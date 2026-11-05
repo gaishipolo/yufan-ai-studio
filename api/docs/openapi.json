@@ -1127,25 +1127,64 @@
         "tags": [
           "生图"
         ],
-        "summary": "生图历史",
+        "summary": "生图历史（分页）",
         "operationId": "list_images_api_v1_images_get",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "页码，从 1 开始",
+              "default": 1,
+              "title": "Page"
+            },
+            "description": "页码，从 1 开始"
+          },
+          {
+            "name": "pageSize",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "description": "每页条数",
+              "default": 24,
+              "title": "Pagesize"
+            },
+            "description": "每页条数"
+          }
+        ],
         "responses": {
           "200": {
             "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ApiResponse_ImageJobListOut_"
+                  "$ref": "#/components/schemas/ApiResponse_Page_ImageJobOut__"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }
           }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
+        }
       }
     },
     "/api/v1/generations/image": {
@@ -1873,33 +1912,6 @@
         "type": "object",
         "title": "ApiResponse[HealthOut]"
       },
-      "ApiResponse_ImageJobListOut_": {
-        "properties": {
-          "code": {
-            "type": "integer",
-            "title": "Code",
-            "description": "0 表示成功，其余为业务错误码",
-            "default": 0
-          },
-          "message": {
-            "type": "string",
-            "title": "Message",
-            "default": "OK"
-          },
-          "data": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/ImageJobListOut"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "type": "object",
-        "title": "ApiResponse[ImageJobListOut]"
-      },
       "ApiResponse_ImageJobOut_": {
         "properties": {
           "code": {
@@ -2001,6 +2013,33 @@
         },
         "type": "object",
         "title": "ApiResponse[NoneType]"
+      },
+      "ApiResponse_Page_ImageJobOut__": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Page_ImageJobOut_"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[Page[ImageJobOut]]"
       },
       "ApiResponse_Page_UserOut__": {
         "properties": {
@@ -2749,49 +2788,38 @@
         ],
         "title": "HealthOut"
       },
-      "ImageJobListOut": {
-        "properties": {
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/ImageJobOut"
-            },
-            "type": "array",
-            "title": "Items"
-          },
-          "total": {
-            "type": "integer",
-            "title": "Total",
-            "default": 0
-          }
-        },
-        "type": "object",
-        "title": "ImageJobListOut"
-      },
       "ImageJobOut": {
         "properties": {
           "id": {
             "type": "string",
-            "title": "Id"
+            "title": "Id",
+            "description": "生图记录 ID"
           },
           "name": {
             "type": "string",
-            "title": "Name"
+            "title": "Name",
+            "description": "名称"
           },
           "prompt": {
             "type": "string",
-            "title": "Prompt"
+            "title": "Prompt",
+            "description": "画面描述"
           },
           "size": {
             "type": "string",
-            "title": "Size"
+            "title": "Size",
+            "description": "尺寸，如 `1024x1536`"
           },
           "coverUrl": {
             "type": "string",
-            "title": "Coverurl"
+            "title": "Coverurl",
+            "description": "封面图 URL",
+            "default": ""
           },
           "createdAt": {
             "type": "string",
-            "title": "Createdat"
+            "title": "Createdat",
+            "description": "创建时间（UTC）"
           }
         },
         "type": "object",
@@ -2800,7 +2828,6 @@
           "name",
           "prompt",
           "size",
-          "coverUrl",
           "createdAt"
         ],
         "title": "ImageJobOut"
@@ -2979,6 +3006,34 @@
           "provider"
         ],
         "title": "ModelOut"
+      },
+      "Page_ImageJobOut_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ImageJobOut"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "default": 0
+          },
+          "page": {
+            "type": "integer",
+            "title": "Page",
+            "default": 1
+          },
+          "pageSize": {
+            "type": "integer",
+            "title": "Pagesize",
+            "default": 24
+          }
+        },
+        "type": "object",
+        "title": "Page[ImageJobOut]"
       },
       "Page_UserOut_": {
         "properties": {

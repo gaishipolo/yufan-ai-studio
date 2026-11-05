@@ -14,7 +14,10 @@ import hashlib
 import hmac
 import os
 import secrets
+import weakref
+from collections.abc import AsyncIterator
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -38,8 +41,76 @@ _SCRYPT_P = 1
 # 为什么不用 `asyncio.to_thread`：它用的是默认执行器（上限 `min(32, cpu+4)`），
 # 32 个并发 scrypt 会把 CPU 打满，把「事件循环不阻塞」换成「谁也别想算完」。
 # 这里按核数收窄到 2~4，超出的请求在队列里等——登录是低频动作，排队比雪崩好。
+#
+# 「排队比雪崩好」这句话只在**排队的东西不占别的资源**时成立，所以队列的入口
+# 不能是这里，而是下面的 `password_slot()`：线程池只决定「同时算几个」，
+# 闸门决定「同时有几个请求在等算」。
 _HASH_WORKERS = min(4, max(2, (os.cpu_count() or 2) // 2))
-_HASH_POOL = ThreadPoolExecutor(max_workers=_HASH_WORKERS, thread_name_prefix="scrypt")
+_HASH_POOL: ThreadPoolExecutor | None = None
+
+# 口令运算名额：与线程池容量对齐。
+#
+# 线程池只收窄了「同时算几个」，**没有收窄「同时有几个请求在等算」**——等待发生在
+# `verify_password_async` 里，而调用它的协程此时已经取走了一条数据库连接（R7-01）。
+# 于是匿名登录洪水从「卡住事件循环」变成「占满连接池」：几十个并发就能让所有要查库的
+# 接口一起变慢，攻击者一个有效请求都不用发对。
+#
+# 所以闸门要前置到**第一次查库之前**，包住「查库 + 验密」整段；
+# 只包验密没有意义（连接早就拿走了），把 `throttle.penalty()` 的惩罚等待包进来更糟
+# （爆破者用 5 秒等待就能占满闸门）。
+_GATES: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Semaphore] = (
+    weakref.WeakKeyDictionary()
+)
+
+
+def _hash_pool() -> ThreadPoolExecutor:
+    """惰性建池：`shutdown_hash_pool()` 之后还能再用（测试、reload 都走这条）。"""
+    global _HASH_POOL
+    if _HASH_POOL is None:
+        _HASH_POOL = ThreadPoolExecutor(
+            max_workers=_HASH_WORKERS, thread_name_prefix="scrypt"
+        )
+    return _HASH_POOL
+
+
+def shutdown_hash_pool() -> None:
+    """关闭线程池；下次调用 `hash_password_async` 会重新建。
+
+    import 期创建、进程退出时靠 `concurrent.futures` 的 atexit join：
+    `uvicorn --reload` 每次重载都会把上一轮的 worker 留在进程里（R7-06）。
+    挂在 lifespan 的收尾段，重载时就真的回收了。
+    """
+    global _HASH_POOL
+    pool, _HASH_POOL = _HASH_POOL, None
+    if pool is not None:
+        pool.shutdown(wait=False, cancel_futures=True)
+
+
+def _hash_gate() -> asyncio.Semaphore:
+    """按事件循环取闸门。
+
+    模块级单例在「一个进程一个 loop」的生产环境够用，但测试里每个 TestClient 请求、
+    每条 `asyncio.run` 都会新建 loop，而 `asyncio.Semaphore` 一旦在有竞争时被使用，
+    就会绑定到当时的 loop，换 loop 直接 `RuntimeError`。按 loop 存一份既保住了
+    「同一 loop 内并发受限」，也不会把上一个 loop 的状态带进来。
+    """
+    loop = asyncio.get_running_loop()
+    gate = _GATES.get(loop)
+    if gate is None:
+        gate = asyncio.Semaphore(_HASH_WORKERS)
+        _GATES[loop] = gate
+    return gate
+
+
+@asynccontextmanager
+async def password_slot() -> AsyncIterator[None]:
+    """占一个口令运算名额，直到退出。
+
+    用法上有一条要求：**查口令哈希的那次查询必须写在里面**。
+    写在外面等于「先拿连接、再排队」，闸门就白加了。
+    """
+    async with _hash_gate():
+        yield
 
 
 # --------------------------------------------------------------------------- #
@@ -73,17 +144,19 @@ def verify_password(raw: str, encoded: str) -> bool:
 
 async def hash_password_async(raw: str) -> str:
     """`hash_password` 的线程池版本。**请求路径只用这个**。"""
-    return await asyncio.get_running_loop().run_in_executor(_HASH_POOL, hash_password, raw)
+    return await asyncio.get_running_loop().run_in_executor(
+        _hash_pool(), hash_password, raw
+    )
 
 
 async def verify_password_async(raw: str, encoded: str) -> bool:
     """`verify_password` 的线程池版本。**请求路径只用这个**。
 
     并发上限由 `_HASH_POOL` 的 worker 数决定，超出的调用在队列里排队，
-    事件循环始终可以继续调度其它协程。
+    事件循环始终可以继续调度其它协程。排队要配 `password_slot()`——见上面的注释。
     """
     return await asyncio.get_running_loop().run_in_executor(
-        _HASH_POOL, verify_password, raw, encoded
+        _hash_pool(), verify_password, raw, encoded
     )
 
 

@@ -29,6 +29,7 @@ from core.response import Page, PageParams
 from core.security import (
     create_access_token,
     hash_password_async,
+    password_slot,
     verify_password_async,
 )
 from db.base import utcnow
@@ -163,20 +164,32 @@ class IdentityService:
           失败路径与成功路径耗时一致，不会从时间维泄漏「账号是否存在」。
         - 验密走线程池（`verify_password_async`）：scrypt 是 150ms 级纯 CPU 工作，
           留在事件循环里会让整个进程停摆，而不只是「这一个登录变慢」（R6-02）。
+        - **查库与验密都在 `password_slot()` 里面**：线程池只收窄了并发运算数，
+          排队等运算的请求此时已经握着一条数据库连接，几十个并发登录就能占满连接池、
+          拖慢所有要查库的接口；而登录是唯一匿名可达的入口（R7-01）。
+          闸门放在查库之前，等待发生在还没拿连接的时候。
+        - `throttle.penalty()` 的等待留在闸门**外面**：那是有意的慢，不是并发，
+          包进闸门等于让爆破者用 5 秒等待占满名额，比不加闸门更糟。
         """
         key = f"{username}|{client_ip}"
         wait = throttle.penalty(key)
         if wait:
             await asyncio.sleep(wait)
 
-        user = await self.users.get_by_username(username)
-        encoded = user.password_hash if user is not None else await _dummy_hash()
-        ok = await verify_password_async(password, encoded)
-        if user is None or not ok:
-            throttle.record_failure(key)
-            # 已经猜错太多次：给 429，让前端提示「别再试了」，而不是无限 401
-            throttle.reject(key)
-            raise CredentialInvalid()
+        async with password_slot():
+            user = await self.users.get_by_username(username)
+            encoded = user.password_hash if user is not None else await _dummy_hash()
+            ok = await verify_password_async(password, encoded)
+            if user is None or not ok:
+                # 失败路径不再需要数据库：**在闸门里**结束只读事务，连接立刻回池。
+                # 留到请求 teardown 才还的话，「闸门最多放 N 个进查库」这句话就不成立——
+                # 退出闸门的请求还攥着连接，下一批又进来了，峰值照样顶到池上限。
+                await self.session.rollback()
+                throttle.record_failure(key)
+                # 已经猜错太多次：给 429，让前端提示「别再试了」，而不是无限 401
+                throttle.reject(key)
+                raise CredentialInvalid()
+
         throttle.reset(key)
         if not user.is_active:
             raise AccountDisabled()
@@ -339,6 +352,14 @@ class IdentityService:
             if active != user.is_active:
                 await self._guard_target_not_above(user, actor)
             user.is_active = active
+
+        # 邮箱现在只是个资料字段，但它是最可能的「账号找回」入口：一旦接上
+        # 「邮箱找回密码 / 收验证码」，改别人的邮箱就是接管账号的第一步。
+        # 这类「暂时无害」的写权限最容易在半年后变成漏洞，所以现在就按
+        # 「改他人邮箱需要目标不高于自己」处理；改自己的走 `update_me`
+        # （只接受 ProfileUpdateIn 白名单，不经过这里）（R7-03）。
+        if "email" in fields and fields["email"] != user.email and user.id != actor.id:
+            await self._guard_target_not_above(user, actor)
 
         for field in ("display_name", "email", "avatar_url"):
             if field in fields:

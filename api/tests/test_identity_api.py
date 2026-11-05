@@ -894,3 +894,48 @@ def test_seed_refuses_to_run_in_production(monkeypatch: pytest.MonkeyPatch) -> N
     with pytest.raises(SystemExit) as excinfo:
         main(["seed"])
     assert excinfo.value.code == 1
+
+
+# --------------------------------------------------------------------------- #
+# 改他人邮箱要过「目标不高于自己」的守卫（R7-03）
+# --------------------------------------------------------------------------- #
+def test_changing_another_users_email_requires_not_below_target(client: TestClient) -> None:
+    """`identity:update` 能改昵称，但改**超管**的邮箱必须被挡（R7-03）。
+
+    改昵称不是提权，所以资料字段一直不需要守卫；邮箱不一样——它是「账号找回」
+    最可能接上的入口。等接上「邮箱找回密码」再补守卫，等于让这条路径先跑半年。
+    """
+    admin = _admin(client)
+    target, _, _ = _make_user(client, admin, "mail_target", ["*"])
+    _, ops, _ = _make_user(
+        client, admin, "mail_ops", ["identity:read", "identity:update"]
+    )
+
+    denied = client.patch(
+        f"{API}/users/{target['id']}",
+        json={"email": "attacker@evil.test"},
+        headers=ops,
+    )
+    assert denied.status_code == 403
+    assert denied.json()["code"] == 40322
+
+    # 昵称仍然可以改：守卫只针对邮箱，不是把整条资料修改一起封掉
+    renamed = client.patch(
+        f"{API}/users/{target['id']}", json={"displayName": "改名没问题"}, headers=ops
+    )
+    assert renamed.status_code == 200
+    assert renamed.json()["data"]["email"] is None  # 邮箱没被改走
+
+
+def test_changing_own_email_via_user_endpoint_is_allowed(client: TestClient) -> None:
+    """改自己的资料不走「目标不高于自己」那道路径，不该被自己的守卫挡住。"""
+    admin = _admin(client)
+    ops, ops_headers, _ = _make_user(
+        client, admin, "mail_self", ["identity:read", "identity:update"]
+    )
+
+    resp = client.patch(
+        f"{API}/users/{ops['id']}", json={"email": "me@demo.local"}, headers=ops_headers
+    )
+    assert resp.status_code == 200
+    assert resp.json()["data"]["email"] == "me@demo.local"

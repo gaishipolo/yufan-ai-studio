@@ -26,6 +26,7 @@ from api.v1.router import build_v1_router
 from core.config import get_settings
 from core.logging import get_logger, setup_logging
 from core.permissions import catalog
+from core.security import shutdown_hash_pool
 from db.session import dispose_engine, init_db
 from infra import get_queue
 from workers import Worker, handler_names
@@ -93,6 +94,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     finally:
         await worker.stop()
         await dispose_engine()
+        # 口令线程池不随进程退出立刻回收（靠 atexit join），`--reload` 时每轮都留一组线程
+        shutdown_hash_pool()
         logger.info("已关闭")
 
 

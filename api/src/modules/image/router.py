@@ -6,10 +6,10 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, status
 
-from api.deps import ImageProviderDep, SessionDep, require
+from api.deps import ImageProviderDep, PageDep, SessionDep, require
 from core.context import CurrentUser
-from core.response import ApiResponse
-from modules.image.schema import GenerateImageIn, ImageJobListOut, ImageJobOut
+from core.response import ApiResponse, Page
+from modules.image.schema import GenerateImageIn, ImageJobOut
 from modules.image.service import ImageService
 
 router = APIRouter(tags=["生图"])
@@ -26,11 +26,11 @@ ImageReadDep = Annotated[CurrentUser, Depends(require("image:read"))]
 ImageCreateDep = Annotated[CurrentUser, Depends(require("image:create"))]
 
 
-@router.get("/images", summary="生图历史")
+@router.get("/images", summary="生图历史（分页）")
 async def list_images(
-    service: ImageServiceDep, actor: ImageReadDep
-) -> ApiResponse[ImageJobListOut]:
-    return ApiResponse.ok(await service.list_jobs(actor))
+    service: ImageServiceDep, actor: ImageReadDep, page: PageDep
+) -> ApiResponse[Page[ImageJobOut]]:
+    return ApiResponse.ok(await service.list_jobs(actor, page))
 
 
 @router.post(

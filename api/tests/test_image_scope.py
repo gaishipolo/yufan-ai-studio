@@ -34,3 +34,50 @@ def test_list_shows_all_history_with_read_all(client: TestClient) -> None:
 
     assert data["total"] >= 1
     assert all(item["id"] for item in data["items"])
+
+
+def test_history_is_paginated_and_total_is_a_real_count(client: TestClient) -> None:
+    """`GET /images` 必须分页，且 `total` 是全量计数（R7-02）。
+
+    范围打开之后，这个接口对 `image:*` 的账号就是全表返回；`total` 用 `len(rows)`
+    的话，有 30 条、这页 10 条时会报「共 10 条」——分页器和总数对不上，前端翻到
+    第二页就翻不动了。
+    """
+    import asyncio
+
+    from db.session import get_session_factory
+    from modules.image.models import ImageJob
+
+    maker = "pager"
+    extra = 30
+
+    async def _seed_many() -> None:
+        async with get_session_factory()() as session:
+            session.add_all(
+                [
+                    ImageJob(
+                        name=f"{maker}-{i}",
+                        prompt=f"分页用例 {i}",
+                        size="1024x1536",
+                        cover_url="",
+                        owner_id="u_001",
+                    )
+                    for i in range(extra)
+                ]
+            )
+            await session.commit()
+
+    asyncio.run(_seed_many())
+    admin = _login(client, "admin", "admin@12345")
+
+    first = client.get(f"{API}/images?page=1&pageSize=10", headers=admin).json()["data"]
+    assert len(first["items"]) == 10
+    assert first["page"] == 1
+    assert first["pageSize"] == 10
+    assert first["total"] >= extra  # 种子里的历史 + 刚插入的
+
+    last = client.get(
+        f"{API}/images?page={first['total'] // 10 + 2}&pageSize=10", headers=admin
+    ).json()["data"]
+    assert last["items"] == []
+    assert last["total"] == first["total"]  # 翻过尾页不会把总数清零

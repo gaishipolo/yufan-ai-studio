@@ -148,19 +148,19 @@ export interface HealthOut {
   version?: string;
 }
 
-/** ImageJobListOut */
-export interface ImageJobListOut {
-  items?: ImageJobOut[];
-  total?: number;
-}
-
 /** ImageJobOut */
 export interface ImageJobOut {
+  /** 生图记录 ID */
   id: string;
+  /** 名称 */
   name: string;
+  /** 画面描述 */
   prompt: string;
+  /** 尺寸，如 `1024x1536` */
   size: string;
-  coverUrl: string;
+  /** 封面图 URL */
+  coverUrl?: string;
+  /** 创建时间（UTC） */
   createdAt: string;
 }
 
@@ -631,8 +631,8 @@ export interface EndpointData {
   "POST /api/v1/identity/users/{user_id}/reset-password": null;
   /** 设置用户角色（整组替换） */
   "PUT /api/v1/identity/users/{user_id}/roles": UserOut;
-  /** 生图历史 */
-  "GET /api/v1/images": ImageJobListOut;
+  /** 生图历史（分页） */
+  "GET /api/v1/images": Page<ImageJobOut>;
   /** 可用模型目录（含参数 schema） */
   "GET /api/v1/models": ModelListOut;
   /** 镜头词条列表 */

@@ -899,7 +899,7 @@ Authorization: Bearer <accessToken>
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
 | `POST` | `/api/v1/generations/image` | 提交生图（待实现） | 🔒 |
-| `GET` | `/api/v1/images` | 生图历史 | 🔒 |
+| `GET` | `/api/v1/images` | 生图历史（分页） | 🔒 |
 
 #### `POST /api/v1/generations/image`
 
@@ -917,23 +917,30 @@ Authorization: Bearer <accessToken>
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `id` | `string` | 是 |  |
-| `name` | `string` | 是 |  |
-| `prompt` | `string` | 是 |  |
-| `size` | `string` | 是 |  |
-| `coverUrl` | `string` | 是 |  |
-| `createdAt` | `string` | 是 |  |
+| `id` | `string` | 是 | 生图记录 ID |
+| `name` | `string` | 是 | 名称 |
+| `prompt` | `string` | 是 | 画面描述 |
+| `size` | `string` | 是 | 尺寸，如 `1024x1536` |
+| `coverUrl` | `string` | 否 | 封面图 URL |
+| `createdAt` | `string` | 是 | 创建时间（UTC） |
 
 #### `GET /api/v1/images`
 
-**生图历史**
+**生图历史（分页）**
 
-**响应** `ApiResponse<ImageJobListOut>`（前端取 `res.data`）
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `page` | query | `number` | 否 | 页码，从 1 开始 |
+| `pageSize` | query | `number` | 否 | 每页条数 |
+
+**响应** `ApiResponse<Page<ImageJobOut>>`（前端取 `res.data`）
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `items` | `ImageJobOut[]` | 否 |  |
-| `total` | `number` | 否 |  |
+| `items` | `ImageJobOut[]` | 是 | 当前页数据 |
+| `total` | `number` | 是 | 总条数（用于分页器） |
+| `page` | `number` | 是 | 当前页码，从 1 开始 |
+| `pageSize` | `number` | 是 | 每页条数 |
 
 ### 4.6 模板（1 个）
 
@@ -1132,23 +1139,16 @@ Authorization: Bearer <accessToken>
 | `env` | `string` | 是 |  |
 | `version` | `string` | 否 |  |
 
-### `ImageJobListOut`
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `items` | `ImageJobOut[]` | 否 |  |
-| `total` | `number` | 否 |  |
-
 ### `ImageJobOut`
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `id` | `string` | 是 |  |
-| `name` | `string` | 是 |  |
-| `prompt` | `string` | 是 |  |
-| `size` | `string` | 是 |  |
-| `coverUrl` | `string` | 是 |  |
-| `createdAt` | `string` | 是 |  |
+| `id` | `string` | 是 | 生图记录 ID |
+| `name` | `string` | 是 | 名称 |
+| `prompt` | `string` | 是 | 画面描述 |
+| `size` | `string` | 是 | 尺寸，如 `1024x1536` |
+| `coverUrl` | `string` | 否 | 封面图 URL |
+| `createdAt` | `string` | 是 | 创建时间（UTC） |
 
 ### `LoginIn`
 
