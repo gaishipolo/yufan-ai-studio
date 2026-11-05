@@ -7,7 +7,8 @@ export interface TaskSearchRowProps {
   onKeywordChange: (value: string) => void;
   onRefresh: () => void;
   isFetching: boolean;
-  total: number;
+  /** 未知（请求失败）时传 undefined：显示"共 0 条"会让人以为数据被清空了 */
+  total?: number;
 }
 
 export function TaskSearchRow({
@@ -28,7 +29,9 @@ export function TaskSearchRow({
       <Button size="sm" icon={<RefreshCw size={13} className={cn(isFetching && 'animate-spin')} />} onClick={onRefresh}>
         刷新
       </Button>
-      <span className="ml-auto text-[11.5px] text-ink-mute">共 {total} 条任务</span>
+      <span className="ml-auto text-[11.5px] text-ink-mute">
+        {total === undefined ? '共 — 条任务' : `共 ${total} 条任务`}
+      </span>
     </div>
   );
 }

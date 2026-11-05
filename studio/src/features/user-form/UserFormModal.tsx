@@ -1,0 +1,232 @@
+import { useEffect, useState, type FormEvent } from 'react';
+import { Button, FormField, Modal, TextInput } from '@/shared/ui';
+import { toast } from '@/shared/lib/toast';
+import { RoleCheckboxList } from '@/entities/role/ui/RoleCheckboxList';
+import type { Role } from '@/entities/role/model/types';
+import { useCreateUser, useUpdateUser } from '@/entities/user/api/user.queries';
+import { UserAvatar } from '@/entities/user/ui/UserAvatar';
+import {
+  PASSWORD_MIN_LENGTH,
+  USERNAME_PATTERN,
+  checkAvatarUrl,
+  checkEmail,
+  checkPassword,
+} from '@/entities/user/model/validation';
+import type { User } from '@/entities/user/model/types';
+
+/**
+ * 新建 / 编辑用户。
+ * 复用一个弹窗是因为字段高度重合；两者差异（密码、角色只在创建时可填）用 `isEdit` 分支表达。
+ * 角色不在这里改：那属于提权动作，走「分配角色」并单独受 `identity:role:manage` 约束。
+ */
+export function UserFormModal({
+  open,
+  user,
+  roles,
+  onClose,
+}: {
+  open: boolean;
+  /** 传入即编辑模式 */
+  user?: User | null;
+  roles: Role[];
+  onClose: () => void;
+}) {
+  const isEdit = Boolean(user);
+  const createUser = useCreateUser();
+  const updateUser = useUpdateUser();
+
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [displayName, setDisplayName] = useState('');
+  const [email, setEmail] = useState('');
+  const [avatarUrl, setAvatarUrl] = useState('');
+  const [roleIds, setRoleIds] = useState<string[]>([]);
+  const [formError, setFormError] = useState<string | null>(null);
+
+  // 每次打开都从传入值重置，避免上一次的残留（尤其是密码）
+  useEffect(() => {
+    if (!open) return;
+    setUsername(user?.username ?? '');
+    setPassword('');
+    setDisplayName(user?.displayName ?? '');
+    setEmail(user?.email ?? '');
+    setAvatarUrl(user?.avatarUrl ?? '');
+    setRoleIds(user?.roles.map((role) => role.id) ?? []);
+    setFormError(null);
+  }, [open, user]);
+
+  const pending = createUser.isPending || updateUser.isPending;
+
+  const handleSubmit = (event: FormEvent) => {
+    event.preventDefault();
+    setFormError(null);
+
+    if (!isEdit) {
+      if (!USERNAME_PATTERN.test(username.trim())) {
+        setFormError('用户名 3-64 位，只能是字母、数字或 . _ -');
+        return;
+      }
+      const passwordError = checkPassword(password, '初始密码');
+      if (passwordError) {
+        setFormError(passwordError);
+        return;
+      }
+    }
+    const emailError = checkEmail(email);
+    if (emailError) {
+      setFormError(emailError);
+      return;
+    }
+    const avatarError = checkAvatarUrl(avatarUrl);
+    if (avatarError) {
+      setFormError(avatarError);
+      return;
+    }
+
+    if (isEdit && user) {
+      updateUser.mutate(
+        {
+          id: user.id,
+          payload: {
+            displayName: displayName.trim(),
+            email: email.trim() || null,
+            avatarUrl: avatarUrl.trim() || null,
+          },
+        },
+        {
+          onSuccess: () => {
+            toast('用户资料已更新', 'success');
+            onClose();
+          },
+          onError: (error) => setFormError(error.message),
+        },
+      );
+      return;
+    }
+
+    createUser.mutate(
+      {
+        username: username.trim().toLowerCase(),
+        password,
+        displayName: displayName.trim() || undefined,
+        email: email.trim() || null,
+        roleIds,
+      },
+      {
+        onSuccess: () => {
+          toast('用户已创建', 'success');
+          onClose();
+        },
+        onError: (error) => setFormError(error.message),
+      },
+    );
+  };
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={isEdit ? `编辑用户 · ${user?.username ?? ''}` : '新建用户'}
+      width={520}
+    >
+      <form className="space-y-3 px-[18px] py-4" onSubmit={handleSubmit}>
+        {isEdit ? (
+          <FormField label="登录名" htmlFor="user-username">
+            {/* 登录名是历史归属的一部分，创建后不可改 */}
+            <TextInput id="user-username" value={user?.username ?? ''} disabled readOnly />
+          </FormField>
+        ) : (
+          <FormField
+            label="登录名"
+            htmlFor="user-username"
+            required
+            hint="3-64 位字母、数字或 . _ -，保存后会自动转小写"
+          >
+            <TextInput
+              id="user-username"
+              value={username}
+              autoComplete="off"
+              onChange={(event) => setUsername(event.target.value)}
+            />
+          </FormField>
+        )}
+
+        {!isEdit && (
+          <FormField
+            label="初始密码"
+            htmlFor="user-password"
+            required
+            hint={`至少 ${PASSWORD_MIN_LENGTH} 位，不能是纯数字`}
+          >
+            <TextInput
+              id="user-password"
+              type="password"
+              autoComplete="new-password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+            />
+          </FormField>
+        )}
+
+        <FormField label="昵称" htmlFor="user-display-name" hint="顶栏与任务作者展示用；留空则显示登录名">
+          <TextInput
+            id="user-display-name"
+            value={displayName}
+            onChange={(event) => setDisplayName(event.target.value)}
+          />
+        </FormField>
+
+        <FormField label="邮箱" htmlFor="user-email">
+          <TextInput
+            id="user-email"
+            type="email"
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+          />
+        </FormField>
+
+        {/* 建号接口（CreateUserIn）不接收 avatarUrl，只在编辑时可设 */}
+        {isEdit && (
+          <FormField
+            label="头像地址"
+            htmlFor="user-avatar"
+            hint="留空则显示昵称首字；图片加载失败会自动退回首字"
+          >
+            <div className="flex items-center gap-2">
+              <UserAvatar user={{ displayName, username, avatarUrl }} size={32} shape="square" />
+              <TextInput
+                id="user-avatar"
+                className="flex-1"
+                value={avatarUrl}
+                maxLength={512}
+                placeholder="https://…"
+                onChange={(event) => setAvatarUrl(event.target.value)}
+              />
+            </div>
+          </FormField>
+        )}
+
+        {!isEdit && (
+          <FormField label="角色" hint="角色决定权限点；之后可在列表里单独调整">
+            <RoleCheckboxList roles={roles} value={roleIds} onChange={setRoleIds} disabled={pending} />
+          </FormField>
+        )}
+
+        {formError && (
+          <p className="rounded-lg border border-[#fad7d4] bg-[#feeceb] px-2.5 py-2 text-[11.5px] text-[#d94036]" role="alert">
+            {formError}
+          </p>
+        )}
+
+        <div className="flex items-center justify-end gap-1.5 pt-1">
+          <Button size="md" onClick={onClose} disabled={pending}>
+            取消
+          </Button>
+          <Button size="md" variant="primary" type="submit" loading={pending}>
+            {isEdit ? '保存' : '创建'}
+          </Button>
+        </div>
+      </form>
+    </Modal>
+  );
+}

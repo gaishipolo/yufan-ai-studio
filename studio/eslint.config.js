@@ -66,6 +66,8 @@ export default tseslint.config(
   {
     ignores: [
       'dist',
+      // 验证 mock 分包时的临时产物（`VITE_USE_MOCK=true vite build --outDir dist-mock`）
+      'dist-mock',
       'coverage',
       'node_modules',
       // 后端 export-openapi 的生成物（文件头已声明「请勿手工编辑」），格式由生成器决定。
