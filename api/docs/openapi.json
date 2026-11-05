@@ -1641,6 +1641,7 @@
           "任务"
         ],
         "summary": "重试任务",
+        "description": "重试的结果只回 `id` / `status` / `updatedAt`。\n\n不返回整份任务详情：`task:retry:any` 允许「帮别人重跑」，但没允许\n「读别人的 prompt」——那是 `task:read:all` 的事（R6-05）。",
         "operationId": "retry_task_api_v1_tasks__task_id__retry_post",
         "security": [
           {
@@ -1666,7 +1667,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ApiResponse_TaskOut_"
+                  "$ref": "#/components/schemas/ApiResponse_TaskRetryOut_"
                 }
               }
             }
@@ -2216,6 +2217,33 @@
         },
         "type": "object",
         "title": "ApiResponse[TaskOut]"
+      },
+      "ApiResponse_TaskRetryOut_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TaskRetryOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[TaskRetryOut]"
       },
       "ApiResponse_TaskStats_": {
         "properties": {
@@ -3684,6 +3712,32 @@
         "title": "TaskOut",
         "description": "任务出参：字段名与前端 `VideoTask` 完全一致。"
       },
+      "TaskRetryOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "任务 ID"
+          },
+          "status": {
+            "$ref": "#/components/schemas/TaskStatus",
+            "description": "重试后的状态，正常为 queued"
+          },
+          "updatedAt": {
+            "type": "string",
+            "title": "Updatedat",
+            "description": "状态变更时间（UTC），即重新排队的时间"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "status",
+          "updatedAt"
+        ],
+        "title": "TaskRetryOut",
+        "description": "重试的结果：只描述「这一次动作」。\n\n刻意**不**返回整份 `TaskOut`（R6-05）：`task:retry:any` 与 `task:read:all`\n是两个独立开关，客服只需要「帮别人重跑一次」，不该顺带获得\n「按 id 读任意失败任务的 prompt 与作者」这条读通道。\n重试是一个动作，不是一次查询——前端拿到结果后刷新列表即可。"
+      },
       "TaskScope": {
         "type": "string",
         "enum": [
@@ -4166,7 +4220,7 @@
               }
             ],
             "title": "Isactive",
-            "description": "启用/停用；不能停用自己，且必须保留一个启用的超管"
+            "description": "启用/停用；不能停用自己，且必须保留一个启用的超管。不接受 null：停用请传 false，不想改就不要传这个字段"
           }
         },
         "type": "object",

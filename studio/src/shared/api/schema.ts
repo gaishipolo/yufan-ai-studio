@@ -431,6 +431,21 @@ export interface TaskOut {
   startedAt?: string | null;
 }
 
+/** 重试的结果：只描述「这一次动作」。
+
+刻意**不**返回整份 `TaskOut`（R6-05）：`task:retry:any` 与 `task:read:all`
+是两个独立开关，客服只需要「帮别人重跑一次」，不该顺带获得
+「按 id 读任意失败任务的 prompt 与作者」这条读通道。
+重试是一个动作，不是一次查询——前端拿到结果后刷新列表即可。 */
+export interface TaskRetryOut {
+  /** 任务 ID */
+  id: string;
+  /** 重试后的状态，正常为 queued */
+  status: TaskStatus;
+  /** 状态变更时间（UTC），即重新排队的时间 */
+  updatedAt: string;
+}
+
 /** 各状态任务数：不受状态筛选影响，但受搜索/范围影响。 */
 export interface TaskStats {
   /** 总数 */
@@ -551,7 +566,7 @@ export interface UserUpdateIn {
   email?: string | null;
   /** 头像 URL；传 null 清空 */
   avatarUrl?: string | null;
-  /** 启用/停用；不能停用自己，且必须保留一个启用的超管 */
+  /** 启用/停用；不能停用自己，且必须保留一个启用的超管。不接受 null：停用请传 false，不想改就不要传这个字段 */
   isActive?: boolean | null;
 }
 
@@ -639,7 +654,7 @@ export interface EndpointData {
   /** 收藏 / 取消收藏 */
   "POST /api/v1/tasks/{task_id}/favorite": TaskOut;
   /** 重试任务 */
-  "POST /api/v1/tasks/{task_id}/retry": TaskOut;
+  "POST /api/v1/tasks/{task_id}/retry": TaskRetryOut;
   /** 模板列表 */
   "GET /api/v1/templates": TemplateListOut;
 }

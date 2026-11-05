@@ -13,6 +13,7 @@ from core.context import CurrentUser
 from core.exceptions import NotImplementedFeature
 from db.repository import BaseRepository
 from modules.image.models import ImageJob
+from modules.image.permissions import PERM_READ_ALL
 from modules.image.schema import GenerateImageIn, ImageJobListOut, ImageJobOut
 
 
@@ -22,11 +23,15 @@ class ImageService:
         self.repo = BaseRepository(session, ImageJob)
 
     async def list_jobs(self, actor: CurrentUser) -> ImageJobListOut:
-        stmt = (
-            select(ImageJob)
-            .where(ImageJob.owner_id == actor.id)
-            .order_by(ImageJob.created_at.desc())
-        )
+        """历史列表：数据范围只看 `image:read:all`，与 task 模块同一套规则。
+
+        只按 `owner_id` 过滤时，管理员在「全部」视图里也只看得到自己的历史，
+        而任务列表里能看到全站——同一份工作台两套答案，用户只会以为是 bug
+        （R4-07 / R6-09）。
+        """
+        stmt = select(ImageJob).order_by(ImageJob.created_at.desc())
+        if not actor.has(PERM_READ_ALL):
+            stmt = stmt.where(ImageJob.owner_id == actor.id)
         rows = list(await self.repo.list(stmt))
         return ImageJobListOut(
             items=[ImageJobOut.model_validate(row) for row in rows],

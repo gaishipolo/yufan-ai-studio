@@ -375,9 +375,12 @@ ruff check src tests
 - [ ] `WORKER_ENABLED=false` 时单独起 worker 进程，避免 API 实例与 worker 抢队列
 - [ ] 反向代理（Nginx）转发到 8080，并透传 `X-Request-Id`
 - [ ] 有反代就配 `TRUSTED_PROXIES=<代理地址/网段>`（或给 uvicorn 加 `--proxy-headers
-      --forwarded-allow-ips`）。不配的话所有请求的直连地址都是代理，登录限流键会退化成
-      「只按用户名」，一个人就能把别人锁在外面；反过来即使不配，伪造 `X-Forwarded-For`
-      也不会生效——默认不信任任何代理。
+      --forwarded-allow-ips`，二选一）。不配的话所有请求的直连地址都是代理，登录限流键会退化
+      成「只按用户名」，一个人就能把别人锁在外面；反过来即使不配，伪造 `X-Forwarded-For`
+      也不会生效——默认不信任任何代理。**不要**配成 `0.0.0.0/0`：XFF 里的地址由客户端
+      自报，全信任等于限流键可随意伪造。
+- [ ] 不要在启动脚本里留 `app seed`：`APP_ENV=prod` 时它会拒绝执行（演示账号口令固定），
+      生产首启只用 `app create-admin`。
 
 前三条**不需要靠人记**：`Settings` 上有 `model_validator`，`APP_ENV=prod` 时
 匿名放开、样例/过短 JWT 密钥、`CORS_ORIGINS=*`、`DEBUG=true` 任意一条命中都会

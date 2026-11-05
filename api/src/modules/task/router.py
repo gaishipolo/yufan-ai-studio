@@ -36,6 +36,7 @@ from modules.task.schema import (
     TaskListOut,
     TaskListQuery,
     TaskOut,
+    TaskRetryOut,
     TaskStats,
     UpdateTaskIn,
 )
@@ -108,9 +109,14 @@ async def update_task(
 @router.post("/{task_id}/retry", summary="重试任务")
 async def retry_task(
     service: TaskServiceDep, actor: TaskUpdateDep, task_id: TaskId
-) -> ApiResponse[TaskOut]:
+) -> ApiResponse[TaskRetryOut]:
+    """重试的结果只回 `id` / `status` / `updatedAt`。
+
+    不返回整份任务详情：`task:retry:any` 允许「帮别人重跑」，但没允许
+    「读别人的 prompt」——那是 `task:read:all` 的事（R6-05）。
+    """
     task = await service.retry_task(task_id, actor)
-    return ApiResponse.ok(service.to_out(task), message="已重新排队")
+    return ApiResponse.ok(service.to_retry_out(task), message="已重新排队")
 
 
 @router.post("/{task_id}/favorite", summary="收藏 / 取消收藏")

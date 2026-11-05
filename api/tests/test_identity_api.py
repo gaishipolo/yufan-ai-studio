@@ -820,3 +820,77 @@ def test_role_manager_cannot_delete_or_gut_stronger_role(client: TestClient) -> 
     )
     assert gutted.status_code == 403
     assert gutted.json()["code"] == 40323
+
+
+# --------------------------------------------------------------------------- #
+# `isActive` 的 null 语义与「开/关」双向守卫（R6-03 / R6-04）
+# --------------------------------------------------------------------------- #
+def test_is_active_null_is_rejected_instead_of_disabling(client: TestClient) -> None:
+    """`{"isActive": null}` 必须 422，不能被 `bool(None)` 静默当成停用（R6-03）。
+
+    `exclude_unset` 只挡「没传」；表单里「这个开关没填」发 null 很常见，
+    而后果是把一个正常账号关掉，还带着「最后一个超管」的连带判定。
+    """
+    admin = _admin(client)
+    user, _, _ = _make_user(client, admin, "null_active", ["task:read"])
+
+    resp = client.patch(
+        f"{API}/users/{user['id']}", json={"isActive": None}, headers=admin
+    )
+    assert resp.status_code == 422, resp.text
+
+    kept = client.get(f"{API}/users/{user['id']}", headers=admin).json()["data"]
+    assert kept["isActive"] is True
+
+
+def test_restoring_a_superuser_requires_a_superuser(client: TestClient) -> None:
+    """停用超管要超管，**恢复也要**（R6-04）。
+
+    守卫原来只写在 `not active` 分支里：同一个账号、同一个接口，方向反过来就放行。
+    安全事件后的流程通常是「先停用、排查、再启用」，而启用这一步恰好不需要超管——
+    被停用的正是内鬼账号时，一个中级管理员就能把它放回来。
+    """
+    admin = _admin(client)
+    target, _, _ = _make_user(client, admin, "su_target", ["*"])
+    _, weak, _ = _make_user(
+        client, admin, "ops_weak", ["identity:read", "identity:update"]
+    )
+
+    denied = client.patch(
+        f"{API}/users/{target['id']}", json={"isActive": False}, headers=weak
+    )
+    assert denied.status_code == 403
+    assert denied.json()["code"] == 40322
+
+    assert (
+        client.patch(
+            f"{API}/users/{target['id']}", json={"isActive": False}, headers=admin
+        ).status_code
+        == 200
+    )
+
+    restored = client.patch(
+        f"{API}/users/{target['id']}", json={"isActive": True}, headers=weak
+    )
+    assert restored.status_code == 403
+    assert restored.json()["code"] == 40322  # 与停用同一个错误码
+    still_off = client.get(f"{API}/users/{target['id']}", headers=admin).json()["data"]
+    assert still_off["isActive"] is False
+
+
+# --------------------------------------------------------------------------- #
+# 演示数据的环境护栏（R6-06）
+# --------------------------------------------------------------------------- #
+def test_seed_refuses_to_run_in_production(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`app seed` 在 prod 下必须硬拒：它写的是口令固定的账号。
+
+    注释里写「生产用 create-admin」不算护栏——部署脚本里「顺手 seed 初始化数据」
+    很常见，到了生产就把 `admin/admin@12345` 这个超管写进了库。
+    """
+    from cli import main
+    from core.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "app_env", "prod")
+    with pytest.raises(SystemExit) as excinfo:
+        main(["seed"])
+    assert excinfo.value.code == 1

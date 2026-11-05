@@ -492,3 +492,48 @@ def test_retry_others_task_needs_its_own_permission(
         permissions=["task:read", "task:update", "task:retry:any"],
     )
     assert client.post(f"{api}/tasks/{task_id_2}/retry", headers=responder).status_code == 200
+
+
+def test_retry_returns_only_the_action_result(client: TestClient, api: str) -> None:
+    """`retry` 只返回动作结果，不返回整份任务（R6-05）。
+
+    `task:retry:any` 与 `task:read:all` 是两个开关：客服只需要「帮别人重跑」，
+    不该顺带获得「按 id 读任意失败任务的 prompt 与作者」这条读通道。
+    """
+    from db.session import get_session_factory
+    from modules.task.enums import TaskStatus
+    from modules.task.models import VideoTask
+
+    async def _make_failed_task() -> str:
+        async with get_session_factory()() as session:
+            task = VideoTask(
+                title="机密项目A",
+                prompt="客户的保密画面描述",
+                status=TaskStatus.FAILED.value,
+                model="Seedance 2.5",
+                model_id="seedance-2.5",
+                error_message="生成超时，请重试",
+                author_id="u_001",
+                author_name="老大",
+            )
+            session.add(task)
+            await session.commit()
+            return task.id
+
+    task_id = asyncio.run(_make_failed_task())
+    responder = _bearer(
+        client,
+        "u_043",
+        "ops_link",
+        permissions=["task:read", "task:update", "task:retry:any"],
+    )
+
+    resp = client.post(f"{api}/tasks/{task_id}/retry", headers=responder)
+    assert resp.status_code == 200, resp.text
+
+    data = resp.json()["data"]
+    assert set(data) == {"id", "status", "updatedAt"}
+    assert data["id"] == task_id
+    assert data["status"] == "queued"
+    # 「看不见」和「拿不到」必须是同一件事
+    assert client.get(f"{api}/tasks/{task_id}", headers=responder).status_code == 403

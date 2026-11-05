@@ -80,6 +80,7 @@ Authorization: Bearer <accessToken>
 | `catalog:read` | 查看模型目录 |  |
 | `image:create` | 提交生图任务 |  |
 | `image:read` | 查看生图历史 |  |
+| `image:read:all` | 查看他人生图历史 | 列表的数据范围开关；与 task:read:all 同义，不含提交他人的生图任务 |
 | `shot:read` | 查看镜头库 |  |
 | `storyboard:read` | 查看分镜模板 |  |
 | `task:create` | 创建生成任务 |  |
@@ -482,7 +483,7 @@ Authorization: Bearer <accessToken>
 | `displayName` | `string \| null` | 否 | 昵称 |
 | `email` | `string \| null` | 否 | 邮箱；传 null 清空 |
 | `avatarUrl` | `string \| null` | 否 | 头像 URL；传 null 清空 |
-| `isActive` | `boolean \| null` | 否 | 启用/停用；不能停用自己，且必须保留一个启用的超管 |
+| `isActive` | `boolean \| null` | 否 | 启用/停用；不能停用自己，且必须保留一个启用的超管。不接受 null：停用请传 false，不想改就不要传这个字段 |
 
 **响应** `ApiResponse<UserOut>`（前端取 `res.data`）
 
@@ -788,34 +789,22 @@ Authorization: Bearer <accessToken>
 
 **重试任务**
 
+重试的结果只回 `id` / `status` / `updatedAt`。
+
+不返回整份任务详情：`task:retry:any` 允许「帮别人重跑」，但没允许
+「读别人的 prompt」——那是 `task:read:all` 的事（R6-05）。
+
 | 参数 | 位置 | 类型 | 必填 | 说明 |
 |---|---|---|---|---|
 | `task_id` | path | `string` | 是 | 任务 ID |
 
-**响应** `ApiResponse<TaskOut>`（前端取 `res.data`）
+**响应** `ApiResponse<TaskRetryOut>`（前端取 `res.data`）
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `id` | `string` | 是 | 任务 ID |
-| `title` | `string` | 是 | 标题 |
-| `status` | `TaskStatus` | 是 | 状态：queued 排队 / running 生成中 / completed 完成 / failed 失败 |
-| `model` | `string` | 是 | 模型展示名，如 `Seedance 2.5` |
-| `modelId` | `string \| null` | 否 | 模型目录 id，与 `GET /api/v1/models` 的 `id` 对齐 |
-| `durationSec` | `number` | 是 | 视频时长（秒） |
-| `aspectRatio` | `AspectRatio` | 是 | 画幅比例 |
-| `progress` | `number` | 否 | 生成进度 0-100 |
-| `coverUrl` | `string` | 否 | 封面图 URL，未生成完时为空串 |
-| `prompt` | `string` | 否 | 画面描述 |
-| `stylePreset` | `string \| null` | 否 | 风格预设标识，未设置时为 null |
-| `referenceAssetIds` | `string[]` | 否 | 参考素材 ID 列表（图生视频用） |
-| `authorId` | `string` | 是 | 作者用户 ID |
-| `authorName` | `string` | 否 | 作者昵称快照（改名不回填历史） |
-| `favorited` | `boolean` | 否 | 当前账号是否已收藏 |
-| `downloadable` | `boolean` | 否 | 是否允许下载：已成功且有产物 |
-| `errorMessage` | `string \| null` | 否 | 失败原因，成功时为 null |
-| `createdAt` | `string` | 是 | 创建时间（UTC） |
-| `updatedAt` | `string` | 是 | 更新时间（UTC） |
-| `startedAt` | `string \| null` | 否 | 开始生成时间，未开始为 null |
+| `status` | `TaskStatus` | 是 | 重试后的状态，正常为 queued |
+| `updatedAt` | `string` | 是 | 状态变更时间（UTC），即重新排队的时间 |
 
 ### 4.3 模型（1 个）
 
@@ -1387,6 +1376,21 @@ Authorization: Bearer <accessToken>
 | `updatedAt` | `string` | 是 | 更新时间（UTC） |
 | `startedAt` | `string \| null` | 否 | 开始生成时间，未开始为 null |
 
+### `TaskRetryOut`
+
+重试的结果：只描述「这一次动作」。
+
+刻意**不**返回整份 `TaskOut`（R6-05）：`task:retry:any` 与 `task:read:all`
+是两个独立开关，客服只需要「帮别人重跑一次」，不该顺带获得
+「按 id 读任意失败任务的 prompt 与作者」这条读通道。
+重试是一个动作，不是一次查询——前端拿到结果后刷新列表即可。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 | 任务 ID |
+| `status` | `TaskStatus` | 是 | 重试后的状态，正常为 queued |
+| `updatedAt` | `string` | 是 | 状态变更时间（UTC），即重新排队的时间 |
+
 ### `TaskScope`（枚举）
 
 取值：`mine`、`team`、`all`
@@ -1511,7 +1515,7 @@ Authorization: Bearer <accessToken>
 | `displayName` | `string \| null` | 否 | 昵称 |
 | `email` | `string \| null` | 否 | 邮箱；传 null 清空 |
 | `avatarUrl` | `string \| null` | 否 | 头像 URL；传 null 清空 |
-| `isActive` | `boolean \| null` | 否 | 启用/停用；不能停用自己，且必须保留一个启用的超管 |
+| `isActive` | `boolean \| null` | 否 | 启用/停用；不能停用自己，且必须保留一个启用的超管。不接受 null：停用请传 false，不想改就不要传这个字段 |
 
 ### `ValidationError`
 

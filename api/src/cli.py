@@ -38,6 +38,22 @@ def _cmd_init_db(_: argparse.Namespace) -> None:
 
 
 def _cmd_seed(args: argparse.Namespace) -> None:
+    """写入演示数据。
+
+    `seed` 里的账号口令是**固定字符串**（`admin@12345` 等），一旦进生产就是
+    一个已知口令的超级管理员。而部署脚本里「顺手跑一次 seed 初始化数据」很常见，
+    所以这里必须按环境硬拒，不能只在注释里写「生产用 create-admin」（R6-06）。
+    """
+    from core.config import get_settings
+
+    if get_settings().app_env == "prod" and not args.force:
+        print(
+            "生产环境拒绝写入演示数据：seed 会创建口令固定的账号。"
+            "确需写入请显式加 --force",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+
     from seed import seed
 
     counts = asyncio.run(seed(reset=args.reset))
@@ -182,6 +198,11 @@ def main(argv: list[str] | None = None) -> int:
 
     p_seed = sub.add_parser("seed", help="写入演示数据")
     p_seed.add_argument("--reset", action="store_true", help="先清空现有数据")
+    p_seed.add_argument(
+        "--force",
+        action="store_true",
+        help="允许在 APP_ENV=prod 下写入（默认拒绝：演示账号口令是固定的）",
+    )
     p_seed.set_defaults(func=_cmd_seed)
 
     p_admin = sub.add_parser("create-admin", help="创建/修复超级管理员（生产首启必跑）")

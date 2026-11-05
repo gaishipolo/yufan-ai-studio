@@ -130,6 +130,11 @@ POST /identity/login → 校验口令 → 角色展开成权限码 → 签发 JW
 > 客户端 IP 走 `core/net.py`：**只有直连对端在 `TRUSTED_PROXIES` 里才读
 > `X-Forwarded-For`**。部署在 nginx / ingress 后面时必须配这个变量，否则键退化成
 > 「只按用户名」；反过来无条件信任这个头，攻击者换个假 IP 就绕过限流。
+> 取值方向是**从右往左**：XFF 是追加语义（`$proxy_add_x_forwarded_for`），最右一段
+> 才是代理亲眼看到的地址，左边的每一段都可以由客户端自报。取最左 = 取攻击者可控值。
+> 两条部署纪律：**不要**把 `TRUSTED_PROXIES` 配成 `0.0.0.0/0`（那时「跳过可信」等价于
+> 「永远取最左」）；**不要**同时开 uvicorn `--proxy-headers`（它会先改写
+> `request.client`，两条路径重叠后「谁在解析这个头」就不可推理了，只保留一条）。
 > 切 Redis 时只换 `throttle.py` 这一个文件，`authenticate` 不用动。
 
 > 为什么做成注入点而不是直接改 `get_actor`：装配层 import 业务模块会违反依赖方向，
@@ -200,8 +205,11 @@ POST /identity/login → 校验口令 → 角色展开成权限码 → 签发 JW
   （不做临时密码那套状态机）。策略只有一份，在 `identity/policy.py`，
   API validator 与 `app create-admin` 共用——运维命令是唯一能创建「权限最大的账号」的
   入口，它不能是唯一绕过策略的那个
-- 写口令只有 `service._set_password` 一个方法：它同时更新 `password_changed_at`，
-  三条路径（自助改密 / 管理员重置 / `create-admin` 轮换）都走它，新增第四条也别绕开
+- 写口令只有 `service.set_password` 一个方法（`async`）：它同时更新
+  `password_changed_at`，五条路径（自助改密 / 管理员重置 / `create-admin` 轮换 / 建号 /
+  演示数据）都走它，新增第六条也别绕开。哈希在线程池里算
+  （`core/security.hash_password_async`）——单次 scrypt 约 150ms，
+  留在事件循环里会让**整个进程**停摆，不只是「这个登录变慢」
 - 提权面统一判定：见 2.3 的表，四个入口不许各写一套
 
 红线的实现方式统一是「**先改 → flush → 再数一遍超管**」，归零就抛错由事务回滚。
@@ -237,6 +245,9 @@ app create-admin --username admin      # 交互式输入密码；--password 可�
 
 没有账号时谁也登不进去，所以「自动建一个 admin/123456」这种便利不能出现在生产。
 开发环境用 `app seed` 即可（会写入 `admin/editor/viewer` 三个演示账号，见 README）。
+`APP_ENV=prod` 下 `app seed` 会**直接拒绝执行**（`SystemExit(1)`）：演示账号的口令是
+固定字符串，而部署脚本里「顺手跑一次 seed 初始化数据」很常见，进了生产就等于写入一个
+已知口令的超管。确需写入请显式加 `--force`。
 
 非生产环境（`APP_ENV=dev/test`）匿名请求仍回退到演示账号 `*`，方便前端联调；
 `prod` 下 `allow_anonymous` 自动为 false，真去写 `ALLOW_ANONYMOUS=true` 也会在启动期被挡下来。

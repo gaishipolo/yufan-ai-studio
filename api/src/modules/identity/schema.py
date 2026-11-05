@@ -108,8 +108,24 @@ class UserUpdateIn(CamelModel):
         default=None, max_length=512, description="头像 URL；传 null 清空"
     )
     is_active: bool | None = Field(
-        default=None, description="启用/停用；不能停用自己，且必须保留一个启用的超管"
+        default=None,
+        description="启用/停用；不能停用自己，且必须保留一个启用的超管。"
+        "不接受 null：停用请传 false，不想改就不要传这个字段",
     )
+
+    @field_validator("is_active", mode="before")
+    @classmethod
+    def _reject_null_active(cls, v: object) -> object:
+        """`isActive: null` 必须 422，不能静默当成 false（R6-03）。
+
+        `exclude_unset` 只挡「没传」，挡不住「显式传了 null」，而
+        `bool(None)` 会把一次误传变成**停用账号**——表单里「这个开关没填」
+        发 null 很常见，后果却是把一个正常账号关掉，还带着「最后一个超管」的
+        连带判定，排查时会一路往权限方向查。
+        """
+        if v is None:
+            raise ValueError("isActive 不能为 null：停用请传 false，保持不动请不要传该字段")
+        return v
 
 
 class ProfileUpdateIn(CamelModel):

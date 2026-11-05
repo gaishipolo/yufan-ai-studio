@@ -13,7 +13,6 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import delete
 
-from core.security import hash_password
 from db.session import get_session_factory, init_db
 from modules.asset.models import Asset
 from modules.identity.models import Role, RolePermission, User, UserRole
@@ -125,17 +124,20 @@ async def seed(*, reset: bool = False) -> dict[str, int]:
         await identity.ensure_builtin_roles()
         roles = {role.code: role for role in await identity.roles.list_all()}
 
-        users = [
-            User(
+        users: list[User] = []
+        for user_id, username, display_name, _, password in _USERS:
+            user = User(
                 id=user_id,
                 username=username,
-                password_hash=hash_password(password),
                 display_name=display_name,
                 email=f"{username}@demo.local",
                 is_active=True,
             )
-            for user_id, username, display_name, _, password in _USERS
-        ]
+            # 口令也走 `IdentityService.set_password`（唯一的写入点）：
+            # seed 自己 `hash_password` 会让「改口令必须写 password_changed_at」
+            # 出现第四个例外，下次加路径的人就会照着错的那份抄（R6-08）
+            await identity.set_password(user, password)
+            users.append(user)
         session.add_all(users)
         await session.flush()
         for (_, _, _, role_code, _), user in zip(_USERS, users, strict=True):

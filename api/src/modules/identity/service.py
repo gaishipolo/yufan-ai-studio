@@ -26,7 +26,11 @@ from core.context import SUPER_PERMISSION, CurrentUser
 from core.logging import get_logger
 from core.permissions import catalog
 from core.response import Page, PageParams
-from core.security import create_access_token, hash_password, verify_password
+from core.security import (
+    create_access_token,
+    hash_password_async,
+    verify_password_async,
+)
 from db.base import utcnow
 from db.session import get_session_factory
 from modules.identity import throttle
@@ -72,10 +76,15 @@ logger = get_logger(__name__)
 _DUMMY_HASH: str | None = None
 
 
-def _dummy_hash() -> str:
+async def _dummy_hash() -> str:
+    """惰性生成一个假口令哈希（首次登录时算一次，之后复用）。
+
+    走线程池：这一步本身也是一次 scrypt，留在事件循环里同样会卡住全进程。
+    并发首次调用可能各算一次，多算一次的成本远低于加锁的复杂度。
+    """
     global _DUMMY_HASH
     if _DUMMY_HASH is None:
-        _DUMMY_HASH = hash_password(secrets.token_hex(16))
+        _DUMMY_HASH = await hash_password_async(secrets.token_hex(16))
     return _DUMMY_HASH
 
 
@@ -152,6 +161,8 @@ class IdentityService:
           真实用户反而登不进来（R5-01）。计数的意义是「猜错的代价」，不是「禁言」。
         - 计数放在 `verify_password` 之后、抛 `CredentialInvalid` 之前：
           失败路径与成功路径耗时一致，不会从时间维泄漏「账号是否存在」。
+        - 验密走线程池（`verify_password_async`）：scrypt 是 150ms 级纯 CPU 工作，
+          留在事件循环里会让整个进程停摆，而不只是「这一个登录变慢」（R6-02）。
         """
         key = f"{username}|{client_ip}"
         wait = throttle.penalty(key)
@@ -159,9 +170,8 @@ class IdentityService:
             await asyncio.sleep(wait)
 
         user = await self.users.get_by_username(username)
-        ok = verify_password(
-            password, user.password_hash if user is not None else _dummy_hash()
-        )
+        encoded = user.password_hash if user is not None else await _dummy_hash()
+        ok = await verify_password_async(password, encoded)
         if user is None or not ok:
             throttle.record_failure(key)
             # 已经猜错太多次：给 429，让前端提示「别再试了」，而不是无限 401
@@ -248,9 +258,9 @@ class IdentityService:
 
     async def change_password(self, user_id: str, payload: PasswordChangeIn) -> None:
         user = await self._require_user(user_id)
-        if not verify_password(payload.old_password, user.password_hash):
+        if not await verify_password_async(payload.old_password, user.password_hash):
             raise OldPasswordMismatch()
-        self._set_password(user, payload.new_password)
+        await self.set_password(user, payload.new_password)
         await self.session.commit()
 
     # ------------------------------------------------------------------ #
@@ -293,12 +303,14 @@ class IdentityService:
         await self._guard_role_grant(roles, actor)
         user = User(
             username=payload.username,
-            password_hash=hash_password(payload.password),
             display_name=payload.display_name or payload.username,
             email=payload.email,
             avatar_url=payload.avatar_url,
             is_active=True,
         )
+        # 建号也要写 `password_changed_at`：不走同一个方法就会出现「这个账号
+        # 的口令没有建立时间」的第四种状态，而令牌失效判定依赖它
+        await self.set_password(user, payload.password)
         self.session.add(user)
         await self.session.flush()
         await self.users.set_roles(user.id, [role.id for role in roles])
@@ -313,13 +325,18 @@ class IdentityService:
         user = await self._require_user(user_id)
         fields = payload.model_dump(exclude_unset=True)
 
-        # `is_active` 两个方向都要处理：只写 False 分支会导致「停用后无法恢复」
-        if "is_active" in fields:
+        # `is_active` 的三种取值必须分开：**没传**（不动）/ true / false。
+        # 用 `in fields` 会让「传了 null」走进 bool(None) = False（R6-03），
+        # schema 已经挡了一次 422，这里再挡一次是为了内部调用（脚本、CLI）绕不过去。
+        if fields.get("is_active") is not None:
             active = bool(fields["is_active"])
-            if not active and user.id == actor.id:
+            if active is False and user.id == actor.id:
                 raise CannotTargetSelf()
-            if not active:
-                # 停用超管 = 让对方下不来台，与「重置超管密码」同级，需要超管
+            # 守卫在**两个方向**都要过，不是只守「关」（R6-04）。
+            # 停用超管是让人下不来台，恢复超管是把访问权还给对方——后者是授权动作，
+            # 按 R5-03 的原则更需要闸：安全事件后「先停用、再启用」的流程里，
+            # 如果启用不需要超管，一个中级管理员就能把刚被停用的内鬼账号放回来。
+            if active != user.is_active:
                 await self._guard_target_not_above(user, actor)
             user.is_active = active
 
@@ -372,7 +389,7 @@ class IdentityService:
         """
         user = await self._require_user(user_id)
         await self._guard_target_not_above(user, actor)
-        self._set_password(user, new_password)
+        await self.set_password(user, new_password)
         await self.session.commit()
         logger.info("管理员 %s 重置了 %s 的密码", actor.id, user.username)
 
@@ -576,11 +593,11 @@ class IdentityService:
                 display_name=display_name or username,
                 is_active=True,
             )
-            self._set_password(user, password)
+            await self.set_password(user, password)
             self.session.add(user)
             await self.session.flush()
         else:
-            self._set_password(user, password)
+            await self.set_password(user, password)
             user.is_active = True
 
         current = set(await self.users.role_ids_of(user.id))
@@ -592,15 +609,19 @@ class IdentityService:
     # ------------------------------------------------------------------ #
     # 内部工具
     # ------------------------------------------------------------------ #
-    def _set_password(self, user: User, raw: str) -> None:
+    async def set_password(self, user: User, raw: str) -> None:
         """**唯一**的口令写入点。
 
         写口令必须同时更新 `password_changed_at`：解析器靠它让该账号此前签发的
-        所有令牌失效。三条改密路径（自助改密 / 管理员重置 / `create-admin` 轮换）
-        共用这一个方法——上一条漏掉这条不变式，正是「超管疑似泄漏、运维紧急轮换口令后
-        攻击者手里的令牌还能用满 2 小时」的原因（R5-02 / R4-13）。
+        所有令牌失效。改密（自助 / 管理员重置 / `create-admin` 轮换）、建号、
+        演示数据装载全部走这里——上一轮漏掉这条不变式，正是「超管疑似泄漏、
+        运维紧急轮换口令后攻击者手里的令牌还能用满 2 小时」的原因（R5-02 / R4-13）。
+
+        哈希本身在线程池里算（`hash_password_async`）：150ms 的纯 CPU 工作，
+        留在事件循环里会让全进程停摆（R6-02）。所以这个方法是 `async` 的——
+        签名不同不是风格问题，而是「它会等待」这件事必须写在类型上。
         """
-        user.password_hash = hash_password(raw)
+        user.password_hash = await hash_password_async(raw)
         user.password_changed_at = utcnow()
 
     async def _require_user(self, user_id: str) -> User:
@@ -616,11 +637,19 @@ class IdentityService:
         return role
 
     async def _roles_by_ids(self, role_ids: Sequence[str]) -> list[Role]:
+        """按传入顺序返回角色，缺失任何一个就报错（而不是静默少挂一个）。
+
+        一条 SQL 取全量再本地比对：逐 id `await` 是 N+1，5 个角色 5 次往返，
+        而这里每次都在「改权限」的写路径上（R6-07）。
+        """
         if not role_ids:
             return []
         unique = list(dict.fromkeys(role_ids))
-        roles = [await self._require_role(role_id) for role_id in unique]
-        return roles
+        found = {role.id: role for role in await self.roles.get_many(unique)}
+        missing = [role_id for role_id in unique if role_id not in found]
+        if missing:
+            raise RoleNotFound(f"角色不存在：{', '.join(missing)}")
+        return [found[role_id] for role_id in unique]
 
     def _validate_permissions(self, codes: Sequence[str]) -> None:
         known = catalog.codes()

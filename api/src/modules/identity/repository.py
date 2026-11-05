@@ -117,6 +117,21 @@ class RoleRepository(BaseRepository[Role]):
             )
         ).all()
 
+    async def get_many(self, role_ids: Sequence[str]) -> list[Role]:
+        """一次取多个角色。
+
+        `_roles_by_ids` 原本是逐 id `await`：5 个角色就是 5 次往返，
+        而「每加一个守卫就多三轮查询」会变成习惯（R6-07）。
+        顺序不保证，调用方按自己的列表重排。
+        """
+        if not role_ids:
+            return []
+        return list(
+            await self.session.scalars(
+                select(Role).where(Role.id.in_(list(dict.fromkeys(role_ids))))
+            )
+        )
+
     async def permissions_for(self, role_ids: Sequence[str]) -> dict[str, list[str]]:
         if not role_ids:
             return {}

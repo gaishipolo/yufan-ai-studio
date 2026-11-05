@@ -9,9 +9,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
+import os
 import secrets
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -24,6 +27,19 @@ from core.exceptions import Unauthorized
 _SCRYPT_N = 2**14
 _SCRYPT_R = 8
 _SCRYPT_P = 1
+
+# 口令哈希专用线程池：**有界**，且不占用事件循环。
+#
+# 单次 scrypt 本机约 150ms，且 `hashlib.scrypt` 会释放 GIL（是真正的并行 CPU 工作）。
+# 如果直接在协程里同步调用，这 150ms 里整个事件循环被占住——不是「登录慢」，
+# 而是同一进程内的所有请求（健康检查、静态接口、别人的轮询）一起停摆；
+# 10 个并发匿名登录就能把 API 按住 1.5 秒（R6-02）。
+#
+# 为什么不用 `asyncio.to_thread`：它用的是默认执行器（上限 `min(32, cpu+4)`），
+# 32 个并发 scrypt 会把 CPU 打满，把「事件循环不阻塞」换成「谁也别想算完」。
+# 这里按核数收窄到 2~4，超出的请求在队列里等——登录是低频动作，排队比雪崩好。
+_HASH_WORKERS = min(4, max(2, (os.cpu_count() or 2) // 2))
+_HASH_POOL = ThreadPoolExecutor(max_workers=_HASH_WORKERS, thread_name_prefix="scrypt")
 
 
 # --------------------------------------------------------------------------- #
@@ -53,6 +69,22 @@ def verify_password(raw: str, encoded: str) -> bool:
         return hmac.compare_digest(digest.hex(), digest_hex)
     except (ValueError, TypeError):
         return False
+
+
+async def hash_password_async(raw: str) -> str:
+    """`hash_password` 的线程池版本。**请求路径只用这个**。"""
+    return await asyncio.get_running_loop().run_in_executor(_HASH_POOL, hash_password, raw)
+
+
+async def verify_password_async(raw: str, encoded: str) -> bool:
+    """`verify_password` 的线程池版本。**请求路径只用这个**。
+
+    并发上限由 `_HASH_POOL` 的 worker 数决定，超出的调用在队列里排队，
+    事件循环始终可以继续调度其它协程。
+    """
+    return await asyncio.get_running_loop().run_in_executor(
+        _HASH_POOL, verify_password, raw, encoded
+    )
 
 
 # --------------------------------------------------------------------------- #

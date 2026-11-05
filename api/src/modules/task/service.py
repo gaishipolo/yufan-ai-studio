@@ -33,6 +33,7 @@ from modules.task.schema import (
     TaskListOut,
     TaskListQuery,
     TaskOut,
+    TaskRetryOut,
     TaskStats,
 )
 
@@ -225,6 +226,17 @@ class TaskService:
             spec = self.router.spec_for(task.model)
             out.model_id = spec.id if spec else None
         return out
+
+    def to_retry_out(self, task: VideoTask) -> TaskRetryOut:
+        """重试的出参：**最小投影**。
+
+        `retry_task` 只能按 id 取行（不能先过可见性，见方法注释），
+        所以这里绝不能返回整份 `TaskOut`——否则「能重试」顺带成了
+        「能读任意失败任务的 prompt 与作者」（R6-05）。
+        """
+        return TaskRetryOut(
+            id=task.id, status=TaskStatus(task.status), updated_at=task.updated_at
+        )
 
     async def _dispatch(self, task: VideoTask) -> None:
         """入队失败必须让任务显式变为 failed。

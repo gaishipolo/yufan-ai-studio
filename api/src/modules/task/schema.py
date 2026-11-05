@@ -130,3 +130,17 @@ class DeleteTasksOut(CamelModel):
         default_factory=list,
         description="被跳过的任务 ID：不存在，或属于他人且没有 `task:read:all`",
     )
+
+
+class TaskRetryOut(CamelModel):
+    """重试的结果：只描述「这一次动作」。
+
+    刻意**不**返回整份 `TaskOut`（R6-05）：`task:retry:any` 与 `task:read:all`
+    是两个独立开关，客服只需要「帮别人重跑一次」，不该顺带获得
+    「按 id 读任意失败任务的 prompt 与作者」这条读通道。
+    重试是一个动作，不是一次查询——前端拿到结果后刷新列表即可。
+    """
+
+    id: str = Field(description="任务 ID")
+    status: TaskStatus = Field(description="重试后的状态，正常为 queued")
+    updated_at: UtcDateTime = Field(description="状态变更时间（UTC），即重新排队的时间")
