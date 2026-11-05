@@ -77,6 +77,16 @@ logger = get_logger(__name__)
 # 放成常量是为了让「新增字段时两个入口一起改」，而不是各自 `setattr` 循环各写一遍。
 _PROFILE_FIELDS = ("display_name", "email", "avatar_url")
 
+# 但这份清单里的字段**风险等级不同**，守卫不能一刀切（R9-02）：
+# - 展示字段（昵称 / 头像）：只影响渲染，要防的是「冒充比自己更有权威的人」，
+#   判「目标是不是超管」就够。之前复用「目标权限 ⊆ 操作者」的严格守卫，结果是
+#   一个只带 `identity:read` + `identity:update` 的委派角色连 viewer 的昵称都改不了
+#   （40323）——把「能用的功能」换成了「看起来安全但没人能用」。
+# - 找回入口（邮箱）：接上「邮箱找回密码 / 收验证码」之后，改它就是接管账号的第一步，
+#   所以沿用「目标权限不得高于自己」的严格守卫（R7-03）。
+_DISPLAY_FIELDS = ("display_name", "avatar_url")
+_RECOVERY_FIELDS = ("email",)
+
 # 用户不存在时也要跑一次哈希校验，否则「响应快 = 用户名不存在」就是一个免费的账号枚举接口
 _DUMMY_HASH: str | None = None
 
@@ -364,16 +374,20 @@ class IdentityService:
         # 守卫按「**要写什么**」判定，不按「哪个字段」「值变没变」判定。
         # 两次都栽在这上面：R7-03 只守了 email，同一次请求里改昵称、换头像照旧 200（R8-02）；
         # 而「值没变就免检」只是把同一个洞挪到另一个输入上（R8-04）。
-        # 这里一次判完：
-        # - 改别人的资料（昵称 / 邮箱 / 头像）→ 目标不能高于自己。
-        #   昵称能用来冒充（"老大" 改成某个审批人的名字），头像 URL 会渲染成 <img>，
-        #   指到攻击者域名就成了「谁在什么时候打开了这个页面」的回连（R8-02）。
-        # - 写 `is_active`（无论改成什么，包括写回原值）→ 同上。
+        # 这里一次判完，但**按字段的风险等级分两档**（R9-02）：
+        # - 写 `is_active` / 邮箱 → 等同于拿走或接管对方的访问权，用严格守卫；
+        # - 只写展示字段 → 防冒充即可，目标不是超管就放行，
+        #   否则「能改昵称」就等于要求「操作者持有被管理者的一切业务权限」。
+        # 两个都写时走严格的那档——严格守卫覆盖的范围更大，不需要再跑一遍轻的。
         # 改自己的不经过这里：自助路径是 `update_me`，只接受展示字段白名单。
-        writing_profile = any(field in fields for field in _PROFILE_FIELDS)
+        writing_display = any(field in fields for field in _DISPLAY_FIELDS)
+        writing_recovery = any(field in fields for field in _RECOVERY_FIELDS)
         writing_active = fields.get("is_active") is not None
-        if user.id != actor.id and (writing_profile or writing_active):
-            await self._guard_target_not_above(user, actor)
+        if user.id != actor.id:
+            if writing_recovery or writing_active:
+                await self._guard_target_not_above(user, actor)
+            elif writing_display:
+                await self._guard_display_target(user, actor)
 
         # `is_active` 的三种取值必须分开：**没传**（不动）/ true / false。
         # 用 `in fields` 会让「传了 null」走进 bool(None) = False（R6-03），
@@ -432,12 +446,15 @@ class IdentityService:
         这是**最强的提权面**：不需要对方配合，重置完直接以对方身份登录。
         所以目标账号的权限必须不高于操作者——否则 `identity:update` 就等于 `*`
         （R4-11 路径 B）。
+
+        闸门必须在 `_require_user` **之前**：先把名额拿到再借连接。放在守卫之后就
+        成了「先借连接、再排队」，20 并发能把连接池顶满（R9-01）——同一份文件里的
+        `create_user` 就是正确写法，两处不该相反。守卫在闸门内跑只多占一个名额
+        （`resolve_identity` 是几条短查询，不涉及 scrypt），峰值仍是闸门容量。
         """
-        user = await self._require_user(user_id)
-        await self._guard_target_not_above(user, actor)
-        # 守卫在名额外、哈希在名额内：守卫要读权限，本来就得有连接；
-        # 而真正要占 CPU 的那次 scrypt 不该和别的请求抢线程（R8-01）。
         async with password_slot():
+            user = await self._require_user(user_id)
+            await self._guard_target_not_above(user, actor)
             await self.set_password(user, new_password)
             await self.session.commit()
         logger.info("管理员 %s 重置了 %s 的密码", actor.id, user.username)
@@ -755,9 +772,14 @@ class IdentityService:
             )
 
     async def _guard_target_not_above(self, target: User, actor: CurrentUser) -> None:
-        """不能对「权限高于自己」的账号做写操作（重置口令 / 停用）。
+        """不能对「权限高于自己」的账号做写操作（重置口令 / 停用 / 改角色 / 改邮箱）。
 
         否则 `identity:update` 与 `identity:delete` 就成了接管超管的两条捷径。
+
+        判据是「目标的权限集 ⊆ 操作者」——这是为**授出访问权**的动作设计的：
+        重置口令 = 拿到对方身份，停用 = 拿走对方访问权，改角色 = 改对方权限。
+        改展示字段（昵称 / 头像）不属于这一类，用 `_guard_display_target`；
+        把这条套上去会让委派角色连昵称都改不了（R9-02）。
         """
         identity = await self.resolve_identity(target.id)
         if identity is None:  # pragma: no cover - 调用前已确认用户存在
@@ -771,6 +793,31 @@ class IdentityService:
                 f"不能操作权限高于自己的账号 {target.username}",
                 details={"missing": missing},
             )
+
+    async def _guard_display_target(self, target: User, actor: CurrentUser) -> None:
+        """改别人的**展示字段**（昵称 / 头像）时的守卫：只判「目标是不是超管」。
+
+        为什么不用 `_guard_target_not_above`（R9-02）：那个守卫的判断依据是
+        「目标的权限集 ⊆ 操作者」，这是为**授出访问权**的动作设计的（重置口令 =
+        拿到对方身份，停用 = 拿走对方访问权，改角色 = 改对方权限）。
+        套在昵称上就变成「要改一个显示字符串，先得持有对方的一切业务权限」——
+        一个只带 `identity:read` + `identity:update` 的委派角色因此连 viewer 的
+        昵称都改不了，这个权限点在界面上承诺的能力和实际能力不是一回事。
+
+        展示字段的真实风险是**冒充**：把昵称改成某个审批人的名字，让「谁批的」
+        在列表里看起来不一样。所以只要挡住「比自己更有权威的目标」——超管——
+        就够；其余交给 `identity:update` 这个权限点本身做第一道控制。
+        头像 URL 的回连风险同理：能被改的账号，其资料的可见范围本来就不受它自己控制。
+
+        「是不是超管」用 `resolve_identity` 判，而不是只看 `role.is_superuser` 标记：
+        角色带着字面量 `*` 权限时也是超管等价（`ResolvedIdentity.is_superuser` 就是这么
+        定义的），只认标记会让一个含 `*` 的自建角色从这里漏过去。
+        """
+        identity = await self.resolve_identity(target.id)
+        if identity is None:  # pragma: no cover - 调用前已确认用户存在
+            return
+        if identity.is_superuser:
+            self._require_superuser(actor, f"操作超级管理员账号 {target.username}")
 
     async def _guard_role_not_above(self, role: Role, actor: CurrentUser) -> None:
         """不能动「权限高于自己」的角色（删角色 / 改角色权限）。

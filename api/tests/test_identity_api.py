@@ -920,7 +920,8 @@ def test_changing_another_users_email_requires_not_below_target(client: TestClie
     assert denied.json()["code"] == 40322
 
     # 昵称、头像也一起挡：R7-03 只守了 email，同一次请求里另外两个字段照旧 200（R8-02）。
-    # 昵称能用来冒充，头像 URL 会渲染成 <img>，指到攻击者域名就是一次回连。
+    # 这里的「挡」来自另一档守卫——展示字段只判「目标是不是超管」（R9-02），
+    # 而 `mail_target` 挂着 `*`，正是需要挡住的那种目标。
     for payload in ({"displayName": "改名没问题"}, {"avatarUrl": "http://evil/x.png"}):
         resp = client.patch(f"{API}/users/{target['id']}", json=payload, headers=ops)
         assert resp.status_code == 403, f"{payload} 没被守卫挡住"
@@ -965,3 +966,53 @@ def test_writing_a_field_back_to_its_current_value_still_needs_the_guard(
         resp = client.patch(f"{API}/users/{target['id']}", json=payload, headers=ops)
         assert resp.status_code == 403, f"{payload} 写原值绕过了守卫"
         assert resp.json()["code"] == 40322
+
+
+def test_delegated_role_can_rename_a_normal_user_but_not_touch_email(
+    client: TestClient,
+) -> None:
+    """委派角色能改普通账号的昵称——这是**有意选的**，不是漏掉的（R9-02 / R9-03）。
+
+    「能不能改昵称」的判定是「目标是不是超管」，不是「目标的权限是不是我的子集」：
+    后者要求一个人事管理员持有被管理者的**全部业务权限**，结果是这个权限点谁也改不
+    了（实测连 viewer 的昵称都 40323），把「能用的功能」换成了「看起来安全但没人能用」。
+
+    邮箱仍走严格判定：它是「找回密码」的入口，接上之后改它就是接管账号的第一步。
+    两条规则的差别就在这里——同一个接口、同一次请求，字段不同、守卫不同。
+
+    上一轮的用例用的是挂着 `*` 的目标（`["*"]` 是最省事的「比我高」），
+    于是只走了「目标是超管」这一支，把另一支的回归整个绕开了（R9-03）。
+    """
+    admin = _admin(client)
+    # 目标带 `task:read`：操作者没有这个权限码，严格判定会拒；轻判定才会放行
+    target, _, _ = _make_user(client, admin, "delegated_target", ["task:read"])
+    _, hr, _ = _make_user(
+        client, admin, "delegated_hr", ["identity:read", "identity:update"]
+    )
+
+    renamed = client.patch(
+        f"{API}/users/{target['id']}", json={"displayName": "新名字"}, headers=hr
+    )
+    assert renamed.status_code == 200, renamed.text
+    assert renamed.json()["data"]["displayName"] == "新名字"
+
+    avatared = client.patch(
+        f"{API}/users/{target['id']}",
+        json={"avatarUrl": "https://cdn.test/a.png"},
+        headers=hr,
+    )
+    assert avatared.status_code == 200, avatared.text
+
+    denied = client.patch(
+        f"{API}/users/{target['id']}", json={"email": "hr@evil.test"}, headers=hr
+    )
+    assert denied.status_code == 403
+    assert denied.json()["code"] == 40323
+
+    # 超管目标两档都挡：轻判定只放行「不比自己更有权威」的目标
+    superuser, _, _ = _make_user(client, admin, "delegated_admin", ["*"])
+    blocked = client.patch(
+        f"{API}/users/{superuser['id']}", json={"displayName": "冒充"}, headers=hr
+    )
+    assert blocked.status_code == 403
+    assert blocked.json()["code"] == 40322

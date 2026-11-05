@@ -107,7 +107,7 @@ Authorization: Bearer <accessToken>
 | `identity:delete` | 停用用户 |  |
 | `identity:read` | 查看用户与角色 |  |
 | `identity:role:manage` | 管理角色与权限点 | 新建/删除角色、调整角色权限、给用户分配角色 |
-| `identity:update` | 编辑用户（含停用、重置密码） | 不含分配角色；重置密码只能重置「权限不高于自己」的账号，超管仍需超管 |
+| `identity:update` | 编辑用户（含停用、重置密码） | 不含分配角色。改他人昵称/头像：目标不能是超管；重置密码、改他人邮箱、启停账号：目标权限不得高于自己（超管仍需超管） |
 
 > 判定规则：`*` 恒真；`task:*` 这类通配可覆盖 `task:read`；否则按字符串精确匹配。
 

@@ -30,7 +30,10 @@ SPECS: tuple[PermissionSpec, ...] = (
         PERM_UPDATE,
         "编辑用户（含停用、重置密码）",
         group="组织管理",
-        description="不含分配角色；重置密码只能重置「权限不高于自己」的账号，超管仍需超管",
+        description=(
+            "不含分配角色。改他人昵称/头像：目标不能是超管；"
+            "重置密码、改他人邮箱、启停账号：目标权限不得高于自己（超管仍需超管）"
+        ),
     ),
     PermissionSpec(PERM_DELETE, "停用用户", group="组织管理"),
     PermissionSpec(
