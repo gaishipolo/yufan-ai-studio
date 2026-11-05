@@ -1,6 +1,8 @@
 # ===== 依赖与构建产物 =====
 node_modules/
 dist/
+# `VITE_USE_MOCK=true vite build --outDir dist-mock`：验证 mock 分包的临时产物
+dist-mock/
 coverage/
 .venv/
 venv/

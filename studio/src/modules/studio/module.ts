@@ -8,7 +8,14 @@ import { defineModule } from '@/shared/registry/define-module';
 export default defineModule({
   id: 'studio',
   title: '生成工作台',
-  routes: [{ path: 'studio', load: () => import('@/pages/studio/StudioPage') }],
+  routes: [
+    {
+      path: 'studio',
+      load: () => import('@/pages/studio/StudioPage'),
+      // 工作台要先读模型目录（GET /catalog/models）才能选模型与时长
+      permissions: ['catalog:read'],
+    },
+  ],
   nav: [
     {
       label: '生成工作台',
@@ -17,6 +24,7 @@ export default defineModule({
       group: '创作',
       groupOrder: 1,
       order: 1,
+      permissions: ['catalog:read'],
     },
   ],
   cards: [
@@ -27,6 +35,7 @@ export default defineModule({
       icon: Sparkles,
       gradient: 'linear-gradient(140deg,#5b8cff,#7c5cff)',
       order: 1,
+      permissions: ['catalog:read'],
       matchPrefixes: ['/studio', '/image'],
     },
   ],

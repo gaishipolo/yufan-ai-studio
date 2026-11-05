@@ -1,11 +1,11 @@
 import { Plus } from 'lucide-react';
-import { Button, CardSkeletonGrid, Chip, CoverImage, PageHeader } from '@/shared/ui';
+import { Button, CardSkeletonGrid, Chip, CoverImage, ErrorState, PageHeader } from '@/shared/ui';
 import { toast } from '@/shared/lib/toast';
 import { formatDuration } from '@/shared/lib/format';
 import { useStoryboards } from '@/entities/storyboard/api/storyboard.api';
 
 export default function StoryboardsPage() {
-  const { data, isLoading } = useStoryboards();
+  const { data, isLoading, isError, error, refetch } = useStoryboards();
 
   return (
     <>
@@ -22,6 +22,8 @@ export default function StoryboardsPage() {
       <div className="mt-4">
         {isLoading ? (
           <CardSkeletonGrid count={6} />
+        ) : isError ? (
+          <ErrorState error={error} title="分镜加载失败" onRetry={() => void refetch()} />
         ) : (
           <div className="grid grid-cols-[repeat(auto-fit,minmax(240px,1fr))] gap-3.5">
             {(data?.items ?? []).map((sb) => (

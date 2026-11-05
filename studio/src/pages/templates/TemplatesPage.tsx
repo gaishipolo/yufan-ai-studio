@@ -1,5 +1,14 @@
-import { Plus } from 'lucide-react';
-import { Button, CardSkeletonGrid, Chip, CoverImage, PageHeader, Select } from '@/shared/ui';
+import { LayoutTemplate, Plus } from 'lucide-react';
+import {
+  Button,
+  CardSkeletonGrid,
+  Chip,
+  CoverImage,
+  EmptyState,
+  ErrorState,
+  PageHeader,
+  Select,
+} from '@/shared/ui';
 import { toast } from '@/shared/lib/toast';
 import { useTemplates } from '@/entities/template/api/template.api';
 
@@ -12,7 +21,7 @@ const INDUSTRY_OPTIONS = [
 ];
 
 export default function TemplatesPage() {
-  const { data, isLoading } = useTemplates();
+  const { data, isLoading, isError, error, refetch } = useTemplates();
 
   return (
     <>
@@ -32,6 +41,14 @@ export default function TemplatesPage() {
       <div className="mt-4">
         {isLoading ? (
           <CardSkeletonGrid count={6} />
+        ) : isError ? (
+          <ErrorState error={error} title="模板加载失败" onRetry={() => void refetch()} />
+        ) : (data?.items.length ?? 0) === 0 ? (
+          <EmptyState
+            icon={<LayoutTemplate size={40} strokeWidth={1.4} />}
+            title="还没有模板"
+            description="把常用的分镜结构沉淀成模板，下次一键套用"
+          />
         ) : (
           <div className="grid grid-cols-[repeat(auto-fit,minmax(240px,1fr))] gap-3.5">
             {(data?.items ?? []).map((tpl) => (

@@ -15,6 +15,8 @@ export interface MockContext {
   params: Record<string, unknown>;
   /** JSON body（已解析） */
   body: Record<string, unknown>;
+  /** 请求头（键统一小写）。鉴权 mock 靠它读 Authorization，其余 mock 可忽略 */
+  headers: Record<string, string>;
 }
 
 export interface MockRoute {
@@ -76,6 +78,25 @@ export function readBody(config: AxiosRequestConfig): Record<string, unknown> {
     return config.data as Record<string, unknown>;
   }
   return {};
+}
+
+/** 归一化请求头：AxiosHeaders 实例走 toJSON，普通对象直接用；键统一小写 */
+export function readHeaders(config: AxiosRequestConfig): Record<string, string> {
+  const source = config.headers as unknown as
+    | { toJSON?: () => Record<string, unknown> }
+    | Record<string, unknown>
+    | undefined;
+
+  const plain =
+    (typeof source === 'object' && source && 'toJSON' in source && typeof source.toJSON === 'function'
+      ? source.toJSON()
+      : (source as Record<string, unknown> | undefined)) ?? {};
+
+  const result: Record<string, string> = {};
+  for (const [key, value] of Object.entries(plain)) {
+    if (typeof value === 'string') result[key.toLowerCase()] = value;
+  }
+  return result;
 }
 
 export const jsonHeaders = () => new AxiosHeaders({ 'content-type': 'application/json' });

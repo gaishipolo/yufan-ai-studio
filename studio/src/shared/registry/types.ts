@@ -27,8 +27,19 @@ export interface ModuleRouteDef {
    * 骨架内部用 React.lazy 包装，保证「一个页面一个 chunk」不被破坏。
    */
   load: () => Promise<{ default: ComponentType }>;
-  /** 进入该页面所需的权限（全部满足）；不声明 = 公开页面 */
+  /**
+   * 进入该页面所需的权限（全部满足）；不声明 = 公开页面
+   * （注意：公开 ≠ 免登录，登录与否由 layout 与骨架守卫决定）
+   */
   permissions?: Permission[];
+  /**
+   * 页面外壳：
+   * - `'shell'`（默认）套 AppShell（顶栏 / 导航 / 侧栏），并受登录守卫保护
+   * - `'bare'`  独立整页，不套外壳、不做登录守卫（登录页、注册页、外部回调页）
+   *
+   * 只有确实需要「脱离应用框架」的页面才用 bare；业务页面一律保持默认。
+   */
+  layout?: 'shell' | 'bare';
 }
 
 export interface NavItemDef {
@@ -69,7 +80,9 @@ export type SlotName =
   | 'topbar.actions'
   | 'module-nav.trailing'
   | 'sidebar.footer'
-  | 'shell.overlay';
+  | 'shell.overlay'
+  /** 顶栏头像下拉里的菜单项（「个人资料」「修改密码」等由各自模块贡献） */
+  | 'user-menu.items';
 
 export interface SlotContribution {
   name: SlotName;
@@ -101,6 +114,7 @@ export interface ResolvedRoute {
   path: string;
   Component: ComponentType;
   permissions: Permission[];
+  layout: 'shell' | 'bare';
   moduleId: string;
 }
 

@@ -4,6 +4,7 @@ import { AccessProvider } from '@/shared/access/AccessProvider';
 import { useSessionStore } from '@/shared/access/session';
 import { queryClient } from '@/shared/api/query-client';
 import { RegistryProvider } from '@/shared/registry/RegistryProvider';
+import { SessionBootstrap } from './SessionBootstrap';
 import { appRegistry } from './registry';
 
 /**
@@ -16,9 +17,11 @@ export function AppProviders({ children }: { children: ReactNode }) {
 
   return (
     <QueryClientProvider client={queryClient}>
-      <AccessProvider subject={subject}>
-        <RegistryProvider registry={appRegistry}>{children}</RegistryProvider>
-      </AccessProvider>
+      <SessionBootstrap>
+        <AccessProvider subject={subject}>
+          <RegistryProvider registry={appRegistry}>{children}</RegistryProvider>
+        </AccessProvider>
+      </SessionBootstrap>
     </QueryClientProvider>
   );
 }

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { FolderOpen, Plus, UploadCloud } from 'lucide-react';
-import { Button, CardSkeletonGrid, EmptyState, PageHeader, Tabs, type TabItem } from '@/shared/ui';
+import { Button, CardSkeletonGrid, EmptyState, ErrorState, PageHeader, Tabs, type TabItem } from '@/shared/ui';
 import { toast } from '@/shared/lib/toast';
 import { formatBytes } from '@/shared/lib/format';
 import { AssetCard } from '@/entities/asset/ui/AssetCard';
@@ -18,11 +18,12 @@ const TABS: Array<{ value: TypeFilter; label: string }> = [
 
 export default function AssetsPage() {
   const [type, setType] = useState<TypeFilter>('all');
-  const { data, isLoading } = useAssets({ type });
+  const { data, isLoading, isError, error, refetch } = useAssets({ type });
 
   const items: TabItem<TypeFilter>[] = TABS.map((t) => ({
     ...t,
-    count: data?.counts?.[t.value] ?? 0,
+    // 加载失败时不给 0：数字未知与「真的是 0 个」必须区分开
+    count: data?.counts?.[t.value],
   }));
 
   const usedBytes = (data?.items ?? []).reduce((sum, a) => sum + a.sizeBytes, 0);
@@ -47,13 +48,15 @@ export default function AssetsPage() {
       <div className="mt-4 flex flex-wrap items-center gap-2 border-b border-line-soft pb-3">
         <Tabs items={items} value={type} onChange={setType} />
         <span className="ml-auto text-[11.5px] text-ink-mute">
-          当前分类占用 {formatBytes(usedBytes)}
+          {isError ? '占用信息不可用' : `当前分类占用 ${formatBytes(usedBytes)}`}
         </span>
       </div>
 
       <div className="mt-3.5">
         {isLoading ? (
           <CardSkeletonGrid count={8} />
+        ) : isError ? (
+          <ErrorState error={error} title="素材加载失败" onRetry={() => void refetch()} />
         ) : (data?.items.length ?? 0) === 0 ? (
           <EmptyState icon={<FolderOpen size={40} strokeWidth={1.4} />} title="这个分类还没有素材" />
         ) : (

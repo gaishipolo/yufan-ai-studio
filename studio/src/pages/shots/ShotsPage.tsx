@@ -1,11 +1,11 @@
 import { useMemo, useState } from 'react';
-import { CardSkeletonGrid, CoverImage, PageHeader, SearchInput } from '@/shared/ui';
+import { CardSkeletonGrid, CoverImage, ErrorState, PageHeader, SearchInput } from '@/shared/ui';
 import { toast } from '@/shared/lib/toast';
 import { formatDuration } from '@/shared/lib/format';
 import { useShots } from '@/entities/shot/api/shot.api';
 
 export default function ShotsPage() {
-  const { data, isLoading } = useShots();
+  const { data, isLoading, isError, error, refetch } = useShots();
   const [keyword, setKeyword] = useState('');
 
   const items = useMemo(() => {
@@ -36,6 +36,8 @@ export default function ShotsPage() {
       <div className="mt-4">
         {isLoading ? (
           <CardSkeletonGrid count={6} />
+        ) : isError ? (
+          <ErrorState error={error} title="镜头加载失败" onRetry={() => void refetch()} />
         ) : (
           <div className="grid grid-cols-[repeat(auto-fit,minmax(150px,1fr))] gap-2.5 md:grid-cols-[repeat(auto-fit,minmax(200px,1fr))] md:gap-3.5">
             {items.map((shot) => (

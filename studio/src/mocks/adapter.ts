@@ -7,6 +7,7 @@ import {
   pathOf,
   randomLatency,
   readBody,
+  readHeaders,
   type HttpError,
   type MockContext,
   type MockMethod,
@@ -48,6 +49,7 @@ export const mockAdapter: AxiosAdapter = async (config) => {
     path,
     params: (config.params ?? {}) as Record<string, unknown>,
     body: readBody(config),
+    headers: readHeaders(config),
   };
 
   try {
