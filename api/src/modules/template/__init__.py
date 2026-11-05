@@ -2,6 +2,7 @@
 
 from api.module import ModuleSpec
 from core.permissions import PermissionSpec
+from modules.template.replacement_worker import resume
 from modules.template.router import router
 
 module = ModuleSpec(
@@ -10,5 +11,7 @@ module = ModuleSpec(
     tags=["模板"],
     permissions=(
         PermissionSpec("template:read", "查看行业模板", group="内容生产"),
+        PermissionSpec("template:use", "使用替换模板并提交零积分生成", group="内容生产"),
     ),
+    startup=resume,
 )

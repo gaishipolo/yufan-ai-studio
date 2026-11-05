@@ -12,9 +12,10 @@ export function TopBar() {
   return (
     <header className="sticky top-0 z-30 flex h-[54px] items-center justify-between border-b border-[rgba(214,228,232,.8)] bg-[rgba(255,255,255,.72)] px-[22px] backdrop-blur-[10px] 2xl:px-7">
       <Link to={HOME_PATH} className="flex items-center gap-2.5">
+        <img src="/favicon.svg?v=yufan" alt="雨范 Logo" className="h-9 w-10 shrink-0 object-contain" />
         <div className="flex flex-col leading-none">
-          <b className="text-[15px] font-extrabold tracking-[3px] text-[#ff5a2b]">天火</b>
-          <span className="mt-[3px] text-[7px] tracking-[1.6px] text-[#ff8a5c]">AI STUDIO</span>
+          <b className="text-[15px] font-extrabold tracking-[3px] text-[#26251f]">雨范</b>
+          <span className="mt-[3px] text-[7px] tracking-[1.6px] text-ink-mute">AI STUDIO</span>
         </div>
         <div className="h-4 w-px bg-line-strong" />
         <span className="text-sm font-semibold tracking-[.3px] text-ink">{APP_NAME}</span>

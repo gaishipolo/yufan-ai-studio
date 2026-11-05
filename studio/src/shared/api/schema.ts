@@ -62,6 +62,33 @@ export const TaskStatusFilter_VALUES = ["all", "queued", "running", "completed",
 
 /* ------------------------------ 模型 ------------------------------ */
 
+/** ArchiveList */
+export interface ArchiveList {
+  root: string;
+  items: ArchivedAsset[];
+  total: number;
+  usedBytes: number;
+}
+
+/** ArchivedAsset */
+export interface ArchivedAsset {
+  id: string;
+  name: string;
+  category: "source" | "character" | "product" | "scene" | "audio";
+  type: "image" | "video" | "audio";
+  mimeType: string;
+  sizeBytes: number;
+  path: string;
+  sha256: string;
+  createdAt: string;
+  width?: number;
+  height?: number;
+  duration?: number;
+  hasAudio?: boolean;
+  url: string;
+  previewUrl?: string | null;
+}
+
 /** AssetCounts */
 export interface AssetCounts {
   all?: number;
@@ -162,6 +189,12 @@ export interface ImageJobOut {
   coverUrl?: string;
   /** 创建时间（UTC） */
   createdAt: string;
+}
+
+/** ImportAsset */
+export interface ImportAsset {
+  relativePath: string;
+  category: "source" | "character" | "product" | "scene" | "audio";
 }
 
 /** LoginEventListOut */
@@ -284,6 +317,20 @@ export interface PermissionOut {
   description?: string;
 }
 
+/** PrepareReplacement */
+export interface PrepareReplacement {
+  requestId: string;
+  kind: "character" | "product" | "scene";
+  target: string;
+  sourceId: string;
+  referenceIds: string[];
+  wardrobeMode?: "preserve" | "reference";
+  replacementScope?: string;
+  notes?: string;
+  packId?: string | null;
+  aspectRatio?: "9:16" | "16:9" | "1:1" | "adaptive";
+}
+
 /** `PATCH /identity/me` 的自助可写字段。
 
 刻意**不含** `is_active`：停用是管理动作，用户误点一下就把自己锁在门外，
@@ -308,6 +355,45 @@ export interface ReadyOut {
 export interface RefreshIn {
   /** 登录时拿到的刷新令牌 */
   refreshToken: string;
+}
+
+/** ReplacementCatalog */
+export interface ReplacementCatalog {
+  root: string;
+  provider?: string;
+  maxCredits?: number;
+  kinds?: string[];
+  runs: ReplacementRunOut[];
+  packs?: ReplacementPack[];
+}
+
+/** ReplacementPack */
+export interface ReplacementPack {
+  id: string;
+  kind: "character" | "product" | "scene";
+  name: string;
+  referenceIds: string[];
+  wardrobeMode?: "preserve" | "reference";
+  features?: string;
+  instructions?: string;
+}
+
+/** ReplacementRunOut */
+export interface ReplacementRunOut {
+  id: string;
+  kind: "character" | "product" | "scene";
+  target: string;
+  status: string;
+  archivePath: string;
+  createdAt: string;
+  prompt: string;
+  taskId?: string | null;
+  estimatedCredits?: number | null;
+  credits?: number | null;
+  progress?: number;
+  reviewStatus?: string;
+  lastError?: string | null;
+  outputUrl?: string | null;
 }
 
 /** ResetPasswordIn */
@@ -656,6 +742,18 @@ export interface ValidationError {
 export interface EndpointData {
   /** 素材列表（按类型分面计数） */
   "GET /api/v1/assets": AssetListOut;
+  /** 归档素材列表与空间占用 */
+  "GET /api/v1/assets/archive": ArchiveList;
+  /** 从 Z 盘 inbox 登记现有素材 */
+  "POST /api/v1/assets/archive/import": ArchivedAsset;
+  /** 流式上传素材至归档盘 */
+  "POST /api/v1/assets/archive/upload": ArchivedAsset;
+  /** 预览或下载已归档素材 */
+  "GET /api/v1/assets/archive/{asset_id}/file": unknown;
+  /** 浏览器兼容视频预览（派生文件，不改原片） */
+  "GET /api/v1/assets/archive/{asset_id}/stream": unknown;
+  /** 读取归档素材缩略图 */
+  "GET /api/v1/assets/archive/{asset_id}/thumbnail": unknown;
   /** 申请上传凭证（待实现） */
   "POST /api/v1/assets/upload-ticket": UploadTicketOut;
   /** 删除素材（待实现） */
@@ -746,4 +844,14 @@ export interface EndpointData {
   "POST /api/v1/tasks/{task_id}/retry": TaskRetryOut;
   /** 模板列表 */
   "GET /api/v1/templates": TemplateListOut;
+  /** 人物/产品/场景替换模板与调用档案 */
+  "GET /api/v1/templates/replacement-catalog": ReplacementCatalog;
+  /** 归档输入并预览最终提示词，不提交生成 */
+  "POST /api/v1/templates/replacement-runs": ReplacementRunOut;
+  /** 替换任务状态与提示词 */
+  "GET /api/v1/templates/replacement-runs/{run_id}": ReplacementRunOut;
+  /** 仅 0 积分提交或继续查询已有 LibTV 任务 */
+  "POST /api/v1/templates/replacement-runs/{run_id}/execute": ReplacementRunOut;
+  /** 预览或下载 Z 盘原始生成结果 */
+  "GET /api/v1/templates/replacement-runs/{run_id}/output": unknown;
 }

@@ -1,0 +1,309 @@
+"""回归：失败续做、锁恢复与原框架生命周期，全部使用隔离素材和上游替身。"""
+
+from __future__ import annotations
+
+import asyncio
+import os
+import subprocess
+import sys
+import uuid
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+# 显式导入共享夹具供 pytest 注册。
+from test_replacement_archive import archive_root, materials  # noqa: F401
+
+from core.events import EventBus
+from core.exceptions import Conflict, UpstreamError
+from generation.runner import JOB_SUBMIT, GenerationRunner
+from infra.ai.libtv import LibTVProvider
+from infra.ai.libtv_process import clear_finished_lock, supervise
+from infra.ai.libtv_state import ExecutorResult
+from infra.queue.base import Job
+from infra.queue.memory import MemoryJobQueue
+from infra.storage.archive import LocalArchiveStorage, lease
+from modules.template import replacement_service as service
+from modules.template.replacement_repository import ReplacementRepository
+from modules.template.replacement_schema import PrepareReplacement
+from modules.template.replacement_worker import recover_state, schedule_state
+
+
+@pytest.fixture
+def prepared(materials: tuple[dict, dict]) -> tuple[PrepareReplacement, Path]:  # noqa: F811
+    source, image = materials
+    payload = PrepareReplacement(
+        request_id=uuid.uuid4(),
+        kind="character",
+        target="测试目标",
+        source_id=source["id"],
+        reference_ids=[image["id"]],
+    )
+    return payload, Path(service.prepare(payload, "u_001").archive_path)
+
+
+def test_partial_prepare_is_indexed_and_same_request_can_resume(materials, monkeypatch):  # noqa: F811
+    source, image = materials
+    payload = PrepareReplacement(
+        request_id=uuid.uuid4(),
+        kind="character",
+        target="续做目标",
+        source_id=source["id"],
+        reference_ids=[image["id"]],
+    )
+    original = service._compile
+
+    def fail(*args):
+        raise UpstreamError("模拟编译中断")
+
+    monkeypatch.setattr(service, "_compile", fail)
+    with pytest.raises(UpstreamError):
+        service.prepare(payload, "u_001")
+    repo = ReplacementRepository()
+    path = repo.path(payload.request_id.hex)
+    assert repo.load(path).status == "prepare_failed"
+    snapshot = (path / "inputs/reference-video.mp4").read_bytes()
+    monkeypatch.setattr(service, "_compile", original)
+    result = service.prepare(payload, "u_001")
+    assert result.id == payload.request_id.hex and result.status == "prepared"
+    assert (path / "inputs/reference-video.mp4").read_bytes() == snapshot
+    assert len(repo.all_paths()) == 1
+
+
+def test_process_exit_releases_native_lease(tmp_path):
+    target, ready, stop = tmp_path / "lease.lock", tmp_path / "ready", tmp_path / "stop"
+    script = """
+import os, sys, time
+from pathlib import Path
+from infra.storage.archive import lease
+ctx = lease(Path(sys.argv[1]))
+ctx.__enter__()
+Path(sys.argv[2]).write_text('ready')
+while not Path(sys.argv[3]).exists():
+    time.sleep(0.02)
+os._exit(0)  # 不执行 finally，模拟真正崩溃，而非只杀 Windows venv 启动器。
+"""
+    child = subprocess.Popen([sys.executable, "-c", script, str(target), str(ready), str(stop)])
+    try:
+        import time
+
+        deadline = time.monotonic() + 10
+        while not ready.exists() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert ready.exists()
+        with pytest.raises(Conflict), lease(target):
+            pass
+    finally:
+        stop.touch()
+        child.wait(timeout=5)
+    assert target.exists()
+    with lease(target):
+        pass
+
+
+def test_stale_worker_lock_cleanup_requires_confirmed_exit(tmp_path, monkeypatch):
+    records = tmp_path / "records"
+    records.mkdir()
+    lock = records / "worker.lock"
+    lock.write_text("old")
+    storage = LocalArchiveStorage()
+    with pytest.raises(Conflict):
+        clear_finished_lock(tmp_path, storage)
+    storage.write(
+        records / "executor-result.json", ExecutorResult(node_pid=os.getpid()).model_dump()
+    )
+    with pytest.raises(Conflict):
+        clear_finished_lock(tmp_path, storage)
+    assert lock.exists()
+    monkeypatch.setattr("infra.ai.libtv_process.pid_alive", lambda pid: False)
+    clear_finished_lock(tmp_path, storage)
+    assert not lock.exists()
+
+
+def test_supervisor_keeps_active_lock_and_receipt(prepared, tmp_path):
+    _, path = prepared
+    repo = ReplacementRepository()
+    with lease(path / "records/executor.lease"):
+        result = supervise("submit", path, tmp_path / "legacy", "unused")
+        assert result.code == "EXECUTOR_BUSY"
+        with pytest.raises(Conflict):
+            schedule_state(repo.load(path).id, "u_001")
+        with pytest.raises(Conflict):
+            recover_state(repo.load(path).id)
+    assert repo.load(path).status == "prepared"
+
+
+async def test_api_wait_cancellation_does_not_kill_supervisor(prepared, monkeypatch):
+    from infra.ai import libtv
+
+    payload, _ = prepared
+    import threading
+
+    started, finished = threading.Event(), threading.Event()
+
+    class Process:
+        def wait(self):
+            started.set()
+            finished.wait(timeout=5)
+
+        def kill(self):
+            pytest.fail("API 不能杀掉独立监督进程")
+
+    def spawn(*args, **kwargs):
+        return Process()
+
+    monkeypatch.setattr(libtv.subprocess, "Popen", spawn)
+    task = asyncio.create_task(libtv.execute_stage(payload.request_id.hex, "submit"))
+    assert await asyncio.to_thread(started.wait, 5)
+    try:
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    finally:
+        finished.set()
+
+
+async def test_replacement_runs_through_framework_and_events(prepared, monkeypatch):
+    from generation import runner as framework
+    from infra.ai import libtv
+
+    payload, path = prepared
+    repo = ReplacementRepository()
+    meta = repo.load(path)
+    meta.status = "uploaded"
+    repo.save(path, meta)
+    stages = []
+
+    async def execute(run_id, stage):
+        stages.append(stage)
+        with repo.edit(run_id) as current:
+            if stage == "submit":
+                assert current.submit_attempts == 1
+                current.task_id = "fake-task"
+                current.status = "submitted"
+            else:
+                current.status = "success"
+        return ExecutorResult(stage=stage)
+
+    bus = EventBus()
+    events = []
+
+    @bus.subscribe("*")
+    async def receive(event):
+        events.append(event.name)
+
+    monkeypatch.setattr(libtv, "execute_stage", execute)
+    monkeypatch.setattr(
+        framework,
+        "get_model_router",
+        lambda: SimpleNamespace(provider_for=lambda model: LibTVProvider()),
+    )
+    monkeypatch.setattr(framework, "get_event_bus", lambda: bus)
+    monkeypatch.setattr(framework.settings, "generation_poll_interval_sec", 0)
+    queue = MemoryJobQueue()
+    runner = GenerationRunner(queue)
+    await runner.handle_submit(
+        Job(
+            name=JOB_SUBMIT,
+            payload={"kind": "template_replacement", "record_id": payload.request_id.hex},
+        )
+    )
+    job = await queue.dequeue(timeout=1)
+    assert job is not None and job.name == "generation.poll"
+    await runner.handle_poll(job)
+    latest = repo.load(path)
+    assert latest.framework_status == "success"
+    assert latest.task_id == "fake-task" and latest.submit_attempts == 0
+    assert stages == ["submit", "poll"]
+    assert events == ["generation.submitted", "generation.succeeded"]
+
+
+@pytest.mark.parametrize("status,attempts", [("waiting_free", 0), ("submission_unknown", 1)])
+async def test_framework_preserves_free_gate_and_unknown_receipts(
+    prepared, monkeypatch, status, attempts
+):
+    from generation import runner as framework
+    from infra.ai import libtv
+
+    payload, path = prepared
+    repo = ReplacementRepository()
+    meta = repo.load(path)
+    meta.status = "uploaded"
+    repo.save(path, meta)
+
+    async def execute(run_id, stage):
+        with repo.edit(run_id) as current:
+            current.status = status
+        return ExecutorResult(stage=stage)
+
+    monkeypatch.setattr(libtv, "execute_stage", execute)
+    monkeypatch.setattr(
+        framework,
+        "get_model_router",
+        lambda: SimpleNamespace(provider_for=lambda model: LibTVProvider()),
+    )
+    runner = GenerationRunner(MemoryJobQueue())
+    await runner.handle_submit(
+        Job(
+            name=JOB_SUBMIT,
+            payload={"kind": "template_replacement", "record_id": payload.request_id.hex},
+        )
+    )
+    latest = repo.load(path)
+    assert latest.status == status and latest.submit_attempts == attempts
+
+
+async def test_template_provider_rejects_other_module_archive_pointer():
+    from core.exceptions import BadRequest
+    from infra.ai.base import Capability, GenerationRequest
+
+    with pytest.raises(BadRequest):
+        await LibTVProvider().submit(
+            GenerationRequest(
+                capability=Capability.VIDEO,
+                model="libtv-wan3-replacement",
+                prompt="",
+                request_id="other-task",
+                params={"archiveRunId": "a" * 32},
+            )
+        )
+
+
+async def test_supervisor_records_exit_and_cleans_dead_node_lock(prepared, tmp_path, monkeypatch):
+    from core.config import settings
+
+    _, path = prepared
+    code = path / "code/runtime-v2/bridge.mjs"
+    code.parent.mkdir(parents=True)
+    code.write_text(
+        "import {writeFileSync} from 'node:fs';import path from 'node:path';"
+        "writeFileSync(path.join(process.argv[3],'records/worker.lock'),'test');"
+        "process.exitCode=1;",
+        encoding="utf-8",
+    )
+    from infra.ai.libtv import execute_stage
+
+    monkeypatch.setattr(settings, "libtv_legacy_root", str(tmp_path / "fake-legacy"))
+    result = await execute_stage(ReplacementRepository().load(path).id, "upload")
+    assert result.code == "ADAPTER_FAILED" and result.phase == "finished"
+    assert result.node_pid is not None
+    assert not (path / "records/worker.lock").exists()
+    assert LocalArchiveStorage().read(path / "records/executor-result.json")["phase"] == "finished"
+
+
+async def test_queue_failure_remains_visible_and_retryable(prepared, monkeypatch):
+    from core.config import settings
+    from modules.template import replacement_worker as worker
+
+    payload, path = prepared
+
+    async def unavailable(*args, **kwargs):
+        raise RuntimeError("模拟队列不可用")
+
+    monkeypatch.setattr(settings, "worker_enabled", True)
+    monkeypatch.setattr(worker, "enqueue", unavailable)
+    with pytest.raises(UpstreamError):
+        await worker.schedule(payload.request_id.hex, "u_001")
+    meta = ReplacementRepository().load(path)
+    assert meta.status == "service_error" and not meta.task_id and not meta.submit_attempts

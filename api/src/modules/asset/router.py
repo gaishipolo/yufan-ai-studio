@@ -10,6 +10,7 @@ from api.deps import SessionDep, StorageDep, require
 from core.context import CurrentUser
 from core.exceptions import NotImplementedFeature
 from core.response import ApiResponse
+from modules.asset.archive import router as archive_router
 from modules.asset.schema import (
     AssetListOut,
     AssetListQuery,
@@ -20,6 +21,7 @@ from modules.asset.schema import (
 from modules.asset.service import AssetService
 
 router = APIRouter(prefix="/assets", tags=["素材"])
+router.include_router(archive_router)
 
 
 def get_asset_service(session: SessionDep) -> AssetService:
