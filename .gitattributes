@@ -1,0 +1,19 @@
+# 统一换行：仓库内统一 LF，Windows 检出也不产生整文件 diff
+* text=auto
+
+*.sh text eol=lf
+*.py text
+*.ts text
+*.tsx text
+*.md text
+
+# 二进制，不做换行转换
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.db binary

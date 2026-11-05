@@ -1,0 +1,190 @@
+"""身份模块出入参。
+
+契约与前端 `entities/user/model/types.ts` 一一对应（camelCase 自动转换）。
+
+三条约定：
+- 出参**永不包含** `password_hash`：`UserOut` 是白名单式声明，不是 `model_dump()` 直出。
+- PATCH 用 `exclude_unset`，才能区分「没传这个字段」和「显式传 null 清空」。
+- 字段的 `description` 会写进 `docs/API.md` 的字段表，新增字段请一并补上。
+"""
+
+from __future__ import annotations
+
+from pydantic import Field, field_validator
+
+from core.schema import CamelModel, CamelORMModel, UtcDateTime
+from modules.identity.permissions import PASSWORD_MIN_LENGTH
+
+# 用户名只允许字母数字与 . _ -：避免大小写、空格、emoji 带来的「看起来一样但登录不上」
+USERNAME_PATTERN = r"^[a-zA-Z0-9_.-]{3,64}$"
+
+
+class LoginIn(CamelModel):
+    username: str = Field(min_length=1, max_length=64, description="用户名")
+    password: str = Field(min_length=1, max_length=128, description="密码")
+
+    @field_validator("username")
+    @classmethod
+    def _normalize(cls, v: str) -> str:
+        return v.strip().lower()
+
+
+class RoleBriefOut(CamelModel):
+    """用户出参里内嵌的角色摘要。"""
+
+    id: str = Field(description="角色 ID")
+    code: str = Field(description="角色标识，如 `editor`")
+    name: str = Field(description="角色名称")
+    is_superuser: bool = Field(default=False, description="是否超级管理员角色（权限展开为 `*`）")
+
+
+class UserOut(CamelORMModel):
+    id: str = Field(description="用户 ID")
+    username: str = Field(description="登录名，入库前已转小写")
+    display_name: str = Field(default="", description="昵称（顶栏展示用）")
+    email: str | None = Field(default=None, description="邮箱，未填为 null")
+    avatar_url: str | None = Field(default=None, description="头像 URL，未设置为 null")
+    is_active: bool = Field(default=True, description="是否启用；停用后无法登录且令牌立即失效")
+    last_login_at: UtcDateTime | None = Field(
+        default=None, description="最后登录时间，从未登录为 null"
+    )
+    created_at: UtcDateTime = Field(description="创建时间（UTC）")
+    roles: list[RoleBriefOut] = Field(default_factory=list, description="拥有的角色")
+
+
+class MeOut(UserOut):
+    """`GET /identity/me`：前端靠 `permissions` 渲染菜单与按钮。"""
+
+    permissions: list[str] = Field(
+        default_factory=list, description="展开后的权限码；含 `*` 表示超级管理员"
+    )
+
+
+class TokenOut(CamelModel):
+    access_token: str = Field(description="访问令牌，放进 `Authorization: Bearer <token>`")
+    token_type: str = Field(default="Bearer", description="令牌类型，固定 Bearer")
+    expires_in: int = Field(default=0, description="有效期（秒），过期后请求返回 401")
+    user: MeOut = Field(description="登录用户，可省一次 `/me` 请求")
+
+
+class UserCreateIn(CamelModel):
+    username: str = Field(
+        pattern=USERNAME_PATTERN,
+        description="登录名，3-64 位字母数字或 `. _ -`，会被转成小写",
+    )
+    password: str = Field(
+        min_length=PASSWORD_MIN_LENGTH, max_length=128, description="初始密码，管理员指定"
+    )
+    display_name: str = Field(default="", max_length=64, description="昵称，留空则与用户名相同")
+    email: str | None = Field(default=None, max_length=128, description="邮箱")
+    avatar_url: str | None = Field(default=None, max_length=512, description="头像 URL")
+    role_ids: list[str] = Field(default_factory=list, description="角色 id 列表，可留空")
+
+    @field_validator("username")
+    @classmethod
+    def _normalize(cls, v: str) -> str:
+        return v.strip().lower()
+
+
+class UserUpdateIn(CamelModel):
+    display_name: str | None = Field(default=None, max_length=64, description="昵称")
+    email: str | None = Field(default=None, max_length=128, description="邮箱；传 null 清空")
+    avatar_url: str | None = Field(
+        default=None, max_length=512, description="头像 URL；传 null 清空"
+    )
+    is_active: bool | None = Field(
+        default=None, description="启用/停用；不能停用自己，且必须保留一个启用的超管"
+    )
+
+
+class UserRolesIn(CamelModel):
+    role_ids: list[str] = Field(default_factory=list, description="整组替换，传空数组即清空")
+
+
+class PasswordChangeIn(CamelModel):
+    old_password: str = Field(min_length=1, max_length=128, description="当前密码")
+    new_password: str = Field(
+        min_length=PASSWORD_MIN_LENGTH, max_length=128, description="新密码"
+    )
+
+
+class ResetPasswordIn(CamelModel):
+    new_password: str = Field(
+        min_length=PASSWORD_MIN_LENGTH, max_length=128, description="管理员设置的新密码"
+    )
+
+
+class RoleOut(CamelORMModel):
+    id: str = Field(description="角色 ID")
+    code: str = Field(description="角色标识，唯一；内置角色不可改")
+    name: str = Field(description="角色名称")
+    description: str = Field(default="", description="角色说明")
+    is_superuser: bool = Field(default=False, description="持有即展开为 `*`，拥有全部权限")
+    is_builtin: bool = Field(default=False, description="内置角色：不可删除")
+    sort_order: int = Field(default=0, description="排序值，小的在前")
+    created_at: UtcDateTime = Field(description="创建时间（UTC）")
+    permissions: list[str] = Field(default_factory=list, description="角色拥有的权限码")
+    user_count: int = Field(default=0, description="使用该角色的用户数")
+    # 库里存了、但 catalog 里已经不存在（模块被删/权限点改名）——提示管理员清理
+    orphaned_permissions: list[str] = Field(
+        default_factory=list, description="已失效的权限码（权限点被删或改名后残留）"
+    )
+
+
+class RoleCreateIn(CamelModel):
+    code: str = Field(pattern=r"^[a-z][a-z0-9_-]{1,31}$", description="角色标识，唯一且不可改")
+    name: str = Field(min_length=1, max_length=64, description="角色名称")
+    description: str = Field(default="", max_length=200, description="角色说明")
+    permissions: list[str] = Field(default_factory=list, description="权限码列表")
+    is_superuser: bool = Field(default=False, description="仅超级管理员可设置")
+
+
+class RoleUpdateIn(CamelModel):
+    name: str | None = Field(default=None, min_length=1, max_length=64, description="角色名称")
+    description: str | None = Field(default=None, max_length=200, description="角色说明")
+    is_superuser: bool | None = Field(default=None, description="仅超级管理员可设置")
+
+
+class RolePermissionsIn(CamelModel):
+    permissions: list[str] = Field(
+        default_factory=list, description="整组替换；出现未登记的权限码会被拒绝"
+    )
+
+
+class PermissionOut(CamelModel):
+    code: str = Field(description="权限码，如 `task:create`")
+    name: str = Field(description="权限名称")
+    description: str = Field(default="", description="权限说明")
+
+
+class PermissionGroupOut(CamelModel):
+    group: str = Field(description="分组名，如「任务」「身份」")
+    items: list[PermissionOut] = Field(default_factory=list, description="该组下的权限点")
+
+
+class PermissionCatalogOut(CamelModel):
+    groups: list[PermissionGroupOut] = Field(
+        default_factory=list, description="按分组组织的全部权限点，角色编辑界面直接渲染"
+    )
+    total: int = Field(default=0, description="权限点总数")
+
+
+__all__ = [
+    "LoginIn",
+    "MeOut",
+    "PasswordChangeIn",
+    "PermissionCatalogOut",
+    "PermissionGroupOut",
+    "PermissionOut",
+    "ResetPasswordIn",
+    "RoleBriefOut",
+    "RoleCreateIn",
+    "RoleOut",
+    "RolePermissionsIn",
+    "RoleUpdateIn",
+    "TokenOut",
+    "UserCreateIn",
+    "UserOut",
+    "UserRolesIn",
+    "UserUpdateIn",
+]

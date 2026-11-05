@@ -1,0 +1,32 @@
+"""任务模块：视频生成任务的创建、查询、重试与删除。
+
+分层：router（协议）→ service（业务）→ repository（SQL）→ models（ORM）
+
+模块对外的全部信息都在这一个 `ModuleSpec` 里：路由、权限点、启动钩子。
+`api/discovery.py` 扫描到它就会自动挂载，不需要修改任何核心文件。
+"""
+
+from api.module import ModuleSpec
+from modules.task.permissions import SPECS
+from modules.task.router import router
+
+# 必须 import：注册到生成框架的 pipeline 表（副作用导入）
+from modules.task import pipeline  # noqa: E402,F401  isort: skip
+from modules.task.worker import resume_unfinished_tasks  # noqa: E402
+
+
+async def _startup() -> None:
+    """进程启动时恢复上次没跑完的任务。"""
+    from infra import get_queue
+
+    await resume_unfinished_tasks(get_queue())
+
+
+module = ModuleSpec(
+    name="task",
+    router=router,
+    tags=["任务"],
+    description="视频生成任务：创建、查询、重试、收藏、删除",
+    permissions=SPECS,
+    startup=_startup,
+)

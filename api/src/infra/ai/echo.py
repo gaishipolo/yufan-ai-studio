@@ -1,0 +1,128 @@
+"""Echo 供应商：本地开发占位，不调用任何外部 API。
+
+用于跑通「提交 → 轮询 → 完成」的完整链路，接入真实厂商后由配置切换：
+    AI_PROVIDERS=echo,volcengine
+
+它同时演示了接入真实供应商时要提供什么：三个方法 + 一份模型清单。
+"""
+
+from __future__ import annotations
+
+import hashlib
+import time
+
+from infra.ai.base import (
+    Capability,
+    GenerationProgress,
+    GenerationRequest,
+    GenerationState,
+    ModelSpec,
+)
+
+# 本地模拟耗时（秒）：图片快、视频慢，便于观察不同能力的轮询行为
+_FAKE_DURATION_SEC: dict[Capability, float] = {
+    Capability.VIDEO: 8.0,
+    Capability.IMAGE: 2.5,
+    Capability.AUDIO: 5.0,
+}
+
+_VIDEO_SCHEMA = {
+    "durationSec": {"type": "int", "min": 5, "max": 12, "default": 5},
+    "aspectRatio": {"type": "enum", "options": ["9:16", "16:9", "1:1"], "default": "9:16"},
+}
+_IMAGE_SCHEMA = {
+    "size": {
+        "type": "enum",
+        "options": ["1024×1024", "1024×1536", "1536×1024"],
+        "default": "1024×1024",
+    },
+    "count": {"type": "int", "min": 1, "max": 4, "default": 1},
+}
+
+MODELS: tuple[ModelSpec, ...] = (
+    ModelSpec(
+        id="seedance-2.5",
+        label="Seedance 2.5",
+        capability=Capability.VIDEO,
+        provider="echo",
+        param_schema=_VIDEO_SCHEMA,
+        description="通用短视频生成，支持首尾帧参考",
+    ),
+    ModelSpec(
+        id="kling-2.1",
+        label="可灵 2.1",
+        capability=Capability.VIDEO,
+        provider="echo",
+        param_schema=_VIDEO_SCHEMA,
+        description="写实风格运镜，适合商品与人物",
+    ),
+    ModelSpec(
+        id="seedream-3",
+        label="Seedream 3",
+        capability=Capability.IMAGE,
+        provider="echo",
+        param_schema=_IMAGE_SCHEMA,
+    ),
+    ModelSpec(
+        id="tts-v3",
+        label="语音合成 v3",
+        capability=Capability.AUDIO,
+        provider="echo",
+        param_schema={"voice": {"type": "enum", "options": ["female-warm", "male-calm"]}},
+    ),
+)
+
+
+class EchoProvider:
+    """把提交时间编码进 external_id，轮询时按经过秒数推算进度。"""
+
+    name = "echo"
+    capabilities = frozenset(Capability)
+    models = MODELS
+
+    async def submit(self, request: GenerationRequest) -> str:
+        digest = hashlib.sha1(request.prompt.encode()).hexdigest()[:8]
+        return f"echo-{request.capability.value}-{digest}-{int(time.time())}"
+
+    async def poll(self, external_id: str, *, model: str = "") -> GenerationProgress:
+        parts = external_id.split("-")
+        if len(parts) < 4:
+            return GenerationProgress(
+                external_id=external_id,
+                state=GenerationState.FAILED,
+                error="非法的任务标识",
+                retryable=False,
+            )
+
+        try:
+            capability = Capability(parts[1])
+            started = int(parts[-1])
+        except ValueError:
+            return GenerationProgress(
+                external_id=external_id,
+                state=GenerationState.FAILED,
+                error="非法的任务标识",
+            )
+
+        elapsed = time.time() - started
+        ratio = min(1.0, elapsed / _FAKE_DURATION_SEC[capability])
+
+        if ratio >= 1.0:
+            return GenerationProgress(
+                external_id=external_id,
+                state=GenerationState.SUCCEEDED,
+                progress=100,
+                output_url=f"https://example.com/mock/{capability.value}.mp4",
+                cover_url=f"https://picsum.photos/seed/{parts[2]}/720/1280",
+            )
+        return GenerationProgress(
+            external_id=external_id,
+            state=GenerationState.RUNNING,
+            progress=max(1, int(ratio * 100)),
+        )
+
+    async def cancel(self, external_id: str) -> None:
+        return None
+
+
+Driver = EchoProvider

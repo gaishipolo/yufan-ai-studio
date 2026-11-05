@@ -1,0 +1,129 @@
+"""任务模块路由：只做 HTTP 协议转换，业务逻辑在 service。
+
+路径与前端 `entities/task/api/task.api.ts` 严格对齐：
+GET    /tasks                列表（含 stats）
+GET    /tasks/stats          仅统计
+GET    /tasks/{id}           详情
+POST   /tasks                创建
+PATCH  /tasks/{id}           局部更新
+POST   /tasks/{id}/retry     重试
+POST   /tasks/{id}/favorite  收藏切换
+DELETE /tasks                批量删除（body: {ids}）
+
+鉴权：每个接口声明自己需要的权限码，权限点由本模块在 `ModuleSpec` 里登记。
+"""
+
+from __future__ import annotations
+
+from typing import Annotated
+
+from fastapi import APIRouter, Path, Query, status
+
+from api.deps import PageDep
+from core.response import ApiResponse
+from modules.task.dependencies import (
+    TaskCreateDep,
+    TaskDeleteDep,
+    TaskReadDep,
+    TaskServiceDep,
+    TaskUpdateDep,
+)
+from modules.task.enums import TaskScope, TaskSort, TaskStatusFilter
+from modules.task.schema import (
+    CreateTaskIn,
+    DeleteTasksIn,
+    DeleteTasksOut,
+    TaskListOut,
+    TaskListQuery,
+    TaskOut,
+    TaskStats,
+    UpdateTaskIn,
+)
+
+router = APIRouter(prefix="/tasks", tags=["任务"])
+
+TaskId = Annotated[str, Path(description="任务 ID")]
+
+
+@router.get("", summary="任务列表")
+async def list_tasks(
+    service: TaskServiceDep,
+    actor: TaskReadDep,
+    page: PageDep,
+    task_status: Annotated[
+        TaskStatusFilter, Query(alias="status", description="状态筛选")
+    ] = TaskStatusFilter.ALL,
+    keyword: Annotated[str, Query(max_length=100, description="标题 / 模型 / ID 模糊搜索")] = "",
+    sort: Annotated[TaskSort, Query(description="排序")] = TaskSort.CREATED_DESC,
+    scope: Annotated[TaskScope, Query(description="数据范围")] = TaskScope.MINE,
+    only_authorized: Annotated[
+        bool, Query(alias="onlyAuthorized", description="仅显示可下载任务")
+    ] = False,
+) -> ApiResponse[TaskListOut]:
+    query = TaskListQuery(
+        status=task_status,
+        keyword=keyword,
+        sort=sort,
+        scope=scope,
+        only_authorized=only_authorized,
+    )
+    return ApiResponse.ok(await service.list_tasks(actor, query, page))
+
+
+@router.get("/stats", summary="任务统计（侧边栏角标）")
+async def task_stats(
+    service: TaskServiceDep,
+    actor: TaskReadDep,
+    scope: Annotated[TaskScope, Query(description="统计口径，与列表 scope 一致")] = TaskScope.MINE,
+) -> ApiResponse[TaskStats]:
+    return ApiResponse.ok(await service.stats(actor, scope))
+
+
+@router.get("/{task_id}", summary="任务详情")
+async def get_task(
+    service: TaskServiceDep, actor: TaskReadDep, task_id: TaskId
+) -> ApiResponse[TaskOut]:
+    task = await service.get_task(task_id, actor)
+    return ApiResponse.ok(service.to_out(task))
+
+
+@router.post("", status_code=status.HTTP_201_CREATED, summary="创建任务")
+async def create_task(
+    service: TaskServiceDep, actor: TaskCreateDep, payload: CreateTaskIn
+) -> ApiResponse[TaskOut]:
+    task = await service.create_task(actor, payload)
+    return ApiResponse.ok(service.to_out(task), message="任务已创建")
+
+
+@router.patch("/{task_id}", summary="更新任务（标题 / 收藏）")
+async def update_task(
+    service: TaskServiceDep, actor: TaskUpdateDep, task_id: TaskId, payload: UpdateTaskIn
+) -> ApiResponse[TaskOut]:
+    task = await service.update_task(
+        task_id, actor, title=payload.title, favorited=payload.favorited
+    )
+    return ApiResponse.ok(service.to_out(task))
+
+
+@router.post("/{task_id}/retry", summary="重试任务")
+async def retry_task(
+    service: TaskServiceDep, actor: TaskUpdateDep, task_id: TaskId
+) -> ApiResponse[TaskOut]:
+    task = await service.retry_task(task_id, actor)
+    return ApiResponse.ok(service.to_out(task), message="已重新排队")
+
+
+@router.post("/{task_id}/favorite", summary="收藏 / 取消收藏")
+async def toggle_favorite(
+    service: TaskServiceDep, actor: TaskUpdateDep, task_id: TaskId
+) -> ApiResponse[TaskOut]:
+    task = await service.toggle_favorite(task_id, actor)
+    return ApiResponse.ok(service.to_out(task))
+
+
+@router.delete("", summary="批量删除任务")
+async def delete_tasks(
+    service: TaskServiceDep, actor: TaskDeleteDep, payload: DeleteTasksIn
+) -> ApiResponse[DeleteTasksOut]:
+    deleted = await service.delete_tasks(payload.ids, actor)
+    return ApiResponse.ok(DeleteTasksOut(deleted=deleted), message=f"已删除 {deleted} 个任务")

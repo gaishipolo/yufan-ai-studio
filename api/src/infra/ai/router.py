@@ -1,0 +1,150 @@
+"""模型路由：`model` 字符串 → 具体供应商。
+
+业务层只说「用 seedance-2.5 生成」，不需要知道它属于哪个厂商；
+换厂商或做灰度时只改这里注册的模型归属，业务代码零改动。
+
+同时承担两个职责：
+1. 提供模型目录（前端「模型选择器」的数据源，含参数 schema）
+2. 解析某个模型由哪个 provider 承接
+"""
+
+from __future__ import annotations
+
+from typing import TypedDict
+
+from core.exceptions import BadRequest
+from core.logging import get_logger
+from core.registry import NamedRegistry, RegistryError
+from infra.ai.base import Capability, ModelProvider, ModelSpec
+
+logger = get_logger(__name__)
+
+
+class ModelSummaryItem(TypedDict):
+    id: str
+    label: str
+    capability: str
+    provider: str
+
+
+class RouterSummary(TypedDict):
+    providers: list[str]
+    models: list[ModelSummaryItem]
+
+
+class ModelRouter:
+    def __init__(self) -> None:
+        self._providers = NamedRegistry[ModelProvider]("ai.provider")
+        self._models: dict[str, ModelSpec] = {}
+        # 别名：前端历史上按 label（中文名）传 model，需能解析回 id
+        self._alias: dict[str, str] = {}
+        self._default: dict[Capability, str] = {}
+
+    # ------------------------------------------------------------------ 注册
+    def register(self, provider: ModelProvider) -> None:
+        self._providers.add(provider.name, provider)
+
+        for spec in provider.models:
+            if spec.provider != provider.name:
+                raise RegistryError(
+                    f"模型 {spec.id} 声明归属 {spec.provider}，但由 {provider.name} 注册"
+                )
+            existing = self._models.get(spec.id)
+            if existing is not None and existing.provider != provider.name:
+                raise RegistryError(
+                    f"模型 {spec.id} 被多个供应商声明: "
+                    f"{existing.provider} / {provider.name}"
+                )
+            self._models[spec.id] = spec
+            self._register_alias(spec)
+            self._default.setdefault(spec.capability, spec.id)
+
+    def register_specs(self, specs: tuple[ModelSpec, ...], provider_name: str) -> None:
+        """补充单个模型的元信息（供应商没在 `models` 里全量列出时使用）。"""
+        for spec in specs:
+            if spec.provider != provider_name:
+                raise RegistryError(f"模型 {spec.id} 归属与注册名不一致")
+            self._models.setdefault(spec.id, spec)
+            self._register_alias(spec)
+            self._default.setdefault(spec.capability, spec.id)
+
+    def _register_alias(self, spec: ModelSpec) -> None:
+        """登记 label → id 的别名，冲突时**不能静默**。
+
+        两个供应商都叫「Seedance 2.5」时，先注册的会永远赢，后一个模型
+        在日志里没有任何痕迹——排查「为什么请求打到了另一家」会非常痛苦。
+        """
+        existing = self._alias.get(spec.label)
+        if existing is not None and existing != spec.id:
+            logger.warning(
+                "模型别名冲突 label=%r 已指向 %s，本次注册的 %s 不会被按名字解析；"
+                "请改用 id 区分",
+                spec.label,
+                existing,
+                spec.id,
+            )
+            return
+        self._alias[spec.label] = spec.id
+
+    # ------------------------------------------------------------------ 解析
+    def resolve(self, model: str) -> ModelSpec | None:
+        """按 id 或 label 解析模型。"""
+        spec = self._models.get(model)
+        if spec is not None:
+            return spec
+        real_id = self._alias.get(model)
+        return self._models.get(real_id) if real_id else None
+
+    def provider_for(self, model: str) -> ModelProvider:
+        spec = self.resolve(model)
+        if spec is not None:
+            return self._providers.get(spec.provider)
+
+        # 未声明的模型名：只有一个供应商时兜底（本地 echo 联调场景）
+        if len(self._providers) == 1:
+            return self._providers.require()
+        raise BadRequest(f"未知模型 {model!r}，可用模型: {sorted(self._models)}")
+
+    def spec_for(self, model: str) -> ModelSpec | None:
+        return self.resolve(model)
+
+    def default_model(self, capability: Capability) -> str:
+        model = self._default.get(capability)
+        if model is None:
+            raise BadRequest(f"尚未注册任何 {capability.value} 模型")
+        return model
+
+    def default_model_or_none(self, capability: Capability) -> str | None:
+        """给「模型目录」接口用：没有默认值不算错误。"""
+        return self._default.get(capability)
+
+    # ------------------------------------------------------------------ 目录
+    def models(self, capability: Capability | None = None) -> tuple[ModelSpec, ...]:
+        specs = self._models.values()
+        if capability is not None:
+            specs = [s for s in specs if s.capability == capability]  # type: ignore[assignment]
+        return tuple(sorted(specs, key=lambda s: (s.capability, s.id)))
+
+    def provider_names(self) -> list[str]:
+        return self._providers.names()
+
+    def summary(self) -> RouterSummary:
+        return {
+            "providers": self.provider_names(),
+            "models": [
+                {
+                    "id": spec.id,
+                    "label": spec.label,
+                    "capability": spec.capability.value,
+                    "provider": spec.provider,
+                }
+                for spec in self.models()
+            ],
+        }
+
+    def clear(self) -> None:
+        """仅测试使用。"""
+        self._providers.clear()
+        self._models.clear()
+        self._alias.clear()
+        self._default.clear()
