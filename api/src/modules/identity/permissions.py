@@ -97,14 +97,12 @@ BUILTIN_ROLES: tuple[BuiltinRole, ...] = (
     ),
 )
 
-# 密码最小长度：登录接口不校验（旧密码可能更短），只在设置新密码时校验。
-# 配合 `schema.py` 的两条规则一起看：不得与旧密码相同、不得为纯数字。
-PASSWORD_MIN_LENGTH: Final = 10
+# 口令策略（长度 / 纯数字 / 重复字符）不在本文件：它不属于「权限点声明」，
+# 而且 CLI 与 API 要共用同一份规则，统一放在 `policy.py`。
 
 __all__ = [
     "BUILTIN_ROLES",
     "BuiltinRole",
-    "PASSWORD_MIN_LENGTH",
     "PERM_CREATE",
     "PERM_DELETE",
     "PERM_READ",

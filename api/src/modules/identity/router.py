@@ -14,6 +14,7 @@ from fastapi import APIRouter, Query, Request, status
 
 from api.deps import ActorDep, PageDep
 from core.exceptions import Unauthorized
+from core.net import client_ip
 from core.response import ApiResponse, Page
 from modules.identity.dependencies import (
     IdentityCreateDep,
@@ -51,10 +52,11 @@ router = APIRouter(prefix="/identity", tags=["身份"])
 async def login(
     payload: LoginIn, service: IdentityServiceDep, request: Request
 ) -> ApiResponse[TokenOut]:
-    # 客户端 IP 只用于限流计数。反代后面拿到的会是代理地址，
-    # 但因为计数键里还带着用户名，最坏情况是「同名账号被一起锁」而不是全站锁死。
-    client_ip = request.client.host if request.client else ""
-    user = await service.authenticate(payload.username, payload.password, client_ip=client_ip)
+    # 客户端 IP 只用于限流计数。取法见 core/net：只有直连对端是可信代理时才读
+    # X-Forwarded-For，否则一律用 request.client（伪造这个头不能换掉限流键）。
+    user = await service.authenticate(
+        payload.username, payload.password, client_ip=client_ip(request)
+    )
     identity = await service.resolve_identity(user.id)
     if identity is None:  # pragma: no cover - authenticate 已确认用户存在
         raise Unauthorized("账号状态异常，请重试")
@@ -63,14 +65,14 @@ async def login(
 
 @router.get("/me", summary="当前用户（含角色与权限码）")
 async def me(service: IdentityServiceDep, actor: ActorDep) -> ApiResponse[MeOut]:
-    return ApiResponse.ok(await service.me(actor.id))
+    return ApiResponse.ok(await service.me(actor))
 
 
 @router.patch("/me", summary="修改自己的资料")
 async def update_me(
     payload: ProfileUpdateIn, service: IdentityServiceDep, actor: ActorDep
 ) -> ApiResponse[MeOut]:
-    return ApiResponse.ok(await service.update_me(actor.id, payload))
+    return ApiResponse.ok(await service.update_me(actor, payload))
 
 
 @router.post("/me/password", summary="修改自己的密码")
@@ -197,7 +199,7 @@ async def set_role_permissions(
 async def delete_role(
     role_id: str, service: IdentityServiceDep, actor: IdentityRoleManageDep
 ) -> ApiResponse[None]:
-    await service.delete_role(role_id)
+    await service.delete_role(role_id, actor)
     return ApiResponse.ok(None, "角色已删除")
 
 

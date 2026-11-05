@@ -136,9 +136,11 @@ class TaskService:
         return task
 
     async def retry_task(self, task_id: str, actor: CurrentUser) -> VideoTask:
-        task = await self.get_task(task_id, actor)
-        # `task:read:all` 只解决「看得见」，重试是「再花一次钱」，两者必须分开：
-        # 否则「运营能看全部任务」会顺带变成「运营能用别人的额度跑生成」（R4-06）
+        # 这里刻意**不走** `get_task(task_id, actor)`：`read:all` 与 `retry:any`
+        # 是两个独立开关，谁都不蕴含谁。先过可见性会让「只有 retry:any 的客服」永远
+        # 403（权限点勾了没反应），而只有 `read:all` 的运营也不该顺带获得「替人花钱」
+        # 的能力（R4-06 / R5-05）。
+        task = await self.repo.get_or_404(task_id, "任务不存在")
         if task.author_id != actor.id and not actor.has(PERM_RETRY_ANY):
             raise Forbidden("无权重试他人的任务")
         if TaskStatus(task.status) is not TaskStatus.FAILED:

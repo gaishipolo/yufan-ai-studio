@@ -374,6 +374,10 @@ ruff check src tests
 - [ ] `QUEUE_DRIVER=redis`、`STORAGE_DRIVER=s3`，并实现对应驱动
 - [ ] `WORKER_ENABLED=false` 时单独起 worker 进程，避免 API 实例与 worker 抢队列
 - [ ] 反向代理（Nginx）转发到 8080，并透传 `X-Request-Id`
+- [ ] 有反代就配 `TRUSTED_PROXIES=<代理地址/网段>`（或给 uvicorn 加 `--proxy-headers
+      --forwarded-allow-ips`）。不配的话所有请求的直连地址都是代理，登录限流键会退化成
+      「只按用户名」，一个人就能把别人锁在外面；反过来即使不配，伪造 `X-Forwarded-For`
+      也不会生效——默认不信任任何代理。
 
 前三条**不需要靠人记**：`Settings` 上有 `model_validator`，`APP_ENV=prod` 时
 匿名放开、样例/过短 JWT 密钥、`CORS_ORIGINS=*`、`DEBUG=true` 任意一条命中都会

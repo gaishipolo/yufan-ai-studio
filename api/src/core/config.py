@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 import json
 from functools import lru_cache
 from pathlib import Path
@@ -61,6 +62,27 @@ class Settings(BaseSettings):
     jwt_secret: str = "dev-only-secret-change-me-0123456789abcdef"
     jwt_algorithm: str = "HS256"
     access_token_ttl_seconds: int = 7200
+    # 可信反向代理的地址/网段（逗号分隔），只有直连对端在名单里才读 X-Forwarded-For。
+    # 留空 = 不信任任何代理：限流按「直连 IP」计数，伪造请求头无效。
+    trusted_proxies: str = ""
+
+    @field_validator("trusted_proxies")
+    @classmethod
+    def _check_trusted_proxies(cls, value: str) -> str:
+        """写错一个网段就启动失败，而不是默默按「不信任」跑。
+
+        这类配置的错误表现是「限流看起来生效了，实际全站共用一个键」，
+        上线后极难发现，不如在启动期炸掉。
+        """
+        for item in value.replace(";", ",").split(","):
+            item = item.strip()
+            if not item:
+                continue
+            try:
+                ipaddress.ip_network(item, strict=False)
+            except ValueError as exc:
+                raise ValueError(f"TRUSTED_PROXIES 中的 {item!r} 不是合法地址/网段") from exc
+        return value
 
     # ---------- 基础设施（策略选择）----------
     # 刻意不使用 Literal：新增驱动/供应商不应该需要修改本文件。

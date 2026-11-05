@@ -13,7 +13,7 @@ from __future__ import annotations
 from pydantic import Field, field_validator, model_validator
 
 from core.schema import CamelModel, CamelORMModel, UtcDateTime
-from modules.identity.permissions import PASSWORD_MIN_LENGTH
+from modules.identity.policy import PASSWORD_MIN_LENGTH, check_password_strength
 
 # 用户名只允许字母数字与 . _ -：避免大小写、空格、emoji 带来的「看起来一样但登录不上」
 USERNAME_PATTERN = r"^[a-zA-Z0-9_.-]{3,64}$"
@@ -21,20 +21,6 @@ USERNAME_PATTERN = r"^[a-zA-Z0-9_.-]{3,64}$"
 # 邮箱只做「能发出去」的最低限度校验：不追求 RFC 5322 全集（那件事没有正确答案），
 # 只拦住空格、缺 @、缺域名后缀这类必然发不出去的输入。
 EMAIL_PATTERN = r"^[^@\s]+@[^@\s]+\.[^@\s]{2,}$"
-
-
-def _check_password_strength(value: str) -> str:
-    """口令强度：长度由 `Field(min_length=...)` 管，这里管「一眼能猜到」。
-
-    只挡纯数字与全同字符：真正衡量强度需要熵估算，收益远不及这两条。
-    存量账号不受影响——只在设置新口令时校验。
-    """
-    if value.isdigit():
-        raise ValueError("密码不能是纯数字")
-    if len(set(value)) < 4:
-        raise ValueError("密码过于简单（重复字符过多）")
-    return value
-
 
 
 class LoginIn(CamelModel):
@@ -110,7 +96,7 @@ class UserCreateIn(CamelModel):
     @field_validator("password")
     @classmethod
     def _strength(cls, v: str) -> str:
-        return _check_password_strength(v)
+        return check_password_strength(v)
 
 
 class UserUpdateIn(CamelModel):
@@ -158,7 +144,7 @@ class PasswordChangeIn(CamelModel):
     @field_validator("new_password")
     @classmethod
     def _strength(cls, v: str) -> str:
-        return _check_password_strength(v)
+        return check_password_strength(v)
 
     @model_validator(mode="after")
     def _not_same_as_old(self) -> PasswordChangeIn:
@@ -177,7 +163,7 @@ class ResetPasswordIn(CamelModel):
     @field_validator("new_password")
     @classmethod
     def _strength(cls, v: str) -> str:
-        return _check_password_strength(v)
+        return check_password_strength(v)
 
 
 class RoleOut(CamelORMModel):

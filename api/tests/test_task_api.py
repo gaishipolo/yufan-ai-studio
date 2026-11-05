@@ -480,3 +480,15 @@ def test_retry_others_task_needs_its_own_permission(
         permissions=["task:read", "task:read:all", "task:update", "task:retry:any"],
     )
     assert client.post(f"{api}/tasks/{task_id}/retry", headers=allowed).status_code == 200
+
+    # 关键：**只有** retry:any、没有 read:all 的人也必须能重试（R5-05）。
+    # 「能重试但看不见列表」是合理组合（客服按链接代跑），
+    # 如果先过可见性检查，这个权限点就是「勾了没反应」。
+    task_id_2 = asyncio.run(_make_failed_task())
+    responder = _bearer(
+        client,
+        "u_042",
+        "ops_responder",
+        permissions=["task:read", "task:update", "task:retry:any"],
+    )
+    assert client.post(f"{api}/tasks/{task_id_2}/retry", headers=responder).status_code == 200

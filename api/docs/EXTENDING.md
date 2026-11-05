@@ -118,8 +118,19 @@ POST /identity/login → 校验口令 → 角色展开成权限码 → 签发 JW
 > 不需要黑名单存储。`iat` 只有秒级精度，所以「改密同一秒内签发的令牌」仍然有效——
 > 这是有意留的 1 秒窗口，改成 `<=` 会让改密当秒的新登录也立刻失效。
 
-> 登录失败有进程内限流（`identity/throttle.py`）：同一「用户名 + 客户端 IP」
-> 15 分钟内失败 5 次后返回 429。切 Redis 时只换这个文件，`authenticate` 不用动。
+> 登录失败有进程内限流（`identity/throttle.py`）。三条行为是刻意设计的，
+> 改之前先看注释里的理由：
+> - 同一「用户名 + 客户端 IP」允许 5 次失败，**第 6 次才 429**；正确密码永远放行。
+>   若锁定先于验密，任何人用 5 个乱码就能锁死一个已知用户名（未认证的拒绝服务）。
+> - 超过阈值后每次尝试先付 `penalty()` 秒等待成本（0.5s 起、封顶 5s），
+>   而不是纯硬拒——延迟对爆破同样致命，但不会把记错密码的真实用户关在门外。
+> - 计数表是 LRU + 滑动窗口，有 `MAX_KEYS` 上限也会回收过期键：裸 dict 可以被
+>   匿名请求（换用户名）线性撑大。
+>
+> 客户端 IP 走 `core/net.py`：**只有直连对端在 `TRUSTED_PROXIES` 里才读
+> `X-Forwarded-For`**。部署在 nginx / ingress 后面时必须配这个变量，否则键退化成
+> 「只按用户名」；反过来无条件信任这个头，攻击者换个假 IP 就绕过限流。
+> 切 Redis 时只换 `throttle.py` 这一个文件，`authenticate` 不用动。
 
 > 为什么做成注入点而不是直接改 `get_actor`：装配层 import 业务模块会违反依赖方向，
 > 而且 `identity/dependencies.py` 要 `from api.deps import require`，顶层互相 import
@@ -147,15 +158,20 @@ POST /identity/login → 校验口令 → 角色展开成权限码 → 签发 JW
 授角色、建角色、改角色权限全部归它，`identity:update` 只管资料和停用。
 
 但要真正兑现这句话，光拆权限点不够——**任何能间接拿到 `*` 的操作都必须再过一道判定**。
-四个入口共用同一组 helper（`service.py` 的 `_require_superuser` / `_guard_permission_grant`
-/ `_guard_role_grant` / `_guard_target_not_above`）：
+五个入口共用同一组 helper（`service.py` 的 `_require_superuser` / `_guard_permission_grant`
+/ `_guard_role_grant` / `_guard_target_not_above` / `_guard_role_not_above`）：
 
 | 入口 | 额外要求 |
 |---|---|
-| `set_user_roles` / `create_user` | 目标角色是超管 → 超管；否则该角色的权限必须**是自己的子集** |
-| `create_role` / `set_role_permissions` | 权限列表含 `*`，或含自己没有的权限码 → 超管 / 403 |
+| `set_user_roles` / `create_user` | 目标角色是超管 → 超管；否则该角色的权限必须**是自己的子集**；目标账号本身不能高于自己 |
+| `create_role` / `set_role_permissions` | 权限列表含 `*`，或含自己没有的权限码 → 超管 / 403；被改的角色不能强于自己 |
 | `reset_password` | 目标账号权限高于自己 → 403；目标是超管 → 超管 |
 | `update_user`（停用）/ `deactivate_user` | 同上：不能停用比自己强的账号 |
+| `delete_role` | 角色权限强于自己 → 403（角色全局共享，没有 owner 字段） |
+
+**撤销方向必须和授予方向对等**。这是上一轮漏掉的一半：那时「给 editor 角色」被挡，
+「清空 editor 的角色 / 把 editor 角色改成只读」却放行——同一件事换个入口就绕过去了。
+新增任何「改别人的权限集合」的入口时，同时问两个问题：能不能**给**，能不能**撤**。
 
 「子集」用的是 `CurrentUser.has()`，也就是鉴权主路径那一套通配语义（`*` / `资源:*`），
 不要另写一套字符串匹配。改这里的规则时，四条负向用例必须一起改
@@ -181,7 +197,11 @@ POST /identity/login → 校验口令 → 角色展开成权限码 → 签发 JW
 - 内置角色不可删、`code` 不可改（权限内容可调，运营需要）
 - 登录失败对「用户不存在」和「密码错误」返回**同一个错误码和文案**
 - 新口令 ≥ 10 位、不能是纯数字、不能与当前口令相同；管理员建号时直接指定
-  （不做临时密码那套状态机）
+  （不做临时密码那套状态机）。策略只有一份，在 `identity/policy.py`，
+  API validator 与 `app create-admin` 共用——运维命令是唯一能创建「权限最大的账号」的
+  入口，它不能是唯一绕过策略的那个
+- 写口令只有 `service._set_password` 一个方法：它同时更新 `password_changed_at`，
+  三条路径（自助改密 / 管理员重置 / `create-admin` 轮换）都走它，新增第四条也别绕开
 - 提权面统一判定：见 2.3 的表，四个入口不许各写一套
 
 红线的实现方式统一是「**先改 → flush → 再数一遍超管**」，归零就抛错由事务回滚。

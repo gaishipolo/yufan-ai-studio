@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import secrets
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
@@ -145,11 +146,17 @@ class IdentityService:
         `username` 已在 `LoginIn` 里归一成小写；这里再 strip 一次，
         防止内部调用（CLI、脚本）绕过 schema 直接传脏值。
 
-        失败计数放在 `verify_password` **之后**、抛 `CredentialInvalid` **之前**：
-        先算再记，失败路径的耗时与成功路径一致，不会把「账号存在」从时间维泄漏出去。
+        顺序是刻意的：**先付等待成本 → 验密 → 失败才计数**。
+        - 等待在 `scrypt` 之前：爆破的时间成本是真实的，CPU 成本也被压低。
+        - 锁定**不拦正确密码**：否则任何人用 5 个乱码就能把一个已知用户名锁 15 分钟，
+          真实用户反而登不进来（R5-01）。计数的意义是「猜错的代价」，不是「禁言」。
+        - 计数放在 `verify_password` 之后、抛 `CredentialInvalid` 之前：
+          失败路径与成功路径耗时一致，不会从时间维泄漏「账号是否存在」。
         """
         key = f"{username}|{client_ip}"
-        throttle.guard(key)
+        wait = throttle.penalty(key)
+        if wait:
+            await asyncio.sleep(wait)
 
         user = await self.users.get_by_username(username)
         ok = verify_password(
@@ -157,6 +164,8 @@ class IdentityService:
         )
         if user is None or not ok:
             throttle.record_failure(key)
+            # 已经猜错太多次：给 429，让前端提示「别再试了」，而不是无限 401
+            throttle.reject(key)
             raise CredentialInvalid()
         throttle.reset(key)
         if not user.is_active:
@@ -205,16 +214,23 @@ class IdentityService:
             permissions=sorted(identity.permissions),
         )
 
-    async def me(self, user_id: str) -> MeOut:
-        identity = await self.resolve_identity(user_id)
-        if identity is None:
-            raise UserNotFound()
-        return self._to_me(identity)
+    async def me(self, actor: CurrentUser) -> MeOut:
+        """当前用户资料。
+
+        权限直接用请求期已经解析好的 `actor.permissions`，**不再重新展开角色权限**：
+        `get_actor` 对每条带令牌的请求都查过「用户 + 角色 + 角色权限」，
+        这里再走一次 `resolve_identity` 就是纯翻倍的查询（R5-07）。
+        用户行与角色摘要仍要读——`MeOut` 要的 `username` / `email` / `isActive`
+        与角色 id 属于「资料」，不在鉴权用的最小投影 `CurrentUser` 里。
+        """
+        user = await self._require_user(actor.id)
+        roles = (await self.users.roles_for([user.id])).get(user.id, [])
+        return MeOut(**_user_fields(user, roles), permissions=sorted(actor.permissions))
 
     # ------------------------------------------------------------------ #
     # 自助
     # ------------------------------------------------------------------ #
-    async def update_me(self, user_id: str, payload: ProfileUpdateIn) -> MeOut:
+    async def update_me(self, actor: CurrentUser, payload: ProfileUpdateIn) -> MeOut:
         """自助改资料：**只允许改展示字段**。
 
         这里刻意不接 `UserUpdateIn`（那是管理员用的，含 `is_active`）：
@@ -222,21 +238,19 @@ class IdentityService:
         而恢复只有管理员一个入口。字段白名单比 `setattr` 循环更难写错——
         将来给 `UserUpdateIn` 加字段（比如 `role_ids`）也不会自动漏进自助口子。
         """
-        user = await self._require_user(user_id)
+        user = await self._require_user(actor.id)
         fields = payload.model_dump(exclude_unset=True)
         for field in ("display_name", "email", "avatar_url"):
             if field in fields:
                 setattr(user, field, fields[field])
         await self.session.commit()
-        return await self.me(user.id)
+        return await self.me(actor)
 
     async def change_password(self, user_id: str, payload: PasswordChangeIn) -> None:
         user = await self._require_user(user_id)
         if not verify_password(payload.old_password, user.password_hash):
             raise OldPasswordMismatch()
-        user.password_hash = hash_password(payload.new_password)
-        # 改密即失效该账号此前签发的全部令牌（解析器比对 iat）
-        user.password_changed_at = utcnow()
+        self._set_password(user, payload.new_password)
         await self.session.commit()
 
     # ------------------------------------------------------------------ #
@@ -323,6 +337,11 @@ class IdentityService:
         self, user_id: str, role_ids: Sequence[str], actor: CurrentUser
     ) -> UserOut:
         user = await self._require_user(user_id)
+        # 撤权方向与授予方向必须对等：改别人的角色集合，等于改别人的权限，
+        # 而「不能操作权限高于自己的账号」这条红线在改密 / 停用上已经写了，
+        # 这里漏掉就出现「给不了、但能撤」——role:manage 一个人能把 editor 清空（R5-03）。
+        # 放在授予检查之前：目标高于自己时先报「越级」，而不是先报「子集不满足」。
+        await self._guard_target_not_above(user, actor)
         roles = await self._roles_by_ids(role_ids)
 
         current = (await self.users.roles_for([user.id])).get(user.id, [])
@@ -353,9 +372,7 @@ class IdentityService:
         """
         user = await self._require_user(user_id)
         await self._guard_target_not_above(user, actor)
-        user.password_hash = hash_password(new_password)
-        # 重置口令同样让该账号此前的令牌全部失效
-        user.password_changed_at = utcnow()
+        self._set_password(user, new_password)
         await self.session.commit()
         logger.info("管理员 %s 重置了 %s 的密码", actor.id, user.username)
 
@@ -466,17 +483,21 @@ class IdentityService:
     ) -> RoleOut:
         role = await self._require_role(role_id)
         self._validate_permissions(permissions)
+        # 与 set_user_roles 同一条红线：比自己强的角色不能被"顺手改成只读"，
+        # 那和把人降级是一回事，只是换了个入口（R5-03 的同族）。
+        await self._guard_role_not_above(role, actor)
         self._guard_permission_grant(permissions, actor, what=f"角色 {role.code}")
-        if role.is_superuser:
-            self._require_superuser(actor, "修改超级管理员角色的权限")
         await self.roles.set_permissions(role.id, permissions)
         await self.session.commit()
         return await self.get_role(role.id)
 
-    async def delete_role(self, role_id: str) -> None:
+    async def delete_role(self, role_id: str, actor: CurrentUser) -> None:
         role = await self._require_role(role_id)
         if role.is_builtin:
             raise BuiltinRoleLocked()
+        # 删掉一个比自己强的角色 = 让所有持有它的人瞬间掉权限，
+        # 而角色本身没有 owner 字段可以判断"归谁管"（R5-06）
+        await self._guard_role_not_above(role, actor)
         if (await self.roles.user_counts([role.id])).get(role.id, 0) > 0:
             raise RoleInUse()
 
@@ -552,14 +573,14 @@ class IdentityService:
         if user is None:
             user = User(
                 username=username.strip().lower(),
-                password_hash=hash_password(password),
                 display_name=display_name or username,
                 is_active=True,
             )
+            self._set_password(user, password)
             self.session.add(user)
             await self.session.flush()
         else:
-            user.password_hash = hash_password(password)
+            self._set_password(user, password)
             user.is_active = True
 
         current = set(await self.users.role_ids_of(user.id))
@@ -571,6 +592,17 @@ class IdentityService:
     # ------------------------------------------------------------------ #
     # 内部工具
     # ------------------------------------------------------------------ #
+    def _set_password(self, user: User, raw: str) -> None:
+        """**唯一**的口令写入点。
+
+        写口令必须同时更新 `password_changed_at`：解析器靠它让该账号此前签发的
+        所有令牌失效。三条改密路径（自助改密 / 管理员重置 / `create-admin` 轮换）
+        共用这一个方法——上一条漏掉这条不变式，正是「超管疑似泄漏、运维紧急轮换口令后
+        攻击者手里的令牌还能用满 2 小时」的原因（R5-02 / R4-13）。
+        """
+        user.password_hash = hash_password(raw)
+        user.password_changed_at = utcnow()
+
     async def _require_user(self, user_id: str) -> User:
         user = await self.users.get(user_id)
         if user is None:
@@ -659,6 +691,24 @@ class IdentityService:
         if missing:
             raise PermissionEscalation(
                 f"不能操作权限高于自己的账号 {target.username}",
+                details={"missing": missing},
+            )
+
+    async def _guard_role_not_above(self, role: Role, actor: CurrentUser) -> None:
+        """不能动「权限高于自己」的角色（删角色 / 改角色权限）。
+
+        与 `_guard_target_not_above` 是同一条红线，只是对象从「账号」换成「角色」：
+        否则 `identity:role:manage` 一个人就能把 `editor`（含 `task:*`）这类角色
+        删掉或清空，而持有该角色的账号本身受保护——同一件事换个入口就绕过去了。
+        """
+        if role.is_superuser:
+            self._require_superuser(actor, f"操作超级管理员角色 {role.code}")
+            return
+        perms = (await self.roles.permissions_for([role.id])).get(role.id, ())
+        missing = self._missing_grants(actor, perms)
+        if missing:
+            raise PermissionEscalation(
+                f"不能操作权限高于自己的角色 {role.code}",
                 details={"missing": missing},
             )
 

@@ -47,7 +47,7 @@ def _cmd_seed(args: argparse.Namespace) -> None:
 def _cmd_create_admin(args: argparse.Namespace) -> None:
     """生产首启的唯一入口：没有账号时谁也登不进去，必须由运维在服务器上创建。"""
     from db.session import get_session_factory
-    from modules.identity.permissions import PASSWORD_MIN_LENGTH
+    from modules.identity.policy import WeakPassword, check_password_strength
     from modules.identity.service import IdentityService
 
     password = args.password
@@ -56,9 +56,12 @@ def _cmd_create_admin(args: argparse.Namespace) -> None:
             print("非交互环境请用 --password 传入密码", file=sys.stderr)
             raise SystemExit(1)
         password = getpass.getpass("密码: ")
-    if len(password) < PASSWORD_MIN_LENGTH:
-        print(f"密码至少 {PASSWORD_MIN_LENGTH} 位", file=sys.stderr)
-        raise SystemExit(1)
+    try:
+        # 与 API 同一份策略：这个账号是权限最大的那个，不能是唯一不受约束的入口
+        check_password_strength(password)
+    except WeakPassword as exc:
+        print(str(exc), file=sys.stderr)
+        raise SystemExit(1) from exc
 
     async def run() -> tuple[str, str, bool]:
         async with get_session_factory()() as session:

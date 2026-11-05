@@ -679,3 +679,144 @@ def test_login_is_rate_limited_after_repeated_failures(client: TestClient) -> No
     )
     assert blocked.status_code == 429
     assert blocked.json()["code"] == 42900
+
+
+# --------------------------------------------------------------------------- #
+# 登录限流：不挡正确密码、表有界会回收（R5-01）
+# --------------------------------------------------------------------------- #
+def test_correct_password_survives_failures(client: TestClient) -> None:
+    """连续猜错之后，正确密码仍然能登录（R5-01 ①）。
+
+    原实现是「第 6 次请求无论密码对错都 429」，于是任何人用 5 个乱码
+    就能把已知用户名锁 15 分钟——未认证即可拒绝服务，真实用户反而进不来。
+    锁定应该只惩罚「猜错」这个动作。
+    """
+    from modules.identity import throttle
+
+    for _ in range(throttle.MAX_FAILURES):
+        resp = client.post(
+            f"{API}/login", json={"username": "admin", "password": "wrong-pass-1"}
+        )
+        assert resp.status_code == 401
+
+    ok = client.post(f"{API}/login", json={"username": "admin", "password": "admin@12345"})
+    assert ok.status_code == 200
+    # 成功即清零：紧接着再输错一次，应该回到 401 而不是 429
+    after = client.post(f"{API}/login", json={"username": "admin", "password": "wrong-pass-1"})
+    assert after.status_code == 401
+
+
+def test_throttle_table_has_an_upper_bound(monkeypatch: pytest.MonkeyPatch) -> None:
+    """计数表不能被匿名请求线性撑大（R5-01 ③）。
+
+    原实现是裸 dict：换一个用户名就是一条新记录，永不回收，
+    未认证的请求可以稳定地往进程内存里塞键。
+    """
+    from modules.identity import throttle
+
+    monkeypatch.setattr(throttle, "MAX_KEYS", 8)
+    for i in range(60):
+        throttle.record_failure(f"u{i}|198.51.100.1")
+
+    assert len(throttle._failures) <= 8
+
+
+def test_throttle_entries_are_recycled(monkeypatch: pytest.MonkeyPatch) -> None:
+    """窗口外的条目会在下一次写入时被回收，而不是永久留在表里。"""
+    import time
+
+    from modules.identity import throttle
+
+    monkeypatch.setattr(throttle, "WINDOW_SEC", 0.02)
+    throttle.record_failure("stale|198.51.100.1")
+    time.sleep(0.05)
+    throttle.record_failure("fresh|198.51.100.2")
+
+    assert "stale|198.51.100.1" not in throttle._failures
+
+
+# --------------------------------------------------------------------------- #
+# 改口令三条路径共用同一个不变式（R5-02）
+# --------------------------------------------------------------------------- #
+def test_cli_password_rotation_invalidates_tokens(client: TestClient) -> None:
+    """`create-admin` 轮换口令必须让旧令牌失效（R5-02）。
+
+    这是「超管疑似泄漏、运维紧急轮换口令」唯一能用的命令：
+    只让旧口令失效、旧令牌还能用满 2 小时，等于自救只做了一半。
+    """
+    import time
+
+    from db.session import get_session_factory
+    from modules.identity.service import IdentityService
+
+    async def rotate(password: str) -> None:
+        async with get_session_factory()() as session:
+            await IdentityService(session).ensure_superuser("ops_rotate", password)
+
+    asyncio.run(rotate("ops-rotate-1"))
+    old = _login(client, "ops_rotate", "ops-rotate-1")
+    assert client.get(f"{API}/me", headers=old).status_code == 200
+
+    time.sleep(1.1)  # iat 是秒级：让写入时间严格晚于令牌签发时间
+    asyncio.run(rotate("ops-rotate-2"))
+
+    assert client.get(f"{API}/me", headers=old).status_code == 401
+    fresh = _login(client, "ops_rotate", "ops-rotate-2")
+    assert client.get(f"{API}/me", headers=fresh).status_code == 200
+
+
+def test_create_admin_cannot_bypass_password_policy() -> None:
+    """`create-admin` 与 API 共用同一份口令策略（R5-04）。
+
+    生产环境的第一个超管是权限最大的账号，却曾是唯一只校验长度的入口。
+    """
+    from cli import main
+
+    with pytest.raises(SystemExit) as excinfo:
+        main(["create-admin", "--username", "ops_init", "--password", "1234567890"])
+    assert excinfo.value.code == 1
+
+
+# --------------------------------------------------------------------------- #
+# 撤权方向：与授予方向对等（R5-03 / R5-06）
+# --------------------------------------------------------------------------- #
+def test_role_manager_cannot_strip_stronger_account(client: TestClient) -> None:
+    """能管角色 ≠ 能清空比自己权限高的账号（R5-03）。
+
+    修复前同一对（操作者, 目标）：给角色 403、清角色 200。
+    """
+    admin = _admin(client)
+    editor, _, _ = _make_user(client, admin, "strong_editor", ["task:*"])
+    _, headers, _ = _make_user(
+        client, admin, "ops_strip", ["identity:read", "identity:role:manage"]
+    )
+
+    resp = client.put(
+        f"{API}/users/{editor['id']}/roles", json={"roleIds": []}, headers=headers
+    )
+    assert resp.status_code == 403
+    assert resp.json()["code"] == 40323
+    # 角色没被改动
+    kept = client.get(f"{API}/users/{editor['id']}", headers=admin).json()["data"]
+    assert kept["roles"]
+
+
+def test_role_manager_cannot_delete_or_gut_stronger_role(client: TestClient) -> None:
+    """比自己强的角色既不能删，也不能"顺手改成只读"（R5-06 / R5-03 同族）。"""
+    admin = _admin(client)
+    strong = _make_role(client, admin, "strong_role", ["task:*"])
+    _, headers, _ = _make_user(
+        client, admin, "ops_del", ["identity:read", "identity:role:manage"]
+    )
+
+    deleted = client.delete(f"{API}/roles/{strong['id']}", headers=headers)
+    assert deleted.status_code == 403
+    assert deleted.json()["code"] == 40323
+
+    gutted = client.put(
+        f"{API}/roles/{strong['id']}/permissions",
+        json={"permissions": []},
+        headers=headers,
+    )
+    assert gutted.status_code == 403
+    assert gutted.json()["code"] == 40323
