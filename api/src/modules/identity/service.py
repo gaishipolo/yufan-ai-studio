@@ -13,7 +13,7 @@
 from __future__ import annotations
 
 import secrets
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -28,6 +28,7 @@ from core.response import Page, PageParams
 from core.security import create_access_token, hash_password, verify_password
 from db.base import utcnow
 from db.session import get_session_factory
+from modules.identity import throttle
 from modules.identity.errors import (
     AccountDisabled,
     BuiltinRoleLocked,
@@ -35,6 +36,7 @@ from modules.identity.errors import (
     CredentialInvalid,
     LastSuperuser,
     OldPasswordMismatch,
+    PermissionEscalation,
     RoleCodeTaken,
     RoleInUse,
     RoleNotFound,
@@ -52,6 +54,7 @@ from modules.identity.schema import (
     PermissionCatalogOut,
     PermissionGroupOut,
     PermissionOut,
+    ProfileUpdateIn,
     RoleBriefOut,
     RoleCreateIn,
     RoleOut,
@@ -134,18 +137,28 @@ class IdentityService:
     # ------------------------------------------------------------------ #
     # 认证 / 解析
     # ------------------------------------------------------------------ #
-    async def authenticate(self, username: str, password: str) -> User:
+    async def authenticate(
+        self, username: str, password: str, *, client_ip: str = ""
+    ) -> User:
         """校验口令并记录登录时间。
 
         `username` 已在 `LoginIn` 里归一成小写；这里再 strip 一次，
         防止内部调用（CLI、脚本）绕过 schema 直接传脏值。
+
+        失败计数放在 `verify_password` **之后**、抛 `CredentialInvalid` **之前**：
+        先算再记，失败路径的耗时与成功路径一致，不会把「账号存在」从时间维泄漏出去。
         """
+        key = f"{username}|{client_ip}"
+        throttle.guard(key)
+
         user = await self.users.get_by_username(username)
         ok = verify_password(
             password, user.password_hash if user is not None else _dummy_hash()
         )
         if user is None or not ok:
+            throttle.record_failure(key)
             raise CredentialInvalid()
+        throttle.reset(key)
         if not user.is_active:
             raise AccountDisabled()
 
@@ -201,10 +214,19 @@ class IdentityService:
     # ------------------------------------------------------------------ #
     # 自助
     # ------------------------------------------------------------------ #
-    async def update_me(self, user_id: str, payload: UserUpdateIn) -> MeOut:
+    async def update_me(self, user_id: str, payload: ProfileUpdateIn) -> MeOut:
+        """自助改资料：**只允许改展示字段**。
+
+        这里刻意不接 `UserUpdateIn`（那是管理员用的，含 `is_active`）：
+        自助路径若能把 `is_active` 改成 false，用户点错一次就把自己锁在门外，
+        而恢复只有管理员一个入口。字段白名单比 `setattr` 循环更难写错——
+        将来给 `UserUpdateIn` 加字段（比如 `role_ids`）也不会自动漏进自助口子。
+        """
         user = await self._require_user(user_id)
-        for field, value in payload.model_dump(exclude_unset=True).items():
-            setattr(user, field, value)
+        fields = payload.model_dump(exclude_unset=True)
+        for field in ("display_name", "email", "avatar_url"):
+            if field in fields:
+                setattr(user, field, fields[field])
         await self.session.commit()
         return await self.me(user.id)
 
@@ -213,6 +235,8 @@ class IdentityService:
         if not verify_password(payload.old_password, user.password_hash):
             raise OldPasswordMismatch()
         user.password_hash = hash_password(payload.new_password)
+        # 改密即失效该账号此前签发的全部令牌（解析器比对 iat）
+        user.password_changed_at = utcnow()
         await self.session.commit()
 
     # ------------------------------------------------------------------ #
@@ -245,11 +269,14 @@ class IdentityService:
         roles = (await self.users.roles_for([user.id])).get(user.id, ())
         return UserOut(**_user_fields(user, roles))
 
-    async def create_user(self, payload: UserCreateIn) -> UserOut:
+    async def create_user(self, payload: UserCreateIn, actor: CurrentUser) -> UserOut:
         if await self.users.get_by_username(payload.username) is not None:
             raise UsernameTaken()
 
         roles = await self._roles_by_ids(payload.role_ids)
+        # 建号时直接挂超管角色 = 造一个自己登进去就是超管的账号，
+        # 必须和 set_user_roles 走同一道闸（R4-11 路径 C）
+        await self._guard_role_grant(roles, actor)
         user = User(
             username=payload.username,
             password_hash=hash_password(payload.password),
@@ -277,6 +304,9 @@ class IdentityService:
             active = bool(fields["is_active"])
             if not active and user.id == actor.id:
                 raise CannotTargetSelf()
+            if not active:
+                # 停用超管 = 让对方下不来台，与「重置超管密码」同级，需要超管
+                await self._guard_target_not_above(user, actor)
             user.is_active = active
 
         for field in ("display_name", "email", "avatar_url"):
@@ -302,6 +332,8 @@ class IdentityService:
         # 授超管和撤超管都是提权面：只有超管能做，否则「能改角色」等于「能给自己发超管」
         if touches_superuser and not actor.has(SUPER_PERMISSION):
             raise SuperuserRequired()
+        # 非超管角色同样要挡：给自己挂一个含 `task:*` 的角色，等于绕过「只读」授权
+        await self._guard_role_grant(roles, actor)
 
         await self.users.set_roles(user.id, [role.id for role in roles])
         await self._guard_has_superuser()
@@ -310,11 +342,22 @@ class IdentityService:
         logger.info("调整用户角色 %s -> %s", user.username, [role.code for role in roles])
         return UserOut(**_user_fields(user, roles))
 
-    async def reset_password(self, user_id: str, new_password: str) -> None:
+    async def reset_password(
+        self, user_id: str, new_password: str, actor: CurrentUser
+    ) -> None:
+        """管理员重置口令。
+
+        这是**最强的提权面**：不需要对方配合，重置完直接以对方身份登录。
+        所以目标账号的权限必须不高于操作者——否则 `identity:update` 就等于 `*`
+        （R4-11 路径 B）。
+        """
         user = await self._require_user(user_id)
+        await self._guard_target_not_above(user, actor)
         user.password_hash = hash_password(new_password)
+        # 重置口令同样让该账号此前的令牌全部失效
+        user.password_changed_at = utcnow()
         await self.session.commit()
-        logger.info("管理员重置了 %s 的密码", user.username)
+        logger.info("管理员 %s 重置了 %s 的密码", actor.id, user.username)
 
     async def deactivate_user(self, user_id: str, actor: CurrentUser) -> None:
         """`DELETE /users/{id}` 的真实语义：停用，不做物理删除。
@@ -324,6 +367,7 @@ class IdentityService:
         user = await self._require_user(user_id)
         if user.id == actor.id:
             raise CannotTargetSelf()
+        await self._guard_target_not_above(user, actor)
         user.is_active = False
         await self.session.flush()
         await self._guard_has_superuser()
@@ -376,10 +420,12 @@ class IdentityService:
         code = payload.code.strip().lower()
         if await self.roles.get_by_code(code) is not None:
             raise RoleCodeTaken()
-        if payload.is_superuser and not actor.has(SUPER_PERMISSION):
-            raise SuperuserRequired()
+        if payload.is_superuser:
+            self._require_superuser(actor, "创建超级管理员角色")
 
         self._validate_permissions(payload.permissions)
+        # `*` 与 is_superuser 完全等价：只挡字段、不挡字符串，等于没挡（R4-11 路径 A）
+        self._guard_permission_grant(payload.permissions, actor, what=f"角色 {code}")
         role = Role(
             code=code,
             name=payload.name,
@@ -416,10 +462,13 @@ class IdentityService:
         return await self.get_role(role.id)
 
     async def set_role_permissions(
-        self, role_id: str, permissions: Sequence[str]
+        self, role_id: str, permissions: Sequence[str], actor: CurrentUser
     ) -> RoleOut:
         role = await self._require_role(role_id)
         self._validate_permissions(permissions)
+        self._guard_permission_grant(permissions, actor, what=f"角色 {role.code}")
+        if role.is_superuser:
+            self._require_superuser(actor, "修改超级管理员角色的权限")
         await self.roles.set_permissions(role.id, permissions)
         await self.session.commit()
         return await self.get_role(role.id)
@@ -549,6 +598,68 @@ class IdentityService:
             raise UnknownPermission(
                 f"存在无法识别的权限点：{', '.join(sorted(set(invalid)))}",
                 details={"invalid": sorted(set(invalid))},
+            )
+
+    # ---------- 提权面（四个入口共用，别再各写一遍） ---------- #
+    @staticmethod
+    def _require_superuser(actor: CurrentUser, reason: str) -> None:
+        if not actor.has(SUPER_PERMISSION):
+            raise SuperuserRequired(f"{reason}：只有超级管理员可以操作")
+
+    @staticmethod
+    def _missing_grants(actor: CurrentUser, codes: Iterable[str]) -> list[str]:
+        """`codes` 里调用者自己没有的那些。
+
+        `CurrentUser.has` 已经处理 `*` 与 `资源:*` 两种通配，这里直接复用——
+        另写一套通配匹配，迟早会和鉴权主路径对不上。
+        """
+        return sorted({code for code in codes if not actor.has(code)})
+
+    def _guard_permission_grant(
+        self, codes: Sequence[str], actor: CurrentUser, *, what: str
+    ) -> None:
+        missing = self._missing_grants(actor, codes)
+        if missing:
+            raise PermissionEscalation(
+                f"不能给{what}授予自己不具备的权限",
+                details={"missing": missing},
+            )
+
+    async def _guard_role_grant(
+        self, roles: Sequence[Role], actor: CurrentUser
+    ) -> None:
+        """分配角色前的统一闸口：超管角色要超管，其余角色的权限必须是自己的子集。
+
+        子集规则同时挡住两条路：给自己挂含 `*` 的角色（提权），
+        以及把 `editor`（含 `task:*`）发给别人而自己只有 `task:read`（借刀）。
+        """
+        if not roles:
+            return
+        perms = await self.roles.permissions_for([role.id for role in roles])
+        for role in roles:
+            if role.is_superuser:
+                self._require_superuser(actor, f"分配超级管理员角色 {role.code}")
+                continue
+            self._guard_permission_grant(
+                perms.get(role.id, ()), actor, what=f"角色 {role.code}"
+            )
+
+    async def _guard_target_not_above(self, target: User, actor: CurrentUser) -> None:
+        """不能对「权限高于自己」的账号做写操作（重置口令 / 停用）。
+
+        否则 `identity:update` 与 `identity:delete` 就成了接管超管的两条捷径。
+        """
+        identity = await self.resolve_identity(target.id)
+        if identity is None:  # pragma: no cover - 调用前已确认用户存在
+            return
+        if identity.is_superuser:
+            self._require_superuser(actor, f"操作超级管理员账号 {target.username}")
+            return
+        missing = self._missing_grants(actor, identity.permissions)
+        if missing:
+            raise PermissionEscalation(
+                f"不能操作权限高于自己的账号 {target.username}",
+                details={"missing": missing},
             )
 
     async def _guard_has_superuser(self) -> None:

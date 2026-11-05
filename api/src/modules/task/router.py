@@ -125,5 +125,9 @@ async def toggle_favorite(
 async def delete_tasks(
     service: TaskServiceDep, actor: TaskDeleteDep, payload: DeleteTasksIn
 ) -> ApiResponse[DeleteTasksOut]:
-    deleted = await service.delete_tasks(payload.ids, actor)
-    return ApiResponse.ok(DeleteTasksOut(deleted=deleted), message=f"已删除 {deleted} 个任务")
+    deleted, skipped = await service.delete_tasks(payload.ids, actor)
+    return ApiResponse.ok(
+        DeleteTasksOut(deleted=deleted, skipped=skipped),
+        message=f"已删除 {deleted} 个任务"
+        + (f"，{len(skipped)} 个未删除" if skipped else ""),
+    )

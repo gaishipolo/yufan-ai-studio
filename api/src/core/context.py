@@ -24,6 +24,9 @@ class CurrentUser:
     name: str
     roles: tuple[str, ...] = ()
     permissions: frozenset[str] = frozenset()
+    # 令牌签发时间（epoch 秒）。0 表示「不知道」——合成主体（匿名演示账号、
+    # 单元测试里的 CurrentUser）都取 0，解析器据此跳过「令牌是否早于改密」的判断。
+    issued_at: int = 0
 
     def has(self, code: str) -> bool:
         """是否拥有某权限码。"""

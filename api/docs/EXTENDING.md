@@ -39,8 +39,9 @@ app new-module voice --label 配音 --perm voice --slot 9
 ```
 
 `--slot` 是错误码号段，取值见第 7 节的分配表（示例占用 9，别和 `task` 的 3 撞车）。
+它必填（不传会被拒），并且会真的写进 `errors.py`；号段已被别的模块占用时，生成前就报错。
 
-生成 6 个文件：
+生成 7 个文件：
 
 ```
 modules/voice/
@@ -49,6 +50,7 @@ modules/voice/
 ├── schema.py         # 出入参（camelCase 自动转换）
 ├── service.py        # 业务规则（当前抛 501）
 ├── dependencies.py   # 依赖装配 + 权限依赖
+├── errors.py         # ModuleErrors(slot=9) + 一个示例错误码
 └── router.py         # 2 个接口（列表 / 创建）
 ```
 
@@ -105,11 +107,19 @@ POST /identity/login → 校验口令 → 角色展开成权限码 → 签发 JW
 |---|---|
 | 管理员撤了某个权限 | 下一个请求就生效，不用重新登录 |
 | 账号被停用 | 立刻 401，不是等 2 小时 TTL |
+| 用户改了密码 / 被管理员重置密码 | 此前签发的令牌全部失效（`iat < password_changed_at`），只保留改密后新登录的 |
 | 用户改了昵称 | 立即同步（历史任务里的 `author_name` 是快照，不回填） |
 
 代价是每个带令牌的请求多 2~3 次单表查询。后台系统这个量级完全可接受；
 真要优化就加请求级或秒级缓存，**不要**退回「信任令牌快照」——那等于把停用账号的窗口
 重新打开 2 小时。
+
+> 改密失效旧令牌靠的是 `users.password_changed_at` 与令牌的 `iat` 比大小，
+> 不需要黑名单存储。`iat` 只有秒级精度，所以「改密同一秒内签发的令牌」仍然有效——
+> 这是有意留的 1 秒窗口，改成 `<=` 会让改密当秒的新登录也立刻失效。
+
+> 登录失败有进程内限流（`identity/throttle.py`）：同一「用户名 + 客户端 IP」
+> 15 分钟内失败 5 次后返回 429。切 Redis 时只换这个文件，`authenticate` 不用动。
 
 > 为什么做成注入点而不是直接改 `get_actor`：装配层 import 业务模块会违反依赖方向，
 > 而且 `identity/dependencies.py` 要 `from api.deps import require`，顶层互相 import
@@ -120,7 +130,7 @@ POST /identity/login → 校验口令 → 角色展开成权限码 → 签发 JW
 
 | 表 | 关键字段 | 说明 |
 |---|---|---|
-| `users` | `username`(unique)、`password_hash`、`display_name`、`email`、`avatar_url`、`is_active`、`last_login_at` | 不物理删除：历史任务的 `author_id` 还指着他 |
+| `users` | `username`(unique)、`password_hash`、`display_name`、`email`、`avatar_url`、`is_active`、`last_login_at`、`password_changed_at` | 不物理删除：历史任务的 `author_id` 还指着他 |
 | `roles` | `code`(unique)、`name`、`is_superuser`、`is_builtin`、`sort_order` | `is_superuser` 展开为 `*`，**不靠角色名 == admin** |
 | `role_permissions` | `role_id` + `permission`（唯一约束） | 权限码存字符串，权威在 `catalog` |
 | `user_roles` | `user_id` + `role_id`（唯一约束） | |
@@ -136,6 +146,21 @@ POST /identity/login → 校验口令 → 角色展开成权限码 → 签发 JW
 `role:manage` 单独拆出来是有原因的：**能改昵称不等于能给自己提权**。
 授角色、建角色、改角色权限全部归它，`identity:update` 只管资料和停用。
 
+但要真正兑现这句话，光拆权限点不够——**任何能间接拿到 `*` 的操作都必须再过一道判定**。
+四个入口共用同一组 helper（`service.py` 的 `_require_superuser` / `_guard_permission_grant`
+/ `_guard_role_grant` / `_guard_target_not_above`）：
+
+| 入口 | 额外要求 |
+|---|---|
+| `set_user_roles` / `create_user` | 目标角色是超管 → 超管；否则该角色的权限必须**是自己的子集** |
+| `create_role` / `set_role_permissions` | 权限列表含 `*`，或含自己没有的权限码 → 超管 / 403 |
+| `reset_password` | 目标账号权限高于自己 → 403；目标是超管 → 超管 |
+| `update_user`（停用）/ `deactivate_user` | 同上：不能停用比自己强的账号 |
+
+「子集」用的是 `CurrentUser.has()`，也就是鉴权主路径那一套通配语义（`*` / `资源:*`），
+不要另写一套字符串匹配。改这里的规则时，四条负向用例必须一起改
+（`test_identity_api.py` 里 `test_role_manage_cannot_write_wildcard` 等四组）。
+
 ### 2.4 内置角色
 
 | code | 权限 | 说明 |
@@ -150,11 +175,14 @@ POST /identity/login → 校验口令 → 角色展开成权限码 → 签发 JW
 
 ### 2.5 红线（已在 service 里实现，别绕过）
 
-- 不能停用/删除自己（手滑一点就把自己锁在门外）
+- 不能停用/删除自己（手滑一点就把自己锁在门外）；自助 `PATCH /me` 只接受展示字段，
+  `isActive` 根本不在入参里
 - 系统必须保留至少一个启用的超级管理员（否则只能改数据库了）
 - 内置角色不可删、`code` 不可改（权限内容可调，运营需要）
 - 登录失败对「用户不存在」和「密码错误」返回**同一个错误码和文案**
-- 新建用户的密码 ≥ 8 位；管理员建号时直接指定（不做临时密码那套状态机）
+- 新口令 ≥ 10 位、不能是纯数字、不能与当前口令相同；管理员建号时直接指定
+  （不做临时密码那套状态机）
+- 提权面统一判定：见 2.3 的表，四个入口不许各写一套
 
 红线的实现方式统一是「**先改 → flush → 再数一遍超管**」，归零就抛错由事务回滚。
 不要为每种操作手写「这次会不会锁死」的推演——间接路径（改角色标记、换角色、停用账号）
@@ -286,6 +314,12 @@ class MusicStore:
 > 但结果还没落库」的窗口。没有这两个方法，进程崩在这个窗口里时，重启只能看到
 > 「没有 external_id」，就会再提交一次——**两份账单**。实现方式就是给表加一列
 > `submit_attempts`（`video_tasks` 可参考）。
+
+> 占位实现请抛 `NotImplementedFeature`（501），**不要抛 `NotImplementedError`**：
+> 后者不是 `AppError`，会被 `_possibly_delivered` 归到「可能已送达」，
+> 于是「一次都没提交」的任务显示「为避免重复计费请核对」，把人引向查账单。
+> 框架现在把 `mark_submitting` 放在调用供应商的 `try` 之外，即使写错也只会报
+> 「提交准备失败」，不会污染计费口径——但占位该抛什么仍然要写对。
 
 `--generation` 还会在模块 `__init__.py` 里插一行 `from modules.music import pipeline`——
 流水线靠「import 副作用」注册。别删它：删了代码看起来一切正常，

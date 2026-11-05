@@ -80,6 +80,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         handler_names(),
     )
 
+    if settings.anonymous_allowed:
+        # 匿名回退给的是演示账号（含 `*`）。单独看合理，和「监听 0.0.0.0」叠在一起
+        # 就是内网里的免登录超管接口——这种事写在文档里没人看，打进日志才有人问（R4-16）
+        logger.warning(
+            "匿名访问已开启：未携带令牌的请求将以演示账号执行（权限 `*`）。"
+            "仅限本机开发；生产环境请设置 APP_ENV=prod 或显式 ALLOW_ANONYMOUS=false"
+        )
+
     try:
         yield
     finally:

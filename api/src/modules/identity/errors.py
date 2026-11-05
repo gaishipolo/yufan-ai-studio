@@ -31,7 +31,19 @@ class AccountDisabled(AppError):
 
 class SuperuserRequired(AppError):
     code = errors.code(403, 2)
-    message = "只有超级管理员可以授予或撤销超级管理员角色"
+    message = "该操作需要超级管理员权限"
+    http_status = 403
+
+
+class PermissionEscalation(AppError):
+    """想授予自己不具备的权限。
+
+    「能管角色」不等于「能造一个比自己更大的角色」：否则 `identity:role:manage`
+    就是一张通往超管的单程票。判定方式见 `IdentityService._guard_grant`。
+    """
+
+    code = errors.code(403, 3)
+    message = "不能授予自己不具备的权限"
     http_status = 403
 
 
@@ -102,6 +114,7 @@ __all__ = [
     "CredentialInvalid",
     "LastSuperuser",
     "OldPasswordMismatch",
+    "PermissionEscalation",
     "RoleCodeTaken",
     "RoleInUse",
     "RoleNotFound",

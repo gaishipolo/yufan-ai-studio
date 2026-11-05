@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC
 from typing import TYPE_CHECKING
 
 from core.context import CurrentUser
@@ -31,6 +32,10 @@ class IdentityPrincipalResolver:
 
     `resolve` 只做两件事：确认账号还存在且启用、把角色展开成权限码。
     任何业务判断（能不能进这个接口）仍然交给 `require()`，这里不越界。
+
+    额外一条：**改密之前的令牌一律作废**。停用和改权限都能即时生效，
+    唯独改密码不生效的话，「账号被盗 → 改密码」这个最标准的自救动作等于没做。
+    判定用令牌自带的 `iat` 与库里的 `password_changed_at` 比，不需要黑名单。
     """
 
     async def resolve(
@@ -41,9 +46,17 @@ class IdentityPrincipalResolver:
             return None
 
         user = resolved.user
+        if principal.issued_at and user.password_changed_at is not None:
+            changed_at = user.password_changed_at
+            if changed_at.tzinfo is None:  # sqlite 读回来是 naive，按 UTC 解释
+                changed_at = changed_at.replace(tzinfo=UTC)
+            if principal.issued_at < int(changed_at.timestamp()):
+                return None
+
         return CurrentUser(
             id=user.id,
             name=user.display_name or user.username,
             roles=resolved.role_codes,
             permissions=resolved.permissions,
+            issued_at=principal.issued_at,
         )

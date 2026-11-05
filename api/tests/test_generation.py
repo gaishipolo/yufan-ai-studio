@@ -235,6 +235,7 @@ class _SubmitProbeStore:
         self.external_id: str | None = None
         self.failed_with: str | None = None
         self.raised: BaseException | None = None
+        self.submit_calls = 0
 
     async def load(self, record_id: str) -> GenerationRecord:
         return GenerationRecord(
@@ -266,12 +267,18 @@ class _SubmitProbeStore:
 
 
 def _run_submit(
-    monkeypatch: pytest.MonkeyPatch, kind: str, boom: BaseException
+    monkeypatch: pytest.MonkeyPatch,
+    kind: str,
+    boom: BaseException | None = None,
+    probe: _SubmitProbeStore | None = None,
 ) -> _SubmitProbeStore:
     """把 echo 的 submit 换成指定异常，跑一次 handle_submit，返回探针。"""
-    probe = _SubmitProbeStore()
+    probe = probe or _SubmitProbeStore()
 
     async def fake_submit(self: EchoProvider, request: GenerationRequest) -> str:
+        probe.submit_calls += 1
+        if boom is None:  # pragma: no cover - 传入 None 时用于「根本不该提交」的用例
+            raise AssertionError("这个用例不该真的调用供应商")
         raise boom
 
     monkeypatch.setattr(EchoProvider, "submit", fake_submit)
@@ -342,4 +349,59 @@ def test_submit_4xx_is_cleared_without_retry(monkeypatch: pytest.MonkeyPatch) ->
     assert probe.submit_attempts == 0
     assert probe.raised is None
     assert probe.failed_with is not None
+
+
+def test_submit_5xx_is_treated_as_possibly_delivered(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """网关 502 不是「明确没送达」：上游很可能已经受理、只是回程失败（R4-01）。
+
+    把它当「确定没送达」就会自动重提，重提一次 = 第二份账单。
+    """
+    from core.exceptions import UpstreamError
+
+    probe = _run_submit(monkeypatch, "test-submit-502", UpstreamError("供应商网关 502"))
+
+    assert probe.submit_calls == 1, "5xx 不得自动重提"
+    assert probe.submit_attempts == 1, "意图标记要留着，这是「可能已计费」的唯一痕迹"
+    assert probe.raised is None
+    assert probe.failed_with is not None and "提交结果未知" in probe.failed_with
+
+
+def test_submit_not_implemented_fails_honestly(monkeypatch: pytest.MonkeyPatch) -> None:
+    """501 = 功能没实现，请求根本没发出去：文案不能说「可能已计费」（R4-03）。"""
+    from core.exceptions import NotImplementedFeature
+
+    probe = _run_submit(
+        monkeypatch, "test-submit-501", NotImplementedFeature("配音生成待实现")
+    )
+
+    assert probe.submit_attempts == 0, "没发出去的请求不该留下意图标记"
+    assert probe.raised is None, "501 不做无谓重试"
+    assert probe.failed_with is not None
+    assert "提交结果未知" not in probe.failed_with
     assert "提交生成失败" in probe.failed_with
+
+
+def test_submit_prepare_failure_is_not_blamed_on_billing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`mark_submitting` 抛错 = 还没调用供应商，不能说「为避免重复计费请核对」（R4-03）。
+
+    脚手架生成的 store 占位实现就是这种情况：供应商提交次数为 0，
+    但旧代码会显示「提交结果未知：请求已发出…」，把人引向核对账单。
+    """
+    from core.exceptions import NotImplementedFeature
+
+    class _BrokenStore(_SubmitProbeStore):
+        async def mark_submitting(self, record_id: str) -> None:
+            self.submit_attempts += 1
+            raise NotImplementedFeature("TODO: submit_attempts += 1")
+
+    probe = _run_submit(monkeypatch, "test-submit-prepare", probe=_BrokenStore())
+
+    assert probe.submit_calls == 0, "准备阶段就失败了，压根没调用供应商"
+    assert probe.raised is None
+    assert probe.failed_with is not None
+    assert "提交准备失败" in probe.failed_with
+    assert "提交结果未知" not in probe.failed_with

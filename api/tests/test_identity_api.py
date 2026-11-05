@@ -5,18 +5,29 @@
 2. 权限**实时生效**（令牌不再是权限快照）——这是 `api/authn.py` 存在的理由
 3. 锁死红线（最后一个超管、内置角色、停用自己）
 
-种子账号：admin/admin@123、editor/editor@123、viewer/viewer@123（见 `src/seed.py`）。
+种子账号：admin/admin@12345、editor/editor@12345、viewer/viewer@12345（见 `src/seed.py`）。
 """
 
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Iterator
 
 import pytest
 from fastapi.testclient import TestClient
 
 API = "/api/v1/identity"
-ADMIN = ("admin", "admin@123")
+ADMIN = ("admin", "admin@12345")
+
+
+@pytest.fixture(autouse=True)
+def _reset_login_throttle() -> Iterator[None]:
+    """限流计数器是进程级状态：不清零会让用例之间互相影响（顺序一变就红）。"""
+    from modules.identity import throttle
+
+    throttle.clear()
+    yield
+    throttle.clear()
 
 
 def _login(client: TestClient, username: str, password: str) -> dict[str, str]:
@@ -63,7 +74,7 @@ def _make_user(
 # 登录
 # --------------------------------------------------------------------------- #
 def test_login_returns_token_and_permissions(client: TestClient) -> None:
-    resp = client.post(f"{API}/login", json={"username": "admin", "password": "admin@123"})
+    resp = client.post(f"{API}/login", json={"username": "admin", "password": "admin@12345"})
     data = resp.json()["data"]
 
     assert resp.status_code == 200
@@ -89,7 +100,7 @@ def test_login_error_does_not_leak_account_existence(client: TestClient) -> None
 
 
 def test_login_username_is_case_insensitive(client: TestClient) -> None:
-    resp = client.post(f"{API}/login", json={"username": "ADMIN ", "password": "admin@123"})
+    resp = client.post(f"{API}/login", json={"username": "ADMIN ", "password": "admin@12345"})
     assert resp.status_code == 200
 
 
@@ -475,3 +486,196 @@ def test_without_resolver_permissions_come_from_token() -> None:
         assert resolved is claimed
     finally:
         register_principal_resolver(IdentityPrincipalResolver())
+
+
+# --------------------------------------------------------------------------- #
+# 提权面：能管角色 ≠ 能给自己提权（R4-11）
+# --------------------------------------------------------------------------- #
+def _ids(client: TestClient, headers: dict[str, str]) -> tuple[str, dict[str, str]]:
+    """返回 (admin 用户 id, {角色 code: 角色})——两条断言都要用到。"""
+    me = client.get(f"{API}/me", headers=headers).json()["data"]
+    roles = {r["code"]: r for r in client.get(f"{API}/roles", headers=headers).json()["data"]}
+    return me["id"], roles
+
+
+def test_role_manage_cannot_write_wildcard(client: TestClient) -> None:
+    """`identity:role:manage` 写 `*` 等于一次调用把自己变成超管（R4-11 路径 A）。"""
+    admin = _admin(client)
+    _, headers, own_role = _make_user(
+        client, admin, "ops_mgr", ["identity:read", "identity:role:manage", "task:read"]
+    )
+
+    promote = client.put(
+        f"{API}/roles/{own_role['id']}/permissions",
+        json={"permissions": ["*"]},
+        headers=headers,
+    )
+    assert promote.status_code == 403
+    assert promote.json()["code"] == 40323
+    # 权限没有真的写进去
+    assert client.get(f"{API}/me", headers=headers).json()["data"]["permissions"] != ["*"]
+
+    # 换个入口一样拦：新建角色时塞 `*`
+    sneaky = client.post(
+        f"{API}/roles",
+        json={"code": "sneaky", "name": "sneaky", "permissions": ["*"]},
+        headers=headers,
+    )
+    assert sneaky.status_code == 403
+
+    # 也不允许「造一个比自己大的普通角色」再挂给自己
+    bigger = client.post(
+        f"{API}/roles",
+        json={"code": "bigger", "name": "bigger", "permissions": ["task:*"]},
+        headers=headers,
+    )
+    assert bigger.status_code == 403
+
+
+def test_update_permission_cannot_reset_superuser_password(client: TestClient) -> None:
+    """重置超管口令 = 直接接管超管身份，`identity:update` 不该够用（R4-11 路径 B）。"""
+    admin = _admin(client)
+    admin_id, _ = _ids(client, admin)
+    _, headers, _ = _make_user(
+        client, admin, "ops_update", ["identity:read", "identity:update", "task:read"]
+    )
+
+    resp = client.post(
+        f"{API}/users/{admin_id}/reset-password",
+        json={"newPassword": "hijacked-pass-1"},
+        headers=headers,
+    )
+    assert resp.status_code == 403
+    assert resp.json()["code"] == 40322
+    # 原口令仍然有效，说明密码没被改掉
+    _login(client, "admin", "admin@12345")
+
+
+def test_create_user_cannot_attach_superuser_or_stronger_role(
+    client: TestClient,
+) -> None:
+    """建号时直接挂超管 / 挂一个自己都没有的角色（R4-11 路径 C）。"""
+    admin = _admin(client)
+    _, roles = _ids(client, admin)
+    _, headers, _ = _make_user(
+        client, admin, "ops_create", ["identity:read", "identity:create"]
+    )
+
+    as_superuser = client.post(
+        f"{API}/users",
+        json={
+            "username": "backdoor",
+            "password": "backdoor-pass-1",
+            "roleIds": [roles["admin"]["id"]],
+        },
+        headers=headers,
+    )
+    assert as_superuser.status_code == 403
+
+    as_editor = client.post(
+        f"{API}/users",
+        json={
+            "username": "lender",
+            "password": "lender-pass-1",
+            "roleIds": [roles["editor"]["id"]],
+        },
+        headers=headers,
+    )
+    assert as_editor.status_code == 403
+
+
+def test_delete_permission_cannot_disable_superuser(client: TestClient) -> None:
+    """停用超管和重置口令同级：先把人踢出去，再慢慢接管（R4-11 同类路径）。"""
+    admin = _admin(client)
+    admin_id, _ = _ids(client, admin)
+    _, headers, _ = _make_user(
+        client, admin, "ops_delete", ["identity:read", "identity:delete"]
+    )
+
+    resp = client.delete(f"{API}/users/{admin_id}", headers=headers)
+    assert resp.status_code == 403
+    assert resp.json()["code"] == 40322
+
+
+# --------------------------------------------------------------------------- #
+# 自助路径与口令策略（R4-12 / R4-13 / R4-14 / R4-15）
+# --------------------------------------------------------------------------- #
+def test_self_service_cannot_disable_account(client: TestClient) -> None:
+    """`PATCH /me` 只接受展示字段：`isActive` 被忽略而不是把自己锁死（R4-12）。"""
+    admin = _admin(client)
+    _, headers, _ = _make_user(client, admin, "self_off", ["task:read"])
+
+    resp = client.patch(f"{API}/me", json={"isActive": False}, headers=headers)
+    assert resp.status_code == 200
+    assert resp.json()["data"]["isActive"] is True
+    # 令牌仍然可用——旧实现这里会直接 401，且本人无法自救
+    assert client.get(f"{API}/me", headers=headers).status_code == 200
+
+
+def test_password_change_invalidates_old_tokens(client: TestClient) -> None:
+    """改密后旧令牌立即失效（R4-13）：账号被盗时「改密码」必须真的有用。
+
+    令牌 `iat` 只有秒级精度，同一秒内签发的令牌与改密时间相等；
+    这个 1 秒的窗口是有意保留的（否则改密当秒连新登录都会立刻失效）。
+    """
+    admin = _admin(client)
+    _, headers, _ = _make_user(client, admin, "rotate_pwd", ["task:read"])
+
+    old = headers
+    # 令牌 `iat` 只有秒级精度：先跨过一秒再改密，才能构造出「旧令牌严格更早」的场景
+    import time
+
+    time.sleep(1.1)
+    assert (
+        client.post(
+            f"{API}/me/password",
+            json={"oldPassword": "pass-12345", "newPassword": "rotated-pass-1"},
+            headers=old,
+        ).status_code
+        == 200
+    )
+
+    assert client.get(f"{API}/me", headers=old).status_code == 401
+    fresh = _login(client, "rotate_pwd", "rotated-pass-1")
+    assert client.get(f"{API}/me", headers=fresh).status_code == 200
+
+
+def test_weak_password_is_rejected(client: TestClient) -> None:
+    """口令策略三条：不得与旧密码相同、不得纯数字、不得重复字符（R4-14）。"""
+    admin = _admin(client)
+    _, headers, _ = _make_user(client, admin, "weak_pwd", ["task:read"])
+
+    for weak in ("pass-12345", "1234567890", "aaaaaaaaaa"):
+        resp = client.post(
+            f"{API}/me/password",
+            json={"oldPassword": "pass-12345", "newPassword": weak},
+            headers=headers,
+        )
+        assert resp.status_code == 422, f"{weak} 应被拒绝"
+
+    assert (
+        client.post(
+            f"{API}/me/password",
+            json={"oldPassword": "pass-12345", "newPassword": "strong-pass-1"},
+            headers=headers,
+        ).status_code
+        == 200
+    )
+
+
+def test_login_is_rate_limited_after_repeated_failures(client: TestClient) -> None:
+    """连续失败到阈值后返回 429，而不是无限次 401（R4-15）。"""
+    from modules.identity import throttle
+
+    for _ in range(throttle.MAX_FAILURES):
+        resp = client.post(
+            f"{API}/login",
+            json={"username": "brute_target", "password": "wrong-pass-1"},
+        )
+        assert resp.status_code == 401
+
+    blocked = client.post(
+        f"{API}/login", json={"username": "brute_target", "password": "wrong-pass-1"}
+    )
+    assert blocked.status_code == 429
+    assert blocked.json()["code"] == 42900

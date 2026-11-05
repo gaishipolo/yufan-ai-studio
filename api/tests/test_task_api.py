@@ -219,6 +219,9 @@ def test_detail_and_delete_use_the_same_permission(client: TestClient, api: str)
         "DELETE", f"{api}/tasks", json={"ids": [owner_task["id"]]}, headers=reader
     ).json()
     assert body["data"]["deleted"] == 0
+    # 必须回报「跳过了哪条」：只回 deleted=0 的话，前端分不清
+    # 「本来就不存在」和「没权限」，用户会以为自己少选了（R4-05）
+    assert body["data"]["skipped"] == [owner_task["id"]]
     assert client.get(f"{api}/tasks/{owner_task['id']}").status_code == 200
 
 
@@ -429,3 +432,51 @@ def test_stats_scope_follows_request_and_degrades(client: TestClient, api: str) 
     assert degraded["all"] == own["all"]
     assert degraded["all"] >= 1
     assert all_stats["all"] > degraded["all"], "全站总数必须大于单个用户的可见数"
+
+
+def test_retry_others_task_needs_its_own_permission(
+    client: TestClient, api: str
+) -> None:
+    """`task:read:all` 只解决「看得见」，替别人重试是再花一次钱（R4-06）。
+
+    这条边界靠一个独立权限点表达，而不是让「能看全部」顺带解锁计费动作。
+    """
+    from db.session import get_session_factory
+    from modules.task.enums import TaskStatus
+    from modules.task.models import VideoTask
+
+    async def _make_failed_task() -> str:
+        async with get_session_factory()() as session:
+            task = VideoTask(
+                title="别人的失败任务",
+                prompt="沙漠公路",
+                status=TaskStatus.FAILED.value,
+                model="Seedance 2.5",
+                model_id="seedance-2.5",
+                error_message="生成超时，请重试",
+                author_id="u_001",
+                author_name="老大",
+            )
+            session.add(task)
+            await session.commit()
+            return task.id
+
+    task_id = asyncio.run(_make_failed_task())
+
+    reader = _bearer(
+        client,
+        "u_040",
+        "ops_reader",
+        permissions=["task:read", "task:read:all", "task:update"],
+    )
+    denied = client.post(f"{api}/tasks/{task_id}/retry", headers=reader)
+    assert denied.status_code == 403
+    assert "重试他人" in denied.json()["message"]
+
+    allowed = _bearer(
+        client,
+        "u_041",
+        "ops_retry",
+        permissions=["task:read", "task:read:all", "task:update", "task:retry:any"],
+    )
+    assert client.post(f"{api}/tasks/{task_id}/retry", headers=allowed).status_code == 200

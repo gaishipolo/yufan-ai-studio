@@ -84,12 +84,27 @@ def create_access_token(
 
 
 def decode_access_token(token: str) -> dict[str, Any]:
+    """校验签名、有效期、用途与主体。
+
+    `typ` 必须显式校验：将来加 refresh token 时它同样用 `JWT_SECRET` 签名，
+    不区分用途就等于把「换票凭证」当成「访问凭证」接受。`sub` 同理——
+    没有主体的令牌在「按 sub 查库」的解析器下会变成「查不到用户」，报错位置
+    离真正的原因很远。
+    """
     try:
-        return jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
+        claims = jwt.decode(
+            token, settings.jwt_secret, algorithms=[settings.jwt_algorithm]
+        )
     except jwt.ExpiredSignatureError as exc:
         raise Unauthorized("登录已过期，请重新登录") from exc
     except jwt.InvalidTokenError as exc:
         raise Unauthorized("登录凭证无效") from exc
+
+    if claims.get("typ") != "access":
+        raise Unauthorized("登录凭证无效")
+    if not str(claims.get("sub") or "").strip():
+        raise Unauthorized("登录凭证无效")
+    return claims
 
 
 def user_from_token(token: str) -> CurrentUser:
@@ -99,4 +114,5 @@ def user_from_token(token: str) -> CurrentUser:
         name=str(claims.get("name", "")),
         roles=tuple(claims.get("roles", [])),
         permissions=frozenset(claims.get("perms", [])),
+        issued_at=int(claims.get("iat") or 0),
     )

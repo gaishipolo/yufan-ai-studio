@@ -30,7 +30,7 @@ SPECS: tuple[PermissionSpec, ...] = (
         PERM_UPDATE,
         "编辑用户（含停用、重置密码）",
         group="组织管理",
-        description="不含分配角色——那是提权动作",
+        description="不含分配角色；重置密码只能重置「权限不高于自己」的账号，超管仍需超管",
     ),
     PermissionSpec(PERM_DELETE, "停用用户", group="组织管理"),
     PermissionSpec(
@@ -97,8 +97,9 @@ BUILTIN_ROLES: tuple[BuiltinRole, ...] = (
     ),
 )
 
-# 密码最小长度：登录接口不校验（旧密码可能更短），只在设置新密码时校验
-PASSWORD_MIN_LENGTH: Final = 8
+# 密码最小长度：登录接口不校验（旧密码可能更短），只在设置新密码时校验。
+# 配合 `schema.py` 的两条规则一起看：不得与旧密码相同、不得为纯数字。
+PASSWORD_MIN_LENGTH: Final = 10
 
 __all__ = [
     "BUILTIN_ROLES",

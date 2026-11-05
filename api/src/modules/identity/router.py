@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Query, status
+from fastapi import APIRouter, Query, Request, status
 
 from api.deps import ActorDep, PageDep
 from core.exceptions import Unauthorized
@@ -28,6 +28,7 @@ from modules.identity.schema import (
     MeOut,
     PasswordChangeIn,
     PermissionCatalogOut,
+    ProfileUpdateIn,
     ResetPasswordIn,
     RoleCreateIn,
     RoleOut,
@@ -47,8 +48,13 @@ router = APIRouter(prefix="/identity", tags=["身份"])
 # 认证
 # --------------------------------------------------------------------------- #
 @router.post("/login", summary="登录换取令牌")
-async def login(payload: LoginIn, service: IdentityServiceDep) -> ApiResponse[TokenOut]:
-    user = await service.authenticate(payload.username, payload.password)
+async def login(
+    payload: LoginIn, service: IdentityServiceDep, request: Request
+) -> ApiResponse[TokenOut]:
+    # 客户端 IP 只用于限流计数。反代后面拿到的会是代理地址，
+    # 但因为计数键里还带着用户名，最坏情况是「同名账号被一起锁」而不是全站锁死。
+    client_ip = request.client.host if request.client else ""
+    user = await service.authenticate(payload.username, payload.password, client_ip=client_ip)
     identity = await service.resolve_identity(user.id)
     if identity is None:  # pragma: no cover - authenticate 已确认用户存在
         raise Unauthorized("账号状态异常，请重试")
@@ -62,7 +68,7 @@ async def me(service: IdentityServiceDep, actor: ActorDep) -> ApiResponse[MeOut]
 
 @router.patch("/me", summary="修改自己的资料")
 async def update_me(
-    payload: UserUpdateIn, service: IdentityServiceDep, actor: ActorDep
+    payload: ProfileUpdateIn, service: IdentityServiceDep, actor: ActorDep
 ) -> ApiResponse[MeOut]:
     return ApiResponse.ok(await service.update_me(actor.id, payload))
 
@@ -99,7 +105,7 @@ async def list_users(
 async def create_user(
     payload: UserCreateIn, service: IdentityServiceDep, actor: IdentityCreateDep
 ) -> ApiResponse[UserOut]:
-    return ApiResponse.ok(await service.create_user(payload))
+    return ApiResponse.ok(await service.create_user(payload, actor))
 
 
 @router.get("/users/{user_id}", summary="用户详情")
@@ -136,7 +142,7 @@ async def reset_password(
     service: IdentityServiceDep,
     actor: IdentityUpdateDep,
 ) -> ApiResponse[None]:
-    await service.reset_password(user_id, payload.new_password)
+    await service.reset_password(user_id, payload.new_password, actor)
     return ApiResponse.ok(None, "密码已重置")
 
 
@@ -183,7 +189,7 @@ async def set_role_permissions(
     actor: IdentityRoleManageDep,
 ) -> ApiResponse[RoleOut]:
     return ApiResponse.ok(
-        await service.set_role_permissions(role_id, payload.permissions)
+        await service.set_role_permissions(role_id, payload.permissions, actor)
     )
 
 

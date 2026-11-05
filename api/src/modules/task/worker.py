@@ -15,8 +15,10 @@ from datetime import UTC, datetime
 
 from sqlalchemy import select
 
+from core.events import get_event_bus
 from core.logging import get_logger
 from db.session import get_session_factory
+from generation.events import EVT_GENERATION_FAILED
 from generation.runner import SUBMIT_UNKNOWN_MESSAGE, get_runner
 from infra.queue.base import JobQueue
 from modules.task.enums import TaskStatus
@@ -44,22 +46,25 @@ async def resume_unfinished_tasks(queue: JobQueue) -> int:
         # 有提交意图但没有 external_id 的，连提都不能提（见下）
         resubmit: list[str] = []
         resume_poll: list[str] = []
-        unknown: list[str] = []
+        unknown: list[tuple[str, str]] = []
 
         for task in rows:
-            task.status = TaskStatus.QUEUED.value
             if task.external_id:
-                # 供应商侧任务已在执行：保留 external_id 与进度，只把轮询接回来
+                # 供应商侧任务已在执行：保留 external_id 与进度，只把轮询接回来。
+                # 状态必须留在 running——否则前端会显示「排队中 · 62%」，
+                # 要等下一次轮询才被拉回 running（R4-04）
+                task.status = TaskStatus.RUNNING.value
                 resume_poll.append(task.id)
             elif task.submit_attempts > 0:
                 # 崩在「供应商已受理 → 写库」之间：无法判断有没有计费，
                 # 自动重提就会产生第二份账单。宁可失败等人核对。
-                unknown.append(task.id)
+                unknown.append((task.id, task.author_id))
                 task.status = TaskStatus.FAILED.value
                 task.error_message = SUBMIT_UNKNOWN_MESSAGE
                 task.finished_at = datetime.now(tz=UTC)
             else:
                 # 提交前就中断了：重置现场，重新走 submit
+                task.status = TaskStatus.QUEUED.value
                 task.progress = 0
                 task.error_message = None
                 task.started_at = None
@@ -68,8 +73,17 @@ async def resume_unfinished_tasks(queue: JobQueue) -> int:
         # 先提交再派发，避免 worker 抢到任务时读不到最新状态
         await session.commit()
 
-    for task_id in unknown:
+    for task_id, owner_id in unknown:
         logger.warning("任务提交结果未知，已置失败等待人工核对 id=%s", task_id)
+        # 以前这里只写日志：任务页显示失败，但事件流里什么都没有，
+        # 接上通知/SSE 后这类任务对用户是「静默消失」的（R4-10）
+        await get_event_bus().publish(
+            EVT_GENERATION_FAILED,
+            kind=KIND_VIDEO,
+            record_id=task_id,
+            owner_id=owner_id,
+            error=SUBMIT_UNKNOWN_MESSAGE,
+        )
 
     runner = get_runner(queue)
     for task_id in resubmit:

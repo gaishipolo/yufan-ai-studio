@@ -30,9 +30,11 @@ DEMO_AUTHOR_NAME = "老大"
 
 # (id, 用户名, 昵称, 角色标识, 密码) —— 演示库专用口令，生产环境请勿使用
 _USERS: list[tuple[str, str, str, str, str]] = [
-    ("u_001", "admin", "老大", "admin", "admin@123"),
-    ("u_002", "editor", "小林", "editor", "editor@123"),
-    ("u_003", "viewer", "阿 May", "viewer", "viewer@123"),
+    # 演示口令也按正式策略（>=10 位、非纯数字）设置：若演示账号自己都不满足策略，
+    # 「改密码」这一步就会当场 422，第一印象很糟（R4-14/R4-16）
+    ("u_001", "admin", "老大", "admin", "admin@12345"),
+    ("u_002", "editor", "小林", "editor", "editor@12345"),
+    ("u_003", "viewer", "阿 May", "viewer", "viewer@12345"),
 ]
 
 _TASKS: list[tuple[str, str, TaskStatus, str, int, AspectRatio]] = [

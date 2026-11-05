@@ -47,6 +47,11 @@ class User(Base, UUIDMixin, TimestampMixin):
     last_login_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # 最近一次改密时间。解析器据此拒绝「改密之前签发」的令牌：
+    # 令牌是无状态的，不做这一步，账号被盗后改密码对攻击者没有影响（R4-13）
+    password_changed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"<User {self.id} {self.username!r} active={self.is_active}>"

@@ -121,8 +121,10 @@ export interface DeleteTasksIn {
 
 /** DeleteTasksOut */
 export interface DeleteTasksOut {
-  /** 实际删除的条数（不存在的 ID 会被跳过） */
+  /** 实际删除的条数 */
   deleted: number;
+  /** 被跳过的任务 ID：不存在，或属于他人且没有 `task:read:all` */
+  skipped?: string[];
 }
 
 /** GenerateImageIn */
@@ -215,7 +217,7 @@ export interface ModelOut {
 export interface PasswordChangeIn {
   /** 当前密码 */
   oldPassword: string;
-  /** 新密码 */
+  /** 新密码；至少 10 位，不能是纯数字，且不能与当前密码相同 */
   newPassword: string;
 }
 
@@ -245,6 +247,19 @@ export interface PermissionOut {
   description?: string;
 }
 
+/** `PATCH /identity/me` 的自助可写字段。
+
+刻意**不含** `is_active`：停用是管理动作，用户误点一下就把自己锁在门外，
+而恢复只有管理员一个入口。自助路径能改的只有「展示信息」。 */
+export interface ProfileUpdateIn {
+  /** 昵称 */
+  displayName?: string | null;
+  /** 邮箱；传 null 清空 */
+  email?: string | null;
+  /** 头像 URL；传 null 清空 */
+  avatarUrl?: string | null;
+}
+
 /** ReadyOut */
 export interface ReadyOut {
   status: string;
@@ -254,7 +269,7 @@ export interface ReadyOut {
 
 /** ResetPasswordIn */
 export interface ResetPasswordIn {
-  /** 管理员设置的新密码 */
+  /** 管理员设置的新密码；至少 10 位，不能是纯数字 */
   newPassword: string;
 }
 
@@ -488,7 +503,7 @@ export interface UploadTicketOut {
 export interface UserCreateIn {
   /** 登录名，3-64 位字母数字或 `. _ -`，会被转成小写 */
   username: string;
-  /** 初始密码，管理员指定 */
+  /** 初始密码，管理员指定；至少 10 位，不能是纯数字 */
   password: string;
   /** 昵称，留空则与用户名相同 */
   displayName?: string;

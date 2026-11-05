@@ -60,10 +60,11 @@ def test_resume_resubmits_only_tasks_without_external_id() -> None:
     assert f"submit:video:{pending.id}" in keys
     assert f"poll:video:{pending.id}" not in keys
 
-    # 现场保留：external_id 与进度都不能被清空
+    # 现场保留：external_id、进度、**以及 running 状态**都不能被改写。
+    # 状态退回 queued 会出现「排队中 · 42%」这种自相矛盾的展示（R4-04）
     assert submitted.external_id == "echo-video-deadbeef-1700000000"
     assert submitted.progress == 42
-    assert submitted.status == TaskStatus.QUEUED.value
+    assert submitted.status == TaskStatus.RUNNING.value
 
 
 def test_resume_does_not_resubmit_when_submit_result_unknown() -> None:

@@ -26,14 +26,14 @@ app serve --reload            # http://127.0.0.1:8080/docs
 
 | 用户名 | 密码 | 角色 |
 |---|---|---|
-| `admin` | `admin@123` | 超级管理员（`*`）|
-| `editor` | `editor@123` | 内容编辑（内容生产全量）|
-| `viewer` | `viewer@123` | 只读成员 |
+| `admin` | `admin@12345` | 超级管理员（`*`）|
+| `editor` | `editor@12345` | 内容编辑（内容生产全量）|
+| `viewer` | `viewer@12345` | 只读成员 |
 
 ```bash
 curl -X POST http://127.0.0.1:8080/api/v1/identity/login \
   -H 'Content-Type: application/json' \
-  -d '{"username":"admin","password":"admin@123"}'
+  -d '{"username":"admin","password":"admin@12345"}'
 ```
 
 不带令牌时，非生产环境仍回退到演示账号（便于前端联调）；生产环境必须登录。
@@ -172,7 +172,7 @@ import 时不带任何前缀：`from core.config import settings`、`from module
 app new-module comment --label 评论 --perm comment --slot 9
 ```
 
-生成 `modules/comment/` 六件套后，**服务已经能跑**：模块被自动发现、权限点进入目录、
+生成 `modules/comment/` 七件套后，**服务已经能跑**：模块被自动发现、权限点进入目录、
 表由 `create_all` 建好、接口返回 `501 + "评论列表待实现"`。
 
 不需要改路由聚合、不需要改模型注册表、不需要改依赖文件。
@@ -239,6 +239,8 @@ sqlite 读出的 naive 时间在序列化时按 UTC 补齐，避免前端时区�
 
 **数据范围**：列表的 `scope=all` / 详情 / 删除共用同一个权限点 `task:read:all`，
 没有它就一律按「只看自己」处理（不是报错，是安全降级）。
+重试他人任务单独要 `task:retry:any`：那是「再花一次钱」的动作，
+不该由「能看全部」顺带解锁。
 换其它角色（运营、审核）只需在登录时把该权限码展开进令牌，
 业务代码里没有也不应该有 `"admin"` 这类角色名判断。
 

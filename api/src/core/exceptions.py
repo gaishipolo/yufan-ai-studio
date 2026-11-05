@@ -138,8 +138,11 @@ class AppError(Exception):
 
         4xx 是「调用方写错了 / 没权限 / 资源不存在」，重试一万次也是同样的结果，
         只会让用户多等几次退避、并且用最后一次的错误覆盖真正的根因。
-        429 与 5xx 属于临时状态，可以退避重试。
+        429 与 5xx 属于临时状态，可以退避重试——但 **501 除外**：它是
+        `NotImplementedFeature`，代码里就没写这个功能，重试三次只是白等 6 秒。
         """
+        if self.http_status == 501:
+            return False
         return self.http_status == 429 or self.http_status >= 500
 
 

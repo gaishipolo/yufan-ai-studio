@@ -6,6 +6,8 @@
 用法：
     app new-module voice --label 配音 --perm voice --slot 3
     app new-module voice --generation     # 额外生成生成流水线骨架
+
+`--slot` 不是装饰：它会被写进 `errors.py` 的 `ModuleErrors(slot=N)`，并参与号段冲突检测。
 """
 
 from __future__ import annotations
@@ -16,6 +18,7 @@ from pathlib import Path
 
 from scaffold.templates import (
     DEPENDENCIES_TMPL,
+    ERRORS_TMPL,
     GENERATION_TMPL,
     INIT_TMPL,
     MODELS_TMPL,
@@ -25,6 +28,8 @@ from scaffold.templates import (
 )
 
 _NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+# 从现有模块的 errors.py 里读出「谁占了哪个号段」，新增模块时据此查重
+_SLOT_RE = re.compile(r"""ModuleErrors\(\s*["'][\w]+["']\s*,\s*slot\s*=\s*(\d)""")
 
 
 class ScaffoldError(RuntimeError):
@@ -76,7 +81,10 @@ def validate(plan: ModulePlan) -> None:
     if not _NAME_RE.match(plan.perm):
         raise ScaffoldError(f"权限前缀必须是 snake_case：{plan.perm!r}")
     if not 1 <= plan.slot <= 9:
-        raise ScaffoldError("错误码 slot 必须为 1-9（0 为框架保留），见 docs/EXTENDING.md 分配表")
+        raise ScaffoldError(
+            f"必须显式指定 --slot 1-9（当前 {plan.slot}；0 为框架保留），"
+            "取值见 docs/EXTENDING.md 第 7 节的号段分配表"
+        )
 
 
 def render(plan: ModulePlan) -> dict[str, str]:
@@ -91,10 +99,26 @@ def render(plan: ModulePlan) -> dict[str, str]:
         "service.py": SERVICE_TMPL.substitute(ctx),
         "dependencies.py": DEPENDENCIES_TMPL.substitute(ctx),
         "models.py": MODELS_TMPL.substitute(ctx),
+        # 错误码必须一开始就有：等到「要区分 409 和 404」时才补，
+        # 模块里已经散落着框架级 BadRequest，重构成本比一开始生成高得多（R4-02）
+        "errors.py": ERRORS_TMPL.substitute(ctx),
     }
     if plan.with_generation:
         files["pipeline.py"] = GENERATION_TMPL.substitute(ctx)
     return files
+
+
+def _used_slots(root: Path) -> dict[int, str]:
+    """扫描现有模块的 `errors.py`，返回 {号段: 模块名}。"""
+    used: dict[int, str] = {}
+    modules_dir = root / "src" / "modules"
+    if not modules_dir.is_dir():
+        return used
+    for errors_file in modules_dir.glob("*/errors.py"):
+        match = _SLOT_RE.search(errors_file.read_text(encoding="utf-8"))
+        if match:
+            used[int(match.group(1))] = errors_file.parent.name
+    return used
 
 
 def create_module(plan: ModulePlan, root: Path) -> list[Path]:
@@ -102,6 +126,14 @@ def create_module(plan: ModulePlan, root: Path) -> list[Path]:
     target = root / "src" / "modules" / plan.name
     if target.exists():
         raise ScaffoldError(f"目录已存在，拒绝覆盖: {target}")
+
+    used = _used_slots(root)
+    owner = used.get(plan.slot)
+    if owner and owner != plan.name:
+        raise ScaffoldError(
+            f"错误码号段 {plan.slot} 已被模块 {owner} 占用，"
+            "请换一个 slot（见 docs/EXTENDING.md 第 7 节）"
+        )
 
     target.mkdir(parents=True)
     written: list[Path] = []

@@ -16,17 +16,26 @@ PERM_UPDATE = "task:update"
 PERM_DELETE = "task:delete"
 # 跨用户可见：看别人的任务、进别人的详情、删别人的任务，都是这一个开关
 PERM_READ_ALL = "task:read:all"
+# 重试别人的任务是**花钱**的动作（用别人的额度再跑一次生成），单独一个开关：
+# 「能看全部」不应该顺带解锁「替别人烧钱」。内置 editor 的 `task:*` 自然覆盖它。
+PERM_RETRY_ANY = "task:retry:any"
 
 SPECS: tuple[PermissionSpec, ...] = (
     PermissionSpec(PERM_READ, "查看任务", group="内容生产"),
     PermissionSpec(PERM_CREATE, "创建生成任务", group="内容生产"),
-    PermissionSpec(PERM_UPDATE, "编辑/重试任务", group="内容生产"),
+    PermissionSpec(PERM_UPDATE, "编辑/重试自己的任务", group="内容生产"),
     PermissionSpec(PERM_DELETE, "删除任务", group="内容生产"),
     PermissionSpec(
         PERM_READ_ALL,
         "查看并管理他人任务",
         group="内容生产",
-        description="列表 scope=all / 详情 / 删除的跨用户判定依据",
+        description="列表 scope=all / 详情 / 删除的跨用户判定依据；不含重试",
+    ),
+    PermissionSpec(
+        PERM_RETRY_ANY,
+        "重试他人任务",
+        group="内容生产",
+        description="会消耗额度：重试他人任务前额外校验此权限",
     ),
 )
 
@@ -35,6 +44,7 @@ __all__ = [
     "PERM_DELETE",
     "PERM_READ",
     "PERM_READ_ALL",
+    "PERM_RETRY_ANY",
     "PERM_UPDATE",
     "SPECS",
 ]

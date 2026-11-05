@@ -25,7 +25,7 @@ from infra.queue.base import JobQueue
 from modules.task.enums import AspectRatio, TaskScope, TaskStatus
 from modules.task.models import VideoTask
 from modules.task.params import resolve_aspect_ratio, resolve_duration, resolve_model
-from modules.task.permissions import PERM_READ_ALL
+from modules.task.permissions import PERM_READ_ALL, PERM_RETRY_ANY
 from modules.task.pipeline import KIND_VIDEO
 from modules.task.repository import TaskRepository
 from modules.task.schema import (
@@ -137,6 +137,10 @@ class TaskService:
 
     async def retry_task(self, task_id: str, actor: CurrentUser) -> VideoTask:
         task = await self.get_task(task_id, actor)
+        # `task:read:all` 只解决「看得见」，重试是「再花一次钱」，两者必须分开：
+        # 否则「运营能看全部任务」会顺带变成「运营能用别人的额度跑生成」（R4-06）
+        if task.author_id != actor.id and not actor.has(PERM_RETRY_ANY):
+            raise Forbidden("无权重试他人的任务")
         if TaskStatus(task.status) is not TaskStatus.FAILED:
             raise InvalidState("仅失败的任务可以重试")
 
@@ -181,15 +185,30 @@ class TaskService:
         await self.session.commit()
         return task
 
-    async def delete_tasks(self, ids: list[str], actor: CurrentUser) -> int:
+    async def delete_tasks(
+        self, ids: list[str], actor: CurrentUser
+    ) -> tuple[int, list[str]]:
+        """批量删除，返回 (删除条数, 被跳过的 id)。
+
+        跳过有三种原因：id 根本不存在、属于别人且调用者没有 `task:read:all`、
+        或者（极端并发）刚被别人删掉。**不再静默**：前端要把 skipped 显示出来，
+        否则用户会以为是自己少选了。详情接口对无权限是 403，这里不整批 403 是
+        因为批量场景下一条越权不该让其余十条白删——但必须让调用方看得见。
+        """
         tasks = await self.repo.get_many(ids)
         owned = [t for t in tasks if self._can_access(t, actor)]
+        owned_ids = {task.id for task in owned}
+        # 「查不到」与「没权限」都落在这里：对外都是「这条没删成」，
+        # 具体原因在服务端日志里区分（不向无权限者泄漏「这个 id 存在」）
+        skipped = [task_id for task_id in ids if task_id not in owned_ids]
         for task in owned:
             await self.session.delete(task)
         await self.session.commit()
-        if len(owned) != len(ids):
-            logger.warning("批量删除部分任务不存在或无权限: 请求 %d 实际 %d", len(ids), len(owned))
-        return len(owned)
+        if skipped:
+            logger.warning(
+                "批量删除跳过 %d 条（不存在或无权限）: %s", len(skipped), skipped[:20]
+            )
+        return len(owned), skipped
 
     # ------------------------------------------------------------------ 内部
     def to_out(self, task: VideoTask) -> TaskOut:

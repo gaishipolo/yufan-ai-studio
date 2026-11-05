@@ -208,7 +208,12 @@ def main(argv: list[str] | None = None) -> int:
     p_new.add_argument("name", help="模块名（snake_case），同时作为目录名与 pipeline kind")
     p_new.add_argument("--label", required=True, help="中文名，用于路由标签与权限名")
     p_new.add_argument("--perm", default="", help="权限前缀，默认与模块名相同")
-    p_new.add_argument("--slot", type=int, default=3, help="错误码号段 1-9（见文档分配表）")
+    p_new.add_argument(
+        "--slot",
+        type=int,
+        default=0,
+        help="错误码号段 1-9，必填（0 为框架保留）；见 docs/EXTENDING.md 第 7 节",
+    )
     p_new.add_argument("--group", default="业务", help="权限分组（用于角色配置界面）")
     p_new.add_argument("--generation", action="store_true", help="同时生成生成流水线骨架")
     p_new.add_argument("--root", default=".", help="项目根目录")

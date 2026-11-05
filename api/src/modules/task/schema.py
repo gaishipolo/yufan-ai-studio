@@ -125,4 +125,8 @@ class DeleteTasksIn(CamelModel):
 
 
 class DeleteTasksOut(CamelModel):
-    deleted: int = Field(description="实际删除的条数（不存在的 ID 会被跳过）")
+    deleted: int = Field(description="实际删除的条数")
+    skipped: list[str] = Field(
+        default_factory=list,
+        description="被跳过的任务 ID：不存在，或属于他人且没有 `task:read:all`",
+    )

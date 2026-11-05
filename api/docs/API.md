@@ -85,8 +85,9 @@ Authorization: Bearer <accessToken>
 | `task:create` | 创建生成任务 |  |
 | `task:delete` | 删除任务 |  |
 | `task:read` | 查看任务 |  |
-| `task:read:all` | 查看并管理他人任务 | 列表 scope=all / 详情 / 删除的跨用户判定依据 |
-| `task:update` | 编辑/重试任务 |  |
+| `task:read:all` | 查看并管理他人任务 | 列表 scope=all / 详情 / 删除的跨用户判定依据；不含重试 |
+| `task:retry:any` | 重试他人任务 | 会消耗额度：重试他人任务前额外校验此权限 |
+| `task:update` | 编辑/重试自己的任务 |  |
 | `template:read` | 查看行业模板 |  |
 
 **素材**
@@ -105,7 +106,7 @@ Authorization: Bearer <accessToken>
 | `identity:delete` | 停用用户 |  |
 | `identity:read` | 查看用户与角色 |  |
 | `identity:role:manage` | 管理角色与权限点 | 新建/删除角色、调整角色权限、给用户分配角色 |
-| `identity:update` | 编辑用户（含停用、重置密码） | 不含分配角色——那是提权动作 |
+| `identity:update` | 编辑用户（含停用、重置密码） | 不含分配角色；重置密码只能重置「权限不高于自己」的账号，超管仍需超管 |
 
 > 判定规则：`*` 恒真；`task:*` 这类通配可覆盖 `task:read`；否则按字符串精确匹配。
 
@@ -127,7 +128,8 @@ Authorization: Bearer <accessToken>
 | `40121` | 401 | identity | `CredentialInvalid` | 用户名或密码错误 |
 | `40300` | 403 | 框架 | `Forbidden` | 没有操作权限 |
 | `40321` | 403 | identity | `AccountDisabled` | 账号已停用，请联系管理员 |
-| `40322` | 403 | identity | `SuperuserRequired` | 只有超级管理员可以授予或撤销超级管理员角色 |
+| `40322` | 403 | identity | `SuperuserRequired` | 该操作需要超级管理员权限 |
+| `40323` | 403 | identity | `PermissionEscalation` | 不能授予自己不具备的权限 |
 | `40400` | 404 | 框架 | `NotFound` | 资源不存在 |
 | `40421` | 404 | identity | `UserNotFound` | 用户不存在 |
 | `40422` | 404 | identity | `RoleNotFound` | 角色不存在 |
@@ -224,14 +226,13 @@ Authorization: Bearer <accessToken>
 
 **修改自己的资料**
 
-**请求体** `UserUpdateIn`
+**请求体** `ProfileUpdateIn`
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `displayName` | `string \| null` | 否 | 昵称 |
 | `email` | `string \| null` | 否 | 邮箱；传 null 清空 |
 | `avatarUrl` | `string \| null` | 否 | 头像 URL；传 null 清空 |
-| `isActive` | `boolean \| null` | 否 | 启用/停用；不能停用自己，且必须保留一个启用的超管 |
 
 **响应** `ApiResponse<MeOut>`（前端取 `res.data`）
 
@@ -257,7 +258,7 @@ Authorization: Bearer <accessToken>
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `oldPassword` | `string` | 是 | 当前密码 |
-| `newPassword` | `string` | 是 | 新密码 |
+| `newPassword` | `string` | 是 | 新密码；至少 10 位，不能是纯数字，且不能与当前密码相同 |
 
 **响应** `ApiResponse<null>`（前端取 `res.data`）
 
@@ -424,7 +425,7 @@ Authorization: Bearer <accessToken>
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `username` | `string` | 是 | 登录名，3-64 位字母数字或 `. _ -`，会被转成小写 |
-| `password` | `string` | 是 | 初始密码，管理员指定 |
+| `password` | `string` | 是 | 初始密码，管理员指定；至少 10 位，不能是纯数字 |
 | `displayName` | `string` | 否 | 昵称，留空则与用户名相同 |
 | `email` | `string \| null` | 否 | 邮箱 |
 | `avatarUrl` | `string \| null` | 否 | 头像 URL |
@@ -531,7 +532,7 @@ Authorization: Bearer <accessToken>
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `newPassword` | `string` | 是 | 管理员设置的新密码 |
+| `newPassword` | `string` | 是 | 管理员设置的新密码；至少 10 位，不能是纯数字 |
 
 **响应** `ApiResponse<null>`（前端取 `res.data`）
 
@@ -656,7 +657,8 @@ Authorization: Bearer <accessToken>
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `deleted` | `number` | 是 | 实际删除的条数（不存在的 ID 会被跳过） |
+| `deleted` | `number` | 是 | 实际删除的条数 |
+| `skipped` | `string[]` | 否 | 被跳过的任务 ID：不存在，或属于他人且没有 `task:read:all` |
 
 #### `GET /api/v1/tasks/stats`
 
@@ -1115,7 +1117,8 @@ Authorization: Bearer <accessToken>
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `deleted` | `number` | 是 | 实际删除的条数（不存在的 ID 会被跳过） |
+| `deleted` | `number` | 是 | 实际删除的条数 |
+| `skipped` | `string[]` | 否 | 被跳过的任务 ID：不存在，或属于他人且没有 `task:read:all` |
 
 ### `GenerateImageIn`
 
@@ -1206,7 +1209,7 @@ Authorization: Bearer <accessToken>
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `oldPassword` | `string` | 是 | 当前密码 |
-| `newPassword` | `string` | 是 | 新密码 |
+| `newPassword` | `string` | 是 | 新密码；至少 10 位，不能是纯数字，且不能与当前密码相同 |
 
 ### `PermissionCatalogOut`
 
@@ -1230,6 +1233,19 @@ Authorization: Bearer <accessToken>
 | `name` | `string` | 是 | 权限名称 |
 | `description` | `string` | 否 | 权限说明 |
 
+### `ProfileUpdateIn`
+
+`PATCH /identity/me` 的自助可写字段。
+
+刻意**不含** `is_active`：停用是管理动作，用户误点一下就把自己锁在门外，
+而恢复只有管理员一个入口。自助路径能改的只有「展示信息」。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `displayName` | `string \| null` | 否 | 昵称 |
+| `email` | `string \| null` | 否 | 邮箱；传 null 清空 |
+| `avatarUrl` | `string \| null` | 否 | 头像 URL；传 null 清空 |
+
 ### `ReadyOut`
 
 | 字段 | 类型 | 必填 | 说明 |
@@ -1242,7 +1258,7 @@ Authorization: Bearer <accessToken>
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `newPassword` | `string` | 是 | 管理员设置的新密码 |
+| `newPassword` | `string` | 是 | 管理员设置的新密码；至少 10 位，不能是纯数字 |
 
 ### `RoleBriefOut`
 
@@ -1462,7 +1478,7 @@ Authorization: Bearer <accessToken>
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `username` | `string` | 是 | 登录名，3-64 位字母数字或 `. _ -`，会被转成小写 |
-| `password` | `string` | 是 | 初始密码，管理员指定 |
+| `password` | `string` | 是 | 初始密码，管理员指定；至少 10 位，不能是纯数字 |
 | `displayName` | `string` | 否 | 昵称，留空则与用户名相同 |
 | `email` | `string \| null` | 否 | 邮箱 |
 | `avatarUrl` | `string \| null` | 否 | 头像 URL |

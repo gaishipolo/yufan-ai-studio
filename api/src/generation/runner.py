@@ -23,6 +23,7 @@ worker 的并发槽位是稀缺资源。单个视频生成要 3 分钟，如果 
 from __future__ import annotations
 
 import httpx
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.config import settings
 from core.events import get_event_bus
@@ -36,6 +37,7 @@ from generation.events import (
     EVT_GENERATION_SUCCEEDED,
 )
 from generation.pipeline import get_pipeline
+from generation.store import GenerationStore
 from infra import get_model_router
 from infra.ai.base import GenerationState
 from infra.queue.base import Job, JobQueue
@@ -57,21 +59,28 @@ SUBMIT_UNKNOWN_MESSAGE = (
 def _possibly_delivered(exc: BaseException) -> bool:
     """这次提交失败有没有可能「供应商已经受理」。
 
-    - 连接都没建立（DNS 解析 / 握手 / 被拒绝）：请求必然没送达 → False，
-      可以安全清掉意图标记并重试。
-    - 读/写超时、连接中途被重置：请求已经发出去，供应商可能已受理
-      （也可能已扣费）→ True，绝不能自动重提。
-    - `AppError`：供应商适配器明确知道结果（拿到了 4xx/5xx 响应），
-      传输层没有不确定性 → False。
-    - 其它一切异常：按「可能已送达」处理。宁可让一条任务失败等人核对，
-      也不能赌它没送达——重提错的代价是第二份账单。
+    按 **HTTP 语义**分类，而不是按异常类（R4-01 的修正）：
+
+    - 连接都没建立（DNS 解析 / 握手 / 被拒绝）：请求必然没送达 → False。
+    - `AppError` 4xx（含 429）：供应商明确拒绝，没受理 → False。
+    - `AppError` 5xx / 408：**可能已受理**。网关 502 的典型成因就是
+      「上游已经受理、回程失败」，把它当「确定没送达」等于用一次自动重提
+      去赌对方没收到，赌错就是第二份账单。
+    - `AppError` 501：功能没实现，请求根本没发出去 → False（否则脚手架
+      生成的第一条任务会顶着「可能已计费」的文案失败）。
+    - 读/写超时、连接中途被重置、其它未知异常：按「可能已送达」处理。
+      宁可让一条任务失败等人核对，也不能赌它没送达。
 
     注：这里只识别 httpx 的异常类别；用别的 HTTP 客户端的供应商抛出的
     超时不会被精确归类，会落到「可能已送达」这个安全默认值。
     """
     if isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout)):
         return False
-    return not isinstance(exc, AppError)
+    if isinstance(exc, AppError):
+        if exc.http_status == 501:
+            return False
+        return exc.http_status == 408 or exc.http_status >= 500
+    return True
 
 
 class GenerationRunner:
@@ -137,58 +146,71 @@ class GenerationRunner:
                     record_id,
                     record.submit_attempts,
                 )
-                await store.mark_failed(record_id, SUBMIT_UNKNOWN_MESSAGE)
-                await session.commit()
-                await self._emit(
-                    EVT_GENERATION_FAILED,
+                await self._fail(
+                    store=store,
+                    session=session,
                     kind=kind,
                     record_id=record_id,
                     owner_id=record.owner_id,
-                    error=SUBMIT_UNKNOWN_MESSAGE,
+                    message=SUBMIT_UNKNOWN_MESSAGE,
                 )
                 return
             else:
+                # 「记录提交意图」不是「调用供应商」：它出错说明代码有问题
+                # （典型是脚手架里的占位实现），此时请求根本没发出去。
+                # 必须在 try 之外拦下来：落进下面的分支会被误判成「可能已计费」（R4-03）
+                try:
+                    await store.mark_submitting(record_id)
+                    await session.commit()
+                except Exception as exc:  # noqa: BLE001
+                    logger.exception(
+                        "提交准备失败（未调用供应商）kind=%s id=%s", kind, record_id
+                    )
+                    await self._fail(
+                        store=store,
+                        session=session,
+                        kind=kind,
+                        record_id=record_id,
+                        owner_id=record.owner_id,
+                        message=f"提交准备失败：{exc}"[:_MAX_ERROR_LEN],
+                    )
+                    return
+
                 try:
                     provider = get_model_router().provider_for(record.model)
                     request = await pipeline.build_request(record)
-                    # 调用供应商**之前**先落一次提交意图：这是崩溃后唯一的痕迹
-                    await store.mark_submitting(record_id)
-                    await session.commit()
                     external_id = await provider.submit(request)
                 except Exception as exc:  # noqa: BLE001
                     logger.exception("提交生成失败 kind=%s id=%s", kind, record_id)
 
                     if _possibly_delivered(exc):
-                        # 超时 / 连接中途断开：请求已发出，供应商可能已受理。
+                        # 超时 / 5xx / 连接中途断开：请求已发出，供应商可能已受理。
                         # 清标记重试就是在赌「它没收到」，赌错 = 第二份账单，
                         # 所以保留意图标记、置为「结果未知」失败等人核对。
-                        await store.mark_failed(record_id, SUBMIT_UNKNOWN_MESSAGE)
-                        await session.commit()
-                        await self._emit(
-                            EVT_GENERATION_FAILED,
+                        await self._fail(
+                            store=store,
+                            session=session,
                             kind=kind,
                             record_id=record_id,
                             owner_id=record.owner_id,
-                            error=SUBMIT_UNKNOWN_MESSAGE,
+                            message=SUBMIT_UNKNOWN_MESSAGE,
                         )
                         return
 
-                    # 确定没送达（4xx 拒绝 / 根本连不上）：清掉意图标记，允许安全重试
+                    # 确定没送达（4xx 拒绝 / 根本连不上 / 功能未实现）：
+                    # 清掉意图标记，允许安全重试
                     await store.clear_submit_attempt(record_id)
                     if self._retryable(exc, job):
                         await session.commit()
                         raise  # 交给 worker nack + 指数退避重试
 
-                    await store.mark_failed(
-                        record_id, f"提交生成失败：{exc}"[:_MAX_ERROR_LEN]
-                    )
-                    await session.commit()
-                    await self._emit(
-                        EVT_GENERATION_FAILED,
+                    await self._fail(
+                        store=store,
+                        session=session,
                         kind=kind,
                         record_id=record_id,
                         owner_id=record.owner_id,
-                        error=str(exc)[:_MAX_ERROR_LEN],
+                        message=f"提交生成失败：{exc}"[:_MAX_ERROR_LEN],
                     )
                     return
 
@@ -227,14 +249,17 @@ class GenerationRunner:
                     return
 
                 if polls >= settings.generation_max_polls:
-                    await store.mark_failed(record_id, "生成超时，请重试")
+                    # 事件里的 error 与落库文案必须一致：接上通知渠道后，
+                    # 用户收到的说法不能和任务详情页不一样（R4-10）
+                    message = "生成超时，请重试"
+                    await store.mark_failed(record_id, message)
                     await session.commit()
                     await self._emit(
                         EVT_GENERATION_FAILED,
                         kind=kind,
                         record_id=record_id,
                         owner_id=record.owner_id,
-                        error="timeout",
+                        error=message,
                     )
                     return
 
@@ -354,6 +379,31 @@ class GenerationRunner:
                 )
         except Exception:  # noqa: BLE001
             logger.exception("兜底标记失败也失败（只能等重启恢复）kind=%s id=%s", kind, record_id)
+
+    async def _fail(
+        self,
+        *,
+        store: GenerationStore,
+        session: AsyncSession,
+        kind: str,
+        record_id: str,
+        owner_id: str,
+        message: str,
+    ) -> None:
+        """统一的「确定失败」收尾：落库 → 提交 → 发事件。
+
+        三个失败分支（准备失败 / 结果未知 / 确定未送达）文案不同但动作相同。
+        各写一遍的后果已经有先例：`worker.py` 的「结果未知」分支漏发了事件（R4-10）。
+        """
+        await store.mark_failed(record_id, message)
+        await session.commit()
+        await self._emit(
+            EVT_GENERATION_FAILED,
+            kind=kind,
+            record_id=record_id,
+            owner_id=owner_id,
+            error=message,
+        )
 
     @staticmethod
     def _retryable(exc: Exception, job: Job) -> bool:

@@ -80,8 +80,9 @@ async def get_actor(
         claimed = user_from_token(credentials.credentials)
         user = await resolve_principal(claimed, session)
         if user is None:
-            # 令牌本身没坏，坏的是它指向的账号：必须回 401 让前端重新登录
-            raise Unauthorized("账号已停用或不存在，请重新登录")
+            # 令牌本身没坏，坏的是它指向的账号（停用 / 被删 / 改过密码）：
+            # 必须回 401 让前端重新登录
+            raise Unauthorized("登录状态已失效，请重新登录")
         set_current_user(user)
         request.state.user = user
         return user
@@ -121,15 +122,6 @@ def require(
     return dependency
 
 
-def require_role(*roles: str) -> Callable[..., Awaitable[CurrentUser]]:
-    """角色判定：仅用于过渡期，新代码应使用 `require()`。"""
-
-    async def dependency(actor: ActorDep) -> CurrentUser:
-        if not set(roles) & set(actor.roles):
-            raise Forbidden(f"需要角色之一: {', '.join(roles)}")
-        return actor
-
-    return dependency
-
-
-AdminDep = Annotated[CurrentUser, Depends(require_role("admin"))]
+# 这里曾经有 `require_role()` / `AdminDep`：按角色名判定。
+# 身份模块把角色展开成权限码之后，它们既没有调用方也没有测试，
+# 留着只会让人以为「写死角色名」是允许的（R4-08）。

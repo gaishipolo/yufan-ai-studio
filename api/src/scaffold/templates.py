@@ -35,6 +35,30 @@ module = ModuleSpec(
 '''
 )
 
+ERRORS_TMPL = Template(
+    '''"""${label}错误码（slot ${slot}，见 `docs/EXTENDING.md` §7 的号段分配表）。
+
+编号规则：`code = HTTP状态码 × 100 + ${slot} × 10 + seq`，
+因此 `code // 100` 恒等于 HTTP 状态码。每个 (状态码, seq) 在一个模块内只能用一次，
+冲突会在导入期由 `ModuleErrors` 直接报错，不会静默覆盖。
+"""
+
+from __future__ import annotations
+
+from core.exceptions import AppError, ModuleErrors
+
+errors = ModuleErrors("${name}", slot=${slot})
+
+
+class ${Name}Busy(AppError):
+    """示例错误码：删掉它，换成你真正需要的（每个状态码最多 9 个）。"""
+
+    code = errors.code(409, 1)
+    message = "${label}正在处理中，请稍后再试"
+    http_status = 409
+'''
+)
+
 MODELS_TMPL = Template(
     '''"""${label}ORM 实体。
 
@@ -218,6 +242,7 @@ from __future__ import annotations
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.exceptions import NotImplementedFeature
 from generation.pipeline import register_pipeline
 from generation.spec import GenerationRecord
 from infra.ai.base import Capability, GenerationRequest
@@ -244,19 +269,19 @@ class ${Name}Store:
     async def mark_submitting(self, record_id: str) -> None:
         # 调供应商**之前**落一次「提交意图」：进程崩在「已受理 → 写库」之间时，
         # 这是唯一能说明「可能已计费」的痕迹，没有它重启会重复提交
-        raise NotImplementedError("TODO: submit_attempts += 1")
+        raise NotImplementedFeature("TODO: submit_attempts += 1")
 
     async def clear_submit_attempt(self, record_id: str) -> None:
         # 拿到了明确异常，说明本次提交没成功，清掉意图以便安全重试
-        raise NotImplementedError("TODO: submit_attempts 归零")
+        raise NotImplementedFeature("TODO: submit_attempts 归零")
 
     async def mark_submitted(self, record_id: str, external_id: str) -> None:
         # TODO: 写入 external_id、置为 running，并把 submit_attempts 复位为 0
         # （不复位的话，此后任何失败后的重试都会被误判为「提交结果未知」）
-        raise NotImplementedError("TODO: 写入 external_id 并置为 running")
+        raise NotImplementedFeature("TODO: 写入 external_id 并置为 running")
 
     async def mark_progress(self, record_id: str, progress: int) -> None:
-        raise NotImplementedError("TODO: 更新进度")
+        raise NotImplementedFeature("TODO: 更新进度")
 
     async def mark_succeeded(
         self,
@@ -266,10 +291,10 @@ class ${Name}Store:
         cover_url: str | None,
         progress: int = 100,
     ) -> None:
-        raise NotImplementedError("TODO: 置为终态并写入产物地址")
+        raise NotImplementedFeature("TODO: 置为终态并写入产物地址")
 
     async def mark_failed(self, record_id: str, error: str) -> None:
-        raise NotImplementedError("TODO: 置为终态并写入失败原因")
+        raise NotImplementedFeature("TODO: 置为终态并写入失败原因")
 
 
 @register_pipeline

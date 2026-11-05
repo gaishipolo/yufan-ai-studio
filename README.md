@@ -41,7 +41,7 @@ npm install
 npm run dev             # http://localhost:5173，/api 已代理到 8080
 ```
 
-演示账号（`app seed` 写入，仅开发环境）：`admin / admin@123`、`editor / editor@123`、`viewer / viewer@123`。
+演示账号（`app seed` 写入，仅开发环境）：`admin / admin@12345`、`editor / editor@12345`、`viewer / viewer@12345`。
 
 ## 文档导航
 
