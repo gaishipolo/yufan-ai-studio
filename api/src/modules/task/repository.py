@@ -64,12 +64,14 @@ class TaskRepository(BaseRepository[VideoTask]):
 
     def apply_sort(self, stmt: Select[Any], sort: TaskSort | str) -> Select[Any]:
         match TaskSort(sort):
+            # 每条排序都以主键收尾：排序键不唯一时，翻页边界上的行顺序不确定，
+            # 会出现「同一条出现在两页」或「哪一页都没有」（R8-06）
             case TaskSort.CREATED_ASC:
-                return stmt.order_by(VideoTask.created_at.asc())
+                return stmt.order_by(VideoTask.created_at.asc(), VideoTask.id.asc())
             case TaskSort.TITLE_ASC:
-                return stmt.order_by(VideoTask.title.asc())
+                return stmt.order_by(VideoTask.title.asc(), VideoTask.id.asc())
             case _:
-                return stmt.order_by(VideoTask.created_at.desc())
+                return stmt.order_by(VideoTask.created_at.desc(), VideoTask.id.desc())
 
     async def count_by_status(self, stmt: Select[Any]) -> TaskStats:
         """一条 group by 拿到各状态计数。

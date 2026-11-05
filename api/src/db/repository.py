@@ -57,6 +57,13 @@ class BaseRepository(Generic[ModelT]):
     async def paginate(
         self, stmt: Select[Any], params: PageParams
     ) -> tuple[Sequence[ModelT], int]:
+        """分页查询：返回 `(本页行, 总数)`。
+
+        **传进来的 `stmt` 必须自己带 `order_by`，并且以主键收尾。**
+        sqlite 会按 rowid 兜底，看起来「总是有顺序」；但这个顺序不是查询的一部分，
+        换 PG 或并发写入之后就不成立了——同一时间戳的行在翻页边界上可能重复出现、
+        也可能一行都没有。`total` 走 `count(*)`，不要用 `len(rows)`（R8-06）。
+        """
         total = await self.session.scalar(select(func.count()).select_from(stmt.subquery()))
         rows = (
             await self.session.scalars(stmt.offset(params.offset).limit(params.limit))

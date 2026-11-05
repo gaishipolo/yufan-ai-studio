@@ -919,12 +919,16 @@ def test_changing_another_users_email_requires_not_below_target(client: TestClie
     assert denied.status_code == 403
     assert denied.json()["code"] == 40322
 
-    # 昵称仍然可以改：守卫只针对邮箱，不是把整条资料修改一起封掉
-    renamed = client.patch(
-        f"{API}/users/{target['id']}", json={"displayName": "改名没问题"}, headers=ops
-    )
-    assert renamed.status_code == 200
-    assert renamed.json()["data"]["email"] is None  # 邮箱没被改走
+    # 昵称、头像也一起挡：R7-03 只守了 email，同一次请求里另外两个字段照旧 200（R8-02）。
+    # 昵称能用来冒充，头像 URL 会渲染成 <img>，指到攻击者域名就是一次回连。
+    for payload in ({"displayName": "改名没问题"}, {"avatarUrl": "http://evil/x.png"}):
+        resp = client.patch(f"{API}/users/{target['id']}", json=payload, headers=ops)
+        assert resp.status_code == 403, f"{payload} 没被守卫挡住"
+        assert resp.json()["code"] == 40322
+
+    kept = client.get(f"{API}/users/{target['id']}", headers=admin).json()["data"]
+    assert kept["email"] is None
+    assert kept["avatarUrl"] is None
 
 
 def test_changing_own_email_via_user_endpoint_is_allowed(client: TestClient) -> None:
@@ -939,3 +943,25 @@ def test_changing_own_email_via_user_endpoint_is_allowed(client: TestClient) -> 
     )
     assert resp.status_code == 200
     assert resp.json()["data"]["email"] == "me@demo.local"
+
+
+def test_writing_a_field_back_to_its_current_value_still_needs_the_guard(
+    client: TestClient,
+) -> None:
+    """把值写回原样也必须过守卫（R8-04）。
+
+    `if active != user.is_active` 这种「值没变就免检」的写法是个免费的后门：
+    请求照样落到 `_require_user`，于是「404 = 没有这个 id」「200 = 存在但我能写」
+    就成了一次廉价的 id 探测；而 `avatarUrl` 传原值同样会走一遍 `<img src>` 的渲染路径。
+    守卫应当按「要写什么」触发，不按「值变没变」触发。
+    """
+    admin = _admin(client)
+    target, _, _ = _make_user(client, admin, "probe_target", ["*"])
+    _, ops, _ = _make_user(
+        client, admin, "probe_ops", ["identity:read", "identity:update"]
+    )
+
+    for payload in ({"isActive": True}, {"displayName": target["displayName"]}):
+        resp = client.patch(f"{API}/users/{target['id']}", json=payload, headers=ops)
+        assert resp.status_code == 403, f"{payload} 写原值绕过了守卫"
+        assert resp.json()["code"] == 40322

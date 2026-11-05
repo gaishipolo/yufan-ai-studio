@@ -18,6 +18,7 @@ import weakref
 from collections.abc import AsyncIterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -61,6 +62,12 @@ _HASH_POOL: ThreadPoolExecutor | None = None
 _GATES: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Semaphore] = (
     weakref.WeakKeyDictionary()
 )
+
+# 「当前协程已经在名额里」的标记。`asyncio.Semaphore` 不可重入，业务方法包一层、
+# 哈希原语再包一层就是自锁；用 ContextVar 表示已有名额，内层直接放行。
+# 注意它是按任务上下文传递的：在闸门里 `create_task` 出去的协程会继承这个标记，
+# 也就不再单独取名額——那种写法下并发度由外层那一个名额兜着，仍然有界。
+_GATE_DEPTH: ContextVar[int] = ContextVar("password_gate_depth", default=0)
 
 
 def _hash_pool() -> ThreadPoolExecutor:
@@ -106,11 +113,26 @@ def _hash_gate() -> asyncio.Semaphore:
 async def password_slot() -> AsyncIterator[None]:
     """占一个口令运算名额，直到退出。
 
-    用法上有一条要求：**查口令哈希的那次查询必须写在里面**。
-    写在外面等于「先拿连接、再排队」，闸门就白加了。
+    这个函数有**两个用途**，别只当成装饰器看：
+
+    1. `hash_password_async` / `verify_password_async` 自己会取名额（见下），
+       所以「谁忘了包」不会变成「同时几十个 scrypt 抢 CPU」。
+    2. 业务方法显式包一层，是为了把「**先排队、再拿连接**」这件事写进代码：
+       闸门包在查库之前，等待发生在还没借连接的时候。这一条安全层兜不了底——
+       它不知道调用方手里有没有连接（R7-01 / R8-01）。
+
+    嵌套是安全的：`asyncio.Semaphore` 不可重入，重复取会自锁，所以用
+    `_GATE_DEPTH` 标记「我已经在名额里」，内层直接放行。
     """
-    async with _hash_gate():
+    if _GATE_DEPTH.get():
         yield
+        return
+    async with _hash_gate():
+        token = _GATE_DEPTH.set(1)
+        try:
+            yield
+        finally:
+            _GATE_DEPTH.reset(token)
 
 
 # --------------------------------------------------------------------------- #
@@ -143,10 +165,15 @@ def verify_password(raw: str, encoded: str) -> bool:
 
 
 async def hash_password_async(raw: str) -> str:
-    """`hash_password` 的线程池版本。**请求路径只用这个**。"""
-    return await asyncio.get_running_loop().run_in_executor(
-        _hash_pool(), hash_password, raw
-    )
+    """`hash_password` 的线程池版本。**请求路径只用这个**。
+
+    自带名额：调用方没包 `password_slot()` 也不会把线程池挤爆。
+    已经在名额里的调用直接放行（`_GATE_DEPTH`）。
+    """
+    async with password_slot():
+        return await asyncio.get_running_loop().run_in_executor(
+            _hash_pool(), hash_password, raw
+        )
 
 
 async def verify_password_async(raw: str, encoded: str) -> bool:
@@ -154,10 +181,12 @@ async def verify_password_async(raw: str, encoded: str) -> bool:
 
     并发上限由 `_HASH_POOL` 的 worker 数决定，超出的调用在队列里排队，
     事件循环始终可以继续调度其它协程。排队要配 `password_slot()`——见上面的注释。
+    同样自带名额，理由同 `hash_password_async`。
     """
-    return await asyncio.get_running_loop().run_in_executor(
-        _hash_pool(), verify_password, raw, encoded
-    )
+    async with password_slot():
+        return await asyncio.get_running_loop().run_in_executor(
+            _hash_pool(), verify_password, raw, encoded
+        )
 
 
 # --------------------------------------------------------------------------- #

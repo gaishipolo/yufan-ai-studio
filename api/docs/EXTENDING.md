@@ -105,9 +105,13 @@ app modules
 默认 24、上限 100）和 `repo.paginate()`，`total` 走 `count(*)`。
 
 ```python
-rows, total = await self.repo.paginate(stmt, page)   # 不要 list() 再 len()
+stmt = stmt.order_by(Xxx.created_at.desc(), Xxx.id.desc())   # 排序键必须以主键收尾
+rows, total = await self.repo.paginate(stmt, page)           # 不要 list() 再 len()
 return Page.create([XxxOut.model_validate(r) for r in rows], total, page)
 ```
+
+排序键不唯一时，同一时间戳的行在翻页边界上顺序不定，会重复出现或整行漏掉。
+sqlite 按 rowid 兜底，看起来「总是有顺序」，但那是实现细节，不是查询的一部分（R8-06）。
 
 `len(rows)` 在"有 200 条、这页 24 条"时报 24，前端翻到第二页就翻不动了；
 而全量返回在数据长起来之后是"一进页面打满数据库"。`GET /images` 就是范围打开之后
@@ -201,7 +205,7 @@ POST /identity/login → 校验口令 → 角色展开成权限码 → 签发 JW
 | `create_role` / `set_role_permissions` | 权限列表含 `*`，或含自己没有的权限码 → 超管 / 403；被改的角色不能强于自己 |
 | `reset_password` | 目标账号权限高于自己 → 403；目标是超管 → 超管 |
 | `update_user`（停用）/ `deactivate_user` | 同上：不能停用比自己强的账号 |
-| `update_user`（改他人邮箱） | 同上。邮箱眼下只是资料字段，但一旦接上"邮箱找回密码"，改它就能接管账号 |
+| `update_user`（改他人资料 / 写 `is_active`） | 同上。守卫按「要写什么」触发，**不按值变没变**：写回原值同样要过，否则「404 vs 200」就是一次 id 探测（R8-04）。昵称能冒充、头像能回连，三个字段一起守 |
 | `delete_role` | 角色权限强于自己 → 403（角色全局共享，没有 owner 字段） |
 
 **撤销方向必须和授予方向对等**。这是上一轮漏掉的一半：那时「给 editor 角色」被挡，
@@ -240,12 +244,18 @@ POST /identity/login → 校验口令 → 角色展开成权限码 → 签发 JW
   演示数据）都走它，新增第六条也别绕开。哈希在线程池里算
   （`core/security.hash_password_async`）——单次 scrypt 约 150ms，
   留在事件循环里会让**整个进程**停摆，不只是「这个登录变慢」
-- 登录的「查库 + 验密」整段在 `password_slot()` 里，闸门容量 = 哈希线程池 worker 数。
-  线程池只收窄「同时算几个」，不收窄「同时有几个请求在等算」；而等待时那条数据库连接
-  已经借出去了（session 要到请求结束才还）。不设闸门的话，几十个匿名登录就能占满
-  连接池、拖慢所有要查库的接口——CPU 让开了，连接池顶上（R7-01）。
-  两条纪律：闸门必须在**第一次查库之前**（只包验密没有意义）、
-  限流的惩罚等待必须在闸门**外面**（否则爆破者用 5 秒等待就能占满名额）
+- 凡是会算 scrypt 的 service 方法，**整段**包在 `password_slot()` 里（闸门容量 =
+  哈希线程池 worker 数）。目前是 `authenticate` / `change_password` / `reset_password` /
+  `create_user` 四条，新增第五条照做。
+  为什么要包：线程池只收窄「同时算几个」，不收窄「同时有几个请求在等算」；而等待时那条
+  数据库连接已经借出去了（session 要到请求结束才还）。不设闸门的话，几十个并发登录就
+  能占满连接池、拖慢所有要查库的接口——CPU 让开了，连接池顶上（R7-01）。
+  两条纪律：闸门必须在**第一次查库之前**（只包验密没有意义，连接已经拿走）、
+  限流的惩罚等待必须在闸门**外面**（否则爆破者用 5 秒等待就能占满名额）。
+  失败路径还要在闸门**里** `session.rollback()`：留到 teardown 才还，峰值会高于闸门容量。
+  `hash_password_async` / `verify_password_async` 自己也会取名額（`_GATE_DEPTH` 标记
+  防嵌套自锁），所以「忘了包」不会把线程池挤爆——但那一层不知道你手里有没有连接，
+  连接维度只有 service 层包得住（R8-01）
 - 提权面统一判定：见 2.3 的表，四个入口不许各写一套
 
 红线的实现方式统一是「**先改 → flush → 再数一遍超管**」，归零就抛错由事务回滚。
@@ -590,6 +600,11 @@ app export-openapi --check  # 只比对不写盘：有差异就以非 0 退出�
 - [ ] 没有 import 其他业务模块（`test_architecture.py` 会拦）
 - [ ] `app modules` 能看到新模块，权限点数量符合预期
 - [ ] `app export-openapi` 已重新跑过，三份生成物一起提交（见第 8 节）
+- [ ] 改了安全约束（守卫 / 闸门 / 限流 / 字段白名单）时，**先数一遍"还有哪些入口做同一件事"**：
+      改密的守卫只在停用方向写了？闸门只装在 `authenticate` 上？白名单只收了一个字段？
+      这三次都是同一个模式——修一个入口，漏掉同类的另一个（R5-03 / R6-04 / R8-01 / R8-02）。
+      数法：`grep -n "scrypt\|hash_password_async\|verify_password_async" src`（闸门）、
+      `grep -n "_guard_target_not_above" src`（守卫）、`grep -n "setattr" src/modules/*/service.py`（白名单）
 - [ ] `pytest` 全绿（含架构约束测试）
 - [ ] `ruff check src tests` 干净
 

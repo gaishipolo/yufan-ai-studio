@@ -33,7 +33,7 @@ class AssetService:
         counts = await self._counts(actor, query)
 
         stmt = self._scoped_query(actor, query, with_type=True)
-        stmt = stmt.order_by(Asset.created_at.desc())
+        stmt = stmt.order_by(Asset.created_at.desc(), Asset.id.desc())
         rows = list(await self.repo.list(stmt))
 
         return AssetListOut(

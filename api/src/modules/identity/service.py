@@ -73,6 +73,10 @@ from modules.identity.schema import (
 
 logger = get_logger(__name__)
 
+# 资料字段白名单：管理员改他人资料、用户改自己资料，用的是同一份清单。
+# 放成常量是为了让「新增字段时两个入口一起改」，而不是各自 `setattr` 循环各写一遍。
+_PROFILE_FIELDS = ("display_name", "email", "avatar_url")
+
 # 用户不存在时也要跑一次哈希校验，否则「响应快 = 用户名不存在」就是一个免费的账号枚举接口
 _DUMMY_HASH: str | None = None
 
@@ -263,18 +267,34 @@ class IdentityService:
         """
         user = await self._require_user(actor.id)
         fields = payload.model_dump(exclude_unset=True)
-        for field in ("display_name", "email", "avatar_url"):
+        for field in _PROFILE_FIELDS:
             if field in fields:
                 setattr(user, field, fields[field])
         await self.session.commit()
         return await self.me(actor)
 
     async def change_password(self, user_id: str, payload: PasswordChangeIn) -> None:
-        user = await self._require_user(user_id)
-        if not await verify_password_async(payload.old_password, user.password_hash):
-            raise OldPasswordMismatch()
-        await self.set_password(user, payload.new_password)
-        await self.session.commit()
+        """自助改密：这条路径要算**两次** scrypt（验旧 + 算新）。
+
+        闸门必须在 `_require_user` **之前**。放在后面就是 R7-01 的同一个坑挪了个门：
+        旧口令传错时只花一次哈希、不改任何状态，可以无限重放，而这条路由只需要登录、
+        不需要任何权限点——一个只读账号 20 个并发就能把连接池顶满（R8-01）。
+
+        失败计数键用 `user_id` 而不是 IP：这里已经是登录态，IP 只会在同一个办公室
+        的 NAT 后面把所有人算成一个；而这条路径要防的是「拿到令牌后猜口令」。
+        """
+        key = f"pw:{user_id}"
+        async with password_slot():
+            user = await self._require_user(user_id)
+            ok = await verify_password_async(payload.old_password, user.password_hash)
+            if not ok:
+                await self.session.rollback()  # 失败路径不需要事务，先把连接还回池
+                throttle.record_failure(key)
+                throttle.reject(key)
+                raise OldPasswordMismatch()
+            throttle.reset(key)
+            await self.set_password(user, payload.new_password)
+            await self.session.commit()
 
     # ------------------------------------------------------------------ #
     # 用户管理
@@ -307,27 +327,30 @@ class IdentityService:
         return UserOut(**_user_fields(user, roles))
 
     async def create_user(self, payload: UserCreateIn, actor: CurrentUser) -> UserOut:
-        if await self.users.get_by_username(payload.username) is not None:
-            raise UsernameTaken()
+        # 整段在名额里：`set_password` 要算一次 scrypt，而这条路径从第一句起就要查库。
+        # 先排队、再拿连接，才不会出现「几十个建号请求各自握着一条连接等哈希」。
+        async with password_slot():
+            if await self.users.get_by_username(payload.username) is not None:
+                raise UsernameTaken()
 
-        roles = await self._roles_by_ids(payload.role_ids)
-        # 建号时直接挂超管角色 = 造一个自己登进去就是超管的账号，
-        # 必须和 set_user_roles 走同一道闸（R4-11 路径 C）
-        await self._guard_role_grant(roles, actor)
-        user = User(
-            username=payload.username,
-            display_name=payload.display_name or payload.username,
-            email=payload.email,
-            avatar_url=payload.avatar_url,
-            is_active=True,
-        )
-        # 建号也要写 `password_changed_at`：不走同一个方法就会出现「这个账号
-        # 的口令没有建立时间」的第四种状态，而令牌失效判定依赖它
-        await self.set_password(user, payload.password)
-        self.session.add(user)
-        await self.session.flush()
-        await self.users.set_roles(user.id, [role.id for role in roles])
-        await self.session.commit()
+            roles = await self._roles_by_ids(payload.role_ids)
+            # 建号时直接挂超管角色 = 造一个自己登进去就是超管的账号，
+            # 必须和 set_user_roles 走同一道闸（R4-11 路径 C）
+            await self._guard_role_grant(roles, actor)
+            user = User(
+                username=payload.username,
+                display_name=payload.display_name or payload.username,
+                email=payload.email,
+                avatar_url=payload.avatar_url,
+                is_active=True,
+            )
+            # 建号也要写 `password_changed_at`：不走同一个方法就会出现「这个账号
+            # 的口令没有建立时间」的第四种状态，而令牌失效判定依赖它
+            await self.set_password(user, payload.password)
+            self.session.add(user)
+            await self.session.flush()
+            await self.users.set_roles(user.id, [role.id for role in roles])
+            await self.session.commit()
 
         logger.info("创建用户 %s（%s）", user.username, user.id)
         return UserOut(**_user_fields(user, roles))
@@ -338,30 +361,32 @@ class IdentityService:
         user = await self._require_user(user_id)
         fields = payload.model_dump(exclude_unset=True)
 
+        # 守卫按「**要写什么**」判定，不按「哪个字段」「值变没变」判定。
+        # 两次都栽在这上面：R7-03 只守了 email，同一次请求里改昵称、换头像照旧 200（R8-02）；
+        # 而「值没变就免检」只是把同一个洞挪到另一个输入上（R8-04）。
+        # 这里一次判完：
+        # - 改别人的资料（昵称 / 邮箱 / 头像）→ 目标不能高于自己。
+        #   昵称能用来冒充（"老大" 改成某个审批人的名字），头像 URL 会渲染成 <img>，
+        #   指到攻击者域名就成了「谁在什么时候打开了这个页面」的回连（R8-02）。
+        # - 写 `is_active`（无论改成什么，包括写回原值）→ 同上。
+        # 改自己的不经过这里：自助路径是 `update_me`，只接受展示字段白名单。
+        writing_profile = any(field in fields for field in _PROFILE_FIELDS)
+        writing_active = fields.get("is_active") is not None
+        if user.id != actor.id and (writing_profile or writing_active):
+            await self._guard_target_not_above(user, actor)
+
         # `is_active` 的三种取值必须分开：**没传**（不动）/ true / false。
         # 用 `in fields` 会让「传了 null」走进 bool(None) = False（R6-03），
         # schema 已经挡了一次 422，这里再挡一次是为了内部调用（脚本、CLI）绕不过去。
-        if fields.get("is_active") is not None:
+        # 停用与恢复**两个方向**都要过守卫（R6-04）：安全事件后「先停用、再启用」，
+        # 如果启用不需要超管，一个中级管理员就能把刚被停用的内鬼账号放回来。
+        if writing_active:
             active = bool(fields["is_active"])
             if active is False and user.id == actor.id:
                 raise CannotTargetSelf()
-            # 守卫在**两个方向**都要过，不是只守「关」（R6-04）。
-            # 停用超管是让人下不来台，恢复超管是把访问权还给对方——后者是授权动作，
-            # 按 R5-03 的原则更需要闸：安全事件后「先停用、再启用」的流程里，
-            # 如果启用不需要超管，一个中级管理员就能把刚被停用的内鬼账号放回来。
-            if active != user.is_active:
-                await self._guard_target_not_above(user, actor)
             user.is_active = active
 
-        # 邮箱现在只是个资料字段，但它是最可能的「账号找回」入口：一旦接上
-        # 「邮箱找回密码 / 收验证码」，改别人的邮箱就是接管账号的第一步。
-        # 这类「暂时无害」的写权限最容易在半年后变成漏洞，所以现在就按
-        # 「改他人邮箱需要目标不高于自己」处理；改自己的走 `update_me`
-        # （只接受 ProfileUpdateIn 白名单，不经过这里）（R7-03）。
-        if "email" in fields and fields["email"] != user.email and user.id != actor.id:
-            await self._guard_target_not_above(user, actor)
-
-        for field in ("display_name", "email", "avatar_url"):
+        for field in _PROFILE_FIELDS:
             if field in fields:
                 setattr(user, field, fields[field])
 
@@ -410,8 +435,11 @@ class IdentityService:
         """
         user = await self._require_user(user_id)
         await self._guard_target_not_above(user, actor)
-        await self.set_password(user, new_password)
-        await self.session.commit()
+        # 守卫在名额外、哈希在名额内：守卫要读权限，本来就得有连接；
+        # 而真正要占 CPU 的那次 scrypt 不该和别的请求抢线程（R8-01）。
+        async with password_slot():
+            await self.set_password(user, new_password)
+            await self.session.commit()
         logger.info("管理员 %s 重置了 %s 的密码", actor.id, user.username)
 
     async def deactivate_user(self, user_id: str, actor: CurrentUser) -> None:

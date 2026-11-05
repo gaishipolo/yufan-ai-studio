@@ -34,7 +34,9 @@ class ImageService:
         而前端一进生图历史页就会调它。`total` 走 `count(*)`，不是 `len(rows)`——
         后者在「有 200 条、这页 24 条」时会把总数报成 24（R7-02）。
         """
-        stmt = select(ImageJob).order_by(ImageJob.created_at.desc())
+        # 排序键必须以主键收尾，否则同一时间戳的行在翻页边界上顺序不定，
+        # 会重复或漏掉（sqlite 按 rowid 兜底，换 PG 就现形）——R8-06
+        stmt = select(ImageJob).order_by(ImageJob.created_at.desc(), ImageJob.id.desc())
         if not actor.has(PERM_READ_ALL):
             stmt = stmt.where(ImageJob.owner_id == actor.id)
         rows, total = await self.repo.paginate(stmt, page)
