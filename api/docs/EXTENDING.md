@@ -540,6 +540,10 @@ app export-openapi --check  # 只比对不写盘：有差异就以非 0 退出�
 > 现状提醒：`schema.ts` 目前和手写的 `studio/src/entities/*/model/types.ts` 并存。
 > **新代码一律用 `schema.ts`**，手写类型按实体逐个迁移过去，别再新增第二份定义。
 
+> 分工：**接口变动只需要同步这三份文件**，前端以它们为准。后端不代改前端手写类型——
+> 手写 `types.ts` / `*.api.ts` 里的旧签名是前端自己的迁移债，跑完 `export-openapi` 就意味着
+> 「接口已经变了」，剩下的在 code review 里对着 `schema.ts` 的 diff 处理即可。
+
 ---
 
 ## 9. 提交前检查清单
