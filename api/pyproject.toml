@@ -56,6 +56,10 @@ ignore = ["B008"]
 [tool.ruff.lint.per-file-ignores]
 # 种子数据是表格化字面量，拆行会严重降低可读性
 "src/seed.py" = ["E501"]
+# 迁移脚本由 `migrations/script.py.mako` 生成（alembic 上游模板，仍写 `Union`、
+# 索引名一行放不下）。对生成物提 lint 意见只会让人每次 `alembic revision` 后
+# 手工改一遍，要治就改模板本身，别在这里逐个文件修。
+"migrations/versions/*" = ["UP007", "UP035", "E501", "I001"]
 
 [tool.mypy]
 python_version = "3.11"
