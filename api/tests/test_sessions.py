@@ -299,15 +299,158 @@ def test_login_events_keep_failures_and_success_reasons(client: TestClient) -> N
     items = client.get(f"{API}/me/logins?limit=10", headers=_auth(good)).json()["data"][
         "items"
     ]
-    # 最近一次是这次成功登录；再往前是 3 次失败（更早还有建号时的首次登录）
+    # 最近一次是这次成功登录
     assert items[0]["success"] is True
     assert items[0]["reason"] is None
-    assert [item["reason"] for item in items[1:4]] == ["bad_password"] * 3
-    assert items[4]["success"] is True  # 建号后 `_provision` 的那次登录
-    assert all(item["userAgent"] == "audit-agent" for item in items[:4])
+    # 连续 3 次错口令在同一个折叠窗口内只留一行（R10-06）：第 2、3 次没有新增信息，
+    # 而匿名方正是靠「每次都写一行」把审计表线性填满的
+    assert [item["reason"] for item in items[1:]] == ["bad_password", None]
+    assert items[2]["success"] is True  # 建号后 `_provision` 的那次登录
+    assert all(item["userAgent"] == "audit-agent" for item in items[:2])
     assert all(item["ip"] for item in items)
     # 账号 id 是 victim 的，说明失败记录也挂到了正确的账号上
     assert victim["user"]["id"]
+
+
+def test_rate_limited_attempts_do_not_write_a_row_each(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """被 429 拦下的尝试不再各写一行审计（R10-06）。
+
+    限流只减慢了请求，没有减少写入：`rate_limited` 那几次照样 insert + commit，
+    于是一个匿名方以约 7 次/秒的速度线性填充这张表。现在同一对来源在一个窗口内
+    只留一条——审计要说明的是「有人在试」，第 N 次不增加任何信息。
+    """
+    from modules.identity import throttle
+
+    # 只测写入次数，不测等待：渐进延迟在别的用例里保证
+    monkeypatch.setattr(throttle, "penalty", lambda key: 0.0)
+
+    admin = _sign_in(client)
+    victim = _provision(client, admin, "audit_flood", ["task:read"])
+
+    statuses = [
+        client.post(
+            f"{API}/login",
+            json={"username": "audit_flood", "password": "wrong-pass"},
+            headers={"User-Agent": "flood-agent"},
+        ).status_code
+        for _ in range(12)
+    ]
+    # 前 5 次仍然 401（用户要知道是口令错了），之后才是 429
+    assert statuses[:5] == [401] * 5
+    assert set(statuses[5:]) == {429}
+
+    items = client.get(
+        f"{API}/users/{victim['user']['id']}/logins?limit=100", headers=_auth(admin)
+    ).json()["data"]["items"]
+    reasons = [item["reason"] for item in items]
+    assert reasons.count("bad_password") == 1
+    assert reasons.count("rate_limited") == 1
+    assert len(items) < 12
+
+
+def test_disabled_account_does_not_confirm_the_password(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """停用账号的登录尝试不再透露「口令对不对」（R10-04）。
+
+    修复前：错口令 401、对口令 403 —— 403 就是「你猜对了」，而这条路径每次都
+    先把计数清零，所以永远走不到 429，等于一个免费的慢速口令验证器。
+    """
+    from modules.identity import throttle
+
+    monkeypatch.setattr(throttle, "penalty", lambda key: 0.0)
+
+    admin = _sign_in(client)
+    victim = _provision(client, admin, "pwd_probe", ["task:read"])
+    client.delete(f"{API}/users/{victim['user']['id']}", headers=_auth(admin))
+
+    wrong = client.post(
+        f"{API}/login", json={"username": "pwd_probe", "password": "definitely-wrong"}
+    )
+    right = client.post(
+        f"{API}/login", json={"username": "pwd_probe", "password": "pass-12345"}
+    )
+    assert wrong.status_code == right.status_code == 403
+    assert right.json()["code"] == 40321
+    # 反复用对口令也拿不到 429：状态码与次数都不再提供额外信息
+    repeats = [
+        client.post(
+            f"{API}/login", json={"username": "pwd_probe", "password": "pass-12345"}
+        ).status_code
+        for _ in range(8)
+    ]
+    assert set(repeats) == {403}
+
+
+def test_deactivation_kills_the_tokens_for_good(client: TestClient) -> None:
+    """停用是**切断**，不是暂停（R10-02）。
+
+    修复前停用只写 `is_active`，会话行原封不动；管理员重新启用后，同一张 access
+    与 refresh 原地复活。refresh 有 7 天寿命且滑动续期，所以「先停用再启用」
+    在真实运维动作里是一条能走通的路径。
+    """
+    admin = _sign_in(client)
+    victim = _provision(client, admin, "deact_victim", ["task:read"])
+    assert client.get(f"{API}/me", headers=_auth(victim)).status_code == 200
+
+    client.delete(f"{API}/users/{victim['user']['id']}", headers=_auth(admin))
+    assert client.get(f"{API}/me", headers=_auth(victim)).status_code == 401
+    assert (
+        client.post(
+            f"{API}/refresh", json={"refreshToken": victim["refreshToken"]}
+        ).status_code
+        == 401
+    )
+
+    client.patch(
+        f"{API}/users/{victim['user']['id']}",
+        json={"isActive": True},
+        headers=_auth(admin),
+    )
+    # 启用恢复的是「能重新登录」，不是「那两张旧票」——它们已经在停用那一刻被吊销
+    assert client.get(f"{API}/me", headers=_auth(victim)).status_code == 401
+    stale = client.post(f"{API}/refresh", json={"refreshToken": victim["refreshToken"]})
+    assert stale.status_code == 401
+    assert stale.json()["code"] == 40122
+
+    fresh = _sign_in(client, "deact_victim", "pass-12345")
+    assert client.get(f"{API}/me", headers=_auth(fresh)).status_code == 200
+
+
+def test_change_password_signs_every_device_out(client: TestClient) -> None:
+    """自助改密后会话列表不能说谎（R10-03）。
+
+    修复前 `change_password` 只更新 `password_changed_at`，会话行的 `revoked_at`
+    仍是 None、`expires_at` 还在 7 天后，于是「我的设备」把几台已经换不出票的
+    设备列成在线。
+    """
+    admin = _sign_in(client)
+    victim = _provision(client, admin, "pwd_change", ["task:read"])
+    second = _sign_in(client, "pwd_change", "pass-12345", user_agent="second-device")
+
+    changed = client.post(
+        f"{API}/me/password",
+        json={"oldPassword": "pass-12345", "newPassword": "brand-new-12345"},
+        headers=_auth(second),
+    )
+    assert changed.status_code == 200, changed.text
+
+    # 两台都下线：当前设备的 refresh 同样过不了 `iat < password_changed_at`
+    assert client.get(f"{API}/me", headers=_auth(second)).status_code == 401
+    assert client.get(f"{API}/me", headers=_auth(victim)).status_code == 401
+    assert (
+        client.post(
+            f"{API}/refresh", json={"refreshToken": second["refreshToken"]}
+        ).status_code
+        == 401
+    )
+
+    fresh = _sign_in(client, "pwd_change", "brand-new-12345")
+    sessions = client.get(f"{API}/me/sessions", headers=_auth(fresh)).json()["data"]
+    assert len(sessions) == 1  # 旧的两个会话真的没了，而不是还挂在列表里
+    assert sessions[0]["current"] is True
 
 
 def test_disabled_account_attempt_is_audited_as_disabled(client: TestClient) -> None:
@@ -348,6 +491,33 @@ def test_admin_can_read_another_users_login_history_but_needs_the_permission(
 
     missing = client.get(f"{API}/users/not-a-real-id/logins", headers=_auth(admin))
     assert missing.status_code == 404  # id 写错要能看出来，而不是返回空列表
+
+
+def test_login_history_of_a_superuser_is_not_readable_from_below(
+    client: TestClient,
+) -> None:
+    """读审计也要看层级（R10-05）：`identity:read` 不该顺带能读超管的登录记录。
+
+    返回的是 IP + UA + 失败原因，够推断一个人的常用网络、设备与作息，
+    而「凌晨三点有一次失败登录」本身就是安全事件素材。
+    """
+    admin = _sign_in(client)
+    auditor = _provision(client, admin, "auditor01", ["identity:read"])
+    plain = _provision(client, admin, "plain_target", ["task:read"])
+
+    # 读普通账号可以：审计员的职责就是这个
+    assert (
+        client.get(
+            f"{API}/users/{plain['user']['id']}/logins", headers=_auth(auditor)
+        ).status_code
+        == 200
+    )
+
+    denied = client.get(
+        f"{API}/users/{admin['user']['id']}/logins", headers=_auth(auditor)
+    )
+    assert denied.status_code == 403
+    assert denied.json()["code"] == 40322
 
 
 # --------------------------------------------------------------------------- #

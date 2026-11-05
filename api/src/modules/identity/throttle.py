@@ -17,6 +17,10 @@
 键是 `用户名|客户端 IP`，不是只按 IP：多人共用出口 IP（公司 NAT、反代）时，
 只按 IP 会让一个人拖垮所有人；只按用户名则攻击者换个名字就绕过。
 IP 的取法见 `core/net.py`——只有对端是可信代理时才读 `X-Forwarded-For`。
+
+另外这里的限流**不负责减少审计写入**：被 429 拦下的请求照样会写一行。所以审计
+自己还有一层折叠（`audit_once`），两件事分开管，混在一起会让「放宽限流」意外
+变成「放宽写入上限」。
 """
 
 from __future__ import annotations
@@ -34,6 +38,17 @@ BASE_PENALTY_SEC = 0.5
 MAX_PENALTY_SEC = 5.0
 
 _failures: OrderedDict[str, deque[float]] = OrderedDict()
+
+# --------------------------------------------------------------------------- #
+# 审计折叠
+# --------------------------------------------------------------------------- #
+# 审计是「留痕」，不是「访问日志」。同一对来源在窗口内重复失败，第 2~N 条没有新增
+# 信息，却要各付一次 insert + commit——匿名方换用户名就等于换限流键，而 `rate_limited`
+# 那几次本来也照写，于是限流对写入成本毫无作用（R10-06）。这里只给它加一个上限：
+AUDIT_FOLD_SEC = 60.0  # 普通失败（bad_password / disabled）
+AUDIT_LOCK_FOLD_SEC = WINDOW_SEC  # 已被限流的那几秒，一个窗口留一条就够
+
+_audit_at: OrderedDict[str, float] = OrderedDict()
 
 
 def _prune(bucket: deque[float], now: float) -> None:
@@ -117,17 +132,39 @@ def reset(key: str) -> None:
     _failures.pop(key, None)
 
 
+def audit_once(key: str, window: float) -> bool:
+    """这个审计键在 `window` 秒内是否「还没写过」——True 表示该写。
+
+    只做节流、不做统计：判定失败的次数仍然由 `_failures` 负责，两者互不影响。
+    记录写在同一个有界 LRU 里（`MAX_KEYS` 封顶），过期条目不主动扫描——
+    它们的唯一用途是「上次写是什么时候」，被读到时已经自然过期，留着不占什么。
+    """
+    now = time.monotonic()
+    last = _audit_at.get(key)
+    if last is not None and now - last < window:
+        return False
+    _audit_at[key] = now
+    _audit_at.move_to_end(key)
+    while len(_audit_at) > MAX_KEYS:
+        _audit_at.popitem(last=False)
+    return True
+
+
 def clear() -> None:
     """仅测试使用：每个用例都该从干净的计数器开始。"""
     _failures.clear()
+    _audit_at.clear()
 
 
 __all__ = [
+    "AUDIT_FOLD_SEC",
+    "AUDIT_LOCK_FOLD_SEC",
     "BASE_PENALTY_SEC",
     "MAX_FAILURES",
     "MAX_KEYS",
     "MAX_PENALTY_SEC",
     "WINDOW_SEC",
+    "audit_once",
     "clear",
     "is_locked",
     "penalty",

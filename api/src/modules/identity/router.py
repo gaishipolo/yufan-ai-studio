@@ -34,6 +34,7 @@ from modules.identity.schema import (
     ProfileUpdateIn,
     RefreshIn,
     ResetPasswordIn,
+    RevokedSessionsOut,
     RoleCreateIn,
     RoleOut,
     RolePermissionsIn,
@@ -47,6 +48,11 @@ from modules.identity.schema import (
 )
 
 router = APIRouter(prefix="/identity", tags=["身份"])
+
+# 两个「查登录记录」端点是同一语义，limit 的口径必须一致（R10-12）：
+# 一处 le=100/default=10、另一处 le=200/default=20，前端迟早会按错的那份写。
+LOGIN_LIMIT_DEFAULT = 10
+LOGIN_LIMIT_MAX = 100
 
 
 # --------------------------------------------------------------------------- #
@@ -152,16 +158,20 @@ async def revoke_session(
 @router.delete("/me/sessions", summary="退出所有其他设备（保留当前）")
 async def revoke_other_sessions(
     service: IdentityServiceDep, actor: ActorDep
-) -> ApiResponse[dict[str, int]]:
+) -> ApiResponse[RevokedSessionsOut]:
     count = await service.revoke_other_sessions(actor)
-    return ApiResponse.ok({"revoked": count}, f"已下线 {count} 个其他会话")
+    return ApiResponse.ok(
+        RevokedSessionsOut(revoked=count), f"已下线 {count} 个其他会话"
+    )
 
 
 @router.get("/me/logins", summary="我的登录记录")
 async def my_logins(
     service: IdentityServiceDep,
     actor: ActorDep,
-    limit: Annotated[int, Query(ge=1, le=100, description="返回条数")] = 10,
+    limit: Annotated[
+        int, Query(ge=1, le=LOGIN_LIMIT_MAX, description="返回条数")
+    ] = LOGIN_LIMIT_DEFAULT,
 ) -> ApiResponse[LoginEventListOut]:
     return ApiResponse.ok(await service.my_logins(actor, limit))
 
@@ -234,9 +244,9 @@ async def reset_password(
 @router.post("/users/{user_id}/revoke-sessions", summary="踢下线（吊销该用户全部会话）")
 async def revoke_user_sessions(
     user_id: str, service: IdentityServiceDep, actor: IdentityUpdateDep
-) -> ApiResponse[dict[str, int]]:
+) -> ApiResponse[RevokedSessionsOut]:
     count = await service.revoke_user_sessions(user_id, actor)
-    return ApiResponse.ok({"revoked": count}, f"已吊销 {count} 个会话")
+    return ApiResponse.ok(RevokedSessionsOut(revoked=count), f"已吊销 {count} 个会话")
 
 
 @router.get("/users/{user_id}/logins", summary="某账号的登录记录")
@@ -244,9 +254,12 @@ async def user_logins(
     user_id: str,
     service: IdentityServiceDep,
     actor: IdentityReadDep,
-    limit: Annotated[int, Query(ge=1, le=200, description="返回条数")] = 20,
+    limit: Annotated[
+        int, Query(ge=1, le=LOGIN_LIMIT_MAX, description="返回条数")
+    ] = LOGIN_LIMIT_DEFAULT,
 ) -> ApiResponse[LoginEventListOut]:
-    return ApiResponse.ok(await service.logins_of(user_id, limit))
+    # actor 要传进 service：读审计也要过「目标不高于自己」的守卫（R10-05）
+    return ApiResponse.ok(await service.logins_of(user_id, limit, actor))
 
 
 @router.delete("/users/{user_id}", summary="停用用户（保留历史归属）")

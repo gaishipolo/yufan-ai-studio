@@ -320,7 +320,11 @@ Authorization: Bearer <accessToken>
 
 **退出所有其他设备（保留当前）**
 
-**响应** `ApiResponse<dict_str__int>`（前端取 `res.data`）
+**响应** `ApiResponse<RevokedSessionsOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `revoked` | `number` | 是 | 本次吊销的会话数；已经失效的会话不计入 |
 
 #### `DELETE /api/v1/identity/me/sessions/{session_id}`
 
@@ -668,7 +672,11 @@ Authorization: Bearer <accessToken>
 |---|---|---|---|---|
 | `user_id` | path | `string` | 是 |  |
 
-**响应** `ApiResponse<dict_str__int>`（前端取 `res.data`）
+**响应** `ApiResponse<RevokedSessionsOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `revoked` | `number` | 是 | 本次吊销的会话数；已经失效的会话不计入 |
 
 #### `PUT /api/v1/identity/users/{user_id}/roles`
 
@@ -1420,6 +1428,14 @@ Authorization: Bearer <accessToken>
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `newPassword` | `string` | 是 | 管理员设置的新密码；至少 10 位，不能是纯数字 |
+
+### `RevokedSessionsOut`
+
+吊销会话的结果。两个「踢下线」类接口都返回这个形状。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `revoked` | `number` | 是 | 本次吊销的会话数；已经失效的会话不计入 |
 
 ### `RoleBriefOut`
 

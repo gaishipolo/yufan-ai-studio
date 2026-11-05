@@ -601,7 +601,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ApiResponse_dict_str__int__"
+                  "$ref": "#/components/schemas/ApiResponse_RevokedSessionsOut_"
                 }
               }
             }
@@ -1157,7 +1157,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ApiResponse_dict_str__int__"
+                  "$ref": "#/components/schemas/ApiResponse_RevokedSessionsOut_"
                 }
               }
             }
@@ -1203,10 +1203,10 @@
             "required": false,
             "schema": {
               "type": "integer",
-              "maximum": 200,
+              "maximum": 100,
               "minimum": 1,
               "description": "返回条数",
-              "default": 20,
+              "default": 10,
               "title": "Limit"
             },
             "description": "返回条数"
@@ -2545,6 +2545,33 @@
         "type": "object",
         "title": "ApiResponse[ReadyOut]"
       },
+      "ApiResponse_RevokedSessionsOut_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RevokedSessionsOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[RevokedSessionsOut]"
+      },
       "ApiResponse_RoleOut_": {
         "properties": {
           "code": {
@@ -2841,37 +2868,6 @@
         },
         "type": "object",
         "title": "ApiResponse[UserOut]"
-      },
-      "ApiResponse_dict_str__int__": {
-        "properties": {
-          "code": {
-            "type": "integer",
-            "title": "Code",
-            "description": "0 表示成功，其余为业务错误码",
-            "default": 0
-          },
-          "message": {
-            "type": "string",
-            "title": "Message",
-            "default": "OK"
-          },
-          "data": {
-            "anyOf": [
-              {
-                "additionalProperties": {
-                  "type": "integer"
-                },
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Data"
-          }
-        },
-        "type": "object",
-        "title": "ApiResponse[dict[str, int]]"
       },
       "ApiResponse_list_RoleOut__": {
         "properties": {
@@ -3839,6 +3835,21 @@
           "newPassword"
         ],
         "title": "ResetPasswordIn"
+      },
+      "RevokedSessionsOut": {
+        "properties": {
+          "revoked": {
+            "type": "integer",
+            "title": "Revoked",
+            "description": "本次吊销的会话数；已经失效的会话不计入"
+          }
+        },
+        "type": "object",
+        "required": [
+          "revoked"
+        ],
+        "title": "RevokedSessionsOut",
+        "description": "吊销会话的结果。两个「踢下线」类接口都返回这个形状。"
       },
       "RoleBriefOut": {
         "properties": {

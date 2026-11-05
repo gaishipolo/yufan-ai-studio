@@ -263,6 +263,17 @@ class SessionOut(CamelORMModel):
     )
 
 
+# 「吊销了 N 个会话」的结果。之前这两个接口直接返回 `dict[str, int]`，于是 TS 生成器
+# 把 Pydantic 的自动名 `ApiResponse_dict_str__int__` 切成 `dict_str__int` 当类型名写进
+# `schema.ts`，而那个名字在 `components.schemas` 里并不存在——契约生成物编不过，
+# 前端只能手改生成物，后端字节比对又红（R10-01）。
+# 更根本的是：`{"revoked": n}` 本来就该有名字，字段含义不该只写在注释里。
+class RevokedSessionsOut(CamelModel):
+    """吊销会话的结果。两个「踢下线」类接口都返回这个形状。"""
+
+    revoked: int = Field(description="本次吊销的会话数；已经失效的会话不计入")
+
+
 class LoginEventOut(CamelModel):
     """一次登录尝试。审计用，只读。
 
@@ -309,6 +320,7 @@ __all__ = [
     "ProfileUpdateIn",
     "RefreshIn",
     "ResetPasswordIn",
+    "RevokedSessionsOut",
     "RoleBriefOut",
     "RoleCreateIn",
     "RoleOut",

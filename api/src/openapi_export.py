@@ -54,18 +54,31 @@ def _ref_name(ref: str) -> str:
     return ref.rsplit("/", 1)[-1]
 
 
-def _type_name(name: str) -> str:
-    """把 Pydantic 生成的自动名映射成可读的 TypeScript 类型表达式。"""
+def _type_name(name: str, schemas: dict[str, Schema] | None = None) -> str:
+    """把 Pydantic 生成的自动名映射成可读的 TypeScript 类型表达式。
+
+    传了 `schemas` 就**校验叶子名是否存在**，不存在返回空串交给调用方退化。
+    这条校验是 R10-01 的根因修复：生成器曾把 `ApiResponse_dict_str__int__`
+    切成 `dict_str__int` 直接当类型名写进 `schema.ts`，而这个名字在
+    `components.schemas` 里根本不存在——产出的文件 `TS2304` 编不过，
+    前端唯一能让它编过的办法是手改生成物，于是后端字节比对又红。
+    「按名字引用」只有在名字真的存在时才成立。
+    """
     stripped = name.rstrip("_")
     if stripped.startswith("list_"):
-        return f"{_type_name(stripped[5:])}[]"
+        inner = _type_name(stripped[5:], schemas)
+        return f"{inner}[]" if inner else ""
     if stripped == "NoneType":
         return "null"
     for prefix in _GENERICS:
         if stripped.startswith(prefix):
-            inner = _type_name(stripped[len(prefix) :])
+            inner = _type_name(stripped[len(prefix) :], schemas)
+            if not inner:
+                return ""
             generic = prefix[:-1]
             return f"{generic}<{inner}>"
+    if schemas is not None and stripped not in schemas:
+        return ""
     return stripped
 
 
@@ -231,8 +244,40 @@ def render_typescript(spec: Spec) -> str:
     return "\n".join(out)
 
 
+def _non_null(schema: Schema) -> Schema:
+    """去掉 `anyOf` 里的 `{"type": "null"}`。
+
+    封套的 `data` 是 `T | None`；按名字引用时生成器写的是 `T`（不带 null），
+    回退到内联渲染时也要保持同一个口径，否则同一个字段在两条路径下形状不同。
+    """
+    variants = schema.get("anyOf") or schema.get("oneOf")
+    if not variants:
+        return schema
+    kept = [variant for variant in variants if variant.get("type") != "null"]
+    if not kept:
+        return schema
+    key = "anyOf" if "anyOf" in schema else "oneOf"
+    return {key: kept}
+
+
+def _inline_data_type(name: str, spec: Spec) -> str:
+    """封套内层没有具名模型时，直接渲染 `data` 的真实 schema。
+
+    `ApiResponse[dict[str, int]]` / `ApiResponse[list[str]]` 这类接口，
+    Pydantic 生成的泛型参数名（`dict_str__int`）既不是模型也不是类型别名，
+    只能回到 `data` 上把结构内联出来。
+    """
+    schemas: dict[str, Schema] = spec.get("components", {}).get("schemas", {})
+    wrapper = schemas.get(name) or {}
+    data = (wrapper.get("properties") or {}).get("data")
+    if not data:
+        return "unknown"
+    return _ts_type(_non_null(data), spec)
+
+
 def _response_data_type(operation: Schema, spec: Spec) -> str:
     responses = operation.get("responses") or {}
+    schemas: dict[str, Schema] = spec.get("components", {}).get("schemas", {})
     for status in ("200", "201", 200, 201):
         resp = responses.get(status) or responses.get(str(status))
         if not resp:
@@ -243,7 +288,9 @@ def _response_data_type(operation: Schema, spec: Spec) -> str:
             schema = media.get("schema") or {}
             name = _ref_name(schema["$ref"]) if "$ref" in schema else ""
             if name.startswith("ApiResponse_"):
-                return _type_name(name[len("ApiResponse_") :])
+                rendered = _type_name(name[len("ApiResponse_") :], schemas)
+                # 名字不存在就不要把它当类型写出去（R10-01）：回退到 `data` 的结构
+                return rendered or _inline_data_type(name, spec)
             return _ts_type(schema, spec)
     return "unknown"
 

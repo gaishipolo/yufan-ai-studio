@@ -80,6 +80,23 @@ def _cmd_prune_logins(args: argparse.Namespace) -> None:
     print(f"已清理 {days} 天前的登录审计：{removed} 行")
 
 
+def _cmd_prune_sessions(args: argparse.Namespace) -> None:
+    """清理已经过期的登录会话。
+
+    与 `prune-logins` 分开：两者的保留期不是一回事——审计要留 90 天（追溯用），
+    会话行一过 `expires_at` 就没人再读，留着只撑表。
+    """
+    from db.session import get_session_factory
+    from modules.identity.service import IdentityService
+
+    async def run() -> int:
+        async with get_session_factory()() as session:
+            return await IdentityService(session).purge_sessions(args.days)
+
+    removed = asyncio.run(run())
+    print(f"已清理 {args.days} 天前过期的会话：{removed} 行")
+
+
 def _cmd_create_admin(args: argparse.Namespace) -> None:
     """生产首启的唯一入口：没有账号时谁也登不进去，必须由运维在服务器上创建。"""
     from db.session import get_session_factory
@@ -236,6 +253,15 @@ def main(argv: list[str] | None = None) -> int:
         "--days", type=int, default=0, help="保留天数，默认取 LOGIN_EVENT_RETENTION_DAYS"
     )
     p_prune.set_defaults(func=_cmd_prune_logins)
+
+    p_prune_sessions = sub.add_parser("prune-sessions", help="清理已过期的登录会话")
+    p_prune_sessions.add_argument(
+        "--days",
+        type=int,
+        default=7,
+        help="清理「过期超过多少天」的会话行，默认 7（refresh 有效期即 7 天）",
+    )
+    p_prune_sessions.set_defaults(func=_cmd_prune_sessions)
 
     p_modules = sub.add_parser("modules", help="列出已发现的模块与扩展点")
     p_modules.set_defaults(func=_cmd_modules)

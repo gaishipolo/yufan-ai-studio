@@ -127,7 +127,11 @@ def test_short_password_rejected_at_creation(client: TestClient) -> None:
 
 
 def test_deactivated_user_can_be_reactivated(client: TestClient) -> None:
-    """停用是可逆的：界面上「启用」开关必须真的能把人放回来。"""
+    """停用可逆，但「启用」恢复的是**登录能力**，不是那几张旧票。
+
+    R10-02 的原文：停用只写 `is_active`、不吊销会话，于是重新启用后同一张 access
+    与 refresh 原地复活（连口令都不需要）。停用是切断，不是暂停。
+    """
     admin = _admin(client)
     user, headers, _ = _make_user(client, admin, "comeback", ["task:read"])
 
@@ -139,8 +143,13 @@ def test_deactivated_user_can_be_reactivated(client: TestClient) -> None:
     )
     assert resp.status_code == 200
     assert resp.json()["data"]["isActive"] is True
-    # 恢复后旧令牌直接又能用（解析器每次请求都查库）
-    assert client.get(f"{API}/me", headers=headers).status_code == 200
+
+    # 旧令牌仍然 401：会话在停用那一刻就被吊销了，启用不会把它恢复
+    assert client.get(f"{API}/me", headers=headers).status_code == 401
+
+    # 能做的只有「重新登录」——这条路径走的是新的会话、新的票
+    fresh = _login(client, "comeback", "pass-12345")
+    assert client.get(f"{API}/me", headers=fresh).status_code == 200
 
 
 # --------------------------------------------------------------------------- #

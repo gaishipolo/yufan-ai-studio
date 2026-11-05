@@ -316,6 +316,12 @@ export interface ResetPasswordIn {
   newPassword: string;
 }
 
+/** 吊销会话的结果。两个「踢下线」类接口都返回这个形状。 */
+export interface RevokedSessionsOut {
+  /** 本次吊销的会话数；已经失效的会话不计入 */
+  revoked: number;
+}
+
 /** 用户出参里内嵌的角色摘要。 */
 export interface RoleBriefOut {
   /** 角色 ID */
@@ -675,7 +681,7 @@ export interface EndpointData {
   /** 修改自己的密码 */
   "POST /api/v1/identity/me/password": null;
   /** 退出所有其他设备（保留当前） */
-  "DELETE /api/v1/identity/me/sessions": dict_str__int;
+  "DELETE /api/v1/identity/me/sessions": RevokedSessionsOut;
   /** 我的登录会话 */
   "GET /api/v1/identity/me/sessions": SessionOut[];
   /** 踢掉我的一条会话 */
@@ -711,7 +717,7 @@ export interface EndpointData {
   /** 管理员重置密码 */
   "POST /api/v1/identity/users/{user_id}/reset-password": null;
   /** 踢下线（吊销该用户全部会话） */
-  "POST /api/v1/identity/users/{user_id}/revoke-sessions": dict_str__int;
+  "POST /api/v1/identity/users/{user_id}/revoke-sessions": RevokedSessionsOut;
   /** 设置用户角色（整组替换） */
   "PUT /api/v1/identity/users/{user_id}/roles": UserOut;
   /** 生图历史（分页） */

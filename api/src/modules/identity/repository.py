@@ -206,7 +206,7 @@ class SessionRepository(BaseRepository[UserSession]):
         return await self.session.scalar(stmt)
 
     async def list_for_user(
-        self, user_id: str, *, only_active: bool = True
+        self, user_id: str, *, only_active: bool = True, limit: int = 50
     ) -> Sequence[UserSession]:
         stmt = select(UserSession).where(UserSession.user_id == user_id)
         if only_active:
@@ -214,7 +214,10 @@ class SessionRepository(BaseRepository[UserSession]):
                 UserSession.revoked_at.is_(None), UserSession.expires_at > utcnow()
             )
         # 排序键以主键收尾：同一秒登录两台设备的顺序必须稳定（R8-06）
-        return await self.list(stmt.order_by(UserSession.created_at.desc(), UserSession.id))
+        # `limit` 是契约的一部分：这张表只增不减，接口不该无上限地吐（R10-07）
+        return await self.list(
+            stmt.order_by(UserSession.created_at.desc(), UserSession.id).limit(limit)
+        )
 
     async def revoke(
         self, session_id: str, *, reason: str, user_id: str | None = None
@@ -250,6 +253,18 @@ class SessionRepository(BaseRepository[UserSession]):
             row.revoked_reason = reason
         await self.session.flush()
         return len(rows)
+
+    async def purge_expired(self, cutoff: datetime) -> int:
+        """删掉 `expires_at` 早于 cutoff 的会话行，返回删除行数。
+
+        只删「已经过期」的：未过期但已撤销的行还要留在 `revoked_reason` 里
+        供排查（「这台设备是被踢的还是自己退的」），等它自然过期后一起清掉。
+        """
+        result = await self.session.execute(
+            delete(UserSession).where(UserSession.expires_at < cutoff)
+        )
+        await self.session.flush()
+        return int(getattr(result, "rowcount", 0) or 0)
 
 
 class LoginEventRepository(BaseRepository[LoginEvent]):

@@ -103,6 +103,11 @@ _PROFILE_FIELDS = ("display_name", "email", "avatar_url")
 _DISPLAY_FIELDS = ("display_name", "avatar_url")
 _RECOVERY_FIELDS = ("email",)
 
+# `/me/sessions` 的返回上限。会话表只增不减，列表不截断的话，一个用了一年多的
+# 账号打开「我的设备」会一次拿到几百条（R10-07）。超出的按登录时间倒序丢弃——
+# 前端本来也只在弹窗里列最近几台。
+SESSION_LIST_LIMIT = 50
+
 def _clip(value: str, limit: int) -> str:
     """截断用户可控字符串再入库。
 
@@ -225,8 +230,10 @@ class IdentityService:
         `username` 已在 `LoginIn` 里归一成小写；这里再 strip 一次，
         防止内部调用（CLI、脚本）绕过 schema 直接传脏值。
 
-        顺序是刻意的：**先付等待成本 → 验密 → 失败才计数**。
+        顺序是刻意的：**先付等待成本 → 停用则早退 → 验密 → 失败才计数**。
         - 等待在 `scrypt` 之前：爆破的时间成本是真实的，CPU 成本也被压低。
+        - **停用的账号在验密之前就拒**（R10-04）：放在验密之后，403 与 401 的差异
+          就成了一个免费的「口令正确性验证器」，而且它永远走不到 429。
         - 锁定**不拦正确密码**：否则任何人用 5 个乱码就能把一个已知用户名锁 15 分钟，
           真实用户反而登不进来（R5-01）。计数的意义是「猜错的代价」，不是「禁言」。
         - 计数放在 `verify_password` 之后、抛 `CredentialInvalid` 之前：
@@ -247,6 +254,30 @@ class IdentityService:
 
         async with password_slot():
             user = await self.users.get_by_username(username)
+
+            # 停用账号在**验密之前**就拒掉（R10-04）。之前这一步在验密之后，
+            # 而且前面先 `throttle.reset(key)`，于是有两个后果：
+            # 1) 403 与 401 的差异等于「口令猜对了」——对已知/疑似停用的账号
+            #    （离职员工、被冻结的可疑账号）可以慢速验证口令，而这类账号
+            #    恰恰是攻击者最想确认的；
+            # 2) 对口令的路径每次都把计数清零，403 永远不会变成 429，
+            #    等于可以无限次验证，成本只有攻击者自己的 CPU。
+            # 代价是「账号存在且被停用」由 403 可见——这个信息本来就要给用户看
+            # （登录页那句「账号已停用，请联系管理员」），不是泄漏。
+            # 也正因为状态码已经说明了这件事，早退导致的计时差不再多泄漏什么。
+            if user is not None and not user.is_active:
+                throttle.record_failure(key)
+                await self._audit_login(
+                    user_id=user.id,
+                    username=username,
+                    success=False,
+                    reason="disabled",
+                    ip=client_ip,
+                    user_agent=user_agent,
+                    fold=throttle.AUDIT_FOLD_SEC,
+                )
+                raise AccountDisabled()
+
             encoded = user.password_hash if user is not None else await _dummy_hash()
             ok = await verify_password_async(password, encoded)
             if user is None or not ok:
@@ -266,22 +297,20 @@ class IdentityService:
                     reason="rate_limited" if locked else "bad_password",
                     ip=client_ip,
                     user_agent=user_agent,
+                    # 已经进限流窗口的，每 15 分钟只留一条；普通的错口令 60 秒一条。
+                    # 不折叠的话，被 429 拦下的请求照样 insert + commit，
+                    # 限流对写入成本毫无作用（R10-06）。
+                    fold=(
+                        throttle.AUDIT_LOCK_FOLD_SEC
+                        if locked
+                        else throttle.AUDIT_FOLD_SEC
+                    ),
                 )
                 # 已经猜错太多次：给 429，让前端提示「别再试了」，而不是无限 401
                 throttle.reject(key)
                 raise CredentialInvalid()
 
             throttle.reset(key)
-            if not user.is_active:
-                await self._audit_login(
-                    user_id=user.id,
-                    username=username,
-                    success=False,
-                    reason="disabled",
-                    ip=client_ip,
-                    user_agent=user_agent,
-                )
-                raise AccountDisabled()
 
             user.last_login_at = utcnow()
             await self._audit_login(
@@ -303,14 +332,25 @@ class IdentityService:
         reason: str | None,
         ip: str,
         user_agent: str,
+        fold: float = 0.0,
     ) -> None:
         """写一条登录审计并当场提交。
 
         用户名不存在时 `user_id` 为 NULL，但 `username` 照样记——爆破脚本打的大多是
         不存在的账号，这条记录是唯一能看出「有人在扫」的东西。
 
+        `fold > 0` 表示**同一 (原因, 用户名, IP) 在这个窗口内只写一条**（R10-06）。
+        匿名方本来就能线性地往这张表里塞行：换用户名就换限流键，而
+        `rate_limited` 那几次也照样 insert + commit——限流对写入成本毫无作用。
+        折叠的取舍是明确的：审计的用途是「发现有人在试」，同一对来源的第一次
+        就够说明问题，第 2~N 次没有新增信息。成功登录**不折叠**。
+
         提交失败只记日志、不影响登录：审计是旁路，不能让它的故障变成「全站登不进」。
         """
+        if fold and not throttle.audit_once(
+            f"{reason or '-'}|{username}|{ip}", fold
+        ):
+            return
         self.session.add(
             LoginEvent(
                 user_id=user_id,
@@ -473,7 +513,7 @@ class IdentityService:
 
     async def list_sessions(self, actor: CurrentUser) -> list[SessionOut]:
         """当前账号的有效会话。`current` 靠令牌里的 sid 比对，前端据此标「本机」。"""
-        rows = await self.sessions.list_for_user(actor.id)
+        rows = await self.sessions.list_for_user(actor.id, limit=SESSION_LIST_LIMIT)
         return [
             SessionOut(
                 id=row.id,
@@ -525,8 +565,18 @@ class IdentityService:
     async def my_logins(self, actor: CurrentUser, limit: int) -> LoginEventListOut:
         return await self._login_events(actor.id, limit)
 
-    async def logins_of(self, user_id: str, limit: int) -> LoginEventListOut:
+    async def logins_of(
+        self, user_id: str, limit: int, actor: CurrentUser
+    ) -> LoginEventListOut:
+        """管理员查某账号的登录记录。
+
+        读也要过层级守卫（R10-05）：返回的是 IP + UA + 失败原因，够推断一个人的
+        常用网络、设备与作息，而「凌晨三点有一次失败登录」本身就是安全事件。
+        `identity:read` 的语义是「能看用户管理页面」，那个页面里没有 IP——
+        让它顺带能读超管审计，等于把「读」这半边漏在守卫之外。
+        """
         user = await self._require_user(user_id)  # 404 而不是空列表：id 写错要能看出来
+        await self._guard_audit_target(user, actor)
         return await self._login_events(user.id, limit)
 
     async def _login_events(self, user_id: str, limit: int) -> LoginEventListOut:
@@ -553,6 +603,18 @@ class IdentityService:
         """清理 `days` 天前的审计。由 `app prune-logins` 调用，不在请求路径上跑。"""
         cutoff = utcnow() - timedelta(days=max(days, 1))
         removed = await self.logins.purge_before(cutoff)
+        await self.session.commit()
+        return removed
+
+    async def purge_sessions(self, days: int) -> int:
+        """清理 `days` 天前就已经过期的会话行（`app prune-sessions`）。
+
+        `expires_at` 一过，这一行就再也不会被读到，留着的唯一作用是撑大表。
+        保留期不需要比 refresh TTL 长，「谁在哪台设备登录过」由 `login_events` 负责，
+        会话表只管「现在还允许谁用哪张票」。
+        """
+        cutoff = utcnow() - timedelta(days=max(days, 1))
+        removed = await self.sessions.purge_expired(cutoff)
         await self.session.commit()
         return removed
 
@@ -616,6 +678,16 @@ class IdentityService:
                 raise OldPasswordMismatch()
             throttle.reset(key)
             await self.set_password(user, payload.new_password)
+            # 改密必须同时吊销会话（R10-03）。`password_changed_at` 已经让旧票失效，
+            # 但会话表里的行没有任何标记，而 `list_for_user` 的「有效」定义是
+            # `revoked_at IS NULL AND expires_at > now`——僵尸会话全部满足，
+            # 「我的登录设备」于是把几台已经换不出票的设备列成在线，要等 7 天
+            # 自然过期才消失。这正是 `reset_password` 早就写过的那句话。
+            #
+            # 当前这台也在内：它的 refresh 同样过不了 `iat < password_changed_at`
+            # （续期判断与解析器同一套），把它留着只是让列表继续说谎。
+            # 所以改密后的确定状态是「全部下线、回登录页」，前端不必猜。
+            await self.sessions.revoke_all(user.id, reason="password_change")
             await self.session.commit()
 
     # ------------------------------------------------------------------ #
@@ -710,7 +782,12 @@ class IdentityService:
             active = bool(fields["is_active"])
             if active is False and user.id == actor.id:
                 raise CannotTargetSelf()
-            user.is_active = active
+            if active:
+                user.is_active = True
+            else:
+                # 停用**只能**走 `_cut_access`：置 `is_active` 与吊销会话是同一件事，
+                # 两条停用路径（DELETE / PATCH）各写一半，就又回到 R10-02。
+                await self._cut_access(user, reason="deactivate")
 
         for field in _PROFILE_FIELDS:
             if field in fields:
@@ -779,16 +856,19 @@ class IdentityService:
         """`DELETE /users/{id}` 的真实语义：停用，不做物理删除。
 
         历史任务的 `author_id` 还指着他，删掉行会让「谁做的」变成悬空引用。
+
+        停用 = 置 `is_active` **且**吊销全部会话（`_cut_access`）。少了后半句，
+        停用就只是「暂停」：停用期间令牌被 `is_active` 拦住，但会话行没被标记，
+        管理员一启用，同一张 access 与 refresh 原地复活（R10-02）。
         """
         user = await self._require_user(user_id)
         if user.id == actor.id:
             raise CannotTargetSelf()
         await self._guard_target_not_above(user, actor)
-        user.is_active = False
-        await self.session.flush()
+        revoked = await self._cut_access(user, reason="deactivate")
         await self._guard_has_superuser()
         await self.session.commit()
-        logger.info("停用用户 %s", user.username)
+        logger.info("停用用户 %s，吊销 %d 个会话", user.username, revoked)
 
     # ------------------------------------------------------------------ #
     # 角色管理
@@ -991,6 +1071,24 @@ class IdentityService:
     # ------------------------------------------------------------------ #
     # 内部工具
     # ------------------------------------------------------------------ #
+    async def _cut_access(self, user: User, *, reason: str) -> int:
+        """切断一个账号的访问权：**置停用 + 吊销全部会话**，唯一写点。
+
+        为什么两件事必须绑在一起（R10-02）：`is_active` 只管「请求进不进得来」，
+        管不了「票还在不在」。停用期间令牌被拒，但会话行的 `revoked_at` 仍是
+        `None`、`expires_at` 仍是登录时算的 7 天后——管理员重新启用（误判纠正、
+        临时冻结解除）时，解析器的四个条件重新全部满足，**同一张 access 与
+        refresh 原地复活**，连口令都不需要。`refresh` 寿命 7 天且滑动续期，
+        所以「停用」在产品语义上必须是切断，而不是暂停。
+
+        写成唯一入口而不是在两个调用点各补一句：这轮的问题本质就是
+        「同一个不变量有两个写点，两个都漏了」。
+        """
+        user.is_active = False
+        revoked = await self.sessions.revoke_all(user.id, reason=reason)
+        await self.session.flush()
+        return revoked
+
     async def set_password(self, user: User, raw: str) -> None:
         """**唯一**的口令写入点。
 
@@ -1094,8 +1192,9 @@ class IdentityService:
 
         判据是「目标的权限集 ⊆ 操作者」——这是为**授出访问权**的动作设计的：
         重置口令 = 拿到对方身份，停用 = 拿走对方访问权，改角色 = 改对方权限。
-        改展示字段（昵称 / 头像）不属于这一类，用 `_guard_display_target`；
-        把这条套上去会让委派角色连昵称都改不了（R9-02）。
+        只涉及可见性的动作不属于这一类：改展示字段（昵称 / 头像）用
+        `_guard_display_target`，读别人的登录审计用 `_guard_audit_target`。
+        把这条套上去会让委派角色连昵称都改不了、连普通操作员的审计都读不了（R9-02 / R10-05）。
         """
         identity = await self.resolve_identity(target.id)
         if identity is None:  # pragma: no cover - 调用前已确认用户存在
@@ -1109,6 +1208,22 @@ class IdentityService:
                 f"不能操作权限高于自己的账号 {target.username}",
                 details={"missing": missing},
             )
+
+    async def _guard_visible_target(
+        self, target: User, actor: CurrentUser, *, action: str
+    ) -> None:
+        """「不涉及授权、只涉及可见性」的守卫：挡住超管就够了。
+
+        两个调用方——改展示字段（`_guard_display_target`）与读别人的登录审计
+        （`_guard_audit_target`）——判据相同、理由不同，判定只写这一份。
+        用 `resolve_identity` 判超管而不是只看 `role.is_superuser` 标记：
+        角色带着字面量 `*` 时也是超管等价，只认标记会让它从这里漏过去。
+        """
+        identity = await self.resolve_identity(target.id)
+        if identity is None:  # pragma: no cover - 调用前已确认用户存在
+            return
+        if identity.is_superuser:
+            self._require_superuser(actor, f"{action}超级管理员账号 {target.username}")
 
     async def _guard_display_target(self, target: User, actor: CurrentUser) -> None:
         """改别人的**展示字段**（昵称 / 头像）时的守卫：只判「目标是不是超管」。
@@ -1124,16 +1239,23 @@ class IdentityService:
         在列表里看起来不一样。所以只要挡住「比自己更有权威的目标」——超管——
         就够；其余交给 `identity:update` 这个权限点本身做第一道控制。
         头像 URL 的回连风险同理：能被改的账号，其资料的可见范围本来就不受它自己控制。
-
-        「是不是超管」用 `resolve_identity` 判，而不是只看 `role.is_superuser` 标记：
-        角色带着字面量 `*` 权限时也是超管等价（`ResolvedIdentity.is_superuser` 就是这么
-        定义的），只认标记会让一个含 `*` 的自建角色从这里漏过去。
         """
-        identity = await self.resolve_identity(target.id)
-        if identity is None:  # pragma: no cover - 调用前已确认用户存在
-            return
-        if identity.is_superuser:
-            self._require_superuser(actor, f"操作超级管理员账号 {target.username}")
+        await self._guard_visible_target(target, actor, action="操作")
+
+    async def _guard_audit_target(self, target: User, actor: CurrentUser) -> None:
+        """读别人登录审计时的守卫（R10-05）：同样只挡超管。
+
+        这里刻意没有照搬「与踢下线同级」的 `_guard_target_not_above`：那条判据是
+        「目标的权限集 ⊆ 操作者」，为**授出访问权**的动作设计。套在读审计上，一个
+        专职审计员（只有 `identity:read`）必须先持有被审计者的全部业务权限，
+        否则连一个 `task:read` 的操作员都查不了——审计功能对「审计员」这个角色
+        直接失效，R9-02 已经判定过这种一刀切：把功能换成了「看起来安全但没人能用」。
+
+        真实风险是**读到比自己更有权威的人的网络与作息**：超管的登录 IP / UA /
+        「凌晨三点有一次失败登录」本身就是要保护的安全事件素材。挡住超管即可，
+        其余交给 `identity:read` 做第一道控制（用户管理页面本来就不含 IP）。
+        """
+        await self._guard_visible_target(target, actor, action="查看")
 
     async def _guard_role_not_above(self, role: Role, actor: CurrentUser) -> None:
         """不能动「权限高于自己」的角色（删角色 / 改角色权限）。

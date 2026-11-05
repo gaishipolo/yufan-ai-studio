@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import json
+import re
 
 import pytest
 from fastapi.testclient import TestClient
@@ -19,6 +20,7 @@ from openapi_export import (
     DEFAULT_JSON,
     DEFAULT_MD,
     DEFAULT_TS,
+    _response_data_type,
     build_spec,
     render_markdown,
     render_typescript,
@@ -138,7 +140,95 @@ def test_every_permission_is_documented() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# 5. 运行时行为没被导出逻辑破坏
+# 5. 生成器不能编造类型名（R10-01）
+# --------------------------------------------------------------------------- #
+_TS_BUILTINS = {
+    "ApiResponse",
+    "Page",
+    "Record",
+    "boolean",
+    "null",
+    "number",
+    "string",
+    "unknown",
+}
+
+
+def _referenced_types(expr: str) -> set[str]:
+    """类型表达式里引用到的标识符（去掉对象字面量的键与 TS 内建名）。
+
+    `{ revoked: number }` 里的 `revoked` 是键，`number` 是内建；只有 `TaskOut`
+    这种「应该在 components.schemas 里存在」的名字才值得检查。
+    """
+    cleaned = re.sub(r"/\*.*?\*/", " ", expr, flags=re.S)
+    tokens = set(re.findall(r"[A-Za-z_][A-Za-z0-9_]*", cleaned))
+    keys = set(re.findall(r"([A-Za-z_][A-Za-z0-9_]*)\s*\??\s*:", cleaned))
+    return tokens - keys - _TS_BUILTINS
+
+
+def test_every_endpoint_data_type_is_defined() -> None:
+    """每个接口的 data 类型只能引用真实存在的组件。
+
+    修复前 `_response_data_type` 把 `ApiResponse_dict_str__int__` 切成
+    `dict_str__int` 就当类型名写进 `schema.ts`，而这个名字在 `components.schemas`
+    里不存在——生成物 TS2304 编不过；前端手改补上别名，后端的字节比对又红。
+    字节比对保证「生成物与生成器一致」，保证不了「生成器产出的是合法代码」，
+    所以这里从类型引用这一侧再守一遍。
+    """
+    spec = build_spec()
+    schemas = set(spec["components"]["schemas"])
+    undefined: list[str] = []
+    for path, operations in spec["paths"].items():
+        for method, operation in operations.items():
+            if method not in ("get", "post", "put", "patch", "delete"):
+                continue
+            for name in _referenced_types(_response_data_type(operation, spec)):
+                if name not in schemas:
+                    undefined.append(f"{method.upper()} {path} → {name}")
+    assert not undefined, f"生成物引用了不存在的类型：{undefined}"
+
+
+def test_wrapper_without_a_named_model_falls_back_to_the_inline_shape() -> None:
+    """封套内层不是具名模型时，渲染 `data` 的真实形状，而不是编一个名字。"""
+    spec = {
+        "components": {
+            "schemas": {
+                "ApiResponse_dict_str__int__": {
+                    "type": "object",
+                    "properties": {
+                        "data": {
+                            "anyOf": [
+                                {
+                                    "type": "object",
+                                    "additionalProperties": {"type": "integer"},
+                                },
+                                {"type": "null"},
+                            ]
+                        }
+                    },
+                }
+            }
+        }
+    }
+    operation = {
+        "responses": {
+            "200": {
+                "content": {
+                    "application/json": {
+                        "schema": {
+                            "$ref": "#/components/schemas/ApiResponse_dict_str__int__"
+                        }
+                    }
+                }
+            }
+        }
+    }
+    # 不带 `| null`：按名字引用时生成器也写 `T`，两条路径的口径要一致
+    assert _response_data_type(operation, spec) == "Record<string, number>"
+
+
+# --------------------------------------------------------------------------- #
+# 6. 运行时行为没被导出逻辑破坏
 # --------------------------------------------------------------------------- #
 def test_served_openapi_matches_export(client: TestClient) -> None:
     """服务实际吐出的 /openapi.json 与落盘快照一致，避免「文档对、服务错」。"""
