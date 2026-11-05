@@ -28,6 +28,7 @@ api/src/var/storage/
 .env.*.local
 
 # ===== 日志 =====
+.local/
 *.log
 npm-debug.log*
 yarn-debug.log*
@@ -41,7 +42,8 @@ pnpm-debug.log*
 Thumbs.db
 
 # ===== 本期不上传 =====
-# workbench/：早期静态原型，已被 studio（React）取代
-workbench/
+# 只忽略根目录的早期静态原型（已被 studio 取代）。必须锚定根目录：
+# 不加前导 / 会连 api/src/modules/template/replacement_runtime/workbench/ 一起吞掉。
+/workbench/
 # .workbuddy/：本地会话与工作记忆，不属于工程内容
 .workbuddy/

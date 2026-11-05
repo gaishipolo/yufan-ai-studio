@@ -96,6 +96,10 @@ class Settings(BaseSettings):
     storage_driver: str = "local"
     storage_local_root: str = (_VAR_DIR / "storage").as_posix()
     storage_public_base: str = "/static"
+    # 替换模板的素材与调用档案只落此目录；不可用时失败，不回退本地磁盘。
+    media_archive_root: str = "Z:/yufan_ai_studio"
+    libtv_legacy_root: str = "E:/yufan-ai"
+    libtv_node: str = "node"
 
     queue_driver: str = "memory"
     worker_enabled: bool = True

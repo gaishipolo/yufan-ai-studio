@@ -45,6 +45,8 @@ npm run dev             # http://localhost:5173，/api 已代理到 8080
 
 ## 文档导航
 
+人物 / 产品 / 场景替换与 Z 盘素材归档，见 [替换模板使用与开发说明](docs/REPLACEMENT_TEMPLATES.md)。
+
 | 文档 | 读它是因为 |
 |---|---|
 | [api/README.md](api/README.md) | 后端目录、命令表、接口约定、演示数据 |

@@ -22,6 +22,10 @@ os.environ.update(
         "WORKER_ENABLED": "false",
         "QUEUE_DRIVER": "memory",
         "AI_PROVIDER": "echo",
+        "AI_PROVIDERS": "echo",
+        # 测试永远使用临时磁盘，不能读写开发环境 Z 盘的真实素材。
+        "STORAGE_LOCAL_ROOT": str(_TMP_DB.parent / "storage"),
+        "MEDIA_ARCHIVE_ROOT": str(_TMP_DB.parent),
     }
 )
 

@@ -2,7 +2,7 @@
 
 > 此文件由 `app export-openapi` 自动生成，请勿手工编辑。
 >
-> 版本 `0.2.0`｜共 **46** 个接口 / **9** 个模块
+> 版本 `0.2.0`｜共 **57** 个接口 / **9** 个模块
 >
 > 重新生成：`cd api && .venv/Scripts/python -m cli export-openapi`
 
@@ -90,6 +90,7 @@ Authorization: Bearer <accessToken>
 | `task:retry:any` | 重试他人任务 | 会消耗额度：重试他人任务前额外校验此权限 |
 | `task:update` | 编辑/重试自己的任务 |  |
 | `template:read` | 查看行业模板 |  |
+| `template:use` | 使用替换模板并提交零积分生成 |  |
 
 **素材**
 
@@ -157,9 +158,9 @@ Authorization: Bearer <accessToken>
 | 身份 | 26 | 见下方 `4.1` |
 | 任务 | 8 | 见下方 `4.2` |
 | 模型 | 1 | 见下方 `4.3` |
-| 素材 | 4 | 见下方 `4.4` |
+| 素材 | 10 | 见下方 `4.4` |
 | 生图 | 2 | 见下方 `4.5` |
-| 模板 | 1 | 见下方 `4.6` |
+| 模板 | 6 | 见下方 `4.6` |
 | 分镜模板 | 1 | 见下方 `4.7` |
 | 镜头库 | 1 | 见下方 `4.8` |
 | 系统 | 2 | 见下方 `4.9` |
@@ -968,11 +969,17 @@ Authorization: Bearer <accessToken>
 | `items` | `ModelOut[]` | 否 |  |
 | `total` | `number` | 否 |  |
 
-### 4.4 素材（4 个）
+### 4.4 素材（10 个）
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
 | `GET` | `/api/v1/assets` | 素材列表（按类型分面计数） | 🔒 |
+| `GET` | `/api/v1/assets/archive` | 归档素材列表与空间占用 | 🔒 |
+| `POST` | `/api/v1/assets/archive/import` | 从 Z 盘 inbox 登记现有素材 | 🔒 |
+| `POST` | `/api/v1/assets/archive/upload` | 流式上传素材至归档盘 | 🔒 |
+| `GET` | `/api/v1/assets/archive/{asset_id}/file` | 预览或下载已归档素材 | 🔒 |
+| `GET` | `/api/v1/assets/archive/{asset_id}/stream` | 浏览器兼容视频预览（派生文件，不改原片） | 🔒 |
+| `GET` | `/api/v1/assets/archive/{asset_id}/thumbnail` | 读取归档素材缩略图 | 🔒 |
 | `POST` | `/api/v1/assets/upload-ticket` | 申请上传凭证（待实现） | 🔒 |
 | `DELETE` | `/api/v1/assets/{asset_id}` | 删除素材（待实现） | 🔒 |
 | `GET` | `/api/v1/assets/{asset_id}` | 素材详情（待实现） | 🔒 |
@@ -993,6 +1000,113 @@ Authorization: Bearer <accessToken>
 | `items` | `AssetOut[]` | 否 |  |
 | `total` | `number` | 否 |  |
 | `counts` | `AssetCounts` | 否 |  |
+
+#### `GET /api/v1/assets/archive`
+
+**归档素材列表与空间占用**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `category` | query | `string` | 否 |  |
+
+**响应** `ApiResponse<ArchiveList>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `root` | `string` | 是 |  |
+| `items` | `ArchivedAsset[]` | 是 |  |
+| `total` | `number` | 是 |  |
+| `usedBytes` | `number` | 是 |  |
+
+#### `POST /api/v1/assets/archive/import`
+
+**从 Z 盘 inbox 登记现有素材**
+
+**请求体** `ImportAsset`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `relativePath` | `string` | 是 |  |
+| `category` | `"source" \| "character" \| "product" \| "scene" \| "audio"` | 是 |  |
+
+**响应** `ApiResponse<ArchivedAsset>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `category` | `"source" \| "character" \| "product" \| "scene" \| "audio"` | 是 |  |
+| `type` | `"image" \| "video" \| "audio"` | 是 |  |
+| `mimeType` | `string` | 是 |  |
+| `sizeBytes` | `number` | 是 |  |
+| `path` | `string` | 是 |  |
+| `sha256` | `string` | 是 |  |
+| `createdAt` | `string` | 是 |  |
+| `width` | `number` | 否 |  |
+| `height` | `number` | 否 |  |
+| `duration` | `number` | 否 |  |
+| `hasAudio` | `boolean` | 否 |  |
+| `url` | `string` | 是 |  |
+| `previewUrl` | `string \| null` | 否 |  |
+
+#### `POST /api/v1/assets/archive/upload`
+
+**流式上传素材至归档盘**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `category` | query | `"source" | "character" | "product" | "scene" | "audio"` | 是 |  |
+| `filename` | query | `string` | 是 |  |
+
+**响应** `ApiResponse<ArchivedAsset>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `category` | `"source" \| "character" \| "product" \| "scene" \| "audio"` | 是 |  |
+| `type` | `"image" \| "video" \| "audio"` | 是 |  |
+| `mimeType` | `string` | 是 |  |
+| `sizeBytes` | `number` | 是 |  |
+| `path` | `string` | 是 |  |
+| `sha256` | `string` | 是 |  |
+| `createdAt` | `string` | 是 |  |
+| `width` | `number` | 否 |  |
+| `height` | `number` | 否 |  |
+| `duration` | `number` | 否 |  |
+| `hasAudio` | `boolean` | 否 |  |
+| `url` | `string` | 是 |  |
+| `previewUrl` | `string \| null` | 否 |  |
+
+#### `GET /api/v1/assets/archive/{asset_id}/file`
+
+**预览或下载已归档素材**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `asset_id` | path | `string` | 是 |  |
+
+**响应** `ApiResponse<unknown>`（前端取 `res.data`）
+
+#### `GET /api/v1/assets/archive/{asset_id}/stream`
+
+**浏览器兼容视频预览（派生文件，不改原片）**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `asset_id` | path | `string` | 是 |  |
+
+**响应** `ApiResponse<unknown>`（前端取 `res.data`）
+
+#### `GET /api/v1/assets/archive/{asset_id}/thumbnail`
+
+**读取归档素材缩略图**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `asset_id` | path | `string` | 是 |  |
+
+**响应** `ApiResponse<unknown>`（前端取 `res.data`）
 
 #### `POST /api/v1/assets/upload-ticket`
 
@@ -1083,11 +1197,16 @@ Authorization: Bearer <accessToken>
 | `page` | `number` | 是 | 当前页码，从 1 开始 |
 | `pageSize` | `number` | 是 | 每页条数 |
 
-### 4.6 模板（1 个）
+### 4.6 模板（6 个）
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
 | `GET` | `/api/v1/templates` | 模板列表 | 🔒 |
+| `GET` | `/api/v1/templates/replacement-catalog` | 人物/产品/场景替换模板与调用档案 | 🔒 |
+| `POST` | `/api/v1/templates/replacement-runs` | 归档输入并预览最终提示词，不提交生成 | 🔒 |
+| `GET` | `/api/v1/templates/replacement-runs/{run_id}` | 替换任务状态与提示词 | 🔒 |
+| `POST` | `/api/v1/templates/replacement-runs/{run_id}/execute` | 仅 0 积分提交或继续查询已有 LibTV 任务 | 🔒 |
+| `GET` | `/api/v1/templates/replacement-runs/{run_id}/output` | 预览或下载 Z 盘原始生成结果 | 🔒 |
 
 #### `GET /api/v1/templates`
 
@@ -1103,6 +1222,123 @@ Authorization: Bearer <accessToken>
 |---|---|---|---|
 | `items` | `TemplateOut[]` | 否 |  |
 | `total` | `number` | 否 |  |
+
+#### `GET /api/v1/templates/replacement-catalog`
+
+**人物/产品/场景替换模板与调用档案**
+
+**响应** `ApiResponse<ReplacementCatalog>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `root` | `string` | 是 |  |
+| `provider` | `string` | 否 |  |
+| `maxCredits` | `number` | 否 |  |
+| `kinds` | `string[]` | 否 |  |
+| `runs` | `ReplacementRunOut[]` | 是 |  |
+| `packs` | `ReplacementPack[]` | 否 |  |
+
+#### `POST /api/v1/templates/replacement-runs`
+
+**归档输入并预览最终提示词，不提交生成**
+
+**请求体** `PrepareReplacement`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `requestId` | `string` | 是 |  |
+| `kind` | `"character" \| "product" \| "scene"` | 是 |  |
+| `target` | `string` | 是 |  |
+| `sourceId` | `string` | 是 |  |
+| `referenceIds` | `string[]` | 是 |  |
+| `wardrobeMode` | `"preserve" \| "reference"` | 否 |  |
+| `replacementScope` | `string` | 否 |  |
+| `notes` | `string` | 否 |  |
+| `packId` | `string \| null` | 否 |  |
+| `aspectRatio` | `"9:16" \| "16:9" \| "1:1" \| "adaptive"` | 否 |  |
+
+**响应** `ApiResponse<ReplacementRunOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `kind` | `"character" \| "product" \| "scene"` | 是 |  |
+| `target` | `string` | 是 |  |
+| `status` | `string` | 是 |  |
+| `archivePath` | `string` | 是 |  |
+| `createdAt` | `string` | 是 |  |
+| `prompt` | `string` | 是 |  |
+| `taskId` | `string \| null` | 否 |  |
+| `estimatedCredits` | `number \| null` | 否 |  |
+| `credits` | `number \| null` | 否 |  |
+| `progress` | `number` | 否 |  |
+| `reviewStatus` | `string` | 否 |  |
+| `lastError` | `string \| null` | 否 |  |
+| `outputUrl` | `string \| null` | 否 |  |
+
+#### `GET /api/v1/templates/replacement-runs/{run_id}`
+
+**替换任务状态与提示词**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `run_id` | path | `string` | 是 |  |
+
+**响应** `ApiResponse<ReplacementRunOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `kind` | `"character" \| "product" \| "scene"` | 是 |  |
+| `target` | `string` | 是 |  |
+| `status` | `string` | 是 |  |
+| `archivePath` | `string` | 是 |  |
+| `createdAt` | `string` | 是 |  |
+| `prompt` | `string` | 是 |  |
+| `taskId` | `string \| null` | 否 |  |
+| `estimatedCredits` | `number \| null` | 否 |  |
+| `credits` | `number \| null` | 否 |  |
+| `progress` | `number` | 否 |  |
+| `reviewStatus` | `string` | 否 |  |
+| `lastError` | `string \| null` | 否 |  |
+| `outputUrl` | `string \| null` | 否 |  |
+
+#### `POST /api/v1/templates/replacement-runs/{run_id}/execute`
+
+**仅 0 积分提交或继续查询已有 LibTV 任务**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `run_id` | path | `string` | 是 |  |
+
+**响应** `ApiResponse<ReplacementRunOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `kind` | `"character" \| "product" \| "scene"` | 是 |  |
+| `target` | `string` | 是 |  |
+| `status` | `string` | 是 |  |
+| `archivePath` | `string` | 是 |  |
+| `createdAt` | `string` | 是 |  |
+| `prompt` | `string` | 是 |  |
+| `taskId` | `string \| null` | 否 |  |
+| `estimatedCredits` | `number \| null` | 否 |  |
+| `credits` | `number \| null` | 否 |  |
+| `progress` | `number` | 否 |  |
+| `reviewStatus` | `string` | 否 |  |
+| `lastError` | `string \| null` | 否 |  |
+| `outputUrl` | `string \| null` | 否 |  |
+
+#### `GET /api/v1/templates/replacement-runs/{run_id}/output`
+
+**预览或下载 Z 盘原始生成结果**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `run_id` | path | `string` | 是 |  |
+
+**响应** `ApiResponse<unknown>`（前端取 `res.data`）
 
 ### 4.7 分镜模板（1 个）
 
@@ -1177,6 +1413,35 @@ Authorization: Bearer <accessToken>
 ---
 
 ## 5. 数据模型
+
+### `ArchiveList`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `root` | `string` | 是 |  |
+| `items` | `ArchivedAsset[]` | 是 |  |
+| `total` | `number` | 是 |  |
+| `usedBytes` | `number` | 是 |  |
+
+### `ArchivedAsset`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `category` | `"source" \| "character" \| "product" \| "scene" \| "audio"` | 是 |  |
+| `type` | `"image" \| "video" \| "audio"` | 是 |  |
+| `mimeType` | `string` | 是 |  |
+| `sizeBytes` | `number` | 是 |  |
+| `path` | `string` | 是 |  |
+| `sha256` | `string` | 是 |  |
+| `createdAt` | `string` | 是 |  |
+| `width` | `number` | 否 |  |
+| `height` | `number` | 否 |  |
+| `duration` | `number` | 否 |  |
+| `hasAudio` | `boolean` | 否 |  |
+| `url` | `string` | 是 |  |
+| `previewUrl` | `string \| null` | 否 |  |
 
 ### `AspectRatio`（枚举）
 
@@ -1291,6 +1556,13 @@ Authorization: Bearer <accessToken>
 | `coverUrl` | `string` | 否 | 封面图 URL |
 | `createdAt` | `string` | 是 | 创建时间（UTC） |
 
+### `ImportAsset`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `relativePath` | `string` | 是 |  |
+| `category` | `"source" \| "character" \| "product" \| "scene" \| "audio"` | 是 |  |
+
 ### `LoginEventListOut`
 
 | 字段 | 类型 | 必填 | 说明 |
@@ -1396,6 +1668,21 @@ Authorization: Bearer <accessToken>
 | `name` | `string` | 是 | 权限名称 |
 | `description` | `string` | 否 | 权限说明 |
 
+### `PrepareReplacement`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `requestId` | `string` | 是 |  |
+| `kind` | `"character" \| "product" \| "scene"` | 是 |  |
+| `target` | `string` | 是 |  |
+| `sourceId` | `string` | 是 |  |
+| `referenceIds` | `string[]` | 是 |  |
+| `wardrobeMode` | `"preserve" \| "reference"` | 否 |  |
+| `replacementScope` | `string` | 否 |  |
+| `notes` | `string` | 否 |  |
+| `packId` | `string \| null` | 否 |  |
+| `aspectRatio` | `"9:16" \| "16:9" \| "1:1" \| "adaptive"` | 否 |  |
+
 ### `ProfileUpdateIn`
 
 `PATCH /identity/me` 的自助可写字段。
@@ -1422,6 +1709,48 @@ Authorization: Bearer <accessToken>
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `refreshToken` | `string` | 是 | 登录时拿到的刷新令牌 |
+
+### `ReplacementCatalog`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `root` | `string` | 是 |  |
+| `provider` | `string` | 否 |  |
+| `maxCredits` | `number` | 否 |  |
+| `kinds` | `string[]` | 否 |  |
+| `runs` | `ReplacementRunOut[]` | 是 |  |
+| `packs` | `ReplacementPack[]` | 否 |  |
+
+### `ReplacementPack`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `kind` | `"character" \| "product" \| "scene"` | 是 |  |
+| `name` | `string` | 是 |  |
+| `referenceIds` | `string[]` | 是 |  |
+| `wardrobeMode` | `"preserve" \| "reference"` | 否 |  |
+| `features` | `string` | 否 |  |
+| `instructions` | `string` | 否 |  |
+
+### `ReplacementRunOut`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `kind` | `"character" \| "product" \| "scene"` | 是 |  |
+| `target` | `string` | 是 |  |
+| `status` | `string` | 是 |  |
+| `archivePath` | `string` | 是 |  |
+| `createdAt` | `string` | 是 |  |
+| `prompt` | `string` | 是 |  |
+| `taskId` | `string \| null` | 否 |  |
+| `estimatedCredits` | `number \| null` | 否 |  |
+| `credits` | `number \| null` | 否 |  |
+| `progress` | `number` | 否 |  |
+| `reviewStatus` | `string` | 否 |  |
+| `lastError` | `string \| null` | 否 |  |
+| `outputUrl` | `string \| null` | 否 |  |
 
 ### `ResetPasswordIn`
 
