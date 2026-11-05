@@ -1034,6 +1034,36 @@ class IdentityService:
             logger.info("内置角色已初始化：%d 个", created)
         return created
 
+    async def sync_builtin_role_permissions(self) -> dict[str, list[str]]:
+        """把 `BUILTIN_ROLES` 里**新增**的权限点补进已存在的内置角色，返回补了什么。
+
+        为什么单独给一个命令，而不是让 `ensure_builtin_roles` 直接覆盖：
+        那个函数「不覆盖已有权限」是**刻意**的（管理员手工调过的配置不该被重启改回去），
+        把它改掉等于用一个副作用换一次方便。代价是新增权限点永远进不了老库——
+        上一个模块就撞上了：`template:use` 写进了声明，库里的 editor 仍然没有，
+        非超管上线即 403，而超管拿 `*` 全程自测发现不了。
+
+        语义刻意收得很窄：
+        - **只加不减**：管理员手工勾掉的权限不会被加回来（它已不在 `BUILTIN_ROLES` 里）；
+        - **只补差集**：跑第二次什么都不做，可以放进部署脚本；
+        - 角色本身不存在时跳过——那是 `ensure_builtin_roles` 的活，别在这里造半个角色。
+        """
+        added: dict[str, list[str]] = {}
+        for spec in BUILTIN_ROLES:
+            role = await self.roles.get_by_code(spec.code)
+            if role is None:
+                continue
+            current = set((await self.roles.permissions_for([role.id])).get(role.id, []))
+            missing = [code for code in spec.permissions if code not in current]
+            if not missing:
+                continue
+            await self.roles.set_permissions(role.id, sorted(current | set(missing)))
+            added[spec.code] = missing
+        if added:
+            await self.session.commit()
+            logger.info("内置角色权限已补齐：%s", added)
+        return added
+
     async def ensure_superuser(
         self, username: str, password: str, display_name: str = ""
     ) -> tuple[User, bool]:

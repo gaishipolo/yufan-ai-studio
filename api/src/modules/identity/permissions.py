@@ -79,6 +79,10 @@ BUILTIN_ROLES: tuple[BuiltinRole, ...] = (
             "asset:*",
             "image:*",
             "template:read",
+            # 模板替换的「提交生成」：editor 本来就持有 task:* / image:*，
+            # 替换只是把同一件事（产内容）换个入口。少了这一条，非超管点提交
+            # 会拿到 403——功能上线即不可用，而超管自测发现不了。
+            "template:use",
             "storyboard:read",
             "shot:read",
         ),

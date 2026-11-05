@@ -8,14 +8,18 @@
 `tests/test_identity_api.py::test_deactivation_takes_effect_immediately` 专门守这条。
 """
 
+from api.accounts import register_account_status_checker
 from api.authn import register_principal_resolver
 from api.module import ModuleSpec
+from modules.identity.account_status import IdentityAccountStatus
 from modules.identity.permissions import SPECS
 from modules.identity.principal import IdentityPrincipalResolver
 from modules.identity.router import router
 
 # 必须在模块被 import 时注册（发现流程 import 本包即生效）
 register_principal_resolver(IdentityPrincipalResolver())
+# 无请求上下文的调用方（后台任务 / CLI）靠这条判断账号是否还能干活
+register_account_status_checker(IdentityAccountStatus())
 
 
 async def _startup() -> None:

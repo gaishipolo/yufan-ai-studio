@@ -336,6 +336,18 @@ POST /identity/login → 校验口令 → 角色展开成权限码 → 签发 JW
 留着只撑表；「谁在哪台设备登录过」由 `login_events` 负责。
 `GET /me/sessions` 本身也截断到最近 50 条。
 
+**新增权限点后要跑 `app sync-roles`**。`ensure_builtin_roles` 只补「角色不存在」，
+不覆盖已有权限（管理员手工调过的配置不该被重启改回去），所以老库里的
+`editor` / `viewer` 不会自动长出新权限点——超管拿 `*` 全程自测发现不了，
+非超管点新功能的按钮直接 403。这条命令**只加不减**、只补差集，可以放进部署脚本重复跑。
+
+后台任务查账号状态走 `api/accounts.py` 的 `account_is_active()`（三态：
+启用 / 停用 / 查不到）。它和 `PrincipalResolver` 是同一个理由的两种形态：
+**请求内**的权威身份靠解析器，**没有请求**的调用方（worker、CLI）靠这个注入点。
+不要为了省事在业务模块里 `from modules.identity...`——
+`tests/test_architecture.py` 会拦住模块间的横向依赖，而且那种依赖一旦开口，
+这个模块就没法单独删了。
+
 ### 2.7 要接 SSO / LDAP / 企业微信
 
 不要改 `get_actor`，实现一个 `PrincipalResolver` 并注册（写法照

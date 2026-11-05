@@ -28,7 +28,9 @@ api/src/var/storage/
 .env.*.local
 
 # ===== 日志 =====
-.local/
+# 只忽略根目录的本地草稿目录。和下面的 /workbench/ 同理：
+# 不加前导 / 会匹配任意层级的 .local，把将来某个模块自带的同名目录一并吞掉。
+/.local/
 *.log
 npm-debug.log*
 yarn-debug.log*

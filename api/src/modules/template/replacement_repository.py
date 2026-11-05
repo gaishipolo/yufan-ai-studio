@@ -32,6 +32,9 @@ class ReplacementManifest(LibTVState):
     billing_mode: str = "free"
     max_credits: int = 0
     file_checksums: dict[str, str] = {}
+    # 自动重试计数（执行器繁忙 / 成片下载失败）。旧的 run.json 没有这个字段，
+    # 默认 0 即「还没重试过」；人工再点「继续」会清零，重新拿一份额度。
+    retry_count: int = 0
 
 
 class PublishedPack(ReplacementPack):

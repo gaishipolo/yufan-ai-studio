@@ -97,6 +97,28 @@ def _cmd_prune_sessions(args: argparse.Namespace) -> None:
     print(f"已清理 {args.days} 天前过期的会话：{removed} 行")
 
 
+def _cmd_sync_roles(args: argparse.Namespace) -> None:
+    """把新声明的权限点补进已有内置角色（只加不减）。
+
+    上线一个带新权限点的模块时跑一次。没有这一步，老库里的 editor/viewer
+    仍是旧权限集：超管自测一切正常，非超管点新功能的按钮直接 403。
+    只打印差异、不删任何权限，可以安全地放进部署脚本重复执行。
+    """
+    from db.session import get_session_factory
+    from modules.identity.service import IdentityService
+
+    async def run() -> dict[str, list[str]]:
+        async with get_session_factory()() as session:
+            return await IdentityService(session).sync_builtin_role_permissions()
+
+    added = asyncio.run(run())
+    if not added:
+        print("内置角色已是最新，无需补齐")
+        return
+    for code, codes in added.items():
+        print(f"{code}: +{' +'.join(codes)}")
+
+
 def _cmd_create_admin(args: argparse.Namespace) -> None:
     """生产首启的唯一入口：没有账号时谁也登不进去，必须由运维在服务器上创建。"""
     from db.session import get_session_factory
@@ -262,6 +284,11 @@ def main(argv: list[str] | None = None) -> int:
         help="清理「过期超过多少天」的会话行，默认 7（refresh 有效期即 7 天）",
     )
     p_prune_sessions.set_defaults(func=_cmd_prune_sessions)
+
+    p_sync_roles = sub.add_parser(
+        "sync-roles", help="把新声明的权限点补进已有内置角色（只加不减，可重复执行）"
+    )
+    p_sync_roles.set_defaults(func=_cmd_sync_roles)
 
     p_modules = sub.add_parser("modules", help="列出已发现的模块与扩展点")
     p_modules.set_defaults(func=_cmd_modules)
