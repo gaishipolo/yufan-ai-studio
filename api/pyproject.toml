@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "api"
 version = "0.1.0"
-description = "天火 AI 短视频工作台 —— 后端服务"
+description = "雨范 AI 短视频工作台 —— 后端服务"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [

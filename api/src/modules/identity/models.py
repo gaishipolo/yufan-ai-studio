@@ -27,7 +27,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
-from db.base import Base, TimestampMixin, UUIDMixin
+from db.base import Base, TimestampMixin, UUIDMixin, utcnow
 
 
 class User(Base, UUIDMixin, TimestampMixin):
@@ -108,3 +108,70 @@ class UserRole(Base, UUIDMixin, TimestampMixin):
         # 统计「某角色下有多少人」时走这条索引
         Index("ix_user_roles_role_user", "role_id", "user_id"),
     )
+
+
+class UserSession(Base, UUIDMixin, TimestampMixin):
+    """一次登录产生的会话：access 令牌带 `sid`，refresh 令牌用 `refresh_jti` 轮换。
+
+    为什么要有这张表，而不是在 `users` 上加一列 `token_version`：
+
+    - `token_version` 只能「全部踢掉」，做不到「把这台设备下线」，
+      也列不出「我在哪些设备上登录过」；
+    - 而「登出后旧令牌立刻失效」这件事，只有**每请求校验一次会话状态**才兑现得了：
+      令牌是无状态的，签名没坏就永远能解出一个合法主体。
+
+    代价是每个带令牌的请求多一次主键查询（走 `pk_user_sessions`）。比起它解决的问题
+    （离职员工在共用电脑上点了登出、令牌被复制走还能用满 2 小时）不值一提。
+
+    刷新令牌不落库原文，只落 `jti`：JWT 本身有签名，校验时比对 jti 就够，
+    落原文等于给自己加一个「数据库泄漏即令牌泄漏」的面。
+    """
+
+    __tablename__ = "user_sessions"
+
+    user_id: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    # 当前有效的 refresh 令牌 id；轮换时替换，旧的自然失效（不需要黑名单表）
+    refresh_jti: Mapped[str] = mapped_column(String(64), nullable=False)
+    user_agent: Mapped[str] = mapped_column(String(256), default="", nullable=False)
+    ip: Mapped[str] = mapped_column(String(64), default="", nullable=False)
+    last_seen_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # 刷新令牌的到期时间；access 令牌更短，由它自己的 exp 管
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
+    revoked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # 为什么失效：logout / admin_revoke / password_reset / self_revoke
+    revoked_reason: Mapped[str] = mapped_column(String(32), default="", nullable=False)
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"<UserSession {self.id} user={self.user_id} revoked={self.revoked_at}>"
+
+
+class LoginEvent(Base, UUIDMixin):
+    """一次登录尝试。**只追加**，不更新，也不挂在 `users` 上。
+
+    单独一张表而不是给 `users` 加列：审计是时间序列（一次登录一行），
+    塞进 `users` 就只能存「最后一次」，而安全事件恰恰要看「上周三凌晨那一次」。
+    也刻意不带 `updated_at`——这类记录被改过一次就失去证据价值。
+    """
+
+    __tablename__ = "login_events"
+
+    # 用户名不存在时为 NULL（此时 `username` 记下客户端提交的原值，供排查爆破）
+    user_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    username: Mapped[str] = mapped_column(String(64), default="", nullable=False)
+    success: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    ip: Mapped[str] = mapped_column(String(64), default="", nullable=False)
+    user_agent: Mapped[str] = mapped_column(String(256), default="", nullable=False)
+    # 失败原因：bad_password / disabled / rate_limited；成功为 None
+    reason: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False, index=True
+    )
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"<LoginEvent {self.username} ok={self.success} reason={self.reason}>"

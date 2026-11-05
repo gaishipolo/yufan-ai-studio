@@ -29,6 +29,19 @@ class AccountDisabled(AppError):
     http_status = 403
 
 
+class RefreshTokenInvalid(AppError):
+    """刷新令牌不能用了：过期、已轮换、会话被吊销、或账号状态变了。
+
+    与 `CredentialInvalid` 分开是因为前端的动作不同：登录失败留在当前页，
+    刷新失败要**清掉本地会话回登录页**并提示「登录状态已过期」。
+    两者都是 401，但业务码不同，前端按码分流而不是按文案猜。
+    """
+
+    code = errors.code(401, 2)
+    message = "刷新令牌已失效，请重新登录"
+    http_status = 401
+
+
 class SuperuserRequired(AppError):
     code = errors.code(403, 2)
     message = "该操作需要超级管理员权限"
@@ -56,6 +69,18 @@ class UserNotFound(AppError):
 class RoleNotFound(AppError):
     code = errors.code(404, 2)
     message = "角色不存在"
+    http_status = 404
+
+
+class SessionNotFound(AppError):
+    """会话不存在，或已失效（登出 / 踢下线 / 过期）。
+
+    三种情况合并成一个 404：区分开等于告诉调用方「这个 sid 存在但被踢了」，
+    而调用方本来就只该处理「用不了」这一种结局。
+    """
+
+    code = errors.code(404, 3)
+    message = "会话不存在或已失效"
     http_status = 404
 
 
@@ -115,9 +140,11 @@ __all__ = [
     "LastSuperuser",
     "OldPasswordMismatch",
     "PermissionEscalation",
+    "RefreshTokenInvalid",
     "RoleCodeTaken",
     "RoleInUse",
     "RoleNotFound",
+    "SessionNotFound",
     "SuperuserRequired",
     "UnknownPermission",
     "UsernameTaken",

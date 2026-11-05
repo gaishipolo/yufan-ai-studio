@@ -1,8 +1,8 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "天火 AI 短视频工作台 API",
-    "description": "\n天火 AI 短视频工作台后端。\n\n- 统一响应：`{code, message, data}`，`code=0` 为成功\n- 字段命名：出入参均为 camelCase，与前端 TypeScript 类型一一对应\n- 生成任务：提交与轮询走队列，业务侧只调用 `runner.dispatch()`\n",
+    "title": "雨范 AI 短视频工作台 API",
+    "description": "\n雨范 AI 短视频工作台后端。\n\n- 统一响应：`{code, message, data}`，`code=0` 为成功\n- 字段命名：出入参均为 camelCase，与前端 TypeScript 类型一一对应\n- 生成任务：提交与轮询走队列，业务侧只调用 `runner.dispatch()`\n",
     "version": "0.2.0"
   },
   "paths": {
@@ -452,6 +452,267 @@
         ]
       }
     },
+    "/api/v1/identity/refresh": {
+      "post": {
+        "tags": [
+          "身份"
+        ],
+        "summary": "用刷新令牌换取新令牌",
+        "operationId": "refresh_api_v1_identity_refresh_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RefreshIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_TokenOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/identity/logout": {
+      "post": {
+        "tags": [
+          "身份"
+        ],
+        "summary": "退出登录（作废当前会话，幂等）",
+        "operationId": "logout_api_v1_identity_logout_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_NoneType_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/identity/password-policy": {
+      "get": {
+        "tags": [
+          "身份"
+        ],
+        "summary": "口令策略（匿名）",
+        "description": "登录页与「重置密码」表单要在未登录状态下拿到策略，所以不挂鉴权依赖。\n\n只暴露规则，不暴露任何账号信息。",
+        "operationId": "password_policy_api_v1_identity_password_policy_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_PasswordPolicyOut_"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/identity/me/sessions": {
+      "get": {
+        "tags": [
+          "身份"
+        ],
+        "summary": "我的登录会话",
+        "operationId": "list_sessions_api_v1_identity_me_sessions_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_list_SessionOut__"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "身份"
+        ],
+        "summary": "退出所有其他设备（保留当前）",
+        "operationId": "revoke_other_sessions_api_v1_identity_me_sessions_delete",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_dict_str__int__"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/identity/me/sessions/{session_id}": {
+      "delete": {
+        "tags": [
+          "身份"
+        ],
+        "summary": "踢掉我的一条会话",
+        "operationId": "revoke_session_api_v1_identity_me_sessions__session_id__delete",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_NoneType_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/identity/me/logins": {
+      "get": {
+        "tags": [
+          "身份"
+        ],
+        "summary": "我的登录记录",
+        "operationId": "my_logins_api_v1_identity_me_logins_get",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "description": "返回条数",
+              "default": 10,
+              "title": "Limit"
+            },
+            "description": "返回条数"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_LoginEventListOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/identity/users": {
       "get": {
         "tags": [
@@ -850,6 +1111,114 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApiResponse_NoneType_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/identity/users/{user_id}/revoke-sessions": {
+      "post": {
+        "tags": [
+          "身份"
+        ],
+        "summary": "踢下线（吊销该用户全部会话）",
+        "operationId": "revoke_user_sessions_api_v1_identity_users__user_id__revoke_sessions_post",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "User Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_dict_str__int__"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/identity/users/{user_id}/logins": {
+      "get": {
+        "tags": [
+          "身份"
+        ],
+        "summary": "某账号的登录记录",
+        "operationId": "user_logins_api_v1_identity_users__user_id__logins_get",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "User Id"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "description": "返回条数",
+              "default": 20,
+              "title": "Limit"
+            },
+            "description": "返回条数"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_LoginEventListOut_"
                 }
               }
             }
@@ -1939,6 +2308,33 @@
         "type": "object",
         "title": "ApiResponse[ImageJobOut]"
       },
+      "ApiResponse_LoginEventListOut_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LoginEventListOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[LoginEventListOut]"
+      },
       "ApiResponse_MeOut_": {
         "properties": {
           "code": {
@@ -2067,6 +2463,33 @@
         },
         "type": "object",
         "title": "ApiResponse[Page[UserOut]]"
+      },
+      "ApiResponse_PasswordPolicyOut_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PasswordPolicyOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[PasswordPolicyOut]"
       },
       "ApiResponse_PermissionCatalogOut_": {
         "properties": {
@@ -2419,6 +2842,37 @@
         "type": "object",
         "title": "ApiResponse[UserOut]"
       },
+      "ApiResponse_dict_str__int__": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "integer"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Data"
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[dict[str, int]]"
+      },
       "ApiResponse_list_RoleOut__": {
         "properties": {
           "code": {
@@ -2449,6 +2903,37 @@
         },
         "type": "object",
         "title": "ApiResponse[list[RoleOut]]"
+      },
+      "ApiResponse_list_SessionOut__": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/SessionOut"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Data"
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[list[SessionOut]]"
       },
       "AspectRatio": {
         "type": "string",
@@ -2832,6 +3317,65 @@
         ],
         "title": "ImageJobOut"
       },
+      "LoginEventListOut": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/LoginEventOut"
+            },
+            "type": "array",
+            "title": "Items",
+            "description": "按时间倒序"
+          }
+        },
+        "type": "object",
+        "title": "LoginEventListOut"
+      },
+      "LoginEventOut": {
+        "properties": {
+          "at": {
+            "type": "string",
+            "title": "At",
+            "description": "发生时间（UTC）"
+          },
+          "success": {
+            "type": "boolean",
+            "title": "Success",
+            "description": "是否成功"
+          },
+          "ip": {
+            "type": "string",
+            "title": "Ip",
+            "description": "来源 IP",
+            "default": ""
+          },
+          "userAgent": {
+            "type": "string",
+            "title": "Useragent",
+            "description": "客户端 UA",
+            "default": ""
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason",
+            "description": "失败原因：`bad_password` / `disabled` / `rate_limited`；成功为 null"
+          }
+        },
+        "type": "object",
+        "required": [
+          "at",
+          "success"
+        ],
+        "title": "LoginEventOut",
+        "description": "一次登录尝试。审计用，只读。\n\n字段名 `at` 与库里的 `created_at` 不同：契约里这一列叫 `at`（前端需求文档的写法），\n转换放在 service 里显式做一次，比给 `created_at` 起两个别名好读。"
+      },
       "LoginIn": {
         "properties": {
           "username": {
@@ -3087,6 +3631,45 @@
         ],
         "title": "PasswordChangeIn"
       },
+      "PasswordPolicyOut": {
+        "properties": {
+          "minLength": {
+            "type": "integer",
+            "title": "Minlength",
+            "description": "最短长度"
+          },
+          "maxLength": {
+            "type": "integer",
+            "title": "Maxlength",
+            "description": "最长长度"
+          },
+          "forbidAllNumeric": {
+            "type": "boolean",
+            "title": "Forbidallnumeric",
+            "description": "是否禁止纯数字"
+          },
+          "forbidSameAsUsername": {
+            "type": "boolean",
+            "title": "Forbidsameasusername",
+            "description": "是否禁止与用户名相同；当前未启用，前端按 false 处理"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "description": "可直接展示的一句话，前端不要自己拼"
+          }
+        },
+        "type": "object",
+        "required": [
+          "minLength",
+          "maxLength",
+          "forbidAllNumeric",
+          "forbidSameAsUsername",
+          "message"
+        ],
+        "title": "PasswordPolicyOut",
+        "description": "口令策略下发。**文案也由后端给**：前端四处表单不该各拼一份。"
+      },
       "PermissionCatalogOut": {
         "properties": {
           "groups": {
@@ -3224,6 +3807,22 @@
           "queueSize"
         ],
         "title": "ReadyOut"
+      },
+      "RefreshIn": {
+        "properties": {
+          "refreshToken": {
+            "type": "string",
+            "maxLength": 2048,
+            "minLength": 1,
+            "title": "Refreshtoken",
+            "description": "登录时拿到的刷新令牌"
+          }
+        },
+        "type": "object",
+        "required": [
+          "refreshToken"
+        ],
+        "title": "RefreshIn"
       },
       "ResetPasswordIn": {
         "properties": {
@@ -3454,6 +4053,63 @@
         },
         "type": "object",
         "title": "RoleUpdateIn"
+      },
+      "SessionOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "会话 ID，踢下线时用它"
+          },
+          "userAgent": {
+            "type": "string",
+            "title": "Useragent",
+            "description": "登录时的 UA，未记录为空串",
+            "default": ""
+          },
+          "ip": {
+            "type": "string",
+            "title": "Ip",
+            "description": "登录时的来源 IP",
+            "default": ""
+          },
+          "lastSeenAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lastseenat",
+            "description": "最近一次续期时间，从未续期为 null"
+          },
+          "expiresAt": {
+            "type": "string",
+            "title": "Expiresat",
+            "description": "刷新令牌到期时间（UTC）"
+          },
+          "createdAt": {
+            "type": "string",
+            "title": "Createdat",
+            "description": "登录时间（UTC）"
+          },
+          "current": {
+            "type": "boolean",
+            "title": "Current",
+            "description": "是否是发起本次请求的会话；前端据此标「本机」",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "expiresAt",
+          "createdAt"
+        ],
+        "title": "SessionOut",
+        "description": "一条登录会话。前端「我的登录设备」列表用它。"
       },
       "ShotListOut": {
         "properties": {
@@ -3960,6 +4616,18 @@
             "type": "integer",
             "title": "Expiresin",
             "description": "有效期（秒），过期后请求返回 401",
+            "default": 0
+          },
+          "refreshToken": {
+            "type": "string",
+            "title": "Refreshtoken",
+            "description": "刷新令牌，只用来换新的 accessToken，不能访问业务接口",
+            "default": ""
+          },
+          "refreshExpiresIn": {
+            "type": "integer",
+            "title": "Refreshexpiresin",
+            "description": "刷新令牌有效期（秒）；续期时滑动延长",
             "default": 0
           },
           "user": {

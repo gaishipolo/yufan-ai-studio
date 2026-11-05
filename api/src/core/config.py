@@ -35,7 +35,7 @@ class Settings(BaseSettings):
     )
 
     # ---------- 应用 ----------
-    app_name: str = "天火 AI 短视频工作台 API"
+    app_name: str = "雨范 AI 短视频工作台 API"
     app_env: Literal["dev", "test", "prod"] = "dev"
     debug: bool = True
     api_prefix: str = "/api/v1"
@@ -62,6 +62,12 @@ class Settings(BaseSettings):
     jwt_secret: str = "dev-only-secret-change-me-0123456789abcdef"
     jwt_algorithm: str = "HS256"
     access_token_ttl_seconds: int = 7200
+    # 刷新令牌有效期（默认 7 天）。access 令牌短、refresh 令牌长是刻意的：
+    # 短的那张每次请求都在验证，长的那张只在续期时用一次，泄漏面小得多。
+    # 续期时滑动延长，活跃用户的会话不会在第 7 天突然断掉。
+    refresh_token_ttl_seconds: int = 7 * 24 * 3600
+    # 登录审计保留天数：超过的由 `app prune-logins` 清掉（不自动跑，见 README）
+    login_event_retention_days: int = 90
     # 可信反向代理的地址/网段（逗号分隔），只有直连对端在名单里才读 X-Forwarded-For。
     # 留空 = 不信任任何代理：限流按「直连 IP」计数，伪造请求头无效。
     trusted_proxies: str = ""

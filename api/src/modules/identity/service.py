@@ -16,6 +16,7 @@ import asyncio
 import secrets
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
+from datetime import UTC, timedelta
 from typing import Any
 
 from sqlalchemy.exc import SQLAlchemyError
@@ -23,18 +24,22 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.config import settings
 from core.context import SUPER_PERMISSION, CurrentUser
+from core.exceptions import Unauthorized
 from core.logging import get_logger
 from core.permissions import catalog
 from core.response import Page, PageParams
 from core.security import (
     create_access_token,
+    create_refresh_token,
+    decode_access_token,
+    decode_refresh_token,
     hash_password_async,
     password_slot,
     verify_password_async,
 )
 from db.base import utcnow
 from db.session import get_session_factory
-from modules.identity import throttle
+from modules.identity import policy, throttle
 from modules.identity.errors import (
     AccountDisabled,
     BuiltinRoleLocked,
@@ -43,20 +48,30 @@ from modules.identity.errors import (
     LastSuperuser,
     OldPasswordMismatch,
     PermissionEscalation,
+    RefreshTokenInvalid,
     RoleCodeTaken,
     RoleInUse,
     RoleNotFound,
+    SessionNotFound,
     SuperuserRequired,
     UnknownPermission,
     UsernameTaken,
     UserNotFound,
 )
-from modules.identity.models import Role, User
+from modules.identity.models import LoginEvent, Role, User, UserSession
 from modules.identity.permissions import BUILTIN_ROLES, SUPERUSER_ROLE
-from modules.identity.repository import RoleRepository, UserRepository
+from modules.identity.repository import (
+    LoginEventRepository,
+    RoleRepository,
+    SessionRepository,
+    UserRepository,
+)
 from modules.identity.schema import (
+    LoginEventListOut,
+    LoginEventOut,
     MeOut,
     PasswordChangeIn,
+    PasswordPolicyOut,
     PermissionCatalogOut,
     PermissionGroupOut,
     PermissionOut,
@@ -65,6 +80,7 @@ from modules.identity.schema import (
     RoleCreateIn,
     RoleOut,
     RoleUpdateIn,
+    SessionOut,
     TokenOut,
     UserCreateIn,
     UserOut,
@@ -86,6 +102,43 @@ _PROFILE_FIELDS = ("display_name", "email", "avatar_url")
 #   所以沿用「目标权限不得高于自己」的严格守卫（R7-03）。
 _DISPLAY_FIELDS = ("display_name", "avatar_url")
 _RECOVERY_FIELDS = ("email",)
+
+def _clip(value: str, limit: int) -> str:
+    """截断用户可控字符串再入库。
+
+    `user_agent` / `ip` 都来自请求头，长度不设上限时，一条 1MB 的 UA 就能把
+    审计表撑成体积问题；这类字段的用途是「大致认出是哪台设备」，截断无损。
+    """
+    return (value or "").strip()[:limit]
+
+
+def _bearer_value(authorization: str | None) -> str:
+    """从 `Authorization: Bearer xxx` 里取出令牌。
+
+    这里没用 FastAPI 的 `HTTPBearer` 依赖：登出接口要在「令牌已经失效」时也能
+    正常工作（幂等），而那个依赖会在解析阶段就把无效令牌打回 403/401。
+    """
+    if not authorization:
+        return ""
+    scheme, _, value = authorization.partition(" ")
+    if scheme.lower() != "bearer":
+        return ""
+    return value.strip()
+
+
+def _new_jti() -> str:
+    """刷新令牌 id。用 `token_hex` 而不是 uuid：它只用于比对，不需要任何结构。"""
+    return secrets.token_hex(16)
+
+
+def _epoch(value: Any) -> int:
+    """datetime → epoch 秒；naive 按 UTC 解释（sqlite 读回来没有时区）。"""
+    if value is None:
+        return 0
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+    return int(value.timestamp())
+
 
 # 用户不存在时也要跑一次哈希校验，否则「响应快 = 用户名不存在」就是一个免费的账号枚举接口
 _DUMMY_HASH: str | None = None
@@ -158,12 +211,14 @@ class IdentityService:
         self.session = session
         self.users = UserRepository(session)
         self.roles = RoleRepository(session)
+        self.sessions = SessionRepository(session)
+        self.logins = LoginEventRepository(session)
 
     # ------------------------------------------------------------------ #
     # 认证 / 解析
     # ------------------------------------------------------------------ #
     async def authenticate(
-        self, username: str, password: str, *, client_ip: str = ""
+        self, username: str, password: str, *, client_ip: str = "", user_agent: str = ""
     ) -> User:
         """校验口令并记录登录时间。
 
@@ -195,22 +250,82 @@ class IdentityService:
             encoded = user.password_hash if user is not None else await _dummy_hash()
             ok = await verify_password_async(password, encoded)
             if user is None or not ok:
-                # 失败路径不再需要数据库：**在闸门里**结束只读事务，连接立刻回池。
-                # 留到请求 teardown 才还的话，「闸门最多放 N 个进查库」这句话就不成立——
-                # 退出闸门的请求还攥着连接，下一批又进来了，峰值照样顶到池上限。
-                await self.session.rollback()
                 throttle.record_failure(key)
+                locked = throttle.is_locked(key)
+                # 审计**在闸门里**写：这条路径原本是 `rollback()` 结束只读事务把连接
+                # 还回池，现在换成「插一行 + commit」——同样是结束事务、同样只占一个
+                # 连接，峰值不变（R7-01 / R9-01 的闸门容量仍然成立）。
+                # 但审计必须落库：失败登录恰恰是最需要留痕的那一半，而异常路径上
+                # `get_session` 会回滚整个事务，留给请求结束写就等于什么都没写。
+                await self._audit_login(
+                    user_id=user.id if user is not None else None,
+                    username=username,
+                    success=False,
+                    # 已经被限流锁定：这一次失败的原因记成 rate_limited，
+                    # 否则「同一个 IP 连错 50 次」在审计里看不出被拦过
+                    reason="rate_limited" if locked else "bad_password",
+                    ip=client_ip,
+                    user_agent=user_agent,
+                )
                 # 已经猜错太多次：给 429，让前端提示「别再试了」，而不是无限 401
                 throttle.reject(key)
                 raise CredentialInvalid()
 
-        throttle.reset(key)
-        if not user.is_active:
-            raise AccountDisabled()
+            throttle.reset(key)
+            if not user.is_active:
+                await self._audit_login(
+                    user_id=user.id,
+                    username=username,
+                    success=False,
+                    reason="disabled",
+                    ip=client_ip,
+                    user_agent=user_agent,
+                )
+                raise AccountDisabled()
 
-        user.last_login_at = utcnow()
-        await self.session.commit()
-        return user
+            user.last_login_at = utcnow()
+            await self._audit_login(
+                user_id=user.id,
+                username=username,
+                success=True,
+                reason=None,
+                ip=client_ip,
+                user_agent=user_agent,
+            )
+            return user
+
+    async def _audit_login(
+        self,
+        *,
+        user_id: str | None,
+        username: str,
+        success: bool,
+        reason: str | None,
+        ip: str,
+        user_agent: str,
+    ) -> None:
+        """写一条登录审计并当场提交。
+
+        用户名不存在时 `user_id` 为 NULL，但 `username` 照样记——爆破脚本打的大多是
+        不存在的账号，这条记录是唯一能看出「有人在扫」的东西。
+
+        提交失败只记日志、不影响登录：审计是旁路，不能让它的故障变成「全站登不进」。
+        """
+        self.session.add(
+            LoginEvent(
+                user_id=user_id,
+                username=_clip(username, 64),
+                success=success,
+                ip=_clip(ip, 64),
+                user_agent=_clip(user_agent, 256),
+                reason=reason,
+            )
+        )
+        try:
+            await self.session.commit()
+        except SQLAlchemyError:  # pragma: no cover - 审计故障不阻断登录
+            logger.exception("写登录审计失败：%s", username)
+            await self.session.rollback()
 
     async def resolve_identity(self, user_id: str) -> ResolvedIdentity | None:
         """用户 id → 权威身份（角色 + 权限）。账号不存在返回 None。"""
@@ -229,20 +344,217 @@ class IdentityService:
             codes.update(perms.get(role.id, ()))
         return ResolvedIdentity(user, roles, frozenset(codes))
 
-    async def build_token(self, user: User, identity: ResolvedIdentity) -> TokenOut:
-        token = create_access_token(
+    # ------------------------------------------------------------------ #
+    # 会话与令牌
+    # ------------------------------------------------------------------ #
+    async def build_token(
+        self,
+        user: User,
+        identity: ResolvedIdentity,
+        *,
+        user_agent: str = "",
+        ip: str = "",
+    ) -> TokenOut:
+        """登录成功：落一条会话，签一对令牌。
+
+        为什么登录就要落一行会话：不落这一行，后面「登出 / 踢下线 / 我在哪些设备上
+        登录过」都没有主语。`sid` 写进 access 令牌，解析器每请求比对一次——
+        令牌是无状态的，只靠签名和 TTL 的话，登出就永远只是「前端删了本地副本」。
+        """
+        session = UserSession(
+            user_id=user.id,
+            refresh_jti=_new_jti(),
+            user_agent=_clip(user_agent, 256),
+            ip=_clip(ip, 64),
+            last_seen_at=utcnow(),
+            expires_at=utcnow() + timedelta(seconds=settings.refresh_token_ttl_seconds),
+        )
+        self.session.add(session)
+        await self.session.flush()
+        # 落库再签发：会话没写进去的话，签出来的令牌第一次用就会被解析器拒掉
+        # （`sid` 查不到会话），而登录接口本身是 200——这种「登录成功但立刻 401」
+        # 极难从错误信息里看出来。
+        await self.session.commit()
+        return self._issue(identity, session)
+
+    def _issue(self, identity: ResolvedIdentity, session: UserSession) -> TokenOut:
+        user = identity.user
+        access = create_access_token(
             user.id,
             name=user.display_name or user.username,
             roles=list(identity.role_codes),
             # 令牌里的 perms 只作调试参考：权威来源是请求期的 resolve_principal
             permissions=sorted(identity.permissions),
+            session_id=session.id,
         )
         return TokenOut(
-            access_token=token,
+            access_token=access,
             token_type="Bearer",
             expires_in=settings.access_token_ttl_seconds,
+            refresh_token=create_refresh_token(
+                user.id, session_id=session.id, jti=session.refresh_jti
+            ),
+            refresh_expires_in=settings.refresh_token_ttl_seconds,
             user=self._to_me(identity),
         )
+
+    async def refresh(
+        self, refresh_token: str, *, user_agent: str = "", ip: str = ""
+    ) -> TokenOut:
+        """用刷新令牌换一对新令牌（**轮换**：旧 refresh 立即作废）。
+
+        判定顺序是刻意的，每一步对应一种「票不能再用」的具体原因：
+        签名/过期 → 会话还在吗 → 这张 jti 是不是当前那张 → 账号还好吗 → 改过密吗。
+
+        关于「重放检测」：jti 对不上时只拒绝、**不吊销整条会话**。理由是两个标签页
+        同时续期时，后到的那个必然拿着旧 jti——把它当攻击处理，等于让用户因为
+        「开了两个标签页」被迫重新登录。被偷走的旧 refresh 本来也已经换不出东西了。
+        """
+        try:
+            claims = decode_refresh_token(refresh_token)
+        except Unauthorized as exc:
+            # 统一成 40122：前端只需要处理「刷新失败 → 回登录页」这一种结局，
+            # 不需要区分「签名坏了」和「过期了」
+            raise RefreshTokenInvalid() from exc
+
+        session_id = str(claims["sid"])
+        jti = str(claims["jti"])
+        user_id = str(claims["sub"])
+
+        session = await self.sessions.active_by_id(session_id, user_id)
+        if session is None or session.refresh_jti != jti:
+            raise RefreshTokenInvalid()
+
+        identity = await self.resolve_identity(user_id)
+        if identity is None or not identity.user.is_active:
+            raise RefreshTokenInvalid()
+        # 与 access 令牌同一套判定：改密之前签发的票一律作废。
+        # 不做这一步的话，攻击者手里那张 refresh 能在「改密自救」之后继续换新令牌，
+        # 前面那套 `password_changed_at` 就只防住了一半。
+        issued_at = int(claims.get("iat") or 0)
+        if issued_at and issued_at < _epoch(identity.user.password_changed_at):
+            raise RefreshTokenInvalid()
+
+        session.refresh_jti = _new_jti()
+        session.last_seen_at = utcnow()
+        # 滑动延长：活跃用户不该在第 7 天被强制下线；长期不用的会话则按时过期
+        session.expires_at = utcnow() + timedelta(
+            seconds=settings.refresh_token_ttl_seconds
+        )
+        if user_agent:
+            session.user_agent = _clip(user_agent, 256)
+        if ip:
+            session.ip = _clip(ip, 64)
+        await self.session.commit()
+        return self._issue(identity, session)
+
+    async def logout_by_token(self, authorization: str | None) -> None:
+        """登出：作废当前会话。**幂等**——令牌过期、已吊销、格式不对都算成功。
+
+        为什么不等 `get_actor` 校验完再吊销：那样「已经登出过的令牌」会在解析阶段
+        401，用户第二次点退出就会看到一条报错。退出登录的结果是确定的
+        （你现在没有有效会话），过程不重要。
+        """
+        token = _bearer_value(authorization)
+        if not token:
+            return
+        try:
+            claims = decode_access_token(token)
+        except Unauthorized:
+            return
+        session_id = str(claims.get("sid") or "")
+        if not session_id:  # pragma: no cover - 无 sid 的令牌本来就没有会话可吊销
+            return
+        revoked = await self.sessions.revoke(
+            session_id, reason="logout", user_id=str(claims.get("sub") or "")
+        )
+        if revoked:
+            await self.session.commit()
+
+    async def list_sessions(self, actor: CurrentUser) -> list[SessionOut]:
+        """当前账号的有效会话。`current` 靠令牌里的 sid 比对，前端据此标「本机」。"""
+        rows = await self.sessions.list_for_user(actor.id)
+        return [
+            SessionOut(
+                id=row.id,
+                user_agent=row.user_agent,
+                ip=row.ip,
+                last_seen_at=row.last_seen_at,
+                expires_at=row.expires_at,
+                created_at=row.created_at,
+                current=row.id == actor.session_id,
+            )
+            for row in rows
+        ]
+
+    async def revoke_session(self, actor: CurrentUser, session_id: str) -> None:
+        """踢掉自己的一条会话。**只能踢自己的**：别人的 sid 在这里查不到，直接 404。"""
+        if not await self.sessions.revoke(
+            session_id, reason="self_revoke", user_id=actor.id
+        ):
+            raise SessionNotFound()
+        await self.session.commit()
+
+    async def revoke_other_sessions(self, actor: CurrentUser) -> int:
+        """退出所有其他设备，保留当前会话。
+
+        当前令牌没有 `sid`（旧令牌 / 合成主体）时无从判断「哪条是当前」，
+        此时全部吊销——这类令牌本来也无法被单点吊销，留着反而是个例外。
+        """
+        count = await self.sessions.revoke_all(
+            actor.id, reason="self_revoke", keep_session_id=actor.session_id or None
+        )
+        await self.session.commit()
+        return count
+
+    async def revoke_user_sessions(self, user_id: str, actor: CurrentUser) -> int:
+        """管理员踢某人下线（`POST /users/{id}/revoke-sessions`）。
+
+        守卫与重置口令同级：踢下线是**拿走对方的访问权**，目标不能高于自己。
+        """
+        user = await self._require_user(user_id)
+        await self._guard_target_not_above(user, actor)
+        count = await self.sessions.revoke_all(user.id, reason="admin_revoke")
+        await self.session.commit()
+        logger.info("管理员 %s 吊销了 %s 的 %d 个会话", actor.id, user.username, count)
+        return count
+
+    # ------------------------------------------------------------------ #
+    # 登录审计
+    # ------------------------------------------------------------------ #
+    async def my_logins(self, actor: CurrentUser, limit: int) -> LoginEventListOut:
+        return await self._login_events(actor.id, limit)
+
+    async def logins_of(self, user_id: str, limit: int) -> LoginEventListOut:
+        user = await self._require_user(user_id)  # 404 而不是空列表：id 写错要能看出来
+        return await self._login_events(user.id, limit)
+
+    async def _login_events(self, user_id: str, limit: int) -> LoginEventListOut:
+        rows = await self.logins.latest_for_user(user_id, limit)
+        return LoginEventListOut(
+            items=[
+                LoginEventOut(
+                    at=row.created_at,
+                    success=row.success,
+                    ip=row.ip,
+                    user_agent=row.user_agent,
+                    reason=row.reason,
+                )
+                for row in rows
+            ]
+        )
+
+    @staticmethod
+    def password_policy() -> PasswordPolicyOut:
+        """口令策略快照。匿名可访问：登录页和「管理员重置」表单都要在未登录时用它。"""
+        return PasswordPolicyOut(**policy.describe())
+
+    async def purge_login_events(self, days: int) -> int:
+        """清理 `days` 天前的审计。由 `app prune-logins` 调用，不在请求路径上跑。"""
+        cutoff = utcnow() - timedelta(days=max(days, 1))
+        removed = await self.logins.purge_before(cutoff)
+        await self.session.commit()
+        return removed
 
     @staticmethod
     def _to_me(identity: ResolvedIdentity) -> MeOut:
@@ -456,6 +768,10 @@ class IdentityService:
             user = await self._require_user(user_id)
             await self._guard_target_not_above(user, actor)
             await self.set_password(user, new_password)
+            # 顺手吊销目标的所有会话：改密本身已经让旧 access 失效
+            # （`password_changed_at`），但「会话列表里还挂着几台设备」会让管理员
+            # 以为没踢干净；而这张表存在的意义就是「谁的会话还在」要看得见。
+            await self.sessions.revoke_all(user.id, reason="password_reset")
             await self.session.commit()
         logger.info("管理员 %s 重置了 %s 的密码", actor.id, user.username)
 

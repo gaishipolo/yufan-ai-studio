@@ -68,7 +68,17 @@ class TokenOut(CamelModel):
     access_token: str = Field(description="访问令牌，放进 `Authorization: Bearer <token>`")
     token_type: str = Field(default="Bearer", description="令牌类型，固定 Bearer")
     expires_in: int = Field(default=0, description="有效期（秒），过期后请求返回 401")
+    refresh_token: str = Field(
+        default="", description="刷新令牌，只用来换新的 accessToken，不能访问业务接口"
+    )
+    refresh_expires_in: int = Field(
+        default=0, description="刷新令牌有效期（秒）；续期时滑动延长"
+    )
     user: MeOut = Field(description="登录用户，可省一次 `/me` 请求")
+
+
+class RefreshIn(CamelModel):
+    refresh_token: str = Field(min_length=1, max_length=2048, description="登录时拿到的刷新令牌")
 
 
 class UserCreateIn(CamelModel):
@@ -237,20 +247,74 @@ class PermissionCatalogOut(CamelModel):
     total: int = Field(default=0, description="权限点总数")
 
 
+class SessionOut(CamelORMModel):
+    """一条登录会话。前端「我的登录设备」列表用它。"""
+
+    id: str = Field(description="会话 ID，踢下线时用它")
+    user_agent: str = Field(default="", description="登录时的 UA，未记录为空串")
+    ip: str = Field(default="", description="登录时的来源 IP")
+    last_seen_at: UtcDateTime | None = Field(
+        default=None, description="最近一次续期时间，从未续期为 null"
+    )
+    expires_at: UtcDateTime = Field(description="刷新令牌到期时间（UTC）")
+    created_at: UtcDateTime = Field(description="登录时间（UTC）")
+    current: bool = Field(
+        default=False, description="是否是发起本次请求的会话；前端据此标「本机」"
+    )
+
+
+class LoginEventOut(CamelModel):
+    """一次登录尝试。审计用，只读。
+
+    字段名 `at` 与库里的 `created_at` 不同：契约里这一列叫 `at`（前端需求文档的写法），
+    转换放在 service 里显式做一次，比给 `created_at` 起两个别名好读。
+    """
+
+    at: UtcDateTime = Field(description="发生时间（UTC）")
+    success: bool = Field(description="是否成功")
+    ip: str = Field(default="", description="来源 IP")
+    user_agent: str = Field(default="", description="客户端 UA")
+    reason: str | None = Field(
+        default=None,
+        description="失败原因：`bad_password` / `disabled` / `rate_limited`；成功为 null",
+    )
+
+
+class LoginEventListOut(CamelModel):
+    items: list[LoginEventOut] = Field(default_factory=list, description="按时间倒序")
+
+
+class PasswordPolicyOut(CamelModel):
+    """口令策略下发。**文案也由后端给**：前端四处表单不该各拼一份。"""
+
+    min_length: int = Field(description="最短长度")
+    max_length: int = Field(description="最长长度")
+    forbid_all_numeric: bool = Field(description="是否禁止纯数字")
+    forbid_same_as_username: bool = Field(
+        description="是否禁止与用户名相同；当前未启用，前端按 false 处理"
+    )
+    message: str = Field(description="可直接展示的一句话，前端不要自己拼")
+
+
 __all__ = [
     "LoginIn",
     "MeOut",
     "PasswordChangeIn",
     "PermissionCatalogOut",
     "PermissionGroupOut",
+    "LoginEventListOut",
+    "LoginEventOut",
+    "PasswordPolicyOut",
     "PermissionOut",
     "ProfileUpdateIn",
+    "RefreshIn",
     "ResetPasswordIn",
     "RoleBriefOut",
     "RoleCreateIn",
     "RoleOut",
     "RolePermissionsIn",
     "RoleUpdateIn",
+    "SessionOut",
     "TokenOut",
     "UserCreateIn",
     "UserOut",

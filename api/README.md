@@ -1,4 +1,4 @@
-# 天火 AI 短视频工作台 · 后端
+# 雨范 AI 短视频工作台 · 后端
 
 FastAPI + SQLAlchemy 2.0（async）+ Pydantic v2 的分层后端。
 与前端工程 `studio`（Vite + React + TS）配套，接口契约一一对应。
@@ -62,6 +62,7 @@ Vite 会把 `/api` 代理到 `VITE_API_PROXY_TARGET`（默认 `http://127.0.0.1:
 | `app modules` | 列出模块 / 权限点 / 生成流水线 / job handler |
 | `app models` | 列出模型目录（供应商路由结果） |
 | `app export-openapi` | 导出接口契约：`docs/openapi.json` + `docs/API.md` + 前端 `schema.ts` |
+| `app prune-logins [--days 90]` | 清理过期的登录审计（默认取 `LOGIN_EVENT_RETENTION_DAYS`） |
 | `app new-module x --label 中文名` | 生成新模块脚手架（含权限声明） |
 | `alembic revision --autogenerate -m "xxx"` | 生成迁移（生产用） |
 | `alembic upgrade head` | 执行迁移 |
@@ -381,6 +382,11 @@ ruff check src tests
       自报，全信任等于限流键可随意伪造。
 - [ ] 不要在启动脚本里留 `app seed`：`APP_ENV=prod` 时它会拒绝执行（演示账号口令固定），
       生产首启只用 `app create-admin`。
+- [ ] 给 `app prune-logins` 挂一条日任务（cron / systemd timer）：`login_events` 只增不减，
+      不清会一直长。保留天数看审计要求，默认 90 天（`LOGIN_EVENT_RETENTION_DAYS`）。
+- [ ] 多实例部署**不需要**额外配置：会话与吊销判定都在数据库里，没有进程内状态。
+      （限流计数器是进程内的，多实例时每个实例各算各的——要全局限流就得换 Redis，
+      见 `docs/EXTENDING.md` §2.1。）
 
 前三条**不需要靠人记**：`Settings` 上有 `model_validator`，`APP_ENV=prod` 时
 匿名放开、样例/过短 JWT 密钥、`CORS_ORIGINS=*`、`DEBUG=true` 任意一条命中都会

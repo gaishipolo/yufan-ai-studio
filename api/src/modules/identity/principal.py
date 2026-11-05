@@ -6,9 +6,10 @@
 |---|---|---|
 | 管理员撤了某人的权限 | 最晚等 2 小时（TTL）才生效 | 下一个请求就生效 |
 | 账号被停用 | 令牌仍可用满 2 小时 | 立刻 401 |
+| 用户点了「退出登录」 | 只是前端删了本地副本 | 立刻 401（会话已吊销） |
 | 用户改了昵称 | 仍是旧昵称 | 立即同步（日志、任务作者快照除外） |
 
-代价是每个带令牌的请求多 2~3 次单表查询（用户 / 角色 / 权限）。
+代价是每个带令牌的请求多 2~4 次单表查询（用户 / 角色 / 权限 / 会话）。
 这个量级在后台系统里完全可接受；真到瓶颈再加请求级或秒级缓存，
 而不是为了省这几次查询把权限新鲜度换掉。
 """
@@ -41,7 +42,8 @@ class IdentityPrincipalResolver:
     async def resolve(
         self, principal: CurrentUser, session: AsyncSession
     ) -> CurrentUser | None:
-        resolved = await IdentityService(session).resolve_identity(principal.id)
+        identity_service = IdentityService(session)
+        resolved = await identity_service.resolve_identity(principal.id)
         if resolved is None or not resolved.user.is_active:
             return None
 
@@ -53,10 +55,26 @@ class IdentityPrincipalResolver:
             if principal.issued_at < int(changed_at.timestamp()):
                 return None
 
+        # 会话校验：登出 / 踢下线 / 会话过期都在这里生效。
+        #
+        # 为什么必须有这一步：令牌是无状态的，「签名有效」只说明它没被篡改，
+        # 不说明它还被允许使用。没有这一步，登出就只是前端删了本地副本，
+        # 复制走的那张还能用满 TTL。
+        #
+        # `session_id` 为空表示这张令牌不是登录签出来的（旧令牌、测试用令牌、
+        # 匿名演示主体），此时跳过——它们没有会话可查，靠上面的改密判定和 TTL 兜底。
+        if principal.session_id:
+            active = await identity_service.sessions.active_by_id(
+                principal.session_id, user.id
+            )
+            if active is None:
+                return None
+
         return CurrentUser(
             id=user.id,
             name=user.display_name or user.username,
             roles=resolved.role_codes,
             permissions=resolved.permissions,
             issued_at=principal.issued_at,
+            session_id=principal.session_id,
         )

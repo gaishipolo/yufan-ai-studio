@@ -34,7 +34,7 @@ from workers import Worker, handler_names
 logger = get_logger(__name__)
 
 DESCRIPTION = """
-天火 AI 短视频工作台后端。
+雨范 AI 短视频工作台后端。
 
 - 统一响应：`{code, message, data}`，`code=0` 为成功
 - 字段命名：出入参均为 camelCase，与前端 TypeScript 类型一一对应

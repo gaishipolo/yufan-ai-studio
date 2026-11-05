@@ -27,6 +27,9 @@ class CurrentUser:
     # 令牌签发时间（epoch 秒）。0 表示「不知道」——合成主体（匿名演示账号、
     # 单元测试里的 CurrentUser）都取 0，解析器据此跳过「令牌是否早于改密」的判断。
     issued_at: int = 0
+    # 对应的会话 id（access 令牌里的 `sid`）。空字符串表示「这张令牌没有会话」
+    # ——旧令牌、合成主体、测试里直接签的令牌都是这样，解析器据此跳过会话校验。
+    session_id: str = ""
 
     def has(self, code: str) -> bool:
         """是否拥有某权限码。"""

@@ -200,7 +200,14 @@ def create_access_token(
     permissions: list[str] | tuple[str, ...] | None = None,
     expires_in: int | None = None,
     extra: dict[str, Any] | None = None,
+    session_id: str | None = None,
 ) -> str:
+    """签发访问令牌。
+
+    `session_id` 会写成 `sid` claim：解析器据此每次请求校验「这个会话还活着吗」，
+    登出 / 踢下线才能立刻生效。**不传就是无会话令牌**（旧令牌、测试里直接签的令牌），
+    解析器跳过会话校验——它们只能靠 TTL 和 `password_changed_at` 兜底。
+    """
     now = datetime.now(tz=UTC)
     ttl = expires_in if expires_in is not None else settings.access_token_ttl_seconds
     payload: dict[str, Any] = {
@@ -212,19 +219,41 @@ def create_access_token(
         "exp": int((now + timedelta(seconds=ttl)).timestamp()),
         "typ": "access",
     }
+    if session_id:
+        payload["sid"] = session_id
     if extra:
         payload.update(extra)
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
 
 
-def decode_access_token(token: str) -> dict[str, Any]:
-    """校验签名、有效期、用途与主体。
+def create_refresh_token(
+    subject: str,
+    *,
+    session_id: str,
+    jti: str,
+    expires_in: int | None = None,
+) -> str:
+    """签发刷新令牌。
 
-    `typ` 必须显式校验：将来加 refresh token 时它同样用 `JWT_SECRET` 签名，
-    不区分用途就等于把「换票凭证」当成「访问凭证」接受。`sub` 同理——
-    没有主体的令牌在「按 sub 查库」的解析器下会变成「查不到用户」，报错位置
-    离真正的原因很远。
+    只带 `sub` / `sid` / `jti` / `typ`，**不带 `perms`**：
+    权限每次都由解析器从库里取，refresh 里放一份权限快照只会让人误以为它有用。
     """
+    now = datetime.now(tz=UTC)
+    ttl = (
+        expires_in if expires_in is not None else settings.refresh_token_ttl_seconds
+    )
+    payload: dict[str, Any] = {
+        "sub": subject,
+        "sid": session_id,
+        "jti": jti,
+        "iat": int(now.timestamp()),
+        "exp": int((now + timedelta(seconds=ttl)).timestamp()),
+        "typ": "refresh",
+    }
+    return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
+
+
+def _decode(token: str, *, expected_typ: str) -> dict[str, Any]:
     try:
         claims = jwt.decode(
             token, settings.jwt_secret, algorithms=[settings.jwt_algorithm]
@@ -234,9 +263,37 @@ def decode_access_token(token: str) -> dict[str, Any]:
     except jwt.InvalidTokenError as exc:
         raise Unauthorized("登录凭证无效") from exc
 
-    if claims.get("typ") != "access":
+    # `typ` 必须显式校验：两种令牌同样用 `JWT_SECRET` 签名，不区分用途就等于
+    # 把「换票凭证」当成「访问凭证」接受（反过来更糟：刷新接口会接受 access 令牌，
+    # 于是一张 2 小时的票可以无限续期）。
+    if claims.get("typ") != expected_typ:
         raise Unauthorized("登录凭证无效")
     if not str(claims.get("sub") or "").strip():
+        raise Unauthorized("登录凭证无效")
+    return claims
+
+
+def decode_access_token(token: str) -> dict[str, Any]:
+    """校验签名、有效期、用途与主体。
+
+    `typ` 必须显式校验：refresh token 同样用 `JWT_SECRET` 签名，
+    不区分用途就等于把「换票凭证」当成「访问凭证」接受。`sub` 同理——
+    没有主体的令牌在「按 sub 查库」的解析器下会变成「查不到用户」，报错位置
+    离真正的原因很远。
+    """
+    return _decode(token, expected_typ="access")
+
+
+def decode_refresh_token(token: str) -> dict[str, Any]:
+    """校验签名、有效期、用途，并要求带 `sid` 与 `jti`。
+
+    两个都必须有：`sid` 找不到会话就无从轮换，`jti` 缺失则无法比对「这张票是不是
+    已经用过了」。
+    """
+    claims = _decode(token, expected_typ="refresh")
+    if not str(claims.get("sid") or "").strip():
+        raise Unauthorized("登录凭证无效")
+    if not str(claims.get("jti") or "").strip():
         raise Unauthorized("登录凭证无效")
     return claims
 
@@ -249,4 +306,5 @@ def user_from_token(token: str) -> CurrentUser:
         roles=tuple(claims.get("roles", [])),
         permissions=frozenset(claims.get("perms", [])),
         issued_at=int(claims.get("iat") or 0),
+        session_id=str(claims.get("sid") or ""),
     )

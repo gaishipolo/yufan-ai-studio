@@ -60,6 +60,26 @@ def _cmd_seed(args: argparse.Namespace) -> None:
     print("演示数据已写入：", ", ".join(f"{k}={v}" for k, v in counts.items()))
 
 
+def _cmd_prune_logins(args: argparse.Namespace) -> None:
+    """清理过期的登录审计。
+
+    不做成「每次登录顺手删一批」：那会把一次写操作变成「写 + 扫表」，
+    而且审计该留多久是运维决定，不该由某个请求的运气决定。
+    """
+    from core.config import get_settings
+    from db.session import get_session_factory
+    from modules.identity.service import IdentityService
+
+    days = args.days or get_settings().login_event_retention_days
+
+    async def run() -> int:
+        async with get_session_factory()() as session:
+            return await IdentityService(session).purge_login_events(days)
+
+    removed = asyncio.run(run())
+    print(f"已清理 {days} 天前的登录审计：{removed} 行")
+
+
 def _cmd_create_admin(args: argparse.Namespace) -> None:
     """生产首启的唯一入口：没有账号时谁也登不进去，必须由运维在服务器上创建。"""
     from db.session import get_session_factory
@@ -184,7 +204,7 @@ def _cmd_new_module(args: argparse.Namespace) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="app", description="天火 AI 短视频工作台后端")
+    parser = argparse.ArgumentParser(prog="app", description="雨范 AI 短视频工作台后端")
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_serve = sub.add_parser("serve", help="启动 API 服务")
@@ -210,6 +230,12 @@ def main(argv: list[str] | None = None) -> int:
     p_admin.add_argument("--password", default="", help="不传则交互式输入")
     p_admin.add_argument("--display-name", default="", help="昵称，默认与用户名相同")
     p_admin.set_defaults(func=_cmd_create_admin)
+
+    p_prune = sub.add_parser("prune-logins", help="清理过期的登录审计")
+    p_prune.add_argument(
+        "--days", type=int, default=0, help="保留天数，默认取 LOGIN_EVENT_RETENTION_DAYS"
+    )
+    p_prune.set_defaults(func=_cmd_prune_logins)
 
     p_modules = sub.add_parser("modules", help="列出已发现的模块与扩展点")
     p_modules.set_defaults(func=_cmd_modules)

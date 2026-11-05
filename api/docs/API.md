@@ -1,8 +1,8 @@
-# 天火 AI 短视频工作台 API — 接口文档
+# 雨范 AI 短视频工作台 API — 接口文档
 
 > 此文件由 `app export-openapi` 自动生成，请勿手工编辑。
 >
-> 版本 `0.2.0`｜共 **37** 个接口 / **9** 个模块
+> 版本 `0.2.0`｜共 **46** 个接口 / **9** 个模块
 >
 > 重新生成：`cd api && .venv/Scripts/python -m cli export-openapi`
 
@@ -127,6 +127,7 @@ Authorization: Bearer <accessToken>
 | `40022` | 400 | identity | `UnknownPermission` | 存在无法识别的权限点 |
 | `40100` | 401 | 框架 | `Unauthorized` | 请先登录 |
 | `40121` | 401 | identity | `CredentialInvalid` | 用户名或密码错误 |
+| `40122` | 401 | identity | `RefreshTokenInvalid` | 刷新令牌已失效，请重新登录 |
 | `40300` | 403 | 框架 | `Forbidden` | 没有操作权限 |
 | `40321` | 403 | identity | `AccountDisabled` | 账号已停用，请联系管理员 |
 | `40322` | 403 | identity | `SuperuserRequired` | 该操作需要超级管理员权限 |
@@ -134,6 +135,7 @@ Authorization: Bearer <accessToken>
 | `40400` | 404 | 框架 | `NotFound` | 资源不存在 |
 | `40421` | 404 | identity | `UserNotFound` | 用户不存在 |
 | `40422` | 404 | identity | `RoleNotFound` | 角色不存在 |
+| `40423` | 404 | identity | `SessionNotFound` | 会话不存在或已失效 |
 | `40900` | 409 | 框架 | `Conflict` | 资源冲突 |
 | `40902` | 409 | 框架 | `InvalidState` | 当前状态不允许该操作 |
 | `40921` | 409 | identity | `UsernameTaken` | 用户名已被占用 |
@@ -152,7 +154,7 @@ Authorization: Bearer <accessToken>
 
 | 模块 | 接口数 | 说明 |
 |---|---|---|
-| 身份 | 17 | 见下方 `4.1` |
+| 身份 | 26 | 见下方 `4.1` |
 | 任务 | 8 | 见下方 `4.2` |
 | 模型 | 1 | 见下方 `4.3` |
 | 素材 | 4 | 见下方 `4.4` |
@@ -162,15 +164,22 @@ Authorization: Bearer <accessToken>
 | 镜头库 | 1 | 见下方 `4.8` |
 | 系统 | 2 | 见下方 `4.9` |
 
-### 4.1 身份（17 个）
+### 4.1 身份（26 个）
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
 | `POST` | `/api/v1/identity/login` | 登录换取令牌 | 公开 |
+| `POST` | `/api/v1/identity/logout` | 退出登录（作废当前会话，幂等） | 公开 |
 | `GET` | `/api/v1/identity/me` | 当前用户（含角色与权限码） | 🔒 |
 | `PATCH` | `/api/v1/identity/me` | 修改自己的资料 | 🔒 |
+| `GET` | `/api/v1/identity/me/logins` | 我的登录记录 | 🔒 |
 | `POST` | `/api/v1/identity/me/password` | 修改自己的密码 | 🔒 |
+| `GET` | `/api/v1/identity/me/sessions` | 我的登录会话 | 🔒 |
+| `DELETE` | `/api/v1/identity/me/sessions` | 退出所有其他设备（保留当前） | 🔒 |
+| `DELETE` | `/api/v1/identity/me/sessions/{session_id}` | 踢掉我的一条会话 | 🔒 |
+| `GET` | `/api/v1/identity/password-policy` | 口令策略（匿名） | 公开 |
 | `GET` | `/api/v1/identity/permissions` | 全部权限点（按分组，供角色编辑界面） | 🔒 |
+| `POST` | `/api/v1/identity/refresh` | 用刷新令牌换取新令牌 | 公开 |
 | `GET` | `/api/v1/identity/roles` | 角色列表（含权限与人数） | 🔒 |
 | `POST` | `/api/v1/identity/roles` | 创建角色 | 🔒 |
 | `PATCH` | `/api/v1/identity/roles/{role_id}` | 编辑角色 | 🔒 |
@@ -181,7 +190,9 @@ Authorization: Bearer <accessToken>
 | `GET` | `/api/v1/identity/users/{user_id}` | 用户详情 | 🔒 |
 | `PATCH` | `/api/v1/identity/users/{user_id}` | 编辑用户（含停用） | 🔒 |
 | `DELETE` | `/api/v1/identity/users/{user_id}` | 停用用户（保留历史归属） | 🔒 |
+| `GET` | `/api/v1/identity/users/{user_id}/logins` | 某账号的登录记录 | 🔒 |
 | `POST` | `/api/v1/identity/users/{user_id}/reset-password` | 管理员重置密码 | 🔒 |
+| `POST` | `/api/v1/identity/users/{user_id}/revoke-sessions` | 踢下线（吊销该用户全部会话） | 🔒 |
 | `PUT` | `/api/v1/identity/users/{user_id}/roles` | 设置用户角色（整组替换） | 🔒 |
 
 #### `POST /api/v1/identity/login`
@@ -202,7 +213,19 @@ Authorization: Bearer <accessToken>
 | `accessToken` | `string` | 是 | 访问令牌，放进 `Authorization: Bearer <token>` |
 | `tokenType` | `string` | 否 | 令牌类型，固定 Bearer |
 | `expiresIn` | `number` | 否 | 有效期（秒），过期后请求返回 401 |
+| `refreshToken` | `string` | 否 | 刷新令牌，只用来换新的 accessToken，不能访问业务接口 |
+| `refreshExpiresIn` | `number` | 否 | 刷新令牌有效期（秒）；续期时滑动延长 |
 | `user` | `MeOut` | 是 | 登录用户，可省一次 `/me` 请求 |
+
+#### `POST /api/v1/identity/logout`
+
+**退出登录（作废当前会话，幂等）**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `authorization` | header | `string | null` | 否 |  |
+
+**响应** `ApiResponse<null>`（前端取 `res.data`）
 
 #### `GET /api/v1/identity/me`
 
@@ -250,6 +273,20 @@ Authorization: Bearer <accessToken>
 | `roles` | `RoleBriefOut[]` | 否 | 拥有的角色 |
 | `permissions` | `string[]` | 否 | 展开后的权限码；含 `*` 表示超级管理员 |
 
+#### `GET /api/v1/identity/me/logins`
+
+**我的登录记录**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `limit` | query | `number` | 否 | 返回条数 |
+
+**响应** `ApiResponse<LoginEventListOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `items` | `LoginEventOut[]` | 否 | 按时间倒序 |
+
 #### `POST /api/v1/identity/me/password`
 
 **修改自己的密码**
@@ -263,6 +300,56 @@ Authorization: Bearer <accessToken>
 
 **响应** `ApiResponse<null>`（前端取 `res.data`）
 
+#### `GET /api/v1/identity/me/sessions`
+
+**我的登录会话**
+
+**响应** `ApiResponse<SessionOut[]>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `[].id` | `string` | 是 | 会话 ID，踢下线时用它 |
+| `[].userAgent` | `string` | 否 | 登录时的 UA，未记录为空串 |
+| `[].ip` | `string` | 否 | 登录时的来源 IP |
+| `[].lastSeenAt` | `string \| null` | 否 | 最近一次续期时间，从未续期为 null |
+| `[].expiresAt` | `string` | 是 | 刷新令牌到期时间（UTC） |
+| `[].createdAt` | `string` | 是 | 登录时间（UTC） |
+| `[].current` | `boolean` | 否 | 是否是发起本次请求的会话；前端据此标「本机」 |
+
+#### `DELETE /api/v1/identity/me/sessions`
+
+**退出所有其他设备（保留当前）**
+
+**响应** `ApiResponse<dict_str__int>`（前端取 `res.data`）
+
+#### `DELETE /api/v1/identity/me/sessions/{session_id}`
+
+**踢掉我的一条会话**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `session_id` | path | `string` | 是 |  |
+
+**响应** `ApiResponse<null>`（前端取 `res.data`）
+
+#### `GET /api/v1/identity/password-policy`
+
+**口令策略（匿名）**
+
+登录页与「重置密码」表单要在未登录状态下拿到策略，所以不挂鉴权依赖。
+
+只暴露规则，不暴露任何账号信息。
+
+**响应** `ApiResponse<PasswordPolicyOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `minLength` | `number` | 是 | 最短长度 |
+| `maxLength` | `number` | 是 | 最长长度 |
+| `forbidAllNumeric` | `boolean` | 是 | 是否禁止纯数字 |
+| `forbidSameAsUsername` | `boolean` | 是 | 是否禁止与用户名相同；当前未启用，前端按 false 处理 |
+| `message` | `string` | 是 | 可直接展示的一句话，前端不要自己拼 |
+
 #### `GET /api/v1/identity/permissions`
 
 **全部权限点（按分组，供角色编辑界面）**
@@ -273,6 +360,27 @@ Authorization: Bearer <accessToken>
 |---|---|---|---|
 | `groups` | `PermissionGroupOut[]` | 否 | 按分组组织的全部权限点，角色编辑界面直接渲染 |
 | `total` | `number` | 否 | 权限点总数 |
+
+#### `POST /api/v1/identity/refresh`
+
+**用刷新令牌换取新令牌**
+
+**请求体** `RefreshIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `refreshToken` | `string` | 是 | 登录时拿到的刷新令牌 |
+
+**响应** `ApiResponse<TokenOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `accessToken` | `string` | 是 | 访问令牌，放进 `Authorization: Bearer <token>` |
+| `tokenType` | `string` | 否 | 令牌类型，固定 Bearer |
+| `expiresIn` | `number` | 否 | 有效期（秒），过期后请求返回 401 |
+| `refreshToken` | `string` | 否 | 刷新令牌，只用来换新的 accessToken，不能访问业务接口 |
+| `refreshExpiresIn` | `number` | 否 | 刷新令牌有效期（秒）；续期时滑动延长 |
+| `user` | `MeOut` | 是 | 登录用户，可省一次 `/me` 请求 |
 
 #### `GET /api/v1/identity/roles`
 
@@ -521,6 +629,21 @@ Authorization: Bearer <accessToken>
 | `createdAt` | `string` | 是 | 创建时间（UTC） |
 | `roles` | `RoleBriefOut[]` | 否 | 拥有的角色 |
 
+#### `GET /api/v1/identity/users/{user_id}/logins`
+
+**某账号的登录记录**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `user_id` | path | `string` | 是 |  |
+| `limit` | query | `number` | 否 | 返回条数 |
+
+**响应** `ApiResponse<LoginEventListOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `items` | `LoginEventOut[]` | 否 | 按时间倒序 |
+
 #### `POST /api/v1/identity/users/{user_id}/reset-password`
 
 **管理员重置密码**
@@ -536,6 +659,16 @@ Authorization: Bearer <accessToken>
 | `newPassword` | `string` | 是 | 管理员设置的新密码；至少 10 位，不能是纯数字 |
 
 **响应** `ApiResponse<null>`（前端取 `res.data`）
+
+#### `POST /api/v1/identity/users/{user_id}/revoke-sessions`
+
+**踢下线（吊销该用户全部会话）**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `user_id` | path | `string` | 是 |  |
+
+**响应** `ApiResponse<dict_str__int>`（前端取 `res.data`）
 
 #### `PUT /api/v1/identity/users/{user_id}/roles`
 
@@ -1150,6 +1283,27 @@ Authorization: Bearer <accessToken>
 | `coverUrl` | `string` | 否 | 封面图 URL |
 | `createdAt` | `string` | 是 | 创建时间（UTC） |
 
+### `LoginEventListOut`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `items` | `LoginEventOut[]` | 否 | 按时间倒序 |
+
+### `LoginEventOut`
+
+一次登录尝试。审计用，只读。
+
+字段名 `at` 与库里的 `created_at` 不同：契约里这一列叫 `at`（前端需求文档的写法），
+转换放在 service 里显式做一次，比给 `created_at` 起两个别名好读。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `at` | `string` | 是 | 发生时间（UTC） |
+| `success` | `boolean` | 是 | 是否成功 |
+| `ip` | `string` | 否 | 来源 IP |
+| `userAgent` | `string` | 否 | 客户端 UA |
+| `reason` | `string \| null` | 否 | 失败原因：`bad_password` / `disabled` / `rate_limited`；成功为 null |
+
 ### `LoginIn`
 
 | 字段 | 类型 | 必填 | 说明 |
@@ -1200,6 +1354,18 @@ Authorization: Bearer <accessToken>
 | `oldPassword` | `string` | 是 | 当前密码 |
 | `newPassword` | `string` | 是 | 新密码；至少 10 位，不能是纯数字，且不能与当前密码相同 |
 
+### `PasswordPolicyOut`
+
+口令策略下发。**文案也由后端给**：前端四处表单不该各拼一份。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `minLength` | `number` | 是 | 最短长度 |
+| `maxLength` | `number` | 是 | 最长长度 |
+| `forbidAllNumeric` | `boolean` | 是 | 是否禁止纯数字 |
+| `forbidSameAsUsername` | `boolean` | 是 | 是否禁止与用户名相同；当前未启用，前端按 false 处理 |
+| `message` | `string` | 是 | 可直接展示的一句话，前端不要自己拼 |
+
 ### `PermissionCatalogOut`
 
 | 字段 | 类型 | 必填 | 说明 |
@@ -1242,6 +1408,12 @@ Authorization: Bearer <accessToken>
 | `status` | `string` | 是 |  |
 | `database` | `string` | 是 |  |
 | `queueSize` | `number` | 是 |  |
+
+### `RefreshIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `refreshToken` | `string` | 是 | 登录时拿到的刷新令牌 |
 
 ### `ResetPasswordIn`
 
@@ -1299,6 +1471,20 @@ Authorization: Bearer <accessToken>
 | `name` | `string \| null` | 否 | 角色名称 |
 | `description` | `string \| null` | 否 | 角色说明 |
 | `isSuperuser` | `boolean \| null` | 否 | 仅超级管理员可设置 |
+
+### `SessionOut`
+
+一条登录会话。前端「我的登录设备」列表用它。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 | 会话 ID，踢下线时用它 |
+| `userAgent` | `string` | 否 | 登录时的 UA，未记录为空串 |
+| `ip` | `string` | 否 | 登录时的来源 IP |
+| `lastSeenAt` | `string \| null` | 否 | 最近一次续期时间，从未续期为 null |
+| `expiresAt` | `string` | 是 | 刷新令牌到期时间（UTC） |
+| `createdAt` | `string` | 是 | 登录时间（UTC） |
+| `current` | `boolean` | 否 | 是否是发起本次请求的会话；前端据此标「本机」 |
 
 ### `ShotListOut`
 
@@ -1447,6 +1633,8 @@ Authorization: Bearer <accessToken>
 | `accessToken` | `string` | 是 | 访问令牌，放进 `Authorization: Bearer <token>` |
 | `tokenType` | `string` | 否 | 令牌类型，固定 Bearer |
 | `expiresIn` | `number` | 否 | 有效期（秒），过期后请求返回 401 |
+| `refreshToken` | `string` | 否 | 刷新令牌，只用来换新的 accessToken，不能访问业务接口 |
+| `refreshExpiresIn` | `number` | 否 | 刷新令牌有效期（秒）；续期时滑动延长 |
 | `user` | `MeOut` | 是 | 登录用户，可省一次 `/me` 请求 |
 
 ### `UpdateTaskIn`

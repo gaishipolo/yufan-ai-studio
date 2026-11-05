@@ -164,6 +164,29 @@ export interface ImageJobOut {
   createdAt: string;
 }
 
+/** LoginEventListOut */
+export interface LoginEventListOut {
+  /** 按时间倒序 */
+  items?: LoginEventOut[];
+}
+
+/** 一次登录尝试。审计用，只读。
+
+字段名 `at` 与库里的 `created_at` 不同：契约里这一列叫 `at`（前端需求文档的写法），
+转换放在 service 里显式做一次，比给 `created_at` 起两个别名好读。 */
+export interface LoginEventOut {
+  /** 发生时间（UTC） */
+  at: string;
+  /** 是否成功 */
+  success: boolean;
+  /** 来源 IP */
+  ip?: string;
+  /** 客户端 UA */
+  userAgent?: string;
+  /** 失败原因：`bad_password` / `disabled` / `rate_limited`；成功为 null */
+  reason?: string | null;
+}
+
 /** LoginIn */
 export interface LoginIn {
   /** 用户名 */
@@ -221,6 +244,20 @@ export interface PasswordChangeIn {
   newPassword: string;
 }
 
+/** 口令策略下发。**文案也由后端给**：前端四处表单不该各拼一份。 */
+export interface PasswordPolicyOut {
+  /** 最短长度 */
+  minLength: number;
+  /** 最长长度 */
+  maxLength: number;
+  /** 是否禁止纯数字 */
+  forbidAllNumeric: boolean;
+  /** 是否禁止与用户名相同；当前未启用，前端按 false 处理 */
+  forbidSameAsUsername: boolean;
+  /** 可直接展示的一句话，前端不要自己拼 */
+  message: string;
+}
+
 /** PermissionCatalogOut */
 export interface PermissionCatalogOut {
   /** 按分组组织的全部权限点，角色编辑界面直接渲染 */
@@ -265,6 +302,12 @@ export interface ReadyOut {
   status: string;
   database: string;
   queueSize: number;
+}
+
+/** RefreshIn */
+export interface RefreshIn {
+  /** 登录时拿到的刷新令牌 */
+  refreshToken: string;
 }
 
 /** ResetPasswordIn */
@@ -339,6 +382,24 @@ export interface RoleUpdateIn {
   description?: string | null;
   /** 仅超级管理员可设置 */
   isSuperuser?: boolean | null;
+}
+
+/** 一条登录会话。前端「我的登录设备」列表用它。 */
+export interface SessionOut {
+  /** 会话 ID，踢下线时用它 */
+  id: string;
+  /** 登录时的 UA，未记录为空串 */
+  userAgent?: string;
+  /** 登录时的来源 IP */
+  ip?: string;
+  /** 最近一次续期时间，从未续期为 null */
+  lastSeenAt?: string | null;
+  /** 刷新令牌到期时间（UTC） */
+  expiresAt: string;
+  /** 登录时间（UTC） */
+  createdAt: string;
+  /** 是否是发起本次请求的会话；前端据此标「本机」 */
+  current?: boolean;
 }
 
 /** ShotListOut */
@@ -487,6 +548,10 @@ export interface TokenOut {
   tokenType?: string;
   /** 有效期（秒），过期后请求返回 401 */
   expiresIn?: number;
+  /** 刷新令牌，只用来换新的 accessToken，不能访问业务接口 */
+  refreshToken?: string;
+  /** 刷新令牌有效期（秒）；续期时滑动延长 */
+  refreshExpiresIn?: number;
   /** 登录用户，可省一次 `/me` 请求 */
   user: MeOut;
 }
@@ -599,14 +664,28 @@ export interface EndpointData {
   "GET /api/v1/health/ready": ReadyOut;
   /** 登录换取令牌 */
   "POST /api/v1/identity/login": TokenOut;
+  /** 退出登录（作废当前会话，幂等） */
+  "POST /api/v1/identity/logout": null;
   /** 当前用户（含角色与权限码） */
   "GET /api/v1/identity/me": MeOut;
   /** 修改自己的资料 */
   "PATCH /api/v1/identity/me": MeOut;
+  /** 我的登录记录 */
+  "GET /api/v1/identity/me/logins": LoginEventListOut;
   /** 修改自己的密码 */
   "POST /api/v1/identity/me/password": null;
+  /** 退出所有其他设备（保留当前） */
+  "DELETE /api/v1/identity/me/sessions": dict_str__int;
+  /** 我的登录会话 */
+  "GET /api/v1/identity/me/sessions": SessionOut[];
+  /** 踢掉我的一条会话 */
+  "DELETE /api/v1/identity/me/sessions/{session_id}": null;
+  /** 口令策略（匿名） */
+  "GET /api/v1/identity/password-policy": PasswordPolicyOut;
   /** 全部权限点（按分组，供角色编辑界面） */
   "GET /api/v1/identity/permissions": PermissionCatalogOut;
+  /** 用刷新令牌换取新令牌 */
+  "POST /api/v1/identity/refresh": TokenOut;
   /** 角色列表（含权限与人数） */
   "GET /api/v1/identity/roles": RoleOut[];
   /** 创建角色 */
@@ -627,8 +706,12 @@ export interface EndpointData {
   "GET /api/v1/identity/users/{user_id}": UserOut;
   /** 编辑用户（含停用） */
   "PATCH /api/v1/identity/users/{user_id}": UserOut;
+  /** 某账号的登录记录 */
+  "GET /api/v1/identity/users/{user_id}/logins": LoginEventListOut;
   /** 管理员重置密码 */
   "POST /api/v1/identity/users/{user_id}/reset-password": null;
+  /** 踢下线（吊销该用户全部会话） */
+  "POST /api/v1/identity/users/{user_id}/revoke-sessions": dict_str__int;
   /** 设置用户角色（整组替换） */
   "PUT /api/v1/identity/users/{user_id}/roles": UserOut;
   /** 生图历史（分页） */

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Query, Request, status
+from fastapi import APIRouter, Header, Query, Request, status
 
 from api.deps import ActorDep, PageDep
 from core.exceptions import Unauthorized
@@ -25,16 +25,20 @@ from modules.identity.dependencies import (
     IdentityUpdateDep,
 )
 from modules.identity.schema import (
+    LoginEventListOut,
     LoginIn,
     MeOut,
     PasswordChangeIn,
+    PasswordPolicyOut,
     PermissionCatalogOut,
     ProfileUpdateIn,
+    RefreshIn,
     ResetPasswordIn,
     RoleCreateIn,
     RoleOut,
     RolePermissionsIn,
     RoleUpdateIn,
+    SessionOut,
     TokenOut,
     UserCreateIn,
     UserOut,
@@ -55,12 +59,23 @@ async def login(
     # 客户端 IP 只用于限流计数。取法见 core/net：只有直连对端是可信代理时才读
     # X-Forwarded-For，否则一律用 request.client（伪造这个头不能换掉限流键）。
     user = await service.authenticate(
-        payload.username, payload.password, client_ip=client_ip(request)
+        payload.username,
+        payload.password,
+        client_ip=client_ip(request),
+        user_agent=request.headers.get("user-agent", ""),
     )
     identity = await service.resolve_identity(user.id)
     if identity is None:  # pragma: no cover - authenticate 已确认用户存在
         raise Unauthorized("账号状态异常，请重试")
-    return ApiResponse.ok(await service.build_token(user, identity))
+    return ApiResponse.ok(
+        await service.build_token(
+            user,
+            identity,
+            # UA / IP 落进会话表：前端「我的登录设备」靠它区分，安全排查也靠它
+            user_agent=request.headers.get("user-agent", ""),
+            ip=client_ip(request),
+        )
+    )
 
 
 @router.get("/me", summary="当前用户（含角色与权限码）")
@@ -81,6 +96,74 @@ async def change_password(
 ) -> ApiResponse[None]:
     await service.change_password(actor.id, payload)
     return ApiResponse.ok(None, "密码已更新")
+
+
+@router.post("/refresh", summary="用刷新令牌换取新令牌")
+async def refresh(
+    payload: RefreshIn, service: IdentityServiceDep, request: Request
+) -> ApiResponse[TokenOut]:
+    return ApiResponse.ok(
+        await service.refresh(
+            payload.refresh_token,
+            user_agent=request.headers.get("user-agent", ""),
+            ip=client_ip(request),
+        )
+    )
+
+
+@router.post("/logout", summary="退出登录（作废当前会话，幂等）")
+async def logout(
+    service: IdentityServiceDep,
+    authorization: Annotated[str | None, Header()] = None,
+) -> ApiResponse[None]:
+    # 刻意**不依赖 get_actor**：令牌已经失效时（重复点退出、令牌过期）
+    # 也要正常返回 200，否则用户第二次点退出会看到一条报错
+    await service.logout_by_token(authorization)
+    return ApiResponse.ok(None, "已退出登录")
+
+
+@router.get("/password-policy", summary="口令策略（匿名）")
+async def password_policy(service: IdentityServiceDep) -> ApiResponse[PasswordPolicyOut]:
+    """登录页与「重置密码」表单要在未登录状态下拿到策略，所以不挂鉴权依赖。
+
+    只暴露规则，不暴露任何账号信息。
+    """
+    return ApiResponse.ok(service.password_policy())
+
+
+# --------------------------------------------------------------------------- #
+# 我的会话 / 我的登录记录
+# --------------------------------------------------------------------------- #
+@router.get("/me/sessions", summary="我的登录会话")
+async def list_sessions(
+    service: IdentityServiceDep, actor: ActorDep
+) -> ApiResponse[list[SessionOut]]:
+    return ApiResponse.ok(await service.list_sessions(actor))
+
+
+@router.delete("/me/sessions/{session_id}", summary="踢掉我的一条会话")
+async def revoke_session(
+    session_id: str, service: IdentityServiceDep, actor: ActorDep
+) -> ApiResponse[None]:
+    await service.revoke_session(actor, session_id)
+    return ApiResponse.ok(None, "该设备已下线")
+
+
+@router.delete("/me/sessions", summary="退出所有其他设备（保留当前）")
+async def revoke_other_sessions(
+    service: IdentityServiceDep, actor: ActorDep
+) -> ApiResponse[dict[str, int]]:
+    count = await service.revoke_other_sessions(actor)
+    return ApiResponse.ok({"revoked": count}, f"已下线 {count} 个其他会话")
+
+
+@router.get("/me/logins", summary="我的登录记录")
+async def my_logins(
+    service: IdentityServiceDep,
+    actor: ActorDep,
+    limit: Annotated[int, Query(ge=1, le=100, description="返回条数")] = 10,
+) -> ApiResponse[LoginEventListOut]:
+    return ApiResponse.ok(await service.my_logins(actor, limit))
 
 
 # --------------------------------------------------------------------------- #
@@ -146,6 +229,24 @@ async def reset_password(
 ) -> ApiResponse[None]:
     await service.reset_password(user_id, payload.new_password, actor)
     return ApiResponse.ok(None, "密码已重置")
+
+
+@router.post("/users/{user_id}/revoke-sessions", summary="踢下线（吊销该用户全部会话）")
+async def revoke_user_sessions(
+    user_id: str, service: IdentityServiceDep, actor: IdentityUpdateDep
+) -> ApiResponse[dict[str, int]]:
+    count = await service.revoke_user_sessions(user_id, actor)
+    return ApiResponse.ok({"revoked": count}, f"已吊销 {count} 个会话")
+
+
+@router.get("/users/{user_id}/logins", summary="某账号的登录记录")
+async def user_logins(
+    user_id: str,
+    service: IdentityServiceDep,
+    actor: IdentityReadDep,
+    limit: Annotated[int, Query(ge=1, le=200, description="返回条数")] = 20,
+) -> ApiResponse[LoginEventListOut]:
+    return ApiResponse.ok(await service.logins_of(user_id, limit))
 
 
 @router.delete("/users/{user_id}", summary="停用用户（保留历史归属）")

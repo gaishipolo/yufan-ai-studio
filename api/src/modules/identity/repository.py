@@ -8,13 +8,22 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from datetime import datetime
 
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.response import PageParams
+from db.base import utcnow
 from db.repository import BaseRepository
-from modules.identity.models import Role, RolePermission, User, UserRole
+from modules.identity.models import (
+    LoginEvent,
+    Role,
+    RolePermission,
+    User,
+    UserRole,
+    UserSession,
+)
 
 
 class UserRepository(BaseRepository[User]):
@@ -171,3 +180,102 @@ class RoleRepository(BaseRepository[Role]):
             delete(RolePermission).where(RolePermission.role_id == role_id)
         )
         await self.session.flush()
+
+
+class SessionRepository(BaseRepository[UserSession]):
+    """登录会话。**每请求都会被查一次**（解析器校验 `sid`），所以只走主键。"""
+
+    model = UserSession
+
+    def __init__(self, session: AsyncSession) -> None:
+        super().__init__(session, UserSession)
+
+    async def active_by_id(self, session_id: str, user_id: str) -> UserSession | None:
+        """会话有效 = 存在 + 属于这个用户 + 未撤销 + 未过期。
+
+        四个条件缺一不可：只比 id 会让「换个用户的 sid」通过（sid 是从令牌里读的，
+        虽然是签名过的，但把「谁在用这张票」也校验一遍是免费的）；
+        只比撤销时间会漏掉「7 天到了但没人来登出」的自然过期。
+        """
+        stmt = select(UserSession).where(
+            UserSession.id == session_id,
+            UserSession.user_id == user_id,
+            UserSession.revoked_at.is_(None),
+            UserSession.expires_at > utcnow(),
+        )
+        return await self.session.scalar(stmt)
+
+    async def list_for_user(
+        self, user_id: str, *, only_active: bool = True
+    ) -> Sequence[UserSession]:
+        stmt = select(UserSession).where(UserSession.user_id == user_id)
+        if only_active:
+            stmt = stmt.where(
+                UserSession.revoked_at.is_(None), UserSession.expires_at > utcnow()
+            )
+        # 排序键以主键收尾：同一秒登录两台设备的顺序必须稳定（R8-06）
+        return await self.list(stmt.order_by(UserSession.created_at.desc(), UserSession.id))
+
+    async def revoke(
+        self, session_id: str, *, reason: str, user_id: str | None = None
+    ) -> bool:
+        """吊销单个会话，返回「这次是否真的改动了」——已吊销的再吊销返回 False，
+        幂等性由调用方决定怎么用（登出接口不关心，踢下线关心）。"""
+        stmt = select(UserSession).where(
+            UserSession.id == session_id, UserSession.revoked_at.is_(None)
+        )
+        if user_id is not None:
+            stmt = stmt.where(UserSession.user_id == user_id)
+        target = await self.session.scalar(stmt)
+        if target is None:
+            return False
+        target.revoked_at = utcnow()
+        target.revoked_reason = reason
+        await self.session.flush()
+        return True
+
+    async def revoke_all(
+        self, user_id: str, *, reason: str, keep_session_id: str | None = None
+    ) -> int:
+        """吊销该用户的全部有效会话；`keep_session_id` 用于「退出其他设备」。"""
+        stmt = select(UserSession).where(
+            UserSession.user_id == user_id, UserSession.revoked_at.is_(None)
+        )
+        if keep_session_id:
+            stmt = stmt.where(UserSession.id != keep_session_id)
+        rows = await self.list(stmt)
+        now = utcnow()
+        for row in rows:
+            row.revoked_at = now
+            row.revoked_reason = reason
+        await self.session.flush()
+        return len(rows)
+
+
+class LoginEventRepository(BaseRepository[LoginEvent]):
+    """登录审计。**只追加**：没有 update / delete 之外的口径，清理走 `purge_before`。"""
+
+    model = LoginEvent
+
+    def __init__(self, session: AsyncSession) -> None:
+        super().__init__(session, LoginEvent)
+
+    async def latest_for_user(self, user_id: str, limit: int) -> Sequence[LoginEvent]:
+        return await self.list(
+            select(LoginEvent)
+            .where(LoginEvent.user_id == user_id)
+            .order_by(LoginEvent.created_at.desc(), LoginEvent.id.desc())
+            .limit(limit)
+        )
+
+    async def purge_before(self, cutoff: datetime) -> int:
+        """删掉 cutoff 之前的记录，返回删除行数。
+
+        审计表只增不减会变成一个无限增长的表，而「三个月前的登录记录」在
+        安全追溯上的边际价值已经很低——保留期是配置项，不是硬编码。
+        """
+        result = await self.session.execute(
+            delete(LoginEvent).where(LoginEvent.created_at < cutoff)
+        )
+        await self.session.flush()
+        return int(getattr(result, "rowcount", 0) or 0)

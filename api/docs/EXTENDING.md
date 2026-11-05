@@ -183,6 +183,8 @@ POST /identity/login → 校验口令 → 角色展开成权限码 → 签发 JW
 | `roles` | `code`(unique)、`name`、`is_superuser`、`is_builtin`、`sort_order` | `is_superuser` 展开为 `*`，**不靠角色名 == admin** |
 | `role_permissions` | `role_id` + `permission`（唯一约束） | 权限码存字符串，权威在 `catalog` |
 | `user_roles` | `user_id` + `role_id`（唯一约束） | |
+| `user_sessions` | `user_id`、`refresh_jti`、`user_agent`、`ip`、`expires_at`、`revoked_at`、`revoked_reason` | 一行 = 一次登录。access 令牌带 `sid` 指向它，吊销即刻生效（见 2.6） |
+| `login_events` | `user_id`(可空)、`username`、`success`、`ip`、`user_agent`、`reason`、`created_at` | **只追加**的审计，不挂在 `users` 上；保留期由 `app prune-logins` 控制 |
 
 两个刻意的选择：关联用 `role_id` 而不是 `role_code`（角色改名不用级联改两张表；
 拼错 code 在 sqlite 里不报错、只会静默少一批权限），以及不建外键（与项目其他模块一致，
@@ -274,7 +276,42 @@ POST /identity/login → 校验口令 → 角色展开成权限码 → 签发 JW
 不要为每种操作手写「这次会不会锁死」的推演——间接路径（改角色标记、换角色、停用账号）
 都会走到同一条判断。
 
-### 2.6 要接 SSO / LDAP / 企业微信
+### 2.6 会话、令牌与登录审计
+
+令牌是**无状态**的，签名有效只说明「没被篡改」，不说明「还被允许使用」。
+所以「退出登录」「踢下线」「续期」这三件事，靠令牌自己做不到，必须有服务端状态：
+
+| 表 / 机制 | 解决什么 | 不这么做的后果 |
+|---|---|---|
+| `user_sessions`（一行 = 一次登录） | 登出、单设备踢下线、会话列表 | 登出只是前端删了本地副本，复制走的令牌还能用满 TTL |
+| access 令牌带 `sid`，解析器每请求校验一次 | 吊销立刻生效 | 只能靠 TTL 兜底（最长 2 小时） |
+| refresh 令牌 + 轮换（`refresh_jti`） | 用户不用每 2 小时重新登录 | 令牌到期就掉线，表单里没存的内容全丢 |
+| `login_events`（只追加） | 安全追溯、异常登录 | 只剩 `last_login_at` 一个时间点，查不了「上周三凌晨那一次」 |
+
+几条**不要改**的约定：
+
+- **`sid` 为空一律跳过会话校验**。旧令牌、测试里直接签的令牌、匿名演示主体都没有
+  会话可查，加了强校验只会让它们全部变 401，而它们本来也不是真实登录产生的。
+- **refresh 只认 `typ: "refresh"`**，access 只认 `typ: "access"`。两种票同一个
+  `JWT_SECRET` 签名，不区分用途就等于「一张 2 小时的票可以无限续期」。
+- **刷新失败一律 40122**（`RefreshTokenInvalid`），不要细分「过期了 / 轮换过了 /
+  会话被踢了」：前端的动作只有一个——清本地会话、回登录页。
+- **`jti` 对不上时只拒绝，不吊销整条会话**。两个标签页同时续期，后到的那个必然拿着
+  旧 jti，把它当攻击处理等于让用户因为「开了两个标签页」被迫重新登录。
+- **改密要让 refresh 也失效**（比对 `iat` 与 `password_changed_at`）。只让 access
+  失效的话，攻击者手里那张 refresh 还能换出新票，自救只做了一半。
+- **登出接口不挂 `get_actor`**：它要在令牌已失效时也返回 200（幂等）。
+  挂上依赖的话，用户第二次点「退出」会看到一条 401 报错。
+- **审计写在闸门里，且用 commit 结束事务**：失败登录会抛异常，`get_session` 在异常
+  路径上回滚整个事务，留给请求结束写等于什么都没写。这里 commit 替代了原来的
+  `rollback()`，都是「结束只读事务、连接立刻回池」，所以 `password_slot()` 的容量
+  约束仍然成立（R7-01 / R9-01）。
+
+审计保留期是配置（`LOGIN_EVENT_RETENTION_DAYS`，默认 90 天），清理靠
+`app prune-logins`，**不要**塞进登录路径顺手删一批：那会把一次写变成「写 + 扫表」，
+而且留多久该由运维决定，不该由某个请求的运气决定。
+
+### 2.7 要接 SSO / LDAP / 企业微信
 
 不要改 `get_actor`，实现一个 `PrincipalResolver` 并注册（写法照
 `modules/identity/principal.py`）。SSO 场景通常是**替换**现有解析器：
@@ -283,7 +320,7 @@ POST /identity/login → 校验口令 → 角色展开成权限码 → 签发 JW
 注意注册只允许一个：两个解析器同时生效时「权限以谁为准」没有正确答案，
 `register_principal_resolver` 会在启动期直接报错。
 
-### 2.7 边界
+### 2.8 边界
 
 | 该做 | 不该做 |
 |---|---|
@@ -294,7 +331,7 @@ POST /identity/login → 校验口令 → 角色展开成权限码 → 签发 JW
 
 判断标准：**新模块上线要不要改你？** 不用，边界就是对的。
 
-### 2.8 生产首启
+### 2.9 生产首启
 
 ```bash
 alembic upgrade head

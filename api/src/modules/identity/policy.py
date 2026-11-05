@@ -14,8 +14,32 @@ from __future__ import annotations
 from typing import Final
 
 PASSWORD_MIN_LENGTH: Final = 10
+# 上限与 schema 里 `max_length` 保持一致：太长会让 scrypt 的输入变得可以当 DoS 用
+PASSWORD_MAX_LENGTH: Final = 128
 # 少于这么多种不同字符就判「过于简单」（`aaaa1111` 只有 2 种）
 PASSWORD_MIN_UNIQUE_CHARS: Final = 4
+
+
+def describe() -> dict[str, object]:
+    """给 `GET /identity/password-policy` 用的策略快照。
+
+    **文案也在这里出**。前端原本在 `validation.ts` 里硬编码「至少 10 位」，
+    后端改成 12 位之后，用户按提示输入却被 422 拒绝——这类不一致不是靠
+    「记得同步」解决的，得让策略只有一个来源。
+
+    `forbid_same_as_username` 目前是 `false`，因为**确实没有实现**。
+    接口里如实返回 false，而不是返回一个前端会照做的 true：
+    那会让界面拦住一个后端并不拦的输入，属于把不一致换个方向重演。
+    """
+    return {
+        "min_length": PASSWORD_MIN_LENGTH,
+        "max_length": PASSWORD_MAX_LENGTH,
+        "forbid_all_numeric": True,
+        "forbid_same_as_username": False,
+        "message": (
+            f"至少 {PASSWORD_MIN_LENGTH} 位，不能是纯数字，也不要用重复字符凑长度"
+        ),
+    }
 
 
 class WeakPassword(ValueError):
@@ -39,8 +63,10 @@ def check_password_strength(value: str) -> str:
 
 
 __all__ = [
+    "PASSWORD_MAX_LENGTH",
     "PASSWORD_MIN_LENGTH",
     "PASSWORD_MIN_UNIQUE_CHARS",
     "WeakPassword",
     "check_password_strength",
+    "describe",
 ]
