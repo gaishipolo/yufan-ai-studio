@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 from functools import lru_cache
+from pathlib import Path
 from typing import Annotated, Literal
 
 from pydantic import Field, field_validator, model_validator
@@ -16,6 +17,10 @@ from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 # 生产环境 JWT 密钥最小长度（HS256 推荐值，见 RFC 7518 §3.2）
 _MIN_SECRET_BYTES = 32
 _WEAK_SECRET_PREFIXES = ("dev-only", "change-me")
+
+# api/ 目录（本文件在 api/src/core/config.py）：运行期产物的锚点。
+# 用绝对路径做默认值，保证「从哪个目录启动都读到同一份数据」。
+_VAR_DIR = Path(__file__).resolve().parents[2] / "var"
 
 
 class Settings(BaseSettings):
@@ -42,7 +47,10 @@ class Settings(BaseSettings):
     cors_allow_credentials: bool = True
 
     # ---------- 数据库 ----------
-    db_url: str = "sqlite+aiosqlite:///./var/app.db"
+    # 默认值是**绝对路径**（锚定 api/ 目录），不随 cwd 变化：
+    # 用 `./var/app.db` 时，在 api/ 下启动和在 api/src 下启动会落到两个不同的库，
+    # 后者是个空库——登录 401、列表空，排查半天才发现数据在另一个文件里。
+    db_url: str = f"sqlite+aiosqlite:///{(_VAR_DIR / 'app.db').as_posix()}"
     db_echo: bool = False
     db_pool_size: int = 10
     db_max_overflow: int = 20
@@ -58,7 +66,7 @@ class Settings(BaseSettings):
     # 刻意不使用 Literal：新增驱动/供应商不应该需要修改本文件。
     # 名字对应 `infra.<kind>.<name>` 模块，未实现时启动即报错。
     storage_driver: str = "local"
-    storage_local_root: str = "./var/storage"
+    storage_local_root: str = (_VAR_DIR / "storage").as_posix()
     storage_public_base: str = "/static"
 
     queue_driver: str = "memory"

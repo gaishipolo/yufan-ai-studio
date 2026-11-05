@@ -54,3 +54,23 @@ def test_dev_stays_lenient() -> None:
     """dev 不做生产校验，否则本地开发会被卡死。"""
     settings = Settings(app_env="dev", debug=True, allow_anonymous=True)
     assert settings.anonymous_allowed is True
+
+
+def test_default_runtime_paths_do_not_depend_on_cwd() -> None:
+    """默认 sqlite / 存储路径必须是绝对路径（锚定 api/）。
+
+    相对路径 `./var/app.db` 会随 cwd 变化：在 api/ 下启动读到的是正式开发库，
+    在 api/src 下启动则新建一个空库——登录 401、列表为空，但数据其实还在。
+    """
+    from pathlib import Path
+
+    db_default = str(Settings.model_fields["db_url"].default)
+    storage_default = str(Settings.model_fields["storage_local_root"].default)
+
+    db_needle = db_default.replace("\\", "/")
+    assert "var/app.db" in db_needle
+    db_path = Path(db_default.split("///", 1)[1]) if "///" in db_default else Path(db_default)
+    assert db_path.is_absolute(), f"db_url 默认值不是绝对路径: {db_default}"
+
+    assert "var/storage" in storage_default.replace("\\", "/")
+    assert Path(storage_default).is_absolute(), f"storage 默认值不是绝对路径: {storage_default}"
