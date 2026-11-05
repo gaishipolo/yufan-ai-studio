@@ -4,7 +4,13 @@ import { defineModule } from '@/shared/registry/define-module';
 export default defineModule({
   id: 'image',
   title: '生图',
-  routes: [{ path: 'image', load: () => import('@/pages/image/ImagePage') }],
+  routes: [
+    {
+      path: 'image',
+      load: () => import('@/pages/image/ImagePage'),
+      permissions: ['image:read'],
+    },
+  ],
   nav: [
     {
       label: '生图',
@@ -13,6 +19,7 @@ export default defineModule({
       group: '创作',
       groupOrder: 1,
       order: 2,
+      permissions: ['image:read'],
     },
   ],
 });

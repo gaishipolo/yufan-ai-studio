@@ -49,6 +49,22 @@ export interface TaskListParams {
   pageSize?: number;
 }
 
+/**
+ * `POST /tasks/{id}/retry` 出参（后端 `TaskRetryOut`）。
+ *
+ * **不是**整份 `VideoTask`：重试是一个动作，后端只回 `{id, status, updatedAt}`
+ * （`task:retry:any` 与 `task:read:all` 是两个开关，替别人重跑一次
+ * 不该顺带拿到那份任务的 prompt 与作者）。所以这里单独一个类型，
+ * 免得有人按 `VideoTask` 读 `data.title` —— 那会是 `undefined` 且编译通过。
+ */
+export interface TaskRetryResult {
+  id: string;
+  /** 重试后的状态，正常为 queued */
+  status: TaskStatus;
+  /** 状态变更时间（UTC），即重新排队的时间 */
+  updatedAt: string;
+}
+
 export interface CreateTaskPayload {
   title?: string;
   prompt: string;

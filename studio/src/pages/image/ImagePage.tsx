@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Wand2 } from 'lucide-react';
-import { Button, CardSkeletonGrid, CoverImage, PageHeader, Select } from '@/shared/ui';
+import { Button, CardSkeletonGrid, CoverImage, ErrorState, PageHeader, Pager, Select } from '@/shared/ui';
 import { cn } from '@/shared/lib/cn';
 import { toast } from '@/shared/lib/toast';
 import { formatDateTime } from '@/shared/lib/format';
@@ -13,9 +13,16 @@ export default function ImagePage() {
   const [prompt, setPrompt] = useState('');
   const [size, setSize] = useState(SIZE_OPTIONS[0].value);
   const [count, setCount] = useState('1');
+  const [page, setPage] = useState(1);
 
-  const { data, isLoading } = useImages();
+  const { data, isLoading, isFetching, isError, error, refetch } = useImages(page);
   const generate = useGenerateImage();
+
+  const total = data?.total ?? 0;
+  const pageSize = data?.pageSize ?? 24;
+  // 没有数据（加载中 / 请求失败）时给 0：Pager 据此判断「还不知道总数」，不去回收页码 ——
+  // 否则一次网络抖动就会把用户从第 3 页踢回第 1 页。越界回收统一在 Pager 里做。
+  const totalPages = data ? Math.max(1, Math.ceil(total / pageSize)) : 0;
 
   const submit = () => {
     if (!prompt.trim()) {
@@ -28,6 +35,8 @@ export default function ImagePage() {
         onSuccess: () => {
           toast('图片生成中，稍后刷新查看', 'success');
           setPrompt('');
+          // 新任务在最前面：停在旧页会看不到自己刚提交的那张
+          setPage(1);
         },
         onError: (e) => toast(e.message, 'error'),
       },
@@ -88,12 +97,14 @@ export default function ImagePage() {
             <span className="h-1.5 w-1.5 rounded-full bg-brand" />
             历史记录
             <span className="ml-auto text-[11px] font-normal text-ink-mute">
-              共 {data?.total ?? 0} 张
+              {isError ? '共 — 张' : `共 ${data?.total ?? 0} 张`}
             </span>
           </div>
 
           {isLoading ? (
             <CardSkeletonGrid count={4} />
+          ) : isError ? (
+            <ErrorState error={error} title="生成记录加载失败" onRetry={() => void refetch()} />
           ) : (
             <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 xl:grid-cols-3 2xl:grid-cols-4">
               {(data?.items ?? []).map((job) => (
@@ -116,6 +127,15 @@ export default function ImagePage() {
               ))}
             </div>
           )}
+
+          {/* 后端每页 24 条、total 是全量：没有翻页入口时第 25 张起在界面上不存在 */}
+          <Pager
+            page={page}
+            totalPages={totalPages}
+            busy={isFetching}
+            onChange={setPage}
+            className="mt-2.5 px-0"
+          />
         </section>
       </div>
     </>

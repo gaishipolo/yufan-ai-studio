@@ -74,8 +74,10 @@ export default defineModule({
     {
       path: '${id}',
       load: () => import('@/pages/${id}/${Pascal}Page'),
-      // 需要门禁时打开下一行，并确认后端 / 登录接口会下发该权限点：
-      // permissions: ['${id}:read'],
+      // 默认就上闸：先关后开，忘了开会立刻发现（页面进不去）；
+      // 先开后关，忘了关则永远不会被发现。后端 ModuleSpec 里没有 '${id}:read'
+      // 这个权限点时，去掉这一行（并让 router.test.ts 的豁免名单记一笔）。
+      permissions: ['${id}:read'],
     },
   ],
   nav: [
@@ -86,8 +88,8 @@ export default defineModule({
       group: '${group}',
       groupOrder: 9,
       order: 1,
-      // 导航项也会按权限自动隐藏：
-      // permissions: ['${id}:read'],
+      // 与路由同一权限点：否则会出现「侧栏看得见、点进去 403」
+      permissions: ['${id}:read'],
     },
   ],
   // 需要出现在顶部宫格时打开（最多 4 个，order 决定位置）：
@@ -156,6 +158,7 @@ console.log(`
 下一步：
   1. npm run dev，访问 /${id} —— 路由与导航已自动生效
   2. 接口放 entities/${id}/api/*.api.ts，hook 放 *.queries.ts
-  3. 需要权限时打开 module.ts 里的 permissions，并让后端下发对应权限点
+  3. 在 module.ts 里核对权限点 '${id}:read'：后端 modules/${id}/permissions.py 的
+     ModuleSpec 里没有这个点就去掉 permissions 行，否则页面会对所有人永久隐藏
   4. npm run verify 再提交
 `);

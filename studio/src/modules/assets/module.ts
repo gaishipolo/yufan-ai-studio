@@ -4,7 +4,13 @@ import { defineModule } from '@/shared/registry/define-module';
 export default defineModule({
   id: 'assets',
   title: '素材资产库',
-  routes: [{ path: 'assets', load: () => import('@/pages/assets/AssetsPage') }],
+  routes: [
+    {
+      path: 'assets',
+      load: () => import('@/pages/assets/AssetsPage'),
+      permissions: ['asset:read'],
+    },
+  ],
   nav: [
     {
       label: '素材资产库',
@@ -13,6 +19,7 @@ export default defineModule({
       group: '资产与数据',
       groupOrder: 3,
       order: 1,
+      permissions: ['asset:read'],
     },
   ],
   cards: [
@@ -23,6 +30,7 @@ export default defineModule({
       icon: FolderOpen,
       gradient: 'linear-gradient(140deg,#ffd24a,#f5a623)',
       order: 3,
+      permissions: ['asset:read'],
     },
   ],
 });

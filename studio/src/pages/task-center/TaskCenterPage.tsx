@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { FolderOpen } from 'lucide-react';
-import { PageHeader, CardSkeletonGrid, EmptyState, Tabs, type TabItem } from '@/shared/ui';
+import { PageHeader, CardSkeletonGrid, EmptyState, ErrorState, Pager, Tabs, type TabItem } from '@/shared/ui';
 import { toast } from '@/shared/lib/toast';
 import { useDebouncedValue } from '@/shared/hooks/useDebouncedValue';
 import { TaskCard } from '@/entities/task/ui/TaskCard';
@@ -26,6 +26,9 @@ export default function TaskCenterPage() {
   const sort = (searchParams.get('sort') ?? 'createdAt_desc') as TaskSort;
   const scope = (searchParams.get('scope') ?? 'mine') as TaskScope;
   const onlyAuthorized = searchParams.get('auth') === '1';
+  /* 页码也放 URL：刷新/回退/分享要停在同一条记录上，和筛选条件同理 */
+  const page = Math.max(1, Number(searchParams.get('page') ?? '1') || 1);
+  const pageSize = 48;
 
   const patchParams = useCallback(
     (patch: Record<string, string | undefined>) => {
@@ -43,27 +46,35 @@ export default function TaskCenterPage() {
   const [keywordInput, setKeywordInput] = useState(keyword);
   const debouncedKeyword = useDebouncedValue(keywordInput, 300);
 
-  useEffect(() => {
-    if (debouncedKeyword !== keyword) patchParams({ keyword: debouncedKeyword });
-  }, [debouncedKeyword, keyword, patchParams]);
-
-  const params = useMemo<TaskListParams>(
-    () => ({ status, keyword, sort, scope, onlyAuthorized, page: 1, pageSize: 48 }),
-    [status, keyword, sort, scope, onlyAuthorized],
+  /** 改筛选条件就回到第 1 页：否则会出现「第 3 页但没有结果」 */
+  const patchFilter = useCallback(
+    (patch: Record<string, string | undefined>) => patchParams({ ...patch, page: undefined }),
+    [patchParams],
   );
 
-  const { data, isLoading, isFetching, refetch } = useTaskList(params);
+  useEffect(() => {
+    if (debouncedKeyword !== keyword) patchFilter({ keyword: debouncedKeyword });
+  }, [debouncedKeyword, keyword, patchFilter]);
+
+  const params = useMemo<TaskListParams>(
+    () => ({ status, keyword, sort, scope, onlyAuthorized, page, pageSize }),
+    [status, keyword, sort, scope, onlyAuthorized, page],
+  );
+
+  const { data, isLoading, isFetching, isError, error, refetch } = useTaskList(params);
   const items = data?.items ?? [];
   const stats = data?.stats;
   const canReadAll = data?.canReadAll ?? false;
+  // 0 = 还不知道总数（加载中 / 失败）。越界回收统一由 Pager 做，这里只负责把"不知道"如实传下去
+  const totalPages = data ? Math.max(1, Math.ceil(data.total / (data.pageSize ?? pageSize))) : 0;
 
   /* ---------- 无跨用户权限时，URL 里残留的 scope=all/team 要回落到 mine，
      否则后端静默降级、下拉里又没有对应选项，筛选状态会悬空 ---------- */
   useEffect(() => {
     if (data && !canReadAll && scope !== 'mine') {
-      patchParams({ scope: 'mine' });
+      patchFilter({ scope: 'mine' });
     }
-  }, [data, canReadAll, scope, patchParams]);
+  }, [data, canReadAll, scope, patchFilter]);
 
   /* ---------- 选择 ---------- */
   const toggleSelect = useCallback((id: string) => {
@@ -83,11 +94,12 @@ export default function TaskCenterPage() {
     });
   };
 
+  /* 统计未知时不显示 0：请求失败时「全部 0」会让人以为任务被清空了 */
   const statusTabs: TabItem<StatusFilter>[] = [
-    { value: 'all', label: '全部', count: stats?.all ?? 0 },
-    { value: 'running', label: '进行中', count: stats?.running ?? 0 },
-    { value: 'completed', label: '已完成', count: stats?.completed ?? 0 },
-    { value: 'failed', label: '失败', count: stats?.failed ?? 0 },
+    { value: 'all', label: '全部', count: stats?.all },
+    { value: 'running', label: '进行中', count: stats?.running },
+    { value: 'completed', label: '已完成', count: stats?.completed },
+    { value: 'failed', label: '失败', count: stats?.failed },
   ];
 
   return (
@@ -98,12 +110,12 @@ export default function TaskCenterPage() {
         actions={
           <TaskToolbar
             scope={scope}
-            onScopeChange={(v) => patchParams({ scope: v })}
+            onScopeChange={(v) => patchFilter({ scope: v })}
             canReadAll={canReadAll}
             onlyAuthorized={onlyAuthorized}
-            onAuthorizedChange={(v) => patchParams({ auth: v ? '1' : undefined })}
+            onAuthorizedChange={(v) => patchFilter({ auth: v ? '1' : undefined })}
             sort={sort}
-            onSortChange={(v) => patchParams({ sort: v })}
+            onSortChange={(v) => patchFilter({ sort: v })}
             selectedCount={selected.size}
             onSelectAll={toggleSelectAll}
             onDownload={() =>
@@ -126,16 +138,18 @@ export default function TaskCenterPage() {
           toast('已刷新任务列表');
         }}
         isFetching={isFetching}
-        total={data?.total ?? 0}
+        total={isError ? undefined : data?.total}
       />
 
       <div className="mt-4 border-b border-line-soft pb-3">
-        <Tabs items={statusTabs} value={status} onChange={(v) => patchParams({ status: v })} />
+        <Tabs items={statusTabs} value={status} onChange={(v) => patchFilter({ status: v })} />
       </div>
 
       <div className="mt-3.5">
         {isLoading ? (
           <CardSkeletonGrid count={8} />
+        ) : isError ? (
+          <ErrorState error={error} title="任务加载失败" onRetry={() => void refetch()} />
         ) : items.length === 0 ? (
           <EmptyState
             icon={<FolderOpen size={40} strokeWidth={1.4} />}
@@ -157,12 +171,21 @@ export default function TaskCenterPage() {
         )}
       </div>
 
+      {/* 一页 48 条、标题显示 total（全量）：没有翻页入口时第 49 条起在界面上不存在 */}
+      <Pager
+        page={page}
+        totalPages={totalPages}
+        busy={isFetching}
+        onChange={(next) => patchParams({ page: next === 1 ? undefined : String(next) })}
+        className="mt-3 rounded-card border border-line-soft bg-panel"
+      />
+
       <TaskPreviewModal taskId={previewId} onClose={() => setPreviewId(null)} />
       <CreateTaskModal
         open={createOpen}
         onClose={() => setCreateOpen(false)}
         onCreated={() => {
-          patchParams({ status: 'all' });
+          patchFilter({ status: 'all' });
           setSelected(new Set());
         }}
       />

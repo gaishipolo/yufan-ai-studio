@@ -112,6 +112,31 @@ describe('createRegistry · 校验（宁可启动报错，不要运行时白屏�
     ).toThrow(/导航项「幽灵」\(\/ghost\) 没有对应路由/);
   });
 
+  /* 卡片和导航是同一族入口，以前只有 nav 校验：
+     改模块 id 之后卡片还能通过注册，用户点首页宫格才 404 */
+  it('宫格卡片指向不存在的路由 → 抛错', () => {
+    expect(() =>
+      createRegistry([
+        moduleOf({
+          id: 'a',
+          cards: [{ title: '幽灵卡片', subtitle: 's', path: '/nope', icon: Boxes, gradient: 'x' }],
+        }),
+      ]),
+    ).toThrow(/宫格卡片「幽灵卡片」\(\/nope\) 没有对应路由/);
+  });
+
+  it('宫格卡片指向独立页面 → 抛错（裸页放进宫格会丢外壳）', () => {
+    expect(() =>
+      createRegistry([
+        moduleOf({
+          id: 'a',
+          routes: [{ path: 'login', layout: 'bare', load }],
+          cards: [{ title: '登录卡', subtitle: 's', path: '/login', icon: Boxes, gradient: 'x' }],
+        }),
+      ]),
+    ).toThrow(/宫格卡片「登录卡」指向独立页面 \/login/);
+  });
+
   it('route.path 为空 —— 根路由只能由 HOME_PATH 决定', () => {
     expect(() => createRegistry([moduleOf({ id: 'a', routes: [{ path: '', load }] })])).toThrow(
       /不能为空字符串/,

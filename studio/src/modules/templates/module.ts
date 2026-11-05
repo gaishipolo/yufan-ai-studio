@@ -4,7 +4,13 @@ import { defineModule } from '@/shared/registry/define-module';
 export default defineModule({
   id: 'templates',
   title: '模板库',
-  routes: [{ path: 'templates', load: () => import('@/pages/templates/TemplatesPage') }],
+  routes: [
+    {
+      path: 'templates',
+      load: () => import('@/pages/templates/TemplatesPage'),
+      permissions: ['template:read'],
+    },
+  ],
   nav: [
     {
       label: '模板库',
@@ -13,6 +19,7 @@ export default defineModule({
       group: '模板与镜头',
       groupOrder: 2,
       order: 1,
+      permissions: ['template:read'],
     },
   ],
   cards: [
@@ -23,6 +30,7 @@ export default defineModule({
       icon: LayoutGrid,
       gradient: 'linear-gradient(140deg,#9b8cff,#7c5cff)',
       order: 4,
+      permissions: ['template:read'],
       matchPrefixes: ['/templates', '/storyboards', '/shots'],
     },
   ],

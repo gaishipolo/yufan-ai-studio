@@ -35,6 +35,8 @@ export function createRegistry(modules: AppModule[]): AppRegistry {
   const moduleIds = new Set<string>();
   const routeOwners = new Map<string, string>();
   const navOwners = new Map<string, string>();
+  /** 独立布局页面（不套外壳），不允许出现在导航里 */
+  const barePaths = new Set<string>();
   const routes: ResolvedRoute[] = [];
   const navItems: ResolvedNavItem[] = [];
   const cards: Array<ResolvedCard & { seq: number }> = [];
@@ -59,10 +61,14 @@ export function createRegistry(modules: AppModule[]): AppRegistry {
       const permissions = def.permissions ?? [];
       permissions.forEach((p) => declaredPermissions.add(p));
 
+      const layout = def.layout ?? 'shell';
+      if (layout === 'bare') barePaths.add(path);
+
       routes.push({
         path,
         Component: lazy(def.load),
         permissions,
+        layout,
         moduleId: mod.id,
       });
     }
@@ -107,6 +113,12 @@ export function createRegistry(modules: AppModule[]): AppRegistry {
           `已注册路由：${[...routeOwners.keys()].join(', ')}`,
       );
     }
+    if (barePaths.has(nav.path)) {
+      fail(
+        `导航项「${nav.label}」指向独立页面 ${nav.path}（layout: 'bare'）。` +
+          `这类页面不套外壳，放进侧栏/宫格会失去导航与登录态，请去掉这条 nav。`,
+      );
+    }
   }
 
   const navGroups = buildNavGroups(navItems);
@@ -115,6 +127,27 @@ export function createRegistry(modules: AppModule[]): AppRegistry {
     .slice()
     .sort((a, b) => (a.order ?? DEFAULT_ORDER) - (b.order ?? DEFAULT_ORDER) || a.seq - b.seq)
     .map(({ seq: _seq, ...card }) => card);
+
+  /* 宫格卡片与导航是同一族入口：都按 path 跳转，都可能指向写错的地址。
+     只校验 nav 会漏掉首页宫格——而首页宫格恰恰是主入口（工作台 / 任务 / 素材 /
+     模板 / 生图 五张卡），改模块 id、删路由、卡片没跟着改时，
+     构建、类型检查、测试全绿，用户点卡片才 404。
+     `matchPrefixes` 刻意不校验：它本来就允许指向子路径（如 /templates 卡片同时
+     高亮 /storyboards），校验它会误杀。 */
+  for (const card of sortedCards) {
+    if (!routeOwners.has(card.path)) {
+      fail(
+        `宫格卡片「${card.title}」(${card.path}) 没有对应路由。` +
+          `已注册路由：${[...routeOwners.keys()].join(', ')}`,
+      );
+    }
+    if (barePaths.has(card.path)) {
+      fail(
+        `宫格卡片「${card.title}」指向独立页面 ${card.path}（layout: 'bare'）。` +
+          `这类页面不套外壳，放进首页宫格会失去导航与登录态，请去掉这条 card。`,
+      );
+    }
+  }
 
   const slotMap: Partial<Record<SlotName, ResolvedSlot[]>> = {};
   for (const slot of slots
@@ -140,6 +173,9 @@ function assertRouteDef(mod: AppModule, def: ModuleRouteDef) {
   }
   if (typeof def.load !== 'function') {
     fail(`模块 ${mod.id} 的路由 ${def.path} 缺少 load()；请写成 load: () => import('@/pages/xxx/XxxPage')`);
+  }
+  if (def.layout !== undefined && def.layout !== 'shell' && def.layout !== 'bare') {
+    fail(`模块 ${mod.id} 的路由 ${def.path} 的 layout 只能是 'shell' 或 'bare'`);
   }
 }
 
