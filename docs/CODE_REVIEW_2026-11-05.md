@@ -1,4 +1,4 @@
-# 代码评审报告 · 天火 AI 短视频工作台
+# 代码评审报告 · 雨范 AI 短视频工作台
 
 > 评审日期：2026-11-05 ｜ 范围：`api/`（6.3k 行 Python）+ `studio/`（3.4k 行 TS/TSX）
 > 评审人：Code Reviewer ｜ 依据：[`CODE_STYLE.md`](./CODE_STYLE.md) / [`REVIEW_CHECKLIST.md`](./REVIEW_CHECKLIST.md)

@@ -1,4 +1,4 @@
-# 天火工作台 · 代码规范
+# 雨范工作台 · 代码规范
 
 > 版本 v1.0 ｜ 适用：`api`（FastAPI / Python 3.11）、`studio`（React 18 / TS 5）
 > 配套文件：[`REVIEW_CHECKLIST.md`](./REVIEW_CHECKLIST.md)

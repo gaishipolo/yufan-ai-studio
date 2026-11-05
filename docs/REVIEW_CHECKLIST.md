@@ -1,4 +1,4 @@
-# 天火工作台 · Code Review 检查清单
+# 雨范工作台 · Code Review 检查清单
 
 > 配套：[`CODE_STYLE.md`](./CODE_STYLE.md) ｜ 每条都有编号，评审评论可直接引用，如「BE-07」
 
@@ -23,7 +23,7 @@
 - [ ] **CR-01** 我能用自己的话复述这个 PR 要解决什么问题吗？说不出来 → 先让作者补描述，别评审
 - [ ] **CR-02** 有没有它不该有的东西：调试代码、注释掉的旧实现、无关格式化、误提交的 `.env` / `var/` / `dist/`
 - [ ] **CR-03** diff 在 400 行以内吗？超了就拆（lock 文件、生成代码不计）
-- [ ] **CR-04** CI 全绿吗？`ruff` / `mypy` / `pytest` / `tsc`
+- [ ] **CR-04** CI 全绿吗？`ruff` / `mypy` / `pytest` / `tsc`（`.github/workflows/ci.yml`：后端一个 job，`npm run verify` 一个 job）
 - [ ] **CR-05** 新增/修改的行为有测试吗？没有的话，作者说清为什么（纯 UI 样式可豁免）
 - [ ] **CR-06** 失败路径想过了吗：数据库挂了、上游超时、用户重复点击、列表为空
 - [ ] **CR-07** 有没有为了通过评审而加的 `try/except`、`as any`、`# type: ignore`？有 → 要求写理由

@@ -1,4 +1,4 @@
-# 天火 · AI 短视频工作台
+# 雨范 · AI 短视频工作台
 
 面向 AI 短视频生产的工作台：任务编排、素材/分镜/模板/形象预设管理、模型目录与账号权限体系。
 前后端分离，后端提供契约、前端按模块注册，**目标是「加功能时知道该改哪个文件」**，而不是能跑就行。
@@ -53,6 +53,7 @@ npm run dev             # http://localhost:5173，/api 已代理到 8080
 | [api/docs/PARALLEL_WORK.md](api/docs/PARALLEL_WORK.md) | 多人并行时怎么切分、怎么避免迁移冲突 |
 | [docs/FRONTEND_EXTENSION.md](docs/FRONTEND_EXTENSION.md) | 前端目录职责、模块注册、新增页面 |
 | [docs/CODE_STYLE.md](docs/CODE_STYLE.md) | 命名、分层、异常与日志约定 |
+| [docs/BACKEND_REQUIREMENTS_IDENTITY.md](docs/BACKEND_REQUIREMENTS_IDENTITY.md) | 身份与会话还缺什么：续期、登出吊销、审计、密码策略（**给后端的需求单**） |
 
 ## 质量门禁
 
