@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: 后端 · pytest / ruff / mypy
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: api
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: api/pyproject.toml
+
+      # 替换模板的部分测试会真实执行 settings.libtv_node 指向的 Node 运行时脚本。
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      # 接口契约三份生成物的一致性由 tests/test_openapi_contract.py 在 pytest 内校验。
+      - name: pytest
+        run: pytest -q
+
+      - name: ruff
+        # scripts/ 只在部分开发分支存在，不存在时跳过，避免 main 上误报。
+        run: |
+          ruff check src tests
+          if [ -d scripts ]; then ruff check scripts; fi
+
+      - name: mypy
+        run: mypy src
+
+  frontend:
+    name: 前端 · typecheck / lint / test / build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: studio
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: studio/package-lock.json
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 质量门禁
+        run: npm run verify
