@@ -21,18 +21,23 @@ jobs:
     defaults:
       run:
         working-directory: api
-    # 对象存储冒烟用。`minio/minio` 已从 Docker Hub 下架（pull 会 403），
-    # 这里用重新打包官方二进制的 elestio 镜像，与本地开发保持一致。
-    services:
-      minio:
-        image: elestio/minio:latest
-        env:
-          MINIO_ROOT_USER: minioadmin
-          MINIO_ROOT_PASSWORD: minioadmin123
-        ports:
-          - 19000:9000
     steps:
       - uses: actions/checkout@v4
+
+      # 对象存储冒烟用。`minio/minio` 已从 Docker Hub 下架（pull 会 403），
+      # 这里用重新打包官方二进制的 elestio 镜像，与本地开发保持一致。
+      #
+      # **不能用 `services:`**：这个镜像的 CMD 是 `["minio"]`，不补子命令时它打印
+      # 一版 usage 就以退出码 0 结束——在 actions 眼里「服务已启动、健康检查通过」，
+      # 而 9000 端口上什么都没有（首次上 CI 就是这么红的，本地 `docker run` 一跑
+      # 就能看到 `Exited (0)`）。`services:` 不支持传 command，所以自己 run。
+      - name: 启动 MinIO
+        run: |
+          docker run -d --name minio \
+            -p 19000:9000 \
+            -e MINIO_ROOT_USER=minioadmin \
+            -e MINIO_ROOT_PASSWORD=minioadmin123 \
+            elestio/minio:latest server /data --console-address ":9001"
 
       - uses: actions/setup-python@v5
         with:
@@ -50,17 +55,19 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e ".[dev]"
 
-      # 容器就绪与否不在 service 层判断：health-cmd 依赖镜像里有没有 curl/mc，
-      # 换个镜像就会静默失效。在 runner 上轮询，判据只取决于服务端真的在应答。
+      # 容器就绪与否不在启动那一步判断：镜像自带的 health-cmd 依赖容器里有没有
+      # curl/mc，换个镜像就会「秒过」。在 runner 上轮询，判据只取决于服务端真的在应答。
       - name: 等待 MinIO 就绪
         run: |
-          for i in $(seq 1 30); do
+          for i in $(seq 1 60); do
             if curl -fsS http://127.0.0.1:19000/minio/health/live >/dev/null; then
               echo "MinIO ready after ${i}s"; exit 0
             fi
             sleep 1
           done
-          echo "MinIO 未在 30 秒内就绪" >&2
+          echo "MinIO 未在 60 秒内就绪，容器状态与日志：" >&2
+          docker ps -a --filter name=minio >&2
+          docker logs minio >&2 2>&1 || true
           exit 1
 
       # 接口契约三份生成物的一致性由 tests/test_openapi_contract.py 在 pytest 内校验。
