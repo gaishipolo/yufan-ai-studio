@@ -27,7 +27,13 @@ class ArchivedAsset(MediaFile):
 
 
 class ArchiveList(CamelModel):
-    root: str
+    """列表出参。
+
+    **没有 `root`**：那是本地归档根的绝对路径，远端驱动下根本不存在，
+    前端也早已不再展示（原来「归档位置」那一行在切 S3 后恒为空）。
+    要位置信息就用 `storageKey`，它才是与驱动无关的那一层。
+    """
+
     items: list[ArchivedAsset]
     total: int
     used_bytes: int

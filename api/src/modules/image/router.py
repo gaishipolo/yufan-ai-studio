@@ -48,7 +48,7 @@ async def generate_image(
     payload: GenerateImageIn,
 ) -> ApiResponse[ImageJobOut]:
     job = await service.generate(actor, payload)
-    return ApiResponse.ok(ImageJobOut.model_validate(job), message="已提交")
+    return ApiResponse.ok(await service.out(job), message="已提交")
 
 
 @router.post("/images/{job_id}/retry", summary="重试失败的生图")

@@ -44,7 +44,6 @@ export function ArchiveLibrary() {
   return <section className="space-y-5">
     <div className="rounded-xl border border-primary/20 bg-primary/5 p-4">
       <p className="text-sm font-semibold text-ink">统一素材归档</p>
-      <p className="mt-1 break-all text-xs text-ink-soft">归档位置：{query.data?.root ?? '—'}</p>
       <p className="mt-1 text-xs text-ink-mute">
         按原片、人物、产品、场景和音频分类；归档成功不等于可用于生成，替换适用性见卡片标注。
       </p>

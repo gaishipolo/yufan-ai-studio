@@ -315,11 +315,15 @@ class ImageGenerationPipeline:
         )
 
     async def persist_output(self, record_id: str, url: str) -> str:
-        """把成图落到自己的存储上，返回可长期访问的地址。
+        """把成图落到自己的存储上，返回**对象 key**（不是 URL）。
 
         `generation.runner` 在落结果前会调这个可选的钩子；没有它，
         `output_url` 存的就是供应商签名地址——几小时后前端开始出现裂图，
         而失败表现是「历史页图片加载不出来」，离真正原因很远。
+
+        返回值是 key 而不是 `url_for()` 的产物：落库地址一旦带上网址形态，
+        换存储驱动（本地 → s3 → OSS）时存量链接会整批失联。地址在出参时按
+        当前驱动现签，见 `infra.artifacts`。
 
         下载失败由框架兜底（保留原 URL 并记日志），因为**下载失败不该把一次
         成功的生成改成失败**。这里的host 白名单 / 禁重定向 / 大小上限 / 魔数
@@ -370,11 +374,11 @@ class ImageGenerationPipeline:
                         raise ValueError("成图内容与其 content-type 的魔数不符")
 
                 key = f"images/{record_id}{suffix}"
-                stored = await get_storage().put(key, data, raw_type)
+                await get_storage().put(key, data, raw_type)
                 logger.info(
                     "成图已落盘 id=%s key=%s bytes=%d hops=%d", record_id, key, len(data), hop
                 )
-                return stored
+                return key
 
         raise ValueError(f"成图下载地址重定向超过 {_MAX_REDIRECTS} 跳")
 

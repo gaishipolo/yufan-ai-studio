@@ -115,6 +115,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 port.when_unregistered,
             )
 
+    await _warn_stale_artifact_urls()
+
+    # 运行工作区是本机还是共享，决定了「换台机器能不能打开历史任务」。默认配置下
+    # 这个事实只存在于源码注释里，部署的人看不到，于是把「档案不存在」当数据丢失（T21）
+    from infra.archive.runs import workspace_needs_attention, workspace_note
+
+    if workspace_needs_attention():
+        logger.warning("运行工作区：%s", workspace_note())
+    else:
+        logger.info("运行工作区：%s", workspace_note())
+
     # 周期任务：调度器本身不认识任何具体任务，任务由模块在 import 期注册
     stop_scheduler = asyncio.Event()
     scheduler_task: asyncio.Task[None] | None = None
@@ -188,3 +199,41 @@ def create_app() -> FastAPI:
         return {"service": settings.app_name, "docs": "/docs", "api": settings.api_prefix}
 
     return app
+
+
+async def _warn_stale_artifact_urls() -> None:
+    """产物地址还带着本地 `/static` 前缀时提醒跑迁移（T15）。
+
+    只在非本地驱动下有意义：本地驱动本来就挂载 `/static`，老地址仍可用；切到
+    s3 之后这些地址没有任何端点应答，表现为「生图历史整屏破图」。
+
+    这里用裸 SQL 而不是 import `modules.image.models`：app 是装配层，反依赖一个
+    业务模块只为数一行不划算。自检失败也只记日志——它不该挡住启动。
+    """
+    from core.config import settings as current
+
+    if current.storage_driver == "local":
+        return
+    from sqlalchemy import text
+
+    from db.session import get_session_factory
+
+    try:
+        async with get_session_factory()() as session:
+            stale = (
+                await session.execute(
+                    text(
+                        "SELECT count(*) FROM image_jobs WHERE output_url LIKE '/static/%' "
+                        "OR cover_url LIKE '/static/%'"
+                    )
+                )
+            ).scalar_one()
+    except Exception:  # noqa: BLE001 - 表还没建、库连不上都不该影响启动
+        return
+    if stale:
+        logger.warning(
+            "有 %d 条生图记录仍指向本地 /static 地址，当前 STORAGE_DRIVER=%s："
+            "这些图会打不开。请执行 `app migrate-storage` 把它们剥成对象 key",
+            stale,
+            current.storage_driver,
+        )

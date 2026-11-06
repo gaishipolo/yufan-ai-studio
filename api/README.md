@@ -73,9 +73,11 @@ Vite 会把 `/api` 代理到 `VITE_API_PROXY_TARGET`（默认 `http://127.0.0.1:
 | `app models` | 列出模型目录（供应商路由结果） |
 | `app export-openapi` | 导出接口契约：`docs/openapi.json` + `docs/API.md` + 前端 `schema.ts` |
 | `app import-archive-index [--dry-run]` | 把归档目录的 JSON 索引补进 `assets` 表（幂等，不删 JSON） |
-| `app migrate-storage [--dry-run] [--delete-source]` | `local → s3` 切换前跑：把 `STORAGE_LOCAL_ROOT` 的对象按 key 搬进桶，并把库里 `/static/...` 旧地址改写成桶地址 |
+| `app migrate-storage [--dry-run] [--delete-source] [--skip-urls]` | `local → s3` 切换前跑：把 `STORAGE_LOCAL_ROOT` 的对象按 key 搬进桶，并把库里 `/static/...` 旧地址**剥成对象 key**（地址在出参时按当前驱动现签，跑完不再随驱动失联） |
 | `app migrate-blobs [--dry-run] [--delete-source]` | 归档素材改内容寻址布局（`blobs/<摘要>`），幂等；可原地跑 |
 | `app migrate-archive [--dry-run]` | 归档切远端前跑：把本地归档根（`catalog`/`blobs`/`previews`/`library`）搬进当前归档驱动，幂等 |
+| `app prune-blobs [--execute] [--min-age-hours 24]` | 回收没人引用的孤儿巨量字节（内容寻址的必然产物）：默认只报告，`--execute` 才删 |
+| `app runs-status` | 打印运行工作区在哪、本机可见多少个档案、多少个「指针在桶里但工作区不在本机」 |
 | `app prune-logins [--days 90]` | 清理过期的登录审计（默认取 `LOGIN_EVENT_RETENTION_DAYS`） |
 | `app new-module x --label 中文名` | 生成新模块脚手架（含权限声明） |
 | `alembic revision --autogenerate -m "xxx"` | 生成迁移（生产用） |
@@ -164,8 +166,13 @@ ARCHIVE_DRIVER=s3 S3_ARCHIVE_BUCKET=yufan-archive app migrate-archive
 sha256、给 ffmpeg 派生预览，所以 `runs/` 不随归档进桶——索引指针在桶里
 （`catalog/runs/<id>.json`，枚举走 `ListObjectsV2`），工作区目录由
 `REPLACEMENT_RUNS_ROOT` 指定（留空时本地驱动沿用 `<归档根>/runs`，远端驱动落到
-`api/var/runs`）。代价是「历史任务只在跑它的那台机器上可读」，见 `docs/TODO.md` T21。
+`api/var/runs`）。代价是「历史任务只在跑它的那台机器上可读」——要跨机器就把这个变量
+指到共享盘，再用 `app runs-status` 核对「本机可见 / 总共登记」两个数字是否相等。
 枚举一律走 `storage.list_keys(prefix, suffix=)`，不要在 `root()` 上 `glob`。
+
+取件在远端驱动下走 `307`（`/assets/archive/{id}/file|thumbnail|stream|preview` →
+预签名地址，`Range` 交给对象存储）；本地驱动仍是 `FileResponse`。共享协议是
+`ArchiveStorage.download_url()`：本地返回 `None`，远端返回签名地址。
 
 ---
 
@@ -476,8 +483,8 @@ ruff check src tests
       继续用本地盘就把 `STORAGE_LOCAL_ROOT` 指到一个**独立于代码目录**的持久卷。
 - [ ] 从本地盘切到 s3 时先跑 `app migrate-storage --dry-run` 核对文件数，再去掉
       `--dry-run`。它做两件事：按 key 搬对象、把 `image_jobs` 里 `/static/...` 的
-      旧地址改写成桶地址。**注意**：生成结果地址是直连 `url_for` 拼的，私有桶会 403
-      —— 要么给桶开读权限，要么等 TODO T15 把读路径改成预签名端点。
+      旧地址剥成对象 key。生成结果地址不再落库，出参时按当前驱动现拼
+      （`/static` 或 `307` 预签名），所以私有桶也不会 403。
 - [ ] 从旧归档盘升级时跑一次 `app import-archive-index --dry-run`，确认
       「新建 / 缺文件 / 冲突」的数量后再去掉 `--dry-run`。命令幂等，可重复执行。
 - [ ] `QUEUE_DRIVER=redis`，并实现对应驱动

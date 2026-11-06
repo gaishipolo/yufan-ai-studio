@@ -151,18 +151,28 @@ def test_list_counts_respect_filters(client: TestClient, api: str, create: PngUp
 def test_delete_is_blocked_when_referenced(
     client: TestClient, api: str, create: PngUploader
 ) -> None:
-    """引用检查走注入口：接上实现后，被引用的素材必须 409 并说明被谁引用。"""
+    """注入口契约：接上实现后，被引用的素材必须 409 并说明被谁引用。
+
+    真实实现（`video_tasks.reference_asset_ids`）的端到端覆盖见
+    `test_asset_references.py`；这里用替身，是为了单独验证「服务层确实问了
+    注入口」且描述原样透出，不依赖任务模块的数据。
+    """
+    from modules.task.asset_references import TaskAssetReferences
+
     asset = create("used.png", png_bytes((20, 20), "blue"))
 
     class FakeChecker:
         async def references(self, asset_ids):
             return {asset_id: ["模板《圣诞活动》"] for asset_id in asset_ids}
 
+    # 模块 import 期已经注册了真实实现，先摘下来才能插替身
+    reset_asset_reference_checker()
     register_asset_reference_checker(FakeChecker())
     try:
         response = client.delete(f"{api}/assets/{asset['id']}")
     finally:
         reset_asset_reference_checker()
+        register_asset_reference_checker(TaskAssetReferences())
 
     assert response.status_code == 409
     assert response.json()["code"] == 40951

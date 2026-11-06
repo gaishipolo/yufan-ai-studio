@@ -1071,7 +1071,6 @@ Authorization: Bearer <accessToken>
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `root` | `string` | 是 |  |
 | `items` | `ArchivedAsset[]` | 是 |  |
 | `total` | `number` | 是 |  |
 | `usedBytes` | `number` | 是 |  |
@@ -1485,8 +1484,8 @@ Authorization: Bearer <accessToken>
 | `progress` | `number` | 否 | 进度 0-100 |
 | `model` | `string` | 否 | 模型可读名 |
 | `modelId` | `string \| null` | 否 | 模型目录 id |
-| `coverUrl` | `string` | 否 | 封面图 URL |
-| `outputUrl` | `string \| null` | 否 | 成图 URL（成功后才有） |
+| `coverUrl` | `string` | 否 | 封面图地址（落库存对象 key，出参按当前存储驱动现签，可直接用于 <img>） |
+| `outputUrl` | `string \| null` | 否 | 成图地址（成功后才有）：同样是按当前驱动现签的可访问地址，不要把它当「永久链接」持久化到别处 |
 | `errorMessage` | `string \| null` | 否 | 失败原因 |
 | `externalId` | `string \| null` | 否 | 供应商侧任务号；提交成功后有值，可用于对账 |
 | `previousExternalId` | `string \| null` | 否 | 上一次提交的供应商任务号；带 confirmCharged 重试后保留的对账凭证 |
@@ -2110,9 +2109,14 @@ Authorization: Bearer <accessToken>
 
 ### `ArchiveList`
 
+列表出参。
+
+**没有 `root`**：那是本地归档根的绝对路径，远端驱动下根本不存在，
+前端也早已不再展示（原来「归档位置」那一行在切 S3 后恒为空）。
+要位置信息就用 `storageKey`，它才是与驱动无关的那一层。
+
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `root` | `string` | 是 |  |
 | `items` | `ArchivedAsset[]` | 是 |  |
 | `total` | `number` | 是 |  |
 | `usedBytes` | `number` | 是 |  |
@@ -2291,8 +2295,8 @@ Authorization: Bearer <accessToken>
 | `progress` | `number` | 否 | 进度 0-100 |
 | `model` | `string` | 否 | 模型可读名 |
 | `modelId` | `string \| null` | 否 | 模型目录 id |
-| `coverUrl` | `string` | 否 | 封面图 URL |
-| `outputUrl` | `string \| null` | 否 | 成图 URL（成功后才有） |
+| `coverUrl` | `string` | 否 | 封面图地址（落库存对象 key，出参按当前存储驱动现签，可直接用于 <img>） |
+| `outputUrl` | `string \| null` | 否 | 成图地址（成功后才有）：同样是按当前驱动现签的可访问地址，不要把它当「永久链接」持久化到别处 |
 | `errorMessage` | `string \| null` | 否 | 失败原因 |
 | `externalId` | `string \| null` | 否 | 供应商侧任务号；提交成功后有值，可用于对账 |
 | `previousExternalId` | `string \| null` | 否 | 上一次提交的供应商任务号；带 confirmCharged 重试后保留的对账凭证 |

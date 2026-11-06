@@ -12,6 +12,7 @@ app migrate-storage                # 把本地 storage 根目录的对象搬进�
 app migrate-blobs                  # 归档素材改内容寻址布局（key = sha256，幂等）
 app migrate-archive                # 把本地归档根的内容搬进当前归档驱动（local → s3）
 app prune-blobs                    # 回收没人引用的孤儿素材字节（默认只报告）
+app runs-status                    # 运行工作区现状：多少档案只在本机可见
 app new-module voice --label 配音   # 生成新模块脚手架
 """
 
@@ -270,17 +271,17 @@ def _cmd_import_archive_index(args: argparse.Namespace) -> None:
 
 
 def _cmd_migrate_storage(args: argparse.Namespace) -> None:
-    """把本地存储目录里的对象按 key 搬进当前 `STORAGE_DRIVER`，并修正库里的旧 URL。
+    """把本地存储目录里的对象按 key 搬进当前 `STORAGE_DRIVER`，并修正库里的旧地址。
 
     切驱动要做两件事，缺一件就露馅：
 
     1. **搬对象**。DB 里的 `storage_key` 不变，桶里却没有对象 —— 素材列表还在，
        点开 404。
-    2. **改落库的 URL**。`image_jobs.output_url` 存的是生成那一刻 `url_for()` 的产物
-       （本地驱动下是 `/static/images/xxx.png`）。`/static` 只在本地驱动挂载
-       （`app._mount_static`），切到 S3 之后这些历史地址直接没人应答。全仓只有
-       这一张表把「本服务拼得出来的存储 URL」落库，其他模块存的是外部 https
-       或本服务的 `/api` 路径，所以只改这两列。
+    2. **把落库的旧地址剥成 key**。`image_jobs.output_url` 存的是生成那一刻
+       `url_for()` 的产物（本地驱动下是 `/static/images/xxx.png`）。`/static` 只在
+       本地驱动挂载（`app._mount_static`），切到 S3 之后这些历史地址直接没人应答。
+       现在读路径只认 key（出参时按当前驱动现签），所以这一步是「把数据搬回
+       驱动无关的形态」，跑完再换多少次驱动都不会失联。
     """
     from core.config import settings
     from infra import get_storage
@@ -309,22 +310,35 @@ def _cmd_migrate_storage(args: argparse.Namespace) -> None:
         print(line)
 
     if not args.dry_run and not args.skip_urls:
-        rewritten, scanned = asyncio.run(_rewrite_public_urls(storage))
-        print(f"  已改写落库 URL {rewritten} 处（扫描 {scanned} 行）")
+        rewritten, scanned = asyncio.run(_strip_legacy_urls(storage))
+        print(f"  已把 {rewritten} 处落库地址剥成对象 key（扫描 {scanned} 行）")
 
     if report.failed:
         raise SystemExit(1)
 
 
-async def _rewrite_public_urls(storage: ObjectStorage) -> tuple[int, int]:
-    """把 `/static/<key>` 改写成当前驱动的 `url_for(key)`；返回（改写数，扫描行数）。"""
+async def _strip_legacy_urls(storage: ObjectStorage) -> tuple[int, int]:
+    """把落库的旧绝对地址剥成对象 key；返回（改写数，扫描行数）。
+
+    `image_jobs.output_url` / `cover_url` 以前存的是生成那一刻 `url_for()` 的产物
+    （`/static/images/xxx.png`），现在只存 key，地址在出参时按当前驱动现签。
+    老值留着就等于把「生成那一刻的驱动」固化进数据：换一次驱动失联一次。
+
+    只剥「本服务拼得出来的」前缀（当前驱动的 `url_for("")` 与静态前缀），
+    供应商直链与 `data:` 原样保留 —— 那些本来就不是我们的对象。
+    """
     from sqlalchemy import select
 
     from core.config import settings
     from db.session import get_session_factory
     from modules.image.models import ImageJob
 
-    prefix = settings.storage_public_base.rstrip("/") + "/"
+    prefixes = tuple(
+        {
+            settings.storage_public_base.rstrip("/") + "/",
+            storage.url_for(""),
+        }
+    )
     rewritten = 0
 
     async with get_session_factory()() as session:
@@ -332,15 +346,27 @@ async def _rewrite_public_urls(storage: ObjectStorage) -> tuple[int, int]:
         for row in rows:
             for column in ("cover_url", "output_url"):
                 value = getattr(row, column)
-                if not value or not value.startswith(prefix):
+                key = _strip_prefix(value, prefixes)
+                if key is None:
                     continue
-                # 前缀后面就是对象 key：`/static/images/x.png` → `images/x.png`
-                setattr(row, column, storage.url_for(value[len(prefix) :]))
+                setattr(row, column, key)
                 rewritten += 1
         if rewritten:
             await session.commit()
 
     return rewritten, len(rows)
+
+
+def _strip_prefix(value: str | None, prefixes: tuple[str, ...]) -> str | None:
+    """命中前缀就返回剩余部分（对象 key），否则 `None`。"""
+    if not value:
+        return None
+    for prefix in prefixes:
+        if prefix and value.startswith(prefix):
+            key = value[len(prefix) :]
+            # `//host/...` 这类协议相对地址不是我们的对象
+            return key if key and not key.startswith("/") else None
+    return None
 
 
 def _cmd_migrate_blobs(args: argparse.Namespace) -> None:
@@ -555,6 +581,37 @@ def _rewrite_asset_mirror(storage: ArchiveStorage, row: Asset) -> None:
     storage.write(key, payload)
 
 
+def _cmd_runs_status(_: argparse.Namespace) -> None:
+    """运行工作区的部署形态，以及有多少历史档案在这台机器上打不开。
+
+    T21 的落地：切到远端归档之后，索引指针在桶里、`run.json` 与成片在本地。
+    任务列表照样能看到档案，点开却是「调用档案不存在」——不知道这个前提的人
+    会当成数据丢了。这条命令把「多少档案只在本机可见」变成一句可查的话。
+    """
+    from infra.archive.runs import (
+        orphan_pointers,
+        pointer_ids,
+        runs_root,
+        workspace_needs_attention,
+        workspace_note,
+    )
+
+    print(workspace_note())
+    print(f"工作区根：{runs_root()}")
+    if workspace_needs_attention():
+        print("  这是默认的单机形态；多实例或换机器要共享，请设置 REPLACEMENT_RUNS_ROOT")
+
+    total = len(pointer_ids())
+    missing = orphan_pointers()
+    print(f"归档登记 {total} 个档案，本机可见 {total - len(missing)} 个")
+    if missing:
+        print(f"以下 {len(missing)} 个只有指针、没有工作区（换机器后就是这个表现）：")
+        for run_id in missing[:20]:
+            print(f"  {run_id}")
+        if len(missing) > 20:
+            print(f"  ……另有 {len(missing) - 20} 个")
+
+
 def _cmd_new_module(args: argparse.Namespace) -> None:
     from scaffold import ModulePlan, ScaffoldError, create_module
 
@@ -629,6 +686,12 @@ def main(argv: list[str] | None = None) -> int:
         "sync-roles", help="把新声明的权限点补进已有内置角色（只加不减，可重复执行）"
     )
     p_sync_roles.set_defaults(func=_cmd_sync_roles)
+
+    p_runs = sub.add_parser(
+        "runs-status",
+        help="运行工作区现状：位置、是否为跨机器共享、多少档案只在本机可见",
+    )
+    p_runs.set_defaults(func=_cmd_runs_status)
 
     p_modules = sub.add_parser("modules", help="列出已发现的模块与扩展点")
     p_modules.set_defaults(func=_cmd_modules)

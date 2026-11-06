@@ -5073,10 +5073,6 @@
       },
       "ArchiveList": {
         "properties": {
-          "root": {
-            "type": "string",
-            "title": "Root"
-          },
           "items": {
             "items": {
               "$ref": "#/components/schemas/ArchivedAsset"
@@ -5105,12 +5101,12 @@
         },
         "type": "object",
         "required": [
-          "root",
           "items",
           "total",
           "usedBytes"
         ],
-        "title": "ArchiveList"
+        "title": "ArchiveList",
+        "description": "列表出参。\n\n**没有 `root`**：那是本地归档根的绝对路径，远端驱动下根本不存在，\n前端也早已不再展示（原来「归档位置」那一行在切 S3 后恒为空）。\n要位置信息就用 `storageKey`，它才是与驱动无关的那一层。"
       },
       "ArchivedAsset": {
         "properties": {
@@ -5748,7 +5744,7 @@
           "coverUrl": {
             "type": "string",
             "title": "Coverurl",
-            "description": "封面图 URL",
+            "description": "封面图地址（落库存对象 key，出参按当前存储驱动现签，可直接用于 <img>）",
             "default": ""
           },
           "outputUrl": {
@@ -5761,7 +5757,7 @@
               }
             ],
             "title": "Outputurl",
-            "description": "成图 URL（成功后才有）"
+            "description": "成图地址（成功后才有）：同样是按当前驱动现签的可访问地址，不要把它当「永久链接」持久化到别处"
           },
           "errorMessage": {
             "anyOf": [

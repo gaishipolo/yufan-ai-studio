@@ -113,8 +113,8 @@ PORT_CATALOG: tuple[PortSpec, ...] = (
         name="asset-references",
         module="core.ports.assets",
         protocol="AssetReferenceChecker",
-        implementer="把素材 id 写进自己表里的业务模块（模板 / 分镜 / 镜头），"
-        "当前无人实现",
+        implementer="modules/task（`video_tasks.reference_asset_ids`，导入模块时自注册），"
+        "将来把素材 id 写进自己表的模块（分镜 / 镜头）接上第二个来源时要先改这里",
         when_unregistered="返回空映射，删除一律放行。默认「可能有引用就拒绝」"
         "会让删除功能在实现接上之前完全不可用，而用户只看到「删不掉」",
         is_registered=has_asset_reference_checker,

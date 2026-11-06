@@ -16,8 +16,12 @@ def catalog_lease(storage: ArchiveStorage) -> AbstractContextManager[None]:
     """短期串行化分享撤回、发布、准备快照与最终提交授权。
 
     锁**优先落在归档存储里**：同一份共享盘被多台机器挂载时，只有盘上的文件锁
-    才能让它们互斥。切到远端存储后盘上锁不存在了，退化为本机锁——单机部署足够，
-    多实例并发发布要靠条件写或 DB 行锁（见 `docs/TODO.md` T20）。
+    才能让它们互斥。切到远端存储后盘上锁不存在了，退化为本机锁——它只保证
+    **同一实例内**互斥，挡不住另一个 API 实例。
+
+    跨实例的那部分正确性不靠这把锁：发布版号由 `ArchiveStorage.create`
+    （`If-None-Match: *` 条件写）原子抢占，覆盖不了已发布版本（T20）。
+    把锁当成跨实例互斥是这一片最容易犯的错。
     """
     try:
         path = storage.resolve("catalog/locks/access.lease")

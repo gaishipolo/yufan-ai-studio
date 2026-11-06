@@ -7,12 +7,17 @@
 """
 
 from api.module import ModuleSpec
+from core.ports.assets import register_asset_reference_checker
+from modules.task.asset_references import TaskAssetReferences
 from modules.task.permissions import SPECS
 from modules.task.router import router
 
 # 必须 import：注册到生成框架的 pipeline 表（副作用导入）
 from modules.task import pipeline  # noqa: E402,F401  isort: skip
 from modules.task.worker import resume_unfinished_tasks  # noqa: E402
+
+# 素材删除前问「还有谁在用」：答案来自 `video_tasks.reference_asset_ids`
+register_asset_reference_checker(TaskAssetReferences())
 
 
 async def _startup() -> None:

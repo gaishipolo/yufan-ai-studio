@@ -155,7 +155,9 @@ def test_private_share_revoke_and_owner_management(workspace: Path, client: Test
     assert change(client, item["id"], "A", "sharing", shared=True).status_code == 200
     actor(client, "B", "asset:read")
     data = client.get(f"{API}/assets/archive?scope=public").json()["data"]
-    assert data["total"] == 1 and data["root"] == ""
+    # 公共池不暴露存储位置：契约里连 `root` 都没有了（T11），`storageKey` 对
+    # 非本人也不下发路径（下面那行断言 `path` 为空串）
+    assert data["total"] == 1 and "root" not in data
     assert data["items"][0]["path"] == "" and not data["items"][0]["downloadAllowed"]
     assert client.get(item["url"]).status_code == 404  # 分享不打开原件下载端点
     # 公共预览是唯一放行的字节出口

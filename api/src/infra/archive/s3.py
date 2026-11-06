@@ -190,6 +190,38 @@ class S3ArchiveStorage:
         except (ClientError, BotoCoreError) as exc:
             raise UpstreamError(f"归档写入失败（{self._display(key)}）：{exc}") from exc
 
+    def create(self, location: Location, value: object) -> bool:
+        """条件写（`If-None-Match: *`）：对象已存在时返回 `False`，不覆盖。
+
+        这是远端驱动下唯一可靠的版号 CAS。`catalog_lease` 在远端退化为本机锁，
+        多实例并发发布只能靠这个原子点收敛（T20）。MinIO 与 S3（2024 起）
+        都支持 PutObject 的条件写；不支持的服务端会忽略这个头——
+        那属于部署缺陷，由 `app doctor` 一类的自检暴露，不在这里猜。
+        """
+        workspace = self._workspace(location)
+        if workspace is not None:
+            if workspace.exists():
+                return False
+            write_json(workspace, value)
+            return True
+        key = self._key(location)
+        body = json.dumps(value, ensure_ascii=False, indent=2).encode("utf-8")
+        try:
+            self._client.put_object(
+                Bucket=self._bucket,
+                Key=key,
+                Body=body,
+                ContentType="application/json",
+                IfNoneMatch="*",
+            )
+        except ClientError as exc:
+            if _precondition_failed(exc):
+                return False
+            raise UpstreamError(f"归档写入失败（{self._display(key)}）：{exc}") from exc
+        except BotoCoreError as exc:
+            raise UpstreamError(f"归档连接失败：{exc}") from exc
+        return True
+
     def list_keys(self, prefix: str, *, suffix: str = "") -> list[str]:
         """`ListObjectsV2` 分页枚举；前缀不存在返回空表（与本地驱动同语义）。"""
         base = self._key(prefix.strip("/") + "/")
@@ -399,6 +431,18 @@ def _copy_file(source: Path, target: Path, expected: str) -> str:
 def _is_missing(exc: ClientError) -> bool:
     code = str(exc.response.get("Error", {}).get("Code", ""))
     return code in {"404", "NoSuchKey", "NotFound"}
+
+
+def _precondition_failed(exc: ClientError) -> bool:
+    """条件写没抢到：对象已经存在。
+
+    不同实现给的状态码不一致（S3 用 `PreconditionFailed`，部分网关回 412），
+    两种都认，别让「版号被别人抢了」冒泡成 502。
+    """
+    error = exc.response.get("Error", {})
+    code = str(error.get("Code", ""))
+    status = str(exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode", ""))
+    return code in {"PreconditionFailed", "412"} or status == "412"
 
 
 Driver = S3ArchiveStorage

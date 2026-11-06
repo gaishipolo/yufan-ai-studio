@@ -19,8 +19,15 @@ class ImageJobOut(CamelModel):
     progress: int = Field(default=0, description="进度 0-100")
     model: str = Field(default="", description="模型可读名")
     model_id: str | None = Field(default=None, description="模型目录 id")
-    cover_url: str = Field(default="", description="封面图 URL")
-    output_url: str | None = Field(default=None, description="成图 URL（成功后才有）")
+    cover_url: str = Field(
+        default="",
+        description="封面图地址（落库存对象 key，出参按当前存储驱动现签，可直接用于 <img>）",
+    )
+    output_url: str | None = Field(
+        default=None,
+        description="成图地址（成功后才有）：同样是按当前驱动现签的可访问地址，"
+        "不要把它当「永久链接」持久化到别处",
+    )
     error_message: str | None = Field(default=None, description="失败原因")
     external_id: str | None = Field(
         default=None, description="供应商侧任务号；提交成功后有值，可用于对账"

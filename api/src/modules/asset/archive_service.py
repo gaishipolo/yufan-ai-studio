@@ -54,7 +54,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.config import settings
 from core.context import CurrentUser
-from core.exceptions import BadRequest, Conflict, Forbidden, NotFound, UpstreamError
+from core.exceptions import BadRequest, Conflict, Forbidden, NotFound
 from core.logging import get_logger
 from core.media import MediaCategory
 from infra.archive import (
@@ -131,8 +131,6 @@ class ArchiveAssetService:
             owner, category, scope, keyword, state, page, page_size
         )
         return ArchiveList(
-            # 公共池不暴露归档根路径：调用方不需要知道盘符，也没有权限访问
-            root="" if scope == "public" else self._root(),
             items=[self._to_out(row, owner) for row in rows],
             total=total,
             used_bytes=used_bytes,
@@ -452,13 +450,6 @@ class ArchiveAssetService:
             item.sha256 = ""
             item.url = f"{settings.api_prefix}/assets/archive/{row.id}/preview"
         return item
-
-    def _root(self) -> str:
-        try:
-            return str(self.storage.root())
-        except UpstreamError:
-            # 盘掉线不等于库不可读：列表仍要给运维可用信息，见模块 docstring
-            return ""
 
 
 def _require_digest(row: Asset) -> str:

@@ -44,6 +44,7 @@ from generation.spec import GenerationRecord
 from generation.store import GenerationStore
 from infra import get_model_router
 from infra.ai.base import GenerationProgress, GenerationState
+from infra.artifacts import artifact_urls
 from infra.queue.base import Job, JobQueue
 
 logger = get_logger(__name__)
@@ -352,14 +353,18 @@ class GenerationRunner:
                             progress=result.progress or 100,
                         )
                         await session.commit()
+                        # 落库存 key（与存储驱动无关），事件给地址（订阅方要能直接用）
+                        public_output, public_cover = await artifact_urls(
+                            [output_url, cover_url]
+                        )
                         await self._emit(
                             EVT_GENERATION_SUCCEEDED,
                             kind=kind,
                             record_id=record_id,
                             owner_id=record.owner_id,
                             model=record.model,
-                            output_url=output_url,
-                            cover_url=cover_url,
+                            output_url=public_output,
+                            cover_url=public_cover,
                         )
                         return
 
@@ -481,14 +486,15 @@ class GenerationRunner:
                 progress=result.progress or 100,
             )
             await session.commit()
+            public_output, public_cover = await artifact_urls([output_url, cover_url])
             await self._emit(
                 EVT_GENERATION_SUCCEEDED,
                 kind=kind,
                 record_id=record_id,
                 owner_id=owner_id,
                 model=model,
-                output_url=output_url,
-                cover_url=cover_url,
+                output_url=public_output,
+                cover_url=public_cover,
             )
             return
 

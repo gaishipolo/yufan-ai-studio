@@ -70,11 +70,14 @@ async def test_persist_downloads_and_stores(
     seen: list[str] = []
     _patch_client(monkeypatch, lambda _req: _image_response(), seen)
 
-    url = await ImageGenerationPipeline().persist_output(
+    key = await ImageGenerationPipeline().persist_output(
         "rid-1", "https://cdn.example.com/a/b.php?sig=expires"
     )
 
-    assert url == "/static/images/rid-1.png", "对外暴露的必须是自己的地址，不是供应商签名地址"
+    assert key == "images/rid-1.png", (
+        "落库的必须是对象 key，不是供应商签名地址，也不是本服务器拼的地址——"
+        "地址一旦带上网址形态，换存储驱动时存量链接会整批失联"
+    )
     assert fake_storage["key"] == "images/rid-1.png", (
         "后缀必须由 content-type 决定，不能拼 URL 路径后缀"
     )
@@ -162,11 +165,11 @@ async def test_follows_redirect_only_within_allowlist(
         allowed_hosts="first.example.com, second.example.com",
     )
 
-    url = await ImageGenerationPipeline().persist_output(
+    key = await ImageGenerationPipeline().persist_output(
         "rid-hop", "https://first.example.com/start"
     )
 
-    assert url == "/static/images/rid-hop.png"
+    assert key == "images/rid-hop.png"
     assert len(seen) == 2
     assert fake_storage["data"] == _PNG
 

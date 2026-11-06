@@ -74,9 +74,12 @@ export interface ArchiveChange {
   deleted?: boolean | null;
 }
 
-/** ArchiveList */
+/** 列表出参。
+
+**没有 `root`**：那是本地归档根的绝对路径，远端驱动下根本不存在，
+前端也早已不再展示（原来「归档位置」那一行在切 S3 后恒为空）。
+要位置信息就用 `storageKey`，它才是与驱动无关的那一层。 */
 export interface ArchiveList {
-  root: string;
   items: ArchivedAsset[];
   total: number;
   usedBytes: number;
@@ -240,9 +243,9 @@ export interface ImageJobOut {
   model?: string;
   /** 模型目录 id */
   modelId?: string | null;
-  /** 封面图 URL */
+  /** 封面图地址（落库存对象 key，出参按当前存储驱动现签，可直接用于 <img>） */
   coverUrl?: string;
-  /** 成图 URL（成功后才有） */
+  /** 成图地址（成功后才有）：同样是按当前驱动现签的可访问地址，不要把它当「永久链接」持久化到别处 */
   outputUrl?: string | null;
   /** 失败原因 */
   errorMessage?: string | null;

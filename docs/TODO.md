@@ -5,13 +5,12 @@
 >
 > 来源：`CODE_REVIEW_2026-11-06_R11~R14`、`CODE_REVIEW_2026-11-06_FE6`、
 > `EXTENSIBILITY_GAPS.md` 的 B1/C1/C2，以及素材分支合并时新发现的项。
-> 最后更新：2026-11-07 03:20（归档取件改预签名 307、孤儿 blob 回收、配置类 503 之后）
+> 最后更新：2026-11-07 04:10（素材库五条收口：引用检查、root 字段、结果 key、发布 CAS、工作区形态）
 
 ## 一眼看完
 
 | 编号 | 事项 | 影响 | 谁来做 |
 |---|---|---|---|
-| T1 | `AssetReferenceChecker` 注入口无人实现，删素材一律放行 | 会删掉别人还在用的素材 | 后端（等引用方落地） |
 | T2 | 前端不展示 `externalId` / `previousExternalId` | 文案让用户「凭任务号核对」，页面拿不到 | 前端 |
 | T3 | `recover()` 遇持续 Conflict 无限重投，无上限 | 僵死租约会每 30 秒吵一次，永不停止 | 后端 |
 | T4 | `ReplacementStore` 不写 `submit_mode` 快照 | 删掉模块自有 startup 后会误分类供应商形态 | 后端 |
@@ -20,25 +19,9 @@
 | T8 | 轮询节奏全局化（C1） | 视频与生图共用一个间隔 | 后端 |
 | T9 | 重试是作业级不是任务级（C2） | 任务重试语义与用户预期不一致 | 后端 |
 | T10 | `archivePath` 绝对路径进 HTTP 契约 | 服务端盘符泄漏给浏览器 | 产品决定 |
-| T11 | `ArchiveList.root` 合并后已无前端消费 | 契约里多一个没人用的绝对路径 | 后端（可删） |
 | T14 | `REVIEW_CHECKLIST` 缺两条反模式 | 同类问题第五次出现 | 文档 |
-| T15 | 生成结果 URL 落库（`image_jobs.output_url`） | 换存储驱动后历史链接全部失联 | 后端 |
-| T20 | 远端驱动下发布锁退化为本机锁 | 多实例并发发布可能发出两个版本 | 后端（条件写/行锁） |
-| T21 | 运行工作区本机化，历史任务不跨机器 | 换台机器打开旧任务显示「档案不存在」 | 产品决定 |
 
 ---
-
-## T1 · `AssetReferenceChecker` 未实现，删除素材一律放行
-
-`api/src/core/ports/assets.py` 定义了协议，`api/src/api/ports.py` 已登记进
-`PORT_CATALOG`，**但没有任何模块实现它**，所以删除素材时不查引用、直接放行。
-
-这是有意的取舍：接上之前一律拒绝删，会让删除功能完全不可用，而用户只看到
-「删不掉」。代价是现在「模板 / 分镜 / 镜头还在引用某个素材」时也能删掉，
-删完那些页面会出现空白图。
-
-**验收**：`has_asset_reference_checker()` 为真；删除被引用素材返回 409 并列出引用方
-（模块 + 资源 + id）；启动日志里 `asset-references` 从「注入口未注册」变成已注册。
 
 ## T2 · 前端不展示供应商任务号（R13-08）
 
@@ -111,14 +94,6 @@ R14 的三条问题全部落在被这个早退遮住的函数里——测试套�
 **验收**：产品给结论。保留 → 在 schema 字段描述里写明「这是服务端路径，勿用作下载链接」；
 改 → 只回 `runId`，前端拼展示文案。
 
-## T11 · `ArchiveList.root` 合并后已无前端消费（新发现）
-
-`modules/asset/archive_schema.py:16` 仍然返回 `root: str`，但消费它的
-`features/archive-library/ArchiveLibrary.tsx` 已被素材库（`features/asset-library/`）取代，
-全仓 `studio/src` 已无 `.root` 引用（`grep -rn "\.root\b" studio/src` 为空）。
-
-**验收**：删字段并重跑 `app export-openapi`（四份生成物）；若决定留给运维诊断页，
-在字段描述里写明用途，别再让下一个人重新查一遍「这字段还有没有人用」。
 ## T14 · `REVIEW_CHECKLIST` 缺两条反模式
 
 R13 与 R14 各自归纳出一个新形状，都没进清单：
@@ -129,49 +104,6 @@ R13 与 R14 各自归纳出一个新形状，都没进清单：
    被 `"retry_count" in text` 这个关键字骗过，而那个字段计的是自动重试）。
 
 **验收**：`CODE_STYLE.md §6` 或 `REVIEW_CHECKLIST.md` 的反模式表加两条，各带一个反例。
-
-## T15 · 生成结果 URL 落库，换存储驱动即失联（切 S3 时发现）
-
-`image_jobs.output_url` / `cover_url` 存的是**生成那一刻** `url_for()` 的产物：本地
-驱动下是 `/static/images/<id>.png`。而 `/static` 只在 `STORAGE_DRIVER=local` 时挂载
-（`app._mount_static`），切到 s3 之后这批历史地址没有任何端点应答 —— 生图页整屏
-破图，且**不改代码就修不回来**。
-
-现在已经有的临时兜底：`app migrate-storage` 会把这两列的 `/static/<key>` 改写成当前
-驱动的 `url_for(key)`。但这是「每次换驱动都要记得跑一次」的人肉约定，不是结构保证：
-- 桶如果是私有的，`url_for` 拼出来的直连地址照样 403 —— 本轮验证是把桶设成公开读
-  才通的。
-- 换到第三个驱动（OSS/COS）时，存量地址又会失联一次。
-
-**验收**：读路径不再依赖落库的绝对 URL。方向二选一：
-(a) `output_url` 只存**对象 key**，出参统一拼「本服务的下载端点」，由端点按驱动
-    决定 `FileResponse` 还是 307 预签名（与 `AssetService.resolve_file` 同一套）；
-(b) 保留落库 URL，但新增 `app rewrite-storage-urls`（本次的迁移逻辑抽出来）并在
-    启动日志里探测「库里有一批地址不属于当前驱动」时告警。
-(a) 是正解，(b) 只是把坑做成可见的。
-
-## T20 · 远端驱动下发布锁退化为本机锁
-
-`infra/media_catalog.py:catalog_lease` 优先用归档存储里的文件锁（`catalog/locks/
-access.lease`），远端驱动没有本地路径，退化为 `runs_root()/.locks/access.lease`。
-单机部署没问题，**多实例并发发布同一个包时不再互斥**，可能发出两个版本号。
-
-**验收**：用 S3 条件写（`If-None-Match` 抢 `<version>.json`）或 DB 行锁（`SELECT …
-FOR UPDATE`）替代；或显式在启动日志里声明「本部署只允许单实例发布」。
-
----
-
-## T21 · 运行工作区本机化后，历史任务不跨机器
-
-`REPLACEMENT_RUNS_ROOT` 留空时：本地驱动 = `<归档根>/runs`（沿用旧布局），远端驱动 =
-`api/var/runs`。也就是说切到 S3 之后，**索引指针还在桶里（列表能看到），但
-`run.json`/成片在本机**——换台机器打开就是「调用档案不存在」。
-
-这是有意的取舍：桥接层与 ffmpeg 要真实路径，把 run 目录塞进桶会把执行器拆成两半。
-代价是「API 多实例 + 每台各自跑任务」时历史只有本机可见。
-
-**验收**：明确部署形态。要跨机器就把 `REPLACEMENT_RUNS_ROOT` 指到共享目录（仍是本地
-路径语义），或者把成片产物在完成时转存对象存储、`runs/` 只保留 7 天过程文件。
 
 ---
 

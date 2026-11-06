@@ -21,6 +21,10 @@ from modules.template.replacement_schema import (
 # 重试比对时忽略的字段：它们只描述「第几次」，不描述「改了什么」。
 _VOLATILE = {"id", "owner_id", "version", "revision", "status", "published_at"}
 
+# 抢版号的重试上限。正常只有一个赢家、零重试；有重试说明此刻正有并发发布，
+# 连着被抢 5 次基本只可能是有人在刷接口，直接让它刷新重来。
+_MAX_VERSION_RETRIES = 5
+
 
 def _same_content(previous: MediaPack, content: dict[str, object]) -> bool:
     """比较归一化后的字段，而不是原始入参。
@@ -162,13 +166,41 @@ class PackService:
                 raise BadRequest("发布前请补齐：" + "；".join(gaps))
             self.verify(draft)
             draft.status = "published"
-            draft.version = (head.version if head else 0) + 1
             draft.published_at = datetime.now(UTC)
-            data = draft.model_dump(mode="json", by_alias=True)
-            self.storage.write(f"catalog/pack_versions/{uid}/{draft.version}.json", data)
-            self.storage.write(head_key, data)
-            self.storage.write(f"catalog/pack_drafts/{uid}.json", data)
+            draft.version = self._claim_version(uid, (head.version if head else 0) + 1, draft)
+            # head 是投影：并发下另一个实例可能已经写到更大的版号，不能用旧值盖回去
+            self._write_head(head_key, draft)
+            self.storage.write(
+                f"catalog/pack_drafts/{uid}.json", draft.model_dump(mode="json", by_alias=True)
+            )
             return self.managed(draft)
+
+    def _claim_version(self, uid: str, start: int, draft: MediaPack) -> int:
+        """抢一个没人占用的版号：版本文件的**原子创建**就是 CAS。
+
+        为什么不是「读 head → 加一 → 写」：`catalog_lease` 在远端驱动下退化成
+        本机锁，多实例时两个人都读到 `v2`，然后都写 `v3.json`——后者覆盖前者，
+        留下「两份内容不同却同版本号」的包。已发布的版本按定义不可变，
+        覆盖等于篡改（T20）。
+        """
+        version = start
+        for _ in range(_MAX_VERSION_RETRIES):
+            draft.version = version
+            if self.storage.create(
+                f"catalog/pack_versions/{safe_id(uid)}/{version}.json",
+                draft.model_dump(mode="json", by_alias=True),
+            ):
+                return version
+            version += 1
+        raise Conflict("发布冲突过于频繁，请稍后刷新重试")
+
+    def _write_head(self, head_key: str, draft: MediaPack) -> None:
+        """写 head，但**只向前推进**：已有更大的版号时不覆盖。"""
+        if self.storage.exists(head_key):
+            current = MediaPack.model_validate(self.storage.read(head_key))
+            if current.version > draft.version:
+                return
+        self.storage.write(head_key, draft.model_dump(mode="json", by_alias=True))
 
     def disable(self, uid: str, owner: str, revision: int) -> PackManaged:
         with catalog_lease(self.storage):

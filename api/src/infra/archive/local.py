@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import uuid
@@ -85,6 +86,24 @@ class LocalArchiveStorage:
 
     def write(self, location: Location, value: object) -> None:
         write_json(self._path(location), value)
+
+    def create(self, location: Location, value: object) -> bool:
+        """独占创建：文件已存在就返回 `False`，不覆盖、不抛错。
+
+        `open("xb")` 就是 `O_EXCL`——两个进程同时算出发版号 `v3` 时，内核保证
+        只有一个能创建出来。共享盘上这条语义依赖 SMB/NFS 的独占创建支持，
+        与 `write` 的「临时文件 + 原子替换」是两件事：那个保证内容完整，
+        这个保证「只有一个人算数」。
+        """
+        path = self._path(location)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = json.dumps(value, ensure_ascii=False, indent=2).encode("utf-8")
+        try:
+            with path.open("xb") as stream:
+                stream.write(payload)
+        except FileExistsError:
+            return False
+        return True
 
     def list_keys(self, prefix: str, *, suffix: str = "") -> list[str]:
         """目录遍历实现：前缀不存在返回空表，而不是报错。

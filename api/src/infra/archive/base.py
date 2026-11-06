@@ -117,6 +117,17 @@ class ArchiveStorage(Protocol):
 
     def read(self, location: Location) -> object: ...
     def write(self, location: Location, value: object) -> None: ...
+
+    def create(self, location: Location, value: object) -> bool:
+        """只在目标**不存在**时写入；返回是否写成（已存在返回 `False`）。
+
+        `write` 是覆盖语义（重跑幂等），做不了「谁先到谁算数」。发布版号的分配
+        必须有这种原子性：两个 API 实例同时算出 `v3`，只有一个能创建成功，
+        另一个拿到 `False` 后改用 `v4`（T20）。本地实现是独占创建（`O_EXCL`），
+        对象存储是 `If-None-Match: *` 条件写。
+        """
+        ...
+
     def exists(self, location: Location) -> bool: ...
 
     def list_keys(self, prefix: str, *, suffix: str = "") -> list[str]:

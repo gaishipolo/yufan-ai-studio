@@ -112,3 +112,76 @@ def lock_path(name: str) -> Path:
     if not _LOCK_NAME.fullmatch(name):
         raise BadRequest("锁名无效")
     return runs_root() / ".locks" / f"{name}.lock"
+
+
+def workspace_note() -> str:
+    """部署自检用的一句话：工作区在哪、换台机器还能不能看到历史任务。
+
+    这条是 T21 的落地形态——它的价值不在代码，而在于「部署方式」这件事终于
+    有一行字说清楚了，而不是靠读源码猜。启动日志会打出来。
+    """
+    root = runs_root() if _root_available() else None
+    configured = settings.replacement_runs_root.strip()
+    if root is None:
+        return (
+            "运行工作区无法确定：归档根或 REPLACEMENT_RUNS_ROOT 没有配置，"
+            "替换模板的任务会以「档案不存在」失败"
+        )
+    if configured:
+        return (
+            f"运行工作区固定在 {root}（REPLACEMENT_RUNS_ROOT）："
+            "所有 API 实例必须挂载同一份，否则历史任务只有挂载了的那台能打开"
+        )
+    if settings.archive_driver == "local":
+        return f"运行工作区在归档根的 runs/ 下（{root}）：与归档盘一起共享"
+    return (
+        f"运行工作区在本机 {root}：归档索引指针在桶里（列表能看到），"
+        "run.json 与成片在本地——换机器或多实例会显示「调用档案不存在」。"
+        "要跨机器请把 REPLACEMENT_RUNS_ROOT 指到共享目录，"
+        "或改用 `app runs-status` 查看当前有多少档案只在本机可见"
+    )
+
+
+def workspace_needs_attention() -> bool:
+    """当前配置是否「历史任务只在本机可见」。决定上面那句话打 info 还是 warning。"""
+    return settings.archive_driver != "local" and not settings.replacement_runs_root.strip()
+
+
+def _root_available() -> bool:
+    """`runs_root()` 在本地驱动且归档根没配时会抛错——自检不该因此挡住启动。"""
+    try:
+        runs_root()
+    except Exception:  # noqa: BLE001 - 只是探测
+        return False
+    return True
+
+
+def pointer_ids() -> list[str]:
+    """归档里登记过的全部档案 id（不判断工作区在不在）。"""
+    from infra.archive import get_archive_storage  # 延迟导入：本模块被 __init__ 引用
+
+    storage = get_archive_storage()
+    found: list[str] = []
+    for key in storage.list_keys(INDEX_PREFIX, suffix=".json"):
+        run_id = key.rsplit("/", 1)[-1][: -len(".json")]
+        if RUN_ID.fullmatch(run_id):
+            found.append(run_id)
+    return sorted(found)
+
+
+def orphan_pointers() -> list[str]:
+    """指针在归档里、工作区却不在本机的档案 id。
+
+    这不是数据损坏：远端归档下它正是「换了一台机器」的必然表现。列出来是让
+    运维知道有多少历史任务在这台机器上打不开，而不是等用户来报「档案不存在」。
+    """
+    from infra.archive import get_archive_storage
+
+    storage = get_archive_storage()
+    missing: list[str] = []
+    for run_id in pointer_ids():
+        try:
+            run_dir(storage, run_id)
+        except NotFound:
+            missing.append(run_id)
+    return missing

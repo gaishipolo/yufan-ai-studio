@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,6 +21,7 @@ from generation.runner import get_runner
 from generation.spec import STATUS_FAILED, STATUS_QUEUED
 from infra import get_model_router
 from infra.ai.base import Capability, ModelSpec
+from infra.artifacts import artifact_urls
 from modules.image.models import ImageJob, remember_previous_external_id
 from modules.image.permissions import PERM_READ_ALL, PERM_RETRY_ANY
 from modules.image.pipeline import KIND_IMAGE
@@ -79,9 +82,29 @@ class ImageService:
         if not actor.has(PERM_READ_ALL):
             stmt = stmt.where(ImageJob.owner_id == actor.id)
         rows, total = await self.repo.paginate(stmt, page)
-        return Page.create(
-            [ImageJobOut.model_validate(row) for row in rows], total, page
-        )
+        return Page.create(await self.to_out_many(rows), total, page)
+
+    async def out(self, job: ImageJob) -> ImageJobOut:
+        """单条出参（提交、重试后用）。"""
+        return (await self.to_out_many([job]))[0]
+
+    async def to_out_many(self, rows: Sequence[ImageJob]) -> list[ImageJobOut]:
+        """出参统一在这里把落库的**对象 key** 换成可访问地址。
+
+        库里的值可能是三种：对象 key（新）、老 `/static/<key>`（迁移前）、
+        供应商直链（没有落盘的能力）。`artifact_urls` 只对第一种动手，
+        所以这里不需要版本判断。签名只为「本页要显示的图」做一次批量，
+        不要逐条 `get_storage()`——那会给每张图重建一次驱动实例。
+        """
+        flat = [value for row in rows for value in (row.output_url, row.cover_url)]
+        urls = await artifact_urls(flat)
+        items: list[ImageJobOut] = []
+        for index, row in enumerate(rows):
+            item = ImageJobOut.model_validate(row)
+            item.output_url = urls[index * 2] or None
+            item.cover_url = urls[index * 2 + 1]
+            items.append(item)
+        return items
 
     async def generate(self, actor: CurrentUser, payload: GenerateImageIn) -> ImageJob:
         """建记录并投递到生成队列，接口立即返回 `queued`。
