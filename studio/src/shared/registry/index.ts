@@ -15,6 +15,8 @@ export type {
   ResolvedNavItem,
   ResolvedRoute,
   ResolvedSlot,
+  RouteCardDef,
+  RouteNavDef,
   SlotContribution,
   SlotName,
 } from './types';

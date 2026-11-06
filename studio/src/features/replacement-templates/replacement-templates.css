@@ -1,3 +1,5 @@
+/* 全局样式表：顶层选择器一律以 .replacement- 开头（或由它限定），
+   通用状态类如 .is-selected 只能出现在带前缀祖先的后代位置，避免溢出到其它组件。 */
 .replacement-library{
   margin-top:20px
 }
@@ -160,7 +162,7 @@
   color:white;
   z-index:2
 }
-.is-selected .replacement-card-check{
+.replacement-template-card.is-selected .replacement-card-check{
   background:#3978e8;
   border-color:#3978e8
 }

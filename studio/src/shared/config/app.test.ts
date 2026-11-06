@@ -1,13 +1,24 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { APP_NAME, HOME_PATH, LOGIN_PATH } from './app';
+import {
+  APP_BRAND,
+  APP_BRAND_EN,
+  APP_DESCRIPTION,
+  APP_FULL_NAME,
+  APP_NAME,
+  APP_VERSION,
+  HOME_PATH,
+  LOGIN_PATH,
+} from './app';
 
 /* ------------------------------------------------------------------
- * 产品名只有两个落点，而且必须对得上：
- *   - `APP_NAME`      → 顶栏、登录页（界面里的字标）
- *   - `index.html` 的 <title> → 浏览器标签页
- * 曾经还有第三个（`.env` 的 `VITE_APP_TITLE`），全仓无人读取，
- * 于是"改名"时最容易被改错的就是它。那一个已经删掉了，这里钉住剩下的两个。
+ * 品牌文案只有 `shared/config/app.ts` 一个来源。
+ *
+ * `index.html` 是静态 HTML，没法 import TS，所以那里保留同样的字面量，
+ * 由下面的相等比对钉住；界面组件里再出现品牌字面量会直接红。
+ * 曾经还有第三个「看起来能改名」的开关 `.env` 的 `VITE_APP_TITLE`，
+ * 全仓无人读取，已删除，下面防止它复活。
  * ------------------------------------------------------------------ */
 
 const root = (relative: string) => new URL(relative, import.meta.url);
@@ -16,14 +27,43 @@ function readStudioFile(relative: string): string {
   return readFileSync(root(`../../../${relative}`), 'utf8');
 }
 
+function collectTsx(dir: string): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) return collectTsx(full);
+    return entry.isFile() && /\.tsx$/.test(entry.name) && !/\.test\.tsx$/.test(entry.name)
+      ? [full]
+      : [];
+  });
+}
+
 describe('产品名', () => {
-  it('浏览器标签标题包含界面里的产品名', () => {
+  it('浏览器标签标题 = 完整产品名', () => {
     const html = readStudioFile('index.html');
     const title = /<title>([^<]*)<\/title>/i.exec(html)?.[1]?.trim() ?? '';
+    expect(title).toBe(APP_FULL_NAME);
+  });
 
-    // 标签页里带品牌前缀（「雨范 AI 短视频工作台」），界面上品牌由 logo 承担，
-    // 所以是「包含」而不是「相等」
-    expect(title).toContain(APP_NAME);
+  it('meta description 与常量一致', () => {
+    const html = readStudioFile('index.html');
+    const description = /<meta name="description" content="([^"]*)"/i.exec(html)?.[1] ?? '';
+    expect(description).toBe(APP_DESCRIPTION);
+  });
+
+  it('完整产品名由字标与产品名拼成，不是另写一份', () => {
+    expect(APP_FULL_NAME).toBe(`${APP_BRAND} ${APP_NAME}`);
+  });
+
+  it('界面组件里不再硬编码品牌文案', () => {
+    const literals = [APP_BRAND, APP_BRAND_EN, APP_NAME, APP_VERSION];
+    for (const file of collectTsx(join(process.cwd(), 'src'))) {
+      const source = readFileSync(file, 'utf8');
+      for (const literal of literals) {
+        expect(source, `${file} 里仍写着「${literal}」，请改用 shared/config/app 常量`).not.toContain(
+          literal,
+        );
+      }
+    }
   });
 
   it('没有第二个"看起来能改名"的开关', () => {

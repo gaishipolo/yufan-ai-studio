@@ -9,17 +9,13 @@ export default defineModule({
       path: 'image',
       load: () => import('@/pages/image/ImagePage'),
       permissions: ['image:read'],
-    },
-  ],
-  nav: [
-    {
-      label: '生图',
-      path: '/image',
-      icon: ImageIcon,
-      group: '创作',
-      groupOrder: 1,
-      order: 2,
-      permissions: ['image:read'],
+      nav: {
+        label: '生图',
+        icon: ImageIcon,
+        group: '创作',
+        groupOrder: 1,
+        order: 2,
+      },
     },
   ],
 });

@@ -9,17 +9,13 @@ export default defineModule({
       path: 'shots',
       load: () => import('@/pages/shots/ShotsPage'),
       permissions: ['shot:read'],
-    },
-  ],
-  nav: [
-    {
-      label: '镜头库',
-      path: '/shots',
-      icon: Video,
-      group: '模板与镜头',
-      groupOrder: 2,
-      order: 3,
-      permissions: ['shot:read'],
+      nav: {
+        label: '镜头库',
+        icon: Video,
+        group: '模板与镜头',
+        groupOrder: 2,
+        order: 3,
+      },
     },
   ],
 });
