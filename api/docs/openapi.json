@@ -2673,6 +2673,64 @@
         }
       }
     },
+    "/api/v1/templates/replacement-runs/{run_id}/reconfirm": {
+      "post": {
+        "tags": [
+          "模板",
+          "替换模板"
+        ],
+        "summary": "确认上次提交可能已计费后放行重提（默认拒绝）",
+        "operationId": "reconfirm_run_api_v1_templates_replacement_runs__run_id__reconfirm_post",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReconfirmReplacement"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_ReplacementRunOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/templates/replacement-runs/{run_id}/output": {
       "get": {
         "tags": [
@@ -4886,6 +4944,19 @@
         ],
         "title": "ReadyOut"
       },
+      "ReconfirmReplacement": {
+        "properties": {
+          "confirmCharged": {
+            "type": "boolean",
+            "title": "Confirmcharged",
+            "description": "确认上一次提交可能已产生费用，仍要重新提交（默认拒绝）",
+            "default": false
+          }
+        },
+        "type": "object",
+        "title": "ReconfirmReplacement",
+        "description": "确认「上一次提交可能已经花了钱」后才允许重提。\n\n默认 False：一次误点就变成第二次计费，是这套流程里最贵的一个操作。"
+      },
       "RefreshIn": {
         "properties": {
           "refreshToken": {
@@ -4904,10 +4975,6 @@
       },
       "ReplacementCatalog": {
         "properties": {
-          "root": {
-            "type": "string",
-            "title": "Root"
-          },
           "provider": {
             "type": "string",
             "title": "Provider",
@@ -4948,7 +5015,6 @@
         },
         "type": "object",
         "required": [
-          "root",
           "runs"
         ],
         "title": "ReplacementCatalog"
