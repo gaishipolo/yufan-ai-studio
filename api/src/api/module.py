@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.permissions import PermissionSpec
 
-# 模块启动钩子：应用 lifespan 内、worker 启动前调用
+# 模块启动钩子：应用 lifespan 内、worker 启动前调用；**仅在 `WORKER_ENABLED=true` 时执行**
 StartupHook = Callable[[], Awaitable[None]]
 # 模块演示数据钩子：`app seed` 时调用，返回写入行数。实现方自己 commit。
 SeedHook = Callable[[AsyncSession], Awaitable[int]]
@@ -32,6 +32,12 @@ class ModuleSpec:
 
     `startup` 让模块自己处理「启动时要做什么」（恢复未完成任务、预热缓存…），
     这样 `app.py` 不需要知道任何业务模块的存在。
+
+    **语义边界**：它在 `WORKER_ENABLED=true` 时才会被调用——恢复未完成任务、
+    预热只属于消费队列的那个实例，只读 API 实例跑一遍会改写记录状态并把任务
+    投进无人消费的队列（R13-01）。所以它只该放「本实例消费队列才该发生」的动作；
+    与队列无关的启动动作（例如只读实例也要做的缓存预热）不该塞在这里，
+    否则会被一起跳过。
     """
 
     name: str

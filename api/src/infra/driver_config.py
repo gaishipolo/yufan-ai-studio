@@ -19,13 +19,22 @@
 
 from __future__ import annotations
 
+import importlib
+import pkgutil
 from typing import Any, ClassVar
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from core.logging import get_logger
+
+logger = get_logger(__name__)
+
 # 显式声明过 model_config 的子类会登记在这里，供 `tests/test_config_guard.py` 巡检。
 # 延迟导入的驱动只有被 import 时才会登记，因此测试里要显式 import 待检查的模块。
 _REGISTRY: list[type[DriverSettings]] = []
+
+# 驱动实际所在的三类包（与 `infra.<kind>.<name>` 的命名约定一致）
+_DRIVER_PACKAGES = ("infra.ai", "infra.archive", "infra.storage")
 
 
 def driver_config(prefix: str) -> SettingsConfigDict:
@@ -72,6 +81,39 @@ def registered_driver_settings() -> tuple[type[DriverSettings], ...]:
     return tuple(dict.fromkeys(_REGISTRY))
 
 
+def discover_driver_settings() -> tuple[type[DriverSettings], ...]:
+    """把各驱动包里的模块都 import 一遍，让配置类登记齐全。
+
+    注册表是「被 import 时追加」的副作用，于是**检查范围取决于谁先碰巧
+    import 了驱动**：只加载 echo 的部署里 `AgnesSettings` 根本不在册，
+    `ensure_prod_driver_settings()` 扫不到它，将来给它加 `prod_required_fields`
+    也等于没加（R13-05）。`maintenance._stale_after_sec()` 曾靠函数内
+    `from infra.ai import agnes` 兜住，那是把「注册齐全」当成了巧合。
+
+    这里按包目录扫描，**不写死驱动名**：新增驱动文件即自动纳入巡检，
+    与 `infra/loader.py` 的「加文件不改代码」保持一致。
+    单个模块导入失败只记 warning 并继续——缺某个驱动不该让整个应用起不来，
+    但必须留痕，否则又是一次「巡检范围悄悄变小」。
+    """
+    for package_name in _DRIVER_PACKAGES:
+        try:
+            package = importlib.import_module(package_name)
+        except Exception as exc:  # noqa: BLE001 - 包本身导不进来时不能连坐其余包
+            logger.warning("驱动包 %s 导入失败：%s（其配置声明不参与巡检）", package_name, exc)
+            continue
+        for info in pkgutil.iter_modules(package.__path__):
+            if info.ispkg or info.name.startswith("_"):
+                continue
+            module_name = f"{package_name}.{info.name}"
+            try:
+                importlib.import_module(module_name)
+            except Exception as exc:  # noqa: BLE001 - 同理，逐个模块隔离
+                logger.warning(
+                    "驱动模块 %s 导入失败：%s（其配置声明不参与巡检）", module_name, exc
+                )
+    return registered_driver_settings()
+
+
 def registered_submit_budgets(capability: str) -> list[float]:
     """只取**显式声明**贡献该能力提交预算的驱动配置的 `timeout_sec`。
 
@@ -115,10 +157,29 @@ def ensure_prod_driver_settings(app_env: str) -> None:
         )
 
 
+def precheck_submit_budgets() -> dict[str, list[float]]:
+    """启动预检：把每个被声明的「提交预算」在启动期算一遍。
+
+    `registered_submit_budgets()` 对坏配置是**抛异常**而不是静默跳过（R12-03），
+    但它的消费方是周期任务，`Scheduler.run_once` 捕获后只记一条日志就 `continue`：
+    配置坏掉时巡检永久停摆，每 300 秒刷一条错，谁也不会盯着日志等它被发现
+    （R13-06）。在启动期先算一次，坏配置变成一次说清楚「哪个类哪个字段」的
+    快速失败——这一条不区分环境，因为「巡检再也不会跑」在任何环境都是错。
+
+    返回 `{能力名: 预算列表}`，供启动日志展示；不做任何 IO。
+    """
+    capabilities = sorted(
+        {capability for cls in registered_driver_settings() for capability in cls.submit_budget_for}
+    )
+    return {capability: registered_submit_budgets(capability) for capability in capabilities}
+
+
 __all__ = [
     "DriverSettings",
+    "discover_driver_settings",
     "driver_config",
     "ensure_prod_driver_settings",
+    "precheck_submit_budgets",
     "registered_driver_settings",
     "registered_submit_budgets",
 ]

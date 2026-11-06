@@ -25,6 +25,14 @@
 
 一个可选的 `pipeline.list_unfinished(session, limit)`，返回未终态的
 `GenerationRecord` 列表。框架不认识任何 ORM 实体，差异仍由各模块吸收。
+
+## 谁来决定「这次启动要不要恢复」
+
+`run_startup_recovery()` 是**唯一入口**：模块自带的 `startup` 与框架恢复
+都在它里面执行。`worker_enabled` 表达的是「本实例不消费队列、因此不该做恢复」，
+这是**动作级**约束，就必须贴在「执行恢复」这个动作上，而不是贴在「恢复由谁
+实现」上——R12-09 只给框架恢复器加了门控，模块自己的 `startup` 绕过了它，
+于是只读 API 实例每次启动都在改写记录状态、往无人消费的队列里投任务（R13-01）。
 """
 
 from __future__ import annotations
@@ -181,9 +189,42 @@ async def recover_declared(specs: Sequence[object]) -> dict[str, dict[str, int]]
     return result
 
 
+async def run_startup_recovery(
+    specs: Sequence[object], *, worker_enabled: bool
+) -> dict[str, dict[str, int]]:
+    """启动恢复的唯一入口：模块自带 `startup` + 框架恢复。
+
+    参数语义与 `recover_declared` 相同（只读两个属性，不依赖 `ModuleSpec`）。
+
+    两道恢复实现形状不同，但**触发条件相同**：本实例消费队列。把门控写在这
+    一层，新增第三种恢复实现时不会漏；写在 `recover_declared` 里就只覆盖框架
+    那一种（R13-01：`task` / `template` 恰好都自带 startup，于是两个真正需要
+    门控的模块全在门控之外）。
+
+    worker 关闭时必须连 `startup` 一起跳过，不只是「少投几个没人消费的 job」：
+    模块的恢复器会**先写库再派发**——把「提交结果未知」判死、发失败通知、
+    把 `started_at` 清零。这些改写不可逆，只读实例每次启动都会做一遍。
+    """
+    if not worker_enabled:
+        logger.warning(
+            "worker 未启用，跳过全部启动恢复（%d 个模块的 startup + 框架恢复）："
+            "恢复动作会改写记录状态并把任务投进无人消费的队列；"
+            "需要恢复时请开启 WORKER_ENABLED",
+            len(specs),
+        )
+        return {}
+
+    for spec in specs:
+        startup = getattr(spec, "startup", None)
+        if startup is not None:
+            await startup()
+    return await recover_declared(specs)
+
+
 __all__ = [
     "RECOVERY_BATCH",
     "SYNC_PROVIDER_ORPHAN_MESSAGE",
     "recover_declared",
     "recover_kind",
+    "run_startup_recovery",
 ]

@@ -63,27 +63,40 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     load_extension_points()
 
+    # ---- 配置自检：必须在任何副作用之前（R13-03）----
+    # 以前这两道断言在 lifespan 末尾：启动失败前已经跑完全部恢复（可能判死几条
+    # 记录、发几条失败通知）、起完后 worker，而 `try: yield` 在那之后，
+    # `finally` 根本进不去——worker 后台任务与 engine 都不会被回收。
+    # 运维补上配置重启后，上一轮「失败的启动」留下的状态改写不会回滚。
+    from core.audit import ensure_audit_sink
+    from infra.driver_config import (
+        discover_driver_settings,
+        ensure_prod_driver_settings,
+        precheck_submit_budgets,
+    )
+
+    # 先让驱动配置登记齐全：注册表只记录「被 import 过的」子类，
+    # 只加载 echo 的部署里别的驱动的强制项根本不在检查范围内（R13-05）。
+    discover_driver_settings()
+    # 审计写入端是唯一「没接上会静默丢数据」的注入口：record() 按设计吞掉一切，
+    # 不抛异常也不打日志。生产环境必须在启动期炸掉，不能等到对账时才发现全是空的。
+    ensure_audit_sink(settings.app_env)
+    # 成图下载校验没配白名单时会静默回落到黑名单兜底（挡不住 DNS 解析到内网）
+    ensure_prod_driver_settings(settings.app_env)
+    # 阈值声明坏了会让周期巡检永久停摆（`Scheduler.run_once` 吞异常后 continue），
+    # 在启动期先算一遍，坏配置立刻失败而不是每 5 分钟刷一条错（R13-06）。
+    logger.info("提交预算预检：%s", precheck_submit_budgets() or "无驱动声明")
+
     if settings.app_env != "prod":
         await init_db()
 
-    # 模块自带的启动钩子（如「恢复上次未完成的任务」）
+    # 启动恢复的唯一入口：模块自带的 startup 与框架恢复都在里面执行。
+    # `worker_enabled` 是动作级约束（本实例不消费队列 → 不做恢复），
+    # 贴在入口上才能同时覆盖两类实现（R13-01）。
+    from generation.recovery import run_startup_recovery
+
     modules = active_modules()
-    for spec in modules:
-        if spec.startup is not None:
-            await spec.startup()
-
-    # 框架级恢复：只接管「声明了 recovery_kinds 且没有自定义 startup」的模块。
-    # 关键不是少写几行，而是让「新模块忘接恢复」变成声明缺失，能被 CI 抓住。
-    # worker 没开时恢复入队的 job 根本没人消费，还会污染测试库，直接跳过（R12-09）。
-    from generation.recovery import recover_declared
-
-    if settings.worker_enabled:
-        await recover_declared(modules)
-    else:
-        logger.warning(
-            "worker 未启用，跳过框架启动恢复：恢复动作入队的任务不会被执行；"
-            "需要恢复时请开启 WORKER_ENABLED"
-        )
+    await run_startup_recovery(modules, worker_enabled=settings.worker_enabled)
 
     worker = Worker(get_queue(), concurrency=settings.worker_concurrency)
     if settings.worker_enabled:
@@ -99,7 +112,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     # 注入口未接上不报错（可选依赖），但要在日志里留痕：`app modules` 同样能看到
     from api.ports import port_status
-    from core.audit import ensure_audit_sink
 
     for port, registered in port_status():
         if not registered:
@@ -109,14 +121,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 port.protocol,
                 port.when_unregistered,
             )
-    # 审计写入端是唯一「没接上会静默丢数据」的注入口：record() 按设计吞掉一切，
-    # 不抛异常也不打日志。生产环境必须在启动期炸掉，不能等到对账时才发现全是空的。
-    ensure_audit_sink(settings.app_env)
-    # 同理：成图下载校验没配白名单时会静默回落到黑名单兜底（档不住 DNS 解析到
-    # 内网）。放在 active_modules() 之后，确保各驱动的 Settings 都已 import 登记。
-    from infra.driver_config import ensure_prod_driver_settings
-
-    ensure_prod_driver_settings(settings.app_env)
 
     # 周期任务：调度器本身不认识任何具体任务，任务由模块在 import 期注册
     stop_scheduler = asyncio.Event()
