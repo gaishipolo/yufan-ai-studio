@@ -53,6 +53,7 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
       },
       { code: 'task:update', name: '编辑/重试自己的任务', description: '' },
       { code: 'template:read', name: '查看行业模板', description: '' },
+      { code: 'template:review', name: '评价自己的替换成片', description: '保存可用性评价及修改记录' },
       {
         code: 'template:use',
         name: '提交模板替换',
@@ -66,6 +67,11 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
       { code: 'asset:create', name: '上传素材', description: '' },
       { code: 'asset:delete', name: '删除素材', description: '' },
       { code: 'asset:read', name: '查看素材', description: '' },
+      { code: 'asset:update', name: '修改本人素材名称', description: '' },
+      { code: 'asset:share', name: '分享或撤回本人原片', description: '' },
+      { code: 'asset:reference:manage', name: '维护封装参考素材与登记文件', description: '' },
+      { code: 'template:pack:manage', name: '维护本人封装草稿', description: '' },
+      { code: 'template:pack:publish', name: '发布或停用本人封装对象', description: '' },
     ],
   },
   {

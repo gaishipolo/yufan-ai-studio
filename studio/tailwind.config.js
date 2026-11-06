@@ -28,9 +28,20 @@ export default {
           soft: '#e9f1ff',
           line: '#b9d3ff',
         },
+        // 语义色的三段式。**保持 `ok` 是字符串**：已有 CSS 用 `theme('colors.ok / 8%')`
+        // 做半透明描边，改成嵌套对象会让 `theme('colors.ok')` 直接解析失败。
         ok: '#17c07a',
+        'ok-deep': '#0f9c63',
+        'ok-soft': '#e8faf2',
+        'ok-line': '#d3f3e4',
         warn: '#f5a623',
+        'warn-deep': '#b97a10',
+        'warn-soft': '#fff6e6',
+        'warn-line': '#fbe8c8',
         danger: '#f2544b',
+        'danger-deep': '#d94036',
+        'danger-soft': '#feeceb',
+        'danger-line': '#fad7d4',
         violet: '#7c5cff',
       },
       fontSize: {

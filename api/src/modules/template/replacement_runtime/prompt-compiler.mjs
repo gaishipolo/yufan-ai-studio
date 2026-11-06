@@ -29,7 +29,9 @@ export async function compilePrompt(spec) {
     if(!config.roles.includes(ref.role)||ref.type!==TYPES[ref.role])throw new Error(`Invalid role/type: ${ref.role}`);
     if(!ref.file&&!ref.url)throw new Error('Each reference needs an actual local file path or uploaded URL');
     if(ref.url){const u=new URL(ref.url);if(u.protocol!=='https:'||u.username||u.password)throw new Error('Only HTTPS media URLs are supported');}
-    return {index,id:ref.id,role:ref.role,type:ref.type,token:`{{Mixed ${index+1}}}`,...ref.file?{file:ref.file}:{},...ref.url?{url:ref.url}:{}};
+    // 封装时按用途写的说明优先于内置文案：同一用途下的多张图靠它区分职责。
+    const usage=typeof ref.usage==='string'&&ref.usage.trim()?text(ref.usage,'usage').slice(0,300):'';
+    return {index,id:ref.id,role:ref.role,type:ref.type,token:`{{Mixed ${index+1}}}`,...ref.file?{file:ref.file}:{},...ref.url?{url:ref.url}:{},...usage?{usage}:{}};
   });
   for(const [kind,max] of [['image',10],['video',5],['audio',5]])if(bindings.filter(b=>b.type===kind).length>max)throw new Error(`Too many ${kind} references`);
   const byRole=role=>bindings.filter(b=>b.role===role);
@@ -43,7 +45,7 @@ export async function compilePrompt(spec) {
   const audio=byRole('source_audio').length?`${tokens('source_audio')} 是 ${tokens('source_video')} 同片段原音轨，提供原口播、节奏及说话时间参考，口型跟随相应说话时刻。`:`声音以 ${tokens('source_video')} 的原音轨为准，沿用原说话者、台词、节奏和口型；原片无相应声音时不新增台词、音乐或音效。`;
   const frame=byRole('source_frame').length?`${tokens('source_frame')} 是原片真实关键帧，仅辅助构图与物品状态，不提供待替换人物身份。`:'';
   const values={duration:String(spec.duration),aspect_ratio:spec.aspect_ratio,source_video:tokens('source_video'),identity_refs:tokens('identity'),product_refs:tokens('target_product'),scene_refs:tokens('target_scene'),
-    reference_bindings:bindings.map(b=>`${b.token}：${ROLES[b.role]}。`).join('\n'),audio_instruction:audio,frame_instruction:frame,
+    reference_bindings:bindings.map(b=>`${b.token}：${b.usage||ROLES[b.role]}。`).join('\n'),audio_instruction:audio,frame_instruction:frame,
     source_subject:spec.task==='character'?requireText(variables.source_subject,'source_subject'):text(variables.source_subject,'source_subject'),
     identity_description:text(variables.identity_description,'identity_description','以目标人物参考所示的稳定身份特征为准；面部近景用于身份，全身图只用于可见身体比例；多张人物参考须为同一人。'),
     source_product:spec.task==='product'?requireText(variables.source_product,'source_product'):text(variables.source_product,'source_product'),

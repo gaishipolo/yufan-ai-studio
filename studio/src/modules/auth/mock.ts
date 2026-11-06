@@ -71,6 +71,7 @@ const CONTENT_PERMISSIONS = [
   'task:read',
   'task:update',
   'template:read',
+  'template:review',
   'asset:create',
   'asset:read',
 ];

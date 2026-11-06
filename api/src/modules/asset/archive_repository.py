@@ -9,10 +9,8 @@ from typing import Literal
 
 from core.exceptions import BadRequest, NotFound
 from core.media import MediaCategory, StoredMedia
-from infra.media_probe import EXTENSIONS, create_preview, inspect
+from infra.media_probe import EXTENSIONS, PREVIEW_VERSION, create_preview, inspect
 from infra.storage.archive import ArchiveStorage, get_archive_storage
-
-CATEGORIES = ("source", "character", "product", "scene", "audio")
 
 
 class ArchiveAssetRepository:
@@ -93,7 +91,7 @@ class ArchiveAssetRepository:
         return media
 
     def ensure_preview(self, media: StoredMedia) -> None:
-        key = f"library/previews/{media.id}.jpg"
+        key = f"library/previews/{media.id}.{PREVIEW_VERSION}.jpg"
         if create_preview(self.storage.resolve(media.path), self.storage.resolve(key), media.type):
             media.preview_path = key
             media.preview_url = f"/api/v1/assets/archive/{media.id}/thumbnail"

@@ -1,4 +1,5 @@
 import { api } from '@/shared/api/http';
+import type { TaskFeedParams, TaskFeedResult } from '../model/feed.types';
 import type {
   CreateTaskPayload,
   TaskListParams,
@@ -9,6 +10,7 @@ import type {
 
 /** 任务领域 API —— 后端契约的唯一入口 */
 export const taskApi = {
+  feed: (params: TaskFeedParams) => api.get<TaskFeedResult>('/tasks/feed', { ...params }),
   list: (params: TaskListParams) => api.get<TaskListResult>('/tasks', { ...params }),
 
   detail: (id: string) => api.get<VideoTask>(`/tasks/${id}`),

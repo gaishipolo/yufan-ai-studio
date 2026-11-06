@@ -129,8 +129,13 @@ class LibTVProvider:
             raise UpstreamError("提交回执未知，禁止自动重提")
         if latest.status == "waiting_free":
             raise BadRequest("当前报价非零，等待免费；未提交生成")
-        if result.code == "EXECUTOR_BUSY":
-            raise BadRequest("账号执行器正在占用，请稍后继续；未提交生成")
+        if latest.status == "service_error" and latest.last_error:
+            # 适配器给了具体原因（积分队列仍报 0、估价不可用等），原样透出。
+            raise BadRequest(f"{latest.last_error}；未提交生成")
+        if result.code in ("EXECUTOR_BUSY", "STALE_LOCK"):
+            # 两种「没提上去」的原因要分开：账号被别的任务占着是等一等，
+            # 遗留锁是要人去核对档案，混成一句话会把人引向错误的动作。
+            raise BadRequest(f"{result.message}；未提交生成")
         raise BadRequest(f"提交前检查未完成：{result.message or result.code}；未提交生成")
 
     async def poll(self, external_id: str, *, model: str = "") -> GenerationProgress:

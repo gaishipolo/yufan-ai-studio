@@ -25,9 +25,80 @@
             "in": "query",
             "required": false,
             "schema": {
+              "enum": [
+                "all",
+                "source",
+                "character",
+                "product",
+                "scene",
+                "audio"
+              ],
               "type": "string",
               "default": "all",
               "title": "Category"
+            }
+          },
+          {
+            "name": "scope",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "mine",
+                "public",
+                "trash"
+              ],
+              "type": "string",
+              "default": "mine",
+              "title": "Scope"
+            }
+          },
+          {
+            "name": "keyword",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Keyword"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "all",
+                "private",
+                "shared"
+              ],
+              "type": "string",
+              "default": "all",
+              "title": "State"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1,
+              "title": "Page"
+            }
+          },
+          {
+            "name": "pageSize",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "default": 200,
+              "title": "Pagesize"
             }
           }
         ],
@@ -290,6 +361,274 @@
             "content": {
               "application/json": {
                 "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/assets/archive/{asset_id}": {
+      "get": {
+        "tags": [
+          "素材",
+          "素材归档"
+        ],
+        "summary": "读取本人或共享原片详情",
+        "operationId": "archive_detail_api_v1_assets_archive__asset_id__get",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "asset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Asset Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_ArchivedAsset_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/assets/archive/{asset_id}/preview": {
+      "get": {
+        "tags": [
+          "素材",
+          "素材归档"
+        ],
+        "summary": "受控公共原片预览",
+        "operationId": "public_preview_api_v1_assets_archive__asset_id__preview_get",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "asset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Asset Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/assets/archive/{asset_id}/name": {
+      "put": {
+        "tags": [
+          "素材",
+          "素材归档"
+        ],
+        "summary": "修改本人素材名称",
+        "operationId": "rename_api_v1_assets_archive__asset_id__name_put",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "asset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Asset Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ArchiveChange"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_ArchivedAsset_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/assets/archive/{asset_id}/sharing": {
+      "put": {
+        "tags": [
+          "素材",
+          "素材归档"
+        ],
+        "summary": "分享或取消分享本人原片",
+        "operationId": "sharing_api_v1_assets_archive__asset_id__sharing_put",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "asset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Asset Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ArchiveChange"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_ArchivedAsset_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/assets/archive/{asset_id}/deleted": {
+      "put": {
+        "tags": [
+          "素材",
+          "素材归档"
+        ],
+        "summary": "将本人素材移入回收站或恢复",
+        "operationId": "deleted_api_v1_assets_archive__asset_id__deleted_put",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "asset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Asset Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ArchiveChange"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_ArchivedAsset_"
+                }
               }
             }
           },
@@ -1977,6 +2316,155 @@
         ]
       }
     },
+    "/api/v1/tasks/feed": {
+      "get": {
+        "tags": [
+          "任务"
+        ],
+        "summary": "统一任务中心：通用生成与本人可见的替换档案",
+        "operationId": "task_feed_api_v1_tasks_feed_get",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "source",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "all",
+                "video",
+                "replacement"
+              ],
+              "type": "string",
+              "default": "all",
+              "title": "Source"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "all",
+                "queued",
+                "running",
+                "completed",
+                "failed",
+                "attention"
+              ],
+              "type": "string",
+              "default": "all",
+              "title": "Status"
+            }
+          },
+          {
+            "name": "keyword",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 100,
+              "default": "",
+              "title": "Keyword"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/TaskSort",
+              "default": "createdAt_desc"
+            }
+          },
+          {
+            "name": "scope",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/TaskScope",
+              "default": "mine"
+            }
+          },
+          {
+            "name": "onlyAuthorized",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Onlyauthorized"
+            }
+          },
+          {
+            "name": "statsOnly",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "只返回统计，不组装条目；角标等轮询场景用",
+              "default": false,
+              "title": "Statsonly"
+            },
+            "description": "只返回统计，不组装条目；角标等轮询场景用"
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "页码，从 1 开始",
+              "default": 1,
+              "title": "Page"
+            },
+            "description": "页码，从 1 开始"
+          },
+          {
+            "name": "pageSize",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "description": "每页条数",
+              "default": 24,
+              "title": "Pagesize"
+            },
+            "description": "每页条数"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_TaskFeedOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/tasks": {
       "get": {
         "tags": [
@@ -2442,6 +2930,148 @@
         }
       }
     },
+    "/api/v1/templates/replacement-runs/{run_id}": {
+      "delete": {
+        "tags": [
+          "模板",
+          "替换模板"
+        ],
+        "summary": "将本人替换任务与调用档案移入回收站，不取消生成",
+        "operationId": "delete_run_api_v1_templates_replacement_runs__run_id__delete",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_ReplacementRunOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "模板",
+          "替换模板"
+        ],
+        "summary": "替换任务状态与提示词",
+        "operationId": "get_run_api_v1_templates_replacement_runs__run_id__get",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_ReplacementRunOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/templates/replacement-runs/{run_id}/restore": {
+      "post": {
+        "tags": [
+          "模板",
+          "替换模板"
+        ],
+        "summary": "恢复本人回收站中的替换任务与调用档案",
+        "operationId": "restore_run_api_v1_templates_replacement_runs__run_id__restore_post",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_ReplacementRunOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/templates/replacement-catalog": {
       "get": {
         "tags": [
@@ -2516,61 +3146,13 @@
         ]
       }
     },
-    "/api/v1/templates/replacement-runs/{run_id}": {
-      "get": {
-        "tags": [
-          "模板",
-          "替换模板"
-        ],
-        "summary": "替换任务状态与提示词",
-        "operationId": "get_run_api_v1_templates_replacement_runs__run_id__get",
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "run_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Run Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse_ReplacementRunOut_"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/v1/templates/replacement-runs/{run_id}/execute": {
       "post": {
         "tags": [
           "模板",
           "替换模板"
         ],
-        "summary": "仅 0 积分提交或继续查询已有 LibTV 任务",
+        "summary": "提交替换任务；billingMode=credits 表示本任务用积分加速",
         "operationId": "execute_run_api_v1_templates_replacement_runs__run_id__execute_post",
         "security": [
           {
@@ -2588,6 +3170,23 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/ExecuteReplacement"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Payload"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -2633,6 +3232,456 @@
             "schema": {
               "type": "string",
               "title": "Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/templates/replacement-runs/{run_id}/review": {
+      "put": {
+        "tags": [
+          "模板",
+          "替换模板"
+        ],
+        "summary": "保存人工验收，版本冲突需重新核对",
+        "operationId": "review_run_api_v1_templates_replacement_runs__run_id__review_put",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReplacementReviewIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_ReplacementRunOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/templates/replacement-runs/{run_id}/inputs/{asset_id}": {
+      "get": {
+        "tags": [
+          "模板",
+          "替换模板"
+        ],
+        "summary": "读取当次归档输入快照",
+        "operationId": "archived_input_api_v1_templates_replacement_runs__run_id__inputs__asset_id__get",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Id"
+            }
+          },
+          {
+            "name": "asset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Asset Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/templates/replacement-packs": {
+      "get": {
+        "tags": [
+          "模板",
+          "素材封装"
+        ],
+        "summary": "本人封装草稿和历史包",
+        "operationId": "managed_api_v1_templates_replacement_packs_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_PackManagedList_"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/templates/replacement-packs/available": {
+      "get": {
+        "tags": [
+          "模板",
+          "素材封装"
+        ],
+        "summary": "全工作台已发布对象",
+        "operationId": "available_api_v1_templates_replacement_packs_available_get",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "all",
+              "title": "Kind"
+            }
+          },
+          {
+            "name": "keyword",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Keyword"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1,
+              "title": "Page"
+            }
+          },
+          {
+            "name": "pageSize",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "default": 24,
+              "title": "Pagesize"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_PackPublicList_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/templates/replacement-packs/draft": {
+      "put": {
+        "tags": [
+          "模板",
+          "素材封装"
+        ],
+        "summary": "保存封装草稿（请求标识及版本防重）",
+        "operationId": "save_api_v1_templates_replacement_packs_draft_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PackDraftIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_PackManaged_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/templates/replacement-packs/{pack_id}/publish": {
+      "post": {
+        "tags": [
+          "模板",
+          "素材封装"
+        ],
+        "summary": "发布不可变封装版本",
+        "operationId": "publish_api_v1_templates_replacement_packs__pack_id__publish_post",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "pack_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pack Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PackAction"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_PackManaged_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/templates/replacement-packs/{pack_id}/disable": {
+      "post": {
+        "tags": [
+          "模板",
+          "素材封装"
+        ],
+        "summary": "停用已发布封装对象",
+        "operationId": "disable_api_v1_templates_replacement_packs__pack_id__disable_post",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "pack_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pack Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PackAction"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_PackManaged_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/templates/replacement-packs/{pack_id}/preview/{asset_id}": {
+      "get": {
+        "tags": [
+          "模板",
+          "素材封装"
+        ],
+        "summary": "读取授权发布版本的包内预览",
+        "operationId": "preview_api_v1_templates_replacement_packs__pack_id__preview__asset_id__get",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "pack_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pack Id"
+            }
+          },
+          {
+            "name": "asset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Asset Id"
+            }
+          },
+          {
+            "name": "version",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "title": "Version"
             }
           }
         ],
@@ -2980,6 +4029,87 @@
         "type": "object",
         "title": "ApiResponse[NoneType]"
       },
+      "ApiResponse_PackManagedList_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PackManagedList"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[PackManagedList]"
+      },
+      "ApiResponse_PackManaged_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PackManaged"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[PackManaged]"
+      },
+      "ApiResponse_PackPublicList_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PackPublicList"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[PackPublicList]"
+      },
       "ApiResponse_Page_ImageJobOut__": {
         "properties": {
           "code": {
@@ -3277,6 +4407,33 @@
         "type": "object",
         "title": "ApiResponse[StoryboardListOut]"
       },
+      "ApiResponse_TaskFeedOut_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TaskFeedOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[TaskFeedOut]"
+      },
       "ApiResponse_TaskListOut_": {
         "properties": {
           "code": {
@@ -3555,6 +4712,55 @@
         "type": "object",
         "title": "ApiResponse[list[SessionOut]]"
       },
+      "ArchiveChange": {
+        "properties": {
+          "expectedVersion": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Expectedversion"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 160,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "shared": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Shared"
+          },
+          "deleted": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deleted"
+          }
+        },
+        "type": "object",
+        "required": [
+          "expectedVersion"
+        ],
+        "title": "ArchiveChange"
+      },
       "ArchiveList": {
         "properties": {
           "root": {
@@ -3575,6 +4781,16 @@
           "usedBytes": {
             "type": "integer",
             "title": "Usedbytes"
+          },
+          "page": {
+            "type": "integer",
+            "title": "Page",
+            "default": 1
+          },
+          "pageSize": {
+            "type": "integer",
+            "title": "Pagesize",
+            "default": 200
           }
         },
         "type": "object",
@@ -3670,6 +4886,53 @@
               }
             ],
             "title": "Previewurl"
+          },
+          "ownerId": {
+            "type": "string",
+            "title": "Ownerid",
+            "default": ""
+          },
+          "shared": {
+            "type": "boolean",
+            "title": "Shared",
+            "default": false
+          },
+          "sharedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sharedat"
+          },
+          "deletedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deletedat"
+          },
+          "stateVersion": {
+            "type": "integer",
+            "title": "Stateversion",
+            "default": 0
+          },
+          "editable": {
+            "type": "boolean",
+            "title": "Editable",
+            "default": false
+          },
+          "downloadAllowed": {
+            "type": "boolean",
+            "title": "Downloadallowed",
+            "default": true
           }
         },
         "type": "object",
@@ -3954,6 +5217,28 @@
           "deleted"
         ],
         "title": "DeleteTasksOut"
+      },
+      "ExecuteReplacement": {
+        "properties": {
+          "billingMode": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "free",
+                  "credits"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Billingmode"
+          }
+        },
+        "type": "object",
+        "title": "ExecuteReplacement",
+        "description": "提交或加速一条替换任务。\n\n`credits` 只作用于这条任务：提交时关掉账号的 0 积分权益标签，走正常积分队列，\n**不动账号级开关**，因此不会让同账号的其他人下一次提交莫名其妙开始花钱。\n不传表示沿用档案里当前的计费模式——「继续查询 / 重试原任务」走的就是这条路，\n它们不该顺带把一条已加速的任务改回免费队列。"
       },
       "GenerateImageIn": {
         "properties": {
@@ -4330,6 +5615,327 @@
         ],
         "title": "ModelOut"
       },
+      "PackAction": {
+        "properties": {
+          "expectedRevision": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Expectedrevision"
+          }
+        },
+        "type": "object",
+        "required": [
+          "expectedRevision"
+        ],
+        "title": "PackAction"
+      },
+      "PackBinding": {
+        "properties": {
+          "role": {
+            "type": "string",
+            "title": "Role",
+            "default": ""
+          },
+          "description": {
+            "type": "string",
+            "title": "Description",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "title": "PackBinding",
+        "description": "一张参考图在封装里的用途；description 只补充本次任务特有的事实。"
+      },
+      "PackDraftIn": {
+        "properties": {
+          "requestId": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Requestid"
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Expectedrevision",
+            "default": 0
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "character",
+              "product",
+              "scene"
+            ],
+            "title": "Kind"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 160,
+            "title": "Name",
+            "default": ""
+          },
+          "referenceIds": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 10,
+            "title": "Referenceids"
+          },
+          "coverReferenceId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Coverreferenceid"
+          },
+          "wardrobeMode": {
+            "type": "string",
+            "enum": [
+              "preserve",
+              "reference"
+            ],
+            "title": "Wardrobemode",
+            "default": "preserve"
+          },
+          "features": {
+            "type": "string",
+            "maxLength": 2000,
+            "title": "Features",
+            "default": ""
+          },
+          "instructions": {
+            "type": "string",
+            "maxLength": 2000,
+            "title": "Instructions",
+            "default": ""
+          },
+          "bindings": {
+            "items": {
+              "$ref": "#/components/schemas/PackBinding"
+            },
+            "type": "array",
+            "maxItems": 10,
+            "title": "Bindings"
+          },
+          "requiredRoles": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 8,
+            "title": "Requiredroles"
+          },
+          "supportedScopes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 8,
+            "title": "Supportedscopes"
+          }
+        },
+        "type": "object",
+        "required": [
+          "requestId",
+          "kind"
+        ],
+        "title": "PackDraftIn"
+      },
+      "PackManaged": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "character",
+              "product",
+              "scene"
+            ],
+            "title": "Kind"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "referenceIds": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Referenceids"
+          },
+          "coverReferenceId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Coverreferenceid"
+          },
+          "wardrobeMode": {
+            "type": "string",
+            "enum": [
+              "preserve",
+              "reference"
+            ],
+            "title": "Wardrobemode",
+            "default": "preserve"
+          },
+          "features": {
+            "type": "string",
+            "title": "Features",
+            "default": ""
+          },
+          "instructions": {
+            "type": "string",
+            "title": "Instructions",
+            "default": ""
+          },
+          "version": {
+            "type": "integer",
+            "title": "Version",
+            "default": 0
+          },
+          "available": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Available"
+          },
+          "coverUrl": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Coverurl"
+          },
+          "previewUrls": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Previewurls"
+          },
+          "bindings": {
+            "items": {
+              "$ref": "#/components/schemas/PackBinding"
+            },
+            "type": "array",
+            "title": "Bindings"
+          },
+          "requiredRoles": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Requiredroles"
+          },
+          "supportedScopes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Supportedscopes"
+          },
+          "revision": {
+            "type": "integer",
+            "title": "Revision",
+            "default": 0
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "published",
+              "disabled"
+            ],
+            "title": "Status",
+            "default": "draft"
+          },
+          "gaps": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Gaps"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "name",
+          "referenceIds"
+        ],
+        "title": "PackManaged"
+      },
+      "PackManagedList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/PackManaged"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "PackManagedList"
+      },
+      "PackPublicList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ReplacementPack"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "page": {
+            "type": "integer",
+            "title": "Page"
+          },
+          "pageSize": {
+            "type": "integer",
+            "title": "Pagesize"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "page",
+          "pageSize"
+        ],
+        "title": "PackPublicList"
+      },
       "Page_ImageJobOut_": {
         "properties": {
           "items": {
@@ -4536,8 +6142,8 @@
           "target": {
             "type": "string",
             "maxLength": 160,
-            "minLength": 1,
-            "title": "Target"
+            "title": "Target",
+            "default": ""
           },
           "sourceId": {
             "type": "string",
@@ -4549,7 +6155,6 @@
             },
             "type": "array",
             "maxItems": 10,
-            "minItems": 1,
             "title": "Referenceids"
           },
           "wardrobeMode": {
@@ -4565,7 +6170,7 @@
             "type": "string",
             "maxLength": 1000,
             "title": "Replacementscope",
-            "default": "人物上身穿着、手持展示产品、盒内可见产品、屏幕商品"
+            "default": ""
           },
           "notes": {
             "type": "string",
@@ -4584,6 +6189,18 @@
             ],
             "title": "Packid"
           },
+          "packVersion": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Packversion"
+          },
           "aspectRatio": {
             "type": "string",
             "enum": [
@@ -4600,9 +6217,7 @@
         "required": [
           "requestId",
           "kind",
-          "target",
-          "sourceId",
-          "referenceIds"
+          "sourceId"
         ],
         "title": "PrepareReplacement"
       },
@@ -4734,6 +6349,30 @@
             "type": "array",
             "title": "Packs",
             "default": []
+          },
+          "packRoles": {
+            "additionalProperties": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "type": "object",
+            "title": "Packroles"
+          },
+          "baseRoles": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Baseroles"
+          },
+          "packScopes": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Packscopes"
           }
         },
         "type": "object",
@@ -4742,6 +6381,78 @@
           "runs"
         ],
         "title": "ReplacementCatalog"
+      },
+      "ReplacementInputAsset": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "role": {
+            "type": "string",
+            "title": "Role"
+          },
+          "type": {
+            "type": "string",
+            "title": "Type"
+          },
+          "url": {
+            "type": "string",
+            "title": "Url"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "role",
+          "type",
+          "url"
+        ],
+        "title": "ReplacementInputAsset"
+      },
+      "ReplacementInputSummary": {
+        "properties": {
+          "assets": {
+            "items": {
+              "$ref": "#/components/schemas/ReplacementInputAsset"
+            },
+            "type": "array",
+            "title": "Assets"
+          },
+          "coverReferenceId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Coverreferenceid"
+          },
+          "wardrobeMode": {
+            "type": "string",
+            "title": "Wardrobemode",
+            "default": "preserve"
+          },
+          "replacementScope": {
+            "type": "string",
+            "title": "Replacementscope",
+            "default": ""
+          },
+          "notes": {
+            "type": "string",
+            "title": "Notes",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "title": "ReplacementInputSummary"
       },
       "ReplacementPack": {
         "properties": {
@@ -4769,6 +6480,17 @@
             "type": "array",
             "title": "Referenceids"
           },
+          "coverReferenceId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Coverreferenceid"
+          },
           "wardrobeMode": {
             "type": "string",
             "enum": [
@@ -4787,6 +6509,61 @@
             "type": "string",
             "title": "Instructions",
             "default": ""
+          },
+          "version": {
+            "type": "integer",
+            "title": "Version",
+            "default": 0
+          },
+          "available": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Available"
+          },
+          "coverUrl": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Coverurl"
+          },
+          "previewUrls": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Previewurls"
+          },
+          "bindings": {
+            "items": {
+              "$ref": "#/components/schemas/PackBinding"
+            },
+            "type": "array",
+            "title": "Bindings"
+          },
+          "requiredRoles": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Requiredroles"
+          },
+          "supportedScopes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Supportedscopes"
           }
         },
         "type": "object",
@@ -4797,6 +6574,171 @@
           "referenceIds"
         ],
         "title": "ReplacementPack"
+      },
+      "ReplacementReview": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "default": "pending"
+          },
+          "version": {
+            "type": "integer",
+            "title": "Version",
+            "default": 0
+          },
+          "reasonCodes": {
+            "items": {
+              "type": "string",
+              "enum": [
+                "replacement",
+                "preservation",
+                "visual",
+                "audio",
+                "other"
+              ]
+            },
+            "type": "array",
+            "title": "Reasoncodes"
+          },
+          "comment": {
+            "type": "string",
+            "title": "Comment",
+            "default": ""
+          },
+          "reviewedBy": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reviewedby"
+          },
+          "reviewedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reviewedat"
+          },
+          "history": {
+            "items": {
+              "$ref": "#/components/schemas/ReplacementReviewEvent"
+            },
+            "type": "array",
+            "title": "History"
+          }
+        },
+        "type": "object",
+        "title": "ReplacementReview"
+      },
+      "ReplacementReviewEvent": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "default": "pending"
+          },
+          "version": {
+            "type": "integer",
+            "title": "Version",
+            "default": 0
+          },
+          "reasonCodes": {
+            "items": {
+              "type": "string",
+              "enum": [
+                "replacement",
+                "preservation",
+                "visual",
+                "audio",
+                "other"
+              ]
+            },
+            "type": "array",
+            "title": "Reasoncodes"
+          },
+          "comment": {
+            "type": "string",
+            "title": "Comment",
+            "default": ""
+          },
+          "reviewedBy": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reviewedby"
+          },
+          "reviewedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reviewedat"
+          }
+        },
+        "type": "object",
+        "title": "ReplacementReviewEvent"
+      },
+      "ReplacementReviewIn": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "accepted",
+              "rejected"
+            ],
+            "title": "Status"
+          },
+          "expectedVersion": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Expectedversion"
+          },
+          "reasonCodes": {
+            "items": {
+              "type": "string",
+              "enum": [
+                "replacement",
+                "preservation",
+                "visual",
+                "audio",
+                "other"
+              ]
+            },
+            "type": "array",
+            "maxItems": 5,
+            "title": "Reasoncodes"
+          },
+          "comment": {
+            "type": "string",
+            "maxLength": 2000,
+            "title": "Comment",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "expectedVersion"
+        ],
+        "title": "ReplacementReviewIn"
       },
       "ReplacementRunOut": {
         "properties": {
@@ -4832,6 +6774,12 @@
           "prompt": {
             "type": "string",
             "title": "Prompt"
+          },
+          "displayTitle": {
+            "type": "string",
+            "title": "Displaytitle",
+            "description": "统一展示名，列表/弹窗/任务中心共用",
+            "default": ""
           },
           "taskId": {
             "anyOf": [
@@ -4876,6 +6824,26 @@
             "title": "Reviewstatus",
             "default": "pending"
           },
+          "review": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReplacementReview"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "inputSummary": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReplacementInputSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "lastError": {
             "anyOf": [
               {
@@ -4897,6 +6865,27 @@
               }
             ],
             "title": "Outputurl"
+          },
+          "deletedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deletedat"
+          },
+          "billingMode": {
+            "type": "string",
+            "enum": [
+              "free",
+              "credits"
+            ],
+            "title": "Billingmode",
+            "description": "free=0 积分权益队列；credits=本次任务用积分进正常队列",
+            "default": "free"
           }
         },
         "type": "object",
@@ -5333,6 +7322,209 @@
           "createdAt"
         ],
         "title": "StoryboardOut"
+      },
+      "TaskFeedItem": {
+        "properties": {
+          "key": {
+            "type": "string",
+            "title": "Key",
+            "description": "带来源前缀的唯一键，不是上游任务 ID"
+          },
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "原始任务或替换档案 ID"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "video",
+              "replacement"
+            ],
+            "title": "Source",
+            "description": "任务来源"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title",
+            "description": "展示标题"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "description": "原始状态，保留替换链路的精确状态"
+          },
+          "group": {
+            "type": "string",
+            "enum": [
+              "all",
+              "queued",
+              "running",
+              "completed",
+              "failed",
+              "attention"
+            ],
+            "title": "Group",
+            "description": "统一筛选分组；running 包含排队"
+          },
+          "createdAt": {
+            "type": "string",
+            "title": "Createdat",
+            "description": "创建时间"
+          },
+          "progress": {
+            "type": "integer",
+            "title": "Progress",
+            "description": "生成进度",
+            "default": 0
+          },
+          "sourceName": {
+            "type": "string",
+            "title": "Sourcename",
+            "description": "替换原片名称",
+            "default": ""
+          },
+          "outputUrl": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outputurl",
+            "description": "替换成片预览和下载地址"
+          },
+          "errorMessage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Errormessage",
+            "description": "失败或需处理原因"
+          },
+          "detailUrl": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detailurl",
+            "description": "替换档案深链接"
+          },
+          "video": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TaskOut"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "通用任务数据；替换任务为 null"
+          }
+        },
+        "type": "object",
+        "required": [
+          "key",
+          "id",
+          "source",
+          "title",
+          "status",
+          "group",
+          "createdAt"
+        ],
+        "title": "TaskFeedItem"
+      },
+      "TaskFeedOut": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/TaskFeedItem"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "default": 0
+          },
+          "page": {
+            "type": "integer",
+            "title": "Page",
+            "default": 1
+          },
+          "pageSize": {
+            "type": "integer",
+            "title": "Pagesize",
+            "default": 24
+          },
+          "stats": {
+            "$ref": "#/components/schemas/TaskFeedStats",
+            "description": "筛选前分组统计"
+          },
+          "canReadAll": {
+            "type": "boolean",
+            "title": "Canreadall",
+            "description": "可否查看他人的通用任务",
+            "default": false
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Warnings",
+            "description": "部分来源不可用时的提示"
+          }
+        },
+        "type": "object",
+        "title": "TaskFeedOut"
+      },
+      "TaskFeedStats": {
+        "properties": {
+          "all": {
+            "type": "integer",
+            "title": "All",
+            "description": "总数",
+            "default": 0
+          },
+          "running": {
+            "type": "integer",
+            "title": "Running",
+            "description": "正在执行，包含排队",
+            "default": 0
+          },
+          "completed": {
+            "type": "integer",
+            "title": "Completed",
+            "description": "生成完成，不代表人工验收通过",
+            "default": 0
+          },
+          "failed": {
+            "type": "integer",
+            "title": "Failed",
+            "description": "执行失败",
+            "default": 0
+          },
+          "attention": {
+            "type": "integer",
+            "title": "Attention",
+            "description": "等待核对、免费额度、登录或人工处理",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "title": "TaskFeedStats"
       },
       "TaskListOut": {
         "properties": {

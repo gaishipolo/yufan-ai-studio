@@ -50,10 +50,12 @@ export interface ErrorStateProps {
   /** 语境化标题 */
   title?: string;
   icon?: ReactNode;
+  /** 重试请求在途：按钮转圈并禁用，否则点下去看起来毫无反应。 */
+  retrying?: boolean;
   className?: string;
 }
 
-export function ErrorState({ error, onRetry, title, icon, className }: ErrorStateProps) {
+export function ErrorState({ error, onRetry, title, icon, retrying = false, className }: ErrorStateProps) {
   const described = describe(error, title ?? DEFAULT_TITLE);
 
   return (
@@ -73,9 +75,11 @@ export function ErrorState({ error, onRetry, title, icon, className }: ErrorStat
           size="sm"
           className="mt-4"
           icon={<RefreshCw size={12} aria-hidden />}
+          loading={retrying}
+          disabled={retrying}
           onClick={onRetry}
         >
-          重试
+          {retrying ? '重试中…' : '重试'}
         </Button>
       )}
     </div>

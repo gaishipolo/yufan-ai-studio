@@ -15,14 +15,12 @@ __pycache__/
 
 # ===== 本地运行数据（sqlite / 上传文件 / 临时导出）=====
 # 两种启动方式会落到不同目录：`app serve` 在 api/var，uvicorn 以 src 为 cwd 时在 api/src/var
-api/var/*.db
-api/var/*.db-journal
-api/var/*.tmp.json
-api/var/storage/
-api/src/var/*.db
-api/src/var/*.db-journal
-api/src/var/*.tmp.json
-api/src/var/storage/
+# 整体忽略而不是逐个后缀：归档盘、角色迁移快照、`test-*` 临时目录都属于本地运行数据，
+# 逐条放行只会让新产物默认进入待提交集合。用 `dir/*` + `!.gitkeep` 保留目录本身。
+api/var/*
+!api/var/.gitkeep
+api/src/var/*
+!api/src/var/.gitkeep
 
 # ===== 环境变量（只提交 *.example）=====
 .env
@@ -51,3 +49,5 @@ Thumbs.db
 /workbench/
 # .workbuddy/：本地会话与工作记忆，不属于工程内容
 .workbuddy/
+# .tmp/：本地排查用的临时产物（接口快照、抽帧、pytest 输出）
+/.tmp/

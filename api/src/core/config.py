@@ -100,6 +100,8 @@ class Settings(BaseSettings):
     media_archive_root: str = "Z:/yufan_ai_studio"
     libtv_legacy_root: str = "E:/yufan-ai"
     libtv_node: str = "node"
+    # 适配器从已登录的本地浏览器读 Cookie；显式下发，避免依赖 API 进程继承的环境变量。
+    libtv_browser_url: str = "http://127.0.0.1:9226"
 
     queue_driver: str = "memory"
     worker_enabled: bool = True

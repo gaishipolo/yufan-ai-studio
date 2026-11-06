@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import subprocess
 import sys
 import uuid
@@ -19,15 +20,20 @@ from core.events import EventBus
 from core.exceptions import Conflict, UpstreamError
 from generation.runner import JOB_SUBMIT, GenerationRunner
 from infra.ai.libtv import LibTVProvider
-from infra.ai.libtv_process import clear_finished_lock, supervise
+from infra.ai.libtv_process import (
+    ACCOUNT_LOCK,
+    clear_finished_lock,
+    legacy_worker_active,
+    supervise,
+)
 from infra.ai.libtv_state import ExecutorResult
 from infra.queue.base import Job
 from infra.queue.memory import MemoryJobQueue
-from infra.storage.archive import LocalArchiveStorage, lease
+from infra.storage.archive import LocalArchiveStorage, acquire, lease, release
 from modules.template import replacement_service as service
 from modules.template.replacement_repository import ReplacementRepository
 from modules.template.replacement_schema import PrepareReplacement
-from modules.template.replacement_worker import recover_state, schedule_state
+from modules.template.replacement_worker import recover_state, schedule_state, set_billing_mode
 
 
 @pytest.fixture
@@ -121,10 +127,112 @@ def test_stale_worker_lock_cleanup_requires_confirmed_exit(tmp_path, monkeypatch
     assert not lock.exists()
 
 
+def test_account_lock_does_not_collide_with_legacy_worker_lock(archive_root, tmp_path):  # noqa: F811
+    """旧夜间工作台常驻持有的进程锁，不能被当成「账号执行器被占用」。
+
+    `run_libtv_worker` 用 `with process_lock(): while True: tick()`，从启动一直
+    持有 `libtv/state/workbench-worker.lock`。新工作台早期把同一把文件当作账号
+    互斥锁，旧 worker 只要还在跑，每个阶段都会 EXECUTOR_BUSY（实测档案里
+    upload 连挂 6 次、node 从未启动、node_pid 恒为 null）。
+    """
+    legacy = tmp_path / "legacy"
+    (legacy / "libtv/state").mkdir(parents=True)
+    stream = (legacy / "libtv/state/workbench-worker.lock").open("a+b")
+    stream.write(b"0")
+    stream.flush()
+    stream.seek(0)
+    acquire(stream)  # 模拟旧 worker 常驻持有
+    try:
+        assert legacy_worker_active(legacy) is True
+        # 账号串行用的是归档盘上自己的锁，与旧进程锁互不相干。
+        with lease(LocalArchiveStorage().resolve(ACCOUNT_LOCK)):
+            pass
+    finally:
+        release(stream)
+        stream.close()
+    assert legacy_worker_active(legacy) is False
+
+
+def test_billing_mode_switch_only_before_submission(prepared):
+    """加速只能在提交前改；提交后重复确认只能算「继续查询」。
+
+    已经交给上游的那一笔是按当时的队列发出去的，事后改档案只会让
+    「这条到底走了免费队列还是积分队列」的核对失去依据。
+    """
+    _, path = prepared
+    repo = ReplacementRepository()
+    run_id = repo.load(path).id
+
+    meta = repo.load(path)
+    meta.task_id = "upstream-1"
+    repo.save(path, meta)
+    # 想把已在免费队列的任务改成积分：这会真花钱，必须拒绝并说清出路。
+    with pytest.raises(Conflict):
+        set_billing_mode(run_id, "u_001", "credits")
+    assert repo.load(path).billing_mode == "free"
+
+    # 反过来：已加速的任务被再点一次「确认生成」，那只是查询进度。
+    # 这里若报错，前端就会把一次正常的查询显示成「执行请求失败」。
+    meta = repo.load(path)
+    meta.billing_mode = "credits"
+    repo.save(path, meta)
+    set_billing_mode(run_id, "u_001", "free")
+    assert repo.load(path).billing_mode == "credits"
+
+
+def test_switching_to_credits_releases_waiting_free(prepared):
+    """免费队列报价非 0 才会停在 waiting_free；换积分队列后必须能继续。
+
+    否则点了加速仍然停在原地，看起来和「按钮没反应」一模一样。
+    """
+    _, path = prepared
+    repo = ReplacementRepository()
+    meta = repo.load(path)
+    meta.status = "waiting_free"
+    meta.estimated_credits = 40
+    repo.save(path, meta)
+
+    set_billing_mode(meta.id, "u_001", "credits")
+    updated = repo.load(path)
+    assert updated.status == "uploaded"
+    # 免费队列的报价不能当成积分队列的账单，重新估价后才能填。
+    assert updated.estimated_credits is None
+
+
+def test_run_lock_name_is_skipped_by_bridge_checksum_walk(prepared, tmp_path, monkeypatch):
+    """锁文件必须命中桥接层 update() 的排除规则。
+
+    这条约束不写死就会复发：锁叫 `.lease` 时，update() 遍历 records 给每个
+    文件算 sha256，会读到被自己锁住的字节，SMB 上直接 EBUSY——自动执行必失败，
+    手工执行却成功，极难定位。
+    """
+    from infra.ai import libtv_process
+    from infra.ai.libtv_state import RUN_LOCK
+    from modules.template.replacement_management import MANAGEMENT_LOCK
+    from modules.template.replacement_review import REVIEW_LOCK
+
+    # 三个锁都落在 update() 的遍历范围内（records/、review/），必须全部命中排除规则。
+    for name in (RUN_LOCK, MANAGEMENT_LOCK, REVIEW_LOCK):
+        assert re.search(r"\.(lock|download|tmp)$", name), name
+
+    _, path = prepared
+    seen: list[str] = []
+    real = libtv_process.lease
+
+    def spy(target, *args, **kwargs):
+        seen.append(Path(target).name)
+        return real(target, *args, **kwargs)
+
+    monkeypatch.setattr(libtv_process, "lease", spy)
+    libtv_process.supervise("poll", path, tmp_path / "legacy", "unused")
+
+    assert seen == [Path(RUN_LOCK).name]
+
+
 def test_supervisor_keeps_active_lock_and_receipt(prepared, tmp_path):
     _, path = prepared
     repo = ReplacementRepository()
-    with lease(path / "records/executor.lease"):
+    with lease(path / "records/executor.lock"):
         result = supervise("submit", path, tmp_path / "legacy", "unused")
         assert result.code == "EXECUTOR_BUSY"
         with pytest.raises(Conflict):
@@ -271,30 +379,65 @@ async def test_template_provider_rejects_other_module_archive_pointer():
 
 
 async def test_supervisor_records_exit_and_cleans_dead_node_lock(prepared, tmp_path, monkeypatch):
-    from core.config import settings
+    from infra.ai import libtv_process
 
     _, path = prepared
-    code = path / "code/runtime-v2/bridge.mjs"
-    code.parent.mkdir(parents=True)
-    code.write_text(
+    fake = tmp_path / "fake-bridge.mjs"
+    fake.write_text(
         "import {writeFileSync} from 'node:fs';import path from 'node:path';"
         "writeFileSync(path.join(process.argv[3],'records/worker.lock'),'test');"
         "process.exitCode=1;",
         encoding="utf-8",
     )
-    from infra.ai.libtv import execute_stage
-
-    monkeypatch.setattr(settings, "libtv_legacy_root", str(tmp_path / "fake-legacy"))
-    result = await execute_stage(ReplacementRepository().load(path).id, "upload")
+    monkeypatch.setattr(libtv_process, "RUNTIME", fake)
+    result = await asyncio.to_thread(
+        libtv_process.run_node,
+        "upload",
+        path,
+        tmp_path / "fake-legacy",
+        "node",
+        LocalArchiveStorage(),
+    )
     assert result.code == "ADAPTER_FAILED" and result.phase == "finished"
     assert result.node_pid is not None
     assert not (path / "records/worker.lock").exists()
     assert LocalArchiveStorage().read(path / "records/executor-result.json")["phase"] == "finished"
 
 
+async def test_stale_cached_bridge_is_replaced_at_stage_start(prepared, tmp_path, monkeypatch):
+    """run/code 里残留的旧 bridge 必须被当前版本覆盖。
+
+    之前只在文件不存在时复制，导致桥接层升级后老任务继续跑旧副本，
+    表现是「代码改了、行为完全没变」，极难定位。
+    """
+    from infra.ai import libtv_process
+
+    _, path = prepared
+    cached = path / "code/runtime-v2/bridge.mjs"
+    cached.parent.mkdir(parents=True, exist_ok=True)
+    cached.write_text("// stale bridge", encoding="utf-8")
+    fake = tmp_path / "fake-bridge.mjs"
+    fake.write_text("process.exitCode=0;", encoding="utf-8")
+    monkeypatch.setattr(libtv_process, "RUNTIME", fake)
+
+    await asyncio.to_thread(
+        libtv_process.run_node,
+        "upload",
+        path,
+        tmp_path / "fake-legacy",
+        "node",
+        LocalArchiveStorage(),
+    )
+
+    assert cached.read_text(encoding="utf-8") == "process.exitCode=0;"
+
+
 async def test_queue_failure_remains_visible_and_retryable(prepared, monkeypatch):
     from core.config import settings
     from modules.template import replacement_worker as worker
+
+    # 本例隔离验证入队故障恢复；发布授权另由跨账号集成用例覆盖。
+    monkeypatch.setattr(worker.MediaCatalog, "check_run", lambda *_: None)
 
     payload, path = prepared
 

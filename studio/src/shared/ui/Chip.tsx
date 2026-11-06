@@ -3,12 +3,13 @@ import { cn } from '@/shared/lib/cn';
 
 export type ChipTone = 'default' | 'primary' | 'ok' | 'warn' | 'danger';
 
+/* 只用 token：原来这里写死了 10 个十六进制值，换主题时只有它不跟着变。 */
 const TONES: Record<ChipTone, string> = {
-  default: 'bg-[#f2f7f8] text-[#6a7d87] border-line-soft',
-  primary: 'bg-primary-soft text-[#2b6bd4] border-[#dceaff]',
-  ok: 'bg-[#e8faf2] text-[#0f9c63] border-[#d3f3e4]',
-  warn: 'bg-[#fff6e6] text-[#b97a10] border-[#fbe8c8]',
-  danger: 'bg-[#feeceb] text-[#d94036] border-[#fad7d4]',
+  default: 'bg-panel-soft text-ink-soft border-line-soft',
+  primary: 'bg-primary-soft text-primary-deep border-primary-line',
+  ok: 'bg-ok-soft text-ok-deep border-ok-line',
+  warn: 'bg-warn-soft text-warn-deep border-warn-line',
+  danger: 'bg-danger-soft text-danger-deep border-danger-line',
 };
 
 export function Chip({

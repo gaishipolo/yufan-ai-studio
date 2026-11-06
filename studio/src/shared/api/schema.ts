@@ -62,12 +62,22 @@ export const TaskStatusFilter_VALUES = ["all", "queued", "running", "completed",
 
 /* ------------------------------ 模型 ------------------------------ */
 
+/** ArchiveChange */
+export interface ArchiveChange {
+  expectedVersion: number;
+  name?: string | null;
+  shared?: boolean | null;
+  deleted?: boolean | null;
+}
+
 /** ArchiveList */
 export interface ArchiveList {
   root: string;
   items: ArchivedAsset[];
   total: number;
   usedBytes: number;
+  page?: number;
+  pageSize?: number;
 }
 
 /** ArchivedAsset */
@@ -87,6 +97,13 @@ export interface ArchivedAsset {
   hasAudio?: boolean;
   url: string;
   previewUrl?: string | null;
+  ownerId?: string;
+  shared?: boolean;
+  sharedAt?: string | null;
+  deletedAt?: string | null;
+  stateVersion?: number;
+  editable?: boolean;
+  downloadAllowed?: boolean;
 }
 
 /** AssetCounts */
@@ -152,6 +169,16 @@ export interface DeleteTasksOut {
   deleted: number;
   /** 被跳过的任务 ID：不存在，或属于他人且没有 `task:read:all` */
   skipped?: string[];
+}
+
+/** 提交或加速一条替换任务。
+
+`credits` 只作用于这条任务：提交时关掉账号的 0 积分权益标签，走正常积分队列，
+**不动账号级开关**，因此不会让同账号的其他人下一次提交莫名其妙开始花钱。
+不传表示沿用档案里当前的计费模式——「继续查询 / 重试原任务」走的就是这条路，
+它们不该顺带把一条已加速的任务改回免费队列。 */
+export interface ExecuteReplacement {
+  billingMode?: "free" | "credits" | null;
 }
 
 /** GenerateImageIn */
@@ -269,6 +296,68 @@ export interface ModelOut {
   isDefault?: boolean;
 }
 
+/** PackAction */
+export interface PackAction {
+  expectedRevision: number;
+}
+
+/** 一张参考图在封装里的用途；description 只补充本次任务特有的事实。 */
+export interface PackBinding {
+  role?: string;
+  description?: string;
+}
+
+/** PackDraftIn */
+export interface PackDraftIn {
+  requestId: string;
+  expectedRevision?: number;
+  kind: "character" | "product" | "scene";
+  name?: string;
+  referenceIds?: string[];
+  coverReferenceId?: string | null;
+  wardrobeMode?: "preserve" | "reference";
+  features?: string;
+  instructions?: string;
+  bindings?: PackBinding[];
+  requiredRoles?: string[];
+  supportedScopes?: string[];
+}
+
+/** PackManaged */
+export interface PackManaged {
+  id: string;
+  kind: "character" | "product" | "scene";
+  name: string;
+  referenceIds: string[];
+  coverReferenceId?: string | null;
+  wardrobeMode?: "preserve" | "reference";
+  features?: string;
+  instructions?: string;
+  version?: number;
+  available?: boolean | null;
+  coverUrl?: string | null;
+  previewUrls?: string[];
+  bindings?: PackBinding[];
+  requiredRoles?: string[];
+  supportedScopes?: string[];
+  revision?: number;
+  status?: "draft" | "published" | "disabled";
+  gaps?: string[];
+}
+
+/** PackManagedList */
+export interface PackManagedList {
+  items: PackManaged[];
+}
+
+/** PackPublicList */
+export interface PackPublicList {
+  items: ReplacementPack[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
 /** PasswordChangeIn */
 export interface PasswordChangeIn {
   /** 当前密码 */
@@ -321,13 +410,14 @@ export interface PermissionOut {
 export interface PrepareReplacement {
   requestId: string;
   kind: "character" | "product" | "scene";
-  target: string;
+  target?: string;
   sourceId: string;
-  referenceIds: string[];
+  referenceIds?: string[];
   wardrobeMode?: "preserve" | "reference";
   replacementScope?: string;
   notes?: string;
   packId?: string | null;
+  packVersion?: number | null;
   aspectRatio?: "9:16" | "16:9" | "1:1" | "adaptive";
 }
 
@@ -365,6 +455,27 @@ export interface ReplacementCatalog {
   kinds?: string[];
   runs: ReplacementRunOut[];
   packs?: ReplacementPack[];
+  packRoles?: Record<string, Record<string, string>>;
+  baseRoles?: Record<string, string>;
+  packScopes?: Record<string, string>;
+}
+
+/** ReplacementInputAsset */
+export interface ReplacementInputAsset {
+  id: string;
+  name: string;
+  role: string;
+  type: string;
+  url: string;
+}
+
+/** ReplacementInputSummary */
+export interface ReplacementInputSummary {
+  assets?: ReplacementInputAsset[];
+  coverReferenceId?: string | null;
+  wardrobeMode?: string;
+  replacementScope?: string;
+  notes?: string;
 }
 
 /** ReplacementPack */
@@ -373,9 +484,46 @@ export interface ReplacementPack {
   kind: "character" | "product" | "scene";
   name: string;
   referenceIds: string[];
+  coverReferenceId?: string | null;
   wardrobeMode?: "preserve" | "reference";
   features?: string;
   instructions?: string;
+  version?: number;
+  available?: boolean | null;
+  coverUrl?: string | null;
+  previewUrls?: string[];
+  bindings?: PackBinding[];
+  requiredRoles?: string[];
+  supportedScopes?: string[];
+}
+
+/** ReplacementReview */
+export interface ReplacementReview {
+  status?: string;
+  version?: number;
+  reasonCodes?: ("replacement" | "preservation" | "visual" | "audio" | "other")[];
+  comment?: string;
+  reviewedBy?: string | null;
+  reviewedAt?: string | null;
+  history?: ReplacementReviewEvent[];
+}
+
+/** ReplacementReviewEvent */
+export interface ReplacementReviewEvent {
+  status?: string;
+  version?: number;
+  reasonCodes?: ("replacement" | "preservation" | "visual" | "audio" | "other")[];
+  comment?: string;
+  reviewedBy?: string | null;
+  reviewedAt?: string | null;
+}
+
+/** ReplacementReviewIn */
+export interface ReplacementReviewIn {
+  status: "accepted" | "rejected";
+  expectedVersion: number;
+  reasonCodes?: ("replacement" | "preservation" | "visual" | "audio" | "other")[];
+  comment?: string;
 }
 
 /** ReplacementRunOut */
@@ -387,13 +535,20 @@ export interface ReplacementRunOut {
   archivePath: string;
   createdAt: string;
   prompt: string;
+  /** 统一展示名，列表/弹窗/任务中心共用 */
+  displayTitle?: string;
   taskId?: string | null;
   estimatedCredits?: number | null;
   credits?: number | null;
   progress?: number;
   reviewStatus?: string;
+  review?: ReplacementReview | null;
+  inputSummary?: ReplacementInputSummary | null;
   lastError?: string | null;
   outputUrl?: string | null;
+  deletedAt?: string | null;
+  /** free=0 积分权益队列；credits=本次任务用积分进正常队列 */
+  billingMode?: "free" | "credits";
 }
 
 /** ResetPasswordIn */
@@ -526,6 +681,64 @@ export interface StoryboardOut {
   aspectRatio: AspectRatio;
   coverUrl: string;
   createdAt: string;
+}
+
+/** TaskFeedItem */
+export interface TaskFeedItem {
+  /** 带来源前缀的唯一键，不是上游任务 ID */
+  key: string;
+  /** 原始任务或替换档案 ID */
+  id: string;
+  /** 任务来源 */
+  source: "video" | "replacement";
+  /** 展示标题 */
+  title: string;
+  /** 原始状态，保留替换链路的精确状态 */
+  status: string;
+  /** 统一筛选分组；running 包含排队 */
+  group: "all" | "queued" | "running" | "completed" | "failed" | "attention";
+  /** 创建时间 */
+  createdAt: string;
+  /** 生成进度 */
+  progress?: number;
+  /** 替换原片名称 */
+  sourceName?: string;
+  /** 替换成片预览和下载地址 */
+  outputUrl?: string | null;
+  /** 失败或需处理原因 */
+  errorMessage?: string | null;
+  /** 替换档案深链接 */
+  detailUrl?: string | null;
+  /** 通用任务数据；替换任务为 null */
+  video?: TaskOut | null;
+}
+
+/** TaskFeedOut */
+export interface TaskFeedOut {
+  items?: TaskFeedItem[];
+  total?: number;
+  page?: number;
+  pageSize?: number;
+  /** 筛选前分组统计 */
+  stats?: TaskFeedStats;
+  /** 可否查看他人的通用任务 */
+  canReadAll?: boolean;
+  /** 部分来源不可用时的提示 */
+  warnings?: string[];
+}
+
+/** TaskFeedStats */
+export interface TaskFeedStats {
+  /** 总数 */
+  all?: number;
+  /** 正在执行，包含排队 */
+  running?: number;
+  /** 生成完成，不代表人工验收通过 */
+  completed?: number;
+  /** 执行失败 */
+  failed?: number;
+  /** 等待核对、免费额度、登录或人工处理 */
+  attention?: number;
 }
 
 /** TaskListOut */
@@ -748,8 +961,18 @@ export interface EndpointData {
   "POST /api/v1/assets/archive/import": ArchivedAsset;
   /** 流式上传素材至归档盘 */
   "POST /api/v1/assets/archive/upload": ArchivedAsset;
+  /** 读取本人或共享原片详情 */
+  "GET /api/v1/assets/archive/{asset_id}": ArchivedAsset;
+  /** 将本人素材移入回收站或恢复 */
+  "PUT /api/v1/assets/archive/{asset_id}/deleted": ArchivedAsset;
   /** 预览或下载已归档素材 */
   "GET /api/v1/assets/archive/{asset_id}/file": unknown;
+  /** 修改本人素材名称 */
+  "PUT /api/v1/assets/archive/{asset_id}/name": ArchivedAsset;
+  /** 受控公共原片预览 */
+  "GET /api/v1/assets/archive/{asset_id}/preview": unknown;
+  /** 分享或取消分享本人原片 */
+  "PUT /api/v1/assets/archive/{asset_id}/sharing": ArchivedAsset;
   /** 浏览器兼容视频预览（派生文件，不改原片） */
   "GET /api/v1/assets/archive/{asset_id}/stream": unknown;
   /** 读取归档素材缩略图 */
@@ -832,6 +1055,8 @@ export interface EndpointData {
   "GET /api/v1/tasks": TaskListOut;
   /** 创建任务 */
   "POST /api/v1/tasks": TaskOut;
+  /** 统一任务中心：通用生成与本人可见的替换档案 */
+  "GET /api/v1/tasks/feed": TaskFeedOut;
   /** 任务统计（侧边栏角标） */
   "GET /api/v1/tasks/stats": TaskStats;
   /** 任务详情 */
@@ -846,12 +1071,32 @@ export interface EndpointData {
   "GET /api/v1/templates": TemplateListOut;
   /** 人物/产品/场景替换模板与调用档案 */
   "GET /api/v1/templates/replacement-catalog": ReplacementCatalog;
+  /** 本人封装草稿和历史包 */
+  "GET /api/v1/templates/replacement-packs": PackManagedList;
+  /** 全工作台已发布对象 */
+  "GET /api/v1/templates/replacement-packs/available": PackPublicList;
+  /** 保存封装草稿（请求标识及版本防重） */
+  "PUT /api/v1/templates/replacement-packs/draft": PackManaged;
+  /** 停用已发布封装对象 */
+  "POST /api/v1/templates/replacement-packs/{pack_id}/disable": PackManaged;
+  /** 读取授权发布版本的包内预览 */
+  "GET /api/v1/templates/replacement-packs/{pack_id}/preview/{asset_id}": unknown;
+  /** 发布不可变封装版本 */
+  "POST /api/v1/templates/replacement-packs/{pack_id}/publish": PackManaged;
   /** 归档输入并预览最终提示词，不提交生成 */
   "POST /api/v1/templates/replacement-runs": ReplacementRunOut;
+  /** 将本人替换任务与调用档案移入回收站，不取消生成 */
+  "DELETE /api/v1/templates/replacement-runs/{run_id}": ReplacementRunOut;
   /** 替换任务状态与提示词 */
   "GET /api/v1/templates/replacement-runs/{run_id}": ReplacementRunOut;
-  /** 仅 0 积分提交或继续查询已有 LibTV 任务 */
+  /** 提交替换任务；billingMode=credits 表示本任务用积分加速 */
   "POST /api/v1/templates/replacement-runs/{run_id}/execute": ReplacementRunOut;
+  /** 读取当次归档输入快照 */
+  "GET /api/v1/templates/replacement-runs/{run_id}/inputs/{asset_id}": unknown;
   /** 预览或下载 Z 盘原始生成结果 */
   "GET /api/v1/templates/replacement-runs/{run_id}/output": unknown;
+  /** 恢复本人回收站中的替换任务与调用档案 */
+  "POST /api/v1/templates/replacement-runs/{run_id}/restore": ReplacementRunOut;
+  /** 保存人工验收，版本冲突需重新核对 */
+  "PUT /api/v1/templates/replacement-runs/{run_id}/review": ReplacementRunOut;
 }

@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 from PIL import Image
 
 from core.config import settings
-from infra.media_probe import create_browser_preview, normalize_duration
+from infra.media_probe import PREVIEW_VERSION, create_browser_preview, inspect, normalize_duration
 from modules.asset.archive_service import ArchiveAssetService
 
 
@@ -21,7 +21,7 @@ def archive_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return tmp_path
 
 
-def make_video(path: Path) -> Path:
+def make_video(path: Path, size: str = "64x64") -> Path:
     subprocess.run(
         [
             imageio_ffmpeg.get_ffmpeg_exe(),
@@ -31,7 +31,7 @@ def make_video(path: Path) -> Path:
             "-f",
             "lavfi",
             "-i",
-            "color=c=blue:s=64x64:d=2",
+            f"color=c=blue:s={size}:d=2",
             "-f",
             "lavfi",
             "-i",
@@ -66,10 +66,12 @@ def test_stream_serves_playable_derivative_and_preserves_original(
     source = make_video(archive_root / "sample.mp4")
     original = source.read_bytes()
     media = ArchiveAssetService().repo.register(source, "sample.mp4", "source", "u_001")
+    # 旧低清缓存仍存在时，必须生成并返回新版预览。
+    (archive_root / "library/previews" / f"{media.id}.mp4").write_bytes(b"old preview")
     response = client.get(f"/api/v1/assets/archive/{media.id}/stream")
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("video/mp4")
-    derived = archive_root / "library/previews" / f"{media.id}.mp4"
+    derived = archive_root / "library/previews" / f"{media.id}.{PREVIEW_VERSION}.mp4"
     assert derived.is_file()
     assert derived.read_bytes() == response.content
     assert source.read_bytes() == original  # 派生预览绝不覆盖原片
@@ -83,6 +85,29 @@ def test_stream_serves_playable_derivative_and_preserves_original(
     assert "yuv420p(" in probe.stderr  # 8-bit，浏览器可解码
     assert "yuv420p10" not in probe.stderr
     assert client.get(media.url).content == original
+    assert inspect(derived, ".mp4")["width"] == 64  # 不放大小尺寸原片
+
+
+def test_portrait_preview_keeps_detail_and_upgrades_old_thumbnail(
+    client: TestClient, archive_root: Path
+) -> None:
+    source = make_video(archive_root / "portrait.mp4", "720x1280")
+    service = ArchiveAssetService()
+    media = service.repo.register(source, "portrait.mp4", "source", "u_001")
+    legacy = archive_root / "library/previews" / f"{media.id}.jpg"
+    Image.new("RGB", (320, 568), "red").save(legacy)
+    media.preview_path = str(legacy.relative_to(archive_root))
+    service.repo.save(media)
+    upgraded = archive_root / "library/previews" / f"{media.id}.{PREVIEW_VERSION}.jpg"
+    upgraded.unlink()
+    response = client.get(media.preview_url)
+    assert response.status_code == 200
+    assert response.content == upgraded.read_bytes()
+    with Image.open(upgraded) as image:
+        assert image.size == (720, 1280)
+    path, _ = service.stream(media.id, "u_001")
+    info = inspect(path, ".mp4")
+    assert (info["width"], info["height"]) == (720, 1280)
 
 
 def test_stream_rejects_non_video(client: TestClient, archive_root: Path) -> None:

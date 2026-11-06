@@ -100,3 +100,29 @@ class TaskRepository(BaseRepository[VideoTask]):
             return []
         rows = await self.session.scalars(select(VideoTask).where(VideoTask.id.in_(ids)))
         return list(rows)
+
+    def status_filter(self, base: Select[Any], status: str) -> Select[Any] | None:
+        """按状态页签过滤；`attention` 只属于替换任务，通用任务没有对应状态。"""
+        if status == "running":
+            return base.where(VideoTask.status.in_(["queued", "running"]))
+        if status == "attention":
+            return None
+        if status != "all":
+            return base.where(VideoTask.status == status)
+        return base
+
+    async def count_candidates(self, base: Select[Any], status: str) -> int:
+        """只算条数：统计接口要给出与列表一致的 `total`，但不拉行。"""
+        stmt = self.status_filter(base, status)
+        return 0 if stmt is None else await self.count(stmt)
+
+    async def feed_candidates(
+        self, base: Select[Any], status: str, sort: TaskSort | str, limit: int,
+    ) -> tuple[list[VideoTask], int]:
+        """合并前取前 offset+limit 条，避免把通用任务全表搬进内存。"""
+        stmt = self.status_filter(base, status)
+        if stmt is None:
+            return [], 0
+        total = await self.count(stmt)
+        rows = await self.session.scalars(self.apply_sort(stmt, sort).limit(limit))
+        return list(rows), total

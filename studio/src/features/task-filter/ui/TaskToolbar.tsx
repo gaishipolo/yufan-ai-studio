@@ -57,7 +57,7 @@ export function TaskToolbar({
         onChange={(e) => onScopeChange(e.target.value as TaskScope)}
       />
       <Switch checked={onlyAuthorized} onChange={onAuthorizedChange}>
-        仅授权
+        仅可下载
       </Switch>
 
       <Button size="sm" icon={<Download size={13} />} onClick={onDownload}>

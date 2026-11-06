@@ -10,12 +10,36 @@ import sys
 import uuid
 from pathlib import Path
 
-from core.exceptions import Conflict
-from infra.ai.libtv_state import ExecutorResult
-from infra.storage.archive import LocalArchiveStorage, lease
+from core.config import settings
+from core.exceptions import AppError, Conflict
+from core.logging import get_logger
+from infra.ai.libtv_state import RUN_LOCK, ExecutorResult
+from infra.media_catalog import MediaCatalog, catalog_lease
+from infra.storage.archive import LocalArchiveStorage, acquire, lease, release
+
+logger = get_logger(__name__)
 
 STAGES = {"upload": 1500, "submit": 100, "poll": 45, "download": 240}
 RUNTIME = Path(__file__).parent / "libtv_runtime/bridge.mjs"
+
+# 账号级串行：同一个 LibTV 账号，同一时刻只允许一个执行器上传或提交。
+# 这把锁必须放在归档盘（跨机器、跨 API 实例一致），**不能**再用 legacy 的
+# libtv/state/workbench-worker.lock：那是旧夜间工作台的「进程单例锁」，
+# run_libtv_worker 从启动一直持有到进程退出（见 apps/libtv_workbench/
+# management/commands/run_libtv_worker.py）。旧 worker 常驻时它永远不会释放，
+# 新工作台就会把每一次上传/提交都判成「账号被占用」，任务卡在 waiting_executor。
+ACCOUNT_LOCK = "catalog/locks/account-executor.lease"
+LEGACY_WORKER_LOCK = "libtv/state/workbench-worker.lock"
+# 查询与下载是只读的：不进账号锁，否则同一个人开两个任务轮询就会互相判忙。
+ACCOUNT_STAGES = frozenset({"upload", "submit"})
+
+
+class ExecutorBusy(Conflict):
+    message = "账号执行器正在执行其他任务，请稍后继续"
+
+
+class StaleExecutorLock(Conflict):
+    message = "上一次执行未正常退出，遗留锁需核对"
 
 
 def pid_alive(pid: int) -> bool:
@@ -45,58 +69,112 @@ def clear_finished_lock(run: Path, storage: LocalArchiveStorage) -> None:
         return
     statefile = run / "records/executor-result.json"
     if not statefile.exists():
-        raise Conflict("旧锁缺少执行进程记录，需先人工核对")
+        raise StaleExecutorLock("旧锁缺少执行进程记录，需先人工核对")
     previous = ExecutorResult.model_validate(storage.read(statefile))
     if previous.phase == "starting" or (previous.node_pid and pid_alive(previous.node_pid)):
-        raise Conflict("原执行进程尚未确认退出，不清理锁")
+        raise StaleExecutorLock("原执行进程尚未确认退出，不清理锁")
     lock.unlink()  # 已持有独占 OS 租约，且原进程已退出。
+
+
+def legacy_worker_active(legacy: Path) -> bool:
+    """旧夜间工作台是否还活着。只用于提示，不参与互斥。
+
+    它从启动就独占持有 workbench-worker.lock，把它当作账号互斥锁的后果
+    是「旧 worker 常驻 = 新工作台永远提交不了」。但两套系统同时驱动一个
+    账号确实有风控风险，所以观察到就记一条日志，由人决定是否停掉旧进程。
+    """
+    path = legacy / LEGACY_WORKER_LOCK
+    if not path.is_file():
+        return False
+    try:
+        with path.open("a+b") as stream:
+            acquire(stream)
+            release(stream)
+    except OSError:
+        return True
+    return False
+
+
+def run_node(
+    stage: str, run: Path, legacy: Path, node: str, storage: LocalArchiveStorage
+) -> ExecutorResult:
+    """在已持锁的前提下启动 Node 适配器，返回这一阶段的回执。"""
+    result = ExecutorResult(stage=stage)
+    code = run / "code/runtime-v2/bridge.mjs"
+    code.parent.mkdir(parents=True, exist_ok=True)
+    # 每次覆盖：桥接层属于执行语义的一部分，run 目录里残留旧副本会让
+    # 「代码改了、行为没变」，排查时极难发现。此处已持 executor 排他锁，无并发写。
+    shutil.copyfile(RUNTIME, code)
+    if stage == "submit":
+        with catalog_lease(storage):
+            MediaCatalog(storage).check_run(run)
+            # 最终授权边界；释放共享目录租约后才启动上游，不长持素材锁。
+            storage.write(run / "records/call-authorization.json", {"authorized": True})
+    result.phase = "starting"
+    storage.write(run / "records/executor-result.json", result.model_dump())
+    old_error = run / "records/executor-error.json"
+    if old_error.exists():
+        old_error.rename(run / "records" / f"executor-error-{uuid.uuid4().hex}.json")
+    # 桥接层只输出错误码，若把 stderr 丢掉就再也无法定位失败原因。
+    # 放 logs/ 而不是 records/：records 会被桥接层的 update() 全量遍历算校验和。
+    logs = run / "logs"
+    logs.mkdir(parents=True, exist_ok=True)
+    errors = logs / "executor-stderr.log"
+    env = {**os.environ, "JS_REVERSE_BROWSER_URL": settings.libtv_browser_url}
+    with errors.open("wb") as stream, subprocess.Popen(
+        [node, str(code), stage, str(run), str(legacy)],
+        stdout=subprocess.DEVNULL,
+        stderr=stream,
+        env=env,
+    ) as process:
+        result.node_pid = process.pid
+        result.phase = "running"
+        storage.write(run / "records/executor-result.json", result.model_dump())
+        try:
+            exit_code = process.wait(timeout=STAGES[stage])
+            result.code = "OK" if exit_code == 0 else "ADAPTER_FAILED"
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+            result.code = "EXECUTOR_TIMEOUT"
+        result.phase = "finished"
+        # 子进程已退出且仍持有两把 OS 锁，遗留文件可安全清理。
+        (run / "records/worker.lock").unlink(missing_ok=True)
+        storage.write(run / "records/executor-result.json", result.model_dump())
+        return result
 
 
 def supervise(stage: str, run: Path, legacy: Path, node: str) -> ExecutorResult:
     if stage not in STAGES:
         raise ValueError("未知执行阶段")
     storage = LocalArchiveStorage()
-    result = ExecutorResult(stage=stage)
     try:
-        with (
-            lease(run / "records/executor.lease"),
-            lease(legacy / "libtv/state/workbench-worker.lock"),
+        with lease(
+            run / RUN_LOCK,
+            message="同一任务已有执行器在运行，请稍后继续",
+            error=ExecutorBusy,
         ):
             clear_finished_lock(run, storage)
-            code = run / "code/runtime-v2/bridge.mjs"
-            code.parent.mkdir(parents=True, exist_ok=True)
-            if not code.exists():
-                shutil.copyfile(RUNTIME, code)
-            result.phase = "starting"
-            storage.write(run / "records/executor-result.json", result.model_dump())
-            old_error = run / "records/executor-error.json"
-            if old_error.exists():
-                old_error.rename(run / "records" / f"executor-error-{uuid.uuid4().hex}.json")
-            with subprocess.Popen(
-                [node, str(code), stage, str(run), str(legacy)],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            ) as process:
-                result.node_pid = process.pid
-                result.phase = "running"
-                storage.write(run / "records/executor-result.json", result.model_dump())
-                try:
-                    exit_code = process.wait(timeout=STAGES[stage])
-                    result.code = "OK" if exit_code == 0 else "ADAPTER_FAILED"
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                    process.wait()
-                    result.code = "EXECUTOR_TIMEOUT"
-                result.phase = "finished"
-                # 子进程已退出且仍持有两把 OS 锁，遗留文件可安全清理。
-                (run / "records/worker.lock").unlink(missing_ok=True)
-                storage.write(run / "records/executor-result.json", result.model_dump())
-                return result
-    except Conflict:
+            if stage not in ACCOUNT_STAGES:
+                return run_node(stage, run, legacy, node, storage)
+            if legacy_worker_active(legacy):
+                logger.warning(
+                    "旧夜间工作台仍在运行，与新工作台共用同一 LibTV 账号 run=%s", run.name
+                )
+            with lease(
+                storage.resolve(ACCOUNT_LOCK),
+                message="账号执行器正在执行其他任务，请稍后继续",
+                error=ExecutorBusy,
+            ):
+                return run_node(stage, run, legacy, node, storage)
+    except StaleExecutorLock as exc:
         # 不能覆盖另一活进程的 executor-result，也不能删除它的锁。
-        return ExecutorResult(
-            stage=stage, code="EXECUTOR_BUSY", message="账号执行器正在占用或旧锁需核对"
-        )
+        logger.warning("执行器遗留锁需人工核对 run=%s stage=%s", run.name, stage)
+        return ExecutorResult(stage=stage, code="STALE_LOCK", message=exc.message)
+    except ExecutorBusy as exc:
+        return ExecutorResult(stage=stage, code="EXECUTOR_BUSY", message=exc.message)
+    except AppError as exc:
+        return ExecutorResult(stage=stage, code="AUTHORIZATION_REVOKED", message=exc.message)
     except OSError:
         return ExecutorResult(
             stage=stage, code="EXECUTOR_IO_FAILED", message="执行器文件或共享盘不可用"

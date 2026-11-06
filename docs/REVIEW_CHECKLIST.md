@@ -276,21 +276,22 @@ service.py:96-98 — commit 成功但 enqueue 抛异常时，任务停在 queued
 
 ---
 
-## 附录 A：当前基线快照（2026-11-05 实测）
+## 附录 A：当前基线快照（2026-11-06 实测）
 
 评估"这次改动有没有让仓库变差"，需要知道起点在哪。
 
 | 检查项 | 现状 | 说明 |
 |---|---|---|
-| `pytest -q` | ✅ 14 passed | `tests/test_health.py`、`tests/test_task_api.py` |
-| `ruff check src tests` | ⚠️ 5 errors | 2× `UP035`（`Mapping` 应从 `collections.abc` 导入）、1× `E501`（`infra/ai/echo.py:34` 105 字符）、1× `I001`（`task/pipeline.py` import 未排序）、1× `F401`（`STATUS_FAILED` 未使用）；其中 4 个可 `--fix` |
-| `mypy src` | 未纳入门禁 | 建议先跑一次拿到错误清单，按模块分批收敛 |
+| `pytest -q` | ✅ 310 passed | 任务聚合、素材归档、替换链路、封装用途、契约同步、架构守卫 |
+| `ruff check src tests scripts` | ✅ All checks passed | 零存量 |
+| `mypy --platform win32 src` | ✅ 143 files, no issues | 与 CI 参数一致 |
 | 前端 `tsc -b` | ✅ 通过 | `strict` + `noUnusedLocals` 已开，`any` 计数为 0，无 `console.*` 残留 |
-| 前端 ESLint | ✅ 已配置（2026-11-05 补） | `studio/eslint.config.js`：hooks + 分层 zone + jsx-a11y，`--max-warnings 0` 零存量 |
-| 前端测试 | ✅ 46 passed / 7 files（2026-11-05 补） | Vitest + jsdom + RTL；覆盖 format / 防抖 / 模型选项 / 状态判定 / Modal / TaskCard / mock adapter；覆盖率 18.6% stmts，待继续充血 |
+| 前端 ESLint | ✅ 已配置 | `studio/eslint.config.js`：hooks + 分层 zone + jsx-a11y，`--max-warnings 0` 零存量 |
+| 前端测试 | ✅ 375 passed / 51 files | Vitest + jsdom + RTL |
 | CI | ❌ 未接入 | 前端可用 `npm run verify`（typecheck+lint+test+build）手动一次跑完 |
 
-> 上表后端三行是首轮快照，已落后于当前代码（pytest 现为 87 passed、ruff/mypy 全绿），由后端负责人在下次评审时刷新。
+> 本机跑 `pytest` 若遇到 `PermissionError: ...AppData\Local\Temp\pytest-of-*`，
+> 用 `--basetemp=var/test-<名字>` 指到工作区内即可；属环境问题，不是代码问题。
 
 **建议的收敛顺序**（投入产出比从高到低）：
 

@@ -2,7 +2,7 @@
 
 > 此文件由 `app export-openapi` 自动生成，请勿手工编辑。
 >
-> 版本 `0.2.0`｜共 **57** 个接口 / **9** 个模块
+> 版本 `0.2.0`｜共 **73** 个接口 / **9** 个模块
 >
 > 重新生成：`cd api && .venv/Scripts/python -m cli export-openapi`
 
@@ -90,6 +90,7 @@ Authorization: Bearer <accessToken>
 | `task:retry:any` | 重试他人任务 | 会消耗额度：重试他人任务前额外校验此权限 |
 | `task:update` | 编辑/重试自己的任务 |  |
 | `template:read` | 查看行业模板 |  |
+| `template:review` | 评价自己的替换成片 |  |
 | `template:use` | 使用替换模板并提交零积分生成 |  |
 
 **素材**
@@ -99,6 +100,11 @@ Authorization: Bearer <accessToken>
 | `asset:create` | 上传素材 |  |
 | `asset:delete` | 删除素材 |  |
 | `asset:read` | 查看素材 |  |
+| `asset:reference:manage` | 维护封装参考素材与登记文件 |  |
+| `asset:share` | 分享或撤回本人原片 |  |
+| `asset:update` | 修改本人素材名称 |  |
+| `template:pack:manage` | 维护本人封装草稿 |  |
+| `template:pack:publish` | 发布或停用本人封装对象 |  |
 
 **组织管理**
 
@@ -156,11 +162,11 @@ Authorization: Bearer <accessToken>
 | 模块 | 接口数 | 说明 |
 |---|---|---|
 | 身份 | 26 | 见下方 `4.1` |
-| 任务 | 8 | 见下方 `4.2` |
+| 任务 | 9 | 见下方 `4.2` |
 | 模型 | 1 | 见下方 `4.3` |
-| 素材 | 10 | 见下方 `4.4` |
+| 素材 | 15 | 见下方 `4.4` |
 | 生图 | 2 | 见下方 `4.5` |
-| 模板 | 6 | 见下方 `4.6` |
+| 模板 | 16 | 见下方 `4.6` |
 | 分镜模板 | 1 | 见下方 `4.7` |
 | 镜头库 | 1 | 见下方 `4.8` |
 | 系统 | 2 | 见下方 `4.9` |
@@ -707,13 +713,14 @@ Authorization: Bearer <accessToken>
 | `createdAt` | `string` | 是 | 创建时间（UTC） |
 | `roles` | `RoleBriefOut[]` | 否 | 拥有的角色 |
 
-### 4.2 任务（8 个）
+### 4.2 任务（9 个）
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
 | `GET` | `/api/v1/tasks` | 任务列表 | 🔒 |
 | `POST` | `/api/v1/tasks` | 创建任务 | 🔒 |
 | `DELETE` | `/api/v1/tasks` | 批量删除任务 | 🔒 |
+| `GET` | `/api/v1/tasks/feed` | 统一任务中心：通用生成与本人可见的替换档案 | 🔒 |
 | `GET` | `/api/v1/tasks/stats` | 任务统计（侧边栏角标） | 🔒 |
 | `GET` | `/api/v1/tasks/{task_id}` | 任务详情 | 🔒 |
 | `PATCH` | `/api/v1/tasks/{task_id}` | 更新任务（标题 / 收藏） | 🔒 |
@@ -802,6 +809,34 @@ Authorization: Bearer <accessToken>
 |---|---|---|---|
 | `deleted` | `number` | 是 | 实际删除的条数 |
 | `skipped` | `string[]` | 否 | 被跳过的任务 ID：不存在，或属于他人且没有 `task:read:all` |
+
+#### `GET /api/v1/tasks/feed`
+
+**统一任务中心：通用生成与本人可见的替换档案**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `source` | query | `"all" | "video" | "replacement"` | 否 |  |
+| `status` | query | `"all" | "queued" | "running" | "completed" | "failed" | "attention"` | 否 |  |
+| `keyword` | query | `string` | 否 |  |
+| `sort` | query | `TaskSort` | 否 |  |
+| `scope` | query | `TaskScope` | 否 |  |
+| `onlyAuthorized` | query | `boolean` | 否 |  |
+| `statsOnly` | query | `boolean` | 否 | 只返回统计，不组装条目；角标等轮询场景用 |
+| `page` | query | `number` | 否 | 页码，从 1 开始 |
+| `pageSize` | query | `number` | 否 | 每页条数 |
+
+**响应** `ApiResponse<TaskFeedOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `items` | `TaskFeedItem[]` | 否 |  |
+| `total` | `number` | 否 |  |
+| `page` | `number` | 否 |  |
+| `pageSize` | `number` | 否 |  |
+| `stats` | `TaskFeedStats` | 否 | 筛选前分组统计 |
+| `canReadAll` | `boolean` | 否 | 可否查看他人的通用任务 |
+| `warnings` | `string[]` | 否 | 部分来源不可用时的提示 |
 
 #### `GET /api/v1/tasks/stats`
 
@@ -969,7 +1004,7 @@ Authorization: Bearer <accessToken>
 | `items` | `ModelOut[]` | 否 |  |
 | `total` | `number` | 否 |  |
 
-### 4.4 素材（10 个）
+### 4.4 素材（15 个）
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
@@ -977,7 +1012,12 @@ Authorization: Bearer <accessToken>
 | `GET` | `/api/v1/assets/archive` | 归档素材列表与空间占用 | 🔒 |
 | `POST` | `/api/v1/assets/archive/import` | 从 Z 盘 inbox 登记现有素材 | 🔒 |
 | `POST` | `/api/v1/assets/archive/upload` | 流式上传素材至归档盘 | 🔒 |
+| `GET` | `/api/v1/assets/archive/{asset_id}` | 读取本人或共享原片详情 | 🔒 |
+| `PUT` | `/api/v1/assets/archive/{asset_id}/deleted` | 将本人素材移入回收站或恢复 | 🔒 |
 | `GET` | `/api/v1/assets/archive/{asset_id}/file` | 预览或下载已归档素材 | 🔒 |
+| `PUT` | `/api/v1/assets/archive/{asset_id}/name` | 修改本人素材名称 | 🔒 |
+| `GET` | `/api/v1/assets/archive/{asset_id}/preview` | 受控公共原片预览 | 🔒 |
+| `PUT` | `/api/v1/assets/archive/{asset_id}/sharing` | 分享或取消分享本人原片 | 🔒 |
 | `GET` | `/api/v1/assets/archive/{asset_id}/stream` | 浏览器兼容视频预览（派生文件，不改原片） | 🔒 |
 | `GET` | `/api/v1/assets/archive/{asset_id}/thumbnail` | 读取归档素材缩略图 | 🔒 |
 | `POST` | `/api/v1/assets/upload-ticket` | 申请上传凭证（待实现） | 🔒 |
@@ -1007,7 +1047,12 @@ Authorization: Bearer <accessToken>
 
 | 参数 | 位置 | 类型 | 必填 | 说明 |
 |---|---|---|---|---|
-| `category` | query | `string` | 否 |  |
+| `category` | query | `"all" | "source" | "character" | "product" | "scene" | "audio"` | 否 |  |
+| `scope` | query | `"mine" | "public" | "trash"` | 否 |  |
+| `keyword` | query | `string` | 否 |  |
+| `state` | query | `"all" | "private" | "shared"` | 否 |  |
+| `page` | query | `number` | 否 |  |
+| `pageSize` | query | `number` | 否 |  |
 
 **响应** `ApiResponse<ArchiveList>`（前端取 `res.data`）
 
@@ -1017,6 +1062,8 @@ Authorization: Bearer <accessToken>
 | `items` | `ArchivedAsset[]` | 是 |  |
 | `total` | `number` | 是 |  |
 | `usedBytes` | `number` | 是 |  |
+| `page` | `number` | 否 |  |
+| `pageSize` | `number` | 否 |  |
 
 #### `POST /api/v1/assets/archive/import`
 
@@ -1048,6 +1095,13 @@ Authorization: Bearer <accessToken>
 | `hasAudio` | `boolean` | 否 |  |
 | `url` | `string` | 是 |  |
 | `previewUrl` | `string \| null` | 否 |  |
+| `ownerId` | `string` | 否 |  |
+| `shared` | `boolean` | 否 |  |
+| `sharedAt` | `string \| null` | 否 |  |
+| `deletedAt` | `string \| null` | 否 |  |
+| `stateVersion` | `number` | 否 |  |
+| `editable` | `boolean` | 否 |  |
+| `downloadAllowed` | `boolean` | 否 |  |
 
 #### `POST /api/v1/assets/archive/upload`
 
@@ -1077,6 +1131,92 @@ Authorization: Bearer <accessToken>
 | `hasAudio` | `boolean` | 否 |  |
 | `url` | `string` | 是 |  |
 | `previewUrl` | `string \| null` | 否 |  |
+| `ownerId` | `string` | 否 |  |
+| `shared` | `boolean` | 否 |  |
+| `sharedAt` | `string \| null` | 否 |  |
+| `deletedAt` | `string \| null` | 否 |  |
+| `stateVersion` | `number` | 否 |  |
+| `editable` | `boolean` | 否 |  |
+| `downloadAllowed` | `boolean` | 否 |  |
+
+#### `GET /api/v1/assets/archive/{asset_id}`
+
+**读取本人或共享原片详情**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `asset_id` | path | `string` | 是 |  |
+
+**响应** `ApiResponse<ArchivedAsset>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `category` | `"source" \| "character" \| "product" \| "scene" \| "audio"` | 是 |  |
+| `type` | `"image" \| "video" \| "audio"` | 是 |  |
+| `mimeType` | `string` | 是 |  |
+| `sizeBytes` | `number` | 是 |  |
+| `path` | `string` | 是 |  |
+| `sha256` | `string` | 是 |  |
+| `createdAt` | `string` | 是 |  |
+| `width` | `number` | 否 |  |
+| `height` | `number` | 否 |  |
+| `duration` | `number` | 否 |  |
+| `hasAudio` | `boolean` | 否 |  |
+| `url` | `string` | 是 |  |
+| `previewUrl` | `string \| null` | 否 |  |
+| `ownerId` | `string` | 否 |  |
+| `shared` | `boolean` | 否 |  |
+| `sharedAt` | `string \| null` | 否 |  |
+| `deletedAt` | `string \| null` | 否 |  |
+| `stateVersion` | `number` | 否 |  |
+| `editable` | `boolean` | 否 |  |
+| `downloadAllowed` | `boolean` | 否 |  |
+
+#### `PUT /api/v1/assets/archive/{asset_id}/deleted`
+
+**将本人素材移入回收站或恢复**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `asset_id` | path | `string` | 是 |  |
+
+**请求体** `ArchiveChange`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `expectedVersion` | `number` | 是 |  |
+| `name` | `string \| null` | 否 |  |
+| `shared` | `boolean \| null` | 否 |  |
+| `deleted` | `boolean \| null` | 否 |  |
+
+**响应** `ApiResponse<ArchivedAsset>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `category` | `"source" \| "character" \| "product" \| "scene" \| "audio"` | 是 |  |
+| `type` | `"image" \| "video" \| "audio"` | 是 |  |
+| `mimeType` | `string` | 是 |  |
+| `sizeBytes` | `number` | 是 |  |
+| `path` | `string` | 是 |  |
+| `sha256` | `string` | 是 |  |
+| `createdAt` | `string` | 是 |  |
+| `width` | `number` | 否 |  |
+| `height` | `number` | 否 |  |
+| `duration` | `number` | 否 |  |
+| `hasAudio` | `boolean` | 否 |  |
+| `url` | `string` | 是 |  |
+| `previewUrl` | `string \| null` | 否 |  |
+| `ownerId` | `string` | 否 |  |
+| `shared` | `boolean` | 否 |  |
+| `sharedAt` | `string \| null` | 否 |  |
+| `deletedAt` | `string \| null` | 否 |  |
+| `stateVersion` | `number` | 否 |  |
+| `editable` | `boolean` | 否 |  |
+| `downloadAllowed` | `boolean` | 否 |  |
 
 #### `GET /api/v1/assets/archive/{asset_id}/file`
 
@@ -1087,6 +1227,104 @@ Authorization: Bearer <accessToken>
 | `asset_id` | path | `string` | 是 |  |
 
 **响应** `ApiResponse<unknown>`（前端取 `res.data`）
+
+#### `PUT /api/v1/assets/archive/{asset_id}/name`
+
+**修改本人素材名称**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `asset_id` | path | `string` | 是 |  |
+
+**请求体** `ArchiveChange`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `expectedVersion` | `number` | 是 |  |
+| `name` | `string \| null` | 否 |  |
+| `shared` | `boolean \| null` | 否 |  |
+| `deleted` | `boolean \| null` | 否 |  |
+
+**响应** `ApiResponse<ArchivedAsset>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `category` | `"source" \| "character" \| "product" \| "scene" \| "audio"` | 是 |  |
+| `type` | `"image" \| "video" \| "audio"` | 是 |  |
+| `mimeType` | `string` | 是 |  |
+| `sizeBytes` | `number` | 是 |  |
+| `path` | `string` | 是 |  |
+| `sha256` | `string` | 是 |  |
+| `createdAt` | `string` | 是 |  |
+| `width` | `number` | 否 |  |
+| `height` | `number` | 否 |  |
+| `duration` | `number` | 否 |  |
+| `hasAudio` | `boolean` | 否 |  |
+| `url` | `string` | 是 |  |
+| `previewUrl` | `string \| null` | 否 |  |
+| `ownerId` | `string` | 否 |  |
+| `shared` | `boolean` | 否 |  |
+| `sharedAt` | `string \| null` | 否 |  |
+| `deletedAt` | `string \| null` | 否 |  |
+| `stateVersion` | `number` | 否 |  |
+| `editable` | `boolean` | 否 |  |
+| `downloadAllowed` | `boolean` | 否 |  |
+
+#### `GET /api/v1/assets/archive/{asset_id}/preview`
+
+**受控公共原片预览**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `asset_id` | path | `string` | 是 |  |
+
+**响应** `ApiResponse<unknown>`（前端取 `res.data`）
+
+#### `PUT /api/v1/assets/archive/{asset_id}/sharing`
+
+**分享或取消分享本人原片**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `asset_id` | path | `string` | 是 |  |
+
+**请求体** `ArchiveChange`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `expectedVersion` | `number` | 是 |  |
+| `name` | `string \| null` | 否 |  |
+| `shared` | `boolean \| null` | 否 |  |
+| `deleted` | `boolean \| null` | 否 |  |
+
+**响应** `ApiResponse<ArchivedAsset>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `category` | `"source" \| "character" \| "product" \| "scene" \| "audio"` | 是 |  |
+| `type` | `"image" \| "video" \| "audio"` | 是 |  |
+| `mimeType` | `string` | 是 |  |
+| `sizeBytes` | `number` | 是 |  |
+| `path` | `string` | 是 |  |
+| `sha256` | `string` | 是 |  |
+| `createdAt` | `string` | 是 |  |
+| `width` | `number` | 否 |  |
+| `height` | `number` | 否 |  |
+| `duration` | `number` | 否 |  |
+| `hasAudio` | `boolean` | 否 |  |
+| `url` | `string` | 是 |  |
+| `previewUrl` | `string \| null` | 否 |  |
+| `ownerId` | `string` | 否 |  |
+| `shared` | `boolean` | 否 |  |
+| `sharedAt` | `string \| null` | 否 |  |
+| `deletedAt` | `string \| null` | 否 |  |
+| `stateVersion` | `number` | 否 |  |
+| `editable` | `boolean` | 否 |  |
+| `downloadAllowed` | `boolean` | 否 |  |
 
 #### `GET /api/v1/assets/archive/{asset_id}/stream`
 
@@ -1197,16 +1435,26 @@ Authorization: Bearer <accessToken>
 | `page` | `number` | 是 | 当前页码，从 1 开始 |
 | `pageSize` | `number` | 是 | 每页条数 |
 
-### 4.6 模板（6 个）
+### 4.6 模板（16 个）
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
 | `GET` | `/api/v1/templates` | 模板列表 | 🔒 |
 | `GET` | `/api/v1/templates/replacement-catalog` | 人物/产品/场景替换模板与调用档案 | 🔒 |
+| `GET` | `/api/v1/templates/replacement-packs` | 本人封装草稿和历史包 | 🔒 |
+| `GET` | `/api/v1/templates/replacement-packs/available` | 全工作台已发布对象 | 🔒 |
+| `PUT` | `/api/v1/templates/replacement-packs/draft` | 保存封装草稿（请求标识及版本防重） | 🔒 |
+| `POST` | `/api/v1/templates/replacement-packs/{pack_id}/disable` | 停用已发布封装对象 | 🔒 |
+| `GET` | `/api/v1/templates/replacement-packs/{pack_id}/preview/{asset_id}` | 读取授权发布版本的包内预览 | 🔒 |
+| `POST` | `/api/v1/templates/replacement-packs/{pack_id}/publish` | 发布不可变封装版本 | 🔒 |
 | `POST` | `/api/v1/templates/replacement-runs` | 归档输入并预览最终提示词，不提交生成 | 🔒 |
+| `DELETE` | `/api/v1/templates/replacement-runs/{run_id}` | 将本人替换任务与调用档案移入回收站，不取消生成 | 🔒 |
 | `GET` | `/api/v1/templates/replacement-runs/{run_id}` | 替换任务状态与提示词 | 🔒 |
-| `POST` | `/api/v1/templates/replacement-runs/{run_id}/execute` | 仅 0 积分提交或继续查询已有 LibTV 任务 | 🔒 |
+| `POST` | `/api/v1/templates/replacement-runs/{run_id}/execute` | 提交替换任务；billingMode=credits 表示本任务用积分加速 | 🔒 |
+| `GET` | `/api/v1/templates/replacement-runs/{run_id}/inputs/{asset_id}` | 读取当次归档输入快照 | 🔒 |
 | `GET` | `/api/v1/templates/replacement-runs/{run_id}/output` | 预览或下载 Z 盘原始生成结果 | 🔒 |
+| `POST` | `/api/v1/templates/replacement-runs/{run_id}/restore` | 恢复本人回收站中的替换任务与调用档案 | 🔒 |
+| `PUT` | `/api/v1/templates/replacement-runs/{run_id}/review` | 保存人工验收，版本冲突需重新核对 | 🔒 |
 
 #### `GET /api/v1/templates`
 
@@ -1237,6 +1485,169 @@ Authorization: Bearer <accessToken>
 | `kinds` | `string[]` | 否 |  |
 | `runs` | `ReplacementRunOut[]` | 是 |  |
 | `packs` | `ReplacementPack[]` | 否 |  |
+| `packRoles` | `Record<string, Record<string, string>>` | 否 |  |
+| `baseRoles` | `Record<string, string>` | 否 |  |
+| `packScopes` | `Record<string, string>` | 否 |  |
+
+#### `GET /api/v1/templates/replacement-packs`
+
+**本人封装草稿和历史包**
+
+**响应** `ApiResponse<PackManagedList>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `items` | `PackManaged[]` | 是 |  |
+
+#### `GET /api/v1/templates/replacement-packs/available`
+
+**全工作台已发布对象**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `kind` | query | `string` | 否 |  |
+| `keyword` | query | `string` | 否 |  |
+| `page` | query | `number` | 否 |  |
+| `pageSize` | query | `number` | 否 |  |
+
+**响应** `ApiResponse<PackPublicList>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `items` | `ReplacementPack[]` | 是 |  |
+| `total` | `number` | 是 |  |
+| `page` | `number` | 是 |  |
+| `pageSize` | `number` | 是 |  |
+
+#### `PUT /api/v1/templates/replacement-packs/draft`
+
+**保存封装草稿（请求标识及版本防重）**
+
+**请求体** `PackDraftIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `requestId` | `string` | 是 |  |
+| `expectedRevision` | `number` | 否 |  |
+| `kind` | `"character" \| "product" \| "scene"` | 是 |  |
+| `name` | `string` | 否 |  |
+| `referenceIds` | `string[]` | 否 |  |
+| `coverReferenceId` | `string \| null` | 否 |  |
+| `wardrobeMode` | `"preserve" \| "reference"` | 否 |  |
+| `features` | `string` | 否 |  |
+| `instructions` | `string` | 否 |  |
+| `bindings` | `PackBinding[]` | 否 |  |
+| `requiredRoles` | `string[]` | 否 |  |
+| `supportedScopes` | `string[]` | 否 |  |
+
+**响应** `ApiResponse<PackManaged>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `kind` | `"character" \| "product" \| "scene"` | 是 |  |
+| `name` | `string` | 是 |  |
+| `referenceIds` | `string[]` | 是 |  |
+| `coverReferenceId` | `string \| null` | 否 |  |
+| `wardrobeMode` | `"preserve" \| "reference"` | 否 |  |
+| `features` | `string` | 否 |  |
+| `instructions` | `string` | 否 |  |
+| `version` | `number` | 否 |  |
+| `available` | `boolean \| null` | 否 |  |
+| `coverUrl` | `string \| null` | 否 |  |
+| `previewUrls` | `string[]` | 否 |  |
+| `bindings` | `PackBinding[]` | 否 |  |
+| `requiredRoles` | `string[]` | 否 |  |
+| `supportedScopes` | `string[]` | 否 |  |
+| `revision` | `number` | 否 |  |
+| `status` | `"draft" \| "published" \| "disabled"` | 否 |  |
+| `gaps` | `string[]` | 否 |  |
+
+#### `POST /api/v1/templates/replacement-packs/{pack_id}/disable`
+
+**停用已发布封装对象**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `pack_id` | path | `string` | 是 |  |
+
+**请求体** `PackAction`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `expectedRevision` | `number` | 是 |  |
+
+**响应** `ApiResponse<PackManaged>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `kind` | `"character" \| "product" \| "scene"` | 是 |  |
+| `name` | `string` | 是 |  |
+| `referenceIds` | `string[]` | 是 |  |
+| `coverReferenceId` | `string \| null` | 否 |  |
+| `wardrobeMode` | `"preserve" \| "reference"` | 否 |  |
+| `features` | `string` | 否 |  |
+| `instructions` | `string` | 否 |  |
+| `version` | `number` | 否 |  |
+| `available` | `boolean \| null` | 否 |  |
+| `coverUrl` | `string \| null` | 否 |  |
+| `previewUrls` | `string[]` | 否 |  |
+| `bindings` | `PackBinding[]` | 否 |  |
+| `requiredRoles` | `string[]` | 否 |  |
+| `supportedScopes` | `string[]` | 否 |  |
+| `revision` | `number` | 否 |  |
+| `status` | `"draft" \| "published" \| "disabled"` | 否 |  |
+| `gaps` | `string[]` | 否 |  |
+
+#### `GET /api/v1/templates/replacement-packs/{pack_id}/preview/{asset_id}`
+
+**读取授权发布版本的包内预览**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `pack_id` | path | `string` | 是 |  |
+| `asset_id` | path | `string` | 是 |  |
+| `version` | query | `number` | 是 |  |
+
+**响应** `ApiResponse<unknown>`（前端取 `res.data`）
+
+#### `POST /api/v1/templates/replacement-packs/{pack_id}/publish`
+
+**发布不可变封装版本**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `pack_id` | path | `string` | 是 |  |
+
+**请求体** `PackAction`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `expectedRevision` | `number` | 是 |  |
+
+**响应** `ApiResponse<PackManaged>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `kind` | `"character" \| "product" \| "scene"` | 是 |  |
+| `name` | `string` | 是 |  |
+| `referenceIds` | `string[]` | 是 |  |
+| `coverReferenceId` | `string \| null` | 否 |  |
+| `wardrobeMode` | `"preserve" \| "reference"` | 否 |  |
+| `features` | `string` | 否 |  |
+| `instructions` | `string` | 否 |  |
+| `version` | `number` | 否 |  |
+| `available` | `boolean \| null` | 否 |  |
+| `coverUrl` | `string \| null` | 否 |  |
+| `previewUrls` | `string[]` | 否 |  |
+| `bindings` | `PackBinding[]` | 否 |  |
+| `requiredRoles` | `string[]` | 否 |  |
+| `supportedScopes` | `string[]` | 否 |  |
+| `revision` | `number` | 否 |  |
+| `status` | `"draft" \| "published" \| "disabled"` | 否 |  |
+| `gaps` | `string[]` | 否 |  |
 
 #### `POST /api/v1/templates/replacement-runs`
 
@@ -1248,13 +1659,14 @@ Authorization: Bearer <accessToken>
 |---|---|---|---|
 | `requestId` | `string` | 是 |  |
 | `kind` | `"character" \| "product" \| "scene"` | 是 |  |
-| `target` | `string` | 是 |  |
+| `target` | `string` | 否 |  |
 | `sourceId` | `string` | 是 |  |
-| `referenceIds` | `string[]` | 是 |  |
+| `referenceIds` | `string[]` | 否 |  |
 | `wardrobeMode` | `"preserve" \| "reference"` | 否 |  |
 | `replacementScope` | `string` | 否 |  |
 | `notes` | `string` | 否 |  |
 | `packId` | `string \| null` | 否 |  |
+| `packVersion` | `number \| null` | 否 |  |
 | `aspectRatio` | `"9:16" \| "16:9" \| "1:1" \| "adaptive"` | 否 |  |
 
 **响应** `ApiResponse<ReplacementRunOut>`（前端取 `res.data`）
@@ -1268,13 +1680,50 @@ Authorization: Bearer <accessToken>
 | `archivePath` | `string` | 是 |  |
 | `createdAt` | `string` | 是 |  |
 | `prompt` | `string` | 是 |  |
+| `displayTitle` | `string` | 否 | 统一展示名，列表/弹窗/任务中心共用 |
 | `taskId` | `string \| null` | 否 |  |
 | `estimatedCredits` | `number \| null` | 否 |  |
 | `credits` | `number \| null` | 否 |  |
 | `progress` | `number` | 否 |  |
 | `reviewStatus` | `string` | 否 |  |
+| `review` | `ReplacementReview \| null` | 否 |  |
+| `inputSummary` | `ReplacementInputSummary \| null` | 否 |  |
 | `lastError` | `string \| null` | 否 |  |
 | `outputUrl` | `string \| null` | 否 |  |
+| `deletedAt` | `string \| null` | 否 |  |
+| `billingMode` | `"free" \| "credits"` | 否 | free=0 积分权益队列；credits=本次任务用积分进正常队列 |
+
+#### `DELETE /api/v1/templates/replacement-runs/{run_id}`
+
+**将本人替换任务与调用档案移入回收站，不取消生成**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `run_id` | path | `string` | 是 |  |
+
+**响应** `ApiResponse<ReplacementRunOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `kind` | `"character" \| "product" \| "scene"` | 是 |  |
+| `target` | `string` | 是 |  |
+| `status` | `string` | 是 |  |
+| `archivePath` | `string` | 是 |  |
+| `createdAt` | `string` | 是 |  |
+| `prompt` | `string` | 是 |  |
+| `displayTitle` | `string` | 否 | 统一展示名，列表/弹窗/任务中心共用 |
+| `taskId` | `string \| null` | 否 |  |
+| `estimatedCredits` | `number \| null` | 否 |  |
+| `credits` | `number \| null` | 否 |  |
+| `progress` | `number` | 否 |  |
+| `reviewStatus` | `string` | 否 |  |
+| `review` | `ReplacementReview \| null` | 否 |  |
+| `inputSummary` | `ReplacementInputSummary \| null` | 否 |  |
+| `lastError` | `string \| null` | 否 |  |
+| `outputUrl` | `string \| null` | 否 |  |
+| `deletedAt` | `string \| null` | 否 |  |
+| `billingMode` | `"free" \| "credits"` | 否 | free=0 积分权益队列；credits=本次任务用积分进正常队列 |
 
 #### `GET /api/v1/templates/replacement-runs/{run_id}`
 
@@ -1295,17 +1744,77 @@ Authorization: Bearer <accessToken>
 | `archivePath` | `string` | 是 |  |
 | `createdAt` | `string` | 是 |  |
 | `prompt` | `string` | 是 |  |
+| `displayTitle` | `string` | 否 | 统一展示名，列表/弹窗/任务中心共用 |
 | `taskId` | `string \| null` | 否 |  |
 | `estimatedCredits` | `number \| null` | 否 |  |
 | `credits` | `number \| null` | 否 |  |
 | `progress` | `number` | 否 |  |
 | `reviewStatus` | `string` | 否 |  |
+| `review` | `ReplacementReview \| null` | 否 |  |
+| `inputSummary` | `ReplacementInputSummary \| null` | 否 |  |
 | `lastError` | `string \| null` | 否 |  |
 | `outputUrl` | `string \| null` | 否 |  |
+| `deletedAt` | `string \| null` | 否 |  |
+| `billingMode` | `"free" \| "credits"` | 否 | free=0 积分权益队列；credits=本次任务用积分进正常队列 |
 
 #### `POST /api/v1/templates/replacement-runs/{run_id}/execute`
 
-**仅 0 积分提交或继续查询已有 LibTV 任务**
+**提交替换任务；billingMode=credits 表示本任务用积分加速**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `run_id` | path | `string` | 是 |  |
+
+**请求体**（内联结构）
+
+**响应** `ApiResponse<ReplacementRunOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `kind` | `"character" \| "product" \| "scene"` | 是 |  |
+| `target` | `string` | 是 |  |
+| `status` | `string` | 是 |  |
+| `archivePath` | `string` | 是 |  |
+| `createdAt` | `string` | 是 |  |
+| `prompt` | `string` | 是 |  |
+| `displayTitle` | `string` | 否 | 统一展示名，列表/弹窗/任务中心共用 |
+| `taskId` | `string \| null` | 否 |  |
+| `estimatedCredits` | `number \| null` | 否 |  |
+| `credits` | `number \| null` | 否 |  |
+| `progress` | `number` | 否 |  |
+| `reviewStatus` | `string` | 否 |  |
+| `review` | `ReplacementReview \| null` | 否 |  |
+| `inputSummary` | `ReplacementInputSummary \| null` | 否 |  |
+| `lastError` | `string \| null` | 否 |  |
+| `outputUrl` | `string \| null` | 否 |  |
+| `deletedAt` | `string \| null` | 否 |  |
+| `billingMode` | `"free" \| "credits"` | 否 | free=0 积分权益队列；credits=本次任务用积分进正常队列 |
+
+#### `GET /api/v1/templates/replacement-runs/{run_id}/inputs/{asset_id}`
+
+**读取当次归档输入快照**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `run_id` | path | `string` | 是 |  |
+| `asset_id` | path | `string` | 是 |  |
+
+**响应** `ApiResponse<unknown>`（前端取 `res.data`）
+
+#### `GET /api/v1/templates/replacement-runs/{run_id}/output`
+
+**预览或下载 Z 盘原始生成结果**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `run_id` | path | `string` | 是 |  |
+
+**响应** `ApiResponse<unknown>`（前端取 `res.data`）
+
+#### `POST /api/v1/templates/replacement-runs/{run_id}/restore`
+
+**恢复本人回收站中的替换任务与调用档案**
 
 | 参数 | 位置 | 类型 | 必填 | 说明 |
 |---|---|---|---|---|
@@ -1322,23 +1831,59 @@ Authorization: Bearer <accessToken>
 | `archivePath` | `string` | 是 |  |
 | `createdAt` | `string` | 是 |  |
 | `prompt` | `string` | 是 |  |
+| `displayTitle` | `string` | 否 | 统一展示名，列表/弹窗/任务中心共用 |
 | `taskId` | `string \| null` | 否 |  |
 | `estimatedCredits` | `number \| null` | 否 |  |
 | `credits` | `number \| null` | 否 |  |
 | `progress` | `number` | 否 |  |
 | `reviewStatus` | `string` | 否 |  |
+| `review` | `ReplacementReview \| null` | 否 |  |
+| `inputSummary` | `ReplacementInputSummary \| null` | 否 |  |
 | `lastError` | `string \| null` | 否 |  |
 | `outputUrl` | `string \| null` | 否 |  |
+| `deletedAt` | `string \| null` | 否 |  |
+| `billingMode` | `"free" \| "credits"` | 否 | free=0 积分权益队列；credits=本次任务用积分进正常队列 |
 
-#### `GET /api/v1/templates/replacement-runs/{run_id}/output`
+#### `PUT /api/v1/templates/replacement-runs/{run_id}/review`
 
-**预览或下载 Z 盘原始生成结果**
+**保存人工验收，版本冲突需重新核对**
 
 | 参数 | 位置 | 类型 | 必填 | 说明 |
 |---|---|---|---|---|
 | `run_id` | path | `string` | 是 |  |
 
-**响应** `ApiResponse<unknown>`（前端取 `res.data`）
+**请求体** `ReplacementReviewIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `status` | `"accepted" \| "rejected"` | 是 |  |
+| `expectedVersion` | `number` | 是 |  |
+| `reasonCodes` | `("replacement" \| "preservation" \| "visual" \| "audio" \| "other")[]` | 否 |  |
+| `comment` | `string` | 否 |  |
+
+**响应** `ApiResponse<ReplacementRunOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `kind` | `"character" \| "product" \| "scene"` | 是 |  |
+| `target` | `string` | 是 |  |
+| `status` | `string` | 是 |  |
+| `archivePath` | `string` | 是 |  |
+| `createdAt` | `string` | 是 |  |
+| `prompt` | `string` | 是 |  |
+| `displayTitle` | `string` | 否 | 统一展示名，列表/弹窗/任务中心共用 |
+| `taskId` | `string \| null` | 否 |  |
+| `estimatedCredits` | `number \| null` | 否 |  |
+| `credits` | `number \| null` | 否 |  |
+| `progress` | `number` | 否 |  |
+| `reviewStatus` | `string` | 否 |  |
+| `review` | `ReplacementReview \| null` | 否 |  |
+| `inputSummary` | `ReplacementInputSummary \| null` | 否 |  |
+| `lastError` | `string \| null` | 否 |  |
+| `outputUrl` | `string \| null` | 否 |  |
+| `deletedAt` | `string \| null` | 否 |  |
+| `billingMode` | `"free" \| "credits"` | 否 | free=0 积分权益队列；credits=本次任务用积分进正常队列 |
 
 ### 4.7 分镜模板（1 个）
 
@@ -1414,6 +1959,15 @@ Authorization: Bearer <accessToken>
 
 ## 5. 数据模型
 
+### `ArchiveChange`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `expectedVersion` | `number` | 是 |  |
+| `name` | `string \| null` | 否 |  |
+| `shared` | `boolean \| null` | 否 |  |
+| `deleted` | `boolean \| null` | 否 |  |
+
 ### `ArchiveList`
 
 | 字段 | 类型 | 必填 | 说明 |
@@ -1422,6 +1976,8 @@ Authorization: Bearer <accessToken>
 | `items` | `ArchivedAsset[]` | 是 |  |
 | `total` | `number` | 是 |  |
 | `usedBytes` | `number` | 是 |  |
+| `page` | `number` | 否 |  |
+| `pageSize` | `number` | 否 |  |
 
 ### `ArchivedAsset`
 
@@ -1442,6 +1998,13 @@ Authorization: Bearer <accessToken>
 | `hasAudio` | `boolean` | 否 |  |
 | `url` | `string` | 是 |  |
 | `previewUrl` | `string \| null` | 否 |  |
+| `ownerId` | `string` | 否 |  |
+| `shared` | `boolean` | 否 |  |
+| `sharedAt` | `string \| null` | 否 |  |
+| `deletedAt` | `string \| null` | 否 |  |
+| `stateVersion` | `number` | 否 |  |
+| `editable` | `boolean` | 否 |  |
+| `downloadAllowed` | `boolean` | 否 |  |
 
 ### `AspectRatio`（枚举）
 
@@ -1521,6 +2084,19 @@ Authorization: Bearer <accessToken>
 |---|---|---|---|
 | `deleted` | `number` | 是 | 实际删除的条数 |
 | `skipped` | `string[]` | 否 | 被跳过的任务 ID：不存在，或属于他人且没有 `task:read:all` |
+
+### `ExecuteReplacement`
+
+提交或加速一条替换任务。
+
+`credits` 只作用于这条任务：提交时关掉账号的 0 积分权益标签，走正常积分队列，
+**不动账号级开关**，因此不会让同账号的其他人下一次提交莫名其妙开始花钱。
+不传表示沿用档案里当前的计费模式——「继续查询 / 重试原任务」走的就是这条路，
+它们不该顺带把一条已加速的任务改回免费队列。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `billingMode` | `"free" \| "credits" \| null` | 否 |  |
 
 ### `GenerateImageIn`
 
@@ -1627,6 +2203,76 @@ Authorization: Bearer <accessToken>
 | `paramSchema` | `Record<string, unknown>` | 否 |  |
 | `isDefault` | `boolean` | 否 |  |
 
+### `PackAction`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `expectedRevision` | `number` | 是 |  |
+
+### `PackBinding`
+
+一张参考图在封装里的用途；description 只补充本次任务特有的事实。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `role` | `string` | 否 |  |
+| `description` | `string` | 否 |  |
+
+### `PackDraftIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `requestId` | `string` | 是 |  |
+| `expectedRevision` | `number` | 否 |  |
+| `kind` | `"character" \| "product" \| "scene"` | 是 |  |
+| `name` | `string` | 否 |  |
+| `referenceIds` | `string[]` | 否 |  |
+| `coverReferenceId` | `string \| null` | 否 |  |
+| `wardrobeMode` | `"preserve" \| "reference"` | 否 |  |
+| `features` | `string` | 否 |  |
+| `instructions` | `string` | 否 |  |
+| `bindings` | `PackBinding[]` | 否 |  |
+| `requiredRoles` | `string[]` | 否 |  |
+| `supportedScopes` | `string[]` | 否 |  |
+
+### `PackManaged`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `kind` | `"character" \| "product" \| "scene"` | 是 |  |
+| `name` | `string` | 是 |  |
+| `referenceIds` | `string[]` | 是 |  |
+| `coverReferenceId` | `string \| null` | 否 |  |
+| `wardrobeMode` | `"preserve" \| "reference"` | 否 |  |
+| `features` | `string` | 否 |  |
+| `instructions` | `string` | 否 |  |
+| `version` | `number` | 否 |  |
+| `available` | `boolean \| null` | 否 |  |
+| `coverUrl` | `string \| null` | 否 |  |
+| `previewUrls` | `string[]` | 否 |  |
+| `bindings` | `PackBinding[]` | 否 |  |
+| `requiredRoles` | `string[]` | 否 |  |
+| `supportedScopes` | `string[]` | 否 |  |
+| `revision` | `number` | 否 |  |
+| `status` | `"draft" \| "published" \| "disabled"` | 否 |  |
+| `gaps` | `string[]` | 否 |  |
+
+### `PackManagedList`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `items` | `PackManaged[]` | 是 |  |
+
+### `PackPublicList`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `items` | `ReplacementPack[]` | 是 |  |
+| `total` | `number` | 是 |  |
+| `page` | `number` | 是 |  |
+| `pageSize` | `number` | 是 |  |
+
 ### `PasswordChangeIn`
 
 | 字段 | 类型 | 必填 | 说明 |
@@ -1674,13 +2320,14 @@ Authorization: Bearer <accessToken>
 |---|---|---|---|
 | `requestId` | `string` | 是 |  |
 | `kind` | `"character" \| "product" \| "scene"` | 是 |  |
-| `target` | `string` | 是 |  |
+| `target` | `string` | 否 |  |
 | `sourceId` | `string` | 是 |  |
-| `referenceIds` | `string[]` | 是 |  |
+| `referenceIds` | `string[]` | 否 |  |
 | `wardrobeMode` | `"preserve" \| "reference"` | 否 |  |
 | `replacementScope` | `string` | 否 |  |
 | `notes` | `string` | 否 |  |
 | `packId` | `string \| null` | 否 |  |
+| `packVersion` | `number \| null` | 否 |  |
 | `aspectRatio` | `"9:16" \| "16:9" \| "1:1" \| "adaptive"` | 否 |  |
 
 ### `ProfileUpdateIn`
@@ -1720,6 +2367,29 @@ Authorization: Bearer <accessToken>
 | `kinds` | `string[]` | 否 |  |
 | `runs` | `ReplacementRunOut[]` | 是 |  |
 | `packs` | `ReplacementPack[]` | 否 |  |
+| `packRoles` | `Record<string, Record<string, string>>` | 否 |  |
+| `baseRoles` | `Record<string, string>` | 否 |  |
+| `packScopes` | `Record<string, string>` | 否 |  |
+
+### `ReplacementInputAsset`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `role` | `string` | 是 |  |
+| `type` | `string` | 是 |  |
+| `url` | `string` | 是 |  |
+
+### `ReplacementInputSummary`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `assets` | `ReplacementInputAsset[]` | 否 |  |
+| `coverReferenceId` | `string \| null` | 否 |  |
+| `wardrobeMode` | `string` | 否 |  |
+| `replacementScope` | `string` | 否 |  |
+| `notes` | `string` | 否 |  |
 
 ### `ReplacementPack`
 
@@ -1729,9 +2399,49 @@ Authorization: Bearer <accessToken>
 | `kind` | `"character" \| "product" \| "scene"` | 是 |  |
 | `name` | `string` | 是 |  |
 | `referenceIds` | `string[]` | 是 |  |
+| `coverReferenceId` | `string \| null` | 否 |  |
 | `wardrobeMode` | `"preserve" \| "reference"` | 否 |  |
 | `features` | `string` | 否 |  |
 | `instructions` | `string` | 否 |  |
+| `version` | `number` | 否 |  |
+| `available` | `boolean \| null` | 否 |  |
+| `coverUrl` | `string \| null` | 否 |  |
+| `previewUrls` | `string[]` | 否 |  |
+| `bindings` | `PackBinding[]` | 否 |  |
+| `requiredRoles` | `string[]` | 否 |  |
+| `supportedScopes` | `string[]` | 否 |  |
+
+### `ReplacementReview`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `status` | `string` | 否 |  |
+| `version` | `number` | 否 |  |
+| `reasonCodes` | `("replacement" \| "preservation" \| "visual" \| "audio" \| "other")[]` | 否 |  |
+| `comment` | `string` | 否 |  |
+| `reviewedBy` | `string \| null` | 否 |  |
+| `reviewedAt` | `string \| null` | 否 |  |
+| `history` | `ReplacementReviewEvent[]` | 否 |  |
+
+### `ReplacementReviewEvent`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `status` | `string` | 否 |  |
+| `version` | `number` | 否 |  |
+| `reasonCodes` | `("replacement" \| "preservation" \| "visual" \| "audio" \| "other")[]` | 否 |  |
+| `comment` | `string` | 否 |  |
+| `reviewedBy` | `string \| null` | 否 |  |
+| `reviewedAt` | `string \| null` | 否 |  |
+
+### `ReplacementReviewIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `status` | `"accepted" \| "rejected"` | 是 |  |
+| `expectedVersion` | `number` | 是 |  |
+| `reasonCodes` | `("replacement" \| "preservation" \| "visual" \| "audio" \| "other")[]` | 否 |  |
+| `comment` | `string` | 否 |  |
 
 ### `ReplacementRunOut`
 
@@ -1744,13 +2454,18 @@ Authorization: Bearer <accessToken>
 | `archivePath` | `string` | 是 |  |
 | `createdAt` | `string` | 是 |  |
 | `prompt` | `string` | 是 |  |
+| `displayTitle` | `string` | 否 | 统一展示名，列表/弹窗/任务中心共用 |
 | `taskId` | `string \| null` | 否 |  |
 | `estimatedCredits` | `number \| null` | 否 |  |
 | `credits` | `number \| null` | 否 |  |
 | `progress` | `number` | 否 |  |
 | `reviewStatus` | `string` | 否 |  |
+| `review` | `ReplacementReview \| null` | 否 |  |
+| `inputSummary` | `ReplacementInputSummary \| null` | 否 |  |
 | `lastError` | `string \| null` | 否 |  |
 | `outputUrl` | `string \| null` | 否 |  |
+| `deletedAt` | `string \| null` | 否 |  |
+| `billingMode` | `"free" \| "credits"` | 否 | free=0 积分权益队列；credits=本次任务用积分进正常队列 |
 
 ### `ResetPasswordIn`
 
@@ -1868,6 +2583,46 @@ Authorization: Bearer <accessToken>
 | `aspectRatio` | `AspectRatio` | 是 |  |
 | `coverUrl` | `string` | 是 |  |
 | `createdAt` | `string` | 是 |  |
+
+### `TaskFeedItem`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `key` | `string` | 是 | 带来源前缀的唯一键，不是上游任务 ID |
+| `id` | `string` | 是 | 原始任务或替换档案 ID |
+| `source` | `"video" \| "replacement"` | 是 | 任务来源 |
+| `title` | `string` | 是 | 展示标题 |
+| `status` | `string` | 是 | 原始状态，保留替换链路的精确状态 |
+| `group` | `"all" \| "queued" \| "running" \| "completed" \| "failed" \| "attention"` | 是 | 统一筛选分组；running 包含排队 |
+| `createdAt` | `string` | 是 | 创建时间 |
+| `progress` | `number` | 否 | 生成进度 |
+| `sourceName` | `string` | 否 | 替换原片名称 |
+| `outputUrl` | `string \| null` | 否 | 替换成片预览和下载地址 |
+| `errorMessage` | `string \| null` | 否 | 失败或需处理原因 |
+| `detailUrl` | `string \| null` | 否 | 替换档案深链接 |
+| `video` | `TaskOut \| null` | 否 | 通用任务数据；替换任务为 null |
+
+### `TaskFeedOut`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `items` | `TaskFeedItem[]` | 否 |  |
+| `total` | `number` | 否 |  |
+| `page` | `number` | 否 |  |
+| `pageSize` | `number` | 否 |  |
+| `stats` | `TaskFeedStats` | 否 | 筛选前分组统计 |
+| `canReadAll` | `boolean` | 否 | 可否查看他人的通用任务 |
+| `warnings` | `string[]` | 否 | 部分来源不可用时的提示 |
+
+### `TaskFeedStats`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `all` | `number` | 否 | 总数 |
+| `running` | `number` | 否 | 正在执行，包含排队 |
+| `completed` | `number` | 否 | 生成完成，不代表人工验收通过 |
+| `failed` | `number` | 否 | 执行失败 |
+| `attention` | `number` | 否 | 等待核对、免费额度、登录或人工处理 |
 
 ### `TaskListOut`
 

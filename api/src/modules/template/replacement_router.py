@@ -7,17 +7,37 @@ from fastapi.responses import FileResponse
 
 from core.response import ApiResponse
 from modules.template.replacement_dependencies import (
+    ReplacementManageDep,
     ReplacementReadDep,
+    ReplacementReviewDep,
     ReplacementServiceDep,
     ReplacementWriteDep,
 )
 from modules.template.replacement_schema import (
+    ExecuteReplacement,
     PrepareReplacement,
     ReplacementCatalog,
+    ReplacementReviewIn,
     ReplacementRunOut,
 )
 
 router = APIRouter(tags=["替换模板"])
+
+
+@router.delete(
+    "/replacement-runs/{run_id}", summary="将本人替换任务与调用档案移入回收站，不取消生成"
+)
+async def delete_run(
+    run_id: str, actor: ReplacementManageDep, service: ReplacementServiceDep,
+) -> ApiResponse[ReplacementRunOut]:
+    return ApiResponse.ok(await service.set_deleted(run_id, actor.id, True))
+
+
+@router.post("/replacement-runs/{run_id}/restore", summary="恢复本人回收站中的替换任务与调用档案")
+async def restore_run(
+    run_id: str, actor: ReplacementManageDep, service: ReplacementServiceDep,
+) -> ApiResponse[ReplacementRunOut]:
+    return ApiResponse.ok(await service.set_deleted(run_id, actor.id, False))
 
 
 @router.get("/replacement-catalog", summary="人物/产品/场景替换模板与调用档案")
@@ -41,11 +61,19 @@ async def get_run(
     return ApiResponse.ok(await service.detail(run_id, actor.id))
 
 
-@router.post("/replacement-runs/{run_id}/execute", summary="仅 0 积分提交或继续查询已有 LibTV 任务")
+@router.post(
+    "/replacement-runs/{run_id}/execute",
+    summary="提交替换任务；billingMode=credits 表示本任务用积分加速",
+)
 async def execute_run(
-    run_id: str, actor: ReplacementWriteDep, service: ReplacementServiceDep
+    run_id: str,
+    actor: ReplacementWriteDep,
+    service: ReplacementServiceDep,
+    payload: ExecuteReplacement | None = None,
 ) -> ApiResponse[ReplacementRunOut]:
-    return ApiResponse.ok(await service.execute(run_id, actor.id))
+    return ApiResponse.ok(
+        await service.execute(run_id, actor.id, payload.billing_mode if payload else "free")
+    )
 
 
 @router.get("/replacement-runs/{run_id}/output", summary="预览或下载 Z 盘原始生成结果")
@@ -53,3 +81,18 @@ async def output(
     run_id: str, actor: ReplacementReadDep, service: ReplacementServiceDep
 ) -> FileResponse:
     return FileResponse(await service.output(run_id, actor.id), media_type="video/mp4")
+
+
+@router.put("/replacement-runs/{run_id}/review", summary="保存人工验收，版本冲突需重新核对")
+async def review_run(
+    run_id: str, payload: ReplacementReviewIn,
+    actor: ReplacementReviewDep, service: ReplacementServiceDep,
+) -> ApiResponse[ReplacementRunOut]:
+    return ApiResponse.ok(await service.review(run_id, payload, actor.id))
+
+
+@router.get("/replacement-runs/{run_id}/inputs/{asset_id}", summary="读取当次归档输入快照")
+async def archived_input(
+    run_id: str, asset_id: str, actor: ReplacementReadDep, service: ReplacementServiceDep,
+) -> FileResponse:
+    return FileResponse(await service.input_file(run_id, asset_id, actor.id))
