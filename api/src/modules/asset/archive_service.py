@@ -393,12 +393,10 @@ class ArchiveAssetService:
 
     async def _write_mirror(self, row: Asset) -> None:
         payload = self.repo.to_media(row).model_dump(mode="json", by_alias=True)
-        await asyncio.to_thread(
-            self.storage.write, self.storage.resolve(f"catalog/assets/{row.id}.json"), payload
-        )
+        await asyncio.to_thread(self.storage.write, f"catalog/assets/{row.id}.json", payload)
 
     def _discard_mirror(self, asset_id: str) -> None:
-        self.storage.remove(self.storage.resolve(f"catalog/assets/{asset_id}.json"))
+        self.storage.remove(f"catalog/assets/{asset_id}.json")
 
     def _discard_blob(self, key: str, created: bool) -> None:
         """登记失败不留半条记录，但**也不删字节**。

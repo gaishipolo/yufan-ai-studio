@@ -10,6 +10,7 @@ app export-openapi                 # 导出接口契约（docs/ + 前端 TS 类�
 app import-archive-index           # 归档目录的 JSON 索引 → assets 表（幂等）
 app migrate-storage                # 把本地 storage 根目录的对象搬进当前驱动（local → s3）
 app migrate-blobs                  # 归档素材改内容寻址布局（key = sha256，幂等）
+app migrate-archive                # 把本地归档根的内容搬进当前归档驱动（local → s3）
 app new-module voice --label 配音   # 生成新模块脚手架
 """
 
@@ -424,6 +425,53 @@ async def _migrate_archive_blobs(*, dry_run: bool, delete_source: bool) -> tuple
     return moved, already, failed
 
 
+def _cmd_migrate_archive(args: argparse.Namespace) -> None:
+    """把本地归档根的内容搬进当前归档驱动（`local → s3`），幂等。
+
+    只搬**服务会读的对象**：`catalog/`（素材镜像、封装草稿与发布版本）、
+    `blobs/`（素材字节）、`previews/`（缩略图与转码流）、`library/`（换内容寻址
+    之前的旧 key，历史记录仍指向它）。
+
+    `runs/` 不搬：那是执行器的工作区，必须留在本地（`REPLACEMENT_RUNS_ROOT`）。
+    `inbox/`、`incoming/`、`trash/` 是人手投放/临时上传/回收目录，也不属于内容。
+    """
+    from core.config import settings
+    from infra.archive import get_archive_storage, local_storage
+
+    if settings.archive_driver == "local":
+        print("当前归档驱动就是本地目录，没有可搬的目标；先把 ARCHIVE_DRIVER 切到 s3")
+        raise SystemExit(2)
+    target = get_archive_storage()
+    source = local_storage()
+
+    copied = skipped = failed = 0
+    for prefix in ("catalog", "blobs", "previews", "library"):
+        for key in source.list_keys(prefix):
+            if target.exists(key):
+                skipped += 1
+                continue
+            if args.dry_run:
+                copied += 1
+                continue
+            try:
+                if key.startswith("catalog/") and key.endswith(".json"):
+                    target.write(key, source.read(key))
+                else:
+                    with source.materialize(key) as path:
+                        target.copy(path, key)
+            except Exception as exc:  # noqa: BLE001 - 单个对象失败不该中断整次迁移
+                failed += 1
+                print(f"  失败 {key}：{exc}", file=sys.stderr)
+                continue
+            copied += 1
+
+    print(f"已复制 {copied} 个对象，已存在 {skipped} 个，失败 {failed} 个")
+    if args.dry_run:
+        print("（dry-run：未写入目标驱动）")
+    if failed:
+        raise SystemExit(1)
+
+
 def _rewrite_asset_mirror(storage: ArchiveStorage, row: Asset) -> None:
     """镜像 JSON 的 `path` 也要跟着搬：替换模板读的是它，不是 DB。"""
     key = f"catalog/assets/{row.id}.json"
@@ -567,6 +615,13 @@ def main(argv: list[str] | None = None) -> int:
         help="搬成功后删除旧位置的文件（默认保留：旧文件是回滚依据）",
     )
     p_blobs.set_defaults(func=_cmd_migrate_blobs)
+
+    p_archive = sub.add_parser(
+        "migrate-archive",
+        help="把本地归档根的内容（catalog/blobs/previews/library）搬进当前归档驱动，幂等",
+    )
+    p_archive.add_argument("--dry-run", action="store_true", help="只统计，不写入")
+    p_archive.set_defaults(func=_cmd_migrate_archive)
 
     p_new = sub.add_parser("new-module", help="生成新模块脚手架")
     p_new.add_argument("name", help="模块名（snake_case），同时作为目录名与 pipeline kind")

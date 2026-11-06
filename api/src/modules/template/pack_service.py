@@ -48,8 +48,10 @@ class PackService:
     def drafts(self, owner: str) -> PackManagedList:
         rows: dict[str, MediaPack] = {}
         for folder in ("packs", "pack_drafts"):
-            for path in (self.storage.root() / "catalog" / folder).glob("*.json"):
-                pack = MediaPack.model_validate(self.storage.read(path))
+            # 枚举走存储协议（`list_keys`），不在 `root()` 上 glob：
+            # 后者等于要求「有本地根目录」，切远端存储后封装列表整块不可用（T17）。
+            for key in self.storage.list_keys(f"catalog/{folder}", suffix=".json"):
+                pack = MediaPack.model_validate(self.storage.read(key))
                 if pack.owner_id == owner:
                     # 老包没有显式主图时沿用第一张，发布时仍验证完整性。
                     pack.cover_reference_id = pack.cover_reference_id or next(
@@ -59,10 +61,10 @@ class PackService:
         return PackManagedList(items=[self.managed(p) for p in rows.values()])
 
     def draft(self, uid: str, owner: str) -> MediaPack:
-        path = self.storage.resolve(f"catalog/pack_drafts/{safe_id(uid)}.json")
+        key = f"catalog/pack_drafts/{safe_id(uid)}.json"
         pack = (
-            MediaPack.model_validate(self.storage.read(path))
-            if path.is_file()
+            MediaPack.model_validate(self.storage.read(key))
+            if self.storage.exists(key)
             else self.catalog.pack(uid)
         )
         if pack.owner_id != owner:
@@ -74,9 +76,10 @@ class PackService:
         uid = payload.request_id.hex
         self._check_roles(payload)
         with catalog_lease(self.storage):
-            path = self.storage.resolve(f"catalog/pack_drafts/{uid}.json")
-            head = self.storage.resolve(f"catalog/packs/{uid}.json")
-            previous = self.draft(uid, owner) if path.exists() or head.exists() else None
+            draft_key = f"catalog/pack_drafts/{uid}.json"
+            head_key = f"catalog/packs/{uid}.json"
+            exists = self.storage.exists(draft_key) or self.storage.exists(head_key)
+            previous = self.draft(uid, owner) if exists else None
             content = payload.model_dump(exclude={"request_id", "expected_revision"})
             if previous:
                 if previous.revision == payload.expected_revision + 1 and _same_content(
@@ -98,7 +101,7 @@ class PackService:
                 version=previous.version if previous else 0,
                 revision=payload.expected_revision + 1,
             )
-            self.storage.write(path, pack.model_dump(mode="json", by_alias=True))
+            self.storage.write(draft_key, pack.model_dump(mode="json", by_alias=True))
             return self.managed(pack)
 
     def _check_roles(self, payload: PackDraftIn) -> None:
@@ -150,8 +153,8 @@ class PackService:
             draft = self.draft(uid, owner)
             if draft.revision != revision:
                 raise Conflict("草稿已变化，请刷新后重新发布")
-            headfile = self.storage.resolve(f"catalog/packs/{safe_id(uid)}.json")
-            head = self.catalog.pack(uid) if headfile.exists() else None
+            head_key = f"catalog/packs/{safe_id(uid)}.json"
+            head = self.catalog.pack(uid) if self.storage.exists(head_key) else None
             if head and head.revision == revision and head.status == "published":
                 return self.managed(head)
             gaps = self.gaps(draft)
@@ -162,11 +165,9 @@ class PackService:
             draft.version = (head.version if head else 0) + 1
             draft.published_at = datetime.now(UTC)
             data = draft.model_dump(mode="json", by_alias=True)
-            self.storage.write(
-                self.storage.resolve(f"catalog/pack_versions/{uid}/{draft.version}.json"), data
-            )
-            self.storage.write(headfile, data)
-            self.storage.write(self.storage.resolve(f"catalog/pack_drafts/{uid}.json"), data)
+            self.storage.write(f"catalog/pack_versions/{uid}/{draft.version}.json", data)
+            self.storage.write(head_key, data)
+            self.storage.write(f"catalog/pack_drafts/{uid}.json", data)
             return self.managed(draft)
 
     def disable(self, uid: str, owner: str, revision: int) -> PackManaged:
@@ -182,14 +183,12 @@ class PackService:
             head.status = "disabled"
             head.revision = revision + 1
             self.storage.write(
-                self.storage.resolve(f"catalog/packs/{safe_id(uid)}.json"),
-                head.model_dump(mode="json", by_alias=True),
+                f"catalog/packs/{safe_id(uid)}.json", head.model_dump(mode="json", by_alias=True)
             )
             draft.status = "disabled"
             draft.revision = head.revision
             self.storage.write(
-                self.storage.resolve(f"catalog/pack_drafts/{uid}.json"),
-                draft.model_dump(mode="json", by_alias=True),
+                f"catalog/pack_drafts/{uid}.json", draft.model_dump(mode="json", by_alias=True)
             )
             return self.managed(draft)
 
@@ -221,8 +220,8 @@ class PackService:
 
     def available(self) -> list[ReplacementPack]:
         rows = [
-            MediaPack.model_validate(self.storage.read(p))
-            for p in (self.storage.root() / "catalog/packs").glob("*.json")
+            MediaPack.model_validate(self.storage.read(key))
+            for key in self.storage.list_keys("catalog/packs", suffix=".json")
         ]
         return [self.public(p) for p in rows if p.status == "published" and p.version > 0]
 
@@ -230,8 +229,8 @@ class PackService:
         if kind not in ("all", "character", "product", "scene"):
             raise BadRequest("对象分类无效")
         rows = [
-            MediaPack.model_validate(self.storage.read(p))
-            for p in (self.storage.root() / "catalog/packs").glob("*.json")
+            MediaPack.model_validate(self.storage.read(key))
+            for key in self.storage.list_keys("catalog/packs", suffix=".json")
         ]
         rows = [
             p

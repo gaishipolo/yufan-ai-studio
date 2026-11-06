@@ -13,8 +13,18 @@ from __future__ import annotations
 from functools import lru_cache
 
 from core.config import settings
-from infra.archive.base import ArchiveStorage, checksum, lease, within
+from infra.archive.base import ArchiveStorage, checksum, lease, read_json, within, write_json
 from infra.archive.blobs import BlobStore, blob_key, clip_key, is_blob_key, preview_key
+from infra.archive.local import local_storage
+from infra.archive.runs import (
+    existing_runs,
+    index_key,
+    lock_path,
+    read_pointer,
+    run_dir,
+    runs_root,
+    save_pointer,
+)
 from infra.loader import load_driver
 
 
@@ -34,10 +44,20 @@ __all__ = [
     "blob_key",
     "checksum",
     "clip_key",
+    "existing_runs",
     "get_archive_storage",
+    "index_key",
     "is_blob_key",
     "lease",
+    "local_storage",
+    "lock_path",
     "preview_key",
+    "read_json",
+    "read_pointer",
     "reset_archive_storage",
+    "run_dir",
+    "runs_root",
+    "save_pointer",
     "within",
+    "write_json",
 ]

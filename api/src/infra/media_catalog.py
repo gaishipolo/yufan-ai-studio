@@ -6,14 +6,24 @@ import re
 from contextlib import AbstractContextManager
 from pathlib import Path
 
-from core.exceptions import BadRequest, NotFound
+from core.exceptions import BadRequest, NotFound, UpstreamError
 from core.media import MediaPack, StoredMedia
 from infra.archive import ArchiveStorage, get_archive_storage, lease
+from infra.archive.runs import lock_path
 
 
 def catalog_lease(storage: ArchiveStorage) -> AbstractContextManager[None]:
-    """短期串行化分享撤回、发布、准备快照与最终提交授权。"""
-    return lease(storage.resolve("catalog/locks/access.lease"))
+    """短期串行化分享撤回、发布、准备快照与最终提交授权。
+
+    锁**优先落在归档存储里**：同一份共享盘被多台机器挂载时，只有盘上的文件锁
+    才能让它们互斥。切到远端存储后盘上锁不存在了，退化为本机锁——单机部署足够，
+    多实例并发发布要靠条件写或 DB 行锁（见 `docs/TODO.md` T20）。
+    """
+    try:
+        path = storage.resolve("catalog/locks/access.lease")
+    except UpstreamError:
+        path = lock_path("access")
+    return lease(path)
 
 
 def safe_id(value: str) -> str:
@@ -27,10 +37,10 @@ class MediaCatalog:
         self.storage = storage or get_archive_storage()
 
     def media(self, uid: str) -> StoredMedia:
-        path = self.storage.resolve(f"catalog/assets/{safe_id(uid)}.json")
-        if not path.is_file():
+        key = f"catalog/assets/{safe_id(uid)}.json"
+        if not self.storage.exists(key):
             raise NotFound("素材不存在")
-        return StoredMedia.model_validate(self.storage.read(path))
+        return StoredMedia.model_validate(self.storage.read(key))
 
     def source(self, uid: str, owner: str) -> StoredMedia:
         item = self.media(uid)
@@ -43,16 +53,16 @@ class MediaCatalog:
         return item
 
     def pack(self, uid: str, version: int | None = None) -> MediaPack:
-        path = self.storage.resolve(f"catalog/packs/{safe_id(uid)}.json")
-        if not path.is_file():
+        key = f"catalog/packs/{safe_id(uid)}.json"
+        if not self.storage.exists(key):
             raise NotFound("素材包不存在")
-        head = MediaPack.model_validate(self.storage.read(path))
+        head = MediaPack.model_validate(self.storage.read(key))
         if version is None or head.version == version:
             return head
-        path = self.storage.resolve(f"catalog/pack_versions/{safe_id(uid)}/{version}.json")
-        if version < 1 or not path.is_file():
+        key = f"catalog/pack_versions/{safe_id(uid)}/{version}.json"
+        if version < 1 or not self.storage.exists(key):
             raise NotFound("发布版本不存在")
-        item = MediaPack.model_validate(self.storage.read(path))
+        item = MediaPack.model_validate(self.storage.read(key))
         if head.status != "published":
             item.status = head.status
         return item

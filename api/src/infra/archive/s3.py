@@ -14,9 +14,9 @@
   真正的共享由桶承担（不再有"共享盘单点"）。
 - `root()` / `resolve()` 在远端驱动下没有意义，显式抛错而不是返回假路径：
   返回一个"看起来能用"的目录会让上游悄悄退化成单机行为。
-- **还不能整体切换**：`pack_service` 与 `replacement_repository` 仍用
-  `storage.root()` 上 `glob("*.json")` 枚举封装草稿/发布版本/运行索引，
-  远端驱动下会直接抛错。素材字节层已经与驱动无关，枚举层见 `docs/TODO.md` T17。
+- **枚举走 `list_keys`**：封装草稿/发布版本/运行索引都用它，不再 `root()` 上 glob。
+- **`Path` 参数 = 运行工作区文件**（`run.json`、`inputs/*`、`records/*`），
+  由本驱动的 `_workspace()` 就地读写，不进桶：桥接层与 ffmpeg 要真实文件。
 - 视频流走本地缓存 + `FileResponse`，首帧要等整个文件下完；
   正解是 307 预签名（T19）。
 """
@@ -26,6 +26,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 from collections.abc import Iterator
 from contextlib import contextmanager
 from functools import lru_cache
@@ -36,9 +37,10 @@ import boto3
 from botocore.client import Config
 from botocore.exceptions import BotoCoreError, ClientError
 
-from core.exceptions import UpstreamError
+from core.exceptions import Conflict, UpstreamError
 from core.logging import get_logger
-from infra.archive.base import Location, checksum
+from infra.archive.base import Location, checksum, read_json, write_json
+from infra.archive.runs import runs_root
 from infra.driver_config import DriverSettings, driver_config
 
 logger = get_logger(__name__)
@@ -121,8 +123,27 @@ class S3ArchiveStorage:
         """日志里不要每次都带上前缀。"""
         return key[len(self._prefix) + 1 :] if self._prefix else key
 
+    def _workspace(self, location: object) -> Path | None:
+        """`Path` 参数只可能是运行工作区的文件：那些必须留在本地，不进桶。
+
+        协议里 key 是存储无关的，`Path` 保留给「真实本地文件」这一类调用
+        （`run.json`、`inputs/*`、`records/*`、`outputs/*`）。远端驱动不猜路径：
+        不在工作区内的绝对路径一律拒绝——把任意本地路径当"直接用这个文件"的许可，
+        等于绕开了本地驱动里 `within()` 的全部防护。
+        """
+        if not isinstance(location, Path):
+            return None
+        root = runs_root().resolve()
+        target = (location if location.is_absolute() else root / location).resolve()
+        if not target.is_relative_to(root):
+            raise UpstreamError(f"远端驱动只接受归档 key；本地路径必须位于运行工作区：{location}")
+        return target
+
     # ---------------------------------------------------------------- 元数据
     def exists(self, location: Location) -> bool:
+        workspace = self._workspace(location)
+        if workspace is not None:
+            return workspace.is_file()
         key = self._key(location)
         try:
             self._client.head_object(Bucket=self._bucket, Key=key)
@@ -135,6 +156,9 @@ class S3ArchiveStorage:
         return True
 
     def read(self, location: Location) -> object:
+        workspace = self._workspace(location)
+        if workspace is not None:
+            return read_json(workspace)
         key = self._key(location)
         try:
             response = self._client.get_object(Bucket=self._bucket, Key=key)
@@ -151,6 +175,10 @@ class S3ArchiveStorage:
             raise UpstreamError(f"归档对象不是有效 JSON：{self._display(key)}") from exc
 
     def write(self, location: Location, value: object) -> None:
+        workspace = self._workspace(location)
+        if workspace is not None:
+            write_json(workspace, value)
+            return
         key = self._key(location)
         body = json.dumps(value, ensure_ascii=False, indent=2).encode("utf-8")
         try:
@@ -160,8 +188,27 @@ class S3ArchiveStorage:
         except (ClientError, BotoCoreError) as exc:
             raise UpstreamError(f"归档写入失败（{self._display(key)}）：{exc}") from exc
 
+    def list_keys(self, prefix: str, *, suffix: str = "") -> list[str]:
+        """`ListObjectsV2` 分页枚举；前缀不存在返回空表（与本地驱动同语义）。"""
+        base = self._key(prefix.strip("/") + "/")
+        keys: list[str] = []
+        try:
+            for page in self._client.get_paginator("list_objects_v2").paginate(
+                Bucket=self._bucket, Prefix=base
+            ):
+                for item in page.get("Contents", []):
+                    display = self._display(str(item["Key"]))
+                    if display.endswith(suffix):
+                        keys.append(display)
+        except (ClientError, BotoCoreError) as exc:
+            raise UpstreamError(f"归档枚举失败（{self._display(base)}）：{exc}") from exc
+        return sorted(keys)
+
     # ---------------------------------------------------------------- 字节
     def copy(self, source: Path, destination: Location, digest: str | None = None) -> str:
+        workspace = self._workspace(destination)
+        if workspace is not None:
+            return _copy_file(source, workspace, digest or checksum(source))
         key = self._key(destination)
         expected = digest or checksum(source)
         if self.exists(key):
@@ -170,17 +217,32 @@ class S3ArchiveStorage:
                 raise UpstreamError(f"归档对象与本次写入不一致：{self._display(key)}")
             return expected
         try:
-            self._client.upload_file(str(source), self._bucket, key)
+            # 摘要写进对象元数据：同名对象已存在时比一次摘要不用重新下载
+            self._client.upload_file(
+                str(source), self._bucket, key, ExtraArgs={"Metadata": {"sha256": expected}}
+            )
         except (ClientError, BotoCoreError) as exc:
             raise UpstreamError(f"归档上传失败（{self._display(key)}）：{exc}") from exc
         return expected
 
     def link(self, source: Path, destination: Location, digest: str | None = None) -> str:
-        """对象存储没有硬链接：退化成分片上传。
-
-        这里不复用 S3 的服务端 copy，因为 `source` 是本地文件（尚未入桶）。
-        """
-        return self.copy(source, destination, digest)
+        """对象存储没有硬链接：归档目标是分片上传；工作区目标是本地硬链接。"""
+        workspace = self._workspace(destination)
+        if workspace is None:
+            return self.copy(source, destination, digest)
+        expected = digest or checksum(source)
+        if workspace.exists():
+            if checksum(workspace) != expected:
+                raise Conflict("已有归档文件与本次输入不一致，禁止覆盖")
+            return expected
+        workspace.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            # 物化缓存与工作区通常同盘：一个 run 里同一份原片出现两次时，
+            # 硬链接让它只占一份字节（执行器会给每个文件各算一次 sha256）。
+            os.link(source, workspace)
+            return expected
+        except OSError:
+            return _copy_file(source, workspace, expected)
 
     @contextmanager
     def materialize(self, location: Location) -> Iterator[Path]:
@@ -189,6 +251,10 @@ class S3ArchiveStorage:
         缓存名用 key 的 sha1（key 本身可能很长且含分隔符），并保留原始扩展名——
         ffmpeg 与 `Image.open` 都靠扩展名判断容器格式，剥掉后缀会误判成 raw。
         """
+        workspace = self._workspace(location)
+        if workspace is not None:
+            yield workspace
+            return
         key = self._key(location)
         suffix = Path(self._display(key)).suffix
         name = hashlib.sha1(key.encode("utf-8"), usedforsecurity=False).hexdigest()
@@ -216,6 +282,10 @@ class S3ArchiveStorage:
             pass
 
     def remove(self, location: Location) -> None:
+        workspace = self._workspace(location)
+        if workspace is not None:
+            workspace.unlink(missing_ok=True)
+            return
         key = self._key(location)
         try:
             self._client.delete_object(Bucket=self._bucket, Key=key)
@@ -272,6 +342,18 @@ class S3ArchiveStorage:
                 break
             path.unlink(missing_ok=True)
             total -= size
+
+
+def _copy_file(source: Path, target: Path, expected: str) -> str:
+    """写工作区文件：先写临时文件再替换，避免执行器读到半份输入。"""
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_name(target.name + f".{os.getpid()}.tmp")
+    shutil.copyfile(source, temporary)
+    if checksum(temporary) != expected:
+        temporary.unlink(missing_ok=True)
+        raise UpstreamError("工作区复制校验失败，请检查磁盘")
+    temporary.replace(target)
+    return expected
 
 
 def _is_missing(exc: ClientError) -> bool:

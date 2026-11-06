@@ -26,10 +26,10 @@
 | T13 | 两个运维脚本绕过 `ARCHIVE_DRIVER` | 换 S3 后脚本仍写本地盘 | 后端 |
 | T14 | `REVIEW_CHECKLIST` 缺两条反模式 | 同类问题第五次出现 | 文档 |
 | T15 | 生成结果 URL 落库（`image_jobs.output_url`） | 换存储驱动后历史链接全部失联 | 后端 |
-| T16 | 归档协议 `Path` 形态 → 已句柄化，剩 `root()` 枚举 | `ARCHIVE_DRIVER=s3` 还差最后一公里 | 后端 |
-| T17 | `packs` / `pack_versions` / `runs` 仍靠目录 `glob` 枚举 | 归档驱动切远端后枚举不到 | 后端 |
 | T18 | 内容寻址的孤儿 blob 没有 GC | 上传失败会留下没人引用的字节 | 后端 |
 | T19 | 归档切 S3 后视频流应走预签名 307 | 现在靠本地缓存 + `FileResponse`，首帧要全量下载 | 后端 |
+| T20 | 远端驱动下发布锁退化为本机锁 | 多实例并发发布可能发出两个版本 | 后端（条件写/行锁） |
+| T21 | 运行工作区本机化，历史任务不跨机器 | 换台机器打开旧任务显示「档案不存在」 | 产品决定 |
 
 ---
 
@@ -181,42 +181,28 @@ R13 与 R14 各自归纳出一个新形状，都没进清单：
     启动日志里探测「库里有一批地址不属于当前驱动」时告警。
 (a) 是正解，(b) 只是把坑做成可见的。
 
-## T16 · 归档协议句柄化：已完成大半，剩枚举
+## T20 · 远端驱动下发布锁退化为本机锁
 
-2026-11-07 已改：`ArchiveStorage` 不再用 `Path` 表达位置。
+`infra/media_catalog.py:catalog_lease` 优先用归档存储里的文件锁（`catalog/locks/
+access.lease`），远端驱动没有本地路径，退化为 `runs_root()/.locks/access.lease`。
+单机部署没问题，**多实例并发发布同一个包时不再互斥**，可能发出两个版本号。
 
-- 协议收 key：`read` / `write` / `exists` / `copy(Path, key)` / `link` / `remove`；
-  **字节**统一走 `materialize(key) -> ContextManager[Path]`（本地直接交原路径，
-  远端下到缓存再交）。
-- `infra/archive/blobs.py`：素材字节改为内容寻址（key = sha256），预览/转码流按摘要命名。
-  于是「字节是否被改」不再是一件需要检测的事 —— 改了就是另一个 key。
-- `infra/archive/s3.py`：完整的 S3 实现（含物化缓存、按 mtime 淘汰）。
-- `app migrate-blobs [--dry-run] [--delete-source]`：旧 `library/…` 布局搬进 `blobs/ab/…`，
-  同时改写 `assets.storage_key` / `cover_key` 与镜像 JSON，幂等。
-- 连带删掉三层补丁：`pack_service._digest` 的 `(path, mtime, size)` 缓存、
-  发布前全量重算 sha256、`prepare` 里"读三遍同一个 300MB 原片"。
-  运行快照改用硬链接：同一原片在 run 目录里只占一份字节。
-
-**仍然拦着 `ARCHIVE_DRIVER=s3` 的是 T17**：`root()` 的 `glob` 枚举（pack 草稿/发布/
-搜索、run 索引修复）在远端驱动下直接抛错。这几处必须先把 packs / runs 入库。
-
-**验收**（原定）：`ARCHIVE_DRIVER=s3` 能起、能传、能取；`migrate-blobs` 幂等，
-搬家后 `storage_key` 仍可解析；共享盘保留只读一周作回滚；`test_architecture.py`
-补一条「归档实现不许假设本地路径」的守卫（这条已在 `tests/test_archive_blobs.py`
-用"旧 `library/` key 仍可读"覆盖行为，守卫本身待 T17 一起加）。
+**验收**：用 S3 条件写（`If-None-Match` 抢 `<version>.json`）或 DB 行锁（`SELECT …
+FOR UPDATE`）替代；或显式在启动日志里声明「本部署只允许单实例发布」。
 
 ---
 
-## T17 · `packs` / `pack_versions` / `runs` 仍靠目录 `glob` 枚举
+## T21 · 运行工作区本机化后，历史任务不跨机器
 
-`pack_service.drafts/available/search` 与 `replacement_repository.packs/all_paths/
-repair_indexes` 都在 `storage.root() / "catalog/…"` 上 `glob("*.json")`。这是
-`ARCHIVE_DRIVER=s3` 的最后一公里：远端驱动下 `root()` 抛 `UpstreamError`，整个封装库
-与任务中心随之不可用。
+`REPLACEMENT_RUNS_ROOT` 留空时：本地驱动 = `<归档根>/runs`（沿用旧布局），远端驱动 =
+`api/var/runs`。也就是说切到 S3 之后，**索引指针还在桶里（列表能看到），但
+`run.json`/成片在本机**——换台机器打开就是「调用档案不存在」。
 
-要做的：`packs` / `pack_versions` / `runs` 三张表（manifest 可整份存 JSON 列，
-业务语义不变），读取切表，写路径双写一段时间，JSON 降级为导出快照。
-顺带消掉两笔旧债：`media_catalog` 以 JSON 为可见性真相源、`_find_by_digest` 跨环境去重。
+这是有意的取舍：桥接层与 ffmpeg 要真实路径，把 run 目录塞进桶会把执行器拆成两半。
+代价是「API 多实例 + 每台各自跑任务」时历史只有本机可见。
+
+**验收**：明确部署形态。要跨机器就把 `REPLACEMENT_RUNS_ROOT` 指到共享目录（仍是本地
+路径语义），或者把成片产物在完成时转存对象存储、`runs/` 只保留 7 天过程文件。
 
 ---
 
@@ -252,5 +238,6 @@ repair_indexes` 都在 `storage.root() / "catalog/…"` 上 `glob("*.json")`。�
 | R12-* / R11-* | 已修 | `aa9c5e4` |
 | 原 T15 五份文档未提交 | 已提交 | `e928fbb`（`CODE_STYLE` / `REVIEW_CHECKLIST` v2.0 + R11~R14 / FE6 报告） |
 | 原 T16 两条旧分支 | 已删 | `merge/pr1`（`4e26035`）、`preview/full`（`59513ba`）`merge-base --is-ancestor` 均通过后 `git branch -d` |
+| 原 T16/T17 归档远端化 | 已修 | 协议收 key + `list_keys` 枚举；`infra/archive/runs.py` 把运行工作区分出归档；`app migrate-archive` 幂等搬家；`ARCHIVE_DRIVER=s3` 实测起/传/取全通 |
 
 `ARCHITECTURE.md` / `EXTENSIBILITY_GAPS.md` 里 A 组 13 条已修 10 条，剩余 3 条即上面的 T7/T8/T9。

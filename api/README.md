@@ -75,6 +75,7 @@ Vite 会把 `/api` 代理到 `VITE_API_PROXY_TARGET`（默认 `http://127.0.0.1:
 | `app import-archive-index [--dry-run]` | 把归档目录的 JSON 索引补进 `assets` 表（幂等，不删 JSON） |
 | `app migrate-storage [--dry-run] [--delete-source]` | `local → s3` 切换前跑：把 `STORAGE_LOCAL_ROOT` 的对象按 key 搬进桶，并把库里 `/static/...` 旧地址改写成桶地址 |
 | `app migrate-blobs [--dry-run] [--delete-source]` | 归档素材改内容寻址布局（`blobs/<摘要>`），幂等；可原地跑 |
+| `app migrate-archive [--dry-run]` | 归档切远端前跑：把本地归档根（`catalog`/`blobs`/`previews`/`library`）搬进当前归档驱动，幂等 |
 | `app prune-logins [--days 90]` | 清理过期的登录审计（默认取 `LOGIN_EVENT_RETENTION_DAYS`） |
 | `app new-module x --label 中文名` | 生成新模块脚手架（含权限声明） |
 | `alembic revision --autogenerate -m "xxx"` | 生成迁移（生产用） |
@@ -108,8 +109,9 @@ S3_USE_SSL=false                    # 内网 http endpoint 时必须关
    鉴权头。`AllowOrigin` 填前端来源（不要 `*` 配私有桶）、`AllowMethods` 至少
    `GET, HEAD`、`ExposeHeaders` 带上 `Content-Length, Content-Range, ETag`
    （视频拖进度条要用 `Range`）。
-3. **归档盘与对象存储是两套。** 归档素材（`/assets/archive/*`）读 `MEDIA_ARCHIVE_ROOT`
-   （`ARCHIVE_DRIVER=local`），不会因为切了 `STORAGE_DRIVER` 而搬到桶里。
+3. **归档盘与对象存储是两套驱动，但都能切远端。** 归档素材（`/assets/archive/*`）
+   由 `ARCHIVE_DRIVER` 决定：`local` 读 `MEDIA_ARCHIVE_ROOT`，`s3` 读写
+   `S3_ARCHIVE_BUCKET`。切 `STORAGE_DRIVER` 不会自动搬归档内容，反过来也一样。
 
 本机起 MinIO（`minio/minio` 已从 Docker Hub 下架，用社区镜像）：
 
@@ -141,10 +143,29 @@ app migrate-blobs --delete-source   # 确认无回滚需求后再删旧文件
 
 命令幂等（已是新布局的行直接跳过）。旧文件默认保留一周作为回滚依据。
 
-**归档驱动也能切远端，但还差最后一公里**：`ARCHIVE_DRIVER=s3` 需要
-`S3_ARCHIVE_BUCKET`（与 `S3_BUCKET` **分开**——归档桶不开放匿名读，素材桶是公开读的），
-端点与凭据复用 `S3_*`。目前 `packs` / `runs` 的索引仍靠目录 `glob` 枚举
-（见 `docs/TODO.md` T17），所以整体切换还不能上线；素材字节层已经与驱动无关。
+**归档驱动可以整体切远端**：`ARCHIVE_DRIVER=s3` 需要 `S3_ARCHIVE_BUCKET`
+（与 `S3_BUCKET` **分开**——归档桶不开放匿名读，素材桶是公开读的），端点与凭据复用
+`S3_*`。切换分三步，都可回滚：
+
+```bash
+# 1. 灌数据：把本地归档根的内容搬进桶（幂等，第二遍 copied=0）
+ARCHIVE_DRIVER=s3 S3_ARCHIVE_BUCKET=yufan-archive app migrate-archive --dry-run
+ARCHIVE_DRIVER=s3 S3_ARCHIVE_BUCKET=yufan-archive app migrate-archive
+
+# 2. 切配置
+#    ARCHIVE_DRIVER=s3
+#    S3_ARCHIVE_BUCKET=yufan-archive
+#    REPLACEMENT_RUNS_ROOT=<共享盘>/runs   # 见下方「运行工作区」
+
+# 3. 重启后核对：归档列表、缩略图、封装可用列表、任务中心
+```
+
+边界只有一条：**运行工作区必须留在本地**。`run/inputs/` 要真实文件给桥接层算
+sha256、给 ffmpeg 派生预览，所以 `runs/` 不随归档进桶——索引指针在桶里
+（`catalog/runs/<id>.json`，枚举走 `ListObjectsV2`），工作区目录由
+`REPLACEMENT_RUNS_ROOT` 指定（留空时本地驱动沿用 `<归档根>/runs`，远端驱动落到
+`api/var/runs`）。代价是「历史任务只在跑它的那台机器上可读」，见 `docs/TODO.md` T21。
+枚举一律走 `storage.list_keys(prefix, suffix=)`，不要在 `root()` 上 `glob`。
 
 ---
 

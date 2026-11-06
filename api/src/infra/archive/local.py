@@ -7,10 +7,8 @@
 
 from __future__ import annotations
 
-import json
 import os
 import shutil
-import time
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -18,11 +16,8 @@ from functools import lru_cache
 from pathlib import Path
 
 from core.exceptions import BadRequest, Conflict, UpstreamError
-from infra.archive.base import Location, checksum, within
+from infra.archive.base import Location, checksum, read_json, within, write_json
 from infra.driver_config import DriverSettings, driver_config
-
-# 归档盘上的原子替换窗口：3 次约 150ms 足以跨过桥接层的一次重写。
-ARCHIVE_READ_RETRIES = 3
 
 
 class ArchiveSettings(DriverSettings):
@@ -85,28 +80,23 @@ class LocalArchiveStorage:
         return self._path(location).is_file()
 
     def read(self, location: Location) -> object:
-        """读 JSON；容忍归档盘原子替换暴露出的瞬时缺失。
-
-        SMB 上 `rename` 不保证 POSIX 语义，桥接层每次 update() 都会重写 run.json，
-        覆盖瞬间路径可能短暂不存在（实测轮询期间读到 FileNotFoundError，接口随之 500）。
-        读方必须自己跨过这个窗口，调用方不需要处理「文件刚被替换」。
-        """
-        path = self._path(location)
-        for attempt in range(ARCHIVE_READ_RETRIES):
-            try:
-                return json.loads(path.read_text(encoding="utf-8"))
-            except (FileNotFoundError, json.JSONDecodeError):
-                if attempt == ARCHIVE_READ_RETRIES - 1:
-                    raise
-                time.sleep(0.05 * (attempt + 1))
-        raise AssertionError("unreachable")
+        return read_json(self._path(location))
 
     def write(self, location: Location, value: object) -> None:
-        path = self._path(location)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = path.with_name(path.name + "." + uuid.uuid4().hex + ".tmp")
-        temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
-        temporary.replace(path)
+        write_json(self._path(location), value)
+
+    def list_keys(self, prefix: str, *, suffix: str = "") -> list[str]:
+        """目录遍历实现：前缀不存在返回空表，而不是报错。
+
+        「还没放过任何封装」与「路径写错了」在调用方看来是同一种情况——
+        列表为空，不是 500。真出错（盘掉线）由 `root()` 自己抛。
+        """
+        base = within(self.root(), prefix.strip("/"))
+        if not base.is_dir():
+            return []
+        root = self.root()
+        keys = [p.relative_to(root).as_posix() for p in base.rglob("*") if p.is_file()]
+        return sorted(key for key in keys if key.endswith(suffix))
 
     def copy(self, source: Path, destination: Location, digest: str | None = None) -> str:
         expected = digest or checksum(source)
@@ -153,3 +143,12 @@ class LocalArchiveStorage:
 
 
 Driver = LocalArchiveStorage
+
+
+def local_storage() -> LocalArchiveStorage:
+    """显式取一份**本地**驱动，不受 `ARCHIVE_DRIVER` 影响。
+
+    只给迁移/导入这类「要同时够得着源和目标」的工具用：搬家时目标驱动可能是
+    S3，而源仍然在本地盘上。业务代码一律走 `get_archive_storage()`。
+    """
+    return LocalArchiveStorage()

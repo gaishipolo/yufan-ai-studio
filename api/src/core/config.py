@@ -113,6 +113,9 @@ class Settings(BaseSettings):
     # 归档盘驱动。以前归档盘是写死的 `LocalArchiveStorage()`，`.env.example`
     # 里「换实现只改这里」这句承诺对它不成立；现在它和 storage / queue 同形态。
     archive_driver: str = "local"
+    # 替换任务的运行工作区（执行器要真实目录：inputs/outputs/records）。
+    # 留空 = 本地驱动沿用 `<归档根>/runs`；归档切远端时落到 `api/var/runs`。
+    replacement_runs_root: str = ""
     worker_enabled: bool = True
     worker_concurrency: int = 2
     # 周期任务调度器（模块自己 @periodic 注册）。多副本部署时每个进程都会跑一份，

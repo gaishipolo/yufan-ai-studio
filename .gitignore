@@ -26,6 +26,8 @@ api/src/var/*
 .env
 .env.local
 .env.*.local
+# 切换驱动前的手工备份（`cp .env .env.bak-...`），含明文密钥
+.env.bak*
 
 # ===== 日志 =====
 # 只忽略根目录的本地草稿目录。和下面的 /workbench/ 同理：

@@ -25,7 +25,7 @@ from infra.ai.base import (
     ModelSpec,
 )
 from infra.ai.libtv_state import LIBTV_PROCESS_PROTOCOL, ExecutorResult, LibTVState
-from infra.archive import get_archive_storage
+from infra.archive import get_archive_storage, run_dir
 from infra.driver_config import DriverSettings, driver_config
 from infra.queue.base import Job
 
@@ -61,11 +61,14 @@ class AdapterError(BaseModel):
 
 
 def run_path(run_id: str) -> Path:
+    """索引指针 → 运行工作区目录。
+
+    档案在本地工作区、指针在归档存储，两边分开（见 `infra/archive/runs.py`）：
+    执行器要真实目录，而列表/恢复只依赖指针。
+    """
     if not re.fullmatch(r"[a-f0-9]{32}", run_id):
         raise BadRequest("调用标识无效")
-    storage = get_archive_storage()
-    pointer = Pointer.model_validate(storage.read(storage.resolve(f"catalog/runs/{run_id}.json")))
-    return storage.resolve(pointer.path)
+    return run_dir(get_archive_storage(), run_id)
 
 
 def state(path: Path) -> LibTVState:

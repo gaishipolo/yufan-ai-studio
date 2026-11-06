@@ -67,9 +67,7 @@ def test_modules_do_not_import_each_other() -> None:
                     continue
                 owner = imported.split(".")[1]
                 if owner != module_dir.name:
-                    offenders.append(
-                        f"{module_dir.name}: {path.name} -> {imported}"
-                    )
+                    offenders.append(f"{module_dir.name}: {path.name} -> {imported}")
 
     assert not offenders, "业务模块之间出现横向依赖：\n" + "\n".join(offenders)
 
@@ -89,8 +87,8 @@ def test_modules_only_touch_api_assembly_points() -> None:
                 continue
             offenders.append(f"{path.relative_to(SRC)} -> {imported}")
 
-    assert not offenders, (
-        "业务模块引用了装配层实现，依赖方向应为 api → modules：\n" + "\n".join(offenders)
+    assert not offenders, "业务模块引用了装配层实现，依赖方向应为 api → modules：\n" + "\n".join(
+        offenders
     )
 
 
@@ -148,9 +146,7 @@ def test_every_module_declares_permissions() -> None:
     只有显式标记 `public=True` 的模块（健康检查等）可以豁免。
     """
     missing = [
-        spec.name
-        for spec in discover_modules()
-        if not spec.public and not spec.permission_codes()
+        spec.name for spec in discover_modules() if not spec.public and not spec.permission_codes()
     ]
     assert not missing, f"以下模块没有声明任何权限点 -> {missing}"
 
@@ -327,6 +323,27 @@ def test_archive_storage_only_reached_through_factory() -> None:
             offenders.append(str(path.relative_to(SRC)))
     assert not offenders, (
         f"这些文件直接实例化了归档实现：{offenders}。请改用 infra.archive.get_archive_storage()"
+    )
+
+
+def test_archive_enumeration_goes_through_list_keys() -> None:
+    """归档枚举只能走 `list_keys`，不许在 `root()` 上 `glob`。
+
+    `root()` 是「本地驱动才有的东西」：写成 `(storage.root() / "catalog").glob(...)`
+    时，本地一切正常，切到 S3/MinIO 就整块抛 `UpstreamError`（封装库、任务中心一起挂）。
+    这条守卫是 T17 的防复发措施——枚举漏一处，远端切换就失败一次。
+    """
+    pattern = re.compile(r"\.root\(\)[^\n]*\.(?:r?glob)\(")
+    offenders = [
+        f"{path.relative_to(SRC)}:{index}"
+        for path in _python_files(SRC)
+        if path.parts[-2:] != ("archive", "local.py")  # 实现自己，允许
+        for index, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+        if pattern.search(line)
+    ]
+    assert not offenders, (
+        f"这些位置在归档根上做目录枚举：{offenders}。"
+        "请改用 storage.list_keys(prefix, suffix=)，否则远端驱动下会直接抛错"
     )
 
 

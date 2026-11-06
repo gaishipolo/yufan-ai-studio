@@ -8,13 +8,19 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import sys
+import time
+import uuid
 from collections.abc import Iterator
 from contextlib import AbstractContextManager, contextmanager
 from pathlib import Path
 from typing import IO, Protocol, TypeAlias
 
 from core.exceptions import AppError, BadRequest, Conflict
+
+# 共享盘上原子替换暴露的瞬时缺失：3 次约 150ms 足以跨过桥接层的一次重写。
+FILE_READ_RETRIES = 3
 
 # 归档位置：`str` 是存储无关的 key（新代码一律用它），`Path` 只为兼容既有调用点。
 # 本地驱动两者等价（Path 会被折成相对 key），纯 HTTP 驱动只认 str。
@@ -112,6 +118,16 @@ class ArchiveStorage(Protocol):
     def write(self, location: Location, value: object) -> None: ...
     def exists(self, location: Location) -> bool: ...
 
+    def list_keys(self, prefix: str, *, suffix: str = "") -> list[str]:
+        """枚举前缀下的 key（递归），按字典序返回。
+
+        **枚举必须走这里，不要在 `root()` 上 `glob`。** 后者把「有本地根目录」
+        又塞回协议里：远端驱动直接抛错，封装列表与任务发现整块不可用（T17）。
+        本地驱动用目录遍历，对象存储用 `ListObjectsV2`，返回的都是存储无关 key，
+        调用方拿去 `read` 即可。
+        """
+        ...
+
     def copy(self, source: Path, destination: Location, digest: str | None = None) -> str:
         """把本地文件写入 destination，返回 sha256；目标已存在且摘要不符则拒绝覆盖。"""
         ...
@@ -142,3 +158,28 @@ def within(base: Path, relative: str) -> Path:
 def checksum(path: Path) -> str:
     with path.open("rb") as stream:
         return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
+def read_json(path: Path) -> object:
+    """读本地 JSON，容忍共享盘原子替换暴露出的瞬时缺失。
+
+    SMB 上 `rename` 不保证 POSIX 语义，桥接层每次 update() 都会重写 run.json，
+    覆盖瞬间路径可能短暂不存在（实测轮询期间读到 FileNotFoundError，接口随之 500）。
+    读方必须自己跨过这个窗口，调用方不需要处理「文件刚被替换」。
+    """
+    for attempt in range(FILE_READ_RETRIES):
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except (FileNotFoundError, json.JSONDecodeError):
+            if attempt == FILE_READ_RETRIES - 1:
+                raise
+            time.sleep(0.05 * (attempt + 1))
+    raise AssertionError("unreachable")
+
+
+def write_json(path: Path, value: object) -> None:
+    """写本地 JSON：先写同目录临时文件再替换，读方永远看不到半份。"""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(path.name + "." + uuid.uuid4().hex + ".tmp")
+    temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
+    temporary.replace(path)

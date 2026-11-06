@@ -19,7 +19,7 @@ from core.logging import get_logger
 from core.media import StoredMedia
 from core.pack_roles import PACK_SCOPES, usage_for
 from infra.ai.libtv import get_libtv_settings
-from infra.archive import checksum, lease
+from infra.archive import checksum, index_key, lease, lock_path, runs_root
 from infra.media_catalog import MediaCatalog, catalog_lease
 from modules.template.pack_service import PackService
 from modules.template.replacement_inputs import bindings, input_file, input_summary
@@ -186,9 +186,11 @@ def _prepare(payload: PrepareReplacement, owner: str, require_pack: bool) -> Rep
         _check_scope(pack, payload)
     uid = payload.request_id.hex
     fingerprint = hashlib.sha256((owner + payload.model_dump_json()).encode()).hexdigest()
-    with lease(repo.storage.resolve(f"catalog/locks/{uid}.lock")):
-        pointer = repo.storage.resolve(f"catalog/runs/{uid}.json")
-        if pointer.exists():
+    # 互斥锁落在工作区旁边：它保护的是「同一次请求只准备一份输入」，
+    # 跟归档存储里放什么无关，远端驱动下也不该往桶里写锁文件。
+    with lease(lock_path(uid)):
+        pointer = index_key(uid)
+        if repo.storage.exists(pointer):
             path, meta = repo.owned(uid, owner)
             if meta.fingerprint != fingerprint:
                 raise Conflict("请求标识已被不同配置使用，请重新准备")
@@ -196,7 +198,7 @@ def _prepare(payload: PrepareReplacement, owner: str, require_pack: bool) -> Rep
                 return run_out(path, repo)
         else:
             date = datetime.now(timezone(timedelta(hours=8))).strftime("%Y/%m/%d")
-            path = repo.storage.resolve(f"runs/{date}/{payload.kind}-{uid}")
+            path = runs_root() / date / f"{payload.kind}-{uid}"
             # 修复上一版无索引的半成品：存在真实调用痕迹时绝不覆盖。
             if (path / "run.json").exists():
                 previous = repo.load(path)

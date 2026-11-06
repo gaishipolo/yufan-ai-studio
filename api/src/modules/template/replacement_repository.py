@@ -1,4 +1,9 @@
-"""替换调用仓储：类型化旧 JSON，并保持 Z 盘目录兼容。"""
+"""替换调用档案仓储：档案在运行工作区，索引指针在归档存储。
+
+档案本身（`run.json`、inputs、outputs、records）是执行器的过程文件，必须落在
+本机工作区（见 `infra/archive/runs.py`）；`catalog/runs/<id>.json` 只是一行指针，
+留在归档存储里，所以列表与启动恢复不依赖「有本地根目录」。
+"""
 
 from __future__ import annotations
 
@@ -7,21 +12,24 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-from pydantic import BaseModel
-
 from core.exceptions import NotFound
 from core.media import StoredMedia
 from infra.ai.libtv_state import RUN_LOCK, LibTVState
-from infra.archive import ArchiveStorage, get_archive_storage, lease
+from infra.archive import (
+    ArchiveStorage,
+    existing_runs,
+    get_archive_storage,
+    lease,
+    read_pointer,
+    run_dir,
+    save_pointer,
+)
+from infra.archive.runs import check_id, relative_key
 from modules.template.replacement_schema import (
     ReplacementInputSummary,
     ReplacementKind,
     ReplacementPack,
 )
-
-
-class RunPointer(BaseModel):
-    path: str
 
 
 class ReplacementManifest(LibTVState):
@@ -53,12 +61,7 @@ class ReplacementRepository:
         self.storage = storage or get_archive_storage()
 
     def path(self, run_id: str) -> Path:
-        if not re.fullmatch(r"[a-f0-9]{32}", run_id):
-            raise NotFound("调用档案不存在")
-        pointer = self.storage.resolve(f"catalog/runs/{run_id}.json")
-        if not pointer.is_file():
-            raise NotFound("调用档案不存在")
-        return self.storage.resolve(RunPointer.model_validate(self.storage.read(pointer)).path)
+        return run_dir(self.storage, run_id)
 
     def load(self, path: Path) -> ReplacementManifest:
         return ReplacementManifest.model_validate(self.storage.read(path / "run.json"))
@@ -80,10 +83,7 @@ class ReplacementRepository:
             self.save(path, meta)
 
     def index(self, path: Path, run_id: str) -> None:
-        self.storage.write(
-            self.storage.resolve(f"catalog/runs/{run_id}.json"),
-            {"path": path.relative_to(self.storage.root()).as_posix()},
-        )
+        save_pointer(self.storage, run_id, relative_key(path))
 
     def owned(self, run_id: str, owner: str) -> tuple[Path, ReplacementManifest]:
         path = self.path(run_id)
@@ -95,18 +95,18 @@ class ReplacementRepository:
     def media(self, asset_id: str, owner: str) -> StoredMedia:
         if not re.fullmatch(r"[a-f0-9]{32}", asset_id):
             raise NotFound("素材不存在")
-        path = self.storage.resolve(f"catalog/assets/{asset_id}.json")
-        if not path.is_file():
+        key = f"catalog/assets/{asset_id}.json"
+        if not self.storage.exists(key):
             raise NotFound("素材不存在")
-        media = StoredMedia.model_validate(self.storage.read(path))
+        media = StoredMedia.model_validate(self.storage.read(key))
         if media.owner_id != owner:
             raise NotFound("素材不存在")
         return media
 
     def packs(self, owner: str) -> list[ReplacementPack]:
         rows = [
-            PublishedPack.model_validate(self.storage.read(p))
-            for p in (self.storage.root() / "catalog/packs").glob("*.json")
+            PublishedPack.model_validate(self.storage.read(key))
+            for key in self.storage.list_keys("catalog/packs", suffix=".json")
         ]
         return [self._public_pack(p) for p in rows if p.owner_id == owner]
 
@@ -127,13 +127,29 @@ class ReplacementRepository:
         )
 
     def all_paths(self) -> list[Path]:
-        return [
-            self.storage.resolve(RunPointer.model_validate(self.storage.read(p)).path)
-            for p in (self.storage.root() / "catalog/runs").glob("*.json")
-        ]
+        """所有还读得到的档案。
+
+        指针坏了/工作区不在这台机器上时不抛错，直接跳过：一条脏指针不该让
+        整个任务列表 500（以前的 `catalog/runs` 枚举没有这个容错，因为指针
+        与目录同盘，缺一个就是盘掉了，本来就该报错）。
+        """
+        paths: list[Path] = []
+        for key in self.storage.list_keys("catalog/runs", suffix=".json"):
+            run_id = key.rsplit("/", 1)[-1][: -len(".json")]
+            try:
+                paths.append(run_dir(self.storage, check_id(run_id)))
+            except (NotFound, OSError):
+                continue
+        return paths
 
     def repair_indexes(self) -> None:
         """断连可能中断索引写入；仅补登记，不修改历史输入或上游任务。"""
-        for file in (self.storage.root() / "runs").glob("*/*/*/*/run.json"):
-            meta = self.load(file.parent)
-            self.index(file.parent, meta.id)
+        for path in existing_runs():
+            try:
+                meta = self.load(path)
+            except (OSError, ValueError):
+                continue
+            self.index(path, meta.id)
+
+    def pointer_of(self, run_id: str) -> str:
+        return read_pointer(self.storage, run_id)
