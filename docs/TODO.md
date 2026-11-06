@@ -5,7 +5,7 @@
 >
 > 来源：`CODE_REVIEW_2026-11-06_R11~R14`、`CODE_REVIEW_2026-11-06_FE6`、
 > `EXTENSIBILITY_GAPS.md` 的 B1/C1/C2，以及素材分支合并时新发现的项。
-> 最后更新：2026-11-06 16:10（提交 `f96c4d2` 之后）
+> 最后更新：2026-11-06 16:20（提交 `e928fbb` 之后）
 
 ## 一眼看完
 
@@ -25,8 +25,6 @@
 | T12 | `infra/storage/base.py` 头注释说错工厂位置 | 照它加驱动会改错文件 | 后端（5 分钟） |
 | T13 | 两个运维脚本绕过 `ARCHIVE_DRIVER` | 换 S3 后脚本仍写本地盘 | 后端 |
 | T14 | `REVIEW_CHECKLIST` 缺两条反模式 | 同类问题第五次出现 | 文档 |
-| T15 | 五份文档还没提交 | 换机器就丢 | 已确认后提交 |
-| T16 | 两条已并入/已落后的旧分支没清理 | 仓库里留着过期分支 | 流程 |
 
 ---
 
@@ -158,24 +156,6 @@ R13 与 R14 各自归纳出一个新形状，都没进清单：
 
 **验收**：`CODE_STYLE.md §6` 或 `REVIEW_CHECKLIST.md` 的反模式表加两条，各带一个反例。
 
-## T15 · 五份文档还没提交
-
-`docs/CODE_STYLE.md`（v2.0 重写）、`docs/REVIEW_CHECKLIST.md`（v2.0 重写）、
-`CODE_REVIEW_2026-11-06_R11~R14.md`、`CODE_REVIEW_2026-11-06_FE6.md` 都在工作区未提交。
-内容已定稿，只是没入库。
-
-**验收**：确认后一起提交（含本文件）。
-
-## T16 · 两条旧分支没清理
-
-- `preview/full`（`59513ba`）：已完整并入 `main`（`merge-base --is-ancestor` 通过），
-  对应 worktree 已删，分支本身还留着。
-- `merge/pr1`（`4e26035`）：落后 `main` 19 个提交，是早期 PR 的分支。
-
-都无损可删，但删分支是保留与否的决定，交给你。
-
-**验收**：`git branch -d preview/full`；`merge/pr1` 若 PR 已合并也删，否则注明「保留到何时」。
-
 ---
 
 ## 已复核关闭（别再重做）
@@ -192,5 +172,7 @@ R13 与 R14 各自归纳出一个新形状，都没进清单：
 | FE6-06 `Slot` 用数组下标做 key | 已修 | `shared/registry/Slot.tsx:26` 用 `moduleId:seq` |
 | R13-01~07 / R14-01~03 | 已修 | `dd5fbd2`、`787b88a`、`cad40a9`，见 `.workbuddy/memory/2026-11-06.md` |
 | R12-* / R11-* | 已修 | `aa9c5e4` |
+| 原 T15 五份文档未提交 | 已提交 | `e928fbb`（`CODE_STYLE` / `REVIEW_CHECKLIST` v2.0 + R11~R14 / FE6 报告） |
+| 原 T16 两条旧分支 | 已删 | `merge/pr1`（`4e26035`）、`preview/full`（`59513ba`）`merge-base --is-ancestor` 均通过后 `git branch -d` |
 
 `ARCHITECTURE.md` / `EXTENSIBILITY_GAPS.md` 里 A 组 13 条已修 10 条，剩余 3 条即上面的 T7/T8/T9。
