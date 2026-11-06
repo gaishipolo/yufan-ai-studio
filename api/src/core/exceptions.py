@@ -62,6 +62,9 @@ class ErrorCode:
     # 502 上游依赖
     UPSTREAM_ERROR = 50_200
 
+    # 503 本服务暂不可用（配置/容量/维护），与「上游挂了」区分开
+    UNAVAILABLE = 50_300
+
 
 class ModuleErrors:
     """模块级错误码生成器。
@@ -200,6 +203,18 @@ class UpstreamError(AppError):
     code = ErrorCode.UPSTREAM_ERROR
     message = "上游服务异常"
     http_status = 502
+
+
+class Unavailable(AppError):
+    """本服务暂时不接活：后台执行器未启用、容量已满、正在维护。
+
+    不能用 502 表达：那等于告诉前端与运维「供应商出问题了」，而实际是
+    本机配置（`WORKER_ENABLED=false`）——去查 LibTV 只会白查一圈（T5）。
+    """
+
+    code = ErrorCode.UNAVAILABLE
+    message = "服务暂不可用，请稍后再试"
+    http_status = 503
 
 
 class NotImplementedFeature(AppError):

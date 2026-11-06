@@ -2,16 +2,20 @@
 
 以前 `get_archive_storage()` 恒返回 `LocalArchiveStorage()`，而 provider 里还有 5 处
 直接 `LocalArchiveStorage()`：`.env.example` 里「换实现只改这里」对归档盘不成立，
-要上 S3 得逐个改调用点。这两个测试守住新增的那条路。
+要上 S3 得逐个改调用点。这几个测试守住新增的那条路。
 """
 
 from __future__ import annotations
+
+from pathlib import Path
 
 import pytest
 
 from core.config import settings
 from infra.archive import get_archive_storage, reset_archive_storage
 from infra.archive.local import Driver
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.fixture(autouse=True)
@@ -50,3 +54,30 @@ def test_driver_is_resolved_by_name(monkeypatch: pytest.MonkeyPatch) -> None:
     reset_archive_storage()
 
     assert isinstance(get_archive_storage(), InMemory)
+
+
+def test_callers_never_instantiate_the_local_driver() -> None:
+    """除驱动自己与测试外，谁都不许 `LocalArchiveStorage()`。
+
+    ruff 抓不到这类问题：它是「以正确的方式依赖了错误的东西」，跑起来不报错，
+    只是换驱动之后悄悄读写本地旧目录（T13 的两个运维脚本就是这样）。
+    按 AST 找调用而不是匹配字符串——注释和文档里提到这个名字是正常的。
+    """
+    import ast
+
+    allowed = {ROOT / "src" / "infra" / "archive" / "local.py"}  # 驱动自身
+    offenders: list[str] = []
+    for folder in ("src", "scripts"):
+        for path in (ROOT / folder).rglob("*.py"):
+            if "__pycache__" in path.parts or path in allowed:
+                continue
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if (
+                    isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Name)
+                    and node.func.id == "LocalArchiveStorage"
+                ):
+                    offenders.append(f"{path.relative_to(ROOT)}:{node.lineno}")
+
+    assert not offenders, "请改用 get_archive_storage()：\n" + "\n".join(offenders)

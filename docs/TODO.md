@@ -5,7 +5,7 @@
 >
 > 来源：`CODE_REVIEW_2026-11-06_R11~R14`、`CODE_REVIEW_2026-11-06_FE6`、
 > `EXTENSIBILITY_GAPS.md` 的 B1/C1/C2，以及素材分支合并时新发现的项。
-> 最后更新：2026-11-06 17:05（`app migrate-storage` 落地、个人素材切到 MinIO 之后）
+> 最后更新：2026-11-07 03:20（归档取件改预签名 307、孤儿 blob 回收、配置类 503 之后）
 
 ## 一眼看完
 
@@ -15,19 +15,14 @@
 | T2 | 前端不展示 `externalId` / `previousExternalId` | 文案让用户「凭任务号核对」，页面拿不到 | 前端 |
 | T3 | `recover()` 遇持续 Conflict 无限重投，无上限 | 僵死租约会每 30 秒吵一次，永不停止 | 后端 |
 | T4 | `ReplacementStore` 不写 `submit_mode` 快照 | 删掉模块自有 startup 后会误分类供应商形态 | 后端 |
-| T5 | `schedule()` 用 502 表达「执行器未启用」 | 运维去查上游，实际是配置 | 后端 |
 | T6 | `resume()` 的 `app_env == "test"` 早退 | 恢复链在测试里永不执行，结构性问题藏得住 | 后端 |
 | T7 | 权限点不自动进内置角色（B1） | 新权限上线后要人记得跑命令 | 后端 |
 | T8 | 轮询节奏全局化（C1） | 视频与生图共用一个间隔 | 后端 |
 | T9 | 重试是作业级不是任务级（C2） | 任务重试语义与用户预期不一致 | 后端 |
 | T10 | `archivePath` 绝对路径进 HTTP 契约 | 服务端盘符泄漏给浏览器 | 产品决定 |
 | T11 | `ArchiveList.root` 合并后已无前端消费 | 契约里多一个没人用的绝对路径 | 后端（可删） |
-| T12 | `infra/storage/base.py` 头注释说错工厂位置 | 照它加驱动会改错文件 | 后端（5 分钟） |
-| T13 | 两个运维脚本绕过 `ARCHIVE_DRIVER` | 换 S3 后脚本仍写本地盘 | 后端 |
 | T14 | `REVIEW_CHECKLIST` 缺两条反模式 | 同类问题第五次出现 | 文档 |
 | T15 | 生成结果 URL 落库（`image_jobs.output_url`） | 换存储驱动后历史链接全部失联 | 后端 |
-| T18 | 内容寻址的孤儿 blob 没有 GC | 上传失败会留下没人引用的字节 | 后端 |
-| T19 | 归档切 S3 后视频流应走预签名 307 | 现在靠本地缓存 + `FileResponse`，首帧要全量下载 | 后端 |
 | T20 | 远端驱动下发布锁退化为本机锁 | 多实例并发发布可能发出两个版本 | 后端（条件写/行锁） |
 | T21 | 运行工作区本机化，历史任务不跨机器 | 换台机器打开旧任务显示「档案不存在」 | 产品决定 |
 
@@ -71,15 +66,6 @@ R12-05 加 `submit_mode` 的理由是「恢复要解释记录自身的形态，�
 echo-only 环境里仍会被误分类。
 
 **验收**：`replacement_pipeline.ReplacementStore` 提交时写 `submit_mode`；有轮询供应商的用例。
-
-## T5 · `schedule()` 用 502 表达配置状态（R14 观察-1）
-
-`worker_enabled=false` 时 `raise UpstreamError("后台执行器未启用")`，前端显示成
-「上游服务异常」，运维第一反应去查 LibTV。这是配置/容量问题，503（或 409）更准确。
-
-**验收**：`core/exceptions.py` 增 `Unavailable`（503）；`schedule()` 改抛它；
-前端错误码映射不用改（走统一提示）。
-
 ## T6 · `resume()` 的 `app_env == "test"` 早退（R14 观察-4）
 
 `replacement_worker.resume()` 开头 `if settings.app_env == "test" ... return`。
@@ -133,23 +119,6 @@ R14 的三条问题全部落在被这个早退遮住的函数里——测试套�
 
 **验收**：删字段并重跑 `app export-openapi`（四份生成物）；若决定留给运维诊断页，
 在字段描述里写明用途，别再让下一个人重新查一遍「这字段还有没有人用」。
-
-## T12 · `infra/storage/base.py` 头注释说错工厂位置（R14 观察-6）
-
-文件头写着「在 `infra/__init__.py` 的工厂里加分支」，而 `infra/__init__.py` 明写
-「本文件**不再包含任何 if/elif**」，真实机制是 `infra/loader.py` 的 `load_driver()`。
-照注释加驱动的人会去改错文件。
-
-**验收**：注释改成「在 `infra/storage/` 下加文件，配置 `STORAGE_DRIVER` 选实现」。
-
-## T13 · 两个运维脚本绕过 `ARCHIVE_DRIVER`（R14 观察-6）
-
-`api/scripts/import_legacy_replacement_assets.py:29` 与
-`api/scripts/refresh_archive_media.py:23` 仍 `LocalArchiveStorage()` 直接实例化。
-ruff 是干净的——这是「以正确的方式写了错误的依赖」，换 S3 后脚本仍写本地盘。
-
-**验收**：改用 `get_archive_storage()`；加一条与 provider 同款的「禁止直接实例化」守卫。
-
 ## T14 · `REVIEW_CHECKLIST` 缺两条反模式
 
 R13 与 R14 各自归纳出一个新形状，都没进清单：
@@ -206,22 +175,6 @@ FOR UPDATE`）替代；或显式在启动日志里声明「本部署只允许单
 
 ---
 
-## T18 · 内容寻址的孤儿 blob 没有 GC
-
-登记失败时有意**不删**字节（同一个 key 可能正被并发登记的另一条记录共享，硬删会打断
-别人），代价是上传中途失败会留下没人引用的 blob。需要一个 `app prune-blobs`：
-以 `assets.sha256` 全量为引用集合，删 `blobs/` 下不在集合里的对象，默认 `--dry-run`。
-
----
-
-## T19 · 归档切 S3 后视频流应走预签名 307
-
-`archive_service.stream()` 现在靠 `materialize` 把原片下到本地缓存，再由
-`FileResponse` 提供 Range。远端驱动下第一次拖进度条要等整个视频下载完。
-正解与 `/assets/{id}/file` 一致：307 到预签名 URL，由对象存储自己处理 Range。
-
----
-
 ## 已复核关闭（别再重做）
 
 2026-11-06 合并后逐条核过，以下都已修好，留在这里防止重复劳动：
@@ -239,5 +192,10 @@ FOR UPDATE`）替代；或显式在启动日志里声明「本部署只允许单
 | 原 T15 五份文档未提交 | 已提交 | `e928fbb`（`CODE_STYLE` / `REVIEW_CHECKLIST` v2.0 + R11~R14 / FE6 报告） |
 | 原 T16 两条旧分支 | 已删 | `merge/pr1`（`4e26035`）、`preview/full`（`59513ba`）`merge-base --is-ancestor` 均通过后 `git branch -d` |
 | 原 T16/T17 归档远端化 | 已修 | 协议收 key + `list_keys` 枚举；`infra/archive/runs.py` 把运行工作区分出归档；`app migrate-archive` 幂等搬家；`ARCHIVE_DRIVER=s3` 实测起/传/取全通 |
+| T5 502 表达配置状态 | 已修 | `Unavailable`（50300 / 503）；`schedule()` 改抛它，文案点名 `WORKER_ENABLED` |
+| T12 存储基类注释说错工厂 | 已修 | `infra/storage/base.py` 头注释改指 `infra/loader.py` 的 `load_driver()` |
+| T13 运维脚本绕过 `ARCHIVE_DRIVER` | 已修 | 两个脚本改 `get_archive_storage()` + key 语义；`test_archive_driver.py` 按 AST 拦直接实例化 |
+| T18 孤儿 blob 无 GC | 已修 | `app prune-blobs`：引用集合 = 库行 + 镜像 JSON，默认只报告，`--min-age-hours` 默认 24 |
+| T19 视频流全量下载 | 已修 | `ArchiveStorage.download_url()`；远端驱动 307 预签名、本地仍 `FileResponse`，出参收敛到 `modules/asset/serving.py` |
 
 `ARCHITECTURE.md` / `EXTENSIBILITY_GAPS.md` 里 A 组 13 条已修 10 条，剩余 3 条即上面的 T7/T8/T9。

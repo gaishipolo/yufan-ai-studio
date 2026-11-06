@@ -11,6 +11,7 @@ app import-archive-index           # 归档目录的 JSON 索引 → assets 表�
 app migrate-storage                # 把本地 storage 根目录的对象搬进当前驱动（local → s3）
 app migrate-blobs                  # 归档素材改内容寻址布局（key = sha256，幂等）
 app migrate-archive                # 把本地归档根的内容搬进当前归档驱动（local → s3）
+app prune-blobs                    # 回收没人引用的孤儿素材字节（默认只报告）
 app new-module voice --label 配音   # 生成新模块脚手架
 """
 
@@ -472,6 +473,75 @@ def _cmd_migrate_archive(args: argparse.Namespace) -> None:
         raise SystemExit(1)
 
 
+def _cmd_prune_blobs(args: argparse.Namespace) -> None:
+    """回收内容寻址下没人引用的字节。
+
+    孤儿从哪来：登记是「先落字节、再落库行」，中间失败（校验不过、连接断、
+    进程被杀）时字节已经在 `blobs/` 里。失败路径**有意不删**它——同一个 key
+    可能正被并发登记的另一条记录共享，硬删会打断别人（T18）。代价就是这些
+    没人引用的字节需要一次独立的、可审计的回收。
+
+    默认只报告；`--execute` 才删。`--min-age-hours` 不是保守而是必要：
+    没有它，一次正好撞上上传的回收会删掉「字节已写、行还没提交」的那一份。
+    """
+    orphans, deleted, protected = asyncio.run(
+        _prune_archive_blobs(execute=args.execute, min_age_hours=args.min_age_hours)
+    )
+    print(
+        f"孤儿字节 {orphans} 个，已删除 {deleted} 个，"
+        f"处于保护期 {protected} 个（{args.min_age_hours:g} 小时内）"
+    )
+    if not args.execute:
+        print("（dry-run：未删除任何对象；确认后加 --execute）")
+    elif protected:
+        print("保护期内的对象下轮再扫：它们可能正在被登记流程写入")
+
+
+async def _prune_archive_blobs(*, execute: bool, min_age_hours: float) -> tuple[int, int, int]:
+    from datetime import UTC, datetime, timedelta
+
+    from sqlalchemy import select
+
+    from db.session import get_session_factory
+    from infra.archive import get_archive_storage
+    from modules.asset.models import Asset
+
+    storage = get_archive_storage()
+    async with get_session_factory()() as session:
+        rows = (await session.execute(select(Asset))).scalars().all()
+
+    # 引用集合 = 库行的 storage_key/cover_key + 镜像 JSON 的同名字段。
+    # 镜像必须算进来：模板 worker 直接读 `catalog/assets/*.json`，库里删掉的行
+    # 只要镜像还在，就仍可能被人读，那份字节不能当垃圾。
+    referenced: set[str] = set()
+    for row in rows:
+        referenced.update(key for key in (row.storage_key, row.cover_key) if key)
+    for key in storage.list_keys("catalog/assets", suffix=".json"):
+        value = storage.read(key)
+        if not isinstance(value, dict):
+            continue
+        for field in ("path", "previewPath"):
+            mirror_key = value.get(field)
+            if isinstance(mirror_key, str) and mirror_key:
+                referenced.add(mirror_key)
+
+    cutoff = datetime.now(UTC) - timedelta(hours=min_age_hours)
+    orphans = deleted = protected = 0
+    for key in storage.list_keys("blobs"):
+        if key in referenced:
+            continue
+        modified = storage.modified_at(key)
+        if modified is None or modified > cutoff:
+            protected += 1
+            continue
+        orphans += 1
+        print(f"  孤儿 {key}")
+        if execute:
+            storage.remove(key)
+            deleted += 1
+    return orphans, deleted, protected
+
+
 def _rewrite_asset_mirror(storage: ArchiveStorage, row: Asset) -> None:
     """镜像 JSON 的 `path` 也要跟着搬：替换模板读的是它，不是 DB。"""
     key = f"catalog/assets/{row.id}.json"
@@ -622,6 +692,19 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_archive.add_argument("--dry-run", action="store_true", help="只统计，不写入")
     p_archive.set_defaults(func=_cmd_migrate_archive)
+
+    p_prune_blobs = sub.add_parser(
+        "prune-blobs",
+        help="回收内容寻址下没人引用的孤儿字节（默认只报告，--execute 才删）",
+    )
+    p_prune_blobs.add_argument("--execute", action="store_true", help="实际删除孤儿字节")
+    p_prune_blobs.add_argument(
+        "--min-age-hours",
+        type=float,
+        default=24.0,
+        help="只回收早于此时长的对象（默认 24 小时，避开正在进行的登记）",
+    )
+    p_prune_blobs.set_defaults(func=_cmd_prune_blobs)
 
     p_new = sub.add_parser("new-module", help="生成新模块脚手架")
     p_new.add_argument("name", help="模块名（snake_case），同时作为目录名与 pipeline kind")

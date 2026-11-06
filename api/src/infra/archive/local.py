@@ -12,6 +12,7 @@ import shutil
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
 
@@ -137,6 +138,20 @@ class LocalArchiveStorage:
     def materialize(self, location: Location) -> Iterator[Path]:
         """本地驱动没有搬运成本：路径本身就是可读的，交出去即可。"""
         yield self._path(location)
+
+    def download_url(self, location: Location, *, expires_in: int = 900) -> str | None:
+        """本地没有可直连的地址：返回 `None`，调用方用 `materialize` 直出文件。
+
+        拼一个 `file://` 或 `/static/...` 出来只会让鉴权绕过路由层，而且
+        `FileResponse` 的 Range 支持正是本地文件唯一比远端强的地方。
+        """
+        return None
+
+    def modified_at(self, location: Location) -> datetime | None:
+        try:
+            return datetime.fromtimestamp(self._path(location).stat().st_mtime, UTC)
+        except FileNotFoundError:
+            return None
 
     def remove(self, location: Location) -> None:
         self._path(location).unlink(missing_ok=True)

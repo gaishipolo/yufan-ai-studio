@@ -23,16 +23,19 @@ from pydantic import TypeAdapter  # noqa: E402
 
 from core.media import MediaCategory, StoredMedia  # noqa: E402
 from db.session import get_session_factory  # noqa: E402
+from infra.archive import BlobStore, get_archive_storage  # noqa: E402
 from infra.archive.base import checksum, within  # noqa: E402
-from infra.archive.local import LocalArchiveStorage  # noqa: E402
-from infra.media_probe import create_preview  # noqa: E402
 from modules.asset.archive_service import ArchiveAssetService  # noqa: E402
 
-storage = LocalArchiveStorage()
+# 目标端必须走驱动工厂：旧库在本地盘上读（`--legacy`），但**写**到哪由
+# `ARCHIVE_DRIVER` 决定。直接 `LocalArchiveStorage()` 会在切 S3 后把几百条
+# 记录和缩略图写回本地旧目录，脚本自报成功而线上一条都看不到。
+storage = get_archive_storage()
+blobs = BlobStore(storage)
 
 
-def read_mapping(path: Path) -> dict:
-    value = storage.read(path)
+def read_mapping(key: str) -> dict:
+    value = storage.read(key)
     if not isinstance(value, dict):
         raise ValueError("迁移索引不是对象")
     return value
@@ -50,11 +53,11 @@ def registered(source: Path, name: str, category: str, owner: str) -> dict:
 
 
 def asset_dict(asset_id: str, owner: str) -> dict:
-    """已登记过的素材从 JSON 镜像读回（迁移脚本只认盘上那份）。"""
-    path = storage.resolve(f"catalog/assets/{asset_id}.json")
-    if not path.is_file():
-        raise FileNotFoundError(f"索引缺失：{path}（请先跑 app import-archive-index）")
-    media = StoredMedia.model_validate(storage.read(path))
+    """已登记过的素材从 JSON 镜像读回（迁移脚本只认存储里那份）。"""
+    key = f"catalog/assets/{asset_id}.json"
+    if not storage.exists(key):
+        raise FileNotFoundError(f"索引缺失：{key}（请先跑 app import-archive-index）")
+    media = StoredMedia.model_validate(storage.read(key))
     if media.owner_id != owner:
         raise PermissionError(f"素材 {asset_id} 不属于 {owner}")
     return media.model_dump(mode="json", by_alias=True)
@@ -62,14 +65,16 @@ def asset_dict(asset_id: str, owner: str) -> dict:
 
 def ensure_preview(value: dict) -> None:
     media = StoredMedia.model_validate(value)
-    if media.preview_path and storage.resolve(media.preview_path).is_file():
+    if media.preview_path and storage.exists(media.preview_path):
         return
     key = f"library/previews/{media.id}.jpg"
-    if create_preview(storage.resolve(media.path), storage.resolve(key), media.type):
+    # 派生要真实路径：BlobStore 负责物化原片、在临时目录出图、再回传目标 key，
+    # 本地与远端驱动走同一条路，脚本不再自己拼 `resolve()` 出来的本地路径。
+    if blobs.derive(media.path, key, kind=media.type):
         media.preview_path = key
         media.preview_url = f"/api/v1/assets/archive/{media.id}/thumbnail"
         storage.write(
-            storage.root() / "catalog/assets" / f"{media.id}.json",
+            f"catalog/assets/{media.id}.json",
             media.model_dump(mode="json", by_alias=True),
         )
 
@@ -117,14 +122,14 @@ def main() -> None:
     print(json.dumps(summary))
     if not args.execute:
         return
-    index = storage.root() / "catalog/legacy-import.json"
-    imported = read_mapping(index) if index.exists() else {"assets": {}, "packs": {}}
+    index = "catalog/legacy-import.json"
+    imported = read_mapping(index) if storage.exists(index) else {"assets": {}, "packs": {}}
     for (old_id, category), value in unique.items():
         key = f"{args.owner}:{old_id}:{category}"
         if key in imported["assets"]:
             asset = asset_dict(imported["assets"][key]["id"], args.owner)
             ensure_preview(asset)
-            storage.write(storage.root() / "catalog/assets" / (asset["id"] + ".json"), asset)
+            storage.write(f"catalog/assets/{asset['id']}.json", asset)
             continue
         source = within(legacy, value["path"])
         if checksum(source) != value["sha256"]:

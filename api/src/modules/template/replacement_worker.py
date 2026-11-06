@@ -6,7 +6,7 @@ import asyncio
 from pathlib import Path
 
 from core.config import settings
-from core.exceptions import Conflict, NotFound, UpstreamError
+from core.exceptions import Conflict, NotFound, Unavailable, UpstreamError
 from core.logging import get_logger
 from core.ports.accounts import account_is_active
 from generation.runner import get_runner
@@ -217,7 +217,8 @@ def reconfirm_state(
 
 async def schedule(run_id: str, owner: str) -> None:
     if not settings.worker_enabled:
-        raise UpstreamError("后台执行器未启用")
+        # 配置状态，不是上游故障：503 让前端与运维都不会去查 LibTV（T5）
+        raise Unavailable("后台执行器未启用（WORKER_ENABLED=false），请联系运维开启")
     action = await asyncio.to_thread(schedule_state, run_id, owner)
     if action == "done":
         return

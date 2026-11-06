@@ -46,6 +46,7 @@ import uuid
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TypeAlias
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -85,6 +86,10 @@ from modules.asset.models import Asset
 from modules.asset.schema import AssetSource
 
 logger = get_logger(__name__)
+
+# 取件结果：`(本地路径, 重定向地址, MIME)`，前两项二选一非空。
+# 与 `AssetService.resolve_file` 同形状，路由层的出参逻辑才能共用一份。
+Serve: TypeAlias = tuple[Path | None, str | None, str]
 
 
 class ArchiveAssetService:
@@ -145,14 +150,14 @@ class ArchiveAssetService:
             raise NotFound("素材不存在或已停止共享")
         return self._to_out(row, owner)
 
-    async def preview(self, asset_id: str, owner: str) -> tuple[Path, str]:
+    async def preview(self, asset_id: str, owner: str) -> Serve:
         """受控公共预览：图片给原图，视频给浏览器可播的派生流。"""
         row = await self.visible(asset_id, owner)
         if row.type == "video":
             return await self.stream(asset_id, owner)
-        return await asyncio.to_thread(self._materialized, row.storage_key), row.mime_type
+        return await self._serve(row.storage_key, row.mime_type)
 
-    async def file(self, asset_id: str, owner: str, *, preview: bool = False) -> tuple[Path, str]:
+    async def file(self, asset_id: str, owner: str, *, preview: bool = False) -> Serve:
         row = await self.visible(asset_id, owner) if preview else await self.owned(asset_id, owner)
         if not preview and row.deleted_at is not None:
             raise NotFound("素材已移入回收站")
@@ -160,27 +165,25 @@ class ArchiveAssetService:
             # 视频没有派生封面时现场截一帧：列表用 `<img>` 取缩略图，喂不了 mp4
             derived = preview_key(_require_digest(row))
             if await asyncio.to_thread(self._create_preview, row.storage_key, derived, row.type):
-                return await asyncio.to_thread(self._materialized, derived), "image/jpeg"
+                return await self._serve(derived, "image/jpeg")
         key = row.cover_key if preview else row.storage_key
         if not key:
             raise NotFound("此素材没有缩略图")
-        return await asyncio.to_thread(self._materialized, key), (
-            "image/jpeg" if preview else row.mime_type
-        )
+        return await self._serve(key, "image/jpeg" if preview else row.mime_type)
 
-    async def stream(self, asset_id: str, owner: str) -> tuple[Path, str]:
+    async def stream(self, asset_id: str, owner: str) -> Serve:
         """悬停/页面预览用的视频流；原片字节始终由 `file` 提供，不混用。"""
         row = await self.visible(asset_id, owner)
         if row.type != "video":
             raise NotFound("此素材没有视频预览")
         derived = clip_key(_require_digest(row))
         if await asyncio.to_thread(self._derive_clip, row.storage_key, derived):
-            return await asyncio.to_thread(self._materialized, derived), "video/mp4"
+            return await self._serve(derived, "video/mp4")
         if row.owner_id != owner:
             # 别人的原片不能当预览回出去：派生失败就是失败，不能退化成原片
             raise BadRequest("公共预览生成失败，请稍后重试；原件不会作为预览返回")
         logger.warning("browser preview failed, fallback to original: %s", asset_id)
-        return await asyncio.to_thread(self._materialized, row.storage_key), row.mime_type
+        return await self._serve(row.storage_key, row.mime_type)
 
     # ------------------------------------------------------------------ 写
     async def import_asset(self, payload: ImportAsset, owner: str) -> ArchivedAsset:
@@ -382,6 +385,23 @@ class ArchiveAssetService:
         """
         with self.blobs.materialize(key) as path:
             return path
+
+    async def _serve(self, key: str, mime: str) -> Serve:
+        """取件：远端驱动给预签名地址（307），本地驱动给路径（`FileResponse`）。
+
+        视频原片 300MB。远端驱动下先 `materialize` 再 `FileResponse`，等于把
+        「拖进度条」变成「先下完整个文件」；而预签名让对象存储自己处理 Range，
+        字节也不经过应用进程（T19）。
+
+        预签名地址不校验存在性，所以远端分支要先 HEAD 一次：素材被删掉之后
+        该 404，而不是 307 到一个 403/NoSuchKey 的桶地址。
+        """
+        url = await asyncio.to_thread(self.storage.download_url, key)
+        if url is None:
+            return await asyncio.to_thread(self._materialized, key), None, mime
+        if not await asyncio.to_thread(self.storage.exists, key):
+            raise NotFound("素材字节不存在，请重新登记")
+        return None, url, mime
 
     def _create_preview(self, key: str, cover_key: str, kind: str) -> bool:
         """派生静帧封面（图片缩放 / 视频截帧）。"""

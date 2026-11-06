@@ -1,7 +1,9 @@
 """对象存储抽象。
 
 业务层只依赖 `ObjectStorage` 协议，切换本地磁盘 / S3 / OSS 不改业务代码。
-新增实现：在 `infra/storage/` 下加文件，然后在 `infra/__init__.py` 的工厂里加分支。
+新增实现：在 `infra/storage/` 下加文件（暴露 `Driver`），再用 `STORAGE_DRIVER` 选它。
+本文件与 `infra/__init__.py` 都**不含任何 if/elif**：按名加载在 `infra/loader.py`
+的 `load_driver()`，照旧注释去改工厂只会白改一处。
 """
 
 from __future__ import annotations

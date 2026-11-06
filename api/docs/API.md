@@ -159,6 +159,7 @@ Authorization: Bearer <accessToken>
 | `42900` | 429 | 框架 | `RateLimited` | 请求过于频繁，请稍后再试 |
 | `50100` | 501 | 框架 | `NotImplementedFeature` | 该功能尚未实现 |
 | `50200` | 502 | 框架 | `UpstreamError` | 上游服务异常 |
+| `50300` | 503 | 框架 | `Unavailable` | 服务暂不可用，请稍后再试 |
 
 ---
 

@@ -14,6 +14,7 @@ import time
 import uuid
 from collections.abc import Iterator
 from contextlib import AbstractContextManager, contextmanager
+from datetime import datetime
 from pathlib import Path
 from typing import IO, Protocol, TypeAlias
 
@@ -143,6 +144,28 @@ class ArchiveStorage(Protocol):
 
     def materialize(self, location: Location) -> AbstractContextManager[Path]:
         """交出可读的本地路径；退出时远端驱动负责回收缓存。"""
+        ...
+
+    def download_url(self, location: Location, *, expires_in: int = 900) -> str | None:
+        """私有对象的临时直连地址；本地类驱动返回 `None`。
+
+        为什么不让调用方一律 `materialize`：视频要拖进度条，而 `FileResponse`
+        只有拿到本地文件才支持 Range。远端驱动下先下完整个 300MB 才能出首帧，
+        等于把「流式」变成「先下再放」。返回地址让对象存储自己处理 Range，
+        字节也不经过应用进程（T19）。
+
+        `None` 是**有意义的返回值**（本地驱动、运行工作区文件），不是"没实现"。
+        拿不到地址时调用方退回 `materialize` + `FileResponse`。
+        """
+        ...
+
+    def modified_at(self, location: Location) -> datetime | None:
+        """对象最后修改时间；不存在返回 `None`。
+
+        目前只有 `app prune-blobs` 用它给回收加保护期：登记流程是「先写字节、
+        再写库行」，两件事之间有一小段窗口，此期间 blob 没有任何引用。
+        没有时间维度就只能靠"别在上传时跑回收"这种口头约定。
+        """
         ...
 
     def remove(self, location: Location) -> None: ...

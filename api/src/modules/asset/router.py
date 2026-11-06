@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Annotated
 
 from fastapi import APIRouter, Query, Request, status
 from fastapi import Path as ApiPath
-from fastapi.responses import FileResponse, RedirectResponse, Response
+from fastapi.responses import Response
 
 from api.deps import PageDep
 from core.media import MediaCategory
@@ -19,13 +18,13 @@ from modules.asset.dependencies import (
     AssetReadDep,
     AssetServiceDep,
 )
-from modules.asset.errors import AssetNotFound
 from modules.asset.schema import (
     AssetListOut,
     AssetListQuery,
     AssetOut,
     AssetTypeFilter,
 )
+from modules.asset.serving import serve
 
 router = APIRouter(prefix="/assets", tags=["素材"])
 router.include_router(archive_router)
@@ -84,24 +83,11 @@ async def delete_asset(
 async def asset_file(
     service: AssetServiceDep, actor: AssetReadDep, asset_id: AssetId
 ) -> Response:
-    return _serve(*await service.resolve_file(actor, asset_id))
+    return serve(*await service.resolve_file(actor, asset_id))
 
 
 @router.get("/{asset_id}/cover", summary="读取素材缩略图")
 async def asset_cover(
     service: AssetServiceDep, actor: AssetReadDep, asset_id: AssetId
 ) -> Response:
-    return _serve(*await service.resolve_file(actor, asset_id, cover=True))
-
-
-def _serve(path: Path | None, url: str | None, mime: str) -> Response:
-    """本地给文件、远程给 307 重定向。
-
-    重定向而不是把字节读进进程：素材可能是几十 MB 的视频，中转一次就是
-    「应用内存 × 并发数」，而对象存储自己会处理 Range。
-    """
-    if path is not None:
-        return FileResponse(path, media_type=mime)
-    if url is None:  # pragma: no cover - service 已经保证二者必有其一
-        raise AssetNotFound()
-    return RedirectResponse(url, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+    return serve(*await service.resolve_file(actor, asset_id, cover=True))

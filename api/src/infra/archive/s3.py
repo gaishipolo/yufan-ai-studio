@@ -17,8 +17,9 @@
 - **枚举走 `list_keys`**：封装草稿/发布版本/运行索引都用它，不再 `root()` 上 glob。
 - **`Path` 参数 = 运行工作区文件**（`run.json`、`inputs/*`、`records/*`），
   由本驱动的 `_workspace()` 就地读写，不进桶：桥接层与 ffmpeg 要真实文件。
-- 视频流走本地缓存 + `FileResponse`，首帧要等整个文件下完；
-  正解是 307 预签名（T19）。
+- **取件走 `download_url`（预签名 307）**：归档桶是私有的，签名交给对象存储验；
+  视频的 `Range` 也由它处理，首帧不用等整个文件下完（T19）。`materialize`
+  只剩"执行器需要真实路径"这一种用途（桥接层、ffmpeg、派生预览）。
 """
 
 from __future__ import annotations
@@ -29,6 +30,7 @@ import os
 import shutil
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
 from typing import ClassVar
@@ -280,6 +282,44 @@ class S3ArchiveStorage:
             # 有意不删：一个 run 会多次读同一张参考图（校验收据、编译提示词、派生预览），
             # 每次都重下等于把网络当磁盘用。淘汰交给 `_evict`。
             pass
+
+    def download_url(self, location: Location, *, expires_in: int = 900) -> str | None:
+        """预签名 GET：归档桶是私有的，不能像素材桶那样直接 `url_for`。
+
+        运行工作区文件返回 `None`（它们压根不在桶里），由调用方直出本地文件。
+        """
+        workspace = self._workspace(location)
+        if workspace is not None:
+            return None
+        key = self._key(location)
+        try:
+            return str(
+                self._client.generate_presigned_url(
+                    "get_object",
+                    Params={"Bucket": self._bucket, "Key": key},
+                    ExpiresIn=expires_in,
+                )
+            )
+        except (ClientError, BotoCoreError) as exc:
+            raise UpstreamError(f"归档签名失败（{self._display(key)}）：{exc}") from exc
+
+    def modified_at(self, location: Location) -> datetime | None:
+        workspace = self._workspace(location)
+        if workspace is not None:
+            if not workspace.is_file():
+                return None
+            return datetime.fromtimestamp(workspace.stat().st_mtime, UTC)
+        key = self._key(location)
+        try:
+            head = self._client.head_object(Bucket=self._bucket, Key=key)
+        except ClientError as exc:
+            if _is_missing(exc):
+                return None
+            raise UpstreamError(f"归档读取失败（{self._display(key)}）：{exc}") from exc
+        except BotoCoreError as exc:
+            raise UpstreamError(f"归档连接失败：{exc}") from exc
+        modified: datetime | None = head.get("LastModified")
+        return modified
 
     def remove(self, location: Location) -> None:
         workspace = self._workspace(location)
