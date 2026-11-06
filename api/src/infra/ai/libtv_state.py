@@ -6,6 +6,11 @@ from datetime import UTC, datetime
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+# 单个任务内的执行器锁文件名。后缀必须是 .lock：桥接层的 update() 会遍历
+# inputs/outputs/records/review/code 给每个文件算 sha256，只跳过
+# `.lock/.download/.tmp`。若叫 `.lease`，它会去读刚刚被自己锁住的字节，
+# 在归档盘（SMB）上直接 EBUSY——表现为每次自动执行都失败、手工执行却成功。
+RUN_LOCK = "records/executor.lock"
 # 启动方（libtv.py）与监督进程（libtv_process.py）之间的参数协议版本。
 # 放在这里是因为两侧都已经依赖本模块；改协议时只改这一个数，且必须想清楚旧进程怎么办。
 LIBTV_PROCESS_PROTOCOL = 1

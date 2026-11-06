@@ -11,9 +11,13 @@ from pydantic import BaseModel
 
 from core.exceptions import NotFound
 from core.media import StoredMedia
-from infra.ai.libtv_state import LibTVState
+from infra.ai.libtv_state import RUN_LOCK, LibTVState
 from infra.archive import ArchiveStorage, get_archive_storage, lease
-from modules.template.replacement_schema import ReplacementKind, ReplacementPack
+from modules.template.replacement_schema import (
+    ReplacementInputSummary,
+    ReplacementKind,
+    ReplacementPack,
+)
 
 
 class RunPointer(BaseModel):
@@ -35,6 +39,9 @@ class ReplacementManifest(LibTVState):
     # 自动重试计数（执行器繁忙 / 成片下载失败）。旧的 run.json 没有这个字段，
     # 默认 0 即「还没重试过」；人工再点「继续」会清零，重新拿一份额度。
     retry_count: int = 0
+    # 输入在 prepare 时一次成型并快照，列表/任务中心直接复用，不再逐条回读
+    # configuration / reference-pack / input-map。旧档案为 None，由读取方按需重算。
+    input_summary: ReplacementInputSummary | None = None
 
 
 class PublishedPack(ReplacementPack):
@@ -61,9 +68,13 @@ class ReplacementRepository:
 
     @contextmanager
     def edit(self, run_id: str) -> Iterator[ReplacementManifest]:
-        """与独立监督进程互斥，禁止覆盖它刚写入的提交回执。"""
+        """与独立监督进程互斥，禁止覆盖它刚写入的提交回执。
+
+        锁名沿用执行器的 RUN_LOCK（`.lock` 后缀）：桥接层的 update() 会遍历
+        records 给每个文件算 sha256，只跳过 `.lock/.download/.tmp`。
+        """
         path = self.path(run_id)
-        with lease(path / "records/executor.lease"):
+        with lease(path / RUN_LOCK):
             meta = self.load(path)
             yield meta
             self.save(path, meta)
@@ -97,7 +108,23 @@ class ReplacementRepository:
             PublishedPack.model_validate(self.storage.read(p))
             for p in (self.storage.root() / "catalog/packs").glob("*.json")
         ]
-        return [ReplacementPack.model_validate(p.model_dump()) for p in rows if p.owner_id == owner]
+        return [self._public_pack(p) for p in rows if p.owner_id == owner]
+
+    def _public_pack(self, pack: PublishedPack) -> ReplacementPack:
+        cover = pack.cover_reference_id
+        if cover not in pack.reference_ids:
+            # 迁移时 bindings 与新 reference_ids 按相同顺序写入；不能用旧 material_id。
+            front = next(
+                (i for i, binding in enumerate(pack.bindings) if binding.role == "front"), 0
+            )
+            cover = (
+                pack.reference_ids[front]
+                if front < len(pack.reference_ids)
+                else next(iter(pack.reference_ids), None)
+            )
+        return ReplacementPack.model_validate(pack.model_dump()).model_copy(
+            update={"cover_reference_id": cover}
+        )
 
     def all_paths(self) -> list[Path]:
         return [

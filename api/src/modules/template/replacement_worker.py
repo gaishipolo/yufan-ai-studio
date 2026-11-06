@@ -12,6 +12,7 @@ from core.ports.accounts import account_is_active
 from generation.runner import get_runner
 from infra import get_queue
 from infra.ai.libtv import execute_stage
+from infra.media_catalog import MediaCatalog, catalog_lease
 from infra.queue.base import Job
 from modules.template.replacement_pipeline import KIND_REPLACEMENT
 from modules.template.replacement_repository import ReplacementManifest, ReplacementRepository
@@ -115,6 +116,40 @@ async def enqueue(run_id: str, *, delay: float = 0) -> None:
     )
 
 
+def set_billing_mode(run_id: str, owner: str, mode: str) -> None:
+    """切换这一条任务的计费模式；已交给上游的任务不允许再改。
+
+    `credits` 只影响本任务：提交时关掉账号的 0 积分权益标签走正常积分队列，
+    **不动账号级开关**（billing-default），同账号的其他人下次提交仍走免费队列。
+    这也是 legacy 文档推荐的做法——账号开关不等于某次任务的费用保证。
+    """
+    if mode not in ("free", "credits"):
+        raise Conflict("计费模式无效")
+    repo = ReplacementRepository()
+    with repo.edit(run_id) as meta:
+        if meta.owner_id != owner:
+            raise NotFound("调用档案不存在")
+        # 已提交上游 = 队列锁定，但「再点一次确认」不该被拦成错误：
+        # 前端重新提交时会带上档案里的模式，那不是切换，用户要的只是看进度。
+        # 只有「把一条已在免费队列的任务改成积分」才是真冲突，因为它要花钱。
+        if meta.task_id and mode == "credits" and meta.billing_mode != "credits":
+            raise Conflict(
+                "这条任务已在上游免费队列中，计费队列不能再改；"
+                "继续执行只会查询进度。如需用积分生成，请新建一条任务再勾选加速"
+            )
+        if meta.task_id or meta.billing_mode == mode:
+            return
+        meta.billing_mode = mode
+        # 旧报价属于另一条队列：免费队列报 0、积分队列报正数，沿用它只会误导核对。
+        meta.estimated_credits = None
+        # 免费队列只有在报价非 0 时才会卡在 waiting_free；换到积分队列后应当继续准备，
+        # 否则点了加速仍然停在原地，看起来像按钮没反应。
+        if mode == "credits" and meta.status == "waiting_free":
+            meta.status = "uploaded"
+            meta.framework_status = "queued"
+            meta.last_error = None
+
+
 def schedule_state(run_id: str, owner: str) -> str:
     repo = ReplacementRepository()
     with repo.edit(run_id) as meta:
@@ -131,6 +166,10 @@ def schedule_state(run_id: str, owner: str) -> str:
             raise Conflict("输入尚未准备完成，请先使用原配置继续准备")
         if meta.status not in RETRYABLE and meta.status not in ("queued", "uploading", "uploaded"):
             raise Conflict("该任务当前不能提交")
+        # 提交前核对素材仍可用：原片被移入回收站、参考素材被删、封装被撤版，
+        # 都会让上游白跑一趟并扣费。锁只覆盖「读快照 → 置 queued」这段窗口。
+        with catalog_lease(repo.storage):
+            MediaCatalog(repo.storage).check_run(repo.path(run_id))
         meta.status = "queued"
         meta.last_error = None
         meta.framework_status = "queued"

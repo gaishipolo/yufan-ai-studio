@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import time
 import uuid
 from functools import lru_cache
 from pathlib import Path
@@ -16,6 +17,9 @@ from pathlib import Path
 from core.exceptions import Conflict, UpstreamError
 from infra.archive.base import checksum, within
 from infra.driver_config import DriverSettings, driver_config
+
+# 归档盘上的原子替换窗口：3 次约 150ms 足以跨过桥接层的一次重写。
+ARCHIVE_READ_RETRIES = 3
 
 
 class ArchiveSettings(DriverSettings):
@@ -59,7 +63,20 @@ class LocalArchiveStorage:
         return within(self.root(), key)
 
     def read(self, path: Path) -> object:
-        return json.loads(path.read_text(encoding="utf-8"))
+        """读 JSON；容忍归档盘原子替换暴露出的瞬时缺失。
+
+        SMB 上 `rename` 不保证 POSIX 语义，桥接层每次 update() 都会重写 run.json，
+        覆盖瞬间路径可能短暂不存在（实测轮询期间读到 FileNotFoundError，接口随之 500）。
+        读方必须自己跨过这个窗口，调用方不需要处理「文件刚被替换」。
+        """
+        for attempt in range(ARCHIVE_READ_RETRIES):
+            try:
+                return json.loads(path.read_text(encoding="utf-8"))
+            except (FileNotFoundError, json.JSONDecodeError):
+                if attempt == ARCHIVE_READ_RETRIES - 1:
+                    raise
+                time.sleep(0.05 * (attempt + 1))
+        raise AssertionError("unreachable")
 
     def write(self, path: Path, value: object) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)

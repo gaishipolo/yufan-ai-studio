@@ -1,4 +1,8 @@
-"""归档视频的时长归一化与浏览器兼容预览；只用临时目录，不访问 Z 盘。"""
+"""归档视频的时长归一化与浏览器兼容预览；只用临时目录，不访问 Z 盘。
+
+素材登记一律走 HTTP 上传：索引在 `assets` 表，服务层构造（`ArchiveAssetService()`）
+需要 session，测试里直接调同步方法等于绕开真实的入库路径。
+"""
 
 from __future__ import annotations
 
@@ -13,7 +17,7 @@ from PIL import Image
 from tests_archive_helpers import archive
 
 from infra.archive.local import get_archive_settings
-from infra.media_probe import create_browser_preview, normalize_duration
+from infra.media_probe import PREVIEW_VERSION, create_browser_preview, inspect, normalize_duration
 
 
 @pytest.fixture
@@ -23,7 +27,8 @@ def archive_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return tmp_path
 
 
-def make_video(path: Path) -> Path:
+def make_video(path: Path, size: str = "64x64") -> Path:
+    # 颜色取随机值：内容摘要参与归档去重，两个用例生成同一份字节会互相命中
     subprocess.run(
         [
             imageio_ffmpeg.get_ffmpeg_exe(),
@@ -33,7 +38,7 @@ def make_video(path: Path) -> Path:
             "-f",
             "lavfi",
             "-i",
-            f"color=c=0x{os.urandom(3).hex()}:s=64x64:d=2",
+            f"color=c=0x{os.urandom(3).hex()}:s={size}:d=2",
             "-f",
             "lavfi",
             "-i",
@@ -67,11 +72,12 @@ def test_stream_serves_playable_derivative_and_preserves_original(
 ) -> None:
     source = make_video(archive_root / "sample.mp4")
     original = source.read_bytes()
-    media = archive.upload(client, "sample.mp4", "source", source.read_bytes())
+    media = archive.upload(client, "sample.mp4", "source", original)
     response = client.get(f"/api/v1/assets/archive/{media['id']}/stream")
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("video/mp4")
-    derived = archive_root / "library/previews" / f"{media['id']}.mp4"
+    # 派生文件名带画质版本：升级转码参数时旧缓存自动失效，不需要手工清目录
+    derived = archive_root / "library/previews" / f"{media['id']}.{PREVIEW_VERSION}.mp4"
     assert derived.is_file()
     assert derived.read_bytes() == response.content
     assert source.read_bytes() == original  # 派生预览绝不覆盖原片
@@ -85,6 +91,25 @@ def test_stream_serves_playable_derivative_and_preserves_original(
     assert "yuv420p(" in probe.stderr  # 8-bit，浏览器可解码
     assert "yuv420p10" not in probe.stderr
     assert client.get(media["url"]).content == original
+    assert inspect(derived, ".mp4")["width"] == 64  # 不放大小尺寸原片
+
+
+def test_portrait_thumbnail_keeps_detail(client: TestClient, archive_root: Path) -> None:
+    """竖屏原片的缩略图不能统一压成固定小图：720×1280 原样保留。"""
+    source = make_video(archive_root / "portrait.mp4", "720x1280")
+    media = archive.upload(client, "portrait.mp4", "source", source.read_bytes())
+    response = client.get(media["previewUrl"])
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("image/jpeg")
+    thumbnail = archive_root / "library/previews" / f"{media['id']}.{PREVIEW_VERSION}.jpg"
+    assert thumbnail.read_bytes() == response.content
+    with Image.open(thumbnail) as image:
+        assert image.size == (720, 1280)
+    assert client.get(f"/api/v1/assets/archive/{media['id']}/stream").status_code == 200
+    info = inspect(
+        archive_root / "library/previews" / f"{media['id']}.{PREVIEW_VERSION}.mp4", ".mp4"
+    )
+    assert (info["width"], info["height"]) == (720, 1280)
 
 
 def test_stream_rejects_non_video(client: TestClient, archive_root: Path) -> None:

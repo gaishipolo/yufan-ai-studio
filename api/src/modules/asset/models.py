@@ -16,9 +16,12 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    DateTime,
     Float,
     Index,
     Integer,
@@ -66,10 +69,29 @@ class Asset(Base, UUIDMixin, TimestampMixin):
 
     owner_id: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
 
+    # ------------------------------------------------------------------ 共享 / 回收站
+    # 这三列原先只存在 `catalog/assets/*.json` 里（归档盘上的第二份真相）。
+    # 索引搬进 DB 之后必须跟着搬，否则「列表按 DB、可见性按 JSON」，删掉的素材
+    # 会从另一条路径复活。`state_version` 是乐观锁：改名/分享/删除都要带版本，
+    # 客户端拿旧版本重试时能分清「响应丢了」和「别人改过」。
+    shared: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    shared_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    state_version: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
     __table_args__ = (
         Index("ix_assets_owner_type", "owner_id", "type"),
         # 列表分页的排序键是 (created_at desc, id desc)，索引与它同序才不用额外排序
         Index("ix_assets_owner_created", "owner_id", "created_at"),
+        # 公共原片池的查询形状：`category='source' AND shared AND deleted_at IS NULL`
+        # 是全表范围扫描（不带 owner），补一条部分索引，避免它退化成全表扫。
+        Index(
+            "ix_assets_shared_source",
+            "category",
+            "created_at",
+            sqlite_where=text("shared = 1 AND deleted_at IS NULL"),
+            postgresql_where=text("shared AND deleted_at IS NULL"),
+        ),
         # 同 owner 内按内容去重，**只约束非归档来源**：
         # 归档登记的是「盘上已经存在的文件」，它与同一个人上传的同一份文件是两条
         # 真实记录（两份物理副本、两套 URL）。用全表唯一约束会把登记直接拒掉。

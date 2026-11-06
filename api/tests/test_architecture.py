@@ -74,6 +74,26 @@ def test_modules_do_not_import_each_other() -> None:
     assert not offenders, "业务模块之间出现横向依赖：\n" + "\n".join(offenders)
 
 
+# `api` 只提供装配点：模块契约、依赖注入、主体解析与账户状态注入。
+# 其它 `api.*` 是装配层内部实现，模块引用会形成反向边，环和启动顺序问题都会回来。
+ASSEMBLY_POINTS = ("api.module", "api.deps", "api.accounts", "api.authn")
+
+
+def test_modules_only_touch_api_assembly_points() -> None:
+    offenders: list[str] = []
+    for path in _python_files(MODULES_DIR):
+        for imported in _imported_modules(path):
+            if not (imported == "api" or imported.startswith("api.")):
+                continue
+            if any(imported == p or imported.startswith(f"{p}.") for p in ASSEMBLY_POINTS):
+                continue
+            offenders.append(f"{path.relative_to(SRC)} -> {imported}")
+
+    assert not offenders, (
+        "业务模块引用了装配层实现，依赖方向应为 api → modules：\n" + "\n".join(offenders)
+    )
+
+
 # --------------------------------------------------------------------------- #
 # 模块自注册
 # --------------------------------------------------------------------------- #

@@ -9,12 +9,14 @@ from fastapi import APIRouter, Depends, Query
 from api.deps import SessionDep, require
 from core.context import CurrentUser
 from core.response import ApiResponse
+from modules.template.pack_router import router as pack_router
 from modules.template.replacement_router import router as replacement_router
 from modules.template.schema import TemplateListOut
 from modules.template.service import TemplateService
 
 router = APIRouter(prefix="/templates", tags=["模板"])
 router.include_router(replacement_router)
+router.include_router(pack_router)
 
 
 def get_template_service(session: SessionDep) -> TemplateService:

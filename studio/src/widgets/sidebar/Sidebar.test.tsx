@@ -13,7 +13,7 @@ import { Sidebar } from './Sidebar';
 
 // 角标组件会真的取数，单测里替换掉，只验证「角标被渲染」这件事
 vi.mock('@/entities/task/api/task.queries', () => ({
-  useTaskStats: () => ({ data: { running: 3 } }),
+  useTaskFeed: () => ({ data: { stats: { running: 3 } } }),
 }));
 
 const load = () => Promise.resolve({ default: () => null });

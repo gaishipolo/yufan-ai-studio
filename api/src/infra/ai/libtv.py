@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 import subprocess
 import sys
@@ -41,6 +42,8 @@ class LibTvSettings(DriverSettings):
     legacy_root: str = ""
     # node 可执行文件；模板模块编译提示词时也用这个
     node: str = "node"
+    # 适配器从已登录的本地浏览器读 Cookie；显式下发，避免依赖 API 进程继承的环境变量。
+    browser_url: str = "http://127.0.0.1:9226"
 
 
 @lru_cache
@@ -108,6 +111,8 @@ async def execute_stage(run_id: str, stage: str) -> ExecutorResult:
         stdin=subprocess.PIPE,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
+        # 适配器要从已登录的浏览器读 Cookie；显式下发，别依赖 API 进程碰巧继承到的环境变量。
+        env={**os.environ, "JS_REVERSE_BROWSER_URL": get_libtv_settings().browser_url},
     )
     # 取消等待不杀监督进程；它继续持有租约并保存回执，重启后可恢复。
     # Windows 的 uvicorn reload 使用 Selector loop，不支持 asyncio 子进程 API。
@@ -167,8 +172,13 @@ class LibTVProvider:
             raise UpstreamError("提交回执未知，禁止自动重提")
         if latest.status == "waiting_free":
             raise BadRequest("当前报价非零，等待免费；未提交生成")
-        if result.code == "EXECUTOR_BUSY":
-            raise BadRequest("账号执行器正在占用，请稍后继续；未提交生成")
+        if latest.status == "service_error" and latest.last_error:
+            # 适配器给了具体原因（积分队列仍报 0、估价不可用等），原样透出。
+            raise BadRequest(f"{latest.last_error}；未提交生成")
+        if result.code in ("EXECUTOR_BUSY", "STALE_LOCK"):
+            # 两种「没提上去」的原因要分开：账号被别的任务占着是等一等，
+            # 遗留锁是要人去核对档案，混成一句话会把人引向错误的动作。
+            raise BadRequest(f"{result.message}；未提交生成")
         raise BadRequest(f"提交前检查未完成：{result.message or result.code}；未提交生成")
 
     async def poll(self, external_id: str, *, model: str = "") -> GenerationProgress:

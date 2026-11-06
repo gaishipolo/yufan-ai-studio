@@ -28,7 +28,7 @@ from __future__ import annotations
 
 from typing import Literal, cast
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.config import settings
@@ -62,7 +62,12 @@ class ArchiveAssetRepository:
             raise NotFound("素材不存在")
         return row
 
-    async def list(self, owner: str, category: str = "all") -> list[Asset]:
+    async def list_owned(self, owner: str, category: str = "all") -> list[Asset]:
+        """某人的全部归档行（不分页）。列表接口走 `list_visible`，这里留给脚本与统计。
+
+        方法名不叫 `list`：类体内 `list` 会遮蔽内置类型，`tuple[list[Asset], ...]`
+        这类注解会被 mypy 解析成「方法不是类型」。
+        """
         stmt = (
             select(Asset)
             .where(
@@ -74,6 +79,74 @@ class ArchiveAssetRepository:
         if category != "all":
             stmt = stmt.where(Asset.category == category)
         return list((await self.session.scalars(stmt)).all())
+
+    async def list_visible(
+        self,
+        owner: str,
+        category: str,
+        scope: str,
+        keyword: str,
+        state: str,
+        page: int,
+        page_size: int,
+    ) -> tuple[list[Asset], int, int]:
+        """按 scope 取一页，并给出「全部命中行」的条数与占用。
+
+        `total` / `usedBytes` 是**过滤后的全量**，不是当前页：前端用它们显示
+        「共 N 个 / 占 X GB」，拿当前页求和会随着翻页跳数字。
+
+        过滤全部下推到 SQL：这是索引搬进 DB 的意义，别在 Python 里对全表做
+        `keyword in name` —— 那等于把 glob 时代的问题原样搬过来。
+        """
+        conditions = [Asset.source == AssetSource.ARCHIVE]
+        if category != "all":
+            conditions.append(Asset.category == category)
+        if scope == "trash":
+            conditions += [
+                Asset.owner_id == owner,
+                Asset.deleted_at.is_not(None),
+            ]
+        elif scope == "public":
+            # 公共原片池：别人分享的、未删除的原片。只认 `source` 分类，
+            # 人物/产品/场景走封装（pack），不在这里按图分享。
+            conditions += [
+                Asset.deleted_at.is_(None),
+                Asset.shared.is_(True),
+                Asset.category == "source",
+            ]
+        else:  # mine
+            conditions += [
+                Asset.owner_id == owner,
+                Asset.deleted_at.is_(None),
+            ]
+        if keyword.strip():
+            conditions.append(Asset.name.ilike(f"%{keyword.strip()}%"))
+        if state != "all":
+            conditions.append(Asset.shared.is_(state == "shared"))
+
+        total = await self.session.scalar(
+            select(func.count()).select_from(select(Asset.id).where(*conditions).subquery())
+        )
+        used = await self.session.scalar(
+            select(func.coalesce(func.sum(Asset.size_bytes), 0)).where(*conditions)
+        )
+        rows = list(
+            (
+                await self.session.scalars(
+                    select(Asset)
+                    .where(*conditions)
+                    .order_by(Asset.created_at.desc(), Asset.id.desc())
+                    .offset((page - 1) * page_size)
+                    .limit(page_size)
+                )
+            ).all()
+        )
+        return rows, int(total or 0), int(used or 0)
+
+    async def save(self, row: Asset) -> Asset:
+        """把内存里的改动落库；提交由 service 控制（一次操作一个事务）。"""
+        await self.session.flush()
+        return row
 
     async def add(self, row: Asset) -> Asset:
         self.session.add(row)
@@ -106,4 +179,11 @@ class ArchiveAssetRepository:
             url=f"{base}/file",
             preview_url=f"{base}/thumbnail" if preview_key else None,
             preview_path=preview_key,
+            # 共享 / 回收站状态跟着行走：JSON 镜像由这里派生，
+            # `MediaCatalog` 读镜像判断「已删除就不许模板引用」，两处必须同源。
+            # 兜 None：ORM 的 `default=` 要到 flush 才落值，而镜像是在 flush 之前写的。
+            shared=bool(row.shared),
+            shared_at=row.shared_at,
+            deleted_at=row.deleted_at,
+            state_version=row.state_version or 0,
         )

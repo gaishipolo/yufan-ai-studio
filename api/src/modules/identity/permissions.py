@@ -76,13 +76,18 @@ BUILTIN_ROLES: tuple[BuiltinRole, ...] = (
         permissions=(
             "catalog:read",
             "task:*",
-            "asset:*",
+            "asset:read",
+            "asset:create",
+            "asset:update",
+            "asset:delete",
+            "asset:share",
             "image:*",
             "template:read",
             # 模板替换的「提交生成」：editor 本来就持有 task:* / image:*，
             # 替换只是把同一件事（产内容）换个入口。少了这一条，非超管点提交
             # 会拿到 403——功能上线即不可用，而超管自测发现不了。
             "template:use",
+            "template:review",
             "storyboard:read",
             "shot:read",
         ),
@@ -100,6 +105,22 @@ BUILTIN_ROLES: tuple[BuiltinRole, ...] = (
             "template:read",
             "storyboard:read",
             "shot:read",
+        ),
+    ),
+    BuiltinRole(
+        code="asset_specialist",
+        name="素材专员",
+        description="维护本人参考素材、封装和发布公共对象；执行任务需另授内容编辑角色",
+        sort_order=15,
+        permissions=(
+            "asset:read",
+            "asset:create",
+            "asset:update",
+            "asset:delete",
+            "asset:reference:manage",
+            "template:read",
+            "template:pack:manage",
+            "template:pack:publish",
         ),
     ),
 )

@@ -53,6 +53,7 @@ from dataclasses import dataclass
 
 from api.authn import has_principal_resolver
 from core.audit import has_audit_sink
+from core.feed import has_replacement_feed
 from core.ports.accounts import has_account_status_checker
 from core.ports.assets import has_asset_reference_checker
 
@@ -117,6 +118,15 @@ PORT_CATALOG: tuple[PortSpec, ...] = (
         when_unregistered="返回空映射，删除一律放行。默认「可能有引用就拒绝」"
         "会让删除功能在实现接上之前完全不可用，而用户只看到「删不掉」",
         is_registered=has_asset_reference_checker,
+    ),
+    PortSpec(
+        name="replacement-feed",
+        module="core.feed",
+        protocol="",  # 类型是 Callable 别名，没有具名协议类
+        implementer="modules/template（导入模块时自注册 replacement_feed 读取器）",
+        when_unregistered="任务中心看到空列表：替换档案不计入待办与统计，"
+        "但页面本身仍可用",
+        is_registered=has_replacement_feed,
     ),
 )
 

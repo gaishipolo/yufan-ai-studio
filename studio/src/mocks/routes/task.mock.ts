@@ -1,10 +1,11 @@
 import type { AspectRatio, TaskStatus, VideoTask } from '@/entities/task/model/types';
+import type { TaskFeedItem } from '@/entities/task/model/feed.types';
 import { db } from '../db';
 import { HttpError, type MockContext, type MockRoute } from '../kernel';
 
 /* ---------------- 任务 ---------------- */
 
-function listTasks(ctx: MockContext) {
+function listTasks(ctx: MockContext, maxPageSize = 100) {
   const {
     status = 'all',
     keyword = '',
@@ -56,7 +57,7 @@ function listTasks(ctx: MockContext) {
   list.sort(compare[String(sort)] ?? compare.createdAt_desc);
 
   const p = Math.max(1, Number(page) || 1);
-  const ps = Math.max(1, Math.min(100, Number(pageSize) || 24));
+  const ps = Math.max(1, Math.min(maxPageSize, Number(pageSize) || 24));
   const total = list.length;
 
   return {
@@ -71,6 +72,28 @@ function listTasks(ctx: MockContext) {
 }
 
 export const routes: MockRoute[] = [
+  {
+    method: 'GET',
+    pattern: /^\/tasks\/feed$/,
+    handler: (ctx) => {
+      // 演示库没有替换档案；明确提示，不把演示数据伪装成真实归档。
+      const data = listTasks({...ctx, params: {...ctx.params, status: 'all', page: 1, pageSize: Number.MAX_SAFE_INTEGER}}, Number.MAX_SAFE_INTEGER);
+      const items: TaskFeedItem[] = ctx.params.source === 'replacement' ? [] : data.items.map(video => ({
+        key: `video:${video.id}`, id: video.id, source: 'video', title: video.title,
+        status: video.status, group: video.status === 'queued' ? 'running' : video.status,
+        createdAt: video.createdAt, progress: video.progress, sourceName: '', video,
+      }));
+      const stats = {all: items.length, running: items.filter(item => item.group === 'running').length,
+        completed: items.filter(item => item.group === 'completed').length,
+        failed: items.filter(item => item.group === 'failed').length, attention: 0};
+      const status = ctx.params.status ?? 'all';
+      const filtered = items.filter(item => status === 'all' || item.group === status || (status === 'queued' && item.status === 'queued'));
+      const page = Math.max(1, Number(ctx.params.page) || 1);
+      const pageSize = Math.max(1, Math.min(100, Number(ctx.params.pageSize) || 24));
+      return {items: filtered.slice((page - 1) * pageSize, page * pageSize), total: filtered.length,
+        page, pageSize, stats, canReadAll: true, warnings: ['演示模式不读取真实替换档案，请连接后端查看替换任务。']};
+    },
+  },
   {
     method: 'GET',
     pattern: /^\/tasks$/,

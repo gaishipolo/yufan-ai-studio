@@ -2,9 +2,9 @@
 
 # Mock 覆盖率（只记录，不作门禁）
 
-后端端点 61 条（来自 `schema.ts` 的 `EndpointData`），
-已注册 mock 路由 36 条（来自 `mockRouteTable()`），
-按「同方法 + 正则能匹配」判定疑似覆盖 35 条。
+后端端点 77 条（来自 `schema.ts` 的 `EndpointData`），
+已注册 mock 路由 37 条（来自 `mockRouteTable()`），
+按「同方法 + 正则能匹配」判定疑似覆盖 36 条。
 
 > **这是记录，不是门禁**：CI 不检查覆盖率是否达标，也不要求新增端点必须带 mock。
 > 一条 handler 可以覆盖多个端点（例如 `/tasks/([\w-]+)` 同时命中详情与删除），
@@ -40,7 +40,12 @@
 | GET | `/api/v1/assets/{}/cover` |
 | GET | `/api/v1/assets/{}/file` |
 | GET | `/api/v1/assets/archive` |
+| GET | `/api/v1/assets/archive/{}` |
+| PUT | `/api/v1/assets/archive/{}/deleted` |
 | GET | `/api/v1/assets/archive/{}/file` |
+| PUT | `/api/v1/assets/archive/{}/name` |
+| GET | `/api/v1/assets/archive/{}/preview` |
+| PUT | `/api/v1/assets/archive/{}/sharing` |
 | GET | `/api/v1/assets/archive/{}/stream` |
 | GET | `/api/v1/assets/archive/{}/thumbnail` |
 | POST | `/api/v1/assets/archive/import` |
@@ -57,10 +62,20 @@
 | POST | `/api/v1/images/{}/retry` |
 | PATCH | `/api/v1/tasks/{}` |
 | GET | `/api/v1/templates/replacement-catalog` |
+| GET | `/api/v1/templates/replacement-packs` |
+| POST | `/api/v1/templates/replacement-packs/{}/disable` |
+| GET | `/api/v1/templates/replacement-packs/{}/preview/{}` |
+| POST | `/api/v1/templates/replacement-packs/{}/publish` |
+| GET | `/api/v1/templates/replacement-packs/available` |
+| PUT | `/api/v1/templates/replacement-packs/draft` |
 | POST | `/api/v1/templates/replacement-runs` |
+| DELETE | `/api/v1/templates/replacement-runs/{}` |
 | GET | `/api/v1/templates/replacement-runs/{}` |
 | POST | `/api/v1/templates/replacement-runs/{}/execute` |
+| GET | `/api/v1/templates/replacement-runs/{}/inputs/{}` |
 | GET | `/api/v1/templates/replacement-runs/{}/output` |
 | POST | `/api/v1/templates/replacement-runs/{}/reconfirm` |
+| POST | `/api/v1/templates/replacement-runs/{}/restore` |
+| PUT | `/api/v1/templates/replacement-runs/{}/review` |
 
-（未命中 26 条；已命中 35 条不在本表重复列出。）
+（未命中 41 条；已命中 36 条不在本表重复列出。）

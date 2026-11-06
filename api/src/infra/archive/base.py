@@ -14,7 +14,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import IO, Protocol
 
-from core.exceptions import BadRequest, Conflict
+from core.exceptions import AppError, BadRequest, Conflict
 
 if sys.platform == "win32":
     import msvcrt
@@ -42,15 +42,36 @@ def release(stream: IO[bytes]) -> None:
         fcntl.flock(stream, fcntl.LOCK_UN)
 
 
+ARCHIVE_BUSY = "归档正在被其他执行器处理，请稍后继续"
+
+
 @contextmanager
-def lease(path: Path) -> Iterator[None]:
-    """OS 锁随进程退出自动释放；文件存在不代表仍被占用。"""
+def lease(
+    path: Path,
+    *,
+    message: str = ARCHIVE_BUSY,
+    error: type[AppError] = Conflict,
+) -> Iterator[None]:
+    """OS 锁随进程退出自动释放；文件存在不代表仍被占用。
+
+    `error` / `message` 由调用方指定，因为这里抢的可能是完全不同的三把锁：
+    共享归档、单个任务档案、账号执行器。三者被占用时的处理方式不一样
+    （归档要等、任务档案要核对、账号执行器要排队），统一报「归档正被处理」
+    只会把人引到错误的排查方向。
+
+    打不开锁文件（权限、被别的进程独占共享）与「锁已被别人持有」是两件事，
+    但都不该冒泡成 500：它们是**可预期的忙**，不是服务端故障。
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a+b") as stream:
+    try:
+        stream = path.open("a+b")
+    except OSError as exc:
+        raise error(message) from exc
+    with stream:
         try:
             acquire(stream)
         except OSError as exc:
-            raise Conflict("归档正在被其他执行器处理，请稍后继续") from exc
+            raise error(message) from exc
         try:
             yield
         finally:

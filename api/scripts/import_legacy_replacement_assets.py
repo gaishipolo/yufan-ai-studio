@@ -16,6 +16,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+# 同目录下的封装同步脚本也要能直接 import
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from pydantic import TypeAdapter  # noqa: E402
 
@@ -135,28 +137,21 @@ def main() -> None:
             "path": asset["path"],
         }
         storage.write(index, imported)
+    # 封装记录交给 sync_legacy_packs：那里经 PackService 保存并发布，
+    # 会补齐逐图用途、必备用途和替换范围。这里若直接写 JSON，
+    # 缺 status/version 的包会被读成草稿，模板页永远选不到。
+    from sync_legacy_packs import run_sync
+
+    for line in run_sync(legacy, args.owner, execute=True):
+        print(line)
     for pack in published:
-        refs = [
-            imported["assets"][f"{args.owner}:{b['material_id']}:{pack['kind']}"]["id"]
-            for b in pack["bindings"]
-        ]
-        value = {
-            "id": pack["id"],
+        imported["packs"][pack["id"]] = {
             "name": pack["name"],
-            "kind": pack["kind"],
-            "referenceIds": refs,
-            "wardrobeMode": pack["wardrobe_mode"],
-            "features": pack["features"],
-            "instructions": pack["instructions"],
-            "ownerId": args.owner,
-            "legacyRevisionId": pack["published_revision_id"],
-            "bindings": pack["bindings"],
-            "supportedScopes": json.loads(pack["supported_scopes"]),
-            "requiredRoles": json.loads(pack["required_roles"]),
-            "legacyVersion": pack["version"],
+            "referenceIds": [
+                imported["assets"][f"{args.owner}:{b['material_id']}:{pack['kind']}"]["id"]
+                for b in pack["bindings"]
+            ],
         }
-        storage.write(storage.root() / "catalog/packs" / (pack["id"] + ".json"), value)
-        imported["packs"][pack["id"]] = {"name": pack["name"], "referenceIds": refs}
     imported["completedAt"] = datetime.now(UTC).isoformat()
     storage.write(index, imported)
     print("Copied and verified; no generation submitted.")

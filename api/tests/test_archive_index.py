@@ -27,6 +27,7 @@ from sqlalchemy import delete, select
 
 from db.session import get_session_factory
 from infra.archive.local import get_archive_settings
+from infra.media_probe import PREVIEW_VERSION
 from modules.asset.archive_import import import_archive_index
 from modules.asset.models import Asset
 
@@ -117,7 +118,8 @@ def test_upload_writes_row_and_json_mirror(
     mirror = json.loads(row.read_text(encoding="utf-8"))
     assert mirror["ownerId"] == "u_001"
     assert mirror["path"] == item["path"]
-    assert mirror["previewPath"] == f"library/previews/{item['id']}.jpg"
+    # 预览 key 带画质版本：升级转码参数时旧缓存自动失效（不手工清目录）
+    assert mirror["previewPath"] == f"library/previews/{item['id']}.{PREVIEW_VERSION}.jpg"
 
     listed = client.get(f"{API}/assets/archive", params={"category": "character"})
     ids = [value["id"] for value in listed.json()["data"]["items"]]

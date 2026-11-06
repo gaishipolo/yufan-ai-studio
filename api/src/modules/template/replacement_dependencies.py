@@ -18,3 +18,7 @@ def get_replacement_service() -> ReplacementService:
 ReplacementServiceDep = Annotated[ReplacementService, Depends(get_replacement_service)]
 ReplacementReadDep = Annotated[CurrentUser, Depends(require("template:read"))]
 ReplacementWriteDep = Annotated[CurrentUser, Depends(require("template:use"))]
+ReplacementManageDep = Annotated[CurrentUser, Depends(require("template:read", "template:use"))]
+ReplacementReviewDep = Annotated[
+    CurrentUser, Depends(require("template:read", "template:review"))
+]

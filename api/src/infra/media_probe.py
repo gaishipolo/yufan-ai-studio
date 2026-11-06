@@ -24,6 +24,7 @@ EXTENSIONS = {
     ".wav": "audio/wav",
 }
 MAX_BYTES = 300 * 1024 * 1024
+PREVIEW_VERSION = "hd-v2"
 # AAC 每帧 1024 采样（48kHz 下 21.3ms），音轨尾部填充会让容器时长比画面多几十毫秒。
 # 15 秒原片因此常报 15.02 / 15.07 秒，被 1–15 秒门禁误判为超长素材。
 TAIL_PADDING = 0.1
@@ -118,7 +119,9 @@ def create_preview(source: Path, destination: Path, kind: str) -> bool:
             "-frames:v",
             "1",
             "-vf",
-            "scale=320:-2",
+            "scale=w='min(720,iw)':h='min(1280,ih)':force_original_aspect_ratio=decrease",
+            "-q:v",
+            "2",
             "-update",
             "1",
             str(destination),
@@ -133,7 +136,7 @@ def create_browser_preview(source: Path, destination: Path) -> bool:
     """派生浏览器可解码的轻量预览，绝不改动原始归档文件。
 
     归档原片可能是 HEVC Main10 或 H.264 High10（10-bit），Chrome/Edge 的
-    <video> 无法解码；统一转成 H.264 8-bit + AAC、moov 前置的 360p 小文件，
+    <video> 无法解码；统一转成 H.264 8-bit + AAC、moov 前置的高清预览，
     同时避免悬停预览下载 10–24MB 原始视频。
     """
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -148,7 +151,8 @@ def create_browser_preview(source: Path, destination: Path) -> bool:
                 "-i",
                 str(source),
                 "-vf",
-                "scale=-2:360",
+                "scale=w='min(1920,iw)':h='min(1920,ih)':"
+                "force_original_aspect_ratio=decrease:force_divisible_by=2",
                 "-c:v",
                 "libx264",
                 "-pix_fmt",
@@ -156,7 +160,7 @@ def create_browser_preview(source: Path, destination: Path) -> bool:
                 "-profile:v",
                 "main",
                 "-crf",
-                "28",
+                "20",
                 "-preset",
                 "veryfast",
                 "-c:a",

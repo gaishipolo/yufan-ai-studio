@@ -3,6 +3,10 @@
 FastAPI + SQLAlchemy 2.0（async）+ Pydantic v2 的分层后端。
 与前端工程 `studio`（Vite + React + TS）配套，接口契约一一对应。
 
+素材库与模板库已支持公共 / 个人原片、单条分享与回收站、专员封装发布及版本调用。
+角色适配与验收结果见 [素材库开发交付记录](../docs/ASSETS_INTEGRATION_PLAN.md#11-t01t07-实施与交付记录2026-11-06)。
+现有环境启用前先运行 `python scripts/migrate_asset_roles.py` 预览角色差异，再按交付说明显式应用。
+
 设计目标不是"能跑"，而是**加功能时知道该改哪个文件**。
 
 ---
@@ -52,6 +56,12 @@ Vite 会把 `/api` 代理到 `VITE_API_PROXY_TARGET`（默认 `http://127.0.0.1:
 改完接口跑一次 `app export-openapi`；忘了跑的话 `pytest` 会红着提醒你。
 
 常用命令：
+
+模板替换人工验收：新增 `PUT /api/v1/templates/replacement-runs/{id}/review`，
+要求 `template:read` + `template:review` 且任务归属本人；只有生成成功且结果文件存在才可评价。
+任务详情返回真实评价及输入摘要；`GET /api/v1/templates/replacement-runs/{id}/inputs/{asset_id}`
+读取当次归档快照。评价采用独立原子文件、版本校验和修改历史，不改生成状态。
+已有角色需管理员显式配置新权限；详见 `../docs/REPLACEMENT_TEMPLATES.md`。
 
 | 命令 | 说明 |
 |---|---|
@@ -186,7 +196,9 @@ import 时不带任何前缀：`from core.config import settings`、`from module
 **依赖方向**：`api → modules → generation → db / infra / core`，只允许向下。
 业务模块之间不直接 import，共享词汇上提到 `core`（如 `AspectRatio`）、
 共享流程下沉到 `generation`。
-这两条由 `tests/test_architecture.py` 用 AST 静态检查强制执行。
+模块只能引用 `api` 的**装配点**（`api.module` / `api.deps` / `api.accounts` / `api.authn`），
+引用其它 `api.*` 会形成反向边；跨模块的只读数据通过 `core` 里的注册表注入（见 `core/feed.py`）。
+这三条由 `tests/test_architecture.py` 用 AST 静态检查强制执行。
 
 ---
 

@@ -1,12 +1,69 @@
 /* 全局样式表：顶层选择器一律以 .replacement- 开头（或由它限定），
    通用状态类如 .is-selected 只能出现在带前缀祖先的后代位置，避免溢出到其它组件。 */
 .replacement-library{
-  margin-top:20px
+  margin-top:12px
+}
+.replacement-steps{
+  @apply mb-3 flex flex-wrap gap-x-4 gap-y-1 border-b border-line pb-2 text-xs text-ink-soft;
+}
+.replacement-feedback{
+  display:flex;
+  align-items:flex-start;
+  gap:10px;
+  padding:13px 15px;
+  margin-bottom:16px;
+  border:1px solid;
+  border-radius:theme('borderRadius.card');
+  font-size:12px;
+  line-height:1.8;
+  overflow-wrap:anywhere
+}
+.replacement-feedback>svg{flex-shrink:0;margin-top:2px}
+.replacement-feedback p{flex:1}
+.replacement-feedback button{padding:3px;flex-shrink:0}
+.replacement-feedback button:focus-visible{outline:2px solid currentColor;outline-offset:2px}
+.replacement-feedback.is-success{color:theme('colors.ink.DEFAULT');background:theme('colors.ok / 8%');border-color:theme('colors.ok / 30%')}
+.replacement-feedback.is-success>svg{color:theme('colors.ok')}
+.replacement-feedback.is-error{color:theme('colors.ink.DEFAULT');background:theme('colors.danger / 5%');border-color:theme('colors.danger / 30%')}
+.replacement-feedback.is-error>svg{color:theme('colors.danger')}
+.replacement-operation-status{@apply mb-3 text-xs leading-relaxed text-ink-soft}
+.replacement-reference-empty{@apply rounded-lg border border-dashed border-line bg-panel-soft p-3.5 text-xs leading-relaxed text-ink-soft}
+.replacement-reference-empty p:first-child{@apply font-semibold text-ink}
+.replacement-reference-empty a{@apply text-primary}
+.replacement-task-row.is-success{border-color:theme('colors.ok / 30%');background:theme('colors.ok / 5%')}
+.replacement-review-modal{
+  display:flex;
+  flex-direction:column;
+  overflow:hidden;
+  max-height:88dvh
+}
+.replacement-review-modal,
+.replacement-detail-modal{
+  max-width:calc(100vw - 48px)
+}
+.replacement-review-modal > :first-child{
+  flex-shrink:0
+}
+.replacement-modal-body{
+  min-height:0;
+  overflow-y:auto;
+  overscroll-behavior:contain;
+  padding:20px
+}
+.replacement-modal-actions{
+  @apply flex flex-wrap items-center justify-between gap-3 border-t border-line bg-panel p-4;
+  flex-shrink:0
+}
+@media(max-width:600px){
+  .replacement-modal-body{padding:14px}
+}
+@media(prefers-reduced-motion:reduce){
+  .replacement-library .animate-pulse,.replacement-library .animate-spin{animation:none}
 }
 .replacement-layout{
   display:grid;
-  grid-template-columns:minmax(0,1fr) 310px;
-  gap:22px;
+  grid-template-columns:minmax(0,1fr) clamp(340px,40%,560px);
+  gap:16px;
   align-items:start
 }
 .replacement-sources{
@@ -17,7 +74,7 @@
   gap:12px;
   align-items:center;
   justify-content:space-between;
-  margin-bottom:16px
+  margin-bottom:10px
 }
 .replacement-search{
   display:flex;
@@ -47,7 +104,7 @@
   justify-content:space-between;
   color:#8a94a3;
   font-size:11px;
-  margin-bottom:13px
+  margin-bottom:8px
 }
 .replacement-library-meta>span:first-child{
   color:#344054;
@@ -60,25 +117,26 @@
   border-radius:4px;
   padding:2px 6px
 }
-.replacement-library-meta button,.replacement-selected-summary button{
+.replacement-library-meta button{
   color:#3978e8;
   margin-left:10px;
   font-size:11px
 }
 /* Adapted from E:/yufan-ai/static/replacement.css and libtv-workbench.css. */
 .replacement-waterfall{
-  columns:3;
-  column-gap:12px
+  display:grid;
+  grid-template-columns:repeat(4,minmax(0,1fr));
+  gap:12px;
+  align-items:start
 }
 .replacement-template-card{
   break-inside:avoid;
-  display:inline-block;
+  min-width:0;
   width:100%;
-  margin-bottom:12px;
   border:1px solid #e3e8ee;
   border-radius:10px;
   background:white;
-  padding:5px;
+  padding:0;
   transition:border-color .2s,box-shadow .2s,transform .2s;
   overflow:hidden
 }
@@ -107,8 +165,9 @@
 }
 .replacement-card-media{
   position:relative;
-  aspect-ratio:9/14;
-  border-radius:6px;
+  /* 与竖屏原片同为 9:16，完整显示画面，同时省去两侧留白。 */
+  aspect-ratio:9/16;
+  border-radius:9px 9px 0 0;
   overflow:hidden;
   background:#edf0f5;
   display:flex;
@@ -116,18 +175,12 @@
   align-items:center;
   color:#a5afbe
 }
-.replacement-template-card:nth-child(3n+2) .replacement-card-media{
-  aspect-ratio:9/16
-}
-.replacement-template-card:nth-child(3n) .replacement-card-media{
-  aspect-ratio:9/13
-}
 .replacement-card-media img,.replacement-card-media video{
   position:absolute;
   inset:0;
   width:100%;
   height:100%;
-  object-fit:cover;
+  object-fit:contain;
   border-radius:0
 }
 .replacement-card-preview-error{
@@ -190,12 +243,16 @@
   position:absolute;
   bottom:9px;
   left:7px;
+  right:42px;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
   color:white;
   font-size:9px;
   z-index:1
 }
 .replacement-card-caption{
-  padding:9px 3px 5px
+  padding:8px 9px 9px
 }
 .replacement-card-caption>div{
   display:flex;
@@ -203,6 +260,7 @@
   gap:5px
 }
 .replacement-card-caption h3{
+  min-width:0;
   font-size:12px;
   font-weight:600;
   color:#27364a;
@@ -219,6 +277,9 @@
   padding:0 3px
 }
 .replacement-card-caption p{
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
   color:#8994a4;
   font-size:10px;
   margin-top:5px;
@@ -231,20 +292,38 @@
   margin-top:10px
 }
 .replacement-config{
+  display:flex;
+  flex-direction:column;
   position:sticky;
-  top:20px;
+  top:70px;
   min-width:0;
+  /* 按实际顶部位置填满可视高度，滚动吸顶后也能利用右下方空间。 */
+  height:max(24rem,calc(100dvh - var(--replacement-config-top,250px) - 16px));
+  overflow:hidden;
   border:1px solid #e4e9ef;
   border-radius:12px;
-  padding:17px;
+  padding:14px;
   background:#fff
+}
+.replacement-config-body{
+  flex:1;
+  min-height:0;
+  overflow-y:auto;
+  overscroll-behavior:contain;
+  scrollbar-gutter:stable;
+}
+.replacement-config-action{
+  @apply mt-3 shrink-0 space-y-2 border-t border-line pt-3;
+}
+.replacement-config-heading,.replacement-kind-picker,.replacement-config-footer{
+  flex-shrink:0
 }
 .replacement-config-heading{
   display:flex;
   align-items:center;
   gap:7px;
   color:#344054;
-  padding-bottom:16px
+  padding-bottom:12px
 }
 .replacement-config-heading h2{
   font-size:13px;
@@ -262,7 +341,7 @@
   border-radius:8px;
   background:#f4f6f9;
   padding:4px;
-  margin-bottom:18px
+  margin-bottom:12px
 }
 .replacement-kind-picker button{
   display:flex;
@@ -285,14 +364,14 @@
 }
 .replacement-config-empty{
   text-align:center;
-  padding:54px 0 67px
+  padding:32px 0 40px
 }
 .replacement-config-empty>div{
   display:grid;
   place-items:center;
-  margin:0 auto 20px;
-  width:68px;
-  height:68px;
+  margin:0 auto 14px;
+  width:56px;
+  height:56px;
   color:#acbace;
   background:linear-gradient(145deg,#f4f7fc,#e9eff8);
   border-radius:20px;
@@ -309,26 +388,13 @@
   line-height:1.9;
   margin-top:9px
 }
-.replacement-selected-summary{
-  display:flex;
-  gap:7px;
-  align-items:center;
-  background:#f3f7ff;
-  border-radius:7px;
-  padding:10px;
-  color:#3978e8;
-  font-size:11px
-}
-.replacement-selected-summary button{
-  margin-left:auto
-}
 .replacement-config-footer{
   display:flex;
   justify-content:space-between;
   flex-wrap:wrap;
   gap:8px;
-  margin-top:20px;
-  padding-top:13px;
+  margin-top:14px;
+  padding-top:10px;
   border-top:1px solid #edf0f4;
   font-size:10px;
   color:#98a2b3
@@ -337,42 +403,49 @@
   color:#6488bf
 }
 .replacement-task-history{
-  margin-top:28px
+  margin-top:20px
 }
-@media(min-width:1600px){
+.replacement-config input:not([type=checkbox]),
+.replacement-config select,
+.replacement-config textarea{
+  @apply text-xs;
+}
+@media(max-width:1279px){
   .replacement-waterfall{
-    columns:4
+    grid-template-columns:repeat(3,minmax(0,1fr))
   }
   .replacement-layout{
-    grid-template-columns:minmax(0,1fr) 330px
+    grid-template-columns:minmax(0,1fr) clamp(320px,40%,400px)
   }
 }
-@media(max-width:1200px){
-  .replacement-waterfall{
-    columns:2
-  }
-  .replacement-layout{
-    gap:16px;
-    grid-template-columns:minmax(0,1fr) 290px
-  }
-}
-@media(max-width:900px){
+@media(max-width:1023px){
   .replacement-layout{
     grid-template-columns:minmax(0,1fr)
   }
   .replacement-config{
-    position:static
+    position:static;
+    height:auto;
+    max-height:none;
+    overflow:visible;
+    scrollbar-gutter:auto
+  }
+  .replacement-config-body{
+    overflow:visible;
+    scrollbar-gutter:auto
   }
   .replacement-waterfall{
-    columns:3
+    grid-template-columns:repeat(3,minmax(0,1fr))
   }
 }
 @media(max-width:600px){
   .replacement-waterfall{
-    columns:2
+    grid-template-columns:repeat(2,minmax(0,1fr))
   }
   .replacement-toolbar{
     gap:8px
+  }
+  .replacement-search{
+    flex:1
   }
   .replacement-card-hint{
     font-size:8px

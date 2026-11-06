@@ -117,7 +117,7 @@
 
 | 文件 | 职责 |
 |---|---|
-| `core/config.py` | 应用配置：单一事实来源，全部通过环境变量覆盖（含 `media_archive_root` 归档根、`storage_driver`、`queue_driver`、`ai_provider` 等）。 |
+| `core/config.py` | 应用配置：**部署策略**的唯一来源（`storage_driver`、`queue_driver`、`archive_driver`、`ai_provider` 等），全部可用环境变量覆盖；驱动私有参数在各自的 `XxxSettings`（见 `infra/driver_config.py`）。 |
 | `core/context.py` | 请求级上下文：用 `contextvars` 贯穿一次调用链（请求 ID、操作者）。 |
 | `core/enums.py` | 跨模块共享的枚举词汇。 |
 | `core/events.py` | 进程内域事件总线。 |

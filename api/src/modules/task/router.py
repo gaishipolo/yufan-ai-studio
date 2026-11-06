@@ -29,6 +29,8 @@ from modules.task.dependencies import (
     TaskUpdateDep,
 )
 from modules.task.enums import TaskScope, TaskSort, TaskStatusFilter
+from modules.task.feed_schema import FeedSource, FeedStatus, TaskFeedOut
+from modules.task.feed_service import list_feed
 from modules.task.schema import (
     CreateTaskIn,
     DeleteTasksIn,
@@ -44,6 +46,29 @@ from modules.task.schema import (
 router = APIRouter(prefix="/tasks", tags=["任务"])
 
 TaskId = Annotated[str, Path(description="任务 ID")]
+
+
+@router.get("/feed", summary="统一任务中心：通用生成与本人可见的替换档案")
+async def task_feed(
+    service: TaskServiceDep,
+    actor: TaskReadDep,
+    page: PageDep,
+    source: FeedSource = "all",
+    status: FeedStatus = "all",
+    keyword: Annotated[str, Query(max_length=100)] = "",
+    sort: TaskSort = TaskSort.CREATED_DESC,
+    scope: TaskScope = TaskScope.MINE,
+    only_authorized: Annotated[bool, Query(alias="onlyAuthorized")] = False,
+    stats_only: Annotated[
+        bool,
+        Query(alias="statsOnly", description="只返回统计，不组装条目；角标等轮询场景用"),
+    ] = False,
+) -> ApiResponse[TaskFeedOut]:
+    query = TaskListQuery(keyword=keyword, sort=sort, scope=scope,
+                          only_authorized=only_authorized)
+    return ApiResponse.ok(
+        await list_feed(service, actor, query, page, source, status, stats_only)
+    )
 
 
 @router.get("", summary="任务列表")
