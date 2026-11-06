@@ -20,21 +20,13 @@
 from __future__ import annotations
 
 import importlib
-import pkgutil
 from typing import Any, ClassVar
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from core.logging import get_logger
-
-logger = get_logger(__name__)
-
 # 显式声明过 model_config 的子类会登记在这里，供 `tests/test_config_guard.py` 巡检。
 # 延迟导入的驱动只有被 import 时才会登记，因此测试里要显式 import 待检查的模块。
 _REGISTRY: list[type[DriverSettings]] = []
-
-# 驱动实际所在的三类包（与 `infra.<kind>.<name>` 的命名约定一致）
-_DRIVER_PACKAGES = ("infra.ai", "infra.archive", "infra.storage")
 
 
 def driver_config(prefix: str) -> SettingsConfigDict:
@@ -84,41 +76,6 @@ class DriverSettings(BaseSettings):
 def registered_driver_settings() -> tuple[type[DriverSettings], ...]:
     """已登记的驱动配置类（按 import 顺序）。"""
     return tuple(dict.fromkeys(_REGISTRY))
-
-
-def discover_driver_settings() -> tuple[type[DriverSettings], ...]:
-    """把各驱动包里的模块**全部** import 一遍，拿到全量配置类。
-
-    只给「需要看全量」的场合用：测试里的配置巡检（每个驱动都得声明
-    `prod_required_fields`、每个字段都得有说明…）。**启动路径不要用它**——
-    `_ensure_active_drivers_imported()` 只 import 当前启用的驱动，用 local 部署的
-    机器不该为了巡检去拉 boto3。
-
-    两者治的是同一个病（注册表是「被 import 时追加」的副作用，所以检查范围取决于
-    谁碰巧 import 了驱动，R13-05），只是取舍不同：测试要全量，线上只要能用到的。
-
-    这里按包目录扫描，**不写死驱动名**：新增驱动文件即自动纳入巡检，
-    与 `infra/loader.py` 的「加文件不改代码」保持一致。
-    单个模块导入失败只记 warning 并继续——缺某个驱动不该让整个应用起不来，
-    但必须留痕，否则又是一次「巡检范围悄悄变小」。
-    """
-    for package_name in _DRIVER_PACKAGES:
-        try:
-            package = importlib.import_module(package_name)
-        except Exception as exc:  # noqa: BLE001 - 包本身导不进来时不能连坐其余包
-            logger.warning("驱动包 %s 导入失败：%s（其配置声明不参与巡检）", package_name, exc)
-            continue
-        for info in pkgutil.iter_modules(package.__path__):
-            if info.ispkg or info.name.startswith("_"):
-                continue
-            module_name = f"{package_name}.{info.name}"
-            try:
-                importlib.import_module(module_name)
-            except Exception as exc:  # noqa: BLE001 - 同理，逐个模块隔离
-                logger.warning(
-                    "驱动模块 %s 导入失败：%s（其配置声明不参与巡检）", module_name, exc
-                )
-    return registered_driver_settings()
 
 
 def registered_submit_budgets(capability: str) -> list[float]:
@@ -248,7 +205,6 @@ def precheck_submit_budgets() -> dict[str, list[float]]:
 
 __all__ = [
     "DriverSettings",
-    "discover_driver_settings",
     "driver_config",
     "ensure_prod_driver_settings",
     "precheck_submit_budgets",
