@@ -465,3 +465,70 @@ async def test_queue_failure_remains_visible_and_retryable(prepared, monkeypatch
         await worker.schedule(payload.request_id.hex, "u_001")
     meta = ReplacementRepository().load(path)
     assert meta.status == "service_error" and not meta.task_id and not meta.submit_attempts
+
+
+# --------------------------------------------------------------------------- #
+# R14-02：恢复集合必须收敛（终态不再入队）
+# --------------------------------------------------------------------------- #
+def test_resume_converges_and_skips_settled_runs(archive_root, monkeypatch):  # noqa: F811
+    """两次启动投递的必须是不同批次：第二次应为空。
+
+    原来用 `meta.task_id` 做条件，命中所有历史成功记录——成功记录每次启动都白投
+    一次，而「本地已判失败但有任务号」的记录会被 `recover_state` 翻回 running
+    并再查一次上游，集合永不收敛（R14-02）。
+    """
+    from core.config import settings
+    from modules.template import replacement_worker as worker
+    from modules.template.replacement_repository import ReplacementManifest
+
+    repo = ReplacementRepository()
+
+    def make(status: str, *, attempts: int = 0, task_id: str | None = None) -> str:
+        run_id = uuid.uuid4().hex
+        path = archive_root / "runs/2026/11/06" / f"character-{run_id}"
+        (path / "records").mkdir(parents=True, exist_ok=True)
+        repo.save(
+            path,
+            ReplacementManifest(
+                id=run_id,
+                kind="character",
+                target="收敛用例",
+                owner_id="u_001",
+                fingerprint="converge",
+                status=status,
+                submit_attempts=attempts,
+                task_id=task_id,
+            ),
+        )
+        repo.index(path, run_id)
+        return run_id
+
+    success = make("success", task_id="T-SUCCESS")
+    failed = make("failed", task_id="T-FAILED")
+    unknown = make("submission_unknown", attempts=1)
+    queued = make("queued")
+
+    class _Queue:
+        def __init__(self) -> None:
+            self.sent: list[str] = []
+
+        async def enqueue(self, job: Job, delay: float = 0) -> None:
+            self.sent.append(str(job.payload["id"]))
+
+    queue = _Queue()
+    monkeypatch.setattr(worker, "get_queue", lambda: queue)
+    # resume() 在 test 环境直接早退（那也是它长期没被发现的原因之一）
+    monkeypatch.setattr(settings, "app_env", "prod")
+    monkeypatch.setattr(settings, "worker_enabled", True)
+
+    asyncio.run(worker.resume())
+    first = set(queue.sent)
+    queue.sent.clear()
+    asyncio.run(worker.resume())
+    second = set(queue.sent)
+
+    assert first == {queued}, "只有「还需要推进」的档案该入队"
+    # `queued` 那条没有任何 worker 消费过，它本来就该继续被恢复——收敛指的是
+    # 「终态不再回来」，不是「第二次一条都不投」。
+    assert second == {queued}, "第二次启动把终态记录又捞回来了：恢复集合没有收敛"
+    assert not ({success, failed, unknown} & (first | second))

@@ -89,7 +89,11 @@ class MediaCatalog:
             return
         config_path = path / "inputs/configuration.json"
         if not config_path.is_file():
-            raise BadRequest("历史任务缺少调用授权，请重新准备")
+            # 没有配置快照就无从知道这次引用了哪些素材，也就无从校验。
+            # 这里**不能硬拒**：R14 的 reconfirm 出口重投的正是「已准备但回执未知」
+            # 的旧档案，硬拒会把那个出口重新堵死。缺授权由 prepare / submit 报
+            # 带具体原因的错误。
+            return
         config = self.storage.read(config_path)
         if not isinstance(config, dict):
             raise BadRequest("调用配置无效")

@@ -1,0 +1,200 @@
+"""S3 / MinIO 对象存储驱动。
+
+用 `boto3` + `asyncio.to_thread`，不用 `aioboto3`：`archive_service` 里已经是
+「同步 IO 丢线程池」的写法，同步 SDK 更成熟；aiobotocore 与 botocore 版本绑定很紧，
+升级时容易连带冲突。
+
+key 由调用方决定（`library/**` 归档历史、`assets/**` 新素材），驱动不关心业务分类。
+MinIO 必须用 path-style 寻址，否则虚拟主机风格会把桶名当域名解析。
+
+已知边界：
+- `presigned_upload_url` 直传要求桶配了 CORS PUT；内网 MinIO 默认不带，
+  没配之前浏览器会被拦下，退回 `put_file` 走服务端中转。
+- `url_for` 假设桶对读公开；私有桶必须用 `presigned_download_url`。
+"""
+
+from __future__ import annotations
+
+import asyncio
+import hashlib
+from functools import lru_cache
+from pathlib import Path
+from typing import ClassVar
+
+import boto3
+from botocore.client import Config
+from botocore.exceptions import BotoCoreError, ClientError
+
+from core.logging import get_logger
+from infra.driver_config import DriverSettings, driver_config
+from infra.storage.base import StorageError
+
+logger = get_logger(__name__)
+
+
+class S3Settings(DriverSettings):
+    """S3 部署参数，环境变量前缀 `S3_`。
+
+    `endpoint` 留空表示 AWS 官方；自建 MinIO 填 `http://10.x.x.x:9000`。
+    生产必须显式四项，不允许「跑起来才发现写进了某个默认桶」。
+    """
+
+    model_config = driver_config("S3")
+
+    # 存储有 local / s3 两个实现：只有 STORAGE_DRIVER=s3 时，下面四项才是必填。
+    # 不声明 kind 的话，一个用 local 的生产环境会因为没配 S3_ENDPOINT 而启动失败。
+    driver_kind: ClassVar[str] = "storage"
+    driver_name: ClassVar[str] = "s3"
+
+    endpoint: str = ""
+    bucket: str = ""
+    access_key: str = ""
+    secret_key: str = ""
+    region: str = "us-east-1"
+    use_ssl: bool = True
+    verify: bool = True
+
+    prod_required_fields: ClassVar[tuple[str, ...]] = (
+        "endpoint",
+        "bucket",
+        "access_key",
+        "secret_key",
+    )
+
+
+@lru_cache
+def get_s3_settings() -> S3Settings:
+    return S3Settings()
+
+
+def _digest(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+class S3Storage:
+    def __init__(self, settings: S3Settings | None = None) -> None:
+        self.settings = settings or get_s3_settings()
+        if not self.settings.bucket:
+            raise StorageError("S3_BUCKET 未配置，无法使用 S3 驱动")
+        self._client = boto3.client(
+            "s3",
+            endpoint_url=self.settings.endpoint or None,
+            aws_access_key_id=self.settings.access_key or None,
+            aws_secret_access_key=self.settings.secret_key or None,
+            region_name=self.settings.region,
+            use_ssl=self.settings.use_ssl,
+            verify=self.settings.verify,
+            config=Config(signature_version="s3v4", s3={"addressing_style": "path"}),
+        )
+
+    # ------------------------------------------------------------------ 写
+    async def put(
+        self, key: str, data: bytes, content_type: str = "application/octet-stream"
+    ) -> str:
+        key = self._key(key)
+        try:
+            await asyncio.to_thread(
+                self._client.put_object,
+                Bucket=self.settings.bucket,
+                Key=key,
+                Body=data,
+                ContentType=content_type,
+            )
+        except (ClientError, BotoCoreError) as exc:
+            raise StorageError(f"S3 写入失败（{key}）：{exc}") from exc
+        return self.url_for(key)
+
+    async def put_file(
+        self, key: str, path: Path, content_type: str = "application/octet-stream"
+    ) -> str:
+        """分片上传，同时算 sha256；大文件不进内存。"""
+        key = self._key(key)
+        digest = await asyncio.to_thread(_digest, path)
+        try:
+            await asyncio.to_thread(
+                self._client.upload_file,
+                str(path),
+                self.settings.bucket,
+                key,
+                ExtraArgs={"ContentType": content_type},
+            )
+        except (ClientError, BotoCoreError) as exc:
+            raise StorageError(f"S3 写入失败（{key}）：{exc}") from exc
+        return digest
+
+    async def delete(self, key: str) -> None:
+        """S3 的 delete 对不存在的 key 也返回 204，天然幂等。"""
+        key = self._key(key)
+        try:
+            await asyncio.to_thread(
+                self._client.delete_object, Bucket=self.settings.bucket, Key=key
+            )
+        except (ClientError, BotoCoreError) as exc:
+            raise StorageError(f"S3 删除失败（{key}）：{exc}") from exc
+
+    # ------------------------------------------------------------------ 读
+    async def get(self, key: str) -> bytes:
+        key = self._key(key)
+
+        def _read() -> bytes:
+            response = self._client.get_object(Bucket=self.settings.bucket, Key=key)
+            return response["Body"].read()
+
+        try:
+            return await asyncio.to_thread(_read)
+        except (ClientError, BotoCoreError) as exc:
+            raise StorageError(f"S3 读取失败（{key}）：{exc}") from exc
+
+    def url_for(self, key: str) -> str:
+        key = self._key(key)
+        if self.settings.endpoint:
+            return f"{self.settings.endpoint.rstrip('/')}/{self.settings.bucket}/{key}"
+        return f"https://{self.settings.bucket}.s3.{self.settings.region}.amazonaws.com/{key}"
+
+    # ------------------------------------------------------------------ 签名
+    async def presigned_upload_url(
+        self, key: str, *, content_type: str = "application/octet-stream", expires_in: int = 900
+    ) -> str:
+        key = self._key(key)
+        return await asyncio.to_thread(
+            self._client.generate_presigned_url,
+            "put_object",
+            Params={
+                "Bucket": self.settings.bucket,
+                "Key": key,
+                "ContentType": content_type,
+            },
+            ExpiresIn=expires_in,
+        )
+
+    async def presigned_download_url(self, key: str, *, expires_in: int = 900) -> str:
+        key = self._key(key)
+        return await asyncio.to_thread(
+            self._client.generate_presigned_url,
+            "get_object",
+            Params={"Bucket": self.settings.bucket, "Key": key},
+            ExpiresIn=expires_in,
+        )
+
+    def local_path(self, key: str) -> Path | None:
+        """对象在桶里，没有本地路径：调用方应改用 `presigned_download_url` 重定向。
+
+        这也是 S3 版本比本地版本更省的原因——字节不经过应用进程，Range 由对象存储
+        自己处理（拖动视频进度条直接命中桶，不需要先下载整个文件）。
+        """
+        return None
+
+    @staticmethod
+    def _key(key: str) -> str:
+        normalized = key.strip().lstrip("/")
+        if not normalized or any(part in (".", "..") for part in normalized.split("/")):
+            raise StorageError(f"非法的对象路径: {key}")
+        return normalized
+
+
+# 驱动解析约定：infra.loader 通过这个名字拿到实现
+Driver = S3Storage

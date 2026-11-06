@@ -28,6 +28,13 @@ RETRYABLE = {
     "failed",
 }
 
+# 恢复器的两个状态集合（R14-02）。分开写而不是一个 if 串，是因为它们回答的是
+# 两个不同的问题：这些**没有恢复空间**（入队只会白跑），那些**还需要推进**。
+SETTLED_STATUSES = frozenset({"success", "failed", "service_error", "submission_unknown"})
+UNFINISHED_STATUSES = frozenset(
+    {"queued", "uploading", "uploaded", "waiting_executor", "submitting"}
+)
+
 # 自动重试的节奏与上限。
 #
 # 为什么必须有上限：`max_attempts=1` 意味着失败时**新建一个 job**，而每次新建都会
@@ -36,6 +43,15 @@ RETRYABLE = {
 MAX_RETRIES = 5
 RETRY_BASE_SEC = 30.0
 RETRY_MAX_SEC = 600.0
+
+# 「提交回执未知」的两种文案：一个解释为什么拦，一个解释怎么放行。
+# 和 `image` 的 `SUBMIT_UNKNOWN_MESSAGE` 同一口径——文案承诺「核对后可重试」，
+# 就必须真有一个出口能重试（R11-02 / R14-01）。
+SUBMISSION_UNKNOWN = "提交回执未知，禁止重提，请先核对上游记录"
+SUBMISSION_UNKNOWN_CONFIRM = (
+    "上一次提交可能已产生费用（上游任务号没有落库）：请先凭上游记录核对；"
+    "确认要重新提交时带 confirmCharged=true"
+)
 
 
 def backoff_delay(count: int) -> float:
@@ -84,6 +100,7 @@ def _bump_retry(
         return None
     repo.save(path, meta)
     return backoff_delay(meta.retry_count)
+
 
 
 async def enqueue(run_id: str, *, delay: float = 0) -> None:
@@ -141,7 +158,7 @@ def schedule_state(run_id: str, owner: str) -> str:
         if meta.status == "success":
             return "done"
         if not meta.task_id and (meta.status == "submission_unknown" or meta.submit_attempts > 0):
-            raise Conflict("提交回执未知，禁止重提，请先核对上游记录")
+            raise Conflict(SUBMISSION_UNKNOWN)
         if meta.task_id:
             meta.framework_status = "running"
             return "poll"
@@ -149,6 +166,8 @@ def schedule_state(run_id: str, owner: str) -> str:
             raise Conflict("输入尚未准备完成，请先使用原配置继续准备")
         if meta.status not in RETRYABLE and meta.status not in ("queued", "uploading", "uploaded"):
             raise Conflict("该任务当前不能提交")
+        # 提交前核对素材仍可用：原片被移入回收站、参考素材被删、封装被撤版，
+        # 都会让上游白跑一趟并扣费。锁只覆盖「读快照 → 置 queued」这段窗口。
         with catalog_lease(repo.storage):
             MediaCatalog(repo.storage).check_run(repo.path(run_id))
         meta.status = "queued"
@@ -158,6 +177,42 @@ def schedule_state(run_id: str, owner: str) -> str:
         # 在第一次失败时被判「已重试 5 次」，看起来像按钮没反应。
         meta.retry_count = 0
         return "prepare"
+
+
+def reconfirm_state(
+    run_id: str, owner: str, *, confirm_charged: bool
+) -> tuple[ReplacementManifest, int]:
+    """用户确认「上一次可能已经花了钱，我仍要重新提交」后的复位。
+
+    与 `image` 的 `POST /images/{id}/retry?confirmCharged=` 同一个语义，也同一个
+    理由：`submission_unknown` 的定义就是「提交动作可能已经成功」，没有出口时
+    这条记录只能靠运维进共享盘手改 `run.json`（R14-01）。三条路都必须放行：
+    `schedule_state` 会拦、`prepare_upload` 会直接 return、`recover_state` 会
+    定格在 `submission_unknown`——所以清零 `submit_attempts` 是唯一的钥匙。
+
+    复位后仍走 `schedule()`，不在这里直接提交：提交只有一条路径，重试额度、
+    执行器占用、停用账号这些判断都长在那条路上。
+    """
+    repo = ReplacementRepository()
+    with repo.edit(run_id) as meta:
+        if meta.owner_id != owner:
+            raise NotFound("调用档案不存在")
+        if meta.task_id:
+            # 已有回执：该走「继续」续查询，而不是重提一遍（重提就是第二次计费）
+            raise Conflict("该调用已有上游任务号，请直接继续查询结果")
+        if meta.status != "submission_unknown" and not meta.submit_attempts:
+            raise Conflict("当前档案不在「提交回执未知」状态，无需确认重提")
+        if not confirm_charged:
+            raise Conflict(SUBMISSION_UNKNOWN_CONFIRM)
+        # 复位前留一份原样：审计要说清「清掉了几次提交意图」，否则事后只看得到 0
+        previous_attempts = meta.submit_attempts
+        meta.submit_attempts = 0
+        meta.status = "queued"
+        meta.framework_status = "queued"
+        meta.last_error = None
+        meta.error_code = None
+        meta.retry_count = 0
+        return meta, previous_attempts
 
 
 async def schedule(run_id: str, owner: str) -> None:
@@ -212,18 +267,23 @@ async def prepare_upload(job: Job) -> None:
     if result.code == "EXECUTOR_BUSY":
         meta.status = "waiting_executor"
         meta.last_error = result.message
-        delay = await asyncio.to_thread(_bump_retry, repo, path, meta, reason="执行器持续被占用")
+        delay = await asyncio.to_thread(
+            _bump_retry, repo, path, meta, reason="执行器持续被占用"
+        )
         if delay is None:
             return
         await enqueue(run_id, delay=delay)
         return
     if result.code != "OK" or meta.status not in ("uploaded", "waiting_free"):
+        before_status = meta.status
         meta.status = "service_error"
-        # 适配器可能已经写下了更具体的原因（例如积分队列报价仍为 0）。
-        # 那句话包含用户下一步该做什么，不能被通用的「上传准备未完成」盖掉。
-        if not meta.last_error:
-            meta.error_code = result.code
-            meta.last_error = f"上传准备未完成：{result.message or result.code}"
+        # `result.code` 的默认值就是 "OK"，直接拿来当错误码会让页面显示
+        # 「上传准备未完成：OK」（R14 💭）。只有真出错才带上游码，否则是
+        # 「脚本说成功、档案却没走到 uploaded」这种状态不一致。
+        meta.error_code = result.code if result.code != "OK" else "UPLOAD_INCOMPLETE"
+        meta.last_error = (
+            f"上传准备未完成：{result.message or result.code}（档案状态 {before_status}）"
+        )
         await asyncio.to_thread(repo.save, path, meta)
         return
     meta.preparation_ready = True
@@ -257,7 +317,9 @@ async def download(job: Job) -> None:
             # 档案已被清掉：继续排下去只会每 30 秒报一次同样的错。
             logger.info("成片下载放弃：调用档案已不存在 run_id=%s", run_id)
             return
-        delay = await asyncio.to_thread(_bump_retry, repo, path, meta, reason="成片下载失败")
+        delay = await asyncio.to_thread(
+            _bump_retry, repo, path, meta, reason="成片下载失败"
+        )
         if delay is None:
             return
         await get_queue().enqueue(
@@ -315,6 +377,13 @@ async def recover(job: Job) -> None:
 
 
 async def resume() -> None:
+    """进程启动恢复：只挑「还有事可做」的档案进队列。
+
+    R14-02：原来用 `meta.task_id` 做条件，命中**所有**历史成功记录——每次启动
+    都白投一次、白读两次盘；更糟的是本地已判失败的记录会被 `recover_state`
+    翻回 `framework_status=running` 并真的再查一次上游，集合永不收敛。
+    终态与「等人确认」的状态一律跳过，收敛才成立。
+    """
     if settings.app_env == "test" or not settings.worker_enabled:
         return
     repo = ReplacementRepository()
@@ -326,9 +395,7 @@ async def resume() -> None:
         return
     for path in paths:
         meta = await asyncio.to_thread(repo.load, path)
-        if (
-            meta.task_id
-            or meta.submit_attempts
-            or meta.status in ("queued", "uploading", "uploaded", "waiting_executor", "submitting")
-        ):
+        if meta.status in SETTLED_STATUSES:
+            continue
+        if meta.task_id or meta.submit_attempts or meta.status in UNFINISHED_STATUSES:
             await enqueue_recovery(meta.id)

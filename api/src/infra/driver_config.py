@@ -19,6 +19,7 @@
 
 from __future__ import annotations
 
+import importlib
 from typing import Any, ClassVar
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -59,6 +60,11 @@ class DriverSettings(BaseSettings):
     submit_budget_for: ClassVar[frozenset[str]] = frozenset()
     # 生产环境必须显式配置的字段。留空表示允许走代码里的安全兜底。
     prod_required_fields: ClassVar[tuple[str, ...]] = ()
+    # 这个配置服务于哪种驱动（storage / archive / queue / ai）以及驱动名。
+    # 留空 = 只要 import 就参与生产必填检查（AI 供应商都是这种）。
+    # 有**替代实现**的驱动必须声明：用 local 部署时不该因为没配 S3_ENDPOINT 而起不来。
+    driver_kind: ClassVar[str] = ""
+    driver_name: ClassVar[str] = ""
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
@@ -93,6 +99,64 @@ def registered_submit_budgets(capability: str) -> list[float]:
     return budgets
 
 
+def _driver_is_active(cls: type[DriverSettings]) -> bool:
+    """未启用的替代实现不参与生产必填检查。
+
+    `S3Settings` 与本地存储是同一个 kind 的两个实现：用 local 部署时要求
+    `S3_ENDPOINT`，只会让所有人生不如死。声明了 `driver_kind` 的配置才受这条约束，
+    其它（AI 供应商）保持「import 即检查」的原有语义。
+    """
+    kind = cls.driver_kind
+    if not kind:
+        return True
+
+    from core.config import settings
+
+    if kind == "storage":
+        return settings.storage_driver == cls.driver_name
+    if kind == "archive":
+        return settings.archive_driver == cls.driver_name
+    if kind == "queue":
+        return settings.queue_driver == cls.driver_name
+    if kind == "ai":
+        names = {item.strip() for item in settings.ai_providers.split(",") if item.strip()}
+        return cls.driver_name in names
+    return True
+
+
+def _ensure_active_drivers_imported() -> None:
+    """把**当前启用**的驱动模块 import 进来，让它们的 Settings 完成登记。
+
+    没有这一步，生产巡检就是「import 过才查」：`STORAGE_DRIVER=s3` 却漏配
+    `S3_SECRET_KEY` 时，`infra.storage.s3` 要等第一次上传才被 `load_driver`
+    加载——于是服务正常启动、健康检查通过、第一张素材上传时才 502。
+
+    只 import 启用的那个：用 local 部署的机器不该为了巡检去 import boto3。
+    """
+    from core.config import settings
+
+    targets = [
+        ("storage", settings.storage_driver),
+        ("archive", settings.archive_driver),
+        ("queue", settings.queue_driver),
+    ]
+    targets += [
+        ("ai", name.strip())
+        for name in settings.ai_providers.split(",")
+        if name.strip()
+    ]
+
+    for kind, name in targets:
+        module = f"infra.{kind}.{name}"
+        try:
+            importlib.import_module(module)
+        except ModuleNotFoundError as exc:
+            # 驱动本身没实现时由 load_driver 给出更好的报错，这里不抢先失败
+            if exc.name == module:
+                continue
+            raise
+
+
 def ensure_prod_driver_settings(app_env: str) -> None:
     """启动自检：生产环境不许依赖代码里的兜底策略（R12-04 / R11-05 同一口径）。
 
@@ -102,8 +166,11 @@ def ensure_prod_driver_settings(app_env: str) -> None:
     """
     if app_env != "prod":
         return
+    _ensure_active_drivers_imported()
     missing: list[str] = []
     for cls in registered_driver_settings():
+        if not _driver_is_active(cls):
+            continue
         instance = cls()
         for field in cls.prod_required_fields:
             value = getattr(instance, field, None)
@@ -115,10 +182,32 @@ def ensure_prod_driver_settings(app_env: str) -> None:
         )
 
 
+def precheck_submit_budgets() -> dict[str, list[float]]:
+    """启动预检：把每个被声明的「提交预算」在启动期算一遍。
+
+    `registered_submit_budgets()` 对坏配置是**抛异常**而不是静默跳过（R12-03），
+    但它的消费方是周期任务，`Scheduler.run_once` 捕获后只记一条日志就 `continue`：
+    配置坏掉时巡检永久停摆，每 300 秒刷一条错，谁也不会盯着日志等它被发现
+    （R13-06）。在启动期先算一次，坏配置变成一次说清楚「哪个类哪个字段」的
+    快速失败——这一条不区分环境，因为「巡检再也不会跑」在任何环境都是错。
+
+    返回 `{能力名: 预算列表}`，供启动日志展示；不做任何 IO。
+    """
+    # 注册表是 import 副作用：先按当前配置把**启用中**的驱动 import 进来
+    # （不扫全包，只 import 部署实际用到的那几个），否则 dev 环境下什么都没登记，
+    # 这个预检会安静地返回空字典——比不检查更糟（R13-05 的另一面）。
+    _ensure_active_drivers_imported()
+    capabilities = sorted(
+        {capability for cls in registered_driver_settings() for capability in cls.submit_budget_for}
+    )
+    return {capability: registered_submit_budgets(capability) for capability in capabilities}
+
+
 __all__ = [
     "DriverSettings",
     "driver_config",
     "ensure_prod_driver_settings",
+    "precheck_submit_budgets",
     "registered_driver_settings",
     "registered_submit_budgets",
 ]

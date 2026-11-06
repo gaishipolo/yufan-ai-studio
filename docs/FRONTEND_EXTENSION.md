@@ -96,8 +96,8 @@ shared     无业务：UI 基件、工具、请求内核、注册表、权限内
 ### 2.1 页面分层的现状（`pages` 薄壳 + `features` 整页）
 
 素材 / 模板两页目前是两层：`module.ts` 的 `load()` 指向 `pages/assets/AssetsPage.tsx`
-与 `pages/templates/TemplatesPage.tsx`（各约 9 行，只做转发），真正的整页实现在
-`features/archive-library/ArchiveLibrary.tsx`、`features/replacement-templates/ReplacementTemplates.tsx`。
+与 `pages/templates/TemplatesPage.tsx`（各约 15 行，只做转发），真正的整页实现在
+`features/asset-library/AssetLibrary.tsx`、`features/replacement-templates/ReplacementTemplates.tsx`。
 这是 PR #1 合并后的既有形态，**本轮（2026-11-06）决定保留，不把整页搬回 `pages/`**。规则：
 
 - `module.ts` 的 `load()` **必须**指向 `pages/`，不得直接指向 `features/`；

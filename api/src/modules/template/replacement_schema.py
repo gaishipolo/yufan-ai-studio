@@ -76,6 +76,18 @@ class PrepareReplacement(CamelModel):
     aspect_ratio: Literal["9:16", "16:9", "1:1", "adaptive"] = "adaptive"
 
 
+class ReconfirmReplacement(CamelModel):
+    """确认「上一次提交可能已经花了钱」后才允许重提。
+
+    默认 False：一次误点就变成第二次计费，是这套流程里最贵的一个操作。
+    """
+
+    confirm_charged: bool = Field(
+        default=False,
+        description="确认上一次提交可能已产生费用，仍要重新提交（默认拒绝）",
+    )
+
+
 class ReplacementRunOut(CamelModel):
     id: str
     kind: ReplacementKind
@@ -175,7 +187,6 @@ class PackPublicList(CamelModel):
 
 
 class ReplacementCatalog(CamelModel):
-    root: str
     provider: str = "LibTV · Wan 3.0 · 720P"
     max_credits: int = 0
     kinds: list[str] = ["character", "product", "scene"]

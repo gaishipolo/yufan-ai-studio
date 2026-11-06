@@ -1,4 +1,4 @@
-"""生图模块的周期任务：把卡在 `queued` / `running` 且没拿到供应商任务号的记录捞回来。
+"""生图模块的周期任务：把卡在 `queued` / `running` 的记录捞回来。
 
 ## 为什么要这个任务
 
@@ -8,6 +8,19 @@
 
 框架没有持久队列，也不该为了这个立刻上 Redis，所以用「定期巡检 + 重投」兜底：
 数据库是唯一的事实来源，队列只是加速器。
+
+## 两类「卡住」，处置完全相反（R13-04）
+
+| 形状 | 处置 | 理由 |
+|---|---|---|
+| 没有 `external_id` | `dispatch()` | 提交动作没落库，重投等于把那次提交再做一遍，安全 |
+| 有 `external_id`，快照 `async` | `resume()` | 已受理，只能续轮询；重投就是第二次计费 |
+| 有 `external_id`，`sync` / 无快照 | 不动，交人工 | 续查不了也判不死，凭任务号核对 |
+
+以前用一条 `external_id is None` 把两类混在一起：真正需要接管的「轮询链断掉」
+记录必然有任务号，恰好被这个条件全挡在外面，被捞到的只是本来就会重新提交的
+那一类（R12-06 只修了一半，R13-04 补上）。启动恢复器能 `resume()` 这些记录，
+但它每次进程启动只跑一次、上限 100 条——轮询链在两次重启之间断掉就再没人管。
 
 ## 为什么放在模块里而不是框架里
 
@@ -26,6 +39,8 @@
 
 少了这两条，一次合法跑到 100 秒的 Agnes 调用会被巡检判死，随后第一个 worker
 拿到结果又把状态覆盖回 running/succeeded（R11-02 现象 C）。
+`resume()` 自带幂等（记录终态早退），但**绝不能**用在「有 external_id」以外的
+记录上——它对没有任务号的记录无从续起。
 """
 
 from __future__ import annotations
@@ -101,14 +116,12 @@ async def reconcile_stale_jobs() -> None:
     started = func.coalesce(ImageJob.started_at, ImageJob.created_at)
 
     async with get_session_factory()() as session:
-        rows = (
+        # 两类形状分开查，不靠一个 `external_id is None` 一刀切（R13-04）：
+        # 前者「提交没落库」，后者「供应商已受理但轮询链断了」。
+        unsubmitted = (
             await session.scalars(
                 select(ImageJob)
                 .where(
-                    # `running` 也要捞：恢复器只在启动跑一次且上限 100 条，
-                    # 轮询链断掉后卡在 running 的记录本来没人管（R12-06）。
-                    # 但**有 external_id 的不能碰**——供应商侧任务已在跑，
-                    # 重投就是第二次提交、第二次计费。
                     ImageJob.status.in_((STATUS_QUEUED, STATUS_RUNNING)),
                     ImageJob.external_id.is_(None),
                     started < cutoff_expr,
@@ -117,14 +130,48 @@ async def reconcile_stale_jobs() -> None:
                 .limit(BATCH)
             )
         ).all()
+        accepted = (
+            await session.scalars(
+                select(ImageJob)
+                .where(
+                    ImageJob.status == STATUS_RUNNING,
+                    ImageJob.external_id.is_not(None),
+                    started < cutoff_expr,
+                )
+                .order_by(started, ImageJob.id)
+                .limit(BATCH)
+            )
+        ).all()
 
     # 二次确认只用于兜时区异常，不再是「切 BATCH」的手段：BATCH 已在 SQL 里。
-    stale = [row for row in rows if _clock(row) < cutoff]
-    if not stale:
-        return
+    stale_unsubmitted = [row for row in unsubmitted if _clock(row) < cutoff]
+    # 有任务号的记录里，只有异步供应商能续轮询；同步供应商连查都没地方查，
+    # 贸然重投就是第二次计费。这一类保持原状，等人凭任务号核对。
+    resume_poll = [
+        row for row in accepted if _clock(row) < cutoff and row.submit_mode == "async"
+    ]
+    needs_human = [
+        row for row in accepted if _clock(row) < cutoff and row.submit_mode != "async"
+    ]
 
-    redispatch = [row for row in stale if not row.submit_attempts]
-    needs_review = [row for row in stale if row.submit_attempts]
+    await _redispatch_unsubmitted(stale_unsubmitted, stale_after)
+    await _resume_accepted(resume_poll, stale_after)
+    if needs_human:
+        logger.warning(
+            "发现 %d 条生图任务停在 running 且已有供应商任务号（>%d 秒），"
+            "但快照显示无法续轮询（sync 或无快照），不自动重投，请凭任务号核对：%s",
+            len(needs_human),
+            int(stale_after),
+            ", ".join(f"{row.id}={row.external_id}" for row in needs_human),
+        )
+
+
+async def _redispatch_unsubmitted(rows: list[ImageJob], stale_after: float) -> None:
+    """提交动作还没落库：重投是安全的（幂等键还在时连第二次提交都不会发生）。"""
+    if not rows:
+        return
+    redispatch = [row for row in rows if not row.submit_attempts]
+    needs_review = [row for row in rows if row.submit_attempts]
     if redispatch:
         logger.warning(
             "发现 %d 条生图任务停在 queued/running 且未拿到供应商任务号（>%d 秒），重新投递：%s",
@@ -141,6 +188,27 @@ async def reconcile_stale_jobs() -> None:
             int(stale_after),
             ", ".join(row.id for row in needs_review),
         )
-
-    for row in stale:
+    for row in rows:
         await get_runner().dispatch(KIND_IMAGE, row.id)
+
+
+async def _resume_accepted(rows: list[ImageJob], stale_after: float) -> None:
+    """有任务号且能续轮询：只 `resume()`，绝不 `dispatch()`。
+
+    这是 R12-01 的计费红线：记录一旦有 `external_id`，供应商侧任务就在跑，
+    重新 `dispatch` 会走进 `handle_submit` 再提交一次。
+    """
+    if not rows:
+        return
+    logger.warning(
+        "发现 %d 条生图任务停在 running 且轮询链可能已断（>%d 秒），续接轮询：%s",
+        len(rows),
+        int(stale_after),
+        ", ".join(row.id for row in rows),
+    )
+    runner = get_runner()
+    for row in rows:
+        try:
+            await runner.resume(KIND_IMAGE, row.id)
+        except Exception:  # noqa: BLE001 - 单条失败不阻塞其余记录
+            logger.exception("续接轮询失败 id=%s", row.id)

@@ -1,7 +1,12 @@
-"""归档视频的时长归一化与浏览器兼容预览；只用临时目录，不访问 Z 盘。"""
+"""归档视频的时长归一化与浏览器兼容预览；只用临时目录，不访问 Z 盘。
+
+素材登记一律走 HTTP 上传：索引在 `assets` 表，服务层构造（`ArchiveAssetService()`）
+需要 session，测试里直接调同步方法等于绕开真实的入库路径。
+"""
 
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -9,10 +14,10 @@ import imageio_ffmpeg
 import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
+from tests_archive_helpers import archive
 
 from infra.archive.local import get_archive_settings
 from infra.media_probe import PREVIEW_VERSION, create_browser_preview, inspect, normalize_duration
-from modules.asset.archive_service import ArchiveAssetService
 
 
 @pytest.fixture
@@ -23,6 +28,7 @@ def archive_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 def make_video(path: Path, size: str = "64x64") -> Path:
+    # 颜色取随机值：内容摘要参与归档去重，两个用例生成同一份字节会互相命中
     subprocess.run(
         [
             imageio_ffmpeg.get_ffmpeg_exe(),
@@ -32,7 +38,7 @@ def make_video(path: Path, size: str = "64x64") -> Path:
             "-f",
             "lavfi",
             "-i",
-            f"color=c=blue:s={size}:d=2",
+            f"color=c=0x{os.urandom(3).hex()}:s={size}:d=2",
             "-f",
             "lavfi",
             "-i",
@@ -66,13 +72,12 @@ def test_stream_serves_playable_derivative_and_preserves_original(
 ) -> None:
     source = make_video(archive_root / "sample.mp4")
     original = source.read_bytes()
-    media = ArchiveAssetService().repo.register(source, "sample.mp4", "source", "u_001")
-    # 旧低清缓存仍存在时，必须生成并返回新版预览。
-    (archive_root / "library/previews" / f"{media.id}.mp4").write_bytes(b"old preview")
-    response = client.get(f"/api/v1/assets/archive/{media.id}/stream")
+    media = archive.upload(client, "sample.mp4", "source", original)
+    response = client.get(f"/api/v1/assets/archive/{media['id']}/stream")
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("video/mp4")
-    derived = archive_root / "library/previews" / f"{media.id}.{PREVIEW_VERSION}.mp4"
+    # 派生文件名带画质版本：升级转码参数时旧缓存自动失效，不需要手工清目录
+    derived = archive_root / "library/previews" / f"{media['id']}.{PREVIEW_VERSION}.mp4"
     assert derived.is_file()
     assert derived.read_bytes() == response.content
     assert source.read_bytes() == original  # 派生预览绝不覆盖原片
@@ -85,37 +90,33 @@ def test_stream_serves_playable_derivative_and_preserves_original(
     assert "Video: h264" in probe.stderr
     assert "yuv420p(" in probe.stderr  # 8-bit，浏览器可解码
     assert "yuv420p10" not in probe.stderr
-    assert client.get(media.url).content == original
+    assert client.get(media["url"]).content == original
     assert inspect(derived, ".mp4")["width"] == 64  # 不放大小尺寸原片
 
 
-def test_portrait_preview_keeps_detail_and_upgrades_old_thumbnail(
-    client: TestClient, archive_root: Path
-) -> None:
+def test_portrait_thumbnail_keeps_detail(client: TestClient, archive_root: Path) -> None:
+    """竖屏原片的缩略图不能统一压成固定小图：720×1280 原样保留。"""
     source = make_video(archive_root / "portrait.mp4", "720x1280")
-    service = ArchiveAssetService()
-    media = service.repo.register(source, "portrait.mp4", "source", "u_001")
-    legacy = archive_root / "library/previews" / f"{media.id}.jpg"
-    Image.new("RGB", (320, 568), "red").save(legacy)
-    media.preview_path = str(legacy.relative_to(archive_root))
-    service.repo.save(media)
-    upgraded = archive_root / "library/previews" / f"{media.id}.{PREVIEW_VERSION}.jpg"
-    upgraded.unlink()
-    response = client.get(media.preview_url)
+    media = archive.upload(client, "portrait.mp4", "source", source.read_bytes())
+    response = client.get(media["previewUrl"])
     assert response.status_code == 200
-    assert response.content == upgraded.read_bytes()
-    with Image.open(upgraded) as image:
+    assert response.headers["content-type"].startswith("image/jpeg")
+    thumbnail = archive_root / "library/previews" / f"{media['id']}.{PREVIEW_VERSION}.jpg"
+    assert thumbnail.read_bytes() == response.content
+    with Image.open(thumbnail) as image:
         assert image.size == (720, 1280)
-    path, _ = service.stream(media.id, "u_001")
-    info = inspect(path, ".mp4")
+    assert client.get(f"/api/v1/assets/archive/{media['id']}/stream").status_code == 200
+    info = inspect(
+        archive_root / "library/previews" / f"{media['id']}.{PREVIEW_VERSION}.mp4", ".mp4"
+    )
     assert (info["width"], info["height"]) == (720, 1280)
 
 
 def test_stream_rejects_non_video(client: TestClient, archive_root: Path) -> None:
     image = archive_root / "reference.png"
-    Image.new("RGB", (16, 16), "blue").save(image, format="PNG")
-    media = ArchiveAssetService().repo.register(image, "reference.png", "character", "u_001")
-    assert client.get(f"/api/v1/assets/archive/{media.id}/stream").status_code == 404
+    Image.new("RGB", (16, 16), tuple(os.urandom(3))).save(image, format="PNG")
+    media = archive.upload(client, "reference.png", "character", image.read_bytes())
+    assert client.get(f"/api/v1/assets/archive/{media['id']}/stream").status_code == 404
 
 
 def test_browser_preview_fails_closed_on_bad_input(archive_root: Path) -> None:

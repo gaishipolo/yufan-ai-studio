@@ -5,7 +5,7 @@ import { useSessionStore, type SignOutReason } from './session';
 /* ------------------------------------------------------------------
  * 结束会话 —— 唯一的出口
  *
- * 会话有**五条**结束路径，而它们分散在四个文件里：
+ * 会话有**五条**结束路径，分别落在五个文件里：
  *   manual        用户点退出（widgets/user-menu/use-sign-out）
  *   expired       令牌到点且续期失败（use-session-watch）、冷启动换票被拒（SessionBootstrap）
  *   unauthorized  任意接口 401 且续期失败（shared/api/http 的拦截器）
@@ -19,7 +19,7 @@ import { useSessionStore, type SignOutReason } from './session';
  * 生图历史、角色列表当成新账号的数据渲染出来——用户会当成数据串了报过来。
  *
  * 所以「结束会话」本身必须是原子的：清会话状态 + 清查询缓存，一处写完，
- * 四个入口都调它。清缓存是幂等的，多调一次无害，不存在顺序陷阱。
+ * 五个入口都调它。清缓存是幂等的，多调一次无害，不存在顺序陷阱。
  *
  * 跳转仍然不在**这里**做：路由守卫读 status 自己会重定向，
  * 拦截器不碰路由（否则拦截器与路由会互相打架）。

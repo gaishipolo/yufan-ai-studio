@@ -1,4 +1,12 @@
-"""归档路由只声明 HTTP 参数和响应，业务由 ArchiveAssetService 处理。"""
+"""归档路由只声明 HTTP 参数和响应，业务由 ArchiveAssetService 处理。
+
+索引在 `assets` 表（`source='archive'`），字节仍在归档盘。接口路径、入参与出参
+都保持不变：前端与替换模板按 URL 契约对接，不该因为「索引从 JSON 换成 DB」
+而改一行代码。
+
+三个 `PUT` 是「我的素材」的写入口（改名 / 分享 / 回收站），彼此用不同权限点：
+改名只动自己的记录，分享会让素材进入公共原片池，删除影响可用性，不能共用一个码。
+"""
 
 from __future__ import annotations
 
@@ -26,7 +34,7 @@ router = APIRouter(prefix="/archive", tags=["素材归档"])
 
 
 @router.get("", summary="归档素材列表与空间占用")
-def list_archive(
+async def list_archive(
     actor: ArchiveReadDep,
     service: ArchiveServiceDep,
     category: ArchiveCategory = "all",
@@ -37,7 +45,7 @@ def list_archive(
     page_size: int = Query(default=200, ge=1, le=200, alias="pageSize"),
 ) -> ApiResponse[ArchiveList]:
     return ApiResponse.ok(
-        service.list_assets(actor.id, category, scope, keyword, state, page, page_size)
+        await service.list_assets(actor.id, category, scope, keyword, state, page, page_size)
     )
 
 
@@ -53,44 +61,48 @@ async def upload(
 
 
 @router.post("/import", status_code=201, summary="从 Z 盘 inbox 登记现有素材")
-def import_asset(
+async def import_asset(
     payload: ImportAsset, actor: ArchiveWriteDep, service: ArchiveServiceDep
 ) -> ApiResponse[ArchivedAsset]:
-    return ApiResponse.ok(service.import_for(payload, actor))
+    return ApiResponse.ok(await service.import_for(payload, actor))
 
 
 @router.get("/{asset_id}/file", summary="预览或下载已归档素材")
-def asset_file(asset_id: str, actor: ArchiveReadDep, service: ArchiveServiceDep) -> FileResponse:
-    path, mime = service.file(asset_id, actor.id)
+async def asset_file(
+    asset_id: str, actor: ArchiveReadDep, service: ArchiveServiceDep
+) -> FileResponse:
+    path, mime = await service.file(asset_id, actor.id)
     return FileResponse(path, media_type=mime)
 
 
 @router.get("/{asset_id}/thumbnail", summary="读取归档素材缩略图")
-def asset_thumbnail(
+async def asset_thumbnail(
     asset_id: str, actor: ArchiveReadDep, service: ArchiveServiceDep
 ) -> FileResponse:
-    path, mime = service.file(asset_id, actor.id, preview=True)
+    path, mime = await service.file(asset_id, actor.id, preview=True)
     return FileResponse(path, media_type=mime)
 
 
 @router.get("/{asset_id}/stream", summary="浏览器兼容视频预览（派生文件，不改原片）")
-def asset_stream(asset_id: str, actor: ArchiveReadDep, service: ArchiveServiceDep) -> FileResponse:
-    path, mime = service.stream(asset_id, actor.id)
+async def asset_stream(
+    asset_id: str, actor: ArchiveReadDep, service: ArchiveServiceDep
+) -> FileResponse:
+    path, mime = await service.stream(asset_id, actor.id)
     return FileResponse(path, media_type=mime)
 
 
 @router.get("/{asset_id}", summary="读取本人或共享原片详情")
-def archive_detail(
+async def archive_detail(
     asset_id: str, actor: ArchiveReadDep, service: ArchiveServiceDep
 ) -> ApiResponse[ArchivedAsset]:
-    return ApiResponse.ok(service.detail(asset_id, actor.id))
+    return ApiResponse.ok(await service.detail(asset_id, actor.id))
 
 
 @router.get("/{asset_id}/preview", summary="受控公共原片预览")
-def public_preview(
+async def public_preview(
     asset_id: str, actor: ArchiveReadDep, service: ArchiveServiceDep
 ) -> FileResponse:
-    path, mime = service.preview(asset_id, actor.id)
+    path, mime = await service.preview(asset_id, actor.id)
     return FileResponse(path, media_type=mime)
 
 
@@ -100,21 +112,21 @@ DeleteDep = Annotated[CurrentUser, Depends(require("asset:delete"))]
 
 
 @router.put("/{asset_id}/name", summary="修改本人素材名称")
-def rename(
+async def rename(
     asset_id: str, payload: ArchiveChange, actor: UpdateDep, service: ArchiveServiceDep
 ) -> ApiResponse[ArchivedAsset]:
-    return ApiResponse.ok(service.change_action(asset_id, actor.id, payload, "name"))
+    return ApiResponse.ok(await service.change_action(asset_id, actor.id, payload, "name"))
 
 
 @router.put("/{asset_id}/sharing", summary="分享或取消分享本人原片")
-def sharing(
+async def sharing(
     asset_id: str, payload: ArchiveChange, actor: ShareDep, service: ArchiveServiceDep
 ) -> ApiResponse[ArchivedAsset]:
-    return ApiResponse.ok(service.change_action(asset_id, actor.id, payload, "shared"))
+    return ApiResponse.ok(await service.change_action(asset_id, actor.id, payload, "shared"))
 
 
 @router.put("/{asset_id}/deleted", summary="将本人素材移入回收站或恢复")
-def deleted(
+async def deleted(
     asset_id: str, payload: ArchiveChange, actor: DeleteDep, service: ArchiveServiceDep
 ) -> ApiResponse[ArchivedAsset]:
-    return ApiResponse.ok(service.change_action(asset_id, actor.id, payload, "deleted"))
+    return ApiResponse.ok(await service.change_action(asset_id, actor.id, payload, "deleted"))

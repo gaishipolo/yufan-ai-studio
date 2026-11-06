@@ -91,18 +91,28 @@ function buildAssets(): Asset[] {
     ['鼓点音效', 'audio', 1_800_000, 0],
     ['城市夜景航拍', 'video', 28_400_000, 3840],
   ];
-  return seeds.map(([name, type, sizeBytes, width], i) => ({
-    id: `A${1000 + i}`,
-    name,
-    type,
-    mimeType: type === 'image' ? 'image/jpeg' : type === 'video' ? 'video/mp4' : 'audio/mpeg',
-    sizeBytes,
-    coverUrl: cover(`sf-asset-${i}`, 400, 400),
-    width,
-    height: width ? Math.round(width * 0.75) : 0,
-    refCount: (i * 3) % 11,
-    createdAt: minutesAgo(60 * 5 + i * 37),
-  }));
+  return seeds.map(([name, type, sizeBytes, width], i) => {
+    const coverUrl = cover(`sf-asset-${i}`, 400, 400);
+    return {
+      id: `A${1000 + i}`,
+      name,
+      type,
+      mimeType: type === 'image' ? 'image/jpeg' : type === 'video' ? 'video/mp4' : 'audio/mpeg',
+      sizeBytes,
+      coverUrl,
+      // mock 没有真实对象存储：图片拿占位图当原图，音视频给空串，
+      // 预览弹窗会退化成原生播放器的空态，不会报错也不会假装有内容
+      fileUrl: type === 'image' ? coverUrl : '',
+      width,
+      height: width ? Math.round(width * 0.75) : 0,
+      duration: type === 'video' ? 8 + (i % 7) : type === 'audio' ? 30 + (i % 90) : 0,
+      hasAudio: type !== 'image',
+      category: null,
+      source: (i % 4 === 0 ? 'generated' : 'upload') as Asset['source'],
+      refCount: (i * 3) % 11,
+      createdAt: minutesAgo(60 * 5 + i * 37),
+    };
+  });
 }
 
 const templates: VideoTemplate[] = [

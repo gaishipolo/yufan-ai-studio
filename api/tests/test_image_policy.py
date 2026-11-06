@@ -7,12 +7,36 @@
 
 from __future__ import annotations
 
+import importlib
+import pkgutil
+
 import pytest
 
 import infra.driver_config as dc
 import modules.image.maintenance as maintenance
 from modules.image.maintenance import _stale_after_sec
 from modules.image.pipeline import ImageAssetSettings, _validate_asset_url
+
+# 驱动实际所在的三类包（与 `infra.<kind>.<name>` 的命名约定一致）
+_DRIVER_PACKAGES = ("infra.ai", "infra.archive", "infra.storage")
+
+
+def _discover_driver_settings() -> None:
+    """把各驱动包里的模块**全部** import 一遍，让 `DriverSettings` 注册表齐全。
+
+    这段本来是 `infra.driver_config.discover_driver_settings()`，后来发现线上路径
+    只需要「当前启用的驱动」（`_ensure_active_drivers_imported()`），全量扫包只有
+    这里两个断言要用，就搬进测试了——src 里不留测试专用函数。
+
+    **刻意不吞异常**：线上那版对单个模块失败只记 warning（缺个驱动不该让服务起不来），
+    但测试里漏 import 一个模块 = 巡检范围悄悄变小，而「巡检看起来是绿的」正是要防的事。
+    """
+    for package_name in _DRIVER_PACKAGES:
+        package = importlib.import_module(package_name)
+        for info in pkgutil.iter_modules(package.__path__):
+            if info.ispkg or info.name.startswith("_"):
+                continue
+            importlib.import_module(f"{package_name}.{info.name}")
 
 
 def test_stale_threshold_ignores_unrelated_drivers() -> None:
@@ -78,3 +102,39 @@ def test_default_fallback_boundary_is_explicit() -> None:
         _validate_asset_url(f"http://{host}/x.png", frozenset())  # 放行
     with pytest.raises(ValueError, match="非公网 IP"):
         _validate_asset_url("http://169.254.169.254/latest/", frozenset())
+
+
+def test_discovery_makes_startup_checks_see_every_driver() -> None:
+    """注册表只记「被 import 过」的子类，启动自检不能靠谁碰巧 import 了驱动（R13-05）。
+
+    只加载 echo 的部署里 `AgnesSettings` 原本不在册，`ensure_prod_driver_settings()`
+    扫不到它；`maintenance._stale_after_sec()` 靠函数内 import 兜住纯属巧合。
+    """
+    _discover_driver_settings()
+    registered = {cls.__name__ for cls in dc.registered_driver_settings()}
+    assert "AgnesSettings" in registered
+    assert "ImageAssetSettings" in registered
+
+
+def test_precheck_computes_every_declared_budget() -> None:
+    """启动期预检必须能算出 IMAGE 预算，否则巡检阈值无解（R13-06）。"""
+    _discover_driver_settings()
+    assert dc.precheck_submit_budgets().get("image"), (
+        "没有驱动声明 IMAGE 提交预算：巡检会直接跳过，且没人会发现"
+    )
+
+
+def test_precheck_is_loud_on_broken_declaration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """坏配置在启动期就炸，而不是每 300 秒被调度器吞掉一条日志（R13-06）。"""
+
+    class BadSettings:
+        submit_budget_for = frozenset({"image"})
+
+        def __init__(self) -> None:
+            pass
+
+    monkeypatch.setattr(dc, "registered_driver_settings", lambda: (BadSettings,))  # type: ignore[arg-type]
+    with pytest.raises(RuntimeError, match="timeout_sec"):
+        dc.precheck_submit_budgets()

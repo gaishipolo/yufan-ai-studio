@@ -76,7 +76,10 @@ describe('产品名', () => {
 });
 
 describe('骨架路径常量', () => {
-  it('首页与登录页都是绝对路径（守卫直接用它们 Navigate）', () => {
+  /* 这里只验「形状」——`startsWith('/')` 几乎永远为真，单看它守不住任何东西。
+     真正的问题是「这两个常量指向的路由还在不在」，那条断言必须读注册表，
+     放在 `app/router.test.ts`（shared 层不允许 import app 层）。 */
+  it('首页与登录页都是绝对路径且互不相同（指向性由 router.test.ts 守）', () => {
     for (const path of [HOME_PATH, LOGIN_PATH]) {
       expect(path.startsWith('/')).toBe(true);
     }

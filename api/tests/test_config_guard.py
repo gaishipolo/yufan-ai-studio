@@ -61,6 +61,34 @@ def test_dev_stays_lenient() -> None:
     assert settings.anonymous_allowed is True
 
 
+def test_prod_guard_imports_active_driver_before_checking(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """守卫不能只查「已经 import 过」的驱动配置。
+
+    登记表是按 import 触发的，而 `infra.storage.s3` 平时没人 import——它是
+    `load_driver` 在第一次用到时才加载的。于是 `STORAGE_DRIVER=s3` 漏配密钥时：
+    服务正常启动、健康检查 200、第一张素材上传才 502。这类「配置错在启动后才暴露」
+    是最难排查的一种，必须在启动期炸掉。
+    """
+    from core.config import settings
+    from infra import driver_config as dc
+
+    # 模拟「进程刚起来、S3 驱动还没被 import 过」：登记表清空 + 模块踢出缓存。
+    # 不动原列表对象，teardown 时 monkeypatch 会还原属性，其它测试看到的登记表不变。
+    monkeypatch.setattr(dc, "_REGISTRY", [])
+    monkeypatch.delitem(sys.modules, "infra.storage.s3", raising=False)
+    for key in ("S3_ENDPOINT", "S3_BUCKET", "S3_ACCESS_KEY", "S3_SECRET_KEY"):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setattr(settings, "storage_driver", "s3")
+    monkeypatch.setattr(settings, "ai_providers", "")
+
+    with pytest.raises(RuntimeError, match="S3Settings"):
+        dc.ensure_prod_driver_settings("prod")
+
+    assert "infra.storage.s3" in sys.modules, "守卫没有主动 import 启用的驱动"
+
+
 def test_default_runtime_paths_do_not_depend_on_cwd() -> None:
     """默认 sqlite / 存储路径必须是绝对路径（锚定 api/）。
 
@@ -108,9 +136,10 @@ def _driver_settings() -> tuple[type[BaseSettings], ...]:
     from infra.ai.agnes import AgnesSettings
     from infra.ai.libtv import LibTvSettings
     from infra.archive.local import ArchiveSettings
+    from infra.storage.s3 import S3Settings
     from modules.image.pipeline import ImageAssetSettings
 
-    return (AgnesSettings, LibTvSettings, ArchiveSettings, ImageAssetSettings)
+    return (AgnesSettings, LibTvSettings, ArchiveSettings, S3Settings, ImageAssetSettings)
 
 
 def _all_yaml_fields() -> list[tuple[str, str, object]]:

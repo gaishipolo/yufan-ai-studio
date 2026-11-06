@@ -1,8 +1,14 @@
-"""只读旧库，复制已登记原片和已发布素材包；不移动历史资料，不触发生成。"""
+"""只读旧库，复制已登记原片和已发布素材包；不移动历史资料，不触发生成。
+
+素材登记自「索引搬进 `assets` 表」后是异步 + 需会话的，所以这里每次登记
+`asyncio.run` 一次：一次性迁移脚本，几百个文件多开几个连接无所谓，换来的好处是
+复制、缩略图、DB 行、JSON 镜像全走与线上同一条代码路径，不另写一份实现。
+"""
 
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import sqlite3
 import sys
@@ -16,14 +22,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from pydantic import TypeAdapter  # noqa: E402
 
 from core.media import MediaCategory, StoredMedia  # noqa: E402
+from db.session import get_session_factory  # noqa: E402
 from infra.archive.base import checksum, within  # noqa: E402
 from infra.archive.local import LocalArchiveStorage  # noqa: E402
-from modules.asset.archive_repository import ArchiveAssetRepository  # noqa: E402
+from infra.media_probe import create_preview  # noqa: E402
 from modules.asset.archive_service import ArchiveAssetService  # noqa: E402
 
 storage = LocalArchiveStorage()
-repo = ArchiveAssetRepository(storage)
-service = ArchiveAssetService(storage)
 
 
 def read_mapping(path: Path) -> dict:
@@ -34,19 +39,39 @@ def read_mapping(path: Path) -> dict:
 
 
 def registered(source: Path, name: str, category: str, owner: str) -> dict:
-    return repo.register(
-        source, name, TypeAdapter(MediaCategory).validate_python(category), owner
-    ).model_dump(mode="json", by_alias=True)
+    parsed = TypeAdapter(MediaCategory).validate_python(category)
+
+    async def run() -> dict:
+        async with get_session_factory()() as session:
+            value = await ArchiveAssetService(session).register(source, name, parsed, owner)
+            return value.model_dump(mode="json", by_alias=True)
+
+    return asyncio.run(run())
 
 
 def asset_dict(asset_id: str, owner: str) -> dict:
-    return service.owned(asset_id, owner).model_dump(mode="json", by_alias=True)
+    """已登记过的素材从 JSON 镜像读回（迁移脚本只认盘上那份）。"""
+    path = storage.resolve(f"catalog/assets/{asset_id}.json")
+    if not path.is_file():
+        raise FileNotFoundError(f"索引缺失：{path}（请先跑 app import-archive-index）")
+    media = StoredMedia.model_validate(storage.read(path))
+    if media.owner_id != owner:
+        raise PermissionError(f"素材 {asset_id} 不属于 {owner}")
+    return media.model_dump(mode="json", by_alias=True)
 
 
 def ensure_preview(value: dict) -> None:
     media = StoredMedia.model_validate(value)
-    repo.ensure_preview(media)
-    value.update(media.model_dump(mode="json", by_alias=True))
+    if media.preview_path and storage.resolve(media.preview_path).is_file():
+        return
+    key = f"library/previews/{media.id}.jpg"
+    if create_preview(storage.resolve(media.path), storage.resolve(key), media.type):
+        media.preview_path = key
+        media.preview_url = f"/api/v1/assets/archive/{media.id}/thumbnail"
+        storage.write(
+            storage.root() / "catalog/assets" / f"{media.id}.json",
+            media.model_dump(mode="json", by_alias=True),
+        )
 
 
 def main() -> None:

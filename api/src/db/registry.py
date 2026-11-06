@@ -6,6 +6,12 @@
 现在改为扫描 `modules.*.models`，新增模块的表会自动进入
 `Base.metadata`，`create_all` 与 Alembic autogenerate 都能感知。
 
+**框架自带的表在 `db/` 里（如 `audit_events`），不在 `modules/` 下**，
+所以扫描之外还要显式导入 `FRAMEWORK_MODELS`。漏掉它们的症状很隐蔽：
+运行时因为某个业务代码顺手 import 了 `db.audit` 而一切正常，`alembic check`
+却看不到这张表，于是报「检测到删除表 audit_events」——真按它跑 autogenerate，
+生产库的审计数据就没了。
+
 注意依赖方向：本文件属于 db 层，因此**不能** import `api.discovery`，
 否则 db 会反向依赖 api。这里直接用 pkgutil 扫描。
 """
@@ -23,12 +29,19 @@ logger = get_logger(__name__)
 
 MODULES_PACKAGE = "modules"
 
+# 不属于任何业务模块、但确实建表的框架层模型
+FRAMEWORK_MODELS = ("db.audit",)
+
 
 @lru_cache
 def load_all_models(package_name: str = MODULES_PACKAGE) -> tuple[str, ...]:
     """导入所有模块的 models，返回已加载的模块路径。"""
     package = importlib.import_module(package_name)
     loaded: list[str] = []
+
+    for name in FRAMEWORK_MODELS:
+        importlib.import_module(name)
+        loaded.append(name)
 
     for info in pkgutil.iter_modules(package.__path__):
         if not info.ispkg or info.name.startswith("_"):

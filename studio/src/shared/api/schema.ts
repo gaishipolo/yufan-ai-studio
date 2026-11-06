@@ -32,6 +32,10 @@ export interface Page<T> {
 export type AspectRatio = "9:16" | "16:9" | "1:1";
 export const AspectRatio_VALUES = ["9:16", "16:9", "1:1"] as const;
 
+/** 取值：upload, archive, generated */
+export type AssetSource = "upload" | "archive" | "generated";
+export const AssetSource_VALUES = ["upload", "archive", "generated"] as const;
+
 /** 取值：image, video, audio */
 export type AssetType = "image" | "video" | "audio";
 export const AssetType_VALUES = ["image", "video", "audio"] as const;
@@ -106,7 +110,10 @@ export interface ArchivedAsset {
   downloadAllowed?: boolean;
 }
 
-/** AssetCounts */
+/** 分面计数：切类型 tab 上的数字。
+
+它按「除类型以外的全部筛选条件」统计，所以切 tab 不会看到三个互不相干的数字，
+也不会出现「选了图片但视频计数还是全站值」这种自相矛盾的显示。 */
 export interface AssetCounts {
   all?: number;
   image?: number;
@@ -118,6 +125,8 @@ export interface AssetCounts {
 export interface AssetListOut {
   items?: AssetOut[];
   total?: number;
+  page?: number;
+  pageSize?: number;
   counts?: AssetCounts;
 }
 
@@ -128,9 +137,14 @@ export interface AssetOut {
   type: AssetType;
   mimeType: string;
   sizeBytes: number;
-  coverUrl: string;
   width: number;
   height: number;
+  duration: number;
+  hasAudio: boolean;
+  category?: "source" | "character" | "product" | "scene" | "audio" | null;
+  source: AssetSource;
+  coverUrl: string;
+  fileUrl: string;
   refCount: number;
   createdAt: string;
 }
@@ -236,6 +250,8 @@ export interface ImageJobOut {
   externalId?: string | null;
   /** 上一次提交的供应商任务号；带 confirmCharged 重试后保留的对账凭证 */
   previousExternalId?: string | null;
+  /** 被替换掉的全部供应商任务号（旧的在前）。连续多次确认已扣费重试时，previousExternalId 只保留最近一个，全量凭证看这里 */
+  previousExternalIds?: string[];
   /** 创建时间（UTC） */
   createdAt: string;
 }
@@ -474,6 +490,14 @@ export interface ReadyOut {
   queueSize: number;
 }
 
+/** 确认「上一次提交可能已经花了钱」后才允许重提。
+
+默认 False：一次误点就变成第二次计费，是这套流程里最贵的一个操作。 */
+export interface ReconfirmReplacement {
+  /** 确认上一次提交可能已产生费用，仍要重新提交（默认拒绝） */
+  confirmCharged?: boolean;
+}
+
 /** RefreshIn */
 export interface RefreshIn {
   /** 登录时拿到的刷新令牌 */
@@ -482,7 +506,6 @@ export interface RefreshIn {
 
 /** ReplacementCatalog */
 export interface ReplacementCatalog {
-  root: string;
   provider?: string;
   maxCredits?: number;
   kinds?: string[];
@@ -902,21 +925,6 @@ export interface UpdateTaskIn {
   favorited?: boolean | null;
 }
 
-/** 预签名上传：前端拿到 uploadUrl 后直传对象存储，再回调确认。 */
-export interface UploadAssetIn {
-  filename: string;
-  contentType?: string;
-  sizeBytes?: number;
-}
-
-/** UploadTicketOut */
-export interface UploadTicketOut {
-  assetId: string;
-  uploadUrl: string;
-  key: string;
-  expiresIn?: number;
-}
-
 /** UserCreateIn */
 export interface UserCreateIn {
   /** 登录名，3-64 位字母数字或 `. _ -`，会被转成小写 */
@@ -986,7 +994,7 @@ export interface ValidationError {
 
 /** 键是 `METHOD path`，值是去掉 {code,message,data} 封套后的类型 */
 export interface EndpointData {
-  /** 素材列表（按类型分面计数） */
+  /** 素材列表（分页 + 类型分面计数） */
   "GET /api/v1/assets": AssetListOut;
   /** 归档素材列表与空间占用 */
   "GET /api/v1/assets/archive": ArchiveList;
@@ -1010,12 +1018,16 @@ export interface EndpointData {
   "GET /api/v1/assets/archive/{asset_id}/stream": unknown;
   /** 读取归档素材缩略图 */
   "GET /api/v1/assets/archive/{asset_id}/thumbnail": unknown;
-  /** 申请上传凭证（待实现） */
-  "POST /api/v1/assets/upload-ticket": UploadTicketOut;
-  /** 删除素材（待实现） */
+  /** 上传素材 */
+  "POST /api/v1/assets/upload": AssetOut;
+  /** 删除素材 */
   "DELETE /api/v1/assets/{asset_id}": unknown;
-  /** 素材详情（待实现） */
-  "GET /api/v1/assets/{asset_id}": null;
+  /** 素材详情 */
+  "GET /api/v1/assets/{asset_id}": AssetOut;
+  /** 读取素材缩略图 */
+  "GET /api/v1/assets/{asset_id}/cover": unknown;
+  /** 读取素材原文件 */
+  "GET /api/v1/assets/{asset_id}/file": unknown;
   /** 提交生图 */
   "POST /api/v1/generations/image": ImageJobOut;
   /** 存活探针 */
@@ -1130,6 +1142,8 @@ export interface EndpointData {
   "GET /api/v1/templates/replacement-runs/{run_id}/inputs/{asset_id}": unknown;
   /** 预览或下载 Z 盘原始生成结果 */
   "GET /api/v1/templates/replacement-runs/{run_id}/output": unknown;
+  /** 确认上次提交可能已计费后放行重提（默认拒绝） */
+  "POST /api/v1/templates/replacement-runs/{run_id}/reconfirm": ReplacementRunOut;
   /** 恢复本人回收站中的替换任务与调用档案 */
   "POST /api/v1/templates/replacement-runs/{run_id}/restore": ReplacementRunOut;
   /** 保存人工验收，版本冲突需重新核对 */

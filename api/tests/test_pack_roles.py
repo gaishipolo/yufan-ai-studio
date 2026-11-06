@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any, Literal
 from uuid import UUID, uuid4
 
 import pytest
+from fastapi.testclient import TestClient
 from PIL import Image
 from pydantic import TypeAdapter
-from tests_archive_helpers import archive
 
+from api.deps import get_actor
+from core.context import CurrentUser
 from core.exceptions import BadRequest
 from core.media import MediaCategory
 from core.pack_roles import BASE_ROLE, PACK_ROLES, PACK_SCOPES
@@ -22,13 +25,31 @@ from modules.template.replacement_schema import PackDraftIn
 Kind = Literal["product", "character", "scene"]
 
 
-def _register(tmp_path: Path, owner: str, kind: Kind, count: int) -> list[str]:
+def _as(client: TestClient, owner: str) -> None:
+    client.app.dependency_overrides[get_actor] = lambda: CurrentUser(
+        id=owner,
+        name=owner,
+        permissions=frozenset({"asset:read", "asset:create", "asset:reference:manage"}),
+    )
+
+
+def _register(client: TestClient, tmp_path: Path, owner: str, kind: Kind, count: int) -> list[str]:
+    """走真实上传登记参考图：参考素材的准入权限只在这条路径上生效。"""
     category = TypeAdapter(MediaCategory).validate_python(kind)
+    _as(client, owner)
     ids: list[str] = []
     for index in range(count):
         source = tmp_path / f"ref-{index}.png"
-        Image.new("RGB", (16, 16), "blue").save(source)
-        ids.append(archive.register(source, f"{kind}-{index}.png", category, owner)["id"])
+        # 颜色随机：`assets` 表在测试间共享，同字节同分类会被摘要去重命中旧记录
+        Image.new("RGB", (16, 16), tuple(os.urandom(3))).save(source, format="PNG")
+        response = client.post(
+            "/api/v1/assets/archive/upload",
+            params={"filename": f"{kind}-{index}.png", "category": category},
+            content=source.read_bytes(),
+            headers={"Content-Type": "application/octet-stream"},
+        )
+        assert response.status_code == 201, response.text
+        ids.append(response.json()["data"]["id"])
     return ids
 
 
@@ -44,7 +65,9 @@ def _payload(kind: Kind, ids: list[str], **extra: Any) -> PackDraftIn:
     return PackDraftIn.model_validate(values)
 
 
-def test_legacy_pack_gets_base_role(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_legacy_pack_gets_base_role(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, client: TestClient
+) -> None:
     monkeypatch.setattr(get_archive_settings(), "root", str(tmp_path))
     repo = ReplacementRepository()
     repo.storage.write(
@@ -62,9 +85,11 @@ def test_legacy_pack_gets_base_role(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     assert pack.required_roles == ["front"]
 
 
-def test_save_keeps_roles_and_reports_gaps(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_save_keeps_roles_and_reports_gaps(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, client: TestClient
+) -> None:
     monkeypatch.setattr(get_archive_settings(), "root", str(tmp_path))
-    ids = _register(tmp_path, "owner", "product", 2)
+    ids = _register(client, tmp_path, "owner", "product", 2)
     saved = PackService().save(
         _payload(
             "product",
@@ -78,23 +103,29 @@ def test_save_keeps_roles_and_reports_gaps(tmp_path: Path, monkeypatch: pytest.M
     assert saved.gaps == ["缺少产品细节图", "产品替换范围"]
 
 
-def test_save_rejects_unknown_role(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_save_rejects_unknown_role(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, client: TestClient
+) -> None:
     monkeypatch.setattr(get_archive_settings(), "root", str(tmp_path))
-    ids = _register(tmp_path, "owner", "character", 1)
+    ids = _register(client, tmp_path, "owner", "character", 1)
     with pytest.raises(BadRequest, match="图片用途无效"):
         PackService().save(_payload("character", ids, bindings=[{"role": "multiview"}]), "owner")
 
 
-def test_save_rejects_role_count_mismatch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_save_rejects_role_count_mismatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, client: TestClient
+) -> None:
     monkeypatch.setattr(get_archive_settings(), "root", str(tmp_path))
-    ids = _register(tmp_path, "owner", "character", 2)
+    ids = _register(client, tmp_path, "owner", "character", 2)
     with pytest.raises(BadRequest, match="一一对应"):
         PackService().save(_payload("character", ids, bindings=[{"role": "front"}]), "owner")
 
 
-def test_publish_requires_required_roles(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_publish_requires_required_roles(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, client: TestClient
+) -> None:
     monkeypatch.setattr(get_archive_settings(), "root", str(tmp_path))
-    ids = _register(tmp_path, "owner", "product", 2)
+    ids = _register(client, tmp_path, "owner", "product", 2)
     service = PackService()
     saved = service.save(
         _payload(
@@ -111,18 +142,22 @@ def test_publish_requires_required_roles(tmp_path: Path, monkeypatch: pytest.Mon
     assert "多视结构图" in str(failure.value)
 
 
-def test_publish_requires_product_scope(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_publish_requires_product_scope(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, client: TestClient
+) -> None:
     monkeypatch.setattr(get_archive_settings(), "root", str(tmp_path))
-    ids = _register(tmp_path, "owner", "product", 1)
+    ids = _register(client, tmp_path, "owner", "product", 1)
     service = PackService()
     saved = service.save(_payload("product", ids), "owner")
     with pytest.raises(BadRequest, match="产品替换范围"):
         service.publish(saved.id, "owner", saved.revision)
 
 
-def test_publish_complete_pack(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_publish_complete_pack(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, client: TestClient
+) -> None:
     monkeypatch.setattr(get_archive_settings(), "root", str(tmp_path))
-    ids = _register(tmp_path, "owner", "product", 3)
+    ids = _register(client, tmp_path, "owner", "product", 3)
     service = PackService()
     saved = service.save(
         _payload(
@@ -157,9 +192,11 @@ def test_frontend_role_table_matches_backend() -> None:
         assert f"{kind}: '{role}'" in ts, f"{kind} 的基准用途与后端不一致"
 
 
-def test_edit_draft_uses_same_identity(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_edit_draft_uses_same_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, client: TestClient
+) -> None:
     monkeypatch.setattr(get_archive_settings(), "root", str(tmp_path))
-    ids = _register(tmp_path, "owner", "character", 1)
+    ids = _register(client, tmp_path, "owner", "character", 1)
     service = PackService()
     saved = service.save(_payload("character", ids), "owner")
     edited = service.save(
@@ -230,11 +267,11 @@ def test_scope_check_rejects_outside_pack() -> None:
 
 
 def test_repeat_save_with_same_revision_is_idempotent(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, client: TestClient
 ) -> None:
     """同一次提交因超时重试时，必须返回同一份草稿，而不是「草稿已变化」。"""
     monkeypatch.setattr(get_archive_settings(), "root", str(tmp_path))
-    ids = _register(tmp_path, "owner", "product", 2)
+    ids = _register(client, tmp_path, "owner", "product", 2)
     payload = _payload(
         "product",
         ids,

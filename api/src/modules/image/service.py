@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core import audit
 from core.context import CurrentUser
-from core.exceptions import BadRequest, Forbidden, InvalidState
+from core.exceptions import BadRequest, Forbidden, InvalidState, UpstreamError
 from core.logging import get_logger
 from core.response import Page, PageParams
 from db.repository import BaseRepository
@@ -19,7 +19,7 @@ from generation.runner import get_runner
 from generation.spec import STATUS_FAILED, STATUS_QUEUED
 from infra import get_model_router
 from infra.ai.base import Capability, ModelSpec
-from modules.image.models import ImageJob
+from modules.image.models import ImageJob, remember_previous_external_id
 from modules.image.permissions import PERM_READ_ALL, PERM_RETRY_ANY
 from modules.image.pipeline import KIND_IMAGE
 from modules.image.schema import GenerateImageIn, ImageJobOut
@@ -165,9 +165,11 @@ class ImageService:
 
         # 清 external_id 之前先留凭证：记录上留一份（页面/DB 可查），
         # 审计里留一份（谁确认的、旧任务号是什么）。审计写入按设计会吞异常，
-        # 所以不能只靠它。
+        # 所以不能只靠它；而记录只有一个槽位，第二次确认会覆盖第一次，
+        # 因此同时追加进 external_id_history（R13-02）。
+        history: list[str] = []
         if previous_external_id:
-            job.previous_external_id = previous_external_id
+            history = remember_previous_external_id(job, previous_external_id)
         job.status = STATUS_QUEUED
         job.progress = 0
         job.error_message = None
@@ -187,8 +189,27 @@ class ImageService:
             target_id=job.id,
             detail={
                 "previousExternalId": previous_external_id,
+                # 全量历史一并入审计：单槽被覆盖时这里仍有完整链路
+                "previousExternalIds": history,
                 "confirmedCharged": confirm_charged,
             },
         )
-        await get_runner().dispatch(KIND_IMAGE, job.id)
+        await self._dispatch_after_reset(job)
         return job
+
+    async def _dispatch_after_reset(self, job: ImageJob) -> None:
+        """复位后投递；投递失败不能只抛 500 把现场留在「已复位但没入队」。
+
+        记录此刻是 `queued` + `attempts=0` 的形状，正是巡检
+        （`maintenance.reconcile_stale_jobs`）负责接手的那一类。所以这里
+        只需要把「已受理、会自动重投」说清楚，不要让用户以为要再点一次——
+        重试按钮此时已经不生效了（记录不是 `failed`），这才是真正的坑（R13-07）。
+        """
+        try:
+            await get_runner().dispatch(KIND_IMAGE, job.id)
+        except Exception as exc:  # noqa: BLE001 - 队列不可用不该吞掉，但要给出可操作的说明
+            logger.exception("生图重试已复位但投递失败 id=%s，等待巡检重投", job.id)
+            raise UpstreamError(
+                "重试已受理（记录已复位为排队），但投递队列暂时不可用；"
+                "系统会在几分钟内自动重投，无需重复点击"
+            ) from exc

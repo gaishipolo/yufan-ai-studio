@@ -5,6 +5,7 @@ import { router } from './router';
 import { RequireAuth } from '@/shared/access/RequireAuth';
 import { RequirePermission } from '@/shared/access/RequirePermission';
 import { isResolvablePermission } from '@/entities/role/model/permission-catalog';
+import { HOME_PATH, LOGIN_PATH } from '@/shared/config/app';
 
 /**
  * 路由装配的不变量：
@@ -110,5 +111,20 @@ describe('router 装配', () => {
         true,
       );
     }
+  });
+
+  /* 骨架常量（HOME_PATH / LOGIN_PATH）与模块声明是两份数据，只能靠人记得同步。
+     改了路由名忘了改常量时，tsc、lint、全部单测都是绿的 —— 只有用户点「退出登录」
+     才会掉进 404，因为守卫跳的是常量，而注册表里已经没有那个路径。
+     app.test.ts 只验了「是不是绝对路径」，那是一条永远为真的断言。 */
+  it('骨架常量指向的路由确实存在，且登录页是裸页', () => {
+    const byPath = new Map(appRegistry.routes.map((route) => [route.path, route]));
+
+    expect(byPath.has(HOME_PATH), `HOME_PATH=${HOME_PATH} 不是任何模块声明的路由`).toBe(true);
+
+    const login = byPath.get(LOGIN_PATH);
+    expect(login, `LOGIN_PATH=${LOGIN_PATH} 不是任何模块声明的路由`).toBeTruthy();
+    // 包在外壳里会形成「未登录 → 送登录页 → 又被登录守卫送回登录页」的死循环
+    expect(login?.layout, '登录页必须是 layout: bare').toBe('bare');
   });
 });

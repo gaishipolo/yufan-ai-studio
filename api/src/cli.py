@@ -7,6 +7,7 @@
     app modules                        # 列出已发现的模块与权限点
     app models                         # 列出可用模型（供应商路由结果）
     app export-openapi                 # 导出接口契约（docs/ + 前端 TS 类型）
+    app import-archive-index           # 归档目录的 JSON 索引 → assets 表（幂等）
     app new-module voice --label 配音   # 生成新模块脚手架
 """
 
@@ -229,6 +230,36 @@ def _cmd_export_openapi(args: argparse.Namespace) -> None:
         print(f"{verb.get(status[str(path)], status[str(path)]):<8}{kind:<5}{path}")
 
 
+def _cmd_import_archive_index(args: argparse.Namespace) -> None:
+    """把归档盘的 JSON 索引补进 `assets` 表。
+
+    设计成可反复执行：主键沿用 JSON 的 id，第二次跑就是 `updated=0`。
+    不删 JSON —— 替换模板在 worker 里仍按文件读素材，删了那边就断。
+    """
+    from core.exceptions import AppError
+    from db.session import get_session_factory
+    from infra.archive import get_archive_storage
+    from modules.asset.archive_import import import_archive_index
+
+    try:
+        root = Path(args.root).resolve() if args.root else get_archive_storage().root()
+    except AppError as exc:
+        print(exc.message, file=sys.stderr)
+        raise SystemExit(1) from exc
+
+    if not (root / "catalog" / "assets").is_dir():
+        print(f"没有找到归档索引目录：{root / 'catalog' / 'assets'}", file=sys.stderr)
+        raise SystemExit(1)
+
+    async def run():
+        async with get_session_factory()() as session:
+            return await import_archive_index(session, root, dry_run=args.dry_run)
+
+    report = asyncio.run(run())
+    for line in report.lines():
+        print(line)
+
+
 def _cmd_new_module(args: argparse.Namespace) -> None:
     from scaffold import ModulePlan, ScaffoldError, create_module
 
@@ -321,6 +352,16 @@ def main(argv: list[str] | None = None) -> int:
         "--check", action="store_true", help="只比对不写入，不一致时以非 0 退出（CI 用）"
     )
     p_export.set_defaults(func=_cmd_export_openapi)
+
+    p_import = sub.add_parser(
+        "import-archive-index",
+        help="把归档目录的 JSON 索引导入 assets 表（幂等，不删 JSON）",
+    )
+    p_import.add_argument("--root", default="", help="归档根目录，默认取 MEDIA_ARCHIVE_ROOT")
+    p_import.add_argument(
+        "--dry-run", action="store_true", help="只统计将要发生的变更，不写库"
+    )
+    p_import.set_defaults(func=_cmd_import_archive_index)
 
     p_new = sub.add_parser("new-module", help="生成新模块脚手架")
     p_new.add_argument("name", help="模块名（snake_case），同时作为目录名与 pipeline kind")

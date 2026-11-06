@@ -1,21 +1,72 @@
-"""素材权限、登记和流式上传编排；所有磁盘操作在线程中执行。"""
+"""归档素材编排：登记、列表、取文件；索引在 DB，字节在归档盘。
+
+## 与 `AssetService` 的分工
+
+两个 service 共用 `assets` 表，但用的是两套**物理存储**：
+
+- `AssetService`：对象存储（本地 `STORAGE_LOCAL_ROOT` / S3），服务端中转上传，
+  缩略图按需派生，文件走 `FileResponse` 或预签名跳转。
+- 本文件：归档盘（`MEDIA_ARCHIVE_ROOT`，通常是 Z 盘/共享盘），原片直接落盘，
+  300MB 上限，供替换模板的 `prepare` 读原始视频。
+
+所以两边的 `storage_key` 不是同一个命名空间，靠 `source` 列区分。
+列表接口也各自限定来源，不会把对方的行渲染成 404 的封面。
+
+## 三个可见性层级
+
+| 谁在问 | 能看什么 | 入口 |
+|---|---|---|
+| 本人 | 自己的全部（含回收站、未分享） | `owned()` |
+| 任何人 | 未删除、且「自己的」或「别人已分享的原片」 | `visible()` |
+| 列表 | 按 `scope` 分池：mine / public / trash | `list_visible()` |
+
+`owned()` 与 `visible()` 不能合并：删除、改名只能动自己的记录，
+而预览、详情要放行公共原片。合在一起就得在每个调用点补 if。
+
+## 为什么仍然写 JSON
+
+替换模板在 worker 里同步读 `catalog/assets/{id}.json`。为了让「替换模板零改动」
+成立，入库时同步落一份 JSON 镜像（内容由 DB 行派生）。写失败即整次入库失败：
+「列表里有、prepare 说没有」是最难排查的一种不一致。
+
+改名/分享/移入回收站之后也要重写镜像 —— 否则模板侧读到的还是「可引用」的旧状态。
+
+## 列表不依赖归档盘在线
+
+列表读 DB，`root` 取不到时返回空串而不是 502 —— 盘掉线时运维仍需要看到
+「库里有多少素材、占多少空间」。取文件、上传、导入仍然要求盘可用。
+"""
 
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import uuid
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from core.config import settings
 from core.context import CurrentUser
-from core.exceptions import BadRequest, Conflict, Forbidden, NotFound
+from core.exceptions import BadRequest, Conflict, Forbidden, NotFound, UpstreamError
 from core.logging import get_logger
-from core.media import MediaCategory, StoredMedia
+from core.media import MediaCategory
 from infra.archive import ArchiveStorage, get_archive_storage, within
-from infra.media_catalog import catalog_lease
-from infra.media_probe import MAX_BYTES, PREVIEW_VERSION, create_browser_preview, create_preview
-from modules.asset.archive_repository import ArchiveAssetRepository
+from infra.media_probe import (
+    EXTENSIONS,
+    MAX_BYTES,
+    PREVIEW_VERSION,
+    create_browser_preview,
+    create_preview,
+)
+from infra.media_probe import (
+    inspect as probe_media,
+)
+from modules.asset.archive_repository import CATEGORIES, ArchiveAssetRepository
 from modules.asset.archive_schema import (
     ArchiveCategory,
     ArchiveChange,
@@ -25,180 +76,132 @@ from modules.asset.archive_schema import (
     ArchiveState,
     ImportAsset,
 )
+from modules.asset.models import Asset
+from modules.asset.schema import AssetSource
 
 logger = get_logger(__name__)
 
+# 归档素材的时区：历史 JSON 按北京时间切月份目录，导入时保持同一约定
+_LOCAL_TZ = timezone(timedelta(hours=8))
+
 
 class ArchiveAssetService:
-    def __init__(self, storage: ArchiveStorage | None = None) -> None:
+    def __init__(
+        self, session: AsyncSession, storage: ArchiveStorage | None = None
+    ) -> None:
+        self.session = session
         self.storage = storage or get_archive_storage()
-        self.repo = ArchiveAssetRepository(self.storage)
+        self.repo = ArchiveAssetRepository(session)
 
-    def owned(self, asset_id: str, owner: str) -> StoredMedia:
-        media = self.repo.get(asset_id)
-        if media.owner_id != owner:
+    # ------------------------------------------------------------------ 读
+    async def owned(self, asset_id: str, owner: str) -> Asset:
+        """本人记录：回收站里的也要能取（恢复操作要读它）。"""
+        row = await self.repo.get(asset_id)
+        if row.owner_id != owner:
             raise NotFound("素材不存在")
-        return media
+        return row
 
-    def output(self, media: StoredMedia, owner: str) -> ArchivedAsset:
-        item = ArchivedAsset.model_validate(media.model_dump())
-        item.editable = media.owner_id == owner
-        item.download_allowed = item.editable
-        if not item.editable:
-            # 非本人素材只回预览地址；原件路径与摘要不外露
-            # （`ArchivedAsset` 本身不含 `preview_path`，预览走 `/preview` 接口）。
-            item.path = ""
-            item.sha256 = ""
-            item.url = f"/api/v1/assets/archive/{media.id}/preview"
-        return item
+    async def visible(self, asset_id: str, owner: str) -> Asset:
+        """公共可见：本人未删除的，或别人已分享的未删除原片。"""
+        row = await self.repo.get(asset_id)
+        shared_source = row.category == "source" and row.shared
+        if row.deleted_at is not None or (row.owner_id != owner and not shared_source):
+            raise NotFound("素材不存在或已停止共享")
+        return row
 
-    def list_assets(
+    async def list_assets(
         self,
         owner: str,
-        category: ArchiveCategory,
+        category: ArchiveCategory = "all",
         scope: ArchiveScope = "mine",
         keyword: str = "",
         state: ArchiveState = "all",
         page: int = 1,
         page_size: int = 200,
     ) -> ArchiveList:
-        rows = []
-        for media in self.repo.list():
-            visible = (
-                (media.owner_id == owner and bool(media.deleted_at))
-                if scope == "trash"
-                else (
-                    not media.deleted_at
-                    and (
-                        media.owner_id == owner
-                        if scope == "mine"
-                        else media.category == "source" and media.shared
-                    )
-                )
-            )
-            if (
-                visible
-                and (category == "all" or media.category == category)
-                and (keyword.strip().casefold() in media.name.casefold())
-                and (state == "all" or media.shared == (state == "shared"))
-            ):
-                rows.append(media)
-        rows.sort(key=lambda m: (m.created_at, m.id), reverse=True)
+        if category not in (*CATEGORIES, "all"):
+            raise BadRequest("素材分类无效")
+        rows, total, used_bytes = await self.repo.list_visible(
+            owner, category, scope, keyword, state, page, page_size
+        )
         return ArchiveList(
-            root=str(self.storage.root()) if scope != "public" else "",
-            items=[self.output(m, owner) for m in rows[(page - 1) * page_size : page * page_size]],
-            total=len(rows),
-            used_bytes=sum(m.size_bytes for m in rows),
+            # 公共池不暴露归档根路径：调用方不需要知道盘符，也没有权限访问
+            root="" if scope == "public" else self._root(),
+            items=[self._to_out(row, owner) for row in rows],
+            total=total,
+            used_bytes=used_bytes,
             page=page,
             page_size=page_size,
         )
 
-    def change_action(
-        self, uid: str, owner: str, payload: ArchiveChange, field: str
-    ) -> ArchivedAsset:
-        values = payload.model_dump(exclude_none=True)
-        if set(values) != {"expected_version", field}:
-            raise BadRequest("请仅提交当前操作对应的字段")
-        return self.change(uid, owner, payload)
-
-    async def upload_for(
-        self,
-        chunks: AsyncIterator[bytes],
-        filename: str,
-        category: MediaCategory,
-        actor: CurrentUser,
-    ) -> ArchivedAsset:
-        if category != "source" and not actor.has("asset:reference:manage"):
-            raise Forbidden("参考素材上传需要素材专员权限")
-        return await self.upload(chunks, filename, category, actor.id)
-
-    def import_for(self, payload: ImportAsset, actor: CurrentUser) -> ArchivedAsset:
-        if not actor.has("asset:reference:manage"):
-            raise Forbidden("inbox 登记需要素材专员权限")
-        return self.import_asset(payload, actor.id)
-
-    def change(self, asset_id: str, owner: str, payload: ArchiveChange) -> ArchivedAsset:
-        with catalog_lease(self.storage):
-            media = self.owned(asset_id, owner)
-            if payload.expected_version != media.state_version:
-                # 响应丢失后的相同状态重试只返回事实，不再次改写时间和版本。
-                same = (
-                    (payload.name is None or payload.name.strip() == media.name)
-                    and (payload.shared is None or payload.shared == media.shared)
-                    and (payload.deleted is None or payload.deleted == bool(media.deleted_at))
-                )
-                if same:
-                    return self.output(media, owner)
-                raise Conflict("素材状态已变化，请刷新后重新操作")
-            if payload.name is not None:
-                if not payload.name.strip():
-                    raise BadRequest("名称不能为空")
-                media.name = payload.name.strip()
-            if payload.shared is not None:
-                if media.category != "source" or media.deleted_at:
-                    raise BadRequest("只能分享未删除的本人原片")
-                media.shared = payload.shared
-                media.shared_at = datetime.now(UTC) if payload.shared else None
-            if payload.deleted is not None:
-                media.deleted_at = datetime.now(UTC) if payload.deleted else None
-                media.shared = False
-                media.shared_at = None
-            media.state_version += 1
-            self.repo.save(media)
-            return self.output(media, owner)
-
-    def visible(self, asset_id: str, owner: str) -> StoredMedia:
-        media = self.repo.get(asset_id)
-        if media.deleted_at or (
-            media.owner_id != owner and not (media.category == "source" and media.shared)
+    async def detail(self, asset_id: str, owner: str) -> ArchivedAsset:
+        """详情：本人读自己的任何状态（含回收站，否则没法拿版本号去恢复），
+        别人只能读已分享且未删除的原片。"""
+        row = await self.repo.get(asset_id)
+        if row.owner_id != owner and (
+            row.deleted_at is not None or not (row.category == "source" and row.shared)
         ):
             raise NotFound("素材不存在或已停止共享")
-        return media
+        return self._to_out(row, owner)
 
-    def detail(self, asset_id: str, owner: str) -> ArchivedAsset:
-        return self.output(self.visible(asset_id, owner), owner)
+    async def preview(self, asset_id: str, owner: str) -> tuple[Path, str]:
+        """受控公共预览：图片给原图，视频给浏览器可播的派生流。"""
+        row = await self.visible(asset_id, owner)
+        if row.type == "video":
+            return await self.stream(asset_id, owner)
+        return await asyncio.to_thread(self.storage.resolve, row.storage_key), row.mime_type
 
-    def preview(self, asset_id: str, owner: str) -> tuple[Path, str]:
-        media = self.visible(asset_id, owner)
-        if media.type == "video":
-            return self.stream(asset_id, owner)
-        return self.storage.resolve(media.path), media.mime_type
-
-    def import_asset(self, payload: ImportAsset, owner: str) -> ArchivedAsset:
-        source = within(self.storage.root() / "inbox", payload.relative_path)
-        if not source.is_file():
-            raise BadRequest("请先将文件放入 Z 盘归档根目录的 inbox 文件夹")
-        media = self.repo.register(source, source.name, payload.category, owner)
-        return ArchivedAsset.model_validate(media.model_dump())
-
-    def file(self, asset_id: str, owner: str, *, preview: bool = False) -> tuple[Path, str]:
-        media = self.visible(asset_id, owner) if preview else self.owned(asset_id, owner)
-        if media.deleted_at:
+    async def file(self, asset_id: str, owner: str, *, preview: bool = False) -> tuple[Path, str]:
+        row = await self.visible(asset_id, owner) if preview else await self.owned(asset_id, owner)
+        if not preview and row.deleted_at is not None:
             raise NotFound("素材已移入回收站")
-        if preview and media.type == "video":
-            derived = self.storage.resolve(f"library/previews/{media.id}.{PREVIEW_VERSION}.jpg")
-            if create_preview(self.storage.resolve(media.path), derived, media.type):
+        if preview and row.type == "video" and not row.cover_key:
+            # 视频没有派生封面时现场截一帧：列表用 `<img>` 取缩略图，喂不了 mp4
+            derived = await asyncio.to_thread(
+                self.storage.resolve, f"library/previews/{row.id}.{PREVIEW_VERSION}.jpg"
+            )
+            original = await asyncio.to_thread(self.storage.resolve, row.storage_key)
+            if await asyncio.to_thread(create_preview, original, derived, row.type):
                 return derived, "image/jpeg"
-        key = media.preview_path if preview else media.path
+        key = row.cover_key if preview else row.storage_key
         if not key:
             raise NotFound("此素材没有缩略图")
-        return self.storage.resolve(key), "image/jpeg" if preview else media.mime_type
+        return await asyncio.to_thread(self.storage.resolve, key), (
+            "image/jpeg" if preview else row.mime_type
+        )
 
-    def stream(self, asset_id: str, owner: str) -> tuple[Path, str]:
+    async def stream(self, asset_id: str, owner: str) -> tuple[Path, str]:
         """悬停/页面预览用的视频流；原片字节始终由 `file` 提供，不混用。"""
-        media = self.visible(asset_id, owner)
-        if media.type != "video":
+        row = await self.visible(asset_id, owner)
+        if row.type != "video":
             raise NotFound("此素材没有视频预览")
-        original = self.storage.resolve(media.path)
-        derived = self.storage.resolve(f"library/previews/{media.id}.{PREVIEW_VERSION}.mp4")
-        if derived.is_file():
+        original = await asyncio.to_thread(self.storage.resolve, row.storage_key)
+        derived = await asyncio.to_thread(
+            self.storage.resolve, f"library/previews/{row.id}.{PREVIEW_VERSION}.mp4"
+        )
+        if derived.is_file() or await asyncio.to_thread(
+            create_browser_preview, original, derived
+        ):
             return derived, "video/mp4"
-        if create_browser_preview(original, derived):
-            return derived, "video/mp4"
-        if media.owner_id != owner:
+        if row.owner_id != owner:
+            # 别人的原片不能当预览回出去：派生失败就是失败，不能退化成原片
             raise BadRequest("公共预览生成失败，请稍后重试；原件不会作为预览返回")
         logger.warning("browser preview failed, fallback to original: %s", asset_id)
-        return original, media.mime_type
+        return original, row.mime_type
+
+    # ------------------------------------------------------------------ 写
+    async def import_asset(self, payload: ImportAsset, owner: str) -> ArchivedAsset:
+        source = await asyncio.to_thread(
+            within, await asyncio.to_thread(self.storage.root) / "inbox", payload.relative_path
+        )
+        if not source.is_file():
+            raise BadRequest("请先将文件放入 Z 盘归档根目录的 inbox 文件夹")
+        return await self.register(source, source.name, payload.category, owner)
+
+    async def import_for(self, payload: ImportAsset, actor: CurrentUser) -> ArchivedAsset:
+        if not actor.has("asset:reference:manage"):
+            raise Forbidden("inbox 登记需要素材专员权限")
+        return await self.import_asset(payload, actor.id)
 
     async def upload(
         self,
@@ -208,25 +211,256 @@ class ArchiveAssetService:
         owner: str,
     ) -> ArchivedAsset:
         temporary = await asyncio.to_thread(self._temporary)
-        total = 0
         try:
-            stream = await asyncio.to_thread(temporary.open, "xb")
-            try:
-                async for chunk in chunks:
-                    total += len(chunk)
-                    if total > MAX_BYTES:
-                        raise BadRequest("文件不能超过 300MB")
-                    await asyncio.to_thread(stream.write, chunk)
-            finally:
-                await asyncio.to_thread(stream.close)
-            media = await asyncio.to_thread(
-                self.repo.register, temporary, filename, category, owner
-            )
-            return ArchivedAsset.model_validate(media.model_dump())
+            await self._receive(temporary, chunks)
+            return await self.register(temporary, filename, category, owner)
         finally:
             await asyncio.to_thread(temporary.unlink, missing_ok=True)
+
+    async def upload_for(
+        self,
+        chunks: AsyncIterator[bytes],
+        filename: str,
+        category: MediaCategory,
+        actor: CurrentUser,
+    ) -> ArchivedAsset:
+        # 原片谁都能传（替换任务的输入就是原片），人物/产品/场景/音频属于受管参考素材
+        if category != "source" and not actor.has("asset:reference:manage"):
+            raise Forbidden("参考素材上传需要素材专员权限")
+        return await self.upload(chunks, filename, category, actor.id)
+
+    async def register(
+        self, source: Path, filename: str, category: MediaCategory, owner: str
+    ) -> ArchivedAsset:
+        """登记一份**已经在盘上**的文件（上传的临时文件、inbox 里的文件、迁移脚本）。
+
+        复制进归档目录、派生缩略图、落 DB 行、写 JSON 镜像，四件事要么全成要么全不成。
+        """
+        return await self._ingest(source, filename, category, owner)
+
+    async def change_action(
+        self, asset_id: str, owner: str, payload: ArchiveChange, field: str
+    ) -> ArchivedAsset:
+        """三个 PUT 共用一条写路径；`field` 声明这一次允许改哪个字段。"""
+        values = payload.model_dump(exclude_none=True)
+        if set(values) != {"expected_version", field}:
+            raise BadRequest("请仅提交当前操作对应的字段")
+        return await self.change(asset_id, owner, payload)
+
+    async def change(
+        self, asset_id: str, owner: str, payload: ArchiveChange
+    ) -> ArchivedAsset:
+        """改名 / 分享 / 移入回收站。
+
+        并发保护靠 `state_version` 乐观锁，不用文件锁：索引在 DB，一次更新就是一个
+        事务；归档盘上的 JSON 只是镜像，不需要跨进程串行化。
+        """
+        row = await self.owned(asset_id, owner)
+        if payload.expected_version != row.state_version:
+            # 响应丢失后的相同状态重试只返回事实，不再次改写时间和版本
+            same = (
+                (payload.name is None or payload.name.strip() == row.name)
+                and (payload.shared is None or payload.shared == row.shared)
+                and (payload.deleted is None or payload.deleted == (row.deleted_at is not None))
+            )
+            if same:
+                return self._to_out(row, owner)
+            raise Conflict("素材状态已变化，请刷新后重新操作")
+        if payload.name is not None:
+            if not payload.name.strip():
+                raise BadRequest("名称不能为空")
+            row.name = payload.name.strip()[:200]
+        if payload.shared is not None:
+            if row.category != "source" or row.deleted_at is not None:
+                raise BadRequest("只能分享未删除的本人原片")
+            row.shared = payload.shared
+            row.shared_at = datetime.now(UTC) if payload.shared else None
+        if payload.deleted is not None:
+            row.deleted_at = datetime.now(UTC) if payload.deleted else None
+            # 移入回收站即撤回分享：留着 shared 会让它继续出现在公共池
+            row.shared = False
+            row.shared_at = None
+        row.state_version += 1
+        await self.repo.save(row)
+        # 镜像必须在 commit 前写好：模板侧读 JSON 判断「还能不能用」，
+        # 只改库不改 JSON，会出现「列表已删、模板还能引用」的错位。
+        await self._write_mirror(row)
+        await self.session.commit()
+        return self._to_out(row, owner)
+
+    # ------------------------------------------------------------------ 内部
+    async def _ingest(
+        self, source: Path, filename: str, category: MediaCategory, owner: str
+    ) -> ArchivedAsset:
+        ext = Path(filename).suffix.lower()
+        info = await asyncio.to_thread(probe_media, source, ext)
+        mime = EXTENSIONS[ext]
+        kind = _kind_of(mime)
+        _ensure_category(category, kind)
+
+        digest, size_bytes = await asyncio.to_thread(_digest_and_size, source)
+        existing = await self._find_by_digest(owner, digest, category)
+        if existing is not None:
+            # 同一个人把同一份文件重复登记到**同一个分类**：返回已有记录，
+            # 连对象都不再复制一份。分类不同则各自一条 —— 一张图同时当人物参考
+            # 和产品参考是正常用法，不该被"内容相同"合并掉。
+            return self._to_out(existing, owner)
+
+        uid = uuid.uuid4().hex
+        key = f"library/{category}/{datetime.now(_LOCAL_TZ):%Y/%m}/{uid}{ext}"
+        cover_key = f"library/previews/{uid}.{PREVIEW_VERSION}.jpg"
+
+        await asyncio.to_thread(self._copy, source, key, digest)
+        has_preview = await asyncio.to_thread(
+            create_preview, self.storage.resolve(key), self.storage.resolve(cover_key), kind
+        )
+        if not has_preview:
+            logger.info("归档素材没有缩略图（音轨或派生失败）：%s", uid)
+
+        row = Asset(
+            id=uid,
+            name=Path(filename).name[:200],
+            type=kind,
+            mime_type=mime,
+            size_bytes=size_bytes,
+            storage_key=key,
+            cover_key=cover_key if has_preview else "",
+            sha256=digest,
+            category=category,
+            source=AssetSource.ARCHIVE,
+            owner_id=owner,
+            created_at=datetime.now(UTC),
+            width=info["width"],
+            height=info["height"],
+            duration=info["duration"],
+            has_audio=info["hasAudio"],
+        )
+        try:
+            await self._write_mirror(row)
+            await self.repo.add(row)
+            await self.session.commit()
+        except IntegrityError:
+            # 并发登记同一份文件：部分唯一索引兜底（归档侧不参与该索引，实际很难触发，
+            # 但索引不是这条代码路径的替代品）。回滚后按摘要取已有记录。
+            await self.session.rollback()
+            await self._discard(key, cover_key)
+            await asyncio.to_thread(self._discard_mirror, uid)
+            existing = await self._find_by_digest(owner, digest, category)
+            if existing is not None:
+                return self._to_out(existing, owner)
+            raise
+        except Exception:
+            await self.session.rollback()
+            await self._discard(key, cover_key)
+            await asyncio.to_thread(self._discard_mirror, uid)
+            raise
+        return self._to_out(row, owner)
+
+    async def _find_by_digest(self, owner: str, digest: str, category: str) -> Asset | None:
+        stmt = select(Asset).where(
+            Asset.owner_id == owner,
+            Asset.sha256 == digest,
+            Asset.category == category,
+            Asset.source == AssetSource.ARCHIVE,
+        )
+        return await self.session.scalar(stmt.limit(1))
+
+    async def _receive(self, target: Path, chunks: AsyncIterator[bytes]) -> None:
+        """把请求体流式落盘：300MB 原片不进内存。"""
+        total = 0
+        stream = await asyncio.to_thread(target.open, "xb")
+        try:
+            async for chunk in chunks:
+                if not chunk:
+                    continue
+                total += len(chunk)
+                if total > MAX_BYTES:
+                    raise BadRequest("文件不能超过 300MB")
+                await asyncio.to_thread(stream.write, chunk)
+        finally:
+            await asyncio.to_thread(stream.close)
+        if total == 0:
+            raise BadRequest("文件不能为空")
+
+    def _copy(self, source: Path, key: str, digest: str) -> None:
+        self.storage.copy(source, self.storage.resolve(key), digest)
+
+    async def _write_mirror(self, row: Asset) -> None:
+        payload = self.repo.to_media(row).model_dump(mode="json", by_alias=True)
+        await asyncio.to_thread(
+            self.storage.write, self.storage.resolve(f"catalog/assets/{row.id}.json"), payload
+        )
+
+    def _discard_mirror(self, asset_id: str) -> None:
+        path = self.storage.resolve(f"catalog/assets/{asset_id}.json")
+        path.unlink(missing_ok=True)
+
+    async def _discard(self, *keys: str) -> None:
+        for key in keys:
+            if not key:
+                continue
+
+            def remove(target: str = key) -> None:
+                path = self.storage.resolve(target)
+                path.unlink(missing_ok=True)
+
+            try:
+                await asyncio.to_thread(remove)
+            except OSError:  # pragma: no cover - 清理失败不影响主流程
+                logger.warning("回滚已写入的归档对象失败：%s", key)
 
     def _temporary(self) -> Path:
         folder = self.storage.resolve("incoming")
         folder.mkdir(exist_ok=True)
         return folder / (uuid.uuid4().hex + ".upload")
+
+    def _to_out(self, row: Asset, owner: str) -> ArchivedAsset:
+        """DB 行 → 出参，并**按调用者裁剪**。
+
+        别人的素材只回预览地址：原件路径（Z 盘相对 key）与摘要不外露，
+        否则公共池等于把归档盘目录结构发给了所有账号。
+        """
+        item = ArchivedAsset.model_validate(self.repo.to_media(row).model_dump())
+        item.editable = row.owner_id == owner
+        item.download_allowed = item.editable
+        if not item.editable:
+            item.path = ""
+            item.sha256 = ""
+            item.url = f"{settings.api_prefix}/assets/archive/{row.id}/preview"
+        return item
+
+    def _root(self) -> str:
+        try:
+            return str(self.storage.root())
+        except UpstreamError:
+            # 盘掉线不等于库不可读：列表仍要给运维可用信息，见模块 docstring
+            return ""
+
+
+def _digest_and_size(path: Path) -> tuple[str, int]:
+    digest = hashlib.sha256()
+    size = 0
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            size += len(chunk)
+            digest.update(chunk)
+    return digest.hexdigest(), size
+
+
+def _kind_of(mime: str) -> str:
+    if mime.startswith("video/"):
+        return "video"
+    return "audio" if mime.startswith("audio/") else "image"
+
+
+def _ensure_category(category: MediaCategory, kind: str) -> None:
+    """分类与媒体类型必须匹配：人物库里混进一段音频，替换模板会在运行时炸。"""
+    expected = {
+        "source": "video",
+        "character": "image",
+        "product": "image",
+        "scene": "image",
+        "audio": "audio",
+    }[category]
+    if kind != expected:
+        raise BadRequest("原片需为 MP4，人物/产品/场景需为图片，音频分类需为音频")

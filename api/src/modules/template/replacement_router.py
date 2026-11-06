@@ -16,6 +16,7 @@ from modules.template.replacement_dependencies import (
 from modules.template.replacement_schema import (
     ExecuteReplacement,
     PrepareReplacement,
+    ReconfirmReplacement,
     ReplacementCatalog,
     ReplacementReviewIn,
     ReplacementRunOut,
@@ -73,6 +74,21 @@ async def execute_run(
 ) -> ApiResponse[ReplacementRunOut]:
     return ApiResponse.ok(
         await service.execute(run_id, actor.id, payload.billing_mode if payload else "free")
+    )
+
+
+@router.post(
+    "/replacement-runs/{run_id}/reconfirm",
+    summary="确认上次提交可能已计费后放行重提（默认拒绝）",
+)
+async def reconfirm_run(
+    run_id: str,
+    payload: ReconfirmReplacement,
+    actor: ReplacementWriteDep,
+    service: ReplacementServiceDep,
+) -> ApiResponse[ReplacementRunOut]:
+    return ApiResponse.ok(
+        await service.reconfirm(run_id, actor.id, confirm_charged=payload.confirm_charged)
     )
 
 

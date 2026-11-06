@@ -31,6 +31,10 @@ describe('mock 模式 · 登录 / 续期 / 登出', () => {
     vi.unstubAllEnvs();
   });
 
+  /* 超时给到 15s，而不是默认 5s：这条是集成级用例（6 次真实 axios 往返 + 整模块重置），
+     单跑约 1.4s，但在全量并行池里会被同批文件的环境初始化挤过 5s。
+     放宽超时不降低判定力 —— 真出问题（比如续期漏挂 mock 适配器、打到真网络）
+     的表现是 reject，不是超时。 */
   it('走 mock 适配器完成整条链路（登录 → 续期 → 登出后失效）', async () => {
     const { api, requestRefresh, requestLogout } = await loadMockMode();
 
@@ -58,5 +62,5 @@ describe('mock 模式 · 登录 / 续期 / 登出', () => {
         headers: { Authorization: `Bearer ${renewed.accessToken}` },
       }),
     ).rejects.toBeTruthy();
-  });
+  }, 15_000);
 });

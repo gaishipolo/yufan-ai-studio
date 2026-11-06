@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 
@@ -39,4 +40,31 @@ class ObjectStorage(Protocol):
         self, key: str, *, content_type: str = "application/octet-stream", expires_in: int = 900
     ) -> str:
         """签发前端直传地址。本地实现返回内部上传端点。"""
+        ...
+
+    async def put_file(
+        self, key: str, path: Path, content_type: str = "application/octet-stream"
+    ) -> str:
+        """从本地文件写入，返回内容的 sha256 十六进制摘要。
+
+        单独一个方法而不是让调用方 `path.read_bytes()` 再 `put()`：素材上限 50MB、
+        归档原片 300MB，整块读进内存的峰值是「并发数 × 文件大小」，S3 驱动还要
+        多一次完整拷贝。实现方自己决定流式还是分片，调用方只看得到摘要。
+        """
+        ...
+
+    async def presigned_download_url(self, key: str, *, expires_in: int = 900) -> str:
+        """签发私有对象的临时下载地址（读方向）。
+
+        本地实现没有签名语义，返回静态 URL；调用方不要假设它一定带时效。
+        """
+        ...
+
+    def local_path(self, key: str) -> Path | None:
+        """能直出磁盘路径的实现返回 `Path`，远程实现返回 `None`。
+
+        存在的唯一理由：`FileResponse` 靠真实路径支持 HTTP Range，视频才能拖进度条。
+        远程驱动不该把字节搬进应用进程，调用方拿到 `None` 时改用预签名地址重定向。
+        不要为了「抽象干净」把它拆成两次探测 —— 这本来就是「能不能零拷贝」的能力询问。
+        """
         ...
