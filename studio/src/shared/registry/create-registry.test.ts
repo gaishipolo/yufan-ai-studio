@@ -170,6 +170,9 @@ describe('createRegistry · 装配', () => {
     ]);
 
     expect(registry.slots['topbar.actions']?.map((s) => s.order)).toEqual([1, 5, 100]);
+    /* seq 是注册序（0/1/2），与排序后的位置不同：Slot 用它做 key，
+       排序一变不会把上一个插槽的实例（含内部状态）复用给下一个 */
+    expect(registry.slots['topbar.actions']?.map((s) => s.seq)).toEqual([2, 0, 1]);
   });
 });
 
@@ -244,6 +247,42 @@ describe('createRegistry · 校验（宁可启动报错，不要运行时白屏�
     expect(() => createRegistry([moduleOf({ id: 'a', routes: [{ path: '', load }] })])).toThrow(
       /不能为空字符串/,
     );
+  });
+
+  /* 空字符串拦住了，等价物 '/' 却一直能过：归一化后同样是 `/`，
+     会和骨架的 `{ index: true }` + HOME_PATH 重定向抢同一个位置。 */
+  it("route.path 为 '/' 同样拦下（与空字符串等价）", () => {
+    expect(() => createRegistry([moduleOf({ id: 'a', routes: [{ path: '/', load }] })])).toThrow(
+      /不要声明根路由/,
+    );
+  });
+
+  /* 不剥尾斜杠的话，两条声明会各自通过重复检查，而 React Router 把它们匹配到同一个 URL。 */
+  it("'tasks' 与 'tasks/' 归一化后相同，按重复处理", () => {
+    expect(() =>
+      createRegistry([
+        moduleOf({ id: 'a', routes: [{ path: 'tasks', load }] }),
+        moduleOf({ id: 'b', routes: [{ path: '/tasks/', load }] }),
+      ]),
+    ).toThrow(/路由 \/tasks 被 a 与 b 同时声明/);
+  });
+
+  it('bare 路由不能声明 permissions（不经过守卫，声明了也不生效）', () => {
+    expect(() =>
+      createRegistry([
+        moduleOf({
+          id: 'a',
+          routes: [
+            {
+              path: 'login',
+              layout: 'bare',
+              load,
+              permissions: ['identity:read'],
+            },
+          ],
+        }),
+      ]),
+    ).toThrow(/不能声明 permissions/);
   });
 
   it('模块没有任何路由 → 抛错（多半是忘了声明）', () => {

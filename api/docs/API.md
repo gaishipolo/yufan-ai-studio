@@ -2,7 +2,7 @@
 
 > 此文件由 `app export-openapi` 自动生成，请勿手工编辑。
 >
-> 版本 `0.2.0`｜共 **60** 个接口 / **9** 个模块
+> 版本 `0.2.0`｜共 **61** 个接口 / **9** 个模块
 >
 > 重新生成：`cd api && .venv/Scripts/python -m cli export-openapi`
 
@@ -165,7 +165,7 @@ Authorization: Bearer <accessToken>
 | 模型 | 1 | 见下方 `4.3` |
 | 素材 | 12 | 见下方 `4.4` |
 | 生图 | 3 | 见下方 `4.5` |
-| 模板 | 6 | 见下方 `4.6` |
+| 模板 | 7 | 见下方 `4.6` |
 | 分镜模板 | 1 | 见下方 `4.7` |
 | 镜头库 | 1 | 见下方 `4.8` |
 | 系统 | 2 | 见下方 `4.9` |
@@ -1251,6 +1251,7 @@ Authorization: Bearer <accessToken>
 | `errorMessage` | `string \| null` | 否 | 失败原因 |
 | `externalId` | `string \| null` | 否 | 供应商侧任务号；提交成功后有值，可用于对账 |
 | `previousExternalId` | `string \| null` | 否 | 上一次提交的供应商任务号；带 confirmCharged 重试后保留的对账凭证 |
+| `previousExternalIds` | `string[]` | 否 | 被替换掉的全部供应商任务号（旧的在前）。连续多次确认已扣费重试时，previousExternalId 只保留最近一个，全量凭证看这里 |
 | `createdAt` | `string` | 是 | 创建时间（UTC） |
 
 #### `GET /api/v1/images`
@@ -1297,7 +1298,7 @@ Authorization: Bearer <accessToken>
 | `id` | `string` | 是 | 生图记录 ID |
 | `status` | `string` | 是 | 重试后的状态，固定为 `queued` |
 
-### 4.6 模板（6 个）
+### 4.6 模板（7 个）
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
@@ -1307,6 +1308,7 @@ Authorization: Bearer <accessToken>
 | `GET` | `/api/v1/templates/replacement-runs/{run_id}` | 替换任务状态与提示词 | 🔒 |
 | `POST` | `/api/v1/templates/replacement-runs/{run_id}/execute` | 仅 0 积分提交或继续查询已有 LibTV 任务 | 🔒 |
 | `GET` | `/api/v1/templates/replacement-runs/{run_id}/output` | 预览或下载 Z 盘原始生成结果 | 🔒 |
+| `POST` | `/api/v1/templates/replacement-runs/{run_id}/reconfirm` | 确认上次提交可能已计费后放行重提（默认拒绝） | 🔒 |
 
 #### `GET /api/v1/templates`
 
@@ -1331,7 +1333,6 @@ Authorization: Bearer <accessToken>
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `root` | `string` | 是 |  |
 | `provider` | `string` | 否 |  |
 | `maxCredits` | `number` | 否 |  |
 | `kinds` | `string[]` | 否 |  |
@@ -1439,6 +1440,39 @@ Authorization: Bearer <accessToken>
 | `run_id` | path | `string` | 是 |  |
 
 **响应** `ApiResponse<unknown>`（前端取 `res.data`）
+
+#### `POST /api/v1/templates/replacement-runs/{run_id}/reconfirm`
+
+**确认上次提交可能已计费后放行重提（默认拒绝）**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `run_id` | path | `string` | 是 |  |
+
+**请求体** `ReconfirmReplacement`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `confirmCharged` | `boolean` | 否 | 确认上一次提交可能已产生费用，仍要重新提交（默认拒绝） |
+
+**响应** `ApiResponse<ReplacementRunOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `kind` | `"character" \| "product" \| "scene"` | 是 |  |
+| `target` | `string` | 是 |  |
+| `status` | `string` | 是 |  |
+| `archivePath` | `string` | 是 |  |
+| `createdAt` | `string` | 是 |  |
+| `prompt` | `string` | 是 |  |
+| `taskId` | `string \| null` | 否 |  |
+| `estimatedCredits` | `number \| null` | 否 |  |
+| `credits` | `number \| null` | 否 |  |
+| `progress` | `number` | 否 |  |
+| `reviewStatus` | `string` | 否 |  |
+| `lastError` | `string \| null` | 否 |  |
+| `outputUrl` | `string \| null` | 否 |  |
 
 ### 4.7 分镜模板（1 个）
 
@@ -1680,6 +1714,7 @@ Authorization: Bearer <accessToken>
 | `errorMessage` | `string \| null` | 否 | 失败原因 |
 | `externalId` | `string \| null` | 否 | 供应商侧任务号；提交成功后有值，可用于对账 |
 | `previousExternalId` | `string \| null` | 否 | 上一次提交的供应商任务号；带 confirmCharged 重试后保留的对账凭证 |
+| `previousExternalIds` | `string[]` | 否 | 被替换掉的全部供应商任务号（旧的在前）。连续多次确认已扣费重试时，previousExternalId 只保留最近一个，全量凭证看这里 |
 | `createdAt` | `string` | 是 | 创建时间（UTC） |
 
 ### `ImageRetryOut`
@@ -1842,6 +1877,16 @@ Authorization: Bearer <accessToken>
 | `database` | `string` | 是 |  |
 | `queueSize` | `number` | 是 |  |
 
+### `ReconfirmReplacement`
+
+确认「上一次提交可能已经花了钱」后才允许重提。
+
+默认 False：一次误点就变成第二次计费，是这套流程里最贵的一个操作。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `confirmCharged` | `boolean` | 否 | 确认上一次提交可能已产生费用，仍要重新提交（默认拒绝） |
+
 ### `RefreshIn`
 
 | 字段 | 类型 | 必填 | 说明 |
@@ -1852,7 +1897,6 @@ Authorization: Bearer <accessToken>
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `root` | `string` | 是 |  |
 | `provider` | `string` | 否 |  |
 | `maxCredits` | `number` | 否 |  |
 | `kinds` | `string[]` | 否 |  |

@@ -29,6 +29,13 @@ class ImageJobOut(CamelModel):
         default=None,
         description="上一次提交的供应商任务号；带 confirmCharged 重试后保留的对账凭证",
     )
+    previous_external_ids: list[str] = Field(
+        default_factory=list,
+        description=(
+            "被替换掉的全部供应商任务号（旧的在前）。连续多次确认已扣费重试时，"
+            "previousExternalId 只保留最近一个，全量凭证看这里"
+        ),
+    )
     created_at: UtcDateTime = Field(description="创建时间（UTC）")
 
 

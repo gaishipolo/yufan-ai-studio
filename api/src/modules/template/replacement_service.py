@@ -12,6 +12,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
 
+from core import audit
 from core.exceptions import BadRequest, Conflict, Forbidden, NotFound, UpstreamError
 from core.logging import get_logger
 from core.media import StoredMedia
@@ -24,7 +25,7 @@ from modules.template.replacement_schema import (
     ReplacementPack,
     ReplacementRunOut,
 )
-from modules.template.replacement_worker import schedule
+from modules.template.replacement_worker import reconfirm_state, schedule
 
 RUNTIME = Path(__file__).parent / "replacement_runtime"
 BRIDGE = Path(__file__).parents[2] / "infra/ai/libtv_runtime/bridge.mjs"
@@ -37,9 +38,15 @@ class Compilation(BaseModel):
     compiler_version: str
 
 
-def run_out(path: Path, repo: ReplacementRepository | None = None) -> ReplacementRunOut:
+def run_out(
+    path: Path,
+    repo: ReplacementRepository | None = None,
+    *,
+    meta: ReplacementManifest | None = None,
+) -> ReplacementRunOut:
+    """`meta` 可传入已读到的档案：列表页每条记录读两次 run.json 是纯浪费（R14-03）。"""
     repo = repo or ReplacementRepository()
-    meta = repo.load(path)
+    meta = meta or repo.load(path)
     prompt = path / "inputs/prompt.txt"
     return ReplacementRunOut(
         id=meta.id,
@@ -64,8 +71,19 @@ def run_out(path: Path, repo: ReplacementRepository | None = None) -> Replacemen
 
 
 def list_runs(owner: str) -> list[ReplacementRunOut]:
+    """列出某人的调用档案。
+
+    每条只读一次 `run.json`：以前列表推导里 `repo.load()` 做 owner 过滤、
+    `run_out` 内部又读一遍，20 条记录读 60 次盘（R14-03）。owner 过滤仍在
+    Python 里——指针文件暂时只存 path，把 owner 下推到索引要改指针格式，
+    属于契约级改动，留待单独一轮。
+    """
     repo = ReplacementRepository()
-    rows = [run_out(path, repo) for path in repo.all_paths() if repo.load(path).owner_id == owner]
+    rows: list[ReplacementRunOut] = []
+    for path in repo.all_paths():
+        meta = repo.load(path)
+        if meta.owner_id == owner:
+            rows.append(run_out(path, repo, meta=meta))
     return sorted(rows, key=lambda row: row.created_at, reverse=True)
 
 
@@ -289,7 +307,6 @@ class ReplacementService:
     async def catalog(self, owner: str) -> ReplacementCatalog:
         def load() -> ReplacementCatalog:
             return ReplacementCatalog(
-                root=str(self.repo.storage.root()),
                 runs=list_runs(owner),
                 packs=self.repo.packs(owner),
             )
@@ -311,6 +328,34 @@ class ReplacementService:
         return await asyncio.to_thread(load)
 
     async def execute(self, run_id: str, owner: str) -> ReplacementRunOut:
+        await schedule(run_id, owner)
+        return await self.detail(run_id, owner)
+
+    async def reconfirm(
+        self, run_id: str, owner: str, *, confirm_charged: bool
+    ) -> ReplacementRunOut:
+        """确认上次可能已计费后放行重提（R14-01）。
+
+        没有这个出口时 `submission_unknown` 是永久死锁：`schedule_state` 拦、
+        `prepare_upload` 直接 return、`recover_state` 定格，三处都把路堵死，
+        而清零 `submit_attempts` 的那条分支（`runner` 的「确定没送达」）在模板上
+        永远不可达。先写审计再复位：这一步本身就是「有人拍板再花一次钱」。
+        """
+        meta, previous_attempts = await asyncio.to_thread(
+            reconfirm_state, run_id, owner, confirm_charged=confirm_charged
+        )
+        await audit.record(
+            "template.reconfirm",
+            actor_id=owner,
+            target_type="replacement_run",
+            target_id=run_id,
+            detail={
+                "confirmedCharged": confirm_charged,
+                "kind": meta.kind,
+                "target": meta.target,
+                "clearedSubmitAttempts": previous_attempts,
+            },
+        )
         await schedule(run_id, owner)
         return await self.detail(run_id, owner)
 

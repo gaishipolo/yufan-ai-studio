@@ -33,8 +33,10 @@ import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
+# 合并时接在 `a9d3c7e5b210`（生图对账凭证的历史列）之后：两条链原本都从
+# `f4c2d8e91b70` 分叉，保持单头才能 `upgrade head`。
 revision: str = "a7c3f1b9d2e4"
-down_revision: Union[str, Sequence[str], None] = "f4c2d8e91b70"
+down_revision: Union[str, Sequence[str], None] = "a9d3c7e5b210"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

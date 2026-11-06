@@ -13,6 +13,7 @@ from modules.template.replacement_dependencies import (
 )
 from modules.template.replacement_schema import (
     PrepareReplacement,
+    ReconfirmReplacement,
     ReplacementCatalog,
     ReplacementRunOut,
 )
@@ -46,6 +47,21 @@ async def execute_run(
     run_id: str, actor: ReplacementWriteDep, service: ReplacementServiceDep
 ) -> ApiResponse[ReplacementRunOut]:
     return ApiResponse.ok(await service.execute(run_id, actor.id))
+
+
+@router.post(
+    "/replacement-runs/{run_id}/reconfirm",
+    summary="确认上次提交可能已计费后放行重提（默认拒绝）",
+)
+async def reconfirm_run(
+    run_id: str,
+    payload: ReconfirmReplacement,
+    actor: ReplacementWriteDep,
+    service: ReplacementServiceDep,
+) -> ApiResponse[ReplacementRunOut]:
+    return ApiResponse.ok(
+        await service.reconfirm(run_id, actor.id, confirm_charged=payload.confirm_charged)
+    )
 
 
 @router.get("/replacement-runs/{run_id}/output", summary="预览或下载 Z 盘原始生成结果")

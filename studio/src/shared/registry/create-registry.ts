@@ -15,10 +15,17 @@ import type {
 /** 未显式指定排序时的默认值：数值越小越靠前 */
 const DEFAULT_ORDER = 100;
 
+/**
+ * 归一化路由路径：补前导斜杠、剥尾部斜杠。
+ *
+ * 剥尾斜杠是为了让 `'tasks'` 与 `'tasks/'` 判为同一条路由 —— 否则两条声明各自
+ * 通过重复检查，而 React Router 会把它们匹配到同一个 URL。
+ */
 function normalizePath(path: string): string {
   const trimmed = path.trim();
   if (!trimmed) return '/';
-  return trimmed.startsWith('/') ? trimmed : `/${trimmed}`;
+  const withLeading = trimmed.startsWith('/') ? trimmed : `/${trimmed}`;
+  return withLeading.replace(/\/+$/, '') || '/';
 }
 
 function fail(message: string): never {
@@ -42,7 +49,7 @@ export function createRegistry(modules: AppModule[]): AppRegistry {
   const routes: ResolvedRoute[] = [];
   const navItems: ResolvedNavItem[] = [];
   const cards: Array<ResolvedCard & { seq: number }> = [];
-  const slots: Array<ResolvedSlot & { seq: number }> = [];
+  const slots: ResolvedSlot[] = [];
   const declaredPermissions = new Set<Permission>();
   let seq = 0;
 
@@ -139,10 +146,9 @@ export function createRegistry(modules: AppModule[]): AppRegistry {
   }
 
   const slotMap: Partial<Record<SlotName, ResolvedSlot[]>> = {};
-  for (const slot of slots
-    .slice()
-    .sort((a, b) => a.order - b.order || a.seq - b.seq)
-    .map(({ seq: _seq, ...rest }) => rest)) {
+  /* 保留 seq：Slot 用它做 key。排序只该影响渲染顺序，不该让组件身份跟着下标漂移 ——
+     order 一变，下标全错位，React 会把上一个插槽的实例（含弹窗状态）复用给下一个。 */
+  for (const slot of slots.slice().sort((a, b) => a.order - b.order || a.seq - b.seq)) {
     (slotMap[slot.name] ??= []).push(slot);
   }
 
@@ -158,7 +164,19 @@ export function createRegistry(modules: AppModule[]): AppRegistry {
 
 function assertRouteDef(mod: AppModule, def: ModuleRouteDef) {
   if (!def.path.trim()) {
-    fail(`模块 ${mod.id} 的 route.path 不能为空字符串；首页请在 src/app/config.ts 里配置 HOME_PATH`);
+    fail(
+      `模块 ${mod.id} 的 route.path 不能为空字符串；` +
+        `首页请在 src/shared/config/app.ts 里配置 HOME_PATH`,
+    );
+  }
+  /* 根路径只能由骨架的 `{ index: true }` + HOME_PATH 重定向占据。
+     只拦空字符串不够：`'/'` trim 后非空，归一化后同样是 `/`，
+     会和首页重定向抢同一个位置，且行为取决于模块注册顺序。 */
+  if (normalizePath(def.path) === '/') {
+    fail(
+      `模块 ${mod.id} 不要声明根路由 '/'；` +
+        `首页由 src/shared/config/app.ts 的 HOME_PATH 决定`,
+    );
   }
   if (typeof def.load !== 'function') {
     fail(`模块 ${mod.id} 的路由 ${def.path} 缺少 load()；请写成 load: () => import('@/pages/xxx/XxxPage')`);
@@ -170,6 +188,14 @@ function assertRouteDef(mod: AppModule, def: ModuleRouteDef) {
     fail(
       `模块 ${mod.id} 的独立页面 ${def.path} 不能声明 nav / card。` +
         `bare 页面不套外壳，放进侧栏或宫格会失去导航与登录态。`,
+    );
+  }
+  /* bare 路由在 router.tsx 里直接渲染，不包 RequirePermission。
+     声明了却不生效，比没声明更危险 —— 写的人会以为已经守住了。 */
+  if (def.layout === 'bare' && def.permissions?.length) {
+    fail(
+      `模块 ${mod.id} 的独立页面 ${def.path} 不能声明 permissions：` +
+        `bare 路由不经过权限守卫，声明了也不会生效。`,
     );
   }
 }

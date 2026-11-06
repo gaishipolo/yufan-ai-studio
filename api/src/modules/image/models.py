@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 
 from sqlalchemy import DateTime, Integer, String, Text
@@ -44,6 +45,11 @@ class ImageJob(Base, TimestampMixin, UUIDMixin):
     # 上一次提交的供应商任务号。重试必须清 external_id 才能重投，清掉之后
     # 对账凭证就没了；"可能已计费"的那次提交要留在这里（R12-01）。
     previous_external_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # 被替换掉的全部任务号（JSON 数组，旧的在前）。单槽不够用：连续两次
+    # 「确认已扣费」重试后，第一份凭证会被第二次覆盖（R13-02）；而审计写入
+    # 按设计吞异常，不能把它当唯一备份。存文本而不是 JSONB 列，是为了
+    # sqlite / PG 同一套代码，且这张表从不需要按历史内容查询。
+    external_id_history: Mapped[str | None] = mapped_column(Text, nullable=True)
     # 提交时供应商形态快照 "sync" / "async"：启动恢复按记录自身分类，
     # 不按当前模型目录重新解析（R12-05）。迁移前的老记录为 NULL。
     submit_mode: Mapped[str | None] = mapped_column(String(8), nullable=True)
@@ -52,3 +58,39 @@ class ImageJob(Base, TimestampMixin, UUIDMixin):
 
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    @property
+    def previous_external_ids(self) -> list[str]:
+        """历史任务号（旧的在前）。列里是 JSON 文本，解析失败按空处理。
+
+        直接暴露成列表属性，是为了让 `ImageJobOut` 能用 `from_attributes`
+        读到它——契约里多一个「全量凭证」字段，不必给每个构造点加转换代码。
+        """
+        return parse_external_id_history(self.external_id_history)
+
+
+def parse_external_id_history(raw: str | None) -> list[str]:
+    """把 `external_id_history` 的 JSON 文本解析成列表，脏数据不抛。"""
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+    except (TypeError, ValueError):
+        return []
+    if not isinstance(data, list):
+        return []
+    return [str(item) for item in data if str(item).strip()]
+
+
+def remember_previous_external_id(job: ImageJob, external_id: str) -> list[str]:
+    """把即将被清掉的供应商任务号**追加**进历史，返回追加后的全量列表。
+
+    重试要清 `external_id` 才能重新提交，但那个任务号是「上一次可能已扣费」
+    的唯一凭证。留一个槽位不够：第二次确认会把第一次的覆盖掉（R13-02），
+    而审计 detail 按设计会吞异常，不能当唯一备份——两份会一起丢。
+    """
+    history = parse_external_id_history(job.external_id_history)
+    history.append(external_id)
+    job.external_id_history = json.dumps(history, ensure_ascii=False)
+    job.previous_external_id = external_id
+    return history

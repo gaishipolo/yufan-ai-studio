@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { endSession } from './end-session';
-import { TOKEN_STORAGE_KEY, useSessionStore } from './session';
+import { REFRESH_TOKEN_STORAGE_KEY, TOKEN_STORAGE_KEY, useSessionStore } from './session';
 import { refreshAccessToken } from './token-refresh';
 
 /* ------------------------------------------------------------------
@@ -68,23 +68,41 @@ export function useSessionExpiryWatch() {
 }
 
 /**
- * 多标签页同步：任一标签页退出登录（或令牌被清），其余标签页立即一起退出。
+ * 多标签页同步：任一标签页**真的退出登录**，其余标签页立即一起退出。
  *
- * `storage` 事件只发给**其它**标签页，所以不会自触发；这里也只处理「令牌被删」，
- * 不处理「令牌被换成另一个账号」——换号需要整页重载才能保证缓存干净，
+ * `storage` 事件只发给**其它**标签页，所以不会自触发；这里也只处理「被删」，
+ * 不处理「被写成新值」——换号需要整页重载才能保证缓存干净，
  * 静默替换会留下上一个账号的查询缓存。
  *
  * 另一个标签页**续期**（同一个账号换成新票）也不在这里跟：那由
  * `refreshAccessToken` 在续期失败时用 `adoptStoredTokens` 接手，
  * 时机更准（正好是本页那张旧票被服务端判无效的那一刻）。
+ *
+ * **为什么主信号是「刷新令牌被销毁」而不是「access 令牌被删」**：
+ * access 令牌会因为**到点**被单独清掉（`clearAccessToken`，冷启动换票前那一瞬间），
+ * 那不是退出登录。以前只认 access 被删，于是别的标签页只是想换票，本页却
+ * `endSession('external')` —— 而 `signOut` 会把刷新令牌一起清掉，
+ * 7 天的会话就这样被一次无害的换票连坐销毁，用户被迫重新登录。
+ * 现在：refresh 被删 = 真退出；只删 access 时，本页手里还有 refresh 就不动。
+ *
+ * 旧版本存下的会话没有刷新令牌，对它们来说「access 被删」仍是唯一可用的退出信号，
+ * 所以保留那条分支，只是加了「本页没有 refresh 才跟」的前置条件。
  */
 export function useSessionCrossTabSync() {
   useEffect(() => {
     const onStorage = (event: StorageEvent) => {
-      if (event.key !== TOKEN_STORAGE_KEY || event.newValue !== null) return;
+      if (event.newValue !== null) return;
       const store = useSessionStore.getState();
       if (store.status === 'anonymous') return;
-      endSession('external');
+
+      if (event.key === REFRESH_TOKEN_STORAGE_KEY) {
+        endSession('external');
+        return;
+      }
+
+      if (event.key === TOKEN_STORAGE_KEY && !store.refreshToken) {
+        endSession('external');
+      }
     };
 
     window.addEventListener('storage', onStorage);

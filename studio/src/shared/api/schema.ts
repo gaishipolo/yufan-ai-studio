@@ -223,6 +223,8 @@ export interface ImageJobOut {
   externalId?: string | null;
   /** 上一次提交的供应商任务号；带 confirmCharged 重试后保留的对账凭证 */
   previousExternalId?: string | null;
+  /** 被替换掉的全部供应商任务号（旧的在前）。连续多次确认已扣费重试时，previousExternalId 只保留最近一个，全量凭证看这里 */
+  previousExternalIds?: string[];
   /** 创建时间（UTC） */
   createdAt: string;
 }
@@ -398,6 +400,14 @@ export interface ReadyOut {
   queueSize: number;
 }
 
+/** 确认「上一次提交可能已经花了钱」后才允许重提。
+
+默认 False：一次误点就变成第二次计费，是这套流程里最贵的一个操作。 */
+export interface ReconfirmReplacement {
+  /** 确认上一次提交可能已产生费用，仍要重新提交（默认拒绝） */
+  confirmCharged?: boolean;
+}
+
 /** RefreshIn */
 export interface RefreshIn {
   /** 登录时拿到的刷新令牌 */
@@ -406,7 +416,6 @@ export interface RefreshIn {
 
 /** ReplacementCatalog */
 export interface ReplacementCatalog {
-  root: string;
   provider?: string;
   maxCredits?: number;
   kinds?: string[];
@@ -892,4 +901,6 @@ export interface EndpointData {
   "POST /api/v1/templates/replacement-runs/{run_id}/execute": ReplacementRunOut;
   /** 预览或下载 Z 盘原始生成结果 */
   "GET /api/v1/templates/replacement-runs/{run_id}/output": unknown;
+  /** 确认上次提交可能已计费后放行重提（默认拒绝） */
+  "POST /api/v1/templates/replacement-runs/{run_id}/reconfirm": ReplacementRunOut;
 }

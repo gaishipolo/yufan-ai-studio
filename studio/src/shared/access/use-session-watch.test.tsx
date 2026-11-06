@@ -1,7 +1,7 @@
 import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { GUEST_SUBJECT } from './types';
-import { TOKEN_STORAGE_KEY, useSessionStore } from './session';
+import { REFRESH_TOKEN_STORAGE_KEY, TOKEN_STORAGE_KEY, useSessionStore } from './session';
 import { useSessionCrossTabSync, useSessionExpiryWatch } from './use-session-watch';
 
 const requestRefresh = vi.hoisted(() => vi.fn());
@@ -131,8 +131,41 @@ describe('useSessionCrossTabSync', () => {
     localStorage.clear();
   });
 
-  it('别的标签页删掉令牌 → 本页跟着登出，原因是 external', () => {
-    authenticate(Date.now() + 60_000);
+  it('别的标签页销毁刷新令牌（真登出）→ 本页跟着登出，原因是 external', () => {
+    authenticate(Date.now() + 60_000, 'rt');
+    renderHook(() => useSessionCrossTabSync());
+
+    act(() => {
+      window.dispatchEvent(
+        new StorageEvent('storage', { key: REFRESH_TOKEN_STORAGE_KEY, newValue: null }),
+      );
+    });
+
+    expect(useSessionStore.getState().status).toBe('anonymous');
+    expect(useSessionStore.getState().signOutReason?.kind).toBe('external');
+  });
+
+  /* FE5-01：另一个标签页冷启动时只清 access 令牌（它还要拿 refresh 去换票），
+     那不是退出登录。以前这里会跟着 endSession，把本页还有效的 refresh 一起销毁。 */
+  it('别的标签页只清 access 令牌、本页还有刷新令牌 → 本页不动', () => {
+    authenticate(Date.now() + 60_000, 'rt');
+    renderHook(() => useSessionCrossTabSync());
+
+    act(() => {
+      window.dispatchEvent(
+        new StorageEvent('storage', { key: TOKEN_STORAGE_KEY, newValue: null }),
+      );
+    });
+
+    const state = useSessionStore.getState();
+    expect(state.status).toBe('authenticated');
+    expect(state.refreshToken).toBe('rt');
+    expect(state.signOutReason).toBeNull();
+  });
+
+  /* 旧版本存下的会话没有刷新令牌，access 被删仍是它唯一可用的退出信号。 */
+  it('没有刷新令牌的旧会话，access 被删仍然跟着登出', () => {
+    authenticate(Date.now() + 60_000, null);
     renderHook(() => useSessionCrossTabSync());
 
     act(() => {

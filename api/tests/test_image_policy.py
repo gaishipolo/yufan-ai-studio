@@ -78,3 +78,39 @@ def test_default_fallback_boundary_is_explicit() -> None:
         _validate_asset_url(f"http://{host}/x.png", frozenset())  # 放行
     with pytest.raises(ValueError, match="非公网 IP"):
         _validate_asset_url("http://169.254.169.254/latest/", frozenset())
+
+
+def test_discovery_makes_startup_checks_see_every_driver() -> None:
+    """注册表只记「被 import 过」的子类，启动自检不能靠谁碰巧 import 了驱动（R13-05）。
+
+    只加载 echo 的部署里 `AgnesSettings` 原本不在册，`ensure_prod_driver_settings()`
+    扫不到它；`maintenance._stale_after_sec()` 靠函数内 import 兜住纯属巧合。
+    """
+    dc.discover_driver_settings()
+    registered = {cls.__name__ for cls in dc.registered_driver_settings()}
+    assert "AgnesSettings" in registered
+    assert "ImageAssetSettings" in registered
+
+
+def test_precheck_computes_every_declared_budget() -> None:
+    """启动期预检必须能算出 IMAGE 预算，否则巡检阈值无解（R13-06）。"""
+    dc.discover_driver_settings()
+    assert dc.precheck_submit_budgets().get("image"), (
+        "没有驱动声明 IMAGE 提交预算：巡检会直接跳过，且没人会发现"
+    )
+
+
+def test_precheck_is_loud_on_broken_declaration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """坏配置在启动期就炸，而不是每 300 秒被调度器吞掉一条日志（R13-06）。"""
+
+    class BadSettings:
+        submit_budget_for = frozenset({"image"})
+
+        def __init__(self) -> None:
+            pass
+
+    monkeypatch.setattr(dc, "registered_driver_settings", lambda: (BadSettings,))  # type: ignore[arg-type]
+    with pytest.raises(RuntimeError, match="timeout_sec"):
+        dc.precheck_submit_budgets()

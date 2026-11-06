@@ -362,39 +362,34 @@ def test_every_pipeline_kind_declares_a_recovery_slot() -> None:
             )
 
 
-def _module_has_retry_exit(module_dir: Path) -> bool:
-    """三种都算「用户有自救出口」。
-
-    POST .../retry 路由、模块里的 retry* 函数、或自有重试计数体系
-    （template 用的是 run.json 的 retry_count，语义不同但同样是出口）。
-    """
-    text = "\n".join(p.read_text(encoding="utf-8") for p in _python_files(module_dir))
-    return bool(
-        re.search(r"@router\.post\([^)]*retry", text)
-        or re.search(r"\b(?:async\s+)?def\s+retry\w*", text)
-        or "retry_count" in text
-    )
-
-
 def test_every_kind_has_a_user_retry_exit() -> None:
     """`SUBMIT_UNKNOWN_MESSAGE` 写着「请核对后手动重试」，不能是空头支票。
 
     runner 对 submit_unknown 的记录一律判死，此后 `handle_submit` 的终态早退
     让它再也动不了；没有 retry 出口时这条记录永久死锁（R11-02 现象 A）。
+
+    判据落在**行为**上：`tests/test_user_retry_exits.py` 的 `EXIT_CASES` 每个条目
+    都是一次真实调用（造「提交结果未知」的现场 → 走用户点得到的入口 → 断言不抛
+    Conflict），这里只对账「每个 kind 都有条目」。
+
+    上一版用三个正则判文本，其中 `"retry_count" in text` 专为 template 加的：
+    那个字段计的是**自动**重试，还在被拦下之前被 `schedule_state` 清零，连
+    「用户点得动」都证明不了。于是守卫两边都 True，而 template 那条记录点一百次
+    也只是同一句 Conflict（R14-01）——守卫验证「有没有」，没验证「通不通」。
     """
+    from test_user_retry_exits import EXIT_CASES
+
     from api.discovery import active_modules
     from generation.pipeline import pipeline_kinds
 
-    owner = {kind: spec.name for spec in active_modules() for kind in spec.recovery_kinds}
-    kinds = pipeline_kinds()
+    active_modules()  # 副作用：import 所有模块，填满 pipeline 注册表
+    kinds = set(pipeline_kinds())
     assert kinds, "生成流水线注册表为空：模块没被 import，这条守卫会永远绿"
 
-    missing = [
-        kind
-        for kind in kinds
-        if kind not in owner or not _module_has_retry_exit(MODULES_DIR / owner[kind])
-    ]
+    missing = sorted(kinds - set(EXIT_CASES))
     assert not missing, (
-        f"这些 kind 的模块没有重试出口：{missing}。补 POST /.../retry（并清 "
-        "submit_attempts），或在模块里提供等价的自有重试体系"
+        f"这些 kind 没有登记用户自救出口：{missing}。补一个能把「提交结果未知」"
+        "放行的入口，并在 tests/test_user_retry_exits.py 的 EXIT_CASES 里登记"
     )
+    stale = sorted(set(EXIT_CASES) - kinds)
+    assert not stale, f"EXIT_CASES 里有已经不存在的 kind：{stale}"

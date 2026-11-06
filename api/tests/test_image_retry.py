@@ -369,3 +369,128 @@ async def test_connect_error_clears_submit_attempt(
         assert job.status == STATUS_FAILED
         assert job.submit_attempts == 0, "确定没送达不该被算成「可能已计费」"
         assert job.external_id is None
+
+
+# --------------------------------------------------------------------------- #
+# R13-02：凭证是追加语义，不是单槽
+# --------------------------------------------------------------------------- #
+async def test_confirmed_retry_appends_evidence_instead_of_overwriting(
+    client: TestClient, created_ids: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """连续两次「确认已扣费」重试，第一份账单的凭证不许被第二次覆盖。
+
+    单槽 `previous_external_id` 的价值就在「别把对账凭证弄丢」，而它只能存一个；
+    审计 detail 按设计吞异常，所以两份凭证会在同一轮里一起丢（R13-02）。
+    """
+    actor = _me_id(client)
+    rid = await _insert(
+        owner_id=actor, status=STATUS_FAILED, external_id="EXT-FIRST"
+    )
+    created_ids.append(rid)
+    monkeypatch.setattr(
+        "modules.image.service.get_runner", lambda: GenerationRunner(MemoryJobQueue())
+    )
+
+    first = client.post(f"{API}/images/{rid}/retry?confirmCharged=true")
+    assert first.status_code == 200, first.text
+
+    # 第二次提交又拿到任务号并再次失败（同步供应商出图后落库失败的现场）
+    async with get_session_factory()() as session:
+        job = await session.get(ImageJob, rid)
+        assert job is not None
+        job.status = STATUS_FAILED
+        job.external_id = "EXT-SECOND"
+        await session.commit()
+
+    second = client.post(f"{API}/images/{rid}/retry?confirmCharged=true")
+    assert second.status_code == 200, second.text
+
+    async with get_session_factory()() as session:
+        job = await session.get(ImageJob, rid)
+        assert job is not None
+        assert job.previous_external_id == "EXT-SECOND", "单槽仍返回最近一个"
+        assert job.previous_external_ids == ["EXT-FIRST", "EXT-SECOND"], (
+            "第一份账单的凭证被覆盖了：这就是 R13-02"
+        )
+
+    detail = client.get(f"{API}/images?page=1&pageSize=50")
+    assert detail.status_code == 200
+
+
+# --------------------------------------------------------------------------- #
+# R13-04：巡检按 submit_mode 分流，有任务号的只 resume 不 dispatch
+# --------------------------------------------------------------------------- #
+async def test_reconcile_resumes_accepted_jobs_and_never_dispatches(
+    client: TestClient, created_ids: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`external_id is None` 一刀切会把最需要接管的记录全挡在外面（R13-04）。
+
+    轮询链在两次进程重启之间断掉，启动恢复器（每次启动一次、上限 100 条）
+    管不到，只能靠巡检续接；而重投这类记录就是第二次提交、第二次计费。
+    """
+    from modules.image.maintenance import reconcile_stale_jobs
+
+    dispatched: list[str] = []
+    resumed: list[str] = []
+
+    class _Runner:
+        async def dispatch(self, kind: str, rid: str) -> str:
+            dispatched.append(rid)
+            return "ok"
+
+        async def resume(self, kind: str, rid: str, *, delay: float = 0) -> None:
+            resumed.append(rid)
+
+    monkeypatch.setattr("modules.image.maintenance.get_runner", lambda: _Runner())
+
+    async_mode = await _insert(
+        status="running",
+        external_id="EXT-ACCEPTED",
+        submit_mode="async",
+        started_at=_OLD,
+    )
+    sync_mode = await _insert(
+        status="running",
+        external_id="EXT-SYNC",
+        submit_mode="sync",
+        started_at=_OLD,
+    )
+    created_ids.extend([async_mode, sync_mode])
+
+    await reconcile_stale_jobs()
+
+    assert async_mode in resumed, "轮询链断掉的 running 记录没人接管"
+    assert async_mode not in dispatched, "有任务号还 dispatch = 第二次提交（计费红线）"
+    assert sync_mode not in resumed and sync_mode not in dispatched, (
+        "同步供应商既续查不了也不许重投，应留给人工核对"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# R13-07：复位后投递失败，不能只抛 500 把现场留成「已复位但没入队」
+# --------------------------------------------------------------------------- #
+async def test_dispatch_failure_after_reset_is_explained(
+    client: TestClient, created_ids: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    actor = _me_id(client)
+    rid = await _insert(owner_id=actor, status=STATUS_FAILED, submit_attempts=1)
+    created_ids.append(rid)
+
+    class _BrokenRunner:
+        async def dispatch(self, kind: str, rid: str) -> str:
+            raise RuntimeError("队列不可用")
+
+    monkeypatch.setattr(
+        "modules.image.service.get_runner", lambda: _BrokenRunner()
+    )
+
+    resp = client.post(f"{API}/images/{rid}/retry")
+    assert resp.status_code == 502, resp.text
+    assert "自动重投" in resp.json()["message"], "要告诉用户不用再点一次"
+
+    async with get_session_factory()() as session:
+        job = await session.get(ImageJob, rid)
+        assert job is not None
+        # 已复位成「未投递」形态：巡检会接手，重试按钮已不再生效
+        assert job.status == STATUS_QUEUED
+        assert job.submit_attempts == 0
