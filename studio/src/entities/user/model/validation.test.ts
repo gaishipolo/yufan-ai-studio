@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   PASSWORD_MIN_LENGTH,
+  PASSWORD_MIN_UNIQUE_CHARS,
   USERNAME_PATTERN,
   checkAvatarUrl,
   checkEmail,
@@ -112,5 +113,67 @@ describe('口令校验的调用点', () => {
   it.each(CALL_SITES)('%s 提交前调了 checkPassword', (relative) => {
     const source = readFileSync(join(process.cwd(), relative), 'utf8');
     expect(source).toContain('checkPassword(');
+  });
+});
+
+/**
+ * 与后端口令策略逐条比对 —— **解析后端源码，不调接口**（FE5-02 / FE-33）。
+ *
+ * 上面那些用例拿本地常量做期望值，所以后端把 10 改成 12 时它们照样全绿；
+ * 这条才是真正钉住「唯一真相在后端」的守卫。选源码比对而不是调
+ * `GET /identity/password-policy`，是为了不给运行时加一次冷启动请求
+ * —— 理由写在 `validation.ts` 文件头。
+ *
+ * 读不到 `policy.py` 必须**报错**，不能静默跳过：静默跳过的守卫等于没有守卫，
+ * 前端单独检出时会一直绿着腐烂（旧 `permission-catalog.test.ts` 踩过这个坑）。
+ *
+ * 路径用 cwd 拼：`import.meta.url` 在 vitest 里会被 vite 改写成开发服务器地址。
+ */
+describe('与后端口令策略一致', () => {
+  const POLICY_PATH = join(process.cwd(), '..', 'api', 'src', 'modules', 'identity', 'policy.py');
+
+  function backendPolicySource(): string {
+    try {
+      return readFileSync(POLICY_PATH, 'utf8');
+    } catch {
+      throw new Error(
+        `读不到后端策略文件 ${POLICY_PATH}。这条用例靠解析后端源码守住前端常量，` +
+          `必须与 api/ 一起检出；不要改成静默跳过。`,
+      );
+    }
+  }
+
+  /** 解析 `NAME: Final = 123` 形态的常量 */
+  function backendConstants(): Record<string, number> {
+    const found: Record<string, number> = {};
+    for (const [, name, value] of backendPolicySource().matchAll(
+      /^(PASSWORD_\w+):\s*Final\s*=\s*(\d+)\s*$/gm,
+    )) {
+      found[name] = Number(value);
+    }
+    return found;
+  }
+
+  it('三个策略常量都能从 policy.py 解析出来（解析不到要红，不能当作没这条规则）', () => {
+    expect(Object.keys(backendConstants()).sort()).toEqual([
+      'PASSWORD_MAX_LENGTH',
+      'PASSWORD_MIN_LENGTH',
+      'PASSWORD_MIN_UNIQUE_CHARS',
+    ]);
+  });
+
+  it('最小长度与后端一致', () => {
+    expect(PASSWORD_MIN_LENGTH).toBe(backendConstants().PASSWORD_MIN_LENGTH);
+  });
+
+  it('最少不同字符数与后端一致', () => {
+    expect(PASSWORD_MIN_UNIQUE_CHARS).toBe(backendConstants().PASSWORD_MIN_UNIQUE_CHARS);
+  });
+
+  /* 前端拦纯数字、后端也拦 —— 两边一致。后端哪天放开这条，
+     前端就不该再拒（前端比后端严同样是 bug：用户改了还是过不去），
+     所以这里守的是「后端的态度」，不是前端的实现。 */
+  it('后端仍然禁止纯数字', () => {
+    expect(backendPolicySource()).toMatch(/"forbid_all_numeric":\s*True/);
   });
 });
