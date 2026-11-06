@@ -21,8 +21,9 @@ export function Slot({ name, fallback = null }: { name: SlotName; fallback?: Rea
 
   return (
     <>
-      {slots.map((slot, index) => (
-        <SlotItem key={`${slot.moduleId}:${index}`} slot={slot} />
+      {/* key 用注册序号而不是数组下标：下标是排序后的位置，order 一变就整体漂移 */}
+      {slots.map((slot) => (
+        <SlotItem key={`${slot.moduleId}:${slot.seq}`} slot={slot} />
       ))}
     </>
   );

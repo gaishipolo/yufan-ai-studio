@@ -19,7 +19,8 @@ export type Permission = string;
 export interface ModuleRouteDef {
   /**
    * 相对模块根的路由路径：`'tasks'` → `/tasks`。
-   * 不允许 `''`：首页由 `src/app/config.ts` 的 HOME_PATH 决定，避免多个模块抢根路由。
+   * 不允许 `''` 或等价的 `'/'`：首页由 `src/shared/config/app.ts` 的 HOME_PATH 决定，
+   * 避免多个模块抢根路由。尾部斜杠会被归一化剥掉，所以 `'tasks'` 与 `'tasks/'` 视为重复。
    */
   path: string;
   /**
@@ -165,6 +166,12 @@ export interface ResolvedSlot {
   order: number;
   permissions: Permission[];
   moduleId: string;
+  /**
+   * 注册序号（模块声明的先后），只用于渲染时的稳定 React key。
+   * 不能用排序后的数组下标：`order` 一变下标就整体错位，
+   * 带内部状态（如弹窗开关）的插槽会表现为「弹窗还开着，内容却换了」。
+   */
+  seq: number;
 }
 
 export interface AppRegistry {

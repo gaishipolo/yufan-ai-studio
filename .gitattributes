@@ -7,6 +7,13 @@
 *.tsx text
 *.md text
 
+# 生成物参与字节比对（src/app/registry/routes.test.ts、
+# src/app/registry/mock-coverage.test.ts），必须与生成器的 LF 输出逐字节一致。
+# 只钉这两个文件，不动其它手写 md：core.autocrlf=true 的机器上检出成 CRLF 时，
+# 测试会稳定红、而 git diff 为空 —— 最容易被当成噪声忽略的一种假红。
+docs/ROUTES.md text eol=lf
+docs/MOCK_COVERAGE.md text eol=lf
+
 # 二进制，不做换行转换
 *.png binary
 *.jpg binary

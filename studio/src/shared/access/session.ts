@@ -375,8 +375,16 @@ export const useSessionStore = create<SessionState>()((set, get) => ({
 
     const refreshToken = readStorage(REFRESH_TOKEN_STORAGE_KEY);
     const refreshExpiresAt = Number(readStorage(REFRESH_EXPIRES_STORAGE_KEY) ?? '0');
+
+    /* 跟过来的只有令牌，身份快照可能压根没有（冷启动时 subject 还是 GUEST）。
+       这时置 authenticated 会让导航与 <Can> 带着空 permissions 渲染一帧 ——
+       用户看到的是「权限全丢了」。留 loading，等 /me 回来再由 setSubject 点亮。 */
+    const subject = stored ?? current.subject;
+    const hasIdentity = subject.id !== GUEST_SUBJECT.id;
+
     set({
-      status: 'authenticated',
+      status: hasIdentity ? 'authenticated' : 'loading',
+      subject,
       token,
       expiresAt: expiresAt > 0 ? expiresAt : null,
       refreshToken,
