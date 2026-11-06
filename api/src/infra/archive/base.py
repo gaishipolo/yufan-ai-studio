@@ -1,19 +1,20 @@
-"""归档文件系统协议与实现；不包含素材分类、权限或生成业务。"""
+"""归档存储协议；不含素材分类、权限或生成业务。
+
+`infra/` 里每个「可替换实现」都是一个 kind（storage / queue / ai / archive），
+约定是 `infra/<kind>/<name>.py` 暴露 `Driver`，`<kind>_driver` 选它。
+本文件只放协议与跨实现共用的文件语义，具体实现见 `local.py`。
+"""
 
 from __future__ import annotations
 
 import hashlib
-import json
-import shutil
 import sys
-import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import IO, Protocol
 
-from core.config import settings
-from core.exceptions import BadRequest, Conflict, UpstreamError
+from core.exceptions import BadRequest, Conflict
 
 if sys.platform == "win32":
     import msvcrt
@@ -57,47 +58,18 @@ def lease(path: Path) -> Iterator[None]:
 
 
 class ArchiveStorage(Protocol):
+    """归档盘最小接口。
+
+    **已知边界**：接口以 `Path` 表达位置，所以实现必须是「有本地路径语义」的存储
+    （本地目录、SMB/UNC、挂载点的对象存储网关）。要接纯 HTTP 的 S3/MinIO，
+    得先在协议层把 `resolve() -> Path` 换成句柄，那是另一件事，别在驱动里偷偷绕。
+    """
+
     def root(self) -> Path: ...
     def resolve(self, key: str) -> Path: ...
     def read(self, path: Path) -> object: ...
     def write(self, path: Path, value: object) -> None: ...
     def copy(self, source: Path, destination: Path, digest: str | None = None) -> str: ...
-
-
-class LocalArchiveStorage:
-    """同步文件驱动；异步调用方必须在线程池内完成整次操作。"""
-
-    def root(self) -> Path:
-        path = Path(settings.media_archive_root)
-        if not path.is_absolute() or not path.is_dir():
-            raise UpstreamError("素材归档盘不可用，请检查 Z 盘连接；不会回退本地保存")
-        return path.resolve()
-
-    def resolve(self, key: str) -> Path:
-        return within(self.root(), key)
-
-    def read(self, path: Path) -> object:
-        return json.loads(path.read_text(encoding="utf-8"))
-
-    def write(self, path: Path, value: object) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = path.with_name(path.name + "." + uuid.uuid4().hex + ".tmp")
-        temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
-        temporary.replace(path)
-
-    def copy(self, source: Path, destination: Path, digest: str | None = None) -> str:
-        expected = digest or checksum(source)
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        if destination.exists():
-            if checksum(destination) != expected:
-                raise Conflict("已有归档文件与本次输入不一致，禁止覆盖")
-            return expected
-        temporary = destination.with_name(destination.name + "." + uuid.uuid4().hex + ".tmp")
-        shutil.copyfile(source, temporary)
-        if checksum(temporary) != expected:
-            raise UpstreamError("归档复制校验失败，请检查共享盘连接")
-        temporary.replace(destination)
-        return expected
 
 
 def within(base: Path, relative: str) -> Path:
@@ -110,7 +82,3 @@ def within(base: Path, relative: str) -> Path:
 def checksum(path: Path) -> str:
     with path.open("rb") as stream:
         return hashlib.file_digest(stream, "sha256").hexdigest()
-
-
-def get_archive_storage() -> ArchiveStorage:
-    return LocalArchiveStorage()

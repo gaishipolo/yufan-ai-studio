@@ -93,17 +93,24 @@ class Settings(BaseSettings):
     # ---------- 基础设施（策略选择）----------
     # 刻意不使用 Literal：新增驱动/供应商不应该需要修改本文件。
     # 名字对应 `infra.<kind>.<name>` 模块，未实现时启动即报错。
+    #
+    # 驱动**自己的参数**（provider 的 base_url/api_key、归档盘根目录、node 路径）
+    # 不放这里，见 `infra/driver_config.py`：每个驱动一个 `XxxSettings`，
+    # 环境变量前缀 = 驱动名大写（`AGNES_API_KEY`、`LIBTV_NODE`、`MEDIA_ARCHIVE_ROOT`）。
+    # 这条边界是「部署时就确定、所有驱动共有」与「只有某个驱动懂」的分界。
     storage_driver: str = "local"
     storage_local_root: str = (_VAR_DIR / "storage").as_posix()
     storage_public_base: str = "/static"
-    # 替换模板的素材与调用档案只落此目录；不可用时失败，不回退本地磁盘。
-    media_archive_root: str = "Z:/yufan_ai_studio"
-    libtv_legacy_root: str = "E:/yufan-ai"
-    libtv_node: str = "node"
 
     queue_driver: str = "memory"
+    # 归档盘驱动。以前归档盘是写死的 `LocalArchiveStorage()`，`.env.example`
+    # 里「换实现只改这里」这句承诺对它不成立；现在它和 storage / queue 同形态。
+    archive_driver: str = "local"
     worker_enabled: bool = True
     worker_concurrency: int = 2
+    # 周期任务调度器（模块自己 @periodic 注册）。多副本部署时每个进程都会跑一份，
+    # 所以 handler 必须幂等；需要「全集群只跑一次」要先换掉 queue_driver。
+    scheduler_enabled: bool = True
 
     # 兼容旧的单值写法 AI_PROVIDER；推荐使用 AI_PROVIDERS=echo,volcengine
     ai_provider: str = "echo"
@@ -112,7 +119,10 @@ class Settings(BaseSettings):
     # ---------- 生成编排 ----------
     # 轮询用「延迟投递」实现，不占 worker 槽位，因此可以设得比较密
     generation_poll_interval_sec: float = 2.0
-    generation_max_polls: int = 150
+    # 轮询次数上限是「本次进程内」的计数，重启会归零；真正的超时预算见
+    # `generation_timeout_sec`（按任务创建时间算墙钟）。两个值应当互相匹配：
+    # 900 × 2.0 = 1800 = timeout，配置不一致会在启动期提示。
+    generation_max_polls: int = 900
     generation_timeout_sec: int = 1800
 
     # ---------- 派生属性 ----------
@@ -156,6 +166,30 @@ class Settings(BaseSettings):
         if not v.startswith("/"):
             v = f"/{v}"
         return v.rstrip("/")
+
+    @model_validator(mode="after")
+    def _guard_generation_budget(self) -> Settings:
+        """轮询预算必须撑得住声明的超时时间。
+
+        这条守卫的由来：`GENERATION_TIMEOUT_SEC` 曾经**没有任何代码读取**，
+        真实超时是 `max_polls × poll_interval`（默认 150×2 = 300 秒），
+        而配置写着 1800 秒。默认值下每个 5 分钟的视频都会被误判成超时，
+        而配置里那两个数字看上去都很正常 —— 这种错只能靠启动期算一遍才发现。
+
+        允许 `预算 > 超时`（墙钟是权威，多留的轮询次数不会被用到），
+        但 `预算 < 超时 × 0.8` 说明调小 `max_polls` 的人真正改变的是超时语义，
+        必须显式改 `generation_timeout_sec`。
+        """
+        budget = self.generation_max_polls * self.generation_poll_interval_sec
+        if budget < self.generation_timeout_sec * 0.8:
+            raise ValueError(
+                f"轮询预算不足：GENERATION_MAX_POLLS({self.generation_max_polls}) × "
+                f"GENERATION_POLL_INTERVAL_SEC({self.generation_poll_interval_sec}) "
+                f"= {budget:.0f} 秒，撑不到 GENERATION_TIMEOUT_SEC="
+                f"{self.generation_timeout_sec} 秒。请调大轮询次数，"
+                f"或显式调小超时时间（两者语义不同，不要只改一个）"
+            )
+        return self
 
     @model_validator(mode="after")
     def _guard_production(self) -> Settings:

@@ -13,6 +13,7 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import delete
 
+from api.discovery import active_modules
 from db.session import get_session_factory, init_db
 from modules.asset.models import Asset
 from modules.identity.models import Role, RolePermission, User, UserRole
@@ -83,13 +84,6 @@ _SHOTS: list[tuple[str, str, int, int]] = [
     ("环绕", "围绕主体 180 度环绕", 5, 860),
     ("升降", "从地面升到高空俯瞰", 4, 510),
     ("手持跟拍", "手持轻微晃动跟随主体移动", 3, 770),
-]
-
-_IMAGE_PROMPTS: list[tuple[str, str]] = [
-    ("赛博朋克少女", "赛博朋克风格少女半身像，霓虹光，胶片质感"),
-    ("极简产品图", "白色背景上的香水瓶，柔光棚拍"),
-    ("水彩风景", "水彩风格的山间小屋，晨雾"),
-    ("国潮插画", "国潮风格龙纹插画，朱红与金"),
 ]
 
 
@@ -220,29 +214,24 @@ async def seed(*, reset: bool = False) -> dict[str, int]:
             for i, (name, fragment, duration, popularity) in enumerate(_SHOTS)
         ]
 
-        images = [
-            ImageJob(
-                name=prompt[:12],
-                prompt=prompt,
-                size="1024x1536",
-                cover_url=f"https://picsum.photos/seed/img{i}/400/500",
-                owner_id=DEMO_AUTHOR,
-                created_at=_ts(i * 240 + 60),
-            )
-            for i, (_, prompt) in enumerate(_IMAGE_PROMPTS)
-        ]
-
         # 各实体类型不同，显式声明为 object 列表（list + list 会被 mypy 判为不兼容）
-        rows: list[object] = [*tasks, *assets, *templates, *storyboards, *shots, *images]
+        rows: list[object] = [*tasks, *assets, *templates, *storyboards, *shots]
         session.add_all(rows)
         await session.commit()
 
-        return {
+        counts: dict[str, int] = {
             "users": len(users),
             "tasks": len(tasks),
             "assets": len(assets),
             "templates": len(templates),
             "storyboards": len(storyboards),
             "shots": len(shots),
-            "images": len(images),
         }
+
+        # 模块自带的演示数据：新模块不用再改这个文件（ModuleSpec.seed）。
+        # 老模块（task / asset / template / storyboard / shot）暂时还留在上面——
+        # 迁移它们是无风险的机械工作，按需做，别为了清爽一次性全动。
+        for spec in active_modules():
+            if spec.seed is not None:
+                counts[spec.name] = await spec.seed(session)
+        return counts

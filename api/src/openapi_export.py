@@ -28,6 +28,7 @@ _PKG_ROOT = Path(__file__).resolve().parents[2]  # 工作区根目录
 DEFAULT_JSON = _PKG_ROOT / "api" / "docs" / "openapi.json"
 DEFAULT_MD = _PKG_ROOT / "api" / "docs" / "API.md"
 DEFAULT_TS = _PKG_ROOT / "studio" / "src" / "shared" / "api" / "schema.ts"
+DEFAULT_PERMS = _PKG_ROOT / "studio" / "src" / "shared" / "api" / "permissions.ts"
 
 _BANNER = "此文件由 `app export-openapi` 自动生成，请勿手工编辑。"
 
@@ -647,6 +648,69 @@ def render_markdown(spec: Spec) -> str:
 
 
 # --------------------------------------------------------------------------- #
+# 权限点目录
+# --------------------------------------------------------------------------- #
+_BACKSLASH = chr(92)
+
+
+def render_permissions() -> str:
+    """权限点目录 → 前端常量（第四份生成物）。
+
+    为什么权限点不能只靠 `openapi.json`：`PermissionOut.code` 是自由字符串，
+    目录是**运行时数据**，schema 里没有枚举，从接口定义里抽不出来。
+    于是前端只能手抄一份镜像（`entities/role/model/permission-catalog.ts`），
+    抄漏一个权限点 = 角色界面里少一个勾选项，而且不会有任何报错。
+
+    这份文件把「手抄」改成「生成」：新模块声明 `ModuleSpec.permissions` 之后，
+    跑一次 `app export-openapi` 就同步到前端，`--check` 会在 CI 里拦住忘记跑的情况。
+    """
+    from core.permissions import catalog
+
+    def esc(text: str) -> str:
+        return text.replace(_BACKSLASH, _BACKSLASH * 2).replace("'", _BACKSLASH + "'")
+
+    lines = [
+        "/*",
+        " * " + _BANNER,
+        " *",
+        " * 权威来源：后端各模块 `ModuleSpec.permissions`（与 `GET /identity/permissions` 同源）。",
+        " * 前端请从 `shared/api/permissions` 引用，不要再手写一份镜像。",
+        " */",
+        "",
+        "export interface PermissionItem {",
+        "  code: string;",
+        "  name: string;",
+        "  description: string;",
+        "}",
+        "",
+        "export interface PermissionGroup {",
+        "  group: string;",
+        "  items: PermissionItem[];",
+        "}",
+        "",
+        "export const PERMISSION_GROUPS: PermissionGroup[] = [",
+    ]
+    for group, specs in catalog.grouped().items():
+        lines += ["  {", f"    group: '{esc(group)}',", "    items: ["]
+        for spec in specs:
+            lines.append(
+                f"      {{ code: '{esc(spec.code)}', name: '{esc(spec.name)}', "
+                f"description: '{esc(spec.description)}' }},"
+            )
+        lines += ["    ],", "  },"]
+    lines += ["];", ""]
+
+    # 扁平列表按字母序：分组块保留展示顺序（运营看着顺），但这个数组是给
+    # `Set` / 比对 / 权限判定用的，顺序稳定比好看重要——前端 `PERMISSION_CODES`
+    # 历史上就是排过序的，顺序一变他们的既有断言会红。
+    lines.append("export const PERMISSION_CODES = [")
+    lines += [f"  '{esc(code)}'," for code in sorted(spec.code for spec in catalog.all())]
+    lines += ["] as const;", "",
+              "export type PermissionCode = (typeof PERMISSION_CODES)[number];", ""]
+    return "\n".join(lines)
+
+
+# --------------------------------------------------------------------------- #
 # 写盘
 # --------------------------------------------------------------------------- #
 def export(
@@ -654,9 +718,10 @@ def export(
     json_path: Path = DEFAULT_JSON,
     md_path: Path = DEFAULT_MD,
     ts_path: Path = DEFAULT_TS,
+    perms_path: Path = DEFAULT_PERMS,
     check: bool = False,
 ) -> dict[str, str]:
-    """生成三份文件。
+    """生成四份文件（json / md / ts 类型 / 权限点常量）。
 
     `check=True` 时只比对，不写盘；返回每个文件的状态：
     `written` / `unchanged` / `stale`（内容不一致）/ `missing`。
@@ -666,6 +731,7 @@ def export(
         json_path: json.dumps(spec, ensure_ascii=False, indent=2) + "\n",
         md_path: render_markdown(spec),
         ts_path: render_typescript(spec),
+        perms_path: render_permissions(),
     }
 
     status: dict[str, str] = {}
@@ -696,9 +762,11 @@ def export(
 __all__ = [
     "DEFAULT_JSON",
     "DEFAULT_MD",
+    "DEFAULT_PERMS",
     "DEFAULT_TS",
     "build_spec",
     "export",
     "render_markdown",
+    "render_permissions",
     "render_typescript",
 ]

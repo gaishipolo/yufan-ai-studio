@@ -10,14 +10,15 @@ import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
 
-from core.config import settings
+from infra.archive.local import get_archive_settings
 from infra.media_probe import create_browser_preview, normalize_duration
 from modules.asset.archive_service import ArchiveAssetService
 
 
 @pytest.fixture
 def archive_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    monkeypatch.setattr(settings, "media_archive_root", str(tmp_path))
+    # 归档根是驱动私有配置（前缀 MEDIA_ARCHIVE_），不在全局 settings 里
+    monkeypatch.setattr(get_archive_settings(), "root", str(tmp_path))
     return tmp_path
 
 

@@ -1,11 +1,17 @@
 """接口契约文件的一致性测试。
 
-`docs/openapi.json`、`docs/API.md`、`studio/src/shared/api/schema.ts` 都是
-`app export-openapi` 生成物。它们最容易出的问题不是「生成得不对」，
-而是**改了接口忘了重新生成** —— 前端照着旧文档写完，联调时才发现对不上。
+四份生成物都是 `app export-openapi` 的产物：
+
+- `docs/openapi.json`
+- `docs/API.md`
+- `studio/src/shared/api/schema.ts`
+- `studio/src/shared/api/permissions.ts`
+
+它们最容易出的问题不是「生成得不对」，而是**改了接口忘了重新生成** ——
+前端照着旧文档写完，联调时才发现对不上。
 
 这些测试把「重新生成」变成硬约束：只要代码里的接口变了而文件没更新，CI 就红。
-修法永远是 `app export-openapi`，不要手工改那三个文件。
+修法永远是 `app export-openapi`，不要手工改这四份文件。
 """
 
 from __future__ import annotations
@@ -19,10 +25,12 @@ from fastapi.testclient import TestClient
 from openapi_export import (
     DEFAULT_JSON,
     DEFAULT_MD,
+    DEFAULT_PERMS,
     DEFAULT_TS,
     _response_data_type,
     build_spec,
     render_markdown,
+    render_permissions,
     render_typescript,
 )
 
@@ -54,6 +62,16 @@ def test_typescript_schema_is_up_to_date() -> None:
     expected = render_typescript(build_spec())
     assert DEFAULT_TS.read_text(encoding="utf-8") == expected, (
         "前端 schema.ts 与代码不一致 —— 运行 `app export-openapi`"
+    )
+
+
+def test_permission_catalog_is_up_to_date() -> None:
+    """权限点清单是第四份生成物（B2）：前端不再手抄，漏生成 CI 就红。"""
+    assert DEFAULT_PERMS.exists(), "缺少 studio/src/shared/api/permissions.ts"
+    build_spec()  # 触发模块发现，填满 catalog
+    expected = render_permissions()
+    assert DEFAULT_PERMS.read_text(encoding="utf-8") == expected, (
+        "前端 permissions.ts 与后端权限点不一致 —— 运行 `app export-openapi`"
     )
 
 

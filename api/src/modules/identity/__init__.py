@@ -8,9 +8,9 @@
 `tests/test_identity_api.py::test_deactivation_takes_effect_immediately` 专门守这条。
 """
 
-from api.accounts import register_account_status_checker
 from api.authn import register_principal_resolver
 from api.module import ModuleSpec
+from core.ports.accounts import register_account_status_checker
 from modules.identity.account_status import IdentityAccountStatus
 from modules.identity.permissions import SPECS
 from modules.identity.principal import IdentityPrincipalResolver

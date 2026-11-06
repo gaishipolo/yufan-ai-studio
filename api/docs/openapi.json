@@ -1861,7 +1861,8 @@
         "tags": [
           "生图"
         ],
-        "summary": "提交生图（待实现）",
+        "summary": "提交生图",
+        "description": "受理即返回 `queued`，实际生成由后台队列完成；客户端轮询 `GET /images` 或明细接口取 `status` / `outputUrl`。",
         "operationId": "generate_image_api_v1_generations_image_post",
         "requestBody": {
           "content": {
@@ -1900,6 +1901,66 @@
             "bearerAuth": []
           }
         ]
+      }
+    },
+    "/api/v1/images/{job_id}/retry": {
+      "post": {
+        "tags": [
+          "生图"
+        ],
+        "summary": "重试失败的生图",
+        "description": "`SUBMIT_UNKNOWN_MESSAGE` 承诺的「手动重试」出口（R11-02）。\n\n重试会再向供应商提交一次，因此要 `image:create`；替别人点还要 `image:retry:any`。\n没有这个出口时，`failed` 记录会被 `handle_submit` 的终态早退永久锁死：\n文案说「请核对后手动重试」，而用户根本无处可点。\n\n记录带 `externalId`（供应商任务号）时说明**上一次可能已经扣费**，默认返回\n409 要求先核对；只有带 `confirmCharged=true` 才允许重新提交。不带参数的\n旧调用行为不变（R12-01）。",
+        "operationId": "retry_image_api_v1_images__job_id__retry_post",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          },
+          {
+            "name": "confirmCharged",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "确认上一次可能已扣费，仍要重新提交",
+              "default": false,
+              "title": "Confirmcharged"
+            },
+            "description": "确认上一次可能已扣费，仍要重新提交"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_ImageRetryOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/shots": {
@@ -2877,6 +2938,33 @@
         },
         "type": "object",
         "title": "ApiResponse[ImageJobOut]"
+      },
+      "ApiResponse_ImageRetryOut_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ImageRetryOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[ImageRetryOut]"
       },
       "ApiResponse_LoginEventListOut_": {
         "properties": {
@@ -3961,21 +4049,30 @@
             "type": "string",
             "maxLength": 2000,
             "minLength": 1,
-            "title": "Prompt"
+            "title": "Prompt",
+            "description": "画面描述"
           },
           "size": {
             "type": "string",
             "maxLength": 32,
             "title": "Size",
-            "description": "宽x高",
-            "default": "1024x1536"
+            "description": "宽x高，如 `1024x1536`",
+            "default": "1024x1024"
           },
           "count": {
             "type": "integer",
             "maximum": 4.0,
             "minimum": 1.0,
             "title": "Count",
+            "description": "张数",
             "default": 1
+          },
+          "model": {
+            "type": "string",
+            "maxLength": 64,
+            "title": "Model",
+            "description": "模型 id，留空取默认",
+            "default": ""
           }
         },
         "type": "object",
@@ -4045,13 +4142,97 @@
           "size": {
             "type": "string",
             "title": "Size",
-            "description": "尺寸，如 `1024x1536`"
+            "description": "尺寸，如 `1024x1024`"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count",
+            "description": "一次生成的张数",
+            "default": 1
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "description": "状态：`queued` / `running` / `succeeded` / `failed`",
+            "default": "queued"
+          },
+          "progress": {
+            "type": "integer",
+            "title": "Progress",
+            "description": "进度 0-100",
+            "default": 0
+          },
+          "model": {
+            "type": "string",
+            "title": "Model",
+            "description": "模型可读名",
+            "default": ""
+          },
+          "modelId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Modelid",
+            "description": "模型目录 id"
           },
           "coverUrl": {
             "type": "string",
             "title": "Coverurl",
             "description": "封面图 URL",
             "default": ""
+          },
+          "outputUrl": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outputurl",
+            "description": "成图 URL（成功后才有）"
+          },
+          "errorMessage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Errormessage",
+            "description": "失败原因"
+          },
+          "externalId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Externalid",
+            "description": "供应商侧任务号；提交成功后有值，可用于对账"
+          },
+          "previousExternalId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previousexternalid",
+            "description": "上一次提交的供应商任务号；带 confirmCharged 重试后保留的对账凭证"
           },
           "createdAt": {
             "type": "string",
@@ -4068,6 +4249,27 @@
           "createdAt"
         ],
         "title": "ImageJobOut"
+      },
+      "ImageRetryOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "生图记录 ID"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "description": "重试后的状态，固定为 `queued`"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "status"
+        ],
+        "title": "ImageRetryOut",
+        "description": "重试只回 id / status。\n\n不回整份 `ImageJobOut`：持有 `image:retry:any` 的人可以帮别人重跑，\n但没有 `image:read:all`，不该顺带读到别人的 prompt（与 task 的重试同一口径）。"
       },
       "ImportAsset": {
         "properties": {

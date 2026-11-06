@@ -205,6 +205,10 @@ export interface ImageJobOut {
   outputUrl?: string | null;
   /** 失败原因 */
   errorMessage?: string | null;
+  /** 供应商侧任务号；提交成功后有值，可用于对账 */
+  externalId?: string | null;
+  /** 上一次提交的供应商任务号；带 confirmCharged 重试后保留的对账凭证 */
+  previousExternalId?: string | null;
   /** 创建时间（UTC） */
   createdAt: string;
 }

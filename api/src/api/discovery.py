@@ -107,7 +107,6 @@ def describe() -> list[dict[str, object]]:
             "enabled": spec.enabled,
             "routes": len(spec.router.routes),
             "permissions": sorted(spec.permission_codes()),
-            "jobs": list(spec.jobs),
         }
         for spec in discover_modules()
     ]

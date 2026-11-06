@@ -15,8 +15,9 @@
 2. **新功能 = 新增文件**。如果发现自己在改 `api/`、`core/`、`infra/`、`db/`、`generation/`，
    先停下来确认是不是设计缺口。
 3. **模块的对外契约只有 `ModuleSpec`**：路由 + 权限点 + 启动钩子。
-   （`ModuleSpec.jobs` 只是给 `app modules` 看的展示信息，**不会**注册 handler；
-   handler 靠模块里的 `@register_handler` 装饰器。）
+   handler 不走这里，靠模块里的 `@register_handler` 装饰器注册。
+   反过来也成立：**声明了却没人消费的字段不许留** —— `ModuleSpec.jobs` 曾经声明了
+   但没有任何代码读它，只会让人以为「写进去就会注册」，已于 2026-11-06 删除。
 
 第 1 条由 `tests/test_architecture.py` 用 AST 静态检查强制执行；第 3 条的「可发现性」
 （每个子包导出 `module`、路由非空、权限点已声明）也有测试兜住。
@@ -27,7 +28,8 @@
 （只适用于健康检查这类必须匿名可访问的接口）。默认安全，想裸奔要写出来。
 
 再补一条收尾动作：**动了接口就重跑 `app export-openapi`**，把 `docs/openapi.json`、
-`docs/API.md`、`studio/src/shared/api/schema.ts` 三份生成物一起提交（详见第 8 节）。
+`docs/API.md`、`studio/src/shared/api/schema.ts`、`studio/src/shared/api/permissions.ts`
+四份生成物一起提交（详见第 8 节）。
 忘了跑 `pytest` 会红，但别等到红——前端同事等的就是这个 diff。
 
 ---
@@ -440,14 +442,72 @@ Driver = VolcengineProvider
 AI_PROVIDERS=echo,volcengine
 ```
 
+如果这个供应商需要部署参数（base_url / api_key / 区域），**在它自己的文件里声明配置**，
+不要加进 `core/config.py`：
+
+```python
+# src/infra/ai/volcengine.py
+from typing import ClassVar
+from infra.driver_config import DriverSettings, driver_config
+
+class VolcengineSettings(DriverSettings):
+    model_config = driver_config("VOLCENGINE")   # 前缀 → VOLCENGINE_API_KEY
+    # 只有「调用供应商的那次提交」才声明；下载/后处理超时不算
+    submit_budget_for: ClassVar[frozenset[str]] = frozenset({"video"})
+    base_url: str = "https://ark.cn-beijing.volces.com"
+    api_key: str = ""            # 留空，在使用处报错并提示配置项名
+    timeout_sec: float = 30.0    # 声明了 submit_budget_for 就必须有它
+```
+
+约定：**环境变量前缀 = 驱动名大写 + `_`**，`.env.example` 里要列出来，
+`tests/test_config_guard.py` 会检查「字段有没有人读」「示例有没有写全」「默认值有没有指向盘符」。
+`core/config.py` 只放「所有驱动共有」的部署策略（用哪个驱动、并发多少）。
+
+两个 `ClassVar` 是配置的**自描述**，消费方按声明筛选，不要遍历
+`registered_driver_settings()` 再按字段名 `timeout_sec` 猜语义（R12-03）：
+
+| 声明 | 谁来读 | 不声明的后果 |
+|---|---|---|
+| `submit_budget_for` | 模块巡检（如 `image.reconcile`）推导「多久算卡住」 | 不参与任何阈值推导；与生成无关的驱动不会把阈值拖大 |
+| `prod_required_fields` | `app.py` 启动期 `ensure_prod_driver_settings()` | 允许走代码兜底；**安全相关的一定要声明**，例如 `IMAGE_ASSET_ALLOWED_HOSTS` |
+
+`registered_submit_budgets()` 刻意不吞构造异常：某个驱动声明了预算却没配好必填项，
+静默 `continue` 会让阈值回落到 90 秒，正好重新打开「巡检误伤在途任务」的窗口。
+一条声明都没有时巡检**跳过本轮并打 error**，绝不拿猜出来的阈值去判死任务。
+
 **③ 完成**
 
 - `app models` 会列出新模型
 - 前端模型选择器、时长与比例下拉会自动出现新模型（读 `GET /api/v1/models`，见第 6 节）
-- 业务代码、`infra/__init__.py`、`core/config.py` 全部不动
+- 业务代码、`infra/__init__.py`、`core/config.py` 全部不动（配置写在供应商自己的文件里）
 
 > `core/config.py` 里的 `ai_providers` 是普通 `str` 而不是 `Literal`，
 > 就是为了让"加供应商"不需要改核心文件。
+
+**同步供应商怎么写**
+
+多数图片厂商是同步的：一个 POST 等十几秒，直接返回图片地址。这种 provider 让
+`submit` 返回 `GenerationProgress` 而不是任务 ID，框架拿到终态就不再轮询
+（见 `infra/ai/agnes.py`）：
+
+```python
+async def submit(self, request: GenerationRequest) -> GenerationProgress:
+    body = await post(...)                      # 同步出结果
+    return GenerationProgress(
+        external_id=body["task_id"],            # 仍要落库，便于对账
+        state=GenerationState.SUCCEEDED,
+        progress=100,
+        output_url=body["data"][0]["url"],
+    )
+```
+
+代价是这次调用会占住一个 worker 槽位直到出图（Agnes 实测约 13 秒），
+`WORKER_CONCURRENCY` 默认 2 时约 7 张/分钟。图片任务短，通常够用；
+量上来再考虑业务侧改成「先落记录、后台跑」。
+
+> **异常不要自己包装超时**：`runner` 按 httpx 的异常类别判断「供应商有没有可能
+> 已经受理」。把 `httpx.ReadTimeout` 包成 `UpstreamError` 会丢掉这个语义，
+> 让一次可能已经计费的提交被当成「确定没送达」而重试。
 
 ---
 
@@ -519,8 +579,13 @@ await get_runner(self.queue).dispatch("music", record.id)
   `retry_task` 与 `mark_submitted` 都会把 `submit_attempts` 复位。
   所以 `mark_submitted` 的实现**必须**复位这个标记（见参考实现），
   否则提交成功后残留的标记会把之后每一次失败的重试都误杀成「结果未知」。
+  **但「用户点重试」的前提是模块真的提供了 retry 入口**：R11-02 里新加的
+  `image` 一个都没接，记录被判死后永久死锁。见 §5.6 与两条矩阵守卫。
 
-参考实现：`modules/task/pipeline.py`（约 140 行）。
+除七个 Store 方法外，新模块还要接两件「平时用不上」的事：声明
+`recovery_kinds`（或自己的 `startup`）与提供重试出口。两者都有 CI 守卫。
+
+参考实现：`modules/task/pipeline.py`（约 140 行）、`modules/image/pipeline.py`。
 
 ---
 
@@ -546,6 +611,236 @@ async def notify_on_success(event) -> None:
 
 > 已知边界：这是进程内尽力而为的事件，不重试、不持久化。
 > 需要可靠投递（如计费）时，改成"写 outbox 表 + 独立消费者"，订阅方代码不变。
+
+### 5.1 跨模块**查询**：用注入口，不要 import
+
+事件是「广播」，覆盖不了「我要问一个具体问题」——比如后台任务要问
+「这个任务发起人还被启用着吗」。答案在 `modules/identity` 手里，而架构测试禁止 import。
+
+那就开一个**注入口**（port）。它不是临时文件，是有一致形状的扩展点：
+
+```python
+# api/xxx.py —— 消费方只认协议，核心永远不认识具体模块
+class XxxPort(Protocol):
+    async def query(self, ...) -> ...: ...
+
+_port: XxxPort | None = None
+
+def register_xxx(port: XxxPort) -> None:   # 重复注册直接 RegistryError（权威来源只能有一个）
+def reset_xxx() -> None:                   # 仅测试
+def has_xxx() -> bool:                     # 供 app modules / 启动日志判断
+async def ask_xxx(...) -> ...:             # **未注册时返回中性值，不许抛异常**
+```
+
+四条硬规则：
+
+1. **未注册必须无害**。`ask_xxx()` 没有实现时返回值要能让调用方当「不知道」处理
+   （`accounts.py` 的做法是返回 `None` + 调用方放行）。抛异常等于把可选依赖变成必选依赖。
+2. **必须登记进 `api/ports.py` 的 `PORT_CATALOG`**：写清谁该实现它、没接上是什么行为。
+   不登记 `test_every_port_is_catalogued` 会红。
+3. **实现方在 import 期注册**（模块的 `__init__.py` 里），不要等请求来了才注册。
+4. **查询逻辑薄**。注入口只转调，「三态语义」这类规则写在实现方，别在口子上分叉。
+
+`app modules` 会列出每个注入口是否已接上，启动日志也会为未接上的留一行 INFO。
+**不是所有跨模块需求都该做注入口**：纯数据查询把模型下移到 `db/` 更诚实；
+只有一个调用点、且永远只可能有一个实现的，直接传参。
+
+### 5.2 换基础设施实现：加文件 + 改一个 `*_DRIVER`
+
+`infra/` 下每个可替换实现都是一个 kind，约定 `infra/<kind>/<name>.py` 暴露 `Driver`：
+
+| kind | 配置项 | 现有实现 |
+|---|---|---|
+| `storage` | `STORAGE_DRIVER` | `local` |
+| `queue` | `QUEUE_DRIVER` | `memory` |
+| `ai` | `AI_PROVIDERS`（可多选） | `echo` / `agnes` / `libtv` |
+| `archive` | `ARCHIVE_DRIVER` | `local`（本地 / 共享盘） |
+
+新增一个只需两步：写 `infra/<kind>/<name>.py`（`Driver = 你的类`），改 `.env`。
+驱动自己的参数（base_url、api_key、根目录）放它自己的 `XxxSettings`
+（`infra/driver_config.py`，前缀 = 驱动名大写），**不要**加回 `core/config.py`。
+
+两条纪律：
+
+- **只经工厂拿实现**。`get_storage()` / `get_queue()` / `get_archive_storage()` /
+  `get_model_router()`；直接 `new` 具体实现会让「换驱动只改配置」这句话失真，
+  `test_archive_storage_only_reached_through_factory` 就是为这条加的。
+- **协议只承诺能做到的事**。`ArchiveStorage` 用 `Path` 表达位置，代表它只支持
+  「有本地路径语义」的存储（本地目录、SMB/UNC、挂载点网关）。要接纯 HTTP 的
+  S3/MinIO，得先改协议，别在驱动里偷偷绕过去。
+
+### 5.3 定期发生的事：`@periodic`，别写进 `app.py`
+
+请求驱动和队列驱动都表达不了「没人触发、但每 N 秒要发生一次」。典型场景：
+
+- 进程内队列重启即丢，`queued` 的记录会永远挂在页面上；
+- 孤儿文件按天数清理、「每日重置计数」这类运营动作。
+
+```python
+# modules/<你的模块>/maintenance.py
+from core.scheduler import periodic
+
+@periodic("image.reconcile", every=300, immediate=True)
+async def reconcile() -> None:
+    ...  # 自己开会话：async with get_session_factory()() as session: ...
+```
+
+四条硬规则：
+
+1. **名字 = `<模块>.<动作>`**，`app modules` 按前缀分组，`test_periodic_jobs_are_namespaced_by_module` 会红；
+2. **handler 自己开会话**，不要在闭包里持有 session；
+3. **必须幂等**：多副本部署时每个进程各跑一份，调度器**不做**分布式选主。
+   要「全集群只跑一次」，先换 `queue_driver=redis` 再加锁，别在 handler 里假装；
+4. **`every` 是最小间隔**，不是精确定时：某个 handler 跑久了会推后别人的下一轮。
+
+`SCHEDULER_ENABLED=false` 可以整体关掉。什么时候用 job handler、什么时候用周期任务：
+**有明确终点、由事件触发 → job；没有终点、到点就该跑 → periodic。**
+
+---
+
+## 5.4 模块自带的另外三样东西：种子 / 留痕 / 产物落盘
+
+七维对账（`docs/EXTENSIBILITY_GAPS.md`）里剩下的三个维度，恰好都是「每个模块都要，
+但以前没地方放」的东西。约定如下，都是可选项，不写就是没有这个行为。
+
+**① 演示数据：`ModuleSpec.seed`**
+
+```python
+async def seed(session: AsyncSession) -> int:      # 自己 commit，返回行数
+    session.add_all([...]); await session.commit(); return len(rows)
+
+module = ModuleSpec(name="image", router=router, permissions=SPECS, seed=seed)
+```
+
+`app seed` 会遍历所有模块的 `seed` 钩子，**不需要再改 `src/seed.py`**。
+演示数据必须是**终态**：`queued` 会被周期任务当成「卡住的活」重新投递到真实供应商。
+
+**② 操作留痕：`core.audit.record`**
+
+```python
+await audit.record("image.generate", actor_id=actor.id,
+                   target_type="image_job", target_id=job.id,
+                   detail={"model": spec.id, "count": payload.count})
+```
+
+- 写失败**不会**影响业务（内部吞异常只记日志）—— 为了一条日志让用户报错不值得；
+- `detail` 不许放 api_key / 令牌；
+- 与身份模块的 `login_events` 是两张表：那是安全审计，这是操作留痕。
+
+**③ 产物落盘：`pipeline.persist_output`（可选方法）**
+
+```python
+async def persist_output(self, record_id: str, url: str) -> str:
+    ...  # 下载 → get_storage().put(...) → 返回自己的地址
+```
+
+供应商 URL 多是**签名地址**，过期后历史页全是裂图。实现这个方法，
+`generation.runner` 在落结果前会先搬一次；不实现就存原 URL（视频直链长期有效的场景）。
+**下载失败不会把成功的生成改成失败**，只退回原 URL 并记一条 warning。
+
+---
+
+## 5.5 `param_schema` 是契约，不是注释
+
+`ModelSpec.param_schema` 有两个消费者，别只当它是给前端渲染表单的元数据：
+
+1. **前端**拿它渲染下拉与输入范围（`GET /models`）；
+2. **受理方**（`ImageService._validate_params` 这一类）拿它在**建记录之前**校验入参。
+
+所以它必须等于供应商的**真实能力**。写宽了不是「兼容性更好」，是承诺一个做不到的事：
+`agnes` 的 `count` 曾经声明 `max: 4`，供应商只接受 `n=1`，于是「选 4 张」先 201 受理、
+再异步失败——用户看到的是转圈，失败原因躺在 `errorMessage` 里没人渲染。
+
+三条硬规则：
+
+- **声明 = 实测**。新接供应商时真的传一次越界值，看它是 400 还是默默改小；
+  拿不准就声明得**保守**（宁可少给前端一个选项）。
+- **字面量格式保持一致**。尺寸统一半角 `x`（`1024x1536`）；`echo.py` 曾经用全角 `×`
+  而 `agnes.py` 用半角，同一套前端不可能同时满足两边。
+- **校验放在受理时**，不要指望供应商兜底：异步失败对用户是「生成中」，
+  对排查是「日志里有、页面上没有」。报错要把可选值一起给出来。
+
+---
+
+## 5.6 出事才用得上的插槽：启动恢复、重试出口、落盘校验
+
+R11 的两条 🔴 是同一个形状：新模块接齐了「让它跑起来」的插槽，
+「出事后能恢复」的一个没接，而 292 个用例、ruff、mypy、契约检查全绿。
+现在这两件事都变成**必须写下来的声明**，并由架构守卫兜底。
+
+**① 启动恢复：`ModuleSpec.recovery_kinds`**
+
+```python
+# 新模块：交给框架统一恢复，不要写 startup
+module = ModuleSpec(name="image", router=router, ..., recovery_kinds=(KIND_IMAGE,))
+
+# 老模块：保留自己的恢复器，仍要声明负责的 kind；有 startup 时框架跳过
+module = ModuleSpec(name="task", ..., startup=_startup, recovery_kinds=(KIND_VIDEO,))
+```
+
+`app.py` 在 lifespan 里调 `generation/recovery.py::recover_declared()`，
+按 kind 捞未终态记录并分成四类：续轮询 / 同步供应商孤儿 / 提交结果未知 /
+建了记录没进队列。框架只认 pipeline 上的可选钩子
+`list_unfinished(session, limit)`（SQL 仍由 Store 写），不认识任何 ORM 实体。
+
+**供应商形态要写进 provider，也要写进记录**（R12-05）：
+
+- `supports_poll` **缺省按 False 处理**。异步供应商必须显式写 `True`
+  （`echo` / `libtv` 已写），同步供应商写 `False` 或干脆不写。下一个同步
+  供应商忘了声明也不会被 `resume()` 到恒返回 FAILED 的 `poll()` 上判死。
+- `mark_submitted` 把 `"sync"` / `"async"` 快照落到记录（`submit_mode`）。
+  恢复分类**优先读快照**，不拿当前模型目录重新解释历史：供应商下线、
+  换配置、测试环境只加载 echo 都会让后者翻转。老记录无快照时严格
+  `resolve()`，解析不到按不支持处理，绝不走 `provider_for()` 的单供应商兜底。
+- 同步供应商留下的 `running` 孤儿置为 `failed`，但**保留 `external_id`**，
+  文案明确提示「可能已产生费用，请凭任务号核对」，而不是简单说「请重试」。
+- 模块同时声明 `startup` 与 `recovery_kinds` 时框架跳过并打 warning：
+  这些 kind 由模块自己的恢复器负责，别以为框架接管了（R12-07）。
+
+**② 重试出口：`POST /.../{id}/retry`**
+
+`SUBMIT_UNKNOWN_MESSAGE` 写着「请核对后手动重试」。runner 把结果未知的记录
+判成 `failed` 之后，`handle_submit` 的终态早退让它再也动不了——**没有 retry
+接口，这句文案就是空头支票**。入口必须清掉 `submit_attempts` / `external_id` /
+`error_message` / `finished_at`，改回 `queued` 再 dispatch
+（参考 `ImageService.retry` 与 `TaskService.retry_task`）。返回值别带 prompt：
+`retry:any` 不等于 `read:all`。
+
+**两种 `failed` 不能共用一个出口**（R12-01）：
+
+| 形状 | 含义 | 重试 |
+|---|---|---|
+| `attempts>0`、无 `external_id` | 没确认受理 | 安全，不带参数直接点 |
+| 有 `external_id` | 供应商已受理、可能已扣费 | 默认 409；带 `?confirmCharged=true` 才放行 |
+
+清 `external_id` **之前**先把旧值搬进 `previous_external_id`，并写进
+`audit.record("image.retry")` 的 detail。重试一次就少一份对账凭证，
+比第二次计费更难事后解释。
+
+`tests/test_architecture.py` 有两条矩阵守卫：每个 pipeline kind 都必须有人声明
+负责恢复，且归属模块必须有重试出口。另有
+`tests/test_generation_state_machine.py` 把「恢复 → retry → handle_submit」
+串成一张表——组件级测试各自绿，不代表交接处没洞，R12-01 正是这样漏掉的。
+
+**③ 产物落盘拿到的是外部输入**
+
+`persist_output` 的 URL 来自**供应商响应体**，而 `AGNES_BASE_URL` 本身可配。
+host 白名单、每一跳重定向重新校验、流式字节上限、content-type 白名单与文件
+魔数确认缺一不可；`modules/image/pipeline.py` 是参考实现，
+`tests/test_image_persist.py` 用真实 `httpx.MockTransport` 覆盖这些分支。
+
+**白名单默认不开时兜底只挡非公网 IP 字面量，且不解析 DNS**（域名解析到内网
+拦不住）。所以 `ImageAssetSettings.prod_required_fields = ("allowed_hosts",)`：
+生产启动期 `ensure_prod_driver_settings()` 直接报错，部署必须配
+`IMAGE_ASSET_ALLOWED_HOSTS`（Agnes 实测 CDN 为 `cos-platform-outputs.agnes-ai.cn`）。
+`tests/test_image_policy.py` 把这条兜底的真实边界也钉住了，别把注释当实现（R12-04）。
+
+**④ 巡检也要认「已受理」**（R12-06）
+
+`image.reconcile` 捞 `queued` 与 `running`，但一律排除有 `external_id` 的记录：
+供应商侧任务已在跑，重投就是第二份账单。恢复是启动期一次性、每批 100 条，
+周期巡检补上这层兜底；`worker_enabled=false` 时启动恢复干脆跳过并告警，
+否则入队的 job 没人消费，还会污染测试库（R12-09）。
 
 ---
 
@@ -618,29 +913,34 @@ class TrackBusy(AppError):
 
 ---
 
-## 8. 加完功能要更新这三份文件
+## 8. 加完功能要更新这四份生成物
 
-加功能几乎必然会动接口。后端只写了一遍，前端却要三样东西，所以这三份**由同一条命令、
-从同一份 `build_spec()` 生成**，内容不可能互相对不上：
+加功能几乎必然会动接口。后端只写了一遍，前端却要三样东西（还要一份权限清单），
+所以这四份**由同一条命令、从同一份 `build_spec()` 生成**，内容不可能互相对不上：
 
 | 文件 | 面向 | 内容 | 谁在用 |
 |---|---|---|---|
 | `api/docs/openapi.json` | 机器 | 完整 OpenAPI 3.1 | Apifox / Postman / IDE 插件直接导入 |
 | `api/docs/API.md` | 人 | 约定、权限点分组、错误码总表、按模块的接口清单与字段表 | 前端对接、后端自查 |
 | `studio/src/shared/api/schema.ts` | TypeScript | 全部请求 / 响应 / 枚举的 TS 类型 | 前端 `import type` 直接用 |
+| `studio/src/shared/api/permissions.ts` | TypeScript | 权限点分组、权限码元组与 `PermissionCode` 类型 | 前端权限勾选、菜单与按钮判定 |
 
-三份文件的路径是 `src/openapi_export.py` 里的 `DEFAULT_JSON` / `DEFAULT_MD` / `DEFAULT_TS`，
-也可以用 `--out-json` / `--out-md` / `--out-ts` 覆盖（比如往另一份前端仓库输出）。
+四份的路径是 `src/openapi_export.py` 里的 `DEFAULT_JSON` / `DEFAULT_MD` /
+`DEFAULT_TS` / `DEFAULT_PERMS`，也可以用 `--out-json` / `--out-md` /
+`--out-ts` / `--out-perms` 覆盖（比如往另一份前端仓库输出）。
+
+> 命令要用项目 CLI：`cd api && app export-openapi`。
+> `python -m app ...` 只会静默退出 0，看起来成功其实什么都没做。
 
 ```bash
 cd api
-app export-openapi          # 重新生成三份
+app export-openapi          # 重新生成四份
 app export-openapi --check  # 只比对不写盘：有差异就以非 0 退出（CI 用）
 ```
 
 ### 8.1 什么时候必须跑
 
-只要下面任意一条发生变化，三份文件都会变：
+只要下面任意一条发生变化，四份生成物里至少有一份会变：
 
 | 改动 | 体现在哪里 |
 |---|---|
@@ -650,14 +950,15 @@ app export-openapi --check  # 只比对不写盘：有差异就以非 0 退出�
 | 改字段名、类型、必填、默认值、**改 `description`** | `API.md` 的字段说明列、`schema.ts` 的注释 |
 | 新权限点（`ModuleSpec.permissions`） | `API.md` 的权限点分组 |
 | 新错误码（`errors.py`） | `API.md` 的错误码总表 |
-| 新模块（被 `api/v1/router.py` 扫到） | 三份都多出一整个分组 |
+| 新模块（被 `api/v1/router.py` 扫到） | 四份都会有变化 |
+| 新增 / 删除权限点 | `permissions.ts` 的 `PERMISSION_CODES`、`API.md` 的权限点分组 |
 
 **不用跑**的情况：只改 service 内部实现，没碰 `schema.py` / `router.py` / `permissions.py` / `errors.py`。
 不确定就跑 `--check`，它不写盘。
 
 ### 8.2 两条硬约束
 
-1. **不要手工改这三个文件。** 它们是生成物，手改的部分下次一跑就被覆盖；
+1. **不要手工改这四个文件。** 它们是生成物，手改的部分下次一跑就被覆盖；
    真想让文档变，去改 `schema.py` 的 `Field(description=...)`，那才是源头。
 2. **忘了跑也会红，跑不掉。** `tests/test_openapi_contract.py` 里
    `test_openapi_json_is_up_to_date` / `test_api_markdown_is_up_to_date` /

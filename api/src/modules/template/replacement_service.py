@@ -12,11 +12,11 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
 
-from core.config import settings
 from core.exceptions import BadRequest, Conflict, Forbidden, NotFound, UpstreamError
 from core.logging import get_logger
 from core.media import StoredMedia
-from infra.storage.archive import checksum, lease
+from infra.ai.libtv import get_libtv_settings
+from infra.archive import checksum, lease
 from modules.template.replacement_repository import ReplacementManifest, ReplacementRepository
 from modules.template.replacement_schema import (
     PrepareReplacement,
@@ -262,7 +262,7 @@ def _prepare_inputs(
 def _compile(spec: dict[str, object], payload: PrepareReplacement) -> Compilation:
     try:
         result = subprocess.run(
-            [settings.libtv_node, str(RUNTIME / "workbench/compile.mjs")],
+            [get_libtv_settings().node, str(RUNTIME / "workbench/compile.mjs")],
             input=json.dumps(spec),
             capture_output=True,
             encoding="utf-8",

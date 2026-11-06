@@ -71,6 +71,10 @@ class GenerationProgress:
         object.__setattr__(self, "progress", max(0, min(100, int(self.progress))))
 
 
+# 异步供应商返回任务 ID（需要轮询）；同步供应商直接返回终态快照（不需要轮询）。
+SubmitResult = str | GenerationProgress
+
+
 @dataclass(frozen=True, slots=True)
 class ModelSpec:
     """一个可被业务选择的模型。
@@ -97,18 +101,39 @@ class ModelSpec:
 
 @runtime_checkable
 class ModelProvider(Protocol):
-    """供应商适配器。实现三个方法即可接入一个新厂商。"""
+    """供应商适配器。实现三个方法即可接入一个新厂商。
+
+    供应商有**两种形态**，协议两种都收：
+
+    - **异步**（主流视频厂商）：`submit` 返回任务 ID 字符串，框架按节奏轮询；
+    - **同步**（多数图片厂商）：`submit` 自己等结果，直接返回终态
+      `GenerationProgress`，框架拿到后不再轮询。
+
+    同步形态下 `submit` 会占住一个 worker 槽位直到出图（Agnes 实测约 13 秒），
+    这是供应商的事实约束，不是框架的疏漏；`poll` 在这条路径上不会被调用。
+    """
 
     name: str
     capabilities: frozenset[Capability]
     models: tuple[ModelSpec, ...]
 
-    async def submit(self, request: GenerationRequest) -> str:
-        """提交生成任务，返回供应商侧任务 ID。"""
+    # 同步供应商设 `supports_poll = False`，异步供应商显式设 `True`。
+    # **缺省按 False 处理**（见 generation/recovery.py）：下一个同步供应商忘了
+    # 写这一行时，宁可把它当「不能续查」置失败等人核对，也不能 resume() 到
+    # 一个恒返回 FAILED 的 poll() 上把记录判死（R11-01 / R12-05）。
+    # 不写进 Protocol 成员，是为了不强迫所有历史实现立刻补字段。
+    # supports_poll: bool = True
+
+    async def submit(self, request: GenerationRequest) -> SubmitResult:
+        """提交生成任务。
+
+        返回 `str`（供应商侧任务 ID，需轮询）或 `GenerationProgress`
+        （同步供应商的终态快照，框架直接落结果）。
+        """
         ...
 
     async def poll(self, external_id: str, *, model: str = "") -> GenerationProgress:
-        """查询任务状态。"""
+        """查询任务状态。同步供应商可不实现（返回 FAILED 说明不支持即可）。"""
         ...
 
     async def cancel(self, external_id: str) -> None:

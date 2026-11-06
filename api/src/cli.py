@@ -153,6 +153,7 @@ def _cmd_modules(_: argparse.Namespace) -> None:
     from api.discovery import discover_modules
     from app import load_extension_points
     from core.permissions import catalog
+    from core.scheduler import periodic_jobs
     from generation import pipeline_kinds
     from workers import handler_names
 
@@ -171,7 +172,18 @@ def _cmd_modules(_: argparse.Namespace) -> None:
     print()
     print(f"生成流水线：{pipeline_kinds() or '-'}")
     print(f"Job handler：{handler_names() or '-'}")
+    print(f"周期任务：{', '.join(f'{j.name}({j.every:g}s)' for j in periodic_jobs()) or '-'}")
     print(f"权限点合计：{len(catalog)}")
+
+    # 注入口是「可选依赖」：没接上不报错，但必须能从命令行看出来，
+    # 否则「为什么离职的人还在跑任务」只能靠读代码发现（A3）
+    from api.ports import port_status
+
+    print()
+    print("跨模块注入口：")
+    for port, registered in port_status():
+        state = "已注册" if registered else f"未注册（{port.when_unregistered}）"
+        print(f"  {port.name:<20}{state:<12}{port.protocol:<24}{port.implementer}")
 
 
 def _cmd_models(_: argparse.Namespace) -> None:
@@ -192,18 +204,20 @@ def _cmd_models(_: argparse.Namespace) -> None:
 
 def _cmd_export_openapi(args: argparse.Namespace) -> None:
     """把 OpenAPI 固化成给前端用的三份文件（json / md / ts）。"""
-    from openapi_export import DEFAULT_JSON, DEFAULT_MD, DEFAULT_TS, export
+    from openapi_export import DEFAULT_JSON, DEFAULT_MD, DEFAULT_PERMS, DEFAULT_TS, export
 
     targets = {
         "json": Path(args.out_json) if args.out_json else DEFAULT_JSON,
         "md": Path(args.out_md) if args.out_md else DEFAULT_MD,
         "ts": Path(args.out_ts) if args.out_ts else DEFAULT_TS,
+        "perms": Path(args.out_perms) if getattr(args, "out_perms", "") else DEFAULT_PERMS,
     }
     try:
         status = export(
             json_path=targets["json"],
             md_path=targets["md"],
             ts_path=targets["ts"],
+            perms_path=targets["perms"],
             check=args.check,
         )
     except SystemExit as exc:
@@ -302,6 +316,7 @@ def main(argv: list[str] | None = None) -> int:
     p_export.add_argument("--out-json", default="", help="OpenAPI JSON 输出路径")
     p_export.add_argument("--out-md", default="", help="Markdown 文档输出路径")
     p_export.add_argument("--out-ts", default="", help="前端 TS 类型输出路径")
+    p_export.add_argument("--out-perms", default="", help="前端权限点常量输出路径")
     p_export.add_argument(
         "--check", action="store_true", help="只比对不写入，不一致时以非 0 退出（CI 用）"
     )

@@ -29,4 +29,7 @@ module = ModuleSpec(
     description="视频生成任务：创建、查询、重试、收藏、删除",
     permissions=SPECS,
     startup=_startup,
+    # 已有自己的恢复器（worker.resume_unfinished_tasks），框架恢复器会跳过，
+    # 但声明负责的 kind 让架构守卫能画出完整的「模块 × 插槽」矩阵。
+    recovery_kinds=(pipeline.KIND_VIDEO,),
 )

@@ -12,7 +12,7 @@ from pydantic import BaseModel
 from core.exceptions import NotFound
 from core.media import StoredMedia
 from infra.ai.libtv_state import LibTVState
-from infra.storage.archive import ArchiveStorage, get_archive_storage, lease
+from infra.archive import ArchiveStorage, get_archive_storage, lease
 from modules.template.replacement_schema import ReplacementKind, ReplacementPack
 
 

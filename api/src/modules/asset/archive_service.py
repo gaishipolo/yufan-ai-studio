@@ -10,8 +10,8 @@ from pathlib import Path
 from core.exceptions import BadRequest, NotFound
 from core.logging import get_logger
 from core.media import MediaCategory, StoredMedia
+from infra.archive import ArchiveStorage, get_archive_storage, within
 from infra.media_probe import MAX_BYTES, create_browser_preview
-from infra.storage.archive import ArchiveStorage, get_archive_storage, within
 from modules.asset.archive_repository import CATEGORIES, ArchiveAssetRepository
 from modules.asset.archive_schema import ArchivedAsset, ArchiveList, ImportAsset
 

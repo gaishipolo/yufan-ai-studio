@@ -49,11 +49,15 @@ npm run dev             # http://localhost:5173，/api 已代理到 8080
 
 | 文档 | 读它是因为 |
 |---|---|
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | **新同事先读这个**：全局形状、逐文件职责、请求/登录/生成三条主线、常见坑 |
+| [docs/CHAIN_REPLACEMENT.md](docs/CHAIN_REPLACEMENT.md) | 产品替换从点击到成片的完整链路：12 跳逐文件、状态机、共享盘产物、失败恢复 |
+| [docs/EXTENSIBILITY_GAPS.md](docs/EXTENSIBILITY_GAPS.md) | 扩展框架的问题清单（PR #1 合并暴露）：13 条缺口、优先级、以及暂缓的配置分层提案 |
 | [api/README.md](api/README.md) | 后端目录、命令表、接口约定、演示数据 |
 | [api/docs/EXTENDING.md](api/docs/EXTENDING.md) | 加模块 / 加供应商 / 加生成能力的标准做法，以及「什么绝对不能碰」 |
 | [api/docs/API.md](api/docs/API.md) | 接口清单与字段表（前端对接主入口） |
 | [api/docs/PARALLEL_WORK.md](api/docs/PARALLEL_WORK.md) | 多人并行时怎么切分、怎么避免迁移冲突 |
 | [docs/FRONTEND_EXTENSION.md](docs/FRONTEND_EXTENSION.md) | 前端目录职责、模块注册、新增页面 |
+| [docs/BACKEND_DELIVERY_IMAGE.md](docs/BACKEND_DELIVERY_IMAGE.md) | **前端接生图先读这个**：两个实测会 100% 失败的写法、异步语义与轮询、权限点改用生成物 |
 | [docs/CODE_STYLE.md](docs/CODE_STYLE.md) | 命名、分层、异常与日志约定 |
 | [docs/BACKEND_REQUIREMENTS_IDENTITY.md](docs/BACKEND_REQUIREMENTS_IDENTITY.md) | 身份与会话还缺什么：续期、登出吊销、审计、密码策略（**给后端的需求单**） |
 
