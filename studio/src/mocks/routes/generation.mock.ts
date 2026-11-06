@@ -1,5 +1,5 @@
 import type { AspectRatio } from '@/entities/task/model/types';
-import { db } from '../db';
+import { db, type MockImageJob } from '../db';
 import { HttpError, type MockRoute } from '../kernel';
 
 /* ---------------- 生成（同步返回任务 / 生图记录） ---------------- */
@@ -27,13 +27,21 @@ export const routes: MockRoute[] = [
     handler: (ctx) => {
       const prompt = String(ctx.body.prompt ?? '').trim();
       if (!prompt) throw new HttpError(400, '提示词不能为空');
-      const seq = db.imageJobs.length + 1;
-      const job = {
+      const modelId = ctx.body.model ? String(ctx.body.model) : 'agnes-image-2.5-flash';
+      const job: MockImageJob = {
         id: `IMG${Date.now()}`,
         name: prompt.slice(0, 12),
         prompt,
-        size: String(ctx.body.size ?? '1024×1536'),
-        coverUrl: `https://picsum.photos/seed/sf-img-new-${seq}/400/500`,
+        size: String(ctx.body.size ?? '1024x1024'),
+        count: Number(ctx.body.count ?? 1),
+        status: 'queued',
+        progress: 0,
+        model: modelId === 'seedream-3' ? 'Seedream 3' : 'Agnes Image 2.5 Flash',
+        modelId,
+        // 真实后端成图前 coverUrl 是空串：mock 也留空，占位图与轮询效果才一致
+        coverUrl: '',
+        outputUrl: null,
+        errorMessage: null,
         createdAt: new Date().toISOString(),
       };
       db.imageJobs.unshift(job);

@@ -3,6 +3,7 @@ import type { ShotPreset } from '@/entities/shot/model/types';
 import type { Storyboard } from '@/entities/storyboard/model/types';
 import type { VideoTemplate } from '@/entities/template/model/types';
 import type { AspectRatio, TaskStatus, VideoTask } from '@/entities/task/model/types';
+import type { ImageJob } from '@/entities/image/model/types';
 
 /* ------------------------------------------------------------------
  * 内存数据库：模拟后端持久层
@@ -13,6 +14,8 @@ const NOW = Date.now();
 
 /** 单条视频的预计生成耗时（mock 用 60s 模拟真实排队 + 渲染） */
 const GENERATION_MS = 60_000;
+/** 单张图的预计生成耗时（真实后端 3–12s，mock 取中段，便于验证轮询） */
+const IMAGE_GENERATION_MS = 9_000;
 const minutesAgo = (m: number) => new Date(NOW - m * 60_000).toISOString();
 
 const cover = (seed: string, w = 400, h = 500) => `https://picsum.photos/seed/${seed}/${w}/${h}`;
@@ -157,26 +160,34 @@ const shots: ShotPreset[] = [
   popularity: 30 + i * 9,
 }));
 
-export interface ImageJob {
-  id: string;
-  name: string;
-  prompt: string;
-  size: string;
-  coverUrl: string;
-  createdAt: string;
-}
+/** 出参形状跟随后端 ImageJobOut，mock 额外把异步状态设为必填 */
+export type MockImageJob = ImageJob & {
+  status: 'queued' | 'running' | 'succeeded' | 'failed';
+  progress: number;
+};
 
-const imageJobs: ImageJob[] = [
+const imageJobs: MockImageJob[] = [
   '赛博朋克街景 霓虹人像', '产品白底图 精修', '古风女子 半身像',
   '雪山日出 空镜', '卡通 IP 三视图', '服装模特换装',
-].map((name, i) => ({
-  id: `IMG${500 + i}`,
-  name,
-  prompt: 'cinematic lighting, ultra detailed',
-  size: ['1024×1536', '1024×1024', '768×1344'][i % 3],
-  coverUrl: cover(`sf-img-${i}`, 400, 500),
-  createdAt: minutesAgo(30 + i * 90),
-}));
+].map((name, i) => {
+  const url = cover(`sf-img-${i}`, 400, 500);
+  return {
+    id: `IMG${500 + i}`,
+    name,
+    prompt: 'cinematic lighting, ultra detailed',
+    // 尺寸随 paramSchema 走半角 x，不再写全角 ×
+    size: ['1024x1536', '1024x1024', '1536x1024'][i % 3],
+    count: 1,
+    status: 'succeeded' as const,
+    progress: 100,
+    model: 'Agnes Image 2.5 Flash',
+    modelId: 'agnes-image-2.5-flash',
+    coverUrl: url,
+    outputUrl: url,
+    errorMessage: null,
+    createdAt: minutesAgo(30 + i * 90),
+  };
+});
 
 /* ------------------------------------------------------------------
  * 可变的库：任务进度推进 / 创建 / 删除
@@ -212,6 +223,26 @@ export const db = {
         } else {
           t.progress = Math.min(99, Math.max(1, pct));
         }
+      }
+    });
+
+    // 生图同样是异步的：queued → running → succeeded，完成后才回填成图地址。
+    // 这样 mock 模式也能演示「提交后不刷新，卡片自己变成图」的轮询闭环。
+    db.imageJobs.forEach((job) => {
+      if (job.status === 'succeeded' || job.status === 'failed') return;
+      const elapsed = now - new Date(job.createdAt).getTime();
+      if (elapsed >= IMAGE_GENERATION_MS) {
+        const url = cover(`sf-img-${job.id}`, 400, 500);
+        job.status = 'succeeded';
+        job.progress = 100;
+        job.coverUrl = url;
+        job.outputUrl = url;
+      } else if (elapsed >= 3_000) {
+        job.status = 'running';
+        job.progress = Math.min(99, Math.max(1, Math.floor((elapsed / IMAGE_GENERATION_MS) * 100)));
+      } else {
+        job.status = 'queued';
+        job.progress = 0;
       }
     });
   },

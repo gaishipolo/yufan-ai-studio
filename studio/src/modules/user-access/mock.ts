@@ -37,12 +37,12 @@ interface MockUser {
   roleIds: string[];
 }
 
-/* 权限点目录不再手抄：直接引用前端镜像常量（entities/role/model/permission-catalog），
-   它由测试与后端 `PermissionSpec` 逐条比对。手抄的 19 项曾落后后端 2 项
-   （image:read:all / task:retry:any），而 `set_role_permissions` 是整组替换，
+/* 权限点目录来自后端生成物 `shared/api/permissions`（经 permission-catalog 透传），
+   由 `app export-openapi` 与后端 `ModuleSpec.permissions` 保持同源。手抄的 19 项曾落后
+   后端 2 项（image:read:all / task:retry:any），而 `set_role_permissions` 是整组替换，
    在 mock 里保存一个真实环境带这两项的角色会把它们悄悄清掉。 */
 
-const ALL_CODES = new Set(PERMISSION_CODES);
+const ALL_CODES = new Set<string>(PERMISSION_CODES);
 
 const roles: MockRole[] = [
   {

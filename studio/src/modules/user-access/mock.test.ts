@@ -225,7 +225,7 @@ describe('mock adapter · 角色与权限目录', () => {
     const { body } = await call<PermissionCatalog>('get', '/identity/permissions');
     const catalog = body.data as PermissionCatalog;
 
-    // 目录来自 entities/role/model/permission-catalog，那条常量由测试与后端逐一比对
+    // 目录来自后端生成物，经 permission-catalog 薄壳透传
     expect(catalog.total).toBe(PERMISSION_CODES.length);
     expect(catalog.groups.map((group) => group.group)).toEqual(['内容生产', '素材', '组织管理']);
     expect(
