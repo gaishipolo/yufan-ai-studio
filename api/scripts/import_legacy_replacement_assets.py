@@ -16,7 +16,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from pydantic import TypeAdapter  # noqa: E402
 
 from core.media import MediaCategory, StoredMedia  # noqa: E402
-from infra.storage.archive import LocalArchiveStorage, checksum, within  # noqa: E402
+from infra.archive.base import checksum, within  # noqa: E402
+from infra.archive.local import LocalArchiveStorage  # noqa: E402
 from modules.asset.archive_repository import ArchiveAssetRepository  # noqa: E402
 from modules.asset.archive_service import ArchiveAssetService  # noqa: E402
 

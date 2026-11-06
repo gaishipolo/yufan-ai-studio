@@ -4,7 +4,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal
 
-from infra.storage.archive import LocalArchiveStorage, checksum, within
+from infra.archive import checksum, within
+from infra.archive.local import LocalArchiveStorage
 from modules.asset.archive_repository import ArchiveAssetRepository
 from modules.asset.archive_service import ArchiveAssetService
 

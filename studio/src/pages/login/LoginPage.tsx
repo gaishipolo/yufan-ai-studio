@@ -4,7 +4,14 @@ import { LoginForm } from '@/features/auth/LoginForm';
 import { useSessionStatus } from '@/shared/access/use-session';
 import type { LoginRedirectState } from '@/shared/access/RequireAuth';
 import type { SignOutReason } from '@/shared/access/session';
-import { APP_NAME, HOME_PATH, LOGIN_PATH } from '@/shared/config/app';
+import {
+  APP_BRAND,
+  APP_BRAND_EN,
+  APP_NAME,
+  APP_VERSION,
+  HOME_PATH,
+  LOGIN_PATH,
+} from '@/shared/config/app';
 import { FullPageLoader } from '@/shared/ui/FullPageLoader';
 import { BrandMark, Toaster } from '@/shared/ui';
 
@@ -57,8 +64,8 @@ export default function LoginPage() {
         <div className="relative flex items-center gap-2.5">
           <BrandMark size={32} />
           <div className="flex flex-col leading-none">
-            <b className="text-[17px] font-extrabold tracking-[3px] text-white">雨范</b>
-            <span className="mt-1 text-[7.5px] tracking-[1.8px] text-white/45">AI STUDIO</span>
+            <b className="text-[17px] font-extrabold tracking-[3px] text-white">{APP_BRAND}</b>
+            <span className="mt-1 text-[7.5px] tracking-[1.8px] text-white/45">{APP_BRAND_EN}</span>
           </div>
           <div className="h-4 w-px bg-white/25" />
           <span className="text-sm font-semibold tracking-[.3px] text-white/90">{APP_NAME}</span>
@@ -87,7 +94,9 @@ export default function LoginPage() {
           </ul>
         </div>
 
-        <p className="relative text-[11px] text-white/40">© 2026 雨范 AI Studio · v3.0</p>
+        <p className="relative text-[11px] text-white/40">
+          © 2026 {APP_BRAND} {APP_BRAND_EN} · {APP_VERSION}
+        </p>
       </aside>
 
       <main className="flex flex-col items-center justify-center px-6 py-12">
@@ -95,7 +104,7 @@ export default function LoginPage() {
           <div className="mb-6 flex items-center gap-2 md:hidden">
             <BrandMark size={26} />
             <b className="shrink-0 whitespace-nowrap text-[17px] font-extrabold tracking-[3px] text-ink">
-              雨范
+              {APP_BRAND}
             </b>
             <span className="whitespace-nowrap text-sm font-semibold text-ink">{APP_NAME}</span>
           </div>

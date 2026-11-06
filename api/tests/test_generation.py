@@ -405,3 +405,154 @@ def test_submit_prepare_failure_is_not_blamed_on_billing(
     assert probe.failed_with is not None
     assert "提交准备失败" in probe.failed_with
     assert "提交结果未知" not in probe.failed_with
+
+
+# --------------------------------------------------------------------------- #
+# 同步供应商：submit 直接给终态，不需要轮询
+# --------------------------------------------------------------------------- #
+def test_sync_provider_settles_without_polling(monkeypatch: pytest.MonkeyPatch) -> None:
+    """同步供应商（多数图片厂商）在 submit 里就出结果。
+
+    框架必须认这种形态：拿到终态快照就直接落结果，**不再排一次轮询** ——
+    否则每张图都白跑一跳，而且轮询会拿着一个不会变的 external_id 反复问。
+    """
+    from infra.ai.base import GenerationProgress, GenerationState
+
+    settled: dict[str, object] = {}
+
+    class _Store(_SubmitProbeStore):
+        async def mark_succeeded(self, record_id: str, **kwargs: object) -> None:
+            settled.update(kwargs)
+
+        async def mark_failed(self, record_id: str, error: str) -> None:
+            settled["error"] = error
+
+    probe = _Store()
+
+    async def fake_submit(self: EchoProvider, request: GenerationRequest) -> object:
+        return GenerationProgress(
+            external_id="task_sync_1",
+            state=GenerationState.SUCCEEDED,
+            progress=100,
+            output_url="https://example.com/a.png",
+            cover_url="https://example.com/a.png",
+        )
+
+    monkeypatch.setattr(EchoProvider, "submit", fake_submit)
+
+    async def scenario() -> tuple[list[dict], str | None]:
+        async def build_request(record: GenerationRecord) -> GenerationRequest:
+            return GenerationRequest(
+                capability=Capability.IMAGE, model="seedance-2.5", prompt="p"
+            )
+
+        class _Pipeline:
+            kind = "test-sync-image"
+            capability = Capability.IMAGE
+
+            def store(self, session: object) -> _Store:
+                return probe
+
+            async def build_request(self, record: GenerationRecord) -> GenerationRequest:
+                return await build_request(record)
+
+        register_pipeline(_Pipeline)
+        queue = MemoryJobQueue()
+        await GenerationRunner(queue).handle_submit(
+            Job(name=JOB_SUBMIT, payload={"kind": "test-sync-image", "record_id": "r1"})
+        )
+        return queue.snapshot(), probe.external_id
+
+    jobs, external_id = asyncio.run(scenario())
+
+    assert jobs == [], "同步供应商已经出结果，不该再排轮询"
+    assert external_id == "task_sync_1", "task_id 仍要落库，方便对账"
+    assert settled.get("output_url") == "https://example.com/a.png"
+
+
+def test_poll_times_out_by_wall_clock(monkeypatch: pytest.MonkeyPatch) -> None:
+    """超时按**任务创建时间**算，而不是按轮询次数。
+
+    `generation_timeout_sec` 曾经没有任何代码读取：真实预算是
+    `max_polls × interval`（默认 150×2 = 300 秒），配置里却写着 1800 秒，
+    一个 5 分钟的视频会在第 5 分钟被判超时。而且轮询次数在重启后归零，
+    反复重启永远到不了上限 —— 只有墙钟能兜住。
+    """
+    from datetime import UTC, datetime, timedelta
+
+    from core.config import settings
+
+    failed: dict[str, str] = {}
+
+    class _OldStore:
+        async def load(self, record_id: str) -> GenerationRecord:
+            return GenerationRecord(
+                id=record_id,
+                kind="test-timeout",
+                model="seedance-2.5",
+                prompt="p",
+                status="running",
+                owner_id="u_001",
+                external_id="ext-1",
+                # 比超时预算还老一分钟
+                created_at=datetime.now(tz=UTC)
+                - timedelta(seconds=settings.generation_timeout_sec + 60),
+            )
+
+        async def mark_failed(self, record_id: str, error: str) -> None:
+            failed["error"] = error
+
+        async def mark_progress(self, record_id: str, progress: int) -> None: ...
+
+        async def mark_succeeded(self, record_id: str, **kwargs: object) -> None: ...
+
+    class _Pipeline:
+        kind = "test-timeout"
+        capability = Capability.VIDEO
+
+        def store(self, session: object) -> _OldStore:
+            return _OldStore()
+
+        async def build_request(self, record: object) -> None:  # pragma: no cover
+            return None
+
+    register_pipeline(_Pipeline)
+
+    async def scenario() -> list[dict]:
+        queue = MemoryJobQueue()
+        await GenerationRunner(queue).handle_poll(
+            Job(
+                name=JOB_POLL,
+                payload={"kind": "test-timeout", "record_id": "r1", "polls": 1},
+                max_attempts=1,
+            )
+        )
+        return queue.snapshot()
+
+    jobs = asyncio.run(scenario())
+
+    assert failed.get("error") == "生成超时，请重试"
+    assert jobs == [], "已判超时就不该继续排轮询"
+
+
+def test_disabled_owner_stops_submit_before_spending(monkeypatch: pytest.MonkeyPatch) -> None:
+    """发起人已停用 → 不调用供应商、不留提交意图，直接失败。
+
+    这一条是「跨模块查询」维度的验收点：`generation` 层自己不能认识 identity，
+    只能通过 `core.ports.accounts` 这个注入口问一句。注入口没接上时返回 `None`，
+    按放行处理（老档案、已删除账号不能被误伤）。
+    """
+    import core.ports.accounts as ports
+
+    class _Disabled:
+        async def is_active(self, user_id: str) -> bool:
+            return False
+
+    # identity 在 import 期已经注册了真实实现；这里换掉它而不是再注册一个
+    # （重复注册会按「账号体系只能有一个权威来源」直接报错），monkeypatch 负责还原
+    monkeypatch.setattr(ports, "_checker", _Disabled())
+    probe = _run_submit(monkeypatch, "test-owner-disabled")
+
+    assert probe.submit_calls == 0, "停用账号不该再触发供应商调用（那是真金白银）"
+    assert probe.submit_attempts == 0, "连提交意图都不该落：落了一切重试都会被当成「结果未知」"
+    assert probe.failed_with is not None and "停用" in probe.failed_with

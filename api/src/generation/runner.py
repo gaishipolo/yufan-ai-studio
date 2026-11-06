@@ -22,6 +22,8 @@ worker 的并发槽位是稀缺资源。单个视频生成要 3 分钟，如果 
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -29,6 +31,7 @@ from core.config import settings
 from core.events import get_event_bus
 from core.exceptions import AppError
 from core.logging import get_logger
+from core.ports.accounts import account_is_active
 from db.session import get_session_factory
 from generation.events import (
     EVT_GENERATION_FAILED,
@@ -37,9 +40,10 @@ from generation.events import (
     EVT_GENERATION_SUCCEEDED,
 )
 from generation.pipeline import get_pipeline
+from generation.spec import GenerationRecord
 from generation.store import GenerationStore
 from infra import get_model_router
-from infra.ai.base import GenerationState
+from infra.ai.base import GenerationProgress, GenerationState
 from infra.queue.base import Job, JobQueue
 
 logger = get_logger(__name__)
@@ -54,6 +58,8 @@ SUBMIT_UNKNOWN_MESSAGE = (
     "提交结果未知：请求已发出但未确认供应商是否受理，为避免重复计费未自动重试，"
     "请核对后手动重试"
 )
+
+OWNER_DISABLED_MESSAGE = "发起人账号已停用，任务未提交（避免继续产生费用）"
 
 
 def _possibly_delivered(exc: BaseException) -> bool:
@@ -121,7 +127,6 @@ class GenerationRunner:
         kind, record_id = self._ticket(job)
         pipeline = get_pipeline(kind)
         factory = get_session_factory()
-        external_id: str | None = None
 
         async with factory() as session:
             store = pipeline.store(session)
@@ -135,7 +140,6 @@ class GenerationRunner:
             if record.submitted:
                 # 幂等：上次提交其实成功了，只是没来得及写库
                 logger.info("记录已有 external_id，跳过提交 id=%s", record_id)
-                external_id = record.external_id
             elif record.submit_unknown:
                 # 进程在「供应商已受理 → 写库」之间崩过。库里既没有 external_id
                 # 也没有成功记录，无法判断供应商是否已经扣费，因此**绝不自动重提**：
@@ -156,6 +160,27 @@ class GenerationRunner:
                 )
                 return
             else:
+                # 发起人已被停用：不再替一个被关在门外的人花钱。
+                # 放在这里而不是更早，是因为「已经拿到 external_id」的任务在上面就返回了
+                # （钱已经花了，停掉只会让成片烂在盘里），只有还没提交过的才拦。
+                # 三态语义：None（查不到 / 没接实现）按放行，见 core/ports/accounts.py。
+                if await account_is_active(record.owner_id) is False:
+                    logger.warning(
+                        "发起人已停用，取消提交 kind=%s id=%s owner=%s",
+                        kind,
+                        record_id,
+                        record.owner_id,
+                    )
+                    await self._fail(
+                        store=store,
+                        session=session,
+                        kind=kind,
+                        record_id=record_id,
+                        owner_id=record.owner_id,
+                        message=OWNER_DISABLED_MESSAGE,
+                    )
+                    return
+
                 # 「记录提交意图」不是「调用供应商」：它出错说明代码有问题
                 # （典型是脚手架里的占位实现），此时请求根本没发出去。
                 # 必须在 try 之外拦下来：落进下面的分支会被误判成「可能已计费」（R4-03）
@@ -179,7 +204,7 @@ class GenerationRunner:
                 try:
                     provider = get_model_router().provider_for(record.model)
                     request = await pipeline.build_request(record)
-                    external_id = await provider.submit(request)
+                    delivered = await provider.submit(request)
                 except Exception as exc:  # noqa: BLE001
                     logger.exception("提交生成失败 kind=%s id=%s", kind, record_id)
 
@@ -214,7 +239,18 @@ class GenerationRunner:
                     )
                     return
 
-                await store.mark_submitted(record_id, external_id)
+                # 同步供应商（多数图片厂商）在 submit 里就等到了结果，
+                # 这里拿到的是终态快照而不是任务 ID
+                resolved_id: str
+                sync_result: GenerationProgress | None
+                if isinstance(delivered, GenerationProgress):
+                    sync_result = delivered
+                    resolved_id = delivered.external_id
+                else:
+                    sync_result = None
+                    resolved_id = delivered
+
+                await store.mark_submitted(record_id, resolved_id)
                 await session.commit()
                 await self._emit(
                     EVT_GENERATION_SUBMITTED,
@@ -222,8 +258,21 @@ class GenerationRunner:
                     record_id=record_id,
                     owner_id=record.owner_id,
                     model=record.model,
-                    external_id=external_id,
+                    external_id=resolved_id,
                 )
+
+                if sync_result is not None and sync_result.state.terminal:
+                    # 已经出结果，再排一次轮询只是白跑一跳
+                    await self._settle(
+                        store=store,
+                        session=session,
+                        kind=kind,
+                        record_id=record_id,
+                        owner_id=record.owner_id,
+                        model=record.model,
+                        result=sync_result,
+                    )
+                    return
 
         await self._schedule_poll(
             kind, record_id, polls=0, delay=settings.generation_poll_interval_sec
@@ -246,6 +295,21 @@ class GenerationRunner:
                 if not record.external_id:
                     # 状态被重置过（如手动重试），重新走提交
                     await self.dispatch(kind, record_id)
+                    return
+
+                if self._timed_out(record):
+                    # 墙钟预算优先于轮询次数：max_polls 是「本次进程内」的计数，
+                    # 重启会归零（见 resume 的注释），反复重启时它永远到不了上限
+                    message = "生成超时，请重试"
+                    await store.mark_failed(record_id, message)
+                    await session.commit()
+                    await self._emit(
+                        EVT_GENERATION_FAILED,
+                        kind=kind,
+                        record_id=record_id,
+                        owner_id=record.owner_id,
+                        error=message,
+                    )
                     return
 
                 if polls >= settings.generation_max_polls:
@@ -279,10 +343,12 @@ class GenerationRunner:
                     state = result.state
 
                     if state == GenerationState.SUCCEEDED:
+                        output_url = await self._persist(kind, record_id, result.output_url)
+                        cover_url = self._persisted_cover(result, output_url)
                         await store.mark_succeeded(
                             record_id,
-                            output_url=result.output_url,
-                            cover_url=result.cover_url,
+                            output_url=output_url,
+                            cover_url=cover_url,
                             progress=result.progress or 100,
                         )
                         await session.commit()
@@ -292,8 +358,8 @@ class GenerationRunner:
                             record_id=record_id,
                             owner_id=record.owner_id,
                             model=record.model,
-                            output_url=result.output_url,
-                            cover_url=result.cover_url,
+                            output_url=output_url,
+                            cover_url=cover_url,
                         )
                         return
 
@@ -339,6 +405,119 @@ class GenerationRunner:
             await self._schedule_poll(kind, record_id, polls=polls + 1, delay=next_delay)
 
     # ------------------------------------------------------------------ 内部
+    async def _persist(self, kind: str, record_id: str, url: str | None) -> str | None:
+        """把供应商产物落到自己的存储上（可选钩子 `pipeline.persist_output`）。
+
+        没有这个钩子时原样返回 —— 视频那类「供应商直链长期有效」的能力不必落盘。
+        """
+        if not url:
+            return url
+        persist = getattr(get_pipeline(kind), "persist_output", None)
+        if persist is None:
+            return url
+        try:
+            return await persist(record_id, url)
+        except Exception:  # noqa: BLE001 - 落盘失败不该把成功改成失败
+            logger.exception("产物落盘失败，退回供应商 URL kind=%s id=%s", kind, record_id)
+            return url
+
+    @staticmethod
+    def _persisted_cover(
+        result: GenerationProgress, stored: str | None
+    ) -> str | None:
+        """封面和产物是同一张图时，封面也跟着换成落盘地址。
+
+        图片类能力的 `cover_url` 往往就是 `output_url`（供应商返回同一个签名地址），
+        `persist_output` 只搬了产物——不跟着换，前端拿 `coverUrl` 渲染的卡片会在
+        签名过期后裂图，而 `outputUrl` 明明是好的。两者不同（视频封面单独一张）时不碰，
+        因为那张图没有落盘，换过去等于指向一个不存在的地址。
+        """
+        cover = result.cover_url
+        if cover and result.output_url and stored and cover == result.output_url:
+            return stored
+        return cover
+
+    async def _settle(
+        self,
+        *,
+        store: GenerationStore,
+        session: AsyncSession,
+        kind: str,
+        record_id: str,
+        owner_id: str,
+        model: str,
+        result: GenerationProgress,
+    ) -> None:
+        """同步供应商直接给终态：落结果 + 发事件，不排轮询。
+
+        与 `handle_poll` 的收尾逻辑必须保持一致 —— 两条路径写出的事件字段
+        和错误文案要是不同的，前端会出现「同一件事两种说法」。
+        """
+        # 终态保护（R11-02 现象 C）：并发下可能已经有另一个 worker 把这条记录
+        # 判成 failed（典型是巡检误伤在途任务）。此时再落 succeeded 会让用户
+        # 先收到失败、再收到成功，状态与事件来回跳。这里以库里的终态为准，
+        # 让用户走显式重试，而不是让一条记录自称成功又自称失败。
+        # 用独立会话读：当前 session 的 identity map 可能还缓存着本次进程写入的
+        # `running`，看不到另一个 worker 已经提交的 `failed`。
+        async with get_session_factory()() as check_session:
+            current = await get_pipeline(kind).store(check_session).load(record_id)
+        if current is None or current.terminal:
+            logger.warning(
+                "记录已终态或不存在，跳过结算 kind=%s id=%s status=%s",
+                kind,
+                record_id,
+                None if current is None else current.status,
+            )
+            return
+        if result.state == GenerationState.SUCCEEDED:
+            # 供应商给的 URL 多半会过期（签名地址），能不能落盘由 pipeline 自己决定。
+            # 落盘失败不改变「生成成功」这个事实，只退回原 URL 并留一条警告。
+            output_url = await self._persist(kind, record_id, result.output_url)
+            cover_url = self._persisted_cover(result, output_url)
+            await store.mark_succeeded(
+                record_id,
+                output_url=output_url,
+                cover_url=cover_url,
+                progress=result.progress or 100,
+            )
+            await session.commit()
+            await self._emit(
+                EVT_GENERATION_SUCCEEDED,
+                kind=kind,
+                record_id=record_id,
+                owner_id=owner_id,
+                model=model,
+                output_url=output_url,
+                cover_url=cover_url,
+            )
+            return
+
+        message = (result.error or "生成失败")[:_MAX_ERROR_LEN]
+        await store.mark_failed(record_id, message)
+        await session.commit()
+        await self._emit(
+            EVT_GENERATION_FAILED,
+            kind=kind,
+            record_id=record_id,
+            owner_id=owner_id,
+            error=message,
+        )
+
+    @staticmethod
+    def _timed_out(record: GenerationRecord) -> bool:
+        """按**墙钟**判定超时，而不是按轮询次数。
+
+        `generation_timeout_sec` 之前没有任何代码读取：真实预算等于
+        `max_polls × poll_interval`（默认 150×2 = 300 秒），与配置里写的
+        1800 秒差了 6 倍 —— 一个 5 分钟的视频会在第 5 分钟被判「生成超时」。
+        """
+        if record.created_at is None:
+            return False
+        created = record.created_at
+        if created.tzinfo is None:  # sqlite 读回来是 naive，按 UTC 解释
+            created = created.replace(tzinfo=UTC)
+        return (datetime.now(tz=UTC) - created).total_seconds() > settings.generation_timeout_sec
+
     async def _schedule_poll(self, kind: str, record_id: str, *, polls: int, delay: float) -> None:
         job = Job(
             name=JOB_POLL,

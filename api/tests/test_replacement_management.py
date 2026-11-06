@@ -7,8 +7,8 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from core.config import settings
-from infra.storage.archive import lease
+from infra.archive import lease
+from infra.archive.local import get_archive_settings
 from modules.template.replacement_management import MANAGEMENT_LOCK
 from modules.template.replacement_repository import ReplacementManifest, ReplacementRepository
 from modules.template.replacement_service import ReplacementService
@@ -16,7 +16,7 @@ from modules.template.replacement_service import ReplacementService
 
 @pytest.fixture
 def archived(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[str, Path]:
-    monkeypatch.setattr(settings, "media_archive_root", str(tmp_path))
+    monkeypatch.setattr(get_archive_settings(), "root", str(tmp_path))
     uid = uuid.uuid4().hex
     path = tmp_path / "runs" / uid
     repo = ReplacementRepository()

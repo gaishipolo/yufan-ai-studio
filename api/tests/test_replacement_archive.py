@@ -18,6 +18,8 @@ from tests_archive_helpers import archive
 from core.config import settings
 from core.context import CurrentUser
 from core.exceptions import BadRequest, Conflict, NotFound, UpstreamError
+from infra.ai.libtv import get_libtv_settings
+from infra.archive.local import get_archive_settings
 from modules.template.replacement_schema import PrepareReplacement
 from modules.template.replacement_service import BRIDGE, prepare
 from modules.template.replacement_worker import schedule
@@ -25,7 +27,7 @@ from modules.template.replacement_worker import schedule
 
 @pytest.fixture
 def archive_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    monkeypatch.setattr(settings, "media_archive_root", str(tmp_path))
+    monkeypatch.setattr(get_archive_settings(), "root", str(tmp_path))
     return tmp_path
 
 
@@ -247,7 +249,7 @@ def test_missing_archive_never_falls_back(
     archive_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     missing = archive_root / "offline-share"
-    monkeypatch.setattr(settings, "media_archive_root", str(missing))
+    monkeypatch.setattr(get_archive_settings(), "root", str(missing))
     with pytest.raises(UpstreamError):
         archive.root()
     assert not missing.exists()
@@ -286,7 +288,9 @@ def test_free_quote_gate_and_uncertain_states() -> None:
       assert.equal(canSubmit({{status:'uploaded',task_id:null}}),true);
     """
     subprocess.run(
-        [settings.libtv_node, "--input-type=module", "-e", script], check=True, capture_output=True
+        [get_libtv_settings().node, "--input-type=module", "-e", script],
+        check=True,
+        capture_output=True,
     )
 
 
@@ -368,7 +372,7 @@ def test_bridge_only_reaches_submission_after_zero_quote(
         + ("process.argv[2]='submit';await main();" if quote == 0 else "")
     )
     response = subprocess.run(
-        [settings.libtv_node, "--input-type=module", "-e", script],
+        [get_libtv_settings().node, "--input-type=module", "-e", script],
         env={**os.environ, "TEST_QUOTE": str(quote)},
         capture_output=True,
     )
@@ -462,7 +466,7 @@ def test_bridge_routes_credits_mode_through_paid_queue(
         "await main();"
     )
     response = subprocess.run(
-        [settings.libtv_node, "--input-type=module", "-e", script],
+        [get_libtv_settings().node, "--input-type=module", "-e", script],
         env={**os.environ, "TEST_QUOTE": str(quote)},
         capture_output=True,
     )
@@ -555,7 +559,7 @@ def test_poll_never_overwrites_the_charged_credits_with_zero(
         "await main();"
     )
     response = subprocess.run(
-        [settings.libtv_node, "--input-type=module", "-e", script],
+        [get_libtv_settings().node, "--input-type=module", "-e", script],
         capture_output=True,
     )
     assert response.returncode == 0, response.stderr.decode(errors="replace")

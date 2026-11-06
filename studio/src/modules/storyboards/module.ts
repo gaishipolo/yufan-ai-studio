@@ -9,17 +9,13 @@ export default defineModule({
       path: 'storyboards',
       load: () => import('@/pages/storyboards/StoryboardsPage'),
       permissions: ['storyboard:read'],
-    },
-  ],
-  nav: [
-    {
-      label: '分镜模板库',
-      path: '/storyboards',
-      icon: Clapperboard,
-      group: '模板与镜头',
-      groupOrder: 2,
-      order: 2,
-      permissions: ['storyboard:read'],
+      nav: {
+        label: '分镜模板库',
+        icon: Clapperboard,
+        group: '模板与镜头',
+        groupOrder: 2,
+        order: 2,
+      },
     },
   ],
 });

@@ -8,7 +8,7 @@ from pathlib import Path
 
 from core.exceptions import BadRequest, NotFound
 from core.media import MediaPack, StoredMedia
-from infra.storage.archive import ArchiveStorage, get_archive_storage, lease
+from infra.archive import ArchiveStorage, get_archive_storage, lease
 
 
 def catalog_lease(storage: ArchiveStorage) -> AbstractContextManager[None]:

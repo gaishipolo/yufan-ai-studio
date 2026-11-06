@@ -5,10 +5,10 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-from api.accounts import account_is_active
 from core.config import settings
 from core.exceptions import Conflict, NotFound, UpstreamError
 from core.logging import get_logger
+from core.ports.accounts import account_is_active
 from generation.runner import get_runner
 from infra import get_queue
 from infra.ai.libtv import execute_stage
@@ -56,7 +56,7 @@ async def owner_disabled(owner_id: str) -> bool:
     查不到用户（历史档案、测试夹具里的合成 owner）按「不拦」处理：这里的目的是
     关掉「离职后还在花钱」的口子，不是给所有历史数据补一道会误伤的闸门。
 
-    走 `api.accounts` 这个注入点而不是直接 import identity：业务模块之间禁止互相
+    走 `core.ports.accounts` 这个注入点而不是直接 import identity：业务模块之间禁止互相
     import（`tests/test_architecture.py` 守着），而这里需要的只是一个 Bool。
     """
     return await account_is_active(owner_id) is False

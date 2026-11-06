@@ -11,8 +11,9 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -26,6 +27,7 @@ from api.v1.router import build_v1_router
 from core.config import get_settings
 from core.logging import get_logger, setup_logging
 from core.permissions import catalog
+from core.scheduler import Scheduler, periodic_jobs
 from core.security import shutdown_hash_pool
 from db.session import dispose_engine, init_db
 from infra import get_queue
@@ -48,6 +50,8 @@ def load_extension_points() -> None:
     模块被自动发现时会顺带 import，所以业务模块的 handler 无需在此登记；
     这里只加载框架自带的 handler。
     """
+    # 审计写入端：core 只定义协议，具体落库在 db 层注册
+    from db import audit_sink as _audit_sink  # noqa: F401
     from generation import worker as _generation_worker  # noqa: F401
 
 
@@ -68,6 +72,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         if spec.startup is not None:
             await spec.startup()
 
+    # 框架级恢复：只接管「声明了 recovery_kinds 且没有自定义 startup」的模块。
+    # 关键不是少写几行，而是让「新模块忘接恢复」变成声明缺失，能被 CI 抓住。
+    # worker 没开时恢复入队的 job 根本没人消费，还会污染测试库，直接跳过（R12-09）。
+    from generation.recovery import recover_declared
+
+    if settings.worker_enabled:
+        await recover_declared(modules)
+    else:
+        logger.warning(
+            "worker 未启用，跳过框架启动恢复：恢复动作入队的任务不会被执行；"
+            "需要恢复时请开启 WORKER_ENABLED"
+        )
+
     worker = Worker(get_queue(), concurrency=settings.worker_concurrency)
     if settings.worker_enabled:
         await worker.start()
@@ -80,6 +97,32 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         len(catalog),
         handler_names(),
     )
+    # 注入口未接上不报错（可选依赖），但要在日志里留痕：`app modules` 同样能看到
+    from api.ports import port_status
+    from core.audit import ensure_audit_sink
+
+    for port, registered in port_status():
+        if not registered:
+            logger.info(
+                "注入口未注册：%s（%s）→ %s",
+                port.name,
+                port.protocol,
+                port.when_unregistered,
+            )
+    # 审计写入端是唯一「没接上会静默丢数据」的注入口：record() 按设计吞掉一切，
+    # 不抛异常也不打日志。生产环境必须在启动期炸掉，不能等到对账时才发现全是空的。
+    ensure_audit_sink(settings.app_env)
+    # 同理：成图下载校验没配白名单时会静默回落到黑名单兜底（档不住 DNS 解析到
+    # 内网）。放在 active_modules() 之后，确保各驱动的 Settings 都已 import 登记。
+    from infra.driver_config import ensure_prod_driver_settings
+
+    ensure_prod_driver_settings(settings.app_env)
+
+    # 周期任务：调度器本身不认识任何具体任务，任务由模块在 import 期注册
+    stop_scheduler = asyncio.Event()
+    scheduler_task: asyncio.Task[None] | None = None
+    if settings.scheduler_enabled and periodic_jobs():
+        scheduler_task = asyncio.create_task(Scheduler().serve(stop_scheduler))
 
     if settings.anonymous_allowed:
         # 匿名回退给的是演示账号（含 `*`）。单独看合理，和「监听 0.0.0.0」叠在一起
@@ -92,6 +135,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
+        stop_scheduler.set()
+        if scheduler_task is not None:
+            with suppress(asyncio.CancelledError):
+                scheduler_task.cancel()
+                await scheduler_task
         await worker.stop()
         await dispose_engine()
         # 口令线程池不随进程退出立刻回收（靠 atexit join），`--reload` 时每轮都留一组线程

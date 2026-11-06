@@ -7,7 +7,7 @@ from pathlib import Path
 
 from core.exceptions import Conflict, InvalidState
 from core.logging import get_logger
-from infra.storage.archive import lease
+from infra.archive import lease
 from modules.template.replacement_repository import ReplacementRepository
 from modules.template.replacement_schema import (
     ReplacementReview,

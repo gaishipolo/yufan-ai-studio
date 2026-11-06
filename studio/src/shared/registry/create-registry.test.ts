@@ -1,4 +1,4 @@
-import { Boxes } from 'lucide-react';
+import { Boxes, Layers } from 'lucide-react';
 import { describe, expect, it } from 'vitest';
 import { createRegistry } from './create-registry';
 import { defineModule } from './define-module';
@@ -27,15 +27,33 @@ describe('createRegistry · 装配', () => {
     const registry = createRegistry([
       moduleOf({
         id: 'late',
-        nav: [{ label: '后台', path: '/late', icon: Boxes, group: '系统', groupOrder: 9 }],
+        routes: [
+          {
+            path: 'late',
+            load,
+            nav: { label: '后台', icon: Boxes, group: '系统', groupOrder: 9 },
+          },
+        ],
       }),
       moduleOf({
         id: 'a',
-        nav: [{ label: 'A', path: '/a', icon: Boxes, group: '创作', groupOrder: 1, order: 2 }],
+        routes: [
+          {
+            path: 'a',
+            load,
+            nav: { label: 'A', icon: Boxes, group: '创作', groupOrder: 1, order: 2 },
+          },
+        ],
       }),
       moduleOf({
         id: 'b',
-        nav: [{ label: 'B', path: '/b', icon: Boxes, group: '创作', groupOrder: 1, order: 1 }],
+        routes: [
+          {
+            path: 'b',
+            load,
+            nav: { label: 'B', icon: Boxes, group: '创作', groupOrder: 1, order: 1 },
+          },
+        ],
       }),
     ]);
 
@@ -47,8 +65,13 @@ describe('createRegistry · 装配', () => {
     const registry = createRegistry([
       moduleOf({
         id: 'a',
-        cards: [
-          { title: 'A', subtitle: 's', path: '/a', icon: Boxes, gradient: 'x' },
+        routes: [
+          {
+            path: 'a',
+            load,
+            nav: { label: 'A', icon: Boxes, group: '创作' },
+            card: { subtitle: 's', gradient: 'x' },
+          },
         ],
       }),
     ]);
@@ -56,12 +79,77 @@ describe('createRegistry · 装配', () => {
     expect(registry.cards[0].matchPrefixes).toEqual(['/a']);
   });
 
+  /* B2：以前 path 与 permissions 要在 route / nav / cards 里各写一遍，
+     改权限漏一处就是「入口可见但点进去 403」。现在由注册表继承，
+     这个用例把「派生」本身钉住——不是靠人记得同步。 */
+  it('route.nav / route.card 的 path 与 permissions 一律继承 route', () => {
+    const registry = createRegistry([
+      moduleOf({
+        id: 'a',
+        title: '甲模块',
+        routes: [
+          {
+            path: 'a',
+            load,
+            permissions: ['user:manage'],
+            nav: { label: '侧栏甲', icon: Boxes, group: '系统' },
+            card: { subtitle: 's', gradient: 'x' },
+          },
+        ],
+      }),
+    ]);
+
+    const nav = registry.navGroups[0].items[0];
+    const card = registry.cards[0];
+    expect(nav.path).toBe('/a');
+    expect(nav.permissions).toEqual(['user:manage']);
+    expect(card.path).toBe('/a');
+    expect(card.permissions).toEqual(['user:manage']);
+    // title / icon 从 nav 继承，没写第二遍
+    expect(card.title).toBe('侧栏甲');
+    expect(card.icon).toBe(Boxes);
+  });
+
+  it('card 可以单独指定 icon / title 覆盖 nav，不写 nav 时兜底到模块 title', () => {
+    const registry = createRegistry([
+      moduleOf({
+        id: 'a',
+        title: '甲模块',
+        routes: [
+          {
+            path: 'a',
+            load,
+            nav: { label: '侧栏甲', icon: Boxes, group: '系统' },
+            card: { subtitle: 's', gradient: 'x', icon: Layers, title: '宫格甲' },
+          },
+        ],
+      }),
+      moduleOf({
+        id: 'b',
+        title: '乙模块',
+        routes: [
+          { path: 'b', load, card: { subtitle: 's', gradient: 'x', icon: Layers } },
+        ],
+      }),
+    ]);
+
+    expect(registry.cards.map((c) => c.title)).toEqual(['宫格甲', '乙模块']);
+    expect(registry.cards[0].icon).toBe(Layers);
+  });
+
   it('收集所有声明过的权限，并挂到对应路由上', () => {
     const registry = createRegistry([
       moduleOf({
         id: 'a',
-        routes: [{ path: 'a', load, permissions: ['user:manage'] }],
-        nav: [{ label: 'A', path: '/a', icon: Boxes, group: '系统', permissions: ['user:read'] }],
+        routes: [
+          {
+            path: 'a',
+            load,
+            permissions: ['user:manage'],
+            nav: { label: 'A', icon: Boxes, group: '系统' },
+          },
+        ],
+        slots: [{ name: 'topbar.actions', component: () => null, permissions: ['user:read'] }],
       }),
     ]);
 
@@ -101,40 +189,55 @@ describe('createRegistry · 校验（宁可启动报错，不要运行时白屏�
     ).toThrow(/路由 \/same 被 a 与 b 同时声明/);
   });
 
-  it('导航指向不存在的路由 → 抛错', () => {
-    expect(() =>
-      createRegistry([
-        moduleOf({
-          id: 'a',
-          nav: [{ label: '幽灵', path: '/ghost', icon: Boxes, group: '系统' }],
-        }),
-      ]),
-    ).toThrow(/导航项「幽灵」\(\/ghost\) 没有对应路由/);
+  /* 旧写法里「导航 / 卡片指向不存在的路由」要靠注册期比对字符串来抓；
+     派生之后 path 就是 route.path，这类错误从结构上不可能发生。
+     下面两条改为守住派生本身，以及新引入的结构约束。 */
+  it('导航项的 path 恒等于所属路由，不存在「幽灵导航」', () => {
+    const registry = createRegistry([
+      moduleOf({
+        id: 'a',
+        routes: [
+          {
+            path: 'real',
+            load,
+            nav: { label: '真实', icon: Boxes, group: '系统' },
+          },
+        ],
+      }),
+    ]);
+
+    expect(registry.navGroups[0].items[0].path).toBe(
+      registry.routes[0].path,
+    );
   });
 
-  /* 卡片和导航是同一族入口，以前只有 nav 校验：
-     改模块 id 之后卡片还能通过注册，用户点首页宫格才 404 */
-  it('宫格卡片指向不存在的路由 → 抛错', () => {
+  it('bare 路由不能声明 nav / card（裸页放进侧栏或宫格会丢外壳）', () => {
     expect(() =>
       createRegistry([
         moduleOf({
           id: 'a',
-          cards: [{ title: '幽灵卡片', subtitle: 's', path: '/nope', icon: Boxes, gradient: 'x' }],
+          routes: [
+            {
+              path: 'login',
+              layout: 'bare',
+              load,
+              card: { subtitle: 's', gradient: 'x', icon: Boxes },
+            },
+          ],
         }),
       ]),
-    ).toThrow(/宫格卡片「幽灵卡片」\(\/nope\) 没有对应路由/);
+    ).toThrow(/独立页面 login 不能声明 nav \/ card/);
   });
 
-  it('宫格卡片指向独立页面 → 抛错（裸页放进宫格会丢外壳）', () => {
+  it('card 既没 icon 也没有 nav.icon → 抛错（产物类型不允许缺图标）', () => {
     expect(() =>
       createRegistry([
         moduleOf({
           id: 'a',
-          routes: [{ path: 'login', layout: 'bare', load }],
-          cards: [{ title: '登录卡', subtitle: 's', path: '/login', icon: Boxes, gradient: 'x' }],
+          routes: [{ path: 'a', load, card: { subtitle: 's', gradient: 'x' } }],
         }),
       ]),
-    ).toThrow(/宫格卡片「登录卡」指向独立页面 \/login/);
+    ).toThrow(/缺少 icon/);
   });
 
   it('route.path 为空 —— 根路由只能由 HOME_PATH 决定', () => {

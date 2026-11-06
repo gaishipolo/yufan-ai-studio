@@ -21,28 +21,38 @@ const load = () => Promise.resolve({ default: () => null });
 const registry = createRegistry([
   defineModule({
     id: 'public',
-    routes: [{ path: 'public', load }],
-    nav: [{ label: '公开页', path: '/public', icon: Boxes, group: '通用' }],
+    routes: [
+      { path: 'public', load, nav: { label: '公开页', icon: Boxes, group: '通用' } },
+    ],
   }),
   defineModule({
     id: 'admin',
-    routes: [{ path: 'admin', load }],
-    nav: [
+    routes: [
       {
-        label: '管理页',
-        path: '/admin',
-        icon: Boxes,
-        group: '通用',
-        order: 2,
+        path: 'admin',
+        load,
+        // 权限只写在 route 上：route.nav 派生出来的导航项自动继承
         permissions: ['user:manage'],
-        badge: () => <span>3</span>,
+        nav: {
+          label: '管理页',
+          icon: Boxes,
+          group: '通用',
+          order: 2,
+          badge: () => <span>3</span>,
+        },
       },
     ],
   }),
   defineModule({
     id: 'ops',
-    routes: [{ path: 'ops', load }],
-    nav: [{ label: '运维', path: '/ops', icon: Boxes, group: '运维', permissions: ['ops:read'] }],
+    routes: [
+      {
+        path: 'ops',
+        load,
+        permissions: ['ops:read'],
+        nav: { label: '运维', icon: Boxes, group: '运维' },
+      },
+    ],
   }),
 ]);
 

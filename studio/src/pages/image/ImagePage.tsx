@@ -1,22 +1,52 @@
 import { useState } from 'react';
 import { Wand2 } from 'lucide-react';
-import { Button, CardSkeletonGrid, CoverImage, ErrorState, PageHeader, Pager, Select } from '@/shared/ui';
+import {
+  Button,
+  CardSkeletonGrid,
+  Chip,
+  CoverImage,
+  ErrorState,
+  PageHeader,
+  Pager,
+  Select,
+} from '@/shared/ui';
 import { cn } from '@/shared/lib/cn';
 import { toast } from '@/shared/lib/toast';
 import { formatDateTime } from '@/shared/lib/format';
+import { imageFormSchemaFor, useImageModels } from '@/entities/model/api/model.queries';
 import { useGenerateImage, useImages } from '@/entities/image/api/image.api';
-
-const SIZE_OPTIONS = ['1024×1536', '1024×1024', '1536×1024'].map((v) => ({ value: v, label: v }));
-const COUNT_OPTIONS = ['1', '2', '4'].map((v) => ({ value: v, label: `${v} 张` }));
+import { imageSrcOf, imageStatusChipOf } from '@/entities/image/model/status';
 
 export default function ImagePage() {
   const [prompt, setPrompt] = useState('');
-  const [size, setSize] = useState(SIZE_OPTIONS[0].value);
-  const [count, setCount] = useState('1');
+  const [modelId, setModelId] = useState('');
+  const [sizeOverride, setSizeOverride] = useState('');
+  const [countOverride, setCountOverride] = useState('');
   const [page, setPage] = useState(1);
 
+  const { models, isLoading: modelsLoading, isError: modelsError } = useImageModels();
   const { data, isLoading, isFetching, isError, error, refetch } = useImages(page);
   const generate = useGenerateImage();
+
+  // 用户没选过时用 isDefault 模型 —— 后端「model 留空」取的也是它，前端不编默认值
+  const model =
+    models.find((m) => m.id === modelId) ?? models.find((m) => m.isDefault) ?? models[0];
+  const form = imageFormSchemaFor(model);
+  const modelOptions = models.map((m) => ({ value: m.id, label: m.label }));
+  const sizeOptions = form.sizeOptions.map((v) => ({ value: v, label: v }));
+  const countOptions = form.countOptions.map((v) => ({ value: String(v), label: `${v} 张` }));
+
+  // 存的是「用户覆盖值」而不是最终值：换模型或后端收紧档位后，
+  // 旧值不在新 options 里会自动回落到该模型的 default，不会出现选了却没生效的假象
+  const size = sizeOptions.some((o) => o.value === sizeOverride)
+    ? sizeOverride
+    : form.sizeDefault;
+  const countFallback =
+    countOptions.find((o) => o.value === String(form.countDefault))?.value ??
+    countOptions[0]?.value ??
+    '';
+  const count = countOptions.some((o) => o.value === countOverride) ? countOverride : countFallback;
+  const canSubmit = Boolean(model && size && count);
 
   const total = data?.total ?? 0;
   const pageSize = data?.pageSize ?? 24;
@@ -29,13 +59,24 @@ export default function ImagePage() {
       toast('请先填写提示词', 'error');
       return;
     }
+    if (!model || !size || !count) {
+      toast('暂无可用生图模型，请稍后重试', 'error');
+      return;
+    }
     generate.mutate(
-      { prompt: prompt.trim(), size, count: Number(count) },
+      {
+        prompt: prompt.trim(),
+        size,
+        count: Number(count),
+        // 默认模型留空，交给后端取默认；只有用户显式改选才传 model
+        ...(model.isDefault ? {} : { model: model.id }),
+      },
       {
         onSuccess: () => {
-          toast('图片生成中，稍后刷新查看', 'success');
+          toast('已提交，正在排队生成', 'success');
           setPrompt('');
-          // 新任务在最前面：停在旧页会看不到自己刚提交的那张
+          // 新任务在最前面：停在旧页会看不到自己刚提交的那张。
+          // 回到第 1 页后 useImages(1) 会因为 queued 自动开始轮询
           setPage(1);
         },
         onError: (e) => toast(e.message, 'error'),
@@ -68,14 +109,53 @@ export default function ImagePage() {
             />
           </div>
 
+          <div className="mb-2.5">
+            <div className="mb-1.5 text-[11.5px] text-ink-soft">模型</div>
+            <Select
+              block
+              aria-label="模型"
+              options={modelOptions}
+              value={model?.id ?? ''}
+              disabled={!modelOptions.length}
+              onChange={(e) => {
+                setModelId(e.target.value);
+                setSizeOverride('');
+                setCountOverride('');
+              }}
+            />
+            {!model && (
+              <p className="mt-1 text-[11px] text-ink-mute">
+                {modelsLoading
+                  ? '模型目录加载中…'
+                  : modelsError
+                    ? '模型目录加载失败，请稍后重试'
+                    : '暂无可用的生图模型'}
+              </p>
+            )}
+          </div>
+
           <div className="grid grid-cols-2 gap-2.5">
             <div>
               <div className="mb-1.5 text-[11.5px] text-ink-soft">尺寸</div>
-              <Select block options={SIZE_OPTIONS} value={size} onChange={(e) => setSize(e.target.value)} />
+              <Select
+                block
+                aria-label="尺寸"
+                options={sizeOptions}
+                value={size}
+                disabled={!sizeOptions.length}
+                onChange={(e) => setSizeOverride(e.target.value)}
+              />
             </div>
             <div>
               <div className="mb-1.5 text-[11.5px] text-ink-soft">数量</div>
-              <Select block options={COUNT_OPTIONS} value={count} onChange={(e) => setCount(e.target.value)} />
+              <Select
+                block
+                aria-label="数量"
+                options={countOptions}
+                value={count}
+                disabled={!countOptions.length}
+                onChange={(e) => setCountOverride(e.target.value)}
+              />
             </div>
           </div>
 
@@ -86,6 +166,7 @@ export default function ImagePage() {
             className="mt-3"
             icon={<Wand2 size={15} />}
             loading={generate.isPending}
+            disabled={!canSubmit}
             onClick={submit}
           >
             开始生成
@@ -107,24 +188,55 @@ export default function ImagePage() {
             <ErrorState error={error} title="生成记录加载失败" onRetry={() => void refetch()} />
           ) : (
             <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 xl:grid-cols-3 2xl:grid-cols-4">
-              {(data?.items ?? []).map((job) => (
-                <article
-                  key={job.id}
-                  className={cn(
-                    'overflow-hidden rounded-card border border-line-soft bg-panel transition-all',
-                    'hover:-translate-y-0.5 hover:border-line-strong hover:shadow-card',
-                  )}
-                >
-                  <CoverImage src={job.coverUrl} seed={job.id} className="aspect-[4/5] w-full" />
-                  <div className="px-2 pb-2 pt-1.5">
-                    <p className="truncate text-[11.5px] text-ink">{job.name}</p>
-                    <div className="mt-0.5 flex items-center justify-between text-[10.5px] text-ink-mute">
-                      <span>{job.size}</span>
-                      <span>{formatDateTime(job.createdAt)}</span>
+              {(data?.items ?? []).map((job) => {
+                const chip = imageStatusChipOf(job);
+                return (
+                  <article
+                    key={job.id}
+                    title={job.errorMessage ?? undefined}
+                    className={cn(
+                      'overflow-hidden rounded-card border border-line-soft bg-panel transition-all',
+                      'hover:-translate-y-0.5 hover:border-line-strong hover:shadow-card',
+                    )}
+                  >
+                    <div className="relative">
+                      <CoverImage
+                        src={imageSrcOf(job)}
+                        seed={job.id}
+                        className="aspect-[4/5] w-full"
+                      />
+                      {chip && (
+                        <div className="absolute left-1.5 top-1.5 z-10">
+                          <Chip tone={chip.tone}>{chip.text}</Chip>
+                        </div>
+                      )}
+                      {chip?.progress != null && (
+                        <div className="absolute bottom-0 left-0 right-0 h-1 bg-black/10">
+                          <div
+                            className="h-full bg-primary transition-all"
+                            style={{ width: `${chip.progress}%` }}
+                          />
+                        </div>
+                      )}
                     </div>
-                  </div>
-                </article>
-              ))}
+                    <div className="px-2 pb-2 pt-1.5">
+                      <p className="truncate text-[11.5px] text-ink">{job.name}</p>
+                      <div className="mt-0.5 flex items-center justify-between text-[10.5px] text-ink-mute">
+                        <span>{job.size}</span>
+                        <span>{formatDateTime(job.createdAt)}</span>
+                      </div>
+                      {job.errorMessage && (
+                        <p
+                          className="mt-1 truncate text-[10.5px] text-[#d94036]"
+                          title={job.errorMessage}
+                        >
+                          {job.errorMessage}
+                        </p>
+                      )}
+                    </div>
+                  </article>
+                );
+              })}
             </div>
           )}
 

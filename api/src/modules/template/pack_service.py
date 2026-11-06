@@ -8,9 +8,9 @@ from pathlib import Path
 from core.exceptions import AppError, BadRequest, Conflict, NotFound
 from core.media import MediaPack
 from core.pack_roles import PACK_SCOPES, missing_role_labels, roles_for
+from infra.archive import checksum
 from infra.media_catalog import MediaCatalog, catalog_lease, safe_id
 from infra.media_probe import PREVIEW_VERSION, create_preview
-from infra.storage.archive import checksum
 from modules.template.replacement_schema import (
     PackDraftIn,
     PackManaged,

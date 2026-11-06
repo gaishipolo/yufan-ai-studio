@@ -33,8 +33,11 @@ _VIDEO_SCHEMA = {
 _IMAGE_SCHEMA = {
     "size": {
         "type": "enum",
-        "options": ["1024×1024", "1024×1536", "1536×1024"],
-        "default": "1024×1024",
+        # 尺寸统一用**半角 x**：这是供应商接口的字面格式（Agnes 收到 `×` 直接 400），
+        # 而 `GET /models` 的这份声明就是前端渲染下拉的取值来源——这里写全角，
+        # 前端照着渲染出来的每个选项都会在提交时失败。
+        "options": ["1024x1024", "1024x1536", "1536x1024"],
+        "default": "1024x1024",
     },
     "count": {"type": "int", "min": 1, "max": 4, "default": 1},
 }
@@ -79,6 +82,8 @@ class EchoProvider:
     name = "echo"
     capabilities = frozenset(Capability)
     models = MODELS
+    # 返回任务 ID、由框架续轮询；恢复器按缺省 False 处理，必须显式声明
+    supports_poll = True
 
     async def submit(self, request: GenerationRequest) -> str:
         digest = hashlib.sha1(request.prompt.encode()).hexdigest()[:8]

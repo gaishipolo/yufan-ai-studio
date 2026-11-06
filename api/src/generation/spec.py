@@ -55,6 +55,11 @@ class GenerationRecord:
     reference_urls: tuple[str, ...] = ()
     # 已经尝试过几次提交。>0 且 external_id 为空 = 提交结果未知（见 runner 说明）
     submit_attempts: int = 0
+    # 提交时供应商形态的快照："sync" / "async"，由 Store 在 mark_submitted 时落库。
+    # 启动恢复必须用它解释历史记录，而不是「拿当前模型目录重新解析」——
+    # 供应商下线、换配置、测试环境只加载 echo 都会让后者分类翻转（R12-05）。
+    # None = 迁移前的老记录，恢复器按「不能续查」的安全默认值处理。
+    submit_mode: str | None = None
     # 业务表的「终态」取值可能不同（如任务表用 completed），由 store 在映射时指定
     terminal_statuses: tuple[str, ...] = (STATUS_SUCCEEDED, STATUS_FAILED)
 

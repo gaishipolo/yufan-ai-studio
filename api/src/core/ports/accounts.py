@@ -7,6 +7,12 @@
 既没有令牌也没有请求。于是出现一个缝：人已经被停用，队列里排着的活还在替他跑、
 还在扣积分。停用只把人关在门外，没关掉已经在屋里干着的活。
 
+## 为什么放在 core/ 而不是 api/
+
+`generation/runner.py`（提交前要检查发起人还在不在）也必须能问这个问题。
+端口留在 `api/` 时 `generation → api` 是**反向依赖**，所以下移到 `core/ports/`：
+`api`、`modules`、`generation` 全都可以 import，而 core 依旧不认识任何业务模块。
+
 ## 为什么不直接 import identity
 
 `tests/test_architecture.py::test_modules_do_not_import_each_other` 明令禁止业务模块

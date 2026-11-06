@@ -64,7 +64,8 @@ write(
 import { defineModule } from '@/shared/registry/define-module';
 
 /**
- * 模块清单：路由 / 侧边栏 / 顶部宫格卡片 / 插槽，一处声明，骨架自动装配。
+ * 模块清单：路由 + 挂在路由上的侧栏 / 宫格 / 插槽，一处声明，骨架自动装配。
+ * nav / card 不写 path 与 permissions —— 注册表从所属 route 继承，避免三处抄写漂移。
  * 页面通过 load() 懒加载，不会进入首屏 bundle。
  */
 export default defineModule({
@@ -77,32 +78,23 @@ export default defineModule({
       // 默认就上闸：先关后开，忘了开会立刻发现（页面进不去）；
       // 先开后关，忘了关则永远不会被发现。后端 ModuleSpec 里没有 '${id}:read'
       // 这个权限点时，去掉这一行（并让 router.test.ts 的豁免名单记一笔）。
+      // 这一行同时决定侧栏与宫格的显隐，不用再各写一遍。
       permissions: ['${id}:read'],
+      nav: {
+        label: '${title}',
+        icon: Boxes,
+        group: '${group}',
+        groupOrder: 9,
+        order: 1,
+      },
+      // 需要出现在顶部宫格时打开（最多 4 个，order 决定位置）：
+      // card: {
+      //   subtitle: '一句话说明',
+      //   gradient: 'linear-gradient(140deg,#5b8cff,#7c5cff)',
+      //   order: 5,
+      // },
     },
   ],
-  nav: [
-    {
-      label: '${title}',
-      path: '/${id}',
-      icon: Boxes,
-      group: '${group}',
-      groupOrder: 9,
-      order: 1,
-      // 与路由同一权限点：否则会出现「侧栏看得见、点进去 403」
-      permissions: ['${id}:read'],
-    },
-  ],
-  // 需要出现在顶部宫格时打开（最多 4 个，order 决定位置）：
-  // cards: [
-  //   {
-  //     title: '${title}',
-  //     subtitle: '一句话说明',
-  //     path: '/${id}',
-  //     icon: Boxes,
-  //     gradient: 'linear-gradient(140deg,#5b8cff,#7c5cff)',
-  //     order: 5,
-  //   },
-  // ],
 });
 `,
 );

@@ -12,9 +12,9 @@ from core.context import CurrentUser
 from core.exceptions import BadRequest, Conflict, Forbidden, NotFound
 from core.logging import get_logger
 from core.media import MediaCategory, StoredMedia
+from infra.archive import ArchiveStorage, get_archive_storage, within
 from infra.media_catalog import catalog_lease
 from infra.media_probe import MAX_BYTES, PREVIEW_VERSION, create_browser_preview, create_preview
-from infra.storage.archive import ArchiveStorage, get_archive_storage, within
 from modules.asset.archive_repository import ArchiveAssetRepository
 from modules.asset.archive_schema import (
     ArchiveCategory,

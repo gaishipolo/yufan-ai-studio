@@ -17,16 +17,13 @@ export default defineModule({
     {
       path: 'usage',
       load: () => import('@/pages/usage/UsagePage'),
-    },
-  ],
-  nav: [
-    {
-      label: '用量看板',
-      path: '/usage',
-      icon: ChartColumn,
-      group: '资产与数据',
-      groupOrder: 3,
-      order: 3,
+      nav: {
+        label: '用量看板',
+        icon: ChartColumn,
+        group: '资产与数据',
+        groupOrder: 3,
+        order: 3,
+      },
     },
   ],
 });

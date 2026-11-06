@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import ast
+import re
 from pathlib import Path
 
 import pytest
@@ -218,3 +219,202 @@ def test_model_alias_resolution() -> None:
     router = get_model_router()
     for model in router.models():
         assert router.provider_for(model.label).name == router.provider_for(model.id).name
+
+
+# --------------------------------------------------------------------------- #
+# 跨模块注入口（port）
+#
+# 约定写在 `api/ports.py` 的模块注释里。这里只做机械校验：
+# 新增一个注入口却没登记 → 红；登记了但形状不全 → 红。
+# 目的是让「一共有几个注入口、谁实现它」从"读代码才知道"变成"机器保证"。
+# --------------------------------------------------------------------------- #
+_PORT_SCAN_DIRS = (SRC / "api", SRC / "core", SRC / "core" / "ports")
+
+
+def _base_name(node: ast.expr) -> str:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        return node.attr
+    return ""
+
+
+def _looks_like_port_module(path: Path) -> bool:
+    """「注册 / 复位 / 是否已接上」三个动作齐全 = 一个注入口。
+
+    不再要求具名 `Protocol` 子类 + `register_*`：`core.audit` 用的是
+    `Callable` 类型别名 + `set_audit_sink`，按旧形状识别时它既不在清单、
+    也不在扫描范围、也不在启动日志里——审计写入端没接上会静默丢数据，
+    而所有守卫照常全绿（R11-05）。
+    """
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    functions = [n.name for n in tree.body if isinstance(n, ast.FunctionDef)]
+    has_register = any(n.startswith(("register_", "set_")) for n in functions)
+    has_reset = any(n.startswith("reset_") for n in functions)
+    has_probe = any(n.startswith("has_") for n in functions)
+    return has_register and has_reset and has_probe
+
+
+def _dotted(path: Path) -> str:
+    return ".".join(path.relative_to(SRC).with_suffix("").parts)
+
+
+def test_every_port_is_catalogued() -> None:
+    from api.ports import PORT_CATALOG
+
+    catalogued = {spec.module for spec in PORT_CATALOG}
+    missing = [
+        _dotted(path)
+        for directory in _PORT_SCAN_DIRS
+        for path in sorted(directory.glob("*.py"))
+        if _looks_like_port_module(path) and _dotted(path) not in catalogued
+    ]
+    assert not missing, (
+        f"这些文件是注入口但没有登记进 api/ports.py 的 PORT_CATALOG：{missing}。"
+        "没登记的注入口会让「谁会实现它、没接上是什么行为」再次变成口口相传"
+    )
+
+
+def test_port_modules_expose_the_full_shape() -> None:
+    """注入口必须自带 register / reset / has —— 缺 has 就没法在启动日志里留痕。"""
+    import importlib
+
+    from api.ports import PORT_CATALOG
+
+    problems: list[str] = []
+    for spec in PORT_CATALOG:
+        module = importlib.import_module(spec.module)
+        names = set(vars(module))
+        if spec.protocol:
+            protocol = getattr(module, spec.protocol, None)
+            if not isinstance(protocol, type):
+                problems.append(f"{spec.name}: {spec.module} 里没有协议类 {spec.protocol}")
+        # 类型别名式注入口用 set_*，具名协议式用 register_*，两者都算一个注册入口
+        registers = sorted(n for n in names if n.startswith(("register_", "set_")))
+        if len(registers) != 1:
+            problems.append(f"{spec.name}: 应有且只有一个 register_*/set_*，实际 {registers}")
+        for prefix in ("reset_", "has_"):
+            if not any(n.startswith(prefix) for n in names):
+                problems.append(f"{spec.name}: 缺少 {prefix}* 函数")
+    assert not problems, "注入口形状不完整：\n" + "\n".join(problems)
+
+
+def test_port_names_are_unique() -> None:
+    from api.ports import PORT_CATALOG
+
+    names = [spec.name for spec in PORT_CATALOG]
+    assert len(names) == len(set(names)), f"注入口重名：{names}"
+
+
+# --------------------------------------------------------------------------- #
+# 基础设施驱动
+# --------------------------------------------------------------------------- #
+def test_archive_storage_only_reached_through_factory() -> None:
+    """归档盘只能经 `get_archive_storage()` 获取，不许在别处直接 new 具体实现。
+
+    写死一处就少一个扩展点：要换 S3 / MinIO 时得靠 grep 才能找全调用点，
+    而找漏的那一处会在换驱动后静默继续写本地盘。
+    """
+    offenders: list[str] = []
+    for path in _python_files(SRC):
+        if path.parts[-2:] == ("archive", "local.py"):  # 实现自己，允许
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        if any(
+            isinstance(node, ast.Call) and _base_name(node.func) == "LocalArchiveStorage"
+            for node in ast.walk(tree)
+        ):
+            offenders.append(str(path.relative_to(SRC)))
+    assert not offenders, (
+        f"这些文件直接实例化了归档实现：{offenders}。请改用 infra.archive.get_archive_storage()"
+    )
+
+
+_PERIODIC_DECORATOR = re.compile(r"@periodic\(\s*[\"']([^\"']+)[\"']")
+
+
+def test_periodic_jobs_are_namespaced_by_module() -> None:
+    """周期任务名必须以**所在模块目录**开头，`app modules` 才能按模块分组。
+
+    这里静态扫源码而不是读运行时注册表：注册表是 import 副作用，测试顺序一变就为空，
+    检查会悄悄失效——守卫测试最忌讳这种「永远绿」。
+    """
+    modules = {d.name for d in MODULES_DIR.iterdir() if d.is_dir() and not d.name.startswith("_")}
+    bad: list[str] = []
+    for path in _python_files(MODULES_DIR):
+        for name in _PERIODIC_DECORATOR.findall(path.read_text(encoding="utf-8")):
+            owner = path.relative_to(MODULES_DIR).parts[0]
+            if name.split(".", 1)[0] not in modules or not name.startswith(f"{owner}."):
+                bad.append(f"{path.relative_to(MODULES_DIR)} -> {name}")
+    assert not bad, f"周期任务命名必须 `<模块>.<动作>`：{bad}"
+
+
+# --------------------------------------------------------------------------- #
+# 模块 × 插槽矩阵（R11 第八节）
+#
+# 之前的守卫只检查「插槽有没有造出来」。R11 的两条 🔴 都是另一个形状：
+# 新模块接齐了「让它跑起来」的插槽，却没接「出事后能恢复」的插槽，
+# 292 个用例、ruff、mypy、契约检查全部照常通过。按维度数插槽发现不了，
+# 必须按每个 kind 对账归属模块。
+# --------------------------------------------------------------------------- #
+def test_every_pipeline_kind_declares_a_recovery_slot() -> None:
+    from api.discovery import active_modules
+    from generation.pipeline import get_pipeline, pipeline_kinds
+
+    specs = active_modules()  # 副作用：import 所有模块，填满 pipeline 注册表
+    kinds = pipeline_kinds()
+    assert kinds, "生成流水线注册表为空：模块没被 import，这条守卫会永远绿"
+
+    declared = {kind for spec in specs for kind in spec.recovery_kinds}
+    missing = [kind for kind in kinds if kind not in declared]
+    assert not missing, (
+        f"这些生成 kind 没有任何模块声明负责恢复：{missing}。"
+        "在 ModuleSpec.recovery_kinds 里声明（框架恢复），或提供自己的 startup"
+    )
+
+    for spec in specs:
+        if spec.startup is not None or not spec.recovery_kinds:
+            continue  # 模块自带恢复器，框架不插手
+        for kind in spec.recovery_kinds:
+            assert hasattr(get_pipeline(kind), "list_unfinished"), (
+                f"模块 {spec.name} 依赖框架恢复 kind={kind}，但流水线没有 "
+                "list_unfinished(session, limit)"
+            )
+
+
+def _module_has_retry_exit(module_dir: Path) -> bool:
+    """三种都算「用户有自救出口」。
+
+    POST .../retry 路由、模块里的 retry* 函数、或自有重试计数体系
+    （template 用的是 run.json 的 retry_count，语义不同但同样是出口）。
+    """
+    text = "\n".join(p.read_text(encoding="utf-8") for p in _python_files(module_dir))
+    return bool(
+        re.search(r"@router\.post\([^)]*retry", text)
+        or re.search(r"\b(?:async\s+)?def\s+retry\w*", text)
+        or "retry_count" in text
+    )
+
+
+def test_every_kind_has_a_user_retry_exit() -> None:
+    """`SUBMIT_UNKNOWN_MESSAGE` 写着「请核对后手动重试」，不能是空头支票。
+
+    runner 对 submit_unknown 的记录一律判死，此后 `handle_submit` 的终态早退
+    让它再也动不了；没有 retry 出口时这条记录永久死锁（R11-02 现象 A）。
+    """
+    from api.discovery import active_modules
+    from generation.pipeline import pipeline_kinds
+
+    owner = {kind: spec.name for spec in active_modules() for kind in spec.recovery_kinds}
+    kinds = pipeline_kinds()
+    assert kinds, "生成流水线注册表为空：模块没被 import，这条守卫会永远绿"
+
+    missing = [
+        kind
+        for kind in kinds
+        if kind not in owner or not _module_has_retry_exit(MODULES_DIR / owner[kind])
+    ]
+    assert not missing, (
+        f"这些 kind 的模块没有重试出口：{missing}。补 POST /.../retry（并清 "
+        "submit_attempts），或在模块里提供等价的自有重试体系"
+    )

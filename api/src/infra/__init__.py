@@ -42,8 +42,11 @@ def get_image_provider() -> ModelProvider:
 
 def reset_infra_cache() -> None:
     """测试用：清空工厂缓存以便切换配置。"""
+    from infra.archive import reset_archive_storage
+
     for factory in (get_storage, get_queue):
         factory.cache_clear()
+    reset_archive_storage()
 
 
 __all__ = [

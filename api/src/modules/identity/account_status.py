@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from api.accounts import AccountStatusChecker
+from core.ports.accounts import AccountStatusChecker
 
 __all__ = ["IdentityAccountStatus"]
 

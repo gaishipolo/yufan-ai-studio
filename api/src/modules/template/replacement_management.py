@@ -5,7 +5,7 @@ from pathlib import Path
 
 from core.logging import get_logger
 from core.schema import CamelModel, UtcDateTime
-from infra.storage.archive import lease
+from infra.archive import lease
 from modules.template.replacement_repository import ReplacementRepository
 
 logger = get_logger(__name__)

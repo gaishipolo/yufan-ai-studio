@@ -1,4 +1,17 @@
-"""独立监督进程：持有 OS 租约直至 Node 真正退出，API 重启不会释放活任务的锁。"""
+"""独立监督进程：持有 OS 租约直至 Node 真正退出，API 重启不会释放活任务的锁。
+
+## 与启动方的契约
+
+参数走 **stdin 的 JSON**，不走位置参数（旧写法是 `sys.argv[1..5]` 顺序对齐，
+加一个参数就得两侧同时改，改漏了就是「读串位」这种极难查的错）。
+
+    {"version": 1, "stage": "submit", "run": "/…", "legacyRoot": "/…",
+     "node": "node", "result": "/…/operation-xxx.json"}
+
+- `version` 不匹配 → 退出码 2，启动方按「协议不一致」报错，而不是静默等一个空结果；
+- 读不到 stdin / JSON 不合法 → 同上；
+- 可选参数都有默认值，新增参数不会再要求启动方同步改一遍。
+"""
 
 from __future__ import annotations
 
@@ -10,13 +23,17 @@ import sys
 import uuid
 from pathlib import Path
 
-from core.config import settings
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
+
 from core.exceptions import AppError, Conflict
 from core.logging import get_logger
-from infra.ai.libtv_state import RUN_LOCK, ExecutorResult
+from infra.ai.libtv import get_libtv_settings
+from infra.ai.libtv_state import LIBTV_PROCESS_PROTOCOL, RUN_LOCK, ExecutorResult
+from infra.archive import ArchiveStorage, get_archive_storage, lease
+from infra.archive.base import acquire, release
 from infra.media_catalog import MediaCatalog, catalog_lease
-from infra.storage.archive import LocalArchiveStorage, acquire, lease, release
 
+PROTOCOL_VERSION = LIBTV_PROCESS_PROTOCOL
 logger = get_logger(__name__)
 
 STAGES = {"upload": 1500, "submit": 100, "poll": 45, "download": 240}
@@ -63,7 +80,7 @@ def pid_alive(pid: int) -> bool:
         kernel.CloseHandle(ctypes.c_void_p(handle))
 
 
-def clear_finished_lock(run: Path, storage: LocalArchiveStorage) -> None:
+def clear_finished_lock(run: Path, storage: ArchiveStorage) -> None:
     lock = run / "records/worker.lock"
     if not lock.exists():
         return
@@ -96,7 +113,7 @@ def legacy_worker_active(legacy: Path) -> bool:
 
 
 def run_node(
-    stage: str, run: Path, legacy: Path, node: str, storage: LocalArchiveStorage
+    stage: str, run: Path, legacy: Path, node: str, storage: ArchiveStorage
 ) -> ExecutorResult:
     """在已持锁的前提下启动 Node 适配器，返回这一阶段的回执。"""
     result = ExecutorResult(stage=stage)
@@ -120,7 +137,7 @@ def run_node(
     logs = run / "logs"
     logs.mkdir(parents=True, exist_ok=True)
     errors = logs / "executor-stderr.log"
-    env = {**os.environ, "JS_REVERSE_BROWSER_URL": settings.libtv_browser_url}
+    env = {**os.environ, "JS_REVERSE_BROWSER_URL": get_libtv_settings().browser_url}
     with errors.open("wb") as stream, subprocess.Popen(
         [node, str(code), stage, str(run), str(legacy)],
         stdout=subprocess.DEVNULL,
@@ -147,7 +164,7 @@ def run_node(
 def supervise(stage: str, run: Path, legacy: Path, node: str) -> ExecutorResult:
     if stage not in STAGES:
         raise ValueError("未知执行阶段")
-    storage = LocalArchiveStorage()
+    storage = get_archive_storage()
     try:
         with lease(
             run / RUN_LOCK,
@@ -181,10 +198,34 @@ def supervise(stage: str, run: Path, legacy: Path, node: str) -> ExecutorResult:
         )
 
 
+class Payload(BaseModel):
+    """启动方 → 监督进程的参数包。新增参数请给默认值，别动 `version`。"""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    version: int = PROTOCOL_VERSION
+    stage: str
+    run: str
+    legacy_root: str = Field(alias="legacyRoot")
+    node: str = "node"
+    result: str
+
+
 def main() -> None:
-    stage, run_value, legacy_value, node, result_value = sys.argv[1:]
-    result = supervise(stage, Path(run_value), Path(legacy_value), node)
-    LocalArchiveStorage().write(Path(result_value), result.model_dump())
+    raw = sys.stdin.buffer.read()
+    try:
+        payload = Payload.model_validate_json(raw)
+    except ValidationError as exc:
+        print(f"参数协议不匹配（期望 JSON v{PROTOCOL_VERSION}）：{exc}", file=sys.stderr)
+        raise SystemExit(2) from exc
+    if payload.version != PROTOCOL_VERSION:
+        print(
+            f"参数协议版本不支持：进程支持 v{PROTOCOL_VERSION}，收到 v{payload.version}",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+    result = supervise(payload.stage, Path(payload.run), Path(payload.legacy_root), payload.node)
+    get_archive_storage().write(Path(payload.result), result.model_dump())
 
 
 if __name__ == "__main__":

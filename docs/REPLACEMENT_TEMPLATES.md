@@ -152,7 +152,7 @@ Z:\yufan_ai_studio\
 
 ## 代码落点与验证
 
-后端业务在 `modules/template/replacement_*`，素材 HTTP 在 `modules/asset/archive.py`，素材权限与编排在 `archive_service.py`、索引在 `archive_repository.py`；通用文件协议在 `infra/storage/archive.py`、媒体探测在 `infra/media_probe.py`，无跨模块业务 import。生成适配器在 `infra/ai/libtv.py`，通过 `replacement_pipeline.py` 注册到原框架，复用提交意图、轮询、超时与 `generation.*` 事件。`AI_PROVIDERS=echo,libtv` 启用该模型；模板专用模型从替换模板入口使用。
+后端业务在 `modules/template/replacement_*`，素材 HTTP 在 `modules/asset/archive.py`，素材权限与编排在 `archive_service.py`、索引在 `archive_repository.py`；通用文件协议在 `infra/archive/base.py`（工厂 `infra/archive/`，驱动 `infra/archive/local.py`）、媒体探测在 `infra/media_probe.py`，无跨模块业务 import。生成适配器在 `infra/ai/libtv.py`，通过 `replacement_pipeline.py` 注册到原框架，复用提交意图、轮询、超时与 `generation.*` 事件。`AI_PROVIDERS=echo,libtv` 启用该模型；模板专用模型从替换模板入口使用。
 
 前端在 `features/replacement-templates` 和 `features/archive-library`，API 类型使用自动生成的 `shared/api/schema.ts`。
 

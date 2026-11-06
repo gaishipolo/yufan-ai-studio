@@ -13,11 +13,14 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
 from fastapi import APIRouter
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.permissions import PermissionSpec
 
 # 模块启动钩子：应用 lifespan 内、worker 启动前调用
 StartupHook = Callable[[], Awaitable[None]]
+# 模块演示数据钩子：`app seed` 时调用，返回写入行数。实现方自己 commit。
+SeedHook = Callable[[AsyncSession], Awaitable[int]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,8 +41,15 @@ class ModuleSpec:
     order: int = 100
     description: str = ""
     permissions: tuple[PermissionSpec, ...] = ()
-    jobs: tuple[str, ...] = ()
     startup: StartupHook | None = None
+    # 本模块负责的生成 kind（`generation.pipeline` 的注册表键）。
+    # 没有 `startup` 的模块由 `generation/recovery.py` 按这个声明统一恢复；
+    # 有 `startup` 的模块沿用自己的恢复器，框架不插手。
+    # 这个字段是「模块 × 插槽」矩阵的机械守卫依据：漏声明 = CI 红（R11-01）。
+    recovery_kinds: tuple[str, ...] = ()
+    # 模块自己的演示数据。没有它的时候，每加一个模块都要去改 `src/seed.py`，
+    # 而那个文件会越来越像一个「所有模块的 union」——新模块的演示数据写着写着就变成框架债。
+    seed: SeedHook | None = None
     # 公开模块：健康检查、探活等无需登录/权限的接口。
     # 默认 False —— 新模块默认受权限保护，避免「忘了加权限点」变成裸奔。
     public: bool = False

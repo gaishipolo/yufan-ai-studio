@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import re
 import subprocess
@@ -27,9 +28,11 @@ from infra.ai.libtv_process import (
     supervise,
 )
 from infra.ai.libtv_state import ExecutorResult
+from infra.archive import lease
+from infra.archive.base import acquire, release
+from infra.archive.local import LocalArchiveStorage
 from infra.queue.base import Job
 from infra.queue.memory import MemoryJobQueue
-from infra.storage.archive import LocalArchiveStorage, acquire, lease, release
 from modules.template import replacement_service as service
 from modules.template.replacement_repository import ReplacementRepository
 from modules.template.replacement_schema import PrepareReplacement
@@ -82,7 +85,7 @@ def test_process_exit_releases_native_lease(tmp_path):
     script = """
 import os, sys, time
 from pathlib import Path
-from infra.storage.archive import lease
+from infra.archive import lease
 ctx = lease(Path(sys.argv[1]))
 ctx.__enter__()
 Path(sys.argv[2]).write_text('ready')
@@ -245,13 +248,25 @@ def test_supervisor_keeps_active_lock_and_receipt(prepared, tmp_path):
 async def test_api_wait_cancellation_does_not_kill_supervisor(prepared, monkeypatch):
     from infra.ai import libtv
 
+    # 旧运行时根目录现在是驱动私有配置且默认为空（不再有 E:/yufan-ai 这种
+    # 「只在那台机器上存在」的默认值），这里显式给一个，否则 execute_stage
+    # 会在起子进程之前就按「未配置」报错
+    monkeypatch.setattr(libtv.get_libtv_settings(), "legacy_root", "/tmp/legacy-stub")
+
     payload, _ = prepared
     import threading
 
     started, finished = threading.Event(), threading.Event()
 
     class Process:
-        def wait(self):
+        returncode = 1
+
+        def communicate(self, payload: bytes) -> None:
+            # 参数走 stdin 的 JSON（A4）：顺手验证启动方发出的确实是带版本的 JSON，
+            # 而不是退化成位置参数
+            body = json.loads(payload)
+            assert body["stage"] == "submit"
+            assert body["version"] >= 1
             started.set()
             finished.wait(timeout=5)
 

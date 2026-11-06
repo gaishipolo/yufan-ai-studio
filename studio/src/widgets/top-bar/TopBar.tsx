@@ -3,7 +3,7 @@ import { Bell, CircleHelp } from 'lucide-react';
 import { toast } from '@/shared/lib/toast';
 import { Slot } from '@/shared/registry/Slot';
 import { BrandMark, IconButton } from '@/shared/ui';
-import { APP_NAME, HOME_PATH } from '@/shared/config/app';
+import { APP_BRAND, APP_BRAND_EN, APP_NAME, APP_VERSION, HOME_PATH } from '@/shared/config/app';
 import { UserMenu } from '@/widgets/user-menu/UserMenu';
 
 export function TopBar() {
@@ -12,16 +12,16 @@ export function TopBar() {
       <Link to={HOME_PATH} className="flex min-w-0 items-center gap-2.5">
         <BrandMark size={26} />
         <div className="flex shrink-0 flex-col leading-none whitespace-nowrap">
-          <b className="text-[15px] font-extrabold tracking-[3px] text-ink">雨范</b>
-          <span className="mt-[3px] text-[7px] tracking-[1.6px] text-ink-mute">AI STUDIO</span>
+          <b className="text-[15px] font-extrabold tracking-[3px] text-ink">{APP_BRAND}</b>
+          <span className="mt-[3px] text-[7px] tracking-[1.6px] text-ink-mute">{APP_BRAND_EN}</span>
         </div>
-        {/* 640 以下只留字标：产品名 + 版本号挤在同一行会把「雨范」压成两行（390px 实测） */}
+        {/* 640 以下只留字标：产品名 + 版本号挤在同一行会把字标压成两行（390px 实测） */}
         <div className="hidden h-4 w-px shrink-0 bg-line-strong sm:block" />
         <span className="hidden whitespace-nowrap text-sm font-semibold tracking-[.3px] text-ink sm:inline">
           {APP_NAME}
         </span>
         <span className="hidden shrink-0 whitespace-nowrap rounded-pill border border-line-strong bg-panel px-[7px] py-px text-[10px] tabular-nums text-ink-mute sm:inline">
-          v3.0
+          {APP_VERSION}
         </span>
       </Link>
 

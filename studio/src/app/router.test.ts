@@ -101,7 +101,7 @@ describe('router 装配', () => {
   });
 
   /* 权限码拼错不会报错，只会让那个入口对**所有人**永久隐藏（fail-closed 且静默）。
-     目录常量由 permission-catalog.test.ts 与后端逐条对齐，这里只负责"声明的点确实存在"。 */
+     目录内容由后端生成物 + 字节比对守卫保证，这里只负责"声明的点确实存在"。 */
   it('模块声明的权限点都在权限目录里', () => {
     expect(appRegistry.declaredPermissions.length).toBeGreaterThan(0);
 

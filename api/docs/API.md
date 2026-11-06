@@ -2,7 +2,7 @@
 
 > 此文件由 `app export-openapi` 自动生成，请勿手工编辑。
 >
-> 版本 `0.2.0`｜共 **73** 个接口 / **9** 个模块
+> 版本 `0.2.0`｜共 **74** 个接口 / **9** 个模块
 >
 > 重新生成：`cd api && .venv/Scripts/python -m cli export-openapi`
 
@@ -81,6 +81,7 @@ Authorization: Bearer <accessToken>
 | `image:create` | 提交生图任务 |  |
 | `image:read` | 查看生图历史 |  |
 | `image:read:all` | 查看他人生图历史 | 列表的数据范围开关；与 task:read:all 同义，不含提交他人的生图任务 |
+| `image:retry:any` | 重试他人生图任务 | 只开关「替别人点重试」，不蕴含 image:read:all |
 | `shot:read` | 查看镜头库 |  |
 | `storyboard:read` | 查看分镜模板 |  |
 | `task:create` | 创建生成任务 |  |
@@ -165,7 +166,7 @@ Authorization: Bearer <accessToken>
 | 任务 | 9 | 见下方 `4.2` |
 | 模型 | 1 | 见下方 `4.3` |
 | 素材 | 15 | 见下方 `4.4` |
-| 生图 | 2 | 见下方 `4.5` |
+| 生图 | 3 | 见下方 `4.5` |
 | 模板 | 16 | 见下方 `4.6` |
 | 分镜模板 | 1 | 见下方 `4.7` |
 | 镜头库 | 1 | 见下方 `4.8` |
@@ -1387,24 +1388,28 @@ Authorization: Bearer <accessToken>
 
 **响应** `ApiResponse<null>`（前端取 `res.data`）
 
-### 4.5 生图（2 个）
+### 4.5 生图（3 个）
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
-| `POST` | `/api/v1/generations/image` | 提交生图（待实现） | 🔒 |
+| `POST` | `/api/v1/generations/image` | 提交生图 | 🔒 |
 | `GET` | `/api/v1/images` | 生图历史（分页） | 🔒 |
+| `POST` | `/api/v1/images/{job_id}/retry` | 重试失败的生图 | 🔒 |
 
 #### `POST /api/v1/generations/image`
 
-**提交生图（待实现）**
+**提交生图**
+
+受理即返回 `queued`，实际生成由后台队列完成；客户端轮询 `GET /images` 或明细接口取 `status` / `outputUrl`。
 
 **请求体** `GenerateImageIn`
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `prompt` | `string` | 是 |  |
-| `size` | `string` | 否 | 宽x高 |
-| `count` | `number` | 否 |  |
+| `prompt` | `string` | 是 | 画面描述 |
+| `size` | `string` | 否 | 宽x高，如 `1024x1536` |
+| `count` | `number` | 否 | 张数 |
+| `model` | `string` | 否 | 模型 id，留空取默认 |
 
 **响应** `ApiResponse<ImageJobOut>`（前端取 `res.data`）
 
@@ -1413,8 +1418,17 @@ Authorization: Bearer <accessToken>
 | `id` | `string` | 是 | 生图记录 ID |
 | `name` | `string` | 是 | 名称 |
 | `prompt` | `string` | 是 | 画面描述 |
-| `size` | `string` | 是 | 尺寸，如 `1024x1536` |
+| `size` | `string` | 是 | 尺寸，如 `1024x1024` |
+| `count` | `number` | 否 | 一次生成的张数 |
+| `status` | `string` | 否 | 状态：`queued` / `running` / `succeeded` / `failed` |
+| `progress` | `number` | 否 | 进度 0-100 |
+| `model` | `string` | 否 | 模型可读名 |
+| `modelId` | `string \| null` | 否 | 模型目录 id |
 | `coverUrl` | `string` | 否 | 封面图 URL |
+| `outputUrl` | `string \| null` | 否 | 成图 URL（成功后才有） |
+| `errorMessage` | `string \| null` | 否 | 失败原因 |
+| `externalId` | `string \| null` | 否 | 供应商侧任务号；提交成功后有值，可用于对账 |
+| `previousExternalId` | `string \| null` | 否 | 上一次提交的供应商任务号；带 confirmCharged 重试后保留的对账凭证 |
 | `createdAt` | `string` | 是 | 创建时间（UTC） |
 
 #### `GET /api/v1/images`
@@ -1434,6 +1448,32 @@ Authorization: Bearer <accessToken>
 | `total` | `number` | 是 | 总条数（用于分页器） |
 | `page` | `number` | 是 | 当前页码，从 1 开始 |
 | `pageSize` | `number` | 是 | 每页条数 |
+
+#### `POST /api/v1/images/{job_id}/retry`
+
+**重试失败的生图**
+
+`SUBMIT_UNKNOWN_MESSAGE` 承诺的「手动重试」出口（R11-02）。
+
+重试会再向供应商提交一次，因此要 `image:create`；替别人点还要 `image:retry:any`。
+没有这个出口时，`failed` 记录会被 `handle_submit` 的终态早退永久锁死：
+文案说「请核对后手动重试」，而用户根本无处可点。
+
+记录带 `externalId`（供应商任务号）时说明**上一次可能已经扣费**，默认返回
+409 要求先核对；只有带 `confirmCharged=true` 才允许重新提交。不带参数的
+旧调用行为不变（R12-01）。
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `job_id` | path | `string` | 是 |  |
+| `confirmCharged` | query | `boolean` | 否 | 确认上一次可能已扣费，仍要重新提交 |
+
+**响应** `ApiResponse<ImageRetryOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 | 生图记录 ID |
+| `status` | `string` | 是 | 重试后的状态，固定为 `queued` |
 
 ### 4.6 模板（16 个）
 
@@ -2102,9 +2142,10 @@ Authorization: Bearer <accessToken>
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `prompt` | `string` | 是 |  |
-| `size` | `string` | 否 | 宽x高 |
-| `count` | `number` | 否 |  |
+| `prompt` | `string` | 是 | 画面描述 |
+| `size` | `string` | 否 | 宽x高，如 `1024x1536` |
+| `count` | `number` | 否 | 张数 |
+| `model` | `string` | 否 | 模型 id，留空取默认 |
 
 ### `HTTPValidationError`
 
@@ -2128,9 +2169,30 @@ Authorization: Bearer <accessToken>
 | `id` | `string` | 是 | 生图记录 ID |
 | `name` | `string` | 是 | 名称 |
 | `prompt` | `string` | 是 | 画面描述 |
-| `size` | `string` | 是 | 尺寸，如 `1024x1536` |
+| `size` | `string` | 是 | 尺寸，如 `1024x1024` |
+| `count` | `number` | 否 | 一次生成的张数 |
+| `status` | `string` | 否 | 状态：`queued` / `running` / `succeeded` / `failed` |
+| `progress` | `number` | 否 | 进度 0-100 |
+| `model` | `string` | 否 | 模型可读名 |
+| `modelId` | `string \| null` | 否 | 模型目录 id |
 | `coverUrl` | `string` | 否 | 封面图 URL |
+| `outputUrl` | `string \| null` | 否 | 成图 URL（成功后才有） |
+| `errorMessage` | `string \| null` | 否 | 失败原因 |
+| `externalId` | `string \| null` | 否 | 供应商侧任务号；提交成功后有值，可用于对账 |
+| `previousExternalId` | `string \| null` | 否 | 上一次提交的供应商任务号；带 confirmCharged 重试后保留的对账凭证 |
 | `createdAt` | `string` | 是 | 创建时间（UTC） |
+
+### `ImageRetryOut`
+
+重试只回 id / status。
+
+不回整份 `ImageJobOut`：持有 `image:retry:any` 的人可以帮别人重跑，
+但没有 `image:read:all`，不该顺带读到别人的 prompt（与 task 的重试同一口径）。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 | 生图记录 ID |
+| `status` | `string` | 是 | 重试后的状态，固定为 `queued` |
 
 ### `ImportAsset`
 

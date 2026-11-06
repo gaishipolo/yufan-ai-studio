@@ -4,6 +4,7 @@ from api.module import ModuleSpec
 from core.feed import register_replacement_feed
 from core.permissions import PermissionSpec
 from modules.template.feed_provider import read_feed
+from modules.template.replacement_pipeline import KIND_REPLACEMENT
 from modules.template.replacement_worker import resume
 from modules.template.router import router
 
@@ -21,4 +22,6 @@ module = ModuleSpec(
         PermissionSpec("template:pack:publish", "发布或停用本人封装对象", group="素材"),
     ),
     startup=resume,
+    # 已有自己的恢复器；声明负责的 kind 供架构守卫对账。
+    recovery_kinds=(KIND_REPLACEMENT,),
 )

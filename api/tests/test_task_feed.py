@@ -10,13 +10,13 @@ import pytest
 from fastapi.testclient import TestClient
 from test_task_api import _bearer
 
-from core.config import settings
+from infra.archive.local import get_archive_settings
 from modules.template.replacement_repository import ReplacementManifest, ReplacementRepository
 
 
 @pytest.fixture
 def feed_runs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
-    monkeypatch.setattr(settings, "media_archive_root", str(tmp_path))
+    monkeypatch.setattr(get_archive_settings(), "root", str(tmp_path))
     repo = ReplacementRepository()
     ids = {}
     for index, status in enumerate(
@@ -146,7 +146,7 @@ def test_feed_offline_archive_is_explicit(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(settings, "media_archive_root", str(tmp_path / "missing"))
+    monkeypatch.setattr(get_archive_settings(), "root", str(tmp_path / "missing"))
     data = client.get("/api/v1/tasks/feed").json()["data"]
     assert data["warnings"]
     assert data["items"] and all(item["source"] == "video" for item in data["items"])

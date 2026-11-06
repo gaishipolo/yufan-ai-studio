@@ -23,6 +23,12 @@ export default defineConfig(({ mode }) => {
               target: proxyTarget,
               changeOrigin: true,
             },
+            // 成图 outputUrl 是 `/static/images/<id>.png` 相对路径，
+            // 生产同域反代天然可用，dev 不代理就会打到 5173 直接 404（表现为裂图）
+            '/static': {
+              target: proxyTarget,
+              changeOrigin: true,
+            },
           }
         : undefined,
     },

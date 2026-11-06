@@ -7,7 +7,7 @@ from pathlib import Path
 from pydantic import BaseModel, TypeAdapter
 
 from core.exceptions import NotFound
-from infra.storage.archive import within
+from infra.archive import within
 from modules.template.replacement_repository import ReplacementManifest, ReplacementRepository
 from modules.template.replacement_schema import (
     PrepareReplacement,

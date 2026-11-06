@@ -11,12 +11,12 @@ from fastapi.testclient import TestClient
 from PIL import Image
 
 from api.deps import get_actor
-from core.config import settings
 from core.context import CurrentUser
 from core.exceptions import BadRequest, Conflict, NotFound
 from core.media import StoredMedia
+from infra.archive import checksum
+from infra.archive.local import get_archive_settings
 from infra.media_catalog import MediaCatalog
-from infra.storage.archive import checksum
 from modules.asset.archive_repository import ArchiveAssetRepository
 from modules.asset.archive_schema import ArchiveChange
 from modules.asset.archive_service import ArchiveAssetService
@@ -27,7 +27,7 @@ from modules.template.replacement_service import prepare
 
 @pytest.fixture
 def workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, client: TestClient):
-    monkeypatch.setattr(settings, "media_archive_root", str(tmp_path))
+    monkeypatch.setattr(get_archive_settings(), "root", str(tmp_path))
     yield tmp_path
     client.app.dependency_overrides.pop(get_actor, None)
 

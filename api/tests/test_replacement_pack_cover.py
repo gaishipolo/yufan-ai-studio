@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from core.config import settings
+from infra.archive.local import get_archive_settings
 from modules.template.replacement_repository import ReplacementRepository
 
 
@@ -23,7 +23,7 @@ def test_pack_cover_resolves_owned_reference(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     cover: str | None, bindings: list[dict[str, str]], expected: str,
 ) -> None:
-    monkeypatch.setattr(settings, "media_archive_root", str(tmp_path))
+    monkeypatch.setattr(get_archive_settings(), "root", str(tmp_path))
     repo = ReplacementRepository()
     repo.storage.write(tmp_path / "catalog/packs/pack.json", {
         "id": "pack", "ownerId": "owner", "kind": "product", "name": "产品",

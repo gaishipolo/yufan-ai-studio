@@ -43,6 +43,15 @@ export const routes: MockRoute[] = [
   {
     method: 'GET',
     pattern: /^\/images$/,
-    handler: () => ({ items: db.imageJobs, total: db.imageJobs.length }),
+    handler: (ctx) => {
+      // 每次拉取推进一次后台 worker，mock 模式也能看到 queued → succeeded
+      db.tick();
+      return {
+        items: db.imageJobs,
+        total: db.imageJobs.length,
+        page: Number(ctx.params.page ?? 1),
+        pageSize: Number(ctx.params.pageSize ?? 24),
+      };
+    },
   },
 ];

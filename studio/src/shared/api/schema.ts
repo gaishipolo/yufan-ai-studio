@@ -183,10 +183,14 @@ export interface ExecuteReplacement {
 
 /** GenerateImageIn */
 export interface GenerateImageIn {
+  /** 画面描述 */
   prompt: string;
-  /** 宽x高 */
+  /** 宽x高，如 `1024x1536` */
   size?: string;
+  /** 张数 */
   count?: number;
+  /** 模型 id，留空取默认 */
+  model?: string;
 }
 
 /** HTTPValidationError */
@@ -210,12 +214,41 @@ export interface ImageJobOut {
   name: string;
   /** 画面描述 */
   prompt: string;
-  /** 尺寸，如 `1024x1536` */
+  /** 尺寸，如 `1024x1024` */
   size: string;
+  /** 一次生成的张数 */
+  count?: number;
+  /** 状态：`queued` / `running` / `succeeded` / `failed` */
+  status?: string;
+  /** 进度 0-100 */
+  progress?: number;
+  /** 模型可读名 */
+  model?: string;
+  /** 模型目录 id */
+  modelId?: string | null;
   /** 封面图 URL */
   coverUrl?: string;
+  /** 成图 URL（成功后才有） */
+  outputUrl?: string | null;
+  /** 失败原因 */
+  errorMessage?: string | null;
+  /** 供应商侧任务号；提交成功后有值，可用于对账 */
+  externalId?: string | null;
+  /** 上一次提交的供应商任务号；带 confirmCharged 重试后保留的对账凭证 */
+  previousExternalId?: string | null;
   /** 创建时间（UTC） */
   createdAt: string;
+}
+
+/** 重试只回 id / status。
+
+不回整份 `ImageJobOut`：持有 `image:retry:any` 的人可以帮别人重跑，
+但没有 `image:read:all`，不该顺带读到别人的 prompt（与 task 的重试同一口径）。 */
+export interface ImageRetryOut {
+  /** 生图记录 ID */
+  id: string;
+  /** 重试后的状态，固定为 `queued` */
+  status: string;
 }
 
 /** ImportAsset */
@@ -983,7 +1016,7 @@ export interface EndpointData {
   "DELETE /api/v1/assets/{asset_id}": unknown;
   /** 素材详情（待实现） */
   "GET /api/v1/assets/{asset_id}": null;
-  /** 提交生图（待实现） */
+  /** 提交生图 */
   "POST /api/v1/generations/image": ImageJobOut;
   /** 存活探针 */
   "GET /api/v1/health": HealthOut;
@@ -1043,6 +1076,8 @@ export interface EndpointData {
   "PUT /api/v1/identity/users/{user_id}/roles": UserOut;
   /** 生图历史（分页） */
   "GET /api/v1/images": Page<ImageJobOut>;
+  /** 重试失败的生图 */
+  "POST /api/v1/images/{job_id}/retry": ImageRetryOut;
   /** 可用模型目录（含参数 schema） */
   "GET /api/v1/models": ModelListOut;
   /** 镜头词条列表 */

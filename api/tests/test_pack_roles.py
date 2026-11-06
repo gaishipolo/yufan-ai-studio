@@ -11,10 +11,10 @@ from PIL import Image
 from pydantic import TypeAdapter
 from tests_archive_helpers import archive
 
-from core.config import settings
 from core.exceptions import BadRequest
 from core.media import MediaCategory
 from core.pack_roles import BASE_ROLE, PACK_ROLES, PACK_SCOPES
+from infra.archive.local import get_archive_settings
 from modules.template.pack_service import PackService
 from modules.template.replacement_repository import ReplacementRepository
 from modules.template.replacement_schema import PackDraftIn
@@ -45,7 +45,7 @@ def _payload(kind: Kind, ids: list[str], **extra: Any) -> PackDraftIn:
 
 
 def test_legacy_pack_gets_base_role(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(settings, "media_archive_root", str(tmp_path))
+    monkeypatch.setattr(get_archive_settings(), "root", str(tmp_path))
     repo = ReplacementRepository()
     repo.storage.write(
         tmp_path / "catalog/packs/pack.json",
@@ -63,7 +63,7 @@ def test_legacy_pack_gets_base_role(tmp_path: Path, monkeypatch: pytest.MonkeyPa
 
 
 def test_save_keeps_roles_and_reports_gaps(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(settings, "media_archive_root", str(tmp_path))
+    monkeypatch.setattr(get_archive_settings(), "root", str(tmp_path))
     ids = _register(tmp_path, "owner", "product", 2)
     saved = PackService().save(
         _payload(
@@ -79,21 +79,21 @@ def test_save_keeps_roles_and_reports_gaps(tmp_path: Path, monkeypatch: pytest.M
 
 
 def test_save_rejects_unknown_role(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(settings, "media_archive_root", str(tmp_path))
+    monkeypatch.setattr(get_archive_settings(), "root", str(tmp_path))
     ids = _register(tmp_path, "owner", "character", 1)
     with pytest.raises(BadRequest, match="图片用途无效"):
         PackService().save(_payload("character", ids, bindings=[{"role": "multiview"}]), "owner")
 
 
 def test_save_rejects_role_count_mismatch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(settings, "media_archive_root", str(tmp_path))
+    monkeypatch.setattr(get_archive_settings(), "root", str(tmp_path))
     ids = _register(tmp_path, "owner", "character", 2)
     with pytest.raises(BadRequest, match="一一对应"):
         PackService().save(_payload("character", ids, bindings=[{"role": "front"}]), "owner")
 
 
 def test_publish_requires_required_roles(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(settings, "media_archive_root", str(tmp_path))
+    monkeypatch.setattr(get_archive_settings(), "root", str(tmp_path))
     ids = _register(tmp_path, "owner", "product", 2)
     service = PackService()
     saved = service.save(
@@ -112,7 +112,7 @@ def test_publish_requires_required_roles(tmp_path: Path, monkeypatch: pytest.Mon
 
 
 def test_publish_requires_product_scope(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(settings, "media_archive_root", str(tmp_path))
+    monkeypatch.setattr(get_archive_settings(), "root", str(tmp_path))
     ids = _register(tmp_path, "owner", "product", 1)
     service = PackService()
     saved = service.save(_payload("product", ids), "owner")
@@ -121,7 +121,7 @@ def test_publish_requires_product_scope(tmp_path: Path, monkeypatch: pytest.Monk
 
 
 def test_publish_complete_pack(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(settings, "media_archive_root", str(tmp_path))
+    monkeypatch.setattr(get_archive_settings(), "root", str(tmp_path))
     ids = _register(tmp_path, "owner", "product", 3)
     service = PackService()
     saved = service.save(
@@ -158,7 +158,7 @@ def test_frontend_role_table_matches_backend() -> None:
 
 
 def test_edit_draft_uses_same_identity(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(settings, "media_archive_root", str(tmp_path))
+    monkeypatch.setattr(get_archive_settings(), "root", str(tmp_path))
     ids = _register(tmp_path, "owner", "character", 1)
     service = PackService()
     saved = service.save(_payload("character", ids), "owner")
@@ -233,7 +233,7 @@ def test_repeat_save_with_same_revision_is_idempotent(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """同一次提交因超时重试时，必须返回同一份草稿，而不是「草稿已变化」。"""
-    monkeypatch.setattr(settings, "media_archive_root", str(tmp_path))
+    monkeypatch.setattr(get_archive_settings(), "root", str(tmp_path))
     ids = _register(tmp_path, "owner", "product", 2)
     payload = _payload(
         "product",

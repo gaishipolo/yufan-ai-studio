@@ -9,8 +9,8 @@ from typing import Literal
 
 from core.exceptions import BadRequest, NotFound
 from core.media import MediaCategory, StoredMedia
+from infra.archive import ArchiveStorage, get_archive_storage
 from infra.media_probe import EXTENSIONS, PREVIEW_VERSION, create_preview, inspect
-from infra.storage.archive import ArchiveStorage, get_archive_storage
 
 
 class ArchiveAssetRepository:

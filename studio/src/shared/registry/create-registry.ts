@@ -30,13 +30,15 @@ function fail(message: string): never {
  *
  * 这里是纯函数：不读全局变量、不碰 React 运行时状态，因此可以被单测直接驱动。
  * 所有校验都在注册期完成 —— 配错了会立刻在启动时抛错，而不是运行时白屏。
+ *
+ * 侧栏入口与宫格卡片不再是平级数组，而是挂在 `route.nav` / `route.card` 上：
+ * path / permissions 从这里继承，模块只写展示差异。这样「改权限漏一处」
+ * 从结构上就不可能发生，也就不必再靠测试去比对三处是否一致。
  */
 export function createRegistry(modules: AppModule[]): AppRegistry {
   const moduleIds = new Set<string>();
   const routeOwners = new Map<string, string>();
   const navOwners = new Map<string, string>();
-  /** 独立布局页面（不套外壳），不允许出现在导航里 */
-  const barePaths = new Set<string>();
   const routes: ResolvedRoute[] = [];
   const navItems: ResolvedNavItem[] = [];
   const cards: Array<ResolvedCard & { seq: number }> = [];
@@ -62,7 +64,6 @@ export function createRegistry(modules: AppModule[]): AppRegistry {
       permissions.forEach((p) => declaredPermissions.add(p));
 
       const layout = def.layout ?? 'shell';
-      if (layout === 'bare') barePaths.add(path);
 
       routes.push({
         path,
@@ -71,53 +72,40 @@ export function createRegistry(modules: AppModule[]): AppRegistry {
         layout,
         moduleId: mod.id,
       });
-    }
 
-    for (const nav of mod.nav ?? []) {
-      const path = normalizePath(nav.path);
-      const owner = navOwners.get(path);
-      if (owner) fail(`导航项 ${path} 在 ${owner} 与 ${mod.id} 中重复`);
-      navOwners.set(path, mod.id);
+      /* 侧栏入口：path 与 permissions 继承本路由，模块只写 label / icon / group 等展示信息 */
+      if (def.nav) {
+        const navOwner = navOwners.get(path);
+        if (navOwner) fail(`导航项 ${path} 在 ${navOwner} 与 ${mod.id} 中重复`);
+        navOwners.set(path, mod.id);
+        navItems.push({ ...def.nav, path, permissions, moduleId: mod.id });
+      }
 
-      const permissions = nav.permissions ?? [];
-      permissions.forEach((p) => declaredPermissions.add(p));
-
-      navItems.push({ ...nav, path, permissions, moduleId: mod.id });
-    }
-
-    for (const card of mod.cards ?? []) {
-      const permissions = card.permissions ?? [];
-      permissions.forEach((p) => declaredPermissions.add(p));
-      cards.push({
-        ...card,
-        path: normalizePath(card.path),
-        matchPrefixes: card.matchPrefixes ?? [normalizePath(card.path)],
-        permissions,
-        moduleId: mod.id,
-        seq: seq++,
-      });
+      /* 宫格卡片：同上；title / icon 缺省取 nav，再兜底到模块 title */
+      if (def.card) {
+        const icon = def.card.icon ?? def.nav?.icon;
+        if (!icon) {
+          fail(
+            `模块 ${mod.id} 的宫格卡片 ${path} 缺少 icon：请补 card.icon，或在同一路由声明 nav.icon`,
+          );
+        }
+        cards.push({
+          ...def.card,
+          title: def.card.title ?? def.nav?.label ?? mod.title ?? path,
+          icon,
+          path,
+          permissions,
+          matchPrefixes: def.card.matchPrefixes ?? [path],
+          moduleId: mod.id,
+          seq: seq++,
+        });
+      }
     }
 
     for (const slot of mod.slots ?? []) {
       const permissions = slot.permissions ?? [];
       permissions.forEach((p) => declaredPermissions.add(p));
       slots.push({ ...slot, order: slot.order ?? DEFAULT_ORDER, permissions, moduleId: mod.id, seq: seq++ });
-    }
-  }
-
-  /* 导航必须指向真实存在的路由，否则点击必然 404 —— 注册期就拦掉 */
-  for (const nav of navItems) {
-    if (!routeOwners.has(nav.path)) {
-      fail(
-        `导航项「${nav.label}」(${nav.path}) 没有对应路由。` +
-          `已注册路由：${[...routeOwners.keys()].join(', ')}`,
-      );
-    }
-    if (barePaths.has(nav.path)) {
-      fail(
-        `导航项「${nav.label}」指向独立页面 ${nav.path}（layout: 'bare'）。` +
-          `这类页面不套外壳，放进侧栏/宫格会失去导航与登录态，请去掉这条 nav。`,
-      );
     }
   }
 
@@ -128,24 +116,25 @@ export function createRegistry(modules: AppModule[]): AppRegistry {
     .sort((a, b) => (a.order ?? DEFAULT_ORDER) - (b.order ?? DEFAULT_ORDER) || a.seq - b.seq)
     .map(({ seq: _seq, ...card }) => card);
 
-  /* 宫格卡片与导航是同一族入口：都按 path 跳转，都可能指向写错的地址。
-     只校验 nav 会漏掉首页宫格——而首页宫格恰恰是主入口（工作台 / 任务 / 素材 /
-     模板 / 生图 五张卡），改模块 id、删路由、卡片没跟着改时，
-     构建、类型检查、测试全绿，用户点卡片才 404。
-     `matchPrefixes` 刻意不校验：它本来就允许指向子路径（如 /templates 卡片同时
-     高亮 /storyboards），校验它会误杀。 */
+  /* 注册期校验：导航 / 卡片指向真实存在的路由、且不指向裸页。
+     派生之后这两条由结构保证（path 就是 route.path，bare 页在 assertRouteDef 里禁止声明），
+     但保留成断言，防止以后有人为了"灵活"把 path 改回可写而悄悄退化。 */
+  const barePaths = new Set(routes.filter((route) => route.layout === 'bare').map((route) => route.path));
+  const knownPaths = new Set(routes.map((route) => route.path));
+  for (const nav of navItems) {
+    if (!knownPaths.has(nav.path)) {
+      fail(`导航项「${nav.label}」(${nav.path}) 没有对应路由。`);
+    }
+    if (barePaths.has(nav.path)) {
+      fail(`导航项「${nav.label}」指向独立页面 ${nav.path}（layout: 'bare'）。`);
+    }
+  }
   for (const card of sortedCards) {
-    if (!routeOwners.has(card.path)) {
-      fail(
-        `宫格卡片「${card.title}」(${card.path}) 没有对应路由。` +
-          `已注册路由：${[...routeOwners.keys()].join(', ')}`,
-      );
+    if (!knownPaths.has(card.path)) {
+      fail(`宫格卡片「${card.title}」(${card.path}) 没有对应路由。`);
     }
     if (barePaths.has(card.path)) {
-      fail(
-        `宫格卡片「${card.title}」指向独立页面 ${card.path}（layout: 'bare'）。` +
-          `这类页面不套外壳，放进首页宫格会失去导航与登录态，请去掉这条 card。`,
-      );
+      fail(`宫格卡片「${card.title}」指向独立页面 ${card.path}（layout: 'bare'）。`);
     }
   }
 
@@ -176,6 +165,12 @@ function assertRouteDef(mod: AppModule, def: ModuleRouteDef) {
   }
   if (def.layout !== undefined && def.layout !== 'shell' && def.layout !== 'bare') {
     fail(`模块 ${mod.id} 的路由 ${def.path} 的 layout 只能是 'shell' 或 'bare'`);
+  }
+  if (def.layout === 'bare' && (def.nav || def.card)) {
+    fail(
+      `模块 ${mod.id} 的独立页面 ${def.path} 不能声明 nav / card。` +
+        `bare 页面不套外壳，放进侧栏或宫格会失去导航与登录态。`,
+    );
   }
 }
 

@@ -45,8 +45,9 @@ const registry = createRegistry([
   }),
   defineModule({
     id: 'tasks',
-    routes: [{ path: 'tasks', load }],
-    nav: [{ label: '任务', path: '/tasks', icon: Boxes, group: '创作' }],
+    routes: [
+      { path: 'tasks', load, nav: { label: '任务', icon: Boxes, group: '创作' } },
+    ],
   }),
 ]);
 

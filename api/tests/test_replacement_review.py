@@ -10,8 +10,8 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from core.config import settings
-from infra.storage.archive import LocalArchiveStorage, lease
+from infra.archive import lease
+from infra.archive.local import LocalArchiveStorage, get_archive_settings
 from modules.template.replacement_repository import ReplacementManifest, ReplacementRepository
 from modules.template.replacement_review import REVIEW_LOCK
 from modules.template.replacement_schema import ReplacementReviewIn
@@ -20,7 +20,7 @@ from modules.template.replacement_service import ReplacementService
 
 @pytest.fixture
 def saved_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[str, Path]:
-    monkeypatch.setattr(settings, "media_archive_root", str(tmp_path))
+    monkeypatch.setattr(get_archive_settings(), "root", str(tmp_path))
     uid = uuid.uuid4().hex
     path = tmp_path / "runs" / uid
     (path / "outputs").mkdir(parents=True)

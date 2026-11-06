@@ -59,6 +59,11 @@ eslint.config.js / vitest.config.ts / tsconfig*.json
 
 **没有任何功能需要改 `router.tsx` / `Sidebar.tsx` / `TopBar.tsx` / `navigation.ts`（已删除）。**
 
+> 例外（2026-11-06）：登录 / 会话这类**横切能力**不适用这句。并入用户体系时确实改了
+> `app/router.tsx`（+27 / −4）与 `app/providers.tsx`，能力层扩展点尚未定型。
+> 详见 `docs/FRONTEND_FRAMEWORK_RETRO_2026-11-06.md` 的 A1。协议定下来之前，
+> 新增横切能力仍要走骨架评审，别拿上面这句当「不用改」的依据。
+
 ---
 
 ## 2. 目录与依赖方向
@@ -68,11 +73,11 @@ app        装配层：Provider、路由生成、错误兜底
  │
 modules    功能切片：一个功能一个目录，声明路由 / 导航 / 插槽 / 权限
  │
-pages      页面组件（被 module 的 load() 懒加载）
+pages      路由落点：module 的 load() 一律指向这里（可以是薄壳）
  │
 widgets    外壳与跨页组合块
  │
-features   可复用的业务交互块（如「角色编辑器」）
+features   业务交互块：可复用组件，或由 pages 薄壳引用的整页实现
  │
 entities   领域模型：types / api / queries / 展示组件
  │
@@ -88,6 +93,21 @@ shared     无业务：UI 基件、工具、请求内核、注册表、权限内
 
 > 实测：在 `shared` 里写 `import { x } from '@/entities/...'` 会被 lint 拦下并提示「分层违规」。
 
+### 2.1 页面分层的现状（`pages` 薄壳 + `features` 整页）
+
+素材 / 模板两页目前是两层：`module.ts` 的 `load()` 指向 `pages/assets/AssetsPage.tsx`
+与 `pages/templates/TemplatesPage.tsx`（各约 9 行，只做转发），真正的整页实现在
+`features/archive-library/ArchiveLibrary.tsx`、`features/replacement-templates/ReplacementTemplates.tsx`。
+这是 PR #1 合并后的既有形态，**本轮（2026-11-06）决定保留，不把整页搬回 `pages/`**。规则：
+
+- `module.ts` 的 `load()` **必须**指向 `pages/`，不得直接指向 `features/`；
+- 一个路由只能有**一处**整页实现，薄壳里不要再叠加第二套 UI；
+- 薄壳只做转发（建议不超过 15 行），不放业务逻辑，也不发数据请求；
+- 合并时若两层都写了整页，以薄壳引用的那一版为准，删掉重复的一套。
+
+> 背景：合并时曾出现两套 UI 同屏、同接口请求两遍，见
+> `docs/FRONTEND_FRAMEWORK_RETRO_2026-11-06.md` 的 A2 / B1。
+
 ---
 
 ## 3. 扩展点总表
@@ -95,15 +115,14 @@ shared     无业务：UI 基件、工具、请求内核、注册表、权限内
 | 想做的事 | 声明位置 | 骨架改动 |
 |---|---|---|
 | 新增页面 | `module.ts` → `routes[]` | 无 |
-| 侧边栏入口 | `module.ts` → `nav[]` | 无 |
-| 侧栏一级类目（可折叠） | `nav[].group` + `groupOrder` | 无 |
-| 顶部宫格卡片 | `module.ts` → `cards[]` | 无 |
-| 导航角标（如进行中任务数） | `nav[].badge`（组件） | 无 |
+| 侧边栏入口 | `module.ts` → `routes[].nav` | 无 |
+| 侧栏一级类目（可折叠） | `routes[].nav.group` + `groupOrder` | 无 |
+| 顶部宫格卡片 | `module.ts` → `routes[].card` | 无 |
+| 导航角标（如进行中任务数） | `routes[].nav.badge`（组件） | 无 |
 | 顶栏动作 / 侧栏底部 / 全局浮层 | `module.ts` → `slots[]` | 无 |
 | 独立布局页面（登录页这类，不套外壳） | `routes[].layout = 'bare'` | 无 |
 | 顶栏账号菜单项 | `slots[]` → `name: 'user-menu.items'` | 无 |
-| 页面级权限 | `routes[].permissions` | 无 |
-| 导航按权限隐藏 | `nav[].permissions` | 无 |
+| 页面 / 导航 / 宫格的权限 | `routes[].permissions`（一处声明，另两处自动继承） | 无 |
 | 按钮级权限 | 页面里 `<Can permission="...">` | 无 |
 | 新接口 | `entities/<id>/api/*.api.ts` | 无 |
 | 接口 mock | `modules/<id>/mock.ts` | 无 |
@@ -114,7 +133,7 @@ shared     无业务：UI 基件、工具、请求内核、注册表、权限内
 
 ### 3.1 侧栏分组 = 一级类目（自动可折叠）
 
-`nav[].group` 就是侧栏的一级类目，**不需要额外声明是否可折叠**：
+`routes[].nav.group` 就是侧栏的一级类目，**不需要额外声明是否可折叠**：
 
 | 行为 | 由谁决定 |
 |---|---|
@@ -138,7 +157,7 @@ shared     无业务：UI 基件、工具、请求内核、注册表、权限内
 | 顶栏 / 侧栏 / 宫格 | 有 | 无 |
 | 登录守卫 | 有 | 无（否则登录页会把自己重定向到自己，死循环） |
 | 权限守卫 | 有 | 有（声明了 `permissions` 才校验） |
-| 能出现在 `nav[]` 里 | 能 | **不能**（注册期直接报错，不是运行到一半才发现） |
+| 能声明 `nav` / `card` | 能 | **不能**（注册期直接报错，不是运行到一半才发现） |
 | 典型场景 | 业务页面 | 登录 / 注册 / 第三方回调 / 大屏 |
 
 新功能**默认不要用 `bare`**。真需要时，`app/router.tsx` 会自动把它挂到顶层，不用改路由文件。
@@ -221,6 +240,9 @@ export function useSetUserRoles() {
 ### Step 5 · 写 mock（可选但强烈建议）
 
 见 §5.8。后端没就绪时，页面能独立开发和演示。
+覆盖率现状由 `npm run gen:mock-coverage` 记到 `docs/MOCK_COVERAGE.md`——**只记录，不做 CI 门禁**：
+一条 handler 可能匹配多个端点，「每个端点都有 mock」无法可靠机械判定，硬做成断言只会变成可绕过的假守卫。
+改了接口或 mock 后重跑一次即可，`--check` 只比对不写盘。
 
 ### Step 6 · 声明权限
 
@@ -410,25 +432,27 @@ export default defineModule({
     {
       path: 'system/user-access',           // 多级路径直接写，无需改路由表
       load: () => import('@/pages/user-access/UserAccessPage'),
-      permissions: ['identity:read'],        // ① 路由守卫：手输 URL 也会 403
-    },
-  ],
-  nav: [
-    {
-      label: '用户与权限',
-      path: '/system/user-access',
-      icon: ShieldCheck,
-      group: '系统管理',
-      groupOrder: 9,                         // 排在业务分组之后
-      permissions: ['identity:read'],        // ② 导航：无权限自动隐藏
+      permissions: ['identity:read'],        // ① 只写一次：路由 / 侧栏 / 宫格三处共用
+      nav: {                                // ② 侧栏入口：path 与 permissions 从本路由继承
+        label: '用户与权限',
+        icon: ShieldCheck,
+        group: '系统管理',
+        groupOrder: 9,                      // 排在业务分组之后
+      },
+      // card: { subtitle: '…', gradient: '…', order: 4 },  // ③ 需要宫格时打开
     },
   ],
 });
 ```
 
+`nav` / `card` 挂在路由上，**不写 `path` 与 `permissions`**：注册表从所属 route 派生。
+以前平级的 `nav[]` / `cards[]` 要把同一个路径和同一组权限各抄三遍，改权限漏一处就是
+「入口可见但点进去 403」；现在从结构上不可能发生。`card.title` / `card.icon` 缺省取
+`nav.label` / `nav.icon`，需要不同值时才显式覆盖。
+
 生效链路（全部自动，无需改骨架）：
 
-1. 侧边栏 / 宫格按 `permissions` 过滤；
+1. 侧边栏 / 宫格按派生自 route 的 `permissions` 过滤；
 2. 直接访问 URL → `<RequirePermission>` 渲染 403（`ForbiddenState`）；
 3. 权限点来源 `Subject.permissions`，由登录模块写入 session。
 
@@ -438,8 +462,9 @@ export default defineModule({
 > 显式加进 `NO_PERMISSION_PATHS`（并在注释里写清理由），不要靠"忘了写"来豁免。
 >
 > 权限码拼错同样不会报错，只会让入口对**所有人**永久隐藏。`router.test.ts` 还会检查
-> 每个声明的权限点都在 `entities/role/model/permission-catalog.ts` 里，而那份目录由
-> `permission-catalog.test.ts` 与后端各模块的 `PermissionSpec` 逐条比对——三处任一漂移都会红。
+> 每个声明的权限点都在 `entities/role/model/permission-catalog.ts` 里；那份目录现在只是
+> `shared/api/permissions.ts`（后端 `app export-openapi` 生成物）的薄壳，由后端
+> `test_permission_catalog_is_up_to_date` 做字节比对，漂移会直接让 CI 红。
 
 ### 5.5 页面里的按钮级门禁
 
@@ -773,7 +798,7 @@ export const routes: MockRoute[] = [
 | 页面里 `import { http }` | 请求散落、无法统一错误处理 | 写进 `entities/*/api` |
 | 两个模块共用 `['list']` 这种 key | 相互覆盖缓存 | `createQueryKeys` |
 | 用 `isAdmin` 判断权限 | 角色一变到处改 | 权限点 `user:manage` |
-| 在 `Sidebar` 里判断业务 | 骨架被业务污染 | `nav[].permissions` / `nav[].badge` |
+| 在 `Sidebar` 里判断业务 | 骨架被业务污染 | `routes[].permissions` / `routes[].nav.badge` |
 | 为了跑通把权限从清单里删掉 | 上线漏门禁 | 用 `viewer` 账号登录验证，别删声明 |
 | mock 返回“方便页面”的结构 | 接真后端时全面返工 | 严格按契约 |
 | `as any` 绕过类型 | 契约漂移无人发现 | 改 types 或让后端改字段 |
@@ -791,12 +816,13 @@ export const routes: MockRoute[] = [
 | 新增 `src/shared/access/**` | 身份与权限内核 | 登录模块写 `setSubject` |
 | `src/mocks` 拆成 `kernel / registry / routes` | mock 可扩展 | 业务 mock 放 `modules/<id>/mock.ts` |
 | 新增 `scripts/gen-module.mjs` | 脚手架 | `npm run gen:module` |
-| 侧栏角标读取 `nav[].badge` | 骨架不再依赖 task 实体 | 已由 task-center 模块提供 |
+| 侧栏角标读取 `routes[].nav.badge` | 骨架不再依赖 task 实体 | 已由 task-center 模块提供 |
 | 路由支持 `layout: 'bare'` | 登录页这类整页能脱离外壳 | 新功能默认不写，保持 `'shell'` |
 | 新增 `RequireAuth` + 会话三态 | 未登录自动回登录页、刷新不闪屏 | 无需操作 |
 | `http.ts` 接 401 → `signOut()` | 令牌失效全站一致 | 无需操作 |
 | 新增插槽 `user-menu.items` | 账号菜单项由模块注入 | 加菜单项写 `slots[]` |
 | 新增 `src/modules/auth/**` | 登录页 + 账号菜单 | 只读参考，别改 |
+| `nav[]` / `cards[]` 改为 `routes[].nav` / `routes[].card` | 路径与权限只写一次 | 模块清单按 §9 速查改写，产物不变 |
 
 历史页面（`pages/*`）暂留在原地，通过清单注册；新页面建议同样放 `pages/<id>/`，与模块目录同名，便于对照。
 
@@ -805,21 +831,30 @@ export const routes: MockRoute[] = [
 ## 9. 附：注册表 API 速查
 
 ```ts
-// 清单
-defineModule({ id, title?, routes, nav?, cards?, slots? })
+// 清单：侧栏与宫格挂在路由上，不再是平级数组
+defineModule({ id, title?, routes, slots? })
 
 // routes[]
-{ path: string, load: () => Promise<{ default: ComponentType }>, permissions?: string[], layout?: 'shell' | 'bare' }
-
-// nav[]
-{ label, path, icon, group, groupOrder?, order?, permissions?, badge?: ComponentType }
-
-// cards[]
-{ title, subtitle, path, icon, gradient, order?, matchPrefixes?, permissions? }
+{
+  path: string,
+  load: () => Promise<{ default: ComponentType }>,
+  permissions?: string[],              // 一处声明，nav / card 自动继承
+  layout?: 'shell' | 'bare',
+  nav?: {                             // 声明即生成侧栏入口
+    label, icon, group, groupOrder?, order?, badge?: ComponentType
+  },
+  card?: {                            // 声明即生成首页宫格
+    subtitle, gradient, title?, icon?, order?, matchPrefixes?
+  },
+}
 
 // slots[]
 { name: SlotName, component: ComponentType, order?, permissions? }
 ```
+
+`nav` / `card` 里**没有** `path` 与 `permissions`：注册表从所属 route 派生。
+`card.title` 缺省取 `nav.label`（再兜底到模块 `title`），`card.icon` 缺省取 `nav.icon`；
+两者都没写 `icon` 时注册期直接报错。`bare` 路由不允许声明 `nav` / `card`。
 
 启动期校验（不满足直接抛错，错误信息含双方模块 id）：
 

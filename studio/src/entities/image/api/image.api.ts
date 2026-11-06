@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/shared/api/http';
 import type { PageParams, Paginated } from '@/shared/api/types';
 import type { GenerateImagePayload, ImageJob } from '../model/types';
+import { imagePollInterval } from '../model/status';
 
 export const imageKeys = {
   all: ['images'] as const,
@@ -19,6 +20,9 @@ export function useImages(page = 1, pageSize?: number) {
     // 页码进 key：翻页是不同的一屏数据，共用缓存会先闪上一页
     queryKey: imageKeys.list(page),
     queryFn: () => imageApi.list({ page, pageSize }),
+    // POST 只返回 201 queued，成图 3–12 秒后才回填 outputUrl；
+    // invalidateQueries 的「立刻重拉一次」看不到结果，必须条件轮询
+    refetchInterval: (query) => imagePollInterval(query.state.data),
   });
 }
 

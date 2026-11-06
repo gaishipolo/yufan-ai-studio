@@ -40,6 +40,16 @@ export interface ModuleRouteDef {
    * 只有确实需要「脱离应用框架」的页面才用 bare；业务页面一律保持默认。
    */
   layout?: 'shell' | 'bare';
+  /**
+   * 侧栏入口的**展示信息**。声明后由注册表派生 `NavItemDef`，
+   * `path` 与 `permissions` 一律继承本路由，不再重复写第三遍。
+   */
+  nav?: RouteNavDef;
+  /**
+   * 首页宫格卡片的**展示信息**。同样由注册表派生，
+   * `path` / `permissions` 继承本路由，`title` / `icon` 缺省取 `nav` 的值。
+   */
+  card?: RouteCardDef;
 }
 
 export interface NavItemDef {
@@ -75,6 +85,20 @@ export interface ModuleCardDef {
   permissions?: Permission[];
 }
 
+/* ---------------- 模块声明用的「展示部分」----------------
+ * 只写差异：`path` 与 `permissions` 由所属 route 继承，声明里不再出现。
+ * 用 Omit 而不是再抄一遍字段，避免 NavItemDef / ModuleCardDef 加字段时这里悄悄漏掉。
+ */
+
+export type RouteNavDef = Omit<NavItemDef, 'path' | 'permissions'>;
+
+export type RouteCardDef = Omit<ModuleCardDef, 'path' | 'permissions' | 'title' | 'icon'> & {
+  /** 缺省取 `nav.label`；没有 nav 时取模块 title */
+  title?: string;
+  /** 缺省取 `nav.icon` */
+  icon?: LucideIcon;
+};
+
 /** 骨架暴露的 UI 插槽。新增插槽属于骨架变更，需评审；新增「插槽内容」不用 */
 export type SlotName =
   | 'topbar.actions'
@@ -99,11 +123,14 @@ export interface SlotContribution {
 export interface AppModule {
   /** 全局唯一，kebab-case，通常与目录名一致 */
   id: string;
-  /** 仅用于调试与错误信息 */
+  /** 仅用于调试与错误信息；没写 nav / card 时也是卡片标题的兜底 */
   title?: string;
+  /**
+   * 路由是唯一的入口声明：侧栏与宫格卡片作为 `route.nav` / `route.card` 挂在路由上。
+   * 曾经这里有平级的 `nav[]` / `cards[]`，同一个 path 和同一组 permissions 要写三遍，
+   * 改权限漏一处就是「入口可见但 403」——现在由注册表派生，见 create-registry.ts。
+   */
   routes: ModuleRouteDef[];
-  nav?: NavItemDef[];
-  cards?: ModuleCardDef[];
   slots?: SlotContribution[];
 }
 

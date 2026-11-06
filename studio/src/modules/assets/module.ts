@@ -9,28 +9,18 @@ export default defineModule({
       path: 'assets',
       load: () => import('@/pages/assets/AssetsPage'),
       permissions: ['asset:read'],
-    },
-  ],
-  nav: [
-    {
-      label: '素材资产库',
-      path: '/assets',
-      icon: FolderOpen,
-      group: '资产与数据',
-      groupOrder: 3,
-      order: 1,
-      permissions: ['asset:read'],
-    },
-  ],
-  cards: [
-    {
-      title: '素材资产库',
-      subtitle: '图 / 视频 / 音频',
-      path: '/assets',
-      icon: FolderOpen,
-      gradient: 'linear-gradient(140deg,#ffd24a,#f5a623)',
-      order: 3,
-      permissions: ['asset:read'],
+      nav: {
+        label: '素材资产库',
+        icon: FolderOpen,
+        group: '资产与数据',
+        groupOrder: 3,
+        order: 1,
+      },
+      card: {
+        subtitle: '图 / 视频 / 音频',
+        gradient: 'linear-gradient(140deg,#ffd24a,#f5a623)',
+        order: 3,
+      },
     },
   ],
 });

@@ -20,6 +20,8 @@ os.environ.update(
         "DEBUG": "false",
         "DB_URL": f"sqlite+aiosqlite:///{_TMP_DB.as_posix()}",
         "WORKER_ENABLED": "false",
+        # 周期任务会在后台每 N 秒跑一次，测试里关掉，避免「断言时刚好被巡检动过」
+        "SCHEDULER_ENABLED": "false",
         "QUEUE_DRIVER": "memory",
         "AI_PROVIDER": "echo",
         "AI_PROVIDERS": "echo",
