@@ -74,6 +74,7 @@ Vite 会把 `/api` 代理到 `VITE_API_PROXY_TARGET`（默认 `http://127.0.0.1:
 | `app export-openapi` | 导出接口契约：`docs/openapi.json` + `docs/API.md` + 前端 `schema.ts` |
 | `app import-archive-index [--dry-run]` | 把归档目录的 JSON 索引补进 `assets` 表（幂等，不删 JSON） |
 | `app migrate-storage [--dry-run] [--delete-source]` | `local → s3` 切换前跑：把 `STORAGE_LOCAL_ROOT` 的对象按 key 搬进桶，并把库里 `/static/...` 旧地址改写成桶地址 |
+| `app migrate-blobs [--dry-run] [--delete-source]` | 归档素材改内容寻址布局（`blobs/<摘要>`），幂等；可原地跑 |
 | `app prune-logins [--days 90]` | 清理过期的登录审计（默认取 `LOGIN_EVENT_RETENTION_DAYS`） |
 | `app new-module x --label 中文名` | 生成新模块脚手架（含权限声明） |
 | `alembic revision --autogenerate -m "xxx"` | 生成迁移（生产用） |
@@ -107,8 +108,8 @@ S3_USE_SSL=false                    # 内网 http endpoint 时必须关
    鉴权头。`AllowOrigin` 填前端来源（不要 `*` 配私有桶）、`AllowMethods` 至少
    `GET, HEAD`、`ExposeHeaders` 带上 `Content-Length, Content-Range, ETag`
    （视频拖进度条要用 `Range`）。
-3. **归档盘与对象存储是两套。** 归档素材（`/assets/archive/*`）始终读
-   `MEDIA_ARCHIVE_ROOT`，不会因为切了 `STORAGE_DRIVER` 而搬到桶里。
+3. **归档盘与对象存储是两套。** 归档素材（`/assets/archive/*`）读 `MEDIA_ARCHIVE_ROOT`
+   （`ARCHIVE_DRIVER=local`），不会因为切了 `STORAGE_DRIVER` 而搬到桶里。
 
 本机起 MinIO（`minio/minio` 已从 Docker Hub 下架，用社区镜像）：
 
@@ -117,6 +118,33 @@ docker run -d --name yufan-minio -p 19000:9000 -p 19001:9001 \
   -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin123 \
   elestio/minio:latest server /data --console-address ":9001"
 ```
+
+### 归档素材的字节布局
+
+素材字节按 **sha256 内容寻址**：`blobs/ab/abcdef…{ext}`（前两位分桶），
+预览与转码流按同一摘要命名：`previews/ab/abcdef….hd-v2.{jpg,mp4}`。带来的三个变化：
+
+- 同一份字节登记到不同分类、被多个封装引用，**物理上只有一份**；
+- "字节还是不是当初那份"不再需要检测 —— key 就是摘要，变了就是另一个 key；
+  发布校验只查 key 在不在（`PackService.verify`），不再读全量重算；
+- 运行快照用硬链接（`storage.link`），`run/inputs/` 里原片只占一份字节，
+  不再是「`reference-video.mp4` + `source-original.mp4`」两份 300MB 副本。
+
+存量的 `library/<分类>/<年月>/<id>.<ext>` 旧布局**不改也能继续读**（按 key 直达），
+搬迁是可选动作：
+
+```bash
+app migrate-blobs --dry-run     # 先看有多少条要搬
+app migrate-blobs               # 搬字节 + 改写 storage_key/cover_key + 重写镜像 JSON
+app migrate-blobs --delete-source   # 确认无回滚需求后再删旧文件
+```
+
+命令幂等（已是新布局的行直接跳过）。旧文件默认保留一周作为回滚依据。
+
+**归档驱动也能切远端，但还差最后一公里**：`ARCHIVE_DRIVER=s3` 需要
+`S3_ARCHIVE_BUCKET`（与 `S3_BUCKET` **分开**——归档桶不开放匿名读，素材桶是公开读的），
+端点与凭据复用 `S3_*`。目前 `packs` / `runs` 的索引仍靠目录 `glob` 枚举
+（见 `docs/TODO.md` T17），所以整体切换还不能上线；素材字节层已经与驱动无关。
 
 ---
 

@@ -1,15 +1,16 @@
 """命令行入口：`app <command>`。
 
-    app serve                          # 启动开发服务器
-    app init-db                        # 按 ORM 元数据建表
-    app seed [--reset]                 # 灌演示数据
-    app create-admin --username admin  # 创建/修复超级管理员（生产首启必跑一次）
-    app modules                        # 列出已发现的模块与权限点
-    app models                         # 列出可用模型（供应商路由结果）
-    app export-openapi                 # 导出接口契约（docs/ + 前端 TS 类型）
-    app import-archive-index           # 归档目录的 JSON 索引 → assets 表（幂等）
-    app migrate-storage                # 把本地 storage 根目录的对象搬进当前驱动（local → s3）
-    app new-module voice --label 配音   # 生成新模块脚手架
+app serve                          # 启动开发服务器
+app init-db                        # 按 ORM 元数据建表
+app seed [--reset]                 # 灌演示数据
+app create-admin --username admin  # 创建/修复超级管理员（生产首启必跑一次）
+app modules                        # 列出已发现的模块与权限点
+app models                         # 列出可用模型（供应商路由结果）
+app export-openapi                 # 导出接口契约（docs/ + 前端 TS 类型）
+app import-archive-index           # 归档目录的 JSON 索引 → assets 表（幂等）
+app migrate-storage                # 把本地 storage 根目录的对象搬进当前驱动（local → s3）
+app migrate-blobs                  # 归档素材改内容寻址布局（key = sha256，幂等）
+app new-module voice --label 配音   # 生成新模块脚手架
 """
 
 from __future__ import annotations
@@ -22,7 +23,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # 只用于注解：命令行入口保持「用到才 import」，别把启动链拖长
+    from infra.archive.base import ArchiveStorage
     from infra.storage.base import ObjectStorage
+    from modules.asset.models import Asset
 
 
 def _cmd_serve(args: argparse.Namespace) -> None:
@@ -54,8 +57,7 @@ def _cmd_seed(args: argparse.Namespace) -> None:
 
     if get_settings().app_env == "prod" and not args.force:
         print(
-            "生产环境拒绝写入演示数据：seed 会创建口令固定的账号。"
-            "确需写入请显式加 --force",
+            "生产环境拒绝写入演示数据：seed 会创建口令固定的账号。确需写入请显式加 --force",
             file=sys.stderr,
         )
         raise SystemExit(1)
@@ -297,9 +299,7 @@ def _cmd_migrate_storage(args: argparse.Namespace) -> None:
 
     storage = get_storage()
     report = asyncio.run(
-        migrate_local_objects(
-            storage, root, dry_run=args.dry_run, delete_source=args.delete_source
-        )
+        migrate_local_objects(storage, root, dry_run=args.dry_run, delete_source=args.delete_source)
     )
     print(f"源目录：{root}")
     print(f"目标驱动：{settings.storage_driver}")
@@ -339,6 +339,102 @@ async def _rewrite_public_urls(storage: ObjectStorage) -> tuple[int, int]:
             await session.commit()
 
     return rewritten, len(rows)
+
+
+def _cmd_migrate_blobs(args: argparse.Namespace) -> None:
+    """把归档素材搬到「按 sha256 内容寻址」的布局（`blobs/ab/abcdef…`）。
+
+    旧布局是「分类 + 年月 + 随机 id」，于是同一份字节可以有多个副本、也可以用
+    同名覆盖 —— "这份字节还是不是当初那份"只能靠每次读出来重算 sha256 来猜。
+    搬到内容寻址之后 key 就是摘要，发布校验与运行快照都不再需要读全量。
+
+    幂等：已经是 blob 布局的行直接跳过，跑第二遍 `moved=0`。
+    """
+    moved, already, failed = asyncio.run(
+        _migrate_archive_blobs(dry_run=args.dry_run, delete_source=args.delete_source)
+    )
+    print(f"已迁移 {moved} 条，已是新布局 {already} 条，缺字节 {failed} 条")
+    if args.dry_run:
+        print("（dry-run：未写库、未搬文件）")
+    if failed:
+        raise SystemExit(1)
+
+
+async def _migrate_archive_blobs(*, dry_run: bool, delete_source: bool) -> tuple[int, int, int]:
+    from sqlalchemy import select
+
+    from db.session import get_session_factory
+    from infra.archive import (
+        BlobStore,
+        clip_key,
+        get_archive_storage,
+        is_blob_key,
+        preview_key,
+    )
+    from modules.asset.models import Asset
+    from modules.asset.schema import AssetSource
+
+    storage = get_archive_storage()
+    blobs = BlobStore(storage)
+    moved = already = failed = 0
+
+    async with get_session_factory()() as session:
+        rows = (
+            (await session.execute(select(Asset).where(Asset.source == AssetSource.ARCHIVE)))
+            .scalars()
+            .all()
+        )
+        for row in rows:
+            if is_blob_key(row.storage_key):
+                already += 1
+                continue
+            old_key = row.storage_key
+            if not storage.exists(old_key):
+                failed += 1
+                print(f"  缺字节 {row.id} ← {old_key}", file=sys.stderr)
+                continue
+            if not row.sha256:
+                # 内容寻址靠摘要命名，没有摘要就只能是"位置寻址的孤儿"，跳过并报出来
+                failed += 1
+                print(f"  缺摘要 {row.id} ← {old_key}", file=sys.stderr)
+                continue
+            if dry_run:
+                moved += 1
+                continue
+
+            key, _ = blobs.adopt(old_key, row.sha256, Path(old_key).suffix)
+            old_cover = row.cover_key
+            row.storage_key = key
+            if old_cover and not old_cover.startswith("previews/"):
+                target = (
+                    clip_key(row.sha256) if old_cover.endswith(".mp4") else preview_key(row.sha256)
+                )
+                if storage.exists(old_cover):
+                    with storage.materialize(old_cover) as source:
+                        storage.copy(source, target, None)
+                    row.cover_key = target
+            await session.commit()
+            _rewrite_asset_mirror(storage, row)
+            if delete_source:
+                storage.remove(old_key)
+                if old_cover and old_cover != row.cover_key:
+                    storage.remove(old_cover)
+            moved += 1
+
+    return moved, already, failed
+
+
+def _rewrite_asset_mirror(storage: ArchiveStorage, row: Asset) -> None:
+    """镜像 JSON 的 `path` 也要跟着搬：替换模板读的是它，不是 DB。"""
+    key = f"catalog/assets/{row.id}.json"
+    if not storage.exists(key):
+        return
+    payload = storage.read(key)
+    if not isinstance(payload, dict):
+        return
+    payload["path"] = row.storage_key
+    payload["previewPath"] = row.cover_key or None
+    storage.write(key, payload)
 
 
 def _cmd_new_module(args: argparse.Namespace) -> None:
@@ -439,18 +535,14 @@ def main(argv: list[str] | None = None) -> int:
         help="把归档目录的 JSON 索引导入 assets 表（幂等，不删 JSON）",
     )
     p_import.add_argument("--root", default="", help="归档根目录，默认取 MEDIA_ARCHIVE_ROOT")
-    p_import.add_argument(
-        "--dry-run", action="store_true", help="只统计将要发生的变更，不写库"
-    )
+    p_import.add_argument("--dry-run", action="store_true", help="只统计将要发生的变更，不写库")
     p_import.set_defaults(func=_cmd_import_archive_index)
 
     p_migrate = sub.add_parser(
         "migrate-storage",
         help="把本地 storage 目录的对象按 key 搬进当前驱动（切 s3 前跑一次）",
     )
-    p_migrate.add_argument(
-        "--root", default="", help="源目录，默认取 STORAGE_LOCAL_ROOT"
-    )
+    p_migrate.add_argument("--root", default="", help="源目录，默认取 STORAGE_LOCAL_ROOT")
     p_migrate.add_argument("--dry-run", action="store_true", help="只统计文件数，不写入")
     p_migrate.add_argument(
         "--delete-source",
@@ -463,6 +555,18 @@ def main(argv: list[str] | None = None) -> int:
         help="不改写落库的 /static 旧地址（只在明确要保留本地驱动可读时使用）",
     )
     p_migrate.set_defaults(func=_cmd_migrate_storage)
+
+    p_blobs = sub.add_parser(
+        "migrate-blobs",
+        help="归档素材改内容寻址布局（key = sha256，幂等；发布校验不再读全量）",
+    )
+    p_blobs.add_argument("--dry-run", action="store_true", help="只统计，不写库不搬文件")
+    p_blobs.add_argument(
+        "--delete-source",
+        action="store_true",
+        help="搬成功后删除旧位置的文件（默认保留：旧文件是回滚依据）",
+    )
+    p_blobs.set_defaults(func=_cmd_migrate_blobs)
 
     p_new = sub.add_parser("new-module", help="生成新模块脚手架")
     p_new.add_argument("name", help="模块名（snake_case），同时作为目录名与 pipeline kind")

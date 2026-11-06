@@ -19,7 +19,9 @@ from core.config import settings
 from core.context import CurrentUser
 from core.exceptions import BadRequest, Conflict, UpstreamError
 from infra.ai.libtv import get_libtv_settings
+from infra.archive import checksum
 from infra.archive.local import get_archive_settings
+from modules.template.replacement_repository import ReplacementRepository
 from modules.template.replacement_schema import PrepareReplacement
 from modules.template.replacement_service import BRIDGE, prepare
 from modules.template.replacement_worker import schedule
@@ -98,9 +100,7 @@ def test_upload_and_owner_scoping(client: TestClient, archive_root: Path) -> Non
         client.app.dependency_overrides.clear()
 
 
-def test_archive_rejects_traversal_and_wrong_bytes(
-    client: TestClient, archive_root: Path
-) -> None:
+def test_archive_rejects_traversal_and_wrong_bytes(client: TestClient, archive_root: Path) -> None:
     with pytest.raises(BadRequest):
         archive.within(archive_root, "../outside")
     response = client.post(
@@ -161,9 +161,16 @@ def test_prepare_is_self_contained_and_idempotent(
         prepare(payload.model_copy(update={"target": "不同目标"}), "u_001")
 
 
-def test_prepare_detects_input_changes(materials: tuple[dict, dict], archive_root: Path) -> None:
+def test_prepare_snapshots_inputs_with_matching_digests(
+    materials: tuple[dict, dict], archive_root: Path
+) -> None:
+    """快照必须自洽：`run/inputs` 的实际摘要 == `file_checksums` 的登记值。
+
+    旧版这里验的是「素材字节被改过就拒绝准备」。内容寻址之后那个场景不会发生
+    （key 就是 sha256，字节变了就是另一个 key），真正要守住的是快照一致性：
+    桥接层会重算 inputs 下每个文件的 sha256 与 `file_checksums` 比对，对不上拒绝执行。
+    """
     source, image = materials
-    (archive_root / image["path"]).write_bytes(b"changed")
     payload = PrepareReplacement(
         request_id=uuid.uuid4(),
         kind="character",
@@ -171,8 +178,21 @@ def test_prepare_detects_input_changes(materials: tuple[dict, dict], archive_roo
         source_id=source["id"],
         reference_ids=[image["id"]],
     )
-    with pytest.raises(BadRequest):
-        prepare(payload, "u_001")
+    run = prepare(payload, "u_001")
+    path = ReplacementRepository().path(run.id)
+
+    manifest = json.loads((path / "run.json").read_text(encoding="utf-8"))
+    checksums = manifest["file_checksums"]
+    bindings = json.loads((path / "inputs/input-map.json").read_text(encoding="utf-8"))
+    assert bindings, "快照必须记录本次用到的每张图"
+    for binding in bindings:
+        assert checksum(path / binding["file"]) == checksums[binding["file"]]
+
+    # 原片在 run 目录里只占一份字节：两个文件名是同一份（硬链接），
+    # 以前这里是两份 300MB 的副本，正是共享盘从 200MB 涨到 500MB 的来源。
+    reference = path / "inputs/reference-video.mp4"
+    original = path / "inputs/source-original.mp4"
+    assert reference.stat().st_ino == original.stat().st_ino
 
 
 def test_pack_selection_uses_published_configuration(
@@ -381,8 +401,7 @@ def test_bridge_only_reaches_submission_after_zero_quote(
     script = (
         f"import {{main}} from {json.dumps(BRIDGE.as_uri())};"
         f"process.argv={json.dumps(['node', 'test', 'upload', str(path), str(legacy)])};"
-        "await main();"
-        + ("process.argv[2]='submit';await main();" if quote == 0 else "")
+        "await main();" + ("process.argv[2]='submit';await main();" if quote == 0 else "")
     )
     response = subprocess.run(
         [get_libtv_settings().node, "--input-type=module", "-e", script],
@@ -518,14 +537,16 @@ def test_poll_never_overwrites_the_charged_credits_with_zero(
     )
     path = Path(run.archive_path)
     meta = archive.read(path / "run.json")
-    meta.update({
-        "status": "running",
-        "billing_mode": "credits",
-        "task_id": "20600000000000000001",
-        # 已被旧版轮询抹成 0，必须能从提交回执里自愈。
-        "credits": 0,
-        "estimated_credits": 240,
-    })
+    meta.update(
+        {
+            "status": "running",
+            "billing_mode": "credits",
+            "task_id": "20600000000000000001",
+            # 已被旧版轮询抹成 0，必须能从提交回执里自愈。
+            "credits": 0,
+            "estimated_credits": 240,
+        }
+    )
     archive.save(path / "run.json", meta)
     archive.save(
         path / "records/submission.json",

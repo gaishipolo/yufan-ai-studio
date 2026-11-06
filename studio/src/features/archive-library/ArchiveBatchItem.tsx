@@ -62,7 +62,7 @@ export function ArchiveBatchItem({item, startedAt, assets, onCheck}: ArchiveBatc
           <p className="text-[11px] text-ink-soft">列表里找到同名同大小的记录。确认是这次上传的文件吗？</p>
           {candidates.slice(0, 3).map(asset => <div key={asset.id} className="flex flex-wrap items-center gap-2">
             <span className="min-w-0 flex-1 truncate text-[11px] text-ink-mute">
-              {formatDateTime(asset.createdAt)} · {asset.path}
+              {formatDateTime(asset.createdAt)} · {asset.name}
             </span>
             <Button size="sm" onClick={() => confirm(item.key, asset.id)}>确认是这条</Button>
           </div>)}

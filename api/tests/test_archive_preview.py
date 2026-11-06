@@ -16,8 +16,9 @@ from fastapi.testclient import TestClient
 from PIL import Image
 from tests_archive_helpers import archive
 
+from infra.archive import clip_key, preview_key
 from infra.archive.local import get_archive_settings
-from infra.media_probe import PREVIEW_VERSION, create_browser_preview, inspect, normalize_duration
+from infra.media_probe import create_browser_preview, inspect, normalize_duration
 
 
 @pytest.fixture
@@ -76,8 +77,9 @@ def test_stream_serves_playable_derivative_and_preserves_original(
     response = client.get(f"/api/v1/assets/archive/{media['id']}/stream")
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("video/mp4")
-    # 派生文件名带画质版本：升级转码参数时旧缓存自动失效，不需要手工清目录
-    derived = archive_root / "library/previews" / f"{media['id']}.{PREVIEW_VERSION}.mp4"
+    # 派生流按素材摘要命名（`previews/ab/abcdef…hd-v2.mp4`）：同一原片只派生一次，
+    # 版本号仍在 key 里，升级转码参数时旧缓存自动失效
+    derived = archive_root / clip_key(media["sha256"])
     assert derived.is_file()
     assert derived.read_bytes() == response.content
     assert source.read_bytes() == original  # 派生预览绝不覆盖原片
@@ -101,14 +103,12 @@ def test_portrait_thumbnail_keeps_detail(client: TestClient, archive_root: Path)
     response = client.get(media["previewUrl"])
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("image/jpeg")
-    thumbnail = archive_root / "library/previews" / f"{media['id']}.{PREVIEW_VERSION}.jpg"
+    thumbnail = archive_root / preview_key(media["sha256"])
     assert thumbnail.read_bytes() == response.content
     with Image.open(thumbnail) as image:
         assert image.size == (720, 1280)
     assert client.get(f"/api/v1/assets/archive/{media['id']}/stream").status_code == 200
-    info = inspect(
-        archive_root / "library/previews" / f"{media['id']}.{PREVIEW_VERSION}.mp4", ".mp4"
-    )
+    info = inspect(archive_root / clip_key(media["sha256"]), ".mp4")
     assert (info["width"], info["height"]) == (720, 1280)
 
 

@@ -10,11 +10,15 @@ from __future__ import annotations
 import hashlib
 import sys
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import AbstractContextManager, contextmanager
 from pathlib import Path
-from typing import IO, Protocol
+from typing import IO, Protocol, TypeAlias
 
 from core.exceptions import AppError, BadRequest, Conflict
+
+# 归档位置：`str` 是存储无关的 key（新代码一律用它），`Path` 只为兼容既有调用点。
+# 本地驱动两者等价（Path 会被折成相对 key），纯 HTTP 驱动只认 str。
+Location: TypeAlias = str | Path
 
 if sys.platform == "win32":
     import msvcrt
@@ -79,18 +83,53 @@ def lease(
 
 
 class ArchiveStorage(Protocol):
-    """归档盘最小接口。
+    """归档存储最小接口。
 
-    **已知边界**：接口以 `Path` 表达位置，所以实现必须是「有本地路径语义」的存储
-    （本地目录、SMB/UNC、挂载点的对象存储网关）。要接纯 HTTP 的 S3/MinIO，
-    得先在协议层把 `resolve() -> Path` 换成句柄，那是另一件事，别在驱动里偷偷绕。
+    **位置用 key 表达，不用本地路径。** 早期版本这里是 `resolve() -> Path`，
+    等于把「实现必须有本地路径语义」写进了协议（本地目录、SMB、挂载点网关才行，
+    纯 HTTP 的 S3/MinIO 接不进来）。现在分成两类方法：
+
+    - **元数据**：`read` / `write` 收 key，驱动自己决定怎么落（本地 JSON 文件、
+      对象存储的一个小对象、以后换成 DB 也行）。
+    - **字节**：需要真实文件才能交给 ffmpeg / 桥接层 / 上游 SDK，用
+      `materialize(key)` 拿一个**只读的本地路径**，用完即弃。本地驱动直接交出
+      原路径（零拷贝），远端驱动下到本地缓存再交出。
+
+    内容寻址的约定：素材字节的 key 就是它的 sha256（见 `infra/archive/blobs.py`）。
+    于是「字节会不会变」不再是需要检测的问题——同一个 key 永远指同一份字节，
+    变了就是另一个 key。这条约定取代了原先「发布前重算 sha256 发现被改」的做法。
     """
 
-    def root(self) -> Path: ...
-    def resolve(self, key: str) -> Path: ...
-    def read(self, path: Path) -> object: ...
-    def write(self, path: Path, value: object) -> None: ...
-    def copy(self, source: Path, destination: Path, digest: str | None = None) -> str: ...
+    def root(self) -> Path:
+        """本地工作根目录；仅本地类驱动可用，远端驱动应抛 `UpstreamError`。"""
+        ...
+
+    def resolve(self, key: str) -> Path:
+        """key → 本地路径。**只对本地类驱动成立**，业务层不要依赖它取字节。"""
+        ...
+
+    def read(self, location: Location) -> object: ...
+    def write(self, location: Location, value: object) -> None: ...
+    def exists(self, location: Location) -> bool: ...
+
+    def copy(self, source: Path, destination: Location, digest: str | None = None) -> str:
+        """把本地文件写入 destination，返回 sha256；目标已存在且摘要不符则拒绝覆盖。"""
+        ...
+
+    def link(self, source: Path, destination: Location, digest: str | None = None) -> str:
+        """比 `copy` 更省：同一文件系统硬链接，远端驱动走服务端 copy。
+
+        语义与 `copy` 相同的可见性保证（目标已存在且摘要不符则拒绝），但允许
+        实现省掉字节搬运。调用方必须保证 `source` 之后不再被原地修改——
+        内容寻址的 blob 满足这一点，临时上传文件不满足。
+        """
+        ...
+
+    def materialize(self, location: Location) -> AbstractContextManager[Path]:
+        """交出可读的本地路径；退出时远端驱动负责回收缓存。"""
+        ...
+
+    def remove(self, location: Location) -> None: ...
 
 
 def within(base: Path, relative: str) -> Path:

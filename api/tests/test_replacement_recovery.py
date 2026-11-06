@@ -111,22 +111,24 @@ os._exit(0)  # 不执行 finally，模拟真正崩溃，而非只杀 Windows ven
         pass
 
 
-def test_stale_worker_lock_cleanup_requires_confirmed_exit(tmp_path, monkeypatch):
-    records = tmp_path / "records"
+def test_stale_worker_lock_cleanup_requires_confirmed_exit(archive_root, monkeypatch):  # noqa: F811
+    # run 目录必须落在归档根内：`storage.read` 只接受根内的位置（越界即拒绝），
+    # 这条约束在把归档协议句柄化之后才真正生效。
+    records = archive_root / "records"
     records.mkdir()
     lock = records / "worker.lock"
     lock.write_text("old")
     storage = LocalArchiveStorage()
     with pytest.raises(Conflict):
-        clear_finished_lock(tmp_path, storage)
+        clear_finished_lock(archive_root, storage)
     storage.write(
         records / "executor-result.json", ExecutorResult(node_pid=os.getpid()).model_dump()
     )
     with pytest.raises(Conflict):
-        clear_finished_lock(tmp_path, storage)
+        clear_finished_lock(archive_root, storage)
     assert lock.exists()
     monkeypatch.setattr("infra.ai.libtv_process.pid_alive", lambda pid: False)
-    clear_finished_lock(tmp_path, storage)
+    clear_finished_lock(archive_root, storage)
     assert not lock.exists()
 
 

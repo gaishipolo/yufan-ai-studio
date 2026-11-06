@@ -42,8 +42,9 @@ export function ArchiveDetail({asset, onClose}: ArchiveDetailProps) {
       </div>
       {asset.path && <details className="rounded-lg border border-line p-3 text-xs">
         <summary className="cursor-pointer text-ink-soft">归档信息</summary>
-        <p className="mt-2 break-all text-ink-mute">归档位置：{asset.path}</p>
+        <p className="mt-2 break-all text-ink-mute">存储键：{asset.path}</p>
         <p className="mt-1 break-all text-ink-mute">SHA-256：{asset.sha256}</p>
+        <p className="mt-1 text-ink-soft">字节按摘要存放，同一份文件在归档里只占一份空间。</p>
       </details>}
     </div>
   </Modal>;

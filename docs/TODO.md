@@ -26,7 +26,10 @@
 | T13 | 两个运维脚本绕过 `ARCHIVE_DRIVER` | 换 S3 后脚本仍写本地盘 | 后端 |
 | T14 | `REVIEW_CHECKLIST` 缺两条反模式 | 同类问题第五次出现 | 文档 |
 | T15 | 生成结果 URL 落库（`image_jobs.output_url`） | 换存储驱动后历史链接全部失联 | 后端 |
-| T16 | 归档协议是 `Path` 形态，接不了纯 HTTP 的 S3 | 模板库/归档库搬不进桶 | 后端（要改协议） |
+| T16 | 归档协议 `Path` 形态 → 已句柄化，剩 `root()` 枚举 | `ARCHIVE_DRIVER=s3` 还差最后一公里 | 后端 |
+| T17 | `packs` / `pack_versions` / `runs` 仍靠目录 `glob` 枚举 | 归档驱动切远端后枚举不到 | 后端 |
+| T18 | 内容寻址的孤儿 blob 没有 GC | 上传失败会留下没人引用的字节 | 后端 |
+| T19 | 归档切 S3 后视频流应走预签名 307 | 现在靠本地缓存 + `FileResponse`，首帧要全量下载 | 后端 |
 
 ---
 
@@ -178,28 +181,58 @@ R13 与 R14 各自归纳出一个新形状，都没进清单：
     启动日志里探测「库里有一批地址不属于当前驱动」时告警。
 (a) 是正解，(b) 只是把坑做成可见的。
 
-## T16 · 归档协议是 `Path` 形态，接不了纯 HTTP 的 S3
+## T16 · 归档协议句柄化：已完成大半，剩枚举
 
-`infra/archive/base.py` 的 `ArchiveStorage` 以 `Path` 表达位置
-（`root()` / `resolve()->Path` / `read(path)` / `write(path)` / `copy(Path, Path)`），
-`infra/storage/s3.py` 那套 `ObjectStorage`（key + bytes）实现不了它 —— 文件头
-63-66 行自己也写了这条已知边界。结果就是：个人素材能一行配置切桶，**模板库/归档库
-（共享盘 20 个文件 / 150.2MB）搬不进去**。
+2026-11-07 已改：`ArchiveStorage` 不再用 `Path` 表达位置。
 
-要搬，牵扯这五处语义，缺一处就断：
-1. `archive_service.file/stream` 现在返回 `(Path, mime)` 给 `FileResponse`；
-   S3 下要么 307 预签名，要么把字节读进进程（大视频不能读）。
-2. `_ingest` 的「落盘 + `create_preview` 派生缩略图 + 写 `catalog/assets/*.json` 镜像」
-   三件套全部基于 `Path`。
-3. `replacement_service` 按 `Path` 同步读模板素材，worker 里改流式读要重排事务边界。
-4. `import-archive-index` 读盘上的 JSON 索引；搬家后索引来源要重新定（DB 已有 20 条
-   可当准）。
-5. `scripts/import_legacy_replacement_assets.py`、`refresh_archive_media.py` 仍直接
-   `LocalArchiveStorage()`（T13）。
+- 协议收 key：`read` / `write` / `exists` / `copy(Path, key)` / `link` / `remove`；
+  **字节**统一走 `materialize(key) -> ContextManager[Path]`（本地直接交原路径，
+  远端下到缓存再交）。
+- `infra/archive/blobs.py`：素材字节改为内容寻址（key = sha256），预览/转码流按摘要命名。
+  于是「字节是否被改」不再是一件需要检测的事 —— 改了就是另一个 key。
+- `infra/archive/s3.py`：完整的 S3 实现（含物化缓存、按 mtime 淘汰）。
+- `app migrate-blobs [--dry-run] [--delete-source]`：旧 `library/…` 布局搬进 `blobs/ab/…`，
+  同时改写 `assets.storage_key` / `cover_key` 与镜像 JSON，幂等。
+- 连带删掉三层补丁：`pack_service._digest` 的 `(path, mtime, size)` 缓存、
+  发布前全量重算 sha256、`prepare` 里"读三遍同一个 300MB 原片"。
+  运行快照改用硬链接：同一原片在 run 目录里只占一份字节。
 
-**验收**：`ARCHIVE_DRIVER=s3` 能起、能传、能取（`FileResponse` 或 307 二选一都算）；
-`app migrate-archive-to-s3` 幂等，跑完 `storage_key` 仍可解析，共享盘保留只读一周
-作为回滚；`tests/test_architecture.py` 里补一条「归档实现不许假设本地路径」的守卫。
+**仍然拦着 `ARCHIVE_DRIVER=s3` 的是 T17**：`root()` 的 `glob` 枚举（pack 草稿/发布/
+搜索、run 索引修复）在远端驱动下直接抛错。这几处必须先把 packs / runs 入库。
+
+**验收**（原定）：`ARCHIVE_DRIVER=s3` 能起、能传、能取；`migrate-blobs` 幂等，
+搬家后 `storage_key` 仍可解析；共享盘保留只读一周作回滚；`test_architecture.py`
+补一条「归档实现不许假设本地路径」的守卫（这条已在 `tests/test_archive_blobs.py`
+用"旧 `library/` key 仍可读"覆盖行为，守卫本身待 T17 一起加）。
+
+---
+
+## T17 · `packs` / `pack_versions` / `runs` 仍靠目录 `glob` 枚举
+
+`pack_service.drafts/available/search` 与 `replacement_repository.packs/all_paths/
+repair_indexes` 都在 `storage.root() / "catalog/…"` 上 `glob("*.json")`。这是
+`ARCHIVE_DRIVER=s3` 的最后一公里：远端驱动下 `root()` 抛 `UpstreamError`，整个封装库
+与任务中心随之不可用。
+
+要做的：`packs` / `pack_versions` / `runs` 三张表（manifest 可整份存 JSON 列，
+业务语义不变），读取切表，写路径双写一段时间，JSON 降级为导出快照。
+顺带消掉两笔旧债：`media_catalog` 以 JSON 为可见性真相源、`_find_by_digest` 跨环境去重。
+
+---
+
+## T18 · 内容寻址的孤儿 blob 没有 GC
+
+登记失败时有意**不删**字节（同一个 key 可能正被并发登记的另一条记录共享，硬删会打断
+别人），代价是上传中途失败会留下没人引用的 blob。需要一个 `app prune-blobs`：
+以 `assets.sha256` 全量为引用集合，删 `blobs/` 下不在集合里的对象，默认 `--dry-run`。
+
+---
+
+## T19 · 归档切 S3 后视频流应走预签名 307
+
+`archive_service.stream()` 现在靠 `materialize` 把原片下到本地缓存，再由
+`FileResponse` 提供 Range。远端驱动下第一次拖进度条要等整个视频下载完。
+正解与 `/assets/{id}/file` 一致：307 到预签名 URL，由对象存储自己处理 Range。
 
 ---
 

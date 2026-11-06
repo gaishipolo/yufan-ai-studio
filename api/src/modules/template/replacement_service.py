@@ -251,9 +251,7 @@ def _check_scope(pack: ReplacementPack, payload: PrepareReplacement) -> None:
         raise BadRequest("请选择产品替换位置（素材包已审核：" + "、".join(allowed) + "）")
     beyond = [item for item in chosen if item not in allowed]
     if beyond:
-        raise BadRequest(
-            "替换范围超出素材包已审核的支持范围：" + "、".join(allowed)
-        )
+        raise BadRequest("替换范围超出素材包已审核的支持范围：" + "、".join(allowed))
 
 
 def _pack_usage(pack: ReplacementPack | None, kind: str) -> dict[str, str]:
@@ -322,13 +320,16 @@ def _prepare_inputs(
     roles = {"character": "identity", "product": "target_product", "scene": "target_scene"}
     usages = _pack_usage(resolved_pack, payload.kind)
     for index, item in enumerate(media):
-        original = repo.storage.resolve(item.path)
-        if checksum(original) != item.sha256:
-            raise BadRequest("素材字节已变化，请重新登记")
-        filename = (
-            "reference-video.mp4" if item is source else f"reference-{index + 1}{original.suffix}"
-        )
-        repo.storage.copy(original, path / "inputs" / filename, item.sha256)
+        # 不再"读出全量重算 sha256 再复制"：素材 key 就是摘要，物化出来的字节
+        # 与 `item.sha256` 同源。原先一次 prepare 会把同一个 300MB 原片读三遍
+        # （校验一遍、copy 内部一遍、copy 后的目标再校验一遍），纯属自证。
+        with repo.storage.materialize(item.path) as original:
+            filename = (
+                "reference-video.mp4"
+                if item is source
+                else f"reference-{index + 1}{original.suffix}"
+            )
+            repo.storage.link(original, path / "inputs" / filename, item.sha256)
         binding = {
             "id": item.id,
             "role": "source_video" if item is source else roles[payload.kind],
@@ -339,7 +340,9 @@ def _prepare_inputs(
         if item is not source and usages.get(item.id):
             binding["usage"] = usages[item.id]
         bindings.append(binding)
-    repo.storage.copy(
+    # 执行器会把 inputs 下的每个文件都算一遍 sha256，同一份原片存两份等于白算一次；
+    # 硬链接让 `source-original.mp4` 与 `reference-video.mp4` 指向同一份字节。
+    repo.storage.link(
         path / "inputs/reference-video.mp4", path / "inputs/source-original.mp4", source.sha256
     )
     variables = {"state_constraints": payload.notes}

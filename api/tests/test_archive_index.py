@@ -26,8 +26,8 @@ from PIL import Image
 from sqlalchemy import delete, select
 
 from db.session import get_session_factory
+from infra.archive import preview_key
 from infra.archive.local import get_archive_settings
-from infra.media_probe import PREVIEW_VERSION
 from modules.asset.archive_import import import_archive_index
 from modules.asset.models import Asset
 
@@ -108,9 +108,7 @@ async def _clear(owner: str) -> None:
 
 
 # ---------------------------------------------------------------- 索引即 DB
-def test_upload_writes_row_and_json_mirror(
-    client: TestClient, archive_root: Path
-) -> None:
+def test_upload_writes_row_and_json_mirror(client: TestClient, archive_root: Path) -> None:
     item = upload(client, "新人物.png", "character", png())
 
     row = archive_root / "catalog" / "assets" / f"{item['id']}.json"
@@ -118,8 +116,10 @@ def test_upload_writes_row_and_json_mirror(
     mirror = json.loads(row.read_text(encoding="utf-8"))
     assert mirror["ownerId"] == "u_001"
     assert mirror["path"] == item["path"]
+    # 字节按 sha256 落库：位置由内容决定，同一份文件传两次只有一份
+    assert mirror["path"].startswith("blobs/")
     # 预览 key 带画质版本：升级转码参数时旧缓存自动失效（不手工清目录）
-    assert mirror["previewPath"] == f"library/previews/{item['id']}.{PREVIEW_VERSION}.jpg"
+    assert mirror["previewPath"] == preview_key(item["sha256"])
 
     listed = client.get(f"{API}/assets/archive", params={"category": "character"})
     ids = [value["id"] for value in listed.json()["data"]["items"]]
@@ -136,9 +136,7 @@ def test_list_survives_lost_json(client: TestClient, archive_root: Path) -> None
     assert client.get(f"{API}/assets/archive/{item['id']}/file").status_code == 200
 
 
-def test_upload_deduplicates_within_archive(
-    client: TestClient, archive_root: Path
-) -> None:
+def test_upload_deduplicates_within_archive(client: TestClient, archive_root: Path) -> None:
     content = png()
     first = upload(client, "重复.png", "character", content)
     second = upload(client, "重复.png", "character", content)
@@ -146,9 +144,7 @@ def test_upload_deduplicates_within_archive(
     assert second["id"] == first["id"], "同一个人重复登记同一文件应返回已有记录"
 
 
-def test_same_bytes_in_different_categories_coexist(
-    client: TestClient, archive_root: Path
-) -> None:
+def test_same_bytes_in_different_categories_coexist(client: TestClient, archive_root: Path) -> None:
     """一张图同时当人物参考和产品参考是正常用法，不该被内容去重合并。"""
     content = png()
     character = upload(client, "双用.png", "character", content)
@@ -157,9 +153,7 @@ def test_same_bytes_in_different_categories_coexist(
     assert character["id"] != product["id"]
 
 
-def test_same_bytes_can_live_in_both_libraries(
-    client: TestClient, archive_root: Path
-) -> None:
+def test_same_bytes_can_live_in_both_libraries(client: TestClient, archive_root: Path) -> None:
     """网页上传与归档登记是两条记录：两套物理副本、两套 URL。"""
     content = png()
     archived = upload(client, "同文件.png", "character", content)
@@ -170,9 +164,7 @@ def test_same_bytes_can_live_in_both_libraries(
     assert uploaded.json()["data"]["id"] != archived["id"]
 
 
-def test_web_library_excludes_archive_rows(
-    client: TestClient, archive_root: Path
-) -> None:
+def test_web_library_excludes_archive_rows(client: TestClient, archive_root: Path) -> None:
     archived = upload(client, "归档.png", "character", png())
 
     listed = client.get(f"{API}/assets", params={"pageSize": 100}).json()["data"]
@@ -193,9 +185,7 @@ async def test_import_is_idempotent(archive_root: Path, session) -> None:
         assert (second.created, second.updated) == (0, 0)
         assert second.unchanged == 1, "第二次执行不该再写库"
 
-        rows = (
-            await session.scalars(select(Asset).where(Asset.owner_id == owner))
-        ).all()
+        rows = (await session.scalars(select(Asset).where(Asset.owner_id == owner))).all()
         assert len(rows) == 1
         assert rows[0].source == "archive"
         assert rows[0].storage_key == media["path"]

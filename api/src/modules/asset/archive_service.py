@@ -41,9 +41,10 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import tempfile
 import uuid
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from sqlalchemy import select
@@ -55,13 +56,17 @@ from core.context import CurrentUser
 from core.exceptions import BadRequest, Conflict, Forbidden, NotFound, UpstreamError
 from core.logging import get_logger
 from core.media import MediaCategory
-from infra.archive import ArchiveStorage, get_archive_storage, within
+from infra.archive import (
+    ArchiveStorage,
+    BlobStore,
+    clip_key,
+    get_archive_storage,
+    preview_key,
+    within,
+)
 from infra.media_probe import (
     EXTENSIONS,
     MAX_BYTES,
-    PREVIEW_VERSION,
-    create_browser_preview,
-    create_preview,
 )
 from infra.media_probe import (
     inspect as probe_media,
@@ -81,16 +86,12 @@ from modules.asset.schema import AssetSource
 
 logger = get_logger(__name__)
 
-# 归档素材的时区：历史 JSON 按北京时间切月份目录，导入时保持同一约定
-_LOCAL_TZ = timezone(timedelta(hours=8))
-
 
 class ArchiveAssetService:
-    def __init__(
-        self, session: AsyncSession, storage: ArchiveStorage | None = None
-    ) -> None:
+    def __init__(self, session: AsyncSession, storage: ArchiveStorage | None = None) -> None:
         self.session = session
         self.storage = storage or get_archive_storage()
+        self.blobs = BlobStore(self.storage)
         self.repo = ArchiveAssetRepository(session)
 
     # ------------------------------------------------------------------ 读
@@ -149,7 +150,7 @@ class ArchiveAssetService:
         row = await self.visible(asset_id, owner)
         if row.type == "video":
             return await self.stream(asset_id, owner)
-        return await asyncio.to_thread(self.storage.resolve, row.storage_key), row.mime_type
+        return await asyncio.to_thread(self._materialized, row.storage_key), row.mime_type
 
     async def file(self, asset_id: str, owner: str, *, preview: bool = False) -> tuple[Path, str]:
         row = await self.visible(asset_id, owner) if preview else await self.owned(asset_id, owner)
@@ -157,16 +158,13 @@ class ArchiveAssetService:
             raise NotFound("素材已移入回收站")
         if preview and row.type == "video" and not row.cover_key:
             # 视频没有派生封面时现场截一帧：列表用 `<img>` 取缩略图，喂不了 mp4
-            derived = await asyncio.to_thread(
-                self.storage.resolve, f"library/previews/{row.id}.{PREVIEW_VERSION}.jpg"
-            )
-            original = await asyncio.to_thread(self.storage.resolve, row.storage_key)
-            if await asyncio.to_thread(create_preview, original, derived, row.type):
-                return derived, "image/jpeg"
+            derived = preview_key(_require_digest(row))
+            if await asyncio.to_thread(self._create_preview, row.storage_key, derived, row.type):
+                return await asyncio.to_thread(self._materialized, derived), "image/jpeg"
         key = row.cover_key if preview else row.storage_key
         if not key:
             raise NotFound("此素材没有缩略图")
-        return await asyncio.to_thread(self.storage.resolve, key), (
+        return await asyncio.to_thread(self._materialized, key), (
             "image/jpeg" if preview else row.mime_type
         )
 
@@ -175,19 +173,14 @@ class ArchiveAssetService:
         row = await self.visible(asset_id, owner)
         if row.type != "video":
             raise NotFound("此素材没有视频预览")
-        original = await asyncio.to_thread(self.storage.resolve, row.storage_key)
-        derived = await asyncio.to_thread(
-            self.storage.resolve, f"library/previews/{row.id}.{PREVIEW_VERSION}.mp4"
-        )
-        if derived.is_file() or await asyncio.to_thread(
-            create_browser_preview, original, derived
-        ):
-            return derived, "video/mp4"
+        derived = clip_key(_require_digest(row))
+        if await asyncio.to_thread(self._derive_clip, row.storage_key, derived):
+            return await asyncio.to_thread(self._materialized, derived), "video/mp4"
         if row.owner_id != owner:
             # 别人的原片不能当预览回出去：派生失败就是失败，不能退化成原片
             raise BadRequest("公共预览生成失败，请稍后重试；原件不会作为预览返回")
         logger.warning("browser preview failed, fallback to original: %s", asset_id)
-        return original, row.mime_type
+        return await asyncio.to_thread(self._materialized, row.storage_key), row.mime_type
 
     # ------------------------------------------------------------------ 写
     async def import_asset(self, payload: ImportAsset, owner: str) -> ArchivedAsset:
@@ -247,9 +240,7 @@ class ArchiveAssetService:
             raise BadRequest("请仅提交当前操作对应的字段")
         return await self.change(asset_id, owner, payload)
 
-    async def change(
-        self, asset_id: str, owner: str, payload: ArchiveChange
-    ) -> ArchivedAsset:
+    async def change(self, asset_id: str, owner: str, payload: ArchiveChange) -> ArchivedAsset:
         """改名 / 分享 / 移入回收站。
 
         并发保护靠 `state_version` 乐观锁，不用文件锁：索引在 DB，一次更新就是一个
@@ -307,13 +298,13 @@ class ArchiveAssetService:
             return self._to_out(existing, owner)
 
         uid = uuid.uuid4().hex
-        key = f"library/{category}/{datetime.now(_LOCAL_TZ):%Y/%m}/{uid}{ext}"
-        cover_key = f"library/previews/{uid}.{PREVIEW_VERSION}.jpg"
+        # 字节按 sha256 落库（`blobs/ab/abcdef…`）：位置由内容决定，不由登记时间决定。
+        # 于是同一份文件被两个人传、或同一人传到两个分类，物理上只有一份；
+        # 而"这份字节还是不是当初那份"也不再需要每次读出来重算——key 就是答案。
+        key, created = await asyncio.to_thread(self.blobs.ensure, source, digest, ext)
+        cover_key = preview_key(digest)
 
-        await asyncio.to_thread(self._copy, source, key, digest)
-        has_preview = await asyncio.to_thread(
-            create_preview, self.storage.resolve(key), self.storage.resolve(cover_key), kind
-        )
+        has_preview = await asyncio.to_thread(self._create_preview, key, cover_key, kind)
         if not has_preview:
             logger.info("归档素材没有缩略图（音轨或派生失败）：%s", uid)
 
@@ -343,7 +334,7 @@ class ArchiveAssetService:
             # 并发登记同一份文件：部分唯一索引兜底（归档侧不参与该索引，实际很难触发，
             # 但索引不是这条代码路径的替代品）。回滚后按摘要取已有记录。
             await self.session.rollback()
-            await self._discard(key, cover_key)
+            await asyncio.to_thread(self._discard_blob, key, created)
             await asyncio.to_thread(self._discard_mirror, uid)
             existing = await self._find_by_digest(owner, digest, category)
             if existing is not None:
@@ -351,7 +342,7 @@ class ArchiveAssetService:
             raise
         except Exception:
             await self.session.rollback()
-            await self._discard(key, cover_key)
+            await asyncio.to_thread(self._discard_blob, key, created)
             await asyncio.to_thread(self._discard_mirror, uid)
             raise
         return self._to_out(row, owner)
@@ -382,8 +373,23 @@ class ArchiveAssetService:
         if total == 0:
             raise BadRequest("文件不能为空")
 
-    def _copy(self, source: Path, key: str, digest: str) -> None:
-        self.storage.copy(source, self.storage.resolve(key), digest)
+    def _materialized(self, key: str) -> Path:
+        """取出可读路径。
+
+        上下文在这里就退出了，所以**依赖驱动承诺的「退出后缓存仍可读」**：
+        本地驱动交出的就是归档里的原路径，远端驱动把字节留在物化缓存里等淘汰。
+        不这样做的话，`FileResponse` 拿到的路径会在响应发出前失效。
+        """
+        with self.blobs.materialize(key) as path:
+            return path
+
+    def _create_preview(self, key: str, cover_key: str, kind: str) -> bool:
+        """派生静帧封面（图片缩放 / 视频截帧）。"""
+        return self.blobs.derive(key, cover_key, kind=kind)
+
+    def _derive_clip(self, key: str, target_key: str) -> bool:
+        """派生浏览器可播的转码流。"""
+        return self.blobs.derive(key, target_key, kind="video", clip=True)
 
     async def _write_mirror(self, row: Asset) -> None:
         payload = self.repo.to_media(row).model_dump(mode="json", by_alias=True)
@@ -392,26 +398,26 @@ class ArchiveAssetService:
         )
 
     def _discard_mirror(self, asset_id: str) -> None:
-        path = self.storage.resolve(f"catalog/assets/{asset_id}.json")
-        path.unlink(missing_ok=True)
+        self.storage.remove(self.storage.resolve(f"catalog/assets/{asset_id}.json"))
 
-    async def _discard(self, *keys: str) -> None:
-        for key in keys:
-            if not key:
-                continue
+    def _discard_blob(self, key: str, created: bool) -> None:
+        """登记失败不留半条记录，但**也不删字节**。
 
-            def remove(target: str = key) -> None:
-                path = self.storage.resolve(target)
-                path.unlink(missing_ok=True)
-
-            try:
-                await asyncio.to_thread(remove)
-            except OSError:  # pragma: no cover - 清理失败不影响主流程
-                logger.warning("回滚已写入的归档对象失败：%s", key)
+        内容寻址下同一个 key 可能正被别的记录共享（同一份文件被另一个人登记、
+        或同一人登记到了另一个分类），删它等于打断别人。留一份没人引用的字节
+        只是磁盘占用，`app prune-blobs` 能扫出来；删错则是数据丢失。
+        """
+        if created:
+            logger.info("登记失败，已写入的字节留待回收：%s", key)
 
     def _temporary(self) -> Path:
-        folder = self.storage.resolve("incoming")
-        folder.mkdir(exist_ok=True)
+        """上传中转文件放本机临时目录，不再借用归档盘。
+
+        归档盘可能是只读挂载或远端桶，而中转文件只在本进程内活几秒；
+        放本机也能让 300MB 的流式落盘不等网络。
+        """
+        folder = Path(tempfile.gettempdir()) / "yufan-archive"
+        folder.mkdir(parents=True, exist_ok=True)
         return folder / (uuid.uuid4().hex + ".upload")
 
     def _to_out(self, row: Asset, owner: str) -> ArchivedAsset:
@@ -435,6 +441,13 @@ class ArchiveAssetService:
         except UpstreamError:
             # 盘掉线不等于库不可读：列表仍要给运维可用信息，见模块 docstring
             return ""
+
+
+def _require_digest(row: Asset) -> str:
+    """派生 key 由摘要决定：缺摘要就没法定位字节，也没法定位它的缓存。"""
+    if not row.sha256:
+        raise NotFound("素材摘要缺失，请重新登记")
+    return row.sha256
 
 
 def _digest_and_size(path: Path) -> tuple[str, int]:

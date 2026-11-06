@@ -8,9 +8,8 @@ from pathlib import Path
 from core.exceptions import AppError, BadRequest, Conflict, NotFound
 from core.media import MediaPack
 from core.pack_roles import PACK_SCOPES, missing_role_labels, roles_for
-from infra.archive import checksum
+from infra.archive import BlobStore, preview_key
 from infra.media_catalog import MediaCatalog, catalog_lease, safe_id
-from infra.media_probe import PREVIEW_VERSION, create_preview
 from modules.template.replacement_schema import (
     PackDraftIn,
     PackManaged,
@@ -18,23 +17,6 @@ from modules.template.replacement_schema import (
     PackPublicList,
     ReplacementPack,
 )
-
-# 校验摘要按 (路径, mtime, size) 复用：目录页每次请求都对全部包内图片重算 sha256，
-# 会随「包数 × 图数」线性变慢。文件被替换时 mtime/size 必变，缓存自然失效。
-_DIGESTS: dict[tuple[str, int, int], str] = {}
-
-
-def _digest(path: Path) -> str:
-    stat = path.stat()
-    key = (str(path), stat.st_mtime_ns, stat.st_size)
-    cached = _DIGESTS.get(key)
-    if cached is None:
-        cached = checksum(path)
-        if len(_DIGESTS) > 512:
-            _DIGESTS.clear()
-        _DIGESTS[key] = cached
-    return cached
-
 
 # 重试比对时忽略的字段：它们只描述「第几次」，不描述「改了什么」。
 _VOLATILE = {"id", "owner_id", "version", "revision", "status", "published_at"}
@@ -57,6 +39,7 @@ class PackService:
     def __init__(self) -> None:
         self.catalog = MediaCatalog()
         self.storage = self.catalog.storage
+        self.blobs = BlobStore(self.storage)
 
     def managed(self, pack: MediaPack) -> PackManaged:
         """带缺项清单返回：列表页据此提示「还差什么」，不用前端再猜一遍规则。"""
@@ -151,9 +134,16 @@ class PackService:
         return gaps
 
     def verify(self, pack: MediaPack) -> None:
+        """字节还在不在。
+
+        **不再重算 sha256**：素材 key 就是它的摘要（`blobs/ab/abcdef…`），
+        key 存在即字节正确。原先这里每次发布都要把包内所有图片全读一遍，
+        再用 `(path, mtime, size)` 缓存猜"文件是不是被换过"——那是可变存储的
+        补丁。内容寻址之后，"字节变了"这件事在物理上不可能发生。
+        """
         for media in self.catalog.references(pack):
-            if _digest(self.storage.resolve(media.path)) != media.sha256:
-                raise BadRequest("素材字节发生变化，请重新登记")
+            if not self.blobs.exists(media.path):
+                raise BadRequest("素材字节缺失，请重新登记")
 
     def publish(self, uid: str, owner: str, revision: int) -> PackManaged:
         with catalog_lease(self.storage):
@@ -269,13 +259,18 @@ class PackService:
         if media.deleted_at or media.owner_id != pack.owner_id or media.category != pack.kind:
             raise NotFound("包内素材不可用")
         if media.preview_path:
-            return self.storage.resolve(media.preview_path), "image/jpeg"
+            return self._materialized(media.preview_path), "image/jpeg"
         # 公共预览不开放原件下载：缺预览就现生成一份，生成失败宁可 404。
-        derived = self.storage.resolve(f"library/previews/{media.id}.{PREVIEW_VERSION}.jpg")
+        derived = preview_key(media.sha256)
         try:
-            created = create_preview(self.storage.resolve(media.path), derived, media.type)
+            created = self.blobs.derive(media.path, derived, kind=media.type)
         except OSError as exc:
             raise NotFound("包内预览不可用，请重新登记素材后再封装") from exc
         if not created:
             raise NotFound("包内预览不可用，请重新登记素材后再封装")
-        return derived, "image/jpeg"
+        return self._materialized(derived), "image/jpeg"
+
+    def _materialized(self, key: str) -> Path:
+        """交出可读路径。退出上下文是安全的：驱动承诺物化缓存不会被立即回收。"""
+        with self.blobs.materialize(key) as path:
+            return path
