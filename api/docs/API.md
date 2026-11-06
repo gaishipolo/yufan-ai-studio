@@ -1191,6 +1191,7 @@ Authorization: Bearer <accessToken>
 | `errorMessage` | `string \| null` | 否 | 失败原因 |
 | `externalId` | `string \| null` | 否 | 供应商侧任务号；提交成功后有值，可用于对账 |
 | `previousExternalId` | `string \| null` | 否 | 上一次提交的供应商任务号；带 confirmCharged 重试后保留的对账凭证 |
+| `previousExternalIds` | `string[]` | 否 | 被替换掉的全部供应商任务号（旧的在前）。连续多次确认已扣费重试时，previousExternalId 只保留最近一个，全量凭证看这里 |
 | `createdAt` | `string` | 是 | 创建时间（UTC） |
 
 #### `GET /api/v1/images`
@@ -1604,6 +1605,7 @@ Authorization: Bearer <accessToken>
 | `errorMessage` | `string \| null` | 否 | 失败原因 |
 | `externalId` | `string \| null` | 否 | 供应商侧任务号；提交成功后有值，可用于对账 |
 | `previousExternalId` | `string \| null` | 否 | 上一次提交的供应商任务号；带 confirmCharged 重试后保留的对账凭证 |
+| `previousExternalIds` | `string[]` | 否 | 被替换掉的全部供应商任务号（旧的在前）。连续多次确认已扣费重试时，previousExternalId 只保留最近一个，全量凭证看这里 |
 | `createdAt` | `string` | 是 | 创建时间（UTC） |
 
 ### `ImageRetryOut`

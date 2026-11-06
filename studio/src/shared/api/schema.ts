@@ -209,6 +209,8 @@ export interface ImageJobOut {
   externalId?: string | null;
   /** 上一次提交的供应商任务号；带 confirmCharged 重试后保留的对账凭证 */
   previousExternalId?: string | null;
+  /** 被替换掉的全部供应商任务号（旧的在前）。连续多次确认已扣费重试时，previousExternalId 只保留最近一个，全量凭证看这里 */
+  previousExternalIds?: string[];
   /** 创建时间（UTC） */
   createdAt: string;
 }
