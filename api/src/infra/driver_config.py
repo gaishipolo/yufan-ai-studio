@@ -87,13 +87,15 @@ def registered_driver_settings() -> tuple[type[DriverSettings], ...]:
 
 
 def discover_driver_settings() -> tuple[type[DriverSettings], ...]:
-    """把各驱动包里的模块都 import 一遍，让配置类登记齐全。
+    """把各驱动包里的模块**全部** import 一遍，拿到全量配置类。
 
-    注册表是「被 import 时追加」的副作用，于是**检查范围取决于谁先碰巧
-    import 了驱动**：只加载 echo 的部署里 `AgnesSettings` 根本不在册，
-    `ensure_prod_driver_settings()` 扫不到它，将来给它加 `prod_required_fields`
-    也等于没加（R13-05）。`maintenance._stale_after_sec()` 曾靠函数内
-    `from infra.ai import agnes` 兜住，那是把「注册齐全」当成了巧合。
+    只给「需要看全量」的场合用：测试里的配置巡检（每个驱动都得声明
+    `prod_required_fields`、每个字段都得有说明…）。**启动路径不要用它**——
+    `_ensure_active_drivers_imported()` 只 import 当前启用的驱动，用 local 部署的
+    机器不该为了巡检去拉 boto3。
+
+    两者治的是同一个病（注册表是「被 import 时追加」的副作用，所以检查范围取决于
+    谁碰巧 import 了驱动，R13-05），只是取舍不同：测试要全量，线上只要能用到的。
 
     这里按包目录扫描，**不写死驱动名**：新增驱动文件即自动纳入巡检，
     与 `infra/loader.py` 的「加文件不改代码」保持一致。
