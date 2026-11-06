@@ -26,7 +26,10 @@ postgres = ["asyncpg>=0.30"]
 dev = [
   "pytest>=8.3",
   "pytest-asyncio>=0.24",
-  "ruff>=0.7",
+  # 锁 patch 版本：0.17.3 与 0.17.4 对「import 了不存在的模块」的 I001 判定不同，
+  # 曾出现本地全绿、CI 红（scripts/ 里两个旧脚本引用了已删除的 infra.storage.archive）。
+  # 本地与 CI 用同一版本，自检结论才有意义；升级时故意改这一行并重跑全量。
+  "ruff==0.17.4",
   "mypy>=1.13",
   "alembic>=1.14",
 ]

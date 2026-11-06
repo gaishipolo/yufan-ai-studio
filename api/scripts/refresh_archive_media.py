@@ -17,8 +17,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from core.media import StoredMedia  # noqa: E402
+from infra.archive.local import LocalArchiveStorage  # noqa: E402
 from infra.media_probe import create_browser_preview, normalize_duration  # noqa: E402
-from infra.storage.archive import LocalArchiveStorage  # noqa: E402
 
 storage = LocalArchiveStorage()
 
