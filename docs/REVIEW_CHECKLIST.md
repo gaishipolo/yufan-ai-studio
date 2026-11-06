@@ -1,35 +1,52 @@
 # 雨范工作台 · Code Review 检查清单
 
-> 配套：[`CODE_STYLE.md`](./CODE_STYLE.md) ｜ 每条都有编号，评审评论可直接引用，如「BE-07」
+> 版本 **v2.0**（2026-11-06 按仓库现状更新）｜ 配套：[`CODE_STYLE.md`](./CODE_STYLE.md)
+> 每条都有编号，评审评论可直接引用，如「BE-27」。
+> **编号稳定**：旧编号一律保留（历史报告引用过），新增规则只从各段末尾追加，不要重排。
+> v2.0 新增项主要来自 R5–R12 后端评审与 FE2–FE5 前端评审中**反复出现**的形状，
+> 依据见附录 B。
 
 ---
 
 ## 0. 怎么用这份清单
 
-评审分三档投入，不要每次都逐条读：
+评审分四档投入，不要每次都逐条读：
 
 | 场景 | 走哪一档 | 预计耗时 |
 |---|---|---|
 | 文案、样式微调、依赖升级 | §1 快查 | 3 分钟 |
 | 常规功能 PR | §1 + 对应域的 §2/§3/§4 | 15–25 分钟 |
 | 涉及事务、并发、鉴权、契约变更、迁移 | 全量 + §5 高危反模式 | 40 分钟以上 |
+| **新模块 / 新生成能力 / 框架插槽 / 会话链路** | 全量 + §3.1 的 BE-26 矩阵 + §6 + 跨组件状态机表 | 先跑探针再评 |
 
-**评审不是找茬**。看到好设计要明确说出来——「这里的 queryKey 工厂让缓存失效不用猜」比十条吹毛求疵更有价值，因为它告诉作者什么该被复制。
+**评审不是找茬**。看到好设计要明确说出来——「这里的 `queryKey` 工厂让缓存失效不用猜」
+比十条吹毛求疵更有价值，因为它告诉作者什么该被复制。
+
+**本仓库的评审纪律**（十几轮下来最有效的两条）：
+
+1. **先测基线再读码**：`pytest / ruff / mypy / export-openapi --check`、
+   `npm run verify`，先把「起点是绿的」确认下来，否则分不清问题是不是这次引入的。
+2. **结论要有实测**：涉及并发、状态机、会话、权限的怀疑，写临时探针跑一遍
+   （临时 SQLite + TestClient + 真实 JWT / Vitest + 真实 store），不要凭读码下结论。
+   探针文件用 `__probe_*` / `test___probe_*` 命名，**跑完必须删**，再跑一次全量回归。
 
 ---
 
 ## 1. 五分钟快查（每个 PR 都过）
 
 - [ ] **CR-01** 我能用自己的话复述这个 PR 要解决什么问题吗？说不出来 → 先让作者补描述，别评审
-- [ ] **CR-02** 有没有它不该有的东西：调试代码、注释掉的旧实现、无关格式化、误提交的 `.env` / `var/` / `dist/`
-- [ ] **CR-03** diff 在 400 行以内吗？超了就拆（lock 文件、生成代码不计）
-- [ ] **CR-04** CI 全绿吗？`ruff` / `mypy` / `pytest` / `tsc`（`.github/workflows/ci.yml`：后端一个 job，`npm run verify` 一个 job）
+- [ ] **CR-02** 有没有它不该有的东西：调试代码、注释掉的旧实现、无关格式化、误提交的 `.env` / `var/` / `dist/`、**临时探针测试**
+- [ ] **CR-03** diff 在 400 行以内吗？超了就拆（lock 文件、生成物不计）
+- [ ] **CR-04** CI 全绿吗？`.github/workflows/ci.yml` 两个 job：`backend`（pytest / ruff / `mypy --platform win32 src`）、`frontend`（`npm run verify` = typecheck + lint + test + build）
 - [ ] **CR-05** 新增/修改的行为有测试吗？没有的话，作者说清为什么（纯 UI 样式可豁免）
-- [ ] **CR-06** 失败路径想过了吗：数据库挂了、上游超时、用户重复点击、列表为空
+- [ ] **CR-06** 失败路径想过了吗：数据库挂了、上游超时、用户重复点击、列表为空、进程在半路被 kill
 - [ ] **CR-07** 有没有为了通过评审而加的 `try/except`、`as any`、`# type: ignore`？有 → 要求写理由
 - [ ] **CR-08** 命名读起来像业务语言吗（`retry_task` / `isTaskInFlight`），还是像实现细节（`doProcess2`）
 - [ ] **CR-09** 这段代码删掉会怎样？如果不会怎样，它大概不该存在
-- [ ] **CR-10** 我提的是「必须改」还是「可以更好」？标清级别（见 §6）
+- [ ] **CR-10** 我提的是「必须改」还是「可以更好」？标清级别（见 §7）
+- [ ] **CR-11** 改了接口/权限点吗？→ 四份生成物（`openapi.json`、`API.md`、`schema.ts`、`permissions.ts`）是否都是 `app export-openapi` 重新产出的？**禁止手改生成物**
+- [ ] **CR-12** 这次改动**新开了一个入口**吗（新路由、新 worker、新定时任务、新恢复路径、新的结束会话路径）？→ 同一条不变量在老入口上是怎么落的？（本仓库最高频的坑，见 §6 #11）
+- [ ] **CR-13** 新增测试里，期望值是不是被测代码自己给的常量、或者把当前的错误行为写成了预期？（FE4-01、FE5-02 都是这么漏的）
 
 ---
 
@@ -39,39 +56,49 @@
 
 - [ ] **GEN-01** 边界值：空列表、`null`、0、超大值、超长字符串
 - [ ] **GEN-02** 时间处理：UTC 与时区、跨天、夏令时；不依赖机器本地时区
-- [ ] **GEN-03** 分页边界：`page=1` 与最后一页、`total=0`、筛选后 `total` 是否仍准
-- [ ] **GEN-04** 状态机只允许合法跃迁（本项目：`queued → running → completed | failed`，`failed` 才能 retry）
-- [ ] **GEN-05** 幂等：同一个请求重放两次会怎样？重试接口、支付类、创建类重点看
+- [ ] **GEN-03** 分页边界：`page=1` 与最后一页、`total=0`、筛选后 `total` 是否仍准；页码越界要回收
+- [ ] **GEN-04** 状态机只允许合法跃迁。生成任务是**三态**：`submit_attempts > 0 且 external_id 为空` = 提交结果未知，既不能自动重提、也不能没有人工出口
+- [ ] **GEN-05** 幂等：同一个请求重放两次会怎样？注意内存队列在**出队时**就删幂等键，去重只覆盖排队期、不覆盖执行期
 - [ ] **GEN-06** 浮点/精度：金额、时长、进度百分比用整数或 `Decimal`，不用 `float` 累加
+- [ ] **GEN-07** **两个动作串起来**会不会破例？恢复器置 failed → 用户点 retry → 重新 `submit()`，单独看每一步都对，合起来可能是第二次计费（R12-01）
+- [ ] **GEN-08** 「加一道守卫」有没有改变写入顺序？`session.refresh()` 会冲掉同会话未提交的改动（R12-02）；守卫放在取连接之前还是之后，效果完全不同（R7-01）
 
 ### 安全
 
-- [ ] **SEC-01** 所有用户输入都经过 schema 校验（长度、范围、枚举），不只靠前端
+- [ ] **SEC-01** 所有用户输入都经过 schema 校验（长度、范围、枚举），不只靠前端；`param_schema` 是契约，**受理时**就要校验，不能等异步失败
 - [ ] **SEC-02** SQL 全部参数化；`text()` 里不出现 f-string（详见 BE-11）
-- [ ] **SEC-03** 越权：改 `id` 能不能读到/删掉别人的资源？每个按 ID 的接口都要验 owner（本项目 `get_task` 已做，新增接口照做）
+- [ ] **SEC-03** 越权：改 `id` 能不能读到/删掉别人的资源？**读写两侧都要查**：写操作有层级守卫、读登录审计没有（R10-05）就是漏
 - [ ] **SEC-04** 敏感信息不进日志、不进错误响应、不进 URL query（token、密码、完整 prompt）
 - [ ] **SEC-05** 密钥来自环境变量，不硬编码，不进仓库；`.env.example` 只放占位值
 - [ ] **SEC-06** 前端不 `dangerouslySetInnerHTML`；确需富文本走白名单清洗
 - [ ] **SEC-07** 新增第三方 URL（图片、CDN、webhook）确认过来源可信、可离线降级
 - [ ] **SEC-08** 文件上传：类型白名单、大小上限、存储路径不拼接用户文件名
+- [ ] **SEC-09** **不变量只有一个写点**：停用 = 置 `is_active` + 吊销会话，是否所有路径都走同一个函数？「需要在两处各写一遍」的规则迟早只在一处成立（R10-02）
+- [ ] **SEC-10** 闸门/限流在**取数据库连接之前**、且覆盖所有验密入口（login / change_password / reset_password）
+- [ ] **SEC-11** 供应商返回的 URL：逐跳校验 host、解析后判断 IP（不只是挡字面量）、禁/校验重定向、流式大小上限、魔数校验（R11-03 / R12-04）
+- [ ] **SEC-12** 安全配置在生产是否有必填校验？不要让 `allowed_hosts` 为空时静默走宽松黑名单
 
 ### 可维护性
 
-- [ ] **MNT-01** 依赖方向没被打破（后端 `modules → db/core/infra`；前端只向下）
+- [ ] **MNT-01** 依赖方向没被打破（后端 `modules → generation/core/db/infra`；前端只向下）
 - [ ] **MNT-02** 没有复制粘贴的第三份相同逻辑（出现第三次就该抽）
-- [ ] **MNT-03** 魔法值有名字（`POLL_INTERVAL`、`MAX_PAGE_SIZE`），不是散落的 `2500`、`100`
+- [ ] **MNT-03** 魔法值有名字（`POLL_INTERVAL`、`RECOVERY_BATCH`），不是散落的 `2500`、`100`
 - [ ] **MNT-04** 注释解释「为什么」，不是复述代码
 - [ ] **MNT-05** `TODO` 带 owner 和触发条件
 - [ ] **MNT-06** 删掉了不再使用的代码，而不是注释掉
 - [ ] **MNT-07** 函数单一职责：名字里的「和」越多，越该拆
+- [ ] **MNT-08** **注释里的行为断言与代码同向**：弹窗写「会话不受影响」而后端 `revoke_all`（FE4-02）；「五条路径 / 四个入口」自相矛盾（FE5 💭）
+- [ ] **MNT-09** 同名符号是否重复定义且不同义？两份 `displayNameOf`、两个 `useSignOut` 已各出现过一次；抽公共函数前先 `grep` 全仓
 
 ### 性能
 
 - [ ] **PERF-01** 列表接口无 N+1（关联数据要预加载或聚合查询）
 - [ ] **PERF-02** 没有在循环里发请求 / 查库 / `await` 可以并发的独立操作
-- [ ] **PERF-03** 没有在 `async` 函数里做同步阻塞调用
+- [ ] **PERF-03** 没有在 `async` 函数里做同步阻塞调用（scrypt 尤其，见 `CODE_STYLE.md` §2.3）
 - [ ] **PERF-04** 前端轮询有停止条件；页面不可见时是否该停（`document.visibilityState`）
 - [ ] **PERF-05** 新增大列表、大图、大依赖前，先问「首屏真的需要吗」
+- [ ] **PERF-06** 分页 / 巡检的 `LIMIT` 与 cutoff **下推到 SQL**，不是全表加载后在 Python 切片；排序以主键收尾（R11-04 / R8-06）
+- [ ] **PERF-07** 生产包体积对比过吗？mock 与演示口令不能漏进 `dist/`（FE2-03）
 
 ### 测试
 
@@ -79,52 +106,74 @@
 - [ ] **TEST-02** 至少有：正常路径、一个校验失败、一个权限/不存在
 - [ ] **TEST-03** 测试之间互不污染（独立 DB、独立 mock，参考 `tests/conftest.py`）
 - [ ] **TEST-04** 修 bug 的 PR 带一个「修之前必红」的回归测试
+- [ ] **TEST-05** **跨组件状态机表**：涉及生成 / 恢复 / 重试 / 会话链路时，是否按 `(status, external_id, submit_attempts)` × 动作逐格断言？组件级用例各自绿，仍可能组合出破例（R12-01）
+- [ ] **TEST-06** 期望值不来自被测代码自己的本地常量。对比 `permission-catalog.test.ts`（解析后端源码）与 `validation.test.ts`（本地常量）——后者后端改数字不会红
+- [ ] **TEST-07** 测试有没有把**当前错误行为写成预期**？FE4-01 的 `session.test.ts` 就是这么让冷启动缺陷多活了一轮
 
 ---
 
 ## 3. 后端专项（`api`）
 
-### 分层与结构
+### 3.1 分层与结构
 
 - [ ] **BE-01** `router` 里没有业务分支，只有参数声明 → 调 service → `ApiResponse.ok()`
 - [ ] **BE-02** `service` 里没有 `Request` / `Response` / `HTTPException`；错误用 `AppError` 子类
 - [ ] **BE-03** `repository` 里没有 `commit()`
-- [ ] **BE-04** 新模块按四件套落地：`models / schema / service / router` + `__init__.py` 里 `ModuleSpec`
-- [ ] **BE-05** 已在 `db/registry.py`（模型）和 `api/registry.py`（路由）注册，漏一个就是 404
-- [ ] **BE-06** 模块之间没有直接 import；共享词汇上提到 `core`（如 `AspectRatio`）
+- [ ] **BE-04** 新模块按四件套落地：`models / schema / service / router` + `__init__.py` 里导出 `ModuleSpec`；需要后台能力时补 `worker.py` / `maintenance.py`
+- [ ] **BE-05** **模块由 `api/discovery.py` 扫描自动发现**，没有手写注册表；`ModuleSpec.name` == 目录名，有通配路径时 `order` 调大
+- [ ] **BE-06** 模块之间没有直接 import；共享词汇上提到 `core`，跨模块查询走 `core/ports/*` 注入口
+- [ ] **BE-26** **「模块 × 插槽」矩阵接全了吗**：`startup` 或 `recovery_kinds`、retry 出口（清零 `submit_attempts`）、`@periodic` 巡检、`audit.record()`、注入口登记。缺一格要显式写明「不需要」及理由（R11-01/02）
+- [ ] **BE-27** 新增注入口是否六件套齐全（Protocol / 单例 / `register` 重复注册报错 / `reset` / `has` / `ask` 未注册返回中性值）并登记进 `PORT_CATALOG`？
+- [ ] **BE-28** 权限点在 `ModuleSpec.permissions` 登记、码为 `资源:动作[:范围]`；`public=True` 是否真有必要（默认 False = 新模块受保护）
+- [ ] **BE-29** 新增错误码落在自己的 slot、进 `EXTENDING.md §7` 号段表、`code // 100 == http_status`，且生成物 `API.md` 里能找到它
 
-### 事务与并发
+### 3.2 事务与并发
 
 - [ ] **BE-07** 一次 service 方法最多一次 `commit()`
-- [ ] **BE-08** 副作用（入队、调第三方、发通知）在 `commit()` 之后；失败时有补偿或可恢复路径
-- [ ] **BE-09** 读-改-写不加锁的地方想过并发：同一资源两个请求同时到达会怎样？
-      （例：`toggle_favorite` 是「读当前值再取反」，双击可能丢更新 → 改成 `UPDATE ... SET favorited = NOT favorited` 或加锁）
+- [ ] **BE-08** 副作用（入队、调第三方、发通知）在 `commit()` 之后；失败时有补偿或可恢复路径（巡检 / 启动恢复 / 人工 retry 三选一，且新模块真的接了）
+- [ ] **BE-09** 读-改-写不加锁的地方想过并发（用单条 `UPDATE ... SET x = NOT x` 或加锁）
 - [ ] **BE-10** 长耗时任务没占着请求线程（提交到队列，前端轮询）
+- [ ] **BE-30** 口令哈希只走 `hash_password_async` / `verify_password_async`；口令写入只有 `IdentityService.set_password`；`password_slot()` 闸门放在取连接之前且覆盖全部验密入口
+- [ ] **BE-31** `session.refresh()` 没有冲掉同会话未提交的状态修改（R12-02）；「清标记 + 写终态」是原子的一次写
 
-### 数据访问
+### 3.3 数据访问
 
 - [ ] **BE-11** SQL 参数化，无 f-string 拼接；`ORDER BY` 的字段来自枚举白名单
 - [ ] **BE-12** 列表查询没有 N+1；必要时 `selectinload`
-- [ ] **BE-13** 模型变更带 Alembic 迁移，且迁移可回滚（`downgrade` 不是空的）
+- [ ] **BE-13** 模型变更带 Alembic 迁移，且 `downgrade` 可回滚；`down_revision` 链线性无分叉
 - [ ] **BE-14** 索引跟上查询：新增的筛选/排序字段是否建了索引
-- [ ] **BE-15** 删除用软删还是硬删，和模块既有约定一致（不要同一个资源两种删法）
+- [ ] **BE-15** 删除用软删还是硬删，和模块既有约定一致
+- [ ] **BE-32** 巡检 / 列表的 `LIMIT` 与 cutoff 在 SQL 里，Python 里没有事后切片；排序有主键收尾
 
-### 契约与错误
+### 3.4 契约与错误
 
 - [ ] **BE-16** 返回值是 `ApiResponse[T]`，`data` 有具体类型，不是 `dict`
 - [ ] **BE-17** 时间字段用 `UtcDateTime`，输出带 `Z`
 - [ ] **BE-18** 错误码落在自己的 slot 内，`code // 100 == http_status`
 - [ ] **BE-19** 未实现的方法抛 `NotImplementedFeature`（501），不留 `return {}` 假成功
-- [ ] **BE-20** `PATCH` 语义正确：`None` 表示「不改」，而不是「清空」；想清空要有显式约定
-      （例：`update_task` 里 `title.strip() or task.title` 会让用户无法把标题改成空 → 要么拒绝，要么明确定义）
-- [ ] **BE-21** `DELETE` 批量接口部分失败时的语义明确：全成功？还是返回实际删除数？前端能否感知？
+- [ ] **BE-20** `PATCH` 语义正确：`None` 表示「不改」，而不是「清空」；`isActive=null` 不该静默停用（R6-03）
+- [ ] **BE-21** `DELETE` 批量接口部分失败时的语义明确
+- [ ] **BE-33** 四份生成物随接口变更一起重生成；生成器不能编造类型名（封套内层是匿名形状时内联），`test_every_endpoint_data_type_is_defined` 有覆盖
+- [ ] **BE-34** 枚举比较用 `==` 不用 `is`（`use_enum_values=True` 下 `is` 恒 False）
 
-### 可观测性
+### 3.5 生成框架与状态机
+
+- [ ] **BE-35** `resume()` **只续轮询、绝不重新提交**；有 `external_id` 的记录不得静默回到 `dispatch`
+- [ ] **BE-36** `failed + external_id`（`charged_but_lost`）的重投需要 `confirmCharged` 显式确认，旧任务号保留在 `previous_external_id` 并写审计；**不能清掉 external_id 当成没发生过**
+- [ ] **BE-37** 同步供应商显式声明 `supports_poll = False`；能力快照落在记录上（`submit_mode`），不靠启动时重新解析模型目录分类
+- [ ] **BE-38** 巡检阈值按**本能力**的驱动配置计算（`Capability.IMAGE`），不是全局注册表 `max`；解析异常要报错，不静默降级到默认值
+- [ ] **BE-39** `param_schema` 在受理时参与校验（enum / min-max），尺寸字面量前后端口径一致
+- [ ] **BE-40** 恢复 / 巡检 / retry 三者之一改动时，`tests/test_generation_state_machine.py` 的表驱动用例是否覆盖新组合？
+
+### 3.6 可观测性与配置
 
 - [ ] **BE-22** 关键路径有日志（创建、状态跃迁、上游失败），带业务 ID
 - [ ] **BE-23** 日志用 `%s` 惰性格式化，不含敏感字段
 - [ ] **BE-24** 上游调用有超时与重试上限，不会无限挂起
 - [ ] **BE-25** 后台 worker 的失败任务有终态（`failed` + `error_message`），不会永远 `running`
+- [ ] **BE-41** 涉及计费 / 授权变更 / 人工重试的操作写了 `audit.record()`；写入端未注册时生产启动自检会报错（`ensure_audit_sink`）；关键凭证不只依赖审计
+- [ ] **BE-42** 驱动私有配置在 `infra/driver_config.py`（前缀 = 驱动名大写），没往 `core/config.py` 塞供应商参数；`.env.example` 双向对齐；prod 必填项用 `prod_required_fields`
+- [ ] **BE-43** 可选依赖未接上时是**明确标注的中性行为**，不是 `except Exception: pass` 式静默
 
 ---
 
@@ -133,17 +182,22 @@
 ### 分层与组织
 
 - [ ] **FE-01** 文件放在正确的层：页面逻辑进 `pages`，复用交互进 `features`，实体展示进 `entities`
-- [ ] **FE-02** 没有反向依赖（`entities` 不 import `pages`/`widgets`）
+- [ ] **FE-02** 没有反向依赖（`entities` 不 import `pages`/`widgets`）；**相对路径跨层**同样算违规（ESLint zone 只拦别名）
 - [ ] **FE-03** 组件里没有直接 `axios` / `http` 调用
-- [ ] **FE-04** 新请求按「类型 → api → queries」顺序补齐三件套
-- [ ] **FE-05** `queryKey` 从工厂派生，失效范围准确（该失效 `lists()` 就不要 `all`）
+- [ ] **FE-04** 新请求按「生成物类型 → api → queries」顺序补齐三件套
+- [ ] **FE-05** `queryKey` 从工厂派生，失效范围准确
 
-### 状态
+### 状态与会话
 
 - [ ] **FE-06** 服务端数据只存 React Query，没有镜像到 zustand / 本地 state
 - [ ] **FE-07** 可放 URL 的状态（分页、筛选、tab）在 URL 里，刷新能恢复
 - [ ] **FE-08** 轮询有停止条件，页面隐藏时不空转
 - [ ] **FE-09** mutation 成功后失效/更新了正确的缓存，界面不会停在旧数据
+- [ ] **FE-27** **五条结束路径全部走 `endSession(reason)`**；没有自写 `signOut()` / 直接写 `localStorage`；`endSession` 原子地清 store + `queryClient.clear()`
+- [ ] **FE-28** 续期走 `token-refresh.ts` 单飞 Promise + `shared/api/auth.ts` 独立通道；拦截器不做跳转，跳转只由守卫读 `status`
+- [ ] **FE-29** 冷启动 access 过期时**只清 access、保留 refresh**，由 `SessionBootstrap` 换票；`applyRefreshedTokens` 的守卫要认「access 或 refresh 任一存在」
+- [ ] **FE-30** 跨标签页「他页退出」用 `sf_refresh_token` 删除作信号，不用 `sf_token`（冷启动会删它，会级联踢下线 + 销毁共享 refresh，FE5-01）。**当前 `use-session-watch.ts:84` 仍用 `TOKEN_STORAGE_KEY`，见到相关改动按 🔴 处理**
+- [ ] **FE-31** manual 路径先清本地、再 fire-and-forget 调 `POST /identity/logout`，用清场**之前**取下的令牌；失败不阻塞退出
 
 ### 渲染与副作用
 
@@ -151,13 +205,8 @@
 - [ ] **FE-11** 没有「`useEffect` + `setState` 做派生计算」
 - [ ] **FE-12** 列表 `key` 是稳定 ID，不是下标
 - [ ] **FE-13** 异步回调考虑组件已卸载（React Query 已处理；手写的 `then` 要自己处理）
-- [ ] **FE-14** 加载 / 空 / 错误三态都有 UI，不是只画了成功态
-
-### 类型
-
-- [ ] **FE-15** 无新增 `any`、无 `as unknown as X`、无 `@ts-ignore`
-- [ ] **FE-16** 后端新增字段已在 `model/types.ts` 同步，可选性（`?`）与后端默认值一致
-- [ ] **FE-17** 枚举值与后端枚举字面量逐一对应（多一个少一个都是隐患）
+- [ ] **FE-14** 加载 / 空 / 错误三态都有 UI
+- [ ] **FE-32** 行内操作的 loading 只作用于该行，不把 `isPending` 传染给整张表；分页页码越界有回收
 
 ### 交互与可访问性
 
@@ -174,36 +223,62 @@
 - [ ] **FE-25** 暗色模式下对比度可读（本项目 token 体系已内置，别绕开）
 - [ ] **FE-26** 无内联 `style`（动态计算值除外）
 
+### 类型与契约
+
+- [ ] **FE-15** 无新增 `any`、无 `as unknown as X`、无 `@ts-ignore`
+- [ ] **FE-16** 契约类型从 `shared/api/schema.ts` **派生**，没有手抄另一份 `interface User`；可选性与生成物一致（可用 `expectTypeOf` 或读源码断言守住）
+- [ ] **FE-17** 枚举值与后端枚举字面量逐一对应；权限清单从 `permissions.ts` 派生（`as const` 元组，`new Set()` 要显式 `Set<string>`）
+- [ ] **FE-33** 服务端下发的策略（如 `GET /identity/password-policy`）没有被前端硬编码；若暂未接入，测试要能因后端改数字而变红
+- [ ] **FE-34** mock 严格按契约返回（不返回「方便页面」的结构），`VITE_USE_MOCK` 是唯一开关，`dist/` 里搜不到演示口令
+- [ ] **FE-35** 路由由注册表生成并跑 `gen:routes`；新增页面若确实无权限点，显式登记进 `NO_PERMISSION_PATHS` 并写理由
+- [ ] **FE-36** 用户可见文案与后端行为一致（重置密码是否吊销会话、「会话不受影响」这类断言）
+
 ---
 
 ## 5. 契约专项（跨仓库改动必看）
 
-- [ ] **CT-01** 后端 `schema.py` 与前端 `model/types.ts` 字段名、类型、可选性完全一致
-- [ ] **CT-02** mock 数据（`mocks/db.ts`、`mocks/adapter.ts`）同步更新，否则 `VITE_USE_MOCK=true` 会骗人
-- [ ] **CT-03** 破坏性变更（改名、删字段、枚举增删、必填性变化）有兼容期或明确公告
-- [ ] **CT-04** README 的接口表已更新
-- [ ] **CT-05** 错误码语义没变；前端只依赖 `code != 0` + `message`，不硬编码具体码
+- [ ] **CT-01** 后端 `schema.py` / `ModuleSpec.permissions` 是唯一真相；**四份生成物**都是 `app export-openapi` 产出且本次一并提交
+- [ ] **CT-02** mock 数据按生成物对齐，否则 `VITE_USE_MOCK=true` 会骗人
+- [ ] **CT-03** 破坏性变更（改名、删字段、枚举增删、必填性变化、状态机新增状态、权限点删改）有兼容期或明确公告
+- [ ] **CT-04** `FRONTEND_EXTENSION.md` 契约表、`ROUTES.md` 已同步；`docs/API.md` 由生成器负责，**不手改**
+- [ ] **CT-05** 错误码语义没变；前端用 `code // 100` 取状态段，不硬编码完整业务码
 - [ ] **CT-06** 分页结构、时间格式（`...Z`）没被破坏
-- [ ] **CT-07** 状态枚举前后端同步（`TaskStatus` 四个值与后端 `TaskStatus` 一一对应）
+- [ ] **CT-07** 状态枚举前后端同步
+- [ ] **CT-08** 新增错误码 / 权限点自动出现在 `API.md` 里（契约测试反射会扫）；前端权限目录与后端逐条比对
+- [ ] **CT-09** 生成器产出的是**合法代码**：`data` 类型只能引用 `components.schemas` 里真实存在的名字（R10-01），封套内层匿名形状走内联
+- [ ] **CT-10** 跨组件状态机表随状态机变更一起更新（见 TEST-05 / BE-40）
+- [ ] **CT-11** `app export-openapi --check` 四份全「无变化」，`pytest`（含契约测试）全绿
 
 ---
 
 ## 6. 本仓库高频反模式（评审时优先扫这几处）
 
-按「踩过一次就该记住」的顺序排列，左列是常见写法，右列是问题与替代。
+按「踩过一次就该记住」的顺序排列。前 10 条来自首日清单，11–18 条是 R5–R12 / FE2–FE5
+里**反复出现**的形状——它们占后续十几轮问题的绝大多数。
 
 | # | 反模式 | 为什么危险 | 怎么改 |
 |---|---|---|---|
-| 1 | `await commit()` 之后 `await queue.enqueue()`，异常没人管 | 提交成功 + 入队失败 = 任务永久停在 `queued`，只有重启才被捞回 | 要么 outbox 表 + 消费者，要么先入队后提交 + 幂等消费；别两头都不做 |
+| 1 | `await commit()` 之后 `await queue.enqueue()`，异常没人管 | 提交成功 + 入队失败 = 任务永久停在 `queued`，只有重启才被捞回 | outbox 表 / 先入队后提交 + 幂等消费；并接进巡检与启动恢复 |
 | 2 | 「读当前值 → 取反 → 写回」 | 两次并发请求都基于同一旧值，丢更新 | 单条 `UPDATE ... SET x = NOT x`，或 `SELECT ... FOR UPDATE` |
-| 3 | 默认封面/占位图指向公网服务（如 `picsum.photos`） | 内网、离线、生产限流时全站空白；还构成外部依赖与隐私面 | 本地静态占位图，或由后端生成纯色/渐变占位 |
-| 4 | 函数体内 `import` | 掩盖了循环依赖或把重依赖拖到热路径 | 提到模块顶部；有循环依赖就说明分层出了问题 |
-| 5 | `__all__` 里列出未使用的符号（如顺手把 `NotFound` 导出） | 谎报模块对外契约，读者以为要用 | 只导出真实对外 API |
-| 6 | `except Exception: pass` / 只 `logger.error` 不重抛 | 故障静默，上游以为成功 | 让异常冒泡到全局处理器，或转换成语义化 `AppError` 再抛 |
-| 7 | 无条件 `refetchInterval` | 任务全完成还在每 2.5s 拉全量列表，用户开着标签页就是持续压测 | 以「存在进行中任务」为条件返回 `false` |
-| 8 | 把 token 放 `localStorage` | 任意 XSS 即可窃取长期凭证 | 短期 access token 放内存 + refresh 走 `HttpOnly` cookie；至少缩短有效期 |
-| 9 | 401 没有统一处理 | token 过期后每个页面各自弹错，用户不知道要重新登录 | 响应拦截器统一清凭证 + 跳登录 + 只提示一次 |
-| 10 | 前端 `as` / `any` 抹平类型 | 编译期问题推迟成线上白屏 | `unknown` + 收窄，或修正类型定义 |
+| 3 | 默认封面/占位图指向公网服务 | 内网、离线、生产限流时全站空白 | 本地静态占位图或后端生成纯色占位 |
+| 4 | 函数体内 `import` | 掩盖循环依赖或把重依赖拖到热路径 | 提到模块顶部；有循环依赖说明分层出了问题 |
+| 5 | `__all__` 里列出未使用的符号 | 谎报对外契约 | 只导出真实对外 API |
+| 6 | `except Exception: pass` / 只 `logger.error` 不重抛 | 故障静默，上游以为成功 | 冒泡到全局处理器，或转成语义化 `AppError` |
+| 7 | 无条件 `refetchInterval` | 任务全完成还在持续拉全量列表 | 以「存在进行中任务」为条件返回 `false` |
+| 8 | 把长期凭证放 `localStorage` | 任意 XSS 即可窃取 | 短期 access + refresh 轮换；本项目现状见 `CODE_STYLE §3.8` |
+| 9 | 401 没有统一处理 | token 过期后每个页面各自弹错 | 拦截器统一清凭证 + 守卫跳登录，只提示一次 |
+| 10 | 前端 `as` / `any` 抹平类型 | 编译期问题推迟成线上白屏 | `unknown` + 收窄，或从生成物派生 |
+| **11** | **不变量只贴在「当时想到的那个入口」** | R5-03 / R6-04 / R8-01 / R10-02 / FE2-02 全是它：换个入口规则就消失，而测试只测了贴过守卫的那条 | 收进唯一写点（`_cut_access` / `endSession`），所有入口调它；评审时用 CR-12 数一遍同类入口 |
+| **12** | **新模块只接「让功能跑起来」的插槽** | 恢复 / retry / 巡检 / 审计是可选插槽，漏接时全量 CI 照样绿（R11-01/02） | 按 `CODE_STYLE §1.1` 矩阵逐格确认，靠 `test_architecture.py` 机械守卫 |
+| **13** | **组件级用例各自绿，组合路径没人跑** | 恢复器 + retry 各自正确，串起来是第二次计费（R12-01） | 表驱动的跨组件状态机契约测试，逐格断言终态与凭证 |
+| **14** | **测试把当前错误行为写成预期 / 期望值来自被测代码常量** | FE4-01 多活一轮；FE5-02 后端改数字测试不红 | 先列状态组合再写断言；期望值解析后端源码或调策略接口 |
+| **15** | **清缓存只做在手动登出** | 401 / 他页退出 / 改密是被动路径，用户不会想到清缓存 → 换账号后旧数据串号 | 原子出口 `endSession`，一处写完四个入口共用 |
+| **16** | **冷启动把 refresh 一起删 / 用 `sf_token` 删除当他页退出信号** | 7 天会话退化成 2 小时；刷新一个标签页把另一个也踢下线并级联销毁共享 refresh（FE4-01 / FE5-01） | 只清 access、保留 refresh；跨页信号改看 `sf_refresh_token` |
+| **17** | **契约生成物手抄一份 / 策略硬编码在前端** | 双份真相永远漂移，且类型不兼容时编译器也不报（FE4-03 / FE5-02） | 从 `schema.ts` / `permissions.ts` 派生；服务端策略调接口或用源码解析测试守住 |
+| **18** | **「加守卫 / 从配置推导」引入的第二次写与聚合口径** | `session.refresh()` 冲掉未提交改动；全局驱动 `max(timeout)` 把阈值拖到 90 分钟（R12-02/03） | 改完看邻近的第二次写、第二个调用者；阈值按能力过滤，异常不静默降级 |
+
+一句话规律：**前 11 轮是「不变量只守一个入口」，第 12 轮变成「两个各自正确的修复组合后破例」——
+共同点是，都没有人拥有那条跨入口 / 跨组件的路径。**
 
 ---
 
@@ -215,9 +290,19 @@
 |---|---|---|
 | 普通功能 | 任一熟悉该模块的成员 | 1 个工作日内 |
 | 涉及契约 / 迁移 / 鉴权 | 后端 + 前端各一人 | 1 个工作日内 |
+| **框架插槽 / 会话链路 / 生成状态机** | 后端 + 前端各一人 + 跑跨组件探针 | 1 个工作日内 |
 | 紧急修复 | 一人 review 即可，事后补审 | 立即 |
 
-**作者自审**：发起 PR 前自己先把 diff 读一遍。这一步能拦掉大约三成的低价值评论，也省你自己的时间。
+**作者自审**：发起 PR 前自己先把 diff 读一遍。这一步能拦掉大约三成的低价值评论。
+
+### 复核上一轮问题时的额外动作
+
+- **不要只看「那几行改了没」**：R10 的「停用吊销会话」修好了，但改法是否收敛成唯一写点，
+  决定了下轮会不会从别的入口复发。
+- **一定要看修复的组合副作用**：R12-01 就是 R11 两条修复各自正确、串起来破例。
+  改 A 时把与 A 相邻的动作 B 在同一条记录上跑一遍。
+- **跑完探针要清理并回归**：`__probe_*` / `test___probe_*` 跑完删除，再跑一次全量门禁，
+  确认基线数字没有变化。
 
 ### 评论格式
 
@@ -225,7 +310,7 @@
 🔴 事务一致性：提交后入队失败会让任务悬挂
 service.py:96-98 — commit 成功但 enqueue 抛异常时，任务停在 queued 且无人重试。
 
-**为什么**：只有进程重启才会被 resume_unfinished_tasks() 捞回，用户看到的是「一直排队中」。
+**为什么**：只有进程重启才会被恢复器捞回，用户看到的是「一直排队中」。
 
 **建议**（择一）：
 1. 写入 outbox 表，由 worker 轮询投递 —— 保证「至少一次」
@@ -235,12 +320,13 @@ service.py:96-98 — commit 成功但 enqueue 抛异常时，任务停在 queued
 ```
 
 要点：**定位到行 → 说清后果 → 给可选方案 → 写验收标准**。四条齐了，作者不用来回问。
+引用本清单编号可以省掉一半解释：`🔴 BE-36：这条 retry 会清掉 external_id，见 R12-01`。
 
 ### 什么时候该拦下（Request changes）
 
-- 🔴 安全问题（越权、注入、密钥泄漏）
-- 🔴 数据可能损坏或丢失（事务、并发写、迁移不可回滚）
-- 🔴 契约破坏但没有兼容方案
+- 🔴 安全问题（越权、注入、密钥泄漏、外部 URL 未校验）
+- 🔴 数据可能损坏或丢失（事务、并发写、迁移不可回滚、**重复计费 / 对账凭证丢失**）
+- 🔴 契约破坏但没有兼容方案；四份生成物没同步
 - 🔴 关键路径没有错误处理，失败即静默
 - 🟡 累计超过 5 条且都在核心逻辑上
 
@@ -258,44 +344,91 @@ service.py:96-98 — commit 成功但 enqueue 抛异常时，任务停在 queued
 一句话说明这个改动解决了什么问题。
 
 ## 怎么验证
-- [ ] 步骤 1：app seed --reset && app serve --reload
-- [ ] 步骤 2：POST /api/v1/tasks 后 3s 内状态从 queued 变 running
-- [ ] 单测：pytest -q（新增 3 条）
+- [ ] 后端：pytest -q && ruff check . && mypy src
+- [ ] 契约：app export-openapi --check（四份无变化 / 已重新生成）
+- [ ] 前端：npm run verify
+- [ ] 手动：app serve + npm run dev，走一遍主流程与失败路径
+- [ ] 新增用例：pytest 3 条 / vitest 2 条（写明「修之前必红」）
 
 ## 影响面
-- [ ] 数据库迁移（可回滚）
-- [ ] 接口契约变更（前端 PR：#123）
-- [ ] 配置项新增（.env.example 已更新）
+- [ ] 数据库迁移（可回滚、链线性）
+- [ ] 接口契约变更（四份生成物已同步）
+- [ ] 新增权限点（ModuleSpec.permissions 已登记）
+- [ ] 新增模块 / 生成 kind（§1.1 矩阵逐格确认，架构测试绿）
+- [ ] 配置项新增（driver_config / .env.example 双向对齐）
 - [ ] 无
 
 ## 自我 review
-- [ ] 失败路径已考虑：上游超时 / 重复提交 / 空列表
-- [ ] 无调试代码与注释掉的旧实现
-- [ ] 文档已同步（README 接口表 / 规范）
+- [ ] CR-12：这次新开了入口吗？同一不变量在老入口是怎么落的？
+- [ ] 失败路径已考虑：上游超时 / 重复提交 / 空列表 / 进程中途重启
+- [ ] 无调试代码、注释掉的旧实现、临时探针
+- [ ] 文档已同步（FRONTEND_EXTENSION.md / ROUTES.md / EXTENDING.md）
 ```
 
 ---
 
-## 附录 A：当前基线快照（2026-11-05 实测）
+## 附录 A：当前基线快照（2026-11-06 11:15 实测）
 
-评估"这次改动有没有让仓库变差"，需要知道起点在哪。
+评估「这次改动有没有让仓库变差」，需要知道起点在哪。
 
 | 检查项 | 现状 | 说明 |
 |---|---|---|
-| `pytest -q` | ✅ 14 passed | `tests/test_health.py`、`tests/test_task_api.py` |
-| `ruff check src tests` | ⚠️ 5 errors | 2× `UP035`（`Mapping` 应从 `collections.abc` 导入）、1× `E501`（`infra/ai/echo.py:34` 105 字符）、1× `I001`（`task/pipeline.py` import 未排序）、1× `F401`（`STATUS_FAILED` 未使用）；其中 4 个可 `--fix` |
-| `mypy src` | 未纳入门禁 | 建议先跑一次拿到错误清单，按模块分批收敛 |
-| 前端 `tsc -b` | ✅ 通过 | `strict` + `noUnusedLocals` 已开，`any` 计数为 0，无 `console.*` 残留 |
-| 前端 ESLint | ✅ 已配置（2026-11-05 补） | `studio/eslint.config.js`：hooks + 分层 zone + jsx-a11y，`--max-warnings 0` 零存量 |
-| 前端测试 | ✅ 46 passed / 7 files（2026-11-05 补） | Vitest + jsdom + RTL；覆盖 format / 防抖 / 模型选项 / 状态判定 / Modal / TaskCard / mock adapter；覆盖率 18.6% stmts，待继续充血 |
-| CI | ❌ 未接入 | 前端可用 `npm run verify`（typecheck+lint+test+build）手动一次跑完 |
+| `pytest -q` | ✅ **346 passed / 346 collected** | 含契约字节比对、架构矩阵、跨组件状态机表；1 warning |
+| `ruff check .` | ✅ All checks passed | `per-file-ignores` 覆盖种子数据与迁移模板 |
+| `mypy src` | ✅ 144 source files clean | CI 用 `mypy --platform win32 src` |
+| `app export-openapi --check` | ✅ 四份「无变化」 | `openapi.json` / `API.md` / `schema.ts` / `permissions.ts` |
+| CI | ✅ 已接入 | 两个 job：backend（pytest/ruff/mypy）、frontend（`npm run verify`） |
+| 前端 `tsc -b` | ✅ 通过 | `strict` + `noUnusedLocals` |
+| 前端 ESLint | ✅ 零 error / warning | 分层 zone + hooks + jsx-a11y，`--max-warnings 0` |
+| 前端 Vitest | ✅ **314 passed / 45 files** | 覆盖会话、契约、注册表、权限目录、mock 模式 |
+| `vite build` | ✅ 通过 | 入口 `index` 80.09 kB / gzip 27.48 kB；产物无演示口令 |
 
-> 上表后端三行是首轮快照，已落后于当前代码（pytest 现为 87 passed、ruff/mypy 全绿），由后端负责人在下次评审时刷新。
+**基线的演进**（便于判断增长是否健康）：
+pytest 14 → 87 → 204 → 292 → 325 → **346**；前端 46 → 221 → 245 → 277 → **314**。
+每轮评审都要求「先测基线、确认增量、实测问题、写报告、清探针、再回归」。
 
-**建议的收敛顺序**（投入产出比从高到低）：
+**当前已知的剩余缺口**（不是本清单的红项，但评审时心里有数）：
 
-1. ✅ 已完成：ESLint（`studio/eslint.config.js`）与 Vitest 脚手架，含 hooks 依赖、分层 zone、jsx-a11y
-2. ✅ 已完成：`shared/lib`（`format`、`useDebouncedValue`）、`entities/task` 状态判定、`mocks/adapter` REST 语义的测试网
-3. `/tasks` 创建链路补一条集成测试：提交成功但入队失败时的行为（暴露反模式 #1，属后端）
-4. 把 `mypy` 结果按模块拆分，每个 PR 顺手清零自己模块
-5. 前端下一批：任务列表错误态、URL 与搜索互覆盖、`/tasks/stats` 口径（见 `CODE_REVIEW` R3-03 与前端审计）
+1. `EXTENSIBILITY_GAPS.md` 的 B1（权限点自动进内置角色，仍需人跑 `app sync-roles`）、
+   C1（轮询节奏全局化）、C2（重试是作业级不是任务级）。
+2. CI 注释仍写「三份生成物」、`ARCHITECTURE.md` 连带改动清单漏 `permissions.ts`——文档性欠债。
+3. pre-commit 未接入；目前靠 CI 与提交前手动跑命令。
+4. ESLint zone 只拦 `@/xxx` 别名，相对路径跨层仍需人看（FE-02）。
+5. `useMe` 的 5 分钟 `staleTime`（`session.queries.ts:31`）会让降权延迟可见。
+   （`isAuthEntryRequest` 已改精确路径匹配，不再是 `includes`。）
+
+**本清单已写成规则、但当前代码尚未落地的项**（读到这些编号时按「要求」理解，别当成现状）：
+
+| 规则 | 当前状态 | 评级 |
+|---|---|---|
+| FE-30 跨页信号用 `sf_refresh_token` | `use-session-watch.ts:84` 仍用 `TOKEN_STORAGE_KEY`；冷启动删 `sf_token` 会把另一标签页踢下线并级联销毁共享 refresh | 🔴 FE5-01 |
+| FE-33 / CT-01 服务端策略不硬编码 | `GET /identity/password-policy` 前端零调用，`validation.ts` 硬编码 10/4，测试用本地常量做期望（后端改数字不会红） | 🟡 FE5-02 |
+| SEC-11 白名单为空时解析后判 IP | prod 已强制 `IMAGE_ASSET_ALLOWED_HOSTS`；dev 兜底仍不解析 DNS，`nip.io` 可绕过（边界已被 `test_image_policy.py` 显式记录） | 🟡 R12-04 部分修 |
+
+---
+
+## 附录 B：v2.0 新增编号与来源
+
+| 编号段 | 新增 | 主要来源 |
+|---|---|---|
+| CR-11 ~ CR-13 | 生成物、新入口、测试期望值 | R10 / R11 / FE4 / FE5 |
+| GEN-07 ~ GEN-08 | 组合破例、守卫改变写入顺序 | R12-01 / R12-02 / R7-01 |
+| SEC-09 ~ SEC-12 | 唯一写点、闸门位置、URL 校验、prod 必填 | R10 / R8 / R9 / R11-03 / R12-04 |
+| MNT-08 ~ MNT-09 | 注释与代码同向、同名不同义 | FE4-02 / FE3-03 / FE4-04 |
+| PERF-06 ~ PERF-07 | LIMIT 下推、产物体积 | R11-04 / FE2-03 |
+| TEST-05 ~ TEST-07 | 状态机表、期望值来源、错误行为写成预期 | R12-01 / FE5-02 / FE4-01 |
+| BE-26 ~ BE-29 | 模块×插槽矩阵、注入口、权限点、错误码 | R11 / `EXTENDING.md` |
+| BE-30 ~ BE-31 | 口令唯一入口、refresh 冲掉未提交改动 | R7/R8/R9 / R12-02 |
+| BE-32 ~ BE-34 | LIMIT 下推、生成物合法性、枚举比较 | R11-04 / R10-01 / R2 |
+| BE-35 ~ BE-40 | 生成状态机、绝不重复计费、能力快照、阈值口径、`param_schema` | R11 / R12 / `EXTENSIBILITY_GAPS.md` |
+| BE-41 ~ BE-43 | 审计与启动自检、驱动配置归属、可选依赖中性行为 | R11-05 / A1 / D3 |
+| FE-27 ~ FE-31 | 会话唯一出口、单飞、冷启动保留 refresh、跨页信号、登出 | FE2 / FE3 / FE4 / FE5 |
+| FE-32 ~ FE-36 | 行内 loading、生成物派生、策略来源、mock、路由与文案 | FE4 / FE5 / FE2 |
+| CT-08 ~ CT-11 | 错误码/权限点进文档、生成器合法 TS、状态机表、四份 `--check` | R10 / R11 / R12 |
+
+旧条目中**内容被就地修正**的：CR-04（CI 现状）、BE-04/BE-05（自动发现）、
+SEC-01/03/07（受理时校验、读写两侧、URL）、FE-16（生成物派生）、
+CT-01（四份生成物）、CT-04（文档清单）。编号保持不变，历史报告里的引用仍然有效。
+
+> **规范 ≠ 现状**：清单里的 MUST 条目描述的是目标状态。少数条目（见附录 A 末表）
+> 当前代码还没做到，写进清单是为了让下次改动能据此判红，而不是宣称问题已经消失。
