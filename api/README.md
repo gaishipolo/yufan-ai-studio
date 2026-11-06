@@ -63,6 +63,7 @@ Vite 会把 `/api` 代理到 `VITE_API_PROXY_TARGET`（默认 `http://127.0.0.1:
 | `app models` | 列出模型目录（供应商路由结果） |
 | `app export-openapi` | 导出接口契约：`docs/openapi.json` + `docs/API.md` + 前端 `schema.ts` |
 | `app import-archive-index [--dry-run]` | 把归档目录的 JSON 索引补进 `assets` 表（幂等，不删 JSON） |
+| `app migrate-storage [--dry-run] [--delete-source]` | `local → s3` 切换前跑：把 `STORAGE_LOCAL_ROOT` 的对象按 key 搬进桶，并把库里 `/static/...` 旧地址改写成桶地址 |
 | `app prune-logins [--days 90]` | 清理过期的登录审计（默认取 `LOGIN_EVENT_RETENTION_DAYS`） |
 | `app new-module x --label 中文名` | 生成新模块脚手架（含权限声明） |
 | `alembic revision --autogenerate -m "xxx"` | 生成迁移（生产用） |
@@ -412,6 +413,10 @@ ruff check src tests
 - [ ] 用 `alembic upgrade head` 建表，不要依赖自动建表（`app_env=prod` 时已自动关闭）
 - [ ] `STORAGE_DRIVER=s3` + `S3_*` 四项必填；桶保持私有，并按上文配好 CORS。
       继续用本地盘就把 `STORAGE_LOCAL_ROOT` 指到一个**独立于代码目录**的持久卷。
+- [ ] 从本地盘切到 s3 时先跑 `app migrate-storage --dry-run` 核对文件数，再去掉
+      `--dry-run`。它做两件事：按 key 搬对象、把 `image_jobs` 里 `/static/...` 的
+      旧地址改写成桶地址。**注意**：生成结果地址是直连 `url_for` 拼的，私有桶会 403
+      —— 要么给桶开读权限，要么等 TODO T15 把读路径改成预签名端点。
 - [ ] 从旧归档盘升级时跑一次 `app import-archive-index --dry-run`，确认
       「新建 / 缺文件 / 冲突」的数量后再去掉 `--dry-run`。命令幂等，可重复执行。
 - [ ] `QUEUE_DRIVER=redis`，并实现对应驱动

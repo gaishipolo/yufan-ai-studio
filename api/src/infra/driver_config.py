@@ -24,6 +24,8 @@ from typing import Any, ClassVar
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from core.config import ENV_FILE
+
 # 显式声明过 model_config 的子类会登记在这里，供 `tests/test_config_guard.py` 巡检。
 # 延迟导入的驱动只有被 import 时才会登记，因此测试里要显式 import 待检查的模块。
 _REGISTRY: list[type[DriverSettings]] = []
@@ -33,7 +35,7 @@ def driver_config(prefix: str) -> SettingsConfigDict:
     """生成子类的 `model_config`，避免每个驱动抄一遍五行配置。"""
     return SettingsConfigDict(
         env_prefix=f"{prefix}_",
-        env_file=(".env",),
+        env_file=(ENV_FILE,),
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
@@ -49,7 +51,7 @@ class DriverSettings(BaseSettings):
     """
 
     model_config = SettingsConfigDict(
-        env_file=(".env",),
+        env_file=(ENV_FILE,),
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",

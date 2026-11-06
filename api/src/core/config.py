@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import os
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Literal
@@ -23,12 +24,18 @@ _WEAK_SECRET_PREFIXES = ("dev-only", "change-me")
 # 用绝对路径做默认值，保证「从哪个目录启动都读到同一份数据」。
 _VAR_DIR = Path(__file__).resolve().parents[2] / "var"
 
+# `.env` 的位置可被 `SETTINGS_ENV_FILE` 覆盖，测试用它指向一个不存在的文件：
+# 否则测试结果取决于开发者本机 `.env`——把 `STORAGE_DRIVER` 切成 s3、或者填了
+# `S3_*` 凭据之后，「本机绿、CI 红」（或反过来）就一定会发生。
+# `infra/driver_config.py` 的驱动配置读同一个变量，改这里要一起改。
+ENV_FILE = os.getenv("SETTINGS_ENV_FILE", ".env")
+
 
 class Settings(BaseSettings):
     """全局配置。新增配置项时只需在此添加字段并补充 .env.example。"""
 
     model_config = SettingsConfigDict(
-        env_file=(".env",),
+        env_file=(ENV_FILE,),
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",

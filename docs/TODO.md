@@ -5,7 +5,7 @@
 >
 > 来源：`CODE_REVIEW_2026-11-06_R11~R14`、`CODE_REVIEW_2026-11-06_FE6`、
 > `EXTENSIBILITY_GAPS.md` 的 B1/C1/C2，以及素材分支合并时新发现的项。
-> 最后更新：2026-11-06 16:20（提交 `e928fbb` 之后）
+> 最后更新：2026-11-06 17:05（`app migrate-storage` 落地、个人素材切到 MinIO 之后）
 
 ## 一眼看完
 
@@ -25,6 +25,8 @@
 | T12 | `infra/storage/base.py` 头注释说错工厂位置 | 照它加驱动会改错文件 | 后端（5 分钟） |
 | T13 | 两个运维脚本绕过 `ARCHIVE_DRIVER` | 换 S3 后脚本仍写本地盘 | 后端 |
 | T14 | `REVIEW_CHECKLIST` 缺两条反模式 | 同类问题第五次出现 | 文档 |
+| T15 | 生成结果 URL 落库（`image_jobs.output_url`） | 换存储驱动后历史链接全部失联 | 后端 |
+| T16 | 归档协议是 `Path` 形态，接不了纯 HTTP 的 S3 | 模板库/归档库搬不进桶 | 后端（要改协议） |
 
 ---
 
@@ -155,6 +157,49 @@ R13 与 R14 各自归纳出一个新形状，都没进清单：
    被 `"retry_count" in text` 这个关键字骗过，而那个字段计的是自动重试）。
 
 **验收**：`CODE_STYLE.md §6` 或 `REVIEW_CHECKLIST.md` 的反模式表加两条，各带一个反例。
+
+## T15 · 生成结果 URL 落库，换存储驱动即失联（切 S3 时发现）
+
+`image_jobs.output_url` / `cover_url` 存的是**生成那一刻** `url_for()` 的产物：本地
+驱动下是 `/static/images/<id>.png`。而 `/static` 只在 `STORAGE_DRIVER=local` 时挂载
+（`app._mount_static`），切到 s3 之后这批历史地址没有任何端点应答 —— 生图页整屏
+破图，且**不改代码就修不回来**。
+
+现在已经有的临时兜底：`app migrate-storage` 会把这两列的 `/static/<key>` 改写成当前
+驱动的 `url_for(key)`。但这是「每次换驱动都要记得跑一次」的人肉约定，不是结构保证：
+- 桶如果是私有的，`url_for` 拼出来的直连地址照样 403 —— 本轮验证是把桶设成公开读
+  才通的。
+- 换到第三个驱动（OSS/COS）时，存量地址又会失联一次。
+
+**验收**：读路径不再依赖落库的绝对 URL。方向二选一：
+(a) `output_url` 只存**对象 key**，出参统一拼「本服务的下载端点」，由端点按驱动
+    决定 `FileResponse` 还是 307 预签名（与 `AssetService.resolve_file` 同一套）；
+(b) 保留落库 URL，但新增 `app rewrite-storage-urls`（本次的迁移逻辑抽出来）并在
+    启动日志里探测「库里有一批地址不属于当前驱动」时告警。
+(a) 是正解，(b) 只是把坑做成可见的。
+
+## T16 · 归档协议是 `Path` 形态，接不了纯 HTTP 的 S3
+
+`infra/archive/base.py` 的 `ArchiveStorage` 以 `Path` 表达位置
+（`root()` / `resolve()->Path` / `read(path)` / `write(path)` / `copy(Path, Path)`），
+`infra/storage/s3.py` 那套 `ObjectStorage`（key + bytes）实现不了它 —— 文件头
+63-66 行自己也写了这条已知边界。结果就是：个人素材能一行配置切桶，**模板库/归档库
+（共享盘 20 个文件 / 150.2MB）搬不进去**。
+
+要搬，牵扯这五处语义，缺一处就断：
+1. `archive_service.file/stream` 现在返回 `(Path, mime)` 给 `FileResponse`；
+   S3 下要么 307 预签名，要么把字节读进进程（大视频不能读）。
+2. `_ingest` 的「落盘 + `create_preview` 派生缩略图 + 写 `catalog/assets/*.json` 镜像」
+   三件套全部基于 `Path`。
+3. `replacement_service` 按 `Path` 同步读模板素材，worker 里改流式读要重排事务边界。
+4. `import-archive-index` 读盘上的 JSON 索引；搬家后索引来源要重新定（DB 已有 20 条
+   可当准）。
+5. `scripts/import_legacy_replacement_assets.py`、`refresh_archive_media.py` 仍直接
+   `LocalArchiveStorage()`（T13）。
+
+**验收**：`ARCHIVE_DRIVER=s3` 能起、能传、能取（`FileResponse` 或 307 二选一都算）；
+`app migrate-archive-to-s3` 幂等，跑完 `storage_key` 仍可解析，共享盘保留只读一周
+作为回滚；`tests/test_architecture.py` 里补一条「归档实现不许假设本地路径」的守卫。
 
 ---
 

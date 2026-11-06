@@ -8,6 +8,7 @@
     app models                         # 列出可用模型（供应商路由结果）
     app export-openapi                 # 导出接口契约（docs/ + 前端 TS 类型）
     app import-archive-index           # 归档目录的 JSON 索引 → assets 表（幂等）
+    app migrate-storage                # 把本地 storage 根目录的对象搬进当前驱动（local → s3）
     app new-module voice --label 配音   # 生成新模块脚手架
 """
 
@@ -18,6 +19,10 @@ import asyncio
 import getpass
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # 只用于注解：命令行入口保持「用到才 import」，别把启动链拖长
+    from infra.storage.base import ObjectStorage
 
 
 def _cmd_serve(args: argparse.Namespace) -> None:
@@ -260,6 +265,82 @@ def _cmd_import_archive_index(args: argparse.Namespace) -> None:
         print(line)
 
 
+def _cmd_migrate_storage(args: argparse.Namespace) -> None:
+    """把本地存储目录里的对象按 key 搬进当前 `STORAGE_DRIVER`，并修正库里的旧 URL。
+
+    切驱动要做两件事，缺一件就露馅：
+
+    1. **搬对象**。DB 里的 `storage_key` 不变，桶里却没有对象 —— 素材列表还在，
+       点开 404。
+    2. **改落库的 URL**。`image_jobs.output_url` 存的是生成那一刻 `url_for()` 的产物
+       （本地驱动下是 `/static/images/xxx.png`）。`/static` 只在本地驱动挂载
+       （`app._mount_static`），切到 S3 之后这些历史地址直接没人应答。全仓只有
+       这一张表把「本服务拼得出来的存储 URL」落库，其他模块存的是外部 https
+       或本服务的 `/api` 路径，所以只改这两列。
+    """
+    from core.config import settings
+    from infra import get_storage
+    from infra.storage.migration import migrate_local_objects
+
+    if settings.storage_driver == "local":
+        print(
+            "当前 STORAGE_DRIVER=local，目标就是源目录本身。"
+            "先把 STORAGE_DRIVER 配成 s3（连同 S3_* 四项）再执行本命令",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+
+    root = Path(args.root).resolve() if args.root else Path(settings.storage_local_root)
+    if not root.is_dir():
+        print(f"源目录不存在：{root}", file=sys.stderr)
+        raise SystemExit(1)
+
+    storage = get_storage()
+    report = asyncio.run(
+        migrate_local_objects(
+            storage, root, dry_run=args.dry_run, delete_source=args.delete_source
+        )
+    )
+    print(f"源目录：{root}")
+    print(f"目标驱动：{settings.storage_driver}")
+    for line in report.lines():
+        print(line)
+
+    if not args.dry_run and not args.skip_urls:
+        rewritten, scanned = asyncio.run(_rewrite_public_urls(storage))
+        print(f"  已改写落库 URL {rewritten} 处（扫描 {scanned} 行）")
+
+    if report.failed:
+        raise SystemExit(1)
+
+
+async def _rewrite_public_urls(storage: ObjectStorage) -> tuple[int, int]:
+    """把 `/static/<key>` 改写成当前驱动的 `url_for(key)`；返回（改写数，扫描行数）。"""
+    from sqlalchemy import select
+
+    from core.config import settings
+    from db.session import get_session_factory
+    from modules.image.models import ImageJob
+
+    prefix = settings.storage_public_base.rstrip("/") + "/"
+    rewritten = 0
+
+    async with get_session_factory()() as session:
+        rows = (await session.execute(select(ImageJob))).scalars().all()
+        for row in rows:
+            for column in ("cover_url", "output_url"):
+                value = getattr(row, column)
+                if not value or not value.startswith(prefix):
+                    continue
+                # 前缀后面就是对象 key：`/static/images/x.png` → `images/x.png`
+                setattr(row, column, storage.url_for(value[len(prefix) :]))
+                rewritten += 1
+        if rewritten:
+            await session.commit()
+
+    return rewritten, len(rows)
+
+
 def _cmd_new_module(args: argparse.Namespace) -> None:
     from scaffold import ModulePlan, ScaffoldError, create_module
 
@@ -362,6 +443,26 @@ def main(argv: list[str] | None = None) -> int:
         "--dry-run", action="store_true", help="只统计将要发生的变更，不写库"
     )
     p_import.set_defaults(func=_cmd_import_archive_index)
+
+    p_migrate = sub.add_parser(
+        "migrate-storage",
+        help="把本地 storage 目录的对象按 key 搬进当前驱动（切 s3 前跑一次）",
+    )
+    p_migrate.add_argument(
+        "--root", default="", help="源目录，默认取 STORAGE_LOCAL_ROOT"
+    )
+    p_migrate.add_argument("--dry-run", action="store_true", help="只统计文件数，不写入")
+    p_migrate.add_argument(
+        "--delete-source",
+        action="store_true",
+        help="复制成功后删除源文件（默认保留：本地目录是回滚依据）",
+    )
+    p_migrate.add_argument(
+        "--skip-urls",
+        action="store_true",
+        help="不改写落库的 /static 旧地址（只在明确要保留本地驱动可读时使用）",
+    )
+    p_migrate.set_defaults(func=_cmd_migrate_storage)
 
     p_new = sub.add_parser("new-module", help="生成新模块脚手架")
     p_new.add_argument("name", help="模块名（snake_case），同时作为目录名与 pipeline kind")
