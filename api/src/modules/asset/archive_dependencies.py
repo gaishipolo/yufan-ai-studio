@@ -6,13 +6,13 @@ from typing import Annotated
 
 from fastapi import Depends
 
-from api.deps import require
+from api.deps import SessionDep, require
 from core.context import CurrentUser
 from modules.asset.archive_service import ArchiveAssetService
 
 
-def get_archive_service() -> ArchiveAssetService:
-    return ArchiveAssetService()
+def get_archive_service(session: SessionDep) -> ArchiveAssetService:
+    return ArchiveAssetService(session)
 
 
 ArchiveServiceDep = Annotated[ArchiveAssetService, Depends(get_archive_service)]

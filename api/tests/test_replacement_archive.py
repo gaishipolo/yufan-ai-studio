@@ -17,7 +17,7 @@ from tests_archive_helpers import archive
 
 from core.config import settings
 from core.context import CurrentUser
-from core.exceptions import BadRequest, Conflict, NotFound, UpstreamError
+from core.exceptions import BadRequest, Conflict, UpstreamError
 from infra.ai.libtv import get_libtv_settings
 from infra.archive.local import get_archive_settings
 from modules.template.replacement_schema import PrepareReplacement
@@ -32,12 +32,19 @@ def archive_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 def make_image(path: Path) -> Path:
-    Image.new("RGB", (32, 48), "purple").save(path, format="PNG")
+    # 每个测试用不同像素：摘要相同会被去重成上一条记录，而那条记录的文件在
+    # 上一个测试的临时目录里（会话级数据库跨测试共享）
+    Image.new("RGB", (32, 48), tuple(os.urandom(3))).save(path, format="PNG")
     return path
 
 
 @pytest.fixture
-def materials(archive_root: Path) -> tuple[dict, dict]:
+def materials(client: TestClient, archive_root: Path) -> tuple[dict, dict]:
+    """经真实上传接口登记原片与人物参考图。
+
+    以前这里直接调 `ArchiveAssetRepository().register()`：那是「JSON 即索引」
+    时代的同步写法，索引搬进 `assets` 表后它已经没有对应的真实路径了。
+    """
     video = archive_root / "fixture.mp4"
     subprocess.run(
         [
@@ -48,7 +55,7 @@ def materials(archive_root: Path) -> tuple[dict, dict]:
             "-f",
             "lavfi",
             "-i",
-            "color=c=blue:s=64x64:d=2",
+            f"color=c=0x{os.urandom(3).hex()}:s=64x64:d=2",
             "-f",
             "lavfi",
             "-i",
@@ -65,36 +72,44 @@ def materials(archive_root: Path) -> tuple[dict, dict]:
     )
     image = make_image(archive_root / "fixture.png")
     return (
-        archive.register(video, "source.mp4", "source", "u_001"),
-        archive.register(image, "identity.png", "character", "u_001"),
+        archive.upload(client, "source.mp4", "source", video.read_bytes()),
+        archive.upload(client, "identity.png", "character", image.read_bytes()),
     )
 
 
 def test_upload_and_owner_scoping(client: TestClient, archive_root: Path) -> None:
+    from api.deps import get_actor
+
     image = io.BytesIO()
-    Image.new("RGB", (16, 16), "blue").save(image, format="PNG")
-    response = client.post(
-        "/api/v1/assets/archive/upload",
-        params={"filename": "参考.png", "category": "character"},
-        content=image.getvalue(),
-        headers={"Content-Type": "application/octet-stream"},
-    )
-    assert response.status_code == 201, response.text
-    item = response.json()["data"]
+    Image.new("RGB", (16, 16), tuple(os.urandom(3))).save(image, format="PNG")
+    item = archive.upload(client, "参考.png", "character", image.getvalue())
     assert (archive_root / item["path"]).read_bytes() == image.getvalue()
     assert client.get(item["url"]).content == image.getvalue()
-    assert archive.assets("another-user") == []
-    with pytest.raises(NotFound):
-        archive.asset(item["id"], "another-user")
+
+    # 换一个没有这条素材的操作者：列表为空、取文件 404（索引在 DB，scoping 由查询保证）
+    client.app.dependency_overrides[get_actor] = lambda: CurrentUser(
+        id="another-user", name="他人", permissions=frozenset({"asset:read"})
+    )
+    try:
+        listed = client.get("/api/v1/assets/archive").json()["data"]
+        assert listed["items"] == [] and listed["total"] == 0
+        assert client.get(f"/api/v1/assets/archive/{item['id']}/file").status_code == 404
+    finally:
+        client.app.dependency_overrides.clear()
 
 
-def test_archive_rejects_traversal_and_wrong_bytes(archive_root: Path) -> None:
+def test_archive_rejects_traversal_and_wrong_bytes(
+    client: TestClient, archive_root: Path
+) -> None:
     with pytest.raises(BadRequest):
         archive.within(archive_root, "../outside")
-    invalid = archive_root / "not-an-image.png"
-    invalid.write_bytes(b"not an image")
-    with pytest.raises(BadRequest):
-        archive.register(invalid, "bad.png", "character", "owner")
+    response = client.post(
+        "/api/v1/assets/archive/upload",
+        params={"filename": "bad.png", "category": "character"},
+        content=b"not an image",
+        headers={"Content-Type": "application/octet-stream"},
+    )
+    assert response.status_code == 400
     assert not list((archive_root / "catalog/assets").glob("*.json"))
 
 
@@ -114,8 +129,7 @@ def test_prepare_is_self_contained_and_idempotent(
     kind: str,
 ) -> None:
     source, image = materials
-    image["category"] = kind
-    archive.save(archive_root / "catalog/assets" / (image["id"] + ".json"), image)
+    archive.patch(archive_root / "catalog/assets" / (image["id"] + ".json"), category=kind)
     payload = PrepareReplacement.model_validate(
         {
             "requestId": str(uuid.uuid4()),
@@ -204,8 +218,7 @@ def test_invalid_source_is_never_silently_trimmed(
     changes: dict,
 ) -> None:
     source, image = materials
-    source.update(changes)
-    archive.save(archive_root / "catalog/assets" / (source["id"] + ".json"), source)
+    archive.patch(archive_root / "catalog/assets" / (source["id"] + ".json"), **changes)
     with pytest.raises(BadRequest):
         prepare(
             PrepareReplacement(

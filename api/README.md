@@ -62,12 +62,50 @@ Vite 会把 `/api` 代理到 `VITE_API_PROXY_TARGET`（默认 `http://127.0.0.1:
 | `app modules` | 列出模块 / 权限点 / 生成流水线 / job handler |
 | `app models` | 列出模型目录（供应商路由结果） |
 | `app export-openapi` | 导出接口契约：`docs/openapi.json` + `docs/API.md` + 前端 `schema.ts` |
+| `app import-archive-index [--dry-run]` | 把归档目录的 JSON 索引补进 `assets` 表（幂等，不删 JSON） |
 | `app prune-logins [--days 90]` | 清理过期的登录审计（默认取 `LOGIN_EVENT_RETENTION_DAYS`） |
 | `app new-module x --label 中文名` | 生成新模块脚手架（含权限声明） |
 | `alembic revision --autogenerate -m "xxx"` | 生成迁移（生产用） |
 | `alembic upgrade head` | 执行迁移 |
 | `pytest -q` | 运行测试 |
 | `ruff check src tests --fix` | 静态检查与修复 |
+
+### 对象存储（S3 / MinIO）
+
+默认 `STORAGE_DRIVER=local`，走 `STORAGE_LOCAL_ROOT`。要接 S3/MinIO：
+
+```bash
+STORAGE_DRIVER=s3
+S3_ENDPOINT=http://10.0.0.12:9000   # 自建 MinIO；AWS 官方留空
+S3_BUCKET=yufan-assets
+S3_ACCESS_KEY=...
+S3_SECRET_KEY=...
+S3_REGION=us-east-1
+S3_USE_SSL=false                    # 内网 http endpoint 时必须关
+```
+
+驱动的写法是 path-style 寻址（MinIO 必需），`STORAGE_DRIVER=s3` 而缺
+`S3_ENDPOINT/BUCKET/ACCESS_KEY/SECRET_KEY` 时**生产启动直接失败**，不会等到第一次上传才报错。
+
+三条部署约束：
+
+1. **桶保持私有。** `GET /assets/{id}/file` 与 `/cover` 对远程驱动返回 `307` 到
+   预签名地址（默认 15 分钟），字节不经过应用进程；桶设成公开读等于把访问控制
+   交给 URL 的保密性。
+2. **桶侧要配 CORS。** 浏览器拿到 `307` 后是**直接向对象存储发请求**，不带我们的
+   鉴权头。`AllowOrigin` 填前端来源（不要 `*` 配私有桶）、`AllowMethods` 至少
+   `GET, HEAD`、`ExposeHeaders` 带上 `Content-Length, Content-Range, ETag`
+   （视频拖进度条要用 `Range`）。
+3. **归档盘与对象存储是两套。** 归档素材（`/assets/archive/*`）始终读
+   `MEDIA_ARCHIVE_ROOT`，不会因为切了 `STORAGE_DRIVER` 而搬到桶里。
+
+本机起 MinIO（`minio/minio` 已从 Docker Hub 下架，用社区镜像）：
+
+```bash
+docker run -d --name yufan-minio -p 19000:9000 -p 19001:9001 \
+  -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin123 \
+  elestio/minio:latest server /data --console-address ":9001"
+```
 
 ---
 
@@ -372,7 +410,11 @@ ruff check src tests
 - [ ] `DB_URL` 换 postgres：`postgresql+asyncpg://user:pass@host:5432/app`，装 `pip install -e ".[postgres]"`
 - [ ] `JWT_SECRET` 用 `openssl rand -hex 32` 重新生成
 - [ ] 用 `alembic upgrade head` 建表，不要依赖自动建表（`app_env=prod` 时已自动关闭）
-- [ ] `QUEUE_DRIVER=redis`、`STORAGE_DRIVER=s3`，并实现对应驱动
+- [ ] `STORAGE_DRIVER=s3` + `S3_*` 四项必填；桶保持私有，并按上文配好 CORS。
+      继续用本地盘就把 `STORAGE_LOCAL_ROOT` 指到一个**独立于代码目录**的持久卷。
+- [ ] 从旧归档盘升级时跑一次 `app import-archive-index --dry-run`，确认
+      「新建 / 缺文件 / 冲突」的数量后再去掉 `--dry-run`。命令幂等，可重复执行。
+- [ ] `QUEUE_DRIVER=redis`，并实现对应驱动
 - [ ] `WORKER_ENABLED=false` 时单独起 worker 进程，避免 API 实例与 worker 抢队列
 - [ ] 反向代理（Nginx）转发到 8080，并透传 `X-Request-Id`
 - [ ] 有反代就配 `TRUSTED_PROXIES=<代理地址/网段>`（或给 uvicorn 加 `--proxy-headers

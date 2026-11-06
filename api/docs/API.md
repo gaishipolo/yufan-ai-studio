@@ -2,7 +2,7 @@
 
 > 此文件由 `app export-openapi` 自动生成，请勿手工编辑。
 >
-> 版本 `0.2.0`｜共 **58** 个接口 / **9** 个模块
+> 版本 `0.2.0`｜共 **60** 个接口 / **9** 个模块
 >
 > 重新生成：`cd api && .venv/Scripts/python -m cli export-openapi`
 
@@ -127,6 +127,7 @@ Authorization: Bearer <accessToken>
 | `40001` | 400 | 框架 | `ValidationFailed` | 参数校验失败 |
 | `40021` | 400 | identity | `OldPasswordMismatch` | 原密码不正确 |
 | `40022` | 400 | identity | `UnknownPermission` | 存在无法识别的权限点 |
+| `40051` | 400 | asset | `FileTypeNotAllowed` | 支持 MP4、PNG、JPG、WebP、MP3 和 WAV |
 | `40100` | 401 | 框架 | `Unauthorized` | 请先登录 |
 | `40121` | 401 | identity | `CredentialInvalid` | 用户名或密码错误 |
 | `40122` | 401 | identity | `RefreshTokenInvalid` | 刷新令牌已失效，请重新登录 |
@@ -138,6 +139,7 @@ Authorization: Bearer <accessToken>
 | `40421` | 404 | identity | `UserNotFound` | 用户不存在 |
 | `40422` | 404 | identity | `RoleNotFound` | 角色不存在 |
 | `40423` | 404 | identity | `SessionNotFound` | 会话不存在或已失效 |
+| `40451` | 404 | asset | `AssetNotFound` | 素材不存在 |
 | `40900` | 409 | 框架 | `Conflict` | 资源冲突 |
 | `40902` | 409 | 框架 | `InvalidState` | 当前状态不允许该操作 |
 | `40921` | 409 | identity | `UsernameTaken` | 用户名已被占用 |
@@ -146,6 +148,8 @@ Authorization: Bearer <accessToken>
 | `40924` | 409 | identity | `RoleInUse` | 该角色仍被用户使用，请先解除绑定 |
 | `40925` | 409 | identity | `CannotTargetSelf` | 不能停用或删除自己的账号 |
 | `40926` | 409 | identity | `LastSuperuser` | 系统必须保留至少一个启用的超级管理员 |
+| `40951` | 409 | asset | `AssetInUse` | 素材仍被引用，不能删除 |
+| `41351` | 413 | asset | `FileTooLarge` | 文件不能超过 50MB |
 | `42900` | 429 | 框架 | `RateLimited` | 请求过于频繁，请稍后再试 |
 | `50100` | 501 | 框架 | `NotImplementedFeature` | 该功能尚未实现 |
 | `50200` | 502 | 框架 | `UpstreamError` | 上游服务异常 |
@@ -159,7 +163,7 @@ Authorization: Bearer <accessToken>
 | 身份 | 26 | 见下方 `4.1` |
 | 任务 | 8 | 见下方 `4.2` |
 | 模型 | 1 | 见下方 `4.3` |
-| 素材 | 10 | 见下方 `4.4` |
+| 素材 | 12 | 见下方 `4.4` |
 | 生图 | 3 | 见下方 `4.5` |
 | 模板 | 6 | 见下方 `4.6` |
 | 分镜模板 | 1 | 见下方 `4.7` |
@@ -970,29 +974,34 @@ Authorization: Bearer <accessToken>
 | `items` | `ModelOut[]` | 否 |  |
 | `total` | `number` | 否 |  |
 
-### 4.4 素材（10 个）
+### 4.4 素材（12 个）
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
-| `GET` | `/api/v1/assets` | 素材列表（按类型分面计数） | 🔒 |
+| `GET` | `/api/v1/assets` | 素材列表（分页 + 类型分面计数） | 🔒 |
 | `GET` | `/api/v1/assets/archive` | 归档素材列表与空间占用 | 🔒 |
 | `POST` | `/api/v1/assets/archive/import` | 从 Z 盘 inbox 登记现有素材 | 🔒 |
 | `POST` | `/api/v1/assets/archive/upload` | 流式上传素材至归档盘 | 🔒 |
 | `GET` | `/api/v1/assets/archive/{asset_id}/file` | 预览或下载已归档素材 | 🔒 |
 | `GET` | `/api/v1/assets/archive/{asset_id}/stream` | 浏览器兼容视频预览（派生文件，不改原片） | 🔒 |
 | `GET` | `/api/v1/assets/archive/{asset_id}/thumbnail` | 读取归档素材缩略图 | 🔒 |
-| `POST` | `/api/v1/assets/upload-ticket` | 申请上传凭证（待实现） | 🔒 |
-| `DELETE` | `/api/v1/assets/{asset_id}` | 删除素材（待实现） | 🔒 |
-| `GET` | `/api/v1/assets/{asset_id}` | 素材详情（待实现） | 🔒 |
+| `POST` | `/api/v1/assets/upload` | 上传素材 | 🔒 |
+| `GET` | `/api/v1/assets/{asset_id}` | 素材详情 | 🔒 |
+| `DELETE` | `/api/v1/assets/{asset_id}` | 删除素材 | 🔒 |
+| `GET` | `/api/v1/assets/{asset_id}/cover` | 读取素材缩略图 | 🔒 |
+| `GET` | `/api/v1/assets/{asset_id}/file` | 读取素材原文件 | 🔒 |
 
 #### `GET /api/v1/assets`
 
-**素材列表（按类型分面计数）**
+**素材列表（分页 + 类型分面计数）**
 
 | 参数 | 位置 | 类型 | 必填 | 说明 |
 |---|---|---|---|---|
 | `type` | query | `AssetTypeFilter` | 否 | 类型筛选 |
-| `keyword` | query | `string` | 否 |  |
+| `keyword` | query | `string` | 否 | 按文件名搜索 |
+| `category` | query | `"source" | "character" | "product" | "scene" | "audio" | null` | 否 | 归档分类 |
+| `page` | query | `number` | 否 | 页码，从 1 开始 |
+| `pageSize` | query | `number` | 否 | 每页条数 |
 
 **响应** `ApiResponse<AssetListOut>`（前端取 `res.data`）
 
@@ -1000,6 +1009,8 @@ Authorization: Bearer <accessToken>
 |---|---|---|---|
 | `items` | `AssetOut[]` | 否 |  |
 | `total` | `number` | 否 |  |
+| `page` | `number` | 否 |  |
+| `pageSize` | `number` | 否 |  |
 | `counts` | `AssetCounts` | 否 |  |
 
 #### `GET /api/v1/assets/archive`
@@ -1109,46 +1120,95 @@ Authorization: Bearer <accessToken>
 
 **响应** `ApiResponse<unknown>`（前端取 `res.data`）
 
-#### `POST /api/v1/assets/upload-ticket`
+#### `POST /api/v1/assets/upload`
 
-**申请上传凭证（待实现）**
+**上传素材**
 
-**请求体** `UploadAssetIn`
+请求体是文件原始字节（不是 multipart），文件名按 `?filename=` 传递。
 
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `filename` | `string` | 是 |  |
-| `contentType` | `string` | 否 |  |
-| `sizeBytes` | `number` | 否 |  |
-
-**响应** `ApiResponse<UploadTicketOut>`（前端取 `res.data`）
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `assetId` | `string` | 是 |  |
-| `uploadUrl` | `string` | 是 |  |
-| `key` | `string` | 是 |  |
-| `expiresIn` | `number` | 否 |  |
-
-#### `DELETE /api/v1/assets/{asset_id}`
-
-**删除素材（待实现）**
+同一账号重复上传同一文件会直接返回已有记录（按 sha256 去重），不会产生第二份。
 
 | 参数 | 位置 | 类型 | 必填 | 说明 |
 |---|---|---|---|---|
-| `asset_id` | path | `string` | 是 |  |
+| `filename` | query | `string` | 是 |  |
 
-**响应** `ApiResponse<unknown>`（前端取 `res.data`）
+**响应** `ApiResponse<AssetOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `type` | `AssetType` | 是 |  |
+| `mimeType` | `string` | 是 |  |
+| `sizeBytes` | `number` | 是 |  |
+| `width` | `number` | 是 |  |
+| `height` | `number` | 是 |  |
+| `duration` | `number` | 是 |  |
+| `hasAudio` | `boolean` | 是 |  |
+| `category` | `"source" \| "character" \| "product" \| "scene" \| "audio" \| null` | 否 |  |
+| `source` | `AssetSource` | 是 |  |
+| `coverUrl` | `string` | 是 |  |
+| `fileUrl` | `string` | 是 |  |
+| `refCount` | `number` | 是 |  |
+| `createdAt` | `string` | 是 |  |
 
 #### `GET /api/v1/assets/{asset_id}`
 
-**素材详情（待实现）**
+**素材详情**
 
 | 参数 | 位置 | 类型 | 必填 | 说明 |
 |---|---|---|---|---|
-| `asset_id` | path | `string` | 是 |  |
+| `asset_id` | path | `string` | 是 | 素材 id |
 
-**响应** `ApiResponse<null>`（前端取 `res.data`）
+**响应** `ApiResponse<AssetOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `type` | `AssetType` | 是 |  |
+| `mimeType` | `string` | 是 |  |
+| `sizeBytes` | `number` | 是 |  |
+| `width` | `number` | 是 |  |
+| `height` | `number` | 是 |  |
+| `duration` | `number` | 是 |  |
+| `hasAudio` | `boolean` | 是 |  |
+| `category` | `"source" \| "character" \| "product" \| "scene" \| "audio" \| null` | 否 |  |
+| `source` | `AssetSource` | 是 |  |
+| `coverUrl` | `string` | 是 |  |
+| `fileUrl` | `string` | 是 |  |
+| `refCount` | `number` | 是 |  |
+| `createdAt` | `string` | 是 |  |
+
+#### `DELETE /api/v1/assets/{asset_id}`
+
+**删除素材**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `asset_id` | path | `string` | 是 | 素材 id |
+
+**响应** `ApiResponse<unknown>`（前端取 `res.data`）
+
+#### `GET /api/v1/assets/{asset_id}/cover`
+
+**读取素材缩略图**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `asset_id` | path | `string` | 是 | 素材 id |
+
+**响应** `ApiResponse<unknown>`（前端取 `res.data`）
+
+#### `GET /api/v1/assets/{asset_id}/file`
+
+**读取素材原文件**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `asset_id` | path | `string` | 是 | 素材 id |
+
+**响应** `ApiResponse<unknown>`（前端取 `res.data`）
 
 ### 4.5 生图（3 个）
 
@@ -1489,6 +1549,11 @@ Authorization: Bearer <accessToken>
 
 ### `AssetCounts`
 
+分面计数：切类型 tab 上的数字。
+
+它按「除类型以外的全部筛选条件」统计，所以切 tab 不会看到三个互不相干的数字，
+也不会出现「选了图片但视频计数还是全站值」这种自相矛盾的显示。
+
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `all` | `number` | 否 |  |
@@ -1502,6 +1567,8 @@ Authorization: Bearer <accessToken>
 |---|---|---|---|
 | `items` | `AssetOut[]` | 否 |  |
 | `total` | `number` | 否 |  |
+| `page` | `number` | 否 |  |
+| `pageSize` | `number` | 否 |  |
 | `counts` | `AssetCounts` | 否 |  |
 
 ### `AssetOut`
@@ -1513,11 +1580,20 @@ Authorization: Bearer <accessToken>
 | `type` | `AssetType` | 是 |  |
 | `mimeType` | `string` | 是 |  |
 | `sizeBytes` | `number` | 是 |  |
-| `coverUrl` | `string` | 是 |  |
 | `width` | `number` | 是 |  |
 | `height` | `number` | 是 |  |
+| `duration` | `number` | 是 |  |
+| `hasAudio` | `boolean` | 是 |  |
+| `category` | `"source" \| "character" \| "product" \| "scene" \| "audio" \| null` | 否 |  |
+| `source` | `AssetSource` | 是 |  |
+| `coverUrl` | `string` | 是 |  |
+| `fileUrl` | `string` | 是 |  |
 | `refCount` | `number` | 是 |  |
 | `createdAt` | `string` | 是 |  |
+
+### `AssetSource`（枚举）
+
+取值：`upload`、`archive`、`generated`
 
 ### `AssetType`（枚举）
 
@@ -2052,25 +2128,6 @@ Authorization: Bearer <accessToken>
 |---|---|---|---|
 | `title` | `string \| null` | 否 | 新标题 |
 | `favorited` | `boolean \| null` | 否 | 收藏状态 |
-
-### `UploadAssetIn`
-
-预签名上传：前端拿到 uploadUrl 后直传对象存储，再回调确认。
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `filename` | `string` | 是 |  |
-| `contentType` | `string` | 否 |  |
-| `sizeBytes` | `number` | 否 |  |
-
-### `UploadTicketOut`
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `assetId` | `string` | 是 |  |
-| `uploadUrl` | `string` | 是 |  |
-| `key` | `string` | 是 |  |
-| `expiresIn` | `number` | 否 |  |
 
 ### `UserCreateIn`
 

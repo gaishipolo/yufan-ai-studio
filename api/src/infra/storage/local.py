@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import re
 from pathlib import Path
 
@@ -69,6 +70,32 @@ class LocalStorage:
         或在接入上传接口后再实现本地版本。
         """
         raise StorageError("本地存储不支持预签名直传，请改用 put() 写入")
+
+    async def put_file(
+        self, key: str, path: Path, content_type: str = "application/octet-stream"
+    ) -> str:
+        target = self._resolve(key)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        return await asyncio.to_thread(self._copy_with_digest, path, target)
+
+    async def presigned_download_url(self, key: str, *, expires_in: int = 900) -> str:
+        """本地没有签名语义：`/static` 是公开前缀，鉴权只能由路由层做。"""
+        return self.url_for(key)
+
+    def local_path(self, key: str) -> Path | None:
+        """本地对象本来就在盘上：直出路径，让 `FileResponse` 支持 Range。"""
+        path = self._resolve(key)
+        return path if path.is_file() else None
+
+    @staticmethod
+    def _copy_with_digest(source: Path, target: Path) -> str:
+        """边写边算摘要，避免同一份文件读两遍。"""
+        digest = hashlib.sha256()
+        with source.open("rb") as src, target.open("wb") as dst:
+            for chunk in iter(lambda: src.read(1024 * 1024), b""):
+                digest.update(chunk)
+                dst.write(chunk)
+        return digest.hexdigest()
 
 
 # 驱动解析约定：infra.loader 通过这个名字拿到实现

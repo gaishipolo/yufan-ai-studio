@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -9,10 +10,10 @@ import imageio_ffmpeg
 import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
+from tests_archive_helpers import archive
 
 from infra.archive.local import get_archive_settings
 from infra.media_probe import create_browser_preview, normalize_duration
-from modules.asset.archive_service import ArchiveAssetService
 
 
 @pytest.fixture
@@ -32,7 +33,7 @@ def make_video(path: Path) -> Path:
             "-f",
             "lavfi",
             "-i",
-            "color=c=blue:s=64x64:d=2",
+            f"color=c=0x{os.urandom(3).hex()}:s=64x64:d=2",
             "-f",
             "lavfi",
             "-i",
@@ -66,11 +67,11 @@ def test_stream_serves_playable_derivative_and_preserves_original(
 ) -> None:
     source = make_video(archive_root / "sample.mp4")
     original = source.read_bytes()
-    media = ArchiveAssetService().repo.register(source, "sample.mp4", "source", "u_001")
-    response = client.get(f"/api/v1/assets/archive/{media.id}/stream")
+    media = archive.upload(client, "sample.mp4", "source", source.read_bytes())
+    response = client.get(f"/api/v1/assets/archive/{media['id']}/stream")
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("video/mp4")
-    derived = archive_root / "library/previews" / f"{media.id}.mp4"
+    derived = archive_root / "library/previews" / f"{media['id']}.mp4"
     assert derived.is_file()
     assert derived.read_bytes() == response.content
     assert source.read_bytes() == original  # 派生预览绝不覆盖原片
@@ -83,14 +84,14 @@ def test_stream_serves_playable_derivative_and_preserves_original(
     assert "Video: h264" in probe.stderr
     assert "yuv420p(" in probe.stderr  # 8-bit，浏览器可解码
     assert "yuv420p10" not in probe.stderr
-    assert client.get(media.url).content == original
+    assert client.get(media["url"]).content == original
 
 
 def test_stream_rejects_non_video(client: TestClient, archive_root: Path) -> None:
     image = archive_root / "reference.png"
-    Image.new("RGB", (16, 16), "blue").save(image, format="PNG")
-    media = ArchiveAssetService().repo.register(image, "reference.png", "character", "u_001")
-    assert client.get(f"/api/v1/assets/archive/{media.id}/stream").status_code == 404
+    Image.new("RGB", (16, 16), tuple(os.urandom(3))).save(image, format="PNG")
+    media = archive.upload(client, "reference.png", "character", image.read_bytes())
+    assert client.get(f"/api/v1/assets/archive/{media['id']}/stream").status_code == 404
 
 
 def test_browser_preview_fails_closed_on_bad_input(archive_root: Path) -> None:

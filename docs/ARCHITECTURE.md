@@ -105,7 +105,7 @@
 | 文件 | 职责 |
 |---|---|
 | `app.py` | 应用工厂：所有装配都在这里，`main.py` 只引用它。 |
-| `cli.py` | 命令行入口 `app <command>`：`serve` / `seed` / `export-openapi` / `prune-sessions` / `sync-roles`。 |
+| `cli.py` | 命令行入口 `app <command>`：`serve` / `seed` / `export-openapi` / `import-archive-index` / `prune-sessions` / `sync-roles`。 |
 | `main.py` | ASGI 入口：`uvicorn main:app --reload`。 |
 | `openapi_export.py` | 契约导出：`openapi.json` / `API.md` / `schema.ts` / `permissions.ts` 四份一致文件。 |
 | `seed.py` | 演示数据装载（仅开发环境）：三个账号、示例素材、任务、模板。 |
@@ -232,13 +232,21 @@
 
 **asset · 素材资产（含归档库）**
 
+`assets` 表是**全部素材的唯一索引**（网页上传 / 归档登记 / 生成产物），但字节分两套存储：
+`source='upload'` 走对象存储（`STORAGE_DRIVER`，本地或 S3），`source='archive'` 走归档盘
+（`MEDIA_ARCHIVE_ROOT`）。两套存储的 `storage_key` 不是同一命名空间，读文件时按 `source`
+选择驱动；两个列表接口也各自限定来源，避免把对方的行渲染成 404 封面。
+归档登记时仍写一份 `catalog/assets/{id}.json` 镜像——替换模板在 worker 里同步读它，
+这是「索引换 DB、替换模板零改动」的桥；JSON 不是真相源，丢了不影响列表与取文件。
+
 | 文件 | 职责 |
 |---|---|
 | `modules/asset/router.py` | 普通素材路由（`/assets`）。 |
 | `modules/asset/service.py` / `schema.py` / `models.py` | 素材资产的服务、出入参、ORM 实体。 |
 | `modules/asset/archive.py` | 归档路由：只声明 HTTP 参数与响应，业务在 `archive_service`。 |
-| `modules/asset/archive_service.py` | 权限、登记、流式上传编排；所有磁盘操作在线程池执行。 |
-| `modules/asset/archive_repository.py` | 归档素材索引仓储：保留已迁移的 JSON 文件布局，`CATEGORIES` 分类常量。 |
+| `modules/asset/archive_service.py` | 归档编排：流式落盘、摘要去重、缩略图、写 JSON 镜像；磁盘操作在线程池执行。 |
+| `modules/asset/archive_repository.py` | 归档素材仓储：按 `source='archive'` 限定作用域查 `assets` 表，`CATEGORIES` 分类常量。 |
+| `modules/asset/archive_import.py` | `app import-archive-index` 的实现：JSON 索引 → `assets` 表，幂等、不删 JSON。 |
 | `modules/asset/archive_schema.py` | 归档契约（`ArchivedAssetOut` 等）。 |
 | `modules/asset/archive_dependencies.py` | 归档 HTTP 依赖装配。 |
 
@@ -423,8 +431,9 @@
 
 | 文件 | 职责 |
 |---|---|
-| `features/archive-library/ArchiveLibrary.tsx` | 归档库主体：分类切换、上传、登记 inbox、列表。 |
-| `features/archive-library/ArchivedResults.tsx` | 归档生成结果列表（替换模板跑完的成片）。 |
+| `features/asset-library/AssetLibrary.tsx` | 素材库主体：类型分面 tab、关键字搜索、分页、上传（带进度与去重提示）、删除（引用冲突原样回显）。 |
+| `features/asset-library/AssetPreview.tsx` | 素材预览弹窗：按类型给原生播放器、元信息、下载与删除入口。 |
+| `features/asset-library/AssetLibrary.test.tsx` | 列表筛选、上传去重提示、删除 409、无权限隐藏删除入口。 |
 | `features/replacement-templates/ReplacementTemplates.tsx` | 替换模板主界面：选原片 → 选参考 → 准备 → 提交。 |
 | `features/replacement-templates/SourceTemplateCard.tsx` | 原片卡片（选中态、时长、音轨标记）。 |
 | `features/replacement-templates/ReplacementTemplates.test.tsx` | 主流程单测（取数层替换为固定数据）。 |
@@ -474,7 +483,7 @@
 
 | 文件 | 职责 |
 |---|---|
-| `pages/assets/AssetsPage.tsx` | 素材资产库页：页头 + `<ArchiveLibrary />`。 |
+| `pages/assets/AssetsPage.tsx` | 素材资产库页：页头 + `<AssetLibrary />`。 |
 | `pages/templates/TemplatesPage.tsx` | 模板库页：页头 + `<ReplacementTemplates />`。 |
 | `pages/shots/ShotsPage.tsx` | 镜头库页（词条列表与增删改）。 |
 | `pages/storyboards/StoryboardsPage.tsx` | 分镜模板页。 |
@@ -758,6 +767,7 @@ cd api
 app serve --reload                  # http://127.0.0.1:8080/docs
 app seed --reset                    # 建表 + 演示数据
 app export-openapi                  # 生成四份契约（--check 只比对）
+app import-archive-index            # 归档 JSON 索引 → assets 表（幂等，--dry-run 预演）
 app sync-roles                      # 内置角色补齐缺失权限（只加不减）
 app prune-sessions --days 30        # 清理过期会话
 pytest -q                           # 全量测试

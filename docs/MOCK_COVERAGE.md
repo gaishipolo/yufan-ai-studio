@@ -2,9 +2,9 @@
 
 # Mock 覆盖率（只记录，不作门禁）
 
-后端端点 58 条（来自 `schema.ts` 的 `EndpointData`），
-已注册 mock 路由 34 条（来自 `mockRouteTable()`），
-按「同方法 + 正则能匹配」判定疑似覆盖 33 条。
+后端端点 60 条（来自 `schema.ts` 的 `EndpointData`），
+已注册 mock 路由 36 条（来自 `mockRouteTable()`），
+按「同方法 + 正则能匹配」判定疑似覆盖 35 条。
 
 > **这是记录，不是门禁**：CI 不检查覆盖率是否达标，也不要求新增端点必须带 mock。
 > 一条 handler 可以覆盖多个端点（例如 `/tasks/([\w-]+)` 同时命中详情与删除），
@@ -36,15 +36,15 @@
 
 | 方法 | 路径 |
 | --- | --- |
-| DELETE | `/api/v1/assets/{}` |
 | GET | `/api/v1/assets/{}` |
+| GET | `/api/v1/assets/{}/cover` |
+| GET | `/api/v1/assets/{}/file` |
 | GET | `/api/v1/assets/archive` |
 | GET | `/api/v1/assets/archive/{}/file` |
 | GET | `/api/v1/assets/archive/{}/stream` |
 | GET | `/api/v1/assets/archive/{}/thumbnail` |
 | POST | `/api/v1/assets/archive/import` |
 | POST | `/api/v1/assets/archive/upload` |
-| POST | `/api/v1/assets/upload-ticket` |
 | GET | `/api/v1/health` |
 | GET | `/api/v1/health/ready` |
 | GET | `/api/v1/identity/me/logins` |
@@ -62,4 +62,4 @@
 | POST | `/api/v1/templates/replacement-runs/{}/execute` |
 | GET | `/api/v1/templates/replacement-runs/{}/output` |
 
-（未命中 25 条；已命中 33 条不在本表重复列出。）
+（未命中 25 条；已命中 35 条不在本表重复列出。）

@@ -21,6 +21,16 @@ jobs:
     defaults:
       run:
         working-directory: api
+    # 对象存储冒烟用。`minio/minio` 已从 Docker Hub 下架（pull 会 403），
+    # 这里用重新打包官方二进制的 elestio 镜像，与本地开发保持一致。
+    services:
+      minio:
+        image: elestio/minio:latest
+        env:
+          MINIO_ROOT_USER: minioadmin
+          MINIO_ROOT_PASSWORD: minioadmin123
+        ports:
+          - 19000:9000
     steps:
       - uses: actions/checkout@v4
 
@@ -40,8 +50,26 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e ".[dev]"
 
+      # 容器就绪与否不在 service 层判断：health-cmd 依赖镜像里有没有 curl/mc，
+      # 换个镜像就会静默失效。在 runner 上轮询，判据只取决于服务端真的在应答。
+      - name: 等待 MinIO 就绪
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:19000/minio/health/live >/dev/null; then
+              echo "MinIO ready after ${i}s"; exit 0
+            fi
+            sleep 1
+          done
+          echo "MinIO 未在 30 秒内就绪" >&2
+          exit 1
+
       # 接口契约三份生成物的一致性由 tests/test_openapi_contract.py 在 pytest 内校验。
+      # 同时导出 S3_LIVE_*：tests/test_storage_s3_live.py 只有看到它才跑真实对象存储。
       - name: pytest
+        env:
+          S3_LIVE_ENDPOINT: http://127.0.0.1:19000
+          S3_LIVE_ACCESS_KEY: minioadmin
+          S3_LIVE_SECRET_KEY: minioadmin123
         run: pytest -q
 
       - name: ruff

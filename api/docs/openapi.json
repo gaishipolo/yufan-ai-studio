@@ -311,7 +311,7 @@
         "tags": [
           "素材"
         ],
-        "summary": "素材列表（按类型分面计数）",
+        "summary": "素材列表（分页 + 类型分面计数）",
         "operationId": "list_assets_api_v1_assets_get",
         "security": [
           {
@@ -337,9 +337,63 @@
             "schema": {
               "type": "string",
               "maxLength": 100,
+              "description": "按文件名搜索",
               "default": "",
               "title": "Keyword"
-            }
+            },
+            "description": "按文件名搜索"
+          },
+          {
+            "name": "category",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "source",
+                    "character",
+                    "product",
+                    "scene",
+                    "audio"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "归档分类",
+              "title": "Category"
+            },
+            "description": "归档分类"
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "页码，从 1 开始",
+              "default": 1,
+              "title": "Page"
+            },
+            "description": "页码，从 1 开始"
+          },
+          {
+            "name": "pageSize",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "description": "每页条数",
+              "default": 24,
+              "title": "Pagesize"
+            },
+            "description": "每页条数"
           }
         ],
         "responses": {
@@ -366,30 +420,39 @@
         }
       }
     },
-    "/api/v1/assets/upload-ticket": {
+    "/api/v1/assets/upload": {
       "post": {
         "tags": [
           "素材"
         ],
-        "summary": "申请上传凭证（待实现）",
-        "operationId": "create_upload_ticket_api_v1_assets_upload_ticket_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/UploadAssetIn"
-              }
+        "summary": "上传素材",
+        "description": "请求体是文件原始字节（不是 multipart），文件名按 `?filename=` 传递。\n\n同一账号重复上传同一文件会直接返回已有记录（按 sha256 去重），不会产生第二份。",
+        "operationId": "upload_asset_api_v1_assets_upload_post",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "filename",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200,
+              "title": "Filename"
             }
-          },
-          "required": true
-        },
+          }
+        ],
         "responses": {
           "201": {
             "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ApiResponse_UploadTicketOut_"
+                  "$ref": "#/components/schemas/ApiResponse_AssetOut_"
                 }
               }
             }
@@ -404,20 +467,64 @@
               }
             }
           }
-        },
+        }
+      }
+    },
+    "/api/v1/assets/{asset_id}": {
+      "get": {
+        "tags": [
+          "素材"
+        ],
+        "summary": "素材详情",
+        "operationId": "get_asset_api_v1_assets__asset_id__get",
         "security": [
           {
             "bearerAuth": []
           }
-        ]
-      }
-    },
-    "/api/v1/assets/{asset_id}": {
+        ],
+        "parameters": [
+          {
+            "name": "asset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 32,
+              "description": "素材 id",
+              "title": "Asset Id"
+            },
+            "description": "素材 id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_AssetOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
       "delete": {
         "tags": [
           "素材"
         ],
-        "summary": "删除素材（待实现）",
+        "summary": "删除素材",
         "operationId": "delete_asset_api_v1_assets__asset_id__delete",
         "security": [
           {
@@ -431,8 +538,12 @@
             "required": true,
             "schema": {
               "type": "string",
+              "minLength": 1,
+              "maxLength": 32,
+              "description": "素材 id",
               "title": "Asset Id"
-            }
+            },
+            "description": "素材 id"
           }
         ],
         "responses": {
@@ -450,13 +561,15 @@
             }
           }
         }
-      },
+      }
+    },
+    "/api/v1/assets/{asset_id}/file": {
       "get": {
         "tags": [
           "素材"
         ],
-        "summary": "素材详情（待实现）",
-        "operationId": "get_asset_api_v1_assets__asset_id__get",
+        "summary": "读取素材原文件",
+        "operationId": "asset_file_api_v1_assets__asset_id__file_get",
         "security": [
           {
             "bearerAuth": []
@@ -469,8 +582,12 @@
             "required": true,
             "schema": {
               "type": "string",
+              "minLength": 1,
+              "maxLength": 32,
+              "description": "素材 id",
               "title": "Asset Id"
-            }
+            },
+            "description": "素材 id"
           }
         ],
         "responses": {
@@ -478,9 +595,56 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ApiResponse_NoneType_"
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/assets/{asset_id}/cover": {
+      "get": {
+        "tags": [
+          "素材"
+        ],
+        "summary": "读取素材缩略图",
+        "operationId": "asset_cover_api_v1_assets__asset_id__cover_get",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "asset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 32,
+              "description": "素材 id",
+              "title": "Asset Id"
+            },
+            "description": "素材 id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
               }
             }
           },
@@ -2858,6 +3022,33 @@
         "type": "object",
         "title": "ApiResponse[AssetListOut]"
       },
+      "ApiResponse_AssetOut_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AssetOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[AssetOut]"
+      },
       "ApiResponse_DeleteTasksOut_": {
         "properties": {
           "code": {
@@ -3527,33 +3718,6 @@
         "type": "object",
         "title": "ApiResponse[TokenOut]"
       },
-      "ApiResponse_UploadTicketOut_": {
-        "properties": {
-          "code": {
-            "type": "integer",
-            "title": "Code",
-            "description": "0 表示成功，其余为业务错误码",
-            "default": 0
-          },
-          "message": {
-            "type": "string",
-            "title": "Message",
-            "default": "OK"
-          },
-          "data": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/UploadTicketOut"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "type": "object",
-        "title": "ApiResponse[UploadTicketOut]"
-      },
       "ApiResponse_UserOut_": {
         "properties": {
           "code": {
@@ -3809,7 +3973,8 @@
           }
         },
         "type": "object",
-        "title": "AssetCounts"
+        "title": "AssetCounts",
+        "description": "分面计数：切类型 tab 上的数字。\n\n它按「除类型以外的全部筛选条件」统计，所以切 tab 不会看到三个互不相干的数字，\n也不会出现「选了图片但视频计数还是全站值」这种自相矛盾的显示。"
       },
       "AssetListOut": {
         "properties": {
@@ -3824,6 +3989,16 @@
             "type": "integer",
             "title": "Total",
             "default": 0
+          },
+          "page": {
+            "type": "integer",
+            "title": "Page",
+            "default": 1
+          },
+          "pageSize": {
+            "type": "integer",
+            "title": "Pagesize",
+            "default": 24
           },
           "counts": {
             "$ref": "#/components/schemas/AssetCounts"
@@ -3853,10 +4028,6 @@
             "type": "integer",
             "title": "Sizebytes"
           },
-          "coverUrl": {
-            "type": "string",
-            "title": "Coverurl"
-          },
           "width": {
             "type": "integer",
             "title": "Width"
@@ -3864,6 +4035,43 @@
           "height": {
             "type": "integer",
             "title": "Height"
+          },
+          "duration": {
+            "type": "number",
+            "title": "Duration"
+          },
+          "hasAudio": {
+            "type": "boolean",
+            "title": "Hasaudio"
+          },
+          "category": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "source",
+                  "character",
+                  "product",
+                  "scene",
+                  "audio"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category"
+          },
+          "source": {
+            "$ref": "#/components/schemas/AssetSource"
+          },
+          "coverUrl": {
+            "type": "string",
+            "title": "Coverurl"
+          },
+          "fileUrl": {
+            "type": "string",
+            "title": "Fileurl"
           },
           "refCount": {
             "type": "integer",
@@ -3881,13 +4089,27 @@
           "type",
           "mimeType",
           "sizeBytes",
-          "coverUrl",
           "width",
           "height",
+          "duration",
+          "hasAudio",
+          "source",
+          "coverUrl",
+          "fileUrl",
           "refCount",
           "createdAt"
         ],
         "title": "AssetOut"
+      },
+      "AssetSource": {
+        "type": "string",
+        "enum": [
+          "upload",
+          "archive",
+          "generated"
+        ],
+        "title": "AssetSource",
+        "description": "记录是怎么进库的。不参与鉴权，只用于筛选与运营统计。"
       },
       "AssetType": {
         "type": "string",
@@ -5977,62 +6199,6 @@
         "type": "object",
         "title": "UpdateTaskIn",
         "description": "局部更新（目前只开放展示属性，生成参数不可改，需重试）。"
-      },
-      "UploadAssetIn": {
-        "properties": {
-          "filename": {
-            "type": "string",
-            "maxLength": 200,
-            "minLength": 1,
-            "title": "Filename"
-          },
-          "contentType": {
-            "type": "string",
-            "maxLength": 64,
-            "title": "Contenttype",
-            "default": "application/octet-stream"
-          },
-          "sizeBytes": {
-            "type": "integer",
-            "minimum": 0.0,
-            "title": "Sizebytes",
-            "default": 0
-          }
-        },
-        "type": "object",
-        "required": [
-          "filename"
-        ],
-        "title": "UploadAssetIn",
-        "description": "预签名上传：前端拿到 uploadUrl 后直传对象存储，再回调确认。"
-      },
-      "UploadTicketOut": {
-        "properties": {
-          "assetId": {
-            "type": "string",
-            "title": "Assetid"
-          },
-          "uploadUrl": {
-            "type": "string",
-            "title": "Uploadurl"
-          },
-          "key": {
-            "type": "string",
-            "title": "Key"
-          },
-          "expiresIn": {
-            "type": "integer",
-            "title": "Expiresin",
-            "default": 900
-          }
-        },
-        "type": "object",
-        "required": [
-          "assetId",
-          "uploadUrl",
-          "key"
-        ],
-        "title": "UploadTicketOut"
       },
       "UserCreateIn": {
         "properties": {

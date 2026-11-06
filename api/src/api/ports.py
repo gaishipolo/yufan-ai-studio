@@ -54,6 +54,7 @@ from dataclasses import dataclass
 from api.authn import has_principal_resolver
 from core.audit import has_audit_sink
 from core.ports.accounts import has_account_status_checker
+from core.ports.assets import has_asset_reference_checker
 
 __all__ = ["PORT_CATALOG", "PortSpec", "port_status"]
 
@@ -106,6 +107,16 @@ PORT_CATALOG: tuple[PortSpec, ...] = (
         when_unregistered="record() 静默跳过：留痕是可选依赖，不能拖垮业务；"
         "但生产环境启动自检会直接报错",
         is_registered=has_audit_sink,
+    ),
+    PortSpec(
+        name="asset-references",
+        module="core.ports.assets",
+        protocol="AssetReferenceChecker",
+        implementer="把素材 id 写进自己表里的业务模块（模板 / 分镜 / 镜头），"
+        "当前无人实现",
+        when_unregistered="返回空映射，删除一律放行。默认「可能有引用就拒绝」"
+        "会让删除功能在实现接上之前完全不可用，而用户只看到「删不掉」",
+        is_registered=has_asset_reference_checker,
     ),
 )
 
