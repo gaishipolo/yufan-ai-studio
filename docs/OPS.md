@@ -119,6 +119,7 @@ app sync-roles --dry-run   # 只打印会补什么，不写库
 | `worker_consumers` | gauge | state | alive = 实际存活的消费协程数，desired = 配置值。alive < desired = 协程死了 |
 | `worker_jobs_in_flight` | gauge | — | 正在执行的任务数；长期等于并发数 = 有 handler 卡住 |
 | `queue_dequeue_errors_total` | counter | — | worker **取任务**失败的次数（队列驱动异常）。持续增长 = worker 在空转，不是某个任务有问题 |
+| `queue_polls_total` | counter | outcome | 取任务轮询次数：hit = 队列里有活，miss = 白查一次。`rate(...{outcome="miss"})` 就是空转查询速率——退避生效后它应该远低于 `worker_consumers{alive} / QUEUE_POLL_INTERVAL_SEC` |
 | `replacement_recovery_lock_giveups_total` | counter | — | 替换任务恢复**抢不到档案锁**而放弃等待的次数。>0 说明有进程长时间握着 `.lock`，那条 run 停在原地等人看 |
 | `job_duration_seconds` | histogram | name | 100ms~900s |
 | `queue_jobs` | gauge | state | db 驱动按 pending / running / dead 拆分；其它驱动只有 active |

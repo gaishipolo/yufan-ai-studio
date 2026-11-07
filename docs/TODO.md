@@ -7,9 +7,9 @@
 >
 > 来源：`CODE_REVIEW_2026-11-06_R11~R14`、`CODE_REVIEW_2026-11-06_FE6`、
 > `EXTENSIBILITY_GAPS.md` 的 B1/C1/C2，以及素材分支合并时新发现的项。
-> 最后更新：2026-11-07 23:52（限流豁免表升级为 `Exemption`：理由要引用真代码、每半年复核一次；
-> `app_meta` 加版本/审计/条件写）
-> 剩余：业务侧 T2/T8/T9/T10/T22/T23/T24，架构侧 T25/T26/T27/T29/T30（后两条是观察期））
+> 最后更新：2026-11-08 00:05（限流豁免表升级为 `Exemption`：理由引用真代码 + 每半年复核；
+> `app_meta` 加版本/审计/条件写；db 队列空转退避 + `queue_polls_total`）
+> 剩余：业务侧 T2/T8/T9/T10/T22/T23/T24，架构侧 T25/T26（只剩唤醒）/T27/T29/T30）
 
 ## 一眼看完
 
@@ -23,7 +23,7 @@
 | T23 | 上传秒传/断点、视频派生预热（C 档） | 300MB 白传一遍；首个点开视频的人等转码 | 后端 |
 | T24 | `MediaFile.path` 装的是 key，字段名/描述没跟上 | 契约语义漂移，后来者会当路径拼 | 后端（小） |
 | T25 | 多实例部署还差三处硬边界 | 配额首次并发、预签名 TOCTOU、运行工作区仍要共享盘 | 架构 |
-| T26 | db 队列是轮询式，没有唤醒机制 | 空转查询按 worker 数叠加；万级 QPS 要换 Redis 驱动（协议已备好） | 架构 |
+| T26 | db 队列没有唤醒机制（空转已退避，仍无「叫醒」） | 空闲时入队到被取走最坏 1 秒；万级 QPS 要换 Redis 驱动（协议已备好） | 架构 |
 | T27 | 限流额度写死在路由上（只有一个 `RATE_LIMIT_DEFAULT_PER_MIN`），改额度要发版；固定窗口有 2× 边界误差 | 运营想临时放宽/收紧某个入口只能改代码；窗口交界瞬时可达 2 倍额度 | 后端 |
 | T29 | 指标是单进程语义，未做多进程聚合 | 多 worker 部署要靠 Prometheus `sum by`；本机 `curl /metrics` 只看到一部分 | 架构 |
 | T30 | PG 迁移闸在观察期（`continue-on-error`），尚未成为硬性要求 | PG 特有的默认值/条件索引差异要等它稳定后才真正拦住 | 架构 |
@@ -116,18 +116,25 @@ A/B 档解决的是「数据不会丢、空间不涨、部署可自检」；这�
 
 ## T26 · db 队列没有唤醒机制（轮询式，吞吐有上限）
 
-`QUEUE_DRIVER=db` 解决了「重启丢任务」和「崩溃任务卡死」，但取任务是**轮询**：
-每个 worker 每 `QUEUE_POLL_INTERVAL_SEC`（默认 0.2s）查一次库。10 个 worker 就是
-50 次/秒的空查询，小库能扛，万级 QPS 不行；而且入队到被取走有 0–200ms 的固有延迟。
+`QUEUE_DRIVER=db` 解决了「重启丢任务」和「崩溃任务卡死」，但取任务是**轮询**，
+入队不会叫醒任何人。
+
+**已做的一半（2026-11-07）**：空转退避。间隔从 `QUEUE_POLL_INTERVAL_SEC`（0.2s）
+翻倍到 `QUEUE_IDLE_MAX_INTERVAL_SEC`（1.0s）封顶，领到任务立刻复位。稳态下每个
+worker 的空转查询从 5 次/秒降到 1 次/秒，可用 `queue_polls_total{outcome="miss"}`
+实测；代价写在同一处文档里——**空闲时入队到被取走的最坏延迟变成 1 秒**（原来是
+0.2 秒）。
+
+**还缺的是「叫醒」**：延迟来自退避上限，不是来自「有人在等」。真要 0 延迟只能靠
+PostgreSQL 的 `LISTEN/NOTIFY`（写完 `NOTIFY`，worker 侧长连接被唤醒）或换 Redis——
+前者 sqlite 没有，会变成「两套取任务路径」，所以没做。
 
 协议层已经留好入口（`infra/queue/base.py` 的映射表 + `docs/EXTENDING.md` §5.2.4），
-换 Redis 只需新增 `infra/queue/redis.py`，业务不改。不引 Redis 时的另一条路是
-PostgreSQL 的 `LISTEN/NOTIFY`：写完 `NOTIFY`，worker 侧长连接被唤醒——但 sqlite 没有，
-会变成「两套取任务路径」，所以没做。
+换 Redis 只需新增 `infra/queue/redis.py`，业务不改。
 
-**验收**：`QUEUE_DRIVER=redis` 可切换，且 `tests/test_db_queue.py` 的语义用例在
-新驱动上同样通过（协议一致性是硬要求）；或 db 驱动接上 `LISTEN/NOTIFY` 并有
-「空转查询数下降」的实测数据。
+**验收（剩下的）**：`QUEUE_DRIVER=redis` 可切换，且 `tests/test_db_queue.py` 的语义
+用例在新驱动上同样通过（协议一致性是硬要求）；或 db 驱动接上 `LISTEN/NOTIFY` 并有
+「入队到取走的 P99」实测数据。
 
 ## T27 · 限流额度的两处已知边界
 

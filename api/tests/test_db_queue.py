@@ -171,3 +171,61 @@ def test_concurrent_claim_guard_is_expressed_by_rowcount() -> None:
     assert first is not None
     assert first.id == job.id
     assert again is None
+
+
+# --------------------------------------------------------------------------- #
+# 空转退避（原 T26 的「空转查询按 worker 数叠加」那半段）
+# --------------------------------------------------------------------------- #
+def test_idle_backoff_doubles_then_caps() -> None:
+    """连续空转：0.2 → 0.4 → 0.8 → 1.0（封顶），领到任务立刻回到 0.2。
+
+    队列绝大多数时间是空的，而「空」不需要每 200ms 确认一次。封顶值就是
+    「空闲时入队到被取走」的最坏延迟，所以它是一个**显式配置**
+    （`QUEUE_IDLE_MAX_INTERVAL_SEC`），不是随手写死的 1 秒。
+    """
+    queue = DbJobQueue(lease_sec=30, poll_interval_sec=0.2, idle_max_interval_sec=1.0)
+    assert queue._next_interval() == 0.2
+
+    intervals = []
+    for _ in range(6):
+        queue._idle = min(queue._idle + 1, 16)
+        intervals.append(queue._next_interval())
+    assert intervals == [0.4, 0.8, 1.0, 1.0, 1.0, 1.0]
+
+
+def test_idle_max_never_denser_than_poll() -> None:
+    """封顶小于基础间隔时不许把它当成「更密的轮询」：取两者较大值。"""
+    queue = DbJobQueue(lease_sec=30, poll_interval_sec=0.5, idle_max_interval_sec=0.05)
+    assert queue._next_interval() == 0.5
+
+
+def test_idle_backoff_resets_after_a_hit() -> None:
+    """领到任务就把空转计数清零，否则忙起来的队列会一直被退避拖着。"""
+    asyncio.run(_reset())
+    queue = DbJobQueue(lease_sec=30, poll_interval_sec=0.01, idle_max_interval_sec=0.02)
+    assert asyncio.run(queue.dequeue(timeout=0)) is None
+    assert queue._idle == 1
+
+    asyncio.run(queue.enqueue(Job(name="demo", payload={})))
+    assert asyncio.run(queue.dequeue(timeout=0.2)) is not None
+    assert queue._idle == 0
+    assert queue._next_interval() == 0.01
+
+
+def test_idle_dequeue_issues_fewer_queries_than_fixed_polling() -> None:
+    """空转时查询次数要真的降下来——用指标算，不靠「感觉省了」。
+
+    不退避的话，`timeout=0.3` 的 3 次调用会各查约 30 次（0.01s 间隔）；
+    退避后每次调用最多几次。上限取得很宽松（30），因为这是时间相关断言，
+    在慢机器上不该假红——它要钉的是「数量级」，不是精确值。
+    """
+    from infra.queue.db import POLLS
+
+    asyncio.run(_reset())
+    queue = DbJobQueue(lease_sec=30, poll_interval_sec=0.01, idle_max_interval_sec=0.05)
+    before = POLLS.value(outcome="miss")
+    for _ in range(3):
+        assert asyncio.run(queue.dequeue(timeout=0.3)) is None
+    misses = POLLS.value(outcome="miss") - before
+    assert misses < 30, f"空转查询没有退避：{misses} 次"
+    assert misses >= 3, "每次 dequeue 至少要查一次库，否则逻辑被跳过了"

@@ -36,6 +36,19 @@ UPDATE queued_jobs SET status='running', lease_expires_at=?
 10 个 worker = 50 次/秒的空查询，sqlite / 小 PG 都能扛，但它**不是**高吞吐队列。
 真要上万 QPS 再换 Redis 或 PG 的 `LISTEN/NOTIFY`——只需新增一个 `infra/queue/<name>.py`，
 协议与业务代码都不用动（见 `api/docs/EXTENDING.md` 的「队列换成 Redis」）。
+
+## 空转时退避（省掉大部分没人要的查询）
+
+队列绝大多数时间是空的，而「空」这个状态不需要每 200ms 确认一次。所以连续空转时
+间隔按 2 倍增长，封顶 `QUEUE_IDLE_MAX_INTERVAL_SEC`（默认 1.0s）；一旦领到任务立刻
+回到 `QUEUE_POLL_INTERVAL_SEC`。
+
+**代价是明确写出来的**：封顶值就是「空闲时入队到被取走」的最坏延迟。默认 1 秒，
+比 200ms 差，但空转查询少了 5 倍——对「短 job + 延迟重投」这种模型（见上一节）来说，
+1 秒抖动远小于一次供应商轮询的间隔。要低延迟就把封顶调回等于 `POLL`，退避即消失。
+
+`queue_polls_total{outcome}` 让这件事可验证：改之前/之后各看一次空转速率，
+而不是靠「感觉好像省了」。
 """
 
 from __future__ import annotations
@@ -52,12 +65,21 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from core import trace
 from core.config import settings
 from core.logging import get_logger
+from core.metrics import METRICS
 from db.base import utcnow
 from db.jobs import ACTIVE_JOB_STATUSES, JOB_DEAD, JOB_PENDING, JOB_RUNNING, QueuedJob
 from db.session import get_session_factory
 from infra.queue.base import Job
 
 logger = get_logger(__name__)
+
+# 每次 `_claim()` 一次：区分「查到了」和「白查」。空转速率是退避有没有生效的唯一
+# 实测依据（改配置前记一次，改完再记一次）。
+POLLS = METRICS.counter(
+    "queue_polls_total",
+    "取任务轮询次数",
+    ("outcome",),
+)
 
 
 def _decode(raw: str | None) -> dict[str, Any]:
@@ -80,12 +102,22 @@ class DbJobQueue:
         *,
         lease_sec: float | None = None,
         poll_interval_sec: float | None = None,
+        idle_max_interval_sec: float | None = None,
     ) -> None:
         # 不在这里拿 session：`get_queue()` 可能在数据库初始化之前就被调用
         self._factory = session_factory
         self._lease = max(1.0, settings.queue_lease_sec if lease_sec is None else lease_sec)
         poll = settings.queue_poll_interval_sec if poll_interval_sec is None else poll_interval_sec
         self._poll = max(0.01, poll)
+        idle_max = (
+            settings.queue_idle_max_interval_sec
+            if idle_max_interval_sec is None
+            else idle_max_interval_sec
+        )
+        # 封顶不能小于基础间隔，否则「退避」反而变成了更密的轮询
+        self._idle_max = max(self._poll, idle_max)
+        # 连续空转次数：只在这个驱动的进程内累积，命中一次即清零
+        self._idle = 0
 
     def _session(self) -> AsyncSession:
         factory = self._factory or get_session_factory()
@@ -145,11 +177,29 @@ class DbJobQueue:
         while True:
             job = await self._claim()
             if job is not None:
+                self._idle = 0
                 return job
+            self._idle = min(self._idle + 1, 16)
             remaining = deadline - loop.time()
             if remaining <= 0:
                 return None
-            await asyncio.sleep(min(self._poll, remaining))
+            delay = self._next_interval()
+            if delay >= remaining:
+                # 这一觉睡到超时：醒来就该返回，不必再查一次库。
+                # 每个周期末尾的那次查询是纯浪费——醒来时已经过了 deadline，
+                # 查完必然又是 miss。入队延迟不受影响：worker 的下一次 `dequeue`
+                # 第一个动作就是查库，间隔在微秒级。
+                await asyncio.sleep(remaining)
+                return None
+            await asyncio.sleep(delay)
+
+    def _next_interval(self) -> float:
+        """下一次空转等待多久：`poll` 起，每次翻倍，封顶 `idle_max`。
+
+        指数而不是线性：队列的空闲是**成段时间**的（夜里、发版间隙），翻倍能在
+        两三次查询内到达封顶；线性增长会让「半忙」的时段一直停在小间隔上。
+        """
+        return min(self._poll * (2.0 ** min(self._idle, 16)), self._idle_max)
 
     async def _claim(self) -> Job | None:
         now = utcnow()
@@ -167,7 +217,9 @@ class DbJobQueue:
                 .limit(1)
             )
             if candidate is None:
+                POLLS.inc(outcome="miss")
                 return None
+            POLLS.inc(outcome="hit")
 
             row = await session.get(QueuedJob, candidate)
             if row is None:
