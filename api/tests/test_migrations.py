@@ -97,6 +97,63 @@ def test_models_match_migrations(migrated: Path) -> None:
     assert diff == [], _render_diff(diff)
 
 
+def test_upgrade_keeps_existing_rows(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """**带数据的库**也要能升上来。
+
+    空库跑迁移是一条几乎不会失败的路径，而事故都发生在有数据的库上：sqlite 的
+    batch 模式重建表时，`INSERT ... SELECT` 只带**原有**列，新加列的值全靠它自己的
+    `server_default`。若「加列 + 去默认值」写在同一个 batch 块里，重建时那一列
+    已经没有默认值，而 SELECT 又不带它 → `NOT NULL constraint failed`。
+    本仓库刚踩过一次（`app_meta.version`），空库绿、开发库一升就炸。
+
+    做法：升到 `app_meta` 建表那一版 → 手工塞一行 → 升到 head → 数据还在、新列有值。
+    """
+    import sqlite3
+
+    from core.config import get_settings
+    from db import session as db_session
+
+    db_file = tmp_path / "seeded.db"
+    monkeypatch.setenv("DB_URL", f"sqlite+aiosqlite:///{db_file.as_posix()}")
+    get_settings.cache_clear()
+    db_session.reset_state_for_tests()
+    try:
+        config = _config()
+        command.upgrade(config, "dbbea50e7828")
+        # 显式 close：`with sqlite3.connect(...)` 只提交不关闭，连接留给 GC 回收时
+        # 会在别的线程里抛异常，变成一条与用例无关的 PytestUnhandledThreadException
+        conn = sqlite3.connect(db_file)
+        try:
+            conn.execute(
+                "INSERT INTO app_meta (key, value, created_at, updated_at)"
+                " VALUES (?, ?, ?, ?)",
+                (
+                    "permissions.catalog",
+                    '["asset:read"]',
+                    "2026-01-01 00:00:00.000000",
+                    "2026-01-01 00:00:00.000000",
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        command.upgrade(config, "head")
+        conn = sqlite3.connect(db_file)
+        try:
+            rows = conn.execute(
+                "SELECT key, value, version, updated_by FROM app_meta"
+            ).fetchall()
+        finally:
+            conn.close()
+    finally:
+        get_settings.cache_clear()
+        db_session.reset_state_for_tests()
+
+    assert rows == [("permissions.catalog", '["asset:read"]', 1, "")], (
+        "升级把已有数据弄丢/弄坏：" + repr(rows)
+    )
+
+
 def _render_diff(diff: list) -> str:
     lines = ["模型与迁移不一致（生产会用迁移建表，缺的列/表只会在生产炸）："]
     for item in diff:

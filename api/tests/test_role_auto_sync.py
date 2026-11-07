@@ -166,10 +166,12 @@ def test_first_run_backfills_whole_spec(restores_role_state) -> None:
 
 
 def test_unknown_permission_does_not_break_sync(restores_role_state) -> None:
-    """目录里出现一个没有任何内置角色声明的权限点时，同步照常完成。
+    """快照里有一个当前目录不再声明的权限码：同步照常完成，**但不会被自动抹掉**。
 
-    这正是真实场景：新模块加了 `voice:create`，而 `BUILTIN_ROLES` 里没人提它。
-    该做的事是「什么都不补，但把快照更新掉」，不是报错。
+    「自动路径只增不减」是刻意的：从数据上分不清「这一版删掉了这个权限点」和
+    「写的人是个旧版本实例」。两种错的代价不对称——多留一个历史权限码只是少补
+    一次，少留一个会把管理员手工移除的权限加回来。真要收缩，人跑
+    `app sync-roles --prune-snapshot`（见 `test_prune_snapshot_can_shrink`）。
     """
     from db.session import get_session_factory as factory
 
@@ -180,8 +182,97 @@ def test_unknown_permission_does_not_break_sync(restores_role_state) -> None:
             return await get_json(session, PERMISSION_SNAPSHOT_KEY)
 
     snapshot = set(asyncio.run(scenario()))
-    assert "demo:ghost" not in snapshot
-    assert snapshot == set(catalog.codes())
+    assert "demo:ghost" in snapshot, "自动路径把快照改小了"
+    assert snapshot - {"demo:ghost"} == set(catalog.codes())
+
+
+def test_old_instance_cannot_shrink_snapshot(restores_role_state, monkeypatch) -> None:
+    """滚动发布：旧版本实例（目录更小）不能把新实例写的快照改回去。
+
+    这是 T33 的原样复现。旧实例 `declared` 只是新实例的子集，写入目标是
+    `declared ∪ previous`，于是等于 `previous`——**根本不写**。
+    没有这一条，旧实例最后写就会把快照退回旧集合，下次启动把少掉的几个当成
+    「新增」补进内置角色，管理员手工摘掉的权限被悄悄加回来。
+    """
+    from modules.identity import service as service_module
+
+    wide = set(catalog.codes())
+    narrow = wide - {"template:use", "template:review"}
+    assert narrow < wide
+
+    class _StaleCatalog:
+        """旧版本进程眼里的权限目录。"""
+
+        @staticmethod
+        def codes() -> set[str]:
+            return set(narrow)
+
+    async def scenario() -> object:
+        await _write_snapshot(wide)
+        monkeypatch.setattr(service_module, "catalog", _StaleCatalog())
+        await _sync()
+        async with get_session_factory()() as session:
+            return await get_json(session, PERMISSION_SNAPSHOT_KEY)
+
+    snapshot = asyncio.run(scenario())
+    assert set(snapshot) == wide, "旧版本实例把快照改小了"
+
+
+def test_conflict_makes_it_recompute_instead_of_overwrite(restores_role_state) -> None:
+    """CAS 撞车后必须重读重算：别人的写入不能被盖掉，差集要按新快照重算。
+
+    `flaky` 在第一次写快照前模拟「另一个实例刚提交了一份旧快照」。
+    正确的行为是：写入失败 → 重读 → 用新快照重算差集 → 再写一次（并集不丢东西）。
+    """
+    from modules.identity import service as service_module
+
+    real_set = service_module.set_json
+    rounds: list[list[str]] = []
+
+    async def flaky(session, key, value, **kwargs):  # type: ignore[no-untyped-def]
+        if not rounds:
+            rounds.append(list(value))
+            # 模拟另一个实例在「我算完」与「我写」之间改了快照
+            await real_set(session, key, ["concurrent:only"], expected_version=None)
+            await session.commit()
+        return await real_set(session, key, value, **kwargs)
+
+    async def scenario() -> object:
+        await _write_snapshot(set(catalog.codes()) - {"template:use"})
+        rounds.clear()
+        service_module.set_json = flaky
+        try:
+            await _sync()
+        finally:
+            service_module.set_json = real_set  # type: ignore[assignment]
+        async with get_session_factory()() as session:
+            return await get_json(session, PERMISSION_SNAPSHOT_KEY)
+
+    snapshot = asyncio.run(scenario())
+    assert len(rounds) == 1
+    assert set(snapshot) == set(catalog.codes()) | {"concurrent:only"}, (
+        "冲突后没有重读重算：别人的写入被盖掉了"
+    )
+    assert "template:use" in snapshot, "重算的差集没把新增权限补进去"
+
+
+def test_prune_snapshot_can_shrink(restores_role_state) -> None:
+    """显式收缩：`prune=True` 把快照改写成「当前声明的全部」。
+
+    自动路径只增不减是安全默认值，代价是历史权限码会一直留着；
+    人明确知道「这些权限点这一版确实删了」时用这个开关收掉。
+    """
+    from db.session import get_session_factory as factory
+    from modules.identity.service import IdentityService
+
+    async def scenario() -> object:
+        await _write_snapshot(set(catalog.codes()) | {"demo:ghost"})
+        async with factory()() as session:
+            await IdentityService(session).sync_new_permissions(prune=True)
+        async with factory()() as session:
+            return await get_json(session, PERMISSION_SNAPSHOT_KEY)
+
+    assert set(asyncio.run(scenario())) == set(catalog.codes())
 
 
 def test_dry_run_reports_without_writing(restores_role_state) -> None:

@@ -37,7 +37,7 @@ from core.security import (
     password_slot,
     verify_password_async,
 )
-from db.app_meta import get_json, set_json
+from db.app_meta import WRITE_RETRIES, read_entry, set_json
 from db.base import utcnow
 from db.session import get_session_factory
 from modules.identity import policy, throttle
@@ -112,6 +112,24 @@ SESSION_LIST_LIMIT = 50
 # 权限目录快照在 `app_meta` 里的键。存的是「上一次启动时目录里有哪些权限码」，
 # 用来区分「新声明的权限点」和「管理员手工删掉的旧权限点」——见 `sync_new_permissions`。
 PERMISSION_SNAPSHOT_KEY = "permissions.catalog"
+
+
+def _snapshot_detail(previous: list[str], target: list[str]) -> str:
+    """给审计写一句人话：几个变几个、加了什么、删了什么。
+
+    这份摘要进 `app_meta_history.detail`，是排查「谁把快照改小了」时第一眼要看的东西，
+    所以不写「已更新」这种等于没写的话。
+    """
+    before, after = set(previous), set(target)
+    added = sorted(after - before)
+    dropped = sorted(before - after)
+    parts = [f"{len(before)}→{len(after)} 个权限码"]
+    if added:
+        parts.append(f"新增 {added[:5]}{'…' if len(added) > 5 else ''}")
+    if dropped:
+        parts.append(f"移除 {dropped[:5]}{'…' if len(dropped) > 5 else ''}")
+    return "；".join(parts)
+
 
 def _clip(value: str, limit: int) -> str:
     """截断用户可控字符串再入库。
@@ -1083,7 +1101,7 @@ class IdentityService:
             logger.info("内置角色权限已补齐：%s", added)
         return added
 
-    async def sync_new_permissions(self) -> dict[str, list[str]]:
+    async def sync_new_permissions(self, *, prune: bool = False) -> dict[str, list[str]]:
         """启动时把「这一版**新声明**的权限点」自动补进内置角色。
 
         与 `sync_builtin_role_permissions` 的差别只在**范围**：那个函数会补齐
@@ -1099,21 +1117,59 @@ class IdentityService:
 
         这解决了「上线新模块 → 非超管 403 → 超管自测发现不了」那条老路：
         它过去依赖「发版时记得跑 `app sync-roles`」这种人为动作。
+
+        ## 与并发有关的两个约束
+
+        **写入必须带上「我据以决策的版本」**（`expected_version`）。滚动发布时旧版本
+        实例与新版实例会同时启动，两者的 `declared` 不同；谁最后写谁赢的话，旧实例
+        能把快照退回旧集合，于是下一次启动把少掉的那几个当成「新增」又补进内置角色，
+        管理员手工摘掉的权限被悄悄加回来。CAS 失败就重读、重算差集、重跑一次补齐
+        （补齐本身幂等，多跑一次没有副作用）。
+
+        **自动路径只增不减**（`declared | previous`）。「谁少写了」和「谁写得晚」
+        在数据上分不清，而两种错的代价不对称：多留一个历史权限码只是少补一次，
+        少留一个会撤销管理员的决定。要收缩（不再声明的权限点从快照里删掉）由人跑
+        `app sync-roles --prune-snapshot`——明确动作、可解释、可审计。
         """
         declared = set(catalog.codes())
-        previous = await get_json(self.session, PERMISSION_SNAPSHOT_KEY)
-        if previous is None:
-            added = await self.sync_builtin_role_permissions()
-            logger.info("权限目录首次快照：%d 个权限点，已做一次全量补齐", len(declared))
-        else:
-            fresh = declared - {str(code) for code in previous}
-            added = await self.sync_builtin_role_permissions(only=fresh) if fresh else {}
-            if fresh:
-                logger.info("新增权限点 %s 已并入内置角色：%s", sorted(fresh), added)
-        current = sorted(declared)
-        if previous != current:
-            await set_json(self.session, PERMISSION_SNAPSHOT_KEY, current)
-            await self.session.commit()
+        added: dict[str, list[str]] = {}
+        for attempt in range(1, WRITE_RETRIES + 1):
+            entry = await read_entry(self.session, PERMISSION_SNAPSHOT_KEY)
+            previous = None if entry is None else [str(code) for code in entry.value]
+            if previous is None:
+                added = await self.sync_builtin_role_permissions()
+                logger.info("权限目录首次快照：%d 个权限点，已做一次全量补齐", len(declared))
+            else:
+                fresh = declared - set(previous)
+                added = await self.sync_builtin_role_permissions(only=fresh) if fresh else {}
+                if fresh:
+                    logger.info("新增权限点 %s 已并入内置角色：%s", sorted(fresh), added)
+
+            target = sorted(declared) if prune else sorted(declared | set(previous or ()))
+            if previous == target:
+                return added
+            written = await set_json(
+                self.session,
+                PERMISSION_SNAPSHOT_KEY,
+                target,
+                expected_version=0 if entry is None else entry.version,
+                detail=_snapshot_detail(previous or [], target),
+            )
+            if written:
+                await self.session.commit()
+                return added
+            # 别的实例在这一瞬间写过：丢掉会话里的旧值，下一轮读到的必须是新的
+            logger.info(
+                "权限目录快照被其他实例改写（第 %d/%d 轮），重读后重新判断",
+                attempt,
+                WRITE_RETRIES,
+            )
+            self.session.expire_all()
+
+        logger.warning(
+            "权限目录快照连续 %d 轮被其他实例改写，本次跳过；下次启动会重做（补齐是幂等的）",
+            WRITE_RETRIES,
+        )
         return added
 
     async def ensure_superuser(

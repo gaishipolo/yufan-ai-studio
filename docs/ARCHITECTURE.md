@@ -108,7 +108,7 @@
 | 文件 | 职责 |
 |---|---|
 | `app.py` | 应用工厂：所有装配都在这里，`main.py` 只引用它。 |
-| `cli.py` | 命令行入口 `app <command>`：`serve` / `seed` / `export-openapi` / `import-archive-index` / `prune-sessions` / `sync-roles`。 |
+| `cli.py` | 命令行入口 `app <command>`：`serve` / `seed` / `export-openapi` / `import-archive-index` / `prune-sessions` / `sync-roles` / `meta`。 |
 | `main.py` | ASGI 入口：`uvicorn main:app --reload`。 |
 | `openapi_export.py` | 契约导出：`openapi.json` / `API.md` / `schema.ts` / `permissions.ts` 四份一致文件。 |
 | `seed.py` | 演示数据装载（仅开发环境）：三个账号、示例素材、任务、模板。 |
@@ -779,6 +779,8 @@ app seed --reset                    # 建表 + 演示数据
 app export-openapi                  # 生成四份契约（--check 只比对）
 app import-archive-index            # 归档 JSON 索引 → assets 表（幂等，--dry-run 预演）
 app sync-roles                      # 内置角色补齐缺失权限（只加不减）
+app sync-roles --prune-snapshot     # 顺带把权限目录快照收缩成当前声明（自动路径只增不减）
+app meta permissions.catalog        # 看这份状态的版本与写入轨迹
 app prune-sessions --days 30        # 清理过期会话
 pytest -q                           # 全量测试
 ruff check . && mypy --platform win32 src

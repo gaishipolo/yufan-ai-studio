@@ -276,7 +276,35 @@ FEATURE_FLAGS=new.upload,new.editor           # 逗号写法等价于全部打�
 
 ---
 
-## 7. 故障速查
+## 7. 运行期状态：`app_meta` 与写入轨迹
+
+`app_meta` 存的是「上一次运行时系统认定的事实」（目前是权限目录快照），既不进缓存
+（会过期）也不进配置（运行期写出）。它的写入很少，但**每次都是一次决策**，所以每次
+写入都带版本号、写入者和一句人话摘要。
+
+```bash
+app meta                        # 有哪些键、第几版、谁写的、值长什么样
+app meta permissions.catalog    # 这个键的值 + 最近 20 次写入轨迹
+```
+
+三条语义：
+
+1. **版本号是 CAS 凭据**。`version` 同时是 ORM 的乐观锁列：任何 `UPDATE` 都自带
+   `WHERE version = <读到的值>`，被别人抢先改过就抛 `StaleDataError`，而不是盖掉。
+   调用方用 `expected_version` 写，失败就重读重算——**决策必须跟着数据一起重来**。
+2. **自动路径只增不减**。每次启动跑的引导不允许把集合改小：滚动发布时旧版本实例
+   只认识 29 个权限点，让它写就会把快照退回 29，下一次启动把这些当成「新增」补进
+   内置角色，管理员手工摘掉的权限被悄悄加回来。要收缩（这一版确实删了权限点）由人跑
+   `app sync-roles --prune-snapshot`。
+3. **审计与主写入同事务**。主写入回滚，`app_meta_history` 的记录也消失——否则会留下
+   「改过但没改成」的痕迹，比没有更误导。每个键只保留最近 50 条。
+
+排查「权限快照被改小了」的顺序：`app meta permissions.catalog` 看轨迹里的 `actor`
+（`host:pid`）与摘要 → 去那台机器翻启动日志 → 确认它跑的是哪个镜像版本。
+
+---
+
+## 8. 故障速查
 
 | 症状 | 先看 | 大概率原因 |
 |---|---|---|
@@ -287,12 +315,13 @@ FEATURE_FLAGS=new.upload,new.editor           # 逗号写法等价于全部打�
 | `/metrics` 403 | `METRICS_TOKEN` 是否配置 | 生产环境刻意 fail-closed |
 | 面板上路由只有 `/health` 这种短路径 | 指标 `route` 标签 | 旧版本；现在用完整路径 + `{param}` 模板 |
 | 限流看起来没生效 | `CACHE_DRIVER` | memory 驱动下多实例各算各的 |
-| 非超管点新功能 403，超管正常 | `app_meta` 里的 `permissions.catalog`、该角色权限 | 新权限点没并进内置角色：启动钩子被跳过或没重启；`app sync-roles` 手工补 |
+| 非超管点新功能 403，超管正常 | `app meta permissions.catalog`、该角色权限 | 新权限点没并进内置角色：启动钩子被跳过或没重启；`app sync-roles` 手工补 |
 | 素材点开 404 | `app verify-blobs` | 对象被 GC/迁移遗漏，或桶策略变了 |
+| 管理员删掉的权限又回来了 | `app meta permissions.catalog` 的写入轨迹 | 滚动发布时旧版本实例启动过（轨迹里的 `actor` 是 `host:pid`）：它的目录更小、把快照写回去了；升级顺序上别让旧实例重启 |
 
 ---
 
-## 8. 已知边界（刻意没做，不是遗漏）
+## 9. 已知边界（刻意没做，不是遗漏）
 
 1. **指标是单进程的**：多 worker / 多副本各暴露一份，聚合靠 Prometheus。
    没有 pushgateway，也不落盘。

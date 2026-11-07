@@ -19,6 +19,7 @@ app runs-status                    # 运行工作区现状：多少档案只在�
 app backup [--out var/backups]     # 备份数据库（sqlite 快照 / postgres pg_dump）+ 清单
 app restore --from-dir <dir> --force # 用备份覆盖当前库（先另存现场）
 app new-module voice --label 配音   # 生成新模块脚手架
+app meta [key]                     # 查看 app_meta 的运行期状态及其写入轨迹
 """
 
 from __future__ import annotations
@@ -28,7 +29,7 @@ import asyncio
 import getpass
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:  # 只用于注解：命令行入口保持「用到才 import」，别把启动链拖长
     from infra.archive.base import ArchiveStorage
@@ -125,24 +126,89 @@ def _cmd_sync_roles(args: argparse.Namespace) -> None:
       想提前把角色准备好。
 
     语义仍是「只加不减」：管理员手工勾掉的不会回来；只打印差异，可重复执行。
+
+    `--prune-snapshot` 是唯一会**删除**权限目录快照条目的入口（见
+    `sync_new_permissions` 的「只增不减」说明）：自动路径不敢收缩快照，因为分不清
+    「这一版少声明了」和「写的人是个旧版本」；人明确跑这一条时，两者不再是问题。
     """
+    from db.app_meta import get_json
     from db.session import get_session_factory
-    from modules.identity.service import IdentityService
+    from modules.identity.service import PERMISSION_SNAPSHOT_KEY, IdentityService
 
-    async def run() -> dict[str, list[str]]:
+    async def run() -> tuple[dict[str, list[str]], list[str], list[str]]:
         async with get_session_factory()() as session:
-            return await IdentityService(session).sync_builtin_role_permissions(
-                dry_run=args.dry_run
-            )
+            service = IdentityService(session)
+            snapshot = set(await get_json(session, PERMISSION_SNAPSHOT_KEY) or [])
+            added = await service.sync_builtin_role_permissions(dry_run=args.dry_run)
+            if not args.prune_snapshot:
+                return added, [], []
+            if args.dry_run:
+                from core.permissions import catalog
 
-    added = asyncio.run(run())
+                return added, [], sorted(snapshot - set(catalog.codes()))
+            # `prune=True` 会把快照改写成「当前声明的全部」并按差集重跑一次补齐
+            await service.sync_new_permissions(prune=True)
+            after = set(await get_json(session, PERMISSION_SNAPSHOT_KEY) or [])
+            return added, sorted(set(after) - snapshot), sorted(snapshot - after)
+
+    added, grown, pruned = asyncio.run(run())
+    if args.dry_run:
+        print("（dry-run：只列出会改什么，没有写库）")
     if not added:
         print("内置角色已是最新，无需补齐")
-        return
-    if args.dry_run:
-        print("（dry-run：只列出会补什么，没有写库）")
     for code, codes in added.items():
         print(f"{code}: +{' +'.join(codes)}")
+    for code in grown:
+        print(f"快照补入：{code}")
+    for code in pruned:
+        print(f"快照移除：{code}（当前目录已不再声明）")
+    if args.prune_snapshot and not grown and not pruned:
+        print("快照与当前声明一致，无需收缩")
+
+
+def _cmd_meta(args: argparse.Namespace) -> None:
+    """看 `app_meta` 里的状态：不传键列全部，传键看它怎么被改过来的。
+
+    这张表存的是「上一次运行时系统认定的事实」（权限目录快照、功能开关…）。
+    它过去只有最后写入者胜、没有痕迹，出问题只能翻日志猜；有了 `version` /
+    `updated_by` / `app_meta_history`，这里就是排查入口。
+    """
+    from sqlalchemy import select
+
+    from db.app_meta import AppMeta, history, read_entry
+    from db.session import get_session_factory
+
+    async def run() -> tuple[list[Any], Any, list[Any]]:
+        async with get_session_factory()() as session:
+            if not args.key:
+                rows = list(
+                    (await session.scalars(select(AppMeta).order_by(AppMeta.key))).all()
+                )
+                return rows, None, []
+            entry = await read_entry(session, args.key)
+            rows_ = await history(session, args.key, limit=args.limit)
+            return [], entry, list(rows_)
+
+    rows, entry, trail = asyncio.run(run())
+    if args.key:
+        if entry is None:
+            print(f"{args.key}: 不存在")
+            return
+        print(f"{args.key}  v{entry.version}  最后写入 {entry.updated_by or '-'}")
+        print(f"  {entry.value}")
+        if trail:
+            print("最近写入：")
+            for item in trail:
+                stamp = item.created_at.strftime("%Y-%m-%d %H:%M:%S")
+                print(f"  {stamp}  v{item.version}  {item.actor or '-'}  {item.detail}")
+        return
+    if not rows:
+        print("app_meta 是空的（还没有任何需要记住的运行期事实）")
+        return
+    for row in rows:
+        updated = row.updated_at.strftime("%Y-%m-%d %H:%M")
+        preview = row.value if len(row.value) <= 60 else row.value[:57] + "…"
+        print(f"{row.key}  v{row.version}  {updated}  {row.updated_by or '-'}  {preview}")
 
 
 def _cmd_create_admin(args: argparse.Namespace) -> None:
@@ -784,7 +850,20 @@ def main(argv: list[str] | None = None) -> int:
     p_sync_roles.add_argument(
         "--dry-run", action="store_true", help="只打印会补什么，不写库（升级前预演）"
     )
+    p_sync_roles.add_argument(
+        "--prune-snapshot",
+        action="store_true",
+        help="同时把权限目录快照收缩成「当前声明的全部」（自动路径只增不减）",
+    )
     p_sync_roles.set_defaults(func=_cmd_sync_roles)
+
+    p_meta = sub.add_parser(
+        "meta",
+        help="查看 app_meta 里的运行期状态（不传 key 列全部；传 key 看写入轨迹）",
+    )
+    p_meta.add_argument("key", nargs="?", default="", help="例如 permissions.catalog")
+    p_meta.add_argument("--limit", type=int, default=20, help="轨迹条数，默认 20")
+    p_meta.set_defaults(func=_cmd_meta)
 
     p_runs = sub.add_parser(
         "runs-status",
