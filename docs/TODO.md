@@ -7,8 +7,9 @@
 >
 > 来源：`CODE_REVIEW_2026-11-06_R11~R14`、`CODE_REVIEW_2026-11-06_FE6`、
 > `EXTENSIBILITY_GAPS.md` 的 B1/C1/C2，以及素材分支合并时新发现的项。
-> 最后更新：2026-11-07 21:10（回补三处「登记了但本来能做完」的：T28 自动备份 + 保留期、
-> T27 可选全局兜底、T30 PG 迁移闸（观察期）。T26/T29 维持「刻意不做」并写清触发条件）
+> 最后更新：2026-11-07 21:40（健壮性专项：修掉两个会让「小故障变大故障」的真问题——
+> `/health/ready` 在 down 时返回 200（探针结论没人执行）、worker 取任务异常导致协程
+> 静默死亡；补了故障注入用例组。剩余登记 T31）
 
 ## 一眼看完
 
@@ -30,6 +31,7 @@
 | T27 | 限流仍缺「写路由未挂限流」的架构守卫；固定窗口有 2× 边界误差 | 新接口忘挂 `rate_limit()` 时只能靠全局兜底（默认关）；窗口交界瞬时可达 2 倍额度 | 后端 |
 | T29 | 指标是单进程语义，未做多进程聚合 | 多 worker 部署要靠 Prometheus `sum by`；本机 `curl /metrics` 只看到一部分 | 架构 |
 | T30 | PG 迁移闸在观察期（`continue-on-error`），尚未成为硬性要求 | PG 特有的默认值/条件索引差异要等它稳定后才真正拦住 | 架构 |
+| T31 | worker 没有「当前有多少消费协程在跑」的对外指标 | 协程全停时探针仍绿，只能靠 `jobs_processed_total` 不涨反推 | 架构 |
 
 ---
 
@@ -238,6 +240,8 @@ PostgreSQL 的 `LISTEN/NOTIFY`：写完 `NOTIFY`，worker 侧长连接被唤醒�
 | R13-01~07 / R14-01~03 | 已修 | `dd5fbd2`、`787b88a`、`cad40a9`，见 `.workbuddy/memory/2026-11-06.md` |
 | R12-* / R11-* | 已修 | `aa9c5e4` |
 | T28 备份无调度与保留 | 已修 | `db/backup.py` 的 `backup_loop` / `prune_backups`，用例见 `tests/test_backup.py` 后三条 |
+| 就绪探针 down 却返回 200 | 已修 | `modules/health/router.py` 在 `runtime.down` 时置 503；用例 `tests/test_fault_tolerance.py`（函数级 + HTTP 级两条） |
+| worker 取任务异常导致协程静默死亡 | 已修 | `workers.py` 的 `_loop` 三层兜底 + 退避 + `queue_dequeue_errors_total`；用例 `test_worker_survives_dequeue_errors` / `test_worker_survives_ack_failure` |
 | 原 T15 五份文档未提交 | 已提交 | `e928fbb`（`CODE_STYLE` / `REVIEW_CHECKLIST` v2.0 + R11~R14 / FE6 报告） |
 | 原 T16 两条旧分支 | 已删 | `merge/pr1`（`4e26035`）、`preview/full`（`59513ba`）`merge-base --is-ancestor` 均通过后 `git branch -d` |
 | 原 T16/T17 归档远端化 | 已修 | 协议收 key + `list_keys` 枚举；`infra/archive/runs.py` 把运行工作区分出归档；`app migrate-archive` 幂等搬家；`ARCHIVE_DRIVER=s3` 实测起/传/取全通 |

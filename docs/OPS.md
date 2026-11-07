@@ -40,22 +40,44 @@ app doctor --strict           # 有 WARN 也退出：首次上线建议这样跑
 
 `/health/ready` 的 `status` 有三档，**必须区别对待**：
 
-| status | 含义 | 编排系统该做什么 |
-|---|---|---|
-| `ok` | 依赖全可用 | 正常接流量 |
-| `degraded` | 能服务，但有东西在漏（outbox 积压超阈值、死信超阈值、缓存不可用） | **继续接流量**，同时告警 |
-| `down` | 数据库或队列不可用 | 摘掉这台实例 |
+| status | HTTP | 含义 | 编排系统该做什么 |
+|---|---|---|---|
+| `ok` | 200 | 依赖全可用 | 正常接流量 |
+| `degraded` | 200 | 能服务，但有东西在漏（outbox 积压超阈值、死信超阈值、缓存不可用） | **继续接流量**，同时告警 |
+| `down` | **503** | 数据库或队列不可用 | 摘掉这台实例 |
 
-把 `degraded` 当 `down` 处理（例如 readinessProbe 只要非 200 就摘）会让
-「事件晚投递几分钟」升级成「整批实例下线」。所以探针仍然返回 **200**，
-结论在 body 里：
+`down` 必须落到 **503**，这是这一节最容易被忽略的一条：编排系统读的是状态码，
+不是 body。如果 down 也返回 200，包在 body 里的结论再详细也没人执行——
+「数据库断连的实例继续接流量」正是这种写法造成的。
+
+`degraded` 则必须留在 200。把 `degraded` 当 `down` 处理（例如 readinessProbe
+只要非 200 就摘）会让「事件晚投递几分钟」升级成「整批实例下线」——
+摘掉一个实例，剩下的就要扛它那份流量，越摘越容易雪崩。
 
 ```json
+// 200（degraded）：结论在 body 里
 {"code":0,"data":{"status":"degraded","database":"ok","queueSize":12,
  "checks":[{"name":"outbox.pending","ok":false,"detail":"待投递 1832（阈值 1000）","required":false}]}}
 ```
 
+```json
+// 503（down）：状态码说明「别给我流量」，body 说明「哪一项挂了」
+{"code":0,"data":{"status":"down","database":"down","queueSize":-1,
+ "checks":[{"name":"database","ok":false,"detail":"OperationalError: connection refused","required":true}]}}
+```
+
 阈值在 `HEALTH_OUTBOX_PENDING_LIMIT` / `HEALTH_DEAD_JOB_LIMIT`。
+
+### 2.1 探针不覆盖的东西
+
+`/health/ready` 是**浅检查**：每几秒被调一次，不能跑全表扫描或对象存储连通性测试
+（慢探针被判定超时，表现和「服务挂了」完全一样）。深检查用 `app doctor`，
+或者接一条定时任务跑 `app doctor --strict` 把结果推到监控。
+
+特别地，**worker 是否还活着不在探针里**。worker 消费协程有自己的三层容错
+（取任务失败退避重试、执行异常记指标、回执失败不退出），但没有对外暴露
+「当前有几个消费协程在跑」。判断依据是 `jobs_processed_total` 的增长率：
+这个数在一段时间内完全不动、而 `queue_jobs{state="pending"}` 在涨，就是 worker 停了。
 
 ---
 
@@ -73,6 +95,7 @@ app doctor --strict           # 有 WARN 也退出：首次上线建议这样跑
 | `http_request_duration_seconds` | histogram | method, route | 分桶 5ms~10s |
 | `http_requests_in_flight` | gauge | — | 正在处理的请求数 |
 | `jobs_processed_total` | counter | name, outcome | outcome ∈ success / error / timeout / cancelled / unknown |
+| `queue_dequeue_errors_total` | counter | — | worker **取任务**失败的次数（队列驱动异常）。持续增长 = worker 在空转，不是某个任务有问题 |
 | `job_duration_seconds` | histogram | name | 100ms~900s |
 | `queue_jobs` | gauge | state | db 驱动按 pending / running / dead 拆分；其它驱动只有 active |
 | `outbox_events` | gauge | status | pending / delivered / failed |
@@ -80,7 +103,7 @@ app doctor --strict           # 有 WARN 也退出：首次上线建议这样跑
 
 计数类在事件发生时打点；积压类在**抓取时**去查真实来源，所以重启后立刻是对的。
 
-### 3.2 建议的四条告警
+### 3.2 建议的五条告警
 
 ```promql
 # 5xx 比例（按路由定位）
@@ -96,6 +119,10 @@ max_over_time(queue_jobs{state="pending"}[10m]) > 200
 
 # 死信 / 投递失败：只要有就应该有人看一眼
 queue_jobs{state="dead"} > 0 or outbox_events{status="failed"} > 0
+
+# worker 取不到任务：worker 还活着但队列驱动在报错（数据抖动 / 连接池耗尽）。
+# 这一条和「任务失败」不是一回事——它意味着后台整体在空转，堆到 backlog 都不动。
+rate(queue_dequeue_errors_total[5m]) > 0
 ```
 
 任务成功率建议用 `increase` 而不是 `rate`，量小时 rate 会抖：
