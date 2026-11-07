@@ -11,6 +11,7 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+from sqlalchemy.exc import TimeoutError as PoolTimeoutError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from core.exceptions import AppError, ErrorCode
@@ -65,6 +66,28 @@ def register_exception_handlers(app: FastAPI) -> None:
         return JSONResponse(
             status_code=409,
             content=_payload(ErrorCode.CONFLICT, "数据冲突，请检查唯一性或关联引用"),
+        )
+
+    @app.exception_handler(PoolTimeoutError)
+    async def _pool_exhausted(_: Request, exc: PoolTimeoutError) -> JSONResponse:
+        """连接池借不到连接 → 503，不是 500。
+
+        这两者的区别不是文案：500 意味着「我们写错了」，会触发告警与人工介入；
+        503 意味着「现在过载，等会再来」，调用方应该退避重试。归到 500 的后果是
+        运维半夜被叫起来查一段根本没有 bug 的代码，而真正该做的是扩容或找出占着
+        连接不放的那个慢查询。
+
+        不打 `logger.exception`：堆栈全是池的内部调用，对定位没有帮助；
+        有用的是异常消息里那句 `QueuePool limit of size N overflow M reached`。
+        """
+        logger.warning("连接池耗尽，本次请求快速失败: %s", exc)
+        return JSONResponse(
+            status_code=503,
+            content=_payload(
+                ErrorCode.UNAVAILABLE,
+                "服务繁忙，请稍后重试",
+                {"retryAfter": 5, "reason": "db_pool_exhausted"},
+            ),
         )
 
     @app.exception_handler(SQLAlchemyError)

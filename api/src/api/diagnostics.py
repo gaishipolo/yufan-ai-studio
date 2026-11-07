@@ -601,6 +601,44 @@ def _check_rate_limits(report: DoctorReport) -> None:
         )
 
 
+def _check_db_pool(report: DoctorReport) -> None:
+    """连接池参数：容量与「借不到要等多久」都该被看见。
+
+    重点不是把数字念一遍，而是把**一个只在出事时才暴露的事实**提前说出来：
+    池满了会等多久、PG 上有没有语句超时。这两项都是「不配也能跑」，
+    所以永远不会有报错提醒你它们没配——直到某天一条慢查询把池占满。
+    """
+    from core.config import settings
+
+    if settings.is_sqlite:
+        # sqlite 没有语句超时的概念（`busy_timeout` 管的是等锁，不是语句时长），
+        # 报了会让人以为设了就有用
+        report.add(
+            "runtime.db_pool",
+            "INFO",
+            f"sqlite：池 {settings.db_pool_size}+{settings.db_max_overflow}，"
+            f"借不到等 {settings.db_pool_timeout:g}s；语句超时在此方言下不适用",
+        )
+        return
+
+    detail = (
+        f"池 {settings.db_pool_size}+{settings.db_max_overflow}，"
+        f"借不到等 {settings.db_pool_timeout:g}s，连接复用上限 {settings.db_pool_recycle}s"
+    )
+    if settings.db_statement_timeout_ms <= 0:
+        report.add(
+            "runtime.db_pool",
+            "WARN",
+            detail + "；DB_STATEMENT_TIMEOUT_MS=0，一条慢查询可以一直占着连接把池占满",
+        )
+    else:
+        report.add(
+            "runtime.db_pool",
+            "PASS",
+            detail + f"，语句超时 {settings.db_statement_timeout_ms}ms",
+        )
+
+
 def _check_http_channel(report: DoctorReport) -> None:
     """出站 HTTP 只报配置，不发真实请求。
 
@@ -630,6 +668,7 @@ async def run_doctor(*, sample: int = 10) -> DoctorReport:
     _check_metrics_exposure(report)
     _check_flags(report)
     _check_rate_limits(report)
+    _check_db_pool(report)
     _check_http_channel(report)
     await asyncio.to_thread(_check_workspace_and_blobs, report, sample)
     return report

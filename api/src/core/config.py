@@ -61,6 +61,20 @@ class Settings(BaseSettings):
     db_echo: bool = False
     db_pool_size: int = 10
     db_max_overflow: int = 20
+    # 从池里借连接最多等多久。默认的 30 秒是「全站卡死三十秒」的长度：
+    # 池被占满时，每一个新请求都会安静地挂在这里，看起来像服务没响应，
+    # 而日志里一条错误都没有。5 秒足够覆盖正常的排队抖动，超出就该快速失败。
+    # 别往 1 秒以下调：启动期有并发借连接（worker 起来就开始取任务、各模块
+    # 恢复也并行查库），实际量到 `0.05s` 会让服务卡在 startup 起不来。
+    db_pool_timeout: float = 5.0
+    # 连接最长复用时长（秒）。PG 侧被中间件/防火墙掐掉空闲连接后，
+    # 拿到的是半开连接，报 `server closed the connection unexpectedly`；
+    # `pool_pre_ping` 能挡大部分，但它与真正使用之间仍有窗口。定期换新连接更彻底。
+    db_pool_recycle: int = 1800
+    # 单条语句的服务端超时（毫秒，PostgreSQL 的 `statement_timeout`；0 = 不设）。
+    # 没有它，一条漏了索引的大表扫描会一直占着连接直到把池占满——
+    # 故障形态不是「变慢」，而是「同时全部停住」。sqlite 无此概念，配了也不生效。
+    db_statement_timeout_ms: int = 0
 
     # ---------- 鉴权 ----------
     # 未携带令牌时是否回退到演示账号（None = dev/test 自动放开，prod 关闭）

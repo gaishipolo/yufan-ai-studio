@@ -81,7 +81,7 @@ Vite 会把 `/api` 代理到 `VITE_API_PROXY_TARGET`（默认 `http://127.0.0.1:
 | `app prune-blobs [--execute] [--min-age-hours 24] [--include-trash] [--trash-age-days 30]` | 回收没人引用的孤儿字节；`--include-trash` 同时彻底清理超期的软删记录（软删本身不释放空间） |
 | `app verify-blobs [--all] [--sample 20]` | 读回字节重算 sha256，报告损坏/缺失对象；`key = sha256` 本身就是校验和 |
 | `app rebuild-mirrors [--dry-run]` | 按 DB 幂等重建 `catalog/assets/*.json`：补缺镜像、更新 `stateVersion` 落后的、清掉无 DB 行的孤儿 |
-| `app doctor [--strict]` | 部署自检（22 项）：条件写、引用来源完备性、预签名、DB/镜像一致性、镜像对账、**schema 是否停在迁移 head**、选主、旧 URL、配额、缓存读写往返、队列可达性、**outbox 积压/失败**、**指标端点**、功能开关、出站 HTTP 配置、完整性抽检 |
+| `app doctor [--strict]` | 部署自检（23 项）：条件写、引用来源完备性、预签名、DB/镜像一致性、镜像对账、**schema 是否停在迁移 head**、选主、旧 URL、配额、缓存读写往返、队列可达性、**outbox 积压/失败**、**指标端点**、功能开关、**连接池参数**、出站 HTTP 配置、完整性抽检 |
 | `app audit-events [--action ...] [--target ...]` | 查看最近的操作留痕（分享、回收站、彻底删除、封装发布） |
 | `app jobs [--state dead] [--json]` | 看队列（`QUEUE_DRIVER=db`）：在途与死信、出错原因、租约到期时间；`--redrive <id>` 把死信重新排队，`--drop <id> --force` 删除 |
 | `app runs-status` | 打印运行工作区在哪、本机可见多少个档案、多少个「指针在桶里但工作区不在本机」 |
@@ -535,6 +535,10 @@ ruff check src tests
 
 - [ ] `APP_ENV=prod`、`DEBUG=false`、`ALLOW_ANONYMOUS=false`
 - [ ] `DB_URL` 换 postgres：`postgresql+asyncpg://user:pass@host:5432/app`，装 `pip install -e ".[postgres]"`
+- [ ] 连接池按**进程数**算：数据库看到的连接总数 = 副本数 × (`DB_POOL_SIZE` + `DB_MAX_OVERFLOW`)，
+      默认 10+20 在 4 个副本上就是 120 个，超过 PG 的 `max_connections`（默认 100）。
+      顺手把 `DB_STATEMENT_TIMEOUT_MS` 打开（如 30000）：不配它，
+      一条漏了索引的查询能把池占满，症状是「所有接口一起 503」。
 - [ ] `JWT_SECRET` 用 `openssl rand -hex 32` 重新生成
 - [ ] 用 `alembic upgrade head` 建表，不要依赖自动建表（`app_env=prod` 时已自动关闭）
 - [ ] `STORAGE_DRIVER=s3` + `S3_*` 四项必填；桶保持私有，并按上文配好 CORS。

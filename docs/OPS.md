@@ -12,7 +12,7 @@
 ```bash
 cd api
 alembic upgrade head          # 生产建表只走迁移，不要依赖 create_all
-app doctor                    # 22 项，有 FAIL 直接非零退出
+app doctor                    # 23 项，有 FAIL 直接非零退出
 app doctor --strict           # 有 WARN 也退出：首次上线建议这样跑一遍
 ```
 
@@ -317,6 +317,48 @@ done; echo
 第 4 次的 `retryAfter` 与第 3 次**相同**，说明被拒的请求没有把计数越推越高
 （否则「照着倒计时重试」会永远出不来）。
 
+### 6.2 连接池：过载要报「过载」，不能报「我写错了」
+
+服务忙起来最先耗尽的是数据库连接。这里有三条语义，缺一条就会在生产上误导人：
+
+| 参数 | 默认 | 它在管什么 |
+|---|---|---|
+| `DB_POOL_SIZE` + `DB_MAX_OVERFLOW` | 10 + 20 | 同时能借出多少连接 |
+| `DB_POOL_TIMEOUT` | 5s | 借不到时**等多久**。驱动默认 30s，等于「全站安静地卡半分钟」 |
+| `DB_POOL_RECYCLE` | 1800s | 连接最多复用多久，防中间件掐断后留下半开连接 |
+| `DB_STATEMENT_TIMEOUT_MS` | 0（关） | 单条语句的服务端上限（仅 PG）。开它才能挡住「一条慢查询把池占满」 |
+
+池耗尽时返回 **503**，响应体是：
+
+```json
+{"code": 50300, "message": "服务繁忙，请稍后重试",
+ "data": null, "details": {"retryAfter": 5, "reason": "db_pool_exhausted"}}
+```
+
+`code` 是 `50300`（不是 `50001`），`details.reason` 固定为 `db_pool_exhausted`——
+调用方和告警规则都该按这个分支处理，而不是按 500。区别不是文案：500 的潜台词是
+「我们的代码有问题」，会把人叫起来查一段根本没有 bug 的代码；503 才是「现在过载，
+等会再来」。**报错报错类别，等于把处理方式也报错。**
+
+排查顺序（这个顺序很重要，反过来会白忙半天）：
+
+1. 看 503 的 `details.reason`：是 `db_pool_exhausted` 就往下走，不是就别往这方面想。
+2. 找占着连接不放的人：一条漏了索引的查询、或者某个请求借了连接没还（`async with`
+   漏了）。开 `DB_ECHO=true` 或看 PG 的 `pg_stat_activity`。
+3. 再谈扩容。**先把第 2 步做完**：池调大只是把「多久之后挂」往后推，
+   占着连接的那条 SQL 还在。
+
+`app doctor` 的 `runtime.db_pool` 会把上面这些数字念给你听；PG 上如果
+`DB_STATEMENT_TIMEOUT_MS=0` 它会直接 WARN——因为这个配置**不配也能跑**，
+永远不会有一条报错提醒你它没配。
+
+**别把 `DB_POOL_TIMEOUT` 往 1 秒以下调**。启动期本来就有并发借连接：worker 一起来
+就开始取任务，各模块的恢复钩子也在并行查库。实测 `DB_POOL_SIZE=1` +
+`DB_POOL_TIMEOUT=0.05` 会让服务卡在 startup（日志停在「周期任务调度器启动」，
+没有 `Application startup complete`，也没有报错）；同样的池配 2 秒就正常。
+超时值是把「排队算正常还是算故障」的分界线画在时间轴上，画得太靠前，
+正常启动也会被判定成故障。
+
 ---
 
 ## 7. 运行期状态：`app_meta` 与写入轨迹
@@ -371,6 +413,8 @@ app meta permissions.catalog    # 这个键的值 + 最近 20 次写入轨迹
 | 非超管点新功能 403，超管正常 | `app meta permissions.catalog`、该角色权限 | 新权限点没并进内置角色：启动钩子被跳过或没重启；`app sync-roles` 手工补 |
 | 素材点开 404 | `app verify-blobs` | 对象被 GC/迁移遗漏，或桶策略变了 |
 | 管理员删掉的权限又回来了 | `app meta permissions.catalog` 的写入轨迹 | 滚动发布时旧版本实例启动过（轨迹里的 `actor` 是 `host:pid`）：它的目录更小、把快照写回去了；升级顺序上别让旧实例重启 |
+| 所有接口一起变慢、最后一起 503，日志里没有堆栈 | 503 响应体里的 `details.reason == "db_pool_exhausted"`；`app doctor` 的 `runtime.db_pool` | 连接池被占满：某条慢查询、或某个请求借了连接没还。这不是 bug，是过载——先找出占着连接不放的那条 SQL，再谈扩容 |
+| `server closed the connection unexpectedly` / 连接被重置 | `DB_POOL_RECYCLE` | 连接被中间件或防火墙掐掉了，池里留的是半开连接。`pool_pre_ping` 挡大部分，剩下的靠定期换新（默认 1800s） |
 
 ---
 
@@ -411,6 +455,11 @@ app meta permissions.catalog    # 这个键的值 + 最近 20 次写入轨迹
    「被重跑」，但「副作用已经发生、回执之前进程被杀」仍会让这条任务再跑一遍。
    所以 handler 的副作用必须**自己幂等**（按业务行状态或 `idempotency_key` 判断），
    不要指望队列替你去重。
+7. **连接池是「每进程一份」**：数据库那边看到的连接总数 = 副本数 × (`DB_POOL_SIZE` +
+   `DB_MAX_OVERFLOW`)。`app doctor` 报的也是单进程的数字。按 4 个副本、默认
+   10+20 去算，就是 120 个连接——PG 的 `max_connections` 默认 100，
+   于是「加到 5 个副本」的那次扩容会以全站 503 的形式被记住。
+   同理 `DB_POOL_TIMEOUT` 管的是**本进程借连接**的等待，不是查询耗时。
 7. **租约用应用进程自己的时钟判定**（`utcnow()`），不是数据库时间。多实例部署必须
    跑 NTP：某台机器快 5 分钟，就会把别人正在跑的任务判成「过期」并接手。
    这也是 `QUEUE_LEASE_SEC` 不建议调到分钟以下的另一个理由（抖动同样会误判）。

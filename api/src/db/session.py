@@ -29,22 +29,45 @@ _engine: AsyncEngine | None = None
 _session_factory: async_sessionmaker[AsyncSession] | None = None
 
 
+def _is_memory_sqlite(url: str) -> bool:
+    """内存库用的是 `StaticPool`（一个连接、永不归还），传池参数会直接 TypeError。
+
+    文件库不是：SQLAlchemy 2.0 的 aiosqlite 文件库默认就是 `AsyncAdaptedQueuePool`。
+    早先这里按「sqlite 一律不支持连接池参数」处理，于是开发库悄悄用了
+    `pool_size=5 / pool_timeout=30` 的默认值，和线上的池行为完全不是一回事——
+    池耗尽这种故障因此只能在线上第一次遇到。
+    """
+    return ":memory:" in url or url.rstrip("/") == "sqlite+aiosqlite:"
+
+
 def _engine_kwargs() -> dict[str, Any]:
     settings = get_settings()
     kwargs: dict[str, Any] = {"echo": settings.db_echo, "future": True}
     if settings.is_sqlite:
-        # sqlite 不支持连接池参数；文件库需保证目录存在
         kwargs["connect_args"] = {"check_same_thread": False}
-        if ":///" in settings.db_url and ":memory:" not in settings.db_url:
+        if not _is_memory_sqlite(settings.db_url) and ":///" in settings.db_url:
             rel = settings.db_url.split("///", 1)[1]
             db_path = Path(rel)
             if not db_path.is_absolute():
                 db_path = Path.cwd() / db_path
             db_path.parent.mkdir(parents=True, exist_ok=True)
-    else:
+    if not (settings.is_sqlite and _is_memory_sqlite(settings.db_url)):
+        # 池参数对所有 QueuePool 都成立，不分方言：sqlite 文件库同样会因为
+        # 「一个慢请求占着连接」把后续请求一起拖住。
         kwargs["pool_size"] = settings.db_pool_size
         kwargs["max_overflow"] = settings.db_max_overflow
+        kwargs["pool_timeout"] = settings.db_pool_timeout
+        kwargs["pool_recycle"] = settings.db_pool_recycle
         kwargs["pool_pre_ping"] = True
+    if not settings.is_sqlite and settings.db_statement_timeout_ms > 0:
+        # 服务端超时只能在连接建立时下发，所以走 `server_settings`（PG 的启动参数）。
+        # 客户端侧没有等价物：`asyncio.wait_for` 不取消已在服务端执行的语句，
+        # 那条连接照样被占着——这正是我们要防的。
+        kwargs["connect_args"] = {
+            "server_settings": {
+                "statement_timeout": str(settings.db_statement_timeout_ms),
+            }
+        }
     return kwargs
 
 

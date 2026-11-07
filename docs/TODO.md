@@ -7,8 +7,8 @@
 >
 > 来源：`CODE_REVIEW_2026-11-06_R11~R14`、`CODE_REVIEW_2026-11-06_FE6`、
 > `EXTENSIBILITY_GAPS.md` 的 B1/C1/C2，以及素材分支合并时新发现的项。
-> 最后更新：2026-11-08 02:10（db 队列执行期间续租 + 领取凭据：长任务不再被执行两遍；
-> 限流换两桶加权滑动窗口；额度可按 scope 覆盖 / 整体缩放；`get_settings()` 原地刷新）
+> 最后更新：2026-11-08 02:40（连接池耗尽改报 503 + 池参数真正生效（sqlite 文件库也是池）；
+> db 队列续租 + 领取凭据；限流换滑动窗口；`get_settings()` 原地刷新）
 > 剩余：业务侧 T2/T8/T9/T10/T22/T23/T24，架构侧 T25/T26（只剩唤醒）/T29/T30）
 
 ## 一眼看完
@@ -224,6 +224,7 @@ PostgreSQL 的 `LISTEN/NOTIFY`（写完 `NOTIFY`，worker 侧长连接被唤醒�
 | 就绪探针 down 却返回 200 | 已修 | `modules/health/router.py` 在 `runtime.down` 时置 503；用例 `tests/test_fault_tolerance.py`（函数级 + HTTP 级两条） |
 | 限流豁免表只核「有没有写」（原 T32） | 已修 | `Exemption(why, review_by)`：理由里反引号引用的 `.py` 与 `资源:动作` 权限码由守卫解析存在性（文件/权限点没了就红），`review_by` 过期或超过 180 天也红；用例 `test_exempt_reviews_are_current_and_honest` / `test_exempt_reasons_cite_real_code`；复核方法写进 `docs/OPS.md` §9（按 P95 与调用量找变贵的接口）|
 | 队列租约只靠「注释说它够长」（原 T26 外的发现） | 已修 | 执行期间按 `lease_sec / 4` 续租（`workers.py` 的 `_renew_lease`）+ `queued_jobs.lease_token` 领取凭据（`ack`/`nack`/`renew` 都要对得上）；用例 `test_worker_keeps_the_lease_alive_while_running` / `test_stale_ack_cannot_delete_the_new_owner_row` / `test_worker_stops_the_handler_when_the_lease_is_lost` |
+| 过载被报成 bug：池耗尽返回 500，且默认挂 30 秒（原 T25 外的发现） | 已修 | 池耗尽 → 503 + `details.reason=db_pool_exhausted` + `retryAfter`（`api/errors.py`）；`DB_POOL_TIMEOUT` / `DB_POOL_RECYCLE` / `DB_STATEMENT_TIMEOUT_MS` 三项配置，sqlite 文件库也真正用上了池（原来被「sqlite 不支持连接池参数」这句假注释跳过）；`app doctor` 加 `runtime.db_pool`。用例 `tests/test_db_pool.py`（13 条，含反向验证） |
 | 死信「留档给人看」却没地方看（原 T26 外的发现） | 已修 | `app jobs [--state dead] [--json]` 看得到 `last_error` 与租约；`--redrive <id>` 只接受死信（在途重投会被拒绝），`--drop <id> --force` 拒绝删除 `running` 行；内存驱动直接说明「查不到」而不是打印空表。用例 `tests/test_cli.py` 后四条 |
 | 死信「留档给人看」却没地方看（原 T26 外的发现） | 已修 | `app jobs [--state dead] [--json]` 看得到 `last_error` 与租约；`--redrive <id>` 只接受死信（在途重投会被拒绝），`--drop <id> --force` 拒绝删除 `running` 行；内存驱动直接说明「查不到」而不是打印空表。用例 `tests/test_cli.py` 后四条 |
 | 写路由漏挂限流无人发现 | 已修 | `api/ratelimit_policy.py` + `tests/test_route_policy.py`；8 个花钱/写盘入口补了 `rate_limit`，其余 32 条豁免逐条写理由 |
