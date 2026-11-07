@@ -19,8 +19,10 @@ from pathlib import Path
 API_ROOT = Path(__file__).resolve().parents[1]
 
 
-def _run(*args: str) -> subprocess.CompletedProcess[str]:
-    env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
+def _run(
+    *args: str, extra_env: dict[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
+    env = {**os.environ, "PYTHONIOENCODING": "utf-8", **(extra_env or {})}
     return subprocess.run(
         [sys.executable, "-m", "cli", *args],
         cwd=API_ROOT,
@@ -68,3 +70,100 @@ def test_meta_command_shows_history_for_a_key() -> None:
     assert result.returncode == 0, result.stderr
     assert "permissions.catalog" in result.stdout
     assert "最近写入" in result.stdout or "不存在" in result.stdout
+
+# --------------------------------------------------------------------------- #
+# app jobs：队列的可读入口（死信看得到、能重投、删不掉不该删的）
+# --------------------------------------------------------------------------- #
+async def _seed_job(status: str, name: str) -> str:
+    """按指定状态塞一行队列记录。字段走 ORM 默认值，免得手写一长串列。"""
+    from db.base import utcnow
+    from db.jobs import QueuedJob
+    from db.session import get_session_factory
+
+    job_id = f"cli-{status}-{name}"
+    async with get_session_factory()() as session:
+        session.add(
+            QueuedJob(
+                id=job_id,
+                name=name,
+                payload="{}",
+                status=status,
+                run_at=utcnow(),
+                attempts=3,
+                max_attempts=3,
+                last_error="重试次数用尽" if status == "dead" else "",
+            )
+        )
+        await session.commit()
+    return job_id
+
+
+async def _forget_job(job_id: str) -> None:
+    from sqlalchemy import delete
+
+    from db.jobs import QueuedJob
+    from db.session import get_session_factory
+
+    async with get_session_factory()() as session:
+        await session.execute(delete(QueuedJob).where(QueuedJob.id == job_id))
+        await session.commit()
+
+
+def test_jobs_lists_and_redrives_a_dead_letter() -> None:
+    """死信原来只能看一个数字，要处理只能自己写 SQL——这条命令替掉那次手写。"""
+    import asyncio
+
+    job_id = asyncio.run(_seed_job("dead", "cli.dead"))
+    try:
+        listed = _run("jobs", "--state", "dead", "--json", extra_env={"QUEUE_DRIVER": "db"})
+        assert listed.returncode == 0, listed.stderr
+        assert job_id in listed.stdout, "死信没出现在列表里：" + listed.stdout
+        assert "重试次数用尽" in listed.stdout, "死信没带出错原因"
+
+        done = _run("jobs", "--redrive", job_id, extra_env={"QUEUE_DRIVER": "db"})
+        assert done.returncode == 0, done.stderr
+        assert "attempts 归零" in done.stdout
+
+        still_dead = _run("jobs", "--state", "dead", "--json", extra_env={"QUEUE_DRIVER": "db"})
+        assert job_id not in still_dead.stdout
+        pending = _run("jobs", "--state", "pending", "--json", extra_env={"QUEUE_DRIVER": "db"})
+        assert job_id in pending.stdout, "重投后没回到 pending"
+    finally:
+        asyncio.run(_forget_job(job_id))
+
+
+def test_jobs_refuses_to_redrive_an_inflight_job() -> None:
+    """在途任务不能被「重投」：那等于人手伸进 worker 的状态机，让它被执行两遍。"""
+    import asyncio
+
+    job_id = asyncio.run(_seed_job("pending", "cli.pending"))
+    try:
+        result = _run("jobs", "--redrive", job_id, extra_env={"QUEUE_DRIVER": "db"})
+        assert result.returncode == 1
+        assert "不需要重投" in result.stdout
+    finally:
+        asyncio.run(_forget_job(job_id))
+
+
+def test_jobs_refuses_to_drop_a_running_job() -> None:
+    """`running` 可能是别的实例正在干的活，删了那个 worker 不会知道。"""
+    import asyncio
+
+    job_id = asyncio.run(_seed_job("running", "cli.running"))
+    try:
+        no_force = _run("jobs", "--drop", job_id, extra_env={"QUEUE_DRIVER": "db"})
+        assert no_force.returncode == 1
+        assert "--force" in no_force.stdout
+
+        forced = _run("jobs", "--drop", job_id, "--force", extra_env={"QUEUE_DRIVER": "db"})
+        assert forced.returncode == 1, "running 行被删掉了：" + forced.stdout
+        assert "拒绝删除" in forced.stdout
+    finally:
+        asyncio.run(_forget_job(job_id))
+
+
+def test_jobs_explains_the_memory_driver() -> None:
+    """内存驱动没有可查的队列——要说清楚「为什么查不到」，而不是打印一张空表。"""
+    result = _run("jobs", extra_env={"QUEUE_DRIVER": "memory"})
+    assert result.returncode == 2
+    assert "内存" in result.stdout

@@ -12,7 +12,7 @@
 ```bash
 cd api
 alembic upgrade head          # 生产建表只走迁移，不要依赖 create_all
-app doctor                    # 21 项，有 FAIL 直接非零退出
+app doctor                    # 22 项，有 FAIL 直接非零退出
 app doctor --strict           # 有 WARN 也退出：首次上线建议这样跑一遍
 ```
 
@@ -359,7 +359,8 @@ app meta permissions.catalog    # 这个键的值 + 最近 20 次写入轨迹
 | 症状 | 先看 | 大概率原因 |
 |---|---|---|
 | 页面全空、接口 200 但没数据 | `queue_jobs{state}` + `outbox_events` | worker 没起（`WORKER_ENABLED=false` 但没单独起 worker） |
-| 「任务一直排队」 | `queue_jobs{state="pending"}` 与 worker 日志 | 队列驱动是 `memory` 而 worker 在另一个进程 |
+| 「任务一直排队」 | `queue_jobs{state="pending"}`、`app jobs --state pending`、worker 日志 | 队列驱动是 `memory` 而 worker 在另一个进程；或 worker 一个都没起来 |
+| 某条任务反复失败直到消失 | `app jobs --state dead`（带 `last_error`） | 重试次数用尽转死信。它是**留档**，不会自己再跑；确认无害用 `--redrive <id>` 重投 |
 | 通知/计费偶发丢失 | `outbox_events{status="failed"}`、`app doctor` 的 `runtime.outbox` | 订阅方抛异常把重试用尽 |
 | 同一个任务被执行了两遍 | `job_lease_lost_total`、`jobs_processed_total{outcome="lease_lost"}`、worker 日志里的「续租失败：这条 job 已被别人接手」 | 有 worker 卡住超过一整个租约（`QUEUE_LEASE_SEC`）。续租按租约的 1/4 跑，正常不该丢；丢了说明这个 worker 在**事件循环层面**停住了（同步阻塞调用、CPU 打满、被暂停的容器） |
 | 第一条查询报 `no such column` | `app doctor` 的 `schema.head` | 漏跑 `alembic upgrade head` |

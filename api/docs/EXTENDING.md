@@ -811,6 +811,11 @@ CI 里的红灯。豁免表里失效的条目（路由改名/删除）同样会�
 连接参数放它自己的 `RedisQueueSettings`（`REDIS_*` 前缀，`infra/driver_config.py`），
 然后改 `QUEUE_DRIVER=redis`。业务代码、协议、测试都不用动。
 
+死信是**留档**，不会自己再跑：`app jobs --state dead` 看得到 `last_error`，
+确认无害再 `app jobs --redrive <id>`（`attempts` 归零、回到 pending）。
+这条命令只做「看 / 重投一条 / 删一条」，批量重投刻意没做——一次把几十条推回队列，
+等于同时给供应商发几十个请求，那应该是人逐条确认的决定。
+
 三条容易踩的：
 
 - **`attempts` 的语义是「已失败次数」**，不是「已执行次数」。handler 里 `job.attempts + 1`

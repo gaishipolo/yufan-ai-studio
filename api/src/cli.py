@@ -15,6 +15,7 @@ app prune-blobs                    # 回收没人引用的孤儿素材字节（�
 app verify-blobs [--all]           # 读回字节重算 sha256，报告损坏/缺失对象
 app rebuild-mirrors [--dry-run]    # 按 DB 幂等重建 JSON 镜像，清孤儿（DB 是唯一真相源）
 app doctor                         # 部署自检：条件写、预签名、镜像一致性、完整性抽检
+app jobs [--state dead] [--json]   # 看队列：在途/死信；--redrive <id> 重投、--drop <id> 删除
 app runs-status                    # 运行工作区现状：多少档案只在本机可见
 app backup [--out var/backups]     # 备份数据库（sqlite 快照 / postgres pg_dump）+ 清单
 app restore --from-dir <dir> --force # 用备份覆盖当前库（先另存现场）
@@ -656,6 +657,163 @@ async def _show_audit_events(action: str, limit: int, target: str) -> None:
         )
 
 
+def _cmd_jobs(args: argparse.Namespace) -> None:
+    """队列的可读入口：看、按 id 重投、按 id 删除。
+
+    `db` 驱动把任务落进 `queued_jobs`，死信「留档给人看」——但在此之前没有地方能看：
+    `app doctor` 只给一个数字，要看内容得自己写 SQL。而写 SQL 去 `DELETE` 正是这条
+    命令要替掉的事：删错一行，表现是「某个任务凭空消失」，没有任何报错。
+
+    只做三件事：看、重投一条、删除一条。**不做批量重投**：一次把几十条死信推回队列
+    等于同时给供应商发几十个请求，那应该是一个人逐条确认的决定，不该是一条命令的默认。
+    """
+    asyncio.run(_jobs(args))
+
+
+async def _jobs(args: argparse.Namespace) -> None:
+    import json as jsonlib
+
+    from sqlalchemy import desc, select
+
+    from core.config import settings
+    from db.jobs import QueuedJob
+    from db.session import get_session_factory
+
+    if settings.queue_driver != "db":
+        print(
+            f"QUEUE_DRIVER={settings.queue_driver}：只有 db 驱动把任务落库，这里查不到东西。\n"
+            "内存驱动的「积压」只存在于进程内存里（重启即丢）——这也正是生产要用 db 的理由。"
+        )
+        raise SystemExit(2)
+
+    async with get_session_factory()() as session:
+        if args.drop:
+            await _drop_job(session, args.drop, force=args.force)
+            return
+        if args.redrive:
+            await _redrive_job(session, args.redrive)
+            return
+
+        limit = max(1, min(args.limit, 500))
+        stmt = select(QueuedJob).order_by(desc(QueuedJob.created_at)).limit(limit)
+        if args.state:
+            stmt = stmt.where(QueuedJob.status == args.state)
+        rows = (await session.execute(stmt)).scalars().all()
+
+        if args.json:
+            print(
+                jsonlib.dumps(
+                    [_job_as_dict(row) for row in rows],
+                    ensure_ascii=False,
+                    indent=2,
+                    default=str,
+                )
+            )
+            return
+        if not rows:
+            print("队列里没有匹配的记录")
+            return
+        for row in rows:
+            lease = f"{row.lease_expires_at:%m-%d %H:%M:%S}" if row.lease_expires_at else "-"
+            print(
+                f"{row.status:8} {row.id}  {row.name:24} "
+                f"attempts={row.attempts}/{row.max_attempts} "
+                f"run_at={row.run_at:%m-%d %H:%M:%S} lease={lease}"
+            )
+            if row.last_error:
+                print(f"         └ {row.last_error[:140]}")
+        print(f"\n共 {len(rows)} 条（最多显示 {limit}）")
+        print(
+            "死信是留档用的：确认无害要重跑用 `app jobs --redrive <id>`，"
+            "确认不要了用 `app jobs --drop <id> --force`。"
+        )
+
+
+def _job_as_dict(row: Any) -> dict[str, Any]:
+    return {
+        "id": row.id,
+        "name": row.name,
+        "status": row.status,
+        "attempts": row.attempts,
+        "max_attempts": row.max_attempts,
+        "run_at": row.run_at,
+        "lease_expires_at": row.lease_expires_at,
+        "created_at": row.created_at,
+        "last_error": row.last_error,
+    }
+
+
+async def _redrive_job(session: Any, job_id: str) -> None:
+    """把一条死信重新排队。
+
+    只允许死信：在途任务的重投等于让它被执行两遍，那是把人手伸进了 worker 的状态机。
+    """
+    from sqlalchemy import update
+
+    from db.base import utcnow
+    from db.jobs import JOB_DEAD, JOB_PENDING, QueuedJob
+
+    row = await session.get(QueuedJob, job_id)
+    if row is None:
+        print(f"没有这个任务：{job_id}")
+        raise SystemExit(1)
+    if row.status != JOB_DEAD:
+        print(
+            f"{job_id} 现在是 {row.status}，不需要重投。"
+            "在途任务由 worker 自己推进；重投会让同一件事被执行两遍。"
+        )
+        raise SystemExit(1)
+
+    now = utcnow()
+    await session.execute(
+        update(QueuedJob)
+        .where(QueuedJob.id == job_id)
+        .values(
+            status=JOB_PENDING,
+            run_at=now,
+            attempts=0,
+            lease_expires_at=None,
+            lease_token=None,
+            last_error="",
+            updated_at=now,
+        )
+    )
+    await session.commit()
+    print(f"已重投 {job_id}（{row.name}），attempts 归零")
+    print(
+        "注意：它成为死信之前可能已经产生了副作用（供应商扣费、文件已写），"
+        "handler 必须自己幂等，队列不替你去重。"
+    )
+
+
+async def _drop_job(session: Any, job_id: str, *, force: bool) -> None:
+    """删除一条队列记录。
+
+    `running` 一律拒绝：那可能是别的实例正在执行的任务，删掉它等于让一个活着的 worker
+    白跑，而它自己不会知道（回执时会发现凭据对不上，但那时活已经干完了）。
+    """
+    from sqlalchemy import delete
+
+    from db.jobs import JOB_RUNNING, QueuedJob
+
+    if not force:
+        print("删除不可恢复：确认这条记录不再需要之后，加 --force 再跑一次。")
+        raise SystemExit(1)
+    row = await session.get(QueuedJob, job_id)
+    if row is None:
+        print(f"没有这个任务：{job_id}")
+        raise SystemExit(1)
+    if row.status == JOB_RUNNING:
+        print(
+            f"{job_id} 正在被某个 worker 执行（running），拒绝删除。\n"
+            "崩溃留下的 running 行会在租约过期后被接手；要立刻处理请先停掉 worker。"
+        )
+        raise SystemExit(1)
+    await session.execute(delete(QueuedJob).where(QueuedJob.id == job_id))
+    await session.commit()
+    print(f"已删除 {job_id}（{row.name}，状态 {row.status}）")
+
+
 def _cmd_verify_blobs(args: argparse.Namespace) -> None:
     """读回字节重算摘要：key 既是命名也是校验和，不需要另存元数据。"""
     from infra.archive import get_archive_storage
@@ -989,6 +1147,19 @@ def main(argv: list[str] | None = None) -> int:
     p_audit.add_argument("--target", default="", help="按对象 id 过滤")
     p_audit.add_argument("--limit", type=int, default=30, help="条数（默认 30）")
     p_audit.set_defaults(func=_cmd_audit_events)
+
+    p_jobs = sub.add_parser(
+        "jobs", help="查看队列（在途/死信），按 id 重投或删除死信"
+    )
+    p_jobs.add_argument(
+        "--state", choices=("pending", "running", "dead"), default=None, help="只看某个状态"
+    )
+    p_jobs.add_argument("--limit", type=int, default=20, help="条数（默认 20）")
+    p_jobs.add_argument("--json", action="store_true", help="输出 JSON（给脚本用）")
+    p_jobs.add_argument("--redrive", metavar="ID", help="把一条死信重新排队（attempts 归零）")
+    p_jobs.add_argument("--drop", metavar="ID", help="删除一条记录（需 --force）")
+    p_jobs.add_argument("--force", action="store_true", help="确认执行 --drop")
+    p_jobs.set_defaults(func=_cmd_jobs)
 
     p_backup = sub.add_parser(
         "backup", help="备份数据库（sqlite 一致快照 / postgres pg_dump）并写清单"
