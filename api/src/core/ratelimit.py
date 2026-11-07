@@ -41,7 +41,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 from typing import Protocol, runtime_checkable
 
-from core.config import settings
+from core.config import get_settings
 from core.logging import get_logger
 
 logger = get_logger(__name__)
@@ -159,7 +159,7 @@ def get_rate_limiter() -> RateLimiter:
     """
     from infra import get_cache
 
-    return RateLimiter(get_cache(), prefix=settings.cache_key_prefix)
+    return RateLimiter(get_cache(), prefix=get_settings().cache_key_prefix)
 
 
 def reset_rate_limiter() -> None:

@@ -170,8 +170,23 @@ class Settings(BaseSettings):
     # 计数落在缓存层（`CACHE_DRIVER`）。memory 时各实例各算各的，
     # 多实例部署要换成共享缓存，否则「每 IP 每分钟 60 次」会变成 60×N 次。
     rate_limit_enabled: bool = True
-    # 默认额度：只在路由显式引用时生效，不是全局兜底（全局兜底容易被健康检查打穿）
+    # 默认额度：只在路由显式引用时生效
     rate_limit_default_per_min: int = 60
+    # 全局兜底额度（按客户端 IP 计，次/分钟）。**0 = 关闭**，默认关闭。
+    #
+    # 为什么默认关：全局中间件按 IP 计数，NAT / 反向代理后面一个出口 IP 会代表整栋楼，
+    # 额度定小了正常用户一起 429。它防的是「脚本扫接口」，不是「用户点太快」——
+    # 后者应该由路由级 `rate_limit()` 按用户算。要开就明确写个数，别指望默认值兜底。
+    rate_limit_global_per_min: int = 0
+
+    # ---------- 备份 ----------
+    # 自动备份默认关：开着的代价是每天在磁盘上多一份库、且 sqlite 下 backup API 要持读锁。
+    # 生产建议开（BACKUP_AUTO_ENABLED=true），并配好保留天数。
+    backup_auto_enabled: bool = False
+    backup_dir: str = "var/backups"
+    backup_interval_hours: int = 24
+    # 保留天数：0 表示永不删除（磁盘会一直涨，只适合手动管理）。
+    backup_retention_days: int = 7
 
     # ---------- 可观测 ----------
     # Prometheus 抓取端点（`/metrics`，不进 OpenAPI、不走业务鉴权）。

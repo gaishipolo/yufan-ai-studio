@@ -147,7 +147,33 @@ app restore --from-dir /backup/yufan/backup-20261107-200300 --force
 - 恢复前会把现库另存为 `<db>.pre-restore-<时间戳>`，恢复错了还能退回去。
 - `--force` 不是形式：没有它，目标库已存在就拒绝执行。
 
-### 5.2 演练（每季度至少一次）
+### 5.2 自动备份（别只靠手敲）
+
+```bash
+BACKUP_AUTO_ENABLED=true
+BACKUP_DIR=var/backups
+BACKUP_INTERVAL_HOURS=24
+BACKUP_RETENTION_DAYS=7      # 0 = 永不删除
+```
+
+`@periodic("core.backup")` 每 `BACKUP_INTERVAL_HOURS` 小时跑一次，`leader_only=True`：
+多副本只会有其中一个真的执行（抢不到租约就跳过这一轮，下一轮再抢）。
+这一条和 `core.outbox` 的取舍相反是有理由的——outbox 重复投递只是冗余，
+备份重复执行是实打实的磁盘 + 读锁成本。
+
+清理是**保守**的，三条约束都不要绕：
+
+- 只删形如 `backup-*` 且**带 `manifest.json`** 的目录。`BACKUP_DIR` 指错到 `var/`
+  这种大目录时，通配符删除会把整个数据目录带走。
+- 按清单里的 `created_at` 判断，**不看目录 mtime**。恢复演练时会把备份 `cp` 到别处，
+  mtime 变成今天；按 mtime 排序正好留着最老的一份、把其余全删。
+- `BACKUP_RETENTION_DAYS=0` 直接返回。删备份不可逆，不做默认删除。
+
+**每天看一眼有没有新目录**。自动备份失败不会让服务挂（`logger.error` + 调度器记一笔），
+所以它可能连续失败而没人知道。建议的告警：`BACKUP_DIR` 下最新目录的 `created_at`
+超过 2×`BACKUP_INTERVAL_HOURS`。
+
+### 5.3 演练（每季度至少一次）
 
 ```bash
 # 1. 备份当前库
@@ -162,7 +188,7 @@ DB_URL=sqlite+aiosqlite:////tmp/rehearsal/app.db app doctor
 `manifest.json` 里有 `schema_head`：恢复出来的库版本与当前代码要求的 head 不一致时，
 先 `alembic upgrade head` 再启动服务。
 
-### 5.3 边界（写在最前面，免得出事才发现）
+### 5.4 边界（写在最前面，免得出事才发现）
 
 - **对象存储的字节不在这份备份里**。归档盘/素材桶靠存储侧策略（版本化、跨区复制）。
   恢复后如果对象缺失，`app verify-blobs` 会列出缺失的 key。
@@ -211,7 +237,8 @@ FEATURE_FLAGS=new.upload,new.editor           # 逗号写法等价于全部打�
    没有 pushgateway，也不落盘。
 2. **trace 只有一个 id**，没有 span 树与采样。要按阶段拆分耗时看日志里的
    `X-Process-Time-Ms` 与 job 耗时直方图。
-3. **限流是依赖级**，没有全局兜底：新接口忘了挂 `rate_limit()` 就是完全不限。
-   架构守卫目前只拦「路由层写事务」，没拦「写路由漏挂限流」。
-4. **备份不含对象存储**（见 §5.3）。
+3. **限流默认是依赖级**：全局兜底 `RATE_LIMIT_GLOBAL_PER_MIN` 默认 0（关闭），
+   按客户端 IP 计。架构守卫目前只拦「路由层写事务」，没拦「写路由漏挂限流」。
+4. **备份不含对象存储**（见 §5.4）。自动备份失败只会记日志，不会让服务挂——
+   所以「备份是否真的在跑」需要外部告警盯（见 §5.2 末尾）。
 5. **功能开关不支持热更新与灰度**（见 §6）。

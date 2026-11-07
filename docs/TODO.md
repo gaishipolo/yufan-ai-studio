@@ -7,9 +7,8 @@
 >
 > 来源：`CODE_REVIEW_2026-11-06_R11~R14`、`CODE_REVIEW_2026-11-06_FE6`、
 > `EXTENSIBILITY_GAPS.md` 的 B1/C1/C2，以及素材分支合并时新发现的项。
-> 最后更新：2026-11-07 20:40（三条纵向主线：数据线加迁移漂移守卫与事务边界守卫，
-> 运维线加指标 / 就绪聚合 / 备份恢复 / 功能开关，工程线补脚手架示例；
-> 剩余边界登记为 T26~T30）
+> 最后更新：2026-11-07 21:10（回补三处「登记了但本来能做完」的：T28 自动备份 + 保留期、
+> T27 可选全局兜底、T30 PG 迁移闸（观察期）。T26/T29 维持「刻意不做」并写清触发条件）
 
 ## 一眼看完
 
@@ -28,10 +27,9 @@
 | T24 | `MediaFile.path` 装的是 key，字段名/描述没跟上 | 契约语义漂移，后来者会当路径拼 | 后端（小） |
 | T25 | 多实例部署还差三处硬边界 | 配额首次并发、预签名 TOCTOU、运行工作区仍要共享盘 | 架构 |
 | T26 | db 队列是轮询式，没有唤醒机制 | 空转查询按 worker 数叠加；万级 QPS 要换 Redis 驱动（协议已备好） | 架构 |
-| T27 | 限流只有依赖级，没有全局兜底；固定窗口有 2× 边界误差 | 未显式挂 `rate_limit()` 的接口完全不限；窗口交界处瞬时可达 2 倍额度 | 后端 |
-| T28 | 备份只有手工命令，没有调度与保留策略 | 没人跑就没有备份；也没验证过保留期清理 | 运维 |
+| T27 | 限流仍缺「写路由未挂限流」的架构守卫；固定窗口有 2× 边界误差 | 新接口忘挂 `rate_limit()` 时只能靠全局兜底（默认关）；窗口交界瞬时可达 2 倍额度 | 后端 |
 | T29 | 指标是单进程语义，未做多进程聚合 | 多 worker 部署要靠 Prometheus `sum by`；本机 `curl /metrics` 只看到一部分 | 架构 |
-| T30 | 迁移漂移守卫只覆盖 sqlite 方言 | PG 特有的默认值/条件索引差异不会被 `compare_metadata` 报出来 | 架构 |
+| T30 | PG 迁移闸在观察期（`continue-on-error`），尚未成为硬性要求 | PG 特有的默认值/条件索引差异要等它稳定后才真正拦住 | 架构 |
 
 ---
 
@@ -170,10 +168,11 @@ PostgreSQL 的 `LISTEN/NOTIFY`：写完 `NOTIFY`，worker 侧长连接被唤醒�
 
 ## T27 · 限流的两处已知边界
 
-1. **没有全局兜底**：只有显式写了 `Depends(rate_limit(...))` 的接口才限流。
-   刻意不做全局中间件（会把健康检查、静态资源、预检请求一起限掉），代价是
-   「新接口忘了挂」= 完全不限。可以补一条架构守卫：扫所有写操作路由，要求
-   `rate_limit` 或显式豁免标记。
+1. **全局兜底已提供，但默认关闭**（`RATE_LIMIT_GLOBAL_PER_MIN=0`）。
+   `GlobalRateLimitMiddleware` 按客户端 IP 计数，白名单含探针、指标、文档与静态资源。
+   默认关是因为它按 IP 算：反代/NAT 后面一个出口 IP 代表很多真实用户，额度定小了
+   就是「整栋楼一起 429」；`scope["client"]` 在反代后面还是代理地址。
+   仍未做的是**架构守卫**：扫所有写操作路由，要求 `rate_limit` 或显式豁免标记。
 2. **固定窗口有 2× 边界误差**：窗口最后 1 秒打满、下一秒又是新窗口，
    瞬时可达 `2×limit`。要精确就换滑动窗口（`ZADD` + `ZREMRANGEBYSCORE` + `ZCARD`，
    或用 Lua 保证原子），同样只需替换 `Counter` 实现。
@@ -186,13 +185,17 @@ PostgreSQL 的 `LISTEN/NOTIFY`：写完 `NOTIFY`，worker 侧长连接被唤醒�
 
 ---
 
-## T28 · 备份没有调度与保留策略
+## T28 · 备份没有调度与保留策略 —— 已修（2026-11-07）
 
-`app backup` 解决的是「能不能备份、能不能恢复」，不解决「有没有人每天跑」。
-现在需要运维自己挂 cron / 计划任务，保留期也要自己删目录。
+`@periodic("core.backup")` 每日自动备份并清理过期备份，`leader_only=True`
+（多副本各备一份纯浪费磁盘与读锁，抢不到租约这一轮跳过即可）。
+配置：`BACKUP_AUTO_ENABLED`（默认关）/ `BACKUP_DIR` / `BACKUP_INTERVAL_HOURS` /
+`BACKUP_RETENTION_DAYS`（0 = 永不删）。
 
-**验收**：`BACKUP_DIR` + `BACKUP_RETENTION_DAYS` 配置，`@periodic` 每日备份并按保留期
-清理；或明确写「备份属于部署层职责」并给出 systemd timer / K8s CronJob 样例。
+清理的三条自我约束（都有用例）：只认 `backup-*` 且带 `manifest.json` 的目录、
+按清单 `created_at` 判断而非目录 mtime（`cp` 过的备份 mtime 会变新）、
+`retention_days <= 0` 直接返回。`create_backup` 的 dump 改走线程，
+避免 sqlite backup API 阻塞事件循环。
 
 ## T29 · 指标是单进程语义
 
@@ -210,7 +213,12 @@ PostgreSQL 的 `LISTEN/NOTIFY`：写完 `NOTIFY`，worker 侧长连接被唤醒�
 `server_default` 表达差异——只在 PG 上才会出现的漂移仍要靠 CI 里的
 `alembic check`（需要 PG service）兜。
 
-**验收**：CI 加 postgres service 后跑同一组断言；或明确接受 sqlite 覆盖度。
+**已加（观察期）**：`.github/workflows/ci.yml` 的 `postgres-migrations` job，
+真实 `postgres:16-alpine` 上跑 `upgrade head` → `check` → `downgrade base` → `upgrade head`
+（最后两步顺带验证迁移可回滚）。当前 `continue-on-error: true`：没有历史基线时先用它
+暴露问题而不阻塞合并。
+
+**收紧条件**：连续 3 次 CI 通过后去掉 `continue-on-error`，之后它就是硬性要求。
 
 
 ---
@@ -229,6 +237,7 @@ PostgreSQL 的 `LISTEN/NOTIFY`：写完 `NOTIFY`，worker 侧长连接被唤醒�
 | FE6-06 `Slot` 用数组下标做 key | 已修 | `shared/registry/Slot.tsx:26` 用 `moduleId:seq` |
 | R13-01~07 / R14-01~03 | 已修 | `dd5fbd2`、`787b88a`、`cad40a9`，见 `.workbuddy/memory/2026-11-06.md` |
 | R12-* / R11-* | 已修 | `aa9c5e4` |
+| T28 备份无调度与保留 | 已修 | `db/backup.py` 的 `backup_loop` / `prune_backups`，用例见 `tests/test_backup.py` 后三条 |
 | 原 T15 五份文档未提交 | 已提交 | `e928fbb`（`CODE_STYLE` / `REVIEW_CHECKLIST` v2.0 + R11~R14 / FE6 报告） |
 | 原 T16 两条旧分支 | 已删 | `merge/pr1`（`4e26035`）、`preview/full`（`59513ba`）`merge-base --is-ancestor` 均通过后 `git branch -d` |
 | 原 T16/T17 归档远端化 | 已修 | 协议收 key + `list_keys` 枚举；`infra/archive/runs.py` 把运行工作区分出归档；`app migrate-archive` 幂等搬家；`ARCHIVE_DRIVER=s3` 实测起/传/取全通 |

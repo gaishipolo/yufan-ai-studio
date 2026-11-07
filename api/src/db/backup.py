@@ -22,18 +22,20 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import shutil
 import sqlite3
 import subprocess
 from dataclasses import asdict, dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from sqlalchemy import text
 
 from core.config import get_settings
 from core.logging import get_logger
+from core.scheduler import periodic
 
 logger = get_logger(__name__)
 
@@ -149,9 +151,12 @@ async def create_backup(out_dir: Path, *, note: str = "") -> tuple[Path, BackupM
     settings = get_settings()
     dialect = "sqlite" if settings.is_sqlite else "postgresql"
     if settings.is_sqlite:
-        _dump_sqlite(dump)
+        # 走线程：backup API 会持读锁并逐页复制，库稍大就是几百毫秒到数秒的阻塞。
+        # 在 CLI 里无所谓，但同一个函数现在也由周期任务调用——阻塞的是事件循环。
+        await asyncio.to_thread(_dump_sqlite, dump)
     else:
-        _run(
+        await asyncio.to_thread(
+            _run,
             ["pg_dump", "--format=custom", "--no-owner", "--file", str(dump), _pg_url()],
             what="pg_dump",
         )
@@ -235,10 +240,90 @@ def restore_backup(backup_dir: Path, *, force: bool = False) -> BackupManifest:
     return manifest
 
 
+# --------------------------------------------------------------------------- #
+# 自动备份与保留期
+# --------------------------------------------------------------------------- #
+def prune_backups(out_dir: Path, *, retention_days: int) -> int:
+    """删掉超过保留期的备份目录，返回删除数量。
+
+    三条自我约束：
+
+    1. **只认带 `manifest.json` 的 `backup-*` 目录**。别的目录一律不碰——
+       把 `BACKUP_DIR` 指到 `var/` 这种大目录是很容易犯的错，靠通配符删会出人命。
+    2. **按清单里的 `created_at` 判断，不看目录 mtime**。恢复演练时会把备份
+       `cp` 到别处、mtime 变成今天，按 mtime 排序会把最老的那份当成最新的留着、
+       把别的都删掉——正好删反。
+    3. **`retention_days <= 0` 直接返回**，表示"永不清理"。宁可磁盘涨，也不做
+       默认删除：删备份是不可逆的，只有显式配了天数才动手。
+    """
+    if retention_days <= 0 or not out_dir.is_dir():
+        return 0
+
+    cutoff = datetime.now(tz=UTC) - timedelta(days=retention_days)
+    removed = 0
+    for entry in sorted(out_dir.iterdir()):
+        if not entry.is_dir() or not entry.name.startswith("backup-"):
+            continue
+        if not (entry / MANIFEST_NAME).exists():
+            continue
+        try:
+            created = datetime.fromisoformat(read_manifest(entry).created_at)
+        except (BackupError, ValueError):
+            # 清单坏了就不删：这可能正是唯一一份还能看出问题的现场
+            logger.warning("备份清单无法解析，跳过清理：%s", entry)
+            continue
+        if created.tzinfo is None:
+            created = created.replace(tzinfo=UTC)
+        if created >= cutoff:
+            continue
+        try:
+            shutil.rmtree(entry)
+        except OSError as exc:
+            logger.warning("清理备份失败：%s（%s）", entry, exc)
+            continue
+        removed += 1
+    if removed:
+        logger.info("清理过期备份 %d 份（保留 %d 天）：%s", removed, retention_days, out_dir)
+    return removed
+
+
+@periodic(
+    "core.backup",
+    every=max(3600.0, get_settings().backup_interval_hours * 3600),
+    immediate=False,
+    # 多副本各备一份纯浪费磁盘与读锁，且不会换来确定性；抢不到租约这一轮跳过即可。
+    # 与 `core.outbox` 的取舍相反——那边重复投递只是冗余，这边重复备份是实打实的成本。
+    leader_only=True,
+)
+async def backup_loop() -> None:
+    """周期入口：自动备份 + 清理过期备份。默认关闭，`BACKUP_AUTO_ENABLED=true` 打开。"""
+    settings = get_settings()
+    if not settings.backup_auto_enabled:
+        return
+    out_dir = Path(settings.backup_dir)
+    try:
+        _, manifest = await create_backup(out_dir, note=f"auto:{settings.app_env}")
+    except (BackupError, OSError) as exc:
+        # 不让异常冒出去：调度器会记一笔，但这一轮的清理不该被备份失败拖住
+        logger.error("自动备份失败：%s", exc)
+    else:
+        logger.info(
+            "自动备份完成：%s（schema=%s，%d 张表）",
+            manifest.created_at,
+            manifest.schema_head or "未知",
+            len(manifest.tables),
+        )
+    await asyncio.to_thread(
+        prune_backups, out_dir, retention_days=settings.backup_retention_days
+    )
+
+
 __all__ = [
     "BackupError",
     "BackupManifest",
+    "backup_loop",
     "create_backup",
+    "prune_backups",
     "read_manifest",
     "restore_backup",
 ]

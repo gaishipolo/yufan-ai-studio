@@ -557,10 +557,13 @@ ruff check src tests
 - [ ] 接上 `/health/ready`（别只接 `/health`）：`down` 摘实例、`degraded` 只告警。
       后者表示「能服务但在漏」（outbox 积压、死信超阈值、缓存不可用），
       把它当 down 会让编排系统一次摘掉整批实例。
-- [ ] 备份策略：`app backup` 只能手工跑是不够的，至少配一条定时任务
-      （每日全量 + 保留 7 天）。备份要**演练**：拿一份新备份 `app restore --force`
-      到临时目录，确认表行数与 `manifest.json` 一致——没演练过的备份不算备份。
-      对象存储的字节不在数据库备份里，归档盘版本化/跨区复制要单独配。
+- [ ] 备份：`BACKUP_AUTO_ENABLED=true` + `BACKUP_RETENTION_DAYS=7`（`@periodic("core.backup")`
+      每日一份，`leader_only` 保证多副本只跑一个）。注意它只备**数据库**，
+      对象存储的字节靠存储侧版本化/跨区复制。备份要**演练**：拿一份新备份
+      `app restore --force` 到临时环境，确认表行数与 `manifest.json` 一致——
+      没演练过的备份不算备份。
+- [ ] 全局限流按需开：`RATE_LIMIT_GLOBAL_PER_MIN` 默认 0（关闭）。它按客户端 IP 计，
+      反代/NAT 后面一个出口 IP 代表很多真实用户，开之前确认部署层已正确透传真实 IP。
 - [ ] `WORKER_ENABLED=false` 时单独起 worker 进程，避免 API 实例与 worker 抢队列
 - [ ] 反向代理（Nginx）转发到 8080，并透传 `X-Request-Id`
 - [ ] 有反代就配 `TRUSTED_PROXIES=<代理地址/网段>`（或给 uvicorn 加 `--proxy-headers

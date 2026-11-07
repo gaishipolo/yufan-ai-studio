@@ -22,7 +22,11 @@ from fastapi.staticfiles import StaticFiles
 
 from api.discovery import active_modules
 from api.errors import register_exception_handlers
-from api.middleware import RequestContextMiddleware
+from api.middleware import (
+    DEFAULT_RATE_LIMIT_EXCLUDE,
+    GlobalRateLimitMiddleware,
+    RequestContextMiddleware,
+)
 from api.ops import build_ops_router
 from api.v1.router import build_v1_router
 from core.config import get_settings
@@ -53,6 +57,10 @@ def load_extension_points() -> None:
     """
     # 审计写入端：core 只定义协议，具体落库在 db 层注册
     from db import audit_sink as _audit_sink  # noqa: F401
+
+    # 自动备份：import 即注册 `@periodic("core.backup")`。
+    # 同样不能靠 `app backup` 那条 CLI 路径——手敲命令 == 没有人跑 == 没有备份。
+    from db import backup as _backup  # noqa: F401
 
     # outbox 投递：import 即注册 `@periodic("core.outbox")`。
     # 不能靠 `init_db()` 顺带加载——那只在非生产环境执行，生产用 Alembic 建表，
@@ -203,6 +211,13 @@ def create_app() -> FastAPI:
     )
 
     # 顺序：后添加的在外层。CORS 必须在最外层，异常响应才能带上跨域头。
+    # 全局限流放在 RequestContext **内侧**：429 也要有 request id 和访问日志，
+    # 否则「谁被限了」只能靠猜。默认关闭（额度 0 时整层透传，零开销）。
+    app.add_middleware(
+        GlobalRateLimitMiddleware,
+        limit_per_min=settings.rate_limit_global_per_min,
+        exclude=DEFAULT_RATE_LIMIT_EXCLUDE + (settings.api_prefix + "/health",),
+    )
     app.add_middleware(RequestContextMiddleware)
     app.add_middleware(
         CORSMiddleware,

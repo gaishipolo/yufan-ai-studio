@@ -104,3 +104,132 @@ def test_restore_rejects_cross_dialect_backup(temp_db: Path, tmp_path: Path) -> 
     with pytest.raises(backup.BackupError) as excinfo:
         backup.restore_backup(target, force=True)
     assert "跨方言" in str(excinfo.value)
+
+
+# --------------------------------------------------------------------------- #
+# 保留期清理
+# --------------------------------------------------------------------------- #
+def _fake_backup(out_dir: Path, name: str, created_at: str) -> Path:
+    import json
+
+    from db import backup
+
+    target = out_dir / name
+    target.mkdir(parents=True)
+    (target / backup.MANIFEST_NAME).write_text(
+        json.dumps(
+            {
+                "created_at": created_at,
+                "app_env": "test",
+                "dialect": "sqlite",
+                "file": backup.DB_FILE_NAME,
+            }
+        ),
+        encoding="utf-8",
+    )
+    return target
+
+
+def test_prune_uses_manifest_time_not_mtime(tmp_path: Path) -> None:
+    """按清单时间判断，不按目录 mtime。
+
+    恢复演练会把备份 `cp` 到别处，mtime 变成今天；按 mtime 排会留着最老的一份、
+    把其余全删——正好删反。这里刻意把「旧备份」的 mtime 刷成现在来复现这个陷阱。
+    """
+    import os
+    from datetime import UTC, datetime, timedelta
+
+    from db import backup
+
+    out = tmp_path / "backups"
+    old = _fake_backup(
+        out, "backup-old", (datetime.now(tz=UTC) - timedelta(days=30)).isoformat()
+    )
+    fresh = _fake_backup(
+        out, "backup-fresh", (datetime.now(tz=UTC) - timedelta(days=1)).isoformat()
+    )
+    os.utime(old, None)  # 模拟「刚 cp 出来」：mtime 是最新的
+
+    assert backup.prune_backups(out, retention_days=7) == 1
+    assert not old.exists(), "过期备份应该被删除（mtime 新不代表数据新）"
+    assert fresh.exists()
+
+
+def test_prune_never_touches_foreign_directories(tmp_path: Path) -> None:
+    """`BACKUP_DIR` 指错到 `var/` 时，通配符删除会把整个数据目录带走。"""
+    from datetime import UTC, datetime, timedelta
+
+    from db import backup
+
+    out = tmp_path / "backups"
+    stray = _fake_backup(
+        out, "not-a-backup", (datetime.now(tz=UTC) - timedelta(days=999)).isoformat()
+    )
+    no_manifest = out / "backup-manual"
+    no_manifest.mkdir()
+
+    assert backup.prune_backups(out, retention_days=7) == 0
+    assert stray.exists(), "前缀不是 backup- 的目录不许碰"
+    assert no_manifest.exists(), "没有清单的目录不许碰（可能正是唯一现场）"
+
+
+def test_prune_disabled_when_retention_not_positive(tmp_path: Path) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    from db import backup
+
+    out = tmp_path / "backups"
+    ancient = _fake_backup(
+        out, "backup-ancient", (datetime.now(tz=UTC) - timedelta(days=999)).isoformat()
+    )
+
+    assert backup.prune_backups(out, retention_days=0) == 0
+    assert ancient.exists(), "0 表示永不清理：删备份不可逆，不做默认删除"
+
+
+# --------------------------------------------------------------------------- #
+# 自动备份周期任务
+# --------------------------------------------------------------------------- #
+def test_backup_loop_does_nothing_when_disabled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from core.config import get_settings
+    from db import backup
+
+    monkeypatch.setenv("BACKUP_AUTO_ENABLED", "false")
+    monkeypatch.setenv("BACKUP_DIR", str(tmp_path / "auto"))
+    get_settings.cache_clear()
+
+    asyncio.run(backup.backup_loop())
+
+    assert not (tmp_path / "auto").exists(), "开关关闭时不该碰磁盘"
+
+
+def test_backup_loop_writes_backup_and_prunes(
+    temp_db: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from core.config import get_settings
+    from db import backup
+    from db import session as db_session
+
+    out_dir = tmp_path / "auto"
+    monkeypatch.setenv("BACKUP_AUTO_ENABLED", "true")
+    monkeypatch.setenv("BACKUP_DIR", str(out_dir))
+    monkeypatch.setenv("BACKUP_RETENTION_DAYS", "7")
+    get_settings.cache_clear()
+
+    asyncio.run(db_session.init_db())
+    # 先放一份过期备份进去，验证同一轮里「备份 + 清理」都会发生
+    from datetime import UTC, datetime, timedelta
+
+    stale = _fake_backup(
+        out_dir, "backup-stale", (datetime.now(tz=UTC) - timedelta(days=30)).isoformat()
+    )
+
+    asyncio.run(backup.backup_loop())
+
+    created = [p for p in out_dir.iterdir() if p.name.startswith("backup-") and p != stale]
+    assert len(created) == 1, "应该生成一份新备份"
+    manifest = backup.read_manifest(created[0])
+    assert manifest.note.startswith("auto:")
+    assert not stale.exists(), "过期备份应在同一轮里被清掉"
