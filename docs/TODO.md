@@ -7,8 +7,8 @@
 >
 > 来源：`CODE_REVIEW_2026-11-06_R11~R14`、`CODE_REVIEW_2026-11-06_FE6`、
 > `EXTENSIBILITY_GAPS.md` 的 B1/C1/C2，以及素材分支合并时新发现的项。
-> 最后更新：2026-11-07 22:10（扩展性专项：写路由限流策略守卫 + 权限点自动并入内置角色；
-> 顺带把模块启动钩子拆成 bootstrap（装配，人人执行）/ startup（恢复，仅消费实例））
+> 最后更新：2026-11-07 22:12（恢复链可测化：删掉 `resume()` 的 `APP_ENV` 早退、改注入
+> repo；`recover()` 抢不到档案锁时改为退避 + 六轮上限，放弃时打指标告警）
 > 剩余登记 T31~T33）
 
 ## 一眼看完
@@ -16,9 +16,7 @@
 | 编号 | 事项 | 影响 | 落点 |
 |---|---|---|---|
 | T2 | 前端不展示 `externalId` / `previousExternalId` | 文案让用户「凭任务号核对」，页面拿不到 | 前端 |
-| T3 | `recover()` 遇持续 Conflict 无限重投，无上限 | 僵死租约会每 30 秒吵一次，永不停止 | 后端 |
 | T4 | `ReplacementStore` 不写 `submit_mode` 快照 | 删掉模块自有 startup 后会误分类供应商形态 | 后端 |
-| T6 | `resume()` 的 `app_env == "test"` 早退 | 恢复链在测试里永不执行，结构性问题藏得住 | 后端 |
 | T7 | 权限点不自动进内置角色（B1） | 新权限上线后要人记得跑命令 | 后端 |
 | T8 | 轮询节奏全局化（C1） | 视频与生图共用一个间隔 | 后端 |
 | T9 | 重试是作业级不是任务级（C2） | 任务重试语义与用户预期不一致 | 后端 |
@@ -46,15 +44,6 @@
 **验收**：生图详情/列表能看到并复制 `externalId`；「已确认扣费重试」之后能同时看到
 历史任务号（`previousExternalIds`）。
 
-## T3 · `recover()` 对持续 Conflict 没有重投上限
-
-`modules/template/replacement_worker.py` 的 `recover()`：`except Conflict` 分支
-直接 `enqueue_recovery(run_id, delay=30)` 然后返回，**不计次数**。`_bump_retry` 只管
-prepare / download 两条线。租约被僵死进程占住时（`clear_finished_lock` 要确认退出才清），
-这里会每 30 秒投一次，永不停止。
-
-**验收**：run.json 增恢复重投计数；超过阈值置「待人工核对」并写审计，不再自动入队。
-
 ## T4 · `ReplacementStore` 不写 `submit_mode` 快照（R14 观察-5）
 
 R12-05 加 `submit_mode` 的理由是「恢复要解释记录自身的形态，而不是拿当前模型目录重新解析」。
@@ -63,16 +52,6 @@ R12-05 加 `submit_mode` 的理由是「恢复要解释记录自身的形态，�
 echo-only 环境里仍会被误分类。
 
 **验收**：`replacement_pipeline.ReplacementStore` 提交时写 `submit_mode`；有轮询供应商的用例。
-## T6 · `resume()` 的 `app_env == "test"` 早退（R14 观察-4）
-
-`replacement_worker.resume()` 开头 `if settings.app_env == "test" ... return`。
-R14 的三条问题全部落在被这个早退遮住的函数里——测试套件结构上不可能发现它们。
-本轮新增的收敛用例靠 monkeypatch 把 `app_env` 改成 `prod` 绕过，**但函数本身仍早退**，
-下一个改这个函数的人大概率还是会踩。
-
-**验收**：删掉环境判断，改用显式注入（如 `resume(force=False)`）或夹具控制共享盘；
-用例不再需要 monkeypatch 环境变量。
-
 ## T7 · 权限点不自动进内置角色（EXTENSIBILITY_GAPS B1）
 
 已有 `app sync-roles`，但要人记得跑。新增权限点后，`editor` / `viewer` 这些内置角色
@@ -251,6 +230,8 @@ PostgreSQL 的 `LISTEN/NOTIFY`：写完 `NOTIFY`，worker 侧长连接被唤醒�
 | 新权限点要人工 `sync-roles`，漏了就非超管 403 | 已修 | `IdentityService.sync_new_permissions` + `app_meta.permissions.catalog` 快照；用例 `tests/test_role_auto_sync.py` |
 | 装配钩子塞在 `startup` 里，`WORKER_ENABLED=false` 的实例永不执行 | 已修 | `ModuleSpec.bootstrap`（人人执行）与 `startup`（仅消费实例）分开；identity 改用 `bootstrap` |
 | worker 取任务异常导致协程静默死亡 | 已修 | `workers.py` 的 `_loop` 三层兜底 + 退避 + `queue_dequeue_errors_total`；用例 `test_worker_survives_dequeue_errors` / `test_worker_survives_ack_failure` |
+| `resume()` 的 `APP_ENV` 早退让恢复链在测试里永不执行（原 T6） | 已修 | 删掉环境判断，改 `resume(*, repo=None)` 显式注入；用例 `test_resume_takes_repository_as_explicit_input`（并在 test 环境下断言 `app_env == "test"` 跑通） |
+| `recover()` 对持续 Conflict 无上限（原 T3） | 已修 | 轮次随 payload 带过去，退避 30s→600s 共六轮，用完打 `replacement_recovery_lock_giveups_total` 并放手（拿不到锁就不写档案）；用例 `test_recover_waits_for_run_lock_with_bounded_retries` |
 | 原 T15 五份文档未提交 | 已提交 | `e928fbb`（`CODE_STYLE` / `REVIEW_CHECKLIST` v2.0 + R11~R14 / FE6 报告） |
 | 原 T16 两条旧分支 | 已删 | `merge/pr1`（`4e26035`）、`preview/full`（`59513ba`）`merge-base --is-ancestor` 均通过后 `git branch -d` |
 | 原 T16/T17 归档远端化 | 已修 | 协议收 key + `list_keys` 枚举；`infra/archive/runs.py` 把运行工作区分出归档；`app migrate-archive` 幂等搬家；`ARCHIVE_DRIVER=s3` 实测起/传/取全通 |

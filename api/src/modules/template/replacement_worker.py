@@ -8,6 +8,7 @@ from pathlib import Path
 from core.config import settings
 from core.exceptions import Conflict, NotFound, Unavailable, UpstreamError
 from core.logging import get_logger
+from core.metrics import METRICS
 from core.ports.accounts import account_is_active
 from generation.runner import get_runner
 from infra import get_queue
@@ -43,6 +44,28 @@ UNFINISHED_STATUSES = frozenset(
 MAX_RETRIES = 5
 RETRY_BASE_SEC = 30.0
 RETRY_MAX_SEC = 600.0
+
+# 恢复作业「抢不到档案锁」时的等待额度（R15-01）。
+#
+# 抢不到锁是**正常的忙**：API 重启那一刻，独立监督进程可能正握着 `.lock` 在提交，
+# 我们只该等回执、绝不能覆盖它的状态。但「等」必须有上限：每个 recover 作业跑完
+# 就没了，重投是**新建**一个作业，老代码每次都无条件 `enqueue_recovery(delay=30)`，
+# 于是一个卡死的监督进程会让这条 run 每 30 秒唤醒一次、永不停止——和
+# `MAX_RETRIES` 要解决的「无限重试」是同一个形状，只是发生在锁上而不是执行器上。
+#
+# 计数只能靠 payload 带过去（作业本身每次都是新的）。退避 30s 起翻倍、封顶 10 分钟，
+# 六轮合计约 25 分钟——比 `prepare` 作业自己的 1600s 超时更长，足够覆盖一次正常的
+# 「上传 + 提交」。用完就放弃并告警，不写档案（拿不到锁就不该写，这是硬约束）。
+RECOVER_LOCK_MAX_RETRIES = 6
+RECOVER_LOCK_BASE_SEC = 30.0
+RECOVER_LOCK_MAX_SEC = 600.0
+
+# 放弃等待的次数：语义是「恢复链路在一条档案上没有结论」，运维要介入看一眼
+# 那个持有锁的进程。只有日志的话，翻不到的人会以为恢复是好的。
+RECOVERY_LOCK_GIVEUPS = METRICS.counter(
+    "replacement_recovery_lock_giveups_total",
+    "替换任务恢复因抢不到档案锁而放弃等待的次数",
+)
 
 # 「提交回执未知」的两种文案：一个解释为什么拦，一个解释怎么放行。
 # 和 `image` 的 `SUBMIT_UNKNOWN_MESSAGE` 同一口径——文案承诺「核对后可重试」，
@@ -335,11 +358,16 @@ async def download(job: Job) -> None:
         )
 
 
-async def enqueue_recovery(run_id: str, *, delay: float = 0) -> None:
+async def enqueue_recovery(run_id: str, *, delay: float = 0, attempt: int = 0) -> None:
+    """投一次恢复作业。`attempt` 是「已经等过几轮锁」，随 payload 传给下一轮。
+
+    计数只能这样带：重投是新建作业（`max_attempts=1`），作业自身的 `attempts`
+    每次都是 0，拿它当轮次会永远看到第 1 轮。
+    """
     await get_queue().enqueue(
         Job(
             name="template.replacement.recover",
-            payload={"id": run_id},
+            payload={"id": run_id, "attempt": attempt},
             max_attempts=1,
             idempotency_key=f"replacement:recover:{run_id}",
         ),
@@ -365,11 +393,12 @@ def recover_state(run_id: str) -> str:
 @register_handler("template.replacement.recover")
 async def recover(job: Job) -> None:
     run_id = str(job.payload["id"])
+    attempt = int(job.payload.get("attempt") or 0)
     try:
         action = await asyncio.to_thread(recover_state, run_id)
     except Conflict:
         # API 重启时监督进程可能仍在提交；只等回执，绝不覆盖其状态或重提。
-        await enqueue_recovery(run_id, delay=30)
+        await _wait_for_release(run_id, attempt)
         return
     if action == "poll":
         await get_runner().resume(KIND_REPLACEMENT, run_id)
@@ -377,17 +406,60 @@ async def recover(job: Job) -> None:
         await enqueue(run_id)
 
 
-async def resume() -> None:
+async def _wait_for_release(run_id: str, attempt: int) -> None:
+    """档案锁被别的进程握着：退避后再来一轮，轮次用完就放弃。
+
+    放弃时**什么都不写**：写档案本身就要那把锁，拿不到锁还想改状态，正是
+    「覆盖监督进程刚写下的提交回执」那条路的起点（R14 🚩）。所以放手的信号只有
+    日志与指标——而且这是安全的：真正持锁的那个进程收尾时会自己把状态写正确；
+    它若是崩了，OS 会连带释放锁，下一轮恢复就能正常拿到。
+    """
+    if attempt >= RECOVER_LOCK_MAX_RETRIES:
+        logger.error(
+            "替换任务恢复放弃等待档案锁 run=%s：已等待 %d 轮（约 %.0f 分钟）。"
+            "档案状态未被改动（拿不到锁就不该写），请检查是否仍有监督进程持有 .lock，"
+            "或该 run 是否卡在执行器上",
+            run_id,
+            attempt,
+            sum(
+                min(RECOVER_LOCK_BASE_SEC * 2**i, RECOVER_LOCK_MAX_SEC)
+                for i in range(attempt)
+            )
+            / 60,
+        )
+        RECOVERY_LOCK_GIVEUPS.inc()
+        return
+    delay = min(RECOVER_LOCK_BASE_SEC * 2**attempt, RECOVER_LOCK_MAX_SEC)
+    logger.info(
+        "替换任务档案被占用，%.0fs 后再试 run=%s 第 %d/%d 轮",
+        delay,
+        run_id,
+        attempt + 1,
+        RECOVER_LOCK_MAX_RETRIES,
+    )
+    await enqueue_recovery(run_id, delay=delay, attempt=attempt + 1)
+
+
+async def resume(*, repo: ReplacementRepository | None = None) -> None:
     """进程启动恢复：只挑「还有事可做」的档案进队列。
 
     R14-02：原来用 `meta.task_id` 做条件，命中**所有**历史成功记录——每次启动
     都白投一次、白读两次盘；更糟的是本地已判失败的记录会被 `recover_state`
     翻回 `framework_status=running` 并真的再查一次上游，集合永不收敛。
     终态与「等人确认」的状态一律跳过，收敛才成立。
+
+    R15-01：这里原来有一行 `if settings.app_env == "test" ... return`。它挡住了
+    测试环境对真实共享盘的扫描，但也把**整段恢复逻辑**挡在测试之外——R14 的三条
+    问题全部落在它遮住的函数里，292 个用例结构上不可能发现。替代方案是显式输入：
+
+    - 要隔离共享盘，注入 `repo`（指向临时目录），而不是让环境变量顺手关掉逻辑；
+    - 要验「只读实例不做恢复」，让 `worker_enabled=False` 生效，这条门控本来就
+      表达的是动作级约束，与运行环境无关。
     """
-    if settings.app_env == "test" or not settings.worker_enabled:
+    if not settings.worker_enabled:
+        logger.debug("worker 未启用，跳过替换任务恢复扫描")
         return
-    repo = ReplacementRepository()
+    repo = repo or ReplacementRepository()
     try:
         await asyncio.to_thread(repo.repair_indexes)
         paths = await asyncio.to_thread(repo.all_paths)

@@ -114,6 +114,7 @@ app sync-roles --dry-run   # 只打印会补什么，不写库
 | `http_requests_in_flight` | gauge | — | 正在处理的请求数 |
 | `jobs_processed_total` | counter | name, outcome | outcome ∈ success / error / timeout / cancelled / unknown |
 | `queue_dequeue_errors_total` | counter | — | worker **取任务**失败的次数（队列驱动异常）。持续增长 = worker 在空转，不是某个任务有问题 |
+| `replacement_recovery_lock_giveups_total` | counter | — | 替换任务恢复**抢不到档案锁**而放弃等待的次数。>0 说明有进程长时间握着 `.lock`，那条 run 停在原地等人看 |
 | `job_duration_seconds` | histogram | name | 100ms~900s |
 | `queue_jobs` | gauge | state | db 驱动按 pending / running / dead 拆分；其它驱动只有 active |
 | `outbox_events` | gauge | status | pending / delivered / failed |
@@ -121,7 +122,7 @@ app sync-roles --dry-run   # 只打印会补什么，不写库
 
 计数类在事件发生时打点；积压类在**抓取时**去查真实来源，所以重启后立刻是对的。
 
-### 3.2 建议的五条告警
+### 3.2 建议的六条告警
 
 ```promql
 # 5xx 比例（按路由定位）
@@ -141,6 +142,10 @@ queue_jobs{state="dead"} > 0 or outbox_events{status="failed"} > 0
 # worker 取不到任务：worker 还活着但队列驱动在报错（数据抖动 / 连接池耗尽）。
 # 这一条和「任务失败」不是一回事——它意味着后台整体在空转，堆到 backlog 都不动。
 rate(queue_dequeue_errors_total[5m]) > 0
+
+# 替换任务恢复抢不到档案锁、等满六轮后放手：那条 run 的状态不会再自己往前走。
+# 恢复作业不会再自己重投（有上限），所以这条不告警就没人知道。
+increase(replacement_recovery_lock_giveups_total[30m]) > 0
 ```
 
 任务成功率建议用 `increase` 而不是 `rate`，量小时 rate 会抖：

@@ -519,8 +519,9 @@ def test_resume_converges_and_skips_settled_runs(archive_root, monkeypatch):  # 
 
     queue = _Queue()
     monkeypatch.setattr(worker, "get_queue", lambda: queue)
-    # resume() 在 test 环境直接早退（那也是它长期没被发现的原因之一）
-    monkeypatch.setattr(settings, "app_env", "prod")
+    # R15-01：不再把 `app_env` 改成 prod 才敢调 resume()。下面这条断言就是那道
+    # 环境早退的回归锁——它一旦回来，本用例立刻红（而不是「悄悄什么都不做」）。
+    assert settings.app_env == "test", "本用例刻意在 test 环境下跑恢复扫描"
     monkeypatch.setattr(settings, "worker_enabled", True)
 
     asyncio.run(worker.resume())
@@ -534,3 +535,154 @@ def test_resume_converges_and_skips_settled_runs(archive_root, monkeypatch):  # 
     # 「终态不再回来」，不是「第二次一条都不投」。
     assert second == {queued}, "第二次启动把终态记录又捞回来了：恢复集合没有收敛"
     assert not ({success, failed, unknown} & (first | second))
+
+
+# --------------------------------------------------------------------------- #
+# R15-01：恢复链路的可测性（不再靠 APP_ENV 早退）与「等锁」的上限
+# --------------------------------------------------------------------------- #
+class _RecordingQueue:
+    """记下每次投递的作业与延迟：重投轮次、退避曲线都要能看到。"""
+
+    def __init__(self) -> None:
+        self.sent: list[tuple[Job, float]] = []
+
+    async def enqueue(self, job: Job, delay: float = 0) -> None:
+        self.sent.append((job, delay))
+
+
+def _repo_with(manifest, *, repair_error: Exception | None = None):
+    class _Repo:
+        repaired = 0
+        enumerated = 0
+
+        def repair_indexes(self) -> None:
+            if repair_error is not None:
+                raise repair_error
+            self.repaired += 1
+
+        def all_paths(self) -> list[Path]:
+            self.enumerated += 1
+            return [Path("/injected/run")]
+
+        def load(self, path: Path):
+            return manifest
+
+    return _Repo()
+
+
+def test_resume_takes_repository_as_explicit_input(monkeypatch):
+    """注入 repo 后不得再去碰全局共享盘。
+
+    这是替掉 `app_env == "test"` 早退的东西：测试要隔离的是**数据源**，所以就让
+    数据源变成参数，而不是让整段逻辑在某个环境里不存在。
+    """
+    from core.config import settings
+    from modules.template import replacement_worker as worker
+    from modules.template.replacement_repository import ReplacementManifest
+
+    manifest = ReplacementManifest(
+        id="f" * 32,
+        kind="character",
+        target="注入用例",
+        owner_id="u_001",
+        fingerprint="injected",
+        status="queued",
+    )
+    repo = _repo_with(manifest)
+    queue = _RecordingQueue()
+    monkeypatch.setattr(worker, "get_queue", lambda: queue)
+    monkeypatch.setattr(settings, "worker_enabled", True)
+
+    def _no_global_repo(*args, **kwargs):
+        raise AssertionError("resume() 去碰全局共享盘了：应该只用注入的 repo")
+
+    monkeypatch.setattr(worker, "ReplacementRepository", _no_global_repo)
+
+    asyncio.run(worker.resume(repo=repo))
+
+    assert repo.repaired == 1, "注入的 repo 该被用来补索引"
+    assert [job.payload["id"] for job, _ in queue.sent] == ["f" * 32]
+
+
+def test_resume_waits_when_shared_disk_is_down(monkeypatch):
+    """共享盘掉线：留一句告警就收工，不往队列里投没人能跑的任务。"""
+    from core.config import settings
+    from modules.template import replacement_worker as worker
+
+    repo = _repo_with(None, repair_error=OSError("共享盘掉线"))
+    queue = _RecordingQueue()
+    monkeypatch.setattr(worker, "get_queue", lambda: queue)
+    monkeypatch.setattr(settings, "worker_enabled", True)
+
+    asyncio.run(worker.resume(repo=repo))
+
+    assert queue.sent == []
+    assert repo.enumerated == 0, "盘都读不到还去枚举索引"
+
+
+def test_resume_does_nothing_when_worker_is_off(monkeypatch):
+    """`worker_enabled` 仍然是一道门：只读实例不该恢复（R13-01 的前提）。"""
+    from core.config import settings
+    from modules.template import replacement_worker as worker
+
+    repo = _repo_with(None)
+    monkeypatch.setattr(worker, "get_queue", lambda: _RecordingQueue())
+    monkeypatch.setattr(settings, "worker_enabled", False)
+
+    asyncio.run(worker.resume(repo=repo))
+
+    assert repo.repaired == 0 and repo.enumerated == 0
+
+
+def test_recover_waits_for_run_lock_with_bounded_retries(monkeypatch):
+    """档案锁一直被占：退避重投，但**次数有上限**，用完告警放手。
+
+    老代码每次冲突都 `enqueue_recovery(delay=30)`，而重投是新建作业——一个卡死的
+    监督进程能让这条 run 每 30 秒唤醒一次、永不停止。
+    """
+    from modules.template import replacement_worker as worker
+
+    queue = _RecordingQueue()
+    monkeypatch.setattr(worker, "get_queue", lambda: queue)
+
+    def busy(_run_id: str) -> str:
+        raise Conflict("档案正被处理")
+
+    monkeypatch.setattr(worker, "recover_state", busy)
+
+    before = worker.RECOVERY_LOCK_GIVEUPS.value()
+    # 起始 payload 不带 attempt：库里可能还躺着旧版本投下的作业，必须当第 0 轮处理
+    payload: dict[str, object] = {"id": "a" * 32}
+    delays: list[float] = []
+    for _ in range(worker.RECOVER_LOCK_MAX_RETRIES + 5):
+        queue.sent.clear()
+        asyncio.run(
+            worker.recover(Job(name="template.replacement.recover", payload=payload))
+        )
+        if not queue.sent:
+            break
+        job, delay = queue.sent[0]
+        delays.append(delay)
+        payload = job.payload
+
+    assert len(delays) == worker.RECOVER_LOCK_MAX_RETRIES, "抢不到锁的重投必须有上限"
+    assert delays == [30.0, 60.0, 120.0, 240.0, 480.0, 600.0], "退避该翻倍并封顶"
+    assert payload["attempt"] == worker.RECOVER_LOCK_MAX_RETRIES
+    assert worker.RECOVERY_LOCK_GIVEUPS.value() == before + 1
+
+
+def test_recover_stops_when_nothing_left_to_do(monkeypatch):
+    """`recover_state` 说没事可做时不能顺手重投（否则又是一个无限循环）。"""
+    from modules.template import replacement_worker as worker
+
+    queue = _RecordingQueue()
+    monkeypatch.setattr(worker, "get_queue", lambda: queue)
+    monkeypatch.setattr(worker, "recover_state", lambda _run_id: "done")
+
+    asyncio.run(
+        worker.recover(
+            Job(name="template.replacement.recover", payload={"id": "b" * 32})
+        )
+    )
+
+    assert queue.sent == []
