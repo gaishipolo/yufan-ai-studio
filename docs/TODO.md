@@ -7,16 +7,15 @@
 >
 > 来源：`CODE_REVIEW_2026-11-06_R11~R14`、`CODE_REVIEW_2026-11-06_FE6`、
 > `EXTENSIBILITY_GAPS.md` 的 B1/C1/C2，以及素材分支合并时新发现的项。
-> 最后更新：2026-11-07 23:20（`app_meta` 加版本/审计/条件写：滚动发布时旧实例不能再把权限快照
-> 改小；自动路径只增不减，收缩走 `app sync-roles --prune-snapshot`）
-> 剩余登记 T32）
+> 最后更新：2026-11-07 23:52（限流豁免表升级为 `Exemption`：理由要引用真代码、每半年复核一次；
+> `app_meta` 加版本/审计/条件写）
+> 剩余：业务侧 T2/T8/T9/T10/T22/T23/T24，架构侧 T25/T26/T27/T29/T30（后两条是观察期））
 
 ## 一眼看完
 
 | 编号 | 事项 | 影响 | 落点 |
 |---|---|---|---|
 | T2 | 前端不展示 `externalId` / `previousExternalId` | 文案让用户「凭任务号核对」，页面拿不到 | 前端 |
-| T7 | 权限点不自动进内置角色（B1） | 新权限上线后要人记得跑命令 | 后端 |
 | T8 | 轮询节奏全局化（C1） | 视频与生图共用一个间隔 | 后端 |
 | T9 | 重试是作业级不是任务级（C2） | 任务重试语义与用户预期不一致 | 后端 |
 | T10 | `archivePath` 绝对路径进 HTTP 契约 | 服务端盘符泄漏给浏览器 | 产品决定 |
@@ -28,7 +27,6 @@
 | T27 | 限流额度写死在路由上（只有一个 `RATE_LIMIT_DEFAULT_PER_MIN`），改额度要发版；固定窗口有 2× 边界误差 | 运营想临时放宽/收紧某个入口只能改代码；窗口交界瞬时可达 2 倍额度 | 后端 |
 | T29 | 指标是单进程语义，未做多进程聚合 | 多 worker 部署要靠 Prometheus `sum by`；本机 `curl /metrics` 只看到一部分 | 架构 |
 | T30 | PG 迁移闸在观察期（`continue-on-error`），尚未成为硬性要求 | PG 特有的默认值/条件索引差异要等它稳定后才真正拦住 | 架构 |
-| T32 | 限流豁免表只在 CI 里核对「有没有写」，不核「写得对不对」 | 某个接口变贵了（加了供应商调用）没人回头改额度/删豁免，表会慢慢失真 | 架构 |
 
 ---
 
@@ -40,13 +38,6 @@
 
 **验收**：生图详情/列表能看到并复制 `externalId`；「已确认扣费重试」之后能同时看到
 历史任务号（`previousExternalIds`）。
-
-## T7 · 权限点不自动进内置角色（EXTENSIBILITY_GAPS B1）
-
-已有 `app sync-roles`，但要人记得跑。新增权限点后，`editor` / `viewer` 这些内置角色
-不会自动带上，表现为「功能上线了但没人有权限」。
-
-**验收**：`sync-roles` 进启动流程（幂等）或进迁移；或新增权限点时 CI 报错提示。
 
 ## T8 · 轮询节奏全局化（C1）
 
@@ -215,6 +206,7 @@ PostgreSQL 的 `LISTEN/NOTIFY`：写完 `NOTIFY`，worker 侧长连接被唤醒�
 | R12-* / R11-* | 已修 | `aa9c5e4` |
 | T28 备份无调度与保留 | 已修 | `db/backup.py` 的 `backup_loop` / `prune_backups`，用例见 `tests/test_backup.py` 后三条 |
 | 就绪探针 down 却返回 200 | 已修 | `modules/health/router.py` 在 `runtime.down` 时置 503；用例 `tests/test_fault_tolerance.py`（函数级 + HTTP 级两条） |
+| 限流豁免表只核「有没有写」（原 T32） | 已修 | `Exemption(why, review_by)`：理由里反引号引用的 `.py` 与 `资源:动作` 权限码由守卫解析存在性（文件/权限点没了就红），`review_by` 过期或超过 180 天也红；用例 `test_exempt_reviews_are_current_and_honest` / `test_exempt_reasons_cite_real_code`；复核方法写进 `docs/OPS.md` §9（按 P95 与调用量找变贵的接口）|
 | 写路由漏挂限流无人发现 | 已修 | `api/ratelimit_policy.py` + `tests/test_route_policy.py`；8 个花钱/写盘入口补了 `rate_limit`，其余 32 条豁免逐条写理由 |
 | `app_meta` 只有「最后写入者胜」（原 T33） | 已修 | `AppMeta.version`（ORM `version_id_col` 乐观锁）+ `updated_by` + `app_meta_history`（同事务、每键留 50 条）；`set_json(expected_version=)` 做 CAS，`merge_json` 冲突后重读重算；`sync_new_permissions` 自动路径取 `declared ∪ previous`（只增不减），收缩走 `app sync-roles --prune-snapshot`，`app meta [key]` 看轨迹。用例 `test_write_against_stale_version_is_refused`（test_app_meta.py）、`test_old_instance_cannot_shrink_snapshot` / `test_conflict_makes_it_recompute_instead_of_overwrite`（test_role_auto_sync.py）+ 迁移用例 `test_upgrade_keeps_existing_rows` |
 | 新权限点要人工 `sync-roles`，漏了就非超管 403 | 已修 | `IdentityService.sync_new_permissions` + `app_meta.permissions.catalog` 快照；用例 `tests/test_role_auto_sync.py` |

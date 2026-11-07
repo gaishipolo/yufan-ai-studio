@@ -332,6 +332,20 @@ app meta permissions.catalog    # 这个键的值 + 最近 20 次写入轨迹
    「写路由漏挂限流」已经由 `tests/test_route_policy.py` 拦住（必须挂
    `rate_limit`，或在 `api/ratelimit_policy.py` 里写清豁免理由）；
    仍未解决的是**固定窗口的 2× 边界误差**（见 T27）。
+
+   **复核豁免表**（每半年一次，`review_by` 到期会让 CI 红）不要只重读理由，
+   那只是把上一版再抄一遍。用两条查询找出「变贵了」的接口，再去改额度或删豁免：
+
+   ```promql
+   # 写路由的调用量（豁免表里那些接口是不是已经变成热路径）
+   sum by (route) (rate(http_requests_total{method=~"POST|PUT|PATCH|DELETE"}[1h]))
+   # 写路由的 P95（变慢通常等于开始调外部资源）
+   histogram_quantile(0.95, sum by (le, route)
+     (rate(http_request_duration_seconds_bucket{method=~"POST|PUT|PATCH|DELETE"}[1h])))
+   ```
+
+   `http_requests_total` 带 `method` / `route` / `status`，`http_request_duration_seconds`
+   带 `method` / `route`，所以上面两条查询里的 `method` 筛选项是现成的。
 4. **备份不含对象存储**（见 §5.4）。自动备份失败只会记日志，不会让服务挂——
    所以「备份是否真的在跑」需要外部告警盯（见 §5.2 末尾）。
 5. **功能开关不支持热更新与灰度**（见 §6）。
