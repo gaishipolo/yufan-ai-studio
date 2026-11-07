@@ -233,3 +233,68 @@ def test_backup_loop_writes_backup_and_prunes(
     manifest = backup.read_manifest(created[0])
     assert manifest.note.startswith("auto:")
     assert not stale.exists(), "过期备份应在同一轮里被清掉"
+
+
+def test_external_dump_command_has_a_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`pg_dump` 卡住必须被终止，而不是永远等下去。
+
+    这段代码跑在 `asyncio.to_thread` 里：取消协程不会杀掉子进程，也不会回收那个
+    线程。不设超时的话，每小时攒一个卡死的 `pg_dump`，线程池填满之后连审计落库、
+    预览派生这些无关的事都要排队——症状是「服务整体变慢」，而根因在一小时前。
+    """
+    import subprocess
+
+    from db import backup
+
+    def fake_run(command, **kwargs):  # type: ignore[no-untyped-def]
+        assert kwargs.get("timeout"), "调用 pg_dump 时必须带 timeout"
+        raise subprocess.TimeoutExpired(cmd=command, timeout=kwargs["timeout"])
+
+    monkeypatch.setattr(backup.subprocess, "run", fake_run)
+
+    with pytest.raises(backup.BackupError, match="未返回"):
+        backup._run(["pg_dump", "postgresql://db/x"], what="pg_dump")
+
+
+async def test_auto_backup_survives_unexpected_errors_and_still_prunes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """备份失败不能把这一轮的清理一起带走，也不能让异常冒到调度器。
+
+    注释写的是「不让异常冒出去」，但原来只捕 `BackupError` / `OSError`。
+    库连不上抛的是 `sqlalchemy.exc.OperationalError`（不是 OSError），于是
+    备份失败 → 异常穿出去 → 清理那一步被跳过；而清理是**唯一**能让磁盘不涨的
+    东西，恰恰在出故障的时候最需要它。
+    """
+    from sqlalchemy.exc import OperationalError
+
+    from db import backup
+
+    async def boom(out_dir: Path, *, note: str = "") -> tuple[Path, backup.BackupManifest]:
+        raise OperationalError("SELECT 1", {}, Exception("库连不上"))
+
+    pruned: list[int] = []
+
+    def fake_prune(out_dir: Path, *, retention_days: int) -> int:
+        pruned.append(retention_days)
+        return 0
+
+    monkeypatch.setattr(backup, "create_backup", boom)
+    monkeypatch.setattr(backup, "prune_backups", fake_prune)
+    monkeypatch.setattr(
+        backup,
+        "get_settings",
+        lambda: type(
+            "S",
+            (),
+            {
+                "backup_auto_enabled": True,
+                "backup_dir": str(tmp_path),
+                "backup_retention_days": 3,
+                "app_env": "test",
+            },
+        )(),
+    )
+
+    await backup.backup_loop()  # 不该抛
+    assert pruned == [3]

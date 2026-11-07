@@ -12,7 +12,7 @@ import os
 import shutil
 import uuid
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
@@ -90,14 +90,43 @@ class LocalArchiveStorage:
     def create(self, location: Location, value: object) -> bool:
         """独占创建：文件已存在就返回 `False`，不覆盖、不抛错。
 
-        `open("xb")` 就是 `O_EXCL`——两个进程同时算出发版号 `v3` 时，内核保证
-        只有一个能创建出来。共享盘上这条语义依赖 SMB/NFS 的独占创建支持，
-        与 `write` 的「临时文件 + 原子替换」是两件事：那个保证内容完整，
-        这个保证「只有一个人算数」。
+        **独占**和**内容完整**是两条独立的保证，必须都拿到：
+
+        - 独占靠 `os.link()`：目标已存在时它是唯一会 `FileExistsError` 的调用，
+          内核保证两个进程同时算出发版号 `v3` 时只有一个成功（`open("xb")` 也是
+          独占的，所以这一条以前就是对的）；
+        - 完整靠「先写临时文件、再原子认领目标名」。`open("xb")` 把这两件事绑在
+          同一段代码里：进程在 write 与 close 之间崩掉（OOM、断电、被 kill），
+          目标文件就永远停在一份截断的 JSON 上——读它抛 `JSONDecodeError`，
+          而 `create()` 之后永远返回 `False`（文件已存在），这个版号/租约成了
+          只能人工删文件才能解开的黑洞。
+
+        不支持硬链接的文件系统（部分 SMB 挂载）退回 `open("xb")`：那时只能保住
+        独占，保住内容完整要靠临时文件本身（崩溃时留下的是 `.tmp`，不是正名）。
         """
         path = self._path(location)
         path.parent.mkdir(parents=True, exist_ok=True)
         payload = json.dumps(value, ensure_ascii=False, indent=2).encode("utf-8")
+        temporary = path.with_name(f"{path.name}.{uuid.uuid4().hex}.tmp")
+        try:
+            temporary.write_bytes(payload)
+            try:
+                os.link(temporary, path)
+            except FileExistsError:
+                return False
+            except OSError:
+                return self._create_exclusive(path, payload)
+        finally:
+            # 清理临时文件失败不能反过来让「已经创建成功」变成一次异常：
+            # 调用方会以为没抢到版号，接着算下一个号——于是同一个号被发两次。
+            # 留一个 .tmp 在这里是无害的，下一轮创建也不受影响。
+            with suppress(OSError):
+                temporary.unlink(missing_ok=True)
+        return True
+
+    @staticmethod
+    def _create_exclusive(path: Path, payload: bytes) -> bool:
+        """硬链接不可用时的兜底：`O_EXCL` 独占，内容完整性退化为尽力而为。"""
         try:
             with path.open("xb") as stream:
                 stream.write(payload)

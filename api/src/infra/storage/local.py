@@ -54,9 +54,14 @@ class LocalStorage:
         return await asyncio.to_thread(path.read_bytes)
 
     async def delete(self, key: str) -> None:
-        path = self._resolve(key)
-        if path.exists():
-            await asyncio.to_thread(path.unlink)
+        """删除对象；不存在时幂等返回（协议承诺）。
+
+        不要写成「先 `exists()` 再 `unlink()`」：这两步之间有一个窗口，并发删除
+        （用户连点、重试、两个实例的清理任务同时跑）时第二个调用会删一个**刚刚**
+        被别人删掉的文件，抛 `FileNotFoundError`——它不在 `StorageError` 里，
+        于是落成 500。`missing_ok` 把「不存在」和「删掉了」合成同一个结果。
+        """
+        await asyncio.to_thread(self._resolve(key).unlink, missing_ok=True)
 
     def url_for(self, key: str) -> str:
         return f"{self.public_base}/{key.lstrip('/')}"

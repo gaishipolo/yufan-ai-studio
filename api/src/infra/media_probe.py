@@ -24,6 +24,8 @@ EXTENSIONS = {
     ".wav": "audio/wav",
 }
 MAX_BYTES = 300 * 1024 * 1024
+# 探测单次上限。超过它就不是「这个文件有点慢」，而是解析不出来。
+PROBE_TIMEOUT_SEC = 30.0
 PREVIEW_VERSION = "hd-v2"
 # AAC 每帧 1024 采样（48kHz 下 21.3ms），音轨尾部填充会让容器时长比画面多几十毫秒。
 # 15 秒原片因此常报 15.02 / 15.07 秒，被 1–15 秒门禁误判为超长素材。
@@ -68,14 +70,8 @@ def inspect(path: Path, extension: str) -> MediaInfo:
                 }
         except (OSError, Image.DecompressionBombError) as exc:
             raise BadRequest("图片无法解析") from exc
-    probe = subprocess.run(
-        [imageio_ffmpeg.get_ffmpeg_exe(), "-hide_banner", "-i", str(path)],
-        capture_output=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=30,
-    )
-    duration = re.search(r"Duration: (\d+):(\d+):([\d.]+)", probe.stderr)
+    probe = _probe_stream(path)
+    duration = re.search(r"Duration: (\d+):(\d+):([\d.]+)", probe)
     if not duration:
         raise BadRequest("音视频文件无法解析")
     seconds = normalize_duration(
@@ -84,17 +80,39 @@ def inspect(path: Path, extension: str) -> MediaInfo:
     if extension == ".mp4":
         with path.open("rb") as stream:
             header = stream.read(12)
-        if header[4:8] != b"ftyp" or "Video:" not in probe.stderr:
+        if header[4:8] != b"ftyp" or "Video:" not in probe:
             raise BadRequest("请使用有效的 MP4 视频")
-    elif "Audio:" not in probe.stderr:
+    elif "Audio:" not in probe:
         raise BadRequest("请使用有效的音频文件")
-    size = re.search(r"Video:.*? (\d{2,5})x(\d{2,5})", probe.stderr)
+    size = re.search(r"Video:.*? (\d{2,5})x(\d{2,5})", probe)
     return {
         "width": int(size[1]) if size else 0,
         "height": int(size[2]) if size else 0,
         "duration": seconds,
-        "hasAudio": "Audio:" in probe.stderr,
+        "hasAudio": "Audio:" in probe,
     }
+
+
+def _probe_stream(path: Path) -> str:
+    """跑 `ffmpeg -i` 取 stderr 里的容器信息。
+
+    超时必须是 `BadRequest` 而不是让 `TimeoutExpired` 冒出去：300MB 的畸形文件、
+    停在共享盘上的半成品都可能让它跑满 30 秒。那不是服务端故障，用户该看到的是
+    「请换一个文件」，而不是 500「服务器内部错误」——后者只会让他来问我们。
+    """
+    try:
+        probe = subprocess.run(
+            [imageio_ffmpeg.get_ffmpeg_exe(), "-hide_banner", "-i", str(path)],
+            capture_output=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=PROBE_TIMEOUT_SEC,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise BadRequest(
+            f"音视频文件解析超时（{PROBE_TIMEOUT_SEC:.0f} 秒），请检查文件是否损坏"
+        ) from exc
+    return probe.stderr
 
 
 def create_preview(source: Path, destination: Path, kind: str) -> bool:

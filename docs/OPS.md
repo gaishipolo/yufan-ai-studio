@@ -225,6 +225,7 @@ BACKUP_AUTO_ENABLED=true
 BACKUP_DIR=var/backups
 BACKUP_INTERVAL_HOURS=24
 BACKUP_RETENTION_DAYS=7      # 0 = 永不删除
+BACKUP_COMMAND_TIMEOUT_SEC=3600   # 单条 pg_dump / pg_restore 的上限
 ```
 
 `@periodic("core.backup")` 每 `BACKUP_INTERVAL_HOURS` 小时跑一次，`leader_only=True`：
@@ -240,8 +241,12 @@ BACKUP_RETENTION_DAYS=7      # 0 = 永不删除
   mtime 变成今天；按 mtime 排序正好留着最老的一份、把其余全删。
 - `BACKUP_RETENTION_DAYS=0` 直接返回。删备份不可逆，不做默认删除。
 
+`BACKUP_COMMAND_TIMEOUT_SEC` 不是可选项：`pg_dump` 在「TCP 半开」时不会返回，而这段
+代码跑在 `asyncio.to_thread` 里——取消协程**不会**杀掉子进程，也不会回收那个线程。
+超时生效时 `subprocess.run` 会先 kill 子进程再抛，日志里是「超过 N 秒未返回，已终止」。
+
 **每天看一眼有没有新目录**。自动备份失败不会让服务挂（`logger.error` + 调度器记一笔），
-所以它可能连续失败而没人知道。建议的告警：`BACKUP_DIR` 下最新目录的 `created_at`
+所以它可能连续失败而没人知道。失败时清理**仍会执行**（备份失败不该把磁盘清理一起带走）。建议的告警：`BACKUP_DIR` 下最新目录的 `created_at`
 超过 2×`BACKUP_INTERVAL_HOURS`。
 
 ### 5.3 演练（每季度至少一次）
@@ -419,6 +424,9 @@ app meta permissions.catalog    # 这个键的值 + 最近 20 次写入轨迹
 | 素材点开 404 | `app verify-blobs` | 对象被 GC/迁移遗漏，或桶策略变了 |
 | 管理员删掉的权限又回来了 | `app meta permissions.catalog` 的写入轨迹 | 滚动发布时旧版本实例启动过（轨迹里的 `actor` 是 `host:pid`）：它的目录更小、把快照写回去了；升级顺序上别让旧实例重启 |
 | 所有接口一起变慢、最后一起 503，日志里没有堆栈 | 503 响应体里的 `details.reason == "db_pool_exhausted"`；`app doctor` 的 `runtime.db_pool` | 连接池被占满：某条慢查询、或某个请求借了连接没还。这不是 bug，是过载——先找出占着连接不放的那条 SQL，再谈扩容 |
+| 「所有周期任务突然都不动了」（outbox 不投递、补偿不重投、GC 不跑），日志里没有堆栈 | 搜日志里的「周期任务超时」；`queue_jobs{state="pending"}` 只涨不落 | 某个 handler **回不来**（卡住的 `pg_dump`、没有读超时的第三方调用）。现在它会在 `max(60, every*2)` 秒后被取消并记一条 error，调度器接着跑；旧版本是永久停摆。根因修在 handler 里，别靠加重试 |
+| 自动备份每小时失败一次，磁盘还在涨 | `app doctor` 的 `schema.head`、日志里的「自动备份失败」、`BACKUP_DIR` 下没有 `manifest.json` 的残留目录 | `pg_dump` 卡住或连不上库。命令会在 `BACKUP_COMMAND_TIMEOUT_SEC` 后被终止；**没有 manifest 的目录永远不会被清理**（清理只认带清单的），确认无用后手工删 |
+| 并发打开同一张图 / 同一个视频偶发 500，单试一次又是好的 | 归档物化缓存目录（`S3_ARCHIVE_CACHE_DIR`）里的 `*.part` 残留 | 旧版本临时文件名只带 pid，同进程两个线程同时下载同一份字节会互相踩。现在每次下载用唯一临时名，`*.part` 残留可以直接删 |
 | `server closed the connection unexpectedly` / 连接被重置 | `DB_POOL_RECYCLE` | 连接被中间件或防火墙掐掉了，池里留的是半开连接。`pool_pre_ping` 挡大部分，剩下的靠定期换新（默认 1800s） |
 
 ---

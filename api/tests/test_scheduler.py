@@ -8,12 +8,14 @@
 from __future__ import annotations
 
 import asyncio
+import time
 
 import pytest
 
 from core.scheduler import (
     PeriodicJob,
     Scheduler,
+    handler_timeout,
     periodic,
     periodic_jobs,
     reset_periodic_jobs,
@@ -168,3 +170,54 @@ async def test_image_reconcile_redispatches_only_stale_rows(
 
     assert (KIND_IMAGE, stale_id) in dispatched
     assert (KIND_IMAGE, fresh_id) not in dispatched
+
+
+async def test_a_hung_handler_is_cancelled_instead_of_freezing_every_job() -> None:
+    """一个 handler 永不返回，不能让同一轮后面的任务跟着停摆。
+
+    原来的 `run_once` 是「顺序 await，没有超时」：`asyncio.sleep(3600)` 或者一次
+    卡死的 `pg_dump` 会把这个调度器**永久**占住——outbox 投递、生图补偿、素材 GC
+    全部安静地不再运行，日志里一条错都没有（错误只覆盖了「抛出来」，没覆盖
+    「回不来」）。这条用例用 5 秒硬上限来抓它：旧实现会直接超时失败。
+    """
+    ran: list[str] = []
+
+    async def hang() -> None:
+        await asyncio.sleep(3600)
+
+    async def ok() -> None:
+        ran.append("ok")
+
+    scheduler = Scheduler(
+        [
+            PeriodicJob("image.hang", 60, hang, immediate=True, timeout=0.05),
+            PeriodicJob("image.ok", 60, ok, immediate=True),
+        ]
+    )
+    scheduler.start(now=0.0)
+
+    started = time.monotonic()
+    executed = await asyncio.wait_for(scheduler.run_once(0.0), timeout=5)
+    assert time.monotonic() - started < 5
+    # 超时不算执行成功：不能进 executed，也不能被当成「跑过了」
+    assert executed == ["image.ok"]
+    assert ran == ["ok"]
+
+
+def test_handler_timeout_defaults_to_the_lease_ttl() -> None:
+    """默认超时必须等于租约 TTL，这两个数不能各说各的。
+
+    租约 TTL 决定「别的实例什么时候可以接手」，handler 超时决定「我们什么时候
+    停手」。如果 TTL 更短，一个新实例已经接管了，老 handler 还在写——同一件
+    不可逆的事（删素材）被做了第二遍。让它们由同一个函数算，是唯一不会漂移的写法。
+    """
+
+    async def handler() -> None:  # pragma: no cover - 只取字段
+        return None
+
+    for every in (1.0, 300.0, 3600.0):
+        job = PeriodicJob("image.reconcile", every, handler)
+        assert handler_timeout(job) == max(60.0, every * 2)
+
+    explicit = PeriodicJob("image.reconcile", 3600.0, handler, timeout=120.0)
+    assert handler_timeout(explicit) == 120.0

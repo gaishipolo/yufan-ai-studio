@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+import threading
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -105,3 +107,90 @@ def test_cache_dir_setting_matches_documented_env_key() -> None:
     assert "archive_cache_dir" in ArchiveS3Settings.model_fields
     assert "cache_dir" not in ArchiveS3Settings.model_fields
     assert driver_config("S3")["env_prefix"] == "S3_"
+
+
+# --------------------------------------------------------------------------- #
+# 物化缓存的并发安全
+# --------------------------------------------------------------------------- #
+BLOB = "blobs/ab/" + "ab" * 32
+
+
+class _BarrierClient:
+    """两个下载线程都能「写同一个临时文件」，然后各自 rename —— 真实竞态的交织点。
+
+    取件走 `asyncio.to_thread(self._materialized, key)`，所以同一个进程里的两个
+    并发请求是真的在**两个线程**里跑 `materialize`。临时文件名如果只带 pid，
+    两个线程会写同一个路径：先完成的那次 rename 把文件搬走，后一个 rename
+    找不到自己的临时文件 → FileNotFoundError。症状是「并发取同一张图时偶发 500」。
+    """
+
+    def __init__(self, payload: bytes) -> None:
+        self.payload = payload
+        self.barrier = threading.Barrier(2, timeout=5)
+
+    def head_object(self, *, Bucket: str, Key: str) -> dict[str, Any]:
+        return {"Metadata": {}, "ContentLength": len(self.payload)}
+
+    def download_file(self, bucket: str, key: str, path: str) -> None:
+        with open(path, "wb") as stream:
+            stream.write(self.payload)
+        self.barrier.wait()
+
+
+def _s3_archive(tmp_path: Path, client: Any) -> S3ArchiveStorage:
+    reset_client_cache()
+    storage = S3ArchiveStorage(
+        settings=_settings(archive_bucket="arc", archive_cache_dir=str(tmp_path))
+    )
+    storage._client = client
+    return storage
+
+
+def test_two_threads_materializing_the_same_key_do_not_clobber_each_other(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("infra.archive.s3.boto3.client", lambda *a, **k: object())
+    storage = _s3_archive(tmp_path, _BarrierClient(b"frames"))
+
+    errors: list[BaseException] = []
+    contents: list[bytes] = []
+
+    def work() -> None:
+        try:
+            with storage.materialize(BLOB) as path:
+                contents.append(path.read_bytes())
+        except BaseException as exc:  # noqa: BLE001 - 就是要看它抛什么
+            errors.append(exc)
+
+    threads = [threading.Thread(target=work) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+    reset_client_cache()
+
+    assert errors == [], f"并发物化同一份字节时失败：{errors!r}"
+    assert contents == [b"frames", b"frames"]
+
+
+def test_cache_eviction_tolerates_files_that_cannot_be_removed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Windows 上删不掉「正在被读」的文件（ffmpeg / FileResponse 都持有句柄）。
+
+    淘汰是**尽力而为**：删不掉就跳过，绝不能因此让这次取件失败——缓存的意义是
+    省一次下载，不是成为新的故障点。
+    """
+    from infra.archive import s3 as s3_module
+
+    monkeypatch.setattr("infra.archive.s3.boto3.client", lambda *a, **k: object())
+    storage = _s3_archive(tmp_path, _BarrierClient(b"x"))
+    (tmp_path / "busy.jpg").write_bytes(b"0" * 8)
+    (tmp_path / "idle.jpg").write_bytes(b"0" * 8)
+    monkeypatch.setattr(s3_module, "CACHE_LIMIT_BYTES", 4)
+
+    def refuse(self: Path, missing_ok: bool = False) -> None:  # noqa: ARG001
+        raise PermissionError(13, "另一个进程正在使用这个文件")
+
+    monkeypatch.setattr(Path, "unlink", refuse)
+    storage._evict()  # 不该抛

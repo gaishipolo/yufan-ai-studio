@@ -258,6 +258,12 @@ class Settings(BaseSettings):
     backup_interval_hours: int = 24
     # 保留天数：0 表示永不删除（磁盘会一直涨，只适合手动管理）。
     backup_retention_days: int = 7
+    # 单个 `pg_dump` / `pg_restore` 命令的上限（秒）。**必须有**：
+    # 命令卡住（库连不上、被锁、网络半开）时 `subprocess.run` 会永远等下去，
+    # 而它跑在 `asyncio.to_thread` 里——取消协程并不会杀掉子进程和那个线程。
+    # 一轮一轮攒下来，线程池会被占满，之后所有 `to_thread` 都排队。
+    # 默认 1 小时：大于任何正常备份耗时，又小于「没人注意到」的时间尺度。
+    backup_command_timeout_sec: float = 3600.0
 
     # ---------- 可观测 ----------
     # Prometheus 抓取端点（`/metrics`，不进 OpenAPI、不走业务鉴权）。

@@ -110,10 +110,26 @@ def _restore_sqlite(source: Path) -> None:
 
 
 def _run(command: list[str], *, what: str) -> None:
+    """跑一条外部命令，带超时。
+
+    `timeout` 不是可选的礼貌：`pg_dump` 连着库、`pg_restore` 持着锁，两者在
+    「TCP 半开」时都不会返回。这段代码跑在 `asyncio.to_thread` 里，而取消协程
+    **不会**杀掉子进程，也不会回收那个线程——每小时攒一个，线程池满了之后
+    连审计落库、预览派生这些无关的事都会排队。所以超时必须在这里生效：
+    `subprocess.run` 会在超时时先 kill 子进程再抛 `TimeoutExpired`。
+    """
+    timeout = get_settings().backup_command_timeout_sec
     try:
-        completed = subprocess.run(command, capture_output=True, text=True, check=False)
+        completed = subprocess.run(
+            command, capture_output=True, text=True, check=False, timeout=timeout
+        )
     except FileNotFoundError as exc:
         raise BackupError(f"{what} 需要命令 `{command[0]}`，但 PATH 里没有") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise BackupError(
+            f"{what} 超过 {timeout:.0f} 秒未返回，已终止（检查数据库连通性与 "
+            f"BACKUP_COMMAND_TIMEOUT_SEC）：{command[0]}"
+        ) from exc
     if completed.returncode != 0:
         raise BackupError(f"{what} 失败（exit={completed.returncode}）：{completed.stderr.strip()}")
 
@@ -303,9 +319,12 @@ async def backup_loop() -> None:
     out_dir = Path(settings.backup_dir)
     try:
         _, manifest = await create_backup(out_dir, note=f"auto:{settings.app_env}")
-    except (BackupError, OSError) as exc:
-        # 不让异常冒出去：调度器会记一笔，但这一轮的清理不该被备份失败拖住
-        logger.error("自动备份失败：%s", exc)
+    except Exception as exc:  # noqa: BLE001 - 周期任务的边界：任何失败都不该冒出去
+        # 这里必须捕 `Exception` 而不是列几种类型：连不上库抛的是
+        # `sqlalchemy.exc.OperationalError`、磁盘满抛 OSError、清单写失败抛别的，
+        # 而这段代码的全部意义是「这一轮的清理不能被备份失败拖住」。
+        # 只列几个类型时，恰好是出故障那天才发现漏了一个。
+        logger.error("自动备份失败：%s: %s", type(exc).__name__, exc)
     else:
         logger.info(
             "自动备份完成：%s（schema=%s，%d 张表）",

@@ -34,6 +34,7 @@ import hashlib
 import json
 import os
 import shutil
+import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
@@ -320,7 +321,13 @@ class S3ArchiveStorage:
         target = self._cache_root() / f"{name}{suffix}"
         if not target.is_file():
             target.parent.mkdir(parents=True, exist_ok=True)
-            temporary = target.with_name(f"{name}.{os.getpid()}.part")
+            # 临时文件名必须**每次唯一**：取件走 `asyncio.to_thread(_materialized)`，
+            # 同一进程的两个并发请求是两个线程在跑 `materialize`。共用
+            # `{name}.{pid}.part` 时它们会写同一个路径——Windows 直接
+            # PermissionError，POSIX 上则是先完成的那个 rename 把文件搬走，
+            # 后一个 rename 找不到自己的临时文件（FileNotFoundError）。
+            # 两种都是「并发取同一份字节时偶发 500」，且只在并发下出现。
+            temporary = target.with_name(f"{name}.{uuid.uuid4().hex}.part")
             try:
                 self._client.download_file(self._bucket, key, str(temporary))
             except ClientError as exc:
@@ -331,7 +338,14 @@ class S3ArchiveStorage:
             except BotoCoreError as exc:
                 temporary.unlink(missing_ok=True)
                 raise UpstreamError(f"归档连接失败：{exc}") from exc
-            temporary.replace(target)
+            try:
+                temporary.replace(target)
+            except OSError:
+                # 别人刚放好了同一份字节（key 是内容寻址的，内容必然相同）。
+                # 目标已存在就算成功；只有目标也不在时才是真失败。
+                temporary.unlink(missing_ok=True)
+                if not target.is_file():
+                    raise
             self._evict()
         try:
             yield target
@@ -404,6 +418,7 @@ class S3ArchiveStorage:
             return str(declared)
         target = self._cache_root() / (
             f"verify-{hashlib.sha1(key.encode(), usedforsecurity=False).hexdigest()}"
+            f".{uuid.uuid4().hex}.tmp"
         )
         target.parent.mkdir(parents=True, exist_ok=True)
         try:
@@ -420,6 +435,14 @@ class S3ArchiveStorage:
         return Path(__file__).parents[3] / "var" / "archive-cache"
 
     def _evict(self) -> None:
+        """按 mtime 淘汰，直到总量回到上限以内。
+
+        **删不掉就跳过**：Windows 上正在被 `FileResponse` / ffmpeg 读的文件
+        不允许删除（PermissionError）。淘汰是尽力而为的运维动作，不能因为它
+        失败就让这次取件跟着 500——缓存的意义是省一次下载，不是成为新的故障点。
+        总额仍然照减：这份字节确实不在缓存里了（只是暂时删不掉），下一轮还会
+        再试一次；把它一直算在总额里只会让每轮都重复淘汰同一批。
+        """
         root = self._cache_root()
         if not root.is_dir():
             return
@@ -428,7 +451,10 @@ class S3ArchiveStorage:
         for path in root.iterdir():
             if not path.is_file():
                 continue
-            stat = path.stat()
+            try:
+                stat = path.stat()
+            except OSError:
+                continue
             entries.append((stat.st_mtime, stat.st_size, path))
             total += stat.st_size
         if total <= CACHE_LIMIT_BYTES:
@@ -437,7 +463,12 @@ class S3ArchiveStorage:
         for _, size, path in entries:
             if total <= CACHE_LIMIT_BYTES:
                 break
-            path.unlink(missing_ok=True)
+            try:
+                path.unlink()
+            except FileNotFoundError:
+                pass
+            except OSError as exc:
+                logger.debug("缓存文件暂时删不掉，跳过：%s（%s）", path, exc)
             total -= size
 
 

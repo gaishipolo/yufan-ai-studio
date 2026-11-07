@@ -674,7 +674,7 @@ def has_xxx() -> bool:                     # 供 app modules / 启动日志判�
 async def ask_xxx(...) -> ...:             # **未注册时返回中性值，不许抛异常**
 ```
 
-四条硬规则：
+五条硬规则：
 
 1. **未注册必须无害**。`ask_xxx()` 没有实现时返回值要能让调用方当「不知道」处理
    （`accounts.py` 的做法是返回 `None` + 调用方放行）。抛异常等于把可选依赖变成必选依赖。
@@ -936,7 +936,13 @@ async def reconcile() -> None:
    （不可逆删除、对外发券）标 `leader_only=True`，调度器会向 `LeaderElector`
    抢集群租约，抢不到就跳过这一轮；租约策略由 `LEADER_ELECTOR` 选（默认 `local`，
    多实例用 `backend`，它是用归档存储的条件写实现的，**不需要 Redis**）；
-4. **`every` 是最小间隔**，不是精确定时：某个 handler 跑久了会推后别人的下一轮。
+4. **`every` 是最小间隔**，不是精确定时：某个 handler 跑久了会推后别人的下一轮；
+5. **单次执行有上限**（默认 `max(60, every * 2)`，与 `leader_only` 的租约 TTL 是
+   **同一个数**），到点就取消并记一条 error。这不是洁癖：`run_once` 是顺次 await 的，
+   一个「回不来」的 handler（卡住的 `pg_dump`、没有读超时的第三方调用）会让这个进程
+   里**所有**周期任务停摆，而日志里一条错都没有——抛出来的被捕获了，回不来的没人管。
+   确实需要更久的任务显式写 `@periodic("x.y", every=300, timeout=1800)`；写的时候
+   顺手确认它值得占住别人那么久（租约也按这个数发，超过它别的实例就能接管）。
 
 `SCHEDULER_ENABLED=false` 可以整体关掉。什么时候用 job handler、什么时候用周期任务：
 **有明确终点、由事件触发 → job；没有终点、到点就该跑 → periodic。**

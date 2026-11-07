@@ -83,3 +83,38 @@ def test_claim_version_gives_up_after_repeated_conflicts(packs: PackService) -> 
 
     with pytest.raises(Conflict):
         packs._claim_version("pack1", 1, draft)
+
+
+def test_create_never_leaves_a_truncated_file_when_the_writer_dies(
+    packs: PackService, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """写到一半崩掉：目标名必须**根本没出现**，而不是留一份读不出来的 JSON。
+
+    `create()` 是发布版号与选主租约的仲裁者。旧实现用 `open("xb")` 直接写目标：
+    `xb` 保证独占，但它把「占住这个名字」和「写完内容」绑在同一段代码里——
+    崩在中间就留下一份截断的 JSON，`read()` 抛 `JSONDecodeError`，而 `create()`
+    之后**永远**返回 False（文件已存在）。那个版号成了永久黑洞，只能人工去删。
+    """
+    from infra.archive.local import LocalArchiveStorage
+
+    storage = LocalArchiveStorage()
+    target = tmp_path / "catalog" / "v9.json"
+    original = Path.write_bytes
+
+    def half_then_die(self: Path, data: bytes) -> None:
+        original(self, data[:4])  # 先落一半
+        raise OSError("磁盘满了")
+
+    monkeypatch.setattr(Path, "write_bytes", half_then_die)
+    with pytest.raises(OSError):
+        storage.create("catalog/v9.json", {"version": 9})
+    monkeypatch.setattr(Path, "write_bytes", original)
+
+    assert not target.exists(), "崩溃后目标名不该出现（否则这个版号永久不可用）"
+    assert not list(target.parent.glob("*.tmp")), "临时文件也要清掉，不能留给下一轮"
+
+
+def test_create_still_produces_complete_content(packs: PackService) -> None:
+    """换实现不能把内容写坏：读回来必须是完整 JSON，且目录里不留临时文件。"""
+    assert packs.storage.create("catalog/probe2.json", {"v": 1, "名字": "完整"}) is True
+    assert packs.storage.read("catalog/probe2.json") == {"v": 1, "名字": "完整"}
