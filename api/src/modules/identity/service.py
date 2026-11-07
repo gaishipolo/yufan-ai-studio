@@ -37,6 +37,7 @@ from core.security import (
     password_slot,
     verify_password_async,
 )
+from db.app_meta import get_json, set_json
 from db.base import utcnow
 from db.session import get_session_factory
 from modules.identity import policy, throttle
@@ -107,6 +108,10 @@ _RECOVERY_FIELDS = ("email",)
 # 账号打开「我的设备」会一次拿到几百条（R10-07）。超出的按登录时间倒序丢弃——
 # 前端本来也只在弹窗里列最近几台。
 SESSION_LIST_LIMIT = 50
+
+# 权限目录快照在 `app_meta` 里的键。存的是「上一次启动时目录里有哪些权限码」，
+# 用来区分「新声明的权限点」和「管理员手工删掉的旧权限点」——见 `sync_new_permissions`。
+PERMISSION_SNAPSHOT_KEY = "permissions.catalog"
 
 def _clip(value: str, limit: int) -> str:
     """截断用户可控字符串再入库。
@@ -1034,8 +1039,10 @@ class IdentityService:
             logger.info("内置角色已初始化：%d 个", created)
         return created
 
-    async def sync_builtin_role_permissions(self) -> dict[str, list[str]]:
-        """把 `BUILTIN_ROLES` 里**新增**的权限点补进已存在的内置角色，返回补了什么。
+    async def sync_builtin_role_permissions(
+        self, *, only: Iterable[str] | None = None, dry_run: bool = False
+    ) -> dict[str, list[str]]:
+        """把 `BUILTIN_ROLES` 里**缺失**的权限点补进已存在的内置角色，返回补了什么。
 
         为什么单独给一个命令，而不是让 `ensure_builtin_roles` 直接覆盖：
         那个函数「不覆盖已有权限」是**刻意**的（管理员手工调过的配置不该被重启改回去），
@@ -1047,6 +1054,12 @@ class IdentityService:
         - **只加不减**：管理员手工勾掉的权限不会被加回来（它已不在 `BUILTIN_ROLES` 里）；
         - **只补差集**：跑第二次什么都不做，可以放进部署脚本；
         - 角色本身不存在时跳过——那是 `ensure_builtin_roles` 的活，别在这里造半个角色。
+
+        `only` 把范围再收窄一层：只补落在给定集合里的权限码。启动时用的是
+        `sync_new_permissions`（只补这一版新增的），CLI 不传则保持全量补齐。
+
+        `dry_run` 只算不写：升级前想知道「自动补齐会改动什么」时用它，
+        比事后去角色界面逐条比对可靠。
         """
         added: dict[str, list[str]] = {}
         for spec in BUILTIN_ROLES:
@@ -1054,14 +1067,53 @@ class IdentityService:
             if role is None:
                 continue
             current = set((await self.roles.permissions_for([role.id])).get(role.id, []))
-            missing = [code for code in spec.permissions if code not in current]
+            missing = [
+                code
+                for code in spec.permissions
+                if code not in current and (only is None or code in only)
+            ]
             if not missing:
                 continue
-            await self.roles.set_permissions(role.id, sorted(current | set(missing)))
             added[spec.code] = missing
-        if added:
+            if dry_run:
+                continue
+            await self.roles.set_permissions(role.id, sorted(current | set(missing)))
+        if added and not dry_run:
             await self.session.commit()
             logger.info("内置角色权限已补齐：%s", added)
+        return added
+
+    async def sync_new_permissions(self) -> dict[str, list[str]]:
+        """启动时把「这一版**新声明**的权限点」自动补进内置角色。
+
+        与 `sync_builtin_role_permissions` 的差别只在**范围**：那个函数会补齐
+        `BUILTIN_ROLES` 里所有缺失项，包括管理员手工去掉的，所以只能人工触发；
+        这个函数只补「上一版还没声明过」的权限点，因此可以每次启动都跑。
+
+        判定「新」靠 `app_meta` 里的目录快照（`permissions.catalog`）：
+
+        - **没有快照** = 老库第一次跑到这一版 → 做一次全量补齐，把历史欠账还上。
+          代价是这一次可能把管理员手工移除的旧权限加回来；只发生一次，写进
+          `docs/OPS.md` 的升级步骤里。
+        - **有快照** → 只补 `当前目录 - 快照` 的差集，管理员的删除从此不会再被覆盖。
+
+        这解决了「上线新模块 → 非超管 403 → 超管自测发现不了」那条老路：
+        它过去依赖「发版时记得跑 `app sync-roles`」这种人为动作。
+        """
+        declared = set(catalog.codes())
+        previous = await get_json(self.session, PERMISSION_SNAPSHOT_KEY)
+        if previous is None:
+            added = await self.sync_builtin_role_permissions()
+            logger.info("权限目录首次快照：%d 个权限点，已做一次全量补齐", len(declared))
+        else:
+            fresh = declared - {str(code) for code in previous}
+            added = await self.sync_builtin_role_permissions(only=fresh) if fresh else {}
+            if fresh:
+                logger.info("新增权限点 %s 已并入内置角色：%s", sorted(fresh), added)
+        current = sorted(declared)
+        if previous != current:
+            await set_json(self.session, PERMISSION_SNAPSHOT_KEY, current)
+            await self.session.commit()
         return added
 
     async def ensure_superuser(
@@ -1316,11 +1368,20 @@ class IdentityService:
 
 
 async def bootstrap() -> None:
-    """模块启动钩子：建内置角色。表不存在时明确报错，而不是静默继续。"""
+    """模块启动钩子：建内置角色 + 把新声明的权限点并进去。
+
+    表不存在时明确报错，而不是静默继续：一个「没有角色」的身份库看起来能跑，
+    实际所有鉴权都会 403，那种故障比启动失败难查得多。
+    """
     factory = get_session_factory()
     async with factory() as session:
         try:
-            await IdentityService(session).ensure_builtin_roles()
+            service = IdentityService(session)
+            await service.ensure_builtin_roles()
+            # 这一步过去是人工的 `app sync-roles`：忘了跑就是「功能上线了，
+            # 非超管点按钮 403，而超管自测全绿」。现在只在启动时补**新增**的
+            # 权限点，管理员手工调过的配置不受影响（见 sync_new_permissions）。
+            await service.sync_new_permissions()
         except SQLAlchemyError as exc:
             raise RuntimeError(
                 "内置角色初始化失败：身份相关数据表可能尚未创建。"

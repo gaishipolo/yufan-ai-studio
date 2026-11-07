@@ -338,10 +338,22 @@ POST /identity/login → 校验口令 → 角色展开成权限码 → 签发 JW
 留着只撑表；「谁在哪台设备登录过」由 `login_events` 负责。
 `GET /me/sessions` 本身也截断到最近 50 条。
 
-**新增权限点后要跑 `app sync-roles`**。`ensure_builtin_roles` 只补「角色不存在」，
-不覆盖已有权限（管理员手工调过的配置不该被重启改回去），所以老库里的
-`editor` / `viewer` 不会自动长出新权限点——超管拿 `*` 全程自测发现不了，
-非超管点新功能的按钮直接 403。这条命令**只加不减**、只补差集，可以放进部署脚本重复跑。
+**新增权限点会自动进内置角色，不需要手工跑命令**（`IdentityService.sync_new_permissions`，
+启动时的 `bootstrap` 钩子里执行）。
+
+判定「新增」靠 `app_meta` 表里的目录快照 `permissions.catalog`：
+
+- 快照 = 上一次启动时目录里有哪些权限码；
+- 启动时差集 `当前目录 - 快照` 就是「这一版新声明的」，只把它们补进 `BUILTIN_ROLES`
+  里声明过的角色；
+- **管理员手工移除的旧权限不会被加回来**——它不在差集里。这正是「不让重启覆盖
+  运维配置」和「新增权限点自动生效」能同时成立的地方。
+
+没有快照（老库第一次升到这一版）时会做一次**全量补齐**，把历史欠账还上；这次可能
+把管理员手工去掉的旧权限加回来，只发生一次，`docs/OPS.md` 的升级步骤里写了。
+
+`app sync-roles` 仍然保留，但只用于手工兜底（把角色恢复到 `BUILTIN_ROLES` 的默认值）。
+两条路径都是**只加不减**。
 
 后台任务查账号状态走 `api/accounts.py` 的 `account_is_active()`（三态：
 启用 / 停用 / 查不到）。它和 `PrincipalResolver` 是同一个理由的两种形态：
@@ -743,8 +755,23 @@ async def create(
   全站不可用，放过的代价是可能被打一下——和 `core/ports/assets.py` 的 fail-closed
   是两套判断标准，别混用。
 
-刻意**没有**全局中间件兜底：全局额度容易把健康检查、静态资源、预检请求一起限掉，
-而「哪个接口贵」只有模块自己知道。
+**写路由必须声明策略**：`tests/test_route_policy.py` 会枚举运行期的全部写路由
+（POST/PUT/PATCH/DELETE），要求二选一——
+
+1. 挂了 `rate_limit(...)`（依赖树里有标记，挂在哪一层都算）；
+2. 在 `api/ratelimit_policy.py` 的 `EXEMPT_WRITE_ROUTES` 里写一行**理由**：
+   它靠什么兜底（登录失败节流、幂等、权限点、配额）。写「暂无限流」不算。
+
+漏挂不会报错，接口照常工作，只是没有上限——所以这件事不能靠 review，要做成
+CI 里的红灯。豁免表里失效的条目（路由改名/删除）同样会红，否则那张表会慢慢
+变成没人敢信的历史遗迹。
+
+额度不是「所有接口一个数」：会写盘或提交供应商的入口（上传、生图、任务创建/
+重试、替换执行）用 `settings.rate_limit_default_per_min`，上传按 `cost=3` 计入。
+**加新的花钱入口时，顺手加一行限流**，比事后被刷爆再补便宜得多。
+
+全局兜底（按 IP）也有，但默认关闭（`RATE_LIMIT_GLOBAL_PER_MIN=0`，见 T27）：
+按 IP 计数在反代/NAT 后面一个出口代表很多真实用户，额度定小了就是整栋楼一起 429。
 
 ### 5.2.4 队列：`memory → db → redis` 是同一条升级路径
 
@@ -955,6 +982,12 @@ module = ModuleSpec(name="image", router=router, ..., recovery_kinds=(KIND_IMAGE
 # 老模块：保留自己的恢复器，仍要声明负责的 kind；有 startup 时框架跳过
 module = ModuleSpec(name="task", ..., startup=_startup, recovery_kinds=(KIND_VIDEO,))
 ```
+
+**顺带记住另一条插槽**：`ModuleSpec.bootstrap` 与 `startup` 是两件事。
+`bootstrap` 是**装配**（建内置角色、补权限点、预热只读缓存），任何实例都执行；
+`startup` 是**恢复**（改写未完成任务的状态），只在 `WORKER_ENABLED=true` 的实例上执行。
+把装配塞进 `startup`，`WORKER_ENABLED=false` 的 API 实例就永远不会做它——
+这种坏是静默的：服务照常启动，只是内置角色没建、新增权限点没补。
 
 `app.py` 在 lifespan 里调 `generation/recovery.py::recover_declared()`，
 按 kind 捞未终态记录并分成四类：续轮询 / 同步供应商孤儿 / 提交结果未知 /

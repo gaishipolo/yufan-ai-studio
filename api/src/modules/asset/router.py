@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Query, Request, status
+from fastapi import APIRouter, Depends, Query, Request, status
 from fastapi import Path as ApiPath
 from fastapi.responses import Response
 
-from api.deps import PageDep
+from api.deps import PageDep, rate_limit
+from core.config import settings
 from core.media import MediaCategory
 from core.response import ApiResponse
 from modules.asset.archive import router as archive_router
@@ -61,6 +62,10 @@ async def upload_asset(
     service: AssetServiceDep,
     actor: AssetCreateDep,
     filename: Annotated[str, Query(min_length=1, max_length=200)],
+    # 流式上传：单请求的 IO 与磁盘占用远高于普通写接口，按 3 次计入额度
+    _: None = Depends(
+        rate_limit("asset.upload", limit=settings.rate_limit_default_per_min, cost=3)
+    ),
 ) -> ApiResponse[AssetOut]:
     return ApiResponse.ok(await service.upload(actor, request.stream(), filename))
 

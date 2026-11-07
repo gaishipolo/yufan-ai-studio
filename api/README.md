@@ -87,7 +87,8 @@ Vite 会把 `/api` 代理到 `VITE_API_PROXY_TARGET`（默认 `http://127.0.0.1:
 | `app backup [--out var/backups] [--note ...]` | 备份数据库：sqlite 用 backup API 取一致快照（WAL 下 `cp` 会拿到半份），postgres 走 `pg_dump`；同时写 `manifest.json`（时间、环境、schema 版本、各表行数） |
 | `app restore --from-dir <dir> [--force]` | 从备份覆盖当前库；覆盖前把现场另存为 `*.pre-restore-<时间戳>`（恢复错了还能退回去） |
 | `app prune-logins [--days 90]` | 清理过期的登录审计（默认取 `LOGIN_EVENT_RETENTION_DAYS`） |
-| `app new-module x --label 中文名` | 生成新模块脚手架（含权限声明） |
+| `app new-module x --label 中文名` | 生成新模块脚手架（含权限声明、写接口限流与横向能力用法表） |
+| `app sync-roles [--dry-run]` | 全量补齐内置角色缺失的权限点（启动时只自动补「新增」的；这个命令用于手工兜底/升级前预演） |
 | `alembic revision --autogenerate -m "xxx"` | 生成迁移（生产用） |
 | `alembic upgrade head` | 执行迁移 |
 | `pytest -q` | 运行测试 |

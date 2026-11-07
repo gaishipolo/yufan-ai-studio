@@ -114,23 +114,33 @@ def _cmd_prune_sessions(args: argparse.Namespace) -> None:
 
 
 def _cmd_sync_roles(args: argparse.Namespace) -> None:
-    """把新声明的权限点补进已有内置角色（只加不减）。
+    """全量补齐内置角色缺失的权限点（只加不减）。
 
-    上线一个带新权限点的模块时跑一次。没有这一步，老库里的 editor/viewer
-    仍是旧权限集：超管自测一切正常，非超管点新功能的按钮直接 403。
-    只打印差异、不删任何权限，可以安全地放进部署脚本重复执行。
+    **日常不需要跑**：启动时的 `sync_new_permissions` 会把这一版新增的权限点
+    自动并进去（靠 `app_meta.permissions.catalog` 的快照判断哪些是「新增」）。
+    它的适用范围只剩两种手工场景：
+
+    - 有人把内置角色的权限改乱了，想按 `BUILTIN_ROLES` 恢复默认；
+    - 部署环境从不执行启动钩子（例如只跑 `alembic upgrade` 的离线库），
+      想提前把角色准备好。
+
+    语义仍是「只加不减」：管理员手工勾掉的不会回来；只打印差异，可重复执行。
     """
     from db.session import get_session_factory
     from modules.identity.service import IdentityService
 
     async def run() -> dict[str, list[str]]:
         async with get_session_factory()() as session:
-            return await IdentityService(session).sync_builtin_role_permissions()
+            return await IdentityService(session).sync_builtin_role_permissions(
+                dry_run=args.dry_run
+            )
 
     added = asyncio.run(run())
     if not added:
         print("内置角色已是最新，无需补齐")
         return
+    if args.dry_run:
+        print("（dry-run：只列出会补什么，没有写库）")
     for code, codes in added.items():
         print(f"{code}: +{' +'.join(codes)}")
 
@@ -720,7 +730,8 @@ def _cmd_new_module(args: argparse.Namespace) -> None:
     )
     print("     （漏了这步，测试环境照样绿，生产第一条查询就 no such column）")
     print("  3. 重启服务，`app modules` 应能看到该模块")
-    print("  4. 新权限点要跑一次 `app sync-roles`，否则内置角色拿不到")
+    print("  4. 权限点会自动并入内置角色（启动时补「新增」的），不需要再手工跑 sync-roles")
+    print("     例外：老库第一次升到这一版会做一次全量补齐，见 docs/OPS.md「升级」")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -767,7 +778,11 @@ def main(argv: list[str] | None = None) -> int:
     p_prune_sessions.set_defaults(func=_cmd_prune_sessions)
 
     p_sync_roles = sub.add_parser(
-        "sync-roles", help="把新声明的权限点补进已有内置角色（只加不减，可重复执行）"
+        "sync-roles",
+        help="全量补齐内置角色缺失的权限点（启动时只自动补「新增」的；这个命令用于手工兜底）",
+    )
+    p_sync_roles.add_argument(
+        "--dry-run", action="store_true", help="只打印会补什么，不写库（升级前预演）"
     )
     p_sync_roles.set_defaults(func=_cmd_sync_roles)
 

@@ -34,7 +34,7 @@ MODULES_PACKAGE = "modules"
 # `db.outbox` 除了建表，还注册了「outbox 投递」的周期任务（import 副作用）。
 # 放在这里正好：`load_all_models()` 在启动期一定会跑一次，投递器不会因为
 # 「没人 import 它」而安静地不工作——那种故障的症状是「事件写了但永远发不出去」。
-FRAMEWORK_MODELS = ("db.audit", "db.jobs", "db.outbox")
+FRAMEWORK_MODELS = ("db.app_meta", "db.audit", "db.jobs", "db.outbox")
 
 
 @lru_cache

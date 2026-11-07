@@ -139,7 +139,11 @@ async def update_task(
 
 @router.post("/{task_id}/retry", summary="重试任务")
 async def retry_task(
-    service: TaskServiceDep, actor: TaskUpdateDep, task_id: TaskId
+    service: TaskServiceDep,
+    actor: TaskUpdateDep,
+    task_id: TaskId,
+    # 重试 = 重新提交供应商，和建任务一样会真花钱，额度对齐同一档
+    _: None = Depends(rate_limit("task.retry", limit=settings.rate_limit_default_per_min)),
 ) -> ApiResponse[TaskRetryOut]:
     """重试的结果只回 `id` / `status` / `updatedAt`。
 
@@ -160,7 +164,11 @@ async def toggle_favorite(
 
 @router.delete("", summary="批量删除任务")
 async def delete_tasks(
-    service: TaskServiceDep, actor: TaskDeleteDep, payload: DeleteTasksIn
+    service: TaskServiceDep,
+    actor: TaskDeleteDep,
+    payload: DeleteTasksIn,
+    # 一次可以点很多条，单请求的写放大没有上限；额度给得比创建宽，但要有
+    _: None = Depends(rate_limit("task.delete", limit=settings.rate_limit_default_per_min)),
 ) -> ApiResponse[DeleteTasksOut]:
     deleted, skipped = await service.delete_tasks(payload.ids, actor)
     return ApiResponse.ok(

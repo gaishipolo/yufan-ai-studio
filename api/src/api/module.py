@@ -18,7 +18,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.permissions import PermissionSpec
 from core.ports.assets import AssetReferenceSource
 
-# 模块启动钩子：应用 lifespan 内、worker 启动前调用；**仅在 `WORKER_ENABLED=true` 时执行**
+# 模块启动钩子：应用 lifespan 内、worker 启动前调用。两种语义分得很清楚，别混用：
+# - `startup`：**恢复**动作（把上次没跑完的任务接着跑），只在 `WORKER_ENABLED=true`
+#   的实例上执行——只读 API 实例跑一遍会改写记录状态、把任务投进无人消费的队列。
+# - `bootstrap`：**装配**动作（建内置角色、补权限点），与队列无关，任何实例都要执行。
 StartupHook = Callable[[], Awaitable[None]]
 # 模块演示数据钩子：`app seed` 时调用，返回写入行数。实现方自己 commit。
 SeedHook = Callable[[AsyncSession], Awaitable[int]]
@@ -31,14 +34,15 @@ class ModuleSpec:
     `order` 决定路由注册顺序（小的先注册）。有通配路径的模块应调大该值，
     避免把别人的静态路径吃掉。
 
-    `startup` 让模块自己处理「启动时要做什么」（恢复未完成任务、预热缓存…），
-    这样 `app.py` 不需要知道任何业务模块的存在。
+    `startup` / `bootstrap` 让模块自己处理「启动时要做什么」，这样 `app.py`
+    不需要知道任何业务模块的存在。两者的分界线是**这个动作会不会改写业务状态**：
 
-    **语义边界**：它在 `WORKER_ENABLED=true` 时才会被调用——恢复未完成任务、
-    预热只属于消费队列的那个实例，只读 API 实例跑一遍会改写记录状态并把任务
-    投进无人消费的队列（R13-01）。所以它只该放「本实例消费队列才该发生」的动作；
-    与队列无关的启动动作（例如只读实例也要做的缓存预热）不该塞在这里，
-    否则会被一起跳过。
+    - `startup` = 恢复。只在 `WORKER_ENABLED=true` 时执行：恢复未完成任务、把
+      「提交结果未知」判死、发失败通知——只读 API 实例跑一遍纯属伤害（R13-01）。
+    - `bootstrap` = 装配。**任何实例都执行**，必须是幂等的：建内置角色、把新增
+      权限点补进角色、预热只读缓存这类「谁跑都一样、不跑就出错」的事。
+      它曾经只能塞进 `startup`，代价是「没开 worker 的实例永远不会初始化内置
+      角色，新增权限点也永远进不了老库」——那是写文档的人不会注意到的一种坏。
     """
 
     name: str
@@ -49,6 +53,9 @@ class ModuleSpec:
     description: str = ""
     permissions: tuple[PermissionSpec, ...] = ()
     startup: StartupHook | None = None
+    # 装配型启动钩子：任何实例（含 `WORKER_ENABLED=false`）都会执行，必须幂等。
+    # 与 `startup` 的差别见类文档：这边不许改写「正在进行的业务状态」。
+    bootstrap: StartupHook | None = None
     # 本模块负责的生成 kind（`generation.pipeline` 的注册表键）。
     # 没有 `startup` 的模块由 `generation/recovery.py` 按这个声明统一恢复；
     # 有 `startup` 的模块沿用自己的恢复器，框架不插手。

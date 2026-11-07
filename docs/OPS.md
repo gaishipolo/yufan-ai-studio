@@ -29,6 +29,24 @@ app doctor --strict           # 有 WARN 也退出：首次上线建议这样跑
 - `METRICS_TOKEN` 已配，抓取配置里是 `Authorization: Bearer <token>`；
 - 备份定时任务已开，并且**演练过恢复**（见 §5）。
 
+### 升级到「权限自动同步」这一版的额外一步
+
+这一版新增了 `app_meta` 表（迁移 `dbbea50e7828`）。**第一次启动**会：
+
+1. 读不到 `permissions.catalog` 快照 → 认为是从老库升级上来；
+2. 做一次**全量补齐**：把 `BUILTIN_ROLES` 里声明、但库里缺的权限点全部加回去；
+3. 写入快照，此后只补「这一版新声明的」权限点。
+
+第 2 步可能把管理员手工移除的旧权限加回来（**只此一次**）。如果现网权限形状
+是精心调过的，升级后立刻在「角色与权限」界面复核 `editor` / `viewer`；
+想先看会发生什么，可以：
+
+```bash
+app sync-roles --dry-run   # 只打印会补什么，不写库
+```
+
+这条命令和启动流程用的是同一份 `BUILTIN_ROLES`，所以它的输出就是升级后会被加回来的东西。
+
 ---
 
 ## 2. 探针：`/health` 与 `/health/ready` 不是一回事
@@ -254,6 +272,7 @@ FEATURE_FLAGS=new.upload,new.editor           # 逗号写法等价于全部打�
 | `/metrics` 403 | `METRICS_TOKEN` 是否配置 | 生产环境刻意 fail-closed |
 | 面板上路由只有 `/health` 这种短路径 | 指标 `route` 标签 | 旧版本；现在用完整路径 + `{param}` 模板 |
 | 限流看起来没生效 | `CACHE_DRIVER` | memory 驱动下多实例各算各的 |
+| 非超管点新功能 403，超管正常 | `app_meta` 里的 `permissions.catalog`、该角色权限 | 新权限点没并进内置角色：启动钩子被跳过或没重启；`app sync-roles` 手工补 |
 | 素材点开 404 | `app verify-blobs` | 对象被 GC/迁移遗漏，或桶策略变了 |
 
 ---
@@ -264,8 +283,11 @@ FEATURE_FLAGS=new.upload,new.editor           # 逗号写法等价于全部打�
    没有 pushgateway，也不落盘。
 2. **trace 只有一个 id**，没有 span 树与采样。要按阶段拆分耗时看日志里的
    `X-Process-Time-Ms` 与 job 耗时直方图。
-3. **限流默认是依赖级**：全局兜底 `RATE_LIMIT_GLOBAL_PER_MIN` 默认 0（关闭），
-   按客户端 IP 计。架构守卫目前只拦「路由层写事务」，没拦「写路由漏挂限流」。
+3. **限流默认是依赖级**：每个写路由自己声明额度，全局兜底
+   `RATE_LIMIT_GLOBAL_PER_MIN` 默认 0（关闭，按客户端 IP 计）。
+   「写路由漏挂限流」已经由 `tests/test_route_policy.py` 拦住（必须挂
+   `rate_limit`，或在 `api/ratelimit_policy.py` 里写清豁免理由）；
+   仍未解决的是**固定窗口的 2× 边界误差**（见 T27）。
 4. **备份不含对象存储**（见 §5.4）。自动备份失败只会记日志，不会让服务挂——
    所以「备份是否真的在跑」需要外部告警盯（见 §5.2 末尾）。
 5. **功能开关不支持热更新与灰度**（见 §6）。

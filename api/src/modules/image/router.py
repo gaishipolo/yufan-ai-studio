@@ -6,7 +6,8 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, status
 
-from api.deps import PageDep, SessionDep, require
+from api.deps import PageDep, SessionDep, rate_limit, require
+from core.config import settings
 from core.context import CurrentUser
 from core.response import ApiResponse, Page
 from modules.image.schema import GenerateImageIn, ImageJobOut, ImageRetryOut
@@ -46,6 +47,8 @@ async def generate_image(
     service: ImageServiceDep,
     actor: ImageCreateDep,
     payload: GenerateImageIn,
+    # 生图是真花钱的入口：每个请求对应一次供应商调用，按用户限速
+    _: None = Depends(rate_limit("image.generate", limit=settings.rate_limit_default_per_min)),
 ) -> ApiResponse[ImageJobOut]:
     job = await service.generate(actor, payload)
     return ApiResponse.ok(await service.out(job), message="已提交")
@@ -59,6 +62,8 @@ async def retry_image(
     confirm_charged: Annotated[
         bool, Query(alias="confirmCharged", description="确认上一次可能已扣费，仍要重新提交")
     ] = False,
+    # 重试同样会再扣一次费；额度比新建低一档（重试是补救动作，不该被刷）
+    _: None = Depends(rate_limit("image.retry", limit=settings.rate_limit_default_per_min)),
 ) -> ApiResponse[ImageRetryOut]:
     """`SUBMIT_UNKNOWN_MESSAGE` 承诺的「手动重试」出口（R11-02）。
 

@@ -192,19 +192,31 @@ async def recover_declared(specs: Sequence[object]) -> dict[str, dict[str, int]]
 async def run_startup_recovery(
     specs: Sequence[object], *, worker_enabled: bool
 ) -> dict[str, dict[str, int]]:
-    """启动恢复的唯一入口：模块自带 `startup` + 框架恢复。
+    """启动期的唯一入口：先跑装配钩子，再按实例角色决定要不要跑恢复。
 
-    参数语义与 `recover_declared` 相同（只读两个属性，不依赖 `ModuleSpec`）。
+    参数语义与 `recover_declared` 相同（只读属性，不依赖 `ModuleSpec`）。
 
-    两道恢复实现形状不同，但**触发条件相同**：本实例消费队列。把门控写在这
-    一层，新增第三种恢复实现时不会漏；写在 `recover_declared` 里就只覆盖框架
-    那一种（R13-01：`task` / `template` 恰好都自带 startup，于是两个真正需要
-    门控的模块全在门控之外）。
+    **两个阶段，门控不同**：
+
+    1. `bootstrap`（装配）：建内置角色、补新增权限点这类动作，任何实例都跑。
+       它们幂等、不改写「正在进行的业务状态」，不跑会留下长期隐患——最典型的
+       是「没开 worker 的 API 实例永远不初始化内置角色」。
+    2. `startup` + 框架恢复：只在消费队列的实例上跑。
+
+    恢复实现形状不同，但**触发条件相同**：本实例消费队列。把门控写在这一层，
+    新增第三种恢复实现时不会漏；写在 `recover_declared` 里就只覆盖框架那一种
+    （R13-01：`task` / `template` 恰好都自带 startup，于是两个真正需要门控的
+    模块全在门控之外）。
 
     worker 关闭时必须连 `startup` 一起跳过，不只是「少投几个没人消费的 job」：
     模块的恢复器会**先写库再派发**——把「提交结果未知」判死、发失败通知、
     把 `started_at` 清零。这些改写不可逆，只读实例每次启动都会做一遍。
     """
+    for spec in specs:
+        bootstrap = getattr(spec, "bootstrap", None)
+        if bootstrap is not None:
+            await bootstrap()
+
     if not worker_enabled:
         logger.warning(
             "worker 未启用，跳过全部启动恢复（%d 个模块的 startup + 框架恢复）："

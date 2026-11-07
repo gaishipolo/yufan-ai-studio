@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from fastapi.responses import FileResponse
 
+from api.deps import rate_limit
+from core.config import settings
 from core.response import ApiResponse
 from modules.template.replacement_dependencies import (
     ReplacementManageDep,
@@ -71,6 +73,10 @@ async def execute_run(
     actor: ReplacementWriteDep,
     service: ReplacementServiceDep,
     payload: ExecuteReplacement | None = None,
+    # 执行 = 整批镜头提交供应商（最贵的入口之一），额度对齐生图那一档
+    _: None = Depends(
+        rate_limit("template.replacement.execute", limit=settings.rate_limit_default_per_min)
+    ),
 ) -> ApiResponse[ReplacementRunOut]:
     return ApiResponse.ok(
         await service.execute(run_id, actor.id, payload.billing_mode if payload else "free")

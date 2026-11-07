@@ -15,7 +15,8 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import Response
 
-from api.deps import require
+from api.deps import rate_limit, require
+from core.config import settings
 from core.context import CurrentUser
 from core.media import MediaCategory
 from core.response import ApiResponse
@@ -57,13 +58,25 @@ async def upload(
     service: ArchiveServiceDep,
     category: MediaCategory,
     filename: Annotated[str, Query(min_length=1, max_length=200)],
+    # 一次上传按 3 次计入额度：写归档盘是重 IO，额度不该按「请求数」平等对待
+    _: None = Depends(
+        rate_limit(
+            "asset.archive.upload", limit=settings.rate_limit_default_per_min, cost=3
+        )
+    ),
 ) -> ApiResponse[ArchivedAsset]:
     return ApiResponse.ok(await service.upload_for(request.stream(), filename, category, actor))
 
 
 @router.post("/import", status_code=201, summary="从 Z 盘 inbox 登记现有素材")
 async def import_asset(
-    payload: ImportAsset, actor: ArchiveWriteDep, service: ArchiveServiceDep
+    payload: ImportAsset,
+    actor: ArchiveWriteDep,
+    service: ArchiveServiceDep,
+    # 导入同样要读文件 + 算校验和，按上传的同一档计
+    _: None = Depends(
+        rate_limit("asset.archive.import", limit=settings.rate_limit_default_per_min, cost=3)
+    ),
 ) -> ApiResponse[ArchivedAsset]:
     return ApiResponse.ok(await service.import_for(payload, actor))
 

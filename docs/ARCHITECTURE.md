@@ -97,7 +97,8 @@
 | `api/middleware.py` | HTTP 中间件：请求 ID、耗时、CORS 前置处理，并给每个请求打 `http_requests_total` / 耗时直方图（标签用路由模板）。 |
 | `api/instrumentation.py` | 指标族声明（HTTP / 队列 / outbox / 构建信息）与抓取时的瞬时值采集（`refresh_runtime_gauges`）。 |
 | `api/ops.py` | 运维端点 `/metrics`：独立于业务路由，`METRICS_TOKEN` 校验，不进 OpenAPI。 |
-| `api/module.py` | 模块描述对象 `ModuleSpec`：router / permissions / startup / `recovery_kinds` / seed / public。 |
+| `api/module.py` | 模块描述对象 `ModuleSpec`：router / permissions / **bootstrap（装配，人人执行）** / startup（恢复，仅消费实例）/ `recovery_kinds` / seed / public。 |
+| `api/ratelimit_policy.py` | 写路由的限流策略：依赖树里查 `rate_limit` 标记，未挂的必须在豁免表里写理由（测试守卫）。 |
 | `api/registry.py` | 模块注册表（自动发现版）：按名字查模块、汇总权限点、启动钩子。 |
 | `api/v1/__init__.py` | API v1 版本包。 |
 | `api/v1/router.py` | v1 路由聚合：把每个模块的 router 挂到 `/api/v1` 下。 |
@@ -152,6 +153,7 @@
 | `db/jobs.py` | 持久化队列表 `queued_jobs`（含 `trace_id`、租约、死信）。 |
 | `db/outbox.py` | 事件 outbox：`record()` 与业务同事务落库，周期任务至少一次投递。 |
 | `db/backup.py` | 备份/恢复：sqlite 用 backup API 取一致快照、postgres 走 `pg_dump`，附 `manifest.json`。 |
+| `db/app_meta.py` | 框架级键值表：存「上一次运行认定的事实」（如权限目录快照），不是缓存。 |
 
 ### 3.5 `generation/` —— 生成编排框架
 

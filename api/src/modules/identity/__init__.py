@@ -22,8 +22,13 @@ register_principal_resolver(IdentityPrincipalResolver())
 register_account_status_checker(IdentityAccountStatus())
 
 
-async def _startup() -> None:
-    """启动时确保内置角色存在（幂等）。"""
+async def _bootstrap() -> None:
+    """启动时确保内置角色存在，并把新增权限点并进去（幂等）。
+
+    走 `bootstrap` 而不是 `startup`：这是装配动作，不改写任何「正在进行的业务
+    状态」，因此**每个实例都该跑**。塞进 `startup` 的话，`WORKER_ENABLED=false`
+    的 API 实例永远不会初始化角色、也永远补不到新权限点——那种坏是静默的。
+    """
     from modules.identity.service import bootstrap
 
     await bootstrap()
@@ -35,5 +40,5 @@ module = ModuleSpec(
     tags=["身份"],
     description="用户与角色：登录、账号管理、权限点目录",
     permissions=SPECS,
-    startup=_startup,
+    bootstrap=_bootstrap,
 )

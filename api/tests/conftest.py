@@ -89,3 +89,23 @@ def _assembled_ports() -> None:
 @pytest.fixture
 def api() -> str:
     return "/api/v1"
+
+
+@pytest.fixture(autouse=True)
+def _clean_rate_limit_counters() -> None:
+    """每个用例前清空限流计数（计数器就在缓存里）。
+
+    限流是**生产保护**，不该变成测试之间的隐式耦合：`client` 是 session 级的，
+    所有用例复用同一批演示账号，上一个用例刷满的额度会让下一个用例直接收 429，
+    而失败信息读起来像是「这个接口坏了」。清掉计数比把额度调大更诚实——
+    调大只是把崩溃点往后推，谁的用例再多跑几轮又会红。
+
+    代价是「跨用例累积额度」这类问题测不出来；那种行为由 `test_ratelimit.py`
+    （直接构造 `RateLimiter`）和 `test_global_ratelimit.py`（单独起实例）覆盖。
+    """
+    import asyncio
+
+    from infra import get_cache
+
+    asyncio.run(get_cache().clear())
+

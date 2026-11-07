@@ -7,9 +7,9 @@
 >
 > 来源：`CODE_REVIEW_2026-11-06_R11~R14`、`CODE_REVIEW_2026-11-06_FE6`、
 > `EXTENSIBILITY_GAPS.md` 的 B1/C1/C2，以及素材分支合并时新发现的项。
-> 最后更新：2026-11-07 21:40（健壮性专项：修掉两个会让「小故障变大故障」的真问题——
-> `/health/ready` 在 down 时返回 200（探针结论没人执行）、worker 取任务异常导致协程
-> 静默死亡；补了故障注入用例组。剩余登记 T31）
+> 最后更新：2026-11-07 22:10（扩展性专项：写路由限流策略守卫 + 权限点自动并入内置角色；
+> 顺带把模块启动钩子拆成 bootstrap（装配，人人执行）/ startup（恢复，仅消费实例））
+> 剩余登记 T31~T33）
 
 ## 一眼看完
 
@@ -28,10 +28,12 @@
 | T24 | `MediaFile.path` 装的是 key，字段名/描述没跟上 | 契约语义漂移，后来者会当路径拼 | 后端（小） |
 | T25 | 多实例部署还差三处硬边界 | 配额首次并发、预签名 TOCTOU、运行工作区仍要共享盘 | 架构 |
 | T26 | db 队列是轮询式，没有唤醒机制 | 空转查询按 worker 数叠加；万级 QPS 要换 Redis 驱动（协议已备好） | 架构 |
-| T27 | 限流仍缺「写路由未挂限流」的架构守卫；固定窗口有 2× 边界误差 | 新接口忘挂 `rate_limit()` 时只能靠全局兜底（默认关）；窗口交界瞬时可达 2 倍额度 | 后端 |
+| T27 | 限流额度写死在路由上（只有一个 `RATE_LIMIT_DEFAULT_PER_MIN`），改额度要发版；固定窗口有 2× 边界误差 | 运营想临时放宽/收紧某个入口只能改代码；窗口交界瞬时可达 2 倍额度 | 后端 |
 | T29 | 指标是单进程语义，未做多进程聚合 | 多 worker 部署要靠 Prometheus `sum by`；本机 `curl /metrics` 只看到一部分 | 架构 |
 | T30 | PG 迁移闸在观察期（`continue-on-error`），尚未成为硬性要求 | PG 特有的默认值/条件索引差异要等它稳定后才真正拦住 | 架构 |
 | T31 | worker 没有「当前有多少消费协程在跑」的对外指标 | 协程全停时探针仍绿，只能靠 `jobs_processed_total` 不涨反推 | 架构 |
+| T32 | 限流豁免表只在 CI 里核对「有没有写」，不核「写得对不对」 | 某个接口变贵了（加了供应商调用）没人回头改额度/删豁免，表会慢慢失真 | 架构 |
+| T33 | `app_meta` 只有「最后写入者胜」，没有版本/审计 | 两个实例同时启动时，快照可能被旧值覆盖一轮；排查「谁改了这份状态」只能翻日志 | 架构 |
 
 ---
 
@@ -168,13 +170,16 @@ PostgreSQL 的 `LISTEN/NOTIFY`：写完 `NOTIFY`，worker 侧长连接被唤醒�
 新驱动上同样通过（协议一致性是硬要求）；或 db 驱动接上 `LISTEN/NOTIFY` 并有
 「空转查询数下降」的实测数据。
 
-## T27 · 限流的两处已知边界
+## T27 · 限流额度的两处已知边界
 
-1. **全局兜底已提供，但默认关闭**（`RATE_LIMIT_GLOBAL_PER_MIN=0`）。
-   `GlobalRateLimitMiddleware` 按客户端 IP 计数，白名单含探针、指标、文档与静态资源。
-   默认关是因为它按 IP 算：反代/NAT 后面一个出口 IP 代表很多真实用户，额度定小了
-   就是「整栋楼一起 429」；`scope["client"]` 在反代后面还是代理地址。
-   仍未做的是**架构守卫**：扫所有写操作路由，要求 `rate_limit` 或显式豁免标记。
+> 2026-11-07：「写路由未挂限流」的守卫**已做**——`tests/test_route_policy.py`
+> 枚举运行期全部写路由，要求挂 `rate_limit` 或在 `api/ratelimit_policy.py` 里
+> 写清豁免理由；豁免表里的失效条目同样会红。剩下的是额度本身的边界。
+
+1. **额度不可按接口配置**：只有 `RATE_LIMIT_DEFAULT_PER_MIN` 一个旋钮，
+   各路由写的是同一个值（上传额外用 `cost=3`）。要临时放宽某个入口得改代码发版。
+   想做成 `RATE_LIMIT_TASK_CREATE_PER_MIN` 那样一入口一配置也可以，但配置面会
+   迅速膨胀，且「新入口忘了加配置」又会变成新的静默缺口——目前选择接受。
 2. **固定窗口有 2× 边界误差**：窗口最后 1 秒打满、下一秒又是新窗口，
    瞬时可达 `2×limit`。要精确就换滑动窗口（`ZADD` + `ZREMRANGEBYSCORE` + `ZCARD`，
    或用 Lua 保证原子），同样只需替换 `Counter` 实现。
@@ -182,7 +187,8 @@ PostgreSQL 的 `LISTEN/NOTIFY`：写完 `NOTIFY`，worker 侧长连接被唤醒�
 另：计数在 `CACHE_DRIVER` 里，`memory` 时多实例各算各的——这是部署配置问题，
 `app doctor` 的 `runtime.cache` 会报驱动名，但不会替你判断额度是否被放大。
 
-**验收**：① 架构守卫能拦住「写路由未挂限流」；② 或明确记录「本项不做」的理由。
+**验收**：给某个入口单独的额度配置（例如高成本生图与轻量 PATCH 分开），
+并保证新入口漏配时**回落到默认值且有告警**，而不是变成无限额。
 
 
 ---
@@ -241,6 +247,9 @@ PostgreSQL 的 `LISTEN/NOTIFY`：写完 `NOTIFY`，worker 侧长连接被唤醒�
 | R12-* / R11-* | 已修 | `aa9c5e4` |
 | T28 备份无调度与保留 | 已修 | `db/backup.py` 的 `backup_loop` / `prune_backups`，用例见 `tests/test_backup.py` 后三条 |
 | 就绪探针 down 却返回 200 | 已修 | `modules/health/router.py` 在 `runtime.down` 时置 503；用例 `tests/test_fault_tolerance.py`（函数级 + HTTP 级两条） |
+| 写路由漏挂限流无人发现 | 已修 | `api/ratelimit_policy.py` + `tests/test_route_policy.py`；8 个花钱/写盘入口补了 `rate_limit`，其余 32 条豁免逐条写理由 |
+| 新权限点要人工 `sync-roles`，漏了就非超管 403 | 已修 | `IdentityService.sync_new_permissions` + `app_meta.permissions.catalog` 快照；用例 `tests/test_role_auto_sync.py` |
+| 装配钩子塞在 `startup` 里，`WORKER_ENABLED=false` 的实例永不执行 | 已修 | `ModuleSpec.bootstrap`（人人执行）与 `startup`（仅消费实例）分开；identity 改用 `bootstrap` |
 | worker 取任务异常导致协程静默死亡 | 已修 | `workers.py` 的 `_loop` 三层兜底 + 退避 + `queue_dequeue_errors_total`；用例 `test_worker_survives_dequeue_errors` / `test_worker_survives_ack_failure` |
 | 原 T15 五份文档未提交 | 已提交 | `e928fbb`（`CODE_STYLE` / `REVIEW_CHECKLIST` v2.0 + R11~R14 / FE6 报告） |
 | 原 T16 两条旧分支 | 已删 | `merge/pr1`（`4e26035`）、`preview/full`（`59513ba`）`merge-base --is-ancestor` 均通过后 `git branch -d` |

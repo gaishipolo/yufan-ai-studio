@@ -24,6 +24,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.authn import resolve_principal
+from api.ratelimit_policy import mark_rate_limited
 from core.config import settings
 from core.context import CurrentUser, set_current_user
 from core.exceptions import Forbidden, RateLimited, Unauthorized
@@ -148,11 +149,13 @@ def rate_limit(
     if not scope:
         raise ValueError("rate_limit() 需要 scope")
     if limit <= 0:
-        # 显式关闭：返回一个空依赖，比在路由里写 `if settings.xxx` 干净
+        # 显式关闭：返回一个空依赖，比在路由里写 `if settings.xxx` 干净。
+        # 仍然打标记：额度 0 是「声明过的决定」，不是「忘了挂」——
+        # `api/ratelimit_policy.py` 的守卫只看标记在不在。
         async def _noop() -> None:
             return None
 
-        return _noop
+        return mark_rate_limited(_noop, scope)
 
     async def dependency(request: Request, actor: ActorDep) -> None:
         if not settings.rate_limit_enabled:
@@ -175,7 +178,9 @@ def rate_limit(
             )
 
     dependency.__name__ = f"rate_limit_{scope.replace(':', '_').replace('.', '_')}"
-    return dependency
+    # 标记给 `api/ratelimit_policy.py` 的守卫读：写路由要么挂了这个依赖，
+    # 要么在豁免表里写理由，两者都没有就是漏挂。
+    return mark_rate_limited(dependency, scope)
 
 
 # 这里曾经有 `require_role()` / `AdminDep`：按角色名判定。
