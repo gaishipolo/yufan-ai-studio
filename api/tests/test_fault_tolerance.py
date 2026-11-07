@@ -220,3 +220,68 @@ async def test_backup_failure_does_not_raise(
 
     # 不抛就是通过：调度器靠这个保证「一个任务炸掉不拖垮整轮」
     await backup.backup_loop()
+
+
+# --------------------------------------------------------------------------- #
+# 协程存活与忙碌度（T31）
+# --------------------------------------------------------------------------- #
+async def test_worker_exposes_consumer_metrics(monkeypatch: pytest.MonkeyPatch) -> None:
+    """「worker 还在不在跑」要能被直接抓到，而不是靠任务数不涨反推。
+
+    探针是浅检查，永远不会因为 worker 停了而变红。没有这两个 gauge 时，唯一的
+    线索是 `jobs_processed_total` 不涨 + 积压上升——要等到积压才有人发现，而且
+    分不清「协程死了」与「协程卡在某个 handler 上」。
+    """
+    import workers as workers_mod
+
+    async def _noop(job: Job) -> None:
+        return None
+
+    monkeypatch.setitem(workers_mod.HANDLERS, "fault.noop", _noop)
+
+    before = workers_mod.WORKER_CONSUMERS.value(state="alive")
+    worker = Worker(_FlakyQueue(fail_times=0), concurrency=2)  # type: ignore[arg-type]
+    await worker.start()
+    try:
+        assert workers_mod.WORKER_CONSUMERS.value(state="desired") == 2
+        # `start()` 只是 create_task，给循环一次被调度的机会
+        await asyncio.sleep(0.05)
+        assert workers_mod.WORKER_CONSUMERS.value(state="alive") == before + 2
+        assert workers_mod.WORKER_BUSY.value() == 0, "空转时不该有人被算成在忙"
+    finally:
+        await worker.stop()
+
+    assert workers_mod.WORKER_CONSUMERS.value(state="alive") == before, "停机后存活数没归零"
+
+
+async def test_worker_busy_counts_running_job(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`busy` 要能区分「活着但卡住」：长期等于并发数就是有 handler 卡住了。"""
+    import workers as workers_mod
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def _blocked(job: Job) -> None:
+        started.set()
+        await release.wait()
+
+    monkeypatch.setitem(workers_mod.HANDLERS, "fault.blocked", _blocked)
+
+    class _OneJob(_FlakyQueue):
+        async def dequeue(self, *, timeout: float = 0) -> Job | None:  # noqa: ASYNC109
+            self.calls += 1
+            await asyncio.sleep(0)
+            return Job(name="fault.blocked", payload={}) if self.calls == 1 else None
+
+    worker = Worker(_OneJob(fail_times=0), concurrency=1)  # type: ignore[arg-type]
+    task = asyncio.create_task(worker._loop(0))
+    try:
+        await asyncio.wait_for(started.wait(), timeout=2)
+        assert workers_mod.WORKER_BUSY.value() == 1, "正在跑的 job 没被计入 busy"
+    finally:
+        release.set()
+        worker._stopping.set()
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+    assert workers_mod.WORKER_BUSY.value() == 0, "任务结束后 busy 没减回来"

@@ -7,9 +7,10 @@
 >
 > 来源：`CODE_REVIEW_2026-11-06_R11~R14`、`CODE_REVIEW_2026-11-06_FE6`、
 > `EXTENSIBILITY_GAPS.md` 的 B1/C1/C2，以及素材分支合并时新发现的项。
-> 最后更新：2026-11-07 22:24（恢复链收口：去掉 `resume()` 的 `APP_ENV` 早退改注入 repo、
-> `recover()` 抢锁改成退避 + 六轮上限、提交时写下 `submit_mode` 形态快照）
-> 剩余登记 T31~T33）
+> 最后更新：2026-11-07 22:41（恢复链收口 + worker 存活指标：`resume()` 改注入 repo、
+> `recover()` 抢锁退避 + 六轮上限、提交时写 `submit_mode` 快照、
+> `worker_consumers` / `worker_jobs_in_flight` 两个 gauge）
+> 剩余登记 T32~T33）
 
 ## 一眼看完
 
@@ -28,7 +29,6 @@
 | T27 | 限流额度写死在路由上（只有一个 `RATE_LIMIT_DEFAULT_PER_MIN`），改额度要发版；固定窗口有 2× 边界误差 | 运营想临时放宽/收紧某个入口只能改代码；窗口交界瞬时可达 2 倍额度 | 后端 |
 | T29 | 指标是单进程语义，未做多进程聚合 | 多 worker 部署要靠 Prometheus `sum by`；本机 `curl /metrics` 只看到一部分 | 架构 |
 | T30 | PG 迁移闸在观察期（`continue-on-error`），尚未成为硬性要求 | PG 特有的默认值/条件索引差异要等它稳定后才真正拦住 | 架构 |
-| T31 | worker 没有「当前有多少消费协程在跑」的对外指标 | 协程全停时探针仍绿，只能靠 `jobs_processed_total` 不涨反推 | 架构 |
 | T32 | 限流豁免表只在 CI 里核对「有没有写」，不核「写得对不对」 | 某个接口变贵了（加了供应商调用）没人回头改额度/删豁免，表会慢慢失真 | 架构 |
 | T33 | `app_meta` 只有「最后写入者胜」，没有版本/审计 | 两个实例同时启动时，快照可能被旧值覆盖一轮；排查「谁改了这份状态」只能翻日志 | 架构 |
 
@@ -222,6 +222,7 @@ PostgreSQL 的 `LISTEN/NOTIFY`：写完 `NOTIFY`，worker 侧长连接被唤醒�
 | 装配钩子塞在 `startup` 里，`WORKER_ENABLED=false` 的实例永不执行 | 已修 | `ModuleSpec.bootstrap`（人人执行）与 `startup`（仅消费实例）分开；identity 改用 `bootstrap` |
 | worker 取任务异常导致协程静默死亡 | 已修 | `workers.py` 的 `_loop` 三层兜底 + 退避 + `queue_dequeue_errors_total`；用例 `test_worker_survives_dequeue_errors` / `test_worker_survives_ack_failure` |
 | `resume()` 的 `APP_ENV` 早退让恢复链在测试里永不执行（原 T6） | 已修 | 删掉环境判断，改 `resume(*, repo=None)` 显式注入；用例 `test_resume_takes_repository_as_explicit_input`（并在 test 环境下断言 `app_env == "test"` 跑通） |
+| worker 没有「消费协程还活着吗」的对外指标（原 T31） | 已修 | `workers.py` 的 `worker_consumers` 的 alive / desired 两个取值与 `worker_jobs_in_flight`：前者分辨「协程死了」，后者分辨「活着但卡住」；用例 `test_worker_exposes_consumer_metrics` / `test_worker_busy_counts_running_job`，OPS 加了第七条告警 |
 | `ReplacementStore` 不写 `submit_mode` 快照（原 T4） | 已修 | `replacement_repository.ReplacementManifest.submit_mode` + `mark_submitted` 用 `MODEL_ID` 解析后落盘（解析不出留空=安全侧），`schedule_state` / `reconfirm_state` 在新一次提交前作废旧快照；用例 `test_submit_records_provider_shape_for_recovery` / `test_unresolvable_catalog_leaves_snapshot_empty` / `test_reschedule_drops_stale_snapshot` |
 | `recover()` 对持续 Conflict 无上限（原 T3） | 已修 | 轮次随 payload 带过去，退避 30s→600s 共六轮，用完打 `replacement_recovery_lock_giveups_total` 并放手（拿不到锁就不写档案）；用例 `test_recover_waits_for_run_lock_with_bounded_retries` |
 | 原 T15 五份文档未提交 | 已提交 | `e928fbb`（`CODE_STYLE` / `REVIEW_CHECKLIST` v2.0 + R11~R14 / FE6 报告） |

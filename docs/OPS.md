@@ -92,10 +92,13 @@ app sync-roles --dry-run   # 只打印会补什么，不写库
 （慢探针被判定超时，表现和「服务挂了」完全一样）。深检查用 `app doctor`，
 或者接一条定时任务跑 `app doctor --strict` 把结果推到监控。
 
-特别地，**worker 是否还活着不在探针里**。worker 消费协程有自己的三层容错
-（取任务失败退避重试、执行异常记指标、回执失败不退出），但没有对外暴露
-「当前有几个消费协程在跑」。判断依据是 `jobs_processed_total` 的增长率：
-这个数在一段时间内完全不动、而 `queue_jobs{state="pending"}` 在涨，就是 worker 停了。
+特别地，**worker 是否还活着不在探针里**——探针被调得太频繁，不能每次去问后台协程。
+它在指标里：`worker_consumers{state="alive"}` 是实际存活的消费协程数，
+`{state="desired"}` 是配置值，两者不等就是有协程死了（三层容错也拦不住的那种）；
+`worker_jobs_in_flight` 长期等于并发数则是另一种形态——协程活着但卡在某个 handler 上。
+
+`jobs_processed_total` 不涨 + `queue_jobs{state="pending"}` 在涨仍然是最直观的征兆，
+但它是**事后**信号（要等到积压），而且分不清上面两种故障，所以别拿它代替那两个 gauge。
 
 ---
 
@@ -113,6 +116,8 @@ app sync-roles --dry-run   # 只打印会补什么，不写库
 | `http_request_duration_seconds` | histogram | method, route | 分桶 5ms~10s |
 | `http_requests_in_flight` | gauge | — | 正在处理的请求数 |
 | `jobs_processed_total` | counter | name, outcome | outcome ∈ success / error / timeout / cancelled / unknown |
+| `worker_consumers` | gauge | state | alive = 实际存活的消费协程数，desired = 配置值。alive < desired = 协程死了 |
+| `worker_jobs_in_flight` | gauge | — | 正在执行的任务数；长期等于并发数 = 有 handler 卡住 |
 | `queue_dequeue_errors_total` | counter | — | worker **取任务**失败的次数（队列驱动异常）。持续增长 = worker 在空转，不是某个任务有问题 |
 | `replacement_recovery_lock_giveups_total` | counter | — | 替换任务恢复**抢不到档案锁**而放弃等待的次数。>0 说明有进程长时间握着 `.lock`，那条 run 停在原地等人看 |
 | `job_duration_seconds` | histogram | name | 100ms~900s |
@@ -122,7 +127,7 @@ app sync-roles --dry-run   # 只打印会补什么，不写库
 
 计数类在事件发生时打点；积压类在**抓取时**去查真实来源，所以重启后立刻是对的。
 
-### 3.2 建议的六条告警
+### 3.2 建议的七条告警
 
 ```promql
 # 5xx 比例（按路由定位）
@@ -146,6 +151,11 @@ rate(queue_dequeue_errors_total[5m]) > 0
 # 替换任务恢复抢不到档案锁、等满六轮后放手：那条 run 的状态不会再自己往前走。
 # 恢复作业不会再自己重投（有上限），所以这条不告警就没人知道。
 increase(replacement_recovery_lock_giveups_total[30m]) > 0
+
+# 消费协程死了：探针永远不会因此变红，只有这条能发现「进程活着、后台全停」。
+# 用 max_over_time 而不是瞬时值：滚动重启期间短暂不等是正常的。
+max_over_time(worker_consumers{state="alive"}[5m])
+  < max_over_time(worker_consumers{state="desired"}[5m])
 ```
 
 任务成功率建议用 `increase` 而不是 `rate`，量小时 rate 会抖：

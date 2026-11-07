@@ -56,6 +56,18 @@ QUEUE_ERRORS = METRICS.counter(
     "queue_dequeue_errors_total",
     "worker 取任务失败次数（队列驱动异常）",
 )
+# 协程存活情况（T31）。没有这两个数时，「worker 还在不在跑」只能靠
+# `jobs_processed_total` 不涨反推——那要等积压出现才发现，且分不清两种完全不同的故障：
+# 协程死了（state=alive < desired）与协程活着但卡在某个 handler 上（busy 长期等于并发数）。
+WORKER_CONSUMERS = METRICS.gauge(
+    "worker_consumers",
+    "消费协程数：state=alive 实际存活，state=desired 配置应有多少",
+    ("state",),
+)
+WORKER_BUSY = METRICS.gauge(
+    "worker_jobs_in_flight",
+    "正在执行的任务数；长期等于并发数说明有 handler 卡住了",
+)
 
 
 def register_handler(name: str, *, override: bool = False) -> Callable[[JobHandler], JobHandler]:
@@ -84,7 +96,12 @@ class Worker:
     async def start(self) -> None:
         if not HANDLERS:
             logger.info("未注册任何 job handler，worker 不启动")
+            WORKER_CONSUMERS.set(0, state="desired")
             return
+        WORKER_CONSUMERS.set(float(self._concurrency), state="desired")
+        # 先落一个 0：gauge 只在有样本时才出现在 /metrics 里，空闲期「这条序列不存在」
+        # 会让看板显示 no data、告警表达式也拿不到基线。
+        WORKER_BUSY.set(0)
         for i in range(self._concurrency):
             task = asyncio.create_task(self._loop(i), name=f"worker-{i}")
             # 最后一道记录：正常情况下 `_loop` 只在停机时退出，走到这里说明有东西
@@ -112,7 +129,18 @@ class Worker:
 
         所以分三层兜底：取任务失败 → 退避重试；任务执行/回执失败 → 记指标继续；
         其余意外 → 记日志继续。只有停机信号能让它退出。
+
+        存活计数放在这一层而不是 `_consume` 里：`_consume` 的 `while` 有两个出口
+        （停机、异常冒泡），数在循环里加减很容易在某个出口漏减，留下一个「看起来
+        还有 2 个协程在跑」的假象——那比没有指标更糟。
         """
+        WORKER_CONSUMERS.inc(state="alive")
+        try:
+            await self._consume(index)
+        finally:
+            WORKER_CONSUMERS.dec(state="alive")
+
+    async def _consume(self, index: int) -> None:
         failures = 0
         while not self._stopping.is_set():
             try:
@@ -161,6 +189,7 @@ class Worker:
         # 恢复入队时的 trace：此后这个任务的所有日志都带着「谁触发的那个请求」。
         # 执行结束必须还原，否则同一个 worker 的下一条任务会继承上一条的 id。
         previous = trace.adopt(job.trace_id)
+        WORKER_BUSY.inc()
         started = time.perf_counter()
         outcome = "error"
         label = job.name
@@ -202,6 +231,7 @@ class Worker:
                 outcome = "success"
                 await self._queue.ack(job)
         finally:
+            WORKER_BUSY.dec()
             JOBS_PROCESSED.inc(name=label, outcome=outcome)
             JOB_DURATION.observe(time.perf_counter() - started, name=label)
             trace.release(previous)
