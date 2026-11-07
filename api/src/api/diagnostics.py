@@ -335,10 +335,66 @@ def _check_workspace_and_blobs(report: DoctorReport, sample: int) -> None:
     )
 
 
+async def _check_cache_channel(report: DoctorReport) -> None:
+    """缓存驱动真做一次读写往返。
+
+    只报 `CACHE_DRIVER=memory` 没有意义：换成 Redis 后连不上，启动、健康检查、
+    业务只读接口全都正常，直到限流开始每请求 500 才发现。这里用「写 → 读 → 删」
+    证明它真的可用，而不是「配置看起来对」。
+    """
+    from infra import get_cache
+    from infra.cache.base import cache_key
+
+    probe = cache_key("doctor", "probe")
+    try:
+        cache = get_cache()
+        await cache.set(probe, b"1", ttl=30)
+        value = await cache.get(probe)
+        await cache.delete(probe)
+    except Exception as exc:  # 缓存驱动是可选依赖，故障不该让 doctor 自身崩溃
+        report.add(
+            "runtime.cache",
+            "FAIL",
+            f"CACHE_DRIVER={settings.cache_driver} 不可用：{exc}",
+        )
+        return
+    if value != b"1":
+        report.add(
+            "runtime.cache",
+            "FAIL",
+            f"CACHE_DRIVER={settings.cache_driver} 读写不一致（写 1 读回 {value!r}）",
+        )
+        return
+    report.add(
+        "runtime.cache",
+        "PASS",
+        f"CACHE_DRIVER={settings.cache_driver}，读写往返正常；前缀 {settings.cache_key_prefix!r}",
+    )
+
+
+def _check_http_channel(report: DoctorReport) -> None:
+    """出站 HTTP 只报配置，不发真实请求。
+
+    doctor 会在没有外网的机器上跑，探测供应商连通性属于部署验收，不是自检。
+    """
+    from infra.http import get_http_settings
+
+    config = get_http_settings()
+    report.add(
+        "runtime.http",
+        "INFO",
+        f"出站超时 {config.timeout_sec}s / 连接池 {config.max_connections}"
+        f"；Worker 并发 {settings.worker_concurrency}"
+        f"（连接池应不小于并发的 2 倍）",
+    )
+
+
 async def run_doctor(*, sample: int = 10) -> DoctorReport:
     report = DoctorReport()
     _check_ports(report)
     await asyncio.to_thread(_check_archive_storage, report)
     await _check_database(report)
+    await _check_cache_channel(report)
+    _check_http_channel(report)
     await asyncio.to_thread(_check_workspace_and_blobs, report, sample)
     return report

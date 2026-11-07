@@ -14,6 +14,7 @@ from functools import lru_cache
 from core.config import settings
 from infra.ai import GenerationRequest, GenerationState, ModelProvider, get_model_router
 from infra.ai.base import Capability
+from infra.cache.base import Cache
 from infra.loader import load_driver
 from infra.queue.base import Job, JobQueue
 from infra.storage.base import ObjectStorage
@@ -27,6 +28,16 @@ def get_storage() -> ObjectStorage:
 @lru_cache
 def get_queue() -> JobQueue:
     return load_driver("queue", settings.queue_driver)
+
+
+@lru_cache
+def get_cache() -> Cache:
+    """进程级缓存实例。
+
+    只放可丢失的数据（见 `infra/cache/base.py` 的判据）。默认内存实现，
+    两个副本各存一份——需要全局一致就把 `CACHE_DRIVER` 换成共享实现。
+    """
+    return load_driver("cache", settings.cache_driver)
 
 
 def get_video_provider() -> ModelProvider:
@@ -44,18 +55,20 @@ def reset_infra_cache() -> None:
     """测试用：清空工厂缓存以便切换配置。"""
     from infra.archive import reset_archive_storage
 
-    for factory in (get_storage, get_queue):
+    for factory in (get_storage, get_queue, get_cache):
         factory.cache_clear()
     reset_archive_storage()
 
 
 __all__ = [
+    "Cache",
     "Capability",
     "GenerationRequest",
     "GenerationState",
     "Job",
     "JobQueue",
     "ObjectStorage",
+    "get_cache",
     "get_image_provider",
     "get_model_router",
     "get_queue",

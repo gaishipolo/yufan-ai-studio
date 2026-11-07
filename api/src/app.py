@@ -154,6 +154,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 scheduler_task.cancel()
                 await scheduler_task
         await worker.stop()
+        # 出站连接池：不显式关闭的话，`--reload` 每轮都会把一批 keep-alive 连接
+        # 留给内核，几分钟后开始出现 TIME_WAIT 堆积与「连接被重置」
+        from infra.http import close_http
+
+        await close_http()
         await dispose_engine()
         # 口令线程池不随进程退出立刻回收（靠 atexit join），`--reload` 时每轮都留一组线程
         shutdown_hash_pool()

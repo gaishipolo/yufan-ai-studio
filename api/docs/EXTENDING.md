@@ -653,21 +653,50 @@ async def ask_xxx(...) -> ...:             # **未注册时返回中性值，不
 |---|---|---|
 | `storage` | `STORAGE_DRIVER` | `local` |
 | `queue` | `QUEUE_DRIVER` | `memory` |
+| `cache` | `CACHE_DRIVER` | `memory`（LRU + TTL） |
 | `ai` | `AI_PROVIDERS`（可多选） | `echo` / `agnes` / `libtv` |
 | `archive` | `ARCHIVE_DRIVER` | `local`（本地 / 共享盘） |
 
 新增一个只需两步：写 `infra/<kind>/<name>.py`（`Driver = 你的类`），改 `.env`。
-驱动自己的参数（base_url、api_key、根目录）放它自己的 `XxxSettings`
+驱动自己的参数（base_url、api_key、根目录、连接数）放它自己的 `XxxSettings`
 （`infra/driver_config.py`，前缀 = 驱动名大写），**不要**加回 `core/config.py`。
+配置巡检会自动发现它，不需要改测试（`import_all_driver_settings` 扫的是文件系统，
+不是手写清单——手写清单曾经让 `S3_ARCHIVE_*` 漏检半年）。
 
 两条纪律：
 
-- **只经工厂拿实现**。`get_storage()` / `get_queue()` / `get_archive_storage()` /
-  `get_model_router()`；直接 `new` 具体实现会让「换驱动只改配置」这句话失真，
-  `test_archive_storage_only_reached_through_factory` 就是为这条加的。
-- **协议只承诺能做到的事**。`ArchiveStorage` 用 `Path` 表达位置，代表它只支持
-  「有本地路径语义」的存储（本地目录、SMB/UNC、挂载点网关）。要接纯 HTTP 的
-  S3/MinIO，得先改协议，别在驱动里偷偷绕过去。
+- **只经工厂拿实现**。`get_storage()` / `get_queue()` / `get_cache()` /
+  `get_archive_storage()` / `get_model_router()`；直接 `new` 具体实现会让
+  「换驱动只改配置」这句话失真，`test_archive_storage_only_reached_through_factory`
+  就是为这条加的。
+- **协议只承诺能做到的事**。`ArchiveStorage` 用 **key** 表达位置（`read/write/
+  copy/list_keys`），远端驱动把「取值」表达成 `materialize()`（临时本地路径）与
+  `download_url()`（预签名地址），不假装自己有永久本地路径。新增驱动时如果发现
+  某个协议方法只能靠抛异常实现，说明协议错了，改协议，别在驱动里绕。
+
+### 5.2.1 调第三方：用 `get_http()`，别自己 new client
+
+`infra/http.py` 提供进程级共享 `httpx.AsyncClient`（`get_http()`），生命周期挂在
+lifespan 上。自己 `async with httpx.AsyncClient(...)` 会让三件事对不齐：超时
+（各写各的）、连接池（keep-alive 用不上）、SSRF 校验（只有部分路径做了）。
+
+- 下载产物用 `fetch_bytes(url, max_bytes=...)`：逐跳校验重定向、流式限大小、只对
+  429/5xx 重试；
+- 调 JSON 接口用 `get_http().post(...)`，重试自己判断——POST 重复提交等于重复计费；
+- 安全校验用 `validate_public_url()`，生产必须配 `IMAGE_ASSET_ALLOWED_HOSTS`
+  （黑名单兜底不解析 DNS，拦不住指向内网的域名）。
+
+### 5.2.2 缓存：只放「丢了也不会错」的数据
+
+`get_cache()` 返回 `Cache` 协议（`get/set/delete/exists/incr/clear`），默认进程内。
+放之前先问一句：**整块缓存丢失后业务是否仍然正确？**
+
+- 可以放：模型清单、热点只读聚合、限流计数；
+- 不许放：会话、令牌、余额、任务状态、归档索引——多实例下「A 登录 B 不认」，
+  重启一台机器等于全体掉线。
+
+缓存没有 `get_or_set`，回源策略（要不要加锁、失败是否返回旧值）由调用方写清楚；
+防击穿需要 singleflight，那是消费方的事，不是存储语义。
 
 ### 5.3 定期发生的事：`@periodic`，别写进 `app.py`
 

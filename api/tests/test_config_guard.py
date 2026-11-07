@@ -127,30 +127,19 @@ _FOREIGN_PATH = re.compile(r"^(?:[A-Za-z]:[\\/]|/(?:home|mnt|Users|opt|srv|var|t
 
 
 def _driver_settings() -> tuple[type[BaseSettings], ...]:
-    """驱动私有配置类。
+    """驱动私有配置类：自动发现，不再维护手写清单。
 
-    它们默认不加载（`AI_PROVIDERS` 里没有的驱动不会 import），
-    所以这里显式导入。**新增驱动时要把它的 Settings 加进来**，
-    否则本文件的三条守卫会漏掉它。
+    以前这里是一份元组，新增驱动必须记得加进来——`ArchiveS3Settings` 就是这么
+    漏了半年：`S3_ARCHIVE_*` 写进 `.env.example` 反而被判「无法识别的键」。
+    现在靠 `DriverSettings.__init_subclass__` 自动登记，本函数只负责把模块
+    import 进来（登记是 import 副作用）。
+
+    `extra_modules` 是业务模块自带的驱动配置：`ImageAssetSettings` 在
+    `modules/image/pipeline.py`，不在 `infra/` 扫描范围。
     """
-    from infra.ai.agnes import AgnesSettings
-    from infra.ai.libtv import LibTvSettings
-    from infra.archive.local import ArchiveSettings
+    from infra.driver_config import import_all_driver_settings
 
-    # 归档 S3 驱动以前漏登记：S3_ARCHIVE_* / S3_BUCKET_MODE 一直不在配置巡检范围，
-    # 写进 .env.example 反而会被当成「无法识别的键」。两条 S3 通路都要巡检。
-    from infra.archive.s3 import ArchiveS3Settings
-    from infra.storage.s3 import S3Settings
-    from modules.image.pipeline import ImageAssetSettings
-
-    return (
-        AgnesSettings,
-        LibTvSettings,
-        ArchiveSettings,
-        ArchiveS3Settings,
-        S3Settings,
-        ImageAssetSettings,
-    )
+    return import_all_driver_settings(extra_modules=("modules.image.pipeline",))
 
 
 def _all_yaml_fields() -> list[tuple[str, str, object]]:

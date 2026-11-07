@@ -20,11 +20,15 @@
 from __future__ import annotations
 
 import importlib
+from collections.abc import Sequence
+from pathlib import Path
 from typing import Any, ClassVar
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from core.config import ENV_FILE
+
+_INFRA_ROOT = Path(__file__).resolve().parent
 
 # 显式声明过 model_config 的子类会登记在这里，供 `tests/test_config_guard.py` 巡检。
 # 延迟导入的驱动只有被 import 时才会登记，因此测试里要显式 import 待检查的模块。
@@ -80,6 +84,58 @@ def registered_driver_settings() -> tuple[type[DriverSettings], ...]:
     return tuple(dict.fromkeys(_REGISTRY))
 
 
+def import_all_driver_settings(
+    *, extra_modules: Sequence[str] = ()
+) -> tuple[type[DriverSettings], ...]:
+    """import 全部 infra 驱动模块，返回其中的 `DriverSettings` 子类。
+
+    给**配置巡检**用：`.env.example` 要求「写了就必须能被某个 Settings 解析」，
+    而巡检必须看到所有可能的驱动配置，不能只看到当前启用的那几个。
+
+    为什么不用 `pkgutil.walk_packages`：`infra/storage/` 与 `infra/queue/` 是
+    namespace package（没有 `__init__.py`），`walk_packages` 不递归进去，于是这两个
+    驱动目录整个被漏掉——守卫会「通过」，但 `S3Settings` 从来没被查过。这里直接
+    扫文件系统，不依赖包结构。
+
+    为什么从模块对象取类、而不是读 `_REGISTRY`：登记是 import 的副作用，而
+    `sys.modules` 里的模块不会重新执行。`test_prod_guard_imports_active_driver_before_checking`
+    会把 `_REGISTRY` 和 `sys.modules["infra.storage.s3"]` 一起清空再触发重新
+    import，teardown 时两者各自恢复——重新执行产生的类落进了临时列表，而模块缓存
+    恢复成旧对象，结果是登记表**永久**少一个类（其它用例开始误报「未知配置键」）。
+    直接读 `vars(module)` 不受 import 时序影响。
+
+    `extra_modules` 用于业务模块自带的驱动配置（例如 `modules.image.pipeline`
+    的 `ImageAssetSettings`）：它们不在 `infra/` 下，但同样要进巡检。
+    """
+    found: list[type[DriverSettings]] = []
+
+    def collect(module: object) -> None:
+        for value in vars(module).values():
+            if (
+                isinstance(value, type)
+                and issubclass(value, DriverSettings)
+                and value is not DriverSettings
+            ):
+                found.append(value)
+
+    for path in _INFRA_ROOT.rglob("*.py"):
+        if path.name == "__init__.py" or "__pycache__" in path.parts:
+            continue
+        relative = path.relative_to(_INFRA_ROOT).with_suffix("")
+        module_name = "infra." + ".".join(relative.parts)
+        try:
+            collect(importlib.import_module(module_name))
+        except ModuleNotFoundError as exc:
+            # 可选依赖缺失（例如没装 boto3）不该让配置巡检整体失败，
+            # 但「模块本身不存在」以外的错误必须冒出来。
+            if exc.name == module_name:
+                continue
+            raise
+    for module_name in extra_modules:
+        collect(importlib.import_module(module_name))
+    return tuple(dict.fromkeys(found))
+
+
 def registered_submit_budgets(capability: str) -> list[float]:
     """只取**显式声明**贡献该能力提交预算的驱动配置的 `timeout_sec`。
 
@@ -120,6 +176,8 @@ def _driver_is_active(cls: type[DriverSettings]) -> bool:
         return settings.archive_driver == cls.driver_name
     if kind == "queue":
         return settings.queue_driver == cls.driver_name
+    if kind == "cache":
+        return settings.cache_driver == cls.driver_name
     if kind == "ai":
         names = {item.strip() for item in settings.ai_providers.split(",") if item.strip()}
         return cls.driver_name in names
@@ -141,6 +199,7 @@ def _ensure_active_drivers_imported() -> None:
         ("storage", settings.storage_driver),
         ("archive", settings.archive_driver),
         ("queue", settings.queue_driver),
+        ("cache", settings.cache_driver),
     ]
     targets += [
         ("ai", name.strip())
@@ -209,6 +268,7 @@ __all__ = [
     "DriverSettings",
     "driver_config",
     "ensure_prod_driver_settings",
+    "import_all_driver_settings",
     "precheck_submit_budgets",
     "registered_driver_settings",
     "registered_submit_budgets",

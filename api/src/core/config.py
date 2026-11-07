@@ -110,6 +110,12 @@ class Settings(BaseSettings):
     storage_public_base: str = "/static"
 
     queue_driver: str = "memory"
+    # 缓存驱动：memory = 进程内，随进程消失；redis 等共享实现未落地时启动即报错。
+    # **只放可丢失的加速数据**：限流计数、模型清单、热点只读查询。
+    # 会话与令牌的权威状态在 DB，不能只放这里——多实例下各缓存各的等于没登录。
+    cache_driver: str = "memory"
+    # key 前缀：多个环境共用一个 Redis 时用来隔离。改名只会让旧键全部 miss（无害）。
+    cache_key_prefix: str = "yufan"
     # 归档盘驱动。以前归档盘是写死的 `LocalArchiveStorage()`，`.env.example`
     # 里「换实现只改这里」这句承诺对它不成立；现在它和 storage / queue 同形态。
     archive_driver: str = "local"

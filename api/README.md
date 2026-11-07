@@ -81,7 +81,7 @@ Vite 会把 `/api` 代理到 `VITE_API_PROXY_TARGET`（默认 `http://127.0.0.1:
 | `app prune-blobs [--execute] [--min-age-hours 24] [--include-trash] [--trash-age-days 30]` | 回收没人引用的孤儿字节；`--include-trash` 同时彻底清理超期的软删记录（软删本身不释放空间） |
 | `app verify-blobs [--all] [--sample 20]` | 读回字节重算 sha256，报告损坏/缺失对象；`key = sha256` 本身就是校验和 |
 | `app rebuild-mirrors [--dry-run]` | 按 DB 幂等重建 `catalog/assets/*.json`：补缺镜像、更新 `stateVersion` 落后的、清掉无 DB 行的孤儿 |
-| `app doctor [--strict]` | 部署自检（14 项）：条件写、引用来源完备性、预签名、DB/镜像一致性、镜像对账、选主、旧 URL、配额、完整性抽检 |
+| `app doctor [--strict]` | 部署自检（16 项）：条件写、引用来源完备性、预签名、DB/镜像一致性、镜像对账、选主、旧 URL、配额、缓存读写往返、出站 HTTP 配置、完整性抽检 |
 | `app audit-events [--action ...] [--target ...]` | 查看最近的操作留痕（分享、回收站、彻底删除、封装发布） |
 | `app runs-status` | 打印运行工作区在哪、本机可见多少个档案、多少个「指针在桶里但工作区不在本机」 |
 | `app prune-logins [--days 90]` | 清理过期的登录审计（默认取 `LOGIN_EVENT_RETENTION_DAYS`） |
