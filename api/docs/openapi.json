@@ -6817,6 +6817,14 @@
           "queueSize": {
             "type": "integer",
             "title": "Queuesize"
+          },
+          "checks": {
+            "items": {
+              "$ref": "#/components/schemas/RuntimeCheckOut"
+            },
+            "type": "array",
+            "title": "Checks",
+            "default": []
           }
         },
         "type": "object",
@@ -6825,7 +6833,8 @@
           "database",
           "queueSize"
         ],
-        "title": "ReadyOut"
+        "title": "ReadyOut",
+        "description": "就绪状态。`checks` 说明每一项依赖的结论，status ∈ ok / degraded / down。"
       },
       "ReconfirmReplacement": {
         "properties": {
@@ -7688,6 +7697,34 @@
         },
         "type": "object",
         "title": "RoleUpdateIn"
+      },
+      "RuntimeCheckOut": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "ok": {
+            "type": "boolean",
+            "title": "Ok"
+          },
+          "detail": {
+            "type": "string",
+            "title": "Detail"
+          },
+          "required": {
+            "type": "boolean",
+            "title": "Required",
+            "default": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "ok",
+          "detail"
+        ],
+        "title": "RuntimeCheckOut"
       },
       "SessionOut": {
         "properties": {

@@ -7,8 +7,9 @@
 >
 > 来源：`CODE_REVIEW_2026-11-06_R11~R14`、`CODE_REVIEW_2026-11-06_FE6`、
 > `EXTENSIBILITY_GAPS.md` 的 B1/C1/C2，以及素材分支合并时新发现的项。
-> 最后更新：2026-11-07 19:40（横向能力第二批：队列 db 驱动 + 事件 outbox + 通用限流；
-> Redis 暂不引入，改为把驱动协议与配置入口留好；剩余边界登记为 T26/T27）
+> 最后更新：2026-11-07 20:40（三条纵向主线：数据线加迁移漂移守卫与事务边界守卫，
+> 运维线加指标 / 就绪聚合 / 备份恢复 / 功能开关，工程线补脚手架示例；
+> 剩余边界登记为 T26~T30）
 
 ## 一眼看完
 
@@ -28,6 +29,9 @@
 | T25 | 多实例部署还差三处硬边界 | 配额首次并发、预签名 TOCTOU、运行工作区仍要共享盘 | 架构 |
 | T26 | db 队列是轮询式，没有唤醒机制 | 空转查询按 worker 数叠加；万级 QPS 要换 Redis 驱动（协议已备好） | 架构 |
 | T27 | 限流只有依赖级，没有全局兜底；固定窗口有 2× 边界误差 | 未显式挂 `rate_limit()` 的接口完全不限；窗口交界处瞬时可达 2 倍额度 | 后端 |
+| T28 | 备份只有手工命令，没有调度与保留策略 | 没人跑就没有备份；也没验证过保留期清理 | 运维 |
+| T29 | 指标是单进程语义，未做多进程聚合 | 多 worker 部署要靠 Prometheus `sum by`；本机 `curl /metrics` 只看到一部分 | 架构 |
+| T30 | 迁移漂移守卫只覆盖 sqlite 方言 | PG 特有的默认值/条件索引差异不会被 `compare_metadata` 报出来 | 架构 |
 
 ---
 
@@ -182,6 +186,35 @@ PostgreSQL 的 `LISTEN/NOTIFY`：写完 `NOTIFY`，worker 侧长连接被唤醒�
 
 ---
 
+## T28 · 备份没有调度与保留策略
+
+`app backup` 解决的是「能不能备份、能不能恢复」，不解决「有没有人每天跑」。
+现在需要运维自己挂 cron / 计划任务，保留期也要自己删目录。
+
+**验收**：`BACKUP_DIR` + `BACKUP_RETENTION_DAYS` 配置，`@periodic` 每日备份并按保留期
+清理；或明确写「备份属于部署层职责」并给出 systemd timer / K8s CronJob 样例。
+
+## T29 · 指标是单进程语义
+
+计数器在进程内存里：多 worker / 多副本时每个进程各暴露一份，
+`curl localhost/metrics` 只看到其中一个。Prometheus 侧用 `sum` 聚合同名序列没问题，
+但任何「直接读端点做汇总」的脚本都会算错。
+
+刻意不做多进程聚合（需要共享存储或 pushgateway，都会引入新的故障域）。
+**验收**：文档写清（已写进 `docs/OPS.md` §8），或提供一个 `--json` 的聚合视图给脚本用。
+
+## T30 · 迁移漂移守卫只覆盖 sqlite
+
+`tests/test_migrations.py` 用临时 sqlite 跑 `upgrade head` + `compare_metadata`。
+这能抓住 99% 的「改了模型没写迁移」，但 sqlite 没有 PG 的条件索引、部分方言类型、
+`server_default` 表达差异——只在 PG 上才会出现的漂移仍要靠 CI 里的
+`alembic check`（需要 PG service）兜。
+
+**验收**：CI 加 postgres service 后跑同一组断言；或明确接受 sqlite 覆盖度。
+
+
+---
+
 ## 已复核关闭（别再重做）
 
 2026-11-06 合并后逐条核过，以下都已修好，留在这里防止重复劳动：
@@ -208,5 +241,7 @@ PostgreSQL 的 `LISTEN/NOTIFY`：写完 `NOTIFY`，worker 侧长连接被唤醒�
 | T14 反模式表补两条 | 已修 | `REVIEW_CHECKLIST.md §6` 新增 19–22：fail-closed 例外、双写必须有反向重建（本轮），以及 R13-01 门控按语义集合对照、R14-01 守卫要验「通不通」（原验收口径），各带真实反例 |
 | 素材库基建封顶（扩展性 / 健壮性） | 已修 | ① 引用来源由 `ModuleSpec.asset_reference_sources` 声明 + AST 守卫对账写入点 + 运行时 fail-closed（缺来源抛 503，不再静默放行删除）；② `modules/asset/mirror.py` 把 DB 定为唯一事实来源，写入顺序统一 commit→投影，`stateVersion` 幂等对账（`@periodic("asset.mirror")` + `app rebuild-mirrors`）自动补缺/更新/清孤儿，doctor 的反向建议已改正；③ `infra/blob.py` 让两条 S3 通路共用一份 boto3 client 与凭据，`S3_BUCKET_MODE=shared` 支持单桶前缀隔离；④ `core/coordination.py` 的 `LeaderElector`（local / 基于 `create()` CAS 租约的 backend）注入 Scheduler，GC 标 `leader_only`；⑤ 配额在 PG 下 `FOR UPDATE` 串行化。修复了 `S3_ARCHIVE_CACHE_DIR` 字段名与文档长期不符（实际读的是 `S3_CACHE_DIR`） |
 | 横向能力第二批（队列 / 事件 / 限流） | 已修 | ① `QUEUE_DRIVER=db`：`db/jobs.py` + `infra/queue/db.py`，条件 UPDATE 领取 + 租约接管崩溃任务 + 部分唯一索引管幂等键 + 死信留档；② `db/outbox.py`：`record()` 与业务同事务落库，`@periodic("core.outbox")` 至少一次投递 + 退避 + 终态清理，`modules/task/worker.py` 的失败通知已改走它（原来 commit 后 publish 会静默丢事件）；③ `core/ratelimit.py` + `api.deps.rate_limit()`：基于 `Cache.incr` 的固定窗口，缓存故障降级放行，`POST /tasks` 已挂；④ Redis 未引入，但协议映射表、`*_DRIVER` 开关、`DriverSettings` 自动巡检三个入口都已备好；doctor 16→17 项（队列可达性） |
+
+| 三条纵向主线（数据 / 运维 / 工程） | 已修 | ① 数据线：`tests/test_migrations.py` 在临时库上 `upgrade head` + `compare_metadata` 断言零漂移，CI 另跑真实 `alembic upgrade head && alembic check`；`test_routers_do_not_manage_transactions` 禁止路由层碰事务。② 运维线：`core/metrics.py`（自研 Prometheus 文本暴露）+ `api/instrumentation.py` + `/metrics`（`METRICS_TOKEN`，生产无 token 403）+ worker 指标；`queued_jobs.trace_id` / `outbox_events.trace_id` 让异步段日志接回原请求；`/health/ready` 改三档（ok/degraded/down）+ 逐项 checks；`app backup/restore`（sqlite backup API、迁移清单、恢复前留现场）；`core/flags.py` 功能开关；doctor 17→21 项。③ 工程线：脚手架补缓存/HTTP/队列/outbox/限流/开关/指标用法与写接口限流示例，`new-module` 提示补迁移与 `sync-roles` |
 
 `ARCHITECTURE.md` / `EXTENSIBILITY_GAPS.md` 里 A 组 13 条已修 10 条，剩余 3 条即上面的 T7/T8/T9。

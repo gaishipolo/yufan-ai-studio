@@ -94,7 +94,9 @@
 | `api/deps.py` | 通用依赖：数据库会话、分页、当前操作者、基础设施、权限。 |
 | `api/discovery.py` | 模块自动发现（`pkgutil` 扫 `modules/`，读每个包的 `ModuleSpec`）。 |
 | `api/errors.py` | 全局异常处理器：把任何异常收敛成 `{code, message, data}`。 |
-| `api/middleware.py` | HTTP 中间件：请求 ID、耗时、CORS 前置处理。 |
+| `api/middleware.py` | HTTP 中间件：请求 ID、耗时、CORS 前置处理，并给每个请求打 `http_requests_total` / 耗时直方图（标签用路由模板）。 |
+| `api/instrumentation.py` | 指标族声明（HTTP / 队列 / outbox / 构建信息）与抓取时的瞬时值采集（`refresh_runtime_gauges`）。 |
+| `api/ops.py` | 运维端点 `/metrics`：独立于业务路由，`METRICS_TOKEN` 校验，不进 OpenAPI。 |
 | `api/module.py` | 模块描述对象 `ModuleSpec`：router / permissions / startup / `recovery_kinds` / seed / public。 |
 | `api/registry.py` | 模块注册表（自动发现版）：按名字查模块、汇总权限点、启动钩子。 |
 | `api/v1/__init__.py` | API v1 版本包。 |
@@ -132,6 +134,9 @@
 | `core/scheduler.py` | 周期任务扩展点：`@periodic("模块.动作", every=秒)` 注册，进程内单调度器；模块自己说「多久问一次」，框架不认识任何具体任务。 |
 | `core/response.py` | 统一响应包装 `{code,message,data}` 与分页原语 `Page`。 |
 | `core/schema.py` | Pydantic 基座：统一 camelCase 契约，与前端 TypeScript 类型一一对应。 |
+| `core/metrics.py` | 指标基元（counter / gauge / histogram）+ Prometheus 文本暴露，不引第三方库；标签基数有上限。 |
+| `core/trace.py` | 异步链路的 trace 传递：入队/写 outbox 时快照 `request_id`，执行时恢复、结束还原。 |
+| `core/flags.py` | 功能开关唯一出口 `is_on("领域.动作")`；不做灰度、不做热更新。 |
 | `core/security.py` | 鉴权原语：JWT 签发/校验 + 口令哈希（`hash_password_async` / `verify_password_async` 是唯一入口）。 |
 
 ### 3.4 `db/` —— 数据访问层
@@ -144,6 +149,9 @@
 | `db/session.py` | 数据库会话与引擎管理（async session、事务边界）。 |
 | `db/audit.py` | 通用操作留痕表 `audit_events`（谁/何时/对什么/参数），与 identity 的登录审计分开。 |
 | `db/audit_sink.py` | `core.audit` 的数据库写入端：独立开会话，业务回滚了也要留得下。 |
+| `db/jobs.py` | 持久化队列表 `queued_jobs`（含 `trace_id`、租约、死信）。 |
+| `db/outbox.py` | 事件 outbox：`record()` 与业务同事务落库，周期任务至少一次投递。 |
+| `db/backup.py` | 备份/恢复：sqlite 用 backup API 取一致快照、postgres 走 `pg_dump`，附 `manifest.json`。 |
 
 ### 3.5 `generation/` —— 生成编排框架
 

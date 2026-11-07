@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
-from core.config import settings
+from core.config import get_settings
 from core.logging import get_logger
 from db.base import Base
 
@@ -30,6 +30,7 @@ _session_factory: async_sessionmaker[AsyncSession] | None = None
 
 
 def _engine_kwargs() -> dict[str, Any]:
+    settings = get_settings()
     kwargs: dict[str, Any] = {"echo": settings.db_echo, "future": True}
     if settings.is_sqlite:
         # sqlite 不支持连接池参数；文件库需保证目录存在
@@ -50,6 +51,7 @@ def _engine_kwargs() -> dict[str, Any]:
 def get_engine() -> AsyncEngine:
     global _engine
     if _engine is None:
+        settings = get_settings()
         _engine = create_async_engine(settings.db_url, **_engine_kwargs())
         logger.info("数据库引擎已创建: %s", settings.db_url.split("///")[0])
     return _engine

@@ -85,6 +85,19 @@ jobs:
           ruff check src tests
           if [ -d scripts ]; then ruff check scripts; fi
 
+      # 迁移漂移的第二道闸（第一道是 tests/test_migrations.py）。
+      # pytest 用 Base.metadata 建表，生产用 Alembic；这条用真实 CLI 在空库上
+      # 走一遍「升级 + 比对」，顺带证明打包产物里有 migrations/ 与 alembic.ini。
+      - name: 迁移与模型一致
+        env:
+          APP_ENV: dev
+          SETTINGS_ENV_FILE: ./.ci-no-such.env
+          DB_URL: sqlite+aiosqlite:///./var/ci-migrate.db
+        run: |
+          mkdir -p var
+          alembic upgrade head
+          alembic check
+
       - name: mypy
         # 项目依赖 Windows 共享盘与 Win32 API（ctypes.WinDLL）。CI 跑在 Linux，
         # 按 Linux typeshed 检查会把 WinDLL / get_last_error 判为不存在，故显式指定 win32。

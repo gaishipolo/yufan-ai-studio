@@ -2109,6 +2109,7 @@ Authorization: Bearer <accessToken>
 | `status` | `string` | 是 |  |
 | `database` | `string` | 是 |  |
 | `queueSize` | `number` | 是 |  |
+| `checks` | `RuntimeCheckOut[]` | 否 |  |
 
 ---
 
@@ -2546,11 +2547,14 @@ Authorization: Bearer <accessToken>
 
 ### `ReadyOut`
 
+就绪状态。`checks` 说明每一项依赖的结论，status ∈ ok / degraded / down。
+
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `status` | `string` | 是 |  |
 | `database` | `string` | 是 |  |
 | `queueSize` | `number` | 是 |  |
+| `checks` | `RuntimeCheckOut[]` | 否 |  |
 
 ### `ReconfirmReplacement`
 
@@ -2741,6 +2745,15 @@ Authorization: Bearer <accessToken>
 | `name` | `string \| null` | 否 | 角色名称 |
 | `description` | `string \| null` | 否 | 角色说明 |
 | `isSuperuser` | `boolean \| null` | 否 | 仅超级管理员可设置 |
+
+### `RuntimeCheckOut`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `name` | `string` | 是 |  |
+| `ok` | `boolean` | 是 |  |
+| `detail` | `string` | 是 |  |
+| `required` | `boolean` | 否 |  |
 
 ### `SessionOut`
 

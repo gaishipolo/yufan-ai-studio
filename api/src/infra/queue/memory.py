@@ -12,6 +12,7 @@ import asyncio
 import heapq
 from typing import Any
 
+from core import trace
 from infra.queue.base import Job
 
 
@@ -25,6 +26,9 @@ class MemoryJobQueue:
 
     # ------------------------------------------------------------------ 入队
     async def enqueue(self, job: Job, *, delay: float = 0) -> str:
+        # 入队即快照 trace：业务不传也带着「谁触发的」，与 db 驱动保持一致
+        if not job.trace_id:
+            job.trace_id = trace.current()
         async with self._cv:
             key = job.idempotency_key
             if key and key in self._by_key:

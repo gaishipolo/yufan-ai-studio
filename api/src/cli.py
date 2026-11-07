@@ -16,6 +16,8 @@ app verify-blobs [--all]           # 读回字节重算 sha256，报告损坏/�
 app rebuild-mirrors [--dry-run]    # 按 DB 幂等重建 JSON 镜像，清孤儿（DB 是唯一真相源）
 app doctor                         # 部署自检：条件写、预签名、镜像一致性、完整性抽检
 app runs-status                    # 运行工作区现状：多少档案只在本机可见
+app backup [--out var/backups]     # 备份数据库（sqlite 快照 / postgres pg_dump）+ 清单
+app restore --from-dir <dir> --force # 用备份覆盖当前库（先另存现场）
 app new-module voice --label 配音   # 生成新模块脚手架
 """
 
@@ -609,6 +611,32 @@ def _cmd_doctor(args: argparse.Namespace) -> None:
         raise SystemExit(1)
 
 
+def _cmd_backup(args: argparse.Namespace) -> None:
+    from db.backup import BackupError, create_backup
+
+    out_dir = Path(args.out).resolve()
+    try:
+        target, manifest = asyncio.run(create_backup(out_dir, note=args.note))
+    except BackupError as exc:
+        print(f"备份失败：{exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
+    print(f"备份目录：{target}")
+    print(f"  {manifest.summary()}")
+    print("提示：对象存储里的字节不在这份备份里，请确认归档盘自身的版本化/复制策略。")
+
+
+def _cmd_restore(args: argparse.Namespace) -> None:
+    from db.backup import BackupError, restore_backup
+
+    try:
+        manifest = restore_backup(Path(args.from_dir).resolve(), force=args.force)
+    except BackupError as exc:
+        print(f"恢复失败：{exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
+    print(f"已恢复：{manifest.created_at}（schema={manifest.schema_head or '未知'}）")
+    print("请重启服务后再验证：连接池里可能还有指向旧文件的句柄。")
+
+
 async def _prune_archive_blobs(*, execute: bool, min_age_hours: float) -> tuple[int, int, int]:
     """兼容旧调用点（测试与脚本）：薄封装，不再有第二份实现。"""
     from modules.asset.maintenance import run_archive_gc
@@ -686,8 +714,13 @@ def _cmd_new_module(args: argparse.Namespace) -> None:
     print()
     print("下一步：")
     print("  1. 补全 service.py 的业务逻辑（当前接口返回 501）")
-    print(f"  2. 执行 alembic revision --autogenerate -m '{plan.name} init'")
+    print(
+        f"  2. 执行 alembic revision --autogenerate -m '{plan.name} init'，"
+        "然后 alembic upgrade head"
+    )
+    print("     （漏了这步，测试环境照样绿，生产第一条查询就 no such column）")
     print("  3. 重启服务，`app modules` 应能看到该模块")
+    print("  4. 新权限点要跑一次 `app sync-roles`，否则内置角色拿不到")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -855,6 +888,20 @@ def main(argv: list[str] | None = None) -> int:
     p_audit.add_argument("--target", default="", help="按对象 id 过滤")
     p_audit.add_argument("--limit", type=int, default=30, help="条数（默认 30）")
     p_audit.set_defaults(func=_cmd_audit_events)
+
+    p_backup = sub.add_parser(
+        "backup", help="备份数据库（sqlite 一致快照 / postgres pg_dump）并写清单"
+    )
+    p_backup.add_argument("--out", default="var/backups", help="备份根目录（默认 var/backups）")
+    p_backup.add_argument("--note", default="", help="备注，写进 manifest.json")
+    p_backup.set_defaults(func=_cmd_backup)
+
+    p_restore = sub.add_parser("restore", help="用备份覆盖当前库（会先把现场另存）")
+    p_restore.add_argument("--from-dir", required=True, help="备份目录（含 manifest.json）")
+    p_restore.add_argument(
+        "--force", action="store_true", help="覆盖已有数据必须显式确认（postgres 下同理）"
+    )
+    p_restore.set_defaults(func=_cmd_restore)
 
     p_new = sub.add_parser("new-module", help="生成新模块脚手架")
     p_new.add_argument("name", help="模块名（snake_case），同时作为目录名与 pipeline kind")

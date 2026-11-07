@@ -81,9 +81,11 @@ Vite 会把 `/api` 代理到 `VITE_API_PROXY_TARGET`（默认 `http://127.0.0.1:
 | `app prune-blobs [--execute] [--min-age-hours 24] [--include-trash] [--trash-age-days 30]` | 回收没人引用的孤儿字节；`--include-trash` 同时彻底清理超期的软删记录（软删本身不释放空间） |
 | `app verify-blobs [--all] [--sample 20]` | 读回字节重算 sha256，报告损坏/缺失对象；`key = sha256` 本身就是校验和 |
 | `app rebuild-mirrors [--dry-run]` | 按 DB 幂等重建 `catalog/assets/*.json`：补缺镜像、更新 `stateVersion` 落后的、清掉无 DB 行的孤儿 |
-| `app doctor [--strict]` | 部署自检（17 项）：条件写、引用来源完备性、预签名、DB/镜像一致性、镜像对账、选主、旧 URL、配额、缓存读写往返、队列可达性、出站 HTTP 配置、完整性抽检 |
+| `app doctor [--strict]` | 部署自检（21 项）：条件写、引用来源完备性、预签名、DB/镜像一致性、镜像对账、**schema 是否停在迁移 head**、选主、旧 URL、配额、缓存读写往返、队列可达性、**outbox 积压/失败**、**指标端点**、功能开关、出站 HTTP 配置、完整性抽检 |
 | `app audit-events [--action ...] [--target ...]` | 查看最近的操作留痕（分享、回收站、彻底删除、封装发布） |
 | `app runs-status` | 打印运行工作区在哪、本机可见多少个档案、多少个「指针在桶里但工作区不在本机」 |
+| `app backup [--out var/backups] [--note ...]` | 备份数据库：sqlite 用 backup API 取一致快照（WAL 下 `cp` 会拿到半份），postgres 走 `pg_dump`；同时写 `manifest.json`（时间、环境、schema 版本、各表行数） |
+| `app restore --from-dir <dir> [--force]` | 从备份覆盖当前库；覆盖前把现场另存为 `*.pre-restore-<时间戳>`（恢复错了还能退回去） |
 | `app prune-logins [--days 90]` | 清理过期的登录审计（默认取 `LOGIN_EVENT_RETENTION_DAYS`） |
 | `app new-module x --label 中文名` | 生成新模块脚手架（含权限声明） |
 | `alembic revision --autogenerate -m "xxx"` | 生成迁移（生产用） |
@@ -549,6 +551,16 @@ ruff check src tests
       崩溃任务由租约到期被其它实例接手。内存驱动在发版时会**静默丢掉**已入队未执行的任务。
       上规模（每秒几十个 job 以上）再实现 `infra/queue/redis.py` 并切 `QUEUE_DRIVER=redis`，
       业务代码不用改（见 `docs/EXTENDING.md` §5.2.4）。
+- [ ] `METRICS_TOKEN` 配一个随机串（`openssl rand -hex 16`）。生产环境留空时
+      `/metrics` 直接 403——面板会全空，而 `app doctor` 的 `runtime.metrics` 会提示。
+      抓取配置用 `Authorization: Bearer <token>`，不要用 `?token=`（会进访问日志）。
+- [ ] 接上 `/health/ready`（别只接 `/health`）：`down` 摘实例、`degraded` 只告警。
+      后者表示「能服务但在漏」（outbox 积压、死信超阈值、缓存不可用），
+      把它当 down 会让编排系统一次摘掉整批实例。
+- [ ] 备份策略：`app backup` 只能手工跑是不够的，至少配一条定时任务
+      （每日全量 + 保留 7 天）。备份要**演练**：拿一份新备份 `app restore --force`
+      到临时目录，确认表行数与 `manifest.json` 一致——没演练过的备份不算备份。
+      对象存储的字节不在数据库备份里，归档盘版本化/跨区复制要单独配。
 - [ ] `WORKER_ENABLED=false` 时单独起 worker 进程，避免 API 实例与 worker 抢队列
 - [ ] 反向代理（Nginx）转发到 8080，并透传 `X-Request-Id`
 - [ ] 有反代就配 `TRUSTED_PROXIES=<代理地址/网段>`（或给 uvicorn 加 `--proxy-headers

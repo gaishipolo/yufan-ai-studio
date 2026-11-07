@@ -173,6 +173,27 @@ class Settings(BaseSettings):
     # 默认额度：只在路由显式引用时生效，不是全局兜底（全局兜底容易被健康检查打穿）
     rate_limit_default_per_min: int = 60
 
+    # ---------- 可观测 ----------
+    # Prometheus 抓取端点（`/metrics`，不进 OpenAPI、不走业务鉴权）。
+    # 关闭时返回 404 而不是 403：不对外暴露「这里本来有个端点」。
+    metrics_enabled: bool = True
+    # 抓取凭据（`Authorization: Bearer <token>`）。生产环境留空时端点直接 403：
+    # 路由模板、队列积压、驱动名对内部人员是信息，对扫描器是地图。
+    metrics_token: str = ""
+    # 就绪探针的降级阈值。只影响 `degraded`，不影响 `down`：
+    # down 表示「不能服务请求」（库/队列不可用），degraded 表示「能服务但在漏」。
+    # 把积压报成 down 会让编排系统摘掉整批实例——本来只是事件晚几分钟。
+    health_outbox_pending_limit: int = 1000
+    # 死信是「跑过但没成功」的任务，需要人看。默认容忍少量：偶发的坏载荷不该
+    # 让整个集群显示不健康，但持续增长必须被看到。
+    health_dead_job_limit: int = 10
+
+    # ---------- 功能开关 ----------
+    # 不引配置中心：一份静态 JSON 足够覆盖「上线前先关掉、出问题立刻关掉」。
+    # 业务侧统一调用 `core.flags.is_on("xxx")`，不要在模块里各自读环境变量——
+    # 否则「有哪些开关」这个问题得靠 grep 才能回答。
+    feature_flags: Annotated[dict[str, bool], NoDecode] = Field(default_factory=dict)
+
     # 兼容旧的单值写法 AI_PROVIDER；推荐使用 AI_PROVIDERS=echo,volcengine
     ai_provider: str = "echo"
     ai_providers: str = ""
@@ -227,6 +248,26 @@ class Settings(BaseSettings):
         if not v.startswith("/"):
             v = f"/{v}"
         return v.rstrip("/")
+
+    @field_validator("feature_flags", mode="before")
+    @classmethod
+    def _parse_flags(cls, v: object) -> object:
+        """兼容 JSON 与环境变量里的 `a,b` 写法。
+
+        两种都支持是因为两种场景都真实存在：Compose / K8s 的配置里写
+        `FEATURE_FLAGS={"new_upload": false}` 更清楚；命令行临时试用
+        `FEATURE_FLAGS=new_upload` 更省事。值为 `false` 的键保留在字典里，
+        这样「显式关掉」和「从没声明」在 `enabled()` 里可以区分。
+        """
+        if isinstance(v, str):
+            raw = v.strip()
+            if not raw:
+                return {}
+            if raw.startswith("{"):
+                parsed = json.loads(raw)
+                return {str(key): bool(value) for key, value in parsed.items()}
+            return {item.strip(): True for item in raw.split(",") if item.strip()}
+        return v
 
     @model_validator(mode="after")
     def _guard_generation_budget(self) -> Settings:

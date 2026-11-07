@@ -23,6 +23,7 @@ from fastapi.staticfiles import StaticFiles
 from api.discovery import active_modules
 from api.errors import register_exception_handlers
 from api.middleware import RequestContextMiddleware
+from api.ops import build_ops_router
 from api.v1.router import build_v1_router
 from core.config import get_settings
 from core.logging import get_logger, setup_logging
@@ -150,6 +151,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             "仅限本机开发；生产环境请设置 APP_ENV=prod 或显式 ALLOW_ANONYMOUS=false"
         )
 
+    if settings.metrics_enabled and settings.app_env == "prod" and not settings.metrics_token:
+        # 不拦启动：监控没配好不该让服务起不来。但必须留痕——否则表现是
+        # 「面板全空」，而没人会想到去看 /metrics 返回的 403
+        logger.warning(
+            "METRICS_ENABLED 已开但未设置 METRICS_TOKEN：/metrics 将返回 403，抓不到任何指标"
+        )
+
     try:
         yield
     finally:
@@ -207,6 +215,9 @@ def create_app() -> FastAPI:
 
     register_exception_handlers(app)
     app.include_router(build_v1_router(), prefix=settings.api_prefix)
+    # 运维端点挂根路径、不进 OpenAPI：抓取方是 Prometheus，不是登录用户，
+    # 凭据是独立的 METRICS_TOKEN（见 api/ops.py）
+    app.include_router(build_ops_router())
     _mount_static(app, settings.storage_public_base)
 
     @app.get("/", include_in_schema=False)

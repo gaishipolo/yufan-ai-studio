@@ -54,6 +54,7 @@ from sqlalchemy import DateTime, Index, Integer, String, Text, delete, func, sel
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import Mapped, mapped_column
 
+from core import trace
 from core.config import settings
 from core.events import get_event_bus
 from core.logging import get_logger
@@ -75,6 +76,11 @@ class OutboxEvent(Base, UUIDMixin):
     # 事件名用 `领域.动作`，与 `core/events.py` 的订阅键一致
     name: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     payload: Mapped[str] = mapped_column(Text, default="{}", nullable=False)
+    # 写入时的请求 id（trace）：投递发生在周期任务里，没有它就无法回答
+    # 「这条事件是哪个用户动作产生的」。空串 = 非请求触发。
+    trace_id: Mapped[str] = mapped_column(
+        String(64), default="", server_default="", nullable=False
+    )
     status: Mapped[str] = mapped_column(String(16), default=OUTBOX_PENDING, nullable=False)
     attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     # 下次可投递时间：失败后按指数退避推后，别让坏事件每 5 秒重试一次
@@ -107,6 +113,7 @@ async def record(session: AsyncSession, name: str, /, **payload: Any) -> str:
     row = OutboxEvent(
         name=name,
         payload=json.dumps(payload, ensure_ascii=False, default=str),
+        trace_id=trace.current(),
     )
     session.add(row)
     # flush 只为拿到 id（默认值在 INSERT 时生成）；仍在调用方的事务里
@@ -203,7 +210,7 @@ async def dispatch_pending(
         # 拿三列元组去投递，不依赖 lazy load 是否还有效
         rows = (
             await session.execute(
-                select(OutboxEvent.id, OutboxEvent.name, OutboxEvent.payload)
+                select(OutboxEvent.id, OutboxEvent.name, OutboxEvent.payload, OutboxEvent.trace_id)
                 .where(
                     OutboxEvent.status == OUTBOX_PENDING,
                     OutboxEvent.available_at <= now,
@@ -226,13 +233,17 @@ async def dispatch_pending(
 
     delivered_ids: list[str] = []
     failed: list[tuple[str, str]] = []
-    for event_id, name, payload in rows:
+    for event_id, name, payload, trace_id in rows:
+        # 投递发生在周期任务里：恢复写入时的 trace，订阅方的日志才能接回原始请求
+        previous = trace.adopt(trace_id or "")
         try:
             await bus.publish(name, **_decode(payload))
         except Exception as exc:  # noqa: BLE001 - 单条坏事件不能中断整批
             failed.append((event_id, f"{type(exc).__name__}: {exc}"[:500]))
         else:
             delivered_ids.append(event_id)
+        finally:
+            trace.release(previous)
 
     # 成功的一批合并成一条 UPDATE；失败的逐条记原因与退避
     async with factory() as session:

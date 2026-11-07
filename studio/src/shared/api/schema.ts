@@ -488,11 +488,12 @@ export interface ProfileUpdateIn {
   avatarUrl?: string | null;
 }
 
-/** ReadyOut */
+/** 就绪状态。`checks` 说明每一项依赖的结论，status ∈ ok / degraded / down。 */
 export interface ReadyOut {
   status: string;
   database: string;
   queueSize: number;
+  checks?: RuntimeCheckOut[];
 }
 
 /** 确认「上一次提交可能已经花了钱」后才允许重提。
@@ -690,6 +691,14 @@ export interface RoleUpdateIn {
   description?: string | null;
   /** 仅超级管理员可设置 */
   isSuperuser?: boolean | null;
+}
+
+/** RuntimeCheckOut */
+export interface RuntimeCheckOut {
+  name: string;
+  ok: boolean;
+  detail: string;
+  required?: boolean;
 }
 
 /** 一条登录会话。前端「我的登录设备」列表用它。 */

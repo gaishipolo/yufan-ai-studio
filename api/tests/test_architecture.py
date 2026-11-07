@@ -513,3 +513,33 @@ def test_reference_sources_are_complete_after_discovery() -> None:
     assert not port.reference_source_gaps(), (
         f"删除会被拒绝：{port.reference_source_gaps()}"
     )
+
+
+# --------------------------------------------------------------------------- #
+# 事务边界
+# --------------------------------------------------------------------------- #
+def test_routers_do_not_manage_transactions() -> None:
+    """路由只做协议转换：`commit()` / `rollback()` 属于 service。
+
+    为什么值得一条架构守卫：`commit()` 出现在路由里时，「一个用例一次事务」就
+    变成了「一次调用一次事务」，而事务范围决定了三件事能不能成立——
+    ① outbox 的 `record()` 与业务行同事务；② 校验失败时不会留下半条数据；
+    ③ 一个 service 方法被另一个方法复用时不会在中途提交。
+    这类问题在 code review 里很容易被当成风格问题放过。
+    """
+    offenders: list[str] = []
+    for path in _python_files(MODULES_DIR):
+        if path.name != "router.py":
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+                continue
+            if node.func.attr in {"commit", "rollback", "flush"}:
+                offenders.append(
+                    f"{path.relative_to(SRC)}:{node.lineno} -> {node.func.attr}()"
+                )
+    assert not offenders, (
+        "路由层出现事务操作（事务边界必须留在 service）：\n"
+        + "\n".join(f"  - {item}" for item in offenders)
+    )

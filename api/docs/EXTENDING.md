@@ -767,6 +767,84 @@ async def create(
   `ZRANGEBYSCORE` + `ZREM`（或 `BRPOPLPUSH` + processing 列表）。只 `ZREM` 不留
   processing 列表，进程一崩那条 job 就**永远消失**——这比报错难查得多。
 
+### 5.2.5 可观测：指标、trace、功能开关
+
+三件事各管一段，别混用：
+
+| 问题 | 用什么 | 入口 |
+|---|---|---|
+| 现在积压多少 / 成功率多少 | 指标 | `core.metrics.METRICS` → `GET /metrics` |
+| 这一条请求为什么失败 | 结构化日志 + request id | 自动带；异步段靠 `trace_id` 列恢复 |
+| 这个功能现在该不该开 | 功能开关 | `core.flags.is_on("领域.动作")` |
+
+#### 加指标
+
+在**导入期**声明一次（同名同标签会返回同一实例，但没必要每请求都走注册表）：
+
+```python
+from core.metrics import METRICS
+
+REJECTED = METRICS.counter("asset_uploads_rejected_total", "上传被拒次数", ("reason",))
+
+async def upload(...) -> None:
+    REJECTED.inc(reason="quota")
+```
+
+四条纪律：
+
+1. **标签只用低基数字段**（method / route / status / outcome / name）。
+   把用户 id、资产 id、URL 当标签，时间序列会随流量线性增长——应用侧只看得到
+   「内存慢涨」，Prometheus 侧表现为查询超时，两边都难定位。`max_series`
+   （默认 500）是兜底：撞上会丢**新**序列并告警，保留既有曲线，不是许可证。
+2. **命名按 Prometheus 约定**：`_total` 计数、`_seconds` 耗时、`_bytes` 字节。
+   单位写进名字，面板上才不用猜。
+3. **抓取时才成立的值用 gauge**，并在 `api/instrumentation.py` 的
+   `refresh_runtime_gauges()` 里取真实来源（队列表、outbox 表）。靠打点维护的
+   积压量在「刚重启、还没跑过任务」时是错的。
+4. **多进程各暴露一份**，聚合交给 Prometheus（`sum by (le)`）。本骨架不做
+   跨进程聚合，也不落盘。
+
+`/metrics` 的访问控制：`METRICS_ENABLED` 开关 + `METRICS_TOKEN`（Bearer）。
+生产不配 token 时返回 403（`app doctor` 会提示）：路由模板、队列积压、驱动名
+对内部人员是信息，对扫描器是地图。关闭时返回 404，不暴露端点存在性。
+
+#### trace：异步之后还能接回原请求
+
+`X-Request-Id` 在 contextvar 里，跨过队列/outbox 就断了。框架在**入队与
+`outbox.record()` 时快照** `request_id`，在 **worker / 投递器执行时恢复**，
+所以 handler 里的日志天然带着触发它的那个请求 id（`queued_jobs.trace_id` /
+`outbox_events.trace_id` 两列，空串表示「非请求触发」）。
+
+自己起一条链路时要成对使用：
+
+```python
+from core import trace
+
+previous = trace.adopt(job_trace_id)   # 进入某条链路
+try:
+    ...
+finally:
+    trace.release(previous)            # 必须还原，否则下一条任务会继承这条的 id
+```
+
+#### 功能开关
+
+```python
+from core.flags import is_on
+
+if is_on("upload.multipart"):
+    ...
+```
+
+配置是 `FEATURE_FLAGS`（JSON 或逗号列表）。开关**只决定分支**，不决定装配：
+`WORKER_ENABLED`、`METRICS_ENABLED` 这类仍留在 `Settings` 里，因为它们影响
+「有没有这个能力」，而不只是「走哪条路」。
+
+刻意不做两件事：**不做灰度**（按用户/比例分流属于网关或实验平台，写进领域逻辑
+既污染代码也没法运营）、**不做热更新**（值在启动时读入，否则「这个请求到底走了
+哪条分支」就没有日志之外的证据）。`app doctor` 会列出全部已声明开关，
+「系统里有哪些开关」不需要靠 grep 回答。
+
 ### 5.3 定期发生的事：`@periodic`，别写进 `app.py`
 
 请求驱动和队列驱动都表达不了「没人触发、但每 N 秒要发生一次」。典型场景：

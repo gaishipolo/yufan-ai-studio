@@ -13,6 +13,7 @@ import uuid
 from starlette.datastructures import MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from api.instrumentation import IN_FLIGHT, observe_request, route_template
 from core.context import set_request_id
 from core.logging import get_logger
 
@@ -53,6 +54,7 @@ class RequestContextMiddleware:
 
         started = time.perf_counter()
         status_code = 500
+        IN_FLIGHT.inc()
 
         async def send_wrapper(message: Message) -> None:
             nonlocal status_code
@@ -67,6 +69,14 @@ class RequestContextMiddleware:
             await self.app(scope, receive, send_wrapper)
         finally:
             elapsed_ms = (time.perf_counter() - started) * 1000
+            IN_FLIGHT.dec()
+            # 路由模板而不是真实路径：`/tasks/abc123` 每个 id 都会变成一条时间序列
+            observe_request(
+                method=scope.get("method", "-"),
+                route=route_template(scope),
+                status=status_code,
+                elapsed=elapsed_ms / 1000,
+            )
             logger.info(
                 "%s %s -> %d (%.1fms)",
                 scope.get("method", "-"),

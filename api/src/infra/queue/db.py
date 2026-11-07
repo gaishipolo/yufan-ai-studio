@@ -49,6 +49,7 @@ from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from core import trace
 from core.config import settings
 from core.logging import get_logger
 from db.base import utcnow
@@ -92,6 +93,9 @@ class DbJobQueue:
 
     # ------------------------------------------------------------------ 入队
     async def enqueue(self, job: Job, *, delay: float = 0) -> str:
+        # 入队即快照 trace：异步段的日志要能接回触发它的那个请求（见 core/trace.py）
+        if not job.trace_id:
+            job.trace_id = trace.current()
         run_at = utcnow() + timedelta(seconds=max(0.0, delay))
         async with self._session() as session:
             if job.idempotency_key:
@@ -115,6 +119,7 @@ class DbJobQueue:
                     max_attempts=job.max_attempts,
                     idempotency_key=job.idempotency_key,
                     timeout_sec=job.timeout_sec,
+                    trace_id=job.trace_id,
                 )
             )
             try:
@@ -215,6 +220,7 @@ class DbJobQueue:
                 max_attempts=row.max_attempts,
                 idempotency_key=row.idempotency_key,
                 timeout_sec=row.timeout_sec,
+                trace_id=row.trace_id or "",
                 created_at=row.created_at,
             )
 

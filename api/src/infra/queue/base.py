@@ -66,6 +66,9 @@ class Job:
     idempotency_key: str | None = None
     # 单次执行超时（秒），None 表示不限制
     timeout_sec: float | None = None
+    # 入队时的请求 id（trace）。驱动负责落库与读回，`workers.py` 负责在执行时
+    # 恢复上下文；业务侧不需要关心，`enqueue()` 那一刻自动取（见 `core/trace.py`）。
+    trace_id: str = ""
     created_at: datetime = field(default_factory=lambda: datetime.now(tz=UTC))
 
     def with_attempt(self) -> Job:

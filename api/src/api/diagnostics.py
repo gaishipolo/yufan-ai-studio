@@ -19,6 +19,7 @@ import urllib.error
 import urllib.request
 from contextlib import suppress
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Literal
 
 from core.config import settings
@@ -27,6 +28,22 @@ from infra.archive.integrity import verify_blobs
 
 Level = Literal["PASS", "INFO", "WARN", "FAIL"]
 _CAS_PROBE = "catalog/locks/_doctor_cas.json"
+
+# `api/` 目录（本文件在 api/src/api/diagnostics.py）：alembic.ini 与 migrations/ 的锚点。
+# 放在模块级而不是协程里：`Path.resolve()` 是阻塞调用，写进 async 函数会被 ASYNC240 拦下，
+# 也确实会在慢盘上卡住事件循环。
+_API_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _migration_heads(api_root: Path) -> list[str]:
+    """读迁移图的 head。文件 I/O，调用方负责丢进线程池。"""
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+
+    cfg = Config(str(api_root / "alembic.ini"))
+    cfg.set_main_option("script_location", str(api_root / "migrations"))
+    return list(ScriptDirectory.from_config(cfg).get_heads())
+
 
 __all__ = ["Check", "DoctorReport", "run_doctor"]
 
@@ -417,6 +434,131 @@ async def _check_queue_channel(report: DoctorReport) -> None:
         report.add("runtime.queue", "INFO", detail)
 
 
+async def _check_schema_head(report: DoctorReport) -> None:
+    """数据库模式是否停在迁移 head 上。
+
+    开发/测试用 `Base.metadata.create_all` 建表，生产用 Alembic —— 两条路径。
+    生产环境一旦是 create_all 建的（或升级时漏跑迁移），表现是「代码更新了、
+    表还是旧的」，第一条访问新列的查询才 500。自检要在这里把它拦下。
+    """
+    from sqlalchemy import text
+
+    from db.session import get_session_factory
+
+    try:
+        heads = await asyncio.to_thread(_migration_heads, _API_ROOT)
+    except Exception as exc:  # noqa: BLE001 - 打包部署里可能没带 migrations/
+        report.add("schema.head", "WARN", f"读不到迁移目录：{type(exc).__name__}: {exc}")
+        return
+
+    if len(heads) != 1:
+        report.add("schema.head", "FAIL", f"迁移出现分叉：{heads}（upgrade head 会失败）")
+        return
+    expected = heads[0]
+
+    current = ""
+    try:
+        async with get_session_factory()() as session:
+            current = str(
+                await session.scalar(text("SELECT version_num FROM alembic_version")) or ""
+            )
+    except Exception:  # noqa: BLE001 - 表不存在就是「没跑过迁移」
+        current = ""
+
+    if current == expected:
+        report.add("schema.head", "PASS", f"数据库已到 head（{expected}）")
+        return
+    if not current:
+        level: Level = "FAIL" if settings.app_env == "prod" else "INFO"
+        report.add(
+            "schema.head",
+            level,
+            "库里没有 alembic_version：当前模式由 create_all 建立。"
+            "生产必须用 `alembic upgrade head`，否则后续迁移无法增量执行",
+        )
+        return
+    report.add(
+        "schema.head",
+        "FAIL",
+        f"数据库停在 {current}，迁移 head 是 {expected}：先执行 `alembic upgrade head`",
+    )
+
+
+async def _check_outbox_channel(report: DoctorReport) -> None:
+    """outbox 是否有积压或彻底失败的事件。
+
+    投递器是周期任务，坏了不会让任何接口报错——事件就这么静静地堆着，
+    直到有人发现「通知没发出去」。这是自检必须覆盖的一类静默故障。
+    """
+    from sqlalchemy import func, select
+
+    from db.outbox import OUTBOX_DELIVERED, OUTBOX_FAILED, OUTBOX_PENDING, OutboxEvent
+    from db.session import get_session_factory
+
+    try:
+        async with get_session_factory()() as session:
+            rows = await session.execute(
+                select(OutboxEvent.status, func.count()).group_by(OutboxEvent.status)
+            )
+            counts = {str(status): int(count) for status, count in rows.all()}
+    except Exception as exc:  # noqa: BLE001 - 迁移没跑时表不存在
+        report.add("runtime.outbox", "WARN", f"读不到 outbox_events：{type(exc).__name__}: {exc}")
+        return
+
+    pending = counts.get(OUTBOX_PENDING, 0)
+    failed = counts.get(OUTBOX_FAILED, 0)
+    delivered = counts.get(OUTBOX_DELIVERED, 0)
+    detail = f"待投递 {pending} / 已投递 {delivered} / 失败 {failed}"
+    if not settings.outbox_enabled:
+        report.add("runtime.outbox", "INFO", detail + "；OUTBOX_ENABLED=false，不会自动投递")
+    elif failed:
+        report.add(
+            "runtime.outbox",
+            "WARN",
+            detail + f"；{failed} 条重试用尽，需人工确认后清理（事件已丢，业务侧要补偿）",
+        )
+    elif pending > settings.health_outbox_pending_limit:
+        report.add(
+            "runtime.outbox",
+            "WARN",
+            detail + f"；积压超过阈值 {settings.health_outbox_pending_limit}，检查投递器与订阅方",
+        )
+    else:
+        report.add(
+            "runtime.outbox",
+            "PASS",
+            detail + f"；每 {settings.outbox_dispatch_interval_sec:g}s 投递一轮",
+        )
+
+
+def _check_metrics_exposure(report: DoctorReport) -> None:
+    if not settings.metrics_enabled:
+        report.add("runtime.metrics", "INFO", "METRICS_ENABLED=false，/metrics 返回 404")
+        return
+    if settings.app_env == "prod" and not settings.metrics_token:
+        report.add(
+            "runtime.metrics",
+            "WARN",
+            "生产环境未设置 METRICS_TOKEN：/metrics 会返回 403，抓不到任何指标",
+        )
+        return
+    auth = "Bearer token 校验" if settings.metrics_token else "非生产环境免鉴权"
+    report.add("runtime.metrics", "PASS", f"GET /metrics 可抓取（{auth}）")
+
+
+def _check_flags(report: DoctorReport) -> None:
+    from core.flags import enabled
+
+    flags = enabled()
+    if not flags:
+        report.add("runtime.flags", "INFO", "未声明功能开关")
+        return
+    detail = "、".join(
+        f"{name}={'on' if value else 'off'}" for name, value in sorted(flags.items())
+    )
+    report.add("runtime.flags", "INFO", f"{len(flags)} 个开关：{detail}")
+
+
 def _check_http_channel(report: DoctorReport) -> None:
     """出站 HTTP 只报配置，不发真实请求。
 
@@ -439,8 +581,12 @@ async def run_doctor(*, sample: int = 10) -> DoctorReport:
     _check_ports(report)
     await asyncio.to_thread(_check_archive_storage, report)
     await _check_database(report)
+    await _check_schema_head(report)
     await _check_cache_channel(report)
     await _check_queue_channel(report)
+    await _check_outbox_channel(report)
+    _check_metrics_exposure(report)
+    _check_flags(report)
     _check_http_channel(report)
     await asyncio.to_thread(_check_workspace_and_blobs, report, sample)
     return report

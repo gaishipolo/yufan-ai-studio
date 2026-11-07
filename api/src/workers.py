@@ -14,9 +14,12 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import Awaitable, Callable
 
+from core import trace
 from core.logging import get_logger
+from core.metrics import JOB_BUCKETS, METRICS
 from infra.queue.base import Job, JobQueue
 
 logger = get_logger(__name__)
@@ -27,6 +30,20 @@ HANDLERS: dict[str, JobHandler] = {}
 
 # 单次执行的默认超时，防止某个 handler 挂死拖垮并发槽位
 DEFAULT_JOB_TIMEOUT_SEC = 300.0
+
+# 任务指标：`outcome` 区分成功/异常/超时/取消/未知类型。
+# 只看成功率不够——超时和未知类型是两种完全不同的故障，必须分开计数。
+JOBS_PROCESSED = METRICS.counter(
+    "jobs_processed_total",
+    "任务执行结果数",
+    ("name", "outcome"),
+)
+JOB_DURATION = METRICS.histogram(
+    "job_duration_seconds",
+    "任务执行耗时（秒）",
+    ("name",),
+    buckets=JOB_BUCKETS,
+)
 
 
 def register_handler(name: str, *, override: bool = False) -> Callable[[JobHandler], JobHandler]:
@@ -68,32 +85,49 @@ class Worker:
             if job is None:
                 continue
 
-            handler = HANDLERS.get(job.name)
-            if handler is None:
-                logger.warning("未知任务类型 %s，丢弃", job.name)
-                await self._queue.ack(job)
-                continue
-
+            # 恢复入队时的 trace：此后这个任务的所有日志都带着「谁触发的那个请求」。
+            # 执行结束必须还原，否则同一个 worker 的下一条任务会继承上一条的 id。
+            previous = trace.adopt(job.trace_id)
+            started = time.perf_counter()
+            outcome = "error"
+            label = job.name
             try:
-                await asyncio.wait_for(
-                    handler(job), timeout=job.timeout_sec or DEFAULT_JOB_TIMEOUT_SEC
-                )
-            except TimeoutError:
-                logger.error(
-                    "任务超时 name=%s id=%s attempt=%d", job.name, job.id, job.attempts + 1
-                )
-                await self._queue.nack(job)
-            except asyncio.CancelledError:
-                # 停机时把任务放回队列，避免丢任务
-                await self._queue.nack(job, requeue=True)
-                raise
-            except Exception:
-                logger.exception(
-                    "任务执行失败 name=%s id=%s attempt=%d", job.name, job.id, job.attempts + 1
-                )
-                await self._queue.nack(job)
-            else:
-                await self._queue.ack(job)
+                handler = HANDLERS.get(job.name)
+                if handler is None:
+                    label = "<unknown>"
+                    outcome = "unknown"
+                    logger.warning("未知任务类型 %s，丢弃", job.name)
+                    await self._queue.ack(job)
+                    continue
+
+                try:
+                    await asyncio.wait_for(
+                        handler(job), timeout=job.timeout_sec or DEFAULT_JOB_TIMEOUT_SEC
+                    )
+                except TimeoutError:
+                    outcome = "timeout"
+                    logger.error(
+                        "任务超时 name=%s id=%s attempt=%d", job.name, job.id, job.attempts + 1
+                    )
+                    await self._queue.nack(job)
+                except asyncio.CancelledError:
+                    # 停机时把任务放回队列，避免丢任务
+                    outcome = "cancelled"
+                    await self._queue.nack(job, requeue=True)
+                    raise
+                except Exception:
+                    outcome = "error"
+                    logger.exception(
+                        "任务执行失败 name=%s id=%s attempt=%d", job.name, job.id, job.attempts + 1
+                    )
+                    await self._queue.nack(job)
+                else:
+                    outcome = "success"
+                    await self._queue.ack(job)
+            finally:
+                JOBS_PROCESSED.inc(name=label, outcome=outcome)
+                JOB_DURATION.observe(time.perf_counter() - started, name=label)
+                trace.release(previous)
 
     async def stop(self) -> None:
         self._stopping.set()
