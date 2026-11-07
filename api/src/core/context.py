@@ -65,3 +65,22 @@ def get_current_user() -> CurrentUser | None:
 
 def set_current_user(user: CurrentUser | None) -> None:
     _current_user.set(user)
+
+
+def reset_request_context() -> None:
+    """把请求级 contextvar 复位到「新请求」的状态。
+
+    必须在每个请求**开始时**调用，不能只在设置的地方覆盖：
+
+    - `current_user` 只在**认证成功**的分支里被写入。一个没带令牌的请求
+      （`/metrics`、404、静态资源）不会写它，于是它会读到上一个请求留下的用户；
+    - contextvar 是顺着任务/连接上下文传的。每个请求一个 task 的服务器不会串，
+      但在同一个 task 里连续处理请求的实现（嵌入式、测试客户端、部分网关）会串。
+      症状是「审计/日志里这个请求显示成了上一个登录用户」，只在特定连接形态下
+      偶发，几乎没法靠回放复现。
+
+    复位而不是 `ContextVar.reset(token)`：请求的入口不止一个（middleware 之外的
+    手工调用、CLI、测试），把「当前值」显式设成初值不需要谁持有 token。
+    """
+    _request_id.set("-")
+    _current_user.set(None)

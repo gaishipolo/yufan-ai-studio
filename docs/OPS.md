@@ -145,6 +145,11 @@ max_over_time(queue_jobs{state="pending"}[10m]) > 200
 
 # 死信 / 投递失败：只要有就应该有人看一眼
 queue_jobs{state="dead"} > 0 or outbox_events{status="failed"} > 0
+# 说明：这一条在 2026-11-08 之前是**永远不会响**的——outbox 调的是永不抛的
+# `EventBus.publish`，订阅者失败被记成 delivered，failed 恒为 0、attempts 恒为 0。
+# 现在失败会走退避重试，`outbox_events.last_error` 里是
+# `EventDeliveryError: 事件 <名字> 有 N 个订阅者失败：<handler>: <异常>`。
+# 看到这条先查那个 handler，不要先怀疑 outbox 表。
 
 # worker 取不到任务：worker 还活着但队列驱动在报错（数据抖动 / 连接池耗尽）。
 # 这一条和「任务失败」不是一回事——它意味着后台整体在空转，堆到 backlog 都不动。

@@ -61,6 +61,21 @@ def test_dev_stays_lenient() -> None:
     assert settings.anonymous_allowed is True
 
 
+def test_jwt_algorithm_whitelist_rejects_none() -> None:
+    """`JWT_ALGORITHM=none` 等于关掉签名校验，必须在启动期炸掉。
+
+    它失效时没有任何症状：登录、刷新、鉴权全部照常工作，只是令牌不再被校验——
+    任何人都能用任意 `sub` 自签一张票。这类「配置一改就等于没有鉴权」的开关
+    和 `TRUSTED_PROXIES`、`ALLOW_ANONYMOUS` 同一类，不能等到线上才发现。
+    """
+    assert Settings(jwt_algorithm=" HS256 ").jwt_algorithm == "HS256"  # 容忍空格
+    with pytest.raises(ValueError, match="不签名"):
+        Settings(jwt_algorithm="none")
+    # 拼错的名字同样当场失败，而不是等第一次登录报 Algorithm not supported
+    with pytest.raises(ValueError, match="不在允许的算法列表"):
+        Settings(jwt_algorithm="HS25G")
+
+
 def test_prod_guard_imports_active_driver_before_checking(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

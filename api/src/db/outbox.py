@@ -31,6 +31,11 @@ outbox 的本质是「**用业务同一个数据库事务**写一行待办」，
 或用 `INSERT ... ON CONFLICT DO NOTHING` 写自己的幂等表）。要做到「恰好一次」需要
 分布式事务，本骨架不承诺做不到的事。
 
+「订阅者抛异常」也算一次**失败**（走退避重试），而不是「已投递」——这依赖
+`EventBus.publish_strict` 的严格语义。曾经这里写的是 `publish`，而它永不抛，
+于是订阅者失败被静默记为成功：事件丢了、`attempts` 永远是 0、`OutboxReport.failed`
+永远是 0，整条重试链路在用一份不存在的契约上运行。
+
 ## 为什么状态只有三个
 
 `pending → delivered`，或 `pending → failed`（重试用尽）。刻意不做 `delivering`：
@@ -237,7 +242,11 @@ async def dispatch_pending(
         # 投递发生在周期任务里：恢复写入时的 trace，订阅方的日志才能接回原始请求
         previous = trace.adopt(trace_id or "")
         try:
-            await bus.publish(name, **_decode(payload))
+            # **必须用 publish_strict**：`publish` 永不抛，订阅者失败会被记成
+            # 「投递成功」，重试/退避/`failed` 留档全部变成死代码。
+            # 这里要的就是「失败能被看见」，代价是重试会重新执行同一条事件的
+            # 其它（本来已经成功的）订阅者——至少一次语义本来就这么要求。
+            await bus.publish_strict(name, **_decode(payload))
         except Exception as exc:  # noqa: BLE001 - 单条坏事件不能中断整批
             failed.append((event_id, f"{type(exc).__name__}: {exc}"[:500]))
         else:

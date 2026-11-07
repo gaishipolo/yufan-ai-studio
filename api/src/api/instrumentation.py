@@ -62,8 +62,16 @@ def route_template(scope: Mapping[str, Any]) -> str:
     为什么不直接用 `scope["route"].path`：Starlette 存的是**该路由器内部**的路径，
     `include_router(prefix=...)` 加上的前缀不在里面（实测 `/api/v1/health` 会记成
     `/health`）。前缀丢了以后，不同挂载点的同名路由会在面板上合并。
-    所以拿真实路径，把路径参数按名字替换回去——FastAPI 的路径参数都在
-    `scope["path_params"]` 里，替换后天然是低基数模板。
+    所以拿真实路径，把**参数位**换成模板里的名字。
+
+    为什么不是 `actual.replace(value, "{name}")`：那是子串替换，会顺手把路径里
+    任何相同的片段一起改掉。`/api/v1/tasks/1` + `task_id="1"` 会变成
+    `/api/v{task_id}/tasks/{task_id}`——标签变成一句无意义的话，而且两条本来
+    不同的路由可能因此合并成同一条时间序列。所以按 `/` 切段、**从右对齐**
+    （模板缺的只是前缀），只替换那个位置上的整段。
+
+    结构对不上时（`{param:path}` 这类会把值里的 `/` 吃进参数、或模板段数比真实
+    路径还多）不猜：直接返回路由自己的模板。宁可少一个前缀，也不产出一个错的标签。
     """
     route = scope.get("route")
     path = getattr(route, "path", None)
@@ -73,10 +81,27 @@ def route_template(scope: Mapping[str, Any]) -> str:
     if not isinstance(actual, str) or not actual:
         return path
     params = scope.get("path_params") or {}
-    for name, value in params.items():
-        if value not in (None, ""):
-            actual = actual.replace(str(value), "{" + str(name) + "}")
-    return actual
+
+    template_segments = path.split("/")
+    actual_segments = actual.split("/")
+    placeholders = [
+        segment[1:-1]
+        for segment in template_segments
+        if len(segment) > 2 and segment.startswith("{") and segment.endswith("}")
+    ]
+    if not placeholders:
+        # 纯静态路由：真实路径就是模板 + 前缀
+        return actual
+    if set(placeholders) != set(params):
+        # 带转换器（`{p:path}`）或多段参数：段数对不齐，不猜
+        return path
+    offset = len(actual_segments) - len(template_segments)
+    if offset < 0:
+        return path
+    for index, segment in enumerate(template_segments):
+        if segment[1:-1] in placeholders:
+            actual_segments[offset + index] = segment
+    return "/".join(actual_segments)
 
 
 def observe_request(*, method: str, route: str, status: int, elapsed: float) -> None:

@@ -58,6 +58,23 @@ class DevFormatter(logging.Formatter):
         )
 
 
+# 项目自己的命名空间。`DEBUG=true` 只放开这些，第三方库仍由下面那份降噪名单管。
+# 早先这里只写了 `app`——而 `app` 其实是访问日志那一支，`core.*` / `infra.*` /
+# `db.*` 的 logger 名以各自的包开头，于是「打开了 debug 却一条 debug 日志都看不到」，
+# 排查时很容易以为是那些代码里没写日志。
+PROJECT_NAMESPACES = (
+    "app",
+    "api",
+    "core",
+    "db",
+    "infra",
+    "modules",
+    "generation",
+    "workers",
+    "scaffold",
+)
+
+
 def setup_logging(env: str = "dev", debug: bool = False) -> None:
     handler = logging.StreamHandler(sys.stdout)
     handler.addFilter(RequestIdFilter())
@@ -69,7 +86,9 @@ def setup_logging(env: str = "dev", debug: bool = False) -> None:
     root.setLevel(logging.INFO)
     root.addHandler(handler)
 
-    logging.getLogger("app").setLevel(logging.DEBUG if debug else logging.INFO)
+    project_level = logging.DEBUG if debug else logging.INFO
+    for namespace in PROJECT_NAMESPACES:
+        logging.getLogger(namespace).setLevel(project_level)
 
     # 降噪：访问日志由自己的中间件接管；sqlite 驱动与 SQL echo 无需默认开启
     for noisy in (

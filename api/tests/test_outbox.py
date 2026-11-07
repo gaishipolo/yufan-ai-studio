@@ -87,55 +87,101 @@ def test_committed_event_survives_crash_before_publish() -> None:
         bus.clear()
 
 
-def test_failed_delivery_backs_off_instead_of_hot_looping(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    class BrokenBus:
-        async def publish(self, name: str, **payload: object) -> int:
-            raise RuntimeError("bus down")
+def test_failed_subscriber_backs_off_instead_of_hot_looping() -> None:
+    """订阅者抛异常必须算「投递失败」，不能被记成 delivered。
 
+    这里刻意用**真实的 EventBus**：以前用的是「publish 会抛异常」的假 bus，
+    而真实实现是永不抛的——那份测试验证的是一份不存在的契约，绿着，事件照丢。
+    """
     asyncio.run(_reset())
-    monkeypatch.setattr("db.outbox.get_event_bus", lambda: BrokenBus())
+    bus = get_event_bus()
 
-    async def commit_event() -> None:
-        async with get_session_factory()() as session:
-            await record(session, "demo.broken")
-            await session.commit()
+    async def boom(event: DomainEvent) -> None:
+        raise RuntimeError("bus down")
 
-    asyncio.run(commit_event())
-    report = asyncio.run(dispatch_pending())
-    assert report.failed == 1
+    bus.add("demo.broken", boom)
+    try:
 
-    row = asyncio.run(_rows())[0]
-    assert row.status == OUTBOX_PENDING
-    assert row.attempts == 1
-    assert row.last_error.startswith("RuntimeError")
-    # 退避：available_at 被推到将来，下一轮不会立刻再试。
-    # sqlite 读回来是 naive datetime（列声明了 timezone 也不带 tzinfo），比较前补上
-    assert row.available_at.replace(tzinfo=UTC) > utcnow()
-    assert asyncio.run(dispatch_pending()).delivered == 0
+        async def commit_event() -> None:
+            async with get_session_factory()() as session:
+                await record(session, "demo.broken")
+                await session.commit()
+
+        asyncio.run(commit_event())
+        report = asyncio.run(dispatch_pending())
+        assert report.failed == 1
+        assert report.delivered == 0
+        assert report.healthy is False
+
+        row = asyncio.run(_rows())[0]
+        assert row.status == OUTBOX_PENDING
+        assert row.attempts == 1
+        # 失败原因里带订阅者名字与原始异常，排查时不必再去日志里捞
+        assert row.last_error.startswith("EventDeliveryError")
+        assert "boom" in row.last_error and "bus down" in row.last_error
+        # 退避：available_at 被推到将来，下一轮不会立刻再试。
+        # sqlite 读回来是 naive datetime（列声明了 timezone 也不带 tzinfo），比较前补上
+        assert row.available_at.replace(tzinfo=UTC) > utcnow()
+        assert asyncio.run(dispatch_pending()).delivered == 0
+    finally:
+        bus.clear()
+
+
+def test_one_broken_subscriber_does_not_block_the_others() -> None:
+    """同一条事件有多个订阅者时，坏的那个不该让好的那个也不执行。"""
+    asyncio.run(_reset())
+    bus = get_event_bus()
+    seen: list[str] = []
+
+    async def ok(event: DomainEvent) -> None:
+        seen.append("ok")
+
+    async def boom(event: DomainEvent) -> None:
+        raise RuntimeError("只有我坏了")
+
+    bus.add("demo.mixed", ok, priority=1)
+    bus.add("demo.mixed", boom, priority=2)
+    try:
+
+        async def commit_event() -> None:
+            async with get_session_factory()() as session:
+                await record(session, "demo.mixed")
+                await session.commit()
+
+        asyncio.run(commit_event())
+        report = asyncio.run(dispatch_pending())
+        assert seen == ["ok"]
+        # 整条事件仍是失败（要重试），但成功过的订阅者不会再丢
+        assert report.failed == 1
+        assert asyncio.run(_rows())[0].status == OUTBOX_PENDING
+    finally:
+        bus.clear()
 
 
 def test_exhausted_event_is_marked_failed(monkeypatch: pytest.MonkeyPatch) -> None:
-    class BrokenBus:
-        async def publish(self, name: str, **payload: object) -> int:
-            raise RuntimeError("bus down")
-
     asyncio.run(_reset())
-    monkeypatch.setattr("db.outbox.get_event_bus", lambda: BrokenBus())
+    bus = get_event_bus()
     monkeypatch.setattr(settings, "outbox_max_attempts", 1)
 
-    async def commit_event() -> None:
-        async with get_session_factory()() as session:
-            await record(session, "demo.giveup")
-            await session.commit()
+    async def boom(event: DomainEvent) -> None:
+        raise RuntimeError("bus down")
 
-    asyncio.run(commit_event())
-    asyncio.run(dispatch_pending())
+    bus.add("demo.giveup", boom)
+    try:
 
-    row = asyncio.run(_rows())[0]
-    assert row.status == OUTBOX_FAILED
-    assert row.attempts == 1
+        async def commit_event() -> None:
+            async with get_session_factory()() as session:
+                await record(session, "demo.giveup")
+                await session.commit()
+
+        asyncio.run(commit_event())
+        asyncio.run(dispatch_pending())
+
+        row = asyncio.run(_rows())[0]
+        assert row.status == OUTBOX_FAILED
+        assert row.attempts == 1
+    finally:
+        bus.clear()
 
 
 def test_prune_removes_only_old_finished_events() -> None:

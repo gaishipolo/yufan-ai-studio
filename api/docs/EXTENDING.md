@@ -1140,6 +1140,17 @@ module = ModuleSpec(..., asset_reference_sources=SOURCES)
 `Scheduler` 会向 `LEADER_ELECTOR` 选出的策略抢租约。`local`（单实例，默认）
 恒通过；`backend` 用 `ArchiveStorage.create()` 的条件写抢带 TTL 的租约，
 全集群只有一个实例执行。幂等任务（例如镜像对账）**不要**标，多跑一份结果相同。
+
+`backend` 的两条边界（都不是配置问题，是策略本身的上限）：
+
+1. **没有租约续期**：`ttl` 取 `max(60, every × 2)`。handler 真跑得比它久，
+   第二个实例会认为「执行者崩了」并接手——所以一个要跑几十分钟的不可逆任务，
+   请把 `every` 调大（ttl 跟着变大），别指望它在 60 秒的租约里跑完；
+2. **接管靠一块额外的标记**：`acquire()` 读到过期租约时，先去写
+   `leases/<name>.takeover-<旧到期毫秒>` 再动租约——因为 `create` 是原子的、
+   `remove` 不是，直接「删了重建」会让两个实例同时选上。这块标记是内部实现，
+   别在别的代码里手写或清理它；它带 `TAKEOVER_TICKET_TTL_SEC`（300s）的有效期，
+   接管方崩在中间也不会把任务永久锁死。
 新增介质后端时，两条 S3 通路共用 `infra/blob.py` 的 `s3_client()`，别再各建一份
 boto3 client；`S3_BUCKET_MODE=shared` 下用 `archive/` 前缀隔离。
 

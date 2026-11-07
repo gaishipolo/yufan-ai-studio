@@ -13,6 +13,16 @@
 - 这是**进程内、尽力而为**的事件：handler 异常只记日志，不回滚主事务、不重试。
 - 需要可靠投递（如计费）时，应改为「写 outbox 表 + 独立消费者」，本骨架预留了
   `EventBus.publish` 的 payload 序列化能力，替换实现即可，订阅方代码不变。
+
+## `publish` 与 `publish_strict` 的区别（这条容易踩）
+
+`publish()` 永不抛异常——订阅者失败只记日志。这对**请求路径**是对的（通知失败不该让
+任务回滚），但对 **outbox 投递器**是致命的：投递器靠「抛不抛」判断要不要重试，
+一个永不上抛的 `publish` 会让「订阅者失败」被记成「投递成功」，事件就此永久消失。
+
+所以 outbox 用 `publish_strict()`：同样执行全部订阅者、同样记日志，但只要**任何**
+一个失败就抛 `EventDeliveryError`。两个方法只差这一个布尔值，
+不要为了「统一入口」把它合成一个带默认参数的函数——调用方看不出自己走的是哪条语义。
 """
 
 from __future__ import annotations
@@ -48,6 +58,22 @@ class _Subscription:
     priority: int
 
 
+class EventDeliveryError(RuntimeError):
+    """至少一个订阅者失败（只有 `publish_strict` 会抛）。
+
+    `failures` 里带 handler 名字与原始异常：投递器把它整条写进 `last_error`，
+    排查时不用再去日志里捞那一条 `事件处理器失败`。
+    """
+
+    def __init__(self, name: str, failures: list[tuple[str, BaseException]]) -> None:
+        self.event = name
+        self.failures = failures
+        detail = "；".join(
+            f"{handler}: {type(exc).__name__}: {exc}" for handler, exc in failures
+        )
+        super().__init__(f"事件 {name} 有 {len(failures)} 个订阅者失败：{detail}")
+
+
 class EventBus:
     """极简事件总线：同步注册、异步发布、失败隔离。"""
 
@@ -78,7 +104,23 @@ class EventBus:
         """发布事件，返回被调用的 handler 数量。
 
         永不向上抛异常：订阅者的失败不能影响发布方（例如通知失败不该让任务回滚）。
+        需要「失败能被看到」的调用方（outbox 投递器）用 `publish_strict`。
         """
+        return await self._dispatch(name, payload, strict=False)
+
+    async def publish_strict(self, name: str, **payload: Any) -> int:
+        """发布事件，**任何一个订阅者失败就抛** `EventDeliveryError`。
+
+        为什么必须有这一条：`db/outbox.py` 的投递器靠异常判断「这一条要不要重试」。
+        如果它调的是永不抛的 `publish`，订阅者抛异常会被记成「投递成功」，
+        事件表里写下 `delivered`，重试、退避、`failed` 留档全都不会发生——
+        整条可靠投递的链路看起来齐全，实际一条都不会重试。
+        """
+        return await self._dispatch(name, payload, strict=True)
+
+    async def _dispatch(
+        self, name: str, payload: Mapping[str, Any], *, strict: bool
+    ) -> int:
         event = DomainEvent(name=name, payload=payload)
         handlers = [*self._subs.get(name, []), *self._subs.get(WILDCARD, [])]
         if not handlers:
@@ -88,14 +130,20 @@ class EventBus:
             *(self._invoke(sub.handler, event) for sub in handlers),
             return_exceptions=True,
         )
+        failures: list[tuple[str, BaseException]] = []
         for handler_sub, result in zip(handlers, results, strict=True):
-            if isinstance(result, BaseException):
-                logger.error(
-                    "事件处理器失败 event=%s handler=%s",
-                    name,
-                    getattr(handler_sub.handler, "__qualname__", handler_sub.handler),
-                    exc_info=result,
-                )
+            if not isinstance(result, BaseException):
+                continue
+            label = getattr(handler_sub.handler, "__qualname__", repr(handler_sub.handler))
+            failures.append((str(label), result))
+            logger.error(
+                "事件处理器失败 event=%s handler=%s",
+                name,
+                label,
+                exc_info=result,
+            )
+        if failures and strict:
+            raise EventDeliveryError(name, failures)
         return len(handlers)
 
     @staticmethod

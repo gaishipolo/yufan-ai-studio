@@ -238,6 +238,7 @@ PostgreSQL 的 `LISTEN/NOTIFY`（写完 `NOTIFY`，worker 侧长连接被唤醒�
 | `recover()` 对持续 Conflict 无上限（原 T3） | 已修 | 轮次随 payload 带过去，退避 30s→600s 共六轮，用完打 `replacement_recovery_lock_giveups_total` 并放手（拿不到锁就不写档案）；用例 `test_recover_waits_for_run_lock_with_bounded_retries` |
 | 原 T15 五份文档未提交 | 已提交 | `e928fbb`（`CODE_STYLE` / `REVIEW_CHECKLIST` v2.0 + R11~R14 / FE6 报告） |
 | 原 T16 两条旧分支 | 已删 | `merge/pr1`（`4e26035`）、`preview/full`（`59513ba`）`merge-base --is-ancestor` 均通过后 `git branch -d` |
+| 框架层复审：承诺 vs 实现 | 已修 | ①outbox 调永不抛的 `publish`，订阅者失败被记成 `delivered`（`attempts`/`failed` 恒 0、退避是死代码）→ 新增 `EventBus.publish_strict`，测试改用**真实 bus**；②选主接管走「读过期→remove→create」，删除非原子 → 两实例同时选上；改为「只由被接管租约决定」的接管键，单赢家（对比实测 2→1）；③指标路由模板用子串替换，`/api/v1/tasks/1` 变成 `/api/v{task_id}/tasks/{task_id}` → 按 `/` 切段右对齐；④`current_user` 请求间不复位 → `reset_request_context()`；⑤`JWT_ALGORITHM=none` 可静默关掉签名校验 → 算法白名单 |
 | 原 T16/T17 归档远端化 | 已修 | 协议收 key + `list_keys` 枚举；`infra/archive/runs.py` 把运行工作区分出归档；`app migrate-archive` 幂等搬家；`ARCHIVE_DRIVER=s3` 实测起/传/取全通 |
 | T5 502 表达配置状态 | 已修 | `Unavailable`（50300 / 503）；`schedule()` 改抛它，文案点名 `WORKER_ENABLED` |
 | T12 存储基类注释说错工厂 | 已修 | `infra/storage/base.py` 头注释改指 `infra/loader.py` 的 `load_driver()` |

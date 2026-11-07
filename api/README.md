@@ -205,6 +205,8 @@ sha256、给 ffmpeg 派生预览，所以 `runs/` 不随归档进桶——索引
 `ARCHIVE_GC_ENABLED` 默认 **false**。不可逆删除由 `@periodic("asset.gc",
 leader_only=True)` 保护：多实例部署设 `LEADER_ELECTOR=backend`，调度器会用归档存储的
 条件写抢一份带 TTL 的租约，全集群只有一个进程真的删；单实例用默认 `local` 即可。
+租约没有续期，所以 `ttl` 取 `max(60, every × 2)`——一个要跑几十分钟的不可逆任务
+必须把 `every` 调大，否则会被当成「执行者崩了」而有人接手。
 `app doctor` 在「GC 开启但选主仍是 local」时直接 FAIL。
 
 `catalog/assets/*.json` 是 **DB 的派生投影**，不是第二份索引：业务事务先 commit，

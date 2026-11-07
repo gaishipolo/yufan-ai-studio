@@ -19,6 +19,29 @@ from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 _MIN_SECRET_BYTES = 32
 _WEAK_SECRET_PREFIXES = ("dev-only", "change-me")
 
+# 允许的签名算法。**刻意不含 `none`**：PyJWT 支持它（= 不签名），而
+# `jwt.decode(..., algorithms=[settings.jwt_algorithm])` 会原样接受它。
+# 也就是说 `JWT_ALGORITHM=none` 这一个拼写错误，就能把整套鉴权变成
+# 「谁都能用任意 `sub` 自签一张票」——而且日志里不会有任何异常。
+# 不在白名单里的名字（含 typo）一律启动失败，不静默回退到默认值。
+_JWT_ALGORITHMS = frozenset(
+    {
+        "HS256",
+        "HS384",
+        "HS512",
+        "RS256",
+        "RS384",
+        "RS512",
+        "ES256",
+        "ES384",
+        "ES512",
+        "PS256",
+        "PS384",
+        "PS512",
+        "EdDSA",
+    }
+)
+
 # api/ 目录（本文件在 api/src/core/config.py）：运行期产物的锚点。
 # 用绝对路径做默认值，保证「从哪个目录启动都读到同一份数据」。
 _VAR_DIR = Path(__file__).resolve().parents[2] / "var"
@@ -81,6 +104,29 @@ class Settings(BaseSettings):
     allow_anonymous: bool | None = None
     jwt_secret: str = "dev-only-secret-change-me-0123456789abcdef"
     jwt_algorithm: str = "HS256"
+
+    @field_validator("jwt_algorithm")
+    @classmethod
+    def _check_jwt_algorithm(cls, value: str) -> str:
+        """算法白名单。`none` 与拼错的名字都在启动期炸掉（见 `_JWT_ALGORITHMS`）。
+
+        这类配置的失败形态特别安静：`none` 下一切功能正常，只是令牌不再校验
+        签名；拼成 `HS25G` 则要等第一次登录才报 `Algorithm not supported`。
+        两种都不该等到线上才被发现。
+        """
+        normalized = value.strip()
+        if normalized not in _JWT_ALGORITHMS:
+            hint = (
+                "（`none` 等于不签名，任何人都能伪造任意用户）"
+                if normalized.lower() == "none"
+                else ""
+            )
+            raise ValueError(
+                f"JWT_ALGORITHM={normalized!r} 不在允许的算法列表里{hint}；"
+                f"可选：{', '.join(sorted(_JWT_ALGORITHMS))}"
+            )
+        return normalized
+
     access_token_ttl_seconds: int = 7200
     # 刷新令牌有效期（默认 7 天）。access 令牌短、refresh 令牌长是刻意的：
     # 短的那张每次请求都在验证，长的那张只在续期时用一次，泄漏面小得多。

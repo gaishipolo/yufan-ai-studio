@@ -15,7 +15,7 @@ from starlette.datastructures import MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from api.instrumentation import IN_FLIGHT, observe_request, route_template
-from core.context import set_request_id
+from core.context import reset_request_context, set_request_id
 from core.exceptions import ErrorCode, RateLimited
 from core.logging import get_logger
 from core.ratelimit import get_rate_limiter, retry_after_seconds
@@ -53,6 +53,9 @@ class RequestContextMiddleware:
 
         headers = dict(scope.get("headers") or [])
         rid = _resolve_request_id(headers.get(REQUEST_ID_HEADER.lower().encode(), b""))
+        # 先复位再写入：只覆盖 request id 不够——`current_user` 只在认证成功时才写，
+        # 没带令牌的请求会继承同一个上下文里上一个请求的用户（见 core.context）。
+        reset_request_context()
         set_request_id(rid)
 
         started = time.perf_counter()
