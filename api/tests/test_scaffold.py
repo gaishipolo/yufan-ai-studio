@@ -130,3 +130,70 @@ def test_generated_store_implements_the_whole_protocol() -> None:
 
     missing = required - implemented
     assert not missing, f"脚手架生成的 Store 缺少协议方法：{sorted(missing)}"
+
+
+def test_wrong_root_is_rejected_instead_of_growing_an_orphan_tree(tmp_path) -> None:
+    """`--root` 指错地方必须当场报错，而不是造出一棵永远不会被加载的目录。
+
+    真实事故：在仓库根执行 `api/.venv/Scripts/app.exe new-module export ...`。
+    `--root` 默认 `.`，而这个仓库的 Python 源码根是 `api/`，于是生成了
+    `<repo>/src/modules/export/`——七个文件、语法正确、`app modules` 里查无此模块。
+
+    这一类的共同形态是**失败时不发声**：目录造出来了，命令退出码是 0，
+    唯一的症状是「模块没被加载」，而排查方向会先跑到 discovery 上去。
+    """
+    from scaffold import ScaffoldError, create_module
+
+    with pytest.raises(ScaffoldError, match="src/modules"):
+        create_module(
+            ModulePlan(name="music", label="音乐", perm="music", slot=4),
+            tmp_path,  # 空目录：没有 src/modules
+        )
+    # 报错之后不能留下半棵树
+    assert not (tmp_path / "src").exists()
+
+
+def test_a_proper_project_root_still_generates(tmp_path) -> None:
+    """守卫不能把正常路径也一起挡了：`<root>/src/modules` 存在就该照常生成。"""
+    from scaffold import create_module
+
+    (tmp_path / "src" / "modules").mkdir(parents=True)
+    written = create_module(
+        ModulePlan(name="music", label="音乐", perm="music", slot=4), tmp_path
+    )
+
+    assert len(written) == 7
+    assert all(path.is_file() for path in written)
+    assert written[0].parent == tmp_path / "src" / "modules" / "music"
+
+
+@pytest.mark.parametrize("with_generation", [False, True])
+def test_generated_init_survives_ruff_without_hand_editing(with_generation: bool) -> None:
+    """生成物必须直接过 lint。
+
+    模板里 `${generation_import}` 在不带 `--generation` 时是空串，而它后面还有
+    一个空行——于是导入块与 `module = ModuleSpec(...)` 之间变成**两个**空行，
+    `ruff check` 报 I001。新人的第一步就撞红，而他的处理方式不会是「报模板 bug」，
+    是手改一份本来就该重新生成的文件；下次重新生成又回来。
+    """
+    source = render(_plan(with_generation=with_generation))["__init__.py"]
+
+    head, separator, _ = source.partition("module = ModuleSpec(")
+    assert separator, "模板里找不到 module = ModuleSpec("
+    assert head.endswith("\n\n"), "导入块和 module 之间必须留一个空行"
+    assert not head.endswith("\n\n\n"), "出现了多余空行（ruff I001）"
+    assert "\n\n\n" not in source, "文件里不该有连续两个空行"
+
+
+def test_generation_import_is_sorted_before_the_router_import() -> None:
+    """副作用导入必须排在 router 之前。
+
+    `from modules.x import pipeline` 与 `from modules.x.router import router`
+    是前缀关系，顺序反了 isort 报 I001（按模块路径排序，短的在前）。
+    这条只有带 `--generation` 才触发，正好是最少被走的那条路——
+    所以模板里两个空行的问题当时只暴露了一半。
+    """
+    source = render(_plan(with_generation=True))["__init__.py"]
+    pipeline_at = source.index("import pipeline")
+    router_at = source.index("from modules.music.router import router")
+    assert pipeline_at < router_at

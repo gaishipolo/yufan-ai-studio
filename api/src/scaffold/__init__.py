@@ -63,10 +63,13 @@ class ModulePlan:
             "slot": self.slot,
             "group": self.group,
             "table": self.table,
-            # 流水线靠「副作用导入」注册；漏了这一行，dispatch 会报「未注册」
+            # 流水线靠「副作用导入」注册；漏了这一行，dispatch 会报「未注册」。
+            # 结尾的 `\n` 是给模板用的：占位符独占一行，有值时它替换掉那一行，
+            # 无值时那一行就是空行——两种情况下导入块与 `module =` 之间都恰好
+            # 一个空行（否则 `ruff check` 报 I001，而新人会去手改生成物）。
             "generation_import": (
                 f"from modules.{self.name} import pipeline  "
-                "# noqa: F401  副作用导入：把流水线注册到 generation.pipeline"
+                "# noqa: F401  副作用导入：把流水线注册到 generation.pipeline\n"
                 if self.with_generation
                 else ""
             ),
@@ -122,8 +125,21 @@ def _used_slots(root: Path) -> dict[int, str]:
 
 
 def create_module(plan: ModulePlan, root: Path) -> list[Path]:
-    """在 `<root>/src/modules/<name>/` 下生成文件。"""
-    target = root / "src" / "modules" / plan.name
+    """在 `<root>/src/modules/<name>/` 下生成文件。
+
+    `root` 必须是**含 `src/modules` 的那一层**，不是仓库根。本仓库的 Python
+    源码根是 `api/`，所以在仓库根执行时要传 `--root api`。
+    """
+    modules_dir = root / "src" / "modules"
+    if not modules_dir.is_dir():
+        # 指错 root 时不能默默造一棵孤儿树：文件语法正确、退出码 0，
+        # 唯一症状是 `app modules` 里查无此模块，排查会先跑到 discovery 上。
+        raise ScaffoldError(
+            f"{root} 下没有 src/modules，看起来不是项目根。"
+            "请在 api/ 目录下执行，或显式传 --root api"
+        )
+
+    target = modules_dir / plan.name
     if target.exists():
         raise ScaffoldError(f"目录已存在，拒绝覆盖: {target}")
 

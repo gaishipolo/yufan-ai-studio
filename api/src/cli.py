@@ -1187,7 +1187,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_new.add_argument("--group", default="业务", help="权限分组（用于角色配置界面）")
     p_new.add_argument("--generation", action="store_true", help="同时生成生成流水线骨架")
-    p_new.add_argument("--root", default=".", help="项目根目录")
+    p_new.add_argument(
+        "--root",
+        default=".",
+        help="项目根（必须含 src/modules；在 api/ 下执行，或显式传 --root api）",
+    )
     p_new.set_defaults(func=_cmd_new_module)
 
     args = parser.parse_args(argv)

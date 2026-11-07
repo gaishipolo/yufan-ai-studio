@@ -43,6 +43,12 @@ app new-module voice --label 配音 --perm voice --slot 9
 `--slot` 是错误码号段，取值见第 7 节的分配表（示例占用 9，别和 `task` 的 3 撞车）。
 它必填（不传会被拒），并且会真的写进 `errors.py`；号段已被别的模块占用时，生成前就报错。
 
+**命令要在 `api/` 目录下执行。** `--root` 默认是当前目录，而模板按
+`<root>/src/modules/<name>/` 落盘；本仓库的 Python 源码根是 `api/`，在仓库根
+直接跑会生成一棵 `./src/modules/voice/`——文件语法正确、退出码 0、
+`app modules` 里却查无此模块。为此 `create_module()` 会先检查 `<root>/src/modules`
+是否存在，不存在直接报错。非要在仓库根执行就显式传 `--root api`。
+
 生成 7 个文件：
 
 ```

@@ -17,8 +17,7 @@ INIT_TMPL = Template(
 
 from api.module import ModuleSpec
 from core.permissions import PermissionSpec
-from modules.${name}.router import router
-${generation_import}
+${generation_import}from modules.${name}.router import router
 
 module = ModuleSpec(
     name="${name}",
