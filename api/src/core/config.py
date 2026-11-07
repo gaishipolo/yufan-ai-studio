@@ -121,6 +121,15 @@ class Settings(BaseSettings):
     # 周期任务调度器（模块自己 @periodic 注册）。多副本部署时每个进程都会跑一份，
     # 所以 handler 必须幂等；需要「全集群只跑一次」要先换掉 queue_driver。
     scheduler_enabled: bool = True
+    # 归档 GC 默认关闭：删除不可逆，而调度器没有分布式选主，多实例会各跑一份。
+    # 单机确认后再开；间隔、保护期、回收站保留期都可单独调。
+    archive_gc_enabled: bool = False
+    archive_gc_interval_sec: float = 86400.0
+    archive_gc_min_age_hours: float = 24.0
+    archive_gc_trash_days: float = 30.0
+    # 每个用户的归档逻辑容量上限（字节）；0 = 不限。只算未删除的归档素材，
+    # 内容寻址让同一份字节在物理上共用，但配额按「每个人登记了什么」算。
+    archive_quota_bytes_per_user: int = 0
 
     # 兼容旧的单值写法 AI_PROVIDER；推荐使用 AI_PROVIDERS=echo,volcengine
     ai_provider: str = "echo"

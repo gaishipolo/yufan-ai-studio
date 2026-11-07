@@ -128,3 +128,10 @@ async def deleted(
     asset_id: str, payload: ArchiveChange, actor: DeleteDep, service: ArchiveServiceDep
 ) -> ApiResponse[ArchivedAsset]:
     return ApiResponse.ok(await service.change_action(asset_id, actor.id, payload, "deleted"))
+
+
+@router.delete("/{asset_id}", status_code=204, summary="彻底删除回收站中的归档素材")
+async def purge(asset_id: str, actor: DeleteDep, service: ArchiveServiceDep) -> Response:
+    """清空单条回收站记录。与 `PUT /deleted` 分成两步：软删可恢复，真删不可逆。"""
+    await service.purge(asset_id, actor.id)
+    return Response(status_code=204)

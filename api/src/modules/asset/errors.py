@@ -46,6 +46,18 @@ class FileTooLarge(AppError):
     http_status = 413
 
 
+class AssetQuotaExceeded(AppError):
+    """单用户归档容量用尽。
+
+    与 `FileTooLarge`（单个文件太大）分开：后者换个文件就行，前者要先清理
+    回收站或提配额。混成一个错误，用户会一直重试上传同一份文件。
+    """
+
+    code = errors.code(413, 2)
+    message = "归档空间已用完，请先清理回收站或联系管理员提升配额"
+    http_status = 413
+
+
 class AssetInUse(AppError):
     """仍被模板/分镜等引用。
 
@@ -60,6 +72,7 @@ class AssetInUse(AppError):
 __all__ = [
     "AssetInUse",
     "AssetNotFound",
+    "AssetQuotaExceeded",
     "FileTooLarge",
     "FileTypeNotAllowed",
     "errors",

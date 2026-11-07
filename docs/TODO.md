@@ -5,7 +5,8 @@
 >
 > 来源：`CODE_REVIEW_2026-11-06_R11~R14`、`CODE_REVIEW_2026-11-06_FE6`、
 > `EXTENSIBILITY_GAPS.md` 的 B1/C1/C2，以及素材分支合并时新发现的项。
-> 最后更新：2026-11-07 04:10（素材库五条收口：引用检查、root 字段、结果 key、发布 CAS、工作区形态）
+> 最后更新：2026-11-07 07:20（素材库 A/B 档收口：多来源引用检查、彻底删除与 GC、
+> 完整性校验、doctor 自检、状态审计、容量配额；剩下的产品能力归到 T22/T23，契约漂移归 T24）
 
 ## 一眼看完
 
@@ -20,6 +21,9 @@
 | T9 | 重试是作业级不是任务级（C2） | 任务重试语义与用户预期不一致 | 后端 |
 | T10 | `archivePath` 绝对路径进 HTTP 契约 | 服务端盘符泄漏给浏览器 | 产品决定 |
 | T14 | `REVIEW_CHECKLIST` 缺两条反模式 | 同类问题第五次出现 | 文档 |
+| T22 | 归档检索与批量写太弱（C 档） | 几十万级素材找不到、整理要靠逐条点 | 产品决定 |
+| T23 | 上传秒传/断点、视频派生预热（C 档） | 300MB 白传一遍；首个点开视频的人等转码 | 后端 |
+| T24 | `MediaFile.path` 装的是 key，字段名/描述没跟上 | 契约语义漂移，后来者会当路径拼 | 后端（小） |
 
 ---
 
@@ -105,6 +109,30 @@ R13 与 R14 各自归纳出一个新形状，都没进清单：
 
 **验收**：`CODE_STYLE.md §6` 或 `REVIEW_CHECKLIST.md` 的反模式表加两条，各带一个反例。
 
+## T22 / T23 · 素材库的产品能力（A/B 做完后剩下的）
+
+A/B 档解决的是「数据不会丢、空间不涨、部署可自检」；这些是**好不好用**，
+等真实使用反馈再排期，别提前堆功能。
+
+- **检索**：`list_assets` 只有 category / scope / keyword / state，没有排序、
+  时间/大小/分辨率筛选，`MediaFile` 没有 tags；`pageSize` 上限 200 + offset 分页。
+- **批量写**：上传有 `upload-batch`，改名/分享/移入回收站仍是单条 PUT。
+- **上传**：`_find_by_digest` 已能服务端判重，却没有「先传摘要 → 已存在直接返回」
+  的秒传；断线只能整段重传 300MB。
+- **派生**：`_derive_clip` / `_create_preview` 在请求内 `to_thread` 跑 ffmpeg，
+  首个点开视频的用户要等转码，没有预热队列与失败重试。
+
+**验收**：按真实素材量与失败率定优先级，不要一次全做。
+
+## T24 · `MediaFile.path` 的语义漂移
+
+`core/media.py` 的 `path` 现在装的是内容寻址的 `storageKey`（哈希），
+`ArchiveDetail.tsx` 已改叫「存储键」，但契约字段名与描述仍是「路径」。
+另外 `ArchiveSearch` 前端手写窄类型与后端 `Literal` 靠注释手工同步。
+
+**验收**：要么在字段描述里写清「这是对象 key，不是文件系统路径」，要么改名并
+同步四份生成物；`ArchiveSearch` 改由 `schema.ts` 派生。
+
 ---
 
 ## 已复核关闭（别再重做）
@@ -129,5 +157,6 @@ R13 与 R14 各自归纳出一个新形状，都没进清单：
 | T13 运维脚本绕过 `ARCHIVE_DRIVER` | 已修 | 两个脚本改 `get_archive_storage()` + key 语义；`test_archive_driver.py` 按 AST 拦直接实例化 |
 | T18 孤儿 blob 无 GC | 已修 | `app prune-blobs`：引用集合 = 库行 + 镜像 JSON，默认只报告，`--min-age-hours` 默认 24 |
 | T19 视频流全量下载 | 已修 | `ArchiveStorage.download_url()`；远端驱动 307 预签名、本地仍 `FileResponse`，出参收敛到 `modules/asset/serving.py` |
+| 素材库 A/B 档（数据正确性与长期可运行） | 已修 | 引用检查改多来源聚合（task + template）并接入回收站；`DELETE /assets/archive/{id}` 与 `prune-blobs --include-trash` 共用 `archive_purge.py` 彻底删除；`verify-blobs` 读回重算摘要；`app doctor` 12 项自检；GC 挂 `@periodic`（默认关闭）；状态变更/发布写审计；`ARCHIVE_QUOTA_BYTES_PER_USER` 配额 |
 
 `ARCHITECTURE.md` / `EXTENSIBILITY_GAPS.md` 里 A 组 13 条已修 10 条，剩余 3 条即上面的 T7/T8/T9。

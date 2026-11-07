@@ -9,6 +9,9 @@ from api.module import ModuleSpec
 from core.permissions import PermissionSpec
 from modules.asset.router import router
 
+# 必须 import：注册 @periodic("asset.gc")（副作用导入）
+from modules.asset import maintenance  # noqa: E402,F401  isort: skip
+
 module = ModuleSpec(
     name="asset",
     router=router,

@@ -37,6 +37,10 @@ class ArchiveList(CamelModel):
     items: list[ArchivedAsset]
     total: int
     used_bytes: int
+    # 配额按「本人未删除的归档素材」算，与上面的 `used_bytes`（当前筛选结果的
+    # 占用）不是一个口径：在 public / trash 分池里拿 usedBytes 当已用容量会算错。
+    quota_bytes: int = 0
+    owner_used_bytes: int = 0
     page: int = 1
     page_size: int = 200
 

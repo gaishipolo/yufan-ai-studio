@@ -3,12 +3,16 @@
 from api.module import ModuleSpec
 from core.feed import register_replacement_feed
 from core.permissions import PermissionSpec
+from core.ports.assets import register_asset_reference_checker
+from modules.template.asset_references import PackAssetReferences
 from modules.template.feed_provider import read_feed
 from modules.template.replacement_pipeline import KIND_REPLACEMENT
 from modules.template.replacement_worker import resume
 from modules.template.router import router
 
 register_replacement_feed(read_feed)
+# 删除归档素材前问「还有谁在用」：封装的 head / 草稿引用了 `assets.id`
+register_asset_reference_checker(PackAssetReferences())
 
 module = ModuleSpec(
     name="template",

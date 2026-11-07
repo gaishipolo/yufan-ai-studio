@@ -158,6 +158,7 @@ def test_delete_is_blocked_when_referenced(
     注入口」且描述原样透出，不依赖任务模块的数据。
     """
     from modules.task.asset_references import TaskAssetReferences
+    from modules.template.asset_references import PackAssetReferences
 
     asset = create("used.png", png_bytes((20, 20), "blue"))
 
@@ -173,6 +174,7 @@ def test_delete_is_blocked_when_referenced(
     finally:
         reset_asset_reference_checker()
         register_asset_reference_checker(TaskAssetReferences())
+        register_asset_reference_checker(PackAssetReferences())
 
     assert response.status_code == 409
     assert response.json()["code"] == 40951

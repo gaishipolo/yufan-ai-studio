@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, Literal
 from uuid import UUID, uuid4
@@ -23,6 +24,16 @@ from modules.template.replacement_repository import ReplacementRepository
 from modules.template.replacement_schema import PackDraftIn
 
 Kind = Literal["product", "character", "scene"]
+
+
+@pytest.fixture(autouse=True)
+def _reset_actor(client: TestClient) -> Iterator[None]:
+    """`_as()` 改的是会话级 client 的全局 override，不还原会污染后续测试文件。
+
+    表现是别的测试拿到 actor.id == "owner"，却看不出是谁改的（此前只有按
+    文件子集跑才会红）。"""
+    yield
+    client.app.dependency_overrides.pop(get_actor, None)
 
 
 def _as(client: TestClient, owner: str) -> None:

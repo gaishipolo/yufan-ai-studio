@@ -423,6 +423,46 @@
             }
           }
         }
+      },
+      "delete": {
+        "tags": [
+          "素材",
+          "素材归档"
+        ],
+        "summary": "彻底删除回收站中的归档素材",
+        "description": "清空单条回收站记录。与 `PUT /deleted` 分成两步：软删可恢复，真删不可逆。",
+        "operationId": "purge_api_v1_assets_archive__asset_id__delete",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "asset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Asset Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/assets/archive/{asset_id}/preview": {
@@ -5087,6 +5127,16 @@
           "usedBytes": {
             "type": "integer",
             "title": "Usedbytes"
+          },
+          "quotaBytes": {
+            "type": "integer",
+            "title": "Quotabytes",
+            "default": 0
+          },
+          "ownerUsedBytes": {
+            "type": "integer",
+            "title": "Ownerusedbytes",
+            "default": 0
           },
           "page": {
             "type": "integer",

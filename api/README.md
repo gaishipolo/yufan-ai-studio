@@ -76,7 +76,10 @@ Vite 会把 `/api` 代理到 `VITE_API_PROXY_TARGET`（默认 `http://127.0.0.1:
 | `app migrate-storage [--dry-run] [--delete-source] [--skip-urls]` | `local → s3` 切换前跑：把 `STORAGE_LOCAL_ROOT` 的对象按 key 搬进桶，并把库里 `/static/...` 旧地址**剥成对象 key**（地址在出参时按当前驱动现签，跑完不再随驱动失联） |
 | `app migrate-blobs [--dry-run] [--delete-source]` | 归档素材改内容寻址布局（`blobs/<摘要>`），幂等；可原地跑 |
 | `app migrate-archive [--dry-run]` | 归档切远端前跑：把本地归档根（`catalog`/`blobs`/`previews`/`library`）搬进当前归档驱动，幂等 |
-| `app prune-blobs [--execute] [--min-age-hours 24]` | 回收没人引用的孤儿巨量字节（内容寻址的必然产物）：默认只报告，`--execute` 才删 |
+| `app prune-blobs [--execute] [--min-age-hours 24] [--include-trash] [--trash-age-days 30]` | 回收没人引用的孤儿字节；`--include-trash` 同时彻底清理超期的软删记录（软删本身不释放空间） |
+| `app verify-blobs [--all] [--sample 20]` | 读回字节重算 sha256，报告损坏/缺失对象；`key = sha256` 本身就是校验和 |
+| `app doctor [--strict]` | 部署自检：条件写是否真生效、预签名、DB/镜像一致性、旧 URL、配额、完整性抽检 |
+| `app audit-events [--action ...] [--target ...]` | 查看最近的操作留痕（分享、回收站、彻底删除、封装发布） |
 | `app runs-status` | 打印运行工作区在哪、本机可见多少个档案、多少个「指针在桶里但工作区不在本机」 |
 | `app prune-logins [--days 90]` | 清理过期的登录审计（默认取 `LOGIN_EVENT_RETENTION_DAYS`） |
 | `app new-module x --label 中文名` | 生成新模块脚手架（含权限声明） |
@@ -173,6 +176,35 @@ sha256、给 ffmpeg 派生预览，所以 `runs/` 不随归档进桶——索引
 取件在远端驱动下走 `307`（`/assets/archive/{id}/file|thumbnail|stream|preview` →
 预签名地址，`Range` 交给对象存储）；本地驱动仍是 `FileResponse`。共享协议是
 `ArchiveStorage.download_url()`：本地返回 `None`，远端返回签名地址。
+
+### 删除、引用与容量
+
+删除是**两步**：`PUT /{id}/deleted` 只打回收站标记（可恢复），
+`DELETE /{id}` 才彻底删。两步都会问「还有谁在用」——引用来源由两个模块在 import
+期注册（`video_tasks.reference_asset_ids`、`MediaPack.reference_ids`），聚合口在
+`core/ports/assets.py`。被引用时返回 409，`details.references` 直接列出引用方。
+**新增「把素材 id 写进自己表/文件」的模块时必须同时登记一个来源**，否则删除会
+静默放过它。
+
+彻底删除会删 DB 行 + JSON 镜像 + 没人再引用的字节。内容寻址下 blob、缩略图、
+转码流都由同一个 sha256 派生，所以「能不能删字节」按**还有没有别的行持有同一
+摘要**判断，不是按 key 字符串——漏判一次就是别人的素材裂图。
+
+`ARCHIVE_QUOTA_BYTES_PER_USER`（默认 0=不限）在登记时拦截 413，列表出参带回
+`quotaBytes` 与 `ownerUsedBytes`（后者不受分类/分池筛选影响）。
+`ARCHIVE_GC_ENABLED` 默认 **false**：调度器不做分布式选主，多实例会各跑一份，
+确认单机后再开，间隔与保留期可单独调。
+
+### 部署自检
+
+切到远端后先跑 `app doctor`。它检查的几件事都是「跑起来才发现就晚了」的：
+
+- **条件写是否真生效**：写探针对象再抢第二次 `If-None-Match: *`。某些 S3 兼容
+  实现会静默忽略这个头，发布版号的 CAS 随之退化成「两个实例写同一个版本」；
+- 引用来源数量、DB 行与 `catalog/assets` 镜像是否一致、有没有旧的 `/static` URL
+  落库、运行工作区孤儿指针、配额水位；
+- `verify_blobs` 抽样读回字节重算摘要，`损坏 / 缺失 / 跳过（旧布局）` 分开报告；
+- CORS 是浏览器侧约束，服务端测不了，只在结论里提示要配的项。
 
 ---
 
@@ -485,6 +517,11 @@ ruff check src tests
       `--dry-run`。它做两件事：按 key 搬对象、把 `image_jobs` 里 `/static/...` 的
       旧地址剥成对象 key。生成结果地址不再落库，出参时按当前驱动现拼
       （`/static` 或 `307` 预签名），所以私有桶也不会 403。
+- [ ] 部署后跑一次 `app doctor`（有 FAIL 直接非零退出）：它会实测
+      `If-None-Match` 条件写、预签名可达性、DB/镜像一致性与字节完整性，
+      而不是等第一次并发发布或第一次裂图才暴露。
+- [ ] `app prune-blobs --include-trash` 挂周期任务前先确认是单机部署；
+      多实例请保持 `ARCHIVE_GC_ENABLED=false`，改由运维在单机上定时执行。
 - [ ] 从旧归档盘升级时跑一次 `app import-archive-index --dry-run`，确认
       「新建 / 缺文件 / 冲突」的数量后再去掉 `--dry-run`。命令幂等，可重复执行。
 - [ ] `QUEUE_DRIVER=redis`，并实现对应驱动

@@ -15,6 +15,7 @@ from test_asset_api import png_bytes  # noqa: F401  同一套造图工具
 
 from core.ports.assets import (
     has_asset_reference_checker,
+    reference_source_count,
     register_asset_reference_checker,
     reset_asset_reference_checker,
 )
@@ -69,8 +70,9 @@ def _upload(client: TestClient, api: str, name: str) -> dict[str, Any]:
 
 
 def test_checker_is_registered_at_startup(client: TestClient) -> None:
-    """`asset-references` 从「注入口未注册」变成已注册。"""
+    """`asset-references` 从「注入口未注册」变成已注册，且两个来源都在。"""
     assert has_asset_reference_checker()
+    assert reference_source_count() >= 2
 
 
 def test_delete_blocked_by_referencing_task(client: TestClient, api: str) -> None:
@@ -111,6 +113,7 @@ def test_unregistered_checker_allows_delete(client: TestClient, api: str) -> Non
     删除功能会在实现接上之前完全不可用，而用户只看到「删不掉」。
     """
     from modules.task.asset_references import TaskAssetReferences
+    from modules.template.asset_references import PackAssetReferences
 
     asset = _upload(client, api, "no-checker.png")
     reset_asset_reference_checker()
@@ -118,3 +121,4 @@ def test_unregistered_checker_allows_delete(client: TestClient, api: str) -> Non
         assert client.delete(f"{api}/assets/{asset['id']}").status_code == 204
     finally:
         register_asset_reference_checker(TaskAssetReferences())
+        register_asset_reference_checker(PackAssetReferences())

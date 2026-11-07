@@ -2,7 +2,7 @@
 
 > 此文件由 `app export-openapi` 自动生成，请勿手工编辑。
 >
-> 版本 `0.2.0`｜共 **77** 个接口 / **9** 个模块
+> 版本 `0.2.0`｜共 **78** 个接口 / **9** 个模块
 >
 > 重新生成：`cd api && .venv/Scripts/python -m cli export-openapi`
 
@@ -156,6 +156,7 @@ Authorization: Bearer <accessToken>
 | `40926` | 409 | identity | `LastSuperuser` | 系统必须保留至少一个启用的超级管理员 |
 | `40951` | 409 | asset | `AssetInUse` | 素材仍被引用，不能删除 |
 | `41351` | 413 | asset | `FileTooLarge` | 文件不能超过 50MB |
+| `41352` | 413 | asset | `AssetQuotaExceeded` | 归档空间已用完，请先清理回收站或联系管理员提升配额 |
 | `42900` | 429 | 框架 | `RateLimited` | 请求过于频繁，请稍后再试 |
 | `50100` | 501 | 框架 | `NotImplementedFeature` | 该功能尚未实现 |
 | `50200` | 502 | 框架 | `UpstreamError` | 上游服务异常 |
@@ -170,7 +171,7 @@ Authorization: Bearer <accessToken>
 | 身份 | 26 | 见下方 `4.1` |
 | 任务 | 9 | 见下方 `4.2` |
 | 模型 | 1 | 见下方 `4.3` |
-| 素材 | 17 | 见下方 `4.4` |
+| 素材 | 18 | 见下方 `4.4` |
 | 生图 | 3 | 见下方 `4.5` |
 | 模板 | 17 | 见下方 `4.6` |
 | 分镜模板 | 1 | 见下方 `4.7` |
@@ -1010,7 +1011,7 @@ Authorization: Bearer <accessToken>
 | `items` | `ModelOut[]` | 否 |  |
 | `total` | `number` | 否 |  |
 
-### 4.4 素材（17 个）
+### 4.4 素材（18 个）
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
@@ -1019,6 +1020,7 @@ Authorization: Bearer <accessToken>
 | `POST` | `/api/v1/assets/archive/import` | 从 Z 盘 inbox 登记现有素材 | 🔒 |
 | `POST` | `/api/v1/assets/archive/upload` | 流式上传素材至归档盘 | 🔒 |
 | `GET` | `/api/v1/assets/archive/{asset_id}` | 读取本人或共享原片详情 | 🔒 |
+| `DELETE` | `/api/v1/assets/archive/{asset_id}` | 彻底删除回收站中的归档素材 | 🔒 |
 | `PUT` | `/api/v1/assets/archive/{asset_id}/deleted` | 将本人素材移入回收站或恢复 | 🔒 |
 | `GET` | `/api/v1/assets/archive/{asset_id}/file` | 预览或下载已归档素材 | 🔒 |
 | `PUT` | `/api/v1/assets/archive/{asset_id}/name` | 修改本人素材名称 | 🔒 |
@@ -1074,6 +1076,8 @@ Authorization: Bearer <accessToken>
 | `items` | `ArchivedAsset[]` | 是 |  |
 | `total` | `number` | 是 |  |
 | `usedBytes` | `number` | 是 |  |
+| `quotaBytes` | `number` | 否 |  |
+| `ownerUsedBytes` | `number` | 否 |  |
 | `page` | `number` | 否 |  |
 | `pageSize` | `number` | 否 |  |
 
@@ -1185,6 +1189,18 @@ Authorization: Bearer <accessToken>
 | `stateVersion` | `number` | 否 |  |
 | `editable` | `boolean` | 否 |  |
 | `downloadAllowed` | `boolean` | 否 |  |
+
+#### `DELETE /api/v1/assets/archive/{asset_id}`
+
+**彻底删除回收站中的归档素材**
+
+清空单条回收站记录。与 `PUT /deleted` 分成两步：软删可恢复，真删不可逆。
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `asset_id` | path | `string` | 是 |  |
+
+**响应** `ApiResponse<unknown>`（前端取 `res.data`）
 
 #### `PUT /api/v1/assets/archive/{asset_id}/deleted`
 
@@ -2120,6 +2136,8 @@ Authorization: Bearer <accessToken>
 | `items` | `ArchivedAsset[]` | 是 |  |
 | `total` | `number` | 是 |  |
 | `usedBytes` | `number` | 是 |  |
+| `quotaBytes` | `number` | 否 |  |
+| `ownerUsedBytes` | `number` | 否 |  |
 | `page` | `number` | 否 |  |
 | `pageSize` | `number` | 否 |  |
 

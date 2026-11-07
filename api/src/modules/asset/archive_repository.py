@@ -80,6 +80,20 @@ class ArchiveAssetRepository:
             stmt = stmt.where(Asset.category == category)
         return list((await self.session.scalars(stmt)).all())
 
+    async def used_by_owner(self, owner: str) -> int:
+        """配额口径：本人**未删除**的归档素材。筛选条件与列表无关，不能拿
+        `list_visible()` 的 `used_bytes` 顶替（那个按分类/范围过滤过）。"""
+        return int(
+            await self.session.scalar(
+                select(func.coalesce(func.sum(Asset.size_bytes), 0)).where(
+                    Asset.source == AssetSource.ARCHIVE,
+                    Asset.owner_id == owner,
+                    Asset.deleted_at.is_(None),
+                )
+            )
+            or 0
+        )
+
     async def list_visible(
         self,
         owner: str,

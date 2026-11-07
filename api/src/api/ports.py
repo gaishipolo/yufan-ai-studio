@@ -113,8 +113,9 @@ PORT_CATALOG: tuple[PortSpec, ...] = (
         name="asset-references",
         module="core.ports.assets",
         protocol="AssetReferenceChecker",
-        implementer="modules/task（`video_tasks.reference_asset_ids`，导入模块时自注册），"
-        "将来把素材 id 写进自己表的模块（分镜 / 镜头）接上第二个来源时要先改这里",
+        implementer="modules/task（`video_tasks.reference_asset_ids`）+ "
+        "modules/template（`MediaPack.reference_ids`，封装 head / 草稿）；"
+        "两者引用同一个 `assets.id`，聚合口可继续接第三个来源",
         when_unregistered="返回空映射，删除一律放行。默认「可能有引用就拒绝」"
         "会让删除功能在实现接上之前完全不可用，而用户只看到「删不掉」",
         is_registered=has_asset_reference_checker,

@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 import tempfile
 from collections.abc import Iterator
@@ -32,6 +33,9 @@ _PREVIEW_VERSION = PREVIEW_VERSION
 
 _SHA = re.compile(r"[0-9a-f]{64}")
 _SUFFIX = re.compile(r"\.[a-z0-9]{1,8}")
+_BLOB_PATH = re.compile(
+    rf"^{BLOB_ROOT}/[0-9a-f]{{2}}/([0-9a-f]{{64}})(?:\.[a-z0-9]{{1,8}})?$"
+)
 
 
 def normalize_suffix(suffix: str) -> str:
@@ -108,6 +112,29 @@ class BlobStore:
         with self.storage.materialize(source_key) as path:
             self.storage.copy(path, target, sha256)
         return target, True
+
+    def verify(self, key: str) -> bool | None:
+        """读回字节重算摘要，与 key 里的期望值比对。
+
+        内容寻址让「字节被换掉」在正常写入路径上不可能发生，但挡不住对象存储侧
+        被外部覆盖、迁移搬错或介质位衰减。`key = sha256` 本身就是校验和，所以
+        巡检不需要另存一份元数据：把 key 里的期望值读出来比对即可。
+
+        返回 `None` 表示跳过（旧 `library/` 布局没有摘要可比对），`False` 表示
+        缺失或损坏。调用方要把三者分开报告，别把「没查」算成「通过」。
+        """
+        match = _BLOB_PATH.fullmatch(key)
+        if match is None:
+            return None
+        expected = match.group(1)
+        digest = hashlib.sha256()
+        try:
+            with self.materialize(key) as path, path.open("rb") as stream:
+                for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                    digest.update(chunk)
+        except NotFound:
+            return False
+        return digest.hexdigest() == expected
 
     def materialize(self, key: str) -> AbstractContextManager[Path]:
         return _materialize(self.storage, key)

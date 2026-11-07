@@ -52,11 +52,13 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core import audit
 from core.config import settings
 from core.context import CurrentUser
 from core.exceptions import BadRequest, Conflict, Forbidden, NotFound
 from core.logging import get_logger
 from core.media import MediaCategory
+from core.ports.assets import ask_asset_references
 from infra.archive import (
     ArchiveStorage,
     BlobStore,
@@ -72,6 +74,7 @@ from infra.media_probe import (
 from infra.media_probe import (
     inspect as probe_media,
 )
+from modules.asset.archive_purge import purge_trash_asset
 from modules.asset.archive_repository import CATEGORIES, ArchiveAssetRepository
 from modules.asset.archive_schema import (
     ArchiveCategory,
@@ -82,6 +85,7 @@ from modules.asset.archive_schema import (
     ArchiveState,
     ImportAsset,
 )
+from modules.asset.errors import AssetInUse, AssetQuotaExceeded
 from modules.asset.models import Asset
 from modules.asset.schema import AssetSource
 
@@ -130,10 +134,13 @@ class ArchiveAssetService:
         rows, total, used_bytes = await self.repo.list_visible(
             owner, category, scope, keyword, state, page, page_size
         )
+        quota = max(0, settings.archive_quota_bytes_per_user)
         return ArchiveList(
             items=[self._to_out(row, owner) for row in rows],
             total=total,
             used_bytes=used_bytes,
+            quota_bytes=quota,
+            owner_used_bytes=await self.repo.used_by_owner(owner),
             page=page,
             page_size=page_size,
         )
@@ -232,6 +239,11 @@ class ArchiveAssetService:
         """
         return await self._ingest(source, filename, category, owner)
 
+    async def purge(self, asset_id: str, owner: str) -> None:
+        """清空回收站：删行、删镜像、删没人再引用的字节（A2）。"""
+        row = await self.owned(asset_id, owner)
+        await purge_trash_asset(self.session, row, self.storage, actor_id=owner)
+
     async def change_action(
         self, asset_id: str, owner: str, payload: ArchiveChange, field: str
     ) -> ArchivedAsset:
@@ -268,6 +280,13 @@ class ArchiveAssetService:
             row.shared = payload.shared
             row.shared_at = datetime.now(UTC) if payload.shared else None
         if payload.deleted is not None:
+            if payload.deleted:
+                # 归档素材与对象存储的素材共用 `assets.id`，删除保护不能只在
+                # `AssetService.delete_asset()` 做：这里的回收站标记同样会让
+                # 已发布的封装、任务详情里的参考图失效。
+                references = await ask_asset_references([asset_id])
+                if references.get(asset_id):
+                    raise AssetInUse(details={"references": list(references[asset_id])})
             row.deleted_at = datetime.now(UTC) if payload.deleted else None
             # 移入回收站即撤回分享：留着 shared 会让它继续出现在公共池
             row.shared = False
@@ -278,6 +297,20 @@ class ArchiveAssetService:
         # 只改库不改 JSON，会出现「列表已删、模板还能引用」的错位。
         await self._write_mirror(row)
         await self.session.commit()
+        action = _change_action(payload)
+        if action:
+            await audit.record(
+                action,
+                actor_id=owner,
+                target_type="asset",
+                target_id=asset_id,
+                detail={
+                    "name": row.name,
+                    "stateVersion": row.state_version,
+                    "shared": row.shared,
+                    "deleted": row.deleted_at is not None,
+                },
+            )
         return self._to_out(row, owner)
 
     # ------------------------------------------------------------------ 内部
@@ -297,6 +330,18 @@ class ArchiveAssetService:
             # 连对象都不再复制一份。分类不同则各自一条 —— 一张图同时当人物参考
             # 和产品参考是正常用法，不该被"内容相同"合并掉。
             return self._to_out(existing, owner)
+
+        quota = max(0, settings.archive_quota_bytes_per_user)
+        if quota:
+            used = await self.repo.used_by_owner(owner)
+            if used + size_bytes > quota:
+                raise AssetQuotaExceeded(
+                    details={
+                        "usedBytes": used,
+                        "quotaBytes": quota,
+                        "incomingBytes": size_bytes,
+                    }
+                )
 
         uid = uuid.uuid4().hex
         # 字节按 sha256 落库（`blobs/ab/abcdef…`）：位置由内容决定，不由登记时间决定。
@@ -457,6 +502,17 @@ def _require_digest(row: Asset) -> str:
     if not row.sha256:
         raise NotFound("素材摘要缺失，请重新登记")
     return row.sha256
+
+
+def _change_action(payload: ArchiveChange) -> str:
+    """三个 PUT 各自的审计动作名，便于按动作检索而不是翻日志。"""
+    if payload.name is not None:
+        return "asset.archive.rename"
+    if payload.shared is not None:
+        return "asset.archive.share" if payload.shared else "asset.archive.unshare"
+    if payload.deleted is not None:
+        return "asset.archive.trash" if payload.deleted else "asset.archive.restore"
+    return ""
 
 
 def _digest_and_size(path: Path) -> tuple[str, int]:

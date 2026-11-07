@@ -83,6 +83,8 @@ export interface ArchiveList {
   items: ArchivedAsset[];
   total: number;
   usedBytes: number;
+  quotaBytes?: number;
+  ownerUsedBytes?: number;
   page?: number;
   pageSize?: number;
 }
@@ -1005,6 +1007,8 @@ export interface EndpointData {
   "POST /api/v1/assets/archive/import": ArchivedAsset;
   /** 流式上传素材至归档盘 */
   "POST /api/v1/assets/archive/upload": ArchivedAsset;
+  /** 彻底删除回收站中的归档素材 */
+  "DELETE /api/v1/assets/archive/{asset_id}": unknown;
   /** 读取本人或共享原片详情 */
   "GET /api/v1/assets/archive/{asset_id}": ArchivedAsset;
   /** 将本人素材移入回收站或恢复 */

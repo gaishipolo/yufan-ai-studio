@@ -12,6 +12,8 @@ app migrate-storage                # 把本地 storage 根目录的对象搬进�
 app migrate-blobs                  # 归档素材改内容寻址布局（key = sha256，幂等）
 app migrate-archive                # 把本地归档根的内容搬进当前归档驱动（local → s3）
 app prune-blobs                    # 回收没人引用的孤儿素材字节（默认只报告）
+app verify-blobs [--all]           # 读回字节重算 sha256，报告损坏/缺失对象
+app doctor                         # 部署自检：条件写、预签名、镜像一致性、完整性抽检
 app runs-status                    # 运行工作区现状：多少档案只在本机可见
 app new-module voice --label 配音   # 生成新模块脚手架
 """
@@ -500,72 +502,108 @@ def _cmd_migrate_archive(args: argparse.Namespace) -> None:
 
 
 def _cmd_prune_blobs(args: argparse.Namespace) -> None:
-    """回收内容寻址下没人引用的字节。
+    """回收内容寻址下没人引用的字节，以及（可选）超期软删记录。
 
-    孤儿从哪来：登记是「先落字节、再落库行」，中间失败（校验不过、连接断、
-    进程被杀）时字节已经在 `blobs/` 里。失败路径**有意不删**它——同一个 key
-    可能正被并发登记的另一条记录共享，硬删会打断别人（T18）。代价就是这些
-    没人引用的字节需要一次独立的、可审计的回收。
-
-    默认只报告；`--execute` 才删。`--min-age-hours` 不是保守而是必要：
-    没有它，一次正好撞上上传的回收会删掉「字节已写、行还没提交」的那一份。
+    实现在 `modules/asset/maintenance.py`：周期任务与 CLI 必须共用一份，
+    否则「一处查了引用、另一处没查」迟早出现。
     """
-    orphans, deleted, protected = asyncio.run(
-        _prune_archive_blobs(execute=args.execute, min_age_hours=args.min_age_hours)
+    from api.discovery import discover_modules
+    from modules.asset.maintenance import run_archive_gc
+
+    discover_modules()  # 引用检查器在模块 import 期注册，CLI 默认不发现模块
+    report = asyncio.run(
+        run_archive_gc(
+            execute=args.execute,
+            min_age_hours=args.min_age_hours,
+            trash_days=args.trash_age_days,
+            include_trash=args.include_trash,
+        )
     )
     print(
-        f"孤儿字节 {orphans} 个，已删除 {deleted} 个，"
-        f"处于保护期 {protected} 个（{args.min_age_hours:g} 小时内）"
+        f"孤儿字节 {len(report.orphans)} 个，已删除 {len(report.deleted)} 个，"
+        f"处于保护期 {report.protected} 个（{args.min_age_hours:g} 小时内）"
     )
+    for key in report.orphans:
+        print(f"  孤儿 {key}")
+    if args.include_trash:
+        print(
+            f"回收站超期（{args.trash_age_days:g} 天）：清理 {len(report.purged)} 条、"
+            f"仍被引用 {len(report.blocked)} 条"
+        )
+        for asset_id, name, _ in report.purged:
+            print(f"  [清理] {asset_id} {name}")
+        for asset_id, name, refs in report.blocked:
+            print(f"  [保留] {asset_id} {name} 仍被引用：{refs}")
     if not args.execute:
-        print("（dry-run：未删除任何对象；确认后加 --execute）")
-    elif protected:
+        print("（dry-run：未删除任何对象、未删除任何记录；确认后加 --execute）")
+    elif report.protected:
         print("保护期内的对象下轮再扫：它们可能正在被登记流程写入")
 
 
-async def _prune_archive_blobs(*, execute: bool, min_age_hours: float) -> tuple[int, int, int]:
-    from datetime import UTC, datetime, timedelta
+def _cmd_audit_events(args: argparse.Namespace) -> None:
+    """查看最近的操作留痕：分享、撤回、回收站、彻底删除、封装发布。"""
+    asyncio.run(_show_audit_events(args.action, args.limit, args.target))
 
-    from sqlalchemy import select
 
+async def _show_audit_events(action: str, limit: int, target: str) -> None:
+    from sqlalchemy import desc, select
+
+    from db.audit import AuditEvent
     from db.session import get_session_factory
-    from infra.archive import get_archive_storage
-    from modules.asset.models import Asset
 
-    storage = get_archive_storage()
+    stmt = select(AuditEvent)
+    if action:
+        stmt = stmt.where(AuditEvent.action == action)
+    if target:
+        stmt = stmt.where(AuditEvent.target_id == target)
+    stmt = stmt.order_by(desc(AuditEvent.created_at)).limit(limit)
     async with get_session_factory()() as session:
-        rows = (await session.execute(select(Asset))).scalars().all()
-
-    # 引用集合 = 库行的 storage_key/cover_key + 镜像 JSON 的同名字段。
-    # 镜像必须算进来：模板 worker 直接读 `catalog/assets/*.json`，库里删掉的行
-    # 只要镜像还在，就仍可能被人读，那份字节不能当垃圾。
-    referenced: set[str] = set()
+        rows = (await session.execute(stmt)).scalars().all()
+    if not rows:
+        print("没有匹配的留痕记录")
+        return
     for row in rows:
-        referenced.update(key for key in (row.storage_key, row.cover_key) if key)
-    for key in storage.list_keys("catalog/assets", suffix=".json"):
-        value = storage.read(key)
-        if not isinstance(value, dict):
-            continue
-        for field in ("path", "previewPath"):
-            mirror_key = value.get(field)
-            if isinstance(mirror_key, str) and mirror_key:
-                referenced.add(mirror_key)
+        detail = row.detail[:120] + ("…" if len(row.detail) > 120 else "")
+        print(
+            f"{row.created_at:%Y-%m-%d %H:%M:%S}  {row.action:28} "
+            f"actor={row.actor_id or '-':8} target={row.target_id}  {detail}"
+        )
 
-    cutoff = datetime.now(UTC) - timedelta(hours=min_age_hours)
-    orphans = deleted = protected = 0
-    for key in storage.list_keys("blobs"):
-        if key in referenced:
-            continue
-        modified = storage.modified_at(key)
-        if modified is None or modified > cutoff:
-            protected += 1
-            continue
-        orphans += 1
-        print(f"  孤儿 {key}")
-        if execute:
-            storage.remove(key)
-            deleted += 1
-    return orphans, deleted, protected
+
+def _cmd_verify_blobs(args: argparse.Namespace) -> None:
+    """读回字节重算摘要：key 既是命名也是校验和，不需要另存元数据。"""
+    from infra.archive import get_archive_storage
+    from infra.archive.integrity import verify_blobs
+
+    report = verify_blobs(get_archive_storage(), sample=None if args.all else args.sample)
+    print(report.summary())
+    for key in report.missing:
+        print(f"  [缺失] {key}")
+    for key in report.corrupted:
+        print(f"  [摘要不符] {key}")
+    if not report.healthy and not args.lenient:
+        raise SystemExit(1)
+
+
+def _cmd_doctor(args: argparse.Namespace) -> None:
+    from api.diagnostics import run_doctor
+
+    report = asyncio.run(run_doctor(sample=args.sample))
+    print(report.render())
+    if report.failures:
+        raise SystemExit(1)
+    if args.strict and report.warnings:
+        raise SystemExit(1)
+
+
+async def _prune_archive_blobs(*, execute: bool, min_age_hours: float) -> tuple[int, int, int]:
+    """兼容旧调用点（测试与脚本）：薄封装，不再有第二份实现。"""
+    from modules.asset.maintenance import run_archive_gc
+
+    report = await run_archive_gc(
+        execute=execute, min_age_hours=min_age_hours, include_trash=False
+    )
+    return len(report.orphans), len(report.deleted), report.protected
 
 
 def _rewrite_asset_mirror(storage: ArchiveStorage, row: Asset) -> None:
@@ -767,7 +805,37 @@ def main(argv: list[str] | None = None) -> int:
         default=24.0,
         help="只回收早于此时长的对象（默认 24 小时，避开正在进行的登记）",
     )
+    p_prune_blobs.add_argument(
+        "--include-trash",
+        action="store_true",
+        help="同时彻底清理长期留在回收站的归档记录（软删本身不释放空间）",
+    )
+    p_prune_blobs.add_argument(
+        "--trash-age-days",
+        type=float,
+        default=30.0,
+        help="--include-trash 的保留期（默认 30 天）",
+    )
     p_prune_blobs.set_defaults(func=_cmd_prune_blobs)
+
+    p_verify = sub.add_parser(
+        "verify-blobs", help="读回字节重算 sha256，报告损坏或缺失的归档对象"
+    )
+    p_verify.add_argument("--all", action="store_true", help="全量校验（默认只抽样）")
+    p_verify.add_argument("--sample", type=int, default=20, help="抽样个数（默认 20）")
+    p_verify.add_argument("--lenient", action="store_true", help="发现损坏也不返回非零退出码")
+    p_verify.set_defaults(func=_cmd_verify_blobs)
+
+    p_doctor = sub.add_parser("doctor", help="部署自检：条件写、预签名、镜像一致性、完整性抽检")
+    p_doctor.add_argument("--sample", type=int, default=10, help="完整性抽检个数（默认 10）")
+    p_doctor.add_argument("--strict", action="store_true", help="有 WARN 也返回非零退出码")
+    p_doctor.set_defaults(func=_cmd_doctor)
+
+    p_audit = sub.add_parser("audit-events", help="查看最近的操作留痕（状态变更与发布）")
+    p_audit.add_argument("--action", default="", help="按动作过滤，如 asset.archive.share")
+    p_audit.add_argument("--target", default="", help="按对象 id 过滤")
+    p_audit.add_argument("--limit", type=int, default=30, help="条数（默认 30）")
+    p_audit.set_defaults(func=_cmd_audit_events)
 
     p_new = sub.add_parser("new-module", help="生成新模块脚手架")
     p_new.add_argument("name", help="模块名（snake_case），同时作为目录名与 pipeline kind")

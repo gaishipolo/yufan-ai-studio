@@ -1,11 +1,13 @@
 """封装管理与调用预览的 HTTP 契约。"""
 
+import asyncio
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import FileResponse
 
 from api.deps import require
+from core import audit
 from core.context import CurrentUser
 from core.response import ApiResponse
 from modules.template.pack_service import PackService
@@ -49,17 +51,42 @@ def save(payload: PackDraftIn, actor: ManageDep, service: ServiceDep) -> ApiResp
 
 
 @router.post("/{pack_id}/publish", summary="发布不可变封装版本")
-def publish(
+async def publish(
     pack_id: str, payload: PackAction, actor: PublishDep, service: ServiceDep
 ) -> ApiResponse[PackManaged]:
-    return ApiResponse.ok(service.publish(pack_id, actor.id, payload.expected_revision))
+    # PackService 是同步文件 IO；路由改 async 只是为了能在提交后写审计
+    result = await asyncio.to_thread(
+        service.publish, pack_id, actor.id, payload.expected_revision
+    )
+    await audit.record(
+        "template.pack.publish",
+        actor_id=actor.id,
+        target_type="media_pack",
+        target_id=pack_id,
+        detail={
+            "revision": payload.expected_revision,
+            "version": getattr(result, "version", None),
+            "status": result.status,
+        },
+    )
+    return ApiResponse.ok(result)
 
 
 @router.post("/{pack_id}/disable", summary="停用已发布封装对象")
-def disable(
+async def disable(
     pack_id: str, payload: PackAction, actor: PublishDep, service: ServiceDep
 ) -> ApiResponse[PackManaged]:
-    return ApiResponse.ok(service.disable(pack_id, actor.id, payload.expected_revision))
+    result = await asyncio.to_thread(
+        service.disable, pack_id, actor.id, payload.expected_revision
+    )
+    await audit.record(
+        "template.pack.disable",
+        actor_id=actor.id,
+        target_type="media_pack",
+        target_id=pack_id,
+        detail={"revision": payload.expected_revision, "status": result.status},
+    )
+    return ApiResponse.ok(result)
 
 
 @router.get("/{pack_id}/preview/{asset_id}", summary="读取授权发布版本的包内预览")
