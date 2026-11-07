@@ -52,6 +52,11 @@ def load_extension_points() -> None:
     """
     # 审计写入端：core 只定义协议，具体落库在 db 层注册
     from db import audit_sink as _audit_sink  # noqa: F401
+
+    # outbox 投递：import 即注册 `@periodic("core.outbox")`。
+    # 不能靠 `init_db()` 顺带加载——那只在非生产环境执行，生产用 Alembic 建表，
+    # 结果是「事件写进去了，但永远没有投递器」这种只在生产出现的静默故障。
+    from db import outbox as _outbox  # noqa: F401
     from generation import worker as _generation_worker  # noqa: F401
 
 

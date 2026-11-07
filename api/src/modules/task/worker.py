@@ -15,8 +15,8 @@ from datetime import UTC, datetime
 
 from sqlalchemy import select
 
-from core.events import get_event_bus
 from core.logging import get_logger
+from db.outbox import dispatch_pending, record
 from db.session import get_session_factory
 from generation.events import EVT_GENERATION_FAILED
 from generation.runner import SUBMIT_UNKNOWN_MESSAGE, get_runner
@@ -62,6 +62,17 @@ async def resume_unfinished_tasks(queue: JobQueue) -> int:
                 task.status = TaskStatus.FAILED.value
                 task.error_message = SUBMIT_UNKNOWN_MESSAGE
                 task.finished_at = datetime.now(tz=UTC)
+                # 事件与业务行写进**同一个事务**：以前是 commit 之后再 publish，
+                # 中间崩一下就出现「任务页显示失败、事件流什么都没有」的静默消失（R4-10）。
+                # 现在最坏情况是投递晚几秒，由 outbox 的周期任务补上。
+                await record(
+                    session,
+                    EVT_GENERATION_FAILED,
+                    kind=KIND_VIDEO,
+                    record_id=task.id,
+                    owner_id=task.author_id,
+                    error=SUBMIT_UNKNOWN_MESSAGE,
+                )
             else:
                 # 提交前就中断了：重置现场，重新走 submit
                 task.status = TaskStatus.QUEUED.value
@@ -73,17 +84,16 @@ async def resume_unfinished_tasks(queue: JobQueue) -> int:
         # 先提交再派发，避免 worker 抢到任务时读不到最新状态
         await session.commit()
 
-    for task_id, owner_id in unknown:
+    for task_id, _owner_id in unknown:
         logger.warning("任务提交结果未知，已置失败等待人工核对 id=%s", task_id)
-        # 以前这里只写日志：任务页显示失败，但事件流里什么都没有，
-        # 接上通知/SSE 后这类任务对用户是「静默消失」的（R4-10）
-        await get_event_bus().publish(
-            EVT_GENERATION_FAILED,
-            kind=KIND_VIDEO,
-            record_id=task_id,
-            owner_id=owner_id,
-            error=SUBMIT_UNKNOWN_MESSAGE,
-        )
+
+    # 事务已提交，事件一定在 outbox 里。这里只做一次「尽快投递」的尝试，
+    # 失败也不影响恢复流程——周期任务（core.outbox）会接着补投。
+    if unknown:
+        try:
+            await dispatch_pending()
+        except Exception:  # noqa: BLE001 - 投递失败不该让启动恢复中断
+            logger.exception("启动恢复：outbox 立即投递失败，等待周期任务补投")
 
     runner = get_runner(queue)
     for task_id in resubmit:

@@ -1,7 +1,11 @@
 """任务队列抽象。
 
-视频生成是长耗时任务，必须异步化。当前用内存队列跑通链路，
-生产切 Redis/Celery/Arq 时只替换实现，业务层无感。
+视频生成是长耗时任务，必须异步化。协议与实现分离，`QUEUE_DRIVER` 决定用哪个：
+
+| 驱动 | 文件 | 适用 |
+|---|---|---|
+| `memory` | `infra/queue/memory.py` | 开发、单测、单进程演示（重启即丢） |
+| `db` | `infra/queue/db.py` | 单机 / 小规模生产（job 落库，重启不丢，租约接管崩溃任务） |
 
 两个关键能力直接写进协议，因为它们决定架构形态：
 
@@ -10,6 +14,35 @@
    这样 worker 的并发槽位永远只被正在干活的 job 占用。
 2. **幂等键**：同一个 key 重复入队只保留一条。
    生成任务的提交/轮询都是「至少一次」语义，幂等键避免重复扣费。
+
+## 协议只承诺这 6 个方法能表达的事
+
+不是「随便什么队列都能接进来」，而是**这 6 个方法必须能映射到目标系统**。
+写新的驱动前先对照下表，映射不上的实现会在某个角落撒谎：
+
+| 协议方法 | Redis 对应 | 必须保证的语义 |
+|---|---|---|
+| `enqueue(job, delay)` | `ZADD`（score=到期时间） | 延迟到点之前不可见；同幂等键只留一条 |
+| `dequeue(timeout)` | `ZRANGEBYSCORE` + `ZREM` | **原子领取**；领走后进程崩掉，别人要能接手 |
+| `ack(job)` | `LREM` / `ZREM` pending | 幂等：重复 ack 不报错 |
+| `nack(job, requeue)` | 重新 `ZADD` 或进死信 | 重投要退避；次数用尽后**不要无限重投** |
+| `size()` | `ZCARD` / `LLEN` | 只数在途（含正在跑的），不是历史总数 |
+| `close()` | 关连接池 | 不许清空队列数据 |
+
+## 两条纪律
+
+1. **业务只拿协议**：`infra.get_queue()`，不要在模块里 `new` 具体类。
+   换驱动时业务代码一行不改——这是「留入口」的全部意义。
+2. **`attempts` 的语义是「已失败次数」，不是「已执行次数」**。
+   handler 里读 `job.attempts + 1` 就是当前是第几次尝试。新驱动如果自己另算一套，
+   日志与告警会全部错位。
+
+## 未来接 Redis 的入口在哪
+
+不在本文件，也不在业务模块：新增 `infra/queue/redis.py`（`Driver = RedisJobQueue`），
+把 `QUEUE_DRIVER` 改成 `redis` 即可。需要一起提供的还有它自己的
+`RedisQueueSettings`（见 `infra/driver_config.py`），连接参数不进全局 `Settings`。
+`tests/test_config_guard.py` 会自动把它纳入配置巡检——不需要改测试。
 """
 
 from __future__ import annotations

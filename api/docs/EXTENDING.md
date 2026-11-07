@@ -609,8 +609,33 @@ async def notify_on_success(event) -> None:
 
 处理器异常会被总线捕获并记日志，**不会**影响生成流程（通知失败不该让任务回滚）。
 
-> 已知边界：这是进程内尽力而为的事件，不重试、不持久化。
-> 需要可靠投递（如计费）时，改成"写 outbox 表 + 独立消费者"，订阅方代码不变。
+#### 投递可靠性：需要「一定会发出去」时写 outbox
+
+`get_event_bus().publish()` 是纯进程内的：它在业务 `commit()` **之后**执行，中间那个
+窗口一旦崩掉，业务成功、事件永久消失，日志里一句异常都没有。这类链路（计费、
+通知、审计）改用 outbox：
+
+```python
+from db.outbox import record
+
+async with factory() as session:
+    task.status = "failed"
+    await record(session, EVT_GENERATION_FAILED, record_id=task.id, owner_id=task.author_id)
+    await session.commit()      # 事件与业务行同一个事务：要么都在，要么都不在
+```
+
+之后 `core.outbox` 周期任务（默认 5 秒）把未投递的行发出去；进程在 commit 之后
+崩溃也不会丢，只会晚几秒。**语义是至少一次**，所以订阅方必须幂等
+（按事件 id 去重，或用 `INSERT ... ON CONFLICT DO NOTHING` 写自己的幂等表）。
+要做到「恰好一次」需要分布式事务，本骨架不承诺做不到的事。
+
+选择标准很简单：
+
+| 场景 | 用法 |
+|---|---|
+| 「顺便发一下」的通知、埋点 | `publish()`，丢了不心疼 |
+| 计费、扣额度、对外承诺、审计 | `record()`，丢了要能查出来 |
+
 
 ### 5.1 跨模块**查询**：用注入口，不要 import
 
@@ -652,7 +677,7 @@ async def ask_xxx(...) -> ...:             # **未注册时返回中性值，不
 | kind | 配置项 | 现有实现 |
 |---|---|---|
 | `storage` | `STORAGE_DRIVER` | `local` |
-| `queue` | `QUEUE_DRIVER` | `memory` |
+| `queue` | `QUEUE_DRIVER` | `memory`（开发）/ `db`（`queued_jobs`，重启不丢） |
 | `cache` | `CACHE_DRIVER` | `memory`（LRU + TTL） |
 | `ai` | `AI_PROVIDERS`（可多选） | `echo` / `agnes` / `libtv` |
 | `archive` | `ARCHIVE_DRIVER` | `local`（本地 / 共享盘） |
@@ -698,6 +723,50 @@ lifespan 上。自己 `async with httpx.AsyncClient(...)` 会让三件事对不�
 缓存没有 `get_or_set`，回源策略（要不要加锁、失败是否返回旧值）由调用方写清楚；
 防击穿需要 singleflight，那是消费方的事，不是存储语义。
 
+### 5.2.3 限流：`rate_limit()`，计数落缓存
+
+```python
+from api.deps import rate_limit
+
+@router.post("")
+async def create(
+    ...,
+    _: None = Depends(rate_limit("task.create", limit=settings.rate_limit_default_per_min)),
+): ...
+```
+
+- `scope` 是**动作**（`task.create`），不是 URL：换个路径前缀不该重置额度；
+- 计数主体是当前登录用户；`cost` 让「一次请求算几次」可配（上传大文件常见 5 次）；
+- 超限抛 429，`details.retryAfter` 给前端倒计时；
+- 计数在 `CACHE_DRIVER` 里。**memory 驱动下多实例各算各的**，要精确就换共享缓存；
+- 缓存故障时**放行**（并打一条限流日志）。限流是保护措施不是鉴权：拦错的代价是
+  全站不可用，放过的代价是可能被打一下——和 `core/ports/assets.py` 的 fail-closed
+  是两套判断标准，别混用。
+
+刻意**没有**全局中间件兜底：全局额度容易把健康检查、静态资源、预检请求一起限掉，
+而「哪个接口贵」只有模块自己知道。
+
+### 5.2.4 队列：`memory → db → redis` 是同一条升级路径
+
+| 阶段 | 配置 | 得到什么 | 代价 |
+|---|---|---|---|
+| 开发 | `QUEUE_DRIVER=memory` | 零依赖，跑通链路 | 重启丢在途任务，跨实例不可见 |
+| 单机/小规模生产 | `QUEUE_DRIVER=db` | job 落 `queued_jobs`，重启不丢；租约到期别人能接手崩溃任务；死信留档 | 每秒一次轮询查询（见 `QUEUE_POLL_INTERVAL_SEC`），吞吐不高 |
+| 大规模 | 新增 `infra/queue/redis.py` | 高吞吐、跨实例即时唤醒 | 多一个中间件、多一个故障域 |
+
+从 db 到 redis **只需要一个文件**：`infra/queue/redis.py` 里 `Driver = RedisJobQueue`，
+实现 `JobQueue` 的 6 个方法（映射表见 `infra/queue/base.py` 的模块文档），
+连接参数放它自己的 `RedisQueueSettings`（`REDIS_*` 前缀，`infra/driver_config.py`），
+然后改 `QUEUE_DRIVER=redis`。业务代码、协议、测试都不用动。
+
+两条容易踩的：
+
+- **`attempts` 的语义是「已失败次数」**，不是「已执行次数」。handler 里 `job.attempts + 1`
+  就是第几次尝试；新驱动自己另算一套，日志与告警会全部错位。
+- **领取必须原子且可接管**。`db` 驱动用「条件 UPDATE + 租约」，Redis 用
+  `ZRANGEBYSCORE` + `ZREM`（或 `BRPOPLPUSH` + processing 列表）。只 `ZREM` 不留
+  processing 列表，进程一崩那条 job 就**永远消失**——这比报错难查得多。
+
 ### 5.3 定期发生的事：`@periodic`，别写进 `app.py`
 
 请求驱动和队列驱动都表达不了「没人触发、但每 N 秒要发生一次」。典型场景：
@@ -718,8 +787,10 @@ async def reconcile() -> None:
 
 1. **名字 = `<模块>.<动作>`**，`app modules` 按前缀分组，`test_periodic_jobs_are_namespaced_by_module` 会红；
 2. **handler 自己开会话**，不要在闭包里持有 session；
-3. **必须幂等**：多副本部署时每个进程各跑一份，调度器**不做**分布式选主。
-   要「全集群只跑一次」，先换 `queue_driver=redis` 再加锁，别在 handler 里假装；
+3. **必须幂等**：多副本部署时每个进程各跑一份。确实「全集群只能跑一次」的
+   （不可逆删除、对外发券）标 `leader_only=True`，调度器会向 `LeaderElector`
+   抢集群租约，抢不到就跳过这一轮；租约策略由 `LEADER_ELECTOR` 选（默认 `local`，
+   多实例用 `backend`，它是用归档存储的条件写实现的，**不需要 Redis**）；
 4. **`every` 是最小间隔**，不是精确定时：某个 handler 跑久了会推后别人的下一轮。
 
 `SCHEDULER_ENABLED=false` 可以整体关掉。什么时候用 job handler、什么时候用周期任务：

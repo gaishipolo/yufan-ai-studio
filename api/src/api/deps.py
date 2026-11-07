@@ -26,7 +26,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.authn import resolve_principal
 from core.config import settings
 from core.context import CurrentUser, set_current_user
-from core.exceptions import Forbidden, Unauthorized
+from core.exceptions import Forbidden, RateLimited, Unauthorized
+from core.net import client_ip
+from core.ratelimit import get_rate_limiter, retry_after_seconds
 from core.response import PageParams
 from core.security import user_from_token
 from db.session import get_session
@@ -119,6 +121,60 @@ def require(
         return actor
 
     dependency.__name__ = f"require_{'_'.join(c.replace(':', '_') for c in codes)}"
+    return dependency
+
+
+# ---------- 限流 ----------
+def rate_limit(
+    scope: str,
+    *,
+    limit: int,
+    window: float = 60.0,
+    cost: int = 1,
+) -> Callable[..., Awaitable[None]]:
+    """限流依赖工厂。与 `require()` 同一类东西：横切在路由上的「闸门」。
+
+        @router.post("")
+        async def create(..., _: None = Depends(rate_limit("task.create", limit=30))): ...
+
+    - `scope` 是**动作**（`task.create`），`limit` 是窗口内允许的次数，`cost`
+      让「一次请求算几次」可配（上传大文件算 5 次是常见做法）。
+    - 计数主体是**当前登录用户**；未登录走不到这里（依赖了 `ActorDep`），
+      因为本项目所有业务接口都要求身份。纯匿名接口要按 IP 限流时，
+      应该写 `Depends(rate_limit_by_ip(...))` 那种变体，不要放松这里的语义。
+    - 超出额度抛 429（`RateLimited`），`details.retryAfter` 是建议重试秒数，
+      前端据此倒计时；**不设 `Retry-After` 头**，因为响应封套才是本项目的契约。
+    """
+    if not scope:
+        raise ValueError("rate_limit() 需要 scope")
+    if limit <= 0:
+        # 显式关闭：返回一个空依赖，比在路由里写 `if settings.xxx` 干净
+        async def _noop() -> None:
+            return None
+
+        return _noop
+
+    async def dependency(request: Request, actor: ActorDep) -> None:
+        if not settings.rate_limit_enabled:
+            return
+        decision = await get_rate_limiter().hit(
+            actor.id or client_ip(request),
+            scope=scope,
+            limit=limit,
+            window=window,
+            cost=cost,
+        )
+        if not decision.allowed:
+            raise RateLimited(
+                f"操作过于频繁，请 {retry_after_seconds(decision)} 秒后再试",
+                details={
+                    "scope": scope,
+                    "limit": decision.limit,
+                    "retryAfter": retry_after_seconds(decision),
+                },
+            )
+
+    dependency.__name__ = f"rate_limit_{scope.replace(':', '_').replace('.', '_')}"
     return dependency
 
 

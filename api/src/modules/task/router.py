@@ -17,9 +17,10 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Path, Query, status
+from fastapi import APIRouter, Depends, Path, Query, status
 
-from api.deps import PageDep
+from api.deps import PageDep, rate_limit
+from core.config import settings
 from core.response import ApiResponse
 from modules.task.dependencies import (
     TaskCreateDep,
@@ -115,7 +116,12 @@ async def get_task(
 
 @router.post("", status_code=status.HTTP_201_CREATED, summary="创建任务")
 async def create_task(
-    service: TaskServiceDep, actor: TaskCreateDep, payload: CreateTaskIn
+    service: TaskServiceDep,
+    actor: TaskCreateDep,
+    payload: CreateTaskIn,
+    # 建任务是唯一会真花钱的入口（提交供应商），按用户限速。
+    # 这是全项目第一个用 `rate_limit` 的地方，其余接口照抄这一行即可。
+    _: None = Depends(rate_limit("task.create", limit=settings.rate_limit_default_per_min)),
 ) -> ApiResponse[TaskOut]:
     task = await service.create_task(actor, payload)
     return ApiResponse.ok(service.to_out(task), message="任务已创建")

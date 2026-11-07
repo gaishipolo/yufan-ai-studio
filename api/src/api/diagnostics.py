@@ -372,6 +372,51 @@ async def _check_cache_channel(report: DoctorReport) -> None:
     )
 
 
+async def _check_queue_channel(report: DoctorReport) -> None:
+    """队列：db 驱动要证明表真的可读写；memory 驱动在生产是「重启就丢任务」。
+
+    只报驱动名没有意义。`QUEUE_DRIVER=db` 却没跑迁移时，启动、健康检查、接口
+    全都正常，第一条任务入队才 500。这里真查一次在途数量，把这类部署事故拦在自检里。
+    """
+    from infra import get_queue
+
+    try:
+        queue = get_queue()
+        depth = await queue.size()
+    except Exception as exc:  # 队列是可选依赖，故障不该让 doctor 自身崩溃
+        report.add(
+            "runtime.queue",
+            "FAIL",
+            f"QUEUE_DRIVER={settings.queue_driver} 不可用：{exc}"
+            "（db 驱动要先跑 alembic upgrade head 建表）",
+        )
+        return
+
+    # 用鸭子类型而不是 isinstance：不想为了一个检查把 db 驱动 import 进来
+    stats_fn = getattr(queue, "stats", None)
+    if stats_fn is not None:
+        stats = await stats_fn()
+        detail = (
+            f"QUEUE_DRIVER={settings.queue_driver}，在途 {depth} 条"
+            f"（pending {stats.get('pending', 0)} / running {stats.get('running', 0)}），"
+            f"死信 {stats.get('dead', 0)} 条；租约 {settings.queue_lease_sec:g}s"
+        )
+        if stats.get("dead"):
+            report.add("runtime.queue", "WARN", detail + "。死信需人工确认后清理")
+        else:
+            report.add("runtime.queue", "PASS", detail)
+        return
+
+    detail = (
+        f"QUEUE_DRIVER={settings.queue_driver}，在途 {depth} 条；"
+        "重启会丢在途任务，跨实例不可见"
+    )
+    if settings.worker_enabled and settings.app_env == "prod":
+        report.add("runtime.queue", "WARN", detail + "。生产建议 QUEUE_DRIVER=db")
+    else:
+        report.add("runtime.queue", "INFO", detail)
+
+
 def _check_http_channel(report: DoctorReport) -> None:
     """出站 HTTP 只报配置，不发真实请求。
 
@@ -395,6 +440,7 @@ async def run_doctor(*, sample: int = 10) -> DoctorReport:
     await asyncio.to_thread(_check_archive_storage, report)
     await _check_database(report)
     await _check_cache_channel(report)
+    await _check_queue_channel(report)
     _check_http_channel(report)
     await asyncio.to_thread(_check_workspace_and_blobs, report, sample)
     return report

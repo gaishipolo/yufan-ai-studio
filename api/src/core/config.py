@@ -109,7 +109,16 @@ class Settings(BaseSettings):
     storage_local_root: str = (_VAR_DIR / "storage").as_posix()
     storage_public_base: str = "/static"
 
+    # memory = 进程内（重启即丢，开发用）；db = 落 queued_jobs 表（重启不丢，租约接管
+    # 崩溃任务）。将来接 redis 只需新增 infra/queue/redis.py 并改这一行。
     queue_driver: str = "memory"
+    # 可见性超时：job 被领走后多久算「领的人可能崩了」，可以被别人重新领走。
+    # 必须大于单次 handler 的最长耗时，否则正干着的活会被第二个 worker 重复执行。
+    # 视频/图片都是「短 job + 延迟重投」的形态，300 秒覆盖得住。
+    queue_lease_sec: float = 300.0
+    # 空队列时的轮询间隔。db 驱动每个 worker 每这么久查一次库：
+    # 10 个 worker × 5 次/秒 = 50 QPS 的空查询，小库能扛；再高就该换驱动了。
+    queue_poll_interval_sec: float = 0.2
     # 缓存驱动：memory = 进程内，随进程消失；redis 等共享实现未落地时启动即报错。
     # **只放可丢失的加速数据**：限流计数、模型清单、热点只读查询。
     # 会话与令牌的权威状态在 DB，不能只放这里——多实例下各缓存各的等于没登录。
@@ -143,6 +152,26 @@ class Settings(BaseSettings):
     # 周期任务的集群协调能力：local = 单实例直接跑；backend = 用归档存储的
     # 条件写抢租约，全集群只有一个实例执行「不可逆/非幂等」的任务。
     leader_elector: str = "local"
+
+    # ---------- 事件 outbox ----------
+    # 进程内事件总线是「尽力而为」：订阅者抛异常只记日志、进程崩了就丢。
+    # 需要保证「业务提交成功 → 事件一定被投递」的链路写 outbox 表，
+    # 由这个周期任务补投（至少一次，消费方要幂等）。
+    outbox_enabled: bool = True
+    outbox_dispatch_interval_sec: float = 5.0
+    outbox_batch_size: int = 100
+    # 投递重试上限：到顶转 failed 留档，不再无限重投
+    outbox_max_attempts: int = 5
+    # 终态（delivered / failed）事件的保留天数，到点由周期任务清掉。
+    # pending 无论多老都不清——那是还没发出去的事件，删了就是丢数据。
+    outbox_retention_days: float = 7.0
+
+    # ---------- 限流 ----------
+    # 计数落在缓存层（`CACHE_DRIVER`）。memory 时各实例各算各的，
+    # 多实例部署要换成共享缓存，否则「每 IP 每分钟 60 次」会变成 60×N 次。
+    rate_limit_enabled: bool = True
+    # 默认额度：只在路由显式引用时生效，不是全局兜底（全局兜底容易被健康检查打穿）
+    rate_limit_default_per_min: int = 60
 
     # 兼容旧的单值写法 AI_PROVIDER；推荐使用 AI_PROVIDERS=echo,volcengine
     ai_provider: str = "echo"

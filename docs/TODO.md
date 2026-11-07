@@ -7,9 +7,8 @@
 >
 > 来源：`CODE_REVIEW_2026-11-06_R11~R14`、`CODE_REVIEW_2026-11-06_FE6`、
 > `EXTENSIBILITY_GAPS.md` 的 B1/C1/C2，以及素材分支合并时新发现的项。
-> 最后更新：2026-11-07 16:50（素材库基建封顶：引用来源声明化 + fail-closed、
-> DB 单一事实来源与镜像幂等对账、共享 S3 后端与单桶模式、可插拔选主；
-> 剩余多实例边界登记为 T25）
+> 最后更新：2026-11-07 19:40（横向能力第二批：队列 db 驱动 + 事件 outbox + 通用限流；
+> Redis 暂不引入，改为把驱动协议与配置入口留好；剩余边界登记为 T26/T27）
 
 ## 一眼看完
 
@@ -27,6 +26,8 @@
 | T23 | 上传秒传/断点、视频派生预热（C 档） | 300MB 白传一遍；首个点开视频的人等转码 | 后端 |
 | T24 | `MediaFile.path` 装的是 key，字段名/描述没跟上 | 契约语义漂移，后来者会当路径拼 | 后端（小） |
 | T25 | 多实例部署还差三处硬边界 | 配额首次并发、预签名 TOCTOU、运行工作区仍要共享盘 | 架构 |
+| T26 | db 队列是轮询式，没有唤醒机制 | 空转查询按 worker 数叠加；万级 QPS 要换 Redis 驱动（协议已备好） | 架构 |
+| T27 | 限流只有依赖级，没有全局兜底；固定窗口有 2× 边界误差 | 未显式挂 `rate_limit()` 的接口完全不限；窗口交界处瞬时可达 2 倍额度 | 后端 |
 
 ---
 
@@ -148,6 +149,39 @@ A/B 档解决的是「数据不会丢、空间不涨、部署可自检」；这�
 
 ---
 
+## T26 · db 队列没有唤醒机制（轮询式，吞吐有上限）
+
+`QUEUE_DRIVER=db` 解决了「重启丢任务」和「崩溃任务卡死」，但取任务是**轮询**：
+每个 worker 每 `QUEUE_POLL_INTERVAL_SEC`（默认 0.2s）查一次库。10 个 worker 就是
+50 次/秒的空查询，小库能扛，万级 QPS 不行；而且入队到被取走有 0–200ms 的固有延迟。
+
+协议层已经留好入口（`infra/queue/base.py` 的映射表 + `docs/EXTENDING.md` §5.2.4），
+换 Redis 只需新增 `infra/queue/redis.py`，业务不改。不引 Redis 时的另一条路是
+PostgreSQL 的 `LISTEN/NOTIFY`：写完 `NOTIFY`，worker 侧长连接被唤醒——但 sqlite 没有，
+会变成「两套取任务路径」，所以没做。
+
+**验收**：`QUEUE_DRIVER=redis` 可切换，且 `tests/test_db_queue.py` 的语义用例在
+新驱动上同样通过（协议一致性是硬要求）；或 db 驱动接上 `LISTEN/NOTIFY` 并有
+「空转查询数下降」的实测数据。
+
+## T27 · 限流的两处已知边界
+
+1. **没有全局兜底**：只有显式写了 `Depends(rate_limit(...))` 的接口才限流。
+   刻意不做全局中间件（会把健康检查、静态资源、预检请求一起限掉），代价是
+   「新接口忘了挂」= 完全不限。可以补一条架构守卫：扫所有写操作路由，要求
+   `rate_limit` 或显式豁免标记。
+2. **固定窗口有 2× 边界误差**：窗口最后 1 秒打满、下一秒又是新窗口，
+   瞬时可达 `2×limit`。要精确就换滑动窗口（`ZADD` + `ZREMRANGEBYSCORE` + `ZCARD`，
+   或用 Lua 保证原子），同样只需替换 `Counter` 实现。
+
+另：计数在 `CACHE_DRIVER` 里，`memory` 时多实例各算各的——这是部署配置问题，
+`app doctor` 的 `runtime.cache` 会报驱动名，但不会替你判断额度是否被放大。
+
+**验收**：① 架构守卫能拦住「写路由未挂限流」；② 或明确记录「本项不做」的理由。
+
+
+---
+
 ## 已复核关闭（别再重做）
 
 2026-11-06 合并后逐条核过，以下都已修好，留在这里防止重复劳动：
@@ -173,5 +207,6 @@ A/B 档解决的是「数据不会丢、空间不涨、部署可自检」；这�
 | 素材库 A/B 档（数据正确性与长期可运行） | 已修 | 引用检查改多来源聚合（task + template）并接入回收站；`DELETE /assets/archive/{id}` 与 `prune-blobs --include-trash` 共用 `archive_purge.py` 彻底删除；`verify-blobs` 读回重算摘要；`app doctor` 12 项自检；GC 挂 `@periodic`（默认关闭）；状态变更/发布写审计；`ARCHIVE_QUOTA_BYTES_PER_USER` 配额 |
 | T14 反模式表补两条 | 已修 | `REVIEW_CHECKLIST.md §6` 新增 19–22：fail-closed 例外、双写必须有反向重建（本轮），以及 R13-01 门控按语义集合对照、R14-01 守卫要验「通不通」（原验收口径），各带真实反例 |
 | 素材库基建封顶（扩展性 / 健壮性） | 已修 | ① 引用来源由 `ModuleSpec.asset_reference_sources` 声明 + AST 守卫对账写入点 + 运行时 fail-closed（缺来源抛 503，不再静默放行删除）；② `modules/asset/mirror.py` 把 DB 定为唯一事实来源，写入顺序统一 commit→投影，`stateVersion` 幂等对账（`@periodic("asset.mirror")` + `app rebuild-mirrors`）自动补缺/更新/清孤儿，doctor 的反向建议已改正；③ `infra/blob.py` 让两条 S3 通路共用一份 boto3 client 与凭据，`S3_BUCKET_MODE=shared` 支持单桶前缀隔离；④ `core/coordination.py` 的 `LeaderElector`（local / 基于 `create()` CAS 租约的 backend）注入 Scheduler，GC 标 `leader_only`；⑤ 配额在 PG 下 `FOR UPDATE` 串行化。修复了 `S3_ARCHIVE_CACHE_DIR` 字段名与文档长期不符（实际读的是 `S3_CACHE_DIR`） |
+| 横向能力第二批（队列 / 事件 / 限流） | 已修 | ① `QUEUE_DRIVER=db`：`db/jobs.py` + `infra/queue/db.py`，条件 UPDATE 领取 + 租约接管崩溃任务 + 部分唯一索引管幂等键 + 死信留档；② `db/outbox.py`：`record()` 与业务同事务落库，`@periodic("core.outbox")` 至少一次投递 + 退避 + 终态清理，`modules/task/worker.py` 的失败通知已改走它（原来 commit 后 publish 会静默丢事件）；③ `core/ratelimit.py` + `api.deps.rate_limit()`：基于 `Cache.incr` 的固定窗口，缓存故障降级放行，`POST /tasks` 已挂；④ Redis 未引入，但协议映射表、`*_DRIVER` 开关、`DriverSettings` 自动巡检三个入口都已备好；doctor 16→17 项（队列可达性） |
 
 `ARCHITECTURE.md` / `EXTENSIBILITY_GAPS.md` 里 A 组 13 条已修 10 条，剩余 3 条即上面的 T7/T8/T9。

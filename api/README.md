@@ -81,7 +81,7 @@ Vite 会把 `/api` 代理到 `VITE_API_PROXY_TARGET`（默认 `http://127.0.0.1:
 | `app prune-blobs [--execute] [--min-age-hours 24] [--include-trash] [--trash-age-days 30]` | 回收没人引用的孤儿字节；`--include-trash` 同时彻底清理超期的软删记录（软删本身不释放空间） |
 | `app verify-blobs [--all] [--sample 20]` | 读回字节重算 sha256，报告损坏/缺失对象；`key = sha256` 本身就是校验和 |
 | `app rebuild-mirrors [--dry-run]` | 按 DB 幂等重建 `catalog/assets/*.json`：补缺镜像、更新 `stateVersion` 落后的、清掉无 DB 行的孤儿 |
-| `app doctor [--strict]` | 部署自检（16 项）：条件写、引用来源完备性、预签名、DB/镜像一致性、镜像对账、选主、旧 URL、配额、缓存读写往返、出站 HTTP 配置、完整性抽检 |
+| `app doctor [--strict]` | 部署自检（17 项）：条件写、引用来源完备性、预签名、DB/镜像一致性、镜像对账、选主、旧 URL、配额、缓存读写往返、队列可达性、出站 HTTP 配置、完整性抽检 |
 | `app audit-events [--action ...] [--target ...]` | 查看最近的操作留痕（分享、回收站、彻底删除、封装发布） |
 | `app runs-status` | 打印运行工作区在哪、本机可见多少个档案、多少个「指针在桶里但工作区不在本机」 |
 | `app prune-logins [--days 90]` | 清理过期的登录审计（默认取 `LOGIN_EVENT_RETENTION_DAYS`） |
@@ -253,6 +253,9 @@ api/
 │   │   ├── base.py          DeclarativeBase + UUID/时间戳混入
 │   │   ├── session.py       引擎、会话、`get_session` 依赖
 │   │   ├── repository.py    通用仓储（CRUD + 分页）
+│   │   ├── jobs.py          queued_jobs（QUEUE_DRIVER=db 的落地表）
+│   │   ├── outbox.py        outbox_events + 投递器（事件与业务同事务）
+│   │   ├── audit.py         审计事件表
 │   │   └── registry.py      模型注册表（自动扫描 modules.*.models）
 │   │
 │   ├── api/                 HTTP 层
@@ -542,7 +545,10 @@ ruff check src tests
       多实例请保持 `ARCHIVE_GC_ENABLED=false`，改由运维在单机上定时执行。
 - [ ] 从旧归档盘升级时跑一次 `app import-archive-index --dry-run`，确认
       「新建 / 缺文件 / 冲突」的数量后再去掉 `--dry-run`。命令幂等，可重复执行。
-- [ ] `QUEUE_DRIVER=redis`，并实现对应驱动
+- [ ] `QUEUE_DRIVER=db`（生产建议）：job 落 `queued_jobs` 表，重启不丢在途任务，
+      崩溃任务由租约到期被其它实例接手。内存驱动在发版时会**静默丢掉**已入队未执行的任务。
+      上规模（每秒几十个 job 以上）再实现 `infra/queue/redis.py` 并切 `QUEUE_DRIVER=redis`，
+      业务代码不用改（见 `docs/EXTENDING.md` §5.2.4）。
 - [ ] `WORKER_ENABLED=false` 时单独起 worker 进程，避免 API 实例与 worker 抢队列
 - [ ] 反向代理（Nginx）转发到 8080，并透传 `X-Request-Id`
 - [ ] 有反代就配 `TRUSTED_PROXIES=<代理地址/网段>`（或给 uvicorn 加 `--proxy-headers
@@ -555,8 +561,9 @@ ruff check src tests
 - [ ] 给 `app prune-logins` 挂一条日任务（cron / systemd timer）：`login_events` 只增不减，
       不清会一直长。保留天数看审计要求，默认 90 天（`LOGIN_EVENT_RETENTION_DAYS`）。
 - [ ] 多实例部署**不需要**额外配置：会话与吊销判定都在数据库里，没有进程内状态。
-      （限流计数器是进程内的，多实例时每个实例各算各的——要全局限流就得换 Redis，
-      见 `docs/EXTENDING.md` §2.1。）
+      两处例外要知道：限流计数在 `CACHE_DRIVER` 里（memory 时各实例各算各的，
+      要精确就换共享缓存，见 `docs/EXTENDING.md` §5.2.3）；不可逆的周期任务
+      （如 `asset.gc`）要配 `LEADER_ELECTOR=backend` 让全集群只有一个实例执行。
 
 前三条**不需要靠人记**：`Settings` 上有 `model_validator`，`APP_ENV=prod` 时
 匿名放开、样例/过短 JWT 密钥、`CORS_ORIGINS=*`、`DEBUG=true` 任意一条命中都会
