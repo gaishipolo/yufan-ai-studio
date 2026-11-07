@@ -7,8 +7,8 @@
 >
 > 来源：`CODE_REVIEW_2026-11-06_R11~R14`、`CODE_REVIEW_2026-11-06_FE6`、
 > `EXTENSIBILITY_GAPS.md` 的 B1/C1/C2，以及素材分支合并时新发现的项。
-> 最后更新：2026-11-07 22:12（恢复链可测化：删掉 `resume()` 的 `APP_ENV` 早退、改注入
-> repo；`recover()` 抢不到档案锁时改为退避 + 六轮上限，放弃时打指标告警）
+> 最后更新：2026-11-07 22:24（恢复链收口：去掉 `resume()` 的 `APP_ENV` 早退改注入 repo、
+> `recover()` 抢锁改成退避 + 六轮上限、提交时写下 `submit_mode` 形态快照）
 > 剩余登记 T31~T33）
 
 ## 一眼看完
@@ -16,7 +16,6 @@
 | 编号 | 事项 | 影响 | 落点 |
 |---|---|---|---|
 | T2 | 前端不展示 `externalId` / `previousExternalId` | 文案让用户「凭任务号核对」，页面拿不到 | 前端 |
-| T4 | `ReplacementStore` 不写 `submit_mode` 快照 | 删掉模块自有 startup 后会误分类供应商形态 | 后端 |
 | T7 | 权限点不自动进内置角色（B1） | 新权限上线后要人记得跑命令 | 后端 |
 | T8 | 轮询节奏全局化（C1） | 视频与生图共用一个间隔 | 后端 |
 | T9 | 重试是作业级不是任务级（C2） | 任务重试语义与用户预期不一致 | 后端 |
@@ -44,14 +43,6 @@
 **验收**：生图详情/列表能看到并复制 `externalId`；「已确认扣费重试」之后能同时看到
 历史任务号（`previousExternalIds`）。
 
-## T4 · `ReplacementStore` 不写 `submit_mode` 快照（R14 观察-5）
-
-R12-05 加 `submit_mode` 的理由是「恢复要解释记录自身的形态，而不是拿当前模型目录重新解析」。
-模板的记录一律 `submit_mode=None`，现在靠「不经过框架恢复器」侥幸无事；一旦按框架方向
-删掉模块自有 `startup`，`_supports_poll` 就会退回目录解析，而 `LibTVProvider.supports_poll = True`，
-echo-only 环境里仍会被误分类。
-
-**验收**：`replacement_pipeline.ReplacementStore` 提交时写 `submit_mode`；有轮询供应商的用例。
 ## T7 · 权限点不自动进内置角色（EXTENSIBILITY_GAPS B1）
 
 已有 `app sync-roles`，但要人记得跑。新增权限点后，`editor` / `viewer` 这些内置角色
@@ -231,6 +222,7 @@ PostgreSQL 的 `LISTEN/NOTIFY`：写完 `NOTIFY`，worker 侧长连接被唤醒�
 | 装配钩子塞在 `startup` 里，`WORKER_ENABLED=false` 的实例永不执行 | 已修 | `ModuleSpec.bootstrap`（人人执行）与 `startup`（仅消费实例）分开；identity 改用 `bootstrap` |
 | worker 取任务异常导致协程静默死亡 | 已修 | `workers.py` 的 `_loop` 三层兜底 + 退避 + `queue_dequeue_errors_total`；用例 `test_worker_survives_dequeue_errors` / `test_worker_survives_ack_failure` |
 | `resume()` 的 `APP_ENV` 早退让恢复链在测试里永不执行（原 T6） | 已修 | 删掉环境判断，改 `resume(*, repo=None)` 显式注入；用例 `test_resume_takes_repository_as_explicit_input`（并在 test 环境下断言 `app_env == "test"` 跑通） |
+| `ReplacementStore` 不写 `submit_mode` 快照（原 T4） | 已修 | `replacement_repository.ReplacementManifest.submit_mode` + `mark_submitted` 用 `MODEL_ID` 解析后落盘（解析不出留空=安全侧），`schedule_state` / `reconfirm_state` 在新一次提交前作废旧快照；用例 `test_submit_records_provider_shape_for_recovery` / `test_unresolvable_catalog_leaves_snapshot_empty` / `test_reschedule_drops_stale_snapshot` |
 | `recover()` 对持续 Conflict 无上限（原 T3） | 已修 | 轮次随 payload 带过去，退避 30s→600s 共六轮，用完打 `replacement_recovery_lock_giveups_total` 并放手（拿不到锁就不写档案）；用例 `test_recover_waits_for_run_lock_with_bounded_retries` |
 | 原 T15 五份文档未提交 | 已提交 | `e928fbb`（`CODE_STYLE` / `REVIEW_CHECKLIST` v2.0 + R11~R14 / FE6 报告） |
 | 原 T16 两条旧分支 | 已删 | `merge/pr1`（`4e26035`）、`preview/full`（`59513ba`）`merge-base --is-ancestor` 均通过后 `git branch -d` |

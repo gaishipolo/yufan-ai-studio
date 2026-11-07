@@ -16,6 +16,28 @@ from modules.template.replacement_repository import ReplacementManifest, Replace
 KIND_REPLACEMENT = "template_replacement"
 
 
+def _snapshot_submit_mode() -> str | None:
+    """提交成功时把供应商形态写进档案（与 `image.pipeline` 同一口径）。
+
+    用 `MODEL_ID` 而不是 `meta.model`：真正提交走的是 LibTV，档案里那个
+    `model` 字段是历史展示值（默认 `wanx3.0`），拿它去解析目录只会解析失败。
+
+    取不到就留 `None`：快照是给恢复器分类用的，解析不出来宁可让它按
+    「不能续查、请人核对」处理，也不猜一个可能把记录判死的答案。一次成功提交
+    绝不能因为这个增强动作而失败，所以整段吞异常。
+    """
+    from infra import get_model_router
+
+    try:
+        router = get_model_router()
+        if router.resolve(MODEL_ID) is None:
+            return None
+        provider = router.provider_for(MODEL_ID)
+    except Exception:  # noqa: BLE001 - 快照是增强，不能让一次成功提交失败
+        return None
+    return "async" if getattr(provider, "supports_poll", False) else "sync"
+
+
 class ReplacementStore:
     def __init__(self, session: AsyncSession) -> None:
         self.repo = ReplacementRepository()
@@ -37,6 +59,7 @@ class ReplacementStore:
                 created_at=meta.created_at,
                 params={"archiveRunId": meta.id},
                 submit_attempts=meta.submit_attempts,
+                submit_mode=meta.submit_mode,
                 terminal_statuses=("success", "failed"),
             )
 
@@ -65,6 +88,7 @@ class ReplacementStore:
             meta.framework_status = "running"
             meta.submit_attempts = 0
             meta.last_error = None
+            meta.submit_mode = _snapshot_submit_mode()
 
         await self._update(record_id, change)
 

@@ -47,6 +47,14 @@ class ReplacementManifest(LibTVState):
     # 自动重试计数（执行器繁忙 / 成片下载失败）。旧的 run.json 没有这个字段，
     # 默认 0 即「还没重试过」；人工再点「继续」会清零，重新拿一份额度。
     retry_count: int = 0
+    # 提交成功那一刻的供应商形态（`async` / `sync`），供恢复器分类（R15-02）。
+    #
+    # 恢复时要回答的问题是「这条记录当初是怎么提交的」，不能拿**当前**模型目录
+    # 重新解析：供应商下线、换配置、或测试环境只加载了 echo，都会让同一条历史记录
+    # 被解析成另一个 provider，分类随之翻转——把一条还能续查的记录判死，或者
+    # 反过来对同步供应商 `resume()` 到一个恒返回 FAILED 的 `poll()` 上。
+    # 老档案没有这个字段（None），恢复器按「不能续查」处理，让人核对。
+    submit_mode: str | None = None
     # 输入在 prepare 时一次成型并快照，列表/任务中心直接复用，不再逐条回读
     # configuration / reference-pack / input-map。旧档案为 None，由读取方按需重算。
     input_summary: ReplacementInputSummary | None = None

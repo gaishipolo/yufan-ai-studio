@@ -196,6 +196,9 @@ def schedule_state(run_id: str, owner: str) -> str:
         meta.status = "queued"
         meta.last_error = None
         meta.framework_status = "queued"
+        # 快照描述的是「上一次提交是怎么发生的」，新一次提交由 `mark_submitted`
+        # 重写；留着旧的等于让恢复器按上一条记录的分类处置这一次（R15-02）。
+        meta.submit_mode = None
         # 人工再点「继续」= 重新给一份重试额度：否则上一轮耗尽后，这次刚入队就又
         # 在第一次失败时被判「已重试 5 次」，看起来像按钮没反应。
         meta.retry_count = 0
@@ -235,6 +238,8 @@ def reconfirm_state(
         meta.last_error = None
         meta.error_code = None
         meta.retry_count = 0
+        # 同 `schedule_state`：形态快照随这次「重新提交」作废
+        meta.submit_mode = None
         return meta, previous_attempts
 
 

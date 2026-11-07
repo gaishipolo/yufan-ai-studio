@@ -686,3 +686,88 @@ def test_recover_stops_when_nothing_left_to_do(monkeypatch):
     )
 
     assert queue.sent == []
+
+
+# --------------------------------------------------------------------------- #
+# R15-02：提交时写下供应商形态快照，恢复不必再解释「当前」模型目录
+# --------------------------------------------------------------------------- #
+def _patch_router(monkeypatch, *, pollable: bool, resolved: bool = True) -> None:
+    class _Provider:
+        supports_poll = pollable
+
+    class _Router:
+        def resolve(self, model: str) -> object | None:
+            return object() if resolved else None
+
+        def provider_for(self, model: str) -> _Provider:
+            return _Provider()
+
+    monkeypatch.setattr("infra.get_model_router", lambda: _Router())
+
+
+def test_submit_records_provider_shape_for_recovery(prepared, monkeypatch):
+    """提交成功即写下形态快照：恢复器据此分类，不再看当前目录。
+
+    `_supports_poll` 的目录回退有「只有一个供应商时兜底」的行为，echo-only 环境里
+    会把一条历史 Agnes 记录认成别的 provider——分类一翻，记录要么被 `resume()` 到
+    恒返回 FAILED 的 `poll()` 上判死，要么被误判成同步供应商（T4/R12-05）。
+    """
+    from generation.recovery import _supports_poll
+    from modules.template import replacement_pipeline as pipeline
+
+    payload, path = prepared
+    run_id = payload.request_id.hex
+    _patch_router(monkeypatch, pollable=True)
+
+    store = pipeline.ReplacementStore(session=None)  # type: ignore[arg-type]
+    asyncio.run(store.mark_submitting(run_id))
+    asyncio.run(store.mark_submitted(run_id, f"{run_id}:T-100"))
+
+    meta = ReplacementRepository().load(path)
+    assert meta.submit_mode == "async", "提交成功却没留下供应商形态快照"
+    record = asyncio.run(store.load(run_id))
+    assert record is not None and _supports_poll(record), "有快照却仍走目录解析"
+
+
+def test_unresolvable_catalog_leaves_snapshot_empty(prepared, monkeypatch):
+    """目录答不出来就留空：恢复器按「不能续查」处理，让人核对。"""
+    from generation.recovery import _supports_poll
+    from modules.template import replacement_pipeline as pipeline
+
+    payload, path = prepared
+    run_id = payload.request_id.hex
+    _patch_router(monkeypatch, pollable=True, resolved=False)
+
+    store = pipeline.ReplacementStore(session=None)  # type: ignore[arg-type]
+    asyncio.run(store.mark_submitting(run_id))
+    asyncio.run(store.mark_submitted(run_id, f"{run_id}:T-101"))
+
+    assert ReplacementRepository().load(path).submit_mode is None
+    record = asyncio.run(store.load(run_id))
+    assert record is not None and not _supports_poll(record), "空快照必须落到安全一侧"
+
+
+def test_reschedule_drops_stale_snapshot(prepared, monkeypatch):
+    """人工再点「继续」= 新一次提交，旧快照必须作废。
+
+    否则恢复器会拿上一条记录的形态处置这一次：上次是同步、这次换成了可轮询的
+    供应商时，一条正在跑的任务会被直接判死。
+    """
+    from modules.template import replacement_worker as worker
+
+    payload, path = prepared
+    run_id = payload.request_id.hex
+    repo = ReplacementRepository()
+    with repo.edit(run_id) as meta:
+        meta.status = "uploaded"
+        meta.framework_status = "failed"
+        meta.submit_mode = "sync"
+
+    monkeypatch.setattr(worker.MediaCatalog, "check_run", lambda *args, **kwargs: None)
+
+    assert worker.schedule_state(run_id, "u_001") == "prepare"
+    assert repo.load(path).submit_mode is None
+
+
+# --------------------------------------------------------------------------- #
+# R15-02：提交时写下供应商形态快照，恢复不必再解释「当前」模型目录
