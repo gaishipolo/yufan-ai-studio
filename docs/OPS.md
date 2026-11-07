@@ -297,6 +297,21 @@ RATE_LIMIT_SCALE=0       # 全关（等同于把每个接口的额度写成 0）
   否则它会变成一份「看起来被审阅过的错误信息」。
 - 改完要重启（配置在启动时读入，理由同功能开关）。
 
+**验证额度真的生效**（两分钟，不用等生产出事）：
+
+```bash
+RATE_LIMIT_OVERRIDES='{"task.create": 2}' app serve &
+for i in 1 2 3 4; do
+  curl -s -o /dev/null -w "%{http_code} " -X POST localhost:8080/api/v1/tasks \
+    -H 'content-type: application/json' -d '{}'
+done; echo
+# 期望：422 422 429 429
+```
+
+看两件事：前两次即使是**业务校验失败**（422）也消耗额度——限流在业务之前；
+第 4 次的 `retryAfter` 与第 3 次**相同**，说明被拒的请求没有把计数越推越高
+（否则「照着倒计时重试」会永远出不来）。
+
 ---
 
 ## 7. 运行期状态：`app_meta` 与写入轨迹
