@@ -45,15 +45,17 @@ curl -X POST http://127.0.0.1:8080/api/v1/identity/login \
 前端联调：把 `studio/.env.development` 里的 `VITE_USE_MOCK` 改成 `false`，
 Vite 会把 `/api` 代理到 `VITE_API_PROXY_TARGET`（默认 `http://127.0.0.1:8080`）。业务代码无需改动。
 
-给前端同事的三份接口文件，都由 `app export-openapi` 生成、和代码同源：
+给前端的四份接口生成物，都由 `app export-openapi` 生成、和代码同源：
 
 | 文件 | 怎么用 |
 |---|---|
 | `docs/API.md` | 直接看：约定、错误码总表、权限点、每个接口的入参/出参字段表 |
 | `docs/openapi.json` | 导入 Apifox / Postman / IDE 插件，也可喂给任意代码生成器 |
 | `studio/src/shared/api/schema.ts` | `import type { TaskOut } from '@/shared/api/schema'`，别手写重复类型 |
+| `studio/src/shared/api/permissions.ts` | 权限点分组、权限码元组与 `PermissionCode`，菜单/按钮判定从这里派生 |
 
 改完接口跑一次 `app export-openapi`；忘了跑的话 `pytest` 会红着提醒你。
+前端消费端与手写类型由同一负责人同步，改完跑 `cd studio && npm run verify`。
 
 常用命令：
 

@@ -973,9 +973,11 @@ app export-openapi --check  # 只比对不写盘：有差异就以非 0 退出�
 > 现状提醒：`schema.ts` 目前和手写的 `studio/src/entities/*/model/types.ts` 并存。
 > **新代码一律用 `schema.ts`**，手写类型按实体逐个迁移过去，别再新增第二份定义。
 
-> 分工：**接口变动只需要同步这三份文件**，前端以它们为准。后端不代改前端手写类型——
-> 手写 `types.ts` / `*.api.ts` 里的旧签名是前端自己的迁移债，跑完 `export-openapi` 就意味着
-> 「接口已经变了」，剩下的在 code review 里对着 `schema.ts` 的 diff 处理即可。
+> 职责（2026-11-07 起）：接口变动同步**这四份生成物**，前端以它们为准。
+> 前后端由同一负责人维护，手写 `types.ts` / `*.api.ts` 里与 `schema.ts` 漂移的旧签名
+> 不再是「交给别人的迁移债」——跑完 `export-openapi` 就要顺着 `schema.ts` 的 diff
+> 把消费端一起改掉，并跑一次 `cd studio && npm run verify`。
+> 历史评审报告里的「按分工未动」是当时的记录，不是现行约束。
 
 ---
 
@@ -986,7 +988,8 @@ app export-openapi --check  # 只比对不写盘：有差异就以非 0 退出�
 - [ ] 新表有 Alembic 迁移，且迁移基于最新 head 生成
 - [ ] 没有 import 其他业务模块（`test_architecture.py` 会拦）
 - [ ] `app modules` 能看到新模块，权限点数量符合预期
-- [ ] `app export-openapi` 已重新跑过，三份生成物一起提交（见第 8 节）
+- [ ] `app export-openapi` 已重新跑过，四份生成物一起提交（见第 8 节）
+- [ ] 契约有破坏性变更时前端消费点已同步，`npm run verify` 通过
 - [ ] 改了安全约束（守卫 / 闸门 / 限流 / 字段白名单）时，**先数一遍"还有哪些入口做同一件事"**：
       改密的守卫只在停用方向写了？闸门只装在 `authenticate` 上？白名单只收了一个字段？
       这三次都是同一个模式——修一个入口，漏掉同类的另一个（R5-03 / R6-04 / R8-01 / R8-02）。
