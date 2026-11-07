@@ -566,6 +566,9 @@ ruff check src tests
       没演练过的备份不算备份。
 - [ ] 全局限流按需开：`RATE_LIMIT_GLOBAL_PER_MIN` 默认 0（关闭）。它按客户端 IP 计，
       反代/NAT 后面一个出口 IP 代表很多真实用户，开之前确认部署层已正确透传真实 IP。
+- [ ] 想按环境调额度（活动放宽、故障收紧、临时全关）用 `RATE_LIMIT_OVERRIDES` /
+      `RATE_LIMIT_SCALE`，不用改代码（重启生效；写错 `app doctor` 会红），
+      见 `docs/OPS.md` §6.1。
 - [ ] `WORKER_ENABLED=false` 时单独起 worker 进程，避免 API 实例与 worker 抢队列
 - [ ] 反向代理（Nginx）转发到 8080，并透传 `X-Request-Id`
 - [ ] 有反代就配 `TRUSTED_PROXIES=<代理地址/网段>`（或给 uvicorn 加 `--proxy-headers

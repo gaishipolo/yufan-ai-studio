@@ -16,18 +16,18 @@ from sqlalchemy import delete, func, select
 
 @pytest.fixture()
 def temp_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    from core.config import get_settings
+    from core.config import reload_settings
     from db import session as db_session
 
     db_file = tmp_path / "app.db"
     monkeypatch.setenv("DB_URL", f"sqlite+aiosqlite:///{db_file.as_posix()}")
-    get_settings.cache_clear()
+    reload_settings()
     db_session.reset_state_for_tests()
     try:
         yield db_file
     finally:
         asyncio.run(db_session.dispose_engine())
-        get_settings.cache_clear()
+        reload_settings()
         db_session.reset_state_for_tests()
 
 
@@ -193,12 +193,12 @@ def test_prune_disabled_when_retention_not_positive(tmp_path: Path) -> None:
 def test_backup_loop_does_nothing_when_disabled(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from core.config import get_settings
+    from core.config import reload_settings
     from db import backup
 
     monkeypatch.setenv("BACKUP_AUTO_ENABLED", "false")
     monkeypatch.setenv("BACKUP_DIR", str(tmp_path / "auto"))
-    get_settings.cache_clear()
+    reload_settings()
 
     asyncio.run(backup.backup_loop())
 
@@ -208,7 +208,7 @@ def test_backup_loop_does_nothing_when_disabled(
 def test_backup_loop_writes_backup_and_prunes(
     temp_db: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from core.config import get_settings
+    from core.config import reload_settings
     from db import backup
     from db import session as db_session
 
@@ -216,7 +216,7 @@ def test_backup_loop_writes_backup_and_prunes(
     monkeypatch.setenv("BACKUP_AUTO_ENABLED", "true")
     monkeypatch.setenv("BACKUP_DIR", str(out_dir))
     monkeypatch.setenv("BACKUP_RETENTION_DAYS", "7")
-    get_settings.cache_clear()
+    reload_settings()
 
     asyncio.run(db_session.init_db())
     # 先放一份过期备份进去，验证同一轮里「备份 + 清理」都会发生

@@ -9,7 +9,6 @@ from __future__ import annotations
 import ipaddress
 import json
 import os
-from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Literal
 
@@ -182,6 +181,13 @@ class Settings(BaseSettings):
     # 额度定小了正常用户一起 429。它防的是「脚本扫接口」，不是「用户点太快」——
     # 后者应该由路由级 `rate_limit()` 按用户算。要开就明确写个数，别指望默认值兜底。
     rate_limit_global_per_min: int = 0
+    # 按 scope 覆盖额度：JSON，`{"task.create": 120, "asset.upload": 10}`。
+    # 写错（非法 JSON、scope 里带冒号、次数不是非负整数）直接启动失败；
+    # 写了代码里不存在的 scope 由测试对账（`tests/test_ratelimit.py`）。
+    rate_limit_overrides: str = ""
+    # 整体倍率：活动期间放宽（2.0）、故障时收紧（0.5）、全关（0）。
+    # 先覆盖后缩放——`SCALE=0` 必须真的全关，不能有接口从覆盖里漏出来。
+    rate_limit_scale: float = 1.0
 
     # ---------- 备份 ----------
     # 自动备份默认关：开着的代价是每天在磁盘上多一份库、且 sqlite 下 backup API 要持读锁。
@@ -338,10 +344,31 @@ class Settings(BaseSettings):
         return self
 
 
-@lru_cache
+_settings = Settings()
+
+
 def get_settings() -> Settings:
-    """进程内单例。测试中可用 `get_settings.cache_clear()` 重置。"""
-    return Settings()
+    """进程内单例。**不要直接 `Settings()`**：那会得到第二套配置。
+
+    这里刻意不是 `lru_cache`：`cache_clear()` 之后 `get_settings()` 会返回**新对象**，
+    而所有 `from core.config import settings` 过的地方还绑在旧对象上——
+    症状是「改了环境变量，一半代码生效、一半不生效」，而且看起来完全不合理。
+    要重读环境变量请用 `reload_settings()`。
+    """
+    return _settings
 
 
-settings = get_settings()
+def reload_settings() -> Settings:
+    """按当前环境变量重建配置，并**原地**刷新单例。
+
+    为什么是原地刷新而不是换对象：见 `get_settings` 的说明。原地刷新之后，
+    所有已经 import 过 `settings` 的模块会一起看到新值——「一个进程只有一份配置」
+    这件事必须始终成立，否则排查配置问题时看到的现场是自相矛盾的。
+    """
+    fresh = Settings()
+    for name in type(fresh).model_fields:
+        setattr(_settings, name, getattr(fresh, name))
+    return _settings
+
+
+settings = _settings

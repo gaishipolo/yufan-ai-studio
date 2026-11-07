@@ -29,7 +29,12 @@ from core.config import settings
 from core.context import CurrentUser, set_current_user
 from core.exceptions import Forbidden, RateLimited, Unauthorized
 from core.net import client_ip
-from core.ratelimit import get_rate_limiter, retry_after_seconds
+from core.ratelimit import (
+    get_rate_limiter,
+    register_scope,
+    resolve_budget,
+    retry_after_seconds,
+)
 from core.response import PageParams
 from core.security import user_from_token
 from db.session import get_session
@@ -140,6 +145,8 @@ def rate_limit(
 
     - `scope` 是**动作**（`task.create`），`limit` 是窗口内允许的次数，`cost`
       让「一次请求算几次」可配（上传大文件算 5 次是常见做法）。
+    - `limit` 是**基线**：`RATE_LIMIT_OVERRIDES` 按 scope 改，`RATE_LIMIT_SCALE`
+      整体缩放（`0` = 全关）。见 `core/ratelimit.py` 的「额度」一节。
     - 计数主体是**当前登录用户**；未登录走不到这里（依赖了 `ActorDep`），
       因为本项目所有业务接口都要求身份。纯匿名接口要按 IP 限流时，
       应该写 `Depends(rate_limit_by_ip(...))` 那种变体，不要放松这里的语义。
@@ -148,6 +155,11 @@ def rate_limit(
     """
     if not scope:
         raise ValueError("rate_limit() 需要 scope")
+    if ":" in scope:
+        # 在 import 期就炸：等第一次请求才由 `hit()` 抛，等于把一个笔误拖到线上
+        raise ValueError(f"限流 scope 不能包含冒号：{scope!r}")
+    # 记下代码里真实存在的 scope，供 `RATE_LIMIT_OVERRIDES` 对账
+    register_scope(scope)
     if limit <= 0:
         # 显式关闭：返回一个空依赖，比在路由里写 `if settings.xxx` 干净。
         # 仍然打标记：额度 0 是「声明过的决定」，不是「忘了挂」——
@@ -160,12 +172,16 @@ def rate_limit(
     async def dependency(request: Request, actor: ActorDep) -> None:
         if not settings.rate_limit_enabled:
             return
+        budget = resolve_budget(scope, limit=limit, window=window, cost=cost)
+        if budget.disabled:
+            # `RATE_LIMIT_SCALE=0` 或覆盖成 0：整体关闸时不能有接口从覆盖里漏出来
+            return
         decision = await get_rate_limiter().hit(
             actor.id or client_ip(request),
             scope=scope,
-            limit=limit,
-            window=window,
-            cost=cost,
+            limit=budget.limit,
+            window=budget.window,
+            cost=budget.cost,
         )
         if not decision.allowed:
             raise RateLimited(

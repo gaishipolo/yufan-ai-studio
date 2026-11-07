@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+from collections.abc import Iterator
 from pathlib import Path
 
 _TMP_DB = Path(tempfile.mkdtemp(prefix="app-test-")) / "test.db"
@@ -89,6 +90,25 @@ def _assembled_ports() -> None:
 @pytest.fixture
 def api() -> str:
     return "/api/v1"
+
+
+@pytest.fixture(autouse=True)
+def _restore_settings() -> Iterator[None]:
+    """每个用例结束后按环境变量重新加载配置。
+
+    为什么必须放在 autouse 里：`monkeypatch` 的 `setenv` 在**夹具拆完之后**才撤销，
+    所以任何 `reload_settings()`（或"改了 env 立刻生效"的第三方路径）都会把临时值
+    留进单例。autouse 夹具在 `monkeypatch` **之后**拆，此时环境变量已经回到基线，
+    重载一次就把进程恢复干净。
+
+    没有这一步的症状：某个用例设了 `DB_URL` / `BACKUP_DIR`，后面的用例莫名连到临时库，
+    或者配置读出来自相矛盾——`get_settings()` 曾经是 `lru_cache`，`cache_clear()`
+    之后返回新对象，而所有 import 过 `settings` 的模块还绑着旧对象。
+    """
+    yield
+    from core.config import reload_settings
+
+    reload_settings()
 
 
 @pytest.fixture(autouse=True)

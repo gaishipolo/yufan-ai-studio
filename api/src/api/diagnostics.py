@@ -559,6 +559,47 @@ def _check_flags(report: DoctorReport) -> None:
     report.add("runtime.flags", "INFO", f"{len(flags)} 个开关：{detail}")
 
 
+def _check_rate_limits(report: DoctorReport) -> None:
+    """额度配置：解析得开是硬要求，对账得上才算绿。
+
+    CLI 不走 `create_app()`，路由模块可能没被导入，`declared_scopes()` 就是空集。
+    空集时**不做**未知 scope 检查，并如实说明——否则这里会天天报假警，
+    下一个人就会开始忽略这一行（空检查必须显式承认自己是空的）。
+    """
+    from core.config import settings
+    from core.ratelimit import declared_scopes, parsed_overrides, unknown_overrides
+
+    try:
+        overrides = parsed_overrides()
+    except ValueError as exc:
+        report.add("runtime.rate_limit", "FAIL", f"RATE_LIMIT_OVERRIDES 解析失败：{exc}")
+        return
+
+    known = declared_scopes()
+    unknown = unknown_overrides(known) if known else []
+    if unknown:
+        report.add(
+            "runtime.rate_limit", "FAIL", f"覆盖了不存在的 scope：{', '.join(unknown)}"
+        )
+        return
+    if overrides:
+        detail = "、".join(f"{name}={value}" for name, value in sorted(overrides.items()))
+        report.add("runtime.rate_limit", "INFO", f"{len(overrides)} 条覆盖：{detail}")
+    elif known:
+        report.add("runtime.rate_limit", "INFO", "未覆盖额度，全部使用路由上的基线")
+    else:
+        report.add(
+            "runtime.rate_limit", "INFO", "未覆盖额度；路由未导入，未做 scope 对账"
+        )
+
+    scale = settings.rate_limit_scale
+    if scale != 1.0:
+        note = "全关" if scale <= 0 else f"{scale:g}×"
+        report.add(
+            "runtime.rate_limit.scale", "WARN", f"整体倍率 {note}，线上额度与代码不同"
+        )
+
+
 def _check_http_channel(report: DoctorReport) -> None:
     """出站 HTTP 只报配置，不发真实请求。
 
@@ -587,6 +628,7 @@ async def run_doctor(*, sample: int = 10) -> DoctorReport:
     await _check_outbox_channel(report)
     _check_metrics_exposure(report)
     _check_flags(report)
+    _check_rate_limits(report)
     _check_http_channel(report)
     await asyncio.to_thread(_check_workspace_and_blobs, report, sample)
     return report

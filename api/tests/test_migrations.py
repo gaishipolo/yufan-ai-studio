@@ -41,18 +41,18 @@ def _config() -> Config:
 @pytest.fixture()
 def migrated(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """把库迁到 head，返回 sqlite 文件路径；用例结束后把配置与引擎还原。"""
-    from core.config import get_settings
+    from core.config import reload_settings
     from db import session as db_session
 
     db_file = tmp_path / "migrated.db"
     monkeypatch.setenv("DB_URL", f"sqlite+aiosqlite:///{db_file.as_posix()}")
-    get_settings.cache_clear()
+    reload_settings()
     db_session.reset_state_for_tests()
     try:
         command.upgrade(_config(), "head")
         yield db_file
     finally:
-        get_settings.cache_clear()
+        reload_settings()
         db_session.reset_state_for_tests()
 
 
@@ -110,12 +110,12 @@ def test_upgrade_keeps_existing_rows(tmp_path: Path, monkeypatch: pytest.MonkeyP
     """
     import sqlite3
 
-    from core.config import get_settings
+    from core.config import reload_settings
     from db import session as db_session
 
     db_file = tmp_path / "seeded.db"
     monkeypatch.setenv("DB_URL", f"sqlite+aiosqlite:///{db_file.as_posix()}")
-    get_settings.cache_clear()
+    reload_settings()
     db_session.reset_state_for_tests()
     try:
         config = _config()
@@ -146,7 +146,7 @@ def test_upgrade_keeps_existing_rows(tmp_path: Path, monkeypatch: pytest.MonkeyP
         finally:
             conn.close()
     finally:
-        get_settings.cache_clear()
+        reload_settings()
         db_session.reset_state_for_tests()
 
     assert rows == [("permissions.catalog", '["asset:read"]', 1, "")], (

@@ -239,7 +239,33 @@ def create_app() -> FastAPI:
     async def root() -> dict[str, str]:
         return {"service": settings.app_name, "docs": "/docs", "api": settings.api_prefix}
 
+    # 放在 include_router 之后：模块导入时才会登记 scope，早于这里就是空集
+    _check_rate_limit_overrides()
     return app
+
+
+def _check_rate_limit_overrides() -> None:
+    """启动自检：额度覆盖配置写错就起不来。
+
+    为什么不等第一个请求：`resolve_budget()` 是在 async 依赖里调的，那里抛异常
+    会变成一次 500，而且只影响**被限流的那些接口**——表现是「有的接口 500、
+    有的正常」，比直接启动失败难查十倍。
+
+    未知 scope 只记 error 不阻断：`create_app()` 的导入顺序决定了这里未必已经
+    见过所有模块，误判成「配置写错了」不该让服务起不来。真正的对账在
+    `tests/test_ratelimit.py::test_every_override_names_a_real_scope`。
+    """
+    from core.ratelimit import declared_scopes, parsed_overrides, unknown_overrides
+
+    overrides = parsed_overrides()  # 非法 JSON / 类型错 → 直接抛
+    if not overrides:
+        return
+    unknown = unknown_overrides(declared_scopes())
+    if unknown:
+        logger.error(
+            "RATE_LIMIT_OVERRIDES 里有代码中不存在的 scope：%s（已按原样忽略）",
+            ", ".join(unknown),
+        )
 
 
 async def _warn_stale_artifact_urls() -> None:

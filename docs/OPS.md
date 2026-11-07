@@ -275,6 +275,28 @@ FEATURE_FLAGS=new.upload,new.editor           # 逗号写法等价于全部打�
 什么该用开关、什么该回滚：**单个功能行为**用开关；**数据结构/契约**变更必须回滚
 部署（开关关不掉已经写进库的新字段）。
 
+### 6.1 限流额度：线上改，不改代码
+
+路由上写的 `limit` 是**基线**，两层覆盖都在环境变量里：
+
+```bash
+# 单点调整：这个接口给到 120 次/分钟（原来是 30）
+RATE_LIMIT_OVERRIDES='{"task.create": 120, "asset.upload": 10}'
+
+# 整体倍率：活动放宽、故障收紧、全关
+RATE_LIMIT_SCALE=2.0     # 放宽一倍
+RATE_LIMIT_SCALE=0.5     # 收紧一半
+RATE_LIMIT_SCALE=0       # 全关（等同于把每个接口的额度写成 0）
+```
+
+- 顺序是**先覆盖、后缩放**，所以 `SCALE=0` 能盖住所有单独放宽过的接口。
+  反过来（先缩放后覆盖）会让「全关」名不副实，那不是能救火的开关。
+- 写错不静默：非法 JSON、次数写成 `true` 或字符串、scope 带冒号 → `app doctor`
+  的 `runtime.rate_limit` 直接 FAIL，应用启动时也会抛。
+- 写了代码里**不存在**的 scope → 同一项 FAIL。手写清单必须对账，
+  否则它会变成一份「看起来被审阅过的错误信息」。
+- 改完要重启（配置在启动时读入，理由同功能开关）。
+
 ---
 
 ## 7. 运行期状态：`app_meta` 与写入轨迹
@@ -323,6 +345,7 @@ app meta permissions.catalog    # 这个键的值 + 最近 20 次写入轨迹
 | `/metrics` 403 | `METRICS_TOKEN` 是否配置 | 生产环境刻意 fail-closed |
 | 面板上路由只有 `/health` 这种短路径 | 指标 `route` 标签 | 旧版本；现在用完整路径 + `{param}` 模板 |
 | 限流看起来没生效 | `CACHE_DRIVER` | memory 驱动下多实例各算各的 |
+| 改了 `RATE_LIMIT_*` 没反应 | 是否重启；`app doctor` 的 `runtime.rate_limit` | 配置在启动时读入；解析失败或 scope 对不上会 FAIL |
 | 非超管点新功能 403，超管正常 | `app meta permissions.catalog`、该角色权限 | 新权限点没并进内置角色：启动钩子被跳过或没重启；`app sync-roles` 手工补 |
 | 素材点开 404 | `app verify-blobs` | 对象被 GC/迁移遗漏，或桶策略变了 |
 | 管理员删掉的权限又回来了 | `app meta permissions.catalog` 的写入轨迹 | 滚动发布时旧版本实例启动过（轨迹里的 `actor` 是 `host:pid`）：它的目录更小、把快照写回去了；升级顺序上别让旧实例重启 |
@@ -338,8 +361,13 @@ app meta permissions.catalog    # 这个键的值 + 最近 20 次写入轨迹
 3. **限流默认是依赖级**：每个写路由自己声明额度，全局兜底
    `RATE_LIMIT_GLOBAL_PER_MIN` 默认 0（关闭，按客户端 IP 计）。
    「写路由漏挂限流」已经由 `tests/test_route_policy.py` 拦住（必须挂
-   `rate_limit`，或在 `api/ratelimit_policy.py` 里写清豁免理由）；
-   仍未解决的是**固定窗口的 2× 边界误差**（见 T27）。
+   `rate_limit`，或在 `api/ratelimit_policy.py` 里写清豁免理由）。
+   窗口是**两个桶加权的滑动窗口**（sliding window counter），额度调到多少由
+   `RATE_LIMIT_OVERRIDES` / `RATE_LIMIT_SCALE` 决定（见 §6.1）。
+   剩下的误差是「上一窗口末尾那一小段请求被少算」——量级是那一小段的次数，
+   不再是固定窗口的「整整一个 limit」。
+   仍未解决的是**多实例下的计数一致性**：`CACHE_DRIVER=memory` 时每个副本
+   各算一份，全局额度 = 单实例额度 × 副本数（见 T25）。
 
    **复核豁免表**（每半年一次，`review_by` 到期会让 CI 红）不要只重读理由，
    那只是把上一版再抄一遍。用两条查询找出「变贵了」的接口，再去改额度或删豁免：

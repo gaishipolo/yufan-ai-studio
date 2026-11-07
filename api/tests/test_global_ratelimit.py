@@ -14,6 +14,7 @@ import pytest
 from api import middleware as middleware_mod
 from api.middleware import GlobalRateLimitMiddleware
 from core.ratelimit import RateLimiter
+from infra.cache.counter import CacheCounter
 from infra.cache.memory import MemoryCache
 
 
@@ -70,7 +71,7 @@ def _body(sent: list[dict[str, Any]]) -> dict[str, Any]:
 @pytest.fixture()
 def limiter(monkeypatch: pytest.MonkeyPatch) -> RateLimiter:
     """把中间件用的限流器换成独立实例，避免与业务接口共用计数键。"""
-    instance = RateLimiter(MemoryCache(), prefix="test")
+    instance = RateLimiter(CacheCounter(MemoryCache()), prefix="test")
     monkeypatch.setattr(middleware_mod, "get_rate_limiter", lambda: instance)
     return instance
 
@@ -127,6 +128,9 @@ async def test_fails_open_when_counter_broken(monkeypatch: pytest.MonkeyPatch) -
 
     class _Broken:
         async def incr(self, key: str, delta: int = 1, *, ttl: float | None = None) -> int:
+            raise RuntimeError("cache down")
+
+        async def read(self, key: str) -> int:
             raise RuntimeError("cache down")
 
     monkeypatch.setattr(
