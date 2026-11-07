@@ -229,3 +229,64 @@ def test_idle_dequeue_issues_fewer_queries_than_fixed_polling() -> None:
     misses = POLLS.value(outcome="miss") - before
     assert misses < 30, f"空转查询没有退避：{misses} 次"
     assert misses >= 3, "每次 dequeue 至少要查一次库，否则逻辑被跳过了"
+
+# --------------------------------------------------------------------------- #
+# 进程内唤醒：退避不是「睡着了叫不醒」
+# --------------------------------------------------------------------------- #
+def _idle_queue() -> DbJobQueue:
+    """间隔压到 1s 封顶，这样「有没有被叫醒」在耗时上分得很开。"""
+    return DbJobQueue(
+        lease_sec=30, poll_interval_sec=0.01, idle_max_interval_sec=1.0
+    )
+
+
+def test_enqueue_wakes_a_waiting_worker() -> None:
+    """空闲 worker 已经在等 1 秒退避，此时入队必须把它叫醒。
+
+    不唤醒的话 `dequeue` 会等满 1 秒才再查一次库。断言用 0.5s 上限：
+    它要钉的是「被叫醒」（几十毫秒）与「睡满退避」（1 秒）之间的量级差，
+    不是精确耗时。
+    """
+    import time
+
+    asyncio.run(_reset())
+    queue = _idle_queue()
+
+    async def scenario() -> tuple[Job | None, float]:
+        queue._idle = 16  # 等价于「空转很久了」，下一轮间隔就是 1s 封顶
+        waiting = asyncio.create_task(queue.dequeue(timeout=3.0))
+        await asyncio.sleep(0.05)  # 让它真的进到等待里
+        started = time.perf_counter()
+        await queue.enqueue(Job(name="wake.me", payload={}))
+        job = await waiting
+        return job, time.perf_counter() - started
+
+    job, waited = asyncio.run(scenario())
+    assert job is not None and job.name == "wake.me"
+    assert waited < 0.5, f"入队后没被叫醒，等了 {waited:.2f}s（退避是 1s）"
+
+
+def test_delayed_enqueue_does_not_wake() -> None:
+    """`delay > 0` 的任务在 `run_at` 之前不可见，叫醒只会让 worker 白查一次。
+
+    「短 job + 延迟重投」是延迟入队的大户：唤醒它等于把退避省下的查询又还回去。
+    断言用**查询次数**而不是耗时：错误唤醒会让 worker 醒一次、抢空、然后按复位后的
+    密集间隔狂轮询——耗时照样接近 timeout，从时间上看不出问题。
+    """
+    from infra.queue.db import POLLS
+
+    asyncio.run(_reset())
+    queue = _idle_queue()
+
+    async def scenario() -> tuple[Job | None, int]:
+        queue._idle = 16  # 下一轮间隔 = 1s 封顶
+        before = POLLS.value(outcome="miss")
+        waiting = asyncio.create_task(queue.dequeue(timeout=0.6))
+        await asyncio.sleep(0.05)
+        await queue.enqueue(Job(name="later", payload={}), delay=5)
+        job = await waiting
+        return job, POLLS.value(outcome="miss") - before
+
+    job, misses = asyncio.run(scenario())
+    assert job is None, "延迟任务不该在 run_at 之前被取走"
+    assert misses <= 2, f"延迟入队把 worker 叫醒了：0.6s 内白查了 {misses} 次"

@@ -49,6 +49,24 @@ UPDATE queued_jobs SET status='running', lease_expires_at=?
 
 `queue_polls_total{outcome}` 让这件事可验证：改之前/之后各看一次空转速率，
 而不是靠「感觉好像省了」。
+
+## 进程内唤醒：退避不等于「睡着了叫不醒」
+
+退避解决的是「没人要的时候别空查」，但上面的代价（最坏 1 秒）在**同进程部署**下
+是不必要的——API 和 worker 在同一个 event loop 里，`enqueue` 完全可以直接把等待
+中的 worker 拍醒。
+
+所以 `enqueue(delay=0)` 成功后置位本进程的 `asyncio.Event`，`dequeue` 用
+`wait_for(event.wait(), timeout=退避间隔)` 代替纯 `sleep`：有人入队就立刻重试并复位
+退避，没人入队就睡满退避间隔再查。
+
+**它没有解决跨进程**：另一个实例的 event loop 不在这个进程里，`Event.set()` 够不着。
+多实例（API 与 worker 分进程）的最坏延迟仍然由 `QUEUE_IDLE_MAX_INTERVAL_SEC` 决定。
+真要 0 延迟只能是 PG 的 `LISTEN/NOTIFY` 或 Redis——那会引入「两套取任务路径」，
+不做（见 T26）。
+
+`delay > 0` 的入队**不唤醒**：那些任务在 `run_at` 之前根本不可见，叫醒只会让 worker
+白查一次，而「短 job + 延迟重投」恰恰是延迟入队的大户。
 """
 
 from __future__ import annotations
@@ -57,6 +75,7 @@ import asyncio
 import json
 from datetime import timedelta
 from typing import Any
+from weakref import WeakKeyDictionary
 
 from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
@@ -80,6 +99,47 @@ POLLS = METRICS.counter(
     "取任务轮询次数",
     ("outcome",),
 )
+
+
+# 每个 event loop 一个唤醒开关。按 loop 隔离而不是全局一个：`asyncio.Event` 绑定
+# 创建它的 loop，而测试里每个 `asyncio.run()` 都会新建 loop，复用跨 loop 的 Event
+# 会直接抛「bound to a different loop」（和 `infra/cache/memory.py` 不用
+# `asyncio.Lock` 同一个理由）。WeakKeyDictionary 让 loop 消失后自己不成为泄漏。
+_WAKERS: WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Event] = WeakKeyDictionary()
+
+
+def _waker() -> asyncio.Event:
+    loop = asyncio.get_running_loop()
+    event = _WAKERS.get(loop)
+    if event is None:
+        event = asyncio.Event()
+        _WAKERS[loop] = event
+    return event
+
+
+def wake_workers() -> None:
+    """叫醒**本进程**正在等任务的 worker。
+
+    跨进程够不着（见模块文档）：多实例部署仍有退避上限的延迟。
+    `call_soon_threadsafe` 而不是直接 `event.set()`：入队可能发生在别的线程
+    （线程池里的 handler、同步 CLI 脚本），直接 set 不是线程安全的。
+    """
+    for loop, event in list(_WAKERS.items()):
+        try:
+            loop.call_soon_threadsafe(event.set)
+        except RuntimeError:
+            # loop 已关闭（测试收尾、进程退出）：忽略，不会有人再等它
+            continue
+
+
+async def _woken_within(event: asyncio.Event, *, budget: float) -> bool:
+    """最多等 `budget` 秒，返回「是不是被入队叫醒的」。"""
+    try:
+        async with asyncio.timeout(budget):
+            await event.wait()
+    except TimeoutError:
+        return False
+    return True
 
 
 def _decode(raw: str | None) -> dict[str, Any]:
@@ -168,13 +228,22 @@ class DbJobQueue:
                 if existing:
                     return str(existing)
                 raise
+        # 立刻叫醒本进程的 worker。`delay > 0` 时不叫：那些行在 `run_at` 之前
+        # 根本不可见，叫醒只会白查一次，而延迟入队正是「短 job + 延迟重投」的大户。
+        if delay <= 0:
+            wake_workers()
         return job.id
 
     # ------------------------------------------------------------------ 出队
     async def dequeue(self, timeout: float = 1.0) -> Job | None:  # noqa: ASYNC109 —— 协议规定的是单次等待上限
         loop = asyncio.get_running_loop()
         deadline = loop.time() + max(0.0, timeout)
+        wake = _waker()
         while True:
+            # 先清后查：清之前发生的入队一定被这次 `_claim` 看到；查之后发生的入队
+            # 一定能把 event 置位。反过来（先查后清）会丢掉「查完到清之间」的入队，
+            # 那一次唤醒就白丢了——症状是偶发的「入队后干等满一个退避间隔」。
+            wake.clear()
             job = await self._claim()
             if job is not None:
                 self._idle = 0
@@ -184,14 +253,16 @@ class DbJobQueue:
             if remaining <= 0:
                 return None
             delay = self._next_interval()
+            if await _woken_within(wake, budget=min(delay, remaining)):
+                # 有任务刚入队：立刻重查，并且把退避复位（队列从「空」变成「非空」）
+                self._idle = 0
+                continue
             if delay >= remaining:
-                # 这一觉睡到超时：醒来就该返回，不必再查一次库。
+                # 这一觉睡到了超时：醒来就该返回，不必再查一次库。
                 # 每个周期末尾的那次查询是纯浪费——醒来时已经过了 deadline，
                 # 查完必然又是 miss。入队延迟不受影响：worker 的下一次 `dequeue`
                 # 第一个动作就是查库，间隔在微秒级。
-                await asyncio.sleep(remaining)
                 return None
-            await asyncio.sleep(delay)
 
     def _next_interval(self) -> float:
         """下一次空转等待多久：`poll` 起，每次翻倍，封顶 `idle_max`。

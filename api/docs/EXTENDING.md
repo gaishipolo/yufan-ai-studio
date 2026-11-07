@@ -803,7 +803,7 @@ CI 里的红灯。豁免表里失效的条目（路由改名/删除）同样会�
 | 阶段 | 配置 | 得到什么 | 代价 |
 |---|---|---|---|
 | 开发 | `QUEUE_DRIVER=memory` | 零依赖，跑通链路 | 重启丢在途任务，跨实例不可见 |
-| 单机/小规模生产 | `QUEUE_DRIVER=db` | job 落 `queued_jobs`，重启不丢；租约到期别人能接手崩溃任务；死信留档 | 轮询取任务，空转时退避到 1 次/秒（`QUEUE_POLL_INTERVAL_SEC` → `QUEUE_IDLE_MAX_INTERVAL_SEC`）；**入队不会叫醒 worker**，空闲时最坏延迟 = 退避封顶值 |
+| 单机/小规模生产 | `QUEUE_DRIVER=db` | job 落 `queued_jobs`，重启不丢；租约到期别人能接手崩溃任务；死信留档 | 轮询取任务，空转时退避到 1 次/秒（`QUEUE_POLL_INTERVAL_SEC` → `QUEUE_IDLE_MAX_INTERVAL_SEC`）。**同一进程内入队会立刻叫醒 worker**（`Event` 置位）；跨进程仍是轮询，空闲时最坏延迟 = 退避封顶值 |
 | 大规模 | 新增 `infra/queue/redis.py` | 高吞吐、跨实例即时唤醒 | 多一个中间件、多一个故障域 |
 
 从 db 到 redis **只需要一个文件**：`infra/queue/redis.py` 里 `Driver = RedisJobQueue`，
