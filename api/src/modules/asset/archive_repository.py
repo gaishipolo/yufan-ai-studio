@@ -94,6 +94,29 @@ class ArchiveAssetRepository:
             or 0
         )
 
+    async def lock_owner_for_quota(self, owner: str) -> None:
+        """配额判定前把同一用户的登记串行化。
+
+        「读 sum → 判上限 → 写行」三步必须在一个临界区里，否则两个并发上传会各自
+        看到「还剩 100MB」然后都写进去。PostgreSQL 下用 `FOR UPDATE` 锁住该 owner
+        已有的一行：同一用户的并发登记会排队，不同用户互不影响。
+
+        已知边界（doctor 会报）：SQLite 没有行锁，且用户**首次**登记时无行可锁，
+        这两种情况仍可能超限。彻底原子化要引入 `usage` 表的条件 UPDATE，那会多一处
+        双写；当前选择是「绝大多数并发安全 + 边界显式化」，而不是假装已经解决。
+        """
+        if settings.is_sqlite:
+            return
+        await self.session.scalar(
+            select(Asset.id)
+            .where(
+                Asset.owner_id == owner,
+                Asset.source == AssetSource.ARCHIVE,
+            )
+            .with_for_update()
+            .limit(1)
+        )
+
     async def list_visible(
         self,
         owner: str,

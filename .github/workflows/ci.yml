@@ -70,7 +70,7 @@ jobs:
           docker logs minio >&2 2>&1 || true
           exit 1
 
-      # 接口契约三份生成物的一致性由 tests/test_openapi_contract.py 在 pytest 内校验。
+      # 接口契约四份生成物的一致性由 tests/test_openapi_contract.py 在 pytest 内校验。
       # 同时导出 S3_LIVE_*：tests/test_storage_s3_live.py 只有看到它才跑真实对象存储。
       - name: pytest
         env:

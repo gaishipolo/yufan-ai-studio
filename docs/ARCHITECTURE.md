@@ -751,7 +751,7 @@ CreateTaskModal → POST /tasks
 
 | 你改了 | 必须同步 |
 |---|---|
-| 任何接口的请求/响应 | `openapi.json` + `API.md` + `schema.ts` |
+| 任何接口的请求/响应 | `openapi.json` + `API.md` + `schema.ts`（权限点看 `permissions.ts`） |
 | 新增权限点 | 后端 `ModuleSpec.permissions` + 前端 `permission-catalog.ts` |
 | 新增插槽种类 | `shared/registry/types.ts` 的 `SlotName` + `FRONTEND_EXTENSION.md` |
 | 新增模块错误码号段 | `docs/EXTENDING.md` §7 的号段分配表 |

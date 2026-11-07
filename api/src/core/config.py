@@ -130,6 +130,13 @@ class Settings(BaseSettings):
     # 每个用户的归档逻辑容量上限（字节）；0 = 不限。只算未删除的归档素材，
     # 内容寻址让同一份字节在物理上共用，但配额按「每个人登记了什么」算。
     archive_quota_bytes_per_user: int = 0
+    # 镜像对账：只读 DB + 按 stateVersion 幂等覆盖写，多实例各跑一份结果相同，
+    # 所以默认开启（与 GC 不同，它不需要选主）。也可随时 `app rebuild-mirrors`。
+    archive_mirror_enabled: bool = True
+    archive_mirror_interval_sec: float = 3600.0
+    # 周期任务的集群协调能力：local = 单实例直接跑；backend = 用归档存储的
+    # 条件写抢租约，全集群只有一个实例执行「不可逆/非幂等」的任务。
+    leader_elector: str = "local"
 
     # 兼容旧的单值写法 AI_PROVIDER；推荐使用 AI_PROVIDERS=echo,volcengine
     ai_provider: str = "echo"

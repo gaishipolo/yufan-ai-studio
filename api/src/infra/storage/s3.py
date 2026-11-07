@@ -22,10 +22,10 @@ from pathlib import Path
 from typing import ClassVar
 
 import boto3
-from botocore.client import Config
 from botocore.exceptions import BotoCoreError, ClientError
 
 from core.logging import get_logger
+from infra.blob import s3_client
 from infra.driver_config import DriverSettings, driver_config
 from infra.storage.base import StorageError
 
@@ -80,15 +80,15 @@ class S3Storage:
         self.settings = settings or get_s3_settings()
         if not self.settings.bucket:
             raise StorageError("S3_BUCKET 未配置，无法使用 S3 驱动")
-        self._client = boto3.client(
-            "s3",
-            endpoint_url=self.settings.endpoint or None,
-            aws_access_key_id=self.settings.access_key or None,
-            aws_secret_access_key=self.settings.secret_key or None,
-            region_name=self.settings.region,
+        # 与归档通路共用同一个 client：连接参数相同就命中 `infra.blob` 的缓存。
+        self._client = s3_client(
+            endpoint=self.settings.endpoint,
+            access_key=self.settings.access_key,
+            secret_key=self.settings.secret_key,
+            region=self.settings.region,
             use_ssl=self.settings.use_ssl,
             verify=self.settings.verify,
-            config=Config(signature_version="s3v4", s3={"addressing_style": "path"}),
+            factory=boto3.client,
         )
 
     # ------------------------------------------------------------------ 写

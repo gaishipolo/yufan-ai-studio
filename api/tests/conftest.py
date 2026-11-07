@@ -45,7 +45,11 @@ import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 from app import create_app  # noqa: E402
+from core.scheduler import periodic_jobs, restore_periodic_jobs  # noqa: E402
 from seed import seed  # noqa: E402
+
+# create_app() 之后才能取到完整的周期任务注册表（模块在发现时注册）。
+_PERIODIC_SNAPSHOT: tuple = ()
 
 
 @pytest.fixture(scope="session")
@@ -59,7 +63,27 @@ def client() -> TestClient:
 def _seeded(client: TestClient) -> None:
     import asyncio
 
+    global _PERIODIC_SNAPSHOT
     asyncio.run(seed(reset=True))
+    _PERIODIC_SNAPSHOT = periodic_jobs()
+
+
+@pytest.fixture(autouse=True)
+def _assembled_ports() -> None:
+    """每个用例前把声明式注入口装配齐。
+
+    引用检查是 fail-closed 的：某个用例为了验「未注册时拒绝删除」而清空注册表后，
+    下一个用例必须重新按 `ModuleSpec` 声明装配，否则会连锁 503。把恢复动作放在
+    全局夹具里，测试就不必各写一遍 finally，也不会因为漏写而互相污染。
+    """
+    from api.discovery import active_modules
+    from core.ports.assets import bind_asset_reference_sources
+
+    for spec in active_modules():
+        if spec.asset_reference_sources:
+            bind_asset_reference_sources(spec.name, spec.asset_reference_sources)
+    if _PERIODIC_SNAPSHOT:
+        restore_periodic_jobs(_PERIODIC_SNAPSHOT)
 
 
 @pytest.fixture

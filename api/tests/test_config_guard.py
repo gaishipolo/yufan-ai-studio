@@ -136,10 +136,21 @@ def _driver_settings() -> tuple[type[BaseSettings], ...]:
     from infra.ai.agnes import AgnesSettings
     from infra.ai.libtv import LibTvSettings
     from infra.archive.local import ArchiveSettings
+
+    # 归档 S3 驱动以前漏登记：S3_ARCHIVE_* / S3_BUCKET_MODE 一直不在配置巡检范围，
+    # 写进 .env.example 反而会被当成「无法识别的键」。两条 S3 通路都要巡检。
+    from infra.archive.s3 import ArchiveS3Settings
     from infra.storage.s3 import S3Settings
     from modules.image.pipeline import ImageAssetSettings
 
-    return (AgnesSettings, LibTvSettings, ArchiveSettings, S3Settings, ImageAssetSettings)
+    return (
+        AgnesSettings,
+        LibTvSettings,
+        ArchiveSettings,
+        ArchiveS3Settings,
+        S3Settings,
+        ImageAssetSettings,
+    )
 
 
 def _all_yaml_fields() -> list[tuple[str, str, object]]:

@@ -844,6 +844,56 @@ host 白名单、每一跳重定向重新校验、流式字节上限、content-t
 
 ---
 
+## 5.7 三个「加模块时不显眼、加错了会丢数据」的扩展点
+
+### ① 只要把 `assets.id` 存进了自己的表或文件，就必须声明引用来源
+
+`core/ports/assets.py` 在每次删除前聚合所有来源。漏登记的表现是「删除成功、
+引用方裂图」，**不可逆且没有告警**，所以这条不是可选约定：
+
+```python
+# modules/<name>/__init__.py
+from core.ports.assets import AssetReferenceSource, bind_asset_reference_sources
+
+SOURCES = (
+    AssetReferenceSource(
+        name="<模块>.<字段>",              # 全局唯一、稳定
+        checker=MyAssetReferences(),       # 实现 async references(ids) -> {id: [描述]}
+        location="modules/<name>/models.py:MyModel.field",  # 静态守卫拿它对账
+    ),
+)
+bind_asset_reference_sources("<模块>", SOURCES)
+
+module = ModuleSpec(..., asset_reference_sources=SOURCES)
+```
+
+三层保证：`ModuleSpec` 声明进框架期望集合 → `discover_modules()` 对账（声明了却没
+注册就 FAIL）→ `tests/test_architecture.py` 用 AST 扫所有 `reference_*_ids` 字段
+声明，没被任何来源 `location` 覆盖就 CI 红。运行时来源不齐抛 `Unavailable`(503)，
+**不会**退化成「没人引用、可以删」。
+
+### ② 写入 catalog JSON 前先问「DB 是不是唯一事实来源」
+
+替换模板的同步 worker 读 `catalog/assets/*.json`，所以镜像必须存在，但它是
+`modules/asset/mirror.py` 的**派生投影**：事务先 `commit`，之后才投影；镜像带
+`stateVersion`，`@periodic("asset.mirror")` 与 `app rebuild-mirrors` 按 DB 幂等对账。
+新增写路径不要自己拼 `catalog/assets/{id}.json`，也不要把「镜像写失败」当成
+整次业务失败——DB 已提交时抛 500 只会让用户重试出重复记录。
+
+### ③ 不可逆的周期任务标 `leader_only`
+
+```python
+@periodic("asset.gc", every=86400, leader_only=True)
+```
+
+`Scheduler` 会向 `LEADER_ELECTOR` 选出的策略抢租约。`local`（单实例，默认）
+恒通过；`backend` 用 `ArchiveStorage.create()` 的条件写抢带 TTL 的租约，
+全集群只有一个实例执行。幂等任务（例如镜像对账）**不要**标，多跑一份结果相同。
+新增介质后端时，两条 S3 通路共用 `infra/blob.py` 的 `s3_client()`，别再各建一份
+boto3 client；`S3_BUCKET_MODE=shared` 下用 `archive/` 前缀隔离。
+
+---
+
 ## 6. 模型目录：已经就绪，别重复实现
 
 `GET /api/v1/models?capability=video` 已经由 `modules/catalog` 提供（权限点 `catalog:read`），
@@ -985,6 +1035,10 @@ app export-openapi --check  # 只比对不写盘：有差异就以非 0 退出�
 
 - [ ] 没有修改 `core/`、`api/`、`infra/`、`db/`、`generation/`（若要改，先确认是不是所有模块都受益）
 - [ ] 新权限点在 `ModuleSpec.permissions` 里声明，权限码用 `资源:动作`
+- [ ] 只要把 `assets.id` 存进了自己的表/文件，就在 `ModuleSpec.asset_reference_sources`
+      声明来源并 `bind_asset_reference_sources()`；否则 `test_architecture` 的 AST
+      守卫会红，删除也会 fail-closed（见 §5.7 ①）
+- [ ] 新增不可逆周期任务标 `leader_only=True`；幂等任务不要标（见 §5.7 ③）
 - [ ] 新表有 Alembic 迁移，且迁移基于最新 head 生成
 - [ ] 没有 import 其他业务模块（`test_architecture.py` 会拦）
 - [ ] `app modules` 能看到新模块，权限点数量符合预期
@@ -1001,7 +1055,7 @@ app export-openapi --check  # 只比对不写盘：有差异就以非 0 退出�
       另一支（委派角色 × 普通账号）一个断言都没有——R9-02 的功能回归就是这样躲过测试的。
       判定有几档就写几条用例，而且「能改 / 不能改」必须是**有意选的**，不是被断言顺手固定下来的（R9-03）
 - [ ] `pytest` 全绿（含架构约束测试）
-- [ ] `ruff check src tests` 干净
+- [ ] `ruff check .` 与 `mypy src` 干净、`app doctor` 无 FAIL
 
 ---
 

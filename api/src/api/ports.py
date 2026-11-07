@@ -36,6 +36,11 @@ async def ask_xxx(...) -> ...:             # 6. 消费函数：**未注册时必
 第 6 条是硬要求：注入口的意义是「可选依赖」。未注册就抛异常，等于把可选依赖
 变成必选依赖 —— 删掉 identity 模块整个系统就起不来，那还不如直接 import。
 
+**唯一例外：判定结果会放行不可逆操作的注入口**（`core.ports.assets` 的引用检查）。
+那里「中性值 = 没人引用 = 可以删」，一次漏注册就是永久丢数据，所以必须
+fail-closed：来源不齐抛 `Unavailable`(503)，宁可暂时删不掉。新增这类注入口时
+要在 `PORT_CATALOG` 的 `when_unregistered` 里写明这是刻意的，别照抄「返回中性值」。
+
 ## 什么该做成注入口
 
 - 消费方属于低层（`generation/`、`workers/`、CLI），而答案在业务模块手里；
@@ -55,7 +60,7 @@ from api.authn import has_principal_resolver
 from core.audit import has_audit_sink
 from core.feed import has_replacement_feed
 from core.ports.accounts import has_account_status_checker
-from core.ports.assets import has_asset_reference_checker
+from core.ports.assets import reference_source_gaps
 
 __all__ = ["PORT_CATALOG", "PortSpec", "port_status"]
 
@@ -113,12 +118,13 @@ PORT_CATALOG: tuple[PortSpec, ...] = (
         name="asset-references",
         module="core.ports.assets",
         protocol="AssetReferenceChecker",
-        implementer="modules/task（`video_tasks.reference_asset_ids`）+ "
+        implementer="由 `ModuleSpec.asset_reference_sources` 声明："
+        "modules/task（`video_tasks.reference_asset_ids`）+ "
         "modules/template（`MediaPack.reference_ids`，封装 head / 草稿）；"
-        "两者引用同一个 `assets.id`，聚合口可继续接第三个来源",
-        when_unregistered="返回空映射，删除一律放行。默认「可能有引用就拒绝」"
-        "会让删除功能在实现接上之前完全不可用，而用户只看到「删不掉」",
-        is_registered=has_asset_reference_checker,
+        "两者引用同一个 `assets.id`，AST 守卫对账新增写入点",
+        when_unregistered="fail-closed（见本文件开头的例外说明）：来源不齐抛 503，"
+        "删除一律拒绝。这里返回中性值等于静默放行不可逆删除",
+        is_registered=lambda: not reference_source_gaps(),
     ),
     PortSpec(
         name="replacement-feed",

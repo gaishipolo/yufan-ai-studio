@@ -7,8 +7,9 @@
 >
 > 来源：`CODE_REVIEW_2026-11-06_R11~R14`、`CODE_REVIEW_2026-11-06_FE6`、
 > `EXTENSIBILITY_GAPS.md` 的 B1/C1/C2，以及素材分支合并时新发现的项。
-> 最后更新：2026-11-07 15:30（分工约定废止，「谁来做」改为「落点」；上一轮素材库
-> A/B 档收口：引用检查、彻底删除与 GC、完整性校验、doctor、审计、配额）
+> 最后更新：2026-11-07 16:50（素材库基建封顶：引用来源声明化 + fail-closed、
+> DB 单一事实来源与镜像幂等对账、共享 S3 后端与单桶模式、可插拔选主；
+> 剩余多实例边界登记为 T25）
 
 ## 一眼看完
 
@@ -22,10 +23,10 @@
 | T8 | 轮询节奏全局化（C1） | 视频与生图共用一个间隔 | 后端 |
 | T9 | 重试是作业级不是任务级（C2） | 任务重试语义与用户预期不一致 | 后端 |
 | T10 | `archivePath` 绝对路径进 HTTP 契约 | 服务端盘符泄漏给浏览器 | 产品决定 |
-| T14 | `REVIEW_CHECKLIST` 缺两条反模式 | 同类问题第五次出现 | 文档 |
 | T22 | 归档检索与批量写太弱（C 档） | 几十万级素材找不到、整理要靠逐条点 | 产品决定 |
 | T23 | 上传秒传/断点、视频派生预热（C 档） | 300MB 白传一遍；首个点开视频的人等转码 | 后端 |
 | T24 | `MediaFile.path` 装的是 key，字段名/描述没跟上 | 契约语义漂移，后来者会当路径拼 | 后端（小） |
+| T25 | 多实例部署还差三处硬边界 | 配额首次并发、预签名 TOCTOU、运行工作区仍要共享盘 | 架构 |
 
 ---
 
@@ -100,17 +101,6 @@ R14 的三条问题全部落在被这个早退遮住的函数里——测试套�
 **验收**：产品给结论。保留 → 在 schema 字段描述里写明「这是服务端路径，勿用作下载链接」；
 改 → 只回 `runId`，前端拼展示文案。
 
-## T14 · `REVIEW_CHECKLIST` 缺两条反模式
-
-R13 与 R14 各自归纳出一个新形状，都没进清单：
-
-1. **门控/排除条件要按语义集合对照**，而不是只覆盖触发这次修复的那一种实现
-   （R13-01：`worker_enabled` 只包住框架恢复器，自带 `startup` 全在门控外）。
-2. **守卫要验证「通不通」，不是「有没有」**（R14-01：`test_every_kind_has_a_user_retry_exit`
-   被 `"retry_count" in text` 这个关键字骗过，而那个字段计的是自动重试）。
-
-**验收**：`CODE_STYLE.md §6` 或 `REVIEW_CHECKLIST.md` 的反模式表加两条，各带一个反例。
-
 ## T22 / T23 · 素材库的产品能力（A/B 做完后剩下的）
 
 A/B 档解决的是「数据不会丢、空间不涨、部署可自检」；这些是**好不好用**，
@@ -134,6 +124,27 @@ A/B 档解决的是「数据不会丢、空间不涨、部署可自检」；这�
 
 **验收**：要么在字段描述里写清「这是对象 key，不是文件系统路径」，要么改名并
 同步四份生成物；`ArchiveSearch` 改由 `schema.ts` 派生。
+
+## T25 · 多实例部署剩余的三处硬边界（封顶后明确留下，不是遗漏）
+
+本轮把「能不能安全删数据 / 漂移能不能自愈 / 能不能扩展到新介质与多副本」解决了，
+但**没有**声称系统已经可以无脑横向扩容。以下三处是结构性边界，各自需要独立工程：
+
+1. **配额不是完全原子**：`archive_repository.lock_owner_for_quota()` 在 PostgreSQL
+   下用 `FOR UPDATE` 串行化同一用户的「读 sum → 判上限 → 写行」，但 SQLite 没有行锁，
+   且用户**首次**登记时无行可锁。彻底原子要引入 `usage` 表的条件 UPDATE
+   （`SET used = used + :n WHERE used + :n <= quota`），代价是多一处需要维护的双写。
+2. **预签名有 TOCTOU**：`ArchiveAssetService._serve()` 先 `exists()` HEAD 再 307，
+   另一个实例的 GC 可以在这两步之间删掉字节。要消除需要「签名指向版本化 key」或
+   删除改标墓碑、由后台统一回收。
+3. **运行工作区仍是共享盘**：`REPLACEMENT_RUNS_ROOT` 必须所有实例挂同一份，
+   `catalog/runs` 只是指针。执行器（bridge.mjs / ffmpeg）需要真实本地文件，云化等于
+   重写执行器输入层，不是换配置能解决。
+
+`LEADER_ELECTOR=backend` 只解决「不可逆周期任务全集群只跑一次」，不解决上述三条。
+`app doctor` 会在 GC 开启而选主仍是 local 时直接 FAIL。
+
+**验收**：三处各有方案文档 + 多实例集成测试（至少两个进程并发登记/删除/取件）。
 
 ---
 
@@ -160,5 +171,7 @@ A/B 档解决的是「数据不会丢、空间不涨、部署可自检」；这�
 | T18 孤儿 blob 无 GC | 已修 | `app prune-blobs`：引用集合 = 库行 + 镜像 JSON，默认只报告，`--min-age-hours` 默认 24 |
 | T19 视频流全量下载 | 已修 | `ArchiveStorage.download_url()`；远端驱动 307 预签名、本地仍 `FileResponse`，出参收敛到 `modules/asset/serving.py` |
 | 素材库 A/B 档（数据正确性与长期可运行） | 已修 | 引用检查改多来源聚合（task + template）并接入回收站；`DELETE /assets/archive/{id}` 与 `prune-blobs --include-trash` 共用 `archive_purge.py` 彻底删除；`verify-blobs` 读回重算摘要；`app doctor` 12 项自检；GC 挂 `@periodic`（默认关闭）；状态变更/发布写审计；`ARCHIVE_QUOTA_BYTES_PER_USER` 配额 |
+| T14 反模式表补两条 | 已修 | `REVIEW_CHECKLIST.md §6` 新增 19–22：fail-closed 例外、双写必须有反向重建（本轮），以及 R13-01 门控按语义集合对照、R14-01 守卫要验「通不通」（原验收口径），各带真实反例 |
+| 素材库基建封顶（扩展性 / 健壮性） | 已修 | ① 引用来源由 `ModuleSpec.asset_reference_sources` 声明 + AST 守卫对账写入点 + 运行时 fail-closed（缺来源抛 503，不再静默放行删除）；② `modules/asset/mirror.py` 把 DB 定为唯一事实来源，写入顺序统一 commit→投影，`stateVersion` 幂等对账（`@periodic("asset.mirror")` + `app rebuild-mirrors`）自动补缺/更新/清孤儿，doctor 的反向建议已改正；③ `infra/blob.py` 让两条 S3 通路共用一份 boto3 client 与凭据，`S3_BUCKET_MODE=shared` 支持单桶前缀隔离；④ `core/coordination.py` 的 `LeaderElector`（local / 基于 `create()` CAS 租约的 backend）注入 Scheduler，GC 标 `leader_only`；⑤ 配额在 PG 下 `FOR UPDATE` 串行化。修复了 `S3_ARCHIVE_CACHE_DIR` 字段名与文档长期不符（实际读的是 `S3_CACHE_DIR`） |
 
 `ARCHITECTURE.md` / `EXTENSIBILITY_GAPS.md` 里 A 组 13 条已修 10 条，剩余 3 条即上面的 T7/T8/T9。

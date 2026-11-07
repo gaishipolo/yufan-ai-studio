@@ -13,6 +13,7 @@ app migrate-blobs                  # 归档素材改内容寻址布局（key = s
 app migrate-archive                # 把本地归档根的内容搬进当前归档驱动（local → s3）
 app prune-blobs                    # 回收没人引用的孤儿素材字节（默认只报告）
 app verify-blobs [--all]           # 读回字节重算 sha256，报告损坏/缺失对象
+app rebuild-mirrors [--dry-run]    # 按 DB 幂等重建 JSON 镜像，清孤儿（DB 是唯一真相源）
 app doctor                         # 部署自检：条件写、预签名、镜像一致性、完整性抽检
 app runs-status                    # 运行工作区现状：多少档案只在本机可见
 app new-module voice --label 配音   # 生成新模块脚手架
@@ -585,6 +586,18 @@ def _cmd_verify_blobs(args: argparse.Namespace) -> None:
         raise SystemExit(1)
 
 
+def _cmd_rebuild_mirrors(args: argparse.Namespace) -> None:
+    """按 DB 全量重建镜像：补缺、更新 stateVersion 落后的、清掉没有 DB 行的孤儿。"""
+    from modules.asset.mirror import run_mirror_reconcile
+
+    report = asyncio.run(run_mirror_reconcile(execute=not args.dry_run))
+    print(("预演：" if args.dry_run else "") + report.summary())
+    for asset_id, error in report.failures:
+        print(f"  [失败] {asset_id}: {error}")
+    if not report.healthy:
+        raise SystemExit(1)
+
+
 def _cmd_doctor(args: argparse.Namespace) -> None:
     from api.diagnostics import run_doctor
 
@@ -825,6 +838,12 @@ def main(argv: list[str] | None = None) -> int:
     p_verify.add_argument("--sample", type=int, default=20, help="抽样个数（默认 20）")
     p_verify.add_argument("--lenient", action="store_true", help="发现损坏也不返回非零退出码")
     p_verify.set_defaults(func=_cmd_verify_blobs)
+
+    p_rebuild = sub.add_parser(
+        "rebuild-mirrors", help="按 DB 幂等重建 catalog/assets/*.json，并清理孤儿镜像"
+    )
+    p_rebuild.add_argument("--dry-run", action="store_true", help="只报告差异、不写盘")
+    p_rebuild.set_defaults(func=_cmd_rebuild_mirrors)
 
     p_doctor = sub.add_parser("doctor", help="部署自检：条件写、预签名、镜像一致性、完整性抽检")
     p_doctor.add_argument("--sample", type=int, default=10, help="完整性抽检个数（默认 10）")

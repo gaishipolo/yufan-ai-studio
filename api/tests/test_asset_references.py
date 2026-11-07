@@ -16,7 +16,7 @@ from test_asset_api import png_bytes  # noqa: F401  同一套造图工具
 from core.ports.assets import (
     has_asset_reference_checker,
     reference_source_count,
-    register_asset_reference_checker,
+    reference_source_gaps,
     reset_asset_reference_checker,
 )
 from modules.task.models import VideoTask
@@ -70,9 +70,13 @@ def _upload(client: TestClient, api: str, name: str) -> dict[str, Any]:
 
 
 def test_checker_is_registered_at_startup(client: TestClient) -> None:
-    """`asset-references` 从「注入口未注册」变成已注册，且两个来源都在。"""
+    """声明集合与注册集合零缺口，删除才被允许。
+
+    旧断言只数「>= 2 个来源」：第三个来源漏登记时照样全绿，而失败方向是永久丢数据。
+    """
     assert has_asset_reference_checker()
     assert reference_source_count() >= 2
+    assert not reference_source_gaps(), reference_source_gaps()
 
 
 def test_delete_blocked_by_referencing_task(client: TestClient, api: str) -> None:
@@ -106,19 +110,14 @@ def test_delete_allowed_after_task_removed(client: TestClient, api: str) -> None
     assert response.status_code == 204, response.text
 
 
-def test_unregistered_checker_allows_delete(client: TestClient, api: str) -> None:
-    """没有实现时按中性默认放行。
+def test_unregistered_checker_refuses_delete(client: TestClient, api: str) -> None:
+    """fail-closed：来源集合未知时删除必须 503，不能静默放行。
 
-    这条守的是「可选依赖」语义：把未注册当成「可能有引用、一律拒绝」，
-    删除功能会在实现接上之前完全不可用，而用户只看到「删不掉」。
+    这是唯一「中性默认会造成不可逆数据丢失」的注入口：空映射等于「没人引用、
+    可以删」，漏登记一个来源就是永久裂图。宁可暂时删不掉，也不能猜。
     """
-    from modules.task.asset_references import TaskAssetReferences
-    from modules.template.asset_references import PackAssetReferences
-
     asset = _upload(client, api, "no-checker.png")
     reset_asset_reference_checker()
-    try:
-        assert client.delete(f"{api}/assets/{asset['id']}").status_code == 204
-    finally:
-        register_asset_reference_checker(TaskAssetReferences())
-        register_asset_reference_checker(PackAssetReferences())
+    response = client.delete(f"{api}/assets/{asset['id']}")
+    assert response.status_code == 503
+    assert "引用检查不可用" in response.json()["message"]

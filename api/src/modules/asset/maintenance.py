@@ -18,12 +18,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.config import settings
 from core.logging import get_logger
-from core.ports.assets import has_asset_reference_checker
+from core.ports.assets import reference_source_gaps
 from core.scheduler import periodic
 from db.session import get_session_factory
 from infra.archive import get_archive_storage
 from modules.asset.archive_purge import purge_trash_asset
 from modules.asset.errors import AssetInUse
+from modules.asset.mirror import run_mirror_reconcile
 from modules.asset.models import Asset
 from modules.asset.schema import AssetSource
 
@@ -48,8 +49,10 @@ class GcReport:
 async def _purge_old_trash(
     session: AsyncSession, *, execute: bool, trash_days: float
 ) -> tuple[list[tuple[str, str, list[str]]], list[tuple[str, str, list[str]]]]:
-    if not has_asset_reference_checker():
-        raise RuntimeError("引用检查器未注册，拒绝清理回收站（否则会删掉仍在被引用的素材）")
+    # 不是「有任意一个 checker 就行」：漏登记第三个来源时照样会静默删掉被引用的素材。
+    gaps = reference_source_gaps()
+    if gaps:
+        raise RuntimeError("引用检查不完备，拒绝清理回收站：" + "；".join(gaps))
 
     storage = get_archive_storage()
     cutoff = datetime.now(UTC) - timedelta(days=trash_days)
@@ -138,9 +141,34 @@ async def run_archive_gc(
     return report
 
 
-@periodic("asset.gc", every=max(1.0, settings.archive_gc_interval_sec), immediate=False)
+@periodic("asset.mirror", every=max(1.0, settings.archive_mirror_interval_sec), immediate=False)
+async def mirror_reconcile() -> None:
+    """按 DB 幂等重建镜像。不需要选主：多实例各写一份同样的内容，结果相同。
+
+    这是「双写漂移可自动收敛」的那一半：业务侧只管提交 DB，投影失败或中途宕机
+    留下的缺口，下一轮全部补齐；没有对应 DB 行的孤儿镜像也会被清掉。
+    """
+    if not settings.archive_mirror_enabled:
+        return
+    report = await run_mirror_reconcile()
+    if report.failures:
+        logger.warning("归档镜像对账有失败项：%s %s", report.summary(), report.failures[:5])
+    elif report.written or report.removed:
+        logger.info("归档镜像对账：%s", report.summary())
+
+
+@periodic(
+    "asset.gc",
+    every=max(1.0, settings.archive_gc_interval_sec),
+    immediate=False,
+    leader_only=True,
+)
 async def archive_gc() -> None:
-    """默认关闭：`ARCHIVE_GC_ENABLED=true` 才真正删。多实例部署要自己选主。"""
+    """删除不可逆：除了 `ARCHIVE_GC_ENABLED=true`，还要抢到集群租约才执行。
+
+    `leader_only` 让多实例部署只有一个进程真的删；单实例用默认 local 选主器即可。
+    幂等的镜像对账不需要这层保护，故意没标。
+    """
     if not settings.archive_gc_enabled:
         return
     report = await run_archive_gc(

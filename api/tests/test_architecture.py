@@ -430,3 +430,86 @@ def test_every_kind_has_a_user_retry_exit() -> None:
     )
     stale = sorted(set(EXIT_CASES) - kinds)
     assert not stale, f"EXIT_CASES 里有已经不存在的 kind：{stale}"
+
+
+# --------------------------------------------------------------------------- #
+# 素材引用来源完备性：唯一「漏一处就静默永久丢数据」的扩展点
+# --------------------------------------------------------------------------- #
+_REFERENCE_FIELDS = frozenset({"reference_asset_ids", "reference_ids", "referenceIds"})
+
+
+def _reference_field_files() -> list[str]:
+    """找出所有声明了「装着 assets.id 的集合」字段的源码文件。
+
+    只看模型/契约层的字段定义（赋值 + 名字匹配），不看读它的 checker。
+    新增一个把 `assets.id` 存进自己表或 JSON 的模块，这个集合就会多一项。
+    """
+    found: set[str] = set()
+    for path in _python_files(SRC):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            names: list[str] = []
+            if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+                names.append(node.target.id)
+            elif isinstance(node, ast.Assign):
+                names.extend(t.id for t in node.targets if isinstance(t, ast.Name))
+            if any(name in _REFERENCE_FIELDS for name in names):
+                found.add(path.relative_to(SRC).as_posix())
+                break
+    return sorted(found)
+
+
+def test_every_asset_reference_writer_declares_a_source() -> None:
+    """任何写入 `assets.id` 的模块都必须在 ModuleSpec 里声明引用来源。
+
+    删除保护靠 `core/ports/assets.py` 聚合所有来源；漏登记一个来源，删除会
+    返回成功、引用方从此裂图，是不可逆且没有告警的失败。所以既要有运行时
+    fail-closed，也要在 CI 里对账「写入点 → 声明」这条静态链。
+    """
+    from api.discovery import active_modules
+
+    specs = active_modules()
+    declared = {
+        source.location.split(":", 1)[0]
+        for spec in specs
+        for source in spec.asset_reference_sources
+    }
+    by_module = {
+        spec.name for spec in specs if spec.asset_reference_sources
+    }
+
+    uncovered: list[str] = []
+    for relative in _reference_field_files():
+        parts = relative.split("/")
+        if parts[0] == "modules":
+            if parts[1] not in by_module:
+                uncovered.append(f"{relative}（模块 {parts[1]} 未声明来源）")
+        elif relative not in declared:
+            # core 层定义、被业务模块持久化的共享模型，必须由某个声明显式指认
+            uncovered.append(f"{relative}（共享模型，没有任何来源声明指向它）")
+
+    missing_files = sorted(path for path in declared if not (SRC / path).is_file())
+    details = uncovered + [f"声明指向不存在的文件：{path}" for path in missing_files]
+    assert not details, (
+        "引用来源对账失败：\n"
+        + "\n".join(f"  - {item}" for item in details)
+        + "\n在对应模块的 ModuleSpec.asset_reference_sources 里补声明，并在 "
+        "core/ports/assets.py 的聚合口注册实现；否则删除会被 fail-closed 挡住。"
+    )
+
+
+def test_reference_sources_are_complete_after_discovery() -> None:
+    """discover_modules 之后必须零缺口：声明集合 ⊆ 已注册实现。"""
+    from api.discovery import active_modules
+    from core.ports import assets as port
+
+    port.reset_asset_reference_checker()
+    specs = active_modules()
+    # 模块 import 期已注册过；测试间可能清空了全局表，这里按声明重新装配一次。
+    for spec in specs:
+        if spec.asset_reference_sources:
+            port.bind_asset_reference_sources(spec.name, spec.asset_reference_sources)
+    assert port.declared_reference_sources(), "期望集合为空：没有模块声明引用来源"
+    assert not port.reference_source_gaps(), (
+        f"删除会被拒绝：{port.reference_source_gaps()}"
+    )

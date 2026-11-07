@@ -8,21 +8,20 @@ from typing import Any
 import pytest
 
 from core.config import settings
-from core.ports.assets import (
-    register_asset_reference_checker,
-    reset_asset_reference_checker,
-)
+from core.ports.assets import bind_asset_reference_sources, reset_asset_reference_checker
 from core.scheduler import periodic_jobs
 from modules.asset import maintenance
 from modules.asset.maintenance import archive_gc, run_archive_gc
-from modules.task.asset_references import TaskAssetReferences
-from modules.template.asset_references import PackAssetReferences
 
 
 def _restore_defaults() -> None:
+    """按 ModuleSpec 声明重新装配，别留下匿名来源污染后续用例。"""
+    from api.discovery import active_modules
+
     reset_asset_reference_checker()
-    register_asset_reference_checker(TaskAssetReferences())
-    register_asset_reference_checker(PackAssetReferences())
+    for spec in active_modules():
+        if spec.asset_reference_sources:
+            bind_asset_reference_sources(spec.name, spec.asset_reference_sources)
 
 
 def test_gc_job_is_registered_with_module_prefix() -> None:
@@ -54,7 +53,7 @@ def test_gc_refuses_to_purge_without_reference_checker() -> None:
     """CLI / 周期任务忘了加载模块时，宁可失败也不能静默全删。"""
     reset_asset_reference_checker()
     try:
-        with pytest.raises(RuntimeError, match="引用检查器未注册"):
+        with pytest.raises(RuntimeError, match="引用检查不完备"):
             asyncio.run(run_archive_gc(include_trash=True, execute=False))
     finally:
         _restore_defaults()

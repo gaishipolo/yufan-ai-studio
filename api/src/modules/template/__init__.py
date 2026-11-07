@@ -3,7 +3,7 @@
 from api.module import ModuleSpec
 from core.feed import register_replacement_feed
 from core.permissions import PermissionSpec
-from core.ports.assets import register_asset_reference_checker
+from core.ports.assets import AssetReferenceSource, bind_asset_reference_sources
 from modules.template.asset_references import PackAssetReferences
 from modules.template.feed_provider import read_feed
 from modules.template.replacement_pipeline import KIND_REPLACEMENT
@@ -11,8 +11,18 @@ from modules.template.replacement_worker import resume
 from modules.template.router import router
 
 register_replacement_feed(read_feed)
-# 删除归档素材前问「还有谁在用」：封装的 head / 草稿引用了 `assets.id`
-register_asset_reference_checker(PackAssetReferences())
+# 删除归档素材前问「还有谁在用」：封装 head / 草稿把 `assets.id` 写进 referenceIds。
+# 历史发布版本刻意不算引用，否则老素材永远删不掉。
+ASSET_REFERENCE_SOURCES = (
+    AssetReferenceSource(
+        name="media_packs.reference_ids",
+        checker=PackAssetReferences(),
+        location="core/media.py:MediaPack.reference_ids",
+        description="封装 head / 草稿把 assets.id 写进 catalog/packs 与 "
+        "catalog/pack_drafts 的 referenceIds；历史发布版本不算引用",
+    ),
+)
+bind_asset_reference_sources("template", ASSET_REFERENCE_SOURCES)
 
 module = ModuleSpec(
     name="template",
@@ -28,4 +38,5 @@ module = ModuleSpec(
     startup=resume,
     # 已有自己的恢复器；声明负责的 kind 供架构守卫对账。
     recovery_kinds=(KIND_REPLACEMENT,),
+    asset_reference_sources=ASSET_REFERENCE_SOURCES,
 )

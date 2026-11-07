@@ -2,7 +2,13 @@
 
 **和 `infra/storage/s3.py` 的区别**：那个存的是"用户上传的素材"，URL 要直接给浏览器
 看（公开读 + 预签名）；这里存的是"归档与运行快照"，只给本机进程读，从不对外发 URL。
-所以两者**分桶**：归档桶不开放匿名读，否则私有原片会顺着公开策略漏出去。
+默认 `S3_BUCKET_MODE=separate` **分桶**：归档桶不开放匿名读，否则私有原片会顺着
+公开策略漏出去。设成 `shared` 则两条通路共用 `S3_BUCKET`，本驱动自动加 `archive/`
+前缀隔离，并复用 `infra/blob.py` 缓存的同一个 boto3 client —— 只在桶策略已按前缀
+管控时才允许。
+
+**`create()` 是集群级 CAS 原语**：发布版号、GC 的选主租约都靠它，
+`core/coordination.py` 的 `BackendLeaderElector` 直接用，不需要另引 Redis。
 
 **为什么要 `materialize` 而不是直接给 URL**：桥接层（`libtv_runtime/bridge.mjs`）
 要的是 `run/inputs/` 下的真实文件，还要重算 sha256；ffmpeg 派生预览也要真实路径。
@@ -36,13 +42,13 @@ from pathlib import Path
 from typing import ClassVar
 
 import boto3
-from botocore.client import Config
 from botocore.exceptions import BotoCoreError, ClientError
 
 from core.exceptions import Conflict, UpstreamError
 from core.logging import get_logger
 from infra.archive.base import Location, checksum, read_json, write_json
 from infra.archive.runs import runs_root
+from infra.blob import s3_client
 from infra.driver_config import DriverSettings, driver_config
 
 logger = get_logger(__name__)
@@ -63,9 +69,10 @@ class ArchiveS3Settings(DriverSettings):
 
     driver_kind: ClassVar[str] = "archive"
     driver_name: ClassVar[str] = "s3"
+    # `archive_bucket` 不列进生产必填：shared 模式下它本来就该留空、改用素材桶。
+    # 是否必填由 `__init__` 按 bucket_mode 判断，静态清单管不了这种条件依赖。
     prod_required_fields: ClassVar[tuple[str, ...]] = (
         "endpoint",
-        "archive_bucket",
         "access_key",
         "secret_key",
     )
@@ -73,7 +80,12 @@ class ArchiveS3Settings(DriverSettings):
     endpoint: str = ""
     archive_bucket: str = ""
     archive_prefix: str = ""
-    cache_dir: str = ""
+    # 字段名必须带 archive_ 前缀：env 前缀是 `S3_`，写成 `cache_dir` 会变成
+    # `S3_CACHE_DIR`，与 .env.example 里的 `S3_ARCHIVE_CACHE_DIR` 对不上（配置守卫抓到过）。
+    archive_cache_dir: str = ""
+    # separate（默认）= 独立私有桶；shared = 与素材桶共用一个桶，靠 `archive/` 前缀隔离。
+    # shared 只适合「桶策略已按前缀管控」的部署，别在公开读桶上存私有原片。
+    bucket_mode: str = "separate"
     access_key: str = ""
     secret_key: str = ""
     region: str = "us-east-1"
@@ -89,21 +101,34 @@ def get_archive_s3_settings() -> ArchiveS3Settings:
 class S3ArchiveStorage:
     def __init__(self, settings: ArchiveS3Settings | None = None) -> None:
         self.settings = settings or get_archive_s3_settings()
+        mode = self.settings.bucket_mode.strip().lower()
+        self._prefix = self.settings.archive_prefix.strip().strip("/")
         self._bucket = self.settings.archive_bucket.strip()
+        if mode == "shared":
+            # 单桶部署：与素材通路共用 S3_BUCKET，用命名空间前缀隔开两套 key。
+            from infra.storage.s3 import get_s3_settings
+
+            self._bucket = get_s3_settings().bucket.strip()
+            namespace = "archive"
+            self._prefix = f"{namespace}/{self._prefix}" if self._prefix else namespace
+        elif mode != "separate":
+            raise UpstreamError(
+                f"S3_BUCKET_MODE 只能是 separate 或 shared，收到 {mode!r}"
+            )
         if not self._bucket:
             raise UpstreamError(
-                "归档对象存储未配置：请设置 S3_ARCHIVE_BUCKET（与素材桶分开），不会回退到本地目录"
+                "归档对象存储未配置：separate 模式请设置 S3_ARCHIVE_BUCKET，"
+                "shared 模式请设置 S3_BUCKET；不会回退到本地目录"
             )
-        self._prefix = self.settings.archive_prefix.strip().strip("/")
-        self._client = boto3.client(
-            "s3",
-            endpoint_url=self.settings.endpoint or None,
-            aws_access_key_id=self.settings.access_key or None,
-            aws_secret_access_key=self.settings.secret_key or None,
-            region_name=self.settings.region,
+        # 与素材通路共用同一个 client：连接参数相同就命中 `infra.blob` 的缓存。
+        self._client = s3_client(
+            endpoint=self.settings.endpoint,
+            access_key=self.settings.access_key,
+            secret_key=self.settings.secret_key,
+            region=self.settings.region,
             use_ssl=self.settings.use_ssl,
             verify=self.settings.verify,
-            config=Config(signature_version="s3v4", s3={"addressing_style": "path"}),
+            factory=boto3.client,
         )
 
     # ---------------------------------------------------------------- 位置
@@ -388,7 +413,7 @@ class S3ArchiveStorage:
             target.unlink(missing_ok=True)
 
     def _cache_root(self) -> Path:
-        raw = self.settings.cache_dir.strip()
+        raw = self.settings.archive_cache_dir.strip()
         if raw:
             return Path(raw)
         # api/src/infra/archive/s3.py → api/var/archive-cache

@@ -1,13 +1,14 @@
-"""归档素材编排：登记、列表、取文件；索引在 DB，字节在归档盘。
+"""归档素材编排：登记、列表、取文件；索引在 DB，字节在归档存储。
 
 ## 与 `AssetService` 的分工
 
-两个 service 共用 `assets` 表，但用的是两套**物理存储**：
+两个 service 共用 `assets` 表，但用的是两套**物理通路**（配置分别是
+`STORAGE_DRIVER` 与 `ARCHIVE_DRIVER`，两者都能跑本地盘或 S3）：
 
-- `AssetService`：对象存储（本地 `STORAGE_LOCAL_ROOT` / S3），服务端中转上传，
-  缩略图按需派生，文件走 `FileResponse` 或预签名跳转。
-- 本文件：归档盘（`MEDIA_ARCHIVE_ROOT`，通常是 Z 盘/共享盘），原片直接落盘，
-  300MB 上限，供替换模板的 `prepare` 读原始视频。
+- `AssetService`：对象存储，服务端中转上传，缩略图按需派生，文件走
+  `FileResponse` 或预签名跳转。
+- 本文件：归档存储，内容寻址 blob（`blobs/ab/<sha256>`）、300MB 上限，
+  供替换模板的 `prepare` 读原始视频，取件在远端驱动下走 307 预签名。
 
 所以两边的 `storage_key` 不是同一个命名空间，靠 `source` 列区分。
 列表接口也各自限定来源，不会把对方的行渲染成 404 的封面。
@@ -23,18 +24,18 @@
 `owned()` 与 `visible()` 不能合并：删除、改名只能动自己的记录，
 而预览、详情要放行公共原片。合在一起就得在每个调用点补 if。
 
-## 为什么仍然写 JSON
+## 镜像是派生投影，不是第二份真相
 
-替换模板在 worker 里同步读 `catalog/assets/{id}.json`。为了让「替换模板零改动」
-成立，入库时同步落一份 JSON 镜像（内容由 DB 行派生）。写失败即整次入库失败：
-「列表里有、prepare 说没有」是最难排查的一种不一致。
+替换模板的 worker 是同步代码，够不着异步 ORM，只能读 `catalog/assets/{id}.json`。
+所以镜像必须存在，但**DB 才是唯一事实来源**：业务事务先 `commit`，之后才投影；
+投影失败不回滚事务、也不让请求 500，`modules/asset/mirror.py` 的周期对账会按
+DB 重放（镜像带 `stateVersion`，版本相同就跳过），并清掉没有对应 DB 行的孤儿镜像。
+`app rebuild-mirrors` 可以任何时候全量重建。
 
-改名/分享/移入回收站之后也要重写镜像 —— 否则模板侧读到的还是「可引用」的旧状态。
+## 列表不依赖归档存储在线
 
-## 列表不依赖归档盘在线
-
-列表读 DB，`root` 取不到时返回空串而不是 502 —— 盘掉线时运维仍需要看到
-「库里有多少素材、占多少空间」。取文件、上传、导入仍然要求盘可用。
+列表读 DB，存储不可达也不影响「库里有多少素材、占多少空间」；取文件、上传、
+导入仍然要求存储可用。归档已切 key 语义，没有 `root` 字段可退化。
 """
 
 from __future__ import annotations
@@ -86,6 +87,7 @@ from modules.asset.archive_schema import (
     ImportAsset,
 )
 from modules.asset.errors import AssetInUse, AssetQuotaExceeded
+from modules.asset.mirror import MirrorProjector, project_after_commit
 from modules.asset.models import Asset
 from modules.asset.schema import AssetSource
 
@@ -292,11 +294,11 @@ class ArchiveAssetService:
             row.shared = False
             row.shared_at = None
         row.state_version += 1
+        # DB 先提交，镜像后投影：镜像不是事务的一部分，也不可能回滚。
+        # 投影失败由周期对账按 stateVersion 重放，不会留下「列表已删、模板还能引用」。
         await self.repo.save(row)
-        # 镜像必须在 commit 前写好：模板侧读 JSON 判断「还能不能用」，
-        # 只改库不改 JSON，会出现「列表已删、模板还能引用」的错位。
-        await self._write_mirror(row)
         await self.session.commit()
+        await project_after_commit(row, self.storage)
         action = _change_action(payload)
         if action:
             await audit.record(
@@ -333,6 +335,8 @@ class ArchiveAssetService:
 
         quota = max(0, settings.archive_quota_bytes_per_user)
         if quota:
+            # 与 used_by_owner + 插入共处一个事务临界区，避免并发登记都判成「还够」
+            await self.repo.lock_owner_for_quota(owner)
             used = await self.repo.used_by_owner(owner)
             if used + size_bytes > quota:
                 raise AssetQuotaExceeded(
@@ -373,7 +377,6 @@ class ArchiveAssetService:
             has_audio=info["hasAudio"],
         )
         try:
-            await self._write_mirror(row)
             await self.repo.add(row)
             await self.session.commit()
         except IntegrityError:
@@ -391,6 +394,8 @@ class ArchiveAssetService:
             await asyncio.to_thread(self._discard_blob, key, created)
             await asyncio.to_thread(self._discard_mirror, uid)
             raise
+        # 提交成功后才写镜像；失败交由 `asset.mirror` 周期任务按 DB 重放。
+        await project_after_commit(row, self.storage)
         return self._to_out(row, owner)
 
     async def _find_by_digest(self, owner: str, digest: str, category: str) -> Asset | None:
@@ -455,11 +460,12 @@ class ArchiveAssetService:
         return self.blobs.derive(key, target_key, kind="video", clip=True)
 
     async def _write_mirror(self, row: Asset) -> None:
-        payload = self.repo.to_media(row).model_dump(mode="json", by_alias=True)
-        await asyncio.to_thread(self.storage.write, f"catalog/assets/{row.id}.json", payload)
+        """兼容入口：幂等投影一行。写路径统一走 `project_after_commit()`。"""
+        projector = MirrorProjector(self.storage)
+        await asyncio.to_thread(projector.write, projector.snapshot(row))
 
     def _discard_mirror(self, asset_id: str) -> None:
-        self.storage.remove(f"catalog/assets/{asset_id}.json")
+        MirrorProjector(self.storage).remove(asset_id)
 
     def _discard_blob(self, key: str, created: bool) -> None:
         """登记失败不留半条记录，但**也不删字节**。

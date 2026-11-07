@@ -24,8 +24,9 @@ async def reconcile() -> None:
 1. **名字前缀 = 模块名**（`image.*` / `task.*`），`app modules` 按前缀分组，
    `test_periodic_jobs_are_namespaced` 会拦住不守规矩的命名；
 2. **handler 自己开会话**，不要在闭包里长期持有 session / 连接；
-3. **必须幂等**：多副本部署时每个进程都会跑一份，本扩展点**不做**分布式选主。
-   需要「全集群只跑一次」的，得先把队列换成 `queue_driver=redis` 再加锁，别在这里假装；
+3. **必须幂等**：多副本部署时每个进程都会跑一份。确实「全集群只能跑一次」的任务
+   （不可逆删除等）标 `leader_only=True`，调度器会向 `LeaderElector` 抢租约；
+   租约策略由 `LEADER_ELECTOR` 选，默认 `local`（单实例）；
 4. `every` 是**最小间隔**，不是精确定时：单个 handler 跑得久会推后别人的下一轮。
 
 删除/新增一个周期任务只改模块文件，`app.py` 不认识任何具体任务——这是它存在的意义。
@@ -38,6 +39,7 @@ import time
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 
+from core.coordination import LeaderElector, LocalLeaderElector
 from core.logging import get_logger
 
 logger = get_logger(__name__)
@@ -51,13 +53,15 @@ class PeriodicJob:
     every: float
     handler: PeriodicHandler
     immediate: bool = False
+    # 不可逆 / 非幂等任务：先抢集群租约，抢不到就跳过这一轮
+    leader_only: bool = False
 
 
 _registry: dict[str, PeriodicJob] = {}
 
 
 def periodic(
-    name: str, *, every: float, immediate: bool = False
+    name: str, *, every: float, immediate: bool = False, leader_only: bool = False
 ) -> Callable[[PeriodicHandler], PeriodicHandler]:
     """把协程函数注册为周期任务。返回原函数，便于直接调用（测试也用这条路）。"""
     if every < 1:
@@ -68,7 +72,13 @@ def periodic(
     def decorator(handler: PeriodicHandler) -> PeriodicHandler:
         if name in _registry and _registry[name].handler is not handler:
             raise ValueError(f"周期任务重名：{name}（两个模块抢同一个名字，只有一个会生效）")
-        _registry[name] = PeriodicJob(name=name, every=every, handler=handler, immediate=immediate)
+        _registry[name] = PeriodicJob(
+            name=name,
+            every=every,
+            handler=handler,
+            immediate=immediate,
+            leader_only=leader_only,
+        )
         return handler
 
     return decorator
@@ -83,6 +93,18 @@ def reset_periodic_jobs() -> None:
     _registry.clear()
 
 
+def restore_periodic_jobs(jobs: Sequence[PeriodicJob]) -> None:
+    """把注册表恢复成给定快照（测试夹具用）。
+
+    `reset_periodic_jobs()` 是全局清空，某个用例调过之后，后续用例看到的
+    `periodic_jobs()` 就是空的——「注册了但断言说没有」会变成随测试顺序漂移的
+    假失败。夹具在每轮开始时用这里恢复，注册仍然只在模块 import 期发生一次。
+    """
+    _registry.clear()
+    for job in jobs:
+        _registry[job.name] = job
+
+
 class Scheduler:
     """单进程内的周期调度器。
 
@@ -90,9 +112,15 @@ class Scheduler:
     传一个假的 `now` 就能验证「到点了 / 没到点 / 一个 handler 抛异常不影响别人」。
     """
 
-    def __init__(self, jobs: Sequence[PeriodicJob] | None = None) -> None:
+    def __init__(
+        self,
+        jobs: Sequence[PeriodicJob] | None = None,
+        elector: LeaderElector | None = None,
+    ) -> None:
         self._jobs = list(periodic_jobs() if jobs is None else jobs)
         self._last: dict[str, float] = {}
+        # 不传就用单机选主器：直接构造的 Scheduler（测试、CLI）行为与以前一致
+        self._elector: LeaderElector = elector if elector is not None else LocalLeaderElector()
 
     def start(self, now: float) -> None:
         """确定起点：非 immediate 的任务从「现在」开始计满一个 `every` 才跑。
@@ -123,11 +151,20 @@ class Scheduler:
             # 先记账再执行：handler 里 raise 不该让同一轮无限重试，
             # 也不该把这个任务饿死到下次启动
             self._last[job.name] = now
+            acquired = False
+            if job.leader_only:
+                acquired = self._elector.acquire(job.name, ttl=max(60.0, job.every * 2))
+                if not acquired:
+                    logger.debug("周期任务 %s 未抢到集群租约，跳过本轮", job.name)
+                    continue
             try:
                 await job.handler()
             except Exception:  # noqa: BLE001 - 一个任务炸掉不能拖垮调度器
                 logger.exception("周期任务失败：%s", job.name)
                 continue
+            finally:
+                if acquired:
+                    self._elector.release(job.name)
             executed.append(job.name)
         return executed
 

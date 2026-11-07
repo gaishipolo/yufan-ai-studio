@@ -156,7 +156,9 @@ Z:\yufan_ai_studio\
 
 前端在 `features/replacement-templates`，API 类型使用自动生成的 `shared/api/schema.ts`。素材页（`features/asset-library`）只读 `/assets` 的 DB 线；归档接口 `/assets/archive/*` 现在**只服务于替换模板**，不再有独立的归档库界面。
 
-检查：后端 `pytest -q`、`ruff check src tests scripts`、`mypy src`；前端 `npm run verify`。接口改动后运行 `app export-openapi`，一并提交三份生成物。
+检查：后端 `pytest -q`、`ruff check .`、`mypy src`；前端 `npm run verify`。接口改动后运行 `app export-openapi`，一并提交四份生成物（`openapi.json` / `API.md` / `schema.ts` / `permissions.ts`）。
+
+素材索引的真相源是 `assets` 表；`catalog/assets/*.json` 只是给同步 worker 读的派生投影，由 `modules/asset/mirror.py` 幂等维护，漂移会自动收敛（`app rebuild-mirrors` 可全量重建）。
 
 前端请求函数、Query hooks 和类型各自独立；Query keys 包含当前用户，分类与搜索存入 URL，详情按 ID 从最新查询结果派生。
 

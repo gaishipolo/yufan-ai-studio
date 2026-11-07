@@ -80,7 +80,8 @@ Vite 会把 `/api` 代理到 `VITE_API_PROXY_TARGET`（默认 `http://127.0.0.1:
 | `app migrate-archive [--dry-run]` | 归档切远端前跑：把本地归档根（`catalog`/`blobs`/`previews`/`library`）搬进当前归档驱动，幂等 |
 | `app prune-blobs [--execute] [--min-age-hours 24] [--include-trash] [--trash-age-days 30]` | 回收没人引用的孤儿字节；`--include-trash` 同时彻底清理超期的软删记录（软删本身不释放空间） |
 | `app verify-blobs [--all] [--sample 20]` | 读回字节重算 sha256，报告损坏/缺失对象；`key = sha256` 本身就是校验和 |
-| `app doctor [--strict]` | 部署自检：条件写是否真生效、预签名、DB/镜像一致性、旧 URL、配额、完整性抽检 |
+| `app rebuild-mirrors [--dry-run]` | 按 DB 幂等重建 `catalog/assets/*.json`：补缺镜像、更新 `stateVersion` 落后的、清掉无 DB 行的孤儿 |
+| `app doctor [--strict]` | 部署自检（14 项）：条件写、引用来源完备性、预签名、DB/镜像一致性、镜像对账、选主、旧 URL、配额、完整性抽检 |
 | `app audit-events [--action ...] [--target ...]` | 查看最近的操作留痕（分享、回收站、彻底删除、封装发布） |
 | `app runs-status` | 打印运行工作区在哪、本机可见多少个档案、多少个「指针在桶里但工作区不在本机」 |
 | `app prune-logins [--days 90]` | 清理过期的登录审计（默认取 `LOGIN_EVENT_RETENTION_DAYS`） |
@@ -150,9 +151,11 @@ app migrate-blobs --delete-source   # 确认无回滚需求后再删旧文件
 
 命令幂等（已是新布局的行直接跳过）。旧文件默认保留一周作为回滚依据。
 
-**归档驱动可以整体切远端**：`ARCHIVE_DRIVER=s3` 需要 `S3_ARCHIVE_BUCKET`
-（与 `S3_BUCKET` **分开**——归档桶不开放匿名读，素材桶是公开读的），端点与凭据复用
-`S3_*`。切换分三步，都可回滚：
+**归档驱动可以整体切远端**：`ARCHIVE_DRIVER=s3` 默认 `S3_BUCKET_MODE=separate`，
+需要 `S3_ARCHIVE_BUCKET`（与 `S3_BUCKET` **分开**——归档桶不开放匿名读，素材桶是
+公开读的），端点与凭据复用 `S3_*`。两条通路在 `infra/blob.py` 按连接参数共用同一个
+boto3 client；设 `S3_BUCKET_MODE=shared` 则连桶也共用，归档对象统一落在 `archive/`
+前缀下（**仅在桶策略已按前缀管控、没有公开读时**才可用）。切换分三步，都可回滚：
 
 ```bash
 # 1. 灌数据：把本地归档根的内容搬进桶（幂等，第二遍 copied=0）
@@ -194,8 +197,15 @@ sha256、给 ffmpeg 派生预览，所以 `runs/` 不随归档进桶——索引
 
 `ARCHIVE_QUOTA_BYTES_PER_USER`（默认 0=不限）在登记时拦截 413，列表出参带回
 `quotaBytes` 与 `ownerUsedBytes`（后者不受分类/分池筛选影响）。
-`ARCHIVE_GC_ENABLED` 默认 **false**：调度器不做分布式选主，多实例会各跑一份，
-确认单机后再开，间隔与保留期可单独调。
+`ARCHIVE_GC_ENABLED` 默认 **false**。不可逆删除由 `@periodic("asset.gc",
+leader_only=True)` 保护：多实例部署设 `LEADER_ELECTOR=backend`，调度器会用归档存储的
+条件写抢一份带 TTL 的租约，全集群只有一个进程真的删；单实例用默认 `local` 即可。
+`app doctor` 在「GC 开启但选主仍是 local」时直接 FAIL。
+
+`catalog/assets/*.json` 是 **DB 的派生投影**，不是第二份索引：业务事务先 commit，
+之后才投影；`@periodic("asset.mirror")` 默认每 3600s 按 `stateVersion` 幂等对账
+（补缺 / 更新落后 / 清孤儿），也可以随时 `app rebuild-mirrors` 全量重建。
+投影失败不会让上传 500，下一轮对账会收敛。
 
 ### 部署自检
 
@@ -203,10 +213,16 @@ sha256、给 ffmpeg 派生预览，所以 `runs/` 不随归档进桶——索引
 
 - **条件写是否真生效**：写探针对象再抢第二次 `If-None-Match: *`。某些 S3 兼容
   实现会静默忽略这个头，发布版号的 CAS 随之退化成「两个实例写同一个版本」；
-- 引用来源数量、DB 行与 `catalog/assets` 镜像是否一致、有没有旧的 `/static` URL
-  落库、运行工作区孤儿指针、配额水位；
+- **引用来源完备性**（不是数数量）：`ModuleSpec` 声明集合与注册实现对账，缺一个
+  就 FAIL——删除是 fail-closed 的，漏登记会变成 503 而不是静默放行；
+- DB 行与 `catalog/assets` 镜像是否一致、镜像周期对账是否开启、有没有旧的
+  `/static` URL 落库、运行工作区孤儿指针、配额水位、选主策略与 GC 开关是否相配；
 - `verify_blobs` 抽样读回字节重算摘要，`损坏 / 缺失 / 跳过（旧布局）` 分开报告；
+- `storage.topology` 报告两条物理通路是否真的共用同一个 S3 client；
 - CORS 是浏览器侧约束，服务端测不了，只在结论里提示要配的项。
+
+镜像缺了**不要**跑 `app import-archive-index`（那是 JSON→DB 的单向导入，方向相反），
+跑 `app rebuild-mirrors`。
 
 ---
 

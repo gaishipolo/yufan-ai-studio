@@ -609,8 +609,8 @@ npm run test:coverage
 
 **文档 / 流程欠债**
 
-- `.github/workflows/ci.yml` 里那句注释仍写「三份生成物」，实际是四份；
-  `ARCHITECTURE.md` 的连带改动清单也漏了 `permissions.ts`。**改文档时顺手带上。**
+- 已修（2026-11-07）：CI 注释、`REPLACEMENT_TEMPLATES.md`、`ARCHITECTURE.md` 的
+  「三份生成物」都改成了四份，历史评审报告保留为事实快照。
 - `EXTENSIBILITY_GAPS.md` 剩余 B1（权限点自动进内置角色，需人记得跑 `app sync-roles`）、
   C1（轮询节奏全局化）、C2（重试是作业级不是任务级）。
 - pre-commit 仍未接入；目前靠 CI 与提交前手动跑命令。

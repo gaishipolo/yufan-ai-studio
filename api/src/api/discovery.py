@@ -24,6 +24,7 @@ from api.module import ModuleSpec
 from core.exceptions import AppError
 from core.logging import get_logger
 from core.permissions import catalog
+from core.ports.assets import declare_expected_reference_sources
 
 logger = get_logger(__name__)
 
@@ -81,6 +82,10 @@ def discover_modules(package_name: str = MODULES_PACKAGE) -> tuple[ModuleSpec, .
         if spec.permissions:
             catalog.declare(*spec.permissions)
 
+    # 引用来源是「必须接上」的声明：在这里并入期望集合，删除接口才能做完备性对账。
+    # 模块 import 期注册的是实现，两者缺一都会让删除 fail-closed（503）。
+    declare_expected_reference_sources(specs)
+
     logger.info(
         "已发现 %d 个模块: %s", len(specs), ", ".join(s.name for s in specs)
     )
@@ -88,7 +93,10 @@ def discover_modules(package_name: str = MODULES_PACKAGE) -> tuple[ModuleSpec, .
 
 
 def active_modules() -> tuple[ModuleSpec, ...]:
-    return tuple(spec for spec in discover_modules() if spec.enabled)
+    specs = discover_modules()
+    # discover_modules 有缓存；测试可能清空过注入口，这里无条件再声明一次（幂等）。
+    declare_expected_reference_sources(specs)
+    return tuple(spec for spec in specs if spec.enabled)
 
 
 def reset_discovery_cache() -> None:

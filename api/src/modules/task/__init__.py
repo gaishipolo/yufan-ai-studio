@@ -7,7 +7,7 @@
 """
 
 from api.module import ModuleSpec
-from core.ports.assets import register_asset_reference_checker
+from core.ports.assets import AssetReferenceSource, bind_asset_reference_sources
 from modules.task.asset_references import TaskAssetReferences
 from modules.task.permissions import SPECS
 from modules.task.router import router
@@ -16,8 +16,17 @@ from modules.task.router import router
 from modules.task import pipeline  # noqa: E402,F401  isort: skip
 from modules.task.worker import resume_unfinished_tasks  # noqa: E402
 
-# 素材删除前问「还有谁在用」：答案来自 `video_tasks.reference_asset_ids`
-register_asset_reference_checker(TaskAssetReferences())
+# 素材删除前问「还有谁在用」：本模块把 `assets.id` 写进 video_tasks 的这一列。
+# 声明是同一份常量：ModuleSpec 供框架对账，import 期注册供运行时聚合。
+ASSET_REFERENCE_SOURCES = (
+    AssetReferenceSource(
+        name="video_tasks.reference_asset_ids",
+        checker=TaskAssetReferences(),
+        location="modules/task/models.py:VideoTask.reference_asset_ids",
+        description="视频生成任务的参考图",
+    ),
+)
+bind_asset_reference_sources("task", ASSET_REFERENCE_SOURCES)
 
 
 async def _startup() -> None:
@@ -37,4 +46,5 @@ module = ModuleSpec(
     # 已有自己的恢复器（worker.resume_unfinished_tasks），框架恢复器会跳过，
     # 但声明负责的 kind 让架构守卫能画出完整的「模块 × 插槽」矩阵。
     recovery_kinds=(pipeline.KIND_VIDEO,),
+    asset_reference_sources=ASSET_REFERENCE_SOURCES,
 )

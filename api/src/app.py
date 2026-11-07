@@ -126,11 +126,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     else:
         logger.info("运行工作区：%s", workspace_note())
 
-    # 周期任务：调度器本身不认识任何具体任务，任务由模块在 import 期注册
+    # 周期任务：调度器本身不认识任何具体任务，任务由模块在 import 期注册。
+    # 不可逆任务（GC）标了 leader_only，租约策略按 LEADER_ELECTOR 注入。
+    from core.coordination import get_leader_elector
+
     stop_scheduler = asyncio.Event()
     scheduler_task: asyncio.Task[None] | None = None
     if settings.scheduler_enabled and periodic_jobs():
-        scheduler_task = asyncio.create_task(Scheduler().serve(stop_scheduler))
+        scheduler_task = asyncio.create_task(
+            Scheduler(elector=get_leader_elector()).serve(stop_scheduler)
+        )
 
     if settings.anonymous_allowed:
         # 匿名回退给的是演示账号（含 `*`）。单独看合理，和「监听 0.0.0.0」叠在一起

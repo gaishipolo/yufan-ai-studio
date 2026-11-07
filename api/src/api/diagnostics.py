@@ -67,22 +67,41 @@ def _check_ports(report: DoctorReport) -> None:
     from api.discovery import discover_modules
     from app import load_extension_points
     from core.audit import has_audit_sink
-    from core.ports.assets import reference_source_count
+    from core.ports.assets import (
+        declared_reference_sources,
+        reference_source_count,
+        reference_source_gaps,
+    )
 
     # CLI 不跑 lifespan，两个扩展点都要手动装配；否则会误报「审计未注册」
     load_extension_points()
-    discover_modules()
-    count = reference_source_count()
-    if count == 0:
+    specs = discover_modules()
+
+    # 不再「数够 2 个就 PASS」：那对第三个来源漏登记毫无察觉，而失败方向是永久丢数据。
+    # 现在对账 ModuleSpec 声明集合 vs 实际注册集合，缺一即 FAIL。
+    gaps = reference_source_gaps()
+    declared = declared_reference_sources()
+    module_names = {spec.name for spec in specs}
+    undeclared = sorted(
+        name
+        for name, module in declared.items()
+        if not module.startswith("_") and module not in module_names
+    )
+    if gaps:
+        report.add("ports.references", "FAIL", "删除会被拒绝：" + "；".join(gaps))
+    elif undeclared:
         report.add(
-            "ports.references", "FAIL", "引用检查器未注册，删除素材会静默放过所有引用"
-        )
-    elif count < 2:
-        report.add(
-            "ports.references", "WARN", f"只接了 {count} 个引用来源（预期 task + template）"
+            "ports.references",
+            "WARN",
+            f"{reference_source_count()} 个来源已注册，但这些来源没有 ModuleSpec 声明："
+            + "、".join(undeclared),
         )
     else:
-        report.add("ports.references", "PASS", f"{count} 个引用来源已注册")
+        report.add(
+            "ports.references",
+            "PASS",
+            f"{reference_source_count()} 个来源齐全且全部有声明（fail-closed 生效）",
+        )
 
     if has_audit_sink():
         report.add("ports.audit", "PASS", "审计写入端已注册")
@@ -215,10 +234,24 @@ async def _check_database(report: DoctorReport) -> None:
             "archive.mirrors",
             "WARN",
             f"缺镜像 {len(missing)} 条（模板 worker 读不到），孤儿镜像 {len(orphan)} 份；"
-            "跑 app import-archive-index 或人工核对",
+            "跑 app rebuild-mirrors 按 DB 幂等重建。"
+            "注意 app import-archive-index 是 JSON→DB 的单向导入，方向相反，修不了缺镜像",
         )
     else:
         report.add("archive.mirrors", "PASS", f"DB 归档行与 JSON 镜像一致（{len(archive_ids)} 条）")
+
+    if settings.archive_mirror_enabled:
+        report.add(
+            "archive.mirror.reconcile",
+            "PASS",
+            f"周期对账已启用（每 {settings.archive_mirror_interval_sec:g}s，幂等，无需选主）",
+        )
+    else:
+        report.add(
+            "archive.mirror.reconcile",
+            "WARN",
+            "周期对账已关闭：投影失败只能靠人工跑 app rebuild-mirrors 收敛",
+        )
 
     if stale:
         report.add(
@@ -274,10 +307,31 @@ def _check_workspace_and_blobs(report: DoctorReport, sample: int) -> None:
             "FAIL" if not result.healthy else "PASS",
             result.summary() + ("" if result.healthy else f"；损坏对象：{result.bad[:5]}"),
         )
+    from core.coordination import get_leader_elector
+    from infra.blob import client_cache_info
+
+    elector = get_leader_elector()
+    mode = elector.name
+    if settings.archive_gc_enabled and mode == "local":
+        report.add(
+            "runtime.leader",
+            "FAIL",
+            "ARCHIVE_GC_ENABLED=true 但 LEADER_ELECTOR=local：多实例会各删一份。"
+            "改成 backend（归档存储条件写租约），或确认全集群只有一个进程",
+        )
+    else:
+        report.add(
+            "runtime.leader",
+            "PASS" if mode == "backend" else "INFO",
+            f"周期任务选主={mode}；GC={'开启' if settings.archive_gc_enabled else '关闭'}",
+        )
+    cache = client_cache_info()
     report.add(
-        "storage.driver",
+        "storage.topology",
         "INFO",
-        f"STORAGE_DRIVER={settings.storage_driver}（切 s3 需配齐 S3_* 四项、桶私有 + CORS）",
+        f"STORAGE_DRIVER={settings.storage_driver} / ARCHIVE_DRIVER={settings.archive_driver}"
+        f" / LEADER_ELECTOR={mode}；共享 S3 client 缓存 {cache['currsize']} 个"
+        f"（两条通路连接参数相同应为 1）",
     )
 
 

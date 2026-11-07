@@ -23,14 +23,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core import audit
 from core.exceptions import BadRequest
+from core.logging import get_logger
 from core.ports.assets import ask_asset_references
 from infra.archive import ArchiveStorage, clip_key, get_archive_storage, preview_key
 from modules.asset.errors import AssetInUse
+from modules.asset.mirror import MirrorProjector
 from modules.asset.models import Asset
 from modules.asset.schema import AssetSource
 
 __all__ = ["candidate_keys", "purge_trash_asset"]
 
+logger = get_logger(__name__)
 _SHA = re.compile(r"[0-9a-f]{64}")
 
 
@@ -85,12 +88,15 @@ async def purge_trash_asset(
     asset_id, name, digest = row.id, row.name, row.sha256
     deleted_at = row.deleted_at
 
-    # 镜像先删、行后删，但都在同一个事务之后：镜像不是事务的一部分，删早了
-    # 又提交失败会出现「库里有、worker 读不到」。所以 commit 之后再动文件。
+    # DB 先提交，再删派生镜像：反过来会出现「事务回滚了、worker 先读不到」。
+    # 删镜像失败只是留下孤儿，`asset.mirror` 周期对账会按 DB 清单清掉。
     await session.delete(row)
     await session.commit()
 
-    await asyncio.to_thread(drive.remove, f"catalog/assets/{asset_id}.json")
+    try:
+        await asyncio.to_thread(MirrorProjector(drive).remove, asset_id)
+    except Exception as exc:  # noqa: BLE001 - 行已删，镜像交给对账收敛
+        logger.warning("彻底删除后镜像清理失败，等待周期对账：id=%s err=%s", asset_id, exc)
     removed: list[str] = []
     for key in keys:
         if await _bytes_still_used(session, key, digest):
