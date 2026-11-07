@@ -803,21 +803,26 @@ CI 里的红灯。豁免表里失效的条目（路由改名/删除）同样会�
 | 阶段 | 配置 | 得到什么 | 代价 |
 |---|---|---|---|
 | 开发 | `QUEUE_DRIVER=memory` | 零依赖，跑通链路 | 重启丢在途任务，跨实例不可见 |
-| 单机/小规模生产 | `QUEUE_DRIVER=db` | job 落 `queued_jobs`，重启不丢；租约到期别人能接手崩溃任务；死信留档 | 轮询取任务，空转时退避到 1 次/秒（`QUEUE_POLL_INTERVAL_SEC` → `QUEUE_IDLE_MAX_INTERVAL_SEC`）。**同一进程内入队会立刻叫醒 worker**（`Event` 置位）；跨进程仍是轮询，空闲时最坏延迟 = 退避封顶值 |
+| 单机/小规模生产 | `QUEUE_DRIVER=db` | job 落 `queued_jobs`，重启不丢；**执行期间续租**，崩溃后租约到期别人接手；死信留档 | 轮询取任务，空转时退避到 1 次/秒（`QUEUE_POLL_INTERVAL_SEC` → `QUEUE_IDLE_MAX_INTERVAL_SEC`）。**同一进程内入队会立刻叫醒 worker**（`Event` 置位）；跨进程仍是轮询，空闲时最坏延迟 = 退避封顶值 |
 | 大规模 | 新增 `infra/queue/redis.py` | 高吞吐、跨实例即时唤醒 | 多一个中间件、多一个故障域 |
 
 从 db 到 redis **只需要一个文件**：`infra/queue/redis.py` 里 `Driver = RedisJobQueue`，
-实现 `JobQueue` 的 6 个方法（映射表见 `infra/queue/base.py` 的模块文档），
+实现 `JobQueue` 的 7 个方法（映射表见 `infra/queue/base.py` 的模块文档），
 连接参数放它自己的 `RedisQueueSettings`（`REDIS_*` 前缀，`infra/driver_config.py`），
 然后改 `QUEUE_DRIVER=redis`。业务代码、协议、测试都不用动。
 
-两条容易踩的：
+三条容易踩的：
 
 - **`attempts` 的语义是「已失败次数」**，不是「已执行次数」。handler 里 `job.attempts + 1`
   就是第几次尝试；新驱动自己另算一套，日志与告警会全部错位。
 - **领取必须原子且可接管**。`db` 驱动用「条件 UPDATE + 租约」，Redis 用
   `ZRANGEBYSCORE` + `ZREM`（或 `BRPOPLPUSH` + processing 列表）。只 `ZREM` 不留
   processing 列表，进程一崩那条 job 就**永远消失**——这比报错难查得多。
+- **租约要能续，回执要能设防**。`lease_sec`（驱动给出）+ `renew()`（只延长自己那份）+
+  `Job.lease_token`（领取凭据）三个一起才成立：只续租不设防，一个「租约过期、自己还不
+  知道」的 worker 仍然会把新主人的行 `DELETE` 掉；只设防不续租，所有跑得比租约久的
+  handler 都会被重跑一遍。新驱动的 `ack`/`nack`/`renew` 都必须带上凭据比较，
+  不能只看 id。
 
 ### 5.2.5 可观测：指标、trace、功能开关
 

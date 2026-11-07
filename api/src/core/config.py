@@ -111,9 +111,10 @@ class Settings(BaseSettings):
     # memory = 进程内（重启即丢，开发用）；db = 落 queued_jobs 表（重启不丢，租约接管
     # 崩溃任务）。将来接 redis 只需新增 infra/queue/redis.py 并改这一行。
     queue_driver: str = "memory"
-    # 可见性超时：job 被领走后多久算「领的人可能崩了」，可以被别人重新领走。
-    # 必须大于单次 handler 的最长耗时，否则正干着的活会被第二个 worker 重复执行。
-    # 视频/图片都是「短 job + 延迟重投」的形态，300 秒覆盖得住。
+    # 租约时长：job 被领走后多久没续租就认为「领的人崩了」，可以被别人接手。
+    # worker 在 handler 执行期间按它的 1/4 续租（`workers.py` 的 `_renew_lease`），
+    # 所以这个值**不需要**大于 handler 的最长耗时——它只决定「崩溃后多久被接走」。
+    # 调小 = 故障恢复更快，代价是数据库抖动时更容易被误判为「崩了」（续租会补上）。
     queue_lease_sec: float = 300.0
     # 空队列时的轮询间隔。db 驱动每个 worker 每这么久查一次库：
     # 10 个 worker × 5 次/秒 = 50 QPS 的空查询，小库能扛；再高就该换驱动了。

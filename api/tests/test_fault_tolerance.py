@@ -122,6 +122,9 @@ def test_ready_keeps_200_when_only_cache_down(client, monkeypatch: pytest.Monkey
 class _FlakyQueue:
     """前 `fail_times` 次取任务抛异常，之后正常返回空。"""
 
+    # 协议成员：进程内替身没有「被别人接手」这回事，因此不续租
+    lease_sec: float | None = None
+
     def __init__(self, fail_times: int) -> None:
         self.fail_times = fail_times
         self.calls = 0
@@ -137,6 +140,9 @@ class _FlakyQueue:
 
     async def ack(self, job: Job) -> None:
         return None
+
+    async def renew(self, job: Job) -> bool:
+        return True
 
     async def nack(self, job: Job, *, requeue: bool = False) -> None:
         return None

@@ -150,7 +150,7 @@
 | `db/session.py` | 数据库会话与引擎管理（async session、事务边界）。 |
 | `db/audit.py` | 通用操作留痕表 `audit_events`（谁/何时/对什么/参数），与 identity 的登录审计分开。 |
 | `db/audit_sink.py` | `core.audit` 的数据库写入端：独立开会话，业务回滚了也要留得下。 |
-| `db/jobs.py` | 持久化队列表 `queued_jobs`（含 `trace_id`、租约、死信）。 |
+| `db/jobs.py` | 持久化队列表 `queued_jobs`（含 `trace_id`、租约与领取凭据、死信）。 |
 | `db/outbox.py` | 事件 outbox：`record()` 与业务同事务落库，周期任务至少一次投递。 |
 | `db/backup.py` | 备份/恢复：sqlite 用 backup API 取一致快照、postgres 走 `pg_dump`，附 `manifest.json`。 |
 | `db/app_meta.py` | 框架级键值表：存「上一次运行认定的事实」（如权限目录快照），不是缓存。 |

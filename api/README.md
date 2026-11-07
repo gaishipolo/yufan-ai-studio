@@ -549,8 +549,9 @@ ruff check src tests
       多实例请保持 `ARCHIVE_GC_ENABLED=false`，改由运维在单机上定时执行。
 - [ ] 从旧归档盘升级时跑一次 `app import-archive-index --dry-run`，确认
       「新建 / 缺文件 / 冲突」的数量后再去掉 `--dry-run`。命令幂等，可重复执行。
-- [ ] `QUEUE_DRIVER=db`（生产建议）：job 落 `queued_jobs` 表，重启不丢在途任务，
-      崩溃任务由租约到期被其它实例接手。内存驱动在发版时会**静默丢掉**已入队未执行的任务。
+- [ ] `QUEUE_DRIVER=db`（生产建议）：job 落 `queued_jobs` 表，重启不丢在途任务；
+      执行期间 worker 会续租，崩溃后租约到期由其它实例接手（长任务因此不会被重跑）。
+      内存驱动在发版时会**静默丢掉**已入队未执行的任务。
       上规模（每秒几十个 job 以上）再实现 `infra/queue/redis.py` 并切 `QUEUE_DRIVER=redis`，
       业务代码不用改（见 `docs/EXTENDING.md` §5.2.4）。
 - [ ] `METRICS_TOKEN` 配一个随机串（`openssl rand -hex 16`）。生产环境留空时

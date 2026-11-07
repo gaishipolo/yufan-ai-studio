@@ -24,11 +24,26 @@ UPDATE queued_jobs SET status='running', lease_expires_at=?
 所以领取只打标记，完成才 `ack`（删行）；`lease_expires_at` 到期后别人可以接手，
 连续崩溃 `max_attempts` 次转死信（`status='dead'`）留档。
 
-## 为什么没有 ack 之外的「进度上报」
+## 续租与凭据：租约到期到底意味着什么
 
-协议里只有 6 个方法（见 `infra/queue/base.py`）。长任务（视频生成几十分钟）靠的是
-**短 job + 延迟重投**：`enqueue(job, delay=8)` 做轮询，而不是一个 job 跑 20 分钟。
-所以租约默认 300 秒足够覆盖单次 handler，不需要心跳续租这一层复杂度。
+主形态确实是**短 job + 延迟重投**（`enqueue(job, delay=8)` 轮询，而不是一个 job 跑
+20 分钟）。但「handler 一定跑得比租约短」曾经只是一条款式约定：`QUEUE_LEASE_SEC`
+默认 300 秒，而单次 handler 的预算是 300 秒、供应商侧单个请求就允许 300 秒——
+两个数字本来就贴在一起，任何一次慢调用都会滑过去。
+
+滑过去之后不只是「重跑一遍」：租约到期只说明**没人再证明自己活着**，
+不代表持有者已经停手。于是同一个 job 会被两个 worker 同时跑（用户收到两份成图、
+供应商被扣两次费），而先跑完的那个 `ack` 还会把行删掉，后跑的那个崩了就彻底丢失。
+
+所以持有关系做成了双向的：
+
+1. **worker 续租**（`renew`）：`workers.py` 在 handler 执行期间按 `lease_sec / 4`
+   的节奏续，租约只在「真的没人续」时才过期。到期因此重新等于「执行者崩了」。
+2. **凭据（fencing token）**：每次领取写一个新的 `lease_token`，续租/`ack`/`nack`
+   都要求它对得上。旧主人只能白跑，**不能**删行、不能把新主人的任务改成 pending。
+
+`lease_token` 为空的历史行（升级那一刻正在跑的 job）退化成「只动 `status='running'`
+的行」——比无条件按 id 删除安全，也不会让升级卡住。
 
 ## 吞吐边界（写在这里，免得以后被当成 bug）
 
@@ -75,6 +90,7 @@ import asyncio
 import json
 from datetime import timedelta
 from typing import Any
+from uuid import uuid4
 from weakref import WeakKeyDictionary
 
 from sqlalchemy import and_, delete, func, or_, select, update
@@ -182,6 +198,11 @@ class DbJobQueue:
     def _session(self) -> AsyncSession:
         factory = self._factory or get_session_factory()
         return factory()
+
+    @property
+    def lease_sec(self) -> float | None:
+        """worker 按它的 1/4 续租（见 `workers.py`）。与 `_lease` 同源，不另存一份。"""
+        return self._lease
 
     # ------------------------------------------------------------------ 入队
     async def enqueue(self, job: Job, *, delay: float = 0) -> str:
@@ -307,6 +328,7 @@ class DbJobQueue:
                         status=JOB_DEAD,
                         attempts=attempts,
                         lease_expires_at=None,
+                        lease_token=None,
                         idempotency_key=None,
                         last_error="租约连续过期：执行者反复崩溃或停机",
                         updated_at=now,
@@ -318,7 +340,9 @@ class DbJobQueue:
                 )
                 return None
 
-            # 条件更新才是领取：抢输的 worker rowcount=0，回头再找下一行
+            # 条件更新才是领取：抢输的 worker rowcount=0，回头再找下一行。
+            # 凭据在同一句里换掉：从这一刻起，旧主人的回执和续租都会落空。
+            token = uuid4().hex
             claimed = await session.execute(
                 update(QueuedJob)
                 .where(QueuedJob.id == candidate, or_(pending_ready, lease_expired))
@@ -326,6 +350,7 @@ class DbJobQueue:
                 .values(
                     status=JOB_RUNNING,
                     lease_expires_at=now + timedelta(seconds=self._lease),
+                    lease_token=token,
                     attempts=attempts,
                     updated_at=now,
                 )
@@ -344,14 +369,64 @@ class DbJobQueue:
                 idempotency_key=row.idempotency_key,
                 timeout_sec=row.timeout_sec,
                 trace_id=row.trace_id or "",
+                lease_token=token,
                 created_at=row.created_at,
             )
 
+    # ------------------------------------------------------------------ 续租
+    async def renew(self, job: Job) -> bool:
+        """把租约往后推；返回 False = **这行已经不归你了**。
+
+        `job.lease_token` 为空（手工构造的 Job、升级前就在跑的行）时返回 True：
+        没有凭据就没有「持有」这个概念，worker 继续跑即可——真正的保护在
+        `ack`/`nack` 那一侧（它们退化成只动 `running` 行）。
+        """
+        if not job.lease_token:
+            return True
+        now = utcnow()
+        async with self._session() as session:
+            result = await session.execute(
+                update(QueuedJob)
+                .where(
+                    QueuedJob.id == job.id,
+                    QueuedJob.lease_token == job.lease_token,
+                    QueuedJob.status == JOB_RUNNING,
+                )
+                .execution_options(synchronize_session=False)
+                .values(
+                    lease_expires_at=now + timedelta(seconds=self._lease),
+                    updated_at=now,
+                )
+            )
+            await session.commit()
+            return getattr(result, "rowcount", 0) == 1
+
     # ------------------------------------------------------------------ 确认
+    def _fence(self, job: Job) -> list[Any]:
+        """回执的作用域：必须是「我领走的那一行」，不能只看 id。
+
+        没带凭据时退一步只认 `running` 行：比原来按 id 无条件删除安全
+        （不会误删排队中的任务），也不至于让升级前入队的 job 卡死。
+        """
+        clauses: list[Any] = [QueuedJob.id == job.id]
+        if job.lease_token:
+            clauses.append(QueuedJob.lease_token == job.lease_token)
+        else:
+            clauses.append(QueuedJob.status == JOB_RUNNING)
+        return clauses
+
     async def ack(self, job: Job) -> None:
         async with self._session() as session:
-            await session.execute(delete(QueuedJob).where(QueuedJob.id == job.id))
+            result = await session.execute(delete(QueuedJob).where(*self._fence(job)))
             await session.commit()
+            if getattr(result, "rowcount", 0) != 1:
+                # 不是错误：租约被接手后旧主人的回执本来就该落空。
+                # 但它是「有任务跑了两遍」的**唯一痕迹**，所以要留一行日志。
+                logger.warning(
+                    "回执被忽略：这条 job 已不归本 worker（可能已被接手）id=%s name=%s",
+                    job.id,
+                    job.name,
+                )
 
     async def nack(self, job: Job, *, requeue: bool = True) -> None:
         job.with_attempt()
@@ -362,6 +437,8 @@ class DbJobQueue:
         values: dict[str, Any] = {
             "attempts": job.attempts,
             "lease_expires_at": None,
+            # 交回凭据：回到 pending 的行不该再记着「它属于谁」
+            "lease_token": None,
             "updated_at": now,
         }
         if dead:
@@ -373,10 +450,16 @@ class DbJobQueue:
             values["run_at"] = now + timedelta(seconds=job.retry_delay())
 
         async with self._session() as session:
-            await session.execute(
-                update(QueuedJob).where(QueuedJob.id == job.id).values(**values)
+            result = await session.execute(
+                update(QueuedJob).where(*self._fence(job)).values(**values)
             )
             await session.commit()
+            if getattr(result, "rowcount", 0) != 1:
+                logger.warning(
+                    "重投被忽略：这条 job 已不归本 worker（可能已被接手）id=%s name=%s",
+                    job.id,
+                    job.name,
+                )
 
     async def size(self) -> int:
         async with self._session() as session:

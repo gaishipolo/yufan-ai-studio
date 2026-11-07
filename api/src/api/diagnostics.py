@@ -416,7 +416,8 @@ async def _check_queue_channel(report: DoctorReport) -> None:
         detail = (
             f"QUEUE_DRIVER={settings.queue_driver}，在途 {depth} 条"
             f"（pending {stats.get('pending', 0)} / running {stats.get('running', 0)}），"
-            f"死信 {stats.get('dead', 0)} 条；租约 {settings.queue_lease_sec:g}s"
+            f"死信 {stats.get('dead', 0)} 条；"
+            f"租约 {settings.queue_lease_sec:g}s（执行中自动续租，长任务不会因超租约被重跑）"
         )
         if stats.get("dead"):
             report.add("runtime.queue", "WARN", detail + "。死信需人工确认后清理")

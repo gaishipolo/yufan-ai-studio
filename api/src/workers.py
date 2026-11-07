@@ -8,7 +8,7 @@
 只要该模块被自动发现（`api/discovery.py` 会 import 它），handler 就自动生效，
 **不需要修改本文件**。
 
-本文件只负责与业务无关的三件事：并发消费、超时控制、失败重试。
+本文件只负责与业务无关的四件事：并发消费、超时控制、失败重试、租约续租。
 """
 
 from __future__ import annotations
@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 
 from core import trace
 from core.logging import get_logger
@@ -28,7 +29,9 @@ JobHandler = Callable[[Job], Awaitable[None]]
 
 HANDLERS: dict[str, JobHandler] = {}
 
-# 单次执行的默认超时，防止某个 handler 挂死拖垮并发槽位
+# 单次执行的默认超时，防止某个 handler 挂死拖垮并发槽位。
+# 它可以比队列租约长——执行期间 worker 会续租（见 `_renew_lease`），
+# 所以「handler 比租约久」不会变成「任务被执行两遍」。
 DEFAULT_JOB_TIMEOUT_SEC = 300.0
 
 # 取任务失败后的退避：0.5s 起，每次翻倍，封顶 30s。
@@ -68,6 +71,31 @@ WORKER_BUSY = METRICS.gauge(
     "worker_jobs_in_flight",
     "正在执行的任务数；长期等于并发数说明有 handler 卡住了",
 )
+# 执行期间发现「这行已经不归我了」。它不是错误处理，而是**事故证据**：
+# 出现即说明有 worker 卡住超过了一个完整租约，那个 handler 已经在别处又跑了一遍。
+JOB_LEASE_LOST = METRICS.counter(
+    "job_lease_lost_total",
+    "任务在执行中被别人接手的次数",
+    ("name",),
+)
+
+
+@dataclass
+class _LeaseWatch:
+    """一次执行的持有情况：续租任务写、收尾时读。"""
+
+    work: asyncio.Task[None] | None = None
+    lost: bool = False
+
+
+def _being_cancelled() -> bool:
+    """当前协程是不是「有人在 cancel 我」。
+
+    用来区分两种 `CancelledError`：停机（要放回队列）与「租约没了、handler 被我们
+    自己停掉」（要放手）。只看异常本身的类型是分不出来的。
+    """
+    task = asyncio.current_task()
+    return task is not None and task.cancelling() > 0
 
 
 def register_handler(name: str, *, override: bool = False) -> Callable[[JobHandler], JobHandler]:
@@ -193,6 +221,8 @@ class Worker:
         started = time.perf_counter()
         outcome = "error"
         label = job.name
+        watch = _LeaseWatch()
+        beat: asyncio.Task[None] | None = None
         try:
             handler = HANDLERS.get(job.name)
             if handler is None:
@@ -202,22 +232,46 @@ class Worker:
                 await self._queue.ack(job)
                 return
 
-            try:
-                await asyncio.wait_for(
+            # handler 单独一个 task：租约丢了要能把它停下来。
+            # 直接在 `_handle` 里 await 的话，「停手」就只能 cancel worker 自己的消费
+            # 协程——那会少一个槽位，`_on_task_done` 还会记一条假故障。
+            watch.work = asyncio.create_task(
+                asyncio.wait_for(
                     handler(job), timeout=job.timeout_sec or DEFAULT_JOB_TIMEOUT_SEC
                 )
-            except TimeoutError:
-                outcome = "timeout"
-                logger.error(
-                    "任务超时 name=%s id=%s attempt=%d", job.name, job.id, job.attempts + 1
-                )
-                await self._queue.nack(job)
-            except asyncio.CancelledError:
-                # 停机时把任务放回队列，避免丢任务
+            )
+            if self._queue.lease_sec is not None:
+                beat = asyncio.create_task(self._renew_lease(job, watch))
+                # 谁先结束都回到这里：handler 结束是正常收尾，续租结束是租约丢了。
+                await asyncio.wait({watch.work, beat}, return_when=asyncio.FIRST_COMPLETED)
+            await watch.work
+        except TimeoutError:
+            outcome = "timeout"
+            logger.error(
+                "任务超时 name=%s id=%s attempt=%d", job.name, job.id, job.attempts + 1
+            )
+            await self._queue.nack(job)
+        except asyncio.CancelledError:
+            if _being_cancelled():
+                # 停机时把任务放回队列，避免丢任务。
+                # 回执带凭据：若这行已被接手，它会被忽略而不是抢回来。
                 outcome = "cancelled"
                 await self._queue.nack(job, requeue=True)
                 raise
-            except Exception:
+            # 不是我们在被取消，而是 `_renew_lease` 停掉了 handler：这行已经归别人了。
+            # **不回执**——ack 会删掉新主人正在跑的行使任务彻底消失，
+            # nack 会把新主人的任务改成 pending 让他白跑。两者都是二次伤害。
+            outcome = "lease_lost"
+            logger.error(
+                "租约已被接手，停止执行 name=%s id=%s（这个任务很可能已在别处重跑）",
+                job.name,
+                job.id,
+            )
+        except Exception:
+            if watch.lost:
+                outcome = "lease_lost"
+                logger.error("租约丢失后 handler 仍抛出异常 name=%s id=%s", job.name, job.id)
+            else:
                 outcome = "error"
                 logger.exception(
                     "任务执行失败 name=%s id=%s attempt=%d worker=%d",
@@ -227,14 +281,69 @@ class Worker:
                     index,
                 )
                 await self._queue.nack(job)
+        else:
+            if watch.lost:
+                outcome = "lease_lost"
             else:
                 outcome = "success"
                 await self._queue.ack(job)
         finally:
+            tasks = [task for task in (beat, watch.work) if task is not None]
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            if tasks:
+                # gather(return_exceptions=True)：handler 的异常在这里已经分类过一遍，
+                # 不能在收尾时再抛一次（那会盖掉真正的 outcome）
+                await asyncio.gather(*tasks, return_exceptions=True)
             WORKER_BUSY.dec()
             JOBS_PROCESSED.inc(name=label, outcome=outcome)
             JOB_DURATION.observe(time.perf_counter() - started, name=label)
             trace.release(previous)
+
+    async def _renew_lease(self, job: Job, watch: _LeaseWatch) -> None:
+        """执行期间替 handler 续租；发现被接手就把 handler 停掉。
+
+        节奏取租约的 1/4：留三次重试机会。续租本身抛异常（数据库抖一下）不算丢租约，
+        下一轮接着试；真的丢了的时候 `renew` 会返回 False，那才是「这行不归你了」。
+
+        没有这一层时，「租约到期 = 执行者崩了」这个推断只在「handler 一定比租约短」
+        时成立，而那是约定不是机制：单次 handler 预算与默认租约都是 300 秒，
+        一次慢调用滑过去，任务就会被第二个 worker 同时跑一遍。
+        """
+        lease = self._queue.lease_sec
+        if lease is None:  # 调用方已判过；这里挡住第三方的错误用法
+            return
+        interval = max(0.05, lease / 4)
+        while True:
+            await asyncio.sleep(interval)
+            try:
+                alive = await self._queue.renew(job)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.warning(
+                    "续租失败，%.2fs 后重试 job=%s name=%s：%s: %s",
+                    interval,
+                    job.id,
+                    job.name,
+                    type(exc).__name__,
+                    exc,
+                )
+                continue
+            if alive:
+                continue
+            watch.lost = True
+            JOB_LEASE_LOST.inc(name=job.name)
+            logger.error(
+                "续租失败：这条 job 已被别人接手（租约 %ss），停止执行 id=%s name=%s",
+                lease,
+                job.id,
+                job.name,
+            )
+            if watch.work is not None:
+                watch.work.cancel()
+            return
 
     async def stop(self) -> None:
         self._stopping.set()

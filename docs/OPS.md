@@ -115,11 +115,12 @@ app sync-roles --dry-run   # 只打印会补什么，不写库
 | `http_requests_total` | counter | method, route, status | `route` 是**路由模板**（`/api/v1/tasks/{task_id}`），未匹配记 `unmatched` |
 | `http_request_duration_seconds` | histogram | method, route | 分桶 5ms~10s |
 | `http_requests_in_flight` | gauge | — | 正在处理的请求数 |
-| `jobs_processed_total` | counter | name, outcome | outcome ∈ success / error / timeout / cancelled / unknown |
+| `jobs_processed_total` | counter | name, outcome | outcome ∈ success / error / timeout / cancelled / lease_lost / unknown。`lease_lost` = 执行到一半发现已被接手（见 `job_lease_lost_total`） |
 | `worker_consumers` | gauge | state | alive = 实际存活的消费协程数，desired = 配置值。alive < desired = 协程死了 |
 | `worker_jobs_in_flight` | gauge | — | 正在执行的任务数；长期等于并发数 = 有 handler 卡住 |
 | `queue_dequeue_errors_total` | counter | — | worker **取任务**失败的次数（队列驱动异常）。持续增长 = worker 在空转，不是某个任务有问题 |
 | `queue_polls_total` | counter | outcome | 取任务轮询次数：hit = 队列里有活，miss = 白查一次。`rate(...{outcome="miss"})` 就是空转查询速率——退避生效后它应该远低于 `worker_consumers{alive} / QUEUE_POLL_INTERVAL_SEC` |
+| `job_lease_lost_total` | counter | name | 任务在执行中发现「这行已经不归我了」。出现即说明有 worker 卡住超过一整个租约，**那个 handler 已经在别处又跑了一遍**——去查供应商侧有没有重复提交 |
 | `replacement_recovery_lock_giveups_total` | counter | — | 替换任务恢复**抢不到档案锁**而放弃等待的次数。>0 说明有进程长时间握着 `.lock`，那条 run 停在原地等人看 |
 | `job_duration_seconds` | histogram | name | 100ms~900s |
 | `queue_jobs` | gauge | state | db 驱动按 pending / running / dead 拆分；其它驱动只有 active |
@@ -128,7 +129,7 @@ app sync-roles --dry-run   # 只打印会补什么，不写库
 
 计数类在事件发生时打点；积压类在**抓取时**去查真实来源，所以重启后立刻是对的。
 
-### 3.2 建议的七条告警
+### 3.2 建议的八条告警
 
 ```promql
 # 5xx 比例（按路由定位）
@@ -152,6 +153,10 @@ rate(queue_dequeue_errors_total[5m]) > 0
 # 替换任务恢复抢不到档案锁、等满六轮后放手：那条 run 的状态不会再自己往前走。
 # 恢复作业不会再自己重投（有上限），所以这条不告警就没人知道。
 increase(replacement_recovery_lock_giveups_total[30m]) > 0
+
+# 任务执行中被接手：说明有 worker 在**事件循环层面**卡住了（同步阻塞调用、CPU 打满、
+# 容器被暂停）。后果是同一个任务被跑了两遍，供应商那边可能已经重复计费。
+increase(job_lease_lost_total[30m]) > 0
 
 # 消费协程死了：探针永远不会因此变红，只有这条能发现「进程活着、后台全停」。
 # 用 max_over_time 而不是瞬时值：滚动重启期间短暂不等是正常的。
@@ -356,6 +361,7 @@ app meta permissions.catalog    # 这个键的值 + 最近 20 次写入轨迹
 | 页面全空、接口 200 但没数据 | `queue_jobs{state}` + `outbox_events` | worker 没起（`WORKER_ENABLED=false` 但没单独起 worker） |
 | 「任务一直排队」 | `queue_jobs{state="pending"}` 与 worker 日志 | 队列驱动是 `memory` 而 worker 在另一个进程 |
 | 通知/计费偶发丢失 | `outbox_events{status="failed"}`、`app doctor` 的 `runtime.outbox` | 订阅方抛异常把重试用尽 |
+| 同一个任务被执行了两遍 | `job_lease_lost_total`、`jobs_processed_total{outcome="lease_lost"}`、worker 日志里的「续租失败：这条 job 已被别人接手」 | 有 worker 卡住超过一整个租约（`QUEUE_LEASE_SEC`）。续租按租约的 1/4 跑，正常不该丢；丢了说明这个 worker 在**事件循环层面**停住了（同步阻塞调用、CPU 打满、被暂停的容器） |
 | 第一条查询报 `no such column` | `app doctor` 的 `schema.head` | 漏跑 `alembic upgrade head` |
 | `/metrics` 403 | `METRICS_TOKEN` 是否配置 | 生产环境刻意 fail-closed |
 | 面板上路由只有 `/health` 这种短路径 | 指标 `route` 标签 | 旧版本；现在用完整路径 + `{param}` 模板 |
@@ -400,3 +406,10 @@ app meta permissions.catalog    # 这个键的值 + 最近 20 次写入轨迹
 4. **备份不含对象存储**（见 §5.4）。自动备份失败只会记日志，不会让服务挂——
    所以「备份是否真的在跑」需要外部告警盯（见 §5.2 末尾）。
 5. **功能开关不支持热更新与灰度**（见 §6）。
+6. **任务队列是「至少一次」**，不是「恰好一次」。执行期间续租让「跑得久」不再等于
+   「被重跑」，但「副作用已经发生、回执之前进程被杀」仍会让这条任务再跑一遍。
+   所以 handler 的副作用必须**自己幂等**（按业务行状态或 `idempotency_key` 判断），
+   不要指望队列替你去重。
+7. **租约用应用进程自己的时钟判定**（`utcnow()`），不是数据库时间。多实例部署必须
+   跑 NTP：某台机器快 5 分钟，就会把别人正在跑的任务判成「过期」并接手。
+   这也是 `QUEUE_LEASE_SEC` 不建议调到分钟以下的另一个理由（抖动同样会误判）。

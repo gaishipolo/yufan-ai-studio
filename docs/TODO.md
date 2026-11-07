@@ -7,8 +7,8 @@
 >
 > 来源：`CODE_REVIEW_2026-11-06_R11~R14`、`CODE_REVIEW_2026-11-06_FE6`、
 > `EXTENSIBILITY_GAPS.md` 的 B1/C1/C2，以及素材分支合并时新发现的项。
-> 最后更新：2026-11-08 01:05（限流换两桶加权滑动窗口；额度可按 scope 覆盖 / 整体缩放；
-> 被拒请求回滚计数；`get_settings()` 原地刷新；db 队列进程内唤醒）
+> 最后更新：2026-11-08 02:10（db 队列执行期间续租 + 领取凭据：长任务不再被执行两遍；
+> 限流换两桶加权滑动窗口；额度可按 scope 覆盖 / 整体缩放；`get_settings()` 原地刷新）
 > 剩余：业务侧 T2/T8/T9/T10/T22/T23/T24，架构侧 T25/T26（只剩唤醒）/T29/T30）
 
 ## 一眼看完
@@ -223,6 +223,7 @@ PostgreSQL 的 `LISTEN/NOTIFY`（写完 `NOTIFY`，worker 侧长连接被唤醒�
 | T28 备份无调度与保留 | 已修 | `db/backup.py` 的 `backup_loop` / `prune_backups`，用例见 `tests/test_backup.py` 后三条 |
 | 就绪探针 down 却返回 200 | 已修 | `modules/health/router.py` 在 `runtime.down` 时置 503；用例 `tests/test_fault_tolerance.py`（函数级 + HTTP 级两条） |
 | 限流豁免表只核「有没有写」（原 T32） | 已修 | `Exemption(why, review_by)`：理由里反引号引用的 `.py` 与 `资源:动作` 权限码由守卫解析存在性（文件/权限点没了就红），`review_by` 过期或超过 180 天也红；用例 `test_exempt_reviews_are_current_and_honest` / `test_exempt_reasons_cite_real_code`；复核方法写进 `docs/OPS.md` §9（按 P95 与调用量找变贵的接口）|
+| 队列租约只靠「注释说它够长」（原 T26 外的发现） | 已修 | 执行期间按 `lease_sec / 4` 续租（`workers.py` 的 `_renew_lease`）+ `queued_jobs.lease_token` 领取凭据（`ack`/`nack`/`renew` 都要对得上）；用例 `test_worker_keeps_the_lease_alive_while_running` / `test_stale_ack_cannot_delete_the_new_owner_row` / `test_worker_stops_the_handler_when_the_lease_is_lost` |
 | 写路由漏挂限流无人发现 | 已修 | `api/ratelimit_policy.py` + `tests/test_route_policy.py`；8 个花钱/写盘入口补了 `rate_limit`，其余 32 条豁免逐条写理由 |
 | `app_meta` 只有「最后写入者胜」（原 T33） | 已修 | `AppMeta.version`（ORM `version_id_col` 乐观锁）+ `updated_by` + `app_meta_history`（同事务、每键留 50 条）；`set_json(expected_version=)` 做 CAS，`merge_json` 冲突后重读重算；`sync_new_permissions` 自动路径取 `declared ∪ previous`（只增不减），收缩走 `app sync-roles --prune-snapshot`，`app meta [key]` 看轨迹。用例 `test_write_against_stale_version_is_refused`（test_app_meta.py）、`test_old_instance_cannot_shrink_snapshot` / `test_conflict_makes_it_recompute_instead_of_overwrite`（test_role_auto_sync.py）+ 迁移用例 `test_upgrade_keeps_existing_rows` |
 | 新权限点要人工 `sync-roles`，漏了就非超管 403 | 已修 | `IdentityService.sync_new_permissions` + `app_meta.permissions.catalog` 快照；用例 `tests/test_role_auto_sync.py` |

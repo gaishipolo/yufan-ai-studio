@@ -7,15 +7,18 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from datetime import timedelta
+from typing import Any
 
 from sqlalchemy import delete, select, update
 
 from db.base import utcnow
-from db.jobs import JOB_DEAD, QueuedJob
+from db.jobs import JOB_DEAD, JOB_RUNNING, QueuedJob
 from db.session import get_session_factory
 from infra.queue.base import Job
 from infra.queue.db import DbJobQueue
+from workers import Worker, register_handler
 
 
 def _queue() -> DbJobQueue:
@@ -290,3 +293,242 @@ def test_delayed_enqueue_does_not_wake() -> None:
     job, misses = asyncio.run(scenario())
     assert job is None, "延迟任务不该在 run_at 之前被取走"
     assert misses <= 2, f"延迟入队把 worker 叫醒了：0.6s 内白查了 {misses} 次"
+
+# --------------------------------------------------------------------------- #
+# 续租与 fencing：正在跑的长任务不能被「以为你死了」的接替者重跑
+# --------------------------------------------------------------------------- #
+async def _hand_over(job_id: str) -> None:
+    """模拟「另一个实例接手了这条 job」：换掉凭据，租约推到未来。
+
+    不用「把租约推到过去」来模拟：那等于「执行者崩了」，本机的 worker 会立刻
+    再把它领回来，测的就不是「别人的活被我停掉」了。
+    """
+    async with get_session_factory()() as session:
+        await session.execute(
+            update(QueuedJob)
+            .where(QueuedJob.id == job_id)
+            .values(
+                lease_token="someone-else",
+                lease_expires_at=utcnow() + timedelta(seconds=60),
+            )
+        )
+        await session.commit()
+
+
+def test_renew_extends_the_lease() -> None:
+    """续租必须真的把 `lease_expires_at` 往后推——否则等于没续。"""
+    asyncio.run(_reset())
+    queue = _queue()
+    job = Job(name="demo.renew", payload={})
+    asyncio.run(queue.enqueue(job))
+
+    claimed = asyncio.run(queue.dequeue(timeout=1.0))
+    assert claimed is not None
+    assert claimed.lease_token, "领取时必须发一个凭据，否则回执无法设防"
+
+    before = asyncio.run(_row(job.id)).lease_expires_at
+    assert asyncio.run(queue.renew(claimed)) is True
+    after = asyncio.run(_row(job.id)).lease_expires_at
+    assert after > before
+
+
+def test_renew_reports_false_after_takeover() -> None:
+    """租约被接手后，旧 worker 的续租必须返回 False（它该停手了）。"""
+    asyncio.run(_reset())
+    queue = _queue()
+    job = Job(name="demo.renew.lost", payload={})
+    asyncio.run(queue.enqueue(job))
+
+    first = asyncio.run(queue.dequeue(timeout=1.0))
+    assert first is not None
+    asyncio.run(_hand_over(job.id))
+
+    assert asyncio.run(queue.renew(first)) is False
+    # 新凭据续得上：同一个方法在两个人手里给出不同答案，靠的就是 token
+    second = asyncio.run(_row(job.id))
+    assert second is not None and second.lease_token != first.lease_token
+
+
+def test_stale_ack_cannot_delete_the_new_owner_row() -> None:
+    """迟到的 ack 不能删掉新主人正在跑的行。
+
+    这是「重复执行」之外更坏的一种：行被删了，新主人崩掉后这条 job 就**凭空消失**，
+    连死信都没有。所以 ack 必须带凭据，不能只看 id。
+    """
+    asyncio.run(_reset())
+    queue = _queue()
+    job = Job(name="demo.fence.ack", payload={})
+    asyncio.run(queue.enqueue(job))
+
+    first = asyncio.run(queue.dequeue(timeout=1.0))
+    assert first is not None
+    asyncio.run(_hand_over(job.id))
+
+    asyncio.run(queue.ack(first))
+
+    row = asyncio.run(_row(job.id))
+    assert row is not None, "旧 worker 的 ack 把新主人正在跑的行删掉了"
+    assert row.status == JOB_RUNNING
+    assert row.lease_token == "someone-else"
+
+    # 真正的主人仍然能正常收尾
+    row.lease_token = "someone-else"
+    asyncio.run(queue.ack(_as_job(row)))
+    assert asyncio.run(_row(job.id)) is None
+
+
+def test_stale_nack_cannot_requeue_a_taken_over_job() -> None:
+    """迟到的 nack 不能把新主人正在跑的行改成 pending（那会变成第三次执行）。"""
+    asyncio.run(_reset())
+    queue = _queue()
+    job = Job(name="demo.fence.nack", payload={})
+    asyncio.run(queue.enqueue(job))
+
+    first = asyncio.run(queue.dequeue(timeout=1.0))
+    assert first is not None
+    asyncio.run(_hand_over(job.id))
+
+    asyncio.run(queue.nack(first))
+
+    row = asyncio.run(_row(job.id))
+    assert row is not None
+    assert row.status == JOB_RUNNING, "旧 worker 的 nack 抢走了任务"
+    assert row.attempts == 0
+    assert row.lease_token == "someone-else"
+
+
+def test_requeue_after_nack_clears_the_token() -> None:
+    """任务回到 pending 就该交回凭据：否则一条队列里的行还带着「谁的」这种信息。"""
+    asyncio.run(_reset())
+    queue = _queue()
+    job = Job(name="demo.nack.token", payload={})
+    asyncio.run(queue.enqueue(job))
+
+    claimed = asyncio.run(queue.dequeue(timeout=1.0))
+    assert claimed is not None
+    asyncio.run(queue.nack(claimed))
+    row = asyncio.run(_row(job.id))
+    assert row is not None and row.lease_token is None
+
+
+def _as_job(row: QueuedJob) -> Job:
+    return Job(
+        id=row.id,
+        name=row.name,
+        payload={},
+        attempts=row.attempts,
+        max_attempts=row.max_attempts,
+        lease_token=row.lease_token,
+    )
+
+
+# --------------------------------------------------------------------------- #
+# worker 侧：续租由 worker 驱动，租约丢了要停手
+# --------------------------------------------------------------------------- #
+_SLOW: dict[str, Any] = {"runs": 0, "cancelled": False}
+
+
+@register_handler("test.lease.slow", override=True)
+async def _slow_handler(job: Job) -> None:
+    """按 payload 睡指定秒数；被取消时留下痕迹（用来看「有没有真的停手」）。"""
+    _SLOW["runs"] += 1
+    try:
+        await asyncio.sleep(float(job.payload.get("sleep", 2.2)))
+    finally:
+        _SLOW["cancelled"] = True
+
+
+def test_worker_keeps_the_lease_alive_while_running() -> None:
+    """handler 跑过租约时长时，第二个 worker 不能把任务领走。
+
+    这是租约的原始承诺（「领的人崩了别人才能接手」）在**长任务**上的唯一保障：
+    不续租的话，凡是跑得比 `QUEUE_LEASE_SEC` 久的 handler 都会被执行两遍——
+    表现是用户收到两份成图、供应商被扣两次费。
+    """
+    asyncio.run(_reset())
+    _SLOW.update(runs=0, cancelled=False)
+    queue = DbJobQueue(lease_sec=1, poll_interval_sec=0.01)
+    other = DbJobQueue(lease_sec=1, poll_interval_sec=0.01)
+
+    async def scenario() -> Job | None:
+        await queue.enqueue(Job(name="test.lease.slow", payload={"sleep": 2.2}))
+        worker = Worker(queue, concurrency=1)
+        await worker.start()
+        try:
+            # 1.6s > 租约 1s：不续租的话这时租约已经过期，另一实例必然能领走
+            await asyncio.sleep(1.6)
+            return await other.dequeue(timeout=0.1)
+        finally:
+            await worker.stop()
+
+    stolen = asyncio.run(scenario())
+    assert stolen is None, "续租没生效：正在跑的任务被第二个 worker 领走了（会执行两遍）"
+    assert _SLOW["runs"] == 1
+
+
+def test_worker_stops_the_handler_when_the_lease_is_lost() -> None:
+    """确认自己已被接手时必须停手，不能「装作没看见」继续跑完。
+
+    续租能防止「活人被当成死人」，但反过来（真的被接手了）也得认：
+    继续跑下去就是两个 worker 同时写同一份业务数据。
+    """
+    asyncio.run(_reset())
+    _SLOW.update(runs=0, cancelled=False)
+    queue = DbJobQueue(lease_sec=1, poll_interval_sec=0.01)
+    job = Job(name="test.lease.slow", payload={"sleep": 10})
+
+    async def scenario() -> float:
+        await queue.enqueue(job)
+        worker = Worker(queue, concurrency=1)
+        await worker.start()
+        started = time.perf_counter()
+        try:
+            await asyncio.sleep(0.3)
+            await _hand_over(job.id)
+            # 下一次续租（≤0.25s 后）必然失败 → handler 应被停掉
+            for _ in range(60):
+                if _SLOW["cancelled"]:
+                    break
+                await asyncio.sleep(0.05)
+            return time.perf_counter() - started
+        finally:
+            await worker.stop()
+
+    elapsed = asyncio.run(scenario())
+    assert _SLOW["cancelled"], "租约丢了还在继续跑"
+    assert elapsed < 3.0, f"停手太慢（{elapsed:.1f}s）：说明是靠 10 秒的 handler 自己结束的"
+    assert _SLOW["runs"] == 1
+
+
+def test_memory_driver_needs_no_lease() -> None:
+    """内存驱动不会被别人接手，因此「续租」是无需动作的成功。"""
+    from infra.queue.memory import MemoryJobQueue
+
+    queue = MemoryJobQueue()
+    assert queue.lease_sec is None
+    job = Job(name="demo.memory", payload={})
+    asyncio.run(queue.enqueue(job))
+    claimed = asyncio.run(queue.dequeue(timeout=0.1))
+    assert claimed is not None
+    assert asyncio.run(queue.renew(claimed)) is True
+
+
+def test_both_drivers_implement_the_whole_protocol() -> None:
+    """协议长了一个成员，每个驱动都要表态。
+
+    防的是一种**静默失效**：新驱动漏了 `renew` 时，worker 的续租会在第一次调用抛
+    `AttributeError`，被 `except Exception` 记成一条 warning 就过去了——表现不是报错，
+    而是「长任务照旧被执行两遍」。所以这里不看文档、不看注释，直接对着协议本身点名：
+    成员清单从 `JobQueue` 反解，不在测试里另抄一份。
+    """
+    from infra.queue.base import JobQueue
+    from infra.queue.memory import MemoryJobQueue
+
+    members = {name for name in dir(JobQueue) if not name.startswith("_")}
+    members |= set(getattr(JobQueue, "__annotations__", {}))
+    # `JobQueue` 自身的方法里只有协议声明的那些；少写一个成员就等于少一条保证
+    assert {"enqueue", "dequeue", "renew", "ack", "nack", "size", "close"} <= members
+
+    for driver_cls in (DbJobQueue, MemoryJobQueue):
+        missing = sorted(name for name in members if not hasattr(driver_cls, name))
+        assert not missing, f"{driver_cls.__name__} 没实现协议的 {missing}"

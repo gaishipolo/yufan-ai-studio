@@ -25,6 +25,10 @@ Alembic autogenerate 都能看见。表跟着驱动走（只有 `QUEUE_DRIVER=db
   JSON 类型，postgres 是 jsonb，DDL 不一致；队列载荷不参与查询与聚合，存文本最省事。
 - `lease_expires_at` 是**可见性超时**：领着跑的人崩了，租约到期后别人能接手。
   没有它，`status='running'` 就是永久卡死——比丢任务更难查。
+- `lease_token` 是**领取凭据**（fencing token）：每次被领走换一个新值，续租/回执
+  都必须带上它。只有 `lease_expires_at` 是不够的——一个「租约早已过期、自己还不知道」
+  的 worker 会拿着旧 id 去 `ack`，把新主人正在跑的那一行删掉；那一行没了，
+  新主人再崩一次，任务就凭空消失，连死信都没有。
 - `idempotency_key` 用**部分唯一索引**（只约束 pending/running）：死信要留档排查，
   但它不能继续占着幂等键，否则「同一个 key 想重投」会被死信挡一辈子。
 - `status` 只给 `(status, run_at)` 一个复合索引：取任务的查询就是「哪些能跑」。
@@ -74,6 +78,9 @@ class QueuedJob(Base, UUIDMixin):
     lease_expires_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # 领取凭据：每次领走换一个。回执、续租都要对得上，防止「旧主人」写到新主人的行上。
+    # 长度 32 是 uuid4().hex 的长度，比 id 短一截就够用（它不需要全局可读）。
+    lease_token: Mapped[str | None] = mapped_column(String(32), nullable=True)
     attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     max_attempts: Mapped[int] = mapped_column(Integer, default=3, nullable=False)
     idempotency_key: Mapped[str | None] = mapped_column(String(160), nullable=True)

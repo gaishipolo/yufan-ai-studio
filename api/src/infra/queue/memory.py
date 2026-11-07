@@ -17,6 +17,9 @@ from infra.queue.base import Job
 
 
 class MemoryJobQueue:
+    #: 进程内队列不会被别人接手：没有租约，worker 也就不续租（见 `infra/queue/base.py`）。
+    lease_sec: float | None = None
+
     def __init__(self) -> None:
         self._heap: list[tuple[float, int, Job]] = []
         self._seq = 0
@@ -74,12 +77,17 @@ class MemoryJobQueue:
             return None
 
     # ------------------------------------------------------------------ 确认
+    async def renew(self, job: Job) -> bool:
+        """无事可做：进程内队列没有「被别人接手」这回事，所以永远不会丢租约。"""
+        return True
+
     async def ack(self, job: Job) -> None:
         return None
 
     async def nack(self, job: Job, *, requeue: bool = True) -> None:
         if not requeue or job.exhausted:
             return
+        job.lease_token = None
         job.with_attempt()
         await self.enqueue(job, delay=job.retry_delay())
 

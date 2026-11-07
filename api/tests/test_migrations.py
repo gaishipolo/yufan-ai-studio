@@ -154,6 +154,68 @@ def test_upgrade_keeps_existing_rows(tmp_path: Path, monkeypatch: pytest.MonkeyP
     )
 
 
+def test_inflight_jobs_survive_the_lease_token_migration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """加 `lease_token` 会重建 `queued_jobs` 表，在途任务一条都不能丢。
+
+    丢一行的后果不是「少了个任务」：那一行是用户点下去的那次生成的唯一凭证，
+    行没了就再也没人会去跑它，页面永远转圈。所以这条用例盯的是「行还在」，
+    而不是「列加上了」——后者 `compare_metadata` 已经管了。
+    """
+    import sqlite3
+
+    from core.config import reload_settings
+    from db import session as db_session
+
+    db_file = tmp_path / "jobs.db"
+    monkeypatch.setenv("DB_URL", f"sqlite+aiosqlite:///{db_file.as_posix()}")
+    reload_settings()
+    db_session.reset_state_for_tests()
+    try:
+        config = _config()
+        command.upgrade(config, "a1c4e7f2b930")  # 加列之前的最后一版
+        conn = sqlite3.connect(db_file)
+        try:
+            conn.execute(
+                "INSERT INTO queued_jobs (id, name, payload, status, run_at, attempts,"
+                " max_attempts, trace_id, last_error, created_at, updated_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    "job-under-upgrade",
+                    "image.poll",
+                    '{"task": "t-1"}',
+                    "running",
+                    "2026-01-01 00:00:00.000000",
+                    1,
+                    3,
+                    "trace-1",
+                    "",
+                    "2026-01-01 00:00:00.000000",
+                    "2026-01-01 00:00:00.000000",
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        command.upgrade(config, "head")
+        conn = sqlite3.connect(db_file)
+        try:
+            rows = conn.execute(
+                "SELECT id, name, status, attempts, lease_token FROM queued_jobs"
+            ).fetchall()
+        finally:
+            conn.close()
+    finally:
+        reload_settings()
+        db_session.reset_state_for_tests()
+
+    assert rows == [("job-under-upgrade", "image.poll", "running", 1, None)], (
+        "升级把在途任务弄丢/弄坏了：" + repr(rows)
+    )
+
+
 def _render_diff(diff: list) -> str:
     lines = ["模型与迁移不一致（生产会用迁移建表，缺的列/表只会在生产炸）："]
     for item in diff:
