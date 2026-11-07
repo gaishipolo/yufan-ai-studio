@@ -131,9 +131,16 @@ def _cmd_sync_roles(args: argparse.Namespace) -> None:
     `sync_new_permissions` 的「只增不减」说明）：自动路径不敢收缩快照，因为分不清
     「这一版少声明了」和「写的人是个旧版本」；人明确跑这一条时，两者不再是问题。
     """
+    from api.discovery import discover_modules
     from db.app_meta import get_json
     from db.session import get_session_factory
     from modules.identity.service import PERMISSION_SNAPSHOT_KEY, IdentityService
+
+    # **必须先把模块发现跑掉**：`core.permissions.catalog` 是模块声明时填的，
+    # 而 CLI 不会走 `create_app()`。不调这一句，`catalog.codes()` 是空集，
+    # `--prune-snapshot` 会把整张快照抹掉（「当前目录一个权限点都没声明」），
+    # 下一次启动于是把管理员手工移除的权限全部当「新增」补回来。
+    discover_modules()
 
     async def run() -> tuple[dict[str, list[str]], list[str], list[str]]:
         async with get_session_factory()() as session:

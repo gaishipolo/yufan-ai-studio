@@ -294,3 +294,29 @@ def test_dry_run_reports_without_writing(restores_role_state) -> None:
     planned, codes = asyncio.run(scenario())
     assert planned.get(EDITOR) == ["template:use"]
     assert "template:use" not in codes, "dry-run 写库了"
+
+
+def test_empty_catalog_refuses_to_write_snapshot(restores_role_state, monkeypatch) -> None:
+    """目录为空时**什么都不写**。
+
+    这个状态只有一种解释：模块没被发现（在脚本里直接 new 了服务，或者 CLI 忘了先
+    `discover_modules()`）。此时写快照等于声称「这一版一个权限点都没声明」——
+    下一次启动会把管理员手工移除的权限全当成「新增」补回来，`--prune-snapshot`
+    更会把整张表抹成 `[]`（真踩过：CLI 里 catalog 是空集，prune 抹掉了 29 条）。
+    """
+    from modules.identity import service as service_module
+
+    class _EmptyCatalog:
+        @staticmethod
+        def codes() -> set[str]:
+            return set()
+
+    async def scenario() -> object:
+        await _write_snapshot(set(catalog.codes()))
+        monkeypatch.setattr(service_module, "catalog", _EmptyCatalog())
+        await _sync()
+        async with get_session_factory()() as session:
+            return await get_json(session, PERMISSION_SNAPSHOT_KEY)
+
+    snapshot = asyncio.run(scenario())
+    assert set(snapshot) == set(catalog.codes()), "目录为空时把快照写掉了"

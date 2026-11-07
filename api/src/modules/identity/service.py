@@ -1132,6 +1132,13 @@ class IdentityService:
         `app sync-roles --prune-snapshot`——明确动作、可解释、可审计。
         """
         declared = set(catalog.codes())
+        if not declared:
+            # 目录为空只可能是「模块没被发现」——例如从脚本里直接实例化这个服务，
+            # 或者 CLI 忘了先 `discover_modules()`。这时候写快照等于把「这一版声明了
+            # 哪些权限」清空，下一次启动就会把管理员手工移除的权限全当「新增」补回来，
+            # 而且 `--prune-snapshot` 会把整张表抹掉。宁可什么都不做，也不能写空的。
+            logger.error("权限目录为空，跳过权限同步与快照写入（模块未发现？）")
+            return {}
         added: dict[str, list[str]] = {}
         for attempt in range(1, WRITE_RETRIES + 1):
             entry = await read_entry(self.session, PERMISSION_SNAPSHOT_KEY)
