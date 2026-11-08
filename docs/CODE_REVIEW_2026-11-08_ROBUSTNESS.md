@@ -15,9 +15,9 @@
 |---|---|---|
 | 关键不变量注入缺陷后被发现 | 8 / 15 | **15 / 15** |
 | 有测试的缺口 | 7 个 | **0 个** |
-| 新增测试 | — | **52 条**（49 个用例，6 个新文件 + 2 处追加） |
+| 新增测试 | — | **54 条**（51 个用例，6 个新文件 + 3 处追加） |
 | mypy | 220 files, **16 errors** | 220 files, **no issues** |
-| CI 状态 | 连续 **8 次 failure** | 后端/前端/迁移三道全绿（见 §5） |
+| CI 状态 | 连续 **8 次 failure** | 后端/前端**全绿**；PG 迁移的根因也已修（§5 补记） |
 
 「7 个缺口」的意思是：**把框架的关键安全判定改坏，840+ 条测试没有一条会红**。
 它们不是「覆盖率不够」，是「守卫不存在」——最典型的一个：把权限判定 `has_all`
@@ -90,6 +90,7 @@ sha256」规避，但正确做法是扫描期间不碰源码。
 | `tests/test_session_scope.py` | 3 | 异常穿出依赖、`rollback` 在异常离开前执行、正常结束不回滚 |
 | `tests/test_trace.py` | +4 | 中间件把 id 写进上下文、两个出口同一个 id、非法 id 被替换、**上个请求的用户不串号** |
 | `tests/test_archive_serving.py` | +1 | 本地驱动下字节消失 → 404（此前只测了远端那一半） |
+| `tests/test_migrations.py` | +2 | 迁移不得使用 sqlite 专有类型；每个迁移必须有 `downgrade()` |
 
 两个模块此前是**零测试覆盖**：`core/serving.py`（所有下载接口的必经之路）和
 `infra/loader.py`（`.env` 里的驱动名决定 import 什么模块）。
@@ -105,7 +106,7 @@ sha256」规避，但正确做法是扫描期间不碰源码。
 
 ---
 
-## 四、修的 4 个缺陷
+## 四、修的 5 个缺陷
 
 ### 1. 本地产物文件被清掉时返回 500（`core/serving.py`）
 
@@ -151,6 +152,15 @@ GET /api/v1/assets/<id>/file      盘上文件已删 → 500 Internal Server Err
 修法都是**让注解说实话**，没有加 `type: ignore`（唯一用 `ignore` 的是原本就有的
 `run.kind  # type: ignore[arg-type]`，那是枚举与字符串的已知边界）。
 
+### 5. 下行迁移用了 sqlite 专有类型（`migrations/versions/df546efef239`）
+
+`downgrade()` 里 `sa.Column('created_at', sa.DATETIME(), ...)` —— 这是
+`sqlalchemy.dialects.sqlite` 专有类型，通用的是 `sa.DateTime`。PG 上执行报
+`type "datetime" does not exist`。
+
+`upgrade` 是通的（新表都用通用类型），断的是 `downgrade`：**回滚部署这条路是断的**。
+sqlite 上一切正常，本地测不出来。详见 §5 补记。
+
 ---
 
 ## 五、CI 的真相：连续 8 次 failure
@@ -165,6 +175,7 @@ GET /api/v1/assets/<id>/file      盘上文件已删 → 500 Internal Server Err
 | 38 | b6464ed5 | — | — | — |
 | 40 | b83a696c | **红（ruff）** | 绿 | **红** |
 | 41 | e90923c | **红（ruff）** | 绿 | — |
+| 42 | aa990d2 | **绿** | **绿** | 红（根因已定位并修复，见下） |
 
 **从 run 34 到 run 41，8 次提交没有一次全绿，没有人看。**
 
@@ -182,6 +193,37 @@ GET /api/v1/assets/<id>/file      盘上文件已删 → 500 Internal Server Err
 
 **这一节的教训比任何一条代码缺陷都贵**：门禁的价值不在「配了」，在「红了有人看」。
 现在的语义是「CI 红了 → 大概又是那个老问题 → 不管」，等于没有门禁。
+
+### 补记：run 42 与 PG 的真正根因
+
+修完推上去，run 42 **整体 Success**（run 33 之后第一次）：后端 1m59s、
+前端 1m29s，`mypy` 这一步在 CI 上**第一次真正执行并通过**。
+
+但 PostgreSQL job 仍然红（`continue-on-error` 使整体不阻塞）。于是本地起了
+`postgres:16-alpine` 复现，四步逐条跑：
+
+```
+alembic upgrade head        → 通过
+alembic check               → No new upgrade operations detected
+alembic downgrade base      → UndefinedObjectError: type "datetime" does not exist
+alembic upgrade head        → 未执行
+```
+
+根因在 `df546efef239` 的 `downgrade()`：
+
+```python
+sa.Column('created_at', sa.DATETIME(), nullable=False)
+```
+
+`sa.DATETIME` 是 **sqlalchemy.dialects.sqlite 专有**类型，通用类型是 `sa.DateTime`。
+它进迁移的唯一途径是 autogenerate 对着一个 **sqlite 库**做反射。
+
+**这条的价值在于「哪条路断了」**：`upgrade` 能过（新表都用通用类型），所以
+「新部署」是通的；断的是 `downgrade` —— 也就是「出事要回滚」的那一刻。
+而 sqlite 上一切正常，本地永远测不出来，`test_migrations.py` 当时也只跑 sqlite。
+
+修完 PG 四步全通。守卫是纯文本扫描（`test_migrations_do_not_use_sqlite_only_types`），
+不需要数据库 —— 因为它要防的正是「本地 sqlite 测不出 PG 方言」。
 
 ---
 
@@ -211,7 +253,7 @@ GET /api/v1/assets/<id>/file      盘上文件已删 → 500 Internal Server Err
 | 3 | `VALIDATION_FAILED = 40001` 配 HTTP 422，违反自述的 `code // 100` | 已用测试钉住，前端按 `code` 而非状态判断，当前不发作 |
 | 4 | 成功响应有两种形状（裸数据 / `{code:0,...}` 信封） | 前端 `http.ts` 有兼容层；风险是业务对象恰好带 `code` 字段时被误判成信封 |
 | 5 | `dispatch → submit` 之间仍有秒级授权窗口 | 已评估：归零需要注入口回调，收益不划算（上一轮结论，不变） |
-| 6 | PG 迁移 job 是 `continue-on-error` 观察期，且现在红 | 阻塞上线的是它，不是 sqlite 那条。需要真实 PG 才能定位 |
+| 6 | PG 迁移 job 是 `continue-on-error` 观察期 | **已修**：下行迁移的 sqlite 专有类型（§5 补记），PG 四步全通；建议观察一周后去掉 `continue-on-error` |
 | 7 | 变异测试不进 CI | 15 个变异约 3 分钟，不适合每次 push 都跑；作为手动工具 |
 
 ---
