@@ -62,6 +62,59 @@ def test_single_head() -> None:
     assert len(heads) == 1, f"迁移出现分叉：{heads}"
 
 
+# `sa.DATETIME` / `sa.TIME` / `sa.DATE` 是 **sqlite 方言专有**类型
+# （`sqlalchemy.dialects.sqlite`），通用类型是 `sa.DateTime` / `sa.Time` / `sa.Date`。
+# 它们进迁移的唯一途径是 autogenerate 对着一个 **sqlite 库**做反射。
+_SQLITE_ONLY_TYPES = (
+    "sa.DATETIME(",
+    "sa.TIME(",
+    "sa.DATE(",
+    "from sqlalchemy.dialects.sqlite",
+    "from sqlalchemy.dialects import sqlite",
+)
+
+
+def test_migrations_do_not_use_sqlite_only_types() -> None:
+    """迁移必须能在 PostgreSQL 上执行：sqlite 专有类型在 PG 上是 `type does not exist`。
+
+    这条守卫的由来：`df546efef239` 的 `downgrade()` 用 `sa.DATETIME()` 重建
+    `video_templates`，那是对着 sqlite 反射出来的。upgrade 能过（新表都用通用类型），
+    但 `alembic downgrade base` 在 PG 上报 `type "datetime" does not exist`
+    —— **回滚部署这条路是断的**，而 sqlite 上一切正常，本地永远测不出来。
+
+    CI 的 PG job 从 run 40 起一直红就是这个（观察期 continue-on-error，
+    所以没人被挡住，也就没人发现）。
+
+    纯文本扫描，不需要数据库：本仓的 sqlite 测试跑不到 PG 方言。
+    """
+    offenders: list[str] = []
+    for path in sorted((API_ROOT / "migrations" / "versions").glob("*.py")):
+        text = path.read_text(encoding="utf-8")
+        for needle in _SQLITE_ONLY_TYPES:
+            if needle in text:
+                offenders.append(f"{path.name}: {needle}")
+
+    assert not offenders, (
+        "迁移里出现了 sqlite 专有类型，PG 上会失败（改用 sa.DateTime / sa.Time / sa.Date）：\n  "
+        + "\n  ".join(offenders)
+    )
+
+
+def test_every_migration_defines_downgrade() -> None:
+    """每个迁移都要有 `downgrade()`：没有它，出事时回滚不了。
+
+    空实现是允许的（数据迁移常常无法逆向），但**函数必须存在**——
+    缺了它 alembic 到这一步会直接 `NotImplementedError`，而发现时机是
+    「生产要回滚」的那一刻。
+    """
+    missing = [
+        path.name
+        for path in sorted((API_ROOT / "migrations" / "versions").glob("*.py"))
+        if "def downgrade(" not in path.read_text(encoding="utf-8")
+    ]
+    assert not missing, "缺少 downgrade()：" + ", ".join(missing)
+
+
 def test_migrations_apply_to_empty_database(migrated: Path) -> None:
     """空库能升到 head。这条同时保证「新部署」这条路是通的。"""
     from db import registry

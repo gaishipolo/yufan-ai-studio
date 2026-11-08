@@ -175,8 +175,8 @@ def downgrade() -> None:
     sa.Column('cover_url', sa.VARCHAR(length=512), nullable=False),
     sa.Column('tags', sa.VARCHAR(length=256), nullable=False),
     sa.Column('id', sa.VARCHAR(length=32), nullable=False),
-    sa.Column('created_at', sa.DATETIME(), nullable=False),
-    sa.Column('updated_at', sa.DATETIME(), nullable=False),
+    sa.Column('created_at', sa.DateTime(), nullable=False),
+    sa.Column('updated_at', sa.DateTime(), nullable=False),
     sa.PrimaryKeyConstraint('id', name=op.f('pk_video_templates'))
     )
     with op.batch_alter_table('video_templates', schema=None) as batch_op:
