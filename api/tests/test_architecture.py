@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import ast
 import re
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -228,6 +229,23 @@ def test_permission_codes_are_namespaced_by_module() -> None:
     assert not mismatched, f"权限码前缀与归属模块不一致 -> {mismatched}"
 
 
+def _require_calls(package: Path) -> Iterator[ast.Call]:
+    """一个模块里所有 `require(...)` 调用（不管实参是字面量还是常量名）。
+
+    用 `rglob` 而不是 `glob`：模块内再分子包（`modules/x/http/`）时，
+    `glob("*.py")` 会静默漏掉整个子包，守卫照旧「没问题」。
+    """
+    for path in _python_files(package):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            name = func.id if isinstance(func, ast.Name) else getattr(func, "attr", "")
+            if name == "require":
+                yield node
+
+
 def _required_codes(package: Path) -> set[str]:
     """AST 提取一个模块里所有 `require("...")` 的权限码。
 
@@ -236,21 +254,16 @@ def _required_codes(package: Path) -> set[str]:
     症状却是：超级管理员（`*`）一切正常，其他人永远 403。
     启动、doctor、契约生成、既有测试全都不报错——这种"只有一部分人会遇到"
     的问题最难查，所以要在静态分析这一层拦住。
+
+    只认字面量：`require(PERM_READ)` 这种常量写法在这里解不出来，
+    由 `test_permission_coverage.py` 的跨文件常量解析覆盖，两者互补。
     """
-    codes: set[str] = set()
-    for path in package.glob("*.py"):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Call):
-                continue
-            func = node.func
-            name = func.id if isinstance(func, ast.Name) else getattr(func, "attr", "")
-            if name != "require":
-                continue
-            for arg in node.args:
-                if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
-                    codes.add(arg.value)
-    return codes
+    return {
+        arg.value
+        for call in _require_calls(package)
+        for arg in call.args
+        if isinstance(arg, ast.Constant) and isinstance(arg.value, str)
+    }
 
 
 def test_required_codes_are_declared_somewhere() -> None:
@@ -418,15 +431,25 @@ def test_every_port_is_catalogued() -> None:
     from api.ports import PORT_CATALOG
 
     catalogued = {spec.module for spec in PORT_CATALOG}
-    missing = [
-        _dotted(path)
-        for directory in _PORT_SCAN_DIRS
-        for path in sorted(directory.glob("*.py"))
-        if _looks_like_port_module(path) and _dotted(path) not in catalogued
-    ]
+    # `rglob` 而不是 `glob`：注入口挪进子包（`core/ports/providers/`）时，
+    # 扁平 glob 会整份漏掉，守卫照旧「没问题」。这是同一类失败模式的第 4 次
+    # 出现（权限核对、限流策略、`require` 扫描都栽过）。
+    detected = sorted(
+        {
+            _dotted(path)
+            for directory in _PORT_SCAN_DIRS
+            for path in directory.rglob("*.py")
+            if "__pycache__" not in path.parts and _looks_like_port_module(path)
+        }
+    )
+    missing = [name for name in detected if name not in catalogued]
     assert not missing, (
         f"这些文件是注入口但没有登记进 api/ports.py 的 PORT_CATALOG：{missing}。"
         "没登记的注入口会让「谁会实现它、没接上是什么行为」再次变成口口相传"
+    )
+    assert len(detected) >= len(PORT_CATALOG), (
+        f"只认出 {len(detected)} 个注入口文件，少于目录里的 {len(PORT_CATALOG)} 条："
+        "扫描口径退化了（识别不出来 = 上面那条永远通过）"
     )
 
 
@@ -735,3 +758,44 @@ def test_port_detection_does_not_depend_on_the_verb(tmp_path: Path) -> None:
         "手写注册表（`_impl` 全局 + bind_/has_/reset_）也是注入口，"
         "识别不出来就意味着它不会出现在 app modules 与启动自检里"
     )
+
+
+# --------------------------------------------------------------------------- #
+# 守卫自身的有效性
+#
+# 上面几十条守卫的共同形状是「扫一遍，有问题就报」。它们的失效方式也一样：
+# **扫不到东西时不报错**——目录改名、glob 改成不匹配当前布局、过滤条件写反，
+# 结果都是「零个问题」，看起来和「全都没问题」完全一样。
+#
+# 这一类失败在本仓已经真实发生过 4 次：权限核对的 include 盲区、`require`
+# 扫描的扁平 glob、注入口识别的动词依赖、限流策略只看 `app.routes`。
+# 所以给每条扫描加一条「必须真的扫到东西」的元测试。阈值按当前规模取整，
+# 缩小到这个数以下时先确认是重构还是退化了，再改数字。
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize("layer", ["core", "db", "infra", "generation", "api", "modules"])
+def test_layer_directories_are_scannable(layer: str) -> None:
+    """层目录必须真的有 .py 文件，否则那几条「不许反向 import」的守卫是空的。"""
+    files = _python_files(SRC / layer)
+    assert files, f"{layer}/ 下扫描不到任何 .py：依赖方向守卫变成永远通过的检查"
+
+
+def test_require_scan_is_not_vacuous() -> None:
+    """`require(...)` 扫描要有产出。
+
+    `_required_codes` 从 `glob` 换成 `rglob`、或者模块目录结构变化时，
+    它可能一个调用都扫不到，而 `test_required_codes_are_declared_somewhere`
+    会安静地绿着——守卫失效与守卫通过必须能被区分开。
+
+    两个数都要看：调用**处数**（不受「用常量还是字面量」影响）和字面量**码数**
+    （`require(PERM_READ)` 解不出来，所以 18 个字面量码是对的，别拿它跟 33 比）。
+    """
+    specs = discover_modules()
+    calls = sum(1 for spec in specs for _ in _require_calls(MODULES_DIR / spec.name))
+    codes = {code for spec in specs for code in _required_codes(MODULES_DIR / spec.name)}
+
+    assert calls >= 25, (
+        f"只在源码里找到 {calls} 处 `require(...)` 调用（预期 ≥25）："
+        "扫描口径退化了，路由权限守卫实际上没在检查"
+    )
+    assert len(codes) >= 15, f"只扫到 {len(codes)} 个字面量权限码（预期 ≥15）：解析口径变了"
+    assert "asset:read" in codes, "连确定以字面量出现的 asset:read 都没扫到，文件定位有问题"
