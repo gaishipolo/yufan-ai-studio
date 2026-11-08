@@ -1,86 +1,58 @@
-"""跨账号原片分享、专员发布与输入快照，不访问真实盘或模型。
+"""跨账号：公共原片池、专员发布的封装、调用者的输入快照。
 
-素材一律走 HTTP 上传登记：索引在 `assets` 表，服务层构造需要 session，
-测试里直接调同步仓储是「JSON 即索引」时代的写法，留着会掩盖真实的入库路径。
+模板库的设定是「借用别人准备好的东西，但只产出自己的记录」，所以跨账号是主线
+而不是边界情况。这一组用例把三条门禁钉住：
+
+- 原片只有 `shared=True` 才能被别人拿去用，撤回立刻关门；
+- 封装发布后对所有账号可见，停用立刻关门；
+- 一旦开始准备，输入就复制进**调用者**的工作区，此后原作者删素材、撤回分享都
+  不影响这条记录——否则「历史可复核」只是时间问题。
+
+另外两条是重建时新加的：`stateVersion` 乐观锁（两位同事同时改同一条素材）与
+「移入回收站即撤回分享」（否则删掉的原片还挂在公共池里）。
 """
 
 from __future__ import annotations
 
-import os
-import subprocess
 import uuid
 from pathlib import Path
+from typing import Any
 
-import imageio_ffmpeg
 import pytest
 from fastapi.testclient import TestClient
-from PIL import Image
+from tests_template_helpers import (
+    ADMIN,
+    API,
+    add_pack,
+    drop_pack,
+    drop_run,
+    login,
+    png_bytes,
+    upload,
+    video_bytes,
+)
 
-from api.deps import get_actor
-from core.context import CurrentUser
-from core.exceptions import BadRequest, NotFound
-from infra.archive import checksum
 from infra.archive.local import get_archive_settings
-from infra.media_catalog import MediaCatalog
-from modules.template.pack_service import PackService
-from modules.template.replacement_schema import PackDraftIn, PrepareReplacement
-from modules.template.replacement_service import prepare
 
-API = "/api/v1"
-PERMISSIONS = ("asset:read", "asset:create", "asset:share", "asset:update", "asset:delete")
+EDITOR = "editor"
+EDITOR_PASSWORD = "editor@12345"
 
 
-@pytest.fixture
-def workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, client: TestClient):
+@pytest.fixture(autouse=True)
+def archive_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """每个用例一个归档根：跨账号用例会改分享状态，不能与前一个共用目录。"""
     monkeypatch.setattr(get_archive_settings(), "root", str(tmp_path))
-    yield tmp_path
-    client.app.dependency_overrides.pop(get_actor, None)
+    return tmp_path
 
 
-def actor(client: TestClient, owner: str, *permissions: str) -> None:
-    client.app.dependency_overrides[get_actor] = lambda: CurrentUser(
-        id=owner, name=owner, permissions=frozenset(permissions)
-    )
-
-
-def make_video(path: Path) -> Path:
-    """2 秒 H.264 + AAC 短视频；颜色随机，避免同分类内被摘要去重。"""
-    subprocess.run(
-        [
-            imageio_ffmpeg.get_ffmpeg_exe(),
-            "-y",
-            "-loglevel",
-            "error",
-            "-f",
-            "lavfi",
-            "-i",
-            f"color=c=0x{os.urandom(3).hex()}:s=64x64:d=2",
-            "-f",
-            "lavfi",
-            "-i",
-            "sine=frequency=440:duration=2",
-            "-c:v",
-            "libx264",
-            "-c:a",
-            "aac",
-            "-shortest",
-            str(path),
-        ],
-        check=True,
-        capture_output=True,
-    )
-    return path
-
-
-def source(client: TestClient, root: Path, owner: str = "A") -> dict:
-    """以 `owner` 身份上传一份原片，返回与前端完全一致的出参。"""
-    path = make_video(root / f"{uuid.uuid4().hex}.mp4")
-    actor(client, owner, *PERMISSIONS)
+def _upload_as(
+    client: TestClient, headers: dict[str, str], filename: str, category: str, content: bytes
+) -> dict[str, Any]:
     response = client.post(
-        f"{API}/assets/archive/upload",
-        params={"filename": "私有原片.mp4", "category": "source"},
-        content=path.read_bytes(),
-        headers={"Content-Type": "application/octet-stream"},
+        f"{API}/assets/upload",
+        params={"filename": filename, "category": category},
+        content=content,
+        headers={"Content-Type": "application/octet-stream", **headers},
     )
     assert response.status_code == 201, response.text
     data = response.json()["data"]
@@ -88,262 +60,368 @@ def source(client: TestClient, root: Path, owner: str = "A") -> dict:
     return data
 
 
-def change(
-    client: TestClient, asset_id: str, owner: str, action: str, **fields: object
-) -> object:
-    """按当前 `stateVersion` 提交一次状态变更，返回响应（调用方自行断言状态码）。"""
-    actor(client, owner, *PERMISSIONS)
-    detail = client.get(f"{API}/assets/archive/{asset_id}")
-    assert detail.status_code == 200, detail.text
-    version = detail.json()["data"]["stateVersion"]
-    return client.put(
-        f"{API}/assets/archive/{asset_id}/{action}",
-        json={"expectedVersion": version, **fields},
-    )
+def _change(
+    client: TestClient,
+    asset: dict[str, Any],
+    headers: dict[str, str],
+    *,
+    field: str,
+    value: object,
+    version: int | None = None,
+):
+    """三个 PUT 的公共写法：`field` 是 `name` / `shared` / `deleted`。
 
-
-def pack(client: TestClient, root: Path) -> tuple[str, int]:
-    """封装一张参考图并发布，返回（包 id, 版本）。
-
-    参考图也走 HTTP 上传：专员维度的 `asset:reference:manage` 是这条路径的准入条件，
-    直接写 JSON 会绕开它。
+    分享的路径是 `/sharing`（动作名），不是 `/shared`（字段名）：契约里两者
+    本来就不同名，写错了会得到 404，看起来像「素材没有了」。
     """
-    path = root / "reference.png"
-    # 颜色随机：归档按 (owner, sha256, category) 去重，而 `assets` 表在测试间共享，
-    # 写死内容会让第二个用例命中上一个用例已被清掉的 tmp_path 记录。
-    Image.new("RGB", (16, 16), tuple(os.urandom(3))).save(path, format="PNG")
-    actor(client, "S", "asset:read", "asset:create", "asset:reference:manage")
-    response = client.post(
-        f"{API}/assets/archive/upload",
-        params={"filename": "产品.png", "category": "product"},
-        content=path.read_bytes(),
-        headers={"Content-Type": "application/octet-stream"},
+    body = {
+        "expectedVersion": asset["stateVersion"] if version is None else version,
+        field: value,
+    }
+    segment = {"shared": "sharing"}.get(field, field)
+    return client.put(f"{API}/assets/{asset['id']}/{segment}", json=body, headers=headers)
+
+
+def _public_ids(client: TestClient, headers: dict[str, str]) -> set[str]:
+    response = client.get(f"{API}/assets", params={"scope": "public"}, headers=headers)
+    assert response.status_code == 200, response.text
+    return {item["id"] for item in response.json()["data"]["items"]}
+
+
+def _payload(kind: str, source_id: str, pack_id: str, version: int) -> dict[str, Any]:
+    return {
+        "requestId": str(uuid.uuid4()),
+        "kind": kind,
+        "sourceId": source_id,
+        "packId": pack_id,
+        "packVersion": version,
+        "replacementScope": "人物上身穿着" if kind == "product" else "",
+    }
+
+
+def _source(client: TestClient, headers: dict[str, str] | None = None) -> dict[str, Any]:
+    """一段带音轨的 2 秒原片：`prepare` 会读时长与音轨，手写记录测不出来。"""
+    if headers is None:
+        return upload(client, "source.mp4", "source", video_bytes(2, audio=True))
+    return _upload_as(
+        client, headers, "source.mp4", "source", video_bytes(2, audio=True)
     )
-    assert response.status_code == 201, response.text
-    image = response.json()["data"]
-    service = PackService()
-    draft = service.save(
-        PackDraftIn(
-            request_id=uuid.uuid4(),
-            kind="product",
-            name="专员产品",
-            reference_ids=[image["id"]],
-            cover_reference_id=image["id"],
-            # 产品包发布必须声明用途与可替换范围，否则 `gaps` 会拦住发布。
-            bindings=[{"role": "front"}],
-            supported_scopes=["worn", "held"],
-        ),
-        "S",
+
+
+# --------------------------------------------------------------------------- #
+# 公共原片池
+# --------------------------------------------------------------------------- #
+def test_sharing_opens_the_public_pool_and_revoking_closes_it(client: TestClient) -> None:
+    """分享是「借出去」，撤回是「收回来」，两件事都必须立刻在别人的列表里生效。
+
+    中间那一步还验证了详情接口的口径与列表一致：列表看不到、详情却 200，等于
+    把已撤回的原片还能被别人按 id 摸到——撤回就没意义了。
+    """
+    owner = login(client, "admin", "admin@12345")
+    other = login(client, EDITOR, EDITOR_PASSWORD)
+    source = _source(client, owner)
+
+    assert source["id"] not in _public_ids(client, other), "默认私有，不该出现在别人的公共池"
+
+    shared = _change(client, source, owner, field="shared", value=True)
+    assert shared.status_code == 200, shared.text
+    assert source["id"] in _public_ids(client, other)
+    assert client.get(f"{API}/assets/{source['id']}", headers=other).status_code == 200
+
+    revoked = _change(client, shared.json()["data"], owner, field="shared", value=False)
+    assert revoked.status_code == 200, revoked.text
+    assert source["id"] not in _public_ids(client, other)
+    assert client.get(f"{API}/assets/{source['id']}", headers=other).status_code == 404
+
+
+def test_only_the_owner_can_change_sharing(client: TestClient) -> None:
+    """不能改别人的素材，而且回 404：回 403 等于确认「这条存在，只是你没权限」。"""
+    owner = login(client, "admin", "admin@12345")
+    other = login(client, EDITOR, EDITOR_PASSWORD)
+    source = _source(client, owner)
+
+    denied = _change(client, source, other, field="shared", value=True)
+    assert denied.status_code == 404
+    assert source["id"] not in _public_ids(client, owner), "被拒绝的请求不能改到状态"
+
+
+def test_only_undeleted_sources_can_be_shared(client: TestClient) -> None:
+    """参考图不能分享（公共池只放原片），已删除的也不行——它马上就不在了。"""
+    owner = login(client, "admin", "admin@12345")
+    picture = upload(client, "character.png", "character", png_bytes())
+    source = _source(client, owner)
+
+    wrong_category = _change(client, picture, owner, field="shared", value=True)
+    assert wrong_category.status_code == 400
+    assert "原片" in wrong_category.text
+
+    trashed = _change(client, source, owner, field="deleted", value=True)
+    assert trashed.status_code == 200, trashed.text
+    deleted = trashed.json()["data"]
+    assert deleted["shared"] is False
+
+    after_delete = _change(client, deleted, owner, field="shared", value=True)
+    assert after_delete.status_code in (400, 404), "回收站里的原片不能再借出去"
+
+
+def test_recycle_withdraws_sharing_and_restore_does_not_republish(client: TestClient) -> None:
+    """删除要「删干净」：恢复一条已删原片不该顺带把它重新借给全公司。
+
+    如果恢复时把 `shared` 还原成删除前的值，那「删除」就只是一次隐藏，
+    用户以为已经收回的素材会在回收站恢复后重新出现在公共池里。
+    """
+    owner = login(client, "admin", "admin@12345")
+    other = login(client, EDITOR, EDITOR_PASSWORD)
+    shared = _change(
+        client, _source(client, owner), owner, field="shared", value=True
+    ).json()["data"]
+    assert shared["id"] in _public_ids(client, other)
+
+    trashed = _change(client, shared, owner, field="deleted", value=True).json()["data"]
+    assert trashed["shared"] is False
+    assert trashed["id"] not in _public_ids(client, other)
+
+    restored = _change(client, trashed, owner, field="deleted", value=False).json()["data"]
+    assert restored["shared"] is False
+    assert restored["id"] not in _public_ids(client, other)
+
+
+# --------------------------------------------------------------------------- #
+# 写路径的守卫：一次只改一个字段、过期版本不能覆盖
+# --------------------------------------------------------------------------- #
+def test_change_action_accepts_only_its_own_field(client: TestClient) -> None:
+    """三个 PUT 共用一个写路径，所以必须由接口声明「这一次允许改什么」。
+
+    少了这道门，「改名」接口就成了后门：带一个 `shared: true` 就能绕过
+    `asset:share` 权限把原片借出去。
+    """
+    owner = login(client, "admin", "admin@12345")
+    source = _source(client, owner)
+
+    smuggled = client.put(
+        f"{API}/assets/{source['id']}/name",
+        json={"expectedVersion": source["stateVersion"], "name": "改名", "shared": True},
+        headers=owner,
     )
-    published = service.publish(draft.id, "S", draft.revision)
-    return published.id, published.version
+    assert smuggled.status_code == 400
+    assert "仅提交" in smuggled.text
 
 
-def test_private_share_revoke_and_owner_management(workspace: Path, client: TestClient) -> None:
-    item = source(client, workspace)
-    actor(client, "B", "asset:read", "asset:share", "asset:update", "asset:delete")
-    assert client.get(f"{API}/assets/archive?scope=public").json()["data"]["total"] == 0
-    assert client.get(item["url"]).status_code == 404
-    assert client.get(f"{API}/assets/archive/{item['id']}").status_code == 404
-    assert (
-        client.put(
-            f"{API}/assets/archive/{item['id']}/sharing",
-            json={"expectedVersion": 0, "shared": True},
-        ).status_code
-        == 404
+def test_stale_version_is_rejected_but_same_state_retry_passes(client: TestClient) -> None:
+    """乐观锁的两种「版本对不上」要分开处理。
+
+    - 内容真的变了 → 409，让前端刷新后再改（否则后写的覆盖先写的）；
+    - 内容与当前一致 → 200 返回事实：这是「响应丢了，前端重发一次」，
+      再报冲突会让用户反复重试一个其实已经成功的操作。
+    """
+    owner = login(client, "admin", "admin@12345")
+    source = _source(client, owner)
+    fresh = source["stateVersion"]
+
+    renamed = client.put(
+        f"{API}/assets/{source['id']}/name",
+        json={"expectedVersion": fresh, "name": "第一次改名"},
+        headers=owner,
     )
-    assert change(client, item["id"], "A", "sharing", shared=True).status_code == 200
-    actor(client, "B", "asset:read")
-    data = client.get(f"{API}/assets/archive?scope=public").json()["data"]
-    # 公共池不暴露存储位置：契约里连 `root` 都没有了（T11），`storageKey` 对
-    # 非本人也不下发路径（下面那行断言 `path` 为空串）
-    assert data["total"] == 1 and "root" not in data
-    assert data["items"][0]["path"] == "" and not data["items"][0]["downloadAllowed"]
-    assert client.get(item["url"]).status_code == 404  # 分享不打开原件下载端点
-    # 公共预览是唯一放行的字节出口
-    assert client.get(f"{API}/assets/archive/{item['id']}/preview").status_code == 200
-    assert change(client, item["id"], "A", "sharing", shared=False).status_code == 200
-    actor(client, "B", "asset:read")
-    assert client.get(f"{API}/assets/archive/{item['id']}").status_code == 404
+    assert renamed.status_code == 200, renamed.text
+    assert renamed.json()["data"]["stateVersion"] == fresh + 1
 
-
-def test_recycle_restore_private_and_rename_preserves_bytes(
-    workspace: Path, client: TestClient
-) -> None:
-    item = source(client, workspace)
-    assert change(client, item["id"], "A", "name", name="新名称").status_code == 200
-    assert change(client, item["id"], "A", "sharing", shared=True).status_code == 200
-    assert change(client, item["id"], "A", "deleted", deleted=True).status_code == 200
-    actor(client, "B", "asset:read")
-    assert client.get(f"{API}/assets/archive?scope=public").json()["data"]["total"] == 0
-    actor(client, "A", *PERMISSIONS)
-    trash = client.get(f"{API}/assets/archive", params={"scope": "trash"}).json()["data"]
-    assert trash["total"] == 1
-    assert change(client, item["id"], "A", "deleted", deleted=False).status_code == 200
-    restored = client.get(f"{API}/assets/archive/{item['id']}").json()["data"]
-    assert not restored["shared"] and restored["name"] == "新名称"
-    assert checksum(workspace / item["path"]) == item["sha256"]
-    # 拿旧版本号重放：状态在三次变更后已推进，必须按冲突拒绝而不是静默成功
     stale = client.put(
-        f"{API}/assets/archive/{item['id']}/sharing",
-        json={"expectedVersion": 0, "shared": True},
+        f"{API}/assets/{source['id']}/name",
+        json={"expectedVersion": fresh, "name": "另一个人改的名字"},
+        headers=owner,
     )
     assert stale.status_code == 409
+    assert "状态已变化" in stale.text
+
+    retry = client.put(
+        f"{API}/assets/{source['id']}/name",
+        json={"expectedVersion": fresh, "name": "第一次改名"},
+        headers=owner,
+    )
+    assert retry.status_code == 200
+    assert retry.json()["data"]["stateVersion"] == fresh + 1, "重试不该再抬版本号"
 
 
-def test_editor_cannot_upload_references_or_bypass_share_fields(
-    workspace: Path, client: TestClient
+def test_rename_keeps_the_bytes_and_the_storage_key(client: TestClient) -> None:
+    """改名只改索引，不动字节：`storageKey` 是内容地址，重写一遍等于换了个文件。"""
+    owner = login(client, "admin", "admin@12345")
+    picture = upload(client, "character.png", "character", png_bytes())
+    before = client.get(f"{API}/assets/{picture['id']}/file", headers=owner)
+    assert before.status_code == 200
+
+    renamed = _change(client, picture, owner, field="name", value="新名字").json()["data"]
+    assert renamed["name"] == "新名字"
+    # 内容寻址的两个证据：摘要是字节的，路径是摘要派生的，改名都不该动它们
+    assert renamed["sha256"] == picture["sha256"]
+    assert renamed["path"] == picture["path"]
+    assert renamed["sizeBytes"] == picture["sizeBytes"]
+
+    after = client.get(f"{API}/assets/{renamed['id']}/file", headers=owner)
+    assert after.content == before.content
+
+
+# --------------------------------------------------------------------------- #
+# 封装发布：对所有账号可见，停用立刻关门
+# --------------------------------------------------------------------------- #
+async def test_published_pack_is_visible_to_other_accounts(client: TestClient) -> None:
+    """专员在自己的账号里发布，别人就能在自己的目录里选到它。"""
+    other = login(client, EDITOR, EDITOR_PASSWORD)
+    image = upload(client, "character.png", "character", png_bytes())
+    pack = await add_pack(
+        owner=ADMIN, kind="character", name="跨账号封装", reference_ids=[image["id"]]
+    )
+    try:
+        catalog = client.get(f"{API}/templates/replacement-catalog", headers=other)
+        assert pack.id in {item["id"] for item in catalog.json()["data"]["packs"]}
+    finally:
+        await drop_pack(pack.id)
+
+
+async def test_disabled_pack_is_hidden_and_refused(client: TestClient) -> None:
+    """停用要同时作用在「看得见」和「还能不能用」两处。
+
+    只从目录里藏起来不够：前端缓存里的旧目录、或直接按 id 提交的脚本，仍然会用
+    一个已停用的封装去准备。所以 `prepare` 自己也校验状态，文案还要说清原因。
+    """
+    other = login(client, EDITOR, EDITOR_PASSWORD)
+    image = upload(client, "character.png", "character", png_bytes())
+    video = _source(client)
+    draft = await add_pack(
+        owner=ADMIN, kind="character", name="已停用", reference_ids=[image["id"]], status="draft"
+    )
+    try:
+        catalog = client.get(f"{API}/templates/replacement-catalog", headers=other)
+        assert draft.id not in {item["id"] for item in catalog.json()["data"]["packs"]}
+
+        refused = client.post(
+            f"{API}/templates/replacement-runs",
+            json=_payload("character", video["id"], draft.id, 1),
+            headers=other,
+        )
+        assert refused.status_code == 400
+        assert "未发布" in refused.text
+    finally:
+        await drop_pack(draft.id)
+
+
+# --------------------------------------------------------------------------- #
+# 跨账号准备：快照归调用者
+# --------------------------------------------------------------------------- #
+async def test_borrowed_source_and_pack_create_the_callers_own_snapshot(
+    client: TestClient,
 ) -> None:
-    actor(client, "A", "asset:create", "asset:read", "asset:share")
-    response = client.post(
-        f"{API}/assets/archive/upload?category=product&filename=x.png", content=b"x"
+    """公共原片 + 别人的封装，产出的记录必须是我自己的。
+
+    这一条同时验证四件事：别人的原片能借（shared）、别人的封装能用（published）、
+    记录归我（别人按 id 拿不到）、输入快照的地址指向当次归档而不是素材本身
+    （素材被原作者删掉之后仍要能复核当初喂了什么）。
+    """
+    owner = login(client, "admin", "admin@12345")
+    other = login(client, EDITOR, EDITOR_PASSWORD)
+    source = _change(
+        client, _source(client, owner), owner, field="shared", value=True
+    ).json()["data"]
+    image = upload(client, "character.png", "character", png_bytes())
+    pack = await add_pack(
+        owner=ADMIN, kind="character", name="别人的人物", reference_ids=[image["id"]]
     )
-    assert response.status_code == 403
-    assert (
-        client.post(
-            f"{API}/assets/archive/import", json={"relativePath": "x", "category": "source"}
-        ).status_code
-        == 403
+    created = client.post(
+        f"{API}/templates/replacement-runs",
+        json=_payload("character", source["id"], pack.id, pack.version),
+        headers=other,
     )
-    item = source(client, workspace)
-    assert (
-        client.put(
-            f"{API}/assets/archive/{item['id']}/sharing",
-            json={"expectedVersion": 0, "shared": True, "deleted": True},
-        ).status_code
-        == 400
+    assert created.status_code == 201, created.text
+    run_id = created.json()["data"]["id"]
+    try:
+        run = {"id": run_id}
+
+        mine = client.get(f"{API}/templates/replacement-runs/{run['id']}", headers=other)
+        assert mine.status_code == 200
+        assert client.get(
+            f"{API}/templates/replacement-runs/{run['id']}", headers=owner
+        ).status_code == 404, "记录属于调用者，原作者也不该看到"
+
+        inputs = mine.json()["data"]["inputSummary"]["assets"]
+        assert inputs, "准备必须留下输入快照"
+        for item in inputs:
+            assert item["url"].startswith(f"{API}/templates/replacement-runs/{run['id']}/inputs/")
+        snapshot = client.get(inputs[0]["url"], headers=other)
+        assert snapshot.status_code == 200, "快照要能被调用者自己取回"
+    finally:
+        await drop_run(run_id)
+        await drop_pack(pack.id)
+
+
+async def test_revoking_sharing_blocks_new_runs_but_keeps_old_ones(client: TestClient) -> None:
+    """收回分享不影响已经开始的记录——它已经复制走了，历史不能因为借出方反悔而消失。
+
+    但新建必须被拒，而且要回 404「停止共享」：前端据此提示「换一段原片」，
+    而不是笼统的 500。
+    """
+    owner = login(client, "admin", "admin@12345")
+    other = login(client, EDITOR, EDITOR_PASSWORD)
+    shared = _change(
+        client, _source(client, owner), owner, field="shared", value=True
+    ).json()["data"]
+    image = upload(client, "character.png", "character", png_bytes())
+    pack = await add_pack(
+        owner=ADMIN, kind="character", name="别人的人物", reference_ids=[image["id"]]
     )
-
-
-def test_specialist_publication_and_preview_are_cross_account(
-    workspace: Path, client: TestClient
-) -> None:
-    uid, version = pack(client, workspace)
-    actor(client, "B", "asset:read", "template:read", "template:use")
-    result = client.get(f"{API}/templates/replacement-packs/available")
-    assert result.status_code == 200
-    published = result.json()["data"]["items"][0]
-    assert published["id"] == uid and published["available"]
-    assert client.get(published["coverUrl"]).status_code == 200
-    assert client.get(f"{API}/templates/replacement-packs").status_code == 403
-    assert (
-        client.post(
-            f"{API}/templates/replacement-packs/{uid}/disable", json={"expectedRevision": 1}
-        ).status_code
-        == 403
+    created = client.post(
+        f"{API}/templates/replacement-runs",
+        json=_payload("character", shared["id"], pack.id, pack.version),
+        headers=other,
     )
-    assert version == 1
+    assert created.status_code == 201, created.text
+    run_id = created.json()["data"]["id"]
+    try:
+        _change(client, shared, owner, field="shared", value=False)
+
+        again = client.post(
+            f"{API}/templates/replacement-runs",
+            json=_payload("character", shared["id"], pack.id, pack.version),
+            headers=other,
+        )
+        assert again.status_code == 404
+        assert "停止共享" in again.text
+
+        kept = client.get(f"{API}/templates/replacement-runs/{run_id}", headers=other)
+        assert kept.status_code == 200
+    finally:
+        await drop_run(run_id)
+        await drop_pack(pack.id)
 
 
-def test_shared_source_and_published_target_create_callers_snapshot(
-    workspace: Path, monkeypatch: pytest.MonkeyPatch, client: TestClient
-) -> None:
-    from modules.template import replacement_service
+async def test_referenced_reference_cannot_be_trashed(client: TestClient) -> None:
+    """「参考图被删导致准备失败」这条路根本不该存在——删除时就被引用检查挡下。
 
-    monkeypatch.setattr(
-        replacement_service,
-        "_compile",
-        lambda *_: replacement_service.Compilation(
-            prompt="isolated compiled prompt", compiler_version="test"
-        ),
+    拦在删除而不是拦在准备，是有意的：`prepare` 只有在封装已被引用、且素材
+    已经消失时才需要处理这个分支，而那种状态只可能来自历史迁移。让日常删除
+    通过，等于把「封装里少一张图」变成一条只能靠执行器报 ENOENT 才能发现的故障。
+    """
+    owner = login(client, "admin", "admin@12345")
+    other = login(client, EDITOR, EDITOR_PASSWORD)
+    image = upload(client, "character.png", "character", png_bytes())
+    # 原片要借出去才轮得到别人准备，否则挡在前面的会是「停止共享」而不是引用检查
+    source = _change(
+        client, _source(client, owner), owner, field="shared", value=True
+    ).json()["data"]
+    pack = await add_pack(
+        owner=ADMIN, kind="character", name="人物", reference_ids=[image["id"]]
     )
-    item = source(client, workspace)
-    uid, version = pack(client, workspace)
-    payload = PrepareReplacement(
-        request_id=uuid.uuid4(),
-        kind="product",
-        source_id=item["id"],
-        pack_id=uid,
-        pack_version=version,
-        reference_ids=["forged"],
-        target="forged",
-        # 产品包只接受它审核过的范围；留空会被 `_check_scope` 直接拒绝。
-        replacement_scope="人物上身穿着",
-    )
-    with pytest.raises(NotFound):
-        prepare(payload, "B", require_pack=True)
-    assert change(client, item["id"], "A", "sharing", shared=True).status_code == 200
-    run = prepare(payload, "B", require_pack=True)
-    assert run.target == "专员产品"
-    path = Path(run.archive_path)
-    assert (path / "inputs/source-original.mp4").read_bytes() == (
-        workspace / item["path"]
-    ).read_bytes()
-    assert MediaCatalog().storage.read(path / "run.json")["owner_id"] == "B"
-    MediaCatalog().check_run(path)
-    assert change(client, item["id"], "A", "sharing", shared=False).status_code == 200
-    with pytest.raises(NotFound):
-        MediaCatalog().check_run(path)
-    assert (path / "inputs/source-original.mp4").is_file()
-    from infra.ai import libtv_process
+    try:
+        trashed = _change(client, image, owner, field="deleted", value=True)
+        assert trashed.status_code == 409
+        assert "仍被引用" in trashed.text
+        assert pack.name in trashed.text, "提示要点名是谁在用，否则用户不知道去哪改"
 
-    def no_upstream(*args, **kwargs):
-        pytest.fail("撤回共享后不能启动上游提交进程")
-
-    monkeypatch.setattr(libtv_process.subprocess, "Popen", no_upstream)
-    result = libtv_process.supervise("submit", path, workspace / "isolated-legacy", "node")
-    assert result.code == "AUTHORIZATION_REVOKED"
-
-
-def test_no_pack_http_rejected_and_readonly_cannot_prepare(
-    workspace: Path, client: TestClient
-) -> None:
-    item = source(client, workspace, "B")
-    payload = {
-        "requestId": str(uuid.uuid4()),
-        "kind": "product",
-        "sourceId": item["id"],
-        "referenceIds": ["arbitrary"],
-        "target": "x",
-    }
-    actor(client, "B", "asset:read", "template:use")
-    assert client.post(f"{API}/templates/replacement-runs", json=payload).status_code == 400
-    actor(client, "B", "asset:read", "template:read")
-    assert client.post(f"{API}/templates/replacement-runs", json=payload).status_code == 403
-
-
-def test_publish_idempotent_version_and_disable(workspace: Path, client: TestClient) -> None:
-    uid, _ = pack(client, workspace)
-    service = PackService()
-    assert service.publish(uid, "S", 1).version == 1
-    old = service.catalog.pack(uid)
-    draft = service.save(
-        PackDraftIn(
-            request_id=uuid.UUID(uid),
-            expected_revision=1,
-            kind="product",
-            name="第二版",
-            reference_ids=old.reference_ids,
-            cover_reference_id=old.cover_reference_id,
-            bindings=old.bindings,
-            supported_scopes=old.supported_scopes,
-        ),
-        "S",
-    )
-    assert service.publish(uid, "S", draft.revision).version == 2
-    assert service.catalog.published(uid, 1).name == "专员产品"
-    service.disable(uid, "S", draft.revision)
-    with pytest.raises(BadRequest):
-        service.catalog.published(uid, 1)
-
-
-def test_legacy_pack_is_not_automatically_public(workspace: Path, client: TestClient) -> None:
-    uid, _ = pack(client, workspace)
-    catalog = MediaCatalog()
-    head = catalog.pack(uid)
-    data = head.model_dump(mode="json", by_alias=True)
-    for key in ("status", "version", "publishedAt"):
-        data.pop(key, None)
-    catalog.storage.write(catalog.storage.resolve(f"catalog/packs/{uid}.json"), data)
-    assert not PackService().available()
-    assert PackService().drafts("S").items
-
-
-def test_archive_list_rejects_unknown_filter(
-    client: TestClient, workspace: Path
-) -> None:
-    """范围与状态进契约：非法值由框架回 422，而不是落到业务分支里 400。"""
-    actor(client, "u_filter", "asset:read")
-    assert client.get(f"{API}/assets/archive", params={"scope": "everyone"}).status_code == 422
-    assert client.get(f"{API}/assets/archive", params={"state": "deleted"}).status_code == 422
-    assert client.get(f"{API}/assets/archive", params={"category": "video"}).status_code == 422
+        still_usable = client.post(
+            f"{API}/templates/replacement-runs",
+            json=_payload("character", source["id"], pack.id, pack.version),
+            headers=other,
+        )
+        assert still_usable.status_code == 201, still_usable.text
+        await drop_run(still_usable.json()["data"]["id"])
+    finally:
+        await drop_pack(pack.id)

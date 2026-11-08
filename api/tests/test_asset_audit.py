@@ -47,7 +47,7 @@ def test_change_action_names_are_semantic() -> None:
 
 def test_state_changes_are_recorded(client: TestClient, api: str, entries: list[Any]) -> None:
     asset = archive.upload(client, "audited.png", "product", png_bytes((20, 20), "red"))
-    base = f"{api}/assets/archive/{asset['id']}"
+    base = f"{api}/assets/{asset['id']}"
 
     renamed = client.put(
         f"{base}/name", json={"expectedVersion": asset["stateVersion"], "name": "改名后"}

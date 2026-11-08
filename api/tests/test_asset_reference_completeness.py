@@ -37,6 +37,31 @@ def _spec(module: str, *sources: port.AssetReferenceSource) -> SimpleNamespace:
     return SimpleNamespace(name=module, asset_reference_sources=sources)
 
 
+@pytest.fixture(autouse=True)
+def _restore_registry() -> Any:
+    """把注册表还原成「刚装配完」的样子。
+
+    这个文件里的每条用例都会 `reset` 掉全局注册表（那是被测行为本身），但注册
+    发生在模块 import 期，每个进程只跑一次——不还原的话，**后面的用例会看到
+    「模块声明了来源、实现却没注册」**，于是素材删除被 fail-closed 挡住，
+    在整跑里红、单跑绿。上一次就是这样：`test_asset_references.py` 的三条
+    在整跑里失败，单文件跑全过。
+
+    还原方式与装配期完全相同（声明 + 绑定都从 `ModuleSpec` 来），所以不需要
+    在 `core` 里开一个「只给测试用」的后门。
+    """
+    yield
+    from api.discovery import discover_modules
+
+    port.reset_asset_reference_checker()
+    specs = discover_modules()
+    port.declare_expected_reference_sources(specs)
+    for spec in specs:
+        declared = tuple(getattr(spec, "asset_reference_sources", ()) or ())
+        if declared:
+            port.bind_asset_reference_sources(spec.name, declared)
+
+
 def test_declared_but_unregistered_source_refuses_delete() -> None:
     """最危险的情形：模块声明了来源，import 期却忘了注册实现。"""
     port.reset_asset_reference_checker()

@@ -7,7 +7,7 @@
 `has_` 与 `reset_`，`app modules` 看不到它，未注册时的行为也没被声明过。
 """
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 
 from core.ports.host import Port
 from core.schema import CamelModel, UtcDateTime
@@ -31,15 +31,27 @@ class ReplacementFeedRecord(CamelModel):
 
 
 #: 替换档案的读取注入口。单例：全局只有一个「档案来源」。
-_feed: Port[Callable[[str], list[ReplacementFeedRecord]]] = Port(
+#:
+#: **读端是 async**：上一版实现读归档盘上的 JSON（同步 IO），现在读数据库。
+#: 签名从 `Callable[[str], list[...]]` 改成 awaitable 不是风格偏好——同步签名
+#: 逼着调用方 `asyncio.to_thread`，而在线程里查异步连接池会拿到另一个事件循环，
+#: 结果是一个只在生产并发下才出现的「attached to a different loop」。
+_feed: Port[Callable[[str], Awaitable[list[ReplacementFeedRecord]]]] = Port(
     "replacement-feed", multi=False
 )
 
 
-def register_replacement_feed(reader: Callable[[str], list[ReplacementFeedRecord]]) -> None:
-    # 与 `set_audit_sink` 同属「设置」语义：改造前就是后写覆盖，
-    # 收紧成唯一会让测试里的换实现变成错误。
+def register_replacement_feed(
+    reader: Callable[[str], Awaitable[list[ReplacementFeedRecord]]],
+) -> None:
+    """注册口**必须保持同步**：它只在 import 期调用一次。
+
+    形参是 async reader，但注册动作不 await 任何东西。写成 `async def` 会让
+    import 期的调用点变成「未 await 的协程」——注册悄悄不生效，而 `app modules`
+    显示「未注册（任务中心看到空列表）」，能查很久。
+    """
     _feed.provide(reader, replace=True)
+
 
 
 def reset_replacement_feed() -> None:
@@ -52,7 +64,7 @@ def has_replacement_feed() -> bool:
     return _feed.has()
 
 
-def replacement_feed(owner: str) -> list[ReplacementFeedRecord]:
+async def replacement_feed(owner: str) -> list[ReplacementFeedRecord]:
     """未注册（例如只跑任务模块单测）时返回空表，不抛异常。"""
     reader = _feed.single()
-    return reader(owner) if reader else []
+    return await reader(owner) if reader else []

@@ -1,7 +1,7 @@
 """归档盘夹具：只碰文件，不碰索引。
 
 索引自 `c1d9e4b7a260` 起在 `assets` 表里，素材的创建走 HTTP 上传
-（`/api/v1/assets/archive/upload`），测试不再从服务层直接调同步方法 ——
+（`/api/v1/assets/upload`），测试不再从服务层直接调同步方法 ——
 那是旧「JSON 即索引」时代的写法，留着会掩盖真正的入库路径。
 """
 
@@ -44,7 +44,7 @@ class ArchiveFixtures:
     def upload(self, client: TestClient, filename: str, category: str, content: bytes) -> dict:
         """走真实上传接口登记素材，返回出参（与前端拿到的完全一致）。"""
         response = client.post(
-            "/api/v1/assets/archive/upload",
+            "/api/v1/assets/upload",
             params={"filename": filename, "category": category},
             content=content,
             headers={"Content-Type": "application/octet-stream"},

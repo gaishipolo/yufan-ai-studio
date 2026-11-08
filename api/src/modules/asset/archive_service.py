@@ -87,7 +87,7 @@ from modules.asset.archive_schema import (
     ArchiveState,
     ImportAsset,
 )
-from modules.asset.errors import AssetInUse, AssetQuotaExceeded
+from modules.asset.errors import AssetInUse, AssetQuotaExceeded, FileTypeNotAllowed
 from modules.asset.mirror import MirrorProjector, project_after_commit
 from modules.asset.models import Asset
 from modules.asset.schema import AssetSource
@@ -321,6 +321,12 @@ class ArchiveAssetService:
         self, source: Path, filename: str, category: MediaCategory, owner: str
     ) -> ArchivedAsset:
         ext = Path(filename).suffix.lower()
+        # 扩展名先自己判一遍，而不是等 `probe_media`：它属于基础设施层，只能报
+        # 通用 `BadRequest`（40000），业务侧的 `FileTypeNotAllowed`（40051）就到
+        # 不了前端。两套素材接口合并时这个码差点静默消失——前端本来靠它单独提示
+        # 「格式不支持」，退化成 40000 之后只能显示一句通用错误。
+        if ext not in EXTENSIONS:
+            raise FileTypeNotAllowed()
         info = await asyncio.to_thread(probe_media, source, ext)
         mime = EXTENSIONS[ext]
         kind = _kind_of(mime)
@@ -501,7 +507,7 @@ class ArchiveAssetService:
         if not item.editable:
             item.path = ""
             item.sha256 = ""
-            item.url = f"{settings.api_prefix}/assets/archive/{row.id}/preview"
+            item.url = f"{settings.api_prefix}/assets/{row.id}/preview"
         return item
 
 

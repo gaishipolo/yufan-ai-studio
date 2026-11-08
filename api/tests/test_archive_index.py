@@ -48,7 +48,7 @@ def png(size: tuple[int, int] = (20, 30)) -> bytes:
 
 def upload(client: TestClient, name: str, category: str, content: bytes) -> dict:
     response = client.post(
-        f"{API}/assets/archive/upload",
+        f"{API}/assets/upload",
         params={"filename": name, "category": category},
         content=content,
         headers={"Content-Type": "application/octet-stream"},
@@ -82,8 +82,8 @@ def seed_index(root: Path, *, owner: str, content: bytes | None = None) -> dict:
         "height": 30,
         "duration": 0,
         "hasAudio": False,
-        "url": f"{API}/assets/archive/{asset_id}/file",
-        "previewUrl": f"{API}/assets/archive/{asset_id}/thumbnail",
+        "url": f"{API}/assets/{asset_id}/file",
+        "previewUrl": f"{API}/assets/{asset_id}/thumbnail",
         "ownerId": owner,
         "previewPath": f"library/previews/{asset_id}.jpg",
     }
@@ -121,7 +121,7 @@ def test_upload_writes_row_and_json_mirror(client: TestClient, archive_root: Pat
     # 预览 key 带画质版本：升级转码参数时旧缓存自动失效（不手工清目录）
     assert mirror["previewPath"] == preview_key(item["sha256"])
 
-    listed = client.get(f"{API}/assets/archive", params={"category": "character"})
+    listed = client.get(f"{API}/assets", params={"category": "character"})
     ids = [value["id"] for value in listed.json()["data"]["items"]]
     assert item["id"] in ids
 
@@ -131,9 +131,9 @@ def test_list_survives_lost_json(client: TestClient, archive_root: Path) -> None
     item = upload(client, "镜像丢失.png", "character", png())
     (archive_root / "catalog" / "assets" / f"{item['id']}.json").unlink()
 
-    listed = client.get(f"{API}/assets/archive").json()["data"]
+    listed = client.get(f"{API}/assets").json()["data"]
     assert item["id"] in [value["id"] for value in listed["items"]]
-    assert client.get(f"{API}/assets/archive/{item['id']}/file").status_code == 200
+    assert client.get(f"{API}/assets/{item['id']}/file").status_code == 200
 
 
 def test_upload_deduplicates_within_archive(client: TestClient, archive_root: Path) -> None:
@@ -153,24 +153,29 @@ def test_same_bytes_in_different_categories_coexist(client: TestClient, archive_
     assert character["id"] != product["id"]
 
 
-def test_same_bytes_can_live_in_both_libraries(client: TestClient, archive_root: Path) -> None:
-    """网页上传与归档登记是两条记录：两套物理副本、两套 URL。"""
+def test_one_library_serves_the_single_entry_point(
+    client: TestClient, archive_root: Path
+) -> None:
+    """合并之后 `/assets` 就是归档本身：登记过的原片在列表里，也能按 id 打开。
+
+    合并前这里恰好是两条相反的断言——「`/assets` 不返回归档行」「按 id 打开 404」。
+    那正是两套索引各自的证据，也是两套前端页面存在的原因。现在只有一套索引，
+    同一份字节只可能有一条记录，这两条都必须反过来。
+    """
     content = png()
-    archived = upload(client, "同文件.png", "character", content)
-    uploaded = client.post(
-        f"{API}/assets/upload", content=content, params={"filename": "同文件.png"}
-    )
-    assert uploaded.status_code == 201, uploaded.text
-    assert uploaded.json()["data"]["id"] != archived["id"]
-
-
-def test_web_library_excludes_archive_rows(client: TestClient, archive_root: Path) -> None:
-    archived = upload(client, "归档.png", "character", png())
+    archived = upload(client, "同源.png", "character", content)
 
     listed = client.get(f"{API}/assets", params={"pageSize": 100}).json()["data"]
-    assert archived["id"] not in [value["id"] for value in listed["items"]]
-    # 归档行没有对象存储里的文件，走 /assets/{id}/file 只会拼出必然 404 的地址
-    assert client.get(f"{API}/assets/{archived['id']}").status_code == 404
+    assert archived["id"] in [item["id"] for item in listed["items"]]
+    assert client.get(f"{API}/assets/{archived['id']}").status_code == 200
+
+    again = client.post(
+        f"{API}/assets/upload",
+        content=content,
+        params={"filename": "同源.png", "category": "character"},
+    )
+    assert again.status_code == 201, again.text
+    assert again.json()["data"]["id"] == archived["id"], "一套索引只留一条记录"
 
 
 # ---------------------------------------------------------------- 导入命令

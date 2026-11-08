@@ -1,6 +1,6 @@
 """前端用途词表必须与后端逐字一致。
 
-`studio/src/entities/template/model/packRoles.ts` 是 `core/pack_roles.py` 的副本，
+`studio/src/entities/template/model/packRoles.ts` 是 `modules/template/pack_roles.py` 的副本，
 编辑器在目录接口返回前就要渲染选项。两边漂移时前端会显示旧标签、提交旧 key，
 所以在这里直接读 TS 源文件比对，而不是靠评审时肉眼核对。
 """
@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from core.pack_roles import BASE_ROLE, PACK_ROLES, PACK_SCOPES
+from modules.template.pack_roles import BASE_ROLE, PACK_ROLES, PACK_SCOPES
 
 STUDIO_TS = (
     Path(__file__).resolve().parents[2]

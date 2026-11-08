@@ -1,6 +1,6 @@
 """归档素材的「彻底删除」：DB 行 + JSON 镜像 + 没人再引用的字节，一次做完。
 
-为什么单独一个模块：`DELETE /assets/archive/{id}` 和 `app prune-blobs
+为什么单独一个模块：`DELETE /assets/{id}` 和 `app prune-blobs
 --include-trash` 要做的是同一件事，两处各写一遍一定会漂移——最危险的漂移是
 「一处查了引用、另一处没查」。审计留痕也放在这里，两条入口都覆盖到。
 

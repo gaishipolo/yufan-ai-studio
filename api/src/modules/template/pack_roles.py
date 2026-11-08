@@ -1,12 +1,15 @@
 """封装素材的角色词汇：图片用途、必备角色与可替换范围。
 
 这些常量决定三件事，改动前先确认三处都还能对上：
-1. 封装编辑器给每张参考图选什么用途（前端从这里派生的同构表）；
+1. 封装编辑器给每张参考图选什么用途（前端 `entities/template/model/packRoles.ts`
+   是它的副本，`tests/test_pack_roles_sync.py` 逐字比对，漂移就红）；
 2. 发布前校验哪些用途不能缺（`required_roles` ∪ 基准角色）；
 3. 生成提示词时每张图被赋予的说明文字（`usage`）。
 
-旧工作台把这三者写在 Django service 里；这里抽成纯数据模块，
-让 `core.media`（存储模型）和 `modules.template`（封装/替换）共用同一份事实。
+**位置变更记录**：这份词表原先在 `core/pack_roles.py`。搬进模块的判据是
+「放在 core 的条件是两个以上互不认识的模块都要用」——它只有一个消费者
+（模板库），另一个引用它的 `core/media.py` 本身也是模板私有代码。放在 core
+只会让「删掉模板库」变成一次跨层手术。
 """
 
 from __future__ import annotations

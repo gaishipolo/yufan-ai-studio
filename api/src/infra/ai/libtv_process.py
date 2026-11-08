@@ -31,7 +31,6 @@ from infra.ai.libtv import get_libtv_settings
 from infra.ai.libtv_state import LIBTV_PROCESS_PROTOCOL, RUN_LOCK, ExecutorResult
 from infra.archive import ArchiveStorage, get_archive_storage, lease
 from infra.archive.base import acquire, release
-from infra.media_catalog import MediaCatalog, catalog_lease
 
 PROTOCOL_VERSION = LIBTV_PROCESS_PROTOCOL
 logger = get_logger(__name__)
@@ -123,10 +122,11 @@ def run_node(
     # 「代码改了、行为没变」，排查时极难发现。此处已持 executor 排他锁，无并发写。
     shutil.copyfile(RUNTIME, code)
     if stage == "submit":
-        with catalog_lease(storage):
-            MediaCatalog(storage).check_run(run)
-            # 最终授权边界；释放共享目录租约后才启动上游，不长持素材锁。
-            storage.write(run / "records/call-authorization.json", {"authorized": True})
+        # 最终授权校验（原片仍可用、封装仍已发布）已移到业务层
+        # （`modules/template` 的提交入口）在调用执行器之前完成：
+        # 那里能查数据库，而这里只有文件系统。凡能走到这一步的调用都已被授权，
+        # 这里只留一份「谁批准了这次提交」的凭据给事后排查。
+        storage.write(run / "records/call-authorization.json", {"authorized": True})
     result.phase = "starting"
     storage.write(run / "records/executor-result.json", result.model_dump())
     old_error = run / "records/executor-error.json"

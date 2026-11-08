@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from modules.template.replacement_titles import task_name
+from modules.template.titles import task_name
 
 
 def test_long_source_name_is_truncated_not_wrapped() -> None:
@@ -19,3 +19,8 @@ def test_short_source_name_keeps_extension_stripped() -> None:
 def test_missing_and_empty_source_names_fall_back() -> None:
     assert task_name(None, "scene", "海边", "0" * 32).startswith("历史档案未记录原片 · ")
     assert task_name("   ", "scene", "海边", "0" * 32).startswith("未命名原片 · ")
+
+
+def test_target_is_optional() -> None:
+    """没填对象时不能留下「· ·」这种空洞，也不能少一段分隔。"""
+    assert task_name("vlog.mp4", "scene", "  ", "a" * 32) == "vlog · 场景替换 · #AAAAAAAA"

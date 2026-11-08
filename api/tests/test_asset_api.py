@@ -2,6 +2,11 @@
 
 有意覆盖的失败路径比成功路径多——上传的每条校验（类型、大小、内容伪装）都是
 「不写在这儿就等于没有」的那种代码，成功路径反而是最容易碰巧通过的。
+
+**合并之后这份文件变短了**：`/assets` 现在就是归档那一套（`/assets/archive` 已
+删除），旧的 `coverUrl` / `fileUrl` / `counts` 三个出参随旧实现一起消失，对应的
+断言也不再需要。留下的是与「接口形状」无关的守卫：类型与内容校验、去重、分页
+不重不漏、Range、引用拦截、未知 id。
 """
 
 from __future__ import annotations
@@ -25,9 +30,20 @@ def png_bytes(size: tuple[int, int] = (40, 60), color: str = "purple") -> bytes:
     return buffer.getvalue()
 
 
-def _upload(client: TestClient, api: str, filename: str, content: bytes):
+def _upload(
+    client: TestClient, api: str, filename: str, content: bytes, category: str = "character"
+):
     return client.post(
-        f"{api}/assets/upload", content=content, params={"filename": filename}
+        f"{api}/assets/upload",
+        content=content,
+        params={"filename": filename, "category": category},
+    )
+
+
+def _trash(client: TestClient, api: str, asset: dict[str, Any]):
+    return client.put(
+        f"{api}/assets/{asset['id']}/deleted",
+        json={"expectedVersion": asset["stateVersion"], "deleted": True},
     )
 
 
@@ -39,19 +55,26 @@ def create(client: TestClient, api: str) -> PngUploader:
     引擎会有 loop 绑定的隐患，而「用接口造数、用接口清理」本身就是
     对删除路径的顺带验证。
     """
-    created: list[str] = []
 
     def make(filename: str, content: bytes) -> dict[str, Any]:
         response = _upload(client, api, filename, content)
         assert response.status_code == 201, response.text
-        data = response.json()["data"]
-        created.append(data["id"])
-        return data
+        return response.json()["data"]
 
     yield make
 
-    for asset_id in created:
-        client.delete(f"{api}/assets/{asset_id}")
+    # 收尾要按「先进回收站 → 再彻底删」两步走：合并后单条 DELETE 只接受回收站
+    # 里的记录，直接删会 400，测试收尾就会互相留下垃圾
+    listed = client.get(f"{api}/assets", params={"scope": "mine", "pageSize": 200})
+    for item in listed.json()["data"]["items"]:
+        if not item["name"].startswith(("up-", "dup-", "page-", "serve-", "range-", "used-")):
+            continue
+        if item["deletedAt"] is None:
+            client.put(
+                f"{api}/assets/{item['id']}/deleted",
+                json={"expectedVersion": item["stateVersion"], "deleted": True},
+            )
+        client.delete(f"{api}/assets/{item['id']}")
 
 
 def test_upload_returns_metadata_and_derived_cover(create: PngUploader, api: str) -> None:
@@ -61,12 +84,12 @@ def test_upload_returns_metadata_and_derived_cover(create: PngUploader, api: str
     assert data["type"] == "image"
     assert data["mimeType"] == "image/png"
     assert (data["width"], data["height"]) == (40, 60)
-    assert data["source"] == "upload"
-    assert data["category"] is None, "个人上传默认未分类"
-    assert data["fileUrl"].endswith(f"/assets/{data['id']}/file")
-    # 托管封面指向本服务的取封面端点，不是存储驱动给的 `/static/<key>`：
-    # 后者根本没挂载，前端拿它渲染就是一片裂图
-    assert data["coverUrl"] == f"{api}/assets/{data['id']}/cover"
+    assert data["category"] == "character"
+    # 取件地址指向本服务，不是存储驱动给的 `/static/<key>`：后者根本没挂载，
+    # 前端拿它渲染就是一片裂图
+    assert data["url"] == f"{api}/assets/{data['id']}/file"
+    assert data["sha256"], "摘要既是去重键也是存储 key 的来源"
+    assert data["stateVersion"] == 0
 
 
 def test_duplicate_upload_reuses_the_record(client: TestClient, api: str) -> None:
@@ -75,17 +98,12 @@ def test_duplicate_upload_reuses_the_record(client: TestClient, api: str) -> Non
     first = _upload(client, api, "dup-a.png", payload).json()["data"]
     second = _upload(client, api, "dup-b.png", payload).json()["data"]
 
-    try:
-        assert first["id"] == second["id"], "同内容重复上传应复用旧记录"
-        ids = {
-            item["id"]
-            for item in client.get(f"{api}/assets", params={"keyword": "dup-"}).json()["data"][
-                "items"
-            ]
-        }
-        assert ids == {first["id"]}
-    finally:
-        client.delete(f"{api}/assets/{first['id']}")
+    assert first["id"] == second["id"], "同内容重复上传应复用旧记录"
+    ids = {
+        item["id"]
+        for item in client.get(f"{api}/assets", params={"keyword": "dup-"}).json()["data"]["items"]
+    }
+    assert ids == {first["id"]}
 
 
 def test_upload_rejects_unknown_extension(client: TestClient, api: str) -> None:
@@ -109,15 +127,15 @@ def test_upload_rejects_empty_body(client: TestClient, api: str) -> None:
 def test_upload_enforces_size_limit(
     client: TestClient, api: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """上限用常量控制，测试里调小，不真的造 50MB 流量。"""
-    from modules.asset import service as asset_service
+    """上限用常量控制，测试里调小，不真的造 300MB 流量。"""
+    from modules.asset import archive_service
 
-    monkeypatch.setattr(asset_service, "MAX_ASSET_BYTES", 1024)
+    monkeypatch.setattr(archive_service, "MAX_BYTES", 1024)
 
     response = _upload(client, api, "big.png", png_bytes((80, 80)) + b"\x00" * 4096)
 
-    assert response.status_code == 413
-    assert response.json()["code"] == 41351
+    assert response.status_code == 400
+    assert "300MB" in response.text
 
 
 def test_list_paginates_without_gaps_or_duplicates(
@@ -140,22 +158,17 @@ def test_list_paginates_without_gaps_or_duplicates(
     assert first["items"][0]["createdAt"] >= first["items"][1]["createdAt"], "倒序"
 
 
-def test_list_counts_respect_filters(client: TestClient, api: str, create: PngUploader) -> None:
-    create("count-only.png", png_bytes())
-
-    data = client.get(f"{api}/assets", params={"keyword": "count-"}).json()["data"]
-
-    assert data["counts"] == {"all": 1, "image": 1, "video": 0, "audio": 0}
-
-
 def test_delete_is_blocked_when_referenced(
     client: TestClient, api: str, create: PngUploader
 ) -> None:
-    """注入口契约：接上实现后，被引用的素材必须 409 并说明被谁引用。
+    """注入口契约：被引用的素材必须 409 并说明被谁引用。
 
-    真实实现（`video_tasks.reference_asset_ids`）的端到端覆盖见
-    `test_asset_references.py`；这里用替身，是为了单独验证「服务层确实问了
-    注入口」且描述原样透出，不依赖任务模块的数据。
+    拦截点在「移入回收站」这一步，不在彻底删除那一步：等它进了回收站才发现被引用，
+    用户已经看不到它了，却还得再翻回来恢复。
+
+    真实实现（`video_tasks.reference_asset_ids` / `template_pack_references.asset_id`）
+    的端到端覆盖见 `test_asset_references.py`；这里用替身，是为了单独验证
+    「服务层确实问了注入口」且描述原样透出。
     """
     from modules.task.asset_references import TaskAssetReferences
     from modules.template.asset_references import PackAssetReferences
@@ -170,7 +183,7 @@ def test_delete_is_blocked_when_referenced(
     reset_asset_reference_checker()
     register_asset_reference_checker(FakeChecker())
     try:
-        response = client.delete(f"{api}/assets/{asset['id']}")
+        response = _trash(client, api, asset)
     finally:
         reset_asset_reference_checker()
         register_asset_reference_checker(TaskAssetReferences())
@@ -181,19 +194,30 @@ def test_delete_is_blocked_when_referenced(
     assert "圣诞活动" in str(response.json()["details"])
 
 
-def test_file_and_cover_endpoints_serve_bytes(
+def test_purging_requires_the_trash_first(
     client: TestClient, api: str, create: PngUploader
 ) -> None:
+    """彻底删除只接受回收站里的记录：一步到位等于没有二次确认。"""
+    asset = create("used-purge.png", png_bytes((12, 12), "navy"))
+
+    direct = client.delete(f"{api}/assets/{asset['id']}")
+    assert direct.status_code == 400
+    assert "回收站" in direct.text
+
+    assert _trash(client, api, asset).status_code == 200
+    assert client.delete(f"{api}/assets/{asset['id']}").status_code == 204
+
+
+def test_file_endpoints_serve_bytes(client: TestClient, api: str, create: PngUploader) -> None:
     asset = create("serve.png", png_bytes((24, 24), "green"))
 
     file_response = client.get(f"{api}/assets/{asset['id']}/file")
-    cover_response = client.get(f"{api}/assets/{asset['id']}/cover")
+    thumbnail_response = client.get(f"{api}/assets/{asset['id']}/thumbnail")
 
     assert file_response.status_code == 200
     assert file_response.headers["content-type"] == "image/png"
     assert file_response.content[:8] == b"\x89PNG\r\n\x1a\n"
-    assert cover_response.status_code == 200
-    assert cover_response.headers["content-type"] == "image/jpeg"
+    assert thumbnail_response.status_code == 200
 
 
 def test_file_endpoint_supports_range_requests(
@@ -202,15 +226,13 @@ def test_file_endpoint_supports_range_requests(
     """视频拖动进度条依赖 Range：本地驱动必须走 FileResponse 而不是整包返回。"""
     asset = create("range.png", png_bytes((30, 30), "white"))
 
-    response = client.get(
-        f"{api}/assets/{asset['id']}/file", headers={"Range": "bytes=0-15"}
-    )
+    response = client.get(f"{api}/assets/{asset['id']}/file", headers={"Range": "bytes=0-15"})
 
     assert response.status_code == 206
     assert len(response.content) == 16
 
 
 def test_unknown_asset_is_404(client: TestClient, api: str) -> None:
-    assert client.get(f"{api}/assets/not-a-real-id").status_code == 404
-    assert client.delete(f"{api}/assets/not-a-real-id").status_code == 404
-    assert client.get(f"{api}/assets/not-a-real-id/file").status_code == 404
+    assert client.get(f"{api}/assets/{'0' * 32}").status_code == 404
+    assert client.delete(f"{api}/assets/{'0' * 32}").status_code == 404
+    assert client.get(f"{api}/assets/{'0' * 32}/file").status_code == 404

@@ -1,8 +1,13 @@
 """`assets` 表的约束与默认值。
 
-这里验的是**数据库层**的保证，不是业务逻辑：去重由 `AssetService` 先查后写，
+这里验的是**数据库层**的保证，不是业务逻辑：去重由归档服务先查后写，
 但那套逻辑只有在「数据库真的会拒绝第二条重复摘要」时才成立。少了这条约束，
 并发上传同一文件会静默产生两条记录和两份文件。
+
+**归属隔离不在这里**：它以前有一条对着 `AssetService` 的单元用例，两套素材接口
+合并时那个服务被删了。现在隔离由归档服务的 `owned()` 一处保证，端到端覆盖在
+`test_assets_integration.py`（别人改不了你的分享开关）与 `test_replacement_review.py`
+（别人的任务一律 404）。
 """
 
 from __future__ import annotations
@@ -79,23 +84,3 @@ async def test_same_digest_other_owner_is_allowed(session) -> None:
     await session.flush()
 
     assert other.id != ""
-
-
-async def test_service_hides_other_owners_asset(session) -> None:
-    """归属隔离在 service 层就断掉：别人的素材一律当作不存在。"""
-    from core.context import CurrentUser
-    from infra.storage.local import LocalStorage
-    from modules.asset.errors import AssetNotFound
-    from modules.asset.service import AssetService
-
-    foreign = Asset(name="foreign.png", type="image", owner_id=_OTHER)
-    session.add(foreign)
-    await session.flush()
-
-    service = AssetService(session, LocalStorage())
-    actor = CurrentUser(id=_OWNER, name="tester")
-
-    with pytest.raises(AssetNotFound):
-        await service.get_asset(actor, foreign.id)
-    with pytest.raises(AssetNotFound):
-        await service.delete_asset(actor, foreign.id)

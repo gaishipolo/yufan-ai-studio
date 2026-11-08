@@ -1,38 +1,21 @@
-"""模板路由。"""
+"""模板库路由聚合。
+
+前缀 `/templates` 与子路由 `/replacement-packs`、`/replacement-runs`、
+`/replacement-catalog` 都保持重建前的形状——前端 41 个文件按这些路径对接。
+
+**没有 `GET /templates`**：重建前它返回一张 `video_templates` 演示表，前端
+`useTemplates()` 全仓库零调用，而且形状还对不上（声明 `Paginated`、实际返回
+`{items,total}`）。本轮重建的范围是替换流水线，不带模板目录，所以这条路径
+连同那张表一起删掉了。
+"""
 
 from __future__ import annotations
 
-from typing import Annotated
+from fastapi import APIRouter
 
-from fastapi import APIRouter, Depends, Query
-
-from api.deps import SessionDep, require
-from core.context import CurrentUser
-from core.response import ApiResponse
 from modules.template.pack_router import router as pack_router
 from modules.template.replacement_router import router as replacement_router
-from modules.template.schema import TemplateListOut
-from modules.template.service import TemplateService
 
 router = APIRouter(prefix="/templates", tags=["模板"])
 router.include_router(replacement_router)
 router.include_router(pack_router)
-
-
-def get_template_service(session: SessionDep) -> TemplateService:
-    return TemplateService(session)
-
-
-TemplateServiceDep = Annotated[TemplateService, Depends(get_template_service)]
-
-# ---------- 权限依赖 ----------
-TemplateReadDep = Annotated[CurrentUser, Depends(require("template:read"))]
-
-
-@router.get("", summary="模板列表")
-async def list_templates(
-    service: TemplateServiceDep,
-    actor: TemplateReadDep,
-    industry: Annotated[str | None, Query(max_length=64)] = None,
-) -> ApiResponse[TemplateListOut]:
-    return ApiResponse.ok(await service.list_templates(industry=industry))

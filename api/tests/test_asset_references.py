@@ -63,10 +63,20 @@ def _delete_tasks(task_ids: list[str]) -> None:
 
 def _upload(client: TestClient, api: str, name: str) -> dict[str, Any]:
     response = client.post(
-        f"{api}/assets/upload", content=png_bytes((20, 20), "orange"), params={"filename": name}
+        f"{api}/assets/upload",
+        content=png_bytes((20, 20), "orange"),
+        params={"filename": name, "category": "character"},
     )
     assert response.status_code == 201, response.text
     return response.json()["data"]
+
+
+def _trash(client: TestClient, api: str, asset: dict[str, Any]):
+    """引用拦截发生在「移入回收站」：进了回收站才发现被引用，用户已经看不到它了。"""
+    return client.put(
+        f"{api}/assets/{asset['id']}/deleted",
+        json={"expectedVersion": asset["stateVersion"], "deleted": True},
+    )
 
 
 def test_checker_is_registered_at_startup(client: TestClient) -> None:
@@ -83,7 +93,7 @@ def test_delete_blocked_by_referencing_task(client: TestClient, api: str) -> Non
     asset = _upload(client, api, "referenced.png")
     task_id = _create_task("圣诞活动主片", [asset["id"]])
     try:
-        response = client.delete(f"{api}/assets/{asset['id']}")
+        response = _trash(client, api, asset)
         assert response.status_code == 409, response.text
         assert response.json()["code"] == 40951
         references = response.json()["details"]["references"]
@@ -91,11 +101,13 @@ def test_delete_blocked_by_referencing_task(client: TestClient, api: str) -> Non
         assert any("圣诞活动主片" in item for item in references), references
         assert any(task_id in item for item in references), references
 
-        # 拦截不能是「删了一半」：库里的行与字节都还在
+        # 拦截不能是「删了一半」：行还在，也没被标记成已删除
         still_there = client.get(f"{api}/assets/{asset['id']}")
         assert still_there.status_code == 200, still_there.text
+        assert still_there.json()["data"]["deletedAt"] is None
     finally:
         _delete_tasks([task_id])
+        _trash(client, api, asset)
         client.delete(f"{api}/assets/{asset['id']}")
 
 
@@ -105,6 +117,8 @@ def test_delete_allowed_after_task_removed(client: TestClient, api: str) -> None
     task_id = _create_task("已清理的任务", [asset["id"]])
     _delete_tasks([task_id])
 
+    trashed = _trash(client, api, asset)
+    assert trashed.status_code == 200, trashed.text
     response = client.delete(f"{api}/assets/{asset['id']}")
 
     assert response.status_code == 204, response.text
@@ -118,6 +132,6 @@ def test_unregistered_checker_refuses_delete(client: TestClient, api: str) -> No
     """
     asset = _upload(client, api, "no-checker.png")
     reset_asset_reference_checker()
-    response = client.delete(f"{api}/assets/{asset['id']}")
+    response = _trash(client, api, asset)
     assert response.status_code == 503
     assert "引用检查不可用" in response.json()["message"]

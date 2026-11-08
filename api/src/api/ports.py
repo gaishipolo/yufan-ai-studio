@@ -130,10 +130,10 @@ PORT_CATALOG: tuple[PortSpec, ...] = (
         name="asset-references",
         module="core.ports.assets",
         protocol="AssetReferenceChecker",
-        implementer="由 `ModuleSpec.asset_reference_sources` 声明："
-        "modules/task（`video_tasks.reference_asset_ids`）+ "
-        "modules/template（`MediaPack.reference_ids`，封装 head / 草稿）；"
-        "两者引用同一个 `assets.id`，AST 守卫对账新增写入点",
+        implementer="由 `ModuleSpec.asset_reference_sources` 声明。当前实现者："
+        "modules/task（`video_tasks.reference_asset_ids`）、"
+        "modules/template（`template_pack_references.asset_id`，只算封装 head，"
+        "已发布的历史版本不算引用）",
         when_unregistered="fail-closed（见本文件开头的例外说明）：来源不齐抛 503，"
         "删除一律拒绝。这里返回中性值等于静默放行不可逆删除",
         is_registered=lambda: not reference_source_gaps(),
@@ -142,7 +142,8 @@ PORT_CATALOG: tuple[PortSpec, ...] = (
         name="replacement-feed",
         module="core.feed",
         protocol="",  # 类型是 Callable 别名，没有具名协议类
-        implementer="modules/template（导入模块时自注册 replacement_feed 读取器）",
+        implementer="modules/template 的 `feed_provider.read_feed`，读 "
+        "`replacement_runs` 表（不再扫归档盘上的指针）",
         when_unregistered="任务中心看到空列表：替换档案不计入待办与统计，"
         "但页面本身仍可用",
         is_registered=has_replacement_feed,

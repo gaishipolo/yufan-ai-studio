@@ -2,7 +2,7 @@
 
 > 此文件由 `app export-openapi` 自动生成，请勿手工编辑。
 >
-> 版本 `0.2.0`｜共 **84** 个接口 / **10** 个模块
+> 版本 `0.2.0`｜共 **77** 个接口 / **10** 个模块
 >
 > 重新生成：`cd api && .venv/Scripts/python -m cli export-openapi`
 
@@ -164,6 +164,7 @@ Authorization: Bearer <accessToken>
 | `40925` | 409 | identity | `CannotTargetSelf` | 不能停用或删除自己的账号 |
 | `40926` | 409 | identity | `LastSuperuser` | 系统必须保留至少一个启用的超级管理员 |
 | `40951` | 409 | asset | `AssetInUse` | 素材仍被引用，不能删除 |
+| `40971` | 409 | template | `TemplateBusy` | 模板正在处理中，请稍后再试 |
 | `40991` | 409 | export | `ExportBusy` | 同一份数据正在导出中，请等待它完成 |
 | `40992` | 409 | export | `ExportNotReady` | 导出尚未生成完成，请稍后再试 |
 | `41091` | 410 | export | `ExportGone` | 导出文件已过保留期被回收，请重新导出 |
@@ -183,9 +184,9 @@ Authorization: Bearer <accessToken>
 | 身份 | 26 | 见下方 `4.1` |
 | 任务 | 9 | 见下方 `4.2` |
 | 模型 | 1 | 见下方 `4.3` |
-| 素材 | 18 | 见下方 `4.4` |
+| 素材 | 12 | 见下方 `4.4` |
 | 生图 | 3 | 见下方 `4.5` |
-| 模板 | 17 | 见下方 `4.6` |
+| 模板 | 16 | 见下方 `4.6` |
 | 分镜模板 | 1 | 见下方 `4.7` |
 | 镜头库 | 1 | 见下方 `4.8` |
 | 系统 | 2 | 见下方 `4.9` |
@@ -1024,52 +1025,24 @@ Authorization: Bearer <accessToken>
 | `items` | `ModelOut[]` | 否 |  |
 | `total` | `number` | 否 |  |
 
-### 4.4 素材（18 个）
+### 4.4 素材（12 个）
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
-| `GET` | `/api/v1/assets` | 素材列表（分页 + 类型分面计数） | 🔒 |
-| `GET` | `/api/v1/assets/archive` | 归档素材列表与空间占用 | 🔒 |
-| `POST` | `/api/v1/assets/archive/import` | 从 Z 盘 inbox 登记现有素材 | 🔒 |
-| `POST` | `/api/v1/assets/archive/upload` | 流式上传素材至归档盘 | 🔒 |
-| `GET` | `/api/v1/assets/archive/{asset_id}` | 读取本人或共享原片详情 | 🔒 |
-| `DELETE` | `/api/v1/assets/archive/{asset_id}` | 彻底删除回收站中的归档素材 | 🔒 |
-| `PUT` | `/api/v1/assets/archive/{asset_id}/deleted` | 将本人素材移入回收站或恢复 | 🔒 |
-| `GET` | `/api/v1/assets/archive/{asset_id}/file` | 预览或下载已归档素材 | 🔒 |
-| `PUT` | `/api/v1/assets/archive/{asset_id}/name` | 修改本人素材名称 | 🔒 |
-| `GET` | `/api/v1/assets/archive/{asset_id}/preview` | 受控公共原片预览 | 🔒 |
-| `PUT` | `/api/v1/assets/archive/{asset_id}/sharing` | 分享或取消分享本人原片 | 🔒 |
-| `GET` | `/api/v1/assets/archive/{asset_id}/stream` | 浏览器兼容视频预览（派生文件，不改原片） | 🔒 |
-| `GET` | `/api/v1/assets/archive/{asset_id}/thumbnail` | 读取归档素材缩略图 | 🔒 |
-| `POST` | `/api/v1/assets/upload` | 上传素材 | 🔒 |
-| `GET` | `/api/v1/assets/{asset_id}` | 素材详情 | 🔒 |
-| `DELETE` | `/api/v1/assets/{asset_id}` | 删除素材 | 🔒 |
-| `GET` | `/api/v1/assets/{asset_id}/cover` | 读取素材缩略图 | 🔒 |
-| `GET` | `/api/v1/assets/{asset_id}/file` | 读取素材原文件 | 🔒 |
+| `GET` | `/api/v1/assets` | 归档素材列表与空间占用 | 🔒 |
+| `POST` | `/api/v1/assets/import` | 从 Z 盘 inbox 登记现有素材 | 🔒 |
+| `POST` | `/api/v1/assets/upload` | 流式上传素材至归档盘 | 🔒 |
+| `GET` | `/api/v1/assets/{asset_id}` | 读取本人或共享原片详情 | 🔒 |
+| `DELETE` | `/api/v1/assets/{asset_id}` | 彻底删除回收站中的归档素材 | 🔒 |
+| `PUT` | `/api/v1/assets/{asset_id}/deleted` | 将本人素材移入回收站或恢复 | 🔒 |
+| `GET` | `/api/v1/assets/{asset_id}/file` | 预览或下载已归档素材 | 🔒 |
+| `PUT` | `/api/v1/assets/{asset_id}/name` | 修改本人素材名称 | 🔒 |
+| `GET` | `/api/v1/assets/{asset_id}/preview` | 受控公共原片预览 | 🔒 |
+| `PUT` | `/api/v1/assets/{asset_id}/sharing` | 分享或取消分享本人原片 | 🔒 |
+| `GET` | `/api/v1/assets/{asset_id}/stream` | 浏览器兼容视频预览（派生文件，不改原片） | 🔒 |
+| `GET` | `/api/v1/assets/{asset_id}/thumbnail` | 读取归档素材缩略图 | 🔒 |
 
 #### `GET /api/v1/assets`
-
-**素材列表（分页 + 类型分面计数）**
-
-| 参数 | 位置 | 类型 | 必填 | 说明 |
-|---|---|---|---|---|
-| `type` | query | `AssetTypeFilter` | 否 | 类型筛选 |
-| `keyword` | query | `string` | 否 | 按文件名搜索 |
-| `category` | query | `"source" | "character" | "product" | "scene" | "audio" | null` | 否 | 归档分类 |
-| `page` | query | `number` | 否 | 页码，从 1 开始 |
-| `pageSize` | query | `number` | 否 | 每页条数 |
-
-**响应** `ApiResponse<AssetListOut>`（前端取 `res.data`）
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `items` | `AssetOut[]` | 否 |  |
-| `total` | `number` | 否 |  |
-| `page` | `number` | 否 |  |
-| `pageSize` | `number` | 否 |  |
-| `counts` | `AssetCounts` | 否 |  |
-
-#### `GET /api/v1/assets/archive`
 
 **归档素材列表与空间占用**
 
@@ -1094,7 +1067,7 @@ Authorization: Bearer <accessToken>
 | `page` | `number` | 否 |  |
 | `pageSize` | `number` | 否 |  |
 
-#### `POST /api/v1/assets/archive/import`
+#### `POST /api/v1/assets/import`
 
 **从 Z 盘 inbox 登记现有素材**
 
@@ -1132,7 +1105,7 @@ Authorization: Bearer <accessToken>
 | `editable` | `boolean` | 否 |  |
 | `downloadAllowed` | `boolean` | 否 |  |
 
-#### `POST /api/v1/assets/archive/upload`
+#### `POST /api/v1/assets/upload`
 
 **流式上传素材至归档盘**
 
@@ -1168,7 +1141,7 @@ Authorization: Bearer <accessToken>
 | `editable` | `boolean` | 否 |  |
 | `downloadAllowed` | `boolean` | 否 |  |
 
-#### `GET /api/v1/assets/archive/{asset_id}`
+#### `GET /api/v1/assets/{asset_id}`
 
 **读取本人或共享原片详情**
 
@@ -1203,7 +1176,7 @@ Authorization: Bearer <accessToken>
 | `editable` | `boolean` | 否 |  |
 | `downloadAllowed` | `boolean` | 否 |  |
 
-#### `DELETE /api/v1/assets/archive/{asset_id}`
+#### `DELETE /api/v1/assets/{asset_id}`
 
 **彻底删除回收站中的归档素材**
 
@@ -1215,7 +1188,7 @@ Authorization: Bearer <accessToken>
 
 **响应** `ApiResponse<unknown>`（前端取 `res.data`）
 
-#### `PUT /api/v1/assets/archive/{asset_id}/deleted`
+#### `PUT /api/v1/assets/{asset_id}/deleted`
 
 **将本人素材移入回收站或恢复**
 
@@ -1259,7 +1232,7 @@ Authorization: Bearer <accessToken>
 | `editable` | `boolean` | 否 |  |
 | `downloadAllowed` | `boolean` | 否 |  |
 
-#### `GET /api/v1/assets/archive/{asset_id}/file`
+#### `GET /api/v1/assets/{asset_id}/file`
 
 **预览或下载已归档素材**
 
@@ -1269,7 +1242,7 @@ Authorization: Bearer <accessToken>
 
 **响应** `ApiResponse<unknown>`（前端取 `res.data`）
 
-#### `PUT /api/v1/assets/archive/{asset_id}/name`
+#### `PUT /api/v1/assets/{asset_id}/name`
 
 **修改本人素材名称**
 
@@ -1313,7 +1286,7 @@ Authorization: Bearer <accessToken>
 | `editable` | `boolean` | 否 |  |
 | `downloadAllowed` | `boolean` | 否 |  |
 
-#### `GET /api/v1/assets/archive/{asset_id}/preview`
+#### `GET /api/v1/assets/{asset_id}/preview`
 
 **受控公共原片预览**
 
@@ -1323,7 +1296,7 @@ Authorization: Bearer <accessToken>
 
 **响应** `ApiResponse<unknown>`（前端取 `res.data`）
 
-#### `PUT /api/v1/assets/archive/{asset_id}/sharing`
+#### `PUT /api/v1/assets/{asset_id}/sharing`
 
 **分享或取消分享本人原片**
 
@@ -1367,7 +1340,7 @@ Authorization: Bearer <accessToken>
 | `editable` | `boolean` | 否 |  |
 | `downloadAllowed` | `boolean` | 否 |  |
 
-#### `GET /api/v1/assets/archive/{asset_id}/stream`
+#### `GET /api/v1/assets/{asset_id}/stream`
 
 **浏览器兼容视频预览（派生文件，不改原片）**
 
@@ -1377,103 +1350,13 @@ Authorization: Bearer <accessToken>
 
 **响应** `ApiResponse<unknown>`（前端取 `res.data`）
 
-#### `GET /api/v1/assets/archive/{asset_id}/thumbnail`
+#### `GET /api/v1/assets/{asset_id}/thumbnail`
 
 **读取归档素材缩略图**
 
 | 参数 | 位置 | 类型 | 必填 | 说明 |
 |---|---|---|---|---|
 | `asset_id` | path | `string` | 是 |  |
-
-**响应** `ApiResponse<unknown>`（前端取 `res.data`）
-
-#### `POST /api/v1/assets/upload`
-
-**上传素材**
-
-请求体是文件原始字节（不是 multipart），文件名按 `?filename=` 传递。
-
-同一账号重复上传同一文件会直接返回已有记录（按 sha256 去重），不会产生第二份。
-
-| 参数 | 位置 | 类型 | 必填 | 说明 |
-|---|---|---|---|---|
-| `filename` | query | `string` | 是 |  |
-
-**响应** `ApiResponse<AssetOut>`（前端取 `res.data`）
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `id` | `string` | 是 |  |
-| `name` | `string` | 是 |  |
-| `type` | `AssetType` | 是 |  |
-| `mimeType` | `string` | 是 |  |
-| `sizeBytes` | `number` | 是 |  |
-| `width` | `number` | 是 |  |
-| `height` | `number` | 是 |  |
-| `duration` | `number` | 是 |  |
-| `hasAudio` | `boolean` | 是 |  |
-| `category` | `"source" \| "character" \| "product" \| "scene" \| "audio" \| null` | 否 |  |
-| `source` | `AssetSource` | 是 |  |
-| `coverUrl` | `string` | 是 |  |
-| `fileUrl` | `string` | 是 |  |
-| `refCount` | `number` | 是 |  |
-| `createdAt` | `string` | 是 |  |
-
-#### `GET /api/v1/assets/{asset_id}`
-
-**素材详情**
-
-| 参数 | 位置 | 类型 | 必填 | 说明 |
-|---|---|---|---|---|
-| `asset_id` | path | `string` | 是 | 素材 id |
-
-**响应** `ApiResponse<AssetOut>`（前端取 `res.data`）
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `id` | `string` | 是 |  |
-| `name` | `string` | 是 |  |
-| `type` | `AssetType` | 是 |  |
-| `mimeType` | `string` | 是 |  |
-| `sizeBytes` | `number` | 是 |  |
-| `width` | `number` | 是 |  |
-| `height` | `number` | 是 |  |
-| `duration` | `number` | 是 |  |
-| `hasAudio` | `boolean` | 是 |  |
-| `category` | `"source" \| "character" \| "product" \| "scene" \| "audio" \| null` | 否 |  |
-| `source` | `AssetSource` | 是 |  |
-| `coverUrl` | `string` | 是 |  |
-| `fileUrl` | `string` | 是 |  |
-| `refCount` | `number` | 是 |  |
-| `createdAt` | `string` | 是 |  |
-
-#### `DELETE /api/v1/assets/{asset_id}`
-
-**删除素材**
-
-| 参数 | 位置 | 类型 | 必填 | 说明 |
-|---|---|---|---|---|
-| `asset_id` | path | `string` | 是 | 素材 id |
-
-**响应** `ApiResponse<unknown>`（前端取 `res.data`）
-
-#### `GET /api/v1/assets/{asset_id}/cover`
-
-**读取素材缩略图**
-
-| 参数 | 位置 | 类型 | 必填 | 说明 |
-|---|---|---|---|---|
-| `asset_id` | path | `string` | 是 | 素材 id |
-
-**响应** `ApiResponse<unknown>`（前端取 `res.data`）
-
-#### `GET /api/v1/assets/{asset_id}/file`
-
-**读取素材原文件**
-
-| 参数 | 位置 | 类型 | 必填 | 说明 |
-|---|---|---|---|---|
-| `asset_id` | path | `string` | 是 | 素材 id |
 
 **响应** `ApiResponse<unknown>`（前端取 `res.data`）
 
@@ -1565,11 +1448,10 @@ Authorization: Bearer <accessToken>
 | `id` | `string` | 是 | 生图记录 ID |
 | `status` | `string` | 是 | 重试后的状态，固定为 `queued` |
 
-### 4.6 模板（17 个）
+### 4.6 模板（16 个）
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
-| `GET` | `/api/v1/templates` | 模板列表 | 🔒 |
 | `GET` | `/api/v1/templates/replacement-catalog` | 人物/产品/场景替换模板与调用档案 | 🔒 |
 | `GET` | `/api/v1/templates/replacement-packs` | 本人封装草稿和历史包 | 🔒 |
 | `GET` | `/api/v1/templates/replacement-packs/available` | 全工作台已发布对象 | 🔒 |
@@ -1582,25 +1464,10 @@ Authorization: Bearer <accessToken>
 | `GET` | `/api/v1/templates/replacement-runs/{run_id}` | 替换任务状态与提示词 | 🔒 |
 | `POST` | `/api/v1/templates/replacement-runs/{run_id}/execute` | 提交替换任务；billingMode=credits 表示本任务用积分加速 | 🔒 |
 | `GET` | `/api/v1/templates/replacement-runs/{run_id}/inputs/{asset_id}` | 读取当次归档输入快照 | 🔒 |
-| `GET` | `/api/v1/templates/replacement-runs/{run_id}/output` | 预览或下载 Z 盘原始生成结果 | 🔒 |
+| `GET` | `/api/v1/templates/replacement-runs/{run_id}/output` | 预览或下载原始生成结果 | 🔒 |
 | `POST` | `/api/v1/templates/replacement-runs/{run_id}/reconfirm` | 确认上次提交可能已计费后放行重提（默认拒绝） | 🔒 |
 | `POST` | `/api/v1/templates/replacement-runs/{run_id}/restore` | 恢复本人回收站中的替换任务与调用档案 | 🔒 |
 | `PUT` | `/api/v1/templates/replacement-runs/{run_id}/review` | 保存人工验收，版本冲突需重新核对 | 🔒 |
-
-#### `GET /api/v1/templates`
-
-**模板列表**
-
-| 参数 | 位置 | 类型 | 必填 | 说明 |
-|---|---|---|---|---|
-| `industry` | query | `string | null` | 否 |  |
-
-**响应** `ApiResponse<TemplateListOut>`（前端取 `res.data`）
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `items` | `TemplateOut[]` | 否 |  |
-| `total` | `number` | 否 |  |
 
 #### `GET /api/v1/templates/replacement-catalog`
 
@@ -1934,7 +1801,7 @@ Authorization: Bearer <accessToken>
 
 #### `GET /api/v1/templates/replacement-runs/{run_id}/output`
 
-**预览或下载 Z 盘原始生成结果**
+**预览或下载原始生成结果**
 
 | 参数 | 位置 | 类型 | 必填 | 说明 |
 |---|---|---|---|---|
@@ -2298,62 +2165,6 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 ### `AspectRatio`（枚举）
 
 取值：`9:16`、`16:9`、`1:1`
-
-### `AssetCounts`
-
-分面计数：切类型 tab 上的数字。
-
-它按「除类型以外的全部筛选条件」统计，所以切 tab 不会看到三个互不相干的数字，
-也不会出现「选了图片但视频计数还是全站值」这种自相矛盾的显示。
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `all` | `number` | 否 |  |
-| `image` | `number` | 否 |  |
-| `video` | `number` | 否 |  |
-| `audio` | `number` | 否 |  |
-
-### `AssetListOut`
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `items` | `AssetOut[]` | 否 |  |
-| `total` | `number` | 否 |  |
-| `page` | `number` | 否 |  |
-| `pageSize` | `number` | 否 |  |
-| `counts` | `AssetCounts` | 否 |  |
-
-### `AssetOut`
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `id` | `string` | 是 |  |
-| `name` | `string` | 是 |  |
-| `type` | `AssetType` | 是 |  |
-| `mimeType` | `string` | 是 |  |
-| `sizeBytes` | `number` | 是 |  |
-| `width` | `number` | 是 |  |
-| `height` | `number` | 是 |  |
-| `duration` | `number` | 是 |  |
-| `hasAudio` | `boolean` | 是 |  |
-| `category` | `"source" \| "character" \| "product" \| "scene" \| "audio" \| null` | 否 |  |
-| `source` | `AssetSource` | 是 |  |
-| `coverUrl` | `string` | 是 |  |
-| `fileUrl` | `string` | 是 |  |
-| `refCount` | `number` | 是 |  |
-| `createdAt` | `string` | 是 |  |
-
-### `AssetSource`（枚举）
-
-取值：`upload`、`archive`、`generated`
-
-### `AssetType`（枚举）
-
-取值：`image`、`video`、`audio`
-
-### `AssetTypeFilter`（枚举）
-
-取值：`all`、`image`、`video`、`audio`
 
 ### `Capability`（枚举）
 
@@ -3130,27 +2941,6 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 ### `TaskStatusFilter`（枚举）
 
 取值：`all`、`queued`、`running`、`completed`、`failed`
-
-### `TemplateListOut`
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `items` | `TemplateOut[]` | 否 |  |
-| `total` | `number` | 否 |  |
-
-### `TemplateOut`
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `id` | `string` | 是 |  |
-| `name` | `string` | 是 |  |
-| `description` | `string` | 是 |  |
-| `industry` | `string` | 是 |  |
-| `shotCount` | `number` | 是 |  |
-| `usageCount` | `number` | 是 |  |
-| `coverUrl` | `string` | 是 |  |
-| `tags` | `string[]` | 否 |  |
-| `createdAt` | `string` | 是 |  |
 
 ### `TokenOut`
 

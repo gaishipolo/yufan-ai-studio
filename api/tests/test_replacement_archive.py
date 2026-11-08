@@ -1,30 +1,49 @@
-"""不访问 LibTV、不碰 Z 盘：验证归档字节、权限、幂等和未知提交门禁。"""
+"""准备阶段：输入快照自洽、发布版本冻结、非法原片不静默截断。
+
+这一组用例是**重建后唯一能证明整条链路走得通的东西**——被移走的旧用例原本覆盖
+它们，而删除之后 `prepare` 的三个致命缺陷全靠肉眼看代码才发现：
+
+1. 新建 run 从不登记索引指针，`_run_out()` 拼 `archivePath` 时自己 404；
+2. 不写 `inputs/input-map.json`，执行器在 upload 阶段读文件直接 ENOENT；
+3. `run.json` 没有 `file_checksums`，执行器拿 `undefined` 跟实算摘要比。
+
+三条的共同点：**每一步单独看都"合理"，串起来第一次点生成就炸**，而全量测试全绿。
+所以这里的断言刻意贴到文件级（清单、摘要、投影），而不是只看接口返回 200。
+"""
 
 from __future__ import annotations
 
-import io
+import asyncio
 import json
 import os
 import subprocess
 import uuid
 from pathlib import Path
 
-import imageio_ffmpeg
 import pytest
 from fastapi.testclient import TestClient
-from PIL import Image
-from tests_archive_helpers import archive
+from tests_template_helpers import (
+    ADMIN,
+    API,
+    add_pack,
+    drop_pack,
+    drop_run,
+    login,
+    patch_run,
+    png_bytes,
+    read_run,
+    upload,
+    video_bytes,
+    workspace,
+)
 
 from core.config import settings
-from core.context import CurrentUser
-from core.exceptions import BadRequest, Conflict, UpstreamError
 from infra.ai.libtv import get_libtv_settings
-from infra.archive import checksum
+from infra.archive import checksum, get_archive_storage
 from infra.archive.local import get_archive_settings
-from modules.template.replacement_repository import ReplacementRepository
-from modules.template.replacement_schema import PrepareReplacement
-from modules.template.replacement_service import BRIDGE, prepare
-from modules.template.replacement_worker import schedule
+from infra.archive.runs import read_pointer, runs_root
+from modules.template import worker
+from modules.template.workspace import BRIDGE, run_path
 
 
 @pytest.fixture
@@ -33,282 +52,434 @@ def archive_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return tmp_path
 
 
-def make_image(path: Path) -> Path:
-    # 每个测试用不同像素：摘要相同会被去重成上一条记录，而那条记录的文件在
-    # 上一个测试的临时目录里（会话级数据库跨测试共享）
-    Image.new("RGB", (32, 48), tuple(os.urandom(3))).save(path, format="PNG")
-    return path
-
-
 @pytest.fixture
-def materials(client: TestClient, archive_root: Path) -> tuple[dict, dict]:
-    """经真实上传接口登记原片与人物参考图。
+def materials(client: TestClient, archive_root: Path):
+    """一份原片 + 一张参考图 + 一个已发布封装（都归演示超管）。
 
-    以前这里直接调 `ArchiveAssetRepository().register()`：那是「JSON 即索引」
-    时代的同步写法，索引搬进 `assets` 表后它已经没有对应的真实路径了。
+    走真实上传：`prepare` 会读素材的时长、音轨与 `sha256`，手写记录测不出这些。
     """
-    video = archive_root / "fixture.mp4"
-    subprocess.run(
-        [
-            imageio_ffmpeg.get_ffmpeg_exe(),
-            "-y",
-            "-loglevel",
-            "error",
-            "-f",
-            "lavfi",
-            "-i",
-            f"color=c=0x{os.urandom(3).hex()}:s=64x64:d=2",
-            "-f",
-            "lavfi",
-            "-i",
-            "sine=frequency=440:duration=2",
-            "-c:v",
-            "libx264",
-            "-c:a",
-            "aac",
-            "-shortest",
-            str(video),
-        ],
-        check=True,
-        capture_output=True,
-    )
-    image = make_image(archive_root / "fixture.png")
-    return (
-        archive.upload(client, "source.mp4", "source", video.read_bytes()),
-        archive.upload(client, "identity.png", "character", image.read_bytes()),
+
+    def _make(kind: str = "character", *, duration: float = 2, audio: bool = True):
+        video = upload(client, "source.mp4", "source", video_bytes(duration, audio=audio))
+        image = upload(client, f"{kind}.png", kind, png_bytes())
+        return video, image
+
+    return _make
+
+
+async def _pack(kind: str = "character", *, image_ids: list[str], **extra):
+    return await add_pack(
+        owner=ADMIN,
+        kind=kind,
+        name="已发布人物" if kind == "character" else "已发布产品",
+        reference_ids=image_ids,
+        features="保持身份",
+        instructions="只替换指定人物",
+        wardrobe_mode="reference" if kind == "character" else "preserve",
+        **extra,
     )
 
 
-def test_upload_and_owner_scoping(client: TestClient, archive_root: Path) -> None:
-    from api.deps import get_actor
+def _payload(kind: str, source_id: str, pack, **extra) -> dict:
+    values = {
+        "requestId": str(uuid.uuid4()),
+        "kind": kind,
+        "sourceId": source_id,
+        "packId": pack.id,
+        "packVersion": pack.version,
+        "replacementScope": "人物上身穿着" if kind == "product" else "",
+    }
+    values.update(extra)
+    return values
 
-    image = io.BytesIO()
-    Image.new("RGB", (16, 16), tuple(os.urandom(3))).save(image, format="PNG")
-    item = archive.upload(client, "参考.png", "character", image.getvalue())
-    assert (archive_root / item["path"]).read_bytes() == image.getvalue()
-    assert client.get(item["url"]).content == image.getvalue()
 
-    # 换一个没有这条素材的操作者：列表为空、取文件 404（索引在 DB，scoping 由查询保证）
-    client.app.dependency_overrides[get_actor] = lambda: CurrentUser(
-        id="another-user", name="他人", permissions=frozenset({"asset:read"})
-    )
+async def test_prepare_creates_a_reachable_run(client: TestClient, materials) -> None:
+    """新建 run 必须同时有行、目录、`run.json`、指针——少一个后面全 404。
+
+    这条专门回归「只建目录不登记指针」：接口自己会 404，错误信息还是
+    「调用档案不存在」，看起来像前端传错了 id。
+    """
+    video, image = materials()
+    pack = await _pack(image_ids=[image["id"]])
     try:
-        listed = client.get("/api/v1/assets/archive").json()["data"]
-        assert listed["items"] == [] and listed["total"] == 0
-        assert client.get(f"/api/v1/assets/archive/{item['id']}/file").status_code == 404
+        payload = _payload("character", video["id"], pack)
+        created = client.post(f"{API}/templates/replacement-runs", json=payload)
+        assert created.status_code == 201, created.text
+        run = created.json()["data"]
+        try:
+            assert run["status"] == "prepared"
+            assert run["archivePath"], "出参里没有工作区路径：执行器和详情页都定位不到档案"
+
+            path = Path(run["archivePath"])
+            root = str(await asyncio.to_thread(runs_root))
+            assert str(path).startswith(root)
+            assert (path / "run.json").is_file()
+            assert read_pointer(get_archive_storage(), run["id"])
+            assert client.get(f"{API}/templates/replacement-runs/{run['id']}").status_code == 200
+        finally:
+            await drop_run(run["id"])
     finally:
-        client.app.dependency_overrides.clear()
+        await drop_pack(pack.id)
 
 
-def test_archive_rejects_traversal_and_wrong_bytes(client: TestClient, archive_root: Path) -> None:
-    with pytest.raises(BadRequest):
-        archive.within(archive_root, "../outside")
-    response = client.post(
-        "/api/v1/assets/archive/upload",
-        params={"filename": "bad.png", "category": "character"},
-        content=b"not an image",
-        headers={"Content-Type": "application/octet-stream"},
-    )
-    assert response.status_code == 400
-    assert not list((archive_root / "catalog/assets").glob("*.json"))
+async def test_prepare_is_self_contained_and_idempotent(client: TestClient, materials) -> None:
+    video, image = materials()
+    pack = await _pack(image_ids=[image["id"]])
+    payload = _payload("character", video["id"], pack)
+    try:
+        first = client.post(f"{API}/templates/replacement-runs", json=payload)
+        assert first.status_code == 201, first.text
+        run = first.json()["data"]
+        try:
+            again = client.post(f"{API}/templates/replacement-runs", json=payload)
+            assert again.json()["data"]["id"] == run["id"], "同一个 requestId 只能有一条记录"
+
+            path = Path(run["archivePath"])
+            # 原片与参考图都落成真实文件（执行器要真实路径）
+            assert (path / "inputs/reference-video.mp4").is_file()
+            assert (path / "inputs/reference-1.png").is_file()
+            assert "{{Mixed 1}}" in run["prompt"] and "{{Mixed 2}}" in run["prompt"]
+            assert "{{source_video}}" not in run["prompt"]
+            # 未冒充「已经发出请求」：这份文件只有走到 upload 阶段才该出现
+            assert not (path / "inputs/request.json").exists()
+            assert run["status"] == "prepared" and run["taskId"] is None
+
+            projection = json.loads((path / "run.json").read_text(encoding="utf-8"))
+            assert projection["status"] == "prepared"
+            assert projection["billing_mode"] == "free"
+
+            # 换了配置就不能复用同一个 requestId
+            other = client.post(
+                f"{API}/templates/replacement-runs",
+                json={**payload, "notes": "换一份配置"},
+            )
+            assert other.status_code == 409
+        finally:
+            await drop_run(run["id"])
+    finally:
+        await drop_pack(pack.id)
 
 
-def test_import_does_not_escape_inbox(client: TestClient, archive_root: Path) -> None:
-    make_image(archive_root / "secret.png")
-    response = client.post(
-        "/api/v1/assets/archive/import",
-        json={"relativePath": "../secret.png", "category": "character"},
-    )
-    assert response.status_code == 400
+async def test_prepare_writes_what_the_executor_reads(client: TestClient, materials) -> None:
+    """清单、媒体元信息、摘要三者必须都在：执行器缺一样就在 upload 阶段报错。
 
-
-@pytest.mark.parametrize("kind", ["character", "product", "scene"])
-def test_prepare_is_self_contained_and_idempotent(
-    materials: tuple[dict, dict],
-    archive_root: Path,
-    kind: str,
-) -> None:
-    source, image = materials
-    archive.patch(archive_root / "catalog/assets" / (image["id"] + ".json"), category=kind)
-    payload = PrepareReplacement.model_validate(
-        {
-            "requestId": str(uuid.uuid4()),
-            "kind": kind,
-            "target": "目标",
-            "sourceId": source["id"],
-            "referenceIds": [image["id"]],
-            # 产品必须显式给出替换范围；服务端不再用默认值替调用方承诺位置。
-            "replacementScope": "人物上身穿着" if kind == "product" else "",
-        }
-    )
-    run = prepare(payload, "u_001")
-    assert prepare(payload, "u_001").id == run.id
-    path = Path(run.archive_path)
-    assert path.is_relative_to(archive_root)
-    assert (path / "inputs/reference-video.mp4").read_bytes() == (
-        archive_root / source["path"]
-    ).read_bytes()
-    assert "{{Mixed 1}}" in run.prompt and "{{Mixed 2}}" in run.prompt
-    assert "{{source_video}}" not in run.prompt
-    assert not (path / "inputs/request.json").exists()  # 未冒充已经实际发送请求
-    assert run.status == "prepared" and run.task_id is None
-    meta = archive.read(path / "run.json")
-    assert meta["max_credits"] == 0 and meta["review_status"] == "pending"
-    mapping = json.loads((path / "inputs/input-map.json").read_text(encoding="utf-8"))
-    for entry in mapping:
-        assert archive.checksum(path / entry["file"]) == entry["sha256"]
-    with pytest.raises(Conflict):
-        prepare(payload.model_copy(update={"target": "不同目标"}), "u_001")
-
-
-def test_prepare_snapshots_inputs_with_matching_digests(
-    materials: tuple[dict, dict], archive_root: Path
-) -> None:
-    """快照必须自洽：`run/inputs` 的实际摘要 == `file_checksums` 的登记值。
-
-    旧版这里验的是「素材字节被改过就拒绝准备」。内容寻址之后那个场景不会发生
-    （key 就是 sha256，字节变了就是另一个 key），真正要守住的是快照一致性：
-    桥接层会重算 inputs 下每个文件的 sha256 与 `file_checksums` 比对，对不上拒绝执行。
+    - `inputs/input-map.json`：逐条上传清单（含用途文字）
+    - `records/media-inputs.json`：宽高时长，拼请求体用
+    - `run.json.file_checksums`：与实算摘要比对，防快照被换过
     """
-    source, image = materials
-    payload = PrepareReplacement(
-        request_id=uuid.uuid4(),
-        kind="character",
-        target="目标",
-        source_id=source["id"],
-        reference_ids=[image["id"]],
-    )
-    run = prepare(payload, "u_001")
-    path = ReplacementRepository().path(run.id)
-
-    manifest = json.loads((path / "run.json").read_text(encoding="utf-8"))
-    checksums = manifest["file_checksums"]
-    bindings = json.loads((path / "inputs/input-map.json").read_text(encoding="utf-8"))
-    assert bindings, "快照必须记录本次用到的每张图"
-    for binding in bindings:
-        assert checksum(path / binding["file"]) == checksums[binding["file"]]
-
-    # 原片在 run 目录里只占一份字节：两个文件名是同一份（硬链接），
-    # 以前这里是两份 300MB 的副本，正是共享盘从 200MB 涨到 500MB 的来源。
-    reference = path / "inputs/reference-video.mp4"
-    original = path / "inputs/source-original.mp4"
-    assert reference.stat().st_ino == original.stat().st_ino
-
-
-def test_pack_selection_uses_published_configuration(
-    materials: tuple[dict, dict],
-    archive_root: Path,
-) -> None:
-    source, image = materials
-    archive.save(
-        archive_root / "catalog/packs/published.json",
-        {
-            "id": "published",
-            "ownerId": "u_001",
-            "kind": "character",
-            "name": "已发布人物",
-            "referenceIds": [image["id"]],
-            "wardrobeMode": "reference",
-            "features": "保持身份",
-            "instructions": "只替换指定人物",
-        },
-    )
-    run = prepare(
-        PrepareReplacement(
-            request_id=uuid.uuid4(),
-            kind="character",
-            target="试图覆盖名称",
-            source_id=source["id"],
-            reference_ids=["untrusted-id"],
-            pack_id="published",
-        ),
-        "u_001",
-    )
-    path = Path(run.archive_path)
-    assert run.target == "已发布人物"
-    assert "人物参考的服装" in run.prompt
-    assert "声音：原片内嵌音轨" in run.prompt
-    assert "已发布人物" in run.prompt
-    assert "{{Mixed 1}}" in run.prompt
-    assert (path / "inputs/reference-pack.json").is_file()
-
-
-@pytest.mark.parametrize("changes", [{"duration": 15.01}, {"hasAudio": False}])
-def test_invalid_source_is_never_silently_trimmed(
-    materials: tuple[dict, dict],
-    archive_root: Path,
-    changes: dict,
-) -> None:
-    source, image = materials
-    archive.patch(archive_root / "catalog/assets" / (source["id"] + ".json"), **changes)
-    with pytest.raises(BadRequest):
-        prepare(
-            PrepareReplacement(
-                request_id=uuid.uuid4(),
-                kind="character",
-                target="人物",
-                source_id=source["id"],
-                reference_ids=[image["id"]],
-            ),
-            "u_001",
+    video, image = materials()
+    pack = await _pack(image_ids=[image["id"]])
+    try:
+        created = client.post(
+            f"{API}/templates/replacement-runs", json=_payload("character", video["id"], pack)
         )
+        run = created.json()["data"]
+        try:
+            path = Path(run["archivePath"])
+            mapping = json.loads((path / "inputs/input-map.json").read_text(encoding="utf-8"))
+            # 人物包的第一张参考图角色是 `identity`（真人是身份图，不是普通参考）
+            assert [entry["role"] for entry in mapping] == ["identity", "source_video"]
+            for entry in mapping:
+                assert checksum(path / entry["file"]) == entry["sha256"], (
+                    "清单里的摘要跟物化出来的字节不一致，执行器会拒绝提交"
+                )
+                assert entry["name"]
+
+            media = json.loads((path / "records/media-inputs.json").read_text(encoding="utf-8"))
+            assert set(media) == {entry["file"] for entry in mapping}
+            assert media["inputs/reference-video.mp4"]["duration"] > 0
+
+            projection = json.loads((path / "run.json").read_text(encoding="utf-8"))
+            assert projection["file_checksums"] == {
+                entry["file"]: entry["sha256"] for entry in mapping
+            }
+        finally:
+            await drop_run(run["id"])
+    finally:
+        await drop_pack(pack.id)
 
 
-async def test_unknown_submission_cannot_be_repeated(
-    materials: tuple[dict, dict],
-    monkeypatch: pytest.MonkeyPatch,
+async def test_source_is_snapshotted_once(client: TestClient, materials) -> None:
+    """原片在 run 目录里只占一份字节：两个文件名是同一份（硬链接）。
+
+    以前这里是两份 300MB 的副本，共享盘从 200MB 涨到 500MB 就是这么来的。
+    """
+    video, image = materials()
+    pack = await _pack(image_ids=[image["id"]])
+    try:
+        run = client.post(
+            f"{API}/templates/replacement-runs", json=_payload("character", video["id"], pack)
+        ).json()["data"]
+        try:
+            path = Path(run["archivePath"])
+            reference = path / "inputs/reference-video.mp4"
+            original = path / "inputs/source-original.mp4"
+            assert reference.stat().st_ino == original.stat().st_ino
+        finally:
+            await drop_run(run["id"])
+    finally:
+        await drop_pack(pack.id)
+
+
+async def test_published_configuration_wins_over_request(client: TestClient, materials) -> None:
+    """目标名、服装模式、补充说明都来自**发布版本**，不接受调用方覆盖。
+
+    否则「公共原片 + 自己的封装」这条流程里，调用方能悄悄改掉别人审核过的约束。
+    """
+    video, image = materials()
+    pack = await _pack(image_ids=[image["id"]])
+    try:
+        run = client.post(
+            f"{API}/templates/replacement-runs",
+            json=_payload("character", video["id"], pack, target="试图覆盖名称"),
+        ).json()["data"]
+        try:
+            assert run["target"] == "已发布人物"
+            assert "人物参考的服装" in run["prompt"]
+            assert "声音：原片内嵌音轨" in run["prompt"]
+            assert "已发布人物" in run["prompt"]
+            path = Path(run["archivePath"])
+            assert (path / "code/runtime/bridge.mjs").is_file(), "编译器快照缺失后无法复现提示词"
+        finally:
+            await drop_run(run["id"])
+    finally:
+        await drop_pack(pack.id)
+
+
+@pytest.mark.parametrize(("duration", "audio"), [(16, True), (2, False)])
+async def test_invalid_source_is_never_silently_trimmed(
+    client: TestClient, materials, duration: float, audio: bool
 ) -> None:
-    source, image = materials
-    run = prepare(
-        PrepareReplacement(
-            request_id=uuid.uuid4(),
-            kind="character",
-            target="目标",
-            source_id=source["id"],
-            reference_ids=[image["id"]],
-        ),
-        "u_001",
-    )
-    path = Path(run.archive_path)
-    meta = archive.read(path / "run.json")
-    meta["status"] = "submission_unknown"
-    archive.save(path / "run.json", meta)
-    monkeypatch.setattr(settings, "worker_enabled", True)
-    with pytest.raises(Conflict):
-        await schedule(run.id, "u_001")
+    """超长 / 没音轨必须在准备阶段拒掉：悄悄截断等于改了用户的原片。"""
+    video, image = materials(duration=duration, audio=audio)
+    pack = await _pack(image_ids=[image["id"]])
+    try:
+        response = client.post(
+            f"{API}/templates/replacement-runs", json=_payload("character", video["id"], pack)
+        )
+        assert response.status_code == 400, response.text
+        assert "1–15" in response.json()["message"] or "音轨" in response.json()["message"]
+    finally:
+        await drop_pack(pack.id)
 
 
-def test_missing_archive_never_falls_back(
-    archive_root: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    missing = archive_root / "offline-share"
-    monkeypatch.setattr(get_archive_settings(), "root", str(missing))
-    with pytest.raises(UpstreamError):
-        archive.root()
-    assert not missing.exists()
+async def test_scattered_references_are_rejected(client: TestClient, materials) -> None:
+    """散图入口已随重建移除：必须选已发布对象与版本。"""
+    video, image = materials()
+    try:
+        response = client.post(
+            f"{API}/templates/replacement-runs",
+            json={
+                "requestId": str(uuid.uuid4()),
+                "kind": "character",
+                "sourceId": video["id"],
+                "referenceIds": [image["id"]],
+                "target": "随便",
+            },
+        )
+        assert response.status_code == 400
+        assert "必须选择专员发布的对象" in response.json()["message"]
+    finally:
+        pass
+
+
+async def test_product_scope_must_come_from_the_pack(client: TestClient, materials) -> None:
+    """产品替换位置只能落在封装审核过的范围里。"""
+    video, image = materials(kind="product")
+    pack = await _pack("product", image_ids=[image["id"]], scopes=["worn"])
+    try:
+        ok = client.post(
+            f"{API}/templates/replacement-runs", json=_payload("product", video["id"], pack)
+        )
+        assert ok.status_code == 201, ok.text
+        await drop_run(ok.json()["data"]["id"])
+
+        beyond = client.post(
+            f"{API}/templates/replacement-runs",
+            json=_payload("product", video["id"], pack, replacementScope="屏幕商品"),
+        )
+        assert beyond.status_code == 400
+        assert "替换范围超出" in beyond.json()["message"]
+    finally:
+        await drop_pack(pack.id)
+
+
+async def test_unknown_submission_cannot_be_executed(client: TestClient, materials) -> None:
+    """`submission_unknown` 是死锁：既不能当失败重提，也不能当成功继续。"""
+    video, image = materials()
+    pack = await _pack(image_ids=[image["id"]])
+    try:
+        run = client.post(
+            f"{API}/templates/replacement-runs", json=_payload("character", video["id"], pack)
+        ).json()["data"]
+        try:
+            from tests_template_helpers import patch_run
+
+            await patch_run(run["id"], status="submission_unknown", submit_attempts=1)
+            with pytest.MonkeyPatch.context() as patch:
+                patch.setattr(settings, "worker_enabled", True)
+                response = client.post(f"{API}/templates/replacement-runs/{run['id']}/execute")
+            assert response.status_code == 409
+        finally:
+            await drop_run(run["id"])
+    finally:
+        await drop_pack(pack.id)
 
 
 def test_write_permission_is_required(client: TestClient, archive_root: Path) -> None:
+    """只读账号不能提交：`prepare` 会占队列，也会在未来某次点执行时真花钱。"""
     from api.deps import get_actor
+    from core.context import CurrentUser
 
     client.app.dependency_overrides[get_actor] = lambda: CurrentUser(
         id="limited", name="只读", permissions=frozenset({"template:read", "asset:read"})
     )
     try:
-        assert client.post("/api/v1/templates/replacement-runs", json={}).status_code == 403
+        assert client.post(f"{API}/templates/replacement-runs", json={}).status_code == 403
         assert (
             client.post(
-                "/api/v1/assets/archive/upload",
+                f"{API}/assets/upload",
                 params={"filename": "test.png", "category": "character"},
                 content=b"test",
             ).status_code
             == 403
         )
     finally:
-        client.app.dependency_overrides.clear()
+        client.app.dependency_overrides.pop(get_actor, None)
+
+
+def test_editor_cannot_prepare_for_someone_else(client: TestClient, archive_root: Path) -> None:
+    """权限组合：`template:read` 不够（403），有 `template:use` 但要别人原片也拿不到。"""
+    headers = login(client, "viewer", "viewer@12345")
+    blocked = client.post(f"{API}/templates/replacement-runs", json={}, headers=headers)
+    assert blocked.status_code == 403
+
+
+def test_workspace_helper_matches_production_layout() -> None:
+    """测试夹具造的工作区必须与真实布局同形，否则断言的其实是夹具自己的洞。"""
+    run_id = uuid.uuid4().hex
+    path = workspace(run_id, {"id": run_id, "status": "prepared"})
+    try:
+        assert path == run_path(run_id)
+        for folder in ("inputs", "outputs", "records", "review", "code"):
+            assert (path / folder).is_dir()
+    finally:
+        import shutil
+
+        shutil.rmtree(path, ignore_errors=True)
+
+
+# --------------------------------------------------------------------------- #
+# 执行器契约：run.json 的字段名与「零报价」闸门
+# --------------------------------------------------------------------------- #
+def _write_legacy(root: Path, *, submit_body: str) -> Path:
+    """搭一个「假 legacy」目录：桥接层只认文件，不认网络。
+
+    这些替身与生产 legacy 的接口逐字对齐（`upload/update/withRunLock` 的签名，
+    `submit(api, run, id, verify)` 的四个参数），所以桥接层的真实代码会被执行到，
+    而网络请求全部落在替身上。
+    """
+    files = {
+        "scripts/libtv_video.mjs": "console.log('fake release verified');",
+        "tools/js-reverse-mcp/release.json": "{}",
+        "tools/js-reverse-mcp/canvas-transport.mjs": """
+          export class CanvasApi {
+            static async fromBrowser() { return new CanvasApi(); }
+            async request(route) {
+              if (route !== '/api/task/generation/power/calculator')
+                throw Error('Unexpected network endpoint');
+              return {data:{power:Number(process.env.TEST_QUOTE)}};
+            }
+          }
+        """,
+        "tools/js-reverse-mcp/canvas-run.mjs": """
+          import {readFile,writeFile} from 'node:fs/promises';
+          import path from 'node:path';
+          export const load = async run => JSON.parse(await readFile(path.join(run,'run.json')));
+          export const save = (filename,value) => writeFile(filename,JSON.stringify(value));
+          export const update = async (run,value) => save(path.join(run,'run.json'),
+            {...await load(run),...value});
+          export const withRunLock = async (_run,action) => action();
+          export const poll = async () => {throw Error('No polling expected');};
+        """,
+        "libtv/adapters/canvas-media.mjs": """
+          import {readFile} from 'node:fs/promises';
+          import {createHash} from 'node:crypto';
+          export const accountUploadUuid = async () => 'fake-account';
+          export class MediaUploader {
+            async upload(filename) {return {url:'https://example.invalid/media',
+              sha256:createHash('sha256').update(await readFile(filename)).digest('hex'),
+              audit:{passed:true}};}
+          }
+        """,
+        "libtv/workbench/submit.mjs": submit_body,
+        "libtv/adapters/billing.mjs": """
+          export async function accountCreditTags() {return ['rateLimit_powerZero_test'];}
+          export function applyBilling(request, mode, tags) {
+            const out = structuredClone(request);
+            out.params.infiniteSwitch = mode === 'credits' ? 1 : 0;
+            if (mode === 'credits') {
+              out.disableBenefitTags = tags;
+              out.params.disableBenefitTags = tags;
+            }
+            return out;
+          }
+        """,
+    }
+    for filename, content in files.items():
+        dest = root / filename
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(content, encoding="utf-8")
+    return root
+
+
+SUBMIT_REACHED = """
+  import {writeFile} from 'node:fs/promises';
+  import path from 'node:path';
+  import {update} from '../../tools/js-reverse-mcp/canvas-run.mjs';
+  export async function submit(_api,run) {
+    await writeFile(path.join(run,'records/CREATE_WAS_REACHED'),'yes');
+    await update(run,{status:'submitted',task_id:'fake-task',estimated_credits:0});
+    return {state:'submitted'};
+  }
+"""
+
+SUBMIT_UNUSED = "export async function submit(){throw Error('not used');}"
+
+
+def _run_bridge(path: Path, legacy: Path, commands: list[str], *, quote: int) -> None:
+    """真跑桥接层：`commands` 按顺序执行，`TEST_QUOTE` 控制估价。"""
+    settings = get_libtv_settings()
+    script = (
+        f"import {{main}} from {json.dumps(BRIDGE.as_uri())};"
+        f"process.argv={json.dumps(['node', 'test', 'upload', str(path), str(legacy)])};"
+        "await main();"
+        + "".join(f"process.argv[2]={json.dumps(command)!s};await main();" for command in commands)
+    )
+    response = subprocess.run(
+        [settings.node, "--input-type=module", "-e", script],
+        env={**os.environ, "TEST_QUOTE": str(quote)},
+        capture_output=True,
+    )
+    assert response.returncode == 0, response.stderr.decode(errors="replace")
+
+
+async def _prepared(client: TestClient, materials, kind: str = "character"):
+    video, image = materials(kind=kind)
+    pack = await _pack(kind, image_ids=[image["id"]], scopes=["worn"] if kind == "product" else [])
+    created = client.post(
+        f"{API}/templates/replacement-runs", json=_payload(kind, video["id"], pack)
+    )
+    assert created.status_code == 201, created.text
+    return created.json()["data"], pack
 
 
 def test_free_quote_gate_and_uncertain_states() -> None:
+    """`freeQuote` 只认「真的是 0」；`canSubmit` 只要拿到过任务号就不再放行。
+
+    第二句是「重复计费」的最后一道闸：字段名写成 `taskId` 时 `meta.task_id` 恒为
+    undefined，`canSubmit` 会一直放行。
+    """
     script = f"""
       import {{freeQuote, canSubmit}} from {json.dumps(BRIDGE.as_uri())};
       import assert from 'node:assert/strict';
@@ -327,277 +498,83 @@ def test_free_quote_gate_and_uncertain_states() -> None:
     )
 
 
-@pytest.mark.parametrize("quote", [0, 5])
-def test_bridge_only_reaches_submission_after_zero_quote(
-    materials: tuple[dict, dict],
-    archive_root: Path,
-    quote: int,
+async def test_projection_uses_the_field_names_the_executor_reads(
+    client: TestClient, materials
 ) -> None:
-    """真实运行新桥接器，替身只模拟旧适配器与上游；绝不访问网络。"""
-    source, image = materials
-    run = prepare(
-        PrepareReplacement(
-            request_id=uuid.uuid4(),
-            kind="character",
-            target="测试",
-            source_id=source["id"],
-            reference_ids=[image["id"]],
-        ),
-        "u_001",
-    )
-    path = Path(run.archive_path)
-    meta = archive.read(path / "run.json")
-    meta["status"] = "queued"
-    archive.save(path / "run.json", meta)
-    legacy = archive_root / "fake-legacy"
-    files = {
-        "scripts/libtv_video.mjs": "console.log('fake release verified');",
-        "tools/js-reverse-mcp/release.json": "{}",
-        "tools/js-reverse-mcp/canvas-transport.mjs": """
-          export class CanvasApi {
-            static async fromBrowser() { return new CanvasApi(); }
-            async request(route) {
-              if (route !== '/api/task/generation/power/calculator')
-                throw Error('Unexpected network endpoint');
-              return {data:{power:Number(process.env.TEST_QUOTE)}};
-            }
-          }
-        """,
-        "tools/js-reverse-mcp/canvas-run.mjs": """
-          import {readFile,writeFile} from 'node:fs/promises';
-          import path from 'node:path';
-          export const load = async run => JSON.parse(await readFile(path.join(run,'run.json')));
-          export const save = (filename,value) => writeFile(filename,JSON.stringify(value));
-          export const update = async (run,value) => save(path.join(run,'run.json'),
-            {...await load(run),...value});
-          export const withRunLock = async (_run,action) => action();
-          export const poll = async () => {throw Error('No polling expected');};
-        """,
-        "libtv/adapters/canvas-media.mjs": """
-          import {readFile} from 'node:fs/promises';
-          import {createHash} from 'node:crypto';
-          export const accountUploadUuid = async () => 'fake-account';
-          export class MediaUploader {
-            async upload(filename) {return {url:'https://example.invalid/media',
-              sha256:createHash('sha256').update(await readFile(filename)).digest('hex'),
-              audit:{passed:true}};}
-          }
-        """,
-        "libtv/workbench/submit.mjs": """
-          import {writeFile} from 'node:fs/promises';
-          import path from 'node:path';
-          import {update} from '../../tools/js-reverse-mcp/canvas-run.mjs';
-          export async function submit(_api,run) {
-            await writeFile(path.join(run,'records/CREATE_WAS_REACHED'),'yes');
-            await update(run,{status:'submitted',task_id:'fake-task',estimated_credits:0});
-            return {state:'submitted'};
-          }
-        """,
-    }
-    for filename, content in files.items():
-        dest = legacy / filename
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_text(content, encoding="utf-8")
-    script = (
-        f"import {{main}} from {json.dumps(BRIDGE.as_uri())};"
-        f"process.argv={json.dumps(['node', 'test', 'upload', str(path), str(legacy)])};"
-        "await main();" + ("process.argv[2]='submit';await main();" if quote == 0 else "")
-    )
-    response = subprocess.run(
-        [get_libtv_settings().node, "--input-type=module", "-e", script],
-        env={**os.environ, "TEST_QUOTE": str(quote)},
-        capture_output=True,
-    )
-    assert response.returncode == 0, response.stderr.decode(errors="replace")
-    updated = archive.read(path / "run.json")
-    assert (path / "records/CREATE_WAS_REACHED").exists() is (quote == 0)
-    assert updated["status"] == ("submitted" if quote == 0 else "waiting_free")
-    assert updated.get("task_id") == ("fake-task" if quote == 0 else None)
+    """`run.json` 是喂给执行器的，字段名必须对齐它：`task_id`、`billing_mode`。
+
+    写成 `taskId` 的后果比「读不到」严重：`canSubmit()` 认为这条从没提交过，
+    于是重提交、重复计费，而数据库里那条记录明明已经有任务号。
+    """
+    run, pack = await _prepared(client, materials)
+    try:
+        await patch_run(run["id"], status="uploaded", task_id="upstream-1", billing_mode="credits")
+        row = await read_run(run["id"])
+
+        await asyncio.to_thread(worker.sync_projection, row)
+
+        state = json.loads((run_path(run["id"]) / "run.json").read_text(encoding="utf-8"))
+        assert state["task_id"] == "upstream-1"
+        assert "taskId" not in state
+        assert state["billing_mode"] == "credits"
+        assert state["status"] == "uploaded"
+        assert state["file_checksums"], "缺摘要表执行器在 upload 阶段直接抛错"
+    finally:
+        await drop_run(run["id"])
+        await drop_pack(pack.id)
+
+
+@pytest.mark.parametrize("quote", [0, 5])
+async def test_bridge_only_reaches_submission_after_zero_quote(
+    client: TestClient, materials, tmp_path, quote: int
+) -> None:
+    """真实运行桥接层：报价非 0 时它停在 `waiting_free`，绝不提交。"""
+    run, pack = await _prepared(client, materials)
+    try:
+        await patch_run(run["id"], status="queued")
+        await asyncio.to_thread(worker.sync_projection, await read_run(run["id"]))
+        path = run_path(run["id"])
+        legacy = _write_legacy(tmp_path / "fake-legacy", submit_body=SUBMIT_REACHED)
+
+        _run_bridge(path, legacy, ["submit"] if quote == 0 else [], quote=quote)
+
+        updated = json.loads((path / "run.json").read_text(encoding="utf-8"))
+        assert (path / "records/CREATE_WAS_REACHED").exists() is (quote == 0)
+        assert updated["status"] == ("submitted" if quote == 0 else "waiting_free")
+        assert updated.get("task_id") == ("fake-task" if quote == 0 else None)
+    finally:
+        await drop_run(run["id"])
+        await drop_pack(pack.id)
 
 
 @pytest.mark.parametrize(("quote", "expected"), [(40, "uploaded"), (0, "service_error")])
-def test_bridge_routes_credits_mode_through_paid_queue(
-    materials: tuple[dict, dict], archive_root: Path, quote: int, expected: str
+async def test_bridge_routes_credits_mode_through_paid_queue(
+    client: TestClient, materials, tmp_path, quote: int, expected: str
 ) -> None:
     """加速 = 只给这一条请求关掉 0 积分标签，不碰账号级开关。
 
-    估价必须给正数才算切换成功：报 0 说明标签没关掉，这时候放行等于
-    「以为在花钱插队，其实又排回免费队列」，所以要停下等人核对。
+    估价必须是正数：报 0 说明标签没关掉，这时候放行等于「以为在花钱插队，
+    实际又排回免费队列」，所以要停下等人核对。
     """
-    source, image = materials
-    run = prepare(
-        PrepareReplacement(
-            request_id=uuid.uuid4(),
-            kind="character",
-            target="加速目标",
-            source_id=source["id"],
-            reference_ids=[image["id"]],
-        ),
-        "u_001",
-    )
-    path = Path(run.archive_path)
-    meta = archive.read(path / "run.json")
-    meta["status"] = "queued"
-    meta["billing_mode"] = "credits"
-    archive.save(path / "run.json", meta)
-    legacy = archive_root / "fake-legacy"
-    files = {
-        "scripts/libtv_video.mjs": "console.log('fake release verified');",
-        "tools/js-reverse-mcp/release.json": "{}",
-        "tools/js-reverse-mcp/canvas-transport.mjs": """
-          export class CanvasApi {
-            static async fromBrowser() { return new CanvasApi(); }
-            async request(route) {
-              if (route !== '/api/task/generation/power/calculator')
-                throw Error('Unexpected network endpoint');
-              return {data:{power:Number(process.env.TEST_QUOTE)}};
-            }
-          }
-        """,
-        "tools/js-reverse-mcp/canvas-run.mjs": """
-          import {readFile,writeFile} from 'node:fs/promises';
-          import path from 'node:path';
-          export const load = async run => JSON.parse(await readFile(path.join(run,'run.json')));
-          export const save = (filename,value) => writeFile(filename,JSON.stringify(value));
-          export const update = async (run,value) => save(path.join(run,'run.json'),
-            {...await load(run),...value});
-          export const withRunLock = async (_run,action) => action();
-          export const poll = async () => {throw Error('No polling expected');};
-        """,
-        "libtv/adapters/canvas-media.mjs": """
-          import {readFile} from 'node:fs/promises';
-          import {createHash} from 'node:crypto';
-          export const accountUploadUuid = async () => 'fake-account';
-          export class MediaUploader {
-            async upload(filename) {return {url:'https://example.invalid/media',
-              sha256:createHash('sha256').update(await readFile(filename)).digest('hex'),
-              audit:{passed:true}};}
-          }
-        """,
-        "libtv/workbench/submit.mjs": "export async function submit(){throw Error('not used');}",
-        "libtv/adapters/billing.mjs": """
-          export async function accountCreditTags() {return ['rateLimit_powerZero_test'];}
-          export function applyBilling(request, mode, tags) {
-            const out = structuredClone(request);
-            out.params.infiniteSwitch = mode === 'credits' ? 1 : 0;
-            if (mode === 'credits') {
-              out.disableBenefitTags = tags;
-              out.params.disableBenefitTags = tags;
-            }
-            return out;
-          }
-        """,
-    }
-    for filename, content in files.items():
-        dest = legacy / filename
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_text(content, encoding="utf-8")
-    script = (
-        f"import {{main}} from {json.dumps(BRIDGE.as_uri())};"
-        f"process.argv={json.dumps(['node', 'test', 'upload', str(path), str(legacy)])};"
-        "await main();"
-    )
-    response = subprocess.run(
-        [get_libtv_settings().node, "--input-type=module", "-e", script],
-        env={**os.environ, "TEST_QUOTE": str(quote)},
-        capture_output=True,
-    )
-    assert response.returncode == 0, response.stderr.decode(errors="replace")
-    updated = archive.read(path / "run.json")
-    assert updated["status"] == expected
-    request = json.loads((path / "inputs/request.json").read_text(encoding="utf-8"))
-    assert request["params"]["infiniteSwitch"] == 1
-    assert request["disableBenefitTags"] == ["rateLimit_powerZero_test"]
-    if quote:
-        assert updated["estimated_credits"] == quote
-    else:
-        assert "积分队列" in updated["last_error"]
-        assert updated["estimated_credits"] is None
+    run, pack = await _prepared(client, materials)
+    try:
+        await patch_run(run["id"], status="queued", billing_mode="credits")
+        await asyncio.to_thread(worker.sync_projection, await read_run(run["id"]))
+        path = run_path(run["id"])
+        legacy = _write_legacy(tmp_path / "fake-legacy", submit_body=SUBMIT_UNUSED)
 
+        _run_bridge(path, legacy, [], quote=quote)
 
-def test_poll_never_overwrites_the_charged_credits_with_zero(
-    materials: tuple[dict, dict], archive_root: Path
-) -> None:
-    """轮询不能把真实扣费改写成 0。
-
-    上游 progress.power 在排队/生成阶段恒为 0，只有提交回执 data.power 是真正
-    结算的那笔。早期实现无条件用 progress.power 覆盖 credits，档案于是显示
-    「0 积分」，等于把扣费记录抹掉——用户根本无法核对加速到底花了多少。
-    """
-    source, image = materials
-    run = prepare(
-        PrepareReplacement(
-            request_id=uuid.uuid4(),
-            kind="character",
-            target="积分核对",
-            source_id=source["id"],
-            reference_ids=[image["id"]],
-        ),
-        "u_001",
-    )
-    path = Path(run.archive_path)
-    meta = archive.read(path / "run.json")
-    meta.update(
-        {
-            "status": "running",
-            "billing_mode": "credits",
-            "task_id": "20600000000000000001",
-            # 已被旧版轮询抹成 0，必须能从提交回执里自愈。
-            "credits": 0,
-            "estimated_credits": 240,
-        }
-    )
-    archive.save(path / "run.json", meta)
-    archive.save(
-        path / "records/submission.json",
-        {"code": 0, "data": {"power": 240, "taskId": "20600000000000000001"}},
-    )
-    legacy = archive_root / "fake-legacy"
-    files = {
-        "scripts/libtv_video.mjs": "console.log('fake release verified');",
-        "tools/js-reverse-mcp/release.json": "{}",
-        "tools/js-reverse-mcp/canvas-transport.mjs": """
-          export class CanvasApi {
-            static async fromBrowser() { return new CanvasApi(); }
-            async request(route) {
-              if (route !== '/api/task/generation/progress')
-                throw Error('Unexpected network endpoint');
-              return {code:0,data:{progresses:[{taskId:'20600000000000000001',
-                status:1,progressPercent:7,power:0}]}};
-            }
-          }
-        """,
-        "tools/js-reverse-mcp/canvas-run.mjs": """
-          import {readFile,writeFile} from 'node:fs/promises';
-          import path from 'node:path';
-          export const load = async run => JSON.parse(await readFile(path.join(run,'run.json')));
-          export const save = (filename,value) => writeFile(filename,JSON.stringify(value));
-          export const update = async (run,value) => save(path.join(run,'run.json'),
-            {...await load(run),...value});
-          export const withRunLock = async (_run,action) => action();
-          export const poll = async () => {throw Error('No polling expected');};
-        """,
-        "libtv/adapters/canvas-media.mjs": """
-          export const accountUploadUuid = async () => 'fake-account';
-          export class MediaUploader { async upload() {throw Error('not used');} }
-        """,
-        "libtv/workbench/submit.mjs": "export async function submit(){throw Error('not used');}",
-    }
-    for filename, content in files.items():
-        dest = legacy / filename
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_text(content, encoding="utf-8")
-    script = (
-        f"import {{main}} from {json.dumps(BRIDGE.as_uri())};"
-        f"process.argv={json.dumps(['node', 'test', 'poll', str(path), str(legacy)])};"
-        "await main();"
-    )
-    response = subprocess.run(
-        [get_libtv_settings().node, "--input-type=module", "-e", script],
-        capture_output=True,
-    )
-    assert response.returncode == 0, response.stderr.decode(errors="replace")
-    updated = archive.read(path / "run.json")
-    assert updated["status"] == "running"
-    assert updated["credits"] == 240
-    assert updated["estimated_credits"] == 240
+        updated = json.loads((path / "run.json").read_text(encoding="utf-8"))
+        assert updated["status"] == expected
+        request = json.loads((path / "inputs/request.json").read_text(encoding="utf-8"))
+        assert request["params"]["infiniteSwitch"] == 1
+        assert request["disableBenefitTags"] == ["rateLimit_powerZero_test"]
+        if quote:
+            assert updated["estimated_credits"] == quote
+        else:
+            assert "积分队列" in updated["last_error"]
+            assert updated["estimated_credits"] is None
+    finally:
+        await drop_run(run["id"])
+        await drop_pack(pack.id)

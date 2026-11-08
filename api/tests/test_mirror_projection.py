@@ -48,7 +48,7 @@ def test_rebuild_updates_stale_version(client: TestClient, api: str) -> None:
     """镜像内容旧了但文件还在：靠 stateVersion 发现并重写，不是靠 mtime。"""
     asset = _upload(client, "mirror-stale.png")
     renamed = client.put(
-        f"{api}/assets/archive/{asset['id']}/name",
+        f"{api}/assets/{asset['id']}/name",
         json={"expectedVersion": asset["stateVersion"], "name": "改过名.png"},
     )
     assert renamed.status_code == 200, renamed.text

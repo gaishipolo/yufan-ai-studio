@@ -197,7 +197,7 @@ class ArchiveAssetRepository:
         路径与 URL 都按「归档根」拼，`path` 是前端下载时拼 Z 盘路径用的相对 key。
         """
         preview_key = row.cover_key or None
-        base = f"{settings.api_prefix}/assets/archive/{row.id}"
+        base = f"{settings.api_prefix}/assets/{row.id}"
         return StoredMedia(
             id=row.id,
             name=row.name,

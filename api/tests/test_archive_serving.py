@@ -68,7 +68,7 @@ def test_remote_driver_redirects_to_presigned_url(
     client: TestClient, archive_root: Path, redirecting: None
 ) -> None:
     media = _upload_png(client, archive_root)
-    response = client.get(f"/api/v1/assets/archive/{media['id']}/file", follow_redirects=False)
+    response = client.get(f"/api/v1/assets/{media['id']}/file", follow_redirects=False)
     assert response.status_code == 307
     location = response.headers["location"]
     assert location.startswith("https://archive.example.test/")
@@ -82,5 +82,5 @@ def test_remote_driver_still_404s_when_bytes_are_gone(
     """预签名不校验存在性：少了这次 HEAD，用户会拿到一个 307 到 NoSuchKey。"""
     media = _upload_png(client, archive_root)
     (archive_root / media["path"]).unlink()
-    response = client.get(f"/api/v1/assets/archive/{media['id']}/file", follow_redirects=False)
+    response = client.get(f"/api/v1/assets/{media['id']}/file", follow_redirects=False)
     assert response.status_code == 404

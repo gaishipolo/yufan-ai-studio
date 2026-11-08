@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from datetime import UTC
 
 from core.context import CurrentUser
@@ -75,7 +74,7 @@ async def list_feed(
     warnings: list[str] = []
     if source != "video" and actor.has("template:read"):
         try:
-            runs = await asyncio.to_thread(replacement_feed, actor.id)
+            runs = await replacement_feed(actor.id)
             replacements = [replacement_item(run) for run in runs if not run.deleted_at]
             upstream_ids = {run.id: run.task_id or "" for run in runs}
         except (OSError, UpstreamError):

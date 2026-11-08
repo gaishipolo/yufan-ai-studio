@@ -62,10 +62,12 @@ def test_policy_covers_money_endpoints() -> None:
     这条用例钉的是策略本身：`filter` 出来的这些接口如果哪天被改成豁免，
     下面会红——比「某人 review 时想起来」可靠。
     """
+    # 这里原本有两条上传：旧 `/assets/upload` 与 `/assets/archive/upload`。素材接口
+    # 合并成一套后它们是同一个路径——集合去重会把重复项静默吃掉，所以合并当时没报错，
+    # 直到 ruff 的 B033 问「你为什么要写两遍」。
     money = {
         "POST /assets/upload",
-        "POST /assets/archive/upload",
-        "POST /assets/archive/import",
+        "POST /assets/import",
         "POST /generations/image",
         "POST /images/{job_id}/retry",
         "POST /tasks",

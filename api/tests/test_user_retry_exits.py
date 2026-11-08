@@ -12,6 +12,12 @@
 这里的 `EXIT_CASES` 是唯一清单：条目本身就是一次真实调用（造「提交结果未知」
 的现场 → 走用户点得到的入口 → 断言不抛 Conflict）。`test_architecture.py` 只对账
 「每个 kind 都在这张表里」，不再猜文本。新增 kind 时，先写出口再登记。
+
+**2026-11-08 重建后**：template 的现场从「工作区里的 run.json」变成
+「`replacement_runs` 表里的一行」，出口本身（`/reconfirm`）没变。这个文件被
+重写而不是丢弃——它正是发现「`replacement_worker` 这个模块名不存在」的那条
+测试：没有它，`execute` 与 `reconfirm` 会在 import 那一行就抛 ImportError，
+而全量测试一片绿。
 """
 
 from __future__ import annotations
@@ -19,21 +25,20 @@ from __future__ import annotations
 import uuid
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
-# 显式导入共享夹具供 pytest 注册（归档根目录切到 tmp_path）
-from test_replacement_archive import archive_root  # noqa: F401
-
 from core.config import settings
 from db.session import get_session_factory
 from generation.spec import STATUS_FAILED
+from infra.archive import get_archive_storage
+from infra.archive.runs import relative_key, runs_root, save_pointer
 from modules.image.models import ImageJob
 from modules.task.enums import TaskStatus
 from modules.task.models import VideoTask
-from modules.template.replacement_repository import ReplacementManifest, ReplacementRepository
+from modules.template.models import ReplacementRun
+from modules.template.workspace import ensure_layout, write_state
 
 API = "/api/v1"
 
@@ -69,7 +74,7 @@ async def _drop_image(job_id: str) -> None:
             await session.commit()
 
 
-async def _image_exit(client: TestClient, _root: Path) -> None:
+async def _image_exit(client: TestClient) -> None:
     """`image`：带 confirmCharged 的 retry 必须放行已受理的失败记录。"""
     job_id = await _insert_unknown_image(_me_id(client))
     try:
@@ -79,7 +84,7 @@ async def _image_exit(client: TestClient, _root: Path) -> None:
         await _drop_image(job_id)
 
 
-async def _video_exit(client: TestClient, _root: Path) -> None:
+async def _video_exit(client: TestClient) -> None:
     """`video`：失败任务的重试必须清掉提交意图，否则入队即被防线拦下。"""
     actor = _me_id(client)
     task = VideoTask(
@@ -111,47 +116,77 @@ async def _video_exit(client: TestClient, _root: Path) -> None:
                 await session.commit()
 
 
-def _make_unknown_run(root: Path, owner: str) -> str:
-    """造一条「进程在供应商受理与写库之间被杀」的档案。"""
-    repo = ReplacementRepository()
+async def _make_unknown_run(owner: str) -> str:
+    """造一条「进程在供应商受理与写库之间被杀」的记录。
+
+    两个现场都要真造：数据库里那行（状态机的真相）+ 工作区与指针（详情页要
+    读 `archive_path`，执行器要真实目录）。只造数据库会让断言蓝在 500 上，
+    而那是测试自己的问题，不是代码的问题。
+    """
     run_id = uuid.uuid4().hex
-    path = root / "runs/2026/11/06" / f"character-{run_id}"
-    for folder in ("inputs", "outputs", "records", "review", "code"):
-        (path / folder).mkdir(parents=True, exist_ok=True)
-    repo.save(
+    async with get_session_factory()() as session:
+        session.add(
+            ReplacementRun(
+                id=run_id,
+                kind="character",
+                target="出口用例",
+                owner_id=owner,
+                fingerprint="exit-check",
+                status="submission_unknown",
+                submit_attempts=1,
+            )
+        )
+        await session.commit()
+    path = runs_root() / f"character-{run_id}"
+    ensure_layout(path)
+    # 执行器协议文件：`run.json` 不在时 `run_dir()` 按「档案不存在」处理（换机器
+    # 时的正确表现），详情页也就打不开。这里要验的是状态机，所以把它写上。
+    write_state(
         path,
-        ReplacementManifest(
-            id=run_id,
-            kind="character",
-            target="出口用例",
-            owner_id=owner,
-            fingerprint="exit-check",
-            status="submission_unknown",
-            submit_attempts=1,
-        ),
+        {
+            "id": run_id,
+            "kind": "character",
+            "owner_id": owner,
+            "status": "submission_unknown",
+            "submit_attempts": 1,
+        },
     )
-    repo.index(path, run_id)
+    save_pointer(get_archive_storage(), run_id, relative_key(path))
     return run_id
 
 
-async def _replacement_exit(client: TestClient, root: Path) -> None:
+async def _drop_run(run_id: str) -> None:
+    async with get_session_factory()() as session:
+        row = await session.get(ReplacementRun, run_id)
+        if row is not None:
+            await session.delete(row)
+            await session.commit()
+
+
+async def _replacement_exit(client: TestClient) -> None:
     """`template_replacement`：reconfirm 必须能把死锁记录放回队列。"""
-    run_id = _make_unknown_run(root, _me_id(client))
-    with pytest.MonkeyPatch.context() as patch:
-        # schedule() 在 worker 关闭时拒绝入队（只读实例不该真去提交），
-        # 这里要验的是「状态机放行」，所以把 worker 打开。
-        patch.setattr(settings, "worker_enabled", True)
-        resp = client.post(
-            f"{API}/templates/replacement-runs/{run_id}/reconfirm", json={"confirmCharged": True}
-        )
-    assert resp.status_code == 200, resp.text
+    owner = _me_id(client)
+    run_id = await _make_unknown_run(owner)
+    try:
+        with pytest.MonkeyPatch.context() as patch:
+            # schedule() 在 worker 关闭时拒绝入队（只读实例不该真去提交），
+            # 这里要验的是「状态机放行」，所以把 worker 打开。
+            patch.setattr(settings, "worker_enabled", True)
+            resp = client.post(
+                f"{API}/templates/replacement-runs/{run_id}/reconfirm",
+                json={"confirmCharged": True},
+            )
+        assert resp.status_code == 200, resp.text
+        async with get_session_factory()() as session:
+            after = await session.get(ReplacementRun, run_id)
+            assert after is not None
+            assert after.submit_attempts == 0, "出口没清提交意图，恢复器仍会把它定格"
+            assert after.status == "queued"
+    finally:
+        await _drop_run(run_id)
 
-    meta = ReplacementRepository().load(ReplacementRepository().path(run_id))
-    assert meta.submit_attempts == 0, "出口没清提交意图，恢复器仍会把它定格"
-    assert meta.status == "queued"
 
-
-EXIT_CASES: dict[str, Callable[[TestClient, Path], Awaitable[None]]] = {
+EXIT_CASES: dict[str, Callable[[TestClient], Awaitable[None]]] = {
     "image": _image_exit,
     "template_replacement": _replacement_exit,
     "video": _video_exit,
@@ -159,21 +194,22 @@ EXIT_CASES: dict[str, Callable[[TestClient, Path], Awaitable[None]]] = {
 
 
 @pytest.mark.parametrize("kind", sorted(EXIT_CASES))
-async def test_declared_exit_actually_works(
-    kind: str, client: TestClient, archive_root: Path  # noqa: F811
-) -> None:
-    await EXIT_CASES[kind](client, archive_root)
+async def test_declared_exit_actually_works(kind: str, client: TestClient) -> None:
+    await EXIT_CASES[kind](client)
 
 
-async def test_reconfirm_defaults_to_refusal(
-    client: TestClient, archive_root: Path  # noqa: F811
-) -> None:
+async def test_reconfirm_defaults_to_refusal(client: TestClient) -> None:
     """不带 confirmCharged 时必须 409：一次误点就是第二次计费。"""
-    run_id = _make_unknown_run(archive_root, _me_id(client))
-    resp = client.post(f"{API}/templates/replacement-runs/{run_id}/reconfirm", json={})
-    assert resp.status_code == 409, resp.text
-    assert "可能已产生费用" in resp.json()["message"]
-
-    meta = ReplacementRepository().load(ReplacementRepository().path(run_id))
-    assert meta.status == "submission_unknown", "拒绝时不能动状态"
-    assert meta.submit_attempts == 1, "拒绝时不能清提交意图"
+    owner = _me_id(client)
+    run_id = await _make_unknown_run(owner)
+    try:
+        resp = client.post(f"{API}/templates/replacement-runs/{run_id}/reconfirm", json={})
+        assert resp.status_code == 409, resp.text
+        assert "可能已产生费用" in resp.json()["message"]
+        async with get_session_factory()() as session:
+            after = await session.get(ReplacementRun, run_id)
+            assert after is not None
+            assert after.status == "submission_unknown", "拒绝时不能动状态"
+            assert after.submit_attempts == 1, "拒绝时不能清提交意图"
+    finally:
+        await _drop_run(run_id)

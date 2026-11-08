@@ -19,7 +19,7 @@ def test_quota_blocks_upload_and_is_reported(
 ) -> None:
     monkeypatch.setattr(settings, "archive_quota_bytes_per_user", 1)
     response = client.post(
-        f"{api}/assets/archive/upload",
+        f"{api}/assets/upload",
         params={"filename": "over-quota.png", "category": "product"},
         content=png_bytes((20, 20), "red"),
         headers={"Content-Type": "application/octet-stream"},
@@ -27,7 +27,7 @@ def test_quota_blocks_upload_and_is_reported(
     assert response.status_code == 413, response.text
     assert response.json()["details"]["quotaBytes"] == 1
 
-    listing = client.get(f"{api}/assets/archive", params={"scope": "mine"}).json()["data"]
+    listing = client.get(f"{api}/assets", params={"scope": "mine"}).json()["data"]
     assert listing["quotaBytes"] == 1
     assert "ownerUsedBytes" in listing
 
@@ -38,7 +38,7 @@ def test_zero_quota_means_unlimited(
     monkeypatch.setattr(settings, "archive_quota_bytes_per_user", 0)
     asset = archive.upload(client, "unlimited.png", "product", png_bytes((22, 22), "blue"))
     assert asset["id"]
-    listing = client.get(f"{api}/assets/archive", params={"scope": "mine"}).json()["data"]
+    listing = client.get(f"{api}/assets", params={"scope": "mine"}).json()["data"]
     assert listing["quotaBytes"] == 0
     assert listing["ownerUsedBytes"] >= asset["sizeBytes"]
 
@@ -48,14 +48,14 @@ def test_trash_does_not_count_toward_quota(
 ) -> None:
     monkeypatch.setattr(settings, "archive_quota_bytes_per_user", 0)
     asset = archive.upload(client, "to-trash.png", "product", png_bytes((20, 20), "green"))
-    before = client.get(f"{api}/assets/archive", params={"scope": "mine"}).json()["data"][
+    before = client.get(f"{api}/assets", params={"scope": "mine"}).json()["data"][
         "ownerUsedBytes"
     ]
     assert client.put(
-        f"{api}/assets/archive/{asset['id']}/deleted",
+        f"{api}/assets/{asset['id']}/deleted",
         json={"expectedVersion": asset["stateVersion"], "deleted": True},
     ).status_code == 200
-    after = client.get(f"{api}/assets/archive", params={"scope": "mine"}).json()["data"][
+    after = client.get(f"{api}/assets", params={"scope": "mine"}).json()["data"][
         "ownerUsedBytes"
     ]
     assert after == before - asset["sizeBytes"]

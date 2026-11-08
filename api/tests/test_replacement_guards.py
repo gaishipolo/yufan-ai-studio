@@ -1,87 +1,76 @@
 """替换任务的两道后台闸门。
 
-这两条都不是「代码写得对不对」，而是「出事的时候钱会不会继续花」：
-发起人被停用后队列还在替他跑、上游一直忙就无限重试。测试钉的就是这两个边界。
+这两条都不是「代码写得对不对」，而是「出事的时候钱会不会继续花」：发起人被停用后
+队列还在替他跑、上游一直忙就无限重试。测试钉的就是这两个边界。
+
+重建后闸门的**位置**变了（旧写在 `replacement_worker`，现在在 `worker.py`，
+状态从 `run.json` 换到行上），判据一字没改：
+
+- 退避 30s 起、翻倍、封顶 10 分钟，第 6 次转人工；
+- 停用只挡**新提交**：已经拿到上游 `task_id` 的继续轮询与下载（那笔钱已经花出去）。
 """
 
 from __future__ import annotations
 
+import uuid
+
+import pytest
 from fastapi.testclient import TestClient
+from tests_template_helpers import API, add_run, drop_run, login, read_run
 
-from modules.template.replacement_repository import (
-    ReplacementManifest,
-    ReplacementRepository,
-)
-from modules.template.replacement_worker import (
-    MAX_RETRIES,
-    _bump_retry,
-    backoff_delay,
-    owner_disabled,
-)
+from db.session import get_session_factory
+from infra.queue.base import Job
+from modules.template import worker
 
-API = "/api/v1"
 ADMIN = ("admin", "admin@12345")
-
-
-def _login(
-    client: TestClient, username: str = ADMIN[0], password: str = ADMIN[1]
-) -> dict[str, str]:
-    resp = client.post(f"{API}/identity/login", json={"username": username, "password": password})
-    assert resp.status_code == 200, resp.text
-    return {"Authorization": "Bearer " + resp.json()["data"]["accessToken"]}
-
-
-def _manifest(owner_id: str) -> ReplacementManifest:
-    return ReplacementManifest(
-        id="a" * 32,
-        kind="character",
-        target="hero",
-        owner_id=owner_id,
-        fingerprint="f" * 64,
-    )
 
 
 def test_backoff_starts_small_and_caps() -> None:
     """退避必须两端都成立：起步别太急（打上游），上限别太大（用户等到以为卡死）。"""
-    assert [backoff_delay(n) for n in (1, 2, 3, 4)] == [30.0, 60.0, 120.0, 240.0]
-    assert backoff_delay(9) == 600.0  # 封顶
-    assert backoff_delay(0) == 30.0  # 计数异常时按第一次算，不返回 0
+    assert [worker.backoff_delay(n) for n in (1, 2, 3, 4)] == [30.0, 60.0, 120.0, 240.0]
+    assert worker.backoff_delay(9) == 600.0  # 封顶
+    assert worker.backoff_delay(0) == 30.0  # 计数异常时按第一次算，不返回 0
 
 
-def test_retry_is_bounded_and_lands_in_service_error() -> None:
-    repo = ReplacementRepository()
-    path = repo.storage.root() / "runs/guard-check"
-    meta = _manifest("u_guard")
+async def test_retry_is_bounded_and_lands_in_service_error() -> None:
+    run = await add_run(status="uploaded")
+    try:
+        delays = []
+        for _ in range(worker.MAX_RETRIES):
+            async with get_session_factory()() as session:
+                delay = await worker._bump_retry(session, run.id, reason="执行器持续被占用")
+            assert delay is not None
+            delays.append(delay)
+        assert delays == [30.0, 60.0, 120.0, 240.0, 480.0]
 
-    delays = []
-    for _ in range(MAX_RETRIES):
-        delay = _bump_retry(repo, path, meta, reason="执行器持续被占用")
-        assert delay is not None
-        delays.append(delay)
-    assert delays == [30.0, 60.0, 120.0, 240.0, 480.0]
+        # 第 6 次不再排队：返回 None 即为「别再 enqueue」，run 转人工
+        async with get_session_factory()() as session:
+            assert await worker._bump_retry(session, run.id, reason="执行器持续被占用") is None
 
-    # 第 6 次不再排队：返回 None 即为「别再 enqueue」，run 转人工
-    assert _bump_retry(repo, path, meta, reason="执行器持续被占用") is None
-
-    saved = repo.load(path)
-    assert saved.status == "service_error"
-    assert saved.error_code == "RETRY_EXHAUSTED"
-    assert saved.retry_count == MAX_RETRIES + 1
-    assert "转人工" in (saved.last_error or "")
+        saved = await read_run(run.id)
+        assert saved is not None
+        assert saved.status == "service_error"
+        assert saved.error_code == "RETRY_EXHAUSTED"
+        assert saved.retry_count == worker.MAX_RETRIES + 1
+        assert "转人工" in (saved.last_error or "")
+    finally:
+        await drop_run(run.id)
 
 
-async def test_disabled_owner_blocks_and_unknown_owner_passes(client: TestClient) -> None:
-    admin = _login(client)
+async def _disabled_owner(client: TestClient) -> str:
+    """建一个账号再删掉：`owner_disabled` 只认库里真实存在的账号。"""
+    suffix = uuid.uuid4().hex[:8]
+    admin = login(client, *ADMIN)
     role = client.post(
         f"{API}/identity/roles",
-        json={"code": "guard_none", "name": "guard", "permissions": []},
+        json={"code": f"guard{suffix}", "name": "guard", "permissions": []},
         headers=admin,
     )
     assert role.status_code == 201, role.text
     created = client.post(
         f"{API}/identity/users",
         json={
-            "username": "guard_owner",
+            "username": f"guard_owner_{suffix}",
             "password": "pass-12345",
             "displayName": "guard",
             "roleIds": [role.json()["data"]["id"]],
@@ -91,46 +80,110 @@ async def test_disabled_owner_blocks_and_unknown_owner_passes(client: TestClient
     assert created.status_code == 201, created.text
     user_id = created.json()["data"]["id"]
 
-    assert await owner_disabled(user_id) is False
-
+    assert await worker.owner_disabled(user_id) is False
     assert client.delete(f"{API}/identity/users/{user_id}", headers=admin).status_code == 200
-    assert await owner_disabled(user_id) is True
+    assert await worker.owner_disabled(user_id) is True
 
     # 历史档案里的合成 owner / 已删除的 id：不拦（否则老数据全部卡死）
-    assert await owner_disabled("u_that_never_existed") is False
+    assert await worker.owner_disabled("u_that_never_existed") is False
+    return user_id
 
 
-async def _set_role_permissions(role_id: str, codes: list[str]) -> None:
-    from db.session import get_session_factory
-    from modules.identity.repository import RoleRepository
+async def test_disabled_owner_blocks_new_submission(client: TestClient) -> None:
+    """停用账号之后，排在队列里的「还没提交」不能继续：下一步就是花钱。"""
+    user_id = await _disabled_owner(client)
+    run = await add_run(owner=user_id, status="prepared")
+    try:
+        job = Job(name="template.replacement.prepare", payload={"id": run.id})
+        await worker.prepare_upload(job)
+        saved = await read_run(run.id)
+        assert saved is not None
+        assert saved.status == "service_error"
+        assert saved.error_code == "OWNER_DISABLED"
+        assert "停用" in (saved.last_error or "")
+    finally:
+        await drop_run(run.id)
 
-    async with get_session_factory()() as session:
-        await RoleRepository(session).set_permissions(role_id, codes)
-        await session.commit()
+
+async def test_disabled_owner_does_not_stop_an_already_submitted_run(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """已经拿到上游任务号的不拦：那笔钱已经花出去了，停在这里成片就白买。
+
+    这一条是「停用」与「取消」的分界：停用是别再花新钱，不是把已付的丢掉。
+    """
+    user_id = await _disabled_owner(client)
+    run = await add_run(owner=user_id, status="running", task_id="upstream-existing")
+    resumed: list[str] = []
+
+    class _Runner:
+        async def resume(self, kind: str, run_id: str) -> None:
+            resumed.append(f"{kind}:{run_id}")
+
+    monkeypatch.setattr(worker, "get_runner", lambda: _Runner())
+    try:
+        job = Job(name="template.replacement.prepare", payload={"id": run.id})
+        await worker.prepare_upload(job)
+        saved = await read_run(run.id)
+        assert saved is not None
+        assert saved.status == "running", "已提交的任务不该被停用改成终态"
+        assert resumed == [f"template_replacement:{run.id}"]
+    finally:
+        await drop_run(run.id)
+
+
+async def test_submitted_run_is_never_resubmitted(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """「提交中/提交结果未知」一律 return：重提交等于第二次计费。
+
+    这条和 `reconfirm` 出口是同一件事的两面：后台不能自己放行，必须由人拍板。
+    """
+    calls: list[str] = []
+
+    async def fake_stage(run_id: str, stage: str):
+        calls.append(stage)
+        raise AssertionError("不该走到执行器")
+
+    monkeypatch.setattr(worker, "execute_stage", fake_stage)
+    for status, attempts in (("submitting", 1), ("submission_unknown", 1), ("uploaded", 1)):
+        run = await add_run(status=status, submit_attempts=attempts)
+        try:
+            await worker.prepare_upload(
+                Job(name="template.replacement.prepare", payload={"id": run.id})
+            )
+            saved = await read_run(run.id)
+            assert saved is not None and saved.status == status, "状态不能被后台悄悄推进"
+        finally:
+            await drop_run(run.id)
+    assert calls == []
 
 
 async def test_sync_roles_backfills_only_missing_permission(client: TestClient) -> None:
     """上线带新权限点的模块时，老库里的 editor 不会自动长出新权限。
 
-    这条测的就是那个缺口：症状是「超管测都正常，非超管点提交 403」，
-    而 `sync-roles` 只补差集、不删任何手工配置。
+    症状是「超管测都正常，非超管点提交 403」。`sync-roles` 只补差集，不删任何
+    手工配置——所以这个用例同时钉住「补齐」与「幂等」两件事。
     """
-    from db.session import get_session_factory
+    from modules.identity.repository import RoleRepository
     from modules.identity.service import IdentityService
 
-    admin = _login(client)
+    admin = login(client, *ADMIN)
     roles = client.get(f"{API}/identity/roles", headers=admin).json()["data"]
-    editor = next(r for r in roles if r["code"] == "editor")
+    editor = next(role for role in roles if role["code"] == "editor")
     assert "template:use" in editor["permissions"]  # 新库：声明即生效
 
-    # 模拟「模块上线前就在的老库」：把这条权限拿掉
-    await _set_role_permissions(
-        editor["id"], [p for p in editor["permissions"] if p != "template:use"]
-    )
+    async with get_session_factory()() as session:
+        await RoleRepository(session).set_permissions(
+            editor["id"], [code for code in editor["permissions"] if code != "template:use"]
+        )
+        await session.commit()
+
+    suffix = uuid.uuid4().hex[:6]
     resp = client.post(
         f"{API}/identity/users",
         json={
-            "username": "guard_editor",
+            "username": f"guard_editor_{suffix}",
             "password": "pass-12345",
             "displayName": "editor",
             "roleIds": [editor["id"]],
@@ -138,9 +191,8 @@ async def test_sync_roles_backfills_only_missing_permission(client: TestClient) 
         headers=admin,
     )
     assert resp.status_code == 201, resp.text
-    headers = _login(client, "guard_editor", "pass-12345")
+    headers = login(client, f"guard_editor_{suffix}", "pass-12345")
 
-    # 缺权限时：提交替换被 403 挡在门外（不是 422 校验失败）
     submit = f"{API}/templates/replacement-runs"
     assert client.post(submit, json={}, headers=headers).status_code == 403
 
@@ -151,7 +203,5 @@ async def test_sync_roles_backfills_only_missing_permission(client: TestClient) 
     # 补齐后同一张令牌就能过权限检查，落到参数校验（422）
     assert client.post(submit, json={}, headers=headers).status_code == 422
 
-    # 幂等：再跑一次什么都不做
     async with get_session_factory()() as session:
         assert await IdentityService(session).sync_builtin_role_permissions() == {}
-

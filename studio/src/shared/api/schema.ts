@@ -32,18 +32,6 @@ export interface Page<T> {
 export type AspectRatio = "9:16" | "16:9" | "1:1";
 export const AspectRatio_VALUES = ["9:16", "16:9", "1:1"] as const;
 
-/** 取值：upload, archive, generated */
-export type AssetSource = "upload" | "archive" | "generated";
-export const AssetSource_VALUES = ["upload", "archive", "generated"] as const;
-
-/** 取值：image, video, audio */
-export type AssetType = "image" | "video" | "audio";
-export const AssetType_VALUES = ["image", "video", "audio"] as const;
-
-/** 取值：all, image, video, audio */
-export type AssetTypeFilter = "all" | "image" | "video" | "audio";
-export const AssetTypeFilter_VALUES = ["all", "image", "video", "audio"] as const;
-
 /** 取值：video, image, audio */
 export type Capability = "video" | "image" | "audio";
 export const Capability_VALUES = ["video", "image", "audio"] as const;
@@ -117,45 +105,6 @@ export interface ArchivedAsset {
   stateVersion?: number;
   editable?: boolean;
   downloadAllowed?: boolean;
-}
-
-/** 分面计数：切类型 tab 上的数字。
-
-它按「除类型以外的全部筛选条件」统计，所以切 tab 不会看到三个互不相干的数字，
-也不会出现「选了图片但视频计数还是全站值」这种自相矛盾的显示。 */
-export interface AssetCounts {
-  all?: number;
-  image?: number;
-  video?: number;
-  audio?: number;
-}
-
-/** AssetListOut */
-export interface AssetListOut {
-  items?: AssetOut[];
-  total?: number;
-  page?: number;
-  pageSize?: number;
-  counts?: AssetCounts;
-}
-
-/** AssetOut */
-export interface AssetOut {
-  id: string;
-  name: string;
-  type: AssetType;
-  mimeType: string;
-  sizeBytes: number;
-  width: number;
-  height: number;
-  duration: number;
-  hasAudio: boolean;
-  category?: "source" | "character" | "product" | "scene" | "audio" | null;
-  source: AssetSource;
-  coverUrl: string;
-  fileUrl: string;
-  refCount: number;
-  createdAt: string;
 }
 
 /** CreateExportIn */
@@ -973,25 +922,6 @@ export interface TaskStats {
   failed?: number;
 }
 
-/** TemplateListOut */
-export interface TemplateListOut {
-  items?: TemplateOut[];
-  total?: number;
-}
-
-/** TemplateOut */
-export interface TemplateOut {
-  id: string;
-  name: string;
-  description: string;
-  industry: string;
-  shotCount: number;
-  usageCount: number;
-  coverUrl: string;
-  tags?: string[];
-  createdAt: string;
-}
-
 /** TokenOut */
 export interface TokenOut {
   /** 访问令牌，放进 `Authorization: Bearer <token>` */
@@ -1085,42 +1015,30 @@ export interface ValidationError {
 
 /** 键是 `METHOD path`，值是去掉 {code,message,data} 封套后的类型 */
 export interface EndpointData {
-  /** 素材列表（分页 + 类型分面计数） */
-  "GET /api/v1/assets": AssetListOut;
   /** 归档素材列表与空间占用 */
-  "GET /api/v1/assets/archive": ArchiveList;
+  "GET /api/v1/assets": ArchiveList;
   /** 从 Z 盘 inbox 登记现有素材 */
-  "POST /api/v1/assets/archive/import": ArchivedAsset;
+  "POST /api/v1/assets/import": ArchivedAsset;
   /** 流式上传素材至归档盘 */
-  "POST /api/v1/assets/archive/upload": ArchivedAsset;
+  "POST /api/v1/assets/upload": ArchivedAsset;
   /** 彻底删除回收站中的归档素材 */
-  "DELETE /api/v1/assets/archive/{asset_id}": unknown;
-  /** 读取本人或共享原片详情 */
-  "GET /api/v1/assets/archive/{asset_id}": ArchivedAsset;
-  /** 将本人素材移入回收站或恢复 */
-  "PUT /api/v1/assets/archive/{asset_id}/deleted": ArchivedAsset;
-  /** 预览或下载已归档素材 */
-  "GET /api/v1/assets/archive/{asset_id}/file": unknown;
-  /** 修改本人素材名称 */
-  "PUT /api/v1/assets/archive/{asset_id}/name": ArchivedAsset;
-  /** 受控公共原片预览 */
-  "GET /api/v1/assets/archive/{asset_id}/preview": unknown;
-  /** 分享或取消分享本人原片 */
-  "PUT /api/v1/assets/archive/{asset_id}/sharing": ArchivedAsset;
-  /** 浏览器兼容视频预览（派生文件，不改原片） */
-  "GET /api/v1/assets/archive/{asset_id}/stream": unknown;
-  /** 读取归档素材缩略图 */
-  "GET /api/v1/assets/archive/{asset_id}/thumbnail": unknown;
-  /** 上传素材 */
-  "POST /api/v1/assets/upload": AssetOut;
-  /** 删除素材 */
   "DELETE /api/v1/assets/{asset_id}": unknown;
-  /** 素材详情 */
-  "GET /api/v1/assets/{asset_id}": AssetOut;
-  /** 读取素材缩略图 */
-  "GET /api/v1/assets/{asset_id}/cover": unknown;
-  /** 读取素材原文件 */
+  /** 读取本人或共享原片详情 */
+  "GET /api/v1/assets/{asset_id}": ArchivedAsset;
+  /** 将本人素材移入回收站或恢复 */
+  "PUT /api/v1/assets/{asset_id}/deleted": ArchivedAsset;
+  /** 预览或下载已归档素材 */
   "GET /api/v1/assets/{asset_id}/file": unknown;
+  /** 修改本人素材名称 */
+  "PUT /api/v1/assets/{asset_id}/name": ArchivedAsset;
+  /** 受控公共原片预览 */
+  "GET /api/v1/assets/{asset_id}/preview": unknown;
+  /** 分享或取消分享本人原片 */
+  "PUT /api/v1/assets/{asset_id}/sharing": ArchivedAsset;
+  /** 浏览器兼容视频预览（派生文件，不改原片） */
+  "GET /api/v1/assets/{asset_id}/stream": unknown;
+  /** 读取归档素材缩略图 */
+  "GET /api/v1/assets/{asset_id}/thumbnail": unknown;
   /** 我的导出记录 */
   "GET /api/v1/exports": Page<ExportOut>;
   /** 创建导出（异步生成，202） */
@@ -1219,8 +1137,6 @@ export interface EndpointData {
   "POST /api/v1/tasks/{task_id}/favorite": TaskOut;
   /** 重试任务 */
   "POST /api/v1/tasks/{task_id}/retry": TaskRetryOut;
-  /** 模板列表 */
-  "GET /api/v1/templates": TemplateListOut;
   /** 人物/产品/场景替换模板与调用档案 */
   "GET /api/v1/templates/replacement-catalog": ReplacementCatalog;
   /** 本人封装草稿和历史包 */
@@ -1245,7 +1161,7 @@ export interface EndpointData {
   "POST /api/v1/templates/replacement-runs/{run_id}/execute": ReplacementRunOut;
   /** 读取当次归档输入快照 */
   "GET /api/v1/templates/replacement-runs/{run_id}/inputs/{asset_id}": unknown;
-  /** 预览或下载 Z 盘原始生成结果 */
+  /** 预览或下载原始生成结果 */
   "GET /api/v1/templates/replacement-runs/{run_id}/output": unknown;
   /** 确认上次提交可能已计费后放行重提（默认拒绝） */
   "POST /api/v1/templates/replacement-runs/{run_id}/reconfirm": ReplacementRunOut;

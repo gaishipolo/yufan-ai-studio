@@ -1,8 +1,11 @@
-"""归档路由只声明 HTTP 参数和响应，业务由 ArchiveAssetService 处理。
+"""素材路由：全部挂在 `/assets` 下，只声明 HTTP 参数和响应。
 
-索引在 `assets` 表（`source='archive'`），字节仍在归档盘。接口路径、入参与出参
-都保持不变：前端与替换模板按 URL 契约对接，不该因为「索引从 JSON 换成 DB」
-而改一行代码。
+**这里是素材唯一的入口**。上一版有两套：`/assets`（旧 `AssetService`，索引走
+`MediaCatalog`）与 `/assets/archive`（归档盘 + `assets` 表）。两套路径长得几乎一样、
+权限码却不同，前端因此养出两个客户端、两套页面，问题永远只在其中一套里被修。
+索引搬进 `assets` 表之后，旧那套已经没有任何独有的能力，只剩 `cover` ——
+而归档侧本来就有 `thumbnail`。所以路径统一到 `/assets`，`archive` 这一段去掉：
+「归档」是数据来源，不是资源名。
 
 三个 `PUT` 是「我的素材」的写入口（改名 / 分享 / 回收站），彼此用不同权限点：
 改名只动自己的记录，分享会让素材进入公共原片池，删除影响可用性，不能共用一个码。
@@ -31,7 +34,7 @@ from modules.asset.archive_schema import (
     ImportAsset,
 )
 
-router = APIRouter(prefix="/archive", tags=["素材归档"])
+router = APIRouter(prefix="/assets", tags=["素材"])
 
 
 @router.get("", summary="归档素材列表与空间占用")

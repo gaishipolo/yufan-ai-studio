@@ -74,7 +74,7 @@ def test_stream_serves_playable_derivative_and_preserves_original(
     source = make_video(archive_root / "sample.mp4")
     original = source.read_bytes()
     media = archive.upload(client, "sample.mp4", "source", original)
-    response = client.get(f"/api/v1/assets/archive/{media['id']}/stream")
+    response = client.get(f"/api/v1/assets/{media['id']}/stream")
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("video/mp4")
     # 派生流按素材摘要命名（`previews/ab/abcdef…hd-v2.mp4`）：同一原片只派生一次，
@@ -107,7 +107,7 @@ def test_portrait_thumbnail_keeps_detail(client: TestClient, archive_root: Path)
     assert thumbnail.read_bytes() == response.content
     with Image.open(thumbnail) as image:
         assert image.size == (720, 1280)
-    assert client.get(f"/api/v1/assets/archive/{media['id']}/stream").status_code == 200
+    assert client.get(f"/api/v1/assets/{media['id']}/stream").status_code == 200
     info = inspect(archive_root / clip_key(media["sha256"]), ".mp4")
     assert (info["width"], info["height"]) == (720, 1280)
 
@@ -116,7 +116,7 @@ def test_stream_rejects_non_video(client: TestClient, archive_root: Path) -> Non
     image = archive_root / "reference.png"
     Image.new("RGB", (16, 16), tuple(os.urandom(3))).save(image, format="PNG")
     media = archive.upload(client, "reference.png", "character", image.read_bytes())
-    assert client.get(f"/api/v1/assets/archive/{media['id']}/stream").status_code == 404
+    assert client.get(f"/api/v1/assets/{media['id']}/stream").status_code == 404
 
 
 def test_browser_preview_fails_closed_on_bad_input(archive_root: Path) -> None:
