@@ -196,6 +196,67 @@ def test_generated_store_implements_the_whole_protocol() -> None:
     assert not missing, f"脚手架生成的 Store 缺少协议方法：{sorted(missing)}"
 
 
+def _declared_permissions(source: str) -> set[str]:
+    codes: set[str] = set()
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        name = func.id if isinstance(func, ast.Name) else getattr(func, "attr", "")
+        if name != "PermissionSpec" or not node.args:
+            continue
+        first = node.args[0]
+        if isinstance(first, ast.Constant) and isinstance(first.value, str):
+            codes.add(first.value)
+    return codes
+
+
+def _enforced_permissions(sources: list[str]) -> set[str]:
+    """生成物里 `require("...")` 用到的码。"""
+    codes: set[str] = set()
+    for source in sources:
+        for node in ast.walk(ast.parse(source)):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            name = func.id if isinstance(func, ast.Name) else getattr(func, "attr", "")
+            if name != "require":
+                continue
+            for arg in node.args:
+                if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                    codes.add(arg.value)
+    return codes
+
+
+@pytest.mark.parametrize("with_generation", [False, True])
+def test_generated_module_passes_the_permission_coverage_guard(
+    with_generation: bool,
+) -> None:
+    """脚手架声明了哪个权限点，生成物里就要有对应的 `require(...)`。
+
+    这条守的是**模板与守卫的一致性**：`tests/test_permission_coverage.py` 只扫
+    已经落盘的 `src/modules/*`，对模板本身没有约束。模板里多声明一个权限点、
+    或者删掉一行 `${Name}UpdateDep`，`app new-module` 生成出来的模块会直接红在
+    「声明了没人用」这条新守卫上——而发现这个错误的人是刚用完脚手架的新人。
+
+    模板生成的是 CRUD 骨架，四个 `require(...)` 都写在 `dependencies.py` 里
+    （路由只挂了 read/create，update/delete 留给业务自己接）。所以扫描范围
+    必须包含 `dependencies.py`，否则会误报 `:update` / `:delete`。
+    """
+    files = render(_plan(with_generation=with_generation))
+    declared = _declared_permissions(files["__init__.py"])
+    enforced = _enforced_permissions(
+        [files["dependencies.py"], files["router.py"]]
+    )
+
+    assert declared, "模板里一个 PermissionSpec 都没有，扫描口径可能坏了"
+    missing = sorted(declared - enforced)
+    assert not missing, (
+        f"脚手架声明了但生成物里没有判定点：{missing}。"
+        "新模块一落地就会撞上「声明了没人用」的守卫"
+    )
+
+
 def test_wrong_root_is_rejected_instead_of_growing_an_orphan_tree(tmp_path) -> None:
     """`--root` 指错地方必须当场报错，而不是造出一棵永远不会被加载的目录。
 

@@ -273,6 +273,25 @@ MUTANTS: tuple[Mutant, ...] = (
         ("tests/test_token_claims.py",),
         "刷新票不要求 jti：重放检测失去依据",
     ),
+    Mutant(
+        "scaffold-perm-unused",
+        "src/scaffold/templates.py",
+        '${Name}UpdateDep = Annotated[CurrentUser, Depends(require("${perm}:update"))]\n',
+        "",
+        ("tests/test_scaffold.py",),
+        "脚手架模板声明了 :update 却没有 require：新模块一落地就撞上僵尸权限守卫",
+    ),
+    Mutant(
+        "backup-leaves-handle",
+        "src/db/backup.py",
+        "    # 否则「恢复成功」之后紧接着的任何 rename / 二次备份都可能撞上占用。\n"
+        "    with closing(sqlite3.connect(source)) as src, "
+        "closing(sqlite3.connect(target)) as dst:\n",
+        "    # 否则「恢复成功」之后紧接着的任何 rename / 二次备份都可能撞上占用。\n"
+        "    with sqlite3.connect(source) as src, sqlite3.connect(target) as dst:\n",
+        ("tests/test_backup.py",),
+        "恢复不再关闭 sqlite 连接：文件句柄留到 GC，Windows 上挡住恢复时替换文件",
+    ),
 )
 
 
