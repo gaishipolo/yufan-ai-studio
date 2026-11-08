@@ -453,6 +453,19 @@ def reload_settings() -> Settings:
     为什么是原地刷新而不是换对象：见 `get_settings` 的说明。原地刷新之后，
     所有已经 import 过 `settings` 的模块会一起看到新值——「一个进程只有一份配置」
     这件事必须始终成立，否则排查配置问题时看到的现场是自相矛盾的。
+
+    **不重建 `@lru_cache` 派生的单例**（`get_archive_storage()`、`get_event_bus()`、
+    `get_rate_limiter()`、`get_leader_elector()`、`get_model_router()` 等 10 个）。
+    这些对象在第一次取用时就把 `settings` 里的值读走了：改了 `ARCHIVE_ROOT`
+    再 reload，`settings.archive_root` 是新值，但归档盘实例还指着旧目录。
+
+    这不是「忘了清缓存」，而是分层决定的：`core` 不能反向 import `infra` 去调
+    `cache_clear()`。所以它只承诺「配置值刷新」，不承诺「派生对象重建」——
+    需要换驱动/换目录的场景请重启进程（运维脚本 `app migrate-storage` 也是这么做的）。
+
+    测试里要临时改配置，**优先 monkeypatch 那个单例对象的属性**
+    （`monkeypatch.setattr(get_archive_settings(), "root", tmp)`），而不是 `setenv`
+    之后指望 reload 生效——后者会得到「一半新一半旧」的现场。
     """
     fresh = Settings()
     for name in type(fresh).model_fields:
