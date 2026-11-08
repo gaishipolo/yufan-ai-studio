@@ -73,6 +73,7 @@ from core.feed import has_replacement_feed
 from core.ports.accounts import has_account_status_checker
 from core.ports.assets import reference_source_gaps
 from core.ports.export_sources import export_sources
+from core.ports.media import has_asset_lookup
 
 __all__ = ["PORT_CATALOG", "PortSpec", "port_status"]
 
@@ -137,6 +138,17 @@ PORT_CATALOG: tuple[PortSpec, ...] = (
         when_unregistered="fail-closed（见本文件开头的例外说明）：来源不齐抛 503，"
         "删除一律拒绝。这里返回中性值等于静默放行不可逆删除",
         is_registered=lambda: not reference_source_gaps(),
+    ),
+    PortSpec(
+        name="asset-lookup",
+        module="core.ports.media",
+        protocol="AssetLookup",
+        implementer="modules/asset 的 `lookup.SqlAssetLookup`（模块 import 期 "
+        "`install()` 注册）。与 `asset-references` 分工：那个回答「谁还在引用它」，"
+        "这个回答「它本身是什么」",
+        when_unregistered="fail-closed（见本文件开头的例外说明）：抛 503，不返回 "
+        "空映射。这里退化成「查不到就算素材不存在」会把配置故障报成用户数据问题",
+        is_registered=has_asset_lookup,
     ),
     PortSpec(
         name="replacement-feed",

@@ -17,7 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.media import StoredMedia
-from core.ports.media import AssetLookup, bind_asset_lookup
+from core.ports.media import AssetLookup, register_asset_lookup
 from modules.asset.archive_repository import ArchiveAssetRepository
 from modules.asset.models import Asset
 
@@ -41,5 +41,5 @@ lookup = SqlAssetLookup()
 
 
 def install() -> None:
-    """import 期挂到注入口。幂等——重复调用只是覆盖同一个实现。"""
-    bind_asset_lookup(lookup)
+    """import 期挂到注入口。幂等——每次传的是同一个 `lookup` 实例。"""
+    register_asset_lookup(lookup)

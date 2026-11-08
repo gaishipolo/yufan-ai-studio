@@ -12,9 +12,12 @@
 
 ## fail-open 还是 fail-closed
 
-这里选 **fail-closed**：没注册实现时抛 `Unavailable`(503)，不返回 None。
+这里选 **fail-closed**：没注册实现时抛 `Unavailable`(503)，不返回 `None`。
 理由与引用检查相同——「查不到」被当成「不存在」时，用户看到的是
 「素材不存在或归属不符」这种把配置故障说成数据问题的报错，排查方向会被带偏。
+
+这与 `api/ports.py` 的「未注册必须返回中性值」相反，是**刻意的例外**（与
+`asset-references` 同类），理由已写进 `PORT_CATALOG` 的 `when_unregistered`。
 """
 
 from __future__ import annotations
@@ -26,12 +29,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.exceptions import Unavailable
 from core.media import StoredMedia
+from core.ports.host import Port
 
 __all__ = [
     "AssetLookup",
-    "bind_asset_lookup",
     "get_asset_lookup",
     "has_asset_lookup",
+    "register_asset_lookup",
     "reset_asset_lookup",
 ]
 
@@ -55,29 +59,36 @@ class AssetLookup(Protocol):
         ...
 
 
-_impl: AssetLookup | None = None
+_lookup: Port[AssetLookup] = Port("asset-lookup", multi=False)
 
 
-def bind_asset_lookup(port: AssetLookup) -> None:
-    """素材模块在 import 期调用一次。重复调用以最后一次为准（测试注入假实现）。"""
-    global _impl
-    _impl = port
+def register_asset_lookup(port: AssetLookup) -> AssetLookup:
+    """素材模块在 import 期调用一次。
+
+    名字是 `register_` 而不是 `bind_`。在这个仓里 `bind_` 是「声明一个来源」的
+    语义（`bind_asset_reference_sources`：只登记名字，不注册实现），而这里注册的
+    是实现本身。改名不只是对齐词表——`tests/test_architecture.py` 的端口守卫按
+    `register_` / `set_` 前缀识别注入口，写成 `bind_` 之后这个文件既不被守卫当作
+    注入口扫描、也没进 `PORT_CATALOG`，于是「素材模块没装配」时启动自检与
+    `app modules` 都一片绿，只有真正调用 prepare 才拿到 503。
+    """
+    return _lookup.provide(port)
 
 
 def has_asset_lookup() -> bool:
-    return _impl is not None
+    return _lookup.has()
 
 
 def get_asset_lookup() -> AssetLookup:
-    if _impl is None:
+    impl = _lookup.single()
+    if impl is None:
         raise Unavailable(
             "素材查询不可用：没有任何模块注册 AssetLookup。"
             "通常是启动时漏了 `discover_modules()`。"
         )
-    return _impl
+    return impl
 
 
 def reset_asset_lookup() -> None:
     """仅测试用。"""
-    global _impl
-    _impl = None
+    _lookup.reset()

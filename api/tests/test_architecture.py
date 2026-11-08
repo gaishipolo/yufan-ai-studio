@@ -371,20 +371,43 @@ def _base_name(node: ast.expr) -> str:
     return ""
 
 
-def _looks_like_port_module(path: Path) -> bool:
-    """「注册 / 复位 / 是否已接上」三个动作齐全 = 一个注入口。
+def _builds_port(tree: ast.Module) -> bool:
+    """模块里是否出现了 `Port(...)` 实例——机制层面的证据。"""
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and _base_name(node.func) == "Port":
+            return True
+    return False
 
-    不再要求具名 `Protocol` 子类 + `register_*`：`core.audit` 用的是
-    `Callable` 类型别名 + `set_audit_sink`，按旧形状识别时它既不在清单、
-    也不在扫描范围、也不在启动日志里——审计写入端没接上会静默丢数据，
-    而所有守卫照常全绿（R11-05）。
+
+def _looks_like_port_module(path: Path) -> bool:
+    """是不是一个注入口：**机制证据优先，形状做兜底**。
+
+    旧判据只看「有没有 `register_*` / `set_*` 前缀的函数」，于是同一个意思换个
+    动词就整份漏掉：`core/ports/media.py` 最初写成 `bind_asset_lookup`（`bind_`
+    在本仓是「声明来源」的语义，`bind_asset_reference_sources` 是那样用的），
+    守卫认定它不是注入口 → 既没进 `PORT_CATALOG`、也不被形状检查，结果是
+    「素材模块没装配」时 `app modules` 与 `doctor` 全绿，只有真正调 prepare
+    才拿到 503。
+
+    所以改成三条，任一成立即算注入口：
+
+    1. 模块里出现 `Port(...)` 实例（合规写法的直接证据，与函数叫什么无关）；
+    2. `reset_*` 与 `has_*` 同时存在（这两个是注入口特有的形状，业务代码里
+       几乎不会出现——扫描目录也只有 `api/` 与 `core/`，不含业务模块）；
+    3. 旧形状：`register_*` / `set_*` + `reset_*` + `has_*` 齐全。
+
+    识别出来之后，**形状是否合规交给 `test_port_modules_expose_the_full_shape`**
+    ——它要求有且只有一个 `register_*` / `set_*`，`bind_` 到那里会明确报错。
+    两道守卫分工：这一道负责「别漏」，那一道负责「别歪」。
     """
     tree = ast.parse(path.read_text(encoding="utf-8"))
+    if _builds_port(tree):
+        return True
     functions = [n.name for n in tree.body if isinstance(n, ast.FunctionDef)]
-    has_register = any(n.startswith(("register_", "set_")) for n in functions)
     has_reset = any(n.startswith("reset_") for n in functions)
     has_probe = any(n.startswith("has_") for n in functions)
-    return has_register and has_reset and has_probe
+    has_register = any(n.startswith(("register_", "set_")) for n in functions)
+    return (has_reset and has_probe) or (has_register and has_reset and has_probe)
 
 
 def _dotted(path: Path) -> str:
@@ -678,4 +701,37 @@ def test_routers_do_not_manage_transactions() -> None:
     assert not offenders, (
         "路由层出现事务操作（事务边界必须留在 service）：\n"
         + "\n".join(f"  - {item}" for item in offenders)
+    )
+
+
+def test_port_detection_does_not_depend_on_the_verb(tmp_path: Path) -> None:
+    """守卫靠「机制」认注入口，不靠函数名喊什么。
+
+    `core/ports/media.py` 最初写成 `bind_asset_lookup`。`bind_` 在本仓是
+    「声明一个来源」的语义（`bind_asset_reference_sources`），不是「注册实现」；
+    旧判据只看 `register_` / `set_` 前缀，于是这个文件既没进 `PORT_CATALOG`、
+    也不被形状检查，结果「素材模块没装配」时 `app modules` 与 `doctor` 全绿，
+    只有真正调用 prepare 才拿到 503。
+
+    这条用例钉住「换个动词也照样认出来」，免得下次又靠命名约定兜底。
+    """
+    hand_rolled = tmp_path / "hand_rolled.py"
+    hand_rolled.write_text(
+        "_impl = None\n"
+        "\n"
+        "def bind_widget(port):\n"
+        "    global _impl\n"
+        "    _impl = port\n"
+        "\n"
+        "def has_widget():\n"
+        "    return _impl is not None\n"
+        "\n"
+        "def reset_widget():\n"
+        "    global _impl\n"
+        "    _impl = None\n",
+        encoding="utf-8",
+    )
+    assert _looks_like_port_module(hand_rolled), (
+        "手写注册表（`_impl` 全局 + bind_/has_/reset_）也是注入口，"
+        "识别不出来就意味着它不会出现在 app modules 与启动自检里"
     )

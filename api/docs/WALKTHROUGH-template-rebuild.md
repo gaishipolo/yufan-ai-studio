@@ -608,3 +608,85 @@ import：现场从「工作区里的 `run.json`」变成「数据库行 + 工作
 收尾：`tsc -b` 通过、`eslint --max-warnings 0` 通过、`vitest run` **424 passed**、
 `vite build` 通过。`grep -r "assets/archive" studio/src` 只剩设计文档里的历史记录。
 
+## 7. 审查与加固（2026-11-08 收尾）
+
+合并推上去之后回头审框架层的 7 个文件（+162 / −235），查出四处问题。三处是这次
+重构**自己引入**的，一处在重构前就存在。
+
+### 7.1 端口守卫靠「函数名前缀」认人，换个动词就漏
+
+`AssetLookup` 端口（`core/ports/media.py`）最初写成 `bind_asset_lookup`。
+在本仓 `bind_` 是「声明一个来源」的语义（`bind_asset_reference_sources` 那样用），
+不是「注册实现」，所以命名本身就错；更麻烦的是守卫按 `register_` / `set_` 前缀
+识别注入口，于是这个文件：
+
+- 不被 `_looks_like_port_module` 认作注入口 → 不参与「是否登记」的对账；
+- 没进 `PORT_CATALOG` → `app modules` 看不见它，`doctor` 不检查它；
+- 结果是「素材模块没装配」时**启动自检全绿，只有真正调 prepare 才拿到 503**。
+
+修了两件事：把实现换成 `Port("asset-lookup", multi=False)` + `register_asset_lookup`，
+并补进端口目录（`when_unregistered` 写明 fail-closed 是刻意例外）。
+
+判据也换了。现在的 `_looks_like_port_module` 三条任一成立即算注入口：
+
+1. 模块里出现 `Port(...)` 实例（机制证据，与函数叫什么无关）；
+2. `reset_*` 与 `has_*` 同时存在（这两个是注入口特有的形状，扫描目录也只有
+   `api/` 与 `core/`，不含业务模块）；
+3. 旧形状三件套（向后兼容）。
+
+识别出来之后，**形状是否合规交给 `test_port_modules_expose_the_full_shape`**
+——它要求有且只有一个 `register_*` / `set_*`，`bind_` 到那里会明确报错。
+两道守卫分工：一道负责「别漏」，一道负责「别歪」。
+
+### 7.2 执行器的 `except AppError` 把任何业务异常都说成「授权被撤销」
+
+`libtv_process.supervise()` 里有个 `except AppError → AUTHORIZATION_REVOKED`。
+那本来是给 `MediaCatalog.check_run()` 准备的：授权失效就返回这个码。
+授权校验搬到业务层之后来源没了，但分支还在——剩下能命中它的只有 `NotFound`
+（归档根没挂、账号锁路径解析不到）之类，全被标成「授权被撤销」，排查方向
+直接跑偏。
+
+改成 `EXECUTOR_FAILED` 并记一条 warning（带异常类型名），兜底保留但归因诚实。
+`AUTHORIZATION_REVOKED` 这个码搬去业务层 `_stop_if_unauthorized` —— 语义才对得上，
+前端与日志里的历史记录也不会对不上。
+
+### 7.3 最终授权出现窗口：从「零」变成「几分钟」
+
+这是三处里最贵的一个。旧实现在执行器的 `submit` 阶段调 `check_run`，也就是
+**紧贴花钱那一刻**校验封装是否仍发布、原片是否仍可用。搬到业务层时只接在
+`ReplacementService.execute()`（排队前），从此到真正提交之间隔着一整个 upload
+阶段（超时 1500 秒）——期间封装被停用、原片被删，任务照样提交、照样扣钱。
+
+现在三个调用点共用同一个 `authorization.authorization_gap()`：
+
+| 调用点 | 作用 |
+|---|---|
+| `ReplacementService.execute()` | 排队前给用户即时反馈，别让人等几十秒才看到失败 |
+| `worker.prepare_upload()`（upload 前） | upload 会真的往上游传文件，授权失效就别开始 |
+| `worker.prepare_upload()`（dispatch 前） | **真正提交前的最后一次**，位置等价于旧实现的 `check_run` |
+
+搬回业务层的好处很实际：旧位置只有文件系统，才需要为「原片被删但档案还在」
+造一份 JSON 镜像；现在直接查库，判断与花钱之间不再隔着可能过期的中间层。
+
+### 7.4 「素材已被删除」这句判断原来永远不成立
+
+`_assert_still_authorized` 原来用 `any(row.asset_id not in media for row in rows)`
+判断输入素材是否还在。但 `AssetLookup.get_many()` **不排除软删**——行还在，
+只是 `deleted_at` 置位。所以那个条件只在硬删时才成立，而业务上素材走的是回收站。
+
+改成两个条件都看：键不在，或者 `deleted_at` 非空。这条是重构前就存在的缺陷，
+只是被「只在排队前查一次」掩盖了——查得越少，判断错也看不出来。
+
+### 7.5 验证
+
+新增 4 条用例（`test_replacement_guards.py` 3 条、`test_architecture.py` 1 条），
+并做了一次反向验证：临时让 `authorization_gap()` 恒返回 `None`，两条拒绝用例
+如期变红、放行用例仍绿——确认它们测的是判据而不是「碰巧通过」。
+
+| 项 | 结果 |
+|---|---|
+| `pytest` | **862 passed / 12 skipped**（原 857，+5：3 条授权闸 + 1 条端口识别 + 1 条执行器归因） |
+| `ruff check src/ tests/` | 全过 |
+| `app doctor` | 24 项，失败 0、警告 0 |
+| `app modules` | 7 个注入口全部「已注册」（新增 `asset-lookup`） |
+| `app export-openapi --check` | 四份生成物「无变化」（这次没动 HTTP 契约） |

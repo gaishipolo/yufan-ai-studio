@@ -13,14 +13,34 @@
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from tests_template_helpers import API, add_run, drop_run, login, read_run
+from tests_template_helpers import (
+    ADMIN as ADMIN_ID,
+)
+from tests_template_helpers import (
+    API,
+    add_input,
+    add_pack,
+    add_run,
+    drop_pack,
+    drop_run,
+    login,
+    png_bytes,
+    read_run,
+    upload,
+)
 
 from db.session import get_session_factory
 from infra.queue.base import Job
+from modules.asset.models import Asset
 from modules.template import worker
+from modules.template.authorization import authorization_gap
+from modules.template.models import TemplatePack
+from modules.template.repository import RunRepository
 
 ADMIN = ("admin", "admin@12345")
 
@@ -205,3 +225,108 @@ async def test_sync_roles_backfills_only_missing_permission(client: TestClient) 
 
     async with get_session_factory()() as session:
         assert await IdentityService(session).sync_builtin_role_permissions() == {}
+
+
+async def test_disabled_pack_stops_the_queue_before_upload(client: TestClient) -> None:
+    """排队期间封装被停用：作业必须在 upload 之前停下，而不是照常提交。
+
+    这是「最终授权」的第三次调用点。排队前 `execute()` 已查过一次，但 upload
+    阶段超时 1500 秒，期间封装被停用完全来得及。旧实现把这道闸放在执行器的
+    submit 里（窗口为零），搬到业务层时如果只在排队前查，等于把窗口拉长到几分钟。
+    """
+    login(client, "admin", "admin@12345")
+    pack = await add_pack(
+        owner=ADMIN_ID, kind="character", name="人物", status="published", version=1
+    )
+    run = await add_run(pack_id=pack.id, pack_version=1, status="uploaded")
+    try:
+        async with get_session_factory()() as session:
+            row = await session.get(TemplatePack, pack.id)
+            assert row is not None
+            row.status = "disabled"
+            await session.commit()
+
+        await worker.prepare_upload(
+            Job(name="template.replacement.prepare", payload={"id": run.id})
+        )
+
+        saved = await read_run(run.id)
+        assert saved is not None
+        assert saved.status == "service_error"
+        assert saved.error_code == "AUTHORIZATION_REVOKED"
+        assert "停用" in (saved.last_error or "")
+    finally:
+        await drop_run(run.id)
+        await drop_pack(pack.id)
+
+
+async def test_trashed_input_asset_counts_as_gone(client: TestClient) -> None:
+    """输入素材被移入回收站也要拦：只查「id 还在不在」永远查不到。
+
+    `AssetLookup.get_many` 不排除软删——行还在、`deleted_at` 已置位。按
+    「键是否存在」判断会放行一份已经不存在的输入，等执行器 upload 阶段
+    才以 ENOENT 的形式暴露，而那时任务已经排在付费队列里了。
+
+    这里直接改库而不是走删除接口：接口那一步会被引用检查挡下（409），
+    本用例要验的是「已经删了之后」的判断。
+    """
+    login(client, "admin", "admin@12345")
+    image = upload(client, "character.png", "character", png_bytes())
+    pack = await add_pack(
+        owner=ADMIN_ID, kind="character", name="人物", reference_ids=[image["id"]]
+    )
+    run = await add_run(pack_id=pack.id, pack_version=pack.version, status="prepared")
+    await add_input(run.id, image["id"], position=1)
+    try:
+        async with get_session_factory()() as session:
+            row = await session.get(Asset, image["id"])
+            assert row is not None
+            row.deleted_at = datetime.now(UTC)
+            await session.commit()
+
+        async with get_session_factory()() as session:
+            stored = await RunRepository(session).get_or_404(run.id)
+            gap = await authorization_gap(session, stored)
+
+        assert gap == "本次输入的素材已被删除，请重新准备"
+    finally:
+        await drop_run(run.id)
+        await drop_pack(pack.id)
+
+
+async def test_live_run_passes_the_authorization_gate(client: TestClient) -> None:
+    """反过来也要钉住：还能用的输入不该被这道闸误伤。
+
+    没有这一条，「一律返回拒绝」的实现也能让上面两条通过。
+    """
+    login(client, "admin", "admin@12345")
+    image = upload(client, "character.png", "character", png_bytes())
+    pack = await add_pack(
+        owner=ADMIN_ID, kind="character", name="人物", reference_ids=[image["id"]]
+    )
+    run = await add_run(pack_id=pack.id, pack_version=pack.version, status="prepared")
+    await add_input(run.id, image["id"], position=1)
+    try:
+        async with get_session_factory()() as session:
+            stored = await RunRepository(session).get_or_404(run.id)
+            assert await authorization_gap(session, stored) is None
+    finally:
+        await drop_run(run.id)
+        await drop_pack(pack.id)
+
+
+def test_executor_does_not_report_authorization_codes() -> None:
+    """执行器不该再产出 `AUTHORIZATION_REVOKED`：授权判断已经在业务层。
+
+    它以前把 `MediaCatalog.check_run()` 的失败映射成这个码。搬到业务层之后
+    如果不删，能命中 `except AppError` 的就只剩 `NotFound`（归档根没挂、
+    账号锁路径解析不到）之类——那些会被说成「授权被撤销」，排查方向直接跑偏。
+    现在业务层用同一个码（`_stop_if_unauthorized`），语义才对得上。
+
+    断言用 `code="..."` 精确匹配，不看注释里提到的名字。
+    """
+    source = (
+        Path(__file__).resolve().parents[1] / "src/infra/ai/libtv_process.py"
+    ).read_text(encoding="utf-8")
+    assert 'code="AUTHORIZATION_REVOKED"' not in source
+    assert 'code="EXECUTOR_FAILED"' in source, "兜底分支要诚实地表示「执行器没跑成」"

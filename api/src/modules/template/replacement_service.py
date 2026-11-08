@@ -33,6 +33,7 @@ from core.ports.media import get_asset_lookup
 from core.serving import Served
 from infra.ai.libtv import get_libtv_settings
 from infra.archive import ArchiveStorage, get_archive_storage
+from modules.template.authorization import authorization_gap
 from modules.template.models import ReplacementReview as ReviewRow
 from modules.template.models import ReplacementRun
 from modules.template.pack_roles import PACK_SCOPES, usage_for
@@ -491,25 +492,16 @@ class ReplacementService:
             return False
 
     async def _assert_still_authorized(self, run_id: str, owner: str) -> None:
-        """提交前的最终授权：原片还可用、封装还已发布。
+        """提交前的最终授权：原片还可用、封装还已发布、档案还能提交。
 
-        旧位置在 `libtv_process.run_node`（执行器里），那里只有文件系统。
-        移到业务层之后，同一份判断能查库，也不必为「原片被删了但档案还在」
-        造一份 JSON 镜像去读。
+        旧位置在 `libtv_process.run_node`（执行器的 submit 阶段），那里只有
+        文件系统。细节与三处调用点见 `authorization.authorization_gap`——这里
+        只负责把它变成用户看得懂的 400。
         """
         run = await self.runs.get_or_404(run_id, owner=owner)
-        if run.pack_id and run.pack_version:
-            frozen = await self.packs.get_version(run.pack_id, run.pack_version)
-            pack = await self.packs.get_or_404(run.pack_id)
-            if frozen is None or pack.status != "published":
-                raise BadRequest("素材包已停用，请重新选择后准备")
-        rows = await self.runs.inputs(run.id)
-        if rows:
-            media = await get_asset_lookup().get_many(
-                self.session, [row.asset_id for row in rows]
-            )
-            if any(row.asset_id not in media for row in rows):
-                raise BadRequest("本次输入的素材已被删除，请重新准备")
+        gap = await authorization_gap(self.session, run)
+        if gap is not None:
+            raise BadRequest(gap)
 
     async def _review_map(self, run_ids: list[str]) -> dict[str, ReplacementReview]:
         """批量取评价：列表页逐条查会变成 N+1（旧实现逐条读 `review.json`）。"""

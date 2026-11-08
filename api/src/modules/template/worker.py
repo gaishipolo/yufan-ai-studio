@@ -24,6 +24,7 @@ from infra import get_queue
 from infra.ai.libtv import execute_stage
 from infra.archive import get_archive_storage
 from infra.queue.base import Job
+from modules.template.authorization import authorization_gap
 from modules.template.models import ReplacementRun
 from modules.template.pipeline import KIND_REPLACEMENT
 from modules.template.repository import RunRepository
@@ -326,6 +327,29 @@ async def _bump_retry(session, run_id: str, *, reason: str) -> float | None:
 # --------------------------------------------------------------------------- #
 # 作业处理器
 # --------------------------------------------------------------------------- #
+async def _stop_if_unauthorized(session, repo, run: ReplacementRun) -> bool:
+    """授权已失效就停住，返回 True 表示「这一轮别继续」。
+
+    与 `ReplacementService.execute()` 排队前那次用的是同一条规则
+    （`authorization.authorization_gap`）。两次都要有，而且分工不同：
+    排队前那次是给用户即时反馈，这里这次才是真正花钱前的最后一道闸——
+    中间隔着 upload 阶段（超时 1500 秒），封装被停用、原片被删都来得及发生。
+    旧实现把这道闸放在执行器的 submit 阶段，位置对但只有文件系统；搬到业务层
+    之后放回同一时刻，窗口反而比「只在排队前查一次」小。
+    """
+    gap = await authorization_gap(session, run)
+    if gap is None:
+        return False
+    run.status = "service_error"
+    # 沿用执行器时代那个码：前端与日志里已经有它，换名只会让历史记录对不上。
+    run.error_code = "AUTHORIZATION_REVOKED"
+    run.last_error = gap
+    await repo.save(run)
+    await session.commit()
+    logger.warning("提交前授权已失效 run=%s：%s", run.id, gap)
+    return True
+
+
 @register_handler("template.replacement.prepare")
 async def prepare_upload(job: Job) -> None:
     from db.session import get_session_factory
@@ -350,6 +374,10 @@ async def prepare_upload(job: Job) -> None:
             await repo.save(run)
             await session.commit()
             logger.warning("发起人已停用，替换任务停止准备 run=%s", run_id)
+            return
+
+        # upload 会真的往上游传文件、要跑几分钟：授权已经失效就别开始。
+        if await _stop_if_unauthorized(session, repo, run):
             return
 
         path = await asyncio.to_thread(run_path, run_id)
@@ -384,6 +412,9 @@ async def prepare_upload(job: Job) -> None:
         if run.status == "waiting_free":
             await repo.save(run)
             await session.commit()
+            return
+        # 上传期间封装可能被停用、原片可能被删——真正提交前的最后一次。
+        if await _stop_if_unauthorized(session, repo, run):
             return
         run.framework_status = "queued"
         await repo.save(run)

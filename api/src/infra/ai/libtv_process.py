@@ -191,7 +191,21 @@ def supervise(stage: str, run: Path, legacy: Path, node: str) -> ExecutorResult:
     except ExecutorBusy as exc:
         return ExecutorResult(stage=stage, code="EXECUTOR_BUSY", message=exc.message)
     except AppError as exc:
-        return ExecutorResult(stage=stage, code="AUTHORIZATION_REVOKED", message=exc.message)
+        # 这条分支原来把 `MediaCatalog.check_run()` 的失败映射成
+        # `AUTHORIZATION_REVOKED`。授权校验已于 2026-11-08 移到业务层
+        # （`ReplacementService._assert_still_authorized`，那里能查库），
+        # 来源不存在了却继续沿用旧码：残留的 `NotFound`（归档根没挂、
+        # 账号锁路径解析不到）会被说成「授权被撤销」，排查方向直接跑偏。
+        # 兜底仍然保留——别让异常穿透到 job handler 把任务崩成 failed，
+        # 但码要诚实地表示「执行器没跑成，原因看 message」。
+        logger.warning(
+            "执行器前置检查失败 run=%s stage=%s err=%s: %s",
+            run.name,
+            stage,
+            type(exc).__name__,
+            exc.message,
+        )
+        return ExecutorResult(stage=stage, code="EXECUTOR_FAILED", message=exc.message)
     except OSError:
         return ExecutorResult(
             stage=stage, code="EXECUTOR_IO_FAILED", message="执行器文件或共享盘不可用"
