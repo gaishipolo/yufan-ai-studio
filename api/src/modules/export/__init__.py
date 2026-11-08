@@ -30,4 +30,6 @@ module = ModuleSpec(
         # 和「能不能导自己的任务」是两回事。
         PermissionSpec("export:read:audit", "导出操作留痕", group="系统"),
     ),
+    jobs=("export.build",),
+    periodic=("export.reclaim", "export.stale"),
 )

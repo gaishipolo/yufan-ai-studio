@@ -25,7 +25,6 @@ from modules.asset.schema import (
     AssetOut,
     AssetTypeFilter,
 )
-from modules.asset.serving import serve
 
 router = APIRouter(prefix="/assets", tags=["素材"])
 router.include_router(archive_router)
@@ -88,11 +87,11 @@ async def delete_asset(
 async def asset_file(
     service: AssetServiceDep, actor: AssetReadDep, asset_id: AssetId
 ) -> Response:
-    return serve(*await service.resolve_file(actor, asset_id))
+    return (await service.resolve_file(actor, asset_id)).response()
 
 
 @router.get("/{asset_id}/cover", summary="读取素材缩略图")
 async def asset_cover(
     service: AssetServiceDep, actor: AssetReadDep, asset_id: AssetId
 ) -> Response:
-    return serve(*await service.resolve_file(actor, asset_id, cover=True))
+    return (await service.resolve_file(actor, asset_id, cover=True)).response()

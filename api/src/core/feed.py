@@ -9,6 +9,7 @@
 
 from collections.abc import Callable
 
+from core.ports.host import Port
 from core.schema import CamelModel, UtcDateTime
 
 
@@ -29,25 +30,29 @@ class ReplacementFeedRecord(CamelModel):
     deleted_at: UtcDateTime | None = None
 
 
-_reader: Callable[[str], list[ReplacementFeedRecord]] | None = None
+#: 替换档案的读取注入口。单例：全局只有一个「档案来源」。
+_feed: Port[Callable[[str], list[ReplacementFeedRecord]]] = Port(
+    "replacement-feed", multi=False
+)
 
 
 def register_replacement_feed(reader: Callable[[str], list[ReplacementFeedRecord]]) -> None:
-    global _reader
-    _reader = reader
+    # 与 `set_audit_sink` 同属「设置」语义：改造前就是后写覆盖，
+    # 收紧成唯一会让测试里的换实现变成错误。
+    _feed.provide(reader, replace=True)
 
 
 def reset_replacement_feed() -> None:
     """仅测试用：清空注册，验证「未注册时返回空表」这条约定。"""
-    global _reader
-    _reader = None
+    _feed.reset()
 
 
 def has_replacement_feed() -> bool:
     """是否已接上实现；`app modules` 与启动日志据此显示状态。"""
-    return _reader is not None
+    return _feed.has()
 
 
 def replacement_feed(owner: str) -> list[ReplacementFeedRecord]:
     """未注册（例如只跑任务模块单测）时返回空表，不抛异常。"""
-    return _reader(owner) if _reader else []
+    reader = _feed.single()
+    return reader(owner) if reader else []

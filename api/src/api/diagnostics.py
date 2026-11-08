@@ -128,6 +128,33 @@ def _check_ports(report: DoctorReport) -> None:
         report.add("ports.audit", "INFO", "审计写入端未注册（非生产环境允许）")
 
 
+def _check_assembly(report: DoctorReport) -> None:
+    """模块声明 vs 运行时注册，双向对账。
+
+    启动期只拦「声明了没注册」（那是漏副作用 import 的唯一信号）。这里两个方向
+    都看：反向那种不影响运行，但意味着清单不全——下一个读 `app modules` 的人
+    看不到这个 handler 属于谁，改动时不知道该去哪个模块找。
+    """
+    from api.assembly import assembly_gaps
+    from app import collect_assembly
+
+    specs, jobs, periodic = collect_assembly()
+    gaps = assembly_gaps(specs, jobs=jobs, periodic=periodic)
+    missing = [gap for gap in gaps if gap.fatal]
+    unnamed = [gap for gap in gaps if not gap.fatal]
+
+    if missing:
+        report.add("runtime.assembly", "FAIL", "；".join(str(g) for g in missing))
+    elif unnamed:
+        report.add("runtime.assembly", "WARN", "；".join(str(g) for g in unnamed))
+    else:
+        report.add(
+            "runtime.assembly",
+            "PASS",
+            f"{len(jobs)} 个 job handler、{len(periodic)} 个周期任务全部有模块声明",
+        )
+
+
 def _check_archive_storage(report: DoctorReport) -> None:
     storage = get_archive_storage()
     try:
@@ -659,6 +686,7 @@ def _check_http_channel(report: DoctorReport) -> None:
 async def run_doctor(*, sample: int = 10) -> DoctorReport:
     report = DoctorReport()
     _check_ports(report)
+    _check_assembly(report)
     await asyncio.to_thread(_check_archive_storage, report)
     await _check_database(report)
     await _check_schema_head(report)

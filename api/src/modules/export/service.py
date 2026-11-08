@@ -28,9 +28,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import timedelta
-from pathlib import Path
 from typing import Any
 
 from sqlalchemy import select
@@ -42,6 +40,7 @@ from core.context import CurrentUser
 from core.exceptions import NotFound
 from core.logging import get_logger
 from core.response import Page, PageParams
+from core.serving import Served
 from db.base import utcnow
 from db.repository import BaseRepository
 from infra import get_queue, get_storage
@@ -59,13 +58,6 @@ logger = get_logger(__name__)
 BUILD_TIMEOUT_SEC = 600.0
 
 
-@dataclass(frozen=True, slots=True)
-class DownloadRef:
-    """取件的二选一结果：本地给路径，远端给预签名地址。"""
-
-    path: Path | None
-    url: str | None
-    filename: str
 
 
 class ExportService:
@@ -104,7 +96,7 @@ class ExportService:
         )
         return out
 
-    async def download(self, actor: CurrentUser, export_id: str) -> DownloadRef:
+    async def download(self, actor: CurrentUser, export_id: str) -> Served:
         record = await self._get_owned(actor, export_id)
         if record.status == ExportStatus.EXPIRED.value:
             raise ExportGone()
@@ -129,17 +121,17 @@ class ExportService:
             detail={"data_source": record.data_source, "row_count": record.row_count},
         )
         if path is not None:
-            return DownloadRef(path=path, url=None, filename=filename)
+            return Served(path=path, mime="text/csv", filename=filename)
         url = await storage.presigned_download_url(key, expires_in=300)
-        return DownloadRef(path=None, url=url, filename=filename)
+        return Served(url=url, mime="text/csv")
 
     # ------------------------------------------------------------------ #
     # 写
     # ------------------------------------------------------------------ #
     async def create(self, actor: CurrentUser, payload: CreateExportIn) -> ExportOut:
-        # `CamelModel` 开了 `use_enum_values=True`，枚举字段到这里已经是 str，
-        # 写 `payload.data_source.value` 会 AttributeError。`str()` 对两者都成立。
-        source_name = str(payload.data_source)
+        # 字段注解是 `ExportSource`，运行时就是枚举实例——`.value` 有类型检查兜底，
+        # `str()` 只是把「本该被 mypy 抓到的拼写错误」拖到运行期才发现。
+        source_name = payload.data_source.value
         # 权限与「源是否存在」一起判：不存在是 400（客户端传错），没权限是 403
         resolve_source(source_name, actor)
         params = normalize_params(payload.params.model_dump(exclude_none=True))
@@ -300,4 +292,4 @@ class ExportService:
                 raise ExportBusy()
 
 
-__all__ = ["BUILD_TIMEOUT_SEC", "DownloadRef", "ExportService"]
+__all__ = ["BUILD_TIMEOUT_SEC", "ExportService"]

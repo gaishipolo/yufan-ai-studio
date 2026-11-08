@@ -36,7 +36,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from core.exceptions import RegistryError
+from core.ports.host import Port
 
 __all__ = [
     "AccountStatusChecker",
@@ -53,37 +53,31 @@ class AccountStatusChecker(Protocol):
     async def is_active(self, user_id: str) -> bool | None: ...
 
 
-_checker: AccountStatusChecker | None = None
+#: 账号状态查询的注入口。单例：账号体系只能有一个权威来源。
+_checker: Port[AccountStatusChecker] = Port("account-status", multi=False)
 
 
 def register_account_status_checker(checker: AccountStatusChecker) -> None:
     """注册实现（由拥有账号体系的模块在 import 期调用）。
 
     只允许一个：两个账号来源同时生效时「谁说了算」没有正确答案，
-    与其猜，不如在启动期直接报错——和 `register_principal_resolver` 同一个取舍。
+    重复注入由 `Port` 直接拒绝——和 `register_principal_resolver` 同一个取舍。
     """
-    global _checker
-    if _checker is not None and _checker is not checker:
-        raise RegistryError(
-            "账号状态查询器重复注册："
-            f"{type(_checker).__name__} 已生效，拒绝 {type(checker).__name__}。"
-            "账号体系只能有一个权威来源。"
-        )
-    _checker = checker
+    _checker.provide(checker)
 
 
 def reset_account_status_checker() -> None:
     """仅测试使用：清掉注册，验证「没有实现时按放行处理」。"""
-    global _checker
-    _checker = None
+    _checker.reset()
 
 
 def has_account_status_checker() -> bool:
-    return _checker is not None
+    return _checker.has()
 
 
 async def account_is_active(user_id: str) -> bool | None:
     """查账号是否启用；没有注册实现时返回 None（调用方按放行处理）。"""
-    if _checker is None:
+    checker = _checker.single()
+    if checker is None:
         return None
-    return await _checker.is_active(user_id)
+    return await checker.is_active(user_id)

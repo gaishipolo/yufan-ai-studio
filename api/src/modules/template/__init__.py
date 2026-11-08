@@ -39,4 +39,9 @@ module = ModuleSpec(
     # 已有自己的恢复器；声明负责的 kind 供架构守卫对账。
     recovery_kinds=(KIND_REPLACEMENT,),
     asset_reference_sources=ASSET_REFERENCE_SOURCES,
+    jobs=(
+        "template.replacement.prepare",
+        "libtv.download",
+        "template.replacement.recover",
+    ),
 )

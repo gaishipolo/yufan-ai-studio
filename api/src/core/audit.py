@@ -28,6 +28,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from core.logging import get_logger
+from core.ports.host import Port
 
 logger = get_logger(__name__)
 
@@ -44,23 +45,23 @@ class AuditEntry:
 
 AuditSink = Callable[[AuditEntry], Awaitable[None]]
 
-_sink: AuditSink | None = None
+_sink: Port[AuditSink] = Port("audit-sink", multi=False)
 
 
 def set_audit_sink(sink: AuditSink) -> None:
     """注册写入实现（由 `db/audit_sink.py` 在 import 期调用）。"""
-    global _sink
-    _sink = sink
+    # 这个注入口的契约是「设置」而非「注册」：测试会换成内存收集器，
+    # 生产只有一个 db/audit_sink.py。强制唯一反而会让合法的替换变成错误。
+    _sink.provide(sink, owner="db/audit_sink.py", replace=True)
 
 
 def reset_audit_sink() -> None:
     """仅测试使用。"""
-    global _sink
-    _sink = None
+    _sink.reset()
 
 
 def has_audit_sink() -> bool:
-    return _sink is not None
+    return _sink.has()
 
 
 def ensure_audit_sink(app_env: str) -> None:
@@ -70,7 +71,7 @@ def ensure_audit_sink(app_env: str) -> None:
     在 dev/test 里是允许的、无害的；但生产里它意味着对账时一张表都是空的，
     且日志里一句错都没有。抽成函数是为了让这条自检本身可被测试覆盖。
     """
-    if app_env == "prod" and _sink is None:
+    if app_env == "prod" and not _sink.has():
         raise RuntimeError(
             "生产环境审计写入端未注册：确认 app.load_extension_points() 已被调用，"
             "且 db/audit_sink.py 能正常导入（其它环境允许静默跳过）"
@@ -86,7 +87,8 @@ async def record(
     detail: dict[str, Any] | None = None,
 ) -> None:
     """记一条操作留痕。没有注册写入端时静默跳过（可选依赖，不能拖垮业务）。"""
-    if _sink is None:
+    sink = _sink.single()
+    if sink is None:
         return
     entry = AuditEntry(
         action=action,
@@ -96,7 +98,7 @@ async def record(
         detail=detail or {},
     )
     try:
-        await _sink(entry)
+        await sink(entry)
     except Exception:  # noqa: BLE001 - 留痕失败不能影响业务结果
         logger.exception("审计写入失败 action=%s target=%s", action, target_id)
 

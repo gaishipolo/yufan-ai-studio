@@ -16,7 +16,6 @@ from fastapi import APIRouter, Depends, Query, Response, status
 
 from api.deps import PageDep, rate_limit
 from core.response import ApiResponse, Page
-from core.serving import serve
 from modules.export.dependencies import (
     ExportCreateDep,
     ExportDeleteDep,
@@ -98,8 +97,8 @@ async def get_export(
 async def download_export(
     export_id: str, service: ExportServiceDep, actor: ExportReadDep
 ) -> Response:
-    ref = await service.download(actor, export_id)
-    return serve(ref.path, ref.url, "text/csv", filename=ref.filename)
+    served = await service.download(actor, export_id)
+    return served.response()
 
 
 @router.delete(

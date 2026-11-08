@@ -31,7 +31,7 @@ from typing import Protocol
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.context import CurrentUser
-from core.exceptions import RegistryError
+from core.ports.host import Port
 
 __all__ = [
     "PrincipalResolver",
@@ -58,39 +58,33 @@ class PrincipalResolver(Protocol):
     ) -> CurrentUser | None: ...
 
 
-_resolver: PrincipalResolver | None = None
+#: 主体解析注入口。单例：权限以谁为准确只能有一个答案。
+_resolver: Port[PrincipalResolver] = Port("principal-resolver", multi=False)
 
 
 def register_principal_resolver(resolver: PrincipalResolver) -> None:
     """注册主体解析器（由拥有账号体系的模块在 import 期调用）。
 
     只允许一个：两个解析器同时生效时"权限以谁为准"没有正确答案，
-    与其猜，不如在启动期直接报错。
+    重复注入由 `Port` 在注册期直接拒绝。
     """
-    global _resolver
-    if _resolver is not None and _resolver is not resolver:
-        raise RegistryError(
-            "主体解析器重复注册："
-            f"{type(_resolver).__name__} 已生效，拒绝 {type(resolver).__name__}。"
-            "账号体系只能有一个权威来源。"
-        )
-    _resolver = resolver
+    _resolver.provide(resolver)
 
 
 def reset_principal_resolver() -> None:
     """仅测试使用：清掉注册，验证「无解析器时行为不变」。"""
-    global _resolver
-    _resolver = None
+    _resolver.reset()
 
 
 def has_principal_resolver() -> bool:
-    return _resolver is not None
+    return _resolver.has()
 
 
 async def resolve_principal(
     principal: CurrentUser, session: AsyncSession
 ) -> CurrentUser | None:
     """交给已注册的解析器；没有解析器时视为「令牌即权威」。"""
-    if _resolver is None:
+    resolver = _resolver.single()
+    if resolver is None:
         return principal
-    return await _resolver.resolve(principal, session)
+    return await resolver.resolve(principal, session)

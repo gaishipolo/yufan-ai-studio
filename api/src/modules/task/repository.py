@@ -20,9 +20,11 @@ class TaskRepository(BaseRepository[VideoTask]):
     def base_query(self, query: TaskListQuery, actor: CurrentUser) -> Select[Any]:
         """按范围 / 授权 / 关键词过滤，返回未加状态与排序的语句。
 
-        注意：`CamelModel` 开了 `use_enum_values=True`，校验后枚举字段拿到的是
-        **值（str）而不是枚举实例**——`query.scope is TaskScope.MINE` 恒为 False。
-        这里先归一成枚举再做身份比较，不要直接依赖 Pydantic 字段的对象身份。
+        这里先归一成枚举再做身份比较（`TaskScope(query.scope)`），不要直接依赖
+        Pydantic 字段的对象身份：曾经 `CamelModel` 开了 `use_enum_values=True`，
+        显式传入的枚举会被转成 str，`query.scope is TaskScope.MINE` 恒为 False，
+        作者过滤整个失效（跨用户看到全站任务）。那个配置已删，但这个归一保留——
+        调用方传 str 是常态（查询串、JSON），归一比依赖注解更结实。
 
         数据范围只有**一个开关**：`task:read:all`。没有它时 `all` / `team` 一律
         降级为「只看自己」，与详情、删除的判定完全一致——列表能看见、点进去 403

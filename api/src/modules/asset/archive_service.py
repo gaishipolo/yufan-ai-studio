@@ -60,6 +60,7 @@ from core.exceptions import BadRequest, Conflict, Forbidden, NotFound
 from core.logging import get_logger
 from core.media import MediaCategory
 from core.ports.assets import ask_asset_references
+from core.serving import Served
 from infra.archive import (
     ArchiveStorage,
     BlobStore,
@@ -95,7 +96,7 @@ logger = get_logger(__name__)
 
 # 取件结果：`(本地路径, 重定向地址, MIME)`，前两项二选一非空。
 # 与 `AssetService.resolve_file` 同形状，路由层的出参逻辑才能共用一份。
-Serve: TypeAlias = tuple[Path | None, str | None, str]
+Serve: TypeAlias = Served
 
 
 class ArchiveAssetService:
@@ -446,10 +447,11 @@ class ArchiveAssetService:
         """
         url = await asyncio.to_thread(self.storage.download_url, key)
         if url is None:
-            return await asyncio.to_thread(self._materialized, key), None, mime
+            path = await asyncio.to_thread(self._materialized, key)
+            return Served.local(path, mime)
         if not await asyncio.to_thread(self.storage.exists, key):
             raise NotFound("素材字节不存在，请重新登记")
-        return None, url, mime
+        return Served.remote(url, mime)
 
     def _create_preview(self, key: str, cover_key: str, kind: str) -> bool:
         """派生静帧封面（图片缩放 / 视频截帧）。"""

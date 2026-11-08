@@ -37,7 +37,7 @@ from typing import Any, Protocol
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.exceptions import RegistryError
+from core.ports.host import Port
 
 __all__ = [
     "ExportSource",
@@ -75,27 +75,22 @@ class ExportSource(Protocol):
         ...
 
 
-_sources: dict[str, ExportSource] = {}
+#: 导出源注册表。多实现：任何拥有可导出表的模块各贡献一份。
+_sources: Port[ExportSource] = Port("export-sources", multi=True)
 
 
 def register_export_source(source: ExportSource) -> None:
     """注册（由拥有数据的模块在 import 期调用）。
 
-    重名直接报错：两个模块都想叫 `tasks` 时，「谁的数据被导出去」没有正确答案，
-    与其按 import 顺序随机决定，不如启动期就炸。
+    重名由 `Port` 直接拒绝：两个模块都想叫 `tasks` 时，「谁的数据被导出去」
+    没有正确答案，与其按 import 顺序随机决定，不如启动期就炸。
     """
-    existing = _sources.get(source.name)
-    if existing is not None and existing is not source:
-        raise RegistryError(
-            f"导出源 {source.name!r} 重复注册："
-            f"{type(existing).__name__} 已生效，拒绝 {type(source).__name__}"
-        )
-    _sources[source.name] = source
+    _sources.provide(source, key=source.name)
 
 
 def export_sources() -> dict[str, ExportSource]:
     """当前所有已注册的源（只在请求期调用，此时 discovery 已完成）。"""
-    return dict(_sources)
+    return _sources.items()
 
 
 def has_export_source() -> bool:
@@ -104,7 +99,7 @@ def has_export_source() -> bool:
     内置的 `audit_events` 不走这里，所以返回 False 不代表「导出不可用」，
     只代表「没有别的模块贡献数据源」——前端下拉会只剩内置源那一项。
     """
-    return bool(_sources)
+    return _sources.has()
 
 
 def get_export_source(name: str) -> ExportSource | None:
@@ -113,4 +108,4 @@ def get_export_source(name: str) -> ExportSource | None:
 
 def reset_export_sources() -> None:
     """仅测试使用：清空注册表，让用例可以造自己的源。"""
-    _sources.clear()
+    _sources.reset()

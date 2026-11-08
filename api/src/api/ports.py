@@ -17,24 +17,35 @@
 
 ## 注入口的形状（新增时照抄）
 
+内部实现一律走 `core.ports.host.Port`，不要再手写模块级字典：
+
 ```python
-class XxxPort(Protocol):            # 1. 协议：只放消费方真正需要的方法
-    async def query(...) -> ...: ...
+_sink: Port[AuditSink] = Port("audit-sink", multi=False)   # 内部：宿主负责重名/复位
 
-_port: XxxPort | None = None        # 2. 模块级单例
+def set_audit_sink(sink: AuditSink) -> AuditSink:         # 1. 注册：模块对外仍暴露
+    return _sink.provide(sink, replace=True)              #    （PORT_CATALOG 要用）
 
-def register_xxx(port: XxxPort) -> None:   # 3. 注册：重复注册直接报错（权威来源只能有一个）
-def reset_xxx() -> None:                   # 4. 复位：仅测试用
-def has_xxx() -> bool:                     # 5. 是否已接上：供 CLI / 启动日志 / 测试判断
-async def ask_xxx(...) -> ...:             # 6. 消费函数：**未注册时必须返回中性值**，不许抛
+def reset_audit_sink() -> None:                           # 2. 复位：仅测试用
+    _sink.reset()
+
+def has_audit_sink() -> bool:                             # 3. 是否已接上：CLI / 启动日志
+    return _sink.has()
+
+async def record(...) -> None:                            # 4. 消费函数：**未注册时必须
+    ...                                                   #    返回中性值**，不许抛
 ```
 
-两种等价形状都收：具名 `Protocol` 子类 + `register_*`（`api.authn`、
-`core.ports.accounts`），或 `Callable` 类型别名 + `set_*`（`core.audit`）。
-守卫按「注册 / 复位 / 是否已接上」这三个动作识别，不依赖协议类的具体写法。
+`Port(multi=False)` 是「权威来源只能有一个」，重复注册直接报错；
+`Port(multi=True)` 是「多模块各贡献一份」，此时 `provide()` 必须带 `key`
+（`export-sources` 就是这么装的）。两种形态的差别只在基数，库逻辑只有一份。
 
-第 6 条是硬要求：注入口的意义是「可选依赖」。未注册就抛异常，等于把可选依赖
+第 4 条是硬要求：注入口的意义是「可选依赖」。未注册就抛异常，等于把可选依赖
 变成必选依赖 —— 删掉 identity 模块整个系统就起不来，那还不如直接 import。
+
+**`set_*` vs `register_*` 是两种语义，别混用**：`set_*`（配 `replace=True`）是
+「后写覆盖」，本来就有权威来源会变（`core.audit`、`core.feed`）；`register_*`
+是「不许两个实现抢同一个位置」（`api.authn`、`core.ports.accounts`）。改造前这
+两种语义在五个文件里各写各的，谁也没发现它们不一致。
 
 **唯一例外：判定结果会放行不可逆操作的注入口**（`core.ports.assets` 的引用检查）。
 那里「中性值 = 没人引用 = 可以删」，一次漏注册就是永久丢数据，所以必须

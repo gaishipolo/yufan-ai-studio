@@ -94,9 +94,22 @@ async def reclaim() -> None: ...
 from modules.<name> import maintenance, worker  # noqa: E402,F401  isort: skip
 ```
 
-漏了这一步不会报错：handler 没注册 → 任务永远排队；周期任务没注册 →
-`app modules` 里看不到它。没有任何一处会主动告诉你少了一行，
-`app modules` 的「Job handler / 周期任务」两行是唯一检查点。
+漏了这一步**现在会直接起不来**：`ModuleSpec` 里的 `jobs` / `periodic` 是义务而非注释，
+`create_app()` 会核对「声明了就必须注册」（`api/assembly.py`）：
+
+```python
+module = ModuleSpec(
+    name="voice",
+    router=router,
+    jobs=("voice.clone",),       # 本模块注册的 job handler 名
+    periodic=("voice.gc",),      # 本模块注册的周期任务名
+)
+```
+
+反方向（注册了但没声明）只让 `app doctor` 记一条 `runtime.assembly` WARN——
+它不影响运行，但意味着 `app modules` 里看不出这个 handler 属于谁。
+两个方向都不覆盖的只有一种情况：写了 `@register_handler` 却**既没声明也没 import**，
+那条路径由 `tests/test_assembly.py` 的 AST 守卫兜住。
 
 接下来只有三件事：
 
@@ -702,22 +715,49 @@ async with factory() as session:
 事件是「广播」，覆盖不了「我要问一个具体问题」——比如后台任务要问
 「这个任务发起人还被启用着吗」。答案在 `modules/identity` 手里，而架构测试禁止 import。
 
-那就开一个**注入口**（port）。它不是临时文件，是有一致形状的扩展点：
+那就开一个**注入口**（port）。它不是临时文件，是有一致形状的扩展点。
+形状由 `core/ports/host.py` 的 `Port` 保证，**不要手写注册表**：
 
 ```python
-# api/xxx.py —— 消费方只认协议，核心永远不认识具体模块
+# core/ports/xxx.py —— 消费方只认协议，核心永远不认识具体模块
 class XxxPort(Protocol):
     async def query(self, ...) -> ...: ...
 
-_port: XxxPort | None = None
+_port: Port[XxxPort] = Port("xxx-port", multi=False)
 
-def register_xxx(port: XxxPort) -> None:   # 重复注册直接 RegistryError（权威来源只能有一个）
+def register_xxx(port: XxxPort) -> None:   # 重复注册 → RegistryError
+    _port.provide(port)
 def reset_xxx() -> None:                   # 仅测试
+    _port.reset()
 def has_xxx() -> bool:                     # 供 app modules / 启动日志判断
-async def ask_xxx(...) -> ...:             # **未注册时返回中性值，不许抛异常**
+    return _port.has()
+async def ask_xxx(...) -> ...:              # **未注册时返回中性值，不许抛异常**
+    impl = _port.single()
+    return None if impl is None else await impl.query(...)
 ```
 
-五条硬规则：
+两种形态，差别只在基数：
+
+| | `multi=False`（单例） | `multi=True`（注册表） |
+|---|---|---|
+| 语义 | 权威来源只能有一个 | 很多模块各贡献一份 |
+| 注册 | `_port.provide(x)` | `_port.provide(x, key=x.name)` |
+| 读取 | `_port.single()` | `_port.items()` / `_port.get(name)` |
+| 重名 | 第二个实现 `RegistryError` | 同名 `RegistryError` |
+| 样板 | `core.ports.accounts`、`core.audit`、`api.authn` | `core.ports.export_sources` |
+
+**为什么必须用 `Port` 而不是手写**：曾经五个注入口各写一份几乎相同的
+`_registry` + 重名检查 + `reset` + `has`，抄漏一项（少个 `has`）只让
+`app modules` 少一行，不会报错。当时的补救是加测试
+`test_port_modules_expose_the_full_shape` 要求每个注入口写全三者——
+**那是用测试弥补「形状没有统一保证」**。宿主把保证前移到了类型层。
+
+「设置语义」的注入口（`set_audit_sink`、`register_replacement_feed`）传
+`replace=True`：它们的契约本来就是「后写的生效」，测试会换实现；而
+`register_*` 不传，保持「不许两个实现抢同一个位置」。**改造前这两种语义
+本来就混在五个文件里，显式化之后才知道它们不一样。**
+
+四条硬规则：
 
 1. **未注册必须无害**。`ask_xxx()` 没有实现时返回值要能让调用方当「不知道」处理
    （`accounts.py` 的做法是返回 `None` + 调用方放行）。抛异常等于把可选依赖变成必选依赖。
@@ -728,21 +768,8 @@ async def ask_xxx(...) -> ...:             # **未注册时返回中性值，不
 
 `app modules` 会列出每个注入口是否已接上，启动日志也会为未接上的留一行 INFO。
 
-**多个实现同时生效时用注册表，不是单例。** 上面的形状是「权威来源只能有一个」
-（两个账号体系同时生效没有正确答案）；但「很多人各自贡献一份」的场景需要另一种：
-
-```python
-_sources: dict[str, Xxx] = {}
-
-def register_xxx(item: Xxx) -> None: ...   # 重名直接 RegistryError
-def xxx_items() -> dict[str, Xxx]: ...     # 消费方按名字查
-def has_xxx() -> bool: ...                 # 至少接上一个（守卫要求有这个）
-def reset_xxx() -> None: ...               # 仅测试
-```
-
-现在的两个样板：`core.ports.assets`（谁引用了素材）和 `core.ports.export_sources`
-（谁的账号能导出哪张表）。要点和单例一致：**未命中返回中性结果，不是抛异常**
-——导出源没找到时是 400「不支持的数据源」（客户端传错了），不是 500。
+要点：**未命中返回中性结果，不是抛异常**——导出源没找到时是 400「不支持的数据源」
+（客户端传错了），不是 500。
 
 **不是所有跨模块需求都该做注入口**：纯数据查询把模型下移到 `db/` 更诚实；
 只有一个调用点、且永远只可能有一个实现的，直接传参。
@@ -1051,24 +1078,33 @@ async def persist_output(self, record_id: str, url: str) -> str:
 
 ---
 
-### 5.4.1 产物取件：`core.serving.serve`
+### 5.4.1 产物取件：`core.serving.Served`
 
 任何「把存储里的字节交给浏览器」的接口都长同一个形状，别自己拼：
 
 ```python
-from core.serving import serve
+from core.serving import Served
 
-path = storage.local_path(key)                       # 本地驱动：有真实路径
-url = await storage.presigned_download_url(key)      # 远端驱动：预签名地址
-return serve(path, url, "text/csv", filename="x.csv")
+path = storage.local_path(key)                    # 本地驱动：有真实路径
+if path is not None:
+    return Served.local(path, "text/csv", filename="x.csv").response()
+url = await storage.presigned_download_url(key)   # 远端驱动：预签名地址
+return Served.remote(url, "text/csv").response()
 ```
 
 本地驱动走 `FileResponse`（支持 Range，视频能拖进度条），远端驱动走 307
-（不把几十 MB 搬进应用进程内存）。`filename` 只对本地驱动生效。
+（不把几十 MB 搬进应用进程内存）。`filename` 只对本地驱动生效——远端由对象
+存储自己带 `response-content-disposition`，别去改签名 URL 的查询串。
 
-这段代码**曾经在 `modules/asset/serving.py` 里**。导出功能需要下载时才发现：
-要么违规 import 别的业务模块，要么抄一份。横切能力属于核心，所以 2026-11-08
-上移到 `core/serving.py`，`modules/asset/serving.py` 只留了一个 re-export 兼容入口。
+**取数留在你这侧，成响应交给框架。** 「去哪取」取决于模块自己的存储通路
+（素材走归档盘的 `BlobStore`，要 `materialize` 才拿得到稳定路径；导出走对象
+存储的 `local_path` / 预签名），框架不该认识这些细节；而「怎么交出去」是协议层
+知识，全项目只该有一份。
+
+历史：这段代码曾经在 `modules/asset/serving.py` 里，导出要下载时才发现只能
+违规 import 或抄一份。2026-11-08 上移到 `core/serving.py`，并从一个
+`(path, url, mime)` 元组改成值对象——当时 `asset` 的 `Serve` 和 `export` 的
+`DownloadRef` 是两处编码同一件事的类型。
 
 **判断标准**：如果你正要从别的模块 import 一个「和业务无关的通用函数」，
 说明它放错了层——上移到 `core/` 或 `infra/`，不要 import 过去。
@@ -1429,6 +1465,8 @@ app export-openapi --check  # 只比对不写盘：有差异就以非 0 退出�
 | 需要新的跨模块共享枚举 | 上提到 `core/enums.py`，不要 import 别的模块 |
 | 需要新的统一响应形态（如 SSE） | 在 `core/response.py` 加，不改现有接口 |
 | 需要一个「框架反过来调用业务」的钩子 | 加**协议 + 注册表**（如 `api/authn.py` 的 `PrincipalResolver`），业务侧注册，核心不认识它 |
+| 需要一个「很多模块各贡献一份」的注册表 | 用 `core/ports/host.py` 的 `Port(multi=True)`，不要手写第六份 `_registry` |
+| 装配环节不可验证（漏一行 import 就静默失效） | 在 `ModuleSpec` 加声明字段 + 启动期对账，别写进文档当「注意事项」 |
 
 判断标准：**改完之后，下次加同类功能要不要再改一次？** 要 → 抽象不够；不要 → 这次改对了。
 

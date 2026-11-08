@@ -72,6 +72,15 @@ class ModuleSpec:
     # 声明与实现是同一份常量：模块 import 期调 `register_asset_reference_sources()`
     # 交给注入口，框架用这里的声明做完备性对账（`core/ports/assets.py`）。
     asset_reference_sources: tuple[AssetReferenceSource, ...] = ()
+    # 本模块注册的 job handler 名（`workers.register_handler` 的 key）。
+    # **声明是义务，不是注释**：`create_app()` 会核对「声明了就必须注册」，
+    # 漏掉 `__init__.py` 里那句副作用 import 会直接起不来，而不是静默少一个 worker
+    # （见 `api/assembly.py`）。反过来漏声明只会让 doctor 记一条 WARN。
+    jobs: tuple[str, ...] = ()
+    # 本模块注册的周期任务名。周期任务名本来就必须写成 `<模块>.<动作>`
+    # （`core.scheduler.periodic` 的硬约束），这里再声明一次是为了让
+    # 「漏 import」变成启动失败——名字前缀只能证明「谁命名得像」，证明不了「谁注册了」。
+    periodic: tuple[str, ...] = ()
 
     @property
     def label(self) -> str:

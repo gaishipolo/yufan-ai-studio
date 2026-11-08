@@ -50,7 +50,6 @@ class CamelModel(BaseModel):
         alias_generator=to_camel,
         populate_by_name=True,
         from_attributes=True,
-        use_enum_values=True,
         str_strip_whitespace=True,
     )
 
@@ -65,6 +64,5 @@ class CamelORMModel(CamelModel):
         alias_generator=to_camel,
         populate_by_name=True,
         from_attributes=True,
-        use_enum_values=True,
         str_strip_whitespace=True,
     )

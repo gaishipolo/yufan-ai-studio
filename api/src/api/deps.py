@@ -127,6 +127,11 @@ def require(
         return actor
 
     dependency.__name__ = f"require_{'_'.join(c.replace(':', '_') for c in codes)}"
+    # 启动期核对用：`create_app()` 收集所有路由上的这个标记，核对每个码都有人
+    # 声明过（`api/assembly.py::permission_gaps`）。拼错一个字母时，超管（`*`）
+    # 一切正常、别人永远 403，而启动/doctor/契约/既有测试全不报错——所以必须
+    # 在启动期拦。顺带覆盖 AST 守卫扫不到的情况（码从常量拼出来而不是字面量）。
+    dependency.required_permissions = codes  # type: ignore[attr-defined]
     return dependency
 
 

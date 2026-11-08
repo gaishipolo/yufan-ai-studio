@@ -160,9 +160,10 @@ def test_batch_delete(client: TestClient, api: str) -> None:
 def test_scope_mine_isolates_authors(client: TestClient, api: str) -> None:
     """回归：`scope=mine` 必须只返回本人的任务。
 
-    曾经的写法是 `query.scope is TaskScope.MINE`，但 `CamelModel` 开了
+    曾经的写法是 `query.scope is TaskScope.MINE`，而当时 `CamelModel` 开着
     `use_enum_values=True`，显式传入的枚举会被转成 str，身份判断恒为 False，
-    导致作者过滤完全失效（跨用户看到全站任务）。
+    导致作者过滤完全失效（跨用户看到全站任务）。该配置已删，但这条回归用例
+    保留：归一逻辑（`TaskScope(query.scope)`）不该被「现在都是枚举了」说服掉。
     """
     bob = _bearer(client, "u_030", "bob")
 

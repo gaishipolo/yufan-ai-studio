@@ -15,6 +15,7 @@ import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -39,6 +40,9 @@ from infra import get_queue
 from workers import Worker, handler_names
 
 logger = get_logger(__name__)
+
+if TYPE_CHECKING:
+    from api.module import ModuleSpec
 
 DESCRIPTION = """
 雨范 AI 短视频工作台后端。
@@ -241,7 +245,56 @@ def create_app() -> FastAPI:
 
     # 放在 include_router 之后：模块导入时才会登记 scope，早于这里就是空集
     _check_rate_limit_overrides()
+    # 同理必须在 include_router 之后：模块导入才会注册 handler / 周期任务。
+    # 声明了却没注册 = 队列会被永远堵住，所以这一项直接拒绝启动。
+    # 权限码拼错只有普通用户会遇到（超管有 `*`），一并在这里拦。
+    _check_assembly()
     return app
+
+
+def collect_assembly() -> tuple[
+    tuple[ModuleSpec, ...], dict[str, str], dict[str, str]
+]:
+    """运行时装配快照：模块声明 + 实际注册的 handler / 周期任务。
+
+    返回 `(specs, {handler 名: 所在模块}, {周期任务名: 所在模块})`。
+    `app doctor` 与 `app modules` 用同一份数据做对账，避免「三处各实现一遍、
+    结果各不相同」——CLI 曾经因为少调一次 `load_extension_points()`，
+    打印出的 handler 清单比线上少两个，而命令本身看起来完全正常。
+    """
+    from api.discovery import discover_modules
+    from workers import HANDLERS
+
+    load_extension_points()  # 幂等：框架自带的 handler 也要在快照里
+    specs = tuple(discover_modules())
+    jobs = {name: fn.__module__ for name, fn in HANDLERS.items()}
+    periodic = {job.name: job.handler.__module__ for job in periodic_jobs()}
+    return specs, jobs, periodic
+
+
+def _check_assembly() -> None:
+    """启动自检：模块声明了 job / 周期任务，就必须真的注册。
+
+    为什么不等第一个任务：漏了副作用 import 的模块，表现是「任务永远 queued」，
+    而队列里堆着的那些任务没有任何一处日志会说「handler 不存在」。
+    参考 `api/assembly.py` 的模块文档。
+    """
+    from api.assembly import assert_assembly, permission_gaps_for_modules
+    from core.exceptions import RegistryError
+
+    specs, jobs, periodic = collect_assembly()
+    assert_assembly(specs, jobs=jobs, periodic=periodic)
+
+    # 权限码：拼错一个字母时，超级管理员（`*`）一切正常，别人永远 403。
+    # 遍历**模块 router** 而不是 `build_v1_router()` 的产物——后者在当前
+    # FastAPI 版本里是 `_IncludedRouter` 占位（延迟到建 OpenAPI 时才展开），
+    # 里面的 `.routes` 数等于模块数而不是接口数，照着遍历会得到「零个问题」。
+    gaps = permission_gaps_for_modules(specs, set(catalog.codes()))
+    if gaps:
+        raise RegistryError(
+            "路由用了没有任何模块声明的权限码"
+            "（拼错时表现为「超管能用、别人永远 403」）：\n  " + "\n  ".join(gaps)
+        )
 
 
 def _check_rate_limit_overrides() -> None:

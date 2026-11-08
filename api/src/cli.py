@@ -250,16 +250,20 @@ def _cmd_create_admin(args: argparse.Namespace) -> None:
 
 
 def _cmd_modules(_: argparse.Namespace) -> None:
-    from api.discovery import discover_modules
-    from app import load_extension_points
+    from api.assembly import assembly_gaps, permission_gaps_for_modules
+    from app import collect_assembly
     from core.permissions import catalog
     from core.scheduler import periodic_jobs
     from generation import pipeline_kinds
     from workers import handler_names
 
-    load_extension_points()  # 注册框架自带的 job handler
+    # 和 create_app() 共用同一份装配快照。CLI 曾经自己装配一遍，代价是
+    # 「漏了副作用 import 的模块」在这里根本不出现，而命令看起来一切正常——
+    # 于是这个「检查装配的命令」本身成了假阳性来源。
+    specs, jobs, periodic = collect_assembly()
+    gaps = assembly_gaps(specs, jobs=jobs, periodic=periodic)
+    bad_permissions = permission_gaps_for_modules(specs, set(catalog.codes()))  # type: ignore[arg-type]
 
-    specs = discover_modules()
     width = max((len(",".join(sorted(s.permission_codes())) or "-") for s in specs), default=8)
     width = max(width, 8) + 2
 
@@ -284,6 +288,21 @@ def _cmd_modules(_: argparse.Namespace) -> None:
     for port, registered in port_status():
         state = "已注册" if registered else f"未注册（{port.when_unregistered}）"
         print(f"  {port.name:<20}{state:<12}{port.protocol:<24}{port.implementer}")
+
+    # 先把清单打完整再判失败：这个命令的用途是「确认被识别」，
+    # 装配合不上时最需要看到的恰恰是「实际有什么」，而不是一行报错。
+    missing = [gap for gap in gaps if gap.fatal]
+    if missing or bad_permissions:
+        print(file=sys.stderr)
+        if missing:
+            print("装配不完整（声明了但没注册）：", file=sys.stderr)
+            for gap in missing:
+                print(f"  - {gap}", file=sys.stderr)
+        if bad_permissions:
+            print("权限码没有模块声明（超管能用、别人永远 403）：", file=sys.stderr)
+            for code in bad_permissions:
+                print(f"  - {code}", file=sys.stderr)
+        raise SystemExit(1)
 
 
 def _cmd_models(_: argparse.Namespace) -> None:

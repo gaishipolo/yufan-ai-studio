@@ -1,23 +1,44 @@
 """取件出参：本地给文件，远端给 307。
 
-任何「把存储里的字节交给浏览器」的接口都长同一个形状：
+任何「把存储里的字节交给浏览器」的接口都长同一个形状：拿到一个本地路径
+或者一个预签名地址，二选一，然后变成一个响应。
 
-    path = storage.local_path(key)            # 本地驱动：有真实路径
-    url = await storage.presigned_download_url(key)  # 远端驱动：预签名地址
+## 为什么要有 `Served` 而不只是一个函数
 
-两者不会同时非空。每个模块各写一遍 `if path … else RedirectResponse`，
-只会让「改一处忘一处」再发生一次，所以收敛在这里。
+`serve(path, url, mime)` 的签名让每个调用方都要：
 
-为什么远端必须重定向而不是中转：产物可能是几十上百 MB，中转一次就是
-「应用内存 × 并发数」；而对象存储自己会处理 `Range`，视频能直接拖进度条。
+1. 自己算出 `path` 和 `url` 两个值（哪怕只可能有一个非空）；
+2. 按位置参数传，顺序错了类型检查不一定报（两个都是 `str | None` 时直接静默出错）；
+3. 各自定义承载它的类型——本仓库曾经同时存在 `asset` 的
+   `Serve = tuple[Path | None, str | None, str]` 和 `export` 的 `DownloadRef`
+   dataclass，两个结构编码的是同一件事。
+
+`Served` 把「一件可下载的产物」变成一个有名字的类型，`response()` 把
+「怎么交出去」收在一处。
+
+## 边界：取数留在业务侧
+
+`Served` 只管**成响应**，不管**去哪取**。素材走归档盘的 `BlobStore`
+（要 `materialize` 才能拿到稳定路径），导出走对象存储的 `local_path` /
+预签名——这是两条不同的存储通路，把它们强行收进一个「storage 取件接口」
+会让框架认识归档盘的 CAS 细节，方向是反的。
+
+与之配套的业务规则（远端分支必须先 HEAD，否则 307 到一个 403 的桶地址）
+也留在各自 service：那是「取数是否成功」的判断，不是「怎么交出去」。
+
+## 为什么远端必须重定向而不是中转
+
+产物可能是几十上百 MB，中转一次就是「应用内存 × 并发数」；而对象存储自己
+会处理 `Range`，视频能直接拖进度条。
 
 **这个模块的位置曾经是 `modules/asset/serving.py`。** 第二个需要下载的模块
 （导出）出现时，才发现「要么违规 import 别人的模块，要么抄一份」——
-按第 0 节的分层，横切能力属于核心，业务模块只往里加，不往里藏。
+按分层，横切能力属于核心，业务模块只往里加，不往里藏。
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
 from fastapi import status
@@ -25,22 +46,32 @@ from fastapi.responses import FileResponse, RedirectResponse, Response
 
 from core.exceptions import NotFound
 
+__all__ = ["Served"]
 
-def serve(
-    path: Path | None,
-    url: str | None,
-    mime: str,
-    *,
-    filename: str | None = None,
-) -> Response:
-    """把「本地路径 / 预签名 URL」二选一的结果变成响应。
 
-    `filename` 只对本地驱动生效（`Content-Disposition`）；远端驱动下由对象存储
-    自己带 `response-content-disposition`，调用方不要去改签名 URL 的查询串。
-    """
-    if path is not None:
-        # FileResponse 支持 Range：本地驱动下拖进度条不需要把文件读进内存
-        return FileResponse(path, media_type=mime, filename=filename)
-    if url is None:  # pragma: no cover - 调用方已保证二者必有其一
-        raise NotFound("产物字节不存在，请重新生成")
-    return RedirectResponse(url, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+@dataclass(frozen=True, slots=True)
+class Served:
+    """一件可下载的产物。`path` 与 `url` 二选一，都为空就是字节不存在。"""
+
+    path: Path | None = None
+    url: str | None = None
+    mime: str = "application/octet-stream"
+    #: 只对本地驱动生效（`Content-Disposition`）；远端驱动下由对象存储自己带
+    #: `response-content-disposition`，不要去改签名 URL 的查询串。
+    filename: str | None = None
+
+    def response(self) -> Response:
+        if self.path is not None:
+            # FileResponse 支持 Range：本地驱动下拖进度条不需要把文件读进内存
+            return FileResponse(self.path, media_type=self.mime, filename=self.filename)
+        if self.url is None:
+            raise NotFound("产物字节不存在，请重新生成")
+        return RedirectResponse(self.url, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+
+    @classmethod
+    def local(cls, path: Path, mime: str, *, filename: str | None = None) -> Served:
+        return cls(path=path, mime=mime, filename=filename)
+
+    @classmethod
+    def remote(cls, url: str, mime: str) -> Served:
+        return cls(url=url, mime=mime)

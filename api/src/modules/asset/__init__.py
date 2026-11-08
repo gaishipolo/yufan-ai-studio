@@ -24,4 +24,5 @@ module = ModuleSpec(
         PermissionSpec("asset:share", "分享或撤回本人原片", group="素材"),
         PermissionSpec("asset:reference:manage", "维护封装参考素材与登记文件", group="素材"),
     ),
+    periodic=("asset.gc", "asset.mirror"),
 )

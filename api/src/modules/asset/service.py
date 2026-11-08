@@ -40,6 +40,7 @@ from core.exceptions import BadRequest
 from core.logging import get_logger
 from core.ports.assets import ask_asset_references
 from core.response import PageParams
+from core.serving import Served
 from db.repository import BaseRepository
 from infra.media_probe import EXTENSIONS, MediaInfo, create_preview, inspect
 from infra.storage.base import ObjectStorage, StorageError
@@ -88,11 +89,11 @@ class AssetService:
 
     async def resolve_file(
         self, actor: CurrentUser, asset_id: str, *, cover: bool = False
-    ) -> tuple[Path | None, str | None, str]:
-        """取文件：返回 `(本地路径, 重定向地址, MIME)`，二选一非空。
+    ) -> Served:
+        """取文件：本地驱动给路径（`FileResponse` 支持 Range，视频能拖进度条），
+        远程驱动给预签名地址（字节不经过应用进程）。
 
-        本地驱动给路径（`FileResponse` 支持 Range，视频能拖进度条），远程驱动给
-        预签名地址（字节不经过应用进程）。两条路都不把私有素材的直链写进列表接口。
+        两条路都不把私有素材的直链写进列表接口。
         """
         row = await self._owned(actor, asset_id)
         key = self._file_key(row, cover=cover)
@@ -102,8 +103,9 @@ class AssetService:
 
         path = self.storage.local_path(key)
         if path is not None:
-            return path, None, mime
-        return None, await self.storage.presigned_download_url(key), mime
+            return Served.local(path, mime)
+        url = await self.storage.presigned_download_url(key)
+        return Served.remote(url, mime)
 
     # ------------------------------------------------------------------ 写
     async def upload(

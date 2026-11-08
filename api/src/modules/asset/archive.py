@@ -30,7 +30,6 @@ from modules.asset.archive_schema import (
     ArchiveState,
     ImportAsset,
 )
-from modules.asset.serving import serve
 
 router = APIRouter(prefix="/archive", tags=["素材归档"])
 
@@ -85,14 +84,14 @@ async def import_asset(
 async def asset_file(
     asset_id: str, actor: ArchiveReadDep, service: ArchiveServiceDep
 ) -> Response:
-    return serve(*await service.file(asset_id, actor.id))
+    return (await service.file(asset_id, actor.id)).response()
 
 
 @router.get("/{asset_id}/thumbnail", summary="读取归档素材缩略图")
 async def asset_thumbnail(
     asset_id: str, actor: ArchiveReadDep, service: ArchiveServiceDep
 ) -> Response:
-    return serve(*await service.file(asset_id, actor.id, preview=True))
+    return (await service.file(asset_id, actor.id, preview=True)).response()
 
 
 @router.get("/{asset_id}/stream", summary="浏览器兼容视频预览（派生文件，不改原片）")
@@ -100,7 +99,7 @@ async def asset_stream(
     asset_id: str, actor: ArchiveReadDep, service: ArchiveServiceDep
 ) -> Response:
     # 远端驱动下这里返回 307：`Range` 由对象存储处理，首帧不用等整个文件
-    return serve(*await service.stream(asset_id, actor.id))
+    return (await service.stream(asset_id, actor.id)).response()
 
 
 @router.get("/{asset_id}", summary="读取本人或共享原片详情")
@@ -114,7 +113,7 @@ async def archive_detail(
 async def public_preview(
     asset_id: str, actor: ArchiveReadDep, service: ArchiveServiceDep
 ) -> Response:
-    return serve(*await service.preview(asset_id, actor.id))
+    return (await service.preview(asset_id, actor.id)).response()
 
 
 UpdateDep = Annotated[CurrentUser, Depends(require("asset:update"))]

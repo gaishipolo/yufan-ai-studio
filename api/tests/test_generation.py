@@ -548,9 +548,11 @@ def test_disabled_owner_stops_submit_before_spending(monkeypatch: pytest.MonkeyP
         async def is_active(self, user_id: str) -> bool:
             return False
 
-    # identity 在 import 期已经注册了真实实现；这里换掉它而不是再注册一个
-    # （重复注册会按「账号体系只能有一个权威来源」直接报错），monkeypatch 负责还原
-    monkeypatch.setattr(ports, "_checker", _Disabled())
+    # identity 在 import 期已经注册了真实实现。这里直接换掉 `Port` 的内部表，
+    # 而不是再调一次 `register_account_status_checker`——那个口的语义是
+    # 「账号体系只能有一个权威来源」，第二个实现会 RegistryError。
+    # `monkeypatch` 负责把 `_impls` 原样还回去。
+    monkeypatch.setattr(ports._checker, "_impls", {"": _Disabled()})
     probe = _run_submit(monkeypatch, "test-owner-disabled")
 
     assert probe.submit_calls == 0, "停用账号不该再触发供应商调用（那是真金白银）"
