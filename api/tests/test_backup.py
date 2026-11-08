@@ -86,6 +86,48 @@ def test_restore_refuses_to_overwrite_without_force(temp_db: Path, tmp_path: Pat
     assert "--force" in str(excinfo.value)
 
 
+def test_backup_and_restore_close_their_sqlite_connections(
+    temp_db: Path, tmp_path: Path
+) -> None:
+    """拷完必须放开文件句柄，不能等 GC。
+
+    `with sqlite3.connect(...)` 是**事务**上下文管理器：`__exit__` 只 commit /
+    rollback，不 close。连接要等引用计数归零才由 `__del__` 关闭，其间：
+
+    - Windows 上文件仍被占用，「恢复时替换数据库文件」会 `PermissionError`；
+    - 每次备份漏一个 fd（备份是周期任务，一天漏 2 个）；
+    - CPython 的 `__del__` 打 `ResourceWarning: unclosed database`，在 CI 日志里
+      会被标成 failure annotation——一个绿色构建挂着两个红叉。
+
+    这条用例不看实现，只看结果：临时屏蔽 gc，把 `REFCNT` 之外的清理手段挡掉，
+    然后**显式 gc.collect()**，此时若还有未关闭的连接就会冒出 ResourceWarning。
+    """
+    import gc
+    import warnings
+
+    from db import backup
+    from db import session as db_session
+
+    asyncio.run(db_session.init_db())
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", ResourceWarning)
+        target, _ = asyncio.run(backup.create_backup(tmp_path / "backups"))
+        asyncio.run(db_session.dispose_engine())
+        backup.restore_backup(target, force=True)
+        gc.collect()
+
+    leaks = [
+        str(w.message)
+        for w in caught
+        # 只认裸 `sqlite3.Connection`：这条用例管的是 `_dump_sqlite` /
+        # `_restore_sqlite` 里那两个直接 connect 的连接。`aiosqlite` 的连接是引擎池
+        # 管的，它的少量残留来自「每个操作一个 asyncio.run」这个测试架构（跨 loop
+        # 关闭池连接不彻底），不是本函数的责任，见报告 §9 的限制清单。
+        if issubclass(w.category, ResourceWarning) and "sqlite3.Connection" in str(w.message)
+    ]
+    assert not leaks, f"备份/恢复没有关闭 sqlite 连接 -> {leaks}"
+
+
 def test_restore_rejects_cross_dialect_backup(temp_db: Path, tmp_path: Path) -> None:
     import json
 

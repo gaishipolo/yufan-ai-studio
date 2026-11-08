@@ -27,6 +27,7 @@ import json
 import shutil
 import sqlite3
 import subprocess
+from contextlib import closing
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -93,7 +94,13 @@ def _dump_sqlite(target: Path) -> None:
         raise BackupError(f"数据库文件不存在：{source}")
     # sqlite3 的 backup API：在源库上加共享锁复制，得到一致快照；
     # 直接 shutil.copy 在 WAL 模式下可能漏掉尚未 checkpoint 的页。
-    with sqlite3.connect(source) as src, sqlite3.connect(target) as dst:
+    #
+    # **必须用 closing() 包一层**：`with sqlite3.connect(...)` 里，连接对象是
+    # 事务上下文管理器，`__exit__` 只 commit/rollback，**不 close**。连接要等引用
+    # 计数归零才由 `__del__` 关闭，其间文件句柄一直开着——Windows 上这会挡住
+    # 「恢复时替换数据库文件」，也会让每次备份漏一个 fd。CPython 的 `__del__`
+    # 还会打一条 `ResourceWarning: unclosed database`，在 CI 日志里被标成 failure。
+    with closing(sqlite3.connect(source)) as src, closing(sqlite3.connect(target)) as dst:
         src.backup(dst)
 
 
@@ -105,7 +112,9 @@ def _restore_sqlite(source: Path) -> None:
         shutil.copy2(target, safety)
         logger.info("恢复前现场已保留：%s", safety)
     target.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(source) as src, sqlite3.connect(target) as dst:
+    # 同上：`with sqlite3.connect(...)` 不关闭连接。恢复完必须立刻放开目标文件，
+    # 否则「恢复成功」之后紧接着的任何 rename / 二次备份都可能撞上占用。
+    with closing(sqlite3.connect(source)) as src, closing(sqlite3.connect(target)) as dst:
         src.backup(dst)
 
 

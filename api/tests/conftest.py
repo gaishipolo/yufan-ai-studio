@@ -69,6 +69,30 @@ def _seeded(client: TestClient) -> None:
     _PERIODIC_SNAPSHOT = periodic_jobs()
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _dispose_engine_at_exit() -> Iterator[None]:
+    """整场跑完后关掉引擎，别把 sqlite 连接留给 GC。
+
+    为什么必须有：`TestClient` 有自己的事件循环，`asyncio.run(seed(...))` 又一个。
+    连接池里的 `aiosqlite` 连接是**在某个循环里建**的，循环关闭后连接对象仍在池里；
+    等解释器 GC 到它时 `Connection.__del__` 会在已关闭的循环上收尾，
+    打出 `RuntimeError: Event loop is closed` 与 `ResourceWarning`。
+
+    这个现象在本地只是 14 条告警（`python -X dev` 可见），但在 GitHub Actions 上
+    会被日志解析器标成 **2 条 failure annotation**——构建明明是绿的，PR 页面却挂着
+    两个红叉。它训练出来的行为是「annotation 不用看」，那比告警本身危险得多。
+
+    `dispose_engine()` 会 `await engine.dispose()` 并把全局单例置空，所以它在
+    `client` 之后执行（session 级夹具的拆解顺序与创建顺序相反）。
+    """
+    yield
+    import asyncio
+
+    from db.session import dispose_engine
+
+    asyncio.run(dispose_engine())
+
+
 @pytest.fixture(autouse=True)
 def _assembled_ports() -> None:
     """每个用例前把声明式注入口装配齐。
