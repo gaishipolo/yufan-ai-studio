@@ -154,6 +154,125 @@ MUTANTS: tuple[Mutant, ...] = (
         ("tests/test_driver_loader.py",),
         "驱动名校验退回 isalnum：中文名放行后给出不可能的建文件提示",
     ),
+    Mutant(
+        "perm-include-blind",
+        "src/api/assembly.py",
+        "    for route, full_path in iter_api_routes(routes):\n",
+        '    for route, full_path in ((r, str(getattr(r, "path", "?"))) for r in routes):\n',
+        ("tests/test_assembly.py",),
+        "启动期权限核对退回裸迭代：include 聚合的子路由一条都扫不到，检查永远通过",
+    ),
+    Mutant(
+        "perm-zombie",
+        "src/modules/image/service.py",
+        "        if not actor.has(PERM_READ_ALL):\n",
+        '        if not actor.has("image:read"):\n',
+        ("tests/test_permission_coverage.py",),
+        "某个已声明的权限点失去唯一判定点：声明的开关什么也不控制",
+    ),
+    Mutant(
+        "perm-undeclared-service",
+        "src/modules/task/service.py",
+        "        return task.author_id == actor.id or actor.has(PERM_READ_ALL)\n",
+        '        return task.author_id == actor.id or actor.has("task:raed:all")\n',
+        ("tests/test_permission_coverage.py",),
+        "服务层权限码拼错：路由层检查看不见，普通用户会莫名 403",
+    ),
+    Mutant(
+        "role-builtin-typo",
+        "src/modules/identity/permissions.py",
+        '            "image:read",\n',
+        '            "image:raed",\n',
+        ("tests/test_permission_coverage.py",),
+        "内置角色模板里的权限码写错：角色建出来就少一个能力，超管自测发现不了",
+    ),
+    Mutant(
+        "token-typ-blind",
+        "src/core/security.py",
+        '    if claims.get("typ") != expected_typ:\n'
+        '        raise Unauthorized("登录凭证无效")\n',
+        "    if False:\n" '        raise Unauthorized("登录凭证无效")\n',
+        ("tests/test_sessions.py", "tests/test_identity_api.py"),
+        "不校验令牌用途：refresh 票能当 access 用，一张票可以无限续期",
+    ),
+    Mutant(
+        "token-sub-blind",
+        "src/core/security.py",
+        '    if not str(claims.get("sub") or "").strip():\n'
+        '        raise Unauthorized("登录凭证无效")\n',
+        "    if False:\n" '        raise Unauthorized("登录凭证无效")\n',
+        ("tests/test_token_claims.py", "tests/test_sessions.py", "tests/test_identity_api.py"),
+        "不校验令牌主体：无 sub 的票在按 id 查库时变成「查不到用户」",
+    ),
+    Mutant(
+        "pwd-change-blind",
+        "src/modules/identity/principal.py",
+        "            if principal.issued_at < int(changed_at.timestamp()):\n"
+        "                return None\n",
+        "            if False:\n                return None\n",
+        ("tests/test_sessions.py", "tests/test_identity_api.py"),
+        "改密后旧令牌继续可用：泄露的票在改密之后依然能进系统",
+    ),
+    Mutant(
+        "session-revoke-blind",
+        "src/modules/identity/principal.py",
+        "            if active is None:\n                return None\n",
+        "            if False:\n                return None\n",
+        ("tests/test_sessions.py",),
+        "登出/踢下线不生效：无状态令牌只靠 TTL，复制走的那张还能用满有效期",
+    ),
+    Mutant(
+        "audit-failure-breaks-request",
+        "src/core/audit.py",
+        '    except Exception:  # noqa: BLE001 - 留痕失败不能影响业务结果\n'
+        '        logger.exception("审计写入失败 action=%s target=%s", action, target_id)\n',
+        "    except Exception:  # noqa: BLE001\n        raise\n",
+        ("tests/test_audit.py",),
+        "审计写失败把业务请求一起炸掉：留痕成了可用性的单点",
+    ),
+    Mutant(
+        "outbox-attempts-frozen",
+        "src/db/outbox.py",
+        "        attempts = row.attempts + 1\n",
+        "        attempts = row.attempts\n",
+        ("tests/test_outbox.py",),
+        "投递失败不再累加 attempts：永远到不了上限，失败事件无限重试",
+    ),
+    Mutant(
+        "scheduler-last-not-set",
+        "src/core/scheduler.py",
+        "            # 也不该把这个任务饿死到下次启动\n"
+        "            self._last[job.name] = now\n",
+        "            # 也不该把这个任务饿死到下次启动\n            pass\n",
+        ("tests/test_scheduler.py",),
+        "跑完不记时间：handler 抛异常后同一轮立刻重试，变成热循环",
+    ),
+    Mutant(
+        "token-claims-not-required",
+        "src/core/security.py",
+        '            options={"require": ["exp", "iat"]},\n',
+        "",
+        ("tests/test_token_claims.py",),
+        "不再要求 exp/iat 存在：无过期的票永久有效，无 iat 的票静默绕过改密失效",
+    ),
+    Mutant(
+        "refresh-sid-blind",
+        "src/core/security.py",
+        '    if not str(claims.get("sid") or "").strip():\n'
+        '        raise Unauthorized("登录凭证无效")\n',
+        "    if False:\n" '        raise Unauthorized("登录凭证无效")\n',
+        ("tests/test_token_claims.py",),
+        "刷新票不要求 sid：会话轮换找不到要吊销的那一条",
+    ),
+    Mutant(
+        "refresh-jti-blind",
+        "src/core/security.py",
+        '    if not str(claims.get("jti") or "").strip():\n'
+        '        raise Unauthorized("登录凭证无效")\n',
+        "    if False:\n" '        raise Unauthorized("登录凭证无效")\n',
+        ("tests/test_token_claims.py",),
+        "刷新票不要求 jti：重放检测失去依据",
+    ),
 )
 
 
@@ -226,8 +345,14 @@ def main() -> int:
             new = mutant.new.replace("\n", nl)
             count = text.count(old)
             if count != 1:
+                # 静默跳过是扫描器自己的盲区：锚点因为缩进/换行变化不再唯一时，
+                # 这条不变量就从「守住了」变成「没测」，而汇总里只显示一个 `??`。
                 results.append(
                     (mutant.ident, VERDICT_INVALID, f"锚点命中 {count} 次，跳过", mutant.why)
+                )
+                print(
+                    f"[{index:02d}] {mutant.ident:24s} {'skip':8s} 锚点命中 {count} 次",
+                    flush=True,
                 )
                 continue
             path.write_bytes(text.replace(old, new, 1).encode("utf-8"))
