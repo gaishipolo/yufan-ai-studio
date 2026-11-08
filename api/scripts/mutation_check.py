@@ -323,10 +323,10 @@ def _classify(stdout: str) -> tuple[str, str]:
     return VERDICT_INVALID, summary or "无输出"
 
 
-def _run(tests: tuple[str, ...], index: int) -> tuple[str, str]:
+def _run(tests: tuple[str, ...], index: int, suffix: str = "") -> tuple[str, str]:
     """跑测试，返回 (判定, 摘要行)。"""
     # 必须单层：`var/mut-tmp/<n>` 两层时 tmp_path 夹具会 FileNotFoundError
-    basetemp = f"var/mtp{index}"
+    basetemp = f"var/mtp{index}{suffix}"
     cmd = [
         str(PYTEST),
         "-m",
@@ -345,6 +345,20 @@ def _run(tests: tuple[str, ...], index: int) -> tuple[str, str]:
     if not (proc.stdout or "").strip():
         return VERDICT_INVALID, (proc.stderr or "").strip()[-200:] or "无输出"
     return _classify(proc.stdout or "")
+
+
+def _run_with_retry(tests: tuple[str, ...], index: int) -> tuple[str, str]:
+    """判定为 `invalid` 时重跑一次，用另一个 basetemp。
+
+    为什么需要：`invalid` 有两种来源——真的环境坏了，或者这条用例本来就不稳。
+    两者混在一起时，扫描器会把「偶发」报成「没测」，而它的全部价值就在判定可信。
+    重跑只发生在 invalid 上（`fail` / `pass` 不重跑），代价是极少数情况多几秒。
+    """
+    verdict, summary = _run(tests, index)
+    if verdict != VERDICT_INVALID:
+        return verdict, summary
+    retry_verdict, retry_summary = _run(tests, index, suffix="b")
+    return retry_verdict, f"重跑一次：{retry_summary}"
 
 
 def main() -> int:
@@ -376,7 +390,7 @@ def main() -> int:
                 continue
             path.write_bytes(text.replace(old, new, 1).encode("utf-8"))
             try:
-                verdict, summary = _run(mutant.tests, index)
+                verdict, summary = _run_with_retry(mutant.tests, index)
             finally:
                 path.write_bytes(raw)
             results.append((mutant.ident, verdict, summary, mutant.why))
