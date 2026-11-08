@@ -63,7 +63,11 @@ class PackRepository:
         return (await self.session.scalars(stmt)).all()
 
     async def list_published(self, kind: str | None = None) -> Sequence[TemplatePack]:
-        stmt: Select[tuple[TemplatePack]] = select(TemplatePack).where(
+        # `select(Model)` 在这一版 SQLAlchemy 的类型里是 `Select[Model]`，
+        # 不是 `Select[tuple[Model]]`：写后者会让 `stmt.where(...)`（返回 `Self`）
+        # 被判定成不兼容，同时 `session.scalars(stmt)` 被推成 `tuple[Model]`，
+        # 于是一个单纯的排序查询报出两处「类型不对」。
+        stmt: Select[TemplatePack] = select(TemplatePack).where(
             TemplatePack.status == "published",
             TemplatePack.version > 0,
             TemplatePack.deleted_at.is_(None),

@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -267,7 +268,7 @@ class PackService:
             ):
                 raise BadRequest("只能封装本人同类参考图片")
 
-    def gaps(self, pack: TemplatePack, refs: list[TemplatePackReference]) -> list[str]:
+    def gaps(self, pack: TemplatePack, refs: Sequence[TemplatePackReference]) -> list[str]:
         """发布前还差什么；顺序就是封装者该补的顺序。"""
         gaps: list[str] = []
         if not pack.name.strip():
@@ -282,7 +283,7 @@ class PackService:
             gaps.append("产品替换范围")
         return gaps
 
-    async def _verify_bytes(self, refs: list[TemplatePackReference]) -> None:
+    async def _verify_bytes(self, refs: Sequence[TemplatePackReference]) -> None:
         """字节还在不在。
 
         **不重算 sha256**：素材 key 就是它的摘要（`blobs/ab/abcdef…`），key 存在
@@ -301,7 +302,7 @@ class PackService:
     # 出参
     # ------------------------------------------------------------------ #
     def _shape(
-        self, pack: TemplatePack, refs: list[TemplatePackReference]
+        self, pack: TemplatePack, refs: Sequence[TemplatePackReference]
     ) -> ReplacementPack:
         reference_ids = [ref.asset_id for ref in refs]
         bindings = aligned_bindings(
@@ -329,7 +330,7 @@ class PackService:
         )
 
     async def _public(
-        self, pack: TemplatePack, refs: list[TemplatePackReference]
+        self, pack: TemplatePack, refs: Sequence[TemplatePackReference]
     ) -> ReplacementPack:
         """对外可选项：附预览地址，并如实标注「能不能用」。
 
@@ -405,7 +406,7 @@ class PackService:
         )
 
     def _same_as_version(
-        self, pack: TemplatePack, refs: list[TemplatePackReference], frozen: TemplatePackVersion
+        self, pack: TemplatePack, refs: Sequence[TemplatePackReference], frozen: TemplatePackVersion
     ) -> bool:
         """当前草稿是否与这份已发布版本内容相同。
 

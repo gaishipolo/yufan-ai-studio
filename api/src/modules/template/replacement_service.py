@@ -53,6 +53,7 @@ from modules.template.titles import task_name
 from modules.template.workspace import (
     BRIDGE,
     RUNTIME,
+    Compilation,
     compile_prompt,
     create_workspace,
     ensure_layout,
@@ -245,7 +246,11 @@ class ReplacementService:
         run.fingerprint = fingerprint
         run.prompt = compiled.prompt
         run.prompt_spec = spec
-        run.duration = int(spec.get("duration") or 0)
+        # `spec["duration"]` 是 `_materialize_inputs` 刚算出来的 int（1..15），
+        # 不是外部输入；这里过 `isinstance` 只为把 `dict[str, object]` 收窄成 int，
+        # 不引入新的失败分支。
+        raw_duration = spec.get("duration")
+        run.duration = raw_duration if isinstance(raw_duration, int) else 0
         run.input_summary = summary.model_dump(mode="json")
         run.last_error = None
         run.error_code = None
@@ -503,19 +508,23 @@ class ReplacementService:
         if gap is not None:
             raise BadRequest(gap)
 
-    async def _review_map(self, run_ids: list[str]) -> dict[str, ReplacementReview]:
-        """批量取评价：列表页逐条查会变成 N+1（旧实现逐条读 `review.json`）。"""
+    async def _review_map(self, run_ids: list[str]) -> dict[str, ReviewRow]:
+        """批量取评价：列表页逐条查会变成 N+1（旧实现逐条读 `review.json`）。
+
+        返回的是**行**而不是出参：转换统一在 `_run_out` 里做一次。这里若先转成
+        `schema.ReplacementReview`，`_run_out` 就得同时接受「行」和「出参」两种
+        类型（详情接口走 `runs.review()` 拿的是行），类型上只能写成联合类型，
+        调用方从此分不清手里是什么。
+        """
         if not run_ids:
             return {}
         from sqlalchemy import select
 
         stmt = select(ReviewRow).where(ReviewRow.run_id.in_(run_ids))
         rows = (await self.session.scalars(stmt)).all()
-        return {row.run_id: _review_out(row) for row in rows}
+        return {row.run_id: row for row in rows}
 
-    def _run_out(
-        self, run: ReplacementRun, review: ReplacementReview | None
-    ) -> ReplacementRunOut:
+    def _run_out(self, run: ReplacementRun, review: ReviewRow | None) -> ReplacementRunOut:
         summary = (
             ReplacementInputSummary.model_validate(run.input_summary)
             if run.input_summary
@@ -530,14 +539,14 @@ class ReplacementService:
             created_at=run.created_at,
             prompt=run.prompt,
             display_title=_display_title(
-                run, summary and _source_name(summary)
+                run, _source_name(summary) if summary else None
             ),
             task_id=run.task_id,
             estimated_credits=run.estimated_credits,
             credits=run.credits,
             progress=run.progress_percent,
             review_status=(review.status if review else "pending"),
-            review=review,
+            review=_review_out(review) if review else None,
             input_summary=summary,
             last_error=run.last_error,
             output_url=(
@@ -591,7 +600,7 @@ def _materialize_inputs(
     source: StoredMedia,
     refs: list[StoredMedia],
     frozen,
-) -> tuple[dict[str, object], object, ReplacementInputSummary]:
+) -> tuple[dict[str, object], Compilation, ReplacementInputSummary]:
     """把输入落到工作区并编译提示词。**同步函数**：调用方放进线程池。
 
     这一段刻意不碰数据库：它慢（物化 + Node 编译）、可能抛各种 IO 异常，
