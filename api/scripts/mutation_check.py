@@ -292,6 +292,15 @@ MUTANTS: tuple[Mutant, ...] = (
         ("tests/test_backup.py",),
         "恢复不再关闭 sqlite 连接：文件句柄留到 GC，Windows 上挡住恢复时替换文件",
     ),
+    Mutant(
+        "log-drops-traceback",
+        "src/core/logging.py",
+        "        if record.exc_info:\n"
+        '            text += "\\n" + self.formatException(record.exc_info)\n',
+        "",
+        ("tests/test_logging_format.py",),
+        "dev 日志只打 message 不打堆栈：日志说「执行失败」，却不说是抛的什么",
+    ),
 )
 
 

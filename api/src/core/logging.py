@@ -52,10 +52,17 @@ class DevFormatter(logging.Formatter):
         ts = datetime.fromtimestamp(record.created).strftime("%H:%M:%S")
         rid = getattr(record, "request_id", "-")
         rid_part = f"\033[38;5;243m[{rid[:8]}]\033[0m " if rid != "-" else ""
-        return (
+        text = (
             f"\033[38;5;243m{ts}\033[0m {color}{record.levelname:<7}{self.RESET} "
             f"{rid_part}{record.getMessage()}"
         )
+        # 异常堆栈必须带上。`logger.exception(...)` 的全部价值就是那几行 traceback：
+        # 只打 message 的话，日志里只剩「任务执行失败 name=xxx」，和
+        # 「日志说了失败了」差不多——排查时还得回头复现一次才知道抛的是什么。
+        # JsonFormatter 有这一段，dev 用的这个反而没有，属于两边没对齐。
+        if record.exc_info:
+            text += "\n" + self.formatException(record.exc_info)
+        return text
 
 
 # 项目自己的命名空间。`DEBUG=true` 只放开这些，第三方库仍由下面那份降噪名单管。
