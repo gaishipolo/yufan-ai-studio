@@ -66,6 +66,22 @@ modules/voice/
 └── router.py         # 2 个接口（列表 / 创建）
 ```
 
+### 1.0 脚手架给的是骨架，几处必须按业务改掉
+
+2026-11-08 用「删掉 `modules/image` 再照本节长回来」走过一遍（见
+`WALKTHROUGH-image-rebuild.md`），生成的产物**能跑、能过 lint、能被发现**，
+但下面四处是通用假设，照抄会得到一个「看起来对、语义不对」的模块：
+
+| 生成物 | 默认假设 | 什么时候要改 |
+|---|---|---|
+| 权限点 | 通用 CRUD：`:read` `:create` `:update` `:delete` | **生成类模块**（配 `--generation`）几乎没有 `update`/`delete` 动作，而要 `:read:all`（数据范围）与 `:retry:any`（替别人重跑）。照抄会让角色界面多出两个勾不到东西的权限、缺两个能用的 |
+| `errors.py` | 一定需要自定义错误码 | 只用框架级异常（`BadRequest`/`Forbidden`/`InvalidState`）就**整个删掉**。留着示例码 `40961` 会进 `API.md` 的错误码总表，前端会为一个永远不出现的码写分支 |
+| `dependencies.py` | 注入 `Repository` + `Service` | 只有一张主表的模块，`Service` 自己 `BaseRepository(session, Model)` 更短；把 repo 提到依赖层会让路由多知道一个模型 |
+| `router.py` 的路径 | `/{模块名}` 复数直出 | 「生成」是动作不是资源子集：`POST /generations/image` 比 `POST /images` 更准确，也和 `/generations/video` 对称 |
+
+改这些是**正常的**，不是脚手架坏了。判断标准只有一条：改完之后
+`app modules` 的权限点数量与契约里的错误码表，是否只包含你真的会用的东西。
+
 **重启进程后服务就能跑**：模块被自动发现（发现结果进程内缓存，不重启看不到），
 `GET /api/v1/voice` 与 `POST /api/v1/voice` 都返回 `501`（文案「配音列表待实现」「配音创建待实现」），
 权限点已进入全局目录。
@@ -587,8 +603,14 @@ async def submit(self, request: GenerationRequest) -> GenerationProgress:
 ## 4. 案例：新增一种生成能力（音乐 / 配音 / 3D）
 
 ```bash
-app new-module music --label 音乐 --perm music --slot 4 --generation
+app new-module music --label 音乐 --perm music --slot 4 --generation --capability audio
 ```
+
+`--capability` 在 `--generation` 时**必填**（`image` / `video` / `audio`）。
+它决定「这个模块的请求会被交给哪一类供应商」：模板里曾经写死 `Capability.VIDEO`，
+于是 `new-module image --generation` 生成的是一个「kind=image、能力=video」的
+流水线——协议守卫照样绿，只有第一次真实提交时才会把图发给视频供应商。
+不给默认值是因为没有正确的默认值：猜错不报错，只是把请求发错地方。
 
 框架负责：提交、轮询、重试、超时、幂等、事件发布。
 你要补的只有**表与 `GenerationRecord` 的映射**：
@@ -610,6 +632,13 @@ class MusicStore:
 > 但结果还没落库」的窗口。没有这两个方法，进程崩在这个窗口里时，重启只能看到
 > 「没有 external_id」，就会再提交一次——**两份账单**。实现方式就是给表加一列
 > `submit_attempts`（`video_tasks` 可参考）。
+
+> **上面七行之外还有第八个方法：`list_unfinished(session, limit)`。**
+> 它不是「框架要调」的日常接口，而是**启动恢复的入口**：声明了
+> `ModuleSpec.recovery_kinds` 却没实现它，启动期会直接抛
+> `RuntimeError: kind='x' 声明了框架恢复但流水线没有 list_unfinished`
+> （`generation/recovery.py`）。所以它属于「出事才用得上、但漏了会当场起不来」，
+> 写 pipeline 时一起补，别等到第一次重启才发现。
 
 > 占位实现请抛 `NotImplementedFeature`（501），**不要抛 `NotImplementedError`**：
 > 后者不是 `AppError`，会被 `_possibly_delivered` 归到「可能已送达」，
@@ -1078,7 +1107,31 @@ async def persist_output(self, record_id: str, url: str) -> str:
 
 ---
 
-### 5.4.1 产物取件：`core.serving.Served`
+#**④ 部署自检：`ModuleSpec.doctor`**
+
+```python
+# modules/image/health.py
+async def check(report: DoctorReportLike) -> None:
+    ...  # report.add("<模块>.<主题>", "PASS" | "INFO" | "WARN" | "FAIL", "一句话结论")
+
+module = ModuleSpec(name="image", router=router, ..., doctor=check)
+```
+
+`app doctor` 在末尾逐个调用。**凡是「只对你这一个模块成立」的检查都写在自己的
+模块里**，不要加进 `api/diagnostics.py`：那等于让装配层反向 import 业务模块，
+删模块时 doctor 会崩在半路（`ModuleNotFoundError`），而这工具的意义正是
+「一次把所有问题列全」——崩在第五项等于后面十几项全部失联。
+
+写模块自检的三条纪律：
+
+- 只往报告里 `add` 自己的条目，不改别人的结论、不读整份报告做判断；
+- 一条自检抛异常只会让 `module.<名字>` 变红，不影响其他模块（框架已兜）；
+- 检查必须**只读**。`doctor` 会在生产上被随手跑，写库/删文件的自检没人敢用。
+
+历史：`archive.mirrors` / `archive.mirror.reconcile` / `archive.quota` 三条原本
+写在 `api/diagnostics.py` 里，2026-11-08 随生图模块重建一起搬回 `modules/asset`。
+
+## 5.4.1 产物取件：`core.serving.Served`
 
 任何「把存储里的字节交给浏览器」的接口都长同一个形状，别自己拼：
 
@@ -1435,6 +1488,8 @@ app export-openapi --check  # 只比对不写盘：有差异就以非 0 退出�
       守卫会红，删除也会 fail-closed（见 §5.7 ①）
 - [ ] 新增不可逆周期任务标 `leader_only=True`；幂等任务不要标（见 §5.7 ③）
 - [ ] 新表有 Alembic 迁移，且迁移基于最新 head 生成
+- [ ] 模块特有的部署检查写在 `ModuleSpec.doctor` 里，不要加进 `api/diagnostics.py`
+      （加了就等于装配层反向 import 业务模块，删模块时 doctor 会崩在半路）
 - [ ] 没有 import 其他业务模块（`test_architecture.py` 会拦）
 - [ ] `app modules` 能看到新模块，权限点数量符合预期
 - [ ] `app export-openapi` 已重新跑过，四份生成物一起提交（见第 8 节）
@@ -1467,6 +1522,7 @@ app export-openapi --check  # 只比对不写盘：有差异就以非 0 退出�
 | 需要一个「框架反过来调用业务」的钩子 | 加**协议 + 注册表**（如 `api/authn.py` 的 `PrincipalResolver`），业务侧注册，核心不认识它 |
 | 需要一个「很多模块各贡献一份」的注册表 | 用 `core/ports/host.py` 的 `Port(multi=True)`，不要手写第六份 `_registry` |
 | 装配环节不可验证（漏一行 import 就静默失效） | 在 `ModuleSpec` 加声明字段 + 启动期对账，别写进文档当「注意事项」 |
+| 某项检查/命令只对一个模块成立 | 变成 `ModuleSpec` 上的钩子（`doctor` / `seed` / `bootstrap`），由模块自己实现——别在框架里 import 那个模块 |
 
 判断标准：**改完之后，下次加同类功能要不要再改一次？** 要 → 抽象不够；不要 → 这次改对了。
 

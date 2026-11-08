@@ -33,7 +33,7 @@ _MAX_JOB_NAME = 120
 
 
 def _validate_params(spec: ModelSpec, payload: GenerateImageIn) -> None:
-    """按模型自己声明的 `param_schema` 校验入参，在**受理时**就拒绝。
+    """按模型自己声明的 `param_schema` 校验入参，在**受理时**就拒绝（手册 §5.5）。
 
     为什么不能留给供应商兜底：Agnes 对尺寸是敏感的——`1024×1536`（全角乘号）
     会被 400 拒掉，但那是**异步**才发生的，用户看到的是「生成中」，
@@ -66,7 +66,7 @@ class ImageService:
         self.repo = BaseRepository(session, ImageJob)
 
     async def list_jobs(self, actor: CurrentUser, page: PageParams) -> Page[ImageJobOut]:
-        """历史列表：数据范围只看 `image:read:all`，与 task 模块同一套规则。
+        """历史列表：数据范围只看 `image:read:all`，与 task 模块同一套规则（手册 §1.1）。
 
         只按 `owner_id` 过滤时，管理员在「全部」视图里也只看得到自己的历史，
         而任务列表里能看到全站——同一份工作台两套答案，用户只会以为是 bug
@@ -154,7 +154,7 @@ class ImageService:
     async def retry(
         self, actor: CurrentUser, job_id: str, *, confirm_charged: bool = False
     ) -> ImageJob:
-        """人工重试：把 `failed` 复位成 `queued` 并重新投递。
+        """人工重试：把 `failed` 复位成 `queued` 并重新投递（手册 §5.6②）。
 
         这里必须**显式清掉提交意图标记**（`submit_attempts`）。否则记录带着
         `attempts>0 且 external_id 为空` 的形状回到队列，`handle_submit` 会把它

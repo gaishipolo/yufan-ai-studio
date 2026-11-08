@@ -1,4 +1,4 @@
-"""生图模块出入参。"""
+"""生图模块出入参。字段用 snake_case 书写，序列化自动转 camelCase。"""
 
 from __future__ import annotations
 

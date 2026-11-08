@@ -62,7 +62,8 @@ _BLOCKED_SUFFIXES = (".localhost", ".internal", ".local", ".localdomain")
 class ImageAssetSettings(DriverSettings):
     """成图落盘的部署参数（前缀 `IMAGE_ASSET_`）。
 
-    这些是「换部署才变」的驱动参数，按约定放 DriverSettings 而不是 core/config.py。
+    这些是「换部署才变」的驱动参数，按约定放 DriverSettings 而不是 core/config.py
+    （手册 §3：驱动自己的配置写在驱动自己的文件里）。
     """
 
     model_config = driver_config("IMAGE_ASSET")
@@ -142,6 +143,9 @@ class ImageJobStore:
 
         按创建时间排序并以主键收尾，分页边界才稳定；`limit` 下推到 SQL，
         供应商故障后不会因为堆积把整张表读进内存。
+
+        **声明了 `recovery_kinds` 却没实现这个方法，恢复会静默地什么也不做**——
+        框架只认 pipeline 上的这个可选钩子，缺了就跳过，不报错（见走查文档 G10）。
         """
         rows = (
             await session.scalars(
@@ -240,18 +244,14 @@ class ImageJobStore:
 
 
 def _allowed_hosts(raw: str) -> frozenset[str]:
-    return frozenset(
-        item.strip().lower()
-        for item in raw.split(",")
-        if item.strip()
-    )
+    return frozenset(item.strip().lower() for item in raw.split(",") if item.strip())
 
 
 def _validate_asset_url(url: str, allowed: frozenset[str]) -> None:
     """下载前校验 URL；每一跳重定向都要重新过一遍这个函数。
 
     URL 完全来自供应商响应体，而 `AGNES_BASE_URL` 本身是运维可配的环境变量——
-    配置指错、上游被劫持、响应被篡改都能把它变成 SSRF 入口。
+    配置指错、上游被劫持、响应被篡改都能把它变成 SSRF 入口（手册 §5.6③）。
     """
     parts = urlparse(url)
     if parts.scheme not in ("https", "http"):
@@ -326,7 +326,7 @@ class ImageGenerationPipeline:
         当前驱动现签，见 `infra.artifacts`。
 
         下载失败由框架兜底（保留原 URL 并记日志），因为**下载失败不该把一次
-        成功的生成改成失败**。这里的host 白名单 / 禁重定向 / 大小上限 / 魔数
+        成功的生成改成失败**。这里的 host 白名单 / 禁重定向 / 大小上限 / 魔数
         校验都是同一条原则：宁可退回原图，也不要把不可信的外部响应写进自己的盘。
         """
         if url.startswith("/"):
@@ -383,4 +383,10 @@ class ImageGenerationPipeline:
         raise ValueError(f"成图下载地址重定向超过 {_MAX_REDIRECTS} 跳")
 
 
-__all__ = ["KIND_IMAGE", "ImageGenerationPipeline", "ImageJobStore"]
+__all__ = [
+    "KIND_IMAGE",
+    "ImageAssetSettings",
+    "ImageGenerationPipeline",
+    "ImageJobStore",
+    "get_image_asset_settings",
+]

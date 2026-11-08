@@ -1543,7 +1543,7 @@ Authorization: Bearer <accessToken>
 
 **重试失败的生图**
 
-`SUBMIT_UNKNOWN_MESSAGE` 承诺的「手动重试」出口（R11-02）。
+`SUBMIT_UNKNOWN_MESSAGE` 承诺的「手动重试」出口（R11-02 / 手册 §5.6②）。
 
 重试会再向供应商提交一次，因此要 `image:create`；替别人点还要 `image:retry:any`。
 没有这个出口时，`failed` 记录会被 `handle_submit` 的终态早退永久锁死：

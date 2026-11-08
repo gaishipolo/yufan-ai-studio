@@ -428,18 +428,24 @@ def _cmd_migrate_storage(args: argparse.Namespace) -> None:
 async def _strip_legacy_urls(storage: ObjectStorage) -> tuple[int, int]:
     """把落库的旧绝对地址剥成对象 key；返回（改写数，扫描行数）。
 
-    `image_jobs.output_url` / `cover_url` 以前存的是生成那一刻 `url_for()` 的产物
-    （`/static/images/xxx.png`），现在只存 key，地址在出参时按当前驱动现签。
-    老值留着就等于把「生成那一刻的驱动」固化进数据：换一次驱动失联一次。
+    以前各模块把 `url_for()` 的产物（`/static/images/xxx.png`）直接落库，现在只存
+    key、地址在出参时按当前驱动现签。老值留着就等于把「生成那一刻的驱动」固化进
+    数据：换一次驱动失联一次。
+
+    **扫的是整张 schema，不是某张表**：这曾经是 `image_jobs.output_url` /
+    `cover_url` 的专用修复，于是 CLI 为了它 `from modules.image.models import
+    ImageJob`——删掉生图模块，`app migrate-storage` 就崩，而且下一个犯同样毛病的
+    模块还得再来改一遍。判断标准很直白：**「库里存了本服务的绝对地址」是个
+    跨模块的数据纪律，不是某个模块的私事**，所以按列名（`*_url`）扫全部表。
 
     只剥「本服务拼得出来的」前缀（当前驱动的 `url_for("")` 与静态前缀），
-    供应商直链与 `data:` 原样保留 —— 那些本来就不是我们的对象。
+    供应商直链、`data:`、协议相对地址原样保留 —— 那些本来就不是我们的对象。
     """
-    from sqlalchemy import select
+    from sqlalchemy import select, update
 
     from core.config import settings
+    from db.base import Base
     from db.session import get_session_factory
-    from modules.image.models import ImageJob
 
     prefixes = tuple(
         {
@@ -448,21 +454,31 @@ async def _strip_legacy_urls(storage: ObjectStorage) -> tuple[int, int]:
         }
     )
     rewritten = 0
+    scanned = 0
 
     async with get_session_factory()() as session:
-        rows = (await session.execute(select(ImageJob))).scalars().all()
-        for row in rows:
-            for column in ("cover_url", "output_url"):
-                value = getattr(row, column)
-                key = _strip_prefix(value, prefixes)
-                if key is None:
+        for table in Base.metadata.sorted_tables:
+            columns = [c for c in table.columns if c.name.endswith("_url")]
+            if not columns:
+                continue
+            rows = (await session.execute(select(table))).mappings().all()
+            scanned += len(rows)
+            for row in rows:
+                changes = {}
+                for column in columns:
+                    key = _strip_prefix(row[column.name], prefixes)
+                    if key is not None:
+                        changes[column.name] = key
+                if not changes:
                     continue
-                setattr(row, column, key)
-                rewritten += 1
+                await session.execute(
+                    update(table).where(table.c.id == row["id"]).values(**changes)
+                )
+                rewritten += len(changes)
         if rewritten:
             await session.commit()
 
-    return rewritten, len(rows)
+    return rewritten, scanned
 
 
 def _strip_prefix(value: str | None, prefixes: tuple[str, ...]) -> str | None:
@@ -961,6 +977,7 @@ def _cmd_new_module(args: argparse.Namespace) -> None:
         slot=args.slot,
         group=args.group,
         with_generation=args.generation,
+        capability=args.capability,
     )
     try:
         written = create_module(plan, Path(args.root).resolve())
@@ -1206,6 +1223,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_new.add_argument("--group", default="业务", help="权限分组（用于角色配置界面）")
     p_new.add_argument("--generation", action="store_true", help="同时生成生成流水线骨架")
+    p_new.add_argument(
+        "--capability",
+        default="",
+        choices=["", "image", "video", "audio"],
+        help="生成能力，--generation 时必填：决定请求交给哪一类供应商",
+    )
     p_new.add_argument(
         "--root",
         default=".",

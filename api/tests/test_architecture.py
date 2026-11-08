@@ -55,6 +55,98 @@ def test_lower_layers_do_not_import_modules(layer: str) -> None:
     assert not offenders, "底层反向依赖业务模块：\n" + "\n".join(offenders)
 
 
+API_DIR = SRC / "api"
+
+
+def test_api_layer_does_not_import_business_modules() -> None:
+    """`api/` 是装配层，一个业务模块都不许 import（手册第 0 节第 1 条）。
+
+    这条**曾经没有守卫**：`test_lower_layers_do_not_import_modules` 只参数化了
+    core/db/infra/generation，把「api 也要守」留在了文档里。于是
+    `api/diagnostics.py` 悄悄 import 了 `modules.asset.models` 与
+    `modules.image.models`，`app doctor` 里的几条业务检查一直是这么跑的。
+
+    代价是用一次「删掉 image 模块」测出来的：doctor 在第 5 项上
+    `ModuleNotFoundError` 崩掉，后面十几条检查一条都看不到；而且这个崩溃
+    **发生在整份报告之前**，运维拿到的是一段 traceback 而不是「哪一项不合格」。
+
+    正确的形状是模块自检从自己家里挂上来（`ModuleSpec.doctor`），诊断层只负责
+    按顺序调用。加模块/删模块都不该碰 `api/`——这正是这条守卫要固定的事。
+    """
+    offenders: list[str] = []
+    for path in _python_files(API_DIR):
+        for imported in _imported_modules(path):
+            if imported == "modules" or imported.startswith("modules."):
+                offenders.append(f"{path.relative_to(SRC)} -> {imported}")
+
+    assert not offenders, (
+        "api/ 反向依赖业务模块：\n"
+        + "\n".join(offenders)
+        + "\n正确做法：需要「某个模块特有」的检查/命令，把它变成 ModuleSpec 上的钩子"
+        "（doctor / seed / bootstrap / recovery_kinds），由模块自己实现。"
+    )
+
+
+# 顶层脚本（CLI / 种子）当前仍然直接 import 若干业务模块。这是**历史债**：
+# `app create-admin` 天然要认识 identity，`app seed` 的老模块演示数据还没搬进
+# `ModuleSpec.seed`。清零是一次独立改动，在那之前用清单把它钉住：
+# - 新增一行 = 有人为了让新功能跑起来改了框架，review 时能看见；
+# - 想删模块时，这份清单直接告诉你「删完哪里会崩」。
+#
+# 每一项都要写清退出条件，否则清单会慢慢变成「大家都加一行」的橡皮图章。
+KNOWN_SCRIPT_MODULE_IMPORTS: dict[str, frozenset[str]] = {
+    # 运维命令：建号 / 重置口令 / 角色同步 / 登录审计清理，全部是 identity 的职责。
+    # 退出条件：等 identity 把这几条命令搬成 `ModuleSpec` 上的 CLI 钩子。
+    "cli.py": frozenset(
+        {
+            "modules.asset.archive_import",
+            "modules.asset.maintenance",
+            "modules.asset.mirror",
+            "modules.asset.models",
+            "modules.asset.schema",
+            "modules.identity.policy",
+            "modules.identity.service",
+        }
+    ),
+    # 老模块的演示数据还留在 `seed.py`（手册 §5.4 ① 说按需迁移，没要求一次做完）。
+    # 退出条件：task / asset / template / storyboard / shot 逐个改写成 `ModuleSpec.seed`。
+    "seed.py": frozenset(
+        {
+            "modules.asset.models",
+            "modules.identity.models",
+            "modules.identity.service",
+            "modules.shot.models",
+            "modules.storyboard.models",
+            "modules.task.enums",
+            "modules.task.models",
+            "modules.template.models",
+        }
+    ),
+}
+
+
+def test_top_level_scripts_only_import_known_modules() -> None:
+    """顶层脚本的业务模块 import 只能来自清单，且清单不许留过期条目。
+
+    「过期条目」同样要红：某个脚本已经不再 import 那个模块，清单里还留着，
+    下一个人就会以为它是刻意的。这张表的价值全在**准**，不准就只剩噪音。
+    """
+    problems: list[str] = []
+    for name, allowed in KNOWN_SCRIPT_MODULE_IMPORTS.items():
+        path = SRC / name
+        actual = {
+            imported
+            for imported in _imported_modules(path)
+            if imported == "modules" or imported.startswith("modules.")
+        }
+        for imported in sorted(actual - allowed):
+            problems.append(f"{name} 新增了业务模块依赖：{imported}（先问是不是设计缺口）")
+        for imported in sorted(allowed - actual):
+            problems.append(f"{name} 清单已过期：{imported} 早就不 import 了，删掉这一行")
+
+    assert not problems, "顶层脚本的模块依赖清单与代码不一致：\n" + "\n".join(problems)
+
+
 def test_modules_do_not_import_each_other() -> None:
     """业务模块之间禁止直接 import，共享逻辑必须下移到 core/db/infra/generation。"""
     offenders: list[str] = []

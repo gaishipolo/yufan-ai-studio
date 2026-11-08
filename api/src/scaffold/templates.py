@@ -123,7 +123,7 @@ SERVICE_TMPL = Template(
 | 出站 HTTP | `from infra.http import get_http, fetch_bytes` | 过 SSRF 校验、限大小、只重试幂等码 |
 | 队列 | `from infra import get_queue` + `Job(name=..., payload=...)` | 只拿协议，换驱动业务不改 |
 | 可靠事件 | `from db.outbox import record` | **与业务行同一次 commit**，不要单独提交 |
-| 限流 | 路由上 `Depends(rate_limit("${name}.create", limit=30))` | 只在显式挂载的接口生效 |
+| 限流 | 路由上 `Depends(rate_limit(...))`，额度用配置默认值 | 只在显式挂载的接口生效 |
 | 功能开关 | `from core.flags import is_on` | 名字用 `领域.动作`，doctor 会列出全部 |
 | 指标 | `from core.metrics import METRICS` | 导入期声明一次；标签只用低基数字段 |
 | 上下文 | `from core.context import get_current_user, get_request_id` | 日志已自动带 request id |
@@ -135,7 +135,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.context import CurrentUser
 from core.exceptions import NotImplementedFeature
-from core.response import PageParams
+from core.response import Page, PageParams
 from db.repository import BaseRepository
 from modules.${name}.models import ${Name}
 from modules.${name}.schema import ${Name}Out
@@ -146,8 +146,9 @@ class ${Name}Service:
         self.session = session
         self.repo = repo
 
-    async def list_items(self, actor: CurrentUser, page: PageParams) -> list[${Name}Out]:
+    async def list_items(self, actor: CurrentUser, page: PageParams) -> Page[${Name}Out]:
         # TODO: 换成真实查询（参考 modules/task/repository.py 的过滤 + 分页写法）
+        #   排序键必须以主键收尾；total 走 count(*)，不要 `list()` 再 `len()`
         raise NotImplementedFeature("${label}列表待实现")
 '''
 )
@@ -206,8 +207,9 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, status
 
 from api.deps import PageDep, rate_limit
+from core.config import settings
 from core.exceptions import NotImplementedFeature
-from core.response import ApiResponse
+from core.response import ApiResponse, Page
 from modules.${name}.dependencies import (
     ${Name}CreateDep,
     ${Name}ReadDep,
@@ -221,16 +223,19 @@ router = APIRouter(prefix="/${name}", tags=["${label}"])
 @router.get("", summary="${label}列表")
 async def list_items(
     service: ${Name}ServiceDep, actor: ${Name}ReadDep, page: PageDep
-) -> ApiResponse[list[${Name}Out]]:
+) -> ApiResponse[Page[${Name}Out]]:
+    # 分页不是可选项：范围一旦打开（`<perm>:read:all`），这个接口就是全表返回，
+    # 而前端一进列表页就会调它。手册 §1.1 记着这一步踩过的两次坑。
     return ApiResponse.ok(await service.list_items(actor, page))
 
 
-# 写接口默认挂限流：漏挂等于完全不限（限流是依赖级，没有全局兜底）
+# 写接口默认挂限流：漏挂等于完全不限（限流是依赖级，没有全局兜底）。
+# 额度用配置里的默认值，不要写死数字——写死之后线上调额度就得改代码。
 @router.post(
     "",
     status_code=status.HTTP_201_CREATED,
     summary="创建${label}",
-    dependencies=[Depends(rate_limit("${name}.create", limit=30))],
+    dependencies=[Depends(rate_limit("${name}.create", limit=settings.rate_limit_default_per_min))],
 )
 async def create_item(
     service: ${Name}ServiceDep, actor: ${Name}CreateDep, payload: Create${Name}In
@@ -318,7 +323,7 @@ class ${Name}Store:
 @register_pipeline
 class ${Name}GenerationPipeline:
     kind = "${name}"
-    capability = Capability.VIDEO
+    capability = Capability.${capability}
 
     def store(self, session: AsyncSession) -> ${Name}Store:
         return ${Name}Store(session)

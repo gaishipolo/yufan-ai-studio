@@ -23,7 +23,35 @@ def _plan(*, with_generation: bool) -> ModulePlan:
         perm="music",
         slot=4,
         with_generation=with_generation,
+        # 带流水线时必须显式说清能力：模板曾经写死 VIDEO，于是「生图模块」
+        # 生成出来会走视频供应商，而协议守卫照样绿
+        capability="audio" if with_generation else "",
     )
+
+
+def test_generation_without_capability_is_rejected() -> None:
+    """`--generation` 不写 `--capability` 直接拒绝落盘。
+
+    为什么不能给默认值：capability 决定这个模块的请求交给哪一类供应商。
+    写错了不会在启动时报错（pipeline 协议是对的），只会在第一次真实提交时
+    把图发给视频供应商——错误发生在最贵的那一步。
+    """
+    from scaffold import ScaffoldError, validate
+
+    with pytest.raises(ScaffoldError, match="capability"):
+        validate(ModulePlan(name="music", label="音乐", perm="music", slot=4, with_generation=True))
+
+
+def test_capability_without_generation_is_rejected() -> None:
+    """光有 `--capability` 没有 `--generation` 是误用，别默默忽略。"""
+    from scaffold import ScaffoldError, validate
+
+    with pytest.raises(ScaffoldError, match="capability"):
+        validate(
+            ModulePlan(
+                name="music", label="音乐", perm="music", slot=4, capability="audio"
+            )
+        )
 
 
 def test_render_produces_the_documented_file_set() -> None:

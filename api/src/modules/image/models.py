@@ -1,4 +1,9 @@
-"""生图任务记录 ORM 实体。"""
+"""生图任务记录 ORM 实体。
+
+字段命名刻意对齐 `modules/task/models.py`：`generation` 框架只认
+`GenerationRecord`，两张表的差异全部由各自的 Store 吸收，所以这里多一个、
+少一个字段都不影响框架，只影响各自 Store 里的那一次映射。
+"""
 
 from __future__ import annotations
 
@@ -13,11 +18,7 @@ from generation.spec import STATUS_QUEUED
 
 
 class ImageJob(Base, TimestampMixin, UUIDMixin):
-    """与 `video_tasks` 保持同一套状态字段，好在 `generation` 框架里互换。
-
-    字段命名刻意对齐 `modules/task/models.py`：框架只认 `GenerationRecord`，
-    两张表的差异全部由各自的 Store 吸收。
-    """
+    """一次生图请求。表名带模块前缀，避免与其他模块撞名。"""
 
     __tablename__ = "image_jobs"
 
@@ -34,6 +35,8 @@ class ImageJob(Base, TimestampMixin, UUIDMixin):
     model_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
 
     progress: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    # 这两个列存的是**对象 key**，不是 URL：地址在出参时按当前存储驱动现签。
+    # 落库地址一旦带上网址形态，换一次驱动存量链接就整批失联。
     cover_url: Mapped[str] = mapped_column(String(512), default="", nullable=False)
     output_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     error_message: Mapped[str | None] = mapped_column(String(512), nullable=True)

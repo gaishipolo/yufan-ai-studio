@@ -1,4 +1,4 @@
-"""生图模块的演示数据：`app seed` 时由 `ModuleSpec.seed` 调用。
+"""生图模块的演示数据：`app seed` 时由 `ModuleSpec.seed` 调用（手册 §5.4 ①）。
 
 ## 为什么放在模块里
 

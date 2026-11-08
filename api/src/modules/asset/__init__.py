@@ -7,6 +7,7 @@
 
 from api.module import ModuleSpec
 from core.permissions import PermissionSpec
+from modules.asset.health import check as health_check
 from modules.asset.router import router
 
 # 必须 import：注册 @periodic("asset.gc")（副作用导入）
@@ -25,4 +26,6 @@ module = ModuleSpec(
         PermissionSpec("asset:reference:manage", "维护封装参考素材与登记文件", group="素材"),
     ),
     periodic=("asset.gc", "asset.mirror"),
+    # 部署自检：归档镜像一致性、对账开关、配额水位（见 modules/asset/health.py）
+    doctor=health_check,
 )

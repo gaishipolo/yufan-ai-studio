@@ -20,13 +20,12 @@ import urllib.request
 from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal
 
+from api.module import Level
 from core.config import settings
 from infra.archive import get_archive_storage
 from infra.archive.integrity import verify_blobs
 
-Level = Literal["PASS", "INFO", "WARN", "FAIL"]
 _CAS_PROBE = "catalog/locks/_doctor_cas.json"
 
 # `api/` 目录（本文件在 api/src/api/diagnostics.py）：alembic.ini 与 migrations/ 的锚点。
@@ -220,109 +219,6 @@ def _check_archive_storage(report: DoctorReport) -> None:
                 report.add(
                     "archive.presign", "WARN", f"预签名地址无法直连：{type(exc).__name__}: {exc}"
                 )
-
-
-async def _check_database(report: DoctorReport) -> None:
-    from sqlalchemy import func, or_, select
-
-    from db.session import get_session_factory
-    from modules.asset.models import Asset
-    from modules.asset.schema import AssetSource
-    from modules.image.models import ImageJob
-
-    async with get_session_factory()() as session:
-        archive_ids = set(
-            (
-                await session.execute(
-                    select(Asset.id).where(Asset.source == AssetSource.ARCHIVE)
-                )
-            ).scalars().all()
-        )
-        stale = (
-            await session.execute(
-                select(func.count())
-                .select_from(ImageJob)
-                .where(
-                    or_(
-                        ImageJob.output_url.like("/static/%"),
-                        ImageJob.cover_url.like("/static/%"),
-                    )
-                )
-            )
-        ).scalar_one()
-        quota = max(0, settings.archive_quota_bytes_per_user)
-        usage: list[tuple[str, int]] = []
-        if quota:
-            usage = list(
-                (
-                    await session.execute(
-                        select(Asset.owner_id, func.sum(Asset.size_bytes))
-                        .where(
-                            Asset.source == AssetSource.ARCHIVE,
-                            Asset.deleted_at.is_(None),
-                        )
-                        .group_by(Asset.owner_id)
-                    )
-                ).all()
-            )
-
-    storage = get_archive_storage()
-    mirror_ids = {
-        key.rsplit("/", 1)[-1].removesuffix(".json")
-        for key in storage.list_keys("catalog/assets", suffix=".json")
-    }
-    missing = sorted(archive_ids - mirror_ids)
-    orphan = sorted(mirror_ids - archive_ids)
-    if missing or orphan:
-        report.add(
-            "archive.mirrors",
-            "WARN",
-            f"缺镜像 {len(missing)} 条（模板 worker 读不到），孤儿镜像 {len(orphan)} 份；"
-            "跑 app rebuild-mirrors 按 DB 幂等重建。"
-            "注意 app import-archive-index 是 JSON→DB 的单向导入，方向相反，修不了缺镜像",
-        )
-    else:
-        report.add("archive.mirrors", "PASS", f"DB 归档行与 JSON 镜像一致（{len(archive_ids)} 条）")
-
-    if settings.archive_mirror_enabled:
-        report.add(
-            "archive.mirror.reconcile",
-            "PASS",
-            f"周期对账已启用（每 {settings.archive_mirror_interval_sec:g}s，幂等，无需选主）",
-        )
-    else:
-        report.add(
-            "archive.mirror.reconcile",
-            "WARN",
-            "周期对账已关闭：投影失败只能靠人工跑 app rebuild-mirrors 收敛",
-        )
-
-    if stale:
-        report.add(
-            "image.urls",
-            "WARN",
-            f"{stale} 条生成结果仍是旧 /static 地址；跑 app migrate-storage 剥成 key",
-        )
-    else:
-        report.add("image.urls", "PASS", "生成结果没有落库的旧地址")
-
-    if not quota:
-        report.add("archive.quota", "INFO", "未设置归档容量上限（ARCHIVE_QUOTA_BYTES_PER_USER=0）")
-    else:
-        near = [(owner, int(used or 0)) for owner, used in usage if (used or 0) >= quota * 0.8]
-        if near:
-            report.add(
-                "archive.quota",
-                "WARN",
-                f"{len(near)} 个用户已用超过配额 80%："
-                + "、".join(f"{owner}={used // 1024 // 1024}MB" for owner, used in near[:5]),
-            )
-        else:
-            report.add(
-                "archive.quota",
-                "PASS",
-                f"全部用户归档用量低于配额 80%（上限 {quota} 字节）",
-            )
 
 
 def _check_workspace_and_blobs(report: DoctorReport, sample: int) -> None:
@@ -688,7 +584,6 @@ async def run_doctor(*, sample: int = 10) -> DoctorReport:
     _check_ports(report)
     _check_assembly(report)
     await asyncio.to_thread(_check_archive_storage, report)
-    await _check_database(report)
     await _check_schema_head(report)
     await _check_cache_channel(report)
     await _check_queue_channel(report)
@@ -699,4 +594,33 @@ async def run_doctor(*, sample: int = 10) -> DoctorReport:
     _check_db_pool(report)
     _check_http_channel(report)
     await asyncio.to_thread(_check_workspace_and_blobs, report, sample)
+    await _check_modules(report)
     return report
+
+
+async def _check_modules(report: DoctorReport) -> None:
+    """跑各模块自己声明的自检（`ModuleSpec.doctor`）。
+
+    为什么不在本文件里写死这些检查：它们只对一个模块成立（「生图结果还是旧
+    `/static` 地址吗」「归档用量离配额还有多远」）。写死在这里就等于框架反向
+    import 业务模块——删掉那个模块，`app doctor` 直接 `ModuleNotFoundError`
+    崩在半路，后面十几项一条都看不到；而手册第 0 节写着 api 不认识业务模块。
+
+    异常单独兜：某个模块的自检抛了，只该让**这一条**变红，不该把整份报告打断。
+    doctor 的用途就是「一次把所有问题列全」，一条检查失败反而吞掉其余 20 条，
+    是工具本身最不该有的行为。
+    """
+    from api.discovery import active_modules
+
+    for spec in active_modules():
+        if spec.doctor is None:
+            continue
+        try:
+            await spec.doctor(report)
+        except Exception as exc:  # noqa: BLE001 - 一条自检失败不该拖垮整份报告
+            report.add(
+                f"module.{spec.name}",
+                "FAIL",
+                f"模块自检未完成：{type(exc).__name__}: {exc}",
+            )
+

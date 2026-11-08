@@ -11,12 +11,17 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from typing import Literal, Protocol
 
 from fastapi import APIRouter
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.permissions import PermissionSpec
 from core.ports.assets import AssetReferenceSource
+
+# 自检结论的档位。定义在这里而不是 `api/diagnostics.py`：模块要按它填报告，
+# 而模块不该为了一个类型去 import 诊断实现。诊断层反过来从这里取（单向）。
+Level = Literal["PASS", "INFO", "WARN", "FAIL"]
 
 # 模块启动钩子：应用 lifespan 内、worker 启动前调用。两种语义分得很清楚，别混用：
 # - `startup`：**恢复**动作（把上次没跑完的任务接着跑），只在 `WORKER_ENABLED=true`
@@ -25,6 +30,26 @@ from core.ports.assets import AssetReferenceSource
 StartupHook = Callable[[], Awaitable[None]]
 # 模块演示数据钩子：`app seed` 时调用，返回写入行数。实现方自己 commit。
 SeedHook = Callable[[AsyncSession], Awaitable[int]]
+
+
+class DoctorReportLike(Protocol):
+    """`app doctor` 的报告对象（真实类型是 `api.diagnostics.DoctorReport`）。
+
+    这里只声明模块用得到的那一个方法：模块自检**只能往报告里加一条**，
+    不该改动别人的结论、也不该读整份报告去做判断——那会让「哪条检查归谁」
+    重新变成一团。用 Protocol 而不是 import 真实类型，是为了让
+    `api/module.py` 不认识诊断实现（诊断随时可以换掉）。
+    """
+
+    def add(self, name: str, level: Level, message: str) -> None: ...
+
+
+# 模块自检钩子：`app doctor` 末尾逐个调用。
+# 为什么需要它：doctor 里有几条检查天生只对一个模块成立（「生图结果还是旧
+# `/static` 地址吗」「归档用量离配额还有多远」）。这些检查直接写在
+# `api/diagnostics.py` 里，就等于**框架为了几条业务检查反向 import 业务模块**——
+# 删掉那个模块，doctor 直接崩；而手册第 0 节写着 api 不认识业务模块。
+DoctorHook = Callable[[DoctorReportLike], Awaitable[None]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,6 +106,10 @@ class ModuleSpec:
     # （`core.scheduler.periodic` 的硬约束），这里再声明一次是为了让
     # 「漏 import」变成启动失败——名字前缀只能证明「谁命名得像」，证明不了「谁注册了」。
     periodic: tuple[str, ...] = ()
+    # 模块自检：`app doctor` 逐个调用，往报告里加自己那几条。
+    # 没有它时，凡是「只对这个模块成立」的检查都写在 `api/diagnostics.py` 里，
+    # 于是框架反向 import 业务模块——删模块 = doctor 崩，加模块 = 改框架。
+    doctor: DoctorHook | None = None
 
     @property
     def label(self) -> str:

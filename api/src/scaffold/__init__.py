@@ -52,6 +52,12 @@ class ModulePlan:
     slot: int
     group: str = "业务"
     with_generation: bool = False
+    # 生成能力。只在 `with_generation` 时有意义，但**不能有默认值**：
+    # 模板里曾经写死 `Capability.VIDEO`，于是 `new-module image --generation`
+    # 生成的是一个「kind=image、能力=video」的流水线——框架会把生图请求路由到
+    # 视频供应商，而且静态守卫（pipeline 必须实现协议）照样全绿，因为协议对了。
+    # 这种错不会在启动时报，只会在第一次真实提交时把图发给错的供应商。
+    capability: str = ""
 
     @property
     def pascal(self) -> str:
@@ -71,6 +77,8 @@ class ModulePlan:
             "slot": self.slot,
             "group": self.group,
             "table": self.table,
+            # 流水线骨架里的能力枚举名（大写成员名），如 CAPABILITY -> IMAGE
+            "capability": self.capability.upper(),
             # 流水线靠「副作用导入」注册；漏了这一行，dispatch 会报「未注册」。
             # 结尾的 `\n` 是给模板用的：占位符独占一行，有值时它替换掉那一行，
             # 无值时那一行就是空行——两种情况下导入块与 `module =` 之间都恰好
@@ -96,6 +104,14 @@ def validate(plan: ModulePlan) -> None:
             f"必须显式指定 --slot 1-9（当前 {plan.slot}；0 为框架保留），"
             "取值见 docs/EXTENDING.md 第 7 节的号段分配表"
         )
+    if plan.with_generation and not plan.capability:
+        raise ScaffoldError(
+            "带 --generation 时必须显式指定 --capability（image / video / audio）："
+            "流水线的 capability 决定「这个模块的请求会被交给哪一类供应商」，"
+            "猜错不会报错，只会把请求发给错的供应商"
+        )
+    if plan.capability and not plan.with_generation:
+        raise ScaffoldError("--capability 只在 --generation 时有意义，去掉其中一个")
 
 
 def render(plan: ModulePlan) -> dict[str, str]:

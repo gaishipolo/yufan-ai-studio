@@ -2765,7 +2765,7 @@
           "生图"
         ],
         "summary": "重试失败的生图",
-        "description": "`SUBMIT_UNKNOWN_MESSAGE` 承诺的「手动重试」出口（R11-02）。\n\n重试会再向供应商提交一次，因此要 `image:create`；替别人点还要 `image:retry:any`。\n没有这个出口时，`failed` 记录会被 `handle_submit` 的终态早退永久锁死：\n文案说「请核对后手动重试」，而用户根本无处可点。\n\n记录带 `externalId`（供应商任务号）时说明**上一次可能已经扣费**，默认返回\n409 要求先核对；只有带 `confirmCharged=true` 才允许重新提交。不带参数的\n旧调用行为不变（R12-01）。",
+        "description": "`SUBMIT_UNKNOWN_MESSAGE` 承诺的「手动重试」出口（R11-02 / 手册 §5.6②）。\n\n重试会再向供应商提交一次，因此要 `image:create`；替别人点还要 `image:retry:any`。\n没有这个出口时，`failed` 记录会被 `handle_submit` 的终态早退永久锁死：\n文案说「请核对后手动重试」，而用户根本无处可点。\n\n记录带 `externalId`（供应商任务号）时说明**上一次可能已经扣费**，默认返回\n409 要求先核对；只有带 `confirmCharged=true` 才允许重新提交。不带参数的\n旧调用行为不变（R12-01）。",
         "operationId": "retry_image_api_v1_images__job_id__retry_post",
         "security": [
           {

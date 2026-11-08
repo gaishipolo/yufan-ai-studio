@@ -14,11 +14,11 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import delete
 
 from api.discovery import active_modules
+from db.base import Base
 from db.session import get_session_factory, init_db
 from modules.asset.models import Asset
-from modules.identity.models import Role, RolePermission, User, UserRole
+from modules.identity.models import User
 from modules.identity.service import IdentityService
-from modules.image.models import ImageJob
 from modules.shot.models import ShotPreset
 from modules.storyboard.models import Storyboard
 from modules.task.enums import AspectRatio, TaskStatus
@@ -27,6 +27,12 @@ from modules.template.models import VideoTemplate
 
 DEMO_AUTHOR = "u_001"
 DEMO_AUTHOR_NAME = "老大"
+
+# `--reset` 不清的表：框架记账（`app_meta` 里是权限目录快照、目录版本这类
+# 「bootstrap 写过、本轮不会再写」的值）。清掉它的后果见 `reset` 分支的注释。
+# 历史表必须跟着一起留：只留主表会得到「有一条 v1、却没有任何写入轨迹」的
+# 不一致状态，`app meta <key>` 会打不出「最近写入」——这个坑是 test_cli 抓到的。
+FRAMEWORK_TABLES = frozenset({"app_meta", "app_meta_history"})
 
 # (id, 用户名, 昵称, 角色标识, 密码) —— 演示库专用口令，生产环境请勿使用
 _USERS: list[tuple[str, str, str, str, str]] = [
@@ -97,20 +103,20 @@ async def seed(*, reset: bool = False) -> dict[str, int]:
     factory = get_session_factory()
     async with factory() as session:
         if reset:
-            # 身份表放最后删：其它表虽然没建外键，但语义上先清业务数据更安全
-            for model in (
-                VideoTask,
-                Asset,
-                VideoTemplate,
-                Storyboard,
-                ShotPreset,
-                ImageJob,
-                UserRole,
-                RolePermission,
-                User,
-                Role,
-            ):
-                await session.execute(delete(model))
+            # 清表按 `Base.metadata` 反序，**不手写清单**：手写的那一版漏一个模块的
+            # 结果不是报错，而是 `--reset` 之后旧行还在，演示数据和历史数据混在一起，
+            # 测试之间互相污染，而且现象要等到下一次「明明 seed 过却查出两条」才出现。
+            # 反向遍历是因为 sorted_tables 是拓扑序（父表在前），删数据要从子表开始。
+            #
+            # 框架记账表除外（`app_meta` 存权限目录快照等）。原因不是「舍不得删」，
+            # 而是**时序**：`bootstrap` 在启动时就写过它，`seed --reset` 在之后执行，
+            # 抹掉之后本轮没有任何代码会重写——`sync_new_permissions` 于是退化成
+            # 「没有快照 → 全量补齐」，管理员手工去掉的旧权限会被悄悄加回来。
+            # 这个坑是靠 `test_startup_writes_catalog_snapshot` 抓到的：换清单时它红了。
+            for table in reversed(Base.metadata.sorted_tables):
+                if table.name in FRAMEWORK_TABLES:
+                    continue
+                await session.execute(delete(table))
             await session.commit()
 
         # 内置角色（admin/editor/viewer）由模块自己保证存在，seed 不重复定义
