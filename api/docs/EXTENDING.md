@@ -1065,7 +1065,7 @@ async def reconcile() -> None:
 
 ---
 
-## 5.4 模块自带的另外三样东西：种子 / 留痕 / 产物落盘
+## 5.4 模块自带的另外五样东西：种子 / 留痕 / 产物落盘 / 自检 / 运维命令
 
 七维对账（`docs/EXTENSIBILITY_GAPS.md`）里剩下的三个维度，恰好都是「每个模块都要，
 但以前没地方放」的东西。约定如下，都是可选项，不写就是没有这个行为。
@@ -1073,14 +1073,27 @@ async def reconcile() -> None:
 **① 演示数据：`ModuleSpec.seed`**
 
 ```python
-async def seed(session: AsyncSession) -> int:      # 自己 commit，返回行数
+async def seed(session: AsyncSession, ctx: SeedContext) -> int:   # 自己 commit，返回行数
     session.add_all([...]); await session.commit(); return len(rows)
 
-module = ModuleSpec(name="image", router=router, permissions=SPECS, seed=seed)
+module = ModuleSpec(name="image", router=router, permissions=SPECS,
+                    seed=seed, seed_order=70)
 ```
 
-`app seed` 会遍历所有模块的 `seed` 钩子，**不需要再改 `src/seed.py`**。
+`app seed` 会遍历所有模块的 `seed` 钩子，**不需要再改 `src/seed.py`**——那个文件
+现在只剩编排（`init_db → 清表 → 按序调钩子`），一行业务 import 都没有。
+
 演示数据必须是**终态**：`queued` 会被周期任务当成「卡住的活」重新投递到真实供应商。
+
+两个约定别搞错：
+
+- **`ctx.demo_user_id` 是共享的演示账号**。演示数据是跨模块连贯的（任务属于这个
+  用户、分镜引用模板），所以「那个用户是谁」由框架通过 `SeedContext` 发下来，
+  别自己写死 `"u_001"`。它的值来自 `DEMO_USER_ID` / `DEMO_USER_NAME` 配置。
+- **`seed_order` 不是 `order`**。`order` 决定路由注册顺序，动它会改契约里
+  tag/path 的先后；`seed_order` 只决定「谁先种」。identity 用 `seed_order=10`
+  先种账号，其余模块才引用得到它。两者共用一个字段的话，调接口顺序的人会顺手
+  弄坏演示数据。
 
 **② 操作留痕：`core.audit.record`**
 
@@ -1107,7 +1120,7 @@ async def persist_output(self, record_id: str, url: str) -> str:
 
 ---
 
-#**④ 部署自检：`ModuleSpec.doctor`**
+**④ 部署自检：`ModuleSpec.doctor`**
 
 ```python
 # modules/image/health.py
@@ -1130,6 +1143,34 @@ module = ModuleSpec(name="image", router=router, ..., doctor=check)
 
 历史：`archive.mirrors` / `archive.mirror.reconcile` / `archive.quota` 三条原本
 写在 `api/diagnostics.py` 里，2026-11-08 随生图模块重建一起搬回 `modules/asset`。
+
+**⑤ 运维命令：`ModuleSpec.cli`**
+
+```python
+# modules/identity/cli.py
+def register(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    p = sub.add_parser("create-admin", help="创建/修复超级管理员")
+    p.add_argument("--username", required=True)
+    p.set_defaults(func=cmd_create_admin)
+
+# modules/identity/__init__.py
+module = ModuleSpec(name="identity", router=router, cli=register, ...)
+```
+
+`app` 在组装解析器时逐个调用，模块的运维命令就长在 `app <command>` 上——
+和 `doctor` / `seed` 是同一个模式：**框架只按顺序调用，不认识具体命令**。
+
+三条纪律：
+
+- **不要往 `src/cli.py` 里加业务命令**。那会让框架文件 `from modules.xxx import ...`，
+  删掉那个模块时连 `app backup` / `app restore` 都起不来——而它们正是出事时才跑的。
+- **执行时模块已经发现过了**。`_register_module_commands` 跑在 `parse_args` 之前，
+  所以命令里读 `core.permissions.catalog`、用各注入口都是安全的，不用再调
+  `discover_modules()`（漏了会静默拿到空目录）。
+- **命令名不许和框架命令撞**。撞名会在注册时报错（argparse 旧版本是静默覆盖）。
+
+放进模块的判据是「这条命令认不认识业务表」：`migrate-storage` 扫 schema 里所有
+`*_url` 列、`verify-blobs` 只读归档盘字节，都不认识业务模型，所以留在框架。
 
 ## 5.4.1 产物取件：`core.serving.Served`
 
@@ -1409,6 +1450,34 @@ class TrackBusy(AppError):
 - `seq` 只能取 1–9，因此**每个模块每个 HTTP 状态码最多 9 个错误码**，超了要换 slot。
 - 同一个 `(状态码, seq)` 在一个模块内不能重复定义，否则 `RegistryError`。
 
+**再往下还有一层**：`slot` 也是 1–9，所以每个 HTTP 状态码下**全局只有 81 个可用值**
+（9 slot × 9 seq，所有模块共享）。这不是随便定的常量，是编码格式的推论——
+`code // 100 == http_status` 要求最后两位只能装 `slot*10 + seq`。
+
+### 7.1 号段用尽时怎么办（预案，别现场设计）
+
+真撞墙时的做法是**一次性、机械、可验证**的：把编码改成 6 位。
+
+```
+code = HTTP状态码 × 1000 + slot × 100 + 序号      # slot 1-99，seq 0-99
+```
+
+影响面（已经数过，不是估的）：
+
+| 要改的地方 | 改动 |
+|---|---|
+| `core/exceptions.py::ModuleErrors.code` | 一处算式 + 两处范围校验（`slot` 1-99、`seq` 0-99） |
+| `studio/src/shared/api/types.ts::errorHttpStatus` | `/100` → `/1000`，门槛 `code < 1_000` → `< 10_000` |
+| `api/tests/` | 55 处断言具体码值（机械替换，`40991` → `409091`） |
+| `api/docs/API.md` | 错误码总表由 `app export-openapi` 重新生成 |
+
+**不需要动的**：`schema.ts` / `permissions.ts`（错误码不进 TS 契约）、前端业务代码
+（没有任何地方写死具体码值——`login-feedback.ts` 明确按「状态段」判定，它的注释
+就写着「写死具体码必然失效」）。
+
+**什么时候做**：等真有模块在一个状态码上要表达第 10 种情况时。现在 3 个模块用号段、
+一共 6 个码，预算还很宽；提前改只是把 55 条断言白改一遍，收益为零。
+
 ---
 
 ## 8. 加完功能要更新这四份生成物
@@ -1490,6 +1559,11 @@ app export-openapi --check  # 只比对不写盘：有差异就以非 0 退出�
 - [ ] 新表有 Alembic 迁移，且迁移基于最新 head 生成
 - [ ] 模块特有的部署检查写在 `ModuleSpec.doctor` 里，不要加进 `api/diagnostics.py`
       （加了就等于装配层反向 import 业务模块，删模块时 doctor 会崩在半路）
+- [ ] 演示数据写在 `ModuleSpec.seed` 里（自己 commit），归属用 `ctx.demo_user_id`，
+      不要写死 `"u_001"`；需要别的模块先种好数据就调大 `seed_order`
+- [ ] 运维命令写在 `ModuleSpec.cli` 里，不要加进 `src/cli.py`
+      （`tests/test_architecture.py` 里那张顶层脚本 import 白名单**是空的**，
+      往里加业务 import 会直接红）
 - [ ] 没有 import 其他业务模块（`test_architecture.py` 会拦）
 - [ ] `app modules` 能看到新模块，权限点数量符合预期
 - [ ] `app export-openapi` 已重新跑过，四份生成物一起提交（见第 8 节）
@@ -1522,9 +1596,16 @@ app export-openapi --check  # 只比对不写盘：有差异就以非 0 退出�
 | 需要一个「框架反过来调用业务」的钩子 | 加**协议 + 注册表**（如 `api/authn.py` 的 `PrincipalResolver`），业务侧注册，核心不认识它 |
 | 需要一个「很多模块各贡献一份」的注册表 | 用 `core/ports/host.py` 的 `Port(multi=True)`，不要手写第六份 `_registry` |
 | 装配环节不可验证（漏一行 import 就静默失效） | 在 `ModuleSpec` 加声明字段 + 启动期对账，别写进文档当「注意事项」 |
-| 某项检查/命令只对一个模块成立 | 变成 `ModuleSpec` 上的钩子（`doctor` / `seed` / `bootstrap`），由模块自己实现——别在框架里 import 那个模块 |
+| 某项检查/命令只对一个模块成立 | 变成 `ModuleSpec` 上的钩子（`doctor` / `seed` / `bootstrap` / `cli`），由模块自己实现——别在框架里 import 那个模块 |
+| 演示数据要跨模块对齐（任务属于某个用户） | 框架下发 `SeedContext`（只有 `demo_user_id` 一个字符串），别让各模块硬编码、也别让模块互相 import |
+| 同一件事有两个不同的先后（路由注册 vs 演示数据装载） | **两个字段**（`order` / `seed_order`），别为了省一个字段让它们互相污染 |
 
 判断标准：**改完之后，下次加同类功能要不要再改一次？** 要 → 抽象不够；不要 → 这次改对了。
+
+判据的另一种问法：**删掉一个模块，要改几处框架？** 2026-11-08 之前是 3 处（删生图模块
+直接让 816 条用例无法收集），之后是 0——`api/diagnostics.py`、`cli.py`、`seed.py` 现在
+都不认识任何业务模块。`tests/test_architecture.py` 里那张顶层脚本的 import 白名单
+**已经是空的**，它是零容忍的，不是废弃的。
 
 一个已经发生过的例子：接入账号体系时发现 `get_actor` 把「权限从哪来」写死成「信令牌」，
 导致停用账号后令牌仍能用满 TTL、改角色要重登。当时的修法不是加 `if identity`，

@@ -16,8 +16,8 @@ from fastapi.testclient import TestClient
 from PIL import Image
 from tests_archive_helpers import archive
 
-from cli import _prune_archive_blobs
 from infra.archive.local import get_archive_settings
+from modules.asset.cli import prune_archive_blobs
 
 
 @pytest.fixture
@@ -49,13 +49,13 @@ def test_prune_keeps_referenced_and_recent_blobs(client: TestClient, archive_roo
     fresh_orphan = _blob(archive_root, "fresh-orphan.png", age_hours=0)
 
     orphans, deleted, protected = asyncio.run(
-        _prune_archive_blobs(execute=False, min_age_hours=24)
+        prune_archive_blobs(execute=False, min_age_hours=24)
     )
     assert (orphans, deleted, protected) == (1, 0, 1)
     # 只报告不动手：dry-run 之后三份字节都还在
     assert old_orphan.is_file() and fresh_orphan.is_file() and referenced.is_file()
 
-    orphans, deleted, protected = asyncio.run(_prune_archive_blobs(execute=True, min_age_hours=24))
+    orphans, deleted, protected = asyncio.run(prune_archive_blobs(execute=True, min_age_hours=24))
     assert (orphans, deleted, protected) == (1, 1, 1)
     assert not old_orphan.exists()  # 过期孤儿被回收
     assert fresh_orphan.is_file()  # 保护期内：可能正处在「字节写完、行没提交」的窗口

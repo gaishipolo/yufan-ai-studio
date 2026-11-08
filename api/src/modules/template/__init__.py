@@ -9,6 +9,7 @@ from modules.template.feed_provider import read_feed
 from modules.template.replacement_pipeline import KIND_REPLACEMENT
 from modules.template.replacement_worker import resume
 from modules.template.router import router
+from modules.template.seed import seed as seed_demo
 
 register_replacement_feed(read_feed)
 # 删除归档素材前问「还有谁在用」：封装 head / 草稿把 `assets.id` 写进 referenceIds。
@@ -44,4 +45,6 @@ module = ModuleSpec(
         "libtv.download",
         "template.replacement.recover",
     ),
+    seed=seed_demo,
+    seed_order=30,
 )

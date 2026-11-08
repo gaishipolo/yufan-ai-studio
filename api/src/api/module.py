@@ -9,6 +9,7 @@ registry 与各业务模块都从这里取 `ModuleSpec`。
 
 from __future__ import annotations
 
+import argparse
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Literal, Protocol
@@ -28,8 +29,42 @@ Level = Literal["PASS", "INFO", "WARN", "FAIL"]
 #   的实例上执行——只读 API 实例跑一遍会改写记录状态、把任务投进无人消费的队列。
 # - `bootstrap`：**装配**动作（建内置角色、补权限点），与队列无关，任何实例都要执行。
 StartupHook = Callable[[], Awaitable[None]]
+
+
+@dataclass(frozen=True, slots=True)
+class SeedContext:
+    """演示数据装载时传给每个模块的共享上下文。
+
+    为什么需要它：演示数据是**跨模块连贯**的（任务属于某个用户、分镜引用模板），
+    拆到各模块之后，「那个用户是谁」必须有个共同的答案。可选的两条路都不好：
+
+    - 各模块硬编码同一个常量（`"u_001"` 抄五遍）——改一次要改五处，且没有任何
+      地方会告诉你改漏了；
+    - 让模块之间互相 import 那个常量——直接违反「模块之间不互相 import」。
+
+    所以框架只认识**一个字符串**：演示账号的 id。它不知道用户表长什么样，
+    也不知道谁在用它，只负责在种子装载开始时把它算出来、发下去。
+    """
+
+    demo_user_id: str
+    demo_user_name: str
+
+
 # 模块演示数据钩子：`app seed` 时调用，返回写入行数。实现方自己 commit。
-SeedHook = Callable[[AsyncSession], Awaitable[int]]
+SeedHook = Callable[[AsyncSession, SeedContext], Awaitable[int]]
+
+# 模块命令行注册钩子：`app <command>` 的解析器组装阶段调用，模块把自己的
+# 运维子命令挂上去（`sub.add_parser(...)` + `set_defaults(func=...)`）。
+# 没有它的时候，每条业务运维命令都写在 `src/cli.py` 里，于是那个 1200 行的文件
+# 必须 `from modules.identity.service import ...`——加一条命令要动框架，
+# 删一个模块会让备份/恢复这些救命命令一起 import 失败。
+#
+# 写成 Protocol 而不是 `Callable[[...], None]`：`argparse._SubParsersAction`
+# 在运行期不可下标（`from __future__ import annotations` 只救注解，救不了
+# 模块级的类型别名赋值），而函数体里的注解是延迟求值的，所以这样写既能让 mypy
+# 拿到真实类型，又不会在 import 期炸。
+class CLIRegistrar(Protocol):
+    def __call__(self, sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None: ...
 
 
 class DoctorReportLike(Protocol):
@@ -89,6 +124,15 @@ class ModuleSpec:
     # 模块自己的演示数据。没有它的时候，每加一个模块都要去改 `src/seed.py`，
     # 而那个文件会越来越像一个「所有模块的 union」——新模块的演示数据写着写着就变成框架债。
     seed: SeedHook | None = None
+    # 演示数据的装载顺序（小的先装）。
+    # **刻意与 `order` 分开**：`order` 决定路由注册顺序，动它会改契约里 tag/path
+    # 的先后；而「谁先种数据」是另一件事——identity 必须先种，否则其它模块的
+    # 演示行指向一个不存在的用户。两件事共用一个字段，调接口顺序就会顺手弄坏演示数据。
+    seed_order: int = 100
+    # 模块的运维子命令：`app <command>` 组装解析器时逐个调用。
+    # 没有它的时候，建号、清审计、归档迁移这些命令全写在 `src/cli.py`，
+    # 而那个文件反过来 import 业务模块——加命令要改框架，删模块会连累 `app backup`。
+    cli: CLIRegistrar | None = None
     # 公开模块：健康检查、探活等无需登录/权限的接口。
     # 默认 False —— 新模块默认受权限保护，避免「忘了加权限点」变成裸奔。
     public: bool = False

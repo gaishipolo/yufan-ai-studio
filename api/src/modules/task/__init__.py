@@ -13,6 +13,7 @@ from modules.task.asset_references import TaskAssetReferences
 from modules.task.export_source import TASK_EXPORT_SOURCE
 from modules.task.permissions import SPECS
 from modules.task.router import router
+from modules.task.seed import seed as seed_demo
 
 # 必须 import：注册到生成框架的 pipeline 表（副作用导入）
 from modules.task import pipeline  # noqa: E402,F401  isort: skip
@@ -53,4 +54,6 @@ module = ModuleSpec(
     # 但声明负责的 kind 让架构守卫能画出完整的「模块 × 插槽」矩阵。
     recovery_kinds=(pipeline.KIND_VIDEO,),
     asset_reference_sources=ASSET_REFERENCE_SOURCES,
+    seed=seed_demo,
+    seed_order=60,
 )

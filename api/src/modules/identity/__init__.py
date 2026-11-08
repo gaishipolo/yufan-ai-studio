@@ -12,9 +12,11 @@ from api.authn import register_principal_resolver
 from api.module import ModuleSpec
 from core.ports.accounts import register_account_status_checker
 from modules.identity.account_status import IdentityAccountStatus
+from modules.identity.cli import register as register_cli
 from modules.identity.permissions import SPECS
 from modules.identity.principal import IdentityPrincipalResolver
 from modules.identity.router import router
+from modules.identity.seed import seed as seed_demo
 
 # 必须在模块被 import 时注册（发现流程 import 本包即生效）
 register_principal_resolver(IdentityPrincipalResolver())
@@ -41,4 +43,13 @@ module = ModuleSpec(
     description="用户与角色：登录、账号管理、权限点目录",
     permissions=SPECS,
     bootstrap=_bootstrap,
+    seed=seed_demo,
+    # 运维命令（create-admin / prune-logins / prune-sessions / sync-roles）
+    # 由模块自己挂到 `app` 上：它们全都依赖 IdentityService 与口令策略，写在
+    # `src/cli.py` 里等于框架反向 import 业务模块。
+    cli=register_cli,
+    # 必须最先种：其它模块的演示行都指向 `SeedContext.demo_user_id` 这个账号。
+    # 这条注释就是 `seed_order` 与 `order` 分家的原因——`order` 管路由注册顺序，
+    # 动它会改契约；演示数据的先后是另一件事，不该被调接口顺序的人顺手弄坏。
+    seed_order=10,
 )

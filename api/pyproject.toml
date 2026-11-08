@@ -58,8 +58,10 @@ select = ["E", "F", "I", "UP", "B", "SIM", "ASYNC"]
 ignore = ["B008"]
 
 [tool.ruff.lint.per-file-ignores]
-# 种子数据是表格化字面量，拆行会严重降低可读性
-"src/seed.py" = ["E501"]
+# 种子数据是表格化字面量，拆行会严重降低可读性。
+# 范围是「模块的 seed」（演示数据现在归各模块自己写）；`src/seed.py` 已不含
+# 字面量，所以不再享有豁免——它要是哪天又长出长行，那是真的该拆。
+"src/modules/*/seed.py" = ["E501"]
 # 迁移脚本由 `migrations/script.py.mako` 生成（alembic 上游模板，仍写 `Union`、
 # 索引名一行放不下）。对生成物提 lint 意见只会让人每次 `alembic revision` 后
 # 手工改一遍，要治就改模板本身，别在这里逐个文件修。

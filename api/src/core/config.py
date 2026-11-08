@@ -69,6 +69,15 @@ class Settings(BaseSettings):
     debug: bool = True
     api_prefix: str = "/api/v1"
 
+    # ---------- 演示数据 ----------
+    # `app seed` 种出来的演示账号是谁。放在配置里而不是写死成某个模块的常量：
+    # 演示数据是**跨模块连贯**的（任务属于这个用户、分镜引用模板），各模块种的
+    # 行必须指向同一个账号。让框架硬编码 `"u_001"` 等于框架认识业务数据；
+    # 让各模块各抄一份常量，改一次要改五处且没人告诉你改漏了。
+    # 这是框架唯一认识的「演示」语义：一个 id 和一个昵称，都是字符串。
+    demo_user_id: str = "u_001"
+    demo_user_name: str = "老大"
+
     # ---------- 跨域 ----------
     # 支持 `a,b,c` 逗号分隔或 JSON 数组两种写法
     cors_origins: Annotated[list[str], NoDecode] = Field(

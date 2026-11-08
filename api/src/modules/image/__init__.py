@@ -22,6 +22,7 @@ module = ModuleSpec(
     permissions=SPECS,
     # 演示数据由模块自带：`app seed` 会遍历所有模块的 seed 钩子
     seed=seed,
+    seed_order=70,
     # 没有自定义 startup：恢复交给 generation/recovery.py 统一处理。
     # 声明这个 kind 是「模块 × 插槽」矩阵守卫的依据（R11-01）。
     recovery_kinds=(pipeline.KIND_IMAGE,),

@@ -181,6 +181,7 @@
 - [ ] **BE-48** 框架有没有用「运行期改类型」的便利选项替业务做决定？（如 Pydantic 的 `use_enum_values=True` 让枚举字段退化成 str——注解写 `Status`，运行时是 `"ok"`，IDE 补全与 mypy 全部失效，且问题要到 `payload.x.value` 崩了才暴露）。框架该做的不是悄悄转换，而是让类型在运行期与注解一致
 - [ ] **BE-49** 试着**删掉一个业务模块**，然后跑 `app doctor` / `app modules` / `pytest`。崩在哪，框架就在哪儿认识了业务。常见三处：诊断层写了业务检查、CLI 写了业务数据修复、`seed --reset` 手写了删除清单。正确形状是 `ModuleSpec` 上的钩子（`doctor` / `seed` / `bootstrap`），模块自己实现，框架只按顺序调用。判据：删模块只需要 `git rm -r` + 重跑契约，**不碰 `api/`、`cli.py`、`seed.py`**
 - [ ] **BE-50** 脚手架生成的东西，作者**照抄**会得到什么？逐项看：权限点是通用 CRUD 吗（生成类模块要的是 `:read:all` 与 `:retry:any`）、`errors.py` 的示例码会不会进契约、列表接口是全量还是分页、写死的数值（`rate_limit(limit=30)`）该不该读配置、带 `--generation` 时的 capability 是猜的还是问的。**生成物能过 lint 不等于语义对**——模板的错会被复制到每一个新模块
+- [ ] **BE-51** 框架脚本（`cli.py` / `seed.py`）里有没有 `from modules.* import`？有就说明那个能力本该是 `ModuleSpec` 上的钩子（`doctor` / `seed` / `cli` / `bootstrap`）。代价不是「不好看」：删那个模块时，`app backup` / `app restore` 这些**出事才跑**的命令会一起起不来。判据：顶层脚本的业务 import 白名单应当是空的，往里面加一行就该被 review 拦下
 
 ---
 
@@ -462,6 +463,7 @@ pytest 14 → 87 → 204 → 292 → 325 → **346**；前端 46 → 221 → 245
 | BE-48 | 框架别用运行期改类型替业务做决定 | `use_enum_values=True` 让注解撒谎 |
 | BE-49 | 删模块要改几处框架 = 扩展性的真判据 | 删 image 后 doctor 崩、816 条用例无法收集 |
 | BE-50 | 脚手架产物会被照抄，默认值就是事实标准 | 生成流水线 capability 写死 VIDEO |
+| BE-51 | 框架脚本 import 业务模块 = 备份命令也一起坏 | cli.py 有 7 个业务 import，seed.py 有 6 个 |
 | FE-27 ~ FE-31 | 会话唯一出口、单飞、冷启动保留 refresh、跨页信号、登出 | FE2 / FE3 / FE4 / FE5 |
 | FE-32 ~ FE-36 | 行内 loading、生成物派生、策略来源、mock、路由与文案 | FE4 / FE5 / FE2 |
 | CT-08 ~ CT-11 | 错误码/权限点进文档、生成器合法 TS、状态机表、四份 `--check` | R10 / R11 / R12 |

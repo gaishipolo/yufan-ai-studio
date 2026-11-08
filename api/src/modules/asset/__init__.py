@@ -7,8 +7,10 @@
 
 from api.module import ModuleSpec
 from core.permissions import PermissionSpec
+from modules.asset.cli import register as register_cli
 from modules.asset.health import check as health_check
 from modules.asset.router import router
+from modules.asset.seed import seed as seed_demo
 
 # 必须 import：注册 @periodic("asset.gc")（副作用导入）
 from modules.asset import maintenance  # noqa: E402,F401  isort: skip
@@ -26,6 +28,11 @@ module = ModuleSpec(
         PermissionSpec("asset:reference:manage", "维护封装参考素材与登记文件", group="素材"),
     ),
     periodic=("asset.gc", "asset.mirror"),
+    # 演示数据由模块自己种（`app seed` 遍历所有模块的 seed 钩子）
+    seed=seed_demo,
+    seed_order=20,
+    # 运维命令（import-archive-index / migrate-blobs / prune-blobs / rebuild-mirrors）
+    cli=register_cli,
     # 部署自检：归档镜像一致性、对账开关、配额水位（见 modules/asset/health.py）
     doctor=health_check,
 )

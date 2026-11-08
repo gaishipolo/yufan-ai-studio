@@ -143,6 +143,13 @@ for table in reversed(Base.metadata.sorted_tables):
 还没搬进 `ModuleSpec.seed`）——那是独立的一次改动，本轮不动，但**下次删模块时，
 这张清单会直接告诉你哪里会崩**。
 
+> **同日收尾（2026-11-08 下午）**：这条尾巴已经剪掉，清单现在是**空的**。
+> `ModuleSpec.cli` 与 `ModuleSpec.seed` 两个钩子落地，identity / asset 的运维命令
+> 搬进了 `modules/*/cli.py`，六个模块的演示数据搬进了 `modules/*/seed.py`，
+> `cli.py` 从 1245 行降到 ~880 行、`seed.py` 从 243 行降到 ~80 行，两个文件都
+> 一行业务 import 都没有。反向验证：移走 `modules/shot` 之后 `app doctor` 24 项全过、
+> `app modules` exit=0、**835 条用例照常收集**。
+
 ---
 
 ## P3 按手册第 1 节重建骨架

@@ -17,14 +17,11 @@ storyboards / shots / images 七种模型——每加一个模块就要再去改
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
-
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.base import utcnow
+from api.module import SeedContext
+from core.demo import minutes_ago, placeholder_image
 from modules.image.models import ImageJob
-
-DEMO_OWNER = "u_001"
 
 _PROMPTS: list[tuple[str, str]] = [
     ("赛博朋克少女", "赛博朋克风格少女半身像，霓虹光，胶片质感"),
@@ -34,11 +31,7 @@ _PROMPTS: list[tuple[str, str]] = [
 ]
 
 
-def _ago(minutes: int) -> datetime:
-    return utcnow() - timedelta(minutes=minutes)
-
-
-async def seed(session: AsyncSession) -> int:
+async def seed(session: AsyncSession, context: SeedContext) -> int:
     rows = [
         ImageJob(
             name=title,
@@ -48,11 +41,11 @@ async def seed(session: AsyncSession) -> int:
             progress=100,
             model="Agnes Image 2.5 Flash",
             model_id="agnes-image-2.5-flash",
-            cover_url=f"https://picsum.photos/seed/img{i}/400/500",
-            output_url=f"https://picsum.photos/seed/img{i}/1024/1536",
-            owner_id=DEMO_OWNER,
-            created_at=_ago(i * 240 + 60),
-            finished_at=_ago(i * 240 + 58),
+            cover_url=placeholder_image(f"img{i}", 400, 500),
+            output_url=placeholder_image(f"img{i}", 1024, 1536),
+            owner_id=context.demo_user_id,
+            created_at=minutes_ago(i * 240 + 60),
+            finished_at=minutes_ago(i * 240 + 58),
         )
         for i, (title, prompt) in enumerate(_PROMPTS)
     ]

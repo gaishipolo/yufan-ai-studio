@@ -3,6 +3,7 @@
 from api.module import ModuleSpec
 from core.permissions import PermissionSpec
 from modules.shot.router import router
+from modules.shot.seed import seed as seed_demo
 
 module = ModuleSpec(
     name="shot",
@@ -11,4 +12,6 @@ module = ModuleSpec(
     permissions=(
         PermissionSpec("shot:read", "查看镜头库", group="内容生产"),
     ),
+    seed=seed_demo,
+    seed_order=50,
 )

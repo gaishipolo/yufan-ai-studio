@@ -21,21 +21,28 @@ app backup [--out var/backups]     # 备份数据库（sqlite 快照 / postgres 
 app restore --from-dir <dir> --force # 用备份覆盖当前库（先另存现场）
 app new-module voice --label 配音   # 生成新模块脚手架
 app meta [key]                     # 查看 app_meta 的运行期状态及其写入轨迹
+```
+
+下面这些命令**不在这个文件里**，由业务模块通过 `ModuleSpec.cli` 自己挂上来：
+
+    create-admin / prune-logins / prune-sessions / sync-roles      ← modules/identity
+    import-archive-index / migrate-blobs / prune-blobs /
+    rebuild-mirrors                                               ← modules/asset
+
+判据是「这条命令认不认识业务表」：`migrate-storage` 扫 schema 里所有 `*_url` 列、
+`verify-blobs` 只读归档盘字节，都不认识业务模型，所以留在框架。
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
-import getpass
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:  # 只用于注解：命令行入口保持「用到才 import」，别把启动链拖长
-    from infra.archive.base import ArchiveStorage
     from infra.storage.base import ObjectStorage
-    from modules.asset.models import Asset
 
 
 def _cmd_serve(args: argparse.Namespace) -> None:
@@ -76,102 +83,6 @@ def _cmd_seed(args: argparse.Namespace) -> None:
 
     counts = asyncio.run(seed(reset=args.reset))
     print("演示数据已写入：", ", ".join(f"{k}={v}" for k, v in counts.items()))
-
-
-def _cmd_prune_logins(args: argparse.Namespace) -> None:
-    """清理过期的登录审计。
-
-    不做成「每次登录顺手删一批」：那会把一次写操作变成「写 + 扫表」，
-    而且审计该留多久是运维决定，不该由某个请求的运气决定。
-    """
-    from core.config import get_settings
-    from db.session import get_session_factory
-    from modules.identity.service import IdentityService
-
-    days = args.days or get_settings().login_event_retention_days
-
-    async def run() -> int:
-        async with get_session_factory()() as session:
-            return await IdentityService(session).purge_login_events(days)
-
-    removed = asyncio.run(run())
-    print(f"已清理 {days} 天前的登录审计：{removed} 行")
-
-
-def _cmd_prune_sessions(args: argparse.Namespace) -> None:
-    """清理已经过期的登录会话。
-
-    与 `prune-logins` 分开：两者的保留期不是一回事——审计要留 90 天（追溯用），
-    会话行一过 `expires_at` 就没人再读，留着只撑表。
-    """
-    from db.session import get_session_factory
-    from modules.identity.service import IdentityService
-
-    async def run() -> int:
-        async with get_session_factory()() as session:
-            return await IdentityService(session).purge_sessions(args.days)
-
-    removed = asyncio.run(run())
-    print(f"已清理 {args.days} 天前过期的会话：{removed} 行")
-
-
-def _cmd_sync_roles(args: argparse.Namespace) -> None:
-    """全量补齐内置角色缺失的权限点（只加不减）。
-
-    **日常不需要跑**：启动时的 `sync_new_permissions` 会把这一版新增的权限点
-    自动并进去（靠 `app_meta.permissions.catalog` 的快照判断哪些是「新增」）。
-    它的适用范围只剩两种手工场景：
-
-    - 有人把内置角色的权限改乱了，想按 `BUILTIN_ROLES` 恢复默认；
-    - 部署环境从不执行启动钩子（例如只跑 `alembic upgrade` 的离线库），
-      想提前把角色准备好。
-
-    语义仍是「只加不减」：管理员手工勾掉的不会回来；只打印差异，可重复执行。
-
-    `--prune-snapshot` 是唯一会**删除**权限目录快照条目的入口（见
-    `sync_new_permissions` 的「只增不减」说明）：自动路径不敢收缩快照，因为分不清
-    「这一版少声明了」和「写的人是个旧版本」；人明确跑这一条时，两者不再是问题。
-    """
-    from api.discovery import discover_modules
-    from db.app_meta import get_json
-    from db.session import get_session_factory
-    from modules.identity.service import PERMISSION_SNAPSHOT_KEY, IdentityService
-
-    # **必须先把模块发现跑掉**：`core.permissions.catalog` 是模块声明时填的，
-    # 而 CLI 不会走 `create_app()`。不调这一句，`catalog.codes()` 是空集，
-    # `--prune-snapshot` 会把整张快照抹掉（「当前目录一个权限点都没声明」），
-    # 下一次启动于是把管理员手工移除的权限全部当「新增」补回来。
-    discover_modules()
-
-    async def run() -> tuple[dict[str, list[str]], list[str], list[str]]:
-        async with get_session_factory()() as session:
-            service = IdentityService(session)
-            snapshot = set(await get_json(session, PERMISSION_SNAPSHOT_KEY) or [])
-            added = await service.sync_builtin_role_permissions(dry_run=args.dry_run)
-            if not args.prune_snapshot:
-                return added, [], []
-            if args.dry_run:
-                from core.permissions import catalog
-
-                return added, [], sorted(snapshot - set(catalog.codes()))
-            # `prune=True` 会把快照改写成「当前声明的全部」并按差集重跑一次补齐
-            await service.sync_new_permissions(prune=True)
-            after = set(await get_json(session, PERMISSION_SNAPSHOT_KEY) or [])
-            return added, sorted(set(after) - snapshot), sorted(snapshot - after)
-
-    added, grown, pruned = asyncio.run(run())
-    if args.dry_run:
-        print("（dry-run：只列出会改什么，没有写库）")
-    if not added:
-        print("内置角色已是最新，无需补齐")
-    for code, codes in added.items():
-        print(f"{code}: +{' +'.join(codes)}")
-    for code in grown:
-        print(f"快照补入：{code}")
-    for code in pruned:
-        print(f"快照移除：{code}（当前目录已不再声明）")
-    if args.prune_snapshot and not grown and not pruned:
-        print("快照与当前声明一致，无需收缩")
 
 
 def _cmd_meta(args: argparse.Namespace) -> None:
@@ -217,36 +128,6 @@ def _cmd_meta(args: argparse.Namespace) -> None:
         updated = row.updated_at.strftime("%Y-%m-%d %H:%M")
         preview = row.value if len(row.value) <= 60 else row.value[:57] + "…"
         print(f"{row.key}  v{row.version}  {updated}  {row.updated_by or '-'}  {preview}")
-
-
-def _cmd_create_admin(args: argparse.Namespace) -> None:
-    """生产首启的唯一入口：没有账号时谁也登不进去，必须由运维在服务器上创建。"""
-    from db.session import get_session_factory
-    from modules.identity.policy import WeakPassword, check_password_strength
-    from modules.identity.service import IdentityService
-
-    password = args.password
-    if not password:
-        if not sys.stdin.isatty():
-            print("非交互环境请用 --password 传入密码", file=sys.stderr)
-            raise SystemExit(1)
-        password = getpass.getpass("密码: ")
-    try:
-        # 与 API 同一份策略：这个账号是权限最大的那个，不能是唯一不受约束的入口
-        check_password_strength(password)
-    except WeakPassword as exc:
-        print(str(exc), file=sys.stderr)
-        raise SystemExit(1) from exc
-
-    async def run() -> tuple[str, str, bool]:
-        async with get_session_factory()() as session:
-            user, created = await IdentityService(session).ensure_superuser(
-                args.username, password, args.display_name
-            )
-            return user.username, user.id, created
-
-    username, user_id, created = asyncio.run(run())
-    print(f"{'已创建' if created else '已更新'}超级管理员：{username}（{user_id}）")
 
 
 def _cmd_modules(_: argparse.Namespace) -> None:
@@ -346,36 +227,6 @@ def _cmd_export_openapi(args: argparse.Namespace) -> None:
     verb = {"written": "已写入", "unchanged": "无变化", "stale": "已过期", "missing": "缺失"}
     for kind, path in targets.items():
         print(f"{verb.get(status[str(path)], status[str(path)]):<8}{kind:<5}{path}")
-
-
-def _cmd_import_archive_index(args: argparse.Namespace) -> None:
-    """把归档盘的 JSON 索引补进 `assets` 表。
-
-    设计成可反复执行：主键沿用 JSON 的 id，第二次跑就是 `updated=0`。
-    不删 JSON —— 替换模板在 worker 里仍按文件读素材，删了那边就断。
-    """
-    from core.exceptions import AppError
-    from db.session import get_session_factory
-    from infra.archive import get_archive_storage
-    from modules.asset.archive_import import import_archive_index
-
-    try:
-        root = Path(args.root).resolve() if args.root else get_archive_storage().root()
-    except AppError as exc:
-        print(exc.message, file=sys.stderr)
-        raise SystemExit(1) from exc
-
-    if not (root / "catalog" / "assets").is_dir():
-        print(f"没有找到归档索引目录：{root / 'catalog' / 'assets'}", file=sys.stderr)
-        raise SystemExit(1)
-
-    async def run():
-        async with get_session_factory()() as session:
-            return await import_archive_index(session, root, dry_run=args.dry_run)
-
-    report = asyncio.run(run())
-    for line in report.lines():
-        print(line)
 
 
 def _cmd_migrate_storage(args: argparse.Namespace) -> None:
@@ -493,89 +344,6 @@ def _strip_prefix(value: str | None, prefixes: tuple[str, ...]) -> str | None:
     return None
 
 
-def _cmd_migrate_blobs(args: argparse.Namespace) -> None:
-    """把归档素材搬到「按 sha256 内容寻址」的布局（`blobs/ab/abcdef…`）。
-
-    旧布局是「分类 + 年月 + 随机 id」，于是同一份字节可以有多个副本、也可以用
-    同名覆盖 —— "这份字节还是不是当初那份"只能靠每次读出来重算 sha256 来猜。
-    搬到内容寻址之后 key 就是摘要，发布校验与运行快照都不再需要读全量。
-
-    幂等：已经是 blob 布局的行直接跳过，跑第二遍 `moved=0`。
-    """
-    moved, already, failed = asyncio.run(
-        _migrate_archive_blobs(dry_run=args.dry_run, delete_source=args.delete_source)
-    )
-    print(f"已迁移 {moved} 条，已是新布局 {already} 条，缺字节 {failed} 条")
-    if args.dry_run:
-        print("（dry-run：未写库、未搬文件）")
-    if failed:
-        raise SystemExit(1)
-
-
-async def _migrate_archive_blobs(*, dry_run: bool, delete_source: bool) -> tuple[int, int, int]:
-    from sqlalchemy import select
-
-    from db.session import get_session_factory
-    from infra.archive import (
-        BlobStore,
-        clip_key,
-        get_archive_storage,
-        is_blob_key,
-        preview_key,
-    )
-    from modules.asset.models import Asset
-    from modules.asset.schema import AssetSource
-
-    storage = get_archive_storage()
-    blobs = BlobStore(storage)
-    moved = already = failed = 0
-
-    async with get_session_factory()() as session:
-        rows = (
-            (await session.execute(select(Asset).where(Asset.source == AssetSource.ARCHIVE)))
-            .scalars()
-            .all()
-        )
-        for row in rows:
-            if is_blob_key(row.storage_key):
-                already += 1
-                continue
-            old_key = row.storage_key
-            if not storage.exists(old_key):
-                failed += 1
-                print(f"  缺字节 {row.id} ← {old_key}", file=sys.stderr)
-                continue
-            if not row.sha256:
-                # 内容寻址靠摘要命名，没有摘要就只能是"位置寻址的孤儿"，跳过并报出来
-                failed += 1
-                print(f"  缺摘要 {row.id} ← {old_key}", file=sys.stderr)
-                continue
-            if dry_run:
-                moved += 1
-                continue
-
-            key, _ = blobs.adopt(old_key, row.sha256, Path(old_key).suffix)
-            old_cover = row.cover_key
-            row.storage_key = key
-            if old_cover and not old_cover.startswith("previews/"):
-                target = (
-                    clip_key(row.sha256) if old_cover.endswith(".mp4") else preview_key(row.sha256)
-                )
-                if storage.exists(old_cover):
-                    with storage.materialize(old_cover) as source:
-                        storage.copy(source, target, None)
-                    row.cover_key = target
-            await session.commit()
-            _rewrite_asset_mirror(storage, row)
-            if delete_source:
-                storage.remove(old_key)
-                if old_cover and old_cover != row.cover_key:
-                    storage.remove(old_cover)
-            moved += 1
-
-    return moved, already, failed
-
-
 def _cmd_migrate_archive(args: argparse.Namespace) -> None:
     """把本地归档根的内容搬进当前归档驱动（`local → s3`），幂等。
 
@@ -621,45 +389,6 @@ def _cmd_migrate_archive(args: argparse.Namespace) -> None:
         print("（dry-run：未写入目标驱动）")
     if failed:
         raise SystemExit(1)
-
-
-def _cmd_prune_blobs(args: argparse.Namespace) -> None:
-    """回收内容寻址下没人引用的字节，以及（可选）超期软删记录。
-
-    实现在 `modules/asset/maintenance.py`：周期任务与 CLI 必须共用一份，
-    否则「一处查了引用、另一处没查」迟早出现。
-    """
-    from api.discovery import discover_modules
-    from modules.asset.maintenance import run_archive_gc
-
-    discover_modules()  # 引用检查器在模块 import 期注册，CLI 默认不发现模块
-    report = asyncio.run(
-        run_archive_gc(
-            execute=args.execute,
-            min_age_hours=args.min_age_hours,
-            trash_days=args.trash_age_days,
-            include_trash=args.include_trash,
-        )
-    )
-    print(
-        f"孤儿字节 {len(report.orphans)} 个，已删除 {len(report.deleted)} 个，"
-        f"处于保护期 {report.protected} 个（{args.min_age_hours:g} 小时内）"
-    )
-    for key in report.orphans:
-        print(f"  孤儿 {key}")
-    if args.include_trash:
-        print(
-            f"回收站超期（{args.trash_age_days:g} 天）：清理 {len(report.purged)} 条、"
-            f"仍被引用 {len(report.blocked)} 条"
-        )
-        for asset_id, name, _ in report.purged:
-            print(f"  [清理] {asset_id} {name}")
-        for asset_id, name, refs in report.blocked:
-            print(f"  [保留] {asset_id} {name} 仍被引用：{refs}")
-    if not args.execute:
-        print("（dry-run：未删除任何对象、未删除任何记录；确认后加 --execute）")
-    elif report.protected:
-        print("保护期内的对象下轮再扫：它们可能正在被登记流程写入")
 
 
 def _cmd_audit_events(args: argparse.Namespace) -> None:
@@ -864,18 +593,6 @@ def _cmd_verify_blobs(args: argparse.Namespace) -> None:
         raise SystemExit(1)
 
 
-def _cmd_rebuild_mirrors(args: argparse.Namespace) -> None:
-    """按 DB 全量重建镜像：补缺、更新 stateVersion 落后的、清掉没有 DB 行的孤儿。"""
-    from modules.asset.mirror import run_mirror_reconcile
-
-    report = asyncio.run(run_mirror_reconcile(execute=not args.dry_run))
-    print(("预演：" if args.dry_run else "") + report.summary())
-    for asset_id, error in report.failures:
-        print(f"  [失败] {asset_id}: {error}")
-    if not report.healthy:
-        raise SystemExit(1)
-
-
 def _cmd_doctor(args: argparse.Namespace) -> None:
     from api.diagnostics import run_doctor
 
@@ -911,29 +628,6 @@ def _cmd_restore(args: argparse.Namespace) -> None:
         raise SystemExit(1) from exc
     print(f"已恢复：{manifest.created_at}（schema={manifest.schema_head or '未知'}）")
     print("请重启服务后再验证：连接池里可能还有指向旧文件的句柄。")
-
-
-async def _prune_archive_blobs(*, execute: bool, min_age_hours: float) -> tuple[int, int, int]:
-    """兼容旧调用点（测试与脚本）：薄封装，不再有第二份实现。"""
-    from modules.asset.maintenance import run_archive_gc
-
-    report = await run_archive_gc(
-        execute=execute, min_age_hours=min_age_hours, include_trash=False
-    )
-    return len(report.orphans), len(report.deleted), report.protected
-
-
-def _rewrite_asset_mirror(storage: ArchiveStorage, row: Asset) -> None:
-    """镜像 JSON 的 `path` 也要跟着搬：替换模板读的是它，不是 DB。"""
-    key = f"catalog/assets/{row.id}.json"
-    if not storage.exists(key):
-        return
-    payload = storage.read(key)
-    if not isinstance(payload, dict):
-        return
-    payload["path"] = row.storage_key
-    payload["previewPath"] = row.cover_key or None
-    storage.write(key, payload)
 
 
 def _cmd_runs_status(_: argparse.Namespace) -> None:
@@ -1001,6 +695,58 @@ def _cmd_new_module(args: argparse.Namespace) -> None:
     print("     例外：老库第一次升到这一版会做一次全量补齐，见 docs/OPS.md「升级」")
 
 
+def _register_module_commands(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    """让每个模块把自己的运维命令挂上来（`ModuleSpec.cli`）。
+
+    两条刻意的设计：
+
+    1. **单个模块 import 失败不拖垮整个入口**。`app backup` / `app restore` 正是
+       「出事时才跑」的命令，而那时候坏掉的可能就是某个模块。所以逐模块兜异常、
+       打一行 stderr 后继续——丢几条运维命令，好过整个 CLI 起不来。
+    2. **撞名要红**。模块想注册一个已经存在的命令名（比如 `backup`），框架命令就被
+       业务模块顶掉了，只有用到的人才会发现。这里按解析器对象身份比对，一旦被替换
+       立刻报错并**把原命令还原**（`RegistryError` 由上层兜住）。
+       注意这个兜底是跨版本的：Python 3.13 的 argparse 自己抛
+       `conflicting subparser`，而 3.11/3.12（`pyproject` 的 target）是**静默覆盖**；
+       只写「信任 argparse」等于在 3.11 上留一个静默的洞。
+
+    这个函数顺带也**保证了「命令执行时模块已发现」**：它跑在 `parse_args` 之前，
+    所以任何模块命令执行时 `core.permissions.catalog` 与各注入口都已经填好了。
+    没有这条保证的话，每个「要读目录 / 要引用检查器」的命令都得自己再调一次
+    `discover_modules()`——漏一次就是静默拿到空目录（`sync-roles --prune-snapshot`
+    会把整张权限快照抹掉）。代价是每条命令都要 import 一遍模块，实测约 0.8s。
+    """
+    from api.discovery import active_modules
+    from core.exceptions import RegistryError
+
+    try:
+        specs = active_modules()
+    except Exception as exc:  # noqa: BLE001 - 见函数说明第 1 条
+        print(f"模块发现失败（{exc}），业务模块的运维命令不可用", file=sys.stderr)
+        return
+
+    for spec in specs:
+        if spec.cli is None:
+            continue
+        snapshot = dict(sub.choices)
+        try:
+            spec.cli(sub)
+            for name, parser_obj in snapshot.items():
+                if sub.choices.get(name) is not parser_obj:
+                    # **把被顶掉的命令还回去再报错**：只检查不修复的话，框架命令
+                    # （`backup` / `restore` 这类救命命令）在那之后就已经是坏的，
+                    # 而报错只是打印一行——用户手里的 CLI 已经不能用了。
+                    sub.choices[name] = parser_obj
+                    raise RegistryError(
+                        f"模块 {spec.name} 用命令名 {name!r} 覆盖了已有的命令"
+                    )
+        except Exception as exc:  # noqa: BLE001 - 见函数说明第 1 条
+            print(
+                f"模块 {spec.name} 的命令行注册失败（{exc}），它的运维命令将不可用",
+                file=sys.stderr,
+            )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="app", description="雨范 AI 短视频工作台后端")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -1023,40 +769,6 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_seed.set_defaults(func=_cmd_seed)
 
-    p_admin = sub.add_parser("create-admin", help="创建/修复超级管理员（生产首启必跑）")
-    p_admin.add_argument("--username", required=True, help="登录名")
-    p_admin.add_argument("--password", default="", help="不传则交互式输入")
-    p_admin.add_argument("--display-name", default="", help="昵称，默认与用户名相同")
-    p_admin.set_defaults(func=_cmd_create_admin)
-
-    p_prune = sub.add_parser("prune-logins", help="清理过期的登录审计")
-    p_prune.add_argument(
-        "--days", type=int, default=0, help="保留天数，默认取 LOGIN_EVENT_RETENTION_DAYS"
-    )
-    p_prune.set_defaults(func=_cmd_prune_logins)
-
-    p_prune_sessions = sub.add_parser("prune-sessions", help="清理已过期的登录会话")
-    p_prune_sessions.add_argument(
-        "--days",
-        type=int,
-        default=7,
-        help="清理「过期超过多少天」的会话行，默认 7（refresh 有效期即 7 天）",
-    )
-    p_prune_sessions.set_defaults(func=_cmd_prune_sessions)
-
-    p_sync_roles = sub.add_parser(
-        "sync-roles",
-        help="全量补齐内置角色缺失的权限点（启动时只自动补「新增」的；这个命令用于手工兜底）",
-    )
-    p_sync_roles.add_argument(
-        "--dry-run", action="store_true", help="只打印会补什么，不写库（升级前预演）"
-    )
-    p_sync_roles.add_argument(
-        "--prune-snapshot",
-        action="store_true",
-        help="同时把权限目录快照收缩成「当前声明的全部」（自动路径只增不减）",
-    )
-    p_sync_roles.set_defaults(func=_cmd_sync_roles)
 
     p_meta = sub.add_parser(
         "meta",
@@ -1090,13 +802,6 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_export.set_defaults(func=_cmd_export_openapi)
 
-    p_import = sub.add_parser(
-        "import-archive-index",
-        help="把归档目录的 JSON 索引导入 assets 表（幂等，不删 JSON）",
-    )
-    p_import.add_argument("--root", default="", help="归档根目录，默认取 MEDIA_ARCHIVE_ROOT")
-    p_import.add_argument("--dry-run", action="store_true", help="只统计将要发生的变更，不写库")
-    p_import.set_defaults(func=_cmd_import_archive_index)
 
     p_migrate = sub.add_parser(
         "migrate-storage",
@@ -1116,17 +821,6 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_migrate.set_defaults(func=_cmd_migrate_storage)
 
-    p_blobs = sub.add_parser(
-        "migrate-blobs",
-        help="归档素材改内容寻址布局（key = sha256，幂等；发布校验不再读全量）",
-    )
-    p_blobs.add_argument("--dry-run", action="store_true", help="只统计，不写库不搬文件")
-    p_blobs.add_argument(
-        "--delete-source",
-        action="store_true",
-        help="搬成功后删除旧位置的文件（默认保留：旧文件是回滚依据）",
-    )
-    p_blobs.set_defaults(func=_cmd_migrate_blobs)
 
     p_archive = sub.add_parser(
         "migrate-archive",
@@ -1135,29 +829,6 @@ def main(argv: list[str] | None = None) -> int:
     p_archive.add_argument("--dry-run", action="store_true", help="只统计，不写入")
     p_archive.set_defaults(func=_cmd_migrate_archive)
 
-    p_prune_blobs = sub.add_parser(
-        "prune-blobs",
-        help="回收内容寻址下没人引用的孤儿字节（默认只报告，--execute 才删）",
-    )
-    p_prune_blobs.add_argument("--execute", action="store_true", help="实际删除孤儿字节")
-    p_prune_blobs.add_argument(
-        "--min-age-hours",
-        type=float,
-        default=24.0,
-        help="只回收早于此时长的对象（默认 24 小时，避开正在进行的登记）",
-    )
-    p_prune_blobs.add_argument(
-        "--include-trash",
-        action="store_true",
-        help="同时彻底清理长期留在回收站的归档记录（软删本身不释放空间）",
-    )
-    p_prune_blobs.add_argument(
-        "--trash-age-days",
-        type=float,
-        default=30.0,
-        help="--include-trash 的保留期（默认 30 天）",
-    )
-    p_prune_blobs.set_defaults(func=_cmd_prune_blobs)
 
     p_verify = sub.add_parser(
         "verify-blobs", help="读回字节重算 sha256，报告损坏或缺失的归档对象"
@@ -1167,11 +838,6 @@ def main(argv: list[str] | None = None) -> int:
     p_verify.add_argument("--lenient", action="store_true", help="发现损坏也不返回非零退出码")
     p_verify.set_defaults(func=_cmd_verify_blobs)
 
-    p_rebuild = sub.add_parser(
-        "rebuild-mirrors", help="按 DB 幂等重建 catalog/assets/*.json，并清理孤儿镜像"
-    )
-    p_rebuild.add_argument("--dry-run", action="store_true", help="只报告差异、不写盘")
-    p_rebuild.set_defaults(func=_cmd_rebuild_mirrors)
 
     p_doctor = sub.add_parser("doctor", help="部署自检：条件写、预签名、镜像一致性、完整性抽检")
     p_doctor.add_argument("--sample", type=int, default=10, help="完整性抽检个数（默认 10）")
@@ -1235,6 +901,8 @@ def main(argv: list[str] | None = None) -> int:
         help="项目根（必须含 src/modules；在 api/ 下执行，或显式传 --root api）",
     )
     p_new.set_defaults(func=_cmd_new_module)
+
+    _register_module_commands(sub)
 
     args = parser.parse_args(argv)
     args.func(args)

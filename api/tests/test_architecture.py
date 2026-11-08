@@ -87,42 +87,17 @@ def test_api_layer_does_not_import_business_modules() -> None:
     )
 
 
-# 顶层脚本（CLI / 种子）当前仍然直接 import 若干业务模块。这是**历史债**：
-# `app create-admin` 天然要认识 identity，`app seed` 的老模块演示数据还没搬进
-# `ModuleSpec.seed`。清零是一次独立改动，在那之前用清单把它钉住：
-# - 新增一行 = 有人为了让新功能跑起来改了框架，review 时能看见；
-# - 想删模块时，这份清单直接告诉你「删完哪里会崩」。
+# 顶层脚本（CLI / 种子）允许直接 import 的业务模块。
 #
-# 每一项都要写清退出条件，否则清单会慢慢变成「大家都加一行」的橡皮图章。
-KNOWN_SCRIPT_MODULE_IMPORTS: dict[str, frozenset[str]] = {
-    # 运维命令：建号 / 重置口令 / 角色同步 / 登录审计清理，全部是 identity 的职责。
-    # 退出条件：等 identity 把这几条命令搬成 `ModuleSpec` 上的 CLI 钩子。
-    "cli.py": frozenset(
-        {
-            "modules.asset.archive_import",
-            "modules.asset.maintenance",
-            "modules.asset.mirror",
-            "modules.asset.models",
-            "modules.asset.schema",
-            "modules.identity.policy",
-            "modules.identity.service",
-        }
-    ),
-    # 老模块的演示数据还留在 `seed.py`（手册 §5.4 ① 说按需迁移，没要求一次做完）。
-    # 退出条件：task / asset / template / storyboard / shot 逐个改写成 `ModuleSpec.seed`。
-    "seed.py": frozenset(
-        {
-            "modules.asset.models",
-            "modules.identity.models",
-            "modules.identity.service",
-            "modules.shot.models",
-            "modules.storyboard.models",
-            "modules.task.enums",
-            "modules.task.models",
-            "modules.template.models",
-        }
-    ),
-}
+# **现在是空的**：`ModuleSpec.cli` 与 `ModuleSpec.seed` 落地之后，`cli.py` 与
+# `seed.py` 都不再认识任何业务模块——建号、清审计、归档迁移搬进了
+# `modules/identity/cli.py` 与 `modules/asset/cli.py`，演示数据搬进了各自的
+# `modules/*/seed.py`。
+#
+# 空字典不是「这条守卫没用了」，恰恰相反：它现在是零容忍。谁哪天为了让新功能
+# 跑起来在顶层脚本里写一句 `from modules.xxx import ...`，CI 立刻红。
+# 真有必要加，就带着**退出条件**一起加进来（那是临时豁免，不是永久许可）。
+KNOWN_SCRIPT_MODULE_IMPORTS: dict[str, frozenset[str]] = {}
 
 
 def test_top_level_scripts_only_import_known_modules() -> None:
