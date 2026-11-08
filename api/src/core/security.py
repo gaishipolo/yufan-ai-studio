@@ -256,7 +256,17 @@ def create_refresh_token(
 def _decode(token: str, *, expected_typ: str) -> dict[str, Any]:
     try:
         claims = jwt.decode(
-            token, settings.jwt_secret, algorithms=[settings.jwt_algorithm]
+            token,
+            settings.jwt_secret,
+            algorithms=[settings.jwt_algorithm],
+            # `exp` / `iat` 必须**存在**，不只是「存在时校验」。
+            #
+            # PyJWT 默认只在声明存在时判断有效期：一张不带 `exp` 的票永远不过期，
+            # 不带 `iat` 的票会被解析器读成「不知道签发时间」，从而静默跳过
+            # 「改密让旧票失效」（见 `modules/identity/principal.py`）。
+            # 两种情形都只可能来自「签发路径漏写」或「有人拿密钥手工拼票」，
+            # 没有一种是我们愿意放行的，所以这里失败关闭。
+            options={"require": ["exp", "iat"]},
         )
     except jwt.ExpiredSignatureError as exc:
         raise Unauthorized("登录已过期，请重新登录") from exc
