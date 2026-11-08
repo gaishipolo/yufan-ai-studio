@@ -17,23 +17,23 @@ function fetchBlob(url: string) {
 }
 
 const CHANGE_PATH: Record<'name' | 'sharing' | 'deleted', (id: string) => string> = {
-  name: (id) => `/assets/archive/${id}/name`,
-  sharing: (id) => `/assets/archive/${id}/sharing`,
-  deleted: (id) => `/assets/archive/${id}/deleted`,
+  name: (id) => `/assets/${id}/name`,
+  sharing: (id) => `/assets/${id}/sharing`,
+  deleted: (id) => `/assets/${id}/deleted`,
 };
 
 export const archiveApi = {
-  list: (category: ArchiveCategory | 'all', params: ArchiveSearch = {}) => api.get<ArchiveList>('/assets/archive', {category, ...params}),
-  detail: (id: string) => api.get<ArchivedAsset>(`/assets/archive/${id}`),
+  list: (category: ArchiveCategory | 'all', params: ArchiveSearch = {}) => api.get<ArchiveList>('/assets', {category, ...params}),
+  detail: (id: string) => api.get<ArchivedAsset>(`/assets/${id}`),
   // 三个动作各写一条字面量路径：接口契约守卫按字面量比对后端 EndpointData，
   // 拼成 `${action}` 的模板串在守卫里只能落成占位符，等于没被覆盖。
   change: ({id, action, ...payload}: ArchiveChange & {id: string; action: 'name' | 'sharing' | 'deleted'}) =>
     api.put<ArchivedAsset>(CHANGE_PATH[action](id), payload),
   upload: ({file, category}: {file: File; category: ArchiveCategory}) =>
-    api.post<ArchivedAsset>('/assets/archive/upload', file, {params: {filename: file.name, category},
+    api.post<ArchivedAsset>('/assets/upload', file, {params: {filename: file.name, category},
       headers: {'Content-Type': 'application/octet-stream'}, timeout: 600_000}),
   import: ({relativePath, category}: {relativePath: string; category: ArchiveCategory}) =>
-    api.post<ArchivedAsset>('/assets/archive/import', {relativePath, category}, {timeout: 120_000}),
+    api.post<ArchivedAsset>('/assets/import', {relativePath, category}, {timeout: 120_000}),
   /** 预览：`/stream?v=hd-v2` 或原件。 */
   media: fetchBlob,
   /** 下载：只接受 `/file` 原件地址。 */

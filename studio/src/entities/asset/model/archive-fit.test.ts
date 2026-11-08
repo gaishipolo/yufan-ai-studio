@@ -15,7 +15,7 @@ function source(overrides: Partial<ArchivedAsset> = {}): ArchivedAsset {
     createdAt: '2026-11-06T00:00:00Z',
     duration: 8,
     hasAudio: true,
-    url: '/api/v1/assets/archive/a1/file',
+    url: '/api/v1/assets/a1/file',
     ...overrides,
   };
 }

@@ -26,14 +26,14 @@ vi.mock('@/entities/asset/api/archive.queries', () => ({
   useArchiveSelection: () => ({data: undefined, error: null}),
   useArchiveAssets: () => ({ isLoading: mock.assetsLoading, error: mock.assetsError, refetch: mock.assetsRefetch, data: mock.assetsHidden ? undefined : { items: mock.assetsEmpty ? [] : [
     { id: 'source', name: '测试原片', category: 'source', type: 'video', duration: 2, hasAudio: true,
-      url: '/api/v1/assets/archive/source/file' },
+      url: '/api/v1/assets/source/file' },
     { id: 'source-15s', name: '十五秒原片', category: 'source', type: 'video', duration: 15, hasAudio: true,
-      url: '/api/v1/assets/archive/source-15s/file' },
+      url: '/api/v1/assets/source-15s/file' },
     { id: 'image', name: '人物参考', category: 'character', type: 'image', url: '/image', previewUrl: '/thumbnail/image' },
     { id: 'product-front', name: '产品正面', category: 'product', type: 'image', url: '/product-front', previewUrl: '/thumbnail/product-front' },
     { id: 'product-back', name: '产品背面', category: 'product', type: 'image', url: '/product-back', previewUrl: '/thumbnail/product-back' },
     { id: 'product-detail', name: '产品细节', category: 'product', type: 'image', url: '/product-detail', previewUrl: '/thumbnail/product-detail' },
-    { id: 'source-third', name: '第三原片', category: 'source', type: 'video', duration: 3, hasAudio: true, url: '/api/v1/assets/archive/source-third/file' },
+    { id: 'source-third', name: '第三原片', category: 'source', type: 'video', duration: 3, hasAudio: true, url: '/api/v1/assets/source-third/file' },
   ] } }),
   useArchiveUpload: () => ({ isPending: mock.uploadPending, mutate: mock.upload }),
   useArchiveDownload: () => ({mutate: vi.fn(), isPending: false, error: null}),
@@ -497,9 +497,9 @@ describe('替换模板工作台', () => {
     const card = screen.getByRole('button', { name: '选择模板：十五秒原片' });
     expect(card).toBeEnabled();
     fireEvent.mouseEnter(card.closest('article')!);
-    expect(mock.mediaUrls).toContain('/api/v1/assets/archive/source-15s/stream?v=hd-v2');
-    expect(mock.mediaUrls).not.toContain('/api/v1/assets/archive/source-15s/stream');
-    expect(mock.mediaUrls).not.toContain('/api/v1/assets/archive/source-15s/file');
+    expect(mock.mediaUrls).toContain('/api/v1/assets/source-15s/stream?v=hd-v2');
+    expect(mock.mediaUrls).not.toContain('/api/v1/assets/source-15s/stream');
+    expect(mock.mediaUrls).not.toContain('/api/v1/assets/source-15s/file');
   });
 
   it('准备失败后复用请求 ID，避免在新目录重复归档', async () => {

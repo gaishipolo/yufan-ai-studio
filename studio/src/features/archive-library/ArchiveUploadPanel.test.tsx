@@ -25,7 +25,7 @@ function archived(name: string): ArchivedAsset {
   return {
     id: 'found', name, category: 'source' as const, type: 'video' as const, mimeType: 'video/mp4',
     sizeBytes: 1, path: `library/source/2026/11/${name}`, sha256: 's',
-    createdAt: new Date().toISOString(), url: '/api/v1/assets/archive/found/file',
+    createdAt: new Date().toISOString(), url: '/api/v1/assets/found/file',
   };
 }
 

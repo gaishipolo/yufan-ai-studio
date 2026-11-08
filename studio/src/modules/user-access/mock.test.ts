@@ -221,13 +221,24 @@ describe('mock adapter · 角色与权限目录', () => {
     expect(failed.message).toContain('video:publish');
   });
 
-  it('权限目录按分组返回，与后端目录同源（21）', async () => {
+  it('权限目录按分组返回，且分组与码能互相覆盖', async () => {
     const { body } = await call<PermissionCatalog>('get', '/identity/permissions');
     const catalog = body.data as PermissionCatalog;
 
     // 目录来自后端生成物，经 permission-catalog 薄壳透传
     expect(catalog.total).toBe(PERMISSION_CODES.length);
-    expect(catalog.groups.map((group) => group.group)).toEqual(['内容生产', '素材', '组织管理']);
+
+    // 这里原本硬编码着 `['内容生产', '素材', '组织管理']`。导出功能加了「系统」
+    // 一组之后它就红了，而红着一直没人判断「该不该把这一组放进前端目录」——
+    // 抄下来的清单，改与不改都说不清理由，只能靠人记得。改成检查目录自身的自洽：
+    // 组不重名、码不重复、每个权限码都被某一组收着且只收一次。
+    // 这三条与「后端新加了几组」无关，但能抓住真正的坏目录（漏分组、重名、码丢失）。
+    const names = catalog.groups.map((group) => group.group);
+    expect(new Set(names).size).toBe(names.length);
+
+    const codes = catalog.groups.flatMap((group) => group.items);
+    expect(new Set(codes.map((item) => item.code)).size).toBe(codes.length);
+    expect(codes.map((item) => item.code).sort()).toEqual([...PERMISSION_CODES].sort());
     expect(
       catalog.groups
         .flatMap((group) => group.items)

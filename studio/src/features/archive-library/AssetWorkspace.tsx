@@ -1,7 +1,6 @@
 import { useSearchParams } from 'react-router-dom';
 import { useCan } from '@/shared/access/use-access';
 import { Button } from '@/shared/ui';
-import { AssetLibrary } from '@/features/asset-library/AssetLibrary';
 import { SourceLibrary } from './SourceLibrary';
 import { PublicPacks } from './PublicPacks';
 import { PackManager } from './PackManager';
@@ -16,12 +15,14 @@ export function AssetWorkspace() {
   const tab = params.get('scope') ?? 'public';
   const type = params.get('type') ?? 'source';
   /**
-   * 「我的素材」有两条存储通路，不能混成一个列表：
-   * - `upload` → `AssetLibrary`，走 `/assets`，新文件进对象存储（当前 S3 桶）；
-   * - `active`/`trash`/`history` → `SourceLibrary`，走 `/assets/archive`，文件在归档盘。
-   * 默认给上传，因为它是这个工作台唯一能主动写入的入口。
+   * 「我的素材」曾经有两条存储通路，页面用两个视图分开：
+   * `upload` → 旧 `AssetLibrary`（对象存储）与 `active`/`trash`/`history`
+   * → `SourceLibrary`（归档盘）。接口合并成一套 `/assets` 之后两条通路是同
+   * 一份数据，`upload` 这个视图就没有独立意义了——上传本来就在 `SourceLibrary`
+   * 顶部（`ArchiveUploadPanel` 负责批次进度），继续留一个只会让人以为还有第二
+   * 个上传入口。
    */
-  const view = params.get('view') ?? 'upload';
+  const view = params.get('view') ?? 'active';
   const change = (key: string, value: string) => setParams(previous => {const next = new URLSearchParams(previous); next.set(key, value); next.delete('page'); next.delete('q'); next.delete('state'); return next;});
   const setView = (value: string) => setParams(previous => {const next = new URLSearchParams(previous); next.set('view', value); next.delete('page'); next.delete('q'); next.delete('state'); return next;});
   return <div className="space-y-5">
@@ -37,14 +38,11 @@ export function AssetWorkspace() {
       {type === 'source' ? <SourceLibrary scope="public" /> : templateRead ? <PublicPacks key={type} kind={type === 'product' ? 'product' : type === 'scene' ? 'scene' : 'character'} /> : <p>当前账号无模板读取权限。</p>}
     </> : tab === 'references' && referenceManager ? <ArchiveLibrary /> : tab === 'packs' && manager ? <PackManager /> : <>
       <div className="flex flex-wrap gap-2">
-        <Button variant={view === 'upload' ? 'primary' : 'secondary'} aria-pressed={view === 'upload'} onClick={() => setView('upload')}>上传素材</Button>
         <Button variant={view === 'active' ? 'primary' : 'secondary'} aria-pressed={view === 'active'} onClick={() => setView('active')}>个人原片</Button>
         <Button variant={view === 'trash' ? 'primary' : 'secondary'} aria-pressed={view === 'trash'} onClick={() => setView('trash')}>回收站</Button>
         <Button variant={view === 'history' ? 'primary' : 'secondary'} aria-pressed={view === 'history'} onClick={() => setView('history')}>历史素材</Button>
       </div>
-      {view === 'upload'
-        ? <AssetLibrary />
-        : <SourceLibrary key={view} scope={view === 'trash' ? 'trash' : view === 'history' ? 'history' : 'mine'} />}
+      <SourceLibrary key={view} scope={view === 'trash' ? 'trash' : view === 'history' ? 'history' : 'mine'} />
     </>}
     {tab !== 'references' && <ArchivedResults />}
   </div>;

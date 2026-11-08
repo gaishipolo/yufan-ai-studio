@@ -570,20 +570,41 @@ import：现场从「工作区里的 `run.json`」变成「数据库行 + 工作
 一句通用错误。修法是在 `_ingest` 里先自己判一次扩展名再交给 probe —— **分层不该
 以丢业务错误码为代价**。
 
-### 6.4 前端待办（7 处路径 + 2 个文件）
+### 6.4 前端跟进（2026-11-08 完成）
 
 契约生成物已重新导出（`api/docs/openapi.json`、`api/docs/API.md`、
-`studio/src/shared/api/schema.ts`，合计 −1156 行）。前端要跟的是：
+`studio/src/shared/api/schema.ts`、`permissions.ts`，合计 −1156 行）。
 
-| 文件 | 改什么 |
+前端这一边不是「改 7 处路径」那么小：实际删掉 12 个文件、改 8 个。
+原因是有两套**页面**，不只是两套客户端——`features/asset-library`（旧素材库）
+和 `features/archive-library`（归档）各自有列表、上传、预览、详情。
+
+| 动作 | 文件 |
 |---|---|
-| `entities/asset/api/archive.api.ts` | `/assets/archive` → `/assets`，共 7 处（`CHANGE_PATH` 3 条 + `list` + `detail` + `upload` + `import`） |
-| `entities/asset/api/asset.api.ts` | **整份删除**：它调用的六条接口已经不存在，类型 `AssetOut` / `AssetListOut` 也已从 `schema.ts` 消失 |
-| `entities/asset/api/asset.queries.ts` | 四个钩子改用 `archiveApi`；`cover` 改 `thumbnail`，`fileUrl`/`coverUrl` 改 `url`/`previewUrl` |
-| `features/asset-library/*`（4 个文件） | 旧素材库页面与归档页面合成一个入口 |
-| `features/archive-library/AssetWorkspace.tsx` | 顶部注释里「upload → `/assets`」那段说明要删，两个入口变一个 |
-| `shared/api/endpoints.test.ts` | 契约守卫按字面量比对，`/assets/archive/*` 那几条会红，跟着改 |
+| 路径去掉 `archive` 段（7 处） | `entities/asset/api/archive.api.ts` |
+| 整份删除（接口与类型都没了） | `entities/asset/api/asset.api.ts`、`asset.queries.ts` |
+| 整份删除（旧素材库页面，能力是 `SourceLibrary` 的子集） | `features/asset-library/AssetLibrary.tsx`、`AssetPreview.tsx`、`AssetLibrary.test.tsx` |
+| 整份删除（只被旧素材库用） | `entities/asset/ui/AssetCard.tsx`、`entities/asset/model/cover.ts`、`cover.test.ts`、`model/types.ts` |
+| 整份删除（调后端已删的死接口 `GET /templates`） | `entities/template/api/template.api.ts`、`entities/template/model/types.ts` |
+| 四个视图并成三个 | `features/archive-library/AssetWorkspace.tsx` |
+| 数据形状改成归档契约 | `mocks/db.ts`（`buildAssets` 造 `ArchivedAsset`）、`mocks/routes/catalog.mock.ts`（九条路由对齐后端规矩） |
+| 页面说明去掉「两条存储通路」 | `pages/assets/AssetsPage.tsx` |
 
-出参差异（脚本化替换时最容易漏）：`fileUrl` → `url`、`coverUrl` → `previewUrl`、
-`refCount`/`counts` 消失、新增 `shared` / `sharedAt` / `stateVersion` / `editable` /
-`downloadAllowed`，并且三个写接口要带 `expectedVersion`。
+**mock 也一起搬了。** 它原本 mock 的是旧六条接口（`counts` 分面、`refCount`、
+`DELETE` 直接删）——后端删了那六条之后它照样绿，因为没人拿 mock 跑真实链路。
+现在照抄后端的三条规矩：隐藏已删、`expectedVersion` 不匹配给 409、彻底删除前
+必须先在回收站。`gen:mock-coverage` 重跑后未命中端点从 12 条降到 4 条，
+剩下的全是字节流（`/file`、`/stream`、`/thumbnail`、`/preview`）——mock 内核
+只能返回 JSON，这几条给不了，不是漏了。
+
+**顺手修掉两个测试**，都与合并无关但都红着：
+1. `modules/user-access/mock.test.ts` 硬编码着 `['内容生产','素材','组织管理']`。
+   导出功能在 `a91328c` 加了「系统」组之后这条就红了，一直没人判断该不该把
+   这一组放进前端目录。改成检查目录自洽（组不重名、码不重复、每个码恰好出现
+   一次并覆盖全部 `PERMISSION_CODES`）——与后端加几组无关，但能抓坏目录。
+2. `shared/api/endpoints.test.ts` 抓到 `/api/v1/templates` 不存在，牵出前端还在
+   调后端已删的死接口（`entities/template`），一并删。
+
+收尾：`tsc -b` 通过、`eslint --max-warnings 0` 通过、`vitest run` **424 passed**、
+`vite build` 通过。`grep -r "assets/archive" studio/src` 只剩设计文档里的历史记录。
+

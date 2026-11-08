@@ -145,7 +145,7 @@ describe('未知结果的候选匹配', () => {
     return {
       id: 'a1', name: 'a.mp4', category: 'source', type: 'video', mimeType: 'video/mp4',
       sizeBytes: 10, path: 'library/source/2026/11/a1.mp4', sha256: 's', createdAt: '2026-11-06T02:00:30Z',
-      url: '/api/v1/assets/archive/a1/file', ...overrides,
+      url: '/api/v1/assets/a1/file', ...overrides,
     };
   }
 

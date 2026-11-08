@@ -2,9 +2,9 @@
 
 # Mock 覆盖率（只记录，不作门禁）
 
-后端端点 78 条（来自 `schema.ts` 的 `EndpointData`），
-已注册 mock 路由 37 条（来自 `mockRouteTable()`），
-按「同方法 + 正则能匹配」判定疑似覆盖 36 条。
+后端端点 77 条（来自 `schema.ts` 的 `EndpointData`），
+已注册 mock 路由 41 条（来自 `mockRouteTable()`），
+按「同方法 + 正则能匹配」判定疑似覆盖 40 条。
 
 > **这是记录，不是门禁**：CI 不检查覆盖率是否达标，也不要求新增端点必须带 mock。
 > 一条 handler 可以覆盖多个端点（例如 `/tasks/([\w-]+)` 同时命中详情与删除），
@@ -36,21 +36,16 @@
 
 | 方法 | 路径 |
 | --- | --- |
-| GET | `/api/v1/assets/{}` |
-| GET | `/api/v1/assets/{}/cover` |
 | GET | `/api/v1/assets/{}/file` |
-| GET | `/api/v1/assets/archive` |
-| DELETE | `/api/v1/assets/archive/{}` |
-| GET | `/api/v1/assets/archive/{}` |
-| PUT | `/api/v1/assets/archive/{}/deleted` |
-| GET | `/api/v1/assets/archive/{}/file` |
-| PUT | `/api/v1/assets/archive/{}/name` |
-| GET | `/api/v1/assets/archive/{}/preview` |
-| PUT | `/api/v1/assets/archive/{}/sharing` |
-| GET | `/api/v1/assets/archive/{}/stream` |
-| GET | `/api/v1/assets/archive/{}/thumbnail` |
-| POST | `/api/v1/assets/archive/import` |
-| POST | `/api/v1/assets/archive/upload` |
+| GET | `/api/v1/assets/{}/preview` |
+| GET | `/api/v1/assets/{}/stream` |
+| GET | `/api/v1/assets/{}/thumbnail` |
+| GET | `/api/v1/exports` |
+| POST | `/api/v1/exports` |
+| DELETE | `/api/v1/exports/{}` |
+| GET | `/api/v1/exports/{}` |
+| GET | `/api/v1/exports/{}/download` |
+| GET | `/api/v1/exports/sources` |
 | GET | `/api/v1/health` |
 | GET | `/api/v1/health/ready` |
 | GET | `/api/v1/identity/me/logins` |
@@ -79,4 +74,4 @@
 | POST | `/api/v1/templates/replacement-runs/{}/restore` |
 | PUT | `/api/v1/templates/replacement-runs/{}/review` |
 
-（未命中 42 条；已命中 36 条不在本表重复列出。）
+（未命中 37 条；已命中 40 条不在本表重复列出。）

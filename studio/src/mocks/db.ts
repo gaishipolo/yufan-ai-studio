@@ -1,7 +1,6 @@
-import type { Asset } from '@/entities/asset/model/types';
+import type { ArchivedAsset } from '@/shared/api/schema';
 import type { ShotPreset } from '@/entities/shot/model/types';
 import type { Storyboard } from '@/entities/storyboard/model/types';
-import type { VideoTemplate } from '@/entities/template/model/types';
 import type { AspectRatio, TaskStatus, VideoTask } from '@/entities/task/model/types';
 import type { ImageJob } from '@/entities/image/model/types';
 
@@ -72,72 +71,69 @@ function buildTasks(): VideoTask[] {
   });
 }
 
-function buildAssets(): Asset[] {
-  const seeds: Array<[string, Asset['type'], number, number]> = [
-    ['超市抢购-参考图 01', 'image', 820 * 1024, 1080],
-    ['超市抢购-参考图 02', 'image', 1_150_000, 1080],
-    ['卖场空镜 4K', 'video', 16_800_000, 1920],
-    ['收银台特写', 'video', 22_200_000, 1920],
-    ['背景音乐-urban pulse', 'audio', 4_400_000, 0],
-    ['雪山徒步素材', 'video', 25_000_000, 3840],
-    ['品牌 LOGO 白色', 'image', 2_600_000, 2000],
-    ['人物走位参考', 'video', 35_800_000, 1920],
-    ['环境音-雨天街道', 'audio', 6_600_000, 0],
-    ['产品静物图', 'image', 3_500_000, 2048],
-    ['转场素材 光斑', 'video', 8_900_000, 1920],
-    ['片头动画 AE', 'video', 42_000_000, 3840],
-    ['人物特写合集', 'image', 4_100_000, 1536],
-    ['字幕底条模板', 'image', 690_000, 1080],
-    ['鼓点音效', 'audio', 1_800_000, 0],
-    ['城市夜景航拍', 'video', 28_400_000, 3840],
+/**
+ * 素材 mock 直接造归档契约（`ArchivedAsset`），不再是手写的 `Asset`。
+ *
+ * 两套素材接口合并成一套 `/assets` 之后，前端已经没有第二种素材形状：类型直接
+ * 取自生成物，契约一变这里就编译不过——手写类型当年正是靠「看起来差不多」
+ * 一直活下来的。
+ */
+function buildAssets(): ArchivedAsset[] {
+  type Kind = ArchivedAsset['type'];
+  const seeds: Array<[string, Kind, ArchivedAsset['category'], number, number]> = [
+    ['超市抢购-参考图 01', 'image', 'scene', 820 * 1024, 1080],
+    ['超市抢购-参考图 02', 'image', 'scene', 1_150_000, 1080],
+    ['卖场空镜 4K', 'video', 'source', 16_800_000, 1920],
+    ['收银台特写', 'video', 'source', 22_200_000, 1920],
+    ['背景音乐-urban pulse', 'audio', 'audio', 4_400_000, 0],
+    ['雪山徒步素材', 'video', 'source', 25_000_000, 3840],
+    ['品牌 LOGO 白色', 'image', 'product', 2_600_000, 2000],
+    ['人物走位参考', 'video', 'source', 35_800_000, 1920],
+    ['环境音-雨天街道', 'audio', 'audio', 6_600_000, 0],
+    ['产品静物图', 'image', 'product', 3_500_000, 2048],
+    ['转场素材 光斑', 'video', 'source', 8_900_000, 1920],
+    ['片头动画 AE', 'video', 'source', 42_000_000, 3840],
+    ['人物特写合集', 'image', 'character', 4_100_000, 1536],
+    ['字幕底条模板', 'image', 'character', 690_000, 1080],
+    ['鼓点音效', 'audio', 'audio', 1_800_000, 0],
+    ['城市夜景航拍', 'video', 'source', 28_400_000, 3840],
   ];
-  return seeds.map(([name, type, sizeBytes, width], i) => {
-    const coverUrl = cover(`sf-asset-${i}`, 400, 400);
+  return seeds.map(([name, type, category, sizeBytes, width], i) => {
+    // 摘要只是 64 位十六进制字符串：mock 不校验内容，但列表、`file_checksums`
+    // 与执行器清单都以它为键，形状必须对
+    const sha = i.toString(16).padStart(2, '0').repeat(32);
+    const thumb = cover(`sf-asset-${i}`, 400, 400);
+    const shared = i % 3 === 0;
     return {
       id: `A${1000 + i}`,
       name,
+      category,
       type,
-      mimeType: type === 'image' ? 'image/jpeg' : type === 'video' ? 'video/mp4' : 'audio/mpeg',
+      mimeType:
+        type === 'image' ? 'image/jpeg' : type === 'video' ? 'video/mp4' : 'audio/mpeg',
       sizeBytes,
-      coverUrl,
-      // mock 没有真实对象存储：图片拿占位图当原图，音视频给空串，
-      // 预览弹窗会退化成原生播放器的空态，不会报错也不会假装有内容
-      fileUrl: type === 'image' ? coverUrl : '',
+      path: `materials/${sha.slice(0, 2)}/${sha}.${type === 'image' ? 'jpg' : type === 'video' ? 'mp4' : 'mp3'}`,
+      sha256: sha,
+      createdAt: minutesAgo(60 * 5 + i * 37),
       width,
       height: width ? Math.round(width * 0.75) : 0,
       duration: type === 'video' ? 8 + (i % 7) : type === 'audio' ? 30 + (i % 90) : 0,
       hasAudio: type !== 'image',
-      category: null,
-      source: (i % 4 === 0 ? 'generated' : 'upload') as Asset['source'],
-      refCount: (i * 3) % 11,
-      createdAt: minutesAgo(60 * 5 + i * 37),
+      // mock 没有对象存储：图片拿占位图当原件，音视频给空串。真实环境这里都是
+      // `/assets/{id}/file`，前端一律带令牌取 Blob，所以两条路径都不影响布局
+      url: type === 'image' ? thumb : '',
+      previewUrl: type === 'image' ? thumb : null,
+      ownerId: i % 5 === 0 ? 'u_002' : 'u_001',
+      shared,
+      sharedAt: shared ? minutesAgo(60 * 5 + i * 37 + 30) : null,
+      // 留一条在回收站里，回收站页签不至于永远空着
+      deletedAt: i === 15 ? minutesAgo(120) : null,
+      stateVersion: 1,
+      editable: true,
+      downloadAllowed: true,
     };
   });
 }
-
-const templates: VideoTemplate[] = [
-  ['超市抢购裂变', '3 镜头 / 15 秒 / 强节奏', '电商', ['电商', '快节奏']],
-  ['电商带货口播', '1 镜头 / 30 秒 / 口播', '电商', ['口播', '转化']],
-  ['品牌 TVC 15s', '5 镜头 / 15 秒 / 电影感', '品牌', ['品牌', '质感']],
-  ['剧情反转短剧', '6 镜头 / 45 秒 / 强冲突', '内容', ['剧情', '反转']],
-  ['产品开箱测评', '4 镜头 / 22 秒 / 细节', '电商', ['电商', '测评']],
-  ['旅拍 Vlog', '7 镜头 / 60 秒 / 轻叙事', '内容', ['旅拍', 'Vlog']],
-  ['知识科普口播', '3 镜头 / 40 秒 / 信息密度', '知识', ['科普', '口播']],
-  ['门店探店', '5 镜头 / 30 秒 / 本地生活', '本地生活', ['探店', '本地']],
-].map((row, i) => {
-  const [name, description, industry, tags] = row as [string, string, string, string[]];
-  return {
-    id: `TPL${100 + i}`,
-    name,
-    description,
-    industry,
-    shotCount: 3 + (i % 4),
-    usageCount: 12 + i * 7,
-    coverUrl: cover(`sf-tpl-${i}`, 480, 300),
-    tags,
-    createdAt: minutesAgo(60 * 24 * (i + 3)),
-  };
-});
 
 const storyboards: Storyboard[] = [
   '开场-环境交代', '主角登场-中景', '冲突爆发-手持', '细节特写-慢镜', '结尾-品牌落版',
@@ -205,7 +201,6 @@ const imageJobs: MockImageJob[] = [
 export const db = {
   tasks: buildTasks(),
   assets: buildAssets(),
-  templates,
   storyboards,
   shots,
   imageJobs,

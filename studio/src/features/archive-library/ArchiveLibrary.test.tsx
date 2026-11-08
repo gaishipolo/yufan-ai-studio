@@ -48,7 +48,7 @@ function asset(overrides: Partial<ArchivedAsset> = {}): ArchivedAsset {
     id: 'a1', name: '原片.mp4', category: 'source', type: 'video', mimeType: 'video/mp4',
     sizeBytes: 2048, path: 'library/source/2026/11/a1.mp4', sha256: 'sha', createdAt: '2026-11-06T02:00:00Z',
     duration: 8, hasAudio: true, width: 1080, height: 1920,
-    url: '/api/v1/assets/archive/a1/file', previewUrl: '/api/v1/assets/archive/a1/thumbnail', ...overrides,
+    url: '/api/v1/assets/a1/file', previewUrl: '/api/v1/assets/a1/thumbnail', ...overrides,
   };
 }
 
@@ -122,9 +122,9 @@ describe('素材预览与下载', () => {
     render(<App />);
     expect(screen.getByText('可用于替换')).toBeVisible();
     fireEvent.click(screen.getByRole('button', {name: /原片\.mp4/}));
-    expect(mock.mediaCalls).toContain('/api/v1/assets/archive/a1/stream?v=hd-v2');
+    expect(mock.mediaCalls).toContain('/api/v1/assets/a1/stream?v=hd-v2');
     fireEvent.click(screen.getByRole('button', {name: '下载原始文件'}));
-    expect(mock.download).toHaveBeenCalledWith({url: '/api/v1/assets/archive/a1/file', filename: '原片.mp4'});
+    expect(mock.download).toHaveBeenCalledWith({url: '/api/v1/assets/a1/file', filename: '原片.mp4'});
   });
 
   it('缩略图读取失败显示预览不可用，而不是永久加载', () => {
@@ -149,7 +149,7 @@ describe('素材预览与下载', () => {
     fireEvent.click(screen.getByRole('button', {name: /原片\.mp4/}));
     expect(screen.getByText('预览读取失败')).toBeVisible();
     fireEvent.click(screen.getByRole('button', {name: '下载原始文件'}));
-    expect(mock.download).toHaveBeenCalledWith({url: '/api/v1/assets/archive/a1/file', filename: '原片.mp4'});
+    expect(mock.download).toHaveBeenCalledWith({url: '/api/v1/assets/a1/file', filename: '原片.mp4'});
   });
 });
 
