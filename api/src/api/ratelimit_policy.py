@@ -56,6 +56,10 @@ from typing import Any, Final
 
 from fastapi.routing import APIRoute
 
+# `iter_api_routes` 住在 `api/routing.py`：权限核对（`api/assembly.py`）也要用它，
+# 放在这里会让「装配核对」依赖「限流策略」，方向不自然。
+from api.routing import iter_api_routes
+
 # 会被限流策略检查的方法。GET/HEAD/OPTIONS 不计：读接口由缓存与分页兜底，
 # DELETE 以外还有大量天然幂等的读，逐条挂限流只会把噪声堆到路由上。
 WRITE_METHODS: Final = frozenset({"POST", "PUT", "PATCH", "DELETE"})
@@ -289,29 +293,6 @@ class WriteRoute:
     method: str
     path: str
     scope: str | None
-
-
-def _included(route: Any) -> Any:
-    """判断是不是 FastAPI 的「延迟包含」包装（不同版本形态不同）。
-
-    0.162 起 `app.include_router()` 不再把子路由摊平进 `app.routes`，而是放一个
-    `_IncludedRouter` 包着原 router 和 include 前缀。只看 `app.routes` 会以为
-    整个应用只有两三条路由——**守卫会变成永远通过的空检查**，比没有守卫更糟。
-    所以这里显式判型，并且不依赖私有类名。
-    """
-    return route if hasattr(route, "original_router") else None
-
-
-def iter_api_routes(routes: Iterable[Any], prefix: str = "") -> Iterator[tuple[APIRoute, str]]:
-    """递归展开被 include 的 router，产出 `(路由, 完整路径)`。"""
-    for route in routes:
-        wrapped = _included(route)
-        if wrapped is not None:
-            context = getattr(wrapped, "include_context", None)
-            extra = getattr(context, "prefix", "") or ""
-            yield from iter_api_routes(wrapped.original_router.routes, prefix + extra)
-        elif isinstance(route, APIRoute):
-            yield route, prefix + route.path
 
 
 def iter_write_routes(routes: Iterable[Any], *, prefix: str = "") -> Iterator[WriteRoute]:

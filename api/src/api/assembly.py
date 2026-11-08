@@ -35,6 +35,7 @@ from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass
 
 from api.module import ModuleSpec
+from api.routing import iter_api_routes
 from core.exceptions import RegistryError
 
 __all__ = [
@@ -161,9 +162,15 @@ def permission_gaps(routes: Iterable[object], known: Collection[str]) -> list[st
     - 这里读运行时依赖对象上的标记，覆盖后者，代价是要等应用装配完。
 
     依赖对象上的标记由 `api/deps.py::require` 打（`required_permissions`）。
+
+    遍历必须走 `iter_api_routes`：模块自己的 `router.py` 若用 `include_router`
+    聚合子路由（`template` 就是这样），`routes` 里放的是 `_IncludedRouter` 占位，
+    直接迭代会一条路由都看不到——**核对永远通过**。这不是理论风险：
+    `template` 的 20 条路由曾经真实地被漏掉，`require("template:reviewx")`
+    这种拼写错误在启动期不会报错，只有 `template:read` 的人会一直 403。
     """
     missing: dict[str, set[str]] = {}
-    for route in routes:
+    for route, full_path in iter_api_routes(routes):
         dependant = getattr(route, "dependant", None)
         if dependant is None:
             continue
@@ -173,7 +180,7 @@ def permission_gaps(routes: Iterable[object], known: Collection[str]) -> list[st
             codes = getattr(getattr(dep, "call", None), "required_permissions", ())
             for code in codes:
                 if code not in known:
-                    missing.setdefault(str(code), set()).add(str(getattr(route, "path", "?")))
+                    missing.setdefault(str(code), set()).add(full_path)
             pending.extend(getattr(dep, "dependencies", ()) or ())
 
     return [
@@ -187,11 +194,13 @@ def permission_gaps_for_modules(
 ) -> list[str]:
     """按模块遍历真实路由收集权限码缺口。
 
-    不能遍历 `build_v1_router()` 的产物：当前 FastAPI 版本里
-    `include_router` 放的是 `_IncludedRouter` 占位（延迟到建 OpenAPI 才展开），
-    它的 `.routes` 数量等于**模块数**而不是接口数，照着遍历会得到「零个问题」——
-    一个看起来生效、实际上永远说 OK 的检查。
+    为什么按模块而不是直接遍历 `build_v1_router()` 的产物：缺口信息要能归到
+    哪个模块，运维才知道去改哪份声明。
+
+    两个都遍历也可以（`iter_api_routes` 现在会展开 `_IncludedRouter`），
+    但**必须**走它——曾经这里是裸 `for route in spec.router.routes`，
+    `template` 那种「router.py 里 include 子 router」的模块因此一条都没被扫到。
+    `tests/test_assembly.py::test_permission_gaps_sees_through_included_routes`
+    钉住了这个行为。
     """
-    return [
-        gap for spec in specs for gap in permission_gaps(spec.router.routes, known)
-    ]
+    return [gap for spec in specs for gap in permission_gaps(spec.router.routes, known)]

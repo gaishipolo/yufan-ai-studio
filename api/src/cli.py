@@ -132,6 +132,7 @@ def _cmd_meta(args: argparse.Namespace) -> None:
 
 def _cmd_modules(_: argparse.Namespace) -> None:
     from api.assembly import assembly_gaps, permission_gaps_for_modules
+    from api.routing import iter_api_routes
     from app import collect_assembly
     from core.permissions import catalog
     from core.scheduler import periodic_jobs
@@ -152,7 +153,10 @@ def _cmd_modules(_: argparse.Namespace) -> None:
     print("-" * (12 + 6 + width + 20))
     for spec in specs:
         perms = ",".join(sorted(spec.permission_codes())) or "-"
-        print(f"{spec.name:<12}{len(spec.router.routes):<6}{perms:<{width}}{spec.description}")
+        # 走 `iter_api_routes`：用 include_router 聚合子路由的模块（template）
+        # `router.routes` 里只有占位，直接 len() 会把 20 条接口报成 2 条。
+        route_count = sum(1 for _ in iter_api_routes(spec.router.routes))
+        print(f"{spec.name:<12}{route_count:<6}{perms:<{width}}{spec.description}")
 
     print()
     print(f"生成流水线：{pipeline_kinds() or '-'}")

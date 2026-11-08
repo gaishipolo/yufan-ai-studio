@@ -8,7 +8,8 @@
 from __future__ import annotations
 
 import pytest
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+from fastapi.routing import APIRoute
 
 from api.assembly import (
     FRAMEWORK_JOBS,
@@ -16,6 +17,8 @@ from api.assembly import (
     assembly_gaps,
     assert_assembly,
 )
+from api.deps import require
+from api.discovery import discover_modules
 from api.module import ModuleSpec
 from core.exceptions import RegistryError
 
@@ -167,6 +170,28 @@ def test_module_files_declare_what_they_register_via_decorator() -> None:
     assert not problems, "这些装配物既没声明也不会被对账看见 -> " + str(problems)
 
 
+def _api_route(path: str, *codes: str, wrap: bool = False) -> APIRoute:
+    """造一条真实的 `APIRoute`，权限依赖挂在它上面。
+
+    刻意不用鸭子类型的假路由：`permission_gaps` 现在走 `iter_api_routes`，
+    它按 `isinstance(route, APIRoute)` 过滤。用假对象会让测试在「守卫已经
+    看不见真实路由」时依然绿——守卫本身失效却测不出来，这正是本轮要防的。
+    """
+
+    async def endpoint() -> None: ...
+
+    if not codes:
+        return APIRoute(path, endpoint)
+
+    dep = require(*codes)
+    if not wrap:
+        return APIRoute(path, endpoint, dependencies=[Depends(dep)])
+
+    async def wrapper(_: object = Depends(dep)) -> None: ...
+
+    return APIRoute(path, endpoint, dependencies=[Depends(wrapper)])
+
+
 def test_permission_codes_are_checked_against_declarations() -> None:
     """路由 `require(...)` 的码必须有人声明过。
 
@@ -175,42 +200,62 @@ def test_permission_codes_are_checked_against_declarations() -> None:
     能覆盖「码从常量拼出来」这种 AST 扫不到的情况。
     """
     from api.assembly import permission_gaps
-    from api.deps import require
 
-    class _Dependant:
-        def __init__(self, call: object, deps: list[_Dependant] | None = None) -> None:
-            self.call = call
-            self.dependencies = deps or []
-
-    class _Route:
-        def __init__(self, path: str, dependant: _Dependant) -> None:
-            self.path = path
-            self.dependant = dependant
-
-    # 嵌套一层：真实路由的权限依赖挂在更深一层，遍历必须递归
-    inner = _Dependant(require("export:readx"))
-    route = _Route("/exports", _Dependant(None, [inner]))
+    # 嵌套一层：真实路由的权限依赖可能挂在更深一层，遍历必须递归
+    route = _api_route("/exports", "export:readx", wrap=True)
 
     gaps = permission_gaps([route], {"export:read"})
 
-    assert len(gaps) == 1
+    assert len(gaps) == 1, gaps
     assert "export:readx" in gaps[0]
     assert "/exports" in gaps[0]
 
 
 def test_known_permission_codes_pass() -> None:
     from api.assembly import permission_gaps
-    from api.deps import require
 
-    class _Dependant:
-        def __init__(self, call: object, deps: list[_Dependant] | None = None) -> None:
-            self.call = call
-            self.dependencies = deps or []
-
-    class _Route:
-        def __init__(self, path: str, dependant: _Dependant) -> None:
-            self.path = path
-            self.dependant = dependant
-
-    route = _Route("/exports", _Dependant(require("export:read", "export:create")))
+    route = _api_route("/exports", "export:read", "export:create")
     assert permission_gaps([route], {"export:read", "export:create"}) == []
+
+
+def test_permission_gaps_sees_through_included_routers() -> None:
+    """`router.py` 里 `include_router` 聚合的子路由，也必须被核对。
+
+    真实事故（本轮发现）：`template` 模块的 `router.py` 只是
+    `include_router(replacement_router)` + `include_router(pack_router)`，
+    于是它那 20 条路由在启动期核对里**一条都没被扫到**——`permission_gaps`
+    返回空列表，检查永远是「没问题」。FastAPI 0.162 起 `include_router`
+    放进 `routes` 的是 `_IncludedRouter` 占位，裸迭代必然踩这个坑。
+    """
+    from api.assembly import permission_gaps
+
+    child = APIRouter(prefix="/children")
+
+    @child.get("/leaf", dependencies=[Depends(require("export:readx"))])
+    async def leaf() -> None: ...
+
+    parent = APIRouter(prefix="/templates")
+    parent.include_router(child)
+
+    gaps = permission_gaps(parent.routes, {"export:read"})
+
+    assert len(gaps) == 1, f"include 里的路由被漏扫了（守卫永远通过）-> {gaps}"
+    assert "export:readx" in gaps[0]
+    assert "/templates/children/leaf" in gaps[0]
+
+
+def test_every_module_route_is_visible_to_permission_check() -> None:
+    """每个模块的 `router.routes` 都必须能被展开成真实路由。
+
+    这条是上面那条的**全量**版本：只要有模块用 `include_router` 却仍能被
+    展开（`iter_api_routes` 负责），这里的数量就该等于「接口真的有几条」。
+    断言用「非空且无占位」，因为占位一旦出现就说明展开逻辑退化了。
+    """
+    from api.routing import iter_api_routes
+
+    empty = [
+        spec.name
+        for spec in discover_modules()
+        if not list(iter_api_routes(spec.router.routes))
+    ]
+    assert not empty, f"这些模块的路由一条都展开不出来（权限核对会静默跳过）-> {empty}"
