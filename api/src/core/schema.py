@@ -58,11 +58,11 @@ class CamelModel(BaseModel):
 
 
 class CamelORMModel(CamelModel):
-    """从 ORM 实体读出的出参基类（额外放开 lazy 属性访问开销）。"""
+    """**语义标记**：出参是从 ORM 实体读出来的（`from_attributes` 已在父类放开）。
 
-    model_config = ConfigDict(
-        alias_generator=to_camel,
-        populate_by_name=True,
-        from_attributes=True,
-        str_strip_whitespace=True,
-    )
+    这里曾经写着「额外放开 lazy 属性访问开销」，但两份 `model_config` 逐字相同——
+    那句话既没有实现，也做不到：`from_attributes` 只决定能不能 `model_validate(obj)`，
+    「读不读 lazy 关系」取决于查询里的 `selectinload` / `noload`，不是模型基类能管的。
+    保留这个类是为了让「这是 ORM 出参」在类型上可读（`UserOut` / `RoleOut` /
+    `SessionOut` 用它），不要指望它比 `CamelModel` 多做什么。
+    """

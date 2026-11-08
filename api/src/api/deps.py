@@ -54,10 +54,21 @@ VideoProviderDep = Annotated[ModelProvider, Depends(get_video_provider)]
 ImageProviderDep = Annotated[ModelProvider, Depends(get_image_provider)]
 
 # ---------- 身份 ----------
-# 演示账号持有超级权限，本地联调不需要造角色数据
-DEMO_USER = CurrentUser(
-    id="u_001", name="老大", roles=("admin",), permissions=frozenset({"*"})
-)
+# 演示账号持有超级权限，本地联调不需要造角色数据。
+#
+# id 必须与 `settings.demo_user_id` **同源**：`app seed` 按那个 id 种演示数据
+# （`SeedContext.demo_user_id` 也是从同一份配置算的）。这里写死 `"u_001"` 的话，
+# 改了 `DEMO_USER_ID` 之后，匿名请求拿到的是一个库里不存在的身份：
+# 接口全部照常返回 200，只是每张列表都空、每个详情都 404——
+# 看起来像「数据没种上」，而实际是两个人不是同一个人。
+def demo_user() -> CurrentUser:
+    """匿名回退用的合成主体。"""
+    return CurrentUser(
+        id=settings.demo_user_id,
+        name=settings.demo_user_name,
+        roles=("admin",),
+        permissions=frozenset({"*"}),
+    )
 
 # 用 HTTPBearer 而不是裸 Header 解析：FastAPI 会据此在 OpenAPI 里生成
 # `securitySchemes`，并**自动**给所有依赖 get_actor 的接口标上「需要令牌」。
@@ -96,9 +107,10 @@ async def get_actor(
         return user
 
     if settings.anonymous_allowed:
-        set_current_user(DEMO_USER)
-        request.state.user = DEMO_USER
-        return DEMO_USER
+        actor = demo_user()
+        set_current_user(actor)
+        request.state.user = actor
+        return actor
 
     raise Unauthorized("请先登录")
 

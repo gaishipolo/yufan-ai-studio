@@ -195,6 +195,31 @@ def test_anonymous_demo_account_still_works_in_test_env(client: TestClient) -> N
     assert client.get(f"{API}/me").status_code == 200
 
 
+def test_anonymous_identity_follows_demo_user_setting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """匿名回退的主体必须与 `DEMO_USER_ID` 同源。
+
+    这个 id 曾经在 `api/deps.py` 里写死成 `"u_001"`，而 `app seed` 按
+    `settings.demo_user_id` 种数据（`SeedContext.demo_user_id` 同源）。
+    于是改了配置之后，匿名请求拿到的是一个库里不存在的身份：每个接口都是 200，
+    只是列表全空、详情全 404——现象像「演示数据没种上」，其实是两个人。
+
+    直接测构造函数而不是打 HTTP：`/me` 会走 `resolve_principal`，账号不存在时
+    返回 401，断言就变成在测「查库失败」而不是在测「id 从哪来」。
+    """
+    from api.deps import demo_user
+    from core.config import reload_settings
+
+    monkeypatch.setenv("DEMO_USER_ID", "u_demo_from_env")
+    monkeypatch.setenv("DEMO_USER_NAME", "环境里的演示账号")
+    reload_settings()
+
+    actor = demo_user()
+    assert actor.id == "u_demo_from_env"
+    assert actor.name == "环境里的演示账号"
+
+
 # --------------------------------------------------------------------------- #
 # 权限边界
 # --------------------------------------------------------------------------- #

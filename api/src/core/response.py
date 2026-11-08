@@ -32,12 +32,6 @@ class ApiResponse(CamelModel, Generic[T]):
         return cls(code=0, message=message, data=data)
 
 
-class PageMeta(CamelModel):
-    total: int = 0
-    page: int = 1
-    page_size: int = DEFAULT_PAGE_SIZE
-
-
 class Page(CamelModel, Generic[T]):
     """标准分页结果：`items / total / page / pageSize`。"""
 
