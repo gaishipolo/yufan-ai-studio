@@ -301,6 +301,23 @@ MUTANTS: tuple[Mutant, ...] = (
         ("tests/test_logging_format.py",),
         "dev 日志只打 message 不打堆栈：日志说「执行失败」，却不说是抛的什么",
     ),
+    Mutant(
+        "asset-dedupe-sees-trash",
+        "src/modules/asset/archive_service.py",
+        "            Asset.source == AssetSource.ARCHIVE,\n"
+        "            Asset.deleted_at.is_(None),\n",
+        "            Asset.source == AssetSource.ARCHIVE,\n",
+        ("tests/test_assets_integration.py",),
+        "去重不看回收站：删掉再传同一文件会「复现」那条已删除记录，列表里看不到",
+    ),
+    Mutant(
+        "asset-restore-skips-twin-check",
+        "src/modules/asset/archive_service.py",
+        "                twin = await self._find_by_digest(owner, row.sha256, row.category)\n",
+        "                twin = None\n",
+        ("tests/test_assets_integration.py",),
+        "恢复不查重复：撞唯一索引后客户端收到 500，而不是可读冲突",
+    ),
 )
 
 
