@@ -22,8 +22,13 @@ from core.registry import RegistryError
 
 
 def _import_driver_module(kind: str, name: str) -> ModuleType:
-    if not name.replace("_", "").isalnum():
-        raise RegistryError(f"非法的驱动名 {name!r}（只允许字母、数字、下划线）")
+    # `isidentifier()` 而不是 `isalnum()`：后者对 `中文`、`驱动1` 都返回 True
+    # （Unicode 字母算 alnum），于是校验通过、import 失败，最后给出
+    # 「请创建 src/infra/storage/中文.py」这种永远不可能成立的提示。
+    # `isascii()` 再挡一层：模块名是契约的一部分，会进 .env 与日志，
+    # 全项目只允许 ASCII。
+    if not (name.isidentifier() and name.isascii()):
+        raise RegistryError(f"非法的驱动名 {name!r}（只允许字母、数字、下划线，且不能以数字开头）")
 
     path = f"infra.{kind}.{name}"
     try:
