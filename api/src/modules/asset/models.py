@@ -1,8 +1,12 @@
 """素材资产 ORM 实体。
 
-表是**素材的唯一索引**：上传的个人素材、归档库导入的模板素材、生成产物都落在这里，
+表是**素材的唯一索引**：用户上传的原片、从盘上登记的模板素材都落在这里，
 不再有第二份 JSON 目录当真相源。文件本身在对象存储里，`storage_key` 是相对 key，
 换 local / S3 只改驱动，不动数据。
+
+**生成产物目前不在这张表里**——它落在运行工作区，入库这一步还没做
+（`AssetSource.GENERATED` 是预留值，见 `schema.py`）。写查询时按「已入库」
+理解本表，不要把「素材库」当成「所有用过的媒体文件」。
 
 两个封面字段不是重复：
 
@@ -59,9 +63,13 @@ class Asset(Base, UUIDMixin, TimestampMixin):
     # 上传的个人素材默认未分类，归档导入时按目录归类。
     category: Mapped[str | None] = mapped_column(String(16), nullable=True, index=True)
 
-    # 来源：upload（网页上传）/ archive（归档库导入）/ generated（生成产物）。
-    # 它不参与鉴权，只用来回答「这条记录是怎么来的」和做运营统计。
-    source: Mapped[str] = mapped_column(String(16), default="upload", nullable=False)
+    # 来源：**当前所有写入都是 `archive`**（网页上传与盘上登记走同一个 `_ingest`）。
+    # 字节一律进归档存储，「归档」已经是素材的存在形式，不再是来源之一。
+    # `upload` / `generated` 没有写入路径（`upload` 只剩早期数据，`generated` 是
+    # 预留），由 `schema.AssetSource` 的守卫测试盯着——见那边的说明。
+    # 它不参与鉴权，也**不能**再拿来当查询过滤条件：`archive_repository` 里的
+    # 每个查询都带 `source == ARCHIVE`，新增别的来源会写进去却在列表里看不见。
+    source: Mapped[str] = mapped_column(String(16), default="archive", nullable=False)
 
     # 被模板/任务引用的次数。仅供列表展示；**删除时的引用校验不读它**
     # （计数会漂移，真正的判定走 `api/ports.py` 的注入口）。
@@ -92,17 +100,25 @@ class Asset(Base, UUIDMixin, TimestampMixin):
             sqlite_where=text("shared = 1 AND deleted_at IS NULL"),
             postgresql_where=text("shared AND deleted_at IS NULL"),
         ),
-        # 同 owner 内按内容去重，**只约束非归档来源**：
-        # 归档登记的是「盘上已经存在的文件」，它与同一个人上传的同一份文件是两条
-        # 真实记录（两份物理副本、两套 URL）。用全表唯一约束会把登记直接拒掉。
-        # 带 `where` 的部分索引 SQLite 与 PostgreSQL 都支持。
+        # 同 owner 内按内容去重，口径**必须与 `ArchiveService._find_by_digest` 一致**：
+        # `(owner_id, sha256, category)`，且只看未删除的行。
+        #
+        # 这条索引曾经是 `UNIQUE (owner_id, sha256) WHERE source != 'archive'`——
+        # 那前提是「网页上传记 upload、盘上登记记 archive」。接口合并后所有写入都记
+        # archive，于是**从上线起它一行都没进过**：看着在防并发重复，实际没有任何约束。
+        #
+        # 三个条件缺一不可：
+        # - `category`：同一张图同时当人物参考与产品参考是正常用法，合并会误伤；
+        # - `deleted_at IS NULL`：回收站里的旧记录不该挡住「重新上传同一个文件」；
+        # - `sha256` 可为 NULL：摘要算不出来的行不参与（NULL 互不相同）。
         Index(
             "uq_assets_owner_sha256",
             "owner_id",
             "sha256",
+            "category",
             unique=True,
-            sqlite_where=text("source != 'archive'"),
-            postgresql_where=text("source != 'archive'"),
+            sqlite_where=text("deleted_at IS NULL"),
+            postgresql_where=text("deleted_at IS NULL"),
         ),
     )
 

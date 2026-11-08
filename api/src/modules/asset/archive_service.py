@@ -290,6 +290,15 @@ class ArchiveAssetService:
                 references = await ask_asset_references([asset_id])
                 if references.get(asset_id):
                     raise AssetInUse(details={"references": list(references[asset_id])})
+            elif row.sha256 and row.category:
+                # 恢复要过唯一索引（owner + sha256 + category，只看未删除行）这一关：
+                # 「删除一份、又传了同一个文件」之后点恢复，库里就会并列两条同一份
+                # 内容，索引直接拒掉——不先查的话客户端收到的是 500 而不是可读冲突。
+                twin = await self._find_by_digest(owner, row.sha256, row.category)
+                if twin is not None and twin.id != row.id:
+                    raise Conflict(
+                        "已存在内容相同的素材，无法恢复；请先删除列表中那一条，或直接使用它"
+                    )
             row.deleted_at = datetime.now(UTC) if payload.deleted else None
             # 移入回收站即撤回分享：留着 shared 会让它继续出现在公共池
             row.shared = False
@@ -387,8 +396,12 @@ class ArchiveAssetService:
             await self.repo.add(row)
             await self.session.commit()
         except IntegrityError:
-            # 并发登记同一份文件：部分唯一索引兜底（归档侧不参与该索引，实际很难触发，
-            # 但索引不是这条代码路径的替代品）。回滚后按摘要取已有记录。
+            # 并发登记同一份文件：部分唯一索引（owner + sha256 + category，
+            # 且只看未删除行）兜底。回滚后按摘要取已有记录返回——用户拿到的是
+            # 「本来就在库里的那条」，不是一条报错。
+            #
+            # 索引与 `_find_by_digest` 的口径必须一字不差，否则会出现
+            # 「索引拦下了、这里又查不到」→ 直接把 IntegrityError 抛给客户端。
             await self.session.rollback()
             await asyncio.to_thread(self._discard_blob, key, created)
             await asyncio.to_thread(self._discard_mirror, uid)
@@ -406,11 +419,20 @@ class ArchiveAssetService:
         return self._to_out(row, owner)
 
     async def _find_by_digest(self, owner: str, digest: str, category: str) -> Asset | None:
+        """同 owner、同摘要、同分类的**活跃**记录。
+
+        `deleted_at IS NULL` 不能少：否则用户把一份素材移进回收站、再上传同一个
+        文件时，这里会命中那条已删除的行并原样返回——接口回 201，返回体里带着
+        `deletedAt`，而「我的素材」列表默认不含回收站，看起来就是「上传成功但
+        文件不见了」。之前靠 `source != 'archive'` 的部分唯一索引完全没兜住这个
+        （索引对所有行都不生效），所以只能在这里判。
+        """
         stmt = select(Asset).where(
             Asset.owner_id == owner,
             Asset.sha256 == digest,
             Asset.category == category,
             Asset.source == AssetSource.ARCHIVE,
+            Asset.deleted_at.is_(None),
         )
         return await self.session.scalar(stmt.limit(1))
 

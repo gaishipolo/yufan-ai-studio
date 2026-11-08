@@ -425,3 +425,58 @@ async def test_referenced_reference_cannot_be_trashed(client: TestClient) -> Non
         await drop_run(still_usable.json()["data"]["id"])
     finally:
         await drop_pack(pack.id)
+
+
+# --------------------------------------------------------------------------- #
+# 去重口径：回收站里的记录不该参与「已经传过这份文件」的判断
+# --------------------------------------------------------------------------- #
+def test_reuploading_a_trashed_file_creates_a_fresh_record(client: TestClient) -> None:
+    """删掉再传同一个文件，必须得到一条**新的、可见的**记录。
+
+    `_find_by_digest` 之前不看 `deleted_at`，于是这种情况下它会命中回收站里那条
+    已删除的行并原样返回：接口回 201，返回体带着 `deletedAt`，而「我的素材」
+    默认不含回收站——用户看到的就是「提示上传成功，列表里没有」。
+    而本该拦住并发重复的部分唯一索引那时条件写成 `source != 'archive'`，
+    对所有行都不成立，一行也没进过，兜不住这个。
+    """
+    owner = login(client, "admin", "admin@12345")
+    content = video_bytes(2, audio=True)
+    first = _upload_as(client, owner, "same.mp4", "source", content)
+
+    trashed = _change(client, first, owner, field="deleted", value=True)
+    assert trashed.status_code == 200, trashed.text
+
+    again = _upload_as(client, owner, "same.mp4", "source", content)
+    assert again["id"] != first["id"], "回收站里的记录不该被当成「这份文件已经传过」"
+    assert again["deletedAt"] is None
+
+    listed = client.get(f"{API}/assets", params={"scope": "mine"}, headers=owner)
+    visible = {item["id"] for item in listed.json()["data"]["items"]}
+    assert again["id"] in visible, "重新上传的记录必须出现在「我的素材」里"
+
+
+def test_restoring_a_trashed_duplicate_is_a_conflict_not_a_500(client: TestClient) -> None:
+    """「删掉旧的后又传了同一个文件」再点恢复，要给可读冲突。
+
+    新的唯一索引 `(owner_id, sha256, category) WHERE deleted_at IS NULL` 会让这次
+    恢复撞库。不先查的话，客户端拿到的是未捕获的 `IntegrityError`（500），
+    而它其实是一个完全可解释的业务状态：库里已经有一条一模一样的活跃素材。
+    """
+    owner = login(client, "admin", "admin@12345")
+    content = video_bytes(2, audio=True)
+    first = _upload_as(client, owner, "old.mp4", "source", content)
+    assert _change(client, first, owner, field="deleted", value=True).status_code == 200
+
+    second = _upload_as(client, owner, "new.mp4", "source", content)
+    assert second["id"] != first["id"]
+
+    # 删除操作让 stateVersion 加了一，恢复要带最新的版本号
+    latest = client.get(f"{API}/assets/{first['id']}", headers=owner).json()["data"]
+    restored = _change(client, latest, owner, field="deleted", value=False)
+    assert restored.status_code == 409, restored.text
+    assert "内容相同" in restored.text
+
+    # 原来的两条都还在：冲突不该顺手改掉任何一边
+    assert client.get(f"{API}/assets/{second['id']}", headers=owner).status_code == 200
+    trashed = client.get(f"{API}/assets/{first['id']}", headers=owner).json()["data"]
+    assert trashed["deletedAt"] is not None, "冲突后它应该还在回收站里"
