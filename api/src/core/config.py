@@ -265,6 +265,19 @@ class Settings(BaseSettings):
     # 默认 1 小时：大于任何正常备份耗时，又小于「没人注意到」的时间尺度。
     backup_command_timeout_sec: float = 3600.0
 
+    # ---------- 导出 ----------
+    # 单次导出的行数上限。**必须有**：没有上限的导出等于「把整张表拉进内存」，
+    # 一个几百万行的任务表就能把 worker 的 RSS 打满；而 worker 是共享进程，
+    # 会连带同一进程里其他模块的 job 一起 OOM。
+    export_max_rows: int = 100_000
+    # 产物保留时长（小时）。到期由周期任务 `export.reclaim` 删字节，**记录行保留**
+    # （状态转 expired），这样「上周导过什么」查得到，只是文件没了。
+    export_ttl_hours: int = 168
+    # 「卡住」判定：`queued` / `running` 超过这么久没有任何推进，视为丢失并置失败。
+    # 必须**大于** worker 单次 job 的超时（否则会把正常在跑的导出判成卡死），
+    # 又必须**小于**「用户会来问」的时间尺度（否则记录永远挂在列表上转圈）。
+    export_stale_after_sec: int = 900
+
     # ---------- 可观测 ----------
     # Prometheus 抓取端点（`/metrics`，不进 OpenAPI、不走业务鉴权）。
     # 关闭时返回 404 而不是 403：不对外暴露「这里本来有个端点」。

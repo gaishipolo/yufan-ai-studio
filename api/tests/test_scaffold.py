@@ -64,20 +64,56 @@ def test_slot_zero_is_rejected() -> None:
         validate(ModulePlan(name="music", label="音乐", perm="music", slot=0))
 
 
-def test_slot_conflict_with_existing_module_is_detected(tmp_path) -> None:
-    """号段冲突必须在生成前拦住。identity 已占用 2，再生成一个 slot=2 的模块应报错。"""
+def test_sharing_a_slot_is_allowed_when_codes_do_not_clash(tmp_path) -> None:
+    """号段可以共用：9 个号段装不下第 10 个模块，`template`/`shot` 就共用一个。
+
+    老模块只占了 40921 之外的码位（这里一个都没占），新模块的 `40921`
+    在 slot 2 里是空的，应当放行。
+    """
+    from scaffold import create_module
+
+    modules = tmp_path / "src" / "modules" / "identity"
+    modules.mkdir(parents=True)
+    (modules / "errors.py").write_text(
+        'errors = ModuleErrors("identity", slot=2)\n'
+        "\n"
+        "\n"
+        "class CredentialInvalid(AppError):\n"
+        "    code = errors.code(401, 1)\n",
+        encoding="utf-8",
+    )
+
+    written = create_module(
+        ModulePlan(name="music", label="音乐", perm="music", slot=2), tmp_path
+    )
+    assert {p.name for p in written} >= {"errors.py", "router.py"}
+
+
+def test_clashing_code_is_detected_before_writing(tmp_path) -> None:
+    """同一个码值不能两个模块都用，否则前端拿到 40921 分不清是谁失败。
+
+    模板里的示例码是 `errors.code(409, 1)`；slot 2 下它就是 40921，
+    老模块已占用时必须拦住，且一个文件都不落盘。
+    """
     from scaffold import ScaffoldError, create_module
 
     modules = tmp_path / "src" / "modules" / "identity"
     modules.mkdir(parents=True)
     (modules / "errors.py").write_text(
-        'errors = ModuleErrors("identity", slot=2)\n', encoding="utf-8"
+        'errors = ModuleErrors("identity", slot=2)\n'
+        "\n"
+        "\n"
+        "class IdentityBusy(AppError):\n"
+        "    code = errors.code(409, 1)\n",
+        encoding="utf-8",
     )
 
-    with pytest.raises(ScaffoldError, match="已被模块 identity 占用"):
+    with pytest.raises(ScaffoldError, match=r"40921（identity）"):
         create_module(
             ModulePlan(name="music", label="音乐", perm="music", slot=2), tmp_path
         )
+
+    assert not (tmp_path / "src" / "modules" / "music").exists()
 
 
 def test_generated_router_returns_501_not_500() -> None:

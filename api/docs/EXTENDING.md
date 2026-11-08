@@ -37,11 +37,15 @@
 ## 1. 加一个业务模块（5 分钟）
 
 ```bash
-app new-module voice --label 配音 --perm voice --slot 9
+app new-module voice --label 配音 --perm voice --slot 4
 ```
 
-`--slot` 是错误码号段，取值见第 7 节的分配表（示例占用 9，别和 `task` 的 3 撞车）。
-它必填（不传会被拒），并且会真的写进 `errors.py`；号段已被别的模块占用时，生成前就报错。
+`--slot` 是错误码号段，取值见第 7 节的分配表。它必填（不传会被拒），会真的写进
+`errors.py`。号段按业务领域分配，**可以被多个模块共用**（`template` / `storyboard` /
+`shot` 就共用 7 号）；不能共用的是具体码值——两个模块返回同一个 `code`，前端就
+分不清是谁失败了。所以生成前会扫描已有模块的 `errors.py`，只要新模块的示例码
+（`code(409, 1)`）在该号段下已被占用就拒绝落盘。示例用 4 号（临时/演示位），
+长期模块请到第 7 节表里认领一个。
 
 **命令要在 `api/` 目录下执行。** `--root` 默认是当前目录，而模板按
 `<root>/src/modules/<name>/` 落盘；本仓库的 Python 源码根是 `api/`，在仓库根
@@ -58,7 +62,7 @@ modules/voice/
 ├── schema.py         # 出入参（camelCase 自动转换）
 ├── service.py        # 业务规则（当前抛 501）
 ├── dependencies.py   # 依赖装配 + 权限依赖
-├── errors.py         # ModuleErrors(slot=9) + 一个示例错误码
+├── errors.py         # ModuleErrors(slot=4) + 一个示例错误码
 └── router.py         # 2 个接口（列表 / 创建）
 ```
 
@@ -67,6 +71,32 @@ modules/voice/
 权限点已进入全局目录。
 `voices` 表也会被 `create_all` 建好——但**只在 `APP_ENV` 为 dev/test 时**，
 生产环境不会自动建表（`app.py` 里写了 `if settings.app_env != "prod"`）。
+
+**要写后台任务或周期任务时，脚手架不会再给你两个文件**——它们按需存在，不生成：
+
+```python
+# modules/<name>/worker.py        队列任务
+from workers import register_handler
+
+@register_handler("<name>.build")
+async def build(job: Job) -> None: ...
+
+# modules/<name>/maintenance.py   周期任务
+from core.scheduler import periodic
+
+@periodic("<name>.reclaim", every=3600, leader_only=True)
+async def reclaim() -> None: ...
+```
+
+生成后**必须在 `__init__.py` 里副作用 import 一次**：
+
+```python
+from modules.<name> import maintenance, worker  # noqa: E402,F401  isort: skip
+```
+
+漏了这一步不会报错：handler 没注册 → 任务永远排队；周期任务没注册 →
+`app modules` 里看不到它。没有任何一处会主动告诉你少了一行，
+`app modules` 的「Job handler / 周期任务」两行是唯一检查点。
 
 接下来只有三件事：
 
@@ -86,6 +116,13 @@ app modules
 > alembic stamp head          # 本地库已由 create_all 建好，只补版本号
 > alembic revision --autogenerate -m "voice init"   # 此时 diff 只剩你新加的表
 > ```
+>
+> **`alembic` 命令静默失败时**：venv 里的 `alembic.exe` 是 pip 生成的启动器。
+> venv 被复制/移动过之后它可能坏掉，症状是**退出码 1、一个字都不输出**——
+> 连 `alembic --help` 都是这样，很容易被当成「已经执行成功」。
+> 先判断：`alembic --help; echo $?`（正常 0）。坏了就用
+> `.venv/Scripts/python -m alembic ...` 跑，并重建启动器：
+> `pip install --force-reinstall --no-deps alembic`。
 >
 > 拿不准就用一个空库生成：`DB_URL=sqlite+aiosqlite:///./var/tmp.db alembic upgrade head`
 > 再 `revision --autogenerate`。
@@ -690,6 +727,23 @@ async def ask_xxx(...) -> ...:             # **未注册时返回中性值，不
 4. **查询逻辑薄**。注入口只转调，「三态语义」这类规则写在实现方，别在口子上分叉。
 
 `app modules` 会列出每个注入口是否已接上，启动日志也会为未接上的留一行 INFO。
+
+**多个实现同时生效时用注册表，不是单例。** 上面的形状是「权威来源只能有一个」
+（两个账号体系同时生效没有正确答案）；但「很多人各自贡献一份」的场景需要另一种：
+
+```python
+_sources: dict[str, Xxx] = {}
+
+def register_xxx(item: Xxx) -> None: ...   # 重名直接 RegistryError
+def xxx_items() -> dict[str, Xxx]: ...     # 消费方按名字查
+def has_xxx() -> bool: ...                 # 至少接上一个（守卫要求有这个）
+def reset_xxx() -> None: ...               # 仅测试
+```
+
+现在的两个样板：`core.ports.assets`（谁引用了素材）和 `core.ports.export_sources`
+（谁的账号能导出哪张表）。要点和单例一致：**未命中返回中性结果，不是抛异常**
+——导出源没找到时是 400「不支持的数据源」（客户端传错了），不是 500。
+
 **不是所有跨模块需求都该做注入口**：纯数据查询把模型下移到 `db/` 更诚实；
 只有一个调用点、且永远只可能有一个实现的，直接传参。
 
@@ -997,6 +1051,28 @@ async def persist_output(self, record_id: str, url: str) -> str:
 
 ---
 
+### 5.4.1 产物取件：`core.serving.serve`
+
+任何「把存储里的字节交给浏览器」的接口都长同一个形状，别自己拼：
+
+```python
+from core.serving import serve
+
+path = storage.local_path(key)                       # 本地驱动：有真实路径
+url = await storage.presigned_download_url(key)      # 远端驱动：预签名地址
+return serve(path, url, "text/csv", filename="x.csv")
+```
+
+本地驱动走 `FileResponse`（支持 Range，视频能拖进度条），远端驱动走 307
+（不把几十 MB 搬进应用进程内存）。`filename` 只对本地驱动生效。
+
+这段代码**曾经在 `modules/asset/serving.py` 里**。导出功能需要下载时才发现：
+要么违规 import 别的业务模块，要么抄一份。横切能力属于核心，所以 2026-11-08
+上移到 `core/serving.py`，`modules/asset/serving.py` 只留了一个 re-export 兼容入口。
+
+**判断标准**：如果你正要从别的模块 import 一个「和业务无关的通用函数」，
+说明它放错了层——上移到 `core/` 或 `infra/`，不要 import 过去。
+
 ## 5.5 `param_schema` 是契约，不是注释
 
 `ModelSpec.param_schema` 有两个消费者，别只当它是给前端渲染表单的元数据：
@@ -1204,16 +1280,25 @@ boto3 client；`S3_BUCKET_MODE=shared` 下用 `archive/` 前缀隔离。
 |---|---|---|
 | 0 | 框架 | `core/exceptions.py` 的 `ErrorCode`，已占用 |
 | 1 | catalog / 通用业务 | 模型目录等跨模块只读资源 |
-| 2 | identity | 用户 / 角色 / 登录 |
+| 2 | identity | 用户 / 角色 / 登录（`IdentityBusy` 等） |
 | 3 | task | 任务 |
-| 4 | music | 音乐（示例） |
-| 5 | asset | 素材 |
+| 4 | 示例 / 临时模块 | 第 1 节脚手架的演示位（music、voice 这类，用完即删） |
+| 5 | asset | 素材（`AssetNotFound`、`AssetInUse` 等） |
 | 6 | image | 生图 |
 | 7 | template / storyboard / shot | 模板类 |
-| 8 | notify / billing | 横向能力 |
-| 9 | voice（示例）/ 预留 | 第 1 节的脚手架示例占用 |
+| 8 | notify / billing | 横向能力（尚未落地） |
+| 9 | export | 导出（`ExportBusy` 等） |
 
-新增模块时先在这张表里占一个空格，再写进 `app new-module --slot n`。
+**号段 1–9 已经全部有归属，没有空格了。** 第 10 个模块不该去抢号段，而是和
+同领域的模块共用一格（7 号就是三家共用的先例）；真正的约束是码值：
+
+- 生成期：`app new-module` 会扫已有 `errors.py`，新模块的示例码在该号段下
+  已被占用就拒绝落盘；
+- 导入期：`ModuleErrors.code()` 查全局归属表，同一个 `code` 被第二个模块
+  申请时直接 `RegistryError`，不会等你到运行期才发现。
+
+两个模块拿同一个 `code` 时，前端只能按 `message` 猜发生了什么——那等于没有
+错误码。所以撞了要改 `seq`，不是改号段。
 
 模块内这样用（**不需要改 `core/exceptions.py`**）：
 

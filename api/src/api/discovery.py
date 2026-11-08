@@ -61,6 +61,27 @@ def _load_spec(qualified: str) -> ModuleSpec | None:
     return spec
 
 
+def _load_errors(qualified: str) -> None:
+    """导入模块的 `errors.py`，让错误码在启动期就注册齐。
+
+    少了这一步，错误码集合取决于「哪个模块的 errors.py 恰好被业务代码 import
+    过」：`docs/API.md` 第 3 节会随执行顺序增减，`ModuleErrors` 的跨模块撞码
+    检查也会对「还没被任何路由用到」的模块失效。`errors.py` 只依赖
+    `core.exceptions`，导入它没有副作用，只有注册。
+    """
+    target = f"{qualified}.errors"
+    try:
+        importlib.import_module(target)
+    except ModuleNotFoundError as exc:
+        if exc.name != target:
+            # errors.py 存在但里面缺别的依赖，不能当成「没有 errors.py」吞掉
+            raise RuntimeError(f"导入 {target} 失败: {exc}") from exc
+        logger.debug("%s 没有 errors.py，跳过", qualified)
+    except Exception as exc:  # noqa: BLE001
+        # 撞码（RegistryError）也走这里：报错必须点到具体模块
+        raise RuntimeError(f"导入 {target} 失败: {exc}") from exc
+
+
 @lru_cache
 def discover_modules(package_name: str = MODULES_PACKAGE) -> tuple[ModuleSpec, ...]:
     """发现并加载所有业务模块（结果缓存，进程内只扫一次）。"""
@@ -74,6 +95,7 @@ def discover_modules(package_name: str = MODULES_PACKAGE) -> tuple[ModuleSpec, .
         if spec.name != name:
             # 名字不一致会让日志/配置对不上，尽早暴露
             raise ValueError(f"模块目录 {name} 与 ModuleSpec.name={spec.name} 不一致")
+        _load_errors(f"{package_name}.{name}")
         specs.append(spec)
 
     specs.sort(key=lambda s: (s.order, s.name))

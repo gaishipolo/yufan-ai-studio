@@ -161,6 +161,75 @@ def test_permission_codes_are_namespaced_by_module() -> None:
     assert not mismatched, f"权限码前缀与归属模块不一致 -> {mismatched}"
 
 
+def _required_codes(package: Path) -> set[str]:
+    """AST 提取一个模块里所有 `require("...")` 的权限码。
+
+    上面三条测试都只看「声明侧」。而拼错一个字母、或者从别的模块
+    copy 了一个 `require("task:read")` 过来，声明的集合依然自洽，
+    症状却是：超级管理员（`*`）一切正常，其他人永远 403。
+    启动、doctor、契约生成、既有测试全都不报错——这种"只有一部分人会遇到"
+    的问题最难查，所以要在静态分析这一层拦住。
+    """
+    codes: set[str] = set()
+    for path in package.glob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            name = func.id if isinstance(func, ast.Name) else getattr(func, "attr", "")
+            if name != "require":
+                continue
+            for arg in node.args:
+                if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                    codes.add(arg.value)
+    return codes
+
+
+def test_required_codes_are_declared_somewhere() -> None:
+    """路由里 `require` 的权限码必须在**某个模块**的 `ModuleSpec` 里声明过。
+
+    上面三条测试都只看「声明侧」，没有一条管「路由真的用了什么」。而拼错一个
+    字母、或者把 `asset:read` 写成 `assets:read`，声明的集合依然自洽，
+    症状却是：超级管理员（`*`）一切正常，其他人永远 403。
+    启动、doctor、契约生成、既有测试全都不报错——这种「只有一部分人会遇到」
+    的问题最难查，所以在静态分析这一层拦住。
+
+    刻意不要求「必须自己声明」：`template` 的封装接口同时要求 `asset:read`
+    是组合语义（要封装素材，先得能看素材），跨模块借用权限码是允许的。
+    """
+    all_declared = set(catalog.codes())
+    problems = [
+        f"{spec.name}: require({code!r}) 没有任何模块声明"
+        for spec in discover_modules()
+        for code in sorted(_required_codes(MODULES_DIR / spec.name))
+        if code not in all_declared
+    ]
+    assert not problems, f"路由用了没人登记的权限码（普通用户会永远 403）-> {problems}"
+
+
+def test_export_sources_declare_known_permissions() -> None:
+    """导出源挂在数据上的权限码也要有人声明。
+
+    上面那条只扫 `require("...")` 字面量。而导出源把权限码放在
+    `source.permission` 属性里，静态分析看不到——漏声明的症状一模一样：
+    超管能导、别人 403，没有任何一处报错。
+    """
+    from core.ports.export_sources import export_sources
+    from modules.export.sources import AUDIT_EXPORT_SOURCE
+
+    known = set(catalog.codes())
+    sources = dict(export_sources())
+    sources[AUDIT_EXPORT_SOURCE.name] = AUDIT_EXPORT_SOURCE
+
+    missing = [
+        f"{source.name} -> {source.permission}"
+        for source in sources.values()
+        if source.permission is not None and source.permission not in known
+    ]
+    assert not missing, f"导出源要求的权限码没人声明（只有超管能导）-> {missing}"
+
+
 # --------------------------------------------------------------------------- #
 # 错误码
 # --------------------------------------------------------------------------- #

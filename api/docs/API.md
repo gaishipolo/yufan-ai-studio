@@ -2,7 +2,7 @@
 
 > 此文件由 `app export-openapi` 自动生成，请勿手工编辑。
 >
-> 版本 `0.2.0`｜共 **78** 个接口 / **9** 个模块
+> 版本 `0.2.0`｜共 **84** 个接口 / **10** 个模块
 >
 > 重新生成：`cd api && .venv/Scripts/python -m cli export-openapi`
 
@@ -78,6 +78,9 @@ Authorization: Bearer <accessToken>
 | 权限码 | 名称 | 说明 |
 |---|---|---|
 | `catalog:read` | 查看模型目录 |  |
+| `export:create` | 创建导出 |  |
+| `export:delete` | 删除导出 |  |
+| `export:read` | 查看导出 |  |
 | `image:create` | 提交生图任务 |  |
 | `image:read` | 查看生图历史 |  |
 | `image:read:all` | 查看他人生图历史 | 列表的数据范围开关；与 task:read:all 同义，不含提交他人的生图任务 |
@@ -93,6 +96,12 @@ Authorization: Bearer <accessToken>
 | `template:read` | 查看行业模板 |  |
 | `template:review` | 评价自己的替换成片 |  |
 | `template:use` | 使用替换模板并提交零积分生成 |  |
+
+**系统**
+
+| 权限码 | 名称 | 说明 |
+|---|---|---|
+| `export:read:audit` | 导出操作留痕 |  |
 
 **素材**
 
@@ -155,6 +164,9 @@ Authorization: Bearer <accessToken>
 | `40925` | 409 | identity | `CannotTargetSelf` | 不能停用或删除自己的账号 |
 | `40926` | 409 | identity | `LastSuperuser` | 系统必须保留至少一个启用的超级管理员 |
 | `40951` | 409 | asset | `AssetInUse` | 素材仍被引用，不能删除 |
+| `40991` | 409 | export | `ExportBusy` | 同一份数据正在导出中，请等待它完成 |
+| `40992` | 409 | export | `ExportNotReady` | 导出尚未生成完成，请稍后再试 |
+| `41091` | 410 | export | `ExportGone` | 导出文件已过保留期被回收，请重新导出 |
 | `41351` | 413 | asset | `FileTooLarge` | 文件不能超过 50MB |
 | `41352` | 413 | asset | `AssetQuotaExceeded` | 归档空间已用完，请先清理回收站或联系管理员提升配额 |
 | `42900` | 429 | 框架 | `RateLimited` | 请求过于频繁，请稍后再试 |
@@ -177,6 +189,7 @@ Authorization: Bearer <accessToken>
 | 分镜模板 | 1 | 见下方 `4.7` |
 | 镜头库 | 1 | 见下方 `4.8` |
 | 系统 | 2 | 见下方 `4.9` |
+| 导出 | 6 | 见下方 `4.10` |
 
 ### 4.1 身份（26 个）
 
@@ -2120,6 +2133,110 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `queueSize` | `number` | 是 |  |
 | `checks` | `RuntimeCheckOut[]` | 否 |  |
 
+### 4.10 导出（6 个）
+
+| 方法 | 路径 | 说明 | 鉴权 |
+|---|---|---|---|
+| `GET` | `/api/v1/exports` | 我的导出记录 | 🔒 |
+| `POST` | `/api/v1/exports` | 创建导出（异步生成，202） | 🔒 |
+| `GET` | `/api/v1/exports/sources` | 可导出的数据源 | 🔒 |
+| `GET` | `/api/v1/exports/{export_id}` | 导出详情 | 🔒 |
+| `DELETE` | `/api/v1/exports/{export_id}` | 删除导出（连带产物） | 🔒 |
+| `GET` | `/api/v1/exports/{export_id}/download` | 下载导出文件（本地驱动直出，远端驱动 307） | 🔒 |
+
+#### `GET /api/v1/exports`
+
+**我的导出记录**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `status` | query | `string | null` | 否 | 状态筛选：queued/running/succeeded/failed/… |
+| `data_source` | query | `string | null` | 否 | 数据源筛选 |
+| `page` | query | `number` | 否 | 页码，从 1 开始 |
+| `pageSize` | query | `number` | 否 | 每页条数 |
+
+**响应** `ApiResponse<Page<ExportOut>>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `items` | `ExportOut[]` | 是 | 当前页数据 |
+| `total` | `number` | 是 | 总条数（用于分页器） |
+| `page` | `number` | 是 | 当前页码，从 1 开始 |
+| `pageSize` | `number` | 是 | 每页条数 |
+
+#### `POST /api/v1/exports`
+
+**创建导出（异步生成，202）**
+
+**请求体** `CreateExportIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `dataSource` | `ExportSource` | 是 | 数据源，见 enums.ExportSource |
+| `params` | `ExportParams` | 否 | 筛选条件；不填表示该源的全量 |
+
+**响应** `ApiResponse<unknown>`（前端取 `res.data`）
+
+#### `GET /api/v1/exports/sources`
+
+**可导出的数据源**
+
+**响应** `ApiResponse<ExportSourceOut[]>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `[].name` | `string` | 是 |  |
+| `[].label` | `string` | 是 |  |
+| `[].columns` | `string[]` | 是 | CSV 列，同时也是列顺序 |
+| `[].permission` | `string \| null` | 否 | 导出该源额外需要的权限码；null 表示只需 export:read |
+
+#### `GET /api/v1/exports/{export_id}`
+
+**导出详情**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `export_id` | path | `string` | 是 |  |
+
+**响应** `ApiResponse<ExportDetailOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `dataSource` | `string` | 是 |  |
+| `params` | `Record<string, unknown>` | 否 |  |
+| `status` | `string` | 是 |  |
+| `rowCount` | `number` | 否 |  |
+| `byteSize` | `number` | 否 |  |
+| `error` | `string \| null` | 否 |  |
+| `attempts` | `number` | 否 |  |
+| `requestedBy` | `string` | 是 |  |
+| `createdAt` | `string \| null` | 否 |  |
+| `startedAt` | `string \| null` | 否 |  |
+| `finishedAt` | `string \| null` | 否 |  |
+| `expiresAt` | `string \| null` | 否 |  |
+| `downloadable` | `boolean` | 否 |  |
+
+#### `DELETE /api/v1/exports/{export_id}`
+
+**删除导出（连带产物）**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `export_id` | path | `string` | 是 |  |
+
+**响应** `ApiResponse<unknown>`（前端取 `res.data`）
+
+#### `GET /api/v1/exports/{export_id}/download`
+
+**下载导出文件（本地驱动直出，远端驱动 307）**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `export_id` | path | `string` | 是 |  |
+
+**响应** `ApiResponse<unknown>`（前端取 `res.data`）
+
 ---
 
 ## 5. 数据模型
@@ -2242,6 +2359,13 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 
 取值：`video`、`image`、`audio`
 
+### `CreateExportIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `dataSource` | `ExportSource` | 是 | 数据源，见 enums.ExportSource |
+| `params` | `ExportParams` | 否 | 筛选条件；不填表示该源的全量 |
+
 ### `CreateTaskIn`
 
 创建任务入参。
@@ -2285,6 +2409,76 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `billingMode` | `"free" \| "credits" \| null` | 否 |  |
+
+### `ExportDetailOut`
+
+详情多一个 `downloadable`：让前端不必重复实现「能不能下」的判断。
+
+这条规则有两处（`succeeded` 且未被回收），前端各写一遍必然和回收任务
+对不上——用户会看到「按钮是亮的，点进去 410」。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `dataSource` | `string` | 是 |  |
+| `params` | `Record<string, unknown>` | 否 |  |
+| `status` | `string` | 是 |  |
+| `rowCount` | `number` | 否 |  |
+| `byteSize` | `number` | 否 |  |
+| `error` | `string \| null` | 否 |  |
+| `attempts` | `number` | 否 |  |
+| `requestedBy` | `string` | 是 |  |
+| `createdAt` | `string \| null` | 否 |  |
+| `startedAt` | `string \| null` | 否 |  |
+| `finishedAt` | `string \| null` | 否 |  |
+| `expiresAt` | `string \| null` | 否 |  |
+| `downloadable` | `boolean` | 否 |  |
+
+### `ExportOut`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `dataSource` | `string` | 是 |  |
+| `params` | `Record<string, unknown>` | 否 |  |
+| `status` | `string` | 是 |  |
+| `rowCount` | `number` | 否 |  |
+| `byteSize` | `number` | 否 |  |
+| `error` | `string \| null` | 否 |  |
+| `attempts` | `number` | 否 |  |
+| `requestedBy` | `string` | 是 |  |
+| `createdAt` | `string \| null` | 否 |  |
+| `startedAt` | `string \| null` | 否 |  |
+| `finishedAt` | `string \| null` | 否 |  |
+| `expiresAt` | `string \| null` | 否 |  |
+
+### `ExportParams`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `status` | `string \| null` | 否 | 仅 tasks：按任务状态过滤（如 succeeded / failed） |
+| `modelId` | `string \| null` | 否 | 仅 tasks：按模型目录 id 过滤 |
+| `action` | `string \| null` | 否 | 仅 audit_events：按动作前缀过滤（如 task.） |
+| `since` | `string \| null` | 否 | 起始时间（含），ISO 8601 |
+| `until` | `string \| null` | 否 | 结束时间（不含），ISO 8601 |
+
+### `ExportSource`（枚举）
+
+取值：`tasks`、`audit_events`
+
+### `ExportSourceOut`
+
+可导出的数据源。前端据此渲染下拉，不要硬编码数据源名单。
+
+这份列表来自运行时注册表（`core.ports.export_sources` + 内置源），
+新模块注册一个源之后这里自动多一项——前端不需要跟着发版。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `name` | `string` | 是 |  |
+| `label` | `string` | 是 |  |
+| `columns` | `string[]` | 是 | CSV 列，同时也是列顺序 |
+| `permission` | `string \| null` | 否 | 导出该源额外需要的权限码；null 表示只需 export:read |
 
 ### `GenerateImageIn`
 

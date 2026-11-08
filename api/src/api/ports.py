@@ -61,6 +61,7 @@ from core.audit import has_audit_sink
 from core.feed import has_replacement_feed
 from core.ports.accounts import has_account_status_checker
 from core.ports.assets import reference_source_gaps
+from core.ports.export_sources import export_sources
 
 __all__ = ["PORT_CATALOG", "PortSpec", "port_status"]
 
@@ -134,6 +135,16 @@ PORT_CATALOG: tuple[PortSpec, ...] = (
         when_unregistered="任务中心看到空列表：替换档案不计入待办与统计，"
         "但页面本身仍可用",
         is_registered=has_replacement_feed,
+    ),
+    PortSpec(
+        name="export-sources",
+        module="core.ports.export_sources",
+        protocol="ExportSource",
+        implementer="任何拥有可导出表的业务模块（当前 modules/task 注册 `tasks`）。"
+        "框架表（audit_events）由 modules/export 自己实现，不走这里",
+        when_unregistered="导出功能仍可用，只是可选数据源为空："
+        "`GET /exports/sources` 只剩内置的 audit_events，创建别的源返回 400",
+        is_registered=lambda: bool(export_sources()),
     ),
 )
 

@@ -8,13 +8,19 @@
 
 from api.module import ModuleSpec
 from core.ports.assets import AssetReferenceSource, bind_asset_reference_sources
+from core.ports.export_sources import register_export_source
 from modules.task.asset_references import TaskAssetReferences
+from modules.task.export_source import TASK_EXPORT_SOURCE
 from modules.task.permissions import SPECS
 from modules.task.router import router
 
 # 必须 import：注册到生成框架的 pipeline 表（副作用导入）
 from modules.task import pipeline  # noqa: E402,F401  isort: skip
 from modules.task.worker import resume_unfinished_tasks  # noqa: E402
+
+# 导出功能要读 video_tasks：注册成导出源，而不是让 modules/export import 本模块。
+# 见 core/ports/export_sources.py 的说明。
+register_export_source(TASK_EXPORT_SOURCE)
 
 # 素材删除前问「还有谁在用」：本模块把 `assets.id` 写进 video_tasks 的这一列。
 # 声明是同一份常量：ModuleSpec 供框架对账，import 期注册供运行时聚合。

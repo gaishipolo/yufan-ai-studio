@@ -1096,6 +1096,308 @@
         }
       }
     },
+    "/api/v1/exports": {
+      "get": {
+        "tags": [
+          "导出"
+        ],
+        "summary": "我的导出记录",
+        "operationId": "list_exports_api_v1_exports_get",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "状态筛选：queued/running/succeeded/failed/…",
+              "title": "Status"
+            },
+            "description": "状态筛选：queued/running/succeeded/failed/…"
+          },
+          {
+            "name": "data_source",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "数据源筛选",
+              "title": "Data Source"
+            },
+            "description": "数据源筛选"
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "页码，从 1 开始",
+              "default": 1,
+              "title": "Page"
+            },
+            "description": "页码，从 1 开始"
+          },
+          {
+            "name": "pageSize",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "description": "每页条数",
+              "default": 24,
+              "title": "Pagesize"
+            },
+            "description": "每页条数"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_Page_ExportOut__"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "导出"
+        ],
+        "summary": "创建导出（异步生成，202）",
+        "operationId": "create_export_api_v1_exports_post",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateExportIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_ExportOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/exports/sources": {
+      "get": {
+        "tags": [
+          "导出"
+        ],
+        "summary": "可导出的数据源",
+        "operationId": "list_sources_api_v1_exports_sources_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_list_ExportSourceOut__"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/exports/{export_id}": {
+      "get": {
+        "tags": [
+          "导出"
+        ],
+        "summary": "导出详情",
+        "operationId": "get_export_api_v1_exports__export_id__get",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "export_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Export Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_ExportDetailOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "导出"
+        ],
+        "summary": "删除导出（连带产物）",
+        "operationId": "delete_export_api_v1_exports__export_id__delete",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "export_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Export Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/exports/{export_id}/download": {
+      "get": {
+        "tags": [
+          "导出"
+        ],
+        "summary": "下载导出文件（本地驱动直出，远端驱动 307）",
+        "operationId": "download_export_api_v1_exports__export_id__download_get",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "export_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Export Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "CSV 文件（本地驱动）",
+            "content": {
+              "text/csv": {}
+            }
+          },
+          "307": {
+            "description": "重定向到对象存储的预签名地址（远端驱动）"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/health": {
       "get": {
         "tags": [
@@ -4234,6 +4536,60 @@
         "type": "object",
         "title": "ApiResponse[DeleteTasksOut]"
       },
+      "ApiResponse_ExportDetailOut_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExportDetailOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[ExportDetailOut]"
+      },
+      "ApiResponse_ExportOut_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExportOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[ExportOut]"
+      },
       "ApiResponse_HealthOut_": {
         "properties": {
           "code": {
@@ -4497,6 +4853,33 @@
         },
         "type": "object",
         "title": "ApiResponse[PackPublicList]"
+      },
+      "ApiResponse_Page_ExportOut__": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Page_ExportOut_"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[Page[ExportOut]]"
       },
       "ApiResponse_Page_ImageJobOut__": {
         "properties": {
@@ -5011,6 +5394,37 @@
         "type": "object",
         "title": "ApiResponse[UserOut]"
       },
+      "ApiResponse_list_ExportSourceOut__": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ExportSourceOut"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Data"
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[list[ExportSourceOut]]"
+      },
       "ApiResponse_list_RoleOut__": {
         "properties": {
           "code": {
@@ -5518,6 +5932,23 @@
         "title": "Capability",
         "description": "生成能力。新增能力（如 3D、配音）只需在此加一项。"
       },
+      "CreateExportIn": {
+        "properties": {
+          "dataSource": {
+            "$ref": "#/components/schemas/ExportSource",
+            "description": "数据源，见 enums.ExportSource"
+          },
+          "params": {
+            "$ref": "#/components/schemas/ExportParams",
+            "description": "筛选条件；不填表示该源的全量"
+          }
+        },
+        "type": "object",
+        "required": [
+          "dataSource"
+        ],
+        "title": "CreateExportIn"
+      },
       "CreateTaskIn": {
         "properties": {
           "prompt": {
@@ -5664,6 +6095,335 @@
         "type": "object",
         "title": "ExecuteReplacement",
         "description": "提交或加速一条替换任务。\n\n`credits` 只作用于这条任务：提交时关掉账号的 0 积分权益标签，走正常积分队列，\n**不动账号级开关**，因此不会让同账号的其他人下一次提交莫名其妙开始花钱。\n不传表示沿用档案里当前的计费模式——「继续查询 / 重试原任务」走的就是这条路，\n它们不该顺带把一条已加速的任务改回免费队列。"
+      },
+      "ExportDetailOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "dataSource": {
+            "type": "string",
+            "title": "Datasource"
+          },
+          "params": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Params"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "rowCount": {
+            "type": "integer",
+            "title": "Rowcount",
+            "default": 0
+          },
+          "byteSize": {
+            "type": "integer",
+            "title": "Bytesize",
+            "default": 0
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "attempts": {
+            "type": "integer",
+            "title": "Attempts",
+            "default": 0
+          },
+          "requestedBy": {
+            "type": "string",
+            "title": "Requestedby"
+          },
+          "createdAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Createdat"
+          },
+          "startedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Startedat"
+          },
+          "finishedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finishedat"
+          },
+          "expiresAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expiresat"
+          },
+          "downloadable": {
+            "type": "boolean",
+            "title": "Downloadable",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "dataSource",
+          "status",
+          "requestedBy"
+        ],
+        "title": "ExportDetailOut",
+        "description": "详情多一个 `downloadable`：让前端不必重复实现「能不能下」的判断。\n\n这条规则有两处（`succeeded` 且未被回收），前端各写一遍必然和回收任务\n对不上——用户会看到「按钮是亮的，点进去 410」。"
+      },
+      "ExportOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "dataSource": {
+            "type": "string",
+            "title": "Datasource"
+          },
+          "params": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Params"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "rowCount": {
+            "type": "integer",
+            "title": "Rowcount",
+            "default": 0
+          },
+          "byteSize": {
+            "type": "integer",
+            "title": "Bytesize",
+            "default": 0
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "attempts": {
+            "type": "integer",
+            "title": "Attempts",
+            "default": 0
+          },
+          "requestedBy": {
+            "type": "string",
+            "title": "Requestedby"
+          },
+          "createdAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Createdat"
+          },
+          "startedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Startedat"
+          },
+          "finishedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finishedat"
+          },
+          "expiresAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expiresat"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "dataSource",
+          "status",
+          "requestedBy"
+        ],
+        "title": "ExportOut"
+      },
+      "ExportParams": {
+        "properties": {
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status",
+            "description": "仅 tasks：按任务状态过滤（如 succeeded / failed）"
+          },
+          "modelId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Modelid",
+            "description": "仅 tasks：按模型目录 id 过滤"
+          },
+          "action": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Action",
+            "description": "仅 audit_events：按动作前缀过滤（如 task.）"
+          },
+          "since": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Since",
+            "description": "起始时间（含），ISO 8601"
+          },
+          "until": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Until",
+            "description": "结束时间（不含），ISO 8601"
+          }
+        },
+        "type": "object",
+        "title": "ExportParams"
+      },
+      "ExportSource": {
+        "type": "string",
+        "enum": [
+          "tasks",
+          "audit_events"
+        ],
+        "title": "ExportSource",
+        "description": "可导出的数据源白名单。\n\n只列已经在表里落了「谁、什么时候、做了什么」的数据。加新数据源要同时\n回答两件事：**谁能导出**（权限）、**导出时按什么过滤**（params 的必填项），\n见 `parameters.py` 的校验表。"
+      },
+      "ExportSourceOut": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "columns": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Columns",
+            "description": "CSV 列，同时也是列顺序"
+          },
+          "permission": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Permission",
+            "description": "导出该源额外需要的权限码；null 表示只需 export:read"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "label",
+          "columns"
+        ],
+        "title": "ExportSourceOut",
+        "description": "可导出的数据源。前端据此渲染下拉，不要硬编码数据源名单。\n\n这份列表来自运行时注册表（`core.ports.export_sources` + 内置源），\n新模块注册一个源之后这里自动多一项——前端不需要跟着发版。"
       },
       "GenerateImageIn": {
         "properties": {
@@ -6482,6 +7242,34 @@
           "pageSize"
         ],
         "title": "PackPublicList"
+      },
+      "Page_ExportOut_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ExportOut"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "default": 0
+          },
+          "page": {
+            "type": "integer",
+            "title": "Page",
+            "default": 1
+          },
+          "pageSize": {
+            "type": "integer",
+            "title": "Pagesize",
+            "default": 24
+          }
+        },
+        "type": "object",
+        "title": "Page[ExportOut]"
       },
       "Page_ImageJobOut_": {
         "properties": {

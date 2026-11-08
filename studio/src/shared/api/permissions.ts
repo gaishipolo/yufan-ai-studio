@@ -21,6 +21,9 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
     group: '内容生产',
     items: [
       { code: 'catalog:read', name: '查看模型目录', description: '' },
+      { code: 'export:create', name: '创建导出', description: '' },
+      { code: 'export:delete', name: '删除导出', description: '' },
+      { code: 'export:read', name: '查看导出', description: '' },
       { code: 'image:create', name: '提交生图任务', description: '' },
       { code: 'image:read', name: '查看生图历史', description: '' },
       { code: 'image:read:all', name: '查看他人生图历史', description: '列表的数据范围开关；与 task:read:all 同义，不含提交他人的生图任务' },
@@ -36,6 +39,12 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
       { code: 'template:read', name: '查看行业模板', description: '' },
       { code: 'template:review', name: '评价自己的替换成片', description: '' },
       { code: 'template:use', name: '使用替换模板并提交零积分生成', description: '' },
+    ],
+  },
+  {
+    group: '系统',
+    items: [
+      { code: 'export:read:audit', name: '导出操作留痕', description: '' },
     ],
   },
   {
@@ -71,6 +80,10 @@ export const PERMISSION_CODES = [
   'asset:share',
   'asset:update',
   'catalog:read',
+  'export:create',
+  'export:delete',
+  'export:read',
+  'export:read:audit',
   'identity:create',
   'identity:delete',
   'identity:read',

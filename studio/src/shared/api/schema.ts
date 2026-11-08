@@ -48,6 +48,10 @@ export const AssetTypeFilter_VALUES = ["all", "image", "video", "audio"] as cons
 export type Capability = "video" | "image" | "audio";
 export const Capability_VALUES = ["video", "image", "audio"] as const;
 
+/** 取值：tasks, audit_events */
+export type ExportSource = "tasks" | "audit_events";
+export const ExportSource_VALUES = ["tasks", "audit_events"] as const;
+
 /** 取值：mine, team, all */
 export type TaskScope = "mine" | "team" | "all";
 export const TaskScope_VALUES = ["mine", "team", "all"] as const;
@@ -154,6 +158,14 @@ export interface AssetOut {
   createdAt: string;
 }
 
+/** CreateExportIn */
+export interface CreateExportIn {
+  /** 数据源，见 enums.ExportSource */
+  dataSource: ExportSource;
+  /** 筛选条件；不填表示该源的全量 */
+  params?: ExportParams;
+}
+
 /** 创建任务入参。
 
 `model` / `durationSec` 不设默认值：合法取值来自模型目录（`GET /models`），
@@ -198,6 +210,71 @@ export interface DeleteTasksOut {
 它们不该顺带把一条已加速的任务改回免费队列。 */
 export interface ExecuteReplacement {
   billingMode?: "free" | "credits" | null;
+}
+
+/** 详情多一个 `downloadable`：让前端不必重复实现「能不能下」的判断。
+
+这条规则有两处（`succeeded` 且未被回收），前端各写一遍必然和回收任务
+对不上——用户会看到「按钮是亮的，点进去 410」。 */
+export interface ExportDetailOut {
+  id: string;
+  dataSource: string;
+  params?: Record<string, unknown>;
+  status: string;
+  rowCount?: number;
+  byteSize?: number;
+  error?: string | null;
+  attempts?: number;
+  requestedBy: string;
+  createdAt?: string | null;
+  startedAt?: string | null;
+  finishedAt?: string | null;
+  expiresAt?: string | null;
+  downloadable?: boolean;
+}
+
+/** ExportOut */
+export interface ExportOut {
+  id: string;
+  dataSource: string;
+  params?: Record<string, unknown>;
+  status: string;
+  rowCount?: number;
+  byteSize?: number;
+  error?: string | null;
+  attempts?: number;
+  requestedBy: string;
+  createdAt?: string | null;
+  startedAt?: string | null;
+  finishedAt?: string | null;
+  expiresAt?: string | null;
+}
+
+/** ExportParams */
+export interface ExportParams {
+  /** 仅 tasks：按任务状态过滤（如 succeeded / failed） */
+  status?: string | null;
+  /** 仅 tasks：按模型目录 id 过滤 */
+  modelId?: string | null;
+  /** 仅 audit_events：按动作前缀过滤（如 task.） */
+  action?: string | null;
+  /** 起始时间（含），ISO 8601 */
+  since?: string | null;
+  /** 结束时间（不含），ISO 8601 */
+  until?: string | null;
+}
+
+/** 可导出的数据源。前端据此渲染下拉，不要硬编码数据源名单。
+
+这份列表来自运行时注册表（`core.ports.export_sources` + 内置源），
+新模块注册一个源之后这里自动多一项——前端不需要跟着发版。 */
+export interface ExportSourceOut {
+  name: string;
+  label: string;
+  /** CSV 列，同时也是列顺序 */
+  columns: string[];
+  /** 导出该源额外需要的权限码；null 表示只需 export:read */
+  permission?: string | null;
 }
 
 /** GenerateImageIn */
@@ -1044,6 +1121,18 @@ export interface EndpointData {
   "GET /api/v1/assets/{asset_id}/cover": unknown;
   /** 读取素材原文件 */
   "GET /api/v1/assets/{asset_id}/file": unknown;
+  /** 我的导出记录 */
+  "GET /api/v1/exports": Page<ExportOut>;
+  /** 创建导出（异步生成，202） */
+  "POST /api/v1/exports": unknown;
+  /** 可导出的数据源 */
+  "GET /api/v1/exports/sources": ExportSourceOut[];
+  /** 删除导出（连带产物） */
+  "DELETE /api/v1/exports/{export_id}": unknown;
+  /** 导出详情 */
+  "GET /api/v1/exports/{export_id}": ExportDetailOut;
+  /** 下载导出文件（本地驱动直出，远端驱动 307） */
+  "GET /api/v1/exports/{export_id}/download": unknown;
   /** 提交生图 */
   "POST /api/v1/generations/image": ImageJobOut;
   /** 存活探针 */

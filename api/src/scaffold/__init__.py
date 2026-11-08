@@ -7,7 +7,10 @@
     app new-module voice --label 配音 --perm voice --slot 3
     app new-module voice --generation     # 额外生成生成流水线骨架
 
-`--slot` 不是装饰：它会被写进 `errors.py` 的 `ModuleErrors(slot=N)`，并参与号段冲突检测。
+`--slot` 不是装饰：它会被写进 `errors.py` 的 `ModuleErrors(slot=N)`。
+约束的粒度是**码值**而不是号段：号段只有 9 个而模块会更多，所以号段按业务
+领域共用（`template` / `storyboard` / `shot` 就共用 7 号）；但两个模块返回
+同一个 `code`，前端就分不清是谁失败了，所以生成前会逐个比对已占用的码值。
 """
 
 from __future__ import annotations
@@ -28,8 +31,13 @@ from scaffold.templates import (
 )
 
 _NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
-# 从现有模块的 errors.py 里读出「谁占了哪个号段」，新增模块时据此查重
+# 从现有模块的 errors.py 里读出号段，用来把下标还原成完整码值
 _SLOT_RE = re.compile(r"""ModuleErrors\(\s*["'][\w]+["']\s*,\s*slot\s*=\s*(\d)""")
+# 只认 `code = errors.code(409, 1)` 这种**定义行**。docstring 里常写
+# `errors.code(409, 1)   # -> 40931` 作说明，那些不能被算成占用。
+_CODE_DEF_RE = re.compile(
+    r"^\s*code\s*=\s*errors\.code\(\s*(\d{3})\s*,\s*(\d)\s*\)", re.MULTILINE
+)
 
 
 class ScaffoldError(RuntimeError):
@@ -111,16 +119,24 @@ def render(plan: ModulePlan) -> dict[str, str]:
     return files
 
 
-def _used_slots(root: Path) -> dict[int, str]:
-    """扫描现有模块的 `errors.py`，返回 {号段: 模块名}。"""
+def _used_codes(root: Path) -> dict[int, str]:
+    """扫描现有模块的 `errors.py`，返回 {错误码值: 模块名}。
+
+    号段要配合 seq 才能还原成码值，所以先读 `slot=N` 再逐条算。
+    读不到号段的文件直接跳过——那种 `errors.py` 不是本脚手架生成的。
+    """
     used: dict[int, str] = {}
     modules_dir = root / "src" / "modules"
     if not modules_dir.is_dir():
         return used
     for errors_file in modules_dir.glob("*/errors.py"):
-        match = _SLOT_RE.search(errors_file.read_text(encoding="utf-8"))
-        if match:
-            used[int(match.group(1))] = errors_file.parent.name
+        text = errors_file.read_text(encoding="utf-8")
+        slot = _SLOT_RE.search(text)
+        if slot is None:
+            continue
+        base = int(slot.group(1)) * 10
+        for status, seq in _CODE_DEF_RE.findall(text):
+            used[int(status) * 100 + base + int(seq)] = errors_file.parent.name
     return used
 
 
@@ -143,17 +159,28 @@ def create_module(plan: ModulePlan, root: Path) -> list[Path]:
     if target.exists():
         raise ScaffoldError(f"目录已存在，拒绝覆盖: {target}")
 
-    used = _used_slots(root)
-    owner = used.get(plan.slot)
-    if owner and owner != plan.name:
+    files = render(plan)
+
+    # 号段可共用，码值不能。这里做的是**生成前**的预检：`ModuleErrors` 在
+    # 导入期还有一道同样的闸门，但那时候错误要等到 `app serve` 才暴露。
+    used = _used_codes(root)
+    wanted = {
+        int(status) * 100 + plan.slot * 10 + int(seq)
+        for status, seq in _CODE_DEF_RE.findall(files["errors.py"])
+    }
+    clashes = {code: used[code] for code in wanted if code in used}
+    if clashes:
+        detail = "、".join(
+            f"{code}（{owner}）" for code, owner in sorted(clashes.items())
+        )
         raise ScaffoldError(
-            f"错误码号段 {plan.slot} 已被模块 {owner} 占用，"
-            "请换一个 slot（见 docs/EXTENDING.md 第 7 节）"
+            f"错误码 {detail} 已被占用。号段（slot {plan.slot}）可以共用，"
+            "同一个码值不能；请换一个 slot，或改掉新模块 errors.py 里的示例 seq"
         )
 
     target.mkdir(parents=True)
     written: list[Path] = []
-    for filename, content in render(plan).items():
+    for filename, content in files.items():
         path = target / filename
         path.write_text(content, encoding="utf-8")
         written.append(path)

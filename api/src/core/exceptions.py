@@ -66,11 +66,18 @@ class ErrorCode:
     UNAVAILABLE = 50_300
 
 
+# 全局错误码归属：`code` 值 -> 占用它的模块名。
+# slot 只有 9 个，而模块会超过 9 个，因此号段是**可共享**的（如 7 号由
+# template / storyboard / shot 共用）；不可共享的是具体码值 —— 两个模块返回
+# 同一个 `code`，前端就分不清是哪件事失败了。
+_CODE_OWNER: dict[int, str] = {}
+
+
 class ModuleErrors:
     """模块级错误码生成器。
 
-    团队成员各自占用一个 `slot`（见 `docs/EXTENDING.md` 的号段分配表），
-    在自己的段内编号，互不干扰：
+    团队成员按业务领域占用一个 `slot`（见 `docs/EXTENDING.md` 的号段分配表），
+    在自己的段内编号：
 
         errors = ModuleErrors("voice", slot=3)
 
@@ -81,6 +88,10 @@ class ModuleErrors:
 
     约束：`slot` 只能取 1-9，`seq` 只能取 1-9，保证
     `code // 100 == http_status` 恒成立、且不会越界到下一个段。
+
+    号段可共用，**同一个 `code` 不能**：`code()` 在导入期查全局归属表，
+    被别的模块占过就抛 `RegistryError`（不是约定，是当场失败）。
+    没有这道闸门时，撞号完全静默，前端只会看到一个含义漂移的数字。
     """
 
     __slots__ = ("module", "slot", "_used")
@@ -104,7 +115,16 @@ class ModuleErrors:
             raise RegistryError(
                 f"{self.module} 错误码重复 {value}: seq {seq} 已被占用"
             )
+
+        owner = _CODE_OWNER.get(value)
+        if owner is not None and owner != self.module:
+            raise RegistryError(
+                f"错误码 {value} 已被模块 {owner} 占用：号段（slot）可以共用，"
+                f"具体码值不能。{self.module} 请换一个 seq，或另选号段"
+            )
+
         self._used[value] = seq
+        _CODE_OWNER[value] = self.module
         return value
 
 
