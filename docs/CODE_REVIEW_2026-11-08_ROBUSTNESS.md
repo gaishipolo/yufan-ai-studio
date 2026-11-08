@@ -13,12 +13,12 @@
 
 | 指标 | 第一轮 | 第二轮（本文主体） | 现在 |
 |---|---|---|---|
-| 关键不变量注入缺陷后被发现 | 8 / 15 | 15 / 15 | **29 / 29** |
-| 有测试的缺口 | 7 个 | 0 个 | **0 个**（又发现 3 个并补齐，§9） |
-| 新增测试 | — | 54 条 | **86 条**（含 §9 的 32 条） |
+| 关键不变量注入缺陷后被发现 | 8 / 15 | 15 / 15 | **31 / 31** |
+| 有测试的缺口 | 7 个 | 0 个 | **0 个**（又发现 3 个守卫缺口 + 1 个真缺陷，§9） |
+| 新增测试 | — | 54 条 | **90 条**（含 §9 的 36 条） |
 | mypy | 220 files, **16 errors** | 220 files, no issues | 221 files, **no issues** |
-| 全量测试 | 864 | 918 | **950 passed / 12 skipped** |
-| CI 状态 | 连续 **8 次 failure** | 后端/前端全绿；PG 迁移根因已修（§5 补记） | 全绿（run 42/43） |
+| 全量测试 | 864 | 918 | **953 passed / 12 skipped** |
+| CI 状态 | 连续 **8 次 failure** | 后端/前端全绿；PG 迁移根因已修（§5 补记） | 全绿（run 42/43/44） |
 
 「7 个缺口」的意思是：**把框架的关键安全判定改坏，840+ 条测试没有一条会红**。
 它们不是「覆盖率不够」，是「守卫不存在」——最典型的一个：把权限判定 `has_all`
@@ -255,8 +255,9 @@ sa.Column('created_at', sa.DATETIME(), nullable=False)
 | 4 | 成功响应有两种形状（裸数据 / `{code:0,...}` 信封） | 前端 `http.ts` 有兼容层；风险是业务对象恰好带 `code` 字段时被误判成信封 |
 | 5 | `dispatch → submit` 之间仍有秒级授权窗口 | 已评估：归零需要注入口回调，收益不划算（上一轮结论，不变） |
 | 6 | PG 迁移 job 是 `continue-on-error` 观察期 | **已修**：下行迁移的 sqlite 专有类型（§5 补记），PG 四步全通；建议观察一周后去掉 `continue-on-error` |
-| 7 | 变异测试不进 CI | 29 个变异约 5 分钟，不适合每次 push 都跑；作为手动工具（§9 已从 15 增至 29） |
-| 8 | `tests/test_storage_s3_live.py` 的 **12 条永远跳过** | S3 驱动只在 mock 层被验证过；真实的 multipart / 预签名 / 断点续传没跑过。**建议**：CI 加 MinIO service（`s3` 镜像，`S3_LIVE_ENDPOINT` 指过去），与 PG job 同形态。这是目前唯一「写进测试但从不执行」的整块区域 |
+| 7 | 变异测试不进 CI | 31 个变异约 6 分钟，不适合每次 push 都跑；作为手动工具（§9 已从 15 增至 31） |
+| 8 | 测试架构：**每个操作一个 `asyncio.run`** | 引擎池里的 `aiosqlite` 连接可能「在 A 循环创建、在 B 循环关闭」。加了 session 收尾的 `dispose_engine()` 之后，`-X dev` 全量跑下来 sqlite 资源告警为 **0**；但这个结构的脆弱性还在——哪天有连接跨过两次 `asyncio.run` 存活，就会重新冒出来。彻底解决要把测试切到「一个 session 一个事件循环」 |
+| 9 | `tests/test_storage_s3_live.py` 只在 CI 跑 | 本地默认 12 条 skip（没有 `S3_LIVE_ENDPOINT`），**CI 用 MinIO 容器真跑**（`ci.yml` 的「启动 MinIO」+ 传 `S3_LIVE_*`）。所以「真实对象存储」这条线是被覆盖的，只是本地看不到 |
 
 ---
 
@@ -336,22 +337,63 @@ sa.Column('created_at', sa.DATETIME(), nullable=False)
 （`tests/test_token_claims.py`）：用途互换、空/缺 `sub`、缺 `sid`、缺 `jti`、
 缺 `exp`、缺 `iat`、过期、伪造、篡改、TTL 上下界。
 
+**⑤ `db/backup.py` 的 sqlite 连接从来不关闭（已修，见 §9.3）**
+
+这条不在计划内：它是追查「CI 为什么多了两条 failure annotation」时撞出来的。
+`with sqlite3.connect(...)` 只管事务、不关连接，于是备份/恢复每次漏一个文件句柄。
+按「用户可感知的后果」排，它比 ④ 更靠前：Windows 上恢复时替换数据库文件会
+`PermissionError`。
+
 ### 9.2 顺带修的一致性问题
 
 | 位置 | 问题 | 影响 |
 |---|---|---|
+| `db/backup.py` | `with sqlite3.connect(...)` **不关闭连接** | 见 §9.3，这条不是「不一致」，是真缺陷 |
 | `cli.py::_cmd_modules` | `len(spec.router.routes)` | `app modules` 把 template 报成 2 条路由，实际 16 条（运维据此误判模块规模）|
 | `test_architecture.py::_required_codes` | `glob("*.py")` | 模块内再分子包时整份漏扫 |
 | `test_architecture.py::test_every_port_is_catalogued` | `glob("*.py")` + 无产出量断言 | 同上；注入口挪进子包就静默失效 |
 | `scripts/mutation_check.py` | 锚点不唯一时**静默跳过** | 汇总只显示一个 `??`，看不出「这条不变量其实没测」|
 
-### 9.3 数字
+### 9.3 追查 CI 的两条假红叉，追出一个真缺陷
+
+我自己那 5 个提交跑完 CI，构建是 Success，但 PR 页面挂着 **2 条 failure annotation：
+`Event loop is closed`**。上一次推送（run 43）没有——所以是我引入的。
+
+往上追：`python -X dev` 跑全量，输出 **14 条 `ResourceWarning`**，其中
+`<sqlite3.Connection> was deleted before being closed` 指向 `tests/test_backup.py`。
+再看实现，`src/db/backup.py` 两处写的都是：
+
+```python
+with sqlite3.connect(source) as src, sqlite3.connect(target) as dst:
+    src.backup(dst)
+```
+
+**`sqlite3.Connection` 作为上下文管理器只管事务，不关连接**（`__exit__` 只
+commit/rollback）。这是 sqlite3 最经典的一处误读，后果分三层：
+
+1. 每次备份/恢复漏一个文件句柄，而备份是**周期任务**（`core.backup` 每天一次）；
+2. Windows 上句柄未放就挡 `os.replace` / 重命名——「恢复时替换数据库文件」会
+   `PermissionError`，而这正好是恢复路径上的一步；
+3. CPython 在 GC 时打 `ResourceWarning: unclosed database`，Linux 上 `__del__`
+   在已关闭的循环里收尾就成了 `RuntimeError: Event loop is closed`，被 Actions
+   的日志解析器标成 failure——**构建全绿，PR 页面上有两个红叉**。
+
+第 3 点才是这次能发现它的原因，也是它危险的地方：它训练出来的行为是
+「annotation 不用看」。修法两处加 `contextlib.closing()`，并补一条不看实现、
+只看结果的用例（`gc.collect()` 后不许有 `ResourceWarning`）。
+
+顺手给测试会话加了 `dispose_engine()` 收尾（`tests/conftest.py`）：跑完不关引擎，
+池里的连接会留给解释器 GC，同样会变成上面那种噪声。从 14 条降到个位数——
+剩下的来自「每个操作一个 `asyncio.run`」这个测试架构（见 §7 限制 8）。
+
+### 9.4 数字
 
 | 项 | 之前 | 现在 |
 |---|---|---|
-| 变异数 | 15 | **29**（新增 4 组权限 + 7 组鉴权/调度 + 各 1 条）|
-| 全量测试 | 918 | **950 passed / 12 skipped** |
-| 变异结论 | 15/15 | **29/29（缺口 0、无效 0）** |
+| 变异数 | 15 | **31**（权限 4 组 + 鉴权/调度 7 组 + 脚手架 + 备份）|
+| 全量测试 | 918 | **953 passed / 12 skipped** |
+| 变异结论 | 15/15 | **31/31（缺口 0、无效 0）** |
+| `python -X dev` 的 sqlite 资源告警 | 14 | **0** |
 
 这一轮自己也踩了一次「守卫失效」：改 `test_permission_coverage.py` 修 ruff 时，把
 `getattr(node, "target", None)` 改成了 `node.target`，于是 `ast.walk` 走到任何非
@@ -367,7 +409,7 @@ cd api
 # 1) 全量测试
 python -m pytest -q --basetemp=var/pt
 
-# 2) 变异扫描（29 个不变量，约 5 分钟）
+# 2) 变异扫描（31 个不变量，约 6 分钟）
 python scripts/mutation_check.py
 
 # 3) 类型与静态检查（与 CI 完全一致）
