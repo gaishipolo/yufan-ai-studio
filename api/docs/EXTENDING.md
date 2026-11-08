@@ -27,6 +27,17 @@
 `test_every_module_declares_permissions` 会失败，除非显式标 `public=True`
 （只适用于健康检查这类必须匿名可访问的接口）。默认安全，想裸奔要写出来。
 
+权限点的**引用侧**也有守卫，两个方向都查（`tests/test_permission_coverage.py`）：
+
+- 用到的码必须有模块声明过（拼错 → 超管正常、别人永远 403）；
+- **声明了的码必须有地方真的拿它做判断**。判定点只有三种形状会被认：
+  `require("...")`、`actor.has / has_all / has_any(...)`、导出源的 `permission` 属性。
+  扫的是 AST 且能跨文件解析常量（`actor.has(PERM_READ_ALL)` 也算），所以新写判定
+  时**不要**发明第四种写法（比如 `actor.can(...)`）——那样这个码会被判成僵尸权限点。
+  真需要新形状，先把它加进 `_ENFORCEMENT_CALLS`。
+- 同理，`BUILTIN_ROLES` 里手写的码必须真实存在：写错时角色建出来就少一个能力，
+  超管自测（`*` 直接放行）永远发现不了。
+
 再补一条收尾动作：**动了接口就重跑 `app export-openapi`**，把 `docs/openapi.json`、
 `docs/API.md`、`studio/src/shared/api/schema.ts`、`studio/src/shared/api/permissions.ts`
 四份生成物一起提交（详见第 8 节）。

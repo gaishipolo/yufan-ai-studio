@@ -11,13 +11,14 @@
 
 ## 结论先说
 
-| 指标 | 第一轮 | 现在 |
-|---|---|---|
-| 关键不变量注入缺陷后被发现 | 8 / 15 | **15 / 15** |
-| 有测试的缺口 | 7 个 | **0 个** |
-| 新增测试 | — | **54 条**（51 个用例，6 个新文件 + 3 处追加） |
-| mypy | 220 files, **16 errors** | 220 files, **no issues** |
-| CI 状态 | 连续 **8 次 failure** | 后端/前端**全绿**；PG 迁移的根因也已修（§5 补记） |
+| 指标 | 第一轮 | 第二轮（本文主体） | 现在 |
+|---|---|---|---|
+| 关键不变量注入缺陷后被发现 | 8 / 15 | 15 / 15 | **29 / 29** |
+| 有测试的缺口 | 7 个 | 0 个 | **0 个**（又发现 3 个并补齐，§9） |
+| 新增测试 | — | 54 条 | **86 条**（含 §9 的 32 条） |
+| mypy | 220 files, **16 errors** | 220 files, no issues | 221 files, **no issues** |
+| 全量测试 | 864 | 918 | **950 passed / 12 skipped** |
+| CI 状态 | 连续 **8 次 failure** | 后端/前端全绿；PG 迁移根因已修（§5 补记） | 全绿（run 42/43） |
 
 「7 个缺口」的意思是：**把框架的关键安全判定改坏，840+ 条测试没有一条会红**。
 它们不是「覆盖率不够」，是「守卫不存在」——最典型的一个：把权限判定 `has_all`
@@ -254,7 +255,8 @@ sa.Column('created_at', sa.DATETIME(), nullable=False)
 | 4 | 成功响应有两种形状（裸数据 / `{code:0,...}` 信封） | 前端 `http.ts` 有兼容层；风险是业务对象恰好带 `code` 字段时被误判成信封 |
 | 5 | `dispatch → submit` 之间仍有秒级授权窗口 | 已评估：归零需要注入口回调，收益不划算（上一轮结论，不变） |
 | 6 | PG 迁移 job 是 `continue-on-error` 观察期 | **已修**：下行迁移的 sqlite 专有类型（§5 补记），PG 四步全通；建议观察一周后去掉 `continue-on-error` |
-| 7 | 变异测试不进 CI | 15 个变异约 3 分钟，不适合每次 push 都跑；作为手动工具 |
+| 7 | 变异测试不进 CI | 29 个变异约 5 分钟，不适合每次 push 都跑；作为手动工具（§9 已从 15 增至 29） |
+| 8 | `tests/test_storage_s3_live.py` 的 **12 条永远跳过** | S3 驱动只在 mock 层被验证过；真实的 multipart / 预签名 / 断点续传没跑过。**建议**：CI 加 MinIO service（`s3` 镜像，`S3_LIVE_ENDPOINT` 指过去），与 PG job 同形态。这是目前唯一「写进测试但从不执行」的整块区域 |
 
 ---
 
@@ -274,6 +276,90 @@ sa.Column('created_at', sa.DATETIME(), nullable=False)
 
 ---
 
+## 九、第二轮追加（2026-11-09）：守卫自己的盲区
+
+第一轮补齐的 15 个不变量都有守卫了。这一轮换了个问法：**守卫自己会不会失效**。
+
+答案是会，而且失效方式高度一致——**扫不到东西时不报错**。目录改名、`glob` 不匹配
+当前布局、`include_router` 换实现、过滤条件写反，结果都是「零个问题」，与「全都
+没问题」在输出上完全相同。这一类已经在本仓真实发生过 4 次，所以这轮把「守卫的
+产出量」本身也变成了断言。
+
+### 9.1 找到的真问题（按严重度）
+
+**① 启动期权限核对漏扫了 `template` 的全部 16 条路由（已修）**
+
+`api/assembly.py::permission_gaps` 遍历 `spec.router.routes`。而 `template/router.py`
+只是两个 `include_router`，所以 `routes` 里是两个 `_IncludedRouter` **占位对象**，
+既没有 `.dependant` 也没有 `.path` —— 循环体一次都没执行。
+
+后果：`require("template:reviewx")` 这种拼写错误，启动期核对返回「无缺口」。
+超管（`*`）自测一切正常，只有恰好持有 `template:read` 的人会一直 403。
+
+讽刺的是，同一个坑 `api/ratelimit_policy.py` 早就踩过并写了 `iter_api_routes` 来
+展开（它的 docstring 里明确写着「守卫会变成永远通过的空检查」）——权限核对没复用它。
+修法：抽出 `api/routing.py::iter_api_routes`，两边共用；三条测试钉住
+（含一条全量断言「每个模块的路由都必须能展开出东西」）。
+
+**② 声明了却没人用的权限点，没有任何人管（已补守卫）**
+
+已有两条守卫只看一个方向（用了的码必须有声明）。反方向没人管：一个权限码声明后
+没人 `require`、没人 `actor.has`，它就是个**什么也不控制的开关**，却会出现在角色
+配置界面里，让管理员以为配好了。
+
+补 `tests/test_permission_coverage.py`：AST 扫全部 `src/**`，认出三种判定形状
+（`require(...)` / `actor.has|has_all|has_any(...)` / 导出源的 `permission` 属性），
+并且**能跨文件解析常量**——33 个权限点里有 12 个写成 `actor.has(PERM_READ_ALL)`，
+只扫字面量会得到 12 条假阳性，那等于没有守卫。
+
+当前结果：**33 个声明，33 个都有判定点，豁免表为空**。同一条守卫顺带覆盖了
+服务层的拼写错误（`actor.has("task:raed:all")` 以前谁都看不见）。
+
+**③ 内置角色模板的权限码没人核对（已补守卫）**
+
+`BUILTIN_ROLES` 里手写的 `"catalog:read"` / `"template:use"` 一旦写错，角色建出来
+就少一个能力，超管自测完全看不出来（`*` 直接放行）。`identity/service.py` 里那句
+「上一个模块就撞上了：`template:use` 写进了声明，库里的 editor 仍然没有」就是
+这个事故的现场记录。补：模板里的每个码（含 `资源:*` 通配）都必须在权限目录里存在。
+
+**④ 令牌缺声明也能过（已收紧）**
+
+变异「不校验 `sub`」跑全套 1000+ 用例 **全绿** —— 即「没有主体的令牌」从来没被
+测过。继续追下去发现更硬的：`jwt.decode` 默认只在校验 `exp` 存在**时**判有效期，
+所以
+
+- 不带 `exp` 的票**永不过期**（签发路径漏写一行即可产生，没有任何现象）；
+- 不带 `iat` 的票被解析器读成 `issued_at=0`，于是**静默跳过「改密让旧票失效」**
+  （`principal.py` 的判断条件就是 `if principal.issued_at and ...`）。
+
+已把 `exp`/`iat` 改成 `options={"require": [...]}`，并补 18 条逐声明用例
+（`tests/test_token_claims.py`）：用途互换、空/缺 `sub`、缺 `sid`、缺 `jti`、
+缺 `exp`、缺 `iat`、过期、伪造、篡改、TTL 上下界。
+
+### 9.2 顺带修的一致性问题
+
+| 位置 | 问题 | 影响 |
+|---|---|---|
+| `cli.py::_cmd_modules` | `len(spec.router.routes)` | `app modules` 把 template 报成 2 条路由，实际 16 条（运维据此误判模块规模）|
+| `test_architecture.py::_required_codes` | `glob("*.py")` | 模块内再分子包时整份漏扫 |
+| `test_architecture.py::test_every_port_is_catalogued` | `glob("*.py")` + 无产出量断言 | 同上；注入口挪进子包就静默失效 |
+| `scripts/mutation_check.py` | 锚点不唯一时**静默跳过** | 汇总只显示一个 `??`，看不出「这条不变量其实没测」|
+
+### 9.3 数字
+
+| 项 | 之前 | 现在 |
+|---|---|---|
+| 变异数 | 15 | **29**（新增 4 组权限 + 7 组鉴权/调度 + 各 1 条）|
+| 全量测试 | 918 | **950 passed / 12 skipped** |
+| 变异结论 | 15/15 | **29/29（缺口 0、无效 0）** |
+
+这一轮自己也踩了一次「守卫失效」：改 `test_permission_coverage.py` 修 ruff 时，把
+`getattr(node, "target", None)` 改成了 `node.target`，于是 `ast.walk` 走到任何非
+赋值节点都会 `AttributeError`，4 个用例 error。**是变异扫描把它标成 `invalid` 才
+发现的**（只看「有没有 failed」会当成「守住了」）。这正是 §1 陷阱一的复用价值。
+
+---
+
 ## 附：怎么复查这份结论
 
 ```bash
@@ -281,7 +367,7 @@ cd api
 # 1) 全量测试
 python -m pytest -q --basetemp=var/pt
 
-# 2) 变异扫描（15 个不变量，约 3 分钟）
+# 2) 变异扫描（29 个不变量，约 5 分钟）
 python scripts/mutation_check.py
 
 # 3) 类型与静态检查（与 CI 完全一致）
