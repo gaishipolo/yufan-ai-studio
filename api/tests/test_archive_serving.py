@@ -84,3 +84,22 @@ def test_remote_driver_still_404s_when_bytes_are_gone(
     (archive_root / media["path"]).unlink()
     response = client.get(f"/api/v1/assets/{media['id']}/file", follow_redirects=False)
     assert response.status_code == 404
+
+
+def test_local_driver_still_404s_when_bytes_are_gone(
+    client: TestClient, archive_root: Path
+) -> None:
+    """本地驱动的对称场景：盘上文件没了必须是 404，不是 500。
+
+    远端那条靠 `storage.exists()` 先 HEAD 一次；本地分支把 `materialize` 交出的
+    路径直接塞给 `FileResponse`，而 Starlette 在发送前 stat 失败会抛
+    `RuntimeError`——兜底处理器把它收成纯文本 `Internal Server Error`，
+    连错误码都没有。这条路径此前**只测了远端那一半**。
+    """
+    media = _upload_png(client, archive_root)
+    (archive_root / media["path"]).unlink()
+
+    response = client.get(f"/api/v1/assets/{media['id']}/file")
+
+    assert response.status_code == 404
+    assert response.json()["code"] == 40_400

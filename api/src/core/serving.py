@@ -62,6 +62,12 @@ class Served:
 
     def response(self) -> Response:
         if self.path is not None:
+            if not self.path.is_file():
+                # 「库里有记录、盘上文件没了」是必然会发生的：GC 误删、迁移中断、
+                # 运维手工清理、备份还原只还原了数据库。不检查的话 `FileResponse`
+                # 在发送前 stat 失败抛 RuntimeError，用户拿到 500「服务器出错」——
+                # 而这其实只是一次正常的「产物不在了」，该 404 该重试。
+                raise NotFound("产物文件已不存在，请重新生成或重新登记")
             # FileResponse 支持 Range：本地驱动下拖进度条不需要把文件读进内存
             return FileResponse(self.path, media_type=self.mime, filename=self.filename)
         if self.url is None:
