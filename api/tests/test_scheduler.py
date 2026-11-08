@@ -204,6 +204,66 @@ async def test_a_hung_handler_is_cancelled_instead_of_freezing_every_job() -> No
     assert ran == ["ok"]
 
 
+async def test_leader_only_lease_call_does_not_block_the_event_loop() -> None:
+    """抢租约是同步阻塞调用（文件锁 / S3 条件写），不能按在事件循环上。
+
+    `LEADER_ELECTOR=backend` + `ARCHIVE_DRIVER=s3` 时，`acquire` 里是几次 boto3
+    往返。旧写法在协程里直接调它：几百毫秒的 S3 期间，所有 HTTP 请求、队列消费、
+    其它周期任务一起停摆，而日志里没有任何异常——现象是「服务偶尔卡一下」，
+    排查方向会被引到数据库或网络上。这条用例用一个 100ms 的假阻塞抓它。
+
+    测量方式要小心：ticker 必须**先跑起来**再触发 `run_once`。`create_task` 之后
+    没有 await 点的话，任务还没开始，它的第一个时间戳取在阻塞之后，于是阻塞被
+    完整漏掉——实测会得到「最大间隔 16ms」这种全绿结果，守卫等于不存在。
+    """
+    block = 0.1
+
+    class _BlockingLease:
+        """结构上满足 LeaderElector：同步 acquire 里做阻塞 IO。"""
+
+        name = "blocking"
+
+        def acquire(self, lease: str, *, ttl: float = 60.0) -> bool:
+            time.sleep(block)
+            return True
+
+        def release(self, lease: str) -> None:
+            return None
+
+    async def noop() -> None:
+        return None
+
+    scheduler = Scheduler(
+        [PeriodicJob("image.gc", 60, noop, immediate=True, leader_only=True)],
+        elector=_BlockingLease(),  # type: ignore[arg-type]
+    )
+    scheduler.start(now=0.0)
+
+    gaps: list[float] = []
+    stop = asyncio.Event()
+
+    async def ticker() -> None:
+        last = time.perf_counter()
+        while not stop.is_set():
+            await asyncio.sleep(0.01)
+            now = time.perf_counter()
+            gaps.append(now - last)
+            last = now
+
+    task = asyncio.create_task(ticker())
+    await asyncio.sleep(0.03)  # 让 ticker 进入循环，否则测不到阻塞
+    await scheduler.run_once(0.0)
+    stop.set()
+    await asyncio.wait_for(task, timeout=2)
+
+    assert gaps
+    worst = max(gaps)
+    assert worst < block / 2, (
+        f"抢租约期间事件循环被按住 {worst * 1000:.0f}ms"
+        f"（假阻塞 {block * 1000:.0f}ms）：同步的 elector 调用必须挪出事件循环"
+    )
+
+
 def test_handler_timeout_defaults_to_the_lease_ttl() -> None:
     """默认超时必须等于租约 TTL，这两个数不能各说各的。
 

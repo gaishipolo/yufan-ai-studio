@@ -176,6 +176,36 @@ class Scheduler:
                 due.append(job)
         return due
 
+    async def _acquire(self, name: str, ttl: float) -> bool:
+        """抢集群租约，**在线程池里**调。
+
+        `LeaderElector` 的实现是同步的，因为它的原语（文件 `O_EXCL`、S3 的
+        `If-None-Match: *`）本身是同步的。`LEADER_ELECTOR=backend` +
+        `ARCHIVE_DRIVER=s3` 时，`acquire` 里是若干次 boto3 往返（`head` / `put`
+        各几十到几百毫秒，接管路径更多）。直接在协程里 await 同步函数不会报错，
+        但会把**整个事件循环**按住那么久：这段时间里所有 HTTP 请求、其它周期任务、
+        队列消费全部停摆，而日志里一条异常都没有——表现为「服务偶尔卡一下」，
+        排查方向会完全跑偏到数据库或网络。
+
+        所以阻塞调用必须离开事件循环。用默认执行器（`asyncio.to_thread`）而不是
+        自建线程池：这里一周期才几次，与口令哈希那种要限并发的场景不是一回事。
+
+        抢租约本身失败（存储不可达）按「没抢到」处理——`_elector` 的实现已经
+        吞掉各自的异常，这里再包一层是为了挡住自定义实现漏吞的情况。
+        """
+        try:
+            return await asyncio.to_thread(self._elector.acquire, name, ttl=ttl)
+        except Exception:  # noqa: BLE001 - 抢不到就是这一轮不跑，失败方向是安全
+            logger.warning("抢集群租约失败，跳过本轮：%s", name)
+            return False
+
+    async def _release(self, name: str) -> None:
+        """释放租约，同样离开事件循环。失败不影响调度：租约本来就会 TTL 过期。"""
+        try:
+            await asyncio.to_thread(self._elector.release, name)
+        except Exception:  # noqa: BLE001 - TTL 兜底，释放失败只是多占一会儿
+            logger.debug("释放集群租约失败（等 TTL 过期）：%s", name)
+
     async def run_once(self, now: float) -> list[str]:
         """执行所有到期任务，返回实际执行的名字（按注册顺序）。"""
         executed: list[str] = []
@@ -186,7 +216,7 @@ class Scheduler:
             timeout = handler_timeout(job)
             acquired = False
             if job.leader_only:
-                acquired = self._elector.acquire(job.name, ttl=timeout)
+                acquired = await self._acquire(job.name, timeout)
                 if not acquired:
                     logger.debug("周期任务 %s 未抢到集群租约，跳过本轮", job.name)
                     continue
@@ -207,7 +237,7 @@ class Scheduler:
                 continue
             finally:
                 if acquired:
-                    self._elector.release(job.name)
+                    await self._release(job.name)
             executed.append(job.name)
         return executed
 

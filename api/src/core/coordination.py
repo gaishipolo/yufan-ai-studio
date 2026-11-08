@@ -50,7 +50,15 @@ TAKEOVER_TICKET_TTL_SEC = 300.0
 
 @runtime_checkable
 class LeaderElector(Protocol):
-    """单次执行的资格判定。"""
+    """单次执行的资格判定。
+
+    **两个方法都是同步的，而且允许阻塞**：底层原语（文件锁、对象存储条件写）
+    没有异步版本。调用方负责把调用挪出事件循环——`Scheduler` 用
+    `asyncio.to_thread` 包着调（见 `core/scheduler.py::_acquire`）。
+
+    实现方**不要**自己 `async def`：那会让「调用方必须 offload」这条约定消失，
+    下一个人在新调用点上直接 `await elector.acquire()` 就又把事件循环按住了。
+    """
 
     # 策略名（local / backend），进 doctor 报告与日志
     name: str
