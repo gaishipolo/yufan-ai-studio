@@ -3104,6 +3104,172 @@
         }
       }
     },
+    "/api/v1/library/assets": {
+      "get": {
+        "tags": [
+          "资产库"
+        ],
+        "summary": "资产库列表（分页 + 分面）",
+        "description": "列表。\n\nM0 骨架：过滤参数已进契约，但还没有表可查，所以固定返回空页。\n这里刻意返回 200 而不是 501 —— 前端占位页与「真实空库」需要同一条渲染路径，\n返回 501 会逼前端为「骨架期」写一个临时分支，M1 又要删掉。",
+        "operationId": "list_assets_api_v1_library_assets_get",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "library",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/LibraryTab",
+              "default": "all"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/LibraryAssetState",
+              "default": "active"
+            }
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/LibraryAssetKind"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Kind"
+            }
+          },
+          {
+            "name": "tagIds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Tagids"
+            }
+          },
+          {
+            "name": "keyword",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 100,
+              "default": "",
+              "title": "Keyword"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/AssetSort",
+              "default": "-createdAt"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "页码，从 1 开始",
+              "default": 1,
+              "title": "Page"
+            },
+            "description": "页码，从 1 开始"
+          },
+          {
+            "name": "pageSize",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "description": "每页条数",
+              "default": 24,
+              "title": "Pagesize"
+            },
+            "description": "每页条数"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_LibraryAssetPage_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/library/facets": {
+      "get": {
+        "tags": [
+          "资产库"
+        ],
+        "summary": "资产库分面统计",
+        "description": "单独的分面接口：给「不加载列表也要显示角标」的页面用（如首页卡片）。\n\n列表接口已经带 `facets`，这个接口是给侧栏常驻角标用的，避免为了六个数字\n拉一整页数据。",
+        "operationId": "facets_api_v1_library_facets_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_LibraryFacets_"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/api/v1/shots": {
       "get": {
         "tags": [
@@ -4901,6 +5067,60 @@
         "type": "object",
         "title": "ApiResponse[ImageRetryOut]"
       },
+      "ApiResponse_LibraryAssetPage_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LibraryAssetPage"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[LibraryAssetPage]"
+      },
+      "ApiResponse_LibraryFacets_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LibraryFacets"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[LibraryFacets]"
+      },
       "ApiResponse_LoginEventListOut_": {
         "properties": {
           "code": {
@@ -6037,6 +6257,17 @@
         "title": "AspectRatio",
         "description": "画面比例：竖屏 / 横屏 / 方形。"
       },
+      "AssetSort": {
+        "type": "string",
+        "enum": [
+          "-createdAt",
+          "createdAt",
+          "name",
+          "-sizeBytes"
+        ],
+        "title": "AssetSort",
+        "description": "排序键。默认按创建时间倒序。"
+      },
       "Capability": {
         "type": "string",
         "enum": [
@@ -7002,6 +7233,234 @@
           "category"
         ],
         "title": "ImportAsset"
+      },
+      "LibraryAssetKind": {
+        "type": "string",
+        "enum": [
+          "video",
+          "audio",
+          "image",
+          "pack"
+        ],
+        "title": "LibraryAssetKind",
+        "description": "资产类型。`pack` 是封装，成员关系在 `library_pack_items`。"
+      },
+      "LibraryAssetOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/LibraryAssetKind"
+          },
+          "origin": {
+            "type": "string",
+            "title": "Origin",
+            "description": "upload / generated / template_source / imported"
+          },
+          "mimeType": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mimetype"
+          },
+          "sizeBytes": {
+            "type": "integer",
+            "title": "Sizebytes",
+            "default": 0
+          },
+          "durationMs": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Durationms"
+          },
+          "hasAudio": {
+            "type": "boolean",
+            "title": "Hasaudio",
+            "default": false
+          },
+          "ownerId": {
+            "type": "string",
+            "title": "Ownerid"
+          },
+          "ownerName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ownername"
+          },
+          "visibility": {
+            "$ref": "#/components/schemas/LibraryVisibility"
+          },
+          "state": {
+            "$ref": "#/components/schemas/LibraryAssetState"
+          },
+          "stateVersion": {
+            "type": "integer",
+            "title": "Stateversion",
+            "default": 1
+          },
+          "coverUrl": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Coverurl"
+          },
+          "createdAt": {
+            "type": "string",
+            "title": "Createdat"
+          },
+          "updatedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updatedat"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "kind",
+          "origin",
+          "ownerId",
+          "visibility",
+          "state",
+          "createdAt"
+        ],
+        "title": "LibraryAssetOut",
+        "description": "列表项。字段对齐 `library_assets` 表，M1 建表后不再改形状。"
+      },
+      "LibraryAssetPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/LibraryAssetOut"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "default": 0
+          },
+          "page": {
+            "type": "integer",
+            "title": "Page",
+            "default": 1
+          },
+          "pageSize": {
+            "type": "integer",
+            "title": "Pagesize",
+            "default": 24
+          },
+          "facets": {
+            "$ref": "#/components/schemas/LibraryFacets"
+          }
+        },
+        "type": "object",
+        "title": "LibraryAssetPage",
+        "description": "列表响应 = 标准分页 + 分面统计。\n\n继承 `Page` 而不是复制 `items/total/page/pageSize`：前端的通用分页组件\n认的是那四个字段，复制一遍迟早出现「这个页面 pageSize 拼错成 page_size」。"
+      },
+      "LibraryAssetState": {
+        "type": "string",
+        "enum": [
+          "draft",
+          "active",
+          "trash"
+        ],
+        "title": "LibraryAssetState",
+        "description": "生命周期状态。与 `visibility` 正交，别把草稿/回收站塞进可见性。"
+      },
+      "LibraryFacets": {
+        "properties": {
+          "all": {
+            "type": "integer",
+            "title": "All",
+            "default": 0
+          },
+          "personal": {
+            "type": "integer",
+            "title": "Personal",
+            "default": 0
+          },
+          "group": {
+            "type": "integer",
+            "title": "Group",
+            "default": 0
+          },
+          "team": {
+            "type": "integer",
+            "title": "Team",
+            "default": 0
+          },
+          "drafts": {
+            "type": "integer",
+            "title": "Drafts",
+            "default": 0
+          },
+          "trash": {
+            "type": "integer",
+            "title": "Trash",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "title": "LibraryFacets",
+        "description": "分面统计：五个一级入口的条数，前端直接渲染成侧栏角标。\n\n与 `items` 同一次查询算出，不额外发起请求——否则切换 tab 时角标会跳。"
+      },
+      "LibraryTab": {
+        "type": "string",
+        "enum": [
+          "all",
+          "personal",
+          "group",
+          "team"
+        ],
+        "title": "LibraryTab",
+        "description": "列表的可见范围（对应侧栏一级入口的个人/小组/团队/全部）。\n\n草稿箱与回收站不在这里：它们是 `state` 的两个值，与可见范围正交。\n把「草稿」做成 `library=draft` 会让「草稿属于谁」变成一个可见范围问题，\n而实际不变式是「草稿必须是 personal」。"
+      },
+      "LibraryVisibility": {
+        "type": "string",
+        "enum": [
+          "personal",
+          "group",
+          "team"
+        ],
+        "title": "LibraryVisibility",
+        "description": "可见范围。`personal` 是唯一允许草稿与回收站存在的范围。"
       },
       "LoginEventListOut": {
         "properties": {

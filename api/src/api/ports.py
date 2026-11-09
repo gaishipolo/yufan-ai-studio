@@ -73,6 +73,9 @@ from core.feed import has_replacement_feed
 from core.ports.accounts import has_account_status_checker
 from core.ports.assets import reference_source_gaps
 from core.ports.export_sources import export_sources
+from core.ports.library_ingest import has_library_ingest
+from core.ports.library_lookup import has_library_lookup
+from core.ports.library_references import has_library_references
 from core.ports.media import has_asset_lookup
 
 __all__ = ["PORT_CATALOG", "PortSpec", "port_status"]
@@ -169,6 +172,35 @@ PORT_CATALOG: tuple[PortSpec, ...] = (
         when_unregistered="导出功能仍可用，只是可选数据源为空："
         "`GET /exports/sources` 只剩内置的 audit_events，创建别的源返回 400",
         is_registered=lambda: bool(export_sources()),
+    ),
+    # ---- 资产库 v2：三个注入口刻意与旧 asset 的注入口分开 ----
+    # 并存期两套库同时对在线，共用注入口会让「问的是哪一边」变成隐式行为。
+    PortSpec(
+        name="library-lookup",
+        module="core.ports.library_lookup",
+        protocol="LibraryLookup",
+        implementer="modules/library（v2 资产库，import 期注册 `SqlLibraryLookup`）",
+        when_unregistered="fail-closed（见本文件开头的例外说明）：抛 503，不返回空映射。"
+        "退化成「查不到 = 不存在」会把装配故障报成用户数据问题",
+        is_registered=has_library_lookup,
+    ),
+    PortSpec(
+        name="library-ingest",
+        module="core.ports.library_ingest",
+        protocol="LibraryIngest",
+        implementer="modules/library（`ingest_generated()`，生成侧只能经它落草稿箱）",
+        when_unregistered="fail-closed：抛 503。生成成功但没入库是最难发现的一类问题，"
+        "宁可让生成侧显式失败一次",
+        is_registered=has_library_ingest,
+    ),
+    PortSpec(
+        name="library-references",
+        module="core.ports.library_references",
+        protocol="LibraryReferenceChecker",
+        implementer="modules/library（聚合 v2 封装成员、下载任务与将来接入的跨模块来源）",
+        when_unregistered="fail-closed：抛 503，v2 资产一律不可彻底删除。"
+        "「查不到 = 没人引用」在这里等于静默放行不可逆删除",
+        is_registered=has_library_references,
     ),
 )
 

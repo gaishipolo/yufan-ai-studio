@@ -1427,7 +1427,7 @@ boto3 client；`S3_BUCKET_MODE=shared` 下用 `archive/` 前缀隔离。
 | 5 | asset | 素材（`AssetNotFound`、`AssetInUse` 等） |
 | 6 | image | 生图 |
 | 7 | template / storyboard / shot | 模板类 |
-| 8 | notify / billing | 横向能力（尚未落地） |
+| 8 | library / notify / billing | 资产库 v2（2026-11-09 起占用，`SHARED_ASSET_NOT_DELETABLE` 等）；通知 / 计费尚未落地，落地时共用本号段、靠 `seq` 区分具体码值 |
 | 9 | export | 导出（`ExportBusy` 等） |
 
 **号段 1–9 已经全部有归属，没有空格了。** 第 10 个模块不该去抢号段，而是和

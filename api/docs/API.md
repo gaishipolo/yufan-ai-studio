@@ -2,7 +2,7 @@
 
 > 此文件由 `app export-openapi` 自动生成，请勿手工编辑。
 >
-> 版本 `0.2.0`｜共 **90** 个接口 / **10** 个模块
+> 版本 `0.2.0`｜共 **92** 个接口 / **11** 个模块
 >
 > 重新生成：`cd api && .venv/Scripts/python -m cli export-openapi`
 
@@ -134,6 +134,22 @@ Authorization: Bearer <accessToken>
 | `identity:update` | 编辑用户（含停用、重置密码） | 不含分配角色。改他人昵称/头像：目标不能是超管；重置密码、改他人邮箱、启停账号：目标权限不得高于自己（超管仍需超管） |
 | `identity:user:permission:manage` | 设置个人权限 | 单独授予，与团队/小组/角色取并集；不能授出自己没有的权限 |
 
+**资产库**
+
+| 权限码 | 名称 | 说明 |
+|---|---|---|
+| `library:create` | 上传与封装资产 |  |
+| `library:delete` | 删除本人资产（移入回收站） |  |
+| `library:delete:any` | 管理任意资产（含他人与团队库） |  |
+| `library:draft:review` | 审核他人草稿 |  |
+| `library:generation:ingest` | 生成结果入库 |  |
+| `library:read` | 查看资产库 |  |
+| `library:share` | 发起共享与撤销共享申请 |  |
+| `library:share:approve` | 审核共享与撤销申请 |  |
+| `library:share:direct` | 免审直接共享到小组 |  |
+| `library:tag:manage` | 管理标签（改名 / 合并 / 删除） |  |
+| `library:update` | 编辑本人资产 |  |
+
 > 判定规则：`*` 恒真；`task:*` 这类通配可覆盖 `task:read`；否则按字符串精确匹配。
 
 ---
@@ -152,6 +168,7 @@ Authorization: Bearer <accessToken>
 | `40022` | 400 | identity | `UnknownPermission` | 存在无法识别的权限点 |
 | `40023` | 400 | identity | `TeamGrantForbidden` | 团队基础权限不能包含管理类权限或通配符 |
 | `40051` | 400 | asset | `FileTypeNotAllowed` | 支持 MP4、PNG、JPG、WebP、MP3 和 WAV |
+| `40081` | 400 | library | `RevokeReasonRequired` | 撤销共享必须填写理由 |
 | `40100` | 401 | 框架 | `Unauthorized` | 请先登录 |
 | `40121` | 401 | identity | `CredentialInvalid` | 用户名或密码错误 |
 | `40122` | 401 | identity | `RefreshTokenInvalid` | 刷新令牌已失效，请重新登录 |
@@ -159,6 +176,7 @@ Authorization: Bearer <accessToken>
 | `40321` | 403 | identity | `AccountDisabled` | 账号已停用，请联系管理员 |
 | `40322` | 403 | identity | `SuperuserRequired` | 该操作需要超级管理员权限 |
 | `40323` | 403 | identity | `PermissionEscalation` | 不能授予自己不具备的权限 |
+| `40381` | 403 | library | `DraftReviewForbidden` | 没有审核他人草稿的权限 |
 | `40400` | 404 | 框架 | `NotFound` | 资源不存在 |
 | `40421` | 404 | identity | `UserNotFound` | 用户不存在 |
 | `40422` | 404 | identity | `RoleNotFound` | 角色不存在 |
@@ -176,6 +194,12 @@ Authorization: Bearer <accessToken>
 | `40927` | 409 | identity | `GroupNameTaken` | 小组名称已被占用 |
 | `40951` | 409 | asset | `AssetInUse` | 素材仍被引用，不能删除 |
 | `40971` | 409 | template | `TemplateBusy` | 模板正在处理中，请稍后再试 |
+| `40981` | 409 | library | `SharedAssetNotDeletable` | 该资产仍处于共享状态，请先撤销共享后再删除 |
+| `40982` | 409 | library | `TeamDeleteForbidden` | 团队库资产不能直接删除，请先撤销团队共享 |
+| `40983` | 409 | library | `ShareRevokePending` | 撤销共享正在审批中，通过后再删除 |
+| `40984` | 409 | library | `DraftNotReviewable` | 该草稿已被处理，请刷新后重试 |
+| `40985` | 409 | library | `AssetNotInTrash` | 该资产不在回收站 |
+| `40986` | 409 | library | `TrashEntryReferenced` | 资产仍被引用，不能彻底删除 |
 | `40991` | 409 | export | `ExportBusy` | 同一份数据正在导出中，请等待它完成 |
 | `40992` | 409 | export | `ExportNotReady` | 导出尚未生成完成，请稍后再试 |
 | `41091` | 410 | export | `ExportGone` | 导出文件已过保留期被回收，请重新导出 |
@@ -202,6 +226,7 @@ Authorization: Bearer <accessToken>
 | 镜头库 | 1 | 见下方 `4.8` |
 | 系统 | 2 | 见下方 `4.9` |
 | 导出 | 6 | 见下方 `4.10` |
+| 资产库 | 2 | 见下方 `4.11` |
 
 ### 4.1 身份（39 个）
 
@@ -2387,6 +2412,64 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 
 **响应** `ApiResponse<unknown>`（前端取 `res.data`）
 
+### 4.11 资产库（2 个）
+
+| 方法 | 路径 | 说明 | 鉴权 |
+|---|---|---|---|
+| `GET` | `/api/v1/library/assets` | 资产库列表（分页 + 分面） | 🔒 |
+| `GET` | `/api/v1/library/facets` | 资产库分面统计 | 🔒 |
+
+#### `GET /api/v1/library/assets`
+
+**资产库列表（分页 + 分面）**
+
+列表。
+
+M0 骨架：过滤参数已进契约，但还没有表可查，所以固定返回空页。
+这里刻意返回 200 而不是 501 —— 前端占位页与「真实空库」需要同一条渲染路径，
+返回 501 会逼前端为「骨架期」写一个临时分支，M1 又要删掉。
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `library` | query | `LibraryTab` | 否 |  |
+| `state` | query | `LibraryAssetState` | 否 |  |
+| `kind` | query | `LibraryAssetKind | null` | 否 |  |
+| `tagIds` | query | `string[] | null` | 否 |  |
+| `keyword` | query | `string` | 否 |  |
+| `sort` | query | `AssetSort` | 否 |  |
+| `page` | query | `number` | 否 | 页码，从 1 开始 |
+| `pageSize` | query | `number` | 否 | 每页条数 |
+
+**响应** `ApiResponse<LibraryAssetPage>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `items` | `LibraryAssetOut[]` | 否 |  |
+| `total` | `number` | 否 |  |
+| `page` | `number` | 否 |  |
+| `pageSize` | `number` | 否 |  |
+| `facets` | `LibraryFacets` | 否 |  |
+
+#### `GET /api/v1/library/facets`
+
+**资产库分面统计**
+
+单独的分面接口：给「不加载列表也要显示角标」的页面用（如首页卡片）。
+
+列表接口已经带 `facets`，这个接口是给侧栏常驻角标用的，避免为了六个数字
+拉一整页数据。
+
+**响应** `ApiResponse<LibraryFacets>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `all` | `number` | 否 |  |
+| `personal` | `number` | 否 |  |
+| `group` | `number` | 否 |  |
+| `team` | `number` | 否 |  |
+| `drafts` | `number` | 否 |  |
+| `trash` | `number` | 否 |  |
+
 ---
 
 ## 5. 数据模型
@@ -2448,6 +2531,10 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 ### `AspectRatio`（枚举）
 
 取值：`9:16`、`16:9`、`1:1`
+
+### `AssetSort`（枚举）
+
+取值：`-createdAt`、`createdAt`、`name`、`-sizeBytes`
 
 ### `Capability`（枚举）
 
@@ -2691,6 +2778,75 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 |---|---|---|---|
 | `relativePath` | `string` | 是 |  |
 | `category` | `"source" \| "character" \| "product" \| "scene" \| "audio"` | 是 |  |
+
+### `LibraryAssetKind`（枚举）
+
+取值：`video`、`audio`、`image`、`pack`
+
+### `LibraryAssetOut`
+
+列表项。字段对齐 `library_assets` 表，M1 建表后不再改形状。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `kind` | `LibraryAssetKind` | 是 |  |
+| `origin` | `string` | 是 | upload / generated / template_source / imported |
+| `mimeType` | `string \| null` | 否 |  |
+| `sizeBytes` | `number` | 否 |  |
+| `durationMs` | `number \| null` | 否 |  |
+| `hasAudio` | `boolean` | 否 |  |
+| `ownerId` | `string` | 是 |  |
+| `ownerName` | `string \| null` | 否 |  |
+| `visibility` | `LibraryVisibility` | 是 |  |
+| `state` | `LibraryAssetState` | 是 |  |
+| `stateVersion` | `number` | 否 |  |
+| `coverUrl` | `string \| null` | 否 |  |
+| `createdAt` | `string` | 是 |  |
+| `updatedAt` | `string \| null` | 否 |  |
+
+### `LibraryAssetPage`
+
+列表响应 = 标准分页 + 分面统计。
+
+继承 `Page` 而不是复制 `items/total/page/pageSize`：前端的通用分页组件
+认的是那四个字段，复制一遍迟早出现「这个页面 pageSize 拼错成 page_size」。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `items` | `LibraryAssetOut[]` | 否 |  |
+| `total` | `number` | 否 |  |
+| `page` | `number` | 否 |  |
+| `pageSize` | `number` | 否 |  |
+| `facets` | `LibraryFacets` | 否 |  |
+
+### `LibraryAssetState`（枚举）
+
+取值：`draft`、`active`、`trash`
+
+### `LibraryFacets`
+
+分面统计：五个一级入口的条数，前端直接渲染成侧栏角标。
+
+与 `items` 同一次查询算出，不额外发起请求——否则切换 tab 时角标会跳。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `all` | `number` | 否 |  |
+| `personal` | `number` | 否 |  |
+| `group` | `number` | 否 |  |
+| `team` | `number` | 否 |  |
+| `drafts` | `number` | 否 |  |
+| `trash` | `number` | 否 |  |
+
+### `LibraryTab`（枚举）
+
+取值：`all`、`personal`、`group`、`team`
+
+### `LibraryVisibility`（枚举）
+
+取值：`personal`、`group`、`team`
 
 ### `LoginEventListOut`
 

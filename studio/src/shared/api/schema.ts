@@ -32,6 +32,10 @@ export interface Page<T> {
 export type AspectRatio = "9:16" | "16:9" | "1:1";
 export const AspectRatio_VALUES = ["9:16", "16:9", "1:1"] as const;
 
+/** 取值：-createdAt, createdAt, name, -sizeBytes */
+export type AssetSort = "-createdAt" | "createdAt" | "name" | "-sizeBytes";
+export const AssetSort_VALUES = ["-createdAt", "createdAt", "name", "-sizeBytes"] as const;
+
 /** 取值：video, image, audio */
 export type Capability = "video" | "image" | "audio";
 export const Capability_VALUES = ["video", "image", "audio"] as const;
@@ -39,6 +43,22 @@ export const Capability_VALUES = ["video", "image", "audio"] as const;
 /** 取值：tasks, audit_events */
 export type ExportSource = "tasks" | "audit_events";
 export const ExportSource_VALUES = ["tasks", "audit_events"] as const;
+
+/** 取值：video, audio, image, pack */
+export type LibraryAssetKind = "video" | "audio" | "image" | "pack";
+export const LibraryAssetKind_VALUES = ["video", "audio", "image", "pack"] as const;
+
+/** 取值：draft, active, trash */
+export type LibraryAssetState = "draft" | "active" | "trash";
+export const LibraryAssetState_VALUES = ["draft", "active", "trash"] as const;
+
+/** 取值：all, personal, group, team */
+export type LibraryTab = "all" | "personal" | "group" | "team";
+export const LibraryTab_VALUES = ["all", "personal", "group", "team"] as const;
+
+/** 取值：personal, group, team */
+export type LibraryVisibility = "personal" | "group" | "team";
+export const LibraryVisibility_VALUES = ["personal", "group", "team"] as const;
 
 /** 取值：mine, team, all */
 export type TaskScope = "mine" | "team" | "all";
@@ -366,6 +386,51 @@ export interface ImageRetryOut {
 export interface ImportAsset {
   relativePath: string;
   category: "source" | "character" | "product" | "scene" | "audio";
+}
+
+/** 列表项。字段对齐 `library_assets` 表，M1 建表后不再改形状。 */
+export interface LibraryAssetOut {
+  id: string;
+  name: string;
+  kind: LibraryAssetKind;
+  /** upload / generated / template_source / imported */
+  origin: string;
+  mimeType?: string | null;
+  sizeBytes?: number;
+  durationMs?: number | null;
+  hasAudio?: boolean;
+  ownerId: string;
+  ownerName?: string | null;
+  visibility: LibraryVisibility;
+  state: LibraryAssetState;
+  stateVersion?: number;
+  coverUrl?: string | null;
+  createdAt: string;
+  updatedAt?: string | null;
+}
+
+/** 列表响应 = 标准分页 + 分面统计。
+
+继承 `Page` 而不是复制 `items/total/page/pageSize`：前端的通用分页组件
+认的是那四个字段，复制一遍迟早出现「这个页面 pageSize 拼错成 page_size」。 */
+export interface LibraryAssetPage {
+  items?: LibraryAssetOut[];
+  total?: number;
+  page?: number;
+  pageSize?: number;
+  facets?: LibraryFacets;
+}
+
+/** 分面统计：五个一级入口的条数，前端直接渲染成侧栏角标。
+
+与 `items` 同一次查询算出，不额外发起请求——否则切换 tab 时角标会跳。 */
+export interface LibraryFacets {
+  all?: number;
+  personal?: number;
+  group?: number;
+  team?: number;
+  drafts?: number;
+  trash?: number;
 }
 
 /** LoginEventListOut */
@@ -1234,6 +1299,10 @@ export interface EndpointData {
   "GET /api/v1/images": Page<ImageJobOut>;
   /** 重试失败的生图 */
   "POST /api/v1/images/{job_id}/retry": ImageRetryOut;
+  /** 资产库列表（分页 + 分面） */
+  "GET /api/v1/library/assets": LibraryAssetPage;
+  /** 资产库分面统计 */
+  "GET /api/v1/library/facets": LibraryFacets;
   /** 可用模型目录（含参数 schema） */
   "GET /api/v1/models": ModelListOut;
   /** 镜头词条列表 */
