@@ -19,6 +19,11 @@ vi.mock('@/shared/access/end-session', () => ({
 /** 能过 checkPassword 的口令：≥10 位、非纯数字、不同字符 ≥4 */
 const NEW_PASSWORD = 'abcd1234ef';
 
+/* `userEvent.type` 逐字符触发：单跑这个文件约 0.7s，但 57 个文件并行时
+   会被调度拖到 5–12s，Vitest 默认 5s 会假失败。只放宽本文件的超时，
+   不改全局配置 —— 这些用例验的是「提交什么、清不清场」，不是输入速度。 */
+const TIMEOUT = 10_000;
+
 function fill(oldPassword: string, next: string, confirm: string) {
   return async () => {
     await userEvent.type(screen.getByLabelText(/当前密码/), oldPassword);
@@ -52,7 +57,7 @@ describe('ChangePasswordModal', () => {
     expect(mocks.endSession).toHaveBeenCalledWith('password');
     // 先关弹窗再清场：清场会触发守卫重定向，留着弹窗只会闪一下
     expect(onClose).toHaveBeenCalled();
-  });
+  }, TIMEOUT);
 
   it('两次输入不一致时既不发请求也不结束会话', async () => {
     render(<ChangePasswordModal open onClose={vi.fn()} />);
@@ -62,7 +67,7 @@ describe('ChangePasswordModal', () => {
     expect(mocks.mutate).not.toHaveBeenCalled();
     expect(mocks.endSession).not.toHaveBeenCalled();
     expect(screen.getByRole('alert')).toHaveTextContent('两次输入的新密码不一致');
-  });
+  }, TIMEOUT);
 
   it('新口令不满足策略时拦在前端（少一次往返）', async () => {
     render(<ChangePasswordModal open onClose={vi.fn()} />);
@@ -71,5 +76,5 @@ describe('ChangePasswordModal', () => {
 
     expect(mocks.mutate).not.toHaveBeenCalled();
     expect(screen.getByRole('alert')).toHaveTextContent('不能是纯数字');
-  });
+  }, TIMEOUT);
 });

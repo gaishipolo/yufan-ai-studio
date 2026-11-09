@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { Button, FormField, Modal, MultiSelect, TextInput, type MultiSelectOption } from '@/shared/ui';
+import { Button, FormField, Modal, Select, TextInput, type SelectOption } from '@/shared/ui';
 import { toast } from '@/shared/lib/toast';
 import type { Role } from '@/entities/role/model/types';
 import type { Group } from '@/entities/group/model/types';
@@ -20,8 +20,12 @@ import type { User } from '@/entities/user/model/types';
  * `isEdit` 分支表达。编辑时改角色属于提权动作，走「分配角色」并单独受
  * `identity:role:manage` 约束；这里不碰。
  *
- * 角色与分组都用多选下拉：收起时各占一行，展开才显示选项，避免原来
- * 复选框长列表把弹窗撑到需要滚动。两者都支持多选（可挂多角色、可属多组）。
+ * 分组与角色是**单选**的原生下拉，并放在表单顶部：Modal 容器有 `overflow-auto`，
+ * 自定义浮层放在底部会被裁切、还会盖住提交按钮；原生 `<select>` 的选项层由浏览器
+ * 渲染、不占文档流，浏览器在空间不足时自动向上展开，移到顶部后向下也有足够空间。
+ *
+ * 接口入参仍是数组（底层允许一人多组 / 多角色，由小组「成员」页签和「分配角色」
+ * 弹窗维护），这里只提交 0 或 1 项 —— 建号入口按界面语义收敛为单选，不动后端契约。
  */
 export function UserFormModal({
   open,
@@ -48,8 +52,8 @@ export function UserFormModal({
   const [phone, setPhone] = useState('');
   const [position, setPosition] = useState('');
   const [avatarUrl, setAvatarUrl] = useState('');
-  const [roleIds, setRoleIds] = useState<string[]>([]);
-  const [groupIds, setGroupIds] = useState<string[]>([]);
+  const [roleId, setRoleId] = useState('');
+  const [groupId, setGroupId] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
 
   // 每次打开都从传入值重置，避免上一次的残留（尤其是密码）
@@ -62,24 +66,29 @@ export function UserFormModal({
     setPhone(user?.phone ?? '');
     setPosition(user?.position ?? '');
     setAvatarUrl(user?.avatarUrl ?? '');
-    setRoleIds(user?.roles.map((role) => role.id) ?? []);
-    setGroupIds([]);
+    setRoleId(user?.roles[0]?.id ?? '');
+    setGroupId('');
     setFormError(null);
   }, [open, user]);
 
   const pending = createUser.isPending || updateUser.isPending;
 
-  const roleOptions: MultiSelectOption[] = roles.map((role) => ({
-    value: role.id,
-    label: role.name,
-    description: role.description || role.code,
-    badge: role.isSuperuser ? '超管' : role.isBuiltin ? '内置' : undefined,
-  }));
-  const groupOptions: MultiSelectOption[] = groups.map((group) => ({
-    value: group.id,
-    label: group.name,
-    description: group.description || '暂无小组说明',
-  }));
+  // 首项是「不选」占位：单选下拉用空串表示未选，提交时映射回空数组。
+  const roleOptions: SelectOption[] = [
+    { value: '', label: '不分配角色' },
+    ...roles.map((role) => ({
+      value: role.id,
+      label: role.isSuperuser
+        ? `${role.name}（超管）`
+        : role.isBuiltin
+          ? `${role.name}（内置）`
+          : role.name,
+    })),
+  ];
+  const groupOptions: SelectOption[] = [
+    { value: '', label: groups.length ? '不加入分组' : '暂无可选分组' },
+    ...groups.map((group) => ({ value: group.id, label: group.name })),
+  ];
 
   const handleSubmit = (event: FormEvent) => {
     event.preventDefault();
@@ -138,8 +147,8 @@ export function UserFormModal({
         email: email.trim() || null,
         phone: phone.trim() || null,
         position: position.trim() || null,
-        roleIds,
-        groupIds,
+        roleIds: roleId ? [roleId] : [],
+        groupIds: groupId ? [groupId] : [],
       },
       {
         onSuccess: () => {
@@ -159,6 +168,37 @@ export function UserFormModal({
       width={520}
     >
       <form className="space-y-3 px-[18px] py-4" onSubmit={handleSubmit}>
+        {/* 身份归属放在最上面：下拉展开时下方有足够空间，不会像放在底部那样
+            被 Modal 的滚动容器裁切、也盖不到「取消 / 创建」按钮。 */}
+        {!isEdit && (
+          <div className="grid gap-3 sm:grid-cols-2">
+            <FormField
+              label="分组"
+              htmlFor="user-group"
+              hint={groups.length ? '创建后可在小组里调整' : '暂无分组，可先在左侧新增'}
+            >
+              <Select
+                id="user-group"
+                block
+                options={groupOptions}
+                value={groupId}
+                disabled={pending}
+                onChange={(event) => setGroupId(event.target.value)}
+              />
+            </FormField>
+            <FormField label="角色" htmlFor="user-role" hint="决定基础权限点">
+              <Select
+                id="user-role"
+                block
+                options={roleOptions}
+                value={roleId}
+                disabled={pending}
+                onChange={(event) => setRoleId(event.target.value)}
+              />
+            </FormField>
+          </div>
+        )}
+
         {isEdit ? (
           <FormField label="登录名" htmlFor="user-username">
             {/* 登录名是历史归属的一部分，创建后不可改 */}
@@ -253,35 +293,6 @@ export function UserFormModal({
               />
             </div>
           </FormField>
-        )}
-
-        {!isEdit && (
-          <div className="grid gap-3 sm:grid-cols-2">
-            <FormField label="分组" htmlFor="user-group" hint="可多选；创建后可在小组里调整">
-              <MultiSelect
-                id="user-group"
-                ariaLabel="分组"
-                options={groupOptions}
-                value={groupIds}
-                onChange={setGroupIds}
-                placeholder="不加入分组"
-                emptyText="暂无可选分组，可先在左侧「新增分组」"
-                disabled={pending}
-              />
-            </FormField>
-            <FormField label="角色" htmlFor="user-role" hint="可多选；决定基础权限点">
-              <MultiSelect
-                id="user-role"
-                ariaLabel="角色"
-                options={roleOptions}
-                value={roleIds}
-                onChange={setRoleIds}
-                placeholder="不分配角色"
-                emptyText="还没有可用角色，请先在「角色与权限」页签创建"
-                disabled={pending}
-              />
-            </FormField>
-          </div>
         )}
 
         {formError && (

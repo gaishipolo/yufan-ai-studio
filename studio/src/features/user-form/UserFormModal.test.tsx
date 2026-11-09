@@ -104,10 +104,9 @@ describe('UserFormModal', () => {
       renderModal();
 
       expect(screen.getByLabelText(/初始密码/)).toBeInTheDocument();
-      expect(screen.getByText('角色')).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: '分组' })).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: '角色' })).toBeInTheDocument();
-      // 两个下拉都收起，选项不会铺满弹窗
+      expect(screen.getByRole('combobox', { name: '分组' })).toBeInTheDocument();
+      expect(screen.getByRole('combobox', { name: '角色' })).toBeInTheDocument();
+      // 原生下拉的浮层由浏览器渲染，弹窗里不会铺开复选框长列表
       expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
       expect(screen.queryByLabelText(/头像地址/)).not.toBeInTheDocument();
     });
@@ -170,28 +169,41 @@ describe('UserFormModal', () => {
       });
     });
 
-    it('从下拉里选分组和角色，提交时带上各自的 id（可多选）', async () => {
+    it('单选分组和角色，提交时各带一个 id', async () => {
       const user = userEvent.setup();
       renderModal(null, { roles: ROLES, groups: GROUPS });
 
       await user.type(screen.getByLabelText(/登录名/), 'Alice');
       await user.type(screen.getByLabelText(/初始密码/), 'alice12345');
-
-      await user.click(screen.getByRole('button', { name: '分组' }));
-      await user.click(screen.getByRole('checkbox', { name: /内容组/ }));
-      await user.click(screen.getByRole('checkbox', { name: /运营组/ }));
-      // 点另一个下拉会先关掉前一个：两个浮层不能同时开着
-      await user.click(screen.getByRole('button', { name: '角色' }));
-      await user.click(screen.getByRole('checkbox', { name: /内容编辑/ }));
-      expect(screen.getByRole('button', { name: '分组' })).toHaveTextContent('已选 2 项');
+      await user.selectOptions(screen.getByRole('combobox', { name: '分组' }), 'g_content');
+      await user.selectOptions(screen.getByRole('combobox', { name: '角色' }), 'r_editor');
 
       await submit(user);
 
       expect(mutations.create).toHaveBeenCalledTimes(1);
       expect(mutations.create.mock.calls[0][0]).toMatchObject({
         username: 'alice',
-        groupIds: ['g_content', 'g_ops'],
+        groupIds: ['g_content'],
         roleIds: ['r_editor'],
+      });
+    });
+
+    it('重新选择会替换旧值，不会累加成多项', async () => {
+      const user = userEvent.setup();
+      renderModal(null, { roles: ROLES, groups: GROUPS });
+
+      await user.selectOptions(screen.getByRole('combobox', { name: '分组' }), 'g_content');
+      await user.selectOptions(screen.getByRole('combobox', { name: '分组' }), 'g_ops');
+      await user.selectOptions(screen.getByRole('combobox', { name: '角色' }), 'r_editor');
+      await user.selectOptions(screen.getByRole('combobox', { name: '角色' }), 'r_admin');
+
+      await user.type(screen.getByLabelText(/登录名/), 'alice');
+      await user.type(screen.getByLabelText(/初始密码/), 'alice12345');
+      await submit(user);
+
+      expect(mutations.create.mock.calls[0][0]).toMatchObject({
+        groupIds: ['g_ops'],
+        roleIds: ['r_admin'],
       });
     });
 
@@ -199,8 +211,8 @@ describe('UserFormModal', () => {
       const user = userEvent.setup();
       renderModal(null, { roles: ROLES });
 
-      await user.click(screen.getByRole('button', { name: '分组' }));
-      expect(screen.getByText(/暂无可选分组/)).toBeInTheDocument();
+      expect(screen.getByRole('option', { name: '暂无可选分组' })).toBeInTheDocument();
+      expect(screen.getByRole('combobox', { name: '分组' })).toHaveValue('');
 
       await user.type(screen.getByLabelText(/登录名/), 'alice');
       await user.type(screen.getByLabelText(/初始密码/), 'alice12345');
@@ -214,8 +226,8 @@ describe('UserFormModal', () => {
       renderModal(EXISTING, { roles: ROLES, groups: GROUPS });
 
       expect(screen.queryByLabelText(/初始密码/)).not.toBeInTheDocument();
-      expect(screen.queryByLabelText('角色')).not.toBeInTheDocument();
-      expect(screen.queryByRole('button', { name: '分组' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('combobox', { name: '角色' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('combobox', { name: '分组' })).not.toBeInTheDocument();
       expect(screen.getByLabelText(/头像地址/)).toHaveValue('https://cdn.example.com/e.png');
       expect(screen.getByLabelText(/登录名/)).toBeDisabled();
     });
