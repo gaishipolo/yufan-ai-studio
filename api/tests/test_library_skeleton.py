@@ -25,18 +25,12 @@ from core.ports.library_lookup import get_library_lookup, reset_library_lookup
 from core.ports.library_references import get_library_references, reset_library_references
 from modules.library import errors as library_errors
 
+# M1 只声明「已接线」的两个码。其余 9 个（delete / share / draft:review 等）
+# 在 M2/M3 有真实判定点时再加——`test_permission_coverage` 不允许「声明了但没人用」
+# 的僵尸权限点，那会在角色配置界面变成永远无效的勾选项。
 LIBRARY_PERMISSIONS = {
     "library:read",
     "library:create",
-    "library:update",
-    "library:delete",
-    "library:delete:any",
-    "library:draft:review",
-    "library:share",
-    "library:share:direct",
-    "library:share:approve",
-    "library:tag:manage",
-    "library:generation:ingest",
 }
 
 
@@ -53,21 +47,18 @@ def test_library_permissions_are_in_the_catalog() -> None:
     assert not missing, f"权限点没有进全局目录：{missing}"
 
 
-def test_library_list_returns_an_empty_page_with_facets(client: TestClient, api: str) -> None:
-    response = client.get(f"{api}/library/assets")
+def test_library_list_returns_the_contract_shape(client: TestClient, api: str) -> None:
+    """M1 起列表可能非空，所以用「必然匹配不到」的关键词保证空页。
+
+    这里守的是**形状**：分面字段一个不能少（前端侧栏角标直接读它），
+    而不是「库一定是空的」。
+    """
+    response = client.get(f"{api}/library/assets", params={"keyword": "__no_such_asset__"})
     assert response.status_code == 200
     data = response.json()["data"]
     assert data["items"] == []
     assert data["total"] == 0
-    # 分面字段必须存在且全为 0：前端侧栏角标直接读它，缺字段会让整页崩
-    assert data["facets"] == {
-        "all": 0,
-        "personal": 0,
-        "group": 0,
-        "team": 0,
-        "drafts": 0,
-        "trash": 0,
-    }
+    assert set(data["facets"]) == {"all", "personal", "group", "team", "drafts", "trash"}
 
 
 def test_library_list_accepts_the_contract_query_params(client: TestClient, api: str) -> None:

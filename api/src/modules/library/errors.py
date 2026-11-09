@@ -97,10 +97,35 @@ class DraftReviewForbidden(AppError):
     http_status = 403
 
 
+class LibraryFileTypeNotAllowed(AppError):
+    """扩展名不在白名单，或与本次上传声明的类型不符。
+
+    只认扩展名 + 内容探测，不认前端传的 `Content-Type`：后者由客户端随意填写，
+    把校验建在它上面等于没校验。
+    """
+
+    code = errors.code(400, 2)
+    message = "支持 MP4、PNG、JPG、WebP、MP3 和 WAV"
+    http_status = 400
+
+
+class LibraryFileTooLarge(AppError):
+    """超出单文件上限（300MB，与归档原片同档）。
+
+    `details` 带 `maxBytes`，前端可以显示「最多 300MB」而不是猜。
+    """
+
+    code = errors.code(413, 1)
+    message = "文件不能超过 300MB"
+    http_status = 413
+
+
 __all__ = [
     "AssetNotInTrash",
     "DraftNotReviewable",
     "DraftReviewForbidden",
+    "LibraryFileTooLarge",
+    "LibraryFileTypeNotAllowed",
     "RevokeReasonRequired",
     "ShareRevokePending",
     "SharedAssetNotDeletable",

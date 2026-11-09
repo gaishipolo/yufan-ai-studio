@@ -2,7 +2,7 @@
 
 > 此文件由 `app export-openapi` 自动生成，请勿手工编辑。
 >
-> 版本 `0.2.0`｜共 **92** 个接口 / **11** 个模块
+> 版本 `0.2.0`｜共 **97** 个接口 / **11** 个模块
 >
 > 重新生成：`cd api && .venv/Scripts/python -m cli export-openapi`
 
@@ -139,16 +139,7 @@ Authorization: Bearer <accessToken>
 | 权限码 | 名称 | 说明 |
 |---|---|---|
 | `library:create` | 上传与封装资产 |  |
-| `library:delete` | 删除本人资产（移入回收站） |  |
-| `library:delete:any` | 管理任意资产（含他人与团队库） |  |
-| `library:draft:review` | 审核他人草稿 |  |
-| `library:generation:ingest` | 生成结果入库 |  |
 | `library:read` | 查看资产库 |  |
-| `library:share` | 发起共享与撤销共享申请 |  |
-| `library:share:approve` | 审核共享与撤销申请 |  |
-| `library:share:direct` | 免审直接共享到小组 |  |
-| `library:tag:manage` | 管理标签（改名 / 合并 / 删除） |  |
-| `library:update` | 编辑本人资产 |  |
 
 > 判定规则：`*` 恒真；`task:*` 这类通配可覆盖 `task:read`；否则按字符串精确匹配。
 
@@ -169,6 +160,7 @@ Authorization: Bearer <accessToken>
 | `40023` | 400 | identity | `TeamGrantForbidden` | 团队基础权限不能包含管理类权限或通配符 |
 | `40051` | 400 | asset | `FileTypeNotAllowed` | 支持 MP4、PNG、JPG、WebP、MP3 和 WAV |
 | `40081` | 400 | library | `RevokeReasonRequired` | 撤销共享必须填写理由 |
+| `40082` | 400 | library | `LibraryFileTypeNotAllowed` | 支持 MP4、PNG、JPG、WebP、MP3 和 WAV |
 | `40100` | 401 | 框架 | `Unauthorized` | 请先登录 |
 | `40121` | 401 | identity | `CredentialInvalid` | 用户名或密码错误 |
 | `40122` | 401 | identity | `RefreshTokenInvalid` | 刷新令牌已失效，请重新登录 |
@@ -205,6 +197,7 @@ Authorization: Bearer <accessToken>
 | `41091` | 410 | export | `ExportGone` | 导出文件已过保留期被回收，请重新导出 |
 | `41351` | 413 | asset | `FileTooLarge` | 文件不能超过 50MB |
 | `41352` | 413 | asset | `AssetQuotaExceeded` | 归档空间已用完，请先清理回收站或联系管理员提升配额 |
+| `41381` | 413 | library | `LibraryFileTooLarge` | 文件不能超过 300MB |
 | `42900` | 429 | 框架 | `RateLimited` | 请求过于频繁，请稍后再试 |
 | `50100` | 501 | 框架 | `NotImplementedFeature` | 该功能尚未实现 |
 | `50200` | 502 | 框架 | `UpstreamError` | 上游服务异常 |
@@ -226,7 +219,7 @@ Authorization: Bearer <accessToken>
 | 镜头库 | 1 | 见下方 `4.8` |
 | 系统 | 2 | 见下方 `4.9` |
 | 导出 | 6 | 见下方 `4.10` |
-| 资产库 | 2 | 见下方 `4.11` |
+| 资产库 | 7 | 见下方 `4.11` |
 
 ### 4.1 身份（39 个）
 
@@ -2412,22 +2405,21 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 
 **响应** `ApiResponse<unknown>`（前端取 `res.data`）
 
-### 4.11 资产库（2 个）
+### 4.11 资产库（7 个）
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
 | `GET` | `/api/v1/library/assets` | 资产库列表（分页 + 分面） | 🔒 |
+| `POST` | `/api/v1/library/assets/upload` | 上传图片 / 音频（流式，按内容秒传） | 🔒 |
+| `GET` | `/api/v1/library/assets/{asset_id}` | 资产详情（含标签与生成参数） | 🔒 |
+| `GET` | `/api/v1/library/assets/{asset_id}/file` | 下载或预览原文件 | 🔒 |
+| `GET` | `/api/v1/library/assets/{asset_id}/thumbnail` | 读取缩略图 | 🔒 |
 | `GET` | `/api/v1/library/facets` | 资产库分面统计 | 🔒 |
+| `POST` | `/api/v1/library/source-videos` | 上传模板库参考视频（只收视频） | 🔒 |
 
 #### `GET /api/v1/library/assets`
 
 **资产库列表（分页 + 分面）**
-
-列表。
-
-M0 骨架：过滤参数已进契约，但还没有表可查，所以固定返回空页。
-这里刻意返回 200 而不是 501 —— 前端占位页与「真实空库」需要同一条渲染路径，
-返回 501 会逼前端为「骨架期」写一个临时分支，M1 又要删掉。
 
 | 参数 | 位置 | 类型 | 必填 | 说明 |
 |---|---|---|---|---|
@@ -2450,14 +2442,99 @@ M0 骨架：过滤参数已进契约，但还没有表可查，所以固定返�
 | `pageSize` | `number` | 否 |  |
 | `facets` | `LibraryFacets` | 否 |  |
 
+#### `POST /api/v1/library/assets/upload`
+
+**上传图片 / 音频（流式，按内容秒传）**
+
+只收图片与音频：视频走 `/source-videos`（模板库专用）。
+
+分开的理由不是「类型不同」，而是**来源语义不同**：这个接口是用户自己挑文件，
+视频上传属于模板库的参考素材流程，它需要 `origin=template_source` 才能在
+切换后继续喂给模板封装。混成一个接口会让来源变成前端传参，写错了没人发现。
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `filename` | query | `string` | 是 |  |
+| `kind` | query | `UploadKind` | 否 |  |
+| `sourceKey` | query | `string | null` | 否 |  |
+
+**响应** `ApiResponse<LibraryAssetOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `kind` | `LibraryAssetKind` | 是 |  |
+| `origin` | `string` | 是 | upload / generated / template_source / imported |
+| `mimeType` | `string \| null` | 否 |  |
+| `sizeBytes` | `number` | 否 |  |
+| `durationSec` | `number \| null` | 否 |  |
+| `hasAudio` | `boolean` | 否 |  |
+| `ownerId` | `string` | 是 |  |
+| `ownerName` | `string \| null` | 否 |  |
+| `visibility` | `LibraryVisibility` | 是 |  |
+| `state` | `LibraryAssetState` | 是 |  |
+| `stateVersion` | `number` | 否 |  |
+| `coverUrl` | `string \| null` | 否 |  |
+| `createdAt` | `string` | 是 |  |
+| `updatedAt` | `string \| null` | 否 |  |
+
+#### `GET /api/v1/library/assets/{asset_id}`
+
+**资产详情（含标签与生成参数）**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `asset_id` | path | `string` | 是 |  |
+
+**响应** `ApiResponse<LibraryAssetDetailOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `kind` | `LibraryAssetKind` | 是 |  |
+| `origin` | `string` | 是 | upload / generated / template_source / imported |
+| `mimeType` | `string \| null` | 否 |  |
+| `sizeBytes` | `number` | 否 |  |
+| `durationSec` | `number \| null` | 否 |  |
+| `hasAudio` | `boolean` | 否 |  |
+| `ownerId` | `string` | 是 |  |
+| `ownerName` | `string \| null` | 否 |  |
+| `visibility` | `LibraryVisibility` | 是 |  |
+| `state` | `LibraryAssetState` | 是 |  |
+| `stateVersion` | `number` | 否 |  |
+| `coverUrl` | `string \| null` | 否 |  |
+| `createdAt` | `string` | 是 |  |
+| `updatedAt` | `string \| null` | 否 |  |
+| `tags` | `LibraryTagOut[]` | 否 |  |
+| `generation` | `LibraryGenerationOut \| null` | 否 |  |
+
+#### `GET /api/v1/library/assets/{asset_id}/file`
+
+**下载或预览原文件**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `asset_id` | path | `string` | 是 |  |
+
+**响应** `ApiResponse<unknown>`（前端取 `res.data`）
+
+#### `GET /api/v1/library/assets/{asset_id}/thumbnail`
+
+**读取缩略图**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `asset_id` | path | `string` | 是 |  |
+
+**响应** `ApiResponse<unknown>`（前端取 `res.data`）
+
 #### `GET /api/v1/library/facets`
 
 **资产库分面统计**
 
-单独的分面接口：给「不加载列表也要显示角标」的页面用（如首页卡片）。
-
-列表接口已经带 `facets`，这个接口是给侧栏常驻角标用的，避免为了六个数字
-拉一整页数据。
+给「不加载列表也要显示角标」的页面用（侧栏、首页卡片）。
 
 **响应** `ApiResponse<LibraryFacets>`（前端取 `res.data`）
 
@@ -2469,6 +2546,40 @@ M0 骨架：过滤参数已进契约，但还没有表可查，所以固定返�
 | `team` | `number` | 否 |  |
 | `drafts` | `number` | 否 |  |
 | `trash` | `number` | 否 |  |
+
+#### `POST /api/v1/library/source-videos`
+
+**上传模板库参考视频（只收视频）**
+
+等价于旧 `POST /assets/upload?category=source`，只是路径与来源不同。
+
+模板库前端切换时只改 `archive.api.ts` 里一个 URL 常量，界面一行不动。
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `filename` | query | `string` | 是 |  |
+| `sourceKey` | query | `string | null` | 否 |  |
+
+**响应** `ApiResponse<LibraryAssetOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `kind` | `LibraryAssetKind` | 是 |  |
+| `origin` | `string` | 是 | upload / generated / template_source / imported |
+| `mimeType` | `string \| null` | 否 |  |
+| `sizeBytes` | `number` | 否 |  |
+| `durationSec` | `number \| null` | 否 |  |
+| `hasAudio` | `boolean` | 否 |  |
+| `ownerId` | `string` | 是 |  |
+| `ownerName` | `string \| null` | 否 |  |
+| `visibility` | `LibraryVisibility` | 是 |  |
+| `state` | `LibraryAssetState` | 是 |  |
+| `stateVersion` | `number` | 否 |  |
+| `coverUrl` | `string \| null` | 否 |  |
+| `createdAt` | `string` | 是 |  |
+| `updatedAt` | `string \| null` | 否 |  |
 
 ---
 
@@ -2779,6 +2890,34 @@ M0 骨架：过滤参数已进契约，但还没有表可查，所以固定返�
 | `relativePath` | `string` | 是 |  |
 | `category` | `"source" \| "character" \| "product" \| "scene" \| "audio"` | 是 |  |
 
+### `LibraryAssetDetailOut`
+
+详情 = 列表项 + 标签 + 生成参数（有才返回）。
+
+生成参数用 `None` 而不是空对象：前端要区分「不是生成来的」与
+「是生成来的但历史数据没记全」，两者显示逻辑不同。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `kind` | `LibraryAssetKind` | 是 |  |
+| `origin` | `string` | 是 | upload / generated / template_source / imported |
+| `mimeType` | `string \| null` | 否 |  |
+| `sizeBytes` | `number` | 否 |  |
+| `durationSec` | `number \| null` | 否 |  |
+| `hasAudio` | `boolean` | 否 |  |
+| `ownerId` | `string` | 是 |  |
+| `ownerName` | `string \| null` | 否 |  |
+| `visibility` | `LibraryVisibility` | 是 |  |
+| `state` | `LibraryAssetState` | 是 |  |
+| `stateVersion` | `number` | 否 |  |
+| `coverUrl` | `string \| null` | 否 |  |
+| `createdAt` | `string` | 是 |  |
+| `updatedAt` | `string \| null` | 否 |  |
+| `tags` | `LibraryTagOut[]` | 否 |  |
+| `generation` | `LibraryGenerationOut \| null` | 否 |  |
+
 ### `LibraryAssetKind`（枚举）
 
 取值：`video`、`audio`、`image`、`pack`
@@ -2795,7 +2934,7 @@ M0 骨架：过滤参数已进契约，但还没有表可查，所以固定返�
 | `origin` | `string` | 是 | upload / generated / template_source / imported |
 | `mimeType` | `string \| null` | 否 |  |
 | `sizeBytes` | `number` | 否 |  |
-| `durationMs` | `number \| null` | 否 |  |
+| `durationSec` | `number \| null` | 否 |  |
 | `hasAudio` | `boolean` | 否 |  |
 | `ownerId` | `string` | 是 |  |
 | `ownerName` | `string \| null` | 否 |  |
@@ -2840,9 +2979,42 @@ M0 骨架：过滤参数已进契约，但还没有表可查，所以固定返�
 | `drafts` | `number` | 否 |  |
 | `trash` | `number` | 否 |  |
 
+### `LibraryGenerationOut`
+
+生成溯源快照。入库那一刻冻结，不联表查；缺失字段前端显示「未记录」。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `sourceModule` | `string` | 是 |  |
+| `sourceTaskId` | `string` | 是 |  |
+| `model` | `string` | 否 |  |
+| `modelId` | `string` | 否 |  |
+| `prompt` | `string` | 否 |  |
+| `size` | `string` | 否 |  |
+| `count` | `number` | 否 |  |
+| `durationSec` | `number` | 否 |  |
+| `aspectRatio` | `string` | 否 |  |
+| `stylePreset` | `string` | 否 |  |
+| `seed` | `string` | 否 |  |
+| `referenceAssetIds` | `string[]` | 否 |  |
+| `packId` | `string` | 否 |  |
+| `packVersion` | `number` | 否 |  |
+| `promptSpec` | `Record<string, unknown>` | 否 |  |
+| `configuration` | `Record<string, unknown>` | 否 |  |
+| `externalId` | `string` | 否 |  |
+| `credits` | `number` | 否 |  |
+| `generatedAt` | `string \| null` | 否 |  |
+
 ### `LibraryTab`（枚举）
 
 取值：`all`、`personal`、`group`、`team`
+
+### `LibraryTagOut`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
 
 ### `LibraryVisibility`（枚举）
 
@@ -3469,6 +3641,10 @@ M0 骨架：过滤参数已进契约，但还没有表可查，所以固定返�
 |---|---|---|---|
 | `title` | `string \| null` | 否 | 新标题 |
 | `favorited` | `boolean \| null` | 否 | 收藏状态 |
+
+### `UploadKind`（枚举）
+
+取值：`image`、`audio`、`video`
 
 ### `UserCreateIn`
 

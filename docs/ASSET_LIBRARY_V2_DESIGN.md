@@ -287,6 +287,12 @@ owner 发起撤销 ─→ pending(action=revoke, reason) ─┬─ approve → �
   share:approve / tag:manage / generation:ingest`，共 **11 个**。`delete` 与 `delete:any`
   必须分开：前者是「删自己的」，服务层仍要判 `owner_id`；后者是管理员兜底通道
   （删他人的、团队库的、彻底删除）。批量下载不单列权限（可见即可下载，§4 决策）。
+
+  **这 11 个是目标形态，不是一次性声明**：`tests/test_permission_coverage.py` 要求
+  每个声明的码都有 `require(...)` / `actor.has(...)` 判定点，否则角色界面会出现
+  「勾了没用」的装饰品。所以按批进入 `ModuleSpec`：M1 只声明已接线的
+  `read` / `create`，M2 加 `update / delete / delete:any / draft:review / share /
+  share:direct / share:approve / tag:manage`，M3 加 `generation:ingest`。
 - **错误码**：`ModuleErrors("library", slot=8)`（调研确认 slot 8 全空，81 个码值可用，
   与旧 asset 的 slot 5 完全隔离）。编码 `status*100 + 8*10 + seq`。
   本次新增需求必须有的语义（`seq` 在 M0 建表时按 `ModuleErrors` 实际占用排号，

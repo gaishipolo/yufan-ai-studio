@@ -1,0 +1,427 @@
+"""资产库 v2 领域服务（M1：上传 / 秒传 / 幂等 / 列表 / 取件）。
+
+## M1 的边界
+
+只做「个人库」这一条竖线：上传、按内容去重、`sourceKey` 幂等、列表与分面、
+取件。可见性判定（小组 / 团队）、共享审批、草稿与回收站状态机在 M2，
+它会把 `_visible_query()` 换成三层可见集，其余方法不动。
+
+## 三条不能省的规则
+
+1. **元数据探测在落库之前**：损坏的文件不能先入库再报错，否则列表里会多一条
+   打不开的资产，用户要自己发现。
+2. **`sha256` 是内容寻址的 key**：同一份字节多人使用时物理只存一份；秒传就是
+   「同 owner + 同 sha + 同 kind 且未删除」命中已有行。
+3. **幂等键 `source_key` 先查**：生成侧的轮询会重复回调，第二次必须返回同一个
+   `asset_id`，不能产生第二行——这条比「去重」更严格，因为生成结果可能同名不同内容。
+"""
+
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import logging
+import tempfile
+from collections.abc import AsyncIterator
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+
+from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.elements import ColumnElement
+
+from core.context import CurrentUser
+from core.exceptions import NotFound
+from core.response import PageParams
+from core.serving import Served
+from infra.media_probe import EXTENSIONS, MAX_BYTES, create_preview, inspect
+from infra.storage.base import ObjectStorage
+from modules.library.errors import LibraryFileTooLarge, LibraryFileTypeNotAllowed
+from modules.library.models import (
+    LibraryAsset,
+    LibraryAssetGeneration,
+    LibraryAssetTag,
+    LibraryTag,
+)
+from modules.library.schema import (
+    AssetSort,
+    LibraryAssetDetailOut,
+    LibraryAssetOut,
+    LibraryAssetPage,
+    LibraryFacets,
+    LibraryGenerationOut,
+    LibraryTab,
+    LibraryTagOut,
+    UploadKind,
+)
+
+__all__ = ["LibraryService"]
+
+logger = logging.getLogger(__name__)
+
+#: 主字节前缀。与旧归档盘（`blobs/`）彻底分开：删 v2 模块不会误删旧库字节，
+#: 反过来旧库的 `prune-blobs` 也扫不到这里。
+BLOB_PREFIX = "library/blobs"
+PREVIEW_PREFIX = "library/previews"
+
+_STATES = {"draft", "active", "trash"}
+
+
+def _digest_and_size(path: Path) -> tuple[str, int]:
+    digest = hashlib.sha256()
+    size = 0
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            size += len(chunk)
+            digest.update(chunk)
+    return digest.hexdigest(), size
+
+
+def _kind_of(mime: str) -> str:
+    if mime.startswith("video/"):
+        return "video"
+    return "audio" if mime.startswith("audio/") else "image"
+
+
+def blob_key(digest: str, extension: str) -> str:
+    return f"{BLOB_PREFIX}/{digest[:2]}/{digest}{extension}"
+
+
+def preview_key(digest: str) -> str:
+    return f"{PREVIEW_PREFIX}/{digest[:2]}/{digest}.jpg"
+
+
+class LibraryService:
+    def __init__(self, session: AsyncSession, storage: ObjectStorage) -> None:
+        self.session = session
+        self.storage = storage
+
+    # ------------------------------------------------------------------ 读
+
+    async def list_assets(
+        self,
+        actor: CurrentUser,
+        params: PageParams,
+        *,
+        library: LibraryTab = LibraryTab.ALL,
+        state: str = "active",
+        kind: str | None = None,
+        tag_ids: list[str] | None = None,
+        keyword: str = "",
+        sort: AssetSort = AssetSort.CREATED_DESC,
+    ) -> LibraryAssetPage:
+        """列表 + 分面。
+
+        M1 的可见集是**本人所有**：小组与团队共享还没有写入路径（M2 才有），
+        所以这里先按 `owner_id` 收窄。M2 会把它换成三层可见集，接口形状不变。
+        """
+        if state not in _STATES:
+            state = "active"
+        query = select(LibraryAsset).where(
+            LibraryAsset.owner_id == actor.id, LibraryAsset.state == state
+        )
+        if state != "trash":
+            query = query.where(LibraryAsset.deleted_at.is_(None))
+        if library is not LibraryTab.ALL:
+            query = query.where(LibraryAsset.visibility == library.value)
+        if kind:
+            query = query.where(LibraryAsset.kind == kind)
+        if keyword:
+            query = query.where(LibraryAsset.name.ilike(f"%{keyword}%"))
+        if tag_ids:
+            query = query.where(
+                LibraryAsset.id.in_(
+                    select(LibraryAssetTag.asset_id).where(LibraryAssetTag.tag_id.in_(tag_ids))
+                )
+            )
+
+        total = await self.session.scalar(
+            select(func.count()).select_from(query.subquery())
+        )
+        # 排序键必须以主键收尾：created_at 同秒的行（批量导入）否则顺序不稳定，
+        # 分页会出现「第 2 页重复第 1 页的最后一条」。
+        order: tuple[ColumnElement[Any], ColumnElement[Any]]
+        if sort is AssetSort.CREATED_ASC:
+            order = (LibraryAsset.created_at.asc(), LibraryAsset.id.asc())
+        elif sort is AssetSort.NAME:
+            order = (LibraryAsset.name.asc(), LibraryAsset.id.asc())
+        elif sort is AssetSort.SIZE_DESC:
+            order = (LibraryAsset.size_bytes.desc(), LibraryAsset.id.desc())
+        else:
+            order = (LibraryAsset.created_at.desc(), LibraryAsset.id.desc())
+        rows = (
+            await self.session.scalars(
+                query.order_by(*order).offset(params.offset).limit(params.limit)
+            )
+        ).all()
+        return LibraryAssetPage(
+            items=[self._to_out(row) for row in rows],
+            total=int(total or 0),
+            page=params.page,
+            page_size=params.page_size,
+            facets=await self._facets(actor.id),
+        )
+
+    async def facets(self, actor: CurrentUser) -> LibraryFacets:
+        return await self._facets(actor.id)
+
+    async def detail(self, asset_id: str, actor: CurrentUser) -> LibraryAssetDetailOut:
+        row = await self._owned(asset_id, actor.id, allow_trashed=True)
+        tags = (
+            await self.session.scalars(
+                select(LibraryTag)
+                .join(LibraryAssetTag, LibraryAssetTag.tag_id == LibraryTag.id)
+                .where(LibraryAssetTag.asset_id == row.id)
+                .order_by(LibraryTag.name)
+            )
+        ).all()
+        generation = await self.session.get(LibraryAssetGeneration, row.id)
+        return LibraryAssetDetailOut(
+            **self._to_out(row).model_dump(by_alias=False),
+            tags=[LibraryTagOut(id=tag.id, name=tag.name) for tag in tags],
+            generation=(
+                LibraryGenerationOut(
+                    source_module=generation.source_module,
+                    source_task_id=generation.source_task_id,
+                    model=generation.model,
+                    model_id=generation.model_id,
+                    prompt=generation.prompt,
+                    size=generation.size,
+                    count=generation.count,
+                    duration_sec=generation.duration_sec,
+                    aspect_ratio=generation.aspect_ratio,
+                    style_preset=generation.style_preset,
+                    seed=generation.seed,
+                    reference_asset_ids=list(generation.reference_asset_ids or []),
+                    pack_id=generation.pack_id,
+                    pack_version=generation.pack_version,
+                    prompt_spec=dict(generation.prompt_spec or {}),
+                    configuration=dict(generation.configuration or {}),
+                    external_id=generation.external_id,
+                    credits=generation.credits,
+                    generated_at=generation.generated_at,
+                )
+                if generation
+                else None
+            ),
+        )
+
+    async def file(
+        self, asset_id: str, actor: CurrentUser, *, preview: bool = False
+    ) -> Served:
+        row = await self._owned(asset_id, actor.id)
+        key = row.cover_key if preview else row.storage_key
+        if not key:
+            raise NotFound("此资产没有缩略图")
+        return await self._serve(
+            key,
+            "image/jpeg" if preview else row.mime_type,
+            filename=None if preview else row.name,
+        )
+
+    # ------------------------------------------------------------------ 写
+
+    async def upload(
+        self,
+        chunks: AsyncIterator[bytes],
+        filename: str,
+        *,
+        kind: UploadKind,
+        actor: CurrentUser,
+        origin: str = "upload",
+        source_key: str | None = None,
+    ) -> LibraryAssetOut:
+        """流式上传。临时文件在 http 请求体内写满即落盘，300MB 不进内存。"""
+        extension = Path(filename).suffix.lower()
+        mime = EXTENSIONS.get(extension)
+        if mime is None or _kind_of(mime) != kind.value:
+            raise LibraryFileTypeNotAllowed()
+        with tempfile.TemporaryDirectory(prefix="library-upload-") as folder:
+            temporary = Path(folder) / f"source{extension}"
+            size = await self._receive(temporary, chunks)
+            return await self._ingest(
+                temporary,
+                filename=filename,
+                extension=extension,
+                mime=mime,
+                size=size,
+                kind=kind.value,
+                actor=actor,
+                origin=origin,
+                source_key=source_key,
+            )
+
+    # ------------------------------------------------------------------ 内部
+
+    async def _receive(self, target: Path, chunks: AsyncIterator[bytes]) -> int:
+        total = 0
+        stream = await asyncio.to_thread(target.open, "xb")
+        try:
+            async for chunk in chunks:
+                if not chunk:
+                    continue
+                total += len(chunk)
+                if total > MAX_BYTES:
+                    raise LibraryFileTooLarge(details={"maxBytes": MAX_BYTES})
+                await asyncio.to_thread(stream.write, chunk)
+        finally:
+            await asyncio.to_thread(stream.close)
+        if total == 0:
+            raise LibraryFileTypeNotAllowed("文件不能为空")
+        return total
+
+    async def _ingest(
+        self,
+        path: Path,
+        *,
+        filename: str,
+        extension: str,
+        mime: str,
+        size: int,
+        kind: str,
+        actor: CurrentUser,
+        origin: str,
+        source_key: str | None,
+    ) -> LibraryAssetOut:
+        info = await asyncio.to_thread(inspect, path, extension)
+        digest, measured = await asyncio.to_thread(_digest_and_size, path)
+        if measured != size:
+            # 写盘与读回不一致只可能是并发截断/磁盘故障；宁可拒绝，也别落一条
+            # 「大小字段与字节不符」的行——它会让配额、下载包大小全部失真。
+            raise LibraryFileTypeNotAllowed("文件在写入过程中发生变化，请重试")
+
+        if source_key:
+            existing = await self._by_source_key(source_key)
+            if existing is not None:
+                return self._to_out(existing)
+        duplicate = await self._find_duplicate(actor.id, digest, kind)
+        if duplicate is not None:
+            return self._to_out(duplicate)
+
+        key = blob_key(digest, extension)
+        await self.storage.put_file(key, path, mime)
+        cover_key = ""
+        if kind != "audio":
+            cover_key = await self._ensure_preview(path, digest, kind)
+
+        row = LibraryAsset(
+            name=Path(filename).name[:200] or f"{kind}{extension}",
+            kind=kind,
+            origin=origin,
+            mime_type=mime,
+            size_bytes=size,
+            sha256=digest,
+            storage_key=key,
+            cover_key=cover_key,
+            width=int(info["width"]),
+            height=int(info["height"]),
+            duration=float(info["duration"]),
+            has_audio=bool(info["hasAudio"]),
+            owner_id=actor.id,
+            visibility="personal",
+            state="active",
+            state_version=1,
+            source_key=source_key or None,
+            created_at=datetime.now(UTC),
+        )
+        try:
+            self.session.add(row)
+            await self.session.commit()
+        except IntegrityError:
+            # 并发上传同一份文件 / 同一个 sourceKey：唯一索引兜底。回滚后按同样
+            # 口径再查一次——索引拦下了、这里又查不到，说明口径不一致，那就把
+            # IntegrityError 原样抛出去，别伪装成成功。
+            await self.session.rollback()
+            existing = await self._find_duplicate(actor.id, digest, kind)
+            if existing is None and source_key:
+                existing = await self._by_source_key(source_key)
+            if existing is None:
+                raise
+            return self._to_out(existing)
+        return self._to_out(row)
+
+    async def _ensure_preview(self, source: Path, digest: str, kind: str) -> str:
+        key = preview_key(digest)
+        with tempfile.TemporaryDirectory(prefix="library-cover-") as folder:
+            target = Path(folder) / "cover.jpg"
+            ok = await asyncio.to_thread(create_preview, source, target, kind)
+            if not ok or not target.is_file():
+                logger.info("资产没有生成缩略图（音轨或派生失败）：%s", digest[:12])
+                return ""
+            await self.storage.put_file(key, target, "image/jpeg")
+        return key
+
+    async def _serve(self, key: str, mime: str, *, filename: str | None = None) -> Served:
+        path = self.storage.local_path(key)
+        if path is not None:
+            return Served.local(path, mime, filename=filename)
+        # 远端驱动不把字节搬进进程：预签名地址由对象存储处理 Range。
+        return Served.remote(await self.storage.presigned_download_url(key), mime)
+
+    async def _owned(
+        self, asset_id: str, owner_id: str, *, allow_trashed: bool = False
+    ) -> LibraryAsset:
+        row = await self.session.get(LibraryAsset, asset_id)
+        if row is None or row.owner_id != owner_id:
+            # 两种情况共用一个 404：区分开等于把「这个 id 存在」白送给非本人。
+            raise NotFound("资产不存在")
+        if not allow_trashed and row.deleted_at is not None:
+            raise NotFound("资产已移入回收站")
+        return row
+
+    async def _find_duplicate(self, owner_id: str, digest: str, kind: str) -> LibraryAsset | None:
+        return await self.session.scalar(
+            select(LibraryAsset).where(
+                LibraryAsset.owner_id == owner_id,
+                LibraryAsset.sha256 == digest,
+                LibraryAsset.kind == kind,
+                LibraryAsset.deleted_at.is_(None),
+            )
+        )
+
+    async def _by_source_key(self, source_key: str) -> LibraryAsset | None:
+        return await self.session.scalar(
+            select(LibraryAsset).where(LibraryAsset.source_key == source_key)
+        )
+
+    async def _facets(self, owner_id: str) -> LibraryFacets:
+        rows = (
+            await self.session.execute(
+                select(LibraryAsset.visibility, LibraryAsset.state, func.count())
+                .where(LibraryAsset.owner_id == owner_id)
+                .group_by(LibraryAsset.visibility, LibraryAsset.state)
+            )
+        ).all()
+        facets = LibraryFacets()
+        for visibility, state, count in rows:
+            if state == "draft":
+                facets.drafts += int(count)
+            elif state == "trash":
+                facets.trash += int(count)
+            else:
+                facets.all += int(count)
+                if visibility in ("personal", "group", "team"):
+                    setattr(facets, visibility, getattr(facets, visibility) + int(count))
+        return facets
+
+    def _to_out(self, row: LibraryAsset) -> LibraryAssetOut:
+        return LibraryAssetOut(
+            id=row.id,
+            name=row.name,
+            kind=row.kind,
+            origin=row.origin,
+            mime_type=row.mime_type or None,
+            size_bytes=row.size_bytes,
+            duration_sec=row.duration or None,
+            has_audio=row.has_audio,
+            owner_id=row.owner_id,
+            owner_name=None,
+            visibility=row.visibility,
+            state=row.state,
+            state_version=row.state_version,
+            cover_url=self.storage.url_for(row.cover_key) if row.cover_key else None,
+            created_at=row.created_at,
+            updated_at=row.updated_at,
+        )

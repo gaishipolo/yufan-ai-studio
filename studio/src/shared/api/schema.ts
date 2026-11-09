@@ -76,6 +76,10 @@ export const TaskStatus_VALUES = ["queued", "running", "completed", "failed"] as
 export type TaskStatusFilter = "all" | "queued" | "running" | "completed" | "failed";
 export const TaskStatusFilter_VALUES = ["all", "queued", "running", "completed", "failed"] as const;
 
+/** 取值：image, audio, video */
+export type UploadKind = "image" | "audio" | "video";
+export const UploadKind_VALUES = ["image", "audio", "video"] as const;
+
 /* ------------------------------ 模型 ------------------------------ */
 
 /** ArchiveChange */
@@ -388,6 +392,32 @@ export interface ImportAsset {
   category: "source" | "character" | "product" | "scene" | "audio";
 }
 
+/** 详情 = 列表项 + 标签 + 生成参数（有才返回）。
+
+生成参数用 `None` 而不是空对象：前端要区分「不是生成来的」与
+「是生成来的但历史数据没记全」，两者显示逻辑不同。 */
+export interface LibraryAssetDetailOut {
+  id: string;
+  name: string;
+  kind: LibraryAssetKind;
+  /** upload / generated / template_source / imported */
+  origin: string;
+  mimeType?: string | null;
+  sizeBytes?: number;
+  durationSec?: number | null;
+  hasAudio?: boolean;
+  ownerId: string;
+  ownerName?: string | null;
+  visibility: LibraryVisibility;
+  state: LibraryAssetState;
+  stateVersion?: number;
+  coverUrl?: string | null;
+  createdAt: string;
+  updatedAt?: string | null;
+  tags?: LibraryTagOut[];
+  generation?: LibraryGenerationOut | null;
+}
+
 /** 列表项。字段对齐 `library_assets` 表，M1 建表后不再改形状。 */
 export interface LibraryAssetOut {
   id: string;
@@ -397,7 +427,7 @@ export interface LibraryAssetOut {
   origin: string;
   mimeType?: string | null;
   sizeBytes?: number;
-  durationMs?: number | null;
+  durationSec?: number | null;
   hasAudio?: boolean;
   ownerId: string;
   ownerName?: string | null;
@@ -431,6 +461,35 @@ export interface LibraryFacets {
   team?: number;
   drafts?: number;
   trash?: number;
+}
+
+/** 生成溯源快照。入库那一刻冻结，不联表查；缺失字段前端显示「未记录」。 */
+export interface LibraryGenerationOut {
+  sourceModule: string;
+  sourceTaskId: string;
+  model?: string;
+  modelId?: string;
+  prompt?: string;
+  size?: string;
+  count?: number;
+  durationSec?: number;
+  aspectRatio?: string;
+  stylePreset?: string;
+  seed?: string;
+  referenceAssetIds?: string[];
+  packId?: string;
+  packVersion?: number;
+  promptSpec?: Record<string, unknown>;
+  configuration?: Record<string, unknown>;
+  externalId?: string;
+  credits?: number;
+  generatedAt?: string | null;
+}
+
+/** LibraryTagOut */
+export interface LibraryTagOut {
+  id: string;
+  name: string;
 }
 
 /** LoginEventListOut */
@@ -1301,8 +1360,18 @@ export interface EndpointData {
   "POST /api/v1/images/{job_id}/retry": ImageRetryOut;
   /** 资产库列表（分页 + 分面） */
   "GET /api/v1/library/assets": LibraryAssetPage;
+  /** 上传图片 / 音频（流式，按内容秒传） */
+  "POST /api/v1/library/assets/upload": LibraryAssetOut;
+  /** 资产详情（含标签与生成参数） */
+  "GET /api/v1/library/assets/{asset_id}": LibraryAssetDetailOut;
+  /** 下载或预览原文件 */
+  "GET /api/v1/library/assets/{asset_id}/file": unknown;
+  /** 读取缩略图 */
+  "GET /api/v1/library/assets/{asset_id}/thumbnail": unknown;
   /** 资产库分面统计 */
   "GET /api/v1/library/facets": LibraryFacets;
+  /** 上传模板库参考视频（只收视频） */
+  "POST /api/v1/library/source-videos": LibraryAssetOut;
   /** 可用模型目录（含参数 schema） */
   "GET /api/v1/models": ModelListOut;
   /** 镜头词条列表 */

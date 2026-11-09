@@ -44,12 +44,12 @@ const ENTRIES = [
 
 /** M0 已交付 / 后续批次：写在页面上，避免「看起来是空的」被当成故障 */
 const DELIVERED = [
-  '模块注册与 11 个权限点',
-  '三个跨模块注入口（查询 / 入库 / 引用检查）',
-  '列表与分面接口壳（空库）',
+  '10 张 library_* 表与双向迁移',
+  '图片 / 音频上传、按内容秒传、sourceKey 幂等',
+  '模板库源视频上传入口',
+  '旧素材导入 CLI（dry-run + 幂等）',
 ];
 const NEXT = [
-  'M1 建表、上传与存量导入',
   'M2 可见性、共享审核、草稿与回收站',
   'M3 封装、批量下载、生成入库',
   'M4 页面全套并切换入口',
@@ -60,8 +60,8 @@ export default function LibraryPage() {
     <>
       <PageHeader
         title="资产库 v2"
-        description="草稿箱、个人、小组、团队与回收站五个入口的统一资产库，与现役素材库并行开发。"
-        actions={<Chip tone="warn">骨架阶段 M0</Chip>}
+        description="草稿箱、个人、小组、团队与回收站五个入口的统一资产库。后端 M1 已能上传与读取，界面在 M4 接入。"
+        actions={<Chip tone="ok">后端 M1 已就绪</Chip>}
       />
 
       <div className="mt-4 flex items-start gap-2 rounded-card border border-line-soft bg-panel-soft px-3 py-2.5">

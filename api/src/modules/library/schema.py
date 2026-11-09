@@ -21,10 +21,14 @@ from core.schema import CamelModel, UtcDateTime
 
 __all__ = [
     "AssetSort",
+    "LibraryAssetDetailOut",
     "LibraryAssetOut",
     "LibraryAssetPage",
     "LibraryFacets",
+    "LibraryGenerationOut",
+    "LibraryTagOut",
     "LibraryTab",
+    "UploadKind",
 ]
 
 
@@ -74,7 +78,7 @@ class LibraryAssetOut(CamelModel):
     origin: str = Field(description="upload / generated / template_source / imported")
     mime_type: str | None = None
     size_bytes: int = 0
-    duration_ms: int | None = None
+    duration_sec: float | None = None
     has_audio: bool = False
     owner_id: str
     owner_name: str | None = None
@@ -108,3 +112,55 @@ class LibraryAssetPage(Page[LibraryAssetOut]):
             page_size=params.page_size,
             facets=facets or LibraryFacets(),
         )
+
+
+class UploadKind(StrEnum):
+    """上传接口允许的媒体类型。
+
+    分成三个值而不是复用 `LibraryAssetKind`：`pack` 不是上传出来的，
+    它是封装动作的产物；让上传接口收 `pack` 只会得到一个没有字节的资产行。
+    """
+
+    IMAGE = "image"
+    AUDIO = "audio"
+    VIDEO = "video"
+
+
+class LibraryTagOut(CamelModel):
+    id: str
+    name: str
+
+
+class LibraryGenerationOut(CamelModel):
+    """生成溯源快照。入库那一刻冻结，不联表查；缺失字段前端显示「未记录」。"""
+
+    source_module: str
+    source_task_id: str
+    model: str = ""
+    model_id: str = ""
+    prompt: str = ""
+    size: str = ""
+    count: int = 0
+    duration_sec: float = 0.0
+    aspect_ratio: str = ""
+    style_preset: str = ""
+    seed: str = ""
+    reference_asset_ids: list[str] = Field(default_factory=list)
+    pack_id: str = ""
+    pack_version: int = 0
+    prompt_spec: dict = Field(default_factory=dict)
+    configuration: dict = Field(default_factory=dict)
+    external_id: str = ""
+    credits: float = 0.0
+    generated_at: UtcDateTime | None = None
+
+
+class LibraryAssetDetailOut(LibraryAssetOut):
+    """详情 = 列表项 + 标签 + 生成参数（有才返回）。
+
+    生成参数用 `None` 而不是空对象：前端要区分「不是生成来的」与
+    「是生成来的但历史数据没记全」，两者显示逻辑不同。
+    """
+
+    tags: list[LibraryTagOut] = Field(default_factory=list)
+    generation: LibraryGenerationOut | None = None

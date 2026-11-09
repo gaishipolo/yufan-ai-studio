@@ -3110,7 +3110,6 @@
           "资产库"
         ],
         "summary": "资产库列表（分页 + 分面）",
-        "description": "列表。\n\nM0 骨架：过滤参数已进契约，但还没有表可查，所以固定返回空页。\n这里刻意返回 200 而不是 501 —— 前端占位页与「真实空库」需要同一条渲染路径，\n返回 501 会逼前端为「骨架期」写一个临时分支，M1 又要删掉。",
         "operationId": "list_assets_api_v1_library_assets_get",
         "security": [
           {
@@ -3249,7 +3248,7 @@
           "资产库"
         ],
         "summary": "资产库分面统计",
-        "description": "单独的分面接口：给「不加载列表也要显示角标」的页面用（如首页卡片）。\n\n列表接口已经带 `facets`，这个接口是给侧栏常驻角标用的，避免为了六个数字\n拉一整页数据。",
+        "description": "给「不加载列表也要显示角标」的页面用（侧栏、首页卡片）。",
         "operationId": "facets_api_v1_library_facets_get",
         "responses": {
           "200": {
@@ -3268,6 +3267,286 @@
             "bearerAuth": []
           }
         ]
+      }
+    },
+    "/api/v1/library/assets/upload": {
+      "post": {
+        "tags": [
+          "资产库"
+        ],
+        "summary": "上传图片 / 音频（流式，按内容秒传）",
+        "description": "只收图片与音频：视频走 `/source-videos`（模板库专用）。\n\n分开的理由不是「类型不同」，而是**来源语义不同**：这个接口是用户自己挑文件，\n视频上传属于模板库的参考素材流程，它需要 `origin=template_source` 才能在\n切换后继续喂给模板封装。混成一个接口会让来源变成前端传参，写错了没人发现。",
+        "operationId": "upload_api_v1_library_assets_upload_post",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "filename",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200,
+              "title": "Filename"
+            }
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/UploadKind",
+              "default": "image"
+            }
+          },
+          {
+            "name": "sourceKey",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 160
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Sourcekey"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_LibraryAssetOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/library/source-videos": {
+      "post": {
+        "tags": [
+          "资产库"
+        ],
+        "summary": "上传模板库参考视频（只收视频）",
+        "description": "等价于旧 `POST /assets/upload?category=source`，只是路径与来源不同。\n\n模板库前端切换时只改 `archive.api.ts` 里一个 URL 常量，界面一行不动。",
+        "operationId": "upload_source_video_api_v1_library_source_videos_post",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "filename",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200,
+              "title": "Filename"
+            }
+          },
+          {
+            "name": "sourceKey",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 160
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Sourcekey"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_LibraryAssetOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/library/assets/{asset_id}": {
+      "get": {
+        "tags": [
+          "资产库"
+        ],
+        "summary": "资产详情（含标签与生成参数）",
+        "operationId": "asset_detail_api_v1_library_assets__asset_id__get",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "asset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Asset Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_LibraryAssetDetailOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/library/assets/{asset_id}/file": {
+      "get": {
+        "tags": [
+          "资产库"
+        ],
+        "summary": "下载或预览原文件",
+        "operationId": "asset_file_api_v1_library_assets__asset_id__file_get",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "asset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Asset Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/library/assets/{asset_id}/thumbnail": {
+      "get": {
+        "tags": [
+          "资产库"
+        ],
+        "summary": "读取缩略图",
+        "operationId": "asset_thumbnail_api_v1_library_assets__asset_id__thumbnail_get",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "asset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Asset Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/shots": {
@@ -5066,6 +5345,60 @@
         },
         "type": "object",
         "title": "ApiResponse[ImageRetryOut]"
+      },
+      "ApiResponse_LibraryAssetDetailOut_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LibraryAssetDetailOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[LibraryAssetDetailOut]"
+      },
+      "ApiResponse_LibraryAssetOut_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LibraryAssetOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[LibraryAssetOut]"
       },
       "ApiResponse_LibraryAssetPage_": {
         "properties": {
@@ -7234,6 +7567,140 @@
         ],
         "title": "ImportAsset"
       },
+      "LibraryAssetDetailOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/LibraryAssetKind"
+          },
+          "origin": {
+            "type": "string",
+            "title": "Origin",
+            "description": "upload / generated / template_source / imported"
+          },
+          "mimeType": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mimetype"
+          },
+          "sizeBytes": {
+            "type": "integer",
+            "title": "Sizebytes",
+            "default": 0
+          },
+          "durationSec": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Durationsec"
+          },
+          "hasAudio": {
+            "type": "boolean",
+            "title": "Hasaudio",
+            "default": false
+          },
+          "ownerId": {
+            "type": "string",
+            "title": "Ownerid"
+          },
+          "ownerName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ownername"
+          },
+          "visibility": {
+            "$ref": "#/components/schemas/LibraryVisibility"
+          },
+          "state": {
+            "$ref": "#/components/schemas/LibraryAssetState"
+          },
+          "stateVersion": {
+            "type": "integer",
+            "title": "Stateversion",
+            "default": 1
+          },
+          "coverUrl": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Coverurl"
+          },
+          "createdAt": {
+            "type": "string",
+            "title": "Createdat"
+          },
+          "updatedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updatedat"
+          },
+          "tags": {
+            "items": {
+              "$ref": "#/components/schemas/LibraryTagOut"
+            },
+            "type": "array",
+            "title": "Tags"
+          },
+          "generation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LibraryGenerationOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "kind",
+          "origin",
+          "ownerId",
+          "visibility",
+          "state",
+          "createdAt"
+        ],
+        "title": "LibraryAssetDetailOut",
+        "description": "详情 = 列表项 + 标签 + 生成参数（有才返回）。\n\n生成参数用 `None` 而不是空对象：前端要区分「不是生成来的」与\n「是生成来的但历史数据没记全」，两者显示逻辑不同。"
+      },
       "LibraryAssetKind": {
         "type": "string",
         "enum": [
@@ -7279,16 +7746,16 @@
             "title": "Sizebytes",
             "default": 0
           },
-          "durationMs": {
+          "durationSec": {
             "anyOf": [
               {
-                "type": "integer"
+                "type": "number"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Durationms"
+            "title": "Durationsec"
           },
           "hasAudio": {
             "type": "boolean",
@@ -7441,6 +7908,118 @@
         "title": "LibraryFacets",
         "description": "分面统计：五个一级入口的条数，前端直接渲染成侧栏角标。\n\n与 `items` 同一次查询算出，不额外发起请求——否则切换 tab 时角标会跳。"
       },
+      "LibraryGenerationOut": {
+        "properties": {
+          "sourceModule": {
+            "type": "string",
+            "title": "Sourcemodule"
+          },
+          "sourceTaskId": {
+            "type": "string",
+            "title": "Sourcetaskid"
+          },
+          "model": {
+            "type": "string",
+            "title": "Model",
+            "default": ""
+          },
+          "modelId": {
+            "type": "string",
+            "title": "Modelid",
+            "default": ""
+          },
+          "prompt": {
+            "type": "string",
+            "title": "Prompt",
+            "default": ""
+          },
+          "size": {
+            "type": "string",
+            "title": "Size",
+            "default": ""
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count",
+            "default": 0
+          },
+          "durationSec": {
+            "type": "number",
+            "title": "Durationsec",
+            "default": 0.0
+          },
+          "aspectRatio": {
+            "type": "string",
+            "title": "Aspectratio",
+            "default": ""
+          },
+          "stylePreset": {
+            "type": "string",
+            "title": "Stylepreset",
+            "default": ""
+          },
+          "seed": {
+            "type": "string",
+            "title": "Seed",
+            "default": ""
+          },
+          "referenceAssetIds": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Referenceassetids"
+          },
+          "packId": {
+            "type": "string",
+            "title": "Packid",
+            "default": ""
+          },
+          "packVersion": {
+            "type": "integer",
+            "title": "Packversion",
+            "default": 0
+          },
+          "promptSpec": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Promptspec"
+          },
+          "configuration": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Configuration"
+          },
+          "externalId": {
+            "type": "string",
+            "title": "Externalid",
+            "default": ""
+          },
+          "credits": {
+            "type": "number",
+            "title": "Credits",
+            "default": 0.0
+          },
+          "generatedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generatedat"
+          }
+        },
+        "type": "object",
+        "required": [
+          "sourceModule",
+          "sourceTaskId"
+        ],
+        "title": "LibraryGenerationOut",
+        "description": "生成溯源快照。入库那一刻冻结，不联表查；缺失字段前端显示「未记录」。"
+      },
       "LibraryTab": {
         "type": "string",
         "enum": [
@@ -7451,6 +8030,24 @@
         ],
         "title": "LibraryTab",
         "description": "列表的可见范围（对应侧栏一级入口的个人/小组/团队/全部）。\n\n草稿箱与回收站不在这里：它们是 `state` 的两个值，与可见范围正交。\n把「草稿」做成 `library=draft` 会让「草稿属于谁」变成一个可见范围问题，\n而实际不变式是「草稿必须是 personal」。"
+      },
+      "LibraryTagOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "title": "LibraryTagOut"
       },
       "LibraryVisibility": {
         "type": "string",
@@ -10113,6 +10710,16 @@
         "type": "object",
         "title": "UpdateTaskIn",
         "description": "局部更新（目前只开放展示属性，生成参数不可改，需重试）。"
+      },
+      "UploadKind": {
+        "type": "string",
+        "enum": [
+          "image",
+          "audio",
+          "video"
+        ],
+        "title": "UploadKind",
+        "description": "上传接口允许的媒体类型。\n\n分成三个值而不是复用 `LibraryAssetKind`：`pack` 不是上传出来的，\n它是封装动作的产物；让上传接口收 `pack` 只会得到一个没有字节的资产行。"
       },
       "UserCreateIn": {
         "properties": {
