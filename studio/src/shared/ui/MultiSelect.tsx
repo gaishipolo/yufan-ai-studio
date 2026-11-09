@@ -2,6 +2,9 @@ import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Check, ChevronDown } from 'lucide-react';
 import { cn } from '@/shared/lib/cn';
 
+/** 浮层大致高度：列表 196 + 内边距 + 新建行。下方不够就朝上展开。 */
+const POPOVER_MIN_SPACE = 250;
+
 export interface MultiSelectOption {
   value: string;
   label: string;
@@ -46,8 +49,9 @@ export interface MultiSelectProps {
  * 既不是「下拉」，也没法给每项带上第二行说明。而建号弹窗里角色需要多选，
  * 又要把原来占半屏的复选框长列表收起来。
  *
- * 调用方必须把本组件放在**表单顶部**：浮层是 absolute 向下展开的，
- * 放在 `Modal` 滚动容器底部会被 `overflow-auto` 裁切、还盖住提交按钮。
+ * **浮层方向按空间自适应**：默认向下展开；下方放大约 250px 时向上翻。
+ * 原先写死向下，在「贴底部的批量栏」里展开后整块落在视口外，用户只看到一条
+ * 被裁掉的边——控件明明在那里，就是点不到。
  *
  * 组件只管「选哪些」，不认识角色或小组；选项由调用方从服务端数据映射。
  */
@@ -64,6 +68,8 @@ export function MultiSelect({
   ariaLabel,
 }: MultiSelectProps) {
   const [open, setOpen] = useState(false);
+  /* 浮层朝上还是朝下。贴底的批量栏里朝下展开会落到视口外（只看得到一条边）。 */
+  const [dropUp, setDropUp] = useState(false);
   const [draft, setDraft] = useState('');
   const [creating, setCreating] = useState(false);
   /* 本地下沉新建出来的选项。父级重新拉列表要一个来回，这期间收起态会退化成
@@ -114,6 +120,21 @@ export function MultiSelect({
     onChange(value.includes(item) ? value.filter((v) => v !== item) : [...value, item]);
   };
 
+  /* 打开时量一次可用空间再决定方向，而不是靠调用方传 placement：
+     同一个组件在批量栏（贴底）和详情弹窗（页面中部）要用不同方向，量比重申可靠。
+     估算高度 = 列表 196 + 内边距 + 新建行，取 250。 */
+  const toggleOpen = () => {
+    const next = !open;
+    if (next) {
+      const rect = rootRef.current?.getBoundingClientRect();
+      const spaceBelow = rect
+        ? window.innerHeight - rect.bottom
+        : Number.POSITIVE_INFINITY;
+      setDropUp(spaceBelow < POPOVER_MIN_SPACE);
+    }
+    setOpen(next);
+  };
+
   /* 新建：回车提交。必须 preventDefault —— 本组件常放在 Modal 的表单里，
      回车会连带提交整个表单。失败了不清空输入，让人改一个字就能重试。 */
   const submitCreate = async () => {
@@ -148,7 +169,7 @@ export function MultiSelect({
         aria-controls={listId}
         disabled={disabled}
         title={selectedLabels.join('、') || undefined}
-        onClick={() => setOpen((previous) => !previous)}
+        onClick={toggleOpen}
         className={cn(
           'flex h-8 w-full items-center gap-1.5 rounded-lg border border-line bg-white px-2.5 text-left text-xs',
           'transition-colors hover:border-line-strong focus:border-primary-line focus:outline-none focus:ring-2 focus:ring-primary/10',
@@ -168,7 +189,11 @@ export function MultiSelect({
       {open && (
         <div
           id={listId}
-          className="absolute left-0 right-0 top-[calc(100%+4px)] z-30 overflow-hidden rounded-lg border border-line bg-white shadow-pop"
+          data-placement={dropUp ? 'top' : 'bottom'}
+          className={cn(
+            'absolute left-0 right-0 z-30 overflow-hidden rounded-lg border border-line bg-white shadow-pop',
+            dropUp ? 'bottom-[calc(100%+4px)]' : 'top-[calc(100%+4px)]',
+          )}
         >
           {merged.length === 0 ? (
             <p className="px-3 py-4 text-center text-[11.5px] text-ink-mute">{emptyText}</p>
