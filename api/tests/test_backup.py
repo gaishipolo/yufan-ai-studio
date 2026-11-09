@@ -298,6 +298,45 @@ def test_external_dump_command_has_a_timeout(monkeypatch: pytest.MonkeyPatch) ->
         backup._run(["pg_dump", "postgresql://db/x"], what="pg_dump")
 
 
+def test_pg_bin_dir_is_injected_into_child_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """服务进程 PATH 里没有 PG 客户端时，显式目录要保证 pg_dump 找得到。
+
+    切到 Docker PG 之后这条最容易踩：`app backup` 报「PATH 里没有 pg_dump」，
+    但机器上明明装了客户端——服务是旧 shell 拉起的，改用户 PATH 对它不生效。
+    """
+    import os
+    import subprocess
+
+    from core.config import settings
+    from db import backup
+
+    exe_name = "pg_dump.exe" if os.name == "nt" else "pg_dump"
+    (tmp_path / exe_name).write_text("", encoding="utf-8")
+    seen: dict[str, object] = {}
+
+    def fake_run(command, **kwargs):  # type: ignore[no-untyped-def]
+        seen["command"] = command
+        seen.update(kwargs)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(backup.subprocess, "run", fake_run)
+    original = settings.backup_pg_bin_dir
+    try:
+        settings.backup_pg_bin_dir = str(tmp_path)
+        backup._run(["pg_dump", "postgresql://db/x"], what="pg_dump")
+    finally:
+        settings.backup_pg_bin_dir = original
+
+    command = seen.get("command")
+    assert isinstance(command, list)
+    assert command[0] == str(tmp_path / exe_name)
+    env = seen.get("env")
+    assert isinstance(env, dict)
+    assert env["PATH"].startswith(f"{tmp_path}{os.pathsep}")
+
+
 async def test_auto_backup_survives_unexpected_errors_and_still_prunes(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

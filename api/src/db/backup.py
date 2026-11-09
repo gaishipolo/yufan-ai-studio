@@ -15,7 +15,8 @@
 - **对象存储里的字节不在备份范围内**。归档盘 / S3 桶的备份靠存储侧策略
   （版本化、跨区复制），本命令只负责「元数据与业务行」。恢复后如果对象也丢了，
   `app verify-blobs` 会告诉你哪些 key 不存在。
-- **postgres 依赖 `pg_dump` / `pg_restore` 在 PATH 里**。没装就明确报错，
+- **postgres 依赖 `pg_dump` / `pg_restore`**：默认从进程 PATH 找，也可用
+  `BACKUP_PG_BIN_DIR` 显式指定客户端目录（Docker 化部署常用）。没找到就明确报错，
   不做「退化成 SQL 文本导出」这种半成品——那种备份在恢复时才发现不完整。
 - **不自动重启服务**。恢复完请重启（连接池里还有指向旧文件的句柄）。
 """
@@ -24,6 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import shutil
 import sqlite3
 import subprocess
@@ -127,13 +129,30 @@ def _run(command: list[str], *, what: str) -> None:
     连审计落库、预览派生这些无关的事都会排队。所以超时必须在这里生效：
     `subprocess.run` 会在超时时先 kill 子进程再抛 `TimeoutExpired`。
     """
-    timeout = get_settings().backup_command_timeout_sec
+    settings = get_settings()
+    timeout = settings.backup_command_timeout_sec
+    env = None
+    command = list(command)
+    bin_dir = settings.backup_pg_bin_dir.strip()
+    if bin_dir:
+        # Windows 的 CreateProcess 用**父进程** PATH 解析可执行文件名，subprocess 的
+        # `env` 参数改不了这一点——只把目录塞进 env["PATH"] 照样 FileNotFoundError。
+        # 所以显式目录必须解析成绝对路径；env 注入保留，让子进程能找到同目录的 DLL。
+        # 服务由计划任务 / 容器 / 桌面启动器拉起时，继承的 PATH 未必有 PG 客户端。
+        exe = Path(bin_dir) / (command[0] + (".exe" if os.name == "nt" else ""))
+        if exe.is_file():
+            command[0] = str(exe)
+        env = os.environ.copy()
+        env["PATH"] = f"{bin_dir}{os.pathsep}{env.get('PATH', '')}"
     try:
         completed = subprocess.run(
-            command, capture_output=True, text=True, check=False, timeout=timeout
+            command, capture_output=True, text=True, check=False, timeout=timeout, env=env
         )
     except FileNotFoundError as exc:
-        raise BackupError(f"{what} 需要命令 `{command[0]}`，但 PATH 里没有") from exc
+        raise BackupError(
+            f"{what} 需要命令 `{command[0]}`，但 PATH 里没有"
+            "（可配 BACKUP_PG_BIN_DIR 指向 pg_dump 所在目录）"
+        ) from exc
     except subprocess.TimeoutExpired as exc:
         raise BackupError(
             f"{what} 超过 {timeout:.0f} 秒未返回，已终止（检查数据库连通性与 "
