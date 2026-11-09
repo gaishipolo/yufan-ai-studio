@@ -14,6 +14,12 @@
 docs/ROUTES.md text eol=lf
 docs/MOCK_COVERAGE.md text eol=lf
 
+# vendor 是**按字节校验**的只读快照：manifest.json 记的是 LF 内容的 sha256，
+# bridge 起动时逐文件比对。检出时一旦被 `* text=auto` 转成 CRLF，校验就会判
+# 「适配器被改过」，表现为所有替换生成在起动阶段失败——而 git diff 看着是空的。
+# 所以这里必须钉死不做转换，理由与上面两个生成物相同。
+api/src/infra/ai/libtv_runtime/vendor/** -text
+
 # 二进制，不做换行转换
 *.png binary
 *.jpg binary
