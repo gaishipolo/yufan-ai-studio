@@ -3581,6 +3581,53 @@
         ]
       }
     },
+    "/api/v1/library/assets/from-generation": {
+      "post": {
+        "tags": [
+          "资产库"
+        ],
+        "summary": "生成结果入库（落草稿箱，按 sourceKey 幂等）",
+        "description": "`state=draft` / `visibility=personal` 由服务层强制，入参给不了。\n\n命中幂等（同一个 `sourceKey`，或同一份字节已在该 owner 的库里）时返回\n**200 + `created=false`**：调用方据此知道「这条已经入过库了」，不必再关联一次。",
+        "operationId": "ingest_generated_api_v1_library_assets_from_generation_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FromGenerationIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_IngestOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/api/v1/library/assets/{asset_id}": {
       "patch": {
         "tags": [
@@ -4035,6 +4082,363 @@
                 "schema": {
                   "$ref": "#/components/schemas/ApiResponse_NoneType_"
                 }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/library/packs": {
+      "post": {
+        "tags": [
+          "资产库"
+        ],
+        "summary": "建封装（成员必须是我看得见且在库的）",
+        "description": "封装是一行 `kind=pack` 的资产行 + 有序成员，**不复制成员**。\n\n解散封装不影响任何成员；下载时封装会被展开成成员逐个进包。",
+        "operationId": "create_pack_api_v1_library_packs_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PackIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_LibraryAssetDetailOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/library/packs/{pack_id}": {
+      "get": {
+        "tags": [
+          "资产库"
+        ],
+        "summary": "封装详情（含成员）",
+        "operationId": "pack_detail_api_v1_library_packs__pack_id__get",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "pack_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pack Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_LibraryAssetDetailOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "资产库"
+        ],
+        "summary": "改封装：改名 / 整体替换成员 / 换封面 / 换标签",
+        "operationId": "patch_pack_api_v1_library_packs__pack_id__patch",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "pack_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pack Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PackPatchIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_LibraryAssetDetailOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "资产库"
+        ],
+        "summary": "解散封装（进回收站，成员不受影响）",
+        "operationId": "delete_pack_api_v1_library_packs__pack_id__delete",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "pack_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pack Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_NoneType_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/library/downloads": {
+      "get": {
+        "tags": [
+          "资产库"
+        ],
+        "summary": "我最近发起的打包任务",
+        "operationId": "list_downloads_api_v1_library_downloads_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_list_DownloadJobOut__"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "资产库"
+        ],
+        "summary": "发起批量打包（异步，返回任务）",
+        "description": "**可见即可下载**：能看见的 `state=active` 条目都能进包。\n\n草稿与回收站里的 id 不整单失败，而是在 `skipped` 里逐条给原因。\n超限（100 项 / 2GB）返回 413，`details` 带 `limit` 与 `actual`。",
+        "operationId": "create_download_api_v1_library_downloads_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DownloadIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_DownloadJobOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/library/downloads/{job_id}": {
+      "get": {
+        "tags": [
+          "资产库"
+        ],
+        "summary": "打包任务状态",
+        "operationId": "download_status_api_v1_library_downloads__job_id__get",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_DownloadJobOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/library/downloads/{job_id}/file": {
+      "get": {
+        "tags": [
+          "资产库"
+        ],
+        "summary": "取打包好的 zip",
+        "operationId": "download_file_api_v1_library_downloads__job_id__file_get",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
               }
             }
           },
@@ -6199,6 +6603,33 @@
         "type": "object",
         "title": "ApiResponse[DeleteTasksOut]"
       },
+      "ApiResponse_DownloadJobOut_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DownloadJobOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[DownloadJobOut]"
+      },
       "ApiResponse_EffectivePermissionsOut_": {
         "properties": {
           "code": {
@@ -6387,6 +6818,33 @@
         },
         "type": "object",
         "title": "ApiResponse[ImageRetryOut]"
+      },
+      "ApiResponse_IngestOut_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IngestOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[IngestOut]"
       },
       "ApiResponse_LibraryAssetDetailOut_": {
         "properties": {
@@ -7273,6 +7731,37 @@
         "type": "object",
         "title": "ApiResponse[UserOut]"
       },
+      "ApiResponse_list_DownloadJobOut__": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/DownloadJobOut"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Data"
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[list[DownloadJobOut]]"
+      },
       "ApiResponse_list_ExportSourceOut__": {
         "properties": {
           "code": {
@@ -7867,7 +8356,8 @@
           "restore",
           "approveDraft",
           "rejectDraft",
-          "requestRevoke"
+          "requestRevoke",
+          "pack"
         ],
         "title": "BulkAction",
         "description": "批量动作。每一条都复用单条接口的服务方法，不另写一份状态机。\n\n`purge` 刻意不在列表里：彻底删除不可逆，一批 10 条点错一次就没了。"
@@ -8121,6 +8611,128 @@
           "deleted"
         ],
         "title": "DeleteTasksOut"
+      },
+      "DownloadIn": {
+        "properties": {
+          "ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 200,
+            "minItems": 1,
+            "title": "Ids"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ids"
+        ],
+        "title": "DownloadIn",
+        "description": "发起打包。上限在服务层判：请求最多 200 个 id（封装要展开），\n**展开后**的条目数与总字节数才是真正的闸门（100 项 / 2GB）。"
+      },
+      "DownloadJobOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "assetCount": {
+            "type": "integer",
+            "title": "Assetcount",
+            "default": 0
+          },
+          "sizeBytes": {
+            "type": "integer",
+            "title": "Sizebytes",
+            "default": 0
+          },
+          "error": {
+            "type": "string",
+            "title": "Error",
+            "default": ""
+          },
+          "downloadUrl": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Downloadurl"
+          },
+          "expiresAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expiresat"
+          },
+          "createdAt": {
+            "type": "string",
+            "title": "Createdat"
+          },
+          "finishedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finishedat"
+          },
+          "skipped": {
+            "items": {
+              "$ref": "#/components/schemas/DownloadSkip"
+            },
+            "type": "array",
+            "title": "Skipped"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "status",
+          "createdAt"
+        ],
+        "title": "DownloadJobOut",
+        "description": "打包任务。\n\n`skipped` 只在 `POST /downloads` 的响应里非空：它解释的是「你选的这批里\n哪几个为什么没进来」，轮询状态时不再重复（前端在发起那一刻就该提示）。\n落库只存 id 列表与结果，不存这份解释——省一张明细表，也避免它变成第二真相源。"
+      },
+      "DownloadSkip": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "default": ""
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "reason"
+        ],
+        "title": "DownloadSkip",
+        "description": "没能进包的条目与原因。**不整单失败**：一批 20 个里有 1 个是草稿，\n剩下的 19 个仍然该能下。"
       },
       "DraftDecisionIn": {
         "properties": {
@@ -8537,6 +9149,79 @@
         "title": "ExportSourceOut",
         "description": "可导出的数据源。前端据此渲染下拉，不要硬编码数据源名单。\n\n这份列表来自运行时注册表（`core.ports.export_sources` + 内置源），\n新模块注册一个源之后这里自动多一项——前端不需要跟着发版。"
       },
+      "FromGenerationIn": {
+        "properties": {
+          "sourceModule": {
+            "type": "string",
+            "pattern": "^(image|template|task)$",
+            "title": "Sourcemodule"
+          },
+          "sourceTaskId": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Sourcetaskid"
+          },
+          "sourceKey": {
+            "type": "string",
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Sourcekey"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/GenerationKind"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 200,
+            "title": "Name",
+            "default": ""
+          },
+          "storageKey": {
+            "type": "string",
+            "maxLength": 256,
+            "title": "Storagekey",
+            "default": ""
+          },
+          "sourceUrl": {
+            "type": "string",
+            "maxLength": 1000,
+            "title": "Sourceurl",
+            "default": ""
+          },
+          "mimeType": {
+            "type": "string",
+            "maxLength": 64,
+            "title": "Mimetype",
+            "default": ""
+          },
+          "sizeBytes": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Sizebytes",
+            "default": 0
+          },
+          "tagIds": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Tagids"
+          },
+          "generation": {
+            "$ref": "#/components/schemas/GenerationSnapshotIn"
+          }
+        },
+        "type": "object",
+        "required": [
+          "sourceModule",
+          "sourceTaskId",
+          "sourceKey",
+          "kind"
+        ],
+        "title": "FromGenerationIn",
+        "description": "生成结果入库（也经 `library-ingest` 注入口供后端模块调用）。\n\n`storageKey` 与 `sourceUrl` 二选一：**必须能物化字节**，只存外部链接的\n详情页与下载都会裂（链接会过期）。两个都给时优先 `storageKey`。"
+      },
       "GenerateImageIn": {
         "properties": {
           "prompt": {
@@ -8574,6 +9259,128 @@
           "prompt"
         ],
         "title": "GenerateImageIn"
+      },
+      "GenerationKind": {
+        "type": "string",
+        "enum": [
+          "video",
+          "image"
+        ],
+        "title": "GenerationKind",
+        "description": "生成结果的类型。只有这两种能进草稿箱：`audio` / `pack` 没有生成链路。"
+      },
+      "GenerationSnapshotIn": {
+        "properties": {
+          "model": {
+            "type": "string",
+            "maxLength": 80,
+            "title": "Model",
+            "default": ""
+          },
+          "modelId": {
+            "type": "string",
+            "maxLength": 80,
+            "title": "Modelid",
+            "default": ""
+          },
+          "prompt": {
+            "type": "string",
+            "maxLength": 4000,
+            "title": "Prompt",
+            "default": ""
+          },
+          "size": {
+            "type": "string",
+            "maxLength": 32,
+            "title": "Size",
+            "default": ""
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Count",
+            "default": 0
+          },
+          "durationSec": {
+            "type": "number",
+            "minimum": 0.0,
+            "title": "Durationsec",
+            "default": 0.0
+          },
+          "aspectRatio": {
+            "type": "string",
+            "maxLength": 16,
+            "title": "Aspectratio",
+            "default": ""
+          },
+          "stylePreset": {
+            "type": "string",
+            "maxLength": 40,
+            "title": "Stylepreset",
+            "default": ""
+          },
+          "seed": {
+            "type": "string",
+            "maxLength": 64,
+            "title": "Seed",
+            "default": ""
+          },
+          "referenceAssetIds": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Referenceassetids"
+          },
+          "packId": {
+            "type": "string",
+            "maxLength": 32,
+            "title": "Packid",
+            "default": ""
+          },
+          "packVersion": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Packversion",
+            "default": 0
+          },
+          "promptSpec": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Promptspec"
+          },
+          "configuration": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Configuration"
+          },
+          "externalId": {
+            "type": "string",
+            "maxLength": 120,
+            "title": "Externalid",
+            "default": ""
+          },
+          "credits": {
+            "type": "number",
+            "title": "Credits",
+            "default": 0.0
+          },
+          "generatedAt": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generatedat"
+          }
+        },
+        "type": "object",
+        "title": "GenerationSnapshotIn",
+        "description": "生成参数快照。字段与 `library_asset_generation` 一一对应，全部可选。"
       },
       "GroupCreateIn": {
         "properties": {
@@ -8967,6 +9774,57 @@
         ],
         "title": "ImportAsset"
       },
+      "IngestOut": {
+        "properties": {
+          "assetId": {
+            "type": "string",
+            "title": "Assetid"
+          },
+          "created": {
+            "type": "boolean",
+            "title": "Created"
+          }
+        },
+        "type": "object",
+        "required": [
+          "assetId",
+          "created"
+        ],
+        "title": "IngestOut",
+        "description": "生成入库结果。`created=False` = 命中幂等（sourceKey 重复或内容相同）。\n\n不返回整条资产：调用方（生成侧）需要的是「拿到 id 去关联任务」，\n而它可能并不持有 `library:read` 之外的权限去读详情。"
+      },
+      "LibraryArchiveOut": {
+        "properties": {
+          "storageKey": {
+            "type": "string",
+            "title": "Storagekey",
+            "default": ""
+          },
+          "sha256": {
+            "type": "string",
+            "title": "Sha256",
+            "default": ""
+          },
+          "sourceKey": {
+            "type": "string",
+            "title": "Sourcekey",
+            "default": ""
+          },
+          "sizeBytes": {
+            "type": "integer",
+            "title": "Sizebytes",
+            "default": 0
+          },
+          "referenceCount": {
+            "type": "integer",
+            "title": "Referencecount",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "title": "LibraryArchiveOut",
+        "description": "归档信息。只给所有者与管理员：存储键与幂等键对外没有意义，只会泄露内部结构。"
+      },
       "LibraryAssetDetailOut": {
         "properties": {
           "id": {
@@ -8983,7 +9841,7 @@
           "origin": {
             "type": "string",
             "title": "Origin",
-            "description": "upload / generated / template_source / imported"
+            "description": "upload / generated / template_source / imported / pack"
           },
           "mimeType": {
             "anyOf": [
@@ -9121,6 +9979,88 @@
                 "type": "null"
               }
             ]
+          },
+          "packItems": {
+            "items": {
+              "$ref": "#/components/schemas/PackItemOut"
+            },
+            "type": "array",
+            "title": "Packitems"
+          },
+          "references": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "References"
+          },
+          "shareHistory": {
+            "items": {
+              "$ref": "#/components/schemas/ShareHistoryItem"
+            },
+            "type": "array",
+            "title": "Sharehistory"
+          },
+          "archive": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LibraryArchiveOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reviewedBy": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reviewedby"
+          },
+          "reviewedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reviewedat"
+          },
+          "rejectReason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rejectreason"
+          },
+          "trashedFromState": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trashedfromstate"
           }
         },
         "type": "object",
@@ -9135,7 +10075,7 @@
           "createdAt"
         ],
         "title": "LibraryAssetDetailOut",
-        "description": "详情 = 列表项 + 标签 + 生成参数（有才返回）。\n\n生成参数用 `None` 而不是空对象：前端要区分「不是生成来的」与\n「是生成来的但历史数据没记全」，两者显示逻辑不同。"
+        "description": "详情 = 列表项 + 标签 + 生成参数（有才返回）。\n\n生成参数用 `None` 而不是空对象：前端要区分「不是生成来的」与\n「是生成来的但历史数据没记全」，两者显示逻辑不同。\n\nM3 补齐详情页六个区的数据源（设计 §7.2）：\n\n- 媒体区 → `packItems`（仅封装）与 `coverUrl`；\n- 基础信息 → `state` / `trashedFromState` / `reviewedBy` / `rejectReason`；\n- 媒体规格 → 继承的 `sizeBytes` / `durationSec` / `width`… 由前端自己排；\n- 生成参数 → `generation`；\n- 使用与引用 → `references` + `shareHistory`；\n- 归档信息 → `archive`（仅所有者 / 管理员可见）。"
       },
       "LibraryAssetKind": {
         "type": "string",
@@ -9164,7 +10104,7 @@
           "origin": {
             "type": "string",
             "title": "Origin",
-            "description": "upload / generated / template_source / imported"
+            "description": "upload / generated / template_source / imported / pack"
           },
           "mimeType": {
             "anyOf": [
@@ -9985,6 +10925,137 @@
         ],
         "title": "PackDraftIn"
       },
+      "PackIn": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "assetIds": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 100,
+            "title": "Assetids"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/PackItemIn"
+            },
+            "type": "array",
+            "maxItems": 100,
+            "title": "Items"
+          },
+          "coverAssetId": {
+            "type": "string",
+            "maxLength": 32,
+            "title": "Coverassetid",
+            "default": ""
+          },
+          "tagIds": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Tagids"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "PackIn",
+        "description": "建封装。\n\n`items` 是**唯一有序来源**；`assetIds` 只是给「勾选一批直接封装」用的简写，\n会被追加到 `items` 之后（已在 items 里的不重复加）。两者都空 → 400。"
+      },
+      "PackItemIn": {
+        "properties": {
+          "assetId": {
+            "type": "string",
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Assetid"
+          },
+          "role": {
+            "type": "string",
+            "maxLength": 40,
+            "title": "Role",
+            "default": ""
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 200,
+            "title": "Description",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "assetId"
+        ],
+        "title": "PackItemIn",
+        "description": "封装成员。`role` 预留给模板替换（产品主图 / 多视结构图…），首版可为空。"
+      },
+      "PackItemOut": {
+        "properties": {
+          "assetId": {
+            "type": "string",
+            "title": "Assetid"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "default": ""
+          },
+          "kind": {
+            "$ref": "#/components/schemas/LibraryAssetKind"
+          },
+          "state": {
+            "$ref": "#/components/schemas/LibraryAssetState"
+          },
+          "position": {
+            "type": "integer",
+            "title": "Position"
+          },
+          "role": {
+            "type": "string",
+            "title": "Role",
+            "default": ""
+          },
+          "description": {
+            "type": "string",
+            "title": "Description",
+            "default": ""
+          },
+          "sizeBytes": {
+            "type": "integer",
+            "title": "Sizebytes",
+            "default": 0
+          },
+          "coverUrl": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Coverurl"
+          }
+        },
+        "type": "object",
+        "required": [
+          "assetId",
+          "kind",
+          "state",
+          "position"
+        ],
+        "title": "PackItemOut",
+        "description": "封装里的一项。成员可能是别人共享给我的素材，所以带 `state` 与 `coverUrl`。"
+      },
       "PackManaged": {
         "properties": {
           "id": {
@@ -10143,6 +11214,72 @@
           "items"
         ],
         "title": "PackManagedList"
+      },
+      "PackPatchIn": {
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "items": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/PackItemIn"
+                },
+                "type": "array",
+                "maxItems": 100
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Items"
+          },
+          "coverAssetId": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 32
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Coverassetid"
+          },
+          "tagIds": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tagids"
+          },
+          "expectedVersion": {
+            "type": "integer",
+            "title": "Expectedversion",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "title": "PackPatchIn",
+        "description": "改封装。`items` 提供即**整体替换**（不是增量追加）——增量语义要前端自己\n算差集，而算错了就是悄悄多一个成员，不如让调用方给全量。"
       },
       "PackPublicList": {
         "properties": {
@@ -11580,6 +12717,107 @@
         "type": "object",
         "title": "ShareDecisionIn",
         "description": "审批 / 驳回 / 撤回申请单。`note` 会进申请单与审计。"
+      },
+      "ShareHistoryItem": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "action": {
+            "$ref": "#/components/schemas/ShareAction"
+          },
+          "target": {
+            "$ref": "#/components/schemas/ShareTarget"
+          },
+          "groupId": {
+            "type": "string",
+            "title": "Groupid",
+            "default": ""
+          },
+          "groupName": {
+            "type": "string",
+            "title": "Groupname",
+            "default": ""
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "applicantId": {
+            "type": "string",
+            "title": "Applicantid"
+          },
+          "applicantName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Applicantname"
+          },
+          "reviewerId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reviewerid"
+          },
+          "reviewerName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reviewername"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason",
+            "default": ""
+          },
+          "note": {
+            "type": "string",
+            "title": "Note",
+            "default": ""
+          },
+          "decidedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decidedat"
+          },
+          "createdAt": {
+            "type": "string",
+            "title": "Createdat"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "action",
+          "target",
+          "status",
+          "applicantId",
+          "createdAt"
+        ],
+        "title": "ShareHistoryItem",
+        "description": "可见性变更的一条记录。`reason` 是撤销申请里填的理由，审核人当时看的就是它。"
       },
       "ShareRequestIn": {
         "properties": {

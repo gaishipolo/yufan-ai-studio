@@ -4,6 +4,10 @@
   会先试跑一次、切换前一天再跑一次追平增量。
 - `library trash-gc`：手动跑一轮回收站清理。周期任务默认关闭（删除不可逆），
   所以运维需要一个「我看过了，现在清」的入口；`--dry-run` 只列 id。
+- `library download-gc`：清过期的打包 zip。它删的是我们自己生成的临时产物，
+  周期任务默认开着；这个命令用于「刚改完保留期，想立刻生效」或确认积压。
+- `library download-run`：手动跑一条打包任务。worker 没起 / 队列卡住时用来补跑，
+  与队列里的 handler 是同一个函数（幂等：只处理 `queued`）。
 
 命令通过 `ModuleSpec.cli` 注册：`src/cli.py` 不需要 import 本模块，
 删掉 v2 也不会让 `app backup` 起不来。
@@ -63,6 +67,28 @@ def cmd_trash_gc(args: argparse.Namespace) -> None:
         print("跳过的条目（仍被引用）：" + ", ".join(report.blocked[:20]))
 
 
+def cmd_download_gc(args: argparse.Namespace) -> None:
+    from modules.library.downloads import run_download_gc
+
+    report = asyncio.run(run_download_gc(dry_run=args.dry_run))
+    if report.dry_run:
+        print(
+            f"试运行：过期 {report.expired}，超时判失败 {report.failed}，"
+            f"可删历史行 {report.purged}"
+            + ("；涉及 " + ", ".join(report.ids[:20]) if report.ids else "")
+        )
+        return
+    for line in report.lines():
+        print(line)
+
+
+def cmd_download_run(args: argparse.Namespace) -> None:
+    from modules.library.downloads import build_download
+
+    asyncio.run(build_download(args.job_id))
+    print(f"已执行打包任务 {args.job_id}（只处理 queued 状态；其余会跳过）")
+
+
 def register(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     parser = sub.add_parser("library", help="资产库 v2 运维命令")
     actions = parser.add_subparsers(dest="library_action", required=True)
@@ -84,3 +110,20 @@ def register(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     )
     gc.set_defaults(func=cmd_trash_gc, dry_run=True)
     gc.add_argument("--batch", type=int, default=0, help="单轮最多处理多少条（0 = 用配置值）")
+
+    download_gc = actions.add_parser(
+        "download-gc", help="清理过期的打包 zip（默认试运行）"
+    )
+    download_gc.add_argument(
+        "--no-dry-run",
+        dest="dry_run",
+        action="store_false",
+        help="真的删字节；不传时只报告数量",
+    )
+    download_gc.set_defaults(func=cmd_download_gc, dry_run=True)
+
+    download_run = actions.add_parser(
+        "download-run", help="手动执行一条打包任务（worker 未起时补跑）"
+    )
+    download_run.add_argument("job_id", help="打包任务 id")
+    download_run.set_defaults(func=cmd_download_run)

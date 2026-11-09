@@ -6,27 +6,35 @@
 前端路径（`/library`）。切换时只改前端模块的 `load()` 一行，删掉本模块
 不影响现役素材库。
 
-M2 交付：三层可见集、共享与撤销审批、删除矩阵与 §3.4.1 窄口、草稿与回收站
-状态机、标签、批量写、选择器。封装与批量下载在 M3。
+M3 交付：封装、批量下载（异步 zip + 取件）、生成入库与溯源快照、详情页六个区的
+数据源。前端页面在 M4。
 """
 
 from api.module import ModuleSpec
 from core.permissions import PermissionSpec
 from core.ports.assets import AssetReferenceSource, bind_asset_reference_sources
+from core.ports.library_ingest import register_library_ingest
 from core.ports.library_references import register_library_references
 from modules.library.asset_references import GenerationAssetReferences
 from modules.library.cli import register as register_cli
 from modules.library.health import check as health_check
+from modules.library.ingest import SqlLibraryIngest
 from modules.library.lookup import install as install_lookup
 from modules.library.references import SqlLibraryReferences
 from modules.library.router import router
 
-# 必须 import：注册 @periodic("library.trash.gc")（副作用导入）
+# 必须 import：注册 @periodic("library.trash.gc") 与 @register_handler /
+# @periodic("library.download.gc")（副作用导入）
+from modules.library import downloads  # noqa: E402,F401  isort: skip
 from modules.library import maintenance  # noqa: E402,F401  isort: skip
 
 # 把「v2 资产是什么」挂到注入口：模板 / 任务 / 选择器在并存期要读它，
 # 但它们不能 import 本模块（业务模块之间不许互相 import）。
 install_lookup()
+
+# 生成结果写进草稿箱的唯一通道。fail-closed —— 没接上时生成侧 503，
+# 而不是「生成成功但库里找不到」。
+register_library_ingest(SqlLibraryIngest())
 
 # 彻底删除前的引用检查：v2 自己的封装成员与下载任务在这里聚合。
 # fail-closed —— 没接上时 `purge` 一律 503，不把「查不到」当「没人引用」。
@@ -51,11 +59,10 @@ bind_asset_reference_sources("library", ASSET_REFERENCE_SOURCES)
 # 所以：
 #
 # - M1：`read` / `create`；
-# - M2（本批）：`update` / `delete` / `delete:any` / `draft:review` / `share` /
-#   `share:direct` / `share:approve` / `tag:manage` —— 全部已接线：
-#   `update`/`delete`/`share`/`tag:manage` 在路由 `require`，
-#   `delete:any`/`draft:review`/`share:direct` 在服务层 `actor.has`；
-# - M3：`generation:ingest`（生成入库接口接线时）。
+# - M2：`update` / `delete` / `delete:any` / `draft:review` / `share` /
+#   `share:direct` / `share:approve` / `tag:manage`；
+# - M3（本批）：`generation:ingest` —— 生成入库接口用 `require` 卡住。
+#   它与 `create` 分开：能上传的人不应该能伪造「这是某次生成的结果」。
 module = ModuleSpec(
     name="library",
     router=router,
@@ -72,11 +79,15 @@ module = ModuleSpec(
         PermissionSpec("library:share:direct", "共享无需审批（撤销仍需审批）", group="资产库"),
         PermissionSpec("library:share:approve", "审批共享与撤销申请", group="资产库"),
         PermissionSpec("library:tag:manage", "管理标签词表（改名 / 删除）", group="资产库"),
+        PermissionSpec(
+            "library:generation:ingest", "生成结果入库（草稿箱）", group="资产库"
+        ),
     ),
-    # M2 起有周期任务（回收站 GC）。声明了就必须注册，`create_app()` 会核对：
-    # `modules.library.maintenance` 的 import 就是注册动作。
-    periodic=("library.trash.gc",),
-    # 运维命令：旧素材导入、回收站 GC（dry-run / 手动跑一轮）
+    # M3 起有后台打包任务与两个周期任务。声明了就必须注册，`create_app()` 会核对：
+    # `downloads` / `maintenance` 的 import 就是注册动作。
+    jobs=("library.download.build",),
+    periodic=("library.trash.gc", "library.download.gc"),
+    # 运维命令：旧素材导入、回收站 GC、打包产物清理
     cli=register_cli,
     asset_reference_sources=ASSET_REFERENCE_SOURCES,
     doctor=health_check,

@@ -296,3 +296,109 @@ LIB_RW = [
     "library:delete",
     "library:share",
 ]
+
+
+def put_blob(key: str, data: bytes, mime: str = "image/png") -> str:
+    """直接往对象存储写一份字节，模拟「生成结果已经落在存储里」。
+
+    生成入库的用例不能拿「刚上传的那张图」当来源：同一份字节已经登记在这个
+    owner 的库里了，入库会走内容去重（`created=false`），测不到新建路径。
+    """
+    from infra import get_storage
+
+    async def run() -> None:
+        await get_storage().put(key, data, mime)
+
+    asyncio.run(run())
+    return key
+
+
+def fetch_pack_items(pack_id: str) -> list[dict[str, Any]]:
+    """读回封装成员行（断言「彻底删除封装不留孤儿行」用）。"""
+    from sqlalchemy import select
+
+    from modules.library.models import LibraryPackItem
+
+    async def run() -> list[dict[str, Any]]:
+        from db.session import get_session_factory
+
+        async with get_session_factory()() as session:
+            rows = (
+                await session.scalars(
+                    select(LibraryPackItem)
+                    .where(LibraryPackItem.pack_id == pack_id)
+                    .order_by(LibraryPackItem.position)
+                )
+            ).all()
+            return [
+                {
+                    "asset_id": row.asset_id,
+                    "position": row.position,
+                    "role": row.role,
+                }
+                for row in rows
+            ]
+
+    return asyncio.run(run())
+
+
+def build_download_job(job_id: str) -> None:
+    """同步执行一次打包（测试里没有常驻 worker）。
+
+    `build_download` 只处理 `queued`，所以重复调用是安全的；用例里调两次不会把
+    同一个包压两遍，也不会把状态从 succeeded 改回去。
+    """
+    from modules.library.downloads import build_download
+
+    asyncio.run(build_download(job_id))
+
+
+def backdate_download(
+    job_id: str, *, expires_days: float = 1, updated_days: float = 0
+) -> None:
+    """把打包任务的过期时间 / 更新时间调到过去，用来测 GC（不想等 24 小时）。"""
+    from datetime import UTC, datetime, timedelta
+
+    from sqlalchemy import update
+
+    from modules.library.models import LibraryDownloadJob
+
+    async def run() -> None:
+        from db.session import get_session_factory
+
+        now = datetime.now(UTC)
+        values: dict[str, Any] = {
+            "expires_at": now - timedelta(days=expires_days),
+        }
+        if updated_days:
+            values["updated_at"] = now - timedelta(days=updated_days)
+        async with get_session_factory()() as session:
+            await session.execute(
+                update(LibraryDownloadJob)
+                .where(LibraryDownloadJob.id == job_id)
+                .values(**values)
+            )
+            await session.commit()
+
+    asyncio.run(run())
+
+
+def fetch_download_job(job_id: str) -> dict[str, Any] | None:
+    from modules.library.models import LibraryDownloadJob
+
+    async def run() -> dict[str, Any] | None:
+        from db.session import get_session_factory
+
+        async with get_session_factory()() as session:
+            row = await session.get(LibraryDownloadJob, job_id)
+            if row is None:
+                return None
+            return {
+                "status": row.status,
+                "storage_key": row.storage_key,
+                "size_bytes": row.size_bytes,
+                "asset_ids": list(row.asset_ids or []),
+                "error": row.error,
+            }
+
+    return asyncio.run(run())

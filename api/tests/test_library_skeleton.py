@@ -25,10 +25,9 @@ from core.ports.library_lookup import get_library_lookup, reset_library_lookup
 from core.ports.library_references import get_library_references, reset_library_references
 from modules.library import errors as library_errors
 
-#: 已接入 `ModuleSpec` 的权限点（M2）。清单必须与真实判定点同步：
+#: 已接入 `ModuleSpec` 的权限点（M3 完成态）。清单必须与真实判定点同步：
 #: `test_permission_coverage` 不允许「声明了但没人用」的僵尸权限点，
 #: 也不允许「服务层判了但没声明」（那样普通用户永远 403）。
-#: `library:generation:ingest` 在 M3 接线时加进来。
 LIBRARY_PERMISSIONS = {
     "library:read",
     "library:create",
@@ -40,6 +39,7 @@ LIBRARY_PERMISSIONS = {
     "library:share:direct",
     "library:share:approve",
     "library:tag:manage",
+    "library:generation:ingest",
 }
 
 
@@ -65,11 +65,16 @@ def _restore_ports() -> Iterator[None]:
     自己 finally——漏写一次会污染整场。
     """
     yield
+    from core.ports.library_ingest import (
+        has_library_ingest,
+        register_library_ingest,
+    )
     from core.ports.library_lookup import has_library_lookup
     from core.ports.library_references import (
         has_library_references,
         register_library_references,
     )
+    from modules.library.ingest import SqlLibraryIngest
     from modules.library.lookup import install as install_lookup
     from modules.library.references import SqlLibraryReferences
 
@@ -79,6 +84,8 @@ def _restore_ports() -> Iterator[None]:
         install_lookup()
     if not has_library_references():
         register_library_references(SqlLibraryReferences())
+    if not has_library_ingest():
+        register_library_ingest(SqlLibraryIngest())
 
 
 def test_library_list_returns_the_contract_shape(client: TestClient, api: str) -> None:

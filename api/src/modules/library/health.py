@@ -1,14 +1,16 @@
 """资产库 v2 的部署自检：`ModuleSpec.doctor` 指向这里。
 
-三条检查，各自对应一种「不报错但会慢慢坏」的状态：
+四条检查，各自对应一种「不报错但会慢慢坏」的状态：
 
-- `library.ports`：注入口有没有接上。`library-ingest` 要到 M3 才接，所以它在
-  未接上时只记 INFO；`library-lookup` / `library-references` 在 M2 已接地，
-  缺任何一个都是装配故障（引用检查缺失会让「彻底删除」一律 503）。
+- `library.ports`：四个注入口有没有接上。任何一个缺失都是装配故障——
+  读查询缺了选择器拿不到资产，引用检查缺了「彻底删除」一律 503，
+  入库缺了生成结果会丢（fail-closed 会让生成侧报错，还算看得见）。
 - `library.trash`：回收站里**已过期但仍未清理**的条数。GC 默认关闭，所以这项
   平时是 INFO；一旦条数持续增长且 GC 开着，说明有引用一直挡着删除。
 - `library.share_requests`：pending 超过 7 天的申请单。审批流最典型的死法是
   「没人知道有这张单」——资产既删不掉也共享不出去，而日志里一句错都没有。
+- `library.downloads`：卡住的打包任务与没清掉的过期 zip。打包任务卡在
+  `running` 时前端会永远转圈；而「过期却没清」只占磁盘，不表现成任何错误。
 
 纪律与其它模块自检一致：只往报告里加自己那条，不改别人的结论。
 """
@@ -25,7 +27,12 @@ from core.ports.library_ingest import has_library_ingest
 from core.ports.library_lookup import has_library_lookup
 from core.ports.library_references import has_library_references
 from db.session import get_session_factory
-from modules.library.models import LibraryAsset, LibraryShareRequest
+from modules.library.downloads import QUEUED, RUNNING, STUCK_AFTER, SUCCEEDED
+from modules.library.models import (
+    LibraryAsset,
+    LibraryDownloadJob,
+    LibraryShareRequest,
+)
 
 __all__ = ["check"]
 
@@ -33,27 +40,24 @@ _STALE_REQUEST_DAYS = 7
 
 
 async def check(report: DoctorReportLike) -> None:
-    required_missing = [
+    missing = [
         name
         for name, connected in (
             ("library-lookup", has_library_lookup()),
+            ("library-ingest", has_library_ingest()),
             ("library-references", has_library_references()),
         )
         if not connected
     ]
-    if required_missing:
+    if missing:
         report.add(
             "library.ports",
             "FAIL",
-            f"注入口未接上：{', '.join(required_missing)}"
-            "（引用检查缺失会让彻底删除一律 503，这是刻意的 fail-closed）",
-        )
-    elif not has_library_ingest():
-        report.add(
-            "library.ports", "INFO", "library-ingest 未接上（M3 接入生成入库后才需要）"
+            f"注入口未接上：{', '.join(missing)}"
+            "（引用检查缺失会让彻底删除一律 503，入库缺失会让生成结果无处可写）",
         )
     else:
-        report.add("library.ports", "PASS", "三个注入口均已接上")
+        report.add("library.ports", "PASS", "读 / 写 / 引用三个注入口均已接上")
 
     async with get_session_factory()() as session:
         now = datetime.now(UTC)
@@ -107,3 +111,48 @@ async def check(report: DoctorReportLike) -> None:
             )
         else:
             report.add("library.share_requests", "PASS", "没有长期待审的申请单")
+
+        stuck = int(
+            await session.scalar(
+                select(func.count())
+                .select_from(LibraryDownloadJob)
+                .where(
+                    LibraryDownloadJob.status.in_((QUEUED, RUNNING)),
+                    LibraryDownloadJob.created_at <= now - STUCK_AFTER,
+                )
+            )
+            or 0
+        )
+        overdue = int(
+            await session.scalar(
+                select(func.count())
+                .select_from(LibraryDownloadJob)
+                .where(
+                    LibraryDownloadJob.status == SUCCEEDED,
+                    LibraryDownloadJob.expires_at.is_not(None),
+                    LibraryDownloadJob.expires_at <= now,
+                )
+            )
+            or 0
+        )
+        if stuck:
+            report.add(
+                "library.downloads",
+                "WARN",
+                f"{stuck} 条打包任务卡在排队/执行超过 {STUCK_AFTER.total_seconds() / 3600:.0f} 小时"
+                "：前端会一直转圈，检查 worker 是否在跑，或用 `app library download-run` 补跑",
+            )
+        elif overdue and not settings.library_download_gc_enabled:
+            report.add(
+                "library.downloads",
+                "INFO",
+                f"{overdue} 个过期 zip 未清理（LIBRARY_DOWNLOAD_GC_ENABLED=false，属预期）",
+            )
+        elif overdue:
+            report.add(
+                "library.downloads",
+                "WARN",
+                f"{overdue} 个过期 zip 未清理（GC 已开，检查 library.download.gc 是否在跑）",
+            )
+        else:
+            report.add("library.downloads", "PASS", "没有卡住的打包任务与过期 zip")

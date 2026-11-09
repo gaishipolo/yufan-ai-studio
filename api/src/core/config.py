@@ -228,6 +228,18 @@ class Settings(BaseSettings):
     # 单轮 GC 的批大小：一次最多处理多少条过期条目，避免一轮跑太久
     # 把调度器的其他任务推后（handler 超时是 every*2）。
     library_trash_gc_batch: int = 200
+    # 批量下载：单次**展开后**的条目上限与字节上限。上限存在的理由不是省带宽，
+    # 而是「一个人点一下就把 worker 占满十分钟」。超限返回 413，提示分批。
+    library_download_max_items: int = 100
+    # 2 GB：解压后总量，按资产行登记的 size_bytes 求和（不用 zip 实际大小，
+    # 否则压缩率高的视频会让闸门形同虚设）。
+    library_download_max_bytes: int = 2 * 1024 * 1024 * 1024
+    # zip 保留时长。任务行不删，只删字节；过期后再取文件给 409。
+    library_download_ttl_hours: float = 24.0
+    # 过期 zip 的清扫。与回收站 GC 不同，这里删的是**我们自己生成的临时产物**，
+    # 用户点开只会看到 409，所以默认开启；多实例仍靠 leader_only 收敛到一台。
+    library_download_gc_enabled: bool = True
+    library_download_gc_interval_sec: float = 3600.0
     # 镜像对账：只读 DB + 按 stateVersion 幂等覆盖写，多实例各跑一份结果相同，
     # 所以默认开启（与 GC 不同，它不需要选主）。也可随时 `app rebuild-mirrors`。
     archive_mirror_enabled: bool = True

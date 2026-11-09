@@ -36,6 +36,7 @@ from sqlalchemy.sql.elements import ColumnElement
 
 from core.context import CurrentUser
 from core.exceptions import NotFound
+from core.ports.library_references import get_library_references, has_library_references
 from core.response import PageParams
 from core.serving import Served
 from infra.media_probe import EXTENSIONS, MAX_BYTES, create_preview, inspect
@@ -46,11 +47,14 @@ from modules.library.models import (
     LibraryAsset,
     LibraryAssetGeneration,
     LibraryAssetTag,
+    LibraryPackItem,
+    LibraryShareRequest,
     LibraryTag,
 )
 from modules.library.schema import (
     AssetPatchIn,
     AssetSort,
+    LibraryArchiveOut,
     LibraryAssetDetailOut,
     LibraryAssetOut,
     LibraryAssetPage,
@@ -59,6 +63,8 @@ from modules.library.schema import (
     LibraryGroupRef,
     LibraryTab,
     LibraryTagOut,
+    PackItemOut,
+    ShareHistoryItem,
     UploadKind,
 )
 from modules.library.tags import set_asset_tags
@@ -97,6 +103,31 @@ def blob_key(digest: str, extension: str) -> str:
 
 def preview_key(digest: str) -> str:
     return f"{PREVIEW_PREFIX}/{digest[:2]}/{digest}.jpg"
+
+
+def snapshot_out(row: LibraryAssetGeneration) -> LibraryGenerationOut:
+    """生成溯源快照 → 出参。入库时冻结，这里只做字段搬运，不联表、不补算。"""
+    return LibraryGenerationOut(
+        source_module=row.source_module,
+        source_task_id=row.source_task_id,
+        model=row.model,
+        model_id=row.model_id,
+        prompt=row.prompt,
+        size=row.size,
+        count=row.count,
+        duration_sec=row.duration_sec,
+        aspect_ratio=row.aspect_ratio,
+        style_preset=row.style_preset,
+        seed=row.seed,
+        reference_asset_ids=list(row.reference_asset_ids or []),
+        pack_id=row.pack_id,
+        pack_version=row.pack_version,
+        prompt_spec=dict(row.prompt_spec or {}),
+        configuration=dict(row.configuration or {}),
+        external_id=row.external_id,
+        credits=row.credits,
+        generated_at=row.generated_at,
+    )
 
 
 class LibraryService:
@@ -187,7 +218,7 @@ class LibraryService:
     async def detail(
         self, asset_id: str, actor: CurrentUser, *, require_visible: bool = True
     ) -> LibraryAssetDetailOut:
-        """详情。
+        """详情：列表项 + 详情页六个区要用的东西（设计 §7.2）。
 
         `require_visible=False` 只给「刚做完授权动作」的调用方用（草稿代审、
         驳回、恢复）：动作本身已经判过权限，但动作之后的状态可能让操作人
@@ -211,6 +242,7 @@ class LibraryService:
         names = await access.group_names_for(self.session, group_ids.get(row.id, []))
         owner_map = await access.owner_names(self.session, [row.owner_id])
         generation = await self.session.get(LibraryAssetGeneration, row.id)
+        references = await self._references(row)
         return LibraryAssetDetailOut(
             **self._to_out(
                 row,
@@ -222,31 +254,121 @@ class LibraryService:
                 LibraryGroupRef(id=group_id, name=names.get(group_id, ""))
                 for group_id in group_ids.get(row.id, [])
             ],
-            generation=(
-                LibraryGenerationOut(
-                    source_module=generation.source_module,
-                    source_task_id=generation.source_task_id,
-                    model=generation.model,
-                    model_id=generation.model_id,
-                    prompt=generation.prompt,
-                    size=generation.size,
-                    count=generation.count,
-                    duration_sec=generation.duration_sec,
-                    aspect_ratio=generation.aspect_ratio,
-                    style_preset=generation.style_preset,
-                    seed=generation.seed,
-                    reference_asset_ids=list(generation.reference_asset_ids or []),
-                    pack_id=generation.pack_id,
-                    pack_version=generation.pack_version,
-                    prompt_spec=dict(generation.prompt_spec or {}),
-                    configuration=dict(generation.configuration or {}),
-                    external_id=generation.external_id,
-                    credits=generation.credits,
-                    generated_at=generation.generated_at,
+            generation=snapshot_out(generation) if generation else None,
+            pack_items=await self._pack_items(row) if row.kind == "pack" else [],
+            references=references,
+            share_history=await self._share_history(row),
+            archive=self._archive(row, actor, references),
+            reviewed_by=row.reviewed_by,
+            reviewed_at=row.reviewed_at,
+            reject_reason=row.reject_reason,
+            trashed_from_state=row.trashed_from_state,
+        )
+
+    async def _pack_items(self, pack: LibraryAsset) -> list[PackItemOut]:
+        """封装的成员。**成员行可能已经被物理删除**——建封装时它们是引用关系，
+        删除一方要过 `library-references`，理论上到不了这里；但历史数据/人工
+        SQL 都可能留下断链，取不到就跳过，别让详情页整体 500。"""
+        items = (
+            await self.session.scalars(
+                select(LibraryPackItem)
+                .where(LibraryPackItem.pack_id == pack.id)
+                .order_by(LibraryPackItem.position)
+            )
+        ).all()
+        if not items:
+            return []
+        rows = {
+            row.id: row
+            for row in (
+                await self.session.scalars(
+                    select(LibraryAsset).where(
+                        LibraryAsset.id.in_([item.asset_id for item in items])
+                    )
                 )
-                if generation
-                else None
-            ),
+            ).all()
+        }
+        result: list[PackItemOut] = []
+        for item in items:
+            row = rows.get(item.asset_id)
+            if row is None:
+                continue
+            result.append(
+                PackItemOut(
+                    asset_id=row.id,
+                    name=row.name,
+                    kind=row.kind,
+                    state=row.state,
+                    position=item.position,
+                    role=item.role,
+                    description=item.description,
+                    size_bytes=row.size_bytes,
+                    cover_url=self.storage.url_for(row.cover_key) if row.cover_key else None,
+                )
+            )
+        return result
+
+    async def _references(self, row: LibraryAsset) -> list[str] | None:
+        """谁在用它。`None` 表示注入口没接上（**不可判定**），不是「没人用」。
+
+        详情页据此决定是「可以彻底删除」还是「暂时查不了」——把两者都说成
+        空数组，会让用户在一个装配故障的实例上删掉正在被引用的素材。
+        """
+        if not has_library_references():
+            return None
+        references = await get_library_references().references(self.session, [row.id])
+        return list(references.get(row.id, []))
+
+    async def _share_history(self, row: LibraryAsset) -> list[ShareHistoryItem]:
+        """可见性变更历史。最多 20 条：再久远的共享记录属于审计，不属于详情页。"""
+        requests = (
+            await self.session.scalars(
+                select(LibraryShareRequest)
+                .where(LibraryShareRequest.asset_id == row.id)
+                .order_by(LibraryShareRequest.created_at.desc())
+                .limit(20)
+            )
+        ).all()
+        if not requests:
+            return []
+        user_ids = {request.applicant_id for request in requests}
+        user_ids.update(request.reviewer_id for request in requests if request.reviewer_id)
+        names = await access.owner_names(self.session, sorted(user_ids))
+        group_names = await access.group_names_for(
+            self.session, [request.group_id for request in requests if request.group_id]
+        )
+        return [
+            ShareHistoryItem(
+                id=request.id,
+                action=request.action,
+                target=request.target,
+                group_id=request.group_id,
+                group_name=group_names.get(request.group_id, ""),
+                status=request.status,
+                applicant_id=request.applicant_id,
+                applicant_name=names.get(request.applicant_id),
+                reviewer_id=request.reviewer_id,
+                reviewer_name=names.get(request.reviewer_id or ""),
+                reason=request.reason,
+                note=request.note,
+                decided_at=request.decided_at,
+                created_at=request.created_at,
+            )
+            for request in requests
+        ]
+
+    def _archive(
+        self, row: LibraryAsset, actor: CurrentUser, references: list[str] | None
+    ) -> LibraryArchiveOut | None:
+        """归档信息只给所有者与管理员：存储键与幂等键对外没有意义，只暴露内部结构。"""
+        if row.owner_id != actor.id and not actor.has(access.PERM_DELETE_ANY):
+            return None
+        return LibraryArchiveOut(
+            storage_key=row.storage_key,
+            sha256=row.sha256 or "",
+            source_key=row.source_key or "",
+            size_bytes=row.size_bytes,
+            reference_count=len(references or []),
         )
 
     async def file(

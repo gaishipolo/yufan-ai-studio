@@ -36,9 +36,9 @@ export const AspectRatio_VALUES = ["9:16", "16:9", "1:1"] as const;
 export type AssetSort = "-createdAt" | "createdAt" | "name" | "-sizeBytes";
 export const AssetSort_VALUES = ["-createdAt", "createdAt", "name", "-sizeBytes"] as const;
 
-/** 取值：addTag, removeTag, rename, delete, restore, approveDraft, rejectDraft, requestRevoke */
-export type BulkAction = "addTag" | "removeTag" | "rename" | "delete" | "restore" | "approveDraft" | "rejectDraft" | "requestRevoke";
-export const BulkAction_VALUES = ["addTag", "removeTag", "rename", "delete", "restore", "approveDraft", "rejectDraft", "requestRevoke"] as const;
+/** 取值：addTag, removeTag, rename, delete, restore, approveDraft, rejectDraft, requestRevoke, pack */
+export type BulkAction = "addTag" | "removeTag" | "rename" | "delete" | "restore" | "approveDraft" | "rejectDraft" | "requestRevoke" | "pack";
+export const BulkAction_VALUES = ["addTag", "removeTag", "rename", "delete", "restore", "approveDraft", "rejectDraft", "requestRevoke", "pack"] as const;
 
 /** 取值：video, image, audio */
 export type Capability = "video" | "image" | "audio";
@@ -47,6 +47,10 @@ export const Capability_VALUES = ["video", "image", "audio"] as const;
 /** 取值：tasks, audit_events */
 export type ExportSource = "tasks" | "audit_events";
 export const ExportSource_VALUES = ["tasks", "audit_events"] as const;
+
+/** 取值：video, image */
+export type GenerationKind = "video" | "image";
+export const GenerationKind_VALUES = ["video", "image"] as const;
 
 /** 取值：video, audio, image, pack */
 export type LibraryAssetKind = "video" | "audio" | "image" | "pack";
@@ -219,6 +223,38 @@ export interface DeleteTasksOut {
   skipped?: string[];
 }
 
+/** 发起打包。上限在服务层判：请求最多 200 个 id（封装要展开），
+**展开后**的条目数与总字节数才是真正的闸门（100 项 / 2GB）。 */
+export interface DownloadIn {
+  ids: string[];
+}
+
+/** 打包任务。
+
+`skipped` 只在 `POST /downloads` 的响应里非空：它解释的是「你选的这批里
+哪几个为什么没进来」，轮询状态时不再重复（前端在发起那一刻就该提示）。
+落库只存 id 列表与结果，不存这份解释——省一张明细表，也避免它变成第二真相源。 */
+export interface DownloadJobOut {
+  id: string;
+  status: string;
+  assetCount?: number;
+  sizeBytes?: number;
+  error?: string;
+  downloadUrl?: string | null;
+  expiresAt?: string | null;
+  createdAt: string;
+  finishedAt?: string | null;
+  skipped?: DownloadSkip[];
+}
+
+/** 没能进包的条目与原因。**不整单失败**：一批 20 个里有 1 个是草稿，
+剩下的 19 个仍然该能下。 */
+export interface DownloadSkip {
+  id: string;
+  name?: string;
+  reason: string;
+}
+
 /** DraftDecisionIn */
 export interface DraftDecisionIn {
   reason?: string;
@@ -314,6 +350,24 @@ export interface ExportSourceOut {
   permission?: string | null;
 }
 
+/** 生成结果入库（也经 `library-ingest` 注入口供后端模块调用）。
+
+`storageKey` 与 `sourceUrl` 二选一：**必须能物化字节**，只存外部链接的
+详情页与下载都会裂（链接会过期）。两个都给时优先 `storageKey`。 */
+export interface FromGenerationIn {
+  sourceModule: string;
+  sourceTaskId: string;
+  sourceKey: string;
+  kind: GenerationKind;
+  name?: string;
+  storageKey?: string;
+  sourceUrl?: string;
+  mimeType?: string;
+  sizeBytes?: number;
+  tagIds?: string[];
+  generation?: GenerationSnapshotIn;
+}
+
 /** GenerateImageIn */
 export interface GenerateImageIn {
   /** 画面描述 */
@@ -324,6 +378,27 @@ export interface GenerateImageIn {
   count?: number;
   /** 模型 id，留空取默认 */
   model?: string;
+}
+
+/** 生成参数快照。字段与 `library_asset_generation` 一一对应，全部可选。 */
+export interface GenerationSnapshotIn {
+  model?: string;
+  modelId?: string;
+  prompt?: string;
+  size?: string;
+  count?: number;
+  durationSec?: number;
+  aspectRatio?: string;
+  stylePreset?: string;
+  seed?: string;
+  referenceAssetIds?: string[];
+  packId?: string;
+  packVersion?: number;
+  promptSpec?: Record<string, unknown>;
+  configuration?: Record<string, unknown>;
+  externalId?: string;
+  credits?: number;
+  generatedAt?: string | null;
 }
 
 /** GroupCreateIn */
@@ -448,15 +523,42 @@ export interface ImportAsset {
   category: "source" | "character" | "product" | "scene" | "audio";
 }
 
+/** 生成入库结果。`created=False` = 命中幂等（sourceKey 重复或内容相同）。
+
+不返回整条资产：调用方（生成侧）需要的是「拿到 id 去关联任务」，
+而它可能并不持有 `library:read` 之外的权限去读详情。 */
+export interface IngestOut {
+  assetId: string;
+  created: boolean;
+}
+
+/** 归档信息。只给所有者与管理员：存储键与幂等键对外没有意义，只会泄露内部结构。 */
+export interface LibraryArchiveOut {
+  storageKey?: string;
+  sha256?: string;
+  sourceKey?: string;
+  sizeBytes?: number;
+  referenceCount?: number;
+}
+
 /** 详情 = 列表项 + 标签 + 生成参数（有才返回）。
 
 生成参数用 `None` 而不是空对象：前端要区分「不是生成来的」与
-「是生成来的但历史数据没记全」，两者显示逻辑不同。 */
+「是生成来的但历史数据没记全」，两者显示逻辑不同。
+
+M3 补齐详情页六个区的数据源（设计 §7.2）：
+
+- 媒体区 → `packItems`（仅封装）与 `coverUrl`；
+- 基础信息 → `state` / `trashedFromState` / `reviewedBy` / `rejectReason`；
+- 媒体规格 → 继承的 `sizeBytes` / `durationSec` / `width`… 由前端自己排；
+- 生成参数 → `generation`；
+- 使用与引用 → `references` + `shareHistory`；
+- 归档信息 → `archive`（仅所有者 / 管理员可见）。 */
 export interface LibraryAssetDetailOut {
   id: string;
   name: string;
   kind: LibraryAssetKind;
-  /** upload / generated / template_source / imported */
+  /** upload / generated / template_source / imported / pack */
   origin: string;
   mimeType?: string | null;
   sizeBytes?: number;
@@ -476,6 +578,14 @@ export interface LibraryAssetDetailOut {
   tags?: LibraryTagOut[];
   groups?: LibraryGroupRef[];
   generation?: LibraryGenerationOut | null;
+  packItems?: PackItemOut[];
+  references?: string[] | null;
+  shareHistory?: ShareHistoryItem[];
+  archive?: LibraryArchiveOut | null;
+  reviewedBy?: string | null;
+  reviewedAt?: string | null;
+  rejectReason?: string | null;
+  trashedFromState?: string | null;
 }
 
 /** 列表项。字段对齐 `library_assets` 表，M1 建表后不再改形状。 */
@@ -483,7 +593,7 @@ export interface LibraryAssetOut {
   id: string;
   name: string;
   kind: LibraryAssetKind;
-  /** upload / generated / template_source / imported */
+  /** upload / generated / template_source / imported / pack */
   origin: string;
   mimeType?: string | null;
   sizeBytes?: number;
@@ -679,6 +789,38 @@ export interface PackDraftIn {
   supportedScopes?: string[];
 }
 
+/** 建封装。
+
+`items` 是**唯一有序来源**；`assetIds` 只是给「勾选一批直接封装」用的简写，
+会被追加到 `items` 之后（已在 items 里的不重复加）。两者都空 → 400。 */
+export interface PackIn {
+  name: string;
+  assetIds?: string[];
+  items?: PackItemIn[];
+  coverAssetId?: string;
+  tagIds?: string[];
+}
+
+/** 封装成员。`role` 预留给模板替换（产品主图 / 多视结构图…），首版可为空。 */
+export interface PackItemIn {
+  assetId: string;
+  role?: string;
+  description?: string;
+}
+
+/** 封装里的一项。成员可能是别人共享给我的素材，所以带 `state` 与 `coverUrl`。 */
+export interface PackItemOut {
+  assetId: string;
+  name?: string;
+  kind: LibraryAssetKind;
+  state: LibraryAssetState;
+  position: number;
+  role?: string;
+  description?: string;
+  sizeBytes?: number;
+  coverUrl?: string | null;
+}
+
 /** PackManaged */
 export interface PackManaged {
   id: string;
@@ -704,6 +846,16 @@ export interface PackManaged {
 /** PackManagedList */
 export interface PackManagedList {
   items: PackManaged[];
+}
+
+/** 改封装。`items` 提供即**整体替换**（不是增量追加）——增量语义要前端自己
+算差集，而算错了就是悄悄多一个成员，不如让调用方给全量。 */
+export interface PackPatchIn {
+  name?: string | null;
+  items?: PackItemIn[] | null;
+  coverAssetId?: string | null;
+  tagIds?: string[] | null;
+  expectedVersion?: number;
 }
 
 /** PackPublicList */
@@ -1038,6 +1190,24 @@ export interface SessionOut {
 export interface ShareDecisionIn {
   note?: string;
   expectedVersion?: number;
+}
+
+/** 可见性变更的一条记录。`reason` 是撤销申请里填的理由，审核人当时看的就是它。 */
+export interface ShareHistoryItem {
+  id: string;
+  action: ShareAction;
+  target: ShareTarget;
+  groupId?: string;
+  groupName?: string;
+  status: string;
+  applicantId: string;
+  applicantName?: string | null;
+  reviewerId?: string | null;
+  reviewerName?: string | null;
+  reason?: string;
+  note?: string;
+  decidedAt?: string | null;
+  createdAt: string;
 }
 
 /** 发起共享或撤销共享。
@@ -1489,6 +1659,8 @@ export interface EndpointData {
   "GET /api/v1/library/assets": LibraryAssetPage;
   /** 批量写：逐条判定，部分失败返回明细 */
   "POST /api/v1/library/assets/bulk": BulkOut;
+  /** 生成结果入库（落草稿箱，按 sourceKey 幂等） */
+  "POST /api/v1/library/assets/from-generation": IngestOut;
   /** 上传图片 / 音频（流式，按内容秒传） */
   "POST /api/v1/library/assets/upload": LibraryAssetOut;
   /** 移入回收站（软删，可恢复） */
@@ -1501,6 +1673,14 @@ export interface EndpointData {
   "GET /api/v1/library/assets/{asset_id}/file": unknown;
   /** 读取缩略图 */
   "GET /api/v1/library/assets/{asset_id}/thumbnail": unknown;
+  /** 我最近发起的打包任务 */
+  "GET /api/v1/library/downloads": DownloadJobOut[];
+  /** 发起批量打包（异步，返回任务） */
+  "POST /api/v1/library/downloads": unknown;
+  /** 打包任务状态 */
+  "GET /api/v1/library/downloads/{job_id}": DownloadJobOut;
+  /** 取打包好的 zip */
+  "GET /api/v1/library/downloads/{job_id}/file": unknown;
   /** 草稿采纳：进入个人素材库 */
   "POST /api/v1/library/drafts/{asset_id}/approve": LibraryAssetDetailOut;
   /** 草稿驳回：进回收站，可恢复回草稿 */
@@ -1511,6 +1691,14 @@ export interface EndpointData {
   "GET /api/v1/library/groups": LibraryGroupOut[];
   /** 设置小组负责人（整体替换） */
   "PUT /api/v1/library/groups/{group_id}/leaders": string[];
+  /** 建封装（成员必须是我看得见且在库的） */
+  "POST /api/v1/library/packs": LibraryAssetDetailOut;
+  /** 解散封装（进回收站，成员不受影响） */
+  "DELETE /api/v1/library/packs/{pack_id}": null;
+  /** 封装详情（含成员） */
+  "GET /api/v1/library/packs/{pack_id}": LibraryAssetDetailOut;
+  /** 改封装：改名 / 整体替换成员 / 换封面 / 换标签 */
+  "PATCH /api/v1/library/packs/{pack_id}": LibraryAssetDetailOut;
   /** 选择器：只返回库内资产 */
   "GET /api/v1/library/selection": LibrarySelectionPage;
   /** 申请单列表（我提交的 / 待我审核） */

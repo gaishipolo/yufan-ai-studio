@@ -2,7 +2,7 @@
 
 > 此文件由 `app export-openapi` 自动生成，请勿手工编辑。
 >
-> 版本 `0.2.0`｜共 **116** 个接口 / **11** 个模块
+> 版本 `0.2.0`｜共 **125** 个接口 / **11** 个模块
 >
 > 重新生成：`cd api && .venv/Scripts/python -m cli export-openapi`
 
@@ -142,6 +142,7 @@ Authorization: Bearer <accessToken>
 | `library:delete` | 删除本人资产（移入回收站） |  |
 | `library:delete:any` | 删除 / 恢复任何人的资产 |  |
 | `library:draft:review` | 审核他人草稿 |  |
+| `library:generation:ingest` | 生成结果入库（草稿箱） |  |
 | `library:read` | 查看资产库 |  |
 | `library:share` | 发起共享与撤销共享申请 |  |
 | `library:share:approve` | 审批共享与撤销申请 |  |
@@ -169,6 +170,10 @@ Authorization: Bearer <accessToken>
 | `40051` | 400 | asset | `FileTypeNotAllowed` | 支持 MP4、PNG、JPG、WebP、MP3 和 WAV |
 | `40081` | 400 | library | `RevokeReasonRequired` | 撤销共享必须填写理由 |
 | `40082` | 400 | library | `LibraryFileTypeNotAllowed` | 支持 MP4、PNG、JPG、WebP、MP3 和 WAV |
+| `40083` | 400 | library | `PackItemInvalid` | 封装里有不可用的成员 |
+| `40084` | 400 | library | `PackEmpty` | 封装至少需要一个成员 |
+| `40085` | 400 | library | `GenerationSourceInvalid` | 生成结果必须提供可读取的 storageKey 或 sourceUrl |
+| `40086` | 400 | library | `DownloadEmpty` | 选中的条目都不在可下载范围内 |
 | `40100` | 401 | 框架 | `Unauthorized` | 请先登录 |
 | `40121` | 401 | identity | `CredentialInvalid` | 用户名或密码错误 |
 | `40122` | 401 | identity | `RefreshTokenInvalid` | 刷新令牌已失效，请重新登录 |
@@ -202,12 +207,14 @@ Authorization: Bearer <accessToken>
 | `40986` | 409 | library | `TrashEntryReferenced` | 资产仍被引用，不能彻底删除 |
 | `40987` | 409 | library | `ShareTargetInvalid` | 共享目标与该资产的当前状态不符 |
 | `40988` | 409 | library | `RequestNotPending` | 该申请已被处理，请刷新列表 |
+| `40989` | 409 | library | `DownloadNotReady` | 打包任务尚未完成或已失效 |
 | `40991` | 409 | export | `ExportBusy` | 同一份数据正在导出中，请等待它完成 |
 | `40992` | 409 | export | `ExportNotReady` | 导出尚未生成完成，请稍后再试 |
 | `41091` | 410 | export | `ExportGone` | 导出文件已过保留期被回收，请重新导出 |
 | `41351` | 413 | asset | `FileTooLarge` | 文件不能超过 50MB |
 | `41352` | 413 | asset | `AssetQuotaExceeded` | 归档空间已用完，请先清理回收站或联系管理员提升配额 |
 | `41381` | 413 | library | `LibraryFileTooLarge` | 文件不能超过 300MB |
+| `41382` | 413 | library | `DownloadTooLarge` | 单次打包超出上限 |
 | `42900` | 429 | 框架 | `RateLimited` | 请求过于频繁，请稍后再试 |
 | `50100` | 501 | 框架 | `NotImplementedFeature` | 该功能尚未实现 |
 | `50200` | 502 | 框架 | `UpstreamError` | 上游服务异常 |
@@ -229,7 +236,7 @@ Authorization: Bearer <accessToken>
 | 镜头库 | 1 | 见下方 `4.8` |
 | 系统 | 2 | 见下方 `4.9` |
 | 导出 | 6 | 见下方 `4.10` |
-| 资产库 | 26 | 见下方 `4.11` |
+| 资产库 | 35 | 见下方 `4.11` |
 
 ### 4.1 身份（39 个）
 
@@ -2415,23 +2422,32 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 
 **响应** `ApiResponse<unknown>`（前端取 `res.data`）
 
-### 4.11 资产库（26 个）
+### 4.11 资产库（35 个）
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
 | `GET` | `/api/v1/library/assets` | 资产库列表（分页 + 分面） | 🔒 |
 | `POST` | `/api/v1/library/assets/bulk` | 批量写：逐条判定，部分失败返回明细 | 🔒 |
+| `POST` | `/api/v1/library/assets/from-generation` | 生成结果入库（落草稿箱，按 sourceKey 幂等） | 🔒 |
 | `POST` | `/api/v1/library/assets/upload` | 上传图片 / 音频（流式，按内容秒传） | 🔒 |
 | `PATCH` | `/api/v1/library/assets/{asset_id}` | 改名 / 换标签（不含可见性） | 🔒 |
 | `DELETE` | `/api/v1/library/assets/{asset_id}` | 移入回收站（软删，可恢复） | 🔒 |
 | `GET` | `/api/v1/library/assets/{asset_id}` | 资产详情（含标签与生成参数） | 🔒 |
 | `GET` | `/api/v1/library/assets/{asset_id}/file` | 下载或预览原文件 | 🔒 |
 | `GET` | `/api/v1/library/assets/{asset_id}/thumbnail` | 读取缩略图 | 🔒 |
+| `GET` | `/api/v1/library/downloads` | 我最近发起的打包任务 | 🔒 |
+| `POST` | `/api/v1/library/downloads` | 发起批量打包（异步，返回任务） | 🔒 |
+| `GET` | `/api/v1/library/downloads/{job_id}` | 打包任务状态 | 🔒 |
+| `GET` | `/api/v1/library/downloads/{job_id}/file` | 取打包好的 zip | 🔒 |
 | `POST` | `/api/v1/library/drafts/{asset_id}/approve` | 草稿采纳：进入个人素材库 | 🔒 |
 | `POST` | `/api/v1/library/drafts/{asset_id}/reject` | 草稿驳回：进回收站，可恢复回草稿 | 🔒 |
 | `GET` | `/api/v1/library/facets` | 资产库分面统计 | 🔒 |
 | `GET` | `/api/v1/library/groups` | 我的小组（含是否负责人） | 🔒 |
 | `PUT` | `/api/v1/library/groups/{group_id}/leaders` | 设置小组负责人（整体替换） | 🔒 |
+| `POST` | `/api/v1/library/packs` | 建封装（成员必须是我看得见且在库的） | 🔒 |
+| `GET` | `/api/v1/library/packs/{pack_id}` | 封装详情（含成员） | 🔒 |
+| `PATCH` | `/api/v1/library/packs/{pack_id}` | 改封装：改名 / 整体替换成员 / 换封面 / 换标签 | 🔒 |
+| `DELETE` | `/api/v1/library/packs/{pack_id}` | 解散封装（进回收站，成员不受影响） | 🔒 |
 | `GET` | `/api/v1/library/selection` | 选择器：只返回库内资产 | 🔒 |
 | `POST` | `/api/v1/library/share-requests` | 发起共享 / 撤销共享申请 | 🔒 |
 | `GET` | `/api/v1/library/share-requests` | 申请单列表（我提交的 / 待我审核） | 🔒 |
@@ -2497,6 +2513,38 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `failed` | `number` | 否 |  |
 | `results` | `BulkItemResult[]` | 否 |  |
 
+#### `POST /api/v1/library/assets/from-generation`
+
+**生成结果入库（落草稿箱，按 sourceKey 幂等）**
+
+`state=draft` / `visibility=personal` 由服务层强制，入参给不了。
+
+命中幂等（同一个 `sourceKey`，或同一份字节已在该 owner 的库里）时返回
+**200 + `created=false`**：调用方据此知道「这条已经入过库了」，不必再关联一次。
+
+**请求体** `FromGenerationIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `sourceModule` | `string` | 是 |  |
+| `sourceTaskId` | `string` | 是 |  |
+| `sourceKey` | `string` | 是 |  |
+| `kind` | `GenerationKind` | 是 |  |
+| `name` | `string` | 否 |  |
+| `storageKey` | `string` | 否 |  |
+| `sourceUrl` | `string` | 否 |  |
+| `mimeType` | `string` | 否 |  |
+| `sizeBytes` | `number` | 否 |  |
+| `tagIds` | `string[]` | 否 |  |
+| `generation` | `GenerationSnapshotIn` | 否 |  |
+
+**响应** `ApiResponse<IngestOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `assetId` | `string` | 是 |  |
+| `created` | `boolean` | 是 |  |
+
 #### `POST /api/v1/library/assets/upload`
 
 **上传图片 / 音频（流式，按内容秒传）**
@@ -2520,7 +2568,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `id` | `string` | 是 |  |
 | `name` | `string` | 是 |  |
 | `kind` | `LibraryAssetKind` | 是 |  |
-| `origin` | `string` | 是 | upload / generated / template_source / imported |
+| `origin` | `string` | 是 | upload / generated / template_source / imported / pack |
 | `mimeType` | `string \| null` | 否 |  |
 | `sizeBytes` | `number` | 否 |  |
 | `durationSec` | `number \| null` | 否 |  |
@@ -2560,7 +2608,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `id` | `string` | 是 |  |
 | `name` | `string` | 是 |  |
 | `kind` | `LibraryAssetKind` | 是 |  |
-| `origin` | `string` | 是 | upload / generated / template_source / imported |
+| `origin` | `string` | 是 | upload / generated / template_source / imported / pack |
 | `mimeType` | `string \| null` | 否 |  |
 | `sizeBytes` | `number` | 否 |  |
 | `durationSec` | `number \| null` | 否 |  |
@@ -2579,6 +2627,14 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `tags` | `LibraryTagOut[]` | 否 |  |
 | `groups` | `LibraryGroupRef[]` | 否 |  |
 | `generation` | `LibraryGenerationOut \| null` | 否 |  |
+| `packItems` | `PackItemOut[]` | 否 |  |
+| `references` | `string[] \| null` | 否 |  |
+| `shareHistory` | `ShareHistoryItem[]` | 否 |  |
+| `archive` | `LibraryArchiveOut \| null` | 否 |  |
+| `reviewedBy` | `string \| null` | 否 |  |
+| `reviewedAt` | `string \| null` | 否 |  |
+| `rejectReason` | `string \| null` | 否 |  |
+| `trashedFromState` | `string \| null` | 否 |  |
 
 #### `DELETE /api/v1/library/assets/{asset_id}`
 
@@ -2613,7 +2669,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `id` | `string` | 是 |  |
 | `name` | `string` | 是 |  |
 | `kind` | `LibraryAssetKind` | 是 |  |
-| `origin` | `string` | 是 | upload / generated / template_source / imported |
+| `origin` | `string` | 是 | upload / generated / template_source / imported / pack |
 | `mimeType` | `string \| null` | 否 |  |
 | `sizeBytes` | `number` | 否 |  |
 | `durationSec` | `number \| null` | 否 |  |
@@ -2632,6 +2688,14 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `tags` | `LibraryTagOut[]` | 否 |  |
 | `groups` | `LibraryGroupRef[]` | 否 |  |
 | `generation` | `LibraryGenerationOut \| null` | 否 |  |
+| `packItems` | `PackItemOut[]` | 否 |  |
+| `references` | `string[] \| null` | 否 |  |
+| `shareHistory` | `ShareHistoryItem[]` | 否 |  |
+| `archive` | `LibraryArchiveOut \| null` | 否 |  |
+| `reviewedBy` | `string \| null` | 否 |  |
+| `reviewedAt` | `string \| null` | 否 |  |
+| `rejectReason` | `string \| null` | 否 |  |
+| `trashedFromState` | `string \| null` | 否 |  |
 
 #### `GET /api/v1/library/assets/{asset_id}/file`
 
@@ -2650,6 +2714,75 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | 参数 | 位置 | 类型 | 必填 | 说明 |
 |---|---|---|---|---|
 | `asset_id` | path | `string` | 是 |  |
+
+**响应** `ApiResponse<unknown>`（前端取 `res.data`）
+
+#### `GET /api/v1/library/downloads`
+
+**我最近发起的打包任务**
+
+**响应** `ApiResponse<DownloadJobOut[]>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `[].id` | `string` | 是 |  |
+| `[].status` | `string` | 是 |  |
+| `[].assetCount` | `number` | 否 |  |
+| `[].sizeBytes` | `number` | 否 |  |
+| `[].error` | `string` | 否 |  |
+| `[].downloadUrl` | `string \| null` | 否 |  |
+| `[].expiresAt` | `string \| null` | 否 |  |
+| `[].createdAt` | `string` | 是 |  |
+| `[].finishedAt` | `string \| null` | 否 |  |
+| `[].skipped` | `DownloadSkip[]` | 否 |  |
+
+#### `POST /api/v1/library/downloads`
+
+**发起批量打包（异步，返回任务）**
+
+**可见即可下载**：能看见的 `state=active` 条目都能进包。
+
+草稿与回收站里的 id 不整单失败，而是在 `skipped` 里逐条给原因。
+超限（100 项 / 2GB）返回 413，`details` 带 `limit` 与 `actual`。
+
+**请求体** `DownloadIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `ids` | `string[]` | 是 |  |
+
+**响应** `ApiResponse<unknown>`（前端取 `res.data`）
+
+#### `GET /api/v1/library/downloads/{job_id}`
+
+**打包任务状态**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `job_id` | path | `string` | 是 |  |
+
+**响应** `ApiResponse<DownloadJobOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `status` | `string` | 是 |  |
+| `assetCount` | `number` | 否 |  |
+| `sizeBytes` | `number` | 否 |  |
+| `error` | `string` | 否 |  |
+| `downloadUrl` | `string \| null` | 否 |  |
+| `expiresAt` | `string \| null` | 否 |  |
+| `createdAt` | `string` | 是 |  |
+| `finishedAt` | `string \| null` | 否 |  |
+| `skipped` | `DownloadSkip[]` | 否 |  |
+
+#### `GET /api/v1/library/downloads/{job_id}/file`
+
+**取打包好的 zip**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `job_id` | path | `string` | 是 |  |
 
 **响应** `ApiResponse<unknown>`（前端取 `res.data`）
 
@@ -2675,7 +2808,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `id` | `string` | 是 |  |
 | `name` | `string` | 是 |  |
 | `kind` | `LibraryAssetKind` | 是 |  |
-| `origin` | `string` | 是 | upload / generated / template_source / imported |
+| `origin` | `string` | 是 | upload / generated / template_source / imported / pack |
 | `mimeType` | `string \| null` | 否 |  |
 | `sizeBytes` | `number` | 否 |  |
 | `durationSec` | `number \| null` | 否 |  |
@@ -2694,6 +2827,14 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `tags` | `LibraryTagOut[]` | 否 |  |
 | `groups` | `LibraryGroupRef[]` | 否 |  |
 | `generation` | `LibraryGenerationOut \| null` | 否 |  |
+| `packItems` | `PackItemOut[]` | 否 |  |
+| `references` | `string[] \| null` | 否 |  |
+| `shareHistory` | `ShareHistoryItem[]` | 否 |  |
+| `archive` | `LibraryArchiveOut \| null` | 否 |  |
+| `reviewedBy` | `string \| null` | 否 |  |
+| `reviewedAt` | `string \| null` | 否 |  |
+| `rejectReason` | `string \| null` | 否 |  |
+| `trashedFromState` | `string \| null` | 否 |  |
 
 #### `POST /api/v1/library/drafts/{asset_id}/reject`
 
@@ -2717,7 +2858,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `id` | `string` | 是 |  |
 | `name` | `string` | 是 |  |
 | `kind` | `LibraryAssetKind` | 是 |  |
-| `origin` | `string` | 是 | upload / generated / template_source / imported |
+| `origin` | `string` | 是 | upload / generated / template_source / imported / pack |
 | `mimeType` | `string \| null` | 否 |  |
 | `sizeBytes` | `number` | 否 |  |
 | `durationSec` | `number \| null` | 否 |  |
@@ -2736,6 +2877,14 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `tags` | `LibraryTagOut[]` | 否 |  |
 | `groups` | `LibraryGroupRef[]` | 否 |  |
 | `generation` | `LibraryGenerationOut \| null` | 否 |  |
+| `packItems` | `PackItemOut[]` | 否 |  |
+| `references` | `string[] \| null` | 否 |  |
+| `shareHistory` | `ShareHistoryItem[]` | 否 |  |
+| `archive` | `LibraryArchiveOut \| null` | 否 |  |
+| `reviewedBy` | `string \| null` | 否 |  |
+| `reviewedAt` | `string \| null` | 否 |  |
+| `rejectReason` | `string \| null` | 否 |  |
+| `trashedFromState` | `string \| null` | 否 |  |
 
 #### `GET /api/v1/library/facets`
 
@@ -2788,6 +2937,165 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `userIds` | `string[]` | 否 |  |
 
 **响应** `ApiResponse<string[]>`（前端取 `res.data`）
+
+#### `POST /api/v1/library/packs`
+
+**建封装（成员必须是我看得见且在库的）**
+
+封装是一行 `kind=pack` 的资产行 + 有序成员，**不复制成员**。
+
+解散封装不影响任何成员；下载时封装会被展开成成员逐个进包。
+
+**请求体** `PackIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `name` | `string` | 是 |  |
+| `assetIds` | `string[]` | 否 |  |
+| `items` | `PackItemIn[]` | 否 |  |
+| `coverAssetId` | `string` | 否 |  |
+| `tagIds` | `string[]` | 否 |  |
+
+**响应** `ApiResponse<LibraryAssetDetailOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `kind` | `LibraryAssetKind` | 是 |  |
+| `origin` | `string` | 是 | upload / generated / template_source / imported / pack |
+| `mimeType` | `string \| null` | 否 |  |
+| `sizeBytes` | `number` | 否 |  |
+| `durationSec` | `number \| null` | 否 |  |
+| `hasAudio` | `boolean` | 否 |  |
+| `ownerId` | `string` | 是 |  |
+| `ownerName` | `string \| null` | 否 |  |
+| `visibility` | `LibraryVisibility` | 是 |  |
+| `state` | `LibraryAssetState` | 是 |  |
+| `stateVersion` | `number` | 否 |  |
+| `coverUrl` | `string \| null` | 否 |  |
+| `groupIds` | `string[]` | 否 |  |
+| `trashReason` | `string \| null` | 否 |  |
+| `trashExpiresAt` | `string \| null` | 否 |  |
+| `createdAt` | `string` | 是 |  |
+| `updatedAt` | `string \| null` | 否 |  |
+| `tags` | `LibraryTagOut[]` | 否 |  |
+| `groups` | `LibraryGroupRef[]` | 否 |  |
+| `generation` | `LibraryGenerationOut \| null` | 否 |  |
+| `packItems` | `PackItemOut[]` | 否 |  |
+| `references` | `string[] \| null` | 否 |  |
+| `shareHistory` | `ShareHistoryItem[]` | 否 |  |
+| `archive` | `LibraryArchiveOut \| null` | 否 |  |
+| `reviewedBy` | `string \| null` | 否 |  |
+| `reviewedAt` | `string \| null` | 否 |  |
+| `rejectReason` | `string \| null` | 否 |  |
+| `trashedFromState` | `string \| null` | 否 |  |
+
+#### `GET /api/v1/library/packs/{pack_id}`
+
+**封装详情（含成员）**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `pack_id` | path | `string` | 是 |  |
+
+**响应** `ApiResponse<LibraryAssetDetailOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `kind` | `LibraryAssetKind` | 是 |  |
+| `origin` | `string` | 是 | upload / generated / template_source / imported / pack |
+| `mimeType` | `string \| null` | 否 |  |
+| `sizeBytes` | `number` | 否 |  |
+| `durationSec` | `number \| null` | 否 |  |
+| `hasAudio` | `boolean` | 否 |  |
+| `ownerId` | `string` | 是 |  |
+| `ownerName` | `string \| null` | 否 |  |
+| `visibility` | `LibraryVisibility` | 是 |  |
+| `state` | `LibraryAssetState` | 是 |  |
+| `stateVersion` | `number` | 否 |  |
+| `coverUrl` | `string \| null` | 否 |  |
+| `groupIds` | `string[]` | 否 |  |
+| `trashReason` | `string \| null` | 否 |  |
+| `trashExpiresAt` | `string \| null` | 否 |  |
+| `createdAt` | `string` | 是 |  |
+| `updatedAt` | `string \| null` | 否 |  |
+| `tags` | `LibraryTagOut[]` | 否 |  |
+| `groups` | `LibraryGroupRef[]` | 否 |  |
+| `generation` | `LibraryGenerationOut \| null` | 否 |  |
+| `packItems` | `PackItemOut[]` | 否 |  |
+| `references` | `string[] \| null` | 否 |  |
+| `shareHistory` | `ShareHistoryItem[]` | 否 |  |
+| `archive` | `LibraryArchiveOut \| null` | 否 |  |
+| `reviewedBy` | `string \| null` | 否 |  |
+| `reviewedAt` | `string \| null` | 否 |  |
+| `rejectReason` | `string \| null` | 否 |  |
+| `trashedFromState` | `string \| null` | 否 |  |
+
+#### `PATCH /api/v1/library/packs/{pack_id}`
+
+**改封装：改名 / 整体替换成员 / 换封面 / 换标签**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `pack_id` | path | `string` | 是 |  |
+
+**请求体** `PackPatchIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `name` | `string \| null` | 否 |  |
+| `items` | `PackItemIn[] \| null` | 否 |  |
+| `coverAssetId` | `string \| null` | 否 |  |
+| `tagIds` | `string[] \| null` | 否 |  |
+| `expectedVersion` | `number` | 否 |  |
+
+**响应** `ApiResponse<LibraryAssetDetailOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `kind` | `LibraryAssetKind` | 是 |  |
+| `origin` | `string` | 是 | upload / generated / template_source / imported / pack |
+| `mimeType` | `string \| null` | 否 |  |
+| `sizeBytes` | `number` | 否 |  |
+| `durationSec` | `number \| null` | 否 |  |
+| `hasAudio` | `boolean` | 否 |  |
+| `ownerId` | `string` | 是 |  |
+| `ownerName` | `string \| null` | 否 |  |
+| `visibility` | `LibraryVisibility` | 是 |  |
+| `state` | `LibraryAssetState` | 是 |  |
+| `stateVersion` | `number` | 否 |  |
+| `coverUrl` | `string \| null` | 否 |  |
+| `groupIds` | `string[]` | 否 |  |
+| `trashReason` | `string \| null` | 否 |  |
+| `trashExpiresAt` | `string \| null` | 否 |  |
+| `createdAt` | `string` | 是 |  |
+| `updatedAt` | `string \| null` | 否 |  |
+| `tags` | `LibraryTagOut[]` | 否 |  |
+| `groups` | `LibraryGroupRef[]` | 否 |  |
+| `generation` | `LibraryGenerationOut \| null` | 否 |  |
+| `packItems` | `PackItemOut[]` | 否 |  |
+| `references` | `string[] \| null` | 否 |  |
+| `shareHistory` | `ShareHistoryItem[]` | 否 |  |
+| `archive` | `LibraryArchiveOut \| null` | 否 |  |
+| `reviewedBy` | `string \| null` | 否 |  |
+| `reviewedAt` | `string \| null` | 否 |  |
+| `rejectReason` | `string \| null` | 否 |  |
+| `trashedFromState` | `string \| null` | 否 |  |
+
+#### `DELETE /api/v1/library/packs/{pack_id}`
+
+**解散封装（进回收站，成员不受影响）**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `pack_id` | path | `string` | 是 |  |
+
+**响应** `ApiResponse<null>`（前端取 `res.data`）
 
 #### `GET /api/v1/library/selection`
 
@@ -3004,7 +3312,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `id` | `string` | 是 |  |
 | `name` | `string` | 是 |  |
 | `kind` | `LibraryAssetKind` | 是 |  |
-| `origin` | `string` | 是 | upload / generated / template_source / imported |
+| `origin` | `string` | 是 | upload / generated / template_source / imported / pack |
 | `mimeType` | `string \| null` | 否 |  |
 | `sizeBytes` | `number` | 否 |  |
 | `durationSec` | `number \| null` | 否 |  |
@@ -3109,7 +3417,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `id` | `string` | 是 |  |
 | `name` | `string` | 是 |  |
 | `kind` | `LibraryAssetKind` | 是 |  |
-| `origin` | `string` | 是 | upload / generated / template_source / imported |
+| `origin` | `string` | 是 | upload / generated / template_source / imported / pack |
 | `mimeType` | `string \| null` | 否 |  |
 | `sizeBytes` | `number` | 否 |  |
 | `durationSec` | `number \| null` | 否 |  |
@@ -3128,6 +3436,14 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `tags` | `LibraryTagOut[]` | 否 |  |
 | `groups` | `LibraryGroupRef[]` | 否 |  |
 | `generation` | `LibraryGenerationOut \| null` | 否 |  |
+| `packItems` | `PackItemOut[]` | 否 |  |
+| `references` | `string[] \| null` | 否 |  |
+| `shareHistory` | `ShareHistoryItem[]` | 否 |  |
+| `archive` | `LibraryArchiveOut \| null` | 否 |  |
+| `reviewedBy` | `string \| null` | 否 |  |
+| `reviewedAt` | `string \| null` | 否 |  |
+| `rejectReason` | `string \| null` | 否 |  |
+| `trashedFromState` | `string \| null` | 否 |  |
 
 ---
 
@@ -3207,7 +3523,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 
 ### `BulkAction`（枚举）
 
-取值：`addTag`、`removeTag`、`rename`、`delete`、`restore`、`approveDraft`、`rejectDraft`、`requestRevoke`
+取值：`addTag`、`removeTag`、`rename`、`delete`、`restore`、`approveDraft`、`rejectDraft`、`requestRevoke`、`pack`
 
 ### `BulkIn`
 
@@ -3279,6 +3595,47 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 |---|---|---|---|
 | `deleted` | `number` | 是 | 实际删除的条数 |
 | `skipped` | `string[]` | 否 | 被跳过的任务 ID：不存在，或属于他人且没有 `task:read:all` |
+
+### `DownloadIn`
+
+发起打包。上限在服务层判：请求最多 200 个 id（封装要展开），
+**展开后**的条目数与总字节数才是真正的闸门（100 项 / 2GB）。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `ids` | `string[]` | 是 |  |
+
+### `DownloadJobOut`
+
+打包任务。
+
+`skipped` 只在 `POST /downloads` 的响应里非空：它解释的是「你选的这批里
+哪几个为什么没进来」，轮询状态时不再重复（前端在发起那一刻就该提示）。
+落库只存 id 列表与结果，不存这份解释——省一张明细表，也避免它变成第二真相源。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `status` | `string` | 是 |  |
+| `assetCount` | `number` | 否 |  |
+| `sizeBytes` | `number` | 否 |  |
+| `error` | `string` | 否 |  |
+| `downloadUrl` | `string \| null` | 否 |  |
+| `expiresAt` | `string \| null` | 否 |  |
+| `createdAt` | `string` | 是 |  |
+| `finishedAt` | `string \| null` | 否 |  |
+| `skipped` | `DownloadSkip[]` | 否 |  |
+
+### `DownloadSkip`
+
+没能进包的条目与原因。**不整单失败**：一批 20 个里有 1 个是草稿，
+剩下的 19 个仍然该能下。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `name` | `string` | 否 |  |
+| `reason` | `string` | 是 |  |
 
 ### `DraftDecisionIn`
 
@@ -3382,6 +3739,27 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `columns` | `string[]` | 是 | CSV 列，同时也是列顺序 |
 | `permission` | `string \| null` | 否 | 导出该源额外需要的权限码；null 表示只需 export:read |
 
+### `FromGenerationIn`
+
+生成结果入库（也经 `library-ingest` 注入口供后端模块调用）。
+
+`storageKey` 与 `sourceUrl` 二选一：**必须能物化字节**，只存外部链接的
+详情页与下载都会裂（链接会过期）。两个都给时优先 `storageKey`。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `sourceModule` | `string` | 是 |  |
+| `sourceTaskId` | `string` | 是 |  |
+| `sourceKey` | `string` | 是 |  |
+| `kind` | `GenerationKind` | 是 |  |
+| `name` | `string` | 否 |  |
+| `storageKey` | `string` | 否 |  |
+| `sourceUrl` | `string` | 否 |  |
+| `mimeType` | `string` | 否 |  |
+| `sizeBytes` | `number` | 否 |  |
+| `tagIds` | `string[]` | 否 |  |
+| `generation` | `GenerationSnapshotIn` | 否 |  |
+
 ### `GenerateImageIn`
 
 | 字段 | 类型 | 必填 | 说明 |
@@ -3390,6 +3768,34 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `size` | `string` | 否 | 宽x高，如 `1024x1536` |
 | `count` | `number` | 否 | 张数 |
 | `model` | `string` | 否 | 模型 id，留空取默认 |
+
+### `GenerationKind`（枚举）
+
+取值：`video`、`image`
+
+### `GenerationSnapshotIn`
+
+生成参数快照。字段与 `library_asset_generation` 一一对应，全部可选。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `model` | `string` | 否 |  |
+| `modelId` | `string` | 否 |  |
+| `prompt` | `string` | 否 |  |
+| `size` | `string` | 否 |  |
+| `count` | `number` | 否 |  |
+| `durationSec` | `number` | 否 |  |
+| `aspectRatio` | `string` | 否 |  |
+| `stylePreset` | `string` | 否 |  |
+| `seed` | `string` | 否 |  |
+| `referenceAssetIds` | `string[]` | 否 |  |
+| `packId` | `string` | 否 |  |
+| `packVersion` | `number` | 否 |  |
+| `promptSpec` | `Record<string, unknown>` | 否 |  |
+| `configuration` | `Record<string, unknown>` | 否 |  |
+| `externalId` | `string` | 否 |  |
+| `credits` | `number` | 否 |  |
+| `generatedAt` | `string \| null` | 否 |  |
 
 ### `GroupCreateIn`
 
@@ -3497,6 +3903,30 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `relativePath` | `string` | 是 |  |
 | `category` | `"source" \| "character" \| "product" \| "scene" \| "audio"` | 是 |  |
 
+### `IngestOut`
+
+生成入库结果。`created=False` = 命中幂等（sourceKey 重复或内容相同）。
+
+不返回整条资产：调用方（生成侧）需要的是「拿到 id 去关联任务」，
+而它可能并不持有 `library:read` 之外的权限去读详情。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `assetId` | `string` | 是 |  |
+| `created` | `boolean` | 是 |  |
+
+### `LibraryArchiveOut`
+
+归档信息。只给所有者与管理员：存储键与幂等键对外没有意义，只会泄露内部结构。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `storageKey` | `string` | 否 |  |
+| `sha256` | `string` | 否 |  |
+| `sourceKey` | `string` | 否 |  |
+| `sizeBytes` | `number` | 否 |  |
+| `referenceCount` | `number` | 否 |  |
+
 ### `LibraryAssetDetailOut`
 
 详情 = 列表项 + 标签 + 生成参数（有才返回）。
@@ -3504,12 +3934,21 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 生成参数用 `None` 而不是空对象：前端要区分「不是生成来的」与
 「是生成来的但历史数据没记全」，两者显示逻辑不同。
 
+M3 补齐详情页六个区的数据源（设计 §7.2）：
+
+- 媒体区 → `packItems`（仅封装）与 `coverUrl`；
+- 基础信息 → `state` / `trashedFromState` / `reviewedBy` / `rejectReason`；
+- 媒体规格 → 继承的 `sizeBytes` / `durationSec` / `width`… 由前端自己排；
+- 生成参数 → `generation`；
+- 使用与引用 → `references` + `shareHistory`；
+- 归档信息 → `archive`（仅所有者 / 管理员可见）。
+
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `id` | `string` | 是 |  |
 | `name` | `string` | 是 |  |
 | `kind` | `LibraryAssetKind` | 是 |  |
-| `origin` | `string` | 是 | upload / generated / template_source / imported |
+| `origin` | `string` | 是 | upload / generated / template_source / imported / pack |
 | `mimeType` | `string \| null` | 否 |  |
 | `sizeBytes` | `number` | 否 |  |
 | `durationSec` | `number \| null` | 否 |  |
@@ -3528,6 +3967,14 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `tags` | `LibraryTagOut[]` | 否 |  |
 | `groups` | `LibraryGroupRef[]` | 否 |  |
 | `generation` | `LibraryGenerationOut \| null` | 否 |  |
+| `packItems` | `PackItemOut[]` | 否 |  |
+| `references` | `string[] \| null` | 否 |  |
+| `shareHistory` | `ShareHistoryItem[]` | 否 |  |
+| `archive` | `LibraryArchiveOut \| null` | 否 |  |
+| `reviewedBy` | `string \| null` | 否 |  |
+| `reviewedAt` | `string \| null` | 否 |  |
+| `rejectReason` | `string \| null` | 否 |  |
+| `trashedFromState` | `string \| null` | 否 |  |
 
 ### `LibraryAssetKind`（枚举）
 
@@ -3542,7 +3989,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `id` | `string` | 是 |  |
 | `name` | `string` | 是 |  |
 | `kind` | `LibraryAssetKind` | 是 |  |
-| `origin` | `string` | 是 | upload / generated / template_source / imported |
+| `origin` | `string` | 是 | upload / generated / template_source / imported / pack |
 | `mimeType` | `string \| null` | 否 |  |
 | `sizeBytes` | `number` | 否 |  |
 | `durationSec` | `number \| null` | 否 |  |
@@ -3762,6 +4209,47 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `requiredRoles` | `string[]` | 否 |  |
 | `supportedScopes` | `string[]` | 否 |  |
 
+### `PackIn`
+
+建封装。
+
+`items` 是**唯一有序来源**；`assetIds` 只是给「勾选一批直接封装」用的简写，
+会被追加到 `items` 之后（已在 items 里的不重复加）。两者都空 → 400。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `name` | `string` | 是 |  |
+| `assetIds` | `string[]` | 否 |  |
+| `items` | `PackItemIn[]` | 否 |  |
+| `coverAssetId` | `string` | 否 |  |
+| `tagIds` | `string[]` | 否 |  |
+
+### `PackItemIn`
+
+封装成员。`role` 预留给模板替换（产品主图 / 多视结构图…），首版可为空。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `assetId` | `string` | 是 |  |
+| `role` | `string` | 否 |  |
+| `description` | `string` | 否 |  |
+
+### `PackItemOut`
+
+封装里的一项。成员可能是别人共享给我的素材，所以带 `state` 与 `coverUrl`。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `assetId` | `string` | 是 |  |
+| `name` | `string` | 否 |  |
+| `kind` | `LibraryAssetKind` | 是 |  |
+| `state` | `LibraryAssetState` | 是 |  |
+| `position` | `number` | 是 |  |
+| `role` | `string` | 否 |  |
+| `description` | `string` | 否 |  |
+| `sizeBytes` | `number` | 否 |  |
+| `coverUrl` | `string \| null` | 否 |  |
+
 ### `PackManaged`
 
 | 字段 | 类型 | 必填 | 说明 |
@@ -3790,6 +4278,19 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `items` | `PackManaged[]` | 是 |  |
+
+### `PackPatchIn`
+
+改封装。`items` 提供即**整体替换**（不是增量追加）——增量语义要前端自己
+算差集，而算错了就是悄悄多一个成员，不如让调用方给全量。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `name` | `string \| null` | 否 |  |
+| `items` | `PackItemIn[] \| null` | 否 |  |
+| `coverAssetId` | `string \| null` | 否 |  |
+| `tagIds` | `string[] \| null` | 否 |  |
+| `expectedVersion` | `number` | 否 |  |
 
 ### `PackPublicList`
 
@@ -4119,6 +4620,27 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 |---|---|---|---|
 | `note` | `string` | 否 |  |
 | `expectedVersion` | `number` | 否 |  |
+
+### `ShareHistoryItem`
+
+可见性变更的一条记录。`reason` 是撤销申请里填的理由，审核人当时看的就是它。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `action` | `ShareAction` | 是 |  |
+| `target` | `ShareTarget` | 是 |  |
+| `groupId` | `string` | 否 |  |
+| `groupName` | `string` | 否 |  |
+| `status` | `string` | 是 |  |
+| `applicantId` | `string` | 是 |  |
+| `applicantName` | `string \| null` | 否 |  |
+| `reviewerId` | `string \| null` | 否 |  |
+| `reviewerName` | `string \| null` | 否 |  |
+| `reason` | `string` | 否 |  |
+| `note` | `string` | 否 |  |
+| `decidedAt` | `string \| null` | 否 |  |
+| `createdAt` | `string` | 是 |  |
 
 ### `ShareRequestIn`
 

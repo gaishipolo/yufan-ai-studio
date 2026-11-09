@@ -149,12 +149,82 @@ class RequestNotPending(AppError):
     http_status = 409
 
 
+class DownloadNotReady(AppError):
+    """打包还没完成（或已失败 / 已过期）就取文件。
+
+    占掉 409 的最后一个槽位。再要新语义就得按 `EXTENDING.md` §7.1 的预案
+    把编码扩到 6 位——所以**不要**把「打包失败」也塞成同码的新文案，
+    失败原因在任务的 `error` 字段里，前端读它。
+    """
+
+    code = errors.code(409, 9)
+    message = "打包任务尚未完成或已失效"
+    http_status = 409
+
+
+class PackItemInvalid(AppError):
+    """封装成员不合法：看不见 / 不在库 / 是另一个封装 / 把自己装进去。
+
+    四种情形共用一个码：前端能做的都是同一件事（刷新选择器、去掉那几项）。
+    `details.items` 带具体不合法的是哪几个，别让用户猜。
+    """
+
+    code = errors.code(400, 3)
+    message = "封装里有不可用的成员"
+    http_status = 400
+
+
+class PackEmpty(AppError):
+    """封装一个成员都没有。空封装没有意义：它没有字节、下载也解不出东西。"""
+
+    code = errors.code(400, 4)
+    message = "封装至少需要一个成员"
+    http_status = 400
+
+
+class GenerationSourceInvalid(AppError):
+    """生成入库没给能物化的来源，或来源取不到字节。
+
+    **不接受「只存外部 URL」**：供应商签名地址会过期，详情页与下载都会裂。
+    所以入库这一侧必须是「下载下来存进我们自己的存储」。
+    """
+
+    code = errors.code(400, 5)
+    message = "生成结果必须提供可读取的 storageKey 或 sourceUrl"
+    http_status = 400
+
+
+class DownloadEmpty(AppError):
+    """选中的条目一个都不能下载（全是草稿 / 回收站 / 看不见的）。"""
+
+    code = errors.code(400, 6)
+    message = "选中的条目都不在可下载范围内"
+    http_status = 400
+
+
+class DownloadTooLarge(AppError):
+    """打包超出上限（100 个条目 / 解压后 2GB）。
+
+    `details` 带 `limit` 与 `actual`，前端据此提示「分两批」而不是只说「太大了」。
+    """
+
+    code = errors.code(413, 2)
+    message = "单次打包超出上限"
+    http_status = 413
+
+
 __all__ = [
     "AssetNotInTrash",
+    "DownloadEmpty",
+    "DownloadNotReady",
+    "DownloadTooLarge",
     "DraftNotReviewable",
     "DraftReviewForbidden",
+    "GenerationSourceInvalid",
     "LibraryFileTooLarge",
     "LibraryFileTypeNotAllowed",
+    "PackEmpty",
+    "PackItemInvalid",
     "RequestNotPending",
     "RevokeReasonRequired",
     "ShareRevokePending",

@@ -21,14 +21,18 @@ from fastapi.responses import Response
 
 from api.deps import PageDep, rate_limit
 from core.config import settings
+from core.ports.library_ingest import IngestRequest
 from core.ports.library_lookup import LibraryAssetKind, LibraryAssetState
 from core.response import ApiResponse
 from modules.library.dependencies import (
     BulkDep,
     BulkServiceDep,
+    DownloadServiceDep,
+    GenerationIngestDep,
     LibraryCreateDep,
     LibraryDeleteDep,
     LibraryDraftDep,
+    LibraryIngestDep,
     LibraryReadDep,
     LibraryServiceDep,
     LibraryShareApproveDep,
@@ -36,6 +40,7 @@ from modules.library.dependencies import (
     LibraryTagManageDep,
     LibraryUpdateDep,
     LifecycleServiceDep,
+    PackServiceDep,
     ShareServiceDep,
     TagServiceDep,
 )
@@ -44,8 +49,12 @@ from modules.library.schema import (
     AssetSort,
     BulkIn,
     BulkOut,
+    DownloadIn,
+    DownloadJobOut,
     DraftDecisionIn,
+    FromGenerationIn,
     GroupLeadersIn,
+    IngestOut,
     LibraryAssetDetailOut,
     LibraryAssetOut,
     LibraryAssetPage,
@@ -54,6 +63,8 @@ from modules.library.schema import (
     LibrarySelectionPage,
     LibraryTab,
     LibraryTagOut,
+    PackIn,
+    PackPatchIn,
     ShareDecisionIn,
     ShareRequestIn,
     ShareRequestOut,
@@ -234,6 +245,44 @@ async def bulk_write(
     return ApiResponse.ok(await service.run(payload, actor))
 
 
+@router.post(
+    "/assets/from-generation",
+    status_code=status.HTTP_201_CREATED,
+    summary="生成结果入库（落草稿箱，按 sourceKey 幂等）",
+    dependencies=[Depends(rate_limit("library.generation_ingest", limit=60, cost=2))],
+)
+async def ingest_generated(
+    payload: FromGenerationIn,
+    response: Response,
+    actor: LibraryIngestDep,
+    service: GenerationIngestDep,
+) -> ApiResponse[IngestOut]:
+    """`state=draft` / `visibility=personal` 由服务层强制，入参给不了。
+
+    命中幂等（同一个 `sourceKey`，或同一份字节已在该 owner 的库里）时返回
+    **200 + `created=false`**：调用方据此知道「这条已经入过库了」，不必再关联一次。
+    """
+    result = await service.run(
+        IngestRequest(
+            source_module=payload.source_module,
+            source_task_id=payload.source_task_id,
+            source_key=payload.source_key,
+            kind=LibraryAssetKind(payload.kind.value),
+            owner_id=actor.id,
+            name=payload.name,
+            storage_key=payload.storage_key,
+            source_url=payload.source_url,
+            mime_type=payload.mime_type,
+            size_bytes=payload.size_bytes,
+            generation=payload.generation.model_dump(by_alias=False),
+            tag_ids=payload.tag_ids,
+        )
+    )
+    if not result.created:
+        response.status_code = status.HTTP_200_OK
+    return ApiResponse.ok(IngestOut(asset_id=result.asset_id, created=result.created))
+
+
 @router.patch(
     "/assets/{asset_id}",
     summary="改名 / 换标签（不含可见性）",
@@ -361,6 +410,99 @@ async def purge_asset(
     """
     await service.purge(asset_id, actor)
     return ApiResponse.ok(None)
+
+
+# --------------------------------------------------------------------------- #
+# 封装
+# --------------------------------------------------------------------------- #
+@router.post(
+    "/packs",
+    status_code=status.HTTP_201_CREATED,
+    summary="建封装（成员必须是我看得见且在库的）",
+    dependencies=[Depends(rate_limit("library.pack", limit=30))],
+)
+async def create_pack(
+    payload: PackIn, actor: LibraryCreateDep, service: PackServiceDep
+) -> ApiResponse[LibraryAssetDetailOut]:
+    """封装是一行 `kind=pack` 的资产行 + 有序成员，**不复制成员**。
+
+    解散封装不影响任何成员；下载时封装会被展开成成员逐个进包。
+    """
+    return ApiResponse.ok(await service.create(payload, actor))
+
+
+@router.get("/packs/{pack_id}", summary="封装详情（含成员）")
+async def pack_detail(
+    pack_id: str, actor: LibraryReadDep, service: LibraryServiceDep
+) -> ApiResponse[LibraryAssetDetailOut]:
+    return ApiResponse.ok(await service.detail(pack_id, actor))
+
+
+@router.patch(
+    "/packs/{pack_id}",
+    summary="改封装：改名 / 整体替换成员 / 换封面 / 换标签",
+    dependencies=[Depends(rate_limit("library.pack", limit=30))],
+)
+async def patch_pack(
+    pack_id: str,
+    payload: PackPatchIn,
+    actor: LibraryUpdateDep,
+    service: PackServiceDep,
+) -> ApiResponse[LibraryAssetDetailOut]:
+    return ApiResponse.ok(await service.update(pack_id, payload, actor))
+
+
+@router.delete(
+    "/packs/{pack_id}",
+    summary="解散封装（进回收站，成员不受影响）",
+    dependencies=[Depends(rate_limit("library.pack", limit=30))],
+)
+async def delete_pack(
+    pack_id: str, actor: LibraryDeleteDep, service: PackServiceDep
+) -> ApiResponse[None]:
+    await service.delete(pack_id, actor)
+    return ApiResponse.ok(None)
+
+
+# --------------------------------------------------------------------------- #
+# 批量下载
+# --------------------------------------------------------------------------- #
+@router.post(
+    "/downloads",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="发起批量打包（异步，返回任务）",
+    dependencies=[Depends(rate_limit("library.download", limit=10, cost=2))],
+)
+async def create_download(
+    payload: DownloadIn, actor: LibraryReadDep, service: DownloadServiceDep
+) -> ApiResponse[DownloadJobOut]:
+    """**可见即可下载**：能看见的 `state=active` 条目都能进包。
+
+    草稿与回收站里的 id 不整单失败，而是在 `skipped` 里逐条给原因。
+    超限（100 项 / 2GB）返回 413，`details` 带 `limit` 与 `actual`。
+    """
+    return ApiResponse.ok(await service.create(payload, actor))
+
+
+@router.get("/downloads", summary="我最近发起的打包任务")
+async def list_downloads(
+    actor: LibraryReadDep, service: DownloadServiceDep
+) -> ApiResponse[list[DownloadJobOut]]:
+    return ApiResponse.ok(await service.list_jobs(actor))
+
+
+@router.get("/downloads/{job_id}", summary="打包任务状态")
+async def download_status(
+    job_id: str, actor: LibraryReadDep, service: DownloadServiceDep
+) -> ApiResponse[DownloadJobOut]:
+    return ApiResponse.ok(await service.get(job_id, actor))
+
+
+@router.get("/downloads/{job_id}/file", summary="取打包好的 zip")
+async def download_file(
+    job_id: str, actor: LibraryReadDep, service: DownloadServiceDep
+) -> Response:
+    return (await service.file(job_id, actor)).response()
 
 
 # --------------------------------------------------------------------------- #

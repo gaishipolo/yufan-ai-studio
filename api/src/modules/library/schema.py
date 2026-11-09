@@ -26,8 +26,16 @@ __all__ = [
     "BulkIn",
     "BulkItemResult",
     "BulkOut",
+    "DownloadIn",
+    "DownloadJobOut",
+    "DownloadSkip",
     "DraftDecisionIn",
+    "FromGenerationIn",
+    "GenerationKind",
+    "GenerationSnapshotIn",
     "GroupLeadersIn",
+    "IngestOut",
+    "LibraryArchiveOut",
     "LibraryAssetDetailOut",
     "LibraryAssetOut",
     "LibraryAssetPage",
@@ -38,8 +46,13 @@ __all__ = [
     "LibrarySelectionPage",
     "LibraryTab",
     "LibraryTagOut",
+    "PackIn",
+    "PackItemIn",
+    "PackItemOut",
+    "PackPatchIn",
     "ShareAction",
     "ShareDecisionIn",
+    "ShareHistoryItem",
     "ShareRequestIn",
     "ShareRequestOut",
     "ShareTarget",
@@ -91,7 +104,7 @@ class LibraryAssetOut(CamelModel):
     id: str
     name: str
     kind: LibraryAssetKind
-    origin: str = Field(description="upload / generated / template_source / imported")
+    origin: str = Field(description="upload / generated / template_source / imported / pack")
     mime_type: str | None = None
     size_bytes: int = 0
     duration_sec: float | None = None
@@ -176,16 +189,83 @@ class LibraryGenerationOut(CamelModel):
     generated_at: UtcDateTime | None = None
 
 
+class PackItemOut(CamelModel):
+    """封装里的一项。成员可能是别人共享给我的素材，所以带 `state` 与 `coverUrl`。"""
+
+    asset_id: str
+    name: str = ""
+    kind: LibraryAssetKind
+    state: LibraryAssetState
+    position: int
+    role: str = ""
+    description: str = ""
+    size_bytes: int = 0
+    cover_url: str | None = None
+
+
+class ShareHistoryItem(CamelModel):
+    """可见性变更的一条记录。`reason` 是撤销申请里填的理由，审核人当时看的就是它。"""
+
+    id: str
+    action: ShareAction
+    target: ShareTarget
+    group_id: str = ""
+    group_name: str = ""
+    status: str
+    applicant_id: str
+    applicant_name: str | None = None
+    reviewer_id: str | None = None
+    reviewer_name: str | None = None
+    reason: str = ""
+    note: str = ""
+    decided_at: UtcDateTime | None = None
+    created_at: UtcDateTime
+
+
+class LibraryArchiveOut(CamelModel):
+    """归档信息。只给所有者与管理员：存储键与幂等键对外没有意义，只会泄露内部结构。"""
+
+    storage_key: str = ""
+    sha256: str = ""
+    source_key: str = ""
+    size_bytes: int = 0
+    reference_count: int = 0
+
+
 class LibraryAssetDetailOut(LibraryAssetOut):
     """详情 = 列表项 + 标签 + 生成参数（有才返回）。
 
     生成参数用 `None` 而不是空对象：前端要区分「不是生成来的」与
     「是生成来的但历史数据没记全」，两者显示逻辑不同。
+
+    M3 补齐详情页六个区的数据源（设计 §7.2）：
+
+    - 媒体区 → `packItems`（仅封装）与 `coverUrl`；
+    - 基础信息 → `state` / `trashedFromState` / `reviewedBy` / `rejectReason`；
+    - 媒体规格 → 继承的 `sizeBytes` / `durationSec` / `width`… 由前端自己排；
+    - 生成参数 → `generation`；
+    - 使用与引用 → `references` + `shareHistory`；
+    - 归档信息 → `archive`（仅所有者 / 管理员可见）。
     """
 
     tags: list[LibraryTagOut] = Field(default_factory=list)
     groups: list[LibraryGroupRef] = Field(default_factory=list)
     generation: LibraryGenerationOut | None = None
+    #: 封装的成员（`kind=pack` 时有值，其它类型恒为空数组）。
+    pack_items: list[PackItemOut] = Field(default_factory=list)
+    #: 谁在用它。`None` 表示**查不了**（`library-references` 未接上），
+    #: 与空数组（查过、没人用）是两件事——后者能删，前者不能下结论。
+    references: list[str] | None = None
+    #: 可见性变更历史（共享 / 撤销，按时间倒序，最多 20 条）。
+    share_history: list[ShareHistoryItem] = Field(default_factory=list)
+    #: 归档信息。只有所有者与 `library:delete:any` 拿得到，其他人是 `None`。
+    archive: LibraryArchiveOut | None = None
+    #: 草稿最近一次审核的结论（审核人、时间、驳回原因）。
+    reviewed_by: str | None = None
+    reviewed_at: UtcDateTime | None = None
+    reject_reason: str | None = None
+    #: 回收站条目的来源状态：决定「恢复」之后回到草稿箱还是个人库。
+    trashed_from_state: str | None = None
 
 
 # --------------------------------------------------------------------------- #
@@ -289,6 +369,8 @@ class BulkAction(StrEnum):
     APPROVE_DRAFT = "approveDraft"
     REJECT_DRAFT = "rejectDraft"
     REQUEST_REVOKE = "requestRevoke"
+    #: 把勾选的这批直接封装起来（M3）。`payload.name` 必填，`payload.coverAssetId` 可选。
+    PACK = "pack"
 
 
 class BulkIn(CamelModel):
@@ -323,3 +405,135 @@ class GroupLeadersIn(CamelModel):
     `library:share:approve` 的人审批」）。"""
 
     user_ids: list[str] = Field(default_factory=list)
+
+
+# --------------------------------------------------------------------------- #
+# M3：封装、批量下载、生成入库
+# --------------------------------------------------------------------------- #
+class PackItemIn(CamelModel):
+    """封装成员。`role` 预留给模板替换（产品主图 / 多视结构图…），首版可为空。"""
+
+    asset_id: str = Field(min_length=1, max_length=32)
+    role: str = Field(default="", max_length=40)
+    description: str = Field(default="", max_length=200)
+
+
+class PackIn(CamelModel):
+    """建封装。
+
+    `items` 是**唯一有序来源**；`assetIds` 只是给「勾选一批直接封装」用的简写，
+    会被追加到 `items` 之后（已在 items 里的不重复加）。两者都空 → 400。
+    """
+
+    name: str = Field(min_length=1, max_length=200)
+    asset_ids: list[str] = Field(default_factory=list, max_length=100)
+    items: list[PackItemIn] = Field(default_factory=list, max_length=100)
+    cover_asset_id: str = Field(default="", max_length=32)
+    tag_ids: list[str] = Field(default_factory=list)
+
+
+class PackPatchIn(CamelModel):
+    """改封装。`items` 提供即**整体替换**（不是增量追加）——增量语义要前端自己
+    算差集，而算错了就是悄悄多一个成员，不如让调用方给全量。"""
+
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    items: list[PackItemIn] | None = Field(default=None, max_length=100)
+    cover_asset_id: str | None = Field(default=None, max_length=32)
+    tag_ids: list[str] | None = None
+    expected_version: int = 0
+
+
+class DownloadIn(CamelModel):
+    """发起打包。上限在服务层判：请求最多 200 个 id（封装要展开），
+    **展开后**的条目数与总字节数才是真正的闸门（100 项 / 2GB）。"""
+
+    ids: list[str] = Field(min_length=1, max_length=200)
+
+
+class DownloadSkip(CamelModel):
+    """没能进包的条目与原因。**不整单失败**：一批 20 个里有 1 个是草稿，
+    剩下的 19 个仍然该能下。"""
+
+    id: str
+    name: str = ""
+    reason: str
+
+
+class DownloadJobOut(CamelModel):
+    """打包任务。
+
+    `skipped` 只在 `POST /downloads` 的响应里非空：它解释的是「你选的这批里
+    哪几个为什么没进来」，轮询状态时不再重复（前端在发起那一刻就该提示）。
+    落库只存 id 列表与结果，不存这份解释——省一张明细表，也避免它变成第二真相源。
+    """
+
+    id: str
+    status: str
+    asset_count: int = 0
+    size_bytes: int = 0
+    error: str = ""
+    download_url: str | None = None
+    expires_at: UtcDateTime | None = None
+    created_at: UtcDateTime
+    finished_at: UtcDateTime | None = None
+    skipped: list[DownloadSkip] = Field(default_factory=list)
+
+
+class GenerationKind(StrEnum):
+    """生成结果的类型。只有这两种能进草稿箱：`audio` / `pack` 没有生成链路。"""
+
+    VIDEO = "video"
+    IMAGE = "image"
+
+
+class IngestOut(CamelModel):
+    """生成入库结果。`created=False` = 命中幂等（sourceKey 重复或内容相同）。
+
+    不返回整条资产：调用方（生成侧）需要的是「拿到 id 去关联任务」，
+    而它可能并不持有 `library:read` 之外的权限去读详情。
+    """
+
+    asset_id: str
+    created: bool
+
+
+class GenerationSnapshotIn(CamelModel):
+    """生成参数快照。字段与 `library_asset_generation` 一一对应，全部可选。"""
+
+    model: str = Field(default="", max_length=80)
+    model_id: str = Field(default="", max_length=80)
+    prompt: str = Field(default="", max_length=4000)
+    size: str = Field(default="", max_length=32)
+    count: int = Field(default=0, ge=0)
+    duration_sec: float = Field(default=0.0, ge=0)
+    aspect_ratio: str = Field(default="", max_length=16)
+    style_preset: str = Field(default="", max_length=40)
+    seed: str = Field(default="", max_length=64)
+    reference_asset_ids: list[str] = Field(default_factory=list)
+    pack_id: str = Field(default="", max_length=32)
+    pack_version: int = Field(default=0, ge=0)
+    prompt_spec: dict = Field(default_factory=dict)
+    configuration: dict = Field(default_factory=dict)
+    external_id: str = Field(default="", max_length=120)
+    credits: float = 0.0
+    generated_at: UtcDateTime | None = None
+
+
+class FromGenerationIn(CamelModel):
+    """生成结果入库（也经 `library-ingest` 注入口供后端模块调用）。
+
+    `storageKey` 与 `sourceUrl` 二选一：**必须能物化字节**，只存外部链接的
+    详情页与下载都会裂（链接会过期）。两个都给时优先 `storageKey`。
+    """
+
+    source_module: str = Field(pattern="^(image|template|task)$")
+    source_task_id: str = Field(min_length=1, max_length=64)
+    source_key: str = Field(min_length=1, max_length=160)
+    kind: GenerationKind
+    name: str = Field(default="", max_length=200)
+    storage_key: str = Field(default="", max_length=256)
+    source_url: str = Field(default="", max_length=1000)
+    mime_type: str = Field(default="", max_length=64)
+    size_bytes: int = Field(default=0, ge=0)
+    tag_ids: list[str] = Field(default_factory=list)
+    generation: GenerationSnapshotIn = Field(default_factory=GenerationSnapshotIn)

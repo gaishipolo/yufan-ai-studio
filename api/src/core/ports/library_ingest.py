@@ -65,6 +65,12 @@ class IngestRequest:
     kind: LibraryAssetKind
     """生成结果的类型，只允许 `video` / `image`（由实现方校验）。"""
 
+    #: 归属人。生成任务的 owner 在业务表里（`image_jobs.owner_id` 等），
+    #: 而 worker 里没有请求上下文，所以调用方**应该显式传**；留空时退回
+    #: `get_current_user()`（请求内调用），两者都没有就拒绝入库——
+    #: 归属是这个模块的权限基础，不能猜一个默认账号。
+    owner_id: str = ""
+
     name: str = ""
     storage_key: str = ""
     source_url: str = ""

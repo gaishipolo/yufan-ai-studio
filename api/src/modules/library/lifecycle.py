@@ -320,6 +320,12 @@ class LifecycleService:
         await self.session.execute(
             delete(LibraryPackItem).where(LibraryPackItem.asset_id == row.id)
         )
+        # 被删的本身可能是一个封装：成员关系挂在 `pack_id` 而不是 `asset_id` 上。
+        # 漏了这一段，彻底删除封装会留下一批指向不存在 pack 的孤儿行，而引用检查
+        # 只按 `asset_id` 查——于是谁也不会发现。
+        await self.session.execute(
+            delete(LibraryPackItem).where(LibraryPackItem.pack_id == row.id)
+        )
         await self.session.execute(
             delete(LibraryAssetGeneration).where(LibraryAssetGeneration.asset_id == row.id)
         )

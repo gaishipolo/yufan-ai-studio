@@ -45,6 +45,8 @@ PERMISSION_BY_ACTION = {
     BulkAction.APPROVE_DRAFT: "library:create",
     BulkAction.REJECT_DRAFT: "library:create",
     BulkAction.REQUEST_REVOKE: "library:share",
+    #: 封装是「新建一个东西」而不是改这批，所以是 `create`
+    BulkAction.PACK: "library:create",
 }
 
 
@@ -59,6 +61,9 @@ class BulkService:
             raise BadRequest(f"不支持的批量动作：{payload.action}")
         if not actor.has(permission):
             raise Forbidden(f"没有执行 {payload.action} 的权限")
+
+        if payload.action is BulkAction.PACK:
+            return await self._pack(payload, actor)
 
         results: list[BulkItemResult] = []
         for asset_id in dict.fromkeys(payload.ids):
@@ -80,6 +85,41 @@ class BulkService:
         succeeded = sum(1 for item in results if item.ok)
         return BulkOut(
             succeeded=succeeded, failed=len(results) - succeeded, results=results
+        )
+
+    async def _pack(self, payload: BulkIn, actor: CurrentUser) -> BulkOut:
+        """把勾选的这批直接封装。
+
+        **不走逐条循环**：`pack` 是「用这批建一个东西」，逐条跑会建出 N 个
+        单成员封装。所以它在 `run()` 里就分流，返回一条结果，`id` 是新封装的 id；
+        成员里只要有一个不可用，整次封装失败（`PackItemInvalid` 带明细）。
+        """
+        from modules.library.packs import PackService
+        from modules.library.schema import PackIn
+
+        data = payload.payload or {}
+        name = str(data.get("name") or "").strip()
+        if not name:
+            raise BadRequest("pack 需要 payload.name")
+        pack = await PackService(self.session, self.storage).create(
+            PackIn(
+                name=name[:200],
+                asset_ids=list(dict.fromkeys(payload.ids)),
+                cover_asset_id=str(data.get("coverAssetId") or ""),
+                tag_ids=self._str_list(data, "tagIds"),
+            ),
+            actor,
+        )
+        return BulkOut(
+            succeeded=1,
+            failed=0,
+            results=[
+                BulkItemResult(
+                    id=pack.id,
+                    ok=True,
+                    message=f"已封装 {len(pack.pack_items)} 项",
+                )
+            ],
         )
 
     async def _apply(self, asset_id: str, payload: BulkIn, actor: CurrentUser) -> None:

@@ -319,9 +319,13 @@ org_directory.py`，由 `modules/identity` 注册）。小组素材库要问「�
   `ASSET_NOT_IN_TRASH` 与 `TRASH_ENTRY_REFERENCED` 也可以合成一个 409，但分开更利于前端
   给出不同提示（「不在回收站」vs「还有人用着」），按分开实现。
 - **装配物**：`jobs=("library.download.build",)`、
-  `periodic=("library.download.gc","library.trash.gc","library.gc","library.mirror")`，
+  `periodic=("library.download.gc","library.trash.gc")`，
   必须在 `ModuleSpec` 声明，否则 `assembly_gaps` 让启动直接失败。
-  `library.trash.gc` 每日 03:00：删过期回收站条目（先过引用校验）、清投影、写汇总审计。
+  `library.gc` / `library.mirror`（孤儿 blob、投影对账）随投影一起在 M4/M5 落地，
+  **没实现就不要先声明**：`create_app()` 会核对「声明了必须注册」，声明了没注册
+  直接拒绝启动（见 §10.2）。
+  `library.trash.gc` 是小时级扫描（调度器没有 cron）：删过期回收站条目
+  （先过引用校验）、写汇总审计。
 - **限流**：上传类接口**必须挂** `rate_limit`（`test_policy_covers_money_endpoints` 禁止豁免）；
   其余新增写路由在 `EXEMPT_WRITE_ROUTES` 登记 `why` + `review_by`，或同样挂限流。
 - **引用守卫**：`library_pack_items` 等写 `asset_id` 的位置要声明
@@ -453,7 +457,7 @@ name / tagIds / visibility                    （可选；visibility 必须是 p
 | M0 | 模块骨架：ModuleSpec 全钩子、11 个权限点、slot=8 errors、三个注入口 + PORT_CATALOG、空路由、前端占位页与精确前缀 mock、四份生成物 + ROUTES/MOCK_COVERAGE | 启动对账 0 gap；`/assets` 与 `/library` 同时在线互不影响；架构/装配守卫全绿 |
 | M1 | 10 张表 + 双向迁移、上传/秒传/幂等、`source-videos`、导入 CLI（dry-run + 对账报告） | 迁移双向、导入幂等、两库 blob 前缀互不误删 |
 | M2 ✅ | 可见性与三层判定、共享审核 + **撤销共享审批**、**删除权限矩阵**、**草稿/回收站状态机与 `library.trash.gc`**、标签、批量写、选择器接口、`library-lookup`、`library-references` | 越权/越级守卫、审核并发版本、**不变式 A/B 用例**（草稿与回收站必须 personal）、引用 fail-closed |
-| M3 | 封装、批量下载 job + 流式、生成入库 + 溯源快照、详情页六区 | 100 项/2GB 边界、失败重试、参数快照冻结 |
+| M3 ✅ | 封装、批量下载 job + 流式、生成入库 + 溯源快照、详情页六区 | 100 项/2GB 边界、失败重试、参数快照冻结 |
 | M4 | 前端页面全套 + `LibraryPicker` 接入三处 + mock 全端点 | `npm run verify`、`gen:mock-coverage`、隔离用例 |
 | M5 | 切换演练（改 `load()` 一行）、并行观察、下线旧模块、重生成全部生成物 | 一键回滚演练通过；旧库数据已对账追平 |
 
@@ -468,6 +472,20 @@ name / tagIds / visibility                    （可选；visibility 必须是 p
 | 批量动作集合 | 列出 `addTag/…/purge/pack` | 不含 `purge`（不可逆）与 `pack`（M3 才有） | 十个勾选一次不可逆删除太危险；`pack` 现在没有实现可调 |
 | 错误码 | 8 个语义 | 再加 `SHARE_TARGET_INVALID`(409-7)、`REQUEST_NOT_PENDING`(409-8) | 目标与状态不符、并发重复审批都要有独立文案；「已在回收站」用通用 409，把最后一个槽位留给将来 |
 | `PATCH /assets/{id}` | 「改名、标签、可见性（直接共享时）」 | **不含可见性** | 可见性变更一律走申请单，否则「`share:direct` 可以顺手改可见性」会绕开撤销审批 |
+
+### 10.2 M3 落地记录（同样都是实施时才暴露的）
+
+| 项 | 设计原本 | 落地做法 | 原因 |
+| --- | --- | --- | --- |
+| 入库归属人 | 入库协议里只写了来源模块 / 任务号 / 幂等键 | `IngestRequest` 增加 `owner_id`，空则退回当前请求主体，两者都没有就 400 | worker 里没有请求上下文；归属是权限的基础，不能猜一个默认账号 |
+| 内容相同的第二次生成 | 只用 `sourceKey` 幂等 | 再加一条「同 owner + 同 sha256 + 同 kind 且未删除 → 返回原行」 | 建表时就有 `uq_library_assets_owner_sha_kind` 唯一索引，不按它判就会在第二次生成同样字节时撞 500 |
+| 批量下载的跳过去向 | 「逐条返回可读原因」 | 原因只在 `POST /downloads` 的响应里返回，落库只存可打包的 id | 落库要存解释就得加一列或一张明细表，而它只是「发起那一刻的选择结果」；轮询状态不该重复这段解释 |
+| 打包压缩方式 | 未指定 | `ZIP_STORED`（不 deflate） | 图片 / 视频 / 音频本身已压缩，deflate 只省几个百分点，却要在 2GB 上白烧 CPU |
+| 周期任务清单 | `library.download.gc` + `library.gc` + `library.mirror` 四个 | 只落地 `library.trash.gc` + `library.download.gc` | 投影（`catalog/library/*.json`）与孤儿 blob 清理还没实现，先声明未注册的任务会让 `create_app()` 直接拒绝启动 |
+| 封装成员的上限 | 未写 | 单封装 100 项（`PackIn/items` 的 `max_length`），成员不能是另一个封装 | 嵌套会让「下载解包」变成递归、「这个封装多大」变成图遍历；需求里没有这一条 |
+| 批量写里的 `pack` | 设计列在 action 里 | 在 `run()` 里**分流**，整批建一个封装，返回一条结果（`id` 是新封装） | 别的 action 是逐条改，`pack` 是「用这批建一个东西」；照抄逐条循环会建出 N 个单成员封装 |
+| 打包任务的归属 | 未写 | 只有 owner（或 `library:delete:any`）能看能取，其余一律 404 | 既不说「存在但没权限」，也不泄露「这个人下过什么」 |
+| 彻底删除封装 | 未写 | `_purge_row` 同时清 `pack_items.asset_id` 与 `pack_items.pack_id` | 成员关系挂在 `pack_id` 上，漏了会留下孤儿行；而引用检查只按 `asset_id` 查，谁也不会发现 |
 
 ## 11. 我拍板的细节与仍需你知道的点
 

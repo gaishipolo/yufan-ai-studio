@@ -2,7 +2,7 @@
 
 # Mock 覆盖率（只记录，不作门禁）
 
-后端端点 116 条（来自 `schema.ts` 的 `EndpointData`），
+后端端点 125 条（来自 `schema.ts` 的 `EndpointData`），
 已注册 mock 路由 56 条（来自 `mockRouteTable()`），
 按「同方法 + 正则能匹配」判定疑似覆盖 55 条。
 
@@ -63,11 +63,20 @@
 | GET | `/api/v1/library/assets/{}/file` |
 | GET | `/api/v1/library/assets/{}/thumbnail` |
 | POST | `/api/v1/library/assets/bulk` |
+| POST | `/api/v1/library/assets/from-generation` |
 | POST | `/api/v1/library/assets/upload` |
+| GET | `/api/v1/library/downloads` |
+| POST | `/api/v1/library/downloads` |
+| GET | `/api/v1/library/downloads/{}` |
+| GET | `/api/v1/library/downloads/{}/file` |
 | POST | `/api/v1/library/drafts/{}/approve` |
 | POST | `/api/v1/library/drafts/{}/reject` |
 | GET | `/api/v1/library/groups` |
 | PUT | `/api/v1/library/groups/{}/leaders` |
+| POST | `/api/v1/library/packs` |
+| DELETE | `/api/v1/library/packs/{}` |
+| GET | `/api/v1/library/packs/{}` |
+| PATCH | `/api/v1/library/packs/{}` |
 | GET | `/api/v1/library/selection` |
 | GET | `/api/v1/library/share-requests` |
 | POST | `/api/v1/library/share-requests` |
@@ -99,4 +108,4 @@
 | POST | `/api/v1/templates/replacement-runs/{}/restore` |
 | PUT | `/api/v1/templates/replacement-runs/{}/review` |
 
-（未命中 61 条；已命中 55 条不在本表重复列出。）
+（未命中 70 条；已命中 55 条不在本表重复列出。）
