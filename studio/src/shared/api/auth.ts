@@ -46,7 +46,16 @@ function toApiError(error: unknown): ApiError {
     return new ApiError(payload.message || '请求失败', payload.code ?? -1);
   }
   if (axiosError.code === 'ECONNABORTED') return new ApiError('请求超时，请稍后重试', 408);
-  return new ApiError(axiosError.message || '网络异常', axiosError.response?.status ?? -1);
+  const status = axiosError.response?.status ?? -1;
+  // 与 http.ts 同口径：服务没起来时别把 axios 的英文原文丢给用户
+  if (status < 0) return new ApiError('无法连接后端服务，请确认服务已启动后重试', status);
+  if (status >= 500) {
+    return new ApiError(
+      `后端服务暂时不可用（HTTP ${status}），请检查服务是否在运行或稍后重试`,
+      status,
+    );
+  }
+  return new ApiError(axiosError.message || '网络异常', status);
 }
 
 function unwrap<T>(body: ApiResponse<T> | undefined): T {

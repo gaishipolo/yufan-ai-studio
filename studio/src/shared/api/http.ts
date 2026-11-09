@@ -119,7 +119,17 @@ function toApiError(error: AxiosError<ApiResponse<unknown>>) {
     return new ApiError(payload.message, payload.code ?? error.response?.status ?? -1);
   }
   if (error.code === 'ECONNABORTED') return new ApiError('请求超时，请稍后重试', 408);
-  return new ApiError(error.message || '网络异常', error.response?.status ?? -1);
+  const status = error.response?.status ?? -1;
+  /* 后端进程没起来时，dev 代理/axios 只给 "Request failed with status code 500"
+     这类英文原文。直接展示会让人以为接口写错了，其实只是服务没在运行。 */
+  if (status < 0) return new ApiError('无法连接后端服务，请确认服务已启动后重试', status);
+  if (status >= 500) {
+    return new ApiError(
+      `后端服务暂时不可用（HTTP ${status}），请检查服务是否在运行或稍后重试`,
+      status,
+    );
+  }
+  return new ApiError(error.message || '网络异常', status);
 }
 
 /** 响应拦截：解包 { code, message, data }，统一抛 ApiError */

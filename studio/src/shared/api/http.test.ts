@@ -135,3 +135,41 @@ describe('http 拦截器 · 401 的两级处理', () => {
     expect(useSessionStore.getState().status).toBe('authenticated');
   });
 });
+
+/* 后端进程被回收时，dev 代理会回一个没有 {code,message} 封套的裸 500。
+   此前 axios 的英文原文会直接出现在「执行请求失败：」后面，用户无从判断
+   是接口写错了还是服务没起来。 */
+describe('http 拦截器 · 服务不可用时的可读提示', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    useSessionStore.getState().signIn({
+      token: 'tk',
+      expiresIn: 7_200,
+      refreshToken: 'rt',
+      subject,
+    });
+  });
+
+  it('裸 500 提示检查服务，不展示 axios 英文原文', async () => {
+    http.defaults.adapter = async (config) => {
+      throw new AxiosError(
+        'Request failed with status code 500',
+        'ERR_BAD_RESPONSE',
+        config,
+        null,
+        respond(config, 500, 'Bad Gateway'),
+      );
+    };
+    const error = await api.get('/tasks').catch((reason: unknown) => reason);
+    expect(error).toBeInstanceOf(ApiError);
+    expect((error as Error).message).toContain('后端服务暂时不可用');
+    expect((error as Error).message).not.toContain('Request failed with status code');
+  });
+
+  it('服务进程不可达时提示先启动服务', async () => {
+    http.defaults.adapter = async (config) => {
+      throw new AxiosError('Network Error', 'ERR_NETWORK', config);
+    };
+    await expect(api.get('/tasks')).rejects.toThrow(/无法连接后端服务/);
+  });
+});
