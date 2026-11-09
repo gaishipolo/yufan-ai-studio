@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Check, ChevronDown } from 'lucide-react';
 import { cn } from '@/shared/lib/cn';
 
@@ -20,6 +20,19 @@ export interface MultiSelectProps {
   /** 一个选项都没有时的空态文案 */
   emptyText?: string;
   disabled?: boolean;
+  /**
+   * 允许在下拉里**就地新建**一个选项（标签用）。
+   *
+   * 返回新选项的值就自动选中；返回 `null` 表示没建成（调用方负责提示原因），
+   * 输入内容原样保留，用户不用重打一遍。
+   *
+   * 为什么不传 `onCreate` 就不显示这一行：能不能建是权限决定的
+   * （标签要 `library:create`），组件不该替调用方判断，也不该给用不了的人
+   * 摆一个必定失败的输入框。
+   */
+  onCreate?: (name: string) => Promise<string | null>;
+  /** 新建行的占位文案，默认「新建并选中」 */
+  createPlaceholder?: string;
   /** 关联 FormField 的 label（label 点击会聚焦这个按钮） */
   id?: string;
   /** 可访问名；不传则用收起态文本 */
@@ -45,12 +58,26 @@ export function MultiSelect({
   placeholder = '请选择',
   emptyText = '暂无可选项',
   disabled = false,
+  onCreate,
+  createPlaceholder = '新建并选中',
   id,
   ariaLabel,
 }: MultiSelectProps) {
   const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState('');
+  const [creating, setCreating] = useState(false);
+  /* 本地下沉新建出来的选项。父级重新拉列表要一个来回，这期间收起态会退化成
+     显示 id（`t9` 这种）。把新建项记在本地，等 props 回流后按 value 去重合并，
+     用户就看不到那一帧闪烁。 */
+  const [createdOptions, setCreatedOptions] = useState<MultiSelectOption[]>([]);
   const rootRef = useRef<HTMLDivElement>(null);
   const listId = useId();
+
+  const merged = useMemo(() => {
+    if (createdOptions.length === 0) return options;
+    const known = new Set(options.map((option) => option.value));
+    return [...options, ...createdOptions.filter((option) => !known.has(option.value))];
+  }, [options, createdOptions]);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -72,7 +99,7 @@ export function MultiSelect({
   }, [open]);
 
   const labelOf = (item: string) =>
-    options.find((option) => option.value === item)?.label ?? item;
+    merged.find((option) => option.value === item)?.label ?? item;
   const selectedLabels = value.map(labelOf);
   // 收起态只占一行：多选时不把所有名字铺出来（否则弹窗会被撑变形），
   // 完整清单放 title，hover 即可看到。
@@ -85,6 +112,30 @@ export function MultiSelect({
 
   const toggle = (item: string) => {
     onChange(value.includes(item) ? value.filter((v) => v !== item) : [...value, item]);
+  };
+
+  /* 新建：回车提交。必须 preventDefault —— 本组件常放在 Modal 的表单里，
+     回车会连带提交整个表单。失败了不清空输入，让人改一个字就能重试。 */
+  const submitCreate = async () => {
+    const name = draft.trim();
+    if (!onCreate || !name || creating) return;
+    setCreating(true);
+    let created: string | null = null;
+    try {
+      created = await onCreate(name);
+    } catch {
+      created = null;
+    } finally {
+      setCreating(false);
+    }
+    if (!created) return;
+    if (!value.includes(created)) onChange([...value, created]);
+    setCreatedOptions((previous) =>
+      previous.some((option) => option.value === created)
+        ? previous
+        : [...previous, { value: created, label: name }],
+    );
+    setDraft('');
   };
 
   return (
@@ -119,11 +170,11 @@ export function MultiSelect({
           id={listId}
           className="absolute left-0 right-0 top-[calc(100%+4px)] z-30 overflow-hidden rounded-lg border border-line bg-white shadow-pop"
         >
-          {options.length === 0 ? (
+          {merged.length === 0 ? (
             <p className="px-3 py-4 text-center text-[11.5px] text-ink-mute">{emptyText}</p>
           ) : (
             <ul className="max-h-[196px] space-y-0.5 overflow-auto p-1.5">
-              {options.map((option) => {
+              {merged.map((option) => {
                 const checked = value.includes(option.value);
                 return (
                   <li key={option.value}>
@@ -161,6 +212,43 @@ export function MultiSelect({
                 );
               })}
             </ul>
+          )}
+
+          {onCreate && !disabled && (
+            <div className="flex items-center gap-1.5 border-t border-line-soft p-1.5">
+              <input
+                type="text"
+                value={draft}
+                disabled={creating}
+                maxLength={24}
+                placeholder={createPlaceholder}
+                aria-label={createPlaceholder}
+                autoComplete="off"
+                onChange={(event) => setDraft(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key !== 'Enter') return;
+                  event.preventDefault();
+                  void submitCreate();
+                }}
+                className={cn(
+                  'h-7 min-w-0 flex-1 rounded-[7px] border border-line bg-white px-2 text-xs text-ink',
+                  'placeholder:text-ink-mute focus:border-primary-line focus:outline-none focus:ring-2 focus:ring-primary/10',
+                  'disabled:cursor-not-allowed disabled:bg-panel-soft',
+                )}
+              />
+              <button
+                type="button"
+                disabled={!draft.trim() || creating}
+                onClick={() => void submitCreate()}
+                className={cn(
+                  'h-7 shrink-0 rounded-[7px] px-2 text-[11.5px] font-medium transition-colors',
+                  'bg-primary-soft text-primary hover:bg-primary/15',
+                  'disabled:cursor-not-allowed disabled:bg-panel-soft disabled:text-ink-mute',
+                )}
+              >
+                {creating ? '新建中' : '新建'}
+              </button>
+            </div>
           )}
         </div>
       )}

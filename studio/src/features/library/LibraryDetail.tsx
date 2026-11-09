@@ -44,6 +44,7 @@ import {
   useSaveAssetFile,
 } from '@/entities/library/api/library.queries';
 import type { LibraryCardAction } from './LibraryCard';
+import { useCreateTagInline } from './use-create-tag-inline';
 
 export interface LibraryDetailProps {
   assetId: string | null;
@@ -99,6 +100,7 @@ function DetailBody({
 }: LibraryDetailProps & { asset: LibraryAssetDetailOut }) {
   const patch = usePatchAsset();
   const saveFile = useSaveAssetFile();
+  const createTag = useCreateTagInline();
   const offer = deleteOffer(asset, viewer);
   const days = trashDaysLeft(asset.trashExpiresAt);
   const hasMedia = asset.kind === 'video' || asset.kind === 'audio';
@@ -255,6 +257,7 @@ function DetailBody({
                   placeholder="未打标签"
                   emptyText="还没有标签"
                   ariaLabel="编辑标签"
+                  onCreate={createTag}
                 />
               ) : (
                 asset.tags?.map((tag) => tag.name).join('、') || '未打标签'

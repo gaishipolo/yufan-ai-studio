@@ -6,6 +6,7 @@ import { formatBytes } from '@/shared/lib/format';
 import { toast } from '@/shared/lib/toast';
 import type { LibraryTagOut } from '@/shared/api/schema';
 import { usePatchAsset, useUploadAsset } from '@/entities/library/api/library.queries';
+import { useCreateTagInline } from './use-create-tag-inline';
 
 interface UploadItem {
   file: File;
@@ -34,6 +35,7 @@ export function LibraryUploadModal({ open, tags, onClose }: LibraryUploadModalPr
   const input = useRef<HTMLInputElement>(null);
   const upload = useUploadAsset();
   const patch = usePatchAsset();
+  const createTag = useCreateTagInline();
   const [items, setItems] = useState<UploadItem[]>([]);
   const [tagIds, setTagIds] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
@@ -161,6 +163,7 @@ export function LibraryUploadModal({ open, tags, onClose }: LibraryUploadModalPr
             emptyText="还没有标签"
             disabled={busy}
             ariaLabel="上传标签"
+            onCreate={createTag}
           />
         </div>
 

@@ -3,6 +3,7 @@ import { Download, PackagePlus, RotateCcw, Tag, Trash2, X } from 'lucide-react';
 import { Button, MultiSelect } from '@/shared/ui';
 import type { LibraryTagOut } from '@/shared/api/schema';
 import type { LibraryView } from '@/entities/library/model/types';
+import { useCreateTagInline } from './use-create-tag-inline';
 
 export type BulkKind = 'download' | 'pack' | 'delete' | 'restore' | 'approve' | 'reject' | 'tag';
 
@@ -24,6 +25,7 @@ export interface LibraryBulkBarProps {
 export function LibraryBulkBar({ view, count, tags, busy, onClear, onAction }: LibraryBulkBarProps) {
   const [tagging, setTagging] = useState(false);
   const [tagIds, setTagIds] = useState<string[]>([]);
+  const createTag = useCreateTagInline();
 
   if (count <= 0) return null;
 
@@ -115,6 +117,7 @@ export function LibraryBulkBar({ view, count, tags, busy, onClear, onAction }: L
               placeholder="选择要添加的标签"
               emptyText="还没有标签"
               ariaLabel="批量添加标签"
+              onCreate={createTag}
             />
           </div>
           <Button size="sm" variant="primary" disabled={!tagIds.length || busy} onClick={applyTags}>
