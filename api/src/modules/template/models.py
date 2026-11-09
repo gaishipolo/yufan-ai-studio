@@ -226,6 +226,11 @@ class ReplacementRun(Base, UUIDMixin, TimestampMixin):
 
     # 成片在归档存储里的 key；为空表示还没下载完成
     output_key: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    # 耗时统计。两列自初始迁移（844779d1b4c9）就存在，但模型一直漏声明，
+    # `alembic check` 会把它当成「模型里没有、库里有」的待删除列而报红。
+    # 补声明而不是删列：历史数据里的真实耗时不该被一次收漂移抹掉。
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     __table_args__ = (
