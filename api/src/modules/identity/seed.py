@@ -18,6 +18,7 @@ from __future__ import annotations
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.module import SeedContext
+from core.teams import TEAM_ACCOUNTS
 from modules.identity.models import User
 from modules.identity.service import IdentityService
 
@@ -30,6 +31,14 @@ _USERS: list[tuple[str, str, str, str, str]] = [
     ("u_003", "viewer", "阿 May", "viewer", "viewer@12345"),
 ]
 
+# 6 个团队管理员占位账号。id 与团队归属来自 `core.teams`——那份常量同时被
+# asset 模块的 seed 用来建 `team_members`，两边不能各写一份（改一处漏一处的
+# 症状是「账号建了但不在任何团队里」，而列表页看起来完全正常）。
+_TEAM_USERS: list[tuple[str, str, str, str, str]] = [
+    (account.user_id, account.username, account.display_name, "team_admin", account.password)
+    for account in TEAM_ACCOUNTS
+]
+
 
 async def seed(session: AsyncSession, context: SeedContext) -> int:
     # 内置角色（admin/editor/viewer）由模块自己保证存在，seed 不重复定义
@@ -38,7 +47,8 @@ async def seed(session: AsyncSession, context: SeedContext) -> int:
     roles = {role.code: role for role in await identity.roles.list_all()}
 
     users: list[User] = []
-    for index, (user_id, username, display_name, _, password) in enumerate(_USERS):
+    accounts = [*_USERS, *_TEAM_USERS]
+    for index, (user_id, username, display_name, _, password) in enumerate(accounts):
         # 第一个演示账号的 id 必须与 `SeedContext.demo_user_id` 一致：其它模块
         # 就是按那个 id 种 `owner_id` 的。不一致的表现不是报错，而是列表页
         # 显示一个「不存在的人」——所以这里对齐一次，改配置也不会错位。
@@ -57,7 +67,7 @@ async def seed(session: AsyncSession, context: SeedContext) -> int:
 
     session.add_all(users)
     await session.flush()
-    for (_, _, _, role_code, _), user in zip(_USERS, users, strict=True):
+    for (_, _, _, role_code, _), user in zip(accounts, users, strict=True):
         await identity.users.set_roles(user.id, [roles[role_code].id])
     await session.commit()
     return len(users)

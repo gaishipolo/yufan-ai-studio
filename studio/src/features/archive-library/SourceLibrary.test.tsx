@@ -19,6 +19,17 @@ vi.mock('@/entities/asset/api/archive.queries', () => ({
 }));
 vi.mock('./model/use-upload-batch', () => ({useUploadBatchStore: (selector: (state: unknown) => unknown) => selector({batch: null, start: vi.fn()})}));
 
+/* 详情浮层的标签/血缘是两条独立请求，与"谁能看到哪些操作按钮"无关 */
+vi.mock('@/entities/asset/api/tag.queries', () => ({
+  useAssetTags: () => ({data: {assetId: 'source1', items: []}, isPending: false, error: null}),
+  useSetAssetTags: () => ({mutate: vi.fn(), isPending: false}),
+  useTagCatalog: () => ({data: {groups: []}, isPending: false, error: null}),
+}));
+vi.mock('@/entities/asset/api/lineage.queries', () => ({
+  useAssetLineage: () => ({data: undefined, isPending: false, error: null}),
+  useDeriveFromAsset: () => ({mutateAsync: vi.fn(), isPending: false}),
+}));
+
 function app(scope: 'mine' | 'public', permissions: string[]) {
   return <MemoryRouter><AccessProvider subject={{id: 'A', name: '测试', roles: [], permissions}}><SourceLibrary scope={scope} /></AccessProvider></MemoryRouter>;
 }

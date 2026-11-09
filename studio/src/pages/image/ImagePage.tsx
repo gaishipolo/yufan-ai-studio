@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Wand2 } from 'lucide-react';
 import {
   Button,
@@ -18,7 +19,19 @@ import { useGenerateImage, useImages } from '@/entities/image/api/image.api';
 import { imageSrcOf, imageStatusChipOf } from '@/entities/image/model/status';
 
 export default function ImagePage() {
-  const [prompt, setPrompt] = useState('');
+  const [params] = useSearchParams();
+  /**
+   * `?prompt=` 是素材详情「提取提示词微调」的落点：它把配方里的提示词带过来，
+   * **只填不提交**——提交会扣费，而用户点的是"拿来看看"。
+   *
+   * 用 effect 同步而不是只靠 `useState` 初值：页面已经挂在 `/image` 上的时候
+   * 再点一次"提取提示词"，初值不会重跑，输入框里还是上一段文字。
+   */
+  const preset = params.get('prompt') ?? '';
+  const [prompt, setPrompt] = useState(preset);
+  useEffect(() => {
+    if (preset) setPrompt(preset);
+  }, [preset]);
   const [modelId, setModelId] = useState('');
   const [sizeOverride, setSizeOverride] = useState('');
   const [countOverride, setCountOverride] = useState('');

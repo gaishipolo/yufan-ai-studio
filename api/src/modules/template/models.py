@@ -31,6 +31,13 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from db.base import Base, TimestampMixin, UUIDMixin
 
+# 素材模板那一套表（M3.5）在单独文件里：它与「封装 + 替换运行」没有交叉，
+# 混进来只会让这个文件变成"模板库所有表"的杂物间。
+# 这一行是为了让它们进 `Base.metadata`——`db.registry` 只扫 `modules.<x>.models`，
+# 没被 import 的模型文件对 `create_all` 和 `alembic check` 都不存在，
+# 而症状是「表不存在」这种很难联想到注册表的报错。
+from modules.template import template_models  # noqa: F401  isort: skip
+
 # 封装生命周期。`disabled` 是运营主动下架，与「还没发布」（version=0）不是一回事。
 PACK_STATUSES = ("draft", "published", "disabled")
 

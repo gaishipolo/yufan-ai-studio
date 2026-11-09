@@ -212,6 +212,30 @@ def _rewrite_asset_mirror(storage: ArchiveStorage, row: Asset) -> None:
     storage.write(key, payload)
 
 
+def cmd_backfill_blobs(args: argparse.Namespace) -> None:
+    """给存量素材补 `blob_id`。
+
+    为什么不是迁移的一部分：回填要按 sha256 分组、逐批提交，跑在部署事务里
+    会让一次发布卡住好几分钟，中途失败还得靠手动清理。做成命令之后，
+    「迁移完成但回填没跑」是一个**可读的中间态**——读路径回落旧列，
+    功能不受影响，doctor 只记一条 WARN。
+    """
+    from db.session import get_session_factory
+    from modules.asset.blob_repository import backfill_blobs
+
+    async def run():
+        async with get_session_factory()() as session:
+            return await backfill_blobs(
+                session, batch_size=args.batch_size, dry_run=args.dry_run
+            )
+
+    report = asyncio.run(run())
+    for line in report.lines():
+        print(line)
+    if args.dry_run:
+        print("（dry-run：以上为预估值，未写库）")
+
+
 def register(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     """把本模块的运维命令挂到 `app` 上（框架在组装解析器时调用一次）。"""
     p_import = sub.add_parser(
@@ -263,3 +287,11 @@ def register(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     )
     p_rebuild.add_argument("--dry-run", action="store_true", help="只报告差异、不写盘")
     p_rebuild.set_defaults(func=cmd_rebuild_mirrors)
+
+    p_backfill = sub.add_parser(
+        "backfill-blobs",
+        help="给存量素材补 blob 记录（幂等、分批、可中断重跑）",
+    )
+    p_backfill.add_argument("--batch-size", type=int, default=500, help="每批处理条数")
+    p_backfill.add_argument("--dry-run", action="store_true", help="只统计，不写库")
+    p_backfill.set_defaults(func=cmd_backfill_blobs)

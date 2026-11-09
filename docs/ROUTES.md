@@ -2,7 +2,7 @@
 
 # 前端路由清单
 
-共 10 条路由，来自 10 个模块。
+共 13 条路由，来自 10 个模块。
 
 > 路由由 `src/app/registry/index.ts` 的 `import.meta.glob` 自动发现；
 > 新增模块只需写 `module.ts`，本文件由 `npm run gen:routes` 重新生成。
@@ -10,6 +10,9 @@
 | 路径 | 模块 | 外壳 | 权限 | 侧栏 | 宫格 |
 | --- | --- | --- | --- | --- | --- |
 | `/assets` | assets | shell | `asset:read` | 资产与数据 / 素材资产库 | ✓ |
+| `/assets/packs` | assets | shell | `template:pack:manage` | — | — |
+| `/assets/references` | assets | shell | `asset:reference:manage` | — | — |
+| `/assets/subjects` | assets | shell | `asset:read` | — | — |
 | `/image` | image | shell | `image:read` | 创作 / 生图 | — |
 | `/login` | auth | bare | — | — | — |
 | `/shots` | shots | shell | `shot:read` | 模板与镜头 / 镜头库 | — |
@@ -40,7 +43,7 @@
 
 | 模块 | 路由 | 导航 | 卡片 | 插槽 |
 | --- | --- | --- | --- | --- |
-| assets | 1 | 1 | 1 | 0 |
+| assets | 4 | 1 | 1 | 0 |
 | auth | 1 | 0 | 0 | 1 |
 | image | 1 | 1 | 0 | 0 |
 | shots | 1 | 1 | 0 | 0 |

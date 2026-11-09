@@ -23,6 +23,7 @@ from core.scheduler import periodic
 from db.session import get_session_factory
 from infra.archive import get_archive_storage
 from modules.asset.archive_purge import purge_trash_asset
+from modules.asset.candidate_service import expire_candidates
 from modules.asset.errors import AssetInUse
 from modules.asset.mirror import run_mirror_reconcile
 from modules.asset.models import Asset
@@ -185,3 +186,21 @@ async def archive_gc() -> None:
         len(report.purged),
         len(report.blocked),
     )
+
+
+@periodic(
+    "asset.candidate.gc",
+    every=max(60.0, settings.archive_candidate_gc_interval_sec),
+    immediate=False,
+)
+async def candidate_gc() -> None:
+    """把超时未确认的候选翻成 `expired`。
+
+    不标 `leader_only`：它只改一个状态字段、幂等，多实例各跑一遍结果相同。
+    也没有开关——「过期」不是删除，字节与配方都还在，误跑的代价为零；
+    而漏跑的代价是横幅里一直挂着已经确认不了的图，用户每点一次得一个 409。
+    """
+    async with get_session_factory()() as session:
+        flipped = await expire_candidates(session)
+    if flipped:
+        logger.info("候选过期扫描：%d 条转为 expired", flipped)

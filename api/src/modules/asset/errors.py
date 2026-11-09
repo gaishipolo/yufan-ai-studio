@@ -69,11 +69,99 @@ class AssetInUse(AppError):
     http_status = 409
 
 
+class TagUnknown(AppError):
+    """标签 id 不在词表里（或已归档 / 已合并）。
+
+    用 422 而不是 400：这个码只在「接口只接受词表内的 id」这件事被违反时出现
+    （见设计文档 §3.3 的落地方式）。前端那个搜索框是词表内模糊匹配，
+    收到未知 id 说明调用方自己在拼词——这是程序问题，不是用户输入问题。
+    """
+
+    code = errors.code(422, 1)
+    message = "标签不在词表内，请从标签列表中选择"
+    http_status = 422
+
+
+class TagExists(AppError):
+    """同名词已经存在。
+
+    全局重名会让筛选条出现两个一模一样的分组标题，用户无从选择——
+    所以这里不合并、不复用，直接拒绝并提示去用已有的那个词。
+    """
+
+    code = errors.code(409, 2)
+    message = "已存在同名标签"
+    http_status = 409
+
+
+class ViewNameExists(AppError):
+    """同一个人的保存视图重名。
+
+    恢复筛选时无法判断该用哪个，而「两个都恢复一遍再看」不是用户该做的事。
+    """
+
+    code = errors.code(409, 3)
+    message = "已存在同名视图"
+    http_status = 409
+
+
+class ViewNotFound(AppError):
+    """保存视图不存在，或不属于当前用户。两者共用一个错误：区分开等于白送存在性。"""
+
+    code = errors.code(404, 2)
+    message = "视图不存在"
+    http_status = 404
+
+
+class NotGenerated(AppError):
+    """上传件没有生成配方。
+
+    与 404 分开：素材明明存在、也能下载，只是"没有可提取的提示词"。
+    回 404 会让前端以为链接失效；回一句 400 才能指向正确动作——
+    要去生成页写提示词，而不是去别处找回它。
+    """
+
+    code = errors.code(400, 2)
+    message = "这张素材是上传件，没有生成配方可提取"
+    http_status = 400
+
+
+class CandidateClosed(AppError):
+    """候选已弃用或已过期，不能采纳。
+
+    过期**不复活**：能恢复的话，7 天前的中间产物会永远留在库里——
+    它既不是素材也不是废片，清理任务永远等不到它。要用就重新生成一次。
+    """
+
+    code = errors.code(409, 4)
+    message = "候选已弃用或已过期，请重新生成"
+    http_status = 409
+
+
+class ComplianceRejected(AppError):
+    """合规审核未通过。
+
+    驳回是**终态**（对这条素材而言）：不是"还没审"，所以不能靠等待解决。
+    与"待审"分开是必要的——前者要重做，后者只要等。
+    """
+
+    code = errors.code(409, 5)
+    message = "这张素材未通过合规审核，不能采纳"
+    http_status = 409
+
+
 __all__ = [
     "AssetInUse",
     "AssetNotFound",
     "AssetQuotaExceeded",
+    "CandidateClosed",
+    "ComplianceRejected",
     "FileTooLarge",
     "FileTypeNotAllowed",
+    "NotGenerated",
+    "TagExists",
+    "TagUnknown",
+    "ViewNameExists",
+    "ViewNotFound",
     "errors",
 ]

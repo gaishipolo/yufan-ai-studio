@@ -104,6 +104,9 @@ function buildAssets(): ArchivedAsset[] {
     const sha = i.toString(16).padStart(2, '0').repeat(32);
     const thumb = cover(`sf-asset-${i}`, 400, 400);
     const shared = i % 3 === 0;
+    // 两条是"生成出来的"：第 1 条与第 10 条各自挂了一条配方，详情浮层的
+    // 生成血缘才有东西可看。其余是上传件——**上传件血缘为空是事实，不是错误**。
+    const recipeId = i === 0 ? 'R100' : i === 9 ? 'R101' : '';
     return {
       id: `A${1000 + i}`,
       name,
@@ -131,6 +134,142 @@ function buildAssets(): ArchivedAsset[] {
       stateVersion: 1,
       editable: true,
       downloadAllowed: true,
+      // 上传路径必须**显式**写这三列：列级默认值是"生成件的假设"
+      // （`compliance_status` 默认 pending），靠默认值会让上传的图不能进主体
+      origin: recipeId ? 'generate' : 'upload',
+      stage: 'adopted',
+      recipeId,
+      complianceStatus: 'approved',
+      adoptedAt: recipeId ? minutesAgo(60 * 5 + i * 37) : null,
+      categoryId: `cat-${['source', 'character', 'product', 'scene', 'audio'].indexOf(category)}`,
+    };
+  });
+}
+
+/* ------------------------------------------------------------------
+ * 配方与候选（M3）
+ *
+ * 三件事必须分开存，和后端同构：
+ *   1. `recipes` 是**事实**（一次生成用了什么模型、什么提示词、参考了哪几张图），
+ *      一条素材可被复制到三个库，但它们说的是同一次生成事件，配方只有一份；
+ *   2. `assets` 是**已采纳**的素材，`recipeId` 指回配方；
+ *   3. `candidates` 是**待办**，故意不放进 `assets`——它不进 `GET /assets`、
+ *      不计配额、不进主体。mock 里如果图省事塞进 `assets` 再过滤，前端就会
+ *      在「候选会出现在列表里」的假前提下开发，上了真后端才发现要改。
+ * ------------------------------------------------------------------ */
+
+export interface MockRecipe {
+  id: string;
+  prompt: string;
+  model: string;
+  provider: string;
+  seed: string;
+  params: Record<string, unknown>;
+  /** 冻结的参考图列表（与后端 `reference_asset_ids` 同义） */
+  referenceIds: string[];
+  /** 修正链：这条是「照哪条再生成一次」 */
+  parentId: string | null;
+  createdAt: string;
+}
+
+function buildRecipes(): MockRecipe[] {
+  const base = {
+    model: 'Agnes Image 2.5 Flash',
+    provider: 'agnes',
+    seed: '',
+    params: {size: '1024x1536', count: 1},
+  };
+  return [
+    {
+      ...base,
+      id: 'R100',
+      prompt: '超市抢购场景，手持镜头跟拍，人群涌动，暖色顶光，电影感浅景深',
+      referenceIds: ['A1002'],
+      parentId: null,
+      createdAt: minutesAgo(60 * 5),
+    },
+    {
+      ...base,
+      id: 'R101',
+      prompt: '产品静物，深灰渐变背景，侧逆光，金属高光，极简留白',
+      referenceIds: [],
+      parentId: null,
+      createdAt: minutesAgo(60 * 9),
+    },
+    {
+      ...base,
+      id: 'R200',
+      prompt: '赛博朋克街头，霓虹灯牌，雨夜地面反光，电影级打光，超高细节，9:16 竖构图',
+      referenceIds: ['A1000', 'A1001'],
+      parentId: null,
+      createdAt: minutesAgo(18),
+    },
+    {
+      ...base,
+      id: 'R201',
+      prompt: '产品静物，深灰渐变背景，侧逆光，金属高光，极简留白，加一层薄雾',
+      referenceIds: ['A1009'],
+      // 这是「照 R101 再生成一次」，衍生链上会显示父配方
+      parentId: 'R101',
+      createdAt: minutesAgo(9),
+    },
+  ];
+}
+
+/** 未采纳的生成结果。`expiresAt` 只存在组上：一批里最早那张到期，整批就该消失。 */
+export interface MockCandidate {
+  asset: ArchivedAsset;
+  recipeId: string;
+  expiresAt: string;
+}
+
+function buildCandidates(): MockCandidate[] {
+  const seeds: Array<[string, string, number]> = [
+    ['赛博朋克街景 · 候选 1', 'R200', 1],
+    ['赛博朋克街景 · 候选 2', 'R200', 2],
+    ['赛博朋克街景 · 候选 3', 'R200', 3],
+    ['赛博朋克街景 · 候选 4', 'R200', 4],
+    ['产品薄雾版 · 候选 1', 'R201', 5],
+    ['产品薄雾版 · 候选 2', 'R201', 6],
+  ];
+  const expires = new Date(NOW + 7 * 24 * 3600_000).toISOString();
+  return seeds.map(([name, recipeId, seq]) => {
+    const thumb = cover(`sf-cand-${seq}`, 400, 500);
+    const sha = `${(200 + seq).toString(16)}`.padStart(64, '0');
+    return {
+      recipeId,
+      expiresAt: expires,
+      asset: {
+        id: `C${900 + seq}`,
+        name,
+        category: 'scene',
+        type: 'image',
+        mimeType: 'image/png',
+        sizeBytes: 1_400_000 + seq * 90_000,
+        path: `drafts/${sha.slice(0, 2)}/${sha}.png`,
+        sha256: sha,
+        createdAt: minutesAgo(20 - seq),
+        width: 1024,
+        height: 1536,
+        duration: 0,
+        hasAudio: false,
+        url: thumb,
+        previewUrl: thumb,
+        ownerId: 'u_001',
+        shared: false,
+        sharedAt: null,
+        deletedAt: null,
+        stateVersion: 0,
+        editable: true,
+        downloadAllowed: true,
+        // 列级默认值的"生成件假设"：候选出身即待审，采纳也不改合规
+        origin: 'generate',
+        stage: 'candidate',
+        recipeId,
+        complianceStatus: 'pending',
+        adoptedAt: null,
+        categoryId: '',
+      },
     };
   });
 }
@@ -198,9 +337,31 @@ const imageJobs: MockImageJob[] = [
 /* ------------------------------------------------------------------
  * 可变的库：任务进度推进 / 创建 / 删除
  * ------------------------------------------------------------------ */
+
+/**
+ * 素材 → 标签 id。只在这一处存，`GET` 与 `PUT /assets/{id}/tags` 读写同一份，
+ * 否则「保存成功但浮层里还是旧标签」这类问题在 mock 里先复现不出来。
+ */
+const assetTags: Record<string, string[]> = {
+  A1000: ['style-1', 'scene-3', 'composition-0'],
+  A1001: ['style-1', 'shot-1'],
+  A1002: ['shot-0', 'placement-2'],
+  A1009: ['style-7', 'scene-8', 'placement-0'],
+};
+
 export const db = {
   tasks: buildTasks(),
   assets: buildAssets(),
+  recipes: buildRecipes(),
+  candidates: buildCandidates(),
+  /**
+   * 已弃用 / 已过期的候选。**行还在，只是不进任何列表**——与后端一致：
+   * 弃用只翻 `stage`，字节等宽限期回收，配方永久保留（衍生链可能从它经过）。
+   * 单独一个数组是为了让 `GET /assets/candidates` 与 `GET /assets` 都干净，
+   * 而"这条已经关了"仍然答得出来。
+   */
+  closed: [] as ArchivedAsset[],
+  assetTags,
   storyboards,
   shots,
   imageJobs,

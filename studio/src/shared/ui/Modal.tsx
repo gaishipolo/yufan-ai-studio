@@ -17,9 +17,25 @@ export interface ModalProps {
   children: ReactNode;
   width?: number;
   className?: string;
+  /**
+   * `center` = 居中弹窗；`right` = 右侧滑出（详情浮层）。
+   *
+   * 两种形态共用这一个组件，是因为**滚动锁、Esc、焦点归还**这三件事必须
+   * 只有一份实现。另写一个 `Drawer` 会出现"浮层关闭后页面滚不动"这类只在
+   * 其中一种里被修的 bug——上面那层引用计数就是为这个加的。
+   */
+  placement?: 'center' | 'right';
 }
 
-export function Modal({ open, onClose, title, children, width = 780, className }: ModalProps) {
+export function Modal({
+  open,
+  onClose,
+  title,
+  children,
+  width = 780,
+  className,
+  placement = 'center',
+}: ModalProps) {
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
 
@@ -53,10 +69,16 @@ export function Modal({ open, onClose, title, children, width = 780, className }
 
   if (!open) return null;
 
+  const right = placement === 'right';
+
   return createPortal(
     <div
       role="presentation"
-      className="fixed inset-0 z-[100] grid place-items-center overflow-auto bg-[rgba(12,24,30,.55)] p-6 backdrop-blur-[3px] animate-fadeIn"
+      className={cn(
+        'fixed inset-0 z-[100] bg-[rgba(12,24,30,.55)] backdrop-blur-[3px] animate-fadeIn',
+        // 右侧形态自己不做内边距：面板要贴满右边，留白由面板内部给
+        right ? 'flex justify-end' : 'grid place-items-center overflow-auto p-6',
+      )}
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) closeRef.current();
       }}
@@ -69,8 +91,10 @@ export function Modal({ open, onClose, title, children, width = 780, className }
         tabIndex={-1}
         style={{ width }}
         className={cn(
-          'max-h-[88vh] max-w-[94vw] overflow-auto rounded-[14px] bg-panel shadow-pop animate-popIn',
           'outline-none',
+          right
+            ? 'flex h-full max-w-full flex-col overflow-auto bg-panel shadow-pop animate-slideInRight'
+            : 'max-h-[88vh] max-w-[94vw] overflow-auto rounded-[14px] bg-panel shadow-pop animate-popIn',
           className,
         )}
       >

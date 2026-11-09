@@ -45,7 +45,8 @@
               "enum": [
                 "mine",
                 "public",
-                "trash"
+                "trash",
+                "team"
               ],
               "type": "string",
               "default": "mine",
@@ -99,6 +100,69 @@
               "default": 200,
               "title": "Pagesize"
             }
+          },
+          {
+            "name": "teamId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 32,
+              "default": "",
+              "title": "Teamid"
+            }
+          },
+          {
+            "name": "tagIds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Tagids"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 24,
+              "default": "created_desc",
+              "title": "Sort"
+            }
+          },
+          {
+            "name": "categoryId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 32,
+              "default": "",
+              "title": "Categoryid"
+            }
+          },
+          {
+            "name": "mediaType",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 16,
+              "default": "",
+              "title": "Mediatype"
+            }
           }
         ],
         "responses": {
@@ -123,6 +187,79 @@
             }
           }
         }
+      }
+    },
+    "/api/v1/assets/candidates": {
+      "get": {
+        "tags": [
+          "素材"
+        ],
+        "summary": "待确认的生成候选（按批分组）",
+        "description": "候选是**待办**，不是分类：它不进 `GET /assets`，只在这里按批出现。\n\n返回的是「几批」而不是「一页」——同一批（同一 `recipe_id`）必须挨着，\n否则\"刚才那 4 张里选 2 张\"这个动作在界面上无法完成。",
+        "operationId": "list_candidates_api_v1_assets_candidates_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_CandidateList_"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/assets/batch/adopt": {
+      "post": {
+        "tags": [
+          "素材"
+        ],
+        "summary": "整组采纳候选（全成或全不成）",
+        "operationId": "batch_adopt_api_v1_assets_batch_adopt_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BatchAdoptRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_BatchAdoptResult_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
       }
     },
     "/api/v1/assets/upload": {
@@ -659,6 +796,798 @@
                 }
               }
             }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/assets/{asset_id}/tags": {
+      "get": {
+        "tags": [
+          "素材"
+        ],
+        "summary": "读取素材的标签",
+        "description": "与 `PUT` 成对：只写不读的话，详情浮层里的标签只能靠列表接口顺带带回来，\n而列表一次 200 条、每条都带标签会让响应体大一个量级。",
+        "operationId": "get_tags_api_v1_assets__asset_id__tags_get",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "asset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Asset Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_AssetTagList_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "素材"
+        ],
+        "summary": "整体替换本人素材的标签",
+        "description": "整体替换而不是逐条增删：前端是勾选面板，它天然知道勾了哪几个。\n\n「整体替换」的代价是并发下后写覆盖（两个人同时改同一条素材），\n但素材标签不是协同编辑的对象——它是一组个人描述，覆盖比冲突提示更符合预期。",
+        "operationId": "set_tags_api_v1_assets__asset_id__tags_put",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "asset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Asset Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssetTagSet"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_AssetTagList_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/assets/{asset_id}/adopt": {
+      "post": {
+        "tags": [
+          "素材"
+        ],
+        "summary": "采纳生成候选（成为素材）",
+        "description": "补分类（可选）后把候选转正。\n\n幂等：已经采纳过的再点一次返回现状，而不是 409——\"全选\"与双击都会打到\n同一行，回冲突会让用户以为自己的操作没生效。",
+        "operationId": "adopt_candidate_api_v1_assets__asset_id__adopt_post",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "asset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Asset Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdoptRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_ArchivedAsset_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/assets/{asset_id}/discard": {
+      "post": {
+        "tags": [
+          "素材"
+        ],
+        "summary": "弃用生成候选",
+        "description": "弃用**不删字节**：字节等宽限期后由 `asset.gc` 回收，配方永久保留\n—— 衍生链可能从它经过，删了会让成品的血缘在中途断掉。",
+        "operationId": "discard_candidate_api_v1_assets__asset_id__discard_post",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "asset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Asset Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_ArchivedAsset_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/assets/{asset_id}/lineage": {
+      "get": {
+        "tags": [
+          "素材"
+        ],
+        "summary": "生成血缘：配方、父链与引用关系",
+        "operationId": "asset_lineage_api_v1_assets__asset_id__lineage_get",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "asset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Asset Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_LineageOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/assets/{asset_id}/derive": {
+      "post": {
+        "tags": [
+          "素材"
+        ],
+        "summary": "一键衍生：回填生成页的输入位",
+        "description": "只回填输入，**不建任务、不扣费**：生成有额度与模型选择，提交由生成页自己做。",
+        "operationId": "derive_from_asset_api_v1_assets__asset_id__derive_post",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "asset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Asset Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeriveRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_DeriveIntent_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/asset-categories": {
+      "get": {
+        "tags": [
+          "素材"
+        ],
+        "summary": "当前库的分类树与计数",
+        "description": "返回当前库的分类树 + 每个分类的素材数。\n\n计数口径与 `GET /assets` 的分支一一对应（未删除 + 当前库可见）。\n两处一旦不一致，症状是「角标 149、点进去 12 条」，而这种差异\n通常被当成缓存问题排查很久。\n\n团队库会先校验成员关系：不是成员是 403，不是空列表——空列表会被读成\n「这个团队还没传东西」，用户会去要权限，而实际是他根本不该看。",
+        "operationId": "list_categories_api_v1_asset_categories_get",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "library",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 40,
+              "default": "personal",
+              "title": "Library"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_AssetCategoryList_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/subjects": {
+      "get": {
+        "tags": [
+          "素材"
+        ],
+        "summary": "主体列表（带成员数与可用性）",
+        "description": "列表项不带成员明细：一页 24 个主体 × 10 个成员 = 240 条素材塞进一次响应，\n而其中绝大多数不会被看。要看成员就点进详情。\n\n`availability` 三态在服务端算（`ready` / `broken` / `incomplete`）。\n前端复算必然与后端漂移，症状是\"卡片显示可发布、点发布报缺少能力\"。",
+        "operationId": "list_subjects_api_v1_subjects_get",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "subjectType",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 16,
+              "default": "",
+              "title": "Subjecttype"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1,
+              "title": "Page"
+            }
+          },
+          {
+            "name": "pageSize",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 24,
+              "title": "Pagesize"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_SubjectList_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/subjects/by-legacy-pack/{pack_id}": {
+      "get": {
+        "tags": [
+          "素材"
+        ],
+        "summary": "按旧素材包 id 解析主体（B5）",
+        "description": "旧链接、外部系统、历史工单里全是 `packId`。这条让它们还能打开。\n\n解析不到是 404 而不是空主体：空主体会让前端渲染一张\"什么都是空的\"卡片，\n看起来像数据坏了；404 至少说清了\"这个 id 没有对应主体\"。",
+        "operationId": "by_legacy_pack_api_v1_subjects_by_legacy_pack__pack_id__get",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "pack_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pack Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_SubjectDetail_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/subjects/{subject_id}": {
+      "get": {
+        "tags": [
+          "素材"
+        ],
+        "summary": "主体详情（含成员条带与缺项）",
+        "description": "详情带成员条带，每条含 `grants` 与 `missing`。\n\n`memberGaps` 是\"到底谁不给哪项能力\"的答案。只给主体级结论（缺少 download）\n的话，用户只能一张张点开看——主体最多 10 张，但没人会真的去数。",
+        "operationId": "get_subject_api_v1_subjects__subject_id__get",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "subject_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Subject Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_SubjectDetail_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/subjects/{subject_id}/publish": {
+      "post": {
+        "tags": [
+          "素材"
+        ],
+        "summary": "发布主体（过可达性后冻结版本）",
+        "description": "发布有三道前置，缺一不可：至少一张成员、角色可达、能力可达。\n\n失败时**不返回 200 + 空结果**：发布是模板侧缓存的失效点，静默失败会让\n\"发布了但模板还是老图\"变成一个要靠猜的问题。",
+        "operationId": "publish_subject_api_v1_subjects__subject_id__publish_post",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "subject_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Subject Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_SubjectPublishResult_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/teams": {
+      "get": {
+        "tags": [
+          "素材"
+        ],
+        "summary": "当前用户可见的团队（库切换器数据源）",
+        "description": "可见范围：有 `asset:team:manage` 的人看全部，其余人只看自己所在的团队。\n\n**跨团队不可见是默认行为**，不是 M5 才生效的策略：三个团队并存时，\n「能看见但不能改」会让每个团队都变成别人的参考库，边界形同虚设。\n要跨团队共享走「提升到公共库」那条路，那条路有审核也有审计。",
+        "operationId": "list_teams_api_v1_teams_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_TeamList_"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/asset-tags": {
+      "get": {
+        "tags": [
+          "素材"
+        ],
+        "summary": "标签词表（按维度分组，带在用数量）",
+        "description": "筛选条的数据源。\n\n`useCount` 只数未删除的素材：回收站里的关联保留（恢复后标签要回来），\n但不计入热度——否则一个词能靠一堆已删除的素材把自己顶进常显区。",
+        "operationId": "list_tags_api_v1_asset_tags_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_TagCatalog_"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "素材"
+        ],
+        "summary": "新增标签（词表外的新词）",
+        "description": "新增即生效、不审批，但记 `created_by`。\n\n**准入三问在表单上，不在接口里**：接口只能挡住\"同名词\"和\"维度不存在\"，\n挡不住\"这个概念两个人看着会给出不同答案\"。所以这条路径要窄——只有管理员\n能进，且每次新增都留痕，便于季度复查时把零使用的词收掉。",
+        "operationId": "create_tag_api_v1_asset_tags_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TagCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_TagOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/asset-views": {
+      "get": {
+        "tags": [
+          "素材"
+        ],
+        "summary": "我的保存视图",
+        "operationId": "list_views_api_v1_asset_views_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_AssetViewList_"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "素材"
+        ],
+        "summary": "保存当前筛选条件",
+        "description": "存的是**筛选参数**，不是结果集。\n\n存结果集的视图会在素材增减后给出过期的列表——用户以为\"这个视图里就这些\"，\n而实际上它是某个时刻的快照。参数是幂等的，结果不是。",
+        "operationId": "save_view_api_v1_asset_views_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssetViewCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_AssetViewOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/asset-views/{view_id}": {
+      "delete": {
+        "tags": [
+          "素材"
+        ],
+        "summary": "删除我的保存视图",
+        "operationId": "delete_view_api_v1_asset_views__view_id__delete",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "view_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "View Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
           },
           "422": {
             "description": "Validation Error",
@@ -3979,6 +4908,27 @@
   },
   "components": {
     "schemas": {
+      "AdoptRequest": {
+        "properties": {
+          "categoryId": {
+            "type": "string",
+            "maxLength": 32,
+            "title": "Categoryid",
+            "default": ""
+          },
+          "tagIds": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 20,
+            "title": "Tagids"
+          }
+        },
+        "type": "object",
+        "title": "AdoptRequest",
+        "description": "采纳一个候选。\n\n`category_id` 为空时落到个人库的「未分类收件箱」——采纳是一个高频、\n低摩擦的动作，逼用户先选分类会让\"待办\"越积越多。"
+      },
       "ApiResponse_ArchiveList_": {
         "properties": {
           "code": {
@@ -4033,6 +4983,168 @@
         "type": "object",
         "title": "ApiResponse[ArchivedAsset]"
       },
+      "ApiResponse_AssetCategoryList_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AssetCategoryList"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[AssetCategoryList]"
+      },
+      "ApiResponse_AssetTagList_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AssetTagList"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[AssetTagList]"
+      },
+      "ApiResponse_AssetViewList_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AssetViewList"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[AssetViewList]"
+      },
+      "ApiResponse_AssetViewOut_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AssetViewOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[AssetViewOut]"
+      },
+      "ApiResponse_BatchAdoptResult_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BatchAdoptResult"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[BatchAdoptResult]"
+      },
+      "ApiResponse_CandidateList_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CandidateList"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[CandidateList]"
+      },
       "ApiResponse_DeleteTasksOut_": {
         "properties": {
           "code": {
@@ -4059,6 +5171,33 @@
         },
         "type": "object",
         "title": "ApiResponse[DeleteTasksOut]"
+      },
+      "ApiResponse_DeriveIntent_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DeriveIntent"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[DeriveIntent]"
       },
       "ApiResponse_ExportDetailOut_": {
         "properties": {
@@ -4194,6 +5333,33 @@
         },
         "type": "object",
         "title": "ApiResponse[ImageRetryOut]"
+      },
+      "ApiResponse_LineageOut_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LineageOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[LineageOut]"
       },
       "ApiResponse_LoginEventListOut_": {
         "properties": {
@@ -4702,6 +5868,141 @@
         "type": "object",
         "title": "ApiResponse[StoryboardListOut]"
       },
+      "ApiResponse_SubjectDetail_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SubjectDetail"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[SubjectDetail]"
+      },
+      "ApiResponse_SubjectList_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SubjectList"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[SubjectList]"
+      },
+      "ApiResponse_SubjectPublishResult_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SubjectPublishResult"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[SubjectPublishResult]"
+      },
+      "ApiResponse_TagCatalog_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TagCatalog"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[TagCatalog]"
+      },
+      "ApiResponse_TagOut_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TagOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[TagOut]"
+      },
       "ApiResponse_TaskFeedOut_": {
         "properties": {
           "code": {
@@ -4836,6 +6137,33 @@
         },
         "type": "object",
         "title": "ApiResponse[TaskStats]"
+      },
+      "ApiResponse_TeamList_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TeamList"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[TeamList]"
       },
       "ApiResponse_TokenOut_": {
         "properties": {
@@ -5060,6 +6388,9 @@
             "title": "Ownerusedbytes",
             "default": 0
           },
+          "quota": {
+            "$ref": "#/components/schemas/AssetQuota"
+          },
           "page": {
             "type": "integer",
             "title": "Page",
@@ -5211,6 +6542,42 @@
             "type": "boolean",
             "title": "Downloadallowed",
             "default": true
+          },
+          "origin": {
+            "type": "string",
+            "title": "Origin",
+            "default": "upload"
+          },
+          "stage": {
+            "type": "string",
+            "title": "Stage",
+            "default": "adopted"
+          },
+          "recipeId": {
+            "type": "string",
+            "title": "Recipeid",
+            "default": ""
+          },
+          "complianceStatus": {
+            "type": "string",
+            "title": "Compliancestatus",
+            "default": "approved"
+          },
+          "adoptedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Adoptedat"
+          },
+          "categoryId": {
+            "type": "string",
+            "title": "Categoryid",
+            "default": ""
           }
         },
         "type": "object",
@@ -5237,6 +6604,415 @@
         ],
         "title": "AspectRatio",
         "description": "画面比例：竖屏 / 横屏 / 方形。"
+      },
+      "AssetCategoryList": {
+        "properties": {
+          "library": {
+            "type": "string",
+            "title": "Library"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AssetCategoryOut"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "inboxCount": {
+            "type": "integer",
+            "title": "Inboxcount"
+          }
+        },
+        "type": "object",
+        "required": [
+          "library",
+          "items",
+          "inboxCount"
+        ],
+        "title": "AssetCategoryList"
+      },
+      "AssetCategoryOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "isInbox": {
+            "type": "boolean",
+            "title": "Isinbox",
+            "default": false
+          },
+          "sortOrder": {
+            "type": "integer",
+            "title": "Sortorder",
+            "default": 0
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "kind"
+        ],
+        "title": "AssetCategoryOut"
+      },
+      "AssetQuota": {
+        "properties": {
+          "personalUsed": {
+            "type": "integer",
+            "title": "Personalused",
+            "default": 0
+          },
+          "personalQuota": {
+            "type": "integer",
+            "title": "Personalquota",
+            "default": 0
+          },
+          "teamUsed": {
+            "type": "integer",
+            "title": "Teamused",
+            "default": 0
+          },
+          "teamQuota": {
+            "type": "integer",
+            "title": "Teamquota",
+            "default": 0
+          },
+          "draftUsed": {
+            "type": "integer",
+            "title": "Draftused",
+            "default": 0
+          },
+          "trashUsed": {
+            "type": "integer",
+            "title": "Trashused",
+            "default": 0
+          },
+          "physicalUsed": {
+            "type": "integer",
+            "title": "Physicalused",
+            "default": 0
+          },
+          "physicalQuota": {
+            "type": "integer",
+            "title": "Physicalquota",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "title": "AssetQuota",
+        "description": "账面与物理两组数字。\n\n为什么不塞成一个大整数：这四个数回答的是**四个不同的问题**，合并任何两个\n都会制造无法解释的现象——「删了 1.4G 空间没变」（回收站）、\n「我什么都没传空间却少了」（草稿过期）、「复制一次额度翻倍」（没去重）。\n分开显示，每条差异都有名字；合成一个，用户只能得出「这东西坏了」。"
+      },
+      "AssetRefOut": {
+        "properties": {
+          "assetId": {
+            "type": "string",
+            "title": "Assetid"
+          },
+          "role": {
+            "type": "string",
+            "title": "Role",
+            "default": "reference"
+          },
+          "sortOrder": {
+            "type": "integer",
+            "title": "Sortorder",
+            "default": 0
+          },
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "default": ""
+          },
+          "previewUrl": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previewurl"
+          }
+        },
+        "type": "object",
+        "required": [
+          "assetId"
+        ],
+        "title": "AssetRefOut",
+        "description": "配方里的一张参考图。带名字与缩略图——详情浮层要能直接点开。"
+      },
+      "AssetTagList": {
+        "properties": {
+          "assetId": {
+            "type": "string",
+            "title": "Assetid"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/TagOut"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "type": "object",
+        "required": [
+          "assetId"
+        ],
+        "title": "AssetTagList"
+      },
+      "AssetTagSet": {
+        "properties": {
+          "tagIds": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Tagids"
+          }
+        },
+        "type": "object",
+        "title": "AssetTagSet",
+        "description": "整体替换一条素材的标签集合。\n\n空列表是合法输入，含义是「清空标签」——不要用「不传该字段」表达清空，\n那样和「没改」无法区分。"
+      },
+      "AssetUsage": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "asset",
+              "subject"
+            ],
+            "title": "Kind"
+          },
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind",
+          "id"
+        ],
+        "title": "AssetUsage",
+        "description": "「谁在用它」的一条记录。\n\n两种消费者分开标：`asset` 是别的配方引用了它（生成血缘），\n`subject` 是某个主体把它当成员（业务装配）。合并成一种会让\"这张图能不能删\"\n的答案少一半——两者各自都会阻止删除。"
+      },
+      "AssetViewCreate": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 40,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "query": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Query"
+          },
+          "sort": {
+            "type": "string",
+            "maxLength": 24,
+            "title": "Sort",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "AssetViewCreate"
+      },
+      "AssetViewList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AssetViewOut"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "type": "object",
+        "title": "AssetViewList"
+      },
+      "AssetViewOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "query": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Query"
+          },
+          "sort": {
+            "type": "string",
+            "title": "Sort",
+            "default": ""
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Createdat"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "createdAt"
+        ],
+        "title": "AssetViewOut"
+      },
+      "BatchAdoptRequest": {
+        "properties": {
+          "assetIds": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 32,
+            "minItems": 1,
+            "title": "Assetids"
+          },
+          "categoryId": {
+            "type": "string",
+            "maxLength": 32,
+            "title": "Categoryid",
+            "default": ""
+          },
+          "tagIds": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 20,
+            "title": "Tagids"
+          }
+        },
+        "type": "object",
+        "required": [
+          "assetIds"
+        ],
+        "title": "BatchAdoptRequest",
+        "description": "整组采纳。**全成或全不成**：一次事务，任一条不可采纳就整批拒绝。\n\n半成功是这里最坏的形态——前端要记住哪几条成功、失败的重试会不会重复，\n而用户看到的是\"选了 8 张，成了 5 张\"，且不知道差在哪。"
+      },
+      "BatchAdoptResult": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ArchivedAsset"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "already": {
+            "type": "integer",
+            "title": "Already",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "BatchAdoptResult"
+      },
+      "CandidateGroup": {
+        "properties": {
+          "recipeId": {
+            "type": "string",
+            "title": "Recipeid",
+            "default": ""
+          },
+          "summary": {
+            "type": "string",
+            "title": "Summary",
+            "default": ""
+          },
+          "promptSummary": {
+            "type": "string",
+            "title": "Promptsummary",
+            "default": ""
+          },
+          "createdAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Createdat"
+          },
+          "expiresAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expiresat"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ArchivedAsset"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "type": "object",
+        "title": "CandidateGroup",
+        "description": "一批同源候选（同一 `recipe_id`）。\n\n`expires_at` 取组内**最早**的那个：一批里但凡有一张到期，这一组就该消失，\n否则会出现\"确认界面里还留着 3 张已经过期的\"。"
+      },
+      "CandidateList": {
+        "properties": {
+          "groups": {
+            "items": {
+              "$ref": "#/components/schemas/CandidateGroup"
+            },
+            "type": "array",
+            "title": "Groups"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "title": "CandidateList"
       },
       "Capability": {
         "type": "string",
@@ -5389,6 +7165,71 @@
           "deleted"
         ],
         "title": "DeleteTasksOut"
+      },
+      "DeriveIntent": {
+        "properties": {
+          "mode": {
+            "type": "string",
+            "title": "Mode"
+          },
+          "assetId": {
+            "type": "string",
+            "title": "Assetid"
+          },
+          "prompt": {
+            "type": "string",
+            "title": "Prompt",
+            "default": ""
+          },
+          "referenceAssetIds": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Referenceassetids"
+          },
+          "referenceRole": {
+            "type": "string",
+            "title": "Referencerole",
+            "default": ""
+          },
+          "sourceRecipeId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sourcerecipeid"
+          }
+        },
+        "type": "object",
+        "required": [
+          "mode",
+          "assetId"
+        ],
+        "title": "DeriveIntent",
+        "description": "「照这个素材再生成一次」所需的全部输入。\n\n只回填输入位、**不落库**：真正发起生成走的是生成任务自己的接口（它有额度、\n模型选择、参数校验）。在这里顺手建一个任务会让\"点了衍生\"变成一次扣费。"
+      },
+      "DeriveRequest": {
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "image_ref",
+              "video_first_frame",
+              "prompt_extract"
+            ],
+            "title": "Mode"
+          }
+        },
+        "type": "object",
+        "required": [
+          "mode"
+        ],
+        "title": "DeriveRequest"
       },
       "ExecuteReplacement": {
         "properties": {
@@ -6003,6 +7844,91 @@
           "category"
         ],
         "title": "ImportAsset"
+      },
+      "LineageNode": {
+        "properties": {
+          "recipe": {
+            "$ref": "#/components/schemas/RecipeOut"
+          },
+          "assetId": {
+            "type": "string",
+            "title": "Assetid",
+            "default": ""
+          },
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "default": ""
+          },
+          "previewUrl": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previewurl"
+          }
+        },
+        "type": "object",
+        "required": [
+          "recipe"
+        ],
+        "title": "LineageNode",
+        "description": "血缘链上的一个节点：一条配方 + 它产出的那张素材。"
+      },
+      "LineageOut": {
+        "properties": {
+          "assetId": {
+            "type": "string",
+            "title": "Assetid"
+          },
+          "recipe": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RecipeOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "references": {
+            "items": {
+              "$ref": "#/components/schemas/AssetRefOut"
+            },
+            "type": "array",
+            "title": "References"
+          },
+          "parents": {
+            "items": {
+              "$ref": "#/components/schemas/LineageNode"
+            },
+            "type": "array",
+            "title": "Parents"
+          },
+          "children": {
+            "items": {
+              "$ref": "#/components/schemas/LineageNode"
+            },
+            "type": "array",
+            "title": "Children"
+          },
+          "usedBy": {
+            "items": {
+              "$ref": "#/components/schemas/AssetUsage"
+            },
+            "type": "array",
+            "title": "Usedby"
+          }
+        },
+        "type": "object",
+        "required": [
+          "assetId"
+        ],
+        "title": "LineageOut"
       },
       "LoginEventListOut": {
         "properties": {
@@ -6950,6 +8876,128 @@
         ],
         "title": "ReadyOut",
         "description": "就绪状态。`checks` 说明每一项依赖的结论，status ∈ ok / degraded / down。"
+      },
+      "RecipeOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "model": {
+            "type": "string",
+            "title": "Model",
+            "default": ""
+          },
+          "modelVersion": {
+            "type": "string",
+            "title": "Modelversion",
+            "default": ""
+          },
+          "provider": {
+            "type": "string",
+            "title": "Provider",
+            "default": ""
+          },
+          "prompt": {
+            "type": "string",
+            "title": "Prompt",
+            "default": ""
+          },
+          "negativePrompt": {
+            "type": "string",
+            "title": "Negativeprompt",
+            "default": ""
+          },
+          "promptLanguage": {
+            "type": "string",
+            "title": "Promptlanguage",
+            "default": "zh"
+          },
+          "params": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Params"
+          },
+          "seed": {
+            "type": "string",
+            "title": "Seed",
+            "default": ""
+          },
+          "seedRequested": {
+            "type": "string",
+            "title": "Seedrequested",
+            "default": ""
+          },
+          "taskId": {
+            "type": "string",
+            "title": "Taskid",
+            "default": ""
+          },
+          "templateId": {
+            "type": "string",
+            "title": "Templateid",
+            "default": ""
+          },
+          "templateVersion": {
+            "type": "integer",
+            "title": "Templateversion",
+            "default": 0
+          },
+          "subjectVersion": {
+            "type": "integer",
+            "title": "Subjectversion",
+            "default": 0
+          },
+          "contentLabel": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Contentlabel"
+          },
+          "parentRecipeId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parentrecipeid"
+          },
+          "referenceAssetIds": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Referenceassetids"
+          },
+          "costUnits": {
+            "type": "number",
+            "title": "Costunits",
+            "default": 0.0
+          },
+          "createdBy": {
+            "type": "string",
+            "title": "Createdby",
+            "default": ""
+          },
+          "createdAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Createdat"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id"
+        ],
+        "title": "RecipeOut"
       },
       "ReconfirmReplacement": {
         "properties": {
@@ -8019,6 +10067,427 @@
         ],
         "title": "StoryboardOut"
       },
+      "SubjectDetail": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "subjectType": {
+            "type": "string",
+            "title": "Subjecttype"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "visibility": {
+            "type": "string",
+            "title": "Visibility"
+          },
+          "teamId": {
+            "type": "string",
+            "title": "Teamid",
+            "default": ""
+          },
+          "categoryId": {
+            "type": "string",
+            "title": "Categoryid",
+            "default": ""
+          },
+          "coverAssetId": {
+            "type": "string",
+            "title": "Coverassetid",
+            "default": ""
+          },
+          "coverUrl": {
+            "type": "string",
+            "title": "Coverurl",
+            "default": ""
+          },
+          "memberCount": {
+            "type": "integer",
+            "title": "Membercount",
+            "default": 0
+          },
+          "currentVersion": {
+            "type": "integer",
+            "title": "Currentversion",
+            "default": 0
+          },
+          "availability": {
+            "type": "string",
+            "title": "Availability",
+            "default": "incomplete"
+          },
+          "availabilityNote": {
+            "type": "string",
+            "title": "Availabilitynote",
+            "default": ""
+          },
+          "members": {
+            "items": {
+              "$ref": "#/components/schemas/SubjectMemberOut"
+            },
+            "type": "array",
+            "title": "Members",
+            "default": []
+          },
+          "attributes": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Attributes",
+            "default": {}
+          },
+          "requires": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Requires",
+            "default": []
+          },
+          "requiredRoles": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Requiredroles",
+            "default": []
+          },
+          "missingCapabilities": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Missingcapabilities",
+            "default": []
+          },
+          "missingRoles": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Missingroles",
+            "default": []
+          },
+          "memberGaps": {
+            "additionalProperties": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "type": "object",
+            "title": "Membergaps",
+            "default": {}
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "subjectType",
+          "status",
+          "visibility"
+        ],
+        "title": "SubjectDetail"
+      },
+      "SubjectList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SubjectOut"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "default": 0
+          },
+          "page": {
+            "type": "integer",
+            "title": "Page",
+            "default": 1
+          },
+          "pageSize": {
+            "type": "integer",
+            "title": "Pagesize",
+            "default": 24
+          }
+        },
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "SubjectList"
+      },
+      "SubjectMemberOut": {
+        "properties": {
+          "assetId": {
+            "type": "string",
+            "title": "Assetid"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "default": ""
+          },
+          "coverUrl": {
+            "type": "string",
+            "title": "Coverurl",
+            "default": ""
+          },
+          "role": {
+            "type": "string",
+            "title": "Role",
+            "default": ""
+          },
+          "sortOrder": {
+            "type": "integer",
+            "title": "Sortorder",
+            "default": 0
+          },
+          "grants": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Grants",
+            "default": []
+          },
+          "inOutput": {
+            "type": "boolean",
+            "title": "Inoutput",
+            "default": true
+          },
+          "missing": {
+            "type": "boolean",
+            "title": "Missing",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "assetId"
+        ],
+        "title": "SubjectMemberOut"
+      },
+      "SubjectOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "subjectType": {
+            "type": "string",
+            "title": "Subjecttype"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "visibility": {
+            "type": "string",
+            "title": "Visibility"
+          },
+          "teamId": {
+            "type": "string",
+            "title": "Teamid",
+            "default": ""
+          },
+          "categoryId": {
+            "type": "string",
+            "title": "Categoryid",
+            "default": ""
+          },
+          "coverAssetId": {
+            "type": "string",
+            "title": "Coverassetid",
+            "default": ""
+          },
+          "coverUrl": {
+            "type": "string",
+            "title": "Coverurl",
+            "default": ""
+          },
+          "memberCount": {
+            "type": "integer",
+            "title": "Membercount",
+            "default": 0
+          },
+          "currentVersion": {
+            "type": "integer",
+            "title": "Currentversion",
+            "default": 0
+          },
+          "availability": {
+            "type": "string",
+            "title": "Availability",
+            "default": "incomplete"
+          },
+          "availabilityNote": {
+            "type": "string",
+            "title": "Availabilitynote",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "subjectType",
+          "status",
+          "visibility"
+        ],
+        "title": "SubjectOut"
+      },
+      "SubjectPublishResult": {
+        "properties": {
+          "subjectId": {
+            "type": "string",
+            "title": "Subjectid"
+          },
+          "version": {
+            "type": "integer",
+            "title": "Version"
+          },
+          "publishedAt": {
+            "type": "string",
+            "title": "Publishedat"
+          }
+        },
+        "type": "object",
+        "required": [
+          "subjectId",
+          "version",
+          "publishedAt"
+        ],
+        "title": "SubjectPublishResult"
+      },
+      "TagCatalog": {
+        "properties": {
+          "groups": {
+            "items": {
+              "$ref": "#/components/schemas/TagGroup"
+            },
+            "type": "array",
+            "title": "Groups"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "default": 0
+          },
+          "pinnedThreshold": {
+            "type": "integer",
+            "title": "Pinnedthreshold",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "title": "TagCatalog"
+      },
+      "TagCreate": {
+        "properties": {
+          "dimension": {
+            "type": "string",
+            "maxLength": 16,
+            "minLength": 1,
+            "title": "Dimension"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "dimension",
+          "name"
+        ],
+        "title": "TagCreate"
+      },
+      "TagGroup": {
+        "properties": {
+          "dimension": {
+            "type": "string",
+            "title": "Dimension"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/TagOut"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "type": "object",
+        "required": [
+          "dimension",
+          "label"
+        ],
+        "title": "TagGroup"
+      },
+      "TagOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "dimension": {
+            "type": "string",
+            "title": "Dimension"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "default": "active"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source",
+            "default": "manual"
+          },
+          "useCount": {
+            "type": "integer",
+            "title": "Usecount",
+            "default": 0
+          },
+          "pinned": {
+            "type": "boolean",
+            "title": "Pinned",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "dimension",
+          "name"
+        ],
+        "title": "TagOut"
+      },
       "TaskFeedItem": {
         "properties": {
           "key": {
@@ -8515,6 +10984,60 @@
         ],
         "title": "TaskStatusFilter",
         "description": "列表筛选值：`all` 与具体状态并列，避免路由层出现联合类型。"
+      },
+      "TeamList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/TeamOut"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "canManage": {
+            "type": "boolean",
+            "title": "Canmanage",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "TeamList"
+      },
+      "TeamOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "role": {
+            "type": "string",
+            "title": "Role",
+            "default": ""
+          },
+          "memberCount": {
+            "type": "integer",
+            "title": "Membercount",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "kind"
+        ],
+        "title": "TeamOut"
       },
       "TokenOut": {
         "properties": {

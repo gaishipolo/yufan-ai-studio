@@ -76,6 +76,7 @@ BUILTIN_ROLES: tuple[BuiltinRole, ...] = (
         permissions=(
             "catalog:read",
             "task:*",
+            "asset:team:read",
             "asset:read",
             "asset:create",
             "asset:update",
@@ -100,6 +101,7 @@ BUILTIN_ROLES: tuple[BuiltinRole, ...] = (
         permissions=(
             "catalog:read",
             "task:read",
+            "asset:team:read",
             "asset:read",
             "image:read",
             "template:read",
@@ -118,9 +120,31 @@ BUILTIN_ROLES: tuple[BuiltinRole, ...] = (
             "asset:update",
             "asset:delete",
             "asset:reference:manage",
+            "asset:team:read",
             "template:read",
             "template:pack:manage",
             "template:pack:publish",
+        ),
+    ),
+    BuiltinRole(
+        code="team_admin",
+        name="团队管理员",
+        description="审批交付、管理团队成员、维护团队库分类；不能任命同级，不能改个人库素材",
+        sort_order=12,
+        permissions=(
+            "asset:team:read",
+            # 刻意**不含** `asset:team:manage`：任命其他团队管理员必须由平台管理员执行。
+            # 允许自循环的话，每个团队会变成权限孤岛，调岗或离职时无从回收。
+            #
+            # 「管理团队成员」(`asset:team:member:manage`) 随 M5 的成员管理接口
+            # 一起授权：现在没有判定点，先给等于让这个角色看起来能管人、实际不能。
+            "asset:read",
+            "asset:create",
+            "asset:update",
+            "asset:delete",
+            "asset:share",
+            "asset:reference:manage",
+            "template:read",
         ),
     ),
 )

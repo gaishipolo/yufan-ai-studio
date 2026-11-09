@@ -1,5 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ModelSpec } from '@/entities/model/model/types';
 import type { ImageJob } from '@/entities/image/model/types';
@@ -82,6 +83,18 @@ const select = (name: string) => screen.getByRole('combobox', { name }) as HTMLS
 const optionValues = (element: HTMLSelectElement) =>
   Array.from(element.options).map((option) => option.value);
 
+/**
+ * 页面读 `?prompt=`（素材详情的「提取提示词微调」就落在这里），
+ * 所以渲染必须包在 Router 里——没有 Router 时 `useSearchParams` 会直接抛错，
+ * 而那七个用例跟 URL 无关，报错却全落在它们身上。
+ */
+const renderPage = (path = '/image') =>
+  render(
+    <MemoryRouter initialEntries={[path]}>
+      <ImagePage />
+    </MemoryRouter>,
+  );
+
 beforeEach(() => {
   modelsMock.mockReset();
   imagesMock.mockReset();
@@ -93,7 +106,7 @@ beforeEach(() => {
 
 describe('ImagePage · 表单参数来自模型目录', () => {
   it('尺寸取 enum 白名单（半角 x），张数按默认模型的 max 只有 1 张', () => {
-    render(<ImagePage />);
+    renderPage();
     expect(optionValues(select('尺寸'))).toEqual(['1024x1024', '1024x1536', '1536x1024']);
     expect(optionValues(select('数量'))).toEqual(['1']);
     expect(select('尺寸').value).toBe('1024x1024');
@@ -101,7 +114,7 @@ describe('ImagePage · 表单参数来自模型目录', () => {
 
   it('换模型后张数上限跟着变；旧选值失效时自动回落到新模型的默认档', async () => {
     const user = userEvent.setup();
-    render(<ImagePage />);
+    renderPage();
 
     await user.selectOptions(select('模型'), 'seedream-3');
     expect(optionValues(select('数量'))).toEqual(['1', '2', '3', '4']);
@@ -115,7 +128,7 @@ describe('ImagePage · 表单参数来自模型目录', () => {
 
   it('提交使用半角尺寸，默认模型留空不传 model', async () => {
     const user = userEvent.setup();
-    render(<ImagePage />);
+    renderPage();
     await user.type(screen.getByPlaceholderText(/赛博朋克街头/), '一只白猫');
     await user.click(screen.getByRole('button', { name: '开始生成' }));
 
@@ -129,7 +142,7 @@ describe('ImagePage · 表单参数来自模型目录', () => {
 
   it('显式改选非默认模型时才下发 model，张数带上用户所选', async () => {
     const user = userEvent.setup();
-    render(<ImagePage />);
+    renderPage();
     await user.selectOptions(select('模型'), 'seedream-3');
     await user.selectOptions(select('数量'), '3');
     await user.type(screen.getByPlaceholderText(/赛博朋克街头/), '一只白猫');
@@ -145,7 +158,7 @@ describe('ImagePage · 表单参数来自模型目录', () => {
 
   it('空提示词不提交', async () => {
     const user = userEvent.setup();
-    render(<ImagePage />);
+    renderPage();
     await user.click(screen.getByRole('button', { name: '开始生成' }));
     expect(mutateMock).not.toHaveBeenCalled();
     expect(toastMock).toHaveBeenCalledWith('请先填写提示词', 'error');
@@ -153,9 +166,18 @@ describe('ImagePage · 表单参数来自模型目录', () => {
 
   it('模型目录为空时禁用提交并说明原因，不拿假参数发请求', () => {
     modelsMock.mockReturnValue({ models: [], isLoading: false, isError: false });
-    render(<ImagePage />);
+    renderPage();
     expect(screen.getByText('暂无可用的生图模型')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '开始生成' })).toBeDisabled();
+  });
+
+  /* 素材详情「提取提示词微调」跳过来的就是这条路径：带 `?prompt=` 落到生图页。
+     只填不提交——点了提取就自动扣一次费，是这个入口最不能有的行为。 */
+  it('?prompt= 预填提示词但不自动提交', () => {
+    renderPage(`/image?prompt=${encodeURIComponent('赛博朋克街头，雨夜反光')}`);
+    expect((screen.getByPlaceholderText(/赛博朋克街头/) as HTMLTextAreaElement).value)
+      .toBe('赛博朋克街头，雨夜反光');
+    expect(mutateMock).not.toHaveBeenCalled();
   });
 });
 
@@ -174,7 +196,7 @@ describe('ImagePage · 异步状态在页面上看得见', () => {
       job({ id: 'f', name: '失败的图', status: 'failed', errorMessage: '供应商超时' }),
     ]);
 
-    const { container } = render(<ImagePage />);
+    const { container } = renderPage();
 
     expect(screen.getByText('排队中')).toBeInTheDocument();
     expect(screen.getByText('生成中 42%')).toBeInTheDocument();

@@ -78,11 +78,18 @@ export default {
           from: { opacity: '0', transform: 'translateY(-6px)' },
           to: { opacity: '1', transform: 'translateY(0)' },
         },
+        // 右侧滑出（详情浮层）。位移只有 24px：滑 300px 会让"按下到看见"的
+        // 时间花在动画上，而用户点的是"给我看这张图"
+        slideInRight: {
+          from: { opacity: '0', transform: 'translateX(24px)' },
+          to: { opacity: '1', transform: 'translateX(0)' },
+        },
       },
       animation: {
         fadeIn: 'fadeIn .18s ease',
         popIn: 'popIn .2s cubic-bezier(.22,.61,.36,1)',
         slideDown: 'slideDown .18s ease',
+        slideInRight: 'slideInRight .22s cubic-bezier(.22,.61,.36,1)',
       },
     },
   },

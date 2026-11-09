@@ -49,41 +49,69 @@ class MediaInfo(TypedDict):
     hasAudio: bool
 
 
-def inspect(path: Path, extension: str) -> MediaInfo:
+#: 扩展名 → 图片格式名。只用于「按扩展名校验」那条路径（`kind=None`）。
+_IMAGE_FORMATS = {".png": "PNG", ".jpg": "JPEG", ".jpeg": "JPEG", ".webp": "WEBP"}
+
+
+def inspect(path: Path, extension: str, *, kind: str | None = None) -> MediaInfo:
+    """读元数据并校验字节，`extension` 决定走图片还是音视频分支。
+
+    `kind` 给定时按**内容判定的类型**分派，不再用扩展名选分支。这是 M1-E 的
+    配套：文件被改名后扩展名与内容冲突，元数据仍然要读得出来——否则一张改名
+    成 `.mp4` 的 PNG 会在 ffmpeg 那里报「音视频文件无法解析」，而用户以为
+    视频坏了，实际只是文件名写错了。
+
+    `kind=None` 保留旧行为（严格按扩展名分派并校验格式一致），供调用方在
+    内容判不出来时兜底。
+    """
     if extension not in EXTENSIONS:
         raise BadRequest("支持 MP4、PNG、JPG、WebP、MP3 和 WAV")
     if not 0 < path.stat().st_size <= MAX_BYTES:
         raise BadRequest("文件不能为空，且不能超过 300MB")
-    if EXTENSIONS[extension].startswith("image/"):
-        try:
-            with Image.open(path) as image:
-                image.verify()
-            with Image.open(path) as image:
-                expected = {".png": "PNG", ".jpg": "JPEG", ".jpeg": "JPEG", ".webp": "WEBP"}
-                if image.format != expected[extension]:
-                    raise BadRequest("图片内容与扩展名不一致")
-                return {
-                    "width": image.width,
-                    "height": image.height,
-                    "duration": 0,
-                    "hasAudio": False,
-                }
-        except (OSError, Image.DecompressionBombError) as exc:
-            raise BadRequest("图片无法解析") from exc
+    # 内容判定优先：`kind` 说了算时扩展名只用于「无可信类型」的格式一致性校验
+    trust_extension = kind is None
+    branch = kind or ("image" if EXTENSIONS[extension].startswith("image/") else "stream")
+    if branch == "image":
+        return _inspect_image(path, extension if trust_extension else None)
+    return _inspect_stream(path, extension if trust_extension else None)
+
+
+def _inspect_image(path: Path, expected_extension: str | None) -> MediaInfo:
+    """图片分支。`expected_extension` 为空表示格式以内容为准，不比对外声称的格式。"""
+    try:
+        with Image.open(path) as image:
+            image.verify()
+        with Image.open(path) as image:
+            if expected_extension and image.format != _IMAGE_FORMATS[expected_extension]:
+                raise BadRequest("图片内容与扩展名不一致")
+            return {
+                "width": image.width,
+                "height": image.height,
+                "duration": 0,
+                "hasAudio": False,
+            }
+    except (OSError, Image.DecompressionBombError) as exc:
+        raise BadRequest("图片无法解析") from exc
+
+
+def _inspect_stream(path: Path, expected_extension: str | None) -> MediaInfo:
+    """音视频分支。`expected_extension` 为空时只要求「能读出时长」，
+    不再追加「必须含视频流 / 必须含音频流」——那两条是按扩展名推断期望值才成立的
+    判断，内容已经自己说明类型时再套一遍只会误伤。"""
     probe = _probe_stream(path)
     duration = re.search(r"Duration: (\d+):(\d+):([\d.]+)", probe)
     if not duration:
         raise BadRequest("音视频文件无法解析")
-    seconds = normalize_duration(
-        int(duration[1]) * 3600 + int(duration[2]) * 60 + float(duration[3])
-    )
-    if extension == ".mp4":
+    if expected_extension == ".mp4":
         with path.open("rb") as stream:
             header = stream.read(12)
         if header[4:8] != b"ftyp" or "Video:" not in probe:
             raise BadRequest("请使用有效的 MP4 视频")
-    elif "Audio:" not in probe:
+    elif expected_extension is not None and "Audio:" not in probe:
         raise BadRequest("请使用有效的音频文件")
+    seconds = normalize_duration(
+        int(duration[1]) * 3600 + int(duration[2]) * 60 + float(duration[3])
+    )
     size = re.search(r"Video:.*? (\d{2,5})x(\d{2,5})", probe)
     return {
         "width": int(size[1]) if size else 0,

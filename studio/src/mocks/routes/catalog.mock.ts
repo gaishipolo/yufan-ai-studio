@@ -1,6 +1,7 @@
 import type { ArchivedAsset } from '@/shared/api/schema';
 import { db } from '../db';
 import { HttpError, type MockRoute } from '../kernel';
+import { categoryIdOf, mediaTypeOf, visibleInLibrary } from '../library-tree';
 
 /* ---------------- 素材 / 模板 / 分镜 / 镜头 / 生图记录 ---------------- */
 
@@ -39,14 +40,24 @@ const MINE = 'u_001';
 const visibleAssets = (params: Record<string, unknown>) => {
   const scope = String(params.scope ?? 'mine');
   const category = String(params.category ?? 'all');
+  const categoryId = String(params.categoryId ?? '');
+  const mediaType = String(params.mediaType ?? '');
   const keyword = String(params.keyword ?? '').trim().toLowerCase();
   const state = String(params.state ?? 'all');
+  const teamId = String(params.teamId ?? '');
   const inTrash = (asset: ArchivedAsset) => asset.deletedAt != null;
-  let list = db.assets.slice();
-  if (scope === 'trash') list = list.filter((asset) => asset.ownerId === MINE && inTrash(asset));
-  else if (scope === 'public') list = list.filter((asset) => asset.shared && !inTrash(asset));
-  else list = list.filter((asset) => asset.ownerId === MINE && !inTrash(asset));
-  if (category !== 'all') list = list.filter((asset) => asset.category === category);
+  let list: ArchivedAsset[];
+  if (scope === 'trash') list = db.assets.filter((asset) => asset.ownerId === MINE && inTrash(asset));
+  else if (scope === 'public') list = visibleInLibrary('brand');
+  else if (scope === 'team') {
+    // 不带 teamId 是 400，与后端一致：回落成"全部团队"等于把跨团队隔离关掉
+    if (!teamId) throw new HttpError(400, '请先选择团队库');
+    list = visibleInLibrary(`team:${teamId}`);
+  } else list = visibleInLibrary('personal');
+  // 新分类树按 id；两个都给时以 id 为准（与后端一致）
+  if (categoryId) list = list.filter((asset) => categoryIdOf(asset) === categoryId);
+  else if (category !== 'all') list = list.filter((asset) => asset.category === category);
+  if (mediaType) list = list.filter((asset) => mediaTypeOf(asset) === mediaType);
   if (keyword) list = list.filter((asset) => asset.name.toLowerCase().includes(keyword));
   if (scope === 'mine' && state !== 'all') {
     list = list.filter((asset) => (state === 'shared' ? asset.shared : !asset.shared));
@@ -157,7 +168,10 @@ export const routes: MockRoute[] = [
   },
   {
     method: 'GET',
-    pattern: /^\/assets\/[^/]+$/,
+    // `/assets/candidates`、`/assets/batch/...` 是**子资源集合**，不是一条素材。
+    // 用负向断言排除，而不是靠 mock 文件的注册顺序（顺序由文件名字母序决定，
+    // 改个文件名就会让详情接口抢走 candidates，症状是"候选列表 404 素材不存在"）。
+    pattern: /^\/assets\/(?!candidates$|batch\/)[^/]+$/,
     handler: (ctx) => findAsset(ctx.path.split('/')[2]),
   },
   {

@@ -2,7 +2,7 @@
 
 > 此文件由 `app export-openapi` 自动生成，请勿手工编辑。
 >
-> 版本 `0.2.0`｜共 **77** 个接口 / **10** 个模块
+> 版本 `0.2.0`｜共 **96** 个接口 / **10** 个模块
 >
 > 重新生成：`cd api && .venv/Scripts/python -m cli export-openapi`
 
@@ -112,7 +112,10 @@ Authorization: Bearer <accessToken>
 | `asset:read` | 查看素材 |  |
 | `asset:reference:manage` | 维护封装参考素材与登记文件 |  |
 | `asset:share` | 分享或撤回本人原片 |  |
-| `asset:update` | 修改本人素材名称 |  |
+| `asset:tag:manage` | 管理标签词表（新增标签） |  |
+| `asset:team:manage` | 管理团队（建团队、任命管理员） | 任命其他团队管理员必须由平台管理员执行，团队管理员不能自行任命同级 |
+| `asset:team:read` | 查看团队（库切换器） |  |
+| `asset:update` | 修改本人素材（名称、标签） |  |
 | `template:pack:manage` | 维护本人封装草稿 |  |
 | `template:pack:publish` | 发布或停用本人封装对象 |  |
 
@@ -143,6 +146,7 @@ Authorization: Bearer <accessToken>
 | `40021` | 400 | identity | `OldPasswordMismatch` | 原密码不正确 |
 | `40022` | 400 | identity | `UnknownPermission` | 存在无法识别的权限点 |
 | `40051` | 400 | asset | `FileTypeNotAllowed` | 支持 MP4、PNG、JPG、WebP、MP3 和 WAV |
+| `40052` | 400 | asset | `NotGenerated` | 这张素材是上传件，没有生成配方可提取 |
 | `40100` | 401 | 框架 | `Unauthorized` | 请先登录 |
 | `40121` | 401 | identity | `CredentialInvalid` | 用户名或密码错误 |
 | `40122` | 401 | identity | `RefreshTokenInvalid` | 刷新令牌已失效，请重新登录 |
@@ -155,6 +159,7 @@ Authorization: Bearer <accessToken>
 | `40422` | 404 | identity | `RoleNotFound` | 角色不存在 |
 | `40423` | 404 | identity | `SessionNotFound` | 会话不存在或已失效 |
 | `40451` | 404 | asset | `AssetNotFound` | 素材不存在 |
+| `40452` | 404 | asset | `ViewNotFound` | 视图不存在 |
 | `40900` | 409 | 框架 | `Conflict` | 资源冲突 |
 | `40902` | 409 | 框架 | `InvalidState` | 当前状态不允许该操作 |
 | `40921` | 409 | identity | `UsernameTaken` | 用户名已被占用 |
@@ -164,12 +169,17 @@ Authorization: Bearer <accessToken>
 | `40925` | 409 | identity | `CannotTargetSelf` | 不能停用或删除自己的账号 |
 | `40926` | 409 | identity | `LastSuperuser` | 系统必须保留至少一个启用的超级管理员 |
 | `40951` | 409 | asset | `AssetInUse` | 素材仍被引用，不能删除 |
+| `40952` | 409 | asset | `TagExists` | 已存在同名标签 |
+| `40953` | 409 | asset | `ViewNameExists` | 已存在同名视图 |
+| `40954` | 409 | asset | `CandidateClosed` | 候选已弃用或已过期，请重新生成 |
+| `40955` | 409 | asset | `ComplianceRejected` | 这张素材未通过合规审核，不能采纳 |
 | `40971` | 409 | template | `TemplateBusy` | 模板正在处理中，请稍后再试 |
 | `40991` | 409 | export | `ExportBusy` | 同一份数据正在导出中，请等待它完成 |
 | `40992` | 409 | export | `ExportNotReady` | 导出尚未生成完成，请稍后再试 |
 | `41091` | 410 | export | `ExportGone` | 导出文件已过保留期被回收，请重新导出 |
 | `41351` | 413 | asset | `FileTooLarge` | 文件不能超过 50MB |
 | `41352` | 413 | asset | `AssetQuotaExceeded` | 归档空间已用完，请先清理回收站或联系管理员提升配额 |
+| `42251` | 422 | asset | `TagUnknown` | 标签不在词表内，请从标签列表中选择 |
 | `42900` | 429 | 框架 | `RateLimited` | 请求过于频繁，请稍后再试 |
 | `50100` | 501 | 框架 | `NotImplementedFeature` | 该功能尚未实现 |
 | `50200` | 502 | 框架 | `UpstreamError` | 上游服务异常 |
@@ -184,7 +194,7 @@ Authorization: Bearer <accessToken>
 | 身份 | 26 | 见下方 `4.1` |
 | 任务 | 9 | 见下方 `4.2` |
 | 模型 | 1 | 见下方 `4.3` |
-| 素材 | 12 | 见下方 `4.4` |
+| 素材 | 31 | 见下方 `4.4` |
 | 生图 | 3 | 见下方 `4.5` |
 | 模板 | 16 | 见下方 `4.6` |
 | 分镜模板 | 1 | 见下方 `4.7` |
@@ -1025,22 +1035,159 @@ Authorization: Bearer <accessToken>
 | `items` | `ModelOut[]` | 否 |  |
 | `total` | `number` | 否 |  |
 
-### 4.4 素材（12 个）
+### 4.4 素材（31 个）
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
+| `GET` | `/api/v1/asset-categories` | 当前库的分类树与计数 | 🔒 |
+| `GET` | `/api/v1/asset-tags` | 标签词表（按维度分组，带在用数量） | 🔒 |
+| `POST` | `/api/v1/asset-tags` | 新增标签（词表外的新词） | 🔒 |
+| `GET` | `/api/v1/asset-views` | 我的保存视图 | 🔒 |
+| `POST` | `/api/v1/asset-views` | 保存当前筛选条件 | 🔒 |
+| `DELETE` | `/api/v1/asset-views/{view_id}` | 删除我的保存视图 | 🔒 |
 | `GET` | `/api/v1/assets` | 归档素材列表与空间占用 | 🔒 |
+| `POST` | `/api/v1/assets/batch/adopt` | 整组采纳候选（全成或全不成） | 🔒 |
+| `GET` | `/api/v1/assets/candidates` | 待确认的生成候选（按批分组） | 🔒 |
 | `POST` | `/api/v1/assets/import` | 从 Z 盘 inbox 登记现有素材 | 🔒 |
 | `POST` | `/api/v1/assets/upload` | 流式上传素材至归档盘 | 🔒 |
 | `GET` | `/api/v1/assets/{asset_id}` | 读取本人或共享原片详情 | 🔒 |
 | `DELETE` | `/api/v1/assets/{asset_id}` | 彻底删除回收站中的归档素材 | 🔒 |
+| `POST` | `/api/v1/assets/{asset_id}/adopt` | 采纳生成候选（成为素材） | 🔒 |
 | `PUT` | `/api/v1/assets/{asset_id}/deleted` | 将本人素材移入回收站或恢复 | 🔒 |
+| `POST` | `/api/v1/assets/{asset_id}/derive` | 一键衍生：回填生成页的输入位 | 🔒 |
+| `POST` | `/api/v1/assets/{asset_id}/discard` | 弃用生成候选 | 🔒 |
 | `GET` | `/api/v1/assets/{asset_id}/file` | 预览或下载已归档素材 | 🔒 |
+| `GET` | `/api/v1/assets/{asset_id}/lineage` | 生成血缘：配方、父链与引用关系 | 🔒 |
 | `PUT` | `/api/v1/assets/{asset_id}/name` | 修改本人素材名称 | 🔒 |
 | `GET` | `/api/v1/assets/{asset_id}/preview` | 受控公共原片预览 | 🔒 |
 | `PUT` | `/api/v1/assets/{asset_id}/sharing` | 分享或取消分享本人原片 | 🔒 |
 | `GET` | `/api/v1/assets/{asset_id}/stream` | 浏览器兼容视频预览（派生文件，不改原片） | 🔒 |
+| `GET` | `/api/v1/assets/{asset_id}/tags` | 读取素材的标签 | 🔒 |
+| `PUT` | `/api/v1/assets/{asset_id}/tags` | 整体替换本人素材的标签 | 🔒 |
 | `GET` | `/api/v1/assets/{asset_id}/thumbnail` | 读取归档素材缩略图 | 🔒 |
+| `GET` | `/api/v1/subjects` | 主体列表（带成员数与可用性） | 🔒 |
+| `GET` | `/api/v1/subjects/by-legacy-pack/{pack_id}` | 按旧素材包 id 解析主体（B5） | 🔒 |
+| `GET` | `/api/v1/subjects/{subject_id}` | 主体详情（含成员条带与缺项） | 🔒 |
+| `POST` | `/api/v1/subjects/{subject_id}/publish` | 发布主体（过可达性后冻结版本） | 🔒 |
+| `GET` | `/api/v1/teams` | 当前用户可见的团队（库切换器数据源） | 🔒 |
+
+#### `GET /api/v1/asset-categories`
+
+**当前库的分类树与计数**
+
+返回当前库的分类树 + 每个分类的素材数。
+
+计数口径与 `GET /assets` 的分支一一对应（未删除 + 当前库可见）。
+两处一旦不一致，症状是「角标 149、点进去 12 条」，而这种差异
+通常被当成缓存问题排查很久。
+
+团队库会先校验成员关系：不是成员是 403，不是空列表——空列表会被读成
+「这个团队还没传东西」，用户会去要权限，而实际是他根本不该看。
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `library` | query | `string` | 否 |  |
+
+**响应** `ApiResponse<AssetCategoryList>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `library` | `string` | 是 |  |
+| `items` | `AssetCategoryOut[]` | 是 |  |
+| `inboxCount` | `number` | 是 |  |
+
+#### `GET /api/v1/asset-tags`
+
+**标签词表（按维度分组，带在用数量）**
+
+筛选条的数据源。
+
+`useCount` 只数未删除的素材：回收站里的关联保留（恢复后标签要回来），
+但不计入热度——否则一个词能靠一堆已删除的素材把自己顶进常显区。
+
+**响应** `ApiResponse<TagCatalog>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `groups` | `TagGroup[]` | 否 |  |
+| `total` | `number` | 否 |  |
+| `pinnedThreshold` | `number` | 否 |  |
+
+#### `POST /api/v1/asset-tags`
+
+**新增标签（词表外的新词）**
+
+新增即生效、不审批，但记 `created_by`。
+
+**准入三问在表单上，不在接口里**：接口只能挡住"同名词"和"维度不存在"，
+挡不住"这个概念两个人看着会给出不同答案"。所以这条路径要窄——只有管理员
+能进，且每次新增都留痕，便于季度复查时把零使用的词收掉。
+
+**请求体** `TagCreate`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `dimension` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+
+**响应** `ApiResponse<TagOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `dimension` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `status` | `string` | 否 |  |
+| `source` | `string` | 否 |  |
+| `useCount` | `number` | 否 |  |
+| `pinned` | `boolean` | 否 |  |
+
+#### `GET /api/v1/asset-views`
+
+**我的保存视图**
+
+**响应** `ApiResponse<AssetViewList>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `items` | `AssetViewOut[]` | 否 |  |
+
+#### `POST /api/v1/asset-views`
+
+**保存当前筛选条件**
+
+存的是**筛选参数**，不是结果集。
+
+存结果集的视图会在素材增减后给出过期的列表——用户以为"这个视图里就这些"，
+而实际上它是某个时刻的快照。参数是幂等的，结果不是。
+
+**请求体** `AssetViewCreate`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `name` | `string` | 是 |  |
+| `query` | `Record<string, unknown>` | 否 |  |
+| `sort` | `string` | 否 |  |
+
+**响应** `ApiResponse<AssetViewOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `query` | `Record<string, unknown>` | 否 |  |
+| `sort` | `string` | 否 |  |
+| `createdAt` | `string` | 是 |  |
+
+#### `DELETE /api/v1/asset-views/{view_id}`
+
+**删除我的保存视图**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `view_id` | path | `string` | 是 |  |
+
+**响应** `ApiResponse<unknown>`（前端取 `res.data`）
 
 #### `GET /api/v1/assets`
 
@@ -1049,11 +1196,16 @@ Authorization: Bearer <accessToken>
 | 参数 | 位置 | 类型 | 必填 | 说明 |
 |---|---|---|---|---|
 | `category` | query | `"all" | "source" | "character" | "product" | "scene" | "audio"` | 否 |  |
-| `scope` | query | `"mine" | "public" | "trash"` | 否 |  |
+| `scope` | query | `"mine" | "public" | "trash" | "team"` | 否 |  |
 | `keyword` | query | `string` | 否 |  |
 | `state` | query | `"all" | "private" | "shared"` | 否 |  |
 | `page` | query | `number` | 否 |  |
 | `pageSize` | query | `number` | 否 |  |
+| `teamId` | query | `string` | 否 |  |
+| `tagIds` | query | `string[] | null` | 否 |  |
+| `sort` | query | `string` | 否 |  |
+| `categoryId` | query | `string` | 否 |  |
+| `mediaType` | query | `string` | 否 |  |
 
 **响应** `ApiResponse<ArchiveList>`（前端取 `res.data`）
 
@@ -1064,8 +1216,44 @@ Authorization: Bearer <accessToken>
 | `usedBytes` | `number` | 是 |  |
 | `quotaBytes` | `number` | 否 |  |
 | `ownerUsedBytes` | `number` | 否 |  |
+| `quota` | `AssetQuota` | 否 |  |
 | `page` | `number` | 否 |  |
 | `pageSize` | `number` | 否 |  |
+
+#### `POST /api/v1/assets/batch/adopt`
+
+**整组采纳候选（全成或全不成）**
+
+**请求体** `BatchAdoptRequest`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `assetIds` | `string[]` | 是 |  |
+| `categoryId` | `string` | 否 |  |
+| `tagIds` | `string[]` | 否 |  |
+
+**响应** `ApiResponse<BatchAdoptResult>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `items` | `ArchivedAsset[]` | 是 |  |
+| `already` | `number` | 否 |  |
+
+#### `GET /api/v1/assets/candidates`
+
+**待确认的生成候选（按批分组）**
+
+候选是**待办**，不是分类：它不进 `GET /assets`，只在这里按批出现。
+
+返回的是「几批」而不是「一页」——同一批（同一 `recipe_id`）必须挨着，
+否则"刚才那 4 张里选 2 张"这个动作在界面上无法完成。
+
+**响应** `ApiResponse<CandidateList>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `groups` | `CandidateGroup[]` | 否 |  |
+| `total` | `number` | 否 |  |
 
 #### `POST /api/v1/assets/import`
 
@@ -1104,6 +1292,12 @@ Authorization: Bearer <accessToken>
 | `stateVersion` | `number` | 否 |  |
 | `editable` | `boolean` | 否 |  |
 | `downloadAllowed` | `boolean` | 否 |  |
+| `origin` | `string` | 否 |  |
+| `stage` | `string` | 否 |  |
+| `recipeId` | `string` | 否 |  |
+| `complianceStatus` | `string` | 否 |  |
+| `adoptedAt` | `string \| null` | 否 |  |
+| `categoryId` | `string` | 否 |  |
 
 #### `POST /api/v1/assets/upload`
 
@@ -1140,6 +1334,12 @@ Authorization: Bearer <accessToken>
 | `stateVersion` | `number` | 否 |  |
 | `editable` | `boolean` | 否 |  |
 | `downloadAllowed` | `boolean` | 否 |  |
+| `origin` | `string` | 否 |  |
+| `stage` | `string` | 否 |  |
+| `recipeId` | `string` | 否 |  |
+| `complianceStatus` | `string` | 否 |  |
+| `adoptedAt` | `string \| null` | 否 |  |
+| `categoryId` | `string` | 否 |  |
 
 #### `GET /api/v1/assets/{asset_id}`
 
@@ -1175,6 +1375,12 @@ Authorization: Bearer <accessToken>
 | `stateVersion` | `number` | 否 |  |
 | `editable` | `boolean` | 否 |  |
 | `downloadAllowed` | `boolean` | 否 |  |
+| `origin` | `string` | 否 |  |
+| `stage` | `string` | 否 |  |
+| `recipeId` | `string` | 否 |  |
+| `complianceStatus` | `string` | 否 |  |
+| `adoptedAt` | `string \| null` | 否 |  |
+| `categoryId` | `string` | 否 |  |
 
 #### `DELETE /api/v1/assets/{asset_id}`
 
@@ -1187,6 +1393,59 @@ Authorization: Bearer <accessToken>
 | `asset_id` | path | `string` | 是 |  |
 
 **响应** `ApiResponse<unknown>`（前端取 `res.data`）
+
+#### `POST /api/v1/assets/{asset_id}/adopt`
+
+**采纳生成候选（成为素材）**
+
+补分类（可选）后把候选转正。
+
+幂等：已经采纳过的再点一次返回现状，而不是 409——"全选"与双击都会打到
+同一行，回冲突会让用户以为自己的操作没生效。
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `asset_id` | path | `string` | 是 |  |
+
+**请求体** `AdoptRequest`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `categoryId` | `string` | 否 |  |
+| `tagIds` | `string[]` | 否 |  |
+
+**响应** `ApiResponse<ArchivedAsset>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `category` | `"source" \| "character" \| "product" \| "scene" \| "audio"` | 是 |  |
+| `type` | `"image" \| "video" \| "audio"` | 是 |  |
+| `mimeType` | `string` | 是 |  |
+| `sizeBytes` | `number` | 是 |  |
+| `path` | `string` | 是 |  |
+| `sha256` | `string` | 是 |  |
+| `createdAt` | `string` | 是 |  |
+| `width` | `number` | 否 |  |
+| `height` | `number` | 否 |  |
+| `duration` | `number` | 否 |  |
+| `hasAudio` | `boolean` | 否 |  |
+| `url` | `string` | 是 |  |
+| `previewUrl` | `string \| null` | 否 |  |
+| `ownerId` | `string` | 否 |  |
+| `shared` | `boolean` | 否 |  |
+| `sharedAt` | `string \| null` | 否 |  |
+| `deletedAt` | `string \| null` | 否 |  |
+| `stateVersion` | `number` | 否 |  |
+| `editable` | `boolean` | 否 |  |
+| `downloadAllowed` | `boolean` | 否 |  |
+| `origin` | `string` | 否 |  |
+| `stage` | `string` | 否 |  |
+| `recipeId` | `string` | 否 |  |
+| `complianceStatus` | `string` | 否 |  |
+| `adoptedAt` | `string \| null` | 否 |  |
+| `categoryId` | `string` | 否 |  |
 
 #### `PUT /api/v1/assets/{asset_id}/deleted`
 
@@ -1231,6 +1490,83 @@ Authorization: Bearer <accessToken>
 | `stateVersion` | `number` | 否 |  |
 | `editable` | `boolean` | 否 |  |
 | `downloadAllowed` | `boolean` | 否 |  |
+| `origin` | `string` | 否 |  |
+| `stage` | `string` | 否 |  |
+| `recipeId` | `string` | 否 |  |
+| `complianceStatus` | `string` | 否 |  |
+| `adoptedAt` | `string \| null` | 否 |  |
+| `categoryId` | `string` | 否 |  |
+
+#### `POST /api/v1/assets/{asset_id}/derive`
+
+**一键衍生：回填生成页的输入位**
+
+只回填输入，**不建任务、不扣费**：生成有额度与模型选择，提交由生成页自己做。
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `asset_id` | path | `string` | 是 |  |
+
+**请求体** `DeriveRequest`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `mode` | `"image_ref" \| "video_first_frame" \| "prompt_extract"` | 是 |  |
+
+**响应** `ApiResponse<DeriveIntent>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `mode` | `string` | 是 |  |
+| `assetId` | `string` | 是 |  |
+| `prompt` | `string` | 否 |  |
+| `referenceAssetIds` | `string[]` | 否 |  |
+| `referenceRole` | `string` | 否 |  |
+| `sourceRecipeId` | `string \| null` | 否 |  |
+
+#### `POST /api/v1/assets/{asset_id}/discard`
+
+**弃用生成候选**
+
+弃用**不删字节**：字节等宽限期后由 `asset.gc` 回收，配方永久保留
+—— 衍生链可能从它经过，删了会让成品的血缘在中途断掉。
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `asset_id` | path | `string` | 是 |  |
+
+**响应** `ApiResponse<ArchivedAsset>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `category` | `"source" \| "character" \| "product" \| "scene" \| "audio"` | 是 |  |
+| `type` | `"image" \| "video" \| "audio"` | 是 |  |
+| `mimeType` | `string` | 是 |  |
+| `sizeBytes` | `number` | 是 |  |
+| `path` | `string` | 是 |  |
+| `sha256` | `string` | 是 |  |
+| `createdAt` | `string` | 是 |  |
+| `width` | `number` | 否 |  |
+| `height` | `number` | 否 |  |
+| `duration` | `number` | 否 |  |
+| `hasAudio` | `boolean` | 否 |  |
+| `url` | `string` | 是 |  |
+| `previewUrl` | `string \| null` | 否 |  |
+| `ownerId` | `string` | 否 |  |
+| `shared` | `boolean` | 否 |  |
+| `sharedAt` | `string \| null` | 否 |  |
+| `deletedAt` | `string \| null` | 否 |  |
+| `stateVersion` | `number` | 否 |  |
+| `editable` | `boolean` | 否 |  |
+| `downloadAllowed` | `boolean` | 否 |  |
+| `origin` | `string` | 否 |  |
+| `stage` | `string` | 否 |  |
+| `recipeId` | `string` | 否 |  |
+| `complianceStatus` | `string` | 否 |  |
+| `adoptedAt` | `string \| null` | 否 |  |
+| `categoryId` | `string` | 否 |  |
 
 #### `GET /api/v1/assets/{asset_id}/file`
 
@@ -1241,6 +1577,25 @@ Authorization: Bearer <accessToken>
 | `asset_id` | path | `string` | 是 |  |
 
 **响应** `ApiResponse<unknown>`（前端取 `res.data`）
+
+#### `GET /api/v1/assets/{asset_id}/lineage`
+
+**生成血缘：配方、父链与引用关系**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `asset_id` | path | `string` | 是 |  |
+
+**响应** `ApiResponse<LineageOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `assetId` | `string` | 是 |  |
+| `recipe` | `RecipeOut \| null` | 否 |  |
+| `references` | `AssetRefOut[]` | 否 |  |
+| `parents` | `LineageNode[]` | 否 |  |
+| `children` | `LineageNode[]` | 否 |  |
+| `usedBy` | `AssetUsage[]` | 否 |  |
 
 #### `PUT /api/v1/assets/{asset_id}/name`
 
@@ -1285,6 +1640,12 @@ Authorization: Bearer <accessToken>
 | `stateVersion` | `number` | 否 |  |
 | `editable` | `boolean` | 否 |  |
 | `downloadAllowed` | `boolean` | 否 |  |
+| `origin` | `string` | 否 |  |
+| `stage` | `string` | 否 |  |
+| `recipeId` | `string` | 否 |  |
+| `complianceStatus` | `string` | 否 |  |
+| `adoptedAt` | `string \| null` | 否 |  |
+| `categoryId` | `string` | 否 |  |
 
 #### `GET /api/v1/assets/{asset_id}/preview`
 
@@ -1339,6 +1700,12 @@ Authorization: Bearer <accessToken>
 | `stateVersion` | `number` | 否 |  |
 | `editable` | `boolean` | 否 |  |
 | `downloadAllowed` | `boolean` | 否 |  |
+| `origin` | `string` | 否 |  |
+| `stage` | `string` | 否 |  |
+| `recipeId` | `string` | 否 |  |
+| `complianceStatus` | `string` | 否 |  |
+| `adoptedAt` | `string \| null` | 否 |  |
+| `categoryId` | `string` | 否 |  |
 
 #### `GET /api/v1/assets/{asset_id}/stream`
 
@@ -1350,6 +1717,50 @@ Authorization: Bearer <accessToken>
 
 **响应** `ApiResponse<unknown>`（前端取 `res.data`）
 
+#### `GET /api/v1/assets/{asset_id}/tags`
+
+**读取素材的标签**
+
+与 `PUT` 成对：只写不读的话，详情浮层里的标签只能靠列表接口顺带带回来，
+而列表一次 200 条、每条都带标签会让响应体大一个量级。
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `asset_id` | path | `string` | 是 |  |
+
+**响应** `ApiResponse<AssetTagList>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `assetId` | `string` | 是 |  |
+| `items` | `TagOut[]` | 否 |  |
+
+#### `PUT /api/v1/assets/{asset_id}/tags`
+
+**整体替换本人素材的标签**
+
+整体替换而不是逐条增删：前端是勾选面板，它天然知道勾了哪几个。
+
+「整体替换」的代价是并发下后写覆盖（两个人同时改同一条素材），
+但素材标签不是协同编辑的对象——它是一组个人描述，覆盖比冲突提示更符合预期。
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `asset_id` | path | `string` | 是 |  |
+
+**请求体** `AssetTagSet`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `tagIds` | `string[]` | 否 |  |
+
+**响应** `ApiResponse<AssetTagList>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `assetId` | `string` | 是 |  |
+| `items` | `TagOut[]` | 否 |  |
+
 #### `GET /api/v1/assets/{asset_id}/thumbnail`
 
 **读取归档素材缩略图**
@@ -1359,6 +1770,145 @@ Authorization: Bearer <accessToken>
 | `asset_id` | path | `string` | 是 |  |
 
 **响应** `ApiResponse<unknown>`（前端取 `res.data`）
+
+#### `GET /api/v1/subjects`
+
+**主体列表（带成员数与可用性）**
+
+列表项不带成员明细：一页 24 个主体 × 10 个成员 = 240 条素材塞进一次响应，
+而其中绝大多数不会被看。要看成员就点进详情。
+
+`availability` 三态在服务端算（`ready` / `broken` / `incomplete`）。
+前端复算必然与后端漂移，症状是"卡片显示可发布、点发布报缺少能力"。
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `subjectType` | query | `string` | 否 |  |
+| `page` | query | `number` | 否 |  |
+| `pageSize` | query | `number` | 否 |  |
+
+**响应** `ApiResponse<SubjectList>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `items` | `SubjectOut[]` | 是 |  |
+| `total` | `number` | 否 |  |
+| `page` | `number` | 否 |  |
+| `pageSize` | `number` | 否 |  |
+
+#### `GET /api/v1/subjects/by-legacy-pack/{pack_id}`
+
+**按旧素材包 id 解析主体（B5）**
+
+旧链接、外部系统、历史工单里全是 `packId`。这条让它们还能打开。
+
+解析不到是 404 而不是空主体：空主体会让前端渲染一张"什么都是空的"卡片，
+看起来像数据坏了；404 至少说清了"这个 id 没有对应主体"。
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `pack_id` | path | `string` | 是 |  |
+
+**响应** `ApiResponse<SubjectDetail>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `subjectType` | `string` | 是 |  |
+| `status` | `string` | 是 |  |
+| `visibility` | `string` | 是 |  |
+| `teamId` | `string` | 否 |  |
+| `categoryId` | `string` | 否 |  |
+| `coverAssetId` | `string` | 否 |  |
+| `coverUrl` | `string` | 否 |  |
+| `memberCount` | `number` | 否 |  |
+| `currentVersion` | `number` | 否 |  |
+| `availability` | `string` | 否 |  |
+| `availabilityNote` | `string` | 否 |  |
+| `members` | `SubjectMemberOut[]` | 否 |  |
+| `attributes` | `Record<string, unknown>` | 否 |  |
+| `requires` | `string[]` | 否 |  |
+| `requiredRoles` | `string[]` | 否 |  |
+| `missingCapabilities` | `string[]` | 否 |  |
+| `missingRoles` | `string[]` | 否 |  |
+| `memberGaps` | `Record<string, string[]>` | 否 |  |
+
+#### `GET /api/v1/subjects/{subject_id}`
+
+**主体详情（含成员条带与缺项）**
+
+详情带成员条带，每条含 `grants` 与 `missing`。
+
+`memberGaps` 是"到底谁不给哪项能力"的答案。只给主体级结论（缺少 download）
+的话，用户只能一张张点开看——主体最多 10 张，但没人会真的去数。
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `subject_id` | path | `string` | 是 |  |
+
+**响应** `ApiResponse<SubjectDetail>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `subjectType` | `string` | 是 |  |
+| `status` | `string` | 是 |  |
+| `visibility` | `string` | 是 |  |
+| `teamId` | `string` | 否 |  |
+| `categoryId` | `string` | 否 |  |
+| `coverAssetId` | `string` | 否 |  |
+| `coverUrl` | `string` | 否 |  |
+| `memberCount` | `number` | 否 |  |
+| `currentVersion` | `number` | 否 |  |
+| `availability` | `string` | 否 |  |
+| `availabilityNote` | `string` | 否 |  |
+| `members` | `SubjectMemberOut[]` | 否 |  |
+| `attributes` | `Record<string, unknown>` | 否 |  |
+| `requires` | `string[]` | 否 |  |
+| `requiredRoles` | `string[]` | 否 |  |
+| `missingCapabilities` | `string[]` | 否 |  |
+| `missingRoles` | `string[]` | 否 |  |
+| `memberGaps` | `Record<string, string[]>` | 否 |  |
+
+#### `POST /api/v1/subjects/{subject_id}/publish`
+
+**发布主体（过可达性后冻结版本）**
+
+发布有三道前置，缺一不可：至少一张成员、角色可达、能力可达。
+
+失败时**不返回 200 + 空结果**：发布是模板侧缓存的失效点，静默失败会让
+"发布了但模板还是老图"变成一个要靠猜的问题。
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `subject_id` | path | `string` | 是 |  |
+
+**响应** `ApiResponse<SubjectPublishResult>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `subjectId` | `string` | 是 |  |
+| `version` | `number` | 是 |  |
+| `publishedAt` | `string` | 是 |  |
+
+#### `GET /api/v1/teams`
+
+**当前用户可见的团队（库切换器数据源）**
+
+可见范围：有 `asset:team:manage` 的人看全部，其余人只看自己所在的团队。
+
+**跨团队不可见是默认行为**，不是 M5 才生效的策略：三个团队并存时，
+「能看见但不能改」会让每个团队都变成别人的参考库，边界形同虚设。
+要跨团队共享走「提升到公共库」那条路，那条路有审核也有审计。
+
+**响应** `ApiResponse<TeamList>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `items` | `TeamOut[]` | 是 |  |
+| `canManage` | `boolean` | 否 |  |
 
 ### 4.5 生图（3 个）
 
@@ -2108,6 +2658,18 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 
 ## 5. 数据模型
 
+### `AdoptRequest`
+
+采纳一个候选。
+
+`category_id` 为空时落到个人库的「未分类收件箱」——采纳是一个高频、
+低摩擦的动作，逼用户先选分类会让"待办"越积越多。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `categoryId` | `string` | 否 |  |
+| `tagIds` | `string[]` | 否 |  |
+
 ### `ArchiveChange`
 
 | 字段 | 类型 | 必填 | 说明 |
@@ -2132,6 +2694,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `usedBytes` | `number` | 是 |  |
 | `quotaBytes` | `number` | 否 |  |
 | `ownerUsedBytes` | `number` | 否 |  |
+| `quota` | `AssetQuota` | 否 |  |
 | `page` | `number` | 否 |  |
 | `pageSize` | `number` | 否 |  |
 
@@ -2161,10 +2724,166 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `stateVersion` | `number` | 否 |  |
 | `editable` | `boolean` | 否 |  |
 | `downloadAllowed` | `boolean` | 否 |  |
+| `origin` | `string` | 否 |  |
+| `stage` | `string` | 否 |  |
+| `recipeId` | `string` | 否 |  |
+| `complianceStatus` | `string` | 否 |  |
+| `adoptedAt` | `string \| null` | 否 |  |
+| `categoryId` | `string` | 否 |  |
 
 ### `AspectRatio`（枚举）
 
 取值：`9:16`、`16:9`、`1:1`
+
+### `AssetCategoryList`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `library` | `string` | 是 |  |
+| `items` | `AssetCategoryOut[]` | 是 |  |
+| `inboxCount` | `number` | 是 |  |
+
+### `AssetCategoryOut`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `kind` | `string` | 是 |  |
+| `isInbox` | `boolean` | 否 |  |
+| `sortOrder` | `number` | 否 |  |
+| `count` | `number` | 否 |  |
+
+### `AssetQuota`
+
+账面与物理两组数字。
+
+为什么不塞成一个大整数：这四个数回答的是**四个不同的问题**，合并任何两个
+都会制造无法解释的现象——「删了 1.4G 空间没变」（回收站）、
+「我什么都没传空间却少了」（草稿过期）、「复制一次额度翻倍」（没去重）。
+分开显示，每条差异都有名字；合成一个，用户只能得出「这东西坏了」。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `personalUsed` | `number` | 否 |  |
+| `personalQuota` | `number` | 否 |  |
+| `teamUsed` | `number` | 否 |  |
+| `teamQuota` | `number` | 否 |  |
+| `draftUsed` | `number` | 否 |  |
+| `trashUsed` | `number` | 否 |  |
+| `physicalUsed` | `number` | 否 |  |
+| `physicalQuota` | `number` | 否 |  |
+
+### `AssetRefOut`
+
+配方里的一张参考图。带名字与缩略图——详情浮层要能直接点开。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `assetId` | `string` | 是 |  |
+| `role` | `string` | 否 |  |
+| `sortOrder` | `number` | 否 |  |
+| `name` | `string` | 否 |  |
+| `previewUrl` | `string \| null` | 否 |  |
+
+### `AssetTagList`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `assetId` | `string` | 是 |  |
+| `items` | `TagOut[]` | 否 |  |
+
+### `AssetTagSet`
+
+整体替换一条素材的标签集合。
+
+空列表是合法输入，含义是「清空标签」——不要用「不传该字段」表达清空，
+那样和「没改」无法区分。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `tagIds` | `string[]` | 否 |  |
+
+### `AssetUsage`
+
+「谁在用它」的一条记录。
+
+两种消费者分开标：`asset` 是别的配方引用了它（生成血缘），
+`subject` 是某个主体把它当成员（业务装配）。合并成一种会让"这张图能不能删"
+的答案少一半——两者各自都会阻止删除。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `kind` | `"asset" \| "subject"` | 是 |  |
+| `id` | `string` | 是 |  |
+| `name` | `string` | 否 |  |
+
+### `AssetViewCreate`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `name` | `string` | 是 |  |
+| `query` | `Record<string, unknown>` | 否 |  |
+| `sort` | `string` | 否 |  |
+
+### `AssetViewList`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `items` | `AssetViewOut[]` | 否 |  |
+
+### `AssetViewOut`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `query` | `Record<string, unknown>` | 否 |  |
+| `sort` | `string` | 否 |  |
+| `createdAt` | `string` | 是 |  |
+
+### `BatchAdoptRequest`
+
+整组采纳。**全成或全不成**：一次事务，任一条不可采纳就整批拒绝。
+
+半成功是这里最坏的形态——前端要记住哪几条成功、失败的重试会不会重复，
+而用户看到的是"选了 8 张，成了 5 张"，且不知道差在哪。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `assetIds` | `string[]` | 是 |  |
+| `categoryId` | `string` | 否 |  |
+| `tagIds` | `string[]` | 否 |  |
+
+### `BatchAdoptResult`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `items` | `ArchivedAsset[]` | 是 |  |
+| `already` | `number` | 否 |  |
+
+### `CandidateGroup`
+
+一批同源候选（同一 `recipe_id`）。
+
+`expires_at` 取组内**最早**的那个：一批里但凡有一张到期，这一组就该消失，
+否则会出现"确认界面里还留着 3 张已经过期的"。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `recipeId` | `string` | 否 |  |
+| `summary` | `string` | 否 |  |
+| `promptSummary` | `string` | 否 |  |
+| `createdAt` | `string \| null` | 否 |  |
+| `expiresAt` | `string \| null` | 否 |  |
+| `items` | `ArchivedAsset[]` | 否 |  |
+
+### `CandidateList`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `groups` | `CandidateGroup[]` | 否 |  |
+| `total` | `number` | 否 |  |
 
 ### `Capability`（枚举）
 
@@ -2207,6 +2926,28 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 |---|---|---|---|
 | `deleted` | `number` | 是 | 实际删除的条数 |
 | `skipped` | `string[]` | 否 | 被跳过的任务 ID：不存在，或属于他人且没有 `task:read:all` |
+
+### `DeriveIntent`
+
+「照这个素材再生成一次」所需的全部输入。
+
+只回填输入位、**不落库**：真正发起生成走的是生成任务自己的接口（它有额度、
+模型选择、参数校验）。在这里顺手建一个任务会让"点了衍生"变成一次扣费。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `mode` | `string` | 是 |  |
+| `assetId` | `string` | 是 |  |
+| `prompt` | `string` | 否 |  |
+| `referenceAssetIds` | `string[]` | 否 |  |
+| `referenceRole` | `string` | 否 |  |
+| `sourceRecipeId` | `string \| null` | 否 |  |
+
+### `DeriveRequest`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `mode` | `"image_ref" \| "video_first_frame" \| "prompt_extract"` | 是 |  |
 
 ### `ExecuteReplacement`
 
@@ -2354,6 +3095,28 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 |---|---|---|---|
 | `relativePath` | `string` | 是 |  |
 | `category` | `"source" \| "character" \| "product" \| "scene" \| "audio"` | 是 |  |
+
+### `LineageNode`
+
+血缘链上的一个节点：一条配方 + 它产出的那张素材。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `recipe` | `RecipeOut` | 是 |  |
+| `assetId` | `string` | 否 |  |
+| `name` | `string` | 否 |  |
+| `previewUrl` | `string \| null` | 否 |  |
+
+### `LineageOut`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `assetId` | `string` | 是 |  |
+| `recipe` | `RecipeOut \| null` | 否 |  |
+| `references` | `AssetRefOut[]` | 否 |  |
+| `parents` | `LineageNode[]` | 否 |  |
+| `children` | `LineageNode[]` | 否 |  |
+| `usedBy` | `AssetUsage[]` | 否 |  |
 
 ### `LoginEventListOut`
 
@@ -2569,6 +3332,31 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `database` | `string` | 是 |  |
 | `queueSize` | `number` | 是 |  |
 | `checks` | `RuntimeCheckOut[]` | 否 |  |
+
+### `RecipeOut`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `model` | `string` | 否 |  |
+| `modelVersion` | `string` | 否 |  |
+| `provider` | `string` | 否 |  |
+| `prompt` | `string` | 否 |  |
+| `negativePrompt` | `string` | 否 |  |
+| `promptLanguage` | `string` | 否 |  |
+| `params` | `Record<string, unknown>` | 否 |  |
+| `seed` | `string` | 否 |  |
+| `seedRequested` | `string` | 否 |  |
+| `taskId` | `string` | 否 |  |
+| `templateId` | `string` | 否 |  |
+| `templateVersion` | `number` | 否 |  |
+| `subjectVersion` | `number` | 否 |  |
+| `contentLabel` | `Record<string, unknown>` | 否 |  |
+| `parentRecipeId` | `string \| null` | 否 |  |
+| `referenceAssetIds` | `string[]` | 否 |  |
+| `costUnits` | `number` | 否 |  |
+| `createdBy` | `string` | 否 |  |
+| `createdAt` | `string \| null` | 否 |  |
 
 ### `ReconfirmReplacement`
 
@@ -2821,6 +3609,114 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `coverUrl` | `string` | 是 |  |
 | `createdAt` | `string` | 是 |  |
 
+### `SubjectDetail`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `subjectType` | `string` | 是 |  |
+| `status` | `string` | 是 |  |
+| `visibility` | `string` | 是 |  |
+| `teamId` | `string` | 否 |  |
+| `categoryId` | `string` | 否 |  |
+| `coverAssetId` | `string` | 否 |  |
+| `coverUrl` | `string` | 否 |  |
+| `memberCount` | `number` | 否 |  |
+| `currentVersion` | `number` | 否 |  |
+| `availability` | `string` | 否 |  |
+| `availabilityNote` | `string` | 否 |  |
+| `members` | `SubjectMemberOut[]` | 否 |  |
+| `attributes` | `Record<string, unknown>` | 否 |  |
+| `requires` | `string[]` | 否 |  |
+| `requiredRoles` | `string[]` | 否 |  |
+| `missingCapabilities` | `string[]` | 否 |  |
+| `missingRoles` | `string[]` | 否 |  |
+| `memberGaps` | `Record<string, string[]>` | 否 |  |
+
+### `SubjectList`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `items` | `SubjectOut[]` | 是 |  |
+| `total` | `number` | 否 |  |
+| `page` | `number` | 否 |  |
+| `pageSize` | `number` | 否 |  |
+
+### `SubjectMemberOut`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `assetId` | `string` | 是 |  |
+| `name` | `string` | 否 |  |
+| `coverUrl` | `string` | 否 |  |
+| `role` | `string` | 否 |  |
+| `sortOrder` | `number` | 否 |  |
+| `grants` | `string[]` | 否 |  |
+| `inOutput` | `boolean` | 否 |  |
+| `missing` | `boolean` | 否 |  |
+
+### `SubjectOut`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `subjectType` | `string` | 是 |  |
+| `status` | `string` | 是 |  |
+| `visibility` | `string` | 是 |  |
+| `teamId` | `string` | 否 |  |
+| `categoryId` | `string` | 否 |  |
+| `coverAssetId` | `string` | 否 |  |
+| `coverUrl` | `string` | 否 |  |
+| `memberCount` | `number` | 否 |  |
+| `currentVersion` | `number` | 否 |  |
+| `availability` | `string` | 否 |  |
+| `availabilityNote` | `string` | 否 |  |
+
+### `SubjectPublishResult`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `subjectId` | `string` | 是 |  |
+| `version` | `number` | 是 |  |
+| `publishedAt` | `string` | 是 |  |
+
+### `TagCatalog`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `groups` | `TagGroup[]` | 否 |  |
+| `total` | `number` | 否 |  |
+| `pinnedThreshold` | `number` | 否 |  |
+
+### `TagCreate`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `dimension` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+
+### `TagGroup`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `dimension` | `string` | 是 |  |
+| `label` | `string` | 是 |  |
+| `items` | `TagOut[]` | 否 |  |
+
+### `TagOut`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `dimension` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `status` | `string` | 否 |  |
+| `source` | `string` | 否 |  |
+| `useCount` | `number` | 否 |  |
+| `pinned` | `boolean` | 否 |  |
+
 ### `TaskFeedItem`
 
 | 字段 | 类型 | 必填 | 说明 |
@@ -2941,6 +3837,23 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 ### `TaskStatusFilter`（枚举）
 
 取值：`all`、`queued`、`running`、`completed`、`failed`
+
+### `TeamList`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `items` | `TeamOut[]` | 是 |  |
+| `canManage` | `boolean` | 否 |  |
+
+### `TeamOut`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `kind` | `string` | 是 |  |
+| `role` | `string` | 否 |  |
+| `memberCount` | `number` | 否 |  |
 
 ### `TokenOut`
 

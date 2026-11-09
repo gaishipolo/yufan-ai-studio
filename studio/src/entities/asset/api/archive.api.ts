@@ -23,7 +23,20 @@ const CHANGE_PATH: Record<'name' | 'sharing' | 'deleted', (id: string) => string
 };
 
 export const archiveApi = {
-  list: (category: ArchiveCategory | 'all', params: ArchiveSearch = {}) => api.get<ArchiveList>('/assets', {category, ...params}),
+  list: (category: ArchiveCategory | 'all', params: ArchiveSearch = {}) => {
+    const {tagIds, categoryId, ...rest} = params;
+    return api.get<ArchiveList>('/assets', {
+      ...rest,
+      // 新分类树按 id 过滤；**只在没有 id 时才带旧枚举**。
+      // 两个都带的话后端以 id 为准，"全部素材"（id 为空）会退回旧枚举，
+      // 结果是"点了全部却只看到原片"——而请求是 200，没人会去查。
+      ...(categoryId ? {categoryId} : {category}),
+      // 标签用逗号串成一个参数，**不能直接把数组交给 axios**：它的默认序列化是
+      // `tagIds[]=a&tagIds[]=b`，而后端认的是 `tagIds`——结果是"筛选被静默忽略"，
+      // 列表比用户以为的更宽，而请求本身是 200。这类错误只能靠人眼发现。
+      ...(tagIds?.length ? {tagIds: tagIds.join(',')} : {}),
+    });
+  },
   detail: (id: string) => api.get<ArchivedAsset>(`/assets/${id}`),
   // 三个动作各写一条字面量路径：接口契约守卫按字面量比对后端 EndpointData，
   // 拼成 `${action}` 的模板串在守卫里只能落成占位符，等于没被覆盖。
@@ -41,9 +54,19 @@ export const archiveApi = {
 };
 
 export interface ArchiveSearch {
-  scope?: 'mine' | 'public' | 'trash';
+  scope?: 'mine' | 'public' | 'trash' | 'team';
   keyword?: string;
   state?: 'all' | 'private' | 'shared';
   page?: number;
   pageSize?: number;
+  /** 当前选中的团队库；为空表示个人库或还没切库（团队额度显示 0） */
+  teamId?: string;
+  /** 受控标签，**AND 语义**：多项是「同时具备」，不是「任一」 */
+  tagIds?: string[];
+  /** 分类树上的位置（id）。传了就**不再**用旧的 `category` 枚举 */
+  categoryId?: string;
+  /** 二级媒体类型分面：`image` / `video` / `audio`，空表示不限 */
+  mediaType?: string;
+  /** `created_desc` / `created_asc` / `name_asc` */
+  sort?: string;
 }

@@ -74,6 +74,7 @@ from core.ports.accounts import has_account_status_checker
 from core.ports.assets import reference_source_gaps
 from core.ports.export_sources import export_sources
 from core.ports.media import has_asset_lookup
+from core.ports.subjects import has_subject_lookup
 
 __all__ = ["PORT_CATALOG", "PortSpec", "port_status"]
 
@@ -149,6 +150,18 @@ PORT_CATALOG: tuple[PortSpec, ...] = (
         when_unregistered="fail-closed（见本文件开头的例外说明）：抛 503，不返回 "
         "空映射。这里退化成「查不到就算素材不存在」会把配置故障报成用户数据问题",
         is_registered=has_asset_lookup,
+    ),
+    PortSpec(
+        name="subject-lookup",
+        module="core.ports.subjects",
+        protocol="SubjectLookup",
+        implementer="modules/asset 的 `subject_lookup.SqlSubjectLookup`（import 期 "
+        "`install()` 注册）。回答「这一版由哪几张图组成、什么顺序、有哪些能力」"
+        "——`asset-lookup` 回答的是单张素材的事实，这个是组合的事实",
+        when_unregistered="fail-open 且**回落旧路径**：返回 `None`（不是空元组），"
+        "模板侧据此读 `template_pack_versions.reference_ids`，结果与改造前逐字节一致。"
+        "返回空元组会被当成「这个包确实没有图」，生成结果少参考而无人察觉",
+        is_registered=has_subject_lookup,
     ),
     PortSpec(
         name="replacement-feed",

@@ -49,6 +49,7 @@ from modules.template.schema import (
     ReplacementReviewIn,
     ReplacementRunOut,
 )
+from modules.template.subject_bridge import resolve_reference_ids
 from modules.template.titles import task_name
 from modules.template.workspace import (
     BRIDGE,
@@ -169,10 +170,18 @@ class ReplacementService:
         if pack.kind != payload.kind:
             raise BadRequest("素材包不存在或类型不匹配")
 
+        # 参考图走双读桥（M2.5-C）：默认 shadow 模式下与改造前逐字节一致，
+        # 只多一条差异日志。`on` 之后才真正改读主体版本。
+        reference_ids = await resolve_reference_ids(
+            self.session,
+            pack_id=payload.pack_id,
+            version=payload.pack_version,
+            fallback=list(frozen.reference_ids),
+        )
         payload = payload.model_copy(
             update={
                 "target": pack.name,
-                "reference_ids": list(frozen.reference_ids),
+                "reference_ids": reference_ids,
                 "wardrobe_mode": frozen.wardrobe_mode,  # type: ignore[arg-type]
             }
         )

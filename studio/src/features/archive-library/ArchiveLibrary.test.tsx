@@ -43,6 +43,19 @@ vi.mock('@/entities/template/api/replacement.queries', () => ({
   useReplacementCatalog: () => ({data: {runs: []}, isPending: false, isFetching: false, error: null, refetch: vi.fn()}),
 }));
 
+/* 详情浮层里的标签与血缘各是一次独立请求。这个文件测的是列表与预览，
+   两者都只需要"有入口/没入口"，所以按空结果 mock 掉——真发请求会让
+   "视频详情能播放"这类断言依赖一个跟它无关的网络往返。 */
+vi.mock('@/entities/asset/api/tag.queries', () => ({
+  useAssetTags: () => ({data: {assetId: 'a1', items: []}, isPending: false, error: null}),
+  useSetAssetTags: () => ({mutate: vi.fn(), isPending: false}),
+  useTagCatalog: () => ({data: {groups: []}, isPending: false, error: null}),
+}));
+vi.mock('@/entities/asset/api/lineage.queries', () => ({
+  useAssetLineage: () => ({data: undefined, isPending: false, error: null}),
+  useDeriveFromAsset: () => ({mutateAsync: vi.fn(), isPending: false}),
+}));
+
 function asset(overrides: Partial<ArchivedAsset> = {}): ArchivedAsset {
   return {
     id: 'a1', name: '原片.mp4', category: 'source', type: 'video', mimeType: 'video/mp4',

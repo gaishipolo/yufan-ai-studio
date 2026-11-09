@@ -58,6 +58,15 @@ export const TaskStatusFilter_VALUES = ["all", "queued", "running", "completed",
 
 /* ------------------------------ 模型 ------------------------------ */
 
+/** 采纳一个候选。
+
+`category_id` 为空时落到个人库的「未分类收件箱」——采纳是一个高频、
+低摩擦的动作，逼用户先选分类会让"待办"越积越多。 */
+export interface AdoptRequest {
+  categoryId?: string;
+  tagIds?: string[];
+}
+
 /** ArchiveChange */
 export interface ArchiveChange {
   expectedVersion: number;
@@ -77,6 +86,7 @@ export interface ArchiveList {
   usedBytes: number;
   quotaBytes?: number;
   ownerUsedBytes?: number;
+  quota?: AssetQuota;
   page?: number;
   pageSize?: number;
 }
@@ -105,6 +115,136 @@ export interface ArchivedAsset {
   stateVersion?: number;
   editable?: boolean;
   downloadAllowed?: boolean;
+  origin?: string;
+  stage?: string;
+  recipeId?: string;
+  complianceStatus?: string;
+  adoptedAt?: string | null;
+  categoryId?: string;
+}
+
+/** AssetCategoryList */
+export interface AssetCategoryList {
+  library: string;
+  items: AssetCategoryOut[];
+  inboxCount: number;
+}
+
+/** AssetCategoryOut */
+export interface AssetCategoryOut {
+  id: string;
+  name: string;
+  kind: string;
+  isInbox?: boolean;
+  sortOrder?: number;
+  count?: number;
+}
+
+/** 账面与物理两组数字。
+
+为什么不塞成一个大整数：这四个数回答的是**四个不同的问题**，合并任何两个
+都会制造无法解释的现象——「删了 1.4G 空间没变」（回收站）、
+「我什么都没传空间却少了」（草稿过期）、「复制一次额度翻倍」（没去重）。
+分开显示，每条差异都有名字；合成一个，用户只能得出「这东西坏了」。 */
+export interface AssetQuota {
+  personalUsed?: number;
+  personalQuota?: number;
+  teamUsed?: number;
+  teamQuota?: number;
+  draftUsed?: number;
+  trashUsed?: number;
+  physicalUsed?: number;
+  physicalQuota?: number;
+}
+
+/** 配方里的一张参考图。带名字与缩略图——详情浮层要能直接点开。 */
+export interface AssetRefOut {
+  assetId: string;
+  role?: string;
+  sortOrder?: number;
+  name?: string;
+  previewUrl?: string | null;
+}
+
+/** AssetTagList */
+export interface AssetTagList {
+  assetId: string;
+  items?: TagOut[];
+}
+
+/** 整体替换一条素材的标签集合。
+
+空列表是合法输入，含义是「清空标签」——不要用「不传该字段」表达清空，
+那样和「没改」无法区分。 */
+export interface AssetTagSet {
+  tagIds?: string[];
+}
+
+/** 「谁在用它」的一条记录。
+
+两种消费者分开标：`asset` 是别的配方引用了它（生成血缘），
+`subject` 是某个主体把它当成员（业务装配）。合并成一种会让"这张图能不能删"
+的答案少一半——两者各自都会阻止删除。 */
+export interface AssetUsage {
+  kind: "asset" | "subject";
+  id: string;
+  name?: string;
+}
+
+/** AssetViewCreate */
+export interface AssetViewCreate {
+  name: string;
+  query?: Record<string, unknown>;
+  sort?: string;
+}
+
+/** AssetViewList */
+export interface AssetViewList {
+  items?: AssetViewOut[];
+}
+
+/** AssetViewOut */
+export interface AssetViewOut {
+  id: string;
+  name: string;
+  query?: Record<string, unknown>;
+  sort?: string;
+  createdAt: string;
+}
+
+/** 整组采纳。**全成或全不成**：一次事务，任一条不可采纳就整批拒绝。
+
+半成功是这里最坏的形态——前端要记住哪几条成功、失败的重试会不会重复，
+而用户看到的是"选了 8 张，成了 5 张"，且不知道差在哪。 */
+export interface BatchAdoptRequest {
+  assetIds: string[];
+  categoryId?: string;
+  tagIds?: string[];
+}
+
+/** BatchAdoptResult */
+export interface BatchAdoptResult {
+  items: ArchivedAsset[];
+  already?: number;
+}
+
+/** 一批同源候选（同一 `recipe_id`）。
+
+`expires_at` 取组内**最早**的那个：一批里但凡有一张到期，这一组就该消失，
+否则会出现"确认界面里还留着 3 张已经过期的"。 */
+export interface CandidateGroup {
+  recipeId?: string;
+  summary?: string;
+  promptSummary?: string;
+  createdAt?: string | null;
+  expiresAt?: string | null;
+  items?: ArchivedAsset[];
+}
+
+/** CandidateList */
+export interface CandidateList {
+  groups?: CandidateGroup[];
+  total?: number;
 }
 
 /** CreateExportIn */
@@ -149,6 +289,24 @@ export interface DeleteTasksOut {
   deleted: number;
   /** 被跳过的任务 ID：不存在，或属于他人且没有 `task:read:all` */
   skipped?: string[];
+}
+
+/** 「照这个素材再生成一次」所需的全部输入。
+
+只回填输入位、**不落库**：真正发起生成走的是生成任务自己的接口（它有额度、
+模型选择、参数校验）。在这里顺手建一个任务会让"点了衍生"变成一次扣费。 */
+export interface DeriveIntent {
+  mode: string;
+  assetId: string;
+  prompt?: string;
+  referenceAssetIds?: string[];
+  referenceRole?: string;
+  sourceRecipeId?: string | null;
+}
+
+/** DeriveRequest */
+export interface DeriveRequest {
+  mode: "image_ref" | "video_first_frame" | "prompt_extract";
 }
 
 /** 提交或加速一条替换任务。
@@ -302,6 +460,24 @@ export interface ImageRetryOut {
 export interface ImportAsset {
   relativePath: string;
   category: "source" | "character" | "product" | "scene" | "audio";
+}
+
+/** 血缘链上的一个节点：一条配方 + 它产出的那张素材。 */
+export interface LineageNode {
+  recipe: RecipeOut;
+  assetId?: string;
+  name?: string;
+  previewUrl?: string | null;
+}
+
+/** LineageOut */
+export interface LineageOut {
+  assetId: string;
+  recipe?: RecipeOut | null;
+  references?: AssetRefOut[];
+  parents?: LineageNode[];
+  children?: LineageNode[];
+  usedBy?: AssetUsage[];
 }
 
 /** LoginEventListOut */
@@ -520,6 +696,30 @@ export interface ReadyOut {
   database: string;
   queueSize: number;
   checks?: RuntimeCheckOut[];
+}
+
+/** RecipeOut */
+export interface RecipeOut {
+  id: string;
+  model?: string;
+  modelVersion?: string;
+  provider?: string;
+  prompt?: string;
+  negativePrompt?: string;
+  promptLanguage?: string;
+  params?: Record<string, unknown>;
+  seed?: string;
+  seedRequested?: string;
+  taskId?: string;
+  templateId?: string;
+  templateVersion?: number;
+  subjectVersion?: number;
+  contentLabel?: Record<string, unknown>;
+  parentRecipeId?: string | null;
+  referenceAssetIds?: string[];
+  costUnits?: number;
+  createdBy?: string;
+  createdAt?: string | null;
 }
 
 /** 确认「上一次提交可能已经花了钱」后才允许重提。
@@ -779,6 +979,105 @@ export interface StoryboardOut {
   createdAt: string;
 }
 
+/** SubjectDetail */
+export interface SubjectDetail {
+  id: string;
+  name: string;
+  subjectType: string;
+  status: string;
+  visibility: string;
+  teamId?: string;
+  categoryId?: string;
+  coverAssetId?: string;
+  coverUrl?: string;
+  memberCount?: number;
+  currentVersion?: number;
+  availability?: string;
+  availabilityNote?: string;
+  members?: SubjectMemberOut[];
+  attributes?: Record<string, unknown>;
+  requires?: string[];
+  requiredRoles?: string[];
+  missingCapabilities?: string[];
+  missingRoles?: string[];
+  memberGaps?: Record<string, string[]>;
+}
+
+/** SubjectList */
+export interface SubjectList {
+  items: SubjectOut[];
+  total?: number;
+  page?: number;
+  pageSize?: number;
+}
+
+/** SubjectMemberOut */
+export interface SubjectMemberOut {
+  assetId: string;
+  name?: string;
+  coverUrl?: string;
+  role?: string;
+  sortOrder?: number;
+  grants?: string[];
+  inOutput?: boolean;
+  missing?: boolean;
+}
+
+/** SubjectOut */
+export interface SubjectOut {
+  id: string;
+  name: string;
+  subjectType: string;
+  status: string;
+  visibility: string;
+  teamId?: string;
+  categoryId?: string;
+  coverAssetId?: string;
+  coverUrl?: string;
+  memberCount?: number;
+  currentVersion?: number;
+  availability?: string;
+  availabilityNote?: string;
+}
+
+/** SubjectPublishResult */
+export interface SubjectPublishResult {
+  subjectId: string;
+  version: number;
+  publishedAt: string;
+}
+
+/** TagCatalog */
+export interface TagCatalog {
+  groups?: TagGroup[];
+  total?: number;
+  pinnedThreshold?: number;
+}
+
+/** TagCreate */
+export interface TagCreate {
+  dimension: string;
+  name: string;
+}
+
+/** TagGroup */
+export interface TagGroup {
+  dimension: string;
+  label: string;
+  items?: TagOut[];
+}
+
+/** TagOut */
+export interface TagOut {
+  id: string;
+  dimension: string;
+  name: string;
+  status?: string;
+  source?: string;
+  useCount?: number;
+  pinned?: boolean;
+}
+
 /** TaskFeedItem */
 export interface TaskFeedItem {
   /** 带来源前缀的唯一键，不是上游任务 ID */
@@ -922,6 +1221,21 @@ export interface TaskStats {
   failed?: number;
 }
 
+/** TeamList */
+export interface TeamList {
+  items: TeamOut[];
+  canManage?: boolean;
+}
+
+/** TeamOut */
+export interface TeamOut {
+  id: string;
+  name: string;
+  kind: string;
+  role?: string;
+  memberCount?: number;
+}
+
 /** TokenOut */
 export interface TokenOut {
   /** 访问令牌，放进 `Authorization: Bearer <token>` */
@@ -1015,8 +1329,24 @@ export interface ValidationError {
 
 /** 键是 `METHOD path`，值是去掉 {code,message,data} 封套后的类型 */
 export interface EndpointData {
+  /** 当前库的分类树与计数 */
+  "GET /api/v1/asset-categories": AssetCategoryList;
+  /** 标签词表（按维度分组，带在用数量） */
+  "GET /api/v1/asset-tags": TagCatalog;
+  /** 新增标签（词表外的新词） */
+  "POST /api/v1/asset-tags": TagOut;
+  /** 我的保存视图 */
+  "GET /api/v1/asset-views": AssetViewList;
+  /** 保存当前筛选条件 */
+  "POST /api/v1/asset-views": AssetViewOut;
+  /** 删除我的保存视图 */
+  "DELETE /api/v1/asset-views/{view_id}": unknown;
   /** 归档素材列表与空间占用 */
   "GET /api/v1/assets": ArchiveList;
+  /** 整组采纳候选（全成或全不成） */
+  "POST /api/v1/assets/batch/adopt": BatchAdoptResult;
+  /** 待确认的生成候选（按批分组） */
+  "GET /api/v1/assets/candidates": CandidateList;
   /** 从 Z 盘 inbox 登记现有素材 */
   "POST /api/v1/assets/import": ArchivedAsset;
   /** 流式上传素材至归档盘 */
@@ -1025,10 +1355,18 @@ export interface EndpointData {
   "DELETE /api/v1/assets/{asset_id}": unknown;
   /** 读取本人或共享原片详情 */
   "GET /api/v1/assets/{asset_id}": ArchivedAsset;
+  /** 采纳生成候选（成为素材） */
+  "POST /api/v1/assets/{asset_id}/adopt": ArchivedAsset;
   /** 将本人素材移入回收站或恢复 */
   "PUT /api/v1/assets/{asset_id}/deleted": ArchivedAsset;
+  /** 一键衍生：回填生成页的输入位 */
+  "POST /api/v1/assets/{asset_id}/derive": DeriveIntent;
+  /** 弃用生成候选 */
+  "POST /api/v1/assets/{asset_id}/discard": ArchivedAsset;
   /** 预览或下载已归档素材 */
   "GET /api/v1/assets/{asset_id}/file": unknown;
+  /** 生成血缘：配方、父链与引用关系 */
+  "GET /api/v1/assets/{asset_id}/lineage": LineageOut;
   /** 修改本人素材名称 */
   "PUT /api/v1/assets/{asset_id}/name": ArchivedAsset;
   /** 受控公共原片预览 */
@@ -1037,6 +1375,10 @@ export interface EndpointData {
   "PUT /api/v1/assets/{asset_id}/sharing": ArchivedAsset;
   /** 浏览器兼容视频预览（派生文件，不改原片） */
   "GET /api/v1/assets/{asset_id}/stream": unknown;
+  /** 读取素材的标签 */
+  "GET /api/v1/assets/{asset_id}/tags": AssetTagList;
+  /** 整体替换本人素材的标签 */
+  "PUT /api/v1/assets/{asset_id}/tags": AssetTagList;
   /** 读取归档素材缩略图 */
   "GET /api/v1/assets/{asset_id}/thumbnail": unknown;
   /** 我的导出记录 */
@@ -1119,6 +1461,14 @@ export interface EndpointData {
   "GET /api/v1/shots": ShotListOut;
   /** 分镜模板列表 */
   "GET /api/v1/storyboards": StoryboardListOut;
+  /** 主体列表（带成员数与可用性） */
+  "GET /api/v1/subjects": SubjectList;
+  /** 按旧素材包 id 解析主体（B5） */
+  "GET /api/v1/subjects/by-legacy-pack/{pack_id}": SubjectDetail;
+  /** 主体详情（含成员条带与缺项） */
+  "GET /api/v1/subjects/{subject_id}": SubjectDetail;
+  /** 发布主体（过可达性后冻结版本） */
+  "POST /api/v1/subjects/{subject_id}/publish": SubjectPublishResult;
   /** 批量删除任务 */
   "DELETE /api/v1/tasks": DeleteTasksOut;
   /** 任务列表 */
@@ -1137,6 +1487,8 @@ export interface EndpointData {
   "POST /api/v1/tasks/{task_id}/favorite": TaskOut;
   /** 重试任务 */
   "POST /api/v1/tasks/{task_id}/retry": TaskRetryOut;
+  /** 当前用户可见的团队（库切换器数据源） */
+  "GET /api/v1/teams": TeamList;
   /** 人物/产品/场景替换模板与调用档案 */
   "GET /api/v1/templates/replacement-catalog": ReplacementCatalog;
   /** 本人封装草稿和历史包 */
