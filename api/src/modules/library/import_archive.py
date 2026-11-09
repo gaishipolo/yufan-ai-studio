@@ -25,7 +25,7 @@ import asyncio
 import hashlib
 import logging
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from sqlalchemy import select, text
@@ -37,9 +37,13 @@ from infra.storage.base import ObjectStorage
 from modules.library.models import LibraryAsset
 from modules.library.service import blob_key, preview_key
 
-__all__ = ["ImportReport", "import_legacy_assets"]
+__all__ = ["GapReport", "ImportReport", "LEGACY_PREFIX", "import_legacy_assets", "reconcile_legacy"]
 
 logger = logging.getLogger(__name__)
+
+#: 旧行在 v2 里的 `source_key` 前缀。导入与对账**共用同一个常量**：
+#: 两边各写一遍 `"legacy:"` 时，改一处就是「导进去了、对账永远说缺」。
+LEGACY_PREFIX = "legacy:"
 
 #: 旧表里参与迁移的列。刻意不 `SELECT *`：新增列不该让迁移脚本的行为变化。
 _LEGACY_QUERY = text(
@@ -53,6 +57,19 @@ _LEGACY_QUERY = text(
 )
 
 _SUPPORTED_KINDS = {"image", "video", "audio"}
+
+#: 对账用的旧表查询：比 `_LEGACY_QUERY` 多读 `deleted_at`。
+#:
+#: 为什么不能复用导入那条：导入只关心「该迁还没迁的」，对账还要回答反方向的问题——
+#: 「v2 里有、旧库已经删了」的那些行。少了 `deleted_at` 就看不见它们，等于
+#: 观察期只盯着一个方向漂移。
+_LEGACY_ALL_QUERY = text(
+    """
+    SELECT id, type, storage_key, owner_id, deleted_at
+    FROM assets
+    WHERE source = 'archive'
+    """
+)
 
 
 @dataclass
@@ -74,6 +91,101 @@ class ImportReport:
         if self.dry_run:
             return [head, detail]
         return [head, detail, f"复制字节 {self.bytes_copied} 字节"]
+
+
+@dataclass
+class GapReport:
+    """并存观察期的对账结果。**只读**，不修数据。
+
+    三个缺口各自对应一种处置，混在一起报会让人不知道该跑哪条命令：
+
+    - `missing_supported`：旧库有、v2 没有、格式认得 → 跑 `library import-archive` 就能补；
+    - `missing_unsupported`：旧库有、v2 没有、格式不认识 → 导入会**永远跳过**它，
+      只能人工确认（早期归档行有没扩展名的，脚本不猜）；
+    - `orphan`：v2 有 `legacy:<id>`、旧库那行已被删除（或物理不存在）→ 反向漂移。
+      不会自动清理：v2 可能已经共享出去、甚至被别人引用，删不删是人的决定。
+    """
+
+    legacy_total: int = 0
+    migrated: int = 0
+    missing_supported: list[str] = field(default_factory=list)
+    missing_unsupported: list[str] = field(default_factory=list)
+    orphan: list[str] = field(default_factory=list)
+
+    @property
+    def in_sync(self) -> bool:
+        return not (self.missing_supported or self.missing_unsupported or self.orphan)
+
+    def lines(self, limit: int = 20) -> list[str]:
+        head = f"旧库未删除 {self.legacy_total} 条，v2 已迁 {self.migrated} 条"
+        if self.in_sync:
+            return [head, "对账一致：没有缺口，也没有 v2 独有行"]
+        parts = [head]
+        for label, ids in (
+            ("待补", self.missing_supported),
+            ("格式不支持", self.missing_unsupported),
+            ("v2 独有", self.orphan),
+        ):
+            if ids:
+                shown = ", ".join(ids[:limit])
+                more = f" 等 {len(ids)} 条" if len(ids) > limit else ""
+                parts.append(f"{label} {len(ids)} 条：{shown}{more}")
+        return parts
+
+
+async def reconcile_legacy(session: AsyncSession, *, owner: str = "") -> GapReport:
+    """对比旧 `assets` 表与 v2 的 `legacy:<id>` 行。
+
+    为什么需要它：`import-archive --dry-run` 只能回答「还能导多少」，看不到反方向
+    的漂移（旧库删了、v2 还留着），而观察期两边都会有人写。这条命令是观察期
+    每天跑一次的「两边还是不是同一批东西」。
+    """
+    all_keys = await session.scalars(
+        select(LibraryAsset.source_key).where(
+            LibraryAsset.source_key.like(f"{LEGACY_PREFIX}%")
+        )
+    )
+    keys = {key for key in all_keys if key}
+    rows = (await session.execute(_LEGACY_ALL_QUERY)).all()
+
+    report = GapReport()
+    known: set[str] = set()
+    for row in rows:
+        known.add(row.id)
+        if owner and row.owner_id != owner:
+            continue
+        key = f"{LEGACY_PREFIX}{row.id}"
+        if row.deleted_at is not None:
+            if key in keys:
+                report.orphan.append(row.id)
+            continue
+        report.legacy_total += 1
+        if key in keys:
+            report.migrated += 1
+            continue
+        extension = Path(row.storage_key or "").suffix.lower()
+        bucket = (
+            report.missing_supported
+            if row.type in _SUPPORTED_KINDS and extension in EXTENSIONS
+            else report.missing_unsupported
+        )
+        bucket.append(row.id)
+
+    # 旧行被物理删除的情况：`known` 里没有它，但 v2 的 key 还在
+    for key in keys:
+        legacy_id = key[len(LEGACY_PREFIX) :]
+        if legacy_id in known:
+            continue
+        if owner:
+            # 按 owner 过滤时无法判断这条孤儿属于谁（旧行已经没了），
+            # 一律不报，避免把别人的漂移算到这个人头上。
+            continue
+        report.orphan.append(legacy_id)
+
+    report.missing_supported.sort()
+    report.missing_unsupported.sort()
+    report.orphan.sort()
+    return report
 
 
 def _digest(path: Path) -> str:
@@ -102,7 +214,7 @@ async def import_legacy_assets(
     report.total = len(rows)
 
     for row in rows:
-        source_key = f"legacy:{row.id}"
+        source_key = f"{LEGACY_PREFIX}{row.id}"
         if await session.scalar(
             select(LibraryAsset.id).where(LibraryAsset.source_key == source_key)
         ):

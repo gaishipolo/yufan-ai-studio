@@ -11,6 +11,9 @@
   「没人知道有这张单」——资产既删不掉也共享不出去，而日志里一句错都没有。
 - `library.downloads`：卡住的打包任务与没清掉的过期 zip。打包任务卡在
   `running` 时前端会永远转圈；而「过期却没清」只占磁盘，不表现成任何错误。
+- `library.legacy_sync`：并存观察期的对账。旧 `assets` 表与 v2 的 `legacy:<id>`
+  行有没有缺口。观察期两边都会有人写，「新库看起来正常」并不等于「旧库的增量
+  都追平了」——这一条就是把 `app library reconcile` 的结论摆到部署自检里。
 
 纪律与其它模块自检一致：只往报告里加自己那条，不改别人的结论。
 """
@@ -20,6 +23,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import SQLAlchemyError
 
 from api.module import DoctorReportLike, Level
 from core.config import settings
@@ -28,6 +32,7 @@ from core.ports.library_lookup import has_library_lookup
 from core.ports.library_references import has_library_references
 from db.session import get_session_factory
 from modules.library.downloads import QUEUED, RUNNING, STUCK_AFTER, SUCCEEDED
+from modules.library.import_archive import reconcile_legacy
 from modules.library.models import (
     LibraryAsset,
     LibraryDownloadJob,
@@ -156,3 +161,33 @@ async def check(report: DoctorReportLike) -> None:
             )
         else:
             report.add("library.downloads", "PASS", "没有卡住的打包任务与过期 zip")
+
+        try:
+            gap = await reconcile_legacy(session)
+        except SQLAlchemyError as exc:
+            # 旧表不存在是**正常状态**（新部署、或旧模块已彻底下线），
+            # 不该让 v2 的自检变红——它不是 v2 的部署条件。
+            report.add(
+                "library.legacy_sync",
+                "INFO",
+                f"旧素材表不可读，跳过对账（{type(exc).__name__}）",
+            )
+        else:
+            if gap.legacy_total == 0 and not gap.orphan:
+                report.add("library.legacy_sync", "INFO", "旧素材库没有数据，无需对账")
+            elif gap.in_sync:
+                report.add(
+                    "library.legacy_sync",
+                    "PASS",
+                    f"{gap.legacy_total} 条旧素材全部已迁",
+                )
+            else:
+                report.add(
+                    "library.legacy_sync",
+                    "WARN",
+                    f"旧库还有 {len(gap.missing_supported)} 条待补 / "
+                    f"{len(gap.missing_unsupported)} 条格式不支持 / "
+                    f"{len(gap.orphan)} 条 v2 独有"
+                    "：跑 `app library reconcile` 看明细，"
+                    "`app library import-archive` 追平可补的那部分",
+                )

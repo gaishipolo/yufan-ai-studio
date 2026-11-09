@@ -2,6 +2,8 @@
 
 - `library import-archive`：把旧素材库搬进 v2。必须能反复跑（幂等），因为并存期
   会先试跑一次、切换前一天再跑一次追平增量。
+- `library reconcile`：只读对账，回答「两边还是不是同一批东西」。观察期每天跑一次：
+  有缺口退出码非 0，CI / 值班脚本据此报警，不用人肉比对列表。
 - `library trash-gc`：手动跑一轮回收站清理。周期任务默认关闭（删除不可逆），
   所以运维需要一个「我看过了，现在清」的入口；`--dry-run` 只列 id。
 - `library download-gc`：清过期的打包 zip。它删的是我们自己生成的临时产物，
@@ -53,6 +55,32 @@ def cmd_import_archive(args: argparse.Namespace) -> None:
         raise SystemExit(1)
 
 
+def cmd_reconcile(args: argparse.Namespace) -> None:
+    from sqlalchemy.exc import SQLAlchemyError
+
+    from db.session import get_session_factory
+    from modules.library.import_archive import reconcile_legacy
+
+    async def run():
+        async with get_session_factory()() as session:
+            return await reconcile_legacy(session, owner=args.owner)
+
+    try:
+        report = asyncio.run(run())
+    except SQLAlchemyError as exc:
+        # 旧表不存在（新部署、或已彻底下线旧模块）不是错误，是「没有可对账的东西」。
+        # 与 `health.py` 同口径：这条命令不该因为旧表缺席而报红。
+        print(f"跳过对账：旧素材表不可读（{type(exc).__name__}）", file=sys.stderr)
+        return
+
+    for line in report.lines(limit=args.limit):
+        print(line)
+
+    # 缺口即非 0：观察期靠退出码判断「今天能不能放心继续观察 / 能不能切换」。
+    if not report.in_sync:
+        raise SystemExit(1)
+
+
 def cmd_trash_gc(args: argparse.Namespace) -> None:
     from modules.library.maintenance import run_trash_gc
 
@@ -100,6 +128,11 @@ def register(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     importer.add_argument("--limit", type=int, default=0, help="最多处理多少条（0 = 全部）")
     importer.add_argument("--owner", default="", help="只导入指定 owner_id 的素材")
     importer.set_defaults(func=cmd_import_archive)
+
+    reconcile = actions.add_parser("reconcile", help="只读对账：旧库与 v2 的差集")
+    reconcile.add_argument("--owner", default="", help="只看指定 owner_id 的素材")
+    reconcile.add_argument("--limit", type=int, default=20, help="每类最多列几个 id")
+    reconcile.set_defaults(func=cmd_reconcile)
 
     gc = actions.add_parser("trash-gc", help="清理过期的回收站条目（默认试运行）")
     gc.add_argument(

@@ -3,11 +3,10 @@
 **与现役 `modules/asset` 并行的第二版素材库**，不是它的重构。并存期两边
 完全隔离：表（`library_*`）、路由（`/library`）、权限（`library:*`）、
 注入口（`library-lookup` / `library-ingest` / `library-references`）、
-前端路径（`/library`）。切换时只改前端模块的 `load()` 一行，删掉本模块
-不影响现役素材库。
+前端路径（`/library`）。删掉本模块不影响现役素材库。
 
-M3 交付：封装、批量下载（异步 zip + 取件）、生成入库与溯源快照、详情页六个区的
-数据源。前端页面在 M4。
+M5 起入口已切到本模块（`/library` 是主入口）。**旧库不下线**：`/assets` 仍是可用的
+旧版入口，观察期用 `app library reconcile` 与周期任务 `library.legacy.sync` 对账。
 """
 
 from api.module import ModuleSpec
@@ -23,10 +22,11 @@ from modules.library.lookup import install as install_lookup
 from modules.library.references import SqlLibraryReferences
 from modules.library.router import router
 
-# 必须 import：注册 @periodic("library.trash.gc") 与 @register_handler /
-# @periodic("library.download.gc")（副作用导入）
+# 必须 import：注册 @periodic("library.trash.gc") / @periodic("library.download.gc") /
+# @periodic("library.legacy.sync") 与 @register_handler（副作用导入）
 from modules.library import downloads  # noqa: E402,F401  isort: skip
 from modules.library import maintenance  # noqa: E402,F401  isort: skip
+from modules.library import observation  # noqa: E402,F401  isort: skip
 
 # 把「v2 资产是什么」挂到注入口：模板 / 任务 / 选择器在并存期要读它，
 # 但它们不能 import 本模块（业务模块之间不许互相 import）。
@@ -83,10 +83,11 @@ module = ModuleSpec(
             "library:generation:ingest", "生成结果入库（草稿箱）", group="资产库"
         ),
     ),
-    # M3 起有后台打包任务与两个周期任务。声明了就必须注册，`create_app()` 会核对：
-    # `downloads` / `maintenance` 的 import 就是注册动作。
+    # 声明了就必须注册，`create_app()` 会核对：上面三条 import 就是注册动作。
+    # `library.legacy.sync` 是并存观察期的每日对账（只读、只记日志）；
+    # 观察期结束后随旧模块一起删掉，它不再是 v2 的部署条件。
     jobs=("library.download.build",),
-    periodic=("library.trash.gc", "library.download.gc"),
+    periodic=("library.trash.gc", "library.download.gc", "library.legacy.sync"),
     # 运维命令：旧素材导入、回收站 GC、打包产物清理
     cli=register_cli,
     asset_reference_sources=ASSET_REFERENCE_SOURCES,
