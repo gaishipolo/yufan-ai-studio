@@ -116,7 +116,9 @@ function handleUnauthorized(url?: string) {
 function toApiError(error: AxiosError<ApiResponse<unknown>>) {
   const payload = error.response?.data;
   if (payload && typeof payload === 'object' && 'message' in payload) {
-    return new ApiError(payload.message, payload.code ?? error.response?.status ?? -1);
+    /* `details` 不在 ApiResponse 的公共形状里，但它确实由后端附加在同一层 */
+    const details = (payload as { details?: unknown }).details;
+    return new ApiError(payload.message, payload.code ?? error.response?.status ?? -1, details);
   }
   if (error.code === 'ECONNABORTED') return new ApiError('请求超时，请稍后重试', 408);
   return new ApiError(error.message || '网络异常', error.response?.status ?? -1);
@@ -160,6 +162,6 @@ export const api = {
 
   patch: <T>(url: string, body?: unknown) => http.patch<T>(url, body).then((r) => r.data),
 
-  delete: <T>(url: string, body?: unknown) =>
-    http.delete<T>(url, { data: body }).then((r) => r.data),
+  delete: <T>(url: string, body?: unknown, config?: AxiosRequestConfig) =>
+    http.delete<T>(url, { data: body, ...config }).then((r) => r.data),
 };

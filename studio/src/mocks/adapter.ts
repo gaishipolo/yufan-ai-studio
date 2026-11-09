@@ -72,7 +72,12 @@ export const mockAdapter: AxiosAdapter = async (config) => {
         config,
         null,
         {
-          data: { code: status, message: err.message, data: null },
+          data: {
+            code: status,
+            message: err.message,
+            data: null,
+            ...(err.details === undefined ? {} : { details: err.details }),
+          },
           status,
           statusText: 'ERROR',
           headers: jsonHeaders(),

@@ -1,12 +1,15 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { UploadCloud, Wand2 } from 'lucide-react';
+import { Library, Wand2, X } from 'lucide-react';
 import { Button, Chip, CoverImage, PageHeader, Select } from '@/shared/ui';
 import { cn } from '@/shared/lib/cn';
 import { toast } from '@/shared/lib/toast';
 import { useCreateTask, useTaskList } from '@/entities/task/api/task.queries';
 import { aspectOptionsFor, durationOptionsFor, useModels } from '@/entities/model/api/model.queries';
 import { useShots } from '@/entities/shot/api/shot.api';
+import { LibraryPicker } from '@/entities/library/ui/LibraryPicker';
+import { useCan } from '@/shared/access/use-access';
+import type { LibraryAssetOut } from '@/shared/api/schema';
 import type { AspectRatio } from '@/entities/task/model/types';
 
 const STYLE_PRESETS = ['电影感', '纪实手持', '广告质感', '胶片复古'];
@@ -25,6 +28,10 @@ export default function StudioPage() {
   const [ratio, setRatio] = useState<AspectRatio>('9:16');
   const [style, setStyle] = useState(STYLE_PRESETS[0]);
   const [error, setError] = useState('');
+  /* 参考素材来自资产库 v2：并存期不碰旧 archive 库，权限点也不同 */
+  const [references, setReferences] = useState<LibraryAssetOut[]>([]);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const canReadLibrary = useCan('library:read');
 
   const currentModel = useMemo(
     () => models.find((item) => item.id === modelId) ?? models.find((m) => m.isDefault) ?? models[0],
@@ -74,6 +81,7 @@ export default function StudioPage() {
         durationSec: Number(duration),
         aspectRatio: ratio,
         stylePreset: style,
+        ...(references.length ? { referenceAssetIds: references.map((item) => item.id) } : {}),
       },
       {
         onSuccess: () => {
@@ -107,15 +115,44 @@ export default function StudioPage() {
         <section className="self-start rounded-card border border-line-soft bg-panel p-3.5 lg:row-span-2 2xl:row-span-1">
           <SectionTitle>创作输入</SectionTitle>
 
-          <Field label="参考图" hint="支持 JPG / PNG，最多 4 张" required>
-            <button
-              type="button"
-              onClick={() => toast('上传面板待接入对象存储')}
-              className="w-full rounded-card border-[1.5px] border-dashed border-[#d5e2e7] bg-panel-soft px-3 py-6 text-center text-[11.5px] text-ink-mute transition-colors hover:border-[#b9d3ff] hover:bg-[#f7fbff] hover:text-primary"
-            >
-              <UploadCloud size={26} strokeWidth={1.5} className="mx-auto mb-1.5 text-[#b7c6cd]" />
-              拖拽图片到此处，或点击上传参考图
-            </button>
+          <Field label="参考图" hint="从资产库选，最多 4 张" required>
+            <div className="space-y-1.5">
+              {references.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {references.map((item) => (
+                    <span
+                      key={item.id}
+                      className="inline-flex max-w-full items-center gap-1 rounded-lg border border-line bg-panel-soft px-2 py-1 text-[11px] text-ink-soft"
+                    >
+                      <span className="truncate">{item.name}</span>
+                      <button
+                        type="button"
+                        aria-label={`移除参考图：${item.name}`}
+                        className="text-ink-mute hover:text-danger"
+                        onClick={() => setReferences((prev) => prev.filter((one) => one.id !== item.id))}
+                      >
+                        <X size={11} />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
+              <button
+                type="button"
+                disabled={!canReadLibrary || references.length >= 4}
+                onClick={() => (canReadLibrary ? setPickerOpen(true) : toast('没有资产库查看权限', 'error'))}
+                className={cn(
+                  'w-full rounded-card border-[1.5px] border-dashed px-3 py-4 text-center text-[11.5px] transition-colors',
+                  'border-[#d5e2e7] bg-panel-soft text-ink-mute',
+                  canReadLibrary && references.length < 4
+                    ? 'hover:border-[#b9d3ff] hover:bg-[#f7fbff] hover:text-primary'
+                    : 'cursor-not-allowed opacity-60',
+                )}
+              >
+                <Library size={22} strokeWidth={1.5} className="mx-auto mb-1 text-[#b7c6cd]" />
+                {references.length ? `已选 ${references.length} 张，继续选择` : '从资产库选择参考图'}
+              </button>
+            </div>
           </Field>
 
           <Field label="画面描述" required>
@@ -230,6 +267,15 @@ export default function StudioPage() {
           </div>
         </section>
       </div>
+
+      <LibraryPicker
+        open={pickerOpen}
+        title="选择参考图"
+        value={references.map((item) => item.id)}
+        kinds={['image']}
+        onClose={() => setPickerOpen(false)}
+        onConfirm={(assets) => setReferences(assets.slice(0, 4))}
+      />
     </>
   );
 }

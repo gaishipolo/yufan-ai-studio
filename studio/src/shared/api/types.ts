@@ -41,11 +41,20 @@ export function errorHttpStatus(code: number): number {
 
 export class ApiError extends Error {
   readonly code: number;
+  /**
+   * 后端错误里的附加信息（`details`）。
+   *
+   * 只在「同码不同处置」时使用，例如删除共享资产返回 409 并带
+   * `canRevokeAndDelete`：界面据此把按钮换成「撤销共享并删除」，
+   * 而不是让用户自己去猜顺序。判定仍然以后端为准。
+   */
+  readonly details: unknown;
 
-  constructor(message: string, code: number = -1) {
+  constructor(message: string, code: number = -1, details?: unknown) {
     super(message);
     this.name = 'ApiError';
     this.code = code;
+    this.details = details;
   }
 }
 

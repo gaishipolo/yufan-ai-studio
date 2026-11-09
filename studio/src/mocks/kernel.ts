@@ -33,6 +33,8 @@ export class HttpError extends Error {
   constructor(
     readonly status: number,
     message: string,
+    /** 与后端 `AppError.details` 对齐：同码不同处置时用（如 canRevokeAndDelete） */
+    readonly details?: unknown,
   ) {
     super(message);
     this.name = 'HttpError';

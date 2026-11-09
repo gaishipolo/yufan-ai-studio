@@ -3,8 +3,8 @@
 # Mock 覆盖率（只记录，不作门禁）
 
 后端端点 125 条（来自 `schema.ts` 的 `EndpointData`），
-已注册 mock 路由 56 条（来自 `mockRouteTable()`），
-按「同方法 + 正则能匹配」判定疑似覆盖 55 条。
+已注册 mock 路由 86 条（来自 `mockRouteTable()`），
+按「同方法 + 正则能匹配」判定疑似覆盖 88 条。
 
 > **这是记录，不是门禁**：CI 不检查覆盖率是否达标，也不要求新增端点必须带 mock。
 > 一条 handler 可以覆盖多个端点（例如 `/tasks/([\w-]+)` 同时命中详情与删除），
@@ -57,39 +57,6 @@
 | GET | `/api/v1/identity/users/{}/logins` |
 | POST | `/api/v1/identity/users/{}/revoke-sessions` |
 | POST | `/api/v1/images/{}/retry` |
-| DELETE | `/api/v1/library/assets/{}` |
-| GET | `/api/v1/library/assets/{}` |
-| PATCH | `/api/v1/library/assets/{}` |
-| GET | `/api/v1/library/assets/{}/file` |
-| GET | `/api/v1/library/assets/{}/thumbnail` |
-| POST | `/api/v1/library/assets/bulk` |
-| POST | `/api/v1/library/assets/from-generation` |
-| POST | `/api/v1/library/assets/upload` |
-| GET | `/api/v1/library/downloads` |
-| POST | `/api/v1/library/downloads` |
-| GET | `/api/v1/library/downloads/{}` |
-| GET | `/api/v1/library/downloads/{}/file` |
-| POST | `/api/v1/library/drafts/{}/approve` |
-| POST | `/api/v1/library/drafts/{}/reject` |
-| GET | `/api/v1/library/groups` |
-| PUT | `/api/v1/library/groups/{}/leaders` |
-| POST | `/api/v1/library/packs` |
-| DELETE | `/api/v1/library/packs/{}` |
-| GET | `/api/v1/library/packs/{}` |
-| PATCH | `/api/v1/library/packs/{}` |
-| GET | `/api/v1/library/selection` |
-| GET | `/api/v1/library/share-requests` |
-| POST | `/api/v1/library/share-requests` |
-| POST | `/api/v1/library/share-requests/{}/approve` |
-| POST | `/api/v1/library/share-requests/{}/cancel` |
-| POST | `/api/v1/library/share-requests/{}/reject` |
-| POST | `/api/v1/library/source-videos` |
-| GET | `/api/v1/library/tags` |
-| POST | `/api/v1/library/tags` |
-| DELETE | `/api/v1/library/tags/{}` |
-| PATCH | `/api/v1/library/tags/{}` |
-| DELETE | `/api/v1/library/trash/{}` |
-| POST | `/api/v1/library/trash/{}/restore` |
 | PATCH | `/api/v1/tasks/{}` |
 | GET | `/api/v1/templates/replacement-catalog` |
 | GET | `/api/v1/templates/replacement-packs` |
@@ -108,4 +75,4 @@
 | POST | `/api/v1/templates/replacement-runs/{}/restore` |
 | PUT | `/api/v1/templates/replacement-runs/{}/review` |
 
-（未命中 70 条；已命中 55 条不在本表重复列出。）
+（未命中 37 条；已命中 88 条不在本表重复列出。）

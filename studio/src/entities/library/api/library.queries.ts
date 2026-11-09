@@ -1,0 +1,336 @@
+import { useEffect, useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import type {
+  AssetPatchIn,
+  BulkIn,
+  DownloadIn,
+  DraftDecisionIn,
+  ShareDecisionIn,
+  ShareRequestIn,
+} from '@/shared/api/schema';
+import { ApiError } from '@/shared/api/types';
+import { saveBlob } from '@/shared/lib/download';
+import { libraryApi, type LibraryListParams } from './library.api';
+
+/**
+ * 查询键第一段固定 `library`：并存期要能一次失效整块，且不能误伤
+ * `archive-assets` / `packs` 那些旧库的缓存。
+ */
+export const libraryKeys = {
+  all: ['library'] as const,
+  lists: () => [...libraryKeys.all, 'list'] as const,
+  list: (params: LibraryListParams) => [...libraryKeys.lists(), params] as const,
+  facets: () => [...libraryKeys.all, 'facets'] as const,
+  details: () => [...libraryKeys.all, 'detail'] as const,
+  detail: (id: string) => [...libraryKeys.details(), id] as const,
+  media: (id: string) => [...libraryKeys.all, 'media', id] as const,
+  tags: () => [...libraryKeys.all, 'tags'] as const,
+  groups: () => [...libraryKeys.all, 'groups'] as const,
+  downloads: () => [...libraryKeys.all, 'downloads'] as const,
+  download: (id: string) => [...libraryKeys.all, 'download', id] as const,
+  requests: (scope: 'mine' | 'pending') => [...libraryKeys.all, 'requests', scope] as const,
+  selection: (params: object) => [...libraryKeys.all, 'selection', params] as const,
+};
+
+export function useLibraryList(params: LibraryListParams) {
+  return useQuery({
+    queryKey: libraryKeys.list(params),
+    queryFn: () => libraryApi.list(params),
+    /* 切换视图时保留上一屏，避免整页闪白；角标与列表来自同一次响应 */
+    placeholderData: (previous) => previous,
+  });
+}
+
+export function useLibraryFacets() {
+  return useQuery({
+    queryKey: libraryKeys.facets(),
+    queryFn: libraryApi.facets,
+    staleTime: 30_000,
+  });
+}
+
+export function useLibraryDetail(id: string | null) {
+  return useQuery({
+    queryKey: libraryKeys.detail(id ?? ''),
+    queryFn: () => libraryApi.detail(id ?? ''),
+    enabled: !!id,
+  });
+}
+
+export function useLibraryTags() {
+  return useQuery({ queryKey: libraryKeys.tags(), queryFn: libraryApi.tags, staleTime: 60_000 });
+}
+
+/** 选择器：硬过滤 `state=active`，封装也不出现在候选里（禁嵌套） */
+export function useLibrarySelection(params: {
+  keyword?: string;
+  kind?: string;
+  tagIds?: string[];
+  page?: number;
+  pageSize?: number;
+}) {
+  return useQuery({
+    queryKey: libraryKeys.selection(params),
+    queryFn: () => libraryApi.selection({ ...params, includePacks: false }),
+    placeholderData: (previous) => previous,
+  });
+}
+
+export function useMyGroups() {
+  return useQuery({ queryKey: libraryKeys.groups(), queryFn: libraryApi.groups, staleTime: 60_000 });
+}
+
+/** 列表 / 分面 / 详情一起失效：写操作会同时改数目与内容 */
+function useInvalidateLibrary() {
+  const client = useQueryClient();
+  return () => {
+    void client.invalidateQueries({ queryKey: libraryKeys.lists() });
+    void client.invalidateQueries({ queryKey: libraryKeys.facets() });
+    void client.invalidateQueries({ queryKey: libraryKeys.details() });
+  };
+}
+
+export function usePatchAsset() {
+  const invalidate = useInvalidateLibrary();
+  return useMutation({
+    mutationFn: ({ id, body }: { id: string; body: AssetPatchIn }) => libraryApi.patch(id, body),
+    onSuccess: invalidate,
+  });
+}
+
+export function useDeleteAsset() {
+  const invalidate = useInvalidateLibrary();
+  return useMutation({
+    mutationFn: ({
+      id,
+      revokeOwnGroupShare,
+      reason,
+    }: {
+      id: string;
+      revokeOwnGroupShare?: boolean;
+      reason?: string;
+    }) => libraryApi.remove(id, { revokeOwnGroupShare, reason }),
+    onSuccess: invalidate,
+  });
+}
+
+export function useDraftDecision() {
+  const invalidate = useInvalidateLibrary();
+  return useMutation({
+    mutationFn: ({
+      id,
+      action,
+      body,
+    }: {
+      id: string;
+      action: 'approve' | 'reject';
+      body: DraftDecisionIn;
+    }) =>
+      action === 'approve'
+        ? libraryApi.approveDraft(id, body)
+        : libraryApi.rejectDraft(id, body),
+    onSuccess: invalidate,
+  });
+}
+
+export function useRestoreAsset() {
+  const invalidate = useInvalidateLibrary();
+  return useMutation({ mutationFn: (id: string) => libraryApi.restore(id), onSuccess: invalidate });
+}
+
+export function usePurgeAsset() {
+  const invalidate = useInvalidateLibrary();
+  return useMutation({ mutationFn: (id: string) => libraryApi.purge(id), onSuccess: invalidate });
+}
+
+export function useBulkAction() {
+  const invalidate = useInvalidateLibrary();
+  return useMutation({
+    mutationFn: (body: BulkIn) => libraryApi.bulk(body),
+    onSettled: invalidate,
+  });
+}
+
+export function useUploadAsset() {
+  const invalidate = useInvalidateLibrary();
+  return useMutation({
+    mutationFn: ({
+      file,
+      kind,
+      onProgress,
+    }: {
+      file: File;
+      kind: 'image' | 'audio';
+      onProgress?: (ratio: number) => void;
+    }) => libraryApi.upload(file, kind, { onProgress }),
+    onSuccess: invalidate,
+  });
+}
+
+export function useCreatePack() {
+  const invalidate = useInvalidateLibrary();
+  return useMutation({
+    mutationFn: (body: { name: string; assetIds: string[]; tagIds?: string[] }) =>
+      libraryApi.createPack(body),
+    onSuccess: invalidate,
+  });
+}
+
+export function useDeletePack() {
+  const invalidate = useInvalidateLibrary();
+  return useMutation({ mutationFn: (id: string) => libraryApi.deletePack(id), onSuccess: invalidate });
+}
+
+export function useCreateTag() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (name: string) => libraryApi.createTag(name),
+    onSuccess: () => client.invalidateQueries({ queryKey: libraryKeys.tags() }),
+  });
+}
+
+/* ------------------------------------------------------------------ 共享 */
+
+export function useShareRequests(scope: 'mine' | 'pending', enabled = true) {
+  return useQuery({
+    queryKey: libraryKeys.requests(scope),
+    queryFn: () => libraryApi.shareRequests(scope),
+    enabled,
+    staleTime: 15_000,
+  });
+}
+
+function useInvalidateRequests() {
+  const client = useQueryClient();
+  const invalidate = useInvalidateLibrary();
+  return () => {
+    invalidate();
+    void client.invalidateQueries({ queryKey: [...libraryKeys.all, 'requests'] });
+  };
+}
+
+export function useCreateShareRequest() {
+  const invalidate = useInvalidateRequests();
+  return useMutation({
+    mutationFn: (body: ShareRequestIn) => libraryApi.createShareRequest(body),
+    onSuccess: invalidate,
+  });
+}
+
+export function useDecideShareRequest() {
+  const invalidate = useInvalidateRequests();
+  return useMutation({
+    mutationFn: ({
+      id,
+      approve,
+      body,
+    }: {
+      id: string;
+      approve: boolean;
+      body: ShareDecisionIn;
+    }) =>
+      approve
+        ? libraryApi.approveShareRequest(id, body)
+        : libraryApi.rejectShareRequest(id, body),
+    onSuccess: invalidate,
+  });
+}
+
+export function useCancelShareRequest() {
+  const invalidate = useInvalidateRequests();
+  return useMutation({
+    mutationFn: (id: string) => libraryApi.cancelShareRequest(id),
+    onSuccess: invalidate,
+  });
+}
+
+/* -------------------------------------------------------------- 批量下载 */
+
+export function useDownloadJobs(enabled = true) {
+  return useQuery({
+    queryKey: libraryKeys.downloads(),
+    queryFn: libraryApi.downloads,
+    enabled,
+    /* 有任务在跑时轮询，全部落定就停：每秒一次足够，别再拿 refetchInterval 猜 */
+    refetchInterval: (query) =>
+      (query.state.data ?? []).some((job) => job.status === 'queued' || job.status === 'running')
+        ? 1_500
+        : false,
+  });
+}
+
+export function useCreateDownload() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (body: DownloadIn) => libraryApi.createDownload(body),
+    onSuccess: () => client.invalidateQueries({ queryKey: libraryKeys.downloads() }),
+  });
+}
+
+/**
+ * 取打包好的 zip 并触发保存。
+ *
+ * mock 模式下适配器回的是 `{code,message,data}` 对象而不是二进制，
+ * 这里显式拦一道：宁可提示「演示环境不生成压缩包」，也不给用户存下
+ * 一个扩展名是 .zip、打开却报损坏的文件。
+ */
+export function useSaveDownload() {
+  return useMutation({
+    mutationFn: async ({ id, filename }: { id: string; filename: string }) => {
+      const payload = await libraryApi.downloadFile(id);
+      if (!(payload instanceof Blob)) {
+        throw new ApiError('演示模式不会生成真实压缩包', -1);
+      }
+      saveBlob(payload, filename);
+      return payload.size;
+    },
+  });
+}
+
+/* ------------------------------------------------------------------ 媒体 */
+
+/**
+ * 下载单个资产的原件。与打包下载共用同一道「mock 回的不是二进制」判定：
+ * 宁可提示，也不写一个打不开的文件到用户磁盘上。
+ */
+export function useSaveAssetFile() {
+  return useMutation({
+    mutationFn: async ({ id, filename }: { id: string; filename: string }) => {
+      const payload = await libraryApi.file(id);
+      if (!(payload instanceof Blob)) {
+        throw new ApiError('演示模式没有真实文件字节', -1);
+      }
+      saveBlob(payload, filename);
+      return payload.size;
+    },
+  });
+}
+
+/**
+ * 取受保护的原文件并转成 object URL（视频/音频预览用）。
+ *
+ * 不能直接把 `/assets/{id}/file` 塞进 `<video src>`：那个地址要 Bearer 头，
+ * 浏览器发媒体请求时不会带上，结果是 401 而不是画面。
+ */
+export function useLibraryMedia(assetId: string | null, enabled: boolean) {
+  const query = useQuery({
+    queryKey: libraryKeys.media(assetId ?? ''),
+    enabled: !!assetId && enabled,
+    staleTime: 5 * 60_000,
+    queryFn: async () => libraryApi.file(assetId ?? ''),
+  });
+
+  const [url, setUrl] = useState<string | undefined>();
+
+  useEffect(() => {
+    if (!(query.data instanceof Blob)) {
+      setUrl(undefined);
+      return undefined;
+    }
+    const objectUrl = URL.createObjectURL(query.data);
+    setUrl(objectUrl);
+    return () => URL.revokeObjectURL(objectUrl);
+  }, [query.data]);
+
+  return { url, ...query };
+}

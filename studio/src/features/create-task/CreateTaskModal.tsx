@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Sparkles } from 'lucide-react';
+import { Library, Sparkles, X } from 'lucide-react';
 import { Button, Chip, Modal, Select } from '@/shared/ui';
+import { LibraryPicker } from '@/entities/library/ui/LibraryPicker';
+import { useCan } from '@/shared/access/use-access';
+import type { LibraryAssetOut } from '@/shared/api/schema';
 import { cn } from '@/shared/lib/cn';
 import { toast } from '@/shared/lib/toast';
 import { useCreateTask } from '@/entities/task/api/task.queries';
@@ -22,6 +25,9 @@ export function CreateTaskModal({ open, onClose, onCreated }: CreateTaskModalPro
   const [duration, setDuration] = useState('');
   const [ratio, setRatio] = useState<AspectRatio>('9:16');
   const [error, setError] = useState('');
+  const [references, setReferences] = useState<LibraryAssetOut[]>([]);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const canReadLibrary = useCan('library:read');
 
   const currentModel = useMemo(
     () => models.find((item) => item.id === modelId) ?? models.find((m) => m.isDefault) ?? models[0],
@@ -62,6 +68,7 @@ export function CreateTaskModal({ open, onClose, onCreated }: CreateTaskModalPro
     if (!open) {
       setPrompt('');
       setError('');
+      setReferences([]);
     }
   }, [open]);
 
@@ -77,6 +84,7 @@ export function CreateTaskModal({ open, onClose, onCreated }: CreateTaskModalPro
         model: currentModel?.id ?? '',
         durationSec: Number(duration),
         aspectRatio: ratio,
+        ...(references.length ? { referenceAssetIds: references.map((item) => item.id) } : {}),
       },
       {
         onSuccess: (task) => {
@@ -156,6 +164,40 @@ export function CreateTaskModal({ open, onClose, onCreated }: CreateTaskModalPro
           </div>
         </div>
 
+        <div>
+          <div className="mb-1.5 flex items-center gap-1.5 text-[11.5px] text-ink-soft">
+            参考素材
+            <span className="text-[10.5px] text-ink-mute">从资产库选，最多 4 张</span>
+          </div>
+          <div className="flex flex-wrap items-center gap-1.5">
+            {references.map((item) => (
+              <span
+                key={item.id}
+                className="inline-flex max-w-[180px] items-center gap-1 rounded-lg border border-line bg-panel-soft px-2 py-1 text-[11px] text-ink-soft"
+              >
+                <span className="truncate">{item.name}</span>
+                <button
+                  type="button"
+                  aria-label={`移除参考素材：${item.name}`}
+                  className="text-ink-mute hover:text-danger"
+                  onClick={() => setReferences((prev) => prev.filter((one) => one.id !== item.id))}
+                >
+                  <X size={11} />
+                </button>
+              </span>
+            ))}
+            <Button
+              size="sm"
+              variant="secondary"
+              icon={<Library size={12} />}
+              disabled={!canReadLibrary || references.length >= 4}
+              onClick={() => setPickerOpen(true)}
+            >
+              {references.length ? '继续选择' : '选择参考素材'}
+            </Button>
+          </div>
+        </div>
+
         <div className="flex items-center justify-between gap-3 pt-1">
           <Chip tone="primary">异步排队 · 生成后自动入库</Chip>
           <div className="flex gap-2">
@@ -174,6 +216,15 @@ export function CreateTaskModal({ open, onClose, onCreated }: CreateTaskModalPro
           </div>
         </div>
       </div>
+
+      <LibraryPicker
+        open={pickerOpen}
+        title="选择参考素材"
+        value={references.map((item) => item.id)}
+        kinds={['image']}
+        onClose={() => setPickerOpen(false)}
+        onConfirm={(assets) => setReferences(assets.slice(0, 4))}
+      />
     </Modal>
   );
 }
