@@ -54,6 +54,8 @@ export function useLibraryDetail(id: string | null) {
     queryKey: libraryKeys.detail(id ?? ''),
     queryFn: () => libraryApi.detail(id ?? ''),
     enabled: !!id,
+    /* 30 秒内不重拉：详情里有就地改名与标签编辑，聚焦窗口时刷新会把输入冲掉 */
+    staleTime: 30_000,
   });
 }
 

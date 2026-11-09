@@ -457,7 +457,7 @@ export function LibraryWorkspace() {
           tagIds={tagIds}
           canCreate={canCreate}
           pendingCount={pending.data?.length ?? 0}
-          busy={list.isFetching}
+          busy={list.isPending}
           onView={changeView}
           onKind={(next) => update({ kind: next === 'all' ? null : next, page: null })}
           onKeyword={(value) => update({ q: value || null, page: null })}
@@ -494,7 +494,7 @@ export function LibraryWorkspace() {
             <Pager
               page={page}
               totalPages={totalPages}
-              busy={list.isFetching}
+              busy={list.isPending}
               onChange={(next) => update({ page: String(next) })}
             />
           </div>
