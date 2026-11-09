@@ -17,6 +17,9 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
+# vitest 运行时生成的临时配置文件（进程被中断会残留）
+vitest.config.ts.timestamp-*.mjs
+
 # 本地环境覆盖（仅提交示例）
 .env.local
 .env.*.local
