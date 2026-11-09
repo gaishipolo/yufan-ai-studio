@@ -1,15 +1,26 @@
 import { Film, Plus, Search } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import type { VideoTemplateOut } from '@/shared/api/schema';
 import { Can } from '@/shared/access/Can';
 import { Button, EmptyState } from '@/shared/ui';
 import { CardSkeletonGrid } from '@/shared/ui/EmptyState';
 import { ErrorState } from '@/shared/ui/ErrorState';
+import { TYPES } from './replacementOptions';
 import { SourceTemplateCard } from './SourceTemplateCard';
 import type { ReplacementWorkbench } from './useReplacementWorkbench';
 
+/** 封装过的卡片和 0507 高端姐共用同一个组件，只多一枚「默认替换类型」标识。 */
+function templateBadge(binding: VideoTemplateOut | undefined) {
+  if (!binding) return undefined;
+  const raw = binding.defaultKind
+    ?? (typeof binding.rules?.defaultKind === 'string' ? binding.rules.defaultKind : 'product');
+  const label = TYPES.find(item => item.kind === raw)?.label ?? '产品替换';
+  return `视频模板 · ${label}`;
+}
+
 interface ReplacementSourceLibraryProps { model: ReplacementWorkbench }
 export function ReplacementSourceLibrary({ model }: ReplacementSourceLibraryProps) {
-  const {assets, search, setSearch, sourceId, setSourceId, videos, upload, busy, pickUpload} = model;
+  const {assets, search, setSearch, sourceId, setSourceId, selectSource, templateForSource, videos, upload, busy, pickUpload} = model;
   return (
       <section className="replacement-sources" aria-label="原片模板库" aria-busy={assets.isLoading}>
         <div className="flex flex-wrap gap-2">
@@ -25,7 +36,7 @@ export function ReplacementSourceLibrary({ model }: ReplacementSourceLibraryProp
         {assets.error && <ErrorState error={assets.error} title={assets.data ? '素材更新失败，以下为上次加载的内容' : '原片与参考素材加载失败'} onRetry={() => {void assets.refetch();}} />}
         {assets.isLoading && !assets.data ? <div role="status" aria-label="正在加载原片模板"><p className="replacement-operation-status">正在加载原片模板…</p><CardSkeletonGrid count={6} /></div> : <>
         <div className="replacement-waterfall">
-          {videos.map(video => <SourceTemplateCard key={video.id} video={video} selected={sourceId === video.id} disabled={busy} onToggle={() => setSourceId(sourceId === video.id ? null : video.id)} />)}
+          {videos.map(video => <SourceTemplateCard key={video.id} video={video} badge={templateBadge(templateForSource(video))} selected={sourceId === video.id} disabled={busy} onToggle={() => selectSource(sourceId === video.id ? null : video.id)} />)}
         </div>
         {!assets.error && !videos.length && <EmptyState icon={search ? <Search size={36} /> : <Film size={36} />} title={search ? '没有找到相关模板' : model.sourceScope === 'public' ? '暂无公共原片' : '添加你的第一条原片'} description={search ? '试试其他关键词，或清空搜索查看全部模板。' : '上传个人原片，再选择专员发布的对象进行替换。'} action={search ? <Button onClick={() => setSearch('')}>清空搜索</Button> : <div className="space-y-3"><Can permission="asset:create"><Button variant="primary" onClick={() => pickUpload()} disabled={busy} loading={upload.isPending}>上传第一条原片</Button></Can><p><Link to="/assets" className="text-xs text-primary">前往素材资产库 →</Link></p></div>} />}
         </>}

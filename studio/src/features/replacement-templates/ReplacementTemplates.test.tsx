@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ArchivedAsset, ArchiveCategory } from '@/entities/asset/model/archive.types';
+import type { VideoTemplateOut } from '@/shared/api/schema';
 import { AccessProvider } from '@/shared/access/AccessProvider';
 import type { ReplacementPack } from '@/shared/api/schema';
 import type { ReplacementRun } from '@/entities/template/model/replacement.types';
@@ -14,6 +15,7 @@ interface UploadCallbacks {
 
 const mock = vi.hoisted(() => ({
   prepare: vi.fn(), execute: vi.fn(), review: vi.fn(), manage: vi.fn(), mediaUrls: [] as string[],
+  videoTemplates: [] as VideoTemplateOut[],
   assetsLoading: false, assetsError: null as Error | null, assetsHidden: false, assetsEmpty: false, assetsRefetch: vi.fn(),
   catalogHidden: false,
   upload: vi.fn<(input: {file: File; category: ArchiveCategory}, callbacks: UploadCallbacks) => void>(),
@@ -34,10 +36,15 @@ vi.mock('@/entities/asset/api/archive.queries', () => ({
     { id: 'product-back', name: '产品背面', category: 'product', type: 'image', url: '/product-back', previewUrl: '/thumbnail/product-back' },
     { id: 'product-detail', name: '产品细节', category: 'product', type: 'image', url: '/product-detail', previewUrl: '/thumbnail/product-detail' },
     { id: 'source-third', name: '第三原片', category: 'source', type: 'video', duration: 3, hasAudio: true, url: '/api/v1/assets/source-third/file' },
+    { id: 'source-template', name: '我穿的是米兰之夜模板测试.mp4', category: 'source', type: 'video', duration: 5.31, hasAudio: true, url: '/api/v1/assets/source-template/file' },
   ] } }),
   useArchiveUpload: () => ({ isPending: mock.uploadPending, mutate: mock.upload }),
   useArchiveDownload: () => ({mutate: vi.fn(), isPending: false, error: null}),
   useArchivedMedia: (url?: string) => {if (url) mock.mediaUrls.push(url); return {data: undefined};},
+}));
+vi.mock('@/entities/video-template/api/videoTemplate.queries', () => ({
+  useVideoTemplates: () => ({data: {items: mock.videoTemplates, total: mock.videoTemplates.length, pinnedId: null},
+    isPending: false, error: null}),
 }));
 vi.mock('@/entities/template/api/replacement.queries', () => ({
   useReplacementCatalog: () => ({...mock.catalog, data: mock.catalogHidden ? undefined : mock.catalog.data}),
@@ -64,6 +71,7 @@ beforeEach(() => {
   mock.execute.mockReset();
   mock.manage.mockReset();
   mock.mediaUrls.length = 0;
+  mock.videoTemplates = [];
   mock.catalog.data.runs = [];
   mock.catalog.data.packs = [
     {id: 'character-pack', kind: 'character', name: '测试人物', referenceIds: ['image'], coverReferenceId: 'image'},
@@ -142,6 +150,46 @@ describe('替换模板工作台', () => {
     expect(screen.getByRole('dialog', {name: '核对替换任务'})).toHaveTextContent(secondId);
     expect(mock.execute).not.toHaveBeenCalled();
   });
+  it('列表与档案详情显示耗时，历史档案明确标「未记录」', () => {
+    mock.catalog.data.runs = [
+      {...run('success'), startedAt: '2026-11-05T00:00:00Z', finishedAt: '2026-11-05T00:02:05Z', elapsedSec: 125},
+      {...run('failed'), id: 'legacy', target: '历史人物'},
+    ];
+    render(<App />);
+    expect(screen.getByText(/耗时：2 分 5 秒/)).toBeVisible();
+    fireEvent.click(screen.getByRole('button', {name: /历史人物.*查看档案/}));
+    const dialog = screen.getByRole('dialog', {name: '调用档案'});
+    // 上线前的档案没有可信提交时刻：不拿创建时间冒充
+    expect(within(dialog).getByText(/耗时：未记录/)).toBeVisible();
+  });
+  it('档案里先给「本次实际提交的提示词」，归档路径明确标成排查用', () => {
+    /* 两行以前挨着、路径在上，读起来就像「提示词 = 那个 runs 目录」。
+       封装模板跑出来的任务还要自报来源，用户才敢相信跑的是自己写的那份。 */
+    mock.catalog.data.runs = [{
+      ...run('success'),
+      prompt: '固定提示词正文',
+      promptMode: 'fixed',
+      videoTemplateName: '三人高端姐 · 三人同款内衣替换',
+    }];
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', {name: /测试人物.*查看档案/}));
+    const dialog = screen.getByRole('dialog', {name: '调用档案'});
+    fireEvent.click(within(dialog).getByText('查看最终提示词与归档路径'));
+    expect(within(dialog).getByText('最终提示词（本次实际提交）')).toBeVisible();
+    expect(within(dialog).getByText(/来源：视频模板「三人高端姐 · 三人同款内衣替换」的固定提示词，逐字提交，未改写/)).toBeVisible();
+    expect(within(dialog).getByText(/归档路径（排查用，非本次提示词）：Z:\/runs\/run1/)).toBeVisible();
+  });
+
+  it('任务记录给固定提示词任务打标记，现编提示词的不打', () => {
+    mock.catalog.data.runs = [
+      {...run('success'), promptMode: 'fixed', videoTemplateName: '三人高端姐'},
+      {...run('success'), id: 'compiled-run', target: '现编人物'},
+    ];
+    render(<App />);
+    expect(screen.getAllByText('固定提示词')).toHaveLength(1);
+    expect(screen.getByTitle('固定提示词：三人高端姐')).toBeVisible();
+  });
+
   it('已准备任务从档案重新进入核对，不直接提交生成', () => {
     mock.catalog.data.runs = [{...run('prepared'), taskId: null}];
     render(<App />);
@@ -541,5 +589,83 @@ describe('替换模板工作台', () => {
     render(<App url="/templates?sourceId=source-third" />);
     expect(screen.getByRole('button', { name: '选择模板：第三原片' })).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getByRole('button', { name: '选择模板：测试原片' })).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('选中已封装的视频模板卡片：默认产品替换、带出绑定素材包、提示固定提示词生效', () => {
+    mock.videoTemplates = [{
+      id: 'tpl', templateKey: 'milan_night_3030_pink', name: '米兰之夜 · 3030 粉色',
+      description: '', prompt: '固定提示词 {{Mixed 1}} {{Mixed 3}}', promptSha256: 'abc',
+      sourceVideoName: '我穿的是米兰之夜模板测试.mp4', sourceVideoAssetId: 'source-template',
+      sourceVideoPath: '', sourceDurationSec: 5.31, aspectRatio: '9:16',
+      packId: 'product-pack', packName: '测试产品', packVersion: 1, defaultKind: 'product',
+      mediaOrder: [], generation: {}, rules: {}, coverUrl: '', pinned: true,
+      createdAt: '2026-11-09T07:00:00Z', updatedAt: '2026-11-09T07:00:00Z',
+    }];
+    render(<App />);
+    expect(screen.getByText('视频模板 · 产品替换')).toBeVisible();
+    fireEvent.click(screen.getByRole('button', {name: '选择模板：我穿的是米兰之夜模板测试.mp4'}));
+    expect(screen.getByRole('button', {name: '产品替换'})).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByLabelText('地址').textContent).toContain('kind=product');
+    expect(screen.getByLabelText('地址').textContent).toContain('packId=product-pack');
+    expect(screen.getByText(/已套用视频模板「米兰之夜 · 3030 粉色」/)).toBeVisible();
+  });
+
+  it('封装只有产品替换时，不显示其他功能或未声明的范围参数', () => {
+    mock.videoTemplates = [{
+      id: 'tpl', templateKey: 'milan_night_3030_pink', name: '米兰之夜 · 3030 粉色',
+      description: '', prompt: '固定提示词 {{Mixed 1}} {{Mixed 3}}', promptSha256: 'abc',
+      sourceVideoName: '我穿的是米兰之夜模板测试.mp4', sourceVideoAssetId: 'source-template',
+      sourceVideoPath: '', sourceDurationSec: 5.31, aspectRatio: '9:16',
+      packId: 'product-pack', packName: '测试产品', packVersion: 1, defaultKind: 'product',
+      mediaOrder: [], generation: {}, rules: {}, coverUrl: '', pinned: true,
+      createdAt: '2026-11-09T07:00:00Z', updatedAt: '2026-11-09T07:00:00Z',
+    }];
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', {name: '选择模板：我穿的是米兰之夜模板测试.mp4'}));
+    expect(screen.getByText(/已套用视频模板/)).toBeVisible();
+    expect(screen.queryByRole('button', {name: '人物替换'})).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', {name: '场景替换'})).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', {name: '替换范围'})).not.toBeInTheDocument();
+    expect(screen.getByRole('button', {name: '下一步：确认替换'})).toBeEnabled();
+  });
+
+  it('同一原片可有五个封装功能，选择时携带具体模板 ID', async () => {
+    mock.videoTemplates = Array.from({length: 5}, (_, index) => ({
+      id: `function-${index}`, templateKey: `function-${index}`, name: `封装${index}`,
+      description: '', prompt: '{{Mixed 1}} {{Mixed 2}}', promptSha256: 'abc',
+      sourceVideoName: '我穿的是米兰之夜模板测试.mp4', sourceVideoAssetId: 'source-template',
+      sourceVideoPath: '', sourceDurationSec: 5, aspectRatio: '9:16',
+      packId: 'product-pack', defaultKind: 'product', mediaOrder: [], generation: {},
+      rules: {workbenchLabel: `功能${index}`}, coverUrl: '', pinned: index === 0,
+      createdAt: '2026-11-09T07:00:00Z', updatedAt: '2026-11-09T07:00:00Z',
+    }));
+    render(<App url='/templates?sourceId=source-template&kind=scene' />);
+    const picker = screen.getByLabelText('替换类型');
+    expect(within(picker).getAllByRole('button')).toHaveLength(5);
+    fireEvent.click(within(picker).getByRole('button', {name: '功能4'}));
+    expect(screen.getByLabelText('地址')).toHaveTextContent('videoTemplateId=function-4');
+    mock.prepare.mockResolvedValue({...run('prepared'), kind: 'product'});
+    fireEvent.click(screen.getByRole('button', {name: '下一步：确认替换'}));
+    await vi.waitFor(() => expect(mock.prepare).toHaveBeenCalledWith(expect.objectContaining({
+      videoTemplateId: 'function-4', kind: 'product', replacementScope: '',
+    })));
+  });
+
+  it('深链接保留选中的封装功能，仅显示它声明的范围选项', () => {
+    mock.videoTemplates = ['a', 'b'].map(id => ({
+      id, templateKey: id, name: id, description: '',
+      prompt: '{{Mixed 1}} {{Mixed 2}} {{ReplacementScope}}', promptSha256: 'abc',
+      sourceVideoName: '我穿的是米兰之夜模板测试.mp4', sourceVideoAssetId: 'source-template',
+      sourceVideoPath: '', sourceDurationSec: 5, aspectRatio: '9:16', packId: 'product-pack',
+      defaultKind: 'product', mediaOrder: [], generation: {},
+      rules: {workbenchLabel: id, scopeOptions: id === 'b' ? ['只换前景', '全片替换'] : []},
+      coverUrl: '', pinned: false, createdAt: '2026-11-09T07:00:00Z', updatedAt: '2026-11-09T07:00:00Z',
+    }));
+    render(<App url='/templates?sourceId=source-template&videoTemplateId=b&kind=product&packId=product-pack' />);
+    expect(screen.getByRole('button', {name: 'b'})).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('checkbox', {name: '只换前景'})).toBeVisible();
+    expect(screen.queryByRole('checkbox', {name: '盒内可见产品'})).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', {name: 'a'}));
+    expect(screen.queryByRole('heading', {name: '替换范围'})).not.toBeInTheDocument();
   });
 });

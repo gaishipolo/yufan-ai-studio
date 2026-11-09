@@ -3,6 +3,7 @@ import {
   formatBytes,
   formatDateTime,
   formatDuration,
+  formatElapsed,
   formatNumber,
   formatRelative,
 } from './format';
@@ -16,6 +17,28 @@ describe('formatDuration', () => {
   it('超过 60 秒换算成分秒，整除时不带秒', () => {
     expect(formatDuration(80)).toBe('1m20s');
     expect(formatDuration(120)).toBe('2m');
+  });
+});
+
+describe('formatElapsed', () => {
+  it('不足一分钟只显示秒', () => {
+    expect(formatElapsed(0)).toBe('0 秒');
+    expect(formatElapsed(45)).toBe('45 秒');
+  });
+
+  it('分秒与整分钟', () => {
+    expect(formatElapsed(80)).toBe('1 分 20 秒');
+    expect(formatElapsed(120)).toBe('2 分');
+  });
+
+  it('超过一小时按小时收敛，秒不进位', () => {
+    expect(formatElapsed(3725)).toBe('1 小时 2 分');
+    expect(formatElapsed(3600)).toBe('1 小时');
+  });
+
+  it('负数与小数不产生「-1 秒」这类输出', () => {
+    expect(formatElapsed(-3)).toBe('0 秒');
+    expect(formatElapsed(59.9)).toBe('59 秒');
   });
 });
 

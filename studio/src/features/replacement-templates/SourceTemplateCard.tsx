@@ -10,10 +10,11 @@ interface SourceTemplateCardProps {
   video: ArchivedAsset;
   selected: boolean;
   disabled?: boolean;
+  badge?: string;
   onToggle: () => void;
 }
 
-export function SourceTemplateCard({ video, selected, disabled, onToggle }: SourceTemplateCardProps) {
+export function SourceTemplateCard({ video, selected, disabled, badge, onToggle }: SourceTemplateCardProps) {
   const [preview, setPreview] = useState(false);
   const duration = video.duration ?? 0;
   const width = video.width ?? 0;
@@ -38,6 +39,7 @@ export function SourceTemplateCard({ video, selected, disabled, onToggle }: Sour
         <ArchivedThumbnail url={video.previewUrl ? archivePreviewUrl(video.previewUrl) : null} type={video.type} />
         {preview && <SourceHoverPreview video={video} />}
         <span className="replacement-card-check">{selected && <Check size={13} />}</span>
+        {badge && <span className="replacement-card-badge">{badge}</span>}
         <span className="replacement-card-play"><Play size={18} fill="currentColor" /></span>
         <span className="replacement-card-duration">{duration.toFixed(1)}s</span>
         <span className="replacement-card-hint">{selected ? '已加入替换' : valid ? '悬停预览 · 点击选择' : '悬停预览 · 暂不可用'}</span>
