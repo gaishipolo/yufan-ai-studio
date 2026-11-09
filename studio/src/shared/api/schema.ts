@@ -492,6 +492,7 @@ export interface PrepareReplacement {
   kind: "character" | "product" | "scene";
   target?: string;
   sourceId: string;
+  videoTemplateId?: string | null;
   referenceIds?: string[];
   wardrobeMode?: "preserve" | "reference";
   replacementScope?: string;
@@ -622,7 +623,17 @@ export interface ReplacementRunOut {
   status: string;
   archivePath: string;
   createdAt: string;
+  /** 确认提交（进入排队）的时间，未开始为 null */
+  startedAt?: string | null;
+  /** 这一轮结束的时间；未结束为 null */
+  finishedAt?: string | null;
+  /** 确认提交到结束的耗时（秒）；未完成时按到此刻计，未开始为 null */
+  elapsedSec?: number | null;
   prompt: string;
+  /** fixed=封装视频模板时写死的原文，逐字提交；compiled=按素材与替换范围现编。展示层据此告诉用户「跑的就是你封装时那份提示词」。 */
+  promptMode?: "fixed" | "compiled";
+  /** fixed 时出自哪条视频模板；compiled 为 null */
+  videoTemplateName?: string | null;
   /** 统一展示名，列表/弹窗/任务中心共用 */
   displayTitle?: string;
   taskId?: string | null;
@@ -1011,6 +1022,105 @@ export interface ValidationError {
   ctx?: Record<string, unknown>;
 }
 
+/** 把样片登记后的 source 资产绑定到模板：绑定后它才是「全部模板」里可选的卡片。 */
+export interface VideoTemplateAttachSourceIn {
+  /** 素材库里 category=source 的 asset id */
+  sourceVideoAssetId: string;
+}
+
+/** 封装一条新的视频模板。
+
+`mediaOrder` 决定 mixedList 顺序（即 `{{Mixed N}}` 指向谁）：显式给出时按它拼，
+必须是原片在第 1 位、其余图片与素材包「同一批图」（可换序，不能换图/少图）；
+留空则由服务端按 `packId` 的包内顺序自动生成。 */
+export interface VideoTemplateDraftIn {
+  /** 模板名称 */
+  name: string;
+  /** 稳定标识，便于后续复制与导入 */
+  templateKey?: string;
+  /** 模板说明 */
+  description?: string;
+  /** 固定提示词原文，含 {{Mixed N}} 占位符 */
+  prompt: string;
+  /** 样片文件名 */
+  sourceVideoName?: string;
+  /** 样片在素材库中的 asset id */
+  sourceVideoAssetId?: string | null;
+  /** 样片本地路径（可选） */
+  sourceVideoPath?: string;
+  /** 样片真实时长，用于提示与档位说明 */
+  sourceDurationSec?: number;
+  /** 输出画幅 */
+  aspectRatio?: string;
+  /** 关联的已发布替换素材包 */
+  packId?: string | null;
+  /** 选中这张原片卡片时，替换配置默认切到的替换类型 */
+  defaultKind?: "character" | "product" | "scene";
+  /** 留空则由素材包顺序生成 */
+  mediaOrder?: VideoTemplateMedia[];
+  /** 生成参数，覆盖默认值 */
+  generation?: Record<string, unknown>;
+  /** 封装规则，覆盖默认值 */
+  rules?: Record<string, unknown>;
+  /** 封面地址 */
+  coverUrl?: string;
+  /** 是否设为固定蓝本（全库仅一个） */
+  pinned?: boolean;
+}
+
+/** VideoTemplateListOut */
+export interface VideoTemplateListOut {
+  items?: VideoTemplateOut[];
+  total?: number;
+  /** 当前固定蓝本的 id */
+  pinnedId?: string | null;
+}
+
+/** mixedList 里的一项；下标 +1 就是 {{Mixed N}} 编号。 */
+export interface VideoTemplateMedia {
+  /** 形如 {{Mixed 3}}，与所在下标严格对应 */
+  token: string;
+  /** source_video / front / multiview / detail 等用途 */
+  role?: string;
+  /** video / image / audio */
+  type?: string;
+  /** 素材库 asset id */
+  assetId?: string | null;
+  /** 素材显示名 */
+  name?: string;
+  /** 本地文件相对路径（可选） */
+  file?: string;
+  /** 是否被提示词显式引用 */
+  inPrompt?: boolean;
+}
+
+/** VideoTemplateOut */
+export interface VideoTemplateOut {
+  id: string;
+  templateKey: string;
+  name: string;
+  description: string;
+  prompt: string;
+  /** 提示词 sha256，防止文字被悄悄改掉 */
+  promptSha256: string;
+  sourceVideoName: string;
+  sourceVideoAssetId?: string | null;
+  sourceVideoPath: string;
+  sourceDurationSec: number;
+  aspectRatio: string;
+  packId?: string | null;
+  packName?: string;
+  packVersion?: number;
+  defaultKind?: "character" | "product" | "scene";
+  mediaOrder?: VideoTemplateMedia[];
+  generation?: Record<string, unknown>;
+  rules?: Record<string, unknown>;
+  coverUrl?: string;
+  pinned?: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
 /* --------------------- 接口 → data 类型（已解包封套） --------------------- */
 
 /** 键是 `METHOD path`，值是去掉 {code,message,data} 封套后的类型 */
@@ -1169,4 +1279,14 @@ export interface EndpointData {
   "POST /api/v1/templates/replacement-runs/{run_id}/restore": ReplacementRunOut;
   /** 保存人工验收，版本冲突需重新核对 */
   "PUT /api/v1/templates/replacement-runs/{run_id}/review": ReplacementRunOut;
+  /** 视频模板列表（固定蓝本优先） */
+  "GET /api/v1/templates/video-templates": VideoTemplateListOut;
+  /** 封装一条视频模板 */
+  "POST /api/v1/templates/video-templates": VideoTemplateOut;
+  /** 视频模板详情（含提示词与媒体顺序） */
+  "GET /api/v1/templates/video-templates/{template_id}": VideoTemplateOut;
+  /** 绑定样片原片资产 */
+  "POST /api/v1/templates/video-templates/{template_id}/attach-source": VideoTemplateOut;
+  /** 设为固定蓝本（全库仅一个） */
+  "POST /api/v1/templates/video-templates/{template_id}/pin": VideoTemplateOut;
 }

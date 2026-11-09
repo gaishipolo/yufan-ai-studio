@@ -499,6 +499,9 @@ module = ModuleSpec(name="voice", router=router, config=VoiceSettings)
    —— `api/tests/test_config_guard.py`
 2. ✅ `MEDIA_ARCHIVE_ROOT`、`LIBTV_LEGACY_ROOT` 默认改空串；改用 `DriverSettings` 承载，
    未配置时在使用处报错并点名配置项（`archive.py` / `libtv.py`）
+   > 后续（2026-11-09）：`LIBTV_LEGACY_ROOT` 已随固定版适配器入库
+   > （`api/src/infra/ai/libtv_runtime/vendor/`）而彻底删除，该驱动只保留
+   > `LIBTV_NODE` / `LIBTV_BROWSER_URL`。上文记录的是当时的整改动作。
 3. ✅ `generation_timeout_sec` 在 `runner._timed_out()` 真正生效，并加启动期一致性校验
 4. ✅ `EXTENDING.md` 的「新增供应商」一节改成准确表述，并补了「同步供应商怎么写」与
    「驱动配置写在驱动自己的文件里」

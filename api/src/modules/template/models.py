@@ -228,6 +228,12 @@ class ReplacementRun(Base, UUIDMixin, TimestampMixin):
     output_key: Mapped[str | None] = mapped_column(String(256), nullable=True)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    # 「确认提交 → 出片」的起止：只由 `run_clock` 写，别在状态赋值处另外记时间。
+    # `created_at` 回答不了这个问题——`prepared` 可以放几天再点确认；
+    # `updated_at` 更不行——评价、回收站、补积分都会推着它往后走。
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
     __table_args__ = (
         # 任务列表：我的 + 未删除 + 按时间倒序。这是最热的一条查询。
         Index(

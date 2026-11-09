@@ -22,6 +22,7 @@ from infra.ai.base import Capability, GenerationRequest
 from infra.ai.libtv import MODEL_ID
 from modules.template.models import ReplacementRun
 from modules.template.repository import RunRepository
+from modules.template.run_clock import set_status
 
 KIND_REPLACEMENT = "template_replacement"
 
@@ -73,6 +74,7 @@ class ReplacementStore:
             progress=run.progress_percent,
             error=run.last_error,
             created_at=run.created_at,
+            timeout_started_at=run.started_at,
             params={"archiveRunId": run.id},
             submit_attempts=run.submit_attempts,
             submit_mode=run.submit_mode,
@@ -104,7 +106,9 @@ class ReplacementStore:
     async def mark_submitted(self, record_id: str, external_id: str) -> None:
         def change(run: ReplacementRun) -> None:
             run.task_id = external_id.partition(":")[2]
-            run.status = "running"
+            # 正常路径上 `schedule_state` 已经把起点落了；恢复路径可能直接从
+            # `prepared` 提交过来，这里兜底补一次，别让一条真跑过的任务显示「未记录」。
+            set_status(run, "running")
             run.framework_status = "running"
             run.submit_attempts = 0
             run.last_error = None
@@ -122,7 +126,7 @@ class ReplacementStore:
         self, record_id: str, *, output_url: str | None, cover_url: str | None, progress: int = 100
     ) -> None:
         def change(run: ReplacementRun) -> None:
-            run.status = "success"
+            set_status(run, "success")
             run.framework_status = "success"
             run.progress_percent = 100
             run.last_error = None
@@ -134,13 +138,13 @@ class ReplacementStore:
             run.framework_status = "failed"
             run.last_error = error
             if run.submit_attempts > 0 and not run.task_id:
-                run.status = "submission_unknown"
+                set_status(run, "submission_unknown")
             elif run.status == "waiting_free":
                 return
             elif "占用" in error:
-                run.status = "waiting_executor"
+                set_status(run, "waiting_executor")
             else:
-                run.status = "failed" if run.task_id else "service_error"
+                set_status(run, "failed" if run.task_id else "service_error")
 
         await self._update(record_id, change)
 
