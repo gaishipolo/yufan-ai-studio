@@ -23,14 +23,21 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from typing import Any
 
-from sqlalchemy import ColumnElement, and_, or_, select
+from sqlalchemy import ColumnElement, and_, exists, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from core.context import CurrentUser
 from core.exceptions import NotFound
 from core.ports.org_directory import group_ids_of, group_names, user_names
-from modules.library.models import LibraryAsset, LibraryAssetGroup, LibraryGroupLeader
+from modules.library.models import (
+    LibraryAsset,
+    LibraryAssetGroup,
+    LibraryGroupLeader,
+    LibraryPackItem,
+)
 from modules.library.schema import LibraryTab
 
 __all__ = [
@@ -39,6 +46,7 @@ __all__ = [
     "asset_group_ids",
     "can_read",
     "group_names_for",
+    "hidden_by_pack_clause",
     "is_group_leader",
     "leader_group_ids",
     "load_asset",
@@ -59,7 +67,7 @@ async def all_groups(session: AsyncSession, actor: CurrentUser) -> list[str]:
 
 
 def active_visible_clause(
-    actor: CurrentUser, groups: Sequence[str]
+    actor: CurrentUser, groups: Sequence[str], asset: Any = LibraryAsset
 ) -> ColumnElement[bool]:
     """`state=active` 前提下「我能看到」的 SQL 条件。
 
@@ -67,24 +75,30 @@ def active_visible_clause(
     「我自己的」刻意只算 `visibility=personal`：一条素材共享出去之后，它在
     小组库里，个人库里不再重复出现——否则同一张图会在两个入口各出现一次，
     用户会以为是两份。
+
+    `asset` 用来换别名：判断「这条封装对我可见吗」时，条件要挂在 pack 的
+    `aliased(LibraryAsset)` 上，而不是外层那张表。
     """
-    group_branch = LibraryAsset.id.in_(
+    group_branch = asset.id.in_(
         select(LibraryAssetGroup.asset_id).where(
             LibraryAssetGroup.group_id.in_(list(groups))
         )
     )
     return or_(
         and_(
-            LibraryAsset.owner_id == actor.id,
-            LibraryAsset.visibility == "personal",
+            asset.owner_id == actor.id,
+            asset.visibility == "personal",
         ),
-        and_(LibraryAsset.visibility == "group", group_branch),
-        LibraryAsset.visibility == "team",
+        and_(asset.visibility == "group", group_branch),
+        asset.visibility == "team",
     )
 
 
 def tab_clause(
-    actor: CurrentUser, groups: Sequence[str], tab: LibraryTab
+    actor: CurrentUser,
+    groups: Sequence[str],
+    tab: LibraryTab,
+    asset: Any = LibraryAsset,
 ) -> ColumnElement[bool]:
     """一级入口 → 可见范围。**只负责可见范围，`state` 由调用方拼。**
 
@@ -92,21 +106,56 @@ def tab_clause(
     """
     if tab is LibraryTab.PERSONAL:
         return and_(
-            LibraryAsset.owner_id == actor.id,
-            LibraryAsset.visibility == "personal",
+            asset.owner_id == actor.id,
+            asset.visibility == "personal",
         )
     if tab is LibraryTab.TEAM:
-        return LibraryAsset.visibility == "team"
+        return asset.visibility == "team"
     if tab is LibraryTab.GROUP:
         return and_(
-            LibraryAsset.visibility == "group",
-            LibraryAsset.id.in_(
+            asset.visibility == "group",
+            asset.id.in_(
                 select(LibraryAssetGroup.asset_id).where(
                     LibraryAssetGroup.group_id.in_(list(groups))
                 )
             ),
         )
-    return active_visible_clause(actor, groups)
+    return active_visible_clause(actor, groups, asset)
+
+
+def hidden_by_pack_clause(
+    actor: CurrentUser, groups: Sequence[str], tab: LibraryTab | None = None
+) -> ColumnElement[bool]:
+    """「已经装进某个我能看到的封装」的成员行，`state=active` 列表里不再单独出现。
+
+    不这么做的话，封装完 3 条素材会变成 4 条（1 个封装 + 3 个原素材），用户会
+    以为封装是「又复制了一份」。
+
+    **必须带上「封装对我可见」这个条件**，不能只判 `library_pack_items` 里有行：
+    封装是封装者的视角。一条素材共享到团队后被我装进自己的个人封装，团队成员
+    仍该在团队库里看到它——否则别人会以为素材被删了，而且怎么找都找不到。
+
+    用 `tab` 传入口时按入口口径判（个人库里只认个人封装），传 `None` 用全量可见集
+    （分面角标就是全量口径）。
+    """
+    pack = aliased(LibraryAsset)
+    pack_visible = (
+        tab_clause(actor, groups, tab, asset=pack)
+        if tab is not None
+        else active_visible_clause(actor, groups, asset=pack)
+    )
+    packed = exists(
+        select(1)
+        .select_from(LibraryPackItem)
+        .join(pack, pack.id == LibraryPackItem.pack_id)
+        .where(
+            LibraryPackItem.asset_id == LibraryAsset.id,
+            pack.state == "active",
+            pack.deleted_at.is_(None),
+            pack_visible,
+        )
+    )
+    return ~packed
 
 
 def can_read(

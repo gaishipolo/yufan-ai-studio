@@ -26,12 +26,32 @@ from modules.library.models import LibraryAssetTag, LibraryTag
 from modules.library.schema import LibraryTagOut, TagIn
 
 __all__ = [
+    "PACK_TAG_NAME",
     "TagService",
     "add_asset_tags",
+    "ensure_tag",
     "remove_asset_tags",
     "set_asset_tags",
     "tag_ids_by_asset",
 ]
+
+#: 封装创建时自动打上的标签名。
+#:
+#: 为什么用标签而不是留一个 `kind=pack` 的筛选项：用户要的是「按封装找」这件事，
+#: 标签本来就可筛选、可改名、可组合，而 `kind` 是类型维度——把封装塞进类型筛选，
+#: 它会和「成片 / 图片 / 音频」并列，看起来像第四种素材，而它其实是个容器。
+PACK_TAG_NAME = "封装"
+
+
+async def ensure_tag(session: AsyncSession, name: str, created_by: str) -> LibraryTag:
+    """按名字取标签，没有就建。与 `TagService.create` 同一个幂等口径。"""
+    row = await session.scalar(select(LibraryTag).where(LibraryTag.name == name))
+    if row is not None:
+        return row
+    row = LibraryTag(name=name, created_by=created_by)
+    session.add(row)
+    await session.flush()
+    return row
 
 
 async def _ensure_tags_exist(session: AsyncSession, tag_ids: Sequence[str]) -> None:

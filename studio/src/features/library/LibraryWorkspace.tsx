@@ -41,7 +41,9 @@ import { ShareRequestsModal } from './ShareRequestsModal';
 import type { LibraryCardAction } from './LibraryCard';
 
 const PAGE_SIZE = 24;
-const KINDS = new Set(['all', 'video', 'image', 'audio', 'pack']);
+/* 不含 `pack`：类型筛选里没有「封装」这一档（见 KIND_OPTIONS 注释）。
+   老的 `?kind=pack` 链接会落到「全部」，而不是筛出一个空列表。 */
+const KINDS = new Set(['all', 'video', 'image', 'audio']);
 const SORTS = new Set(['-createdAt', 'createdAt', 'name', '-sizeBytes']);
 
 interface ConfirmState {

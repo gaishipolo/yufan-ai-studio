@@ -138,6 +138,9 @@ async def selection(
         kind=kind.value if kind else None,
         tag_ids=tag_ids,
         keyword=keyword,
+        # 选择器要能挑到封装里的原素材：封装的成员在这里不隐藏（列表里隐藏是
+        # 为了「封装后只剩一条」，选择器恰恰相反，挑的是要用的那条素材）。
+        hide_packed_members=False,
     )
     items = (
         result.items

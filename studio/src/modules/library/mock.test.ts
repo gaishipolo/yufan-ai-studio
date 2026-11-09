@@ -95,6 +95,53 @@ describe('资产库 mock · 列表与可见范围', () => {
   });
 });
 
+/**
+ * 封装的口径：封完只剩一条，成员的入口是「封装」标签而不是类型筛选。
+ *
+ * mock 与后端必须同一套语义，否则只看 mock 开发时页面是对的、接上后端就多出
+ * 三条重复素材。这里用运行时的 id 而不是写死 `a101`：种子会随用例改动而变号。
+ */
+describe('资产库 mock · 封装的口径', () => {
+  const activeItems = async () => {
+    const { body } = await call<LibraryAssetPage>('GET', '/library/assets', {
+      params: { state: 'active', pageSize: 50 },
+    });
+    return body.data.items ?? [];
+  };
+
+  it('封装后成员不再单列，封装自动带上「封装」标签', async () => {
+    const members = (await activeItems()).filter((item) => item.kind !== 'pack').slice(0, 2);
+    expect(members).toHaveLength(2);
+
+    const created = await call<LibraryAssetDetailOut>('POST', '/library/packs', {
+      data: { name: '口径用例封装', assetIds: members.map((item) => item.id) },
+    });
+    expect(created.status).toBe(200);
+    expect(created.body.data.tags?.some((tag) => tag.name === '封装')).toBe(true);
+
+    const ids = (await activeItems()).map((item) => item.id);
+    expect(ids).toContain(created.body.data.id);
+    expect(ids).not.toContain(members[0].id);
+    expect(ids).not.toContain(members[1].id);
+  });
+
+  it('选择器仍能挑到封装里的成员', async () => {
+    const packs = (await call<LibraryAssetPage>('GET', '/library/assets', {
+      params: { state: 'active', kind: 'pack' },
+    })).body.data.items ?? [];
+    expect(packs.length).toBeGreaterThan(0);
+
+    const detail = await call<LibraryAssetDetailOut>('GET', `/library/packs/${packs[0].id}`);
+    const memberId = detail.body.data.packItems?.[0]?.assetId;
+    expect(memberId).toBeTruthy();
+
+    const selection = await call<LibraryAssetPage>('GET', '/library/selection', {
+      params: { includePacks: false, pageSize: 50 },
+    });
+    expect((selection.body.data.items ?? []).map((item) => item.id)).toContain(memberId);
+  });
+});
+
 describe('资产库 mock · 写操作的语义', () => {
   it('撤销共享不填理由直接 400', async () => {
     const result = await failure('POST', '/library/share-requests', {

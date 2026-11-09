@@ -84,12 +84,18 @@ export function viewAllowsCreate(view: LibraryView): boolean {
   return view === 'personal';
 }
 
+/**
+ * 二级类型筛选。
+ *
+ * **刻意不含「封装」**：封装是容器，不是第四种素材。把它摆在这一排，会让人
+ * 以为它是和「成片 / 图片 / 音频」并列的类型；而且封装创建后自动带上「封装」
+ * 标签，按标签筛已经能找全，多一个入口只会两处口径。
+ */
 export const KIND_OPTIONS: ReadonlyArray<{ value: KindFilter; label: string }> = [
   { value: 'all', label: '全部' },
   { value: 'video', label: '成片' },
   { value: 'image', label: '图片' },
   { value: 'audio', label: '音频' },
-  { value: 'pack', label: '封装' },
 ];
 
 export const SORT_OPTIONS: ReadonlyArray<{ value: LibrarySortKey; label: string }> = [

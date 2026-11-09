@@ -148,12 +148,17 @@ class LibraryService:
         tag_ids: list[str] | None = None,
         keyword: str = "",
         sort: AssetSort = AssetSort.CREATED_DESC,
+        hide_packed_members: bool = True,
     ) -> LibraryAssetPage:
         """列表 + 分面。
 
         可见集按 `library` 与 `state` 两组条件拼：`state=draft/trash` 时**忽略**
         `library`（它们不在任何一个可见范围内，只属于本人），避免出现
         「草稿箱 + 团队」这种拼起来的空集让人以为权限出了问题。
+
+        `hide_packed_members`：active 列表里不单列「已装进封装」的成员（见
+        `access.hidden_by_pack_clause`）。选择器传 `False`——封装的成员本来就要
+        能被挑去生成，按列表口径把成员藏起来，会让那 3 个原素材在选择器里消失。
         """
         if state not in _STATES:
             state = "active"
@@ -165,6 +170,8 @@ class LibraryService:
                 LibraryAsset.deleted_at.is_(None),
                 access.tab_clause(actor, groups, library),
             )
+            if hide_packed_members:
+                query = query.where(access.hidden_by_pack_clause(actor, groups, library))
         elif state == "draft":
             # 代审范围：持 draft:review 的人能看到所有人的草稿；否则只看自己的
             if not actor.has(access.PERM_DRAFT_REVIEW):
@@ -575,6 +582,9 @@ class LibraryService:
                     LibraryAsset.state == "active",
                     LibraryAsset.deleted_at.is_(None),
                     access.active_visible_clause(actor, groups),
+                    # 与列表同口径：成员不单列，角标也不该把它算进去，
+                    # 否则「个人 4」点进去只看到 1 条。
+                    access.hidden_by_pack_clause(actor, groups),
                 )
                 .group_by(LibraryAsset.visibility)
             )

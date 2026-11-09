@@ -29,6 +29,10 @@ const TAGS: LibraryTagOut[] = [
   { id: 't3', name: '场景' },
 ];
 
+/** 封装自动带上的标签（后端 `PACK_TAG_NAME`）。类型筛选里没有「封装」这一档。 */
+const PACK_TAG: LibraryTagOut = { id: 't4', name: '封装' };
+TAGS.push(PACK_TAG);
+
 const GROUPS: LibraryGroupOut[] = [
   { id: 'g1', name: '品牌组', isLeader: true },
   { id: 'g2', name: '短视频组', isLeader: false },
@@ -224,6 +228,7 @@ function seed() {
     kind: 'pack',
     mimeType: 'application/x-directory',
     createdAt: iso(-2),
+    tags: [PACK_TAG],
     references: [],
   });
   pack.packItems = ASSETS.slice(0, 2).map((item, index) => ({
@@ -340,7 +345,8 @@ function visible(row: LibraryAssetDetailOut, library: string | undefined) {
 }
 
 function facets() {
-  const active = ASSETS.filter((row) => row.state === 'active');
+  const hidden = packedMemberIds();
+  const active = ASSETS.filter((row) => row.state === 'active' && !hidden.has(row.id));
   return {
     all: active.length,
     personal: active.filter((row) => row.visibility === 'personal' && row.ownerId === ME).length,
@@ -351,7 +357,22 @@ function facets() {
   };
 }
 
-function listOf(ctx: MockContext, withFacets: boolean) {
+/**
+ * 「已装进我能看到的封装」的成员 id。
+ *
+ * 与后端 `access.hidden_by_pack_clause` 同口径：封装后只剩一条，而不是
+ * 一个封装 + 三个原素材。选择器（`includePacks=false`）不走这里——那边要挑的
+ * 就是素材本身。
+ */
+function packedMemberIds(library?: string): Set<string> {
+  return new Set(
+    ASSETS.filter(
+      (row) => row.kind === 'pack' && row.state === 'active' && visible(row, library),
+    ).flatMap((row) => (row.packItems ?? []).map((item) => item.assetId)),
+  );
+}
+
+function listOf(ctx: MockContext, withFacets: boolean, hidePacked = true) {
   const params = ctx.params;
   const state = String(params.state ?? 'active');
   const library = params.library ? String(params.library) : undefined;
@@ -362,7 +383,14 @@ function listOf(ctx: MockContext, withFacets: boolean) {
     .filter(Boolean);
 
   let rows = ASSETS.filter((row) => row.state === state);
-  if (state === 'active') rows = rows.filter((row) => visible(row, library));
+  if (state === 'active') {
+    rows = rows.filter((row) => visible(row, library));
+    if (hidePacked) {
+      // 封装后成员不单列：与后端列表口径一致
+      const packed = packedMemberIds(library);
+      rows = rows.filter((row) => !packed.has(row.id));
+    }
+  }
   if (kind) rows = rows.filter((row) => row.kind === kind);
   if (keyword) rows = rows.filter((row) => row.name.toLowerCase().includes(keyword));
   if (tagIds.length) {
@@ -390,7 +418,13 @@ export const routes: MockRoute[] = [
     method: 'GET',
     pattern: /^\/library\/selection$/,
     handler: (ctx) => {
-      const page = listOf({ ...ctx, params: { ...ctx.params, state: 'active' } }, false);
+      /* 选择器不隐藏封装成员：挑的正是要被使用的那条素材（后端同口径，
+         `hide_packed_members=False`）。列表隐藏是为了「封装后只剩一条」。 */
+      const page = listOf(
+        { ...ctx, params: { ...ctx.params, state: 'active' } },
+        false,
+        false,
+      );
       const items = String(ctx.params.includePacks ?? 'true') === 'false'
         ? page.items.filter((item) => item.kind !== 'pack')
         : page.items;
@@ -618,7 +652,7 @@ export const routes: MockRoute[] = [
         name: String(ctx.body.name ?? '新封装'),
         kind: 'pack',
         mimeType: 'application/x-directory',
-        tags: [],
+        tags: [PACK_TAG],
         createdAt: nowIso(),
         sizeBytes: members.reduce((sum, item) => sum + (item.sizeBytes ?? 0), 0),
       });

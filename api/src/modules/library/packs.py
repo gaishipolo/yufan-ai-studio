@@ -38,7 +38,7 @@ from modules.library.schema import (
     PackItemIn,
     PackPatchIn,
 )
-from modules.library.tags import set_asset_tags
+from modules.library.tags import PACK_TAG_NAME, ensure_tag, set_asset_tags
 
 __all__ = ["PackService", "pack_cover_key"]
 
@@ -99,8 +99,12 @@ class PackService:
         self.session.add(pack)
         await self.session.flush()
         await self._write_items(pack.id, items)
-        if payload.tag_ids:
-            await set_asset_tags(self.session, pack.id, payload.tag_ids)
+        # 封装自动带上「封装」标签：类型筛选里不再有「封装」这一档，
+        # 找封装靠这个标签。用户自己选的标签照旧保留（服务层会去重）。
+        pack_tag = await ensure_tag(self.session, PACK_TAG_NAME, actor.id)
+        await set_asset_tags(
+            self.session, pack.id, [pack_tag.id, *(payload.tag_ids or [])]
+        )
         await self.session.commit()
         return await self._detail(pack.id, actor)
 

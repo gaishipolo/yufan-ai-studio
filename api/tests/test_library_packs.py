@@ -19,6 +19,7 @@ from library_support import (
     admin_headers,
     fetch_asset,
     fetch_pack_items,
+    insert_asset,
     make_user,
     upload_image,
 )
@@ -200,3 +201,170 @@ def test_bulk_pack_creates_one_pack_for_the_batch(client: TestClient, api: str) 
     detail = client.get(f"{api}/library/packs/{pack_id}", headers=owner_h).json()["data"]
     assert len(detail["packItems"]) == 2
     assert detail["name"] == "批量封装"
+
+
+# --------------------------------------------------------------------------- #
+# 封装在列表里「占一个位置」：成员不再单列
+# --------------------------------------------------------------------------- #
+#
+# 用户看到问题是：封了 3 个素材，列表里变成 4 条（1 个封装 + 3 个原素材），
+# 看起来像封装「又复制了一份」。下面这几条把口径钉在 SQL 上。
+
+
+def _list_ids(
+    client: TestClient,
+    api: str,
+    headers: dict[str, str],
+    *,
+    library: str = "personal",
+    kind: str | None = None,
+) -> list[str]:
+    params: dict[str, object] = {"library": library, "state": "active", "pageSize": 100}
+    if kind:
+        params["kind"] = kind
+    response = client.get(f"{api}/library/assets", params=params, headers=headers)
+    assert response.status_code == 200, response.text
+    return [row["id"] for row in response.json()["data"]["items"]]
+
+
+def test_packed_members_are_not_listed_separately(client: TestClient, api: str) -> None:
+    admin = admin_headers(client)
+    owner, owner_h = make_user(client, admin, LIB_RW)
+    first = upload_image(client, api, owner_h, name="pack-a.png", color="orchid")
+    second = upload_image(client, api, owner_h, name="pack-b.png", color="olive")
+    third = upload_image(client, api, owner_h, name="pack-c.png", color="coral")
+
+    before = _list_ids(client, api, owner_h)
+    assert {first["id"], second["id"], third["id"]} <= set(before)
+
+    pack = _create_pack(
+        client,
+        api,
+        owner_h,
+        {"name": "三视图", "assetIds": [first["id"], second["id"], third["id"]]},
+    ).json()["data"]
+
+    after = _list_ids(client, api, owner_h)
+    assert len(after) == len(before) - 2, "3 条成员 + 1 个封装 = 原来条数 - 2"
+    assert pack["id"] in after
+    assert not {first["id"], second["id"], third["id"]} & set(after)
+
+    # 角标与列表同口径，否则「个人 4」点进去只看到 1 条
+    facets = client.get(f"{api}/library/facets", headers=owner_h).json()["data"]
+    assert facets["personal"] == len(after)
+
+
+def test_members_come_back_after_pack_is_dissolved(client: TestClient, api: str) -> None:
+    """解散 = 封装进回收站，成员一行不动，并且要**立刻回到列表**。
+
+    隐藏是「按封装关系算出来的」而不是给成员打了标记，所以封装离开 active
+    的那一刻，成员自然重新出现——这条用例守的就是这个「自然」。
+    """
+    admin = admin_headers(client)
+    owner, owner_h = make_user(client, admin, LIB_RW)
+    first = upload_image(client, api, owner_h, name="dissolve-a.png", color="navy")
+    second = upload_image(client, api, owner_h, name="dissolve-b.png", color="teal")
+    pack = _create_pack(
+        client, api, owner_h, {"name": "待解散", "assetIds": [first["id"], second["id"]]}
+    ).json()["data"]
+
+    hidden = _list_ids(client, api, owner_h)
+    assert not {first["id"], second["id"]} & set(hidden)
+
+    assert client.delete(f"{api}/library/packs/{pack['id']}", headers=owner_h).status_code == 200
+
+    back = _list_ids(client, api, owner_h)
+    assert {first["id"], second["id"]} <= set(back)
+    assert pack["id"] not in back
+
+
+def test_member_shared_to_team_stays_visible_there(client: TestClient, api: str) -> None:
+    """隐藏必须限定在「封装对我可见」的入口里。
+
+    一条素材共享到团队后，被我装进**自己的个人封装**：团队成员仍要在团队库
+    看到它。只判 `library_pack_items` 有行的话，别人会以为素材被删了。
+
+    团队那条用 `insert_asset` 直接造（PATCH 不含可见性：变更一律走申请单）。
+    """
+    admin = admin_headers(client)
+    owner, owner_h = make_user(client, admin, LIB_RW)
+    mine = upload_image(client, api, owner_h, name="team-mine.png", color="khaki")
+    shared_id = insert_asset(
+        owner_id=owner["id"],
+        name="team-shared.png",
+        origin="upload",
+        state="active",
+        visibility="team",
+    )
+
+    pack = _create_pack(
+        client, api, owner_h, {"name": "个人封装", "assetIds": [mine["id"], shared_id]}
+    )
+    assert pack.status_code == 201, pack.text
+
+    team_ids = _list_ids(client, api, owner_h, library="team")
+    assert shared_id in team_ids, "团队库不该因为我个人的封装而看不到这条素材"
+    personal_ids = _list_ids(client, api, owner_h, library="personal")
+    assert mine["id"] not in personal_ids
+
+
+def test_pack_gets_the_pack_tag_automatically(client: TestClient, api: str) -> None:
+    """类型筛选里没有「封装」这一档，找封装靠这个标签。
+
+    标签是全局词表：两个封装共用同一条，不是每个封装各建一条同名的。
+    """
+    admin = admin_headers(client)
+    owner, owner_h = make_user(client, admin, LIB_RW)
+    first = upload_image(client, api, owner_h, name="tag-a.png", color="plum")
+    second = upload_image(client, api, owner_h, name="tag-b.png", color="wheat")
+
+    first_pack = _create_pack(
+        client, api, owner_h, {"name": "带标签 1", "assetIds": [first["id"]]}
+    ).json()["data"]
+    second_pack = _create_pack(
+        client, api, owner_h, {"name": "带标签 2", "assetIds": [second["id"]]}
+    ).json()["data"]
+
+    def pack_tag(pack: dict) -> str:
+        names = [tag["id"] for tag in pack.get("tags") or [] if tag["name"] == "封装"]
+        assert names, f"封装没有自动打上「封装」标签: {pack.get('tags')}"
+        return names[0]
+
+    assert pack_tag(first_pack) == pack_tag(second_pack)
+
+    # 按标签能筛出这两条（类型筛选已经不含封装，标签是唯一入口）
+    tag_id = pack_tag(first_pack)
+    response = client.get(
+        f"{api}/library/assets",
+        params={"library": "personal", "tagIds": [tag_id], "pageSize": 100},
+        headers=owner_h,
+    )
+    ids = {row["id"] for row in response.json()["data"]["items"]}
+    assert {first_pack["id"], second_pack["id"]} <= ids
+
+
+def test_selection_still_offers_packed_members(client: TestClient, api: str) -> None:
+    """选择器要能挑到封装里的原素材。
+
+    列表隐藏成员是为了「封装后只剩一条」，而选择器挑的恰恰就是那条要被使用的
+    素材；把列表口径套过去，那 3 个原素材就会在生成页里彻底消失。
+    """
+    admin = admin_headers(client)
+    owner, owner_h = make_user(client, admin, LIB_RW)
+    keyword = "sel-member"
+    member = upload_image(client, api, owner_h, name=f"{keyword}.png", color="silver")
+    other = upload_image(client, api, owner_h, name="sel-packmate.png", color="indigo")
+    _create_pack(
+        client, api, owner_h, {"name": "选择器封装", "assetIds": [member["id"], other["id"]]}
+    )
+
+    hidden = _list_ids(client, api, owner_h)
+    assert member["id"] not in hidden
+
+    response = client.get(
+        f"{api}/library/selection",
+        params={"keyword": keyword, "includePacks": "false"},
+        headers=owner_h,
+    )
+    ids = {row["id"] for row in response.json()["data"]["items"]}
+    assert member["id"] in ids
