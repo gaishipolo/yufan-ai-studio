@@ -17,8 +17,9 @@ from __future__ import annotations
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.context import CurrentUser
-from core.exceptions import AppError, BadRequest, Forbidden
+from core.exceptions import AppError, BadRequest, Forbidden, NotFound
 from infra.storage.base import ObjectStorage
+from modules.library import access
 from modules.library.lifecycle import LifecycleService
 from modules.library.schema import (
     AssetPatchIn,
@@ -131,6 +132,7 @@ class BulkService:
             tag_ids = self._str_list(data, "tagIds")
             if not tag_ids:
                 raise BadRequest("addTag 需要 payload.tagIds")
+            await self._require_writable(asset_id, actor)
             await add_asset_tags(self.session, asset_id, tag_ids)
             await self.session.commit()
             return
@@ -138,6 +140,7 @@ class BulkService:
             tag_ids = self._str_list(data, "tagIds")
             if not tag_ids:
                 raise BadRequest("removeTag 需要 payload.tagIds")
+            await self._require_writable(asset_id, actor)
             await remove_asset_tags(self.session, asset_id, tag_ids)
             await self.session.commit()
             return
@@ -196,3 +199,17 @@ class BulkService:
         if not isinstance(raw, list):
             raise BadRequest(f"payload.{key} 必须是数组")
         return [str(item) for item in raw if item]
+
+    async def _require_writable(self, asset_id: str, actor: CurrentUser) -> None:
+        """打标签前先过一遍「看得见 + 是我的（或有 delete:any）」。
+
+        与 `LibraryService.patch` 同一条线。不这么写的话，`addTag` 只要拿到
+        一个 id 就能给**别人的**资产写标签：标签是全局词表，一次越权写会同时
+        改到对方的组织信息，而返回结果里没有任何迹象。
+
+        改名/删除走各自的服务方法，本来就有这一步；只有标签是直接写关联表，
+        所以校验必须显式补在这里。
+        """
+        row = await access.load_visible(self.session, asset_id, actor)
+        if row.owner_id != actor.id and not actor.has(access.PERM_DELETE_ANY):
+            raise NotFound("资产不存在")

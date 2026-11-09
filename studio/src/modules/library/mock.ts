@@ -337,21 +337,36 @@ function toOut(row: LibraryAssetDetailOut): LibraryAssetOut {
   };
 }
 
+function inMyGroups(row: LibraryAssetDetailOut) {
+  return (row.groupIds ?? []).some((gid) => GROUPS.some((group) => group.id === gid));
+}
+
 function visible(row: LibraryAssetDetailOut, library: string | undefined) {
   if (library === 'personal') return row.visibility === 'personal' && row.ownerId === ME;
-  if (library === 'group') return row.visibility === 'group' && (row.groupIds ?? []).some((gid) => GROUPS.some((group) => group.id === gid));
+  if (library === 'group') return row.visibility === 'group' && inMyGroups(row);
   if (library === 'team') return row.visibility === 'team';
-  return row.ownerId === ME || row.visibility !== 'personal';
+  // 全部：我的（未共享）+ 共享到我所在小组的 + 团队。
+  // 不能写成 `ownerId === ME || visibility !== 'personal'`：那样别人共享到
+  // **我不在的**小组的资产也会出现（后端 `active_visible_clause` 不是这么判的）。
+  if (row.ownerId === ME && row.visibility === 'personal') return true;
+  if (row.visibility === 'team') return true;
+  return row.visibility === 'group' && inMyGroups(row);
+}
+
+/** 某个入口的可见条数。角标必须等于点进去的条数，所以按入口逐个算。 */
+function facetOf(library?: string) {
+  const hidden = packedMemberIds(library);
+  return ASSETS.filter(
+    (row) => row.state === 'active' && visible(row, library) && !hidden.has(row.id),
+  ).length;
 }
 
 function facets() {
-  const hidden = packedMemberIds();
-  const active = ASSETS.filter((row) => row.state === 'active' && !hidden.has(row.id));
   return {
-    all: active.length,
-    personal: active.filter((row) => row.visibility === 'personal' && row.ownerId === ME).length,
-    group: active.filter((row) => row.visibility === 'group').length,
-    team: active.filter((row) => row.visibility === 'team').length,
+    all: facetOf(undefined),
+    personal: facetOf('personal'),
+    group: facetOf('group'),
+    team: facetOf('team'),
     drafts: ASSETS.filter((row) => row.state === 'draft').length,
     trash: ASSETS.filter((row) => row.state === 'trash').length,
   };
@@ -372,7 +387,12 @@ function packedMemberIds(library?: string): Set<string> {
   );
 }
 
-function listOf(ctx: MockContext, withFacets: boolean, hidePacked = true) {
+function listOf(
+  ctx: MockContext,
+  withFacets: boolean,
+  hidePacked = true,
+  excludeKinds: string[] = [],
+) {
   const params = ctx.params;
   const state = String(params.state ?? 'active');
   const library = params.library ? String(params.library) : undefined;
@@ -392,6 +412,8 @@ function listOf(ctx: MockContext, withFacets: boolean, hidePacked = true) {
     }
   }
   if (kind) rows = rows.filter((row) => row.kind === kind);
+  // 排除某几类要在 `total` 之前：滤掉 items 之后再减总数，分页就会多出一页。
+  if (excludeKinds.length) rows = rows.filter((row) => !excludeKinds.includes(row.kind ?? ''));
   if (keyword) rows = rows.filter((row) => row.name.toLowerCase().includes(keyword));
   if (tagIds.length) {
     rows = rows.filter((row) => (row.tags ?? []).some((tag) => tagIds.includes(tag.id)));
@@ -420,15 +442,13 @@ export const routes: MockRoute[] = [
     handler: (ctx) => {
       /* 选择器不隐藏封装成员：挑的正是要被使用的那条素材（后端同口径，
          `hide_packed_members=False`）。列表隐藏是为了「封装后只剩一条」。 */
-      const page = listOf(
+      const includePacks = String(ctx.params.includePacks ?? 'true') !== 'false';
+      return listOf(
         { ...ctx, params: { ...ctx.params, state: 'active' } },
         false,
         false,
+        includePacks ? [] : ['pack'],
       );
-      const items = String(ctx.params.includePacks ?? 'true') === 'false'
-        ? page.items.filter((item) => item.kind !== 'pack')
-        : page.items;
-      return ({ ...page, items });
     },
   },
 

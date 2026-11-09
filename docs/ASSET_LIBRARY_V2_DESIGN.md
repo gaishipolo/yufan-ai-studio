@@ -591,3 +591,67 @@ app doctor | grep library.legacy_sync  # 部署自检里也有一份同样的结
 
 **回滚**：切换点仍是 `studio/src/modules/assets/module.ts` 的 `load()` 一行；
 v2 的表、字节、投影、权限、注入口全部独立，删掉模块不影响现役库。
+
+## 12. 上线前审查修掉的九处（2026-11-10）
+
+九处都不是新功能，而是**同一条规则写了两遍、其中一处漏了一半**，或者**一条脏数据
+能让整批停下**。前七条先写成会失败的用例再修，用例留在
+`api/tests/test_library_regressions.py`（7 例）。
+
+1. **批量打标签越权**（`bulk.py`）：`addTag` / `removeTag` 直接写关联表，没有
+   `load_visible` + owner 判定。任何持 `library:update` 的人拿到一个 id 就能改
+   **别人的**标签，返回里还显示成功。补 `_require_writable()`，与改名同一条线。
+2. **彻底删除误删共享字节**（`lifecycle.py`）：`others` 计数带了
+   `deleted_at IS NULL`。两个用户的同内容资产都在回收站时，先 purge 的那个判定
+   「没人引用」把文件删了，后恢复的那个取件 404。上游去重问的是「这条还在不在」，
+   这里问的是「还有谁引用这份字节」，两个问题不同，条件不能抄。
+3. **角标与列表口径不一致**（`service.py`）：四个入口原先共用一次
+   `active_visible_clause` 的 group by。把共享到小组的素材装进**自己的个人封装**时，
+   小组列表不隐藏它、角标却隐藏——显示 0，点进去 1 条。改成按入口各算一次
+   （`tab_clause` + `hidden_by_pack_clause(tab)`）。
+4. **选择器 total 虚高**（`service.py` / `router.py`）：`includePacks=false` 原先在
+   Python 里滤 items，`total` 仍是含封装的数，前端会算出多一页，最后一页点进去为空。
+   改成 `exclude_kinds` 落在 SQL 里。
+5. **回收站里的封装还能打包**（`downloads.py`）：`kind=pack` 分支写在
+   `_skip_reason` 之前，跳过了「回收站内容不可下载」。解散的封装照样展开成员进包——
+   等于解散没生效。拆出 `_state_skip_reason`（封装天生没有 `storage_key`，
+   不能套用那条「没有可下载的原文件」）。
+6. **`sourceKey` 跨用户串号**（`service.py` / `router.py`）：`?sourceKey=` 是客户端
+   可传的，而 `uq_library_assets_source_key` 是全局唯一、查询也不带 owner。别人用
+   同一个 key 上传会命中**你的**行：他的文件被静默丢弃，返回的 id 还是你的。
+   上传侧加 `upload:<actorId>:` 前缀按人隔离（生成侧的 `module:taskId` 不走这条
+   路径），参数上限相应从 160 降到 120（列宽 160，前缀 40）。
+7. **解散封装仍「保护」成员**（`references.py` / `lifecycle.py`）：引用检查不看封装
+   state，解散后成员彻底删除被挡在「封装 X 的成员」上——X 正是用户刚解散的那个，
+   界面上已经找不到。改成**只排除在回收站的封装**（不是「只算在库封装」：
+   指向不存在封装的孤儿行也要算引用，不可逆删除的最后一道闸查不清就当有人在用）。
+   同时补上「封装封面借用成员 `cover_key` / `storage_key`」这一层：字节真被删掉时
+   把指向它的封装封面置空，留占位图而不是裂图。
+
+8. **导入被一条脏数据打断**（`import_archive.py`）：`session.add` + `commit` 不在
+   try 里。旧库里某条字节恰好也被同一个人在 v2 里传过时，`uq_library_assets_owner_sha_kind`
+   会让整条命令中断——而观察期是每天跑一次的，每天都停在同一处，剩下的永远补不完。
+   捕 `IntegrityError` 后回滚这一条、记进 `skipped_existing`，继续下一条。
+9. **连续勾标签必然 409**（`LibraryDetail.tsx`）：标签选择器每勾一次提交一次，
+   而 `expectedVersion` 取自尚未刷新的 `asset`。第一个请求已经把它 +1，第二个
+   还带旧版本 → 「资产已被修改」，用户看到的是「打两个标签，第二个没生效」。
+   标签改动改为不带版本（整体替换的集合操作），改名仍带版本。
+
+顺带对齐 `mock.ts`：`visible()` 的「全部」口径原先写成
+`ownerId === ME || visibility !== 'personal'`，会把别人共享到**我不在的小组**的资产
+也放进来；现在与 `active_visible_clause` 同构，`facets()` 也改成按入口逐个算。
+
+**审查里看到、但这次没动的**（记录在这，避免下次重新发现一遍）：
+
+- `downloads._stage` 对远端驱动是 `storage.get()` 全量进内存，2GB 单文件会 OOM。
+  注释也这么写着，但接口层只有 `get() -> bytes`，要修得给 `ObjectStorage` 加流式下载，
+  影响面超出资产库。当前用本地驱动（零拷贝），暂无实际影响。
+- 被移出小组后，自己共享给该组的素材在列表里看不到（`active_visible_clause` 的
+  owner 分支只认 `visibility=personal`），但详情按 owner 仍可读。这是产品口径问题，
+  改它会让「共享出去的素材是否还在个人库出现」重新变成议题，不擅自定。
+- `ensure_tag` 并发建同名标签会撞唯一索引返回 500（两个用户同时建封装）。
+  根治要用 `begin_nested()` savepoint（直接 rollback 会把外层已 flush 的封装行一起回滚），
+  概率低、重试即恢复，先记着。
+- 审批通过时不校验申请单自带的 `expected_version`，一张等了很久的旧申请仍能落地。
+  实际只写 `visibility`，被改名/换标签不影响语义，危害小。
+

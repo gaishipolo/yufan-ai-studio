@@ -141,15 +141,13 @@ async def selection(
         # 选择器要能挑到封装里的原素材：封装的成员在这里不隐藏（列表里隐藏是
         # 为了「封装后只剩一条」，选择器恰恰相反，挑的是要用的那条素材）。
         hide_packed_members=False,
-    )
-    items = (
-        result.items
-        if include_packs
-        else [item for item in result.items if item.kind != "pack"]
+        # 排除封装要落在 SQL 里：这里再 `items = [x for x ...]` 滤一遍的话，
+        # `total` 仍是含封装的数，前端算出多一页。
+        exclude_kinds=() if include_packs else ("pack",),
     )
     return ApiResponse.ok(
         LibrarySelectionPage(
-            items=items,
+            items=result.items,
             total=result.total,
             page=result.page,
             page_size=result.page_size,
@@ -177,7 +175,9 @@ async def upload(
     service: LibraryServiceDep,
     filename: Annotated[str, Query(min_length=1, max_length=200)],
     kind: UploadKind = UploadKind.IMAGE,
-    source_key: Annotated[str | None, Query(alias="sourceKey", max_length=160)] = None,
+    # 120 而不是 160：服务层会给它加 `upload:<actorId>:` 前缀（40 字符）做
+    # 按人隔离，列宽是 160，加起来刚好。
+    source_key: Annotated[str | None, Query(alias="sourceKey", max_length=120)] = None,
 ) -> ApiResponse[LibraryAssetOut]:
     """只收图片与音频：视频走 `/source-videos`（模板库专用）。
 
@@ -216,7 +216,9 @@ async def upload_source_video(
     actor: LibraryCreateDep,
     service: LibraryServiceDep,
     filename: Annotated[str, Query(min_length=1, max_length=200)],
-    source_key: Annotated[str | None, Query(alias="sourceKey", max_length=160)] = None,
+    # 120 而不是 160：服务层会给它加 `upload:<actorId>:` 前缀（40 字符）做
+    # 按人隔离，列宽是 160，加起来刚好。
+    source_key: Annotated[str | None, Query(alias="sourceKey", max_length=120)] = None,
 ) -> ApiResponse[LibraryAssetOut]:
     """等价于旧 `POST /assets/upload?category=source`，只是路径与来源不同。
 

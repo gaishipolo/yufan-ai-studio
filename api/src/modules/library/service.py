@@ -149,6 +149,7 @@ class LibraryService:
         keyword: str = "",
         sort: AssetSort = AssetSort.CREATED_DESC,
         hide_packed_members: bool = True,
+        exclude_kinds: Sequence[str] = (),
     ) -> LibraryAssetPage:
         """列表 + 分面。
 
@@ -182,6 +183,10 @@ class LibraryService:
 
         if kind:
             query = query.where(LibraryAsset.kind == kind)
+        if exclude_kinds:
+            # 「排除某几类」必须落在 SQL 里：在 Python 里滤掉 items 之后
+            # `total` 还是原值，前端会算出多一页，最后一页点进去是空的。
+            query = query.where(LibraryAsset.kind.not_in(list(exclude_kinds)))
         if keyword:
             query = query.where(LibraryAsset.name.ilike(f"%{keyword}%"))
         if tag_ids:
@@ -423,11 +428,20 @@ class LibraryService:
         origin: str = "upload",
         source_key: str | None = None,
     ) -> LibraryAssetOut:
-        """流式上传。临时文件在 http 请求体内写满即落盘，300MB 不进内存。"""
+        """流式上传。临时文件在 http 请求体内写满即落盘，300MB 不进内存。
+
+        `source_key` 由客户端传，只表达「我重复传同一个文件别落两条」，没有
+        跨用户语义。但 `uq_library_assets_source_key` 是**全局**唯一、
+        `_by_source_key()` 也不带 owner：不隔离的话，别人用同一个 key 上传会
+        直接命中**你的**行——他的文件被静默丢弃，返回的 id 还是你的。
+        加 actor 前缀把上传的命名空间按人隔开；生成侧（`module:taskId`）的 key
+        不进这条路径，不受影响。
+        """
         extension = Path(filename).suffix.lower()
         mime = EXTENSIONS.get(extension)
         if mime is None or _kind_of(mime) != kind.value:
             raise LibraryFileTypeNotAllowed()
+        scoped_key = f"upload:{actor.id}:{source_key}" if source_key else None
         with tempfile.TemporaryDirectory(prefix="library-upload-") as folder:
             temporary = Path(folder) / f"source{extension}"
             size = await self._receive(temporary, chunks)
@@ -440,7 +454,7 @@ class LibraryService:
                 kind=kind.value,
                 actor=actor,
                 origin=origin,
-                source_key=source_key,
+                source_key=scoped_key,
             )
 
     # ------------------------------------------------------------------ 内部
@@ -570,30 +584,41 @@ class LibraryService:
     ) -> LibraryFacets:
         """六个角标。
 
-        前四个按 `visibility` 分组一次算完；草稿与回收站各一条 count。
-        管理员（`draft:review` / `delete:any`）看到的角标是全量的——否则
-        「待我审核」的入口显示 0，而实际有一堆在等。
+        四个可见范围**各自按自己的入口口径算**，与列表用的是同一对条件
+        （`tab_clause` + `hidden_by_pack_clause(tab)`）。不能图省事用一次
+        「全量可见集」的 group by 分发四个数字：我把一条共享到小组的素材装进
+        **自己的个人封装**时，小组列表不该隐藏它（个人封装在小组入口不可见），
+        而全量口径会隐藏——角标于是显示 0，点进去却有 1 条。
+
+        管理员（`draft:review` / `delete:any`）看到的草稿与回收站角标是全量的，
+        否则「待我审核」的入口显示 0，而实际有一堆在等。
         """
         facets = LibraryFacets()
-        rows = (
-            await self.session.execute(
-                select(LibraryAsset.visibility, func.count())
+
+        async def visible_count(tab: LibraryTab | None) -> int:
+            scope = (
+                access.active_visible_clause(actor, groups)
+                if tab is None
+                else access.tab_clause(actor, groups, tab)
+            )
+            query = (
+                select(func.count())
+                .select_from(LibraryAsset)
                 .where(
                     LibraryAsset.state == "active",
                     LibraryAsset.deleted_at.is_(None),
-                    access.active_visible_clause(actor, groups),
+                    scope,
                     # 与列表同口径：成员不单列，角标也不该把它算进去，
                     # 否则「个人 4」点进去只看到 1 条。
-                    access.hidden_by_pack_clause(actor, groups),
+                    access.hidden_by_pack_clause(actor, groups, tab),
                 )
-                .group_by(LibraryAsset.visibility)
             )
-        ).all()
-        for visibility, count in rows:
-            value = int(count)
-            facets.all += value
-            if visibility in ("personal", "group", "team"):
-                setattr(facets, visibility, getattr(facets, visibility) + value)
+            return int(await self.session.scalar(query) or 0)
+
+        facets.all = await visible_count(None)
+        facets.personal = await visible_count(LibraryTab.PERSONAL)
+        facets.group = await visible_count(LibraryTab.GROUP)
+        facets.team = await visible_count(LibraryTab.TEAM)
 
         draft_query = select(func.count()).where(LibraryAsset.state == "draft")
         if not actor.has(access.PERM_DRAFT_REVIEW):

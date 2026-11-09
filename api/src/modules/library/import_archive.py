@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from sqlalchemy import select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from infra.archive.base import ArchiveStorage
@@ -269,7 +270,17 @@ async def import_legacy_assets(
                 created_at=row.created_at,
             )
         )
-        await session.commit()
+        try:
+            await session.commit()
+        except IntegrityError:
+            # 唯一索引 `uq_library_assets_owner_sha_kind` 拦下的正常情况：
+            # 这份字节已经被同一个人在 v2 里传过（试用期手工上传过同一张图）。
+            # 一条撞索引就让整批停下，观察期每天重跑都停在同一处，等于这条命令
+            # 永远补不完剩下的。回滚这一条、按「已存在」记账，继续下一条。
+            await session.rollback()
+            report.skipped_existing += 1
+            logger.info("旧素材 %s 的字节已在 v2 里（同 owner 同 sha），跳过", row.id)
+            continue
         report.imported += 1
         report.bytes_copied += size_bytes
 

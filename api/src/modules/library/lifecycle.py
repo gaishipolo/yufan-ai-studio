@@ -23,7 +23,7 @@ import contextlib
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.audit import record as audit
@@ -296,6 +296,12 @@ class LifecycleService:
         digest, storage_key, cover_key = row.sha256, row.storage_key, row.cover_key
         # 内容寻址：同一份字节可能还被别人的行登记着，只有最后一个引用者
         # 才删物理文件。判断放在删除本行之前，删除之后我们自己就查不到了。
+        #
+        # **不能带 `deleted_at IS NULL`**：回收站里的行 deleted_at 恰好非空，
+        # 它们恢复之后还要用这份字节。带上这个条件的后果是「两个用户的同内容
+        # 资产都在回收站时，先彻底删除的那个把文件删了，后恢复的那个 404」——
+        # 上游去重（`_find_duplicate`）要的是「未删除」，这里要的是「还有人引用」，
+        # 两个问题不同，条件也就不能抄。
         others = 0
         if digest:
             others = int(
@@ -305,7 +311,6 @@ class LifecycleService:
                     .where(
                         LibraryAsset.sha256 == digest,
                         LibraryAsset.id != row.id,
-                        LibraryAsset.deleted_at.is_(None),
                     )
                 )
                 or 0
@@ -314,6 +319,21 @@ class LifecycleService:
         await self.session.execute(
             delete(LibraryAssetTag).where(LibraryAssetTag.asset_id == row.id)
         )
+        # 封装的封面借用成员的 `cover_key`（拿不到封面图时还借用 `storage_key`）。
+        # 字节真被删掉（others==0）时，这些封面会变成 404 的裂图——而封装本身
+        # 可能只是被解散、之后还要恢复。置空让前端回退到占位图：丢一张封面是
+        # 可恢复的，裂图不是。
+        borrowed = [key for key in (cover_key, storage_key) if key]
+        if borrowed and others == 0:
+            await self.session.execute(
+                update(LibraryAsset)
+                .where(
+                    LibraryAsset.kind == "pack",
+                    LibraryAsset.id != row.id,
+                    LibraryAsset.cover_key.in_(borrowed),
+                )
+                .values(cover_key="")
+            )
         await self.session.execute(
             delete(LibraryAssetGroup).where(LibraryAssetGroup.asset_id == row.id)
         )

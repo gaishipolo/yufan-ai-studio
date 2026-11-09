@@ -214,6 +214,16 @@ class DownloadService:
                 skipped.append(DownloadSkip(id=asset_id, reason="不存在或无权访问"))
                 continue
             if row.kind == "pack":
+                # 封装没有自己的字节，`_skip_reason` 最后那条「没有可下载的原文件」
+                # 对它是常态，所以这里只判状态。少了这一步，**回收站里的封装仍能
+                # 打包**：它的 `can_read` 对 owner 是 true，成员于是照常展开——
+                # 「解散」也就等于没解散。
+                state_reason = _state_skip_reason(row)
+                if state_reason:
+                    skipped.append(
+                        DownloadSkip(id=row.id, name=row.name, reason=state_reason)
+                    )
+                    continue
                 pack_ids.append(row.id)
                 continue
             reason = _skip_reason(row)
@@ -298,12 +308,23 @@ class DownloadService:
         )
 
 
-def _skip_reason(row: LibraryAsset) -> str:
-    """不能进包的原因。空串 = 可以打包。"""
+def _state_skip_reason(row: LibraryAsset) -> str:
+    """只看状态的原因。空串 = 状态上可以进包。
+
+    与 `_skip_reason` 拆开是因为封装要单独判：它天生没有 `storage_key`。
+    """
     if row.state == "draft":
         return "草稿未入库"
     if row.state == "trash":
         return "回收站内容不可下载"
+    return ""
+
+
+def _skip_reason(row: LibraryAsset) -> str:
+    """不能进包的原因。空串 = 可以打包。"""
+    reason = _state_skip_reason(row)
+    if reason:
+        return reason
     if not row.storage_key:
         return "没有可下载的原文件"
     return ""

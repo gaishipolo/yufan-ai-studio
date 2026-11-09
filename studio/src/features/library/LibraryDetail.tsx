@@ -122,9 +122,26 @@ function DetailBody({
     if (renaming) nameInput.current?.focus();
   }, [renaming]);
 
-  const save = (body: { name?: string; tagIds?: string[] }) => {
+  /**
+   * `expectedVersion` 默认带当前版本，但**标签改动不带**。
+   *
+   * 标签选择器是每勾一次就提交一次的整体替换，而 `asset` 要等 invalidate 后
+   * 重新拉取才更新：勾第二个标签时带的还是旧版本，服务端第一次已经把它 +1 了，
+   * 于是必然 409「资产已被修改」——用户看到的是「打两个标签，第二个没生效」。
+   * 改名仍带版本：那才是「两个人同时改同一行」该拦的场景。
+   */
+  const save = (
+    body: { name?: string; tagIds?: string[] },
+    options?: { versioned?: boolean },
+  ) => {
     patch.mutate(
-      { id: asset.id, body: { ...body, expectedVersion: asset.stateVersion ?? 0 } },
+      {
+        id: asset.id,
+        body: {
+          ...body,
+          expectedVersion: options?.versioned === false ? 0 : (asset.stateVersion ?? 0),
+        },
+      },
       {
         onSuccess: () => {
           setRenaming(false);
@@ -252,7 +269,7 @@ function DetailBody({
                   value={tagIds}
                   onChange={(values) => {
                     setTagIds(values);
-                    save({ tagIds: values });
+                    save({ tagIds: values }, { versioned: false });
                   }}
                   placeholder="未打标签"
                   emptyText="还没有标签"

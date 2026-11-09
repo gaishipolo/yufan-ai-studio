@@ -26,7 +26,7 @@ from collections.abc import Mapping, Sequence
 from sqlalchemy import String, cast, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from modules.library.models import LibraryDownloadJob, LibraryPackItem
+from modules.library.models import LibraryAsset, LibraryDownloadJob, LibraryPackItem
 
 __all__ = ["SqlLibraryReferences"]
 
@@ -46,9 +46,22 @@ class SqlLibraryReferences:
             return {}
         found: dict[str, list[str]] = {}
 
+        # 只把**已解散（在回收站）**的封装排除掉。解散后 `library_pack_items`
+        # 的行仍然留着（恢复时要原样回来），但它已经不是「用户还在用这个封装」——
+        # 把解散的也算成引用，成员就永远删不掉：提示「封装 X 的成员」，而 X 正是
+        # 用户刚解散的那一个，界面上已经找不到它。恢复封装后 state 回到 active，
+        # 引用随之重新生效。
+        #
+        # 判「不在回收站」而不是「在库」：指向不存在封装的孤儿行也要算引用。
+        # 这是不可逆删除的最后一道闸，查不清楚的一律当「有人在用」。
+        trashed_packs = select(LibraryAsset.id).where(
+            LibraryAsset.kind == "pack",
+            LibraryAsset.state == "trash",
+        )
         pack_rows = await session.execute(
             select(LibraryPackItem.pack_id, LibraryPackItem.asset_id).where(
-                LibraryPackItem.asset_id.in_(wanted)
+                LibraryPackItem.asset_id.in_(wanted),
+                LibraryPackItem.pack_id.not_in(trashed_packs),
             )
         )
         for pack_id, asset_id in pack_rows.all():
