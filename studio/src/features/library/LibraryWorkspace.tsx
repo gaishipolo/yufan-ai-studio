@@ -1,5 +1,5 @@
 import { useMemo, useState, type ReactNode } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { Download, PackageCheck } from 'lucide-react';
 import { Button, Chip, PageHeader, Pager } from '@/shared/ui';
 import { toast } from '@/shared/lib/toast';
@@ -87,6 +87,10 @@ export function LibraryWorkspace() {
   const canDeleteAny = useCan('library:delete:any');
   const canShareDirect = useCan('library:share:direct');
   const canShare = useCan('library:share');
+  /* 并存观察期：有旧库权限的人给一条回头路。
+     这里查 `asset:read` 而不是写死 true —— 只配了新库权限的账号点进去会 403，
+     那是个「看得见但用不了」的入口，比没有更糟。 */
+  const canReadLegacy = useCan('asset:read');
   const viewer = useMemo(
     () => ({ id: subject?.id ?? '', canDeleteAny }),
     [subject?.id, canDeleteAny],
@@ -432,6 +436,14 @@ export function LibraryWorkspace() {
         description="草稿箱、个人、小组、团队与回收站五个入口的统一资产库。可见性、共享审批与生命周期由后端判定，界面只少显示不该点的按钮。"
         actions={
           <>
+            {canReadLegacy && (
+              <Link
+                to="/assets"
+                className="text-[11.5px] font-medium text-ink-mute hover:text-primary"
+              >
+                旧版素材库
+              </Link>
+            )}
             <Button
               size="sm"
               variant="ghost"
@@ -440,7 +452,7 @@ export function LibraryWorkspace() {
             >
               打包任务
             </Button>
-            <Chip tone="ok">v2 · M4</Chip>
+            <Chip tone="ok">v2 · M5 观察期</Chip>
           </>
         }
       />

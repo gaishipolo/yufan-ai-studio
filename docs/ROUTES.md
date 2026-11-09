@@ -9,9 +9,9 @@
 
 | 路径 | 模块 | 外壳 | 权限 | 侧栏 | 宫格 |
 | --- | --- | --- | --- | --- | --- |
-| `/assets` | assets | shell | `asset:read` | 资产与数据 / 素材资产库 | ✓ |
+| `/assets` | assets | shell | `asset:read` | 资产与数据 / 素材资产库（旧版） | ✓ |
 | `/image` | image | shell | `image:read` | 创作 / 生图 | — |
-| `/library` | library | shell | `library:read` | 资产与数据 / 资产库 v2 | ✓ |
+| `/library` | library | shell | `library:read` | 资产与数据 / 资产库 | ✓ |
 | `/login` | auth | bare | — | — | — |
 | `/shots` | shots | shell | `shot:read` | 模板与镜头 / 镜头库 | — |
 | `/storyboards` | storyboards | shell | `storyboard:read` | 模板与镜头 / 分镜模板库 | — |
@@ -31,8 +31,8 @@
   - 分镜模板库 → `/storyboards`
   - 镜头库 → `/shots`
 - **资产与数据**（order 3）
-  - 素材资产库 → `/assets`
-  - 资产库 v2 → `/library`
+  - 资产库 → `/library`
+  - 素材资产库（旧版） → `/assets`
   - 任务中心 → `/tasks`
   - 用量看板 → `/usage`
 - **系统管理**（order 9）
