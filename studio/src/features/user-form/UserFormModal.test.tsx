@@ -105,8 +105,8 @@ describe('UserFormModal', () => {
 
       expect(screen.getByLabelText(/初始密码/)).toBeInTheDocument();
       expect(screen.getByRole('combobox', { name: '分组' })).toBeInTheDocument();
-      expect(screen.getByRole('combobox', { name: '角色' })).toBeInTheDocument();
-      // 原生下拉的浮层由浏览器渲染，弹窗里不会铺开复选框长列表
+      expect(screen.getByRole('button', { name: '角色' })).toBeInTheDocument();
+      // 角色多选下拉收起时不铺开复选框长列表
       expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
       expect(screen.queryByLabelText(/头像地址/)).not.toBeInTheDocument();
     });
@@ -169,14 +169,19 @@ describe('UserFormModal', () => {
       });
     });
 
-    it('单选分组和角色，提交时各带一个 id', async () => {
+    it('分组单选、角色可多选，提交时带上各自的 id', async () => {
       const user = userEvent.setup();
       renderModal(null, { roles: ROLES, groups: GROUPS });
 
       await user.type(screen.getByLabelText(/登录名/), 'Alice');
       await user.type(screen.getByLabelText(/初始密码/), 'alice12345');
       await user.selectOptions(screen.getByRole('combobox', { name: '分组' }), 'g_content');
-      await user.selectOptions(screen.getByRole('combobox', { name: '角色' }), 'r_editor');
+      await user.click(screen.getByRole('button', { name: '角色' }));
+      await user.click(screen.getByRole('checkbox', { name: /内容编辑/ }));
+      await user.click(screen.getByRole('checkbox', { name: /超级管理员/ }));
+      // 多选收起态只显示短摘要，不把名字全铺出来
+      expect(screen.getByRole('button', { name: '角色' })).toHaveTextContent('已选 2 项');
+      await user.keyboard('{Escape}');
 
       await submit(user);
 
@@ -184,18 +189,21 @@ describe('UserFormModal', () => {
       expect(mutations.create.mock.calls[0][0]).toMatchObject({
         username: 'alice',
         groupIds: ['g_content'],
-        roleIds: ['r_editor'],
+        roleIds: ['r_editor', 'r_admin'],
       });
     });
 
-    it('重新选择会替换旧值，不会累加成多项', async () => {
+    it('分组重新选择替换旧值，角色取消勾选会移除该项', async () => {
       const user = userEvent.setup();
       renderModal(null, { roles: ROLES, groups: GROUPS });
 
       await user.selectOptions(screen.getByRole('combobox', { name: '分组' }), 'g_content');
       await user.selectOptions(screen.getByRole('combobox', { name: '分组' }), 'g_ops');
-      await user.selectOptions(screen.getByRole('combobox', { name: '角色' }), 'r_editor');
-      await user.selectOptions(screen.getByRole('combobox', { name: '角色' }), 'r_admin');
+      await user.click(screen.getByRole('button', { name: '角色' }));
+      await user.click(screen.getByRole('checkbox', { name: /内容编辑/ }));
+      await user.click(screen.getByRole('checkbox', { name: /超级管理员/ }));
+      await user.click(screen.getByRole('checkbox', { name: /内容编辑/ }));
+      await user.keyboard('{Escape}');
 
       await user.type(screen.getByLabelText(/登录名/), 'alice');
       await user.type(screen.getByLabelText(/初始密码/), 'alice12345');
@@ -226,7 +234,7 @@ describe('UserFormModal', () => {
       renderModal(EXISTING, { roles: ROLES, groups: GROUPS });
 
       expect(screen.queryByLabelText(/初始密码/)).not.toBeInTheDocument();
-      expect(screen.queryByRole('combobox', { name: '角色' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: '角色' })).not.toBeInTheDocument();
       expect(screen.queryByRole('combobox', { name: '分组' })).not.toBeInTheDocument();
       expect(screen.getByLabelText(/头像地址/)).toHaveValue('https://cdn.example.com/e.png');
       expect(screen.getByLabelText(/登录名/)).toBeDisabled();

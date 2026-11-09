@@ -1,5 +1,14 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { Button, FormField, Modal, Select, TextInput, type SelectOption } from '@/shared/ui';
+import {
+  Button,
+  FormField,
+  Modal,
+  MultiSelect,
+  Select,
+  TextInput,
+  type MultiSelectOption,
+  type SelectOption,
+} from '@/shared/ui';
 import { toast } from '@/shared/lib/toast';
 import type { Role } from '@/entities/role/model/types';
 import type { Group } from '@/entities/group/model/types';
@@ -20,12 +29,12 @@ import type { User } from '@/entities/user/model/types';
  * `isEdit` 分支表达。编辑时改角色属于提权动作，走「分配角色」并单独受
  * `identity:role:manage` 约束；这里不碰。
  *
- * 分组与角色是**单选**的原生下拉，并放在表单顶部：Modal 容器有 `overflow-auto`，
- * 自定义浮层放在底部会被裁切、还会盖住提交按钮；原生 `<select>` 的选项层由浏览器
- * 渲染、不占文档流，浏览器在空间不足时自动向上展开，移到顶部后向下也有足够空间。
+ * 身份归属放在表单**第一行**：分组是单选原生 `<select>`，角色是可多选的
+ * `MultiSelect`。角色浮层是 absolute 向下展开的，放在顶部才有空间——放在底部会被
+ * `Modal` 的 `overflow-auto` 裁切、还盖住「取消 / 创建」按钮（见 M3.2）。
  *
- * 接口入参仍是数组（底层允许一人多组 / 多角色，由小组「成员」页签和「分配角色」
- * 弹窗维护），这里只提交 0 或 1 项 —— 建号入口按界面语义收敛为单选，不动后端契约。
+ * 接口入参仍是数组（一人可属多组 / 多角色）。这里分组只提交 0 或 1 项，
+ * 角色可以提交多项；不动后端契约，「分配角色」弹窗也仍可多选。
  */
 export function UserFormModal({
   open,
@@ -52,7 +61,7 @@ export function UserFormModal({
   const [phone, setPhone] = useState('');
   const [position, setPosition] = useState('');
   const [avatarUrl, setAvatarUrl] = useState('');
-  const [roleId, setRoleId] = useState('');
+  const [roleIds, setRoleIds] = useState<string[]>([]);
   const [groupId, setGroupId] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
 
@@ -66,25 +75,20 @@ export function UserFormModal({
     setPhone(user?.phone ?? '');
     setPosition(user?.position ?? '');
     setAvatarUrl(user?.avatarUrl ?? '');
-    setRoleId(user?.roles[0]?.id ?? '');
+    setRoleIds(user?.roles.map((role) => role.id) ?? []);
     setGroupId('');
     setFormError(null);
   }, [open, user]);
 
   const pending = createUser.isPending || updateUser.isPending;
 
-  // 首项是「不选」占位：单选下拉用空串表示未选，提交时映射回空数组。
-  const roleOptions: SelectOption[] = [
-    { value: '', label: '不分配角色' },
-    ...roles.map((role) => ({
-      value: role.id,
-      label: role.isSuperuser
-        ? `${role.name}（超管）`
-        : role.isBuiltin
-          ? `${role.name}（内置）`
-          : role.name,
-    })),
-  ];
+  const roleOptions: MultiSelectOption[] = roles.map((role) => ({
+    value: role.id,
+    label: role.name,
+    description: role.description || role.code,
+    badge: role.isSuperuser ? '超管' : role.isBuiltin ? '内置' : undefined,
+  }));
+  // 分组是单选原生下拉：首项用空串占位表示「不选」，提交时映射回空数组。
   const groupOptions: SelectOption[] = [
     { value: '', label: groups.length ? '不加入分组' : '暂无可选分组' },
     ...groups.map((group) => ({ value: group.id, label: group.name })),
@@ -147,7 +151,7 @@ export function UserFormModal({
         email: email.trim() || null,
         phone: phone.trim() || null,
         position: position.trim() || null,
-        roleIds: roleId ? [roleId] : [],
+        roleIds,
         groupIds: groupId ? [groupId] : [],
       },
       {
@@ -168,8 +172,8 @@ export function UserFormModal({
       width={520}
     >
       <form className="space-y-3 px-[18px] py-4" onSubmit={handleSubmit}>
-        {/* 身份归属放在最上面：下拉展开时下方有足够空间，不会像放在底部那样
-            被 Modal 的滚动容器裁切、也盖不到「取消 / 创建」按钮。 */}
+        {/* 身份归属放在最上面：角色的多选浮层向下展开时下方有足够空间，
+            不会像放在底部那样被 Modal 的滚动容器裁切、也盖不到「取消 / 创建」按钮。 */}
         {!isEdit && (
           <div className="grid gap-3 sm:grid-cols-2">
             <FormField
@@ -186,14 +190,16 @@ export function UserFormModal({
                 onChange={(event) => setGroupId(event.target.value)}
               />
             </FormField>
-            <FormField label="角色" htmlFor="user-role" hint="决定基础权限点">
-              <Select
+            <FormField label="角色" htmlFor="user-role" hint="可多选；决定基础权限点">
+              <MultiSelect
                 id="user-role"
-                block
+                ariaLabel="角色"
                 options={roleOptions}
-                value={roleId}
+                value={roleIds}
+                onChange={setRoleIds}
+                placeholder="不分配角色"
+                emptyText="还没有可用角色，请先在「角色与权限」页签创建"
                 disabled={pending}
-                onChange={(event) => setRoleId(event.target.value)}
               />
             </FormField>
           </div>
