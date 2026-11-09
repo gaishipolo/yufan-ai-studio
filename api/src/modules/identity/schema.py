@@ -101,6 +101,10 @@ class UserCreateIn(CamelModel):
     phone: str | None = Field(default=None, max_length=32, description="手机号，仅展示")
     position: str | None = Field(default=None, max_length=64, description="职务，仅展示")
     role_ids: list[str] = Field(default_factory=list, description="角色 id 列表，可留空")
+    group_ids: list[str] = Field(
+        default_factory=list,
+        description="建号时加入的小组 id 列表，可留空；小组不存在会报 404",
+    )
 
     @field_validator("username")
     @classmethod

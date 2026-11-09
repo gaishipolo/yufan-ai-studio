@@ -1,8 +1,8 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { Button, FormField, Modal, TextInput } from '@/shared/ui';
+import { Button, FormField, Modal, MultiSelect, TextInput, type MultiSelectOption } from '@/shared/ui';
 import { toast } from '@/shared/lib/toast';
-import { RoleCheckboxList } from '@/entities/role/ui/RoleCheckboxList';
 import type { Role } from '@/entities/role/model/types';
+import type { Group } from '@/entities/group/model/types';
 import { useCreateUser, useUpdateUser } from '@/entities/user/api/user.queries';
 import { UserAvatar } from '@/entities/user/ui/UserAvatar';
 import {
@@ -16,19 +16,25 @@ import type { User } from '@/entities/user/model/types';
 
 /**
  * 新建 / 编辑用户。
- * 复用一个弹窗是因为字段高度重合；两者差异（密码、角色只在创建时可填）用 `isEdit` 分支表达。
- * 角色不在这里改：那属于提权动作，走「分配角色」并单独受 `identity:role:manage` 约束。
+ * 复用一个弹窗是因为字段高度重合；两者差异（密码、角色、分组只在创建时可填）用
+ * `isEdit` 分支表达。编辑时改角色属于提权动作，走「分配角色」并单独受
+ * `identity:role:manage` 约束；这里不碰。
+ *
+ * 角色与分组都用多选下拉：收起时各占一行，展开才显示选项，避免原来
+ * 复选框长列表把弹窗撑到需要滚动。两者都支持多选（可挂多角色、可属多组）。
  */
 export function UserFormModal({
   open,
   user,
   roles,
+  groups,
   onClose,
 }: {
   open: boolean;
   /** 传入即编辑模式 */
   user?: User | null;
   roles: Role[];
+  groups: Group[];
   onClose: () => void;
 }) {
   const isEdit = Boolean(user);
@@ -43,6 +49,7 @@ export function UserFormModal({
   const [position, setPosition] = useState('');
   const [avatarUrl, setAvatarUrl] = useState('');
   const [roleIds, setRoleIds] = useState<string[]>([]);
+  const [groupIds, setGroupIds] = useState<string[]>([]);
   const [formError, setFormError] = useState<string | null>(null);
 
   // 每次打开都从传入值重置，避免上一次的残留（尤其是密码）
@@ -56,10 +63,23 @@ export function UserFormModal({
     setPosition(user?.position ?? '');
     setAvatarUrl(user?.avatarUrl ?? '');
     setRoleIds(user?.roles.map((role) => role.id) ?? []);
+    setGroupIds([]);
     setFormError(null);
   }, [open, user]);
 
   const pending = createUser.isPending || updateUser.isPending;
+
+  const roleOptions: MultiSelectOption[] = roles.map((role) => ({
+    value: role.id,
+    label: role.name,
+    description: role.description || role.code,
+    badge: role.isSuperuser ? '超管' : role.isBuiltin ? '内置' : undefined,
+  }));
+  const groupOptions: MultiSelectOption[] = groups.map((group) => ({
+    value: group.id,
+    label: group.name,
+    description: group.description || '暂无小组说明',
+  }));
 
   const handleSubmit = (event: FormEvent) => {
     event.preventDefault();
@@ -119,6 +139,7 @@ export function UserFormModal({
         phone: phone.trim() || null,
         position: position.trim() || null,
         roleIds,
+        groupIds,
       },
       {
         onSuccess: () => {
@@ -235,9 +256,32 @@ export function UserFormModal({
         )}
 
         {!isEdit && (
-          <FormField label="角色" hint="角色决定权限点；之后可在列表里单独调整">
-            <RoleCheckboxList roles={roles} value={roleIds} onChange={setRoleIds} disabled={pending} />
-          </FormField>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <FormField label="分组" htmlFor="user-group" hint="可多选；创建后可在小组里调整">
+              <MultiSelect
+                id="user-group"
+                ariaLabel="分组"
+                options={groupOptions}
+                value={groupIds}
+                onChange={setGroupIds}
+                placeholder="不加入分组"
+                emptyText="暂无可选分组，可先在左侧「新增分组」"
+                disabled={pending}
+              />
+            </FormField>
+            <FormField label="角色" htmlFor="user-role" hint="可多选；决定基础权限点">
+              <MultiSelect
+                id="user-role"
+                ariaLabel="角色"
+                options={roleOptions}
+                value={roleIds}
+                onChange={setRoleIds}
+                placeholder="不分配角色"
+                emptyText="还没有可用角色，请先在「角色与权限」页签创建"
+                disabled={pending}
+              />
+            </FormField>
+          </div>
         )}
 
         {formError && (

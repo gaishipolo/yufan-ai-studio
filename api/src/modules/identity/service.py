@@ -805,6 +805,25 @@ class IdentityService:
             # 建号时直接挂超管角色 = 造一个自己登进去就是超管的账号，
             # 必须和 set_user_roles 走同一道闸（R4-11 路径 C）
             await self._guard_role_grant(roles, actor)
+
+            # 建号顺带入组：一个请求一个事务，不搞「先建号再调 set_members」——
+            # 那会在第二步失败时留下一个没进组的半成品账号。
+            group_ids = list(dict.fromkeys(payload.group_ids))
+            groups = await self.layers.groups_by_ids(group_ids)
+            unknown = [gid for gid in group_ids if gid not in groups]
+            if unknown:
+                raise GroupNotFound(details={"unknown": unknown})
+            # 入组会让新账号立刻继承该组权限码，和挂角色是同一条红线：
+            # 不能借「给新人加组」授出操作者自己都没有的权限。
+            # 组自身的权限是别处设的（set_group_permissions 已有同一道闸），
+            # 这里只判断「这个组的操作者能不能碰」。
+            for group in groups.values():
+                self._guard_permission_grant(
+                    await self.layers.grants(SCOPE_GROUP, group.id),
+                    actor,
+                    what=f"小组 {group.name}",
+                )
+
             user = User(
                 username=payload.username,
                 display_name=payload.display_name or payload.username,
@@ -820,9 +839,10 @@ class IdentityService:
             self.session.add(user)
             await self.session.flush()
             await self.users.set_roles(user.id, [role.id for role in roles])
+            await self.layers.add_to_groups(user.id, group_ids)
             await self.session.commit()
 
-        logger.info("创建用户 %s（%s）", user.username, user.id)
+        logger.info("创建用户 %s（%s），加入 %d 个小组", user.username, user.id, len(group_ids))
         return UserOut(**_user_fields(user, roles))
 
     async def update_user(

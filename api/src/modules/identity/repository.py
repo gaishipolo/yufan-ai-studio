@@ -312,6 +312,23 @@ class PermissionLayerRepository:
             self.session.add(GroupMember(group_id=group_id, user_id=user_id))
         await self.session.flush()
 
+    async def add_to_groups(self, user_id: str, group_ids: Sequence[str]) -> None:
+        """建号时把新账号挂进若干小组。
+
+        只在「新建用户」路径调用：此刻 `user_id` 不可能已属于任何组，
+        所以是纯插入，不需要像 `set_members` 那样先清后插。小组的存在性由
+        service 在这一步之前用 `groups_by_ids()` 校验过。
+        """
+        if not group_ids:
+            return
+        self.session.add_all(
+            [
+                GroupMember(group_id=gid, user_id=user_id)
+                for gid in dict.fromkeys(group_ids)
+            ]
+        )
+        await self.session.flush()
+
     async def group_ids_for_user(self, user_id: str) -> list[str]:
         return list(
             await self.session.scalars(

@@ -1045,6 +1045,8 @@ export interface UserCreateIn {
   position?: string | null;
   /** 角色 id 列表，可留空 */
   roleIds?: string[];
+  /** 建号时加入的小组 id 列表，可留空；小组不存在会报 404 */
+  groupIds?: string[];
 }
 
 /** UserOut */

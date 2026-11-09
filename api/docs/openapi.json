@@ -9737,6 +9737,14 @@
             "type": "array",
             "title": "Roleids",
             "description": "角色 id 列表，可留空"
+          },
+          "groupIds": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Groupids",
+            "description": "建号时加入的小组 id 列表，可留空；小组不存在会报 404"
           }
         },
         "type": "object",

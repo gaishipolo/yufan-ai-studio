@@ -1,6 +1,8 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { Group } from '@/entities/group/model/types';
+import type { Role } from '@/entities/role/model/types';
 import type { User } from '@/entities/user/model/types';
 import { UserFormModal } from './UserFormModal';
 
@@ -24,8 +26,68 @@ const EXISTING: User = {
   roles: [{ id: 'r_editor', code: 'editor', name: '内容编辑', isSuperuser: false }],
 };
 
-const renderModal = (user?: User | null) =>
-  render(<UserFormModal open user={user} roles={[]} onClose={vi.fn()} />);
+const ROLES: Role[] = [
+  {
+    id: 'r_editor',
+    code: 'editor',
+    name: '内容编辑',
+    description: '内容生产全量',
+    isSuperuser: false,
+    isBuiltin: true,
+    sortOrder: 10,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    permissions: [],
+    userCount: 1,
+    orphanedPermissions: [],
+  },
+  {
+    id: 'r_admin',
+    code: 'admin',
+    name: '超级管理员',
+    description: '拥有全部权限',
+    isSuperuser: true,
+    isBuiltin: true,
+    sortOrder: 0,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    permissions: [],
+    userCount: 1,
+    orphanedPermissions: [],
+  },
+];
+
+const GROUPS: Group[] = [
+  {
+    id: 'g_content',
+    name: '内容组',
+    description: '模板与素材的编辑同学',
+    createdAt: '2026-02-01T00:00:00.000Z',
+    permissions: [],
+    memberIds: [],
+    memberCount: 0,
+  },
+  {
+    id: 'g_ops',
+    name: '运营组',
+    createdAt: '2026-02-02T00:00:00.000Z',
+    permissions: [],
+    memberIds: [],
+    memberCount: 0,
+  },
+];
+
+const renderModal = (
+  user?: User | null,
+  options: { roles?: Role[]; groups?: Group[] } = {},
+) =>
+  render(
+    <UserFormModal
+      open
+      user={user}
+      roles={options.roles ?? []}
+      groups={options.groups ?? []}
+      onClose={vi.fn()}
+    />,
+  );
 
 const submit = async (user: ReturnType<typeof userEvent.setup>) => {
   await user.click(screen.getByRole('button', { name: /创建|保存/ }));
@@ -38,11 +100,15 @@ describe('UserFormModal', () => {
   });
 
   describe('创建模式', () => {
-    it('初始密码与角色只在创建时出现，头像地址不出现（建号接口不接收）', () => {
+    it('初始密码、分组、角色只在创建时出现，头像地址不出现（建号接口不接收）', () => {
       renderModal();
 
       expect(screen.getByLabelText(/初始密码/)).toBeInTheDocument();
       expect(screen.getByText('角色')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: '分组' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: '角色' })).toBeInTheDocument();
+      // 两个下拉都收起，选项不会铺满弹窗
+      expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
       expect(screen.queryByLabelText(/头像地址/)).not.toBeInTheDocument();
     });
 
@@ -99,16 +165,57 @@ describe('UserFormModal', () => {
         username: 'alice',
         password: 'alice12345',
         email: null,
+        groupIds: [],
+        roleIds: [],
       });
+    });
+
+    it('从下拉里选分组和角色，提交时带上各自的 id（可多选）', async () => {
+      const user = userEvent.setup();
+      renderModal(null, { roles: ROLES, groups: GROUPS });
+
+      await user.type(screen.getByLabelText(/登录名/), 'Alice');
+      await user.type(screen.getByLabelText(/初始密码/), 'alice12345');
+
+      await user.click(screen.getByRole('button', { name: '分组' }));
+      await user.click(screen.getByRole('checkbox', { name: /内容组/ }));
+      await user.click(screen.getByRole('checkbox', { name: /运营组/ }));
+      // 点另一个下拉会先关掉前一个：两个浮层不能同时开着
+      await user.click(screen.getByRole('button', { name: '角色' }));
+      await user.click(screen.getByRole('checkbox', { name: /内容编辑/ }));
+      expect(screen.getByRole('button', { name: '分组' })).toHaveTextContent('已选 2 项');
+
+      await submit(user);
+
+      expect(mutations.create).toHaveBeenCalledTimes(1);
+      expect(mutations.create.mock.calls[0][0]).toMatchObject({
+        username: 'alice',
+        groupIds: ['g_content', 'g_ops'],
+        roleIds: ['r_editor'],
+      });
+    });
+
+    it('没有分组时下拉给出空态，不影响创建', async () => {
+      const user = userEvent.setup();
+      renderModal(null, { roles: ROLES });
+
+      await user.click(screen.getByRole('button', { name: '分组' }));
+      expect(screen.getByText(/暂无可选分组/)).toBeInTheDocument();
+
+      await user.type(screen.getByLabelText(/登录名/), 'alice');
+      await user.type(screen.getByLabelText(/初始密码/), 'alice12345');
+      await submit(user);
+      expect(mutations.create).toHaveBeenCalledTimes(1);
     });
   });
 
   describe('编辑模式', () => {
-    it('隐藏密码与角色，回填头像地址', () => {
-      renderModal(EXISTING);
+    it('隐藏密码、分组与角色，回填头像地址', () => {
+      renderModal(EXISTING, { roles: ROLES, groups: GROUPS });
 
       expect(screen.queryByLabelText(/初始密码/)).not.toBeInTheDocument();
       expect(screen.queryByLabelText('角色')).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: '分组' })).not.toBeInTheDocument();
       expect(screen.getByLabelText(/头像地址/)).toHaveValue('https://cdn.example.com/e.png');
       expect(screen.getByLabelText(/登录名/)).toBeDisabled();
     });

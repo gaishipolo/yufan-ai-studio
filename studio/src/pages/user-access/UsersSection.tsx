@@ -8,6 +8,7 @@ import { formatDateTime, formatRelative } from '@/shared/lib/format';
 import { toast } from '@/shared/lib/toast';
 import { useDebouncedValue } from '@/shared/hooks/useDebouncedValue';
 import { useRoleList } from '@/entities/role/api/role.queries';
+import { useGroupList } from '@/entities/group/api/group.queries';
 import { useUpdateUser, useUserList } from '@/entities/user/api/user.queries';
 import { displayNameOf, type User } from '@/entities/user/model/types';
 import { UserAvatar } from '@/entities/user/ui/UserAvatar';
@@ -71,6 +72,10 @@ export function UsersSection() {
   const debouncedPhone = useDebouncedValue(phone);
 
   const rolesQuery = useRoleList();
+  // 左栏 GroupPanel 也查这份列表，React Query 按 key 共享，不会发两次请求。
+  // 建号弹窗要列出「已有分组」，没有 identity:group:read 时 data 为 undefined，
+  // 下拉会显示空态而不是报错 —— 建号本身不该被分组读取权限卡住。
+  const groupsQuery = useGroupList();
   const usersQuery = useUserList({
     page,
     pageSize,
@@ -390,6 +395,7 @@ export function UsersSection() {
         open={dialog === 'create' || dialog === 'edit'}
         user={dialog === 'edit' ? active : null}
         roles={rolesQuery.data ?? []}
+        groups={groupsQuery.data ?? []}
         onClose={close}
       />
       <AssignRolesModal

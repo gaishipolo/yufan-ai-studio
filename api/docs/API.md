@@ -797,6 +797,7 @@ Authorization: Bearer <accessToken>
 | `phone` | `string \| null` | 否 | 手机号，仅展示 |
 | `position` | `string \| null` | 否 | 职务，仅展示 |
 | `roleIds` | `string[]` | 否 | 角色 id 列表，可留空 |
+| `groupIds` | `string[]` | 否 | 建号时加入的小组 id 列表，可留空；小组不存在会报 404 |
 
 **响应** `ApiResponse<UserOut>`（前端取 `res.data`）
 
@@ -3325,6 +3326,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `phone` | `string \| null` | 否 | 手机号，仅展示 |
 | `position` | `string \| null` | 否 | 职务，仅展示 |
 | `roleIds` | `string[]` | 否 | 角色 id 列表，可留空 |
+| `groupIds` | `string[]` | 否 | 建号时加入的小组 id 列表，可留空；小组不存在会报 404 |
 
 ### `UserOut`
 

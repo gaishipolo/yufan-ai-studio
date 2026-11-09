@@ -397,6 +397,9 @@ export const routes: MockRoute[] = [
 
       const roleIds = Array.isArray(ctx.body.roleIds) ? (ctx.body.roleIds as string[]) : [];
       for (const id of roleIds) findRole(id);
+      // 与后端 UserCreateIn.groupIds 同口径：去重、不存在报 404、创建后立刻入组
+      const groupIds = [...new Set(Array.isArray(ctx.body.groupIds) ? (ctx.body.groupIds as string[]) : [])];
+      for (const id of groupIds) findGroup(id);
 
       const created: MockUser = {
         id: `u_${++seq}`,
@@ -412,6 +415,10 @@ export const routes: MockRoute[] = [
         roleIds,
       };
       users.unshift(created);
+      for (const id of groupIds) {
+        const group = findGroup(id);
+        if (!group.memberIds.includes(created.id)) group.memberIds.push(created.id);
+      }
       return toUserOut(created);
     },
   },

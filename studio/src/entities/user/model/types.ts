@@ -10,7 +10,7 @@
  * 收窄写进类型，等于把「一定发」变成编译期断言 —— 后端哪天真不发了，
  * 读取处会直接报错，而不是在运行时变成 `undefined` 让权限判定失准。
  */
-import type { MeOut, RoleBriefOut, UserOut } from '@/shared/api/schema';
+import type { MeOut, RoleBriefOut, UserCreateIn, UserOut } from '@/shared/api/schema';
 
 /** 把 `K` 里的字段从可选改成必填，其余原样保留 */
 type RequiredFields<T, K extends keyof T> = Omit<T, K> & Required<Pick<T, K>>;
@@ -50,19 +50,14 @@ export interface UserListResult {
   pageSize: number;
 }
 
-/** `POST /identity/users` 入参 */
-export interface CreateUserPayload {
-  username: string;
-  /** 至少 10 位、不能纯数字（后端策略） */
-  password: string;
-  displayName?: string;
-  email?: string | null;
-  /** 仅展示，不参与业务校验（Q1 待确认，当前按可选字符串） */
-  phone?: string | null;
-  /** 仅展示 */
-  position?: string | null;
-  roleIds?: string[];
-}
+/**
+ * `POST /identity/users` 入参 —— 直接派生自生成物 `UserCreateIn`，别手抄：
+ * 后端给建号接口加字段（如 `groupIds`）时，手抄版本不会报错，只会在运行时
+ * 悄悄丢掉这个字段，症状是「界面选了但没生效」。
+ *
+ * 口令规则：至少 10 位、不能纯数字（后端策略，前端 `validation.ts` 同源校验）。
+ */
+export type CreateUserPayload = UserCreateIn;
 
 /** `PATCH /identity/users/{id}` 入参：只传要改的字段 */
 export interface UpdateUserPayload {

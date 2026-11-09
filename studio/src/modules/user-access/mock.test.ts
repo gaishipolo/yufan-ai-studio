@@ -404,4 +404,37 @@ describe('mock adapter · 团队 / 小组 / 个人三层授权', () => {
     });
     await call('put', '/identity/users/u_002/permissions', { data: { permissions: ['asset:update'] } });
   });
+
+  it('建号带 groupIds 会立刻入组并继承组权限；未知小组 404', async () => {
+    const created = await call<User>('post', '/identity/users', {
+      data: {
+        username: 'joiner_bot',
+        password: 'join@123456',
+        // 重复 id 只应插入一条成员
+        groupIds: ['g_content', 'g_content'],
+      },
+    });
+    expect(created.status).toBe(201);
+    const userId = (created.body.data as User).id;
+
+    const members = await call<User[]>('get', '/identity/groups/g_content/members');
+    expect((members.body.data as User[]).filter((user) => user.id === userId)).toHaveLength(1);
+
+    const detail = await call<{
+      groups: { id: string }[];
+      effective: string[];
+    }>('get', `/identity/users/${userId}/effective-permissions`);
+    expect(detail.body.data?.groups.map((group) => group.id)).toContain('g_content');
+    expect(detail.body.data?.effective).toContain('asset:create');
+
+    const missing = await expectFailure('post', '/identity/users', {
+      username: 'ghost_joiner',
+      password: 'join@123456',
+      groupIds: ['g_ghost'],
+    });
+    expect(missing.status).toBe(404);
+
+    // 复原：别让后面的用例依赖这个新成员
+    await call('put', '/identity/groups/g_content/members', { data: { userIds: ['u_002'] } });
+  });
 });

@@ -21,6 +21,7 @@ from sqlalchemy import delete
 from test_identity_api import _admin, _make_user
 
 from db.session import get_session_factory
+from modules.identity.errors import GroupNotFound, PermissionEscalation
 from modules.identity.models import Group, GroupMember, PermissionGrant
 from modules.identity.permissions import (
     SCOPE_TEAM,
@@ -268,3 +269,102 @@ def test_user_list_filters_and_contact_fields(client: TestClient) -> None:
         f"{API}/users", params={"name": "通讯录"}, headers=admin
     ).json()["data"]
     assert [item["id"] for item in by_name["items"]] == [user["id"]]
+
+
+# --------------------------------------------------------------------------- #
+# 建号时直接选分组（UserCreateIn.groupIds）
+# --------------------------------------------------------------------------- #
+def test_create_user_can_join_groups_and_inherits_group_permissions(
+    client: TestClient,
+) -> None:
+    admin = _admin(client)
+    group = _create_group(client, admin, "建号入组-" + _suffix())
+    granted = client.put(
+        f"{API}/groups/{group['id']}/permissions",
+        json={"permissions": ["template:use"]},
+        headers=admin,
+    )
+    assert granted.status_code == 200, granted.text
+
+    created = client.post(
+        f"{API}/users",
+        json={
+            "username": f"joiner_{_suffix()}",
+            "password": "pass-12345",
+            # 前端下拉去重后不会传重复 id，但后端也不能因此插入两条成员
+            "groupIds": [group["id"], group["id"]],
+        },
+        headers=admin,
+    )
+    assert created.status_code == 201, created.text
+    user_id = created.json()["data"]["id"]
+
+    members = client.get(
+        f"{API}/groups/{group['id']}/members", headers=admin
+    ).json()["data"]
+    assert [item["id"] for item in members].count(user_id) == 1
+
+    effective = client.get(
+        f"{API}/users/{user_id}/effective-permissions", headers=admin
+    ).json()["data"]
+    assert "template:use" in effective["effective"]
+    assert any(layer["id"] == group["id"] for layer in effective["groups"])
+
+    # 不传 groupIds 的老调用仍是「不进任何组」
+    plain = client.post(
+        f"{API}/users",
+        json={"username": f"plain_{_suffix()}", "password": "pass-12345"},
+        headers=admin,
+    )
+    assert plain.status_code == 201, plain.text
+    assert (
+        client.get(
+            f"{API}/users/{plain.json()['data']['id']}/effective-permissions",
+            headers=admin,
+        )
+        .json()["data"]["groups"]
+        == []
+    )
+
+
+def test_create_user_rejects_unknown_group(client: TestClient) -> None:
+    admin = _admin(client)
+    created = client.post(
+        f"{API}/users",
+        json={
+            "username": f"unknown_group_{_suffix()}",
+            "password": "pass-12345",
+            "groupIds": ["g_does_not_exist"],
+        },
+        headers=admin,
+    )
+    assert created.status_code == 404
+    assert created.json()["code"] == GroupNotFound.code
+    assert created.json()["details"]["unknown"] == ["g_does_not_exist"]
+
+
+def test_create_user_cannot_join_a_group_above_the_actor(client: TestClient) -> None:
+    """建号入组和建号挂角色是同一条提权红线：不能把新人塞进比自己强的组。"""
+    admin = _admin(client)
+    group = _create_group(client, admin, "高权限组-" + _suffix())
+    granted = client.put(
+        f"{API}/groups/{group['id']}/permissions",
+        json={"permissions": ["template:use"]},
+        headers=admin,
+    )
+    assert granted.status_code == 200, granted.text
+
+    _, limited, _ = _make_user(
+        client, admin, f"creator_{_suffix()}", ["identity:create"]
+    )
+    created = client.post(
+        f"{API}/users",
+        json={
+            "username": f"limited_joiner_{_suffix()}",
+            "password": "pass-12345",
+            "groupIds": [group["id"]],
+        },
+        headers=limited,
+    )
+    assert created.status_code == 403
+    assert created.json()["code"] == PermissionEscalation.code
