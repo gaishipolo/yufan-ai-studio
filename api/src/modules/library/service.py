@@ -1,19 +1,21 @@
-"""资产库 v2 领域服务（M1：上传 / 秒传 / 幂等 / 列表 / 取件）。
+"""资产库 v2 服务（M2：三层可见集 + 改名换标签 + 取件）。
 
-## M1 的边界
+拆分边界（M2 之后）：
 
-只做「个人库」这一条竖线：上传、按内容去重、`sourceKey` 幂等、列表与分面、
-取件。可见性判定（小组 / 团队）、共享审批、草稿与回收站状态机在 M2，
-它会把 `_visible_query()` 换成三层可见集，其余方法不动。
+- 本文件：**读**（列表 / 分面 / 详情 / 取件）与**上传**、改名换标签；
+- `sharing.py`：共享 / 撤销审批、组长映射；
+- `lifecycle.py`：草稿与回收站状态机、删除矩阵（含 3.4.1 窄口）；
+- `tags.py`：标签 CRUD 与资产打标；
+- `bulk.py`：批量写，逐条复用上面三个的方法。
 
-## 三条不能省的规则
+不把它们塞进一个类，是因为「删除矩阵」与「共享审批」各自都有并发与版本校验，
+合在一起只会让 review 时看不出「这一行属于哪条规则」。
 
-1. **元数据探测在落库之前**：损坏的文件不能先入库再报错，否则列表里会多一条
-   打不开的资产，用户要自己发现。
-2. **`sha256` 是内容寻址的 key**：同一份字节多人使用时物理只存一份；秒传就是
-   「同 owner + 同 sha + 同 kind 且未删除」命中已有行。
-3. **幂等键 `source_key` 先查**：生成侧的轮询会重复回调，第二次必须返回同一个
-   `asset_id`，不能产生第二行——这条比「去重」更严格，因为生成结果可能同名不同内容。
+## 三条不能省的规则（M1 起沿用）
+
+1. **元数据探测在落库之前**：损坏的文件不能先入库再报错。
+2. **`sha256` 是内容寻址的 key**：秒传 = 同 owner + 同 sha + 同 kind 且未删除。
+3. **幂等键 `source_key` 先查**：生成侧轮询会重复回调，第二次必须返回同一行。
 """
 
 from __future__ import annotations
@@ -22,7 +24,7 @@ import asyncio
 import hashlib
 import logging
 import tempfile
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -38,6 +40,7 @@ from core.response import PageParams
 from core.serving import Served
 from infra.media_probe import EXTENSIONS, MAX_BYTES, create_preview, inspect
 from infra.storage.base import ObjectStorage
+from modules.library import access
 from modules.library.errors import LibraryFileTooLarge, LibraryFileTypeNotAllowed
 from modules.library.models import (
     LibraryAsset,
@@ -46,16 +49,19 @@ from modules.library.models import (
     LibraryTag,
 )
 from modules.library.schema import (
+    AssetPatchIn,
     AssetSort,
     LibraryAssetDetailOut,
     LibraryAssetOut,
     LibraryAssetPage,
     LibraryFacets,
     LibraryGenerationOut,
+    LibraryGroupRef,
     LibraryTab,
     LibraryTagOut,
     UploadKind,
 )
+from modules.library.tags import set_asset_tags
 
 __all__ = ["LibraryService"]
 
@@ -114,18 +120,28 @@ class LibraryService:
     ) -> LibraryAssetPage:
         """列表 + 分面。
 
-        M1 的可见集是**本人所有**：小组与团队共享还没有写入路径（M2 才有），
-        所以这里先按 `owner_id` 收窄。M2 会把它换成三层可见集，接口形状不变。
+        可见集按 `library` 与 `state` 两组条件拼：`state=draft/trash` 时**忽略**
+        `library`（它们不在任何一个可见范围内，只属于本人），避免出现
+        「草稿箱 + 团队」这种拼起来的空集让人以为权限出了问题。
         """
         if state not in _STATES:
             state = "active"
-        query = select(LibraryAsset).where(
-            LibraryAsset.owner_id == actor.id, LibraryAsset.state == state
-        )
-        if state != "trash":
-            query = query.where(LibraryAsset.deleted_at.is_(None))
-        if library is not LibraryTab.ALL:
-            query = query.where(LibraryAsset.visibility == library.value)
+        groups = await access.all_groups(self.session, actor)
+
+        query = select(LibraryAsset).where(LibraryAsset.state == state)
+        if state == "active":
+            query = query.where(
+                LibraryAsset.deleted_at.is_(None),
+                access.tab_clause(actor, groups, library),
+            )
+        elif state == "draft":
+            # 代审范围：持 draft:review 的人能看到所有人的草稿；否则只看自己的
+            if not actor.has(access.PERM_DRAFT_REVIEW):
+                query = query.where(LibraryAsset.owner_id == actor.id)
+        else:
+            if not actor.has(access.PERM_DELETE_ANY):
+                query = query.where(LibraryAsset.owner_id == actor.id)
+
         if kind:
             query = query.where(LibraryAsset.kind == kind)
         if keyword:
@@ -137,38 +153,52 @@ class LibraryService:
                 )
             )
 
-        total = await self.session.scalar(
-            select(func.count()).select_from(query.subquery())
-        )
-        # 排序键必须以主键收尾：created_at 同秒的行（批量导入）否则顺序不稳定，
-        # 分页会出现「第 2 页重复第 1 页的最后一条」。
-        order: tuple[ColumnElement[Any], ColumnElement[Any]]
-        if sort is AssetSort.CREATED_ASC:
-            order = (LibraryAsset.created_at.asc(), LibraryAsset.id.asc())
-        elif sort is AssetSort.NAME:
-            order = (LibraryAsset.name.asc(), LibraryAsset.id.asc())
-        elif sort is AssetSort.SIZE_DESC:
-            order = (LibraryAsset.size_bytes.desc(), LibraryAsset.id.desc())
-        else:
-            order = (LibraryAsset.created_at.desc(), LibraryAsset.id.desc())
+        total = await self.session.scalar(select(func.count()).select_from(query.subquery()))
+        order = self._order(sort)
         rows = (
             await self.session.scalars(
                 query.order_by(*order).offset(params.offset).limit(params.limit)
             )
         ).all()
+        page_ids = [row.id for row in rows]
+        # 一次查完这一页的归属与组名，不按行循环（24 行就是 24 次往返）
+        group_map = await access.asset_group_ids(self.session, page_ids)
+        owner_map = await access.owner_names(
+            self.session, [row.owner_id for row in rows]
+        )
         return LibraryAssetPage(
-            items=[self._to_out(row) for row in rows],
+            items=[
+                self._to_out(
+                    row,
+                    owner_name=owner_map.get(row.owner_id),
+                    group_ids=group_map.get(row.id, []),
+                )
+                for row in rows
+            ],
             total=int(total or 0),
             page=params.page,
             page_size=params.page_size,
-            facets=await self._facets(actor.id),
+            facets=await self._facets(actor, groups),
         )
 
     async def facets(self, actor: CurrentUser) -> LibraryFacets:
-        return await self._facets(actor.id)
+        return await self._facets(actor, await access.all_groups(self.session, actor))
 
-    async def detail(self, asset_id: str, actor: CurrentUser) -> LibraryAssetDetailOut:
-        row = await self._owned(asset_id, actor.id, allow_trashed=True)
+    async def detail(
+        self, asset_id: str, actor: CurrentUser, *, require_visible: bool = True
+    ) -> LibraryAssetDetailOut:
+        """详情。
+
+        `require_visible=False` 只给「刚做完授权动作」的调用方用（草稿代审、
+        驳回、恢复）：动作本身已经判过权限，但动作之后的状态可能让操作人
+        看不见这条资产——审核人采纳草稿后它变回「别人的个人库资产」，
+        再走一遍可见性判定就会 404，把一次成功的审核报成失败。
+        """
+        row = (
+            await access.load_visible(self.session, asset_id, actor)
+            if require_visible
+            else await access.load_asset(self.session, asset_id)
+        )
         tags = (
             await self.session.scalars(
                 select(LibraryTag)
@@ -177,10 +207,21 @@ class LibraryService:
                 .order_by(LibraryTag.name)
             )
         ).all()
+        group_ids = await access.asset_group_ids(self.session, [row.id])
+        names = await access.group_names_for(self.session, group_ids.get(row.id, []))
+        owner_map = await access.owner_names(self.session, [row.owner_id])
         generation = await self.session.get(LibraryAssetGeneration, row.id)
         return LibraryAssetDetailOut(
-            **self._to_out(row).model_dump(by_alias=False),
+            **self._to_out(
+                row,
+                owner_name=owner_map.get(row.owner_id),
+                group_ids=group_ids.get(row.id, []),
+            ).model_dump(by_alias=False),
             tags=[LibraryTagOut(id=tag.id, name=tag.name) for tag in tags],
+            groups=[
+                LibraryGroupRef(id=group_id, name=names.get(group_id, ""))
+                for group_id in group_ids.get(row.id, [])
+            ],
             generation=(
                 LibraryGenerationOut(
                     source_module=generation.source_module,
@@ -211,7 +252,11 @@ class LibraryService:
     async def file(
         self, asset_id: str, actor: CurrentUser, *, preview: bool = False
     ) -> Served:
-        row = await self._owned(asset_id, actor.id)
+        row = await access.load_visible(self.session, asset_id, actor)
+        if row.state == "trash":
+            # 「删除」必须真的拿不到文件，否则回收站只是前端的一个标签页。
+            # 恢复后立刻可用，所以这不是永久拒绝。
+            raise NotFound("回收站内的资产不提供预览与下载")
         key = row.cover_key if preview else row.storage_key
         if not key:
             raise NotFound("此资产没有缩略图")
@@ -222,6 +267,22 @@ class LibraryService:
         )
 
     # ------------------------------------------------------------------ 写
+
+    async def patch(
+        self, asset_id: str, payload: AssetPatchIn, actor: CurrentUser
+    ) -> LibraryAssetDetailOut:
+        """改名 / 换标签。**不改可见性**：共享必须走申请单，否则审批就成了摆设。"""
+        row = await access.load_visible(self.session, asset_id, actor)
+        if row.owner_id != actor.id and not actor.has(access.PERM_DELETE_ANY):
+            raise NotFound("资产不存在")
+        self._check_version(row, payload.expected_version)
+        if payload.name is not None:
+            row.name = payload.name
+        if payload.tag_ids is not None:
+            await set_asset_tags(self.session, row.id, payload.tag_ids)
+        row.state_version += 1
+        await self.session.commit()
+        return await self.detail(asset_id, actor)
 
     async def upload(
         self,
@@ -360,17 +421,6 @@ class LibraryService:
         # 远端驱动不把字节搬进进程：预签名地址由对象存储处理 Range。
         return Served.remote(await self.storage.presigned_download_url(key), mime)
 
-    async def _owned(
-        self, asset_id: str, owner_id: str, *, allow_trashed: bool = False
-    ) -> LibraryAsset:
-        row = await self.session.get(LibraryAsset, asset_id)
-        if row is None or row.owner_id != owner_id:
-            # 两种情况共用一个 404：区分开等于把「这个 id 存在」白送给非本人。
-            raise NotFound("资产不存在")
-        if not allow_trashed and row.deleted_at is not None:
-            raise NotFound("资产已移入回收站")
-        return row
-
     async def _find_duplicate(self, owner_id: str, digest: str, kind: str) -> LibraryAsset | None:
         return await self.session.scalar(
             select(LibraryAsset).where(
@@ -386,27 +436,72 @@ class LibraryService:
             select(LibraryAsset).where(LibraryAsset.source_key == source_key)
         )
 
-    async def _facets(self, owner_id: str) -> LibraryFacets:
+    async def _facets(
+        self, actor: CurrentUser, groups: Sequence[str]
+    ) -> LibraryFacets:
+        """六个角标。
+
+        前四个按 `visibility` 分组一次算完；草稿与回收站各一条 count。
+        管理员（`draft:review` / `delete:any`）看到的角标是全量的——否则
+        「待我审核」的入口显示 0，而实际有一堆在等。
+        """
+        facets = LibraryFacets()
         rows = (
             await self.session.execute(
-                select(LibraryAsset.visibility, LibraryAsset.state, func.count())
-                .where(LibraryAsset.owner_id == owner_id)
-                .group_by(LibraryAsset.visibility, LibraryAsset.state)
+                select(LibraryAsset.visibility, func.count())
+                .where(
+                    LibraryAsset.state == "active",
+                    LibraryAsset.deleted_at.is_(None),
+                    access.active_visible_clause(actor, groups),
+                )
+                .group_by(LibraryAsset.visibility)
             )
         ).all()
-        facets = LibraryFacets()
-        for visibility, state, count in rows:
-            if state == "draft":
-                facets.drafts += int(count)
-            elif state == "trash":
-                facets.trash += int(count)
-            else:
-                facets.all += int(count)
-                if visibility in ("personal", "group", "team"):
-                    setattr(facets, visibility, getattr(facets, visibility) + int(count))
+        for visibility, count in rows:
+            value = int(count)
+            facets.all += value
+            if visibility in ("personal", "group", "team"):
+                setattr(facets, visibility, getattr(facets, visibility) + value)
+
+        draft_query = select(func.count()).where(LibraryAsset.state == "draft")
+        if not actor.has(access.PERM_DRAFT_REVIEW):
+            draft_query = draft_query.where(LibraryAsset.owner_id == actor.id)
+        facets.drafts = int(await self.session.scalar(draft_query) or 0)
+
+        trash_query = select(func.count()).where(LibraryAsset.state == "trash")
+        if not actor.has(access.PERM_DELETE_ANY):
+            trash_query = trash_query.where(LibraryAsset.owner_id == actor.id)
+        facets.trash = int(await self.session.scalar(trash_query) or 0)
         return facets
 
-    def _to_out(self, row: LibraryAsset) -> LibraryAssetOut:
+    def _order(self, sort: AssetSort) -> tuple[ColumnElement[Any], ColumnElement[Any]]:
+        # 排序键必须以主键收尾：created_at 同秒的行（批量导入）否则顺序不稳定，
+        # 分页会出现「第 2 页重复第 1 页的最后一条」。
+        if sort is AssetSort.CREATED_ASC:
+            return (LibraryAsset.created_at.asc(), LibraryAsset.id.asc())
+        if sort is AssetSort.NAME:
+            return (LibraryAsset.name.asc(), LibraryAsset.id.asc())
+        if sort is AssetSort.SIZE_DESC:
+            return (LibraryAsset.size_bytes.desc(), LibraryAsset.id.desc())
+        return (LibraryAsset.created_at.desc(), LibraryAsset.id.desc())
+
+    def _check_version(self, row: LibraryAsset, expected: int) -> None:
+        """乐观锁。`expected=0` 表示不校验——单页操作没必要为了一个数字失败一次。"""
+        if expected and row.state_version != expected:
+            from core.exceptions import Conflict
+
+            raise Conflict(
+                "资产已被修改，请刷新后重试",
+                details={"expectedVersion": expected, "stateVersion": row.state_version},
+            )
+
+    def _to_out(
+        self,
+        row: LibraryAsset,
+        *,
+        owner_name: str | None = None,
+        group_ids: Sequence[str] = (),
+    ) -> LibraryAssetOut:
         return LibraryAssetOut(
             id=row.id,
             name=row.name,
@@ -417,11 +512,14 @@ class LibraryService:
             duration_sec=row.duration or None,
             has_audio=row.has_audio,
             owner_id=row.owner_id,
-            owner_name=None,
+            owner_name=owner_name,
             visibility=row.visibility,
             state=row.state,
             state_version=row.state_version,
             cover_url=self.storage.url_for(row.cover_key) if row.cover_key else None,
+            group_ids=list(group_ids),
+            trash_reason=row.trash_reason,
+            trash_expires_at=row.trash_expires_at,
             created_at=row.created_at,
             updated_at=row.updated_at,
         )

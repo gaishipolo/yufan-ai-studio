@@ -77,6 +77,7 @@ from core.ports.library_ingest import has_library_ingest
 from core.ports.library_lookup import has_library_lookup
 from core.ports.library_references import has_library_references
 from core.ports.media import has_asset_lookup
+from core.ports.org_directory import has_org_directory
 
 __all__ = ["PORT_CATALOG", "PortSpec", "port_status"]
 
@@ -175,6 +176,16 @@ PORT_CATALOG: tuple[PortSpec, ...] = (
     ),
     # ---- 资产库 v2：三个注入口刻意与旧 asset 的注入口分开 ----
     # 并存期两套库同时对在线，共用注入口会让「问的是哪一边」变成隐式行为。
+    PortSpec(
+        name="org-directory",
+        module="core.ports.org_directory",
+        protocol="OrgDirectory",
+        implementer="拥有组织模型的模块（当前是 modules/identity 的 user_groups / group_members）",
+        when_unregistered="返回空集：小组素材库为空、组名显示为空串。"
+        "这是中性方向——少看见不会多看见；抛异常会让「删掉身份模块」变成"
+        "「资产库起不来」",
+        is_registered=has_org_directory,
+    ),
     PortSpec(
         name="library-lookup",
         module="core.ports.library_lookup",

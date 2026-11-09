@@ -1,9 +1,9 @@
-"""资产库 v2 骨架（M0）：并存隔离、契约与 fail-closed。
+"""资产库 v2 骨架：并存隔离、契约与 fail-closed。
 
-这份文件只守 M0 承诺过的四件事：
+这份文件守的是**跨批次不变的那几件事**，与具体业务行为无关：
 
 1. **并存**：`/library` 与 `/assets` 同时在线，且响应形状互不污染；
-2. **契约**：11 个权限点、错误码编码、空页字段齐全；
+2. **契约**：权限点集合、错误码编码、空页字段齐全；
 3. **注入口**：三个 v2 注入口未注册时 fail-closed（返回中性值等于静默放行）；
 4. **装配**：模块被自动发现，路由挂在 `/api/v1/library` 下。
 
@@ -12,7 +12,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 
 import pytest
 from fastapi.testclient import TestClient
@@ -25,12 +25,21 @@ from core.ports.library_lookup import get_library_lookup, reset_library_lookup
 from core.ports.library_references import get_library_references, reset_library_references
 from modules.library import errors as library_errors
 
-# M1 只声明「已接线」的两个码。其余 9 个（delete / share / draft:review 等）
-# 在 M2/M3 有真实判定点时再加——`test_permission_coverage` 不允许「声明了但没人用」
-# 的僵尸权限点，那会在角色配置界面变成永远无效的勾选项。
+#: 已接入 `ModuleSpec` 的权限点（M2）。清单必须与真实判定点同步：
+#: `test_permission_coverage` 不允许「声明了但没人用」的僵尸权限点，
+#: 也不允许「服务层判了但没声明」（那样普通用户永远 403）。
+#: `library:generation:ingest` 在 M3 接线时加进来。
 LIBRARY_PERMISSIONS = {
     "library:read",
     "library:create",
+    "library:update",
+    "library:delete",
+    "library:delete:any",
+    "library:draft:review",
+    "library:share",
+    "library:share:direct",
+    "library:share:approve",
+    "library:tag:manage",
 }
 
 
@@ -45,6 +54,31 @@ def test_library_permissions_are_in_the_catalog() -> None:
     declared = set(catalog.codes())
     missing = sorted(LIBRARY_PERMISSIONS - declared)
     assert not missing, f"权限点没有进全局目录：{missing}"
+
+
+@pytest.fixture(autouse=True)
+def _restore_ports() -> Iterator[None]:
+    """用例里 reset 过的注入口，跑完要按真实实现装回去。
+
+    引用检查是 fail-closed 的：它一旦空着，后续所有「彻底删除」用例都会 503，
+    而失败信息读起来像「purge 坏了」。恢复动作放在这里，而不是让每个用例
+    自己 finally——漏写一次会污染整场。
+    """
+    yield
+    from core.ports.library_lookup import has_library_lookup
+    from core.ports.library_references import (
+        has_library_references,
+        register_library_references,
+    )
+    from modules.library.lookup import install as install_lookup
+    from modules.library.references import SqlLibraryReferences
+
+    # 只在「被本用例清空过」时补装：注入口不允许重复注册（那是配置错误），
+    # 无条件补装会把每个用例的 teardown 都变成 RegistryError。
+    if not has_library_lookup():
+        install_lookup()
+    if not has_library_references():
+        register_library_references(SqlLibraryReferences())
 
 
 def test_library_list_returns_the_contract_shape(client: TestClient, api: str) -> None:
@@ -83,9 +117,15 @@ def test_library_list_accepts_the_contract_query_params(client: TestClient, api:
 
 
 def test_library_facets_endpoint(client: TestClient, api: str) -> None:
+    """只断言形状与类型：测试库是 session 级共享的，前面用例会留下草稿与回收站条目。
+
+    管理员（`*`）的角标是全量的，所以更不能断言「一定是 0」。
+    """
     response = client.get(f"{api}/library/facets")
     assert response.status_code == 200
-    assert response.json()["data"]["drafts"] == 0
+    data = response.json()["data"]
+    assert set(data) == {"all", "personal", "group", "team", "drafts", "trash"}
+    assert all(isinstance(value, int) and value >= 0 for value in data.values())
 
 
 def test_legacy_assets_and_library_coexist(client: TestClient, api: str) -> None:
@@ -124,7 +164,11 @@ def test_library_paths_are_registered_in_openapi(client: TestClient, api: str) -
 def test_v2_ports_are_fail_closed(
     reset: Callable[[], None], getter: Callable[[], object]
 ) -> None:
-    """M0 还没实现，正好是「未注册」的真实状态：必须抛 503，不能返回空值。"""
+    """未注册时必须抛 503，不能返回空值。
+
+    三个都在 M1/M2 接上了实现，但「实现被漏装配」仍然会发生（模块没被发现、
+    import 失败）。这里临时清空注册表，模拟的正是那种状态。
+    """
     reset()
     with pytest.raises(Unavailable):
         getter()

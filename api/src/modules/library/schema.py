@@ -20,14 +20,30 @@ from core.response import Page, PageParams
 from core.schema import CamelModel, UtcDateTime
 
 __all__ = [
+    "AssetPatchIn",
     "AssetSort",
+    "BulkAction",
+    "BulkIn",
+    "BulkItemResult",
+    "BulkOut",
+    "DraftDecisionIn",
+    "GroupLeadersIn",
     "LibraryAssetDetailOut",
     "LibraryAssetOut",
     "LibraryAssetPage",
     "LibraryFacets",
     "LibraryGenerationOut",
-    "LibraryTagOut",
+    "LibraryGroupOut",
+    "LibraryGroupRef",
+    "LibrarySelectionPage",
     "LibraryTab",
+    "LibraryTagOut",
+    "ShareAction",
+    "ShareDecisionIn",
+    "ShareRequestIn",
+    "ShareRequestOut",
+    "ShareTarget",
+    "TagIn",
     "UploadKind",
 ]
 
@@ -86,6 +102,11 @@ class LibraryAssetOut(CamelModel):
     state: LibraryAssetState
     state_version: int = 1
     cover_url: str | None = None
+    group_ids: list[str] = Field(default_factory=list)
+    # 回收站专用的两个字段：前端据此显示「剩余 N 天」与「因何被删」。
+    # 在库里时为 null，不要在响应里省略——省略会让前端多一层「有没有这个键」的判断。
+    trash_reason: str | None = None
+    trash_expires_at: UtcDateTime | None = None
     created_at: UtcDateTime
     updated_at: UtcDateTime | None = None
 
@@ -163,4 +184,142 @@ class LibraryAssetDetailOut(LibraryAssetOut):
     """
 
     tags: list[LibraryTagOut] = Field(default_factory=list)
+    groups: list[LibraryGroupRef] = Field(default_factory=list)
     generation: LibraryGenerationOut | None = None
+
+
+# --------------------------------------------------------------------------- #
+# M2：可见性、共享、生命周期、标签、批量
+# --------------------------------------------------------------------------- #
+class LibraryGroupRef(CamelModel):
+    """资产共享到的小组。名称走组织目录注入口，不在本模块 join 身份的表。"""
+
+    id: str
+    name: str = ""
+
+
+class LibraryGroupOut(CamelModel):
+    """我的小组。`isLeader` 决定「待我审核」里会不会出现该组的申请。"""
+
+    id: str
+    name: str = ""
+    is_leader: bool = False
+
+
+class AssetPatchIn(CamelModel):
+    """改名 / 换标签。**不含可见性**：共享必须走申请单，否则审批就没有意义了。"""
+
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    tag_ids: list[str] | None = None
+    expected_version: int = Field(
+        default=0, description=">0 时做乐观锁校验；0 表示不校验（兼容单页操作）"
+    )
+
+
+class TagIn(CamelModel):
+    name: str = Field(min_length=1, max_length=40)
+
+
+class ShareAction(StrEnum):
+    SHARE = "share"
+    REVOKE = "revoke"
+
+
+class ShareTarget(StrEnum):
+    GROUP = "group"
+    TEAM = "team"
+
+
+class ShareRequestIn(CamelModel):
+    """发起共享或撤销共享。
+
+    `action=revoke` 必须带 `reason`：撤销会让正在用这个素材的同事突然拿不到文件，
+    理由要留在申请单里（设计 §3.5）。
+    """
+
+    asset_id: str
+    action: ShareAction = ShareAction.SHARE
+    target: ShareTarget = ShareTarget.GROUP
+    group_id: str = ""
+    reason: str = Field(default="", max_length=200)
+    expected_version: int = 0
+
+
+class ShareDecisionIn(CamelModel):
+    """审批 / 驳回 / 撤回申请单。`note` 会进申请单与审计。"""
+
+    note: str = Field(default="", max_length=200)
+    expected_version: int = 0
+
+
+class ShareRequestOut(CamelModel):
+    id: str
+    asset_id: str
+    asset_name: str = ""
+    applicant_id: str
+    applicant_name: str | None = None
+    action: ShareAction
+    target: ShareTarget
+    group_id: str = ""
+    group_name: str | None = None
+    status: str
+    reviewer_id: str | None = None
+    note: str = ""
+    reason: str = ""
+    decided_at: UtcDateTime | None = None
+    created_at: UtcDateTime
+
+
+class DraftDecisionIn(CamelModel):
+    reason: str = Field(default="", max_length=200)
+    expected_version: int = 0
+
+
+class BulkAction(StrEnum):
+    """批量动作。每一条都复用单条接口的服务方法，不另写一份状态机。
+
+    `purge` 刻意不在列表里：彻底删除不可逆，一批 10 条点错一次就没了。
+    """
+
+    ADD_TAG = "addTag"
+    REMOVE_TAG = "removeTag"
+    RENAME = "rename"
+    DELETE = "delete"
+    RESTORE = "restore"
+    APPROVE_DRAFT = "approveDraft"
+    REJECT_DRAFT = "rejectDraft"
+    REQUEST_REVOKE = "requestRevoke"
+
+
+class BulkIn(CamelModel):
+    """批量写。**逐条判定、逐条提交**：一批里 3 条已共享就返回 7 成功 + 3 条明细。"""
+
+    ids: list[str] = Field(min_length=1, max_length=100)
+    action: BulkAction
+    payload: dict = Field(default_factory=dict)
+    expected_versions: dict[str, int] = Field(default_factory=dict)
+
+
+class BulkItemResult(CamelModel):
+    id: str
+    ok: bool
+    error_code: int = 0
+    message: str = ""
+    details: dict | None = None
+
+
+class BulkOut(CamelModel):
+    succeeded: int = 0
+    failed: int = 0
+    results: list[BulkItemResult] = Field(default_factory=list)
+
+
+class LibrarySelectionPage(Page[LibraryAssetOut]):
+    """选择器返回：只含 `state=active` 的条目，不带分面（选择器不显示角标）。"""
+
+
+class GroupLeadersIn(CamelModel):
+    """整体替换某组的负责人列表。空数组 = 清空（该组退回「只能由持
+    `library:share:approve` 的人审批」）。"""
+
+    user_ids: list[str] = Field(default_factory=list)

@@ -3110,6 +3110,7 @@
           "资产库"
         ],
         "summary": "资产库列表（分页 + 分面）",
+        "description": "`state=draft|trash` 时忽略 `library`：草稿与回收站不在任何可见范围内。\n\n代审 / 管理员看全量靠权限点（`library:draft:review` / `library:delete:any`），\n不靠一个 `mine=false` 参数——参数能被任何人传，权限点不能。",
         "operationId": "list_assets_api_v1_library_assets_get",
         "security": [
           {
@@ -3269,6 +3270,128 @@
         ]
       }
     },
+    "/api/v1/library/selection": {
+      "get": {
+        "tags": [
+          "资产库"
+        ],
+        "summary": "选择器：只返回库内资产",
+        "description": "生成页 / 工作台挑素材用。\n\n**硬过滤 `state=active`**：草稿与回收站永远不出现在选择器里。这不是一个\n可选的筛选参数——调用方忘了传就会把用户删掉的东西塞进生成任务。",
+        "operationId": "selection_api_v1_library_selection_get",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/LibraryAssetKind"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Kind"
+            }
+          },
+          {
+            "name": "tagIds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Tagids"
+            }
+          },
+          {
+            "name": "keyword",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 100,
+              "default": "",
+              "title": "Keyword"
+            }
+          },
+          {
+            "name": "includePacks",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": true,
+              "title": "Includepacks"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "页码，从 1 开始",
+              "default": 1,
+              "title": "Page"
+            },
+            "description": "页码，从 1 开始"
+          },
+          {
+            "name": "pageSize",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "description": "每页条数",
+              "default": 24,
+              "title": "Pagesize"
+            },
+            "description": "每页条数"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_LibrarySelectionPage_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/library/assets/upload": {
       "post": {
         "tags": [
@@ -3412,7 +3535,177 @@
         }
       }
     },
+    "/api/v1/library/assets/bulk": {
+      "post": {
+        "tags": [
+          "资产库"
+        ],
+        "summary": "批量写：逐条判定，部分失败返回明细",
+        "operationId": "bulk_write_api_v1_library_assets_bulk_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BulkIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_BulkOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/api/v1/library/assets/{asset_id}": {
+      "patch": {
+        "tags": [
+          "资产库"
+        ],
+        "summary": "改名 / 换标签（不含可见性）",
+        "operationId": "patch_asset_api_v1_library_assets__asset_id__patch",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "asset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Asset Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssetPatchIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_LibraryAssetDetailOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "资产库"
+        ],
+        "summary": "移入回收站（软删，可恢复）",
+        "description": "删除矩阵见设计 §3.4。\n\n已共享返回 409 `SHARED_ASSET_NOT_DELETABLE`，`details.canRevokeAndDelete`\n告诉前端要不要把按钮换成「撤销共享并删除」。判定与执行共用同一个条件，\n前端不自己算。",
+        "operationId": "delete_asset_api_v1_library_assets__asset_id__delete",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "asset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Asset Id"
+            }
+          },
+          {
+            "name": "revokeOwnGroupShare",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "组长的窄口：本人所有、仅共享给本组时，一步撤销共享并删除",
+              "default": false,
+              "title": "Revokeowngroupshare"
+            },
+            "description": "组长的窄口：本人所有、仅共享给本组时，一步撤销共享并删除"
+          },
+          {
+            "name": "reason",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 200,
+              "default": "",
+              "title": "Reason"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_NoneType_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
       "get": {
         "tags": [
           "资产库"
@@ -3533,6 +3826,728 @@
             "content": {
               "application/json": {
                 "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/library/drafts/{asset_id}/approve": {
+      "post": {
+        "tags": [
+          "资产库"
+        ],
+        "summary": "草稿采纳：进入个人素材库",
+        "operationId": "approve_draft_api_v1_library_drafts__asset_id__approve_post",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "asset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Asset Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DraftDecisionIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_LibraryAssetDetailOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/library/drafts/{asset_id}/reject": {
+      "post": {
+        "tags": [
+          "资产库"
+        ],
+        "summary": "草稿驳回：进回收站，可恢复回草稿",
+        "operationId": "reject_draft_api_v1_library_drafts__asset_id__reject_post",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "asset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Asset Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DraftDecisionIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_LibraryAssetDetailOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/library/trash/{asset_id}/restore": {
+      "post": {
+        "tags": [
+          "资产库"
+        ],
+        "summary": "从回收站恢复（强制回到个人库，不恢复共享）",
+        "operationId": "restore_asset_api_v1_library_trash__asset_id__restore_post",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "asset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Asset Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_LibraryAssetDetailOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/library/trash/{asset_id}": {
+      "delete": {
+        "tags": [
+          "资产库"
+        ],
+        "summary": "彻底删除（不可逆，先过引用检查）",
+        "description": "被封装 / 下载任务引用时返回 409 `TRASH_ENTRY_REFERENCED` 并列出引用方。\n\n不做批量彻底删除：不可逆的动作用「勾选十条点一下」来触发太危险。",
+        "operationId": "purge_asset_api_v1_library_trash__asset_id__delete",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "asset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Asset Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_NoneType_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/library/share-requests": {
+      "post": {
+        "tags": [
+          "资产库"
+        ],
+        "summary": "发起共享 / 撤销共享申请",
+        "description": "`action=revoke` 必须带 `reason`（400 `REVOKE_REASON_REQUIRED`）。\n\n申请人自己就是审批人时（持 `library:share:approve`）直接通过并记自审，\n否则会出现「自己申请、等自己批」的死锁。",
+        "operationId": "create_share_request_api_v1_library_share_requests_post",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ShareRequestIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_ShareRequestOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "资产库"
+        ],
+        "summary": "申请单列表（我提交的 / 待我审核）",
+        "operationId": "list_share_requests_api_v1_library_share_requests_get",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "scope",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^(mine|pending)$",
+              "default": "mine",
+              "title": "Scope"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_list_ShareRequestOut__"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/library/share-requests/{request_id}/approve": {
+      "post": {
+        "tags": [
+          "资产库"
+        ],
+        "summary": "通过申请",
+        "description": "小组负责人也能审批本组的申请，所以这里只要求 `library:read`。",
+        "operationId": "approve_share_request_api_v1_library_share_requests__request_id__approve_post",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Request Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ShareDecisionIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_ShareRequestOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/library/share-requests/{request_id}/reject": {
+      "post": {
+        "tags": [
+          "资产库"
+        ],
+        "summary": "驳回申请",
+        "operationId": "reject_share_request_api_v1_library_share_requests__request_id__reject_post",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Request Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ShareDecisionIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_ShareRequestOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/library/share-requests/{request_id}/cancel": {
+      "post": {
+        "tags": [
+          "资产库"
+        ],
+        "summary": "撤回自己提交的申请",
+        "operationId": "cancel_share_request_api_v1_library_share_requests__request_id__cancel_post",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Request Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_ShareRequestOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/library/groups": {
+      "get": {
+        "tags": [
+          "资产库"
+        ],
+        "summary": "我的小组（含是否负责人）",
+        "description": "前端用它渲染「小组素材库」的分组筛选与审批入口。\n\n不直接调用 `/identity/groups`：那个接口要 `identity:group:read`，\n普通成员没有；而且它返回全站小组，会泄露别人的组织结构。",
+        "operationId": "my_groups_api_v1_library_groups_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_list_LibraryGroupOut__"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/library/groups/{group_id}/leaders": {
+      "put": {
+        "tags": [
+          "资产库"
+        ],
+        "summary": "设置小组负责人（整体替换）",
+        "description": "负责人是「谁能审批本组共享」的唯一来源，存在 v2 自己的表里。",
+        "operationId": "set_group_leaders_api_v1_library_groups__group_id__leaders_put",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "group_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Group Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GroupLeadersIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_list_str__"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/library/tags": {
+      "get": {
+        "tags": [
+          "资产库"
+        ],
+        "summary": "标签列表",
+        "operationId": "list_tags_api_v1_library_tags_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_list_LibraryTagOut__"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "资产库"
+        ],
+        "summary": "新建标签（同名返回已有那条）",
+        "operationId": "create_tag_api_v1_library_tags_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TagIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_LibraryTagOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/library/tags/{tag_id}": {
+      "patch": {
+        "tags": [
+          "资产库"
+        ],
+        "summary": "重命名标签（不做隐式合并）",
+        "operationId": "rename_tag_api_v1_library_tags__tag_id__patch",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "tag_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Tag Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TagIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_LibraryTagOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "资产库"
+        ],
+        "summary": "删除标签（同时清绑定，资产不受影响）",
+        "operationId": "delete_tag_api_v1_library_tags__tag_id__delete",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "tag_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Tag Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_NoneType_"
+                }
               }
             }
           },
@@ -5130,6 +6145,33 @@
         "type": "object",
         "title": "ApiResponse[ArchivedAsset]"
       },
+      "ApiResponse_BulkOut_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BulkOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[BulkOut]"
+      },
       "ApiResponse_DeleteTasksOut_": {
         "properties": {
           "code": {
@@ -5453,6 +6495,60 @@
         },
         "type": "object",
         "title": "ApiResponse[LibraryFacets]"
+      },
+      "ApiResponse_LibrarySelectionPage_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LibrarySelectionPage"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[LibrarySelectionPage]"
+      },
+      "ApiResponse_LibraryTagOut_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LibraryTagOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[LibraryTagOut]"
       },
       "ApiResponse_LoginEventListOut_": {
         "properties": {
@@ -5907,6 +7003,33 @@
         "type": "object",
         "title": "ApiResponse[RoleOut]"
       },
+      "ApiResponse_ShareRequestOut_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ShareRequestOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[ShareRequestOut]"
+      },
       "ApiResponse_ShotListOut_": {
         "properties": {
           "code": {
@@ -6212,6 +7335,68 @@
         "type": "object",
         "title": "ApiResponse[list[GroupOut]]"
       },
+      "ApiResponse_list_LibraryGroupOut__": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/LibraryGroupOut"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Data"
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[list[LibraryGroupOut]]"
+      },
+      "ApiResponse_list_LibraryTagOut__": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/LibraryTagOut"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Data"
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[list[LibraryTagOut]]"
+      },
       "ApiResponse_list_RoleOut__": {
         "properties": {
           "code": {
@@ -6273,6 +7458,37 @@
         },
         "type": "object",
         "title": "ApiResponse[list[SessionOut]]"
+      },
+      "ApiResponse_list_ShareRequestOut__": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ShareRequestOut"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Data"
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[list[ShareRequestOut]]"
       },
       "ApiResponse_list_UserOut__": {
         "properties": {
@@ -6590,6 +7806,46 @@
         "title": "AspectRatio",
         "description": "画面比例：竖屏 / 横屏 / 方形。"
       },
+      "AssetPatchIn": {
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "tagIds": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tagids"
+          },
+          "expectedVersion": {
+            "type": "integer",
+            "title": "Expectedversion",
+            "description": ">0 时做乐观锁校验；0 表示不校验（兼容单页操作）",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "title": "AssetPatchIn",
+        "description": "改名 / 换标签。**不含可见性**：共享必须走申请单，否则审批就没有意义了。"
+      },
       "AssetSort": {
         "type": "string",
         "enum": [
@@ -6600,6 +7856,119 @@
         ],
         "title": "AssetSort",
         "description": "排序键。默认按创建时间倒序。"
+      },
+      "BulkAction": {
+        "type": "string",
+        "enum": [
+          "addTag",
+          "removeTag",
+          "rename",
+          "delete",
+          "restore",
+          "approveDraft",
+          "rejectDraft",
+          "requestRevoke"
+        ],
+        "title": "BulkAction",
+        "description": "批量动作。每一条都复用单条接口的服务方法，不另写一份状态机。\n\n`purge` 刻意不在列表里：彻底删除不可逆，一批 10 条点错一次就没了。"
+      },
+      "BulkIn": {
+        "properties": {
+          "ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Ids"
+          },
+          "action": {
+            "$ref": "#/components/schemas/BulkAction"
+          },
+          "payload": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Payload"
+          },
+          "expectedVersions": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Expectedversions"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ids",
+          "action"
+        ],
+        "title": "BulkIn",
+        "description": "批量写。**逐条判定、逐条提交**：一批里 3 条已共享就返回 7 成功 + 3 条明细。"
+      },
+      "BulkItemResult": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "ok": {
+            "type": "boolean",
+            "title": "Ok"
+          },
+          "errorCode": {
+            "type": "integer",
+            "title": "Errorcode",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": ""
+          },
+          "details": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Details"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "ok"
+        ],
+        "title": "BulkItemResult"
+      },
+      "BulkOut": {
+        "properties": {
+          "succeeded": {
+            "type": "integer",
+            "title": "Succeeded",
+            "default": 0
+          },
+          "failed": {
+            "type": "integer",
+            "title": "Failed",
+            "default": 0
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/BulkItemResult"
+            },
+            "type": "array",
+            "title": "Results"
+          }
+        },
+        "type": "object",
+        "title": "BulkOut"
       },
       "Capability": {
         "type": "string",
@@ -6752,6 +8121,23 @@
           "deleted"
         ],
         "title": "DeleteTasksOut"
+      },
+      "DraftDecisionIn": {
+        "properties": {
+          "reason": {
+            "type": "string",
+            "maxLength": 200,
+            "title": "Reason",
+            "default": ""
+          },
+          "expectedVersion": {
+            "type": "integer",
+            "title": "Expectedversion",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "title": "DraftDecisionIn"
       },
       "EffectivePermissionsOut": {
         "properties": {
@@ -7241,6 +8627,20 @@
         "title": "GroupLayerOut",
         "description": "分层权限明细里的一段：这条权限来自哪个小组。"
       },
+      "GroupLeadersIn": {
+        "properties": {
+          "userIds": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Userids"
+          }
+        },
+        "type": "object",
+        "title": "GroupLeadersIn",
+        "description": "整体替换某组的负责人列表。空数组 = 清空（该组退回「只能由持\n`library:share:approve` 的人审批」）。"
+      },
       "GroupMembersIn": {
         "properties": {
           "userIds": {
@@ -7654,6 +9054,35 @@
             ],
             "title": "Coverurl"
           },
+          "groupIds": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Groupids"
+          },
+          "trashReason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trashreason"
+          },
+          "trashExpiresAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trashexpiresat"
+          },
           "createdAt": {
             "type": "string",
             "title": "Createdat"
@@ -7675,6 +9104,13 @@
             },
             "type": "array",
             "title": "Tags"
+          },
+          "groups": {
+            "items": {
+              "$ref": "#/components/schemas/LibraryGroupRef"
+            },
+            "type": "array",
+            "title": "Groups"
           },
           "generation": {
             "anyOf": [
@@ -7798,6 +9234,35 @@
               }
             ],
             "title": "Coverurl"
+          },
+          "groupIds": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Groupids"
+          },
+          "trashReason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trashreason"
+          },
+          "trashExpiresAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trashexpiresat"
           },
           "createdAt": {
             "type": "string",
@@ -8019,6 +9484,78 @@
         ],
         "title": "LibraryGenerationOut",
         "description": "生成溯源快照。入库那一刻冻结，不联表查；缺失字段前端显示「未记录」。"
+      },
+      "LibraryGroupOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "default": ""
+          },
+          "isLeader": {
+            "type": "boolean",
+            "title": "Isleader",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "id"
+        ],
+        "title": "LibraryGroupOut",
+        "description": "我的小组。`isLeader` 决定「待我审核」里会不会出现该组的申请。"
+      },
+      "LibraryGroupRef": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "id"
+        ],
+        "title": "LibraryGroupRef",
+        "description": "资产共享到的小组。名称走组织目录注入口，不在本模块 join 身份的表。"
+      },
+      "LibrarySelectionPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/LibraryAssetOut"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "default": 0
+          },
+          "page": {
+            "type": "integer",
+            "title": "Page",
+            "default": 1
+          },
+          "pageSize": {
+            "type": "integer",
+            "title": "Pagesize",
+            "default": 24
+          }
+        },
+        "type": "object",
+        "title": "LibrarySelectionPage",
+        "description": "选择器返回：只含 `state=active` 的条目，不带分面（选择器不显示角标）。"
       },
       "LibraryTab": {
         "type": "string",
@@ -10018,6 +11555,183 @@
         "title": "SessionOut",
         "description": "一条登录会话。前端「我的登录设备」列表用它。"
       },
+      "ShareAction": {
+        "type": "string",
+        "enum": [
+          "share",
+          "revoke"
+        ],
+        "title": "ShareAction"
+      },
+      "ShareDecisionIn": {
+        "properties": {
+          "note": {
+            "type": "string",
+            "maxLength": 200,
+            "title": "Note",
+            "default": ""
+          },
+          "expectedVersion": {
+            "type": "integer",
+            "title": "Expectedversion",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "title": "ShareDecisionIn",
+        "description": "审批 / 驳回 / 撤回申请单。`note` 会进申请单与审计。"
+      },
+      "ShareRequestIn": {
+        "properties": {
+          "assetId": {
+            "type": "string",
+            "title": "Assetid"
+          },
+          "action": {
+            "$ref": "#/components/schemas/ShareAction",
+            "default": "share"
+          },
+          "target": {
+            "$ref": "#/components/schemas/ShareTarget",
+            "default": "group"
+          },
+          "groupId": {
+            "type": "string",
+            "title": "Groupid",
+            "default": ""
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 200,
+            "title": "Reason",
+            "default": ""
+          },
+          "expectedVersion": {
+            "type": "integer",
+            "title": "Expectedversion",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "assetId"
+        ],
+        "title": "ShareRequestIn",
+        "description": "发起共享或撤销共享。\n\n`action=revoke` 必须带 `reason`：撤销会让正在用这个素材的同事突然拿不到文件，\n理由要留在申请单里（设计 §3.5）。"
+      },
+      "ShareRequestOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "assetId": {
+            "type": "string",
+            "title": "Assetid"
+          },
+          "assetName": {
+            "type": "string",
+            "title": "Assetname",
+            "default": ""
+          },
+          "applicantId": {
+            "type": "string",
+            "title": "Applicantid"
+          },
+          "applicantName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Applicantname"
+          },
+          "action": {
+            "$ref": "#/components/schemas/ShareAction"
+          },
+          "target": {
+            "$ref": "#/components/schemas/ShareTarget"
+          },
+          "groupId": {
+            "type": "string",
+            "title": "Groupid",
+            "default": ""
+          },
+          "groupName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Groupname"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "reviewerId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reviewerid"
+          },
+          "note": {
+            "type": "string",
+            "title": "Note",
+            "default": ""
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason",
+            "default": ""
+          },
+          "decidedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decidedat"
+          },
+          "createdAt": {
+            "type": "string",
+            "title": "Createdat"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "assetId",
+          "applicantId",
+          "action",
+          "target",
+          "status",
+          "createdAt"
+        ],
+        "title": "ShareRequestOut"
+      },
+      "ShareTarget": {
+        "type": "string",
+        "enum": [
+          "group",
+          "team"
+        ],
+        "title": "ShareTarget"
+      },
       "ShotListOut": {
         "properties": {
           "items": {
@@ -10138,6 +11852,21 @@
           "createdAt"
         ],
         "title": "StoryboardOut"
+      },
+      "TagIn": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 40,
+            "minLength": 1,
+            "title": "Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "TagIn"
       },
       "TaskFeedItem": {
         "properties": {

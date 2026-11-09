@@ -266,7 +266,7 @@ owner 发起撤销 ─→ pending(action=revoke, reason) ─┬─ approve → �
 **CLI**（`ModuleSpec.cli`）：`app import-library`（幂等导入现役 `assets` + S3 `yufan-archive`）、
 `app verify-library`（对账）、`app rebuild-library-mirrors`。不是 HTTP 接口。
 
-## 5. 三个注入口与框架装配
+## 5. 注入口与框架装配
 
 业务模块之间不许互相 import，所以第 5/6 条的后端侧不能让 template/image 直接调 `library`：
 
@@ -279,6 +279,13 @@ owner 发起撤销 ─→ pending(action=revoke, reason) ─┬─ approve → �
 三者都用 `core.ports.host.Port`（`multi=False` 单例），各自导出**有且只有一个**
 `register_*` + `reset_*` + `has_*`（三件套），并登记 `api/ports.py::PORT_CATALOG`
 （漏登记 `test_every_port_is_catalogued` 红，形状不全 `test_port_modules_expose_the_full_shape` 红）。
+
+**M2 实施时补了第四个（设计里原先没定的那个洞）**：`org-directory`（`core/ports/
+org_directory.py`，由 `modules/identity` 注册）。小组素材库要问「我属于哪些组」
+「这个组叫什么」「这个人是哪位」，而答案在身份模块的表里。三条约束决定了必须做成
+注入口：不许跨模块 import、可见性判定必须与列表查询同一个事务快照、未接上时要能
+退化成「不在任何小组」（少看见，不多看见）。它返回**中性值**而不是 fail-closed——
+小组是可选能力，缺它就 503 会让「删掉身份模块」等于「资产库起不来」。
 
 其它装配清单：
 
@@ -445,10 +452,22 @@ name / tagIds / visibility                    （可选；visibility 必须是 p
 | --- | --- | --- |
 | M0 | 模块骨架：ModuleSpec 全钩子、11 个权限点、slot=8 errors、三个注入口 + PORT_CATALOG、空路由、前端占位页与精确前缀 mock、四份生成物 + ROUTES/MOCK_COVERAGE | 启动对账 0 gap；`/assets` 与 `/library` 同时在线互不影响；架构/装配守卫全绿 |
 | M1 | 10 张表 + 双向迁移、上传/秒传/幂等、`source-videos`、导入 CLI（dry-run + 对账报告） | 迁移双向、导入幂等、两库 blob 前缀互不误删 |
-| M2 | 可见性与三层判定、共享审核 + **撤销共享审批**、**删除权限矩阵**、**草稿/回收站状态机与 `library.trash.gc`**、标签、批量写、选择器接口、`library-lookup` | 越权/越级守卫、审核并发版本、**不变式 A/B 用例**（草稿与回收站必须 personal）、引用 fail-closed |
+| M2 ✅ | 可见性与三层判定、共享审核 + **撤销共享审批**、**删除权限矩阵**、**草稿/回收站状态机与 `library.trash.gc`**、标签、批量写、选择器接口、`library-lookup`、`library-references` | 越权/越级守卫、审核并发版本、**不变式 A/B 用例**（草稿与回收站必须 personal）、引用 fail-closed |
 | M3 | 封装、批量下载 job + 流式、生成入库 + 溯源快照、详情页六区 | 100 项/2GB 边界、失败重试、参数快照冻结 |
 | M4 | 前端页面全套 + `LibraryPicker` 接入三处 + mock 全端点 | `npm run verify`、`gen:mock-coverage`、隔离用例 |
 | M5 | 切换演练（改 `load()` 一行）、并行观察、下线旧模块、重生成全部生成物 | 一键回滚演练通过；旧库数据已对账追平 |
+
+### 10.1 M2 落地记录（与设计的差异，都是实施时才暴露的）
+
+| 项 | 设计原本 | 落地做法 | 原因 |
+| --- | --- | --- | --- |
+| 组归属从哪来 | 只说「取自 identity 的组成员关系」 | 新增注入口 `org-directory`（组 id / 组名 / 用户显示名） | 不许跨模块 import；且可见性判定要和列表查询同一个会话快照 |
+| 组长映射谁写 | 只说表 `library_group_leaders` 放在 v2 | `PUT /library/groups/{groupId}/leaders`（`library:share:approve`，整体替换） | 没有写入入口时窄口与「待我审核」永远空着 |
+| `library.trash.gc` 时刻 | 「每日 03:00」 | `every=3600` 小时级扫描，`leader_only=True`，配置默认**关闭** | 调度器只有间隔、没有 cron；保留期 30 天，早一小时无差别，漏跑一天差别很大 |
+| 审批路由的权限 | 「`library:share` / `library:share:approve`」 | `POST /share-requests/{id}/approve\|reject` 只要求 `library:read`，判定在服务层 | 组长不一定持有 `share:approve`（那是管理员级码），照抄 `require` 会让组长点不动 |
+| 批量动作集合 | 列出 `addTag/…/purge/pack` | 不含 `purge`（不可逆）与 `pack`（M3 才有） | 十个勾选一次不可逆删除太危险；`pack` 现在没有实现可调 |
+| 错误码 | 8 个语义 | 再加 `SHARE_TARGET_INVALID`(409-7)、`REQUEST_NOT_PENDING`(409-8) | 目标与状态不符、并发重复审批都要有独立文案；「已在回收站」用通用 409，把最后一个槽位留给将来 |
+| `PATCH /assets/{id}` | 「改名、标签、可见性（直接共享时）」 | **不含可见性** | 可见性变更一律走申请单，否则「`share:direct` 可以顺手改可见性」会绕开撤销审批 |
 
 ## 11. 我拍板的细节与仍需你知道的点
 

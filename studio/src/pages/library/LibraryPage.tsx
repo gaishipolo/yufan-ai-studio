@@ -2,10 +2,10 @@ import { FileClock, FolderOpen, Info, Trash2, UserRound, Users, UsersRound } fro
 import { Chip, PageHeader } from '@/shared/ui';
 
 /**
- * 资产库 v2 · 骨架占位页（M0）
+ * 资产库 v2 · 骨架占位页
  *
- * 只固定「有哪几个入口、各自装什么」，不接数据：M1 建表、M2 可见性、
- * M3 封装与下载、M4 全套页面。这样 M4 换页面时路由与导航不用动，
+ * 只固定「有哪几个入口、各自装什么」，不接数据：M1 建表与上传、M2 可见性与
+ * 生命周期、M3 封装与下载、M4 全套页面。这样 M4 换页面时路由与导航不用动，
  * 也避免现在先写一版「看起来能用、点进去全是假数据」的界面。
  */
 
@@ -42,16 +42,17 @@ const ENTRIES = [
   },
 ];
 
-/** M0 已交付 / 后续批次：写在页面上，避免「看起来是空的」被当成故障 */
+/** 已交付 / 后续批次：写在页面上，避免「看起来是空的」被当成故障 */
 const DELIVERED = [
   '10 张 library_* 表与双向迁移',
-  '图片 / 音频上传、按内容秒传、sourceKey 幂等',
-  '模板库源视频上传入口',
-  '旧素材导入 CLI（dry-run + 幂等）',
+  '上传 / 秒传 / sourceKey 幂等，模板库源视频入口',
+  '三层可见集：个人 / 小组 / 团队',
+  '共享与撤销审批（含组长一步撤销+删除）',
+  '删除矩阵、草稿箱与回收站（30 天保留）',
+  '标签、批量写、选择器、引用检查',
 ];
 const NEXT = [
-  'M2 可见性、共享审核、草稿与回收站',
-  'M3 封装、批量下载、生成入库',
+  'M3 封装、批量下载、生成入库与详情页',
   'M4 页面全套并切换入口',
 ];
 
@@ -60,8 +61,8 @@ export default function LibraryPage() {
     <>
       <PageHeader
         title="资产库 v2"
-        description="草稿箱、个人、小组、团队与回收站五个入口的统一资产库。后端 M1 已能上传与读取，界面在 M4 接入。"
-        actions={<Chip tone="ok">后端 M1 已就绪</Chip>}
+        description="草稿箱、个人、小组、团队与回收站五个入口的统一资产库。后端已具备可见性、共享审批与生命周期，界面在 M4 接入。"
+        actions={<Chip tone="ok">后端 M2 已就绪</Chip>}
       />
 
       <div className="mt-4 flex items-start gap-2 rounded-card border border-line-soft bg-panel-soft px-3 py-2.5">

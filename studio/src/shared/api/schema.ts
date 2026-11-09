@@ -36,6 +36,10 @@ export const AspectRatio_VALUES = ["9:16", "16:9", "1:1"] as const;
 export type AssetSort = "-createdAt" | "createdAt" | "name" | "-sizeBytes";
 export const AssetSort_VALUES = ["-createdAt", "createdAt", "name", "-sizeBytes"] as const;
 
+/** 取值：addTag, removeTag, rename, delete, restore, approveDraft, rejectDraft, requestRevoke */
+export type BulkAction = "addTag" | "removeTag" | "rename" | "delete" | "restore" | "approveDraft" | "rejectDraft" | "requestRevoke";
+export const BulkAction_VALUES = ["addTag", "removeTag", "rename", "delete", "restore", "approveDraft", "rejectDraft", "requestRevoke"] as const;
+
 /** 取值：video, image, audio */
 export type Capability = "video" | "image" | "audio";
 export const Capability_VALUES = ["video", "image", "audio"] as const;
@@ -59,6 +63,14 @@ export const LibraryTab_VALUES = ["all", "personal", "group", "team"] as const;
 /** 取值：personal, group, team */
 export type LibraryVisibility = "personal" | "group" | "team";
 export const LibraryVisibility_VALUES = ["personal", "group", "team"] as const;
+
+/** 取值：share, revoke */
+export type ShareAction = "share" | "revoke";
+export const ShareAction_VALUES = ["share", "revoke"] as const;
+
+/** 取值：group, team */
+export type ShareTarget = "group" | "team";
+export const ShareTarget_VALUES = ["group", "team"] as const;
 
 /** 取值：mine, team, all */
 export type TaskScope = "mine" | "team" | "all";
@@ -131,6 +143,38 @@ export interface ArchivedAsset {
   downloadAllowed?: boolean;
 }
 
+/** 改名 / 换标签。**不含可见性**：共享必须走申请单，否则审批就没有意义了。 */
+export interface AssetPatchIn {
+  name?: string | null;
+  tagIds?: string[] | null;
+  /** >0 时做乐观锁校验；0 表示不校验（兼容单页操作） */
+  expectedVersion?: number;
+}
+
+/** 批量写。**逐条判定、逐条提交**：一批里 3 条已共享就返回 7 成功 + 3 条明细。 */
+export interface BulkIn {
+  ids: string[];
+  action: BulkAction;
+  payload?: Record<string, unknown>;
+  expectedVersions?: Record<string, number>;
+}
+
+/** BulkItemResult */
+export interface BulkItemResult {
+  id: string;
+  ok: boolean;
+  errorCode?: number;
+  message?: string;
+  details?: Record<string, unknown> | null;
+}
+
+/** BulkOut */
+export interface BulkOut {
+  succeeded?: number;
+  failed?: number;
+  results?: BulkItemResult[];
+}
+
 /** CreateExportIn */
 export interface CreateExportIn {
   /** 数据源，见 enums.ExportSource */
@@ -173,6 +217,12 @@ export interface DeleteTasksOut {
   deleted: number;
   /** 被跳过的任务 ID：不存在，或属于他人且没有 `task:read:all` */
   skipped?: string[];
+}
+
+/** DraftDecisionIn */
+export interface DraftDecisionIn {
+  reason?: string;
+  expectedVersion?: number;
 }
 
 /** 某用户的权限来源。前端只读展示，**判定永远走 effective**。 */
@@ -294,6 +344,12 @@ export interface GroupLayerOut {
   permissions?: string[];
 }
 
+/** 整体替换某组的负责人列表。空数组 = 清空（该组退回「只能由持
+`library:share:approve` 的人审批」）。 */
+export interface GroupLeadersIn {
+  userIds?: string[];
+}
+
 /** GroupMembersIn */
 export interface GroupMembersIn {
   /** 成员用户 id，整组替换；传空数组即清空 */
@@ -412,9 +468,13 @@ export interface LibraryAssetDetailOut {
   state: LibraryAssetState;
   stateVersion?: number;
   coverUrl?: string | null;
+  groupIds?: string[];
+  trashReason?: string | null;
+  trashExpiresAt?: string | null;
   createdAt: string;
   updatedAt?: string | null;
   tags?: LibraryTagOut[];
+  groups?: LibraryGroupRef[];
   generation?: LibraryGenerationOut | null;
 }
 
@@ -435,6 +495,9 @@ export interface LibraryAssetOut {
   state: LibraryAssetState;
   stateVersion?: number;
   coverUrl?: string | null;
+  groupIds?: string[];
+  trashReason?: string | null;
+  trashExpiresAt?: string | null;
   createdAt: string;
   updatedAt?: string | null;
 }
@@ -484,6 +547,27 @@ export interface LibraryGenerationOut {
   externalId?: string;
   credits?: number;
   generatedAt?: string | null;
+}
+
+/** 我的小组。`isLeader` 决定「待我审核」里会不会出现该组的申请。 */
+export interface LibraryGroupOut {
+  id: string;
+  name?: string;
+  isLeader?: boolean;
+}
+
+/** 资产共享到的小组。名称走组织目录注入口，不在本模块 join 身份的表。 */
+export interface LibraryGroupRef {
+  id: string;
+  name?: string;
+}
+
+/** 选择器返回：只含 `state=active` 的条目，不带分面（选择器不显示角标）。 */
+export interface LibrarySelectionPage {
+  items?: LibraryAssetOut[];
+  total?: number;
+  page?: number;
+  pageSize?: number;
 }
 
 /** LibraryTagOut */
@@ -950,6 +1034,44 @@ export interface SessionOut {
   current?: boolean;
 }
 
+/** 审批 / 驳回 / 撤回申请单。`note` 会进申请单与审计。 */
+export interface ShareDecisionIn {
+  note?: string;
+  expectedVersion?: number;
+}
+
+/** 发起共享或撤销共享。
+
+`action=revoke` 必须带 `reason`：撤销会让正在用这个素材的同事突然拿不到文件，
+理由要留在申请单里（设计 §3.5）。 */
+export interface ShareRequestIn {
+  assetId: string;
+  action?: ShareAction;
+  target?: ShareTarget;
+  groupId?: string;
+  reason?: string;
+  expectedVersion?: number;
+}
+
+/** ShareRequestOut */
+export interface ShareRequestOut {
+  id: string;
+  assetId: string;
+  assetName?: string;
+  applicantId: string;
+  applicantName?: string | null;
+  action: ShareAction;
+  target: ShareTarget;
+  groupId?: string;
+  groupName?: string | null;
+  status: string;
+  reviewerId?: string | null;
+  note?: string;
+  reason?: string;
+  decidedAt?: string | null;
+  createdAt: string;
+}
+
 /** ShotListOut */
 export interface ShotListOut {
   items?: ShotPresetOut[];
@@ -982,6 +1104,11 @@ export interface StoryboardOut {
   aspectRatio: AspectRatio;
   coverUrl: string;
   createdAt: string;
+}
+
+/** TagIn */
+export interface TagIn {
+  name: string;
 }
 
 /** TaskFeedItem */
@@ -1360,18 +1487,56 @@ export interface EndpointData {
   "POST /api/v1/images/{job_id}/retry": ImageRetryOut;
   /** 资产库列表（分页 + 分面） */
   "GET /api/v1/library/assets": LibraryAssetPage;
+  /** 批量写：逐条判定，部分失败返回明细 */
+  "POST /api/v1/library/assets/bulk": BulkOut;
   /** 上传图片 / 音频（流式，按内容秒传） */
   "POST /api/v1/library/assets/upload": LibraryAssetOut;
+  /** 移入回收站（软删，可恢复） */
+  "DELETE /api/v1/library/assets/{asset_id}": null;
   /** 资产详情（含标签与生成参数） */
   "GET /api/v1/library/assets/{asset_id}": LibraryAssetDetailOut;
+  /** 改名 / 换标签（不含可见性） */
+  "PATCH /api/v1/library/assets/{asset_id}": LibraryAssetDetailOut;
   /** 下载或预览原文件 */
   "GET /api/v1/library/assets/{asset_id}/file": unknown;
   /** 读取缩略图 */
   "GET /api/v1/library/assets/{asset_id}/thumbnail": unknown;
+  /** 草稿采纳：进入个人素材库 */
+  "POST /api/v1/library/drafts/{asset_id}/approve": LibraryAssetDetailOut;
+  /** 草稿驳回：进回收站，可恢复回草稿 */
+  "POST /api/v1/library/drafts/{asset_id}/reject": LibraryAssetDetailOut;
   /** 资产库分面统计 */
   "GET /api/v1/library/facets": LibraryFacets;
+  /** 我的小组（含是否负责人） */
+  "GET /api/v1/library/groups": LibraryGroupOut[];
+  /** 设置小组负责人（整体替换） */
+  "PUT /api/v1/library/groups/{group_id}/leaders": string[];
+  /** 选择器：只返回库内资产 */
+  "GET /api/v1/library/selection": LibrarySelectionPage;
+  /** 申请单列表（我提交的 / 待我审核） */
+  "GET /api/v1/library/share-requests": ShareRequestOut[];
+  /** 发起共享 / 撤销共享申请 */
+  "POST /api/v1/library/share-requests": ShareRequestOut;
+  /** 通过申请 */
+  "POST /api/v1/library/share-requests/{request_id}/approve": ShareRequestOut;
+  /** 撤回自己提交的申请 */
+  "POST /api/v1/library/share-requests/{request_id}/cancel": ShareRequestOut;
+  /** 驳回申请 */
+  "POST /api/v1/library/share-requests/{request_id}/reject": ShareRequestOut;
   /** 上传模板库参考视频（只收视频） */
   "POST /api/v1/library/source-videos": LibraryAssetOut;
+  /** 标签列表 */
+  "GET /api/v1/library/tags": LibraryTagOut[];
+  /** 新建标签（同名返回已有那条） */
+  "POST /api/v1/library/tags": LibraryTagOut;
+  /** 删除标签（同时清绑定，资产不受影响） */
+  "DELETE /api/v1/library/tags/{tag_id}": null;
+  /** 重命名标签（不做隐式合并） */
+  "PATCH /api/v1/library/tags/{tag_id}": LibraryTagOut;
+  /** 彻底删除（不可逆，先过引用检查） */
+  "DELETE /api/v1/library/trash/{asset_id}": null;
+  /** 从回收站恢复（强制回到个人库，不恢复共享） */
+  "POST /api/v1/library/trash/{asset_id}/restore": LibraryAssetDetailOut;
   /** 可用模型目录（含参数 schema） */
   "GET /api/v1/models": ModelListOut;
   /** 镜头词条列表 */

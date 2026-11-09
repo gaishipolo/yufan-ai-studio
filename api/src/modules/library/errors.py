@@ -120,14 +120,45 @@ class LibraryFileTooLarge(AppError):
     http_status = 413
 
 
+class ShareTargetInvalid(AppError):
+    """共享 / 撤销的目标与资产当前状态对不上。
+
+    三种情形共用这个码，因为前端的处理完全一样（刷新详情、重选目标）：
+
+    - 共享到小组，但我不在那个组（管理员也不能替别人往组里塞素材）；
+    - 撤销某个组的共享，但资产并没有共享给这个组；
+    - 撤销团队共享，但资产根本不在团队库。
+
+    不拆成三个码：拆开只会在前端多出三条一样的提示分支。
+    """
+
+    code = errors.code(409, 7)
+    message = "共享目标与该资产的当前状态不符"
+    http_status = 409
+
+
+class RequestNotPending(AppError):
+    """审批 / 撤回一张已经处理过的申请单。
+
+    并发下两个人同时点「通过」时，第二个会撞在 `expected_version` 或这里。
+    两者都给 409，但文案不同：这里说「已被处理」，版本冲突说「已被修改」。
+    """
+
+    code = errors.code(409, 8)
+    message = "该申请已被处理，请刷新列表"
+    http_status = 409
+
+
 __all__ = [
     "AssetNotInTrash",
     "DraftNotReviewable",
     "DraftReviewForbidden",
     "LibraryFileTooLarge",
     "LibraryFileTypeNotAllowed",
+    "RequestNotPending",
     "RevokeReasonRequired",
     "ShareRevokePending",
+    "ShareTargetInvalid",
     "SharedAssetNotDeletable",
     "TeamDeleteForbidden",
     "TrashEntryReferenced",

@@ -2,7 +2,7 @@
 
 > 此文件由 `app export-openapi` 自动生成，请勿手工编辑。
 >
-> 版本 `0.2.0`｜共 **97** 个接口 / **11** 个模块
+> 版本 `0.2.0`｜共 **116** 个接口 / **11** 个模块
 >
 > 重新生成：`cd api && .venv/Scripts/python -m cli export-openapi`
 
@@ -139,7 +139,15 @@ Authorization: Bearer <accessToken>
 | 权限码 | 名称 | 说明 |
 |---|---|---|
 | `library:create` | 上传与封装资产 |  |
+| `library:delete` | 删除本人资产（移入回收站） |  |
+| `library:delete:any` | 删除 / 恢复任何人的资产 |  |
+| `library:draft:review` | 审核他人草稿 |  |
 | `library:read` | 查看资产库 |  |
+| `library:share` | 发起共享与撤销共享申请 |  |
+| `library:share:approve` | 审批共享与撤销申请 |  |
+| `library:share:direct` | 共享无需审批（撤销仍需审批） |  |
+| `library:tag:manage` | 管理标签词表（改名 / 删除） |  |
+| `library:update` | 修改本人资产的名称与标签 |  |
 
 > 判定规则：`*` 恒真；`task:*` 这类通配可覆盖 `task:read`；否则按字符串精确匹配。
 
@@ -192,6 +200,8 @@ Authorization: Bearer <accessToken>
 | `40984` | 409 | library | `DraftNotReviewable` | 该草稿已被处理，请刷新后重试 |
 | `40985` | 409 | library | `AssetNotInTrash` | 该资产不在回收站 |
 | `40986` | 409 | library | `TrashEntryReferenced` | 资产仍被引用，不能彻底删除 |
+| `40987` | 409 | library | `ShareTargetInvalid` | 共享目标与该资产的当前状态不符 |
+| `40988` | 409 | library | `RequestNotPending` | 该申请已被处理，请刷新列表 |
 | `40991` | 409 | export | `ExportBusy` | 同一份数据正在导出中，请等待它完成 |
 | `40992` | 409 | export | `ExportNotReady` | 导出尚未生成完成，请稍后再试 |
 | `41091` | 410 | export | `ExportGone` | 导出文件已过保留期被回收，请重新导出 |
@@ -219,7 +229,7 @@ Authorization: Bearer <accessToken>
 | 镜头库 | 1 | 见下方 `4.8` |
 | 系统 | 2 | 见下方 `4.9` |
 | 导出 | 6 | 见下方 `4.10` |
-| 资产库 | 7 | 见下方 `4.11` |
+| 资产库 | 26 | 见下方 `4.11` |
 
 ### 4.1 身份（39 个）
 
@@ -2405,21 +2415,45 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 
 **响应** `ApiResponse<unknown>`（前端取 `res.data`）
 
-### 4.11 资产库（7 个）
+### 4.11 资产库（26 个）
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
 | `GET` | `/api/v1/library/assets` | 资产库列表（分页 + 分面） | 🔒 |
+| `POST` | `/api/v1/library/assets/bulk` | 批量写：逐条判定，部分失败返回明细 | 🔒 |
 | `POST` | `/api/v1/library/assets/upload` | 上传图片 / 音频（流式，按内容秒传） | 🔒 |
+| `PATCH` | `/api/v1/library/assets/{asset_id}` | 改名 / 换标签（不含可见性） | 🔒 |
+| `DELETE` | `/api/v1/library/assets/{asset_id}` | 移入回收站（软删，可恢复） | 🔒 |
 | `GET` | `/api/v1/library/assets/{asset_id}` | 资产详情（含标签与生成参数） | 🔒 |
 | `GET` | `/api/v1/library/assets/{asset_id}/file` | 下载或预览原文件 | 🔒 |
 | `GET` | `/api/v1/library/assets/{asset_id}/thumbnail` | 读取缩略图 | 🔒 |
+| `POST` | `/api/v1/library/drafts/{asset_id}/approve` | 草稿采纳：进入个人素材库 | 🔒 |
+| `POST` | `/api/v1/library/drafts/{asset_id}/reject` | 草稿驳回：进回收站，可恢复回草稿 | 🔒 |
 | `GET` | `/api/v1/library/facets` | 资产库分面统计 | 🔒 |
+| `GET` | `/api/v1/library/groups` | 我的小组（含是否负责人） | 🔒 |
+| `PUT` | `/api/v1/library/groups/{group_id}/leaders` | 设置小组负责人（整体替换） | 🔒 |
+| `GET` | `/api/v1/library/selection` | 选择器：只返回库内资产 | 🔒 |
+| `POST` | `/api/v1/library/share-requests` | 发起共享 / 撤销共享申请 | 🔒 |
+| `GET` | `/api/v1/library/share-requests` | 申请单列表（我提交的 / 待我审核） | 🔒 |
+| `POST` | `/api/v1/library/share-requests/{request_id}/approve` | 通过申请 | 🔒 |
+| `POST` | `/api/v1/library/share-requests/{request_id}/cancel` | 撤回自己提交的申请 | 🔒 |
+| `POST` | `/api/v1/library/share-requests/{request_id}/reject` | 驳回申请 | 🔒 |
 | `POST` | `/api/v1/library/source-videos` | 上传模板库参考视频（只收视频） | 🔒 |
+| `GET` | `/api/v1/library/tags` | 标签列表 | 🔒 |
+| `POST` | `/api/v1/library/tags` | 新建标签（同名返回已有那条） | 🔒 |
+| `PATCH` | `/api/v1/library/tags/{tag_id}` | 重命名标签（不做隐式合并） | 🔒 |
+| `DELETE` | `/api/v1/library/tags/{tag_id}` | 删除标签（同时清绑定，资产不受影响） | 🔒 |
+| `DELETE` | `/api/v1/library/trash/{asset_id}` | 彻底删除（不可逆，先过引用检查） | 🔒 |
+| `POST` | `/api/v1/library/trash/{asset_id}/restore` | 从回收站恢复（强制回到个人库，不恢复共享） | 🔒 |
 
 #### `GET /api/v1/library/assets`
 
 **资产库列表（分页 + 分面）**
+
+`state=draft|trash` 时忽略 `library`：草稿与回收站不在任何可见范围内。
+
+代审 / 管理员看全量靠权限点（`library:draft:review` / `library:delete:any`），
+不靠一个 `mine=false` 参数——参数能被任何人传，权限点不能。
 
 | 参数 | 位置 | 类型 | 必填 | 说明 |
 |---|---|---|---|---|
@@ -2441,6 +2475,27 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `page` | `number` | 否 |  |
 | `pageSize` | `number` | 否 |  |
 | `facets` | `LibraryFacets` | 否 |  |
+
+#### `POST /api/v1/library/assets/bulk`
+
+**批量写：逐条判定，部分失败返回明细**
+
+**请求体** `BulkIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `ids` | `string[]` | 是 |  |
+| `action` | `BulkAction` | 是 |  |
+| `payload` | `Record<string, unknown>` | 否 |  |
+| `expectedVersions` | `Record<string, number>` | 否 |  |
+
+**响应** `ApiResponse<BulkOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `succeeded` | `number` | 否 |  |
+| `failed` | `number` | 否 |  |
+| `results` | `BulkItemResult[]` | 否 |  |
 
 #### `POST /api/v1/library/assets/upload`
 
@@ -2476,8 +2531,72 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `state` | `LibraryAssetState` | 是 |  |
 | `stateVersion` | `number` | 否 |  |
 | `coverUrl` | `string \| null` | 否 |  |
+| `groupIds` | `string[]` | 否 |  |
+| `trashReason` | `string \| null` | 否 |  |
+| `trashExpiresAt` | `string \| null` | 否 |  |
 | `createdAt` | `string` | 是 |  |
 | `updatedAt` | `string \| null` | 否 |  |
+
+#### `PATCH /api/v1/library/assets/{asset_id}`
+
+**改名 / 换标签（不含可见性）**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `asset_id` | path | `string` | 是 |  |
+
+**请求体** `AssetPatchIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `name` | `string \| null` | 否 |  |
+| `tagIds` | `string[] \| null` | 否 |  |
+| `expectedVersion` | `number` | 否 | >0 时做乐观锁校验；0 表示不校验（兼容单页操作） |
+
+**响应** `ApiResponse<LibraryAssetDetailOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `kind` | `LibraryAssetKind` | 是 |  |
+| `origin` | `string` | 是 | upload / generated / template_source / imported |
+| `mimeType` | `string \| null` | 否 |  |
+| `sizeBytes` | `number` | 否 |  |
+| `durationSec` | `number \| null` | 否 |  |
+| `hasAudio` | `boolean` | 否 |  |
+| `ownerId` | `string` | 是 |  |
+| `ownerName` | `string \| null` | 否 |  |
+| `visibility` | `LibraryVisibility` | 是 |  |
+| `state` | `LibraryAssetState` | 是 |  |
+| `stateVersion` | `number` | 否 |  |
+| `coverUrl` | `string \| null` | 否 |  |
+| `groupIds` | `string[]` | 否 |  |
+| `trashReason` | `string \| null` | 否 |  |
+| `trashExpiresAt` | `string \| null` | 否 |  |
+| `createdAt` | `string` | 是 |  |
+| `updatedAt` | `string \| null` | 否 |  |
+| `tags` | `LibraryTagOut[]` | 否 |  |
+| `groups` | `LibraryGroupRef[]` | 否 |  |
+| `generation` | `LibraryGenerationOut \| null` | 否 |  |
+
+#### `DELETE /api/v1/library/assets/{asset_id}`
+
+**移入回收站（软删，可恢复）**
+
+删除矩阵见设计 §3.4。
+
+已共享返回 409 `SHARED_ASSET_NOT_DELETABLE`，`details.canRevokeAndDelete`
+告诉前端要不要把按钮换成「撤销共享并删除」。判定与执行共用同一个条件，
+前端不自己算。
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `asset_id` | path | `string` | 是 |  |
+| `revokeOwnGroupShare` | query | `boolean` | 否 | 组长的窄口：本人所有、仅共享给本组时，一步撤销共享并删除 |
+| `reason` | query | `string` | 否 |  |
+
+**响应** `ApiResponse<null>`（前端取 `res.data`）
 
 #### `GET /api/v1/library/assets/{asset_id}`
 
@@ -2505,9 +2624,13 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `state` | `LibraryAssetState` | 是 |  |
 | `stateVersion` | `number` | 否 |  |
 | `coverUrl` | `string \| null` | 否 |  |
+| `groupIds` | `string[]` | 否 |  |
+| `trashReason` | `string \| null` | 否 |  |
+| `trashExpiresAt` | `string \| null` | 否 |  |
 | `createdAt` | `string` | 是 |  |
 | `updatedAt` | `string \| null` | 否 |  |
 | `tags` | `LibraryTagOut[]` | 否 |  |
+| `groups` | `LibraryGroupRef[]` | 否 |  |
 | `generation` | `LibraryGenerationOut \| null` | 否 |  |
 
 #### `GET /api/v1/library/assets/{asset_id}/file`
@@ -2530,6 +2653,90 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 
 **响应** `ApiResponse<unknown>`（前端取 `res.data`）
 
+#### `POST /api/v1/library/drafts/{asset_id}/approve`
+
+**草稿采纳：进入个人素材库**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `asset_id` | path | `string` | 是 |  |
+
+**请求体** `DraftDecisionIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `reason` | `string` | 否 |  |
+| `expectedVersion` | `number` | 否 |  |
+
+**响应** `ApiResponse<LibraryAssetDetailOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `kind` | `LibraryAssetKind` | 是 |  |
+| `origin` | `string` | 是 | upload / generated / template_source / imported |
+| `mimeType` | `string \| null` | 否 |  |
+| `sizeBytes` | `number` | 否 |  |
+| `durationSec` | `number \| null` | 否 |  |
+| `hasAudio` | `boolean` | 否 |  |
+| `ownerId` | `string` | 是 |  |
+| `ownerName` | `string \| null` | 否 |  |
+| `visibility` | `LibraryVisibility` | 是 |  |
+| `state` | `LibraryAssetState` | 是 |  |
+| `stateVersion` | `number` | 否 |  |
+| `coverUrl` | `string \| null` | 否 |  |
+| `groupIds` | `string[]` | 否 |  |
+| `trashReason` | `string \| null` | 否 |  |
+| `trashExpiresAt` | `string \| null` | 否 |  |
+| `createdAt` | `string` | 是 |  |
+| `updatedAt` | `string \| null` | 否 |  |
+| `tags` | `LibraryTagOut[]` | 否 |  |
+| `groups` | `LibraryGroupRef[]` | 否 |  |
+| `generation` | `LibraryGenerationOut \| null` | 否 |  |
+
+#### `POST /api/v1/library/drafts/{asset_id}/reject`
+
+**草稿驳回：进回收站，可恢复回草稿**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `asset_id` | path | `string` | 是 |  |
+
+**请求体** `DraftDecisionIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `reason` | `string` | 否 |  |
+| `expectedVersion` | `number` | 否 |  |
+
+**响应** `ApiResponse<LibraryAssetDetailOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `kind` | `LibraryAssetKind` | 是 |  |
+| `origin` | `string` | 是 | upload / generated / template_source / imported |
+| `mimeType` | `string \| null` | 否 |  |
+| `sizeBytes` | `number` | 否 |  |
+| `durationSec` | `number \| null` | 否 |  |
+| `hasAudio` | `boolean` | 否 |  |
+| `ownerId` | `string` | 是 |  |
+| `ownerName` | `string \| null` | 否 |  |
+| `visibility` | `LibraryVisibility` | 是 |  |
+| `state` | `LibraryAssetState` | 是 |  |
+| `stateVersion` | `number` | 否 |  |
+| `coverUrl` | `string \| null` | 否 |  |
+| `groupIds` | `string[]` | 否 |  |
+| `trashReason` | `string \| null` | 否 |  |
+| `trashExpiresAt` | `string \| null` | 否 |  |
+| `createdAt` | `string` | 是 |  |
+| `updatedAt` | `string \| null` | 否 |  |
+| `tags` | `LibraryTagOut[]` | 否 |  |
+| `groups` | `LibraryGroupRef[]` | 否 |  |
+| `generation` | `LibraryGenerationOut \| null` | 否 |  |
+
 #### `GET /api/v1/library/facets`
 
 **资产库分面统计**
@@ -2546,6 +2753,236 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `team` | `number` | 否 |  |
 | `drafts` | `number` | 否 |  |
 | `trash` | `number` | 否 |  |
+
+#### `GET /api/v1/library/groups`
+
+**我的小组（含是否负责人）**
+
+前端用它渲染「小组素材库」的分组筛选与审批入口。
+
+不直接调用 `/identity/groups`：那个接口要 `identity:group:read`，
+普通成员没有；而且它返回全站小组，会泄露别人的组织结构。
+
+**响应** `ApiResponse<LibraryGroupOut[]>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `[].id` | `string` | 是 |  |
+| `[].name` | `string` | 否 |  |
+| `[].isLeader` | `boolean` | 否 |  |
+
+#### `PUT /api/v1/library/groups/{group_id}/leaders`
+
+**设置小组负责人（整体替换）**
+
+负责人是「谁能审批本组共享」的唯一来源，存在 v2 自己的表里。
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `group_id` | path | `string` | 是 |  |
+
+**请求体** `GroupLeadersIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `userIds` | `string[]` | 否 |  |
+
+**响应** `ApiResponse<string[]>`（前端取 `res.data`）
+
+#### `GET /api/v1/library/selection`
+
+**选择器：只返回库内资产**
+
+生成页 / 工作台挑素材用。
+
+**硬过滤 `state=active`**：草稿与回收站永远不出现在选择器里。这不是一个
+可选的筛选参数——调用方忘了传就会把用户删掉的东西塞进生成任务。
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `kind` | query | `LibraryAssetKind | null` | 否 |  |
+| `tagIds` | query | `string[] | null` | 否 |  |
+| `keyword` | query | `string` | 否 |  |
+| `includePacks` | query | `boolean` | 否 |  |
+| `page` | query | `number` | 否 | 页码，从 1 开始 |
+| `pageSize` | query | `number` | 否 | 每页条数 |
+
+**响应** `ApiResponse<LibrarySelectionPage>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `items` | `LibraryAssetOut[]` | 否 |  |
+| `total` | `number` | 否 |  |
+| `page` | `number` | 否 |  |
+| `pageSize` | `number` | 否 |  |
+
+#### `POST /api/v1/library/share-requests`
+
+**发起共享 / 撤销共享申请**
+
+`action=revoke` 必须带 `reason`（400 `REVOKE_REASON_REQUIRED`）。
+
+申请人自己就是审批人时（持 `library:share:approve`）直接通过并记自审，
+否则会出现「自己申请、等自己批」的死锁。
+
+**请求体** `ShareRequestIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `assetId` | `string` | 是 |  |
+| `action` | `ShareAction` | 否 |  |
+| `target` | `ShareTarget` | 否 |  |
+| `groupId` | `string` | 否 |  |
+| `reason` | `string` | 否 |  |
+| `expectedVersion` | `number` | 否 |  |
+
+**响应** `ApiResponse<ShareRequestOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `assetId` | `string` | 是 |  |
+| `assetName` | `string` | 否 |  |
+| `applicantId` | `string` | 是 |  |
+| `applicantName` | `string \| null` | 否 |  |
+| `action` | `ShareAction` | 是 |  |
+| `target` | `ShareTarget` | 是 |  |
+| `groupId` | `string` | 否 |  |
+| `groupName` | `string \| null` | 否 |  |
+| `status` | `string` | 是 |  |
+| `reviewerId` | `string \| null` | 否 |  |
+| `note` | `string` | 否 |  |
+| `reason` | `string` | 否 |  |
+| `decidedAt` | `string \| null` | 否 |  |
+| `createdAt` | `string` | 是 |  |
+
+#### `GET /api/v1/library/share-requests`
+
+**申请单列表（我提交的 / 待我审核）**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `scope` | query | `string` | 否 |  |
+
+**响应** `ApiResponse<ShareRequestOut[]>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `[].id` | `string` | 是 |  |
+| `[].assetId` | `string` | 是 |  |
+| `[].assetName` | `string` | 否 |  |
+| `[].applicantId` | `string` | 是 |  |
+| `[].applicantName` | `string \| null` | 否 |  |
+| `[].action` | `ShareAction` | 是 |  |
+| `[].target` | `ShareTarget` | 是 |  |
+| `[].groupId` | `string` | 否 |  |
+| `[].groupName` | `string \| null` | 否 |  |
+| `[].status` | `string` | 是 |  |
+| `[].reviewerId` | `string \| null` | 否 |  |
+| `[].note` | `string` | 否 |  |
+| `[].reason` | `string` | 否 |  |
+| `[].decidedAt` | `string \| null` | 否 |  |
+| `[].createdAt` | `string` | 是 |  |
+
+#### `POST /api/v1/library/share-requests/{request_id}/approve`
+
+**通过申请**
+
+小组负责人也能审批本组的申请，所以这里只要求 `library:read`。
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `request_id` | path | `string` | 是 |  |
+
+**请求体** `ShareDecisionIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `note` | `string` | 否 |  |
+| `expectedVersion` | `number` | 否 |  |
+
+**响应** `ApiResponse<ShareRequestOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `assetId` | `string` | 是 |  |
+| `assetName` | `string` | 否 |  |
+| `applicantId` | `string` | 是 |  |
+| `applicantName` | `string \| null` | 否 |  |
+| `action` | `ShareAction` | 是 |  |
+| `target` | `ShareTarget` | 是 |  |
+| `groupId` | `string` | 否 |  |
+| `groupName` | `string \| null` | 否 |  |
+| `status` | `string` | 是 |  |
+| `reviewerId` | `string \| null` | 否 |  |
+| `note` | `string` | 否 |  |
+| `reason` | `string` | 否 |  |
+| `decidedAt` | `string \| null` | 否 |  |
+| `createdAt` | `string` | 是 |  |
+
+#### `POST /api/v1/library/share-requests/{request_id}/cancel`
+
+**撤回自己提交的申请**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `request_id` | path | `string` | 是 |  |
+
+**响应** `ApiResponse<ShareRequestOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `assetId` | `string` | 是 |  |
+| `assetName` | `string` | 否 |  |
+| `applicantId` | `string` | 是 |  |
+| `applicantName` | `string \| null` | 否 |  |
+| `action` | `ShareAction` | 是 |  |
+| `target` | `ShareTarget` | 是 |  |
+| `groupId` | `string` | 否 |  |
+| `groupName` | `string \| null` | 否 |  |
+| `status` | `string` | 是 |  |
+| `reviewerId` | `string \| null` | 否 |  |
+| `note` | `string` | 否 |  |
+| `reason` | `string` | 否 |  |
+| `decidedAt` | `string \| null` | 否 |  |
+| `createdAt` | `string` | 是 |  |
+
+#### `POST /api/v1/library/share-requests/{request_id}/reject`
+
+**驳回申请**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `request_id` | path | `string` | 是 |  |
+
+**请求体** `ShareDecisionIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `note` | `string` | 否 |  |
+| `expectedVersion` | `number` | 否 |  |
+
+**响应** `ApiResponse<ShareRequestOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `assetId` | `string` | 是 |  |
+| `assetName` | `string` | 否 |  |
+| `applicantId` | `string` | 是 |  |
+| `applicantName` | `string \| null` | 否 |  |
+| `action` | `ShareAction` | 是 |  |
+| `target` | `ShareTarget` | 是 |  |
+| `groupId` | `string` | 否 |  |
+| `groupName` | `string \| null` | 否 |  |
+| `status` | `string` | 是 |  |
+| `reviewerId` | `string \| null` | 否 |  |
+| `note` | `string` | 否 |  |
+| `reason` | `string` | 否 |  |
+| `decidedAt` | `string \| null` | 否 |  |
+| `createdAt` | `string` | 是 |  |
 
 #### `POST /api/v1/library/source-videos`
 
@@ -2578,8 +3015,119 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `state` | `LibraryAssetState` | 是 |  |
 | `stateVersion` | `number` | 否 |  |
 | `coverUrl` | `string \| null` | 否 |  |
+| `groupIds` | `string[]` | 否 |  |
+| `trashReason` | `string \| null` | 否 |  |
+| `trashExpiresAt` | `string \| null` | 否 |  |
 | `createdAt` | `string` | 是 |  |
 | `updatedAt` | `string \| null` | 否 |  |
+
+#### `GET /api/v1/library/tags`
+
+**标签列表**
+
+**响应** `ApiResponse<LibraryTagOut[]>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `[].id` | `string` | 是 |  |
+| `[].name` | `string` | 是 |  |
+
+#### `POST /api/v1/library/tags`
+
+**新建标签（同名返回已有那条）**
+
+**请求体** `TagIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `name` | `string` | 是 |  |
+
+**响应** `ApiResponse<LibraryTagOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+
+#### `PATCH /api/v1/library/tags/{tag_id}`
+
+**重命名标签（不做隐式合并）**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `tag_id` | path | `string` | 是 |  |
+
+**请求体** `TagIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `name` | `string` | 是 |  |
+
+**响应** `ApiResponse<LibraryTagOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+
+#### `DELETE /api/v1/library/tags/{tag_id}`
+
+**删除标签（同时清绑定，资产不受影响）**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `tag_id` | path | `string` | 是 |  |
+
+**响应** `ApiResponse<null>`（前端取 `res.data`）
+
+#### `DELETE /api/v1/library/trash/{asset_id}`
+
+**彻底删除（不可逆，先过引用检查）**
+
+被封装 / 下载任务引用时返回 409 `TRASH_ENTRY_REFERENCED` 并列出引用方。
+
+不做批量彻底删除：不可逆的动作用「勾选十条点一下」来触发太危险。
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `asset_id` | path | `string` | 是 |  |
+
+**响应** `ApiResponse<null>`（前端取 `res.data`）
+
+#### `POST /api/v1/library/trash/{asset_id}/restore`
+
+**从回收站恢复（强制回到个人库，不恢复共享）**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `asset_id` | path | `string` | 是 |  |
+
+**响应** `ApiResponse<LibraryAssetDetailOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `kind` | `LibraryAssetKind` | 是 |  |
+| `origin` | `string` | 是 | upload / generated / template_source / imported |
+| `mimeType` | `string \| null` | 否 |  |
+| `sizeBytes` | `number` | 否 |  |
+| `durationSec` | `number \| null` | 否 |  |
+| `hasAudio` | `boolean` | 否 |  |
+| `ownerId` | `string` | 是 |  |
+| `ownerName` | `string \| null` | 否 |  |
+| `visibility` | `LibraryVisibility` | 是 |  |
+| `state` | `LibraryAssetState` | 是 |  |
+| `stateVersion` | `number` | 否 |  |
+| `coverUrl` | `string \| null` | 否 |  |
+| `groupIds` | `string[]` | 否 |  |
+| `trashReason` | `string \| null` | 否 |  |
+| `trashExpiresAt` | `string \| null` | 否 |  |
+| `createdAt` | `string` | 是 |  |
+| `updatedAt` | `string \| null` | 否 |  |
+| `tags` | `LibraryTagOut[]` | 否 |  |
+| `groups` | `LibraryGroupRef[]` | 否 |  |
+| `generation` | `LibraryGenerationOut \| null` | 否 |  |
 
 ---
 
@@ -2643,9 +3191,52 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 
 取值：`9:16`、`16:9`、`1:1`
 
+### `AssetPatchIn`
+
+改名 / 换标签。**不含可见性**：共享必须走申请单，否则审批就没有意义了。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `name` | `string \| null` | 否 |  |
+| `tagIds` | `string[] \| null` | 否 |  |
+| `expectedVersion` | `number` | 否 | >0 时做乐观锁校验；0 表示不校验（兼容单页操作） |
+
 ### `AssetSort`（枚举）
 
 取值：`-createdAt`、`createdAt`、`name`、`-sizeBytes`
+
+### `BulkAction`（枚举）
+
+取值：`addTag`、`removeTag`、`rename`、`delete`、`restore`、`approveDraft`、`rejectDraft`、`requestRevoke`
+
+### `BulkIn`
+
+批量写。**逐条判定、逐条提交**：一批里 3 条已共享就返回 7 成功 + 3 条明细。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `ids` | `string[]` | 是 |  |
+| `action` | `BulkAction` | 是 |  |
+| `payload` | `Record<string, unknown>` | 否 |  |
+| `expectedVersions` | `Record<string, number>` | 否 |  |
+
+### `BulkItemResult`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `ok` | `boolean` | 是 |  |
+| `errorCode` | `number` | 否 |  |
+| `message` | `string` | 否 |  |
+| `details` | `Record<string, unknown> \| null` | 否 |  |
+
+### `BulkOut`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `succeeded` | `number` | 否 |  |
+| `failed` | `number` | 否 |  |
+| `results` | `BulkItemResult[]` | 否 |  |
 
 ### `Capability`（枚举）
 
@@ -2688,6 +3279,13 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 |---|---|---|---|
 | `deleted` | `number` | 是 | 实际删除的条数 |
 | `skipped` | `string[]` | 否 | 被跳过的任务 ID：不存在，或属于他人且没有 `task:read:all` |
+
+### `DraftDecisionIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `reason` | `string` | 否 |  |
+| `expectedVersion` | `number` | 否 |  |
 
 ### `EffectivePermissionsOut`
 
@@ -2810,6 +3408,15 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `name` | `string` | 是 | 小组名称 |
 | `permissions` | `string[]` | 否 | 该组授予的权限码 |
 
+### `GroupLeadersIn`
+
+整体替换某组的负责人列表。空数组 = 清空（该组退回「只能由持
+`library:share:approve` 的人审批」）。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `userIds` | `string[]` | 否 |  |
+
 ### `GroupMembersIn`
 
 | 字段 | 类型 | 必填 | 说明 |
@@ -2913,9 +3520,13 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `state` | `LibraryAssetState` | 是 |  |
 | `stateVersion` | `number` | 否 |  |
 | `coverUrl` | `string \| null` | 否 |  |
+| `groupIds` | `string[]` | 否 |  |
+| `trashReason` | `string \| null` | 否 |  |
+| `trashExpiresAt` | `string \| null` | 否 |  |
 | `createdAt` | `string` | 是 |  |
 | `updatedAt` | `string \| null` | 否 |  |
 | `tags` | `LibraryTagOut[]` | 否 |  |
+| `groups` | `LibraryGroupRef[]` | 否 |  |
 | `generation` | `LibraryGenerationOut \| null` | 否 |  |
 
 ### `LibraryAssetKind`（枚举）
@@ -2942,6 +3553,9 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `state` | `LibraryAssetState` | 是 |  |
 | `stateVersion` | `number` | 否 |  |
 | `coverUrl` | `string \| null` | 否 |  |
+| `groupIds` | `string[]` | 否 |  |
+| `trashReason` | `string \| null` | 否 |  |
+| `trashExpiresAt` | `string \| null` | 否 |  |
 | `createdAt` | `string` | 是 |  |
 | `updatedAt` | `string \| null` | 否 |  |
 
@@ -3004,6 +3618,36 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `externalId` | `string` | 否 |  |
 | `credits` | `number` | 否 |  |
 | `generatedAt` | `string \| null` | 否 |  |
+
+### `LibraryGroupOut`
+
+我的小组。`isLeader` 决定「待我审核」里会不会出现该组的申请。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `name` | `string` | 否 |  |
+| `isLeader` | `boolean` | 否 |  |
+
+### `LibraryGroupRef`
+
+资产共享到的小组。名称走组织目录注入口，不在本模块 join 身份的表。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `name` | `string` | 否 |  |
+
+### `LibrarySelectionPage`
+
+选择器返回：只含 `state=active` 的条目，不带分面（选择器不显示角标）。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `items` | `LibraryAssetOut[]` | 否 |  |
+| `total` | `number` | 否 |  |
+| `page` | `number` | 否 |  |
+| `pageSize` | `number` | 否 |  |
 
 ### `LibraryTab`（枚举）
 
@@ -3463,6 +4107,59 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `createdAt` | `string` | 是 | 登录时间（UTC） |
 | `current` | `boolean` | 否 | 是否是发起本次请求的会话；前端据此标「本机」 |
 
+### `ShareAction`（枚举）
+
+取值：`share`、`revoke`
+
+### `ShareDecisionIn`
+
+审批 / 驳回 / 撤回申请单。`note` 会进申请单与审计。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `note` | `string` | 否 |  |
+| `expectedVersion` | `number` | 否 |  |
+
+### `ShareRequestIn`
+
+发起共享或撤销共享。
+
+`action=revoke` 必须带 `reason`：撤销会让正在用这个素材的同事突然拿不到文件，
+理由要留在申请单里（设计 §3.5）。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `assetId` | `string` | 是 |  |
+| `action` | `ShareAction` | 否 |  |
+| `target` | `ShareTarget` | 否 |  |
+| `groupId` | `string` | 否 |  |
+| `reason` | `string` | 否 |  |
+| `expectedVersion` | `number` | 否 |  |
+
+### `ShareRequestOut`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `assetId` | `string` | 是 |  |
+| `assetName` | `string` | 否 |  |
+| `applicantId` | `string` | 是 |  |
+| `applicantName` | `string \| null` | 否 |  |
+| `action` | `ShareAction` | 是 |  |
+| `target` | `ShareTarget` | 是 |  |
+| `groupId` | `string` | 否 |  |
+| `groupName` | `string \| null` | 否 |  |
+| `status` | `string` | 是 |  |
+| `reviewerId` | `string \| null` | 否 |  |
+| `note` | `string` | 否 |  |
+| `reason` | `string` | 否 |  |
+| `decidedAt` | `string \| null` | 否 |  |
+| `createdAt` | `string` | 是 |  |
+
+### `ShareTarget`（枚举）
+
+取值：`group`、`team`
+
 ### `ShotListOut`
 
 | 字段 | 类型 | 必填 | 说明 |
@@ -3500,6 +4197,12 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `aspectRatio` | `AspectRatio` | 是 |  |
 | `coverUrl` | `string` | 是 |  |
 | `createdAt` | `string` | 是 |  |
+
+### `TagIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `name` | `string` | 是 |  |
 
 ### `TaskFeedItem`
 

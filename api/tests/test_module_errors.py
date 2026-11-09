@@ -65,12 +65,15 @@ def test_two_modules_may_share_a_slot_with_distinct_seq() -> None:
 
 
 def test_two_modules_may_not_share_a_code() -> None:
+    # 用 499 而不是 409：409 号段已经被真实模块占掉大半，写死 (409, 7) 这种
+    # 「碰巧还空着」的组合，会在下一个模块新增错误码时莫名其妙变红——那时失败
+    # 信息指向的是「号段被占用」，而用例的本意是「两个模块不能抢同一个码」。
     first = ModuleErrors("clash_first", slot=8)
     second = ModuleErrors("clash_second", slot=8)
-    first.code(409, 7)
+    first.code(499, 7)
 
     with pytest.raises(RegistryError, match="已被模块 clash_first 占用"):
-        second.code(409, 7)
+        second.code(499, 7)
 
 
 def test_recreating_same_module_name_is_allowed() -> None:

@@ -6,22 +6,31 @@
 前端路径（`/library`）。切换时只改前端模块的 `load()` 一行，删掉本模块
 不影响现役素材库。
 
-M1 交付「个人库」竖线：10 张表、上传 / 秒传 / `sourceKey` 幂等、列表与取件、
-旧素材导入 CLI。可见性、共享、草稿与回收站在 M2。
+M2 交付：三层可见集、共享与撤销审批、删除矩阵与 §3.4.1 窄口、草稿与回收站
+状态机、标签、批量写、选择器。封装与批量下载在 M3。
 """
 
 from api.module import ModuleSpec
 from core.permissions import PermissionSpec
 from core.ports.assets import AssetReferenceSource, bind_asset_reference_sources
+from core.ports.library_references import register_library_references
 from modules.library.asset_references import GenerationAssetReferences
 from modules.library.cli import register as register_cli
 from modules.library.health import check as health_check
 from modules.library.lookup import install as install_lookup
+from modules.library.references import SqlLibraryReferences
 from modules.library.router import router
+
+# 必须 import：注册 @periodic("library.trash.gc")（副作用导入）
+from modules.library import maintenance  # noqa: E402,F401  isort: skip
 
 # 把「v2 资产是什么」挂到注入口：模板 / 任务 / 选择器在并存期要读它，
 # 但它们不能 import 本模块（业务模块之间不许互相 import）。
 install_lookup()
+
+# 彻底删除前的引用检查：v2 自己的封装成员与下载任务在这里聚合。
+# fail-closed —— 没接上时 `purge` 一律 503，不把「查不到」当「没人引用」。
+register_library_references(SqlLibraryReferences())
 
 # v2 绝大多数 `asset_id` 列指向 `library_assets.id`，与旧 `assets.id` 无关；
 # 唯一例外是生成溯源里记录的旧素材参考图——删掉旧图会让历史详情页留白。
@@ -39,15 +48,14 @@ bind_asset_reference_sources("library", ASSET_REFERENCE_SOURCES)
 #
 # `tests/test_permission_coverage.py` 的红线：声明了却没有任何 `require(...)` /
 # `actor.has(...)` 判定点的权限码，会在角色配置界面变成一个永远勾了没用的项。
-# M0 曾一次性声明 11 个，全量测试立刻报 9 个僵尸码——那不是在提醒「还没写」，
-# 而是在说「现在就已经是装饰品」。所以：
+# 所以：
 #
-# - M1（本批）：`read` / `create` —— 列表、上传、源视频上传、取件都已接线；
-# - M2 加：`update` / `delete` / `delete:any` / `draft:review` / `share` /
-#   `share:direct` / `share:approve` / `tag:manage`；
-# - M3 加：`generation:ingest`（生成入库接口接线时）。
-#
-# 设计文档 §5 的清单仍是目标形态，只是分批判落地。
+# - M1：`read` / `create`；
+# - M2（本批）：`update` / `delete` / `delete:any` / `draft:review` / `share` /
+#   `share:direct` / `share:approve` / `tag:manage` —— 全部已接线：
+#   `update`/`delete`/`share`/`tag:manage` 在路由 `require`，
+#   `delete:any`/`draft:review`/`share:direct` 在服务层 `actor.has`；
+# - M3：`generation:ingest`（生成入库接口接线时）。
 module = ModuleSpec(
     name="library",
     router=router,
@@ -56,9 +64,19 @@ module = ModuleSpec(
     permissions=(
         PermissionSpec("library:read", "查看资产库", group="资产库"),
         PermissionSpec("library:create", "上传与封装资产", group="资产库"),
+        PermissionSpec("library:update", "修改本人资产的名称与标签", group="资产库"),
+        PermissionSpec("library:delete", "删除本人资产（移入回收站）", group="资产库"),
+        PermissionSpec("library:delete:any", "删除 / 恢复任何人的资产", group="资产库"),
+        PermissionSpec("library:draft:review", "审核他人草稿", group="资产库"),
+        PermissionSpec("library:share", "发起共享与撤销共享申请", group="资产库"),
+        PermissionSpec("library:share:direct", "共享无需审批（撤销仍需审批）", group="资产库"),
+        PermissionSpec("library:share:approve", "审批共享与撤销申请", group="资产库"),
+        PermissionSpec("library:tag:manage", "管理标签词表（改名 / 删除）", group="资产库"),
     ),
-    # M1 起有运维命令（旧素材导入）；jobs / periodic 仍留到 M2/M3 有实现时再加，
-    # 提前声明会让 `create_app()` 的装配对账直接拒绝启动。
+    # M2 起有周期任务（回收站 GC）。声明了就必须注册，`create_app()` 会核对：
+    # `modules.library.maintenance` 的 import 就是注册动作。
+    periodic=("library.trash.gc",),
+    # 运维命令：旧素材导入、回收站 GC（dry-run / 手动跑一轮）
     cli=register_cli,
     asset_reference_sources=ASSET_REFERENCE_SOURCES,
     doctor=health_check,

@@ -1,7 +1,9 @@
 """资产库 v2 的运维命令。
 
-M1 只有一条：把旧素材库搬进 v2。它必须能反复跑（幂等），因为并存期会先试跑
-一次、切换前一天再跑一次追平增量。
+- `library import-archive`：把旧素材库搬进 v2。必须能反复跑（幂等），因为并存期
+  会先试跑一次、切换前一天再跑一次追平增量。
+- `library trash-gc`：手动跑一轮回收站清理。周期任务默认关闭（删除不可逆），
+  所以运维需要一个「我看过了，现在清」的入口；`--dry-run` 只列 id。
 
 命令通过 `ModuleSpec.cli` 注册：`src/cli.py` 不需要 import 本模块，
 删掉 v2 也不会让 `app backup` 起不来。
@@ -47,6 +49,20 @@ def cmd_import_archive(args: argparse.Namespace) -> None:
         raise SystemExit(1)
 
 
+def cmd_trash_gc(args: argparse.Namespace) -> None:
+    from modules.library.maintenance import run_trash_gc
+
+    report = asyncio.run(run_trash_gc(batch=args.batch or None, dry_run=args.dry_run))
+    if report.dry_run:
+        print(f"试运行：{report.scanned} 条已过保留期（加上 --no-dry-run 才会真删）")
+        return
+    print(f"扫描 {report.scanned}，清理 {report.purged}，跳过 {report.blocked_count}")
+    if report.blocked:
+        # 被引用而跳过是**预期**行为，不是失败：这些条目的解释在详情页的
+        # 「使用与引用」区。退出码仍为 0，否则运维脚本会以为整轮失败了。
+        print("跳过的条目（仍被引用）：" + ", ".join(report.blocked[:20]))
+
+
 def register(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     parser = sub.add_parser("library", help="资产库 v2 运维命令")
     actions = parser.add_subparsers(dest="library_action", required=True)
@@ -58,3 +74,13 @@ def register(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     importer.add_argument("--limit", type=int, default=0, help="最多处理多少条（0 = 全部）")
     importer.add_argument("--owner", default="", help="只导入指定 owner_id 的素材")
     importer.set_defaults(func=cmd_import_archive)
+
+    gc = actions.add_parser("trash-gc", help="清理过期的回收站条目（默认试运行）")
+    gc.add_argument(
+        "--no-dry-run",
+        dest="dry_run",
+        action="store_false",
+        help="真的删除；不传时只列出会删哪些",
+    )
+    gc.set_defaults(func=cmd_trash_gc, dry_run=True)
+    gc.add_argument("--batch", type=int, default=0, help="单轮最多处理多少条（0 = 用配置值）")

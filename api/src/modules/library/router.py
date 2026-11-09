@@ -3,8 +3,13 @@
 **与现役 `/assets` 完全隔离**：表前缀、权限码、注入口、前端路径全部独立，
 切换时只改前端模块的 `load()` 一行，后端两套可以同时在线。
 
-M1 交付「个人库」竖线：列表 / 分面 / 上传 / 源视频上传 / 详情 / 取件。
-共享、草稿、回收站、封装、下载、生成入库在 M2/M3，路由不提前占位。
+路径顺序有讲究：`/assets/bulk`、`/assets/upload` 必须声明在
+`/assets/{asset_id}` **之前**。FastAPI 按声明顺序匹配，写在后面会被
+`{asset_id}` 吃掉，然后返回「资产不存在」——这种错在 OpenAPI 里看不出来，
+只有真的发一次请求才会发现。
+
+M2 交付：三层可见集、共享与撤销审批、删除矩阵（含 §3.4.1 窄口）、草稿与回收站、
+标签、批量写、选择器。封装与批量下载在 M3。
 """
 
 from __future__ import annotations
@@ -19,23 +24,49 @@ from core.config import settings
 from core.ports.library_lookup import LibraryAssetKind, LibraryAssetState
 from core.response import ApiResponse
 from modules.library.dependencies import (
+    BulkDep,
+    BulkServiceDep,
     LibraryCreateDep,
+    LibraryDeleteDep,
+    LibraryDraftDep,
     LibraryReadDep,
     LibraryServiceDep,
+    LibraryShareApproveDep,
+    LibraryShareDep,
+    LibraryTagManageDep,
+    LibraryUpdateDep,
+    LifecycleServiceDep,
+    ShareServiceDep,
+    TagServiceDep,
 )
 from modules.library.schema import (
+    AssetPatchIn,
     AssetSort,
+    BulkIn,
+    BulkOut,
+    DraftDecisionIn,
+    GroupLeadersIn,
     LibraryAssetDetailOut,
     LibraryAssetOut,
     LibraryAssetPage,
     LibraryFacets,
+    LibraryGroupOut,
+    LibrarySelectionPage,
     LibraryTab,
+    LibraryTagOut,
+    ShareDecisionIn,
+    ShareRequestIn,
+    ShareRequestOut,
+    TagIn,
     UploadKind,
 )
 
 router = APIRouter(prefix="/library", tags=["资产库"])
 
 
+# --------------------------------------------------------------------------- #
+# 浏览
+# --------------------------------------------------------------------------- #
 @router.get("/assets", summary="资产库列表（分页 + 分面）")
 async def list_assets(
     actor: LibraryReadDep,
@@ -48,6 +79,11 @@ async def list_assets(
     keyword: str = Query(default="", max_length=100),
     sort: AssetSort = AssetSort.CREATED_DESC,
 ) -> ApiResponse[LibraryAssetPage]:
+    """`state=draft|trash` 时忽略 `library`：草稿与回收站不在任何可见范围内。
+
+    代审 / 管理员看全量靠权限点（`library:draft:review` / `library:delete:any`），
+    不靠一个 `mine=false` 参数——参数能被任何人传，权限点不能。
+    """
     return ApiResponse.ok(
         await service.list_assets(
             actor,
@@ -68,6 +104,48 @@ async def facets(actor: LibraryReadDep, service: LibraryServiceDep) -> ApiRespon
     return ApiResponse.ok(await service.facets(actor))
 
 
+@router.get("/selection", summary="选择器：只返回库内资产")
+async def selection(
+    actor: LibraryReadDep,
+    page: PageDep,
+    service: LibraryServiceDep,
+    kind: LibraryAssetKind | None = None,
+    tag_ids: Annotated[list[str] | None, Query(alias="tagIds")] = None,
+    keyword: str = Query(default="", max_length=100),
+    include_packs: Annotated[bool, Query(alias="includePacks")] = True,
+) -> ApiResponse[LibrarySelectionPage]:
+    """生成页 / 工作台挑素材用。
+
+    **硬过滤 `state=active`**：草稿与回收站永远不出现在选择器里。这不是一个
+    可选的筛选参数——调用方忘了传就会把用户删掉的东西塞进生成任务。
+    """
+    result = await service.list_assets(
+        actor,
+        page,
+        library=LibraryTab.ALL,
+        state="active",
+        kind=kind.value if kind else None,
+        tag_ids=tag_ids,
+        keyword=keyword,
+    )
+    items = (
+        result.items
+        if include_packs
+        else [item for item in result.items if item.kind != "pack"]
+    )
+    return ApiResponse.ok(
+        LibrarySelectionPage(
+            items=items,
+            total=result.total,
+            page=result.page,
+            page_size=result.page_size,
+        )
+    )
+
+
+# --------------------------------------------------------------------------- #
+# 上传
+# --------------------------------------------------------------------------- #
 @router.post(
     "/assets/upload",
     status_code=status.HTTP_201_CREATED,
@@ -75,9 +153,7 @@ async def facets(actor: LibraryReadDep, service: LibraryServiceDep) -> ApiRespon
     dependencies=[
         # 上传是重 IO：一次按 3 次计入额度，与旧素材库同一档
         Depends(
-            rate_limit(
-                "library.upload", limit=settings.rate_limit_default_per_min, cost=3
-            )
+            rate_limit("library.upload", limit=settings.rate_limit_default_per_min, cost=3)
         )
     ],
 )
@@ -144,6 +220,67 @@ async def upload_source_video(
     )
 
 
+# --------------------------------------------------------------------------- #
+# 批量写（必须声明在 /assets/{asset_id} 之前）
+# --------------------------------------------------------------------------- #
+@router.post(
+    "/assets/bulk",
+    summary="批量写：逐条判定，部分失败返回明细",
+    dependencies=[Depends(rate_limit("library.bulk", limit=20, cost=2))],
+)
+async def bulk_write(
+    payload: BulkIn, actor: BulkDep, service: BulkServiceDep
+) -> ApiResponse[BulkOut]:
+    return ApiResponse.ok(await service.run(payload, actor))
+
+
+@router.patch(
+    "/assets/{asset_id}",
+    summary="改名 / 换标签（不含可见性）",
+    dependencies=[Depends(rate_limit("library.asset_write", limit=60))],
+)
+async def patch_asset(
+    asset_id: str,
+    payload: AssetPatchIn,
+    actor: LibraryUpdateDep,
+    service: LibraryServiceDep,
+) -> ApiResponse[LibraryAssetDetailOut]:
+    return ApiResponse.ok(await service.patch(asset_id, payload, actor))
+
+
+@router.delete(
+    "/assets/{asset_id}",
+    summary="移入回收站（软删，可恢复）",
+    dependencies=[Depends(rate_limit("library.asset_delete", limit=60))],
+)
+async def delete_asset(
+    asset_id: str,
+    actor: LibraryDeleteDep,
+    service: LifecycleServiceDep,
+    revoke_own_group_share: Annotated[
+        bool,
+        Query(
+            alias="revokeOwnGroupShare",
+            description="组长的窄口：本人所有、仅共享给本组时，一步撤销共享并删除",
+        ),
+    ] = False,
+    reason: str = Query(default="", max_length=200),
+) -> ApiResponse[None]:
+    """删除矩阵见设计 §3.4。
+
+    已共享返回 409 `SHARED_ASSET_NOT_DELETABLE`，`details.canRevokeAndDelete`
+    告诉前端要不要把按钮换成「撤销共享并删除」。判定与执行共用同一个条件，
+    前端不自己算。
+    """
+    await service.delete(
+        asset_id,
+        actor,
+        revoke_own_group_share=revoke_own_group_share,
+        reason=reason,
+    )
+    return ApiResponse.ok(None)
+
+
 @router.get("/assets/{asset_id}", summary="资产详情（含标签与生成参数）")
 async def asset_detail(
     asset_id: str, actor: LibraryReadDep, service: LibraryServiceDep
@@ -163,3 +300,205 @@ async def asset_thumbnail(
     asset_id: str, actor: LibraryReadDep, service: LibraryServiceDep
 ) -> Response:
     return (await service.file(asset_id, actor, preview=True)).response()
+
+
+# --------------------------------------------------------------------------- #
+# 草稿
+# --------------------------------------------------------------------------- #
+@router.post(
+    "/drafts/{asset_id}/approve",
+    summary="草稿采纳：进入个人素材库",
+    dependencies=[Depends(rate_limit("library.draft", limit=60))],
+)
+async def approve_draft(
+    asset_id: str,
+    payload: DraftDecisionIn,
+    actor: LibraryDraftDep,
+    service: LifecycleServiceDep,
+) -> ApiResponse[LibraryAssetDetailOut]:
+    return ApiResponse.ok(await service.approve_draft(asset_id, payload, actor))
+
+
+@router.post(
+    "/drafts/{asset_id}/reject",
+    summary="草稿驳回：进回收站，可恢复回草稿",
+    dependencies=[Depends(rate_limit("library.draft", limit=60))],
+)
+async def reject_draft(
+    asset_id: str,
+    payload: DraftDecisionIn,
+    actor: LibraryDraftDep,
+    service: LifecycleServiceDep,
+) -> ApiResponse[LibraryAssetDetailOut]:
+    return ApiResponse.ok(await service.reject_draft(asset_id, payload, actor))
+
+
+# --------------------------------------------------------------------------- #
+# 回收站
+# --------------------------------------------------------------------------- #
+@router.post(
+    "/trash/{asset_id}/restore",
+    summary="从回收站恢复（强制回到个人库，不恢复共享）",
+    dependencies=[Depends(rate_limit("library.trash", limit=60))],
+)
+async def restore_asset(
+    asset_id: str, actor: LibraryDeleteDep, service: LifecycleServiceDep
+) -> ApiResponse[LibraryAssetDetailOut]:
+    return ApiResponse.ok(await service.restore(asset_id, actor))
+
+
+@router.delete(
+    "/trash/{asset_id}",
+    summary="彻底删除（不可逆，先过引用检查）",
+    dependencies=[Depends(rate_limit("library.trash", limit=30, cost=2))],
+)
+async def purge_asset(
+    asset_id: str, actor: LibraryDeleteDep, service: LifecycleServiceDep
+) -> ApiResponse[None]:
+    """被封装 / 下载任务引用时返回 409 `TRASH_ENTRY_REFERENCED` 并列出引用方。
+
+    不做批量彻底删除：不可逆的动作用「勾选十条点一下」来触发太危险。
+    """
+    await service.purge(asset_id, actor)
+    return ApiResponse.ok(None)
+
+
+# --------------------------------------------------------------------------- #
+# 共享
+# --------------------------------------------------------------------------- #
+@router.post(
+    "/share-requests",
+    status_code=status.HTTP_201_CREATED,
+    summary="发起共享 / 撤销共享申请",
+    dependencies=[Depends(rate_limit("library.share", limit=60))],
+)
+async def create_share_request(
+    payload: ShareRequestIn, actor: LibraryShareDep, service: ShareServiceDep
+) -> ApiResponse[ShareRequestOut]:
+    """`action=revoke` 必须带 `reason`（400 `REVOKE_REASON_REQUIRED`）。
+
+    申请人自己就是审批人时（持 `library:share:approve`）直接通过并记自审，
+    否则会出现「自己申请、等自己批」的死锁。
+    """
+    return ApiResponse.ok(await service.request(payload, actor))
+
+
+@router.get("/share-requests", summary="申请单列表（我提交的 / 待我审核）")
+async def list_share_requests(
+    actor: LibraryReadDep,
+    service: ShareServiceDep,
+    scope: str = Query(default="mine", pattern="^(mine|pending)$"),
+) -> ApiResponse[list[ShareRequestOut]]:
+    return ApiResponse.ok(await service.list_requests(actor, scope=scope))
+
+
+@router.post(
+    "/share-requests/{request_id}/approve",
+    summary="通过申请",
+    dependencies=[Depends(rate_limit("library.share", limit=60))],
+)
+async def approve_share_request(
+    request_id: str,
+    payload: ShareDecisionIn,
+    actor: LibraryReadDep,
+    service: ShareServiceDep,
+) -> ApiResponse[ShareRequestOut]:
+    """小组负责人也能审批本组的申请，所以这里只要求 `library:read`。"""
+    return ApiResponse.ok(await service.decide(request_id, payload, actor, approve=True))
+
+
+@router.post(
+    "/share-requests/{request_id}/reject",
+    summary="驳回申请",
+    dependencies=[Depends(rate_limit("library.share", limit=60))],
+)
+async def reject_share_request(
+    request_id: str,
+    payload: ShareDecisionIn,
+    actor: LibraryReadDep,
+    service: ShareServiceDep,
+) -> ApiResponse[ShareRequestOut]:
+    return ApiResponse.ok(await service.decide(request_id, payload, actor, approve=False))
+
+
+@router.post(
+    "/share-requests/{request_id}/cancel",
+    summary="撤回自己提交的申请",
+    dependencies=[Depends(rate_limit("library.share", limit=60))],
+)
+async def cancel_share_request(
+    request_id: str, actor: LibraryShareDep, service: ShareServiceDep
+) -> ApiResponse[ShareRequestOut]:
+    return ApiResponse.ok(await service.cancel(request_id, actor))
+
+
+# --------------------------------------------------------------------------- #
+# 小组与标签
+# --------------------------------------------------------------------------- #
+@router.get("/groups", summary="我的小组（含是否负责人）")
+async def my_groups(
+    actor: LibraryReadDep, service: ShareServiceDep
+) -> ApiResponse[list[LibraryGroupOut]]:
+    """前端用它渲染「小组素材库」的分组筛选与审批入口。
+
+    不直接调用 `/identity/groups`：那个接口要 `identity:group:read`，
+    普通成员没有；而且它返回全站小组，会泄露别人的组织结构。
+    """
+    return ApiResponse.ok(await service.my_groups(actor))
+
+
+@router.put(
+    "/groups/{group_id}/leaders",
+    summary="设置小组负责人（整体替换）",
+    dependencies=[Depends(rate_limit("library.leaders", limit=30))],
+)
+async def set_group_leaders(
+    group_id: str,
+    payload: GroupLeadersIn,
+    actor: LibraryShareApproveDep,
+    service: ShareServiceDep,
+) -> ApiResponse[list[str]]:
+    """负责人是「谁能审批本组共享」的唯一来源，存在 v2 自己的表里。"""
+    return ApiResponse.ok(await service.set_leaders(group_id, payload.user_ids, actor))
+
+
+@router.get("/tags", summary="标签列表")
+async def list_tags(
+    actor: LibraryReadDep, service: TagServiceDep
+) -> ApiResponse[list[LibraryTagOut]]:
+    return ApiResponse.ok(await service.list_tags())
+
+
+@router.post(
+    "/tags",
+    status_code=status.HTTP_201_CREATED,
+    summary="新建标签（同名返回已有那条）",
+    dependencies=[Depends(rate_limit("library.tag", limit=60))],
+)
+async def create_tag(
+    payload: TagIn, actor: LibraryCreateDep, service: TagServiceDep
+) -> ApiResponse[LibraryTagOut]:
+    return ApiResponse.ok(await service.create(payload, actor))
+
+
+@router.patch(
+    "/tags/{tag_id}",
+    summary="重命名标签（不做隐式合并）",
+    dependencies=[Depends(rate_limit("library.tag", limit=60))],
+)
+async def rename_tag(
+    tag_id: str, payload: TagIn, actor: LibraryTagManageDep, service: TagServiceDep
+) -> ApiResponse[LibraryTagOut]:
+    return ApiResponse.ok(await service.rename(tag_id, payload))
+
+
+@router.delete(
+    "/tags/{tag_id}",
+    summary="删除标签（同时清绑定，资产不受影响）",
+    dependencies=[Depends(rate_limit("library.tag", limit=60))],
+)
+async def delete_tag(
+    tag_id: str, actor: LibraryTagManageDep, service: TagServiceDep
+) -> ApiResponse[None]:
+    await service.delete(tag_id)
+    return ApiResponse.ok(None)

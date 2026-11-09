@@ -11,9 +11,11 @@
 from api.authn import register_principal_resolver
 from api.module import ModuleSpec
 from core.ports.accounts import register_account_status_checker
+from core.ports.org_directory import register_org_directory
 from modules.identity.account_status import IdentityAccountStatus
 from modules.identity.cli import register as register_cli
 from modules.identity.health import check as health_check
+from modules.identity.org_directory import IdentityOrgDirectory
 from modules.identity.permissions import SPECS
 from modules.identity.principal import IdentityPrincipalResolver
 from modules.identity.router import router
@@ -23,6 +25,8 @@ from modules.identity.seed import seed as seed_demo
 register_principal_resolver(IdentityPrincipalResolver())
 # 无请求上下文的调用方（后台任务 / CLI）靠这条判断账号是否还能干活
 register_account_status_checker(IdentityAccountStatus())
+# 资产库的「小组素材库」要按组成员关系过滤，但它不能 import 本模块
+register_org_directory(IdentityOrgDirectory())
 
 
 async def _bootstrap() -> None:

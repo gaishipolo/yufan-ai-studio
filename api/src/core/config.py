@@ -218,6 +218,16 @@ class Settings(BaseSettings):
     # 每个用户的归档逻辑容量上限（字节）；0 = 不限。只算未删除的归档素材，
     # 内容寻址让同一份字节在物理上共用，但配额按「每个人登记了什么」算。
     archive_quota_bytes_per_user: int = 0
+    # 资产库 v2 的回收站：保留期到了才允许物理删除，删除前还要过引用检查。
+    # GC 默认关闭，理由与归档 GC 相同（删除不可逆、调度器默认单实例选主）。
+    # 周期任务是**小时级扫描**而不是「每日 03:00」：调度器只支持间隔，没有 cron；
+    # 保留期是 30 天，早一小时晚一小时对用户无差别，而漏跑一天差别很大。
+    library_trash_gc_enabled: bool = False
+    library_trash_gc_interval_sec: float = 3600.0
+    library_trash_retention_days: float = 30.0
+    # 单轮 GC 的批大小：一次最多处理多少条过期条目，避免一轮跑太久
+    # 把调度器的其他任务推后（handler 超时是 every*2）。
+    library_trash_gc_batch: int = 200
     # 镜像对账：只读 DB + 按 stateVersion 幂等覆盖写，多实例各跑一份结果相同，
     # 所以默认开启（与 GC 不同，它不需要选主）。也可随时 `app rebuild-mirrors`。
     archive_mirror_enabled: bool = True
