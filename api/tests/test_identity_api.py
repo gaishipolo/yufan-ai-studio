@@ -1018,8 +1018,10 @@ def test_delegated_role_can_rename_a_normal_user_but_not_touch_email(
     于是只走了「目标是超管」这一支，把另一支的回归整个绕开了（R9-03）。
     """
     admin = _admin(client)
-    # 目标带 `task:read`：操作者没有这个权限码，严格判定会拒；轻判定才会放行
-    target, _, _ = _make_user(client, admin, "delegated_target", ["task:read"])
+    # 目标带 `template:use`：操作者没有这个权限码，严格判定会拒；轻判定才会放行。
+    # 用 `template:use` 而不是 `task:read`，是因为三层权限上线后 `task:read`
+    # 属于团队基础权限、人人都有，拿它构造「目标比我高」已经不成立了。
+    target, _, _ = _make_user(client, admin, "delegated_target", ["template:use"])
     _, hr, _ = _make_user(
         client, admin, "delegated_hr", ["identity:read", "identity:update"]
     )

@@ -46,6 +46,8 @@ from modules.identity.errors import (
     BuiltinRoleLocked,
     CannotTargetSelf,
     CredentialInvalid,
+    GroupNameTaken,
+    GroupNotFound,
     LastSuperuser,
     OldPasswordMismatch,
     PermissionEscalation,
@@ -55,19 +57,35 @@ from modules.identity.errors import (
     RoleNotFound,
     SessionNotFound,
     SuperuserRequired,
+    TeamGrantForbidden,
     UnknownPermission,
     UsernameTaken,
     UserNotFound,
 )
-from modules.identity.models import LoginEvent, Role, User, UserSession
-from modules.identity.permissions import BUILTIN_ROLES, SUPERUSER_ROLE
+from modules.identity.models import Group, LoginEvent, Role, User, UserSession
+from modules.identity.permissions import (
+    BUILTIN_ROLES,
+    SCOPE_GROUP,
+    SCOPE_TEAM,
+    SCOPE_USER,
+    SUPERUSER_ROLE,
+    TEAM_BASE_PERMISSIONS,
+    TEAM_FORBIDDEN_PREFIXES,
+    TEAM_SCOPE_ID,
+)
 from modules.identity.repository import (
     LoginEventRepository,
+    PermissionLayerRepository,
     RoleRepository,
     SessionRepository,
     UserRepository,
 )
 from modules.identity.schema import (
+    EffectivePermissionsOut,
+    GroupCreateIn,
+    GroupLayerOut,
+    GroupOut,
+    GroupUpdateIn,
     LoginEventListOut,
     LoginEventOut,
     MeOut,
@@ -92,7 +110,7 @@ logger = get_logger(__name__)
 
 # 资料字段白名单：管理员改他人资料、用户改自己资料，用的是同一份清单。
 # 放成常量是为了让「新增字段时两个入口一起改」，而不是各自 `setattr` 循环各写一遍。
-_PROFILE_FIELDS = ("display_name", "email", "avatar_url")
+_PROFILE_FIELDS = ("display_name", "email", "avatar_url", "phone", "position")
 
 # 但这份清单里的字段**风险等级不同**，守卫不能一刀切（R9-02）：
 # - 展示字段（昵称 / 头像）：只影响渲染，要防的是「冒充比自己更有权威的人」，
@@ -101,7 +119,7 @@ _PROFILE_FIELDS = ("display_name", "email", "avatar_url")
 #   （40323）——把「能用的功能」换成了「看起来安全但没人能用」。
 # - 找回入口（邮箱）：接上「邮箱找回密码 / 收验证码」之后，改它就是接管账号的第一步，
 #   所以沿用「目标权限不得高于自己」的严格守卫（R7-03）。
-_DISPLAY_FIELDS = ("display_name", "avatar_url")
+_DISPLAY_FIELDS = ("display_name", "avatar_url", "phone", "position")
 _RECOVERY_FIELDS = ("email",)
 
 # `/me/sessions` 的返回上限。会话表只增不减，列表不截断的话，一个用了一年多的
@@ -112,6 +130,11 @@ SESSION_LIST_LIMIT = 50
 # 权限目录快照在 `app_meta` 里的键。存的是「上一次启动时目录里有哪些权限码」，
 # 用来区分「新声明的权限点」和「管理员手工删掉的旧权限点」——见 `sync_new_permissions`。
 PERMISSION_SNAPSHOT_KEY = "permissions.catalog"
+
+# 团队基础权限「只播种一次」的标记。与上面的目录快照不是一回事：
+# 那个每次启动都要算差集（新声明的权限点要补进内置角色），这个只在首次
+# 启动时把模板写进去，之后管理员在界面上删掉的基础权限**不该被重启加回来**。
+TEAM_SNAPSHOT_KEY = "permissions.team_base"
 
 
 def _snapshot_detail(previous: list[str], target: list[str]) -> str:
@@ -214,6 +237,8 @@ def _user_fields(user: User, roles: Sequence[Role]) -> dict[str, Any]:
         "display_name": user.display_name,
         "email": user.email,
         "avatar_url": user.avatar_url,
+        "phone": user.phone,
+        "position": user.position,
         "is_active": user.is_active,
         "last_login_at": user.last_login_at,
         "created_at": user.created_at,
@@ -241,6 +266,7 @@ class IdentityService:
         self.roles = RoleRepository(session)
         self.sessions = SessionRepository(session)
         self.logins = LoginEventRepository(session)
+        self.layers = PermissionLayerRepository(session)
 
     # ------------------------------------------------------------------ #
     # 认证 / 解析
@@ -391,20 +417,34 @@ class IdentityService:
             await self.session.rollback()
 
     async def resolve_identity(self, user_id: str) -> ResolvedIdentity | None:
-        """用户 id → 权威身份（角色 + 权限）。账号不存在返回 None。"""
+        """用户 id → 权威身份（角色 + 权限）。账号不存在返回 None。
+
+        权限是**四层并集**：团队基础 ∪ 所属小组 ∪ 个人 ∪ 角色。
+        没有 deny，所以「个人权限永远 ≥ 小组/团队」是集合运算的必然结果，
+        不需要额外写一条「个人不能被降权」的特判——那类特判一旦和通配、
+        超管短路叠在一起就会互相打架。
+
+        任一层出现 `*` 都等价于超管：只认角色上的 `is_superuser` 会让
+        「给某人单独授 `*`」这条合法操作失效。
+        """
         user = await self.users.get(user_id)
         if user is None:
             return None
 
         roles = tuple((await self.users.roles_for([user.id])).get(user.id, ()))
         if any(role.is_superuser for role in roles):
-            # 超管直接给 `*`：新模块上线、新权限点声明后自动生效，不需要逐条授权
+            # 超管直接给 `*`：新模块上线、新权限点声明后自动生效，不需要逐条授权。
+            # 短路掉三层查询：超管的权限集已经是全集，再查也没有信息量。
             return ResolvedIdentity(user, roles, frozenset({SUPER_PERMISSION}))
 
         perms = await self.roles.permissions_for([role.id for role in roles])
         codes: set[str] = set()
         for role in roles:
             codes.update(perms.get(role.id, ()))
+        layers = await self.layers.layer_codes(user.id)
+        codes.update(layers.all_codes())
+        if SUPER_PERMISSION in codes:
+            return ResolvedIdentity(user, roles, frozenset({SUPER_PERMISSION}))
         return ResolvedIdentity(user, roles, frozenset(codes))
 
     # ------------------------------------------------------------------ #
@@ -721,11 +761,22 @@ class IdentityService:
         params: PageParams,
         *,
         keyword: str = "",
+        name: str = "",
+        username: str = "",
+        phone: str = "",
         is_active: bool | None = None,
         role_id: str | None = None,
+        group_id: str | None = None,
     ) -> Page[UserOut]:
         rows, total = await self.users.page(
-            params, keyword=keyword, is_active=is_active, role_id=role_id
+            params,
+            keyword=keyword,
+            name=name,
+            username=username,
+            phone=phone,
+            is_active=is_active,
+            role_id=role_id,
+            group_id=group_id,
         )
         roles_map = await self.users.roles_for([row.id for row in rows])
         items = [
@@ -759,6 +810,8 @@ class IdentityService:
                 display_name=payload.display_name or payload.username,
                 email=payload.email,
                 avatar_url=payload.avatar_url,
+                phone=payload.phone,
+                position=payload.position,
                 is_active=True,
             )
             # 建号也要写 `password_changed_at`：不走同一个方法就会出现「这个账号
@@ -1010,6 +1063,203 @@ class IdentityService:
         await self.session.commit()
 
     # ------------------------------------------------------------------ #
+    # 三层授权：团队 / 小组 / 个人
+    # ------------------------------------------------------------------ #
+    async def _require_group(self, group_id: str) -> Group:
+        group = await self.layers.get_group(group_id)
+        if group is None:
+            raise GroupNotFound()
+        return group
+
+    async def _group_out(self, group: Group) -> GroupOut:
+        members = (await self.layers.members_for([group.id])).get(group.id, [])
+        return GroupOut(
+            id=group.id,
+            name=group.name,
+            description=group.description,
+            created_at=group.created_at,
+            permissions=await self.layers.grants(SCOPE_GROUP, group.id),
+            member_ids=sorted(members),
+            member_count=len(members),
+        )
+
+    def _validate_team_grants(self, codes: Sequence[str]) -> None:
+        """团队层 = 所有人：管理类权限和 `*` 一律不许放进来。
+
+        `*` 会把全站变成超管；`identity:*` / `identity:group:*` 等于给所有人
+        发「管理组织」的票。校验放在服务层而不是只靠前端隐藏选项：
+        直接打接口也要挡得住。
+        """
+        self._validate_permissions(codes)
+        forbidden = sorted(
+            {
+                code
+                for code in codes
+                if code == SUPER_PERMISSION
+                or code.startswith(TEAM_FORBIDDEN_PREFIXES)
+            }
+        )
+        if forbidden:
+            raise TeamGrantForbidden(details={"forbidden": forbidden})
+
+    def _guard_layer_not_above(
+        self, codes: Sequence[str], actor: CurrentUser, *, what: str
+    ) -> None:
+        """撤权方向也要挡：清空一层比自己高的权限，和「把人降级」是同一件事。"""
+        missing = self._missing_grants(actor, codes)
+        if missing:
+            raise PermissionEscalation(
+                f"不能改动权限高于自己的{what}", details={"missing": missing}
+            )
+
+    async def list_groups(self) -> list[GroupOut]:
+        return [await self._group_out(group) for group in await self.layers.list_groups()]
+
+    async def get_group(self, group_id: str) -> GroupOut:
+        return await self._group_out(await self._require_group(group_id))
+
+    async def create_group(
+        self, payload: GroupCreateIn, actor: CurrentUser
+    ) -> GroupOut:
+        name = payload.name.strip()
+        if await self.layers.get_group_by_name(name) is not None:
+            raise GroupNameTaken()
+        group = await self.layers.create_group(name, payload.description)
+        await self.session.commit()
+        logger.info("管理员 %s 新建小组 %s（%s）", actor.id, name, group.id)
+        return await self._group_out(group)
+
+    async def update_group(
+        self, group_id: str, payload: GroupUpdateIn, actor: CurrentUser
+    ) -> GroupOut:
+        group = await self._require_group(group_id)
+        fields = payload.model_dump(exclude_unset=True)
+        if "name" in fields and fields["name"] is not None:
+            name = fields["name"].strip()
+            existing = await self.layers.get_group_by_name(name)
+            if existing is not None and existing.id != group.id:
+                raise GroupNameTaken()
+            group.name = name
+        if "description" in fields and fields["description"] is not None:
+            group.description = fields["description"]
+        await self.session.flush()
+        await self.session.commit()
+        logger.info("管理员 %s 编辑小组 %s", actor.id, group.name)
+        return await self._group_out(group)
+
+    async def delete_group(self, group_id: str, actor: CurrentUser) -> None:
+        group = await self._require_group(group_id)
+        current = await self.layers.grants(SCOPE_GROUP, group.id)
+        self._guard_layer_not_above(current, actor, what="小组")
+        # 成员与 grant 由 repository 在同一个事务里清掉；没有外键级联可依赖
+        await self.layers.delete_group(group.id)
+        await self.session.commit()
+        logger.info("管理员 %s 删除小组 %s", actor.id, group.name)
+
+    async def group_members(self, group_id: str) -> list[UserOut]:
+        """成员列表给「编辑小组成员」弹窗用：一次拿全，不按 id 逐个查。"""
+        group = await self._require_group(group_id)
+        ids = (await self.layers.members_for([group.id])).get(group.id, [])
+        users = sorted(await self.users.get_many(ids), key=lambda u: u.username)
+        roles_map = await self.users.roles_for([user.id for user in users])
+        return [
+            UserOut(**_user_fields(user, roles_map.get(user.id, ())))
+            for user in users
+        ]
+
+    async def set_group_members(
+        self, group_id: str, user_ids: Sequence[str], actor: CurrentUser
+    ) -> GroupOut:
+        group = await self._require_group(group_id)
+        wanted = list(dict.fromkeys(user_ids))
+        found = await self.users.get_many(wanted)
+        if len(found) != len(wanted):
+            raise UserNotFound(details={"unknown": sorted(set(wanted) - {u.id for u in found})})
+        await self.layers.set_members(group.id, wanted)
+        await self.session.commit()
+        logger.info("管理员 %s 设置小组 %s 成员 %d 人", actor.id, group.name, len(wanted))
+        return await self._group_out(group)
+
+    async def set_group_permissions(
+        self, group_id: str, permissions: Sequence[str], actor: CurrentUser
+    ) -> GroupOut:
+        group = await self._require_group(group_id)
+        self._validate_permissions(permissions)
+        current = await self.layers.grants(SCOPE_GROUP, group.id)
+        self._guard_layer_not_above(current, actor, what="小组")
+        self._guard_permission_grant(permissions, actor, what=f"小组 {group.name}")
+        await self.layers.set_grants(SCOPE_GROUP, group.id, permissions)
+        await self.session.commit()
+        return await self._group_out(group)
+
+    async def team_permissions(self) -> list[str]:
+        return await self.layers.grants(SCOPE_TEAM, TEAM_SCOPE_ID)
+
+    async def set_team_permissions(
+        self, permissions: Sequence[str], actor: CurrentUser
+    ) -> list[str]:
+        self._validate_team_grants(permissions)
+        current = await self.layers.grants(SCOPE_TEAM, TEAM_SCOPE_ID)
+        self._guard_layer_not_above(current, actor, what="团队基础权限")
+        self._guard_permission_grant(permissions, actor, what="团队基础权限")
+        await self.layers.set_grants(SCOPE_TEAM, TEAM_SCOPE_ID, permissions)
+        await self.session.commit()
+        logger.info("管理员 %s 更新团队基础权限：%d 条", actor.id, len(permissions))
+        return await self.team_permissions()
+
+    async def user_permissions(self, user_id: str) -> list[str]:
+        await self._require_user(user_id)
+        return await self.layers.grants(SCOPE_USER, user_id)
+
+    async def set_user_permissions(
+        self, user_id: str, permissions: Sequence[str], actor: CurrentUser
+    ) -> list[str]:
+        user = await self._require_user(user_id)
+        # 改别人的权限 = 授出/拿走访问权，和「改角色」走同一条红线
+        await self._guard_target_not_above(user, actor)
+        self._validate_permissions(permissions)
+        current = await self.layers.grants(SCOPE_USER, user.id)
+        self._guard_layer_not_above(current, actor, what="个人权限")
+        self._guard_permission_grant(permissions, actor, what=f"用户 {user.username}")
+        await self.layers.set_grants(SCOPE_USER, user.id, permissions)
+        await self.session.commit()
+        return await self.user_permissions(user.id)
+
+    async def effective_permissions(self, user_id: str) -> EffectivePermissionsOut:
+        """把四层来源摊开给界面看。
+
+        **判定永远只看 `effective`**：前端不要拿 `personal` 去算「有没有权限」，
+        那会把团队/小组/角色的授予全部漏掉。
+        """
+        user = await self._require_user(user_id)
+        layers = await self.layers.layer_codes(user.id)
+        groups = await self.layers.groups_by_ids(layers.group_ids)
+        roles = tuple((await self.users.roles_for([user.id])).get(user.id, ()))
+        role_perms = await self.roles.permissions_for([role.id for role in roles])
+        role_codes = sorted(
+            {code for role in roles for code in role_perms.get(role.id, ())}
+        )
+        codes = set(role_codes) | layers.all_codes()
+        if any(role.is_superuser for role in roles) or SUPER_PERMISSION in codes:
+            effective = [SUPER_PERMISSION]
+        else:
+            effective = sorted(codes)
+        return EffectivePermissionsOut(
+            team=list(layers.team),
+            groups=[
+                GroupLayerOut(
+                    id=gid,
+                    name=groups[gid].name if gid in groups else gid,
+                    permissions=list((layers.groups or {}).get(gid, ())),
+                )
+                for gid in layers.group_ids
+            ],
+            personal=list(layers.personal),
+            roles=role_codes,
+            effective=effective,
+        )
+
+    # ------------------------------------------------------------------ #
     # 权限目录
     # ------------------------------------------------------------------ #
     def permission_catalog(self) -> PermissionCatalogOut:
@@ -1028,6 +1278,51 @@ class IdentityService:
     # ------------------------------------------------------------------ #
     # 启动引导
     # ------------------------------------------------------------------ #
+    async def ensure_team_permissions(self, *, force: bool = False) -> int:
+        """首次启动时把 `TEAM_BASE_PERMISSIONS` 播进团队层，返回新写入的条数。
+
+        `force=True` 只给 `app seed --reset` 用：那是一条「把演示库清空重来」的命令，
+        会按 metadata 删掉 `permission_grants` 的行，但 `app_meta`（框架记账表）
+        刻意保留，于是快照标记还在、团队层却空了。不强制重播的话，
+        重置后的库会得到一个「所有人都没有任何基础权限」的假状态。
+        生产环境不跑 seed，管理员的编辑不会被这里覆盖。
+
+        「团队 = 所有人」是一层**配置**，不是成员表：所有启用账号在
+        `resolve_identity()` 里无条件合并 `team` 层，无需给每个用户写一行。
+
+        为什么用 `app_meta` 标记而不是「看表里空不空」：管理员把基础权限
+        全部清空是合法操作，用「空了就补」会在下次重启把他删掉的又加回来。
+        标记只说明「这个版本已经播种过」，与管理员的后续编辑完全解耦。
+
+        并发：两个实例同时启动时都读到「无标记」，各自补一遍（幂等），
+        但只有一个能 CAS 写入标记；输的那个 `expire_all()` 后下次启动会重读，
+        不会留下半套状态。
+        """
+        entry = await read_entry(self.session, TEAM_SNAPSHOT_KEY)
+        if entry is not None and not force:
+            return 0
+        current = set(await self.layers.grants(SCOPE_TEAM, TEAM_SCOPE_ID))
+        missing = [code for code in TEAM_BASE_PERMISSIONS if code not in current]
+        if missing:
+            await self.layers.set_grants(
+                SCOPE_TEAM, TEAM_SCOPE_ID, sorted(current | set(missing))
+            )
+        written = await set_json(
+            self.session,
+            TEAM_SNAPSHOT_KEY,
+            sorted(TEAM_BASE_PERMISSIONS),
+            expected_version=0 if entry is None else entry.version,
+            detail=f"团队基础权限播种：{len(missing)} 条",
+        )
+        if written:
+            await self.session.commit()
+            logger.info("团队基础权限已播种：%s", missing)
+        else:
+            # 别的实例抢先写了标记：丢掉旧会话状态，播种本身幂等，不必回滚
+            self.session.expire_all()
+            logger.info("团队基础权限快照被其他实例写入，本次跳过")
+        return len(missing)
+
     async def ensure_builtin_roles(self) -> int:
         """确保内置角色存在，返回新建数量。
 
@@ -1441,6 +1736,8 @@ async def bootstrap() -> None:
         try:
             service = IdentityService(session)
             await service.ensure_builtin_roles()
+            # 团队基础权限只播一次；之后管理员的编辑是唯一权威（见方法注释）
+            await service.ensure_team_permissions()
             # 这一步过去是人工的 `app sync-roles`：忘了跑就是「功能上线了，
             # 非超管点按钮 403，而超管自测全绿」。现在只在启动时补**新增**的
             # 权限点，管理员手工调过的配置不受影响（见 sync_new_permissions）。

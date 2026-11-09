@@ -8,21 +8,31 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import datetime
 
-from sqlalchemy import delete, func, or_, select
+from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.response import PageParams
 from db.base import utcnow
 from db.repository import BaseRepository
 from modules.identity.models import (
+    Group,
+    GroupMember,
     LoginEvent,
+    PermissionGrant,
     Role,
     RolePermission,
     User,
     UserRole,
     UserSession,
+)
+from modules.identity.permissions import (
+    SCOPE_GROUP,
+    SCOPE_TEAM,
+    SCOPE_USER,
+    TEAM_SCOPE_ID,
 )
 
 
@@ -42,9 +52,19 @@ class UserRepository(BaseRepository[User]):
         params: PageParams,
         *,
         keyword: str = "",
+        name: str = "",
+        username: str = "",
+        phone: str = "",
         is_active: bool | None = None,
         role_id: str | None = None,
+        group_id: str | None = None,
     ) -> tuple[Sequence[User], int]:
+        """用户页筛选。
+
+        `keyword` 是旧版「一个框搜所有」；`name` / `username` / `phone` 是
+        新版三个独立输入框。两套都留着：老前端还在传 keyword，直接删会让
+        「搜索」在发布窗口里静默失效。多个条件同时传时取交集。
+        """
         stmt = select(User)
         if keyword:
             like = f"%{keyword.strip()}%"
@@ -53,13 +73,27 @@ class UserRepository(BaseRepository[User]):
                     User.username.ilike(like),
                     User.display_name.ilike(like),
                     User.email.ilike(like),
+                    User.phone.ilike(like),
+                    User.position.ilike(like),
                 )
             )
+        if name.strip():
+            stmt = stmt.where(User.display_name.ilike(f"%{name.strip()}%"))
+        if username.strip():
+            stmt = stmt.where(User.username.ilike(f"%{username.strip()}%"))
+        if phone.strip():
+            stmt = stmt.where(User.phone.ilike(f"%{phone.strip()}%"))
         if is_active is not None:
             stmt = stmt.where(User.is_active.is_(is_active))
         if role_id:
             stmt = stmt.where(
                 User.id.in_(select(UserRole.user_id).where(UserRole.role_id == role_id))
+            )
+        if group_id:
+            stmt = stmt.where(
+                User.id.in_(
+                    select(GroupMember.user_id).where(GroupMember.group_id == group_id)
+                )
             )
         stmt = stmt.order_by(User.created_at.desc(), User.id)
         return await self.paginate(stmt, params)
@@ -78,6 +112,16 @@ class UserRepository(BaseRepository[User]):
         for user_id, role in rows.all():
             result.setdefault(user_id, []).append(role)
         return result
+
+    async def get_many(self, user_ids: Sequence[str]) -> list[User]:
+        """一次取多个用户，供「整组替换成员」校验 id 是否真实存在。"""
+        if not user_ids:
+            return []
+        return list(
+            await self.session.scalars(
+                select(User).where(User.id.in_(list(dict.fromkeys(user_ids))))
+            )
+        )
 
     async def role_ids_of(self, user_id: str) -> list[str]:
         return list(
@@ -180,6 +224,211 @@ class RoleRepository(BaseRepository[Role]):
             delete(RolePermission).where(RolePermission.role_id == role_id)
         )
         await self.session.flush()
+
+
+@dataclass(frozen=True, slots=True)
+class LayerCodes:
+    """一个用户的三层授权明细。
+
+    `groups` 的键是 group_id：UI 要展示「这条权限来自哪个小组」，
+    只给一个合并后的集合就说不清来源了。`all_codes()` 才是鉴权用的合并结果。
+    """
+
+    team: tuple[str, ...] = ()
+    groups: dict[str, tuple[str, ...]] | None = None
+    personal: tuple[str, ...] = ()
+    group_ids: tuple[str, ...] = ()
+
+    def all_codes(self) -> set[str]:
+        codes = set(self.team) | set(self.personal)
+        for group_codes in (self.groups or {}).values():
+            codes.update(group_codes)
+        return codes
+
+
+class PermissionLayerRepository:
+    """小组 / 成员 / 三层授权。**没有外键，删除必须显式清绑定**。
+
+    `layer_codes()` 是每请求的热路径：一次取该用户的组 id，再一次把
+    team / group / user 三层的 grant 全取回来。分成三次查询会让
+    `resolve_principal` 每请求多两次往返，而这里没有缓存可以兜底。
+    """
+
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    # ---------- 小组 ----------
+    async def list_groups(self) -> Sequence[Group]:
+        return (
+            await self.session.scalars(
+                select(Group).order_by(Group.created_at, Group.name)
+            )
+        ).all()
+
+    async def get_group(self, group_id: str) -> Group | None:
+        return await self.session.get(Group, group_id)
+
+    async def get_group_by_name(self, name: str) -> Group | None:
+        return await self.session.scalar(select(Group).where(Group.name == name))
+
+    async def groups_by_ids(self, group_ids: Sequence[str]) -> dict[str, Group]:
+        if not group_ids:
+            return {}
+        rows = await self.session.scalars(
+            select(Group).where(Group.id.in_(list(group_ids)))
+        )
+        return {group.id: group for group in rows.all()}
+
+    async def create_group(self, name: str, description: str = "") -> Group:
+        group = Group(name=name, description=description)
+        self.session.add(group)
+        await self.session.flush()
+        return group
+
+    async def delete_group(self, group_id: str) -> None:
+        """删组 = 删成员 + 删该组的 grant + 删组，三步在同一个事务里。
+
+        少了第二步会留下「没有任何界面能看到、却仍然能授予权限」的孤儿行；
+        组 id 是 uuid，不会被复用，但它会让 doctor 对账永远报脏。
+        """
+        await self.session.execute(
+            delete(GroupMember).where(GroupMember.group_id == group_id)
+        )
+        await self.session.execute(
+            delete(PermissionGrant).where(
+                PermissionGrant.scope == SCOPE_GROUP,
+                PermissionGrant.scope_id == group_id,
+            )
+        )
+        await self.session.execute(delete(Group).where(Group.id == group_id))
+        await self.session.flush()
+
+    async def set_members(self, group_id: str, user_ids: Sequence[str]) -> None:
+        """整组替换。先清后插，与 `UserRepository.set_roles` 同一套语义。"""
+        await self.session.execute(
+            delete(GroupMember).where(GroupMember.group_id == group_id)
+        )
+        for user_id in dict.fromkeys(user_ids):
+            self.session.add(GroupMember(group_id=group_id, user_id=user_id))
+        await self.session.flush()
+
+    async def group_ids_for_user(self, user_id: str) -> list[str]:
+        return list(
+            await self.session.scalars(
+                select(GroupMember.group_id).where(GroupMember.user_id == user_id)
+            )
+        )
+
+    async def members_for(self, group_ids: Sequence[str]) -> dict[str, list[str]]:
+        if not group_ids:
+            return {}
+        rows = await self.session.execute(
+            select(GroupMember.group_id, GroupMember.user_id).where(
+                GroupMember.group_id.in_(list(group_ids))
+            )
+        )
+        result: dict[str, list[str]] = {gid: [] for gid in group_ids}
+        for group_id, user_id in rows.all():
+            result.setdefault(group_id, []).append(user_id)
+        return result
+
+    async def member_counts(self, group_ids: Sequence[str]) -> dict[str, int]:
+        if not group_ids:
+            return {}
+        rows = await self.session.execute(
+            select(GroupMember.group_id, func.count())
+            .where(GroupMember.group_id.in_(list(group_ids)))
+            .group_by(GroupMember.group_id)
+        )
+        counts = {gid: 0 for gid in group_ids}
+        counts.update({gid: int(n) for gid, n in rows.all()})
+        return counts
+
+    # ---------- 授权 ----------
+    async def grants(self, scope: str, scope_id: str) -> list[str]:
+        return list(
+            await self.session.scalars(
+                select(PermissionGrant.permission)
+                .where(
+                    PermissionGrant.scope == scope,
+                    PermissionGrant.scope_id == scope_id,
+                )
+                .order_by(PermissionGrant.permission)
+            )
+        )
+
+    async def set_grants(
+        self, scope: str, scope_id: str, codes: Sequence[str]
+    ) -> None:
+        await self.session.execute(
+            delete(PermissionGrant).where(
+                PermissionGrant.scope == scope,
+                PermissionGrant.scope_id == scope_id,
+            )
+        )
+        for code in dict.fromkeys(codes):
+            self.session.add(
+                PermissionGrant(scope=scope, scope_id=scope_id, permission=code)
+            )
+        await self.session.flush()
+
+    async def layer_codes(self, user_id: str) -> LayerCodes:
+        group_ids = tuple(await self.group_ids_for_user(user_id))
+        rows = await self.session.execute(
+            select(
+                PermissionGrant.scope,
+                PermissionGrant.scope_id,
+                PermissionGrant.permission,
+            ).where(
+                or_(
+                    and_(
+                        PermissionGrant.scope == SCOPE_TEAM,
+                        PermissionGrant.scope_id == TEAM_SCOPE_ID,
+                    ),
+                    and_(
+                        PermissionGrant.scope == SCOPE_GROUP,
+                        PermissionGrant.scope_id.in_(list(group_ids)),
+                    ),
+                    and_(
+                        PermissionGrant.scope == SCOPE_USER,
+                        PermissionGrant.scope_id == user_id,
+                    ),
+                )
+            )
+        )
+        team: list[str] = []
+        groups: dict[str, list[str]] = {gid: [] for gid in group_ids}
+        personal: list[str] = []
+        for scope, scope_id, code in rows.all():
+            if scope == SCOPE_TEAM:
+                team.append(code)
+            elif scope == SCOPE_USER:
+                personal.append(code)
+            elif scope == SCOPE_GROUP:
+                groups.setdefault(scope_id, []).append(code)
+        return LayerCodes(
+            team=tuple(sorted(team)),
+            groups={gid: tuple(sorted(codes)) for gid, codes in groups.items()},
+            personal=tuple(sorted(personal)),
+            group_ids=group_ids,
+        )
+
+    async def all_grant_codes(self) -> set[str]:
+        """doctor 对账：三层表里出现过的全部权限码。"""
+        return set(
+            await self.session.scalars(
+                select(PermissionGrant.permission).distinct()
+            )
+        )
+
+    async def orphan_grants(self, valid_group_ids: set[str]) -> list[str]:
+        """doctor 对账：指向已删除小组的 grant。"""
+        rows = await self.session.scalars(
+            select(PermissionGrant.scope_id).where(
+                PermissionGrant.scope == SCOPE_GROUP
+            ).distinct()
+        )
+        return sorted(set(rows) - valid_group_ids)
 
 
 class SessionRepository(BaseRepository[UserSession]):

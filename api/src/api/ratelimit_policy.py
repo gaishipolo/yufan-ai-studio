@@ -208,6 +208,41 @@ EXEMPT_WRITE_ROUTES: Mapping[str, Exemption] = {
         why="角色管理：需要 `identity:role:manage`，低频",
         review_by=NEAR_TERM,
     ),
+    # ---- 身份：三层授权，与上面同一口径（低频 + 权限点 + 服务层守卫） ----
+    # 这些接口都是「整组替换」，不是会打爆队列/供应商额度的高频动作；
+    # 真正的提权闸门在 `modules/identity/service.py` 的
+    # `_guard_permission_grant` / `_guard_layer_not_above` / `_validate_team_grants`。
+    "PUT /identity/team/permissions": Exemption(
+        why=(
+            "团队基础权限整组替换：需要 `identity:team:manage`，低频；"
+            "`modules/identity/service.py` 还会挡住 `*` 与 `identity:` 管理类码"
+        ),
+        review_by=NEAR_TERM,
+    ),
+    "POST /identity/groups": Exemption(
+        why="新建小组：需要 `identity:group:create`，低频且组名唯一",
+        review_by=NEAR_TERM,
+    ),
+    "PATCH /identity/groups/{group_id}": Exemption(
+        why="编辑小组资料：需要 `identity:group:update`，低频且组名唯一",
+        review_by=NEAR_TERM,
+    ),
+    "DELETE /identity/groups/{group_id}": Exemption(
+        why="删除小组：需要 `identity:group:delete`，低频；删组同时清成员与授权",
+        review_by=NEAR_TERM,
+    ),
+    "PUT /identity/groups/{group_id}/members": Exemption(
+        why="分配小组成员：需要 `identity:group:member:manage`，低频的整组替换",
+        review_by=NEAR_TERM,
+    ),
+    "PUT /identity/groups/{group_id}/permissions": Exemption(
+        why="设置小组整体权限：需要 `identity:group:permission:manage`，低频的整组替换",
+        review_by=NEAR_TERM,
+    ),
+    "PUT /identity/users/{user_id}/permissions": Exemption(
+        why="设置个人权限：需要 `identity:user:permission:manage`，低频的整组替换",
+        review_by=NEAR_TERM,
+    ),
     # ---- 素材归档：单条记录的状态位 ----
     "PUT /assets/{asset_id}/name": Exemption(
         why="只改自己那条记录的名字，单行更新",

@@ -35,6 +35,10 @@ async def seed(session: AsyncSession, context: SeedContext) -> int:
     # 内置角色（admin/editor/viewer）由模块自己保证存在，seed 不重复定义
     identity = IdentityService(session)
     await identity.ensure_builtin_roles()
+    # `--reset` 清掉了 permission_grants 的行，但保留了 app_meta 里的团队快照标记。
+    # 强制重播一次，重置后的库才有「所有人都有基础权限」这个真实状态。
+    # 这不是演示数据：团队层是配置，和内置角色一样属于模块的初始化。
+    await identity.ensure_team_permissions(force=True)
     roles = {role.code: role for role in await identity.roles.list_all()}
 
     users: list[User] = []

@@ -40,6 +40,10 @@ class User(Base, UUIDMixin, TimestampMixin):
     display_name: Mapped[str] = mapped_column(String(64), default="", nullable=False)
     email: Mapped[str | None] = mapped_column(String(128), nullable=True)
     avatar_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    # 用户页的展示字段（对齐后台「成员」表格）：刻意不做唯一性与格式校验，
+    # 它们不参与登录、找回或任何鉴权判断，只是通讯录信息。
+    phone: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    position: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # 停用即不能登录；不物理删除，因为历史任务/素材的 author_id 还指着他
     is_active: Mapped[bool] = mapped_column(
         Boolean, default=True, nullable=False, index=True
@@ -107,6 +111,68 @@ class UserRole(Base, UUIDMixin, TimestampMixin):
         UniqueConstraint("user_id", "role_id", name="uq_user_roles_user_role"),
         # 统计「某角色下有多少人」时走这条索引
         Index("ix_user_roles_role_user", "role_id", "user_id"),
+    )
+
+
+class Group(Base, UUIDMixin, TimestampMixin):
+    """小组：由管理员创建、分配成员，并可整组授权。
+
+    **刻意不做嵌套**：这一期的层级是「团队 → 小组 → 人」三层，小组下面只有人。
+    加 `parent_id` 会让「小组权限取并集」变成「子树权限取并集」，而需求里
+    「个人权限永远 ≥ 小组/团队」只需要扁平的并集就能满足。
+
+    表名用 `user_groups` 而不是 `groups`：`GROUPS` 在 PostgreSQL 的窗口帧语法里
+    是关键字，虽然当前是非保留的，但没必要为一张新表留这个隐患。
+    """
+
+    __tablename__ = "user_groups"
+
+    name: Mapped[str] = mapped_column(
+        String(64), unique=True, index=True, nullable=False
+    )
+    description: Mapped[str] = mapped_column(String(200), default="", nullable=False)
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"<Group {self.id} {self.name!r}>"
+
+
+class GroupMember(Base, UUIDMixin, TimestampMixin):
+    """小组 → 用户。一人可属多组，权限取并集。"""
+
+    __tablename__ = "group_members"
+
+    group_id: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    user_id: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+
+    __table_args__ = (
+        UniqueConstraint("group_id", "user_id", name="uq_group_members_group_user"),
+        # 解析「某用户属于哪些组」走这条联合索引，每请求都要查
+        Index("ix_group_members_user_group", "user_id", "group_id"),
+    )
+
+
+class PermissionGrant(Base, UUIDMixin, TimestampMixin):
+    """三层权限授予：`team` / `group` / `user`。
+
+    为什么三层共用一张表而不是各建一张：判定链路 `resolve_identity()` 每请求都要
+    把三层一起读出来，分三张表就是三次往返；而且「权限码是否合法」「整组替换」
+    「删组清绑定」这些规则对三层完全一样，写一份比复制三份可靠。
+
+    `team` 没有成员表：`scope_id` 固定为 `TEAM_SCOPE_ID`（`__all__`），
+    团队 = 所有启用账号。`user` 层的 `scope_id` 就是 user_id。
+    """
+
+    __tablename__ = "permission_grants"
+
+    scope: Mapped[str] = mapped_column(String(16), nullable=False)
+    scope_id: Mapped[str] = mapped_column(String(32), nullable=False)
+    permission: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "scope", "scope_id", "permission", name="uq_permission_grants_scope_code"
+        ),
+        Index("ix_permission_grants_scope", "scope", "scope_id"),
     )
 
 

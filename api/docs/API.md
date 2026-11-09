@@ -2,7 +2,7 @@
 
 > 此文件由 `app export-openapi` 自动生成，请勿手工编辑。
 >
-> 版本 `0.2.0`｜共 **77** 个接口 / **10** 个模块
+> 版本 `0.2.0`｜共 **90** 个接口 / **10** 个模块
 >
 > 重新生成：`cd api && .venv/Scripts/python -m cli export-openapi`
 
@@ -122,9 +122,17 @@ Authorization: Bearer <accessToken>
 |---|---|---|
 | `identity:create` | 创建用户 |  |
 | `identity:delete` | 停用用户 |  |
+| `identity:group:create` | 新建小组 |  |
+| `identity:group:delete` | 删除小组 |  |
+| `identity:group:member:manage` | 分配小组成员 | 整组替换成员；一人可属多组 |
+| `identity:group:permission:manage` | 设置小组整体权限 | 该组所有成员自动获得；个人权限只增不减 |
+| `identity:group:read` | 查看小组与成员 |  |
+| `identity:group:update` | 编辑小组资料 |  |
 | `identity:read` | 查看用户与角色 |  |
 | `identity:role:manage` | 管理角色与权限点 | 新建/删除角色、调整角色权限、给用户分配角色 |
+| `identity:team:manage` | 设置团队基础权限 | 团队 = 所有启用账号；禁止把 identity:* 或 * 放进这一层 |
 | `identity:update` | 编辑用户（含停用、重置密码） | 不含分配角色。改他人昵称/头像：目标不能是超管；重置密码、改他人邮箱、启停账号：目标权限不得高于自己（超管仍需超管） |
+| `identity:user:permission:manage` | 设置个人权限 | 单独授予，与团队/小组/角色取并集；不能授出自己没有的权限 |
 
 > 判定规则：`*` 恒真；`task:*` 这类通配可覆盖 `task:read`；否则按字符串精确匹配。
 
@@ -142,6 +150,7 @@ Authorization: Bearer <accessToken>
 | `40001` | 400 | 框架 | `ValidationFailed` | 参数校验失败 |
 | `40021` | 400 | identity | `OldPasswordMismatch` | 原密码不正确 |
 | `40022` | 400 | identity | `UnknownPermission` | 存在无法识别的权限点 |
+| `40023` | 400 | identity | `TeamGrantForbidden` | 团队基础权限不能包含管理类权限或通配符 |
 | `40051` | 400 | asset | `FileTypeNotAllowed` | 支持 MP4、PNG、JPG、WebP、MP3 和 WAV |
 | `40100` | 401 | 框架 | `Unauthorized` | 请先登录 |
 | `40121` | 401 | identity | `CredentialInvalid` | 用户名或密码错误 |
@@ -154,6 +163,7 @@ Authorization: Bearer <accessToken>
 | `40421` | 404 | identity | `UserNotFound` | 用户不存在 |
 | `40422` | 404 | identity | `RoleNotFound` | 角色不存在 |
 | `40423` | 404 | identity | `SessionNotFound` | 会话不存在或已失效 |
+| `40424` | 404 | identity | `GroupNotFound` | 小组不存在 |
 | `40451` | 404 | asset | `AssetNotFound` | 素材不存在 |
 | `40900` | 409 | 框架 | `Conflict` | 资源冲突 |
 | `40902` | 409 | 框架 | `InvalidState` | 当前状态不允许该操作 |
@@ -163,6 +173,7 @@ Authorization: Bearer <accessToken>
 | `40924` | 409 | identity | `RoleInUse` | 该角色仍被用户使用，请先解除绑定 |
 | `40925` | 409 | identity | `CannotTargetSelf` | 不能停用或删除自己的账号 |
 | `40926` | 409 | identity | `LastSuperuser` | 系统必须保留至少一个启用的超级管理员 |
+| `40927` | 409 | identity | `GroupNameTaken` | 小组名称已被占用 |
 | `40951` | 409 | asset | `AssetInUse` | 素材仍被引用，不能删除 |
 | `40971` | 409 | template | `TemplateBusy` | 模板正在处理中，请稍后再试 |
 | `40991` | 409 | export | `ExportBusy` | 同一份数据正在导出中，请等待它完成 |
@@ -181,7 +192,7 @@ Authorization: Bearer <accessToken>
 
 | 模块 | 接口数 | 说明 |
 |---|---|---|
-| 身份 | 26 | 见下方 `4.1` |
+| 身份 | 39 | 见下方 `4.1` |
 | 任务 | 9 | 见下方 `4.2` |
 | 模型 | 1 | 见下方 `4.3` |
 | 素材 | 12 | 见下方 `4.4` |
@@ -192,10 +203,18 @@ Authorization: Bearer <accessToken>
 | 系统 | 2 | 见下方 `4.9` |
 | 导出 | 6 | 见下方 `4.10` |
 
-### 4.1 身份（26 个）
+### 4.1 身份（39 个）
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
+| `GET` | `/api/v1/identity/groups` | 小组列表（含成员与权限） | 🔒 |
+| `POST` | `/api/v1/identity/groups` | 新建小组 | 🔒 |
+| `GET` | `/api/v1/identity/groups/{group_id}` | 小组详情 | 🔒 |
+| `PATCH` | `/api/v1/identity/groups/{group_id}` | 编辑小组资料 | 🔒 |
+| `DELETE` | `/api/v1/identity/groups/{group_id}` | 删除小组（同时清成员与授权） | 🔒 |
+| `GET` | `/api/v1/identity/groups/{group_id}/members` | 小组成员列表 | 🔒 |
+| `PUT` | `/api/v1/identity/groups/{group_id}/members` | 设置小组成员（整组替换） | 🔒 |
+| `PUT` | `/api/v1/identity/groups/{group_id}/permissions` | 设置小组整体权限（整组替换） | 🔒 |
 | `POST` | `/api/v1/identity/login` | 登录换取令牌 | 公开 |
 | `POST` | `/api/v1/identity/logout` | 退出登录（作废当前会话，幂等） | 公开 |
 | `GET` | `/api/v1/identity/me` | 当前用户（含角色与权限码） | 🔒 |
@@ -213,15 +232,192 @@ Authorization: Bearer <accessToken>
 | `PATCH` | `/api/v1/identity/roles/{role_id}` | 编辑角色 | 🔒 |
 | `DELETE` | `/api/v1/identity/roles/{role_id}` | 删除角色 | 🔒 |
 | `PUT` | `/api/v1/identity/roles/{role_id}/permissions` | 设置角色权限（整组替换） | 🔒 |
+| `GET` | `/api/v1/identity/team/permissions` | 团队基础权限（全体启用账号） | 🔒 |
+| `PUT` | `/api/v1/identity/team/permissions` | 设置团队基础权限（整组替换） | 🔒 |
 | `GET` | `/api/v1/identity/users` | 用户列表 | 🔒 |
 | `POST` | `/api/v1/identity/users` | 创建用户 | 🔒 |
 | `GET` | `/api/v1/identity/users/{user_id}` | 用户详情 | 🔒 |
 | `PATCH` | `/api/v1/identity/users/{user_id}` | 编辑用户（含停用） | 🔒 |
 | `DELETE` | `/api/v1/identity/users/{user_id}` | 停用用户（保留历史归属） | 🔒 |
+| `GET` | `/api/v1/identity/users/{user_id}/effective-permissions` | 用户有效权限与四层来源 | 🔒 |
 | `GET` | `/api/v1/identity/users/{user_id}/logins` | 某账号的登录记录 | 🔒 |
+| `GET` | `/api/v1/identity/users/{user_id}/permissions` | 用户单独授予的权限 | 🔒 |
+| `PUT` | `/api/v1/identity/users/{user_id}/permissions` | 设置个人权限（整组替换） | 🔒 |
 | `POST` | `/api/v1/identity/users/{user_id}/reset-password` | 管理员重置密码 | 🔒 |
 | `POST` | `/api/v1/identity/users/{user_id}/revoke-sessions` | 踢下线（吊销该用户全部会话） | 🔒 |
 | `PUT` | `/api/v1/identity/users/{user_id}/roles` | 设置用户角色（整组替换） | 🔒 |
+
+#### `GET /api/v1/identity/groups`
+
+**小组列表（含成员与权限）**
+
+**响应** `ApiResponse<GroupOut[]>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `[].id` | `string` | 是 | 小组 ID |
+| `[].name` | `string` | 是 | 小组名称，唯一 |
+| `[].description` | `string` | 否 | 小组说明 |
+| `[].createdAt` | `string` | 是 | 创建时间（UTC） |
+| `[].permissions` | `string[]` | 否 | 小组整体权限；成员自动获得 |
+| `[].memberIds` | `string[]` | 否 | 成员用户 id；编辑成员时整组替换 |
+| `[].memberCount` | `number` | 否 | 成员数 |
+
+#### `POST /api/v1/identity/groups`
+
+**新建小组**
+
+**请求体** `GroupCreateIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `name` | `string` | 是 | 小组名称，唯一 |
+| `description` | `string` | 否 | 小组说明 |
+
+**响应** `ApiResponse<GroupOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 | 小组 ID |
+| `name` | `string` | 是 | 小组名称，唯一 |
+| `description` | `string` | 否 | 小组说明 |
+| `createdAt` | `string` | 是 | 创建时间（UTC） |
+| `permissions` | `string[]` | 否 | 小组整体权限；成员自动获得 |
+| `memberIds` | `string[]` | 否 | 成员用户 id；编辑成员时整组替换 |
+| `memberCount` | `number` | 否 | 成员数 |
+
+#### `GET /api/v1/identity/groups/{group_id}`
+
+**小组详情**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `group_id` | path | `string` | 是 |  |
+
+**响应** `ApiResponse<GroupOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 | 小组 ID |
+| `name` | `string` | 是 | 小组名称，唯一 |
+| `description` | `string` | 否 | 小组说明 |
+| `createdAt` | `string` | 是 | 创建时间（UTC） |
+| `permissions` | `string[]` | 否 | 小组整体权限；成员自动获得 |
+| `memberIds` | `string[]` | 否 | 成员用户 id；编辑成员时整组替换 |
+| `memberCount` | `number` | 否 | 成员数 |
+
+#### `PATCH /api/v1/identity/groups/{group_id}`
+
+**编辑小组资料**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `group_id` | path | `string` | 是 |  |
+
+**请求体** `GroupUpdateIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `name` | `string \| null` | 否 | 小组名称 |
+| `description` | `string \| null` | 否 | 小组说明 |
+
+**响应** `ApiResponse<GroupOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 | 小组 ID |
+| `name` | `string` | 是 | 小组名称，唯一 |
+| `description` | `string` | 否 | 小组说明 |
+| `createdAt` | `string` | 是 | 创建时间（UTC） |
+| `permissions` | `string[]` | 否 | 小组整体权限；成员自动获得 |
+| `memberIds` | `string[]` | 否 | 成员用户 id；编辑成员时整组替换 |
+| `memberCount` | `number` | 否 | 成员数 |
+
+#### `DELETE /api/v1/identity/groups/{group_id}`
+
+**删除小组（同时清成员与授权）**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `group_id` | path | `string` | 是 |  |
+
+**响应** `ApiResponse<null>`（前端取 `res.data`）
+
+#### `GET /api/v1/identity/groups/{group_id}/members`
+
+**小组成员列表**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `group_id` | path | `string` | 是 |  |
+
+**响应** `ApiResponse<UserOut[]>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `[].id` | `string` | 是 | 用户 ID |
+| `[].username` | `string` | 是 | 登录名，入库前已转小写 |
+| `[].displayName` | `string` | 否 | 昵称（顶栏展示用） |
+| `[].email` | `string \| null` | 否 | 邮箱，未填为 null |
+| `[].avatarUrl` | `string \| null` | 否 | 头像 URL，未设置为 null |
+| `[].phone` | `string \| null` | 否 | 手机号，仅展示，未填为 null |
+| `[].position` | `string \| null` | 否 | 职务，仅展示，未填为 null |
+| `[].isActive` | `boolean` | 否 | 是否启用；停用后无法登录且令牌立即失效 |
+| `[].lastLoginAt` | `string \| null` | 否 | 最后登录时间，从未登录为 null |
+| `[].createdAt` | `string` | 是 | 创建时间（UTC） |
+| `[].roles` | `RoleBriefOut[]` | 否 | 拥有的角色 |
+
+#### `PUT /api/v1/identity/groups/{group_id}/members`
+
+**设置小组成员（整组替换）**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `group_id` | path | `string` | 是 |  |
+
+**请求体** `GroupMembersIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `userIds` | `string[]` | 否 | 成员用户 id，整组替换；传空数组即清空 |
+
+**响应** `ApiResponse<GroupOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 | 小组 ID |
+| `name` | `string` | 是 | 小组名称，唯一 |
+| `description` | `string` | 否 | 小组说明 |
+| `createdAt` | `string` | 是 | 创建时间（UTC） |
+| `permissions` | `string[]` | 否 | 小组整体权限；成员自动获得 |
+| `memberIds` | `string[]` | 否 | 成员用户 id；编辑成员时整组替换 |
+| `memberCount` | `number` | 否 | 成员数 |
+
+#### `PUT /api/v1/identity/groups/{group_id}/permissions`
+
+**设置小组整体权限（整组替换）**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `group_id` | path | `string` | 是 |  |
+
+**请求体** `PermissionsIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `permissions` | `string[]` | 否 | 整组替换；传空数组即清空。出现未登记的权限码会被拒绝 |
+
+**响应** `ApiResponse<GroupOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 | 小组 ID |
+| `name` | `string` | 是 | 小组名称，唯一 |
+| `description` | `string` | 否 | 小组说明 |
+| `createdAt` | `string` | 是 | 创建时间（UTC） |
+| `permissions` | `string[]` | 否 | 小组整体权限；成员自动获得 |
+| `memberIds` | `string[]` | 否 | 成员用户 id；编辑成员时整组替换 |
+| `memberCount` | `number` | 否 | 成员数 |
 
 #### `POST /api/v1/identity/login`
 
@@ -268,6 +464,8 @@ Authorization: Bearer <accessToken>
 | `displayName` | `string` | 否 | 昵称（顶栏展示用） |
 | `email` | `string \| null` | 否 | 邮箱，未填为 null |
 | `avatarUrl` | `string \| null` | 否 | 头像 URL，未设置为 null |
+| `phone` | `string \| null` | 否 | 手机号，仅展示，未填为 null |
+| `position` | `string \| null` | 否 | 职务，仅展示，未填为 null |
 | `isActive` | `boolean` | 否 | 是否启用；停用后无法登录且令牌立即失效 |
 | `lastLoginAt` | `string \| null` | 否 | 最后登录时间，从未登录为 null |
 | `createdAt` | `string` | 是 | 创建时间（UTC） |
@@ -285,6 +483,8 @@ Authorization: Bearer <accessToken>
 | `displayName` | `string \| null` | 否 | 昵称 |
 | `email` | `string \| null` | 否 | 邮箱；传 null 清空 |
 | `avatarUrl` | `string \| null` | 否 | 头像 URL；传 null 清空 |
+| `phone` | `string \| null` | 否 | 手机号；传 null 清空 |
+| `position` | `string \| null` | 否 | 职务；传 null 清空 |
 
 **响应** `ApiResponse<MeOut>`（前端取 `res.data`）
 
@@ -295,6 +495,8 @@ Authorization: Bearer <accessToken>
 | `displayName` | `string` | 否 | 昵称（顶栏展示用） |
 | `email` | `string \| null` | 否 | 邮箱，未填为 null |
 | `avatarUrl` | `string \| null` | 否 | 头像 URL，未设置为 null |
+| `phone` | `string \| null` | 否 | 手机号，仅展示，未填为 null |
+| `position` | `string \| null` | 否 | 职务，仅展示，未填为 null |
 | `isActive` | `boolean` | 否 | 是否启用；停用后无法登录且令牌立即失效 |
 | `lastLoginAt` | `string \| null` | 否 | 最后登录时间，从未登录为 null |
 | `createdAt` | `string` | 是 | 创建时间（UTC） |
@@ -536,15 +738,37 @@ Authorization: Bearer <accessToken>
 | `userCount` | `number` | 否 | 使用该角色的用户数 |
 | `orphanedPermissions` | `string[]` | 否 | 已失效的权限码（权限点被删或改名后残留） |
 
+#### `GET /api/v1/identity/team/permissions`
+
+**团队基础权限（全体启用账号）**
+
+**响应** `ApiResponse<string[]>`（前端取 `res.data`）
+
+#### `PUT /api/v1/identity/team/permissions`
+
+**设置团队基础权限（整组替换）**
+
+**请求体** `PermissionsIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `permissions` | `string[]` | 否 | 整组替换；传空数组即清空。出现未登记的权限码会被拒绝 |
+
+**响应** `ApiResponse<string[]>`（前端取 `res.data`）
+
 #### `GET /api/v1/identity/users`
 
 **用户列表**
 
 | 参数 | 位置 | 类型 | 必填 | 说明 |
 |---|---|---|---|---|
-| `keyword` | query | `string` | 否 | 匹配用户名/昵称/邮箱 |
+| `keyword` | query | `string` | 否 | 匹配用户名/昵称/邮箱/手机号/职务 |
+| `name` | query | `string` | 否 | 按姓名（昵称）模糊筛选 |
+| `username` | query | `string` | 否 | 按账号模糊筛选 |
+| `phone` | query | `string` | 否 | 按手机号模糊筛选 |
 | `isActive` | query | `boolean | null` | 否 |  |
 | `roleId` | query | `string | null` | 否 |  |
+| `groupId` | query | `string | null` | 否 | 只看该小组成员 |
 | `page` | query | `number` | 否 | 页码，从 1 开始 |
 | `pageSize` | query | `number` | 否 | 每页条数 |
 
@@ -570,6 +794,8 @@ Authorization: Bearer <accessToken>
 | `displayName` | `string` | 否 | 昵称，留空则与用户名相同 |
 | `email` | `string \| null` | 否 | 邮箱 |
 | `avatarUrl` | `string \| null` | 否 | 头像 URL |
+| `phone` | `string \| null` | 否 | 手机号，仅展示 |
+| `position` | `string \| null` | 否 | 职务，仅展示 |
 | `roleIds` | `string[]` | 否 | 角色 id 列表，可留空 |
 
 **响应** `ApiResponse<UserOut>`（前端取 `res.data`）
@@ -581,6 +807,8 @@ Authorization: Bearer <accessToken>
 | `displayName` | `string` | 否 | 昵称（顶栏展示用） |
 | `email` | `string \| null` | 否 | 邮箱，未填为 null |
 | `avatarUrl` | `string \| null` | 否 | 头像 URL，未设置为 null |
+| `phone` | `string \| null` | 否 | 手机号，仅展示，未填为 null |
+| `position` | `string \| null` | 否 | 职务，仅展示，未填为 null |
 | `isActive` | `boolean` | 否 | 是否启用；停用后无法登录且令牌立即失效 |
 | `lastLoginAt` | `string \| null` | 否 | 最后登录时间，从未登录为 null |
 | `createdAt` | `string` | 是 | 创建时间（UTC） |
@@ -603,6 +831,8 @@ Authorization: Bearer <accessToken>
 | `displayName` | `string` | 否 | 昵称（顶栏展示用） |
 | `email` | `string \| null` | 否 | 邮箱，未填为 null |
 | `avatarUrl` | `string \| null` | 否 | 头像 URL，未设置为 null |
+| `phone` | `string \| null` | 否 | 手机号，仅展示，未填为 null |
+| `position` | `string \| null` | 否 | 职务，仅展示，未填为 null |
 | `isActive` | `boolean` | 否 | 是否启用；停用后无法登录且令牌立即失效 |
 | `lastLoginAt` | `string \| null` | 否 | 最后登录时间，从未登录为 null |
 | `createdAt` | `string` | 是 | 创建时间（UTC） |
@@ -623,6 +853,8 @@ Authorization: Bearer <accessToken>
 | `displayName` | `string \| null` | 否 | 昵称 |
 | `email` | `string \| null` | 否 | 邮箱；传 null 清空 |
 | `avatarUrl` | `string \| null` | 否 | 头像 URL；传 null 清空 |
+| `phone` | `string \| null` | 否 | 手机号；传 null 清空 |
+| `position` | `string \| null` | 否 | 职务；传 null 清空 |
 | `isActive` | `boolean \| null` | 否 | 启用/停用；不能停用自己，且必须保留一个启用的超管。不接受 null：停用请传 false，不想改就不要传这个字段 |
 
 **响应** `ApiResponse<UserOut>`（前端取 `res.data`）
@@ -634,6 +866,8 @@ Authorization: Bearer <accessToken>
 | `displayName` | `string` | 否 | 昵称（顶栏展示用） |
 | `email` | `string \| null` | 否 | 邮箱，未填为 null |
 | `avatarUrl` | `string \| null` | 否 | 头像 URL，未设置为 null |
+| `phone` | `string \| null` | 否 | 手机号，仅展示，未填为 null |
+| `position` | `string \| null` | 否 | 职务，仅展示，未填为 null |
 | `isActive` | `boolean` | 否 | 是否启用；停用后无法登录且令牌立即失效 |
 | `lastLoginAt` | `string \| null` | 否 | 最后登录时间，从未登录为 null |
 | `createdAt` | `string` | 是 | 创建时间（UTC） |
@@ -656,10 +890,30 @@ Authorization: Bearer <accessToken>
 | `displayName` | `string` | 否 | 昵称（顶栏展示用） |
 | `email` | `string \| null` | 否 | 邮箱，未填为 null |
 | `avatarUrl` | `string \| null` | 否 | 头像 URL，未设置为 null |
+| `phone` | `string \| null` | 否 | 手机号，仅展示，未填为 null |
+| `position` | `string \| null` | 否 | 职务，仅展示，未填为 null |
 | `isActive` | `boolean` | 否 | 是否启用；停用后无法登录且令牌立即失效 |
 | `lastLoginAt` | `string \| null` | 否 | 最后登录时间，从未登录为 null |
 | `createdAt` | `string` | 是 | 创建时间（UTC） |
 | `roles` | `RoleBriefOut[]` | 否 | 拥有的角色 |
+
+#### `GET /api/v1/identity/users/{user_id}/effective-permissions`
+
+**用户有效权限与四层来源**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `user_id` | path | `string` | 是 |  |
+
+**响应** `ApiResponse<EffectivePermissionsOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `team` | `string[]` | 否 | 团队基础权限（全体启用账号） |
+| `groups` | `GroupLayerOut[]` | 否 | 各所属小组授予的权限 |
+| `personal` | `string[]` | 否 | 单独授予的权限 |
+| `roles` | `string[]` | 否 | 现有角色授予的权限 |
+| `effective` | `string[]` | 否 | 四层并集；`*` 表示超级管理员。require() 唯一判据 |
 
 #### `GET /api/v1/identity/users/{user_id}/logins`
 
@@ -675,6 +929,32 @@ Authorization: Bearer <accessToken>
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `items` | `LoginEventOut[]` | 否 | 按时间倒序 |
+
+#### `GET /api/v1/identity/users/{user_id}/permissions`
+
+**用户单独授予的权限**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `user_id` | path | `string` | 是 |  |
+
+**响应** `ApiResponse<string[]>`（前端取 `res.data`）
+
+#### `PUT /api/v1/identity/users/{user_id}/permissions`
+
+**设置个人权限（整组替换）**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `user_id` | path | `string` | 是 |  |
+
+**请求体** `PermissionsIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `permissions` | `string[]` | 否 | 整组替换；传空数组即清空。出现未登记的权限码会被拒绝 |
+
+**响应** `ApiResponse<string[]>`（前端取 `res.data`）
 
 #### `POST /api/v1/identity/users/{user_id}/reset-password`
 
@@ -729,6 +1009,8 @@ Authorization: Bearer <accessToken>
 | `displayName` | `string` | 否 | 昵称（顶栏展示用） |
 | `email` | `string \| null` | 否 | 邮箱，未填为 null |
 | `avatarUrl` | `string \| null` | 否 | 头像 URL，未设置为 null |
+| `phone` | `string \| null` | 否 | 手机号，仅展示，未填为 null |
+| `position` | `string \| null` | 否 | 职务，仅展示，未填为 null |
 | `isActive` | `boolean` | 否 | 是否启用；停用后无法登录且令牌立即失效 |
 | `lastLoginAt` | `string \| null` | 否 | 最后登录时间，从未登录为 null |
 | `createdAt` | `string` | 是 | 创建时间（UTC） |
@@ -2208,6 +2490,18 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `deleted` | `number` | 是 | 实际删除的条数 |
 | `skipped` | `string[]` | 否 | 被跳过的任务 ID：不存在，或属于他人且没有 `task:read:all` |
 
+### `EffectivePermissionsOut`
+
+某用户的权限来源。前端只读展示，**判定永远走 effective**。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `team` | `string[]` | 否 | 团队基础权限（全体启用账号） |
+| `groups` | `GroupLayerOut[]` | 否 | 各所属小组授予的权限 |
+| `personal` | `string[]` | 否 | 单独授予的权限 |
+| `roles` | `string[]` | 否 | 现有角色授予的权限 |
+| `effective` | `string[]` | 否 | 四层并集；`*` 表示超级管理员。require() 唯一判据 |
+
 ### `ExecuteReplacement`
 
 提交或加速一条替换任务。
@@ -2299,6 +2593,48 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `size` | `string` | 否 | 宽x高，如 `1024x1536` |
 | `count` | `number` | 否 | 张数 |
 | `model` | `string` | 否 | 模型 id，留空取默认 |
+
+### `GroupCreateIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `name` | `string` | 是 | 小组名称，唯一 |
+| `description` | `string` | 否 | 小组说明 |
+
+### `GroupLayerOut`
+
+分层权限明细里的一段：这条权限来自哪个小组。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 | 小组 ID |
+| `name` | `string` | 是 | 小组名称 |
+| `permissions` | `string[]` | 否 | 该组授予的权限码 |
+
+### `GroupMembersIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `userIds` | `string[]` | 否 | 成员用户 id，整组替换；传空数组即清空 |
+
+### `GroupOut`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 | 小组 ID |
+| `name` | `string` | 是 | 小组名称，唯一 |
+| `description` | `string` | 否 | 小组说明 |
+| `createdAt` | `string` | 是 | 创建时间（UTC） |
+| `permissions` | `string[]` | 否 | 小组整体权限；成员自动获得 |
+| `memberIds` | `string[]` | 否 | 成员用户 id；编辑成员时整组替换 |
+| `memberCount` | `number` | 否 | 成员数 |
+
+### `GroupUpdateIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `name` | `string \| null` | 否 | 小组名称 |
+| `description` | `string \| null` | 否 | 小组说明 |
 
 ### `HTTPValidationError`
 
@@ -2394,6 +2730,8 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `displayName` | `string` | 否 | 昵称（顶栏展示用） |
 | `email` | `string \| null` | 否 | 邮箱，未填为 null |
 | `avatarUrl` | `string \| null` | 否 | 头像 URL，未设置为 null |
+| `phone` | `string \| null` | 否 | 手机号，仅展示，未填为 null |
+| `position` | `string \| null` | 否 | 职务，仅展示，未填为 null |
 | `isActive` | `boolean` | 否 | 是否启用；停用后无法登录且令牌立即失效 |
 | `lastLoginAt` | `string \| null` | 否 | 最后登录时间，从未登录为 null |
 | `createdAt` | `string` | 是 | 创建时间（UTC） |
@@ -2530,6 +2868,17 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `name` | `string` | 是 | 权限名称 |
 | `description` | `string` | 否 | 权限说明 |
 
+### `PermissionsIn`
+
+团队 / 小组 / 个人三层共用的「整组替换」入参。
+
+三层共用一份形状不是偷懒：写接口的守卫、权限码合法性校验、以及前端的
+权限勾选组件对三层完全一样，分成三个类只会让「改了一处忘两处」变大概率事件。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `permissions` | `string[]` | 否 | 整组替换；传空数组即清空。出现未登记的权限码会被拒绝 |
+
 ### `PrepareReplacement`
 
 | 字段 | 类型 | 必填 | 说明 |
@@ -2558,6 +2907,8 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `displayName` | `string \| null` | 否 | 昵称 |
 | `email` | `string \| null` | 否 | 邮箱；传 null 清空 |
 | `avatarUrl` | `string \| null` | 否 | 头像 URL；传 null 清空 |
+| `phone` | `string \| null` | 否 | 手机号；传 null 清空 |
+| `position` | `string \| null` | 否 | 职务；传 null 清空 |
 
 ### `ReadyOut`
 
@@ -2971,6 +3322,8 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `displayName` | `string` | 否 | 昵称，留空则与用户名相同 |
 | `email` | `string \| null` | 否 | 邮箱 |
 | `avatarUrl` | `string \| null` | 否 | 头像 URL |
+| `phone` | `string \| null` | 否 | 手机号，仅展示 |
+| `position` | `string \| null` | 否 | 职务，仅展示 |
 | `roleIds` | `string[]` | 否 | 角色 id 列表，可留空 |
 
 ### `UserOut`
@@ -2982,6 +3335,8 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `displayName` | `string` | 否 | 昵称（顶栏展示用） |
 | `email` | `string \| null` | 否 | 邮箱，未填为 null |
 | `avatarUrl` | `string \| null` | 否 | 头像 URL，未设置为 null |
+| `phone` | `string \| null` | 否 | 手机号，仅展示，未填为 null |
+| `position` | `string \| null` | 否 | 职务，仅展示，未填为 null |
 | `isActive` | `boolean` | 否 | 是否启用；停用后无法登录且令牌立即失效 |
 | `lastLoginAt` | `string \| null` | 否 | 最后登录时间，从未登录为 null |
 | `createdAt` | `string` | 是 | 创建时间（UTC） |
@@ -3000,6 +3355,8 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `displayName` | `string \| null` | 否 | 昵称 |
 | `email` | `string \| null` | 否 | 邮箱；传 null 清空 |
 | `avatarUrl` | `string \| null` | 否 | 头像 URL；传 null 清空 |
+| `phone` | `string \| null` | 否 | 手机号；传 null 清空 |
+| `position` | `string \| null` | 否 | 职务；传 null 清空 |
 | `isActive` | `boolean \| null` | 否 | 启用/停用；不能停用自己，且必须保留一个启用的超管。不接受 null：停用请传 false，不想改就不要传这个字段 |
 
 ### `ValidationError`

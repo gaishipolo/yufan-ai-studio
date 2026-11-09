@@ -1522,11 +1522,50 @@
             "schema": {
               "type": "string",
               "maxLength": 64,
-              "description": "匹配用户名/昵称/邮箱",
+              "description": "匹配用户名/昵称/邮箱/手机号/职务",
               "default": "",
               "title": "Keyword"
             },
-            "description": "匹配用户名/昵称/邮箱"
+            "description": "匹配用户名/昵称/邮箱/手机号/职务"
+          },
+          {
+            "name": "name",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 64,
+              "description": "按姓名（昵称）模糊筛选",
+              "default": "",
+              "title": "Name"
+            },
+            "description": "按姓名（昵称）模糊筛选"
+          },
+          {
+            "name": "username",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 64,
+              "description": "按账号模糊筛选",
+              "default": "",
+              "title": "Username"
+            },
+            "description": "按账号模糊筛选"
+          },
+          {
+            "name": "phone",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 32,
+              "description": "按手机号模糊筛选",
+              "default": "",
+              "title": "Phone"
+            },
+            "description": "按手机号模糊筛选"
           },
           {
             "name": "isActive",
@@ -1559,6 +1598,24 @@
               ],
               "title": "Roleid"
             }
+          },
+          {
+            "name": "groupId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "只看该小组成员",
+              "title": "Groupid"
+            },
+            "description": "只看该小组成员"
           },
           {
             "name": "page",
@@ -2008,6 +2065,601 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApiResponse_LoginEventListOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/identity/team/permissions": {
+      "get": {
+        "tags": [
+          "身份"
+        ],
+        "summary": "团队基础权限（全体启用账号）",
+        "operationId": "team_permissions_api_v1_identity_team_permissions_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_list_str__"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "身份"
+        ],
+        "summary": "设置团队基础权限（整组替换）",
+        "operationId": "set_team_permissions_api_v1_identity_team_permissions_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PermissionsIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_list_str__"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/identity/groups": {
+      "get": {
+        "tags": [
+          "身份"
+        ],
+        "summary": "小组列表（含成员与权限）",
+        "operationId": "list_groups_api_v1_identity_groups_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_list_GroupOut__"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "身份"
+        ],
+        "summary": "新建小组",
+        "operationId": "create_group_api_v1_identity_groups_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GroupCreateIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_GroupOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/identity/groups/{group_id}": {
+      "get": {
+        "tags": [
+          "身份"
+        ],
+        "summary": "小组详情",
+        "operationId": "get_group_api_v1_identity_groups__group_id__get",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "group_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Group Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_GroupOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "身份"
+        ],
+        "summary": "编辑小组资料",
+        "operationId": "update_group_api_v1_identity_groups__group_id__patch",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "group_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Group Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GroupUpdateIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_GroupOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "身份"
+        ],
+        "summary": "删除小组（同时清成员与授权）",
+        "operationId": "delete_group_api_v1_identity_groups__group_id__delete",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "group_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Group Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_NoneType_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/identity/groups/{group_id}/members": {
+      "get": {
+        "tags": [
+          "身份"
+        ],
+        "summary": "小组成员列表",
+        "operationId": "group_members_api_v1_identity_groups__group_id__members_get",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "group_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Group Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_list_UserOut__"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "身份"
+        ],
+        "summary": "设置小组成员（整组替换）",
+        "operationId": "set_group_members_api_v1_identity_groups__group_id__members_put",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "group_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Group Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GroupMembersIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_GroupOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/identity/groups/{group_id}/permissions": {
+      "put": {
+        "tags": [
+          "身份"
+        ],
+        "summary": "设置小组整体权限（整组替换）",
+        "operationId": "set_group_permissions_api_v1_identity_groups__group_id__permissions_put",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "group_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Group Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PermissionsIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_GroupOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/identity/users/{user_id}/permissions": {
+      "get": {
+        "tags": [
+          "身份"
+        ],
+        "summary": "用户单独授予的权限",
+        "operationId": "user_permissions_api_v1_identity_users__user_id__permissions_get",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "User Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_list_str__"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "身份"
+        ],
+        "summary": "设置个人权限（整组替换）",
+        "operationId": "set_user_permissions_api_v1_identity_users__user_id__permissions_put",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "User Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PermissionsIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_list_str__"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/identity/users/{user_id}/effective-permissions": {
+      "get": {
+        "tags": [
+          "身份"
+        ],
+        "summary": "用户有效权限与四层来源",
+        "operationId": "effective_permissions_api_v1_identity_users__user_id__effective_permissions_get",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "User Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_EffectivePermissionsOut_"
                 }
               }
             }
@@ -4060,6 +4712,33 @@
         "type": "object",
         "title": "ApiResponse[DeleteTasksOut]"
       },
+      "ApiResponse_EffectivePermissionsOut_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EffectivePermissionsOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[EffectivePermissionsOut]"
+      },
       "ApiResponse_ExportDetailOut_": {
         "properties": {
           "code": {
@@ -4113,6 +4792,33 @@
         },
         "type": "object",
         "title": "ApiResponse[ExportOut]"
+      },
+      "ApiResponse_GroupOut_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GroupOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[GroupOut]"
       },
       "ApiResponse_HealthOut_": {
         "properties": {
@@ -4922,6 +5628,37 @@
         "type": "object",
         "title": "ApiResponse[list[ExportSourceOut]]"
       },
+      "ApiResponse_list_GroupOut__": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/GroupOut"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Data"
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[list[GroupOut]]"
+      },
       "ApiResponse_list_RoleOut__": {
         "properties": {
           "code": {
@@ -4983,6 +5720,68 @@
         },
         "type": "object",
         "title": "ApiResponse[list[SessionOut]]"
+      },
+      "ApiResponse_list_UserOut__": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/UserOut"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Data"
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[list[UserOut]]"
+      },
+      "ApiResponse_list_str__": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Data"
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[list[str]]"
       },
       "ArchiveChange": {
         "properties": {
@@ -5390,6 +6189,53 @@
         ],
         "title": "DeleteTasksOut"
       },
+      "EffectivePermissionsOut": {
+        "properties": {
+          "team": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Team",
+            "description": "团队基础权限（全体启用账号）"
+          },
+          "groups": {
+            "items": {
+              "$ref": "#/components/schemas/GroupLayerOut"
+            },
+            "type": "array",
+            "title": "Groups",
+            "description": "各所属小组授予的权限"
+          },
+          "personal": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Personal",
+            "description": "单独授予的权限"
+          },
+          "roles": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Roles",
+            "description": "现有角色授予的权限"
+          },
+          "effective": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Effective",
+            "description": "四层并集；`*` 表示超级管理员。require() 唯一判据"
+          }
+        },
+        "type": "object",
+        "title": "EffectivePermissionsOut",
+        "description": "某用户的权限来源。前端只读展示，**判定永远走 effective**。"
+      },
       "ExecuteReplacement": {
         "properties": {
           "billingMode": {
@@ -5779,6 +6625,159 @@
         ],
         "title": "GenerateImageIn"
       },
+      "GroupCreateIn": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Name",
+            "description": "小组名称，唯一"
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 200,
+            "title": "Description",
+            "description": "小组说明",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "GroupCreateIn"
+      },
+      "GroupLayerOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "小组 ID"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "小组名称"
+          },
+          "permissions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Permissions",
+            "description": "该组授予的权限码"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "title": "GroupLayerOut",
+        "description": "分层权限明细里的一段：这条权限来自哪个小组。"
+      },
+      "GroupMembersIn": {
+        "properties": {
+          "userIds": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Userids",
+            "description": "成员用户 id，整组替换；传空数组即清空"
+          }
+        },
+        "type": "object",
+        "title": "GroupMembersIn"
+      },
+      "GroupOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "小组 ID"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "小组名称，唯一"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description",
+            "description": "小组说明",
+            "default": ""
+          },
+          "createdAt": {
+            "type": "string",
+            "title": "Createdat",
+            "description": "创建时间（UTC）"
+          },
+          "permissions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Permissions",
+            "description": "小组整体权限；成员自动获得"
+          },
+          "memberIds": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Memberids",
+            "description": "成员用户 id；编辑成员时整组替换"
+          },
+          "memberCount": {
+            "type": "integer",
+            "title": "Membercount",
+            "description": "成员数",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "createdAt"
+        ],
+        "title": "GroupOut"
+      },
+      "GroupUpdateIn": {
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name",
+            "description": "小组名称"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description",
+            "description": "小组说明"
+          }
+        },
+        "type": "object",
+        "title": "GroupUpdateIn"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -6128,6 +7127,30 @@
             ],
             "title": "Avatarurl",
             "description": "头像 URL，未设置为 null"
+          },
+          "phone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phone",
+            "description": "手机号，仅展示，未填为 null"
+          },
+          "position": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Position",
+            "description": "职务，仅展示，未填为 null"
           },
           "isActive": {
             "type": "boolean",
@@ -6774,6 +7797,21 @@
         ],
         "title": "PermissionOut"
       },
+      "PermissionsIn": {
+        "properties": {
+          "permissions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Permissions",
+            "description": "整组替换；传空数组即清空。出现未登记的权限码会被拒绝"
+          }
+        },
+        "type": "object",
+        "title": "PermissionsIn",
+        "description": "团队 / 小组 / 个人三层共用的「整组替换」入参。\n\n三层共用一份形状不是偷懒：写接口的守卫、权限码合法性校验、以及前端的\n权限勾选组件对三层完全一样，分成三个类只会让「改了一处忘两处」变大概率事件。"
+      },
       "PrepareReplacement": {
         "properties": {
           "requestId": {
@@ -6913,6 +7951,32 @@
             ],
             "title": "Avatarurl",
             "description": "头像 URL；传 null 清空"
+          },
+          "phone": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 32
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phone",
+            "description": "手机号；传 null 清空"
+          },
+          "position": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Position",
+            "description": "职务；传 null 清空"
           }
         },
         "type": "object",
@@ -8640,6 +9704,32 @@
             "title": "Avatarurl",
             "description": "头像 URL"
           },
+          "phone": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 32
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phone",
+            "description": "手机号，仅展示"
+          },
+          "position": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Position",
+            "description": "职务，仅展示"
+          },
           "roleIds": {
             "items": {
               "type": "string"
@@ -8697,6 +9787,30 @@
             ],
             "title": "Avatarurl",
             "description": "头像 URL，未设置为 null"
+          },
+          "phone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phone",
+            "description": "手机号，仅展示，未填为 null"
+          },
+          "position": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Position",
+            "description": "职务，仅展示，未填为 null"
           },
           "isActive": {
             "type": "boolean",
@@ -8793,6 +9907,32 @@
             ],
             "title": "Avatarurl",
             "description": "头像 URL；传 null 清空"
+          },
+          "phone": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 32
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phone",
+            "description": "手机号；传 null 清空"
+          },
+          "position": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Position",
+            "description": "职务；传 null 清空"
           },
           "isActive": {
             "anyOf": [

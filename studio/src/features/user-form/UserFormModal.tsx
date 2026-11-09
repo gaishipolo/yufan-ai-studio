@@ -39,6 +39,8 @@ export function UserFormModal({
   const [password, setPassword] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [email, setEmail] = useState('');
+  const [phone, setPhone] = useState('');
+  const [position, setPosition] = useState('');
   const [avatarUrl, setAvatarUrl] = useState('');
   const [roleIds, setRoleIds] = useState<string[]>([]);
   const [formError, setFormError] = useState<string | null>(null);
@@ -50,6 +52,8 @@ export function UserFormModal({
     setPassword('');
     setDisplayName(user?.displayName ?? '');
     setEmail(user?.email ?? '');
+    setPhone(user?.phone ?? '');
+    setPosition(user?.position ?? '');
     setAvatarUrl(user?.avatarUrl ?? '');
     setRoleIds(user?.roles.map((role) => role.id) ?? []);
     setFormError(null);
@@ -90,6 +94,8 @@ export function UserFormModal({
           payload: {
             displayName: displayName.trim(),
             email: email.trim() || null,
+            phone: phone.trim() || null,
+            position: position.trim() || null,
             avatarUrl: avatarUrl.trim() || null,
           },
         },
@@ -110,6 +116,8 @@ export function UserFormModal({
         password,
         displayName: displayName.trim() || undefined,
         email: email.trim() || null,
+        phone: phone.trim() || null,
+        position: position.trim() || null,
         roleIds,
       },
       {
@@ -184,6 +192,26 @@ export function UserFormModal({
             onChange={(event) => setEmail(event.target.value)}
           />
         </FormField>
+
+        {/* 手机号 / 职务对齐截图的用户表格列。Q1 未定：目前只作可选展示字段，
+            不做唯一性、必填或格式校验，留空提交 null 由后端清空。 */}
+        <div className="grid gap-3 sm:grid-cols-2">
+          <FormField label="手机号" htmlFor="user-phone" hint="仅用于展示与检索">
+            <TextInput
+              id="user-phone"
+              value={phone}
+              inputMode="tel"
+              onChange={(event) => setPhone(event.target.value)}
+            />
+          </FormField>
+          <FormField label="职务" htmlFor="user-position" hint="仅用于展示">
+            <TextInput
+              id="user-position"
+              value={position}
+              onChange={(event) => setPosition(event.target.value)}
+            />
+          </FormField>
+        </div>
 
         {/* 建号接口（CreateUserIn）不接收 avatarUrl，只在编辑时可设 */}
         {isEdit && (

@@ -151,6 +151,20 @@ export interface DeleteTasksOut {
   skipped?: string[];
 }
 
+/** 某用户的权限来源。前端只读展示，**判定永远走 effective**。 */
+export interface EffectivePermissionsOut {
+  /** 团队基础权限（全体启用账号） */
+  team?: string[];
+  /** 各所属小组授予的权限 */
+  groups?: GroupLayerOut[];
+  /** 单独授予的权限 */
+  personal?: string[];
+  /** 现有角色授予的权限 */
+  roles?: string[];
+  /** 四层并集；`*` 表示超级管理员。require() 唯一判据 */
+  effective?: string[];
+}
+
 /** 提交或加速一条替换任务。
 
 `credits` 只作用于这条任务：提交时关掉账号的 0 积分权益标签，走正常积分队列，
@@ -236,6 +250,56 @@ export interface GenerateImageIn {
   count?: number;
   /** 模型 id，留空取默认 */
   model?: string;
+}
+
+/** GroupCreateIn */
+export interface GroupCreateIn {
+  /** 小组名称，唯一 */
+  name: string;
+  /** 小组说明 */
+  description?: string;
+}
+
+/** 分层权限明细里的一段：这条权限来自哪个小组。 */
+export interface GroupLayerOut {
+  /** 小组 ID */
+  id: string;
+  /** 小组名称 */
+  name: string;
+  /** 该组授予的权限码 */
+  permissions?: string[];
+}
+
+/** GroupMembersIn */
+export interface GroupMembersIn {
+  /** 成员用户 id，整组替换；传空数组即清空 */
+  userIds?: string[];
+}
+
+/** GroupOut */
+export interface GroupOut {
+  /** 小组 ID */
+  id: string;
+  /** 小组名称，唯一 */
+  name: string;
+  /** 小组说明 */
+  description?: string;
+  /** 创建时间（UTC） */
+  createdAt: string;
+  /** 小组整体权限；成员自动获得 */
+  permissions?: string[];
+  /** 成员用户 id；编辑成员时整组替换 */
+  memberIds?: string[];
+  /** 成员数 */
+  memberCount?: number;
+}
+
+/** GroupUpdateIn */
+export interface GroupUpdateIn {
+  /** 小组名称 */
+  name?: string | null;
+  /** 小组说明 */
+  description?: string | null;
 }
 
 /** HTTPValidationError */
@@ -347,6 +411,10 @@ export interface MeOut {
   email?: string | null;
   /** 头像 URL，未设置为 null */
   avatarUrl?: string | null;
+  /** 手机号，仅展示，未填为 null */
+  phone?: string | null;
+  /** 职务，仅展示，未填为 null */
+  position?: string | null;
   /** 是否启用；停用后无法登录且令牌立即失效 */
   isActive?: boolean;
   /** 最后登录时间，从未登录为 null */
@@ -486,6 +554,15 @@ export interface PermissionOut {
   description?: string;
 }
 
+/** 团队 / 小组 / 个人三层共用的「整组替换」入参。
+
+三层共用一份形状不是偷懒：写接口的守卫、权限码合法性校验、以及前端的
+权限勾选组件对三层完全一样，分成三个类只会让「改了一处忘两处」变大概率事件。 */
+export interface PermissionsIn {
+  /** 整组替换；传空数组即清空。出现未登记的权限码会被拒绝 */
+  permissions?: string[];
+}
+
 /** PrepareReplacement */
 export interface PrepareReplacement {
   requestId: string;
@@ -512,6 +589,10 @@ export interface ProfileUpdateIn {
   email?: string | null;
   /** 头像 URL；传 null 清空 */
   avatarUrl?: string | null;
+  /** 手机号；传 null 清空 */
+  phone?: string | null;
+  /** 职务；传 null 清空 */
+  position?: string | null;
 }
 
 /** 就绪状态。`checks` 说明每一项依赖的结论，status ∈ ok / degraded / down。 */
@@ -958,6 +1039,10 @@ export interface UserCreateIn {
   email?: string | null;
   /** 头像 URL */
   avatarUrl?: string | null;
+  /** 手机号，仅展示 */
+  phone?: string | null;
+  /** 职务，仅展示 */
+  position?: string | null;
   /** 角色 id 列表，可留空 */
   roleIds?: string[];
 }
@@ -974,6 +1059,10 @@ export interface UserOut {
   email?: string | null;
   /** 头像 URL，未设置为 null */
   avatarUrl?: string | null;
+  /** 手机号，仅展示，未填为 null */
+  phone?: string | null;
+  /** 职务，仅展示，未填为 null */
+  position?: string | null;
   /** 是否启用；停用后无法登录且令牌立即失效 */
   isActive?: boolean;
   /** 最后登录时间，从未登录为 null */
@@ -998,6 +1087,10 @@ export interface UserUpdateIn {
   email?: string | null;
   /** 头像 URL；传 null 清空 */
   avatarUrl?: string | null;
+  /** 手机号；传 null 清空 */
+  phone?: string | null;
+  /** 职务；传 null 清空 */
+  position?: string | null;
   /** 启用/停用；不能停用自己，且必须保留一个启用的超管。不接受 null：停用请传 false，不想改就不要传这个字段 */
   isActive?: boolean | null;
 }
@@ -1057,6 +1150,22 @@ export interface EndpointData {
   "GET /api/v1/health": HealthOut;
   /** 就绪探针（检查依赖） */
   "GET /api/v1/health/ready": ReadyOut;
+  /** 小组列表（含成员与权限） */
+  "GET /api/v1/identity/groups": GroupOut[];
+  /** 新建小组 */
+  "POST /api/v1/identity/groups": GroupOut;
+  /** 删除小组（同时清成员与授权） */
+  "DELETE /api/v1/identity/groups/{group_id}": null;
+  /** 小组详情 */
+  "GET /api/v1/identity/groups/{group_id}": GroupOut;
+  /** 编辑小组资料 */
+  "PATCH /api/v1/identity/groups/{group_id}": GroupOut;
+  /** 小组成员列表 */
+  "GET /api/v1/identity/groups/{group_id}/members": UserOut[];
+  /** 设置小组成员（整组替换） */
+  "PUT /api/v1/identity/groups/{group_id}/members": GroupOut;
+  /** 设置小组整体权限（整组替换） */
+  "PUT /api/v1/identity/groups/{group_id}/permissions": GroupOut;
   /** 登录换取令牌 */
   "POST /api/v1/identity/login": TokenOut;
   /** 退出登录（作废当前会话，幂等） */
@@ -1091,6 +1200,10 @@ export interface EndpointData {
   "PATCH /api/v1/identity/roles/{role_id}": RoleOut;
   /** 设置角色权限（整组替换） */
   "PUT /api/v1/identity/roles/{role_id}/permissions": RoleOut;
+  /** 团队基础权限（全体启用账号） */
+  "GET /api/v1/identity/team/permissions": string[];
+  /** 设置团队基础权限（整组替换） */
+  "PUT /api/v1/identity/team/permissions": string[];
   /** 用户列表 */
   "GET /api/v1/identity/users": Page<UserOut>;
   /** 创建用户 */
@@ -1101,8 +1214,14 @@ export interface EndpointData {
   "GET /api/v1/identity/users/{user_id}": UserOut;
   /** 编辑用户（含停用） */
   "PATCH /api/v1/identity/users/{user_id}": UserOut;
+  /** 用户有效权限与四层来源 */
+  "GET /api/v1/identity/users/{user_id}/effective-permissions": EffectivePermissionsOut;
   /** 某账号的登录记录 */
   "GET /api/v1/identity/users/{user_id}/logins": LoginEventListOut;
+  /** 用户单独授予的权限 */
+  "GET /api/v1/identity/users/{user_id}/permissions": string[];
+  /** 设置个人权限（整组替换） */
+  "PUT /api/v1/identity/users/{user_id}/permissions": string[];
   /** 管理员重置密码 */
   "POST /api/v1/identity/users/{user_id}/reset-password": null;
   /** 踢下线（吊销该用户全部会话） */

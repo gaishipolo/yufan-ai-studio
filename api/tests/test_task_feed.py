@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import UTC, datetime
 
@@ -20,6 +21,12 @@ from tests_template_helpers import ADMIN, API, add_run, purge_runs, workspace
 
 from db.session import get_session_factory
 from infra.archive.local import get_archive_settings
+from modules.identity.permissions import (
+    SCOPE_TEAM,
+    TEAM_BASE_PERMISSIONS,
+    TEAM_SCOPE_ID,
+)
+from modules.identity.repository import PermissionLayerRepository
 from modules.task.enums import TaskStatus
 from modules.task.models import VideoTask
 
@@ -156,8 +163,24 @@ def test_feed_permissions_and_owner(client: TestClient, feed_runs) -> None:
     data = client.get(url, headers=other, params={"source": "replacement"})
     assert data.json()["data"]["total"] == 0
 
-    denied = _bearer(client, "feed-denied-" + uuid.uuid4().hex[:6], permissions=("template:read",))
-    assert client.get(url, headers=denied).status_code == 403
+    # 三层权限上线后，团队基础权限给所有人（包括这个 denied 账号）发了 `task:read`。
+    # 「没有 task:read 就该 403」仍然要守，所以这里临时摘掉团队层再验；
+    # finally 必须还原，否则后续用例会连锁 403，而且症状看起来像接口坏了。
+    async def set_team(codes: list[str]) -> None:
+        async with get_session_factory()() as session:
+            await PermissionLayerRepository(session).set_grants(
+                SCOPE_TEAM, TEAM_SCOPE_ID, codes
+            )
+            await session.commit()
+
+    asyncio.run(set_team([]))
+    try:
+        denied = _bearer(
+            client, "feed-denied-" + uuid.uuid4().hex[:6], permissions=("template:read",)
+        )
+        assert client.get(url, headers=denied).status_code == 403
+    finally:
+        asyncio.run(set_team(list(TEAM_BASE_PERMISSIONS)))
 
 
 async def test_feed_survives_offline_archive(

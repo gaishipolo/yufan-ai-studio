@@ -19,18 +19,32 @@ from core.response import ApiResponse, Page
 from modules.identity.dependencies import (
     IdentityCreateDep,
     IdentityDeleteDep,
+    IdentityGroupCreateDep,
+    IdentityGroupDeleteDep,
+    IdentityGroupMemberManageDep,
+    IdentityGroupPermissionManageDep,
+    IdentityGroupReadDep,
+    IdentityGroupUpdateDep,
     IdentityReadDep,
     IdentityRoleManageDep,
     IdentityServiceDep,
+    IdentityTeamManageDep,
     IdentityUpdateDep,
+    IdentityUserPermissionManageDep,
 )
 from modules.identity.schema import (
+    EffectivePermissionsOut,
+    GroupCreateIn,
+    GroupMembersIn,
+    GroupOut,
+    GroupUpdateIn,
     LoginEventListOut,
     LoginIn,
     MeOut,
     PasswordChangeIn,
     PasswordPolicyOut,
     PermissionCatalogOut,
+    PermissionsIn,
     ProfileUpdateIn,
     RefreshIn,
     ResetPasswordIn,
@@ -184,12 +198,25 @@ async def list_users(
     service: IdentityServiceDep,
     actor: IdentityReadDep,
     params: PageDep,
-    keyword: Annotated[str, Query(max_length=64, description="匹配用户名/昵称/邮箱")] = "",
+    keyword: Annotated[
+        str, Query(max_length=64, description="匹配用户名/昵称/邮箱/手机号/职务")
+    ] = "",
+    name: Annotated[str, Query(max_length=64, description="按姓名（昵称）模糊筛选")] = "",
+    username: Annotated[str, Query(max_length=64, description="按账号模糊筛选")] = "",
+    phone: Annotated[str, Query(max_length=32, description="按手机号模糊筛选")] = "",
     is_active: Annotated[bool | None, Query(alias="isActive")] = None,
     role_id: Annotated[str | None, Query(alias="roleId")] = None,
+    group_id: Annotated[str | None, Query(alias="groupId", description="只看该小组成员")] = None,
 ) -> ApiResponse[Page[UserOut]]:
     page = await service.list_users(
-        params, keyword=keyword, is_active=is_active, role_id=role_id
+        params,
+        keyword=keyword,
+        name=name,
+        username=username,
+        phone=phone,
+        is_active=is_active,
+        role_id=role_id,
+        group_id=group_id,
     )
     return ApiResponse.ok(page)
 
@@ -268,6 +295,128 @@ async def deactivate_user(
 ) -> ApiResponse[UserOut]:
     await service.deactivate_user(user_id, actor)
     return ApiResponse.ok(await service.get_user(user_id), "用户已停用")
+
+
+# --------------------------------------------------------------------------- #
+# 三层授权：团队 / 小组 / 个人
+# --------------------------------------------------------------------------- #
+@router.get("/team/permissions", summary="团队基础权限（全体启用账号）")
+async def team_permissions(
+    service: IdentityServiceDep, actor: IdentityReadDep
+) -> ApiResponse[list[str]]:
+    return ApiResponse.ok(await service.team_permissions())
+
+
+@router.put("/team/permissions", summary="设置团队基础权限（整组替换）")
+async def set_team_permissions(
+    payload: PermissionsIn,
+    service: IdentityServiceDep,
+    actor: IdentityTeamManageDep,
+) -> ApiResponse[list[str]]:
+    return ApiResponse.ok(await service.set_team_permissions(payload.permissions, actor))
+
+
+@router.get("/groups", summary="小组列表（含成员与权限）")
+async def list_groups(
+    service: IdentityServiceDep, actor: IdentityGroupReadDep
+) -> ApiResponse[list[GroupOut]]:
+    return ApiResponse.ok(await service.list_groups())
+
+
+@router.post(
+    "/groups", summary="新建小组", status_code=status.HTTP_201_CREATED
+)
+async def create_group(
+    payload: GroupCreateIn,
+    service: IdentityServiceDep,
+    actor: IdentityGroupCreateDep,
+) -> ApiResponse[GroupOut]:
+    return ApiResponse.ok(await service.create_group(payload, actor))
+
+
+@router.get("/groups/{group_id}", summary="小组详情")
+async def get_group(
+    group_id: str, service: IdentityServiceDep, actor: IdentityGroupReadDep
+) -> ApiResponse[GroupOut]:
+    return ApiResponse.ok(await service.get_group(group_id))
+
+
+@router.patch("/groups/{group_id}", summary="编辑小组资料")
+async def update_group(
+    group_id: str,
+    payload: GroupUpdateIn,
+    service: IdentityServiceDep,
+    actor: IdentityGroupUpdateDep,
+) -> ApiResponse[GroupOut]:
+    return ApiResponse.ok(await service.update_group(group_id, payload, actor))
+
+
+@router.delete("/groups/{group_id}", summary="删除小组（同时清成员与授权）")
+async def delete_group(
+    group_id: str, service: IdentityServiceDep, actor: IdentityGroupDeleteDep
+) -> ApiResponse[None]:
+    await service.delete_group(group_id, actor)
+    return ApiResponse.ok(None, "小组已删除")
+
+
+@router.get("/groups/{group_id}/members", summary="小组成员列表")
+async def group_members(
+    group_id: str, service: IdentityServiceDep, actor: IdentityGroupReadDep
+) -> ApiResponse[list[UserOut]]:
+    return ApiResponse.ok(await service.group_members(group_id))
+
+
+@router.put("/groups/{group_id}/members", summary="设置小组成员（整组替换）")
+async def set_group_members(
+    group_id: str,
+    payload: GroupMembersIn,
+    service: IdentityServiceDep,
+    actor: IdentityGroupMemberManageDep,
+) -> ApiResponse[GroupOut]:
+    return ApiResponse.ok(
+        await service.set_group_members(group_id, payload.user_ids, actor)
+    )
+
+
+@router.put("/groups/{group_id}/permissions", summary="设置小组整体权限（整组替换）")
+async def set_group_permissions(
+    group_id: str,
+    payload: PermissionsIn,
+    service: IdentityServiceDep,
+    actor: IdentityGroupPermissionManageDep,
+) -> ApiResponse[GroupOut]:
+    return ApiResponse.ok(
+        await service.set_group_permissions(group_id, payload.permissions, actor)
+    )
+
+
+@router.get("/users/{user_id}/permissions", summary="用户单独授予的权限")
+async def user_permissions(
+    user_id: str, service: IdentityServiceDep, actor: IdentityReadDep
+) -> ApiResponse[list[str]]:
+    return ApiResponse.ok(await service.user_permissions(user_id))
+
+
+@router.put("/users/{user_id}/permissions", summary="设置个人权限（整组替换）")
+async def set_user_permissions(
+    user_id: str,
+    payload: PermissionsIn,
+    service: IdentityServiceDep,
+    actor: IdentityUserPermissionManageDep,
+) -> ApiResponse[list[str]]:
+    return ApiResponse.ok(
+        await service.set_user_permissions(user_id, payload.permissions, actor)
+    )
+
+
+@router.get(
+    "/users/{user_id}/effective-permissions",
+    summary="用户有效权限与四层来源",
+)
+async def effective_permissions(
+    user_id: str, service: IdentityServiceDep, actor: IdentityReadDep
+) -> ApiResponse[EffectivePermissionsOut]:
+    return ApiResponse.ok(await service.effective_permissions(user_id))
 
 
 # --------------------------------------------------------------------------- #

@@ -15,8 +15,10 @@ import {
 } from '@/entities/role/model/types';
 import { RoleFormModal } from '@/features/role-editor/RoleFormModal';
 import { RolePermissionsModal } from '@/features/role-editor/RolePermissionsModal';
+import { LayerPermissionsModal } from '@/features/permission-layers/LayerPermissionsModal';
+import { TeamBasePermissionsCard } from '@/features/permission-layers/TeamBasePermissionsCard';
 
-type Dialog = 'create' | 'edit' | 'permissions' | null;
+type Dialog = 'create' | 'edit' | 'permissions' | 'team' | null;
 
 function RoleCard({ role, onOpen }: { role: Role; onOpen: (dialog: Dialog, role: Role) => void }) {
   const canManage = useCan('identity:role:manage');
@@ -127,6 +129,8 @@ export function RolesSection() {
 
   return (
     <>
+      <TeamBasePermissionsCard onEdit={() => setDialog('team')} />
+
       <div className="flex flex-wrap items-center gap-1.5">
         <p className="text-[11.5px] leading-[1.6] text-ink-mute">
           角色是权限点的集合。给用户分配角色即授予对应权限；内置角色不可删除。
@@ -181,6 +185,11 @@ export function RolesSection() {
 
       <RoleFormModal open={dialog === 'create' || dialog === 'edit'} role={dialog === 'edit' ? active : null} onClose={close} />
       <RolePermissionsModal open={dialog === 'permissions'} role={active} onClose={close} />
+      <LayerPermissionsModal
+        open={dialog === 'team'}
+        target={dialog === 'team' ? { kind: 'team' } : null}
+        onClose={close}
+      />
     </>
   );
 }

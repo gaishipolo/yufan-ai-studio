@@ -84,6 +84,30 @@ class SessionNotFound(AppError):
     http_status = 404
 
 
+class GroupNotFound(AppError):
+    code = errors.code(404, 4)
+    message = "小组不存在"
+    http_status = 404
+
+
+class GroupNameTaken(AppError):
+    code = errors.code(409, 7)
+    message = "小组名称已被占用"
+    http_status = 409
+
+
+class TeamGrantForbidden(AppError):
+    """团队层 = 所有人：管理类权限与 `*` 不能放进来。
+
+    这不是「权限码写错了」，所以不与 `UnknownPermission` 合并——
+    前者是配置约束，后者是目录里根本没有这个码，前端提示的动作不同。
+    """
+
+    code = errors.code(400, 3)
+    message = "团队基础权限不能包含管理类权限或通配符"
+    http_status = 400
+
+
 class UsernameTaken(AppError):
     code = errors.code(409, 1)
     message = "用户名已被占用"
@@ -137,10 +161,13 @@ __all__ = [
     "BuiltinRoleLocked",
     "CannotTargetSelf",
     "CredentialInvalid",
+    "GroupNameTaken",
+    "GroupNotFound",
     "LastSuperuser",
     "OldPasswordMismatch",
     "PermissionEscalation",
     "RefreshTokenInvalid",
+    "TeamGrantForbidden",
     "RoleCodeTaken",
     "RoleInUse",
     "RoleNotFound",

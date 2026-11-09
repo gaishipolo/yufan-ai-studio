@@ -252,3 +252,156 @@ describe('mock adapter · 角色与权限目录', () => {
     }
   });
 });
+
+describe('mock adapter · 团队 / 小组 / 个人三层授权', () => {
+  it('用户列表支持名字 / 账号 / 手机号 / 小组四路筛选', async () => {
+    const byName = await listUsers({ name: '小林' });
+    expect(byName.body.data?.items.map((user) => user.username)).toEqual(['editor']);
+
+    const byUsername = await listUsers({ username: 'VIEW' });
+    expect(byUsername.body.data?.items.map((user) => user.username)).toEqual(['viewer']);
+
+    const byPhone = await listUsers({ phone: '1557690' });
+    expect(byPhone.body.data?.items.map((user) => user.username)).toEqual(['editor']);
+
+    const byGroup = await listUsers({ groupId: 'g_content' });
+    expect(byGroup.body.data?.items.map((user) => user.username)).toEqual(['editor']);
+  });
+
+  it('用户出参带 phone / position，创建与编辑都能写这两个展示字段', async () => {
+    const editor = (await listUsers({ username: 'editor' })).body.data?.items[0] as User;
+    expect(editor.phone).toBe('15576908188');
+    expect(editor.position).toBe('编导');
+
+    const created = await call<User>('post', '/identity/users', {
+      data: { username: 'contact_bot', password: 'contact@1234', phone: '13600000000', position: '剪辑' },
+    });
+    expect(created.body.data?.phone).toBe('13600000000');
+    expect(created.body.data?.position).toBe('剪辑');
+
+    const patched = await call<User>('patch', `/identity/users/${created.body.data?.id}`, {
+      data: { phone: null, position: '统筹' },
+    });
+    expect(patched.body.data?.phone).toBeNull();
+    expect(patched.body.data?.position).toBe('统筹');
+  });
+
+  it('小组列表是裸数组并带成员与权限；重名 409，删除后详情 404', async () => {
+    const { body } = await call<{ id: string; name: string; memberIds: string[] }[]>('get', '/identity/groups');
+    const groups = body.data as { id: string; name: string; memberIds: string[] }[];
+    expect(Array.isArray(groups)).toBe(true);
+    expect(groups.find((group) => group.id === 'g_content')?.memberIds).toEqual(['u_002']);
+
+    const duplicate = await expectFailure('post', '/identity/groups', { name: '内容组' });
+    expect(duplicate.status).toBe(409);
+
+    const created = await call<{ id: string; name: string }>('post', '/identity/groups', {
+      data: { name: '临时小组', description: '测试用' },
+    });
+    expect(created.status).toBe(201);
+    const id = (created.body.data as { id: string }).id;
+
+    await call('delete', `/identity/groups/${id}`);
+    const missing = await expectFailure('get', `/identity/groups/${id}`);
+    expect(missing.status).toBe(404);
+  });
+
+  it('成员是整组替换，替换后 groupId 筛选与有效权限同时生效', async () => {
+    const before = await call<{ id: string }[]>('get', '/identity/groups/g_content/members');
+    expect((before.body.data as { id: string }[]).map((user) => user.id)).toEqual(['u_002']);
+
+    await call('put', '/identity/groups/g_content/members', {
+      data: { userIds: ['u_002', 'u_003'] },
+    });
+    const byGroup = await listUsers({ groupId: 'g_content' });
+    expect(byGroup.body.data?.items.map((user) => user.id).sort()).toEqual(['u_002', 'u_003']);
+
+    // 复原，别让后面的用例依赖这一条的顺序
+    await call('put', '/identity/groups/g_content/members', { data: { userIds: ['u_002'] } });
+  });
+
+  it('有效权限按四层摊开，判定字段是 effective；超管短路为 *', async () => {
+    const { body } = await call<{
+      team: string[];
+      groups: { id: string; name: string; permissions: string[] }[];
+      personal: string[];
+      roles: string[];
+      effective: string[];
+    }>('get', '/identity/users/u_002/effective-permissions');
+    const detail = body.data as {
+      team: string[];
+      groups: { id: string; name: string; permissions: string[] }[];
+      personal: string[];
+      roles: string[];
+      effective: string[];
+    };
+
+    expect(detail.team).toContain('task:read');
+    expect(detail.groups.map((group) => group.name)).toContain('内容组');
+    expect(detail.personal).toContain('asset:update');
+    expect(detail.roles).toContain('template:read');
+    // 并集：个人层的码必须出现在 effective 里，而不是只躺在 personal
+    expect(detail.effective).toContain('asset:update');
+    expect(detail.effective).toContain('task:read');
+
+    const admin = await call<{ effective: string[] }>(
+      'get',
+      '/identity/users/u_001/effective-permissions',
+    );
+    expect(admin.body.data?.effective).toEqual(['*']);
+  });
+
+  it('团队权限整组替换；未登记码、管理类与通配一律拒绝', async () => {
+    const before = (await call<string[]>('get', '/identity/team/permissions')).body.data as string[];
+    try {
+      const forbidden = await expectFailure('put', '/identity/team/permissions', {
+        permissions: ['task:read', 'identity:group:read'],
+      });
+      expect(forbidden.status).toBe(400);
+      expect(forbidden.message).toContain('identity:group:read');
+
+      const wildcard = await expectFailure('put', '/identity/team/permissions', {
+        permissions: ['*'],
+      });
+      expect(wildcard.status).toBe(400);
+
+      const unknown = await expectFailure('put', '/identity/team/permissions', {
+        permissions: ['video:publish'],
+      });
+      expect(unknown.status).toBe(400);
+      expect(unknown.message).toContain('未登记');
+
+      const updated = await call<string[]>('put', '/identity/team/permissions', {
+        data: { permissions: ['task:read'] },
+      });
+      expect(updated.body.data).toEqual(['task:read']);
+    } finally {
+      await call('put', '/identity/team/permissions', { data: { permissions: before } });
+    }
+  });
+
+  it('小组与个人层的授权都是整组替换，且拒绝未登记的码', async () => {
+    const group = await call<{ permissions: string[] }>('put', '/identity/groups/g_content/permissions', {
+      data: { permissions: ['asset:create', 'asset:update'] },
+    });
+    expect(group.body.data?.permissions).toEqual(['asset:create', 'asset:update']);
+
+    const personal = await call<string[]>('put', '/identity/users/u_002/permissions', {
+      data: { permissions: ['asset:share'] },
+    });
+    expect(personal.body.data).toEqual(['asset:share']);
+    const reread = await call<string[]>('get', '/identity/users/u_002/permissions');
+    expect(reread.body.data).toEqual(['asset:share']);
+
+    const unknown = await expectFailure('put', '/identity/users/u_002/permissions', {
+      permissions: ['video:publish'],
+    });
+    expect(unknown.status).toBe(400);
+
+    // 复原
+    await call('put', '/identity/groups/g_content/permissions', {
+      data: { permissions: ['asset:create', 'template:read'] },
+    });
+    await call('put', '/identity/users/u_002/permissions', { data: { permissions: ['asset:update'] } });
+  });
+});

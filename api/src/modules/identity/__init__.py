@@ -13,6 +13,7 @@ from api.module import ModuleSpec
 from core.ports.accounts import register_account_status_checker
 from modules.identity.account_status import IdentityAccountStatus
 from modules.identity.cli import register as register_cli
+from modules.identity.health import check as health_check
 from modules.identity.permissions import SPECS
 from modules.identity.principal import IdentityPrincipalResolver
 from modules.identity.router import router
@@ -43,6 +44,7 @@ module = ModuleSpec(
     description="用户与角色：登录、账号管理、权限点目录",
     permissions=SPECS,
     bootstrap=_bootstrap,
+    doctor=health_check,
     seed=seed_demo,
     # 运维命令（create-admin / prune-logins / prune-sessions / sync-roles）
     # 由模块自己挂到 `app` 上：它们全都依赖 IdentityService 与口令策略，写在

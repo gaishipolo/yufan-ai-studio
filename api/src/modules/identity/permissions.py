@@ -22,6 +22,17 @@ PERM_CREATE: Final = "identity:create"
 PERM_UPDATE: Final = "identity:update"
 PERM_DELETE: Final = "identity:delete"
 PERM_ROLE_MANAGE: Final = "identity:role:manage"
+# 三层授权：团队 / 小组 / 个人。这些点**刻意不进 BUILTIN_ROLES**——
+# 内置角色模板会被 `sync_new_permissions` 在启动时自动补齐，写进去等于
+# 给 editor / viewer 也发一张「管理组织」的票。
+PERM_TEAM_MANAGE: Final = "identity:team:manage"
+PERM_GROUP_READ: Final = "identity:group:read"
+PERM_GROUP_CREATE: Final = "identity:group:create"
+PERM_GROUP_UPDATE: Final = "identity:group:update"
+PERM_GROUP_DELETE: Final = "identity:group:delete"
+PERM_GROUP_MEMBER_MANAGE: Final = "identity:group:member:manage"
+PERM_GROUP_PERMISSION_MANAGE: Final = "identity:group:permission:manage"
+PERM_USER_PERMISSION_MANAGE: Final = "identity:user:permission:manage"
 
 SPECS: tuple[PermissionSpec, ...] = (
     PermissionSpec(PERM_READ, "查看用户与角色", group="组织管理"),
@@ -41,6 +52,34 @@ SPECS: tuple[PermissionSpec, ...] = (
         "管理角色与权限点",
         group="组织管理",
         description="新建/删除角色、调整角色权限、给用户分配角色",
+    ),
+    PermissionSpec(
+        PERM_TEAM_MANAGE,
+        "设置团队基础权限",
+        group="组织管理",
+        description="团队 = 所有启用账号；禁止把 identity:* 或 * 放进这一层",
+    ),
+    PermissionSpec(PERM_GROUP_READ, "查看小组与成员", group="组织管理"),
+    PermissionSpec(PERM_GROUP_CREATE, "新建小组", group="组织管理"),
+    PermissionSpec(PERM_GROUP_UPDATE, "编辑小组资料", group="组织管理"),
+    PermissionSpec(PERM_GROUP_DELETE, "删除小组", group="组织管理"),
+    PermissionSpec(
+        PERM_GROUP_MEMBER_MANAGE,
+        "分配小组成员",
+        group="组织管理",
+        description="整组替换成员；一人可属多组",
+    ),
+    PermissionSpec(
+        PERM_GROUP_PERMISSION_MANAGE,
+        "设置小组整体权限",
+        group="组织管理",
+        description="该组所有成员自动获得；个人权限只增不减",
+    ),
+    PermissionSpec(
+        PERM_USER_PERMISSION_MANAGE,
+        "设置个人权限",
+        group="组织管理",
+        description="单独授予，与团队/小组/角色取并集；不能授出自己没有的权限",
     ),
 )
 
@@ -125,6 +164,28 @@ BUILTIN_ROLES: tuple[BuiltinRole, ...] = (
     ),
 )
 
+# ---------- 三层权限授予（团队 / 小组 / 个人） ----------
+# `permission_grants.scope` 的取值。团队是「所有启用账号」，没有成员表，
+# 所以它的 scope_id 是一个固定常量，而不是某个实体 id。
+SCOPE_TEAM: Final = "team"
+SCOPE_GROUP: Final = "group"
+SCOPE_USER: Final = "user"
+TEAM_SCOPE_ID: Final = "__all__"
+SCOPES: Final = (SCOPE_TEAM, SCOPE_GROUP, SCOPE_USER)
+
+# 团队基础权限的初始模板。**直接取 viewer 的默认权限**，不另抄一份：
+# 两边各写一遍，迟早会出现「只读成员能看的东西，团队基础权限却没给」。
+# 只在首次启动时播种（见 `IdentityService.ensure_team_permissions`），
+# 之后管理员在界面上改过的配置不会被重启覆盖。
+TEAM_BASE_PERMISSIONS: Final[tuple[str, ...]] = tuple(
+    next(role for role in BUILTIN_ROLES if role.code == "viewer").permissions
+)
+
+# 团队层是「所有人」：放进管理类权限等于给全站发管理权，放进 `*` 等于
+# 把所有人都变成超管。写接口要挡，常量单独列出来是为了让守卫与文档同源。
+TEAM_FORBIDDEN_CODES: Final = ("*", "identity:*")
+TEAM_FORBIDDEN_PREFIXES: Final = ("identity:",)
+
 # 口令策略（长度 / 纯数字 / 重复字符）不在本文件：它不属于「权限点声明」，
 # 而且 CLI 与 API 要共用同一份规则，统一放在 `policy.py`。
 
@@ -133,9 +194,25 @@ __all__ = [
     "BuiltinRole",
     "PERM_CREATE",
     "PERM_DELETE",
+    "PERM_GROUP_CREATE",
+    "PERM_GROUP_DELETE",
+    "PERM_GROUP_MEMBER_MANAGE",
+    "PERM_GROUP_PERMISSION_MANAGE",
+    "PERM_GROUP_READ",
+    "PERM_GROUP_UPDATE",
     "PERM_READ",
     "PERM_ROLE_MANAGE",
+    "PERM_TEAM_MANAGE",
     "PERM_UPDATE",
+    "PERM_USER_PERMISSION_MANAGE",
+    "SCOPES",
+    "SCOPE_GROUP",
+    "SCOPE_TEAM",
+    "SCOPE_USER",
     "SPECS",
     "SUPERUSER_ROLE",
+    "TEAM_BASE_PERMISSIONS",
+    "TEAM_FORBIDDEN_CODES",
+    "TEAM_FORBIDDEN_PREFIXES",
+    "TEAM_SCOPE_ID",
 ]

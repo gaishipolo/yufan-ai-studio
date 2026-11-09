@@ -48,6 +48,8 @@ class UserOut(CamelORMModel):
     display_name: str = Field(default="", description="昵称（顶栏展示用）")
     email: str | None = Field(default=None, description="邮箱，未填为 null")
     avatar_url: str | None = Field(default=None, description="头像 URL，未设置为 null")
+    phone: str | None = Field(default=None, description="手机号，仅展示，未填为 null")
+    position: str | None = Field(default=None, description="职务，仅展示，未填为 null")
     is_active: bool = Field(default=True, description="是否启用；停用后无法登录且令牌立即失效")
     last_login_at: UtcDateTime | None = Field(
         default=None, description="最后登录时间，从未登录为 null"
@@ -96,6 +98,8 @@ class UserCreateIn(CamelModel):
         default=None, max_length=128, pattern=EMAIL_PATTERN, description="邮箱"
     )
     avatar_url: str | None = Field(default=None, max_length=512, description="头像 URL")
+    phone: str | None = Field(default=None, max_length=32, description="手机号，仅展示")
+    position: str | None = Field(default=None, max_length=64, description="职务，仅展示")
     role_ids: list[str] = Field(default_factory=list, description="角色 id 列表，可留空")
 
     @field_validator("username")
@@ -116,6 +120,12 @@ class UserUpdateIn(CamelModel):
     )
     avatar_url: str | None = Field(
         default=None, max_length=512, description="头像 URL；传 null 清空"
+    )
+    phone: str | None = Field(
+        default=None, max_length=32, description="手机号；传 null 清空"
+    )
+    position: str | None = Field(
+        default=None, max_length=64, description="职务；传 null 清空"
     )
     is_active: bool | None = Field(
         default=None,
@@ -152,7 +162,12 @@ class ProfileUpdateIn(CamelModel):
     avatar_url: str | None = Field(
         default=None, max_length=512, description="头像 URL；传 null 清空"
     )
-
+    phone: str | None = Field(
+        default=None, max_length=32, description="手机号；传 null 清空"
+    )
+    position: str | None = Field(
+        default=None, max_length=64, description="职务；传 null 清空"
+    )
 
 
 class UserRolesIn(CamelModel):
@@ -247,6 +262,79 @@ class PermissionCatalogOut(CamelModel):
     total: int = Field(default=0, description="权限点总数")
 
 
+# ---------- 三层授权：团队 / 小组 / 个人 ----------
+class PermissionsIn(CamelModel):
+    """团队 / 小组 / 个人三层共用的「整组替换」入参。
+
+    三层共用一份形状不是偷懒：写接口的守卫、权限码合法性校验、以及前端的
+    权限勾选组件对三层完全一样，分成三个类只会让「改了一处忘两处」变大概率事件。
+    """
+
+    permissions: list[str] = Field(
+        default_factory=list,
+        description="整组替换；传空数组即清空。出现未登记的权限码会被拒绝",
+    )
+
+
+class GroupOut(CamelORMModel):
+    id: str = Field(description="小组 ID")
+    name: str = Field(description="小组名称，唯一")
+    description: str = Field(default="", description="小组说明")
+    created_at: UtcDateTime = Field(description="创建时间（UTC）")
+    permissions: list[str] = Field(
+        default_factory=list, description="小组整体权限；成员自动获得"
+    )
+    member_ids: list[str] = Field(
+        default_factory=list, description="成员用户 id；编辑成员时整组替换"
+    )
+    member_count: int = Field(default=0, description="成员数")
+
+
+class GroupCreateIn(CamelModel):
+    name: str = Field(min_length=1, max_length=64, description="小组名称，唯一")
+    description: str = Field(default="", max_length=200, description="小组说明")
+
+
+class GroupUpdateIn(CamelModel):
+    name: str | None = Field(default=None, min_length=1, max_length=64, description="小组名称")
+    description: str | None = Field(
+        default=None, max_length=200, description="小组说明"
+    )
+
+
+class GroupMembersIn(CamelModel):
+    user_ids: list[str] = Field(
+        default_factory=list, description="成员用户 id，整组替换；传空数组即清空"
+    )
+
+
+class GroupLayerOut(CamelModel):
+    """分层权限明细里的一段：这条权限来自哪个小组。"""
+
+    id: str = Field(description="小组 ID")
+    name: str = Field(description="小组名称")
+    permissions: list[str] = Field(
+        default_factory=list, description="该组授予的权限码"
+    )
+
+
+class EffectivePermissionsOut(CamelModel):
+    """某用户的权限来源。前端只读展示，**判定永远走 effective**。"""
+
+    team: list[str] = Field(
+        default_factory=list, description="团队基础权限（全体启用账号）"
+    )
+    groups: list[GroupLayerOut] = Field(
+        default_factory=list, description="各所属小组授予的权限"
+    )
+    personal: list[str] = Field(default_factory=list, description="单独授予的权限")
+    roles: list[str] = Field(default_factory=list, description="现有角色授予的权限")
+    effective: list[str] = Field(
+        default_factory=list,
+        description="四层并集；`*` 表示超级管理员。require() 唯一判据",
+    )
+
+
 class SessionOut(CamelORMModel):
     """一条登录会话。前端「我的登录设备」列表用它。"""
 
@@ -308,6 +396,12 @@ class PasswordPolicyOut(CamelModel):
 
 
 __all__ = [
+    "EffectivePermissionsOut",
+    "GroupCreateIn",
+    "GroupLayerOut",
+    "GroupMembersIn",
+    "GroupOut",
+    "GroupUpdateIn",
     "LoginIn",
     "MeOut",
     "PasswordChangeIn",
@@ -317,6 +411,7 @@ __all__ = [
     "LoginEventOut",
     "PasswordPolicyOut",
     "PermissionOut",
+    "PermissionsIn",
     "ProfileUpdateIn",
     "RefreshIn",
     "ResetPasswordIn",

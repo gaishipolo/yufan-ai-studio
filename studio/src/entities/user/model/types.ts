@@ -29,10 +29,18 @@ export type Me = RequiredFields<
 export interface UserListParams {
   page?: number;
   pageSize?: number;
-  /** 匹配用户名 / 昵称 / 邮箱 */
+  /** 匹配用户名 / 昵称 / 邮箱 / 手机号 / 职务 */
   keyword?: string;
+  /** 按姓名（昵称）模糊筛选；截图顶栏的第一个搜索框 */
+  name?: string;
+  /** 按账号模糊筛选 */
+  username?: string;
+  /** 按手机号模糊筛选 */
+  phone?: string;
   isActive?: boolean;
   roleId?: string;
+  /** 只看该小组的成员；不传 = 全部分组 */
+  groupId?: string;
 }
 
 export interface UserListResult {
@@ -49,6 +57,10 @@ export interface CreateUserPayload {
   password: string;
   displayName?: string;
   email?: string | null;
+  /** 仅展示，不参与业务校验（Q1 待确认，当前按可选字符串） */
+  phone?: string | null;
+  /** 仅展示 */
+  position?: string | null;
   roleIds?: string[];
 }
 
@@ -57,6 +69,8 @@ export interface UpdateUserPayload {
   displayName?: string;
   email?: string | null;
   avatarUrl?: string | null;
+  phone?: string | null;
+  position?: string | null;
   isActive?: boolean;
 }
 
