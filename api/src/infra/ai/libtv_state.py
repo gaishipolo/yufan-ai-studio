@@ -13,7 +13,9 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 RUN_LOCK = "records/executor.lock"
 # 启动方（libtv.py）与监督进程（libtv_process.py）之间的参数协议版本。
 # 放在这里是因为两侧都已经依赖本模块；改协议时只改这一个数，且必须想清楚旧进程怎么办。
-LIBTV_PROCESS_PROTOCOL = 1
+# v2（2026-11-09）：payload 去掉 legacyRoot，适配器目录改由监督进程按仓库内位置计算。
+# 旧进程收到 v2 会因版本不符直接退出，不会拿着半个参数包去跑任务。
+LIBTV_PROCESS_PROTOCOL = 2
 
 
 class LibTVState(BaseModel):

@@ -62,6 +62,8 @@ class GenerationRecord:
     submit_mode: str | None = None
     # 业务表的「终态」取值可能不同（如任务表用 completed），由 store 在映射时指定
     terminal_statuses: tuple[str, ...] = (STATUS_SUCCEEDED, STATUS_FAILED)
+    # 业务可指定本轮执行/人工恢复起点；未提供时仍按创建时间计算预算。
+    timeout_started_at: datetime | None = None
 
     @property
     def terminal(self) -> bool:

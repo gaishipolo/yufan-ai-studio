@@ -1,6 +1,5 @@
-// New workbench bridge. Legacy pinned files are verified and imported without edits.
-import {readFile, copyFile} from 'node:fs/promises';
-import {execFileSync} from 'node:child_process';
+// New workbench bridge. Pinned adapters are vendored in ./vendor (this repository).
+import {readFile, copyFile, stat} from 'node:fs/promises';
 import {pathToFileURL} from 'node:url';
 import path from 'node:path';
 import {randomUUID, createHash} from 'node:crypto';
@@ -13,21 +12,64 @@ export function canSubmit(meta) {
   return !meta.task_id && ['queued', 'uploading', 'uploaded', 'waiting_free', 'waiting_executor', 'needs_login', 'service_error'].includes(meta.status);
 }
 
+/* SMB 共享盘上 `writeFile(tmp) + rename` 偶发 EPERM/EBUSY：那是瞬时文件锁，
+   不是任务失败。只重放「可重放的写状态」动作；其它异常原样抛出，绝不把写失败
+   伪装成成功。3 次仍失败就按原来的 ADAPTER_FAILED 处理。 */
+export async function withTransientWriteRetry(action, attempts = 3) {
+  for (let attempt = 0; ; attempt++) {
+    try {return await action();}
+    catch (error) {
+      const transient = /EPERM|EBUSY|EACCES|resource busy|being used/i.test(String(error?.message ?? error));
+      if (!transient || attempt >= attempts - 1) throw error;
+      await new Promise(resolve => setTimeout(resolve, 80 * (attempt + 1)));
+    }
+  }
+}
+
+/* 发布完整性校验改由本仓库的 vendor/manifest.json 承担：旧项目那套入口
+   会逐个校验它自己 pin 的 18 个文件（含测试、ps1、batch），与本链路无关的
+   文件没有一起搬过来，照搬必然失败。 */
+export async function verifyVendor(vendor) {
+  const manifest = JSON.parse(await readFile(path.join(vendor, 'manifest.json'), 'utf8'));
+  if (!manifest.files || typeof manifest.files !== 'object') throw Error('Vendor manifest has no file list');
+  const base = path.resolve(vendor) + path.sep;
+  for (const [name, expected] of Object.entries(manifest.files)) {
+    const filename = path.resolve(vendor, name);
+    if (!filename.startsWith(base)) throw Error('Invalid vendor path');
+    const actual = createHash('sha256').update(await readFile(filename)).digest('hex');
+    if (actual !== expected) throw Error(`Vendored adapter changed: ${name}. Refresh the manifest intentionally.`);
+  }
+  return manifest;
+}
+
+/* 积分加速适配器 billing.mjs 已按浏览器逆向补齐并纳入 vendor 清单。
+   仍保留存在性检查：清单缺文件时不能让请求悄悄排回免费队列，
+   也不能让一个找不到的模块在半路炸成 ADAPTER_FAILED。 */
+async function creditsAdapterAvailable(vendor) {
+  try { await stat(path.join(vendor, 'libtv/adapters/billing.mjs')); return true; }
+  catch { return false; }
+}
+
 let stage = 'verify';
 
 export async function main() {
   stage = 'verify';
-  const [command, run, legacy] = process.argv.slice(2);
-  if (!['upload', 'submit', 'poll', 'download'].includes(command) || !path.isAbsolute(run) || !path.isAbsolute(legacy)) throw Error('Invalid bridge arguments');
-  execFileSync(process.execPath, [path.join(legacy, 'scripts/libtv_video.mjs'), 'check'], {encoding:'utf8', timeout:30000, stdio:'pipe'});
-  const moduleAt = value => import(pathToFileURL(path.join(legacy, value)).href);
+  const [command, run, vendor] = process.argv.slice(2);
+  if (!['upload', 'submit', 'poll', 'download'].includes(command) || !path.isAbsolute(run) || !path.isAbsolute(vendor)) throw Error('Invalid bridge arguments');
+  // vendor 由监督进程按仓库内位置算出，不是部署配置，也不指向任何外部项目。
+  await verifyVendor(vendor);
+  const moduleAt = value => import(pathToFileURL(path.join(vendor, value)).href);
   const {CanvasApi} = await moduleAt('tools/js-reverse-mcp/canvas-transport.mjs');
-  const {load, save, update, withRunLock, poll} = await moduleAt('tools/js-reverse-mcp/canvas-run.mjs');
+  const canvasRun = await moduleAt('tools/js-reverse-mcp/canvas-run.mjs');
+  const {load, save, withRunLock, poll} = canvasRun;
+  /* submitCredits 也走同一层：重试只重放写盘，不重提、不重复扣费。 */
+  const update = (run, changes) =>
+    withTransientWriteRetry(() => canvasRun.update(run, changes));
   const {MediaUploader, accountUploadUuid} = await moduleAt('libtv/adapters/canvas-media.mjs');
   const {submit} = await moduleAt('libtv/workbench/submit.mjs');
   /* 计费适配器只在加速路径上懒加载：免费队列的每次上传都不该因为
-     一个用不到的模块而依赖 legacy 目录里存在 billing.mjs。 */
-  // 积分提交不能复用 legacy 的 submit.mjs：它硬校验 infiniteSwitch===0（免费门禁），
+     一个用不到的模块而依赖 vendor 里存在 billing.mjs。 */
+  // 积分提交不能复用 vendor 的 submit.mjs：它硬校验 infiniteSwitch===0（免费门禁），
   // 加速按定义就是 infiniteSwitch=1。这里只做等价校验，门禁条件换成积分那条队列。
   const submitCredits = async (api, run, meta) => {
     const request = JSON.parse(await readFile(path.join(run, 'inputs/request.json'), 'utf8'));
@@ -70,6 +112,13 @@ export async function main() {
   };
   await withRunLock(run, async () => {
     let meta = await load(run);
+    if (meta.billing_mode === 'credits' && !meta.task_id
+        && ['upload','submit'].includes(command) && !await creditsAdapterAvailable(vendor)) {
+      // 已提交的任务（有 task_id）照常查询，不受影响；未提交的停在明确提示上，不产生请求体。
+      await update(run, {status:'service_error',
+        last_error:'积分加速适配器尚未接入，请改用免费队列'});
+      return;
+    }
     stage = 'login';
     const api = await CanvasApi.fromBrowser(process.env.JS_REVERSE_BROWSER_URL);
     if (command === 'download') {
@@ -155,12 +204,12 @@ export async function main() {
     await save(path.join(run, 'inputs/input-map.json'), mapping.map((entry,index) => ({...entry,
       field:`params.mixedList[${index}].url`, url:mixed[index].url})));
     for (const filename of ['canvas-transport.mjs','canvas-run.mjs']) {
-      await copyFile(path.join(legacy,'tools/js-reverse-mcp',filename), path.join(run,'code',filename));
+      await copyFile(path.join(vendor,'tools/js-reverse-mcp',filename), path.join(run,'code',filename));
     }
-    await copyFile(path.join(legacy,'libtv/adapters/canvas-media.mjs'), path.join(run,'code/canvas-media.mjs'));
-    await copyFile(path.join(legacy,'libtv/workbench/submit.mjs'), path.join(run,'code/submit.mjs'));
-    if (credits) await copyFile(path.join(legacy,'libtv/adapters/billing.mjs'), path.join(run,'code/billing.mjs'));
-    await copyFile(path.join(legacy,'tools/js-reverse-mcp/release.json'), path.join(run,'code/legacy-release.json'));
+    await copyFile(path.join(vendor,'libtv/adapters/canvas-media.mjs'), path.join(run,'code/canvas-media.mjs'));
+    await copyFile(path.join(vendor,'libtv/workbench/submit.mjs'), path.join(run,'code/submit.mjs'));
+    if (credits) await copyFile(path.join(vendor,'libtv/adapters/billing.mjs'), path.join(run,'code/billing.mjs'));
+    await copyFile(path.join(vendor,'manifest.json'), path.join(run,'code/vendor-manifest.json'));
     await update(run, {status:'uploaded'});
     stage = 'estimate';
     const preview = await api.request('/api/task/generation/power/calculator', request);

@@ -3,6 +3,8 @@
 旧写法是位置参数：`[stage, run, legacy, node, result]` 靠 `sys.argv[1:6]` 顺序对齐。
 加一个参数就得两侧同时改，改漏了不是报错，而是**读串位**——某个字段拿到隔壁字段的值，
 故障现象离原因很远。现在改成 stdin 的 JSON + 版本号，两侧各自解析、各自校验。
+
+v2 起 payload 不再带适配器目录：固定版适配器随代码入库，监督进程按自身位置计算。
 """
 
 from __future__ import annotations
@@ -28,25 +30,18 @@ def test_main_parses_payload_and_reports_result(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Any
 ) -> None:
     seen: dict[str, Any] = {}
-    written: dict[str, Any] = {}
 
-    def fake_supervise(stage: str, run: Any, legacy: Any, node: str) -> ExecutorResult:
-        seen.update(stage=stage, run=run, legacy=legacy, node=node)
+    def fake_supervise(stage: str, run: Any, node: str) -> ExecutorResult:
+        seen.update(stage=stage, run=run, node=node)
         return ExecutorResult(code="OK", stage=stage)
 
-    class FakeStorage:
-        def write(self, path: Any, value: object) -> None:
-            written.update(path=path, value=value)
-
     monkeypatch.setattr(libtv_process, "supervise", fake_supervise)
-    monkeypatch.setattr(libtv_process, "get_archive_storage", lambda: FakeStorage())
     _feed(
         monkeypatch,
         {
             "version": LIBTV_PROCESS_PROTOCOL,
             "stage": "submit",
             "run": str(tmp_path / "run"),
-            "legacyRoot": str(tmp_path / "legacy"),
             "node": "node",
             "result": str(tmp_path / "out.json"),
         },
@@ -55,10 +50,10 @@ def test_main_parses_payload_and_reports_result(
     libtv_process.main()
 
     assert seen["stage"] == "submit"
-    assert seen["legacy"] == tmp_path / "legacy"
+    assert seen["run"] == tmp_path / "run"
     assert seen["node"] == "node"
-    assert written["path"] == tmp_path / "out.json"
-    assert written["value"]["code"] == "OK"
+    written = json.loads((tmp_path / "out.json").read_text(encoding="utf-8"))
+    assert written["code"] == "OK"
 
 
 def test_node_has_a_default(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
@@ -67,7 +62,7 @@ def test_node_has_a_default(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> N
     monkeypatch.setattr(
         libtv_process,
         "supervise",
-        lambda stage, run, legacy, node: seen.update(node=node) or ExecutorResult(stage=stage),
+        lambda stage, run, node: seen.update(node=node) or ExecutorResult(stage=stage),
     )
     monkeypatch.setattr(
         libtv_process, "get_archive_storage", lambda: SimpleNamespace(write=lambda *a: None)
@@ -75,10 +70,9 @@ def test_node_has_a_default(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> N
     _feed(
         monkeypatch,
         {
-            "version": 1,
+            "version": LIBTV_PROCESS_PROTOCOL,
             "stage": "poll",
             "run": str(tmp_path / "run"),
-            "legacyRoot": str(tmp_path / "legacy"),
             "result": str(tmp_path / "out.json"),
         },
     )
@@ -86,6 +80,23 @@ def test_node_has_a_default(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> N
     libtv_process.main()
 
     assert seen["node"] == "node"
+
+
+def test_v1_payload_is_rejected(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
+    """旧形状（带 legacyRoot）必须先被版本拦住，不能拿着半个参数包去跑任务。"""
+    _feed(
+        monkeypatch,
+        {
+            "version": LIBTV_PROCESS_PROTOCOL - 1,
+            "stage": "submit",
+            "run": str(tmp_path / "run"),
+            "legacyRoot": str(tmp_path / "legacy"),
+            "result": str(tmp_path / "out.json"),
+        },
+    )
+    with pytest.raises(SystemExit) as exc:
+        libtv_process.main()
+    assert exc.value.code == 2
 
 
 def test_unknown_protocol_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -97,7 +108,7 @@ def test_unknown_protocol_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_garbage_input_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
-    _feed(monkeypatch, b"submit /path legacy node result")
+    _feed(monkeypatch, b"submit /path node result")
     with pytest.raises(SystemExit) as exc:
         libtv_process.main()
     assert exc.value.code == 2

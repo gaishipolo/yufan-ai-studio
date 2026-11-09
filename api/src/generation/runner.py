@@ -511,15 +511,16 @@ class GenerationRunner:
 
     @staticmethod
     def _timed_out(record: GenerationRecord) -> bool:
-        """按**墙钟**判定超时，而不是按轮询次数。
+        """按本轮执行起点判定墙钟超时；未指定起点的业务沿用创建时间。
 
         `generation_timeout_sec` 之前没有任何代码读取：真实预算等于
         `max_polls × poll_interval`（默认 150×2 = 300 秒），与配置里写的
         1800 秒差了 6 倍 —— 一个 5 分钟的视频会在第 5 分钟被判「生成超时」。
         """
-        if record.created_at is None:
+        started = record.timeout_started_at or record.created_at
+        if started is None:
             return False
-        created = record.created_at
+        created = started
         if created.tzinfo is None:  # sqlite 读回来是 naive，按 UTC 解释
             created = created.replace(tzinfo=UTC)
         return (datetime.now(tz=UTC) - created).total_seconds() > settings.generation_timeout_sec

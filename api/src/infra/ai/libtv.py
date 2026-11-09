@@ -31,15 +31,17 @@ from infra.queue.base import Job
 
 logger = get_logger(__name__)
 MODEL_ID = "libtv-wan3-replacement"
+# 这些故障需要修复执行环境，再由「继续」恢复已有 task_id 的查询。
+EXECUTOR_BLOCKED = frozenset(
+    {"STALE_LOCK", "LOCK_CLEANUP_FAILED", "EXECUTOR_IO_FAILED", "EXECUTOR_CRASHED"}
+)
 
 
 class LibTvSettings(DriverSettings):
-    """LibTV 旧运行时的参数。环境变量前缀 `LIBTV_`（键名与迁移前一致）。"""
+    """LibTV 驱动的参数。环境变量前缀 `LIBTV_`（键名与迁移前一致）。"""
 
     model_config = driver_config("LIBTV")
 
-    # 旧运行时目录：只用于执行替换生成，未配置时 commit 阶段会显式报错
-    legacy_root: str = ""
     # node 可执行文件；模板模块编译提示词时也用这个
     node: str = "node"
     # 适配器从已登录的本地浏览器读 Cookie；显式下发，避免依赖 API 进程继承的环境变量。
@@ -86,14 +88,20 @@ def read_result(path: Path) -> tuple[ExecutorResult, str | None]:
 
 
 async def execute_stage(run_id: str, stage: str) -> ExecutorResult:
-    path = await asyncio.to_thread(run_path, run_id)
-    legacy_root = get_libtv_settings().legacy_root.strip()
-    if not legacy_root:
-        # 以前这个默认值是 `E:/yufan-ai`（只在那台机器上存在），
-        # 现在留空并在真正要用时才报错：报错信息里带配置项名，而不是一个谜之路径
-        raise UpstreamError(
-            "LibTV 旧运行时未配置：请设置 LIBTV_LEGACY_ROOT 后重试（仅替换生成需要）"
+    try:
+        return await _execute_stage(run_id, stage)
+    except OSError:
+        logger.exception("LibTV 阶段文件访问或进程启动失败 run_id=%s stage=%s", run_id, stage)
+        return ExecutorResult(
+            code="EXECUTOR_IO_FAILED",
+            stage=stage,
+            message="执行器文件或进程不可用；请检查共享盘、文件权限和运行环境",
         )
+
+
+async def _execute_stage(run_id: str, stage: str) -> ExecutorResult:
+    path = await asyncio.to_thread(run_path, run_id)
+    # 适配器目录由监督进程按仓库内位置计算，这里不再接收任何外部路径配置。
     resultfile = path / "records" / f"operation-{uuid.uuid4().hex}.json"
     # 参数走 stdin 的 JSON（带版本号），不再靠位置对齐：新增参数只要给默认值，
     # 启动方不必同步改一遍，也不会出现「读串位」这种错位到别的字段的故障。
@@ -102,29 +110,40 @@ async def execute_stage(run_id: str, stage: str) -> ExecutorResult:
             "version": LIBTV_PROCESS_PROTOCOL,
             "stage": stage,
             "run": str(path),
-            "legacyRoot": legacy_root,
             "node": get_libtv_settings().node,
             "result": str(resultfile),
         },
         ensure_ascii=False,
     ).encode("utf-8")
-    process = await asyncio.to_thread(
-        subprocess.Popen,
-        [sys.executable, "-m", "infra.ai.libtv_process"],
-        stdin=subprocess.PIPE,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        # 适配器要从已登录的浏览器读 Cookie；显式下发，别依赖 API 进程碰巧继承到的环境变量。
-        env={**os.environ, "JS_REVERSE_BROWSER_URL": get_libtv_settings().browser_url},
-    )
-    # 取消等待不杀监督进程；它继续持有租约并保存回执，重启后可恢复。
-    # Windows 的 uvicorn reload 使用 Selector loop，不支持 asyncio 子进程 API。
-    await asyncio.to_thread(process.communicate, payload)
+    logdir = path / "logs"
+    await asyncio.to_thread(logdir.mkdir, parents=True, exist_ok=True)
+    logfile = logdir / f"supervisor-{resultfile.stem}.log"
+    with logfile.open("wb") as errors:
+        process = await asyncio.to_thread(
+            subprocess.Popen,
+            [sys.executable, "-m", "infra.ai.libtv_process"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=errors,
+            env={**os.environ, "JS_REVERSE_BROWSER_URL": get_libtv_settings().browser_url},
+        )
+        # 取消等待不杀监督进程；子进程继承日志句柄，可继续保存回执。
+        # Windows 的 uvicorn reload 使用 Selector loop，不支持 asyncio 子进程 API。
+        await asyncio.to_thread(process.communicate, payload)
     if not resultfile.exists():
-        raise UpstreamError(
-            "LibTV 执行进程未返回结果：进程内代码与启动方协议不一致（"
-            f"期望 JSON v{LIBTV_PROCESS_PROTOCOL}），或监督进程启动即失败；"
-            f"退出码 {process.returncode}"
+        logger.error(
+            "LibTV 监督进程未返回回执 run_id=%s stage=%s exit=%s log=%s",
+            run_id,
+            stage,
+            process.returncode,
+            logfile,
+        )
+        return ExecutorResult(
+            code="EXECUTOR_CRASHED",
+            stage=stage,
+            message=(
+                f"监督进程未返回回执（退出码 {process.returncode}）；请检查 logs/{logfile.name}"
+            ),
         )
     result, error = await asyncio.to_thread(read_result, resultfile)
     if result.code != "OK":
@@ -135,7 +154,7 @@ async def execute_stage(run_id: str, stage: str) -> ExecutorResult:
             result.code,
             error,
         )
-        if error:
+        if error and not result.message:
             result.message = error
     return result
 
@@ -151,7 +170,7 @@ class LibTVProvider:
             label="LibTV · 720P 替换模板专用",
             provider="libtv",
             capability=Capability.VIDEO,
-            description="需先在替换模板归档输入，仅允许 0 积分提交",
+            description="需先在替换模板归档输入；支持 0 积分畅用队列与积分加速队列",
         ),
     )
 
@@ -193,6 +212,16 @@ class LibTVProvider:
         if meta.status != "success":
             result = await execute_stage(run_id, "poll")
             if result.code != "OK":
+                if result.code in EXECUTOR_BLOCKED:
+                    return GenerationProgress(
+                        external_id=external_id,
+                        state=GenerationState.FAILED,
+                        error=(
+                            f"LibTV 查询中断：{result.message or result.code}；"
+                            "上游任务未取消，处理后请点继续查询"
+                        ),
+                        retryable=False,
+                    )
                 raise UpstreamError(f"LibTV 查询暂不可用：{result.message or result.code}")
             meta = await asyncio.to_thread(state, path)
         if meta.status == "generated":
