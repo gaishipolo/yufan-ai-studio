@@ -51,6 +51,7 @@ npm run dev             # http://localhost:5173，/api 已代理到 8080
 |---|---|
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | **新同事先读这个**：全局形状、逐文件职责、请求/登录/生成三条主线、常见坑 |
 | [docs/CHAIN_REPLACEMENT.md](docs/CHAIN_REPLACEMENT.md) | 产品替换从点击到成片的完整链路：12 跳逐文件、状态机、共享盘产物、失败恢复 |
+| [docs/AI_TEMPLATE_PACKAGER.md](docs/AI_TEMPLATE_PACKAGER.md) | 通过 AI 会话和配置文件封装视频卡片：预检、多功能模板、发布、防重与失败恢复 |
 | [docs/EXTENSIBILITY_GAPS.md](docs/EXTENSIBILITY_GAPS.md) | 扩展框架的问题清单（PR #1 合并暴露）：13 条缺口、优先级、以及暂缓的配置分层提案 |
 | [api/README.md](api/README.md) | 后端目录、命令表、接口约定、演示数据 |
 | [api/docs/EXTENDING.md](api/docs/EXTENDING.md) | 加模块 / 加供应商 / 加生成能力的标准做法，以及「什么绝对不能碰」 |
