@@ -13,6 +13,7 @@ from __future__ import annotations
 import ipaddress
 from collections.abc import Sequence
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import ClassVar
 from urllib.parse import urljoin, urlparse
 
@@ -21,6 +22,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.logging import get_logger
+from core.ports.library_ingest import IngestRequest
+from core.ports.library_lookup import LibraryAssetKind
 from generation.pipeline import register_pipeline
 from generation.spec import (
     STATUS_FAILED,
@@ -291,6 +294,18 @@ def _has_magic(data: bytes, suffix: str) -> bool:
     return False
 
 
+def _with_suffix(name: str, stored: str) -> str:
+    """给草稿名补上**文件本身**的后缀。
+
+    界面上显示会剥掉后缀（前端 `displayName`），但库里存的名字要有：打包下载
+    拿 `name` 当条目名，缺后缀的文件双击打不开。后缀只认 `stored` 的（那是真实
+    产物的格式），用户给的名字里带什么后缀都不算数。
+    """
+    suffix = Path(stored.split("?", 1)[0]).suffix
+    base = Path(name).stem if Path(name).suffix else name
+    return f"{base}{suffix}" if suffix else base
+
+
 @register_pipeline
 class ImageGenerationPipeline:
     kind = KIND_IMAGE
@@ -312,6 +327,43 @@ class ImageGenerationPipeline:
             prompt=record.prompt,
             params=record.params,
             request_id=record.id,
+        )
+
+    async def archive_request(
+        self, session: AsyncSession, record: GenerationRecord, stored: str
+    ) -> IngestRequest:
+        """把一条成功的生图记录翻译成「入草稿箱」的请求（可选钩子）。
+
+        `stored` 是 `persist_output` 的产物：落盘成功时是对象 key，落盘失败时
+        仍是供应商的签名地址。两种都照实转交——入库方按 `storageKey` 零拷贝、
+        按 `sourceUrl` 现取现存，签名地址因此不会作为「库里的图」留在库里。
+
+        名字取作业名（用户建任务时填的那个），不带参数名进快照：`record.params`
+        是直接发给供应商的请求体，往里面塞 `name` 会变成供应商收到的多余字段。
+        """
+        job = await session.get(ImageJob, record.id)
+        name = (job.name if job is not None else "") or f"生成图片-{record.id[:8]}"
+        is_url = stored.startswith(("http://", "https://"))
+        return IngestRequest(
+            source_module=KIND_IMAGE,
+            source_task_id=record.id,
+            # 幂等键要带上**供应商任务号**，不能只用作业 id：
+            # 同一个作业可以「重试」出另一张图（重试会清空 external_id 重投），
+            # 只用 `image:{id}` 的话重试后新图会被幂等判成「已经入过库」，
+            # 草稿箱里永远停着上一版的图。同一跳轮询重复回调时 external_id
+            # 不变，仍然是同一行。
+            source_key=f"{KIND_IMAGE}:{record.id}:{record.external_id or 'v0'}",
+            kind=LibraryAssetKind.IMAGE,
+            owner_id=record.owner_id,
+            name=_with_suffix(name, stored),
+            storage_key="" if is_url else stored.lstrip("/"),
+            source_url=stored if is_url else "",
+            generation={
+                "model": record.model,
+                "prompt": record.prompt,
+                "size": job.size if job is not None else record.params.get("size"),
+                "count": job.count if job is not None else record.params.get("count"),
+            },
         )
 
     async def persist_output(self, record_id: str, url: str) -> str:

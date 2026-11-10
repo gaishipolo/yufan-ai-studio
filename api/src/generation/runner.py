@@ -22,6 +22,7 @@ worker 的并发槽位是稀缺资源。单个视频生成要 3 分钟，如果 
 
 from __future__ import annotations
 
+import contextlib
 from datetime import UTC, datetime
 
 import httpx
@@ -32,6 +33,7 @@ from core.events import get_event_bus
 from core.exceptions import AppError
 from core.logging import get_logger
 from core.ports.accounts import account_is_active
+from core.ports.library_ingest import get_library_ingest, has_library_ingest
 from db.session import get_session_factory
 from generation.events import (
     EVT_GENERATION_FAILED,
@@ -353,6 +355,9 @@ class GenerationRunner:
                             progress=result.progress or 100,
                         )
                         await session.commit()
+                        # 生成成功是既成事实，先落库再往资产库送：入库失败不该
+                        # 把用户已经看到的结果改回失败（见 `_archive`）。
+                        await self._archive(kind, session, record_id, output_url)
                         # 落库存 key（与存储驱动无关），事件给地址（订阅方要能直接用）
                         public_output, public_cover = await artifact_urls(
                             [output_url, cover_url]
@@ -426,6 +431,62 @@ class GenerationRunner:
             logger.exception("产物落盘失败，退回供应商 URL kind=%s id=%s", kind, record_id)
             return url
 
+    async def _archive(
+        self, kind: str, session: AsyncSession, record_id: str, stored: str | None
+    ) -> None:
+        """把生成结果送进资产库草稿箱（可选钩子 `pipeline.archive_request`）。
+
+        这是「AI 生成的图 / 视频先进草稿箱，本人确认后才进库」的唯一入口。
+        没有这一步，资产库的草稿箱永远是个空架子：`POST /assets/from-generation`
+        与 `library-ingest` 端口都建好了，但没有任何人调用它们（2026-11-10 查出的
+        线上问题——用户生成完图去草稿箱，一条都没有）。
+
+        **为什么是钩子而不是框架里写死字段映射**：`image_jobs.size`、
+        `video_tasks.aspect_ratio` 分别怎么对应入库快照，是各业务模块自己的事；
+        框架连它们的 ORM 实体都不认识，硬写一张映射表就是把三个模块的知识
+        塞回框架里。模块不实现这个钩子 = 它的产物不进草稿箱，语义明确。
+
+        **失败只记日志**：此刻生成已经 commit 成功，用户界面上就是「生成完成」。
+        这里抛异常会把它改成失败，用户会以为图没了；静默吞掉又无法排查，所以
+        留一条带 `kind/id` 的 error 日志，并保持 `source_key` 幂等——同一个任务
+        再跑一次（重试、恢复）不会产生第二行草稿。
+        """
+        if not stored:
+            return
+        pipeline = get_pipeline(kind)
+        build = getattr(pipeline, "archive_request", None)
+        if build is None:
+            return
+        if not has_library_ingest():
+            # 生成与资产库可以分别部署（资产库还没上线的环境）。库不在时打断
+            # 生成是更坏的选择：用户连生成都用不了。留痕，等库上线后由重试补齐。
+            logger.warning(
+                "资产库入库端口未注册，生成结果不落草稿箱 kind=%s id=%s", kind, record_id
+            )
+            return
+        try:
+            record = await pipeline.store(session).load(record_id)
+            if record is None:
+                return
+            request = await build(session, record, stored)
+            if request is None:
+                return
+            result = await get_library_ingest().ingest_generated(session, request)
+        except Exception:  # noqa: BLE001 - 见 docstring：生成成功不能被入库失败反噬
+            logger.exception("生成结果入库失败 kind=%s id=%s", kind, record_id)
+            # 入库实现自己 commit / rollback 过；剩下没提交的半截语句在这里收尾，
+            # 否则后续同一会话里的查询会撞在「事务已被中止」上。
+            with contextlib.suppress(Exception):
+                await session.rollback()
+            return
+        logger.info(
+            "生成结果已入草稿箱 kind=%s id=%s asset=%s created=%s",
+            kind,
+            record_id,
+            result.asset_id,
+            result.created,
+        )
+
     @staticmethod
     def _persisted_cover(
         result: GenerationProgress, stored: str | None
@@ -486,6 +547,7 @@ class GenerationRunner:
                 progress=result.progress or 100,
             )
             await session.commit()
+            await self._archive(kind, session, record_id, output_url)
             public_output, public_cover = await artifact_urls([output_url, cover_url])
             await self._emit(
                 EVT_GENERATION_SUCCEEDED,
