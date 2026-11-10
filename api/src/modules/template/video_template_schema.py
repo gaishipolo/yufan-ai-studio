@@ -40,7 +40,10 @@ class VideoTemplateDraftIn(CamelModel):
     """
 
     name: str = Field(min_length=1, max_length=160, description="模板名称")
-    template_key: str = Field(default="", max_length=80, description="稳定标识，便于后续复制与导入")
+    template_key: str = Field(
+        default="", max_length=80,
+        description="稳定标识：同键同配置返回原模板，同键异配置409；留空自动生成。固定蓝本状态独立管理",
+    )
     description: str = Field(default="", max_length=2000, description="模板说明")
     prompt: str = Field(
         min_length=1, max_length=20000, description="固定提示词原文，含 {{Mixed N}} 占位符"
