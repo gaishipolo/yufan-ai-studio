@@ -17,8 +17,16 @@ import modules.image.maintenance as maintenance
 from modules.image.maintenance import _stale_after_sec
 from modules.image.pipeline import ImageAssetSettings, _validate_asset_url
 
-# 驱动实际所在的三类包（与 `infra.<kind>.<name>` 的命名约定一致）
-_DRIVER_PACKAGES = ("infra.ai", "infra.archive", "infra.storage")
+# 驱动实际所在的包：`infra.<kind>.<name>` 的旧约定，加上自动载入的 `drivers/`。
+# 为什么必须带上 drivers/：agnes 从 `infra/ai/agnes.py` 挪进了
+# `modules/model_driver/drivers/agnes.py`，它仍然是「声明了 IMAGE 提交预算」的
+# 驱动。漏了这个包，巡检就看不到它，`precheck_submit_budgets()` 会安静地少一项。
+_DRIVER_PACKAGES = (
+    "infra.ai",
+    "infra.archive",
+    "infra.storage",
+    "modules.model_driver.drivers",
+)
 
 
 def _discover_driver_settings() -> None:

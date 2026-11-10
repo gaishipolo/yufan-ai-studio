@@ -58,8 +58,12 @@ def _seed_job(owner_id: str, *, name: str = "产品主图") -> str:
                 size="1024x1024",
                 count=1,
                 status="running",
-                model="echo-image",
-                model_id="echo-image",
+                # 必须写 echo 声明过的模型 id：`provider_for` 只在「路由里只有
+                # 一个供应商」时对未声明模型兜底，而 `model_driver` 的示例驱动
+                # 会自动注册进同一个路由（测试环境 = echo + md_async + md_sync），
+                # 兜底分支不再成立。这里要钉的是「生成成功 → 草稿」，不是模型解析。
+                model="seedream-3",
+                model_id="seedream-3",
                 progress=10,
                 owner_id=owner_id,
                 external_id=_EXTERNAL_A,

@@ -3,7 +3,7 @@
 ## 为什么要有这一层
 
 在这之前，「调第三方」是各模块自己 `async with httpx.AsyncClient(...)`：
-`infra/ai/agnes.py`、`modules/image/pipeline.py`、`generation/runner.py` 各建各的。
+`infra/ai/libtv.py`、`modules/image/pipeline.py`、`generation/runner.py` 各建各的。
 后果不是不够优雅，是**三件事对不齐**：
 
 - 超时：一个 60 秒、一个 30 秒、一个没设（httpx 默认 5 秒连接 + 无限读）；

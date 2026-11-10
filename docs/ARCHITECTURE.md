@@ -182,7 +182,7 @@
 | `infra/ai/__init__.py` | 模型供应商标注册与路由单例。 |
 | `infra/ai/base.py` | AI 模型供应商抽象（`ModelProvider` Protocol）。 |
 | `infra/ai/echo.py` | Echo 供应商：本地开发占位，不调用任何外部 API。 |
-| `infra/ai/agnes.py` | Agnes 生图供应商：OpenAI 兼容的**同步**接口，`submit` 直接返回终态快照，框架不再轮询。 |
+| `modules/model_driver/drivers/agnes.py` | Agnes 生图**驱动**（单文件，自动载入，不登记在 `AI_PROVIDERS`）：同步接口，`submit` 直接返回终态快照；支持图生图/多图合成（`reference_urls` → `extra_body.image`）。 |
 | `infra/ai/router.py` | 模型路由：`model` 字符串 → 具体供应商。 |
 | `infra/ai/libtv.py` | LibTV 供应商：只接收归档引用，提交与轮询交给 `GenerationRunner`。 |
 | `infra/ai/libtv_process.py` | 独立监督进程：持有 OS 租约直至 Node 真正退出，API 重启不会释放活任务的锁。 |

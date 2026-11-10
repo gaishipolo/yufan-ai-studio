@@ -59,6 +59,32 @@ class ModelRouter:
             self._register_alias(spec)
             self._default.setdefault(spec.capability, spec.id)
 
+        self._apply_preferred(provider)
+
+    def _apply_preferred(self, provider: ModelProvider) -> None:
+        """应用供应商声明的「该能力的首选默认模型」（可选字段 `preferred_for`）。
+
+        默认模型原本完全由注册顺序决定（`setdefault` 先到先得），而顺序是装配
+        细节：`AI_PROVIDERS` 里的供应商先注册、`drivers/` 里的驱动后注册。于是
+        把 agnes 从 `AI_PROVIDERS` 挪进 `drivers/`，默认生图模型就会**静默**
+        变成 echo 的 seedream-3——没有一处报错，用户只看到出的是占位图。
+
+        所以「谁是默认」必须由供应商自己声明，而不是靠谁先被 import。
+        """
+        preferred = getattr(provider, "preferred_for", ()) or ()
+        for capability in preferred:
+            candidates = [
+                spec.id for spec in provider.models if spec.capability is capability
+            ]
+            if not candidates:
+                logger.warning(
+                    "供应商 %s 声明 %s 为首选，但它没有该能力的模型，已忽略",
+                    provider.name,
+                    getattr(capability, "value", capability),
+                )
+                continue
+            self._default[capability] = candidates[0]
+
     def register_specs(self, specs: tuple[ModelSpec, ...], provider_name: str) -> None:
         """补充单个模型的元信息（供应商没在 `models` 里全量列出时使用）。"""
         for spec in specs:

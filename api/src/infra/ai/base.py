@@ -124,6 +124,13 @@ class ModelProvider(Protocol):
     # 不写进 Protocol 成员，是为了不强迫所有历史实现立刻补字段。
     # supports_poll: bool = True
 
+    # 同样可选的声明式字段：`preferred_for = frozenset({Capability.IMAGE})`
+    # 表示「我这个供应商的模型是该能力的默认首选」。不写则沿用「注册顺序第一个」
+    # （见 `ModelRouter._apply_preferred`）。为什么需要它：默认模型不该由
+    # 「谁先被 import」决定——供应商来源有 `AI_PROVIDERS` 与 `drivers/` 两条，
+    # 顺序是装配细节，换个接入方式就会静默换掉默认模型。
+    # preferred_for: frozenset[Capability]
+
     async def submit(self, request: GenerationRequest) -> SubmitResult:
         """提交生成任务。
 

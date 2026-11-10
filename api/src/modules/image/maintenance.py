@@ -81,8 +81,15 @@ def _stale_after_sec() -> float | None:
     一条声明都没有时返回 None：宁可本轮不巡检并打 error，也不能用一个
     猜出来的阈值去判死正在跑的任务。
     """
-    from infra.ai import agnes  # noqa: F401  确保 IMAGE 供应商的声明已登记
-
+    # 这里**不** import 具体供应商。以前是 `from infra.ai import agnes`，写死了
+    # 一个供应商名，agnes 搬进 drivers/ 之后就找不到了；改成
+    # `modules.model_driver.registry` 又违反「业务模块之间不许互相 import」
+    # （`test_modules_do_not_import_each_other` 会红）。
+    #
+    # 正确的依赖方向是「装配期保证已登记」：`model_driver` 在 import 期就扫描
+    # drivers/ 并实例化，而模块发现发生在 `create_app()` 装配阶段、早于任何周期
+    # 任务（`tests/test_image_policy.py` 在测试里自己显式扫一遍）。真没人声明时
+    # 下面的 error 会喊出来——比静默猜一个阈值去判死在途任务安全。
     budgets = registered_submit_budgets(Capability.IMAGE.value)
     if not budgets:
         logger.error(

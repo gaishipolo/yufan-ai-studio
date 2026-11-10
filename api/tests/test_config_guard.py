@@ -150,11 +150,17 @@ def _driver_settings() -> tuple[type[BaseSettings], ...]:
     import 进来（登记是 import 副作用）。
 
     `extra_modules` 是业务模块自带的驱动配置：`ImageAssetSettings` 在
-    `modules/image/pipeline.py`，不在 `infra/` 扫描范围。
+    `modules/image/pipeline.py`，`AgnesSettings` 在
+    `modules/model_driver/drivers/agnes.py`——都不在 `infra/` 扫描范围。
     """
     from infra.driver_config import import_all_driver_settings
 
-    return import_all_driver_settings(extra_modules=("modules.image.pipeline",))
+    return import_all_driver_settings(
+        extra_modules=(
+            "modules.image.pipeline",
+            "modules.model_driver.drivers.agnes",
+        )
+    )
 
 
 def _all_yaml_fields() -> list[tuple[str, str, object]]:

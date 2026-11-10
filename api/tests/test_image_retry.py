@@ -205,8 +205,8 @@ async def test_settle_skips_terminal_record_without_emitting_success(
 
 def test_stale_threshold_covers_the_provider_timeout() -> None:
     """90 秒 < Agnes 180 秒是配置级误伤窗口，阈值必须由供应商超时推导。"""
-    from infra.ai.agnes import AgnesSettings
     from modules.image.maintenance import _stale_after_sec
+    from modules.model_driver.drivers.agnes import AgnesSettings
 
     assert _stale_after_sec() >= AgnesSettings().timeout_sec * 1.5
 
