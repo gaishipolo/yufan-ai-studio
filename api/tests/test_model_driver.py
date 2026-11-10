@@ -16,7 +16,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from core.config import settings
-from core.exceptions import Unavailable
+from core.exceptions import BadRequest, Unavailable
 from core.ports.model_generation import (
     ModelGeneration,
     SubmitSpec,
@@ -273,3 +273,124 @@ def test_retry_requires_confirm_charged(client: TestClient) -> None:
         assert body["submitAttempts"] == 0
     finally:
         _cleanup([job_id])
+
+
+def test_facade_persists_resolved_model_id(client: TestClient) -> None:
+    """按 label（中文名/展示名）提交时，落库与透传给上游的必须是 **id**。
+
+    路由为了兼容前端历史传参保留了 `label → id` 的别名解析。把原串原样落库，
+    后果是路由成功、驱动 404「不认这个模型」——报错文案还会把人引向「模型配错」。
+    """
+    ticket = asyncio.run(
+        get_model_generation().submit(
+            SubmitSpec(
+                model="Agnes Image 2.5 Flash",
+                prompt="别名提交",
+                owner_id=_me(client),
+                source="alias-test",
+            )
+        )
+    )
+    try:
+        assert ticket.model == "agnes-image-2.5-flash"
+    finally:
+        _cleanup([ticket.task_id])
+
+
+def test_facade_rejects_undeclared_param(client: TestClient) -> None:
+    """打错字的参数键必须 400，而不是静默丢弃。
+
+    门面是通用入口，但它知道每个模型声明了什么。漏了这道检查，`{"szie": ...}`
+    会被驱动忽略，用户以为改了尺寸、实际用的还是默认值，页面看起来一切正常。
+    """
+    with pytest.raises(BadRequest) as err:
+        asyncio.run(
+            get_model_generation().submit(
+                SubmitSpec(
+                    model="agnes-image-2.5-flash",
+                    prompt="参数打错字",
+                    owner_id=_me(client),
+                    source="param-test",
+                    params={"szie": "1024x1024"},
+                )
+            )
+        )
+    assert "可用参数" in str(err.value)
+
+
+def test_facade_enforces_declared_param_range(client: TestClient) -> None:
+    """声明的张数上限要在**受理时**就拦，不能等异步任务失败。
+
+    agnes 只支持 n=1。收下 count=4 的后果是：受理成功 → 异步 400 →
+    用户只看到一张失败记录，而账单可能已经产生。
+    """
+    with pytest.raises(BadRequest):
+        asyncio.run(
+            get_model_generation().submit(
+                SubmitSpec(
+                    model="agnes-image-2.5-flash",
+                    prompt="超出张数",
+                    owner_id=_me(client),
+                    source="param-test",
+                    params={"count": 4},
+                )
+            )
+        )
+
+
+def test_register_leaves_no_half_provider_on_conflict() -> None:
+    """模型 id 撞车时整次注册回滚，不能留下「驱动在册、模型进了一半」。
+
+    旧顺序是先 `add` 供应商、再边循环边校验：撞车抛错时，驱动已进注册表、
+    前几个模型已进 `_models`，而 `ensure_drivers_registered` 之后不会再重试。
+    表现是清单显示「加载失败」，但它的模型仍能被 `resolve()` 选中并提交。
+    """
+    from core.registry import RegistryError
+    from infra.ai.base import Capability, ModelSpec
+    from infra.ai.router import ModelRouter
+
+    class _Provider:
+        def __init__(self, name: str, specs: tuple[ModelSpec, ...]) -> None:
+            self.name = name
+            self.models = specs
+            self.capabilities = frozenset({Capability.IMAGE})
+            self.supports_poll = False
+
+    router = ModelRouter()
+    router.register(
+        _Provider(
+            "alpha",
+            (
+                ModelSpec(
+                    id="same-id",
+                    label="Alpha 模型",
+                    capability=Capability.IMAGE,
+                    provider="alpha",
+                ),
+            ),
+        )
+    )
+
+    clashing = _Provider(
+        "beta",
+        (
+            ModelSpec(
+                id="beta-only",
+                label="Beta 独占",
+                capability=Capability.IMAGE,
+                provider="beta",
+            ),
+            ModelSpec(
+                id="same-id",
+                label="Beta 冲突",
+                capability=Capability.IMAGE,
+                provider="beta",
+            ),
+        ),
+    )
+    with pytest.raises(RegistryError):
+        router.register(clashing)
+
+    assert "beta" not in router.provider_names()
+    assert router.resolve("beta-only") is None, "校验失败时不能留下半个供应商"
+    assert router.provider_for("same-id").name == "alpha", "原归属不能被抢走"

@@ -11,6 +11,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from core.exceptions import BadRequest, Conflict, InvalidState, NotFound
+from core.param_schema import resolve_params
 from core.ports.model_generation import (
     DriverSummary,
     GenerationTicket,
@@ -62,12 +63,20 @@ class ModelGenerationFacade:
         if spec is None:
             raise BadRequest(f"未知模型 {request.model!r}，请先查模型目录")
 
+        # 参数校验不能靠驱动自觉：门面是通用入口，不认识任何具体字段，
+        # 但**知道**每个模型声明了什么。漏了这道检查，`{"count": 4}` 遇到
+        # 只支持 1 张的驱动会被上游静默裁成 1 张（只计费 1 张、也不报错），
+        # 未声明的键则被静默丢弃——两种都让用户以为改的值生效了。
+        params = resolve_params(spec.id, spec.param_schema or {}, request.params)
+
         job = DriverJob(
             name=(request.name.strip() or request.prompt.strip()[:60] or "统一生成"),
             prompt=request.prompt,
-            model=request.model,
+            # 落 **id** 而不是调用方传进来的原串：路由支持按 label（中文名）解析，
+            # 但原串透传给上游只会 404「不认这个模型」（agnes/bailian 都如此）。
+            model=spec.id,
             capability=spec.capability.value,
-            params_json=encode_request(dict(request.params), tuple(request.reference_urls)),
+            params_json=encode_request(params, tuple(request.reference_urls)),
             source=request.source[:64],
             owner_id=request.owner_id,
         )

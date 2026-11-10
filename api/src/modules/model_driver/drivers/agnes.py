@@ -174,6 +174,17 @@ class AgnesDriver:
     # 把默认生图模型悄悄换成 echo 的 seedream-3，而没有任何一处报错。
     preferred_for = frozenset({Capability.IMAGE})
 
+    @property
+    def submit_timeout_sec(self) -> float:
+        """提交预算由**驱动自己**声明，框架据此给提交 job 定硬超时。
+
+        框架侧的默认预算是 120 秒，而这里 180 秒（2K 图 + 上游排队）。两者打架
+        时后果很硬：worker 到点取消 handler → 任务被重投 → `submit_attempts=1`
+        且没有 external_id → 直接判「提交结果未知」，钱可能已经花了、图丢了，
+        还不许重试。所以宁可让框架按这里的值等。
+        """
+        return get_agnes_settings().timeout_sec
+
     async def submit(self, request: GenerationRequest) -> GenerationProgress:
         config = get_agnes_settings()
         if not config.api_key.strip():

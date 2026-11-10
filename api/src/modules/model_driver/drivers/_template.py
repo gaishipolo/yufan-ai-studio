@@ -65,6 +65,15 @@ class TemplateDriver:
     models = MODELS
     supports_poll = True
 
+    # 可选：单次提交最多等多久（秒）。同步出图的驱动**必须**声明，且不小于
+    # 上游最长耗时——框架默认 120 秒先到点会取消提交，任务重投时「有提交意图、
+    # 没有任务号」，直接判「提交结果未知」（钱可能花了、图丢了、不许重试）。
+    # submit_timeout_sec = 180.0
+
+    # 可选：声明「我的模型是该能力的默认」（frozenset({Capability.IMAGE})）。
+    # 不写就按注册顺序，而 drivers/ 永远晚于 AI_PROVIDERS 注册。
+    # preferred_for = frozenset({Capability.IMAGE})
+
     async def submit(self, request: GenerationRequest) -> SubmitResult:
         """怎么调用。
 

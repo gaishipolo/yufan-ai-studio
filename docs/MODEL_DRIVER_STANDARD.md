@@ -48,11 +48,24 @@ drivers/<name>.py  ──自动扫描──▶ ModelRouter ──▶ generation.
 （那里做了再导出）。`GenerationProgress` 会在构造时把 `state` 归一成枚举、
 把 `progress` 夹到 0–100，所以别在驱动外自己拼字典。
 
-**可选的一个声明**：`preferred_for = frozenset({Capability.IMAGE})`，表示
-「我这个驱动的模型是该能力的**默认**」。不写就沿用「注册顺序第一个」，而
-`drivers/` 永远后于 `AI_PROVIDERS` 注册——所以想当默认必须显式声明，否则
-默认会落在老的 infra 供应商上（agnes 就是这么踩过一次：从 `AI_PROVIDERS`
-搬进 `drivers/` 后，默认生图模型差点悄悄变成 echo 的 `seedream-3`）。
+**可选的两个声明**：
+
+```python
+preferred_for = frozenset({Capability.IMAGE})   # 「我的模型是该能力的默认」
+submit_timeout_sec = 180.0                     # 单次提交最多等多久（秒）
+```
+
+`preferred_for` 不写就沿用「注册顺序第一个」，而 `drivers/` 永远后于
+`AI_PROVIDERS` 注册——所以想当默认必须显式声明，否则默认会落在老的 infra
+供应商上（agnes 就是这么踩过一次：从 `AI_PROVIDERS` 搬进 `drivers/` 后，
+默认生图模型差点悄悄变成 echo 的 `seedream-3`）。
+
+`submit_timeout_sec` 是**提交动作**的预算，不是整条生成的预算（后者由
+`generation_timeout_sec` 管）。框架默认 120 秒，会再加上 30 秒余量作为提交
+job 的硬超时。同步出图的驱动（提交即等结果）必须声明它，而且要≥上游最长
+耗时：框架先到点就会取消 handler，任务被重投时「有提交意图、没有任务号」，
+直接判成「提交结果未知」——钱可能花了、图丢了、还不许重试。异步驱动提交
+很快，一般不用写。
 
 ## 3. 两种供应商形态
 
