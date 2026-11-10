@@ -1569,7 +1569,7 @@ export interface VideoTemplateAttachSourceIn {
 export interface VideoTemplateDraftIn {
   /** 模板名称 */
   name: string;
-  /** 稳定标识，便于后续复制与导入 */
+  /** 稳定标识：同键同配置返回原模板，同键异配置409；留空自动生成。固定蓝本状态独立管理 */
   templateKey?: string;
   /** 模板说明 */
   description?: string;

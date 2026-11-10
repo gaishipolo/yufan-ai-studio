@@ -2305,7 +2305,7 @@ Authorization: Bearer <accessToken>
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `name` | `string` | 是 | 模板名称 |
-| `templateKey` | `string` | 否 | 稳定标识，便于后续复制与导入 |
+| `templateKey` | `string` | 否 | 稳定标识：同键同配置返回原模板，同键异配置409；留空自动生成。固定蓝本状态独立管理 |
 | `description` | `string` | 否 | 模板说明 |
 | `prompt` | `string` | 是 | 固定提示词原文，含 {{Mixed N}} 占位符 |
 | `sourceVideoName` | `string` | 否 | 样片文件名 |
@@ -5210,7 +5210,7 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `name` | `string` | 是 | 模板名称 |
-| `templateKey` | `string` | 否 | 稳定标识，便于后续复制与导入 |
+| `templateKey` | `string` | 否 | 稳定标识：同键同配置返回原模板，同键异配置409；留空自动生成。固定蓝本状态独立管理 |
 | `description` | `string` | 否 | 模板说明 |
 | `prompt` | `string` | 是 | 固定提示词原文，含 {{Mixed N}} 占位符 |
 | `sourceVideoName` | `string` | 否 | 样片文件名 |

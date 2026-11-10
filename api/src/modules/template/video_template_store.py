@@ -31,7 +31,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.exceptions import BadRequest, NotFound
+from core.exceptions import BadRequest, Conflict, NotFound
 from core.ports.media import get_asset_lookup
 from modules.template.models import TemplatePack
 from modules.template.repository import PackRepository
@@ -332,19 +332,30 @@ async def create(payload: VideoTemplateDraftIn, session: AsyncSession) -> VideoT
     )
     record = _serialize(template)
     # 写盘进线程池：临界区整段（读 → 改 → 写）必须在一起，所以整段一起交出去。
-    await asyncio.to_thread(_append_record, record, payload.pinned)
-    return template
+    persisted = await asyncio.to_thread(_append_record, record, payload.pinned)
+    return _as_out(persisted)
 
 
-def _append_record(record: dict[str, Any], pinned: bool) -> None:
+def _append_record(record: dict[str, Any], pinned: bool) -> dict[str, Any]:
     """同步临界区：追加一条并（可选）抢占固定蓝本。只从线程池调用。"""
     with _LOCK:
         data = _read()
+        # 稳定键是脚本重试边界：检查与追加必须在同一临界区内。
+        # pinned 是独立管理状态：其他模板抢占蓝本后，重试创建不能报冲突或抢回。
+        ignored = {"id", "createdAt", "updatedAt", "pinned"}
+        configuration = {key: value for key, value in record.items() if key not in ignored}
+        for existing in data["items"]:
+            if existing.get("templateKey") == record["templateKey"]:
+                previous = {key: value for key, value in existing.items() if key not in ignored}
+                if previous != configuration:
+                    raise Conflict("模板稳定标识已被不同配置使用，请使用新的稳定标识")
+                return dict(existing)
         if pinned:
             for existing in data["items"]:
                 existing["pinned"] = False
         data["items"].append(record)
         _write(data)
+        return dict(record)
 
 
 def pin(template_id: str) -> VideoTemplateOut:

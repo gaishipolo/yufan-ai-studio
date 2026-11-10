@@ -48,7 +48,7 @@ async def get_video_template(
     return ApiResponse.ok(await asyncio.to_thread(store.get_out, template_id))
 
 
-@router.post("", summary="封装一条视频模板")
+@router.post("", summary="封装一条视频模板", openapi_extra={"x-template-key-idempotency": 1})
 async def create_video_template(
     payload: VideoTemplateDraftIn, actor: ManageDep, session: SessionDep
 ) -> ApiResponse[VideoTemplateOut]:
