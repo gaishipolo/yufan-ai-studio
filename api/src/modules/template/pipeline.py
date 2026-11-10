@@ -97,15 +97,17 @@ class ReplacementStore:
         with contextlib.suppress(OSError):
             await asyncio.to_thread(worker.sync_projection, run)
 
-    async def mark_submitting(self, record_id: str) -> None:
+    async def mark_submitting(self, record_id: str) -> bool:
         await self._update(
             record_id, lambda run: setattr(run, "submit_attempts", run.submit_attempts + 1)
         )
+        return True
 
-    async def clear_submit_attempt(self, record_id: str) -> None:
+    async def clear_submit_attempt(self, record_id: str) -> bool:
         await self._update(record_id, lambda run: setattr(run, "submit_attempts", 0))
+        return True
 
-    async def mark_submitted(self, record_id: str, external_id: str) -> None:
+    async def mark_submitted(self, record_id: str, external_id: str) -> bool:
         def change(run: ReplacementRun) -> None:
             run.task_id = external_id.partition(":")[2]
             # 正常路径上 `schedule_state` 已经把起点落了；恢复路径可能直接从
@@ -117,16 +119,18 @@ class ReplacementStore:
             run.submit_mode = _snapshot_submit_mode(CHANNEL_MODELS[run_channel(run.configuration)])
 
         await self._update(record_id, change)
+        return True
 
-    async def mark_progress(self, record_id: str, progress: int) -> None:
+    async def mark_progress(self, record_id: str, progress: int) -> bool:
         def change(run: ReplacementRun) -> None:
             run.progress_percent = max(run.progress_percent, min(99, progress))
 
         await self._update(record_id, change)
+        return True
 
     async def mark_succeeded(
         self, record_id: str, *, output_url: str | None, cover_url: str | None, progress: int = 100
-    ) -> None:
+    ) -> bool:
         run = await self.repo.get_or_404(record_id)
         if run_channel(run.configuration) != "libtv":
             from modules.template.worker import publish_output
@@ -140,8 +144,9 @@ class ReplacementStore:
             run.last_error = None
 
         await self._update(record_id, change)
+        return True
 
-    async def mark_failed(self, record_id: str, error: str) -> None:
+    async def mark_failed(self, record_id: str, error: str) -> bool:
         def change(run: ReplacementRun) -> None:
             run.framework_status = "failed"
             run.last_error = error
@@ -155,6 +160,7 @@ class ReplacementStore:
                 set_status(run, "failed" if run.task_id else "service_error")
 
         await self._update(record_id, change)
+        return True
 
 
 @register_pipeline

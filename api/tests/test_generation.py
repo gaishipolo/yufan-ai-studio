@@ -249,21 +249,27 @@ class _SubmitProbeStore:
             external_id=self.external_id,
         )
 
-    async def mark_submitting(self, record_id: str) -> None:
+    async def mark_submitting(self, record_id: str) -> bool:
         self.submit_attempts += 1
+        return True
 
-    async def clear_submit_attempt(self, record_id: str) -> None:
+    async def clear_submit_attempt(self, record_id: str) -> bool:
         self.submit_attempts = 0
+        return True
 
-    async def mark_submitted(self, record_id: str, external_id: str) -> None:
+    async def mark_submitted(self, record_id: str, external_id: str) -> bool:
         self.external_id = external_id
+        return True
 
-    async def mark_progress(self, record_id: str, progress: int) -> None: ...
+    async def mark_progress(self, record_id: str, progress: int) -> bool:
+        return True
 
-    async def mark_succeeded(self, record_id: str, **kwargs: object) -> None: ...
+    async def mark_succeeded(self, record_id: str, **kwargs: object) -> bool:
+        return True
 
-    async def mark_failed(self, record_id: str, error: str) -> None:
+    async def mark_failed(self, record_id: str, error: str) -> bool:
         self.failed_with = error
+        return True
 
 
 def _run_submit(
@@ -421,11 +427,13 @@ def test_sync_provider_settles_without_polling(monkeypatch: pytest.MonkeyPatch) 
     settled: dict[str, object] = {}
 
     class _Store(_SubmitProbeStore):
-        async def mark_succeeded(self, record_id: str, **kwargs: object) -> None:
+        async def mark_succeeded(self, record_id: str, **kwargs: object) -> bool:
             settled.update(kwargs)
+            return True
 
-        async def mark_failed(self, record_id: str, error: str) -> None:
+        async def mark_failed(self, record_id: str, error: str) -> bool:
             settled["error"] = error
+            return True
 
     probe = _Store()
 
@@ -499,12 +507,15 @@ def test_poll_times_out_by_wall_clock(monkeypatch: pytest.MonkeyPatch) -> None:
                 - timedelta(seconds=settings.generation_timeout_sec + 60),
             )
 
-        async def mark_failed(self, record_id: str, error: str) -> None:
+        async def mark_failed(self, record_id: str, error: str) -> bool:
             failed["error"] = error
+            return True
 
-        async def mark_progress(self, record_id: str, progress: int) -> None: ...
+        async def mark_progress(self, record_id: str, progress: int) -> bool:
+            return True
 
-        async def mark_succeeded(self, record_id: str, **kwargs: object) -> None: ...
+        async def mark_succeeded(self, record_id: str, **kwargs: object) -> bool:
+            return True
 
     class _Pipeline:
         kind = "test-timeout"
@@ -558,3 +569,214 @@ def test_disabled_owner_stops_submit_before_spending(monkeypatch: pytest.MonkeyP
     assert probe.submit_calls == 0, "停用账号不该再触发供应商调用（那是真金白银）"
     assert probe.submit_attempts == 0, "连提交意图都不该落：落了一切重试都会被当成「结果未知」"
     assert probe.failed_with is not None and "停用" in probe.failed_with
+
+
+def test_cancelled_during_poll_discards_result(monkeypatch: pytest.MonkeyPatch) -> None:
+    """轮询期间被取消：结果必须丢弃，不归档、不发成功事件。
+
+    `DriverJobStore._guard` 遇到终态记录会拒绝写入并返回 `False`。
+    runner 早期版本不看返回值，继续 `_archive()` + 发 `EVT_GENERATION_SUCCEEDED`：
+    用户先看到「已取消」，再收到「生成成功」通知，草稿箱还多一条脏数据。
+
+    这里用「load 时还是 running、写入时已被取消」的替身复现那个窗口——
+    真实场景是 poll 正在等上游（单次可跑几十秒），用户这时点了取消。
+    """
+    from generation import runner as runner_module
+    from infra.ai.base import GenerationProgress, GenerationState
+
+    archived: list[str] = []
+    emitted: list[str] = []
+
+    class _CancelledMidwayStore:
+        async def load(self, record_id: str) -> GenerationRecord:
+            return GenerationRecord(
+                id=record_id,
+                kind="test-cancel-race",
+                model="seedance-2.5",
+                prompt="p",
+                status="running",
+                owner_id="u_001",
+                external_id="ext-1",
+            )
+
+        async def mark_progress(self, record_id: str, progress: int) -> bool:
+            return False
+
+        async def mark_succeeded(self, record_id: str, **kwargs: object) -> bool:
+            return False
+
+        async def mark_failed(self, record_id: str, error: str) -> bool:
+            return False
+
+    class _Provider:
+        async def poll(
+            self, external_id: str, model: str | None = None
+        ) -> GenerationProgress:
+            return GenerationProgress(
+                external_id=external_id,
+                state=GenerationState.SUCCEEDED,
+                progress=100,
+                output_url="https://example.com/a.png",
+            )
+
+    class _Pipeline:
+        kind = "test-cancel-race"
+        capability = Capability.IMAGE
+
+        def store(self, session: object) -> _CancelledMidwayStore:
+            return _CancelledMidwayStore()
+
+        def resolve_provider(self, model: str) -> _Provider:
+            return _Provider()
+
+        async def build_request(self, record: object) -> None:  # pragma: no cover
+            return None
+
+    async def fake_archive(
+        self: GenerationRunner, kind: str, session: object, record_id: str, output_url: object
+    ) -> None:
+        archived.append(record_id)
+
+    async def fake_emit(self: GenerationRunner, name: str, **payload: object) -> None:
+        emitted.append(name)
+
+    register_pipeline(_Pipeline)
+    monkeypatch.setattr(runner_module.GenerationRunner, "_archive", fake_archive)
+    monkeypatch.setattr(runner_module.GenerationRunner, "_emit", fake_emit)
+
+    async def scenario() -> None:
+        await GenerationRunner(MemoryJobQueue()).handle_poll(
+            Job(
+                name=JOB_POLL,
+                payload={"kind": "test-cancel-race", "record_id": "r1", "polls": 1},
+                max_attempts=1,
+            )
+        )
+
+    asyncio.run(scenario())
+
+    assert archived == [], "已取消的记录不该进草稿箱"
+    assert emitted == [], "已取消的记录不该再发「生成成功」事件"
+
+
+def test_submit_budget_follows_driver_declaration() -> None:
+    """提交 job 的硬超时按驱动自报的预算算，不能写死。
+
+    写死 120 秒会短于 Agens 声明的 180 秒（2K 图 / 上游排队）：worker 到点取消
+    handler，任务被重投时 `submit_attempts=1` 且没有 external_id，直接判
+    「提交结果未知」——钱可能花了、图丢了、还不许重试。
+    """
+
+    class _Store:
+        async def load(self, record_id: str) -> GenerationRecord:
+            return GenerationRecord(
+                id=record_id,
+                kind="test-budget",
+                model="declared-180",
+                prompt="p",
+                status="queued",
+                owner_id="u_001",
+            )
+
+    class _Provider:
+        submit_timeout_sec = 180.0
+
+    class _Pipeline:
+        kind = "test-budget"
+        capability = Capability.IMAGE
+
+        def store(self, session: object) -> _Store:
+            return _Store()
+
+        def resolve_provider(self, model: str) -> _Provider:
+            return _Provider()
+
+        async def build_request(self, record: object) -> None:  # pragma: no cover
+            return None
+
+    register_pipeline(_Pipeline)
+    budget = asyncio.run(
+        GenerationRunner(MemoryJobQueue())._submit_budget("test-budget", "r1")
+    )
+    assert budget >= 180.0, "驱动声明 180 秒，框架不能 150 秒就取消"
+
+
+def test_submit_budget_falls_back_when_driver_silent() -> None:
+    """驱动没声明预算时回退框架默认值，且不能因为解析失败而拒绝提交。"""
+
+    class _Store:
+        async def load(self, record_id: str) -> GenerationRecord:
+            raise RuntimeError("记录读不出来也不该阻止提交")
+
+    class _Pipeline:
+        kind = "test-budget-missing"
+        capability = Capability.IMAGE
+
+        def store(self, session: object) -> _Store:
+            return _Store()
+
+        async def build_request(self, record: object) -> None:  # pragma: no cover
+            return None
+
+    register_pipeline(_Pipeline)
+    budget = asyncio.run(
+        GenerationRunner(MemoryJobQueue())._submit_budget("test-budget-missing", "r1")
+    )
+    assert budget == GenerationRunner._DEFAULT_SUBMIT_TIMEOUT_SEC
+
+
+def test_build_request_failure_is_not_treated_as_delivered() -> None:
+    """构造请求失败 = 请求根本没发出去，不能判「供应商可能已受理」。
+
+    `_possibly_delivered` 对非 AppError 一律返回 True。`build_request()` 里的
+    KeyError（我们自己的 bug）若落进那个 try，就会被当成「可能已计费」，
+    自动重试被永久放弃，报告还把锅推给上游。
+    """
+    failed: dict[str, str] = {}
+
+    class _Store:
+        async def load(self, record_id: str) -> GenerationRecord:
+            return GenerationRecord(
+                id=record_id,
+                kind="test-build-boom",
+                model="seedance-2.5",
+                prompt="p",
+                status="queued",
+                owner_id="u_001",
+            )
+
+        async def mark_submitting(self, record_id: str) -> bool:
+            return True
+
+        async def clear_submit_attempt(self, record_id: str) -> bool:
+            return True
+
+        async def mark_progress(self, record_id: str, progress: int) -> bool:
+            return True
+
+        async def mark_succeeded(self, record_id: str, **kwargs: object) -> bool:
+            return True
+
+        async def mark_failed(self, record_id: str, error: str) -> bool:
+            failed["error"] = error
+            return True
+
+    class _Pipeline:
+        kind = "test-build-boom"
+        capability = Capability.IMAGE
+
+        def store(self, session: object) -> _Store:
+            return _Store()
+
+        async def build_request(self, record: object) -> None:
+            raise KeyError("referenceUrls")
+
+    register_pipeline(_Pipeline)
+    asyncio.run(
+        GenerationRunner(MemoryJobQueue()).handle_submit(
+            Job(name=JOB_SUBMIT, payload={"kind": "test-build-boom", "record_id": "r1"})
+        )
+    )
+
+    assert "无法构造" in failed["error"]
+    assert "可能已计费" not in failed["error"], "请求没发出去，别把锅推给上游"

@@ -61,23 +61,25 @@ class VideoTaskStore:
             terminal_statuses=_TERMINAL,
         )
 
-    async def mark_submitting(self, record_id: str) -> None:
+    async def mark_submitting(self, record_id: str) -> bool:
         """调用供应商前先落一次「提交意图」，崩在中途时重启能识别出来。"""
         task = await self._get(record_id)
         if task is None:
-            return
+            return False
         task.submit_attempts += 1
+        return True
 
-    async def clear_submit_attempt(self, record_id: str) -> None:
+    async def clear_submit_attempt(self, record_id: str) -> bool:
         task = await self._get(record_id)
         if task is None:
-            return
+            return False
         task.submit_attempts = 0
+        return True
 
-    async def mark_submitted(self, record_id: str, external_id: str) -> None:
+    async def mark_submitted(self, record_id: str, external_id: str) -> bool:
         task = await self._get(record_id)
         if task is None:
-            return
+            return False
         task.external_id = external_id
         task.status = STATUS_RUNNING if task.status != STATUS_QUEUED else TaskStatus.RUNNING.value
         task.started_at = datetime.now(tz=UTC)
@@ -85,14 +87,16 @@ class VideoTaskStore:
         # 提交意图已完成使命：不复位的话，「attempts>0」会一直残留，
         # 此后任何一次失败后的重试都会被误判为「提交结果未知」（R3-01）
         task.submit_attempts = 0
+        return True
 
-    async def mark_progress(self, record_id: str, progress: int) -> None:
+    async def mark_progress(self, record_id: str, progress: int) -> bool:
         task = await self._get(record_id)
         if task is None:
-            return
+            return False
         # 进度只增不减，且不提前到达 100（终态才置 100）
         task.progress = min(99, max(task.progress, progress))
         task.status = TaskStatus.RUNNING.value
+        return True
 
     async def mark_succeeded(
         self,
@@ -101,10 +105,10 @@ class VideoTaskStore:
         output_url: str | None,
         cover_url: str | None,
         progress: int = 100,
-    ) -> None:
+    ) -> bool:
         task = await self._get(record_id)
         if task is None:
-            return
+            return False
         task.status = TaskStatus.COMPLETED.value
         task.progress = 100
         task.downloadable = True
@@ -113,14 +117,16 @@ class VideoTaskStore:
             task.cover_url = cover_url
         task.error_message = None
         task.finished_at = datetime.now(tz=UTC)
+        return True
 
-    async def mark_failed(self, record_id: str, error: str) -> None:
+    async def mark_failed(self, record_id: str, error: str) -> bool:
         task = await self._get(record_id)
         if task is None:
-            return
+            return False
         task.status = TaskStatus.FAILED.value
         task.error_message = error
         task.finished_at = datetime.now(tz=UTC)
+        return True
 
 
 @register_pipeline

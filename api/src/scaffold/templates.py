@@ -289,21 +289,21 @@ class ${Name}Store:
             owner_id=record.owner_id,
         )
 
-    async def mark_submitting(self, record_id: str) -> None:
+    async def mark_submitting(self, record_id: str) -> bool:
         # 调供应商**之前**落一次「提交意图」：进程崩在「已受理 → 写库」之间时，
         # 这是唯一能说明「可能已计费」的痕迹，没有它重启会重复提交
         raise NotImplementedFeature("TODO: submit_attempts += 1")
 
-    async def clear_submit_attempt(self, record_id: str) -> None:
+    async def clear_submit_attempt(self, record_id: str) -> bool:
         # 拿到了明确异常，说明本次提交没成功，清掉意图以便安全重试
         raise NotImplementedFeature("TODO: submit_attempts 归零")
 
-    async def mark_submitted(self, record_id: str, external_id: str) -> None:
+    async def mark_submitted(self, record_id: str, external_id: str) -> bool:
         # TODO: 写入 external_id、置为 running，并把 submit_attempts 复位为 0
         # （不复位的话，此后任何失败后的重试都会被误判为「提交结果未知」）
         raise NotImplementedFeature("TODO: 写入 external_id 并置为 running")
 
-    async def mark_progress(self, record_id: str, progress: int) -> None:
+    async def mark_progress(self, record_id: str, progress: int) -> bool:
         raise NotImplementedFeature("TODO: 更新进度")
 
     async def mark_succeeded(
@@ -313,10 +313,12 @@ class ${Name}Store:
         output_url: str | None,
         cover_url: str | None,
         progress: int = 100,
-    ) -> None:
+    ) -> bool:
+        # 必须返回 True：False 表示「记录已终态、本次写入被忽略」，
+        # 框架据此决定要不要归档与发事件
         raise NotImplementedFeature("TODO: 置为终态并写入产物地址")
 
-    async def mark_failed(self, record_id: str, error: str) -> None:
+    async def mark_failed(self, record_id: str, error: str) -> bool:
         raise NotImplementedFeature("TODO: 置为终态并写入失败原因")
 
 

@@ -160,7 +160,7 @@ class ImageJobStore:
         ).all()
         return [self._to_record(row) for row in rows]
 
-    async def mark_submitting(self, record_id: str) -> None:
+    async def mark_submitting(self, record_id: str) -> bool:
         """调用供应商前落一次「提交意图」，崩在中途时重启能识别出来。
 
         同时记下 `started_at`：巡检按「什么时候开始提交」判陈旧，
@@ -168,15 +168,17 @@ class ImageJobStore:
         """
         job = await _guard(self.session, record_id)
         if job is None:
-            return
+            return False
         job.submit_attempts += 1
         job.started_at = datetime.now(tz=UTC)
+        return True
 
-    async def clear_submit_attempt(self, record_id: str) -> None:
+    async def clear_submit_attempt(self, record_id: str) -> bool:
         job = await _guard(self.session, record_id)
         if job is None:
-            return
+            return False
         job.submit_attempts = 0
+        return True
 
     @staticmethod
     def _snapshot_submit_mode(job: ImageJob) -> str | None:
@@ -197,10 +199,10 @@ class ImageJobStore:
             return None
         return "async" if getattr(provider, "supports_poll", False) else "sync"
 
-    async def mark_submitted(self, record_id: str, external_id: str) -> None:
+    async def mark_submitted(self, record_id: str, external_id: str) -> bool:
         job = await _guard(self.session, record_id)
         if job is None:
-            return
+            return False
         job.external_id = external_id
         job.status = STATUS_RUNNING
         job.started_at = datetime.now(tz=UTC)
@@ -209,13 +211,15 @@ class ImageJobStore:
         # 都会被误判成「提交结果未知」而拒绝重提
         job.submit_attempts = 0
         job.submit_mode = self._snapshot_submit_mode(job)
+        return True
 
-    async def mark_progress(self, record_id: str, progress: int) -> None:
+    async def mark_progress(self, record_id: str, progress: int) -> bool:
         job = await _guard(self.session, record_id)
         if job is None:
-            return
+            return False
         job.progress = min(99, max(job.progress, progress))
         job.status = STATUS_RUNNING
+        return True
 
     async def mark_succeeded(
         self,
@@ -224,10 +228,10 @@ class ImageJobStore:
         output_url: str | None,
         cover_url: str | None,
         progress: int = 100,
-    ) -> None:
+    ) -> bool:
         job = await _guard(self.session, record_id)
         if job is None:
-            return
+            return False
         job.status = STATUS_SUCCEEDED
         job.progress = 100
         job.output_url = output_url
@@ -236,14 +240,16 @@ class ImageJobStore:
             job.cover_url = cover_url
         job.error_message = None
         job.finished_at = datetime.now(tz=UTC)
+        return True
 
-    async def mark_failed(self, record_id: str, error: str) -> None:
+    async def mark_failed(self, record_id: str, error: str) -> bool:
         job = await _guard(self.session, record_id)
         if job is None:
-            return
+            return False
         job.status = STATUS_FAILED
         job.error_message = error
         job.finished_at = datetime.now(tz=UTC)
+        return True
 
 
 def _allowed_hosts(raw: str) -> frozenset[str]:

@@ -107,9 +107,40 @@ class GenerationRunner:
             name=JOB_SUBMIT,
             payload={"kind": kind, "record_id": record_id},
             idempotency_key=f"submit:{kind}:{record_id}",
-            timeout_sec=120.0,
+            timeout_sec=await self._submit_budget(kind, record_id),
         )
         return await self._queue.enqueue(job)
+
+    #: 框架默认的提交预算（秒）。驱动没声明 `submit_timeout_sec` 时用它。
+    _DEFAULT_SUBMIT_TIMEOUT_SEC = 120.0
+    #: 在驱动自报预算之外留给建连 / 序列化 / 落库的余量
+    _SUBMIT_TIMEOUT_MARGIN_SEC = 30.0
+
+    async def _submit_budget(self, kind: str, record_id: str) -> float:
+        """提交 job 的硬超时 = 驱动的提交预算 + 余量。
+
+        写死一个值会与驱动声明打架：agnes 声明 180 秒（2K 图 / 上游排队），
+        框架按 120 秒取消 handler，任务重投时 `submit_attempts=1` 且没有
+        external_id，于是被判「提交结果未知」——钱可能花了、图丢了、还不许重试。
+        预算解析失败一律回退默认值：算不出来也必须能提交。
+        """
+        declared: object = None
+        try:
+            async with get_session_factory()() as session:
+                record = await get_pipeline(kind).store(session).load(record_id)
+            if record is not None:
+                resolver = getattr(get_pipeline(kind), "resolve_provider", None)
+                provider = (
+                    resolver(record.model)
+                    if resolver is not None
+                    else get_model_router().provider_for(record.model)
+                )
+                declared = getattr(provider, "submit_timeout_sec", None)
+        except Exception:  # noqa: BLE001 - 预算算不出来不该阻止提交
+            logger.warning("提交超时预算解析失败，按默认值 kind=%s id=%s", kind, record_id)
+        if not isinstance(declared, (int, float)) or isinstance(declared, bool) or declared <= 0:
+            return self._DEFAULT_SUBMIT_TIMEOUT_SEC
+        return float(declared) + self._SUBMIT_TIMEOUT_MARGIN_SEC
 
     async def resume(self, kind: str, record_id: str, *, delay: float = 0) -> None:
         """进程重启后恢复：只续轮询，**绝不重新提交**。
@@ -188,7 +219,11 @@ class GenerationRunner:
                 # （典型是脚手架里的占位实现），此时请求根本没发出去。
                 # 必须在 try 之外拦下来：落进下面的分支会被误判成「可能已计费」（R4-03）
                 try:
-                    await store.mark_submitting(record_id)
+                    if not await store.mark_submitting(record_id):
+                        # 排队期间已被取消（或记录被删）：不能再向供应商提交，
+                        # 否则用户已经看到「已取消」，账单却照样产生
+                        logger.info("记录已终态，放弃提交 kind=%s id=%s", kind, record_id)
+                        return
                     await session.commit()
                 except Exception as exc:  # noqa: BLE001
                     logger.exception(
@@ -204,6 +239,10 @@ class GenerationRunner:
                     )
                     return
 
+                # 「解析供应商 + 构造请求」都发生在请求发出**之前**，出错是我们
+                # 自己的 bug（模型配置写错、记录缺字段）。放进下面的 try 会被
+                # `_possibly_delivered` 判成「供应商可能已受理」——它对非 AppError
+                # 一律返回 True——于是自动重试被永久放弃，锅推给了上游。
                 try:
                     resolver = getattr(pipeline, "resolve_provider", None)
                     provider = (
@@ -211,6 +250,22 @@ class GenerationRunner:
                         else get_model_router().provider_for(record.model)
                     )
                     request = await pipeline.build_request(record)
+                except Exception as exc:  # noqa: BLE001
+                    logger.exception(
+                        "生成请求构造失败（未调用供应商）kind=%s id=%s", kind, record_id
+                    )
+                    await store.clear_submit_attempt(record_id)
+                    await self._fail(
+                        store=store,
+                        session=session,
+                        kind=kind,
+                        record_id=record_id,
+                        owner_id=record.owner_id,
+                        message=f"生成请求无法构造：{exc}"[:_MAX_ERROR_LEN],
+                    )
+                    return
+
+                try:
                     delivered = await provider.submit(request)
                 except Exception as exc:  # noqa: BLE001
                     logger.exception("提交生成失败 kind=%s id=%s", kind, record_id)
@@ -257,7 +312,16 @@ class GenerationRunner:
                     sync_result = None
                     resolved_id = delivered
 
-                await store.mark_submitted(record_id, resolved_id)
+                if not await store.mark_submitted(record_id, resolved_id):
+                    # 提交期间被取消：供应商那边可能已经受理（钱照花），
+                    # 但不能再发「已提交」事件、也不能继续轮询把结果写回来
+                    logger.info(
+                        "记录已终态，丢弃提交结果 kind=%s id=%s external=%s",
+                        kind,
+                        record_id,
+                        resolved_id,
+                    )
+                    return
                 await session.commit()
                 await self._emit(
                     EVT_GENERATION_SUBMITTED,
@@ -308,30 +372,30 @@ class GenerationRunner:
                     # 墙钟预算优先于轮询次数：max_polls 是「本次进程内」的计数，
                     # 重启会归零（见 resume 的注释），反复重启时它永远到不了上限
                     message = "生成超时，请重试"
-                    await store.mark_failed(record_id, message)
-                    await session.commit()
-                    await self._emit(
-                        EVT_GENERATION_FAILED,
-                        kind=kind,
-                        record_id=record_id,
-                        owner_id=record.owner_id,
-                        error=message,
-                    )
+                    if await store.mark_failed(record_id, message):
+                        await session.commit()
+                        await self._emit(
+                            EVT_GENERATION_FAILED,
+                            kind=kind,
+                            record_id=record_id,
+                            owner_id=record.owner_id,
+                            error=message,
+                        )
                     return
 
                 if polls >= settings.generation_max_polls:
                     # 事件里的 error 与落库文案必须一致：接上通知渠道后，
                     # 用户收到的说法不能和任务详情页不一样（R4-10）
                     message = "生成超时，请重试"
-                    await store.mark_failed(record_id, message)
-                    await session.commit()
-                    await self._emit(
-                        EVT_GENERATION_FAILED,
-                        kind=kind,
-                        record_id=record_id,
-                        owner_id=record.owner_id,
-                        error=message,
-                    )
+                    if await store.mark_failed(record_id, message):
+                        await session.commit()
+                        await self._emit(
+                            EVT_GENERATION_FAILED,
+                            kind=kind,
+                            record_id=record_id,
+                            owner_id=record.owner_id,
+                            error=message,
+                        )
                     return
 
                 resolver = getattr(pipeline, "resolve_provider", None)
@@ -356,12 +420,20 @@ class GenerationRunner:
                     if state == GenerationState.SUCCEEDED:
                         output_url = await self._persist(kind, record_id, result.output_url)
                         cover_url = self._persisted_cover(result, output_url)
-                        await store.mark_succeeded(
+                        # 终态保护必须接返回值：轮询期间用户点了取消时，
+                        # `mark_succeeded` 会拒绝写入（记录已是 cancelled）。
+                        # 此时继续 commit + 归档 + 发事件，用户就会先看到
+                        # 「已取消」再收到「生成成功」，草稿箱还多一条脏数据。
+                        if not await store.mark_succeeded(
                             record_id,
                             output_url=output_url,
                             cover_url=cover_url,
                             progress=result.progress or 100,
-                        )
+                        ):
+                            logger.info(
+                                "记录已终态，丢弃轮询结果 kind=%s id=%s", kind, record_id
+                            )
+                            return
                         await session.commit()
                         # 生成成功是既成事实，先落库再往资产库送：入库失败不该
                         # 把用户已经看到的结果改回失败（见 `_archive`）。
@@ -385,9 +457,15 @@ class GenerationRunner:
                         if result.retryable and polls + 1 < settings.generation_max_polls:
                             next_delay = self._backoff(polls)
                         else:
-                            await store.mark_failed(
+                            if not await store.mark_failed(
                                 record_id, (result.error or "生成失败")[:_MAX_ERROR_LEN]
-                            )
+                            ):
+                                logger.info(
+                                    "记录已终态，丢弃失败结果 kind=%s id=%s",
+                                    kind,
+                                    record_id,
+                                )
+                                return
                             await session.commit()
                             await self._emit(
                                 EVT_GENERATION_FAILED,
@@ -398,8 +476,9 @@ class GenerationRunner:
                             )
                             return
                     else:
-                        if result.progress != record.progress:
-                            await store.mark_progress(record_id, result.progress)
+                        if result.progress != record.progress and await store.mark_progress(
+                            record_id, result.progress
+                        ):
                             await session.commit()
                             await self._emit(
                                 EVT_GENERATION_PROGRESS,
@@ -548,12 +627,14 @@ class GenerationRunner:
             # 落盘失败不改变「生成成功」这个事实，只退回原 URL 并留一条警告。
             output_url = await self._persist(kind, record_id, result.output_url)
             cover_url = self._persisted_cover(result, output_url)
-            await store.mark_succeeded(
+            if not await store.mark_succeeded(
                 record_id,
                 output_url=output_url,
                 cover_url=cover_url,
                 progress=result.progress or 100,
-            )
+            ):
+                logger.info("记录已终态，跳过结算 kind=%s id=%s", kind, record_id)
+                return
             await session.commit()
             await self._archive(kind, session, record_id, output_url)
             public_output, public_cover = await artifact_urls([output_url, cover_url])
@@ -569,7 +650,9 @@ class GenerationRunner:
             return
 
         message = (result.error or "生成失败")[:_MAX_ERROR_LEN]
-        await store.mark_failed(record_id, message)
+        if not await store.mark_failed(record_id, message):
+            logger.info("记录已终态，跳过结算 kind=%s id=%s", kind, record_id)
+            return
         await session.commit()
         await self._emit(
             EVT_GENERATION_FAILED,
@@ -624,7 +707,8 @@ class GenerationRunner:
                 record = await store.load(record_id)
                 if record is None or record.terminal:
                     return
-                await store.mark_failed(record_id, message)
+                if not await store.mark_failed(record_id, message):
+                    return
                 await session.commit()
                 await self._emit(
                     EVT_GENERATION_FAILED,
@@ -651,7 +735,10 @@ class GenerationRunner:
         三个失败分支（准备失败 / 结果未知 / 确定未送达）文案不同但动作相同。
         各写一遍的后果已经有先例：`worker.py` 的「结果未知」分支漏发了事件（R4-10）。
         """
-        await store.mark_failed(record_id, message)
+        if not await store.mark_failed(record_id, message):
+            # 记录已被取消：不要再发失败事件，否则用户收到的是「已取消」+「失败」
+            logger.info("记录已终态，跳过失败收尾 kind=%s id=%s", kind, record_id)
+            return
         await session.commit()
         await self._emit(
             EVT_GENERATION_FAILED,

@@ -90,29 +90,32 @@ class DriverJobStore:
         ).all()
         return [self._to_record(row) for row in rows]
 
-    async def mark_submitting(self, record_id: str) -> None:
+    async def mark_submitting(self, record_id: str) -> bool:
         job = await _guard(self.session, record_id)
         if job is None:
-            return
+            return False
         job.submit_attempts += 1
         job.started_at = datetime.now(tz=UTC)
+        return True
 
-    async def clear_submit_attempt(self, record_id: str) -> None:
+    async def clear_submit_attempt(self, record_id: str) -> bool:
         job = await _guard(self.session, record_id)
         if job is None:
-            return
+            return False
         job.submit_attempts = 0
+        return True
 
-    async def mark_submitted(self, record_id: str, external_id: str) -> None:
+    async def mark_submitted(self, record_id: str, external_id: str) -> bool:
         job = await _guard(self.session, record_id)
         if job is None:
-            return
+            return False
         job.external_id = external_id
         job.status = STATUS_RUNNING
         job.started_at = datetime.now(tz=UTC)
         job.progress = max(job.progress, 1)
         job.submit_attempts = 0
         job.submit_mode = self._snapshot_submit_mode(job)
+        return True
 
     @staticmethod
     def _snapshot_submit_mode(job: DriverJob) -> str | None:
@@ -128,12 +131,13 @@ class DriverJobStore:
             return None
         return "async" if getattr(provider, "supports_poll", False) else "sync"
 
-    async def mark_progress(self, record_id: str, progress: int) -> None:
+    async def mark_progress(self, record_id: str, progress: int) -> bool:
         job = await _guard(self.session, record_id)
         if job is None:
-            return
+            return False
         job.progress = min(99, max(job.progress, progress))
         job.status = STATUS_RUNNING
+        return True
 
     async def mark_succeeded(
         self,
@@ -142,10 +146,10 @@ class DriverJobStore:
         output_url: str | None,
         cover_url: str | None,
         progress: int = 100,
-    ) -> None:
+    ) -> bool:
         job = await _guard(self.session, record_id)
         if job is None:
-            return
+            return False
         job.status = STATUS_SUCCEEDED
         job.progress = 100
         job.output_url = output_url
@@ -153,11 +157,13 @@ class DriverJobStore:
             job.cover_url = cover_url
         job.error_message = None
         job.finished_at = datetime.now(tz=UTC)
+        return True
 
-    async def mark_failed(self, record_id: str, error: str) -> None:
+    async def mark_failed(self, record_id: str, error: str) -> bool:
         job = await _guard(self.session, record_id)
         if job is None:
-            return
+            return False
         job.status = STATUS_FAILED
         job.error_message = error
         job.finished_at = datetime.now(tz=UTC)
+        return True
