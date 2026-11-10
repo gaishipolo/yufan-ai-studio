@@ -10,6 +10,11 @@
   周期任务默认开着；这个命令用于「刚改完保留期，想立刻生效」或确认积压。
 - `library download-run`：手动跑一条打包任务。worker 没起 / 队列卡住时用来补跑，
   与队列里的 handler 是同一个函数（幂等：只处理 `queued`）。
+- `library repreview`：重建缺失的缩略图。原图在 `blobs/`、封面在 `previews/`，
+  是两套字节一条记录；封面对象丢了原图仍然完好，但界面只剩占位与裂图。
+  默认试运行，只报告有几条需要重建。
+- `library sync-pack-tags`：给改动前建的封装补齐「成员标签并集」。自动继承是
+  建封装 / 换成员时做的，存量数据要回填一次；只增不减，可反复跑。
 
 命令通过 `ModuleSpec.cli` 注册：`src/cli.py` 不需要 import 本模块，
 删掉 v2 也不会让 `app backup` 起不来。
@@ -117,6 +122,30 @@ def cmd_download_run(args: argparse.Namespace) -> None:
     print(f"已执行打包任务 {args.job_id}（只处理 queued 状态；其余会跳过）")
 
 
+def cmd_preview_repair(args: argparse.Namespace) -> None:
+    from modules.library.maintenance import run_preview_repair
+
+    report = asyncio.run(
+        run_preview_repair(batch=args.batch or None, dry_run=args.dry_run, owner=args.owner)
+    )
+    for line in report.lines():
+        print(line)
+    # 有修不好的就非 0：这些条目的原图可能真的坏了，需要人去看一眼，
+    # 而「修了 N 条」的成功不该把这个信号盖住。
+    if report.broken:
+        raise SystemExit(1)
+
+
+def cmd_pack_tag_sync(args: argparse.Namespace) -> None:
+    from modules.library.maintenance import run_pack_tag_sync
+
+    report = asyncio.run(
+        run_pack_tag_sync(batch=args.batch or 0, dry_run=args.dry_run, owner=args.owner)
+    )
+    for line in report.lines():
+        print(line)
+
+
 def register(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     parser = sub.add_parser("library", help="资产库 v2 运维命令")
     actions = parser.add_subparsers(dest="library_action", required=True)
@@ -160,3 +189,31 @@ def register(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     )
     download_run.add_argument("job_id", help="打包任务 id")
     download_run.set_defaults(func=cmd_download_run)
+
+    previews = actions.add_parser(
+        "repreview",
+        help="重建缺失的缩略图（原图还在、封面对象没了时用，默认试运行）",
+    )
+    previews.add_argument(
+        "--no-dry-run",
+        dest="dry_run",
+        action="store_false",
+        help="真的生成并写回存储；不传时只报告有几条缺失",
+    )
+    previews.set_defaults(func=cmd_preview_repair, dry_run=True)
+    previews.add_argument("--batch", type=int, default=0, help="最多处理多少条（0 = 全部）")
+    previews.add_argument("--owner", default="", help="只修指定 owner_id 的素材")
+
+    pack_tags = actions.add_parser(
+        "sync-pack-tags",
+        help="给存量封装补齐成员标签并集（默认试运行）",
+    )
+    pack_tags.add_argument(
+        "--no-dry-run",
+        dest="dry_run",
+        action="store_false",
+        help="真的写库；不传时只报告有几个封装需要补",
+    )
+    pack_tags.set_defaults(func=cmd_pack_tag_sync, dry_run=True)
+    pack_tags.add_argument("--batch", type=int, default=0, help="最多处理多少个（0 = 全部）")
+    pack_tags.add_argument("--owner", default="", help="只处理指定 owner_id 的封装")

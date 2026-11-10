@@ -19,8 +19,11 @@
 
 from __future__ import annotations
 
+import asyncio
+import tempfile
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from pathlib import Path
 
 from sqlalchemy import select
 
@@ -30,12 +33,24 @@ from core.logging import get_logger
 from core.scheduler import periodic
 from db.session import get_session_factory
 from infra import get_storage
+from infra.media_probe import create_preview
+from infra.storage.base import ObjectStorage, StorageError
 from modules.library.lifecycle import LifecycleService
-from modules.library.models import LibraryAsset
+from modules.library.models import LibraryAsset, LibraryPackItem
+from modules.library.service import preview_key
+from modules.library.tags import sync_pack_tags
 
 logger = get_logger(__name__)
 
-__all__ = ["TrashGcReport", "run_trash_gc", "trash_gc"]
+__all__ = [
+    "PackTagReport",
+    "PreviewReport",
+    "TrashGcReport",
+    "run_pack_tag_sync",
+    "run_preview_repair",
+    "run_trash_gc",
+    "trash_gc",
+]
 
 
 @dataclass
@@ -112,3 +127,218 @@ async def trash_gc() -> None:
         logger.debug("回收站 GC 未启用（LIBRARY_TRASH_GC_ENABLED=false），本轮跳过")
         return
     await run_trash_gc()
+
+
+@dataclass
+class PreviewReport:
+    """一轮封面修复的结果。`ok` 与 `rebuilt` 分开数，是因为「本来就是好的」和
+    「这次修好了」都算「扫完没事」，但排查时只有后者能对上刚才看到的那张裂图。"""
+
+    scanned: int = 0
+    ok: int = 0
+    rebuilt: int = 0
+    failed: list[tuple[str, str]] = field(default_factory=list)
+    dry_run: bool = False
+
+    @property
+    def broken(self) -> int:
+        return len(self.failed)
+
+    @property
+    def pending(self) -> int:
+        """需要重建的条数（试运行时就是「会修几条」）。"""
+        return self.scanned - self.ok
+
+    def lines(self) -> list[str]:
+        head = (
+            f"试运行：扫描 {self.scanned}，封面缺失或为空 {self.pending}"
+            if self.dry_run
+            else f"扫描 {self.scanned}，封面正常 {self.ok}，重建 {self.rebuilt}，失败 {self.broken}"
+        )
+        rows = [head]
+        rows += [f"  失败 {asset_id}：{reason}" for asset_id, reason in self.failed[:20]]
+        return rows
+
+
+async def run_preview_repair(
+    *, batch: int | None = None, dry_run: bool = False, owner: str = ""
+) -> PreviewReport:
+    """重建「记录在、字节不在」的缩略图。
+
+    ## 为什么需要它
+
+    原图按 `sha256` 落在 `library/blobs/`，封面是按同一摘要派生的
+    `library/previews/*.jpg`：**两套字节，一条记录**。封面的字节没了，原图仍然完好，
+    用户看到的却是列表一片渐变占位、详情页一个裂图标——这时候「素材丢了吗」
+    只能靠翻存储才知道。对账不该靠人肉翻，所以给一个可反复跑的入口。
+
+    ## 判据
+
+    `cover_key` 非空但 `exists()` 为假，或者 `cover_key` 为空（当年生成失败，
+    例如视频抽帧那次 ffmpeg 超时）——两者都要重建。`kind` 只扫 `image` / `video`：
+    音频没有封面，封装的 `cover_key` 是**借**成员的（自己的 `sha256` 为空），
+    给它重建会把别人的图写到 `previews/<空摘要>` 上去。
+
+    `--dry-run` 只探测不写，用来先回答「到底有几条」。
+    """
+    storage = get_storage()
+    report = PreviewReport(dry_run=dry_run)
+    async with get_session_factory()() as session:
+        query = (
+            select(LibraryAsset)
+            .where(
+                LibraryAsset.deleted_at.is_(None),
+                LibraryAsset.kind.in_(("image", "video")),
+                LibraryAsset.storage_key != "",
+                LibraryAsset.sha256 != "",
+            )
+            .order_by(LibraryAsset.created_at)
+        )
+        if owner:
+            query = query.where(LibraryAsset.owner_id == owner)
+        if batch:
+            query = query.limit(batch)
+        rows = (await session.scalars(query)).all()
+
+        for row in rows:
+            report.scanned += 1
+            try:
+                intact = bool(row.cover_key) and await storage.exists(row.cover_key)
+            except StorageError:
+                # 探测本身失败（权限、网关）：记成失败继续下一条，别让一条坏账号
+                # 把整轮修复停住——这正是要来修「裂图」的人最不想看到的。
+                report.failed.append((row.id, "封面探测失败"))
+                continue
+            if intact:
+                report.ok += 1
+                continue
+            if dry_run:
+                continue
+            try:
+                key = await _rebuild_cover(storage, row)
+            except (StorageError, OSError, RuntimeError) as exc:
+                report.failed.append((row.id, str(exc)[:120]))
+                continue
+            if not key:
+                report.failed.append((row.id, "生成缩略图失败（原图可能已损坏）"))
+                continue
+            row.cover_key = key
+            await session.commit()
+            report.rebuilt += 1
+
+    if report.rebuilt:
+        logger.info(
+            "封面修复：扫描 %s，重建 %s，失败 %s",
+            report.scanned,
+            report.rebuilt,
+            report.broken,
+        )
+    return report
+
+
+@dataclass
+class PackTagReport:
+    scanned: int = 0
+    changed: list[str] = field(default_factory=list)
+    added: int = 0
+    dry_run: bool = False
+
+    @property
+    def pending(self) -> int:
+        return len(self.changed)
+
+    def lines(self) -> list[str]:
+        rows = [
+            f"试运行：扫描 {self.scanned} 个封装，{self.pending} 个缺成员标签（共 {self.added} 个）"
+            if self.dry_run
+            else f"扫描 {self.scanned} 个封装，补齐 {self.pending} 个（共 {self.added} 个标签）"
+        ]
+        if self.changed:
+            rows.append("  涉及：" + ", ".join(self.changed[:20]))
+        if self.dry_run and self.pending:
+            rows.append("加 --no-dry-run 才写库")
+        return rows
+
+
+async def run_pack_tag_sync(
+    *, batch: int = 0, dry_run: bool = False, owner: str = ""
+) -> PackTagReport:
+    """给**存量**封装补上成员标签并集。
+
+    自动继承只在建封装 / 换成员时发生，所以本次改动之前建的封装仍然只有
+    「封装」一个（外加用户手选的）标签。这条命令是可反复跑的回填：
+    `sync_pack_tags` 只增不减，跑第二次 `pending` 应为 0，也不会覆盖用户
+    后来在卡片上手动加的标签。
+
+    默认试运行；`--no-dry-run` 才逐个 commit（一个封装失败不影响其它封装）。
+    """
+    report = PackTagReport(dry_run=dry_run)
+    async with get_session_factory()() as session:
+        query = (
+            select(LibraryAsset.id)
+            .where(
+                LibraryAsset.kind == "pack",
+                LibraryAsset.deleted_at.is_(None),
+            )
+            .order_by(LibraryAsset.created_at)
+        )
+        if owner:
+            query = query.where(LibraryAsset.owner_id == owner)
+        if batch:
+            query = query.limit(batch)
+        pack_ids = list((await session.scalars(query)).all())
+        if not pack_ids:
+            return report
+
+        pairs = await session.execute(
+            select(LibraryPackItem.pack_id, LibraryPackItem.asset_id).where(
+                LibraryPackItem.pack_id.in_(pack_ids)
+            )
+        )
+        members: dict[str, list[str]] = {}
+        for pack_id, asset_id in pairs.all():
+            members.setdefault(pack_id, []).append(asset_id)
+
+        for pack_id in pack_ids:
+            report.scanned += 1
+            added = await sync_pack_tags(
+                session, pack_id, members.get(pack_id, []), dry_run=dry_run
+            )
+            if not added:
+                continue
+            report.changed.append(pack_id)
+            report.added += added
+            if not dry_run:
+                await session.commit()
+
+    if report.added and not dry_run:
+        logger.info(
+            "封装标签回填：扫描 %s，补齐 %s 个封装 / %s 个标签",
+            report.scanned,
+            report.pending,
+            report.added,
+        )
+    return report
+
+
+async def _rebuild_cover(storage: ObjectStorage, row: LibraryAsset) -> str:
+    """下载原图 → 生成缩略图 → 写回对象存储。返回写成的 key，失败返回空串。"""
+    with tempfile.TemporaryDirectory(prefix="library-cover-") as folder:
+        source = Path(folder) / "source"
+        local = storage.local_path(row.storage_key)
+        if local is not None:
+            if not local.is_file():
+                raise StorageError(f"原图不存在：{row.storage_key}")
+            source = local
+        else:
+            with source.open("wb") as handle:
+                async for chunk in storage.iter_chunks(row.storage_key):
+                    await asyncio.to_thread(handle.write, chunk)
+        target = Path(folder) / "cover.jpg"
+        if not await asyncio.to_thread(create_preview, source, target, row.kind):
+            return ""
+        if not target.is_file():
+            return ""
+        key = preview_key(row.sha256)
+        await storage.put_file(key, target, "image/jpeg")
+        return key

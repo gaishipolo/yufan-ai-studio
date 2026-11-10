@@ -17,6 +17,9 @@
 3. **`position` 全量替换**：`(pack_id, position)` 有唯一索引，所以更新成员是
    「删干净 → flush → 重插」，不是逐条 update。反过来的写法在 SQLite 下会
    因为同一事务里的唯一性检查顺序而随机失败。
+4. **标签自动继承成员**：建封装 / 换成员时把成员标签的并集并到封装上（见
+   `tags.sync_pack_tags`）。成员被装进封装后从列表里隐身，不继承的话按
+   「产品」筛只能筛到散件、筛不到装着产品图的封装，标签筛选像是漏了东西。
 """
 
 from __future__ import annotations
@@ -38,7 +41,7 @@ from modules.library.schema import (
     PackItemIn,
     PackPatchIn,
 )
-from modules.library.tags import PACK_TAG_NAME, ensure_tag, set_asset_tags
+from modules.library.tags import PACK_TAG_NAME, ensure_tag, sync_pack_tags
 
 __all__ = ["PackService", "pack_cover_key"]
 
@@ -99,11 +102,14 @@ class PackService:
         self.session.add(pack)
         await self.session.flush()
         await self._write_items(pack.id, items)
-        # 封装自动带上「封装」标签：类型筛选里不再有「封装」这一档，
-        # 找封装靠这个标签。用户自己选的标签照旧保留（服务层会去重）。
+        # 「封装」是固定标签（类型筛选里没有「封装」这一档，靠它找封装）；
+        # 用户手选的标签 + 所有成员的标签一起并进来，`sync_pack_tags` 去重。
         pack_tag = await ensure_tag(self.session, PACK_TAG_NAME, actor.id)
-        await set_asset_tags(
-            self.session, pack.id, [pack_tag.id, *(payload.tag_ids or [])]
+        await sync_pack_tags(
+            self.session,
+            pack.id,
+            [member.id for member in members],
+            base=[pack_tag.id, *(payload.tag_ids or [])],
         )
         await self.session.commit()
         return await self._detail(pack.id, actor)
@@ -141,8 +147,20 @@ class PackService:
                 raise PackItemInvalid(details={"items": [payload.cover_asset_id]})
             explicit = _cover_of(payload.cover_asset_id, current) if payload.cover_asset_id else ""
             pack.cover_key = explicit or pack_cover_key(current)
-        if payload.tag_ids is not None:
-            await set_asset_tags(self.session, pack.id, payload.tag_ids)
+        if payload.tag_ids is not None or payload.items is not None:
+            member_ids = (
+                [member.id for member in members]
+                if payload.items is not None
+                else [row.id for row in await self.member_rows(pack.id)]
+            )
+            # 没显式传 tagIds 就在现有标签上「只增不减」：新装进来的素材，
+            # 它的标签应该跟着出现在封装上，但用户手动去掉 / 加上的标签不该被抹掉。
+            await sync_pack_tags(
+                self.session,
+                pack.id,
+                member_ids,
+                base=payload.tag_ids if payload.tag_ids is not None else None,
+            )
         pack.state_version += 1
         await self.session.commit()
         return await self._detail(pack.id, actor)

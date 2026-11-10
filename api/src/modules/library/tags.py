@@ -17,13 +17,19 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.context import CurrentUser
 from core.exceptions import BadRequest, Conflict, NotFound
-from modules.library.models import LibraryAssetTag, LibraryTag
-from modules.library.schema import LibraryTagOut, TagIn
+from modules.library import access
+from modules.library.models import LibraryAsset, LibraryAssetTag, LibraryTag
+from modules.library.schema import (
+    LibraryTab,
+    LibraryTagOut,
+    LibraryTagStatOut,
+    TagIn,
+)
 
 __all__ = [
     "PACK_TAG_NAME",
@@ -32,7 +38,9 @@ __all__ = [
     "ensure_tag",
     "remove_asset_tags",
     "set_asset_tags",
+    "sync_pack_tags",
     "tag_ids_by_asset",
+    "tag_ids_of_assets",
 ]
 
 #: 封装创建时自动打上的标签名。
@@ -83,6 +91,62 @@ async def tag_ids_by_asset(
     for asset_id, tag_id in rows.all():
         result.setdefault(asset_id, []).append(tag_id)
     return result
+
+
+async def tag_ids_of_assets(
+    session: AsyncSession, asset_ids: Sequence[str]
+) -> list[str]:
+    """一批资产的标签 id 并集（去重、按 id 稳定排序）。
+
+    与 `tag_ids_by_asset` 的区别是这里**不按资产分组**：封装要的是「里面所有素材
+    一共有哪些标签」，把分组结果再拍平一遍不如直接查一次 `distinct`。
+    """
+    wanted = [asset_id for asset_id in dict.fromkeys(asset_ids) if asset_id]
+    if not wanted:
+        return []
+    rows = await session.scalars(
+        select(LibraryAssetTag.tag_id)
+        .where(LibraryAssetTag.asset_id.in_(wanted))
+        .distinct()
+    )
+    return sorted({tag_id for tag_id in rows.all()})
+
+
+async def sync_pack_tags(
+    session: AsyncSession,
+    pack_id: str,
+    member_ids: Sequence[str],
+    *,
+    base: Sequence[str] | None = None,
+    dry_run: bool = False,
+) -> int:
+    """封装**自动继承成员标签**，返回新补上的标签数。
+
+    ## 口径（写时合并，不做实时联动）
+
+    - `base` 给了就是「整体替换」的基准（建封装时用：`封装` + 用户手选的标签）；
+      没给就读出封装当前标签，在它上面**只增不减**。
+    - 两种情形都会再并上成员标签的并集。所以封装的标签是真数据、能像普通素材
+      一样被 × 去掉或 + 加上；不做「读的时候临时拼成员标签」那一套——那样
+      卡片上的 × 就成了摆设，按标签筛选也得另写一套 SQL。
+    - **只在封装创建 / 替换成员时合并**。成员素材后来单独打标不会回写所有包含
+      它的封装：那要反查引用关系、还会把用户刚从封装上删掉的标签又塞回来。
+      代价是「只增不减」——重新编辑一次成员会把仍属于成员的标签补回来，
+      这与「封装自动获得成员标签」的定义一致，写在这里免得下次被当成 bug。
+
+    `dry_run` 给存量回填命令用：只算差、不写库。
+    """
+    current = (
+        list(base)
+        if base is not None
+        else (await tag_ids_by_asset(session, [pack_id])).get(pack_id, [])
+    )
+    inherited = await tag_ids_of_assets(session, member_ids)
+    wanted = list(dict.fromkeys([*current, *inherited]))
+    added = len([tag_id for tag_id in inherited if tag_id not in current])
+    if not dry_run and (base is not None or added):
+        await set_asset_tags(session, pack_id, wanted)
+    return added
 
 
 async def add_asset_tags(
@@ -145,9 +209,72 @@ class TagService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def list_tags(self) -> list[LibraryTagOut]:
-        rows = await self.session.scalars(select(LibraryTag).order_by(LibraryTag.name))
-        return [LibraryTagOut(id=row.id, name=row.name) for row in rows.all()]
+    async def list_tags(
+        self,
+        actor: CurrentUser,
+        *,
+        state: str = "active",
+        library: LibraryTab = LibraryTab.ALL,
+    ) -> list[LibraryTagStatOut]:
+        """标签栏的数据：全部标签 + 当前入口下各标签的素材数。
+
+        两个口径刻意与 `LibraryService.list_assets` 一致，否则「标签旁写 8，
+        点进去只有 3 条」会让人以为数据丢了：
+
+        - `state=active` 带上 `tab_clause` 与 `hidden_by_pack_clause`（被装进
+          封装的成员在列表里不单列，计数里也不该算）；
+        - 草稿 / 回收站按权限点收窄到本人或全量，忽略 `library`。
+
+        **不受当前标签筛选影响**：计数是「这个入口里有多少素材属于该标签」，
+        不是「再叠上已选标签后还剩多少」；否则每点一次筛选，其余标签的数字
+        都会跳一遍，反而没法读。关键词与类型筛选同理不计入。
+
+        排序按 `created_at` 升序（先加的在前），`id` 收尾保证同秒创建时稳定。
+        """
+        groups = await access.all_groups(self.session, actor)
+        rows = (
+            await self.session.scalars(
+                select(LibraryTag).order_by(LibraryTag.created_at, LibraryTag.id)
+            )
+        ).all()
+        counts = await self._asset_counts(actor, groups, state, library)
+        return [
+            LibraryTagStatOut(
+                id=row.id,
+                name=row.name,
+                asset_count=counts.get(row.id, 0),
+                created_at=row.created_at,
+            )
+            for row in rows
+        ]
+
+    async def _asset_counts(
+        self,
+        actor: CurrentUser,
+        groups: list[str],
+        state: str,
+        library: LibraryTab,
+    ) -> dict[str, int]:
+        """一次 group by 取回所有标签的计数，不按标签逐条查。"""
+        query = (
+            select(LibraryAssetTag.tag_id, func.count(LibraryAsset.id))
+            .join(LibraryAsset, LibraryAsset.id == LibraryAssetTag.asset_id)
+            .where(LibraryAsset.state == state)
+        )
+        if state == "active":
+            query = query.where(
+                LibraryAsset.deleted_at.is_(None),
+                access.tab_clause(actor, groups, library),
+                access.hidden_by_pack_clause(actor, groups, library),
+            )
+        elif state == "draft":
+            if not actor.has(access.PERM_DRAFT_REVIEW):
+                query = query.where(LibraryAsset.owner_id == actor.id)
+        elif not actor.has(access.PERM_DELETE_ANY):
+            query = query.where(LibraryAsset.owner_id == actor.id)
+
+        result = await self.session.execute(query.group_by(LibraryAssetTag.tag_id))
+        return {tag_id: int(count) for tag_id, count in result.all()}
 
     async def create(self, payload: TagIn, actor: CurrentUser) -> LibraryTagOut:
         existing = await self.session.scalar(
