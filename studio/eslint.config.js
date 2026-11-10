@@ -73,9 +73,10 @@ export default tseslint.config(
       // 后端 export-openapi 的生成物（文件头已声明「请勿手工编辑」），格式由生成器决定。
       // 它仍参与 tsc 类型检查，只是不按手写代码的规范要求。
       'src/shared/api/schema.ts',
-      // vitest 被中断时残留的临时配置（`vitest.config.ts.timestamp-*.mjs`）：
-      // 里面 `new URL(...)` 会被当成未定义全局，lint 直接红，跟本次改动无关。
-      'vitest.config.ts.timestamp-*.mjs',
+      // vite / vitest 启动时生成、中断后残留的临时配置（`*.config.ts.timestamp-*.mjs`）：
+      // 里面的 `new URL(...)` / `process` 会被当成未定义全局，lint 直接红，跟本次改动无关。
+      // 本机删除守卫会让这些文件清不掉，只能按模式忽略。
+      '*.config.ts.timestamp-*.mjs',
     ],
   },
 
