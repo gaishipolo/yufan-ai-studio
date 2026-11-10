@@ -4461,7 +4461,7 @@
           "资产库"
         ],
         "summary": "发起共享 / 撤销共享申请",
-        "description": "`action=revoke` 必须带 `reason`（400 `REVOKE_REASON_REQUIRED`）。\n\n申请人自己就是审批人时（持 `library:share:approve`）直接通过并记自审，\n否则会出现「自己申请、等自己批」的死锁。",
+        "description": "`action=revoke` 必须带 `reason`（400 `REVOKE_REASON_REQUIRED`）。\n\n申请人自己就是**该目标**的审批人时直接通过并记自审（全站码\n`library:share:approve`，或目标对应的 `library:share:approve:team` /\n`library:share:approve:group`），否则会出现「自己申请、等自己批」的死锁。",
         "operationId": "create_share_request_api_v1_library_share_requests_post",
         "security": [
           {
@@ -4555,7 +4555,7 @@
           "资产库"
         ],
         "summary": "通过申请",
-        "description": "小组负责人也能审批本组的申请，所以这里只要求 `library:read`。",
+        "description": "审批资格按申请目标范围在服务层判（全站 / 团队 / 所在小组），路由只要求\n`library:read`；组长身份本身不再给审批权。",
         "operationId": "approve_share_request_api_v1_library_share_requests__request_id__approve_post",
         "security": [
           {
@@ -4744,7 +4744,7 @@
           "资产库"
         ],
         "summary": "设置小组负责人（整体替换）",
-        "description": "负责人是「谁能审批本组共享」的唯一来源，存在 v2 自己的表里。",
+        "description": "负责人表现在只服务删除窄口与 `isLeader` 展示；审批资格改由三个审批权限点\n按申请目标范围判定（`_can_approve_target`），本接口仍由全站审批码守护。",
         "operationId": "set_group_leaders_api_v1_library_groups__group_id__leaders_put",
         "security": [
           {
@@ -4801,25 +4801,56 @@
         "tags": [
           "资产库"
         ],
-        "summary": "标签列表",
+        "summary": "标签列表（含当前入口的素材数，按添加时间排序）",
+        "description": "计数按 `state` + `library` 与列表同口径；`state=draft|trash` 时忽略 `library`。",
         "operationId": "list_tags_api_v1_library_tags_get",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "library",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/LibraryTab",
+              "default": "all"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/LibraryAssetState",
+              "default": "active"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ApiResponse_list_LibraryTagOut__"
+                  "$ref": "#/components/schemas/ApiResponse_list_LibraryTagStatOut__"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }
           }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
+        }
       },
       "post": {
         "tags": [
@@ -4827,15 +4858,20 @@
         ],
         "summary": "新建标签（同名返回已有那条）",
         "operationId": "create_tag_api_v1_library_tags_post",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
         "requestBody": {
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/TagIn"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "201": {
@@ -4858,12 +4894,7 @@
               }
             }
           }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
+        }
       }
     },
     "/api/v1/library/tags/{tag_id}": {
@@ -8136,7 +8167,7 @@
         "type": "object",
         "title": "ApiResponse[list[LibraryGroupOut]]"
       },
-      "ApiResponse_list_LibraryTagOut__": {
+      "ApiResponse_list_LibraryTagStatOut__": {
         "properties": {
           "code": {
             "type": "integer",
@@ -8153,7 +8184,7 @@
             "anyOf": [
               {
                 "items": {
-                  "$ref": "#/components/schemas/LibraryTagOut"
+                  "$ref": "#/components/schemas/LibraryTagStatOut"
                 },
                 "type": "array"
               },
@@ -8165,7 +8196,7 @@
           }
         },
         "type": "object",
-        "title": "ApiResponse[list[LibraryTagOut]]"
+        "title": "ApiResponse[list[LibraryTagStatOut]]"
       },
       "ApiResponse_list_RoleOut__": {
         "properties": {
@@ -9727,7 +9758,7 @@
         },
         "type": "object",
         "title": "GroupLeadersIn",
-        "description": "整体替换某组的负责人列表。空数组 = 清空（该组退回「只能由持\n`library:share:approve` 的人审批」）。"
+        "description": "整体替换某组的负责人列表（只服务删除窄口）。空数组 = 清空。\n审批资格由 `library:share:approve*` 三个权限点按申请目标判定，与这张表无关。"
       },
       "GroupMembersIn": {
         "properties": {
@@ -10200,6 +10231,13 @@
             "type": "array",
             "title": "Groupids"
           },
+          "tags": {
+            "items": {
+              "$ref": "#/components/schemas/LibraryTagOut"
+            },
+            "type": "array",
+            "title": "Tags"
+          },
           "trashReason": {
             "anyOf": [
               {
@@ -10236,13 +10274,6 @@
               }
             ],
             "title": "Updatedat"
-          },
-          "tags": {
-            "items": {
-              "$ref": "#/components/schemas/LibraryTagOut"
-            },
-            "type": "array",
-            "title": "Tags"
           },
           "groups": {
             "items": {
@@ -10462,6 +10493,13 @@
             },
             "type": "array",
             "title": "Groupids"
+          },
+          "tags": {
+            "items": {
+              "$ref": "#/components/schemas/LibraryTagOut"
+            },
+            "type": "array",
+            "title": "Tags"
           },
           "trashReason": {
             "anyOf": [
@@ -10728,7 +10766,7 @@
           "id"
         ],
         "title": "LibraryGroupOut",
-        "description": "我的小组。`isLeader` 决定「待我审核」里会不会出现该组的申请。"
+        "description": "我的小组。`isLeader` 现在只用于删除窄口（§3.4.1）的入口展示；\n「待我审核」按审批权限点与「是不是该组成员」收窄，与组长身份无关。"
       },
       "LibraryGroupRef": {
         "properties": {
@@ -10806,6 +10844,35 @@
           "name"
         ],
         "title": "LibraryTagOut"
+      },
+      "LibraryTagStatOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "assetCount": {
+            "type": "integer",
+            "title": "Assetcount",
+            "default": 0
+          },
+          "createdAt": {
+            "type": "string",
+            "title": "Createdat"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "createdAt"
+        ],
+        "title": "LibraryTagStatOut",
+        "description": "标签栏的列表项：比卡片上的标签多「素材数」与「添加时间」。\n\n`asset_count` 是**当前入口**（`state` + `library`）下挂了这个标签的素材数，\n不是全库总量——标签栏上点一下就按这个入口筛，数字必须与结果对得上。\n`created_at` 给前端按「添加时间先后」排序用。\n\n单独出一个类型而不是往 `LibraryTagOut` 上加两个字段：卡片里 24 条资产\n每条都带一遍计数与时间戳，既没用也容易被人误当成卡片上的真实数据。"
       },
       "LibraryVisibility": {
         "type": "string",

@@ -419,8 +419,8 @@ export interface GroupLayerOut {
   permissions?: string[];
 }
 
-/** 整体替换某组的负责人列表。空数组 = 清空（该组退回「只能由持
-`library:share:approve` 的人审批」）。 */
+/** 整体替换某组的负责人列表（只服务删除窄口）。空数组 = 清空。
+审批资格由 `library:share:approve*` 三个权限点按申请目标判定，与这张表无关。 */
 export interface GroupLeadersIn {
   userIds?: string[];
 }
@@ -571,11 +571,11 @@ export interface LibraryAssetDetailOut {
   stateVersion?: number;
   coverUrl?: string | null;
   groupIds?: string[];
+  tags?: LibraryTagOut[];
   trashReason?: string | null;
   trashExpiresAt?: string | null;
   createdAt: string;
   updatedAt?: string | null;
-  tags?: LibraryTagOut[];
   groups?: LibraryGroupRef[];
   generation?: LibraryGenerationOut | null;
   packItems?: PackItemOut[];
@@ -606,6 +606,7 @@ export interface LibraryAssetOut {
   stateVersion?: number;
   coverUrl?: string | null;
   groupIds?: string[];
+  tags?: LibraryTagOut[];
   trashReason?: string | null;
   trashExpiresAt?: string | null;
   createdAt: string;
@@ -659,7 +660,8 @@ export interface LibraryGenerationOut {
   generatedAt?: string | null;
 }
 
-/** 我的小组。`isLeader` 决定「待我审核」里会不会出现该组的申请。 */
+/** 我的小组。`isLeader` 现在只用于删除窄口（§3.4.1）的入口展示；
+「待我审核」按审批权限点与「是不是该组成员」收窄，与组长身份无关。 */
 export interface LibraryGroupOut {
   id: string;
   name?: string;
@@ -684,6 +686,21 @@ export interface LibrarySelectionPage {
 export interface LibraryTagOut {
   id: string;
   name: string;
+}
+
+/** 标签栏的列表项：比卡片上的标签多「素材数」与「添加时间」。
+
+`asset_count` 是**当前入口**（`state` + `library`）下挂了这个标签的素材数，
+不是全库总量——标签栏上点一下就按这个入口筛，数字必须与结果对得上。
+`created_at` 给前端按「添加时间先后」排序用。
+
+单独出一个类型而不是往 `LibraryTagOut` 上加两个字段：卡片里 24 条资产
+每条都带一遍计数与时间戳，既没用也容易被人误当成卡片上的真实数据。 */
+export interface LibraryTagStatOut {
+  id: string;
+  name: string;
+  assetCount?: number;
+  createdAt: string;
 }
 
 /** LoginEventListOut */
@@ -1823,8 +1840,8 @@ export interface EndpointData {
   "POST /api/v1/library/share-requests/{request_id}/reject": ShareRequestOut;
   /** 上传模板库参考视频（只收视频） */
   "POST /api/v1/library/source-videos": LibraryAssetOut;
-  /** 标签列表 */
-  "GET /api/v1/library/tags": LibraryTagOut[];
+  /** 标签列表（含当前入口的素材数，按添加时间排序） */
+  "GET /api/v1/library/tags": LibraryTagStatOut[];
   /** 新建标签（同名返回已有那条） */
   "POST /api/v1/library/tags": LibraryTagOut;
   /** 删除标签（同时清绑定，资产不受影响） */

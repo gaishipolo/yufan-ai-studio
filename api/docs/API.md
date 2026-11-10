@@ -145,7 +145,9 @@ Authorization: Bearer <accessToken>
 | `library:generation:ingest` | 生成结果入库（草稿箱） |  |
 | `library:read` | 查看资产库 |  |
 | `library:share` | 发起共享与撤销共享申请 |  |
-| `library:share:approve` | 审批共享与撤销申请 |  |
+| `library:share:approve` | 全站审批共享与撤销申请（兼容码，等同同时勾选下面两项） |  |
+| `library:share:approve:group` | 审批所在小组的共享与撤销申请 |  |
+| `library:share:approve:team` | 审批团队级共享与撤销申请 |  |
 | `library:share:direct` | 共享无需审批（撤销仍需审批） |  |
 | `library:tag:manage` | 管理标签词表（改名 / 删除） |  |
 | `library:update` | 修改本人资产的名称与标签 |  |
@@ -174,6 +176,7 @@ Authorization: Bearer <accessToken>
 | `40084` | 400 | library | `PackEmpty` | 封装至少需要一个成员 |
 | `40085` | 400 | library | `GenerationSourceInvalid` | 生成结果必须提供可读取的 storageKey 或 sourceUrl |
 | `40086` | 400 | library | `DownloadEmpty` | 选中的条目都不在可下载范围内 |
+| `40087` | 400 | library | `PackHasNoOriginal` | 封装没有单独的原文件，请使用「下载」打包其中素材 |
 | `40100` | 401 | 框架 | `Unauthorized` | 请先登录 |
 | `40121` | 401 | identity | `CredentialInvalid` | 用户名或密码错误 |
 | `40122` | 401 | identity | `RefreshTokenInvalid` | 刷新令牌已失效，请重新登录 |
@@ -182,6 +185,8 @@ Authorization: Bearer <accessToken>
 | `40322` | 403 | identity | `SuperuserRequired` | 该操作需要超级管理员权限 |
 | `40323` | 403 | identity | `PermissionEscalation` | 不能授予自己不具备的权限 |
 | `40381` | 403 | library | `DraftReviewForbidden` | 没有审核他人草稿的权限 |
+| `40382` | 403 | library | `ShareNotOwned` | 撤销共享只能由资产所有者发起 |
+| `40383` | 403 | library | `PackMemberShareBlocked` | 封装内的素材不能单独调整共享范围 |
 | `40400` | 404 | 框架 | `NotFound` | 资源不存在 |
 | `40421` | 404 | identity | `UserNotFound` | 用户不存在 |
 | `40422` | 404 | identity | `RoleNotFound` | 角色不存在 |
@@ -2673,7 +2678,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `POST` | `/api/v1/library/share-requests/{request_id}/cancel` | 撤回自己提交的申请 | 🔒 |
 | `POST` | `/api/v1/library/share-requests/{request_id}/reject` | 驳回申请 | 🔒 |
 | `POST` | `/api/v1/library/source-videos` | 上传模板库参考视频（只收视频） | 🔒 |
-| `GET` | `/api/v1/library/tags` | 标签列表 | 🔒 |
+| `GET` | `/api/v1/library/tags` | 标签列表（含当前入口的素材数，按添加时间排序） | 🔒 |
 | `POST` | `/api/v1/library/tags` | 新建标签（同名返回已有那条） | 🔒 |
 | `PATCH` | `/api/v1/library/tags/{tag_id}` | 重命名标签（不做隐式合并） | 🔒 |
 | `DELETE` | `/api/v1/library/tags/{tag_id}` | 删除标签（同时清绑定，资产不受影响） | 🔒 |
@@ -2798,6 +2803,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `stateVersion` | `number` | 否 |  |
 | `coverUrl` | `string \| null` | 否 |  |
 | `groupIds` | `string[]` | 否 |  |
+| `tags` | `LibraryTagOut[]` | 否 |  |
 | `trashReason` | `string \| null` | 否 |  |
 | `trashExpiresAt` | `string \| null` | 否 |  |
 | `createdAt` | `string` | 是 |  |
@@ -2838,11 +2844,11 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `stateVersion` | `number` | 否 |  |
 | `coverUrl` | `string \| null` | 否 |  |
 | `groupIds` | `string[]` | 否 |  |
+| `tags` | `LibraryTagOut[]` | 否 |  |
 | `trashReason` | `string \| null` | 否 |  |
 | `trashExpiresAt` | `string \| null` | 否 |  |
 | `createdAt` | `string` | 是 |  |
 | `updatedAt` | `string \| null` | 否 |  |
-| `tags` | `LibraryTagOut[]` | 否 |  |
 | `groups` | `LibraryGroupRef[]` | 否 |  |
 | `generation` | `LibraryGenerationOut \| null` | 否 |  |
 | `packItems` | `PackItemOut[]` | 否 |  |
@@ -2899,11 +2905,11 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `stateVersion` | `number` | 否 |  |
 | `coverUrl` | `string \| null` | 否 |  |
 | `groupIds` | `string[]` | 否 |  |
+| `tags` | `LibraryTagOut[]` | 否 |  |
 | `trashReason` | `string \| null` | 否 |  |
 | `trashExpiresAt` | `string \| null` | 否 |  |
 | `createdAt` | `string` | 是 |  |
 | `updatedAt` | `string \| null` | 否 |  |
-| `tags` | `LibraryTagOut[]` | 否 |  |
 | `groups` | `LibraryGroupRef[]` | 否 |  |
 | `generation` | `LibraryGenerationOut \| null` | 否 |  |
 | `packItems` | `PackItemOut[]` | 否 |  |
@@ -3038,11 +3044,11 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `stateVersion` | `number` | 否 |  |
 | `coverUrl` | `string \| null` | 否 |  |
 | `groupIds` | `string[]` | 否 |  |
+| `tags` | `LibraryTagOut[]` | 否 |  |
 | `trashReason` | `string \| null` | 否 |  |
 | `trashExpiresAt` | `string \| null` | 否 |  |
 | `createdAt` | `string` | 是 |  |
 | `updatedAt` | `string \| null` | 否 |  |
-| `tags` | `LibraryTagOut[]` | 否 |  |
 | `groups` | `LibraryGroupRef[]` | 否 |  |
 | `generation` | `LibraryGenerationOut \| null` | 否 |  |
 | `packItems` | `PackItemOut[]` | 否 |  |
@@ -3088,11 +3094,11 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `stateVersion` | `number` | 否 |  |
 | `coverUrl` | `string \| null` | 否 |  |
 | `groupIds` | `string[]` | 否 |  |
+| `tags` | `LibraryTagOut[]` | 否 |  |
 | `trashReason` | `string \| null` | 否 |  |
 | `trashExpiresAt` | `string \| null` | 否 |  |
 | `createdAt` | `string` | 是 |  |
 | `updatedAt` | `string \| null` | 否 |  |
-| `tags` | `LibraryTagOut[]` | 否 |  |
 | `groups` | `LibraryGroupRef[]` | 否 |  |
 | `generation` | `LibraryGenerationOut \| null` | 否 |  |
 | `packItems` | `PackItemOut[]` | 否 |  |
@@ -3142,7 +3148,8 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 
 **设置小组负责人（整体替换）**
 
-负责人是「谁能审批本组共享」的唯一来源，存在 v2 自己的表里。
+负责人表现在只服务删除窄口与 `isLeader` 展示；审批资格改由三个审批权限点
+按申请目标范围判定（`_can_approve_target`），本接口仍由全站审批码守护。
 
 | 参数 | 位置 | 类型 | 必填 | 说明 |
 |---|---|---|---|---|
@@ -3193,11 +3200,11 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `stateVersion` | `number` | 否 |  |
 | `coverUrl` | `string \| null` | 否 |  |
 | `groupIds` | `string[]` | 否 |  |
+| `tags` | `LibraryTagOut[]` | 否 |  |
 | `trashReason` | `string \| null` | 否 |  |
 | `trashExpiresAt` | `string \| null` | 否 |  |
 | `createdAt` | `string` | 是 |  |
 | `updatedAt` | `string \| null` | 否 |  |
-| `tags` | `LibraryTagOut[]` | 否 |  |
 | `groups` | `LibraryGroupRef[]` | 否 |  |
 | `generation` | `LibraryGenerationOut \| null` | 否 |  |
 | `packItems` | `PackItemOut[]` | 否 |  |
@@ -3236,11 +3243,11 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `stateVersion` | `number` | 否 |  |
 | `coverUrl` | `string \| null` | 否 |  |
 | `groupIds` | `string[]` | 否 |  |
+| `tags` | `LibraryTagOut[]` | 否 |  |
 | `trashReason` | `string \| null` | 否 |  |
 | `trashExpiresAt` | `string \| null` | 否 |  |
 | `createdAt` | `string` | 是 |  |
 | `updatedAt` | `string \| null` | 否 |  |
-| `tags` | `LibraryTagOut[]` | 否 |  |
 | `groups` | `LibraryGroupRef[]` | 否 |  |
 | `generation` | `LibraryGenerationOut \| null` | 否 |  |
 | `packItems` | `PackItemOut[]` | 否 |  |
@@ -3289,11 +3296,11 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `stateVersion` | `number` | 否 |  |
 | `coverUrl` | `string \| null` | 否 |  |
 | `groupIds` | `string[]` | 否 |  |
+| `tags` | `LibraryTagOut[]` | 否 |  |
 | `trashReason` | `string \| null` | 否 |  |
 | `trashExpiresAt` | `string \| null` | 否 |  |
 | `createdAt` | `string` | 是 |  |
 | `updatedAt` | `string \| null` | 否 |  |
-| `tags` | `LibraryTagOut[]` | 否 |  |
 | `groups` | `LibraryGroupRef[]` | 否 |  |
 | `generation` | `LibraryGenerationOut \| null` | 否 |  |
 | `packItems` | `PackItemOut[]` | 否 |  |
@@ -3348,8 +3355,9 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 
 `action=revoke` 必须带 `reason`（400 `REVOKE_REASON_REQUIRED`）。
 
-申请人自己就是审批人时（持 `library:share:approve`）直接通过并记自审，
-否则会出现「自己申请、等自己批」的死锁。
+申请人自己就是**该目标**的审批人时直接通过并记自审（全站码
+`library:share:approve`，或目标对应的 `library:share:approve:team` /
+`library:share:approve:group`），否则会出现「自己申请、等自己批」的死锁。
 
 **请求体** `ShareRequestIn`
 
@@ -3414,7 +3422,8 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 
 **通过申请**
 
-小组负责人也能审批本组的申请，所以这里只要求 `library:read`。
+审批资格按申请目标范围在服务层判（全站 / 团队 / 所在小组），路由只要求
+`library:read`；组长身份本身不再给审批权。
 
 | 参数 | 位置 | 类型 | 必填 | 说明 |
 |---|---|---|---|---|
@@ -3542,6 +3551,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `stateVersion` | `number` | 否 |  |
 | `coverUrl` | `string \| null` | 否 |  |
 | `groupIds` | `string[]` | 否 |  |
+| `tags` | `LibraryTagOut[]` | 否 |  |
 | `trashReason` | `string \| null` | 否 |  |
 | `trashExpiresAt` | `string \| null` | 否 |  |
 | `createdAt` | `string` | 是 |  |
@@ -3549,14 +3559,23 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 
 #### `GET /api/v1/library/tags`
 
-**标签列表**
+**标签列表（含当前入口的素材数，按添加时间排序）**
 
-**响应** `ApiResponse<LibraryTagOut[]>`（前端取 `res.data`）
+计数按 `state` + `library` 与列表同口径；`state=draft|trash` 时忽略 `library`。
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `library` | query | `LibraryTab` | 否 |  |
+| `state` | query | `LibraryAssetState` | 否 |  |
+
+**响应** `ApiResponse<LibraryTagStatOut[]>`（前端取 `res.data`）
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `[].id` | `string` | 是 |  |
 | `[].name` | `string` | 是 |  |
+| `[].assetCount` | `number` | 否 |  |
+| `[].createdAt` | `string` | 是 |  |
 
 #### `POST /api/v1/library/tags`
 
@@ -3647,11 +3666,11 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `stateVersion` | `number` | 否 |  |
 | `coverUrl` | `string \| null` | 否 |  |
 | `groupIds` | `string[]` | 否 |  |
+| `tags` | `LibraryTagOut[]` | 否 |  |
 | `trashReason` | `string \| null` | 否 |  |
 | `trashExpiresAt` | `string \| null` | 否 |  |
 | `createdAt` | `string` | 是 |  |
 | `updatedAt` | `string \| null` | 否 |  |
-| `tags` | `LibraryTagOut[]` | 否 |  |
 | `groups` | `LibraryGroupRef[]` | 否 |  |
 | `generation` | `LibraryGenerationOut \| null` | 否 |  |
 | `packItems` | `PackItemOut[]` | 否 |  |
@@ -4034,8 +4053,8 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 
 ### `GroupLeadersIn`
 
-整体替换某组的负责人列表。空数组 = 清空（该组退回「只能由持
-`library:share:approve` 的人审批」）。
+整体替换某组的负责人列表（只服务删除窄口）。空数组 = 清空。
+审批资格由 `library:share:approve*` 三个权限点按申请目标判定，与这张表无关。
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
@@ -4178,11 +4197,11 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `stateVersion` | `number` | 否 |  |
 | `coverUrl` | `string \| null` | 否 |  |
 | `groupIds` | `string[]` | 否 |  |
+| `tags` | `LibraryTagOut[]` | 否 |  |
 | `trashReason` | `string \| null` | 否 |  |
 | `trashExpiresAt` | `string \| null` | 否 |  |
 | `createdAt` | `string` | 是 |  |
 | `updatedAt` | `string \| null` | 否 |  |
-| `tags` | `LibraryTagOut[]` | 否 |  |
 | `groups` | `LibraryGroupRef[]` | 否 |  |
 | `generation` | `LibraryGenerationOut \| null` | 否 |  |
 | `packItems` | `PackItemOut[]` | 否 |  |
@@ -4219,6 +4238,7 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `stateVersion` | `number` | 否 |  |
 | `coverUrl` | `string \| null` | 否 |  |
 | `groupIds` | `string[]` | 否 |  |
+| `tags` | `LibraryTagOut[]` | 否 |  |
 | `trashReason` | `string \| null` | 否 |  |
 | `trashExpiresAt` | `string \| null` | 否 |  |
 | `createdAt` | `string` | 是 |  |
@@ -4286,7 +4306,8 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 
 ### `LibraryGroupOut`
 
-我的小组。`isLeader` 决定「待我审核」里会不会出现该组的申请。
+我的小组。`isLeader` 现在只用于删除窄口（§3.4.1）的入口展示；
+「待我审核」按审批权限点与「是不是该组成员」收窄，与组长身份无关。
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
@@ -4324,6 +4345,24 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 |---|---|---|---|
 | `id` | `string` | 是 |  |
 | `name` | `string` | 是 |  |
+
+### `LibraryTagStatOut`
+
+标签栏的列表项：比卡片上的标签多「素材数」与「添加时间」。
+
+`asset_count` 是**当前入口**（`state` + `library`）下挂了这个标签的素材数，
+不是全库总量——标签栏上点一下就按这个入口筛，数字必须与结果对得上。
+`created_at` 给前端按「添加时间先后」排序用。
+
+单独出一个类型而不是往 `LibraryTagOut` 上加两个字段：卡片里 24 条资产
+每条都带一遍计数与时间戳，既没用也容易被人误当成卡片上的真实数据。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `assetCount` | `number` | 否 |  |
+| `createdAt` | `string` | 是 |  |
 
 ### `LibraryVisibility`（枚举）
 
