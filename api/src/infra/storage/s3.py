@@ -17,9 +17,10 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+from collections.abc import AsyncIterator
 from functools import lru_cache
 from pathlib import Path
-from typing import ClassVar
+from typing import Any, ClassVar
 
 import boto3
 from botocore.exceptions import BotoCoreError, ClientError
@@ -73,6 +74,19 @@ def _digest(path: Path) -> str:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _is_not_found(exc: ClientError) -> bool:
+    """S3 / MinIO 的「没有这个 key」。
+
+    按状态码判而不是按 Error.Code 字符串：AWS 回 `NoSuchKey`，有的实现回 `404`，
+    老版本 MinIO 对 HEAD 只给 `NotFound`。403 不能算进来——那是权限问题，
+    「问不到」与「不存在」混淆过一次就会让对账扫描整批重建。
+    """
+    response = exc.response or {}
+    status = (response.get("ResponseMetadata") or {}).get("HTTPStatusCode")
+    code = (response.get("Error") or {}).get("Code")
+    return status == 404 or code in {"NoSuchKey", "NotFound", "404"}
 
 
 class S3Storage:
@@ -137,6 +151,28 @@ class S3Storage:
             raise StorageError(f"S3 删除失败（{key}）：{exc}") from exc
 
     # ------------------------------------------------------------------ 读
+    async def exists(self, key: str) -> bool:
+        """`head_object`，不读 body。
+
+        只有 `404 / NoSuchKey`（各家实现写法不同，按状态码判最稳）算「不在」；
+        403（没权限）、502（网关）必须抛出去——把「问不到」当成「不存在」，
+        对账命令会去重建一批其实好好的对象，反而把问题盖住。
+        """
+        key = self._key(key)
+
+        def _head() -> None:
+            self._client.head_object(Bucket=self.settings.bucket, Key=key)
+
+        try:
+            await asyncio.to_thread(_head)
+        except ClientError as exc:
+            if _is_not_found(exc):
+                return False
+            raise StorageError(f"S3 探测失败（{key}）：{exc}") from exc
+        except BotoCoreError as exc:
+            raise StorageError(f"S3 探测失败（{key}）：{exc}") from exc
+        return True
+
     async def get(self, key: str) -> bytes:
         key = self._key(key)
 
@@ -187,6 +223,38 @@ class S3Storage:
         自己处理（拖动视频进度条直接命中桶，不需要先下载整个文件）。
         """
         return None
+
+    def iter_chunks(self, key: str, *, chunk_size: int = 1024 * 1024) -> AsyncIterator[bytes]:
+        """流式读对象。
+
+        `StreamingBody.read(n)` 是同步阻塞的，所以每一块都要丢线程池；整块 `read()`
+        就是 `get()`，那一条已经存在（要全部内容时用它，别用这个）。
+
+        **不额外打 HEAD 做存在性校验**：那要多一次往返，而 key 是我们自己写进去的，
+        真丢了属于部署事故。代价是「对象不存在」会在首次迭代时抛——此时 200 已经
+        发出去了，前端看到的是连接中断。宁可这样，也不让每次下载都多一跳。
+        """
+        return self._read_object(self._key(key), chunk_size)
+
+    async def _read_object(self, key: str, chunk_size: int) -> AsyncIterator[bytes]:
+        def _open() -> Any:
+            return self._client.get_object(Bucket=self.settings.bucket, Key=key)["Body"]
+
+        try:
+            body = await asyncio.to_thread(_open)
+        except (ClientError, BotoCoreError) as exc:
+            raise StorageError(f"S3 读取失败（{key}）：{exc}") from exc
+        try:
+            while True:
+                chunk = await asyncio.to_thread(body.read, chunk_size)
+                if not chunk:
+                    return
+                yield chunk
+        except (ClientError, BotoCoreError) as exc:
+            raise StorageError(f"S3 读取中断（{key}）：{exc}") from exc
+        finally:
+            # 客户端断开 / 生成器被 close 时都要释放连接，否则连接池会被慢慢耗尽
+            await asyncio.to_thread(body.close)
 
     @staticmethod
     def _key(key: str) -> str:

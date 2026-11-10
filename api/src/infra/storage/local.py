@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import re
+from collections.abc import AsyncIterator
 from pathlib import Path
 
 from core.config import settings
@@ -53,6 +54,10 @@ class LocalStorage:
             raise StorageError(f"对象不存在: {key}")
         return await asyncio.to_thread(path.read_bytes)
 
+    async def exists(self, key: str) -> bool:
+        """本地实现就是问一次文件系统；非法 key 仍由 `_resolve` 抛错。"""
+        return await asyncio.to_thread(self._resolve(key).is_file)
+
     async def delete(self, key: str) -> None:
         """删除对象；不存在时幂等返回（协议承诺）。
 
@@ -91,6 +96,29 @@ class LocalStorage:
         """本地对象本来就在盘上：直出路径，让 `FileResponse` 支持 Range。"""
         path = self._resolve(key)
         return path if path.is_file() else None
+
+    def iter_chunks(self, key: str, *, chunk_size: int = 1024 * 1024) -> AsyncIterator[bytes]:
+        """按块读盘。key 与存在性在这里就判掉：本地校验零成本，不必拖到迭代时才报。"""
+        path = self._resolve(key)
+        if not path.is_file():
+            raise StorageError(f"对象不存在: {key}")
+        return self._read_chunks(path, chunk_size)
+
+    @staticmethod
+    async def _read_chunks(path: Path, chunk_size: int) -> AsyncIterator[bytes]:
+        """读句柄放线程池里开、读、关：`open()` 与 `read()` 都是阻塞调用，
+        在事件循环里直接跑会把这个 worker 上其他请求一起卡住（下载大文件时最明显）。"""
+        handle = await asyncio.to_thread(path.open, "rb")
+        try:
+            while True:
+                chunk = await asyncio.to_thread(handle.read, chunk_size)
+                if not chunk:
+                    return
+                yield chunk
+        finally:
+            # 客户端中途断开时 `StreamingResponse` 会 close 生成器走这里；
+            # 不关句柄就会一直占着文件锁（Windows 上重命名 / 删除会失败）
+            await asyncio.to_thread(handle.close)
 
     @staticmethod
     def _copy_with_digest(source: Path, target: Path) -> str:
