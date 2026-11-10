@@ -6,6 +6,7 @@ import type {
   DownloadJobOut,
   LibraryAssetDetailOut,
   LibraryAssetPage,
+  LibraryTagStatOut,
   ShareRequestOut,
 } from '@/shared/api/schema';
 
@@ -70,6 +71,23 @@ describe('资产库 mock · 列表与可见范围', () => {
     expect(body.data.items?.every((item) => item.visibility === 'team')).toBe(true);
   });
 
+  it('显式 library=all 与省略同口径，覆盖三种可见范围且角标等于条数', async () => {
+    const all = await call<LibraryAssetPage>('GET', '/library/assets', {
+      params: { state: 'active', library: 'all', pageSize: 100 },
+    });
+    const omitted = await call<LibraryAssetPage>('GET', '/library/assets', {
+      params: { state: 'active', pageSize: 100 },
+    });
+    expect(all.body.data.total).toBe(omitted.body.data.total);
+    expect(all.body.data.facets?.all).toBe(all.body.data.total);
+
+    const items = all.body.data.items ?? [];
+    expect(items.every((item) => item.state === 'active')).toBe(true);
+    expect(new Set(items.map((item) => item.id)).size).toBe(items.length);
+    const visibilities = new Set(items.map((item) => item.visibility));
+    expect([...visibilities].sort()).toEqual(['group', 'personal', 'team']);
+  });
+
   it('分面统计与列表同源，且各字段都是非负整数', async () => {
     const { body } = await call<LibraryAssetPage>('GET', '/library/assets', {
       params: { state: 'active' },
@@ -123,6 +141,20 @@ describe('资产库 mock · 封装的口径', () => {
     expect(ids).toContain(created.body.data.id);
     expect(ids).not.toContain(members[0].id);
     expect(ids).not.toContain(members[1].id);
+  });
+
+  it('新建封装自动继承所有成员标签，与后端 sync_pack_tags 同口径', async () => {
+    const first = (await call<LibraryAssetDetailOut>('GET', '/library/assets/a101')).body.data;
+    const second = (await call<LibraryAssetDetailOut>('GET', '/library/assets/a102')).body.data;
+    const created = await call<LibraryAssetDetailOut>('POST', '/library/packs', {
+      data: { name: '继承标签封装', assetIds: [first.id, second.id] },
+    });
+    const names = (created.body.data.tags ?? []).map((tag) => tag.name);
+    for (const member of [first, second]) {
+      for (const tag of member.tags ?? []) expect(names).toContain(tag.name);
+    }
+    expect(names).toContain('封装');
+    expect(new Set(names).size).toBe(names.length);
   });
 
   it('选择器仍能挑到封装里的成员', async () => {
@@ -186,5 +218,40 @@ describe('资产库 mock · 写操作的语义', () => {
     const detail = await call<LibraryAssetDetailOut>('GET', '/library/assets/a101');
     expect(detail.body.data.visibility).toBe('group');
     expect(detail.body.data.groupIds).toContain('g2');
+  });
+});
+
+describe('资产库 mock · 标签栏计数', () => {
+  it('每个标签都带素材数与创建时间，按添加时间升序', async () => {
+    const { body } = await call<LibraryTagStatOut[]>('GET', '/library/tags', {
+      params: { state: 'active', library: 'personal' },
+    });
+    const tags = body.data;
+    expect(tags.length).toBeGreaterThan(0);
+    expect(tags.every((tag) => Number.isInteger(tag.assetCount ?? 0) && !!tag.createdAt)).toBe(true);
+    const created = tags.map((tag) => tag.createdAt);
+    expect(created).toEqual([...created].sort());
+  });
+
+  it('用 PATCH 去掉一个标签后，计数同步减少', async () => {
+    const scope = { state: 'active', library: 'personal' };
+    const before = (await call<LibraryTagStatOut[]>('GET', '/library/tags', { params: scope })).body.data;
+    const tag = before.find((item) => (item.assetCount ?? 0) > 0);
+    if (!tag) throw new Error('演示数据里应该有一个非空标签');
+
+    const listed = await call<LibraryAssetPage>('GET', '/library/assets', {
+      params: { ...scope, tagIds: [tag.id], pageSize: 100 },
+    });
+    const assetId = listed.body.data.items?.[0]?.id ?? '';
+    expect(assetId).toBeTruthy();
+
+    const detail = await call<LibraryAssetDetailOut>('GET', `/library/assets/${assetId}`);
+    const remaining = (detail.body.data.tags ?? [])
+      .filter((item) => item.id !== tag.id)
+      .map((item) => item.id);
+    await call('PATCH', `/library/assets/${assetId}`, { data: { tagIds: remaining } });
+
+    const after = (await call<LibraryTagStatOut[]>('GET', '/library/tags', { params: scope })).body.data;
+    expect(after.find((item) => item.id === tag.id)?.assetCount).toBe((tag.assetCount ?? 0) - 1);
   });
 });

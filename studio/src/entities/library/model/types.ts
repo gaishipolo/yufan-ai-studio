@@ -8,12 +8,17 @@ import type {
 /**
  * 资产库 v2 的视图模型。
  *
- * 五个一级入口里 `drafts` / `trash` 是**状态**，`personal` / `group` / `team`
- * 是**可见范围**；后端把它们拆成 `state` 与 `library` 两个参数（正交维度），
- * 界面上不做解释，只把两端（草稿、回收站）排在两边。转换集中在 `viewQuery`，
+ * 六个一级入口分两类：`all` / `personal` / `group` / `team` 是 `state=active`
+ * 下的可见范围（`library`），`drafts` / `trash` 是两个状态。后端把两者拆成正交
+ * 参数，界面上不做解释，只把草稿箱与回收站放在末尾。转换集中在 `viewQuery`，
  * 页面里不许自己拼 `state`，否则「草稿箱里出现小组资产」这类错会散落各处。
+ *
+ * `all` 不是「三份列表拼起来」，而是后端的全量可见集：本人未共享的 +
+ * 共享到我所在小组的 + 团队的，同一个素材只出现一次；装进可见封装的成员
+ * 也不单列。所以角标 `all` 可能小于三个入口角标之和（跨入口的封装成员会
+ * 在各自的入口里出现一次），这不是漏数据。
  */
-export type LibraryView = 'drafts' | 'personal' | 'group' | 'team' | 'trash';
+export type LibraryView = 'all' | 'personal' | 'group' | 'team' | 'drafts' | 'trash';
 
 export type KindFilter = 'all' | LibraryAssetKind;
 
@@ -24,13 +29,13 @@ export const VIEWS: ReadonlyArray<{
   label: string;
   hint: string;
   /** 分面字段：徽章数字的来源 */
-  facet: 'drafts' | 'personal' | 'group' | 'team' | 'trash';
+  facet: 'all' | 'personal' | 'group' | 'team' | 'drafts' | 'trash';
 }> = [
   {
-    value: 'drafts',
-    label: '草稿箱',
-    hint: 'AI 生成结果先落这里，确认后才进个人库',
-    facet: 'drafts',
+    value: 'all',
+    label: '全部素材',
+    hint: '当前账号能见的个人、小组、团队素材，同一素材不重复',
+    facet: 'all',
   },
   {
     value: 'personal',
@@ -46,6 +51,12 @@ export const VIEWS: ReadonlyArray<{
   },
   { value: 'team', label: '团队', hint: '全员可见，任何人不含上传者都不可直接删除', facet: 'team' },
   {
+    value: 'drafts',
+    label: '草稿箱',
+    hint: 'AI 生成结果先落这里，确认后才进个人库',
+    facet: 'drafts',
+  },
+  {
     value: 'trash',
     label: '回收站',
     hint: '保留 30 天，被引用的条目不自动清理',
@@ -55,20 +66,22 @@ export const VIEWS: ReadonlyArray<{
 
 const VIEW_VALUES = new Set<string>(VIEWS.map((item) => item.value));
 
-/** URL 里的 `view` 不可信：刷新、手改、旧链接都要落回一个合法值 */
+/** URL 里的 `view` 不可信：刷新、手改、旧链接都要落回第一个入口 */
 export function parseView(raw: string | null): LibraryView {
-  return raw && VIEW_VALUES.has(raw) ? (raw as LibraryView) : 'personal';
+  return raw && VIEW_VALUES.has(raw) ? (raw as LibraryView) : 'all';
 }
 
 export function viewMeta(view: LibraryView) {
-  return VIEWS.find((item) => item.value === view) ?? VIEWS[1];
+  return VIEWS.find((item) => item.value === view) ?? VIEWS[0];
 }
 
 /**
  * 视图 → 列表查询参数。
  *
  * `drafts` / `trash` 不走可见范围：它们各自被权限点限定（`draft:review` /
- * `delete:any`），传 `library` 只会让后端多算一遍却不用它。
+ * `delete:any`），传 `library` 只会让后端多算一遍却不用它。其余四个视图的
+ * 字面量与后端 `LibraryTab` 一一对应，`all` 显式传给列表和标签栏，保证
+ * 「标签写 N，点进去就是 N 条」用的是同一套口径。
  */
 export function viewQuery(view: LibraryView): {
   state: LibraryAssetState;
@@ -79,9 +92,15 @@ export function viewQuery(view: LibraryView): {
   return { state: 'active', library: view };
 }
 
-/** 这个视图里能不能出现「上传 / 封装」主按钮 */
+/**
+ * 这个视图里能不能出现「上传 / 封装」主按钮。
+ *
+ * 上传写的是**个人库**、封装选择器的可见集一直是全量，两者都与「当前在看哪
+ * 个入口」无关；默认 landing 在「全部素材」，按钮藏起来只会让人以为不能上传。
+ * 草稿箱来自生成入库、回收站里的东西不该再被建封装，这两个仍不显示。
+ */
 export function viewAllowsCreate(view: LibraryView): boolean {
-  return view === 'personal';
+  return view === 'all' || view === 'personal';
 }
 
 /**
@@ -131,6 +150,23 @@ export const VISIBILITY_LABEL: Record<string, string> = {
   group: '小组',
   team: '团队',
 };
+
+/**
+ * 展示用的名称：去掉格式后缀。
+ *
+ * 后缀是**文件自己的属性**，用户改不了（后端 `keep_extension` 会把后缀拼回
+ * 记录原有的那个，见 `api/tests/test_library_naming.py`）。界面上再把 `.png`
+ * 摆在名字里，只会让人以为那一段可以编辑——所以卡片、详情标题、选择器统一
+ * 用这个函数，只改主体。
+ *
+ * 只剥「像扩展名」的尾段：带字母、1-5 位。`v1.2`、`主图-2.0` 里的点不是后缀，
+ * 剥掉会把名字改残；`.png` 这种「整个名字就是后缀」的，剥完为空，退回原样。
+ */
+const SUFFIX_SHAPE = /\.[A-Za-z][A-Za-z0-9]{0,4}$/;
+
+export function displayName(name: string): string {
+  return name.replace(SUFFIX_SHAPE, '') || name;
+}
 
 /**
  * 删除按钮该给什么。

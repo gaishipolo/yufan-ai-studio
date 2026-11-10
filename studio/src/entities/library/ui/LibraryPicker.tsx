@@ -5,7 +5,7 @@ import { cn } from '@/shared/lib/cn';
 import { useDebouncedValue } from '@/shared/hooks/useDebouncedValue';
 import type { LibraryAssetKind, LibraryAssetOut } from '@/shared/api/schema';
 import { useLibrarySelection } from '../api/library.queries';
-import { KIND_LABEL } from '../model/types';
+import { KIND_LABEL, displayName } from '../model/types';
 
 export interface LibraryPickerProps {
   open: boolean;
@@ -153,7 +153,7 @@ export function LibraryPicker({
                   )}
                 >
                   <CoverImage src={asset.coverUrl ?? undefined} seed={asset.id} className="aspect-[4/3] rounded-md" />
-                  <div className="mt-1 truncate text-[11.5px] text-ink">{asset.name}</div>
+                  <div className="mt-1 truncate text-[11.5px] text-ink">{displayName(asset.name)}</div>
                   <div className="truncate text-[10.5px] text-ink-mute">{KIND_LABEL[asset.kind]}</div>
                   {active && (
                     <span className="absolute right-1.5 top-1.5 grid size-[18px] place-items-center rounded-full bg-primary text-white">

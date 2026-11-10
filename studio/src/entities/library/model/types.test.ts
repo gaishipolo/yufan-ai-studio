@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
+  VIEWS,
   deleteOffer,
   isTrashExpired,
   parseView,
   trashDaysLeft,
   viewAllowsCreate,
+  viewMeta,
   viewQuery,
 } from './types';
 
@@ -20,25 +22,50 @@ function asset(overrides: Partial<{ ownerId: string; visibility: string; state: 
 }
 
 describe('视图与查询参数的映射', () => {
+  it('入口顺序：总览在前，草稿箱与回收站挪到末尾', () => {
+    expect(VIEWS.map((item) => item.label)).toEqual([
+      '全部素材',
+      '个人',
+      '小组',
+      '团队',
+      '草稿箱',
+      '回收站',
+    ]);
+    // 徽章取各自的分面字段，「全部素材」不能误用 personal 的数字
+    expect(VIEWS.map((item) => item.facet)).toEqual([
+      'all',
+      'personal',
+      'group',
+      'team',
+      'drafts',
+      'trash',
+    ]);
+  });
+
   it('草稿箱与回收站只传 state，不传可见范围', () => {
     expect(viewQuery('drafts')).toEqual({ state: 'draft' });
     expect(viewQuery('trash')).toEqual({ state: 'trash' });
   });
 
-  it('个人 / 小组 / 团队是 state=active + library', () => {
+  it('全部 / 个人 / 小组 / 团队是 state=active + library', () => {
+    expect(viewQuery('all')).toEqual({ state: 'active', library: 'all' });
     expect(viewQuery('personal')).toEqual({ state: 'active', library: 'personal' });
     expect(viewQuery('group')).toEqual({ state: 'active', library: 'group' });
     expect(viewQuery('team')).toEqual({ state: 'active', library: 'team' });
   });
 
-  it('非法 view 落回个人库，而不是白屏', () => {
-    expect(parseView(null)).toBe('personal');
-    expect(parseView('nope')).toBe('personal');
-    expect(parseView('trash')).toBe('trash');
+  it('非法 view 落回全部素材，而不是白屏', () => {
+    expect(parseView(null)).toBe('all');
+    expect(parseView('nope')).toBe('all');
+    expect(parseView('personal')).toBe('personal');
+    expect(viewMeta('nope' as never).label).toBe('全部素材');
   });
 
-  it('只有个人入口能出现上传与封装', () => {
+  it('总览与个人入口能上传、能建封装，其余入口不出现按钮', () => {
+    expect(viewAllowsCreate('all')).toBe(true);
     expect(viewAllowsCreate('personal')).toBe(true);
+    expect(viewAllowsCreate('group')).toBe(false);
+    expect(viewAllowsCreate('team')).toBe(false);
     expect(viewAllowsCreate('drafts')).toBe(false);
     expect(viewAllowsCreate('trash')).toBe(false);
   });

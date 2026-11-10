@@ -3,7 +3,7 @@ import type {
   LibraryAssetDetailOut,
   LibraryAssetOut,
   LibraryGroupOut,
-  LibraryTagOut,
+  LibraryTagStatOut,
   ShareRequestOut,
 } from '@/shared/api/schema';
 
@@ -23,16 +23,31 @@ const DAY = 86_400_000;
 const now = Date.now();
 const iso = (offsetDays = 0) => new Date(now + offsetDays * DAY).toISOString();
 
-const TAGS: LibraryTagOut[] = [
-  { id: 't1', name: '人物' },
-  { id: 't2', name: '产品' },
-  { id: 't3', name: '场景' },
+/** 词表按添加时间排：t1 最早、t4 最后，与后端 `list_tags` 的排序一致。 */
+const TAGS: LibraryTagStatOut[] = [
+  { id: 't1', name: '人物', assetCount: 0, createdAt: iso(-8) },
+  { id: 't2', name: '产品', assetCount: 0, createdAt: iso(-6) },
+  { id: 't3', name: '场景', assetCount: 0, createdAt: iso(-4) },
 ];
 
 /** 封装自动带上的标签（后端 `PACK_TAG_NAME`）。类型筛选里没有「封装」这一档。 */
-const PACK_TAG: LibraryTagOut = { id: 't4', name: '封装' };
+const PACK_TAG: LibraryTagStatOut = { id: 't4', name: '封装', assetCount: 0, createdAt: iso(-2) };
 TAGS.push(PACK_TAG);
 
+/** 与后端 `sync_pack_tags` 同口径：封装带「封装」+ 用户手选的 + 所有成员标签，去重。 */
+function packTags(
+  members: LibraryAssetDetailOut[],
+  extra: string[] = [],
+): LibraryTagStatOut[] {
+  const ids = new Set<string>([PACK_TAG.id, ...extra]);
+  for (const item of members) {
+    for (const tag of item.tags ?? []) ids.add(tag.id);
+  }
+  return TAGS.filter((tag) => ids.has(tag.id));
+}
+
+/** `isLeader` 现在只服务删除窄口（§3.4.1）；审批资格按权限点与目标范围判，
+ *  和这个字段无关——mock 没有当前用户的权限模型，申请单列表也就不按组长筛。 */
 const GROUPS: LibraryGroupOut[] = [
   { id: 'g1', name: '品牌组', isLeader: true },
   { id: 'g2', name: '短视频组', isLeader: false },
@@ -231,7 +246,9 @@ function seed() {
     tags: [PACK_TAG],
     references: [],
   });
-  pack.packItems = ASSETS.slice(0, 2).map((item, index) => ({
+  const seededMembers = ASSETS.slice(0, 2);
+  pack.tags = packTags(seededMembers);
+  pack.packItems = seededMembers.map((item, index) => ({
     assetId: item.id,
     name: item.name,
     kind: item.kind,
@@ -345,7 +362,8 @@ function visible(row: LibraryAssetDetailOut, library: string | undefined) {
   if (library === 'personal') return row.visibility === 'personal' && row.ownerId === ME;
   if (library === 'group') return row.visibility === 'group' && inMyGroups(row);
   if (library === 'team') return row.visibility === 'team';
-  // 全部：我的（未共享）+ 共享到我所在小组的 + 团队。
+  // 全部：省略 `library` 与显式 `library=all` 都走这一支（后端 LibraryTab.ALL
+  // 是 `tab_clause` 的 fallback）。我的（未共享）+ 共享到我所在小组的 + 团队。
   // 不能写成 `ownerId === ME || visibility !== 'personal'`：那样别人共享到
   // **我不在的**小组的资产也会出现（后端 `active_visible_clause` 不是这么判的）。
   if (row.ownerId === ME && row.visibility === 'personal') return true;
@@ -427,6 +445,25 @@ function listOf(
   const pageSize = Math.max(1, Number(params.pageSize ?? 24) || 24);
   const items = rows.slice((page - 1) * pageSize, page * pageSize).map(toOut);
   return { items, total: rows.length, page, pageSize, ...(withFacets ? { facets: facets() } : {}) };
+}
+
+/** 标签栏计数：与 `listOf` 同一套入口口径（含「封装成员不单列」）。 */
+function tagStats(ctx: MockContext): LibraryTagStatOut[] {
+  const state = String(ctx.params.state ?? 'active');
+  const library = ctx.params.library ? String(ctx.params.library) : undefined;
+  let rows = ASSETS.filter((row) => row.state === state);
+  if (state === 'active') {
+    rows = rows.filter((row) => visible(row, library));
+    const packed = packedMemberIds(library);
+    rows = rows.filter((row) => !packed.has(row.id));
+  }
+  const counts = new Map<string, number>();
+  for (const row of rows) {
+    for (const tag of row.tags ?? []) counts.set(tag.id, (counts.get(tag.id) ?? 0) + 1);
+  }
+  return TAGS.map((tag) => ({ ...tag, assetCount: counts.get(tag.id) ?? 0 })).sort(
+    (a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id),
+  );
 }
 
 const nowIso = () => new Date().toISOString();
@@ -672,7 +709,7 @@ export const routes: MockRoute[] = [
         name: String(ctx.body.name ?? '新封装'),
         kind: 'pack',
         mimeType: 'application/x-directory',
-        tags: [PACK_TAG],
+        tags: packTags(members, (ctx.body.tagIds as string[]) ?? []),
         createdAt: nowIso(),
         sizeBytes: members.reduce((sum, item) => sum + (item.sizeBytes ?? 0), 0),
       });
@@ -835,7 +872,7 @@ export const routes: MockRoute[] = [
   { method: 'GET', pattern: /^\/library\/groups$/, handler: () => (GROUPS) },
   { method: 'PUT', pattern: /^\/library\/groups\/([^/]+)\/leaders$/, handler: () => ([]) },
 
-  { method: 'GET', pattern: /^\/library\/tags$/, handler: () => (TAGS) },
+  { method: 'GET', pattern: /^\/library\/tags$/, handler: (ctx) => (tagStats(ctx)) },
   {
     method: 'POST',
     pattern: /^\/library\/tags$/,
@@ -843,7 +880,12 @@ export const routes: MockRoute[] = [
       const name = String(ctx.body.name ?? '').trim();
       const existing = TAGS.find((tag) => tag.name === name);
       if (existing) return (existing);
-      const tag = { id: `t${TAGS.length + 1}`, name };
+      const tag: LibraryTagStatOut = {
+        id: `t${TAGS.length + 1}`,
+        name,
+        assetCount: 0,
+        createdAt: nowIso(),
+      };
       TAGS.push(tag);
       return (tag);
     },

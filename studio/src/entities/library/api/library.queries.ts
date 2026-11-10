@@ -10,7 +10,7 @@ import type {
 } from '@/shared/api/schema';
 import { ApiError } from '@/shared/api/types';
 import { saveBlob } from '@/shared/lib/download';
-import { libraryApi, type LibraryListParams } from './library.api';
+import { libraryApi, type LibraryListParams, type LibraryTagScope } from './library.api';
 
 /**
  * 查询键第一段固定 `library`：并存期要能一次失效整块，且不能误伤
@@ -24,7 +24,9 @@ export const libraryKeys = {
   details: () => [...libraryKeys.all, 'detail'] as const,
   detail: (id: string) => [...libraryKeys.details(), id] as const,
   media: (id: string) => [...libraryKeys.all, 'media', id] as const,
+  /** 前缀：切入口只是换了计数范围，任一次写操作都要把所有范围的缓存失效 */
   tags: () => [...libraryKeys.all, 'tags'] as const,
+  tagList: (scope: LibraryTagScope) => [...libraryKeys.tags(), scope] as const,
   groups: () => [...libraryKeys.all, 'groups'] as const,
   downloads: () => [...libraryKeys.all, 'downloads'] as const,
   download: (id: string) => [...libraryKeys.all, 'download', id] as const,
@@ -59,8 +61,13 @@ export function useLibraryDetail(id: string | null) {
   });
 }
 
-export function useLibraryTags() {
-  return useQuery({ queryKey: libraryKeys.tags(), queryFn: libraryApi.tags, staleTime: 60_000 });
+/** 标签计数按入口变化，所以 scope 进 queryKey；不保留上一屏，避免个人/小组数字串味。 */
+export function useLibraryTags(scope: LibraryTagScope) {
+  return useQuery({
+    queryKey: libraryKeys.tagList(scope),
+    queryFn: () => libraryApi.tags(scope),
+    staleTime: 30_000,
+  });
 }
 
 /** 选择器：硬过滤 `state=active`，封装也不出现在候选里（禁嵌套） */
@@ -82,13 +89,14 @@ export function useMyGroups() {
   return useQuery({ queryKey: libraryKeys.groups(), queryFn: libraryApi.groups, staleTime: 60_000 });
 }
 
-/** 列表 / 分面 / 详情一起失效：写操作会同时改数目与内容 */
+/** 列表 / 分面 / 详情 / 标签计数一起失效：打标与去标会同时改这四处 */
 function useInvalidateLibrary() {
   const client = useQueryClient();
   return () => {
     void client.invalidateQueries({ queryKey: libraryKeys.lists() });
     void client.invalidateQueries({ queryKey: libraryKeys.facets() });
     void client.invalidateQueries({ queryKey: libraryKeys.details() });
+    void client.invalidateQueries({ queryKey: libraryKeys.tags() });
   };
 }
 

@@ -13,6 +13,7 @@ import type {
   LibraryGroupOut,
   LibrarySelectionPage,
   LibraryTagOut,
+  LibraryTagStatOut,
   ShareDecisionIn,
   ShareRequestIn,
   ShareRequestOut,
@@ -38,6 +39,9 @@ export function toRequestParams(params: LibraryListParams): Record<string, unkno
   const { view, ...rest } = params;
   return { ...viewQuery(view), ...rest };
 }
+
+/** 标签栏的计数范围：与列表同一个视图，避免「写 8 点进去只有 3 条」。 */
+export type LibraryTagScope = ReturnType<typeof viewQuery>;
 
 export const libraryApi = {
   list: (params: LibraryListParams) =>
@@ -145,7 +149,9 @@ export const libraryApi = {
 
   groups: () => api.get<LibraryGroupOut[]>(`/library/groups`),
 
-  tags: () => api.get<LibraryTagOut[]>(`/library/tags`),
+  /** 标签词表 + 当前入口下每个标签的素材数（按添加时间排序由后端保证）。 */
+  tags: (scope: LibraryTagScope) =>
+    api.get<LibraryTagStatOut[]>(`/library/tags`, scope),
 
   createTag: (name: string) => api.post<LibraryTagOut>(`/library/tags`, { name }),
 };
