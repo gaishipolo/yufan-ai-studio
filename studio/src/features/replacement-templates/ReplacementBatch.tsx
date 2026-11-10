@@ -17,7 +17,7 @@ export function ReplacementBatch({model}: {model: ReplacementWorkbench}) {
   const prepare = usePrepareReplacement();
   const lock = useRef(false);
   async function start() {
-    if (lock.current || model.busy || model.missing || !model.selectedPack) return;
+    if (lock.current || model.busy || model.missing || (!model.isTextScene && !model.selectedPack)) return;
     lock.current = true; setRunning(true); model.setBatchPreparing(true);
     const items: BatchRow[] = Object.entries(selected).map(([id, name]) => ({id, name, state: 'pending'}));
     setRows(items);
@@ -28,10 +28,13 @@ export function ReplacementBatch({model}: {model: ReplacementWorkbench}) {
           mark(row.id, {state: 'failed', error: '当前封装功能只适用于绑定的原片，请为该原片单独选择功能'});
           break;
         }
-        const config = {kind: model.kind, sourceId: row.id, packId: model.selectedPack.id,
+        const config = {channel: model.channel, kind: model.kind, sourceId: row.id, packId: model.isTextScene ? null : model.selectedPack?.id,
           videoTemplateId: model.boundTemplate?.id,
-          packVersion: model.selectedPack.version || 1, replacementScope: model.scopes.join('、'),
-          notes: model.notes, aspectRatio: 'adaptive' as const};
+          extraPackIds: model.slots > 1 ? model.slotPacks.slice(1).filter(Boolean) : [],
+          extraPackVersions: model.slots > 1 ? model.chosenPacks.slice(1).map(pack => pack.version || 1) : [],
+          packVersion: model.isTextScene ? null : model.selectedPack?.version || 1, replacementScope: model.showScope ? model.scopes.join('、') : '',
+          ...(model.isTextScene ? {scenePrompt: model.scenePrompt} : {}),
+          notes: model.isTextScene ? '' : model.notes, aspectRatio: 'adaptive' as const};
         const key = JSON.stringify(config);
         let saved = completed.current.get(key);
         if (saved && model.catalog.data?.runs.some(run => run.id === saved && run.deletedAt)) {completed.current.delete(key); requests.current.delete(key); saved = undefined;}

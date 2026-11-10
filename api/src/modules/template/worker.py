@@ -14,9 +14,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+from uuid import uuid4
 
 from core.config import settings
-from core.exceptions import Conflict, Unavailable, UpstreamError
+from core.exceptions import Conflict, NotFound, Unavailable, UpstreamError
 from core.logging import get_logger
 from core.metrics import METRICS
 from core.ports.accounts import account_is_active
@@ -24,8 +25,10 @@ from generation.runner import get_runner
 from infra import get_queue
 from infra.ai.libtv import execute_stage
 from infra.archive import get_archive_storage
+from infra.archive.base import lease
 from infra.queue.base import Job
 from modules.template.authorization import authorization_gap
+from modules.template.channels import CHANNEL_MODELS, run_channel
 from modules.template.models import ReplacementRun
 from modules.template.pipeline import KIND_REPLACEMENT
 from modules.template.repository import RunRepository
@@ -237,6 +240,8 @@ async def set_billing_mode(session, run_id: str, owner: str, mode: str) -> None:
         raise Conflict("计费模式无效")
     repo = RunRepository(session)
     run = await repo.get_or_404(run_id, owner=owner)
+    if run_channel(run.configuration) != "libtv":
+        raise Conflict("百炼渠道按阿里云 API 账单计费，不支持 LibTV 积分队列")
     # 已提交上游 = 队列锁定，但「再点一次确认」不该被拦成错误：前端重新提交时会
     # 带上记录里的模式，那不是切换，用户要的只是看进度。只有「把一条已在免费队列
     # 的任务改成积分」才是真冲突，因为它要花钱。
@@ -264,6 +269,7 @@ async def schedule_state(session, run_id: str, owner: str) -> str:
     """决定这次「继续」该做什么：`done` / `poll` / `prepare`。"""
     repo = RunRepository(session)
     run = await repo.get_or_404(run_id, owner=owner)
+    await _restore_bailian_receipt(session, repo, run)
     if run.status == "success":
         return "done"
     if not run.task_id and (run.status == "submission_unknown" or run.submit_attempts > 0):
@@ -309,6 +315,7 @@ async def reconfirm_state(
     """
     repo = RunRepository(session)
     run = await repo.get_or_404(run_id, owner=owner)
+    await _restore_bailian_receipt(session, repo, run)
     if run.task_id:
         # 已有回执：该走「继续」续查询，而不是重提一遍（重提就是第二次计费）
         raise Conflict("该调用已有上游任务号，请直接继续查询结果")
@@ -419,6 +426,7 @@ async def prepare_upload(job: Job) -> None:
         if run is None:
             logger.info("准备作业放弃：记录已不存在 run_id=%s", run_id)
             return
+        await _restore_bailian_receipt(session, repo, run)
         if run.task_id:
             await get_runner().resume(KIND_REPLACEMENT, run_id)
             return
@@ -440,6 +448,28 @@ async def prepare_upload(job: Job) -> None:
 
         path = await asyncio.to_thread(run_path, run_id)
         await asyncio.to_thread(_sync_out, run, path)
+        if run_channel(run.configuration) != "libtv":
+            from infra.ai.bailian import prepare_inputs
+
+            try:
+                await prepare_inputs(run_id, model=CHANNEL_MODELS[run_channel(run.configuration)])
+            except Exception:
+                logger.exception("百炼素材上传失败 run_id=%s", run_id)
+                set_status(run, "service_error")
+                run.error_code = "BAILIAN_UPLOAD_FAILED"
+                run.last_error = "百炼素材上传或校验未完成，尚未提交生成；请核对素材后继续"
+                await repo.save(run)
+                await session.commit()
+                return
+            run.status = "uploaded"
+            run.retry_count = 0
+            if await _stop_if_unauthorized(session, repo, run):
+                return
+            run.framework_status = "queued"
+            await repo.save(run)
+            await session.commit()
+            await get_runner().dispatch(KIND_REPLACEMENT, run_id)
+            return
         result = await execute_stage(run_id, "upload")
 
         run = await repo.get_or_404(run_id)
@@ -578,6 +608,7 @@ async def recover_state(session, run_id: str) -> str:
     run = await repo.get(run_id)
     if run is None:
         return "done"
+    await _restore_bailian_receipt(session, repo, run)
     if run.task_id and run.status != "success":
         run.framework_status = "running"
         await repo.save(run)
@@ -592,6 +623,46 @@ async def recover_state(session, run_id: str) -> str:
     elif run.status in ("queued", "uploading", "uploaded", "waiting_executor", "prepared"):
         return "prepare"
     return "done"
+
+
+async def _restore_bailian_receipt(session, repo, run: ReplacementRun) -> None:
+    """Reattach an accepted upstream task if the process died before DB acknowledgement."""
+    if run.task_id or run_channel(run.configuration) == "libtv":
+        return
+    try:
+        path = await asyncio.to_thread(run_path, run.id)
+        raw = await asyncio.to_thread(
+            (path / "records/bailian-submission.json").read_text, encoding="utf-8"
+        )
+        receipt = json.loads(raw)
+    except (OSError, ValueError, NotFound):
+        return
+    task_id = receipt.get("task_id") or (receipt.get("output") or {}).get("task_id")
+    if not isinstance(task_id, str) or not task_id:
+        return
+    run.task_id = task_id
+    run.submit_attempts = 0
+    run.submit_mode = "async"
+    run.framework_status = "running"
+    if run.status in SETTLED_STATUSES:
+        begin(run)
+    set_status(run, "running")
+    run.last_error = None
+    await repo.save(run)
+    await session.commit()
+
+
+def archive_bailian_unknown_receipt(run_id: str) -> None:
+    """Only call after explicit paid-retry confirmation has been audited."""
+    path = run_path(run_id)
+    with lease(path / "records/bailian-submit.lock"):
+        receipt = path / "records/bailian-submission.json"
+        if not receipt.is_file():
+            return
+        payload = json.loads(receipt.read_text(encoding="utf-8"))
+        if payload.get("task_id") or (payload.get("output") or {}).get("task_id"):
+            raise Conflict("百炼已有上游任务号，请继续查询原任务，不能重新提交")
+        receipt.rename(path / f"records/bailian-reconfirmed-{uuid4().hex}.json")
 
 
 @register_handler("template.replacement.recover")
@@ -649,8 +720,21 @@ async def resume() -> None:
         return
     try:
         async with get_session_factory()() as session:
-            rows = await RunRepository(session).list_unfinished(list(UNFINISHED_STATUSES))
-            ids = [row.id for row in rows if row.status not in SETTLED_STATUSES]
+            repo = RunRepository(session)
+            rows = await repo.list_unfinished(
+                list((UNFINISHED_STATUSES | SETTLED_STATUSES) - {"success"})
+            )
+            ids = []
+            for row in rows:
+                # Only a durable accepted Bailian receipt may reopen a settled DB row.
+                # Unknown receipts remain settled and never create another paid task.
+                if row.status in SETTLED_STATUSES:
+                    if row.task_id or row.status == "success":
+                        continue
+                    await _restore_bailian_receipt(session, repo, row)
+                    if not row.task_id:
+                        continue
+                ids.append(row.id)
     except (UpstreamError, OSError):
         logger.warning("数据库暂不可用，替换任务等待恢复")
         return

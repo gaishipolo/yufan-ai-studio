@@ -188,6 +188,15 @@ def client_for(server):
     return PackagingClient("http://test/api/v1", "secret", transport=httpx.MockTransport(server))
 
 
+def test_client_does_not_inherit_tls_key_logging_environment(tmp_path, monkeypatch):
+    target = tmp_path / "absent-directory" / "tls-keys.log"
+    monkeypatch.setenv("SSLKEYLOGFILE", str(target))
+    # 不发出任何网络请求；初始化不能因调试环境变量向外写文件。
+    with PackagingClient("http://127.0.0.1:8080/api/v1", "secret") as api:
+        assert api.base_url.endswith("/api/v1")
+    assert not target.exists()
+
+
 def test_two_functions_share_source_and_pack_and_rerun_without_writes(tmp_path):
     loaded = load_manifest(manifest_file(tmp_path))
     server = Server()

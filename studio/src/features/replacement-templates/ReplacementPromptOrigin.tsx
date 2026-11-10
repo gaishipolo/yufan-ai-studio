@@ -14,6 +14,9 @@ export function ReplacementPromptOrigin({run}: {run: ReplacementRun}) {
     </p>;
   }
   const name = run.videoTemplateName?.trim();
+  if (run.inputSummary?.scenePrompt) return <p className="rounded-lg bg-primary/5 p-3 text-xs text-ink-soft">
+    来源：{name ? `视频模板「${name}」` : '已封装的视频模板'}，已填入本次场景描述；其余固定约束保持原文。
+  </p>;
   return <p className="rounded-lg bg-primary/5 p-3 text-xs text-ink-soft">
     来源：{name ? `视频模板「${name}」` : '已封装的视频模板'}的固定提示词，逐字提交，未改写。
   </p>;

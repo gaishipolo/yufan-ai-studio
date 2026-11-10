@@ -10,6 +10,7 @@ export function ReplacementAccelerate({run, model}: {run: ReplacementRun; model:
   const {submitting, submitRun} = model;
   /* 已提交上游、已删除、已经选了积分队列的任务不再给这个入口：
      前两者改不了计费模式，后者正在用积分跑，再点一次只会重复提交。 */
+  if (run.channel && run.channel !== 'libtv') return null;
   if (run.status !== 'waiting_free' || run.taskId || run.deletedAt || run.billingMode === 'credits') return null;
   const credits = run.estimatedCredits;
   const quoted = typeof credits === 'number' && credits > 0;

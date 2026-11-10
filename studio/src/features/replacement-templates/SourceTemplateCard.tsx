@@ -5,6 +5,7 @@ import { replacementFitness } from '@/entities/asset/model/archive-fit';
 import { ArchivedThumbnail } from '@/entities/asset/ui/ArchivedThumbnail';
 import { cn } from '@/shared/lib/cn';
 import { SourceHoverPreview } from './SourceHoverPreview';
+import { Button } from '@/shared/ui';
 
 interface SourceTemplateCardProps {
   video: ArchivedAsset;
@@ -12,9 +13,10 @@ interface SourceTemplateCardProps {
   disabled?: boolean;
   badge?: string;
   onToggle: () => void;
+  onViewPrompt?: () => void;
 }
 
-export function SourceTemplateCard({ video, selected, disabled, badge, onToggle }: SourceTemplateCardProps) {
+export function SourceTemplateCard({ video, selected, disabled, badge, onToggle, onViewPrompt }: SourceTemplateCardProps) {
   const [preview, setPreview] = useState(false);
   const duration = video.duration ?? 0;
   const width = video.width ?? 0;
@@ -49,5 +51,6 @@ export function SourceTemplateCard({ video, selected, disabled, badge, onToggle 
         <p>{valid ? '保留分镜与动作 · 自由替换' : reason}</p>
       </div>
     </button>
+    {onViewPrompt && <div className="border-t border-line-soft px-3 py-2"><Button size="sm" variant="ghost" aria-label={`查看提示词：${video.name}`} onClick={onViewPrompt}>查看提示词</Button></div>}
   </article>;
 }

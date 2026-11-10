@@ -2,7 +2,7 @@
 
 > 此文件由 `app export-openapi` 自动生成，请勿手工编辑。
 >
-> 版本 `0.2.0`｜共 **130** 个接口 / **11** 个模块
+> 版本 `0.2.0`｜共 **132** 个接口 / **11** 个模块
 >
 > 重新生成：`cd api && .venv/Scripts/python -m cli export-openapi`
 
@@ -236,7 +236,7 @@ Authorization: Bearer <accessToken>
 | 模型 | 1 | 见下方 `4.3` |
 | 素材 | 12 | 见下方 `4.4` |
 | 生图 | 3 | 见下方 `4.5` |
-| 模板 | 21 | 见下方 `4.6` |
+| 模板 | 23 | 见下方 `4.6` |
 | 分镜模板 | 1 | 见下方 `4.7` |
 | 镜头库 | 1 | 见下方 `4.8` |
 | 系统 | 2 | 见下方 `4.9` |
@@ -1771,7 +1771,7 @@ Authorization: Bearer <accessToken>
 | `id` | `string` | 是 | 生图记录 ID |
 | `status` | `string` | 是 | 重试后的状态，固定为 `queued` |
 
-### 4.6 模板（21 个）
+### 4.6 模板（23 个）
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
@@ -1787,6 +1787,7 @@ Authorization: Bearer <accessToken>
 | `GET` | `/api/v1/templates/replacement-runs/{run_id}` | 替换任务状态与提示词 | 🔒 |
 | `POST` | `/api/v1/templates/replacement-runs/{run_id}/execute` | 提交替换任务；billingMode=credits 表示本任务用积分加速 | 🔒 |
 | `GET` | `/api/v1/templates/replacement-runs/{run_id}/inputs/{asset_id}` | 读取当次归档输入快照 | 🔒 |
+| `GET` | `/api/v1/templates/replacement-runs/{run_id}/inputs/{asset_id}/thumbnail` | 读取当次输入快照缩略图 | 🔒 |
 | `GET` | `/api/v1/templates/replacement-runs/{run_id}/output` | 预览或下载原始生成结果 | 🔒 |
 | `POST` | `/api/v1/templates/replacement-runs/{run_id}/reconfirm` | 确认上次提交可能已计费后放行重提（默认拒绝） | 🔒 |
 | `POST` | `/api/v1/templates/replacement-runs/{run_id}/restore` | 恢复本人回收站中的替换任务与调用档案 | 🔒 |
@@ -1796,6 +1797,7 @@ Authorization: Bearer <accessToken>
 | `GET` | `/api/v1/templates/video-templates/{template_id}` | 视频模板详情（含提示词与媒体顺序） | 🔒 |
 | `POST` | `/api/v1/templates/video-templates/{template_id}/attach-source` | 绑定样片原片资产 | 🔒 |
 | `POST` | `/api/v1/templates/video-templates/{template_id}/pin` | 设为固定蓝本（全库仅一个） | 🔒 |
+| `PATCH` | `/api/v1/templates/video-templates/{template_id}/prompt` | 改固定提示词（媒体清单与素材包不动） | 🔒 |
 
 #### `GET /api/v1/templates/replacement-catalog`
 
@@ -1805,6 +1807,7 @@ Authorization: Bearer <accessToken>
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
+| `channels` | `ReplacementChannelOut[]` | 否 |  |
 | `provider` | `string` | 否 |  |
 | `maxCredits` | `number` | 否 |  |
 | `kinds` | `string[]` | 否 |  |
@@ -1983,11 +1986,15 @@ Authorization: Bearer <accessToken>
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `requestId` | `string` | 是 |  |
+| `channel` | `"libtv" \| "bailian" \| "bailian-prime"` | 否 |  |
 | `kind` | `"character" \| "product" \| "scene"` | 是 |  |
 | `target` | `string` | 否 |  |
 | `sourceId` | `string` | 是 |  |
 | `videoTemplateId` | `string \| null` | 否 |  |
+| `scenePrompt` | `string \| null` | 否 | 文字换场景的描述；省略使用模板默认值，空白拒绝 |
 | `referenceIds` | `string[]` | 否 |  |
+| `extraPackIds` | `string[]` | 否 | 第 2 位及以后的素材包 id，按提示词槽位顺序；第一包仍用 packId |
+| `extraPackVersions` | `number[]` | 否 | 与 extraPackIds 顺序对应的发布版本；旧调用省略时由服务端解析并冻结 |
 | `wardrobeMode` | `"preserve" \| "reference"` | 否 |  |
 | `replacementScope` | `string` | 否 |  |
 | `notes` | `string` | 否 |  |
@@ -2000,10 +2007,12 @@ Authorization: Bearer <accessToken>
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `id` | `string` | 是 |  |
+| `channel` | `"libtv" \| "bailian" \| "bailian-prime"` | 否 |  |
+| `channelLabel` | `string` | 否 |  |
 | `kind` | `"character" \| "product" \| "scene"` | 是 |  |
 | `target` | `string` | 是 |  |
 | `status` | `string` | 是 |  |
-| `archivePath` | `string` | 是 |  |
+| `archivePath` | `string \| null` | 否 | 工作区绝对路径（排查用）；目录已被清理或换机器后为 null |
 | `createdAt` | `string` | 是 |  |
 | `startedAt` | `string \| null` | 否 | 确认提交（进入排队）的时间，未开始为 null |
 | `finishedAt` | `string \| null` | 否 | 这一轮结束的时间；未结束为 null |
@@ -2037,10 +2046,12 @@ Authorization: Bearer <accessToken>
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `id` | `string` | 是 |  |
+| `channel` | `"libtv" \| "bailian" \| "bailian-prime"` | 否 |  |
+| `channelLabel` | `string` | 否 |  |
 | `kind` | `"character" \| "product" \| "scene"` | 是 |  |
 | `target` | `string` | 是 |  |
 | `status` | `string` | 是 |  |
-| `archivePath` | `string` | 是 |  |
+| `archivePath` | `string \| null` | 否 | 工作区绝对路径（排查用）；目录已被清理或换机器后为 null |
 | `createdAt` | `string` | 是 |  |
 | `startedAt` | `string \| null` | 否 | 确认提交（进入排队）的时间，未开始为 null |
 | `finishedAt` | `string \| null` | 否 | 这一轮结束的时间；未结束为 null |
@@ -2074,10 +2085,12 @@ Authorization: Bearer <accessToken>
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `id` | `string` | 是 |  |
+| `channel` | `"libtv" \| "bailian" \| "bailian-prime"` | 否 |  |
+| `channelLabel` | `string` | 否 |  |
 | `kind` | `"character" \| "product" \| "scene"` | 是 |  |
 | `target` | `string` | 是 |  |
 | `status` | `string` | 是 |  |
-| `archivePath` | `string` | 是 |  |
+| `archivePath` | `string \| null` | 否 | 工作区绝对路径（排查用）；目录已被清理或换机器后为 null |
 | `createdAt` | `string` | 是 |  |
 | `startedAt` | `string \| null` | 否 | 确认提交（进入排队）的时间，未开始为 null |
 | `finishedAt` | `string \| null` | 否 | 这一轮结束的时间；未结束为 null |
@@ -2113,10 +2126,12 @@ Authorization: Bearer <accessToken>
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `id` | `string` | 是 |  |
+| `channel` | `"libtv" \| "bailian" \| "bailian-prime"` | 否 |  |
+| `channelLabel` | `string` | 否 |  |
 | `kind` | `"character" \| "product" \| "scene"` | 是 |  |
 | `target` | `string` | 是 |  |
 | `status` | `string` | 是 |  |
-| `archivePath` | `string` | 是 |  |
+| `archivePath` | `string \| null` | 否 | 工作区绝对路径（排查用）；目录已被清理或换机器后为 null |
 | `createdAt` | `string` | 是 |  |
 | `startedAt` | `string \| null` | 否 | 确认提交（进入排队）的时间，未开始为 null |
 | `finishedAt` | `string \| null` | 否 | 这一轮结束的时间；未结束为 null |
@@ -2140,6 +2155,17 @@ Authorization: Bearer <accessToken>
 #### `GET /api/v1/templates/replacement-runs/{run_id}/inputs/{asset_id}`
 
 **读取当次归档输入快照**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `run_id` | path | `string` | 是 |  |
+| `asset_id` | path | `string` | 是 |  |
+
+**响应** `ApiResponse<unknown>`（前端取 `res.data`）
+
+#### `GET /api/v1/templates/replacement-runs/{run_id}/inputs/{asset_id}/thumbnail`
+
+**读取当次输入快照缩略图**
 
 | 参数 | 位置 | 类型 | 必填 | 说明 |
 |---|---|---|---|---|
@@ -2177,10 +2203,12 @@ Authorization: Bearer <accessToken>
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `id` | `string` | 是 |  |
+| `channel` | `"libtv" \| "bailian" \| "bailian-prime"` | 否 |  |
+| `channelLabel` | `string` | 否 |  |
 | `kind` | `"character" \| "product" \| "scene"` | 是 |  |
 | `target` | `string` | 是 |  |
 | `status` | `string` | 是 |  |
-| `archivePath` | `string` | 是 |  |
+| `archivePath` | `string \| null` | 否 | 工作区绝对路径（排查用）；目录已被清理或换机器后为 null |
 | `createdAt` | `string` | 是 |  |
 | `startedAt` | `string \| null` | 否 | 确认提交（进入排队）的时间，未开始为 null |
 | `finishedAt` | `string \| null` | 否 | 这一轮结束的时间；未结束为 null |
@@ -2214,10 +2242,12 @@ Authorization: Bearer <accessToken>
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `id` | `string` | 是 |  |
+| `channel` | `"libtv" \| "bailian" \| "bailian-prime"` | 否 |  |
+| `channelLabel` | `string` | 否 |  |
 | `kind` | `"character" \| "product" \| "scene"` | 是 |  |
 | `target` | `string` | 是 |  |
 | `status` | `string` | 是 |  |
-| `archivePath` | `string` | 是 |  |
+| `archivePath` | `string \| null` | 否 | 工作区绝对路径（排查用）；目录已被清理或换机器后为 null |
 | `createdAt` | `string` | 是 |  |
 | `startedAt` | `string \| null` | 否 | 确认提交（进入排队）的时间，未开始为 null |
 | `finishedAt` | `string \| null` | 否 | 这一轮结束的时间；未结束为 null |
@@ -2260,10 +2290,12 @@ Authorization: Bearer <accessToken>
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `id` | `string` | 是 |  |
+| `channel` | `"libtv" \| "bailian" \| "bailian-prime"` | 否 |  |
+| `channelLabel` | `string` | 否 |  |
 | `kind` | `"character" \| "product" \| "scene"` | 是 |  |
 | `target` | `string` | 是 |  |
 | `status` | `string` | 是 |  |
-| `archivePath` | `string` | 是 |  |
+| `archivePath` | `string \| null` | 否 | 工作区绝对路径（排查用）；目录已被清理或换机器后为 null |
 | `createdAt` | `string` | 是 |  |
 | `startedAt` | `string \| null` | 否 | 确认提交（进入排队）的时间，未开始为 null |
 | `finishedAt` | `string \| null` | 否 | 这一轮结束的时间；未结束为 null |
@@ -2317,7 +2349,7 @@ Authorization: Bearer <accessToken>
 | `defaultKind` | `"character" \| "product" \| "scene"` | 否 | 选中这张原片卡片时，替换配置默认切到的替换类型 |
 | `mediaOrder` | `VideoTemplateMedia[]` | 否 | 留空则由素材包顺序生成 |
 | `generation` | `Record<string, unknown>` | 否 | 生成参数，覆盖默认值 |
-| `rules` | `Record<string, unknown>` | 否 | 封装规则，覆盖默认值 |
+| `rules` | `Record<string, unknown>` | 否 | 封装规则；referenceBindings 将连续 Mixed 编号绑定到 source_video/图片用途，服务端排列声明槽位并完整附带当前包其余图片，无需逐图引用 |
 | `coverUrl` | `string` | 否 | 封面地址 |
 | `pinned` | `boolean` | 否 | 是否设为固定蓝本（全库仅一个） |
 
@@ -2433,6 +2465,52 @@ Authorization: Bearer <accessToken>
 | 参数 | 位置 | 类型 | 必填 | 说明 |
 |---|---|---|---|---|
 | `template_id` | path | `string` | 是 |  |
+
+**响应** `ApiResponse<VideoTemplateOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `templateKey` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `description` | `string` | 是 |  |
+| `prompt` | `string` | 是 |  |
+| `promptSha256` | `string` | 是 | 提示词 sha256，防止文字被悄悄改掉 |
+| `sourceVideoName` | `string` | 是 |  |
+| `sourceVideoAssetId` | `string \| null` | 否 |  |
+| `sourceVideoPath` | `string` | 是 |  |
+| `sourceDurationSec` | `number` | 是 |  |
+| `aspectRatio` | `string` | 是 |  |
+| `packId` | `string \| null` | 否 |  |
+| `packName` | `string` | 否 |  |
+| `packVersion` | `number` | 否 |  |
+| `defaultKind` | `"character" \| "product" \| "scene"` | 否 |  |
+| `mediaOrder` | `VideoTemplateMedia[]` | 否 |  |
+| `generation` | `Record<string, unknown>` | 否 |  |
+| `rules` | `Record<string, unknown>` | 否 |  |
+| `coverUrl` | `string` | 否 |  |
+| `pinned` | `boolean` | 否 |  |
+| `createdAt` | `string` | 是 |  |
+| `updatedAt` | `string` | 是 |  |
+
+#### `PATCH /api/v1/templates/video-templates/{template_id}/prompt`
+
+**改固定提示词（媒体清单与素材包不动）**
+
+只换提示词原文，`{{Mixed N}}` 引用按新原文重算。
+
+不提供「删掉重建」：同原片同类型下 `find_for_run` 取最早创建的那条，
+重建出来的新版会一直输给旧版。改提示词会影响此后每一次生成，留审计。
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `template_id` | path | `string` | 是 |  |
+
+**请求体** `VideoTemplatePromptIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `prompt` | `string` | 是 | 新的固定提示词原文，含 {{Mixed N}} 占位符 |
 
 **响应** `ApiResponse<VideoTemplateOut>`（前端取 `res.data`）
 
@@ -4615,11 +4693,15 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `requestId` | `string` | 是 |  |
+| `channel` | `"libtv" \| "bailian" \| "bailian-prime"` | 否 |  |
 | `kind` | `"character" \| "product" \| "scene"` | 是 |  |
 | `target` | `string` | 否 |  |
 | `sourceId` | `string` | 是 |  |
 | `videoTemplateId` | `string \| null` | 否 |  |
+| `scenePrompt` | `string \| null` | 否 | 文字换场景的描述；省略使用模板默认值，空白拒绝 |
 | `referenceIds` | `string[]` | 否 |  |
+| `extraPackIds` | `string[]` | 否 | 第 2 位及以后的素材包 id，按提示词槽位顺序；第一包仍用 packId |
+| `extraPackVersions` | `number[]` | 否 | 与 extraPackIds 顺序对应的发布版本；旧调用省略时由服务端解析并冻结 |
 | `wardrobeMode` | `"preserve" \| "reference"` | 否 |  |
 | `replacementScope` | `string` | 否 |  |
 | `notes` | `string` | 否 |  |
@@ -4673,6 +4755,7 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
+| `channels` | `ReplacementChannelOut[]` | 否 |  |
 | `provider` | `string` | 否 |  |
 | `maxCredits` | `number` | 否 |  |
 | `kinds` | `string[]` | 否 |  |
@@ -4681,6 +4764,17 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `packRoles` | `Record<string, Record<string, string>>` | 否 |  |
 | `baseRoles` | `Record<string, string>` | 否 |  |
 | `packScopes` | `Record<string, string>` | 否 |  |
+
+### `ReplacementChannelOut`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `"libtv" \| "bailian" \| "bailian-prime"` | 是 |  |
+| `label` | `string` | 是 |  |
+| `model` | `string` | 是 |  |
+| `enabled` | `boolean` | 是 |  |
+| `billing` | `"libtv" \| "aliyun"` | 是 |  |
+| `unavailableReason` | `string` | 否 |  |
 
 ### `ReplacementInputAsset`
 
@@ -4691,6 +4785,9 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `role` | `string` | 是 |  |
 | `type` | `string` | 是 |  |
 | `url` | `string` | 是 |  |
+| `token` | `string` | 否 | 当次输入的 Mixed 编号，无法从历史快照确定时留空 |
+| `usage` | `string` | 否 | 当次快照中记录的媒体用途说明 |
+| `previewUrl` | `string \| null` | 否 | 授权读取当次输入快照的缩略图 |
 
 ### `ReplacementInputSummary`
 
@@ -4701,6 +4798,7 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `wardrobeMode` | `string` | 否 |  |
 | `replacementScope` | `string` | 否 |  |
 | `notes` | `string` | 否 |  |
+| `scenePrompt` | `string \| null` | 否 | 本次实际使用的可编辑场景描述 |
 
 ### `ReplacementPack`
 
@@ -4759,10 +4857,12 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `id` | `string` | 是 |  |
+| `channel` | `"libtv" \| "bailian" \| "bailian-prime"` | 否 |  |
+| `channelLabel` | `string` | 否 |  |
 | `kind` | `"character" \| "product" \| "scene"` | 是 |  |
 | `target` | `string` | 是 |  |
 | `status` | `string` | 是 |  |
-| `archivePath` | `string` | 是 |  |
+| `archivePath` | `string \| null` | 否 | 工作区绝对路径（排查用）；目录已被清理或换机器后为 null |
 | `createdAt` | `string` | 是 |  |
 | `startedAt` | `string \| null` | 否 | 确认提交（进入排队）的时间，未开始为 null |
 | `finishedAt` | `string \| null` | 否 | 这一轮结束的时间；未结束为 null |
@@ -5204,8 +5304,8 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 封装一条新的视频模板。
 
 `mediaOrder` 决定 mixedList 顺序（即 `{{Mixed N}}` 指向谁）：显式给出时按它拼，
-必须是原片在第 1 位、其余图片与素材包「同一批图」（可换序，不能换图/少图）；
-留空则由服务端按 `packId` 的包内顺序自动生成。
+旧模式必须原片第1位、其余图片与素材包同一批；用途绑定模式不传 mediaOrder，
+服务端按 referenceBindings 生成，保留视频所在编号并完整附带辅助参考。
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
@@ -5222,7 +5322,7 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `defaultKind` | `"character" \| "product" \| "scene"` | 否 | 选中这张原片卡片时，替换配置默认切到的替换类型 |
 | `mediaOrder` | `VideoTemplateMedia[]` | 否 | 留空则由素材包顺序生成 |
 | `generation` | `Record<string, unknown>` | 否 | 生成参数，覆盖默认值 |
-| `rules` | `Record<string, unknown>` | 否 | 封装规则，覆盖默认值 |
+| `rules` | `Record<string, unknown>` | 否 | 封装规则；referenceBindings 将连续 Mixed 编号绑定到 source_video/图片用途，服务端排列声明槽位并完整附带当前包其余图片，无需逐图引用 |
 | `coverUrl` | `string` | 否 | 封面地址 |
 | `pinned` | `boolean` | 否 | 是否设为固定蓝本（全库仅一个） |
 
@@ -5274,3 +5374,14 @@ mixedList 里的一项；下标 +1 就是 {{Mixed N}} 编号。
 | `pinned` | `boolean` | 否 |  |
 | `createdAt` | `string` | 是 |  |
 | `updatedAt` | `string` | 是 |  |
+
+### `VideoTemplatePromptIn`
+
+只换固定提示词原文：媒体清单、素材包、档位与名称都不动。
+
+`{{Mixed N}}` 的引用关系按新原文**重算**（新增引用会把槽位补进 bindings，
+不再引用的图片降为「仅插入接口」），所以不需要连同媒体一起提交。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `prompt` | `string` | 是 | 新的固定提示词原文，含 {{Mixed N}} 占位符 |

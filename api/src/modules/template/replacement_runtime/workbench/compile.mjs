@@ -3,6 +3,27 @@ import {createHash} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 import path from 'node:path';
 export async function compileWorkbench(spec){
+  // 仅原片+文字场景描述：不伪造场景参考图，也不改变通用素材包编译规则。
+  if(spec?.inputMode==='video_scene_text'){
+    const refs=spec.references;
+    const fixed=spec.fixed_prompt, description=spec.variables?.scene_prompt;
+    if(spec.task!=='scene'||!Array.isArray(refs)||refs.length!==1||refs[0]?.role!=='source_video'||refs[0]?.type!=='video'
+      ||typeof refs[0]?.id!=='string'||!refs[0].id||!refs[0].file)
+      throw new Error('Text scene requires exactly one source video');
+    if(typeof fixed!=='string'||fixed.split('{{ScenePrompt}}').length!==2
+      ||typeof description!=='string'||!description.trim()||description.length>4000||description.includes('{{')||description.includes('}}'))
+      throw new Error('Invalid scene description or fixed scene template');
+    if(!Number.isInteger(spec.duration)||spec.duration<1||spec.duration>15
+      ||!['9:16','16:9','1:1','3:4','4:3','adaptive'].includes(spec.aspect_ratio))
+      throw new Error('Invalid scene video generation parameters');
+    const prompt=fixed.replaceAll('{{ScenePrompt}}',()=>description);
+    const tokens=[...prompt.matchAll(/\{\{([^{}]+)\}\}/g)].map(match=>match[1]);
+    if(tokens.some(token=>token!=='Mixed 1'))throw new Error('Unknown scene prompt token');
+    return {compiler_version:'scene-video-text-v1',task:'scene',model:'wanx3.0',modeType:'mixed2video',
+      prompt,bindings:[{index:0,...refs[0],token:'{{Mixed 1}}'}],warnings:['场景描述来自本次输入，其余约束来自封装模板'],
+      template_sha256:createHash('sha256').update(fixed).digest('hex'),
+      spec_sha256:createHash('sha256').update(JSON.stringify(spec)).digest('hex'),generation_verified:false};
+  }
   // The pinned generic compiler retains its historical 2-30s contract.
   // Adapt one-second workbench inputs without modifying the pinned release.
   const oneSecond=spec?.duration===1;

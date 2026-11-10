@@ -943,11 +943,18 @@ export interface PermissionsIn {
 /** PrepareReplacement */
 export interface PrepareReplacement {
   requestId: string;
+  channel?: "libtv" | "bailian" | "bailian-prime";
   kind: "character" | "product" | "scene";
   target?: string;
   sourceId: string;
   videoTemplateId?: string | null;
+  /** 文字换场景的描述；省略使用模板默认值，空白拒绝 */
+  scenePrompt?: string | null;
   referenceIds?: string[];
+  /** 第 2 位及以后的素材包 id，按提示词槽位顺序；第一包仍用 packId */
+  extraPackIds?: string[];
+  /** 与 extraPackIds 顺序对应的发布版本；旧调用省略时由服务端解析并冻结 */
+  extraPackVersions?: number[];
   wardrobeMode?: "preserve" | "reference";
   replacementScope?: string;
   notes?: string;
@@ -997,6 +1004,7 @@ export interface RefreshIn {
 
 /** ReplacementCatalog */
 export interface ReplacementCatalog {
+  channels?: ReplacementChannelOut[];
   provider?: string;
   maxCredits?: number;
   kinds?: string[];
@@ -1007,6 +1015,16 @@ export interface ReplacementCatalog {
   packScopes?: Record<string, string>;
 }
 
+/** ReplacementChannelOut */
+export interface ReplacementChannelOut {
+  id: "libtv" | "bailian" | "bailian-prime";
+  label: string;
+  model: string;
+  enabled: boolean;
+  billing: "libtv" | "aliyun";
+  unavailableReason?: string;
+}
+
 /** ReplacementInputAsset */
 export interface ReplacementInputAsset {
   id: string;
@@ -1014,6 +1032,12 @@ export interface ReplacementInputAsset {
   role: string;
   type: string;
   url: string;
+  /** 当次输入的 Mixed 编号，无法从历史快照确定时留空 */
+  token?: string;
+  /** 当次快照中记录的媒体用途说明 */
+  usage?: string;
+  /** 授权读取当次输入快照的缩略图 */
+  previewUrl?: string | null;
 }
 
 /** ReplacementInputSummary */
@@ -1023,6 +1047,8 @@ export interface ReplacementInputSummary {
   wardrobeMode?: string;
   replacementScope?: string;
   notes?: string;
+  /** 本次实际使用的可编辑场景描述 */
+  scenePrompt?: string | null;
 }
 
 /** ReplacementPack */
@@ -1076,10 +1102,13 @@ export interface ReplacementReviewIn {
 /** ReplacementRunOut */
 export interface ReplacementRunOut {
   id: string;
+  channel?: "libtv" | "bailian" | "bailian-prime";
+  channelLabel?: string;
   kind: "character" | "product" | "scene";
   target: string;
   status: string;
-  archivePath: string;
+  /** 工作区绝对路径（排查用）；目录已被清理或换机器后为 null */
+  archivePath?: string | null;
   createdAt: string;
   /** 确认提交（进入排队）的时间，未开始为 null */
   startedAt?: string | null;
@@ -1564,8 +1593,8 @@ export interface VideoTemplateAttachSourceIn {
 /** 封装一条新的视频模板。
 
 `mediaOrder` 决定 mixedList 顺序（即 `{{Mixed N}}` 指向谁）：显式给出时按它拼，
-必须是原片在第 1 位、其余图片与素材包「同一批图」（可换序，不能换图/少图）；
-留空则由服务端按 `packId` 的包内顺序自动生成。 */
+旧模式必须原片第1位、其余图片与素材包同一批；用途绑定模式不传 mediaOrder，
+服务端按 referenceBindings 生成，保留视频所在编号并完整附带辅助参考。 */
 export interface VideoTemplateDraftIn {
   /** 模板名称 */
   name: string;
@@ -1593,7 +1622,7 @@ export interface VideoTemplateDraftIn {
   mediaOrder?: VideoTemplateMedia[];
   /** 生成参数，覆盖默认值 */
   generation?: Record<string, unknown>;
-  /** 封装规则，覆盖默认值 */
+  /** 封装规则；referenceBindings 将连续 Mixed 编号绑定到 source_video/图片用途，服务端排列声明槽位并完整附带当前包其余图片，无需逐图引用 */
   rules?: Record<string, unknown>;
   /** 封面地址 */
   coverUrl?: string;
@@ -1652,6 +1681,15 @@ export interface VideoTemplateOut {
   pinned?: boolean;
   createdAt: string;
   updatedAt: string;
+}
+
+/** 只换固定提示词原文：媒体清单、素材包、档位与名称都不动。
+
+`{{Mixed N}}` 的引用关系按新原文**重算**（新增引用会把槽位补进 bindings，
+不再引用的图片降为「仅插入接口」），所以不需要连同媒体一起提交。 */
+export interface VideoTemplatePromptIn {
+  /** 新的固定提示词原文，含 {{Mixed N}} 占位符 */
+  prompt: string;
 }
 
 /* --------------------- 接口 → data 类型（已解包封套） --------------------- */
@@ -1900,6 +1938,8 @@ export interface EndpointData {
   "POST /api/v1/templates/replacement-runs/{run_id}/execute": ReplacementRunOut;
   /** 读取当次归档输入快照 */
   "GET /api/v1/templates/replacement-runs/{run_id}/inputs/{asset_id}": unknown;
+  /** 读取当次输入快照缩略图 */
+  "GET /api/v1/templates/replacement-runs/{run_id}/inputs/{asset_id}/thumbnail": unknown;
   /** 预览或下载原始生成结果 */
   "GET /api/v1/templates/replacement-runs/{run_id}/output": unknown;
   /** 确认上次提交可能已计费后放行重提（默认拒绝） */
@@ -1918,4 +1958,6 @@ export interface EndpointData {
   "POST /api/v1/templates/video-templates/{template_id}/attach-source": VideoTemplateOut;
   /** 设为固定蓝本（全库仅一个） */
   "POST /api/v1/templates/video-templates/{template_id}/pin": VideoTemplateOut;
+  /** 改固定提示词（媒体清单与素材包不动） */
+  "PATCH /api/v1/templates/video-templates/{template_id}/prompt": VideoTemplateOut;
 }

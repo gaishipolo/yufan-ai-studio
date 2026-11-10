@@ -28,7 +28,14 @@ from typing import TYPE_CHECKING
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core import audit
-from core.exceptions import BadRequest, Conflict, Forbidden, NotFound, UpstreamError
+from core.exceptions import (
+    AppError,
+    BadRequest,
+    Conflict,
+    Forbidden,
+    NotFound,
+    UpstreamError,
+)
 from core.feed import ReplacementFeedRecord
 from core.logging import get_logger
 from core.media import StoredMedia
@@ -38,6 +45,7 @@ from infra.ai.libtv import get_libtv_settings
 from infra.archive import ArchiveStorage, get_archive_storage
 from modules.template import video_template_store
 from modules.template.authorization import authorization_gap
+from modules.template.channels import CHANNEL_LABELS, channel_catalog, require_channel, run_channel
 from modules.template.models import ReplacementReview as ReviewRow
 from modules.template.models import ReplacementRun
 from modules.template.pack_roles import PACK_ROLES, PACK_SCOPES, usage_for
@@ -55,7 +63,12 @@ from modules.template.schema import (
     ReplacementRunOut,
 )
 from modules.template.titles import task_name
-from modules.template.video_template_options import scope_options, validate_options
+from modules.template.video_template_options import (
+    is_scene_text,
+    scene_description,
+    scope_options,
+    validate_options,
+)
 from modules.template.workspace import (
     BRIDGE,
     RUNTIME,
@@ -97,7 +110,7 @@ class ReplacementService:
 
         runs = await self.list_runs(owner)
         packs = await PackService(self.session).available()
-        return ReplacementCatalog(runs=runs, packs=packs)
+        return ReplacementCatalog(runs=runs, packs=packs, channels=channel_catalog())
 
     async def list_runs(self, owner: str) -> list[ReplacementRunOut]:
         """列表**包含**回收站里的记录：前端「回收站」页签读的就是这一份。
@@ -166,26 +179,10 @@ class ReplacementService:
     ) -> ReplacementRunOut:
         if not can_read_assets:
             raise Forbidden("需要素材读取权限")
+        require_channel(payload.channel)
 
         # 必须带已发布版本：散图路径在 HTTP 入口一律拒绝，脚本/测试用
         # `require_pack=False` 的旧入口已随重建移除（见文档的「刻意保留的差异」）。
-        if not payload.pack_id or not payload.pack_version:
-            raise BadRequest("必须选择专员发布的对象与版本，不能直接使用散图")
-        frozen = await self.packs.get_version(payload.pack_id, payload.pack_version)
-        pack = await self.packs.get_or_404(payload.pack_id)
-        if frozen is None or pack.status != "published":
-            raise BadRequest("素材包未发布或已停用，请重新选择")
-        if pack.kind != payload.kind:
-            raise BadRequest("素材包不存在或类型不匹配")
-
-        payload = payload.model_copy(
-            update={
-                "target": pack.name,
-                "reference_ids": list(frozen.reference_ids),
-                "wardrobe_mode": frozen.wardrobe_mode,  # type: ignore[arg-type]
-            }
-        )
-
         # 视频模板按**原片**套用：工作台里换产品包，模板照样生效 —— 提示词不动，
         # 图片按「用途」（主图/三视图/细节）从当前素材包里取。没有模板的普通原片
         # （例如 0507 高端姐）走原来的通用提示词，行为一个字都不变。
@@ -197,13 +194,78 @@ class ReplacementService:
             payload.kind,
             payload.video_template_id,
         )
-        _check_scope(frozen.supported_scopes, payload, video_template)
-        roles = {row.asset_id: row.role for row in await self.packs.references(pack.id)}
-        if video_template is not None:
-            _check_video_template(video_template, roles, pack.kind)
+        text_scene = video_template is not None and is_scene_text(video_template.rules)
+        frozen = None
+        pack_owner = ""
+        if text_scene:
+            assert video_template is not None
+            validate_options(video_template.prompt, video_template.rules)
+            if payload.kind != "scene" or any(
+                (
+                    payload.pack_id,
+                    payload.pack_version,
+                    payload.reference_ids,
+                    payload.extra_pack_ids,
+                    payload.extra_pack_versions,
+                    payload.replacement_scope,
+                    payload.notes,
+                )
+            ):
+                raise BadRequest("文字换场景只接收原视频和场景描述，不附带素材包、散图或其他参数")
+            description = scene_description(
+                payload.scene_prompt
+                if payload.scene_prompt is not None
+                else video_template.rules.get("scenePromptDefault")
+            )
+            payload = payload.model_copy(
+                update={
+                    "target": "文字换场景",
+                    "scene_prompt": description,
+                    "wardrobe_mode": "preserve",
+                }
+            )
+            roles, pack_owners, character_fronts, selected_packs = {}, set(), [], []
+        else:
+            if payload.scene_prompt is not None:
+                raise BadRequest("当前功能不支持编辑场景描述，请选择文字换场景功能")
+            if not payload.pack_id or not payload.pack_version:
+                raise BadRequest("必须选择专员发布的对象与版本，不能直接使用散图")
+            frozen = await self.packs.get_version(payload.pack_id, payload.pack_version)
+            pack = await self.packs.get_or_404(payload.pack_id)
+            if frozen is None or pack.status != "published":
+                raise BadRequest("素材包未发布或已停用，请重新选择")
+            if pack.kind != payload.kind:
+                raise BadRequest("素材包不存在或类型不匹配")
+            payload = payload.model_copy(
+                update={
+                    "target": pack.name,
+                    "reference_ids": list(frozen.reference_ids),
+                    "wardrobe_mode": frozen.wardrobe_mode,
+                }
+            )
+            _check_scope(frozen.supported_scopes, payload, video_template)
+            (
+                payload,
+                roles,
+                pack_owners,
+                character_fronts,
+                selected_packs,
+            ) = await self._selected_pack_inputs(
+                payload,
+                video_template,
+                pack,
+                frozen,
+            )
+            pack_owner = pack.owner_id
+            if video_template is not None:
+                _check_video_template(video_template, roles, pack.kind, character_fronts)
 
         source, refs = await self._validate_inputs(
-            payload, owner, pack.owner_id, scope_required=video_template is None
+            payload,
+            owner,
+            pack_owner,
+            scope_required=video_template is None,
+            pack_owners=pack_owners,
         )
         run = await self.runs.get(payload.request_id.hex)
         fingerprint = _fingerprint(owner, payload)
@@ -258,6 +320,8 @@ class ReplacementService:
                 frozen,
                 video_template,
                 roles,
+                character_fronts,
+                selected_packs,
             )
         except Exception:
             logger.exception("替换输入准备失败 run_id=%s", run.id)
@@ -293,7 +357,7 @@ class ReplacementService:
                     "",
                 )
                 for position, item in enumerate(
-                    _media_in_mixed_order(video_template, source, refs, roles)
+                    _media_in_mixed_order(video_template, source, refs, roles, character_fronts)
                 )
             ],
         )
@@ -352,6 +416,8 @@ class ReplacementService:
             },
         )
         await self.session.commit()
+        if run_channel(run.configuration) != "libtv":
+            await asyncio.to_thread(worker.archive_bailian_unknown_receipt, run.id)
         await worker.schedule(self.session, run_id, owner)
         return await self.detail(run_id, owner)
 
@@ -445,6 +511,16 @@ class ReplacementService:
             raise NotFound("输入文件不存在")
         return target
 
+    async def input_preview(self, run_id: str, asset_id: str, owner: str) -> Path:
+        # input_file 先做本人任务 + 当次输入成员校验，不能凭素材 id 越权取件。
+        source = await self.input_file(run_id, asset_id, owner)
+        rows = await self.runs.inputs(run_id)
+        row = next(item for item in rows if item.asset_id == asset_id)
+        kind = "video" if row.role == "source_video" else "image"
+        from modules.template.prompt_media import input_thumbnail
+
+        return await asyncio.to_thread(input_thumbnail, source, kind)
+
     async def output(self, run_id: str, owner: str) -> Served:
         """成片取件：归档存储优先，工作区兜底。
 
@@ -471,9 +547,101 @@ class ReplacementService:
     # ------------------------------------------------------------------ #
     # 内部
     # ------------------------------------------------------------------ #
+    async def _selected_pack_inputs(self, payload, template, primary, frozen):
+        """每个已选人物包各贡献一个身份槽位；所有参考与用途以发布快照为准。"""
+        from modules.template.schema import aligned_bindings
+        from modules.template.video_template_bindings import character_slots
+
+        count = character_slots(template)
+        ids = [payload.pack_id, *payload.extra_pack_ids]
+        if len(set(ids)) != len(ids):
+            raise BadRequest("同一张人物卡不能填多个槽位，请为每位人物选不同的人")
+        if payload.extra_pack_ids and (payload.kind != "character" or count <= 1):
+            raise BadRequest("产品、场景和单人替换只允许选择一个素材包")
+        if len(ids) != count:
+            raise BadRequest(f"当前模板需要按出镜顺序选择 {count} 个人物素材包")
+        if payload.extra_pack_versions and len(payload.extra_pack_versions) != len(
+            payload.extra_pack_ids
+        ):
+            raise BadRequest("额外人物包版本必须与选择数量、顺序一致")
+
+        chosen = [(primary, frozen)]
+        versions = []
+        for index, pack_id in enumerate(payload.extra_pack_ids):
+            pack = await self.packs.get_or_404(pack_id)
+            if (
+                pack.status != "published"
+                or pack.deleted_at is not None
+                or pack.kind != payload.kind
+            ):
+                raise BadRequest("额外人物包未发布、已停用或类型不匹配")
+            version = (
+                payload.extra_pack_versions[index] if payload.extra_pack_versions else pack.version
+            )
+            snapshot = await self.packs.get_version(pack_id, version)
+            if snapshot is None:
+                raise BadRequest("额外人物包的所选发布版本不存在，请重新选择")
+            versions.append(version)
+            chosen.append((pack, snapshot))
+
+        all_ids, fronts, metadata = [], [], []
+        roles, owners = {}, set()
+        for index, (pack, snapshot) in enumerate(chosen, 1):
+            ref_ids = list(snapshot.reference_ids)
+            bindings = aligned_bindings(payload.kind, ref_ids, snapshot.bindings)
+            if count > 1:
+                front = next(
+                    (
+                        asset_id
+                        for asset_id, binding in zip(ref_ids, bindings, strict=True)
+                        if binding.role == "front"
+                    ),
+                    None,
+                )
+                if front is None or front in fronts:
+                    raise BadRequest(f"第 {index} 位人物缺少独立的正面身份图，请重新选择")
+                fronts.append(front)
+            for asset_id, binding in zip(ref_ids, bindings, strict=True):
+                if asset_id in roles and roles[asset_id] != binding.role:
+                    raise BadRequest("不同素材包对同一图片的用途冲突，请重新选择")
+                if asset_id not in roles:
+                    all_ids.append(asset_id)
+                roles[asset_id] = binding.role
+            owners.add(pack.owner_id)
+            metadata.append(
+                {
+                    "slot": index,
+                    "packId": pack.id,
+                    "packVersion": snapshot.version,
+                    "name": pack.name,
+                    "referenceIds": ref_ids,
+                    "bindings": [binding.model_dump() for binding in bindings],
+                }
+            )
+        if len(all_ids) > 10:
+            raise BadRequest("所选素材包合计超过10张参考图，请选择更精简的包；不会静默遗漏图片")
+        return (
+            payload.model_copy(
+                update={
+                    "reference_ids": all_ids,
+                    "target": "、".join(pack.name for pack, _ in chosen),
+                    "extra_pack_versions": versions,
+                }
+            ),
+            roles,
+            owners,
+            fronts,
+            metadata,
+        )
+
     async def _validate_inputs(
-        self, payload: PrepareReplacement, owner: str, pack_owner: str,
-        *, scope_required: bool = True,
+        self,
+        payload: PrepareReplacement,
+        owner: str,
+        pack_owner: str,
+        *,
+        scope_required: bool = True,
+        pack_owners: set[str] | None = None,
     ) -> tuple[StoredMedia, list[StoredMedia]]:
         lookup = get_asset_lookup()
         media = await lookup.get_many(self.session, [payload.source_id, *payload.reference_ids])
@@ -491,11 +659,12 @@ class ReplacementService:
         if len(set(payload.reference_ids)) != len(payload.reference_ids):
             raise BadRequest("参考素材不能重复")
         refs: list[StoredMedia] = []
+        allowed_owners = pack_owners or {pack_owner}
         for asset_id in payload.reference_ids:
             row = media.get(asset_id)
             if row is None or row.deleted_at:
                 raise BadRequest("参考图不存在或已删除")
-            if row.owner_id != pack_owner:
+            if row.owner_id not in allowed_owners:
                 raise BadRequest("参考图不属于该素材包")
             if row.category != payload.kind or row.type != "image":
                 raise BadRequest("参考图分类需与人物/产品/场景替换类型一致")
@@ -557,17 +726,21 @@ class ReplacementService:
 
     def _run_out(self, run: ReplacementRun, review: ReviewRow | None) -> ReplacementRunOut:
         summary = (
-            ReplacementInputSummary.model_validate(run.input_summary)
-            if run.input_summary
-            else None
+            ReplacementInputSummary.model_validate(run.input_summary) if run.input_summary else None
         )
         prompt_mode, template_name = _prompt_origin(run.prompt_spec)
+        if summary is not None:
+            from modules.template.prompt_media import enrich_input_summary
+
+            summary = enrich_input_summary(summary, run.prompt_spec)
         return ReplacementRunOut(
             id=run.id,
+            channel=run_channel(run.configuration),
+            channel_label=CHANNEL_LABELS[run_channel(run.configuration)],
             kind=run.kind,  # type: ignore[arg-type]
             target=run.target,
             status=run.status,
-            archive_path=str(run_path(run.id)),
+            archive_path=_archive_path(run.id),
             created_at=run.created_at,
             started_at=run.started_at,
             finished_at=run.finished_at,
@@ -575,9 +748,7 @@ class ReplacementService:
             prompt=run.prompt,
             prompt_mode=prompt_mode,
             video_template_name=template_name,
-            display_title=_display_title(
-                run, _source_name(summary) if summary else None
-            ),
+            display_title=_display_title(run, _source_name(summary) if summary else None),
             task_id=run.task_id,
             estimated_credits=run.estimated_credits,
             credits=run.credits,
@@ -586,11 +757,7 @@ class ReplacementService:
             review=_review_out(review) if review else None,
             input_summary=summary,
             last_error=run.last_error,
-            output_url=(
-                f"/api/v1/templates/replacement-runs/{run.id}/output"
-                if run.output_key
-                else None
-            ),
+            output_url=self._feed_output_url(run),
             deleted_at=run.deleted_at,
             billing_mode="credits" if run.billing_mode == "credits" else "free",
         )
@@ -600,7 +767,9 @@ class ReplacementService:
 # 纯函数
 # --------------------------------------------------------------------------- #
 def _fingerprint(owner: str, payload: PrepareReplacement) -> str:
-    return hashlib.sha256((owner + payload.model_dump_json()).encode()).hexdigest()
+    # Omitting the historical default preserves stable request IDs created before channels.
+    exclude = {"channel"} if payload.channel == "libtv" else set()
+    return hashlib.sha256((owner + payload.model_dump_json(exclude=exclude)).encode()).hexdigest()
 
 
 def _role_labels(kind: str) -> dict[str, str]:
@@ -613,7 +782,10 @@ def _role_labels(kind: str) -> dict[str, str]:
 
 
 def _check_video_template(
-    template: VideoTemplateOut, roles: dict[str, str], kind: str
+    template: VideoTemplateOut,
+    roles: dict[str, str],
+    kind: str,
+    character_fronts: list[str] | None = None,
 ) -> None:
     """模板按**原片**套用，图片按用途对应：换素材包时提示词与编号都不动。
 
@@ -622,9 +794,24 @@ def _check_video_template(
     并且要说清缺的是哪一张。
     """
     validate_options(template.prompt, template.rules)
+    from modules.template.video_template_bindings import (
+        character_slots,
+        order_reference_ids,
+        reference_roles,
+    )
+
+    declared = reference_roles(template.rules, template.prompt, kind)
+    if character_slots(template) > 1 and (
+        character_fronts is None or len(character_fronts) != character_slots(template)
+    ):
+        raise BadRequest("请为每位出镜人物分别选择人物素材包")
+    if declared is not None:
+        order_reference_ids(list(roles), roles, declared, kind)
     images = [item for item in template.media_order if item.type == "image"]
     provided = set(roles.values())
-    needed = dict.fromkeys(item.role for item in images if item.role)
+    needed = dict.fromkeys(
+        declared if declared is not None else (item.role for item in images if item.role)
+    )
     missing = [role for role in needed if role not in provided]
     if missing:
         labels = _role_labels(kind)
@@ -655,6 +842,7 @@ def _media_in_mixed_order(
     source: StoredMedia,
     refs: list[StoredMedia],
     roles: dict[str, str] | None = None,
+    character_fronts: list[str] | None = None,
 ) -> list[StoredMedia]:
     """mixedList 的顺序：普通原片沿用「参考图 + 原片」；视频模板按**用途**排。
 
@@ -665,6 +853,27 @@ def _media_in_mixed_order(
     """
     if template is None:
         return [*refs, source]
+    from modules.template.video_template_bindings import (
+        character_slots,
+        order_reference_ids,
+        place_source,
+        reference_roles,
+    )
+
+    declared = reference_roles(template.rules, template.prompt, template.default_kind)
+    if character_slots(template) > 1:
+        if not character_fronts or len(character_fronts) != character_slots(template):
+            raise BadRequest("请为每位出镜人物分别选择人物素材包")
+        by_id = {ref.id: ref for ref in refs}
+        if any(asset_id not in by_id for asset_id in character_fronts):
+            raise BadRequest("所选人物正面图不在本次输入中")
+        images = [by_id[asset_id] for asset_id in character_fronts]
+        images.extend(ref for ref in refs if ref.id not in character_fronts)
+        return place_source(source, images, template.rules)
+    if declared is not None:
+        by_id = {ref.id: ref for ref in refs}
+        ordered_ids = order_reference_ids(list(by_id), roles or {}, declared, template.default_kind)
+        return place_source(source, [by_id[asset_id] for asset_id in ordered_ids], template.rules)
     by_role = roles or {}
     remaining = list(refs)
     ordered: list[StoredMedia] = []
@@ -697,8 +906,12 @@ def _prompt_origin(spec: dict[str, object] | None) -> tuple[str, str | None]:
 
     `videoTemplateName` 是 prepare 时写进 spec 的；早期档案只有 id，
     这时才去模板库里反查一次（模板库是本机 JSON，查不到就只报 fixed）。
+
+    `spec` 可能是 `None`，也可能是**字符串**（历史档案、手工导入的行直接存了
+    JSON 文本）。这里只认字典，别的形状一律当「按素材现编」——列表接口不该
+    因为一条老档案的字段形状把整页打成 500。
     """
-    if not spec or spec.get("promptMode") != "fixed_video_template":
+    if not isinstance(spec, dict) or spec.get("promptMode") != "fixed_video_template":
         return "compiled", None
     name = spec.get("videoTemplateName")
     if isinstance(name, str) and name.strip():
@@ -724,6 +937,22 @@ def _cached_template_name(template_id: str, _stamp: float) -> str | None:
         return video_template_store.get_out(template_id).name
     except Exception:  # noqa: BLE001 - 模板被删/目录损坏都不该让档案列表 500
         logger.debug("视频模板反查失败 template_id=%s", template_id, exc_info=True)
+        return None
+
+
+def _archive_path(run_id: str) -> str | None:
+    """工作区路径：查得到就给，查不到也不能把整页拖下水。
+
+    列表/详情回答的是「有哪些任务、各自什么状态」。一条历史记录的工作区被清掉
+    （归档 GC、换机器、从备份只恢复了数据库）时，`run_path()` 按设计抛 404
+    —— 但那一行本身还在库里，用户仍要能看到状态、看到当时提交的提示词、从回收站
+    恢复它。这里把「目录没了」降级成 `None`，由前端照实标注，而不是让
+    `GET /replacement-catalog` 整页 404：一条坏记录不该连带另外几十条打不开。
+    """
+    try:
+        return str(run_path(run_id))
+    except AppError:
+        logger.debug("归档目录定位失败 run_id=%s", run_id, exc_info=True)
         return None
 
 
@@ -768,6 +997,8 @@ def _materialize_inputs(
     frozen,
     video_template: VideoTemplateOut | None = None,
     roles: dict[str, str] | None = None,
+    character_fronts: list[str] | None = None,
+    selected_packs: list[dict] | None = None,
 ) -> tuple[dict[str, object], Compilation, ReplacementInputSummary]:
     """把输入落到工作区并编译提示词。**同步函数**：调用方放进线程池。
 
@@ -779,7 +1010,7 @@ def _materialize_inputs(
     同一顺序产出，执行器那套「顺序、类型、摘要」校验一个都不绕过。
     """
     ensure_layout(path)
-    media = _media_in_mixed_order(video_template, source, refs, roles)
+    media = _media_in_mixed_order(video_template, source, refs, roles, character_fronts)
     bindings: list[dict[str, str]] = []
     for index, item in enumerate(media):
         with storage.materialize(item.path) as original:
@@ -799,6 +1030,20 @@ def _materialize_inputs(
         }
         # 同一用途下的多张图靠 usage 区分：主图定外观、多视图只补结构、细节图只补局部。
         usage_text = _usage_for_asset(item, refs, frozen, payload.kind)
+        if selected_packs and item is not source:
+            details = []
+            for group in selected_packs:
+                if item.id not in group["referenceIds"]:
+                    continue
+                position = group["referenceIds"].index(item.id)
+                usage_binding = group["bindings"][position]
+                text = usage_for(payload.kind, usage_binding["role"])
+                if usage_binding.get("description"):
+                    text += "；" + usage_binding["description"]
+                if character_fronts:
+                    text = f"第{group['slot']}位人物（{group['name']}）：{text}"
+                details.append(text)
+            usage_text = "；".join(details)
         if usage_text:
             binding["usage"] = usage_text
         bindings.append(binding)
@@ -811,22 +1056,29 @@ def _materialize_inputs(
     )
 
     variables = {"state_constraints": payload.notes, "replacement_scope": payload.replacement_scope}
-    if frozen.features or frozen.instructions:
+    if frozen is not None and (frozen.features or frozen.instructions):
         variables["state_constraints"] = "\n".join(
             text for text in (frozen.features, frozen.instructions, payload.notes) if text
         )
     if payload.kind == "character":
         variables.update(
-            source_subject="原片唯一前景主角，背景人物不替换",
-            identity_description=f"目标人物为{payload.target}，多张参考属于同一人。",
+            source_subject=(
+                f"原片中按槽位对应的{len(character_fronts)}位人物"
+                if character_fronts
+                else "原片唯一前景主角，背景人物不替换"
+            ),
+            identity_description=(
+                f"各位目标人物依次为{payload.target}，每组辅助图只用于对应人物。"
+                if character_fronts
+                else f"目标人物为{payload.target}，多张参考属于同一人。"
+            ),
         )
     elif payload.kind == "product":
         variables.update(
             source_product="原片中指定展示的产品",
             target_product=payload.target,
-            replacement_scope=payload.replacement_scope or (
-                "按封装提示词指定的范围" if video_template is not None else ""
-            ),
+            replacement_scope=payload.replacement_scope
+            or ("按封装提示词指定的范围" if video_template is not None else ""),
         )
     else:
         variables.update(
@@ -840,9 +1092,7 @@ def _materialize_inputs(
     if video_template is not None:
         # 封装时定下的档位优先：样片 9:16 / 5 秒，和模板里的 generation 对齐。
         generation = video_template.generation
-        aspect_ratio = str(
-            generation.get("ratio") or video_template.aspect_ratio or aspect_ratio
-        )
+        aspect_ratio = str(generation.get("ratio") or video_template.aspect_ratio or aspect_ratio)
         configured = generation.get("duration")
         if isinstance(configured, int):
             duration = min(15, max(2, configured))
@@ -854,6 +1104,11 @@ def _materialize_inputs(
         "references": bindings,
         "variables": variables,
     }
+    if video_template is not None and is_scene_text(video_template.rules):
+        spec["inputMode"] = "video_scene_text"
+        variables["scene_prompt"] = payload.scene_prompt or ""
+    if selected_packs:
+        spec["selectedPacks"] = selected_packs
     if video_template is not None:
         spec["promptMode"] = "fixed_video_template"
         spec["videoTemplateId"] = video_template.id
@@ -863,12 +1118,23 @@ def _materialize_inputs(
         spec["fixedPromptSha256"] = video_template.prompt_sha256
         spec["fixed_prompt"] = video_template.prompt
     compiled = compile_prompt(spec, node=get_libtv_settings().node)
-    if payload.kind == "character" and payload.wardrobe_mode == "reference":
+    if (
+        video_template is None
+        and payload.kind == "character"
+        and payload.wardrobe_mode == "reference"
+    ):
         compiled.prompt = compiled.prompt.replace("；提供同片原音轨", "；原片内嵌音轨提供声音")
         compiled.prompt = compiled.prompt.replace(
             "声音：为完整原片音轨", "声音：原片内嵌音轨为完整原片音轨"
         )
         compiled.compiler_version += "+embedded-audio-v1"
+
+    if payload.channel != "libtv":
+        from infra.ai.bailian import translate_prompt
+
+        spec["channel"] = payload.channel
+        compiled.prompt = translate_prompt(compiled.prompt, bindings)
+        compiled.compiler_version += "+bailian-references-v1"
 
     (path / "inputs/prompt.txt").write_text(compiled.prompt, encoding="utf-8", newline="\n")
     storage.write(path / "inputs/prompt-spec.json", spec)
@@ -879,8 +1145,10 @@ def _materialize_inputs(
     # 用户只看到「上传准备未完成」，无从判断是缺文件。
     storage.write(
         path / "inputs/input-map.json",
-        [{**binding, "sha256": item.sha256, "name": item.name} for binding, item in
-         zip(bindings, media, strict=True)],
+        [
+            {**binding, "sha256": item.sha256, "name": item.name}
+            for binding, item in zip(bindings, media, strict=True)
+        ],
     )
     storage.write(
         path / "records/media-inputs.json",
@@ -911,8 +1179,7 @@ def _materialize_inputs(
                 # 指向**归档快照**而不是素材本身：素材后来被删或换了内容，评价页
                 # 仍要能打开「当初喂给模型的那张图」，否则人工验收失去依据。
                 url=(
-                    f"/api/v1/templates/replacement-runs/{payload.request_id.hex}"
-                    f"/inputs/{item.id}"
+                    f"/api/v1/templates/replacement-runs/{payload.request_id.hex}/inputs/{item.id}"
                 ),
             )
             for item, binding in zip(media, bindings, strict=True)
@@ -921,7 +1188,11 @@ def _materialize_inputs(
         wardrobe_mode=payload.wardrobe_mode,
         replacement_scope=payload.replacement_scope,
         notes=payload.notes,
+        scene_prompt=payload.scene_prompt,
     )
+    from modules.template.prompt_media import enrich_input_summary
+
+    summary = enrich_input_summary(summary, spec)
     (path / "00_本次调用说明.md").write_text(
         f"# {payload.target} · {payload.kind}\n\n输入已归档，尚未提交。\n"
         "inputs 保存实际文件副本；outputs 保存原始成片；records 保存状态和错误分类。\n"
@@ -932,9 +1203,7 @@ def _materialize_inputs(
     return spec, compiled, summary
 
 
-def _usage_for_asset(
-    item: StoredMedia, refs: list[StoredMedia], frozen, kind: str
-) -> str:
+def _usage_for_asset(item: StoredMedia, refs: list[StoredMedia], frozen, kind: str) -> str:
     """这张图在提示词里的说明：用途文字 + 封装里为它写的补充说明。"""
     try:
         index = refs.index(item)
@@ -960,7 +1229,5 @@ def _review_out(row: ReviewRow) -> ReplacementReview:
         comment=row.comment,
         reviewed_by=row.reviewed_by,
         reviewed_at=row.reviewed_at,
-        history=[
-            ReplacementReviewEvent.model_validate(item) for item in (row.history or [])
-        ],
+        history=[ReplacementReviewEvent.model_validate(item) for item in (row.history or [])],
     )

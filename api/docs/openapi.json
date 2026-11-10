@@ -6186,6 +6186,61 @@
         }
       }
     },
+    "/api/v1/templates/replacement-runs/{run_id}/inputs/{asset_id}/thumbnail": {
+      "get": {
+        "tags": [
+          "模板",
+          "替换模板"
+        ],
+        "summary": "读取当次输入快照缩略图",
+        "operationId": "archived_input_thumbnail_api_v1_templates_replacement_runs__run_id__inputs__asset_id__thumbnail_get",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Id"
+            }
+          },
+          {
+            "name": "asset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Asset Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/templates/replacement-packs": {
       "get": {
         "tags": [
@@ -6593,7 +6648,9 @@
             "bearerAuth": []
           }
         ],
-        "x-template-key-idempotency": 1
+        "x-template-key-idempotency": 1,
+        "x-template-role-bindings": 2,
+        "x-template-scene-text": 1
       }
     },
     "/api/v1/templates/video-templates/{template_id}": {
@@ -6668,6 +6725,65 @@
             }
           }
         ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_VideoTemplateOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/templates/video-templates/{template_id}/prompt": {
+      "patch": {
+        "tags": [
+          "模板",
+          "视频模板"
+        ],
+        "summary": "改固定提示词（媒体清单与素材包不动）",
+        "description": "只换提示词原文，`{{Mixed N}}` 引用按新原文重算。\n\n不提供「删掉重建」：同原片同类型下 `find_for_run` 取最早创建的那条，\n重建出来的新版会一直输给旧版。改提示词会影响此后每一次生成，留审计。",
+        "operationId": "update_video_template_prompt_api_v1_templates_video_templates__template_id__prompt_patch",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "template_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Template Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VideoTemplatePromptIn"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -11898,6 +12014,16 @@
             "format": "uuid",
             "title": "Requestid"
           },
+          "channel": {
+            "type": "string",
+            "enum": [
+              "libtv",
+              "bailian",
+              "bailian-prime"
+            ],
+            "title": "Channel",
+            "default": "libtv"
+          },
           "kind": {
             "type": "string",
             "enum": [
@@ -11929,6 +12055,19 @@
             ],
             "title": "Videotemplateid"
           },
+          "scenePrompt": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 4000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sceneprompt",
+            "description": "文字换场景的描述；省略使用模板默认值，空白拒绝"
+          },
           "referenceIds": {
             "items": {
               "type": "string"
@@ -11936,6 +12075,25 @@
             "type": "array",
             "maxItems": 10,
             "title": "Referenceids"
+          },
+          "extraPackIds": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 5,
+            "title": "Extrapackids",
+            "description": "第 2 位及以后的素材包 id，按提示词槽位顺序；第一包仍用 packId"
+          },
+          "extraPackVersions": {
+            "items": {
+              "type": "integer",
+              "minimum": 1.0
+            },
+            "type": "array",
+            "maxItems": 5,
+            "title": "Extrapackversions",
+            "description": "与 extraPackIds 顺序对应的发布版本；旧调用省略时由服务端解析并冻结"
           },
           "wardrobeMode": {
             "type": "string",
@@ -12137,6 +12295,13 @@
       },
       "ReplacementCatalog": {
         "properties": {
+          "channels": {
+            "items": {
+              "$ref": "#/components/schemas/ReplacementChannelOut"
+            },
+            "type": "array",
+            "title": "Channels"
+          },
           "provider": {
             "type": "string",
             "title": "Provider",
@@ -12205,6 +12370,53 @@
         ],
         "title": "ReplacementCatalog"
       },
+      "ReplacementChannelOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "enum": [
+              "libtv",
+              "bailian",
+              "bailian-prime"
+            ],
+            "title": "Id"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "model": {
+            "type": "string",
+            "title": "Model"
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled"
+          },
+          "billing": {
+            "type": "string",
+            "enum": [
+              "libtv",
+              "aliyun"
+            ],
+            "title": "Billing"
+          },
+          "unavailableReason": {
+            "type": "string",
+            "title": "Unavailablereason",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "label",
+          "model",
+          "enabled",
+          "billing"
+        ],
+        "title": "ReplacementChannelOut"
+      },
       "ReplacementInputAsset": {
         "properties": {
           "id": {
@@ -12226,6 +12438,30 @@
           "url": {
             "type": "string",
             "title": "Url"
+          },
+          "token": {
+            "type": "string",
+            "title": "Token",
+            "description": "当次输入的 Mixed 编号，无法从历史快照确定时留空",
+            "default": ""
+          },
+          "usage": {
+            "type": "string",
+            "title": "Usage",
+            "description": "当次快照中记录的媒体用途说明",
+            "default": ""
+          },
+          "previewUrl": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previewurl",
+            "description": "授权读取当次输入快照的缩略图"
           }
         },
         "type": "object",
@@ -12272,6 +12508,18 @@
             "type": "string",
             "title": "Notes",
             "default": ""
+          },
+          "scenePrompt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sceneprompt",
+            "description": "本次实际使用的可编辑场景描述"
           }
         },
         "type": "object",
@@ -12569,6 +12817,21 @@
             "type": "string",
             "title": "Id"
           },
+          "channel": {
+            "type": "string",
+            "enum": [
+              "libtv",
+              "bailian",
+              "bailian-prime"
+            ],
+            "title": "Channel",
+            "default": "libtv"
+          },
+          "channelLabel": {
+            "type": "string",
+            "title": "Channellabel",
+            "default": "LibTV · Wan 3.0 · 720P"
+          },
           "kind": {
             "type": "string",
             "enum": [
@@ -12587,8 +12850,16 @@
             "title": "Status"
           },
           "archivePath": {
-            "type": "string",
-            "title": "Archivepath"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archivepath",
+            "description": "工作区绝对路径（排查用）；目录已被清理或换机器后为 null"
           },
           "createdAt": {
             "type": "string",
@@ -12775,7 +13046,6 @@
           "kind",
           "target",
           "status",
-          "archivePath",
           "createdAt",
           "prompt"
         ],
@@ -14578,7 +14848,7 @@
             "additionalProperties": true,
             "type": "object",
             "title": "Rules",
-            "description": "封装规则，覆盖默认值"
+            "description": "封装规则；referenceBindings 将连续 Mixed 编号绑定到 source_video/图片用途，服务端排列声明槽位并完整附带当前包其余图片，无需逐图引用"
           },
           "coverUrl": {
             "type": "string",
@@ -14600,7 +14870,7 @@
           "prompt"
         ],
         "title": "VideoTemplateDraftIn",
-        "description": "封装一条新的视频模板。\n\n`mediaOrder` 决定 mixedList 顺序（即 `{{Mixed N}}` 指向谁）：显式给出时按它拼，\n必须是原片在第 1 位、其余图片与素材包「同一批图」（可换序，不能换图/少图）；\n留空则由服务端按 `packId` 的包内顺序自动生成。"
+        "description": "封装一条新的视频模板。\n\n`mediaOrder` 决定 mixedList 顺序（即 `{{Mixed N}}` 指向谁）：显式给出时按它拼，\n旧模式必须原片第1位、其余图片与素材包同一批；用途绑定模式不传 mediaOrder，\n服务端按 referenceBindings 生成，保留视频所在编号并完整附带辅助参考。"
       },
       "VideoTemplateListOut": {
         "properties": {
@@ -14826,6 +15096,23 @@
           "updatedAt"
         ],
         "title": "VideoTemplateOut"
+      },
+      "VideoTemplatePromptIn": {
+        "properties": {
+          "prompt": {
+            "type": "string",
+            "maxLength": 20000,
+            "minLength": 1,
+            "title": "Prompt",
+            "description": "新的固定提示词原文，含 {{Mixed N}} 占位符"
+          }
+        },
+        "type": "object",
+        "required": [
+          "prompt"
+        ],
+        "title": "VideoTemplatePromptIn",
+        "description": "只换固定提示词原文：媒体清单、素材包、档位与名称都不动。\n\n`{{Mixed N}}` 的引用关系按新原文**重算**（新增引用会把槽位补进 bindings，\n不再引用的图片降为「仅插入接口」），所以不需要连同媒体一起提交。"
       }
     },
     "securitySchemes": {

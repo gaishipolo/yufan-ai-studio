@@ -5,12 +5,13 @@ import { useCan } from '@/shared/access/use-access';
 import { Button, EmptyState } from '@/shared/ui';
 import { Skeleton } from '@/shared/ui/EmptyState';
 import { ErrorState } from '@/shared/ui/ErrorState';
-import { STATUS, REVIEW_LABELS } from './replacementOptions';
+import { STATUS, RETRY, REVIEW_LABELS } from './replacementOptions';
 import { replacementTaskFullName, replacementTaskName, replacementSourceName } from '@/entities/template/model/replacementTaskIdentity';
 import { replacementElapsedText } from './replacementElapsed';
 import type { ReplacementWorkbench } from './useReplacementWorkbench';
 import { ReplacementRunManagement } from './ReplacementRunManagement';
 import { ReplacementAccelerate } from './ReplacementAccelerate';
+import { ReplacementRetry } from './ReplacementRetry';
 
 interface ReplacementTaskHistoryProps { model: ReplacementWorkbench }
 export function ReplacementTaskHistory({ model }: ReplacementTaskHistoryProps) {
@@ -58,7 +59,7 @@ export function ReplacementTaskHistory({ model }: ReplacementTaskHistoryProps) {
           <span className="ml-auto rounded-full bg-panel-soft px-3 py-1 text-xs text-ink-soft">{run.status === 'success' && !run.outputUrl ? '结果文件待恢复' : STATUS[run.status] ?? run.status}</span>
           {run.status === 'success' && <span className="text-xs text-ink-soft">人工验收：{REVIEW_LABELS[run.reviewStatus ?? 'pending'] ?? run.reviewStatus}</span>}
           <span className="text-xs text-primary">{run.status === 'success' && run.outputUrl ? '查看成片并下载 →' : '查看档案 →'}</span>
-        </button><p title={replacementSourceName(run)} className="truncate text-xs text-ink-soft">原片：{replacementSourceName(run)}</p><p className="break-all text-[11px] text-ink-mute">创建时间：{new Date(run.createdAt).toLocaleString()} · 耗时：{replacementElapsedText(run)} · 任务编号：{run.id}{run.billingMode === 'credits' ? ' · 积分加速' : ''}</p><ReplacementAccelerate run={run} model={model} /><ReplacementRunManagement run={run} /></article>)}</div>}
+        </button><p title={replacementSourceName(run)} className="truncate text-xs text-ink-soft">原片：{replacementSourceName(run)}</p><p className="break-all text-[11px] text-ink-mute">创建时间：{new Date(run.createdAt).toLocaleString()} · 耗时：{replacementElapsedText(run)} · 任务编号：{run.id} · 模型渠道：{run.channelLabel || (!run.channel || run.channel === 'libtv' ? 'LibTV' : run.channel === 'bailian-prime' ? '百炼 Prime' : '百炼')}{run.channel && run.channel !== 'libtv' ? ' · 阿里云 API 计费' : ''}{run.billingMode === 'credits' ? ' · 积分加速' : ''}</p>{run.lastError && RETRY.includes(run.status) && <p className="break-words text-xs text-danger">{run.lastError}</p>}<ReplacementRetry run={run} model={model} /><ReplacementAccelerate run={run} model={model} /><ReplacementRunManagement run={run} /></article>)}</div>}
     </section>
   );
 }

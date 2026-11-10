@@ -62,6 +62,44 @@ vi.mock('@/entities/template/api/pack.queries', () => ({
 }));
 
 describe('模板库里的视频模板', () => {
+  it.each([1, 3])('复制用途绑定蓝本（原片槽位 %s）由服务端生成清单', async sourceSlot => {
+    const previous = mock.template;
+    mock.template = {...previous, ...(sourceSlot === 3 ? {prompt: '编辑 {{Mixed 3}}，参考 {{Mixed 2}}。'} : {}), rules: {referenceBindings: sourceSlot === 3 ? {
+      '{{Mixed 1}}': 'front', '{{Mixed 2}}': 'multiview', '{{Mixed 3}}': 'source_video',
+    } : {
+      '{{Mixed 1}}': 'source_video', '{{Mixed 2}}': 'front', '{{Mixed 3}}': 'multiview',
+    }}};
+    mock.create.mockClear();
+    try {
+      render(<VideoTemplateLibrary />);
+      fireEvent.click(screen.getByRole('button', {name: '复制固定蓝本'}));
+      fireEvent.change(screen.getByLabelText('替换素材包'), {target: {value: mock.template.packId}});
+      fireEvent.click(screen.getByRole('button', {name: '保存封装'}));
+      await vi.waitFor(() => expect(mock.create).toHaveBeenCalledWith(expect.objectContaining({
+        mediaOrder: [], rules: expect.objectContaining({referenceBindings: mock.template.rules?.referenceBindings}),
+      })));
+    } finally {mock.template = previous;}
+  });
+  it('文字换场景蓝本可复制保存，不要求素材包或参考图', async () => {
+    const previous = mock.template;
+    mock.template = {...previous, defaultKind: 'scene', packId: null, packName: '', packVersion: 0,
+      prompt: '{{ScenePrompt}}\n\n保留人物与产品。', mediaOrder: previous.mediaOrder?.slice(0, 1),
+      rules: {inputMode: 'video_scene_text', scenePromptDefault: '将场景替换为酒店会客厅。'}};
+    mock.create.mockClear();
+    try {
+      render(<VideoTemplateLibrary />);
+      fireEvent.click(screen.getByRole('button', {name: '复制固定蓝本'}));
+      expect(screen.getByLabelText('默认场景描述')).toHaveValue('将场景替换为酒店会客厅。');
+      expect(screen.queryByLabelText('替换素材包')).not.toBeInTheDocument();
+      fireEvent.change(screen.getByLabelText('默认场景描述'), {target: {value: '将场景替换为海边花园。'}});
+      fireEvent.click(screen.getByRole('button', {name: '保存封装'}));
+      await vi.waitFor(() => expect(mock.create).toHaveBeenCalledWith(expect.objectContaining({
+        packId: null, mediaOrder: [], defaultKind: 'scene',
+        rules: expect.objectContaining({inputMode: 'video_scene_text', scenePromptDefault: '将场景替换为海边花园。'}),
+      })));
+    } finally {mock.template = previous;}
+  });
+
   it('显示固定蓝本与提示词引用的编号（三视图是 Mixed 3）', () => {
     render(<VideoTemplateLibrary />);
     expect(screen.getByText('米兰之夜 · 3030 粉色文胸局部替换')).toBeVisible();

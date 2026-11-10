@@ -22,6 +22,7 @@ from modules.template.video_template_schema import (
     VideoTemplateDraftIn,
     VideoTemplateListOut,
     VideoTemplateOut,
+    VideoTemplatePromptIn,
 )
 
 # 由 router.py 统一加 `/templates` 前缀，这里只写相对段（与 pack_router 一致）。
@@ -48,7 +49,9 @@ async def get_video_template(
     return ApiResponse.ok(await asyncio.to_thread(store.get_out, template_id))
 
 
-@router.post("", summary="封装一条视频模板", openapi_extra={"x-template-key-idempotency": 1})
+@router.post("", summary="封装一条视频模板", openapi_extra={
+    "x-template-key-idempotency": 1, "x-template-role-bindings": 2, "x-template-scene-text": 1,
+})
 async def create_video_template(
     payload: VideoTemplateDraftIn, actor: ManageDep, session: SessionDep
 ) -> ApiResponse[VideoTemplateOut]:
@@ -68,6 +71,26 @@ async def pin_video_template(
         target_type="video_template",
         target_id=template_id,
         detail={"name": result.name, "packId": result.pack_id},
+    )
+    return ApiResponse.ok(result)
+
+
+@router.patch("/{template_id}/prompt", summary="改固定提示词（媒体清单与素材包不动）")
+async def update_video_template_prompt(
+    template_id: str, payload: VideoTemplatePromptIn, actor: ManageDep
+) -> ApiResponse[VideoTemplateOut]:
+    """只换提示词原文，`{{Mixed N}}` 引用按新原文重算。
+
+    不提供「删掉重建」：同原片同类型下 `find_for_run` 取最早创建的那条，
+    重建出来的新版会一直输给旧版。改提示词会影响此后每一次生成，留审计。
+    """
+    result = await asyncio.to_thread(store.update_prompt, template_id, payload.prompt)
+    await audit.record(
+        "template.video_template.update_prompt",
+        actor_id=actor.id,
+        target_type="video_template",
+        target_id=template_id,
+        detail={"name": result.name, "promptSha256": result.prompt_sha256},
     )
     return ApiResponse.ok(result)
 

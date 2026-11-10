@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ArchivedAsset, ArchiveCategory } from '@/entities/asset/model/archive.types';
 import type { VideoTemplateOut } from '@/shared/api/schema';
 import { AccessProvider } from '@/shared/access/AccessProvider';
-import type { ReplacementPack } from '@/shared/api/schema';
+import type { ReplacementChannelOut, ReplacementPack } from '@/shared/api/schema';
 import type { ReplacementRun } from '@/entities/template/model/replacement.types';
 import { ReplacementTemplates } from './ReplacementTemplates';
 
@@ -22,7 +22,7 @@ const mock = vi.hoisted(() => ({
   uploadPending: false,
   catalog: { data: { root: 'Z:/yufan_ai_studio', packs: [] as ReplacementPack[], runs: [] as ReplacementRun[],
     packScopes: {worn: '人物上身穿着', held: '手持展示产品', boxed: '盒内可见产品', screen: '手机详情页产品图'},
-    packRoles: {}, baseRoles: {} }, refetch: vi.fn(), isLoading: false, isFetching: false, error: null as Error | null },
+    channels: undefined as ReplacementChannelOut[] | undefined, packRoles: {}, baseRoles: {} }, refetch: vi.fn(), isLoading: false, isFetching: false, error: null as Error | null },
 }));
 vi.mock('@/entities/asset/api/archive.queries', () => ({
   useArchiveSelection: () => ({data: undefined, error: null}),
@@ -73,6 +73,7 @@ beforeEach(() => {
   mock.mediaUrls.length = 0;
   mock.videoTemplates = [];
   mock.catalog.data.runs = [];
+  mock.catalog.data.channels = undefined;
   mock.catalog.data.packs = [
     {id: 'character-pack', kind: 'character', name: '测试人物', referenceIds: ['image'], coverReferenceId: 'image'},
     {id: 'other-character', kind: 'character', name: '另一人物', referenceIds: ['image'], coverReferenceId: 'image'},
@@ -93,6 +94,194 @@ beforeEach(() => {
 });
 
 describe('替换模板工作台', () => {
+  it('单条和批量准备保存所选渠道，换渠道使用独立请求', async () => {
+    mock.catalog.data.channels = [
+      {id: 'libtv', label: 'LibTV', model: 'seedance', enabled: true, billing: 'libtv'},
+      {id: 'bailian', label: '百炼', model: 'wan', enabled: true, billing: 'aliyun'},
+      {id: 'bailian-prime', label: '百炼 Prime', model: 'wan-prime', enabled: false, billing: 'aliyun', unavailableReason: '尚未配置'},
+    ];
+    mock.prepare.mockResolvedValue({...run('prepared'), taskId: null});
+    render(<App url='/templates?sourceId=source&packId=character-pack' />);
+    const selector = screen.getByRole('combobox', {name: '模型渠道'});
+    expect(within(selector).getByRole('option', {name: /百炼 Prime/})).toBeDisabled();
+    fireEvent.change(selector, {target: {value: 'bailian'}});
+    expect(screen.getByText('核对后再生成，使用阿里云 API 计费。')).toBeVisible();
+    fireEvent.click(screen.getByRole('button', {name: '下一步：确认替换'}));
+    await vi.waitFor(() => expect(mock.prepare).toHaveBeenCalledWith(expect.objectContaining({channel: 'bailian'})));
+    const firstRequest = mock.prepare.mock.calls[0][0].requestId;
+    fireEvent.change(selector, {target: {value: 'libtv'}});
+    fireEvent.click(screen.getByRole('button', {name: '下一步：确认替换'}));
+    await vi.waitFor(() => expect(mock.prepare).toHaveBeenCalledTimes(2));
+    expect(mock.prepare.mock.calls[1][0]).toMatchObject({channel: 'libtv'});
+    expect(mock.prepare.mock.calls[1][0].requestId).not.toBe(firstRequest);
+    fireEvent.change(selector, {target: {value: 'bailian'}});
+    fireEvent.click(screen.getByText('批量准备多条原片'));
+    fireEvent.click(screen.getByRole('checkbox', {name: '测试原片'}));
+    fireEvent.click(screen.getByRole('button', {name: '准备所选原片／继续未完成项'}));
+    await vi.waitFor(() => expect(mock.prepare).toHaveBeenCalledTimes(3));
+    expect(mock.prepare.mock.calls[2][0]).toMatchObject({channel: 'bailian'});
+  });
+
+  it.each(['bailian', 'bailian-prime'] as const)('核对重试沿用已保存的 %s 渠道及阿里云计费', async channel => {
+    mock.catalog.data.runs = [{...run('failed'), taskId: null, channel, channelLabel: '已保存百炼渠道'}];
+    mock.execute.mockResolvedValue({...run('queued'), taskId: null, channel});
+    render(<App url='/templates?channel=libtv' />);
+    fireEvent.click(screen.getByRole('button', {name: '重试'}));
+    const dialog = await screen.findByRole('dialog', {name: '核对替换任务'});
+    expect(dialog).toHaveTextContent('已保存百炼渠道');
+    expect(dialog).toHaveTextContent('阿里云 API 计费');
+    expect(within(dialog).queryByRole('checkbox', {name: '用积分加速生成'})).not.toBeInTheDocument();
+    expect(dialog).not.toHaveTextContent('0 积分');
+    fireEvent.click(within(dialog).getByRole('button', {name: '确认生成'}));
+    await vi.waitFor(() => expect(mock.execute).toHaveBeenCalledWith({id: 'run1', billingMode: undefined}));
+    expect(mock.prepare).not.toHaveBeenCalled();
+  });
+
+  it('非 LibTV 档案显示保存渠道和阿里云计费，不显示积分加速', () => {
+    mock.catalog.data.runs = [{...run('waiting_free'), taskId: null, channel: 'bailian', channelLabel: '百炼已保存'}];
+    render(<App url='/templates?run=run1' />);
+    const dialog = screen.getByRole('dialog', {name: '调用档案'});
+    expect(dialog).toHaveTextContent('百炼已保存');
+    expect(dialog).toHaveTextContent('阿里云 API 计费');
+    expect(dialog).not.toHaveTextContent('零积分');
+    expect(screen.queryByRole('button', {name: '用积分加速生成'})).not.toBeInTheDocument();
+  });
+  it('只选手持后切换产品及刷新目录，不扩大范围，核对任务沿用当次选择', async () => {
+    mock.catalog.data.packs.push({...mock.catalog.data.packs[2], id: 'other-product', name: '另一个产品', version: 2});
+    mock.videoTemplates = [{id: 'scope-template', templateKey: 'scope-template', name: '产品范围模板',
+      description: '', prompt: '编辑 {{Mixed 1}}，目标 {{Mixed 2}}。允许编辑的范围：{{ReplacementScope}}。',
+      promptSha256: 'test', sourceVideoName: '米兰之夜.mp4', sourceVideoAssetId: 'source-template',
+      sourceVideoPath: '', sourceDurationSec: 5.31, aspectRatio: '9:16', generation: {}, coverUrl: '', pinned: false,
+      createdAt: '2026-11-10T00:00:00Z', updatedAt: '2026-11-10T00:00:00Z', packId: 'product-pack', defaultKind: 'product',
+      rules: {scopeOptions: ['人物上身穿着', '手持展示产品', '盒内可见产品', '手机详情页产品图']}, mediaOrder: []}];
+    mock.prepare.mockImplementation(async (input: {replacementScope: string}) => {
+      const result: ReplacementRun = {...run('prepared'), kind: 'product', prompt: `允许编辑的范围：${input.replacementScope}。`};
+      mock.catalog.data.runs = [result];
+      return result;
+    });
+    const view = render(<App url='/templates?sourceId=source-template&videoTemplateId=scope-template&kind=product&packId=product-pack' />);
+    const scopes = within(screen.getByRole('group', {name: '原片中允许替换的位置'})).getAllByRole<HTMLInputElement>('checkbox');
+    for (const checkbox of scopes) if (checkbox.checked) fireEvent.click(checkbox);
+    fireEvent.click(screen.getByRole('checkbox', {name: '手持展示产品'}));
+    fireEvent.click(screen.getByRole('button', {name: '选择产品：另一个产品'}));
+    mock.catalog.data.packs = structuredClone(mock.catalog.data.packs);
+    mock.videoTemplates = structuredClone(mock.videoTemplates);
+    view.rerender(<App url='/templates?sourceId=source-template&videoTemplateId=scope-template&kind=product&packId=product-pack' />);
+    expect(screen.getByRole('checkbox', {name: '手持展示产品'})).toBeChecked();
+    for (const name of ['人物上身穿着', '盒内可见产品', '手机详情页产品图']) expect(screen.getByRole('checkbox', {name})).not.toBeChecked();
+    fireEvent.click(screen.getByRole('button', {name: '下一步：确认替换'}));
+    await vi.waitFor(() => expect(mock.prepare).toHaveBeenCalledWith(expect.objectContaining({replacementScope: '手持展示产品', packId: 'other-product'})));
+    const review = await screen.findByRole('dialog', {name: '核对替换任务'});
+    expect(within(review).getAllByText('允许编辑的范围：手持展示产品。').length).toBeGreaterThan(0);
+  });
+
+  it('文字换场景只编辑描述，空白不可提交，轮询不覆盖编辑并可恢复默认', async () => {
+    const preset = '将原视频场景替换为明亮雅致的高档酒店会客厅。';
+    mock.videoTemplates = [{id: 'scene-text', name: '文字换场景', defaultKind: 'scene', sourceVideoAssetId: 'source-template',
+      templateKey: 'scene-text', description: '', promptSha256: 'test', sourceVideoName: '米兰之夜.mp4',
+      sourceVideoPath: '', sourceDurationSec: 5.31, aspectRatio: '9:16', generation: {}, coverUrl: '', pinned: false,
+      createdAt: '2026-11-10T00:00:00Z', updatedAt: '2026-11-10T00:00:00Z',
+      rules: {inputMode: 'video_scene_text', scenePromptDefault: preset, sourceVideoAssetId: 'source-template', functionLabel: '文字换场景'},
+      prompt: '{{ScenePrompt}}\n\n保留人物和产品。', mediaOrder: [{token: '{{Mixed 1}}', type: 'video', role: 'source_video', inPrompt: false}],
+    }];
+    mock.prepare.mockResolvedValue(run('prepared'));
+    const view = render(<App url='/templates?sourceId=source-template&kind=scene&videoTemplateId=scene-text' />);
+    const field = screen.getByRole('textbox', {name: '场景描述'});
+    expect(field).toHaveValue(preset);
+    expect(screen.queryByText('选择目标场景')).not.toBeInTheDocument();
+    fireEvent.change(field, {target: {value: '   '}});
+    expect(screen.getByRole('button', {name: '下一步：确认替换'})).toBeDisabled();
+    fireEvent.change(field, {target: {value: '将场景替换为海边花园。'}});
+    mock.videoTemplates = structuredClone(mock.videoTemplates);
+    view.rerender(<App url='/templates?sourceId=source-template&kind=scene&videoTemplateId=scene-text' />);
+    expect(field).toHaveValue('将场景替换为海边花园。');
+    fireEvent.click(screen.getByRole('button', {name: '下一步：确认替换'}));
+    await vi.waitFor(() => expect(mock.prepare).toHaveBeenCalledOnce());
+    expect(mock.prepare).toHaveBeenCalledWith(expect.objectContaining({kind: 'scene', videoTemplateId: 'scene-text',
+      scenePrompt: '将场景替换为海边花园。', packId: null, packVersion: null, referenceIds: [], notes: ''}));
+    await vi.waitFor(() => expect(screen.getByRole('button', {name: '恢复默认场景描述'})).toBeEnabled());
+    fireEvent.click(screen.getByRole('button', {name: '恢复默认场景描述'}));
+    expect(field).toHaveValue(preset);
+  });
+
+  it.each(['failed', 'timeout', 'service_error', 'needs_login'])('列表中 %s 任务可重试原查询，保留任务和计费模式', async status => {
+    mock.catalog.data.runs = [{...run(status), billingMode: 'credits', lastError: '查询中断'}];
+    mock.execute.mockResolvedValue({...run('running'), billingMode: 'credits'});
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', {name: '重试'}));
+    await vi.waitFor(() => expect(mock.execute).toHaveBeenCalledOnce());
+    expect(mock.execute).toHaveBeenCalledWith({id: 'run1', billingMode: undefined});
+    expect(mock.prepare).not.toHaveBeenCalled();
+    expect(screen.queryByRole('dialog', {name: '核对替换任务'})).not.toBeInTheDocument();
+  });
+
+  it('失败档案详情中可以重试已有任务', async () => {
+    mock.catalog.data.runs = [run('failed')];
+    mock.execute.mockResolvedValue(run('running'));
+    render(<App url='/templates?run=run1' />);
+    const dialog = screen.getByRole('dialog', {name: '调用档案'});
+    expect(within(dialog).getByText('只恢复查询已有上游任务，不重复提交或扣费。')).toBeVisible();
+    fireEvent.click(within(dialog).getByRole('button', {name: '重试'}));
+    await vi.waitFor(() => expect(mock.execute).toHaveBeenCalledWith({id: 'run1', billingMode: undefined}));
+  });
+
+  it.each(['free', 'credits'] as const)('未提交的失败任务先核对，再以 %s 模式重试', async billingMode => {
+    mock.catalog.data.runs = [{...run('failed'), taskId: null, billingMode}];
+    mock.execute.mockResolvedValue({...run('queued'), taskId: null, billingMode});
+    render(<App url='/templates?run=run1' />);
+    fireEvent.click(within(screen.getByRole('dialog', {name: '调用档案'})).getByRole('button', {name: '重试'}));
+    const review = screen.getByRole('dialog', {name: '核对替换任务'});
+    expect(screen.queryByRole('dialog', {name: '调用档案'})).not.toBeInTheDocument();
+    expect(mock.execute).not.toHaveBeenCalled();
+    expect(within(review).getByRole('checkbox', {name: '用积分加速生成'})).toHaveProperty('checked', billingMode === 'credits');
+    fireEvent.click(within(review).getByRole('button', {name: billingMode === 'credits' ? '用积分加速' : '确认生成'}));
+    await vi.waitFor(() => expect(mock.execute).toHaveBeenCalledWith({id: 'run1', billingMode}));
+    expect(mock.prepare).not.toHaveBeenCalled();
+  });
+
+  it.each(['success', 'running', 'submission_unknown', 'prepare_failed'])('%s 任务不显示失败重试按钮', status => {
+    mock.catalog.data.runs = [run(status)];
+    render(<App url='/templates?run=run1' />);
+    expect(screen.queryByRole('button', {name: '重试'})).not.toBeInTheDocument();
+  });
+
+  it('只读用户和回收站任务没有重试按钮', () => {
+    mock.catalog.data.runs = [run('failed')];
+    const view = render(<App url='/templates?run=run1' permissions={['template:read', 'asset:read']} />);
+    expect(screen.queryByRole('button', {name: '重试'})).not.toBeInTheDocument();
+    view.unmount();
+    mock.catalog.data.runs = [{...run('failed'), deletedAt: '2026-11-10T00:00:00Z'}];
+    render(<App url='/templates?run=run1&trash=1' />);
+    expect(screen.queryByRole('button', {name: '重试'})).not.toBeInTheDocument();
+  });
+
+  it('重试请求中禁用重复点击，失败后展示原因并允许再次重试', async () => {
+    mock.catalog.data.runs = [run('failed')];
+    let rejectRequest!: (error: Error) => void;
+    mock.execute.mockImplementationOnce(() => new Promise((_resolve, reject) => {rejectRequest = reject;}));
+    render(<App />);
+    const retry = screen.getByRole('button', {name: '重试'});
+    fireEvent.click(retry);
+    expect(retry).toBeDisabled();
+    fireEvent.click(retry);
+    expect(mock.execute).toHaveBeenCalledOnce();
+    await act(async () => {rejectRequest(new Error('执行器仍不可用'));});
+    expect(screen.getByRole('alert')).toHaveTextContent('执行器仍不可用');
+    expect(retry).toBeEnabled();
+    mock.execute.mockResolvedValue(run('running'));
+    fireEvent.click(retry);
+    await vi.waitFor(() => expect(mock.execute).toHaveBeenCalledTimes(2));
+  });
+
+  it('重试响应仍是失败时展示实际原因，不误报已恢复', async () => {
+    mock.catalog.data.runs = [run('failed')];
+    mock.execute.mockResolvedValue({...run('failed'), lastError: '安全守卫仍阻止清理'});
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', {name: '重试'}));
+    expect(await screen.findByRole('alert')).toHaveTextContent('安全守卫仍阻止清理');
+    expect(screen.queryByText(/已处理任务的执行请求/)).not.toBeInTheDocument();
+  });
+
   it('批量准备首错暂停，继续时不重复成功项且失败项沿用请求标识', async () => {
     mock.prepare.mockResolvedValueOnce({...run('prepared'), id: 'batch-first'})
       .mockRejectedValueOnce(new Error('暂时断连'))
@@ -243,6 +432,7 @@ describe('替换模板工作台', () => {
     expect(mock.mediaUrls).not.toContain('/thumbnail/product-back?v=hd-v2');
     expect(mock.mediaUrls).not.toContain('/thumbnail/product-detail?v=hd-v2');
     fireEvent.click(screen.getByRole('button', {name: '选择产品：测试产品'}));
+    fireEvent.click(screen.getByRole('checkbox', {name: '手持展示产品'}));
     expect(screen.queryByRole('combobox', {name: '已封装素材包'})).not.toBeInTheDocument();
     expect(screen.queryByRole('textbox', {name: '目标名称'})).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', {name: '下一步：确认替换'}));
@@ -301,8 +491,8 @@ describe('替换模板工作台', () => {
     fireEvent.click(screen.getByRole('button', {name: '下一步：确认替换'}));
     const dialog = await screen.findByRole('dialog');
     expect(mock.mediaUrls).toContain('/snapshot/image');
-    expect(within(dialog).queryByText('归档人物.png')).not.toBeInTheDocument();
-    expect(within(dialog).getByText(/归档原片.mp4/)).toBeVisible();
+    expect(within(dialog).getByText('归档人物.png')).toBeVisible();
+    expect(within(within(dialog).getByLabelText('当次完整输入')).getByText('归档原片.mp4')).toBeVisible();
     expect(within(dialog).getByText(/保留原动作/)).toBeVisible();
     expect(mock.execute).not.toHaveBeenCalled();
   });
@@ -372,7 +562,7 @@ describe('替换模板工作台', () => {
     fireEvent.click(screen.getByRole('button', {name: '产品替换'}));
     fireEvent.click(screen.getByRole('button', {name: '选择产品：测试产品'}));
     const scopes = within(screen.getByRole('group', {name: '原片中允许替换的位置'})).getAllByRole('checkbox');
-    scopes.forEach(scope => fireEvent.click(scope));
+    expect(scopes.every(scope => !(scope as HTMLInputElement).checked)).toBe(true);
     expect(scopes[0]).toHaveAccessibleDescription('请选择至少一个产品替换位置');
   });
 
@@ -603,6 +793,11 @@ describe('替换模板工作台', () => {
     }];
     render(<App />);
     expect(screen.getByText('视频模板 · 产品替换')).toBeVisible();
+    fireEvent.click(screen.getByRole('button', {name: '查看提示词：我穿的是米兰之夜模板测试.mp4'}));
+    expect(screen.getByRole('dialog', {name: '模板提示词与输入预览'})).toHaveTextContent('固定提示词');
+    expect(mock.prepare).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', {name: '选择模板：我穿的是米兰之夜模板测试.mp4'})).toHaveAttribute('aria-pressed', 'false');
+    fireEvent.click(within(screen.getByRole('dialog', {name: '模板提示词与输入预览'})).getByRole('button', {name: '关闭'}));
     fireEvent.click(screen.getByRole('button', {name: '选择模板：我穿的是米兰之夜模板测试.mp4'}));
     expect(screen.getByRole('button', {name: '产品替换'})).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getByLabelText('地址').textContent).toContain('kind=product');
@@ -627,6 +822,98 @@ describe('替换模板工作台', () => {
     expect(screen.queryByRole('button', {name: '场景替换'})).not.toBeInTheDocument();
     expect(screen.queryByRole('heading', {name: '替换范围'})).not.toBeInTheDocument();
     expect(screen.getByRole('button', {name: '下一步：确认替换'})).toBeEnabled();
+  });
+
+  it.each([
+    {kind: 'product' as const, short: '产品', action: '产品替换'},
+    {kind: 'scene' as const, short: '场景', action: '场景替换'},
+  ])('$short 始终单选，不显示人物序号或携带额外包', async ({kind, short, action}) => {
+    mock.catalog.data.packs = ['a', 'b'].map(id => ({id, kind, name: `目标${id}`,
+      referenceIds: [`image-${id}`], available: true, version: 1, supportedScopes: ['held']}));
+    mock.prepare.mockResolvedValue({...run('prepared'), kind});
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', {name: '选择模板：测试原片'}));
+    fireEvent.click(screen.getByRole('button', {name: action}));
+    const first = screen.getByRole('button', {name: `选择${short}：目标a`});
+    const second = screen.getByRole('button', {name: `选择${short}：目标b`});
+    fireEvent.click(first);
+    fireEvent.click(second);
+    expect(first).toHaveAttribute('aria-pressed', 'false');
+    expect(second).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.queryByLabelText('出镜顺序 1')).not.toBeInTheDocument();
+    if (kind === 'product') fireEvent.click(screen.getByRole('checkbox', {name: '手持展示产品'}));
+    fireEvent.click(screen.getByRole('button', {name: '下一步：确认替换'}));
+    await vi.waitFor(() => expect(mock.prepare).toHaveBeenCalledWith(expect.objectContaining({packId: 'b', extraPackIds: []})));
+  });
+
+  it('三人模板在目标人物中按点击顺序多选，取消后重排编号并按序提交', async () => {
+    /* 模板声明 3 个「正面身份图」槽位 = 提示词里的 {{Mixed 2/3/4}} 三个人。
+       人物包一人一包各一张正面图，所以必须选 3 个包；顺序就是编号顺序。 */
+    mock.catalog.data.packs = [
+      {id: 'face-a', kind: 'character', name: '人物A', referenceIds: ['face-a'], coverReferenceId: 'face-a', available: true, version: 1},
+      {id: 'face-b', kind: 'character', name: '人物B', referenceIds: ['face-b'], coverReferenceId: 'face-b', available: true, version: 1},
+      {id: 'face-c', kind: 'character', name: '人物C', referenceIds: ['face-c'], coverReferenceId: 'face-c', available: true, version: 1},
+      {id: 'face-d', kind: 'character', name: '人物D', referenceIds: ['face-d'], coverReferenceId: 'face-d', available: true, version: 1},
+      {id: 'face-e', kind: 'character', name: '人物E', referenceIds: ['face-e'], coverReferenceId: 'face-e', available: false, version: 1},
+    ];
+    mock.videoTemplates = [{
+      id: 'tpl-face', templateKey: 'three-faces', name: '三人换脸',
+      description: '', prompt: '编辑 {{Mixed 1}}，{{Mixed 2}} {{Mixed 3}} {{Mixed 4}} 依次对应三人。',
+      promptSha256: 'abc', sourceVideoName: '我穿的是米兰之夜模板测试.mp4',
+      sourceVideoAssetId: 'source-template', sourceVideoPath: '', sourceDurationSec: 5.31,
+      aspectRatio: '9:16', packId: 'face-a', packName: '人物A', packVersion: 1,
+      defaultKind: 'character',
+      mediaOrder: [
+        {token: '{{Mixed 1}}', role: 'source_video', type: 'video', assetId: 'source-template', name: '我穿的是米兰之夜模板测试.mp4', inPrompt: true},
+        {token: '{{Mixed 2}}', role: 'front', type: 'image', assetId: 'face-a', name: '人物A', inPrompt: true},
+        {token: '{{Mixed 3}}', role: 'front', type: 'image', assetId: null, name: '运行时选正面身份图', inPrompt: true},
+        {token: '{{Mixed 4}}', role: 'front', type: 'image', assetId: null, name: '运行时选正面身份图', inPrompt: true},
+        {token: '{{Mixed 5}}', role: 'front', type: 'image', assetId: 'auxiliary', name: '辅助正面图', inPrompt: false},
+      ],
+      generation: {}, rules: {referenceBindings: {'{{Mixed 1}}': 'source_video', '{{Mixed 2}}': 'front', '{{Mixed 3}}': 'front', '{{Mixed 4}}': 'front'}}, coverUrl: '', pinned: true,
+      createdAt: '2026-11-10T00:00:00Z', updatedAt: '2026-11-10T00:00:00Z',
+    }];
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', {name: '选择模板：我穿的是米兰之夜模板测试.mp4'}));
+    const people = screen.getByRole('region', {name: '目标人物'});
+    expect(within(people).getByRole('heading', {name: '选择目标人物'})).toBeVisible();
+    expect(within(people).queryByRole('combobox')).not.toBeInTheDocument();
+    const card = (name: string) => within(people).getByRole('button', {name: `选择人物：${name}`});
+    const expectOrder = (name: string, order: number) => expect(within(card(name)).getByLabelText(`出镜顺序 ${order}`)).toBeVisible();
+    expectOrder('人物A', 1);
+    expect(within(people).getByText('已选 1/3')).toBeVisible();
+    expect(screen.getByRole('button', {name: '下一步：确认替换'})).toBeDisabled();
+    expect(card('人物E')).toBeDisabled();
+    fireEvent.click(card('人物B'));
+    fireEvent.click(card('人物C'));
+    expectOrder('人物B', 2);
+    expectOrder('人物C', 3);
+    expect(card('人物D')).toBeDisabled();
+    expect(within(people).getByText('已选 3/3')).toBeVisible();
+    // 取消首位后连续编号；清空全部也应保持三人模式。
+    fireEvent.click(card('人物A'));
+    expectOrder('人物B', 1);
+    expectOrder('人物C', 2);
+    expect(card('人物D')).toBeEnabled();
+    fireEvent.click(card('人物B'));
+    fireEvent.click(card('人物C'));
+    expect(within(people).getByText('已选 0/3')).toBeVisible();
+    expect(screen.getByRole('button', {name: '下一步：确认替换'})).toBeDisabled();
+    fireEvent.click(card('人物C'));
+    fireEvent.click(card('人物A'));
+    fireEvent.click(card('人物B'));
+    expectOrder('人物C', 1);
+    expectOrder('人物A', 2);
+    expectOrder('人物B', 3);
+    await vi.waitFor(() => expect(screen.getByRole('button', {name: '下一步：确认替换'})).toBeEnabled());
+    fireEvent.click(screen.getByRole('button', {name: '下一步：确认替换'}));
+    await vi.waitFor(() => expect(mock.prepare).toHaveBeenCalled());
+    const payload = mock.prepare.mock.calls[0][0];
+    expect(payload.packId).toBe('face-c');
+    expect(payload.extraPackIds).toEqual(['face-a', 'face-b']);
+    expect(payload.extraPackVersions).toEqual([1, 1]);
+    expect(payload.referenceIds).toEqual(['face-c', 'face-a', 'face-b']);
+    expect(payload.target).toBe('人物C、人物A、人物B');
   });
 
   it('同一原片可有五个封装功能，选择时携带具体模板 ID', async () => {
