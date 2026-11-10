@@ -15,6 +15,7 @@ export function IconButton({ icon, label, tone = 'default', className, ...rest }
       title={label}
       className={cn(
         'grid h-[30px] w-[30px] place-items-center rounded-[9px] transition-colors',
+        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30',
         tone === 'default'
           ? 'text-ink-soft hover:bg-[#e8eff1] hover:text-ink'
           : 'bg-panel-soft text-ink-soft hover:bg-line-soft',

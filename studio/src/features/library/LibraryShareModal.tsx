@@ -5,6 +5,7 @@ import { cn } from '@/shared/lib/cn';
 import { toast } from '@/shared/lib/toast';
 import type { LibraryAssetOut, LibraryGroupOut, ShareTarget } from '@/shared/api/schema';
 import { useCreateShareRequest } from '@/entities/library/api/library.queries';
+import { displayName } from '@/entities/library/model/types';
 
 export interface LibraryShareModalProps {
   asset: LibraryAssetOut | null;
@@ -12,6 +13,8 @@ export interface LibraryShareModalProps {
   groups: LibraryGroupOut[];
   /** `library:share:direct`：共享立即生效；撤销**始终**要走审批 */
   canDirect: boolean;
+  /** 我是不是这条资产的所有者。「替别人扩大可见范围」必须经审批 */
+  isOwner: boolean;
   onClose: () => void;
 }
 
@@ -28,9 +31,21 @@ interface TargetOption {
  * 两者的表单长得像，语义完全不同：共享在有 `share:direct` 时立即生效，
  * 撤销则**一律**生成申请单（后端同样强制），理由是「同事正在用的素材突然
  * 拿不到」需要留痕。界面把这句话直接写在输入框下面，避免用户以为点完就生效。
+ *
+ * `share:direct` 只对**自己的**资产成立：替别人扩大可见范围一律走审批，
+ * 否则管理员能悄悄把任何人的私货推上团队库。文案按「所有者 / 直接生效」
+ * 两种组合分开写，不把权限点当成结论。
  */
-export function LibraryShareModal({ asset, mode, groups, canDirect, onClose }: LibraryShareModalProps) {
+export function LibraryShareModal({
+  asset,
+  mode,
+  groups,
+  canDirect,
+  isOwner,
+  onClose,
+}: LibraryShareModalProps) {
   const request = useCreateShareRequest();
+  const instant = canDirect && isOwner;
   const [targetKey, setTargetKey] = useState('');
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
@@ -111,7 +126,7 @@ export function LibraryShareModal({ asset, mode, groups, canDirect, onClose }: L
   const title = mode === 'share' ? '共享到…' : '取消共享';
 
   return (
-    <Modal open onClose={onClose} title={`${title} · ${asset.name}`} width={520}>
+    <Modal open onClose={onClose} title={`${title} · ${displayName(asset.name)}`} width={520}>
       <div className="space-y-3 p-[18px]">
         <div className="space-y-1.5">
           {options.length ? (
@@ -161,13 +176,15 @@ export function LibraryShareModal({ asset, mode, groups, canDirect, onClose }: L
         <p className="rounded-lg bg-panel-soft px-2.5 py-1.5 text-[11px] leading-relaxed text-ink-mute">
           {mode === 'revoke'
             ? '撤销共享一律需要审批：同事可能正在用这条素材，审批通过后才会真正生效。'
-            : canDirect
+            : instant
               ? '你持有直接共享权限，提交后立即生效。'
-              : '共享需要小组负责人或管理员审批，提交后可在「待我审核」里查看进度。'}
+              : isOwner
+                ? '共享需要小组负责人或管理员审批，提交后可在「待我审核」里查看进度。'
+                : '这是别人上传的素材。提交后由小组负责人或管理员审批，通过后才会扩大可见范围。'}
         </p>
 
         <div className="flex items-center gap-1.5 border-t border-line-soft pt-3">
-          {mode === 'share' && <Chip tone={canDirect ? 'ok' : 'warn'}>{canDirect ? '立即生效' : '需审批'}</Chip>}
+          {mode === 'share' && <Chip tone={instant ? 'ok' : 'warn'}>{instant ? '立即生效' : '需审批'}</Chip>}
           <Button size="sm" variant="ghost" className="ml-auto" onClick={onClose} disabled={busy}>
             取消
           </Button>

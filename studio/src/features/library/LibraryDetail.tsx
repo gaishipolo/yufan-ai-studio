@@ -34,6 +34,7 @@ import {
   STATE_LABEL,
   VISIBILITY_LABEL,
   deleteOffer,
+  displayName,
   isTrashExpired,
   trashDaysLeft,
 } from '@/entities/library/model/types';
@@ -71,7 +72,12 @@ export function LibraryDetail(props: LibraryDetailProps) {
   if (!assetId) return null;
 
   return (
-    <Modal open onClose={props.onClose} title={asset?.name ?? '资产详情'} width={880}>
+    <Modal
+      open
+      onClose={props.onClose}
+      title={asset ? displayName(asset.name) : '资产详情'}
+      width={880}
+    >
       {query.error ? (
         <div className="p-[18px]">
           <ErrorState error={query.error} onRetry={() => void query.refetch()} />
@@ -102,17 +108,23 @@ function DetailBody({
   const saveFile = useSaveAssetFile();
   const createTag = useCreateTagInline();
   const offer = deleteOffer(asset, viewer);
+  /* 改名与打标签在服务端只认 owner（或有 delete:any）。别人共享给我的素材、
+     或共享封装里的成员，我能读到但改不了——按钮挂在这里就要跟着同一个判定，
+     否则点下去是一句「资产不存在」，看起来像这条记录丢了。 */
+  const canEdit = canUpdate && (asset.ownerId === viewer.id || viewer.canDeleteAny);
   const days = trashDaysLeft(asset.trashExpiresAt);
   const hasMedia = asset.kind === 'video' || asset.kind === 'audio';
   const media = useLibraryMedia(asset.id, hasMedia);
   const [renaming, setRenaming] = useState(false);
   const nameInput = useRef<HTMLInputElement>(null);
-  const [name, setName] = useState(asset.name);
+  /* 输入框里只有主体名：后缀是文件的属性，改不了也不该看起来能改。
+     保存时后端 `keep_extension` 会把后缀拼回去，所以这里传裸名是对的。 */
+  const [name, setName] = useState(displayName(asset.name));
   const [tagIds, setTagIds] = useState<string[]>(asset.tags?.map((tag) => tag.id) ?? []);
 
   /* 换一条资产时把本地编辑态重置，否则会把上一条的名字带到下一条 */
   useEffect(() => {
-    setName(asset.name);
+    setName(displayName(asset.name));
     setTagIds(asset.tags?.map((tag) => tag.id) ?? []);
     setRenaming(false);
   }, [asset.id, asset.name, asset.tags]);
@@ -176,7 +188,7 @@ function DetailBody({
               src={media.url}
               controls
               poster={asset.coverUrl ?? undefined}
-              aria-label={asset.name}
+              aria-label={displayName(asset.name)}
               className="max-h-[360px] w-full bg-black"
             >
               <track kind="captions" />
@@ -187,7 +199,7 @@ function DetailBody({
         ) : media.url ? (
           <div className="flex items-center gap-3 p-4">
             <FileAudio size={22} className="text-ink-mute" />
-            <audio src={media.url} controls aria-label={asset.name} className="w-full">
+            <audio src={media.url} controls aria-label={displayName(asset.name)} className="w-full">
               <track kind="captions" />
             </audio>
           </div>
@@ -228,25 +240,33 @@ function DetailBody({
             label="名称"
             value={
               renaming ? (
-                <span className="flex items-center gap-1">
-                  <input
-                    ref={nameInput}
-                    value={name}
-                    onChange={(event) => setName(event.target.value)}
-                    className="h-7 w-full rounded-lg border border-primary-line bg-white px-2 text-xs text-ink outline-none"
-                    aria-label="资产名称"
-                  />
-                  <Button size="sm" variant="primary" onClick={() => name.trim() && save({ name: name.trim() })}>
-                    保存
-                  </Button>
-                  <Button size="sm" variant="ghost" onClick={() => setRenaming(false)}>
-                    取消
-                  </Button>
+                <span className="flex flex-col gap-1">
+                  <span className="flex items-center gap-1">
+                    <input
+                      ref={nameInput}
+                      value={name}
+                      onChange={(event) => setName(event.target.value)}
+                      className="h-7 w-full rounded-lg border border-primary-line bg-white px-2 text-xs text-ink outline-none"
+                      aria-label="资产名称"
+                    />
+                    <Button size="sm" variant="primary" onClick={() => name.trim() && save({ name: name.trim() })}>
+                      保存
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={() => setRenaming(false)}>
+                      取消
+                    </Button>
+                  </span>
+                  {/* 这句话必须在编辑态说：平时用户看不到后缀，改完发现还在会以为是 bug */}
+                  <span className="text-[10.5px] leading-4 text-ink-mute">
+                    只改名称主体，格式后缀由文件本身决定
+                  </span>
                 </span>
               ) : (
                 <span className="flex items-center gap-1">
-                  <span className="truncate">{asset.name}</span>
-                  {canUpdate && asset.state !== 'trash' && (
+                  <span className="truncate" title={asset.name}>
+                    {displayName(asset.name)}
+                  </span>
+                  {canEdit && asset.state !== 'trash' && (
                     <button
                       type="button"
                       className="text-ink-mute hover:text-primary-deep"
@@ -263,7 +283,7 @@ function DetailBody({
           <Field
             label="标签"
             value={
-              canUpdate && asset.state !== 'trash' ? (
+              canEdit && asset.state !== 'trash' ? (
                 <MultiSelect
                   options={tags.map((tag) => ({ value: tag.id, label: tag.name }))}
                   value={tagIds}
@@ -376,9 +396,17 @@ function DetailBody({
       )}
 
       <div className="flex flex-wrap items-center gap-1.5 border-t border-line-soft pt-3">
-        {asset.kind !== 'pack' && asset.state !== 'draft' && (
-          <Button size="sm" variant="secondary" icon={<Download size={13} />} onClick={download}>
-            下载原件
+        {/* 只在 active 出现：回收站里后端一律拒绝取件，按钮点了也是失败。
+            封装的「下载」是打包下载成员（走 Workspace 的统一分派），
+            单条取件接口对封装没有原文件可给。 */}
+        {asset.state === 'active' && (
+          <Button
+            size="sm"
+            variant="secondary"
+            icon={<Download size={13} />}
+            onClick={asset.kind === 'pack' ? () => onAction('download', asset) : download}
+          >
+            {asset.kind === 'pack' ? '打包下载' : '下载原件'}
           </Button>
         )}
         {asset.state === 'draft' && (
@@ -432,10 +460,38 @@ function DetailBody({
 }
 
 function MediaImage({ asset }: { asset: LibraryAssetDetailOut }) {
-  if (asset.coverUrl) {
-    return <img src={asset.coverUrl} alt={asset.name} className="max-h-[420px] w-full bg-black object-contain" />;
+  /* 封面走对象存储的直链，原图走同源流式端点：**两套字节一条记录**。
+     封面对象丢了（`previews/*.jpg` 被清、换桶、MinIO 重建）时原图往往还在，
+     一个裂图标会让人以为整条素材没了。失败就退回原图，取不到才说「暂时取不到」。
+     换素材时必须复位，否则上一张的失败态会带到下一张。 */
+  const [fallback, setFallback] = useState(false);
+  useEffect(() => setFallback(false), [asset.id, asset.coverUrl]);
+
+  if (asset.coverUrl && !fallback) {
+    return (
+      <img
+        src={asset.coverUrl}
+        alt={displayName(asset.name)}
+        onError={() => setFallback(true)}
+        className="max-h-[420px] w-full bg-black object-contain"
+      />
+    );
   }
-  return <MediaFallback icon={<ImageIcon size={22} />} loading={false} />;
+  return <OriginalImage asset={asset} />;
+}
+
+function OriginalImage({ asset }: { asset: LibraryAssetDetailOut }) {
+  const media = useLibraryMedia(asset.id, true);
+  if (media.url) {
+    return (
+      <img
+        src={media.url}
+        alt={displayName(asset.name)}
+        className="max-h-[420px] w-full bg-black object-contain"
+      />
+    );
+  }
+  return <MediaFallback icon={<ImageIcon size={22} />} loading={media.isPending} />;
 }
 
 function MediaFallback({ icon, loading }: { icon: ReactNode; loading: boolean }) {

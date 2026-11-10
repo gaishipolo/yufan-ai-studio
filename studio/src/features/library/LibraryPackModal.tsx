@@ -6,7 +6,7 @@ import { formatBytes } from '@/shared/lib/format';
 import { toast } from '@/shared/lib/toast';
 import { useDebouncedValue } from '@/shared/hooks/useDebouncedValue';
 import { useCreatePack, useLibrarySelection } from '@/entities/library/api/library.queries';
-import { KIND_LABEL } from '@/entities/library/model/types';
+import { KIND_LABEL, displayName } from '@/entities/library/model/types';
 
 export interface LibraryPackModalProps {
   open: boolean;
@@ -133,7 +133,7 @@ export function LibraryPackModal({ open, preselected, onClose, onCreated }: Libr
                   aria-pressed={active}
                 >
                   <CoverImage src={asset.coverUrl ?? undefined} seed={asset.id} className="aspect-[4/3] rounded-md" />
-                  <div className="mt-1 truncate text-[11.5px] text-ink">{asset.name}</div>
+                  <div className="mt-1 truncate text-[11.5px] text-ink">{displayName(asset.name)}</div>
                   <div className="truncate text-[10.5px] text-ink-mute">
                     {KIND_LABEL[asset.kind]}
                     {asset.sizeBytes != null ? ` · ${formatBytes(asset.sizeBytes)}` : ''}

@@ -9,6 +9,8 @@ export interface LibraryGridProps {
   items?: LibraryAssetOut[];
   selected: Set<string>;
   viewer: { id: string; canDeleteAny: boolean };
+  canUpdate: boolean;
+  tagBusy?: boolean;
   isPending: boolean;
   error: Error | null;
   hasFilters: boolean;
@@ -16,6 +18,8 @@ export interface LibraryGridProps {
   onToggle: (id: string) => void;
   onToggleAll: (ids: string[], checked: boolean) => void;
   onAction: (action: LibraryCardAction, asset: LibraryAssetOut) => void;
+  onRemoveTag: (asset: LibraryAssetOut, tagId: string) => void;
+  onAddTag: (asset: LibraryAssetOut) => void;
 }
 
 /**
@@ -43,9 +47,7 @@ export function LibraryGrid(props: LibraryGridProps) {
           icon={hasFilters ? <SearchX size={26} /> : <FolderOpen size={26} />}
           title={hasFilters ? '没有匹配的资产' : `${meta.label}还是空的`}
           description={
-            hasFilters
-              ? '换一个类型或标签，或者清空筛选条件再看一次。'
-              : meta.hint
+            hasFilters ? '换一个类型或标签，或者清空筛选条件再看一次。' : meta.hint
           }
         />
       </div>
@@ -61,8 +63,12 @@ export function LibraryGrid(props: LibraryGridProps) {
           view={view}
           selected={selected.has(asset.id)}
           viewer={props.viewer}
+          canUpdate={props.canUpdate}
+          tagBusy={props.tagBusy}
           onToggle={props.onToggle}
           onAction={props.onAction}
+          onRemoveTag={props.onRemoveTag}
+          onAddTag={props.onAddTag}
         />
       ))}
     </div>

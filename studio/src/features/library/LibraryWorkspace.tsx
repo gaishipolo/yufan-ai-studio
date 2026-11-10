@@ -1,6 +1,6 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { Download, PackageCheck } from 'lucide-react';
+import { Download } from 'lucide-react';
 import { Button, Chip, PageHeader, Pager } from '@/shared/ui';
 import { toast } from '@/shared/lib/toast';
 import { useDebouncedValue } from '@/shared/hooks/useDebouncedValue';
@@ -9,8 +9,10 @@ import { ApiError } from '@/shared/api/types';
 import type { LibraryAssetOut } from '@/shared/api/schema';
 import {
   deleteOffer,
+  displayName,
   parseView,
   viewMeta,
+  viewQuery,
   type KindFilter,
   type LibrarySortKey,
   type LibraryView,
@@ -23,6 +25,7 @@ import {
   useLibraryList,
   useLibraryTags,
   useMyGroups,
+  usePatchAsset,
   usePurgeAsset,
   useRestoreAsset,
   useSaveAssetFile,
@@ -35,9 +38,12 @@ import { LibraryDownloadsModal } from './LibraryDownloadsModal';
 import { LibraryGrid, LibrarySelectAll } from './LibraryGrid';
 import { LibraryPackModal } from './LibraryPackModal';
 import { LibraryShareModal } from './LibraryShareModal';
+import { LibraryTagBar } from './LibraryTagBar';
+import { LibraryTagPicker } from './LibraryTagPicker';
 import { LibraryToolbar } from './LibraryToolbar';
 import { LibraryUploadModal } from './LibraryUploadModal';
 import { ShareRequestsModal } from './ShareRequestsModal';
+import { useCreateTagInline } from './use-create-tag-inline';
 import type { LibraryCardAction } from './LibraryCard';
 
 const PAGE_SIZE = 24;
@@ -98,6 +104,7 @@ export function LibraryWorkspace() {
     [subject?.id, canDeleteAny],
   );
 
+  const tagScope = useMemo(() => viewQuery(view), [view]);
   const list = useLibraryList({
     view,
     kind: kind === 'all' ? undefined : kind,
@@ -107,7 +114,9 @@ export function LibraryWorkspace() {
     page,
     pageSize: PAGE_SIZE,
   });
-  const tags = useLibraryTags();
+  const tags = useLibraryTags(tagScope);
+  const patch = usePatchAsset();
+  const createTag = useCreateTagInline();
   const groups = useMyGroups();
   const pending = useShareRequests('pending');
   const del = useDeleteAsset();
@@ -131,8 +140,9 @@ export function LibraryWorkspace() {
   const [requestsOpen, setRequestsOpen] = useState(false);
   const [downloadsOpen, setDownloadsOpen] = useState(false);
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
+  /** 卡片标签行 `+` 打开的选择器；只存 asset，词表与权限在渲染时取当前值 */
+  const [tagPicker, setTagPicker] = useState<LibraryAssetOut | null>(null);
 
-  const meta = viewMeta(view);
   const items = list.data?.items ?? [];
   const total = list.data?.total ?? 0;
   const hasFilters = kind !== 'all' || tagIds.length > 0 || !!debouncedKeyword;
@@ -179,13 +189,48 @@ export function LibraryWorkspace() {
 
   const fail = (error: Error) => toast(error.message, 'error');
 
+  function toggleTag(id: string) {
+    const next = tagIds.includes(id)
+      ? tagIds.filter((item) => item !== id)
+      : [...tagIds, id];
+    update({ tags: next.join(',') || null, page: null });
+  }
+
+  /** 卡片标签上的 ×：用整体替换去掉一个标签，不让「去标」变成新接口。 */
+  function removeTag(asset: LibraryAssetOut, tagId: string) {
+    const remaining = (asset.tags ?? [])
+      .filter((tag) => tag.id !== tagId)
+      .map((tag) => tag.id);
+    patch.mutate(
+      { id: asset.id, body: { tagIds: remaining } },
+      {
+        onSuccess: () => toast('已移除标签'),
+        onError: fail,
+      },
+    );
+  }
+
+  /** 卡片标签上的 +：选择器交回的是完整 tagIds，与 × 走同一个 PATCH。 */
+  function addTags(asset: LibraryAssetOut, tagIds: string[]) {
+    patch.mutate(
+      { id: asset.id, body: { tagIds } },
+      {
+        onSuccess: () => {
+          setTagPicker(null);
+          toast('已添加标签');
+        },
+        onError: fail,
+      },
+    );
+  }
+
   function askDelete(asset: LibraryAssetOut) {
     const force = deleteOffer(asset, viewer) === 'force';
     setConfirm({
       title: force ? '强制移入回收站' : '移入回收站',
       description: force
-        ? `「${asset.name}」属于 ${asset.ownerName || asset.ownerId}。强制删除会同时补一张自审的撤销共享单，理由会进审计。`
-        : `「${asset.name}」会进入回收站，30 天内可以恢复；被封装或任务引用时不能彻底删除。`,
+        ? `「${displayName(asset.name)}」属于 ${asset.ownerName || asset.ownerId}。强制删除会同时补一张自审的撤销共享单，理由会进审计。`
+        : `「${displayName(asset.name)}」会进入回收站，30 天内可以恢复；被封装或任务引用时不能彻底删除。`,
       confirmLabel: '移入回收站',
       danger: true,
       requireReason: force,
@@ -218,7 +263,7 @@ export function LibraryWorkspace() {
   function askRevokeAndDelete(asset: LibraryAssetOut) {
     setConfirm({
       title: '撤销共享并删除',
-      description: `「${asset.name}」只共享给你负责的小组，且你是组长：可以一步撤销共享并移入回收站。仍会写一张自审申请单，理由进审计。`,
+      description: `「${displayName(asset.name)}」只共享给你负责的小组，且你是组长：可以一步撤销共享并移入回收站。仍会写一张自审申请单，理由进审计。`,
       confirmLabel: '撤销并删除',
       danger: true,
       requireReason: true,
@@ -245,7 +290,7 @@ export function LibraryWorkspace() {
   function askPurge(asset: LibraryAssetOut) {
     setConfirm({
       title: '彻底删除',
-      description: `「${asset.name}」的字节会被永久删除，**不可恢复**。被模板 / 任务 / 封装引用时后端会拒绝并列出引用方。`,
+      description: `「${displayName(asset.name)}」的字节会被永久删除，**不可恢复**。被模板 / 任务 / 封装引用时后端会拒绝并列出引用方。`,
       confirmLabel: '彻底删除',
       danger: true,
       onConfirm: () => {
@@ -266,7 +311,7 @@ export function LibraryWorkspace() {
   function askReject(asset: LibraryAssetOut) {
     setConfirm({
       title: '驳回草稿',
-      description: `「${asset.name}」会被移入回收站，恢复时回到草稿箱。驳回原因会记在资产上，生成方能看到。`,
+      description: `「${displayName(asset.name)}」会被移入回收站，恢复时回到草稿箱。驳回原因会记在资产上，生成方能看到。`,
       confirmLabel: '驳回',
       danger: true,
       requireReason: true,
@@ -330,6 +375,27 @@ export function LibraryWorkspace() {
         });
         return;
       case 'download':
+        /* 封装没有自己的字节，单条取件接口只会回 404（后端现在改报 400 并
+           说明理由）。用户点「下载封装」想要的是里面那些素材，所以走打包：
+           服务端展开成员、压成一个 zip，和批量下载是同一条通路。 */
+        if (asset.kind === 'pack') {
+          createDownload.mutate(
+            { ids: [asset.id] },
+            {
+              onSuccess: (job) => {
+                const skipped = job.skipped?.length ?? 0;
+                setDownloadsOpen(true);
+                toast(
+                  skipped
+                    ? `已创建打包任务，${skipped} 项被跳过`
+                    : '已创建打包任务，完成后在「下载」里取件',
+                );
+              },
+              onError: fail,
+            },
+          );
+          return;
+        }
         saveFile.mutate(
           { id: asset.id, filename: asset.name },
           { onSuccess: () => toast('已开始下载'), onError: fail },
@@ -435,7 +501,7 @@ export function LibraryWorkspace() {
     <>
       <PageHeader
         title="资产库"
-        description="草稿箱、个人、小组、团队与回收站五个入口的统一资产库。可见性、共享审批与生命周期由后端判定，界面只少显示不该点的按钮。"
+        description="全部素材、个人、小组、团队、草稿箱与回收站六个入口的统一资产库。可见性、共享审批与生命周期由后端判定，界面只少显示不该点的按钮。"
         actions={
           <>
             {canReadLegacy && (
@@ -463,12 +529,9 @@ export function LibraryWorkspace() {
         <LibraryToolbar
           view={view}
           facets={list.data?.facets}
-          total={list.data?.total}
           kind={kind}
           keyword={keyword}
           sort={sort}
-          tags={tags.data ?? []}
-          tagIds={tagIds}
           canCreate={canCreate}
           pendingCount={pending.data?.length ?? 0}
           busy={list.isPending}
@@ -476,17 +539,29 @@ export function LibraryWorkspace() {
           onKind={(next) => update({ kind: next === 'all' ? null : next, page: null })}
           onKeyword={(value) => update({ q: value || null, page: null })}
           onSort={(next) => update({ sort: next, page: null })}
-          onTags={(values) => update({ tags: values.join(',') || null, page: null })}
           onUpload={() => setUploadOpen(true)}
           onPack={() => setPack({ open: true, preselected: [...selected] })}
           onRequests={() => setRequestsOpen(true)}
         />
 
-        <div className="flex items-center justify-between gap-2">
-          <span className="text-[11.5px] text-ink-mute">
-            {canShare ? '' : '共享与删除操作需要权限'}
-          </span>
-          <LibrarySelectAll items={items} selected={selected} onToggleAll={toggleAll} />
+        {/* 标签筛选条与「共 N 条」收进同一张卡：原来这里只有一句入口说明和
+            一个全选按钮，白占一行；现在这一屏就能看到全部标签与各自的数量。 */}
+        <div className="rounded-card border border-line-soft bg-panel px-3 py-2">
+          <LibraryTagBar
+            tags={tags.data ?? []}
+            selected={tagIds}
+            busy={tags.isPending}
+            onToggle={toggleTag}
+            onClear={() => update({ tags: null, page: null })}
+          />
+          <div className="mt-2 flex items-center justify-between gap-2 border-t border-line-soft pt-2">
+            <span className="min-w-0 truncate text-[11.5px] text-ink-mute">
+              共 {total} 条
+              {items.length > 0 ? ` · ${viewMeta(view).hint}` : ''}
+              {canShare ? '' : ' · 共享与删除操作需要权限'}
+            </span>
+            <LibrarySelectAll items={items} selected={selected} onToggleAll={toggleAll} />
+          </div>
         </div>
 
         <LibraryGrid
@@ -494,6 +569,8 @@ export function LibraryWorkspace() {
           items={list.data?.items}
           selected={selected}
           viewer={viewer}
+          canUpdate={canUpdate}
+          tagBusy={patch.isPending}
           isPending={list.isPending}
           error={(list.error as Error | null) ?? null}
           hasFilters={hasFilters}
@@ -501,6 +578,8 @@ export function LibraryWorkspace() {
           onToggle={toggle}
           onToggleAll={toggleAll}
           onAction={onAction}
+          onRemoveTag={removeTag}
+          onAddTag={(asset) => setTagPicker(asset)}
         />
 
         {totalPages > 1 && (
@@ -522,11 +601,6 @@ export function LibraryWorkspace() {
           onClear={() => setSelected(new Set())}
           onAction={runBulk}
         />
-
-        <p className="flex items-center gap-1.5 text-[11px] text-ink-mute">
-          <PackageCheck size={12} />
-          {meta.label}：{meta.hint}
-        </p>
       </div>
 
       <LibraryDetail
@@ -544,6 +618,18 @@ export function LibraryWorkspace() {
 
       <LibraryUploadModal open={uploadOpen} tags={tags.data ?? []} onClose={() => setUploadOpen(false)} />
 
+      {tagPicker && (
+        <LibraryTagPicker
+          key={tagPicker.id}
+          asset={tagPicker}
+          tags={tags.data ?? []}
+          busy={patch.isPending}
+          onCreateTag={createTag}
+          onSubmit={addTags}
+          onClose={() => setTagPicker(null)}
+        />
+      )}
+
       <LibraryPackModal
         open={pack.open}
         preselected={pack.preselected}
@@ -559,6 +645,7 @@ export function LibraryWorkspace() {
         mode={share?.mode ?? 'share'}
         groups={groups.data ?? []}
         canDirect={canShareDirect}
+        isOwner={!!share && share.asset.ownerId === viewer.id}
         onClose={() => setShare(null)}
       />
 
