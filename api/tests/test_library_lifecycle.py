@@ -268,3 +268,115 @@ def test_admin_delete_of_shared_asset_requires_reason_and_records_self_review(
     assert fetch_group_rows(asset["id"]) == []
     forced = [item for item in fetch_share_requests(asset["id"]) if item["note"] == "admin_forced"]
     assert forced and forced[0]["status"] == "approved"
+
+
+def test_purge_gives_up_when_the_row_was_restored_meanwhile(
+    client: TestClient, api: str
+) -> None:
+    """彻底删除与恢复竞态：以 DELETE 的 rowcount 为准，删不到就什么都不动。
+
+    旧顺序是「先删子表、最后删主行」：并发 restore 把行改回 active 时，
+    最后那条 `WHERE state='trash'` 静默命中 0 行、commit 照做、字节照删。
+    用户看到「恢复成功」，拿回来的是没有标签、原文件 404 的空壳——不可逆。
+
+    这里用「拿着 trash 快照、库里已恢复」复现那个窗口（串行测试构造不出真并发）。
+    """
+    import asyncio
+
+    from db.session import get_session_factory
+    from infra import get_storage
+    from modules.library.lifecycle import LifecycleService
+    from modules.library.models import LibraryAsset
+
+    admin = admin_headers(client)
+    owner, owner_h = make_user(client, admin, LIB_RW)
+    asset = upload_image(client, api, owner_h, color="orchid")
+    client.delete(f"{api}/library/assets/{asset['id']}", headers=owner_h)
+
+    async def scenario() -> None:
+        factory = get_session_factory()
+        async with factory() as session:
+            snapshot = await session.get(LibraryAsset, asset["id"])
+            assert snapshot is not None and snapshot.state == "trash"
+
+            # 模拟另一个会话在这中间完成了 restore
+            async with factory() as other:
+                live = await other.get(LibraryAsset, asset["id"])
+                assert live is not None
+                live.state = "active"
+                await other.commit()
+
+            await LifecycleService(session, get_storage())._purge_row(snapshot, None)
+
+    asyncio.run(scenario())
+
+    survived = fetch_asset(asset["id"])
+    assert survived is not None, "被恢复的记录不该被物理删除"
+    assert survived["state"] == "active"
+    served = client.get(f"{api}/library/assets/{asset['id']}/file", headers=owner_h)
+    assert served.status_code == 200, "字节也不该被删掉"
+
+
+def test_purge_cancels_pending_share_requests(client: TestClient, api: str) -> None:
+    """彻底删除要把挂在它上面的 pending 申请单一起关掉。
+
+    不关的话，审批人点「通过 / 驳回」只会拿到 404「资产不存在」，
+    申请单永远留在待办列表里，健康检查的陈旧告警也清不掉。
+    """
+    admin = admin_headers(client)
+    owner, owner_h = make_user(client, admin, LIB_RW)
+    group = make_group(client, admin, [owner["id"]])
+    asset = upload_image(client, api, owner_h, color="salmon")
+    submitted = client.post(
+        f"{api}/library/share-requests",
+        json={"assetId": asset["id"], "target": "group", "groupId": group["id"]},
+        headers=owner_h,
+    )
+    assert submitted.status_code in (200, 201), submitted.text
+    request_id = submitted.json()["data"]["id"]
+
+    client.delete(f"{api}/library/assets/{asset['id']}", headers=owner_h)
+    purged = client.delete(f"{api}/library/trash/{asset['id']}", headers=owner_h)
+    assert purged.status_code == 200, purged.text
+
+    rows = fetch_share_requests(asset["id"])
+    assert rows, "申请单本身要留档，不能跟着资产一起消失"
+    assert all(item["status"] != "pending" for item in rows), "不能留一条永远审不掉的 pending"
+    assert any(item["id"] == request_id for item in rows)
+
+
+def test_trash_entries_cannot_be_edited(client: TestClient, api: str) -> None:
+    """回收站里的条目只能恢复或彻底删除，不能再改名、打标签。
+
+    `load_visible` 走的是 `can_read`，而它对 owner 直接放行、不看 `state`。
+    于是删除语义变成「只是换个桶」：还能继续改名换标签，管理员也能静默改
+    别人回收站里的内容，而 purge 前的这些写入没有任何业务含义。
+    """
+    admin = admin_headers(client)
+    owner, owner_h = make_user(client, admin, LIB_RW)
+    asset = upload_image(client, api, owner_h, color="plum")
+    client.delete(f"{api}/library/assets/{asset['id']}", headers=owner_h)
+    before = fetch_asset(asset["id"])
+    assert before is not None
+
+    renamed = client.patch(
+        f"{api}/library/assets/{asset['id']}",
+        json={"name": "改个名.png"},
+        headers=owner_h,
+    )
+    assert renamed.status_code == 400, renamed.text
+    assert renamed.json()["code"] == 40088
+
+    tagged = client.post(
+        f"{api}/library/assets/bulk",
+        json={"ids": [asset["id"]], "action": "addTag", "payload": {"tagIds": ["t-any"]}},
+        headers=owner_h,
+    )
+    assert tagged.status_code == 200
+    body = tagged.json()["data"]
+    assert body["failed"] == 1
+    assert body["results"][0]["errorCode"] == 40088
+
+    still = fetch_asset(asset["id"])
+    assert still is not None and still["state"] == "trash"
+    assert still["state_version"] == before["state_version"], "被拒的修改不该留下版本变更"

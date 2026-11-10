@@ -33,7 +33,7 @@ from core.context import CurrentUser
 from core.exceptions import Conflict, NotFound
 from infra.storage.base import ObjectStorage
 from modules.library import access
-from modules.library.errors import PackEmpty, PackItemInvalid
+from modules.library.errors import AssetNotEditable, PackEmpty, PackItemInvalid
 from modules.library.models import LibraryAsset, LibraryPackItem
 from modules.library.schema import (
     LibraryAssetDetailOut,
@@ -118,6 +118,10 @@ class PackService:
         self, pack_id: str, payload: PackPatchIn, actor: CurrentUser
     ) -> LibraryAssetDetailOut:
         pack = await self._load_pack(pack_id, actor)
+        # 回收站里的封装只能恢复或彻底删除：还能改成员的话，purge 前的这些
+        # 写入没有业务含义，而且引用关系会与即将删除的字节打架
+        if pack.state == "trash":
+            raise AssetNotEditable()
         if payload.expected_version and pack.state_version != payload.expected_version:
             raise Conflict(
                 "封装已被修改，请刷新后重试",

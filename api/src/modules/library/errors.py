@@ -66,6 +66,19 @@ class AssetNotInTrash(AppError):
     http_status = 409
 
 
+class AssetNotEditable(AppError):
+    """对回收站里的条目改名 / 换标签 / 改封装成员。
+
+    删除的语义是「先冻结、再决定」：能继续改的话，purge 前的这些写入没有
+    任何业务含义（字节马上就要删了），而管理员还能静默改别人回收站里的内容。
+    要改就先恢复——恢复是显式动作，用户知道自己在做什么。
+    """
+
+    code = errors.code(400, 8)
+    message = "回收站里的素材不能修改，请先恢复"
+    http_status = 400
+
+
 class TrashEntryReferenced(AppError):
     """彻底删除前发现仍被封装 / 下载任务 / 跨模块引用。
 

@@ -180,6 +180,7 @@ Authorization: Bearer <accessToken>
 | `40085` | 400 | library | `GenerationSourceInvalid` | 生成结果必须提供可读取的 storageKey 或 sourceUrl |
 | `40086` | 400 | library | `DownloadEmpty` | 选中的条目都不在可下载范围内 |
 | `40087` | 400 | library | `PackHasNoOriginal` | 封装没有单独的原文件，请使用「下载」打包其中素材 |
+| `40088` | 400 | library | `AssetNotEditable` | 回收站里的素材不能修改，请先恢复 |
 | `40100` | 401 | 框架 | `Unauthorized` | 请先登录 |
 | `40121` | 401 | identity | `CredentialInvalid` | 用户名或密码错误 |
 | `40122` | 401 | identity | `RefreshTokenInvalid` | 刷新令牌已失效，请重新登录 |

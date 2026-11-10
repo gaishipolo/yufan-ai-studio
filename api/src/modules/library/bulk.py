@@ -20,6 +20,7 @@ from core.context import CurrentUser
 from core.exceptions import AppError, BadRequest, Forbidden, NotFound
 from infra.storage.base import ObjectStorage
 from modules.library import access
+from modules.library.errors import AssetNotEditable
 from modules.library.lifecycle import LifecycleService
 from modules.library.schema import (
     AssetPatchIn,
@@ -213,3 +214,6 @@ class BulkService:
         row = await access.load_visible(self.session, asset_id, actor)
         if row.owner_id != actor.id and not actor.has(access.PERM_DELETE_ANY):
             raise NotFound("资产不存在")
+        # 与 `patch` 同一条口径：回收站里的条目一律不许再改（只能恢复或彻底删除）
+        if row.state == "trash":
+            raise AssetNotEditable()

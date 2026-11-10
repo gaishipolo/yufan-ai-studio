@@ -30,6 +30,7 @@ from core.audit import record as audit
 from core.config import settings
 from core.context import CurrentUser
 from core.exceptions import Conflict, NotFound
+from core.logging import get_logger
 from core.ports.library_references import get_library_references
 from infra.storage.base import ObjectStorage
 from modules.library import access
@@ -58,6 +59,8 @@ from modules.library.schema import (
 )
 
 __all__ = ["LifecycleService"]
+
+logger = get_logger(__name__)
 
 #: 自审窄口写进申请单的标记，运营查账时按它筛出「合并动作」的记录。
 SELF_LEADER_NOTE = "self_leader_combined"
@@ -316,6 +319,24 @@ class LifecycleService:
                 or 0
             )
 
+        # **闸门必须是第一条语句，而且要看 rowcount。**
+        # `WHERE state='trash'` 写在最后等于没写：子表已经删掉、commit 也照做，
+        # 只有那条 DELETE 静默命中 0 行。并发 restore 把行改回 active 时，
+        # 用户看到「恢复成功」，拿回来的却是没有标签、没有封装关系、原文件 404
+        # 的空壳——不可逆。所以：删不到就整段放弃，什么都不动。
+        # 先取出 id：下面的 rollback 会让 ORM 实例过期，之后再访问 `row.id`
+        # 会触发一次懒加载（行已经不在了），日志里就会抛异常把整个操作带崩
+        asset_id = row.id
+        purged = await self.session.execute(
+            delete(LibraryAsset).where(
+                LibraryAsset.id == asset_id, LibraryAsset.state == "trash"
+            )
+        )
+        if purged.rowcount != 1:
+            await self.session.rollback()
+            logger.info("彻底删除跳过：记录已恢复或不存在 id=%s", asset_id)
+            return
+
         await self.session.execute(
             delete(LibraryAssetTag).where(LibraryAssetTag.asset_id == row.id)
         )
@@ -357,11 +378,16 @@ class LifecycleService:
         await self.session.execute(
             delete(LibraryAssetGeneration).where(LibraryAssetGeneration.asset_id == row.id)
         )
-        # `WHERE state='trash'` 作为最后一道闸：并发恢复过的行不该被物理删掉
+        # 资产没了，挂在它上面的 pending 申请单必须一起关掉：否则审批人点
+        # 「通过 / 驳回」只会拿到 404「资产不存在」，申请单永远留在待办列表里
+        # （待我审核、健康检查的陈旧告警都清不掉）。
         await self.session.execute(
-            delete(LibraryAsset).where(
-                LibraryAsset.id == row.id, LibraryAsset.state == "trash"
+            update(LibraryShareRequest)
+            .where(
+                LibraryShareRequest.asset_id == row.id,
+                LibraryShareRequest.status == "pending",
             )
+            .values(status="cancelled", reviewer_id=None, decided_at=datetime.now(tz=UTC))
         )
         await self.session.commit()
 

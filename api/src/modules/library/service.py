@@ -52,6 +52,7 @@ from infra.media_probe import (
 from infra.storage.base import ObjectStorage, StorageError
 from modules.library import access
 from modules.library.errors import (
+    AssetNotEditable,
     LibraryFileTooLarge,
     LibraryFileTypeNotAllowed,
     PackHasNoOriginal,
@@ -531,6 +532,11 @@ class LibraryService:
         row = await access.load_visible(self.session, asset_id, actor)
         if row.owner_id != actor.id and not actor.has(access.PERM_DELETE_ANY):
             raise NotFound("资产不存在")
+        # 草稿可以改（它还没进库），回收站不行：删除的语义是「冻结后再决定」，
+        # 能继续改名换标签意味着 purge 前的写入没有业务含义，而 admin 还能
+        # 静默改别人回收站里的内容。
+        if row.state == "trash":
+            raise AssetNotEditable()
         self._check_version(row, payload.expected_version)
         if payload.name is not None:
             # 名字里的格式后缀由**文件本身**决定，不由用户输入决定
