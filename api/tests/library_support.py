@@ -180,6 +180,10 @@ def fetch_asset(asset_id: str) -> dict[str, Any] | None:
                 "deleted_at": row.deleted_at,
                 "owner_id": row.owner_id,
                 "state_version": row.state_version,
+                "kind": row.kind,
+                "sha256": row.sha256,
+                "storage_key": row.storage_key,
+                "cover_key": row.cover_key,
             }
 
     return asyncio.run(run())
@@ -261,6 +265,30 @@ def expire_trash(asset_id: str) -> None:
                 update(LibraryAsset)
                 .where(LibraryAsset.id == asset_id)
                 .values(trash_expires_at=datetime.now(UTC) - timedelta(days=1))
+            )
+            await session.commit()
+
+    asyncio.run(run())
+
+
+def set_visibility(asset_id: str, visibility: str) -> None:
+    """直接把可见性改成 group / team，跳过申请单与审批。
+
+    「共享后别人能不能读」是判定用例的主角，而审批流程本身另有专属用例；
+    为了测前者去走一遍申请单，只会让用例失败时分不清是判定错了还是流程错了。
+    """
+    from sqlalchemy import update
+
+    from modules.library.models import LibraryAsset
+
+    async def run() -> None:
+        from db.session import get_session_factory
+
+        async with get_session_factory()() as session:
+            await session.execute(
+                update(LibraryAsset)
+                .where(LibraryAsset.id == asset_id)
+                .values(visibility=visibility)
             )
             await session.commit()
 

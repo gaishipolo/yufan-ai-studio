@@ -21,6 +21,7 @@ from library_support import (
     fetch_pack_items,
     insert_asset,
     make_user,
+    set_visibility,
     upload_image,
 )
 
@@ -156,6 +157,40 @@ def test_purge_pack_removes_member_rows(client: TestClient, api: str) -> None:
     assert purged.status_code == 200, purged.text
     assert fetch_pack_items(pack["id"]) == []
     assert fetch_asset(member["id"])["state"] == "active"  # type: ignore[index]
+
+
+def test_purge_pack_keeps_other_packs_cover(client: TestClient, api: str) -> None:
+    """封装没有自己的字节，删它不该动别人的封面。
+
+    封装的 `cover_key` 是从成员**借**来的（`pack_cover_key`）。彻底删除封装时
+    `others` 恒为 0（封装 `sha256` / `storage_key` 都为空），如果照搬「members
+    被删 → 清掉借用这张图的封面」那段逻辑，两个封装收录同一个成员时，删掉其中
+    一个会把另一个的封面也置空——而那张图还在，成员自己也好好地活着。
+    """
+    admin = admin_headers(client)
+    owner, owner_h = make_user(client, admin, LIB_RW)
+    member = upload_image(client, api, owner_h, color="orchid")
+    first = _create_pack(
+        client, api, owner_h, {"name": "封面重了 A", "assetIds": [member["id"]]}
+    ).json()["data"]
+    second = _create_pack(
+        client, api, owner_h, {"name": "封面重了 B", "assetIds": [member["id"]]}
+    ).json()["data"]
+
+    def cover_of(asset_id: str) -> str | None:
+        detail = client.get(f"{api}/library/assets/{asset_id}", headers=owner_h)
+        assert detail.status_code == 200, detail.text
+        return detail.json()["data"]["coverUrl"]
+
+    before = cover_of(second["id"])
+    assert before  # 借到成员的缩略图，否则这条用例证明不了什么
+
+    client.delete(f"{api}/library/packs/{first['id']}", headers=owner_h)
+    purged = client.delete(f"{api}/library/trash/{first['id']}", headers=owner_h)
+    assert purged.status_code == 200, purged.text
+
+    assert cover_of(second["id"]) == before
+    assert cover_of(member["id"]) == before
 
 
 def test_member_detail_explains_why_it_cannot_be_purged(
@@ -308,6 +343,91 @@ def test_member_shared_to_team_stays_visible_there(client: TestClient, api: str)
     assert mine["id"] not in personal_ids
 
 
+def test_member_of_shared_pack_is_readable_by_teammate(
+    client: TestClient, api: str
+) -> None:
+    """封装是成员的**读入口**：封装共享到团队后，别人点开封装要能看成员详情。
+
+    成员的 `visibility` 还是 `personal`（共享的是容器，不是成员各自再去申请一次
+    审批）。只按行字段判读权限，封装里每张缩略图点进去都是「资产不存在」——
+    用户看到的是「共享了个空壳」。
+    """
+    admin = admin_headers(client)
+    owner, owner_h = make_user(client, admin, LIB_RW)
+    _, viewer_h = make_user(client, admin, LIB_RW)
+    member = upload_image(client, api, owner_h, name="packed.png", color="thistle")
+    pack = _create_pack(
+        client, api, owner_h, {"name": "共享封装", "assetIds": [member["id"]]}
+    ).json()["data"]
+    set_visibility(pack["id"], "team")
+
+    # 前置事实：封装在团队库可见，成员作为「容器里的东西」不单列
+    team_ids = _list_ids(client, api, viewer_h, library="team")
+    assert pack["id"] in team_ids
+    assert member["id"] not in team_ids
+
+    detail = client.get(f"{api}/library/assets/{member['id']}", headers=viewer_h)
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["data"]["id"] == member["id"]
+    # 归档信息（存储键）仍只给所有者：封装给的是「看」，不是「拿到内部分层」
+    assert detail.json()["data"]["archive"] is None
+
+    thumb = client.get(f"{api}/library/assets/{member['id']}/thumbnail", headers=viewer_h)
+    assert thumb.status_code in (200, 307), thumb.text
+    served = client.get(f"{api}/library/assets/{member['id']}/file", headers=viewer_h)
+    assert served.status_code == 200, served.text
+
+
+def test_member_of_private_pack_stays_invisible(client: TestClient, api: str) -> None:
+    """封装没共享出去时，成员一条都不能漏。
+
+    「封装可读」才是授权来源；把「是不是谁的成员」当成读权限，等于给了一个
+    猜 id 就能翻别人库的探针。
+    """
+    admin = admin_headers(client)
+    owner, owner_h = make_user(client, admin, LIB_RW)
+    _, viewer_h = make_user(client, admin, LIB_RW)
+    member = upload_image(client, api, owner_h, name="private-pack.png", color="plum")
+    _create_pack(client, api, owner_h, {"name": "私人封装", "assetIds": [member["id"]]})
+
+    assert client.get(f"{api}/library/assets/{member['id']}", headers=viewer_h).status_code == 404
+    assert (
+        client.get(f"{api}/library/assets/{member['id']}/file", headers=viewer_h).status_code
+        == 404
+    )
+
+
+def test_trashed_member_is_not_readable_through_shared_pack(
+    client: TestClient, api: str
+) -> None:
+    """成员进回收站后，封装这条路也不该把它放出来。
+
+    回收站是「删除必须真的看不见」的唯一保证（不变式 A）。封装授予的是读取，
+    不是豁免状态机。
+    """
+    admin = admin_headers(client)
+    owner, owner_h = make_user(client, admin, LIB_RW)
+    _, viewer_h = make_user(client, admin, LIB_RW)
+    member = upload_image(client, api, owner_h, name="gone.png", color="olive")
+    pack = _create_pack(
+        client, api, owner_h, {"name": "含回收成员", "assetIds": [member["id"]]}
+    ).json()["data"]
+    set_visibility(pack["id"], "team")
+
+    moved = client.post(
+        f"{api}/library/assets/bulk",
+        json={"ids": [member["id"]], "action": "delete"},
+        headers=owner_h,
+    )
+    assert moved.status_code == 200, moved.text
+
+    assert client.get(f"{api}/library/assets/{member['id']}", headers=viewer_h).status_code == 404
+    assert (
+        client.get(f"{api}/library/assets/{member['id']}/file", headers=viewer_h).status_code
+        == 404
+    )
+
+
 def test_pack_gets_the_pack_tag_automatically(client: TestClient, api: str) -> None:
     """类型筛选里没有「封装」这一档，找封装靠这个标签。
 
@@ -368,3 +488,38 @@ def test_selection_still_offers_packed_members(client: TestClient, api: str) -> 
     )
     ids = {row["id"] for row in response.json()["data"]["items"]}
     assert member["id"] in ids
+
+
+def test_pack_file_endpoint_points_to_batch_download(
+    client: TestClient, api: str
+) -> None:
+    """封装没有原文件：单条取件要说清「走打包」，不能报 404。
+
+    封装的 `storage_key` 天生为空，`file()` 以前落到「取不到键」那条分支上，
+    报的是 404 + 「此资产没有缩略图」。用户在下的是原文件，看到的却是
+    「没有缩略图」，而 404 还让他以为记录被删了。
+
+    这里锁三件事：状态码是 400（不是 404）、码值是 40087、消息指向打包下载。
+    缩略图仍要给——封装的封面借自成员，它是有效的。
+    """
+    admin = admin_headers(client)
+    owner, owner_h = make_user(client, admin, LIB_RW)
+    member = upload_image(client, api, owner_h, name="pack-cover.png", color="orchid")
+    pack = _create_pack(
+        client, api, owner_h, {"name": "封面组", "items": [{"assetId": member["id"]}]}
+    ).json()["data"]
+
+    response = client.get(f"{api}/library/assets/{pack['id']}/file", headers=owner_h)
+    assert response.status_code == 400, response.text
+    body = response.json()
+    assert body["code"] == 40087
+    assert "打包" in body["message"]
+
+    thumb = client.get(f"{api}/library/assets/{pack['id']}/thumbnail", headers=owner_h)
+    assert thumb.status_code in (200, 307), thumb.text
+
+    # 成员本身照常取件：这条改动只针对封装，不能顺手挡住成员
+    assert (
+        client.get(f"{api}/library/assets/{member['id']}/file", headers=owner_h)
+    ).status_code == 200
+

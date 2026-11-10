@@ -320,11 +320,19 @@ class LifecycleService:
             delete(LibraryAssetTag).where(LibraryAssetTag.asset_id == row.id)
         )
         # 封装的封面借用成员的 `cover_key`（拿不到封面图时还借用 `storage_key`）。
-        # 字节真被删掉（others==0）时，这些封面会变成 404 的裂图——而封装本身
-        # 可能只是被解散、之后还要恢复。置空让前端回退到占位图：丢一张封面是
-        # 可恢复的，裂图不是。
-        borrowed = [key for key in (cover_key, storage_key) if key]
-        if borrowed and others == 0:
+        # 字节真被删掉时，这些封面会变成 404 的裂图——而封装本身可能只是被解散、
+        # 之后还要恢复。置空让前端回退到占位图：丢一张封面是可恢复的，裂图不是。
+        #
+        # **前提是这一行自己拥有这份字节**。封装没有自己的字节（`storage_key`
+        # 为空、`sha256` 为空，`others` 恒为 0），它的 `cover_key` 是从成员借来的，
+        # 而成员的字节还在。不判这一个条件，删掉封装 A 会把同样借了这张缩略图的
+        # 封装 B 的封面也清空——B 的封面指向的图根本没人动过。
+        borrowed = (
+            [key for key in (cover_key, storage_key) if key]
+            if storage_key and others == 0
+            else []
+        )
+        if borrowed:
             await self.session.execute(
                 update(LibraryAsset)
                 .where(

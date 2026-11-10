@@ -170,12 +170,21 @@ class DownloadService:
         if expires_at is not None and expires_at <= datetime.now(UTC):
             # 不在这里改状态：GET 不该有副作用，清扫交给周期任务
             raise DownloadNotReady(details={"status": EXPIRED})
+        filename = f"library-{row.id}.zip"
         path = self.storage.local_path(row.storage_key)
         if path is not None:
             # 支持 Range：浏览器续传 / 断点重下都靠它
-            return Served.local(path, "application/zip", filename=f"library-{row.id}.zip")
-        return Served.remote(
-            await self.storage.presigned_download_url(row.storage_key), "application/zip"
+            return Served.local(path, "application/zip", filename=filename)
+        # 远端**不能** 307：前端是 XHR 取 blob 再 `saveBlob` 的，跨域重定向要求
+        # 对象存储回 CORS 头。MinIO 当前的 `PutBucketCors` 直接回 NotImplemented，
+        # 这条链路就变成「控制台报 blocked by CORS、功能时好时坏」。
+        # 同源转发还顺手修了文件名：307 时浏览器拿到的名字是 key 的最后一段，
+        # 也就是一串 uuid，用户看到的是「474a98…zip」。
+        return Served.stream(
+            self.storage.iter_chunks(row.storage_key),
+            "application/zip",
+            filename=filename,
+            size=row.size_bytes or None,
         )
 
     # ------------------------------------------------------------------ 内部
@@ -202,15 +211,21 @@ class DownloadService:
         }
         my_groups = await access.all_groups(self.session, actor)
         group_map = await access.asset_group_ids(self.session, wanted)
+        # 「封装成员」这条读入口要查库，一次问完这一批，别在循环里按 id 打点
+        via_pack = await access.readable_via_pack_ids(
+            self.session, wanted, actor, my_groups
+        )
 
         selected: list[LibraryAsset] = []
         skipped: list[DownloadSkip] = []
         pack_ids: list[str] = []
         for asset_id in wanted:
             row = rows.get(asset_id)
-            if row is None or not access.can_read(
-                row, actor, my_groups, group_map.get(asset_id, [])
+            if row is None or not (
+                access.can_read(row, actor, my_groups, group_map.get(asset_id, []))
+                or asset_id in via_pack
             ):
+                # 预览能看、单条能下，批量却跳过，用户只会觉得「打包坏了」
                 skipped.append(DownloadSkip(id=asset_id, reason="不存在或无权访问"))
                 continue
             if row.kind == "pack":
@@ -247,6 +262,11 @@ class DownloadService:
 
         不递归：建封装时已经禁止嵌套（`PackService._validate`），这里再判断一次
         是防「历史数据里有一条嵌套」把下载变成潜在的死循环。
+
+        成员的可读性用**同一个读入口**判（`can_read` 或「封装成员」）：调用方
+        能走到这里，说明封装本身已通过读判定，而封装对成员的授权是
+        `access.readable_via_pack_clause` 定义的。只按成员行自己的 `visibility`
+        判，别人下载我共享出去的封装会拿到**空 zip**——比报错更难解释。
         """
         member_ids = list(
             await self.session.scalars(
@@ -268,11 +288,15 @@ class DownloadService:
             ).all()
         }
         group_map = await access.asset_group_ids(self.session, member_ids)
+        via_pack = await access.readable_via_pack_ids(
+            self.session, member_ids, actor, my_groups
+        )
         expanded: list[LibraryAsset] = []
         for member_id in member_ids:
             row = rows.get(member_id)
-            if row is None or not access.can_read(
-                row, actor, my_groups, group_map.get(member_id, [])
+            if row is None or not (
+                access.can_read(row, actor, my_groups, group_map.get(member_id, []))
+                or member_id in via_pack
             ):
                 skipped.append(DownloadSkip(id=member_id, reason="封装成员已不可访问"))
                 continue

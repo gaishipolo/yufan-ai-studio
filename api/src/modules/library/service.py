@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import re
 import tempfile
 from collections.abc import AsyncIterator, Sequence
 from datetime import UTC, datetime
@@ -42,7 +43,11 @@ from core.serving import Served
 from infra.media_probe import EXTENSIONS, MAX_BYTES, create_preview, inspect
 from infra.storage.base import ObjectStorage
 from modules.library import access
-from modules.library.errors import LibraryFileTooLarge, LibraryFileTypeNotAllowed
+from modules.library.errors import (
+    LibraryFileTooLarge,
+    LibraryFileTypeNotAllowed,
+    PackHasNoOriginal,
+)
 from modules.library.models import (
     LibraryAsset,
     LibraryAssetGeneration,
@@ -80,6 +85,9 @@ PREVIEW_PREFIX = "library/previews"
 
 _STATES = {"draft", "active", "trash"}
 
+#: 「像扩展名」的判断：带字母，1-5 位。`v1.2` 的 `.2` 不算（见 `keep_extension`）。
+_SUFFIX_SHAPE = re.compile(r"^\.[A-Za-z][A-Za-z0-9]{0,4}$")
+
 
 def _digest_and_size(path: Path) -> tuple[str, int]:
     digest = hashlib.sha256()
@@ -103,6 +111,28 @@ def blob_key(digest: str, extension: str) -> str:
 
 def preview_key(digest: str) -> str:
     return f"{PREVIEW_PREFIX}/{digest[:2]}/{digest}.jpg"
+
+
+def keep_extension(original: str, storage_key: str | None, requested: str) -> str:
+    """改名只改主体，扩展名跟着记录走。
+
+    前端输入框里本来就不带扩展名，但直接调 API 时可能带。两种情况都按
+    「用户写的后缀不算数」处理：先剥掉，再拼回这条记录自己的后缀。否则把
+    `a.png` 改成 `a.mp4` 会让库里的字节（仍是 PNG）与名字（说是 MP4）对不上：
+    详情页的类型徽标还是「图片」，下载下来的文件却叫 `.mp4`，播放器一打开就是坏的。
+
+    后缀先看 `name`，再退到 `storage_key`（导入的历史数据 name 可能被清过）。
+    两者都没有（封装、人工建的行）就不加——别给「春季素材包」硬塞一个 `.png`。
+    """
+    cleaned = requested.strip()
+    suffix = Path(cleaned).suffix
+    # 只有「像扩展名」的那一段才剥：带字母、1-5 位。`v1.2` 的 `.2` 没有字母，
+    # 那是名字的一部分，剥掉就成了 `v1`——比不改名更糟。
+    if suffix and _SUFFIX_SHAPE.match(suffix):
+        cleaned = cleaned[: -len(suffix)]
+    cleaned = cleaned.strip(" .") or "未命名"
+    fixed = Path(original).suffix or Path(storage_key or "").suffix
+    return f"{cleaned}{fixed}" if fixed else cleaned
 
 
 def snapshot_out(row: LibraryAssetGeneration) -> LibraryGenerationOut:
@@ -204,17 +234,19 @@ class LibraryService:
             )
         ).all()
         page_ids = [row.id for row in rows]
-        # 一次查完这一页的归属与组名，不按行循环（24 行就是 24 次往返）
+        # 一次查完这一页的归属、组名与标签，不按行循环（24 行就是 24 次往返）
         group_map = await access.asset_group_ids(self.session, page_ids)
         owner_map = await access.owner_names(
             self.session, [row.owner_id for row in rows]
         )
+        tag_map = await self._tags_of(page_ids)
         return LibraryAssetPage(
             items=[
                 self._to_out(
                     row,
                     owner_name=owner_map.get(row.owner_id),
                     group_ids=group_map.get(row.id, []),
+                    tags=tag_map.get(row.id, []),
                 )
                 for row in rows
             ],
@@ -242,14 +274,7 @@ class LibraryService:
             if require_visible
             else await access.load_asset(self.session, asset_id)
         )
-        tags = (
-            await self.session.scalars(
-                select(LibraryTag)
-                .join(LibraryAssetTag, LibraryAssetTag.tag_id == LibraryTag.id)
-                .where(LibraryAssetTag.asset_id == row.id)
-                .order_by(LibraryTag.name)
-            )
-        ).all()
+        tags = (await self._tags_of([row.id])).get(row.id, [])
         group_ids = await access.asset_group_ids(self.session, [row.id])
         names = await access.group_names_for(self.session, group_ids.get(row.id, []))
         owner_map = await access.owner_names(self.session, [row.owner_id])
@@ -260,8 +285,8 @@ class LibraryService:
                 row,
                 owner_name=owner_map.get(row.owner_id),
                 group_ids=group_ids.get(row.id, []),
+                tags=tags,
             ).model_dump(by_alias=False),
-            tags=[LibraryTagOut(id=tag.id, name=tag.name) for tag in tags],
             groups=[
                 LibraryGroupRef(id=group_id, name=names.get(group_id, ""))
                 for group_id in group_ids.get(row.id, [])
@@ -392,12 +417,22 @@ class LibraryService:
             # 恢复后立刻可用，所以这不是永久拒绝。
             raise NotFound("回收站内的资产不提供预览与下载")
         key = row.cover_key if preview else row.storage_key
+        if not preview and row.kind == "pack":
+            # 封装只有从成员借来的封面，没有自己的原文件。用 404 会让用户
+            # 以为记录被删了；这里明确说「换个入口」。前端已改成对封装
+            # 直接走打包下载，这条是给直接调 API 的人兜底。
+            raise PackHasNoOriginal()
         if not key:
-            raise NotFound("此资产没有缩略图")
+            # 两种取件共用一个函数，提示必须分开：以前无论是下载原文件还是
+            # 取缩略图，都报「没有缩略图」，把排查方向带偏了。
+            raise NotFound("此资产没有缩略图" if preview else "此资产没有原文件")
         return await self._serve(
             key,
             "image/jpeg" if preview else row.mime_type,
             filename=None if preview else row.name,
+            # 缩略图给 `<img>` 直接引用；原文件一律同源转发（见 `_serve` 的注释）
+            proxy=not preview,
+            size=None if preview else row.size_bytes,
         )
 
     # ------------------------------------------------------------------ 写
@@ -411,7 +446,8 @@ class LibraryService:
             raise NotFound("资产不存在")
         self._check_version(row, payload.expected_version)
         if payload.name is not None:
-            row.name = payload.name
+            # 名字里的格式后缀由**文件本身**决定，不由用户输入决定
+            row.name = keep_extension(row.name, row.storage_key, payload.name)
         if payload.tag_ids is not None:
             await set_asset_tags(self.session, row.id, payload.tag_ids)
         row.state_version += 1
@@ -557,11 +593,29 @@ class LibraryService:
             await self.storage.put_file(key, target, "image/jpeg")
         return key
 
-    async def _serve(self, key: str, mime: str, *, filename: str | None = None) -> Served:
+    async def _serve(
+        self,
+        key: str,
+        mime: str,
+        *,
+        filename: str | None = None,
+        proxy: bool = False,
+        size: int | None = None,
+    ) -> Served:
         path = self.storage.local_path(key)
         if path is not None:
             return Served.local(path, mime, filename=filename)
-        # 远端驱动不把字节搬进进程：预签名地址由对象存储处理 Range。
+        if proxy:
+            # 原文件这条路的消费方全是 XHR：详情页播放音视频也是 `fetch` 成 blob
+            # 再 `createObjectURL`，下载原件同样是 blob。`307` 到对象存储会让浏览器
+            # 发起跨域请求，目标不回 CORS 头就被拦成
+            # 「blocked by CORS policy」（MinIO 的 `PutBucketCors` 当前是 NotImplemented）。
+            # 同源转发不依赖任何桶配置。
+            return Served.stream(
+                self.storage.iter_chunks(key), mime, filename=filename, size=size or None
+            )
+        # 缩略图走 `<img>` / `<video poster>`：不受 CORS 限制，交给对象存储
+        # 省掉一次中转，Range 也由它处理。
         return Served.remote(await self.storage.presigned_download_url(key), mime)
 
     async def _find_duplicate(self, owner_id: str, digest: str, kind: str) -> LibraryAsset | None:
@@ -652,12 +706,33 @@ class LibraryService:
                 details={"expectedVersion": expected, "stateVersion": row.state_version},
             )
 
+    async def _tags_of(self, asset_ids: Sequence[str]) -> dict[str, list[LibraryTagOut]]:
+        """一页资产的标签，一次查完。
+
+        列表页要显示标签，但卡片上只有名字没有 id —— 逐条拉详情才能拿到标签，
+        24 条就是 24 次请求。这里按 `asset_id IN (...)` 一次取回，再在内存里分组；
+        分组用 `setdefault` 保持「同一资产内按标签名排序」。
+        """
+        if not asset_ids:
+            return {}
+        rows = await self.session.execute(
+            select(LibraryAssetTag.asset_id, LibraryTag.id, LibraryTag.name)
+            .join(LibraryTag, LibraryTag.id == LibraryAssetTag.tag_id)
+            .where(LibraryAssetTag.asset_id.in_(list(asset_ids)))
+            .order_by(LibraryTag.name)
+        )
+        grouped: dict[str, list[LibraryTagOut]] = {}
+        for asset_id, tag_id, name in rows:
+            grouped.setdefault(asset_id, []).append(LibraryTagOut(id=tag_id, name=name))
+        return grouped
+
     def _to_out(
         self,
         row: LibraryAsset,
         *,
         owner_name: str | None = None,
         group_ids: Sequence[str] = (),
+        tags: Sequence[LibraryTagOut] = (),
     ) -> LibraryAssetOut:
         return LibraryAssetOut(
             id=row.id,
@@ -675,6 +750,7 @@ class LibraryService:
             state_version=row.state_version,
             cover_url=self.storage.url_for(row.cover_key) if row.cover_key else None,
             group_ids=list(group_ids),
+            tags=list(tags),
             trash_reason=row.trash_reason,
             trash_expires_at=row.trash_expires_at,
             created_at=row.created_at,

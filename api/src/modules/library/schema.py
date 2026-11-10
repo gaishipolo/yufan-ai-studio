@@ -46,6 +46,7 @@ __all__ = [
     "LibrarySelectionPage",
     "LibraryTab",
     "LibraryTagOut",
+    "LibraryTagStatOut",
     "PackIn",
     "PackItemIn",
     "PackItemOut",
@@ -98,6 +99,26 @@ class LibraryFacets(CamelModel):
     trash: int = 0
 
 
+class LibraryTagOut(CamelModel):
+    id: str
+    name: str
+
+
+class LibraryTagStatOut(LibraryTagOut):
+    """标签栏的列表项：比卡片上的标签多「素材数」与「添加时间」。
+
+    `asset_count` 是**当前入口**（`state` + `library`）下挂了这个标签的素材数，
+    不是全库总量——标签栏上点一下就按这个入口筛，数字必须与结果对得上。
+    `created_at` 给前端按「添加时间先后」排序用。
+
+    单独出一个类型而不是往 `LibraryTagOut` 上加两个字段：卡片里 24 条资产
+    每条都带一遍计数与时间戳，既没用也容易被人误当成卡片上的真实数据。
+    """
+
+    asset_count: int = 0
+    created_at: UtcDateTime
+
+
 class LibraryAssetOut(CamelModel):
     """列表项。字段对齐 `library_assets` 表，M1 建表后不再改形状。"""
 
@@ -116,6 +137,9 @@ class LibraryAssetOut(CamelModel):
     state_version: int = 1
     cover_url: str | None = None
     group_ids: list[str] = Field(default_factory=list)
+    # 标签随列表一起返回：卡片要在体积下方显示它，而「先列 24 条、再逐条拉详情」
+    # 是 24 次往返。详情页继承这个字段，不再重复声明。
+    tags: list[LibraryTagOut] = Field(default_factory=list)
     # 回收站专用的两个字段：前端据此显示「剩余 N 天」与「因何被删」。
     # 在库里时为 null，不要在响应里省略——省略会让前端多一层「有没有这个键」的判断。
     trash_reason: str | None = None
@@ -158,11 +182,6 @@ class UploadKind(StrEnum):
     IMAGE = "image"
     AUDIO = "audio"
     VIDEO = "video"
-
-
-class LibraryTagOut(CamelModel):
-    id: str
-    name: str
 
 
 class LibraryGenerationOut(CamelModel):
@@ -279,7 +298,8 @@ class LibraryGroupRef(CamelModel):
 
 
 class LibraryGroupOut(CamelModel):
-    """我的小组。`isLeader` 决定「待我审核」里会不会出现该组的申请。"""
+    """我的小组。`isLeader` 现在只用于删除窄口（§3.4.1）的入口展示；
+    「待我审核」按审批权限点与「是不是该组成员」收窄，与组长身份无关。"""
 
     id: str
     name: str = ""
@@ -401,8 +421,8 @@ class LibrarySelectionPage(Page[LibraryAssetOut]):
 
 
 class GroupLeadersIn(CamelModel):
-    """整体替换某组的负责人列表。空数组 = 清空（该组退回「只能由持
-    `library:share:approve` 的人审批」）。"""
+    """整体替换某组的负责人列表（只服务删除窄口）。空数组 = 清空。
+    审批资格由 `library:share:approve*` 三个权限点按申请目标判定，与这张表无关。"""
 
     user_ids: list[str] = Field(default_factory=list)
 

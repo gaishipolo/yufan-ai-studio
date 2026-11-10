@@ -23,6 +23,7 @@ from library_support import (
     build_download_job,
     fetch_download_job,
     make_user,
+    set_visibility,
     upload_image,
 )
 
@@ -149,6 +150,41 @@ def test_download_expands_packs_to_members(client: TestClient, api: str) -> None
         assert len(archive.namelist()) == 2
 
 
+def test_shared_pack_downloads_its_members_for_a_teammate(
+    client: TestClient, api: str
+) -> None:
+    """别人下载我共享出去的封装，包里得真有文件。
+
+    成员展开时若按「成员自己的 visibility」判可读，别人的个人素材一律判不可读，
+    结果是**空 zip + 一堆「封装成员已不可访问」**——比直接报错更难解释。
+    """
+    admin = admin_headers(client)
+    owner, owner_h = make_user(client, admin, LIB_RW)
+    _, viewer_h = make_user(client, admin, LIB_RW)
+    first = upload_image(client, api, owner_h, name="s1.png", color="coral")
+    second = upload_image(client, api, owner_h, name="s2.png", color="cyan")
+    pack = client.post(
+        f"{api}/library/packs",
+        json={"name": "共享整包", "assetIds": [first["id"], second["id"]]},
+        headers=owner_h,
+    ).json()["data"]
+    set_visibility(pack["id"], "team")
+
+    created = _create(client, api, viewer_h, [pack["id"]])
+    assert created.status_code == 202, created.text
+    job = created.json()["data"]
+    assert job["assetCount"] == 2
+    assert job["skipped"] == []
+
+    build_download_job(job["id"])
+    with zipfile.ZipFile(
+        io.BytesIO(
+            client.get(f"{api}/library/downloads/{job['id']}/file", headers=viewer_h).content
+        )
+    ) as archive:
+        assert len(archive.namelist()) == 2
+
+
 def test_download_is_owner_only_and_not_ready_until_built(
     client: TestClient, api: str
 ) -> None:
@@ -226,3 +262,63 @@ def test_download_gc_marks_stuck_jobs_failed(client: TestClient, api: str) -> No
     row = fetch_download_job(job["id"])
     assert row["status"] == "failed"  # type: ignore[index]
     assert "超时" in row["error"]  # type: ignore[index]
+
+
+def test_remote_download_file_streams_instead_of_redirecting(
+    client: TestClient, api: str
+) -> None:
+    """远端驱动下取件必须是同源的 200，不能是 307。
+
+    `307` 到对象存储，对「浏览器用 XHR 取 blob 再保存」就是一次跨域请求：
+    目标不回 CORS 头就被拦成 `blocked by CORS policy`。而桶的 CORS 是环境配置
+    （MinIO 当前的 `PutBucketCors` 直接回 NotImplemented），换个部署就复发。
+
+    这里把本地驱动换成一个「有字节流、没有本地路径」的替身来模拟 S3。只替换这
+    一个请求的依赖，其余用例照常用真实驱动。
+    """
+    from collections.abc import AsyncIterator
+    from pathlib import Path
+
+    from api.deps import get_storage
+
+    admin = admin_headers(client)
+    owner, owner_h = make_user(client, admin, LIB_RW)
+    image = upload_image(client, api, owner_h, name="stream.png", color="teal")
+    job = _create(client, api, owner_h, [image["id"]]).json()["data"]
+    build_download_job(job["id"])
+
+    row = fetch_download_job(job["id"])
+    assert row is not None and row["storage_key"]
+    payload = asyncio.run(get_storage().get(row["storage_key"]))
+
+    class _Remote:
+        """远端驱动的关键特征：`local_path` 为 None，字节只能流式拿。"""
+
+        def local_path(self, key: str) -> Path | None:
+            return None
+
+        def iter_chunks(
+            self, key: str, *, chunk_size: int = 1024 * 1024
+        ) -> AsyncIterator[bytes]:
+            async def _gen() -> AsyncIterator[bytes]:
+                yield payload
+
+            return _gen()
+
+        async def presigned_download_url(self, key: str, *, expires_in: int = 900) -> str:
+            return f"https://bucket.example/{key}?sig=stub"
+
+    app = client.app
+    app.dependency_overrides[get_storage] = lambda: _Remote()  # type: ignore[attr-defined]
+    try:
+        served = client.get(f"{api}/library/downloads/{job['id']}/file", headers=owner_h)
+    finally:
+        app.dependency_overrides.pop(get_storage, None)  # type: ignore[attr-defined]
+
+    assert served.status_code == 200, served.text
+    assert "location" not in served.headers, "还在 307 到桶：浏览器会开始报 CORS"
+    assert served.content == payload
+    assert served.headers["content-length"] == str(len(payload))
+    # 走 307 时文件名是 key 的最后一段（一串 uuid），存下来只看到乱码名
+    assert served.headers["content-disposition"].endswith(f"library-{job['id']}.zip")
+

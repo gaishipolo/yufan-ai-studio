@@ -97,6 +97,34 @@ class DraftReviewForbidden(AppError):
     http_status = 403
 
 
+class ShareNotOwned(AppError):
+    """非所有者对别人的资产发起**撤销**共享。
+
+    撤销与共享的风险方向相反：共享是把自己的东西给别人看，撤销是让别人突然
+    拿不到在用的文件。所以共享申请对「读得到的人」开放（审批人把关范围），
+    撤销仍只认所有者——否则组里任何人都能把正在复用的素材从别人手里抽走。
+
+    403 而不是 404：资产对他确实可见，缺的是这个动作的资格。
+    """
+
+    code = errors.code(403, 2)
+    message = "撤销共享只能由资产所有者发起"
+    http_status = 403
+
+
+class PackMemberShareBlocked(AppError):
+    """只靠「封装成员」才读得到的素材，不能单独调整共享范围。
+
+    成员行的可见性跟着封装走。允许单条放宽，封装内部就出现「整体只给这个组看，
+    但其中一张全团队可见」的裂缝；撤销时也无从判断该收封装还是收成员。
+    所有者本人不受此限——那是他的字节。
+    """
+
+    code = errors.code(403, 3)
+    message = "封装内的素材不能单独调整共享范围"
+    http_status = 403
+
+
 class LibraryFileTypeNotAllowed(AppError):
     """扩展名不在白名单，或与本次上传声明的类型不符。
 
@@ -182,6 +210,22 @@ class PackEmpty(AppError):
     http_status = 400
 
 
+class PackHasNoOriginal(AppError):
+    """封装没有自己的字节，单条取件接口不适用于它。
+
+    **报 400 而不是 404**：封装是存在的，用 404 会让前端和用户都以为是
+    「记录被删了 / 链接坏了」。真实情况是「这个接口下不了这个东西」——
+    下载封装要走 `POST /library/downloads`，它会展开成员打成一个 zip。
+
+    这条会把「封装点下载 → 404」变成一个能看懂的提示。前端已改成对封装
+    直接走打包下载，这里是给直接调 API 的调用方兜底。
+    """
+
+    code = errors.code(400, 7)
+    message = "封装没有单独的原文件，请使用「下载」打包其中素材"
+    http_status = 400
+
+
 class GenerationSourceInvalid(AppError):
     """生成入库没给能物化的来源，或来源取不到字节。
 
@@ -225,8 +269,10 @@ __all__ = [
     "LibraryFileTypeNotAllowed",
     "PackEmpty",
     "PackItemInvalid",
+    "PackMemberShareBlocked",
     "RequestNotPending",
     "RevokeReasonRequired",
+    "ShareNotOwned",
     "ShareRevokePending",
     "ShareTargetInvalid",
     "SharedAssetNotDeletable",

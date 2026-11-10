@@ -18,6 +18,10 @@
 2. **团队 ⊇ 小组**：`visibility=team` 时 `library_asset_groups` 里不该有行。
    共享到团队会先清空小组行（见 `sharing.apply_share`），否则「撤销某个组」
    会在团队共享上留下说不清的状态。
+3. **封装是成员的读入口**：能读一个 `active` 封装，就能读它的成员
+   （`readable_via_pack`）。成员自己的 `visibility` 仍是 `personal`——共享出去
+   的是容器，不是逐个成员再走一次审批。这条只在**读**上生效：列表仍不单列成员
+   （`hidden_by_pack_clause`），写操作仍要 owner（各服务方法自己判）。
 """
 
 from __future__ import annotations
@@ -52,6 +56,8 @@ __all__ = [
     "load_asset",
     "load_visible",
     "owner_names",
+    "readable_via_pack",
+    "readable_via_pack_ids",
     "tab_clause",
 ]
 
@@ -158,6 +164,67 @@ def hidden_by_pack_clause(
     return ~packed
 
 
+def readable_via_pack_clause(
+    actor: CurrentUser, groups: Sequence[str]
+) -> ColumnElement[bool]:
+    """「我是某个**对我可见的 `active` 封装**的成员」→ 读得到。
+
+    封装的成员由封装者从自己（或已经共享给他）的素材里挑，成员行自己的
+    `visibility` 往往还是 `personal`。封装一共享出去，团队成员看到的封装详情里
+    每张成员缩略图点进去都是「资产不存在」——共享了个空壳，打包下载还会因为
+    成员全被跳过而直接 400。
+
+    这里判的是**关系**，不是成员行字段，所以不进 `active_visible_clause`：
+    进了列表就会把封装里的素材再列一遍（与「一个封装占一个位置」冲突），
+    也会让「猜 id 探别人库」变成可能（必须是**我读得到的封装**里的成员）。
+    `state != active` 的成员不适用：草稿与回收站永远 personal（不变式 A），
+    封装授予的是读取，不是状态机豁免。
+    """
+    pack = aliased(LibraryAsset)
+    packed = exists(
+        select(1)
+        .select_from(LibraryPackItem)
+        .join(pack, pack.id == LibraryPackItem.pack_id)
+        .where(
+            LibraryPackItem.asset_id == LibraryAsset.id,
+            pack.state == "active",
+            pack.deleted_at.is_(None),
+            active_visible_clause(actor, groups, asset=pack),
+        )
+    )
+    return and_(LibraryAsset.state == "active", LibraryAsset.deleted_at.is_(None), packed)
+
+
+async def readable_via_pack_ids(
+    session: AsyncSession,
+    asset_ids: Sequence[str],
+    actor: CurrentUser,
+    groups: Sequence[str] | None = None,
+) -> set[str]:
+    """这一批里，哪些能靠「封装成员」这个身份读到。批量路径一次查完，不按行循环。"""
+    wanted = [asset_id for asset_id in dict.fromkeys(asset_ids) if asset_id]
+    if not wanted:
+        return set()
+    my_groups = groups if groups is not None else await all_groups(session, actor)
+    rows = await session.scalars(
+        select(LibraryAsset.id).where(
+            LibraryAsset.id.in_(wanted),
+            readable_via_pack_clause(actor, my_groups),
+        )
+    )
+    return set(rows)
+
+
+async def readable_via_pack(
+    session: AsyncSession,
+    asset_id: str,
+    actor: CurrentUser,
+    groups: Sequence[str] | None = None,
+) -> bool:
+    """单条版本。判定只有一份定义（见 `readable_via_pack_clause`）。"""
+    return bool(await readable_via_pack_ids(session, [asset_id], actor, groups))
+
+
 def can_read(
     asset: LibraryAsset,
     actor: CurrentUser,
@@ -173,6 +240,11 @@ def can_read(
     `asset_groups` 必须由调用方给出（`library_asset_groups` 里的行）：
     「我在某个组里」不等于「这条资产共享到了我的组」，少了这个参数就会把
     别人组里的素材判成可见——那是本文件最危险的一种偷懒。
+
+    **这里不含「封装成员」那一支**：本函数是纯 Python 的，而「我某不某个
+    可见封装的成员」要查库。读入口统一走 `load_visible` / `readable_via_pack`，
+    写路径（`packs._validate`、批量 `_require_writable`）继续只认本函数——
+    「看得到」不等于「能改能再封装」。
     """
     if asset.state == "trash":
         return asset.owner_id == actor.id or actor.has(PERM_DELETE_ANY)
@@ -258,12 +330,18 @@ async def load_asset(session: AsyncSession, asset_id: str) -> LibraryAsset:
 async def load_visible(
     session: AsyncSession, asset_id: str, actor: CurrentUser
 ) -> LibraryAsset:
-    """可见即可读：看不见的 id 一律 404，不区分「不存在」与「没权限」。"""
+    """可见即可读：看不见的 id 一律 404，不区分「不存在」与「没权限」。
+
+    两个分支合成一次判定：**行自己的可见性**（`can_read`）与**封装授予的读权限**
+    （`readable_via_pack`）。少第二个分支，共享出去的封装点进去就是「资产不存在」。
+    """
     row = await session.get(LibraryAsset, asset_id)
     if row is None:
         raise NotFound("资产不存在")
     my_groups = await all_groups(session, actor)
     rows = await asset_group_ids(session, [asset_id])
-    if not can_read(row, actor, my_groups, rows.get(asset_id, [])):
-        raise NotFound("资产不存在")
-    return row
+    if can_read(row, actor, my_groups, rows.get(asset_id, [])):
+        return row
+    if await readable_via_pack(session, asset_id, actor, my_groups):
+        return row
+    raise NotFound("资产不存在")
