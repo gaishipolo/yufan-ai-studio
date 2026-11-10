@@ -77,6 +77,7 @@ from core.ports.library_ingest import has_library_ingest
 from core.ports.library_lookup import has_library_lookup
 from core.ports.library_references import has_library_references
 from core.ports.media import has_asset_lookup
+from core.ports.model_generation import has_model_generation
 from core.ports.org_directory import has_org_directory
 
 __all__ = ["PORT_CATALOG", "PortSpec", "port_status"]
@@ -212,6 +213,15 @@ PORT_CATALOG: tuple[PortSpec, ...] = (
         when_unregistered="fail-closed：抛 503，v2 资产一律不可彻底删除。"
         "「查不到 = 没人引用」在这里等于静默放行不可逆删除",
         is_registered=has_library_references,
+    ),
+    PortSpec(
+        name="model-generation",
+        module="core.ports.model_generation",
+        protocol="ModelGeneration",
+        implementer="modules/model_driver（统一生成门面，import 期注册）",
+        when_unregistered="fail-closed：抛 503。退化成「空模型列表」会把装配故障"
+        "报成用户没配模型，是最难排查的一类问题",
+        is_registered=has_model_generation,
     ),
 )
 

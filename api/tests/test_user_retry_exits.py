@@ -35,6 +35,7 @@ from generation.spec import STATUS_FAILED
 from infra.archive import get_archive_storage
 from infra.archive.runs import relative_key, runs_root, save_pointer
 from modules.image.models import ImageJob
+from modules.model_driver.models import DriverJob
 from modules.task.enums import TaskStatus
 from modules.task.models import VideoTask
 from modules.template.models import ReplacementRun
@@ -82,6 +83,35 @@ async def _image_exit(client: TestClient) -> None:
         assert resp.status_code == 200, resp.text
     finally:
         await _drop_image(job_id)
+
+
+async def _model_driver_exit(client: TestClient) -> None:
+    """`model_driver`：统一生成任务的自救出口，同样要先清提交意图。"""
+    actor = _me_id(client)
+    job = DriverJob(
+        name="retry-exit",
+        prompt="出口用例",
+        model="md-sync-image",
+        capability="image",
+        status=STATUS_FAILED,
+        owner_id=actor,
+        external_id="EXT-MD-EXIT-CHECK",
+        submit_attempts=1,
+    )
+    async with get_session_factory()() as session:
+        session.add(job)
+        await session.commit()
+        job_id = job.id
+    try:
+        resp = client.post(f"{API}/model-driver/tasks/{job_id}/retry?confirmCharged=true")
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["data"]["status"] == "queued"
+    finally:
+        async with get_session_factory()() as session:
+            row = await session.get(DriverJob, job_id)
+            if row is not None:
+                await session.delete(row)
+                await session.commit()
 
 
 async def _video_exit(client: TestClient) -> None:
@@ -188,6 +218,7 @@ async def _replacement_exit(client: TestClient) -> None:
 
 EXIT_CASES: dict[str, Callable[[TestClient], Awaitable[None]]] = {
     "image": _image_exit,
+    "model_driver": _model_driver_exit,
     "template_replacement": _replacement_exit,
     "video": _video_exit,
 }
