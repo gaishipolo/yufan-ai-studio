@@ -6491,6 +6491,233 @@
           }
         }
       }
+    },
+    "/api/v1/templates/video-templates": {
+      "get": {
+        "tags": [
+          "模板",
+          "视频模板"
+        ],
+        "summary": "视频模板列表（固定蓝本优先）",
+        "operationId": "list_video_templates_api_v1_templates_video_templates_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_VideoTemplateListOut_"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "模板",
+          "视频模板"
+        ],
+        "summary": "封装一条视频模板",
+        "operationId": "create_video_template_api_v1_templates_video_templates_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VideoTemplateDraftIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_VideoTemplateOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/templates/video-templates/{template_id}": {
+      "get": {
+        "tags": [
+          "模板",
+          "视频模板"
+        ],
+        "summary": "视频模板详情（含提示词与媒体顺序）",
+        "operationId": "get_video_template_api_v1_templates_video_templates__template_id__get",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "template_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Template Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_VideoTemplateOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/templates/video-templates/{template_id}/pin": {
+      "post": {
+        "tags": [
+          "模板",
+          "视频模板"
+        ],
+        "summary": "设为固定蓝本（全库仅一个）",
+        "operationId": "pin_video_template_api_v1_templates_video_templates__template_id__pin_post",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "template_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Template Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_VideoTemplateOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/templates/video-templates/{template_id}/attach-source": {
+      "post": {
+        "tags": [
+          "模板",
+          "视频模板"
+        ],
+        "summary": "绑定样片原片资产",
+        "description": "绑定后，这条模板对应的原片才会在「全部模板」里被当作可选卡片。",
+        "operationId": "attach_video_template_source_api_v1_templates_video_templates__template_id__attach_source_post",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "template_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Template Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VideoTemplateAttachSourceIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_VideoTemplateOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -7730,6 +7957,60 @@
         },
         "type": "object",
         "title": "ApiResponse[UserOut]"
+      },
+      "ApiResponse_VideoTemplateListOut_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/VideoTemplateListOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[VideoTemplateListOut]"
+      },
+      "ApiResponse_VideoTemplateOut_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/VideoTemplateOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[VideoTemplateOut]"
       },
       "ApiResponse_list_DownloadJobOut__": {
         "properties": {
@@ -11568,6 +11849,18 @@
             "type": "string",
             "title": "Sourceid"
           },
+          "videoTemplateId": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Videotemplateid"
+          },
           "referenceIds": {
             "items": {
               "type": "string"
@@ -12233,9 +12526,67 @@
             "type": "string",
             "title": "Createdat"
           },
+          "startedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Startedat",
+            "description": "确认提交（进入排队）的时间，未开始为 null"
+          },
+          "finishedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finishedat",
+            "description": "这一轮结束的时间；未结束为 null"
+          },
+          "elapsedSec": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Elapsedsec",
+            "description": "确认提交到结束的耗时（秒）；未完成时按到此刻计，未开始为 null"
+          },
           "prompt": {
             "type": "string",
             "title": "Prompt"
+          },
+          "promptMode": {
+            "type": "string",
+            "enum": [
+              "fixed",
+              "compiled"
+            ],
+            "title": "Promptmode",
+            "description": "fixed=封装视频模板时写死的原文，逐字提交；compiled=按素材与替换范围现编。展示层据此告诉用户「跑的就是你封装时那份提示词」。",
+            "default": "compiled"
+          },
+          "videoTemplateName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Videotemplatename",
+            "description": "fixed 时出自哪条视频模板；compiled 为 null"
           },
           "displayTitle": {
             "type": "string",
@@ -14030,6 +14381,383 @@
           "type"
         ],
         "title": "ValidationError"
+      },
+      "VideoTemplateAttachSourceIn": {
+        "properties": {
+          "sourceVideoAssetId": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Sourcevideoassetid",
+            "description": "素材库里 category=source 的 asset id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "sourceVideoAssetId"
+        ],
+        "title": "VideoTemplateAttachSourceIn",
+        "description": "把样片登记后的 source 资产绑定到模板：绑定后它才是「全部模板」里可选的卡片。"
+      },
+      "VideoTemplateDraftIn": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Name",
+            "description": "模板名称"
+          },
+          "templateKey": {
+            "type": "string",
+            "maxLength": 80,
+            "title": "Templatekey",
+            "description": "稳定标识，便于后续复制与导入",
+            "default": ""
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 2000,
+            "title": "Description",
+            "description": "模板说明",
+            "default": ""
+          },
+          "prompt": {
+            "type": "string",
+            "maxLength": 20000,
+            "minLength": 1,
+            "title": "Prompt",
+            "description": "固定提示词原文，含 {{Mixed N}} 占位符"
+          },
+          "sourceVideoName": {
+            "type": "string",
+            "maxLength": 200,
+            "title": "Sourcevideoname",
+            "description": "样片文件名",
+            "default": ""
+          },
+          "sourceVideoAssetId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sourcevideoassetid",
+            "description": "样片在素材库中的 asset id"
+          },
+          "sourceVideoPath": {
+            "type": "string",
+            "maxLength": 512,
+            "title": "Sourcevideopath",
+            "description": "样片本地路径（可选）",
+            "default": ""
+          },
+          "sourceDurationSec": {
+            "type": "number",
+            "minimum": 0.0,
+            "title": "Sourcedurationsec",
+            "description": "样片真实时长，用于提示与档位说明",
+            "default": 0
+          },
+          "aspectRatio": {
+            "type": "string",
+            "maxLength": 16,
+            "title": "Aspectratio",
+            "description": "输出画幅",
+            "default": "9:16"
+          },
+          "packId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Packid",
+            "description": "关联的已发布替换素材包"
+          },
+          "defaultKind": {
+            "type": "string",
+            "enum": [
+              "character",
+              "product",
+              "scene"
+            ],
+            "title": "Defaultkind",
+            "description": "选中这张原片卡片时，替换配置默认切到的替换类型",
+            "default": "product"
+          },
+          "mediaOrder": {
+            "items": {
+              "$ref": "#/components/schemas/VideoTemplateMedia"
+            },
+            "type": "array",
+            "title": "Mediaorder",
+            "description": "留空则由素材包顺序生成"
+          },
+          "generation": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Generation",
+            "description": "生成参数，覆盖默认值"
+          },
+          "rules": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Rules",
+            "description": "封装规则，覆盖默认值"
+          },
+          "coverUrl": {
+            "type": "string",
+            "maxLength": 512,
+            "title": "Coverurl",
+            "description": "封面地址",
+            "default": ""
+          },
+          "pinned": {
+            "type": "boolean",
+            "title": "Pinned",
+            "description": "是否设为固定蓝本（全库仅一个）",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "prompt"
+        ],
+        "title": "VideoTemplateDraftIn",
+        "description": "封装一条新的视频模板。\n\n`mediaOrder` 决定 mixedList 顺序（即 `{{Mixed N}}` 指向谁）：显式给出时按它拼，\n必须是原片在第 1 位、其余图片与素材包「同一批图」（可换序，不能换图/少图）；\n留空则由服务端按 `packId` 的包内顺序自动生成。"
+      },
+      "VideoTemplateListOut": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/VideoTemplateOut"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "default": 0
+          },
+          "pinnedId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pinnedid",
+            "description": "当前固定蓝本的 id"
+          }
+        },
+        "type": "object",
+        "title": "VideoTemplateListOut"
+      },
+      "VideoTemplateMedia": {
+        "properties": {
+          "token": {
+            "type": "string",
+            "title": "Token",
+            "description": "形如 {{Mixed 3}}，与所在下标严格对应"
+          },
+          "role": {
+            "type": "string",
+            "title": "Role",
+            "description": "source_video / front / multiview / detail 等用途",
+            "default": ""
+          },
+          "type": {
+            "type": "string",
+            "title": "Type",
+            "description": "video / image / audio",
+            "default": "image"
+          },
+          "assetId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assetid",
+            "description": "素材库 asset id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "素材显示名",
+            "default": ""
+          },
+          "file": {
+            "type": "string",
+            "title": "File",
+            "description": "本地文件相对路径（可选）",
+            "default": ""
+          },
+          "inPrompt": {
+            "type": "boolean",
+            "title": "Inprompt",
+            "description": "是否被提示词显式引用",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "token"
+        ],
+        "title": "VideoTemplateMedia",
+        "description": "mixedList 里的一项；下标 +1 就是 {{Mixed N}} 编号。"
+      },
+      "VideoTemplateOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "templateKey": {
+            "type": "string",
+            "title": "Templatekey"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description"
+          },
+          "prompt": {
+            "type": "string",
+            "title": "Prompt"
+          },
+          "promptSha256": {
+            "type": "string",
+            "title": "Promptsha256",
+            "description": "提示词 sha256，防止文字被悄悄改掉"
+          },
+          "sourceVideoName": {
+            "type": "string",
+            "title": "Sourcevideoname"
+          },
+          "sourceVideoAssetId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sourcevideoassetid"
+          },
+          "sourceVideoPath": {
+            "type": "string",
+            "title": "Sourcevideopath"
+          },
+          "sourceDurationSec": {
+            "type": "number",
+            "title": "Sourcedurationsec"
+          },
+          "aspectRatio": {
+            "type": "string",
+            "title": "Aspectratio"
+          },
+          "packId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Packid"
+          },
+          "packName": {
+            "type": "string",
+            "title": "Packname",
+            "default": ""
+          },
+          "packVersion": {
+            "type": "integer",
+            "title": "Packversion",
+            "default": 0
+          },
+          "defaultKind": {
+            "type": "string",
+            "enum": [
+              "character",
+              "product",
+              "scene"
+            ],
+            "title": "Defaultkind",
+            "default": "product"
+          },
+          "mediaOrder": {
+            "items": {
+              "$ref": "#/components/schemas/VideoTemplateMedia"
+            },
+            "type": "array",
+            "title": "Mediaorder"
+          },
+          "generation": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Generation"
+          },
+          "rules": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Rules"
+          },
+          "coverUrl": {
+            "type": "string",
+            "title": "Coverurl",
+            "default": ""
+          },
+          "pinned": {
+            "type": "boolean",
+            "title": "Pinned",
+            "default": false
+          },
+          "createdAt": {
+            "type": "string",
+            "title": "Createdat"
+          },
+          "updatedAt": {
+            "type": "string",
+            "title": "Updatedat"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "templateKey",
+          "name",
+          "description",
+          "prompt",
+          "promptSha256",
+          "sourceVideoName",
+          "sourceVideoPath",
+          "sourceDurationSec",
+          "aspectRatio",
+          "createdAt",
+          "updatedAt"
+        ],
+        "title": "VideoTemplateOut"
       }
     },
     "securitySchemes": {

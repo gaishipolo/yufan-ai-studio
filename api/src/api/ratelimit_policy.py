@@ -313,6 +313,19 @@ EXEMPT_WRITE_ROUTES: Mapping[str, Exemption] = {
         why="下架整包，同为低频管理动作",
         review_by=NEAR_TERM,
     ),
+    # ---- 视频模板目录：只写本地目录，不触发任何供应商调用 ----
+    "POST /templates/video-templates": Exemption(
+        why="封装视频模板：写本地模板目录，需要 `template:pack:manage`，低频管理动作",
+        review_by=NEAR_TERM,
+    ),
+    "POST /templates/video-templates/{template_id}/pin": Exemption(
+        why="切换固定蓝本：单条标记更新且幂等，需要 `template:pack:manage`",
+        review_by=NEAR_TERM,
+    ),
+    "POST /templates/video-templates/{template_id}/attach-source": Exemption(
+        why="绑定样片原片：单条目录字段更新，需要 `template:pack:manage`，低频管理动作",
+        review_by=NEAR_TERM,
+    ),
 }
 
 

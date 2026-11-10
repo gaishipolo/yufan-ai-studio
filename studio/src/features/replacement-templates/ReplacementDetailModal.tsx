@@ -5,10 +5,12 @@ import { Button, Modal } from '@/shared/ui';
 import { CONTINUE, STATUS, NEXT_ACTION } from './replacementOptions';
 import { ReplacementEvaluation } from './ReplacementEvaluation';
 import { ReplacementInputSummary } from './ReplacementInputSummary';
+import { ReplacementPromptOrigin } from './ReplacementPromptOrigin';
 import { replacementDownloadName } from './replacementDownloadName';
 import type { ReplacementWorkbench } from './useReplacementWorkbench';
 import { ReplacementRunManagement } from './ReplacementRunManagement';
 import { replacementTaskFullName, replacementTaskName, replacementSourceName } from '@/entities/template/model/replacementTaskIdentity';
+import { replacementElapsedText } from './replacementElapsed';
 
 interface ReplacementDetailModalProps { model: ReplacementWorkbench }
 export function ReplacementDetailModal({ model }: ReplacementDetailModalProps) {
@@ -18,7 +20,7 @@ export function ReplacementDetailModal({ model }: ReplacementDetailModalProps) {
       {currentDetail && <div className="space-y-4 p-5">
         {currentDetail.deletedAt && <p role="status" className="rounded-lg bg-panel-soft p-3 text-sm text-ink-soft">此任务已在回收站，恢复后可继续操作。</p>}
         <p title={replacementTaskFullName(currentDetail)} className="break-words text-sm font-semibold text-ink">{replacementTaskName(currentDetail)} · {STATUS[currentDetail.status] ?? currentDetail.status}</p>
-        <p className="break-all text-xs text-ink-soft">任务编号：{currentDetail.id} · 创建时间：{new Date(currentDetail.createdAt).toLocaleString()}</p>
+        <p className="break-all text-xs text-ink-soft">任务编号：{currentDetail.id} · 创建时间：{new Date(currentDetail.createdAt).toLocaleString()} · 耗时：{replacementElapsedText(currentDetail)}</p>
         <p className="break-words text-xs text-ink-soft">原片：{replacementSourceName(currentDetail)}</p>
         <p className="break-all text-xs text-ink-soft">上游生成 ID：{currentDetail.taskId ?? '尚未提交'} · 估价：{currentDetail.estimatedCredits ?? '待查询'} · 实际积分：{currentDetail.credits ?? '待回传'}</p>
         <p className="rounded-lg bg-panel-soft p-3 text-xs text-ink-soft">{currentDetail.status === 'success' && !currentDetail.outputUrl ? '结果文件暂不可用，请刷新任务记录或检查归档盘；文件恢复前无法查看成片和评价。' : NEXT_ACTION[currentDetail.status] ?? '请刷新查看最新状态，状态不明确时先核对记录。'}</p>
@@ -28,7 +30,16 @@ export function ReplacementDetailModal({ model }: ReplacementDetailModalProps) {
         {currentDetail.outputUrl && <ArchivedMedia url={currentDetail.outputUrl} type="video" name={replacementDownloadName(currentDetail.target, currentDetail.id)} />}
         <ReplacementEvaluation key={currentDetail.id} run={currentDetail} />
         <details><summary className="cursor-pointer text-sm text-primary">查看当次输入和替换范围</summary><ReplacementInputSummary run={currentDetail} /></details>
-        <details><summary className="cursor-pointer text-sm text-primary">查看最终提示词与归档路径</summary><p className="break-all text-xs text-ink-soft">{currentDetail.archivePath}</p><pre className="mt-3 max-h-72 overflow-auto whitespace-pre-wrap text-xs leading-6 text-ink-soft">{currentDetail.prompt}</pre></details>
+        <details><summary className="cursor-pointer text-sm text-primary">查看最终提示词与归档路径</summary>
+          {/* 提示词在前、路径在后：路径是排查用的坐标，不是这次生成的内容。
+              以前两行挨着、路径在上，读起来就像「提示词 = 那个 runs 目录」。 */}
+          <div className="mt-2 space-y-2">
+            <ReplacementPromptOrigin run={currentDetail} />
+            <p className="text-xs font-semibold text-ink">最终提示词（本次实际提交）</p>
+            <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words text-xs leading-6 text-ink-soft">{currentDetail.prompt}</pre>
+            <p className="break-all pt-1 text-[11px] text-ink-mute">归档路径（排查用，非本次提示词）：{currentDetail.archivePath}</p>
+          </div>
+        </details>
         {!currentDetail.deletedAt && currentDetail.status === 'prepared' && <Can permission="template:use"><Button variant="primary" onClick={() => {setDetailId(null); setReviewId(currentDetail.id);}}>核对替换任务</Button></Can>}
         {!currentDetail.deletedAt && currentDetail.status !== 'prepared' && (CONTINUE.includes(currentDetail.status) || (currentDetail.taskId && !['success', 'failed', 'timeout'].includes(currentDetail.status))) &&
           <Can permission="template:use"><Button variant="primary" loading={submitting} onClick={() => {void submitRun(currentDetail);}}>{currentDetail.taskId ? '继续查询已有任务' : '确认并继续零积分提交'}</Button></Can>}

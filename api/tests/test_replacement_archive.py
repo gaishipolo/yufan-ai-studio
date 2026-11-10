@@ -304,6 +304,75 @@ async def test_product_scope_must_come_from_the_pack(client: TestClient, materia
         await drop_pack(pack.id)
 
 
+@pytest.mark.parametrize("selectable_scope", [False, True])
+async def test_selected_video_function_controls_prompt_and_scope(
+    client: TestClient, materials, tmp_path: Path, monkeypatch, selectable_scope: bool
+) -> None:
+    from modules.template import video_template_store as store
+
+    video, image = materials(kind="product")
+    pack = await _pack("product", image_ids=[image["id"]], scopes=["worn"])
+    prompt = "编辑 {{Mixed 1}}，使用 {{Mixed 2}}。"
+    if selectable_scope:
+        prompt += "范围：{{ReplacementScope}}。"
+    base = {
+        "templateKey": "function", "description": "", "promptSha256": "0" * 64,
+        "sourceVideoName": "source.mp4", "sourceVideoAssetId": video["id"],
+        "sourceVideoPath": "", "sourceDurationSec": 2, "aspectRatio": "9:16",
+        "packId": pack.id, "defaultKind": "product", "mediaOrder": [],
+        "createdAt": "2026-11-09T00:00:00Z", "updatedAt": "2026-11-09T00:00:00Z",
+    }
+    records = [
+        {**base, "id": "pinned", "name": "另一功能", "pinned": True,
+         "prompt": "另一功能 {{Mixed 1}} {{Mixed 2}}"},
+        {**base, "id": "selected", "name": "所选功能", "prompt": prompt,
+         "rules": {"scopeOptions": ["只换前景"] if selectable_scope else []}},
+    ]
+    target = tmp_path / "functions.json"
+    target.write_text(json.dumps({"items": records}), encoding="utf-8")
+    monkeypatch.setattr(store, "CATALOG_PATH", target)
+    try:
+        response = client.post(f"{API}/templates/replacement-runs", json=_payload(
+            "product", video["id"], pack, videoTemplateId="selected",
+            replacementScope="只换前景" if selectable_scope else "",
+        ))
+        assert response.status_code == 201, response.text
+        result = response.json()["data"]
+        try:
+            assert result["prompt"] == prompt.replace("{{ReplacementScope}}", "只换前景")
+            assert result["videoTemplateName"] == "所选功能"
+        finally:
+            await drop_run(result["id"])
+    finally:
+        await drop_pack(pack.id)
+
+
+async def test_function_editor_persists_options_and_rejects_pack_type_mismatch(
+    client: TestClient, materials, tmp_path: Path, monkeypatch
+) -> None:
+    from modules.template import video_template_store as store
+
+    video, image = materials(kind="product")
+    pack = await _pack("product", image_ids=[image["id"]], scopes=["worn"])
+    monkeypatch.setattr(store, "CATALOG_PATH", tmp_path / "catalog.json")
+    draft = {
+        "name": "新功能", "sourceVideoAssetId": video["id"], "packId": pack.id,
+        "prompt": "{{Mixed 1}} {{Mixed 2}} 范围：{{ReplacementScope}}",
+        "defaultKind": "character", "rules": {
+            "workbenchLabel": "局部替换", "scopeOptions": ["前景", "背景"],
+        },
+    }
+    try:
+        rejected = client.post(f"{API}/templates/video-templates", json=draft)
+        assert rejected.status_code == 400, rejected.text
+        draft["defaultKind"] = "product"
+        saved = client.post(f"{API}/templates/video-templates", json=draft)
+        assert saved.status_code == 200, saved.text
+        assert saved.json()["data"]["rules"]["scopeOptions"] == ["前景", "背景"]
+    finally:
+        await drop_pack(pack.id)
+
+
 async def test_unknown_submission_cannot_be_executed(client: TestClient, materials) -> None:
     """`submission_unknown` 是死锁：既不能当失败重提，也不能当成功继续。"""
     video, image = materials()
@@ -372,12 +441,13 @@ def test_workspace_helper_matches_production_layout() -> None:
 # --------------------------------------------------------------------------- #
 # 执行器契约：run.json 的字段名与「零报价」闸门
 # --------------------------------------------------------------------------- #
-def _write_legacy(root: Path, *, submit_body: str) -> Path:
-    """搭一个「假 legacy」目录：桥接层只认文件，不认网络。
+def _write_fake_vendor(root: Path, *, submit_body: str) -> Path:
+    """搭一个「假 vendor」目录：桥接层只认文件，不认网络。
 
-    这些替身与生产 legacy 的接口逐字对齐（`upload/update/withRunLock` 的签名，
-    `submit(api, run, id, verify)` 的四个参数），所以桥接层的真实代码会被执行到，
-    而网络请求全部落在替身上。
+    这些替身与本仓库 vendor 里固定版适配器的接口逐字对齐
+    （`upload/update/withRunLock` 的签名、`submit(api, run, id, verify)` 的四个参数），
+    所以桥接层的真实代码会被执行到，而网络请求全部落在替身上。manifest.json
+    按真格式生成，让 `verifyVendor()` 的哈希校验也真实跑一遍。
     """
     files = {
         "scripts/libtv_video.mjs": "console.log('fake release verified');",
@@ -430,6 +500,14 @@ def _write_legacy(root: Path, *, submit_body: str) -> Path:
         dest = root / filename
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_text(content, encoding="utf-8")
+    from hashlib import sha256
+
+    manifest = {
+        "schema": 1,
+        "status": "test-fixture",
+        "files": {name: sha256((root / name).read_bytes()).hexdigest() for name in files},
+    }
+    (root / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     return root
 
 
@@ -447,12 +525,15 @@ SUBMIT_REACHED = """
 SUBMIT_UNUSED = "export async function submit(){throw Error('not used');}"
 
 
-def _run_bridge(path: Path, legacy: Path, commands: list[str], *, quote: int) -> None:
-    """真跑桥接层：`commands` 按顺序执行，`TEST_QUOTE` 控制估价。"""
+def _run_bridge(path: Path, vendor: Path, commands: list[str], *, quote: int) -> None:
+    """真跑桥接层：`commands` 按顺序执行，`TEST_QUOTE` 控制估价。
+
+    argv 第 5 项是适配器目录（生产由监督进程算出仓库内 vendor），测试换成替身目录。
+    """
     settings = get_libtv_settings()
     script = (
         f"import {{main}} from {json.dumps(BRIDGE.as_uri())};"
-        f"process.argv={json.dumps(['node', 'test', 'upload', str(path), str(legacy)])};"
+        f"process.argv={json.dumps(['node', 'test', 'upload', str(path), str(vendor)])};"
         "await main();"
         + "".join(f"process.argv[2]={json.dumps(command)!s};await main();" for command in commands)
     )
@@ -534,9 +615,9 @@ async def test_bridge_only_reaches_submission_after_zero_quote(
         await patch_run(run["id"], status="queued")
         await asyncio.to_thread(worker.sync_projection, await read_run(run["id"]))
         path = run_path(run["id"])
-        legacy = _write_legacy(tmp_path / "fake-legacy", submit_body=SUBMIT_REACHED)
+        vendor = _write_fake_vendor(tmp_path / "fake-vendor", submit_body=SUBMIT_REACHED)
 
-        _run_bridge(path, legacy, ["submit"] if quote == 0 else [], quote=quote)
+        _run_bridge(path, vendor, ["submit"] if quote == 0 else [], quote=quote)
 
         updated = json.loads((path / "run.json").read_text(encoding="utf-8"))
         assert (path / "records/CREATE_WAS_REACHED").exists() is (quote == 0)
@@ -561,9 +642,9 @@ async def test_bridge_routes_credits_mode_through_paid_queue(
         await patch_run(run["id"], status="queued", billing_mode="credits")
         await asyncio.to_thread(worker.sync_projection, await read_run(run["id"]))
         path = run_path(run["id"])
-        legacy = _write_legacy(tmp_path / "fake-legacy", submit_body=SUBMIT_UNUSED)
+        vendor = _write_fake_vendor(tmp_path / "fake-vendor", submit_body=SUBMIT_UNUSED)
 
-        _run_bridge(path, legacy, [], quote=quote)
+        _run_bridge(path, vendor, [], quote=quote)
 
         updated = json.loads((path / "run.json").read_text(encoding="utf-8"))
         assert updated["status"] == expected

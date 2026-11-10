@@ -43,8 +43,12 @@ export function ReplacementConfig({ model }: ReplacementConfigProps) {
   return (
       <aside ref={panelRef} className="replacement-config" aria-label="替换配置">
         <div className="replacement-config-heading"><SlidersHorizontal size={16} /><h2>替换配置</h2><span>{sourceId ? '已选 1 条' : '等待选择'}</span></div>
+        {model.activeVideoTemplate && <div className="replacement-template-binding" role="status">
+          <Layers size={14} />
+          <span>已套用视频模板「{model.activeVideoTemplate.name}」：{model.functionOptions.find(item => item.id === model.activeVideoTemplate?.id)?.label} · 现选素材包「{model.selectedPack?.name ?? ''}」· 换包不换提示词</span>
+        </div>}
         <div className="replacement-kind-picker" aria-label="替换类型">
-          {TYPES.map(item => <button key={item.kind} disabled={busy} aria-pressed={kind === item.kind} onClick={() => setKind(item.kind)}><item.icon size={17} />{item.label}</button>)}
+          {model.boundTemplate ? model.functionOptions.map(item => <button key={item.id} disabled={busy} aria-pressed={model.boundTemplate?.id === item.id} onClick={() => model.selectFunction(item.id)}><item.icon size={17} />{item.label}</button>) : TYPES.map(item => <button key={item.kind} disabled={busy || model.videoTemplates.isPending || !!model.videoTemplates.error} aria-pressed={kind === item.kind} onClick={() => setKind(item.kind)}><item.icon size={17} />{item.label}</button>)}
         </div>
         <div className="replacement-config-body">
         <fieldset disabled={busy} className="min-w-0">

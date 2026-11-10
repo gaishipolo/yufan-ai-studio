@@ -2,10 +2,13 @@ import { useEffect, useRef, useState, type ChangeEvent } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useArchiveAssets, useArchiveUpload, useArchiveSelection } from '@/entities/asset/api/archive.queries';
 import { useExecuteReplacement, usePrepareReplacement, useReplacementCatalog } from '@/entities/template/api/replacement.queries';
+import { useVideoTemplates } from '@/entities/video-template/api/videoTemplate.queries';
+import type { VideoTemplateOut } from '@/shared/api/schema';
 import { replacementKind, type ReplacementKind, type ReplacementRun, type ReplacementInput } from '@/entities/template/model/replacement.types';
 import { toast } from '@/shared/lib/toast';
 import { isReplacementPackAvailable } from '@/entities/template/model/replacementPack';
 import { TYPES } from './replacementOptions';
+import { videoTemplateLabel, videoTemplateScopes, videoTemplatesForSource } from './videoTemplateFunctions';
 
 /** 编排页面动作；服务端记录由 Query 保存，仅持有选择和反馈等 UI 状态。 */
 export function useReplacementWorkbench() {
@@ -27,13 +30,13 @@ export function useReplacementWorkbench() {
     // 只改 state，不调 setPackId：那是另一次 URL 写入，会和下面的 patch 互相覆盖。
     updatePackId('');
     setNotes('');
-    patchParams({kind: value, packId: null, packVersion: null});
+    patchParams({kind: value, packId: null, packVersion: null, videoTemplateId: null});
   }
   /* 原片选择只有一个来源：URL。选择、清空、深链带入都改同一个参数，
      否则刷新会复活旧选择，`linkedSource` 提示也可能指向另一条素材。 */
   const sourceId = params.get('sourceId');
   function setSourceId(id: string | null) {
-    patchParams({sourceId: id});
+    patchParams({sourceId: id, videoTemplateId: null});
   }
   function setPackId(id: string) {
     updatePackId(id);
@@ -72,6 +75,7 @@ export function useReplacementWorkbench() {
   const assets = useArchiveAssets('source', {scope: sourceScope, keyword: search, page: sourcePage, pageSize: 24});
   const linkedSource = useArchiveSelection(sourceId);
   const catalog = useReplacementCatalog();
+  const videoTemplates = useVideoTemplates();
   const prepare = usePrepareReplacement();
   const execute = useExecuteReplacement();
   const upload = useArchiveUpload();
@@ -82,23 +86,95 @@ export function useReplacementWorkbench() {
   const busy = preparing || submitting || upload.isPending || batchPreparing;
   const packs = catalog.data?.packs?.filter(pack => pack.kind === kind) ?? [];
   const selectedPack = packs.find(pack => pack.id === packId);
-  /* 替换范围由素材包审核结果决定：换包就重置为它支持的全部位置，
-     不让上一包的选择残留成越权提交。 */
-  const scopeLabels = catalog.data?.packScopes ?? {};
-  const availableScopes = (selectedPack?.supportedScopes ?? []).map(key => scopeLabels[key] ?? key);
-  /* 只在「换包 / 换版本 / 该包范围变了」时重置。用目录对象做依赖会让后台轮询
-     每 5 秒把用户手动取消的范围又勾回来。 */
-  const scopeSignature = `${selectedPack?.id ?? ''}:${selectedPack?.version ?? 0}:${(selectedPack?.supportedScopes ?? []).join('|')}`;
+
+  /* 视频模板卡片 = 原片 asset id + 绑定的素材包。封装后的模板和 0507 高端姐
+     一样是「全部模板」里的普通卡片，区别只在选中时自动带出默认替换配置。
+     提示词按用途取图，所以用户后续换成别的产品包也仍然套用同一条模板。
+     仅认已绑定的原片 ID，避免把同名原片误认为已封装。 */
+  function templateForSource(asset: {id: string; name: string} | undefined): VideoTemplateOut | undefined {
+    return videoTemplatesForSource(videoTemplates.data?.items ?? [], asset)[0];
+  }
+  function templateKind(item: VideoTemplateOut): ReplacementKind {
+    const raw = item.defaultKind
+      ?? (typeof item.rules?.defaultKind === 'string' ? item.rules.defaultKind : 'product');
+    return raw === 'character' || raw === 'scene' || raw === 'product' ? raw : 'product';
+  }
+  /* 选择卡片时在**同一次 URL 写入**里把替换类型与素材包一起带上，
+     否则两次 patch 会互相覆盖（见文件头的注释）。 */
+  function selectSource(id: string | null) {
+    if (!id) { patchParams({sourceId: null, videoTemplateId: null}); return; }
+    const asset = videos.find(video => video.id === id) ?? linkedSource.data ?? undefined;
+    const binding = templateForSource(asset);
+    if (!binding) { patchParams({sourceId: id, videoTemplateId: null}); return; }
+    applyVideoTemplate(binding, id);
+  }
+  function applyVideoTemplate(binding: VideoTemplateOut, id = sourceId) {
+    updatePackId(binding.packId ?? '');
+    setNotes('');
+    setReviewId(null);
+    patchParams({sourceId: id, kind: templateKind(binding), packId: binding.packId || null, packVersion: null, videoTemplateId: binding.id});
+  }
+  const boundTemplates = videoTemplatesForSource(videoTemplates.data?.items ?? [],
+    sourceId ? videos.find(video => video.id === sourceId) ?? linkedSource.data ?? undefined : undefined,
+  );
+  const boundTemplate = boundTemplates.find(item => item.id === params.get('videoTemplateId'))
+    ?? boundTemplates.find(item => templateKind(item) === kind) ?? boundTemplates[0];
+  const functionOptions = boundTemplates.map(item => ({id: item.id,
+    label: boundTemplates.filter(other => videoTemplateLabel(other) === videoTemplateLabel(item)).length > 1
+      ? `${videoTemplateLabel(item)} · ${item.name}` : videoTemplateLabel(item),
+    icon: TYPES.find(type => type.kind === templateKind(item))?.icon ?? TYPES[0].icon}));
+  function selectFunction(id: string) {
+    const binding = boundTemplates.find(item => item.id === id);
+    if (binding) applyVideoTemplate(binding);
+  }
+  /* 只有配置确实还是模板那一套时才显示「固定提示词生效」：替换类型一致、
+     且用户确实选了一个包。包 id 不锁死——后端按原片命中模板、按用途从当前包
+     取图，换产品包时提示词仍是同一份，这正是提示词动态化的落点。 */
+  const activeVideoTemplate = boundTemplate
+    && !!packId
+    && kind === templateKind(boundTemplate)
+    ? boundTemplate : undefined;
+  /* 深链进入时补一次默认配置。依赖写成**绑定签名**而不是 catalog / 模板对象：
+     素材目录每 5 秒轮询会产出新引用，用对象做依赖会把用户手动改过的类型和包
+     又改回去。最新一次渲染看到的值放 ref，签名没变就不重放 —— 这不是掩盖依赖，
+     而是把真正的触发条件（原片 + 模板 + 类型）写成字符串。 */
+  const bindingSignature = boundTemplate && catalog.data
+    ? `${sourceId ?? ''}:${boundTemplate.id}:${templateKind(boundTemplate)}`
+    : '';
+  const applyBinding = useRef<() => void>(() => {});
+  applyBinding.current = () => {
+    const binding = boundTemplate;
+    if (!binding || !catalog.data) return;
+    if (params.get('videoTemplateId') === binding.id && kind === templateKind(binding)) return;
+    const keepPack = kind === templateKind(binding) && !!params.get('packId');
+    updatePackId(keepPack ? params.get('packId')! : binding.packId ?? '');
+    patchParams({kind: templateKind(binding), videoTemplateId: binding.id,
+      ...(!keepPack ? {packId: binding.packId || null, packVersion: null} : {})});
+  };
   useEffect(() => {
-    setScopes(availableScopes);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- 依赖签名而非目录引用，避免轮询覆盖手动勾选
+    if (bindingSignature) applyBinding.current();
+  }, [bindingSignature]);
+  /* 固定提示词的参数由封装定义；通用替换继续使用素材包审核范围。 */
+  const scopeLabels = catalog.data?.packScopes ?? {};
+  const availableScopes = boundTemplate ? videoTemplateScopes(boundTemplate)
+    : (selectedPack?.supportedScopes ?? []).map(key => scopeLabels[key] ?? key);
+  const showScope = boundTemplate ? availableScopes.length > 0 : true;
+  /* 只在「换包 / 换版本 / 该包范围变了」时重置：依赖同样是签名，
+     目录对象每 5 秒刷新一次，用对象做依赖会把用户手动取消的范围又勾回来。 */
+  const scopeSignature = `${boundTemplate?.id ?? ''}:${selectedPack?.id ?? ''}:${selectedPack?.version ?? 0}:${availableScopes.join('|')}`;
+  const scopesToApply = useRef<string[]>([]);
+  scopesToApply.current = availableScopes;
+  useEffect(() => {
+    setScopes(scopesToApply.current);
   }, [scopeSignature]);
   const references = selectedPack?.referenceIds ?? [];
   const target = selectedPack?.name ?? '';
   const wardrobeMode = selectedPack?.wardrobeMode ?? 'preserve';
   const requestedVersion = params.get('packId') === packId ? params.get('packVersion') : null;
   const packReady = isReplacementPackAvailable(selectedPack, assets.data?.items ?? []) && (!requestedVersion || String(selectedPack?.version) === requestedVersion);
-  const missing = !packReady ? `请选择一个可用的${template.short}素材包` : kind === 'product' && !scopes.length ? '请选择至少一个产品替换位置' : '';
+  const missing = !packReady ? `请选择一个可用的${template.short}素材包`
+    : showScope && (boundTemplate || kind === 'product') && !scopes.length ? '请选择至少一个产品替换位置'
+    : videoTemplates.isPending || videoTemplates.error ? '请等待模板封装配置加载完成' : '';
   function report(type: 'success' | 'error', message: string) {
     setFeedback({type, message});
     toast(message, type);
@@ -120,7 +196,8 @@ export function useReplacementWorkbench() {
     setPreparing(true);
     try {
       const config: Omit<ReplacementInput, 'requestId'> = {kind, target: target.trim(), sourceId, referenceIds: references, wardrobeMode,
-        packId: packId || null, packVersion: selectedPack?.version || 1, replacementScope: scopes.join('、'), notes, aspectRatio: 'adaptive'};
+        packId: packId || null, packVersion: selectedPack?.version || 1, videoTemplateId: boundTemplate?.id,
+        replacementScope: showScope ? scopes.join('、') : '', notes, aspectRatio: 'adaptive'};
       const key = JSON.stringify(config);
       const previous = catalog.data?.runs.find(run => run.id === preparedIds.current.get(key));
       if (previous?.deletedAt) requestIds.current.delete(key);
@@ -177,7 +254,7 @@ export function useReplacementWorkbench() {
       event.target.value = '';
 
   }
-  return { setBatchPreparing, sourceScope, setSourceScope, sourcePage, setSourcePage, linkedSource, params, kind, setKind, sourceId, setSourceId, references, target, packId, setPackId, wardrobeMode, selectedPack, packs, scopes, setScopes, availableScopes, notes, setNotes, reviewId, setReviewId, detailId, setDetailId, search, setSearch, historyTrash, historyStatus, historySearch, setHistoryFilter, preparing, submitting, feedback, setFeedback, uploadInput, assets, catalog, upload, template, videos, currentDetail, review, busy, missing, toggle, pickUpload, prepareTask, submitRun, handleUpload };
+  return { setBatchPreparing, sourceScope, setSourceScope, sourcePage, setSourcePage, linkedSource, params, kind, setKind, sourceId, setSourceId, selectSource, references, target, packId, setPackId, wardrobeMode, selectedPack, packs, scopes, setScopes, availableScopes, showScope, functionOptions, selectFunction, notes, setNotes, reviewId, setReviewId, detailId, setDetailId, search, setSearch, historyTrash, historyStatus, historySearch, setHistoryFilter, preparing, submitting, feedback, setFeedback, uploadInput, assets, catalog, upload, template, videos, currentDetail, review, busy, missing, toggle, pickUpload, prepareTask, submitRun, handleUpload, videoTemplates, templateForSource, boundTemplate, activeVideoTemplate };
 }
 
 export type ReplacementWorkbench = ReturnType<typeof useReplacementWorkbench>;

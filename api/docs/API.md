@@ -2,7 +2,7 @@
 
 > 此文件由 `app export-openapi` 自动生成，请勿手工编辑。
 >
-> 版本 `0.2.0`｜共 **125** 个接口 / **11** 个模块
+> 版本 `0.2.0`｜共 **130** 个接口 / **11** 个模块
 >
 > 重新生成：`cd api && .venv/Scripts/python -m cli export-openapi`
 
@@ -231,7 +231,7 @@ Authorization: Bearer <accessToken>
 | 模型 | 1 | 见下方 `4.3` |
 | 素材 | 12 | 见下方 `4.4` |
 | 生图 | 3 | 见下方 `4.5` |
-| 模板 | 16 | 见下方 `4.6` |
+| 模板 | 21 | 见下方 `4.6` |
 | 分镜模板 | 1 | 见下方 `4.7` |
 | 镜头库 | 1 | 见下方 `4.8` |
 | 系统 | 2 | 见下方 `4.9` |
@@ -1766,7 +1766,7 @@ Authorization: Bearer <accessToken>
 | `id` | `string` | 是 | 生图记录 ID |
 | `status` | `string` | 是 | 重试后的状态，固定为 `queued` |
 
-### 4.6 模板（16 个）
+### 4.6 模板（21 个）
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
@@ -1786,6 +1786,11 @@ Authorization: Bearer <accessToken>
 | `POST` | `/api/v1/templates/replacement-runs/{run_id}/reconfirm` | 确认上次提交可能已计费后放行重提（默认拒绝） | 🔒 |
 | `POST` | `/api/v1/templates/replacement-runs/{run_id}/restore` | 恢复本人回收站中的替换任务与调用档案 | 🔒 |
 | `PUT` | `/api/v1/templates/replacement-runs/{run_id}/review` | 保存人工验收，版本冲突需重新核对 | 🔒 |
+| `GET` | `/api/v1/templates/video-templates` | 视频模板列表（固定蓝本优先） | 🔒 |
+| `POST` | `/api/v1/templates/video-templates` | 封装一条视频模板 | 🔒 |
+| `GET` | `/api/v1/templates/video-templates/{template_id}` | 视频模板详情（含提示词与媒体顺序） | 🔒 |
+| `POST` | `/api/v1/templates/video-templates/{template_id}/attach-source` | 绑定样片原片资产 | 🔒 |
+| `POST` | `/api/v1/templates/video-templates/{template_id}/pin` | 设为固定蓝本（全库仅一个） | 🔒 |
 
 #### `GET /api/v1/templates/replacement-catalog`
 
@@ -1976,6 +1981,7 @@ Authorization: Bearer <accessToken>
 | `kind` | `"character" \| "product" \| "scene"` | 是 |  |
 | `target` | `string` | 否 |  |
 | `sourceId` | `string` | 是 |  |
+| `videoTemplateId` | `string \| null` | 否 |  |
 | `referenceIds` | `string[]` | 否 |  |
 | `wardrobeMode` | `"preserve" \| "reference"` | 否 |  |
 | `replacementScope` | `string` | 否 |  |
@@ -1994,7 +2000,12 @@ Authorization: Bearer <accessToken>
 | `status` | `string` | 是 |  |
 | `archivePath` | `string` | 是 |  |
 | `createdAt` | `string` | 是 |  |
+| `startedAt` | `string \| null` | 否 | 确认提交（进入排队）的时间，未开始为 null |
+| `finishedAt` | `string \| null` | 否 | 这一轮结束的时间；未结束为 null |
+| `elapsedSec` | `number \| null` | 否 | 确认提交到结束的耗时（秒）；未完成时按到此刻计，未开始为 null |
 | `prompt` | `string` | 是 |  |
+| `promptMode` | `"fixed" \| "compiled"` | 否 | fixed=封装视频模板时写死的原文，逐字提交；compiled=按素材与替换范围现编。展示层据此告诉用户「跑的就是你封装时那份提示词」。 |
+| `videoTemplateName` | `string \| null` | 否 | fixed 时出自哪条视频模板；compiled 为 null |
 | `displayTitle` | `string` | 否 | 统一展示名，列表/弹窗/任务中心共用 |
 | `taskId` | `string \| null` | 否 |  |
 | `estimatedCredits` | `number \| null` | 否 |  |
@@ -2026,7 +2037,12 @@ Authorization: Bearer <accessToken>
 | `status` | `string` | 是 |  |
 | `archivePath` | `string` | 是 |  |
 | `createdAt` | `string` | 是 |  |
+| `startedAt` | `string \| null` | 否 | 确认提交（进入排队）的时间，未开始为 null |
+| `finishedAt` | `string \| null` | 否 | 这一轮结束的时间；未结束为 null |
+| `elapsedSec` | `number \| null` | 否 | 确认提交到结束的耗时（秒）；未完成时按到此刻计，未开始为 null |
 | `prompt` | `string` | 是 |  |
+| `promptMode` | `"fixed" \| "compiled"` | 否 | fixed=封装视频模板时写死的原文，逐字提交；compiled=按素材与替换范围现编。展示层据此告诉用户「跑的就是你封装时那份提示词」。 |
+| `videoTemplateName` | `string \| null` | 否 | fixed 时出自哪条视频模板；compiled 为 null |
 | `displayTitle` | `string` | 否 | 统一展示名，列表/弹窗/任务中心共用 |
 | `taskId` | `string \| null` | 否 |  |
 | `estimatedCredits` | `number \| null` | 否 |  |
@@ -2058,7 +2074,12 @@ Authorization: Bearer <accessToken>
 | `status` | `string` | 是 |  |
 | `archivePath` | `string` | 是 |  |
 | `createdAt` | `string` | 是 |  |
+| `startedAt` | `string \| null` | 否 | 确认提交（进入排队）的时间，未开始为 null |
+| `finishedAt` | `string \| null` | 否 | 这一轮结束的时间；未结束为 null |
+| `elapsedSec` | `number \| null` | 否 | 确认提交到结束的耗时（秒）；未完成时按到此刻计，未开始为 null |
 | `prompt` | `string` | 是 |  |
+| `promptMode` | `"fixed" \| "compiled"` | 否 | fixed=封装视频模板时写死的原文，逐字提交；compiled=按素材与替换范围现编。展示层据此告诉用户「跑的就是你封装时那份提示词」。 |
+| `videoTemplateName` | `string \| null` | 否 | fixed 时出自哪条视频模板；compiled 为 null |
 | `displayTitle` | `string` | 否 | 统一展示名，列表/弹窗/任务中心共用 |
 | `taskId` | `string \| null` | 否 |  |
 | `estimatedCredits` | `number \| null` | 否 |  |
@@ -2092,7 +2113,12 @@ Authorization: Bearer <accessToken>
 | `status` | `string` | 是 |  |
 | `archivePath` | `string` | 是 |  |
 | `createdAt` | `string` | 是 |  |
+| `startedAt` | `string \| null` | 否 | 确认提交（进入排队）的时间，未开始为 null |
+| `finishedAt` | `string \| null` | 否 | 这一轮结束的时间；未结束为 null |
+| `elapsedSec` | `number \| null` | 否 | 确认提交到结束的耗时（秒）；未完成时按到此刻计，未开始为 null |
 | `prompt` | `string` | 是 |  |
+| `promptMode` | `"fixed" \| "compiled"` | 否 | fixed=封装视频模板时写死的原文，逐字提交；compiled=按素材与替换范围现编。展示层据此告诉用户「跑的就是你封装时那份提示词」。 |
+| `videoTemplateName` | `string \| null` | 否 | fixed 时出自哪条视频模板；compiled 为 null |
 | `displayTitle` | `string` | 否 | 统一展示名，列表/弹窗/任务中心共用 |
 | `taskId` | `string \| null` | 否 |  |
 | `estimatedCredits` | `number \| null` | 否 |  |
@@ -2151,7 +2177,12 @@ Authorization: Bearer <accessToken>
 | `status` | `string` | 是 |  |
 | `archivePath` | `string` | 是 |  |
 | `createdAt` | `string` | 是 |  |
+| `startedAt` | `string \| null` | 否 | 确认提交（进入排队）的时间，未开始为 null |
+| `finishedAt` | `string \| null` | 否 | 这一轮结束的时间；未结束为 null |
+| `elapsedSec` | `number \| null` | 否 | 确认提交到结束的耗时（秒）；未完成时按到此刻计，未开始为 null |
 | `prompt` | `string` | 是 |  |
+| `promptMode` | `"fixed" \| "compiled"` | 否 | fixed=封装视频模板时写死的原文，逐字提交；compiled=按素材与替换范围现编。展示层据此告诉用户「跑的就是你封装时那份提示词」。 |
+| `videoTemplateName` | `string \| null` | 否 | fixed 时出自哪条视频模板；compiled 为 null |
 | `displayTitle` | `string` | 否 | 统一展示名，列表/弹窗/任务中心共用 |
 | `taskId` | `string \| null` | 否 |  |
 | `estimatedCredits` | `number \| null` | 否 |  |
@@ -2183,7 +2214,12 @@ Authorization: Bearer <accessToken>
 | `status` | `string` | 是 |  |
 | `archivePath` | `string` | 是 |  |
 | `createdAt` | `string` | 是 |  |
+| `startedAt` | `string \| null` | 否 | 确认提交（进入排队）的时间，未开始为 null |
+| `finishedAt` | `string \| null` | 否 | 这一轮结束的时间；未结束为 null |
+| `elapsedSec` | `number \| null` | 否 | 确认提交到结束的耗时（秒）；未完成时按到此刻计，未开始为 null |
 | `prompt` | `string` | 是 |  |
+| `promptMode` | `"fixed" \| "compiled"` | 否 | fixed=封装视频模板时写死的原文，逐字提交；compiled=按素材与替换范围现编。展示层据此告诉用户「跑的就是你封装时那份提示词」。 |
+| `videoTemplateName` | `string \| null` | 否 | fixed 时出自哪条视频模板；compiled 为 null |
 | `displayTitle` | `string` | 否 | 统一展示名，列表/弹窗/任务中心共用 |
 | `taskId` | `string \| null` | 否 |  |
 | `estimatedCredits` | `number \| null` | 否 |  |
@@ -2224,7 +2260,12 @@ Authorization: Bearer <accessToken>
 | `status` | `string` | 是 |  |
 | `archivePath` | `string` | 是 |  |
 | `createdAt` | `string` | 是 |  |
+| `startedAt` | `string \| null` | 否 | 确认提交（进入排队）的时间，未开始为 null |
+| `finishedAt` | `string \| null` | 否 | 这一轮结束的时间；未结束为 null |
+| `elapsedSec` | `number \| null` | 否 | 确认提交到结束的耗时（秒）；未完成时按到此刻计，未开始为 null |
 | `prompt` | `string` | 是 |  |
+| `promptMode` | `"fixed" \| "compiled"` | 否 | fixed=封装视频模板时写死的原文，逐字提交；compiled=按素材与替换范围现编。展示层据此告诉用户「跑的就是你封装时那份提示词」。 |
+| `videoTemplateName` | `string \| null` | 否 | fixed 时出自哪条视频模板；compiled 为 null |
 | `displayTitle` | `string` | 否 | 统一展示名，列表/弹窗/任务中心共用 |
 | `taskId` | `string \| null` | 否 |  |
 | `estimatedCredits` | `number \| null` | 否 |  |
@@ -2237,6 +2278,183 @@ Authorization: Bearer <accessToken>
 | `outputUrl` | `string \| null` | 否 |  |
 | `deletedAt` | `string \| null` | 否 |  |
 | `billingMode` | `"free" \| "credits"` | 否 | free=0 积分权益队列；credits=本次任务用积分进正常队列 |
+
+#### `GET /api/v1/templates/video-templates`
+
+**视频模板列表（固定蓝本优先）**
+
+**响应** `ApiResponse<VideoTemplateListOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `items` | `VideoTemplateOut[]` | 否 |  |
+| `total` | `number` | 否 |  |
+| `pinnedId` | `string \| null` | 否 | 当前固定蓝本的 id |
+
+#### `POST /api/v1/templates/video-templates`
+
+**封装一条视频模板**
+
+**请求体** `VideoTemplateDraftIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `name` | `string` | 是 | 模板名称 |
+| `templateKey` | `string` | 否 | 稳定标识，便于后续复制与导入 |
+| `description` | `string` | 否 | 模板说明 |
+| `prompt` | `string` | 是 | 固定提示词原文，含 {{Mixed N}} 占位符 |
+| `sourceVideoName` | `string` | 否 | 样片文件名 |
+| `sourceVideoAssetId` | `string \| null` | 否 | 样片在素材库中的 asset id |
+| `sourceVideoPath` | `string` | 否 | 样片本地路径（可选） |
+| `sourceDurationSec` | `number` | 否 | 样片真实时长，用于提示与档位说明 |
+| `aspectRatio` | `string` | 否 | 输出画幅 |
+| `packId` | `string \| null` | 否 | 关联的已发布替换素材包 |
+| `defaultKind` | `"character" \| "product" \| "scene"` | 否 | 选中这张原片卡片时，替换配置默认切到的替换类型 |
+| `mediaOrder` | `VideoTemplateMedia[]` | 否 | 留空则由素材包顺序生成 |
+| `generation` | `Record<string, unknown>` | 否 | 生成参数，覆盖默认值 |
+| `rules` | `Record<string, unknown>` | 否 | 封装规则，覆盖默认值 |
+| `coverUrl` | `string` | 否 | 封面地址 |
+| `pinned` | `boolean` | 否 | 是否设为固定蓝本（全库仅一个） |
+
+**响应** `ApiResponse<VideoTemplateOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `templateKey` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `description` | `string` | 是 |  |
+| `prompt` | `string` | 是 |  |
+| `promptSha256` | `string` | 是 | 提示词 sha256，防止文字被悄悄改掉 |
+| `sourceVideoName` | `string` | 是 |  |
+| `sourceVideoAssetId` | `string \| null` | 否 |  |
+| `sourceVideoPath` | `string` | 是 |  |
+| `sourceDurationSec` | `number` | 是 |  |
+| `aspectRatio` | `string` | 是 |  |
+| `packId` | `string \| null` | 否 |  |
+| `packName` | `string` | 否 |  |
+| `packVersion` | `number` | 否 |  |
+| `defaultKind` | `"character" \| "product" \| "scene"` | 否 |  |
+| `mediaOrder` | `VideoTemplateMedia[]` | 否 |  |
+| `generation` | `Record<string, unknown>` | 否 |  |
+| `rules` | `Record<string, unknown>` | 否 |  |
+| `coverUrl` | `string` | 否 |  |
+| `pinned` | `boolean` | 否 |  |
+| `createdAt` | `string` | 是 |  |
+| `updatedAt` | `string` | 是 |  |
+
+#### `GET /api/v1/templates/video-templates/{template_id}`
+
+**视频模板详情（含提示词与媒体顺序）**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `template_id` | path | `string` | 是 |  |
+
+**响应** `ApiResponse<VideoTemplateOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `templateKey` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `description` | `string` | 是 |  |
+| `prompt` | `string` | 是 |  |
+| `promptSha256` | `string` | 是 | 提示词 sha256，防止文字被悄悄改掉 |
+| `sourceVideoName` | `string` | 是 |  |
+| `sourceVideoAssetId` | `string \| null` | 否 |  |
+| `sourceVideoPath` | `string` | 是 |  |
+| `sourceDurationSec` | `number` | 是 |  |
+| `aspectRatio` | `string` | 是 |  |
+| `packId` | `string \| null` | 否 |  |
+| `packName` | `string` | 否 |  |
+| `packVersion` | `number` | 否 |  |
+| `defaultKind` | `"character" \| "product" \| "scene"` | 否 |  |
+| `mediaOrder` | `VideoTemplateMedia[]` | 否 |  |
+| `generation` | `Record<string, unknown>` | 否 |  |
+| `rules` | `Record<string, unknown>` | 否 |  |
+| `coverUrl` | `string` | 否 |  |
+| `pinned` | `boolean` | 否 |  |
+| `createdAt` | `string` | 是 |  |
+| `updatedAt` | `string` | 是 |  |
+
+#### `POST /api/v1/templates/video-templates/{template_id}/attach-source`
+
+**绑定样片原片资产**
+
+绑定后，这条模板对应的原片才会在「全部模板」里被当作可选卡片。
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `template_id` | path | `string` | 是 |  |
+
+**请求体** `VideoTemplateAttachSourceIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `sourceVideoAssetId` | `string` | 是 | 素材库里 category=source 的 asset id |
+
+**响应** `ApiResponse<VideoTemplateOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `templateKey` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `description` | `string` | 是 |  |
+| `prompt` | `string` | 是 |  |
+| `promptSha256` | `string` | 是 | 提示词 sha256，防止文字被悄悄改掉 |
+| `sourceVideoName` | `string` | 是 |  |
+| `sourceVideoAssetId` | `string \| null` | 否 |  |
+| `sourceVideoPath` | `string` | 是 |  |
+| `sourceDurationSec` | `number` | 是 |  |
+| `aspectRatio` | `string` | 是 |  |
+| `packId` | `string \| null` | 否 |  |
+| `packName` | `string` | 否 |  |
+| `packVersion` | `number` | 否 |  |
+| `defaultKind` | `"character" \| "product" \| "scene"` | 否 |  |
+| `mediaOrder` | `VideoTemplateMedia[]` | 否 |  |
+| `generation` | `Record<string, unknown>` | 否 |  |
+| `rules` | `Record<string, unknown>` | 否 |  |
+| `coverUrl` | `string` | 否 |  |
+| `pinned` | `boolean` | 否 |  |
+| `createdAt` | `string` | 是 |  |
+| `updatedAt` | `string` | 是 |  |
+
+#### `POST /api/v1/templates/video-templates/{template_id}/pin`
+
+**设为固定蓝本（全库仅一个）**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `template_id` | path | `string` | 是 |  |
+
+**响应** `ApiResponse<VideoTemplateOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `templateKey` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `description` | `string` | 是 |  |
+| `prompt` | `string` | 是 |  |
+| `promptSha256` | `string` | 是 | 提示词 sha256，防止文字被悄悄改掉 |
+| `sourceVideoName` | `string` | 是 |  |
+| `sourceVideoAssetId` | `string \| null` | 否 |  |
+| `sourceVideoPath` | `string` | 是 |  |
+| `sourceDurationSec` | `number` | 是 |  |
+| `aspectRatio` | `string` | 是 |  |
+| `packId` | `string \| null` | 否 |  |
+| `packName` | `string` | 否 |  |
+| `packVersion` | `number` | 否 |  |
+| `defaultKind` | `"character" \| "product" \| "scene"` | 否 |  |
+| `mediaOrder` | `VideoTemplateMedia[]` | 否 |  |
+| `generation` | `Record<string, unknown>` | 否 |  |
+| `rules` | `Record<string, unknown>` | 否 |  |
+| `coverUrl` | `string` | 否 |  |
+| `pinned` | `boolean` | 否 |  |
+| `createdAt` | `string` | 是 |  |
+| `updatedAt` | `string` | 是 |  |
 
 ### 4.7 分镜模板（1 个）
 
@@ -4361,6 +4579,7 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `kind` | `"character" \| "product" \| "scene"` | 是 |  |
 | `target` | `string` | 否 |  |
 | `sourceId` | `string` | 是 |  |
+| `videoTemplateId` | `string \| null` | 否 |  |
 | `referenceIds` | `string[]` | 否 |  |
 | `wardrobeMode` | `"preserve" \| "reference"` | 否 |  |
 | `replacementScope` | `string` | 否 |  |
@@ -4506,7 +4725,12 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `status` | `string` | 是 |  |
 | `archivePath` | `string` | 是 |  |
 | `createdAt` | `string` | 是 |  |
+| `startedAt` | `string \| null` | 否 | 确认提交（进入排队）的时间，未开始为 null |
+| `finishedAt` | `string \| null` | 否 | 这一轮结束的时间；未结束为 null |
+| `elapsedSec` | `number \| null` | 否 | 确认提交到结束的耗时（秒）；未完成时按到此刻计，未开始为 null |
 | `prompt` | `string` | 是 |  |
+| `promptMode` | `"fixed" \| "compiled"` | 否 | fixed=封装视频模板时写死的原文，逐字提交；compiled=按素材与替换范围现编。展示层据此告诉用户「跑的就是你封装时那份提示词」。 |
+| `videoTemplateName` | `string \| null` | 否 | fixed 时出自哪条视频模板；compiled 为 null |
 | `displayTitle` | `string` | 否 | 统一展示名，列表/弹窗/任务中心共用 |
 | `taskId` | `string \| null` | 否 |  |
 | `estimatedCredits` | `number \| null` | 否 |  |
@@ -4927,3 +5151,87 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `type` | `string` | 是 |  |
 | `input` | `unknown` | 否 |  |
 | `ctx` | `Record<string, unknown>` | 否 |  |
+
+### `VideoTemplateAttachSourceIn`
+
+把样片登记后的 source 资产绑定到模板：绑定后它才是「全部模板」里可选的卡片。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `sourceVideoAssetId` | `string` | 是 | 素材库里 category=source 的 asset id |
+
+### `VideoTemplateDraftIn`
+
+封装一条新的视频模板。
+
+`mediaOrder` 决定 mixedList 顺序（即 `{{Mixed N}}` 指向谁）：显式给出时按它拼，
+必须是原片在第 1 位、其余图片与素材包「同一批图」（可换序，不能换图/少图）；
+留空则由服务端按 `packId` 的包内顺序自动生成。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `name` | `string` | 是 | 模板名称 |
+| `templateKey` | `string` | 否 | 稳定标识，便于后续复制与导入 |
+| `description` | `string` | 否 | 模板说明 |
+| `prompt` | `string` | 是 | 固定提示词原文，含 {{Mixed N}} 占位符 |
+| `sourceVideoName` | `string` | 否 | 样片文件名 |
+| `sourceVideoAssetId` | `string \| null` | 否 | 样片在素材库中的 asset id |
+| `sourceVideoPath` | `string` | 否 | 样片本地路径（可选） |
+| `sourceDurationSec` | `number` | 否 | 样片真实时长，用于提示与档位说明 |
+| `aspectRatio` | `string` | 否 | 输出画幅 |
+| `packId` | `string \| null` | 否 | 关联的已发布替换素材包 |
+| `defaultKind` | `"character" \| "product" \| "scene"` | 否 | 选中这张原片卡片时，替换配置默认切到的替换类型 |
+| `mediaOrder` | `VideoTemplateMedia[]` | 否 | 留空则由素材包顺序生成 |
+| `generation` | `Record<string, unknown>` | 否 | 生成参数，覆盖默认值 |
+| `rules` | `Record<string, unknown>` | 否 | 封装规则，覆盖默认值 |
+| `coverUrl` | `string` | 否 | 封面地址 |
+| `pinned` | `boolean` | 否 | 是否设为固定蓝本（全库仅一个） |
+
+### `VideoTemplateListOut`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `items` | `VideoTemplateOut[]` | 否 |  |
+| `total` | `number` | 否 |  |
+| `pinnedId` | `string \| null` | 否 | 当前固定蓝本的 id |
+
+### `VideoTemplateMedia`
+
+mixedList 里的一项；下标 +1 就是 {{Mixed N}} 编号。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `token` | `string` | 是 | 形如 {{Mixed 3}}，与所在下标严格对应 |
+| `role` | `string` | 否 | source_video / front / multiview / detail 等用途 |
+| `type` | `string` | 否 | video / image / audio |
+| `assetId` | `string \| null` | 否 | 素材库 asset id |
+| `name` | `string` | 否 | 素材显示名 |
+| `file` | `string` | 否 | 本地文件相对路径（可选） |
+| `inPrompt` | `boolean` | 否 | 是否被提示词显式引用 |
+
+### `VideoTemplateOut`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `templateKey` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `description` | `string` | 是 |  |
+| `prompt` | `string` | 是 |  |
+| `promptSha256` | `string` | 是 | 提示词 sha256，防止文字被悄悄改掉 |
+| `sourceVideoName` | `string` | 是 |  |
+| `sourceVideoAssetId` | `string \| null` | 否 |  |
+| `sourceVideoPath` | `string` | 是 |  |
+| `sourceDurationSec` | `number` | 是 |  |
+| `aspectRatio` | `string` | 是 |  |
+| `packId` | `string \| null` | 否 |  |
+| `packName` | `string` | 否 |  |
+| `packVersion` | `number` | 否 |  |
+| `defaultKind` | `"character" \| "product" \| "scene"` | 否 |  |
+| `mediaOrder` | `VideoTemplateMedia[]` | 否 |  |
+| `generation` | `Record<string, unknown>` | 否 |  |
+| `rules` | `Record<string, unknown>` | 否 |  |
+| `coverUrl` | `string` | 否 |  |
+| `pinned` | `boolean` | 否 |  |
+| `createdAt` | `string` | 是 |  |
+| `updatedAt` | `string` | 是 |  |

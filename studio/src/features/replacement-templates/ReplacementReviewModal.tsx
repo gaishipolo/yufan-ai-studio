@@ -3,6 +3,7 @@ import { Can } from '@/shared/access/Can';
 import { Button, Modal } from '@/shared/ui';
 import type { ReplacementWorkbench } from './useReplacementWorkbench';
 import { ReplacementInputSummary } from './ReplacementInputSummary';
+import { ReplacementPromptOrigin } from './ReplacementPromptOrigin';
 import { replacementTaskFullName, replacementTaskName } from '@/entities/template/model/replacementTaskIdentity';
 
 interface ReplacementReviewModalProps { model: ReplacementWorkbench }
@@ -17,7 +18,7 @@ export function ReplacementReviewModal({ model }: ReplacementReviewModalProps) {
   return (
     <Modal open={!!review} onClose={() => {if (!submitting) setReviewId(null);}} title="核对替换任务" width={760} className="replacement-review-modal">
       <div className="replacement-modal-body space-y-4"><p className="text-sm text-ink-soft">已准备当前原片。核对目标和替换范围，确认后使用所选素材包生成。</p>
-        {review && <article key={review.id} className="min-w-0 space-y-3 rounded-xl border border-line p-4"><h3 title={replacementTaskFullName(review)} className="break-words text-sm font-semibold text-ink">{replacementTaskName(review)}</h3><p className="break-all text-xs text-ink-mute">任务编号：{review.id} · 创建时间：{new Date(review.createdAt).toLocaleString()}</p><ReplacementInputSummary run={review} /><details><summary className="cursor-pointer text-xs text-primary">查看最终提示词与归档路径</summary><p className="mt-2 break-all text-xs text-ink-soft">{review.archivePath}</p><pre className="mt-3 max-h-80 overflow-auto whitespace-pre-wrap break-words text-xs leading-6 text-ink-soft">{review.prompt}</pre></details></article>}
+        {review && <article key={review.id} className="min-w-0 space-y-3 rounded-xl border border-line p-4"><h3 title={replacementTaskFullName(review)} className="break-words text-sm font-semibold text-ink">{replacementTaskName(review)}</h3><p className="break-all text-xs text-ink-mute">任务编号：{review.id} · 创建时间：{new Date(review.createdAt).toLocaleString()}</p><ReplacementInputSummary run={review} /><details><summary className="cursor-pointer text-xs text-primary">查看最终提示词与归档路径</summary><div className="mt-2 space-y-2"><ReplacementPromptOrigin run={review} /><p className="text-xs font-semibold text-ink">最终提示词（本次实际提交）</p><pre className="max-h-80 overflow-auto whitespace-pre-wrap break-words text-xs leading-6 text-ink-soft">{review.prompt}</pre><p className="break-all pt-1 text-[11px] text-ink-mute">归档路径（排查用，非本次提示词）：{review.archivePath}</p></div></details></article>}
         {!submitted && <label className="flex items-start gap-2 rounded-lg border border-line bg-panel-soft p-3 text-xs leading-5 text-ink-soft"><input type="checkbox" className="mt-0.5" checked={accelerate} disabled={submitting} aria-label="用积分加速生成" onChange={event => setAccelerate(event.target.checked)} /><span><strong className="text-ink">用积分加速</strong><span className="mt-0.5 block text-ink-mute">不使用 0 积分免费队列，按积分报价进入正常队列。只影响这一条任务，账号默认开关和其他任务不变；实际扣费以任务记录里的上游回执为准。</span></span></label>}
         {submitted && <p className="rounded-lg border border-line bg-panel-soft p-3 text-xs leading-5 text-ink-soft">这条任务已经提交上游（任务号 {review?.taskId}），计费队列不能再改。继续只会查询进度；如需用积分生成，请新建一条任务。</p>}
         {feedback?.type === 'error' && <p role="alert" className="text-sm text-danger">{feedback.message}</p>}

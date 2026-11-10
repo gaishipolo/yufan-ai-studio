@@ -50,7 +50,7 @@ FastAPI
                                    infra/ai/libtv_runtime/bridge.mjs
                                                    │  import
                                                    ▼
-                             $LIBTV_LEGACY_ROOT 里那套旧运行时代码 + 浏览器会话
+                             libtv_runtime/vendor/ 里的固定版适配器 + 浏览器会话
                                                    │
                                                    ▼
                                              LibTV 上游（wanx3.0 / 720P）
@@ -331,13 +331,15 @@ result = await execute_stage(run_id, "upload")
 
 ```python
 subprocess.Popen([sys.executable, "-m", "infra.ai.libtv_process"], stdin=PIPE, ...)
-process.communicate(json.dumps({"version": 1, "stage": stage, "run": str(path),
-                                "legacyRoot": legacy_root, "node": node,
+process.communicate(json.dumps({"version": 2, "stage": stage, "run": str(path),
+                                "node": node,
                                 "result": str(resultfile)}).encode())
 ```
 
 参数走 **stdin 的 JSON**（带 `version`），不再按位置对齐——加参数只要给默认值，
-也不会出现「某个字段拿到隔壁字段的值」这种离原因很远的故障。
+也不会出现「某个字段拿到隔壁字段的值」这种离原因很远的故障。v2 起 payload 不再带
+适配器目录：固定版适配器随代码入库，监督进程按自身位置算出 `libtv_runtime/vendor/`
+再交给桥接层，因此没有任何外部路径配置。
 
 - 结果写进 `records/operation-<uuid>.json`，**通过文件回传**，不走 stdout（stdout 直接丢弃）。
 - `asyncio.to_thread(process.communicate, payload)` 而不是 `asyncio.create_subprocess`：注释写明
@@ -346,20 +348,22 @@ process.communicate(json.dumps({"version": 1, "stage": stage, "run": str(path),
 **D4. 监督进程** `infra/ai/libtv_process.py:55-103`
 
 ```python
-with lease(run/"records/executor.lease"), lease(legacy/"libtv/state/workbench-worker.lock"):
+with lease(run/"records/executor.lease"):
     clear_finished_lock(run, storage)          # 旧锁要确认进程真的死了才清
-    node bridge.mjs stage run legacy           # 超时: upload=1500s submit=100s poll=45s download=240s
+    # upload/submit 再抢工作区旁 .locks/account-executor.lock
+    node bridge.mjs stage run vendor           # 超时: upload=1500s submit=100s poll=45s download=240s
 ```
 
-为什么要有这一层：**它持有两把 OS 锁直到 Node 真的退出**。API 进程重启不会释放活任务的锁，
-重启后 `clear_finished_lock` 会通过 `node_pid` 判断上一个 Node 是否还活着（`:42-52`），
-活着就返回 `EXECUTOR_BUSY`，而不是两个进程同时操作同一个 run。
+为什么要有这一层：**它持有 OS 租约直到 Node 真的退出**。API 进程重启不会释放活任务的锁，
+重启后 `clear_finished_lock` 会通过 `node_pid` 判断上一个 Node 是否还活着，
+活着就返回 `EXECUTOR_BUSY`，而不是两个进程同时操作同一个 run。账号级串行改用归档盘上的
+自有租约，与任何外部项目的进程单例锁无关。
 
 **D5. bridge：upload 分支** `infra/ai/libtv_runtime/bridge.mjs:58-113`
 
 这是整条链路唯一接触上游的地方，顺序很讲究：
 
-1. **验旧运行时**（`:22`）：`node $LEGACY/scripts/libtv_video.mjs check`，失败即 `RELEASE_INVALID`。
+1. **验固定版适配器**：按 `vendor/manifest.json` 逐文件核对 sha256，失败即 `RELEASE_INVALID`。
 2. **接浏览器**（`:31`）：`CanvasApi.fromBrowser(process.env.JS_REVERSE_BROWSER_URL)`，
    复用已登录的浏览器会话；未登录 → 阶段码 `LOGIN_REQUIRED`。
 3. **一致性三连**（`:59-66`）：提示词与 `prompt-compilation.json` 逐字节相同、绑定数量一致、
@@ -539,8 +543,8 @@ await poll(api, run);      // legacy canvas-run.mjs 的 poll()
 
 下载超时 **240 秒**（`libtv_process.py:17`），是所有阶段里最长的。
 
-> 边界说明：`poll()` 的落盘细节在 `$LIBTV_LEGACY_ROOT` 那套旧运行时里，**不在本仓库**，
-> 所以本文在 `bridge.mjs:32-37` 这一行停止追溯。可确认的契约是：
+> 边界说明：固定版适配器已随代码入库在 `libtv_runtime/vendor/`，`poll()` 的落盘细节
+> （`canvas-run.mjs`）现在**就在本仓库内**，可继续追溯。可确认的契约是：
 > 该函数返回后 `run.json` 的 `status` 变成 `success`、`outputs/` 下出现成片——
 > 下一跳 `provider.poll`（`libtv.py:142`）读到 `success` 就不再调上游，直接判成功。
 
@@ -615,7 +619,7 @@ if meta.status != "success":
 | `uploading` | 上传及审核中 | bridge upload |
 | `uploaded` | 已上传 | bridge upload（估价 0） |
 | `waiting_free` | 报价非零 · 等待免费 | 人工 / 上游变价 |
-| `waiting_executor` | 等待旧执行器退出 | 退避重投 |
+| `waiting_executor` | 账号执行器忙 / 同一 run 已有执行器 | 退避重投 |
 | `submitting` | 提交中 | bridge submit |
 | `running` | 生成中 | bridge poll |
 | `generated` | 下载中 | download job |
@@ -663,7 +667,7 @@ $MEDIA_ARCHIVE_ROOT/
         ├── runtime/                 ← 本次编译用的编译器快照
         ├── runtime-v2/bridge.mjs    ← 本次执行用的 bridge 快照
         ├── canvas-transport.mjs / canvas-run.mjs / canvas-media.mjs / submit.mjs
-        └── legacy-release.json      ← 旧运行时的版本标记
+        └── vendor-manifest.json     ← 本次用的固定版适配器哈希清单
 ```
 
 `code/` 这一组是**可追溯性设计**：任何一次出片，都能查到当时用的是哪版编译器、
@@ -706,7 +710,7 @@ $MEDIA_ARCHIVE_ROOT/
 |---|---|---|
 | 共享盘可读写 | `MEDIA_ARCHIVE_ROOT` | 「素材归档盘不可用，请检查 Z 盘连接」 |
 | Node 可用 | `LIBTV_NODE`（默认 `node`） | 「提示词编译器不可用，请检查 Node 配置」 |
-| 旧运行时目录 | `LIBTV_LEGACY_ROOT`（默认 `E:/yufan-ai`） | bridge 校验失败 → `RELEASE_INVALID` |
+| 固定版适配器 | `libtv_runtime/vendor/`（随代码入库，无需配置） | manifest 哈希不符 → `RELEASE_INVALID` |
 | 已登录的浏览器会话 | 环境变量 `JS_REVERSE_BROWSER_URL` | `LOGIN_REQUIRED`（状态显示「需要登录」） |
 | worker 开启 | `WORKER_ENABLED=true` | 「后台执行器未启用」 |
 | 权限 | `template:use` + `asset:read` | 403 |

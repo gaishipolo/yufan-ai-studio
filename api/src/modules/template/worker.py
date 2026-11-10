@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 
 from core.config import settings
 from core.exceptions import Conflict, Unavailable, UpstreamError
@@ -28,6 +29,7 @@ from modules.template.authorization import authorization_gap
 from modules.template.models import ReplacementRun
 from modules.template.pipeline import KIND_REPLACEMENT
 from modules.template.repository import RunRepository
+from modules.template.run_clock import begin, set_status
 from modules.template.workspace import input_checksums, read_state, run_path, write_state
 from workers import register_handler
 
@@ -46,8 +48,14 @@ RETRYABLE = {
 # 恢复器的两个集合分开写，因为它们回答两个不同问题：
 # 这些**没有恢复空间**（入队只会白跑），那些**还需要推进**。
 SETTLED_STATUSES = frozenset({"success", "failed", "service_error", "submission_unknown"})
+# `running` / `submitted` / `generated` 是「上游还在跑」的中间态：进程重启后
+# 它们必须重新进入轮询，否则任务会永远卡在旧进度上，只能靠人工点一次「继续」。
+# 这几种状态一定带 task_id，recover_state 会返回 poll —— 只查询、不重提、不扣费。
 UNFINISHED_STATUSES = frozenset(
-    {"queued", "uploading", "uploaded", "waiting_executor", "submitting", "preparing", "prepared"}
+    {
+        "queued", "uploading", "uploaded", "waiting_executor", "submitting",
+        "preparing", "prepared", "submitted", "running", "generated",
+    }
 )
 
 MAX_RETRIES = 5
@@ -134,8 +142,12 @@ def sync_projection(run: ReplacementRun) -> None:
 def _absorb(run: ReplacementRun, path) -> None:
     """把执行器的回执读回数据库。
 
-    **只吸收执行器有权威的字段**（status / task_id / 提交计数 / 进度 / 估价），
-    业务字段（owner、pack、deleted_at）一个都不碰：执行器不该能改这些。
+    **只吸收执行器有权威的字段**（status / task_id / 提交计数 / 进度 / 估价 /
+    实际扣费），业务字段（owner、pack、deleted_at）一个都不碰：执行器不该能改这些。
+
+    积分队列的真实扣费由 `submitCredits` 从提交回执写进 `run.json`；不吸收
+    `credits` 的话前端永远显示「待核对账单」（`test_libtv_billing` 覆盖）。
+    执行器侧的 poll 已保证不会拿排队阶段的 0 覆盖这笔钱，会回落到 submission.json。
     """
     state = read_state(path)
     if not state:
@@ -155,12 +167,51 @@ def _absorb(run: ReplacementRun, path) -> None:
     estimated = state.get("estimated_credits")
     if isinstance(estimated, (int, float)):
         run.estimated_credits = float(estimated)
+    charged = state.get("credits")
+    if isinstance(charged, (int, float)) and not isinstance(charged, bool):
+        run.credits = float(charged)
     last_error = state.get("last_error")
     if isinstance(last_error, str):
         run.last_error = last_error
     error_code = state.get("error_code")
     if isinstance(error_code, str):
         run.error_code = error_code
+
+
+def receipt_power(run_id: str) -> float | None:
+    """提交回执里的结算积分，是「这次到底花了多少」的权威来源。
+
+    `run.json` 的 credits 会被下载阶段的 vendor poll 用 `progress.power` 覆盖
+    （排队/生成阶段常是 0 或 null），而框架的 GenerationProgress 又不带计费字段，
+    数据库因此长期显示「待核对账单」。只在结算后的回执里取数，不猜、不累积。
+    """
+    try:
+        payload = json.loads(
+            (run_path(run_id) / "records/submission.json").read_text(encoding="utf-8")
+        )
+    except (OSError, ValueError):
+        return None
+    value = (payload.get("data") or {}).get("power")
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
+        return None
+    return float(value)
+
+
+async def sync_credit_charge(run_id: str) -> None:
+    """下载完成后把真实扣费写回数据库，供任务中心/档案列表展示。"""
+    from db.session import get_session_factory
+
+    charged = await asyncio.to_thread(receipt_power, run_id)
+    if charged is None:
+        return
+    async with get_session_factory()() as session:
+        repo = RunRepository(session)
+        run = await repo.get(run_id)
+        if run is None:
+            return
+        run.credits = charged
+        await repo.save(run)
+        await session.commit()
 
 
 async def enqueue(run_id: str, *, delay: float = 0) -> None:
@@ -218,6 +269,11 @@ async def schedule_state(session, run_id: str, owner: str) -> str:
     if not run.task_id and (run.status == "submission_unknown" or run.submit_attempts > 0):
         raise Conflict(SUBMISSION_UNKNOWN)
     if run.task_id:
+        if run.framework_status == "failed" or run.status in ("failed", "service_error"):
+            # 人工恢复已有任务，只重开查询预算，不再次提交或扣费。
+            begin(run)
+            set_status(run, "running")
+            run.last_error = None
         run.framework_status = "running"
         await repo.save(run)
         await session.commit()
@@ -226,7 +282,8 @@ async def schedule_state(session, run_id: str, owner: str) -> str:
         raise Conflict("输入尚未准备完成，请先使用原配置继续准备")
     if run.status not in RETRYABLE and run.status not in ("queued", "uploading", "uploaded"):
         raise Conflict("该任务当前不能提交")
-    run.status = "queued"
+    # 这里开始计时：上传、排队、生成都算在「这次提交」里
+    set_status(run, "queued")
     run.last_error = None
     run.framework_status = "queued"
     # 快照描述的是「上一次提交是怎么发生的」，新一次提交由 mark_submitted 重写；
@@ -261,7 +318,8 @@ async def reconfirm_state(
         raise Conflict(SUBMISSION_UNKNOWN_CONFIRM)
     previous = run.submit_attempts
     run.submit_attempts = 0
-    run.status = "queued"
+    # 确认重提 = 新的一轮计时，上一轮的耗时不再保留
+    set_status(run, "queued")
     run.framework_status = "queued"
     run.last_error = None
     run.error_code = None
@@ -297,7 +355,7 @@ async def mark_schedule_failure(session, run_id: str) -> None:
         return
     # 可能已被其他工作进程领取，禁止覆盖其在途状态。
     if run.status == "queued" and not run.task_id and not run.submit_attempts:
-        run.status = "service_error"
+        set_status(run, "service_error")
         run.last_error = "准备调度失败，请继续；尚未提交"
         await repo.save(run)
         await session.commit()
@@ -311,7 +369,7 @@ async def _bump_retry(session, run_id: str, *, reason: str) -> float | None:
     run = await repo.get_or_404(run_id)
     run.retry_count += 1
     if run.retry_count > MAX_RETRIES:
-        run.status = "service_error"
+        set_status(run, "service_error")
         run.error_code = "RETRY_EXHAUSTED"
         run.last_error = f"{reason}：已自动重试 {MAX_RETRIES} 次仍失败，转人工处理"
         await repo.save(run)
@@ -340,7 +398,7 @@ async def _stop_if_unauthorized(session, repo, run: ReplacementRun) -> bool:
     gap = await authorization_gap(session, run)
     if gap is None:
         return False
-    run.status = "service_error"
+    set_status(run, "service_error")
     # 沿用执行器时代那个码：前端与日志里已经有它，换名只会让历史记录对不上。
     run.error_code = "AUTHORIZATION_REVOKED"
     run.last_error = gap
@@ -368,7 +426,7 @@ async def prepare_upload(job: Job) -> None:
             return
         # 停用账号不再往回推进：这里之后就是「上传 + 提交」，也就是真正花钱的地方。
         if await owner_disabled(run.owner_id):
-            run.status = "service_error"
+            set_status(run, "service_error")
             run.error_code = "OWNER_DISABLED"
             run.last_error = "账号已停用，任务不再继续；恢复账号后可手动继续"
             await repo.save(run)
@@ -398,7 +456,7 @@ async def prepare_upload(job: Job) -> None:
             return
         if result.code != "OK" or run.status not in ("uploaded", "waiting_free"):
             before = run.status
-            run.status = "service_error"
+            set_status(run, "service_error")
             # `result.code` 的默认值就是 "OK"，直接拿来当错误码会让页面显示
             # 「上传准备未完成：OK」。只有真出错才带上游码。
             run.error_code = result.code if result.code != "OK" else "UPLOAD_INCOMPLETE"
@@ -424,7 +482,7 @@ async def prepare_upload(job: Job) -> None:
         except Exception:
             logger.exception("生成调度失败 run_id=%s", run_id)
             run = await repo.get_or_404(run_id)
-            run.status = "service_error"
+            set_status(run, "service_error")
             run.last_error = "生成调度失败，请继续；尚未提交"
             await repo.save(run)
             await session.commit()
@@ -439,6 +497,8 @@ async def download(job: Job) -> None:
     result = await execute_stage(run_id, "download")
     if result.code == "OK":
         await publish_output(run_id)
+        # 结算金额只在提交回执里可靠，下载完成后回填一次（不重试、不改上游）。
+        await sync_credit_charge(run_id)
         return
     logger.warning("成片下载待恢复 run_id=%s code=%s", run_id, result.code)
     async with get_session_factory()() as session:
@@ -524,7 +584,7 @@ async def recover_state(session, run_id: str) -> str:
         await session.commit()
         return "poll"
     if run.status == "submitting" or (not run.task_id and run.submit_attempts):
-        run.status = "submission_unknown"
+        set_status(run, "submission_unknown")
         run.framework_status = "failed"
         run.last_error = "提交中断，请先核对上游回执；禁止自动重提"
         await repo.save(run)

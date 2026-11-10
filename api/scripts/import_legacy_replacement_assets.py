@@ -81,7 +81,9 @@ def ensure_preview(value: dict) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--legacy", default="E:/yufan-ai")
+    parser.add_argument(
+        "--legacy", required=True, help="旧项目根目录（仅此一次性迁移脚本用，运行时不依赖）"
+    )
     parser.add_argument("--owner", default="u_001")
     parser.add_argument("--execute", action="store_true")
     args = parser.parse_args()

@@ -1,0 +1,24 @@
+{
+  "schema": 1,
+  "status": "wired",
+  "source": {
+    "repo": "lweiting958-boop/yufan-ai",
+    "branch": "main",
+    "commit": "42280205558fef1225cc24d43bed5778b01c26c3",
+    "release": "libtv-canvas 1.2.0",
+    "verified_node": "22.14.0"
+  },
+  "note": "只读快照，按源仓库原相对路径复制，便于 bridge 直接引用；已接入运行时，bridge 按本清单校验后加载。release.json 仅作来源元数据，不用于校验（它 pin 了 18 个文件，多数与本链路无关）。例外：libtv/adapters/billing.mjs 在源仓库 main 分支不存在，是 2026-11-09 通过已登录浏览器 CDP 逆向「0 积分畅用」开关后补齐的本地实现，同样纳入本清单逐文件哈希校验。scripts/libtv_video.mjs 未复制，原 check 的发布哈希校验已由本清单自校验替代。",
+  "files": {
+    "libtv/adapters/billing.mjs": "fbfe2c567b45f7ade5fb1c7ec658c98bb749e1e2b967bd8ab76a4ecb5a9974c4",
+    "libtv/adapters/canvas-media.mjs": "beded28c1f1774326c0390635df404d45a2c0d876e40525581eabcd326df3f92",
+    "libtv/prompt-compiler.mjs": "18a6171056dcf7d4ed4fac507b9eac835d5e51e5cd95f32514edb7b1764bf946",
+    "libtv/prompts/character.template.zh.txt": "314ef005f976ec1ebbc201ce9cc02b7c830c383c88a0d7fc0063d460655debeb",
+    "libtv/prompts/product.template.zh.txt": "076e73e403d19563937b668990d8007507b0f2f940ea841732c7742f3ae08281",
+    "libtv/prompts/scene.template.zh.txt": "608d18fd351dfa026c3361094bc4e088bdfc8be2aadc2b6f0ad688f819399d9e",
+    "libtv/workbench/submit.mjs": "3c567cca6147e095568ce9124615f3883ab8d3f1693e3df8300cd57dda469533",
+    "tools/js-reverse-mcp/canvas-run.mjs": "1cfa76c14c41683e62438cf0011e6a721dca8d98e38ca4a3748c0b286dfd43b4",
+    "tools/js-reverse-mcp/canvas-transport.mjs": "c868ace0c67a8f03ddfeaeafd1653bbdee712726bbf31c8e0f88dfff25bbd990",
+    "tools/js-reverse-mcp/release.json": "7ba4e6f2639e19270221d45b6f6a622e74ce22d8fd427c041234fd9c6e90f02b"
+  }
+}

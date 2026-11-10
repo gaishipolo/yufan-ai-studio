@@ -24,7 +24,12 @@ export function ReplacementBatch({model}: {model: ReplacementWorkbench}) {
     const mark = (id: string, update: Partial<BatchRow>) => setRows(previous => previous.map(row => row.id === id ? {...row, ...update} : row));
     try {
       for (const row of items) {
+        if (model.boundTemplate && row.id !== model.sourceId) {
+          mark(row.id, {state: 'failed', error: '当前封装功能只适用于绑定的原片，请为该原片单独选择功能'});
+          break;
+        }
         const config = {kind: model.kind, sourceId: row.id, packId: model.selectedPack.id,
+          videoTemplateId: model.boundTemplate?.id,
           packVersion: model.selectedPack.version || 1, replacementScope: model.scopes.join('、'),
           notes: model.notes, aspectRatio: 'adaptive' as const};
         const key = JSON.stringify(config);
@@ -48,6 +53,7 @@ export function ReplacementBatch({model}: {model: ReplacementWorkbench}) {
     <summary className="cursor-pointer text-sm">批量准备多条原片</summary>
     <div className="mt-3 space-y-3">
       <p className="text-xs text-ink-soft">使用当前目标和替换设置。每条原片独立归档，准备完成后逐条核对并确认生成。可切换原片来源和分页继续选择。</p>
+      {model.boundTemplate && <p className="text-xs text-ink-soft">当前封装功能只适用于已绑定的原片；其他原片请单独选择封装功能。</p>}
       <div className="grid gap-2 sm:grid-cols-2">{model.videos.map(video => <label key={video.id} className="text-xs"><input type="checkbox" checked={video.id in selected} disabled={model.busy || !replacementFitness(video).ok} onChange={e => setSelected(previous => {const next = {...previous}; if (e.target.checked) next[video.id] = video.name; else delete next[video.id]; return next;})} /> {video.name}</label>)}</div>
       <p className="text-xs">已选 {Object.keys(selected).length} 条</p>
       <Button loading={running} disabled={model.busy || !Object.keys(selected).length || !!model.missing || !!model.assets.error || !!model.catalog.error} onClick={() => {void start();}}>准备所选原片／继续未完成项</Button>

@@ -242,7 +242,7 @@ def test_env_example_has_no_unknown_key() -> None:
 def test_defaults_are_not_machine_paths() -> None:
     """默认值只能锚定**仓库内**的路径，不能指向某台机器的盘符或家目录。
 
-    `media_archive_root` 曾经默认 `Z:/yufan_ai_studio`、`libtv_legacy_root` 默认
+    归档根目录曾经默认 `Z:/yufan_ai_studio`、外部运行时目录曾默认
     `E:/yufan-ai`：在作者那台机器上一切正常，换一台就报「归档盘不可用」，
     而且设计上明确不回退本地保存 —— 于是整个归档功能不可用。
     绝对路径本身不是错（`api/var/...` 就该是绝对的，避免随 cwd 变化），

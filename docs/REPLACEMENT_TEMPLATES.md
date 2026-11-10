@@ -114,15 +114,15 @@ Z:\yufan_ai_studio\
 
 ## LibTV 执行
 
-`LIBTV_LEGACY_ROOT=E:/yufan-ai` 指向现有固定 v1.3.0 适配器。执行前调用旧项目固定入口 `node scripts/libtv_video.mjs check` 校验发布哈希，再通过未修改的上传、提交和查询组件执行。旧项目本身的媒体目录不再作为新任务输入/输出位置。
+固定版适配器（libtv-canvas v1.2.0）随代码入库在 `api/src/infra/ai/libtv_runtime/vendor/`，按源仓库原相对路径存放，`vendor/manifest.json` 记录逐文件 sha256。桥接层启动先按清单校验完整性，再从该目录加载上传、提交与查询组件；**不需要任何指向外部项目的路径配置**，校验失败按 `RELEASE_INVALID` 处理。`LIBTV_NODE` 可设置 Node 22+ 的绝对路径。浏览器登录态继续由已登录的专用浏览器提供（`LIBTV_BROWSER_URL`），登录过期时在该浏览器正常登录，不导出 Cookie。
 
-`LIBTV_NODE` 可设置 Node 22+ 的绝对路径。本机继续复用旧项目专用浏览器中的正常 LibTV 登录；登录过期时在原专用浏览器正常登录，不导出 Cookie。
+积分加速适配器（`vendor/libtv/adapters/billing.mjs`）已接入。源仓库 main 没有这个文件，2026-11-09 通过已登录浏览器的 CDP 逆向「0 积分畅用」开关补齐，同样纳入 `vendor/manifest.json` 逐文件哈希校验。开关分两层：**账号级**「优先使用 0 积分畅用」一律不动；**单次请求级**由 `params.infiniteSwitch` 控制（`0` = 走 0 积分畅用的免费队列，`1` = 本次关掉畅用走积分队列），同时在请求顶层与 `params` 内带上 `disableBenefitTags`（账号当前生效的 0 积分权益标签，如 `rateLimit_powerZero_20261111`），并重新生成 `requestId`。标签由 `GET https://api2.liblib.art/api/www/commerce/activity/benefit?productTypes=3` 用浏览器同一套登录头读取，只取 `benefitStatus` 为 1 且未过期的 `powerZero` / `rateLimit_powerZero_*` 项；查不到有效标签时明确报错，不静默排回免费队列。已提交的任务照常查询。
 
-- 提交使用原有零积分门禁：必须取得有效的数字估价，且严格等于 0。
-- 非零报价进入 `waiting_free`，由用户稍后点击继续；不自动切换积分或付费加速。
+- 免费队列提交仍用零积分门禁：必须取得有效的数字估价，且严格等于 0；积分队列反过来要求估价严格为正（报 0 说明标签没关掉，停 `service_error` 不提交）。
+- 免费模式下非零报价进入 `waiting_free`，由用户稍后点击继续；不自动切换积分或付费加速。
 - `submitting` 先持久化再调用上游；没有 task_id 且回执不明时标记 `submission_unknown`，禁止自动重提。
 - 已有 task_id 只查询；后台每 20 秒延迟查询，重启从 Z 盘索引恢复。
-- 新工作台通过独立监督进程串行访问账号，并与旧执行器使用同一 OS 字节锁。旧执行器运行时显示 `waiting_executor`，仅对非计费准备阶段延迟重排；不会中止旧任务。
+- 新工作台通过独立监督进程串行访问账号，账号级互斥用归档盘上的 `catalog/locks/account-executor.lease`（跨机器一致），不再依赖任何旧项目的进程单例锁。同一账号有任务在上传/提交时显示 `waiting_executor`，仅对非计费准备阶段延迟重排；不会中止在途任务。
 - API 重启不会终止监督进程或 Node。恢复任务先取得同一租约，等待在途提交保存回执；取得 task_id 后只续查。只有确认原 Node 已退出且持有两把独占租约，才清理遗留 worker.lock。没有执行记录或退出状态不明的旧锁仍需人工核对。
 - 准备输入前先写调用档案和索引。失败记录为 `prepare_failed`，前端保留请求 ID，同一配置可在原目录续做；内容不符的输入快照禁止覆盖。
 - `records/executor-result.json` 记录执行阶段、PID 与退出分类，`executor-error.json` 仅记录白名单错误码，不保存 Cookie 或原始异常文本。
@@ -183,6 +183,7 @@ Z:\yufan_ai_studio\
 - 浏览器验证原片选择、人物/产品/场景配置切换、素材分类与预览入口；未提交真实上游生成。
 - Z 盘 21 份既有素材共 160,303,186 字节，逐份 SHA-256 校验通过；5 个已发布素材包可读取。
 - 旧适配器 v1.3.0 的 21 个固定文件校验通过。当前旧执行器持有账号锁，新工作台等待释放。
+  （以上为迁移前架构的验收记录；2026-11-09 起固定版适配器已入库，按 `vendor/manifest.json` 的 9 个文件校验，账号锁改为归档盘自有租约。）
 
 ## 2026-11-06：执行器账号锁与积分加速
 
@@ -201,16 +202,15 @@ management/commands/run_libtv_worker.py`）用 `with process_lock(): while True:
 
 现在的规则：
 
-- 账号级串行改用归档盘上的自有文件 `catalog/locks/account-executor.lease`，跨机器一致，
-  与旧进程锁彻底解耦；
+- 账号级串行用运行工作区旁 `.locks/account-executor.lock`（`REPLACEMENT_RUNS_ROOT` 指向共享盘，
+  跨机器一致），由 `lock_path()` 定位；不能用 `storage.resolve()`——归档切到 S3 后没有本地路径；
 - 只有 `upload`、`submit` 进账号锁；`poll`、`download` 是只读的，
   否则同一个人开两条任务轮询就会互相判忙；
 - 失败原因拆成三类，任务中心不再只给一句「或旧锁需核对」：
   - `EXECUTOR_BUSY`：别的任务正在用这个账号执行器，自动退避重试；
   - `STALE_LOCK`：`records/worker.lock` 存在但原执行进程未确认退出，**需要人核对**；
   - `EXECUTOR_IO_FAILED`：归档盘或执行器文件不可用。
-- 观察到旧 worker 仍持锁时只记 warning，不再阻塞——两套系统驱动同一个 LibTV 账号
-  有风控风险，该停的是旧进程，不是让新任务无限等待。
+- 不再检测旧 worker 的锁：账号互斥完全由本仓库的自有租约承担，旧进程不会让新任务无限等待。
 
 旧项目 `E:\yufan-ai` 的 `run_libtv_worker` 已停止；它不再占用账号锁。
 旧项目的 Web 界面（`scripts/lan.py serve`）不持这把锁，需要时仍可单独运行。
@@ -329,3 +329,131 @@ SMB 上 `rename` 没有 POSIX 语义，桥接层每次 `update()` 重写 run.jso
 
 前端反馈也改为跟状态走：返回 running 就说「任务已在执行中（进度 N%），
 状态已刷新；重复点击不会重复提交」，返回 success 就直说成片可播放。
+
+## 视频模板：封装后就是「全部模板」里的一张卡片（2026-11-09）
+
+**用户口径**：封装结果要和 `0507 高端姐` 完全一样 —— 出现在「全部模板」、
+同一张原片卡片、可点选；选中后因为这条模板只封装了产品替换，替换配置默认
+就是产品替换。单独的「视频模板管理」区块不是交付物，已收到底部折叠。
+
+落点分三层：
+
+1. **卡片**：样片先走 `POST /api/v1/assets/upload?category=source` 登记成
+   `source` 原片，再把 asset id 写进视频模板的 `sourceVideoAssetId`
+   （`POST /templates/video-templates/{id}/attach-source`，或封装表单里直接选）。
+   卡片本身仍由 `useArchiveAssets('source')` + `SourceTemplateCard` 渲染，
+   只多一枚「视频模板 · 产品替换」标识。
+2. **选中后的默认配置**：`useReplacementWorkbench.selectSource` 在**同一次
+   URL 写入**里把 `sourceId` + `kind` + `packId` 一起带上（两次 patch 会互相覆盖）。
+   `kind` 取绑定素材包的 `kind`，包未加载时兜底到模板的 `defaultKind`
+   （默认 `product`）。深链带 `sourceId` 进来时补一次默认配置，用 ref 记住
+   「这条原片已补过」，不随轮询覆盖用户后来手动改的类型。
+   `ReplacementConfig` 只有在替换类型没被改、且用户确实选了一个包时才显示
+   「固定提示词生效」；**包 id 不锁死**，换产品包仍套用同一条模板。
+3. **生成链路**：`ReplacementService.prepare` 用
+   `video_template_store.find_for_run(sourceId, packId, kind)` —— 按**原片**
+   命中，`packId` 只决定「同一原片封了多条模板时优先取哪条」，不是硬门槛。
+   这就是「提示词动态」的落点：模板绑定哪个包只是选中卡片时的默认值，
+   用户在替换配置里换成别的产品包，提示词原文一个字都不用改。命中才：
+   - `spec.references` 顺序改成「原片 + 按模板 `mediaOrder` 声明的**用途**
+     从当前素材包取图」：`{{Mixed 1}}` 是视频，`{{Mixed 2}}` 永远是所选包的
+     正面主图（front）、`{{Mixed 3}}` 永远是三视图（multiview）、
+     `{{Mixed 4}}` 是细节图（detail）；没声明用途或包里多出来的图按原序补齐，
+     一张都不少。封装时 `mediaOrder` 只决定**顺序**，每张图的用途一律按素材包
+     的 `bindings` 补齐（界面不传 role，照抄空值会让「按用途取图」全部落空），
+     所以换包后 `{{Mixed 2}}` 仍是新包的正面主图；未命中的普通原片
+     （含 0507 高端姐）仍是原来的「参考图 + 原片」顺序；
+   - `spec.fixed_prompt` 交给 `compile.mjs`，编译器照常产出完整 `bindings`
+     并做 mixedList 类型/顺序校验，只把最终文案换成模板原文，
+     同时把 `compiler_version` 标成 `+fixed-video-template-v1`、
+     `template_sha256` 换成固定提示词自身的摘要；
+   - `generation.ratio` / `duration` 覆盖档位（9:16；样片 5.31s → 5 秒、
+     6.04s → 6 秒）。封装与生成同一口径，都是 2–15 秒：封装时允许 30 秒、
+     生成时截到 15 秒，等于模板上写的档位是假的。
+
+固定提示词允许「3 张图全插入、只点名其中两张」，所以**不能**套用通用编译器
+「每个上传素材都必须在提示词里被点名」那条校验；这也正是模板不调用
+`compilePrompt` 模板渲染、但仍复用它产出的 bindings 的原因。
+
+`_check_video_template(template, roles, kind)` 在 prepare 前只拦两件事：当前素材包
+凑不齐模板声明的用途（直接说缺「正面主图 / 三视图 / 细节图」里的哪一张，
+提示换包）、提示词里出现越界 `{{Mixed N}}`（上界按**当前包**的图片数算，
+不是封装时那份清单：换到图更少的包，`{{Mixed 5}}` 就指向一个不存在的槽位）。
+**换包、升版、换 asset id、包内重排都不再要求重新封装** —— 用途一致就放行，
+这正是同一份提示词能动态套不同产品包的保证。
+
+**没有引入 `packMode` 之类的模式开关**：契约仍是「一个模板绑定一个已发布
+素材包」的旧形态，动态性全部来自「按用途取图」这一层。
+
+封装入口：`/templates` 底部「视频模板封装管理」，固定蓝本（pinned）可一键
+复制；表单里选样片原片、素材包、默认替换类型，并可在「媒体顺序」里上下移动
+产品图 —— `{{Mixed N}}` 就是这份清单的第 N 位，要让 `{{Mixed 2}}` 指三视图，
+把三视图移到第 2 位即可，提示词原文不用改。`mediaOrder` 留空时才回落到
+素材包原序。
+
+**存储与并发**：目录是 `api/var/video_templates/catalog.json`（不入库，原因见
+`video_template_store.py` 模块注释）。读改写整段持一把进程内锁，写盘走
+`asyncio.to_thread` —— 路由是 `async def`，不能在事件循环里做文件 IO
+（`CODE_STYLE.md` §2.3）。这把锁**只在单实例部署下成立**：多 worker 时目录会丢
+更新，届时先换仓储表再谈分页，而不是在 JSON 上补 limit/offset。
+
+**审计**：`POST /video-templates/{id}/pin` 切的是全库蓝本，与 pack publish/disable
+同一口径写一条 `template.video_template.pin`；`create` / `attach-source` 只算保存，
+不记审计。
+
+## 2026-11-09：替换任务与调用档案显示耗时
+
+列表每行和档案详情多了「耗时」，口径是**确认提交 → 这一轮停下**。
+
+为什么不复用已有时间：`created_at` 是准备输入的时刻，`prepared` 的档案可以放几天
+再点确认；`updated_at` 会被评价、回收站、补积分推着走，拿它当结束时间等于把
+「事后评了一次」也算进生成。两列都不回答「跑了多久」。
+
+落地方式：
+
+- `replacement_runs` 新增 `started_at` / `finished_at`，写入点统一收在
+  `modules/template/run_clock.py`，所有会开始/结束一轮的状态赋值都走 `set_status`；
+- 起点是 `queued`（用户点确认/继续），终点是 `success` / `failed` /
+  `service_error` / `submission_unknown`；`waiting_free`、`waiting_executor`
+  只是中途等待，不算结束；
+- **重提重开一轮**：失败后隔天重试的任务，耗时属于这一次，不沿用第一次的起点，
+  否则会显示成「耗时 20 小时」；
+- 出参 `startedAt` / `finishedAt` / `elapsedSec`；未完成时 `elapsedSec` 按到此刻算，
+  页面写成「已用 X」而不是最终值；
+- 上线前的历史档案两列都是 `NULL`，页面显示「未记录」——不拿别的列猜；
+  还没进入提交环节的显示「尚未开始」。
+
+前端：`formatElapsed`（`shared/lib/format.ts`）负责「45 秒 / 1 分 20 秒 / 1 小时 2 分」，
+`replacementElapsedText` 负责三种状态的分流，列表与详情共用同一个函数。
+
+验证：后端新增 `tests/test_replacement_timing.py`（9 项）覆盖起点/终点/重提重置/
+等待态不算结束/历史行返回 null，全量 `pytest` 通过；前端新增 `formatElapsed`、
+`replacementElapsedText` 与列表-详情展示用例，`npm run verify` 通过。
+迁移 `b8e4f1c7a902` 与 `alembic check`、`test_migrations` 一致。
+
+## 2026-11-09：档案要自报「这条提示词是谁写的」
+
+现象：调用档案与核对弹窗里，「查看最终提示词与归档路径」展开后第一行是
+`\\Z4S-XI5Y\内容中心素材盘\yufan_ai_studio\runs\<run_id>`。用户读到的第一行
+就是运行目录，很容易当成「本次提示词 = 那个 runs 目录」，于是质疑封装的
+提示词到底有没有生效。
+
+两处一起改：
+
+- **顺序与措辞**：提示词排在前，标题写明「最终提示词（本次实际提交）」；
+  归档路径退到最后一行、降一档字色，文案改成「归档路径（排查用，非本次提示词）」。
+  路径本身仍要留着——排查时它是唯一坐标。
+- **来源要说清**：`ReplacementRunOut` 新增 `promptMode`（`fixed` / `compiled`）
+  与 `videoTemplateName`。`fixed` 表示逐字提交封装时写下的原文，弹窗直接写
+  「来源：视频模板「X」的固定提示词，逐字提交，未改写」；`compiled` 则写明
+  「按本次素材与替换范围自动编译」，免得用户去模板库里找一条并不存在的模板。
+  任务记录列表同时给固定提示词任务打一枚「固定提示词」标记，不点开也能分辨。
+
+`promptMode` 取自 `run.prompt_spec.promptMode`（`fixed_video_template` 才算固定）；
+`videoTemplateName` 是 prepare 时写进 spec 的，早期档案只有 `videoTemplateId`，
+这时才按 id 反查模板库（`_template_name`，带 `lru_cache`），查不到就只报
+`fixed` 不报名字，展示层自己降级。
+
+验证：`tests/test_video_template_binding.py::test_prompt_origin_tells_where_the_prompt_came_from`
+覆盖现编/固定/老档案反查/模板已删四种情况；前端
+`ReplacementTemplates.test.tsx` 新增两条用例（提示词在前且标来源、列表标记只给固定提示词任务）。

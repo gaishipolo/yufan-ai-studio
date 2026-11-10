@@ -1,0 +1,34 @@
+{
+  "name": "libtv-canvas",
+  "version": "1.2.0",
+  "released_at": "2026-10-30",
+  "verified_node": "22.14.0",
+  "js_reverse_mcp": "4.0.5",
+  "scope": [
+    "wanx3.0:text2video",
+    "wanx3.0:mixed2video:offline-prompt-compilation",
+    "wanx3.0:mixed2video:character-experimental"
+  ],
+  "entry": "scripts/libtv_video.mjs",
+  "default_max_total_credits": 0,
+  "files": {
+    "scripts/libtv_video.mjs": "1906daa616ff7aabf25e40602811a23d4fd0a7414582a4968c198bece94a35c4",
+    "tools/js-reverse-mcp/canvas-transport.mjs": "c868ace0c67a8f03ddfeaeafd1653bbdee712726bbf31c8e0f88dfff25bbd990",
+    "tools/js-reverse-mcp/canvas-run.mjs": "1cfa76c14c41683e62438cf0011e6a721dca8d98e38ca4a3748c0b286dfd43b4",
+    "tools/js-reverse-mcp/canvas-batch.mjs": "e7dd6d9cd9f2cb62d3425a5cb0e7e67f930479b41618583627ad926a80b5d664",
+    "tools/js-reverse-mcp/canvas.test.mjs": "97b57bb014f380bd266b358a36496980ee01797c269f4964970f345ad1ba2bef",
+    "tools/js-reverse-mcp/start-browser.ps1": "d84687453c178b41c4272ca7b820c17ba658f8fa6ba55c24ce56fb94b44f7bc2",
+    "tools/js-reverse-mcp/package.json": "01362b06f3a703617e855226f181b997a7ebb4f3c7205c2309322b857bf8506c",
+    "tools/js-reverse-mcp/package-lock.json": "77e43518b646843582afc238ed337fca1b26b7d56924c6d7a8ccfd9d0096fedc",
+    "libtv/prompt-compiler.mjs": "18a6171056dcf7d4ed4fac507b9eac835d5e51e5cd95f32514edb7b1764bf946",
+    "libtv/adapters/canvas-media.mjs": "beded28c1f1774326c0390635df404d45a2c0d876e40525581eabcd326df3f92",
+    "libtv/adapters/character-experiment.mjs": "ce4fa213ac8e11bfbfb22c54d5483b5461e23423274a08cf12f8f53b0becee2f",
+    "libtv/tests/canvas-media.test.mjs": "6ac9d017a3630e4e1a19ac8fa485e4522f20ac535ffc74dee709fe0a32289c3f",
+    "libtv/tests/prompt-compiler.test.mjs": "88f99a3e00b4de5b1e2b0fbad370d9dae96bab994615fa816bc58a9e2f1c5738",
+    "libtv/scripts/prepare_libtv_character.py": "5efeaef4a8996290f5e7186459beb131105a58ea62e57f14d9bf988a7b81f77d",
+    "libtv/prompts/character.template.zh.txt": "314ef005f976ec1ebbc201ce9cc02b7c830c383c88a0d7fc0063d460655debeb",
+    "libtv/prompts/product.template.zh.txt": "076e73e403d19563937b668990d8007507b0f2f940ea841732c7742f3ae08281",
+    "libtv/prompts/scene.template.zh.txt": "608d18fd351dfa026c3361094bc4e088bdfc8be2aadc2b6f0ad688f819399d9e"
+  },
+  "release_note": "Upgraded character prompt template aligned with 3527b1 benchmark and added 720P resolution support."
+}

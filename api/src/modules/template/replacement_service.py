@@ -18,9 +18,12 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import re
 import shutil
 from datetime import UTC, datetime
+from functools import lru_cache
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -33,11 +36,13 @@ from core.ports.media import get_asset_lookup
 from core.serving import Served
 from infra.ai.libtv import get_libtv_settings
 from infra.archive import ArchiveStorage, get_archive_storage
+from modules.template import video_template_store
 from modules.template.authorization import authorization_gap
 from modules.template.models import ReplacementReview as ReviewRow
 from modules.template.models import ReplacementRun
-from modules.template.pack_roles import PACK_SCOPES, usage_for
+from modules.template.pack_roles import PACK_ROLES, PACK_SCOPES, usage_for
 from modules.template.repository import PackRepository, RunRepository
+from modules.template.run_clock import elapsed_seconds
 from modules.template.schema import (
     PackBinding,
     PrepareReplacement,
@@ -50,6 +55,7 @@ from modules.template.schema import (
     ReplacementRunOut,
 )
 from modules.template.titles import task_name
+from modules.template.video_template_options import scope_options, validate_options
 from modules.template.workspace import (
     BRIDGE,
     RUNTIME,
@@ -59,6 +65,9 @@ from modules.template.workspace import (
     ensure_layout,
     run_path,
 )
+
+if TYPE_CHECKING:
+    from modules.template.video_template_schema import VideoTemplateOut
 
 logger = get_logger(__name__)
 
@@ -176,9 +185,26 @@ class ReplacementService:
                 "wardrobe_mode": frozen.wardrobe_mode,  # type: ignore[arg-type]
             }
         )
-        _check_scope(frozen.supported_scopes, payload)
 
-        source, refs = await self._validate_inputs(payload, owner, pack.owner_id)
+        # 视频模板按**原片**套用：工作台里换产品包，模板照样生效 —— 提示词不动，
+        # 图片按「用途」（主图/三视图/细节）从当前素材包里取。没有模板的普通原片
+        # （例如 0507 高端姐）走原来的通用提示词，行为一个字都不变。
+        # 读模板目录是同步文件 IO，进线程池：prepare 是高频入口，不能卡事件循环。
+        video_template = await asyncio.to_thread(
+            video_template_store.find_for_run,
+            payload.source_id,
+            payload.pack_id,
+            payload.kind,
+            payload.video_template_id,
+        )
+        _check_scope(frozen.supported_scopes, payload, video_template)
+        roles = {row.asset_id: row.role for row in await self.packs.references(pack.id)}
+        if video_template is not None:
+            _check_video_template(video_template, roles, pack.kind)
+
+        source, refs = await self._validate_inputs(
+            payload, owner, pack.owner_id, scope_required=video_template is None
+        )
         run = await self.runs.get(payload.request_id.hex)
         fingerprint = _fingerprint(owner, payload)
         if run is not None:
@@ -230,6 +256,8 @@ class ReplacementService:
                 source,
                 refs,
                 frozen,
+                video_template,
+                roles,
             )
         except Exception:
             logger.exception("替换输入准备失败 run_id=%s", run.id)
@@ -264,7 +292,9 @@ class ReplacementService:
                     "",
                     "",
                 )
-                for position, item in enumerate([*refs, source])
+                for position, item in enumerate(
+                    _media_in_mixed_order(video_template, source, refs, roles)
+                )
             ],
         )
         await self.runs.save(run)
@@ -442,7 +472,8 @@ class ReplacementService:
     # 内部
     # ------------------------------------------------------------------ #
     async def _validate_inputs(
-        self, payload: PrepareReplacement, owner: str, pack_owner: str
+        self, payload: PrepareReplacement, owner: str, pack_owner: str,
+        *, scope_required: bool = True,
     ) -> tuple[StoredMedia, list[StoredMedia]]:
         lookup = get_asset_lookup()
         media = await lookup.get_many(self.session, [payload.source_id, *payload.reference_ids])
@@ -473,7 +504,7 @@ class ReplacementService:
         if any("{{" in text or "}}" in text for text in texts):
             raise BadRequest("请使用普通文字，不要手写素材引用标记")
         if not payload.target.strip() or (
-            payload.kind == "product" and not payload.replacement_scope.strip()
+            scope_required and payload.kind == "product" and not payload.replacement_scope.strip()
         ):
             raise BadRequest("请填写目标名称并选择产品替换范围")
         return source, refs
@@ -530,6 +561,7 @@ class ReplacementService:
             if run.input_summary
             else None
         )
+        prompt_mode, template_name = _prompt_origin(run.prompt_spec)
         return ReplacementRunOut(
             id=run.id,
             kind=run.kind,  # type: ignore[arg-type]
@@ -537,7 +569,12 @@ class ReplacementService:
             status=run.status,
             archive_path=str(run_path(run.id)),
             created_at=run.created_at,
+            started_at=run.started_at,
+            finished_at=run.finished_at,
+            elapsed_sec=elapsed_seconds(run),
             prompt=run.prompt,
+            prompt_mode=prompt_mode,
+            video_template_name=template_name,
             display_title=_display_title(
                 run, _source_name(summary) if summary else None
             ),
@@ -566,9 +603,128 @@ def _fingerprint(owner: str, payload: PrepareReplacement) -> str:
     return hashlib.sha256((owner + payload.model_dump_json()).encode()).hexdigest()
 
 
+def _role_labels(kind: str) -> dict[str, str]:
+    """用途 key → 中文名，用来把「缺哪张图」说成人话。
+
+    必须按素材包类型取：`front` 在产品包是「产品主图」、在人物包是「正面身份图」，
+    合并所有词表会让错误提示指错东西（缺主图却说缺身份图）。
+    """
+    return dict(PACK_ROLES.get(kind) or {})
+
+
+def _check_video_template(
+    template: VideoTemplateOut, roles: dict[str, str], kind: str
+) -> None:
+    """模板按**原片**套用，图片按用途对应：换素材包时提示词与编号都不动。
+
+    所以这里校验的是「当前素材包能不能凑出模板要的那几种用途」，而不是
+    某几张固定 asset：素材包换图、升版都不再要求重新封装；凑不齐用途才拦下，
+    并且要说清缺的是哪一张。
+    """
+    validate_options(template.prompt, template.rules)
+    images = [item for item in template.media_order if item.type == "image"]
+    provided = set(roles.values())
+    needed = dict.fromkeys(item.role for item in images if item.role)
+    missing = [role for role in needed if role not in provided]
+    if missing:
+        labels = _role_labels(kind)
+        names = "、".join(labels.get(role, role) for role in missing)
+        raise BadRequest(
+            f"当前素材包缺少「{names}」，套用不了视频模板「{template.name}」；"
+            "请换一个素材包，或取消模板改用通用提示词"
+        )
+    # 编号上界按**当前包**的图数算（`{{Mixed 1}}` 是原片，其后是 refs）。
+    # 按封装时的图片数校验会放过「换了一个图更少的包」这种越界：mixedList 只有
+    # N 项，提示词却写着 {{Mixed N+1}}，执行器拿不到那一项。
+    upper = len(roles) + 1
+    bad = [
+        token
+        for token in re.findall(r"\{\{([^{}]+)\}\}", template.prompt)
+        if token != "ReplacementScope"
+        and (not re.fullmatch(r"Mixed \d+", token) or not 1 <= int(token[6:]) <= upper)
+    ]
+    if bad:
+        raise BadRequest(
+            f"视频模板提示词含越界引用：{'、'.join(bad)}"
+            f"（当前素材包共 {len(roles)} 张图，最大可用 {{{{Mixed {upper}}}}}）"
+        )
+
+
+def _media_in_mixed_order(
+    template: VideoTemplateOut | None,
+    source: StoredMedia,
+    refs: list[StoredMedia],
+    roles: dict[str, str] | None = None,
+) -> list[StoredMedia]:
+    """mixedList 的顺序：普通原片沿用「参考图 + 原片」；视频模板按**用途**排。
+
+    `{{Mixed 1}}` 永远是原片；第 2 位起按模板声明的用途（主图 / 三视图 / 细节）
+    从**当前素材包**里取图。于是同一份提示词配上不同的产品包，`{{Mixed 2}}` 永远
+    是那个包的正面主图、`{{Mixed 3}}` 永远是三视图，封装一次就能到处用。
+    模板没声明用途、或包里还有没用上的图，按原序补在后面，一张都不少。
+    """
+    if template is None:
+        return [*refs, source]
+    by_role = roles or {}
+    remaining = list(refs)
+    ordered: list[StoredMedia] = []
+    for item in template.media_order:
+        if item.type != "image":
+            continue
+        picked = None
+        if item.role:
+            picked = next((ref for ref in remaining if by_role.get(ref.id) == item.role), None)
+        if picked is None and item.asset_id:
+            # 没写用途的老模板 / 用途对不上时，退回按封装时那张图
+            picked = next((ref for ref in remaining if ref.id == item.asset_id), None)
+        if picked is not None:
+            remaining.remove(picked)
+            ordered.append(picked)
+    return [source, *ordered, *remaining]
+
+
 def _display_title(run: ReplacementRun, source_name: str | None) -> str:
     """统一展示名：规则在 `titles.py`，这里只负责把数据库行翻译成参数。"""
     return task_name(source_name, run.kind, run.target, run.id)
+
+
+def _prompt_origin(spec: dict[str, object] | None) -> tuple[str, str | None]:
+    """这条提示词是「封装时写死的」还是「按素材现编的」，以及出自哪条模板。
+
+    **为什么要在档案里回答这个**：两种提示词长得一样，用户没法从文本判断
+    自己写的那份有没有被改写。`prompt_mode=fixed` 明确告诉他「跑的就是你
+    封装时那份原文」；`compiled` 则是按素材与替换范围现编的。
+
+    `videoTemplateName` 是 prepare 时写进 spec 的；早期档案只有 id，
+    这时才去模板库里反查一次（模板库是本机 JSON，查不到就只报 fixed）。
+    """
+    if not spec or spec.get("promptMode") != "fixed_video_template":
+        return "compiled", None
+    name = spec.get("videoTemplateName")
+    if isinstance(name, str) and name.strip():
+        return "fixed", name.strip()
+    template_id = spec.get("videoTemplateId")
+    if isinstance(template_id, str) and template_id:
+        return "fixed", _template_name(template_id)
+    return "fixed", None
+
+
+def _template_name(template_id: str) -> str | None:
+    """老档案只存了模板 id：反查名字，读不到就当没有（展示层自己降级）。
+
+    缓存以目录文件的 mtime 为代次：模板重新封装、改名或置顶后目录被重写，
+    mtime 一变缓存自然失效，不会让档案列表一直显示旧名字。
+    """
+    return _cached_template_name(template_id, video_template_store.catalog_stamp())
+
+
+@lru_cache(maxsize=64)
+def _cached_template_name(template_id: str, _stamp: float) -> str | None:
+    try:
+        return video_template_store.get_out(template_id).name
+    except Exception:  # noqa: BLE001 - 模板被删/目录损坏都不该让档案列表 500
+        logger.debug("视频模板反查失败 template_id=%s", template_id, exc_info=True)
+        return None
 
 
 def _source_name(summary: ReplacementInputSummary) -> str | None:
@@ -578,8 +734,18 @@ def _source_name(summary: ReplacementInputSummary) -> str | None:
     )
 
 
-def _check_scope(scopes: list[str], payload: PrepareReplacement) -> None:
+def _check_scope(
+    scopes: list[str], payload: PrepareReplacement, template: VideoTemplateOut | None = None
+) -> None:
     """产品替换位置必须落在素材包已审核的范围内，运营不能临时扩大。"""
+    if template is not None:
+        allowed = scope_options(template.rules)
+        chosen = [item.strip() for item in payload.replacement_scope.split("、") if item.strip()]
+        if not allowed and not chosen:
+            return
+        if not allowed or not chosen or any(item not in allowed for item in chosen):
+            raise BadRequest("请选择当前提示词封装的替换范围：" + "、".join(allowed))
+        return
     if payload.kind != "product":
         return
     allowed = [PACK_SCOPES[scope] for scope in scopes if scope in PACK_SCOPES]
@@ -600,14 +766,20 @@ def _materialize_inputs(
     source: StoredMedia,
     refs: list[StoredMedia],
     frozen,
+    video_template: VideoTemplateOut | None = None,
+    roles: dict[str, str] | None = None,
 ) -> tuple[dict[str, object], Compilation, ReplacementInputSummary]:
     """把输入落到工作区并编译提示词。**同步函数**：调用方放进线程池。
 
     这一段刻意不碰数据库：它慢（物化 + Node 编译）、可能抛各种 IO 异常，
     混进事务会让「一次准备」持有数据库连接好几秒。
+
+    `video_template` 非空时走固定提示词通道：媒体顺序按模板声明的**用途**从当前
+    素材包里挑图，最终文案用模板原文；`bindings` / `mixedList` 仍由通用编译器按
+    同一顺序产出，执行器那套「顺序、类型、摘要」校验一个都不绕过。
     """
     ensure_layout(path)
-    media = [*refs, source]
+    media = _media_in_mixed_order(video_template, source, refs, roles)
     bindings: list[dict[str, str]] = []
     for index, item in enumerate(media):
         with storage.materialize(item.path) as original:
@@ -638,7 +810,7 @@ def _materialize_inputs(
         source.sha256,
     )
 
-    variables = {"state_constraints": payload.notes}
+    variables = {"state_constraints": payload.notes, "replacement_scope": payload.replacement_scope}
     if frozen.features or frozen.instructions:
         variables["state_constraints"] = "\n".join(
             text for text in (frozen.features, frozen.instructions, payload.notes) if text
@@ -652,7 +824,9 @@ def _materialize_inputs(
         variables.update(
             source_product="原片中指定展示的产品",
             target_product=payload.target,
-            replacement_scope=payload.replacement_scope,
+            replacement_scope=payload.replacement_scope or (
+                "按封装提示词指定的范围" if video_template is not None else ""
+            ),
         )
     else:
         variables.update(
@@ -661,14 +835,33 @@ def _materialize_inputs(
         )
 
     duration = min(15, max(1, round(source.duration)))
+    # 这里刻意从 `str` 起步：模板可以覆盖成任意画幅，不能把变量钉死成请求模型的 Literal。
+    aspect_ratio = str(payload.aspect_ratio)
+    if video_template is not None:
+        # 封装时定下的档位优先：样片 9:16 / 5 秒，和模板里的 generation 对齐。
+        generation = video_template.generation
+        aspect_ratio = str(
+            generation.get("ratio") or video_template.aspect_ratio or aspect_ratio
+        )
+        configured = generation.get("duration")
+        if isinstance(configured, int):
+            duration = min(15, max(2, configured))
     spec: dict[str, object] = {
         "task": payload.kind,
         "duration": duration,
-        "aspect_ratio": payload.aspect_ratio,
+        "aspect_ratio": aspect_ratio,
         "wardrobe_mode": payload.wardrobe_mode,
         "references": bindings,
         "variables": variables,
     }
+    if video_template is not None:
+        spec["promptMode"] = "fixed_video_template"
+        spec["videoTemplateId"] = video_template.id
+        # 名字一起存进档案：列表和弹窗要回答「这条提示词是谁写的」，
+        # 只给 id 的话得反查模板库，而模板库是本地 JSON，换台机器就没有了。
+        spec["videoTemplateName"] = video_template.name
+        spec["fixedPromptSha256"] = video_template.prompt_sha256
+        spec["fixed_prompt"] = video_template.prompt
     compiled = compile_prompt(spec, node=get_libtv_settings().node)
     if payload.kind == "character" and payload.wardrobe_mode == "reference":
         compiled.prompt = compiled.prompt.replace("；提供同片原音轨", "；原片内嵌音轨提供声音")
@@ -732,7 +925,8 @@ def _materialize_inputs(
     (path / "00_本次调用说明.md").write_text(
         f"# {payload.target} · {payload.kind}\n\n输入已归档，尚未提交。\n"
         "inputs 保存实际文件副本；outputs 保存原始成片；records 保存状态和错误分类。\n"
-        "仅 0 积分提交；人工验收与生成完成分别记录。\n",
+        "提交前须取得估价回执（0 积分畅用队列须报 0，积分队列须报正数）；\n"
+        "人工验收与生成完成分别记录。\n",
         encoding="utf-8",
     )
     return spec, compiled, summary

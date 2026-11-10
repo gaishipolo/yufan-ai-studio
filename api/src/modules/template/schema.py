@@ -118,9 +118,10 @@ class PrepareReplacement(CamelModel):
     kind: ReplacementKind
     target: str = Field(default="", max_length=160)
     source_id: str
+    video_template_id: str | None = Field(default=None, max_length=64)
     reference_ids: list[str] = Field(default_factory=list, max_length=10)
     wardrobe_mode: Literal["preserve", "reference"] = "preserve"
-    # 不再给默认值：范围必须来自素材包审核结果，默认值会悄悄承诺包外的位置。
+    # 固定视频模板按提示词声明参数；通用产品替换仍校验素材包范围。
     replacement_scope: str = Field(default="", max_length=1000)
     notes: str = Field(default="", max_length=2000)
     pack_id: str | None = None
@@ -147,7 +148,27 @@ class ReplacementRunOut(CamelModel):
     status: str
     archive_path: str
     created_at: UtcDateTime
+    started_at: UtcDateTime | None = Field(
+        default=None, description="确认提交（进入排队）的时间，未开始为 null"
+    )
+    finished_at: UtcDateTime | None = Field(
+        default=None, description="这一轮结束的时间；未结束为 null"
+    )
+    elapsed_sec: int | None = Field(
+        default=None,
+        description="确认提交到结束的耗时（秒）；未完成时按到此刻计，未开始为 null",
+    )
     prompt: str
+    prompt_mode: Literal["fixed", "compiled"] = Field(
+        default="compiled",
+        description=(
+            "fixed=封装视频模板时写死的原文，逐字提交；compiled=按素材与替换范围现编。"
+            "展示层据此告诉用户「跑的就是你封装时那份提示词」。"
+        ),
+    )
+    video_template_name: str | None = Field(
+        default=None, description="fixed 时出自哪条视频模板；compiled 为 null"
+    )
     display_title: str = Field(default="", description="统一展示名，列表/弹窗/任务中心共用")
     task_id: str | None = None
     estimated_credits: float | None = None

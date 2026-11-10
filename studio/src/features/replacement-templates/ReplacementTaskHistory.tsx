@@ -7,6 +7,7 @@ import { Skeleton } from '@/shared/ui/EmptyState';
 import { ErrorState } from '@/shared/ui/ErrorState';
 import { STATUS, REVIEW_LABELS } from './replacementOptions';
 import { replacementTaskFullName, replacementTaskName, replacementSourceName } from '@/entities/template/model/replacementTaskIdentity';
+import { replacementElapsedText } from './replacementElapsed';
 import type { ReplacementWorkbench } from './useReplacementWorkbench';
 import { ReplacementRunManagement } from './ReplacementRunManagement';
 import { ReplacementAccelerate } from './ReplacementAccelerate';
@@ -51,10 +52,13 @@ export function ReplacementTaskHistory({ model }: ReplacementTaskHistoryProps) {
         <div className="space-y-2">{filtered.map(run => <article key={run.id} className="space-y-2 rounded-xl border border-line p-3"><button onClick={() => setDetailId(run.id)} className={cn('replacement-task-row flex w-full flex-wrap items-center gap-3 text-left hover:text-primary', run.status === 'success' && run.outputUrl && 'is-success')}>
           {run.status === 'success' && run.outputUrl && <CheckCircle2 size={17} className="text-ok" aria-hidden />}
           <span title={replacementTaskFullName(run)} className="break-words text-sm font-semibold text-ink">{replacementTaskName(run)}</span>
+          {/* 列表里先给一个「这条跑的是封装提示词」的标记：不点开也能区分
+              固定提示词任务和按素材现编的任务，两者提示词文本看不出差别。 */}
+          {run.promptMode === 'fixed' && <span title={`固定提示词：${run.videoTemplateName ?? '已封装视频模板'}`} className="rounded-full bg-primary/10 px-2 py-0.5 text-[11px] text-primary">固定提示词</span>}
           <span className="ml-auto rounded-full bg-panel-soft px-3 py-1 text-xs text-ink-soft">{run.status === 'success' && !run.outputUrl ? '结果文件待恢复' : STATUS[run.status] ?? run.status}</span>
           {run.status === 'success' && <span className="text-xs text-ink-soft">人工验收：{REVIEW_LABELS[run.reviewStatus ?? 'pending'] ?? run.reviewStatus}</span>}
           <span className="text-xs text-primary">{run.status === 'success' && run.outputUrl ? '查看成片并下载 →' : '查看档案 →'}</span>
-        </button><p title={replacementSourceName(run)} className="truncate text-xs text-ink-soft">原片：{replacementSourceName(run)}</p><p className="break-all text-[11px] text-ink-mute">创建时间：{new Date(run.createdAt).toLocaleString()} · 任务编号：{run.id}{run.billingMode === 'credits' ? ' · 积分加速' : ''}</p><ReplacementAccelerate run={run} model={model} /><ReplacementRunManagement run={run} /></article>)}</div>}
+        </button><p title={replacementSourceName(run)} className="truncate text-xs text-ink-soft">原片：{replacementSourceName(run)}</p><p className="break-all text-[11px] text-ink-mute">创建时间：{new Date(run.createdAt).toLocaleString()} · 耗时：{replacementElapsedText(run)} · 任务编号：{run.id}{run.billingMode === 'credits' ? ' · 积分加速' : ''}</p><ReplacementAccelerate run={run} model={model} /><ReplacementRunManagement run={run} /></article>)}</div>}
     </section>
   );
 }
