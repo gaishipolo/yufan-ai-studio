@@ -24,6 +24,7 @@ import tempfile
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import cast
 
 from sqlalchemy import select
 
@@ -339,6 +340,6 @@ async def _rebuild_cover(storage: ObjectStorage, row: LibraryAsset) -> str:
             return ""
         if not target.is_file():
             return ""
-        key = preview_key(row.sha256)
+        key = preview_key(cast(str, row.sha256))
         await storage.put_file(key, target, "image/jpeg")
         return key

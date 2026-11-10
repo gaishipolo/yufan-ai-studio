@@ -11,12 +11,13 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
 from pydantic import Field, model_validator
 
 from core.schema import CamelModel, UtcDateTime
+from modules.template.channels import ReplacementChannel
 from modules.template.pack_roles import BASE_ROLE, PACK_ROLES, PACK_SCOPES
 
 ReplacementKind = Literal["character", "product", "scene"]
@@ -103,6 +104,9 @@ class ReplacementInputAsset(CamelModel):
     role: str
     type: str
     url: str
+    token: str = Field(default="", description="当次输入的 Mixed 编号，无法从历史快照确定时留空")
+    usage: str = Field(default="", description="当次快照中记录的媒体用途说明")
+    preview_url: str | None = Field(default=None, description="授权读取当次输入快照的缩略图")
 
 
 class ReplacementInputSummary(CamelModel):
@@ -111,15 +115,32 @@ class ReplacementInputSummary(CamelModel):
     wardrobe_mode: str = "preserve"
     replacement_scope: str = ""
     notes: str = ""
+    scene_prompt: str | None = Field(default=None, description="本次实际使用的可编辑场景描述")
 
 
 class PrepareReplacement(CamelModel):
     request_id: UUID
+    channel: ReplacementChannel = "libtv"
     kind: ReplacementKind
     target: str = Field(default="", max_length=160)
     source_id: str
     video_template_id: str | None = Field(default=None, max_length=64)
+    scene_prompt: str | None = Field(default=None, max_length=4000,
+                                    description="文字换场景的描述；省略使用模板默认值，空白拒绝")
     reference_ids: list[str] = Field(default_factory=list, max_length=10)
+    # 多人物替换：模板声明了几个「正面身份图」槽位，工作台就要求选几个人物卡。
+    # 第 1 位仍走 `packId` + `packVersion`（版本要锁），这里只放第 2 位起的包，
+    # 顺序即提示词槽位顺序。空列表就是原来的单人/产品替换，行为不变。
+    extra_pack_ids: list[str] = Field(
+        default_factory=list,
+        max_length=5,
+        description="第 2 位及以后的素材包 id，按提示词槽位顺序；第一包仍用 packId",
+    )
+    extra_pack_versions: list[Annotated[int, Field(ge=1)]] = Field(
+        default_factory=list,
+        max_length=5,
+        description="与 extraPackIds 顺序对应的发布版本；旧调用省略时由服务端解析并冻结",
+    )
     wardrobe_mode: Literal["preserve", "reference"] = "preserve"
     # 固定视频模板按提示词声明参数；通用产品替换仍校验素材包范围。
     replacement_scope: str = Field(default="", max_length=1000)
@@ -143,10 +164,15 @@ class ReconfirmReplacement(CamelModel):
 
 class ReplacementRunOut(CamelModel):
     id: str
+    channel: ReplacementChannel = "libtv"
+    channel_label: str = "LibTV · Wan 3.0 · 720P"
     kind: ReplacementKind
     target: str
     status: str
-    archive_path: str
+    archive_path: str | None = Field(
+        default=None,
+        description="工作区绝对路径（排查用）；目录已被清理或换机器后为 null",
+    )
     created_at: UtcDateTime
     started_at: UtcDateTime | None = Field(
         default=None, description="确认提交（进入排队）的时间，未开始为 null"
@@ -262,7 +288,17 @@ class PackPublicList(CamelModel):
     page_size: int
 
 
+class ReplacementChannelOut(CamelModel):
+    id: ReplacementChannel
+    label: str
+    model: str
+    enabled: bool
+    billing: Literal["libtv", "aliyun"]
+    unavailable_reason: str = ""
+
+
 class ReplacementCatalog(CamelModel):
+    channels: list[ReplacementChannelOut] = Field(default_factory=list)
     provider: str = "LibTV · Wan 3.0 · 720P"
     max_credits: int = 0
     kinds: list[str] = ["character", "product", "scene"]

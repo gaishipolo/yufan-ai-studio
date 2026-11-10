@@ -48,11 +48,23 @@ async def authorization_gap(session: AsyncSession, run: ReplacementRun) -> str |
             return "素材包已停用，请重新选择后准备"
         if pack.status != "published":
             return "素材包已停用，请重新选择后准备"
+        configuration = run.configuration if isinstance(run.configuration, dict) else {}
+        extras = configuration.get("extra_pack_ids", [])
+        versions = configuration.get("extra_pack_versions", [])
+        for index, pack_id in enumerate(extras):
+            extra = await packs.get(pack_id)
+            if (
+                extra is None
+                or extra.deleted_at is not None
+                or extra.status != "published"
+                or extra.kind != run.kind
+            ):
+                return f"第{index + 2}位人物素材包已停用，请重新选择后准备"
+            if index < len(versions) and await packs.get_version(pack_id, versions[index]) is None:
+                return "额外人物包的发布版本已不可用，请重新准备"
     rows = await RunRepository(session).inputs(run.id)
     if rows:
-        media = await get_asset_lookup().get_many(
-            session, [row.asset_id for row in rows]
-        )
+        media = await get_asset_lookup().get_many(session, [row.asset_id for row in rows])
         # 两个条件都要：`get_many` 不排除软删，行还在、`deleted_at` 已置位——
         # 只看「键在不在」会让删掉的素材照样通过（原来那句判断永远不成立）。
         gone = [

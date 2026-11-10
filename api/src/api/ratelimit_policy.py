@@ -326,6 +326,11 @@ EXEMPT_WRITE_ROUTES: Mapping[str, Exemption] = {
         why="绑定样片原片：单条目录字段更新，需要 `template:pack:manage`，低频管理动作",
         review_by=NEAR_TERM,
     ),
+    "PATCH /templates/video-templates/{template_id}/prompt": Exemption(
+        why="改固定提示词：同一条模板原地改原文，需要 `template:pack:manage`，"
+        "与封装同频的存量维护动作，不产生上游调用",
+        review_by=NEAR_TERM,
+    ),
 }
 
 

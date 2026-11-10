@@ -11,6 +11,7 @@ export const TYPES = [
 /* 替换范围不再是前端常量：以素材包 supportedScopes + 目录接口的 packScopes 为准。 */
 
 export const CONTINUE = ['prepared', 'waiting_free', 'waiting_executor', 'service_error', 'needs_login'];
+export const RETRY = ['failed', 'timeout', 'service_error', 'needs_login'];
 export const FIELD_CLASS = 'w-full rounded-lg border border-line bg-panel p-2.5 text-sm text-ink outline-none focus:border-primary';
 type ReviewReason = NonNullable<ReplacementReviewIn['reasonCodes']>[number];
 export const REVIEW_REASONS: Record<ReviewReason, string> = {replacement: '替换不准确', preservation: '保留内容被改动', visual: '画面异常', audio: '音画问题', other: '其他'};
@@ -31,10 +32,10 @@ export const NEXT_ACTION: Record<string, string> = {
   running: '正在生成，可稍后查看结果。', generated: '生成已结束，正在保存成片，下载完成后可查看。',
   waiting_free: '当前报价未满足免费条件；稍后点击继续，仅零积分时才会提交。',
   waiting_executor: '生成账号正在被其他任务使用，系统会按规则等待，请勿重复提交。',
-  needs_login: '请在原 LibTV 专用浏览器恢复登录，再点击继续。工作台登录不能替代上游登录。',
-  service_error: '请检查上游连接后继续；已有任务只查询，不重复提交。',
+  needs_login: '请在原 LibTV 专用浏览器恢复登录，再点击重试。工作台登录不能替代上游登录。',
+  service_error: '请检查失败原因和上游连接后点击重试；已有任务只恢复查询。',
   submission_unknown: '提交回执尚不明确，请由管理员核对上游记录；不要重新提交。',
-  failed: '请查看失败原因并核对上游记录，当前任务不会直接重新提交。',
-  timeout: '查询已超时，请核对上游记录后处理，勿盲目新建相同任务。',
+  failed: '处理失败原因后可点击重试。已有上游任务只恢复查询；尚未提交的任务会先核对原配置。若上游已明确生成失败，请核对原因后新建任务。',
+  timeout: '查询已超时。已有上游任务可点击重试恢复查询；尚未取得任务号时请先核对上游记录。',
   success: '成片已保存，请播放、下载并完成可用性评价。',
 };

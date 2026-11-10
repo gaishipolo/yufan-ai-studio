@@ -1,0 +1,18 @@
+{
+  "key": "three-characters-v3",
+  "name": "三人换脸",
+  "video": {"file": "原片.mp4", "shared": false},
+  "packs": [{"key": "character", "kind": "character"}],
+  "functions": [{
+    "key": "replace-three-characters",
+    "name": "三人换脸",
+    "pack": "character",
+    "promptFile": "三人替换提示词.txt",
+    "bindings": {
+      "{{Mixed 1}}": "front",
+      "{{Mixed 2}}": "front",
+      "{{Mixed 3}}": "front",
+      "{{Mixed 4}}": "source_video"
+    }
+  }]
+}

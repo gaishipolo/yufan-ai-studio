@@ -1,0 +1,16 @@
+{
+  "key": "product-role-template-v1",
+  "name": "产品替换卡片",
+  "video": {"file": "原片.mp4", "shared": false},
+  "packs": [{"key": "product", "kind": "product"}],
+  "functions": [{
+    "key": "replace-product",
+    "name": "产品替换",
+    "pack": "product",
+    "promptFile": "产品替换提示词.txt",
+    "bindings": {
+      "{{Mixed 1}}": "source_video",
+      "{{Mixed 2}}": "front"
+    }
+  }]
+}

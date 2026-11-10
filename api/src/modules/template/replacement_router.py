@@ -90,7 +90,7 @@ async def execute_run(
     ),
 ) -> ApiResponse[ReplacementRunOut]:
     return ApiResponse.ok(
-        await service.execute(run_id, actor.id, payload.billing_mode if payload else "free")
+        await service.execute(run_id, actor.id, payload.billing_mode if payload else None)
     )
 
 
@@ -131,3 +131,15 @@ async def archived_input(
     run_id: str, asset_id: str, actor: ReadDep, service: ReplacementServiceDep
 ) -> FileResponse:
     return FileResponse(await service.input_file(run_id, asset_id, actor.id))
+
+
+@router.get(
+    "/replacement-runs/{run_id}/inputs/{asset_id}/thumbnail",
+    summary="读取当次输入快照缩略图",
+)
+async def archived_input_thumbnail(
+    run_id: str, asset_id: str, actor: ReadDep, service: ReplacementServiceDep
+) -> FileResponse:
+    return FileResponse(
+        await service.input_preview(run_id, asset_id, actor.id), media_type="image/jpeg"
+    )

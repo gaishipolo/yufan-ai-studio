@@ -355,3 +355,9 @@ def test_prompt_origin_tells_where_the_prompt_came_from(tmp_path: Path, monkeypa
     assert _prompt_origin(
         {"promptMode": "fixed_video_template", "videoTemplateId": "missing-id"}
     ) == ("fixed", None)
+
+
+def test_prompt_origin_survives_string_spec(tmp_path: Path, monkeypatch) -> None:
+    """历史档案里 `prompt_spec` 可能是 JSON 文本：不能因此把列表接口打成 500。"""
+    assert _prompt_origin('{"promptMode": "fixed_video_template"}') == ("compiled", None)
+    assert _prompt_origin({}) == ("compiled", None)

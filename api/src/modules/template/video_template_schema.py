@@ -2,10 +2,9 @@
 
 一条视频模板 = 固定样片 + 固定提示词 + 一个已发布替换素材包。
 `mediaOrder` 决定接口里 mixedList 的顺序，也就决定 `{{Mixed N}}` 各指向谁：
-第 1 位固定是原片，其后按素材包逐图**用途**（front / multiview / detail）
-排列。生成时按用途从当前素材包取图，所以同一份提示词换一个产品包照样成立：
-`{{Mixed 2}}` 永远是该包的正面主图，`{{Mixed 3}}` 永远是三视图。
-素材包本身的图片顺序不重排，封装者只改提示词里的 token 编号。
+用途绑定模板按 rules.referenceBindings 保留原有 Mixed 编号，视频可以在任意声明位置；
+图片从所选素材包按用途解析，未引用图片完整附带。多人换脸每个人物独立选包，
+各自的 front 填各自槽位，不新建多人合并包。旧 mediaOrder 模式仍要求原片第1位。
 """
 
 from __future__ import annotations
@@ -35,12 +34,16 @@ class VideoTemplateDraftIn(CamelModel):
     """封装一条新的视频模板。
 
     `mediaOrder` 决定 mixedList 顺序（即 `{{Mixed N}}` 指向谁）：显式给出时按它拼，
-    必须是原片在第 1 位、其余图片与素材包「同一批图」（可换序，不能换图/少图）；
-    留空则由服务端按 `packId` 的包内顺序自动生成。
+    旧模式必须原片第1位、其余图片与素材包同一批；用途绑定模式不传 mediaOrder，
+    服务端按 referenceBindings 生成，保留视频所在编号并完整附带辅助参考。
     """
 
     name: str = Field(min_length=1, max_length=160, description="模板名称")
-    template_key: str = Field(default="", max_length=80, description="稳定标识，便于后续复制与导入")
+    template_key: str = Field(
+        default="",
+        max_length=80,
+        description="稳定标识：同键同配置返回原模板，同键异配置409；留空自动生成。固定蓝本状态独立管理",
+    )
     description: str = Field(default="", max_length=2000, description="模板说明")
     prompt: str = Field(
         min_length=1, max_length=20000, description="固定提示词原文，含 {{Mixed N}} 占位符"
@@ -61,7 +64,11 @@ class VideoTemplateDraftIn(CamelModel):
         default_factory=list, description="留空则由素材包顺序生成"
     )
     generation: dict[str, Any] = Field(default_factory=dict, description="生成参数，覆盖默认值")
-    rules: dict[str, Any] = Field(default_factory=dict, description="封装规则，覆盖默认值")
+    rules: dict[str, Any] = Field(
+        default_factory=dict,
+        description="封装规则；referenceBindings 将连续 Mixed 编号绑定到 source_video/图片用途，"
+        "服务端排列声明槽位并完整附带当前包其余图片，无需逐图引用",
+    )
     cover_url: str = Field(default="", max_length=512, description="封面地址")
     pinned: bool = Field(default=False, description="是否设为固定蓝本（全库仅一个）")
 
@@ -96,6 +103,18 @@ class VideoTemplateAttachSourceIn(CamelModel):
 
     source_video_asset_id: str = Field(
         min_length=1, max_length=64, description="素材库里 category=source 的 asset id"
+    )
+
+
+class VideoTemplatePromptIn(CamelModel):
+    """只换固定提示词原文：媒体清单、素材包、档位与名称都不动。
+
+    `{{Mixed N}}` 的引用关系按新原文**重算**（新增引用会把槽位补进 bindings，
+    不再引用的图片降为「仅插入接口」），所以不需要连同媒体一起提交。
+    """
+
+    prompt: str = Field(
+        min_length=1, max_length=20000, description="新的固定提示词原文，含 {{Mixed N}} 占位符"
     )
 
 

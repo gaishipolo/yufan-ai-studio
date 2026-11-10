@@ -205,7 +205,11 @@ class GenerationRunner:
                     return
 
                 try:
-                    provider = get_model_router().provider_for(record.model)
+                    resolver = getattr(pipeline, "resolve_provider", None)
+                    provider = (
+                        resolver(record.model) if resolver is not None
+                        else get_model_router().provider_for(record.model)
+                    )
                     request = await pipeline.build_request(record)
                     delivered = await provider.submit(request)
                 except Exception as exc:  # noqa: BLE001
@@ -330,7 +334,11 @@ class GenerationRunner:
                     )
                     return
 
-                provider = get_model_router().provider_for(record.model)
+                resolver = getattr(pipeline, "resolve_provider", None)
+                provider = (
+                    resolver(record.model) if resolver is not None
+                    else get_model_router().provider_for(record.model)
+                )
                 try:
                     result = await provider.poll(record.external_id, model=record.model)
                 except Exception as exc:  # noqa: BLE001
