@@ -124,7 +124,7 @@ class ImageJobStore:
             prompt=job.prompt,
             status=job.status,
             owner_id=job.owner_id,
-            params={"size": job.size, "count": job.count},
+            params={**job.params, "size": job.size, "count": job.count},
             external_id=job.external_id,
             progress=job.progress,
             output_url=job.output_url,
@@ -344,6 +344,9 @@ class ImageGenerationPipeline:
         job = await session.get(ImageJob, record.id)
         name = (job.name if job is not None else "") or f"生成图片-{record.id[:8]}"
         is_url = stored.startswith(("http://", "https://"))
+        # 额外参数（quality / seed…）一并留档：资产详情里的「生成参数」要能还原
+        # 当时到底怎么出的图，只留 size / count 的话复现不出来
+        extra = {key: value for key, value in record.params.items() if key not in ("size", "count")}
         return IngestRequest(
             source_module=KIND_IMAGE,
             source_task_id=record.id,
@@ -359,6 +362,7 @@ class ImageGenerationPipeline:
             storage_key="" if is_url else stored.lstrip("/"),
             source_url=stored if is_url else "",
             generation={
+                **extra,
                 "model": record.model,
                 "prompt": record.prompt,
                 "size": job.size if job is not None else record.params.get("size"),

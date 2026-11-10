@@ -13,15 +13,24 @@ import {
 import { cn } from '@/shared/lib/cn';
 import { toast } from '@/shared/lib/toast';
 import { formatDateTime } from '@/shared/lib/format';
-import { imageFormSchemaFor, useImageModels } from '@/entities/model/api/model.queries';
+import { useImageModels } from '@/entities/model/api/model.queries';
+import {
+  isEmptyParamValue,
+  paramControlsFor,
+  resolveParamValues,
+  type ParamValue,
+} from '@/entities/model/lib/paramForm';
+import { ParamFields } from '@/entities/model/ui/ParamFields';
 import { useGenerateImage, useImages } from '@/entities/image/api/image.api';
+import type { GenerateImagePayload } from '@/entities/image/model/types';
 import { imageSrcOf, imageStatusChipOf } from '@/entities/image/model/status';
 
 export default function ImagePage() {
   const [prompt, setPrompt] = useState('');
   const [modelId, setModelId] = useState('');
-  const [sizeOverride, setSizeOverride] = useState('');
-  const [countOverride, setCountOverride] = useState('');
+  // 只存「用户改过的那几个」，没改的交给 schema 默认值。
+  // 存最终值的话，换模型后旧值会留在 state 里，而新模型未必认这些值。
+  const [overrides, setOverrides] = useState<Record<string, ParamValue>>({});
   const [page, setPage] = useState(1);
 
   const { models, isLoading: modelsLoading, isError: modelsError } = useImageModels();
@@ -31,22 +40,11 @@ export default function ImagePage() {
   // 用户没选过时用 isDefault 模型 —— 后端「model 留空」取的也是它，前端不编默认值
   const model =
     models.find((m) => m.id === modelId) ?? models.find((m) => m.isDefault) ?? models[0];
-  const form = imageFormSchemaFor(model);
+  // 控件完全由 paramSchema 决定：后端声明什么，这里就渲染什么
+  const controls = paramControlsFor(model);
+  const values = resolveParamValues(controls, overrides);
   const modelOptions = models.map((m) => ({ value: m.id, label: m.label }));
-  const sizeOptions = form.sizeOptions.map((v) => ({ value: v, label: v }));
-  const countOptions = form.countOptions.map((v) => ({ value: String(v), label: `${v} 张` }));
-
-  // 存的是「用户覆盖值」而不是最终值：换模型或后端收紧档位后，
-  // 旧值不在新 options 里会自动回落到该模型的 default，不会出现选了却没生效的假象
-  const size = sizeOptions.some((o) => o.value === sizeOverride)
-    ? sizeOverride
-    : form.sizeDefault;
-  const countFallback =
-    countOptions.find((o) => o.value === String(form.countDefault))?.value ??
-    countOptions[0]?.value ??
-    '';
-  const count = countOptions.some((o) => o.value === countOverride) ? countOverride : countFallback;
-  const canSubmit = Boolean(model && size && count);
+  const canSubmit = Boolean(model);
 
   const total = data?.total ?? 0;
   const pageSize = data?.pageSize ?? 24;
@@ -59,29 +57,37 @@ export default function ImagePage() {
       toast('请先填写提示词', 'error');
       return;
     }
-    if (!model || !size || !count) {
+    if (!model) {
       toast('暂无可用生图模型，请稍后重试', 'error');
       return;
     }
-    generate.mutate(
-      {
-        prompt: prompt.trim(),
-        size,
-        count: Number(count),
-        // 默认模型留空，交给后端取默认；只有用户显式改选才传 model
-        ...(model.isDefault ? {} : { model: model.id }),
+
+    // `size` / `count` 是接口上的顶层字段（历史列表、统计都按列读），
+    // 其余参数走 `params`。键名是契约的一部分，不能随 schema 改名。
+    const payload: GenerateImagePayload = { prompt: prompt.trim() };
+    const extra: Record<string, ParamValue> = {};
+    for (const control of controls) {
+      const value = values[control.key];
+      if (isEmptyParamValue(value)) continue;
+      if (control.key === 'size') payload.size = String(value);
+      else if (control.key === 'count') payload.count = Number(value);
+      else extra[control.key] = value;
+    }
+    // 空对象不发：接口里 `params` 是可选字段，发 `{}` 只是噪音
+    if (Object.keys(extra).length) payload.params = extra;
+    // 默认模型留空，交给后端取默认；只有用户显式改选才传 model
+    if (!model.isDefault) payload.model = model.id;
+
+    generate.mutate(payload, {
+      onSuccess: () => {
+        toast('已提交，正在排队生成', 'success');
+        setPrompt('');
+        // 新任务在最前面：停在旧页会看不到自己刚提交的那张。
+        // 回到第 1 页后 useImages(1) 会因为 queued 自动开始轮询
+        setPage(1);
       },
-      {
-        onSuccess: () => {
-          toast('已提交，正在排队生成', 'success');
-          setPrompt('');
-          // 新任务在最前面：停在旧页会看不到自己刚提交的那张。
-          // 回到第 1 页后 useImages(1) 会因为 queued 自动开始轮询
-          setPage(1);
-        },
-        onError: (e) => toast(e.message, 'error'),
-      },
-    );
+      onError: (e) => toast(e.message, 'error'),
+    });
   };
 
   return (
@@ -119,8 +125,9 @@ export default function ImagePage() {
               disabled={!modelOptions.length}
               onChange={(e) => {
                 setModelId(e.target.value);
-                setSizeOverride('');
-                setCountOverride('');
+                // 换模型的参数面可能完全不同（张数上限、尺寸白名单、甚至多出
+                // 一组新控件），旧改动一律清掉，避免带着上一个模型的值提交
+                setOverrides({});
               }}
             />
             {!model && (
@@ -134,30 +141,11 @@ export default function ImagePage() {
             )}
           </div>
 
-          <div className="grid grid-cols-2 gap-2.5">
-            <div>
-              <div className="mb-1.5 text-[11.5px] text-ink-soft">尺寸</div>
-              <Select
-                block
-                aria-label="尺寸"
-                options={sizeOptions}
-                value={size}
-                disabled={!sizeOptions.length}
-                onChange={(e) => setSizeOverride(e.target.value)}
-              />
-            </div>
-            <div>
-              <div className="mb-1.5 text-[11.5px] text-ink-soft">数量</div>
-              <Select
-                block
-                aria-label="数量"
-                options={countOptions}
-                value={count}
-                disabled={!countOptions.length}
-                onChange={(e) => setCountOverride(e.target.value)}
-              />
-            </div>
-          </div>
+          <ParamFields
+            controls={controls}
+            values={values}
+            onChange={(key, value) => setOverrides((prev) => ({ ...prev, [key]: value }))}
+          />
 
           <Button
             variant="primary"

@@ -8,7 +8,9 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import DateTime, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
@@ -26,6 +28,11 @@ class ImageJob(Base, TimestampMixin, UUIDMixin):
     prompt: Mapped[str] = mapped_column(Text, nullable=False)
     size: Mapped[str] = mapped_column(String(32), default="1024x1024", nullable=False)
     count: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    # 除 size / count 之外的模型参数（JSON 文本），键来自模型的 `param_schema`。
+    # 必须落库：重试是从这条记录重建 `GenerationRecord` 的（`_to_record`），
+    # 只存内存里的那份，重试就会用默认参数重新提交——用户选的 quality / seed
+    # 无声丢失，而页面上什么问题都看不出来。
+    params_json: Mapped[str] = mapped_column(Text, default="", nullable=False)
 
     status: Mapped[str] = mapped_column(
         String(20), default=STATUS_QUEUED, nullable=False, index=True
@@ -70,6 +77,28 @@ class ImageJob(Base, TimestampMixin, UUIDMixin):
         读到它——契约里多一个「全量凭证」字段，不必给每个构造点加转换代码。
         """
         return parse_external_id_history(self.external_id_history)
+
+    @property
+    def params(self) -> dict[str, Any]:
+        """模型额外参数（不含 size / count）。脏数据按空处理，不让列表接口 500。"""
+        return parse_params_json(self.params_json)
+
+
+def dumps_params(params: Mapping[str, Any]) -> str:
+    """把额外参数写成 JSON 文本；空参数写空串（不是 `{}`），便于「无参数」判空。"""
+    if not params:
+        return ""
+    return json.dumps(dict(params), ensure_ascii=False)
+
+
+def parse_params_json(raw: str | None) -> dict[str, Any]:
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+    except (TypeError, ValueError):
+        return {}
+    return dict(data) if isinstance(data, dict) else {}
 
 
 def parse_external_id_history(raw: str | None) -> list[str]:

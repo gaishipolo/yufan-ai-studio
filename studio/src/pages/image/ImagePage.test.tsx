@@ -18,7 +18,7 @@ vi.mock('@/entities/image/api/image.api', () => ({
   useGenerateImage: () => ({ mutate: mutateMock, isPending: false }),
 }));
 
-// imageFormSchemaFor 用真实实现：这里要验的就是参数确实来自 paramSchema
+// paramForm 用真实实现：这里要验的就是控件确实来自 paramSchema
 vi.mock('@/entities/model/api/model.queries', async (importOriginal) => ({
   ...((await importOriginal()) as Record<string, unknown>),
   useImageModels: modelsMock,
@@ -51,6 +51,20 @@ const SEEDREAM: ModelSpec = {
   paramSchema: {
     ...AGNES.paramSchema,
     count: { type: 'int', min: 1, max: 4, default: 1 },
+  },
+};
+
+const RICH: ModelSpec = {
+  ...AGNES,
+  id: 'rich-image',
+  label: 'Rich Image',
+  isDefault: false,
+  paramSchema: {
+    ...AGNES.paramSchema,
+    quality: { type: 'enum', options: ['low', 'high'], default: 'low' },
+    seed: { type: 'int', min: 0, max: 2147483647 },
+    watermark: { type: 'bool', default: false },
+    negativePrompt: { type: 'string' },
   },
 };
 
@@ -156,6 +170,52 @@ describe('ImagePage · 表单参数来自模型目录', () => {
     render(<ImagePage />);
     expect(screen.getByText('暂无可用的生图模型')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '开始生成' })).toBeDisabled();
+  });
+
+  it('模型多声明参数时页面自动多出控件，不需要前端改代码', () => {
+    modelsMock.mockReturnValue({ models: [RICH], isLoading: false, isError: false });
+    render(<ImagePage />);
+
+    // enum → 下拉、范围过大的 int → 数字输入、bool → 开关、string → 输入框
+    expect(optionValues(select('质量'))).toEqual(['low', 'high']);
+    expect(screen.getByRole('spinbutton', { name: '随机种子' })).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: '水印' })).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: '反向提示词' })).toBeInTheDocument();
+  });
+
+  it('额外参数进 params，size / count 仍走顶层字段', async () => {
+    const user = userEvent.setup();
+    modelsMock.mockReturnValue({ models: [RICH], isLoading: false, isError: false });
+    render(<ImagePage />);
+
+    await user.type(screen.getByPlaceholderText(/赛博朋克街头/), '一只白猫');
+    await user.selectOptions(select('质量'), 'high');
+    await user.type(screen.getByRole('spinbutton', { name: '随机种子' }), '42');
+    await user.click(screen.getByRole('checkbox', { name: '水印' }));
+    await user.type(screen.getByRole('textbox', { name: '反向提示词' }), '模糊');
+    await user.click(screen.getByRole('button', { name: '开始生成' }));
+
+    expect(mutateMock.mock.calls[0][0]).toEqual({
+      prompt: '一只白猫',
+      size: '1024x1024',
+      count: 1,
+      params: { quality: 'high', seed: 42, watermark: true, negativePrompt: '模糊' },
+      model: 'rich-image',
+    });
+  });
+
+  it('留空的文本参数不出现在 params 里（让后端用 schema 默认值）', async () => {
+    const user = userEvent.setup();
+    modelsMock.mockReturnValue({ models: [RICH], isLoading: false, isError: false });
+    render(<ImagePage />);
+
+    await user.type(screen.getByPlaceholderText(/赛博朋克街头/), '一只白猫');
+    await user.click(screen.getByRole('button', { name: '开始生成' }));
+
+    const payload = mutateMock.mock.calls[0][0] as Record<string, unknown>;
+    // 没填的 seed / negativePrompt 不下发；有默认值的 quality / watermark 照发，
+    // 保证「界面上显示的」就是「实际用的」
+    expect(payload.params).toEqual({ quality: 'low', watermark: false });
   });
 });
 

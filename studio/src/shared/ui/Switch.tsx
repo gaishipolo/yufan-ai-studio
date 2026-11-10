@@ -7,9 +7,21 @@ export interface SwitchProps {
   children?: ReactNode;
   className?: string;
   disabled?: boolean;
+  /** 关联外部 label（`<label htmlFor>`），参数表单里靠它绑定字段名 */
+  id?: string;
+  /** 没有可见文字（或文字是「开启/关闭」这类状态词）时的可访问名称 */
+  ariaLabel?: string;
 }
 
-export function Switch({ checked, onChange, children, className, disabled }: SwitchProps) {
+export function Switch({
+  checked,
+  onChange,
+  children,
+  className,
+  disabled,
+  id,
+  ariaLabel,
+}: SwitchProps) {
   return (
     <label
       className={cn(
@@ -19,10 +31,12 @@ export function Switch({ checked, onChange, children, className, disabled }: Swi
       )}
     >
       <input
+        id={id}
         type="checkbox"
         className="peer sr-only"
         checked={checked}
         disabled={disabled}
+        aria-label={ariaLabel}
         onChange={(e) => onChange(e.target.checked)}
       />
       <span

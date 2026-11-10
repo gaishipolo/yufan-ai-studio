@@ -101,49 +101,15 @@ export function aspectOptionsFor(
   return values.map((value) => ({ value: value as AspectRatio, label: RATIO_LABEL[value] ?? value }));
 }
 
-/* ---------------- 生图表单：参数完全由模型 paramSchema 决定 ---------------- */
-
-export interface ImageFormSchema {
-  sizeOptions: string[];
-  sizeDefault: string;
-  countOptions: number[];
-  countDefault: number;
-}
-
-/** 没有可用模型时给空档位：表单据此禁用提交，不编造尺寸 / 张数默认值 */
-const EMPTY_IMAGE_FORM_SCHEMA: ImageFormSchema = {
-  sizeOptions: [],
-  sizeDefault: '',
-  countOptions: [],
-  countDefault: 0,
-};
-
-/**
- * 从 `GET /models?capability=image` 的 paramSchema 派生生图表单。
- *
- * 尺寸白名单与张数上限都按模型变（实测 agnes count.max=1、seedream count.max=4），
- * 写死常量会在「换模型 / 换供应商 / 后端收紧校验」三种情况下让用户选什么都被 400。
- */
-export function imageFormSchemaFor(model: ModelSpec | undefined): ImageFormSchema {
-  if (!model) return EMPTY_IMAGE_FORM_SCHEMA;
-
-  const sizeField = model.paramSchema.size;
-  const sizeOptions = (sizeField?.options ?? []).map(String).filter(Boolean);
-  const declaredSize = sizeField?.default == null ? '' : String(sizeField.default);
-  const sizeDefault = sizeOptions.includes(declaredSize) ? declaredSize : (sizeOptions[0] ?? '');
-
-  // 生图张数是连续整数，步长默认 1；不复用视频时长的 5 秒一档
-  const countOptions = intRange(model.paramSchema.count, { min: 1, max: 1, step: 1 });
-  const declaredCount = Number(model.paramSchema.count?.default);
-  const countDefault = countOptions.includes(declaredCount) ? declaredCount : countOptions[0];
-
-  return { sizeOptions, sizeDefault, countOptions, countDefault };
-}
+/* ---------------- 生图模型目录 ---------------- */
 
 /**
  * 生图模型目录。与 `useModels` 分开：不给 image 造 FALLBACK_MODELS，
  * 拿不到目录就明确显示「暂无可用模型」，避免拿一套假参数提交上去再被后端拒。
  * queryKey 与 `useModels('image')` 同源，同一页面重复订阅不会多发请求。
+ *
+ * 表单参数不在这里派生：生图页的控件由 `entities/model/lib/paramForm` 按
+ * `paramSchema` 通用渲染（不再只认 size / count 两个键）。
  */
 export function useImageModels(): { models: ModelSpec[]; isLoading: boolean; isError: boolean } {
   const query = useQuery({

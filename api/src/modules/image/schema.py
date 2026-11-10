@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import Field
 
 from core.schema import CamelModel, UtcDateTime
@@ -13,6 +15,10 @@ class ImageJobOut(CamelModel):
     prompt: str = Field(description="画面描述")
     size: str = Field(description="尺寸，如 `1024x1024`")
     count: int = Field(default=1, description="一次生成的张数")
+    params: dict[str, Any] = Field(
+        default_factory=dict,
+        description="模型额外参数（不含 size / count），键按提交时的模型 `paramSchema`",
+    )
     status: str = Field(
         default="queued", description="状态：`queued` / `running` / `succeeded` / `failed`"
     )
@@ -59,7 +65,24 @@ class ImageRetryOut(CamelModel):
 
 class GenerateImageIn(CamelModel):
     prompt: str = Field(min_length=1, max_length=2000, description="画面描述")
-    size: str = Field(default="1024x1024", max_length=32, description="宽x高，如 `1024x1536`")
-    count: int = Field(default=1, ge=1, le=4, description="张数")
+    size: str = Field(
+        default="",
+        max_length=32,
+        description="宽x高，如 `1024x1536`；留空取模型 `paramSchema.size.default`",
+    )
+    count: int = Field(
+        default=0,
+        ge=0,
+        le=16,
+        description="张数；`0` 表示取模型 `paramSchema.count.default`，上限以模型声明为准",
+    )
+    params: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "模型声明的其他参数，键与 `GET /models` 返回的 `paramSchema` 一致"
+            "（如 `quality` / `seed`）。未声明的键会被 400 拒绝，避免打错字被静默忽略；"
+            "与顶层 `size` / `count` 重复时以顶层为准"
+        ),
+    )
     # 留空用该能力的默认模型；换供应商时前端只需换 id，接口不变
     model: str = Field(default="", max_length=64, description="模型 id，留空取默认")

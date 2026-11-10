@@ -56,6 +56,10 @@ export const GenerationKind_VALUES = ["video", "image"] as const;
 export type LibraryAssetKind = "video" | "audio" | "image" | "pack";
 export const LibraryAssetKind_VALUES = ["video", "audio", "image", "pack"] as const;
 
+/** 取值：upload, generated, template_source, imported, pack */
+export type LibraryAssetOrigin = "upload" | "generated" | "template_source" | "imported" | "pack";
+export const LibraryAssetOrigin_VALUES = ["upload", "generated", "template_source", "imported", "pack"] as const;
+
 /** 取值：draft, active, trash */
 export type LibraryAssetState = "draft" | "active" | "trash";
 export const LibraryAssetState_VALUES = ["draft", "active", "trash"] as const;
@@ -261,6 +265,26 @@ export interface DraftDecisionIn {
   expectedVersion?: number;
 }
 
+/** DriverListOut */
+export interface DriverListOut {
+  items?: DriverOut[];
+  total?: number;
+  errors?: string[];
+}
+
+/** DriverOut */
+export interface DriverOut {
+  name: string;
+  label: string;
+  version: string;
+  path: string;
+  capabilities?: string[];
+  modelCount?: number;
+  supportsPoll?: boolean;
+  loaded?: boolean;
+  error?: string;
+}
+
 /** 某用户的权限来源。前端只读展示，**判定永远走 effective**。 */
 export interface EffectivePermissionsOut {
   /** 团队基础权限（全体启用账号） */
@@ -352,8 +376,13 @@ export interface ExportSourceOut {
 
 /** 生成结果入库（也经 `library-ingest` 注入口供后端模块调用）。
 
-`storageKey` 与 `sourceUrl` 二选一：**必须能物化字节**，只存外部链接的
-详情页与下载都会裂（链接会过期）。两个都给时优先 `storageKey`。 */
+字节来源三选一，**必须能物化**：`storageKey`（主对象存储）、
+`archiveKey`（归档存储，模板库替换成片用）、`sourceUrl`（服务端下载）。
+只存外部链接的详情页与下载都会裂（链接会过期）。优先级按上面顺序，
+同时给多个时取靠前的那个。
+
+`archiveKey` 只应由受信任的服务端调用方填写：它指向归档盘里的对象，
+端点本身仍由 `library:generation:ingest` 守护，普通上传权限调不动。 */
 export interface FromGenerationIn {
   sourceModule: string;
   sourceTaskId: string;
@@ -361,6 +390,7 @@ export interface FromGenerationIn {
   kind: GenerationKind;
   name?: string;
   storageKey?: string;
+  archiveKey?: string;
   sourceUrl?: string;
   mimeType?: string;
   sizeBytes?: number;
@@ -372,10 +402,12 @@ export interface FromGenerationIn {
 export interface GenerateImageIn {
   /** 画面描述 */
   prompt: string;
-  /** 宽x高，如 `1024x1536` */
+  /** 宽x高，如 `1024x1536`；留空取模型 `paramSchema.size.default` */
   size?: string;
-  /** 张数 */
+  /** 张数；`0` 表示取模型 `paramSchema.count.default`，上限以模型声明为准 */
   count?: number;
+  /** 模型声明的其他参数，键与 `GET /models` 返回的 `paramSchema` 一致（如 `quality` / `seed`）。未声明的键会被 400 拒绝，避免打错字被静默忽略；与顶层 `size` / `count` 重复时以顶层为准 */
+  params?: Record<string, unknown>;
   /** 模型 id，留空取默认 */
   model?: string;
 }
@@ -482,6 +514,8 @@ export interface ImageJobOut {
   size: string;
   /** 一次生成的张数 */
   count?: number;
+  /** 模型额外参数（不含 size / count），键按提交时的模型 `paramSchema` */
+  params?: Record<string, unknown>;
   /** 状态：`queued` / `running` / `succeeded` / `failed` */
   status?: string;
   /** 进度 0-100 */
@@ -570,6 +604,11 @@ export interface LibraryAssetDetailOut {
   state: LibraryAssetState;
   stateVersion?: number;
   coverUrl?: string | null;
+  url?: string;
+  previewUrl?: string | null;
+  streamUrl?: string | null;
+  width?: number | null;
+  height?: number | null;
   groupIds?: string[];
   tags?: LibraryTagOut[];
   trashReason?: string | null;
@@ -588,7 +627,11 @@ export interface LibraryAssetDetailOut {
   trashedFromState?: string | null;
 }
 
-/** 列表项。字段对齐 `library_assets` 表，M1 建表后不再改形状。 */
+/** 列表项。字段对齐 `library_assets` 表，M1 建表后不再**改**形状。
+
+后面补的五个字段是「只增不改」：取件地址与媒体规格本来就在表里/由 id 决定，
+以前让前端自己拼 URL、自己猜哪套库。模板库切换时前端只要改接口调用，
+不必在业务组件里补一段「按 id 拼 /file」的适配代码。 */
 export interface LibraryAssetOut {
   id: string;
   name: string;
@@ -605,6 +648,11 @@ export interface LibraryAssetOut {
   state: LibraryAssetState;
   stateVersion?: number;
   coverUrl?: string | null;
+  url?: string;
+  previewUrl?: string | null;
+  streamUrl?: string | null;
+  width?: number | null;
+  height?: number | null;
   groupIds?: string[];
   tags?: LibraryTagOut[];
   trashReason?: string | null;
@@ -760,23 +808,6 @@ export interface MeOut {
   roles?: RoleBriefOut[];
   /** 展开后的权限码；含 `*` 表示超级管理员 */
   permissions?: string[];
-}
-
-/** ModelListOut */
-export interface ModelListOut {
-  items?: ModelOut[];
-  total?: number;
-}
-
-/** ModelOut */
-export interface ModelOut {
-  id: string;
-  label: string;
-  capability: Capability;
-  provider: string;
-  description?: string;
-  paramSchema?: Record<string, unknown>;
-  isDefault?: boolean;
 }
 
 /** PackAction */
@@ -1304,6 +1335,16 @@ export interface StoryboardOut {
   createdAt: string;
 }
 
+/** SubmitIn */
+export interface SubmitIn {
+  model: string;
+  prompt: string;
+  name?: string;
+  params?: Record<string, unknown>;
+  referenceUrls?: string[];
+  source?: string;
+}
+
 /** TagIn */
 export interface TagIn {
   name: string;
@@ -1336,7 +1377,7 @@ export interface TaskFeedItem {
   /** 替换档案深链接 */
   detailUrl?: string | null;
   /** 通用任务数据；替换任务为 null */
-  video?: TaskOut | null;
+  video?: modules__task__schema__TaskOut | null;
 }
 
 /** TaskFeedOut */
@@ -1369,7 +1410,7 @@ export interface TaskFeedStats {
 
 /** TaskListOut */
 export interface TaskListOut {
-  items?: TaskOut[];
+  items?: modules__task__schema__TaskOut[];
   total?: number;
   page?: number;
   pageSize?: number;
@@ -1377,50 +1418,6 @@ export interface TaskListOut {
   stats?: TaskStats;
   /** 当前账号能否查看他人任务；false 时前端应收起「全部」选项 */
   canReadAll?: boolean;
-}
-
-/** 任务出参：字段名与前端 `VideoTask` 完全一致。 */
-export interface TaskOut {
-  /** 任务 ID */
-  id: string;
-  /** 标题 */
-  title: string;
-  /** 状态：queued 排队 / running 生成中 / completed 完成 / failed 失败 */
-  status: TaskStatus;
-  /** 模型展示名，如 `Seedance 2.5` */
-  model: string;
-  /** 模型目录 id，与 `GET /api/v1/models` 的 `id` 对齐 */
-  modelId?: string | null;
-  /** 视频时长（秒） */
-  durationSec: number;
-  /** 画幅比例 */
-  aspectRatio: AspectRatio;
-  /** 生成进度 0-100 */
-  progress?: number;
-  /** 封面图 URL，未生成完时为空串 */
-  coverUrl?: string;
-  /** 画面描述 */
-  prompt?: string;
-  /** 风格预设标识，未设置时为 null */
-  stylePreset?: string | null;
-  /** 参考素材 ID 列表（图生视频用） */
-  referenceAssetIds?: string[];
-  /** 作者用户 ID */
-  authorId: string;
-  /** 作者昵称快照（改名不回填历史） */
-  authorName?: string;
-  /** 当前账号是否已收藏 */
-  favorited?: boolean;
-  /** 是否允许下载：已成功且有产物 */
-  downloadable?: boolean;
-  /** 失败原因，成功时为 null */
-  errorMessage?: string | null;
-  /** 创建时间（UTC） */
-  createdAt: string;
-  /** 更新时间（UTC） */
-  updatedAt: string;
-  /** 开始生成时间，未开始为 null */
-  startedAt?: string | null;
 }
 
 /** 重试的结果：只描述「这一次动作」。
@@ -1654,6 +1651,133 @@ export interface VideoTemplateOut {
   updatedAt: string;
 }
 
+/** ApiResponse[ModelListOut] */
+export interface core__response__ApiResponse_ModelListOut___1 {
+  /** 0 表示成功，其余为业务错误码 */
+  code?: number;
+  message?: string;
+  data?: modules__catalog__schema__ModelListOut | null;
+}
+
+/** ApiResponse[ModelListOut] */
+export interface core__response__ApiResponse_ModelListOut___2 {
+  /** 0 表示成功，其余为业务错误码 */
+  code?: number;
+  message?: string;
+  data?: modules__model_driver__schema__ModelListOut | null;
+}
+
+/** ApiResponse[TaskOut] */
+export interface core__response__ApiResponse_TaskOut___1 {
+  /** 0 表示成功，其余为业务错误码 */
+  code?: number;
+  message?: string;
+  data?: modules__model_driver__schema__TaskOut | null;
+}
+
+/** ApiResponse[TaskOut] */
+export interface core__response__ApiResponse_TaskOut___2 {
+  /** 0 表示成功，其余为业务错误码 */
+  code?: number;
+  message?: string;
+  data?: modules__task__schema__TaskOut | null;
+}
+
+/** ModelListOut */
+export interface modules__catalog__schema__ModelListOut {
+  items?: modules__catalog__schema__ModelOut[];
+  total?: number;
+}
+
+/** ModelOut */
+export interface modules__catalog__schema__ModelOut {
+  id: string;
+  label: string;
+  capability: Capability;
+  provider: string;
+  description?: string;
+  paramSchema?: Record<string, unknown>;
+  isDefault?: boolean;
+}
+
+/** ModelListOut */
+export interface modules__model_driver__schema__ModelListOut {
+  items?: modules__model_driver__schema__ModelOut[];
+  total?: number;
+}
+
+/** ModelOut */
+export interface modules__model_driver__schema__ModelOut {
+  id: string;
+  label: string;
+  capability: string;
+  provider: string;
+  description?: string;
+  paramSchema?: Record<string, unknown>;
+}
+
+/** TaskOut */
+export interface modules__model_driver__schema__TaskOut {
+  id: string;
+  name?: string;
+  model: string;
+  capability: string;
+  status: string;
+  progress?: number;
+  outputUrl?: string | null;
+  coverUrl?: string | null;
+  error?: string | null;
+  externalId?: string | null;
+  ownerId?: string;
+  source?: string;
+  submitAttempts?: number;
+  createdAt?: string | null;
+}
+
+/** 任务出参：字段名与前端 `VideoTask` 完全一致。 */
+export interface modules__task__schema__TaskOut {
+  /** 任务 ID */
+  id: string;
+  /** 标题 */
+  title: string;
+  /** 状态：queued 排队 / running 生成中 / completed 完成 / failed 失败 */
+  status: TaskStatus;
+  /** 模型展示名，如 `Seedance 2.5` */
+  model: string;
+  /** 模型目录 id，与 `GET /api/v1/models` 的 `id` 对齐 */
+  modelId?: string | null;
+  /** 视频时长（秒） */
+  durationSec: number;
+  /** 画幅比例 */
+  aspectRatio: AspectRatio;
+  /** 生成进度 0-100 */
+  progress?: number;
+  /** 封面图 URL，未生成完时为空串 */
+  coverUrl?: string;
+  /** 画面描述 */
+  prompt?: string;
+  /** 风格预设标识，未设置时为 null */
+  stylePreset?: string | null;
+  /** 参考素材 ID 列表（图生视频用） */
+  referenceAssetIds?: string[];
+  /** 作者用户 ID */
+  authorId: string;
+  /** 作者昵称快照（改名不回填历史） */
+  authorName?: string;
+  /** 当前账号是否已收藏 */
+  favorited?: boolean;
+  /** 是否允许下载：已成功且有产物 */
+  downloadable?: boolean;
+  /** 失败原因，成功时为 null */
+  errorMessage?: string | null;
+  /** 创建时间（UTC） */
+  createdAt: string;
+  /** 更新时间（UTC） */
+  updatedAt: string;
+  /** 开始生成时间，未开始为 null */
+  startedAt?: string | null;
+}
+
 /* --------------------- 接口 → data 类型（已解包封套） --------------------- */
 
 /** 键是 `METHOD path`，值是去掉 {code,message,data} 封套后的类型 */
@@ -1798,6 +1922,10 @@ export interface EndpointData {
   "PATCH /api/v1/library/assets/{asset_id}": LibraryAssetDetailOut;
   /** 下载或预览原文件 */
   "GET /api/v1/library/assets/{asset_id}/file": unknown;
+  /** 受控公共预览（视频给派生流） */
+  "GET /api/v1/library/assets/{asset_id}/preview": unknown;
+  /** 浏览器兼容视频预览（派生流，不改原片） */
+  "GET /api/v1/library/assets/{asset_id}/stream": unknown;
   /** 读取缩略图 */
   "GET /api/v1/library/assets/{asset_id}/thumbnail": unknown;
   /** 我最近发起的打包任务 */
@@ -1852,8 +1980,20 @@ export interface EndpointData {
   "DELETE /api/v1/library/trash/{asset_id}": null;
   /** 从回收站恢复（强制回到个人库，不恢复共享） */
   "POST /api/v1/library/trash/{asset_id}/restore": LibraryAssetDetailOut;
+  /** 已自动载入的模型驱动清单 */
+  "GET /api/v1/model-driver/drivers": DriverListOut;
+  /** 统一生成接口可用的模型目录 */
+  "GET /api/v1/model-driver/models": core__response__ApiResponse_ModelListOut___2;
+  /** 提交一次统一生成任务 */
+  "POST /api/v1/model-driver/tasks": core__response__ApiResponse_TaskOut___1;
+  /** 查询统一生成任务 */
+  "GET /api/v1/model-driver/tasks/{task_id}": core__response__ApiResponse_TaskOut___1;
+  /** 取消生成任务 */
+  "POST /api/v1/model-driver/tasks/{task_id}/cancel": core__response__ApiResponse_TaskOut___1;
+  /** 人工重试失败的生成任务 */
+  "POST /api/v1/model-driver/tasks/{task_id}/retry": core__response__ApiResponse_TaskOut___1;
   /** 可用模型目录（含参数 schema） */
-  "GET /api/v1/models": ModelListOut;
+  "GET /api/v1/models": core__response__ApiResponse_ModelListOut___1;
   /** 镜头词条列表 */
   "GET /api/v1/shots": ShotListOut;
   /** 分镜模板列表 */
@@ -1863,17 +2003,17 @@ export interface EndpointData {
   /** 任务列表 */
   "GET /api/v1/tasks": TaskListOut;
   /** 创建任务 */
-  "POST /api/v1/tasks": TaskOut;
+  "POST /api/v1/tasks": core__response__ApiResponse_TaskOut___2;
   /** 统一任务中心：通用生成与本人可见的替换档案 */
   "GET /api/v1/tasks/feed": TaskFeedOut;
   /** 任务统计（侧边栏角标） */
   "GET /api/v1/tasks/stats": TaskStats;
   /** 任务详情 */
-  "GET /api/v1/tasks/{task_id}": TaskOut;
+  "GET /api/v1/tasks/{task_id}": core__response__ApiResponse_TaskOut___2;
   /** 更新任务（标题 / 收藏） */
-  "PATCH /api/v1/tasks/{task_id}": TaskOut;
+  "PATCH /api/v1/tasks/{task_id}": core__response__ApiResponse_TaskOut___2;
   /** 收藏 / 取消收藏 */
-  "POST /api/v1/tasks/{task_id}/favorite": TaskOut;
+  "POST /api/v1/tasks/{task_id}/favorite": core__response__ApiResponse_TaskOut___2;
   /** 重试任务 */
   "POST /api/v1/tasks/{task_id}/retry": TaskRetryOut;
   /** 人物/产品/场景替换模板与调用档案 */
