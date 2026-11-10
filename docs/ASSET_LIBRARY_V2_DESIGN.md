@@ -251,9 +251,9 @@ owner 发起撤销 ─→ pending(action=revoke, reason) ─┬─ approve → �
 
 | 组 | 方法 / 路径 | 权限 | 要点 |
 | --- | --- | --- | --- |
-| 浏览 | `GET /assets` | `library:read` | `library=team\|group\|personal\|all`、`state=draft\|active\|trash`（默认 `active`）、`kind`、`tagIds`、`keyword`、排序、`page/pageSize`；返回分面统计。`state=draft/trash` 时可见集强制收窄到本人（管理员可传 `mine=false` 看全量） |
+| 浏览 | `GET /assets` | `library:read` | `library=team\|group\|personal\|all`、`state=draft\|active\|trash`（默认 `active`）、`kind`、`tagIds`、`keyword`、`origin`（可重复，见 §12 第 22 条）、排序、`page/pageSize`；返回分面统计。`state=draft/trash` 时可见集强制收窄到本人（管理员可传 `mine=false` 看全量） |
 | 浏览 | `GET /assets/{id}` | `library:read` | 详情含规格、标签、可见性、引用、**生成参数**（有才返回） |
-| 浏览 | `GET /assets/{id}/file` `/preview` `/stream` `/thumbnail` | `library:read` | 复用 `core.serving.Served`；本地 `FileResponse`（支持 Range）/ 远端 307 |
+| 浏览 | `GET /assets/{id}/file` `/preview` `/stream` `/thumbnail` | `library:read` | 复用 `core.serving.Served`；本地 `FileResponse`（支持 Range）/ 远端 307。四个端点 2026-11-10 补齐：`/file` 给原件（同源流）、`/thumbnail` 给封面（307）、`/stream` 给 H.264 8-bit 派生流（按 sha 只转一次、绝不改原片）、`/preview` 是受控公共预览（视频转派生流、图片/音频给原文件），可见性统一走 `load_visible` |
 | 上传 | `POST /assets/upload` | `library:create` | 单文件 octet-stream 流式；`kind` 只允许 `image/audio`；`sourceKey` 幂等 + sha256 秒传；挂 `rate_limit` |
 | 上传 | `POST /source-videos` | `library:create` | **专供模板库**，只收 `video`，`origin=template_source`；等价于旧 `/assets/upload`，不改界面 |
 | 封装 | `POST /packs` | `library:create` | `{name, tagIds, assetIds[], coverAssetId, items[role,description]}`；已有素材与「刚上传的一批」都走这里 |
@@ -266,8 +266,8 @@ owner 发起撤销 ─→ pending(action=revoke, reason) ─┬─ approve → �
 | 回收站 | `POST /trash/{id}/restore`、`DELETE /trash/{id}` | `library:delete`（本人）/ `library:delete:any` | restore 回 `trashed_from_state` 且强制 `personal`；purge 前 `library-references` 校验，被引用 409 |
 | 共享 | `POST /share-requests`（`action=share\|revoke`）、`GET /share-requests`、`POST /share-requests/{id}/approve\|reject\|cancel` | `library:share` / 审批三码（全站 `library:share:approve`、团队 `:approve:team`、所在小组 `:approve:group`） | 见 §3.2 与 §3.5；`action=revoke` 必须带 `reason`。**审批路由只要求 `library:read`**，资格按申请目标范围在服务层判；`PUT /groups/{id}/leaders` 仍由全站码守护 |
 | 下载 | `POST /downloads`、`GET /downloads/{id}`、`GET /downloads/{id}/file` | `library:read` | 见 §6 |
-| 选择器 | `GET /selection` | `library:read` | 统一返回 `asset` + `pack`；`kind/tagIds/keyword/includePacks/page`；服务端算可见集，**硬过滤 `state=active`**（草稿与回收站永远不出现在选择器里） |
-| 生成入库 | `POST /assets/from-generation` | `library:generation:ingest` | 见 §7；供 image/template/task 模块经注入口调用 |
+| 选择器 | `GET /selection` | `library:read` | 统一返回 `asset` + `pack`；`kind/tagIds/keyword/includePacks/page/origin`（`origin` 可重复）；服务端算可见集，**硬过滤 `state=active`**（草稿与回收站永远不出现在选择器里）。列表与选择器都返回 `url/previewUrl/streamUrl/width/height`，供模板库切换时直接用 |
+| 生成入库 | `POST /assets/from-generation` | `library:generation:ingest` | 见 §7；供 image/template/task 模块经注入口调用。字节来源 `storageKey` / `archiveKey`（归档存储，模板库成片预留）/ `sourceUrl` 三选一，优先级按此顺序 |
 
 **CLI**（`ModuleSpec.cli`）：`app import-library`（幂等导入现役 `assets` + S3 `yufan-archive`）、
 `app verify-library`（对账）、`app rebuild-library-mirrors`。不是 HTTP 接口。
@@ -380,13 +380,28 @@ sourceModule     image | template | task        （生成来自哪个模块）
 sourceTaskId     业务侧任务/作业/运行 id
 sourceKey        幂等键 = sourceModule + ":" + sourceTaskId [+ ":" + index]
 kind             video | image                 （生成结果的类型）
-bytes / storageKey / sourceUrl               （三选一，服务端必须物化字节，不能只存 URL）
+storageKey / archiveKey / sourceUrl         （三选一，服务端必须物化字节，不能只存 URL）
+                                           storageKey = 主对象存储；archiveKey = 归档存储
+                                           （模板库替换成片）；sourceUrl = 服务端下载
 generation       { model, modelId, prompt, size, count, durationSec, aspectRatio,
                    stylePreset, seed, referenceAssetIds[], packId, packVersion,
                    promptSpec, configuration, externalId, credits, generatedAt }
 name / tagIds / visibility                    （可选；visibility 必须是 personal，
                                                state 固定落 draft，共享一律由本人后续发起）
 ```
+
+**`archiveKey` 是跨存储接口，不是第三条生成链路**（2026-11-10 补）：模板库替换成片
+由 `template/worker.publish_output` 搬进 `ArchiveStorage`（`runs/{id}/outputs/generated.mp4`），
+与主对象存储是两个驱动。`GenerationIngest` 用 `ArchiveStorage.materialize()` 物化后
+再写进资产库自己的 blob，资产不依赖归档盘的生命周期；远端驱动的临时缓存由
+`ExitStack` 持有到探测与预览派生结束。端点仍由 `library:generation:ingest` 守护，
+`archiveKey` 只应由受信任的服务端调用方填写。
+
+本批**只补能力、不接链路**：`ReplacementPipeline.archive_request()` 仍未实现，
+模板库前后端、生成 runner、`replacement_reviews` 全部零改动，不产生任何草稿数据。
+将来接的时候只需构造 `IngestRequest(archive_key=run.output_key, ...)` 交给
+`library-ingest` 端口；`sourceKey` 建议带供应商任务号（与生图同口径），保证重试
+不会把新成片吃掉。至于替换评价与草稿审核谁说了算，仍是下面的产品口径问题。
 
 参数来源对照（调研确认）：`image_jobs` 给 `model/model_id/prompt/size/count`；
 `video_tasks` 给 `duration_sec/aspect_ratio/style_preset/reference_asset_ids`；
@@ -845,6 +860,11 @@ v2 的表、字节、投影、权限、注入口全部独立，删掉模块不�
     `persist_output`，产物是供应商直链，入库要现取现存（300MB 上限）；后者有自己的
     `replacement_reviews` 审核链，再接一层草稿箱要先定「哪一层说了算」。两处都只差
     一个 `archive_request` 实现，等产品口径。
+    **2026-11-10 补注**：换装这条的跨存储阻碍已经清掉 —— `IngestRequest.archive_key`
+    与 `POST /assets/from-generation` 的 `archiveKey` 已能从 `ArchiveStorage` 物化字节
+    落草稿（§7.1，用例 `test_library_ingest_archive.py` 6 例）。**能力备好但没接**：
+    `archive_request` 依旧不实现，业务现状不变、草稿箱不新增数据。剩下的是纯产品
+    口径：替换评价与草稿审核是否联动、哪一层的结论决定成片进不进在库。
 
 18. **标签筛选是个看不见词表的下拉框，卡片还只露两枚标签**（`tags.py` / `router.py` /
     `LibraryToolbar.tsx` / `LibraryTagBar.tsx` / `LibraryCard.tsx`，用户提的第七处）：
@@ -934,6 +954,52 @@ v2 的表、字节、投影、权限、注入口全部独立，删掉模块不�
       `test_library_share_approval_split.py` 钉住三码边界、他组/无组越权、
       旧码兼容、组长表不再授权、自审按目标、负责人表写入口；
       `test_library_sharing.py` 的组长用例改成「不登记负责人也能审」。
+
+22. **模板库 7 条 / 资产库成片 4 条：数据源不一致**（`import_archive.py` /
+    `service.py` / `router.py` / `schema.py`，用户提的第十二处，2026-11-10）：
+    用户先指出两处数字对不上，随后更正口径——**7 条是模板库「全部模板」卡片
+    （封装模板，底层仍是旧 `assets` 表 `category=source` 的 7 条原片）**，
+    **10+ 条是替换任务生成的成片**（`replacement-catalog` 26 条档案、11 条有
+    `outputUrl`、10 条成功），两者不是一回事。查下来是三层不一致：
+
+    - **7 vs 4 = 存量没追平**：11-09 迁过一轮 19 条（含那 4 条视频），
+      11-10 07:06–07:22 模板库又新传 3 条写进旧库。`app library reconcile`
+      报「旧库未删除 22 / v2 已迁 19 / 待补 3」，`doctor` 的
+      `library.legacy_sync` 挂 WARN。执行 `app library import-archive` 补 3 条、
+      复制 46.6 MB 后 `reconcile` exit 0、doctor 转 PASS，资产库 `kind=video`
+      变成 7 条（`origin=imported`）。**这一步只追平副本，不等于统一数据源**。
+    - **10+ vs 4 = 两条不通的链路**：资产库 `kind=video` 的 7 条全是上传/导入的
+      原片，与生成成片零重合——`template/pipeline.py` 的 `ReplacementPipeline`
+      没有 `archive_request`，第 17 条已记「等口径」。补数据补不出这 10 条，
+      且资产库「成片」标签与 §0「成片 = 生成的视频」的设计口径是反的。
+    - **接口准备（本批只动资产库后端，前端与模板库代码一行不动）**：按用户
+      拍板的「按设计补缺」口径，补齐 §4 列过却没实现的两个取件端点
+      `GET /assets/{id}/stream`（按 sha 派生 H.264 8-bit，分块物化原片、
+      只转一次、失败时本人回退原件 / 他人 400 不拿原件冒充预览）与
+      `GET /assets/{id}/preview`（视频走派生、图片音频给原文件，可见性统一
+      `load_visible`）；`GET /assets` 与 `GET /selection` 加**可重复**的
+      `origin` 过滤（`LibraryAssetOrigin` 枚举），因为模板库切换后要同时取
+      `template_source`（新传）与 `imported`（存量原片），只认前者会漏一半；
+      **`origin` 只筛来源、不筛类型**：切换时取原片必须叠 `kind=video`，
+      实测列表与选择器都是 7 条；只传 `origin` 会拿到 16 条（含导入的图片）。
+      `LibraryAssetOut` 只增不改地补 `url/previewUrl/streamUrl/width/height`，
+      让前端切换时改接口调用即可，不必在业务组件里按 id 拼第二套路径。
+      用例 `test_library_template_interfaces.py`（6 例）钉住来源过滤、出参、
+      派生幂等 / 不改原片、非视频 / 回收站 / 陌生人拒绝、预览回退边界。
+
+    **仍需你知道的边界**（本批刻意没做，切换时再定）：
+    ① 现状做不到「只改一个 URL 常量」——`ArchivedAsset` 与 `LibraryAssetOut`
+    形状不同（`category/type/shared/editable/stateVersion/容量` 无一对一映射），
+    旧 `assets.id` 与 `library_assets.id` 是两套 id（`source_key=legacy:<旧 id>`），
+    共享在 v2 是「申请 + 审批」而非一键 `PUT /sharing`；将来要改
+    `archive.api.ts` 的调用地址与字段映射，业务组件可不动。
+    ② 模板库后端仍经 `asset-lookup` 读旧表、`asset-references` 查引用，
+    切换 v2 id 时要换端口、补 `library-lookup.resolve_visible`、接
+    `library-references` 来源，并处理 6 张表里存量的旧 id。
+    ③ 替换成片是否入草稿箱、以及 `replacement_reviews` 与草稿审核谁说了算，
+    仍是第 17 条留下的产品口径问题。**跨存储取字节的接口已备好**
+    （`IngestRequest.archive_key` / `archiveKey`，见 §7.1），但 `archive_request`
+    没接，模板库业务现状未动；要接的是口径，不是存储。
 
 **审查里看到、但这次没动的**（记录在这，避免下次重新发现一遍）：
 

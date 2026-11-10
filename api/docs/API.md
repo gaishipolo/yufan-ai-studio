@@ -2,7 +2,7 @@
 
 > 此文件由 `app export-openapi` 自动生成，请勿手工编辑。
 >
-> 版本 `0.2.0`｜共 **130** 个接口 / **11** 个模块
+> 版本 `0.2.0`｜共 **138** 个接口 / **12** 个模块
 >
 > 重新生成：`cd api && .venv/Scripts/python -m cli export-openapi`
 
@@ -85,6 +85,9 @@ Authorization: Bearer <accessToken>
 | `image:read` | 查看生图历史 |  |
 | `image:read:all` | 查看他人生图历史 | 列表的数据范围开关；与 task:read:all 同义，不含提交他人的生图任务 |
 | `image:retry:any` | 重试他人生图任务 | 只开关「替别人点重试」，不蕴含 image:read:all |
+| `model_driver:cancel` | 取消生成任务 |  |
+| `model_driver:create` | 提交统一生成任务并重试失败记录 |  |
+| `model_driver:read` | 查看模型驱动、模型目录与生成任务 |  |
 | `shot:read` | 查看镜头库 |  |
 | `storyboard:read` | 查看分镜模板 |  |
 | `task:create` | 创建生成任务 |  |
@@ -241,7 +244,8 @@ Authorization: Bearer <accessToken>
 | 镜头库 | 1 | 见下方 `4.8` |
 | 系统 | 2 | 见下方 `4.9` |
 | 导出 | 6 | 见下方 `4.10` |
-| 资产库 | 35 | 见下方 `4.11` |
+| 资产库 | 37 | 见下方 `4.11` |
+| 模型驱动 | 6 | 见下方 `4.12` |
 
 ### 4.1 身份（39 个）
 
@@ -1089,7 +1093,7 @@ Authorization: Bearer <accessToken>
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `items` | `TaskOut[]` | 否 |  |
+| `items` | `modules__task__schema__TaskOut[]` | 否 |  |
 | `total` | `number` | 否 |  |
 | `page` | `number` | 否 |  |
 | `pageSize` | `number` | 否 |  |
@@ -1112,30 +1116,13 @@ Authorization: Bearer <accessToken>
 | `referenceAssetIds` | `string[]` | 否 | 参考素材 ID 列表（最多 20 个） |
 | `stylePreset` | `string \| null` | 否 | 风格预设标识，留空为不套风格 |
 
-**响应** `ApiResponse<TaskOut>`（前端取 `res.data`）
+**响应** `ApiResponse<core__response__ApiResponse_TaskOut___2>`（前端取 `res.data`）
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `id` | `string` | 是 | 任务 ID |
-| `title` | `string` | 是 | 标题 |
-| `status` | `TaskStatus` | 是 | 状态：queued 排队 / running 生成中 / completed 完成 / failed 失败 |
-| `model` | `string` | 是 | 模型展示名，如 `Seedance 2.5` |
-| `modelId` | `string \| null` | 否 | 模型目录 id，与 `GET /api/v1/models` 的 `id` 对齐 |
-| `durationSec` | `number` | 是 | 视频时长（秒） |
-| `aspectRatio` | `AspectRatio` | 是 | 画幅比例 |
-| `progress` | `number` | 否 | 生成进度 0-100 |
-| `coverUrl` | `string` | 否 | 封面图 URL，未生成完时为空串 |
-| `prompt` | `string` | 否 | 画面描述 |
-| `stylePreset` | `string \| null` | 否 | 风格预设标识，未设置时为 null |
-| `referenceAssetIds` | `string[]` | 否 | 参考素材 ID 列表（图生视频用） |
-| `authorId` | `string` | 是 | 作者用户 ID |
-| `authorName` | `string` | 否 | 作者昵称快照（改名不回填历史） |
-| `favorited` | `boolean` | 否 | 当前账号是否已收藏 |
-| `downloadable` | `boolean` | 否 | 是否允许下载：已成功且有产物 |
-| `errorMessage` | `string \| null` | 否 | 失败原因，成功时为 null |
-| `createdAt` | `string` | 是 | 创建时间（UTC） |
-| `updatedAt` | `string` | 是 | 更新时间（UTC） |
-| `startedAt` | `string \| null` | 否 | 开始生成时间，未开始为 null |
+| `code` | `number` | 否 | 0 表示成功，其余为业务错误码 |
+| `message` | `string` | 否 |  |
+| `data` | `modules__task__schema__TaskOut \| null` | 否 |  |
 
 #### `DELETE /api/v1/tasks`
 
@@ -1208,30 +1195,13 @@ Authorization: Bearer <accessToken>
 |---|---|---|---|---|
 | `task_id` | path | `string` | 是 | 任务 ID |
 
-**响应** `ApiResponse<TaskOut>`（前端取 `res.data`）
+**响应** `ApiResponse<core__response__ApiResponse_TaskOut___2>`（前端取 `res.data`）
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `id` | `string` | 是 | 任务 ID |
-| `title` | `string` | 是 | 标题 |
-| `status` | `TaskStatus` | 是 | 状态：queued 排队 / running 生成中 / completed 完成 / failed 失败 |
-| `model` | `string` | 是 | 模型展示名，如 `Seedance 2.5` |
-| `modelId` | `string \| null` | 否 | 模型目录 id，与 `GET /api/v1/models` 的 `id` 对齐 |
-| `durationSec` | `number` | 是 | 视频时长（秒） |
-| `aspectRatio` | `AspectRatio` | 是 | 画幅比例 |
-| `progress` | `number` | 否 | 生成进度 0-100 |
-| `coverUrl` | `string` | 否 | 封面图 URL，未生成完时为空串 |
-| `prompt` | `string` | 否 | 画面描述 |
-| `stylePreset` | `string \| null` | 否 | 风格预设标识，未设置时为 null |
-| `referenceAssetIds` | `string[]` | 否 | 参考素材 ID 列表（图生视频用） |
-| `authorId` | `string` | 是 | 作者用户 ID |
-| `authorName` | `string` | 否 | 作者昵称快照（改名不回填历史） |
-| `favorited` | `boolean` | 否 | 当前账号是否已收藏 |
-| `downloadable` | `boolean` | 否 | 是否允许下载：已成功且有产物 |
-| `errorMessage` | `string \| null` | 否 | 失败原因，成功时为 null |
-| `createdAt` | `string` | 是 | 创建时间（UTC） |
-| `updatedAt` | `string` | 是 | 更新时间（UTC） |
-| `startedAt` | `string \| null` | 否 | 开始生成时间，未开始为 null |
+| `code` | `number` | 否 | 0 表示成功，其余为业务错误码 |
+| `message` | `string` | 否 |  |
+| `data` | `modules__task__schema__TaskOut \| null` | 否 |  |
 
 #### `PATCH /api/v1/tasks/{task_id}`
 
@@ -1248,30 +1218,13 @@ Authorization: Bearer <accessToken>
 | `title` | `string \| null` | 否 | 新标题 |
 | `favorited` | `boolean \| null` | 否 | 收藏状态 |
 
-**响应** `ApiResponse<TaskOut>`（前端取 `res.data`）
+**响应** `ApiResponse<core__response__ApiResponse_TaskOut___2>`（前端取 `res.data`）
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `id` | `string` | 是 | 任务 ID |
-| `title` | `string` | 是 | 标题 |
-| `status` | `TaskStatus` | 是 | 状态：queued 排队 / running 生成中 / completed 完成 / failed 失败 |
-| `model` | `string` | 是 | 模型展示名，如 `Seedance 2.5` |
-| `modelId` | `string \| null` | 否 | 模型目录 id，与 `GET /api/v1/models` 的 `id` 对齐 |
-| `durationSec` | `number` | 是 | 视频时长（秒） |
-| `aspectRatio` | `AspectRatio` | 是 | 画幅比例 |
-| `progress` | `number` | 否 | 生成进度 0-100 |
-| `coverUrl` | `string` | 否 | 封面图 URL，未生成完时为空串 |
-| `prompt` | `string` | 否 | 画面描述 |
-| `stylePreset` | `string \| null` | 否 | 风格预设标识，未设置时为 null |
-| `referenceAssetIds` | `string[]` | 否 | 参考素材 ID 列表（图生视频用） |
-| `authorId` | `string` | 是 | 作者用户 ID |
-| `authorName` | `string` | 否 | 作者昵称快照（改名不回填历史） |
-| `favorited` | `boolean` | 否 | 当前账号是否已收藏 |
-| `downloadable` | `boolean` | 否 | 是否允许下载：已成功且有产物 |
-| `errorMessage` | `string \| null` | 否 | 失败原因，成功时为 null |
-| `createdAt` | `string` | 是 | 创建时间（UTC） |
-| `updatedAt` | `string` | 是 | 更新时间（UTC） |
-| `startedAt` | `string \| null` | 否 | 开始生成时间，未开始为 null |
+| `code` | `number` | 否 | 0 表示成功，其余为业务错误码 |
+| `message` | `string` | 否 |  |
+| `data` | `modules__task__schema__TaskOut \| null` | 否 |  |
 
 #### `POST /api/v1/tasks/{task_id}/favorite`
 
@@ -1281,30 +1234,13 @@ Authorization: Bearer <accessToken>
 |---|---|---|---|---|
 | `task_id` | path | `string` | 是 | 任务 ID |
 
-**响应** `ApiResponse<TaskOut>`（前端取 `res.data`）
+**响应** `ApiResponse<core__response__ApiResponse_TaskOut___2>`（前端取 `res.data`）
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `id` | `string` | 是 | 任务 ID |
-| `title` | `string` | 是 | 标题 |
-| `status` | `TaskStatus` | 是 | 状态：queued 排队 / running 生成中 / completed 完成 / failed 失败 |
-| `model` | `string` | 是 | 模型展示名，如 `Seedance 2.5` |
-| `modelId` | `string \| null` | 否 | 模型目录 id，与 `GET /api/v1/models` 的 `id` 对齐 |
-| `durationSec` | `number` | 是 | 视频时长（秒） |
-| `aspectRatio` | `AspectRatio` | 是 | 画幅比例 |
-| `progress` | `number` | 否 | 生成进度 0-100 |
-| `coverUrl` | `string` | 否 | 封面图 URL，未生成完时为空串 |
-| `prompt` | `string` | 否 | 画面描述 |
-| `stylePreset` | `string \| null` | 否 | 风格预设标识，未设置时为 null |
-| `referenceAssetIds` | `string[]` | 否 | 参考素材 ID 列表（图生视频用） |
-| `authorId` | `string` | 是 | 作者用户 ID |
-| `authorName` | `string` | 否 | 作者昵称快照（改名不回填历史） |
-| `favorited` | `boolean` | 否 | 当前账号是否已收藏 |
-| `downloadable` | `boolean` | 否 | 是否允许下载：已成功且有产物 |
-| `errorMessage` | `string \| null` | 否 | 失败原因，成功时为 null |
-| `createdAt` | `string` | 是 | 创建时间（UTC） |
-| `updatedAt` | `string` | 是 | 更新时间（UTC） |
-| `startedAt` | `string \| null` | 否 | 开始生成时间，未开始为 null |
+| `code` | `number` | 否 | 0 表示成功，其余为业务错误码 |
+| `message` | `string` | 否 |  |
+| `data` | `modules__task__schema__TaskOut \| null` | 否 |  |
 
 #### `POST /api/v1/tasks/{task_id}/retry`
 
@@ -1341,12 +1277,13 @@ Authorization: Bearer <accessToken>
 |---|---|---|---|---|
 | `capability` | query | `Capability | null` | 否 | 能力筛选：video / image / audio |
 
-**响应** `ApiResponse<ModelListOut>`（前端取 `res.data`）
+**响应** `ApiResponse<core__response__ApiResponse_ModelListOut___1>`（前端取 `res.data`）
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `items` | `ModelOut[]` | 否 |  |
-| `total` | `number` | 否 |  |
+| `code` | `number` | 否 | 0 表示成功，其余为业务错误码 |
+| `message` | `string` | 否 |  |
+| `data` | `modules__catalog__schema__ModelListOut \| null` | 否 |  |
 
 ### 4.4 素材（12 个）
 
@@ -1702,8 +1639,9 @@ Authorization: Bearer <accessToken>
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `prompt` | `string` | 是 | 画面描述 |
-| `size` | `string` | 否 | 宽x高，如 `1024x1536` |
-| `count` | `number` | 否 | 张数 |
+| `size` | `string` | 否 | 宽x高，如 `1024x1536`；留空取模型 `paramSchema.size.default` |
+| `count` | `number` | 否 | 张数；`0` 表示取模型 `paramSchema.count.default`，上限以模型声明为准 |
+| `params` | `Record<string, unknown>` | 否 | 模型声明的其他参数，键与 `GET /models` 返回的 `paramSchema` 一致（如 `quality` / `seed`）。未声明的键会被 400 拒绝，避免打错字被静默忽略；与顶层 `size` / `count` 重复时以顶层为准 |
 | `model` | `string` | 否 | 模型 id，留空取默认 |
 
 **响应** `ApiResponse<ImageJobOut>`（前端取 `res.data`）
@@ -1715,6 +1653,7 @@ Authorization: Bearer <accessToken>
 | `prompt` | `string` | 是 | 画面描述 |
 | `size` | `string` | 是 | 尺寸，如 `1024x1024` |
 | `count` | `number` | 否 | 一次生成的张数 |
+| `params` | `Record<string, unknown>` | 否 | 模型额外参数（不含 size / count），键按提交时的模型 `paramSchema` |
 | `status` | `string` | 否 | 状态：`queued` / `running` / `succeeded` / `failed` |
 | `progress` | `number` | 否 | 进度 0-100 |
 | `model` | `string` | 否 | 模型可读名 |
@@ -2645,7 +2584,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 
 **响应** `ApiResponse<unknown>`（前端取 `res.data`）
 
-### 4.11 资产库（35 个）
+### 4.11 资产库（37 个）
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
@@ -2657,6 +2596,8 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `DELETE` | `/api/v1/library/assets/{asset_id}` | 移入回收站（软删，可恢复） | 🔒 |
 | `GET` | `/api/v1/library/assets/{asset_id}` | 资产详情（含标签与生成参数） | 🔒 |
 | `GET` | `/api/v1/library/assets/{asset_id}/file` | 下载或预览原文件 | 🔒 |
+| `GET` | `/api/v1/library/assets/{asset_id}/preview` | 受控公共预览（视频给派生流） | 🔒 |
+| `GET` | `/api/v1/library/assets/{asset_id}/stream` | 浏览器兼容视频预览（派生流，不改原片） | 🔒 |
 | `GET` | `/api/v1/library/assets/{asset_id}/thumbnail` | 读取缩略图 | 🔒 |
 | `GET` | `/api/v1/library/downloads` | 我最近发起的打包任务 | 🔒 |
 | `POST` | `/api/v1/library/downloads` | 发起批量打包（异步，返回任务） | 🔒 |
@@ -2702,6 +2643,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `tagIds` | query | `string[] | null` | 否 |  |
 | `keyword` | query | `string` | 否 |  |
 | `sort` | query | `AssetSort` | 否 |  |
+| `origin` | query | `LibraryAssetOrigin[] | null` | 否 |  |
 | `page` | query | `number` | 否 | 页码，从 1 开始 |
 | `pageSize` | query | `number` | 否 | 每页条数 |
 
@@ -2755,6 +2697,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `kind` | `GenerationKind` | 是 |  |
 | `name` | `string` | 否 |  |
 | `storageKey` | `string` | 否 |  |
+| `archiveKey` | `string` | 否 |  |
 | `sourceUrl` | `string` | 否 |  |
 | `mimeType` | `string` | 否 |  |
 | `sizeBytes` | `number` | 否 |  |
@@ -2802,6 +2745,11 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `state` | `LibraryAssetState` | 是 |  |
 | `stateVersion` | `number` | 否 |  |
 | `coverUrl` | `string \| null` | 否 |  |
+| `url` | `string` | 否 |  |
+| `previewUrl` | `string \| null` | 否 |  |
+| `streamUrl` | `string \| null` | 否 |  |
+| `width` | `number \| null` | 否 |  |
+| `height` | `number \| null` | 否 |  |
 | `groupIds` | `string[]` | 否 |  |
 | `tags` | `LibraryTagOut[]` | 否 |  |
 | `trashReason` | `string \| null` | 否 |  |
@@ -2843,6 +2791,11 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `state` | `LibraryAssetState` | 是 |  |
 | `stateVersion` | `number` | 否 |  |
 | `coverUrl` | `string \| null` | 否 |  |
+| `url` | `string` | 否 |  |
+| `previewUrl` | `string \| null` | 否 |  |
+| `streamUrl` | `string \| null` | 否 |  |
+| `width` | `number \| null` | 否 |  |
+| `height` | `number \| null` | 否 |  |
 | `groupIds` | `string[]` | 否 |  |
 | `tags` | `LibraryTagOut[]` | 否 |  |
 | `trashReason` | `string \| null` | 否 |  |
@@ -2904,6 +2857,11 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `state` | `LibraryAssetState` | 是 |  |
 | `stateVersion` | `number` | 否 |  |
 | `coverUrl` | `string \| null` | 否 |  |
+| `url` | `string` | 否 |  |
+| `previewUrl` | `string \| null` | 否 |  |
+| `streamUrl` | `string \| null` | 否 |  |
+| `width` | `number \| null` | 否 |  |
+| `height` | `number \| null` | 否 |  |
 | `groupIds` | `string[]` | 否 |  |
 | `tags` | `LibraryTagOut[]` | 否 |  |
 | `trashReason` | `string \| null` | 否 |  |
@@ -2924,6 +2882,35 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 #### `GET /api/v1/library/assets/{asset_id}/file`
 
 **下载或预览原文件**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `asset_id` | path | `string` | 是 |  |
+
+**响应** `ApiResponse<unknown>`（前端取 `res.data`）
+
+#### `GET /api/v1/library/assets/{asset_id}/preview`
+
+**受控公共预览（视频给派生流）**
+
+旧库把「非本人的公共原片」的 url 改写成 `/assets/{id}/preview`；v2 补同款。
+
+可见性仍由 `load_visible` 判定，这个端点不额外发权限，只负责「视频别给原件」。
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `asset_id` | path | `string` | 是 |  |
+
+**响应** `ApiResponse<unknown>`（前端取 `res.data`）
+
+#### `GET /api/v1/library/assets/{asset_id}/stream`
+
+**浏览器兼容视频预览（派生流，不改原片）**
+
+模板库悬停/播放用的取件口。旧库在 `/assets/{id}/stream`，v2 补在同位置。
+
+`/file` 给的是原件，`/stream` 给的是 H.264 8-bit 派生版，两者不能互相代替：
+10-bit 原片 Chrome 解不了，而把原件当「预览」发给别人等于放行整份下载。
 
 | 参数 | 位置 | 类型 | 必填 | 说明 |
 |---|---|---|---|---|
@@ -3043,6 +3030,11 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `state` | `LibraryAssetState` | 是 |  |
 | `stateVersion` | `number` | 否 |  |
 | `coverUrl` | `string \| null` | 否 |  |
+| `url` | `string` | 否 |  |
+| `previewUrl` | `string \| null` | 否 |  |
+| `streamUrl` | `string \| null` | 否 |  |
+| `width` | `number \| null` | 否 |  |
+| `height` | `number \| null` | 否 |  |
 | `groupIds` | `string[]` | 否 |  |
 | `tags` | `LibraryTagOut[]` | 否 |  |
 | `trashReason` | `string \| null` | 否 |  |
@@ -3093,6 +3085,11 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `state` | `LibraryAssetState` | 是 |  |
 | `stateVersion` | `number` | 否 |  |
 | `coverUrl` | `string \| null` | 否 |  |
+| `url` | `string` | 否 |  |
+| `previewUrl` | `string \| null` | 否 |  |
+| `streamUrl` | `string \| null` | 否 |  |
+| `width` | `number \| null` | 否 |  |
+| `height` | `number \| null` | 否 |  |
 | `groupIds` | `string[]` | 否 |  |
 | `tags` | `LibraryTagOut[]` | 否 |  |
 | `trashReason` | `string \| null` | 否 |  |
@@ -3199,6 +3196,11 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `state` | `LibraryAssetState` | 是 |  |
 | `stateVersion` | `number` | 否 |  |
 | `coverUrl` | `string \| null` | 否 |  |
+| `url` | `string` | 否 |  |
+| `previewUrl` | `string \| null` | 否 |  |
+| `streamUrl` | `string \| null` | 否 |  |
+| `width` | `number \| null` | 否 |  |
+| `height` | `number \| null` | 否 |  |
 | `groupIds` | `string[]` | 否 |  |
 | `tags` | `LibraryTagOut[]` | 否 |  |
 | `trashReason` | `string \| null` | 否 |  |
@@ -3242,6 +3244,11 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `state` | `LibraryAssetState` | 是 |  |
 | `stateVersion` | `number` | 否 |  |
 | `coverUrl` | `string \| null` | 否 |  |
+| `url` | `string` | 否 |  |
+| `previewUrl` | `string \| null` | 否 |  |
+| `streamUrl` | `string \| null` | 否 |  |
+| `width` | `number \| null` | 否 |  |
+| `height` | `number \| null` | 否 |  |
 | `groupIds` | `string[]` | 否 |  |
 | `tags` | `LibraryTagOut[]` | 否 |  |
 | `trashReason` | `string \| null` | 否 |  |
@@ -3295,6 +3302,11 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `state` | `LibraryAssetState` | 是 |  |
 | `stateVersion` | `number` | 否 |  |
 | `coverUrl` | `string \| null` | 否 |  |
+| `url` | `string` | 否 |  |
+| `previewUrl` | `string \| null` | 否 |  |
+| `streamUrl` | `string \| null` | 否 |  |
+| `width` | `number \| null` | 否 |  |
+| `height` | `number \| null` | 否 |  |
 | `groupIds` | `string[]` | 否 |  |
 | `tags` | `LibraryTagOut[]` | 否 |  |
 | `trashReason` | `string \| null` | 否 |  |
@@ -3337,6 +3349,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `tagIds` | query | `string[] | null` | 否 |  |
 | `keyword` | query | `string` | 否 |  |
 | `includePacks` | query | `boolean` | 否 |  |
+| `origin` | query | `LibraryAssetOrigin[] | null` | 否 |  |
 | `page` | query | `number` | 否 | 页码，从 1 开始 |
 | `pageSize` | query | `number` | 否 | 每页条数 |
 
@@ -3550,6 +3563,11 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `state` | `LibraryAssetState` | 是 |  |
 | `stateVersion` | `number` | 否 |  |
 | `coverUrl` | `string \| null` | 否 |  |
+| `url` | `string` | 否 |  |
+| `previewUrl` | `string \| null` | 否 |  |
+| `streamUrl` | `string \| null` | 否 |  |
+| `width` | `number \| null` | 否 |  |
+| `height` | `number \| null` | 否 |  |
 | `groupIds` | `string[]` | 否 |  |
 | `tags` | `LibraryTagOut[]` | 否 |  |
 | `trashReason` | `string \| null` | 否 |  |
@@ -3665,6 +3683,11 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `state` | `LibraryAssetState` | 是 |  |
 | `stateVersion` | `number` | 否 |  |
 | `coverUrl` | `string \| null` | 否 |  |
+| `url` | `string` | 否 |  |
+| `previewUrl` | `string \| null` | 否 |  |
+| `streamUrl` | `string \| null` | 否 |  |
+| `width` | `number \| null` | 否 |  |
+| `height` | `number \| null` | 否 |  |
 | `groupIds` | `string[]` | 否 |  |
 | `tags` | `LibraryTagOut[]` | 否 |  |
 | `trashReason` | `string \| null` | 否 |  |
@@ -3681,6 +3704,117 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `reviewedAt` | `string \| null` | 否 |  |
 | `rejectReason` | `string \| null` | 否 |  |
 | `trashedFromState` | `string \| null` | 否 |  |
+
+### 4.12 模型驱动（6 个）
+
+| 方法 | 路径 | 说明 | 鉴权 |
+|---|---|---|---|
+| `GET` | `/api/v1/model-driver/drivers` | 已自动载入的模型驱动清单 | 🔒 |
+| `GET` | `/api/v1/model-driver/models` | 统一生成接口可用的模型目录 | 🔒 |
+| `POST` | `/api/v1/model-driver/tasks` | 提交一次统一生成任务 | 🔒 |
+| `GET` | `/api/v1/model-driver/tasks/{task_id}` | 查询统一生成任务 | 🔒 |
+| `POST` | `/api/v1/model-driver/tasks/{task_id}/cancel` | 取消生成任务 | 🔒 |
+| `POST` | `/api/v1/model-driver/tasks/{task_id}/retry` | 人工重试失败的生成任务 | 🔒 |
+
+#### `GET /api/v1/model-driver/drivers`
+
+**已自动载入的模型驱动清单**
+
+**响应** `ApiResponse<DriverListOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `items` | `DriverOut[]` | 否 |  |
+| `total` | `number` | 否 |  |
+| `errors` | `string[]` | 否 |  |
+
+#### `GET /api/v1/model-driver/models`
+
+**统一生成接口可用的模型目录**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `capability` | query | `string` | 否 | 能力筛选：video / image / audio |
+
+**响应** `ApiResponse<core__response__ApiResponse_ModelListOut___2>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `code` | `number` | 否 | 0 表示成功，其余为业务错误码 |
+| `message` | `string` | 否 |  |
+| `data` | `modules__model_driver__schema__ModelListOut \| null` | 否 |  |
+
+#### `POST /api/v1/model-driver/tasks`
+
+**提交一次统一生成任务**
+
+**请求体** `SubmitIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `model` | `string` | 是 |  |
+| `prompt` | `string` | 是 |  |
+| `name` | `string` | 否 |  |
+| `params` | `Record<string, unknown>` | 否 |  |
+| `referenceUrls` | `string[]` | 否 |  |
+| `source` | `string` | 否 |  |
+
+**响应** `ApiResponse<core__response__ApiResponse_TaskOut___1>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `code` | `number` | 否 | 0 表示成功，其余为业务错误码 |
+| `message` | `string` | 否 |  |
+| `data` | `modules__model_driver__schema__TaskOut \| null` | 否 |  |
+
+#### `GET /api/v1/model-driver/tasks/{task_id}`
+
+**查询统一生成任务**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `task_id` | path | `string` | 是 |  |
+
+**响应** `ApiResponse<core__response__ApiResponse_TaskOut___1>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `code` | `number` | 否 | 0 表示成功，其余为业务错误码 |
+| `message` | `string` | 否 |  |
+| `data` | `modules__model_driver__schema__TaskOut \| null` | 否 |  |
+
+#### `POST /api/v1/model-driver/tasks/{task_id}/cancel`
+
+**取消生成任务**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `task_id` | path | `string` | 是 |  |
+
+**响应** `ApiResponse<core__response__ApiResponse_TaskOut___1>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `code` | `number` | 否 | 0 表示成功，其余为业务错误码 |
+| `message` | `string` | 否 |  |
+| `data` | `modules__model_driver__schema__TaskOut \| null` | 否 |  |
+
+#### `POST /api/v1/model-driver/tasks/{task_id}/retry`
+
+**人工重试失败的生成任务**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `task_id` | path | `string` | 是 |  |
+| `confirmCharged` | query | `boolean` | 否 | 确认供应商可能已计费 |
+
+**响应** `ApiResponse<core__response__ApiResponse_TaskOut___1>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `code` | `number` | 否 | 0 表示成功，其余为业务错误码 |
+| `message` | `string` | 否 |  |
+| `data` | `modules__model_driver__schema__TaskOut \| null` | 否 |  |
 
 ---
 
@@ -3881,6 +4015,28 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `reason` | `string` | 否 |  |
 | `expectedVersion` | `number` | 否 |  |
 
+### `DriverListOut`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `items` | `DriverOut[]` | 否 |  |
+| `total` | `number` | 否 |  |
+| `errors` | `string[]` | 否 |  |
+
+### `DriverOut`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `name` | `string` | 是 |  |
+| `label` | `string` | 是 |  |
+| `version` | `string` | 是 |  |
+| `path` | `string` | 是 |  |
+| `capabilities` | `string[]` | 否 |  |
+| `modelCount` | `number` | 否 |  |
+| `supportsPoll` | `boolean` | 否 |  |
+| `loaded` | `boolean` | 否 |  |
+| `error` | `string` | 否 |  |
+
 ### `EffectivePermissionsOut`
 
 某用户的权限来源。前端只读展示，**判定永远走 effective**。
@@ -3980,8 +4136,13 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 
 生成结果入库（也经 `library-ingest` 注入口供后端模块调用）。
 
-`storageKey` 与 `sourceUrl` 二选一：**必须能物化字节**，只存外部链接的
-详情页与下载都会裂（链接会过期）。两个都给时优先 `storageKey`。
+字节来源三选一，**必须能物化**：`storageKey`（主对象存储）、
+`archiveKey`（归档存储，模板库替换成片用）、`sourceUrl`（服务端下载）。
+只存外部链接的详情页与下载都会裂（链接会过期）。优先级按上面顺序，
+同时给多个时取靠前的那个。
+
+`archiveKey` 只应由受信任的服务端调用方填写：它指向归档盘里的对象，
+端点本身仍由 `library:generation:ingest` 守护，普通上传权限调不动。
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
@@ -3991,6 +4152,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `kind` | `GenerationKind` | 是 |  |
 | `name` | `string` | 否 |  |
 | `storageKey` | `string` | 否 |  |
+| `archiveKey` | `string` | 否 |  |
 | `sourceUrl` | `string` | 否 |  |
 | `mimeType` | `string` | 否 |  |
 | `sizeBytes` | `number` | 否 |  |
@@ -4002,8 +4164,9 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `prompt` | `string` | 是 | 画面描述 |
-| `size` | `string` | 否 | 宽x高，如 `1024x1536` |
-| `count` | `number` | 否 | 张数 |
+| `size` | `string` | 否 | 宽x高，如 `1024x1536`；留空取模型 `paramSchema.size.default` |
+| `count` | `number` | 否 | 张数；`0` 表示取模型 `paramSchema.count.default`，上限以模型声明为准 |
+| `params` | `Record<string, unknown>` | 否 | 模型声明的其他参数，键与 `GET /models` 返回的 `paramSchema` 一致（如 `quality` / `seed`）。未声明的键会被 400 拒绝，避免打错字被静默忽略；与顶层 `size` / `count` 重复时以顶层为准 |
 | `model` | `string` | 否 | 模型 id，留空取默认 |
 
 ### `GenerationKind`（枚举）
@@ -4109,6 +4272,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `prompt` | `string` | 是 | 画面描述 |
 | `size` | `string` | 是 | 尺寸，如 `1024x1024` |
 | `count` | `number` | 否 | 一次生成的张数 |
+| `params` | `Record<string, unknown>` | 否 | 模型额外参数（不含 size / count），键按提交时的模型 `paramSchema` |
 | `status` | `string` | 否 | 状态：`queued` / `running` / `succeeded` / `failed` |
 | `progress` | `number` | 否 | 进度 0-100 |
 | `model` | `string` | 否 | 模型可读名 |
@@ -4196,6 +4360,11 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `state` | `LibraryAssetState` | 是 |  |
 | `stateVersion` | `number` | 否 |  |
 | `coverUrl` | `string \| null` | 否 |  |
+| `url` | `string` | 否 |  |
+| `previewUrl` | `string \| null` | 否 |  |
+| `streamUrl` | `string \| null` | 否 |  |
+| `width` | `number \| null` | 否 |  |
+| `height` | `number \| null` | 否 |  |
 | `groupIds` | `string[]` | 否 |  |
 | `tags` | `LibraryTagOut[]` | 否 |  |
 | `trashReason` | `string \| null` | 否 |  |
@@ -4217,9 +4386,17 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 
 取值：`video`、`audio`、`image`、`pack`
 
+### `LibraryAssetOrigin`（枚举）
+
+取值：`upload`、`generated`、`template_source`、`imported`、`pack`
+
 ### `LibraryAssetOut`
 
-列表项。字段对齐 `library_assets` 表，M1 建表后不再改形状。
+列表项。字段对齐 `library_assets` 表，M1 建表后不再**改**形状。
+
+后面补的五个字段是「只增不改」：取件地址与媒体规格本来就在表里/由 id 决定，
+以前让前端自己拼 URL、自己猜哪套库。模板库切换时前端只要改接口调用，
+不必在业务组件里补一段「按 id 拼 /file」的适配代码。
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
@@ -4237,6 +4414,11 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `state` | `LibraryAssetState` | 是 |  |
 | `stateVersion` | `number` | 否 |  |
 | `coverUrl` | `string \| null` | 否 |  |
+| `url` | `string` | 否 |  |
+| `previewUrl` | `string \| null` | 否 |  |
+| `streamUrl` | `string \| null` | 否 |  |
+| `width` | `number \| null` | 否 |  |
+| `height` | `number \| null` | 否 |  |
 | `groupIds` | `string[]` | 否 |  |
 | `tags` | `LibraryTagOut[]` | 否 |  |
 | `trashReason` | `string \| null` | 否 |  |
@@ -4414,25 +4596,6 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `createdAt` | `string` | 是 | 创建时间（UTC） |
 | `roles` | `RoleBriefOut[]` | 否 | 拥有的角色 |
 | `permissions` | `string[]` | 否 | 展开后的权限码；含 `*` 表示超级管理员 |
-
-### `ModelListOut`
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `items` | `ModelOut[]` | 否 |  |
-| `total` | `number` | 否 |  |
-
-### `ModelOut`
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `id` | `string` | 是 |  |
-| `label` | `string` | 是 |  |
-| `capability` | `Capability` | 是 |  |
-| `provider` | `string` | 是 |  |
-| `description` | `string` | 否 |  |
-| `paramSchema` | `Record<string, unknown>` | 否 |  |
-| `isDefault` | `boolean` | 否 |  |
 
 ### `PackAction`
 
@@ -4983,6 +5146,17 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `coverUrl` | `string` | 是 |  |
 | `createdAt` | `string` | 是 |  |
 
+### `SubmitIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `model` | `string` | 是 |  |
+| `prompt` | `string` | 是 |  |
+| `name` | `string` | 否 |  |
+| `params` | `Record<string, unknown>` | 否 |  |
+| `referenceUrls` | `string[]` | 否 |  |
+| `source` | `string` | 否 |  |
+
 ### `TagIn`
 
 | 字段 | 类型 | 必填 | 说明 |
@@ -5005,7 +5179,7 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `outputUrl` | `string \| null` | 否 | 替换成片预览和下载地址 |
 | `errorMessage` | `string \| null` | 否 | 失败或需处理原因 |
 | `detailUrl` | `string \| null` | 否 | 替换档案深链接 |
-| `video` | `TaskOut \| null` | 否 | 通用任务数据；替换任务为 null |
+| `video` | `modules__task__schema__TaskOut \| null` | 否 | 通用任务数据；替换任务为 null |
 
 ### `TaskFeedOut`
 
@@ -5033,39 +5207,12 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `items` | `TaskOut[]` | 否 |  |
+| `items` | `modules__task__schema__TaskOut[]` | 否 |  |
 | `total` | `number` | 否 |  |
 | `page` | `number` | 否 |  |
 | `pageSize` | `number` | 否 |  |
 | `stats` | `TaskStats` | 否 | 侧边栏角标用的分组计数 |
 | `canReadAll` | `boolean` | 否 | 当前账号能否查看他人任务；false 时前端应收起「全部」选项 |
-
-### `TaskOut`
-
-任务出参：字段名与前端 `VideoTask` 完全一致。
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `id` | `string` | 是 | 任务 ID |
-| `title` | `string` | 是 | 标题 |
-| `status` | `TaskStatus` | 是 | 状态：queued 排队 / running 生成中 / completed 完成 / failed 失败 |
-| `model` | `string` | 是 | 模型展示名，如 `Seedance 2.5` |
-| `modelId` | `string \| null` | 否 | 模型目录 id，与 `GET /api/v1/models` 的 `id` 对齐 |
-| `durationSec` | `number` | 是 | 视频时长（秒） |
-| `aspectRatio` | `AspectRatio` | 是 | 画幅比例 |
-| `progress` | `number` | 否 | 生成进度 0-100 |
-| `coverUrl` | `string` | 否 | 封面图 URL，未生成完时为空串 |
-| `prompt` | `string` | 否 | 画面描述 |
-| `stylePreset` | `string \| null` | 否 | 风格预设标识，未设置时为 null |
-| `referenceAssetIds` | `string[]` | 否 | 参考素材 ID 列表（图生视频用） |
-| `authorId` | `string` | 是 | 作者用户 ID |
-| `authorName` | `string` | 否 | 作者昵称快照（改名不回填历史） |
-| `favorited` | `boolean` | 否 | 当前账号是否已收藏 |
-| `downloadable` | `boolean` | 否 | 是否允许下载：已成功且有产物 |
-| `errorMessage` | `string \| null` | 否 | 失败原因，成功时为 null |
-| `createdAt` | `string` | 是 | 创建时间（UTC） |
-| `updatedAt` | `string` | 是 | 更新时间（UTC） |
-| `startedAt` | `string \| null` | 否 | 开始生成时间，未开始为 null |
 
 ### `TaskRetryOut`
 
@@ -5274,3 +5421,118 @@ mixedList 里的一项；下标 +1 就是 {{Mixed N}} 编号。
 | `pinned` | `boolean` | 否 |  |
 | `createdAt` | `string` | 是 |  |
 | `updatedAt` | `string` | 是 |  |
+
+### `core__response__ApiResponse_ModelListOut___1`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `code` | `number` | 否 | 0 表示成功，其余为业务错误码 |
+| `message` | `string` | 否 |  |
+| `data` | `modules__catalog__schema__ModelListOut \| null` | 否 |  |
+
+### `core__response__ApiResponse_ModelListOut___2`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `code` | `number` | 否 | 0 表示成功，其余为业务错误码 |
+| `message` | `string` | 否 |  |
+| `data` | `modules__model_driver__schema__ModelListOut \| null` | 否 |  |
+
+### `core__response__ApiResponse_TaskOut___1`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `code` | `number` | 否 | 0 表示成功，其余为业务错误码 |
+| `message` | `string` | 否 |  |
+| `data` | `modules__model_driver__schema__TaskOut \| null` | 否 |  |
+
+### `core__response__ApiResponse_TaskOut___2`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `code` | `number` | 否 | 0 表示成功，其余为业务错误码 |
+| `message` | `string` | 否 |  |
+| `data` | `modules__task__schema__TaskOut \| null` | 否 |  |
+
+### `modules__catalog__schema__ModelListOut`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `items` | `modules__catalog__schema__ModelOut[]` | 否 |  |
+| `total` | `number` | 否 |  |
+
+### `modules__catalog__schema__ModelOut`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `label` | `string` | 是 |  |
+| `capability` | `Capability` | 是 |  |
+| `provider` | `string` | 是 |  |
+| `description` | `string` | 否 |  |
+| `paramSchema` | `Record<string, unknown>` | 否 |  |
+| `isDefault` | `boolean` | 否 |  |
+
+### `modules__model_driver__schema__ModelListOut`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `items` | `modules__model_driver__schema__ModelOut[]` | 否 |  |
+| `total` | `number` | 否 |  |
+
+### `modules__model_driver__schema__ModelOut`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `label` | `string` | 是 |  |
+| `capability` | `string` | 是 |  |
+| `provider` | `string` | 是 |  |
+| `description` | `string` | 否 |  |
+| `paramSchema` | `Record<string, unknown>` | 否 |  |
+
+### `modules__model_driver__schema__TaskOut`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `name` | `string` | 否 |  |
+| `model` | `string` | 是 |  |
+| `capability` | `string` | 是 |  |
+| `status` | `string` | 是 |  |
+| `progress` | `number` | 否 |  |
+| `outputUrl` | `string \| null` | 否 |  |
+| `coverUrl` | `string \| null` | 否 |  |
+| `error` | `string \| null` | 否 |  |
+| `externalId` | `string \| null` | 否 |  |
+| `ownerId` | `string` | 否 |  |
+| `source` | `string` | 否 |  |
+| `submitAttempts` | `number` | 否 |  |
+| `createdAt` | `string \| null` | 否 |  |
+
+### `modules__task__schema__TaskOut`
+
+任务出参：字段名与前端 `VideoTask` 完全一致。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 | 任务 ID |
+| `title` | `string` | 是 | 标题 |
+| `status` | `TaskStatus` | 是 | 状态：queued 排队 / running 生成中 / completed 完成 / failed 失败 |
+| `model` | `string` | 是 | 模型展示名，如 `Seedance 2.5` |
+| `modelId` | `string \| null` | 否 | 模型目录 id，与 `GET /api/v1/models` 的 `id` 对齐 |
+| `durationSec` | `number` | 是 | 视频时长（秒） |
+| `aspectRatio` | `AspectRatio` | 是 | 画幅比例 |
+| `progress` | `number` | 否 | 生成进度 0-100 |
+| `coverUrl` | `string` | 否 | 封面图 URL，未生成完时为空串 |
+| `prompt` | `string` | 否 | 画面描述 |
+| `stylePreset` | `string \| null` | 否 | 风格预设标识，未设置时为 null |
+| `referenceAssetIds` | `string[]` | 否 | 参考素材 ID 列表（图生视频用） |
+| `authorId` | `string` | 是 | 作者用户 ID |
+| `authorName` | `string` | 否 | 作者昵称快照（改名不回填历史） |
+| `favorited` | `boolean` | 否 | 当前账号是否已收藏 |
+| `downloadable` | `boolean` | 否 | 是否允许下载：已成功且有产物 |
+| `errorMessage` | `string \| null` | 否 | 失败原因，成功时为 null |
+| `createdAt` | `string` | 是 | 创建时间（UTC） |
+| `updatedAt` | `string` | 是 | 更新时间（UTC） |
+| `startedAt` | `string \| null` | 否 | 开始生成时间，未开始为 null |

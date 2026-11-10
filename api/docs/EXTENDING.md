@@ -491,6 +491,17 @@ app create-admin --username admin      # 交互式输入密码；--password 可�
 
 ## 3. 案例：接入一个新的模型供应商
 
+> **先选接入方式**：如果只是想「丢一个 Python 文件就自动生效」，或者要让其他
+> 业务模块通过统一接口发起生成，走 **模型驱动模块**——见
+> `docs/MODEL_DRIVER_STANDARD.md`，不需要改 `.env`、不需要本节的配置清单。
+> 本节是另一条并存的老路径（`infra/ai/<name>.py` + `AI_PROVIDERS`），
+> 适合框架基础设施层的供应商适配；两条路径共用 `ModelProvider` 协议与
+> `ModelRouter`，模型 id 撞车会被报出来。
+>
+> **现成例子**：agnes 就走驱动那条路（`modules/model_driver/drivers/agnes.py`），
+> 支持文生图 / 图生图 / 多图合成，可直接当模板读。它**不**在 `AI_PROVIDERS` 里——
+> 把驱动名再写进那张清单，启动时会因「同名但模型清单不同」或重复注册而报错。
+
 假设要接火山引擎。
 
 **① 新建 `infra/ai/volcengine.py`**
@@ -588,7 +599,7 @@ class VolcengineSettings(DriverSettings):
 
 多数图片厂商是同步的：一个 POST 等十几秒，直接返回图片地址。这种 provider 让
 `submit` 返回 `GenerationProgress` 而不是任务 ID，框架拿到终态就不再轮询
-（见 `infra/ai/agnes.py`）：
+（见 `modules/model_driver/drivers/agnes.py`）：
 
 ```python
 async def submit(self, request: GenerationRequest) -> GenerationProgress:
@@ -1216,12 +1227,19 @@ return Served.remote(url, "text/csv").response()
 
 ## 5.5 `param_schema` 是契约，不是注释
 
-`ModelSpec.param_schema` 有两个消费者，别只当它是给前端渲染表单的元数据：
+`ModelSpec.param_schema` 有三个消费者，别只当它是给前端渲染表单的元数据：
 
-1. **前端**拿它渲染下拉与输入范围（`GET /models`）；
-2. **受理方**（`ImageService._validate_params` 这一类）拿它在**建记录之前**校验入参。
+1. **前端**拿它**通用渲染**表单（生图页：`entities/model/lib/paramForm.ts`，
+   枚举→下拉、有界整数→档位、大范围数值→输入框、布尔→开关、文本→输入框）；
+2. **受理方**（`ImageService._validate_params`）拿它在**建记录之前**校验入参，
+   并把前端传来的字符串收敛成声明的类型；
+3. **落库与提交**：`size` / `count` 进独立列，其余键进 `image_jobs.params_json`，
+   重试时从库里重建请求（不存就会静默退回默认参数）。
 
-所以它必须等于供应商的**真实能力**。写宽了不是「兼容性更好」，是承诺一个做不到的事：
+所以新增一个参数**不需要改前端**：声明 `quality`，页面自动多一个控件、接口
+自动校验、额外键自动进 `params`。前提是键名不撞接口的顶层字段（`size` / `count`）。
+
+它必须等于供应商的**真实能力**。写宽了不是「兼容性更好」，是承诺一个做不到的事：
 `agnes` 的 `count` 曾经声明 `max: 4`，供应商只接受 `n=1`，于是「选 4 张」先 201 受理、
 再异步失败——用户看到的是转圈，失败原因躺在 `errorMessage` 里没人渲染。
 

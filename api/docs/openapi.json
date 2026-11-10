@@ -711,7 +711,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ApiResponse_ModelListOut_"
+                  "$ref": "#/components/schemas/core__response__ApiResponse_ModelListOut___1"
                 }
               }
             }
@@ -3192,6 +3192,25 @@
             }
           },
           {
+            "name": "origin",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/LibraryAssetOrigin"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Origin"
+            }
+          },
+          {
             "name": "page",
             "in": "query",
             "required": false,
@@ -3338,6 +3357,25 @@
               "type": "boolean",
               "default": true,
               "title": "Includepacks"
+            }
+          },
+          {
+            "name": "origin",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/LibraryAssetOrigin"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Origin"
             }
           },
           {
@@ -3851,6 +3889,98 @@
         ],
         "summary": "读取缩略图",
         "operationId": "asset_thumbnail_api_v1_library_assets__asset_id__thumbnail_get",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "asset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Asset Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/library/assets/{asset_id}/stream": {
+      "get": {
+        "tags": [
+          "资产库"
+        ],
+        "summary": "浏览器兼容视频预览（派生流，不改原片）",
+        "description": "模板库悬停/播放用的取件口。旧库在 `/assets/{id}/stream`，v2 补在同位置。\n\n`/file` 给的是原件，`/stream` 给的是 H.264 8-bit 派生版，两者不能互相代替：\n10-bit 原片 Chrome 解不了，而把原件当「预览」发给别人等于放行整份下载。",
+        "operationId": "asset_stream_api_v1_library_assets__asset_id__stream_get",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "asset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Asset Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/library/assets/{asset_id}/preview": {
+      "get": {
+        "tags": [
+          "资产库"
+        ],
+        "summary": "受控公共预览（视频给派生流）",
+        "description": "旧库把「非本人的公共原片」的 url 改写成 `/assets/{id}/preview`；v2 补同款。\n\n可见性仍由 `load_visible` 判定，这个端点不额外发权限，只负责「视频别给原件」。",
+        "operationId": "asset_preview_api_v1_library_assets__asset_id__preview_get",
         "security": [
           {
             "bearerAuth": []
@@ -4999,6 +5129,281 @@
         }
       }
     },
+    "/api/v1/model-driver/drivers": {
+      "get": {
+        "tags": [
+          "模型驱动"
+        ],
+        "summary": "已自动载入的模型驱动清单",
+        "operationId": "list_drivers_api_v1_model_driver_drivers_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_DriverListOut_"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/model-driver/models": {
+      "get": {
+        "tags": [
+          "模型驱动"
+        ],
+        "summary": "统一生成接口可用的模型目录",
+        "operationId": "list_models_api_v1_model_driver_models_get",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "capability",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "能力筛选：video / image / audio",
+              "default": "",
+              "title": "Capability"
+            },
+            "description": "能力筛选：video / image / audio"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/core__response__ApiResponse_ModelListOut___2"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/model-driver/tasks": {
+      "post": {
+        "tags": [
+          "模型驱动"
+        ],
+        "summary": "提交一次统一生成任务",
+        "operationId": "submit_task_api_v1_model_driver_tasks_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubmitIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/core__response__ApiResponse_TaskOut___1"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/model-driver/tasks/{task_id}": {
+      "get": {
+        "tags": [
+          "模型驱动"
+        ],
+        "summary": "查询统一生成任务",
+        "operationId": "get_task_api_v1_model_driver_tasks__task_id__get",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Task Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/core__response__ApiResponse_TaskOut___1"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/model-driver/tasks/{task_id}/cancel": {
+      "post": {
+        "tags": [
+          "模型驱动"
+        ],
+        "summary": "取消生成任务",
+        "operationId": "cancel_task_api_v1_model_driver_tasks__task_id__cancel_post",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Task Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/core__response__ApiResponse_TaskOut___1"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/model-driver/tasks/{task_id}/retry": {
+      "post": {
+        "tags": [
+          "模型驱动"
+        ],
+        "summary": "人工重试失败的生成任务",
+        "operationId": "retry_task_api_v1_model_driver_tasks__task_id__retry_post",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Task Id"
+            }
+          },
+          {
+            "name": "confirmCharged",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "确认供应商可能已计费",
+              "default": false,
+              "title": "Confirmcharged"
+            },
+            "description": "确认供应商可能已计费"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/core__response__ApiResponse_TaskOut___1"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/shots": {
       "get": {
         "tags": [
@@ -5372,7 +5777,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ApiResponse_TaskOut_"
+                  "$ref": "#/components/schemas/core__response__ApiResponse_TaskOut___2"
                 }
               }
             }
@@ -5514,7 +5919,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ApiResponse_TaskOut_"
+                  "$ref": "#/components/schemas/core__response__ApiResponse_TaskOut___2"
                 }
               }
             }
@@ -5571,7 +5976,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ApiResponse_TaskOut_"
+                  "$ref": "#/components/schemas/core__response__ApiResponse_TaskOut___2"
                 }
               }
             }
@@ -5670,7 +6075,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ApiResponse_TaskOut_"
+                  "$ref": "#/components/schemas/core__response__ApiResponse_TaskOut___2"
                 }
               }
             }
@@ -6888,6 +7293,33 @@
         "type": "object",
         "title": "ApiResponse[DownloadJobOut]"
       },
+      "ApiResponse_DriverListOut_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DriverListOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[DriverListOut]"
+      },
       "ApiResponse_EffectivePermissionsOut_": {
         "properties": {
           "code": {
@@ -7319,33 +7751,6 @@
         },
         "type": "object",
         "title": "ApiResponse[MeOut]"
-      },
-      "ApiResponse_ModelListOut_": {
-        "properties": {
-          "code": {
-            "type": "integer",
-            "title": "Code",
-            "description": "0 表示成功，其余为业务错误码",
-            "default": 0
-          },
-          "message": {
-            "type": "string",
-            "title": "Message",
-            "default": "OK"
-          },
-          "data": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/ModelListOut"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "type": "object",
-        "title": "ApiResponse[ModelListOut]"
       },
       "ApiResponse_NoneType_": {
         "properties": {
@@ -7853,33 +8258,6 @@
         },
         "type": "object",
         "title": "ApiResponse[TaskListOut]"
-      },
-      "ApiResponse_TaskOut_": {
-        "properties": {
-          "code": {
-            "type": "integer",
-            "title": "Code",
-            "description": "0 表示成功，其余为业务错误码",
-            "default": 0
-          },
-          "message": {
-            "type": "string",
-            "title": "Message",
-            "default": "OK"
-          },
-          "data": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/TaskOut"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "type": "object",
-        "title": "ApiResponse[TaskOut]"
       },
       "ApiResponse_TaskRetryOut_": {
         "properties": {
@@ -9063,6 +9441,86 @@
         "type": "object",
         "title": "DraftDecisionIn"
       },
+      "DriverListOut": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/DriverOut"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "default": 0
+          },
+          "errors": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Errors"
+          }
+        },
+        "type": "object",
+        "title": "DriverListOut"
+      },
+      "DriverOut": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "version": {
+            "type": "string",
+            "title": "Version"
+          },
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "capabilities": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Capabilities"
+          },
+          "modelCount": {
+            "type": "integer",
+            "title": "Modelcount",
+            "default": 0
+          },
+          "supportsPoll": {
+            "type": "boolean",
+            "title": "Supportspoll",
+            "default": false
+          },
+          "loaded": {
+            "type": "boolean",
+            "title": "Loaded",
+            "default": true
+          },
+          "error": {
+            "type": "string",
+            "title": "Error",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "label",
+          "version",
+          "path"
+        ],
+        "title": "DriverOut"
+      },
       "EffectivePermissionsOut": {
         "properties": {
           "team": {
@@ -9495,6 +9953,12 @@
             "title": "Storagekey",
             "default": ""
           },
+          "archiveKey": {
+            "type": "string",
+            "maxLength": 256,
+            "title": "Archivekey",
+            "default": ""
+          },
           "sourceUrl": {
             "type": "string",
             "maxLength": 1000,
@@ -9532,7 +9996,7 @@
           "kind"
         ],
         "title": "FromGenerationIn",
-        "description": "生成结果入库（也经 `library-ingest` 注入口供后端模块调用）。\n\n`storageKey` 与 `sourceUrl` 二选一：**必须能物化字节**，只存外部链接的\n详情页与下载都会裂（链接会过期）。两个都给时优先 `storageKey`。"
+        "description": "生成结果入库（也经 `library-ingest` 注入口供后端模块调用）。\n\n字节来源三选一，**必须能物化**：`storageKey`（主对象存储）、\n`archiveKey`（归档存储，模板库替换成片用）、`sourceUrl`（服务端下载）。\n只存外部链接的详情页与下载都会裂（链接会过期）。优先级按上面顺序，\n同时给多个时取靠前的那个。\n\n`archiveKey` 只应由受信任的服务端调用方填写：它指向归档盘里的对象，\n端点本身仍由 `library:generation:ingest` 守护，普通上传权限调不动。"
       },
       "GenerateImageIn": {
         "properties": {
@@ -9547,16 +10011,22 @@
             "type": "string",
             "maxLength": 32,
             "title": "Size",
-            "description": "宽x高，如 `1024x1536`",
-            "default": "1024x1024"
+            "description": "宽x高，如 `1024x1536`；留空取模型 `paramSchema.size.default`",
+            "default": ""
           },
           "count": {
             "type": "integer",
-            "maximum": 4.0,
-            "minimum": 1.0,
+            "maximum": 16.0,
+            "minimum": 0.0,
             "title": "Count",
-            "description": "张数",
-            "default": 1
+            "description": "张数；`0` 表示取模型 `paramSchema.count.default`，上限以模型声明为准",
+            "default": 0
+          },
+          "params": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Params",
+            "description": "模型声明的其他参数，键与 `GET /models` 返回的 `paramSchema` 一致（如 `quality` / `seed`）。未声明的键会被 400 拒绝，避免打错字被静默忽略；与顶层 `size` / `count` 重复时以顶层为准"
           },
           "model": {
             "type": "string",
@@ -9930,6 +10400,12 @@
             "description": "一次生成的张数",
             "default": 1
           },
+          "params": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Params",
+            "description": "模型额外参数（不含 size / count），键按提交时的模型 `paramSchema`"
+          },
           "status": {
             "type": "string",
             "title": "Status",
@@ -10224,6 +10700,55 @@
             ],
             "title": "Coverurl"
           },
+          "url": {
+            "type": "string",
+            "title": "Url",
+            "default": ""
+          },
+          "previewUrl": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previewurl"
+          },
+          "streamUrl": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Streamurl"
+          },
+          "width": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Width"
+          },
+          "height": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Height"
+          },
           "groupIds": {
             "items": {
               "type": "string"
@@ -10400,6 +10925,18 @@
         "title": "LibraryAssetKind",
         "description": "资产类型。`pack` 是封装，成员关系在 `library_pack_items`。"
       },
+      "LibraryAssetOrigin": {
+        "type": "string",
+        "enum": [
+          "upload",
+          "generated",
+          "template_source",
+          "imported",
+          "pack"
+        ],
+        "title": "LibraryAssetOrigin",
+        "description": "资产来源，取值必须和 `library_assets.origin` 的落库值一致。\n\n模板库切换时靠它只取「原片视频」：`template_source` 是切换后新上传的，\n`imported` 是并存期从旧库导入的存量原片（7 条）。只认前者会把存量全漏掉，\n所以列表与选择器都支持**传多个值**。"
+      },
       "LibraryAssetOut": {
         "properties": {
           "id": {
@@ -10487,6 +11024,55 @@
             ],
             "title": "Coverurl"
           },
+          "url": {
+            "type": "string",
+            "title": "Url",
+            "default": ""
+          },
+          "previewUrl": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previewurl"
+          },
+          "streamUrl": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Streamurl"
+          },
+          "width": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Width"
+          },
+          "height": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Height"
+          },
           "groupIds": {
             "items": {
               "type": "string"
@@ -10551,7 +11137,7 @@
           "createdAt"
         ],
         "title": "LibraryAssetOut",
-        "description": "列表项。字段对齐 `library_assets` 表，M1 建表后不再改形状。"
+        "description": "列表项。字段对齐 `library_assets` 表，M1 建表后不再**改**形状。\n\n后面补的五个字段是「只增不改」：取件地址与媒体规格本来就在表里/由 id 决定，\n以前让前端自己拼 URL、自己猜哪套库。模板库切换时前端只要改接口调用，\n不必在业务组件里补一段「按 id 拼 /file」的适配代码。"
       },
       "LibraryAssetPage": {
         "properties": {
@@ -11081,66 +11667,6 @@
         ],
         "title": "MeOut",
         "description": "`GET /identity/me`：前端靠 `permissions` 渲染菜单与按钮。"
-      },
-      "ModelListOut": {
-        "properties": {
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/ModelOut"
-            },
-            "type": "array",
-            "title": "Items"
-          },
-          "total": {
-            "type": "integer",
-            "title": "Total",
-            "default": 0
-          }
-        },
-        "type": "object",
-        "title": "ModelListOut"
-      },
-      "ModelOut": {
-        "properties": {
-          "id": {
-            "type": "string",
-            "title": "Id"
-          },
-          "label": {
-            "type": "string",
-            "title": "Label"
-          },
-          "capability": {
-            "$ref": "#/components/schemas/Capability"
-          },
-          "provider": {
-            "type": "string",
-            "title": "Provider"
-          },
-          "description": {
-            "type": "string",
-            "title": "Description",
-            "default": ""
-          },
-          "paramSchema": {
-            "additionalProperties": true,
-            "type": "object",
-            "title": "Paramschema"
-          },
-          "isDefault": {
-            "type": "boolean",
-            "title": "Isdefault",
-            "default": false
-          }
-        },
-        "type": "object",
-        "required": [
-          "id",
-          "label",
-          "capability",
-          "provider"
-        ],
-        "title": "ModelOut"
       },
       "PackAction": {
         "properties": {
@@ -13509,6 +14035,46 @@
         ],
         "title": "StoryboardOut"
       },
+      "SubmitIn": {
+        "properties": {
+          "model": {
+            "type": "string",
+            "title": "Model"
+          },
+          "prompt": {
+            "type": "string",
+            "title": "Prompt"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "default": ""
+          },
+          "params": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Params"
+          },
+          "referenceUrls": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Referenceurls"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "model",
+          "prompt"
+        ],
+        "title": "SubmitIn"
+      },
       "TagIn": {
         "properties": {
           "name": {
@@ -13624,7 +14190,7 @@
           "video": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/TaskOut"
+                "$ref": "#/components/schemas/modules__task__schema__TaskOut"
               },
               {
                 "type": "null"
@@ -13731,7 +14297,7 @@
         "properties": {
           "items": {
             "items": {
-              "$ref": "#/components/schemas/TaskOut"
+              "$ref": "#/components/schemas/modules__task__schema__TaskOut"
             },
             "type": "array",
             "title": "Items"
@@ -13764,159 +14330,6 @@
         },
         "type": "object",
         "title": "TaskListOut"
-      },
-      "TaskOut": {
-        "properties": {
-          "id": {
-            "type": "string",
-            "title": "Id",
-            "description": "任务 ID"
-          },
-          "title": {
-            "type": "string",
-            "title": "Title",
-            "description": "标题"
-          },
-          "status": {
-            "$ref": "#/components/schemas/TaskStatus",
-            "description": "状态：queued 排队 / running 生成中 / completed 完成 / failed 失败"
-          },
-          "model": {
-            "type": "string",
-            "title": "Model",
-            "description": "模型展示名，如 `Seedance 2.5`"
-          },
-          "modelId": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Modelid",
-            "description": "模型目录 id，与 `GET /api/v1/models` 的 `id` 对齐"
-          },
-          "durationSec": {
-            "type": "integer",
-            "title": "Durationsec",
-            "description": "视频时长（秒）"
-          },
-          "aspectRatio": {
-            "$ref": "#/components/schemas/AspectRatio",
-            "description": "画幅比例"
-          },
-          "progress": {
-            "type": "integer",
-            "title": "Progress",
-            "description": "生成进度 0-100",
-            "default": 0
-          },
-          "coverUrl": {
-            "type": "string",
-            "title": "Coverurl",
-            "description": "封面图 URL，未生成完时为空串",
-            "default": ""
-          },
-          "prompt": {
-            "type": "string",
-            "title": "Prompt",
-            "description": "画面描述",
-            "default": ""
-          },
-          "stylePreset": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Stylepreset",
-            "description": "风格预设标识，未设置时为 null"
-          },
-          "referenceAssetIds": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Referenceassetids",
-            "description": "参考素材 ID 列表（图生视频用）"
-          },
-          "authorId": {
-            "type": "string",
-            "title": "Authorid",
-            "description": "作者用户 ID"
-          },
-          "authorName": {
-            "type": "string",
-            "title": "Authorname",
-            "description": "作者昵称快照（改名不回填历史）",
-            "default": ""
-          },
-          "favorited": {
-            "type": "boolean",
-            "title": "Favorited",
-            "description": "当前账号是否已收藏",
-            "default": false
-          },
-          "downloadable": {
-            "type": "boolean",
-            "title": "Downloadable",
-            "description": "是否允许下载：已成功且有产物",
-            "default": false
-          },
-          "errorMessage": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Errormessage",
-            "description": "失败原因，成功时为 null"
-          },
-          "createdAt": {
-            "type": "string",
-            "title": "Createdat",
-            "description": "创建时间（UTC）"
-          },
-          "updatedAt": {
-            "type": "string",
-            "title": "Updatedat",
-            "description": "更新时间（UTC）"
-          },
-          "startedAt": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Startedat",
-            "description": "开始生成时间，未开始为 null"
-          }
-        },
-        "type": "object",
-        "required": [
-          "id",
-          "title",
-          "status",
-          "model",
-          "durationSec",
-          "aspectRatio",
-          "authorId",
-          "createdAt",
-          "updatedAt"
-        ],
-        "title": "TaskOut",
-        "description": "任务出参：字段名与前端 `VideoTask` 完全一致。"
       },
       "TaskRetryOut": {
         "properties": {
@@ -14825,6 +15238,492 @@
           "updatedAt"
         ],
         "title": "VideoTemplateOut"
+      },
+      "core__response__ApiResponse_ModelListOut___1": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/modules__catalog__schema__ModelListOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[ModelListOut]"
+      },
+      "core__response__ApiResponse_ModelListOut___2": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/modules__model_driver__schema__ModelListOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[ModelListOut]"
+      },
+      "core__response__ApiResponse_TaskOut___1": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/modules__model_driver__schema__TaskOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[TaskOut]"
+      },
+      "core__response__ApiResponse_TaskOut___2": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/modules__task__schema__TaskOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[TaskOut]"
+      },
+      "modules__catalog__schema__ModelListOut": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/modules__catalog__schema__ModelOut"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "title": "ModelListOut"
+      },
+      "modules__catalog__schema__ModelOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "capability": {
+            "$ref": "#/components/schemas/Capability"
+          },
+          "provider": {
+            "type": "string",
+            "title": "Provider"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description",
+            "default": ""
+          },
+          "paramSchema": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Paramschema"
+          },
+          "isDefault": {
+            "type": "boolean",
+            "title": "Isdefault",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "label",
+          "capability",
+          "provider"
+        ],
+        "title": "ModelOut"
+      },
+      "modules__model_driver__schema__ModelListOut": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/modules__model_driver__schema__ModelOut"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "title": "ModelListOut"
+      },
+      "modules__model_driver__schema__ModelOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "capability": {
+            "type": "string",
+            "title": "Capability"
+          },
+          "provider": {
+            "type": "string",
+            "title": "Provider"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description",
+            "default": ""
+          },
+          "paramSchema": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Paramschema"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "label",
+          "capability",
+          "provider"
+        ],
+        "title": "ModelOut"
+      },
+      "modules__model_driver__schema__TaskOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "default": ""
+          },
+          "model": {
+            "type": "string",
+            "title": "Model"
+          },
+          "capability": {
+            "type": "string",
+            "title": "Capability"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "progress": {
+            "type": "integer",
+            "title": "Progress",
+            "default": 0
+          },
+          "outputUrl": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outputurl"
+          },
+          "coverUrl": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Coverurl"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "externalId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Externalid"
+          },
+          "ownerId": {
+            "type": "string",
+            "title": "Ownerid",
+            "default": ""
+          },
+          "source": {
+            "type": "string",
+            "title": "Source",
+            "default": ""
+          },
+          "submitAttempts": {
+            "type": "integer",
+            "title": "Submitattempts",
+            "default": 0
+          },
+          "createdAt": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Createdat"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "model",
+          "capability",
+          "status"
+        ],
+        "title": "TaskOut"
+      },
+      "modules__task__schema__TaskOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "任务 ID"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title",
+            "description": "标题"
+          },
+          "status": {
+            "$ref": "#/components/schemas/TaskStatus",
+            "description": "状态：queued 排队 / running 生成中 / completed 完成 / failed 失败"
+          },
+          "model": {
+            "type": "string",
+            "title": "Model",
+            "description": "模型展示名，如 `Seedance 2.5`"
+          },
+          "modelId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Modelid",
+            "description": "模型目录 id，与 `GET /api/v1/models` 的 `id` 对齐"
+          },
+          "durationSec": {
+            "type": "integer",
+            "title": "Durationsec",
+            "description": "视频时长（秒）"
+          },
+          "aspectRatio": {
+            "$ref": "#/components/schemas/AspectRatio",
+            "description": "画幅比例"
+          },
+          "progress": {
+            "type": "integer",
+            "title": "Progress",
+            "description": "生成进度 0-100",
+            "default": 0
+          },
+          "coverUrl": {
+            "type": "string",
+            "title": "Coverurl",
+            "description": "封面图 URL，未生成完时为空串",
+            "default": ""
+          },
+          "prompt": {
+            "type": "string",
+            "title": "Prompt",
+            "description": "画面描述",
+            "default": ""
+          },
+          "stylePreset": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stylepreset",
+            "description": "风格预设标识，未设置时为 null"
+          },
+          "referenceAssetIds": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Referenceassetids",
+            "description": "参考素材 ID 列表（图生视频用）"
+          },
+          "authorId": {
+            "type": "string",
+            "title": "Authorid",
+            "description": "作者用户 ID"
+          },
+          "authorName": {
+            "type": "string",
+            "title": "Authorname",
+            "description": "作者昵称快照（改名不回填历史）",
+            "default": ""
+          },
+          "favorited": {
+            "type": "boolean",
+            "title": "Favorited",
+            "description": "当前账号是否已收藏",
+            "default": false
+          },
+          "downloadable": {
+            "type": "boolean",
+            "title": "Downloadable",
+            "description": "是否允许下载：已成功且有产物",
+            "default": false
+          },
+          "errorMessage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Errormessage",
+            "description": "失败原因，成功时为 null"
+          },
+          "createdAt": {
+            "type": "string",
+            "title": "Createdat",
+            "description": "创建时间（UTC）"
+          },
+          "updatedAt": {
+            "type": "string",
+            "title": "Updatedat",
+            "description": "更新时间（UTC）"
+          },
+          "startedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Startedat",
+            "description": "开始生成时间，未开始为 null"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "status",
+          "model",
+          "durationSec",
+          "aspectRatio",
+          "authorId",
+          "createdAt",
+          "updatedAt"
+        ],
+        "title": "TaskOut",
+        "description": "任务出参：字段名与前端 `VideoTask` 完全一致。"
       }
     },
     "securitySchemes": {
