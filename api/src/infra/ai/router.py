@@ -42,8 +42,13 @@ class ModelRouter:
 
     # ------------------------------------------------------------------ 注册
     def register(self, provider: ModelProvider) -> None:
-        self._providers.add(provider.name, provider)
+        """注册供应商。**先全量校验，再落库** —— 中途抛错会留下残局。
 
+        旧写法是「先 `add` 供应商、边循环边校验模型 id」：撞车时抛错，
+        但驱动已经进了注册表、前几个模型也已经进了 `_models` / `_default`。
+        而 `ensure_drivers_registered` 会把它标成 `loaded=False` 且不再重试，
+        于是清单显示「加载失败」，它那几个模型却仍能被 `resolve()` 选中并提交。
+        """
         for spec in provider.models:
             if spec.provider != provider.name:
                 raise RegistryError(
@@ -55,6 +60,15 @@ class ModelRouter:
                     f"模型 {spec.id} 被多个供应商声明: "
                     f"{existing.provider} / {provider.name}"
                 )
+
+        # 供应商重名也提前判：`NamedRegistry.add` 同样会抛，但那时代码已经
+        # 走过了上面的校验、下面的写入顺序就没人保证了
+        if provider.name in self._providers.names():
+            raise RegistryError(f"供应商 {provider.name!r} 已注册")
+
+        self._providers.add(provider.name, provider)
+
+        for spec in provider.models:
             self._models[spec.id] = spec
             self._register_alias(spec)
             self._default.setdefault(spec.capability, spec.id)

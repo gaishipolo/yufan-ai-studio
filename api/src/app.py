@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager, suppress
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -40,6 +40,10 @@ from infra import get_queue
 from workers import Worker, handler_names
 
 logger = get_logger(__name__)
+
+#: 停机时留给调度器跑完当前一轮的宽限期（秒）。任务本身可能更长，
+#: 到点仍未退出就强制取消——不可逆任务宁可留日志，也不能让进程永远关不掉。
+_SCHEDULER_GRACE_SEC = 30.0
 
 if TYPE_CHECKING:
     from api.module import ModuleSpec
@@ -173,9 +177,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     finally:
         stop_scheduler.set()
         if scheduler_task is not None:
-            with suppress(asyncio.CancelledError):
-                scheduler_task.cancel()
-                await scheduler_task
+            # **先给宽限期，再强杀。** `serve()` 只在两轮之间检查 stop，
+            # 正在跑的那一轮是在 `asyncio.wait_for(job.handler())` 里等着的。
+            # 立刻 cancel 会把不可逆任务（回收站 GC / 备份）掐在半途，而
+            # `finally` 又会马上归还集群租约——别的实例随后接管同一件事，
+            # 留下「行删了、字节还在」这类需要人肉对账的现场。
+            try:
+                await asyncio.wait_for(scheduler_task, timeout=_SCHEDULER_GRACE_SEC)
+            except TimeoutError:
+                logger.warning(
+                    "调度器 %.0f 秒内未退出（正在跑的任务可能仍在执行），已强制取消",
+                    _SCHEDULER_GRACE_SEC,
+                )
+            except asyncio.CancelledError:
+                pass
         await worker.stop()
         # 出站连接池：不显式关闭的话，`--reload` 每轮都会把一批 keep-alive 连接
         # 留给内核，几分钟后开始出现 TIME_WAIT 堆积与「连接被重置」

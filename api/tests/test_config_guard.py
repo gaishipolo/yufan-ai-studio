@@ -321,3 +321,22 @@ def test_gitignore_does_not_swallow_sources() -> None:
     assert not offenders, (
         "这些源码被 .gitignore 吃了（换台机器就不存在）：\n  " + "\n  ".join(offenders)
     )
+
+
+def test_trusted_proxies_rejects_catch_all_networks() -> None:
+    """`0.0.0.0/0` / `::/0` 必须启动失败，而不是「语法合法就放行」。
+
+    配置器只校验「是不是合法网段」的话，这个值会通过——而它的语义是
+    「信任任何来源」。一旦配上，客户端伪造一个 `X-Forwarded-For` 就能
+    每请求换一个限流桶，审计里的来源 IP 也全是假的。校验器的存在意义
+    就是拦住这类「看起来生效了」的错误。
+    """
+    for value in ("0.0.0.0/0", "::/0", "10.0.0.1,0.0.0.0/0"):
+        with pytest.raises(ValueError, match="覆盖全部地址"):
+            Settings(trusted_proxies=value)  # type: ignore[call-arg]
+
+
+def test_trusted_proxies_accepts_concrete_networks() -> None:
+    """具体网段仍要能配（校验只拒绝 /0）。"""
+    settings = Settings(trusted_proxies="127.0.0.1,10.0.0.0/8")  # type: ignore[call-arg]
+    assert settings.trusted_proxies == "127.0.0.1,10.0.0.0/8"

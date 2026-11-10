@@ -160,9 +160,18 @@ class Settings(BaseSettings):
             if not item:
                 continue
             try:
-                ipaddress.ip_network(item, strict=False)
+                network = ipaddress.ip_network(item, strict=False)
             except ValueError as exc:
                 raise ValueError(f"TRUSTED_PROXIES 中的 {item!r} 不是合法地址/网段") from exc
+            if network.prefixlen == 0:
+                # `0.0.0.0/0` / `::/0` 是**语法合法**的，但语义是「信任任何人」：
+                # `core.net` 在整条链都可信时会取链首地址，客户端伪造一个
+                # X-Forwarded-For 就能每请求换一个限流桶，审计里的来源 IP 也全假。
+                # 这类配置最要命的是「看起来生效了」，所以在启动期拒掉。
+                raise ValueError(
+                    f"TRUSTED_PROXIES 中的 {item!r} 覆盖全部地址："
+                    "等于信任任意伪造的 X-Forwarded-For，请写具体代理地址/网段"
+                )
         return value
 
     # ---------- 基础设施（策略选择）----------
