@@ -61,6 +61,7 @@ bind_asset_reference_sources("library", ASSET_REFERENCE_SOURCES)
 # - M1：`read` / `create`；
 # - M2：`update` / `delete` / `delete:any` / `draft:review` / `share` /
 #   `share:direct` / `share:approve` / `tag:manage`；
+#   2026-11-10 追加：`share:approve:team` / `share:approve:group`。
 # - M3（本批）：`generation:ingest` —— 生成入库接口用 `require` 卡住。
 #   它与 `create` 分开：能上传的人不应该能伪造「这是某次生成的结果」。
 module = ModuleSpec(
@@ -77,7 +78,21 @@ module = ModuleSpec(
         PermissionSpec("library:draft:review", "审核他人草稿", group="资产库"),
         PermissionSpec("library:share", "发起共享与撤销共享申请", group="资产库"),
         PermissionSpec("library:share:direct", "共享无需审批（撤销仍需审批）", group="资产库"),
-        PermissionSpec("library:share:approve", "审批共享与撤销申请", group="资产库"),
+        PermissionSpec(
+            "library:share:approve",
+            "全站审批共享与撤销申请（兼容码，等同同时勾选下面两项）",
+            group="资产库",
+        ),
+        PermissionSpec(
+            "library:share:approve:team",
+            "审批团队级共享与撤销申请",
+            group="资产库",
+        ),
+        PermissionSpec(
+            "library:share:approve:group",
+            "审批所在小组的共享与撤销申请",
+            group="资产库",
+        ),
         PermissionSpec("library:tag:manage", "管理标签词表（改名 / 删除）", group="资产库"),
         PermissionSpec(
             "library:generation:ingest", "生成结果入库（草稿箱）", group="资产库"

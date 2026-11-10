@@ -4,14 +4,15 @@
 
 M2 起有两处刻意**不用** `require` 直接卡住：
 
-- `POST /share-requests/{id}/approve|reject`：小组负责人也能审批，而组长不一定
-  持有 `library:share:approve`（那是个管理员级权限点）。所以路由只要求
-  `library:read`，真正的判定在 `ShareService._can_decide()`；
+- `POST /share-requests/{id}/approve|reject`：审批资格按**申请的目标范围**判
+  （全站码 / 团队码 / 小组码 + 我是不是该组成员），还要查组织目录，
+  `require()` 表达不了。所以路由只要求 `library:read`，真正的判定在
+  `ShareService._can_decide()`；
 - `POST /assets/bulk`：权限按 action 判（`library:update` / `delete` / `create` /
   `share`），一个动作一个码，写在 `BulkService.PERMISSION_BY_ACTION` 里。
 
-这两处如果照抄 `require("...")`，症状是「组长点了没反应」（403），而权限表里
-看起来一切正常。
+这两处如果照抄 `require("...")`，症状是「有细分审批权的人点了没反应」（403），
+而权限表里看起来一切正常。
 """
 
 from __future__ import annotations
@@ -56,6 +57,8 @@ LibraryCreateDep = Annotated[CurrentUser, Depends(require("library:create"))]
 LibraryUpdateDep = Annotated[CurrentUser, Depends(require("library:update"))]
 LibraryDeleteDep = Annotated[CurrentUser, Depends(require("library:delete"))]
 LibraryShareDep = Annotated[CurrentUser, Depends(require("library:share"))]
+#: 只守护 `PUT /groups/{id}/leaders`：负责人表现在只服务删除窄口，是全站级配置，
+#: 沿用旧的全站审批码；审批申请本身不看这个依赖（见文件头注释）。
 LibraryShareApproveDep = Annotated[
     CurrentUser, Depends(require("library:share:approve"))
 ]

@@ -7,12 +7,42 @@
 给别人看（风险在自己可控范围），**撤销**是让别人突然拿不到正在用的文件
 （风险落在别人身上）。所以：直接共享可以，直接收回不行。
 
+## 谁能发起
+
+- **共享**：读得到这条资产的人。组员看到一份该全员复用的素材、上传者又不在，
+  如果只能等所有者来点，审批流就只服务「自己的东西」——那它把关的从来不是
+  「范围该不该扩大」。范围由审批人把关，申请人只需要够得着这条资产。
+  「读得到」分两种：直接共享到自己（组 / 团队）的，可以申请；只因为「是某个
+  可见封装的成员」才读到的，不能——成员的可见性跟着封装走（`PackMemberShareBlocked`）。
+- **撤销**：仍然只认所有者。见 `ShareNotOwned`。
+- **直接生效**（`library:share:direct`）只对**自己的**资产成立，替别人扩大
+  范围一律留 pending：审批记录是「谁把谁的私货推上了团队库」的唯一载体。
+
+## 谁能审批（2026-11-10 拆分）
+
+按**申请的目标范围**拆成三个码，共享与撤销共用同一份口径（风险方向不同，但
+「谁来把关范围」是同一个问题）：
+
+- `library:share:approve`：**全站审批**，旧码，等同同时持有下面两项。保留是为了
+  不打断已经按旧码配好的角色；
+- `library:share:approve:team`：`target=team` 的申请（团队没有「负责人」概念）；
+- `library:share:approve:group`：`target=group` 且**该组是我所在小组**的申请。
+  范围来自组织目录，不是 `library_group_leaders`——组长表按产品口径退回去只服务
+  删除窄口，不再单独发一张审批票。
+
+三处判定必须同口径：`decide()`、`list_requests(scope=pending)`、撤销申请的
+「自己就是审批人时自审」。`_can_approve_target()` 是唯一入口，改口径只改这里。
+路由层仍然只要求 `library:read`：审批资格要按申请单的目标与当前组成员关系算，
+`require()` 表达不了。
+
 ## 唯一的一步例外
 
 `owner=me ∧ 只共享给本组 ∧ 我是组长` 时，撤销与删除合并成一个动作，但仍然
 先落一条 `status=approved` 的自审申请单再删共享行——「撤共享必须留一条审批记录」
 这条不变式不破，只是审批人是他自己。实现在 `lifecycle.py`，因为它是删除动作的
 一个分支（`DELETE /assets/{id}?revokeOwnGroupShare=true`），不是一个独立的申请入口。
+**这条窄口刻意不跟着审批权限改**：组长身份在这里是「我正在收回自己给本组的
+东西」的凭据，不是审批别人申请的资格。
 
 ## 并发
 
@@ -27,7 +57,7 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any, cast
 
-from sqlalchemy import CursorResult, delete, select, update
+from sqlalchemy import CursorResult, and_, delete, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.audit import record as audit
@@ -36,8 +66,10 @@ from core.exceptions import BadRequest, Conflict, Forbidden, NotFound
 from core.ports.org_directory import group_names
 from modules.library import access
 from modules.library.errors import (
+    PackMemberShareBlocked,
     RequestNotPending,
     RevokeReasonRequired,
+    ShareNotOwned,
     ShareTargetInvalid,
 )
 from modules.library.models import (
@@ -60,6 +92,13 @@ __all__ = ["ShareService"]
 #: 申请单列表一次最多返回的条数。审批是「处理完就走」的界面，不做无限滚动。
 PAGE_LIMIT = 100
 
+#: 审批权限码。旧码是「全站」，两个新码按申请目标范围细分；三个码在
+#: `ModuleSpec.permissions` 里声明，`test_permission_coverage` 会核对它们确实
+#: 出现在下面的判定点里。
+PERM_APPROVE_ALL = "library:share:approve"
+PERM_APPROVE_TEAM = "library:share:approve:team"
+PERM_APPROVE_GROUP = "library:share:approve:group"
+
 
 class ShareService:
     def __init__(self, session: AsyncSession) -> None:
@@ -70,17 +109,30 @@ class ShareService:
     async def request(
         self, payload: ShareRequestIn, actor: CurrentUser
     ) -> ShareRequestOut:
-        asset = await access.load_asset(self.session, payload.asset_id)
-        if asset.owner_id != actor.id:
-            # 只有所有者能处置自己的资产。管理员想替别人共享，走的是
-            # `library:delete:any` 的删除通道，不是这里——「替别人共享」在语义上
-            # 等于替别人承担可见性后果，没有这个需求就不开这个口子。
-            raise NotFound("资产不存在")
+        asset = await access.load_visible(self.session, payload.asset_id, actor)
         if asset.state != "active":
             raise BadRequest("只有库内的资产可以共享或撤销共享")
+        if asset.owner_id != actor.id:
+            await self._check_non_owner(asset, payload, actor)
         if payload.action is ShareAction.REVOKE:
             return await self._request_revoke(asset, payload, actor)
         return await self._request_share(asset, payload, actor)
+
+    async def _check_non_owner(
+        self, asset: LibraryAsset, payload: ShareRequestIn, actor: CurrentUser
+    ) -> None:
+        """别人（非所有者）发起的申请：只放行「共享」，且必须是直接可见的。
+
+        走到这里说明 `load_visible` 已经通过（看不见的 id 一律 404，别把申请
+        入口变成探库的探针），剩下的两件事是动作资格与可见性来源。
+        """
+        if payload.action is ShareAction.REVOKE:
+            raise ShareNotOwned()
+        my_groups = await access.all_groups(self.session, actor)
+        asset_groups = await access.asset_group_ids(self.session, [asset.id])
+        if not access.can_read(asset, actor, my_groups, asset_groups.get(asset.id, [])):
+            # `can_read` 为假而 `load_visible` 为真：只能是从封装借道读到的成员
+            raise PackMemberShareBlocked()
 
     async def _request_share(
         self, asset: LibraryAsset, payload: ShareRequestIn, actor: CurrentUser
@@ -90,7 +142,10 @@ class ShareService:
         if pending is not None:
             return await self._to_out(pending)
 
-        direct = actor.has("library:share:direct")
+        # `direct` 只对自己的东西成立：替别人扩大可见范围必须留一条审批记录，
+        # 否则管理员能悄悄把任何人的私货推上团队库（`_check_non_owner` 已拦住
+        # 撤销那一半，这里拦「直接生效」那一半）。
+        direct = actor.has("library:share:direct") and asset.owner_id == actor.id
         row = LibraryShareRequest(
             asset_id=asset.id,
             applicant_id=actor.id,
@@ -127,8 +182,10 @@ class ShareService:
         if pending is not None:
             return await self._to_out(pending)
 
-        # 自己就是审核人时自审：否则会出现「自己申请、等自己批」的死锁。
-        self_review = actor.has("library:share:approve")
+        # 自己就是「这个目标」的审核人时自审：否则会出现「自己申请、等自己批」
+        # 的死锁。拆分后必须按目标判定——只有小组审批权的人撤销自己共享到团队
+        # 的资产，不能因为「他有点审批权」就把整条审批流跳过去。
+        self_review = await self._can_approve_target(actor, target.value, group_id)
         row = LibraryShareRequest(
             asset_id=asset.id,
             applicant_id=actor.id,
@@ -252,20 +309,29 @@ class ShareService:
     ) -> list[ShareRequestOut]:
         """`scope=mine` 我提交的；`scope=pending` 待我审核。
 
-        「待我审核」按权限点与组长身份收窄，**不是**全站 pending：否则每个登录
-        用户都能看到别人在共享什么，那本身就是一次泄露。
+        「待我审核」按审批权限点收窄，**不是**全站 pending：否则每个登录用户
+        都能看到别人在共享什么，那本身就是一次泄露。这里的分支必须和
+        `_can_approve_target()` 同口径，不然会出现「看得到却点不动」或反过来。
         """
         query = select(LibraryShareRequest)
         if scope == "pending":
             query = query.where(LibraryShareRequest.status == "pending")
-            if not actor.has("library:share:approve"):
-                leaders = await access.leader_group_ids(self.session, actor.id)
-                if not leaders:
+            if not actor.has(PERM_APPROVE_ALL):
+                clauses = []
+                if actor.has(PERM_APPROVE_TEAM):
+                    clauses.append(LibraryShareRequest.target == ShareTarget.TEAM.value)
+                if actor.has(PERM_APPROVE_GROUP):
+                    groups = await access.all_groups(self.session, actor)
+                    if groups:
+                        clauses.append(
+                            and_(
+                                LibraryShareRequest.target == ShareTarget.GROUP.value,
+                                LibraryShareRequest.group_id.in_(groups),
+                            )
+                        )
+                if not clauses:
                     return []
-                query = query.where(
-                    LibraryShareRequest.target == ShareTarget.GROUP.value,
-                    LibraryShareRequest.group_id.in_(leaders),
-                )
+                query = query.where(or_(*clauses))
         else:
             query = query.where(LibraryShareRequest.applicant_id == actor.id)
         rows = (
@@ -295,9 +361,11 @@ class ShareService:
     ) -> list[str]:
         """整体替换某组的负责人（组长）。
 
-        组长是「谁能审批本组共享」的唯一来源，存在 v2 自己的表里：身份模块的组
-        模型刚上线、正在被真实用户使用，为一件资产库的事去改它，会把两个变更的
-        风险绑在一起。代价是这里要自己维护一份映射——所以只留一个入口。
+        2026-11-10 起这张表**不再发审批票**：审批资格按权限点与目标范围判定
+        （见 `_can_approve_target`）。负责人现在只服务删除窄口（§3.4.1：
+        收回自己给本组的共享并删除），以及 `/groups` 里的 `isLeader` 展示。
+        仍然放在 v2 自己的表里，是为了不改身份模块刚上线、正在使用的组模型；
+        只留这一个写入口，避免映射被多处写坏。
         """
         names = await group_names(self.session, [group_id])
         if not names:
@@ -413,13 +481,26 @@ class ShareService:
         # 撤到最后一个组才回 personal；还有别的组时保持 group（部分撤销）
         asset.visibility = "group" if remaining is not None else "personal"
 
-    async def _can_decide(self, row: LibraryShareRequest, actor: CurrentUser) -> bool:
-        if actor.has("library:share:approve"):
+    async def _can_approve_target(
+        self, actor: CurrentUser, target: str, group_id: str
+    ) -> bool:
+        """审批资格的**唯一**判据，按申请的目标范围分三支。
+
+        `library_group_leaders` 刻意不在这里出现：负责人表按产品口径退回去只服务
+        删除窄口（`lifecycle.py`），不再单独发一张审批票。改审批口径只改这个函数，
+        `decide` / 待我审核 / 撤销自审三处都会跟着变。
+        """
+        if actor.has(PERM_APPROVE_ALL):
             return True
-        if row.target != ShareTarget.GROUP.value or not row.group_id:
-            # 团队共享没有「团队负责人」这个概念，只能由持权限点的人审
+        if target == ShareTarget.TEAM.value:
+            # 团队没有「负责人」这个概念，只能由持团队审批码的人把关
+            return actor.has(PERM_APPROVE_TEAM)
+        if not actor.has(PERM_APPROVE_GROUP) or not group_id:
             return False
-        return await access.is_group_leader(self.session, actor.id, row.group_id)
+        return group_id in await access.all_groups(self.session, actor)
+
+    async def _can_decide(self, row: LibraryShareRequest, actor: CurrentUser) -> bool:
+        return await self._can_approve_target(actor, row.target, row.group_id or "")
 
     async def _to_out(self, row: LibraryShareRequest) -> ShareRequestOut:
         return (await self._to_out_many([row]))[0]

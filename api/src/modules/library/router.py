@@ -63,6 +63,7 @@ from modules.library.schema import (
     LibrarySelectionPage,
     LibraryTab,
     LibraryTagOut,
+    LibraryTagStatOut,
     PackIn,
     PackPatchIn,
     ShareDecisionIn,
@@ -524,8 +525,9 @@ async def create_share_request(
 ) -> ApiResponse[ShareRequestOut]:
     """`action=revoke` 必须带 `reason`（400 `REVOKE_REASON_REQUIRED`）。
 
-    申请人自己就是审批人时（持 `library:share:approve`）直接通过并记自审，
-    否则会出现「自己申请、等自己批」的死锁。
+    申请人自己就是**该目标**的审批人时直接通过并记自审（全站码
+    `library:share:approve`，或目标对应的 `library:share:approve:team` /
+    `library:share:approve:group`），否则会出现「自己申请、等自己批」的死锁。
     """
     return ApiResponse.ok(await service.request(payload, actor))
 
@@ -550,7 +552,8 @@ async def approve_share_request(
     actor: LibraryReadDep,
     service: ShareServiceDep,
 ) -> ApiResponse[ShareRequestOut]:
-    """小组负责人也能审批本组的申请，所以这里只要求 `library:read`。"""
+    """审批资格按申请目标范围在服务层判（全站 / 团队 / 所在小组），路由只要求
+    `library:read`；组长身份本身不再给审批权。"""
     return ApiResponse.ok(await service.decide(request_id, payload, actor, approve=True))
 
 
@@ -605,15 +608,22 @@ async def set_group_leaders(
     actor: LibraryShareApproveDep,
     service: ShareServiceDep,
 ) -> ApiResponse[list[str]]:
-    """负责人是「谁能审批本组共享」的唯一来源，存在 v2 自己的表里。"""
+    """负责人表现在只服务删除窄口与 `isLeader` 展示；审批资格改由三个审批权限点
+    按申请目标范围判定（`_can_approve_target`），本接口仍由全站审批码守护。"""
     return ApiResponse.ok(await service.set_leaders(group_id, payload.user_ids, actor))
 
 
-@router.get("/tags", summary="标签列表")
+@router.get("/tags", summary="标签列表（含当前入口的素材数，按添加时间排序）")
 async def list_tags(
-    actor: LibraryReadDep, service: TagServiceDep
-) -> ApiResponse[list[LibraryTagOut]]:
-    return ApiResponse.ok(await service.list_tags())
+    actor: LibraryReadDep,
+    service: TagServiceDep,
+    library: LibraryTab = LibraryTab.ALL,
+    state: LibraryAssetState = LibraryAssetState.ACTIVE,
+) -> ApiResponse[list[LibraryTagStatOut]]:
+    """计数按 `state` + `library` 与列表同口径；`state=draft|trash` 时忽略 `library`。"""
+    return ApiResponse.ok(
+        await service.list_tags(actor, state=state.value, library=library)
+    )
 
 
 @router.post(

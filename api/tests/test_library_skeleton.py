@@ -38,6 +38,8 @@ LIBRARY_PERMISSIONS = {
     "library:share",
     "library:share:direct",
     "library:share:approve",
+    "library:share:approve:team",
+    "library:share:approve:group",
     "library:tag:manage",
     "library:generation:ingest",
 }

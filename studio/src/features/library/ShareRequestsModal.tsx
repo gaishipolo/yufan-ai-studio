@@ -18,9 +18,10 @@ export interface ShareRequestsModalProps {
 /**
  * 「待我审核」与「我提交的」两栏。
  *
- * 组长不一定持有 `library:share:approve`（那是管理员级码），审批判定在服务层，
- * 所以这里按「服务端允许」呈现，而不是按权限点藏按钮——否则组长看到的是
- * 一张自己永远点不动的列表。
+ * 审批资格按申请的目标范围判（全站 / 团队 / 所在小组），还要查当前组成员
+ * 关系，前端算不出来也不该自己算：列表已由服务端按资格收窄。这里按「服务端
+ * 返回」呈现，不按权限点藏按钮——否则持细分审批码的人会看到一张永远点不动的
+ * 列表，或反过来「看不到却能通过接口点」。
  */
 export function ShareRequestsModal({ open, onClose }: ShareRequestsModalProps) {
   const [scope, setScope] = useState<'pending' | 'mine'>('pending');
