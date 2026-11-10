@@ -35,13 +35,21 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
+from core.config import settings
 from core.context import CurrentUser
-from core.exceptions import NotFound
+from core.exceptions import BadRequest, NotFound
 from core.ports.library_references import get_library_references, has_library_references
 from core.response import PageParams
 from core.serving import Served
-from infra.media_probe import EXTENSIONS, MAX_BYTES, create_preview, inspect
-from infra.storage.base import ObjectStorage
+from infra.media_probe import (
+    EXTENSIONS,
+    MAX_BYTES,
+    PREVIEW_VERSION,
+    create_browser_preview,
+    create_preview,
+    inspect,
+)
+from infra.storage.base import ObjectStorage, StorageError
 from modules.library import access
 from modules.library.errors import (
     LibraryFileTooLarge,
@@ -113,6 +121,16 @@ def preview_key(digest: str) -> str:
     return f"{PREVIEW_PREFIX}/{digest[:2]}/{digest}.jpg"
 
 
+def clip_key(digest: str) -> str:
+    """浏览器可播的视频派生流，按摘要命名，同一份原片只派生一次。
+
+    文件名带 `PREVIEW_VERSION`：转码参数一变，所有缓存（浏览器 / CDN / 桶）
+    必须一起失效。旧库的 `clip_key` 与前端 `?v=hd-v2` 用的是同一个常量，
+    v2 不另起一套版本号，否则将来模板库切过来会出现「新旧两版预览混着放」。
+    """
+    return f"{PREVIEW_PREFIX}/{digest[:2]}/{digest}.{PREVIEW_VERSION}.mp4"
+
+
 def keep_extension(original: str, storage_key: str | None, requested: str) -> str:
     """改名只改主体，扩展名跟着记录走。
 
@@ -178,6 +196,7 @@ class LibraryService:
         tag_ids: list[str] | None = None,
         keyword: str = "",
         sort: AssetSort = AssetSort.CREATED_DESC,
+        origins: Sequence[str] = (),
         hide_packed_members: bool = True,
         exclude_kinds: Sequence[str] = (),
     ) -> LibraryAssetPage:
@@ -213,6 +232,12 @@ class LibraryService:
 
         if kind:
             query = query.where(LibraryAsset.kind == kind)
+        if origins:
+            # 多值而不是单值：模板库要同时取「切换后新传的 template_source」
+            # 与「并存期从旧库导入的 imported」，漏一个就少一半原片。
+            # 角标（facets）仍按全入口算——它是侧栏六个入口的总数，不该被
+            # 调用方的一次筛选悄悄改掉。
+            query = query.where(LibraryAsset.origin.in_(list(origins)))
         if exclude_kinds:
             # 「排除某几类」必须落在 SQL 里：在 Python 里滤掉 items 之后
             # `total` 还是原值，前端会算出多一页，最后一页点进去是空的。
@@ -434,6 +459,68 @@ class LibraryService:
             proxy=not preview,
             size=None if preview else row.size_bytes,
         )
+
+    async def preview(self, asset_id: str, actor: CurrentUser) -> Served:
+        """受控公共预览：视频给派生流，图片 / 音频给原文件。
+
+        与旧 `/assets/{id}/preview` 同口径。能不能看只由 `load_visible` 一家
+        说了算（共享到小组 / 团队、封装成员都算可见），这里不再写第二份
+        「有没有 shared」的判断——两处判定迟早漂移，漂移的方向一定是越权。
+        """
+        row = await access.load_visible(self.session, asset_id, actor)
+        if row.state == "trash":
+            raise NotFound("回收站内的资产不提供预览与下载")
+        if row.kind == "video":
+            return await self.stream(asset_id, actor)
+        return await self.file(asset_id, actor)
+
+    async def stream(self, asset_id: str, actor: CurrentUser) -> Served:
+        """浏览器兼容视频预览：H.264 8-bit 派生流，绝不改动原始归档文件。
+
+        归档原片可能是 10-bit HEVC / H.264 High10，Chrome 的 `<video>` 解不了；
+        旧库 `/assets/{id}/stream` 就是为此存在的，v2 不能只补个「同源转发原片」
+        就算对齐。派生按摘要命名，同一份字节只转一次。
+
+        转码失败时**本人**回退原文件，**别人**一律 400：把别人共享的原片整份
+        当「预览」送出去，等于绕过「只给派生预览」这层收窄。
+        """
+        row = await access.load_visible(self.session, asset_id, actor)
+        if row.state == "trash":
+            raise NotFound("回收站内的资产不提供预览与下载")
+        if row.kind != "video":
+            raise NotFound("此资产没有视频预览")
+        digest = row.sha256 or ""
+        derived = clip_key(digest) if re.fullmatch(r"[0-9a-f]{64}", digest) else ""
+        ready = bool(derived) and await self.storage.exists(derived)
+        if derived and not ready:
+            ready = await self._derive_clip(row, derived)
+        if not ready:
+            if row.owner_id != actor.id:
+                raise BadRequest("公共预览生成失败，请稍后重试；原件不会作为预览返回")
+            logger.warning("浏览器预览派生失败，回退原文件：%s", asset_id)
+            return await self.file(asset_id, actor)
+        # 与 `/file` 一样走同源转发：前端既可能 `<video src>` 直接引用，
+        # 也可能 XHR 取 blob 再 createObjectURL，307 到桶会踩 CORS。
+        return await self._serve(derived, "video/mp4", proxy=True)
+
+    async def _derive_clip(self, row: LibraryAsset, derived: str) -> bool:
+        """分块物化原片 → ffmpeg 转码 → 写回派生 key，全程不整块读进内存。"""
+        if not row.storage_key:
+            return False
+        with tempfile.TemporaryDirectory(prefix="library-clip-") as folder:
+            source = Path(folder) / f"source{Path(row.storage_key).suffix or '.mp4'}"
+            try:
+                with source.open("wb") as handle:
+                    async for chunk in self.storage.iter_chunks(row.storage_key):
+                        handle.write(chunk)
+            except StorageError:
+                logger.warning("原片字节读取失败，跳过派生：%s", row.id)
+                return False
+            target = Path(folder) / "clip.mp4"
+            if not await asyncio.to_thread(create_browser_preview, source, target):
+                return False
+            await self.storage.put_file(derived, target, "video/mp4")
+            return True
 
     # ------------------------------------------------------------------ 写
 
@@ -749,6 +836,19 @@ class LibraryService:
             state=row.state,
             state_version=row.state_version,
             cover_url=self.storage.url_for(row.cover_key) if row.cover_key else None,
+            url=f"{settings.api_prefix}/library/assets/{row.id}/file",
+            preview_url=(
+                f"{settings.api_prefix}/library/assets/{row.id}/thumbnail"
+                if row.cover_key
+                else None
+            ),
+            stream_url=(
+                f"{settings.api_prefix}/library/assets/{row.id}/stream"
+                if row.kind == "video"
+                else None
+            ),
+            width=row.width or None,
+            height=row.height or None,
             group_ids=list(group_ids),
             tags=list(tags),
             trash_reason=row.trash_reason,

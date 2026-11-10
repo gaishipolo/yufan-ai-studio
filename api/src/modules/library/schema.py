@@ -37,6 +37,7 @@ __all__ = [
     "IngestOut",
     "LibraryArchiveOut",
     "LibraryAssetDetailOut",
+    "LibraryAssetOrigin",
     "LibraryAssetOut",
     "LibraryAssetPage",
     "LibraryFacets",
@@ -74,6 +75,21 @@ class LibraryTab(StrEnum):
     PERSONAL = "personal"
     GROUP = "group"
     TEAM = "team"
+
+
+class LibraryAssetOrigin(StrEnum):
+    """资产来源，取值必须和 `library_assets.origin` 的落库值一致。
+
+    模板库切换时靠它只取「原片视频」：`template_source` 是切换后新上传的，
+    `imported` 是并存期从旧库导入的存量原片（7 条）。只认前者会把存量全漏掉，
+    所以列表与选择器都支持**传多个值**。
+    """
+
+    UPLOAD = "upload"
+    GENERATED = "generated"
+    TEMPLATE_SOURCE = "template_source"
+    IMPORTED = "imported"
+    PACK = "pack"
 
 
 class AssetSort(StrEnum):
@@ -120,7 +136,12 @@ class LibraryTagStatOut(LibraryTagOut):
 
 
 class LibraryAssetOut(CamelModel):
-    """列表项。字段对齐 `library_assets` 表，M1 建表后不再改形状。"""
+    """列表项。字段对齐 `library_assets` 表，M1 建表后不再**改**形状。
+
+    后面补的五个字段是「只增不改」：取件地址与媒体规格本来就在表里/由 id 决定，
+    以前让前端自己拼 URL、自己猜哪套库。模板库切换时前端只要改接口调用，
+    不必在业务组件里补一段「按 id 拼 /file」的适配代码。
+    """
 
     id: str
     name: str
@@ -136,6 +157,14 @@ class LibraryAssetOut(CamelModel):
     state: LibraryAssetState
     state_version: int = 1
     cover_url: str | None = None
+    #: 三个取件地址都是「相对 API 前缀」的 URL，由后端拼好。选择器/列表拿到就能
+    #: 直接给 `<img>` / `<video>` / 下载用，不用在前端按 id 拼第二套路径。
+    url: str = ""
+    preview_url: str | None = None
+    stream_url: str | None = None
+    #: 0 表示「没探测出来」。出参给 None，前端才显示「未知」而不是「0 × 0」。
+    width: int | None = None
+    height: int | None = None
     group_ids: list[str] = Field(default_factory=list)
     # 标签随列表一起返回：卡片要在体积下方显示它，而「先列 24 条、再逐条拉详情」
     # 是 24 次往返。详情页继承这个字段，不再重复声明。
@@ -542,8 +571,13 @@ class GenerationSnapshotIn(CamelModel):
 class FromGenerationIn(CamelModel):
     """生成结果入库（也经 `library-ingest` 注入口供后端模块调用）。
 
-    `storageKey` 与 `sourceUrl` 二选一：**必须能物化字节**，只存外部链接的
-    详情页与下载都会裂（链接会过期）。两个都给时优先 `storageKey`。
+    字节来源三选一，**必须能物化**：`storageKey`（主对象存储）、
+    `archiveKey`（归档存储，模板库替换成片用）、`sourceUrl`（服务端下载）。
+    只存外部链接的详情页与下载都会裂（链接会过期）。优先级按上面顺序，
+    同时给多个时取靠前的那个。
+
+    `archiveKey` 只应由受信任的服务端调用方填写：它指向归档盘里的对象，
+    端点本身仍由 `library:generation:ingest` 守护，普通上传权限调不动。
     """
 
     source_module: str = Field(pattern="^(image|template|task)$")
@@ -552,6 +586,7 @@ class FromGenerationIn(CamelModel):
     kind: GenerationKind
     name: str = Field(default="", max_length=200)
     storage_key: str = Field(default="", max_length=256)
+    archive_key: str = Field(default="", max_length=256)
     source_url: str = Field(default="", max_length=1000)
     mime_type: str = Field(default="", max_length=64)
     size_bytes: int = Field(default=0, ge=0)

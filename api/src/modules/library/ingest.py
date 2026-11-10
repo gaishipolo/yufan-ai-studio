@@ -26,8 +26,15 @@
 
 ## 字节必须物化
 
-`storageKey`（已在对象存储里）或 `sourceUrl`（服务端下载后再存），二选一。
+三选一：`storageKey`（已在主对象存储里）、`sourceUrl`（服务端下载后再存）、
+`archiveKey`（**归档存储**里的对象 key，由后端模块直接调用入库端口时填写）。
 **不接受只存外部链接**：供应商签名地址会过期，详情页与下载都会裂。
+
+`archiveKey` 是为模板库替换成片预留的：它的成片由 `template/worker.publish_output`
+搬进 `ArchiveStorage`（`runs/{id}/outputs/generated.mp4`），与主对象存储不是同一个
+驱动。这里统一物化后再写进资产库自己的 blob，资产因此不依赖归档盘的生命周期。
+本批只提供能力，**不接生成链路**：`ReplacementPipeline.archive_request` 何时实现、
+与 `replacement_reviews` 怎么分工，等产品口径。
 """
 
 from __future__ import annotations
@@ -36,6 +43,7 @@ import asyncio
 import hashlib
 import tempfile
 from collections.abc import Mapping
+from contextlib import ExitStack
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -49,6 +57,7 @@ from core.logging import get_logger
 from core.ports.library_ingest import IngestRequest, IngestResult
 from core.ports.library_lookup import LibraryAssetKind
 from infra import get_storage
+from infra.archive import get_archive_storage
 from infra.http import HttpError, fetch_bytes
 from infra.media_probe import EXTENSIONS, MAX_BYTES, create_preview, inspect
 from infra.storage.base import ObjectStorage
@@ -109,8 +118,10 @@ class GenerationIngest:
         if existing is not None:
             return IngestResult(asset_id=existing.id, created=False)
 
-        with tempfile.TemporaryDirectory(prefix="library-ingest-") as folder:
-            path, extension, mime = await self._materialize(request, Path(folder))
+        # `archiveKey` 走 `ArchiveStorage.materialize()`：远端驱动交出的是临时缓存，
+        # 退出上下文即回收，所以「物化 → 探测 → 写 blob」整段都得留在 ExitStack 里。
+        with tempfile.TemporaryDirectory(prefix="library-ingest-") as folder, ExitStack() as stack:
+            path, extension, mime = await self._materialize(request, Path(folder), stack)
             # ffprobe / PIL 都是阻塞的：入库可能同时来好几条，别把事件循环卡住
             info = await asyncio.to_thread(inspect, path, extension)
             digest, size = await asyncio.to_thread(_digest_and_size, path)
@@ -171,10 +182,14 @@ class GenerationIngest:
 
     # ------------------------------------------------------------------ 内部
 
-    async def _materialize(self, request: IngestRequest, folder: Path) -> tuple[Path, str, str]:
-        """把字节落到本地临时文件，返回 (路径, 扩展名, mime)。
+    async def _materialize(
+        self, request: IngestRequest, folder: Path, stack: ExitStack
+    ) -> tuple[Path, str, str]:
+        """把字节物化成可读的本地文件，返回 (路径, 扩展名, mime)。
 
-        `storageKey` 优先：它已经在我们的存储里，本地驱动能零拷贝。
+        `storageKey` 优先：它已经在主存储里，本地驱动能零拷贝。
+        `archiveKey` 走归档驱动的 `materialize()`，`stack` 负责在整段用完前
+        不回收远端驱动的临时缓存。
         `sourceUrl` 走共享的 `fetch_bytes`（逐跳 SSRF 校验 + 大小上限）。
         """
         extension = _extension_of(request)
@@ -194,6 +209,22 @@ class GenerationIngest:
                 raise GenerationSourceInvalid(
                     details={"storageKey": request.storage_key}
                 ) from exc
+        elif request.archive_key:
+            # 归档盘与主对象存储是两个驱动。materialize() 交出的本地路径在远端
+            # 实现里只是缓存，必须由 stack 持有到 put_file / 预览派生结束。
+            try:
+                path = stack.enter_context(
+                    get_archive_storage().materialize(request.archive_key)
+                )
+            except Exception as exc:  # noqa: BLE001 - 驱动异常一律转成入参错误
+                raise GenerationSourceInvalid(
+                    details={"archiveKey": request.archive_key, "reason": str(exc)}
+                ) from exc
+            if not path.is_file():
+                raise GenerationSourceInvalid(details={"archiveKey": request.archive_key})
+            if path.stat().st_size > MAX_BYTES:
+                raise LibraryFileTooLarge(details={"maxBytes": MAX_BYTES})
+            return path, extension, EXTENSIONS[extension]
         elif request.source_url:
             try:
                 payload = (
@@ -296,7 +327,7 @@ def _digest_and_size(path: Path) -> tuple[str, int]:
 
 
 def _extension_of(request: IngestRequest) -> str:
-    """推断扩展名：mime → 名字 / storageKey / URL 的后缀。推不出来就 400。
+    """推断扩展名：mime → 名字 / storageKey / archiveKey / URL 的后缀。推不出来就 400。
 
     不信任调用方给的 `mimeType` 单独成立：它与内容的一致性由 `inspect()` 校验，
     这里只是先决定用哪个解析器。
@@ -309,7 +340,12 @@ def _extension_of(request: IngestRequest) -> str:
                 details={"mimeType": request.mime_type, "supported": sorted(by_mime)}
             )
         return extension
-    for candidate in (request.name, request.storage_key, request.source_url):
+    for candidate in (
+        request.name,
+        request.storage_key,
+        request.archive_key,
+        request.source_url,
+    ):
         suffix = Path(candidate.split("?", 1)[0]).suffix.lower()
         if suffix in EXTENSIONS:
             return suffix
@@ -318,7 +354,11 @@ def _extension_of(request: IngestRequest) -> str:
 
 def _asset_name(request: IngestRequest) -> str:
     """名字优先级：调用方给的 → 文件名 → `来源-任务号`。"""
-    for candidate in (request.name, Path(request.storage_key).name):
+    for candidate in (
+        request.name,
+        Path(request.storage_key).name,
+        Path(request.archive_key).name,
+    ):
         cleaned = Path(candidate).name.strip() if candidate else ""
         if cleaned:
             return cleaned[:200]

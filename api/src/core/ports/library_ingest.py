@@ -11,9 +11,13 @@ image / template / task 三个模块在生成完成后要把结果写进资产�
   传 `state` / `visibility` 的机会——想直接入库的调用方应该走用户操作，不是这里。
 - **`source_key` 是幂等键**：生成侧的轮询可能重复回调，同一个 `source_key`
   第二次调用必须返回同一个 `asset_id` 且 `created=False`，不能产生第二行。
-- **字节必须物化**：接受 `storage_key`（已在对象存储里）或 `source_url`
-  （服务端下载后再存），不接受「只存一个外部 URL」——外部链接会过期，
+- **字节必须物化**：三选一，不接受「只存一个外部 URL」——外部链接会过期，
   详情页与下载都会裂。
+  - `storage_key`：已经在主对象存储里（生图落盘走这条）；
+  - `source_url`：可下载的地址，服务端取回再存；
+  - `archive_key`：**归档存储**里的对象 key（模板库替换成片走这条）。归档盘与主
+    对象存储是两个驱动，字节必须由实现方物化后再写进资产库自己的 blob，不能只
+    登记一个跨存储的指针——归档盘有独立的清理周期，指针会悬空。
 
 ## 未注册时的行为
 
@@ -74,6 +78,13 @@ class IngestRequest:
     name: str = ""
     storage_key: str = ""
     source_url: str = ""
+    archive_key: str = ""
+    """归档存储里的对象 key；仅由受信任的服务端调用方填写（见模块 docstring）。
+
+    模板库替换成片的字节在 `ArchiveStorage`，不在主对象存储里。留出这个字段后，
+    将来 `ReplacementPipeline.archive_request()` 只要把 `run.output_key` 放进来，
+    就能一行复用 `library-ingest`，不必在业务模块里复制字节或 import 资产库。
+    """
     mime_type: str = ""
     size_bytes: int = 0
     generation: Mapping[str, object] = field(default_factory=dict)

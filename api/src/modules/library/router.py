@@ -56,6 +56,7 @@ from modules.library.schema import (
     GroupLeadersIn,
     IngestOut,
     LibraryAssetDetailOut,
+    LibraryAssetOrigin,
     LibraryAssetOut,
     LibraryAssetPage,
     LibraryFacets,
@@ -90,6 +91,7 @@ async def list_assets(
     tag_ids: Annotated[list[str] | None, Query(alias="tagIds")] = None,
     keyword: str = Query(default="", max_length=100),
     sort: AssetSort = AssetSort.CREATED_DESC,
+    origin: Annotated[list[LibraryAssetOrigin] | None, Query()] = None,
 ) -> ApiResponse[LibraryAssetPage]:
     """`state=draft|trash` 时忽略 `library`：草稿与回收站不在任何可见范围内。
 
@@ -106,6 +108,7 @@ async def list_assets(
             tag_ids=tag_ids,
             keyword=keyword,
             sort=sort,
+            origins=[item.value for item in origin] if origin else [],
         )
     )
 
@@ -125,6 +128,7 @@ async def selection(
     tag_ids: Annotated[list[str] | None, Query(alias="tagIds")] = None,
     keyword: str = Query(default="", max_length=100),
     include_packs: Annotated[bool, Query(alias="includePacks")] = True,
+    origin: Annotated[list[LibraryAssetOrigin] | None, Query()] = None,
 ) -> ApiResponse[LibrarySelectionPage]:
     """生成页 / 工作台挑素材用。
 
@@ -139,6 +143,9 @@ async def selection(
         kind=kind.value if kind else None,
         tag_ids=tag_ids,
         keyword=keyword,
+        # 模板库切换后靠 `origin` 只挑原片视频；与列表用同一组枚举值，
+        # 免得两处各写一份字符串字面量、改一处漏一处。
+        origins=[item.value for item in origin] if origin else [],
         # 选择器要能挑到封装里的原素材：封装的成员在这里不隐藏（列表里隐藏是
         # 为了「封装后只剩一条」，选择器恰恰相反，挑的是要用的那条素材）。
         hide_packed_members=False,
@@ -277,6 +284,7 @@ async def ingest_generated(
             owner_id=actor.id,
             name=payload.name,
             storage_key=payload.storage_key,
+            archive_key=payload.archive_key,
             source_url=payload.source_url,
             mime_type=payload.mime_type,
             size_bytes=payload.size_bytes,
@@ -355,6 +363,29 @@ async def asset_thumbnail(
     asset_id: str, actor: LibraryReadDep, service: LibraryServiceDep
 ) -> Response:
     return (await service.file(asset_id, actor, preview=True)).response()
+
+
+@router.get("/assets/{asset_id}/stream", summary="浏览器兼容视频预览（派生流，不改原片）")
+async def asset_stream(
+    asset_id: str, actor: LibraryReadDep, service: LibraryServiceDep
+) -> Response:
+    """模板库悬停/播放用的取件口。旧库在 `/assets/{id}/stream`，v2 补在同位置。
+
+    `/file` 给的是原件，`/stream` 给的是 H.264 8-bit 派生版，两者不能互相代替：
+    10-bit 原片 Chrome 解不了，而把原件当「预览」发给别人等于放行整份下载。
+    """
+    return (await service.stream(asset_id, actor)).response()
+
+
+@router.get("/assets/{asset_id}/preview", summary="受控公共预览（视频给派生流）")
+async def asset_preview(
+    asset_id: str, actor: LibraryReadDep, service: LibraryServiceDep
+) -> Response:
+    """旧库把「非本人的公共原片」的 url 改写成 `/assets/{id}/preview`；v2 补同款。
+
+    可见性仍由 `load_visible` 判定，这个端点不额外发权限，只负责「视频别给原件」。
+    """
+    return (await service.preview(asset_id, actor)).response()
 
 
 # --------------------------------------------------------------------------- #
