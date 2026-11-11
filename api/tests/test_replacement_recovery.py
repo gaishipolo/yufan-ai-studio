@@ -226,7 +226,7 @@ async def test_recover_state_freezes_interrupted_submission(
 
 
 @pytest.mark.parametrize(
-    "status", ["queued", "uploading", "uploaded", "waiting_executor", "prepared"]
+    "status", ["queued", "uploading", "uploaded", "waiting_executor"]
 )
 async def test_recover_state_requeues_unfinished_runs(status: str) -> None:
     run = await add_run(status=status)
@@ -250,6 +250,157 @@ async def test_recover_state_leaves_settled_runs_alone(status: str) -> None:
 async def test_recover_state_ignores_missing_rows() -> None:
     """行被清掉了还投来一个恢复作业：直接结束，不要 404 到日志里刷屏。"""
     assert await _recover_state("0" * 32) == "done"
+
+
+async def test_prepared_never_automatically_recovers_or_scans(monkeypatch) -> None:
+    run = await add_run(status="prepared")
+    queued = []
+
+    async def enqueue(run_id, **kwargs):
+        queued.append(run_id)
+
+    monkeypatch.setattr(settings, "worker_enabled", True)
+    monkeypatch.setattr(worker, "enqueue_recovery", enqueue)
+    try:
+        assert await _recover_state(run.id) == "done"
+        await worker.resume()
+        assert run.id not in queued
+        assert (await read_run(run.id)).status == "prepared"
+    finally:
+        await drop_run(run.id)
+
+
+@pytest.mark.parametrize("source", ["receipt_camel", "receipt_snake", "state"])
+@pytest.mark.parametrize("action", ["schedule", "recover", "reconfirm"])
+async def test_libtv_accepted_receipt_restores_before_action(source, action) -> None:
+    import json
+
+    run = await add_run(status="submission_unknown", submit_attempts=1)
+    state = {"id": run.id, "status": "submission_unknown"}
+    if source == "state":
+        state["task_id"] = "accepted-123"
+    path = workspace(run.id, state)
+    if source != "state":
+        key = "taskId" if source == "receipt_camel" else "task_id"
+        (path / "records/submission.json").write_text(
+            json.dumps({"data": {key: "accepted-123", "power": 23}}), encoding="utf-8"
+        )
+    try:
+        if action == "schedule":
+            assert await _schedule_state(run.id) == "poll"
+        elif action == "recover":
+            assert await _recover_state(run.id) == "poll"
+        else:
+            async with _session() as session:
+                with pytest.raises(Conflict, match="已有上游任务号"):
+                    await worker.reconfirm_state(session, run.id, ADMIN, confirm_charged=True)
+        restored = await read_run(run.id)
+        assert restored.task_id == "accepted-123"
+        assert restored.submit_attempts == 0
+    finally:
+        await drop_run(run.id)
+
+
+async def test_receipt_with_mismatched_workspace_id_cannot_restore() -> None:
+    import json
+
+    run = await add_run(status="submission_unknown", submit_attempts=1)
+    path = workspace(run.id, {"id": "f" * 32, "status": "submission_unknown"})
+    (path / "records/submission.json").write_text(
+        json.dumps({"data": {"taskId": "foreign-task"}}), encoding="utf-8"
+    )
+    try:
+        with pytest.raises(Conflict, match="提交回执未知"):
+            await _schedule_state(run.id)
+        assert (await read_run(run.id)).task_id is None
+    finally:
+        await drop_run(run.id)
+
+
+async def test_prepare_waits_when_executor_lease_is_busy(monkeypatch) -> None:
+    from infra.archive.base import lease
+    from infra.queue.base import Job
+
+    run = await add_run(status="queued")
+    path = workspace(run.id)
+    queued = []
+
+    async def enqueue(run_id, **kwargs):
+        queued.append(run_id)
+
+    monkeypatch.setattr(worker, "enqueue_recovery", enqueue)
+    try:
+        with lease(path / "records/executor.lock"):
+            await worker.prepare_upload(
+                Job(name="template.replacement.prepare", payload={"id": run.id})
+            )
+        assert queued == [run.id]
+        assert (await read_run(run.id)).status == "queued"
+    finally:
+        await drop_run(run.id)
+
+
+async def test_resume_defers_busy_receipt_restore(monkeypatch) -> None:
+    from infra.archive.base import lease
+
+    run = await add_run(status="submission_unknown", submit_attempts=1)
+    path = workspace(run.id)
+    queued = []
+
+    async def enqueue(run_id, **kwargs):
+        queued.append(run_id)
+
+    monkeypatch.setattr(settings, "worker_enabled", True)
+    monkeypatch.setattr(worker, "enqueue_recovery", enqueue)
+    try:
+        with lease(path / "records/executor.lock"):
+            await worker.resume()
+        assert queued == [run.id]
+        assert (await read_run(run.id)).status == "submission_unknown"
+    finally:
+        await drop_run(run.id)
+
+
+async def test_billing_mode_refuses_newly_accepted_local_receipt() -> None:
+    run = await add_run(status="uploaded", billing_mode="free")
+    workspace(run.id, {"id": run.id, "status": "submitted", "task_id": "paid-free-task"})
+    try:
+        with pytest.raises(Conflict, match="免费队列"):
+            await _switch(run.id, "credits")
+        saved = await read_run(run.id)
+        assert saved.task_id == "paid-free-task"
+        assert saved.billing_mode == "free"
+    finally:
+        await drop_run(run.id)
+
+
+async def test_billing_mode_cannot_change_while_executor_is_busy() -> None:
+    from infra.archive.base import lease
+
+    run = await add_run(status="uploaded", billing_mode="free")
+    path = workspace(run.id)
+    try:
+        with lease(path / "records/executor.lock"), pytest.raises(Conflict):
+            await _switch(run.id, "credits")
+        assert (await read_run(run.id)).billing_mode == "free"
+    finally:
+        await drop_run(run.id)
+
+
+async def test_billing_mode_locks_when_submission_intent_has_been_recorded() -> None:
+    run = await add_run(status="uploaded", billing_mode="free", submit_attempts=1)
+    path = workspace(run.id, {
+        "id": run.id, "status": "uploaded", "billing_mode": "free", "submit_attempts": 1,
+    })
+    try:
+        with pytest.raises(Conflict, match="提交"):
+            await _switch(run.id, "credits")
+        assert (await read_run(run.id)).billing_mode == "free"
+        assert worker.read_state(path)["billing_mode"] == "free"
+        await _switch(run.id, "free")
+        assert (await read_run(run.id)).submit_attempts == 1
+    finally:
+        await drop_run(run.id)
 
 
 async def test_recover_waits_for_run_lock_with_bounded_retries(
@@ -309,6 +460,41 @@ async def test_resume_converges_and_skips_settled_runs(
     finally:
         for row in [unfinished, uploading, interrupted, *settled]:
             await drop_run(row.id)
+
+
+async def test_resume_skips_a_row_it_cannot_interpret(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """一条读不懂的历史行只能被跳过，不能拦住整个启动。
+
+    回执恢复会去共享盘读 `run.json` / `submission.json`：盘掉线、旧格式缺字段、
+    手工改坏的配置，都会在这里抛。`resume()` 接在 lifespan 的裸 `await` 上，
+    所以「跳过这一行」和「整个进程起不来」之间只隔一个 `except`。
+    """
+    good = await add_run(status="uploading")
+    broken = await add_run(status="service_error", submit_attempts=1)
+    queued: list[str] = []
+
+    async def fake_enqueue(run_id: str, *, delay: float = 0, attempt: int = 0) -> None:
+        queued.append(run_id)
+
+    original = worker._restore_accepted_receipt
+
+    async def explode(session, repo, run) -> None:
+        if run.id == broken.id:
+            raise RuntimeError("legacy row: 无法解读的记录")
+        await original(session, repo, run)
+
+    monkeypatch.setattr(settings, "worker_enabled", True)
+    monkeypatch.setattr(worker, "enqueue_recovery", fake_enqueue)
+    monkeypatch.setattr(worker, "_restore_accepted_receipt", explode)
+    try:
+        await worker.resume()
+        assert good.id in queued
+        assert broken.id not in queued
+    finally:
+        await drop_run(good.id)
+        await drop_run(broken.id)
 
 
 async def test_resume_does_nothing_when_worker_is_off(
@@ -389,3 +575,66 @@ async def test_mark_failed_classifies_by_receipt_and_status() -> None:
     finally:
         for row in (unknown, waiting, busy, failed, broken):
             await drop_run(row.id)
+
+
+async def test_browser_down_is_not_mistaken_for_a_login_problem(monkeypatch) -> None:
+    """浏览器没起来 → service_error + 明确的启动指引，不是「登录」也不是裸码。
+
+    生产上出现过这条：执行器浏览器进程停了，档案报 `LOGIN_REQUIRED`，
+    人去重登一个仍然有效的会话（cookie 还有四天），真正停掉的浏览器一直没人管。
+    """
+    from infra.ai.libtv_state import ExecutorResult
+    from infra.queue.base import Job
+
+    run = await add_run(status="queued")
+    workspace(run.id)
+    message = (
+        "执行器浏览器未连接（CDP http://127.0.0.1:9226，fetch failed）。"
+        "在你自己终端运行 start-services.ps1 -WithBrowser 启动后点继续；尚未提交，不会重复计费"
+    )
+
+    async def unreachable(*args):
+        return ExecutorResult(
+            code="EXECUTOR_BROWSER_UNAVAILABLE", stage="upload", message=message
+        )
+
+    monkeypatch.setattr(worker, "execute_stage", unreachable)
+    try:
+        await worker.prepare_upload(
+            Job(name="template.replacement.prepare", payload={"id": run.id})
+        )
+        saved = await read_run(run.id)
+        assert saved.status == "service_error"
+        assert saved.error_code == "EXECUTOR_BROWSER_UNAVAILABLE"
+        # 原文照存：再套一层「上传准备未完成：…（档案状态 queued）」会把可执行信息淹掉
+        assert saved.last_error == message
+        assert "登录" not in saved.last_error
+    finally:
+        await drop_run(run.id)
+
+
+async def test_missing_browser_login_lands_on_needs_login(monkeypatch) -> None:
+    """浏览器在、但里面没登录 → `needs_login`（可继续），不是 service_error。"""
+    from infra.ai.libtv_state import ExecutorResult
+    from infra.queue.base import Job
+
+    run = await add_run(status="queued")
+    workspace(run.id)
+    message = "执行器浏览器里没有有效的 LibTV 登录，请在该浏览器登录后点继续"
+
+    async def not_logged_in(*args):
+        return ExecutorResult(code="EXECUTOR_LOGIN_REQUIRED", stage="upload", message=message)
+
+    monkeypatch.setattr(worker, "execute_stage", not_logged_in)
+    try:
+        await worker.prepare_upload(
+            Job(name="template.replacement.prepare", payload={"id": run.id})
+        )
+        saved = await read_run(run.id)
+        assert saved.status == "needs_login"
+        assert saved.error_code == "EXECUTOR_LOGIN_REQUIRED"
+        assert saved.last_error == message
+        # 登录后「继续」必须放行：这是可恢复状态，不是终态
+        assert "needs_login" in worker.RETRYABLE
+    finally:
+        await drop_run(run.id)

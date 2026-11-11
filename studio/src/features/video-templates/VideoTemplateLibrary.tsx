@@ -25,6 +25,8 @@ interface FormState {
   rules?: Record<string, unknown>;
   workbenchLabel?: string;
   scopeOptionsText?: string;
+  textScene?: boolean;
+  scenePromptDefault?: string;
 }
 
 interface PackOption {
@@ -78,6 +80,8 @@ function formFromBlueprint(template: VideoTemplateOut): FormState {
       .map(item => item.assetId as string),
     generation: template.generation,
     rules: template.rules,
+    textScene: template.rules?.inputMode === 'video_scene_text',
+    scenePromptDefault: typeof template.rules?.scenePromptDefault === 'string' ? template.rules.scenePromptDefault : '',
     workbenchLabel: typeof template.rules?.workbenchLabel === 'string' ? template.rules.workbenchLabel : '',
     scopeOptionsText: Array.isArray(template.rules?.scopeOptions) ? template.rules.scopeOptions.join('\n') : '',
   };
@@ -99,9 +103,23 @@ function validateForm(form: FormState, images: number): string {
   if (!!scopes.length !== form.prompt.includes('{{ReplacementScope}}')) return '配置范围选项时，请在提示词中加入 {{ReplacementScope}}；无选项时请移除该参数';
   if (!form.name.trim()) return '请填写模板名称';
   if (!form.sourceVideoAssetId) return '请选择样片原片（先在「我的原片」上传登记，绑定后才会出现在全部模板里）';
+  if (form.textScene) {
+    if (form.defaultKind !== 'scene') return '文字换场景必须使用场景替换类型';
+    const description = form.scenePromptDefault ?? '';
+    if (!description.trim() || description.length > 4000 || /\{\{|\}\}/.test(description)) return '请填写默认场景描述，最多4000字，不含模板标记';
+    const tokens = [...form.prompt.matchAll(/\{\{([^{}]+)\}\}/g)].map(match => match[1]);
+    if (tokens.filter(token => token === 'ScenePrompt').length !== 1 || tokens.some(token => !['ScenePrompt', 'Mixed 1'].includes(token)) || scopes.length) return '文字换场景需包含一个 {{ScenePrompt}}，只允许引用原视频 {{Mixed 1}}，不配置范围';
+    return '';
+  }
   if (!form.packId) return '请选择已发布的替换素材包';
   if (images < 1) return '所选素材包没有参考图，无法生成媒体顺序';
-  if (form.order.length !== images) return '媒体顺序与素材包图片数量对不上，请重新选择素材包';
+  /* 用途绑定模式下媒体清单由服务端按声明生成、`mediaOrder` 不随请求发送，
+     于是 `order` 不再是这份清单的来源，不能再拿它和素材包图片数做等值校验。
+     蓝本里的「运行时选卡」空槽会被 `formFromBlueprint` 滤掉，包里有辅助图时
+     两者必然不等——以前这里会把「复制固定蓝本」堵在一个用户看不见原因的报错上。 */
+  const declaredBindings = form.rules?.referenceBindings;
+  const usesBindings = !!declaredBindings && typeof declaredBindings === 'object' && !Array.isArray(declaredBindings);
+  if (!usesBindings && form.order.length !== images) return '媒体顺序与素材包图片数量对不上，请重新选择素材包';
   if (!form.prompt.trim()) return '请填写固定提示词';
   const tokens = [...form.prompt.matchAll(/\{\{([^{}]+)\}\}/g)].map(match => match[1]);
   if (!tokens.length) return '提示词缺少 {{Mixed N}} 占位符';
@@ -112,9 +130,14 @@ function validateForm(form: FormState, images: number): string {
     if (!matched) return `非法占位符 {{${token}}}，只允许 {{Mixed N}}`;
     numbers.push(Number(matched[1]));
   }
-  if (!numbers.includes(1)) return '提示词必须引用 {{Mixed 1}} 原片';
-  if (!numbers.some(number => number >= 2)) return '提示词必须至少点名一张产品图';
-  const max = 1 + images;
+  const declared = declaredBindings;
+  const bindings = declared && typeof declared === 'object' && !Array.isArray(declared)
+    ? declared as Record<string, unknown> : undefined;
+  const sourceToken = bindings && Object.entries(bindings).find(([, role]) => role === 'source_video')?.[0];
+  const sourceSlot = Number(sourceToken?.match(/\d+/)?.[0] ?? 1);
+  if (!numbers.includes(sourceSlot)) return `提示词必须引用 {{Mixed ${sourceSlot}}} 原片`;
+  if (!numbers.some(number => number !== sourceSlot)) return '提示词必须至少点名一张产品图';
+  const max = Math.max(1 + images, Object.keys(bindings ?? {}).length);
   if (numbers.some(number => number > max)) {
     return `编号超出范围：该素材包 ${images} 张图，最大可用 {{Mixed ${max}}}`;
   }
@@ -150,10 +173,10 @@ function VideoTemplateEditor({initial, packs, sources, busy, onClose, onSubmit}:
       sourceVideoPath: form.sourceVideoPath,
       sourceDurationSec: Number(form.sourceDurationSec) || 0,
       aspectRatio: form.aspectRatio,
-      packId: form.packId,
+      packId: form.textScene ? null : form.packId,
       defaultKind: form.defaultKind,
       // 顺序由这里定：{{Mixed 1}} 永远是原片，其后按 form.order 排，提示词里的编号就指向它
-      mediaOrder: [
+      mediaOrder: form.textScene || form.rules?.referenceBindings ? [] : [
         {
           token: '{{Mixed 1}}', role: 'source_video', type: 'video',
           assetId: form.sourceVideoAssetId || null, name: form.sourceVideoName,
@@ -166,7 +189,7 @@ function VideoTemplateEditor({initial, packs, sources, busy, onClose, onSubmit}:
         }),
       ],
       generation: form.generation,
-      rules: {...form.rules, workbenchLabel: (form.workbenchLabel ?? '').trim(),
+      rules: {...form.rules, ...(form.textScene ? {inputMode: 'video_scene_text', scenePromptDefault: form.scenePromptDefault} : {}), workbenchLabel: (form.workbenchLabel ?? '').trim(),
         scopeOptions: (form.scopeOptionsText ?? '').split('\n').map(item => item.trim()).filter(Boolean)},
       pinned: form.pinned,
     };
@@ -180,13 +203,15 @@ function VideoTemplateEditor({initial, packs, sources, busy, onClose, onSubmit}:
   return <Modal open onClose={onClose} title="封装视频模板" width={860}>
     <form className="space-y-4 p-4" onSubmit={event => {event.preventDefault(); void submit();}}>
       <p className="text-xs leading-relaxed text-ink-mute">
-        媒体顺序由下面的清单决定：{'{{Mixed 1}}'} 固定是原片，后面按你排的顺序排，提示词写 {`{{Mixed 2}}`} 就指向第 2 位那张图 —— 想让三视图当前者，把它移到第 2 位，提示词原文不用改。
+        {form.textScene ? '文字换场景只输入原片。固定提示词用 {{ScenePrompt}} 标记用户可编辑的场景描述段落，其余约束保留原文。' : <>媒体顺序由下面的清单决定：{'{{Mixed 1}}'} 固定是原片，后面按你排的顺序排，提示词写 {`{{Mixed 2}}`} 就指向第 2 位那张图 —— 想让三视图当前者，把它移到第 2 位，提示词原文不用改。
         绑定样片原片后，这条模板会和 0507 高端姐一样出现在「全部模板」卡片流里；选中卡片即自动套用默认替换配置。
-        提示词按用途引用即可：换别的产品包时后端会按「正面 / 三视图 / 细节」重新取图，同一份提示词不用改。
+        提示词按用途引用即可：换别的产品包时后端会按「正面 / 三视图 / 细节」重新取图，同一份提示词不用改。</>}
       </p>
       <div className="grid gap-3 sm:grid-cols-2">
         <label className="block text-xs">模板名称<input className={input} maxLength={160} required value={form.name} onChange={event => patch({name: event.target.value})} placeholder="例如：米兰之夜 · 3030 粉色" /></label>
         <label className="block text-xs">稳定标识（可选）<input className={input} maxLength={80} value={form.templateKey} onChange={event => patch({templateKey: event.target.value})} placeholder="留空自动生成" /></label>
+        <label className="flex items-center gap-2 text-xs sm:col-span-2"><input type="checkbox" checked={!!form.textScene} onChange={event => patch({textScene: event.target.checked, packId: '', order: [], scopeOptionsText: '', rules: {}, ...(event.target.checked ? {defaultKind: 'scene'} : {})})} />文字换场景（仅原片和场景描述）</label>
+        {form.textScene ? <label className="block text-xs sm:col-span-2">默认场景描述<textarea className={input} rows={4} maxLength={4000} value={form.scenePromptDefault ?? ''} onChange={event => patch({scenePromptDefault: event.target.value})} /></label> : <>
         <label className="block text-xs sm:col-span-2">替换素材包
           <select className={input} value={form.packId} required onChange={event => {
             const picked = packs.find(pack => pack.id === event.target.value);
@@ -197,7 +222,7 @@ function VideoTemplateEditor({initial, packs, sources, busy, onClose, onSubmit}:
             {packs.map(pack => <option key={pack.id} value={pack.id}>{pack.label} · {pack.images} 张图</option>)}
           </select>
         </label>
-        <div className="text-xs sm:col-span-2" aria-label="媒体顺序">
+        {form.rules?.referenceBindings ? <p className="text-xs text-ink-mute sm:col-span-2">媒体按模板声明的用途由服务端排列，原有编号保持不变。</p> : <div className="text-xs sm:col-span-2" aria-label="媒体顺序">
           <span>媒体顺序（决定提示词里的编号指向哪张图）</span>
           <ol className="mt-1 space-y-1">
             <li className="flex items-center gap-2 rounded-lg border border-line bg-panel-soft p-2">
@@ -221,7 +246,8 @@ function VideoTemplateEditor({initial, packs, sources, busy, onClose, onSubmit}:
             })}
           </ol>
           <span className="mt-1 block text-[11px] text-ink-mute">默认沿用素材包顺序；只有这里的顺序会进接口，素材包本身不改。</span>
-        </div>
+        </div>}
+        </>}
         <label className="block text-xs sm:col-span-2">样片原片（绑定后才是「全部模板」里的可选卡片）
           <select className={input} value={form.sourceVideoAssetId} required onChange={event => {
             const picked = sources.find(source => source.id === event.target.value);
@@ -234,8 +260,8 @@ function VideoTemplateEditor({initial, packs, sources, busy, onClose, onSubmit}:
           </select>
         </label>
         <label className="block text-xs">工作台功能名称<input className={input} value={form.workbenchLabel ?? ''} maxLength={80} onChange={event => patch({workbenchLabel: event.target.value})} placeholder="例如：外穿产品替换" /></label>
-        <label className="block text-xs sm:col-span-2">替换范围选项（选填，每行一项）<textarea className={input} rows={3} value={form.scopeOptionsText ?? ''} onChange={event => patch({scopeOptionsText: event.target.value})} placeholder="留空则工作台不显示范围选择" /><span className="block text-ink-mute">范围已写在提示词中时留空；需要用户选择时，列出选项并在提示词中放入 {'{{ReplacementScope}}'}。</span></label>
-        <label className="block text-xs">默认替换类型<select className={input} value={form.defaultKind} onChange={event => patch({defaultKind: event.target.value as FormState['defaultKind']})}>{KINDS.map(kind => <option key={kind.value} value={kind.value}>{kind.label}</option>)}</select></label>
+        {!form.textScene && <label className="block text-xs sm:col-span-2">替换范围选项（选填，每行一项）<textarea className={input} rows={3} value={form.scopeOptionsText ?? ''} onChange={event => patch({scopeOptionsText: event.target.value})} placeholder="留空则工作台不显示范围选择" /><span className="block text-ink-mute">范围已写在提示词中时留空；需要用户选择时，列出选项并在提示词中放入 {'{{ReplacementScope}}'}。</span></label>}
+        <label className="block text-xs">默认替换类型<select className={input} value={form.defaultKind} disabled={form.textScene} onChange={event => patch({defaultKind: event.target.value as FormState['defaultKind']})}>{KINDS.map(kind => <option key={kind.value} value={kind.value}>{kind.label}</option>)}</select></label>
         <label className="block text-xs">样片文件名<input className={input} value={form.sourceVideoName} onChange={event => patch({sourceVideoName: event.target.value})} placeholder="原片视频文件名" /></label>
         <label className="block text-xs">样片本地路径（可选）<input className={input} value={form.sourceVideoPath} onChange={event => patch({sourceVideoPath: event.target.value})} placeholder="D:/.../样片.mp4" /></label>
         <label className="block text-xs">样片时长（秒）<input className={input} type="number" min="0" step="any" value={form.sourceDurationSec} onChange={event => patch({sourceDurationSec: event.target.value})} placeholder="5.31" /></label>
@@ -244,7 +270,7 @@ function VideoTemplateEditor({initial, packs, sources, busy, onClose, onSubmit}:
       </div>
       <label className="block text-xs">固定提示词
         <textarea className={`${input} h-40 font-mono leading-relaxed`} value={form.prompt} onChange={event => patch({prompt: event.target.value})} placeholder={'对输入的原视频 {{Mixed 1}} 进行局部替换，目标外观由 {{Mixed 2}} 中的款式决定。'} />
-        <span className="mt-1 block text-[11px] text-ink-mute">当前素材包可用编号：{'{{Mixed 1}}'} 原片，{'{{Mixed 2}}'} 起为上面「媒体顺序」里的图片，最大 {`{{Mixed ${1 + images}}}`}。</span>
+        <span className="mt-1 block text-[11px] text-ink-mute">{form.textScene ? '请在固定提示词放入一个 {{ScenePrompt}}，工作台仅替换这段描述。' : <>当前素材包可用编号：{'{{Mixed 1}}'} 原片，{'{{Mixed 2}}'} 起为上面「媒体顺序」里的图片，最大 {`{{Mixed ${1 + images}}}`}。</>}</span>
       </label>
       <label className="flex items-center gap-2 text-xs text-ink-soft"><input type="checkbox" checked={form.pinned} onChange={event => patch({pinned: event.target.checked})} />设为固定蓝本（全库仅一个，后续可一键复制）</label>
       {error && <p role="alert" className="rounded-lg bg-danger/5 p-2 text-xs text-danger">{error}</p>}
@@ -303,7 +329,7 @@ export function VideoTemplateLibrary({embedded = false}: {embedded?: boolean} = 
     <header className="flex flex-wrap items-start justify-between gap-3">
       <div>
         <h2 className="text-sm font-semibold text-ink">视频模板</h2>
-        <p className="mt-1 text-xs text-ink-mute">固定样片 + 固定提示词 + 已发布素材包。固定蓝本可一键复制，用于封装后续模板。</p>
+        <p className="mt-1 text-xs text-ink-mute">固定样片 + 功能提示词，可使用素材包或文字场景描述。固定蓝本可一键复制，用于封装后续模板。</p>
       </div>
       <div className="flex flex-wrap gap-2">
         <Button size="sm" disabled={!blueprint} onClick={() => blueprint && setEditing(formFromBlueprint(blueprint))}>复制固定蓝本</Button>
@@ -327,7 +353,7 @@ export function VideoTemplateLibrary({embedded = false}: {embedded?: boolean} = 
             <h3 className="text-xs font-semibold text-ink">{template.name}</h3>
             {template.pinned && <span className="shrink-0 rounded bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary">固定蓝本</span>}
           </div>
-          <p className="text-[11px] text-ink-mute">{template.packName} v{template.packVersion} · {template.aspectRatio} · {String(template.generation?.duration ?? '—')} 秒 · {images.length} 张图</p>
+          <p className="text-[11px] text-ink-mute">{template.rules?.inputMode === 'video_scene_text' ? '文字换场景 · 仅原片' : `${template.packName} v${template.packVersion}`} · {template.aspectRatio} · {String(template.generation?.duration ?? '—')} 秒 · {images.length} 张图</p>
           <p className="text-[11px] text-ink-soft">{template.sourceVideoName || '未登记样片'}</p>
           <p className={template.sourceVideoAssetId ? 'text-[11px] text-primary' : 'text-[11px] text-danger'}>
             {template.sourceVideoAssetId ? `已绑定原片卡片 · 默认${KINDS.find(kind => kind.value === template.defaultKind)?.label ?? '产品替换'}` : '未绑定原片，不会出现在「全部模板」'}
@@ -338,7 +364,7 @@ export function VideoTemplateLibrary({embedded = false}: {embedded?: boolean} = 
             <Button size="sm" variant="ghost" disabled={template.pinned || mutations.pin.isPending} onClick={() => {void handlePin(template.id);}}>设为固定</Button>
           </div>
           {open && <div className="space-y-2 border-t border-line pt-2">
-            <p className="text-[11px] font-semibold text-ink">你写的固定提示词（调用时逐字提交，不改写）</p>
+            <p className="text-[11px] font-semibold text-ink">{template.rules?.inputMode === 'video_scene_text' ? '场景描述参数 + 固定保留约束' : '你写的固定提示词（调用时逐字提交，不改写）'}</p>
             <pre className="max-h-48 overflow-auto whitespace-pre-wrap rounded bg-panel p-2 text-[11px] leading-relaxed text-ink-soft">{template.prompt}</pre>
             <ol className="space-y-1">
               {media.map(item => <li key={item.token} className="flex flex-wrap gap-1.5 text-[11px] text-ink-soft">

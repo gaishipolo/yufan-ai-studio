@@ -28,6 +28,7 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict
 
 from core.exceptions import BadRequest, UpstreamError
+from infra.archive.base import write_json
 from infra.archive.runs import check_id, lock_path, relative_key, runs_root
 
 RUNTIME = Path(__file__).parent / "replacement_runtime"
@@ -89,9 +90,7 @@ def write_state(path: Path, state: dict[str, object]) -> None:
     是权威、`run.json` 是给执行器的投影，由业务层单向写下去，再把执行器的回执
     读回来（`read_state`）。不是双写——`run.json` 从不反推业务状态。
     """
-    (path / "run.json").write_text(
-        json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8", newline="\n"
-    )
+    write_json(path / "run.json", state)
 
 
 def read_state(path: Path) -> dict[str, object]:

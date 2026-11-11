@@ -2,19 +2,22 @@ import { CheckCircle2 } from 'lucide-react';
 import { ArchivedMedia } from '@/entities/asset/ui/ArchivedMedia';
 import { Can } from '@/shared/access/Can';
 import { Button, Modal } from '@/shared/ui';
-import { CONTINUE, STATUS, NEXT_ACTION } from './replacementOptions';
+import { CONTINUE, RETRY, STATUS, NEXT_ACTION } from './replacementOptions';
 import { ReplacementEvaluation } from './ReplacementEvaluation';
 import { ReplacementInputSummary } from './ReplacementInputSummary';
 import { ReplacementPromptOrigin } from './ReplacementPromptOrigin';
+import { PromptMediaView } from './PromptMediaView';
 import { replacementDownloadName } from './replacementDownloadName';
 import type { ReplacementWorkbench } from './useReplacementWorkbench';
 import { ReplacementRunManagement } from './ReplacementRunManagement';
+import { ReplacementRetry } from './ReplacementRetry';
 import { replacementTaskFullName, replacementTaskName, replacementSourceName } from '@/entities/template/model/replacementTaskIdentity';
 import { replacementElapsedText } from './replacementElapsed';
 
 interface ReplacementDetailModalProps { model: ReplacementWorkbench }
 export function ReplacementDetailModal({ model }: ReplacementDetailModalProps) {
   const {currentDetail, setDetailId, setReviewId, feedback, submitting, submitRun} = model;
+  const isLibTV = !currentDetail?.channel || currentDetail.channel === 'libtv';
   return (
     <Modal open={!!currentDetail} onClose={() => setDetailId(null)} title="调用档案" width={880} className="replacement-detail-modal">
       {currentDetail && <div className="space-y-4 p-5">
@@ -22,8 +25,9 @@ export function ReplacementDetailModal({ model }: ReplacementDetailModalProps) {
         <p title={replacementTaskFullName(currentDetail)} className="break-words text-sm font-semibold text-ink">{replacementTaskName(currentDetail)} · {STATUS[currentDetail.status] ?? currentDetail.status}</p>
         <p className="break-all text-xs text-ink-soft">任务编号：{currentDetail.id} · 创建时间：{new Date(currentDetail.createdAt).toLocaleString()} · 耗时：{replacementElapsedText(currentDetail)}</p>
         <p className="break-words text-xs text-ink-soft">原片：{replacementSourceName(currentDetail)}</p>
-        <p className="break-all text-xs text-ink-soft">上游生成 ID：{currentDetail.taskId ?? '尚未提交'} · 估价：{currentDetail.estimatedCredits ?? '待查询'} · 实际积分：{currentDetail.credits ?? '待回传'}</p>
-        <p className="rounded-lg bg-panel-soft p-3 text-xs text-ink-soft">{currentDetail.status === 'success' && !currentDetail.outputUrl ? '结果文件暂不可用，请刷新任务记录或检查归档盘；文件恢复前无法查看成片和评价。' : NEXT_ACTION[currentDetail.status] ?? '请刷新查看最新状态，状态不明确时先核对记录。'}</p>
+        <p className="text-xs text-ink-soft">模型渠道：{currentDetail.channelLabel || (isLibTV ? 'LibTV' : currentDetail.channel === 'bailian-prime' ? '百炼 Prime' : '百炼')} · {isLibTV ? 'LibTV 积分队列' : '阿里云 API 计费'}</p>
+        <p className="break-all text-xs text-ink-soft">上游生成 ID：{currentDetail.taskId ?? '尚未提交'}{isLibTV && <> · 估价：{currentDetail.estimatedCredits ?? '待查询'} · 实际积分：{currentDetail.credits ?? '待回传'}</>}</p>
+        <p className="rounded-lg bg-panel-soft p-3 text-xs text-ink-soft">{currentDetail.status === 'success' && !currentDetail.outputUrl ? '结果文件暂不可用，请刷新任务记录或检查归档盘；文件恢复前无法查看成片和评价。' : !isLibTV && currentDetail.status === 'waiting_free' ? '请核对任务记录后继续，使用阿里云 API 计费。' : NEXT_ACTION[currentDetail.status] ?? '请刷新查看最新状态，状态不明确时先核对记录。'}</p>
         {currentDetail.lastError && <p role="alert" className="rounded-lg bg-danger/5 p-3 text-xs text-danger">{currentDetail.lastError}</p>}
         {feedback?.type === 'error' && <p role="alert" className="text-sm text-danger">{feedback.message}</p>}
         {currentDetail.status === 'success' && currentDetail.outputUrl && <div role="status" className="replacement-feedback is-success"><CheckCircle2 size={19} aria-hidden /><p>成片已生成并保存，可播放和下载原始文件。请核对替换效果，生成成功不代表人工验收通过。</p></div>}
@@ -36,13 +40,14 @@ export function ReplacementDetailModal({ model }: ReplacementDetailModalProps) {
           <div className="mt-2 space-y-2">
             <ReplacementPromptOrigin run={currentDetail} />
             <p className="text-xs font-semibold text-ink">最终提示词（本次实际提交）</p>
-            <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words text-xs leading-6 text-ink-soft">{currentDetail.prompt}</pre>
-            <p className="break-all pt-1 text-[11px] text-ink-mute">归档路径（排查用，非本次提示词）：{currentDetail.archivePath}</p>
+            <PromptMediaView key={currentDetail.id} prompt={currentDetail.prompt} media={currentDetail.inputSummary?.assets ?? []} />
+            <p className="break-all pt-1 text-[11px] text-ink-mute">归档路径（排查用，非本次提示词）：{currentDetail.archivePath ?? '目录已不在（可能已被清理）'}</p>
           </div>
         </details>
         {!currentDetail.deletedAt && currentDetail.status === 'prepared' && <Can permission="template:use"><Button variant="primary" onClick={() => {setDetailId(null); setReviewId(currentDetail.id);}}>核对替换任务</Button></Can>}
-        {!currentDetail.deletedAt && currentDetail.status !== 'prepared' && (CONTINUE.includes(currentDetail.status) || (currentDetail.taskId && !['success', 'failed', 'timeout'].includes(currentDetail.status))) &&
-          <Can permission="template:use"><Button variant="primary" loading={submitting} onClick={() => {void submitRun(currentDetail);}}>{currentDetail.taskId ? '继续查询已有任务' : '确认并继续零积分提交'}</Button></Can>}
+        {!currentDetail.deletedAt && currentDetail.status !== 'prepared' && !RETRY.includes(currentDetail.status) && (CONTINUE.includes(currentDetail.status) || (currentDetail.taskId && currentDetail.status !== 'success')) &&
+          <Can permission="template:use"><Button variant="primary" loading={submitting} onClick={() => {void submitRun(currentDetail);}}>{currentDetail.taskId ? '继续查询已有任务' : isLibTV ? '确认并继续零积分提交' : '确认并继续生成'}</Button></Can>}
+        <ReplacementRetry key={`retry-${currentDetail.id}`} run={currentDetail} model={model} />
         <ReplacementRunManagement key={`management-${currentDetail.id}`} run={currentDetail} />
       </div>}
     </Modal>

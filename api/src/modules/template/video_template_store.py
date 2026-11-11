@@ -34,8 +34,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.exceptions import BadRequest, Conflict, NotFound
 from core.ports.media import get_asset_lookup
 from modules.template.models import TemplatePack
+from modules.template.pack_roles import PACK_ROLES
 from modules.template.repository import PackRepository
-from modules.template.video_template_options import validate_options
+from modules.template.video_template_bindings import (
+    allows_partial_slots,
+    ensure_distinct_roles,
+    order_reference_ids,
+    place_source,
+    reference_roles,
+    source_position,
+)
+from modules.template.video_template_options import is_scene_text, validate_options
 from modules.template.video_template_schema import (
     VideoTemplateDraftIn,
     VideoTemplateListOut,
@@ -138,13 +147,13 @@ def get_out(template_id: str) -> VideoTemplateOut:
     raise NotFound("视频模板不存在")
 
 
-def _prompt_tokens(prompt: str) -> set[str]:
+def _prompt_tokens(prompt: str, scene_text: bool = False) -> set[str]:
     found = _TOKEN_RE.findall(prompt)
-    if not found:
+    if not found and not scene_text:
         raise BadRequest("提示词缺少 {{Mixed N}} 占位符")
     tokens: set[str] = set()
     for raw in found:
-        if raw == "ReplacementScope":
+        if raw == "ReplacementScope" or (scene_text and raw == "ScenePrompt"):
             continue
         match = _SLOT_RE.match(raw)
         if not match:
@@ -179,6 +188,69 @@ async def _resolve_media(
     """
     pack_name = ""
     pack_version = 0
+    if is_scene_text(payload.rules):
+        reference_roles(payload.rules, payload.prompt, payload.default_kind)
+        if payload.pack_id or payload.media_order:
+            raise BadRequest("文字换场景不选择素材包，由服务端生成唯一原片输入")
+        return [VideoTemplateMedia(token="{{Mixed 1}}", role="source_video", type="video",
+                   asset_id=payload.source_video_asset_id, name=payload.source_video_name,
+                   in_prompt="{{Mixed 1}}" in tokens)], "", 0
+    required = reference_roles(payload.rules, payload.prompt, payload.default_kind)
+    if required is not None:
+        if payload.media_order or not payload.pack_id:
+            raise BadRequest("用途绑定模式需提供已发布 packId，并由服务端生成完整媒体清单")
+        pack = await session.get(TemplatePack, payload.pack_id)
+        if pack is None or pack.deleted_at is not None or pack.status != "published":
+            raise BadRequest("请选择已发布的替换素材包")
+        refs = list(await PackRepository(session).references(pack.id))
+        ids = [ref.asset_id for ref in refs]
+        roles = {ref.asset_id: ref.role for ref in refs}
+        ordered: list[str | None]
+        if allows_partial_slots(required, payload.default_kind):
+            ensure_distinct_roles(roles, required, payload.default_kind)
+            # 一个包代表一个人物；第二张 front 也是该人物的辅助图，不能占下一人槽位。
+            first = next(asset_id for asset_id in ids if roles[asset_id] == "front")
+            ordered = [
+                first,
+                *([None] * (len(required) - 1)),
+                *(asset_id for asset_id in ids if asset_id != first),
+            ]
+        else:
+            ordered = list(order_reference_ids(ids, roles, required, payload.default_kind))
+        lookup = await get_asset_lookup().get_many(session, ids)
+        source_media = VideoTemplateMedia(
+            token="",
+            role="source_video",
+            type="video",
+            asset_id=payload.source_video_asset_id,
+            name=payload.source_video_name,
+            in_prompt=True,
+        )
+        image_media = []
+        labels = PACK_ROLES.get(payload.default_kind, {})
+        # 前 len(required) 项是模板声明的槽位；其余的包内图片是辅助参考，
+        # 用途照包里的来（不参与槽位映射，但仍然上传）。
+        for index, asset_id in enumerate(ordered):
+            slot = required[index] if index < len(required) else ""
+            role = roles[asset_id] if asset_id else slot
+            image_media.append(
+                VideoTemplateMedia(
+                    token="",
+                    role=role,
+                    type="image",
+                    asset_id=asset_id,
+                    name=(
+                        getattr(lookup.get(asset_id), "name", "") or asset_id
+                        if asset_id
+                        else f"运行时选{labels.get(role, role)}"
+                    ),
+                )
+            )
+        media = place_source(source_media, image_media, payload.rules)
+        for index, item in enumerate(media, 1):
+            item.token = f"{{{{Mixed {index}}}}}"
+            item.in_prompt = item.token in tokens
+        return media, pack.name, pack.version
     if payload.media_order:
         media = [item.model_copy() for item in payload.media_order]
         if payload.pack_id:
@@ -190,9 +262,7 @@ async def _resolve_media(
                     item.asset_id for item in media if item.type == "image" and item.asset_id
                 )
                 if declared != sorted(ref.asset_id for ref in refs):
-                    raise BadRequest(
-                        "媒体清单里的产品图必须与素材包完全一致：数量、图片都要对得上"
-                    )
+                    raise BadRequest("媒体清单里的产品图必须与素材包完全一致：数量、图片都要对得上")
                 _apply_pack_roles(media, refs)
         return media, pack_name, pack_version
 
@@ -232,11 +302,19 @@ async def _resolve_media(
     return media, pack.name, pack.version
 
 
-def _validate_media(media: list[VideoTemplateMedia], tokens: set[str]) -> list[VideoTemplateMedia]:
+def _validate_media(
+    media: list[VideoTemplateMedia], tokens: set[str], source_index: int = 0,
+    video_only: bool = False,
+) -> list[VideoTemplateMedia]:
     if not media:
         raise BadRequest("媒体清单不能为空")
-    if media[0].type != "video" or media[0].token != "{{Mixed 1}}":
-        raise BadRequest("{{Mixed 1}} 必须是完整原片")
+    source_token = f"{{{{Mixed {source_index + 1}}}}}"
+    if (
+        source_index >= len(media)
+        or media[source_index].type != "video"
+        or sum(item.type == "video" for item in media) != 1
+    ):
+        raise BadRequest(f"{source_token} 必须是唯一的完整原片")
     for index, item in enumerate(media, 1):
         expected = f"{{{{Mixed {index}}}}}"
         if item.token != expected:
@@ -245,19 +323,21 @@ def _validate_media(media: list[VideoTemplateMedia], tokens: set[str]) -> list[V
         number = int(_SLOT_RE.match(token[2:-2]).group(1))  # type: ignore[union-attr]
         if number > len(media):
             raise BadRequest(f"{token} 超出 mixedList 长度 {len(media)}")
-    if "{{Mixed 1}}" not in tokens:
-        raise BadRequest("提示词必须引用 {{Mixed 1}} 原片")
-    if not any(int(_SLOT_RE.match(t[2:-2]).group(1)) >= 2 for t in tokens):  # type: ignore[union-attr]
-        raise BadRequest("提示词必须至少点名一张产品图")
+    if source_token not in tokens and not video_only:
+        raise BadRequest(f"提示词必须引用 {source_token} 原片")
+    if not video_only and not any(item.type == "image" and item.token in tokens for item in media):
+        raise BadRequest("提示词必须至少点名一张参考图")
     marked = {item.token for item in media if item.in_prompt}
     if marked != tokens:
         raise BadRequest(f"inPrompt 标记 {sorted(marked)} 与提示词引用 {sorted(tokens)} 不一致")
     images = [item for item in media if item.type == "image"]
-    if not images:
-        raise BadRequest("至少要有 1 张产品图")
-    asset_ids = [item.asset_id for item in images]
+    if not images and not video_only:
+        raise BadRequest("至少要有 1 张参考图")
+    # 空槽位（`assetId` 为空）是「运行时由第 N 张人物卡填」的声明，不是真图，
+    # 不能参与去重：否则两个空槽会被判成「重复图片」。
+    asset_ids = [item.asset_id for item in images if item.asset_id]
     if len(set(asset_ids)) != len(asset_ids):
-        raise BadRequest("产品图不能重复")
+        raise BadRequest("参考图不能重复")
     return images
 
 
@@ -269,9 +349,10 @@ async def create(payload: VideoTemplateDraftIn, session: AsyncSession) -> VideoT
             raise BadRequest("请选择已发布的替换素材包")
         if pack.kind != payload.default_kind:
             raise BadRequest("封装处理类型必须与所选素材包类型一致")
-    tokens = _prompt_tokens(payload.prompt)
+    scene_text = is_scene_text(payload.rules)
+    tokens = _prompt_tokens(payload.prompt, scene_text)
     media, pack_name, pack_version = await _resolve_media(payload, session, tokens)
-    images = _validate_media(media, tokens)
+    images = _validate_media(media, tokens, source_position(payload.rules), scene_text)
 
     duration = round(payload.source_duration_sec) if payload.source_duration_sec > 0 else 5
     # 与生成侧同一口径（`replacement_service` 把 duration 收敛到 2..15 秒）。
@@ -358,6 +439,148 @@ def _append_record(record: dict[str, Any], pinned: bool) -> dict[str, Any]:
         return dict(record)
 
 
+_SCOPE_TOKEN = "ReplacementScope"
+
+
+def _cited_slots(prompt: str, *, scene_text: bool = False) -> tuple[list[int], bool]:
+    """提示词点名了哪些槽位（`Mixed N` 的 N），以及是否引用可选范围参数。
+
+    与 `_prompt_tokens` 的差别只有一处：改提示词允许 `{{ReplacementScope}}`，
+    它在运行文案里替换成用户选的范围，不算媒体槽位。
+    """
+    numbers: list[int] = []
+    scope = False
+    for raw in _TOKEN_RE.findall(prompt):
+        if scene_text and raw == "ScenePrompt":
+            continue
+        if raw == _SCOPE_TOKEN:
+            scope = True
+            continue
+        match = _SLOT_RE.match(raw)
+        if not match:
+            raise BadRequest(
+                f"非法占位符 {{{{{raw}}}}}：只允许 {{{{Mixed N}}}} 或 {{{{ReplacementScope}}}}"
+            )
+        number = int(match.group(1))
+        if number < 1:
+            raise BadRequest("占位符编号从 1 开始")
+        if number not in numbers:
+            numbers.append(number)
+    return numbers, scope
+
+
+def update_prompt(template_id: str, prompt: str) -> VideoTemplateOut:
+    """换掉固定提示词原文，槽位引用按新原文重算。
+
+    **为什么只能原地改**：`find_for_run` 在同原片同类型下按创建时间取最早那条，
+    新建一条「改正版」永远排在后面，等于没改；一条原片还会因此挂着两份同类型
+    模板，排查时说不清跑的是哪份。所以改提示词只改这一条。
+
+    保留 `bindings` 里没被新原文引用的槽位（不缩短）：那些图仍会完整插入接口，
+    只是 `inPrompt=false`；只有新原文点名了更靠后的槽位时才向后扩展。
+    """
+    if not prompt.strip():
+        raise BadRequest("提示词不能为空")
+    with _LOCK:
+        data = _read()
+        index = next(
+            (i for i, item in enumerate(data["items"]) if item.get("id") == template_id),
+            -1,
+        )
+        if index < 0:
+            raise NotFound("视频模板不存在")
+        record = data["items"][index]
+        template = _as_out(record)
+        scene_text = is_scene_text(template.rules)
+        if scene_text:
+            validate_options(prompt, template.rules)
+        numbers, scope = _cited_slots(prompt, scene_text=scene_text)
+        if not numbers and not scene_text:
+            raise BadRequest("提示词至少要引用原片槽位")
+        media = [item.model_copy() for item in template.media_order]
+        if not media:
+            raise BadRequest("模板没有媒体清单，无法改写提示词")
+        for number in numbers:
+            if number > len(media):
+                raise BadRequest(f"{{{{Mixed {number}}}}} 超出模板媒体数量 {len(media)}")
+
+        rules = dict(template.rules)
+        bindings = rules.get("referenceBindings")
+        if isinstance(bindings, dict) and bindings:
+            declared = {str(token): str(role) for token, role in bindings.items()}
+            video_slots = [
+                number
+                for number in range(1, len(declared) + 1)
+                if declared.get(f"{{{{Mixed {number}}}}}") == "source_video"
+            ]
+        else:
+            declared = {}
+            video_slots = [n for n, item in enumerate(media, 1) if item.type == "video"]
+        if not video_slots:
+            raise BadRequest("模板没有原片槽位，无法声明视频引用")
+        if not scene_text and not any(number in video_slots for number in numbers):
+            raise BadRequest("提示词必须引用原片槽位")
+        if not scene_text and not any(number not in video_slots for number in numbers):
+            raise BadRequest("提示词必须至少点名一张参考图")
+
+        if declared and not scene_text:
+            upper = max(max(numbers), len(declared))
+            for number in range(1, upper + 1):
+                token = f"{{{{Mixed {number}}}}}"
+                if token in declared:
+                    continue
+                item = media[number - 1]
+                role = "source_video" if item.type == "video" else item.role
+                if not role:
+                    raise BadRequest(f"{token} 在媒体清单里没有用途，无法声明为图片槽位")
+                declared[token] = role
+            rules["referenceBindings"] = {
+                f"{{{{Mixed {number}}}}}": declared[f"{{{{Mixed {number}}}}}"]
+                for number in range(1, upper + 1)
+            }
+            rules["mixedListOrderIsTokenOrder"] = True
+
+        scopes = [str(option) for option in (rules.get("scopeOptions") or [])]
+        if scope and not scopes:
+            raise BadRequest("提示词引用了 {{ReplacementScope}}，但模板没有声明可选范围")
+        if scope:
+            rules["scopeOptions"] = scopes
+        else:
+            # 新原文不再带范围参数，留着只会让配置面板出现一个点了没用的选择器。
+            rules.pop("scopeOptions", None)
+        rules["promptTokenAllowlist"] = [
+            f"{{{{Mixed {number}}}}}" for number in sorted(numbers)
+        ]
+
+        for number, item in enumerate(media, 1):
+            item.in_prompt = number in numbers
+
+        # 走一遍模型校验再落盘：`CamelModel` 会 strip 首尾空白，`model_copy` 不会。
+        # 少了这步，目录里的 prompt 与读出来看到的差一个换行，sha256 也就跟着对不上。
+        candidate = template.model_copy(
+            update={
+                "prompt": prompt,
+                "media_order": media,
+                "rules": rules,
+                "updated_at": _now(),
+            }
+        )
+        updated = VideoTemplateOut.model_validate(candidate.model_dump())
+        updated = updated.model_copy(
+            update={
+                "prompt_sha256": hashlib.sha256(
+                    updated.prompt.encode("utf-8")
+                ).hexdigest()
+            }
+        )
+        if declared:
+            # 用创建时同一套校验兜底：越界引用、多人换脸槽位规则都不许在这里绕过。
+            reference_roles(rules, updated.prompt, updated.default_kind)
+        data["items"][index] = _serialize(updated)
+        _write(data)
+    return updated
+
+
 def pin(template_id: str) -> VideoTemplateOut:
     """设为固定蓝本：全库只保留一个，后续封装以它为复制样板。"""
     with _LOCK:
@@ -377,7 +600,9 @@ def pin(template_id: str) -> VideoTemplateOut:
 
 
 def find_for_run(
-    source_id: str, pack_id: str | None, kind: str | None = None,
+    source_id: str,
+    pack_id: str | None,
+    kind: str | None = None,
     template_id: str | None = None,
 ) -> VideoTemplateOut | None:
     """按原片 asset id 找已封装的视频模板。
@@ -389,14 +614,17 @@ def find_for_run(
     优先取与本次包 id 一致的那条，其次固定蓝本。
     普通原片（0507 高端姐）没有绑定，行为完全不变。
     """
-    if not source_id or not pack_id:
+    if not source_id or (not pack_id and not template_id):
         return None
     with _LOCK:
         records = list(_read()["items"])
     if template_id:
         selected = next((record for record in records if record.get("id") == template_id), None)
-        if (selected is None or selected.get("sourceVideoAssetId") != source_id
-                or (kind is not None and selected.get("defaultKind", "product") != kind)):
+        if (
+            selected is None
+            or selected.get("sourceVideoAssetId") != source_id
+            or (kind is not None and selected.get("defaultKind", "product") != kind)
+        ):
             raise BadRequest("所选封装功能不存在或与原片、处理类型不匹配，请重新选择")
         return _as_out(selected)
     bound = [
@@ -413,9 +641,7 @@ def find_for_run(
     return _as_out(matches[0])
 
 
-async def attach_source(
-    template_id: str, asset_id: str, session: AsyncSession
-) -> VideoTemplateOut:
+async def attach_source(template_id: str, asset_id: str, session: AsyncSession) -> VideoTemplateOut:
     """把样片上传后的 source 资产绑定到模板，让它出现在「全部模板」卡片流里。"""
     lookup = await get_asset_lookup().get_many(session, [asset_id])
     asset = lookup.get(asset_id)
@@ -423,22 +649,41 @@ async def attach_source(
         raise NotFound("样片原片不存在或已删除")
     if asset.category != "source" or asset.type != "video":
         raise BadRequest("请选择已归档的 source 视频原片")
-    target = await asyncio.to_thread(_bind_source_asset, template_id, asset_id, asset.name)
+    target = await asyncio.to_thread(
+        _bind_source_asset, template_id, asset_id, asset.name, asset.duration
+    )
     return _as_out(target)
 
 
-def _bind_source_asset(template_id: str, asset_id: str, asset_name: str) -> dict[str, Any]:
-    """同步临界区：把 source 资产写回模板。只从线程池调用。"""
+def _bind_source_asset(
+    template_id: str, asset_id: str, asset_name: str, asset_duration: float
+) -> dict[str, Any]:
+    """同步临界区：把 source 资产写回模板。只从线程池调用。
+
+    换的是**这条模板的样片**本身，所以文件名与时长跟着资产走：只写 `assetId`
+    会让封装管理里继续显示上一支片的名字和秒数，生成档位也还按旧时长取整
+    （6 秒的片按 5 秒出，白丢一秒）。
+
+    档位只在它确实等于旧时长取整时才跟着改——手调过的值不覆盖。
+    """
     with _LOCK:
         data = _read()
-        target = next(
-            (record for record in data["items"] if record.get("id") == template_id), None
-        )
+        target = next((record for record in data["items"] if record.get("id") == template_id), None)
         if target is None:
             raise NotFound("视频模板不存在")
+        previous = float(target.get("sourceDurationSec") or 0)
         target["sourceVideoAssetId"] = asset_id
-        if not target.get("sourceVideoName"):
+        if asset_name:
             target["sourceVideoName"] = asset_name
+        duration = float(asset_duration or 0)
+        if duration > 0:
+            target["sourceDurationSec"] = duration
+            generation = dict(target.get("generation") or {})
+            current = generation.get("duration")
+            derived = max(2, min(15, round(previous))) if previous > 0 else None
+            if isinstance(current, int) and derived is not None and current == derived:
+                generation["duration"] = max(2, min(15, round(duration)))
+                target["generation"] = generation
         target["updatedAt"] = _now().isoformat().replace("+00:00", "Z")
         _write(data)
         return dict(target)

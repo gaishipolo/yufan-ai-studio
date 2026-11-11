@@ -112,3 +112,27 @@ def test_garbage_input_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(SystemExit) as exc:
         libtv_process.main()
     assert exc.value.code == 2
+
+
+def test_executor_env_drops_delete_semantics_shims(monkeypatch: pytest.MonkeyPatch) -> None:
+    """宿主带 WorkBuddy 垫片时，执行器子进程不能继承它。
+
+    垫片通过 `PYTHONPATH` 注入 `sitecustomize`，把 `unlink` 换成「进回收站 +
+    批量删除守卫」；执行器清 `records/worker.lock` 时撞上守卫会直接退出，任务被写成
+    「LibTV 查询中断：safe-delete 安全守卫……」而上游其实一切正常。
+    """
+    from infra.ai import libtv
+
+    monkeypatch.setenv("PYTHONPATH", r"D:/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim")
+    monkeypatch.setenv("NODE_OPTIONS", "--require shim.cjs")
+    monkeypatch.setenv("CODEBUDDY_SAFE_DELETE_ENABLED", "1")
+    monkeypatch.setenv("JS_REVERSE_KEEP_ME", "1")
+
+    env = libtv.supervisor_env()
+
+    assert "PYTHONPATH" not in env
+    assert "NODE_OPTIONS" not in env
+    assert "CODEBUDDY_SAFE_DELETE_ENABLED" not in env
+    # 其余变量照旧继承：执行器要靠 PATH 找 node
+    assert env["JS_REVERSE_KEEP_ME"] == "1"
+    assert env.get("PATH")

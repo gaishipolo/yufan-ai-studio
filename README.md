@@ -43,6 +43,21 @@ npm run dev             # http://localhost:5173，/api 已代理到 8080
 
 演示账号（`app seed` 写入，仅开发环境）：`admin / admin@12345`、`editor / editor@12345`、`viewer / viewer@12345`。
 
+### 局域网访问
+
+在服务器电脑的 `studio` 目录运行 `npm run dev:lan`，然后在同一局域网的设备上打开
+`http://服务器的局域网IP:5173`。当前电脑地址可用 PowerShell 的 `Get-NetIPConfiguration` 查看。
+该命令固定监听 `0.0.0.0:5173`，端口被占用时直接报错，不会悄悄切到另一个端口。
+
+前端保持 `VITE_API_BASE_URL=/api/v1`、`VITE_API_PROXY_TARGET=http://127.0.0.1:8080`，
+API 运行在服务器本机的 `127.0.0.1:8080`，由工作台代理请求。客户端无需访问 8080，
+也无需把前端 API 地址改成客户端的 localhost。LibTV 的登录浏览器仍运行在服务器电脑。
+素材与成片若使用 S3 预签名链接，`S3_ENDPOINT` 也必须是其他局域网设备能访问的地址。
+
+Windows 防火墙需允许工作台的 TCP 5173 入站；将远端范围限制为 `LocalSubnet`。
+若页面能打开但 API 不通，检查 API 服务及 Vite 代理；若整页无法打开，先检查 IP、
+5173 监听、防火墙及 Wi-Fi 客户端隔离。各设备首次访问该 IP 时需要单独登录。
+
 ## 文档导航
 
 人物 / 产品 / 场景替换与 Z 盘素材归档，见 [替换模板使用与开发说明](docs/REPLACEMENT_TEMPLATES.md)。
@@ -51,7 +66,7 @@ npm run dev             # http://localhost:5173，/api 已代理到 8080
 |---|---|
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | **新同事先读这个**：全局形状、逐文件职责、请求/登录/生成三条主线、常见坑 |
 | [docs/CHAIN_REPLACEMENT.md](docs/CHAIN_REPLACEMENT.md) | 产品替换从点击到成片的完整链路：12 跳逐文件、状态机、共享盘产物、失败恢复 |
-| [docs/AI_TEMPLATE_PACKAGER.md](docs/AI_TEMPLATE_PACKAGER.md) | 通过 AI 会话和配置文件封装视频卡片：预检、多功能模板、发布、防重与失败恢复 |
+| [docs/AI_TEMPLATE_PACKAGER_V2.md](docs/AI_TEMPLATE_PACKAGER_V2.md) | AI 会话封装视频卡片：复用工作台素材包、按用途绑定编号、完整上传辅助参考图 |
 | [docs/EXTENSIBILITY_GAPS.md](docs/EXTENSIBILITY_GAPS.md) | 扩展框架的问题清单（PR #1 合并暴露）：13 条缺口、优先级、以及暂缓的配置分层提案 |
 | [api/README.md](api/README.md) | 后端目录、命令表、接口约定、演示数据 |
 | [api/docs/EXTENDING.md](api/docs/EXTENDING.md) | 加模块 / 加供应商 / 加生成能力的标准做法，以及「什么绝对不能碰」 |

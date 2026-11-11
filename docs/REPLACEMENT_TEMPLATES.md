@@ -1,5 +1,13 @@
 # 人物 / 产品 / 场景替换与素材归档
 
+## 文字换场景（原视频卡片的新增功能）
+
+同一原视频卡片可新增“文字换场景”，与现有场景素材包功能并存。此模式只上传原片；工作台显示可编辑的“场景描述”多行输入框，预填封装者给出的默认场景，支持恢复默认。人物、产品、动作、声音等固定保留约束由模板保存，准备任务时只替换 `{{ScenePrompt}}`，核对弹窗和历史档案展示当次描述及完整提示词。
+
+契约：`rules.inputMode = "video_scene_text"`、`rules.scenePromptDefault`，模板 `defaultKind = "scene"`；不绑定素材包，媒体清单只有原片。prepare 显式携带 `videoTemplateId` 与 `scenePrompt`，省略描述使用默认值，空白或带模板标记拒绝。该模式拒绝混入素材包、散图、范围和补充要求，普通人物/产品/图片换场景沿用已有契约。
+
+会话封装说明及完整酒店会客厅示例见 [新版调用指南](AI_TEMPLATE_PACKAGER_V2.md)。本轮验证：后端全量 1172 passed / 12 skipped；前端 523 passed，类型检查、lint、构建通过。只登记模板，未执行真实视频生成。
+
 ## 素材封装（当前规则）
 
 封装一个替换目标 = 一组同类参考图 + 每张图的用途 + 必备用途 + 该目标已审核的替换范围。草稿可以随时保存、允许不完整，**只有发布的版本才会出现在模板库**；发布是不可变版本，普通用户只能选到它。
@@ -457,3 +465,157 @@ SMB 上 `rename` 没有 POSIX 语义，桥接层每次 `update()` 重写 run.jso
 验证：`tests/test_video_template_binding.py::test_prompt_origin_tells_where_the_prompt_came_from`
 覆盖现编/固定/老档案反查/模板已删四种情况；前端
 `ReplacementTemplates.test.tsx` 新增两条用例（提示词在前且标来源、列表标记只给固定提示词任务）。
+
+## 2026-11-10：一条原片替换「多位人物」（多槽位人物模板）
+
+需求：米兰之夜原片里有三位女性，要一次把三张脸都换掉。人物包是一人一包、
+各一张正面图，所以「3 个槽位」不可能由一个包填满。
+
+**契约上怎么表达**：同一用途在 `bindings` 里声明多次即可，不需要新字段——
+
+```json
+{"{{Mixed 1}}": "source_video", "{{Mixed 2}}": "front",
+ "{{Mixed 3}}": "front", "{{Mixed 4}}": "front"}
+```
+
+初版曾要求视频第1位。当前用途绑定契约允许唯一的视频在任意连续编号位置，
+「1/2/3=三个人物、4=视频」可直接封装，保留原提示词和编号；旧模板不自动重写。
+
+**封装（三个入口同一套规则）**：`order_reference_ids` 填不满时不再一律报错，
+而是看这是不是多槽位声明——
+- 同一用途只声明一次（产品/单人模板）：照旧报「缺少足够的『正面身份图』」，那是包配错了；
+- 同一用途声明多次（多人物）：能填几个填几个，剩下的留**空槽位**
+  （`assetId=null`，`name="运行时选正面身份图"`），它是「运行时由第 N 张人物卡填」的声明。
+当前仅多人换脸允许默认包只填第1位人物，其余身份待用户分别选卡；同一人物包的
+额外正面图只能做该人物的辅助参考。实现位于 `video_template_store._resolve_media`
+以及封装器 `template_packager/reuse.py`。产品、场景保持单包，不使用多人放宽规则。
+
+**运行时怎么补位**：`PrepareReplacement.extraPackIds` 放第 2 位起的素材包
+（第1位仍走 `packId` + `packVersion`），`extraPackVersions` 逐位锁定额外人物的发布版本。
+服务端 `_selected_pack_inputs` 分别从每张人物卡的发布快照取第一张 `front`，
+直接按人物序号对应提示词槽位，辅助图完整保留各自所属人物，不新建或合并人物包。
+视频位置以 referenceBindings 为准，不能用同一人的第二张正面图占另一人的位置。
+同一张卡填两个槽位会在准备前被拦（「同一张人物卡不能填多个槽位」）。
+任务名取「人物A、人物B、人物C」，档案里三张图的顺序就是槽位顺序。
+
+**工作台**：多人换脸优先按 `rules.referenceBindings` 中声明的 `front` 槽位数确定人数；旧模板回落到 `mediaOrder` 中被提示词引用的正面图，未引用的辅助正面图不计人数。
+在「选择目标人物」的同一人物卡片网格中按出镜顺序多选；选中卡显示 1、2、3 等序号及已选人数，再次点击取消，后续编号连续前移。人数未满不能准备，选满后未选项暂时禁用，取消后可换人。全部取消仍保持多人选择模式。产品和场景始终单选。
+
+验证：`tests/test_replacement_archive.py::test_multi_character_slots_are_filled_by_extra_packs`
+覆盖「封装留空槽 → 三包按序填位 → 同卡重复被拒」；前端
+`ReplacementTemplates.test.tsx`「三人模板在目标人物中按点击顺序多选」覆盖
+未选满不可提交、序号、选满限制、取消重排、全部清空、辅助图不计人数及按序提交 `extraPackIds`；产品/场景单选另有回归覆盖。
+
+第一条实例：`138e6cd3c85c47baac78e2d08ac57967`「米兰之夜 · 三人换脸」，
+原片 `ac1d588d…`（与产品替换模板同一张卡），默认包「年轻女人 黑长波浪发」v1。
+
+## 2026-11-10：模型渠道可选（LibTV / 阿里云百炼北京）
+
+LibTV 排队不稳定时，可以在准备任务前换渠道。渠道是**每条任务冻结**的配置，
+写进 `configuration.channel`，也进幂等指纹——换渠道等于换请求，不会复用旧任务；
+已有任务不回写渠道，历史里没有该字段的一律按 LibTV 解释，不需要数据迁移。
+
+| 渠道 id | 界面文案 | 上游模型 | 计费 |
+| --- | --- | --- | --- |
+| `libtv` | LibTV · Wan 3.0 · 720P | `libtv-wan3-replacement` | LibTV 积分队列 |
+| `bailian` | 阿里云百炼 · Wan 3.0 · 北京 · 720P | `wan3.0-video` | 阿里云 API 按次 |
+| `bailian-prime` | 阿里云百炼 · Wan 3.0 高速版 · 北京 · 720P | `wan3.0-video-prime` | 阿里云 API 按次 |
+
+**界面**：单条与批量配置里都有「模型渠道」下拉，数据来自
+`GET /templates/replacement-catalog` 的 `channels`；服务端认为不可用的渠道置灰并
+给出原因（未配密钥 / 未注册供应商）。核对弹窗、历史列表、详情弹窗显示本次冻结的
+渠道与计费方式；百炼任务不显示「积分加速」勾选（那是 LibTV 的概念）。
+重试沿用原渠道，不静默换道。
+
+**示例与占位符**：LibTV 的 `{{Mixed N}}` 与百炼的「图N/视频N/音频N」编号不同。
+百炼在准备阶段按素材类型分别计数重编译提示词（`translate_prompt`），并递增
+`compiler_version`，避免两类编号混用。
+
+**配置**（`api/.env`，都已写进 `.env.example`）：
+
+```
+AI_PROVIDERS=agnes,echo,libtv,bailian
+BAILIAN_BASE_URL=https://llm-cz0qm1j8cl2weo19.cn-beijing.maas.aliyuncs.com/api/v1
+BAILIAN_API_KEY=sk-...
+BAILIAN_TIMEOUT_SEC=45
+BAILIAN_DOWNLOAD_TIMEOUT_SEC=45
+```
+
+`BAILIAN_BASE_URL` 里第一段是业务空间 ID，必须与密钥同属北京地域，跨地域会失败。
+
+**为什么不直接重试**：百炼按次计费，提交回执（`records/bailian-submission.json`）
+先落盘再发请求。网络不确定时只允许查询已记录的 `task_id`，绝不自动重提；
+确认上游确实没有任务后，才由人工「重新确认」把未知回执归档再提交。
+成片下载到 `outputs/generated.mp4`，沿用既有归档与发布流程。
+
+**验证**：`tests/test_bailian_provider.py`（编号重编译、上传契约、状态归一、回执复用、
+不确定提交、下载、素材约束、纯文生视频不带 `media` 字段）、
+`tests/test_replacement_channels.py`（默认渠道、非法渠道、渠道冻结、回执恢复、
+计费隔离）、前端 `ReplacementTemplates.test.tsx`「单条和批量准备保存所选渠道，
+换渠道使用独立请求」。北京节点用 `GET /uploads?action=getPolicy` 做过免计费鉴权探测。
+
+## 2026-11-10：改固定提示词只能原地改
+
+需求是「把某条模板的提示词换成新的」。上一版没有这个入口，只有创建 / 设固定 /
+绑原片，于是很容易想到「再封一条覆盖它」——这条路是错的：`find_for_run` 在同原片
+同类型下按 `(pinned, createdAt)` 排序取第一条，**新建的那条永远排在旧条后面**，
+改了等于没改；同一枚原片还会因此挂着两份同类型模板，排查时说不清跑的是哪份。
+
+所以补的是原地改：
+
+- `PATCH /api/v1/templates/video-templates/{id}/prompt`，body 只有 `prompt`；
+  `video_template_store.update_prompt()` 负责改。
+- 媒体清单、素材包、名称、档位、原片绑定都不动，只换原文与由此派生的引用关系：
+  - `promptSha256` 重算；
+  - 新原文点名了更靠后的槽位时，`rules.referenceBindings` 向后扩展
+    （用途取自该位媒体自身的 role），**不缩短**——没被点名的图仍完整插入接口，
+    只是 `inPrompt=false`；
+  - `rules.promptTokenAllowlist` 换成新原文实际引用的编号；
+  - 原文不再引用 `{{ReplacementScope}}` 时清掉 `rules.scopeOptions`：
+    固定提示词是逐字提交的，留着范围选择器只会点了没反应。
+- 校验沿用创建时那套：越界 `{{Mixed N}}`、只引用图片不引用原片、一个图片都不点名、
+  引用了 `{{ReplacementScope}}` 但模板没声明范围、非法占位符，全部当场拒绝；
+  多人换脸的「每人一个 front 槽位」规则也在这里复检。
+- **先规范化再算摘要**：`CamelModel` 的 `str_strip_whitespace` 会去掉首尾空白，
+  而 `model_copy` 跳过校验。少了这步，目录里会存下带尾换行的原文、却拿它算 sha，
+  读出来又是没有换行的版本，两边对不上。
+
+前端暂时没有编辑入口（本次只改数据），要改还是走这条接口或直接调 store。
+提示词改动影响此后每一次生成，路由留审计 `template.video_template.update_prompt`。
+
+验证：`tests/test_video_template_prompt.py`（5 项）覆盖扩槽、不缩短、范围参数清理、
+五类非法引用、规范化与摘要自洽；全量 `pytest` 1220 通过，`ruff` 干净，
+`export-openapi`、`gen:mock-coverage` 已同步。
+
+## 2026-11-11：换样片原片，文件名与档位要跟着走
+
+「把这枚卡片的视频换成新拍的那支」= 换模板的 `sourceVideoAssetId`，走
+`POST /templates/video-templates/{id}/attach-source`。原来它只写 `assetId`，
+于是出现「卡片换了、说明没换」：封装管理里仍是上一支片的名字和秒数，
+`generation.duration` 也还按旧时长取整（6 秒的新片按 5 秒出，白丢一秒）。
+
+现在 `_bind_source_asset` 一并同步：
+
+- `sourceVideoName` ← 资产名（不再「只在空的时候填」，因为换片后旧名字一定是错的）；
+- `sourceDurationSec` ← 资产探测时长；
+- `generation.duration` **只在它恰好等于旧时长取整时才改**——那说明它是算出来的；
+  手调过的档位是人做的决定，不覆盖。探测不到时长（0）时只换 id 与名字。
+
+一枚原片常挂多条功能（产品替换 / 三人换脸 / 文字换场景），换样片必须**逐条**
+attach，否则卡片会被拆成两张：旧原片留着没换的那几条，新原片只有换掉的。
+本次「我穿的是米兰之夜模板测试」卡片三条全部改绑到
+`我穿的是米兰之夜3030.mp4`（720×1280 · 6.0 秒 · 含音轨），档位 5 → 6，
+固定蓝本状态保留。
+
+旧原片资产 `ac1d588d…` 不删：历史替换任务的档案还在引用它，删了任务详情就断图。
+它现在没有模板绑定，在「全部模板」里退化成一张普通原片卡片。
+
+验证：`tests/test_video_template_attach_source.py`（3 项）覆盖跟随改名改时长、
+手调档位不被覆盖、缺模板与探测不到时长；全量 `pytest` 通过。
+
+**换片之后旧卡片还在**：卡片流是「按 source 资产逐张渲染」的
+（`ReplacementSourceLibrary` 直接 `videos.map`），`attach-source` 只改模板指向，
+不会动资产本身。所以同一条内容会短暂出现两张卡：旧卡（无模板、放旧片）与新卡
+（挂着全部功能）。把旧原片 `PUT /assets/{id}/deleted` 收进回收站即只剩一张；
+回收前确认两件事：待确认（`prepared`）任务的 `inputs/` 已含 `source-original.mp4`
+快照（它们不从资产现取），历史任务的详情缩略图读各自运行目录——两者都不依赖该资产。

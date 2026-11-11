@@ -11,6 +11,7 @@ from pathlib import Path
 
 from template_packager.client import PackagingClient
 from template_packager.manifest import load_manifest
+from template_packager.reuse import resolve_existing_packs, server_options
 from template_packager.runner import apply_manifest
 
 
@@ -21,9 +22,11 @@ def main(argv=None) -> int:
     parser.add_argument("manifest", type=Path, help="JSON 配置，素材路径相对于该文件")
     modes = parser.add_mutually_exclusive_group()
     modes.add_argument(
-        "--apply", action="store_true", help="执行上传、发布与模板创建；不会生成视频"
+        "--apply", action="store_true", help="封装模板；复用包不传参考图、不发布包，不生成视频"
     )
-    modes.add_argument("--check-server", action="store_true", help="只检查当前后端契约和账号权限")
+    modes.add_argument(
+        "--check-server", action="store_true", help="只读检查后端契约、账号权限和默认包"
+    )
     parser.add_argument("--api-url", default="http://127.0.0.1:8080/api/v1")
     parser.add_argument(
         "--state", type=Path, help="恢复进度文件；默认保存在 api/var/template-packager"
@@ -38,17 +41,23 @@ def main(argv=None) -> int:
                 "fingerprint": loaded.fingerprint,
                 "packs": len(loaded.spec.packs),
                 "functions": [f.key for f in loaded.spec.functions],
+                "inputBindings": {f.key: f.bindings for f in loaded.spec.functions},
                 "shared": loaded.spec.video.shared,
                 "message": "本地预检通过，未联网、未上传",
             }
         else:
             with PackagingClient(args.api_url, os.environ.get("YUFAN_API_TOKEN", "")) as api:
                 if args.check_server:
-                    me = api.check_server(sharing=loaded.spec.video.shared)
+                    me = api.check_server(**server_options(loaded.spec))
+                    existing_packs = resolve_existing_packs(loaded.spec, api, {})
                     report = {
                         "mode": "server-check",
                         "ownerId": me["id"],
                         "message": "契约与权限检查通过，未写入",
+                        "defaultPacks": {
+                            key: {"id": pack["id"], "name": pack["name"]}
+                            for key, pack in existing_packs.items()
+                        },
                     }
                 else:
                     state_key = hashlib.sha256(

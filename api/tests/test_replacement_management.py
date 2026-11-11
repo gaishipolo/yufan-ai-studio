@@ -44,7 +44,9 @@ async def test_recycle_restore_persist_and_keep_workspace(client: TestClient, ar
     row = await read_run(uid)
     assert row is not None and row.deleted_at is not None
 
-    rows = client.get(f"{API}/templates/replacement-catalog").json()["data"]["runs"]
+    catalog = client.get(f"{API}/templates/replacement-catalog")
+    assert catalog.status_code == 200, catalog.text
+    rows = catalog.json()["data"]["runs"]
     assert next(item for item in rows if item["id"] == uid)["deletedAt"] == timestamp
 
     # 回收站里的任务不能继续执行：钱会花出去，而用户以为已经删了
@@ -58,6 +60,27 @@ async def test_recycle_restore_persist_and_keep_workspace(client: TestClient, ar
     # 全程不碰工作区字节
     assert (path / "run.json").read_bytes() == original
     assert (path / "inputs/prompt.txt").read_text(encoding="utf-8") == "prompt"
+
+
+async def test_catalog_survives_a_run_whose_workspace_is_gone(
+    client: TestClient, archived
+) -> None:
+    """一条记录的目录没了，不能连带整页 404。
+
+    这不是假想：归档 GC 清过工作区、换机器只搬了数据库、从备份恢复到新目录，
+    都会留下「库里有一行、指针指不到目录」的记录。那一行仍然要能出现在列表里
+    —— 用户得看到它的状态、看到当时提交的提示词、从回收站把它恢复回来。
+    以前这里 `run_path()` 直接抛 404，`GET /replacement-catalog` 整页打不开，
+    一条坏记录连带另外几十条一起消失。
+    """
+    kept, _ = await archived()
+    orphan = await add_run()  # 只插行，不建目录：模拟工作区已被清理
+
+    catalog = client.get(f"{API}/templates/replacement-catalog")
+    assert catalog.status_code == 200, catalog.text
+    rows = {item["id"]: item for item in catalog.json()["data"]["runs"]}
+    assert rows[orphan.id]["archivePath"] is None
+    assert rows[kept]["archivePath"]
 
 
 async def test_recycle_checks_owner_and_permissions(client: TestClient, archived) -> None:

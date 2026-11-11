@@ -142,15 +142,22 @@ def run_node(
             process.wait()
             result.code = "EXECUTOR_TIMEOUT"
         result.phase = "finished"
-        # 子进程已退出且仍持有两把 OS 锁，遗留文件可安全清理。
+        # 先保存 Node 已退出的事实；清理钩子可能直接终止监督进程，不能只在内存里改。
+        storage.write(run / "records/executor-result.json", result.model_dump())
+        # 此时仍持有 OS 租约。Node 正常退出已自行删除 worker.lock，只清理遗留文件。
         try:
-            (run / "records/worker.lock").unlink(missing_ok=True)
-        except Exception:  # 清理钩子也可能抛 RuntimeError；不重试、不绕过环境限制。
+            lock = run / "records/worker.lock"
+            if lock.exists():
+                lock.unlink(missing_ok=True)
+        except (Exception, SystemExit) as exc:
             # 清理失败不代表 Node 还活着；必须保存 finished，避免后续误判活锁。
             logger.exception("LibTV 锁清理失败 run=%s stage=%s", run.name, stage)
             result.code = "LOCK_CLEANUP_FAILED"
             result.message = "执行进程已退出，但锁清理受阻；请核对文件权限或运行环境限制"
-        storage.write(run / "records/executor-result.json", result.model_dump())
+            storage.write(run / "records/executor-result.json", result.model_dump())
+            if isinstance(exc, SystemExit):
+                # 只记录失败；守卫要求退出时仍退出，不吞掉信号，也不重试删除。
+                raise
         return result
 
 
@@ -227,12 +234,20 @@ def main() -> None:
             file=sys.stderr,
         )
         raise SystemExit(2)
-    result = supervise(payload.stage, Path(payload.run), payload.node)
     # 回执本身就在运行工作区，不依赖 S3 客户端成功初始化。
     # 初始化失败时再次初始化同一个驱动，会把可诊断的错误变成「没有回执」。
     from infra.archive.base import write_json
 
-    write_json(Path(payload.result), result.model_dump())
+    result = ExecutorResult(
+        stage=payload.stage,
+        code="EXECUTOR_CRASHED",
+        message=(f"监督进程异常中断；请检查 logs/supervisor-{Path(payload.result).stem}.log"),
+    )
+    try:
+        result = supervise(payload.stage, Path(payload.run), payload.node)
+    finally:
+        # SystemExit 等终止信号继续传播，但尽可能保留本次操作的独立失败回执。
+        write_json(Path(payload.result), result.model_dump())
 
 
 if __name__ == "__main__":

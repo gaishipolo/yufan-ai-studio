@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import ssl
 from pathlib import Path
 from urllib.parse import urlsplit
 
+import certifi
 import httpx
 
 
@@ -23,12 +25,16 @@ class PackagingClient:
         if not token:
             raise ValueError("请设置 YUFAN_API_TOKEN 环境变量")
         self.base_url = base_url.rstrip("/")
+        # 显式证书上下文保持 HTTPS 校验，同时不继承 SSLKEYLOGFILE 的调试写入。
+        tls = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        tls.load_verify_locations(cafile=certifi.where())
         self.http = httpx.Client(
             headers={"Authorization": f"Bearer {token}"},
             timeout=httpx.Timeout(120, connect=10),
             transport=transport,
             follow_redirects=False,
             trust_env=False,
+            verify=tls,
         )
 
     def __enter__(self):
@@ -72,7 +78,10 @@ class PackagingClient:
                 headers={"Content-Type": "application/octet-stream"},
             )
 
-    def check_server(self, *, sharing=False):
+    def check_server(
+        self, *, sharing=False, creating_packs=True, uploading=True, role_bindings=False,
+        scene_text=False,
+    ):
         spec = self.request("GET", "/openapi.json", raw=True)
         schemas = spec.get("components", {}).get("schemas", {})
         current = any(
@@ -83,16 +92,17 @@ class PackagingClient:
         )
         if not current or operation.get("x-template-key-idempotency") != 1:
             raise ValueError("后端尚未加载封装契约，请更新并重启后端后再执行")
+        if role_bindings and operation.get("x-template-role-bindings", 0) < int(role_bindings):
+            raise ValueError("后端尚未加载用途绑定契约，请更新并重启后端后再执行")
+        if scene_text and operation.get("x-template-scene-text") != 1:
+            raise ValueError("后端尚未加载文字换场景契约，请更新并重启后端后再执行")
         me = self.request("GET", "/identity/me")
         permissions = me.get("permissions", [])
-        required = [
-            "asset:read",
-            "asset:create",
-            "asset:reference:manage",
-            "template:read",
-            "template:pack:manage",
-            "template:pack:publish",
-        ]
+        required = ["asset:read", "template:read", "template:pack:manage"]
+        if uploading:
+            required.append("asset:create")
+        if creating_packs:
+            required.extend(["asset:reference:manage", "template:pack:publish"])
         if sharing:
             required.append("asset:share")
         missing = [

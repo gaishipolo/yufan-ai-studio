@@ -8,12 +8,14 @@ import os
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlencode
 from uuid import NAMESPACE_URL, uuid5
 
 from modules.template.pack_roles import BASE_ROLE
 from template_packager.client import PackagingClient
 from template_packager.manifest import LoadedManifest, digest_file
+from template_packager.reuse import resolve_existing_packs, server_options
 
 
 def atomic_json(path: Path, data: dict) -> None:
@@ -66,7 +68,7 @@ def journal(path: Path, identity: dict, fingerprint: str):
 
 def apply_manifest(loaded: LoadedManifest, api: PackagingClient, state_path: Path) -> dict:
     spec = loaded.spec
-    actor = api.check_server(sharing=spec.video.shared)
+    actor = api.check_server(**server_options(spec))
     owner = actor["id"]
     identity = {"api": api.base_url, "owner": owner, "key": spec.key}
     namespace = uuid5(NAMESPACE_URL, f"yufan-packager:{owner}:{spec.key}")
@@ -82,6 +84,9 @@ def apply_manifest(loaded: LoadedManifest, api: PackagingClient, state_path: Pat
 
         def checkpoint():
             atomic_json(state_path, state)
+
+        reused = resolve_existing_packs(spec, api, state)
+        checkpoint()  # 自动选择结果持久化；后续重试不悄悄换默认包。
 
         def upload(file: Path, category: str) -> dict:
             digest = loaded.digests[file]
@@ -104,7 +109,16 @@ def apply_manifest(loaded: LoadedManifest, api: PackagingClient, state_path: Pat
             checkpoint()
             return asset
 
-        source = upload(spec.video.file, "source")
+        if spec.video.file is not None:
+            source = upload(spec.video.file, "source")
+        else:
+            source = api.request("GET", f"/assets/{spec.video.asset_id}")
+            if (
+                source.get("deletedAt")
+                or source.get("category") != "source"
+                or source.get("type") != "video"
+            ):
+                raise ValueError("assetId 必须是当前账号可读取的有效视频原片")
         if not source.get("hasAudio") or not 1 <= source.get("duration", 0) <= 15:
             raise ValueError("原片需为1–15秒且含音轨；已上传素材保留供核对")
         if spec.video.shared and not source.get("shared"):
@@ -114,12 +128,21 @@ def apply_manifest(loaded: LoadedManifest, api: PackagingClient, state_path: Pat
                 json={"expectedVersion": source["stateVersion"], "shared": True},
             )
 
-        managed = {
-            item["id"]: item for item in api.request("GET", "/templates/replacement-packs")["items"]
-        }
+        managed = (
+            {
+                item["id"]: item
+                for item in api.request("GET", "/templates/replacement-packs")["items"]
+            }
+            if any(pack.references for pack in spec.packs)
+            else {}
+        )
         packs = {}
-        assets = {}
+        assets: dict[str, dict[str, Any]] = {}
         for pack in spec.packs:
+            if not pack.references:
+                packs[pack.key] = reused[pack.key]
+                assets[pack.key] = {}
+                continue
             refs = [upload(ref.file, pack.kind) for ref in pack.references]
             assets[pack.key] = {
                 ref.key: asset for ref, asset in zip(pack.references, refs, strict=True)
@@ -171,9 +194,16 @@ def apply_manifest(loaded: LoadedManifest, api: PackagingClient, state_path: Pat
 
         functions = []
         for function in spec.functions:
-            pack = packs[function.pack]
-            function_refs = assets[function.pack]
-            prompt = function.prompt or ""
+            scene_text = function.scene_prompt_default is not None
+            function_pack: dict[str, Any] = (
+                {"kind": "scene", "id": None, "name": "文字描述", "version": 0}
+                if scene_text
+                else packs[function.pack or ""]
+            )
+            function_refs = {} if scene_text else assets[function.pack or ""]
+            # HTTP CamelModel 会清理首尾空白；文件提示词与该边界保持一致，
+            # 避免文件末尾换行导致重试误判远端配置变化。内部段落保持原文。
+            prompt = (function.prompt or "").strip()
             media = [
                 {
                     "token": "{{Mixed 1}}",
@@ -206,8 +236,8 @@ def apply_manifest(loaded: LoadedManifest, api: PackagingClient, state_path: Pat
                 "sourceVideoAssetId": source["id"],
                 "sourceVideoName": source["name"],
                 "sourceDurationSec": source["duration"],
-                "defaultKind": pack["kind"],
-                "packId": pack["id"],
+                "defaultKind": function_pack["kind"],
+                "packId": function_pack["id"],
                 "mediaOrder": media,
                 "aspectRatio": function.aspect_ratio,
                 "rules": {
@@ -219,6 +249,13 @@ def apply_manifest(loaded: LoadedManifest, api: PackagingClient, state_path: Pat
                 if function.duration is not None
                 else {},
             }
+            if function.bindings is not None:
+                payload.pop("mediaOrder")
+                payload["rules"]["referenceBindings"] = function.bindings
+            if scene_text:
+                payload["rules"].update(
+                    inputMode="video_scene_text", scenePromptDefault=function.scene_prompt_default
+                )
             # 服务端在临界区按 templateKey 防重；响应丢失也不会多出第二条。
             existing = next(
                 (item for item in ours if item["templateKey"] == payload["templateKey"]), None
@@ -235,12 +272,13 @@ def apply_manifest(loaded: LoadedManifest, api: PackagingClient, state_path: Pat
                         existing.get(field, {}).get(key) != value
                         for key, value in payload[field].items()
                     )
-                actual_media = existing.get("mediaOrder", [])
-                different |= len(actual_media) != len(media)
-                different |= any(
-                    any(actual.get(key) != value for key, value in expected.items())
-                    for expected, actual in zip(media, actual_media, strict=False)
-                )
+                if function.bindings is None:
+                    actual_media = existing.get("mediaOrder", [])
+                    different |= len(actual_media) != len(media)
+                    different |= any(
+                        any(actual.get(key) != value for key, value in expected.items())
+                        for expected, actual in zip(media, actual_media, strict=False)
+                    )
                 if different:
                     raise ValueError("远端模板配置已变化，请核对原片、提示词与媒体顺序")
             template = existing or api.request("POST", "/templates/video-templates", json=payload)
@@ -248,9 +286,12 @@ def apply_manifest(loaded: LoadedManifest, api: PackagingClient, state_path: Pat
                 {
                     "sourceId": source["id"],
                     "videoTemplateId": template["id"],
-                    "kind": pack["kind"],
-                    "packId": pack["id"],
-                    "packVersion": pack["version"],
+                    "kind": function_pack["kind"],
+                    **(
+                        {"packId": function_pack["id"], "packVersion": function_pack["version"]}
+                        if not scene_text
+                        else {}
+                    ),
                     "sourceScope": "public" if source.get("shared") else "mine",
                 }
             )
@@ -259,10 +300,32 @@ def apply_manifest(loaded: LoadedManifest, api: PackagingClient, state_path: Pat
                     "key": function.key,
                     "name": function.name,
                     "videoTemplateId": template["id"],
-                    "packId": pack["id"],
-                    "packVersion": pack["version"],
+                    "packId": function_pack["id"],
+                    "packName": function_pack["name"],
+                    "packVersion": function_pack["version"],
                     "promptSha256": hashlib.sha256(prompt.encode()).hexdigest(),
                     "mediaOrder": template["mediaOrder"],
+                    **(
+                        {
+                            "inputMode": "video_scene_text",
+                            "scenePromptDefault": function.scene_prompt_default,
+                        }
+                        if scene_text
+                        else {}
+                    ),
+                    **(
+                        {
+                            "bindings": function.bindings,
+                            "includeAllPackImages": not scene_text,
+                            "requiredPackCount": 0
+                            if scene_text
+                            else max(1, list(function.bindings.values()).count("front"))
+                            if function_pack["kind"] == "character"
+                            else 1,
+                        }
+                        if function.bindings is not None
+                        else {}
+                    ),
                     "workbenchPath": "/templates?" + query,
                 }
             )

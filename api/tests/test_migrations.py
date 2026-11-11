@@ -269,6 +269,53 @@ def test_inflight_jobs_survive_the_lease_token_migration(
     )
 
 
+def test_call_chain_upgrade_preserves_paid_runs_and_queued_jobs(tmp_path, monkeypatch) -> None:
+    import sqlite3
+
+    from core.config import reload_settings
+    from db import session as db_session
+
+    db_file = tmp_path / "call-chain.db"
+    monkeypatch.setenv("DB_URL", f"sqlite+aiosqlite:///{db_file.as_posix()}")
+    reload_settings()
+    db_session.reset_state_for_tests()
+    try:
+        config = _config()
+        command.upgrade(config, "e8f1a3c6b290")
+        conn = sqlite3.connect(db_file)
+        try:
+            conn.execute(
+                "INSERT INTO replacement_runs (id,kind,target,owner_id,status,fingerprint,"
+                "prompt,duration,progress_percent,billing_mode,submit_attempts,retry_count,"
+                "created_at,updated_at,task_id) VALUES "
+                "('paid-run','product','product','owner','running','fingerprint','prompt',"
+                "6,15,'credits',0,0,'2026-11-11','2026-11-11','accepted-upstream')"
+            )
+            conn.execute(
+                "INSERT INTO queued_jobs (id,name,payload,status,run_at,attempts,max_attempts,"
+                "trace_id,last_error,created_at,updated_at) VALUES "
+                "('poll-job','generation.poll','{}','pending','2026-11-11',0,1,"
+                "'trace','', '2026-11-11','2026-11-11')"
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        command.upgrade(config, "head")
+        conn = sqlite3.connect(db_file)
+        try:
+            assert conn.execute(
+                "SELECT task_id, state_version FROM replacement_runs WHERE id='paid-run'"
+            ).fetchone() == ("accepted-upstream", 1)
+            assert conn.execute(
+                "SELECT status, next_job FROM queued_jobs WHERE id='poll-job'"
+            ).fetchone() == ("pending", None)
+        finally:
+            conn.close()
+    finally:
+        reload_settings()
+        db_session.reset_state_for_tests()
+
+
 def _render_diff(diff: list) -> str:
     lines = ["模型与迁移不一致（生产会用迁移建表，缺的列/表只会在生产炸）："]
     for item in diff:

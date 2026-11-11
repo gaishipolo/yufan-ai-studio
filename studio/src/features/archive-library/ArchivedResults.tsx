@@ -80,7 +80,7 @@ export function ArchivedResults() {
     <Modal open={!!selected} onClose={() => setSelectedId(null)} title={selected?.target}>
       {selected?.outputUrl && <div className="space-y-3 p-4">
         <ArchivedMedia url={selected.outputUrl} type="video" name={`${selected.target}-${selected.id}.mp4`} />
-        <p className="text-xs text-ink-mute">归档位置：{selected.archivePath}</p>
+        <p className="text-xs text-ink-mute">归档位置：{selected.archivePath ?? '目录已不在（可能已被清理）'}</p>
         <Link to="/templates" className="inline-block text-xs text-primary underline">前往模板库查看任务 →</Link>
       </div>}
     </Modal>

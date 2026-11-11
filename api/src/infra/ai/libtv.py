@@ -33,7 +33,13 @@ logger = get_logger(__name__)
 MODEL_ID = "libtv-wan3-replacement"
 # 这些故障需要修复执行环境，再由「继续」恢复已有 task_id 的查询。
 EXECUTOR_BLOCKED = frozenset(
-    {"STALE_LOCK", "LOCK_CLEANUP_FAILED", "EXECUTOR_IO_FAILED", "EXECUTOR_CRASHED"}
+    {
+        "STALE_LOCK",
+        "LOCK_CLEANUP_FAILED",
+        "EXECUTOR_IO_FAILED",
+        "EXECUTOR_CRASHED",
+        "EXECUTOR_ENVIRONMENT_BLOCKED",
+    }
 )
 
 
@@ -53,6 +59,24 @@ def get_libtv_settings() -> LibTvSettings:
     return LibTvSettings()
 
 
+# 不能传给执行器的环境变量。原因很具体：宿主若从带 WorkBuddy 垫片的终端启动，
+# `PYTHONPATH` 指向垫片目录，子进程会加载那里的 `sitecustomize`，把 `unlink` 换成
+# 「进回收站 + 批量删除守卫」。执行器清理 `records/worker.lock` 时撞上守卫就退出，
+# 任务被写成「LibTV 查询中断：safe-delete 安全守卫……」，而上游其实还在正常生成。
+# 执行器不需要这些变量：导入路径由 venv 的 .pth 提供，node 也不需要额外的 --require。
+_SHIM_ENV_KEYS = frozenset({"PYTHONPATH", "NODE_OPTIONS", "BASH_ENV"})
+_SHIM_ENV_PREFIXES = ("CODEBUDDY_SAFE_DELETE",)
+
+
+def supervisor_env() -> dict[str, str]:
+    """执行器子进程的环境：继承宿主，但剥掉会改变删除语义的垫片变量。"""
+    return {
+        key: value
+        for key, value in os.environ.items()
+        if key.upper() not in _SHIM_ENV_KEYS and not key.upper().startswith(_SHIM_ENV_PREFIXES)
+    }
+
+
 class Pointer(BaseModel):
     path: str
 
@@ -60,6 +84,59 @@ class Pointer(BaseModel):
 class AdapterError(BaseModel):
     code: str
     stage: str
+    # 适配器给的原始说明。**必须留着**：`LOGIN_REQUIRED` 既可能是「浏览器根本没连上」，
+    # 也可能是「浏览器连着但没登录」，两者的下一动作完全不同，只有 detail 能分开。
+    detail: str = ""
+
+
+# CDP 连接层的失败特征（见 vendor 的 canvas-transport：先 GET /json/version，再连 ws）。
+_BROWSER_DOWN_HINTS = (
+    "fetch failed",
+    "CDP discovery",
+    "CDP connection",
+    "Only a loopback",
+    "Unexpected CDP",
+)
+
+
+def explain_login_failure(
+    result: ExecutorResult, error: AdapterError | None
+) -> ExecutorResult:
+    """把登录阶段的粗码分成「浏览器没连上」与「浏览器里没登录」。
+
+    适配器在两种情况下都写 `LOGIN_REQUIRED`（stage=login），但用户要做的事不同：
+    前者去启动/重启执行器浏览器（`start-services.ps1 -WithBrowser`），后者才是登录。
+    混成一个码的后果已经在生产上出现过：浏览器进程没起来，页面却提示「登录」，
+    人去重登一个仍然有效的会话，真正停掉的浏览器一直没人管。
+    """
+    if error is None or error.code != "LOGIN_REQUIRED":
+        return result
+    detail = error.detail or error.code
+    if any(hint in detail for hint in _BROWSER_DOWN_HINTS):
+        # 文案跟着阶段走：upload 阶段还没花钱，说「不会重复计费」；查询/下载阶段
+        # 任务已经在上游跑着，得说「恢复查询」而不是假装还没提交。
+        if result.stage in ("poll", "download"):
+            tail = "启动后会自动恢复查询，上游任务未取消"
+        else:
+            tail = (
+                "在你自己终端运行 start-services.ps1 -WithBrowser 启动后点继续；"
+                "尚未提交，不会重复计费"
+            )
+        return result.model_copy(
+            update={
+                "code": "EXECUTOR_BROWSER_UNAVAILABLE",
+                "message": (
+                    f"执行器浏览器未连接（CDP {get_libtv_settings().browser_url}，"
+                    f"{detail}）。{tail}"
+                ),
+            }
+        )
+    return result.model_copy(
+        update={
+            "code": "EXECUTOR_LOGIN_REQUIRED",
+            "message": "执行器浏览器里没有有效的 LibTV 登录，请在该浏览器登录后点继续",
+        }
+    )
 
 
 def run_path(run_id: str) -> Path:
@@ -77,14 +154,28 @@ def state(path: Path) -> LibTVState:
     return LibTVState.model_validate(get_archive_storage().read(path / "run.json"))
 
 
-def read_result(path: Path) -> tuple[ExecutorResult, str | None]:
+def read_result(path: Path) -> tuple[ExecutorResult, AdapterError | None]:
     storage = get_archive_storage()
     result = ExecutorResult.model_validate(storage.read(path))
     errorfile = path.parent / "executor-error.json"
     error = (
-        AdapterError.model_validate(storage.read(errorfile)).code if errorfile.exists() else None
+        AdapterError.model_validate(storage.read(errorfile)) if errorfile.exists() else None
     )
     return result, error
+
+
+def environment_blocked(logfile: Path) -> bool:
+    """只认本次监督日志的明确守卫标记，不向用户透出原始日志或推测普通崩溃原因。"""
+    try:
+        with logfile.open("rb") as stream:
+            # 读取有界尾部，避免把大日志全量载入内存。
+            stream.seek(0, os.SEEK_END)
+            stream.seek(max(0, stream.tell() - 65536))
+            return b"[safe-delete][SAFE_DELETE_BULK_CONFIRM_REQUIRED]" in stream.read(65536)
+    except OSError:
+        # 辅助诊断失败不能掩盖原有执行器故障。
+        logger.warning("LibTV 监督日志不可读 log=%s", logfile)
+        return False
 
 
 async def execute_stage(run_id: str, stage: str) -> ExecutorResult:
@@ -122,14 +213,34 @@ async def _execute_stage(run_id: str, stage: str) -> ExecutorResult:
         process = await asyncio.to_thread(
             subprocess.Popen,
             [sys.executable, "-m", "infra.ai.libtv_process"],
+            # A console Ctrl+C during API restart must not interrupt the durable
+            # supervisor before it can write its receipt.
+            creationflags=(subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0),
             stdin=subprocess.PIPE,
             stdout=subprocess.DEVNULL,
             stderr=errors,
-            env={**os.environ, "JS_REVERSE_BROWSER_URL": get_libtv_settings().browser_url},
+            env={**supervisor_env(), "JS_REVERSE_BROWSER_URL": get_libtv_settings().browser_url},
         )
         # 取消等待不杀监督进程；子进程继承日志句柄，可继续保存回执。
         # Windows 的 uvicorn reload 使用 Selector loop，不支持 asyncio 子进程 API。
         await asyncio.to_thread(process.communicate, payload)
+    if process.returncode and await asyncio.to_thread(environment_blocked, logfile):
+        logger.error(
+            "LibTV 监督进程被安全守卫中断 run_id=%s stage=%s exit=%s log=%s",
+            run_id,
+            stage,
+            process.returncode,
+            logfile,
+        )
+        return ExecutorResult(
+            code="EXECUTOR_ENVIRONMENT_BLOCKED",
+            stage=stage,
+            message=(
+                "运行环境的 safe-delete 安全守卫阻止了执行器清理；"
+                "请检查 API 服务运行环境及删除操作授权，处理后再继续；"
+                f"诊断日志：logs/{logfile.name}"
+            ),
+        )
     if not resultfile.exists():
         logger.error(
             "LibTV 监督进程未返回回执 run_id=%s stage=%s exit=%s log=%s",
@@ -152,10 +263,12 @@ async def _execute_stage(run_id: str, stage: str) -> ExecutorResult:
             run_id,
             stage,
             result.code,
-            error,
+            error.code if error is not None else None,
         )
-        if error and not result.message:
-            result.message = error
+        if error is not None and not result.message:
+            result.message = error.code
+        # 登录阶段的粗码在这里落脚：浏览器没连上 / 没登录，两种下一动作。
+        result = explain_login_failure(result, error)
     return result
 
 

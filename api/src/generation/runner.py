@@ -22,6 +22,7 @@ worker 的并发槽位是稀缺资源。单个视频生成要 3 分钟，如果 
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 
 import httpx
@@ -56,8 +57,7 @@ _MAX_ERROR_LEN = 500
 _MAX_BACKOFF_SEC = 30.0
 
 SUBMIT_UNKNOWN_MESSAGE = (
-    "提交结果未知：请求已发出但未确认供应商是否受理，为避免重复计费未自动重试，"
-    "请核对后手动重试"
+    "提交结果未知：请求已发出但未确认供应商是否受理，为避免重复计费未自动重试，请核对后手动重试"
 )
 
 OWNER_DISABLED_MESSAGE = "发起人账号已停用，任务未提交（避免继续产生费用）"
@@ -186,12 +186,11 @@ class GenerationRunner:
                 # （典型是脚手架里的占位实现），此时请求根本没发出去。
                 # 必须在 try 之外拦下来：落进下面的分支会被误判成「可能已计费」（R4-03）
                 try:
-                    await store.mark_submitting(record_id)
+                    if await store.mark_submitting(record_id) is False:
+                        return
                     await session.commit()
                 except Exception as exc:  # noqa: BLE001
-                    logger.exception(
-                        "提交准备失败（未调用供应商）kind=%s id=%s", kind, record_id
-                    )
+                    logger.exception("提交准备失败（未调用供应商）kind=%s id=%s", kind, record_id)
                     await self._fail(
                         store=store,
                         session=session,
@@ -203,7 +202,12 @@ class GenerationRunner:
                     return
 
                 try:
-                    provider = get_model_router().provider_for(record.model)
+                    resolver = getattr(pipeline, "resolve_provider", None)
+                    provider = (
+                        resolver(record.model)
+                        if resolver is not None
+                        else get_model_router().provider_for(record.model)
+                    )
                     request = await pipeline.build_request(record)
                     delivered = await provider.submit(request)
                 except Exception as exc:  # noqa: BLE001
@@ -251,7 +255,17 @@ class GenerationRunner:
                     sync_result = None
                     resolved_id = delivered
 
-                await store.mark_submitted(record_id, resolved_id)
+                if await store.mark_submitted(record_id, resolved_id) is False:
+                    # 静默 return 会让「上游已受理、库里没任务号」无人知晓。
+                    # 落败可能是别人先写了同一个 task_id（无害），也可能是这一行
+                    # 已被接管方判死（有害）；两种都留一条可检索的痕。
+                    logger.warning(
+                        "提交回执未能落库（记录状态已变化）kind=%s id=%s external=%s",
+                        kind,
+                        record_id,
+                        resolved_id,
+                    )
+                    return
                 await session.commit()
                 await self._emit(
                     EVT_GENERATION_SUBMITTED,
@@ -288,114 +302,129 @@ class GenerationRunner:
         next_delay: float | None = None
 
         try:
-            async with factory() as session:
-                store = pipeline.store(session)
-                record = await store.load(record_id)
-                if record is None or record.terminal:
-                    return
-                if not record.external_id:
-                    # 状态被重置过（如手动重试），重新走提交
-                    await self.dispatch(kind, record_id)
-                    return
+            budget = (job.timeout_sec or 120.0) * 0.8
+            async with asyncio.timeout(budget):
+                async with factory() as session:
+                    store = pipeline.store(session)
+                    record = await store.load(record_id)
+                    if record is None or record.terminal:
+                        return
+                    if not record.external_id:
+                        # 状态被重置过（如手动重试），重新走提交
+                        await self.dispatch(kind, record_id)
+                        return
 
-                if self._timed_out(record):
-                    # 墙钟预算优先于轮询次数：max_polls 是「本次进程内」的计数，
-                    # 重启会归零（见 resume 的注释），反复重启时它永远到不了上限
-                    message = "生成超时，请重试"
-                    await store.mark_failed(record_id, message)
-                    await session.commit()
-                    await self._emit(
-                        EVT_GENERATION_FAILED,
-                        kind=kind,
-                        record_id=record_id,
-                        owner_id=record.owner_id,
-                        error=message,
-                    )
-                    return
-
-                if polls >= settings.generation_max_polls:
-                    # 事件里的 error 与落库文案必须一致：接上通知渠道后，
-                    # 用户收到的说法不能和任务详情页不一样（R4-10）
-                    message = "生成超时，请重试"
-                    await store.mark_failed(record_id, message)
-                    await session.commit()
-                    await self._emit(
-                        EVT_GENERATION_FAILED,
-                        kind=kind,
-                        record_id=record_id,
-                        owner_id=record.owner_id,
-                        error=message,
-                    )
-                    return
-
-                provider = get_model_router().provider_for(record.model)
-                try:
-                    result = await provider.poll(record.external_id, model=record.model)
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning(
-                        "轮询失败（稍后重试）kind=%s id=%s polls=%d err=%s",
-                        kind,
-                        record_id,
-                        polls,
-                        exc,
-                    )
-                    next_delay = self._backoff(polls)
-                else:
-                    state = result.state
-
-                    if state == GenerationState.SUCCEEDED:
-                        output_url = await self._persist(kind, record_id, result.output_url)
-                        cover_url = self._persisted_cover(result, output_url)
-                        await store.mark_succeeded(
-                            record_id,
-                            output_url=output_url,
-                            cover_url=cover_url,
-                            progress=result.progress or 100,
-                        )
+                    if self._timed_out(record):
+                        # 墙钟预算优先于轮询次数：max_polls 是「本次进程内」的计数，
+                        # 重启会归零（见 resume 的注释），反复重启时它永远到不了上限
+                        message = "生成超时，请重试"
+                        if await store.mark_failed(record_id, message) is False:
+                            return
                         await session.commit()
-                        # 落库存 key（与存储驱动无关），事件给地址（订阅方要能直接用）
-                        public_output, public_cover = await artifact_urls(
-                            [output_url, cover_url]
-                        )
                         await self._emit(
-                            EVT_GENERATION_SUCCEEDED,
+                            EVT_GENERATION_FAILED,
                             kind=kind,
                             record_id=record_id,
                             owner_id=record.owner_id,
-                            model=record.model,
-                            output_url=public_output,
-                            cover_url=public_cover,
+                            error=message,
                         )
                         return
 
-                    if state == GenerationState.FAILED:
-                        if result.retryable and polls + 1 < settings.generation_max_polls:
-                            next_delay = self._backoff(polls)
-                        else:
-                            await store.mark_failed(
-                                record_id, (result.error or "生成失败")[:_MAX_ERROR_LEN]
+                    if polls >= settings.generation_max_polls:
+                        # 事件里的 error 与落库文案必须一致：接上通知渠道后，
+                        # 用户收到的说法不能和任务详情页不一样（R4-10）
+                        message = "生成超时，请重试"
+                        if await store.mark_failed(record_id, message) is False:
+                            return
+                        await session.commit()
+                        await self._emit(
+                            EVT_GENERATION_FAILED,
+                            kind=kind,
+                            record_id=record_id,
+                            owner_id=record.owner_id,
+                            error=message,
+                        )
+                        return
+
+                    resolver = getattr(pipeline, "resolve_provider", None)
+                    provider = (
+                        resolver(record.model)
+                        if resolver is not None
+                        else get_model_router().provider_for(record.model)
+                    )
+                    try:
+                        result = await provider.poll(record.external_id, model=record.model)
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning(
+                            "轮询失败（稍后重试）kind=%s id=%s polls=%d err=%s",
+                            kind,
+                            record_id,
+                            polls,
+                            exc,
+                        )
+                        next_delay = self._backoff(polls)
+                    else:
+                        state = result.state
+
+                        if state == GenerationState.SUCCEEDED:
+                            output_url = await self._persist(kind, record_id, result.output_url)
+                            cover_url = self._persisted_cover(result, output_url)
+                            applied = await store.mark_succeeded(
+                                record_id,
+                                output_url=output_url,
+                                cover_url=cover_url,
+                                progress=result.progress or 100,
                             )
+                            if applied is False:
+                                return
                             await session.commit()
+                            # 落库存 key（与存储驱动无关），事件给地址（订阅方要能直接用）
+                            public_output, public_cover = await artifact_urls(
+                                [output_url, cover_url]
+                            )
                             await self._emit(
-                                EVT_GENERATION_FAILED,
+                                EVT_GENERATION_SUCCEEDED,
                                 kind=kind,
                                 record_id=record_id,
                                 owner_id=record.owner_id,
-                                error=result.error,
+                                model=record.model,
+                                output_url=public_output,
+                                cover_url=public_cover,
                             )
                             return
-                    else:
-                        if result.progress != record.progress:
-                            await store.mark_progress(record_id, result.progress)
-                            await session.commit()
-                            await self._emit(
-                                EVT_GENERATION_PROGRESS,
-                                kind=kind,
-                                record_id=record_id,
-                                owner_id=record.owner_id,
-                                progress=result.progress,
-                            )
-                        next_delay = settings.generation_poll_interval_sec
+
+                        if state == GenerationState.FAILED:
+                            if result.retryable and polls + 1 < settings.generation_max_polls:
+                                next_delay = self._backoff(polls)
+                            else:
+                                applied = await store.mark_failed(
+                                    record_id, (result.error or "生成失败")[:_MAX_ERROR_LEN]
+                                )
+                                if applied is False:
+                                    return
+                                await session.commit()
+                                await self._emit(
+                                    EVT_GENERATION_FAILED,
+                                    kind=kind,
+                                    record_id=record_id,
+                                    owner_id=record.owner_id,
+                                    error=result.error,
+                                )
+                                return
+                        else:
+                            progress = max(record.progress, min(99, result.progress))
+                            if progress != record.progress:
+                                if await store.mark_progress(record_id, progress) is False:
+                                    return
+                                await session.commit()
+                                await self._emit(
+                                    EVT_GENERATION_PROGRESS,
+                                    kind=kind,
+                                    record_id=record_id,
+                                    owner_id=record.owner_id,
+                                    progress=progress,
+                                )
+                            next_delay = settings.generation_poll_interval_sec
         except Exception:  # noqa: BLE001
             # 轮询 job 的 max_attempts=1，异常冒到 worker 会被直接丢弃；一旦丢弃，
             # 任务就永久停在 running（队列里已经没它的 job 了）。
@@ -427,9 +456,7 @@ class GenerationRunner:
             return url
 
     @staticmethod
-    def _persisted_cover(
-        result: GenerationProgress, stored: str | None
-    ) -> str | None:
+    def _persisted_cover(result: GenerationProgress, stored: str | None) -> str | None:
         """封面和产物是同一张图时，封面也跟着换成落盘地址。
 
         图片类能力的 `cover_url` 往往就是 `output_url`（供应商返回同一个签名地址），
@@ -479,12 +506,14 @@ class GenerationRunner:
             # 落盘失败不改变「生成成功」这个事实，只退回原 URL 并留一条警告。
             output_url = await self._persist(kind, record_id, result.output_url)
             cover_url = self._persisted_cover(result, output_url)
-            await store.mark_succeeded(
+            applied = await store.mark_succeeded(
                 record_id,
                 output_url=output_url,
                 cover_url=cover_url,
                 progress=result.progress or 100,
             )
+            if applied is False:
+                return
             await session.commit()
             public_output, public_cover = await artifact_urls([output_url, cover_url])
             await self._emit(
@@ -499,7 +528,8 @@ class GenerationRunner:
             return
 
         message = (result.error or "生成失败")[:_MAX_ERROR_LEN]
-        await store.mark_failed(record_id, message)
+        if await store.mark_failed(record_id, message) is False:
+            return
         await session.commit()
         await self._emit(
             EVT_GENERATION_FAILED,
@@ -532,7 +562,8 @@ class GenerationRunner:
             # 幂等：同一记录在队列中最多一个待执行的轮询
             idempotency_key=f"poll:{kind}:{record_id}",
             max_attempts=1,
-            timeout_sec=60.0,
+            # Bailian may perform a 45s query followed by a 45s download.
+            timeout_sec=120.0,
         )
         try:
             await self._queue.enqueue(job, delay=delay)
@@ -554,7 +585,8 @@ class GenerationRunner:
                 record = await store.load(record_id)
                 if record is None or record.terminal:
                     return
-                await store.mark_failed(record_id, message)
+                if await store.mark_failed(record_id, message) is False:
+                    return
                 await session.commit()
                 await self._emit(
                     EVT_GENERATION_FAILED,
@@ -581,7 +613,8 @@ class GenerationRunner:
         三个失败分支（准备失败 / 结果未知 / 确定未送达）文案不同但动作相同。
         各写一遍的后果已经有先例：`worker.py` 的「结果未知」分支漏发了事件（R4-10）。
         """
-        await store.mark_failed(record_id, message)
+        if await store.mark_failed(record_id, message) is False:
+            return
         await session.commit()
         await self._emit(
             EVT_GENERATION_FAILED,

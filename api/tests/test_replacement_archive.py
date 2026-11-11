@@ -122,6 +122,40 @@ async def test_prepare_creates_a_reachable_run(client: TestClient, materials) ->
         await drop_pack(pack.id)
 
 
+async def test_input_thumbnail_uses_snapshot_and_requires_run_owner(
+    client: TestClient, materials
+) -> None:
+    video, image = materials()
+    pack = await _pack(image_ids=[image["id"]])
+    run_id = None
+    try:
+        created = client.post(
+            f"{API}/templates/replacement-runs", json=_payload("character", video["id"], pack)
+        )
+        assert created.status_code == 201, created.text
+        run = created.json()["data"]
+        run_id = run["id"]
+        items = run["inputSummary"]["assets"]
+        assert [item["token"] for item in items] == ["{{Mixed 1}}", "{{Mixed 2}}"]
+        other = login(client, "editor", "editor@12345")
+        for item in items:
+            url = item["previewUrl"]
+            assert url == item["url"] + "/thumbnail"
+            response = client.get(url)
+            assert response.status_code == 200, response.text
+            assert response.headers["content-type"].startswith("image/jpeg")
+            assert response.content[:2] == b"\xff\xd8"
+            assert client.get(url).content == response.content
+            assert client.get(url, headers=other).status_code == 404
+        assert client.get(
+            f"{API}/templates/replacement-runs/{run_id}/inputs/not-an-input/thumbnail"
+        ).status_code == 404
+    finally:
+        if run_id:
+            await drop_run(run_id)
+        await drop_pack(pack.id)
+
+
 async def test_prepare_is_self_contained_and_idempotent(client: TestClient, materials) -> None:
     video, image = materials()
     pack = await _pack(image_ids=[image["id"]])
@@ -659,3 +693,92 @@ async def test_bridge_routes_credits_mode_through_paid_queue(
     finally:
         await drop_run(run["id"])
         await drop_pack(pack.id)
+
+
+async def test_multi_character_slots_are_filled_by_extra_packs(
+    client: TestClient, materials, tmp_path: Path, monkeypatch
+) -> None:
+    """三个「正面身份图」槽位 = 视频里三位人物，运行时各选一张人物卡。
+
+    **为什么封装不能按「一个包填满所有槽位」校验**：人物包是一人一包、各一张
+    正面图，3 个槽位天然填不满。所以多槽位模板在封装时把填不满的槽位留空，
+    写成「运行时选正面身份图」的声明；等 prepare 带上 `extraPackIds`，再按
+    **槽位顺序**把第 1/2/3 个人的正面图填进去。每种用途只声明一个槽位的模板
+    仍按老规矩报缺项，不能被这条放宽带沟里。
+    """
+    from modules.template import video_template_store as store
+
+    video, face1 = materials("character")
+    face2 = upload(client, "face2.png", "character", png_bytes())
+    face3 = upload(client, "face3.png", "character", png_bytes())
+    packs = [
+        await add_pack(
+            owner=ADMIN, kind="character", name=f"人物{index}",
+            reference_ids=[face["id"]], features="保持身份",
+            instructions="只替换指定人物", wardrobe_mode="reference",
+        )
+        for index, face in enumerate([face1, face2, face3], 1)
+    ]
+    monkeypatch.setattr(store, "CATALOG_PATH", tmp_path / "catalog.json")
+    draft = {
+        "name": "三人换脸",
+        "sourceVideoAssetId": video["id"],
+        "packId": packs[0].id,
+        "defaultKind": "character",
+        "prompt": (
+            "编辑 {{Mixed 1}}：{{Mixed 2}} 是第 1 位，{{Mixed 3}} 是第 2 位，"
+            "{{Mixed 4}} 是第 3 位。"
+        ),
+        "rules": {
+            "referenceBindings": {
+                "{{Mixed 1}}": "source_video",
+                "{{Mixed 2}}": "front",
+                "{{Mixed 3}}": "front",
+                "{{Mixed 4}}": "front",
+            }
+        },
+    }
+    runs: list[str] = []
+    try:
+        created = client.post(f"{API}/templates/video-templates", json=draft)
+        assert created.status_code == 200, created.text
+        media = created.json()["data"]["mediaOrder"]
+        assert [item["role"] for item in media] == ["source_video", "front", "front", "front"]
+        assert media[1]["assetId"] == face1["id"]
+        # 默认包只有一张正面图：第 2、3 槽留空，等运行时选人
+        assert media[2]["assetId"] is None and media[3]["assetId"] is None
+        assert "运行时选" in media[2]["name"]
+
+        response = client.post(
+            f"{API}/templates/replacement-runs",
+            json=_payload(
+                "character", video["id"], packs[0],
+                extraPackIds=[packs[1].id, packs[2].id],
+            ),
+        )
+        assert response.status_code == 201, response.text
+        result = response.json()["data"]
+        runs.append(result["id"])
+        assert result["target"] == "人物1、人物2、人物3"
+        assert result["promptMode"] == "fixed"
+        # 槽位顺序 = 选人顺序，不能因为包在库里的先后而串位
+        refs = [
+            asset["id"] for asset in result["inputSummary"]["assets"]
+            if asset["role"] != "source_video"
+        ]
+        assert refs == [face1["id"], face2["id"], face3["id"]]
+
+        # 同一张人物卡填两个槽位等于把第 1 个人当成第 2 个人，必须在准备前拦下
+        duplicated = client.post(
+            f"{API}/templates/replacement-runs",
+            json=_payload(
+                "character", video["id"], packs[0], extraPackIds=[packs[0].id],
+            ),
+        )
+        assert duplicated.status_code == 400, duplicated.text
+        assert "同一张人物卡" in duplicated.text
+    finally:
+        for run_id in runs:
+            await drop_run(run_id)
+        for pack in packs:
+            await drop_pack(pack.id)

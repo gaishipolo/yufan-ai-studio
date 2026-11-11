@@ -2,12 +2,13 @@ import { useEffect, useRef, useState, type ChangeEvent } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useArchiveAssets, useArchiveUpload, useArchiveSelection } from '@/entities/asset/api/archive.queries';
 import { useExecuteReplacement, usePrepareReplacement, useReplacementCatalog } from '@/entities/template/api/replacement.queries';
+import { isStateChanged } from '@/shared/api/types';
 import { useVideoTemplates } from '@/entities/video-template/api/videoTemplate.queries';
-import type { VideoTemplateOut } from '@/shared/api/schema';
+import type { ReplacementChannelOut, VideoTemplateOut } from '@/shared/api/schema';
 import { replacementKind, type ReplacementKind, type ReplacementRun, type ReplacementInput } from '@/entities/template/model/replacement.types';
 import { toast } from '@/shared/lib/toast';
 import { isReplacementPackAvailable } from '@/entities/template/model/replacementPack';
-import { TYPES } from './replacementOptions';
+import { NEXT_ACTION, RETRY, TYPES } from './replacementOptions';
 import { videoTemplateLabel, videoTemplateScopes, videoTemplatesForSource } from './videoTemplateFunctions';
 
 /** 编排页面动作；服务端记录由 Query 保存，仅持有选择和反馈等 UI 状态。 */
@@ -29,6 +30,8 @@ export function useReplacementWorkbench() {
   function setKind(value: ReplacementKind) {
     // 只改 state，不调 setPackId：那是另一次 URL 写入，会和下面的 patch 互相覆盖。
     updatePackId('');
+    setExtraPackIds([]);
+    setScopes([]);
     setNotes('');
     patchParams({kind: value, packId: null, packVersion: null, videoTemplateId: null});
   }
@@ -36,6 +39,8 @@ export function useReplacementWorkbench() {
      否则刷新会复活旧选择，`linkedSource` 提示也可能指向另一条素材。 */
   const sourceId = params.get('sourceId');
   function setSourceId(id: string | null) {
+    setExtraPackIds([]);
+    setScopes([]);
     patchParams({sourceId: id, videoTemplateId: null});
   }
   function setPackId(id: string) {
@@ -48,7 +53,9 @@ export function useReplacementWorkbench() {
   const detailId = params.get('run');
   const setDetailId = (id: string | null) => patchParams({run: id});
   const search = params.get('q') ?? '';
-  const setSearch = (value: string) => patchParams({q: value});
+  /* 搜索要回到第 1 页：停在第 3 页上搜索，结果只有 1 页时列表会空，
+     用户看到的是「没有找到相关模板」而不是「你在第 3 页」。与 setSourceScope 同口径。 */
+  const setSearch = (value: string) => patchParams({q: value, sourcePage: '1'});
   /* 历史区的筛选同样进 URL：同页其它筛选都在 URL，刷新后只剩它们会丢，语义也对不上。 */
   const historyTrash = params.get('trash') === '1';
   const historyStatus = params.get('taskStatus') ?? '';
@@ -75,6 +82,13 @@ export function useReplacementWorkbench() {
   const assets = useArchiveAssets('source', {scope: sourceScope, keyword: search, page: sourcePage, pageSize: 24});
   const linkedSource = useArchiveSelection(sourceId);
   const catalog = useReplacementCatalog();
+  const channels: ReplacementChannelOut[] = catalog.data?.channels?.length
+    ? catalog.data.channels
+    : [{id: 'libtv', label: 'LibTV', model: 'libtv-wan3-replacement', enabled: true, billing: 'libtv'}];
+  const channelParam = params.get('channel');
+  const channel: NonNullable<ReplacementInput['channel']> = channelParam === 'bailian' || channelParam === 'bailian-prime' ? channelParam : 'libtv';
+  const currentChannel = channels.find(item => item.id === channel);
+  const setChannel = (value: string) => patchParams({channel: value});
   const videoTemplates = useVideoTemplates();
   const prepare = usePrepareReplacement();
   const execute = useExecuteReplacement();
@@ -102,6 +116,8 @@ export function useReplacementWorkbench() {
   /* 选择卡片时在**同一次 URL 写入**里把替换类型与素材包一起带上，
      否则两次 patch 会互相覆盖（见文件头的注释）。 */
   function selectSource(id: string | null) {
+    setExtraPackIds([]);
+    setScopes([]);
     if (!id) { patchParams({sourceId: null, videoTemplateId: null}); return; }
     const asset = videos.find(video => video.id === id) ?? linkedSource.data ?? undefined;
     const binding = templateForSource(asset);
@@ -109,6 +125,8 @@ export function useReplacementWorkbench() {
     applyVideoTemplate(binding, id);
   }
   function applyVideoTemplate(binding: VideoTemplateOut, id = sourceId) {
+    setExtraPackIds([]);
+    setScopes([]);
     updatePackId(binding.packId ?? '');
     setNotes('');
     setReviewId(null);
@@ -119,6 +137,11 @@ export function useReplacementWorkbench() {
   );
   const boundTemplate = boundTemplates.find(item => item.id === params.get('videoTemplateId'))
     ?? boundTemplates.find(item => templateKind(item) === kind) ?? boundTemplates[0];
+  const isTextScene = kind === 'scene' && boundTemplate?.rules?.inputMode === 'video_scene_text';
+  const defaultScenePrompt = typeof boundTemplate?.rules?.scenePromptDefault === 'string' ? boundTemplate.rules.scenePromptDefault : '';
+  const [sceneDraft, setSceneDraft] = useState<{templateId: string; value: string} | null>(null);
+  const scenePrompt = sceneDraft?.templateId === boundTemplate?.id ? sceneDraft?.value ?? defaultScenePrompt : defaultScenePrompt;
+  function setScenePrompt(value: string) {setSceneDraft({templateId: boundTemplate?.id ?? '', value});}
   const functionOptions = boundTemplates.map(item => ({id: item.id,
     label: boundTemplates.filter(other => videoTemplateLabel(other) === videoTemplateLabel(item)).length > 1
       ? `${videoTemplateLabel(item)} · ${item.name}` : videoTemplateLabel(item),
@@ -131,9 +154,40 @@ export function useReplacementWorkbench() {
      且用户确实选了一个包。包 id 不锁死——后端按原片命中模板、按用途从当前包
      取图，换产品包时提示词仍是同一份，这正是提示词动态化的落点。 */
   const activeVideoTemplate = boundTemplate
-    && !!packId
+    && (!!packId || isTextScene)
     && kind === templateKind(boundTemplate)
     ? boundTemplate : undefined;
+  /* 模板声明了几个「正面身份图」槽位，就要求选几位人物：提示词里的
+     `{{Mixed 2/3/4}}` 是三个人，而人物包一人一包、各一张正面图，
+     一个包填不满三个槽位。槽位数来自封装时的 bindings，不在前端写死。 */
+  const declaredBindings = boundTemplate?.rules?.referenceBindings;
+  const characterSlots = kind === 'character'
+    ? declaredBindings && typeof declaredBindings === 'object' && !Array.isArray(declaredBindings)
+      ? Object.values(declaredBindings).filter(role => role === 'front').length
+      : (boundTemplate?.mediaOrder ?? []).filter(item => item.type === 'image' && item.role === 'front' && item.inPrompt).length
+    : 0;
+  const slots = Math.max(1, characterSlots);
+  const [extraPackIds, setExtraPackIds] = useState<string[]>([]);
+  /* 换成槽位更少的模板/类型时丢掉多余的选人：带着第 3 个人去跑单人模板，
+     后端会按槽位顺序多插一张图，编号就错位了。 */
+  useEffect(() => {setExtraPackIds(previous => previous.slice(0, Math.max(0, slots - 1)));}, [slots]);
+  const slotPacks = Array.from({length: slots}, (_, index) => (index === 0 ? packId : extraPackIds[index - 1] ?? ''));
+  function toggleCharacterPack(id: string) {
+    if (busy || kind !== 'character' || slots <= 1) return;
+    const current = slotPacks.filter(Boolean);
+    let next: string[];
+    if (current.includes(id)) {
+      next = current.filter(selected => selected !== id);
+    } else {
+      if (current.length >= slots || !isReplacementPackAvailable(packs.find(pack => pack.id === id), assets.data?.items ?? [])) return;
+      next = [...current, id];
+    }
+    setExtraPackIds(next.slice(1));
+    setPackId(next[0] ?? '');
+  }
+  const chosenPacks = slotPacks
+    .map(id => packs.find(pack => pack.id === id))
+    .filter((pack): pack is NonNullable<typeof pack> => !!pack);
   /* 深链进入时补一次默认配置。依赖写成**绑定签名**而不是 catalog / 模板对象：
      素材目录每 5 秒轮询会产出新引用，用对象做依赖会把用户手动改过的类型和包
      又改回去。最新一次渲染看到的值放 ref，签名没变就不重放 —— 这不是掩盖依赖，
@@ -147,6 +201,7 @@ export function useReplacementWorkbench() {
     if (!binding || !catalog.data) return;
     if (params.get('videoTemplateId') === binding.id && kind === templateKind(binding)) return;
     const keepPack = kind === templateKind(binding) && !!params.get('packId');
+    setExtraPackIds([]);
     updatePackId(keepPack ? params.get('packId')! : binding.packId ?? '');
     patchParams({kind: templateKind(binding), videoTemplateId: binding.id,
       ...(!keepPack ? {packId: binding.packId || null, packVersion: null} : {})});
@@ -159,20 +214,38 @@ export function useReplacementWorkbench() {
   const availableScopes = boundTemplate ? videoTemplateScopes(boundTemplate)
     : (selectedPack?.supportedScopes ?? []).map(key => scopeLabels[key] ?? key);
   const showScope = boundTemplate ? availableScopes.length > 0 : true;
-  /* 只在「换包 / 换版本 / 该包范围变了」时重置：依赖同样是签名，
-     目录对象每 5 秒刷新一次，用对象做依赖会把用户手动取消的范围又勾回来。 */
+  /* 范围必须明确勾选。换包、换版本或目录刷新只剔除已不支持的位置，
+     不能把可选范围当成用户选择，更不能自动扩大已经选定的范围。 */
   const scopeSignature = `${boundTemplate?.id ?? ''}:${selectedPack?.id ?? ''}:${selectedPack?.version ?? 0}:${availableScopes.join('|')}`;
   const scopesToApply = useRef<string[]>([]);
   scopesToApply.current = availableScopes;
   useEffect(() => {
-    setScopes(scopesToApply.current);
+    setScopes(previous => previous.filter(scope => scopesToApply.current.includes(scope)));
   }, [scopeSignature]);
-  const references = selectedPack?.referenceIds ?? [];
-  const target = selectedPack?.name ?? '';
+  /* 多人物：每个槽位贡献自己的参考图，顺序就是 `{{Mixed 2/3/4}}` 的顺序。
+     单人 / 产品仍是「所选包的全部参考图」，行为一个字不变。 */
+  const references = isTextScene ? [] : slots > 1
+    ? [...new Set(chosenPacks.flatMap(pack => pack.referenceIds))]
+    : selectedPack?.referenceIds ?? [];
+  const target = isTextScene ? '文字换场景' : slots > 1
+    ? chosenPacks.map(pack => pack.name).join('、')
+    : selectedPack?.name ?? '';
   const wardrobeMode = selectedPack?.wardrobeMode ?? 'preserve';
   const requestedVersion = params.get('packId') === packId ? params.get('packVersion') : null;
-  const packReady = isReplacementPackAvailable(selectedPack, assets.data?.items ?? []) && (!requestedVersion || String(selectedPack?.version) === requestedVersion);
-  const missing = !packReady ? `请选择一个可用的${template.short}素材包`
+  const everyoneChosen = chosenPacks.length === slots;
+  const packReady = isTextScene || everyoneChosen
+    && chosenPacks.every(pack => isReplacementPackAvailable(pack, assets.data?.items ?? []))
+    && (!requestedVersion || String(selectedPack?.version) === requestedVersion);
+  /* 与后端 `require_channel` 同口径：LibTV 允许「执行期才注册 provider」的安装方式，
+     目录里的 enabled=false 只用于在选择器里灰显，不能变成提交门禁。否则一个没注册
+     LibTV provider 的部署（新机器、本地联调）整站都点不了「下一步」。 */
+  const channelBlocked = channel !== 'libtv' && !currentChannel?.enabled;
+  const missing = channelBlocked ? currentChannel?.unavailableReason || '所选模型渠道暂不可用'
+    : isTextScene && !scenePrompt.trim() ? '请填写场景描述'
+    : isTextScene && (scenePrompt.length > 4000 || scenePrompt.includes('{{') || scenePrompt.includes('}}')) ? '场景描述最多 4000 字，请使用普通文字'
+    : slots > 1 && !everyoneChosen ? `还需选择 ${slots - chosenPacks.length} 位人物`
+    : references.length > 10 ? `所选人物参考图合计 ${references.length} 张，最多支持 10 张，请选择更精简的角色卡`
+    : !packReady ? `请选择一个可用的${template.short}素材包`
     : showScope && (boundTemplate || kind === 'product') && !scopes.length ? '请选择至少一个产品替换位置'
     : videoTemplates.isPending || videoTemplates.error ? '请等待模板封装配置加载完成' : '';
   function report(type: 'success' | 'error', message: string) {
@@ -195,9 +268,19 @@ export function useReplacementWorkbench() {
     setFeedback(null);
     setPreparing(true);
     try {
-      const config: Omit<ReplacementInput, 'requestId'> = {kind, target: target.trim(), sourceId, referenceIds: references, wardrobeMode,
-        packId: packId || null, packVersion: selectedPack?.version || 1, videoTemplateId: boundTemplate?.id,
-        replacementScope: showScope ? scopes.join('、') : '', notes, aspectRatio: 'adaptive'};
+      /* 额外人物包的版本只在「确实拿到了版本号」时才传：契约里它是可选的，
+         旧行可能没带 version。以前用 `|| 1` 补一个假版本，服务端会拿 1 去查发布版本，
+         查不到就报「额外人物包的所选发布版本不存在」——比省略更难排查。 */
+      const extraIds = slots > 1 ? slotPacks.slice(1).filter(Boolean) : [];
+      const extraVersions = extraIds
+        .map(id => chosenPacks.find(pack => pack.id === id)?.version)
+        .filter((value): value is number => typeof value === 'number');
+      const config: Omit<ReplacementInput, 'requestId'> = {kind, channel, target: target.trim(), sourceId, referenceIds: references, wardrobeMode,
+        packId: isTextScene ? null : packId || null, packVersion: isTextScene ? null : selectedPack?.version || 1, videoTemplateId: boundTemplate?.id,
+        ...(isTextScene ? {scenePrompt} : {}),
+        extraPackIds: extraIds,
+        ...(extraIds.length && extraVersions.length === extraIds.length ? {extraPackVersions: extraVersions} : {}),
+        replacementScope: showScope ? scopes.join('、') : '', notes: isTextScene ? '' : notes, aspectRatio: 'adaptive'};
       const key = JSON.stringify(config);
       const previous = catalog.data?.runs.find(run => run.id === preparedIds.current.get(key));
       if (previous?.deletedAt) requestIds.current.delete(key);
@@ -213,7 +296,9 @@ export function useReplacementWorkbench() {
       setReviewId(result.status === 'prepared' ? result.id : null);
       report('success', result.status === 'prepared' ? '输入已保存，请核对后确认生成。' : '该配置已有调用记录，请在任务记录中查看进度或结果。');
     } catch (reason) {
-      report('error', `准备失败：${reason instanceof Error ? reason.message : '输入准备未完成'}。可在当前配置下重试，不会重复创建任务。`);
+      report('error', isStateChanged(reason)
+        ? '任务状态刚被另一处操作更新，已刷新到最新状态，请确认后重试。'
+        : `准备失败：${reason instanceof Error ? reason.message : '输入准备未完成'}。可在当前配置下重试，不会重复创建任务。`);
     } finally {operationLock.current = false; setPreparing(false);}
   }
   /* billingMode 不传 = 沿用档案里的计费模式：「继续查询已有任务」走这条路，
@@ -224,7 +309,11 @@ export function useReplacementWorkbench() {
     setSubmitting(true);
     setFeedback(null);
     try {
-      const updated = await execute.mutateAsync({id: run.id, billingMode});
+      const updated = await execute.mutateAsync({id: run.id, billingMode: run.channel && run.channel !== 'libtv' ? undefined : billingMode});
+      if (updated && ['failed', 'timeout', 'service_error', 'needs_login', 'submission_unknown'].includes(updated.status)) {
+        report('error', updated.lastError || NEXT_ACTION[updated.status] || '任务未恢复，请查看调用档案中的失败原因。');
+        return;
+      }
       setReviewId(null);
       /* 反馈跟着档案的真实状态走：重复点确认时后端只查询不重提，说「已请求提交」
          会让用户以为又排了一条，说「已在生成中」才是他看到的事实。 */
@@ -232,12 +321,18 @@ export function useReplacementWorkbench() {
       report('success', updated?.status === 'success'
         ? '这条任务已经生成完成，成片可在任务记录中播放或下载。'
         : live
-        ? `任务已在执行中（进度 ${updated?.progress ?? 0}%），状态已刷新；重复点击不会重复提交。`
+        ? run.taskId && RETRY.includes(run.status)
+          ? `已恢复原任务查询（进度 ${updated?.progress ?? 0}%），不会重复提交或扣费。`
+          : `任务已在执行中（进度 ${updated?.progress ?? 0}%），状态已刷新；重复点击不会重复提交。`
+        : run.channel && run.channel !== 'libtv'
+        ? '已处理任务的执行请求，使用阿里云 API 计费，请在任务记录中查看最新状态。'
         : billingMode === 'credits'
         ? '已请求用积分加速：这条任务将按积分报价进入正常队列，实际扣费以任务记录为准。'
         : '已处理任务的执行请求，请在任务记录中查看最新状态；仅在估价为 0 积分时提交生成。');
     } catch (reason) {
-      report('error', `执行请求失败：${reason instanceof Error ? reason.message : '请求未完成'}`);
+      report('error', isStateChanged(reason)
+        ? '任务状态刚被另一处操作更新，已刷新到最新状态；请核对后再点一次（不会重复提交或扣费）。'
+        : `执行请求失败：${reason instanceof Error ? reason.message : '请求未完成'}`);
     } finally {operationLock.current = false; setSubmitting(false);}
   }
   function handleUpload(event: ChangeEvent<HTMLInputElement>) {
@@ -254,7 +349,7 @@ export function useReplacementWorkbench() {
       event.target.value = '';
 
   }
-  return { setBatchPreparing, sourceScope, setSourceScope, sourcePage, setSourcePage, linkedSource, params, kind, setKind, sourceId, setSourceId, selectSource, references, target, packId, setPackId, wardrobeMode, selectedPack, packs, scopes, setScopes, availableScopes, showScope, functionOptions, selectFunction, notes, setNotes, reviewId, setReviewId, detailId, setDetailId, search, setSearch, historyTrash, historyStatus, historySearch, setHistoryFilter, preparing, submitting, feedback, setFeedback, uploadInput, assets, catalog, upload, template, videos, currentDetail, review, busy, missing, toggle, pickUpload, prepareTask, submitRun, handleUpload, videoTemplates, templateForSource, boundTemplate, activeVideoTemplate };
+  return { channel, setChannel, channels, currentChannel, isTextScene, scenePrompt, setScenePrompt, defaultScenePrompt, setBatchPreparing, sourceScope, setSourceScope, sourcePage, setSourcePage, linkedSource, params, kind, setKind, sourceId, setSourceId, selectSource, references, target, packId, setPackId, wardrobeMode, selectedPack, packs, scopes, setScopes, availableScopes, showScope, functionOptions, selectFunction, notes, setNotes, reviewId, setReviewId, detailId, setDetailId, search, setSearch, historyTrash, historyStatus, historySearch, setHistoryFilter, preparing, submitting, feedback, setFeedback, uploadInput, assets, catalog, upload, template, videos, currentDetail, review, busy, missing, toggle, pickUpload, prepareTask, submitRun, handleUpload, videoTemplates, templateForSource, boundTemplate, activeVideoTemplate, slots, slotPacks, toggleCharacterPack, chosenPacks };
 }
 
 export type ReplacementWorkbench = ReturnType<typeof useReplacementWorkbench>;
