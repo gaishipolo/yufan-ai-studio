@@ -1,18 +1,38 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Library, Wand2, X } from 'lucide-react';
-import { Button, Chip, CoverImage, PageHeader, Select } from '@/shared/ui';
+import { Wand2 } from 'lucide-react';
+import {
+  Button,
+  Chip,
+  CoverImage,
+  PageHeader,
+  ReferenceImages,
+  Select,
+  type ReferenceItem,
+} from '@/shared/ui';
 import { cn } from '@/shared/lib/cn';
 import { toast } from '@/shared/lib/toast';
 import { useCreateTask, useTaskList } from '@/entities/task/api/task.queries';
 import { aspectOptionsFor, durationOptionsFor, useModels } from '@/entities/model/api/model.queries';
 import { useShots } from '@/entities/shot/api/shot.api';
-import { LibraryPicker } from '@/entities/library/ui/LibraryPicker';
+import { LibraryFlyout } from '@/entities/library/ui/LibraryFlyout';
+import { useUploadAsset } from '@/entities/library/api/library.queries';
 import { useCan } from '@/shared/access/use-access';
-import type { LibraryAssetOut } from '@/shared/api/schema';
+import type { LibraryAssetDrag } from '@/shared/lib/libraryDrag';
 import type { AspectRatio } from '@/entities/task/model/types';
 
 const STYLE_PRESETS = ['电影感', '纪实手持', '广告质感', '胶片复古'];
+
+/**
+ * 工作台自己的参考图档位。
+ *
+ * 生图页那边「模型的 `maxReferences` 是 0 就不画上传框」，因为供应商确实不收；
+ * 视频侧目前所有模型都还没声明这个字段（后端 `task/pipeline.py` 尚未把
+ * `reference_asset_ids` 转成供应商要的 `reference_urls`），照搬那条规则会让
+ * 整块参考图区直接消失。所以这里取「模型声明了正数才采信，否则用工作台档位」，
+ * 等后端打通后再改成以模型声明为准。
+ */
+const DEFAULT_REFERENCE_SLOTS = 4;
 
 export default function StudioPage() {
   const navigate = useNavigate();
@@ -28,10 +48,12 @@ export default function StudioPage() {
   const [ratio, setRatio] = useState<AspectRatio>('9:16');
   const [style, setStyle] = useState(STYLE_PRESETS[0]);
   const [error, setError] = useState('');
-  /* 参考素材来自资产库 v2：并存期不碰旧 archive 库，权限点也不同 */
-  const [references, setReferences] = useState<LibraryAssetOut[]>([]);
-  const [pickerOpen, setPickerOpen] = useState(false);
+  /* 参考图：先落素材库拿 id，再随请求下发 id —— 与生图页同一条通道，
+     提交的是 id 而不是图片字节，同一张素材可以被多个任务反复引用 */
+  const [references, setReferences] = useState<ReferenceItem[]>([]);
+  const [libraryOpen, setLibraryOpen] = useState(false);
   const canReadLibrary = useCan('library:read');
+  const upload = useUploadAsset();
 
   const currentModel = useMemo(
     () => models.find((item) => item.id === modelId) ?? models.find((m) => m.isDefault) ?? models[0],
@@ -48,24 +70,79 @@ export default function StudioPage() {
   );
   const ratioOptions = useMemo(() => aspectOptionsFor(currentModel), [currentModel]);
 
+  /**
+   * 缺省值取模型自己声明的 `default`，不取「最长的那个档位」。
+   *
+   * 以前时长默认落在最后一档（12 秒），而模型声明的是 5 秒：视频按秒计费，
+   * 这等于默认给用户下了一个 2.4 倍时长的单，还看不出是自己选的。
+   * 声明的 default 不在档位里（供应商配置写歪了）才退回到最后一档。
+   */
+  const durationFallback = useMemo(() => {
+    const declared = Number(currentModel?.paramSchema?.durationSec?.default);
+    if (Number.isFinite(declared) && durationValues.includes(declared)) return String(declared);
+    return String(durationValues[durationValues.length - 1] ?? '');
+  }, [currentModel, durationValues]);
+  const ratioFallback = useMemo(() => {
+    const declared = currentModel?.paramSchema?.aspectRatio?.default;
+    if (declared && ratioOptions.some((one) => one.value === declared)) {
+      return declared as AspectRatio;
+    }
+    return ratioOptions[0]?.value;
+  }, [currentModel, ratioOptions]);
+  const maxReferences =
+    currentModel?.maxReferences && currentModel.maxReferences > 0
+      ? currentModel.maxReferences
+      : DEFAULT_REFERENCE_SLOTS;
+
   // 换模型时把时长/比例收敛到该模型支持的范围内
   useEffect(() => {
     if (!durationValues.length) return;
     setDuration((prev) =>
-      prev && durationValues.includes(Number(prev))
-        ? prev
-        : String(durationValues[durationValues.length - 1]),
+      prev && durationValues.includes(Number(prev)) ? prev : durationFallback,
     );
-  }, [durationValues]);
+  }, [durationValues, durationFallback]);
 
   useEffect(() => {
-    if (!ratioOptions.length) return;
+    if (!ratioOptions.length || !ratioFallback) return;
     setRatio((prev) =>
-      ratioOptions.some((item) => item.value === prev) ? prev : ratioOptions[0].value,
+      ratioOptions.some((item) => item.value === prev) ? prev : ratioFallback,
     );
-  }, [ratioOptions]);
+  }, [ratioOptions, ratioFallback]);
 
   const storyboard = useMemo(() => (shots?.items ?? []).slice(0, 4), [shots]);
+
+  const addReferences = async (files: FileList | null) => {
+    const picked = Array.from(files ?? []);
+    if (!picked.length) return;
+    const room = maxReferences - references.length;
+    if (room <= 0) {
+      toast(`这个模型最多接受 ${maxReferences} 张参考图`, 'error');
+      return;
+    }
+    // 多选超量时只取前面的：先传多余的那几张再丢掉，等于白花一次上传
+    for (const file of picked.slice(0, room)) {
+      try {
+        const asset = await upload.mutateAsync({ file, kind: 'image' });
+        setReferences((prev) => [
+          ...prev,
+          { id: asset.id, name: asset.name, url: asset.previewUrl ?? asset.url ?? '' },
+        ]);
+      } catch (e) {
+        toast(e instanceof Error ? e.message : '参考图上传失败', 'error');
+      }
+    }
+  };
+
+  /** 从素材库加入：不重复上传，只把 id / 名称 / 缩略图接进列表 */
+  const addLibraryAsset = (asset: LibraryAssetDrag) => {
+    // 同一张重复加入没有意义：多图合成里同一张出现两次只会白占一个名额
+    if (references.some((item) => item.id === asset.id)) return;
+    if (references.length >= maxReferences) {
+      toast(`最多 ${maxReferences} 张参考图，先移除一张再添加`, 'error');
+      return;
+    }
+    setReferences((prev) => [...prev, { id: asset.id, name: asset.name, url: asset.url }]);
+  };
 
   const submit = () => {
     if (!prompt.trim()) {
@@ -85,6 +162,9 @@ export default function StudioPage() {
       },
       {
         onSuccess: () => {
+          // 参考图跟着这次请求走了，留着会让下一个任务莫名其妙沿用旧图
+          setReferences([]);
+          setLibraryOpen(false);
           toast('已提交生成，正在跳转任务中心', 'success');
           navigate('/tasks');
         },
@@ -115,45 +195,18 @@ export default function StudioPage() {
         <section className="self-start rounded-card border border-line-soft bg-panel p-3.5 lg:row-span-2 2xl:row-span-1">
           <SectionTitle>创作输入</SectionTitle>
 
-          <Field label="参考图" hint="从资产库选，最多 4 张" required>
-            <div className="space-y-1.5">
-              {references.length > 0 && (
-                <div className="flex flex-wrap gap-1.5">
-                  {references.map((item) => (
-                    <span
-                      key={item.id}
-                      className="inline-flex max-w-full items-center gap-1 rounded-lg border border-line bg-panel-soft px-2 py-1 text-[11px] text-ink-soft"
-                    >
-                      <span className="truncate">{item.name}</span>
-                      <button
-                        type="button"
-                        aria-label={`移除参考图：${item.name}`}
-                        className="text-ink-mute hover:text-danger"
-                        onClick={() => setReferences((prev) => prev.filter((one) => one.id !== item.id))}
-                      >
-                        <X size={11} />
-                      </button>
-                    </span>
-                  ))}
-                </div>
-              )}
-              <button
-                type="button"
-                disabled={!canReadLibrary || references.length >= 4}
-                onClick={() => (canReadLibrary ? setPickerOpen(true) : toast('没有资产库查看权限', 'error'))}
-                className={cn(
-                  'w-full rounded-card border-[1.5px] border-dashed px-3 py-4 text-center text-[11.5px] transition-colors',
-                  'border-[#d5e2e7] bg-panel-soft text-ink-mute',
-                  canReadLibrary && references.length < 4
-                    ? 'hover:border-[#b9d3ff] hover:bg-[#f7fbff] hover:text-primary'
-                    : 'cursor-not-allowed opacity-60',
-                )}
-              >
-                <Library size={22} strokeWidth={1.5} className="mx-auto mb-1 text-[#b7c6cd]" />
-                {references.length ? `已选 ${references.length} 张，继续选择` : '从资产库选择参考图'}
-              </button>
-            </div>
-          </Field>
+          <ReferenceImages
+            items={references}
+            max={maxReferences}
+            busy={upload.isPending}
+            onPick={(files) => void addReferences(files)}
+            onRemove={(id) => setReferences((prev) => prev.filter((item) => item.id !== id))}
+            onAddAsset={addLibraryAsset}
+            // 没有素材库查看权限时不画那个按钮：画出来点了只会弹一句「没有权限」
+            onOpenLibrary={canReadLibrary ? () => setLibraryOpen((open) => !open) : undefined}
+            libraryOpen={libraryOpen && canReadLibrary}
+            emptyHint="也可以点右上角「素材库」把图拖进来"
+          />
 
           <Field label="画面描述" required>
             <textarea
@@ -175,13 +228,25 @@ export default function StudioPage() {
                 block
                 options={modelOptions}
                 value={currentModel?.id ?? ''}
-                onChange={(e) => setModelId(e.target.value)}
+                onChange={(e) => {
+                  setModelId(e.target.value);
+                  // 换模型的参考图上限/支持情况可能完全不同，旧图一律清掉
+                  setReferences([]);
+                  setLibraryOpen(false);
+                }}
               />
             </Field>
             <Field label="时长">
               <Select block options={durationOptions} value={duration} onChange={(e) => setDuration(e.target.value)} />
             </Field>
           </div>
+
+          {/* 模型能做什么写在这里：同一次提交会带上时长上限与画幅白名单，用户不用去试错 */}
+          {currentModel?.description && (
+            <p className="-mt-1 mb-2.5 text-[10.5px] leading-snug text-ink-mute">
+              {currentModel.description}
+            </p>
+          )}
 
           <Field label="画面比例">
             <div className="flex flex-wrap gap-1.5">
@@ -218,11 +283,7 @@ export default function StudioPage() {
 
         {/* 右：分镜 + 最近生成（窄屏叠成一列，2xl 起并排铺满） */}
         <section className="self-start rounded-card border border-line-soft bg-panel p-3.5">
-          <SectionTitle
-            extra={`自动拆解 · ${storyboard.length} 个镜头`}
-          >
-            分镜序列
-          </SectionTitle>
+          <SectionTitle extra={`自动拆解 · ${storyboard.length} 个镜头`}>分镜序列</SectionTitle>
           <div className="flex flex-col gap-2">
             {storyboard.map((shot, i) => (
               <div
@@ -268,14 +329,15 @@ export default function StudioPage() {
         </section>
       </div>
 
-      <LibraryPicker
-        open={pickerOpen}
-        title="选择参考图"
-        value={references.map((item) => item.id)}
-        kinds={['image']}
-        onClose={() => setPickerOpen(false)}
-        onConfirm={(assets) => setReferences(assets.slice(0, 4))}
-      />
+      {/* 悬浮在页面之上、不加遮罩：遮罩会挡住左侧参考图区，拖拽就落不下去了 */}
+      {libraryOpen && canReadLibrary && (
+        <LibraryFlyout
+          onClose={() => setLibraryOpen(false)}
+          max={maxReferences}
+          pickedIds={references.map((item) => item.id)}
+          onPick={addLibraryAsset}
+        />
+      )}
     </>
   );
 }

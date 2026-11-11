@@ -1,22 +1,24 @@
 /**
- * 参考图控件（图生图 / 多图合成）。
+ * 参考图控件（图生图 / 多图合成 / 视频参考）。
  *
  * 刻意**不**塞进 `ParamFields`：参数区完全由 `paramSchema` 渲染，值只能是
  * 字符串 / 数字 / 布尔；参考图是一批图片，走的是提交接口上的独立字段
- * （`referenceLibraryIds`），校验规则也完全不同（要查资产、要读字节）。
+ * （生图 `referenceLibraryIds`、视频 `referenceAssetIds`），校验规则也完全不同
+ * （要查资产、要读字节）。所以它是业务控件，不是 schema 控件。
  *
- * 是否显示由模型的 `maxReferences` 决定，不是所有生图模型都有——给纯文生图
- * 模型画一个上传框，用户传了不会被用上，图照样出、只是完全不像参考图。
+ * 是否显示由调用方决定（生图看模型的 `maxReferences`，视频看工作台自己的档位数）：
+ * 给一个根本不收参考图的模型画上传框，用户传了不会被用上，图照样出、只是不像参考图。
  *
  * 顺序有意义：多图合成时提示词里的「第一张 / 第二张」指的就是这个顺序，
  * 所以缩略图按提交顺序排列，且不允许拖乱（要换顺就删掉重加）。
  *
- * 两个入口：本地上传（先传进素材库换 id）与素材库悬浮栏（拖进来 / 点＋）。
- * 后者是同一份资产，只是不重复上传——同一个素材可以被多个任务反复当参考图。
+ * 三个入口：本地上传（先传进素材库换 id）、素材库悬浮栏拖进来、点「＋」加入；
+ * 点击缩略图看大图（64px 上分不清角色细节，选错一张的代价是一次完整生成）。
  */
 import { useRef, useState } from 'react';
 import { ImagePlus, Library, Loader2, X } from 'lucide-react';
-import { CoverImage } from '@/shared/ui';
+import { CoverImage } from './CoverImage';
+import { Modal } from './Modal';
 import { cn } from '@/shared/lib/cn';
 import { hasLibraryDrag, readLibraryDrag, type LibraryAssetDrag } from '@/shared/lib/libraryDrag';
 
@@ -29,7 +31,7 @@ export interface ReferenceItem {
 
 export interface ReferenceImagesProps {
   items: ReferenceItem[];
-  /** 模型声明的张数上限 */
+  /** 调用方声明的张数上限 */
   max: number;
   busy?: boolean;
   onPick: (files: FileList | null) => void;
@@ -40,6 +42,8 @@ export interface ReferenceImagesProps {
   onOpenLibrary?: () => void;
   /** 悬浮栏当前是否展开，只影响按钮高亮 */
   libraryOpen?: boolean;
+  /** 空列表时的引导文案 */
+  emptyHint?: string;
 }
 
 /** 只收供应商认的三种格式：png / jpeg / webp（与后端白名单一致） */
@@ -54,9 +58,12 @@ export function ReferenceImages({
   onAddAsset,
   onOpenLibrary,
   libraryOpen = false,
+  emptyHint = '也可以从右侧素材库把图拖进来',
 }: ReferenceImagesProps) {
   const input = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
+  // 预览的那张图：点缩略图打开，只为了看清细节，不影响选择
+  const [preview, setPreview] = useState<ReferenceItem | null>(null);
   const full = items.length >= max;
 
   /**
@@ -75,7 +82,7 @@ export function ReferenceImages({
         {/* 标题与按钮都 shrink-0：说明文字很长，不钉住它们就会被挤成「参考」「图」两行 */}
         <span className="shrink-0 whitespace-nowrap">参考图</span>
         <span className="min-w-0 flex-1 text-[10.5px] leading-snug text-ink-mute">
-          最多 {max} 张，按加入顺序生效（提示词里的「第一张」指的就是第一张）
+          最多 {max} 张，已选 {items.length} · 顺序即提示词里的「第 N 张」
         </span>
         {onOpenLibrary && (
           <button
@@ -130,8 +137,15 @@ export function ReferenceImages({
             key={item.id}
             className="group relative h-16 w-16 shrink-0 overflow-hidden rounded-lg border border-line-soft"
           >
-            <CoverImage src={item.url} seed={item.id} alt={item.name} className="h-full w-full" />
-            <span className="absolute bottom-0 left-0 right-0 bg-black/45 px-1 text-[10px] text-white">
+            <button
+              type="button"
+              aria-label={`预览参考图 ${index + 1}：${item.name}`}
+              onClick={() => setPreview(item)}
+              className="block h-full w-full"
+            >
+              <CoverImage src={item.url} seed={item.id} alt={item.name} className="h-full w-full" />
+            </button>
+            <span className="pointer-events-none absolute bottom-0 left-0 right-0 bg-black/45 px-1 text-[10px] text-white">
               {index + 1}
             </span>
             <button
@@ -159,7 +173,7 @@ export function ReferenceImages({
 
         {!items.length && onAddAsset && (
           <span className="min-w-0 self-center text-[10.5px] leading-snug text-ink-mute">
-            也可以从右侧素材库把图拖进来
+            {emptyHint}
           </span>
         )}
       </div>
@@ -178,6 +192,24 @@ export function ReferenceImages({
           event.target.value = '';
         }}
       />
+
+      <Modal
+        open={preview !== null}
+        onClose={() => setPreview(null)}
+        title={preview ? `参考图 ${items.findIndex((one) => one.id === preview.id) + 1}：${preview.name}` : ''}
+        width={720}
+      >
+        {/* 预览只读：关掉就回到表单，不改变已选列表 */}
+        {preview && (
+          <div className="bg-[#0f1a1e] p-3">
+            <img
+              src={preview.url}
+              alt={preview.name}
+              className="mx-auto max-h-[70vh] w-auto max-w-full object-contain"
+            />
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }

@@ -30,6 +30,11 @@ export type { ChipTone } from './Chip';
 export { CoverImage } from './CoverImage';
 export type { CoverImageProps } from './CoverImage';
 
+/* 参考图控件是业务控件但页面无关：生图（图生图/多图合成）与视频工作台都用它，
+   放 entities/image 下会让视频页跨实体引用一份图片实体的 UI。 */
+export { ReferenceImages } from './ReferenceImages';
+export type { ReferenceImagesProps, ReferenceItem } from './ReferenceImages';
+
 export { EmptyState, Skeleton, CardSkeletonGrid } from './EmptyState';
 
 export { ErrorState } from './ErrorState';

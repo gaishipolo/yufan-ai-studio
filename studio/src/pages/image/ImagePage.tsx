@@ -9,7 +9,9 @@ import {
   PageHeader,
   Pager,
   Select,
+  ReferenceImages,
 } from '@/shared/ui';
+import type { ReferenceItem } from '@/shared/ui';
 import { cn } from '@/shared/lib/cn';
 import { toast } from '@/shared/lib/toast';
 import { formatDateTime } from '@/shared/lib/format';
@@ -21,7 +23,6 @@ import {
   type ParamValue,
 } from '@/entities/model/lib/paramForm';
 import { ParamFields } from '@/entities/model/ui/ParamFields';
-import { ReferenceImages, type ReferenceItem } from '@/entities/image/ui/ReferenceImages';
 import { LibraryFlyout } from '@/entities/library/ui/LibraryFlyout';
 import { useUploadAsset } from '@/entities/library/api/library.queries';
 import type { LibraryAssetDrag } from '@/shared/lib/libraryDrag';
