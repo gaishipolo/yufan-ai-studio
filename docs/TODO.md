@@ -8,7 +8,9 @@
 > 来源：`CODE_REVIEW_2026-11-06_R11~R14`、`CODE_REVIEW_2026-11-06_FE6`、
 > `EXTENSIBILITY_GAPS.md` 的 B1/C1/C2、素材分支合并时新发现的项，以及
 > **2026-11-11 全面审查**（框架 / 资产库 / 模型启动，P0×2 · P1×9 · P2×11 已全修）与 PR#4 评审遗留。
-> 最后更新：2026-11-11 14:25 —— T33 修复（`ModelSpec.internal` + `public_models()`）；
+> 最后更新：2026-11-11 15:40 —— T34 落地（生图参考图：`referenceLibraryIds` →
+> `reference_json` → Data URI 内联，前端按模型的 `maxReferences` 出控件）。
+> 早前：T33 修复（`ModelSpec.internal` + `public_models()`）；
 > T32 落地（`bailian` 迁进 `drivers/`，替换链改走 `InputPreparer` 可选协议）；
 > T31 口径已定（素材直传公网 OSS 是有意设计，不是合规遗漏）；T30 拍板**暂不动**（保持观察期）。
 > 交接现状见 [`HANDOFF.md`](HANDOFF.md)。
@@ -31,7 +33,7 @@
 | T29 | 指标是单进程语义，未做多进程聚合 | 多 worker 部署要靠 Prometheus `sum by`；本机 `curl /metrics` 只看到一部分 | 架构 |
 | T30 | PG 迁移闸在观察期（`continue-on-error`），尚未成为硬性要求 | PG 特有的默认值/条件索引差异要等它稳定后才真正拦住；**2026-11-11 拍板：暂不动** | 架构 |
 | T33 | 替换链专用模型出现在通用模型目录 —— **2026-11-11 已修** | 给 `ModelSpec` 加 `internal`，目录层用 `public_models()` 过滤 | 后端（小） |
-| T34 | 生图链路没有参考图，Agnes 实际只能文生图 | 编辑/参考图/多图融合全部用不了，与模型能力不符 | 后端 + 前端 |
+| T34 | 生图链路没有参考图，Agnes 实际只能文生图 —— **2026-11-11 已修** | `referenceLibraryIds` + `reference_json` + Data URI 内联，前端按 `maxReferences` 出控件 | 后端 + 前端 |
 | T35 | PR#5 自报的六条遗留（409 未进契约、continuation 不查 rowcount、`_absorb` 下界、`resume` 全扫、`publish_output` 失败仍记 success、libtv 监督无超时） | 进度、启动耗时与「成功但没片子」这类静默问题 | 后端 |
 
 ---
@@ -255,34 +257,26 @@ Base64 直传），届时改 `drivers/bailian.py` 的 `prepare_inputs` 一处即
 `AI_PROVIDERS=echo,libtv` 里没有它，目录里看不到；`libtv` 那条其实一直都在，只是
 没人从生成页去选它。
 
-## T34 · 生图链路没有参考图（Agnes 实际只能文生图）
+## T34 · 生图链路没有参考图 —— **2026-11-11 已修**
 
-`AgnesDriver` 的 `submit()` 只拼 `prompt` / `size` / `count` / 模型参数，请求体里没有
-任何图片字段；`GenerateImageIn`（`modules/image/schema.py`）也没有参考图入参，
-`ImageJob`（`modules/image/models.py`）没有对应的列。结果是「图生图 / 参考图 / 多图融合」
-这一类能力**前端根本传不进来**，模型能做的和产品能用的不是一回事。
-
-要打通是四处一起改（缺一处就断在中间）：
-
-1. **入参**：`GenerateImageIn` 加 `referenceUrls: list[str]`（或复用一个 `references`
-   结构，留出 `role` 给将来区分首帧/参考图）。
-2. **落库**：`ImageJob` 加一列存参考图（JSON，跟 `params_json` 分开——`params` 是模型
-   参数、要按 `paramSchema` 校验，参考图是调用输入，别混进去）。
-3. **提交**：`ImageGenerationPipeline.build_request()` 透传 `reference_urls`；驱动侧拼进
-   请求体；`archive_request` 的快照要带上参考图，否则重试会静默丢图。
-4. **前端**：生图表单加参考图控件。现有参数区完全由 `paramSchema` 渲染
-   （`entities/model/lib/paramForm.ts`），参考图不是模型参数，得单独加一种控件
-   （`type: "images"`），不能塞进 `ParamFields`。
-
-**前置技术决定（必须先定）**：Agnes 只接受**公网 URL** 或 `data:image/...;base64`，
-而我们素材库给的是私签直链，供应商那边拿不到（签名会过期、域名也不对外）。所以要么
-服务端读字节转 Data URI（要和素材库的可见性检查、大小上限一起做，别绕过 `_serve`），
-要么沿用 T31 那条「先传公网 OSS 再给直链」的路子。**建议先只做后端 + 一条 i2i 的请求体
-用例**，把「参考图能不能到供应商」这件事钉死，前端控件随后。
-
-**验收**：`POST /images` 带 `referenceUrls` 能落库、能透传到驱动请求体、重试不丢；
-内部模型（`internal=True`）仍然不出现在目录里；前端选完参考图能看到缩略图并成功提交。
-
+> 落地口径记在这里，避免以后又按「往 `paramSchema` 塞一个图片字段」的思路改回去：
+>
+> - **入参** `GenerateImageIn.referenceLibraryIds`（素材库 v2 资产 id，按顺序生效）。
+>   刻意不叫 `referenceAssetIds`：那个名字在架构守卫里等于「往自己表里存了旧
+>   `assets.id`」，会被要求声明 `asset_reference_sources` —— 而这里存的是 v2 资产 id，
+>   删除保护走资产库自己的机制。
+> - **落库** `ImageJob.reference_json`（`[{assetId, storageKey, mimeType}]`）。存
+>   `storageKey` 是因为构造请求那一步（`build_request(record)`）没有数据库会话。
+> - **受理前校验** `ImageService._resolve_references`：张数上限取模型的
+>   `max_references`、`kind` 必须是 image、`storage_key` 能推出 png/jpeg/webp、
+>   单张 ≤ 6MB，可读性走新加的 `LibraryLookup.readable_ids`（判据仍是
+>   `library/access.py` 那一份）。**资产 id 不是所有权凭证**，不查这一道就等于
+>   让人把别人的私有素材交给供应商复制一份再取回来。
+> - **提交** `build_request` 读字节转 Data URI（供应商拿不到我们的私签链接）；
+>   `archive_request` 的快照带 `referenceLibraryIds`。
+> - **前端** `entities/image/ui/ReferenceImages.tsx`：先上传到素材库拿 id 再提交，
+>   入口是否出现由 `ModelSpec.max_references`（契约 `maxReferences`）决定。
+>   参考图**不进** `paramSchema`：那边的值只能是标量。
 
 ---
 

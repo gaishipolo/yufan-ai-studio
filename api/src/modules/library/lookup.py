@@ -15,6 +15,7 @@ from collections.abc import Mapping, Sequence
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.context import CurrentUser
 from core.ports.library_lookup import (
     LibraryAssetKind,
     LibraryAssetRef,
@@ -23,12 +24,21 @@ from core.ports.library_lookup import (
     LibraryVisibility,
     register_library_lookup,
 )
+from modules.library.access import readable_rows
 from modules.library.models import LibraryAsset
 
 __all__ = ["SqlLibraryLookup", "lookup", "install"]
 
 
 class SqlLibraryLookup(LibraryLookup):
+    async def readable_ids(
+        self, session: AsyncSession, actor: CurrentUser, asset_ids: Sequence[str]
+    ) -> set[str]:
+        # 判据在 `access.readable_rows`（含「封装成员」这一条读入口与小组判定），
+        # 这里只转发：换个地方重写一份，第一处漂的永远是「小组共享」。
+        rows = await readable_rows(session, list(asset_ids), actor)
+        return set(rows)
+
     async def get_many(
         self, session: AsyncSession, asset_ids: Sequence[str]
     ) -> Mapping[str, LibraryAssetRef]:

@@ -37,6 +37,14 @@ export interface ModelSpec {
   provider: string;
   description?: string;
   paramSchema: Record<string, ParamField>;
+  /**
+   * 最多收几张参考图（图生图 / 多图合成），`0` 或缺失 = 纯文生图。
+   *
+   * 参考图不是 `paramSchema` 里的参数：那边的值只能是一个标量，而参考图是一批
+   * 图片。但「要不要显示参考图入口」由模型说了算——给纯文生图模型也画上传框，
+   * 用户传了不会被用上，图照样出、只是完全不像参考图。
+   */
+  maxReferences?: number;
   isDefault: boolean;
 }
 

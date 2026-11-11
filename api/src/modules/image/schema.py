@@ -49,6 +49,10 @@ class ImageJobOut(CamelModel):
             "previousExternalId 只保留最近一个，全量凭证看这里"
         ),
     )
+    reference_library_ids: list[str] = Field(
+        default_factory=list,
+        description="提交时带的参考图资产 id（顺序即提交顺序）；纯文生图为空",
+    )
     created_at: UtcDateTime = Field(description="创建时间（UTC）")
 
 
@@ -86,3 +90,20 @@ class GenerateImageIn(CamelModel):
     )
     # 留空用该能力的默认模型；换供应商时前端只需换 id，接口不变
     model: str = Field(default="", max_length=64, description="模型 id，留空取默认")
+    # 不叫 `reference_asset_ids`：那个名字在架构守卫
+    # （`test_every_asset_reference_writer_declares_a_source`）里等于「往自己的表里
+    # 存了旧 `assets.id`」，会被要求声明 `asset_reference_sources` 并注册一个
+    # `AssetReferenceChecker`。这里存的是 v2 素材库（`library_assets`）的 id，
+    # 删除保护走资产库自己的机制，不是旧素材库那套。
+    reference_library_ids: list[str] = Field(
+        default_factory=list,
+        max_length=16,
+        description=(
+            "参考图（图生图 / 多图合成）的素材库资产 id，**按顺序生效**："
+            "多图合成时提示词里的「第一张 / 第二张」指的就是这个顺序，重排会让"
+            "提示词与图片错位。只接受 `image` 类型且当前账号能读的资产，"
+            "张数上限由模型 `maxReferences` 决定（`0` = 该模型不支持参考图）。"
+            "传 id 而不是 URL：我们的取件链接是私签的、供应商访问不到，"
+            "服务端读字节后以 `data:image/...;base64,...` 交给供应商"
+        ),
+    )

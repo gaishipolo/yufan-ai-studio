@@ -410,6 +410,8 @@ export interface GenerateImageIn {
   params?: Record<string, unknown>;
   /** 模型 id，留空取默认 */
   model?: string;
+  /** 参考图（图生图 / 多图合成）的素材库资产 id，**按顺序生效**：多图合成时提示词里的「第一张 / 第二张」指的就是这个顺序，重排会让提示词与图片错位。只接受 `image` 类型且当前账号能读的资产，张数上限由模型 `maxReferences` 决定（`0` = 该模型不支持参考图）。传 id 而不是 URL：我们的取件链接是私签的、供应商访问不到，服务端读字节后以 `data:image/...;base64,...` 交给供应商 */
+  referenceLibraryIds?: string[];
 }
 
 /** 生成参数快照。字段与 `library_asset_generation` 一一对应，全部可选。 */
@@ -536,6 +538,8 @@ export interface ImageJobOut {
   previousExternalId?: string | null;
   /** 被替换掉的全部供应商任务号（旧的在前）。连续多次确认已扣费重试时，previousExternalId 只保留最近一个，全量凭证看这里 */
   previousExternalIds?: string[];
+  /** 提交时带的参考图资产 id（顺序即提交顺序）；纯文生图为空 */
+  referenceLibraryIds?: string[];
   /** 创建时间（UTC） */
   createdAt: string;
 }
@@ -1735,6 +1739,8 @@ export interface modules__catalog__schema__ModelOut {
   provider: string;
   description?: string;
   paramSchema?: Record<string, unknown>;
+  /** 这个模型最多接受几张参考图（图生图 / 多图合成），`0` 表示纯文生图。参考图不是 `paramSchema` 里的参数：它的值是「一批图片」，提交时走 `referenceLibraryIds` 这条独立入参 */
+  maxReferences?: number;
   isDefault?: boolean;
 }
 

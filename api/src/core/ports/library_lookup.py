@@ -26,6 +26,7 @@ from typing import Protocol, runtime_checkable
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.context import CurrentUser
 from core.exceptions import Unavailable
 from core.ports.host import Port
 
@@ -90,7 +91,7 @@ class LibraryAssetRef:
 
 @runtime_checkable
 class LibraryLookup(Protocol):
-    """按 id 批量取 v2 资产元数据。"""
+    """按 id 批量取 v2 资产元数据，并回答「这批 id 里哪些我能读」。"""
 
     async def get_many(
         self, session: AsyncSession, asset_ids: Sequence[str]
@@ -99,6 +100,23 @@ class LibraryLookup(Protocol):
 
         不要为缺失 id 造占位对象：调用方靠「键是否存在」区分「已删除」与
         「还没上传完」。`session` 由调用方传入，保证与业务读取同一个快照。
+        """
+        ...
+
+    async def readable_ids(
+        self, session: AsyncSession, actor: CurrentUser, asset_ids: Sequence[str]
+    ) -> set[str]:
+        """这批 id 里，`actor` **现在**还能读的那些。
+
+        为什么元数据之外还要一个独立判定：`LibraryAssetRef` 里没有「共享到哪些
+        小组」，只凭 `visibility=group` 就放行会把**别人组里**的素材判成可见。
+        判据只有 `modules/library/access.py` 一份（含「封装成员」这条读入口），
+        这里刻意只做转发，不在别的模块里重写一遍——重写必然漂移，而漂移的方向
+        总是「多给权限」，不会有人报错。
+
+        调用方（生成链路把素材当参考图）必须过这一关：能读到 id 不等于能读到
+        内容以外的用途，但**读不到内容却能把图交给供应商、再取回产物**，等于
+        绕过整个共享审批把别人的私有素材复制出来。
         """
         ...
 

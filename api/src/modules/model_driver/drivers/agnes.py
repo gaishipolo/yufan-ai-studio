@@ -113,6 +113,11 @@ _PARAM_SCHEMA = {
     "count": {"type": "int", "min": 1, "max": 1, "default": 1},
 }
 
+# 参考图张数上限。上游没给明确上限（文档只写「图片数组」），这个 4 是我们
+# 自己收的：参考图是以 `data:image/...;base64,` 内联进请求体的，每张 base64
+# 后体积涨 4/3，张数不设上限等于把一次提交做成几十 MB 的 JSON。
+_MAX_REFERENCES = 4
+
 MODELS: tuple[ModelSpec, ...] = (
     ModelSpec(
         id=_MODEL_25,
@@ -121,6 +126,7 @@ MODELS: tuple[ModelSpec, ...] = (
         provider="agnes",
         param_schema=_PARAM_SCHEMA,
         description="文生图 / 图生图 / 多图合成，同步返回图片地址",
+        max_references=_MAX_REFERENCES,
     ),
     ModelSpec(
         id=_MODEL_21,
@@ -129,6 +135,7 @@ MODELS: tuple[ModelSpec, ...] = (
         provider="agnes",
         param_schema=_PARAM_SCHEMA,
         description="文生图 / 图生图 / 多图合成，与 2.5 同价",
+        max_references=_MAX_REFERENCES,
     ),
 )
 

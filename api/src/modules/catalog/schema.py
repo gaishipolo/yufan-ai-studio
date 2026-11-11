@@ -22,6 +22,14 @@ class ModelOut(CamelModel):
     provider: str
     description: str = ""
     param_schema: dict[str, Any] = Field(default_factory=dict)
+    max_references: int = Field(
+        default=0,
+        description=(
+            "这个模型最多接受几张参考图（图生图 / 多图合成），`0` 表示纯文生图。"
+            "参考图不是 `paramSchema` 里的参数：它的值是「一批图片」，"
+            "提交时走 `referenceLibraryIds` 这条独立入参"
+        ),
+    )
     is_default: bool = False
 
 

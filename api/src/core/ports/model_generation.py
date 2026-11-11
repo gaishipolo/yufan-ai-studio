@@ -82,6 +82,9 @@ class ModelSummary:
     provider: str
     param_schema: Mapping[str, Any] = field(default_factory=dict)
     description: str = ""
+    # 这个模型最多收几张参考图，`0` = 纯文生图。下游据此决定要不要渲染
+    # 参考图入口、以及提交时该不该带 `reference_urls`
+    max_references: int = 0
 
 
 @dataclass(frozen=True, slots=True)

@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ModelSpec } from '@/entities/model/model/types';
@@ -6,16 +6,22 @@ import type { ImageJob } from '@/entities/image/model/types';
 import ImagePage from './ImagePage';
 
 /* restoreMocks: true 会把 vi.fn 的实现也清掉，所以每个 beforeEach 都要重设 */
-const { modelsMock, imagesMock, mutateMock, toastMock } = vi.hoisted(() => ({
+const { modelsMock, imagesMock, mutateMock, toastMock, uploadMock } = vi.hoisted(() => ({
   modelsMock: vi.fn(),
   imagesMock: vi.fn(),
   mutateMock: vi.fn(),
   toastMock: vi.fn(),
+  uploadMock: vi.fn(),
 }));
 
 vi.mock('@/entities/image/api/image.api', () => ({
   useImages: imagesMock,
   useGenerateImage: () => ({ mutate: mutateMock, isPending: false }),
+}));
+
+// 参考图先传素材库再提交 id：这里只验「传上去的 id 有没有跟着请求走」
+vi.mock('@/entities/library/api/library.queries', () => ({
+  useUploadAsset: () => ({ mutateAsync: uploadMock, isPending: false }),
 }));
 
 // paramForm 用真实实现：这里要验的就是控件确实来自 paramSchema
@@ -36,6 +42,7 @@ const AGNES: ModelSpec = {
   provider: 'agnes',
   description: '',
   isDefault: true,
+  maxReferences: 4,
   paramSchema: {
     size: { type: 'enum', options: ['1024x1024', '1024x1536', '1536x1024'], default: '1024x1024' },
     count: { type: 'int', min: 1, max: 1, default: 1 },
@@ -48,6 +55,8 @@ const SEEDREAM: ModelSpec = {
   label: 'Seedream 3',
   provider: 'echo',
   isDefault: false,
+  // 纯文生图：界面不该出现参考图入口
+  maxReferences: 0,
   paramSchema: {
     ...AGNES.paramSchema,
     count: { type: 'int', min: 1, max: 4, default: 1 },
@@ -101,6 +110,7 @@ beforeEach(() => {
   imagesMock.mockReset();
   mutateMock.mockReset();
   toastMock.mockReset();
+  uploadMock.mockReset();
   modelsMock.mockReturnValue({ models: [AGNES, SEEDREAM], isLoading: false, isError: false });
   setImages([]);
 });
@@ -219,6 +229,87 @@ describe('ImagePage · 表单参数来自模型目录', () => {
   });
 });
 
+describe('ImagePage · 参考图（图生图 / 多图合成）', () => {
+  const png = (name: string) => new File([new Uint8Array([1, 2, 3])], name, { type: 'image/png' });
+
+  /** 隐藏的 file input 直接塞文件：`userEvent.upload` 会因 `display:none` 拒绝交互 */
+  const pick = (files: File[]) => {
+    fireEvent.change(screen.getByLabelText('上传参考图'), { target: { files } });
+  };
+
+  it('上传后按顺序把资产 id 带给后端', async () => {
+    uploadMock.mockResolvedValueOnce({ id: 'a-1', name: 'a.png', url: '/u/1' });
+    uploadMock.mockResolvedValueOnce({ id: 'a-2', name: 'b.png', url: '/u/2' });
+    render(<ImagePage />);
+
+    pick([png('a.png'), png('b.png')]);
+    await screen.findByRole('button', { name: '移除参考图 2' });
+
+    fireEvent.change(screen.getByPlaceholderText(/赛博朋克街头/), {
+      target: { value: '把第一个角色放进第二个场景' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '开始生成' }));
+
+    // 顺序即语义：多图合成时提示词里的「第一张」指的就是这个顺序
+    expect(mutateMock.mock.calls[0][0].referenceLibraryIds).toEqual(['a-1', 'a-2']);
+  });
+
+  it('模型不支持参考图时不显示入口', () => {
+    modelsMock.mockReturnValue({ models: [SEEDREAM], isLoading: false, isError: false });
+    render(<ImagePage />);
+
+    expect(screen.queryByLabelText('上传参考图')).toBeNull();
+    expect(screen.queryByText(/参考图/)).toBeNull();
+  });
+
+  it('到上限后不再显示添加入口', async () => {
+    uploadMock.mockResolvedValueOnce({ id: 'a-1', name: 'a.png', url: '/u/1' });
+    modelsMock.mockReturnValue({
+      models: [{ ...AGNES, maxReferences: 1 }],
+      isLoading: false,
+      isError: false,
+    });
+    render(<ImagePage />);
+
+    pick([png('a.png')]);
+    await screen.findByRole('button', { name: '移除参考图 1' });
+
+    expect(screen.queryByRole('button', { name: '添加' })).toBeNull();
+    expect(screen.getByText(/最多 1 张/)).toBeInTheDocument();
+  });
+
+  it('换模型清空已选参考图（新模型可能根本不收）', async () => {
+    uploadMock.mockResolvedValueOnce({ id: 'a-1', name: 'a.png', url: '/u/1' });
+    render(<ImagePage />);
+
+    pick([png('a.png')]);
+    await screen.findByRole('button', { name: '移除参考图 1' });
+
+    await userEvent.setup().selectOptions(select('模型'), 'seedream-3');
+    expect(screen.queryByRole('button', { name: '移除参考图 1' })).toBeNull();
+  });
+
+  it('提交成功后清空参考图，不让下一张生成莫名沿用旧图', async () => {
+    uploadMock.mockResolvedValueOnce({ id: 'a-1', name: 'a.png', url: '/u/1' });
+    mutateMock.mockImplementation((_payload, options?: { onSuccess?: () => void }) => {
+      options?.onSuccess?.();
+    });
+    render(<ImagePage />);
+
+    pick([png('a.png')]);
+    await screen.findByRole('button', { name: '移除参考图 1' });
+
+    fireEvent.change(screen.getByPlaceholderText(/赛博朋克街头/), {
+      target: { value: '一只白猫' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '开始生成' }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: '移除参考图 1' })).toBeNull();
+    });
+  });
+});
+
 describe('ImagePage · 异步状态在页面上看得见', () => {
   it('排队 / 进度 / 失败原因 / 成图地址都渲染，已完成不挂角标', () => {
     setImages([
@@ -244,5 +335,20 @@ describe('ImagePage · 异步状态在页面上看得见', () => {
     expect(container.querySelector('img[src="/static/images/done.png"]')).not.toBeNull();
     expect(container.querySelector('img[src="https://vendor/signed"]')).toBeNull();
     expect(screen.queryByText('已完成')).not.toBeInTheDocument();
+  });
+
+  it('用过参考图的任务在卡片上标出来', () => {
+    setImages([
+      job({
+        id: 'ref',
+        name: '参考图生成',
+        status: 'succeeded',
+        referenceLibraryIds: ['a-1', 'a-2'],
+      }),
+    ]);
+    render(<ImagePage />);
+
+    // 成图上分不出「哪张是照着参考图做的」，对比时只能靠这个角标回溯
+    expect(screen.getByText('参考 2')).toBeInTheDocument();
   });
 });

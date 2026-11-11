@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import base64
 import ipaddress
 from collections.abc import Sequence
 from datetime import UTC, datetime
@@ -56,6 +57,19 @@ _ALLOWED_IMAGE_TYPES = {
 }
 _MAX_REDIRECTS = 2
 _CHUNK = 64 * 1024
+
+# 参考图单张上限，与 `ImageService.MAX_REFERENCE_BYTES` 同一数值。
+# 受理前已经拦过一次，这里再拦是防「受理后资产被换掉 / 记录被手改」把 worker
+# 的内存打爆——读的是整段字节，几十 MB 的图会连 base64 一起翻三倍。
+MAX_REFERENCE_BYTES = 6 * 1024 * 1024
+
+# 供应商只认这几种（与 `ImageService` 的白名单一致）
+REFERENCE_MIME_BY_SUFFIX = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+}
 _BLOCKED_HOSTNAMES = frozenset(
     {"localhost", "metadata", "metadata.google.internal", "instance-data"}
 )
@@ -125,6 +139,11 @@ class ImageJobStore:
             status=job.status,
             owner_id=job.owner_id,
             params={**job.params, "size": job.size, "count": job.count},
+            # 装的是**对象 key**，由 `build_request` 读字节转成 Data URI；
+            # 别把它当成能直接交给供应商的地址（我们的取件链接是私签的）
+            reference_urls=tuple(
+                item["storageKey"] for item in job.references if item.get("storageKey")
+            ),
             external_id=job.external_id,
             progress=job.progress,
             output_url=job.output_url,
@@ -300,6 +319,40 @@ def _has_magic(data: bytes, suffix: str) -> bool:
     return False
 
 
+async def _reference_data_uris(record: GenerationRecord) -> tuple[str, ...]:
+    """把记录里的参考图快照读成 `data:image/...;base64,...`。
+
+    为什么不直接把素材的取件链接交给供应商：那是**私签**地址，几分钟就过期，
+    本机的存储供应商根本访问不到。模板链（百炼）能让供应商自己去拉，是因为
+    供应商**签发**了上传凭据（见 `drivers/bailian.py`）；Agnes 只有
+    `extra_body.image` 一个入口，接受公网 URL 或 Data URI，于是只剩内联一条路。
+
+    `record.reference_urls` 里装的是我们存储上的**对象 key**（见
+    `ImageJobStore._to_record`），不是可直接交出去的地址——名字沿用框架的
+    `reference_urls` 是因为「参考素材的位置」这个概念两条链一致，别被名字骗了。
+
+    读失败就抛：参考图是提交输入，静默退化成纯文生图会让用户拿到一张
+    完全不相关的图，而记录里写着「用过参考图」。
+    """
+    if not record.reference_urls:
+        return ()
+    storage = get_storage()
+    uris: list[str] = []
+    for key in record.reference_urls:
+        data = await storage.get(key)
+        if not data:
+            raise ValueError(f"参考图为空文件：{key}")
+        if len(data) > MAX_REFERENCE_BYTES:
+            raise ValueError(
+                f"参考图超过 {MAX_REFERENCE_BYTES // (1024 * 1024)}MB：{key}"
+            )
+        mime = REFERENCE_MIME_BY_SUFFIX.get(Path(key).suffix.lower(), "")
+        if not mime:
+            raise ValueError(f"参考图格式不支持（只认 png / jpeg / webp）：{key}")
+        uris.append(f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}")
+    return tuple(uris)
+
+
 def _with_suffix(name: str, stored: str) -> str:
     """给草稿名补上**文件本身**的后缀。
 
@@ -332,6 +385,7 @@ class ImageGenerationPipeline:
             model=record.model,
             prompt=record.prompt,
             params=record.params,
+            reference_urls=await _reference_data_uris(record),
             request_id=record.id,
         )
 
@@ -373,6 +427,11 @@ class ImageGenerationPipeline:
                 "prompt": record.prompt,
                 "size": job.size if job is not None else record.params.get("size"),
                 "count": job.count if job is not None else record.params.get("count"),
+                # 参考图只记资产 id 与张数：资产详情里的「生成参数」要能说清
+                # 「这张图是照着哪几张做的」，但 Data URI 动辄几 MB，不能进参数块
+                "referenceLibraryIds": (
+                    [item["assetId"] for item in job.references] if job is not None else []
+                ),
             },
         )
 

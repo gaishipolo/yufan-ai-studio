@@ -1644,6 +1644,7 @@ Authorization: Bearer <accessToken>
 | `count` | `number` | 否 | 张数；`0` 表示取模型 `paramSchema.count.default`，上限以模型声明为准 |
 | `params` | `Record<string, unknown>` | 否 | 模型声明的其他参数，键与 `GET /models` 返回的 `paramSchema` 一致（如 `quality` / `seed`）。未声明的键会被 400 拒绝，避免打错字被静默忽略；与顶层 `size` / `count` 重复时以顶层为准 |
 | `model` | `string` | 否 | 模型 id，留空取默认 |
+| `referenceLibraryIds` | `string[]` | 否 | 参考图（图生图 / 多图合成）的素材库资产 id，**按顺序生效**：多图合成时提示词里的「第一张 / 第二张」指的就是这个顺序，重排会让提示词与图片错位。只接受 `image` 类型且当前账号能读的资产，张数上限由模型 `maxReferences` 决定（`0` = 该模型不支持参考图）。传 id 而不是 URL：我们的取件链接是私签的、供应商访问不到，服务端读字节后以 `data:image/...;base64,...` 交给供应商 |
 
 **响应** `ApiResponse<ImageJobOut>`（前端取 `res.data`）
 
@@ -1665,6 +1666,7 @@ Authorization: Bearer <accessToken>
 | `externalId` | `string \| null` | 否 | 供应商侧任务号；提交成功后有值，可用于对账 |
 | `previousExternalId` | `string \| null` | 否 | 上一次提交的供应商任务号；带 confirmCharged 重试后保留的对账凭证 |
 | `previousExternalIds` | `string[]` | 否 | 被替换掉的全部供应商任务号（旧的在前）。连续多次确认已扣费重试时，previousExternalId 只保留最近一个，全量凭证看这里 |
+| `referenceLibraryIds` | `string[]` | 否 | 提交时带的参考图资产 id（顺序即提交顺序）；纯文生图为空 |
 | `createdAt` | `string` | 是 | 创建时间（UTC） |
 
 #### `GET /api/v1/images`
@@ -4247,6 +4249,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `count` | `number` | 否 | 张数；`0` 表示取模型 `paramSchema.count.default`，上限以模型声明为准 |
 | `params` | `Record<string, unknown>` | 否 | 模型声明的其他参数，键与 `GET /models` 返回的 `paramSchema` 一致（如 `quality` / `seed`）。未声明的键会被 400 拒绝，避免打错字被静默忽略；与顶层 `size` / `count` 重复时以顶层为准 |
 | `model` | `string` | 否 | 模型 id，留空取默认 |
+| `referenceLibraryIds` | `string[]` | 否 | 参考图（图生图 / 多图合成）的素材库资产 id，**按顺序生效**：多图合成时提示词里的「第一张 / 第二张」指的就是这个顺序，重排会让提示词与图片错位。只接受 `image` 类型且当前账号能读的资产，张数上限由模型 `maxReferences` 决定（`0` = 该模型不支持参考图）。传 id 而不是 URL：我们的取件链接是私签的、供应商访问不到，服务端读字节后以 `data:image/...;base64,...` 交给供应商 |
 
 ### `GenerationKind`（枚举）
 
@@ -4362,6 +4365,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `externalId` | `string \| null` | 否 | 供应商侧任务号；提交成功后有值，可用于对账 |
 | `previousExternalId` | `string \| null` | 否 | 上一次提交的供应商任务号；带 confirmCharged 重试后保留的对账凭证 |
 | `previousExternalIds` | `string[]` | 否 | 被替换掉的全部供应商任务号（旧的在前）。连续多次确认已扣费重试时，previousExternalId 只保留最近一个，全量凭证看这里 |
+| `referenceLibraryIds` | `string[]` | 否 | 提交时带的参考图资产 id（顺序即提交顺序）；纯文生图为空 |
 | `createdAt` | `string` | 是 | 创建时间（UTC） |
 
 ### `ImageRetryOut`
@@ -5583,6 +5587,7 @@ mixedList 里的一项；下标 +1 就是 {{Mixed N}} 编号。
 | `provider` | `string` | 是 |  |
 | `description` | `string` | 否 |  |
 | `paramSchema` | `Record<string, unknown>` | 否 |  |
+| `maxReferences` | `number` | 否 | 这个模型最多接受几张参考图（图生图 / 多图合成），`0` 表示纯文生图。参考图不是 `paramSchema` 里的参数：它的值是「一批图片」，提交时走 `referenceLibraryIds` 这条独立入参 |
 | `isDefault` | `boolean` | 否 |  |
 
 ### `modules__model_driver__schema__ModelListOut`

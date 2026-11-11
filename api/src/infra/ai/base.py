@@ -98,6 +98,15 @@ class ModelSpec:
     # 通用生图 / 视频页的下拉里时，用户选中必然失败，而报错是「标识不匹配」——
     # 没人能从这句话推出「这个模型不该出现在这里」。
     internal: bool = False
+    # 这个模型最多收几张参考图（图生图 / 多图合成）。`0` = 纯文生图。
+    #
+    # 为什么放在 ModelSpec 而不是 `param_schema`：参数 schema 的值域只有
+    # string / number / bool，装不下一批图片；参考图也不是「模型参数」，它是
+    # 调用输入，走 `GenerationRequest.reference_urls` 这条独立通道（视频侧同一个
+    # 字段）。但「要不要显示参考图控件」必须由**模型**说了算——给纯文生图模型
+    # 也画一个上传框，用户传了不会被用上：驱动压根不读，图照样出，只是完全
+    # 不像参考图，而界面上没有任何异常。
+    max_references: int = 0
 
     def defaults(self) -> dict[str, Any]:
         return {

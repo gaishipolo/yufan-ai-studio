@@ -31,6 +31,7 @@ class CatalogService:
                 provider=spec.provider,
                 description=spec.description,
                 param_schema=dict(spec.param_schema),
+                max_references=spec.max_references,
                 is_default=spec.id == self.router.default_model_or_none(spec.capability),
             )
             for spec in self.router.public_models(capability)

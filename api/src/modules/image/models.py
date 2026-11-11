@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import datetime
 from typing import Any
 
@@ -33,6 +33,16 @@ class ImageJob(Base, TimestampMixin, UUIDMixin):
     # 只存内存里的那份，重试就会用默认参数重新提交——用户选的 quality / seed
     # 无声丢失，而页面上什么问题都看不出来。
     params_json: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    # 参考图（JSON 数组，元素 `{assetId, storageKey, mimeType}`），顺序即提交顺序。
+    #
+    # 为什么不并进 `params_json`：`params` 是**模型参数**，键必须来自模型的
+    # `param_schema`、值只能是标量；参考图是**调用输入**，校验规则完全不同
+    # （要查资产、要读字节）。混在一起会让「未声明键 400」这道校验把参考图也拦掉。
+    #
+    # 为什么存 `storageKey` 而不只是 `assetId`：提交时要把字节塞进请求体，
+    # 而构造请求的那一步没有数据库会话（`build_request(record)` 只拿到记录）。
+    # 资产被删也不影响重试——存储是内容寻址的，同一份字节可能还有别处在用。
+    reference_json: Mapped[str] = mapped_column(Text, default="", nullable=False)
 
     status: Mapped[str] = mapped_column(
         String(20), default=STATUS_QUEUED, nullable=False, index=True
@@ -83,6 +93,20 @@ class ImageJob(Base, TimestampMixin, UUIDMixin):
         """模型额外参数（不含 size / count）。脏数据按空处理，不让列表接口 500。"""
         return parse_params_json(self.params_json)
 
+    @property
+    def references(self) -> list[dict[str, str]]:
+        """参考图快照（顺序即提交顺序）。脏数据按空处理。"""
+        return parse_references_json(self.reference_json)
+
+    @property
+    def reference_library_ids(self) -> list[str]:
+        """只给契约用的资产 id 列表（`ImageJobOut` 经 `from_attributes` 读它）。
+
+        名字里不带 `asset_ids`：架构守卫把 `reference_asset_ids` 当「写入了旧
+        `assets.id`」的标记，而这里存的是 v2 素材库的 id。
+        """
+        return [item["assetId"] for item in self.references if item.get("assetId")]
+
 
 def dumps_params(params: Mapping[str, Any]) -> str:
     """把额外参数写成 JSON 文本；空参数写空串（不是 `{}`），便于「无参数」判空。"""
@@ -99,6 +123,37 @@ def parse_params_json(raw: str | None) -> dict[str, Any]:
     except (TypeError, ValueError):
         return {}
     return dict(data) if isinstance(data, dict) else {}
+
+
+def dumps_references(references: Sequence[Mapping[str, str]]) -> str:
+    """把参考图快照写成 JSON 文本；没有参考图写空串（与 `dumps_params` 同一口径）。"""
+    if not references:
+        return ""
+    return json.dumps([dict(item) for item in references], ensure_ascii=False)
+
+
+def parse_references_json(raw: str | None) -> list[dict[str, str]]:
+    """解析参考图快照；脏数据（非数组、元素缺 `assetId`）整条丢弃而不是抛。
+
+    列表接口会读这个属性，一条历史脏行不该让整页 500——与 `parse_params_json`
+    同一条原则：读路径对脏数据必须宽容，写路径才严格。
+    """
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+    except (TypeError, ValueError):
+        return []
+    if not isinstance(data, list):
+        return []
+    items: list[dict[str, str]] = []
+    for entry in data:
+        if not isinstance(entry, dict) or not str(entry.get("assetId") or "").strip():
+            continue
+        items.append(
+            {key: str(entry.get(key) or "") for key in ("assetId", "storageKey", "mimeType")}
+        )
+    return items
 
 
 def parse_external_id_history(raw: str | None) -> list[str]:

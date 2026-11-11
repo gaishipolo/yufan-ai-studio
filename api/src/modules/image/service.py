@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from pathlib import PurePosixPath
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,6 +17,7 @@ from core.context import CurrentUser
 from core.exceptions import BadRequest, Forbidden, InvalidState, UpstreamError
 from core.logging import get_logger
 from core.param_schema import resolve_params
+from core.ports.library_lookup import LibraryAssetKind, get_library_lookup
 from core.response import Page, PageParams
 from db.repository import BaseRepository
 from generation.runner import get_runner
@@ -23,14 +25,96 @@ from generation.spec import STATUS_FAILED, STATUS_QUEUED
 from infra import get_model_router
 from infra.ai.base import Capability, ModelSpec
 from infra.artifacts import artifact_urls
-from modules.image.models import ImageJob, dumps_params, remember_previous_external_id
+from modules.image.models import (
+    ImageJob,
+    dumps_params,
+    dumps_references,
+    remember_previous_external_id,
+)
 from modules.image.permissions import PERM_READ_ALL, PERM_RETRY_ANY
-from modules.image.pipeline import KIND_IMAGE
+from modules.image.pipeline import (
+    KIND_IMAGE,
+    MAX_REFERENCE_BYTES,
+    REFERENCE_MIME_BY_SUFFIX,
+)
 from modules.image.schema import GenerateImageIn, ImageJobOut
 
 logger = get_logger(__name__)
 
 _MAX_JOB_NAME = 120
+
+
+def _reference_mime(storage_key: str, declared: str) -> str:
+    """定参考图的 MIME：资产上登记了就用它，缺了按存储键后缀推。
+
+    两条来源都要，因为资产表的 `mime_type` 允许为空（历史导入、探测失败）。
+    推不出来就返回空串，由调用方拒绝——拿 `application/octet-stream` 当
+    Data URI 的类型，供应商会当成非图片处理，报错信息离原因很远。
+    """
+    if declared.strip().lower() in REFERENCE_MIME_BY_SUFFIX.values():
+        return declared.strip().lower()
+    return REFERENCE_MIME_BY_SUFFIX.get(PurePosixPath(storage_key).suffix.lower(), "")
+
+
+async def _resolve_references(
+    session: AsyncSession,
+    actor: CurrentUser,
+    asset_ids: Sequence[str],
+    spec: ModelSpec,
+) -> list[dict[str, str]]:
+    """把参考图的资产 id 解析成「提交时要用的快照」。
+
+    三件事必须在这里做完，不能留到异步提交时才发现：
+
+    1. **张数上限**按模型声明的 `max_references`（`0` = 纯文生图）；
+    2. **可读性**：资产 id 不是所有权凭证。能读到别人的私有素材当参考图，
+       等于让供应商替我们复制一份再取回来——共享审批被整条绕过；
+    3. **能不能交给供应商**：必须是 image、MIME 在白名单里、体积别太大。
+
+    返回顺序**与入参一致**：多图合成时提示词里的「第一张」指的是这个顺序。
+    """
+    wanted = [item.strip() for item in asset_ids]
+    # 去重保序：同一张图传两遍只会让供应商出更差的图，也不会多算一张的额度
+    wanted = [item for item in dict.fromkeys(wanted) if item]
+    if not wanted:
+        return []
+
+    limit = max(0, spec.max_references)
+    if limit == 0:
+        raise BadRequest(
+            f"模型 {spec.label} 不支持参考图（纯文生图），请换一个支持图生图 / 多图合成的模型"
+        )
+    if len(wanted) > limit:
+        raise BadRequest(f"模型 {spec.label} 最多接受 {limit} 张参考图，本次传了 {len(wanted)} 张")
+
+    lookup = get_library_lookup()
+    found = await lookup.get_many(session, wanted)
+    missing = [asset_id for asset_id in wanted if asset_id not in found]
+    if missing:
+        raise BadRequest(f"参考图不存在或已被删除：{missing}")
+
+    readable = await lookup.readable_ids(session, actor, wanted)
+    denied = [asset_id for asset_id in wanted if asset_id not in readable]
+    if denied:
+        raise Forbidden(f"无权限使用这些参考图（可能是他人的私有素材）：{denied}")
+
+    references: list[dict[str, str]] = []
+    for asset_id in wanted:
+        ref = found[asset_id]
+        if ref.kind is not LibraryAssetKind.IMAGE:
+            raise BadRequest(f"参考图 {ref.name or asset_id} 不是图片（当前为 {ref.kind.value}）")
+        mime = _reference_mime(ref.storage_key, ref.mime_type)
+        if not mime:
+            raise BadRequest(
+                f"参考图 {ref.name or asset_id} 的格式不受支持，请换 png / jpeg / webp 的图"
+            )
+        if ref.size_bytes > MAX_REFERENCE_BYTES:
+            raise BadRequest(
+                f"参考图 {ref.name or asset_id} 超过 "
+                f"{MAX_REFERENCE_BYTES // (1024 * 1024)}MB，请先压缩后再用"
+            )
+        references.append({"assetId": asset_id, "storageKey": ref.storage_key, "mimeType": mime})
+    return references
 
 
 def _validate_params(spec: ModelSpec, payload: GenerateImageIn) -> dict[str, object]:
@@ -117,6 +201,9 @@ class ImageService:
         # 供应商未接入时在这里就暴露（provider_for 会抛 BadRequest）
         router.provider_for(spec.id)
         params = _validate_params(spec, payload)
+        references = await _resolve_references(
+            self.session, actor, payload.reference_library_ids, spec
+        )
 
         # 尺寸 / 张数在表里是独立列（历史列表、卡片角标都按列读），其余参数
         # 按模型声明自由扩展，统一进 params_json。别把它们并进同一条 JSON：
@@ -131,6 +218,7 @@ class ImageService:
             size=size,
             count=count,
             params_json=dumps_params(extra),
+            reference_json=dumps_references(references),
             status=STATUS_QUEUED,
             model=spec.label,
             model_id=spec.id,
@@ -145,7 +233,15 @@ class ImageService:
             actor_id=actor.id,
             target_type="image_job",
             target_id=job.id,
-            detail={"model": spec.id, "size": size, "count": count, **extra},
+            detail={
+                "model": spec.id,
+                "size": size,
+                "count": count,
+                **extra,
+                # 参考图留痕只记 id：字节内容没必要进审计日志，但「用了别人的哪张图」
+                # 要能查出来（尤其是在排查「生成结果像某个素材」的时候）
+                "referenceLibraryIds": [item["assetId"] for item in references],
+            },
         )
 
         await get_runner().dispatch(KIND_IMAGE, job.id)

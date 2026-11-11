@@ -21,6 +21,8 @@ import {
   type ParamValue,
 } from '@/entities/model/lib/paramForm';
 import { ParamFields } from '@/entities/model/ui/ParamFields';
+import { ReferenceImages, type ReferenceItem } from '@/entities/image/ui/ReferenceImages';
+import { useUploadAsset } from '@/entities/library/api/library.queries';
 import { useGenerateImage, useImages } from '@/entities/image/api/image.api';
 import type { GenerateImagePayload } from '@/entities/image/model/types';
 import { imageSrcOf, imageStatusChipOf } from '@/entities/image/model/status';
@@ -31,11 +33,15 @@ export default function ImagePage() {
   // 只存「用户改过的那几个」，没改的交给 schema 默认值。
   // 存最终值的话，换模型后旧值会留在 state 里，而新模型未必认这些值。
   const [overrides, setOverrides] = useState<Record<string, ParamValue>>({});
+  // 参考图：先传到素材库拿 id，再随请求下发 id（后端读字节转 Data URI 交给供应商）。
+  // 不放图片本身进请求：几 MB 的 base64 走 HTTP 只是白费带宽，后端还得再解一遍。
+  const [references, setReferences] = useState<ReferenceItem[]>([]);
   const [page, setPage] = useState(1);
 
   const { models, isLoading: modelsLoading, isError: modelsError } = useImageModels();
   const { data, isLoading, isFetching, isError, error, refetch } = useImages(page);
   const generate = useGenerateImage();
+  const upload = useUploadAsset();
 
   // 用户没选过时用 isDefault 模型 —— 后端「model 留空」取的也是它，前端不编默认值
   const model =
@@ -45,6 +51,35 @@ export default function ImagePage() {
   const values = resolveParamValues(controls, overrides);
   const modelOptions = models.map((m) => ({ value: m.id, label: m.label }));
   const canSubmit = Boolean(model);
+  // 模型声明的上限决定这个入口出不出：0 或缺失 = 纯文生图
+  const maxReferences = model?.maxReferences ?? 0;
+
+  const addReferences = async (files: FileList | null) => {
+    const picked = Array.from(files ?? []);
+    if (!picked.length) return;
+    const room = maxReferences - references.length;
+    if (room <= 0) {
+      toast(`这个模型最多接受 ${maxReferences} 张参考图`, 'error');
+      return;
+    }
+    // 多选超量时只取前面的：先传多余的那几张再丢掉，等于白花一次上传
+    for (const file of picked.slice(0, room)) {
+      try {
+        const asset = await upload.mutateAsync({ file, kind: 'image' });
+        // 缩略图优先用它自己给的预览地址；拿不到就退回取件地址（契约里两个都可选）
+        setReferences((prev) => [
+          ...prev,
+          {
+            id: asset.id,
+            name: asset.name,
+            url: asset.previewUrl ?? asset.url ?? '',
+          },
+        ]);
+      } catch (e) {
+        toast(e instanceof Error ? e.message : '参考图上传失败', 'error');
+      }
+    }
+  };
 
   const total = data?.total ?? 0;
   const pageSize = data?.pageSize ?? 24;
@@ -75,6 +110,8 @@ export default function ImagePage() {
     }
     // 空对象不发：接口里 `params` 是可选字段，发 `{}` 只是噪音
     if (Object.keys(extra).length) payload.params = extra;
+    // 参考图只发 id：顺序就是提交顺序，后端按这个顺序拼进供应商请求
+    if (references.length) payload.referenceLibraryIds = references.map((item) => item.id);
     // 默认模型留空，交给后端取默认；只有用户显式改选才传 model
     if (!model.isDefault) payload.model = model.id;
 
@@ -82,6 +119,8 @@ export default function ImagePage() {
       onSuccess: () => {
         toast('已提交，正在排队生成', 'success');
         setPrompt('');
+        // 参考图跟着这次请求走了，留着会让下一次生成莫名其妙还用旧图
+        setReferences([]);
         // 新任务在最前面：停在旧页会看不到自己刚提交的那张。
         // 回到第 1 页后 useImages(1) 会因为 queued 自动开始轮询
         setPage(1);
@@ -126,8 +165,10 @@ export default function ImagePage() {
               onChange={(e) => {
                 setModelId(e.target.value);
                 // 换模型的参数面可能完全不同（张数上限、尺寸白名单、甚至多出
-                // 一组新控件），旧改动一律清掉，避免带着上一个模型的值提交
+                // 一组新控件），旧改动一律清掉，避免带着上一个模型的值提交。
+                // 参考图同理：新模型可能根本不支持参考图。
                 setOverrides({});
+                setReferences([]);
               }}
             />
             {!model && (
@@ -140,6 +181,18 @@ export default function ImagePage() {
               </p>
             )}
           </div>
+
+          {maxReferences > 0 && (
+            <ReferenceImages
+              items={references}
+              max={maxReferences}
+              busy={upload.isPending}
+              onPick={(files) => void addReferences(files)}
+              onRemove={(id) =>
+                setReferences((prev) => prev.filter((item) => item.id !== id))
+              }
+            />
+          )}
 
           <ParamFields
             controls={controls}
@@ -198,6 +251,13 @@ export default function ImagePage() {
                           <Chip tone={chip.tone}>{chip.text}</Chip>
                         </div>
                       )}
+                      {/* 用了参考图要说出来：否则用户对比两张图发现「不像」，也看不出
+                          差别在哪——参考图只在提交时存在，成图里是看不出来的 */}
+                      {job.referenceLibraryIds?.length ? (
+                        <div className="absolute right-1.5 top-1.5 z-10">
+                          <Chip>参考 {job.referenceLibraryIds.length}</Chip>
+                        </div>
+                      ) : null}
                       {chip?.progress != null && (
                         <div className="absolute bottom-0 left-0 right-0 h-1 bg-black/10">
                           <div
