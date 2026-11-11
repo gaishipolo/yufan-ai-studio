@@ -4,6 +4,7 @@ import { useArchiveAssets } from '@/entities/asset/api/archive.queries';
 import { usePackMutations } from '@/entities/template/api/pack.queries';
 import { PACK_SCOPES, baseRole, rolesFor } from '@/entities/template/model/packRoles';
 import type { PackBinding, PackDraftIn, PackManaged } from '@/shared/api/schema';
+import { createId } from '@/shared/lib/id';
 import { Button, Modal } from '@/shared/ui';
 import { ErrorState } from '@/shared/ui/ErrorState';
 import { ArchivedThumbnail } from '@/entities/asset/ui/ArchivedThumbnail';
@@ -27,7 +28,6 @@ interface Form {
 
 /** 一页只放 24 张，翻页不影响已选：选择状态只存在表单里。 */
 const PAGE_SIZE = 24;
-const uuid = () => crypto.randomUUID();
 
 function initialForm(pack: PackManaged | null): Form {
   const kind = (pack?.kind ?? 'product') as Kind;
@@ -35,7 +35,7 @@ function initialForm(pack: PackManaged | null): Form {
   const bindings = pack?.bindings ?? [];
   return {
     // 编辑既有包必须沿用它自己的 id，否则会另存出一份新草稿。
-    requestId: pack && /^[a-f0-9]{32}$/.test(pack.id) ? pack.id : uuid(),
+    requestId: pack && /^[a-f0-9]{32}$/.test(pack.id) ? pack.id : createId(),
     expectedRevision: pack?.revision ?? 0,
     kind,
     name: pack?.name ?? '',

@@ -399,8 +399,11 @@ SMB 上 `rename` 没有 POSIX 语义，桥接层每次 `update()` 重写 run.jso
 把三视图移到第 2 位即可，提示词原文不用改。`mediaOrder` 留空时才回落到
 素材包原序。
 
-**存储与并发**：目录是 `api/var/video_templates/catalog.json`（不入库，原因见
-`video_template_store.py` 模块注释）。读改写整段持一把进程内锁，写盘走
+**存储与并发**：目录默认在 `api/var/video_templates/catalog.json`（不入库，原因见
+`video_template_store.py` 模块注释）。位置由 `VIDEO_TEMPLATE_CATALOG` 决定，多机部署
+指向共享盘上的同一份文件；**不能指向对象存储**——目录是「读全量 → 改一条 → 写全量」，
+依赖同盘原子重命名，S3/MinIO 没有跨进程 CAS，并发会丢卡片。每次写盘前会把当前版本
+快照到同目录 `backup/`（保留最近 20 份），误改可回捞。读改写整段持一把进程内锁，写盘走
 `asyncio.to_thread` —— 路由是 `async def`，不能在事件循环里做文件 IO
 （`CODE_STYLE.md` §2.3）。这把锁**只在单实例部署下成立**：多 worker 时目录会丢
 更新，届时先换仓储表再谈分页，而不是在 JSON 上补 limit/offset。

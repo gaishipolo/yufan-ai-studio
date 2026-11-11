@@ -20,8 +20,10 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import os
 import re
+import shutil
 import tempfile
 import threading
 import uuid
@@ -31,6 +33,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.config import settings
 from core.exceptions import BadRequest, Conflict, NotFound
 from core.ports.media import get_asset_lookup
 from modules.template.models import TemplatePack
@@ -54,8 +57,20 @@ from modules.template.video_template_schema import (
 
 # .../api/src/modules/template/ -> parents[3] = .../api
 _ROOT = Path(__file__).resolve().parents[3]
-CATALOG_PATH = _ROOT / "var" / "video_templates" / "catalog.json"
+_DEFAULT_CATALOG = _ROOT / "var" / "video_templates" / "catalog.json"
+# 目录文件放哪由部署决定：单机默认 `api/var`，多机指向共享盘上的同一份文件。
+# 只有「同机可读 + 支持原子重命名」的盘能接：共享盘（SMB）可以，对象存储不行
+# ——S3 没有跨进程 CAS，两个封装并发时后写的会把前一条整个覆盖。
+CATALOG_PATH = (
+    Path(settings.video_template_catalog).expanduser()
+    if settings.video_template_catalog.strip()
+    else _DEFAULT_CATALOG
+)
 _CATALOG_VERSION = 1
+# 写前快照保留份数：目录文件没有版本控制，一次误改就会覆盖全部卡片。
+_BACKUP_KEEP = 20
+
+logger = logging.getLogger(__name__)
 
 # 临界区统一在这一把锁里：**读改写整段**不能在锁外拆开，否则两个封装并发时
 # 后写的会把前一条整个覆盖（目录是「读全量 → 追加 → 写全量」）。
@@ -82,18 +97,50 @@ def catalog_stamp() -> float:
         return 0.0
 
 
+def _backup_current() -> None:
+    """写前把当前目录复制一份到 `backup/`，只留最近 `_BACKUP_KEEP` 份。
+
+    为什么不是「每次写都记日志」：目录是整体覆盖式的，出事后要看的是**上一版
+    完整内容**，而不是 diff。备份目录跟着目录文件走（同一块盘），共享盘部署时
+    多台机器天然看到同一批快照。
+
+    失败只告警不阻断：共享盘抖动不该让「改一条提示词」整条不可用。真正保证
+    写入一致性的仍是 `os.replace`，备份只是后悔药。
+
+    **代价**：每次写都完整复制一份，开销随目录文件大小线性增长，而且这次复制
+    发生在 `_LOCK` 里。当前模板量（几十条、几十 KB）可以忽略；若目录长到 MB 级，
+    应改成「按时间间隔快照」而不是「每次写都快照」，别让改一条提示词等一次全量拷贝。
+    """
+    if not CATALOG_PATH.is_file():
+        return
+    folder = CATALOG_PATH.parent / "backup"
+    try:
+        folder.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now(tz=UTC).strftime("%Y%m%dT%H%M%S%f")
+        shutil.copy2(CATALOG_PATH, folder / f"catalog-{stamp}.json")
+        snapshots = sorted(folder.glob("catalog-*.json"))
+        for stale in snapshots[:-_BACKUP_KEEP]:
+            stale.unlink(missing_ok=True)
+    except OSError as exc:  # 备份失败不该连坐业务写入
+        logger.warning("模板目录备份失败（继续写入 %s）：%s", CATALOG_PATH, exc)
+
+
 def _read() -> dict[str, Any]:
     if not CATALOG_PATH.is_file():
         return {"version": _CATALOG_VERSION, "items": []}
     with CATALOG_PATH.open("r", encoding="utf-8") as handle:
         data = json.load(handle)
     if not isinstance(data, dict) or not isinstance(data.get("items"), list):
-        raise BadRequest("视频模板目录文件损坏，请检查 var/video_templates/catalog.json")
+        # 面向用户的文案不回显绝对路径：部署结构（共享盘 UNC、机器名）不该出现在
+        # 接口响应里。全路径进日志，运维照样能定位。
+        logger.error("视频模板目录文件损坏：%s", CATALOG_PATH)
+        raise BadRequest("视频模板目录文件损坏，请检查部署配置里的模板目录文件")
     return data
 
 
 def _write(data: dict[str, Any]) -> None:
     CATALOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    _backup_current()
     descriptor, temp_name = tempfile.mkstemp(
         prefix="catalog-", suffix=".json", dir=CATALOG_PATH.parent
     )

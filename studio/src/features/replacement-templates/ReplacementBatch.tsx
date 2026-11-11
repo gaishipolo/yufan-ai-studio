@@ -2,6 +2,7 @@ import { useRef, useState } from 'react';
 import { usePrepareReplacement } from '@/entities/template/api/replacement.queries';
 import { replacementFitness } from '@/entities/asset/model/archive-fit';
 import { Can } from '@/shared/access/Can';
+import { createId } from '@/shared/lib/id';
 import { Button } from '@/shared/ui';
 import type { ReplacementWorkbench } from './useReplacementWorkbench';
 
@@ -40,7 +41,7 @@ export function ReplacementBatch({model}: {model: ReplacementWorkbench}) {
         if (saved && model.catalog.data?.runs.some(run => run.id === saved && run.deletedAt)) {completed.current.delete(key); requests.current.delete(key); saved = undefined;}
         if (saved) {mark(row.id, {state: 'success', runId: saved}); continue;}
         let requestId = requests.current.get(key);
-        if (!requestId) {requestId = crypto.randomUUID(); requests.current.set(key, requestId);}
+        if (!requestId) {requestId = createId(); requests.current.set(key, requestId);}
         mark(row.id, {state: 'working'});
         try {
           const run = await prepare.mutateAsync({...config, requestId});

@@ -213,6 +213,13 @@ class Settings(BaseSettings):
     # 替换任务的运行工作区（执行器要真实目录：inputs/outputs/records）。
     # 留空 = 本地驱动沿用 `<归档根>/runs`；归档切远端时落到 `api/var/runs`。
     replacement_runs_root: str = ""
+    # 视频模板目录（卡片 + 提示词）。它是「读全量 → 改一条 → 写全量」的 JSON，
+    # 必须能原子重命名，所以只能放本地盘或共享盘，不能放对象存储。
+    # 留空 = `api/var/video_templates/catalog.json`；多机部署指向共享盘上的同一份文件。
+    video_template_catalog: str = ""
+    # 封装进度文件目录（按封装 key 幂等、失败可原样重跑）。
+    # 留空 = `api/var/template-packager`；与模板目录一同放共享盘，换机器才能接着重跑。
+    template_packager_state_dir: str = ""
     worker_enabled: bool = True
     worker_concurrency: int = 2
     # 周期任务调度器（模块自己 @periodic 注册）。多副本部署时每个进程都会跑一份，
