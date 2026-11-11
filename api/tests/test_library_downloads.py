@@ -322,3 +322,35 @@ def test_remote_download_file_streams_instead_of_redirecting(
     # 走 307 时文件名是 key 的最后一段（一串 uuid），存下来只看到乱码名
     assert served.headers["content-disposition"].endswith(f"library-{job['id']}.zip")
 
+
+
+def test_download_rechecks_read_access_before_packing(
+    client: TestClient, api: str
+) -> None:
+    """建任务后被取消共享：打包时要按同一套判据重判一次。
+
+    建任务时判过「能不能读」，但打包是异步的——真正压包可能在几分钟后，中间
+    封装可能被取消共享、人可能被移出小组。只在建任务时判，等于把当时的权限
+    冻结进任务里：人已经失权，包照样生成、照样能取件（取件只校验 owner）。
+    """
+    admin = admin_headers(client)
+    owner, owner_h = make_user(client, admin, LIB_RW)
+    _, viewer_h = make_user(client, admin, LIB_RW)
+    image = upload_image(client, api, owner_h, name="shared.png", color="khaki")
+    pack = client.post(
+        f"{api}/library/packs",
+        json={"name": "临时共享", "assetIds": [image["id"]]},
+        headers=owner_h,
+    ).json()["data"]
+    set_visibility(pack["id"], "team")
+
+    created = _create(client, api, viewer_h, [pack["id"]])
+    assert created.status_code == 202, created.text
+    job = created.json()["data"]
+
+    set_visibility(pack["id"], "personal")  # 打包之前撤销共享
+
+    build_download_job(job["id"])
+    stored = fetch_download_job(job["id"])
+    assert stored["status"] == "failed", "失权后不该还能打出文件来"
+    assert "没有可打包的文件" in (stored["error"] or "")

@@ -56,6 +56,7 @@ __all__ = [
     "load_asset",
     "load_visible",
     "owner_names",
+    "readable_rows",
     "readable_via_pack",
     "readable_via_pack_ids",
     "tab_clause",
@@ -258,6 +259,41 @@ def can_read(
     if asset.visibility == "group":
         return bool(set(asset_groups) & set(my_groups))
     return False
+
+
+async def readable_rows(
+    session: AsyncSession, asset_ids: Sequence[str], actor: CurrentUser
+) -> dict[str, LibraryAsset]:
+    """这批 id 里，`actor` **现在**还能读的行（含「封装成员」这条读入口）。
+
+    存在的理由是异步任务：批量下载建任务时判过一次可读性，真正打包可能几分钟后，
+    中间封装可能被取消共享、人可能被移出小组。只在建任务时判，等于把当时的权限
+    冻结进任务里——人已经失权，包照样生成、照样能取件（取件只校验 owner）。
+
+    判据必须与 `DownloadService._collect` 同口径，所以放在这里共用：
+    `can_read` 或「靠某可见封装的成员身份读到」二选一。各自写一份必然漂移，
+    而漂移的方向恰好是「多给权限」，不会有人报错。
+    """
+    wanted = [asset_id for asset_id in dict.fromkeys(asset_ids) if asset_id]
+    if not wanted:
+        return {}
+    rows = {
+        row.id: row
+        for row in (
+            await session.scalars(select(LibraryAsset).where(LibraryAsset.id.in_(wanted)))
+        ).all()
+    }
+    if not rows:
+        return {}
+    my_groups = await all_groups(session, actor)
+    group_map = await asset_group_ids(session, list(rows))
+    via_pack = await readable_via_pack_ids(session, list(rows), actor, my_groups)
+    return {
+        asset_id: row
+        for asset_id, row in rows.items()
+        if asset_id in via_pack
+        or can_read(row, actor, my_groups, group_map.get(asset_id, []))
+    }
 
 
 async def asset_group_ids(

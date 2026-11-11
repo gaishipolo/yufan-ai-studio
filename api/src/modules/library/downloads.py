@@ -443,21 +443,22 @@ async def build_download(job_id: str) -> None:
         size = 0
         file_count = 0
         try:
-            assets = (
-                await session.scalars(
-                    select(LibraryAsset).where(LibraryAsset.id.in_(asset_ids))
-                )
-            ).all()
-            by_id = {asset.id: asset for asset in assets}
+            # 打包时**重新**判一遍可读性：建任务到真正压包之间可能隔几分钟，
+            # 中间封装被取消共享、人被移出小组，都不该还能把字节打进包。
+            # 判据用 `access.readable_rows`（与建任务时的 `_collect` 同一套），
+            # 这里自己写一份必然漂移，而漂移方向只会是多给。
+            by_id = await access.readable_rows(
+                session, asset_ids, CurrentUser(id=row.owner_id, name="")
+            )
             with tempfile.TemporaryDirectory(prefix="library-download-") as folder:
                 root = Path(folder)
                 entries: list[tuple[str, Path]] = []
                 used: set[str] = set()
                 for index, asset_id in enumerate(asset_ids, start=1):
                     asset = by_id.get(asset_id)
-                    # 发起之后被删 / 被移进回收站：跳过并记原因，不整包失败
+                    # 发起之后被删 / 被移进回收站 / 失权：跳过并记原因，不整包失败
                     if asset is None or asset.state != "active" or not asset.storage_key:
-                        notes.append(f"{asset_id}: 已不可下载")
+                        notes.append(f"{asset_id}: 已不可下载（无权或已删除）")
                         continue
                     path = await _stage(storage, asset.storage_key, root, index)
                     if path is None:
