@@ -119,7 +119,10 @@ async def run() -> int:
             if frozen is None:
                 continue
             rows = aligned_bindings(pack.kind, frozen.reference_ids, frozen.bindings)
-            roles = {aid: row.role for aid, row in zip(frozen.reference_ids, rows)}
+            roles = {
+                aid: row.role
+                for aid, row in zip(frozen.reference_ids, rows, strict=False)
+            }
             updated, dropped = _rebuild(
                 record, set(frozen.reference_ids), pack.name, pack.version
             )
@@ -132,7 +135,10 @@ async def run() -> int:
                     "id": record.get("id"),
                     "name": record.get("name"),
                     "pack": f"{pack.name} v{pack.version}",
-                    "before": [item.get("name") or item.get("token") for item in record["mediaOrder"]],
+                    "before": [
+                        item.get("name") or item.get("token")
+                        for item in record["mediaOrder"]
+                    ],
                     "after": [
                         f'{item["token"]}={item.get("role") or "source_video"}'
                         for item in updated["mediaOrder"]

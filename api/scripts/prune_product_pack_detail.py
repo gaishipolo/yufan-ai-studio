@@ -214,7 +214,8 @@ async def apply(session, service: PackService, rows: list[dict]) -> tuple[list[d
 
 async def rollback(session, service: PackService, snapshot_path: Path) -> list[dict]:
     """按快照重新发布一版：历史版本不可变，所以「恢复」是新增一版而不是改回去。"""
-    snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+    raw = await asyncio.to_thread(snapshot_path.read_text, encoding="utf-8")
+    snapshot = json.loads(raw)
     results = []
     for row in snapshot["packs"]:
         pack = await session.get(TemplatePack, row["packId"])
@@ -266,7 +267,11 @@ async def run() -> int:
         repo = PackRepository(session)
         if args.rollback:
             results = await rollback(session, service, args.rollback)
-            print(json.dumps({"mode": "rollback", "results": results}, ensure_ascii=False, indent=2))
+            print(
+                json.dumps(
+                    {"mode": "rollback", "results": results}, ensure_ascii=False, indent=2
+                )
+            )
             return 0
 
         rows = await plan(session, service, repo, set(args.pack_id))
