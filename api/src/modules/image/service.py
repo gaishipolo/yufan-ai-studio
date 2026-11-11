@@ -120,7 +120,7 @@ class ImageService:
         # 按模型声明自由扩展，统一进 params_json。别把它们并进同一条 JSON：
         # 那样 `size` 的默认值就得靠解析失败兜底，排序与统计也会失真。
         size = str(params.get("size") or payload.size or "1024x1024")
-        count = int(params.get("count") or payload.count or 1)  # type: ignore[arg-type]
+        count = int(params.get("count") or payload.count or 1)  # type: ignore[call-overload]
         extra = {key: value for key, value in params.items() if key not in ("size", "count")}
 
         job = ImageJob(

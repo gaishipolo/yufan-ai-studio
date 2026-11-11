@@ -21,9 +21,10 @@ from __future__ import annotations
 
 import contextlib
 from datetime import UTC, datetime, timedelta
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from sqlalchemy import delete, func, select, update
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.audit import record as audit
@@ -362,7 +363,12 @@ class LifecycleService:
                 LibraryAsset.id == asset_id, LibraryAsset.state == "trash"
             )
         )
-        if purged.rowcount != 1:
+        # DML 经 `session.execute` 返回的实际是 `CursorResult`（带 rowcount），
+        # 而 SQLAlchemy 的注解按查询结果集写成 `Result`（没有 rowcount）。这里
+        # 显式 cast，而不是 `getattr(purged, "rowcount", 0)`——后者一旦注解或
+        # 返回类型漂移就会静默读成 0，把这道闸门自己关掉，且没有任何报错。
+        deleted_rows = cast("CursorResult[Any]", purged).rowcount
+        if deleted_rows != 1:
             await self.session.rollback()
             logger.info("彻底删除跳过：记录已恢复或不存在 id=%s", asset_id)
             return

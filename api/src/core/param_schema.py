@@ -36,6 +36,31 @@ def _options_of(field: dict[str, object]) -> list[object]:
     return list(raw) if isinstance(raw, (list, tuple)) else []
 
 
+def _as_int(value: object) -> int | None:
+    """把 schema 里声明的数值收敛成 int；缺失或不是数字时返回 None。
+
+    声明来自模型 META，静态类型上只是 `object`。这里显式 `isinstance` 收窄，
+    而不是 `int(value)  # type: ignore`——声明写错（`"min": "small"`）时应当
+    退化成「没声明」，不该在受理流程里抛 TypeError 变成 500。
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _as_float(value: object) -> float | None:
+    """同 `_as_int`，用于 `float` 类型的区间。"""
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _bad(model_id: str, key: str, message: str, **details: object) -> BadRequest:
     return BadRequest(
         f"模型 {model_id!r} 的参数 {key!r} {message}",
@@ -71,19 +96,20 @@ def _coerce(
         if isinstance(raw, bool):
             raise _bad(model_id, key, f"需要整数，收到 {raw!r}")
         try:
-            number = int(raw)  # type: ignore[arg-type]
+            number = int(raw)  # type: ignore[call-overload]
         except (TypeError, ValueError):
             raise _bad(model_id, key, f"需要整数，收到 {raw!r}") from None
-        minimum = 1 if low is None else int(low)
-        maximum = None if high is None else int(high)
+        declared_min = _as_int(low)
+        minimum = 1 if declared_min is None else declared_min
+        maximum = _as_int(high)
         if number < minimum or (maximum is not None and number > maximum):
             limit = f"{minimum}-{maximum}" if maximum is not None else f"≥{minimum}"
             raise _bad(
                 model_id, key, f"超出范围（{limit}），收到 {number}", min=minimum, max=maximum
             )
-        step = field.get("step")
-        if step is not None and int(step) > 1 and (number - minimum) % int(step):
-            ladder = list(range(minimum, (maximum or number) + 1, int(step)))
+        step = _as_int(field.get("step"))
+        if step is not None and step > 1 and (number - minimum) % step:
+            ladder = list(range(minimum, (maximum or number) + 1, step))
             if maximum is not None and (not ladder or ladder[-1] != maximum):
                 ladder.append(maximum)
             raise _bad(model_id, key, f"不是支持的档位，可选: {ladder}", options=ladder)
@@ -96,7 +122,10 @@ def _coerce(
             number = float(raw)  # type: ignore[arg-type]
         except (TypeError, ValueError):
             raise _bad(model_id, key, f"需要数字，收到 {raw!r}") from None
-        if (low is not None and number < float(low)) or (high is not None and number > float(high)):
+        low_value, high_value = _as_float(low), _as_float(high)
+        if (low_value is not None and number < low_value) or (
+            high_value is not None and number > high_value
+        ):
             raise _bad(model_id, key, f"超出范围（{low}-{high}），收到 {number}")
         return number
 
@@ -112,9 +141,9 @@ def _coerce(
 
     if kind in ("string", "text", "str"):
         text = str(raw)
-        max_length = field.get("maxLength")
-        if max_length is not None and len(text) > int(max_length):
-            raise _bad(model_id, key, f"长度不能超过 {int(max_length)}")
+        max_length = _as_int(field.get("maxLength"))
+        if max_length is not None and len(text) > max_length:
+            raise _bad(model_id, key, f"长度不能超过 {max_length}")
         return text
 
     # 没声明 type 也没有 options/min/max：供应商自有约定，原样透传

@@ -41,7 +41,7 @@ from generation.events import (
     EVT_GENERATION_SUBMITTED,
     EVT_GENERATION_SUCCEEDED,
 )
-from generation.pipeline import get_pipeline, strict_model
+from generation.pipeline import GenerationPipeline, get_pipeline, strict_model
 from generation.spec import GenerationRecord
 from generation.store import GenerationStore
 from infra import get_model_router
@@ -58,7 +58,7 @@ _MAX_ERROR_LEN = 500
 _MAX_BACKOFF_SEC = 30.0
 
 
-def _provider_for(pipeline: object, model: str) -> ModelProvider:
+def _provider_for(pipeline: GenerationPipeline, model: str) -> ModelProvider:
     """取供应商的唯一入口：**不许流水线自己塞一个解析器绕过路由**。
 
     以前这里有 `getattr(pipeline, "resolve_provider", None)` 的后门：模板替换
