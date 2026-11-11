@@ -82,6 +82,19 @@ describe('LibraryTagBar · 两级标签筛选', () => {
     expect(onChange).toHaveBeenCalledWith(['t11', 't2']);
   });
 
+  it('两行都是「行标题 → 搜索框 → 全部」，输入框上下对齐', () => {
+    renderBar([]);
+    for (const [rowName, searchName, allName] of [
+      ['一级标签', '搜索一级标签', '全部标签'],
+      ['二级标签', '搜索二级标签', '全部二级标签'],
+    ] as const) {
+      const row = within(screen.getByRole('group', { name: rowName }));
+      const input = row.getByRole('searchbox', { name: searchName });
+      expect(input.previousElementSibling?.tagName).toBe('SPAN');
+      expect(input.nextElementSibling?.getAttribute('aria-label')).toBe(allName);
+    }
+  });
+
   it('每行各自搜索，只过滤本行', async () => {
     const user = userEvent.setup();
     renderBar([]);

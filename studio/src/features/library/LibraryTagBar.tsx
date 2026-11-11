@@ -33,7 +33,9 @@ const ACTIVE = 'border-primary bg-primary text-white shadow-sm';
 const ROW_LABEL = 'w-12 shrink-0 truncate text-[13px] font-medium text-ink-mute';
 
 /**
- * 标签筛选条：**两行**，第一行一级、第二行二级，每行各自「全部 + 搜索」。
+ * 标签筛选条：**两行**，第一行一级、第二行二级，每行的排布都是
+ * 「行标题 → 搜索框 → 全部 → 标签胶囊」。搜索框紧跟行标题、靠左放，不推到行尾：
+ * 两行的输入框上下对齐，用户扫一眼就知道第二个框只管二级。
  *
  * 两级之间不是简单的两个多选组，有三条口径：
  *
@@ -223,6 +225,14 @@ function TagRow({
       <span className={ROW_LABEL} title={label}>
         {label}
       </span>
+      <input
+        type="search"
+        value={query}
+        onChange={(event) => onQuery(event.target.value)}
+        aria-label={searchLabel}
+        placeholder="搜索…"
+        className="h-[26px] w-[112px] shrink-0 rounded-md border border-line-soft bg-panel-soft px-2 text-[13px] text-ink placeholder:text-ink-mute focus:border-primary-line focus:outline-none focus:ring-2 focus:ring-primary/10"
+      />
       <button
         type="button"
         onClick={onAll}
@@ -257,14 +267,6 @@ function TagRow({
           </button>
         );
       })}
-      <input
-        type="search"
-        value={query}
-        onChange={(event) => onQuery(event.target.value)}
-        aria-label={searchLabel}
-        placeholder="搜索…"
-        className="ml-auto h-[26px] w-[112px] shrink-0 rounded-md border border-line-soft bg-panel-soft px-2 text-[13px] text-ink placeholder:text-ink-mute focus:border-primary-line focus:outline-none focus:ring-2 focus:ring-primary/10"
-      />
     </div>
   );
 }
