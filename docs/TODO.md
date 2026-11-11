@@ -8,7 +8,9 @@
 > 来源：`CODE_REVIEW_2026-11-06_R11~R14`、`CODE_REVIEW_2026-11-06_FE6`、
 > `EXTENSIBILITY_GAPS.md` 的 B1/C1/C2、素材分支合并时新发现的项，以及
 > **2026-11-11 全面审查**（框架 / 资产库 / 模型启动，P0×2 · P1×9 · P2×11 已全修）与 PR#4 评审遗留。
-> 最后更新：2026-11-11 15:40 —— T34 落地（生图参考图：`referenceLibraryIds` →
+> 最后更新：2026-11-11 16:20 —— T34 补完：参考图不只本地上传，加了素材库侧边悬浮栏
+> （搜索 / 标签筛选 / 拖拽到参考图区）。
+> 早前：T34 落地（生图参考图：`referenceLibraryIds` →
 > `reference_json` → Data URI 内联，前端按模型的 `maxReferences` 出控件）。
 > 早前：T33 修复（`ModelSpec.internal` + `public_models()`）；
 > T32 落地（`bailian` 迁进 `drivers/`，替换链改走 `InputPreparer` 可选协议）；
@@ -274,9 +276,21 @@ Base64 直传），届时改 `drivers/bailian.py` 的 `prepare_inputs` 一处即
 >   让人把别人的私有素材交给供应商复制一份再取回来。
 > - **提交** `build_request` 读字节转 Data URI（供应商拿不到我们的私签链接）；
 >   `archive_request` 的快照带 `referenceLibraryIds`。
-> - **前端** `entities/image/ui/ReferenceImages.tsx`：先上传到素材库拿 id 再提交，
+> - **前端** `entities/image/ui/ReferenceImages.tsx`：两条入口落到同一份资产 id ——
+>   本地上传（先入库换 id 再提交）与素材库悬浮栏（拖拽 `/` 点 ＋）。原本只有前者，
+>   等于「库里已有的素材要再传一遍」，所以 2026-11-11 补了后者。
 >   入口是否出现由 `ModelSpec.max_references`（契约 `maxReferences`）决定。
 >   参考图**不进** `paramSchema`：那边的值只能是标量。
+> - **悬浮栏** `entities/library/ui/LibraryFlyout.tsx`：**不加遮罩**。Modal 那层
+>   backdrop 会盖住左侧参考图区，拖拽就落不下去 —— 这也是它与 `LibraryPicker`
+>   的分工差别（后者带确认按钮，适合一次挑一批再回别处）。只查
+>   `GET /library/selection`（硬过滤 `state=active`），前端固定 `kind=image`：
+>   参考图只收 png/jpeg/webp，把视频摆出来只会让人拖了才被拒。
+> - **拖拽契约** `shared/lib/libraryDrag.ts`（`application/x-yufan-library-asset`）：
+>   放 `shared` 而不是某一边的 `model/`，否则 `entities/image` 要反向依赖
+>   `entities/library`。用自定义 MIME 是因为 `text/plain` 谁都能拖进来 —— 拖一段
+>   提示词就会被当成拖了一张素材。载荷带 `name`/`url` 只为立刻画缩略图，
+>   提交的仍只有 id。
 
 ---
 

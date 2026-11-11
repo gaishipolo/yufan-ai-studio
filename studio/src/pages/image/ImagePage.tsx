@@ -22,7 +22,9 @@ import {
 } from '@/entities/model/lib/paramForm';
 import { ParamFields } from '@/entities/model/ui/ParamFields';
 import { ReferenceImages, type ReferenceItem } from '@/entities/image/ui/ReferenceImages';
+import { LibraryFlyout } from '@/entities/library/ui/LibraryFlyout';
 import { useUploadAsset } from '@/entities/library/api/library.queries';
+import type { LibraryAssetDrag } from '@/shared/lib/libraryDrag';
 import { useGenerateImage, useImages } from '@/entities/image/api/image.api';
 import type { GenerateImagePayload } from '@/entities/image/model/types';
 import { imageSrcOf, imageStatusChipOf } from '@/entities/image/model/status';
@@ -36,6 +38,8 @@ export default function ImagePage() {
   // 参考图：先传到素材库拿 id，再随请求下发 id（后端读字节转 Data URI 交给供应商）。
   // 不放图片本身进请求：几 MB 的 base64 走 HTTP 只是白费带宽，后端还得再解一遍。
   const [references, setReferences] = useState<ReferenceItem[]>([]);
+  // 素材库悬浮栏：默认收起，从参考图区的「素材库」按钮打开
+  const [libraryOpen, setLibraryOpen] = useState(false);
   const [page, setPage] = useState(1);
 
   const { models, isLoading: modelsLoading, isError: modelsError } = useImageModels();
@@ -79,6 +83,24 @@ export default function ImagePage() {
         toast(e instanceof Error ? e.message : '参考图上传失败', 'error');
       }
     }
+  };
+
+  /**
+   * 加入一张素材库里的图（拖进来或点「＋」）。
+   *
+   * 不重新上传：参考图提交的是素材 id，后端自己去库里读字节，同一份素材可以被
+   * 多个任务反复引用。所以这里只把 id / 名称 / 缩略图接进列表，与本地上传的
+   * 结果完全同构。
+   */
+  const addLibraryAsset = (asset: LibraryAssetDrag) => {
+    if (!maxReferences) return;
+    // 同一张重复加入没有意义：多图合成里同一张出现两次只会白占一个名额
+    if (references.some((item) => item.id === asset.id)) return;
+    if (references.length >= maxReferences) {
+      toast(`最多 ${maxReferences} 张参考图，先移除一张再添加`, 'error');
+      return;
+    }
+    setReferences((prev) => [...prev, { id: asset.id, name: asset.name, url: asset.url }]);
   };
 
   const total = data?.total ?? 0;
@@ -169,6 +191,7 @@ export default function ImagePage() {
                 // 参考图同理：新模型可能根本不支持参考图。
                 setOverrides({});
                 setReferences([]);
+                setLibraryOpen(false);
               }}
             />
             {!model && (
@@ -191,6 +214,9 @@ export default function ImagePage() {
               onRemove={(id) =>
                 setReferences((prev) => prev.filter((item) => item.id !== id))
               }
+              onAddAsset={addLibraryAsset}
+              onOpenLibrary={() => setLibraryOpen((open) => !open)}
+              libraryOpen={libraryOpen}
             />
           )}
 
@@ -298,6 +324,16 @@ export default function ImagePage() {
           />
         </section>
       </div>
+
+      {/* 悬浮在页面之上、不加遮罩：遮罩会挡住左侧参考图区，拖拽就落不下去了 */}
+      {libraryOpen && maxReferences > 0 && (
+        <LibraryFlyout
+          onClose={() => setLibraryOpen(false)}
+          max={maxReferences}
+          pickedIds={references.map((item) => item.id)}
+          onPick={addLibraryAsset}
+        />
+      )}
     </>
   );
 }

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
   AssetPatchIn,
   BulkIn,
@@ -82,6 +82,32 @@ export function useLibrarySelection(params: {
     queryKey: libraryKeys.selection(params),
     queryFn: () => libraryApi.selection({ ...params, includePacks: false }),
     placeholderData: (previous) => previous,
+  });
+}
+
+/**
+ * 侧栏悬浮选择器的数据源：滚动追加，不走「上一页 / 下一页」。
+ *
+ * 侧栏只有三百来像素宽，翻页会丢掉「刚才看到的那张在哪」，而拖拽恰恰依赖
+ * 用户还看得见它。下一页由 `loaded >= total` 判定，不额外要 total_pages 字段。
+ */
+export function useLibrarySelectionInfinite(params: {
+  keyword?: string;
+  kind?: string;
+  tagIds?: string[];
+  pageSize?: number;
+}) {
+  return useInfiniteQuery({
+    // 与 useLibrarySelection 共用 `selection` 前缀，但键里多一个 marks，避免命中缓存里
+    // 那份「单页结构」的数据（两者形状不同，共用会让某一方读到 undefined）
+    queryKey: libraryKeys.selection({ ...params, infinite: true }),
+    queryFn: ({ pageParam }) =>
+      libraryApi.selection({ ...params, page: pageParam, includePacks: false }),
+    initialPageParam: 1,
+    getNextPageParam: (last) => {
+      const loaded = (last.page ?? 1) * (last.pageSize ?? 24);
+      return loaded < (last.total ?? 0) ? (last.page ?? 1) + 1 : undefined;
+    },
   });
 }
 

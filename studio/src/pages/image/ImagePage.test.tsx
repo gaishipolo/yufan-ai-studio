@@ -1,18 +1,23 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { LibraryAssetOut } from '@/shared/api/schema';
+import { LIBRARY_ASSET_DRAG_TYPE, type LibraryAssetDrag } from '@/shared/lib/libraryDrag';
 import type { ModelSpec } from '@/entities/model/model/types';
 import type { ImageJob } from '@/entities/image/model/types';
 import ImagePage from './ImagePage';
 
 /* restoreMocks: true 会把 vi.fn 的实现也清掉，所以每个 beforeEach 都要重设 */
-const { modelsMock, imagesMock, mutateMock, toastMock, uploadMock } = vi.hoisted(() => ({
-  modelsMock: vi.fn(),
-  imagesMock: vi.fn(),
-  mutateMock: vi.fn(),
-  toastMock: vi.fn(),
-  uploadMock: vi.fn(),
-}));
+const { modelsMock, imagesMock, mutateMock, toastMock, uploadMock, selectionMock } = vi.hoisted(
+  () => ({
+    modelsMock: vi.fn(),
+    imagesMock: vi.fn(),
+    mutateMock: vi.fn(),
+    toastMock: vi.fn(),
+    uploadMock: vi.fn(),
+    selectionMock: vi.fn(),
+  }),
+);
 
 vi.mock('@/entities/image/api/image.api', () => ({
   useImages: imagesMock,
@@ -20,8 +25,11 @@ vi.mock('@/entities/image/api/image.api', () => ({
 }));
 
 // 参考图先传素材库再提交 id：这里只验「传上去的 id 有没有跟着请求走」
+// 悬浮栏的候选列表也走这条 mock，否则组件会去调真实 hook（拿不到 QueryClient）
 vi.mock('@/entities/library/api/library.queries', () => ({
   useUploadAsset: () => ({ mutateAsync: uploadMock, isPending: false }),
+  useLibrarySelectionInfinite: selectionMock,
+  useLibraryTags: () => ({ data: [] }),
 }));
 
 // paramForm 用真实实现：这里要验的就是控件确实来自 paramSchema
@@ -105,13 +113,63 @@ const select = (name: string) => screen.getByRole('combobox', { name }) as HTMLS
 const optionValues = (element: HTMLSelectElement) =>
   Array.from(element.options).map((option) => option.value);
 
+/** 素材库候选：形状取后端 `LibraryAssetOut` 的必要字段 */
+function libraryAsset(id: string, name: string): LibraryAssetOut {
+  return {
+    id,
+    name,
+    kind: 'image',
+    origin: 'upload',
+    ownerId: 'u-1',
+    visibility: 'personal',
+    state: 'active',
+    createdAt: '2026-11-01T00:00:00Z',
+    coverUrl: `/cover/${id}.png`,
+  };
+}
+
+const LIBRARY_ITEMS = [
+  libraryAsset('lib-1', '角色参考图'),
+  libraryAsset('lib-2', '场景参考图'),
+];
+
+function setSelection(items: LibraryAssetOut[], total = items.length) {
+  selectionMock.mockReturnValue({
+    data: { pages: [{ items, total, page: 1, pageSize: 24 }] },
+    isPending: false,
+    isError: false,
+    hasNextPage: false,
+    isFetchingNextPage: false,
+    refetch: vi.fn(),
+  } as never);
+}
+
+/** jsdom 没有 DataTransfer 构造器：按拖拽回调真正会读的字段造一个 */
+function dragData(asset: LibraryAssetDrag) {
+  return {
+    types: [LIBRARY_ASSET_DRAG_TYPE],
+    effectAllowed: 'all',
+    dropEffect: 'none',
+    setData: vi.fn(),
+    getData: () => JSON.stringify(asset),
+  };
+}
+
+function dropOn(element: HTMLElement, asset: LibraryAssetDrag) {
+  const dataTransfer = dragData(asset);
+  fireEvent.dragOver(element, { dataTransfer });
+  fireEvent.drop(element, { dataTransfer });
+}
+
 beforeEach(() => {
   modelsMock.mockReset();
   imagesMock.mockReset();
   mutateMock.mockReset();
   toastMock.mockReset();
   uploadMock.mockReset();
+  selectionMock.mockReset();
   modelsMock.mockReturnValue({ models: [AGNES, SEEDREAM], isLoading: false, isError: false });
+  setSelection(LIBRARY_ITEMS);
   setImages([]);
 });
 
@@ -307,6 +365,96 @@ describe('ImagePage · 参考图（图生图 / 多图合成）', () => {
     await waitFor(() => {
       expect(screen.queryByRole('button', { name: '移除参考图 1' })).toBeNull();
     });
+  });
+});
+
+describe('ImagePage · 从素材库挑参考图（侧边悬浮栏）', () => {
+  const openLibrary = () => fireEvent.click(screen.getByRole('button', { name: '素材库' }));
+  const prompt = () => screen.getByPlaceholderText(/赛博朋克街头/);
+  const dropZone = () => screen.getByRole('group', { name: '参考图投放区' });
+
+  it('打开悬浮栏但不遮页面：拖拽要能落到左侧参考图区', () => {
+    render(<ImagePage />);
+    expect(screen.queryByRole('complementary', { name: '素材库' })).toBeNull();
+
+    openLibrary();
+    expect(screen.getByRole('complementary', { name: '素材库' })).toBeInTheDocument();
+    // 没有 Modal 那层 backdrop —— 有遮罩就拖不到被盖住的参考图区
+    expect(document.querySelector('[role="presentation"]')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: '关闭素材库' }));
+    expect(screen.queryByRole('complementary', { name: '素材库' })).toBeNull();
+  });
+
+  it('点「＋」加入后提交带素材 id，不重复上传一份', () => {
+    render(<ImagePage />);
+    openLibrary();
+
+    fireEvent.click(screen.getByRole('button', { name: '加入参考图：角色参考图' }));
+    expect(screen.getByLabelText('已加入第 1 张')).toBeInTheDocument();
+
+    fireEvent.change(prompt(), { target: { value: '照着这张画' } });
+    fireEvent.click(screen.getByRole('button', { name: '开始生成' }));
+
+    expect(mutateMock.mock.calls[0][0].referenceLibraryIds).toEqual(['lib-1']);
+    // 素材已经在库里，再上传一次等于把同一份字节存两遍
+    expect(uploadMock).not.toHaveBeenCalled();
+  });
+
+  it('拖进参考图区即加入，落下顺序就是提交顺序', () => {
+    render(<ImagePage />);
+
+    dropOn(dropZone(), { id: 'lib-2', name: '场景参考图', url: '/cover/lib-2.png' });
+    dropOn(dropZone(), { id: 'lib-1', name: '角色参考图', url: '/cover/lib-1.png' });
+    expect(screen.getByRole('button', { name: '移除参考图 2' })).toBeInTheDocument();
+
+    fireEvent.change(prompt(), { target: { value: '把角色放进场景' } });
+    fireEvent.click(screen.getByRole('button', { name: '开始生成' }));
+
+    expect(mutateMock.mock.calls[0][0].referenceLibraryIds).toEqual(['lib-2', 'lib-1']);
+  });
+
+  it('同一张拖两次只算一张：重复出现只占名额、不增加信息', () => {
+    render(<ImagePage />);
+    const asset = { id: 'lib-1', name: '角色参考图', url: '' };
+
+    dropOn(dropZone(), asset);
+    dropOn(dropZone(), asset);
+
+    expect(screen.getByRole('button', { name: '移除参考图 1' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '移除参考图 2' })).toBeNull();
+  });
+
+  it('到上限后不再给「＋」，拖动也接不住', () => {
+    modelsMock.mockReturnValue({
+      models: [{ ...AGNES, maxReferences: 1 }],
+      isLoading: false,
+      isError: false,
+    });
+    render(<ImagePage />);
+    openLibrary();
+
+    fireEvent.click(screen.getByRole('button', { name: '加入参考图：角色参考图' }));
+    expect(screen.queryByRole('button', { name: '加入参考图：场景参考图' })).toBeNull();
+    expect(screen.getByText(/已达上限 1 张/)).toBeInTheDocument();
+
+    // 满员时连 dragover 都不接：让光标显示「可放下」却什么都不发生最糟
+    dropOn(dropZone(), { id: 'lib-2', name: '场景参考图', url: '' });
+    expect(screen.queryByRole('button', { name: '移除参考图 2' })).toBeNull();
+  });
+
+  it('搜索词与「只看图片」进查询参数，不在前端假装过滤', async () => {
+    render(<ImagePage />);
+    openLibrary();
+
+    fireEvent.change(screen.getByLabelText('搜索素材库'), { target: { value: '猫' } });
+
+    // 查询在服务端做：前端过滤会让 total 与分页对不上
+    await waitFor(() =>
+      expect(selectionMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ keyword: '猫', kind: 'image' }),
+      ),
+    );
   });
 });
 
