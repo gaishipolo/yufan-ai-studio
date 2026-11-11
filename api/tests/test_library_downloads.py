@@ -354,3 +354,47 @@ def test_download_rechecks_read_access_before_packing(
     stored = fetch_download_job(job["id"])
     assert stored["status"] == "failed", "失权后不该还能打出文件来"
     assert "没有可打包的文件" in (stored["error"] or "")
+
+
+class _RemoteStorage:
+    """只实现 `_stage` 用得到的三件事，用来盯住「怎么取字节」。
+
+    远端驱动的 `local_path()` 返回 None，取字节只有 `get()` 与 `iter_chunks()`
+    两条路。前者把整个对象读进内存——2GB 的包会在压包阶段把进程打挂，而且
+    是「小文件测不出来、只有真实大素材才炸」的那种。
+    """
+
+    def __init__(self, chunks: list[bytes], *, fail_after: int | None = None) -> None:
+        self.chunks = chunks
+        self.fail_after = fail_after
+
+    def local_path(self, key: str) -> None:
+        return None
+
+    async def get(self, key: str) -> bytes:
+        raise AssertionError("打包不该把整个对象读进内存（要用 iter_chunks 分块）")
+
+    async def iter_chunks(self, key: str, *, chunk_size: int = 1024 * 1024):  # noqa: ANN201
+        for index, chunk in enumerate(self.chunks):
+            if self.fail_after is not None and index >= self.fail_after:
+                raise RuntimeError("网络中断")
+            yield chunk
+
+
+def test_staging_a_remote_object_streams_to_disk(tmp_path) -> None:  # noqa: ANN001
+    """远端对象要分块落盘，不能 `get()` 全量进内存。"""
+    from modules.library.downloads import _stage
+
+    storage = _RemoteStorage([b"abc", b"def"])
+    target = asyncio.run(_stage(storage, "k", tmp_path, 0))  # type: ignore[arg-type]
+    assert target is not None
+    assert target.read_bytes() == b"abcdef", "分块拼接后必须与原对象逐字节一致"
+
+
+def test_staging_drops_a_half_written_file(tmp_path) -> None:  # noqa: ANN001
+    """中途失败不能留下半个文件：那会让「文件读取失败」变成「打包出损坏文件」。"""
+    from modules.library.downloads import _stage
+
+    storage = _RemoteStorage([b"partial", b"rest"], fail_after=1)
+    assert asyncio.run(_stage(storage, "k", tmp_path, 7)) is None  # type: ignore[arg-type]
+    assert list(tmp_path.iterdir()) == []

@@ -407,19 +407,30 @@ def _zip_entries(target: Path, entries: list[tuple[str, Path]]) -> None:
 async def _stage(storage: ObjectStorage, key: str, folder: Path, index: int) -> Path | None:
     """把一条资产落到本地临时目录，返回可被 `zipfile.write` 读的路径。
 
-    本地驱动直接复用原文件（零拷贝）；远端驱动必须先下载——`zipfile` 只认路径，
-    把 2GB 的包全塞进内存是最容易把进程 OOM 掉的写法。
+    本地驱动直接复用原文件（零拷贝）；远端驱动必须先下载——`zipfile` 只认路径。
+    下载**必须分块**：`get()` 会把整个对象留在进程里，2GB 的包只要两个并发就
+    能把服务打挂，而且小文件完全测不出来（只有真实大素材才炸）。`iter_chunks()`
+    的字节边读边写，进程内存与对象大小无关。
     """
     local = storage.local_path(key)
     if local is not None:
         return local if local.is_file() else None
+    target = folder / f"item-{index}"
     try:
-        data = await storage.get(key)
+        handle = await asyncio.to_thread(target.open, "wb")
+        try:
+            async for chunk in storage.iter_chunks(key):
+                # 写盘是阻塞的：一块 1MB 的 `write` 在事件循环里跑会把同 worker
+                # 上的请求一起卡住（大文件时最明显），所以丢线程池。
+                await asyncio.to_thread(handle.write, chunk)
+        finally:
+            await asyncio.to_thread(handle.close)
     except Exception:  # noqa: BLE001 - 单条取不到不该毁掉整包
         logger.warning("打包时取不到对象 key=%s", key)
+        # 半个文件必须删掉：留着会被后续逻辑当成「已就绪」打进包里，
+        # 用户拿到的是一个打不开的 zip（比少一条更难查）。
+        await asyncio.to_thread(target.unlink, True)
         return None
-    target = folder / f"item-{index}"
-    await asyncio.to_thread(target.write_bytes, data)
     return target
 
 
