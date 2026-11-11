@@ -101,3 +101,55 @@ def test_invalid_names_are_rejected_at_declaration() -> None:
         registry.counter("demo total", "空格不合法")
     with pytest.raises(ValueError):
         registry.counter("demo_total", "演示", ("1kind",))
+
+
+def test_dropped_series_are_visible_in_the_scrape_output() -> None:
+    """撞上限必须能被抓到，不能只写进本机日志。
+
+    `_admit` 早就记了 `_dropped` 并打 WARNING，但 `/metrics` 输出里没有任何痕迹：
+    面板上只表现为「某个接口没有数据」，值班的人分不清是没流量、还是被丢了。
+    Prometheus 抓的是文本，所以丢弃量本身也得是能抓的一条序列。
+    """
+    registry = Registry()
+    counter = registry.counter("demo_total", "演示", ("kind",), max_series=1)
+    counter.inc(kind="a")
+    counter.inc(kind="b")  # 丢弃
+
+    text = registry.render()
+    assert "app_metrics_series_dropped_total" in text
+    assert 'app_metrics_series_dropped_total{metric="demo_total"} 1' in text
+
+
+def test_no_drop_metric_when_nothing_was_dropped() -> None:
+    """没丢就别往输出里塞噪声：零值序列会让人以为上限一直在生效。"""
+    registry = Registry()
+    registry.counter("demo_total", "演示", ("kind",)).inc(kind="a")
+    assert "app_metrics_series_dropped_total" not in registry.render()
+
+
+def test_http_request_counter_can_hold_every_route_with_its_status_codes() -> None:
+    """`http_requests_total` 的基数 = 路由数 × 状态码数，不能沿用 500 的默认值。
+
+    140 个操作，只要平均每个踩到 4 个状态码（200 + 4xx/5xx 的几个），就到 560 ——
+    超过默认 500 以后，**后注册的接口会整条丢样本**，且丢的是随机的：
+    取决于哪个接口先被访问。这条用例把「按当前路由规模算够不够」钉住。
+    """
+    import json
+    from pathlib import Path
+
+    from api.instrumentation import REQUESTS
+
+    openapi = json.loads(
+        (Path(__file__).resolve().parents[1] / "docs" / "openapi.json").read_text("utf-8")
+    )
+    operations = sum(
+        1
+        for item in openapi["paths"].values()
+        for method in item
+        if method in ("get", "post", "put", "patch", "delete")
+    )
+    # 每个操作预留 8 个状态码：200/201/202 + 400/401/403/404/409/422/500 里挑 8 个
+    assert REQUESTS.max_series >= operations * 8, (
+        f"http_requests_total 上限 {REQUESTS.max_series} 装不下 {operations} 个操作 × 8 个状态码，"
+        "超出的接口会静默丢样本"
+    )

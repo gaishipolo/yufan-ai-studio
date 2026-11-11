@@ -43,6 +43,9 @@ _LABEL_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 # 保留既有序列比「全部重置」可诊断得多（曲线不会断）。
 DEFAULT_MAX_SERIES = 500
 
+# 丢弃量本身也要能被抓走，否则「某接口在面板上没数据」无法与「没流量」区分
+_DROPPED_METRIC = "app_metrics_series_dropped_total"
+
 # HTTP 延迟直方图分桶（秒）。覆盖「缓存命中 1ms」到「慢查询 10s」：
 # 分桶太粗看不出 P99，太细则序列数 × 桶数爆炸。这组是行业常用的幂次序列。
 HTTP_BUCKETS: tuple[float, ...] = (
@@ -142,6 +145,15 @@ class _Metric:
     def series_count(self) -> int:
         with self._lock:
             return len(self._samples)
+
+    def dropped_count(self) -> int:
+        """因超过基数上限而被丢弃的新序列数。
+
+        必须能被抓走：只看日志的话，「某接口在面板上没数据」会被当成没流量。
+        `Registry.render()` 把它渲染成 `app_metrics_series_dropped_total`。
+        """
+        with self._lock:
+            return self._dropped
 
     def _label_str(self, key: tuple[str, ...]) -> str:
         if not self.label_names:
@@ -359,7 +371,28 @@ class Registry:
         lines: list[str] = []
         for metric in metrics:
             lines.extend(metric.render())
+        lines.extend(self._dropped_lines(metrics))
         return "\n".join(lines) + "\n"
+
+    @staticmethod
+    def _dropped_lines(metrics: Sequence[_Metric]) -> list[str]:
+        """把「超上限丢弃」渲染成真正的序列，否则丢弃是完全不可见的。
+
+        只在确实丢过时才输出：恒输出零值会让人以为上限一直在生效，
+        而 `rate()` 也分不清「一直没丢」和「指标没被抓到」。
+        """
+        dropped = [(metric.name, metric.dropped_count()) for metric in metrics]
+        dropped = [(name, count) for name, count in dropped if count]
+        if not dropped:
+            return []
+        return [
+            f"# HELP {_DROPPED_METRIC} 因标签组合超过基数上限而被丢弃的新序列数",
+            f"# TYPE {_DROPPED_METRIC} counter",
+            *(
+                f'{_DROPPED_METRIC}{{metric="{_escape(name)}"}} {count}'
+                for name, count in dropped
+            ),
+        ]
 
     def names(self) -> list[str]:
         with self._lock:

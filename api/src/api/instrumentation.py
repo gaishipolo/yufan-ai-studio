@@ -26,10 +26,21 @@ from core.metrics import HTTP_BUCKETS, METRICS
 
 logger = get_logger(__name__)
 
+# `http_requests_total` 的基数是 **路由数 × 状态码数**，不是路由数：140 个操作
+# 平均踩到 4 个状态码（200 + 4xx/5xx 的几个）就已经 560，超过默认的 500。越过之后
+# 丢的是「后出现的那条新序列」，也就是**哪个接口先被访问正常、哪个就活下来**，
+# 剩下的一律没有数据——看起来像那些接口没人用。
+#
+# 留足余量而不是精确计算：路由会随模块增加，状态码集合也会变（新增 409/422 等）。
+# 2000 ≈ 140 × 14，够当前规模翻倍。真撞上了 `app_metrics_series_dropped_total`
+# 会显示出来，不用靠猜。
+_HTTP_SERIES_LIMIT = 2000
+
 REQUESTS = METRICS.counter(
     "http_requests_total",
     "HTTP 请求数",
     ("method", "route", "status"),
+    max_series=_HTTP_SERIES_LIMIT,
 )
 REQUEST_DURATION = METRICS.histogram(
     "http_request_duration_seconds",
