@@ -165,3 +165,33 @@ def test_ports_are_independent_instances() -> None:
 
     assert left.has()
     assert not right.has()
+
+
+def test_replacement_feed_registration_rejects_a_second_reader() -> None:
+    """`register_replacement_feed` 是注册语义，不是设置语义。
+
+    它曾经 `provide(..., replace=True)`：名字写着「注册」，行为却是「后来者悄悄
+    顶掉前一个」。两个模块都注册时，任务中心的列表由 import 顺序决定，而 import
+    顺序没人负责——症状是「档案列表时有时无」，没有任何报错。
+    """
+    from core import feed
+
+    async def first(owner: str) -> list:  # noqa: ANN401 - 与注入口签名一致
+        return []
+
+    async def second(owner: str) -> list:  # noqa: ANN401
+        return []
+
+    # 这是进程级单例：模块 import 时已经注册过真实实现，用完必须放回去，
+    # 否则同一进程里后续用例看到的是「未注册 → 空列表」（真踩过）。
+    original = feed._feed.single()
+    feed.reset_replacement_feed()
+    try:
+        feed.register_replacement_feed(first)
+        with pytest.raises(RegistryError, match="replacement-feed"):
+            feed.register_replacement_feed(second)
+        assert feed.has_replacement_feed()
+    finally:
+        feed.reset_replacement_feed()
+        if original is not None:
+            feed.register_replacement_feed(original)

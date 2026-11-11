@@ -49,8 +49,12 @@ def register_replacement_feed(
     形参是 async reader，但注册动作不 await 任何东西。写成 `async def` 会让
     import 期的调用点变成「未 await 的协程」——注册悄悄不生效，而 `app modules`
     显示「未注册（任务中心看到空列表）」，能查很久。
+
+    这里**不是**「设置语义」：名字是 `register_`，契约就是「只有一个档案来源」。
+    之前用 `replace=True` 让它悄悄让位给后来者，症状是两个模块都注册时，任务中心
+    的列表由 import 顺序决定——而 import 顺序没人负责。
     """
-    _feed.provide(reader, replace=True)
+    _feed.provide(reader, owner="modules.template")
 
 
 
