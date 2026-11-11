@@ -37,7 +37,7 @@ from infra import get_storage
 from infra.media_probe import create_preview
 from infra.storage.base import ObjectStorage, StorageError
 from modules.library.lifecycle import LifecycleService
-from modules.library.models import LibraryAsset, LibraryPackItem
+from modules.library.models import LibraryAsset, LibraryPackItem, LibraryTag
 from modules.library.service import preview_key
 from modules.library.tags import sync_pack_tags
 
@@ -46,9 +46,12 @@ logger = get_logger(__name__)
 __all__ = [
     "PackTagReport",
     "PreviewReport",
+    "TAG_TREE_SEED",
+    "TagTreeReport",
     "TrashGcReport",
     "run_pack_tag_sync",
     "run_preview_repair",
+    "run_tag_tree_init",
     "run_trash_gc",
     "trash_gc",
 ]
@@ -319,6 +322,93 @@ async def run_pack_tag_sync(
             report.pending,
             report.added,
         )
+    return report
+
+
+# --------------------------------------------------------------------------- #
+# 存量标签归层
+# --------------------------------------------------------------------------- #
+#: 用户拍板的初始映射：一级 → 旗下的二级。刻意**不写进迁移**：环境之间词表不同，
+#: 一个新部署凭空多出几个标签比「没归层」更难解释。归层由运维命令按名字匹配。
+TAG_TREE_SEED: dict[str, tuple[str, ...]] = {
+    "产品": ("3030", "T35"),
+    "角色": ("菜菜",),
+}
+
+
+@dataclass
+class TagTreeReport:
+    dry_run: bool = False
+    changed: list[str] = field(default_factory=list)
+    skipped: list[str] = field(default_factory=list)
+
+    def lines(self) -> list[str]:
+        verb = "试运行：将移动" if self.dry_run else "已移动"
+        rows = [
+            f"{verb} {len(self.changed)} 个标签到二级"
+            + (f"：{', '.join(self.changed)}" if self.changed else "")
+        ]
+        if self.skipped:
+            rows.append("跳过：" + "；".join(self.skipped[:20]))
+        if self.dry_run and self.changed:
+            rows.append("加 --no-dry-run 才写库")
+        return rows
+
+
+async def run_tag_tree_init(
+    *, dry_run: bool = False, mapping: dict[str, tuple[str, ...]] | None = None
+) -> TagTreeReport:
+    """把存量扁平词表按 `TAG_TREE_SEED` 归成两级；幂等、默认试运行。
+
+    只**提升**已有标签，不新建、不改名、不删绑定：迁移已经把全部存量标签设成
+    一级，这里只把点名的几个改成二级，其余保持一级（包括「音乐」「封装」
+    「AI生成」这些没有子标签的词——它们仍是能直接打在素材上的叶子）。
+
+    跳过比"抢过来"安全：目标已挂在别的一级下、或它自己还有子标签（挂过去就
+    成了三级），都记进报告让人去看，不悄悄改结构。第二次跑 `changed` 应为 0。
+    """
+    seed = TAG_TREE_SEED if mapping is None else mapping
+    report = TagTreeReport(dry_run=dry_run)
+    async with get_session_factory()() as session:
+        rows = (await session.scalars(select(LibraryTag))).all()
+        # 当父只认一级：同名二级是合法的，别把某个系列下的「小红书」当成父。
+        # 但按名字找**待移动**的标签要包含二级，否则复跑会对已归层的三个标签
+        # 报「不存在」——幂等命令不该把「已经好了」说成「缺东西」。
+        top: dict[str, LibraryTag] = {}
+        children_of: dict[str, list[str]] = {}
+        for row in rows:
+            if row.parent_id:
+                children_of.setdefault(row.parent_id, []).append(row.name)
+            else:
+                top.setdefault(row.name, row)
+        by_name: dict[str, LibraryTag] = dict(top)
+        for row in rows:
+            if row.parent_id:
+                by_name.setdefault(row.name, row)
+
+        for parent_name, child_names in seed.items():
+            parent = top.get(parent_name)
+            if parent is None:
+                report.skipped.append(f"一级「{parent_name}」不存在")
+                continue
+            for child_name in child_names:
+                child = by_name.get(child_name)
+                if child is None:
+                    report.skipped.append(f"「{child_name}」不存在")
+                    continue
+                if child.parent_id == parent.id:
+                    continue  # 已就位，幂等
+                if child.parent_id:
+                    report.skipped.append(f"「{child_name}」已挂在别的一级下，不抢")
+                    continue
+                if children_of.get(child.id):
+                    report.skipped.append(f"「{child_name}」还有子标签，挂过去会变成三级")
+                    continue
+                report.changed.append(f"{parent_name} / {child_name}")
+                if not dry_run:
+                    child.parent_id = parent.id
+        if report.changed and not dry_run:
+            await session.commit()
     return report
 
 

@@ -4,8 +4,9 @@ import { Button, Chip, Modal, MultiSelect } from '@/shared/ui';
 import { cn } from '@/shared/lib/cn';
 import { formatBytes } from '@/shared/lib/format';
 import { toast } from '@/shared/lib/toast';
-import type { LibraryTagOut } from '@/shared/api/schema';
+import type { LibraryTagStatOut } from '@/shared/api/schema';
 import { usePatchAsset, useUploadAsset } from '@/entities/library/api/library.queries';
+import { tagOptions } from '@/entities/library/model/tagTree';
 import { useCreateTagInline } from './use-create-tag-inline';
 
 interface UploadItem {
@@ -18,7 +19,7 @@ interface UploadItem {
 
 export interface LibraryUploadModalProps {
   open: boolean;
-  tags: LibraryTagOut[];
+  tags: LibraryTagStatOut[];
   onClose: () => void;
 }
 
@@ -149,14 +150,14 @@ export function LibraryUploadModal({ open, tags, onClose }: LibraryUploadModalPr
           )}
         >
           <FileUp size={22} className="text-ink-mute" />
-          <span className="text-[12.5px] font-medium">选择图片或音频</span>
-          <span className="text-[11px] text-ink-mute">可多选；单个不超过 200 MB，相同内容自动秒传</span>
+          <span className="text-[14.5px] font-medium">选择图片或音频</span>
+          <span className="text-[13px] text-ink-mute">可多选；单个不超过 200 MB，相同内容自动秒传</span>
         </button>
 
         <div>
-          <div className="mb-1 text-[11.5px] text-ink-soft">给这批文件统一打标签（可选）</div>
+          <div className="mb-1 text-[13.5px] text-ink-soft">给这批文件统一打标签（可选）</div>
           <MultiSelect
-            options={tags.map((tag) => ({ value: tag.id, label: tag.name }))}
+            options={tagOptions(tags)}
             value={tagIds}
             onChange={setTagIds}
             placeholder="未选择标签"
@@ -175,8 +176,8 @@ export function LibraryUploadModal({ open, tags, onClose }: LibraryUploadModalPr
                 className="rounded-lg border border-line-soft bg-panel p-2"
               >
                 <div className="flex items-center gap-2">
-                  <span className="min-w-0 flex-1 truncate text-[12px] text-ink">{item.file.name}</span>
-                  <span className="text-[11px] text-ink-mute">{formatBytes(item.file.size)}</span>
+                  <span className="min-w-0 flex-1 truncate text-[14px] text-ink">{item.file.name}</span>
+                  <span className="text-[13px] text-ink-mute">{formatBytes(item.file.size)}</span>
                   {item.status === 'uploading' && <Loader2 size={13} className="animate-spin text-primary" />}
                   {item.status === 'done' && <CheckCircle2 size={13} className="text-ok" />}
                   {item.status === 'failed' && <XCircle size={13} className="text-danger" />}
@@ -190,7 +191,7 @@ export function LibraryUploadModal({ open, tags, onClose }: LibraryUploadModalPr
                   </div>
                 )}
                 {item.status === 'failed' && item.error && (
-                  <p className="mt-1 text-[11px] text-danger">{item.error}</p>
+                  <p className="mt-1 text-[13px] text-danger">{item.error}</p>
                 )}
               </li>
             ))}

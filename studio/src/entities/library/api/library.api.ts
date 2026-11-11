@@ -153,7 +153,18 @@ export const libraryApi = {
   tags: (scope: LibraryTagScope) =>
     api.get<LibraryTagStatOut[]>(`/library/tags`, scope),
 
-  createTag: (name: string) => api.post<LibraryTagOut>(`/library/tags`, { name }),
+  /** `parentId` 给一级的 id 就建成二级；留空建成一级。 */
+  createTag: (name: string, parentId?: string) =>
+    api.post<LibraryTagOut>(`/library/tags`, { name, parentId: parentId ?? null }),
+
+  /** 这三个是 `library:tag:manage`：词表结构由管理员维护，打标入口不出现它们 */
+  renameTag: (id: string, name: string) =>
+    api.patch<LibraryTagOut>(`/library/tags/${id}`, { name }),
+
+  moveTag: (id: string, parentId: string | null) =>
+    api.patch<LibraryTagOut>(`/library/tags/${id}/parent`, { parentId }),
+
+  deleteTag: (id: string) => api.delete<null>(`/library/tags/${id}`),
 };
 
 export type { LibrarySelectionPage };

@@ -59,6 +59,7 @@ __all__ = [
     "ShareRequestOut",
     "ShareTarget",
     "TagIn",
+    "TagParentIn",
     "UploadKind",
 ]
 
@@ -116,22 +117,42 @@ class LibraryFacets(CamelModel):
 
 
 class LibraryTagOut(CamelModel):
+    """词表里的一条标签。**固定两级**，不返回嵌套树。
+
+    为什么仍是平铺数组：标签栏、卡片、打标选择器、上传弹窗、批量栏、素材库
+    悬浮栏六个消费点全都按平铺渲染；改成嵌套树要全量重写，而且「计数与排序」
+    会跟着乱。`parentId` + `depth` 足够让前端自己分两行、显示 `产品 / 3030`。
+
+    库里用空串表示一级（见 models.py），出参统一转成 `null`：前端按真假值判断
+    层级就行，不必知道哨兵串的存在。
+    """
+
     id: str
     name: str
+    parent_id: str | None = None
+    #: 二级标签带父名：卡片直接显示「产品 / 3030」，不必为了一个名字再拉词表
+    parent_name: str | None = None
+    #: 1 = 一级，2 = 二级
+    depth: int = 1
 
 
 class LibraryTagStatOut(LibraryTagOut):
-    """标签栏的列表项：比卡片上的标签多「素材数」与「添加时间」。
+    """标签栏的列表项：比卡片上的标签多「素材数」「直属子标签数」与「添加时间」。
 
     `asset_count` 是**当前入口**（`state` + `library`）下挂了这个标签的素材数，
     不是全库总量——标签栏上点一下就按这个入口筛，数字必须与结果对得上。
+    一级标签的数字是「自身 + 旗下二级」按资产去重后的合计，与「点一级展开到
+    子级」的筛选口径一致；否则会出现「标签旁写 8、点进去只有 3 条」。
+
+    `child_count` 给前端判断「这是一级分组还是可打标的叶子」。
     `created_at` 给前端按「添加时间先后」排序用。
 
-    单独出一个类型而不是往 `LibraryTagOut` 上加两个字段：卡片里 24 条资产
+    单独出一个类型而不是往 `LibraryTagOut` 上加这几个字段：卡片里 24 条资产
     每条都带一遍计数与时间戳，既没用也容易被人误当成卡片上的真实数据。
     """
 
     asset_count: int = 0
+    child_count: int = 0
     created_at: UtcDateTime
 
 
@@ -346,7 +367,21 @@ class AssetPatchIn(CamelModel):
 
 
 class TagIn(CamelModel):
+    """新建 / 重命名标签。
+
+    `parent_id` **只在新建时生效**：给一个一级标签的 id 就建成二级，留 null
+    建成一级。改名时不改层级，走 `PATCH /tags/{id}/parent`——把改名与移动混在
+    一个接口里，会让「只想改个错别字」的请求顺手改变整棵树的形状。
+    """
+
     name: str = Field(min_length=1, max_length=40)
+    parent_id: str | None = Field(default=None, max_length=32)
+
+
+class TagParentIn(CamelModel):
+    """移动标签：`parentId` 指向一个一级标签，`null` 表示提升为一级。"""
+
+    parent_id: str | None = Field(default=None, max_length=32)
 
 
 class ShareAction(StrEnum):

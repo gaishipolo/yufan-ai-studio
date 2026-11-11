@@ -2,7 +2,7 @@
 
 > 此文件由 `app export-openapi` 自动生成，请勿手工编辑。
 >
-> 版本 `0.2.0`｜共 **140** 个接口 / **12** 个模块
+> 版本 `0.2.0`｜共 **141** 个接口 / **12** 个模块
 >
 > 重新生成：`cd api && .venv/Scripts/python -m cli export-openapi`
 
@@ -245,7 +245,7 @@ Authorization: Bearer <accessToken>
 | 镜头库 | 1 | 见下方 `4.8` |
 | 系统 | 2 | 见下方 `4.9` |
 | 导出 | 6 | 见下方 `4.10` |
-| 资产库 | 37 | 见下方 `4.11` |
+| 资产库 | 38 | 见下方 `4.11` |
 | 模型驱动 | 6 | 见下方 `4.12` |
 
 ### 4.1 身份（39 个）
@@ -2665,7 +2665,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 
 **响应** `ApiResponse<unknown>`（前端取 `res.data`）
 
-### 4.11 资产库（37 个）
+### 4.11 资产库（38 个）
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
@@ -2700,10 +2700,11 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `POST` | `/api/v1/library/share-requests/{request_id}/cancel` | 撤回自己提交的申请 | 🔒 |
 | `POST` | `/api/v1/library/share-requests/{request_id}/reject` | 驳回申请 | 🔒 |
 | `POST` | `/api/v1/library/source-videos` | 上传模板库参考视频（只收视频） | 🔒 |
-| `GET` | `/api/v1/library/tags` | 标签列表（含当前入口的素材数，按添加时间排序） | 🔒 |
+| `GET` | `/api/v1/library/tags` | 标签列表（两级平铺，含当前入口的素材数，按添加时间排序） | 🔒 |
 | `POST` | `/api/v1/library/tags` | 新建标签（同名返回已有那条） | 🔒 |
 | `PATCH` | `/api/v1/library/tags/{tag_id}` | 重命名标签（不做隐式合并） | 🔒 |
-| `DELETE` | `/api/v1/library/tags/{tag_id}` | 删除标签（同时清绑定，资产不受影响） | 🔒 |
+| `DELETE` | `/api/v1/library/tags/{tag_id}` | 删除标签（旗下二级提升为一级，资产不受影响） | 🔒 |
+| `PATCH` | `/api/v1/library/tags/{tag_id}/parent` | 移动标签层级（parentId 为空则提升为一级） | 🔒 |
 | `DELETE` | `/api/v1/library/trash/{asset_id}` | 彻底删除（不可逆，先过引用检查） | 🔒 |
 | `POST` | `/api/v1/library/trash/{asset_id}/restore` | 从回收站恢复（强制回到个人库，不恢复共享） | 🔒 |
 
@@ -3658,7 +3659,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 
 #### `GET /api/v1/library/tags`
 
-**标签列表（含当前入口的素材数，按添加时间排序）**
+**标签列表（两级平铺，含当前入口的素材数，按添加时间排序）**
 
 计数按 `state` + `library` 与列表同口径；`state=draft|trash` 时忽略 `library`。
 
@@ -3673,18 +3674,25 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 |---|---|---|---|
 | `[].id` | `string` | 是 |  |
 | `[].name` | `string` | 是 |  |
+| `[].parentId` | `string \| null` | 否 |  |
+| `[].parentName` | `string \| null` | 否 |  |
+| `[].depth` | `number` | 否 |  |
 | `[].assetCount` | `number` | 否 |  |
+| `[].childCount` | `number` | 否 |  |
 | `[].createdAt` | `string` | 是 |  |
 
 #### `POST /api/v1/library/tags`
 
 **新建标签（同名返回已有那条）**
 
+`parentId` 给一级标签的 id 就建成二级；留空建成一级。
+
 **请求体** `TagIn`
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `name` | `string` | 是 |  |
+| `parentId` | `string \| null` | 否 |  |
 
 **响应** `ApiResponse<LibraryTagOut>`（前端取 `res.data`）
 
@@ -3692,6 +3700,9 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 |---|---|---|---|
 | `id` | `string` | 是 |  |
 | `name` | `string` | 是 |  |
+| `parentId` | `string \| null` | 否 |  |
+| `parentName` | `string \| null` | 否 |  |
+| `depth` | `number` | 否 |  |
 
 #### `PATCH /api/v1/library/tags/{tag_id}`
 
@@ -3706,6 +3717,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `name` | `string` | 是 |  |
+| `parentId` | `string \| null` | 否 |  |
 
 **响应** `ApiResponse<LibraryTagOut>`（前端取 `res.data`）
 
@@ -3713,16 +3725,45 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 |---|---|---|---|
 | `id` | `string` | 是 |  |
 | `name` | `string` | 是 |  |
+| `parentId` | `string \| null` | 否 |  |
+| `parentName` | `string \| null` | 否 |  |
+| `depth` | `number` | 否 |  |
 
 #### `DELETE /api/v1/library/tags/{tag_id}`
 
-**删除标签（同时清绑定，资产不受影响）**
+**删除标签（旗下二级提升为一级，资产不受影响）**
 
 | 参数 | 位置 | 类型 | 必填 | 说明 |
 |---|---|---|---|---|
 | `tag_id` | path | `string` | 是 |  |
 
 **响应** `ApiResponse<null>`（前端取 `res.data`）
+
+#### `PATCH /api/v1/library/tags/{tag_id}/parent`
+
+**移动标签层级（parentId 为空则提升为一级）**
+
+固定两级：父必须是一级、自己不能带子标签、不能指向自己。
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `tag_id` | path | `string` | 是 |  |
+
+**请求体** `TagParentIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `parentId` | `string \| null` | 否 |  |
+
+**响应** `ApiResponse<LibraryTagOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `parentId` | `string \| null` | 否 |  |
+| `parentName` | `string \| null` | 否 |  |
+| `depth` | `number` | 否 |  |
 
 #### `DELETE /api/v1/library/trash/{asset_id}`
 
@@ -4606,27 +4647,47 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 
 ### `LibraryTagOut`
 
+词表里的一条标签。**固定两级**，不返回嵌套树。
+
+为什么仍是平铺数组：标签栏、卡片、打标选择器、上传弹窗、批量栏、素材库
+悬浮栏六个消费点全都按平铺渲染；改成嵌套树要全量重写，而且「计数与排序」
+会跟着乱。`parentId` + `depth` 足够让前端自己分两行、显示 `产品 / 3030`。
+
+库里用空串表示一级（见 models.py），出参统一转成 `null`：前端按真假值判断
+层级就行，不必知道哨兵串的存在。
+
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `id` | `string` | 是 |  |
 | `name` | `string` | 是 |  |
+| `parentId` | `string \| null` | 否 |  |
+| `parentName` | `string \| null` | 否 |  |
+| `depth` | `number` | 否 |  |
 
 ### `LibraryTagStatOut`
 
-标签栏的列表项：比卡片上的标签多「素材数」与「添加时间」。
+标签栏的列表项：比卡片上的标签多「素材数」「直属子标签数」与「添加时间」。
 
 `asset_count` 是**当前入口**（`state` + `library`）下挂了这个标签的素材数，
 不是全库总量——标签栏上点一下就按这个入口筛，数字必须与结果对得上。
+一级标签的数字是「自身 + 旗下二级」按资产去重后的合计，与「点一级展开到
+子级」的筛选口径一致；否则会出现「标签旁写 8、点进去只有 3 条」。
+
+`child_count` 给前端判断「这是一级分组还是可打标的叶子」。
 `created_at` 给前端按「添加时间先后」排序用。
 
-单独出一个类型而不是往 `LibraryTagOut` 上加两个字段：卡片里 24 条资产
+单独出一个类型而不是往 `LibraryTagOut` 上加这几个字段：卡片里 24 条资产
 每条都带一遍计数与时间戳，既没用也容易被人误当成卡片上的真实数据。
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `id` | `string` | 是 |  |
 | `name` | `string` | 是 |  |
+| `parentId` | `string \| null` | 否 |  |
+| `parentName` | `string \| null` | 否 |  |
+| `depth` | `number` | 否 |  |
 | `assetCount` | `number` | 否 |  |
+| `childCount` | `number` | 否 |  |
 | `createdAt` | `string` | 是 |  |
 
 ### `LibraryVisibility`（枚举）
@@ -5264,9 +5325,24 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 
 ### `TagIn`
 
+新建 / 重命名标签。
+
+`parent_id` **只在新建时生效**：给一个一级标签的 id 就建成二级，留 null
+建成一级。改名时不改层级，走 `PATCH /tags/{id}/parent`——把改名与移动混在
+一个接口里，会让「只想改个错别字」的请求顺手改变整棵树的形状。
+
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `name` | `string` | 是 |  |
+| `parentId` | `string \| null` | 否 |  |
+
+### `TagParentIn`
+
+移动标签：`parentId` 指向一个一级标签，`null` 表示提升为一级。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `parentId` | `string \| null` | 否 |  |
 
 ### `TaskFeedItem`
 

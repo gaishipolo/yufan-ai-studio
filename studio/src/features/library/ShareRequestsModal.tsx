@@ -69,7 +69,7 @@ export function ShareRequestsModal({ open, onClose }: ShareRequestsModalProps) {
             <Skeleton className="h-12" />
           </div>
         ) : query.error ? (
-          <p className="rounded-lg bg-panel-soft px-3 py-6 text-center text-[11.5px] text-danger">
+          <p className="rounded-lg bg-panel-soft px-3 py-6 text-center text-[13.5px] text-danger">
             {query.error.message}
           </p>
         ) : items.length ? (
@@ -80,7 +80,7 @@ export function ShareRequestsModal({ open, onClose }: ShareRequestsModalProps) {
                   <Chip tone={item.action === 'share' ? 'primary' : 'warn'}>
                     {item.action === 'share' ? '共享' : '撤销共享'}
                   </Chip>
-                  <span className="min-w-0 flex-1 truncate text-[12px] text-ink">
+                  <span className="min-w-0 flex-1 truncate text-[14px] text-ink">
                     {item.assetName || item.assetId}
                   </span>
                   <Chip
@@ -91,14 +91,14 @@ export function ShareRequestsModal({ open, onClose }: ShareRequestsModalProps) {
                     {item.status === 'pending' ? '待审' : item.status === 'approved' ? '已通过' : '已驳回'}
                   </Chip>
                 </div>
-                <p className="mt-1 text-[11px] text-ink-mute">
+                <p className="mt-1 text-[13px] text-ink-mute">
                   {item.action === 'share' ? '共享到' : '撤销'}
                   {item.target === 'team' ? '团队' : `小组 · ${item.groupName || item.groupId}`}
                   {' · 申请人 '}
                   {item.applicantName || item.applicantId}
                   {item.createdAt ? ` · ${formatDateTime(item.createdAt)}` : ''}
                 </p>
-                {item.reason && <p className="mt-1 text-[11px] text-ink-soft">理由：{item.reason}</p>}
+                {item.reason && <p className="mt-1 text-[13px] text-ink-soft">理由：{item.reason}</p>}
 
                 {item.status === 'pending' && (
                   <div className="mt-2 flex items-center gap-1.5">
@@ -132,7 +132,7 @@ export function ShareRequestsModal({ open, onClose }: ShareRequestsModalProps) {
             ))}
           </ul>
         ) : (
-          <p className="rounded-lg bg-panel-soft px-3 py-8 text-center text-[11.5px] text-ink-mute">
+          <p className="rounded-lg bg-panel-soft px-3 py-8 text-center text-[13.5px] text-ink-mute">
             {scope === 'pending' ? '没有待你处理的申请。' : '你还没有提交过共享申请。'}
           </p>
         )}

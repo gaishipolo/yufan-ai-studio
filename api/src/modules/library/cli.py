@@ -15,6 +15,9 @@
   默认试运行，只报告有几条需要重建。
 - `library sync-pack-tags`：给改动前建的封装补齐「成员标签并集」。自动继承是
   建封装 / 换成员时做的，存量数据要回填一次；只增不减，可反复跑。
+- `library init-tag-tree`：把存量扁平词表按内置映射归成两级（产品 → 3030/T35、
+  角色 → 菜菜，其余留一级）。迁移只加列，环境之间词表不同，归层由命令按名字
+  匹配；幂等，默认试运行。
 
 命令通过 `ModuleSpec.cli` 注册：`src/cli.py` 不需要 import 本模块，
 删掉 v2 也不会让 `app backup` 起不来。
@@ -146,6 +149,14 @@ def cmd_pack_tag_sync(args: argparse.Namespace) -> None:
         print(line)
 
 
+def cmd_tag_tree_init(args: argparse.Namespace) -> None:
+    from modules.library.maintenance import run_tag_tree_init
+
+    report = asyncio.run(run_tag_tree_init(dry_run=args.dry_run))
+    for line in report.lines():
+        print(line)
+
+
 def register(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     parser = sub.add_parser("library", help="资产库 v2 运维命令")
     actions = parser.add_subparsers(dest="library_action", required=True)
@@ -217,3 +228,15 @@ def register(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     pack_tags.set_defaults(func=cmd_pack_tag_sync, dry_run=True)
     pack_tags.add_argument("--batch", type=int, default=0, help="最多处理多少个（0 = 全部）")
     pack_tags.add_argument("--owner", default="", help="只处理指定 owner_id 的封装")
+
+    tag_tree = actions.add_parser(
+        "init-tag-tree",
+        help="按内置映射把存量标签归成两级（默认试运行）",
+    )
+    tag_tree.add_argument(
+        "--no-dry-run",
+        dest="dry_run",
+        action="store_false",
+        help="真的写库；不传时只报告会移动哪几个",
+    )
+    tag_tree.set_defaults(func=cmd_tag_tree_init, dry_run=True)

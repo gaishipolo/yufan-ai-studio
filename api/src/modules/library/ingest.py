@@ -166,7 +166,11 @@ class GenerationIngest:
                 )
             )
             if request.tag_ids:
-                await set_asset_tags(self.session, row.id, request.tag_ids)
+                # tagIds 来自生成侧的配置，不是用户在界面上打标；不让「某个
+                # 一级后来成了分组」把生成结果入库整条链路卡住。
+                await set_asset_tags(
+                    self.session, row.id, request.tag_ids, reject_groups=False
+                )
             try:
                 await self.session.commit()
             except IntegrityError:

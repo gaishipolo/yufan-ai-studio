@@ -39,6 +39,7 @@ import { LibraryGrid, LibrarySelectAll } from './LibraryGrid';
 import { LibraryPackModal } from './LibraryPackModal';
 import { LibraryShareModal } from './LibraryShareModal';
 import { LibraryTagBar } from './LibraryTagBar';
+import { LibraryTagManager } from './LibraryTagManager';
 import { LibraryTagPicker } from './LibraryTagPicker';
 import { LibraryToolbar } from './LibraryToolbar';
 import { LibraryUploadModal } from './LibraryUploadModal';
@@ -92,6 +93,7 @@ export function LibraryWorkspace() {
   const subject = useSubject();
   const canCreate = useCan('library:create');
   const canUpdate = useCan('library:update');
+  const canManageTags = useCan('library:tag:manage');
   const canDeleteAny = useCan('library:delete:any');
   const canShareDirect = useCan('library:share:direct');
   const canShare = useCan('library:share');
@@ -139,6 +141,7 @@ export function LibraryWorkspace() {
   );
   const [requestsOpen, setRequestsOpen] = useState(false);
   const [downloadsOpen, setDownloadsOpen] = useState(false);
+  const [tagManagerOpen, setTagManagerOpen] = useState(false);
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
   /** 卡片标签行 `+` 打开的选择器；只存 asset，词表与权限在渲染时取当前值 */
   const [tagPicker, setTagPicker] = useState<LibraryAssetOut | null>(null);
@@ -189,10 +192,9 @@ export function LibraryWorkspace() {
 
   const fail = (error: Error) => toast(error.message, 'error');
 
-  function toggleTag(id: string) {
-    const next = tagIds.includes(id)
-      ? tagIds.filter((item) => item !== id)
-      : [...tagIds, id];
+  /** 标签栏交回**完整**的选中数组：父子互斥的取舍在 Bar 里算，容器只写 URL。
+      URL 里只存最终 tag id、不另存「当前一级」，刷新或分享后两行仍然对得上。 */
+  function changeTags(next: string[]) {
     update({ tags: next.join(',') || null, page: null });
   }
 
@@ -507,7 +509,7 @@ export function LibraryWorkspace() {
             {canReadLegacy && (
               <Link
                 to="/assets"
-                className="text-[11.5px] font-medium text-ink-mute hover:text-primary"
+                className="text-[13.5px] font-medium text-ink-mute hover:text-primary"
               >
                 旧版素材库
               </Link>
@@ -551,11 +553,13 @@ export function LibraryWorkspace() {
             tags={tags.data ?? []}
             selected={tagIds}
             busy={tags.isPending}
-            onToggle={toggleTag}
+            onChange={changeTags}
             onClear={() => update({ tags: null, page: null })}
+            onManage={() => setTagManagerOpen(true)}
+            canManage={canManageTags}
           />
           <div className="mt-2 flex items-center justify-between gap-2 border-t border-line-soft pt-2">
-            <span className="min-w-0 truncate text-[11.5px] text-ink-mute">
+            <span className="min-w-0 truncate text-[13.5px] text-ink-mute">
               共 {total} 条
               {items.length > 0 ? ` · ${viewMeta(view).hint}` : ''}
               {canShare ? '' : ' · 共享与删除操作需要权限'}
@@ -627,6 +631,13 @@ export function LibraryWorkspace() {
           onCreateTag={createTag}
           onSubmit={addTags}
           onClose={() => setTagPicker(null)}
+        />
+      )}
+
+      {tagManagerOpen && canManageTags && (
+        <LibraryTagManager
+          tags={tags.data ?? []}
+          onClose={() => setTagManagerOpen(false)}
         />
       )}
 

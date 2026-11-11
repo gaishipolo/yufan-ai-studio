@@ -12,6 +12,7 @@ import {
   trashDaysLeft,
   type LibraryView,
 } from '@/entities/library/model/types';
+import { tagLabel } from '@/entities/library/model/tagTree';
 
 export type LibraryCardAction =
   | 'open'
@@ -120,12 +121,12 @@ export function LibraryCard({
             </span>
           )}
           <div className="pointer-events-none absolute inset-x-0 bottom-0 flex items-end justify-between gap-1 bg-gradient-to-t from-[rgba(12,24,30,.62)] via-[rgba(12,24,30,.28)] to-transparent px-2 pb-1.5 pt-7">
-            <span className="inline-flex items-center gap-1 text-[10.5px] font-medium text-white/95">
+            <span className="inline-flex items-center gap-1 text-[12.5px] font-medium text-white/95">
               <Icon size={11} />
               {KIND_LABEL[asset.kind]}
             </span>
             {view === 'trash' && days != null && (
-              <span className="rounded bg-black/40 px-1 text-[10px] text-white/90">
+              <span className="rounded bg-black/40 px-1 text-[12px] text-white/90">
                 {expired ? '已过期' : `剩余 ${days} 天`}
               </span>
             )}
@@ -170,13 +171,13 @@ export function LibraryCard({
         <button
           type="button"
           onClick={() => onAction('open', asset)}
-          className="truncate text-left text-[12.5px] font-medium leading-5 text-ink hover:text-primary-deep"
+          className="truncate text-left text-[14.5px] font-medium leading-5 text-ink hover:text-primary-deep"
           title={asset.name}
         >
           {title}
         </button>
-        <p className="truncate text-[11px] leading-4 text-ink-mute">{context.join(' · ')}</p>
-        <p className="min-h-4 truncate text-[10.5px] leading-4 text-ink-mute/85">
+        <p className="truncate text-[13px] leading-4 text-ink-mute">{context.join(' · ')}</p>
+        <p className="min-h-4 truncate text-[12.5px] leading-4 text-ink-mute/85">
           {facts.join(' · ')}
         </p>
 
@@ -190,16 +191,18 @@ export function LibraryCard({
             {tags.map((tag) => (
               <span
                 key={tag.id}
-                className="inline-flex max-w-full items-center gap-0.5 rounded-[5px] border border-line-soft bg-panel-soft px-1.5 py-px text-[10px] leading-[15px] text-ink-soft"
+                className="inline-flex max-w-full items-center gap-0.5 rounded-[5px] border border-line-soft bg-panel-soft px-1.5 py-px text-[12px] leading-[15px] text-ink-soft"
               >
-                <span className="max-w-[86px] truncate">{tag.name}</span>
+                <span className="max-w-[110px] truncate" title={tagLabel(tag)}>
+                  {tagLabel(tag)}
+                </span>
                 {canRemoveTags && (
                   <button
                     type="button"
                     disabled={tagBusy}
                     onClick={() => onRemoveTag(asset, tag.id)}
-                    aria-label={`移除标签 ${tag.name}`}
-                    title={`移除标签 ${tag.name}`}
+                    aria-label={`移除标签 ${tagLabel(tag)}`}
+                    title={`移除标签 ${tagLabel(tag)}`}
                     className="grid size-[14px] shrink-0 place-items-center rounded-full text-ink-mute transition-colors hover:bg-danger-soft hover:text-danger-deep focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 disabled:opacity-40"
                   >
                     <X size={10} strokeWidth={2.5} />

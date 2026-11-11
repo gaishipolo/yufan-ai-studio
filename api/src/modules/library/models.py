@@ -136,15 +136,40 @@ class LibraryAssetGroup(Base, UUIDMixin):
 
 
 class LibraryTag(Base, UUIDMixin):
+    """标签词表，**固定两级**：`parent_id == ""` 是一级，否则是它旗下的二级。
+
+    ## 为什么用空串而不是 NULL 表示「一级」
+
+    PG 与 SQLite 的普通唯一索引里 NULL 互不相等，`UNIQUE(name, parent_id)` 会让
+    两个同名一级标签同时存在。填一个不可能出现的哨兵值（uuid 不会是空串）后，
+    唯一约束可以退化成最朴素的双列索引，跨库行为一致。项目里
+    `library_share_requests.group_id` 也是同一套做法。
+
+    ## 为什么唯一约束变成 `(name, parent_id)`
+
+    二级标签是「挂在某个一级下面的词」，两个不同系列都叫「小红书」是合理的；
+    但同一个一级下面不该有两个同名子标签，否则标签栏两行里会出现两个一模一样
+    的按钮、点哪个都分不清。一级之间仍保持全局同名唯一。
+
+    不加外键（本文件顶部约定 1）：层级合法性由 `TagService.move` 守卫，不靠级联。
+    """
+
     __tablename__ = "library_tags"
 
     name: Mapped[str] = mapped_column(String(40), nullable=False)
+    #: 空串 = 一级；非空 = 父标签 id。固定两级，禁止三级（服务层守卫）。
+    parent_id: Mapped[str] = mapped_column(
+        String(32), default="", server_default="", nullable=False
+    )
     created_by: Mapped[str] = mapped_column(String(32), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utcnow
     )
 
-    __table_args__ = (Index("uq_library_tags_name", "name", unique=True),)
+    __table_args__ = (
+        Index("uq_library_tags_name", "name", "parent_id", unique=True),
+        Index("ix_library_tags_parent", "parent_id"),
+    )
 
 
 class LibraryAssetTag(Base, UUIDMixin):

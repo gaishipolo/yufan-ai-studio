@@ -220,8 +220,45 @@ export function useDeletePack() {
 export function useCreateTag() {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: (name: string) => libraryApi.createTag(name),
+    mutationFn: ({ name, parentId }: { name: string; parentId?: string }) =>
+      libraryApi.createTag(name, parentId),
     onSuccess: () => client.invalidateQueries({ queryKey: libraryKeys.tags() }),
+  });
+}
+
+/** 改名 / 移动 / 删除都要让标签计数与所有打标选择器一起回流 */
+function useInvalidateTags() {
+  const client = useQueryClient();
+  return () => {
+    void client.invalidateQueries({ queryKey: libraryKeys.tags() });
+    void client.invalidateQueries({ queryKey: libraryKeys.lists() });
+    void client.invalidateQueries({ queryKey: libraryKeys.details() });
+  };
+}
+
+export function useRenameTag() {
+  const invalidate = useInvalidateTags();
+  return useMutation({
+    mutationFn: ({ id, name }: { id: string; name: string }) =>
+      libraryApi.renameTag(id, name),
+    onSuccess: invalidate,
+  });
+}
+
+export function useMoveTag() {
+  const invalidate = useInvalidateTags();
+  return useMutation({
+    mutationFn: ({ id, parentId }: { id: string; parentId: string | null }) =>
+      libraryApi.moveTag(id, parentId),
+    onSuccess: invalidate,
+  });
+}
+
+export function useDeleteTag() {
+  const invalidate = useInvalidateTags();
+  return useMutation({
+    mutationFn: (id: string) => libraryApi.deleteTag(id),
+    onSuccess: invalidate,
   });
 }
 

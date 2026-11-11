@@ -134,7 +134,7 @@ export function LibraryShareModal({
               <label
                 key={option.key}
                 className={cn(
-                  'flex cursor-pointer items-center gap-2 rounded-lg border px-2.5 py-2 text-[12px] transition',
+                  'flex cursor-pointer items-center gap-2 rounded-lg border px-2.5 py-2 text-[14px] transition',
                   targetKey === option.key
                     ? 'border-primary-line bg-primary-soft/40 text-ink'
                     : 'border-line-soft bg-panel text-ink-soft hover:border-line-strong',
@@ -150,14 +150,14 @@ export function LibraryShareModal({
               </label>
             ))
           ) : (
-            <p className="rounded-lg bg-panel-soft px-3 py-3 text-[11.5px] text-ink-mute">
+            <p className="rounded-lg bg-panel-soft px-3 py-3 text-[13.5px] text-ink-mute">
               这条资产还没有共享给任何小组。
             </p>
           )}
         </div>
 
         <div>
-          <div className="mb-1 flex items-center gap-1.5 text-[11.5px] text-ink-soft">
+          <div className="mb-1 flex items-center gap-1.5 text-[13.5px] text-ink-soft">
             理由 / 说明 {mode === 'revoke' && <span className="text-danger">*</span>}
           </div>
           <textarea
@@ -169,11 +169,11 @@ export function LibraryShareModal({
                 ? '例：这版人物形象已废弃，换成 v3 重新上传'
                 : '可选：说明这批素材的用途'
             }
-            className="w-full resize-y rounded-lg border border-line bg-panel-soft px-2.5 py-2 text-[12px] leading-relaxed text-ink outline-none focus:border-primary-line focus:bg-white focus:shadow-ring"
+            className="w-full resize-y rounded-lg border border-line bg-panel-soft px-2.5 py-2 text-[14px] leading-relaxed text-ink outline-none focus:border-primary-line focus:bg-white focus:shadow-ring"
           />
         </div>
 
-        <p className="rounded-lg bg-panel-soft px-2.5 py-1.5 text-[11px] leading-relaxed text-ink-mute">
+        <p className="rounded-lg bg-panel-soft px-2.5 py-1.5 text-[13px] leading-relaxed text-ink-mute">
           {mode === 'revoke'
             ? '撤销共享一律需要审批：同事可能正在用这条素材，审批通过后才会真正生效。'
             : instant

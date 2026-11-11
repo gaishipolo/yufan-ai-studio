@@ -33,6 +33,7 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 from sqlalchemy.sql.elements import ColumnElement
 
 from core.config import settings
@@ -81,7 +82,7 @@ from modules.library.schema import (
     ShareHistoryItem,
     UploadKind,
 )
-from modules.library.tags import set_asset_tags
+from modules.library.tags import expand_tag_ids, set_asset_tags
 
 __all__ = ["LibraryService"]
 
@@ -246,9 +247,15 @@ class LibraryService:
         if keyword:
             query = query.where(LibraryAsset.name.ilike(f"%{keyword}%"))
         if tag_ids:
+            # 选中一级 = 展开成「自身 + 旗下二级」，与标签栏的计数口径一致。
+            # 仍是 OR：`asset_id IN (...)` 天然按资产去重，一张图同时挂了父子
+            # 两个标签也只会出现一次。
+            expanded = await expand_tag_ids(self.session, tag_ids)
             query = query.where(
                 LibraryAsset.id.in_(
-                    select(LibraryAssetTag.asset_id).where(LibraryAssetTag.tag_id.in_(tag_ids))
+                    select(LibraryAssetTag.asset_id).where(
+                        LibraryAssetTag.tag_id.in_(expanded)
+                    )
                 )
             )
 
@@ -808,15 +815,33 @@ class LibraryService:
         """
         if not asset_ids:
             return {}
+        # 顺手取父名：卡片要显示「产品 / 3030」，而卡片拿不到整份词表，
+        # 为了一个名字让前端再拉一次 `/library/tags` 不值当。
+        parent = aliased(LibraryTag)
         rows = await self.session.execute(
-            select(LibraryAssetTag.asset_id, LibraryTag.id, LibraryTag.name)
+            select(
+                LibraryAssetTag.asset_id,
+                LibraryTag.id,
+                LibraryTag.name,
+                LibraryTag.parent_id,
+                parent.name,
+            )
             .join(LibraryTag, LibraryTag.id == LibraryAssetTag.tag_id)
+            .outerjoin(parent, parent.id == LibraryTag.parent_id)
             .where(LibraryAssetTag.asset_id.in_(list(asset_ids)))
             .order_by(LibraryTag.name)
         )
         grouped: dict[str, list[LibraryTagOut]] = {}
-        for asset_id, tag_id, name in rows:
-            grouped.setdefault(asset_id, []).append(LibraryTagOut(id=tag_id, name=name))
+        for asset_id, tag_id, name, parent_id, parent_name in rows:
+            grouped.setdefault(asset_id, []).append(
+                LibraryTagOut(
+                    id=tag_id,
+                    name=name,
+                    parent_id=parent_id or None,
+                    parent_name=parent_name,
+                    depth=2 if parent_id else 1,
+                )
+            )
         return grouped
 
     def _to_out(

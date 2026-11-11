@@ -19,6 +19,7 @@ import { useDebouncedValue } from '@/shared/hooks/useDebouncedValue';
 import type { LibraryAssetOut } from '@/shared/api/schema';
 import { useLibrarySelectionInfinite, useLibraryTags } from '../api/library.queries';
 import { displayName } from '../model/types';
+import { tagLabel } from '../model/tagTree';
 import { writeLibraryDrag, type LibraryAssetDrag } from '@/shared/lib/libraryDrag';
 
 export interface LibraryFlyoutProps {
@@ -123,7 +124,7 @@ export function LibraryFlyout({ onClose, max, pickedIds, onPick }: LibraryFlyout
                   : 'border-line-soft bg-panel-soft text-ink-soft hover:border-line-strong',
               )}
             >
-              {tag.name}
+              {tagLabel(tag)}
               <span className="ml-1 text-ink-mute">{tag.assetCount ?? 0}</span>
             </button>
           ))}

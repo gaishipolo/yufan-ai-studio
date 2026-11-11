@@ -2,8 +2,9 @@ import { useCan } from '@/shared/access/use-access';
 import { useCreateTag } from '@/entities/library/api/library.queries';
 import { toast } from '@/shared/lib/toast';
 
-/** 交给 `MultiSelect.onCreate`：建成返回新标签 id，没建成返回 `null`。 */
-export type CreateTagInline = (name: string) => Promise<string | null>;
+/** 建成返回新标签 id，没建成返回 `null`。第二个参数给一级 id 就建成二级；
+ *  留空建成一级。`MultiSelect.onCreate` 只传第一个参数，可选参数保持兼容。 */
+export type CreateTagInline = (name: string, parentId?: string) => Promise<string | null>;
 
 /**
  * 「打标签时发现没有想要的词」的就地新建。
@@ -25,9 +26,9 @@ export function useCreateTagInline(): CreateTagInline | undefined {
 
   if (!canCreate) return undefined;
 
-  return async (name: string) => {
+  return async (name: string, parentId?: string) => {
     try {
-      const tag = await create.mutateAsync(name);
+      const tag = await create.mutateAsync({ name, parentId });
       return tag.id;
     } catch (error) {
       toast(error instanceof Error ? error.message : '新建标签失败', 'error');

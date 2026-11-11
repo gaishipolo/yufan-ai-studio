@@ -82,14 +82,14 @@ export function LibraryPackModal({ open, preselected, onClose, onCreated }: Libr
     <Modal open={open} onClose={onClose} title="新建封装" width={720}>
       <div className="space-y-3 p-[18px]">
         <div>
-          <div className="mb-1 text-[11.5px] text-ink-soft">
+          <div className="mb-1 text-[13.5px] text-ink-soft">
             封装名称 <span className="text-danger">*</span>
           </div>
           <input
             value={name}
             onChange={(event) => setName(event.target.value)}
             placeholder="例：超市抢购·人物三视图"
-            className="h-8 w-full rounded-lg border border-line bg-panel-soft px-2.5 text-xs text-ink outline-none focus:border-primary-line focus:bg-white focus:shadow-ring"
+            className="h-8 w-full rounded-lg border border-line bg-panel-soft px-2.5 text-[14px] text-ink outline-none focus:border-primary-line focus:bg-white focus:shadow-ring"
             aria-label="封装名称"
           />
         </div>
@@ -106,7 +106,7 @@ export function LibraryPackModal({ open, preselected, onClose, onCreated }: Libr
           <Chip tone={selected.length >= 100 ? 'danger' : 'default'}>
             已选 {selected.length} / 100
           </Chip>
-          <span className="text-[11px] text-ink-mute">只列出在库素材；封装不能作为成员</span>
+          <span className="text-[13px] text-ink-mute">只列出在库素材；封装不能作为成员</span>
         </div>
 
         {query.isPending ? (
@@ -133,8 +133,8 @@ export function LibraryPackModal({ open, preselected, onClose, onCreated }: Libr
                   aria-pressed={active}
                 >
                   <CoverImage src={asset.coverUrl ?? undefined} seed={asset.id} className="aspect-[4/3] rounded-md" />
-                  <div className="mt-1 truncate text-[11.5px] text-ink">{displayName(asset.name)}</div>
-                  <div className="truncate text-[10.5px] text-ink-mute">
+                  <div className="mt-1 truncate text-[13.5px] text-ink">{displayName(asset.name)}</div>
+                  <div className="truncate text-[12.5px] text-ink-mute">
                     {KIND_LABEL[asset.kind]}
                     {asset.sizeBytes != null ? ` · ${formatBytes(asset.sizeBytes)}` : ''}
                   </div>
@@ -148,7 +148,7 @@ export function LibraryPackModal({ open, preselected, onClose, onCreated }: Libr
             })}
           </div>
         ) : (
-          <p className="rounded-lg bg-panel-soft px-3 py-6 text-center text-[11.5px] text-ink-mute">
+          <p className="rounded-lg bg-panel-soft px-3 py-6 text-center text-[13.5px] text-ink-mute">
             没有可选的素材。先上传几张图，或者清空搜索词。
           </p>
         )}

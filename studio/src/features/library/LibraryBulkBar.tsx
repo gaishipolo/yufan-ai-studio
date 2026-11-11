@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { Download, PackagePlus, RotateCcw, Tag, Trash2, X } from 'lucide-react';
 import { Button, MultiSelect } from '@/shared/ui';
-import type { LibraryTagOut } from '@/shared/api/schema';
+import type { LibraryTagStatOut } from '@/shared/api/schema';
 import type { LibraryView } from '@/entities/library/model/types';
+import { tagOptions } from '@/entities/library/model/tagTree';
 import { useCreateTagInline } from './use-create-tag-inline';
 
 export type BulkKind = 'download' | 'pack' | 'delete' | 'restore' | 'approve' | 'reject' | 'tag';
@@ -10,7 +11,7 @@ export type BulkKind = 'download' | 'pack' | 'delete' | 'restore' | 'approve' | 
 export interface LibraryBulkBarProps {
   view: LibraryView;
   count: number;
-  tags: LibraryTagOut[];
+  tags: LibraryTagStatOut[];
   busy?: boolean;
   onClear: () => void;
   onAction: (kind: BulkKind, payload?: { tagIds?: string[] }) => void;
@@ -38,7 +39,7 @@ export function LibraryBulkBar({ view, count, tags, busy, onClear, onAction }: L
   return (
     <div className="sticky bottom-3 z-20 space-y-2 rounded-card border border-primary-line bg-white px-2.5 py-2 shadow-float">
       <div className="flex flex-wrap items-center gap-1.5">
-        <span className="text-[12px] font-semibold text-ink">已选 {count} 项</span>
+        <span className="text-[14px] font-semibold text-ink">已选 {count} 项</span>
         <Button size="sm" variant="ghost" icon={<X size={12} />} onClick={onClear}>
           清空
         </Button>
@@ -111,7 +112,7 @@ export function LibraryBulkBar({ view, count, tags, busy, onClear, onAction }: L
         <div className="flex items-end gap-2 border-t border-line-soft pt-2">
           <div className="w-full max-w-[320px]">
             <MultiSelect
-              options={tags.map((tag) => ({ value: tag.id, label: tag.name }))}
+              options={tagOptions(tags)}
               value={tagIds}
               onChange={setTagIds}
               placeholder="选择要添加的标签"

@@ -42,14 +42,14 @@ export function LibraryConfirmModal({
   return (
     <Modal open={open} onClose={onClose} title={title} width={460}>
       <div className="space-y-3 p-[18px]">
-        <div className="flex items-start gap-2 rounded-lg bg-panel-soft px-2.5 py-2 text-[11.5px] leading-relaxed text-ink-soft">
+        <div className="flex items-start gap-2 rounded-lg bg-panel-soft px-2.5 py-2 text-[13.5px] leading-relaxed text-ink-soft">
           {danger && <AlertTriangle size={14} className="mt-0.5 shrink-0 text-danger" />}
           <div className="min-w-0">{description}</div>
         </div>
 
         {requireReason && (
           <div>
-            <div className="mb-1 text-[11.5px] text-ink-soft">
+            <div className="mb-1 text-[13.5px] text-ink-soft">
               {reasonLabel} <span className="text-danger">*</span>
             </div>
             <textarea
@@ -57,7 +57,7 @@ export function LibraryConfirmModal({
               onChange={(event) => setReason(event.target.value)}
               rows={3}
               placeholder={reasonPlaceholder}
-              className="w-full resize-y rounded-lg border border-line bg-panel-soft px-2.5 py-2 text-[12px] leading-relaxed text-ink outline-none focus:border-primary-line focus:bg-white focus:shadow-ring"
+              className="w-full resize-y rounded-lg border border-line bg-panel-soft px-2.5 py-2 text-[14px] leading-relaxed text-ink outline-none focus:border-primary-line focus:bg-white focus:shadow-ring"
               aria-label={reasonLabel}
             />
           </div>

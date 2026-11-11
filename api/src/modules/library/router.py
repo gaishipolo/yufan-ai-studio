@@ -71,6 +71,7 @@ from modules.library.schema import (
     ShareRequestIn,
     ShareRequestOut,
     TagIn,
+    TagParentIn,
     UploadKind,
 )
 
@@ -644,7 +645,7 @@ async def set_group_leaders(
     return ApiResponse.ok(await service.set_leaders(group_id, payload.user_ids, actor))
 
 
-@router.get("/tags", summary="标签列表（含当前入口的素材数，按添加时间排序）")
+@router.get("/tags", summary="标签列表（两级平铺，含当前入口的素材数，按添加时间排序）")
 async def list_tags(
     actor: LibraryReadDep,
     service: TagServiceDep,
@@ -666,6 +667,7 @@ async def list_tags(
 async def create_tag(
     payload: TagIn, actor: LibraryCreateDep, service: TagServiceDep
 ) -> ApiResponse[LibraryTagOut]:
+    """`parentId` 给一级标签的 id 就建成二级；留空建成一级。"""
     return ApiResponse.ok(await service.create(payload, actor))
 
 
@@ -680,9 +682,21 @@ async def rename_tag(
     return ApiResponse.ok(await service.rename(tag_id, payload))
 
 
+@router.patch(
+    "/tags/{tag_id}/parent",
+    summary="移动标签层级（parentId 为空则提升为一级）",
+    dependencies=[Depends(rate_limit("library.tag", limit=60))],
+)
+async def move_tag(
+    tag_id: str, payload: TagParentIn, actor: LibraryTagManageDep, service: TagServiceDep
+) -> ApiResponse[LibraryTagOut]:
+    """固定两级：父必须是一级、自己不能带子标签、不能指向自己。"""
+    return ApiResponse.ok(await service.move(tag_id, payload))
+
+
 @router.delete(
     "/tags/{tag_id}",
-    summary="删除标签（同时清绑定，资产不受影响）",
+    summary="删除标签（旗下二级提升为一级，资产不受影响）",
     dependencies=[Depends(rate_limit("library.tag", limit=60))],
 )
 async def delete_tag(
