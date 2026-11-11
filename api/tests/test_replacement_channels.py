@@ -232,3 +232,19 @@ async def test_startup_recovers_known_receipt_in_unknown_db_state(monkeypatch, t
         assert run.id in captured
     finally:
         await drop_run(run.id)
+
+
+def test_unknown_channel_on_a_stored_row_degrades_instead_of_raising() -> None:
+    """历史脏行不能把恢复链和进程启动拖下水。
+
+    `run_channel` 只读**已经落库的行**；新请求的渠道由 `PrepareReplacement.channel`
+    （Literal）与 `require_channel` 校验。历史行里出现过的渠道只有 libtv，
+    所以「认不出来」的正确答案是降级 + 留痕，而不是抛 `BadRequest`——
+    它处在启动恢复、轮询、详情投影三条链路上，一次异常就是整个进程起不来。
+    """
+    from modules.template.channels import run_channel
+
+    assert run_channel({"channel": "wan-legacy"}) == "libtv"
+    assert run_channel(["not", "a", "mapping"]) == "libtv"  # type: ignore[arg-type]
+    assert run_channel(None) == "libtv"
+    assert run_channel({}) == "libtv"

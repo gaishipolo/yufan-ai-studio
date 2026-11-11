@@ -368,3 +368,34 @@ def test_create_user_cannot_join_a_group_above_the_actor(client: TestClient) -> 
     )
     assert created.status_code == 403
     assert created.json()["code"] == PermissionEscalation.code
+
+
+def test_group_member_manager_cannot_add_itself_to_a_stronger_group(
+    client: TestClient,
+) -> None:
+    """能排班 ≠ 能授权：`member:manage` 不能把任何人塞进比自己强的组。
+
+    入组会立刻继承该组全部授权码（`resolve_identity` 把组授权并进有效权限），
+    所以「分配成员」在这条路径上等价于「授权」。缺了这道守卫，
+    持 `identity:group:member:manage` 的人可以把自己加进高权组、把同伙拉进去、
+    或把别人踢出去（撤权），完全绕过 `identity:group:permission:manage`。
+    """
+    admin = _admin(client)
+    group = _create_group(client, admin, "运维组-" + _suffix())
+    granted = client.put(
+        f"{API}/groups/{group['id']}/permissions",
+        json={"permissions": ["template:use"]},
+        headers=admin,
+    )
+    assert granted.status_code == 200, granted.text
+
+    member, limited, _ = _make_user(
+        client, admin, f"roster_{_suffix()}", ["identity:group:member:manage"]
+    )
+    updated = client.put(
+        f"{API}/groups/{group['id']}/members",
+        json={"userIds": [member["id"]]},
+        headers=limited,
+    )
+    assert updated.status_code == 403, updated.text
+    assert updated.json()["code"] == PermissionEscalation.code

@@ -233,14 +233,13 @@ def test_idle_dequeue_issues_fewer_queries_than_fixed_polling() -> None:
     assert misses < 30, f"空转查询没有退避：{misses} 次"
     assert misses >= 3, "每次 dequeue 至少要查一次库，否则逻辑被跳过了"
 
+
 # --------------------------------------------------------------------------- #
 # 进程内唤醒：退避不是「睡着了叫不醒」
 # --------------------------------------------------------------------------- #
 def _idle_queue() -> DbJobQueue:
     """间隔压到 1s 封顶，这样「有没有被叫醒」在耗时上分得很开。"""
-    return DbJobQueue(
-        lease_sec=30, poll_interval_sec=0.01, idle_max_interval_sec=1.0
-    )
+    return DbJobQueue(lease_sec=30, poll_interval_sec=0.01, idle_max_interval_sec=1.0)
 
 
 def test_enqueue_wakes_a_waiting_worker() -> None:
@@ -293,6 +292,7 @@ def test_delayed_enqueue_does_not_wake() -> None:
     job, misses = asyncio.run(scenario())
     assert job is None, "延迟任务不该在 run_at 之前被取走"
     assert misses <= 2, f"延迟入队把 worker 叫醒了：0.6s 内白查了 {misses} 次"
+
 
 # --------------------------------------------------------------------------- #
 # 续租与 fencing：正在跑的长任务不能被「以为你死了」的接替者重跑
@@ -532,3 +532,136 @@ def test_both_drivers_implement_the_whole_protocol() -> None:
     for driver_cls in (DbJobQueue, MemoryJobQueue):
         missing = sorted(name for name in members if not hasattr(driver_cls, name))
         assert not missing, f"{driver_cls.__name__} 没实现协议的 {missing}"
+
+
+def test_handler_successor_survives_ack_and_queue_restart() -> None:
+    from infra.queue.base import job_execution
+
+    async def run():
+        await _reset()
+        queue = _queue()
+        await queue.enqueue(Job(name="poll", payload={"step": 1}, idempotency_key="chain"))
+        current = await queue.dequeue(timeout=0.1)
+        with job_execution(current):
+            await _queue().enqueue(Job(name="poll", payload={"step": 2}, idempotency_key="chain"))
+        await _queue().ack(current)
+        successor = await _queue().dequeue(timeout=0.05)
+        assert successor is not None, "handler continuation was deleted by ack"
+        assert successor.payload == {"step": 2}
+        await queue.ack(successor)
+
+    asyncio.run(run())
+
+
+def test_staged_successor_is_fenced_and_discarded_on_retry() -> None:
+    from infra.queue.base import job_execution
+
+    async def run():
+        await _reset()
+        queue = _queue()
+        await queue.enqueue(Job(name="poll", payload={}, idempotency_key="chain"))
+        first = await queue.dequeue(timeout=0.1)
+        with job_execution(first):
+            await queue.enqueue(Job(name="poll", payload={"stale": True}, idempotency_key="chain"))
+        assert (await _row(first.id)).next_job is not None
+        await _expire_lease(first.id)
+        second = await _queue().dequeue(timeout=0.1)
+        assert (await _row(first.id)).next_job is None
+        with job_execution(first):
+            await queue.enqueue(Job(name="poll", payload={"stale": True}, idempotency_key="chain"))
+        await queue.ack(first)
+        await queue.nack(first)
+        assert (await _row(first.id)).next_job is None
+        with job_execution(second):
+            await queue.enqueue(Job(name="poll", payload={"new": True}, idempotency_key="chain"))
+        await queue.nack(second)
+        assert (await _row(first.id)).next_job is None
+        assert await queue.size() == 1
+
+    asyncio.run(run())
+
+
+def test_external_duplicate_does_not_stage_successor() -> None:
+    async def run():
+        await _reset()
+        queue = _queue()
+        await queue.enqueue(Job(name="poll", payload={}, idempotency_key="external"))
+        current = await queue.dequeue(timeout=0.1)
+        assert (
+            await _queue().enqueue(Job(name="poll", payload={}, idempotency_key="external"))
+            == current.id
+        )
+        await queue.ack(current)
+        assert await queue.size() == 0
+
+    asyncio.run(run())
+
+
+def test_real_worker_consumes_same_key_handler_chain() -> None:
+    async def run():
+        await _reset()
+        queue = _queue()
+        seen = []
+        done = asyncio.Event()
+
+        @register_handler("test.continuation.chain", override=True)
+        async def handler(job):
+            step = job.payload["step"]
+            seen.append(step)
+            if step < 3:
+                await _queue().enqueue(
+                    Job(
+                        name=job.name,
+                        payload={"step": step + 1},
+                        idempotency_key=job.idempotency_key,
+                    ),
+                    delay=0.02,
+                )
+            else:
+                done.set()
+
+        await queue.enqueue(
+            Job(name="test.continuation.chain", payload={"step": 1}, idempotency_key="worker-chain")
+        )
+        worker = Worker(queue, concurrency=2)
+        await worker.start()
+        try:
+            await asyncio.wait_for(done.wait(), timeout=1)
+            assert seen == [1, 2, 3]
+        finally:
+            await worker.stop()
+
+    asyncio.run(run())
+
+
+def test_claim_cannot_return_pre_promotion_payload(monkeypatch) -> None:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from infra.queue.base import job_execution
+
+    async def run():
+        await _reset()
+        queue = _queue()
+        await queue.enqueue(Job(name="poll", payload={"step": 1}, idempotency_key="race"))
+        current = await queue.dequeue(timeout=0.1)
+        with job_execution(current):
+            await queue.enqueue(Job(name="poll", payload={"step": 2}, idempotency_key="race"))
+        await _expire_lease(current.id)
+        original_get = AsyncSession.get
+        promoted = False
+
+        async def get_then_promote(session, entity, ident, **kwargs):
+            nonlocal promoted
+            row = await original_get(session, entity, ident, **kwargs)
+            if entity is QueuedJob and not promoted:
+                promoted = True
+                await _queue().ack(current)
+            return row
+
+        monkeypatch.setattr(AsyncSession, "get", get_then_promote)
+        claimed = await _queue().dequeue(timeout=0.1)
+        assert claimed is not None
+        assert claimed.payload == {"step": 2}, "claim returned stale pre-promotion payload"
+        await queue.ack(claimed)
+
+    asyncio.run(run())

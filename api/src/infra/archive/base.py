@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import sys
@@ -22,6 +23,8 @@ from core.exceptions import AppError, BadRequest, Conflict
 
 # 共享盘上原子替换暴露的瞬时缺失：3 次约 150ms 足以跨过桥接层的一次重写。
 FILE_READ_RETRIES = 3
+# Windows/SMB 的短暂文件占用：复用同一临时文件，最多等待 50+100+200ms。
+FILE_REPLACE_RETRIES = 4
 
 # 归档位置：`str` 是存储无关的 key（新代码一律用它），`Path` 只为兼容既有调用点。
 # 本地驱动两者等价（Path 会被折成相对 key），纯 HTTP 驱动只认 str。
@@ -212,8 +215,30 @@ def read_json(path: Path) -> object:
 
 
 def write_json(path: Path, value: object) -> None:
-    """写本地 JSON：先写同目录临时文件再替换，读方永远看不到半份。"""
+    """写本地 JSON：原子替换遇短暂共享冲突时有限重试，读方不会看到半份。"""
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(path.name + "." + uuid.uuid4().hex + ".tmp")
-    temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
-    temporary.replace(path)
+    try:
+        temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
+        for attempt in range(FILE_REPLACE_RETRIES):
+            try:
+                temporary.replace(path)
+                return
+            except OSError as exc:
+                transient = getattr(exc, "winerror", None) in (5, 32, 33) or exc.errno in (
+                    errno.EACCES,
+                    errno.EBUSY,
+                    errno.EPERM,
+                )
+                # 不重放写入/上游请求，不清理或重建目标；明确的守卫拒绝也不能重试。
+                if (
+                    not transient
+                    or "[safe-delete]" in str(exc)
+                    or attempt == FILE_REPLACE_RETRIES - 1
+                ):
+                    raise
+                time.sleep(0.05 * 2**attempt)
+    finally:
+        # 重试最终失败时临时文件会留在 records/ 里，被后续目录枚举当成正式产物扫到；
+        # 成功时 replace 已经把它搬走，这里是无操作。
+        temporary.unlink(missing_ok=True)

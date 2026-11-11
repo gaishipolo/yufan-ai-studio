@@ -22,6 +22,7 @@ worker 的并发槽位是稀缺资源。单个视频生成要 3 分钟，如果 
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 from datetime import UTC, datetime
 
@@ -360,132 +361,140 @@ class GenerationRunner:
         next_delay: float | None = None
 
         try:
-            async with factory() as session:
-                store = pipeline.store(session)
-                record = await store.load(record_id)
-                if record is None or record.terminal:
-                    return
-                if not record.external_id:
-                    # 状态被重置过（如手动重试），重新走提交
-                    await self.dispatch(kind, record_id)
-                    return
-
-                if self._timed_out(record):
-                    # 墙钟预算优先于轮询次数：max_polls 是「本次进程内」的计数，
-                    # 重启会归零（见 resume 的注释），反复重启时它永远到不了上限
-                    message = "生成超时，请重试"
-                    if await store.mark_failed(record_id, message):
-                        await session.commit()
-                        await self._emit(
-                            EVT_GENERATION_FAILED,
-                            kind=kind,
-                            record_id=record_id,
-                            owner_id=record.owner_id,
-                            error=message,
-                        )
-                    return
-
-                if polls >= settings.generation_max_polls:
-                    # 事件里的 error 与落库文案必须一致：接上通知渠道后，
-                    # 用户收到的说法不能和任务详情页不一样（R4-10）
-                    message = "生成超时，请重试"
-                    if await store.mark_failed(record_id, message):
-                        await session.commit()
-                        await self._emit(
-                            EVT_GENERATION_FAILED,
-                            kind=kind,
-                            record_id=record_id,
-                            owner_id=record.owner_id,
-                            error=message,
-                        )
-                    return
-
-                provider = _provider_for(pipeline, record.model)
-                try:
-                    result = await provider.poll(record.external_id, model=record.model)
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning(
-                        "轮询失败（稍后重试）kind=%s id=%s polls=%d err=%s",
-                        kind,
-                        record_id,
-                        polls,
-                        exc,
-                    )
-                    next_delay = self._backoff(polls)
-                else:
-                    state = result.state
-
-                    if state == GenerationState.SUCCEEDED:
-                        output_url = await self._persist(kind, record_id, result.output_url)
-                        cover_url = self._persisted_cover(result, output_url)
-                        # 终态保护必须接返回值：轮询期间用户点了取消时，
-                        # `mark_succeeded` 会拒绝写入（记录已是 cancelled）。
-                        # 此时继续 commit + 归档 + 发事件，用户就会先看到
-                        # 「已取消」再收到「生成成功」，草稿箱还多一条脏数据。
-                        if not await store.mark_succeeded(
-                            record_id,
-                            output_url=output_url,
-                            cover_url=cover_url,
-                            progress=result.progress or 100,
-                        ):
-                            logger.info(
-                                "记录已终态，丢弃轮询结果 kind=%s id=%s", kind, record_id
-                            )
-                            return
-                        await session.commit()
-                        # 生成成功是既成事实，先落库再往资产库送：入库失败不该
-                        # 把用户已经看到的结果改回失败（见 `_archive`）。
-                        await self._archive(kind, session, record_id, output_url)
-                        # 落库存 key（与存储驱动无关），事件给地址（订阅方要能直接用）
-                        public_output, public_cover = await artifact_urls(
-                            [output_url, cover_url]
-                        )
-                        await self._emit(
-                            EVT_GENERATION_SUCCEEDED,
-                            kind=kind,
-                            record_id=record_id,
-                            owner_id=record.owner_id,
-                            model=record.model,
-                            output_url=public_output,
-                            cover_url=public_cover,
-                        )
+            budget = (job.timeout_sec or 120.0) * 0.8
+            # 轮询也有硬上限：单次 poll 卡住（供应商不回、连接半开）会一直占着协程，
+            # 队列 timeout 到点直接丢弃 job，整条轮询链就断了。超时按普通异常兜住，
+            # 由下面的 except 排下一跳。
+            async with asyncio.timeout(budget):
+                async with factory() as session:
+                    store = pipeline.store(session)
+                    record = await store.load(record_id)
+                    if record is None or record.terminal:
+                        return
+                    if not record.external_id:
+                        # 状态被重置过（如手动重试），重新走提交
+                        await self.dispatch(kind, record_id)
                         return
 
-                    if state == GenerationState.FAILED:
-                        if result.retryable and polls + 1 < settings.generation_max_polls:
-                            next_delay = self._backoff(polls)
-                        else:
-                            if not await store.mark_failed(
-                                record_id, (result.error or "生成失败")[:_MAX_ERROR_LEN]
-                            ):
-                                logger.info(
-                                    "记录已终态，丢弃失败结果 kind=%s id=%s",
-                                    kind,
-                                    record_id,
-                                )
-                                return
+                    if self._timed_out(record):
+                        # 墙钟预算优先于轮询次数：max_polls 是「本次进程内」的计数，
+                        # 重启会归零（见 resume 的注释），反复重启时它永远到不了上限
+                        message = "生成超时，请重试"
+                        if await store.mark_failed(record_id, message):
                             await session.commit()
                             await self._emit(
                                 EVT_GENERATION_FAILED,
                                 kind=kind,
                                 record_id=record_id,
                                 owner_id=record.owner_id,
-                                error=result.error,
+                                error=message,
                             )
-                            return
-                    else:
-                        if result.progress != record.progress and await store.mark_progress(
-                            record_id, result.progress
-                        ):
+                        return
+
+                    if polls >= settings.generation_max_polls:
+                        # 事件里的 error 与落库文案必须一致：接上通知渠道后，
+                        # 用户收到的说法不能和任务详情页不一样（R4-10）
+                        message = "生成超时，请重试"
+                        if await store.mark_failed(record_id, message):
                             await session.commit()
                             await self._emit(
-                                EVT_GENERATION_PROGRESS,
+                                EVT_GENERATION_FAILED,
                                 kind=kind,
                                 record_id=record_id,
                                 owner_id=record.owner_id,
-                                progress=result.progress,
+                                error=message,
                             )
-                        next_delay = settings.generation_poll_interval_sec
+                        return
+
+                    provider = _provider_for(pipeline, record.model)
+                    try:
+                        result = await provider.poll(record.external_id, model=record.model)
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning(
+                            "轮询失败（稍后重试）kind=%s id=%s polls=%d err=%s",
+                            kind,
+                            record_id,
+                            polls,
+                            exc,
+                        )
+                        next_delay = self._backoff(polls)
+                    else:
+                        state = result.state
+
+                        if state == GenerationState.SUCCEEDED:
+                            output_url = await self._persist(kind, record_id, result.output_url)
+                            cover_url = self._persisted_cover(result, output_url)
+                            # 终态保护必须接返回值：轮询期间用户点了取消时，
+                            # `mark_succeeded` 会拒绝写入（记录已是 cancelled）。
+                            # 此时继续 commit + 归档 + 发事件，用户就会先看到
+                            # 「已取消」再收到「生成成功」，草稿箱还多一条脏数据。
+                            if not await store.mark_succeeded(
+                                record_id,
+                                output_url=output_url,
+                                cover_url=cover_url,
+                                progress=result.progress or 100,
+                            ):
+                                logger.info(
+                                    "记录已终态，丢弃轮询结果 kind=%s id=%s", kind, record_id
+                                )
+                                return
+                            await session.commit()
+                            # 生成成功是既成事实，先落库再往资产库送：入库失败不该
+                            # 把用户已经看到的结果改回失败（见 `_archive`）。
+                            await self._archive(kind, session, record_id, output_url)
+                            # 落库存 key（与存储驱动无关），事件给地址（订阅方要能直接用）
+                            public_output, public_cover = await artifact_urls(
+                                [output_url, cover_url]
+                            )
+                            await self._emit(
+                                EVT_GENERATION_SUCCEEDED,
+                                kind=kind,
+                                record_id=record_id,
+                                owner_id=record.owner_id,
+                                model=record.model,
+                                output_url=public_output,
+                                cover_url=public_cover,
+                            )
+                            return
+
+                        if state == GenerationState.FAILED:
+                            if result.retryable and polls + 1 < settings.generation_max_polls:
+                                next_delay = self._backoff(polls)
+                            else:
+                                if not await store.mark_failed(
+                                    record_id, (result.error or "生成失败")[:_MAX_ERROR_LEN]
+                                ):
+                                    logger.info(
+                                        "记录已终态，丢弃失败结果 kind=%s id=%s",
+                                        kind,
+                                        record_id,
+                                    )
+                                    return
+                                await session.commit()
+                                await self._emit(
+                                    EVT_GENERATION_FAILED,
+                                    kind=kind,
+                                    record_id=record_id,
+                                    owner_id=record.owner_id,
+                                    error=result.error,
+                                )
+                                return
+                        else:
+                            # 进度只增不减，且轮询期不报 100——供应商偶发回一个更小的值
+                            # 会让用户看到进度条倒退；99 留给「已提交、还在等终态」。
+                            progress = max(record.progress, min(99, result.progress))
+                            if progress != record.progress and await store.mark_progress(
+                                record_id, progress
+                            ):
+                                await session.commit()
+                                await self._emit(
+                                    EVT_GENERATION_PROGRESS,
+                                    kind=kind,
+                                    record_id=record_id,
+                                    owner_id=record.owner_id,
+                                    progress=progress,
+                                )
+                            next_delay = settings.generation_poll_interval_sec
         except Exception:  # noqa: BLE001
             # 轮询 job 的 max_attempts=1，异常冒到 worker 会被直接丢弃；一旦丢弃，
             # 任务就永久停在 running（队列里已经没它的 job 了）。

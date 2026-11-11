@@ -113,7 +113,13 @@ function validateForm(form: FormState, images: number): string {
   }
   if (!form.packId) return '请选择已发布的替换素材包';
   if (images < 1) return '所选素材包没有参考图，无法生成媒体顺序';
-  if (form.order.length !== images) return '媒体顺序与素材包图片数量对不上，请重新选择素材包';
+  /* 用途绑定模式下媒体清单由服务端按声明生成、`mediaOrder` 不随请求发送，
+     于是 `order` 不再是这份清单的来源，不能再拿它和素材包图片数做等值校验。
+     蓝本里的「运行时选卡」空槽会被 `formFromBlueprint` 滤掉，包里有辅助图时
+     两者必然不等——以前这里会把「复制固定蓝本」堵在一个用户看不见原因的报错上。 */
+  const declaredBindings = form.rules?.referenceBindings;
+  const usesBindings = !!declaredBindings && typeof declaredBindings === 'object' && !Array.isArray(declaredBindings);
+  if (!usesBindings && form.order.length !== images) return '媒体顺序与素材包图片数量对不上，请重新选择素材包';
   if (!form.prompt.trim()) return '请填写固定提示词';
   const tokens = [...form.prompt.matchAll(/\{\{([^{}]+)\}\}/g)].map(match => match[1]);
   if (!tokens.length) return '提示词缺少 {{Mixed N}} 占位符';
@@ -124,7 +130,7 @@ function validateForm(form: FormState, images: number): string {
     if (!matched) return `非法占位符 {{${token}}}，只允许 {{Mixed N}}`;
     numbers.push(Number(matched[1]));
   }
-  const declared = form.rules?.referenceBindings;
+  const declared = declaredBindings;
   const bindings = declared && typeof declared === 'object' && !Array.isArray(declared)
     ? declared as Record<string, unknown> : undefined;
   const sourceToken = bindings && Object.entries(bindings).find(([, role]) => role === 'source_video')?.[0];

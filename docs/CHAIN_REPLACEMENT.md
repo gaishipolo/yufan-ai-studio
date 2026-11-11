@@ -717,3 +717,36 @@ $MEDIA_ARCHIVE_ROOT/
 
 `JS_REVERSE_BROWSER_URL` 只从**进程环境变量**读取（`bridge.mjs:31,69`），
 没有进 `core/config.py`，也没有写进 `.env.example`——这是当前链路里最容易漏配的一项。
+
+---
+
+## 9. 队列续接与恢复（合并 PR #5 后的口径）
+
+> 这一节来自 PR #5 的调用链评审：续接（continuation）与恢复矩阵原来散在代码注释里，
+> 集中记下来，改动时先看这张表。
+
+### 队列续接
+
+memory 驱动在 dequeue 时释放待执行幂等键。db 驱动保留 running 行和租约，因此不能把 handler 的下一轮 enqueue 当成普通外部重复请求。
+
+worker 在 handler task 创建前进入 job_execution 上下文。db enqueue 对当前 handler 的同键后继，将载荷、delay、超时、attempts、trace 等写入当前行的 next_job。ack 在凭据匹配时原子提升后继为 pending；其他外部重复 enqueue 仍只命中当前活动行。
+
+nack 或崩溃接管丢弃失败执行留下的暂存后继，由重试的 handler 重新决定；旧租约持有者不能安排后继或删除新持有者的作业。领取时还比较读取到的状态和 token，防止 ack 刚提升后继却返回旧 payload。
+
+轮询作业外层预算为 120 秒，内部使用其 80% 预算，给事务收尾和后继调度留下时间。百炼的一次查询与下载各最多 45 秒，完整正常路径可容纳于预算内。内部执行预算超时进入普通退避续查，不会仅耗尽队列重试而永久留下 running。
+
+### 恢复与重提
+
+| 状态/凭据 | 行为 |
+|---|---|
+| prepared | 保持待确认，启动不执行 |
+| queued/uploading/uploaded/waiting_executor 且无未知提交 | 恢复已授权准备 |
+| 有 task_id | 只续查，不再上传创建任务 |
+| 数据库无 task_id，但可信成功回执存在 | 补数据库任务号后续查；确认重提也必须拒绝 |
+| 无 task_id 且 submit_attempts > 0 / submission_unknown | 不自动重提，先核对上游 |
+| success | 不重新执行 |
+| failed/service_error 且已有 task_id | 人工继续可重开查询预算 |
+
+继续查询保留 owner、身份、回收站访问控制，但不因素材包下架或原素材删除而阻断已付费任务取回结果。新提交仍检查素材有效性，以及他人原片是否继续共享。
+
+计费模式只在未提交阶段可变，进入提交意图或已有上游任务号后不能切换到另一队列。模式变更和成功回执复核位于同一非阻塞执行器租约，避免受理中的任务被旧快照改变模式。

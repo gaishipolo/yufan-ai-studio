@@ -592,3 +592,36 @@ BAILIAN_DOWNLOAD_TIMEOUT_SEC=45
 验证：`tests/test_video_template_prompt.py`（5 项）覆盖扩槽、不缩短、范围参数清理、
 五类非法引用、规范化与摘要自洽；全量 `pytest` 1220 通过，`ruff` 干净，
 `export-openapi`、`gen:mock-coverage` 已同步。
+
+## 2026-11-11：换样片原片，文件名与档位要跟着走
+
+「把这枚卡片的视频换成新拍的那支」= 换模板的 `sourceVideoAssetId`，走
+`POST /templates/video-templates/{id}/attach-source`。原来它只写 `assetId`，
+于是出现「卡片换了、说明没换」：封装管理里仍是上一支片的名字和秒数，
+`generation.duration` 也还按旧时长取整（6 秒的新片按 5 秒出，白丢一秒）。
+
+现在 `_bind_source_asset` 一并同步：
+
+- `sourceVideoName` ← 资产名（不再「只在空的时候填」，因为换片后旧名字一定是错的）；
+- `sourceDurationSec` ← 资产探测时长；
+- `generation.duration` **只在它恰好等于旧时长取整时才改**——那说明它是算出来的；
+  手调过的档位是人做的决定，不覆盖。探测不到时长（0）时只换 id 与名字。
+
+一枚原片常挂多条功能（产品替换 / 三人换脸 / 文字换场景），换样片必须**逐条**
+attach，否则卡片会被拆成两张：旧原片留着没换的那几条，新原片只有换掉的。
+本次「我穿的是米兰之夜模板测试」卡片三条全部改绑到
+`我穿的是米兰之夜3030.mp4`（720×1280 · 6.0 秒 · 含音轨），档位 5 → 6，
+固定蓝本状态保留。
+
+旧原片资产 `ac1d588d…` 不删：历史替换任务的档案还在引用它，删了任务详情就断图。
+它现在没有模板绑定，在「全部模板」里退化成一张普通原片卡片。
+
+验证：`tests/test_video_template_attach_source.py`（3 项）覆盖跟随改名改时长、
+手调档位不被覆盖、缺模板与探测不到时长；全量 `pytest` 通过。
+
+**换片之后旧卡片还在**：卡片流是「按 source 资产逐张渲染」的
+（`ReplacementSourceLibrary` 直接 `videos.map`），`attach-source` 只改模板指向，
+不会动资产本身。所以同一条内容会短暂出现两张卡：旧卡（无模板、放旧片）与新卡
+（挂着全部功能）。把旧原片 `PUT /assets/{id}/deleted` 收进回收站即只剩一张；
+回收前确认两件事：待确认（`prepared`）任务的 `inputs/` 已含 `source-original.mp4`
+快照（它们不从资产现取），历史任务的详情缩略图读各自运行目录——两者都不依赖该资产。

@@ -649,20 +649,41 @@ async def attach_source(template_id: str, asset_id: str, session: AsyncSession) 
         raise NotFound("样片原片不存在或已删除")
     if asset.category != "source" or asset.type != "video":
         raise BadRequest("请选择已归档的 source 视频原片")
-    target = await asyncio.to_thread(_bind_source_asset, template_id, asset_id, asset.name)
+    target = await asyncio.to_thread(
+        _bind_source_asset, template_id, asset_id, asset.name, asset.duration
+    )
     return _as_out(target)
 
 
-def _bind_source_asset(template_id: str, asset_id: str, asset_name: str) -> dict[str, Any]:
-    """同步临界区：把 source 资产写回模板。只从线程池调用。"""
+def _bind_source_asset(
+    template_id: str, asset_id: str, asset_name: str, asset_duration: float
+) -> dict[str, Any]:
+    """同步临界区：把 source 资产写回模板。只从线程池调用。
+
+    换的是**这条模板的样片**本身，所以文件名与时长跟着资产走：只写 `assetId`
+    会让封装管理里继续显示上一支片的名字和秒数，生成档位也还按旧时长取整
+    （6 秒的片按 5 秒出，白丢一秒）。
+
+    档位只在它确实等于旧时长取整时才跟着改——手调过的值不覆盖。
+    """
     with _LOCK:
         data = _read()
         target = next((record for record in data["items"] if record.get("id") == template_id), None)
         if target is None:
             raise NotFound("视频模板不存在")
+        previous = float(target.get("sourceDurationSec") or 0)
         target["sourceVideoAssetId"] = asset_id
-        if not target.get("sourceVideoName"):
+        if asset_name:
             target["sourceVideoName"] = asset_name
+        duration = float(asset_duration or 0)
+        if duration > 0:
+            target["sourceDurationSec"] = duration
+            generation = dict(target.get("generation") or {})
+            current = generation.get("duration")
+            derived = max(2, min(15, round(previous))) if previous > 0 else None
+            if isinstance(current, int) and derived is not None and current == derived:
+                generation["duration"] = max(2, min(15, round(duration)))
+                target["generation"] = generation
         target["updatedAt"] = _now().isoformat().replace("+00:00", "Z")
         _write(data)
         return dict(target)

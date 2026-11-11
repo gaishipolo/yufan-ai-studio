@@ -18,10 +18,12 @@ import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
+from sqlalchemy.orm.exc import StaleDataError
+
 from core import trace
 from core.logging import get_logger
 from core.metrics import JOB_BUCKETS, METRICS
-from infra.queue.base import Job, JobQueue
+from infra.queue.base import Job, JobQueue, job_execution
 
 logger = get_logger(__name__)
 
@@ -33,6 +35,14 @@ HANDLERS: dict[str, JobHandler] = {}
 # 它可以比队列租约长——执行期间 worker 会续租（见 `_renew_lease`），
 # 所以「handler 比租约久」不会变成「任务被执行两遍」。
 DEFAULT_JOB_TIMEOUT_SEC = 300.0
+
+# 并发写冲突（乐观锁落败）的重投次数与延迟。
+# 这不是「失败重试」：`StaleDataError` 意味着这次读-改-写输给了另一个写者，
+# 重跑一遍就能看到新状态继续推进。模板作业是 `max_attempts=1`（失败即死信，
+# 重试靠新建作业），所以必须在作业层显式重投，否则「用户点删除时轮询正在写进度」
+# 这种日常并发就会把任务扔进死信。
+CONFLICT_RETRY_LIMIT = 3
+CONFLICT_RETRY_DELAY_SEC = 2.0
 
 # 取任务失败后的退避：0.5s 起，每次翻倍，封顶 30s。
 # 为什么不能「失败就立刻重试」：数据库抖动时每个 worker 每秒打几十次连接，
@@ -101,9 +111,7 @@ def _being_cancelled() -> bool:
 def register_handler(name: str, *, override: bool = False) -> Callable[[JobHandler], JobHandler]:
     def decorator(fn: JobHandler) -> JobHandler:
         if name in HANDLERS and not override:
-            raise RuntimeError(
-                f"job handler 重名: {name!r}（已注册 {HANDLERS[name].__module__}）"
-            )
+            raise RuntimeError(f"job handler 重名: {name!r}（已注册 {HANDLERS[name].__module__}）")
         HANDLERS[name] = fn
         return fn
 
@@ -136,9 +144,7 @@ class Worker:
             # 逃过了那三层兜底。至少让它出现在日志里，而不是「后台任务悄悄停了」。
             task.add_done_callback(self._on_task_done)
             self._tasks.append(task)
-        logger.info(
-            "worker 已启动：并发 %d，handler %s", self._concurrency, handler_names()
-        )
+        logger.info("worker 已启动：并发 %d，handler %s", self._concurrency, handler_names())
 
     def _on_task_done(self, task: asyncio.Task[None]) -> None:
         if task.cancelled() or self._stopping.is_set():
@@ -179,9 +185,7 @@ class Worker:
                 failures += 1
                 QUEUE_ERRORS.inc()
                 # 指数退避：队列不可用时不要空转，把连接池和日志一起打满
-                delay = min(
-                    DEQUEUE_BACKOFF_BASE * 2 ** min(failures - 1, 5), DEQUEUE_BACKOFF_MAX
-                )
+                delay = min(DEQUEUE_BACKOFF_BASE * 2 ** min(failures - 1, 5), DEQUEUE_BACKOFF_MAX)
                 # 只在头几次和每 10 次记一条：持续故障时每轮一行日志等于自己刷屏
                 if failures <= 3 or failures % 10 == 0:
                     logger.warning(
@@ -235,11 +239,12 @@ class Worker:
             # handler 单独一个 task：租约丢了要能把它停下来。
             # 直接在 `_handle` 里 await 的话，「停手」就只能 cancel worker 自己的消费
             # 协程——那会少一个槽位，`_on_task_done` 还会记一条假故障。
-            watch.work = asyncio.create_task(
-                asyncio.wait_for(
-                    handler(job), timeout=job.timeout_sec or DEFAULT_JOB_TIMEOUT_SEC
+            with job_execution(job):
+                watch.work = asyncio.create_task(
+                    asyncio.wait_for(
+                        handler(job), timeout=job.timeout_sec or DEFAULT_JOB_TIMEOUT_SEC
+                    )
                 )
-            )
             if self._queue.lease_sec is not None:
                 beat = asyncio.create_task(self._renew_lease(job, watch))
                 # 谁先结束都回到这里：handler 结束是正常收尾，续租结束是租约丢了。
@@ -247,9 +252,7 @@ class Worker:
             await watch.work
         except TimeoutError:
             outcome = "timeout"
-            logger.error(
-                "任务超时 name=%s id=%s attempt=%d", job.name, job.id, job.attempts + 1
-            )
+            logger.error("任务超时 name=%s id=%s attempt=%d", job.name, job.id, job.attempts + 1)
             await self._queue.nack(job)
         except asyncio.CancelledError:
             if _being_cancelled():
@@ -267,6 +270,58 @@ class Worker:
                 job.name,
                 job.id,
             )
+        except StaleDataError:
+            # 乐观锁落败 = 另一个写者先提交了，不是故障，也不该进死信。
+            # 这里重投一条新作业（模板作业 max_attempts=1，nack 会直接判死），
+            # 用 payload 里的计数封顶，避免持续性冲突变成无限重投。
+            if watch.lost:
+                outcome = "lease_lost"
+                logger.error(
+                    "租约丢失后 handler 仍撞上并发写冲突 name=%s id=%s", job.name, job.id
+                )
+            else:
+                retries = int(job.payload.get("conflict_retries") or 0)
+                if retries >= CONFLICT_RETRY_LIMIT:
+                    outcome = "conflict_giveup"
+                    logger.error(
+                        "并发写冲突重试 %d 次仍未成功，转入死信 name=%s id=%s",
+                        retries,
+                        job.name,
+                        job.id,
+                    )
+                    await self._queue.nack(job)
+                else:
+                    outcome = "conflict"
+                    logger.warning(
+                        "并发写冲突，%0.1fs 后重投 name=%s id=%s（第 %d 次）",
+                        CONFLICT_RETRY_DELAY_SEC,
+                        job.name,
+                        job.id,
+                        retries + 1,
+                    )
+                    # 新作业不带幂等键：带上会命中「在途」去重、拿回自己这条，
+                    # 等于没有重投。旧行随后 ack 掉；万一 ack 落败，多出来的一份
+                    # 也会在读状态时撞上 CAS 安全退出（handler 每一步都是幂等的）。
+                    try:
+                        await self._queue.enqueue(
+                            Job(
+                                name=job.name,
+                                payload={**job.payload, "conflict_retries": retries + 1},
+                                max_attempts=job.max_attempts,
+                                timeout_sec=job.timeout_sec,
+                            ),
+                            delay=CONFLICT_RETRY_DELAY_SEC,
+                        )
+                    except Exception:  # noqa: BLE001
+                        # 队列本身不可用时退回死信：宁可留下一条可排查的记录，
+                        # 也不要让异常从 `_handle` 逃出去打断消费循环。
+                        outcome = "conflict_requeue_failed"
+                        logger.exception(
+                            "并发写冲突后重投失败，转入死信 name=%s id=%s", job.name, job.id
+                        )
+                        await self._queue.nack(job)
+                    else:
+                        await self._queue.ack(job)
         except Exception:
             if watch.lost:
                 outcome = "lease_lost"

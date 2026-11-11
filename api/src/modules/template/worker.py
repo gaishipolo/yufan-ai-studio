@@ -14,7 +14,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+from contextlib import nullcontext
 from uuid import uuid4
+
+from sqlalchemy.orm.exc import StaleDataError
 
 from core.config import settings
 from core.exceptions import Conflict, NotFound, Unavailable, UpstreamError
@@ -24,6 +27,7 @@ from core.ports.accounts import account_is_active
 from generation.runner import get_runner
 from infra import get_queue
 from infra.ai.libtv import execute_stage
+from infra.ai.libtv_state import RUN_LOCK
 from infra.archive import get_archive_storage
 from infra.archive.base import lease
 from infra.queue.base import Job
@@ -57,7 +61,7 @@ SETTLED_STATUSES = frozenset({"success", "failed", "service_error", "submission_
 UNFINISHED_STATUSES = frozenset(
     {
         "queued", "uploading", "uploaded", "waiting_executor", "submitting",
-        "preparing", "prepared", "submitted", "running", "generated",
+        "preparing", "submitted", "running", "generated",
     }
 )
 
@@ -97,7 +101,49 @@ async def owner_disabled(owner_id: str) -> bool:
     return await account_is_active(owner_id) is False
 
 
-def _sync_out(run: ReplacementRun, path) -> None:
+def _sync_out(run: ReplacementRun, path) -> bool:
+    """Nonblocking projection under the exact lease held by the supervisor.
+
+    Never wait with an old DB snapshot, or erase an executor's accepted receipt.
+    The context manager stays entirely in this thread (Windows byte-range locks).
+
+    返回 `False` 一律表示「这一份投影暂时写不进去，下次再补」：调用方据此退避，
+    而不是当成任务失败。所以除了「锁被占」（`Conflict`），还要接住锁文件本身
+    建不出来的 `OSError`（共享盘掉了、路径被文件占住、只读挂载）——
+    让它冒泡会把一条还没提交的任务记成 `service_error`，那是**投影**的问题，
+    不是**任务**的问题。
+    """
+    try:
+        with lease(path / RUN_LOCK):
+            state = read_state(path)
+            file_version = state.get("state_version")
+            if isinstance(file_version, int) and file_version > getattr(run, "state_version", 1):
+                return False
+            if state.get("id") not in (None, run.id):
+                return False
+            local_task = state.get("task_id") or state.get("taskId") or _libtv_task(
+                path, run.id, state
+            )
+            if local_task and local_task != run.task_id:
+                return False
+            if state.get("status") in ("generated", "success") and run.status not in (
+                state["status"], "success"
+            ):
+                return False
+            if not run.task_id and state.get("status") in (
+                "submitting", "submission_unknown", "submitted", "running", "generated", "success"
+            ) and state.get("status") != run.status:
+                return False
+            _write_projection(run, path)
+            return True
+    except Conflict:
+        return False
+    except OSError:
+        logger.warning("状态投影暂时写不进去（工作区不可达），本次跳过 run=%s", run.id)
+        return False
+
+
+def _write_projection(run: ReplacementRun, path) -> None:
     """把数据库行投影成执行器认识的 `run.json`。只写不读。
 
     `file_checksums` 从 `inputs/input-map.json` 派生：执行器会拿它跟实算摘要比，
@@ -110,6 +156,7 @@ def _sync_out(run: ReplacementRun, path) -> None:
         {
             "file_checksums": checksums,
             "id": run.id,
+            "state_version": getattr(run, "state_version", 1),
             "status": run.status,
             # **字段名必须是 snake_case**：执行器（`bridge.mjs`）读的是
             # `meta.task_id`，写成 `taskId` 会让它认为「这条还没提交过」，
@@ -133,13 +180,13 @@ def _sync_out(run: ReplacementRun, path) -> None:
     )
 
 
-def sync_projection(run: ReplacementRun) -> None:
+def sync_projection(run: ReplacementRun) -> bool:
     """把数据库行投影进工作区（`run.json`）。
 
     公开这一个入口给「准备」用：准备阶段也产生新状态（`prepared`），执行器接手
     之前必须能看到。业务层只写不读，读回来仍走 `_absorb`。
     """
-    _sync_out(run, run_path(run.id))
+    return _sync_out(run, run_path(run.id))
 
 
 def _absorb(run: ReplacementRun, path) -> None:
@@ -154,6 +201,9 @@ def _absorb(run: ReplacementRun, path) -> None:
     """
     state = read_state(path)
     if not state:
+        return
+    file_version = state.get("state_version")
+    if isinstance(file_version, int) and file_version < getattr(run, "state_version", 1):
         return
     status = state.get("status")
     if isinstance(status, str) and status:
@@ -202,26 +252,44 @@ def receipt_power(run_id: str) -> float | None:
 
 async def sync_credit_charge(run_id: str) -> None:
     """下载完成后把真实扣费写回数据库，供任务中心/档案列表展示。"""
-    from db.session import get_session_factory
-
     charged = await asyncio.to_thread(receipt_power, run_id)
     if charged is None:
         return
-    async with get_session_factory()() as session:
-        repo = RunRepository(session)
-        run = await repo.get(run_id)
-        if run is None:
-            return
-        run.credits = charged
-        await repo.save(run)
-        await session.commit()
+    await _update_column(run_id, lambda run: setattr(run, "credits", charged))
 
 
-async def enqueue(run_id: str, *, delay: float = 0) -> None:
+async def _update_column(run_id: str, apply) -> bool:
+    """只补一列（输出键、真实扣费）的写入：被并发写挤掉就重读一次再写。
+
+    这两列与业务状态无关，重试天然幂等。它们又恰好都发生在「轮询正在推进度」
+    的时刻，而 `state_version` 会让输的一方抛 `StaleDataError`——不重试的后果是
+    下载作业失败进死信：片子做出来了但没有归档地址，或者账单永远显示「待核对」。
+    重试一次仍撞车才放手（日志留痕），不让一次补写把整条链路拖垮。
+    """
+    from db.session import get_session_factory
+
+    for _ in range(2):
+        async with get_session_factory()() as session:
+            run = await RunRepository(session).get(run_id)
+            if run is None:
+                return False
+            apply(run)
+            try:
+                await session.commit()
+                return True
+            except StaleDataError:
+                await session.rollback()
+    logger.warning("补写列持续撞车（并发写太频繁），本次跳过 run=%s", run_id)
+    return False
+
+
+async def enqueue(run_id: str, *, delay: float = 0, attempt: int = 0) -> None:
     await get_queue().enqueue(
         Job(
             name="template.replacement.prepare",
-            payload={"id": run_id},
+            # `attempt` 只服务「准备阶段的退避轮次」：恢复链把轮次带下来，
+            # 否则 `_wait_for_release` 的封顶在 prepare 这一跳会归零、退化成无限循环。
+            payload={"id": run_id, "attempt": attempt},
             max_attempts=1,
             idempotency_key=f"replacement:prepare:{run_id}",
             timeout_sec=1600,
@@ -242,6 +310,27 @@ async def set_billing_mode(session, run_id: str, owner: str, mode: str) -> None:
     run = await repo.get_or_404(run_id, owner=owner)
     if run_channel(run.configuration) != "libtv":
         raise Conflict("百炼渠道按阿里云 API 账单计费，不支持 LibTV 积分队列")
+    try:
+        path = await asyncio.to_thread(run_path, run_id)
+    except NotFound:
+        # Legacy DB-only rows have no executor workspace to race with.
+        path = None
+    # Enter and exit on the event-loop thread. Acquisition is nonblocking;
+    # keep the supervisor excluded through receipt recovery and the DB commit.
+    with lease(path / RUN_LOCK) if path is not None else nullcontext():
+        await session.refresh(run)
+        if not run.task_id and path is not None:
+            task_id = await asyncio.to_thread(_libtv_task, path, run.id, read_state(path))
+            if task_id:
+                await _attach_accepted_task(session, repo, run, task_id)
+        await _change_billing_mode(session, repo, run, mode)
+
+
+async def _change_billing_mode(session, repo, run: ReplacementRun, mode: str) -> None:
+    # The submit handler may already have frozen a request before its supervisor
+    # acquires the executor lease. That intent also locks the billing queue.
+    if run.submit_attempts > 0 and mode != run.billing_mode:
+        raise Conflict("该任务已进入提交阶段，计费模式不能再改；请先核对原提交结果")
     # 已提交上游 = 队列锁定，但「再点一次确认」不该被拦成错误：前端重新提交时会
     # 带上记录里的模式，那不是切换，用户要的只是看进度。只有「把一条已在免费队列
     # 的任务改成积分」才是真冲突，因为它要花钱。
@@ -269,7 +358,7 @@ async def schedule_state(session, run_id: str, owner: str) -> str:
     """决定这次「继续」该做什么：`done` / `poll` / `prepare`。"""
     repo = RunRepository(session)
     run = await repo.get_or_404(run_id, owner=owner)
-    await _restore_bailian_receipt(session, repo, run)
+    await _restore_accepted_receipt(session, repo, run)
     if run.status == "success":
         return "done"
     if not run.task_id and (run.status == "submission_unknown" or run.submit_attempts > 0):
@@ -315,7 +404,7 @@ async def reconfirm_state(
     """
     repo = RunRepository(session)
     run = await repo.get_or_404(run_id, owner=owner)
-    await _restore_bailian_receipt(session, repo, run)
+    await _restore_accepted_receipt(session, repo, run)
     if run.task_id:
         # 已有回执：该走「继续」续查询，而不是重提一遍（重提就是第二次计费）
         raise Conflict("该调用已有上游任务号，请直接继续查询结果")
@@ -371,22 +460,41 @@ async def mark_schedule_failure(session, run_id: str) -> None:
 
 
 async def _bump_retry(session, run_id: str, *, reason: str) -> float | None:
-    """记一次自动重试；额度用完返回 None（同时把 run 标成 service_error）。"""
+    """记一次自动重试；额度用完返回 None（同时把 run 标成 service_error）。
+
+    **计数写不进去不能让链路断**：这条路径与轮询在改同一行（下载失败的同时，
+    另一次查询正在写进度），`state_version` 会把输的一方顶成 `StaleDataError`。
+    重试计数只是「防无限重试」的保险，丢一次增长最多多跑一轮；而异常冒到队列
+    会让作业进死信——成片下不来、也没有任何后续作业。所以撞车重读一次，
+    仍撞车就按「这一次没记上」继续，绝不因此判任务失败。
+    """
     repo = RunRepository(session)
-    run = await repo.get_or_404(run_id)
-    run.retry_count += 1
-    if run.retry_count > MAX_RETRIES:
-        set_status(run, "service_error")
-        run.error_code = "RETRY_EXHAUSTED"
-        run.last_error = f"{reason}：已自动重试 {MAX_RETRIES} 次仍失败，转人工处理"
-        await repo.save(run)
-        await session.commit()
-        logger.warning("替换任务重试耗尽 run=%s reason=%s", run_id, reason)
-        return None
-    delay = backoff_delay(run.retry_count)
-    await repo.save(run)
-    await session.commit()
-    return delay
+    delay: float | None = None
+    for attempt in range(2):
+        try:
+            run = await repo.get_or_404(run_id)
+            run.retry_count += 1
+            if run.retry_count > MAX_RETRIES:
+                set_status(run, "service_error")
+                run.error_code = "RETRY_EXHAUSTED"
+                run.last_error = f"{reason}：已自动重试 {MAX_RETRIES} 次仍失败，转人工处理"
+                await repo.save(run)
+                await session.commit()
+                logger.warning("替换任务重试耗尽 run=%s reason=%s", run_id, reason)
+                return None
+            delay = backoff_delay(run.retry_count)
+            await repo.save(run)
+            await session.commit()
+            return delay
+        except StaleDataError:
+            await session.rollback()
+            if attempt:
+                logger.warning(
+                    "重试计数写不进去（并发写入过密），本轮按未计数继续 run=%s reason=%s",
+                    run_id,
+                    reason,
+                )
+    return delay or backoff_delay(1)
 
 
 # --------------------------------------------------------------------------- #
@@ -415,6 +523,22 @@ async def _stop_if_unauthorized(session, repo, run: ReplacementRun) -> bool:
     return True
 
 
+async def _prepare_channel_inputs(run_id: str, model: str) -> None:
+    """渠道要求「先上传素材」时，走供应商的可选协议。
+
+    替换链不认识具体供应商：能不能上传、密钥配没配，都由驱动自己回答
+    （`infra.ai.base.InputPreparer`）。这样接一个新渠道不必回来改这里，
+    也不会出现 `modules/template` 直接 import 某个驱动文件的横向依赖。
+    """
+    from infra import get_model_router
+    from infra.ai.base import InputPreparer
+
+    provider = get_model_router().provider_for(model, allow_fallback=False)
+    if not isinstance(provider, InputPreparer):
+        raise Unavailable(f"渠道 {model} 不支持素材上传，无法提交")
+    await provider.prepare_inputs(run_id, model=model)
+
+
 @register_handler("template.replacement.prepare")
 async def prepare_upload(job: Job) -> None:
     from db.session import get_session_factory
@@ -426,7 +550,11 @@ async def prepare_upload(job: Job) -> None:
         if run is None:
             logger.info("准备作业放弃：记录已不存在 run_id=%s", run_id)
             return
-        await _restore_bailian_receipt(session, repo, run)
+        try:
+            await _restore_accepted_receipt(session, repo, run)
+        except Conflict:
+            await _wait_for_release(run_id, int(job.payload.get("attempt") or 0))
+            return
         if run.task_id:
             await get_runner().resume(KIND_REPLACEMENT, run_id)
             return
@@ -442,12 +570,23 @@ async def prepare_upload(job: Job) -> None:
             logger.warning("发起人已停用，替换任务停止准备 run=%s", run_id)
             return
 
+        # Prepared inputs still await the user's explicit execution request.
+        if run.status == "prepared":
+            return
+
         # upload 会真的往上游传文件、要跑几分钟：授权已经失效就别开始。
         if await _stop_if_unauthorized(session, repo, run):
             return
 
         path = await asyncio.to_thread(run_path, run_id)
-        await asyncio.to_thread(_sync_out, run, path)
+        if not await asyncio.to_thread(_sync_out, run, path):
+            # 投影写不进去时走**有上限**的退避：以前这里固定 delay、attempt 恒 0，
+            # 一旦 `_sync_out` 是永久性 False（文件里的版本比库里新、task_id 不一致、
+            # 旧备份回灌），就是一条 30s 一轮、永不收敛的循环，且无告警。
+            await _wait_for_release(
+                run_id, int(job.payload.get("attempt") or 0), reason="投影写不进去"
+            )
+            return
         if run_channel(run.configuration) != "libtv":
             try:
                 await _prepare_channel_inputs(
@@ -484,14 +623,29 @@ async def prepare_upload(job: Job) -> None:
                 return
             await enqueue(run_id, delay=delay)
             return
+        if result.code == "EXECUTOR_LOGIN_REQUIRED":
+            # 「浏览器里没登录」是**可恢复**状态，不是失败：UI 对 `needs_login` 有专门
+            # 的下一步提示（去专用浏览器登录后重试），`RETRYABLE` 也允许继续。
+            # 归到 service_error 会让用户以为任务坏了，而实际只需要登一次。
+            set_status(run, "needs_login")
+            run.error_code = result.code
+            run.last_error = result.message
+            await repo.save(run)
+            await session.commit()
+            logger.warning("执行器浏览器未登录，等待人工登录后继续 run=%s", run_id)
+            return
         if result.code != "OK" or run.status not in ("uploaded", "waiting_free"):
             before = run.status
             set_status(run, "service_error")
             # `result.code` 的默认值就是 "OK"，直接拿来当错误码会让页面显示
             # 「上传准备未完成：OK」。只有真出错才带上游码。
             run.error_code = result.code if result.code != "OK" else "UPLOAD_INCOMPLETE"
+            # 已经说清「是什么、该做什么」的码原样给出：再套一层
+            # 「上传准备未完成：…（档案状态 queued）」只会把可执行的信息淹掉。
             run.last_error = (
-                f"上传准备未完成：{result.message or result.code}（档案状态 {before}）"
+                result.message
+                if result.code == "EXECUTOR_BROWSER_UNAVAILABLE"
+                else f"上传准备未完成：{result.message or result.code}（档案状态 {before}）"
             )
             await repo.save(run)
             await session.commit()
@@ -564,8 +718,6 @@ async def publish_output(run_id: str) -> None:
     等下一次下载重试或人工处置。把「上传失败」判成「生成失败」会让一条已经花钱
     做出来的片子被标成失败。
     """
-    from db.session import get_session_factory
-
     folder = run_path(run_id) / "outputs/generated.mp4"
     if not folder.is_file():
         logger.warning("成片不存在，跳过归档 run_id=%s", run_id)
@@ -576,14 +728,8 @@ async def publish_output(run_id: str) -> None:
     except Exception:  # noqa: BLE001 - 上传失败要降级，不能让任务被判失败
         logger.exception("成片归档失败，暂时只能从工作区读取 run_id=%s", run_id)
         return
-    async with get_session_factory()() as session:
-        repo = RunRepository(session)
-        run = await repo.get(run_id)
-        if run is None:
-            return
-        run.output_key = key
-        await repo.save(run)
-        await session.commit()
+    if not await _update_column(run_id, lambda run: setattr(run, "output_key", key)):
+        logger.warning("成片已归档但输出键没落库，下次下载重试会补上 run_id=%s", run_id)
 
 
 async def enqueue_recovery(run_id: str, *, delay: float = 0, attempt: int = 0) -> None:
@@ -608,7 +754,7 @@ async def recover_state(session, run_id: str) -> str:
     run = await repo.get(run_id)
     if run is None:
         return "done"
-    await _restore_bailian_receipt(session, repo, run)
+    await _restore_accepted_receipt(session, repo, run)
     if run.task_id and run.status != "success":
         run.framework_status = "running"
         await repo.save(run)
@@ -620,25 +766,71 @@ async def recover_state(session, run_id: str) -> str:
         run.last_error = "提交中断，请先核对上游回执；禁止自动重提"
         await repo.save(run)
         await session.commit()
-    elif run.status in ("queued", "uploading", "uploaded", "waiting_executor", "prepared"):
+    elif run.status in ("queued", "uploading", "uploaded", "waiting_executor"):
         return "prepare"
     return "done"
 
 
-async def _prepare_channel_inputs(run_id: str, model: str) -> None:
-    """渠道要求「先上传素材」时，走供应商的可选协议。
+def _libtv_task(path, run_id: str, state: dict) -> str | None:
+    """A receipt belongs to this run only when its workspace identity agrees."""
+    if state.get("id") != run_id:
+        return None
+    task = state.get("task_id") or state.get("taskId")
+    if isinstance(task, str) and task:
+        return task
+    try:
+        receipt = json.loads((path / "records/submission.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(receipt, dict) or receipt.get("id", run_id) != run_id:
+        return None
+    data = receipt.get("data")
+    if not isinstance(data, dict):
+        return None
+    task = data.get("taskId") or data.get("task_id")
+    return task if isinstance(task, str) and task else None
 
-    替换链不认识具体供应商：能不能上传、密钥配没配，都由驱动自己回答
-    （`infra.ai.base.InputPreparer`）。这样接一个新渠道不必回来改这里，
-    也不会出现 `modules/template` 直接 import 某个驱动文件的横向依赖。
-    """
-    from infra import get_model_router
-    from infra.ai.base import InputPreparer
 
-    provider = get_model_router().provider_for(model, allow_fallback=False)
-    if not isinstance(provider, InputPreparer):
-        raise Unavailable(f"渠道 {model} 不支持素材上传，无法提交")
-    await provider.prepare_inputs(run_id, model=model)
+def _accepted_libtv_task(run_id: str) -> str | None:
+    try:
+        path = run_path(run_id)
+    except NotFound:
+        return None
+    with lease(path / RUN_LOCK):
+        return _libtv_task(path, run_id, read_state(path))
+
+
+async def recover_submission(session, run_id: str, owner: str) -> ReplacementRun:
+    """Restore accepted work before authorization of a possible new submission."""
+    repo = RunRepository(session)
+    run = await repo.get_or_404(run_id, owner=owner)
+    await _restore_accepted_receipt(session, repo, run)
+    return run
+
+
+async def _restore_accepted_receipt(session, repo, run: ReplacementRun) -> None:
+    if run.task_id:
+        return
+    if run_channel(run.configuration) != "libtv":
+        await _restore_bailian_receipt(session, repo, run)
+        return
+    task_id = await asyncio.to_thread(_accepted_libtv_task, run.id)
+    if not task_id:
+        return
+    await _attach_accepted_task(session, repo, run, task_id)
+
+
+async def _attach_accepted_task(session, repo, run: ReplacementRun, task_id: str) -> None:
+    run.task_id = task_id
+    run.submit_attempts = 0
+    run.submit_mode = "async"
+    run.framework_status = "running"
+    if run.status in SETTLED_STATUSES:
+        begin(run)
+    set_status(run, "running")
+    run.last_error = None
+    await repo.save(run)
+    await session.commit()
 
 
 async def _restore_bailian_receipt(session, repo, run: ReplacementRun) -> None:
@@ -696,26 +888,29 @@ async def recover(job: Job) -> None:
     if action == "poll":
         await get_runner().resume(KIND_REPLACEMENT, run_id)
     elif action == "prepare":
-        await enqueue(run_id)
+        await enqueue(run_id, attempt=int(job.payload.get("attempt") or 0))
 
 
-async def _wait_for_release(run_id: str, attempt: int) -> None:
+async def _wait_for_release(run_id: str, attempt: int, *, reason: str = "另一实例仍在提交") -> None:
     """恢复作业等不到状态时的退避重投，轮次用完就放手。
 
     放弃时**什么都不写**：真正持锁/持事务的那个进程收尾时会自己把状态写正确；
     它若崩了，下一轮恢复就能正常继续。写一笔「猜测的状态」才是覆盖回执的起点。
+
+    `reason` 只用于最后的日志：同样是「等不到」，等锁、等投影、等另一个实例收尾
+    的排查方向完全不同，别让一句话把值班引到错的地方。
     """
     if attempt >= RECOVER_LOCK_MAX_RETRIES:
         logger.error(
-            "替换任务恢复放弃 run=%s：已等待 %d 轮。记录状态未被改动，"
-            "请检查是否仍有监督进程在提交",
+            "替换任务恢复放弃 run=%s：已等待 %d 轮（%s）。记录状态未被改动，请人工确认这条任务",
             run_id,
             attempt,
+            reason,
         )
         RECOVERY_LOCK_GIVEUPS.inc()
         return
     delay = min(RECOVER_LOCK_BASE_SEC * 2**attempt, RECOVER_LOCK_MAX_SEC)
-    logger.info("替换任务恢复退避 %.0fs run=%s 第 %d 轮", delay, run_id, attempt + 1)
+    logger.info("替换任务恢复退避 %.0fs run=%s 第 %d 轮（%s）", delay, run_id, attempt + 1, reason)
     await enqueue_recovery(run_id, delay=delay, attempt=attempt + 1)
 
 
@@ -740,17 +935,37 @@ async def resume() -> None:
             rows = await repo.list_unfinished(
                 list((UNFINISHED_STATUSES | SETTLED_STATUSES) - {"success"})
             )
+            # 先取成纯数据：某一行的回执恢复失败时要 rollback 才能继续，而 rollback
+            # 会让本 session 里的 ORM 实例全部过期，之后再读 `row.status` 就是异步
+            # 上下文里的隐式 IO（MissingGreenlet）——跳过这一行的动作本身又会炸。
+            cases = [(row.id, row.status, row.task_id) for row in rows]
             ids = []
-            for row in rows:
+            for run_id, status, task_id in cases:
                 # Only a durable accepted Bailian receipt may reopen a settled DB row.
                 # Unknown receipts remain settled and never create another paid task.
-                if row.status in SETTLED_STATUSES:
-                    if row.task_id or row.status == "success":
+                if status in SETTLED_STATUSES:
+                    if task_id or status == "success":
                         continue
-                    await _restore_bailian_receipt(session, repo, row)
-                    if not row.task_id:
+                    try:
+                        row = await repo.get(run_id)
+                        if row is None:
+                            continue
+                        await _restore_accepted_receipt(session, repo, row)
+                        restored = bool(row.task_id)
+                    except Conflict:
+                        # Recovery jobs already have bounded lease backoff; startup
+                        # must neither fail nor guess a state for the active executor.
+                        ids.append(run_id)
                         continue
-                ids.append(row.id)
+                    except Exception:  # noqa: BLE001
+                        # 一条读不懂的历史行不能拦住整个启动：`run_path` 在共享盘
+                        # 掉线时抛 OSError、旧格式记录可能缺字段、乐观锁可能撞车。
+                        await session.rollback()
+                        logger.exception("启动恢复跳过一条无法解读的记录 run=%s", run_id)
+                        continue
+                    if not restored:
+                        continue
+                ids.append(run_id)
     except (UpstreamError, OSError):
         logger.warning("数据库暂不可用，替换任务等待恢复")
         return

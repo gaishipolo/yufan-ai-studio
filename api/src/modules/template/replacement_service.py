@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.exc import StaleDataError
 
 from core import audit
 from core.exceptions import (
@@ -381,7 +382,11 @@ class ReplacementService:
         current = await self.detail(run_id, owner)
         if current.deleted_at:
             raise Conflict("请先从回收站恢复任务，再继续执行")
-        await self._assert_still_authorized(run_id, owner)
+        # 先恢复已落盘的提交回执：已有任务只续查，不再消费素材授权。
+        # 数据库尚未记下 task_id 时，也不能把已经付费的调用当成新提交。
+        run = await worker.recover_submission(self.session, run_id, owner)
+        if not run.task_id:
+            await self._assert_still_authorized(run_id, owner)
         # 先落计费模式再排队：执行器读的是行上的 billing_mode，
         # 反过来的话这一轮准备仍会按免费队列估价，加速就白点了。
         if billing_mode:
@@ -427,7 +432,24 @@ class ReplacementService:
         每次都刷新 `deleted_at` 看着无害，实际有两个后果：回收站按删除时间排序，
         双击一次就跳到最前；前端拿到的 `deletedAt` 每次都不一样，重发请求会被
         当成「又删了一次」。
+
+        **撞车要重来一次**：这一列是「用户随手一点」的写，而轮询每两秒就在改同一行。
+        乐观锁（`state_version`）会让输的一方抛 `StaleDataError`——把它直接抛给
+        用户，等于「点删除时正在生成」就必失败一次。重读一次几乎总能成功，所以
+        重试一次；仍输才报冲突，而不是 500（见 `api/errors.py` 的处理器）。
         """
+        for attempt in range(2):
+            try:
+                return await self._set_deleted_once(run_id, owner, deleted)
+            except StaleDataError:
+                await self.session.rollback()
+                if attempt:
+                    raise Conflict("任务状态已变化，请刷新后重试") from None
+        raise AssertionError("unreachable")  # pragma: no cover - 循环必然返回或抛出
+
+    async def _set_deleted_once(
+        self, run_id: str, owner: str, deleted: bool
+    ) -> ReplacementRunOut:
         run = await self.runs.get_or_404(run_id, owner=owner)
         if deleted and run.deleted_at is None:
             run.deleted_at = datetime.now(UTC)

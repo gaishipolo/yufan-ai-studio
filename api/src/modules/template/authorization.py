@@ -74,4 +74,10 @@ async def authorization_gap(session: AsyncSession, run: ReplacementRun) -> str |
         ]
         if gone:
             return "本次输入的素材已被删除，请重新准备"
+        # 原片遵循 prepare 的公共池规则；包内参考图由发布授权，不要求共享。
+        for row in rows:
+            if row.role == "source_video":
+                source = media[row.asset_id]
+                if source.owner_id != run.owner_id and not source.shared:
+                    return "原片不存在或已停止共享"
     return None
