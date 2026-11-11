@@ -459,7 +459,7 @@ dispatch → generation.submit
 > py 文件（`META` + `MODELS` + `Driver`），不改 `.env`、不改任何 import，重启生效；
 > 标准见 `docs/MODEL_DRIVER_STANDARD.md`，模板文件 `drivers/_template.py`。
 > 下面这段是并存的**老路径**（`infra/ai/<name>.py` + `AI_PROVIDERS`）：
-> 适合框架层适配（`echo` / `libtv` / `bailian` 都在这条路上）。
+> 现在只剩 `echo` / `libtv` 在这条路上（`agnes` / `bailian` 已迁进 `drivers/`）。
 
 `infra/ai/base.py` 只有一个协议 `ModelProvider`（`submit` / `poll` / `cancel`），
 视频、图片、音频都是同一套范式。新增厂商：

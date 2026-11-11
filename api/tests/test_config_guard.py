@@ -150,16 +150,32 @@ def _driver_settings() -> tuple[type[BaseSettings], ...]:
     import 进来（登记是 import 副作用）。
 
     `extra_modules` 是业务模块自带的驱动配置：`ImageAssetSettings` 在
-    `modules/image/pipeline.py`，`AgnesSettings` 在
-    `modules/model_driver/drivers/agnes.py`——都不在 `infra/` 扫描范围。
+    `modules/image/pipeline.py`，其余在 `modules/model_driver/drivers/*.py`
+    ——都不在 `infra/` 扫描范围，所以按目录自动发现（见 `_driver_modules`）。
     """
     from infra.driver_config import import_all_driver_settings
 
     return import_all_driver_settings(
-        extra_modules=(
-            "modules.image.pipeline",
-            "modules.model_driver.drivers.agnes",
-        )
+        extra_modules=("modules.image.pipeline", *_driver_modules())
+    )
+
+
+def _driver_modules() -> tuple[str, ...]:
+    """`drivers/` 下的单文件驱动模块名，自动发现。
+
+    以前这里是手写的 `("modules.model_driver.drivers.agnes",)`：`BailianSettings`
+    跟着驱动从 `infra/ai/bailian.py` 迁进 `drivers/bailian.py` 后，`BAILIAN_*`
+    整组配置立刻被判成「无法识别的键」——这就是上面那段注释抱怨过的同一类问题。
+    以 `_` 开头的（`_template.py`）不是真驱动，跳过。
+    """
+    import importlib
+    import pkgutil
+
+    package = importlib.import_module("modules.model_driver.drivers")
+    return tuple(
+        f"{package.__name__}.{name}"
+        for _, name, _ in pkgutil.iter_modules(package.__path__)
+        if not name.startswith("_")
     )
 
 

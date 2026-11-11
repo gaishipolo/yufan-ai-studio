@@ -8,9 +8,10 @@
 > 来源：`CODE_REVIEW_2026-11-06_R11~R14`、`CODE_REVIEW_2026-11-06_FE6`、
 > `EXTENSIBILITY_GAPS.md` 的 B1/C1/C2、素材分支合并时新发现的项，以及
 > **2026-11-11 全面审查**（框架 / 资产库 / 模型启动，P0×2 · P1×9 · P2×11 已全修）与 PR#4 评审遗留。
-> 最后更新：2026-11-11 12:05 —— 审查问题全部修复且 CI 转绿；新增 T31/T32 两条需要拍板的项；
+> 最后更新：2026-11-11 14:10 —— T32 落地（`bailian` 迁进 `drivers/`，替换链改走 `InputPreparer` 可选协议）；
+> T31 口径已定（素材直传公网 OSS 是有意设计，不是合规遗漏）；T30 拍板**暂不动**（保持观察期）。
 > 交接现状见 [`HANDOFF.md`](HANDOFF.md)。
-> 剩余：业务侧 T2/T8/T9/T10/T22/T23/T24/T31，架构侧 T25/T26（只剩唤醒）/T29/T30/T32
+> 剩余：业务侧 T2/T8/T9/T10/T22/T23/T24/T33，架构侧 T25/T26（只剩唤醒）/T29/T30（暂不收口）
 
 ## 一眼看完
 
@@ -26,9 +27,8 @@
 | T25 | 多实例部署还差三处硬边界 | 配额首次并发、预签名 TOCTOU、运行工作区仍要共享盘 | 架构 |
 | T26 | db 队列没有**跨进程**唤醒（空转已退避，同进程已能叫醒） | API 与 worker 分进程时，空闲入队到取走最坏 1 秒；万级 QPS 要换 Redis 驱动（协议已备好） | 架构 |
 | T29 | 指标是单进程语义，未做多进程聚合 | 多 worker 部署要靠 Prometheus `sum by`；本机 `curl /metrics` 只看到一部分 | 架构 |
-| T30 | PG 迁移闸在观察期（`continue-on-error`），尚未成为硬性要求 | PG 特有的默认值/条件索引差异要等它稳定后才真正拦住 | 架构 |
-| T31 | 模板链素材直传阿里云 OSS | 素材离开本机发到第三方，合规口径未定 | 产品决定 |
-| T32 | `infra/ai/bailian.py` 是否迁进 `drivers/` | 已登记豁免（见 `MODEL_DRIVER_STANDARD.md` §11），要不要收进统一驱动待定 | 架构 |
+| T30 | PG 迁移闸在观察期（`continue-on-error`），尚未成为硬性要求 | PG 特有的默认值/条件索引差异要等它稳定后才真正拦住；**2026-11-11 拍板：暂不动** | 架构 |
+| T33 | 替换链专用模型出现在通用模型目录 | 在工作台视频模型下拉里选到 `bailian-wan3-*` / `libtv-wan3-*` 会 400「调用档案标识不匹配」，用户不知道它只能在替换链里用 | 后端（小） |
 
 ---
 
@@ -209,29 +209,45 @@ PostgreSQL 的 `LISTEN/NOTIFY`（写完 `NOTIFY`，worker 侧长连接被唤醒�
 pytest 里一条用例，PG job 本身 success）——条件已满足，**只差拍板**。去掉它之前先确认
 「`downgrade base` 清库重升」对共享环境没有副作用（job 内是临时 service，无副作用）。
 
-## T31 · 模板链素材直传阿里云 OSS（产品口径）
+**2026-11-11 拍板：暂不动。** 保持 `continue-on-error`，观察期继续。也就是说这道闸
+目前只负责**暴露** PG 方言差异，不阻塞合并；看到它红了要自己去看，别当成必过项。
+条件与前置动作仍如上，等下一轮要收紧时直接照做。
 
-`modules/template/prompt_media.prepare_inputs` 把用户素材**直传**到阿里云对象存储
-（百炼临时素材通道），素材因此离开本机。功能上没问题（2026-11-10 两个渠道各跑通一次真生成），
-缺的是合规口径：客户素材能不能出本地 / 能不能进第三方对象存储，需要产品明确。
+## T31 · 模板链素材直传阿里云 OSS（2026-11-11 已定：保持直传）
 
-**可选方向**（都不改生成语义）：① 保持现状，在替换模板页写明「素材会上传至云端」；
-② 改为部署方自备 OSS（`BAILIAN_*` 侧已有端点配置，需确认临时素材接口是否支持自有桶）；
-③ 关掉直传，要求用户先在素材库归档再由服务端转存。
+**结论：这是有意设计，不是合规遗漏。** 部分视频模型（Wan 3.0）**只接受公网 URL**
+作参考素材，不认本地文件；要让它们工作，素材必须先在公网可达的地方，所以替换链把
+素材直传到阿里云 OSS，再把 `oss://` 直链交给模型。素材因此离开本机是**功能前提**，
+不是可选优化。
 
-**验收**：产品给结论并落到文案与开关上；若选 ②/③，补一条「素材不出本机」的用例。
+留档说明（供合规沟通时引用）：
 
-## T32 · `infra/ai/bailian.py` 要不要迁进 `drivers/`
+- 直传目标由百炼签发（`GET /uploads?action=getPolicy`），走的是**临时素材目录**
+  （`upload_dir` 带有效期，提交时校验 `< 47 小时`），不是我们的长期存储；
+- 上传不带我们的 `Authorization`，凭据是签发的一次性 policy/signature；
+- 素材只服务该次生成，归档盘与素材库的路由不经过这里；
+- 三个渠道里只有 `bailian*` 走这条路；`libtv` 跑本地执行器、不上传素材，`agnes` 的
+  参考图由调用方以 URL 形式给出。
 
-PR#4 评审遗留。两条并存的接入路径本身是设计（见 `MODEL_DRIVER_STANDARD.md` §10），
-但 bailian 属于「业务色彩很重」的那个：它依赖替换链的运行工作区（`run_dir`）、
-归档租约、计费回执，迁进 `drivers/` 需要先抽一层端口，否则驱动会 import 业务基础设施。
+若将来要换成「不出本机」，唯一可行的是让上游支持从我们的对象存储拉取（或支持
+Base64 直传），届时改 `drivers/bailian.py` 的 `prepare_inputs` 一处即可；现有代码
+已把「上传」与「提交」分开，不需要动生成语义。
 
-**现状**：已在 `MODEL_DRIVER_STANDARD.md` **§11 豁免登记**里写明理由，不是漏迁。
+## T33 · 替换链专用模型出现在通用模型目录（T32 顺带发现）
 
-**验收**：如果决定迁 —— 协议一致性用例（`tests/test_model_driver.py` 的那套语义）
-在新位置同样通过，且 `bailian-reconfirmed-*.json` 回执路径不变；如果决定不迁 ——
-本节关掉，§11 就是最终口径。
+`GET /models?capability=video` 直接返回 `router.models()` 全量，于是
+`libtv-wan3-replacement`、`bailian-wan3-replacement`、`bailian-wan3-prime-replacement`
+会出现在工作台的视频模型下拉里。选中提交会立刻 400「调用档案标识不匹配」——这两个
+驱动要求 `params.archiveRunId` 等于任务 id，那是替换链的调用约定，通用入口不提供。
+
+**为什么现在才显形**：`bailian` 迁进 `drivers/` 之前，本机 `.env` 的
+`AI_PROVIDERS=echo,libtv` 里没有它，目录里看不到；`libtv` 那条其实一直都在，只是
+没人从生成页去选它。
+
+**验收**：给 `ModelSpec` 加一个显式的「内部模型」标记（`internal: bool = False`，
+不要用 id 前缀猜），`CatalogService.list_models` 与 `GET /model-driver/models` 默认
+过滤掉；替换链按 model id 走 `router.resolve()`，**不受影响**。用例两条：目录接口
+不返回 `*-replacement`、`router.resolve("bailian-wan3-replacement")` 仍解析得到。
 
 
 ---
@@ -242,6 +258,7 @@ PR#4 评审遗留。两条并存的接入路径本身是设计（见 `MODEL_DRIV
 
 | 编号 | 结论 | 证据 |
 |---|---|---|
+| T32 百炼是否迁进 `drivers/` | 已迁（2026-11-11） | `modules/model_driver/drivers/bailian.py` 自动载入，不进 `AI_PROVIDERS`；替换链改走可选协议 `infra.ai.base.InputPreparer`（上传 + 自报可用性），提示词重编号下移 `core/prompt_refs.py`；回执路径 `records/bailian-submission.json` 不变。用例 `tests/test_bailian_provider.py`（29 条，含「自动载入」「未配密钥在选择渠道时就说清」「提交预算覆盖上传」） |
 | FE6-01 骨架常量与注册表脱钩 | 已修 | `src/app/router.test.ts:120` 断言 `HOME_PATH` 指向的路由确实存在 |
 | FE6-02 `bare` 路由丢 `permissions` | 已修 | `create-registry.test.ts:270` 改成「声明即报错」 |
 | FE6-03 生成物字节比对在 Windows 假红 | 已修 | `.gitattributes` `* text=auto` + `ROUTES.md` / `MOCK_COVERAGE.md` 钉 `eol=lf` |

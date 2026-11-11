@@ -146,3 +146,26 @@ class ModelProvider(Protocol):
     async def cancel(self, external_id: str) -> None:
         """取消任务；不支持时实现为空即可。"""
         ...
+
+
+@runtime_checkable
+class InputPreparer(Protocol):
+    """可选能力：提交前先把素材传到供应商侧（可选协议，不实现也能跑）。
+
+    很多视频模型只接受**公网 URL** 作参考素材，不认本地文件；这类供应商在
+    提交前要把素材直传自己的对象存储，再把直链拼进请求体。这一步既不是
+    「提交」也不是「查询」，塞进 `ModelProvider` 会让所有供应商都得实现一个
+    空方法，所以单列成可选协议：`isinstance(provider, InputPreparer)` 就是
+    「这个渠道需要先准备素材」。
+
+    调用方（替换链）通过 `ModelRouter` 拿到实例再判类型，**不 import 具体驱动**
+    ——业务模块之间不允许横向依赖，而驱动归 `modules/model_driver` 管。
+    """
+
+    def unavailable_reason(self) -> str:
+        """空串表示可用；否则是给用户看的不可用原因（如未配置密钥）。"""
+        ...
+
+    async def prepare_inputs(self, run_id: str, model: str = "") -> dict[str, Any]:
+        """上传 run 工作区里的素材，返回可缓存、提交时直接复用的请求体。"""
+        ...

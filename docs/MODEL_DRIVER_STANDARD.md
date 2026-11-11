@@ -48,7 +48,7 @@ drivers/<name>.py  ──自动扫描──▶ ModelRouter ──▶ generation.
 （那里做了再导出）。`GenerationProgress` 会在构造时把 `state` 归一成枚举、
 把 `progress` 夹到 0–100，所以别在驱动外自己拼字典。
 
-**可选的两个声明**：
+**可选的两个声明式字段**：
 
 ```python
 preferred_for = frozenset({Capability.IMAGE})   # 「我的模型是该能力的默认」
@@ -65,7 +65,21 @@ submit_timeout_sec = 180.0                     # 单次提交最多等多久（�
 job 的硬超时。同步出图的驱动（提交即等结果）必须声明它，而且要≥上游最长
 耗时：框架先到点就会取消 handler，任务被重投时「有提交意图、没有任务号」，
 直接判成「提交结果未知」——钱可能花了、图丢了、还不许重试。异步驱动提交
-很快，一般不用写。
+很快，一般不用写；但如果提交里可能夹着一段素材上传（见下条），也必须声明。
+
+**第三个可选能力：`InputPreparer`**（`infra/ai/base.py`）。多数视频模型只接受
+**公网 URL** 作参考素材，不认本地文件——这类驱动要在提交前把素材直传供应商
+自己的对象存储，再把直链拼进请求体。这一步既不是 `submit` 也不是 `poll`，所以
+单列成可选协议：
+
+```python
+def unavailable_reason(self) -> str: ...                  # 空串=可用；否则给用户看的原因
+async def prepare_inputs(self, run_id: str, model: str = "") -> dict: ...   # 上传并返回请求体
+```
+
+调用方（替换链）**通过路由拿到实例后 `isinstance` 判断**，有就调、没有就跳过，
+它不会 import 你的驱动文件。`unavailable_reason` 让「没配密钥」在**选择渠道时**
+就说清楚，而不是等用户点了开始才在上传阶段炸。范例见 `drivers/bailian.py`。
 
 ## 3. 两种供应商形态
 
@@ -277,7 +291,7 @@ cd api
 
 ## 11. 仍走老路径的供应商（豁免登记）
 
-新接入的供应商**一律进 `drivers/`**。下面三个留在 `infra/ai/<name>.py` + `AI_PROVIDERS`，
+新接入的供应商**一律进 `drivers/`**。下面两个留在 `infra/ai/<name>.py` + `AI_PROVIDERS`，
 是**登记过的例外**，不是漏迁——原因是它们不属于「纯协议适配」，迁过去会变成
 「驱动里再 import 一堆替换链/运行时」，反而破坏 `drivers/` 的单文件可复制性：
 
@@ -285,14 +299,21 @@ cd api
 |---|---|---|
 | `echo` | 演示与单测用的假供应商（无网络）。它的价值在「零依赖跑通全链路」，测试直接以 `AI_PROVIDERS=echo` 起服 | 无收益；迁了还要同步改测试与 `param_schema` 断言 |
 | `libtv` | 真跑**本地 Node 运行时脚本**（`libtv_process.py` / `libtv_runtime/`、`settings.libtv_node`），不是 HTTP 轮询；替换链还依赖 `libtv_state` 的作业状态 | 把 subprocess 运行时与状态文件一并搬进 `drivers/`，并让替换链改读新位置 |
-| `bailian` | 除 HTTP 外还依赖替换链的基础设施：`run_dir` 工作区、归档存储租约（`lease`）、计费回执（`bailian-reconfirmed-*.json`）、成片下载后登记归档 | 抽一层「回执 + 工作区」的端口，否则驱动会 import `infra/archive` 与业务路径规则 |
 
 两条纪律：
 
-- **别把驱动名再写进 `AI_PROVIDERS`**（`agnes` 已迁走）。同名但模型清单不同会在启动时报错，
-  重复注册同理。
-- 想把上表某一行迁走，先在 `docs/TODO.md` 立项并写清验收口径（协议一致性用例要在新位置同样通过），
-  不要顺手搬——这三条都牵着替换链的运行期行为。
+- **别把驱动名再写进 `AI_PROVIDERS`**（`agnes`、`bailian` 都已迁走）。同名但模型清单
+  不同会在启动时报错，重复注册同理。
+- 想把上表某一行迁走，先在 `docs/TODO.md` 立项并写清验收口径（协议一致性用例要在
+  新位置同样通过），不要顺手搬。
+
+**已迁走的先例：`bailian`（2026-11-11，T32）**。它当初也在这张表里，理由是「依赖
+run 工作区、归档租约、计费回执」。真正搬的时候并不需要把这些搬进驱动，而是把
+**替换链需要的能力抽成协议**：`InputPreparer`（上传素材 + 自报可用性）放进
+`infra/ai/base.py`，替换链改成「从路由拿实例、按类型判断」，另把提示词引用重编号
+下移到 `core/prompt_refs.py`。驱动仍读写 run 工作区里的档案（那是替换链编排期写下的
+格式），但它不再被任何业务模块 import。**新供应商照这条路径走，不要照抄「豁免」**。
 
 模型 id 归属：`libtv-*` / `bailian-wan3-*` 只在替换模板链里用；通用生成入口用
-`drivers/` 里的模型（`agnes-image-2.5-flash` 等）。
+`drivers/` 里的模型（`agnes-image-2.5-flash` 等）。`bailian` 不声明 `preferred_for`，
+所以它进 `drivers/` 不会抢通用生成页的默认视频模型。

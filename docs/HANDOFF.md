@@ -41,6 +41,8 @@
 | `4fcd9a5` | 把 CI 上一直红的 **mypy 11 处**修绿 | 类型门禁从「接入即红」变有效 |
 | `ae5cf73` | 测试环境 scrypt `2**14 → 2**10` | 全量 235~289s → 约 200s；登录 150ms → 22ms |
 | `17b3813` | 事件循环用例按**观察窗口**定工作量，不再按轮数定额 | 快机器上不再「窗口太短」假红 |
+| `e521df9` | 新增本交接文档 + 修正 6 处过期口径 | 新会话不用重新摸现状 |
+| 本轮 | **`bailian` 迁进 `drivers/`**（T32）：新增可选协议 `InputPreparer` + `core/prompt_refs.py`，替换链改为「从路由拿实例、按类型判断」 | 百炼不再靠 `AI_PROVIDERS` 加载；未配密钥在选渠道时就说清 |
 
 两个值得记住的结论：
 
@@ -59,20 +61,28 @@
 | agnes 提交预算 **120s → 210s**（驱动声明 180 + 余量 30） | 运维/上游 | 以前上游慢于 120s 会被框架取消并判「提交结果未知」 |
 | `APP_ENV=test` 时 scrypt 用 `2**10`，其他环境仍 `2**14` | 测试 | 参数编码在哈希串里，存量口令不用迁移 |
 | 指标超限丢弃可在 `/metrics` 看到 `app_metrics_series_dropped_total{metric}` | 运维 | 以前是静默丢 |
+| `bailian` 不再是 `AI_PROVIDERS` 里的名字：`.env` 若还写着它，**启动会失败**（`infra/ai/bailian.py` 已删） | 运维 | 删掉那一段即可，驱动会自动载入；只需留 `BAILIAN_API_KEY` 等私有配置 |
+| 百炼渠道可用性改由驱动回答（`InputPreparer.unavailable_reason`） | 前端/运维 | 没配密钥时渠道目录返回「服务端尚未配置百炼密钥」，文案与以前一致 |
 
 ## 3. 没做完的（直接从这里开工）
 
-完整清单在 [`TODO.md`](TODO.md)，这里只标这一轮新增/需要拍板的：
+完整清单在 [`TODO.md`](TODO.md)，这里只标需要拍板 / 刚变动的：
 
-1. **T31 · 模板链素材直传阿里云 OSS**（`modules/template/prompt_media.prepare_inputs`）：
-   素材会离开本机发到第三方，**需要产品口径**确认是否允许外发。代码能用，问题是合规。
-2. **T32 · `infra/ai/bailian.py` 仍走老路径**：豁免理由已写进
-   `MODEL_DRIVER_STANDARD.md` §11（它依赖 run 目录 / 租约 / 计费回执，不是纯协议适配）。
-   要不要迁 `drivers/` 属于工程决策，迁之前先看那一节。
-3. **T30 · PG 迁移闸收紧**：`postgres-migrations` job 已连续 3 次（#62/#63/#64）通过，
-   TODO 里的「连续 3 次通过就去掉 `continue-on-error`」条件已满足，**等拍板**。
-4. **被移出小组后 owner 看不到素材**（产品口径待定，暂按现状）。
-5. 其余存量：T2/T8/T9/T10/T22~T26/T29，均带验收口径。
+1. **T30 · PG 迁移闸收紧**：`postgres-migrations` job 已连续 3 次（#62/#63/#64）通过，
+   TODO 里的收紧条件已满足，但 **2026-11-11 拍板「先不动」**——保持 `continue-on-error`，
+   这道闸目前只负责暴露方言差异、不阻塞合并。哪天要收紧，照 TODO 的前置检查做。
+2. **被移出小组后 owner 看不到素材**（产品口径待定，暂按现状）。
+3. 其余存量：T2/T8/T9/T10/T22~T26/T29，均带验收口径。
+
+已关闭、留结论防重复劳动：
+
+- **T31 · 素材直传阿里云 OSS**：**不是合规遗漏，是有意设计**。部分视频模型只接受
+  公网 URL 作参考素材，所以必须先传到公网可达的地方再给直链；直传目标由百炼签发
+  （临时目录，48 小时有效），凭据是一次性 policy，不带我们的 `Authorization`。
+  完整口径在 TODO 的 T31 小节。
+- **T32 · `bailian` 迁入 `drivers/`**：驱动自动载入，不再进
+  `AI_PROVIDERS`；替换链改走可选协议 `infra.ai.base.InputPreparer`（上传素材 +
+  自报可用性），提示词重编号下移 `core/prompt_refs.py`。回执路径与计费纪律都没变。
 
 ## 4. 新会话怎么接手
 
@@ -131,6 +141,12 @@ curl -sS --noproxy '*' -H "Authorization: Bearer $TOKEN" \
   需要真实哈希成本的用例显式钉 `security._scrypt_n`（`full_cost` 夹具）。
 - **模块之间不许互相 import**（`test_modules_do_not_import_each_other`），
   要复用靠装配期登记或上移 `core/`；`api/` 层也不许 import 业务模块。
+- **驱动的可选能力靠协议识别**：需要「提交前上传素材」的驱动实现
+  `infra.ai.base.InputPreparer`（`prepare_inputs` + `unavailable_reason`），调用方
+  （替换链）从路由拿实例后 `isinstance` 判断。**不要** `getattr(provider, "prepare_inputs")`，
+  也不要让 `modules/template` import 任何 `drivers/*.py`——那正是 T32 之前的状态。
+- **提示词素材引用只有一份实现**：`core/prompt_refs.translate_prompt`（`{{Mixed N}}` →
+  `视频1/图2/音频1`），档案与请求体都用它；别在驱动或模块里再抄一遍。
 
 ## 6. 本机环境坑（Windows 开发机）
 

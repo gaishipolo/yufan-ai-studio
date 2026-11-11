@@ -839,7 +839,7 @@ async def ask_xxx(...) -> ...:              # **未注册时返回中性值，�
 | `storage` | `STORAGE_DRIVER` | `local` / `s3`（S3 或 MinIO，MinIO 必须 path-style） |
 | `queue` | `QUEUE_DRIVER` | `memory`（开发）/ `db`（`queued_jobs`，重启不丢） |
 | `cache` | `CACHE_DRIVER` | `memory`（LRU + TTL） |
-| `ai` | `AI_PROVIDERS`（可多选） | `echo`（演示/单测）/ `libtv`（模板链视频）/ `bailian`（百炼，见 `docs/MODEL_DRIVER_STANDARD.md` §11 豁免登记）。**`agnes` 已迁走**，它在 `modules/model_driver/drivers/agnes.py`，不要写进这张清单 |
+| `ai` | `AI_PROVIDERS`（可多选） | `echo`（演示/单测）/ `libtv`（模板链视频，跑本地 Node 运行时）。**`agnes` / `bailian` 已迁走**，它们在 `modules/model_driver/drivers/` 里自动载入，不要写进这张清单 |
 | `archive` | `ARCHIVE_DRIVER` | `local`（本地 / 共享盘）/ `s3`（默认分桶；`create()` 是集群级 CAS 原语，发布版号与选主租约靠它） |
 
 新增一个只需两步：写 `infra/<kind>/<name>.py`（`Driver = 你的类`），改 `.env`。

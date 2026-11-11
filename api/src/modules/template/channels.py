@@ -29,18 +29,25 @@ def run_channel(configuration: Mapping | None) -> ReplacementChannel:
 
 
 def channel_catalog() -> list[dict]:
+    """渠道清单：模型在目录里、且供应商自报可用，才允许选。
+
+    密钥一类的就绪判断由**供应商自己**回答（`InputPreparer.unavailable_reason`）：
+    替换链不该知道某家供应商要配哪个环境变量，否则每接一个渠道就要改一次这里。
+    """
     from infra import get_model_router
+    from infra.ai.base import InputPreparer
 
     router = get_model_router()
     result = []
     for channel, model in CHANNEL_MODELS.items():
         enabled = router.resolve(model) is not None
         reason = "" if enabled else "服务端未启用此渠道"
-        if enabled and channel != "libtv":
-            from infra.ai.bailian import get_bailian_settings
-
-            if not get_bailian_settings().api_key.strip():
-                enabled, reason = False, "服务端尚未配置百炼密钥"
+        if enabled:
+            provider = router.provider_for(model, allow_fallback=False)
+            if isinstance(provider, InputPreparer):
+                blocked = provider.unavailable_reason()
+                if blocked:
+                    enabled, reason = False, blocked
         result.append({"id": channel, "label": CHANNEL_LABELS[channel],
                        "model": model, "enabled": enabled,
                        "billing": "libtv" if channel == "libtv" else "aliyun",

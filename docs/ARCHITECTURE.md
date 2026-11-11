@@ -139,6 +139,8 @@
 | `core/trace.py` | 异步链路的 trace 传递：入队/写 outbox 时快照 `request_id`，执行时恢复、结束还原。 |
 | `core/flags.py` | 功能开关唯一出口 `is_on("领域.动作")`；不做灰度、不做热更新。 |
 | `core/security.py` | 鉴权原语：JWT 签发/校验 + 口令哈希（`hash_password_async` / `verify_password_async` 是唯一入口）。 |
+| `core/param_schema.py` | 模型参数声明解析：把 `ModelSpec.param_schema` 收敛成「受理校验 + 请求体参数」，生图与通用驱动共用，未声明键一律拒绝。 |
+| `core/prompt_refs.py` | 提示词素材引用重编号（`{{Mixed N}}` → `视频1/图2/音频1`）：替换链档案与视频驱动共用同一套规则，避免两边各编一份。 |
 
 ### 3.4 `db/` —— 数据访问层
 
@@ -183,12 +185,12 @@
 | `infra/ai/base.py` | AI 模型供应商抽象（`ModelProvider` Protocol）。 |
 | `infra/ai/echo.py` | Echo 供应商：本地开发占位，不调用任何外部 API。 |
 | `modules/model_driver/drivers/agnes.py` | Agnes 生图**驱动**（单文件，自动载入，不登记在 `AI_PROVIDERS`）：同步接口，`submit` 直接返回终态快照；支持图生图/多图合成（`reference_urls` → `extra_body.image`）。 |
+| `modules/model_driver/drivers/bailian.py` | 百炼 Wan3 视频**驱动**（自动载入）：异步任务；额外实现可选协议 `InputPreparer`——参考素材先直传百炼 OSS 再拼 `oss://` 直链（Wan 只认公网 URL）。付费提交只允许一次、回执落盘（`bailian-submission.json`），拒绝/未知分别收敛。 |
 | `infra/ai/router.py` | 模型路由：`model` 字符串 → 具体供应商。 |
 | `infra/ai/libtv.py` | LibTV 供应商：只接收归档引用，提交与轮询交给 `GenerationRunner`。 |
 | `infra/ai/libtv_process.py` | 独立监督进程：持有 OS 租约直至 Node 真正退出，API 重启不会释放活任务的锁。 |
 | `infra/ai/libtv_state.py` | LibTV 适配器的持久化执行状态，不含模板业务。 |
 | `infra/ai/libtv_runtime/` | 执行器运行时资源（Node 侧脚本）。 |
-| `infra/ai/bailian.py` | 百炼 Wan3 替换渠道（**老路径**，`AI_PROVIDERS` 启用）：付费提交只允许一次、回执落盘（`bailian-reconfirmed-*.json`），依赖 run 工作区与归档租约；豁免理由见 `MODEL_DRIVER_STANDARD.md` §11。 |
 | `infra/queue/base.py` | 任务队列抽象。 |
 | `infra/queue/memory.py` | 内存队列：开发 / 单测使用，进程重启即丢。 |
 | `infra/queue/db.py` | 数据库队列（`QUEUE_DRIVER=db`）：job 落 `queued_jobs`，条件 UPDATE 领取 + 租约续租 + 死信留档，重启不丢。 |

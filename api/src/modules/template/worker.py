@@ -449,10 +449,10 @@ async def prepare_upload(job: Job) -> None:
         path = await asyncio.to_thread(run_path, run_id)
         await asyncio.to_thread(_sync_out, run, path)
         if run_channel(run.configuration) != "libtv":
-            from infra.ai.bailian import prepare_inputs
-
             try:
-                await prepare_inputs(run_id, model=CHANNEL_MODELS[run_channel(run.configuration)])
+                await _prepare_channel_inputs(
+                    run_id, CHANNEL_MODELS[run_channel(run.configuration)]
+                )
             except Exception:
                 logger.exception("百炼素材上传失败 run_id=%s", run_id)
                 set_status(run, "service_error")
@@ -623,6 +623,22 @@ async def recover_state(session, run_id: str) -> str:
     elif run.status in ("queued", "uploading", "uploaded", "waiting_executor", "prepared"):
         return "prepare"
     return "done"
+
+
+async def _prepare_channel_inputs(run_id: str, model: str) -> None:
+    """渠道要求「先上传素材」时，走供应商的可选协议。
+
+    替换链不认识具体供应商：能不能上传、密钥配没配，都由驱动自己回答
+    （`infra.ai.base.InputPreparer`）。这样接一个新渠道不必回来改这里，
+    也不会出现 `modules/template` 直接 import 某个驱动文件的横向依赖。
+    """
+    from infra import get_model_router
+    from infra.ai.base import InputPreparer
+
+    provider = get_model_router().provider_for(model, allow_fallback=False)
+    if not isinstance(provider, InputPreparer):
+        raise Unavailable(f"渠道 {model} 不支持素材上传，无法提交")
+    await provider.prepare_inputs(run_id, model=model)
 
 
 async def _restore_bailian_receipt(session, repo, run: ReplacementRun) -> None:

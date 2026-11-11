@@ -1,8 +1,11 @@
 # 北京百炼视频渠道
 
-> 本渠道走**老路径**（`infra/ai/bailian.py` + `AI_PROVIDERS`，不在 `drivers/` 里），
-> 理由登记在 [`MODEL_DRIVER_STANDARD.md`](MODEL_DRIVER_STANDARD.md) §11；是否迁移见
-> [`TODO.md`](TODO.md) T32。配置里**不要**再加 `agnes`（它是驱动，写进 `AI_PROVIDERS` 会启动失败）。
+> 本渠道是 `drivers/` 里的单文件驱动（`modules/model_driver/drivers/bailian.py`），
+> 进程启动时自动载入——**不要把 `bailian` 写进 `AI_PROVIDERS`**（同名但模型清单
+> 不同会启动报错，重复注册同理）。它比通用驱动多实现一个可选协议
+> `infra.ai.base.InputPreparer`：参考素材必须先上传到百炼自己的 OSS，因为 Wan
+> 只接受公网 URL 作素材，不认本地文件。协议说明见
+> [`MODEL_DRIVER_STANDARD.md`](MODEL_DRIVER_STANDARD.md) §2 / §11。
 
 替换工作台的「替换配置 → 模型渠道」可选择 LibTV、百炼 Wan 3.0 标准版或高速版。
 单条与批量准备均保存当次渠道；后续更改选择不会改变已保存任务的渠道。
@@ -11,7 +14,8 @@
 
 ## 服务端配置
 
-在不提交版本库的 `api/.env` 中将 `bailian` 追加到 `AI_PROVIDERS`，配置：
+在不提交版本库的 `api/.env` 中配置（这些是**驱动私有配置**，前缀规则见
+`infra/driver_config.py`；不需要改 `AI_PROVIDERS`）：
 
 ```dotenv
 BAILIAN_BASE_URL=https://llm-cz0qm1j8cl2weo19.cn-beijing.maas.aliyuncs.com/api/v1
@@ -20,11 +24,12 @@ BAILIAN_TIMEOUT_SEC=45
 BAILIAN_DOWNLOAD_TIMEOUT_SEC=45
 ```
 
-新增配置需要由后台进程重新加载。密钥只留在服务端，不返回到渠道目录，也不写入任务回执。
+改完重启进程生效（驱动不做热重载）。密钥只留在服务端，不返回到渠道目录，也不写入任务回执。
+没配密钥时渠道目录会直接显示「服务端尚未配置百炼密钥」，而不是等用户点了开始才在上传阶段失败。
 
 ## 输入与结果
 
-参考素材通过官方签名表单上传至百炼临时存储。上传和生成使用同一模型，标准版与高速版分别获取上传凭证。临时素材有效期 48 小时，重新准备可重新上传；生产高并发部署应换用自有 OSS 等稳定存储。
+参考素材通过官方签名表单上传至百炼临时存储。上传和生成使用同一模型，标准版与高速版分别获取上传凭证。临时素材有效期 48 小时（提交时按 47 小时校验，留一小时余量），重新准备可重新上传；生产高并发部署应换用自有 OSS 等稳定存储。
 
 冻结的素材顺序会将 `{{Mixed N}}` 转成独立计数的「视频1」「图1」「音频1」。任务详情中的提示词与素材编号使用转换后的实际文本。
 

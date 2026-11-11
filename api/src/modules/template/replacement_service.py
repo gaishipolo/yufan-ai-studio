@@ -1130,7 +1130,7 @@ def _materialize_inputs(
         compiled.compiler_version += "+embedded-audio-v1"
 
     if payload.channel != "libtv":
-        from infra.ai.bailian import translate_prompt
+        from core.prompt_refs import translate_prompt
 
         spec["channel"] = payload.channel
         compiled.prompt = translate_prompt(compiled.prompt, bindings)

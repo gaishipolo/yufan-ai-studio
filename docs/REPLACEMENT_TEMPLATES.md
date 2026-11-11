@@ -528,21 +528,24 @@ LibTV 排队不稳定时，可以在准备任务前换渠道。渠道是**每条
 重试沿用原渠道，不静默换道。
 
 **示例与占位符**：LibTV 的 `{{Mixed N}}` 与百炼的「图N/视频N/音频N」编号不同。
-百炼在准备阶段按素材类型分别计数重编译提示词（`translate_prompt`），并递增
-`compiler_version`，避免两类编号混用。
+百炼在准备阶段按素材类型分别计数重编译提示词（`core/prompt_refs.translate_prompt`，
+替换链与驱动共用同一份），并递增 `compiler_version`，避免两类编号混用。
 
 **配置**（`api/.env`，都已写进 `.env.example`）：
 
 ```
-AI_PROVIDERS=echo,libtv,bailian
+# 百炼不进 AI_PROVIDERS：它在 drivers/ 里自动载入（2026-11-11 迁入）
+AI_PROVIDERS=echo,libtv
 BAILIAN_BASE_URL=https://llm-cz0qm1j8cl2weo19.cn-beijing.maas.aliyuncs.com/api/v1
 BAILIAN_API_KEY=sk-...
 BAILIAN_TIMEOUT_SEC=45
 BAILIAN_DOWNLOAD_TIMEOUT_SEC=45
 ```
 
-> `agnes` **不要写进 `AI_PROVIDERS`**：它是模型驱动（`modules/model_driver/drivers/agnes.py`），
-> 启动时自动载入。写进去会因「同名但模型清单不同」或重复注册导致启动失败。
+> `agnes` / `bailian` **都不要写进 `AI_PROVIDERS`**：它们是模型驱动
+> （`modules/model_driver/drivers/`），启动时自动载入。写进去会因「同名但模型清单
+> 不同」或重复注册导致启动失败。百炼的渠道可用性由驱动自己回答
+> （`InputPreparer.unavailable_reason`），没配密钥时渠道目录直接标不可用。
 
 `BAILIAN_BASE_URL` 里第一段是业务空间 ID，必须与密钥同属北京地域，跨地域会失败。
 

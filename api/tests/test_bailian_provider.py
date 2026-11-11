@@ -5,8 +5,8 @@ import httpx
 import pytest
 
 from core.exceptions import BadRequest, UpstreamError
-from infra.ai import bailian
 from infra.ai.base import Capability, GenerationRequest, GenerationState
+from modules.model_driver.drivers import bailian
 
 
 @pytest.fixture
@@ -298,3 +298,74 @@ async def test_definite_rejection_can_retry_without_unknown_billing(workspace):
         await p.submit(req)
     assert await p.submit(req) == "run:task-ok"
     assert len(calls) == 2
+
+
+# -------------------------------------------------------------- 标准符合性
+def test_driver_passes_contract_validation() -> None:
+    from modules.model_driver.spec import validate_driver
+
+    assert validate_driver(bailian.BailianProvider()) == []
+
+
+def test_declared_models_belong_to_this_provider() -> None:
+    ids = [model.id for model in bailian.BailianProvider.models]
+    assert ids == [bailian.MODEL_ID, bailian.PRIME_MODEL_ID]
+    for model in bailian.BailianProvider.models:
+        assert model.provider == "bailian"
+        assert model.capability is Capability.VIDEO
+
+
+def test_driver_is_auto_loaded_without_env_listing(client) -> None:  # noqa: ANN001
+    """核心诉求：不进 `AI_PROVIDERS` 也要被发现、校验、接进路由。
+
+    替换链是按 `bailian-wan3-*` 这个模型 id 找供应商的；驱动没被自动载入时，
+    症状不是启动失败，而是渠道在选择列表里静默消失。
+    """
+    from core.config import settings
+    from infra import get_model_router
+    from modules.model_driver.registry import driver_summaries, load_errors
+
+    assert "bailian" not in settings.ai_provider_list, "它不该再靠配置清单加载"
+    assert not load_errors(), load_errors()
+
+    infos = {item.name: item for item in driver_summaries()}
+    assert infos["bailian"].loaded is True
+    assert infos["bailian"].model_count == 2
+
+    assert get_model_router().provider_for(bailian.MODEL_ID).name == "bailian"
+
+
+def test_channel_reports_missing_key_before_any_upload() -> None:
+    """没配密钥要在**选渠道时**就说清楚，不能等用户点了「开始」才在上传阶段炸。"""
+    from infra.ai.base import InputPreparer
+
+    cold = bailian.BailianProvider(
+        settings=bailian.BailianSettings(api_key="", _env_file=None)
+    )
+    assert isinstance(cold, InputPreparer)
+    assert "密钥" in cold.unavailable_reason()
+
+    ready = bailian.BailianProvider(
+        settings=bailian.BailianSettings(api_key="sk-x", _env_file=None)
+    )
+    assert ready.unavailable_reason() == ""
+
+
+def test_prompt_translation_is_shared_with_the_replacement_chain() -> None:
+    """档案（`inputs/prompt.txt`）与请求体必须用同一套重编号规则。
+
+    两份实现迟早编出「档案里写视频1、实际发出去是视频2」——出图正常、只是
+    内容不对，线上极难发现。所以这条钉的是「同一个函数对象」。
+    """
+    from core import prompt_refs
+
+    assert bailian.translate_prompt is prompt_refs.translate_prompt
+
+
+def test_submit_budget_covers_the_upload_fallback() -> None:
+    """提交里可能兜底跑一次素材上传（单文件上限 100MB）。
+
+    预算停在框架默认的 120 秒时，上传没完就被取消 → 任务变成「有提交意图、
+    没有任务号」= 结果未知、禁止重提，而上传本身并不产生费用。
+    """
+    assert bailian.BailianProvider.submit_timeout_sec >= 300
