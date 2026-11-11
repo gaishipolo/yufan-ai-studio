@@ -69,6 +69,59 @@ def test_subjects_and_scopes_do_not_share_buckets() -> None:
     assert other_scope.allowed is True
 
 
+def test_same_scope_with_different_limits_does_not_share_a_bucket() -> None:
+    """同一个 scope 挂两档额度时，额度不能互相偷。
+
+    真实形态就是 `library.trash`：`restore` 限 60/min，`purge` 限 30/min。
+    桶 key 只由 `scope + subject` 决定时，两条路由共用一个桶——先跑满的那条
+    会把另一条的额度吃掉，实际额度还取决于请求顺序（先调 purge，restore 只剩
+    30 次）。额度是**路由自己的契约**，桶必须跟着额度走。
+    """
+    limiter = _limiter()
+
+    async def scenario() -> tuple[bool, bool]:
+        for _ in range(30):  # 把 60 档用掉一半
+            await limiter.hit("u1", scope="library.trash", limit=60)
+        # 30 档是新的一档，自己一分额度都没用过
+        first = await limiter.hit("u1", scope="library.trash", limit=30)
+        second = await limiter.hit("u1", scope="library.trash", limit=30)
+        return first.allowed, second.allowed
+
+    first, second = asyncio.run(scenario())
+    assert first is True, "另一档额度用掉的次数不该算到这一档头上"
+    assert second is True
+
+
+def test_same_scope_and_same_limit_still_shares_a_bucket() -> None:
+    """反过来也要钉住：额度相同就是同一个桶，不能因为分桶把限流拆成两倍。
+
+    `library.share` 有四个路由都挂 60/min —— 四个入口共用一份额度是有意的设计，
+    改 key 时把这条一起改成独立桶，等于悄悄把额度翻四倍。
+    """
+    limiter = _limiter()
+
+    async def scenario() -> list[bool]:
+        return [
+            (await limiter.hit("u1", scope="library.share", limit=2)).allowed
+            for _ in range(3)
+        ]
+
+    allowed = asyncio.run(scenario())
+    assert allowed[:2] == [True, True]
+    assert allowed[2] is False, "同一 scope 同一额度必须共用一份额度"
+
+
+def test_same_scope_with_different_windows_does_not_share_a_bucket() -> None:
+    """窗口不同也不是同一个桶：窗口参与 `bucket` 计算，混用会算错起始时刻。"""
+    limiter = _limiter()
+
+    async def scenario() -> bool:
+        await limiter.hit("u1", scope="library.upload", limit=2, window=10)
+        return (await limiter.hit("u1", scope="library.upload", limit=2, window=60)).allowed
+
+    assert asyncio.run(scenario()) is True
+
+
 def test_limit_zero_disables_limiting() -> None:
     limiter = _limiter()
 

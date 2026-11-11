@@ -240,7 +240,7 @@ class RateLimiter:
         start = bucket * window
         elapsed = now - start
 
-        base = self._key(scope, subject)
+        base = self._key(scope, subject, limit=limit, window=window)
         curr_key = f"{base}:{bucket}"
         prev_key = f"{base}:{bucket - 1}"
         try:
@@ -290,9 +290,29 @@ class RateLimiter:
             ),
         )
 
-    def _key(self, scope: str, subject: str) -> str:
+    def _key(self, scope: str, subject: str, *, limit: int, window: float) -> str:
+        """桶 key：`前缀:rl:scope:主体:额度@窗口:窗口序号`。
+
+        **额度必须进 key**。同一个 scope 挂多档额度是真实存在的
+        （`library.trash` 的 restore 60/min、purge 30/min），而 scope 本身又会被
+        复用（`library.share` 四个入口共用 60/min，这是有意的设计）。只按
+        scope 分桶的话，前者会变成「两条路由抢一份额度」，实际额度取决于请求顺序，
+        而且拒绝时返回的 `remaining` 是按当前路由的 limit 算的——数字对不上是真事。
+
+        代价是改额度（含 `RATE_LIMIT_SCALE`、`RATE_LIMIT_OVERRIDES`）会让在途的
+        桶换到新键，等价于「改配置即重置窗口」。这对限流是对的：新额度应该立刻
+        按新额度算，而不是先继承一段旧窗口的计数。
+        """
         return ":".join(
-            part for part in (self._prefix, "rl", scope, _slot(subject)) if part
+            part
+            for part in (
+                self._prefix,
+                "rl",
+                scope,
+                _slot(subject),
+                f"{limit}@{window:g}",
+            )
+            if part
         )
 
     @staticmethod

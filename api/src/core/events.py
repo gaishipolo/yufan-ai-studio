@@ -83,7 +83,14 @@ class EventBus:
     def subscribe(self, name: str, *, priority: int = 100) -> Callable[[Handler], Handler]:
         """装饰器写法：`@bus.subscribe("task.completed")`。
 
-        priority 小的先执行；同一 priority 按注册顺序。
+        执行语义是**组间串行、组内并发**：priority 小的那一组全部跑完，才开始
+        下一组；同一 priority 内并发（相对顺序不保证，别写出依赖它的 handler）。
+
+        为什么不是全串行：通知类 handler 会打外部 HTTP，串起来等于把延迟相加，
+        一个渠道变慢就拖垮整条发布路径。默认 priority 都是 100，绝大多数情况下
+        所有订阅者在同一组里并发，与「全并发」等价。
+        为什么不是全并发：那就没法表达「先留痕、再通知」这种依赖，priority 只剩
+        一个好看的数字。
         """
 
         def decorator(handler: Handler) -> Handler:
@@ -126,22 +133,35 @@ class EventBus:
         if not handlers:
             return 0
 
-        results = await asyncio.gather(
-            *(self._invoke(sub.handler, event) for sub in handlers),
-            return_exceptions=True,
-        )
+        # 先排序再分组：`add` 只保证各自列表内有序，具名与通配是拼接起来的，
+        # 不重排的话「通配 priority=10」会被排到具名 priority=100 后面。
+        handlers.sort(key=lambda s: s.priority)
+
         failures: list[tuple[str, BaseException]] = []
-        for handler_sub, result in zip(handlers, results, strict=True):
-            if not isinstance(result, BaseException):
-                continue
-            label = getattr(handler_sub.handler, "__qualname__", repr(handler_sub.handler))
-            failures.append((str(label), result))
-            logger.error(
-                "事件处理器失败 event=%s handler=%s",
-                name,
-                label,
-                exc_info=result,
+        index = 0
+        while index < len(handlers):
+            level = handlers[index].priority
+            group: list[_Subscription] = []
+            while index < len(handlers) and handlers[index].priority == level:
+                group.append(handlers[index])
+                index += 1
+            results = await asyncio.gather(
+                *(self._invoke(sub.handler, event) for sub in group),
+                return_exceptions=True,
             )
+            for handler_sub, result in zip(group, results, strict=True):
+                if not isinstance(result, BaseException):
+                    continue
+                label = getattr(
+                    handler_sub.handler, "__qualname__", repr(handler_sub.handler)
+                )
+                failures.append((str(label), result))
+                logger.error(
+                    "事件处理器失败 event=%s handler=%s",
+                    name,
+                    label,
+                    exc_info=result,
+                )
         if failures and strict:
             raise EventDeliveryError(name, failures)
         return len(handlers)
