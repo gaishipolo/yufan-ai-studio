@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import contextlib
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, Literal
 
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -284,6 +284,29 @@ class LifecycleService:
 
         await self._purge_row(row, actor)
 
+    async def _other_holders(
+        self, key: str, asset_id: str, *, column: Literal["storage", "cover"]
+    ) -> int:
+        """除了自己，还有几个行指着这个**对象**。
+
+        按 `storage_key` / `cover_key` 数，不按 `sha256`：内容寻址的 key 带扩展名
+        （`<digest><ext>`），同一份字节可以落到多个对象上，「字节相同」证明不了
+        「我这个对象还有别人在用」。反过来数错的方向是永久孤儿：行删了、字节还在。
+
+        不带 `deleted_at` 条件：回收站里的行恢复后仍要用这份字节（见 `_purge_row`）。
+        """
+        if not key:
+            return 0
+        field = LibraryAsset.storage_key if column == "storage" else LibraryAsset.cover_key
+        return int(
+            await self.session.scalar(
+                select(func.count())
+                .select_from(LibraryAsset)
+                .where(field == key, LibraryAsset.id != asset_id)
+            )
+            or 0
+        )
+
     async def purge_expired(self, asset_id: str) -> bool:
         """GC 专用：到期的回收站条目，被引用则跳过并返回 False。"""
         row = await self.session.get(LibraryAsset, asset_id)
@@ -296,28 +319,35 @@ class LifecycleService:
         return True
 
     async def _purge_row(self, row: LibraryAsset, actor: CurrentUser | None) -> None:
-        digest, storage_key, cover_key = row.sha256, row.storage_key, row.cover_key
+        storage_key, cover_key = row.storage_key, row.cover_key
         # 内容寻址：同一份字节可能还被别人的行登记着，只有最后一个引用者
         # 才删物理文件。判断放在删除本行之前，删除之后我们自己就查不到了。
+        #
+        # **引用要按对象数，不能按 sha256 数**。key 是 `<digest><扩展名>`，同一张图
+        # 以 `.jpg` / `.jpeg` 上传会落到两个**不同对象**、却共享同一个 `sha256`。
+        # 按 sha256 数出来的「还有人用」是假的：我们自己那个对象没有任何其他行
+        # 指着，却因为别人有同样字节而永远不删 —— 行删了、回收站清了、字节还在，
+        # 只有扫孤儿文件能发现。
         #
         # **不能带 `deleted_at IS NULL`**：回收站里的行 deleted_at 恰好非空，
         # 它们恢复之后还要用这份字节。带上这个条件的后果是「两个用户的同内容
         # 资产都在回收站时，先彻底删除的那个把文件删了，后恢复的那个 404」——
         # 上游去重（`_find_duplicate`）要的是「未删除」，这里要的是「还有人引用」，
         # 两个问题不同，条件也就不能抄。
-        others = 0
-        if digest:
-            others = int(
-                await self.session.scalar(
-                    select(func.count())
-                    .select_from(LibraryAsset)
-                    .where(
-                        LibraryAsset.sha256 == digest,
-                        LibraryAsset.id != row.id,
-                    )
-                )
-                or 0
-            )
+        payload_owners = await self._other_holders(storage_key, row.id, column="storage")
+        preview_holders = (
+            await self._other_holders(cover_key, row.id, column="cover")
+            if cover_key and cover_key != storage_key
+            else 0
+        )
+        # 真正会被删掉的对象：原始字节与缩略图是**两个独立对象**，要分开判。
+        # 缩略图按 digest 归一，通常被同一份字节的多个行共用；原始字节带扩展名，
+        # 通常只有一行指着。合成一个判断，必然是一边多删一边少删。
+        doomed = []
+        if storage_key and payload_owners == 0:
+            doomed.append(storage_key)
+        if cover_key and cover_key != storage_key and preview_holders == 0:
+            doomed.append(cover_key)
 
         # **闸门必须是第一条语句，而且要看 rowcount。**
         # `WHERE state='trash'` 写在最后等于没写：子表已经删掉、commit 也照做，
@@ -344,22 +374,16 @@ class LifecycleService:
         # 字节真被删掉时，这些封面会变成 404 的裂图——而封装本身可能只是被解散、
         # 之后还要恢复。置空让前端回退到占位图：丢一张封面是可恢复的，裂图不是。
         #
-        # **前提是这一行自己拥有这份字节**。封装没有自己的字节（`storage_key`
-        # 为空、`sha256` 为空，`others` 恒为 0），它的 `cover_key` 是从成员借来的，
-        # 而成员的字节还在。不判这一个条件，删掉封装 A 会把同样借了这张缩略图的
-        # 封装 B 的封面也清空——B 的封面指向的图根本没人动过。
-        borrowed = (
-            [key for key in (cover_key, storage_key) if key]
-            if storage_key and others == 0
-            else []
-        )
-        if borrowed:
+        # 只清「指向即将删掉的对象」的那些：还活着的对象不能清，否则等于把
+        # 别人的封面一起清掉（`borrowed` 只可能是 doomed，封装自己的
+        # `storage_key` 为空、`sha256` 为空，所以删封装永远落不进这里）。
+        if doomed:
             await self.session.execute(
                 update(LibraryAsset)
                 .where(
                     LibraryAsset.kind == "pack",
                     LibraryAsset.id != row.id,
-                    LibraryAsset.cover_key.in_(borrowed),
+                    LibraryAsset.cover_key.in_(doomed),
                 )
                 .values(cover_key="")
             )
@@ -391,10 +415,8 @@ class LifecycleService:
         )
         await self.session.commit()
 
-        if others == 0:
-            for key in (storage_key, cover_key):
-                if not key:
-                    continue
+        if doomed:
+            for key in doomed:
                 with contextlib.suppress(Exception):
                     # 元数据已删，重试一次也没法把行找回来；留下日志由
                     # `library.gc`（M3）扫孤儿文件，不在这里卡住用户操作。
@@ -404,7 +426,12 @@ class LifecycleService:
             actor_id=actor.id if actor else None,
             target_type="library_asset",
             target_id=row.id,
-            detail={"ownerId": row.owner_id, "bytesFreed": row.size_bytes if others == 0 else 0},
+            # 只有真删了原始字节才算「释放了空间」：封装没有自己的字节，
+            # `size_bytes` 是成员之和，按它记会把没释放的量记成已释放。
+            detail={
+                "ownerId": row.owner_id,
+                "bytesFreed": row.size_bytes if storage_key in doomed else 0,
+            },
         )
 
     # ------------------------------------------------------------------ 草稿

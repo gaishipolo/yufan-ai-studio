@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 from library_support import (
     LIB_RW,
     admin_headers,
+    blob_exists,
     fetch_asset,
     fetch_group_rows,
     fetch_share_requests,
@@ -117,6 +118,41 @@ def test_purge_removes_the_row_and_the_file(client: TestClient, api: str) -> Non
     assert purged.status_code == 200, purged.text
     assert fetch_asset(asset["id"]) is None
     assert client.get(f"{api}/library/assets/{asset['id']}", headers=owner_h).status_code == 404
+
+
+def test_purge_frees_our_blob_even_when_someone_else_has_the_same_bytes(
+    client: TestClient, api: str
+) -> None:
+    """「同一份字节」不等于「同一个对象」，引用计数必须按 `storage_key` 判。
+
+    内容寻址的 key 是 `<digest><扩展名>`：同一张图以 `.jpg` / `.jpeg` 上传会落到
+    两个**不同**的对象上，但 `sha256` 相同。原来按 sha256 数引用，别人也有同样
+    字节时 `others > 0`，于是我们自己那个对象永远不删——行没了、回收站清了、
+    字节还躺在存储里，只有扫孤儿文件才发现得了一次一次地漏。
+    """
+    admin = admin_headers(client)
+    _, first_h = make_user(client, admin, LIB_RW)
+    _, second_h = make_user(client, admin, LIB_RW)
+    mine = upload_image(client, api, first_h, name="同一张.jpg", color="teal", fmt="JPEG")
+    theirs = upload_image(client, api, second_h, name="同一张.jpeg", color="teal", fmt="JPEG")
+
+    row_mine, row_theirs = fetch_asset(mine["id"]), fetch_asset(theirs["id"])
+    assert row_mine and row_theirs
+    assert row_mine["sha256"] == row_theirs["sha256"], "前提：两份字节完全一致"
+    assert row_mine["storage_key"] != row_theirs["storage_key"], (
+        "前提：扩展名不同 → 内容寻址落到两个不同对象"
+    )
+    assert row_mine["cover_key"] == row_theirs["cover_key"], "缩略图按 digest 归一，是同一个对象"
+
+    client.delete(f"{api}/library/assets/{mine['id']}", headers=first_h)
+    purged = client.delete(f"{api}/library/trash/{mine['id']}", headers=first_h)
+    assert purged.status_code == 200, purged.text
+
+    assert not blob_exists(row_mine["storage_key"]), (
+        "自己那份字节必须真删掉，否则是永久孤儿（sha256 相同不代表同一个对象）"
+    )
+    assert blob_exists(row_theirs["storage_key"]), "别人那份对象一个字节都不能动"
+    assert blob_exists(row_mine["cover_key"] or ""), "缩略图还被别人的行用着，不能跟着删"
 
 
 def test_purge_is_blocked_while_referenced(client: TestClient, api: str) -> None:

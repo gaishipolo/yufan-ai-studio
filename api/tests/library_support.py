@@ -103,6 +103,18 @@ def png_bytes(color: str = "purple", size: tuple[int, int] = (32, 32)) -> bytes:
     return buffer.getvalue()
 
 
+def jpeg_bytes(color: str = "purple", size: tuple[int, int] = (32, 32)) -> bytes:
+    """同样的内容只能有一个扩展名的反例：`.jpg` 与 `.jpeg` 都算 JPEG。
+
+    内容校验按 `image.format`（"JPEG"）比对，所以同一份字节可以合法地以上述
+    两个扩展名入库，落到**两个不同**的 `storage_key` 上、共享同一个 `sha256`。
+    引用计数按 sha256 数会把这些当成「还有人用」。
+    """
+    buffer = io.BytesIO()
+    Image.new("RGB", size, color).save(buffer, format="JPEG")
+    return buffer.getvalue()
+
+
 def upload_image(
     client: TestClient,
     api: str,
@@ -110,10 +122,12 @@ def upload_image(
     *,
     name: str = "cover.png",
     color: str = "purple",
+    fmt: str = "PNG",
 ) -> dict[str, Any]:
+    payload = jpeg_bytes(color) if fmt == "JPEG" else png_bytes(color)
     response = client.post(
         f"{api}/library/assets/upload",
-        content=png_bytes(color),
+        content=payload,
         params={"filename": name, "kind": "image"},
         headers=headers,
     )
@@ -344,6 +358,15 @@ def put_blob(key: str, data: bytes, mime: str = "image/png") -> str:
 
     asyncio.run(run())
     return key
+
+
+def blob_exists(key: str) -> bool:
+    """对象存储里这个 key 还在不在（断言「字节真被删掉 / 别人那份没动」用）。"""
+    from infra import get_storage
+
+    if not key:
+        return False
+    return asyncio.run(get_storage().exists(key))
 
 
 def fetch_pack_items(pack_id: str) -> list[dict[str, Any]]:
