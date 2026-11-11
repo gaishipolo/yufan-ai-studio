@@ -12,9 +12,9 @@
 | 项 | 值 |
 |---|---|
 | 仓库 / 分支 | `https://github.com/gaishipolo/yufan-ai-studio` · `main` |
-| HEAD | `a18e927`（与 `origin/main` 一致；未跟踪的只有 `var/`、快捷方式 `.lnk`、`vite.config.ts.timestamp-*.mjs`） |
-| CI | run **#66 全绿**：后端 pytest + ruff + 迁移一致 + mypy；前端 verify；PG 迁移（观察期，`continue-on-error` 仍在） |
-| 本机门禁 | 后端 **1351 passed / 12 skipped**（约 195s）；`npm run verify` 全绿；`app export-openapi --check` 四份无差异 |
+| HEAD | `cfc0508`（与 `origin/main` 一致；未跟踪的只有 `var/`、快捷方式 `.lnk`、`vite.config.ts.timestamp-*.mjs`） |
+| CI | run **#68 全绿**：后端 pytest + ruff + 迁移一致 + mypy；前端 verify；PG 迁移（观察期，`continue-on-error` 仍在） |
+| 本机门禁 | 后端 **1356 passed / 12 skipped**（约 175s）；`npm run verify` 全绿；`app export-openapi --check` 四份无差异 |
 | 规模 | 12 个业务模块 · 111 条路径 / **140 个端点** · **57 个权限码** · **4 份**契约生成物 |
 | 后端 | `api/.venv/Scripts/app.exe serve --reload` → 8080，前缀 **`/api/v1`**（裸 `/health` 会返回 40400） |
 | 前端 | `cd studio && npm run dev` → 5173，`/api` 已代理到 8080 |
@@ -43,6 +43,7 @@
 | `17b3813` | 事件循环用例按**观察窗口**定工作量，不再按轮数定额 | 快机器上不再「窗口太短」假红 |
 | `e521df9` | 新增本交接文档 + 修正 6 处过期口径 | 新会话不用重新摸现状 |
 | 本轮 | **`bailian` 迁进 `drivers/`**（T32，`a18e927`）：新增可选协议 `InputPreparer` + `core/prompt_refs.py`，替换链改为「从路由拿实例、按类型判断」 | 百炼不再靠 `AI_PROVIDERS` 加载；未配密钥在选渠道时就说清 |
+| `cfc0508` | `ModelSpec.internal` + `ModelRouter.public_models()`：替换链专用模型不再出现在目录（T33） | 视频下拉里不再有选中即 400 的 `*-replacement` |
 
 两个值得记住的结论：
 
@@ -63,6 +64,7 @@
 | 指标超限丢弃可在 `/metrics` 看到 `app_metrics_series_dropped_total{metric}` | 运维 | 以前是静默丢 |
 | `bailian` 不再是 `AI_PROVIDERS` 里的名字：`.env` 若还写着它，**启动会失败**（`infra/ai/bailian.py` 已删） | 运维 | 删掉那一段即可，驱动会自动载入；只需留 `BAILIAN_API_KEY` 等私有配置 |
 | 百炼渠道可用性改由驱动回答（`InputPreparer.unavailable_reason`） | 前端/运维 | 没配密钥时渠道目录返回「服务端尚未配置百炼密钥」，文案与以前一致 |
+| `GET /models` 不再返回 `internal=True` 的模型（`bailian-wan3-*` / `libtv-wan3-*`） | 前端/脚本 | 它们是替换链专用（要 `archiveRunId`）。按 id 仍能提交；只是不再出现在「可选清单」和「可用模型」报错提示里 |
 
 ## 3. 没做完的（直接从这里开工）
 
@@ -83,6 +85,9 @@
 - **T32 · `bailian` 迁入 `drivers/`**：驱动自动载入，不再进
   `AI_PROVIDERS`；替换链改走可选协议 `infra.ai.base.InputPreparer`（上传素材 +
   自报可用性），提示词重编号下移 `core/prompt_refs.py`。回执路径与计费纪律都没变。
+- **T33 · 替换链专用模型漏进目录**：`ModelSpec.internal` + `public_models()`。
+  过滤只发生在**目录层**，`resolve()` / `provider_for()` 不动——替换链正是拿
+  `bailian-wan3-*` 的 id 直接提交的。
 
 ## 4. 新会话怎么接手
 
