@@ -12,9 +12,9 @@
 | 项 | 值 |
 |---|---|
 | 仓库 / 分支 | `https://github.com/gaishipolo/yufan-ai-studio` · `main` |
-| HEAD | `17b3813`（与 `origin/main` 一致；未跟踪的只有 `var/`、快捷方式 `.lnk`、`vite.config.ts.timestamp-*.mjs`） |
-| CI | run **#64 全绿**：后端 pytest 1357 passed + ruff + 迁移一致 + mypy；前端 verify；PG 迁移（观察期，`continue-on-error` 仍在） |
-| 本机门禁 | 后端 **1345 passed / 12 skipped**（约 200s）；`npm run verify` 全绿；`app export-openapi --check` 四份无差异 |
+| HEAD | `a18e927`（与 `origin/main` 一致；未跟踪的只有 `var/`、快捷方式 `.lnk`、`vite.config.ts.timestamp-*.mjs`） |
+| CI | run **#66 全绿**：后端 pytest + ruff + 迁移一致 + mypy；前端 verify；PG 迁移（观察期，`continue-on-error` 仍在） |
+| 本机门禁 | 后端 **1351 passed / 12 skipped**（约 195s）；`npm run verify` 全绿；`app export-openapi --check` 四份无差异 |
 | 规模 | 12 个业务模块 · 111 条路径 / **140 个端点** · **57 个权限码** · **4 份**契约生成物 |
 | 后端 | `api/.venv/Scripts/app.exe serve --reload` → 8080，前缀 **`/api/v1`**（裸 `/health` 会返回 40400） |
 | 前端 | `cd studio && npm run dev` → 5173，`/api` 已代理到 8080 |
@@ -42,7 +42,7 @@
 | `ae5cf73` | 测试环境 scrypt `2**14 → 2**10` | 全量 235~289s → 约 200s；登录 150ms → 22ms |
 | `17b3813` | 事件循环用例按**观察窗口**定工作量，不再按轮数定额 | 快机器上不再「窗口太短」假红 |
 | `e521df9` | 新增本交接文档 + 修正 6 处过期口径 | 新会话不用重新摸现状 |
-| 本轮 | **`bailian` 迁进 `drivers/`**（T32）：新增可选协议 `InputPreparer` + `core/prompt_refs.py`，替换链改为「从路由拿实例、按类型判断」 | 百炼不再靠 `AI_PROVIDERS` 加载；未配密钥在选渠道时就说清 |
+| 本轮 | **`bailian` 迁进 `drivers/`**（T32，`a18e927`）：新增可选协议 `InputPreparer` + `core/prompt_refs.py`，替换链改为「从路由拿实例、按类型判断」 | 百炼不再靠 `AI_PROVIDERS` 加载；未配密钥在选渠道时就说清 |
 
 两个值得记住的结论：
 
