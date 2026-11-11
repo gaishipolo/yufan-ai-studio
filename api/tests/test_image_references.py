@@ -32,7 +32,7 @@ from modules.image.models import (
 from modules.image.pipeline import ImageJobStore, _reference_data_uris
 from modules.image.schema import ImageJobOut
 from modules.image.service import _resolve_references
-from tests.library_support import insert_asset, png_bytes, upload_image
+from library_support import insert_asset, png_bytes, upload_image
 
 API = "/api/v1"
 
