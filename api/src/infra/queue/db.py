@@ -88,7 +88,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any
 from uuid import uuid4
 from weakref import WeakKeyDictionary
@@ -104,7 +104,7 @@ from core.metrics import METRICS
 from db.base import utcnow
 from db.jobs import ACTIVE_JOB_STATUSES, JOB_DEAD, JOB_PENDING, JOB_RUNNING, QueuedJob
 from db.session import get_session_factory
-from infra.queue.base import Job
+from infra.queue.base import Job, current_job
 
 logger = get_logger(__name__)
 
@@ -210,6 +210,36 @@ class DbJobQueue:
         if not job.trace_id:
             job.trace_id = trace.current()
         run_at = utcnow() + timedelta(seconds=max(0.0, delay))
+        parent = current_job()
+        if parent and job.idempotency_key and parent.idempotency_key == job.idempotency_key:
+            # Never fall through to normal enqueue on lost ownership: a stale
+            # handler must not create a replacement after another worker finished.
+            continuation = json.dumps(
+                {
+                    "name": job.name,
+                    "payload": job.payload,
+                    "attempts": job.attempts,
+                    "max_attempts": job.max_attempts,
+                    "timeout_sec": job.timeout_sec,
+                    "trace_id": job.trace_id,
+                    "run_at": run_at.isoformat(),
+                },
+                ensure_ascii=False,
+                default=str,
+            )
+            async with self._session() as session:
+                await session.execute(
+                    update(QueuedJob)
+                    .where(
+                        QueuedJob.id == parent.id,
+                        QueuedJob.status == JOB_RUNNING,
+                        QueuedJob.lease_token == parent.lease_token,
+                        QueuedJob.next_job.is_(None),
+                    )
+                    .values(next_job=continuation)
+                )
+                await session.commit()
+            return parent.id
         async with self._session() as session:
             if job.idempotency_key:
                 existing = await session.scalar(
@@ -324,7 +354,7 @@ class DbJobQueue:
                     update(QueuedJob)
                     .where(QueuedJob.id == candidate, lease_expired)
                     .execution_options(synchronize_session=False)
-                .values(
+                    .values(
                         status=JOB_DEAD,
                         attempts=attempts,
                         lease_expires_at=None,
@@ -345,12 +375,21 @@ class DbJobQueue:
             token = uuid4().hex
             claimed = await session.execute(
                 update(QueuedJob)
-                .where(QueuedJob.id == candidate, or_(pending_ready, lease_expired))
+                .where(
+                    QueuedJob.id == candidate,
+                    or_(pending_ready, lease_expired),
+                    # The payload below was read from this exact ownership state.
+                    # An ack may have promoted a different payload under this id
+                    # between our read and update; retry rather than return it stale.
+                    QueuedJob.status == row.status,
+                    QueuedJob.lease_token == row.lease_token,
+                )
                 .execution_options(synchronize_session=False)
                 .values(
                     status=JOB_RUNNING,
                     lease_expires_at=now + timedelta(seconds=self._lease),
                     lease_token=token,
+                    next_job=None,
                     attempts=attempts,
                     updated_at=now,
                 )
@@ -417,7 +456,35 @@ class DbJobQueue:
 
     async def ack(self, job: Job) -> None:
         async with self._session() as session:
-            result = await session.execute(delete(QueuedJob).where(*self._fence(job)))
+            # Lock on PG; the conditional update/delete below also fences SQLite.
+            row = await session.scalar(select(QueuedJob).where(*self._fence(job)).with_for_update())
+            if row is not None and row.next_job:
+                staged = row.next_job
+                values = json.loads(staged)
+                values["payload"] = json.dumps(values["payload"], ensure_ascii=False, default=str)
+                values["run_at"] = datetime.fromisoformat(values["run_at"])
+                values.update(
+                    status=JOB_PENDING,
+                    lease_token=None,
+                    lease_expires_at=None,
+                    next_job=None,
+                    updated_at=utcnow(),
+                )
+                result = await session.execute(
+                    update(QueuedJob)
+                    .where(
+                        *self._fence(job),
+                        QueuedJob.next_job == staged,
+                    )
+                    .values(**values)
+                )
+            else:
+                result = await session.execute(
+                    delete(QueuedJob).where(
+                        *self._fence(job),
+                        QueuedJob.next_job.is_(None),
+                    )
+                )
             await session.commit()
             if getattr(result, "rowcount", 0) != 1:
                 # 不是错误：租约被接手后旧主人的回执本来就该落空。
@@ -435,6 +502,7 @@ class DbJobQueue:
         # 否则同一个 key 想重投会被一条永远不动的死信挡回去
         dead = not requeue or job.exhausted
         values: dict[str, Any] = {
+            "next_job": None,
             "attempts": job.attempts,
             "lease_expires_at": None,
             # 交回凭据：回到 pending 的行不该再记着「它属于谁」

@@ -60,6 +60,9 @@ worker 重跑一遍——用户收到两份结果、供应商被扣两次费。
 from __future__ import annotations
 
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Protocol, runtime_checkable
@@ -97,6 +100,27 @@ class Job:
     def retry_delay(self, *, base: float = 2.0, cap: float = 60.0) -> float:
         """指数退避：2s、4s、8s… 上限 60s。"""
         return min(cap, base * (2 ** max(0, self.attempts - 1)))
+
+
+_executing_job: ContextVar[Job | None] = ContextVar("queue_executing_job", default=None)
+
+
+@contextmanager
+def job_execution(job: Job) -> Iterator[None]:
+    """Scope handler execution, allowing same-key enqueue to stage a successor.
+
+    Workers must enter this scope before creating the handler task. Detached child
+    tasks must not outlive the handler; database writes are fenced by its token.
+    """
+    token = _executing_job.set(job)
+    try:
+        yield
+    finally:
+        _executing_job.reset(token)
+
+
+def current_job() -> Job | None:
+    return _executing_job.get()
 
 
 @runtime_checkable

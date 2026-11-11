@@ -87,9 +87,9 @@ class QueuedJob(Base, UUIDMixin):
     timeout_sec: Mapped[float | None] = mapped_column(Float, nullable=True)
     # 入队那一刻的请求 id（= trace id）。异步之后日志会换一个执行上下文，
     # 没有它就只能靠 job id 反推「这是谁点的」。空字符串 = 非请求触发（定时/补偿）。
-    trace_id: Mapped[str] = mapped_column(
-        String(64), default="", server_default="", nullable=False
-    )
+    trace_id: Mapped[str] = mapped_column(String(64), default="", server_default="", nullable=False)
+    # One durable continuation, promoted only on successful fenced ack.
+    next_job: Mapped[str | None] = mapped_column(Text, nullable=True)
     last_error: Mapped[str] = mapped_column(Text, default="", nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, nullable=False, index=True

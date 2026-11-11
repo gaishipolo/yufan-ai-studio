@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ChangeEvent } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useArchiveAssets, useArchiveUpload, useArchiveSelection } from '@/entities/asset/api/archive.queries';
 import { useExecuteReplacement, usePrepareReplacement, useReplacementCatalog } from '@/entities/template/api/replacement.queries';
+import { isStateChanged } from '@/shared/api/types';
 import { useVideoTemplates } from '@/entities/video-template/api/videoTemplate.queries';
 import type { ReplacementChannelOut, VideoTemplateOut } from '@/shared/api/schema';
 import { replacementKind, type ReplacementKind, type ReplacementRun, type ReplacementInput } from '@/entities/template/model/replacement.types';
@@ -52,7 +53,9 @@ export function useReplacementWorkbench() {
   const detailId = params.get('run');
   const setDetailId = (id: string | null) => patchParams({run: id});
   const search = params.get('q') ?? '';
-  const setSearch = (value: string) => patchParams({q: value});
+  /* 搜索要回到第 1 页：停在第 3 页上搜索，结果只有 1 页时列表会空，
+     用户看到的是「没有找到相关模板」而不是「你在第 3 页」。与 setSourceScope 同口径。 */
+  const setSearch = (value: string) => patchParams({q: value, sourcePage: '1'});
   /* 历史区的筛选同样进 URL：同页其它筛选都在 URL，刷新后只剩它们会丢，语义也对不上。 */
   const historyTrash = params.get('trash') === '1';
   const historyStatus = params.get('taskStatus') ?? '';
@@ -79,7 +82,9 @@ export function useReplacementWorkbench() {
   const assets = useArchiveAssets('source', {scope: sourceScope, keyword: search, page: sourcePage, pageSize: 24});
   const linkedSource = useArchiveSelection(sourceId);
   const catalog = useReplacementCatalog();
-  const channels: ReplacementChannelOut[] = catalog.data?.channels ?? [{id: 'libtv', label: 'LibTV', model: 'seedance', enabled: true, billing: 'libtv'}];
+  const channels: ReplacementChannelOut[] = catalog.data?.channels?.length
+    ? catalog.data.channels
+    : [{id: 'libtv', label: 'LibTV', model: 'libtv-wan3-replacement', enabled: true, billing: 'libtv'}];
   const channelParam = params.get('channel');
   const channel: NonNullable<ReplacementInput['channel']> = channelParam === 'bailian' || channelParam === 'bailian-prime' ? channelParam : 'libtv';
   const currentChannel = channels.find(item => item.id === channel);
@@ -231,7 +236,11 @@ export function useReplacementWorkbench() {
   const packReady = isTextScene || everyoneChosen
     && chosenPacks.every(pack => isReplacementPackAvailable(pack, assets.data?.items ?? []))
     && (!requestedVersion || String(selectedPack?.version) === requestedVersion);
-  const missing = !currentChannel?.enabled ? currentChannel?.unavailableReason || '所选模型渠道暂不可用'
+  /* 与后端 `require_channel` 同口径：LibTV 允许「执行期才注册 provider」的安装方式，
+     目录里的 enabled=false 只用于在选择器里灰显，不能变成提交门禁。否则一个没注册
+     LibTV provider 的部署（新机器、本地联调）整站都点不了「下一步」。 */
+  const channelBlocked = channel !== 'libtv' && !currentChannel?.enabled;
+  const missing = channelBlocked ? currentChannel?.unavailableReason || '所选模型渠道暂不可用'
     : isTextScene && !scenePrompt.trim() ? '请填写场景描述'
     : isTextScene && (scenePrompt.length > 4000 || scenePrompt.includes('{{') || scenePrompt.includes('}}')) ? '场景描述最多 4000 字，请使用普通文字'
     : slots > 1 && !everyoneChosen ? `还需选择 ${slots - chosenPacks.length} 位人物`
@@ -259,11 +268,18 @@ export function useReplacementWorkbench() {
     setFeedback(null);
     setPreparing(true);
     try {
+      /* 额外人物包的版本只在「确实拿到了版本号」时才传：契约里它是可选的，
+         旧行可能没带 version。以前用 `|| 1` 补一个假版本，服务端会拿 1 去查发布版本，
+         查不到就报「额外人物包的所选发布版本不存在」——比省略更难排查。 */
+      const extraIds = slots > 1 ? slotPacks.slice(1).filter(Boolean) : [];
+      const extraVersions = extraIds
+        .map(id => chosenPacks.find(pack => pack.id === id)?.version)
+        .filter((value): value is number => typeof value === 'number');
       const config: Omit<ReplacementInput, 'requestId'> = {kind, channel, target: target.trim(), sourceId, referenceIds: references, wardrobeMode,
         packId: isTextScene ? null : packId || null, packVersion: isTextScene ? null : selectedPack?.version || 1, videoTemplateId: boundTemplate?.id,
         ...(isTextScene ? {scenePrompt} : {}),
-        extraPackIds: slots > 1 ? slotPacks.slice(1).filter(Boolean) : [],
-        extraPackVersions: slots > 1 ? chosenPacks.slice(1).map(pack => pack.version || 1) : [],
+        extraPackIds: extraIds,
+        ...(extraIds.length && extraVersions.length === extraIds.length ? {extraPackVersions: extraVersions} : {}),
         replacementScope: showScope ? scopes.join('、') : '', notes: isTextScene ? '' : notes, aspectRatio: 'adaptive'};
       const key = JSON.stringify(config);
       const previous = catalog.data?.runs.find(run => run.id === preparedIds.current.get(key));
@@ -280,7 +296,9 @@ export function useReplacementWorkbench() {
       setReviewId(result.status === 'prepared' ? result.id : null);
       report('success', result.status === 'prepared' ? '输入已保存，请核对后确认生成。' : '该配置已有调用记录，请在任务记录中查看进度或结果。');
     } catch (reason) {
-      report('error', `准备失败：${reason instanceof Error ? reason.message : '输入准备未完成'}。可在当前配置下重试，不会重复创建任务。`);
+      report('error', isStateChanged(reason)
+        ? '任务状态刚被另一处操作更新，已刷新到最新状态，请确认后重试。'
+        : `准备失败：${reason instanceof Error ? reason.message : '输入准备未完成'}。可在当前配置下重试，不会重复创建任务。`);
     } finally {operationLock.current = false; setPreparing(false);}
   }
   /* billingMode 不传 = 沿用档案里的计费模式：「继续查询已有任务」走这条路，
@@ -312,7 +330,9 @@ export function useReplacementWorkbench() {
         ? '已请求用积分加速：这条任务将按积分报价进入正常队列，实际扣费以任务记录为准。'
         : '已处理任务的执行请求，请在任务记录中查看最新状态；仅在估价为 0 积分时提交生成。');
     } catch (reason) {
-      report('error', `执行请求失败：${reason instanceof Error ? reason.message : '请求未完成'}`);
+      report('error', isStateChanged(reason)
+        ? '任务状态刚被另一处操作更新，已刷新到最新状态；请核对后再点一次（不会重复提交或扣费）。'
+        : `执行请求失败：${reason instanceof Error ? reason.message : '请求未完成'}`);
     } finally {operationLock.current = false; setSubmitting(false);}
   }
   function handleUpload(event: ChangeEvent<HTMLInputElement>) {

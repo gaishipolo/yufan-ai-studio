@@ -181,6 +181,11 @@ class ReplacementRun(Base, UUIDMixin, TimestampMixin):
 
     __tablename__ = "replacement_runs"
 
+    # All ORM writes participate in optimistic concurrency, including worker and
+    # HTTP paths outside GenerationRunner. Projections carry the same revision.
+    state_version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+    __mapper_args__ = {"version_id_col": state_version}
+
     kind: Mapped[str] = mapped_column(String(16), nullable=False)
     target: Mapped[str] = mapped_column(String(160), default="", nullable=False)
     owner_id: Mapped[str] = mapped_column(String(32), nullable=False, index=True)

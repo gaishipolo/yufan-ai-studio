@@ -12,6 +12,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.exc import TimeoutError as PoolTimeoutError
+from sqlalchemy.orm.exc import StaleDataError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from core.exceptions import AppError, ErrorCode
@@ -87,6 +88,29 @@ def register_exception_handlers(app: FastAPI) -> None:
                 ErrorCode.UNAVAILABLE,
                 "服务繁忙，请稍后重试",
                 {"retryAfter": 5, "reason": "db_pool_exhausted"},
+            ),
+        )
+
+    @app.exception_handler(StaleDataError)
+    async def _stale_write(_: Request, exc: StaleDataError) -> JSONResponse:
+        """乐观锁落败 → 409，不是 500。
+
+        `replacement_runs.state_version` 是 `version_id_col`：任何 `UPDATE` 都带
+        `WHERE state_version = <读到的值>`，输的一方抛 `StaleDataError`。它继承
+        `SQLAlchemyError`，落到下面那个通用处理器就会变成 500「数据库操作失败」
+        ——一次「用户点删除时轮询正好在写进度」被报成服务端故障，用户不知道该
+        重试，值班被叫起来翻一段没有 bug 的代码。
+
+        这**不是**数据库异常，是并发写入的正常结局：动作没生效、数据没坏、
+        重读一次就能继续。所以 409 + 明确的下一步，且不打 `logger.exception`。
+        """
+        logger.info("并发写入落败（乐观锁），已要求重试: %s", exc)
+        return JSONResponse(
+            status_code=409,
+            content=_payload(
+                ErrorCode.CONFLICT,
+                "任务状态已变化，请刷新后重试",
+                {"reason": "state_changed"},
             ),
         )
 

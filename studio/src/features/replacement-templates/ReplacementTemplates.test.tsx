@@ -122,6 +122,28 @@ describe('替换模板工作台', () => {
     expect(mock.prepare.mock.calls[2][0]).toMatchObject({channel: 'bailian'});
   });
 
+  it('LibTV 在执行期才注册 provider 时不被前端门禁禁用，只有付费渠道按目录判可用', async () => {
+    mock.catalog.data.channels = [
+      {id: 'libtv', label: 'LibTV', model: 'libtv-wan3-replacement', enabled: false, billing: 'libtv', unavailableReason: '服务端未启用此渠道'},
+      {id: 'bailian', label: '百炼', model: 'wan', enabled: false, billing: 'aliyun', unavailableReason: '服务端尚未配置百炼密钥'},
+    ];
+    mock.prepare.mockResolvedValue({...run('prepared'), taskId: null});
+    render(<App url='/templates?sourceId=source&packId=character-pack' />);
+    const selector = screen.getByRole('combobox', {name: '模型渠道'});
+    const next = screen.getByRole('button', {name: '下一步：确认替换'});
+    /* 后端 `require_channel` 对 libtv 无条件放行（允许“执行期才注册”的安装），
+       前端若照抄目录里的 enabled 就会让这类部署整站点不了「下一步」。 */
+    expect(next).toBeEnabled();
+
+    /* 付费渠道仍然按目录判可用：它没有“执行期注册”这条兼容路径。 */
+    fireEvent.change(selector, {target: {value: 'bailian'}});
+    expect(screen.getByRole('button', {name: '下一步：确认替换'})).toBeDisabled();
+
+    fireEvent.change(selector, {target: {value: 'libtv'}});
+    fireEvent.click(screen.getByRole('button', {name: '下一步：确认替换'}));
+    await vi.waitFor(() => expect(mock.prepare).toHaveBeenCalledTimes(1));
+  });
+
   it.each(['bailian', 'bailian-prime'] as const)('核对重试沿用已保存的 %s 渠道及阿里云计费', async channel => {
     mock.catalog.data.runs = [{...run('failed'), taskId: null, channel, channelLabel: '已保存百炼渠道'}];
     mock.execute.mockResolvedValue({...run('queued'), taskId: null, channel});

@@ -1191,6 +1191,15 @@ class IdentityService:
         self, group_id: str, user_ids: Sequence[str], actor: CurrentUser
     ) -> GroupOut:
         group = await self._require_group(group_id)
+        # 入组 = 立刻继承该组全部授权码（`resolve_identity` 会把组授权并进有效权限），
+        # 所以「能排班」和「能授权」在这条路径上是同一件事。组自身的权限必须是
+        # 操作者的子集，否则持有 `identity:group:member:manage` 的人可以把自己塞进
+        # 高权组、把同伙拉进去、或把人踢出去（撤权），等于绕过
+        # `identity:group:permission:manage`。与 `create_user` 的入组守卫、
+        # `delete_group` / `set_group_permissions` 同口径。
+        self._guard_layer_not_above(
+            await self.layers.grants(SCOPE_GROUP, group.id), actor, what="小组"
+        )
         wanted = list(dict.fromkeys(user_ids))
         found = await self.users.get_many(wanted)
         if len(found) != len(wanted):

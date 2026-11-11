@@ -59,6 +59,19 @@ export class ApiError extends Error {
 }
 
 /**
+ * 这次失败是不是「乐观锁落败」。
+ *
+ * 后端给 `409 + details.reason === 'state_changed'`：数据没坏、动作没生效，
+ * 只是你读到的那一份状态被别的写入者先改了。它随时会发生（轮询写进度时点删除），
+ * 所以处置是「重读权威状态」，不是「报一个错误让用户自己刷新」。
+ * 判定收在这里，与 `isUnauthorizedError` 同处：同码不同处置的入口只留一个。
+ */
+export function isStateChanged(error: unknown): boolean {
+  return error instanceof ApiError
+    && (error.details as {reason?: string} | null | undefined)?.reason === 'state_changed';
+}
+
+/**
  * 这次失败是不是「登录态失效」。
  *
  * 401 有专门的处理路径（拦截器清场 + 守卫跳登录页），

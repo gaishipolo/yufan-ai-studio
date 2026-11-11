@@ -229,7 +229,16 @@ async def run_startup_recovery(
     for spec in specs:
         startup = getattr(spec, "startup", None)
         if startup is not None:
-            await startup()
+            try:
+                await startup()
+            except Exception:  # noqa: BLE001
+                # 恢复是「尽力而为」：某个模块的恢复器读到一条无法解读的历史行
+                # （脏 configuration、旧格式记录、共享盘上一份损坏的 run.json）
+                # 就不该连累其它模块，更不该让整个进程起不来。逐模块隔离 +
+                # 一条能定位的日志，比「启动失败」可运维得多。
+                logger.exception(
+                    "模块 %s 的启动恢复失败，已跳过（其它模块继续）", getattr(spec, "name", spec)
+                )
     return await recover_declared(specs)
 
 

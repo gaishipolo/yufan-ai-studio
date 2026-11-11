@@ -30,6 +30,7 @@
 | T29 | 指标是单进程语义，未做多进程聚合 | 多 worker 部署要靠 Prometheus `sum by`；本机 `curl /metrics` 只看到一部分 | 架构 |
 | T30 | PG 迁移闸在观察期（`continue-on-error`），尚未成为硬性要求 | PG 特有的默认值/条件索引差异要等它稳定后才真正拦住；**2026-11-11 拍板：暂不动** | 架构 |
 | T33 | 替换链专用模型出现在通用模型目录 —— **2026-11-11 已修** | 给 `ModelSpec` 加 `internal`，目录层用 `public_models()` 过滤 | 后端（小） |
+| T34 | 生图链路没有参考图，Agnes 实际只能文生图 | 编辑/参考图/多图融合全部用不了，与模型能力不符 | 后端 + 前端 |
 
 ---
 
@@ -251,6 +252,34 @@ Base64 直传），届时改 `drivers/bailian.py` 的 `prepare_inputs` 一处即
 **为什么当时才显形**：`bailian` 迁进 `drivers/` 之前，本机 `.env` 的
 `AI_PROVIDERS=echo,libtv` 里没有它，目录里看不到；`libtv` 那条其实一直都在，只是
 没人从生成页去选它。
+
+## T34 · 生图链路没有参考图（Agnes 实际只能文生图）
+
+`AgnesDriver` 的 `submit()` 只拼 `prompt` / `size` / `count` / 模型参数，请求体里没有
+任何图片字段；`GenerateImageIn`（`modules/image/schema.py`）也没有参考图入参，
+`ImageJob`（`modules/image/models.py`）没有对应的列。结果是「图生图 / 参考图 / 多图融合」
+这一类能力**前端根本传不进来**，模型能做的和产品能用的不是一回事。
+
+要打通是四处一起改（缺一处就断在中间）：
+
+1. **入参**：`GenerateImageIn` 加 `referenceUrls: list[str]`（或复用一个 `references`
+   结构，留出 `role` 给将来区分首帧/参考图）。
+2. **落库**：`ImageJob` 加一列存参考图（JSON，跟 `params_json` 分开——`params` 是模型
+   参数、要按 `paramSchema` 校验，参考图是调用输入，别混进去）。
+3. **提交**：`ImageGenerationPipeline.build_request()` 透传 `reference_urls`；驱动侧拼进
+   请求体；`archive_request` 的快照要带上参考图，否则重试会静默丢图。
+4. **前端**：生图表单加参考图控件。现有参数区完全由 `paramSchema` 渲染
+   （`entities/model/lib/paramForm.ts`），参考图不是模型参数，得单独加一种控件
+   （`type: "images"`），不能塞进 `ParamFields`。
+
+**前置技术决定（必须先定）**：Agnes 只接受**公网 URL** 或 `data:image/...;base64`，
+而我们素材库给的是私签直链，供应商那边拿不到（签名会过期、域名也不对外）。所以要么
+服务端读字节转 Data URI（要和素材库的可见性检查、大小上限一起做，别绕过 `_serve`），
+要么沿用 T31 那条「先传公网 OSS 再给直链」的路子。**建议先只做后端 + 一条 i2i 的请求体
+用例**，把「参考图能不能到供应商」这件事钉死，前端控件随后。
+
+**验收**：`POST /images` 带 `referenceUrls` 能落库、能透传到驱动请求体、重试不丢；
+内部模型（`internal=True`）仍然不出现在目录里；前端选完参考图能看到缩略图并成功提交。
 
 
 ---
