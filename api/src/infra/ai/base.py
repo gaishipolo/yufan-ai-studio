@@ -90,6 +90,14 @@ class ModelSpec:
     provider: str
     param_schema: Mapping[str, Any] = field(default_factory=dict)
     description: str = ""
+    # 只能由**自己的业务链路**调用的模型：替换工作台的渠道、内部评测等。
+    # 它们在目录接口里不出现，但 `resolve()` 仍能解析（替换链正是按 id 直接调的）。
+    #
+    # 为什么必须有这个标记：替换链的模型（`bailian-wan3-*` / `libtv-wan3-*`）带
+    # 一道「调用档案标识」校验，`params` 里没有 `archiveRunId` 就 400。它们出现在
+    # 通用生图 / 视频页的下拉里时，用户选中必然失败，而报错是「标识不匹配」——
+    # 没人能从这句话推出「这个模型不该出现在这里」。
+    internal: bool = False
 
     def defaults(self) -> dict[str, Any]:
         return {

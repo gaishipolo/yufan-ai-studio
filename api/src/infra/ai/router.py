@@ -174,10 +174,21 @@ class ModelRouter:
 
     # ------------------------------------------------------------------ 目录
     def models(self, capability: Capability | None = None) -> tuple[ModelSpec, ...]:
+        """全部模型，**含** `internal=True` 的。装配巡检、维护任务用这个。"""
         specs = self._models.values()
         if capability is not None:
             specs = [s for s in specs if s.capability == capability]  # type: ignore[assignment]
         return tuple(sorted(specs, key=lambda s: (s.capability, s.id)))
+
+    def public_models(self, capability: Capability | None = None) -> tuple[ModelSpec, ...]:
+        """能出现在「模型选择器」里的模型：过滤掉 `internal=True`。
+
+        凡是给人挑的地方（`GET /models`、统一门面的模型清单）都用这个；凡是
+        「按 id 找实现」的地方（`resolve` / `provider_for` / 巡检）仍然走
+        `models()` —— 替换链就是拿着 `bailian-wan3-*` 的 id 直接提交的，
+        在这里过滤掉会让它 400。
+        """
+        return tuple(spec for spec in self.models(capability) if not spec.internal)
 
     def provider_names(self) -> list[str]:
         return self._providers.names()

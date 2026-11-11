@@ -152,6 +152,12 @@ class ModelGenerationFacade:
         return ticket
 
     def models(self, capability: str = "") -> tuple[ModelSummary, ...]:
+        """给下游挑模型用：过滤 `internal=True`。
+
+        统一门面**仍然**接受内部模型 id（替换链可以从这里提交，它自己带
+        `archiveRunId`）；只是不主动把它们列进「可选清单」，否则下游按清单
+        选一个、提交时被「调用档案标识不匹配」挡回来，错得毫无线索。
+        """
         ensure_drivers_registered()
         try:
             wanted = Capability(capability) if capability else None
@@ -166,7 +172,7 @@ class ModelGenerationFacade:
                 param_schema=dict(spec.param_schema),
                 description=spec.description,
             )
-            for spec in get_model_router().models(wanted)
+            for spec in get_model_router().public_models(wanted)
         )
 
     def drivers(self) -> tuple[DriverSummary, ...]:

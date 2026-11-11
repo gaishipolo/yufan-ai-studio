@@ -106,9 +106,11 @@ class ImageService:
         model_id = payload.model or router.default_model(Capability.IMAGE)
         spec = router.resolve(model_id)
         if spec is None:
+            # 提示里只用公开模型：把替换链专用的 `internal` 模型列在这里，
+            # 等于引导用户再错一次（选中必然 400「调用档案标识不匹配」）
             raise BadRequest(
                 f"未知模型 {model_id!r}，可用模型: "
-                f"{[m.id for m in router.models(Capability.IMAGE)]}"
+                f"{[m.id for m in router.public_models(Capability.IMAGE)]}"
             )
         if spec.capability is not Capability.IMAGE:
             raise BadRequest(f"模型 {model_id!r} 不是生图模型")

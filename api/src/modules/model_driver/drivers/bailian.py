@@ -95,6 +95,9 @@ MODELS: tuple[ModelSpec, ...] = (
         capability=Capability.VIDEO,
         provider="bailian",
         description="替换渠道：720P，参考视频 + 图 + 音频混合输入",
+        # 替换链专用（提交要带 `archiveRunId`，见 `submit` 里的标识校验）。
+        # 不在目录里露脸，避免用户在通用视频页选中后 400。
+        internal=True,
     ),
     ModelSpec(
         id=PRIME_MODEL_ID,
@@ -102,6 +105,7 @@ MODELS: tuple[ModelSpec, ...] = (
         capability=Capability.VIDEO,
         provider="bailian",
         description="替换渠道：与标准版同参数，出片更快、单价更高",
+        internal=True,
     ),
 )
 

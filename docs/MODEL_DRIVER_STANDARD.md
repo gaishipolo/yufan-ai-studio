@@ -48,12 +48,14 @@ drivers/<name>.py  ──自动扫描──▶ ModelRouter ──▶ generation.
 （那里做了再导出）。`GenerationProgress` 会在构造时把 `state` 归一成枚举、
 把 `progress` 夹到 0–100，所以别在驱动外自己拼字典。
 
-**可选的两个声明式字段**：
+**可选的声明式字段**：
 
 ```python
 preferred_for = frozenset({Capability.IMAGE})   # 「我的模型是该能力的默认」
 submit_timeout_sec = 180.0                     # 单次提交最多等多久（秒）
 ```
+
+单条模型上的 `ModelSpec(internal=True)` 另算，见下面「只给自己的业务链路用的模型」。
 
 `preferred_for` 不写就沿用「注册顺序第一个」，而 `drivers/` 永远后于
 `AI_PROVIDERS` 注册——所以想当默认必须显式声明，否则默认会落在老的 infra
@@ -80,6 +82,29 @@ async def prepare_inputs(self, run_id: str, model: str = "") -> dict: ...   # �
 调用方（替换链）**通过路由拿到实例后 `isinstance` 判断**，有就调、没有就跳过，
 它不会 import 你的驱动文件。`unavailable_reason` 让「没配密钥」在**选择渠道时**
 就说清楚，而不是等用户点了开始才在上传阶段炸。范例见 `drivers/bailian.py`。
+
+## 2.5 只给自己的业务链路用的模型：`internal=True`
+
+写 `ModelSpec(..., internal=True)` 的模型不会出现在**给人挑**的地方：`GET /models`、
+统一门面的模型清单、以及「未知模型，可用模型: …」这句报错里的候选列表。但
+`resolve()` / `provider_for()` 仍然按 id 解析——替换链正是拿 id 直接提交的，
+在解析层过滤等于把它打断。
+
+为什么需要这个开关：替换工作台的渠道（`bailian-wan3-*` / `libtv-wan3-*`）提交时
+要求 `params` 里带 `archiveRunId`（见 `bailian.submit` 的标识校验 / `libtv.submit`
+的「请从替换模板使用」）。它们漏进通用生图 / 视频页的下拉后，用户选中必然 400，
+而报错是「调用档案标识不匹配」——没人能从这句话推出「这个模型压根不该出现在这里」。
+
+两条配套规则：
+
+- 新增「只有自己的入口才该用」的模型时**必须**带 `internal=True`，
+  `tests/test_internal_models.py` 会逐条检查 `bailian` / `libtv` 的声明；
+- 过滤只发生在**目录**层，不要在 `router.models()` 里过滤。跨模块取模型清单请用
+  `public_models()`，装配巡检、维护任务、按 id 找实现仍用 `models()`。
+
+一个边角：若某个能力的默认模型恰好是 `internal`，目录接口**不会**把默认标记挪给
+别的模型（前端会「以为默认是 A 所以不传 model」，后端却取到 B，直接 400）。宁可
+一个默认都没有，让前端显式带上 id。
 
 ## 3. 两种供应商形态
 

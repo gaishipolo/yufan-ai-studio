@@ -171,6 +171,9 @@ class LibTVProvider:
             provider="libtv",
             capability=Capability.VIDEO,
             description="需先在替换模板归档输入；支持 0 积分畅用队列与积分加速队列",
+            # 替换链专用：submit 要求 params 里带 archiveRunId，通用视频页
+            # 选中它必然 400。不进模型目录，但 `provider_for()` 仍能按 id 解析。
+            internal=True,
         ),
     )
 

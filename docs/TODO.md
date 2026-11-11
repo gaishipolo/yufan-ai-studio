@@ -8,10 +8,11 @@
 > 来源：`CODE_REVIEW_2026-11-06_R11~R14`、`CODE_REVIEW_2026-11-06_FE6`、
 > `EXTENSIBILITY_GAPS.md` 的 B1/C1/C2、素材分支合并时新发现的项，以及
 > **2026-11-11 全面审查**（框架 / 资产库 / 模型启动，P0×2 · P1×9 · P2×11 已全修）与 PR#4 评审遗留。
-> 最后更新：2026-11-11 14:10 —— T32 落地（`bailian` 迁进 `drivers/`，替换链改走 `InputPreparer` 可选协议）；
+> 最后更新：2026-11-11 14:25 —— T33 修复（`ModelSpec.internal` + `public_models()`）；
+> T32 落地（`bailian` 迁进 `drivers/`，替换链改走 `InputPreparer` 可选协议）；
 > T31 口径已定（素材直传公网 OSS 是有意设计，不是合规遗漏）；T30 拍板**暂不动**（保持观察期）。
 > 交接现状见 [`HANDOFF.md`](HANDOFF.md)。
-> 剩余：业务侧 T2/T8/T9/T10/T22/T23/T24/T33，架构侧 T25/T26（只剩唤醒）/T29/T30（暂不收口）
+> 剩余：业务侧 T2/T8/T9/T10/T22/T23/T24，架构侧 T25/T26（只剩唤醒）/T29/T30（暂不收口）
 
 ## 一眼看完
 
@@ -28,7 +29,7 @@
 | T26 | db 队列没有**跨进程**唤醒（空转已退避，同进程已能叫醒） | API 与 worker 分进程时，空闲入队到取走最坏 1 秒；万级 QPS 要换 Redis 驱动（协议已备好） | 架构 |
 | T29 | 指标是单进程语义，未做多进程聚合 | 多 worker 部署要靠 Prometheus `sum by`；本机 `curl /metrics` 只看到一部分 | 架构 |
 | T30 | PG 迁移闸在观察期（`continue-on-error`），尚未成为硬性要求 | PG 特有的默认值/条件索引差异要等它稳定后才真正拦住；**2026-11-11 拍板：暂不动** | 架构 |
-| T33 | 替换链专用模型出现在通用模型目录 | 在工作台视频模型下拉里选到 `bailian-wan3-*` / `libtv-wan3-*` 会 400「调用档案标识不匹配」，用户不知道它只能在替换链里用 | 后端（小） |
+| T33 | 替换链专用模型出现在通用模型目录 —— **2026-11-11 已修** | 给 `ModelSpec` 加 `internal`，目录层用 `public_models()` 过滤 | 后端（小） |
 
 ---
 
@@ -235,19 +236,21 @@ Base64 直传），届时改 `drivers/bailian.py` 的 `prepare_inputs` 一处即
 
 ## T33 · 替换链专用模型出现在通用模型目录（T32 顺带发现）
 
-`GET /models?capability=video` 直接返回 `router.models()` 全量，于是
+**2026-11-11 已修**：`ModelSpec.internal: bool = False`，`bailian` / `libtv` 的三条
+模型声明都带上；`ModelRouter.public_models()` 是给人挑的唯一来源
+（`GET /models`、`GET /model-driver/models`、`task/params.py` 与 `image/service.py`
+的「可用模型」提示都改用它）；`resolve()` / `provider_for()` 仍走 `models()`，
+替换链不受影响。用例 `tests/test_internal_models.py`（5 条，含「默认值是内部模型时
+不得把默认标记挪给别的模型」）。口径与注意事项见 `MODEL_DRIVER_STANDARD.md` §2.5。
+
+原始记录（供追溯）：`GET /models?capability=video` 直接返回 `router.models()` 全量，于是
 `libtv-wan3-replacement`、`bailian-wan3-replacement`、`bailian-wan3-prime-replacement`
 会出现在工作台的视频模型下拉里。选中提交会立刻 400「调用档案标识不匹配」——这两个
 驱动要求 `params.archiveRunId` 等于任务 id，那是替换链的调用约定，通用入口不提供。
 
-**为什么现在才显形**：`bailian` 迁进 `drivers/` 之前，本机 `.env` 的
+**为什么当时才显形**：`bailian` 迁进 `drivers/` 之前，本机 `.env` 的
 `AI_PROVIDERS=echo,libtv` 里没有它，目录里看不到；`libtv` 那条其实一直都在，只是
 没人从生成页去选它。
-
-**验收**：给 `ModelSpec` 加一个显式的「内部模型」标记（`internal: bool = False`，
-不要用 id 前缀猜），`CatalogService.list_models` 与 `GET /model-driver/models` 默认
-过滤掉；替换链按 model id 走 `router.resolve()`，**不受影响**。用例两条：目录接口
-不返回 `*-replacement`、`router.resolve("bailian-wan3-replacement")` 仍解析得到。
 
 
 ---
