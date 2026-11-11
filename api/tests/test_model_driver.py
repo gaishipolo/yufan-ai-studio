@@ -394,3 +394,37 @@ def test_register_leaves_no_half_provider_on_conflict() -> None:
     assert "beta" not in router.provider_names()
     assert router.resolve("beta-only") is None, "校验失败时不能留下半个供应商"
     assert router.provider_for("same-id").name == "alpha", "原归属不能被抢走"
+
+
+def test_provider_for_can_refuse_the_only_provider_fallback() -> None:
+    """「只有一个供应商」的兜底是给本地联调用的，历史记录不能沾。
+
+    兜底的语义是「模型名没见过，但反正只有一家，就给它」。对**落过库的记录**
+    这等于：原渠道的模型被下线/改名之后，重试会把这条任务悄悄打到另一家上——
+    产物风格、单价、内容合规口径全变，而且日志里看不出任何异常。
+
+    所以兜底必须是可以关掉的，而不是靠调用方记得「别用未声明的模型名」。
+    """
+    from core.exceptions import BadRequest
+    from infra.ai.base import Capability, ModelSpec
+    from infra.ai.router import ModelRouter
+
+    class _Provider:
+        name = "alpha"
+        capabilities = frozenset({Capability.IMAGE})
+        supports_poll = False
+        models = (
+            ModelSpec(id="a-1", label="Alpha 一", capability=Capability.IMAGE, provider="alpha"),
+        )
+
+    router = ModelRouter()
+    router.register(_Provider())
+
+    assert router.provider_for("a-1").name == "alpha"
+    # 默认行为不变：只有一个供应商时，没声明的模型名照样能取到（本地 echo 联调）
+    assert router.provider_for("made-up").name == "alpha"
+
+    with pytest.raises(BadRequest):
+        router.provider_for("made-up", allow_fallback=False)
+    # 已声明的模型不受影响
+    assert router.provider_for("a-1", allow_fallback=False).name == "alpha"

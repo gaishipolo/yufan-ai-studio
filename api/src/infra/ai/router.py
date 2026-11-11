@@ -135,14 +135,28 @@ class ModelRouter:
         real_id = self._alias.get(model)
         return self._models.get(real_id) if real_id else None
 
-    def provider_for(self, model: str) -> ModelProvider:
+    def provider_for(self, model: str, *, allow_fallback: bool = True) -> ModelProvider:
+        """按模型找供应商。
+
+        `allow_fallback=False` 关掉「只有一个供应商就兜底」：那条兜底是给本地
+        echo 联调用的（模型名随便写也能跑）。**落过库的记录不能沾**——原渠道的
+        模型被下线或改名之后，重试会把这条任务悄悄打到另一家供应商上，产物风格、
+        单价、合规口径全变，日志里还看不出异常。
+        """
         spec = self.resolve(model)
         if spec is not None:
             return self._providers.get(spec.provider)
 
         # 未声明的模型名：只有一个供应商时兜底（本地 echo 联调场景）
-        if len(self._providers) == 1:
+        if allow_fallback and len(self._providers) == 1:
             return self._providers.require()
+        if not allow_fallback:
+            # 走严格模式的都是「按历史记录找原渠道」，说法要指向真正的原因，
+            # 否则用户只会看到「未知模型」而不知道是自己停用了某个渠道
+            raise BadRequest(
+                f"模型 {model!r} 不在当前模型目录中（原渠道可能已停用），"
+                f"可用模型: {sorted(self._models)}"
+            )
         raise BadRequest(f"未知模型 {model!r}，可用模型: {sorted(self._models)}")
 
     def spec_for(self, model: str) -> ModelSpec | None:

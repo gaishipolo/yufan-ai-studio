@@ -626,11 +626,12 @@ def test_cancelled_during_poll_discards_result(monkeypatch: pytest.MonkeyPatch) 
         def store(self, session: object) -> _CancelledMidwayStore:
             return _CancelledMidwayStore()
 
-        def resolve_provider(self, model: str) -> _Provider:
-            return _Provider()
-
         async def build_request(self, record: object) -> None:  # pragma: no cover
             return None
+
+    class _Router:
+        def provider_for(self, model: str, *, allow_fallback: bool = True) -> _Provider:
+            return _Provider()
 
     async def fake_archive(
         self: GenerationRunner, kind: str, session: object, record_id: str, output_url: object
@@ -641,6 +642,7 @@ def test_cancelled_during_poll_discards_result(monkeypatch: pytest.MonkeyPatch) 
         emitted.append(name)
 
     register_pipeline(_Pipeline)
+    monkeypatch.setattr(runner_module, "get_model_router", _Router)
     monkeypatch.setattr(runner_module.GenerationRunner, "_archive", fake_archive)
     monkeypatch.setattr(runner_module.GenerationRunner, "_emit", fake_emit)
 
@@ -659,7 +661,9 @@ def test_cancelled_during_poll_discards_result(monkeypatch: pytest.MonkeyPatch) 
     assert emitted == [], "已取消的记录不该再发「生成成功」事件"
 
 
-def test_submit_budget_follows_driver_declaration() -> None:
+def test_submit_budget_follows_driver_declaration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """提交 job 的硬超时按驱动自报的预算算，不能写死。
 
     写死 120 秒会短于 Agens 声明的 180 秒（2K 图 / 上游排队）：worker 到点取消
@@ -688,13 +692,15 @@ def test_submit_budget_follows_driver_declaration() -> None:
         def store(self, session: object) -> _Store:
             return _Store()
 
-        def resolve_provider(self, model: str) -> _Provider:
-            return _Provider()
-
         async def build_request(self, record: object) -> None:  # pragma: no cover
             return None
 
+    class _Router:
+        def provider_for(self, model: str, *, allow_fallback: bool = True) -> _Provider:
+            return _Provider()
+
     register_pipeline(_Pipeline)
+    monkeypatch.setattr("generation.runner.get_model_router", _Router)
     budget = asyncio.run(
         GenerationRunner(MemoryJobQueue())._submit_budget("test-budget", "r1")
     )
@@ -780,3 +786,41 @@ def test_build_request_failure_is_not_treated_as_delivered() -> None:
 
     assert "无法构造" in failed["error"]
     assert "可能已计费" not in failed["error"], "请求没发出去，别把锅推给上游"
+
+
+def test_strict_pipeline_wins_through_the_router_not_a_backdoor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`strict_model = True` 的流水线必须让**路由**关掉兜底。
+
+    以前这里靠 `getattr(pipeline, "resolve_provider")` 摸一个方法出来，业务模块
+    自己写解析器：路由的模型归属、别名、默认模型校验被整段跳过，调用方也看不出
+    自己绕过了什么。现在只有一处解析（`_provider_for` → `ModelRouter`），
+    业务只能**声明**要不要兜底。
+    """
+    from core.exceptions import BadRequest
+    from generation import runner as runner_module
+
+    seen: list[bool] = []
+
+    class _Router:
+        def provider_for(self, model: str, *, allow_fallback: bool = True) -> object:
+            seen.append(allow_fallback)
+            if not allow_fallback:
+                raise BadRequest("渠道已停用")
+            return object()
+
+    class _Loose:
+        pass
+
+    class _Strict:
+        strict_model = True
+
+    monkeypatch.setattr(runner_module, "get_model_router", _Router)
+
+    assert runner_module._provider_for(_Loose(), "m") is not None
+    assert seen == [True], "没声明的流水线沿用兜底语义（本地联调靠它）"
+
+    with pytest.raises(BadRequest):
+        runner_module._provider_for(_Strict(), "m")
+    assert seen[-1] is False, "冻结渠道的流水线必须把兜底关掉"

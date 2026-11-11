@@ -16,10 +16,9 @@ from collections.abc import Callable
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.exceptions import BadRequest
 from generation.pipeline import register_pipeline
 from generation.spec import GenerationRecord
-from infra.ai.base import Capability, GenerationRequest, ModelProvider
+from infra.ai.base import Capability, GenerationRequest
 from infra.ai.libtv import MODEL_ID
 from modules.template.channels import CHANNEL_MODELS, run_channel
 from modules.template.models import ReplacementRun
@@ -167,15 +166,10 @@ class ReplacementStore:
 class ReplacementPipeline:
     kind = KIND_REPLACEMENT
     capability = Capability.VIDEO
-
-    def resolve_provider(self, model: str) -> ModelProvider:
-        """Frozen replacement models must never use the router's development fallback."""
-        from infra import get_model_router
-
-        router = get_model_router()
-        if router.resolve(model) is None:
-            raise BadRequest(f"原任务的模型渠道 {model} 未启用，请恢复该渠道后继续")
-        return router.provider_for(model)
+    # 替换跑的是「原任务那次用的模型」，配置里冻着渠道与提示词。渠道停用之后
+    # 绝不能靠路由的兜底换一家重跑：产物风格、单价、合规口径全变，而且看不出来。
+    # 声明（不是自定义解析）——怎么找供应商只有 `ModelRouter` 一处。
+    strict_model = True
 
     def store(self, session: AsyncSession) -> ReplacementStore:
         return ReplacementStore(session)

@@ -41,11 +41,11 @@ from generation.events import (
     EVT_GENERATION_SUBMITTED,
     EVT_GENERATION_SUCCEEDED,
 )
-from generation.pipeline import get_pipeline
+from generation.pipeline import get_pipeline, strict_model
 from generation.spec import GenerationRecord
 from generation.store import GenerationStore
 from infra import get_model_router
-from infra.ai.base import GenerationProgress, GenerationState
+from infra.ai.base import GenerationProgress, GenerationState, ModelProvider
 from infra.artifacts import artifact_urls
 from infra.queue.base import Job, JobQueue
 
@@ -56,6 +56,17 @@ JOB_POLL = "generation.poll"
 
 _MAX_ERROR_LEN = 500
 _MAX_BACKOFF_SEC = 30.0
+
+
+def _provider_for(pipeline: object, model: str) -> ModelProvider:
+    """取供应商的唯一入口：**不许流水线自己塞一个解析器绕过路由**。
+
+    以前这里有 `getattr(pipeline, "resolve_provider", None)` 的后门：模板替换
+    用它来「不许兜底」。后果是解析规则散在业务模块里，路由的校验（模型归属、
+    别名、默认模型）被整段跳过，谁都可以写一个不查目录的解析器，而且调用方
+    看不出自己绕过了什么。现在改成声明式开关 + 路由内部收紧。
+    """
+    return get_model_router().provider_for(model, allow_fallback=not strict_model(pipeline))
 
 SUBMIT_UNKNOWN_MESSAGE = (
     "提交结果未知：请求已发出但未确认供应商是否受理，为避免重复计费未自动重试，"
@@ -129,12 +140,7 @@ class GenerationRunner:
             async with get_session_factory()() as session:
                 record = await get_pipeline(kind).store(session).load(record_id)
             if record is not None:
-                resolver = getattr(get_pipeline(kind), "resolve_provider", None)
-                provider = (
-                    resolver(record.model)
-                    if resolver is not None
-                    else get_model_router().provider_for(record.model)
-                )
+                provider = _provider_for(get_pipeline(kind), record.model)
                 declared = getattr(provider, "submit_timeout_sec", None)
         except Exception:  # noqa: BLE001 - 预算算不出来不该阻止提交
             logger.warning("提交超时预算解析失败，按默认值 kind=%s id=%s", kind, record_id)
@@ -244,11 +250,7 @@ class GenerationRunner:
                 # `_possibly_delivered` 判成「供应商可能已受理」——它对非 AppError
                 # 一律返回 True——于是自动重试被永久放弃，锅推给了上游。
                 try:
-                    resolver = getattr(pipeline, "resolve_provider", None)
-                    provider = (
-                        resolver(record.model) if resolver is not None
-                        else get_model_router().provider_for(record.model)
-                    )
+                    provider = _provider_for(pipeline, record.model)
                     request = await pipeline.build_request(record)
                 except Exception as exc:  # noqa: BLE001
                     logger.exception(
@@ -398,11 +400,7 @@ class GenerationRunner:
                         )
                     return
 
-                resolver = getattr(pipeline, "resolve_provider", None)
-                provider = (
-                    resolver(record.model) if resolver is not None
-                    else get_model_router().provider_for(record.model)
-                )
+                provider = _provider_for(pipeline, record.model)
                 try:
                     result = await provider.poll(record.external_id, model=record.model)
                 except Exception as exc:  # noqa: BLE001

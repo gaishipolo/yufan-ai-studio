@@ -40,6 +40,20 @@ class GenerationPipeline(Protocol):
     async def build_request(self, record: GenerationRecord) -> GenerationRequest: ...
 
 
+def strict_model(pipeline: GenerationPipeline) -> bool:
+    """该流水线是否**禁止**「只有一个供应商就兜底」。未声明 = 允许。
+
+    历史记录（轮询 / 重试 / 重启恢复）必须按当次记录的模型找回**原**供应商。
+    模型解析不出来时，兜底会把任务打到另一家上：产物风格、单价、合规口径全变，
+    日志里还看不出异常。模板替换属于这一类（配置里冻的是任务当时的渠道），
+    所以它声明 `strict_model = True`。
+
+    这是**声明式**的开关，不是自定义解析：怎么找供应商仍然只有 `ModelRouter`
+    一处实现（见 `generation.runner._provider_for`）。
+    """
+    return bool(getattr(pipeline, "strict_model", False))
+
+
 pipelines = NamedRegistry[GenerationPipeline]("generation.pipeline")
 
 
