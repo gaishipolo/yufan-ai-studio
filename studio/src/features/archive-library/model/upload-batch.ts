@@ -1,4 +1,5 @@
 import { ApiError, errorHttpStatus } from '@/shared/api/types';
+import { createId } from '@/shared/lib/id';
 import type { ArchiveCategory, ArchivedAsset } from '@/entities/asset/model/archive.types';
 
 /**
@@ -28,7 +29,7 @@ export const UPLOAD_STATUS_TEXT: Record<UploadItemStatus, string> = {
 };
 
 export interface BatchItem {
-  /** `crypto.randomUUID()`。不能用文件名：同名多选是合法的，会让第二条覆盖第一条。 */
+  /** `createId()`。不能用文件名：同名多选是合法的，会让第二条覆盖第一条。 */
   key: string;
   file: File;
   status: UploadItemStatus;
@@ -75,7 +76,7 @@ export function batchReducer(batch: UploadBatch | null, event: BatchEvent): Uplo
       category: event.category,
       startedAt: event.startedAt,
       phase: 'running',
-      items: event.files.map(file => ({key: crypto.randomUUID(), file, status: 'queued'})),
+      items: event.files.map(file => ({key: createId(), file, status: 'queued'})),
     };
   }
   if (!batch) return null;

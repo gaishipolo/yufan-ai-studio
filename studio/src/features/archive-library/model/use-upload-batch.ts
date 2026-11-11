@@ -4,6 +4,7 @@ import { archiveKeys } from '@/entities/asset/api/archive.queries';
 import type { ArchiveCategory } from '@/entities/asset/model/archive.types';
 import { useSessionStore } from '@/shared/access/session';
 import { queryClient } from '@/shared/api/query-client';
+import { createId } from '@/shared/lib/id';
 import {
   batchReducer, classifyUploadError, isBatchLocked, messageOf, nextQueued,
   type BatchEvent, type UploadBatch,
@@ -39,7 +40,7 @@ export const useUploadBatchStore = create<UploadBatchStore>((set, get) => ({
   start: (files, category) => {
     if (isBatchLocked(get().batch)) return;
     const batch = batchReducer(null, {
-      type: 'create', id: crypto.randomUUID(), category, files, startedAt: Date.now(),
+      type: 'create', id: createId(), category, files, startedAt: Date.now(),
     });
     if (!batch) return;
     set({batch, ownerId: useSessionStore.getState().subject.id});

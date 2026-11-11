@@ -7,6 +7,7 @@ import { useVideoTemplates } from '@/entities/video-template/api/videoTemplate.q
 import type { ReplacementChannelOut, VideoTemplateOut } from '@/shared/api/schema';
 import { replacementKind, type ReplacementKind, type ReplacementRun, type ReplacementInput } from '@/entities/template/model/replacement.types';
 import { toast } from '@/shared/lib/toast';
+import { createId } from '@/shared/lib/id';
 import { isReplacementPackAvailable } from '@/entities/template/model/replacementPack';
 import { NEXT_ACTION, RETRY, TYPES } from './replacementOptions';
 import { videoTemplateLabel, videoTemplateScopes, videoTemplatesForSource } from './videoTemplateFunctions';
@@ -290,7 +291,7 @@ export function useReplacementWorkbench() {
         return;
       }
       let requestId = requestIds.current.get(key);
-      if (!requestId) {requestId = crypto.randomUUID(); requestIds.current.set(key, requestId);}
+      if (!requestId) {requestId = createId(); requestIds.current.set(key, requestId);}
       const result = await prepare.mutateAsync({...config, requestId});
       preparedIds.current.set(key, result.id);
       setReviewId(result.status === 'prepared' ? result.id : null);
