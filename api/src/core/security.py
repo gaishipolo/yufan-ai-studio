@@ -28,9 +28,30 @@ from core.config import settings
 from core.context import CurrentUser
 from core.exceptions import Unauthorized
 
-_SCRYPT_N = 2**14
+# 口令哈希的成本参数。
+#
+# `N=2**14` 是抗爆破的下限：单次约 150ms，登录每验一次就要走一遍，攻击者承担
+# 的也是这个成本。但测试会**真登录**几百次（实测 847 次哈希 ≈ 157s，占全量
+# 一半以上），所以 `APP_ENV=test` 时降到 `2**10`（约 9ms）。
+#
+# 这不削弱线上任何路径，依据两条：
+#   - 参数**编码在哈希串里**（`scrypt$N$r$p$salt$digest`），`verify_password`
+#     按串里读到的 N 来算，所以不同强度的哈希天然共存，不需要迁移；
+#   - 降级只认 `app_env == "test"`，生产是 `prod`。
+_PROD_SCRYPT_N = 2**14
+_TEST_SCRYPT_N = 2**10
 _SCRYPT_R = 8
 _SCRYPT_P = 1
+
+
+def _scrypt_n() -> int:
+    """当前进程该用的 scrypt N。
+
+    每次调用现读 `settings`（原地刷新的单例），**不要在 import 期定格**：
+    `reload_settings()` 之后必须立刻生效，否则 monkeypatch 了 `APP_ENV` 的
+    用例会继续拿到上一个值。
+    """
+    return _TEST_SCRYPT_N if settings.app_env == "test" else _PROD_SCRYPT_N
 
 # 口令哈希专用线程池：**有界**，且不占用事件循环。
 #
@@ -140,10 +161,13 @@ async def password_slot() -> AsyncIterator[None]:
 # --------------------------------------------------------------------------- #
 def hash_password(raw: str) -> str:
     salt = secrets.token_bytes(16)
+    # 同一次调用里只读一次：串里记的 N 必须与实际算的 N 一致，否则
+    # `verify_password` 按串重算出来的永远不匹配。
+    n = _scrypt_n()
     digest = hashlib.scrypt(
-        raw.encode(), salt=salt, n=_SCRYPT_N, r=_SCRYPT_R, p=_SCRYPT_P, dklen=32
+        raw.encode(), salt=salt, n=n, r=_SCRYPT_R, p=_SCRYPT_P, dklen=32
     )
-    return f"scrypt${_SCRYPT_N}${_SCRYPT_R}${_SCRYPT_P}${salt.hex()}${digest.hex()}"
+    return f"scrypt${n}${_SCRYPT_R}${_SCRYPT_P}${salt.hex()}${digest.hex()}"
 
 
 def verify_password(raw: str, encoded: str) -> bool:

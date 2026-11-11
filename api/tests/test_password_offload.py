@@ -16,6 +16,7 @@ import time
 
 import pytest
 
+from core import security
 from core.security import _HASH_WORKERS, hash_password, verify_password_async
 from modules.identity.errors import CredentialInvalid
 
@@ -24,11 +25,23 @@ HEARTBEAT_SEC = 0.005
 MAX_LAG_SEC = 0.1
 
 
+@pytest.fixture
+def full_cost(monkeypatch: pytest.MonkeyPatch) -> None:
+    """把哈希成本钉回生产值（`N=2**14`）。
+
+    测试环境默认降到 `2**10`（见 `core.security._scrypt_n`，那是全量测试
+    省下约 150s 的关键）。但**这两条用例的整个命题就是「一次 150ms 的
+    scrypt 不该卡住事件循环」**：哈希快到 9ms 时心跳凑不够拍子，断言会从
+    「没测出问题」滑成「测试本身失效」。需要真实成本的地方就显式要真实成本。
+    """
+    monkeypatch.setattr(security, "_scrypt_n", lambda: security._PROD_SCRYPT_N)
+
+
 def _max_lag(ticks: list[float]) -> float:
     return max(ticks) if ticks else 0.0
 
 
-def test_verify_password_does_not_block_the_event_loop() -> None:
+def test_verify_password_does_not_block_the_event_loop(full_cost: None) -> None:
     """并发验密期间，事件循环的最大停顿必须远小于一次 scrypt 的耗时。"""
     encoded = hash_password("pass-12345")  # 同步算一次，避免把测试本身算进停顿
     ticks: list[float] = []
@@ -61,7 +74,7 @@ def test_verify_password_does_not_block_the_event_loop() -> None:
     )
 
 
-def test_concurrent_logins_do_not_stall_the_event_loop(client) -> None:  # noqa: ANN001
+def test_concurrent_logins_do_not_stall_the_event_loop(client, full_cost: None) -> None:  # noqa: ANN001
     """接口层同一条不变式：N 个并发登录期间，事件循环仍然能调度别的协程。
 
     走真实 service：`authenticate` 里除了验密还有一次「用户不存在」的假哈希，
@@ -98,8 +111,9 @@ def test_concurrent_logins_do_not_stall_the_event_loop(client) -> None:  # noqa:
         await beat
         return len(ticks)
 
-    asyncio.run(scenario())
+    beats = asyncio.run(scenario())
 
+    assert beats >= 10, "心跳一次都没跑起来，测试本身失效"
     assert _max_lag(ticks) < MAX_LAG_SEC, (
         f"并发登录把事件循环卡住 {_max_lag(ticks) * 1000:.0f}ms"
     )
