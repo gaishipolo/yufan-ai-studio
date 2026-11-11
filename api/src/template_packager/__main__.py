@@ -15,6 +15,20 @@ from template_packager.reuse import resolve_existing_packs, server_options
 from template_packager.runner import apply_manifest
 
 
+def _state_dir() -> Path:
+    """进度文件目录：与模板目录一起由部署决定，默认 `api/var/template-packager`。
+
+    放共享盘的意义在于「换个会话/换台机器还能接着重跑同一份封装」：进度文件
+    绑定了 API 地址、账号和内容指纹，丢在各自机器的本地目录里就恢复不了。
+    """
+    from core.config import settings
+
+    configured = settings.template_packager_state_dir.strip()
+    if configured:
+        return Path(configured).expanduser()
+    return Path(__file__).resolve().parents[2] / "var" / "template-packager"
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         description="将视频、参考图与多项提示词封装为工作台卡片；默认仅本地预检"
@@ -29,7 +43,9 @@ def main(argv=None) -> int:
     )
     parser.add_argument("--api-url", default="http://127.0.0.1:8080/api/v1")
     parser.add_argument(
-        "--state", type=Path, help="恢复进度文件；默认保存在 api/var/template-packager"
+        "--state",
+        type=Path,
+        help="恢复进度文件；默认取 TEMPLATE_PACKAGER_STATE_DIR（未配置时 api/var 下）",
     )
     args = parser.parse_args(argv)
     try:
@@ -63,12 +79,7 @@ def main(argv=None) -> int:
                     state_key = hashlib.sha256(
                         (api.base_url + ":" + loaded.spec.key).encode()
                     ).hexdigest()[:24]
-                    default = (
-                        Path(__file__).resolve().parents[2]
-                        / "var"
-                        / "template-packager"
-                        / (state_key + ".json")
-                    )
+                    default = _state_dir() / (state_key + ".json")
                     report = apply_manifest(loaded, api, (args.state or default).resolve())
         print(json.dumps(report, ensure_ascii=False, indent=2))
         return 0
