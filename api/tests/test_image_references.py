@@ -18,6 +18,7 @@ from datetime import UTC, datetime
 
 import pytest
 from fastapi.testclient import TestClient
+from library_support import insert_asset, png_bytes, upload_image
 
 from core.context import CurrentUser
 from core.exceptions import BadRequest, Forbidden
@@ -32,7 +33,6 @@ from modules.image.models import (
 from modules.image.pipeline import ImageJobStore, _reference_data_uris
 from modules.image.schema import ImageJobOut
 from modules.image.service import _resolve_references
-from library_support import insert_asset, png_bytes, upload_image
 
 API = "/api/v1"
 
