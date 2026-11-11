@@ -338,8 +338,13 @@ POST /identity/login → 校验口令 → 角色展开成权限码 → 签发 JW
 - 写口令只有 `service.set_password` 一个方法（`async`）：它同时更新
   `password_changed_at`，五条路径（自助改密 / 管理员重置 / `create-admin` 轮换 / 建号 /
   演示数据）都走它，新增第六条也别绕开。哈希在线程池里算
-  （`core/security.hash_password_async`）——单次 scrypt 约 150ms，
-  留在事件循环里会让**整个进程**停摆，不只是「这个登录变慢」
+  （`core/security.hash_password_async`）——单次 scrypt 生产参数约 150ms，
+  留在事件循环里会让**整个进程**停摆，不只是「这个登录变慢」。
+  `APP_ENV=test` 时成本自动降到 `2**10`（约 9ms，全量测试的真实开销大头就在这），
+  其他环境仍是 `2**14`：参数编码在哈希串里，两种强度天然共存、存量口令不用迁移。
+  **要测「真实成本」的用例必须显式钉住** `security._scrypt_n`
+  （`tests/test_password_offload.py` 的 `full_cost` 夹具），否则断言会在便宜哈希上
+  退化成「测不到东西」。
 - 凡是会算 scrypt 的 service 方法，**整段**包在 `password_slot()` 里（闸门容量 =
   哈希线程池 worker 数）。目前是 `authenticate` / `change_password` / `reset_password` /
   `create_user` 四条，新增第五条照做。
@@ -831,11 +836,11 @@ async def ask_xxx(...) -> ...:              # **未注册时返回中性值，�
 
 | kind | 配置项 | 现有实现 |
 |---|---|---|
-| `storage` | `STORAGE_DRIVER` | `local` |
+| `storage` | `STORAGE_DRIVER` | `local` / `s3`（S3 或 MinIO，MinIO 必须 path-style） |
 | `queue` | `QUEUE_DRIVER` | `memory`（开发）/ `db`（`queued_jobs`，重启不丢） |
 | `cache` | `CACHE_DRIVER` | `memory`（LRU + TTL） |
-| `ai` | `AI_PROVIDERS`（可多选） | `echo` / `agnes` / `libtv` |
-| `archive` | `ARCHIVE_DRIVER` | `local`（本地 / 共享盘） |
+| `ai` | `AI_PROVIDERS`（可多选） | `echo`（演示/单测）/ `libtv`（模板链视频）/ `bailian`（百炼，见 `docs/MODEL_DRIVER_STANDARD.md` §11 豁免登记）。**`agnes` 已迁走**，它在 `modules/model_driver/drivers/agnes.py`，不要写进这张清单 |
+| `archive` | `ARCHIVE_DRIVER` | `local`（本地 / 共享盘）/ `s3`（默认分桶；`create()` 是集群级 CAS 原语，发布版号与选主租约靠它） |
 
 新增一个只需两步：写 `infra/<kind>/<name>.py`（`Driver = 你的类`），改 `.env`。
 驱动自己的参数（base_url、api_key、根目录、连接数）放它自己的 `XxxSettings`
@@ -1608,7 +1613,7 @@ app export-openapi --check  # 只比对不写盘：有差异就以非 0 退出�
       另一支（委派角色 × 普通账号）一个断言都没有——R9-02 的功能回归就是这样躲过测试的。
       判定有几档就写几条用例，而且「能改 / 不能改」必须是**有意选的**，不是被断言顺手固定下来的（R9-03）
 - [ ] `pytest` 全绿（含架构约束测试）
-- [ ] `ruff check .` 与 `mypy src` 干净、`app doctor` 无 FAIL
+- [ ] `ruff check .` 与 `mypy --platform win32 src`（与 CI 同口径）干净、`app doctor` 无 FAIL
 
 ---
 

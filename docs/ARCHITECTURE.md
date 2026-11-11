@@ -188,12 +188,16 @@
 | `infra/ai/libtv_process.py` | 独立监督进程：持有 OS 租约直至 Node 真正退出，API 重启不会释放活任务的锁。 |
 | `infra/ai/libtv_state.py` | LibTV 适配器的持久化执行状态，不含模板业务。 |
 | `infra/ai/libtv_runtime/` | 执行器运行时资源（Node 侧脚本）。 |
+| `infra/ai/bailian.py` | 百炼 Wan3 替换渠道（**老路径**，`AI_PROVIDERS` 启用）：付费提交只允许一次、回执落盘（`bailian-reconfirmed-*.json`），依赖 run 工作区与归档租约；豁免理由见 `MODEL_DRIVER_STANDARD.md` §11。 |
 | `infra/queue/base.py` | 任务队列抽象。 |
 | `infra/queue/memory.py` | 内存队列：开发 / 单测使用，进程重启即丢。 |
+| `infra/queue/db.py` | 数据库队列（`QUEUE_DRIVER=db`）：job 落 `queued_jobs`，条件 UPDATE 领取 + 租约续租 + 死信留档，重启不丢。 |
 | `infra/storage/base.py` | 对象存储抽象。 |
 | `infra/storage/local.py` | 本地磁盘存储：开发默认。 |
+| `infra/storage/s3.py` | S3 / MinIO 素材存储（`STORAGE_DRIVER=s3`）：存用户上传的字节，URL 给浏览器看，支持预签名直传（需桶配 CORS PUT，否则退回服务端中转）；MinIO 必须 path-style。 |
 | `infra/archive/base.py` | 归档存储协议（`ArchiveStorage`）+ 跨实现共用的文件语义（`within` 越界校验、`checksum`、跨进程 `lease` 锁）。 |
 | `infra/archive/local.py` | 本地 / 共享盘驱动（`ARCHIVE_DRIVER=local`）：`root()` 不可用直接抛 `UpstreamError`，**不静默回退本地**；`copy()` 带 sha256 校验。 |
+| `infra/archive/s3.py` | 归档存储的 S3 驱动（`ARCHIVE_DRIVER=s3`）：只给本机进程读、从不对外发 URL；默认分桶（归档桶禁匿名读），`S3_BUCKET_MODE=shared` 时加 `archive/` 前缀并复用同一个 boto3 client；`create()` 是集群级 CAS 原语（发布版号、GC 选主租约都靠它）。 |
 | `infra/archive/__init__.py` | 归档存储工厂：`get_archive_storage()` 按 `ARCHIVE_DRIVER` 走 `load_driver("archive", ...)`，与 storage / queue 同形态。 |
 
 ### 3.7 `modules/` —— 业务垂直切片

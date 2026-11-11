@@ -274,3 +274,25 @@ cd api
   老驱动不受影响；名字撞车且模型清单不同会被报出来。
 - **不做生成结果入草稿箱**：本模块目前不实现 `pipeline.archive_request`，
   产物只在 `output_url`；与资产库草稿箱的联动口径仍未拍板。
+
+## 11. 仍走老路径的供应商（豁免登记）
+
+新接入的供应商**一律进 `drivers/`**。下面三个留在 `infra/ai/<name>.py` + `AI_PROVIDERS`，
+是**登记过的例外**，不是漏迁——原因是它们不属于「纯协议适配」，迁过去会变成
+「驱动里再 import 一堆替换链/运行时」，反而破坏 `drivers/` 的单文件可复制性：
+
+| 供应商 | 为什么不迁 | 迁的话要动什么 |
+|---|---|---|
+| `echo` | 演示与单测用的假供应商（无网络）。它的价值在「零依赖跑通全链路」，测试直接以 `AI_PROVIDERS=echo` 起服 | 无收益；迁了还要同步改测试与 `param_schema` 断言 |
+| `libtv` | 真跑**本地 Node 运行时脚本**（`libtv_process.py` / `libtv_runtime/`、`settings.libtv_node`），不是 HTTP 轮询；替换链还依赖 `libtv_state` 的作业状态 | 把 subprocess 运行时与状态文件一并搬进 `drivers/`，并让替换链改读新位置 |
+| `bailian` | 除 HTTP 外还依赖替换链的基础设施：`run_dir` 工作区、归档存储租约（`lease`）、计费回执（`bailian-reconfirmed-*.json`）、成片下载后登记归档 | 抽一层「回执 + 工作区」的端口，否则驱动会 import `infra/archive` 与业务路径规则 |
+
+两条纪律：
+
+- **别把驱动名再写进 `AI_PROVIDERS`**（`agnes` 已迁走）。同名但模型清单不同会在启动时报错，
+  重复注册同理。
+- 想把上表某一行迁走，先在 `docs/TODO.md` 立项并写清验收口径（协议一致性用例要在新位置同样通过），
+  不要顺手搬——这三条都牵着替换链的运行期行为。
+
+模型 id 归属：`libtv-*` / `bailian-wan3-*` 只在替换模板链里用；通用生成入口用
+`drivers/` 里的模型（`agnes-image-2.5-flash` 等）。

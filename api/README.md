@@ -427,7 +427,8 @@ sqlite 读出的 naive 时间在序列化时按 UTC 补齐，避免前端时区�
 | 业务模块 | `modules/<name>/`（`app new-module`） | 0 |
 | 权限点 | 模块自己的 `ModuleSpec.permissions` | 0 |
 | 错误码 | 模块内 `ModuleErrors("x", slot=n)` | 0 |
-| 模型供应商 | `infra/ai/<name>.py` + `AI_PROVIDERS` | 0 |
+| 模型供应商（推荐） | `modules/model_driver/drivers/<name>.py`，丢进去自动载入 | 0 |
+| 模型供应商（老路径） | `infra/ai/<name>.py` + `AI_PROVIDERS` | 0 |
 | 存储 / 队列驱动 | `infra/<kind>/<name>.py` + 改配置 | 0 |
 | 生成能力（视频/图片/音乐） | 模块内 `@register_pipeline` | 0 |
 | 横向功能（通知/计费/审计） | 订阅 `generation.*` 事件 | 0 |
@@ -453,6 +454,12 @@ dispatch → generation.submit
 `Job` 还带幂等键，重复入队只保留一条，避免同一任务重复扣费。
 
 ### 换模型供应商
+
+> **先选路**：新接入商优先走**模型驱动**——在 `modules/model_driver/drivers/` 丢一个
+> py 文件（`META` + `MODELS` + `Driver`），不改 `.env`、不改任何 import，重启生效；
+> 标准见 `docs/MODEL_DRIVER_STANDARD.md`，模板文件 `drivers/_template.py`。
+> 下面这段是并存的**老路径**（`infra/ai/<name>.py` + `AI_PROVIDERS`）：
+> 适合框架层适配（`echo` / `libtv` / `bailian` 都在这条路上）。
 
 `infra/ai/base.py` 只有一个协议 `ModelProvider`（`submit` / `poll` / `cancel`），
 视频、图片、音频都是同一套范式。新增厂商：
@@ -513,7 +520,12 @@ sqlite 与 postgres 的时区行为不一致（sqlite 忽略 tzinfo），交给�
 ```bash
 pytest -q          # 全部用例
 ruff check src tests
+mypy --platform win32 src    # 与 CI 同口径（项目依赖 Win32 API，裸 mypy src 判据不同）
 ```
+
+> Windows 本机跑全量务必每轮换一个新的 `--basetemp=var/pytest-<时间戳>`：
+> 复用旧目录会出成片假错误（临时目录清理被安全守卫拦下）。约 200s，
+> 其中口令哈希已从 157s 降到约 10s（`APP_ENV=test` 用 `2**10`）。
 
 测试分四类：
 

@@ -16,8 +16,9 @@
 - **依赖单向**：`api（装配）→ modules → generation → db / infra / core`，业务模块之间禁止互相 import，
   由 `tests/test_architecture.py` 用 AST 静态检查兜住。
 - **可替换基础设施**：存储 / 队列 / 模型供应商都是 `Protocol + 注册表`，换实现只改 `.env`。
-- **契约单一来源**：`docs/openapi.json`、`docs/API.md`、`studio/src/shared/api/schema.ts`
-  三份文件由 `app export-openapi` 从同一份 OpenAPI 生成，前端不会拿到过期接口。
+- **契约单一来源**：`api/docs/openapi.json`、`api/docs/API.md`、`studio/src/shared/api/schema.ts`、
+  `studio/src/shared/api/permissions.ts` **四份**文件由 `app export-openapi` 从同一份 OpenAPI 生成，
+  前端不会拿到过期接口。
 
 ## 快速开始
 
@@ -49,7 +50,8 @@ npm run dev             # http://localhost:5173，/api 已代理到 8080
 
 | 文档 | 读它是因为 |
 |---|---|
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | **新同事先读这个**：全局形状、逐文件职责、请求/登录/生成三条主线、常见坑 |
+| [docs/HANDOFF.md](docs/HANDOFF.md) | **接手先读这个**：当前状态、这一轮改了什么、还差什么、本机坑与不变量 |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 全局形状、逐文件职责、请求/登录/生成三条主线、常见坑 |
 | [docs/CHAIN_REPLACEMENT.md](docs/CHAIN_REPLACEMENT.md) | 产品替换从点击到成片的完整链路：12 跳逐文件、状态机、共享盘产物、失败恢复 |
 | [docs/AI_TEMPLATE_PACKAGER.md](docs/AI_TEMPLATE_PACKAGER.md) | 通过 AI 会话和配置文件封装视频卡片：预检、多功能模板、发布、防重与失败恢复 |
 | [docs/EXTENSIBILITY_GAPS.md](docs/EXTENSIBILITY_GAPS.md) | 扩展框架的问题清单（PR #1 合并暴露）：13 条缺口、优先级、以及暂缓的配置分层提案 |
@@ -60,13 +62,15 @@ npm run dev             # http://localhost:5173，/api 已代理到 8080
 | [docs/FRONTEND_EXTENSION.md](docs/FRONTEND_EXTENSION.md) | 前端目录职责、模块注册、新增页面 |
 | [docs/BACKEND_DELIVERY_IMAGE.md](docs/BACKEND_DELIVERY_IMAGE.md) | **前端接生图先读这个**：两个实测会 100% 失败的写法、异步语义与轮询、权限点改用生成物 |
 | [docs/CODE_STYLE.md](docs/CODE_STYLE.md) | 命名、分层、异常与日志约定 |
-| [docs/BACKEND_REQUIREMENTS_IDENTITY.md](docs/BACKEND_REQUIREMENTS_IDENTITY.md) | 身份与会话还缺什么：续期、登出吊销、审计、密码策略（**给后端的需求单**） |
+| [docs/BACKEND_REQUIREMENTS_IDENTITY.md](docs/BACKEND_REQUIREMENTS_IDENTITY.md) | 身份与会话那批需求单（**已全部落地**，留作决策记录） |
 
 ## 质量门禁
 
 ```bash
-cd api    && pytest -q && ruff check src tests && mypy src
+cd api    && pytest -q && ruff check src tests && mypy --platform win32 src
 cd studio && npm run verify        # typecheck + lint + test + build
 ```
 
-> 任何接口改动都要重跑 `app export-openapi`，否则 `pytest` 会红着提醒你（见 EXTENDING §8）。
+> CI 的 mypy 用 `--platform win32 src`（项目依赖 Win32 API），本地也照这个跑，别用裸 `mypy src`
+> 自证清白。任何接口改动都要重跑 `app export-openapi`（四份一起提交），否则 `pytest`
+> 会红着提醒你（见 EXTENDING §8）。

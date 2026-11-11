@@ -534,12 +534,15 @@ LibTV 排队不稳定时，可以在准备任务前换渠道。渠道是**每条
 **配置**（`api/.env`，都已写进 `.env.example`）：
 
 ```
-AI_PROVIDERS=agnes,echo,libtv,bailian
+AI_PROVIDERS=echo,libtv,bailian
 BAILIAN_BASE_URL=https://llm-cz0qm1j8cl2weo19.cn-beijing.maas.aliyuncs.com/api/v1
 BAILIAN_API_KEY=sk-...
 BAILIAN_TIMEOUT_SEC=45
 BAILIAN_DOWNLOAD_TIMEOUT_SEC=45
 ```
+
+> `agnes` **不要写进 `AI_PROVIDERS`**：它是模型驱动（`modules/model_driver/drivers/agnes.py`），
+> 启动时自动载入。写进去会因「同名但模型清单不同」或重复注册导致启动失败。
 
 `BAILIAN_BASE_URL` 里第一段是业务空间 ID，必须与密钥同属北京地域，跨地域会失败。
 

@@ -1,5 +1,9 @@
 # 北京百炼视频渠道
 
+> 本渠道走**老路径**（`infra/ai/bailian.py` + `AI_PROVIDERS`，不在 `drivers/` 里），
+> 理由登记在 [`MODEL_DRIVER_STANDARD.md`](MODEL_DRIVER_STANDARD.md) §11；是否迁移见
+> [`TODO.md`](TODO.md) T32。配置里**不要**再加 `agnes`（它是驱动，写进 `AI_PROVIDERS` 会启动失败）。
+
 替换工作台的「替换配置 → 模型渠道」可选择 LibTV、百炼 Wan 3.0 标准版或高速版。
 单条与批量准备均保存当次渠道；后续更改选择不会改变已保存任务的渠道。
 

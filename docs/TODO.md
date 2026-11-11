@@ -6,10 +6,11 @@
 > 「产品决定」表示需用户拍板。
 >
 > 来源：`CODE_REVIEW_2026-11-06_R11~R14`、`CODE_REVIEW_2026-11-06_FE6`、
-> `EXTENSIBILITY_GAPS.md` 的 B1/C1/C2，以及素材分支合并时新发现的项。
-> 最后更新：2026-11-08 02:40（连接池耗尽改报 503 + 池参数真正生效（sqlite 文件库也是池）；
-> db 队列续租 + 领取凭据；限流换滑动窗口；`get_settings()` 原地刷新）
-> 剩余：业务侧 T2/T8/T9/T10/T22/T23/T24，架构侧 T25/T26（只剩唤醒）/T29/T30）
+> `EXTENSIBILITY_GAPS.md` 的 B1/C1/C2、素材分支合并时新发现的项，以及
+> **2026-11-11 全面审查**（框架 / 资产库 / 模型启动，P0×2 · P1×9 · P2×11 已全修）与 PR#4 评审遗留。
+> 最后更新：2026-11-11 12:05 —— 审查问题全部修复且 CI 转绿；新增 T31/T32 两条需要拍板的项；
+> 交接现状见 [`HANDOFF.md`](HANDOFF.md)。
+> 剩余：业务侧 T2/T8/T9/T10/T22/T23/T24/T31，架构侧 T25/T26（只剩唤醒）/T29/T30/T32
 
 ## 一眼看完
 
@@ -26,6 +27,8 @@
 | T26 | db 队列没有**跨进程**唤醒（空转已退避，同进程已能叫醒） | API 与 worker 分进程时，空闲入队到取走最坏 1 秒；万级 QPS 要换 Redis 驱动（协议已备好） | 架构 |
 | T29 | 指标是单进程语义，未做多进程聚合 | 多 worker 部署要靠 Prometheus `sum by`；本机 `curl /metrics` 只看到一部分 | 架构 |
 | T30 | PG 迁移闸在观察期（`continue-on-error`），尚未成为硬性要求 | PG 特有的默认值/条件索引差异要等它稳定后才真正拦住 | 架构 |
+| T31 | 模板链素材直传阿里云 OSS | 素材离开本机发到第三方，合规口径未定 | 产品决定 |
+| T32 | `infra/ai/bailian.py` 是否迁进 `drivers/` | 已登记豁免（见 `MODEL_DRIVER_STANDARD.md` §11），要不要收进统一驱动待定 | 架构 |
 
 ---
 
@@ -202,6 +205,33 @@ PostgreSQL 的 `LISTEN/NOTIFY`（写完 `NOTIFY`，worker 侧长连接被唤醒�
 暴露问题而不阻塞合并。
 
 **收紧条件**：连续 3 次 CI 通过后去掉 `continue-on-error`，之后它就是硬性要求。
+**2026-11-11 状态**：该 job 已连续 3 次通过（run #62 / #63 / #64，其中 #63 整体红是因为
+pytest 里一条用例，PG job 本身 success）——条件已满足，**只差拍板**。去掉它之前先确认
+「`downgrade base` 清库重升」对共享环境没有副作用（job 内是临时 service，无副作用）。
+
+## T31 · 模板链素材直传阿里云 OSS（产品口径）
+
+`modules/template/prompt_media.prepare_inputs` 把用户素材**直传**到阿里云对象存储
+（百炼临时素材通道），素材因此离开本机。功能上没问题（2026-11-10 两个渠道各跑通一次真生成），
+缺的是合规口径：客户素材能不能出本地 / 能不能进第三方对象存储，需要产品明确。
+
+**可选方向**（都不改生成语义）：① 保持现状，在替换模板页写明「素材会上传至云端」；
+② 改为部署方自备 OSS（`BAILIAN_*` 侧已有端点配置，需确认临时素材接口是否支持自有桶）；
+③ 关掉直传，要求用户先在素材库归档再由服务端转存。
+
+**验收**：产品给结论并落到文案与开关上；若选 ②/③，补一条「素材不出本机」的用例。
+
+## T32 · `infra/ai/bailian.py` 要不要迁进 `drivers/`
+
+PR#4 评审遗留。两条并存的接入路径本身是设计（见 `MODEL_DRIVER_STANDARD.md` §10），
+但 bailian 属于「业务色彩很重」的那个：它依赖替换链的运行工作区（`run_dir`）、
+归档租约、计费回执，迁进 `drivers/` 需要先抽一层端口，否则驱动会 import 业务基础设施。
+
+**现状**：已在 `MODEL_DRIVER_STANDARD.md` **§11 豁免登记**里写明理由，不是漏迁。
+
+**验收**：如果决定迁 —— 协议一致性用例（`tests/test_model_driver.py` 的那套语义）
+在新位置同样通过，且 `bailian-reconfirmed-*.json` 回执路径不变；如果决定不迁 ——
+本节关掉，§11 就是最终口径。
 
 
 ---
@@ -225,7 +255,6 @@ PostgreSQL 的 `LISTEN/NOTIFY`（写完 `NOTIFY`，worker 侧长连接被唤醒�
 | 限流豁免表只核「有没有写」（原 T32） | 已修 | `Exemption(why, review_by)`：理由里反引号引用的 `.py` 与 `资源:动作` 权限码由守卫解析存在性（文件/权限点没了就红），`review_by` 过期或超过 180 天也红；用例 `test_exempt_reviews_are_current_and_honest` / `test_exempt_reasons_cite_real_code`；复核方法写进 `docs/OPS.md` §9（按 P95 与调用量找变贵的接口）|
 | 队列租约只靠「注释说它够长」（原 T26 外的发现） | 已修 | 执行期间按 `lease_sec / 4` 续租（`workers.py` 的 `_renew_lease`）+ `queued_jobs.lease_token` 领取凭据（`ack`/`nack`/`renew` 都要对得上）；用例 `test_worker_keeps_the_lease_alive_while_running` / `test_stale_ack_cannot_delete_the_new_owner_row` / `test_worker_stops_the_handler_when_the_lease_is_lost` |
 | 过载被报成 bug：池耗尽返回 500，且默认挂 30 秒（原 T25 外的发现） | 已修 | 池耗尽 → 503 + `details.reason=db_pool_exhausted` + `retryAfter`（`api/errors.py`）；`DB_POOL_TIMEOUT` / `DB_POOL_RECYCLE` / `DB_STATEMENT_TIMEOUT_MS` 三项配置，sqlite 文件库也真正用上了池（原来被「sqlite 不支持连接池参数」这句假注释跳过）；`app doctor` 加 `runtime.db_pool`。用例 `tests/test_db_pool.py`（13 条，含反向验证） |
-| 死信「留档给人看」却没地方看（原 T26 外的发现） | 已修 | `app jobs [--state dead] [--json]` 看得到 `last_error` 与租约；`--redrive <id>` 只接受死信（在途重投会被拒绝），`--drop <id> --force` 拒绝删除 `running` 行；内存驱动直接说明「查不到」而不是打印空表。用例 `tests/test_cli.py` 后四条 |
 | 死信「留档给人看」却没地方看（原 T26 外的发现） | 已修 | `app jobs [--state dead] [--json]` 看得到 `last_error` 与租约；`--redrive <id>` 只接受死信（在途重投会被拒绝），`--drop <id> --force` 拒绝删除 `running` 行；内存驱动直接说明「查不到」而不是打印空表。用例 `tests/test_cli.py` 后四条 |
 | 写路由漏挂限流无人发现 | 已修 | `api/ratelimit_policy.py` + `tests/test_route_policy.py`；8 个花钱/写盘入口补了 `rate_limit`，其余 32 条豁免逐条写理由 |
 | `app_meta` 只有「最后写入者胜」（原 T33） | 已修 | `AppMeta.version`（ORM `version_id_col` 乐观锁）+ `updated_by` + `app_meta_history`（同事务、每键留 50 条）；`set_json(expected_version=)` 做 CAS，`merge_json` 冲突后重读重算；`sync_new_permissions` 自动路径取 `declared ∪ previous`（只增不减），收缩走 `app sync-roles --prune-snapshot`，`app meta [key]` 看轨迹。用例 `test_write_against_stale_version_is_refused`（test_app_meta.py）、`test_old_instance_cannot_shrink_snapshot` / `test_conflict_makes_it_recompute_instead_of_overwrite`（test_role_auto_sync.py）+ 迁移用例 `test_upgrade_keeps_existing_rows` |

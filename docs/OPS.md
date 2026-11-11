@@ -12,7 +12,7 @@
 ```bash
 cd api
 alembic upgrade head          # 生产建表只走迁移，不要依赖 create_all
-app doctor                    # 23 项，有 FAIL 直接非零退出
+app doctor                    # 当前 33 项（随模块增加，别记死这个数），有 FAIL 直接非零退出
 app doctor --strict           # 有 WARN 也退出：首次上线建议这样跑一遍
 ```
 
@@ -126,8 +126,14 @@ app sync-roles --dry-run   # 只打印会补什么，不写库
 | `queue_jobs` | gauge | state | db 驱动按 pending / running / dead 拆分；其它驱动只有 active |
 | `outbox_events` | gauge | status | pending / delivered / failed |
 | `app_build_info` | gauge=1 | env, 驱动名 | 确认抓的是哪个进程、跑的什么驱动 |
+| `app_metrics_series_dropped_total` | counter | metric | 因标签组合超过基数上限被**丢掉**的新序列数。非 0 = 那个指标在面板上会缺尾巴（见 §3.1 末尾） |
 
 计数类在事件发生时打点；积压类在**抓取时**去查真实来源，所以重启后立刻是对的。
+
+**序列上限与丢弃**：每个指标有序列数上限（`DEFAULT_MAX_SERIES`，HTTP 计数器按
+「路由数 × 状态码数」单独放宽到 2000）。超限时**新**序列会被丢掉——不报错、不打日志，
+所以在 `app_metrics_series_dropped_total{metric}` 上盯一下：非 0 说明这个指标的上限
+已经不够，面板上会缺尾巴。看到它涨就调 `max_series`，别当没事。
 
 ### 3.2 建议的八条告警
 
@@ -473,6 +479,6 @@ app meta permissions.catalog    # 这个键的值 + 最近 20 次写入轨迹
    10+20 去算，就是 120 个连接——PG 的 `max_connections` 默认 100，
    于是「加到 5 个副本」的那次扩容会以全站 503 的形式被记住。
    同理 `DB_POOL_TIMEOUT` 管的是**本进程借连接**的等待，不是查询耗时。
-7. **租约用应用进程自己的时钟判定**（`utcnow()`），不是数据库时间。多实例部署必须
+8. **租约用应用进程自己的时钟判定**（`utcnow()`），不是数据库时间。多实例部署必须
    跑 NTP：某台机器快 5 分钟，就会把别人正在跑的任务判成「过期」并接手。
    这也是 `QUEUE_LEASE_SEC` 不建议调到分钟以下的另一个理由（抖动同样会误判）。
