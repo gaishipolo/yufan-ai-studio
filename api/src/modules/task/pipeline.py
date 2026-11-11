@@ -7,10 +7,13 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from pathlib import Path
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.library_text import inject_text_refs
+from core.ports.library_ingest import IngestRequest
+from core.ports.library_lookup import LibraryAssetKind
 from generation.pipeline import register_pipeline
 from generation.spec import STATUS_QUEUED, STATUS_RUNNING, GenerationRecord
 from infra.ai.base import Capability, GenerationRequest
@@ -148,6 +151,71 @@ class VideoGenerationPipeline:
             params=record.params,
             request_id=record.id,
         )
+
+    async def archive_request(
+        self, session: AsyncSession, record: GenerationRecord, stored: str
+    ) -> IngestRequest:
+        """把一条成功的视频任务翻译成「入草稿箱」的请求（可选钩子）。
+
+        没有这个方法时 `generation.runner._archive()` 会在 `getattr` 那一步
+        静默返回——用户视频生成完了，资产库里一条都没有（2026-11-11 实测：
+        图片来源入库 6 条、视频 0 条，日志里「生成结果已入草稿箱」出现 0 次）。
+
+        `stored` 是 `persist_output` 的产物。视频这条链**没有实现落盘钩子**：
+        供应商给的是长期有效的 CDN 直链（`cos-platform-outputs.../xxx.mp4`，
+        不带签名参数），框架文档也写明这类能力不必落盘。所以这里拿到的就是
+        直链，交给入库方按 `sourceUrl` 现取现存——字节最终落在资产库自己的
+        存储里，供应商链接以后失效也不影响库里的那一份。
+        """
+        task = await session.get(VideoTask, record.id)
+        name = (task.title if task is not None else "") or f"生成视频-{record.id[:8]}"
+        is_url = stored.startswith(("http://", "https://"))
+        return IngestRequest(
+            source_module=KIND_VIDEO,
+            source_task_id=record.id,
+            # 幂等键必须带**供应商任务号**：`POST /tasks/{id}/retry` 会清空
+            # `external_id` 重投（见 `service.retry_task`），只用 `video:{id}`
+            # 的话重试后新出的片子会被幂等判成「已入过库」，草稿箱里永远停在
+            # 上一版。同一跳轮询重复回调时 external_id 不变，仍是同一行。
+            source_key=f"{KIND_VIDEO}:{record.id}:{record.external_id or 'v0'}",
+            kind=LibraryAssetKind.VIDEO,
+            owner_id=record.owner_id,
+            name=_with_suffix(name, stored),
+            storage_key="" if is_url else stored.lstrip("/"),
+            source_url=stored if is_url else "",
+            generation=_snapshot(task, record),
+        )
+
+
+def _with_suffix(name: str, stored: str) -> str:
+    """给条目名补上真实产物的后缀（`mp4`）。
+
+    用户填的是标题（「一只狸花猫在草地上奔跑」），没有后缀；资产库里存成
+    无后缀的名字，下载下来双击打不开。后缀只认 `stored` 的——那是真实产物
+    的格式，标题里自带什么后缀都不算数。
+    """
+    suffix = Path(stored.split("?", 1)[0]).suffix
+    base = Path(name).stem if Path(name).suffix else name
+    return f"{base}{suffix}" if suffix else base
+
+
+def _snapshot(task: VideoTask | None, record: GenerationRecord) -> dict[str, object]:
+    """入库快照。键名必须是资产库 `_SNAPSHOT_FIELDS` 里认得的（snake_case），
+    认不出的键会被静默丢弃——写成 `durationSec` 等于没记。
+    """
+    if task is None:
+        return {"model": record.model, "prompt": record.prompt}
+    return {
+        "model": task.model,
+        "model_id": task.model_id or record.model,
+        "prompt": task.prompt,
+        "duration_sec": float(task.duration_sec),
+        "aspect_ratio": task.aspect_ratio,
+        "style_preset": task.style_preset or "",
+        "reference_asset_ids": list(task.reference_asset_ids or []),
+        "external_id": task.external_id or "",
+        "generated_at": task.finished_at,
+    }
 
 
 __all__ = ["KIND_VIDEO", "VideoGenerationPipeline", "VideoTaskStore"]
