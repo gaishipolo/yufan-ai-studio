@@ -12,10 +12,10 @@
 | 项 | 值 |
 |---|---|
 | 仓库 / 分支 | `https://github.com/gaishipolo/yufan-ai-studio` · `main` |
-| HEAD | `cfc0508`（与 `origin/main` 一致；未跟踪的只有 `var/`、快捷方式 `.lnk`、`vite.config.ts.timestamp-*.mjs`） |
-| CI | run **#68 全绿**：后端 pytest + ruff + 迁移一致 + mypy；前端 verify；PG 迁移（观察期，`continue-on-error` 仍在） |
-| 本机门禁 | 后端 **1356 passed / 12 skipped**（约 175s）；`npm run verify` 全绿；`app export-openapi --check` 四份无差异 |
-| 规模 | 12 个业务模块 · 111 条路径 / **140 个端点** · **57 个权限码** · **4 份**契约生成物 |
+| HEAD | 与 `origin/main` 一致，本轮提交 hash 见 `git log -1`（未跟踪的只有 `var/`、快捷方式 `.lnk`、`vite.config.ts.timestamp-*.mjs`，都不该进提交） |
+| CI | 此前连续多轮全绿（含 `bc0940e`）；本轮推送后照 §4 核对。PG 迁移仍在观察期（`continue-on-error`） |
+| 本机门禁 | 后端 **1515 passed / 12 skipped**（约 220s）；`npm run verify` 全绿（**614 passed / 74 files**）；`app export-openapi --check` 四份无差异；`gen:routes` / `gen:mock-coverage` 两个 `--check` 同步 |
+| 规模 | 12 个业务模块 · **118 条路径 / 148 个端点**（文本资产 +7）· **57 个权限码**（本轮未新增）· **4 份**契约生成物 |
 | 后端 | `api/.venv/Scripts/app.exe serve --reload` → 8080，前缀 **`/api/v1`**（裸 `/health` 会返回 40400） |
 | 前端 | `cd studio && npm run dev` → 5173，`/api` 已代理到 8080 |
 
@@ -45,6 +45,13 @@
 | 本轮 | **`bailian` 迁进 `drivers/`**（T32，`a18e927`）：新增可选协议 `InputPreparer` + `core/prompt_refs.py`，替换链改为「从路由拿实例、按类型判断」 | 百炼不再靠 `AI_PROVIDERS` 加载；未配密钥在选渠道时就说清 |
 | `cfc0508` | `ModelSpec.internal` + `ModelRouter.public_models()`：替换链专用模型不再出现在目录（T33） | 视频下拉里不再有选中即 400 的 `*-replacement` |
 
+表格之后又连续落了几件事（提交见 `git log --oneline -12`）：PR#5 语义合并 →
+T34 参考图（含素材库侧边悬浮栏 + 拖拽）→ 标签两级分类 → worktree
+`main-7b123d58` 线性合并（Agnes Video 2.5 Flash 驱动）→ **文本资产 B+C**。
+最后这件的产品口径是用户拍板的：形态 **B+C**（既是可编辑的站内文本资产，
+也要能「挑去用」进提示词）、只收 `.txt`/`.md` 且 ≤1MB、按推荐定为
+「UTF-8 纯文本、Markdown 不转 HTML」。实现要点全在 §5 的三条不变量里。
+
 两个值得记住的结论：
 
 - **CI 从 `48ac435` 起每次都是 failure，只有 mypy 一步红**，而且红了很久没人看——
@@ -65,6 +72,10 @@
 | `bailian` 不再是 `AI_PROVIDERS` 里的名字：`.env` 若还写着它，**启动会失败**（`infra/ai/bailian.py` 已删） | 运维 | 删掉那一段即可，驱动会自动载入；只需留 `BAILIAN_API_KEY` 等私有配置 |
 | 百炼渠道可用性改由驱动回答（`InputPreparer.unavailable_reason`） | 前端/运维 | 没配密钥时渠道目录返回「服务端尚未配置百炼密钥」，文案与以前一致 |
 | `GET /models` 不再返回 `internal=True` 的模型（`bailian-wan3-*` / `libtv-wan3-*`） | 前端/脚本 | 它们是替换链专用（要 `archiveRunId`）。按 id 仍能提交；只是不再出现在「可选清单」和「可用模型」报错提示里 |
+| 资产库多了 `kind=text`：`POST /library/text-assets` + `/assets/{id}/text{,/versions,/restore,/raw}` | 前端/脚本 | 只收 `.txt`/`.md`、UTF-8、≤1MB；`coverUrl` 恒为 null，卡片改画 `textExcerpt`。老资产读到 `textExcerpt/textVersion/textUrl` 分别是 null / 0 / null |
+| 生图 `GenerateImageIn`、视频 `CreateTaskIn`、替换 `PrepareReplacement` 各多 `textLibraryIds` + 出参 `textBindings` | 前端/脚本 | 提示词里写 `{{Text N}}`，提交时冻结正文注入；出参只回「哪几份、第几版」不回正文。替换工作台只认 `{{Text N}}`，别的手写花括号会被前端拦 |
+| 上传接口 `kind=text` | 前端/脚本 | 请求体上限从 300MB 降到 **1MB**（`LibraryTextTooLarge` 413）；非 UTF-8 一律 400，不做替换字符兜底 |
+| `library_assets` + 三张生成表各加列、新增 `library_text_versions`（迁移 `e2b7c4a9f310`） | 运维 | 存量行靠 `server_default` 天然是「没有文本引用」，**无需回填**；purge 由 `lifecycle._purge_row` 显式删版本行 |
 
 ## 3. 没做完的（直接从这里开工）
 
@@ -152,6 +163,22 @@ curl -sS --noproxy '*' -H "Authorization: Bearer $TOKEN" \
   也不要让 `modules/template` import 任何 `drivers/*.py`——那正是 T32 之前的状态。
 - **提示词素材引用只有一份实现**：`core/prompt_refs.translate_prompt`（`{{Mixed N}}` →
   `视频1/图2/音频1`），档案与请求体都用它；别在驱动或模块里再抄一遍。
+- **文本资产是「文件型资产 + 版本快照」，不是文本表**：`kind=text` 复用
+  `library_assets` 的去重/权限/回收站/取件；正文另存 `library_text_versions`（**只增不改**，
+  恢复旧版 = 再写一版）。上传与站内新建都要写第 1 版，否则 `read_text_many` 查不到。
+  正文一律纯文本：严格 UTF-8、剥 BOM、`.md` 也不转 HTML，取件固定
+  `text/plain; charset=utf-8` + `nosniff`；文本没有缩略图，别给它生成 `cover_key`。
+- **`{{Text N}}` 注入只有一条链**：`core/library_text.py` 一处（校验 / 冻结 / 注入 /
+  mask / 出参投影）。受理期 `freeze_text_refs` 把 `id/name/version/sha256/content`
+  冻结进 `image_jobs.text_json` / `video_tasks.text_json` / `replacement_runs.text_json`，
+  提交期只读快照注入，**不再查库、不再读 blob**——否则用户改稿后重试会换一段提示词。
+  可读性判据只有 `LibraryLookup.read_text_many` 一份；替换链的编译器拒绝任何花括号，
+  所以那条链要先 `mask_text_refs`、编译完再 `inject_masked_text_refs`。
+  编号按 `textLibraryIds` 顺序从 1 起，最多 8 份；越界编号当场 400。
+  前端重排 / 解绑走 `textRefs.ts::retargetTextTokens` 按 **id** 重编号，别按位置覆盖。
+- **选择器默认排除文本**：`LibraryPicker` / `LibraryFlyout` 只有显式 `kinds` 含
+  `'text'` 才显示；图片 / 视频 / 封装选择器不能因为多了一种类型就把文案混进去。
+  文本也**不是**参考图，别塞进 `referenceLibraryIds` / `referenceAssetIds`。
 
 ## 6. 本机环境坑（Windows 开发机）
 

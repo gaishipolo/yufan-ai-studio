@@ -16,11 +16,14 @@ import { Check, Library, Plus, X } from 'lucide-react';
 import { Button, Chip, CoverImage, SearchInput, Skeleton } from '@/shared/ui';
 import { cn } from '@/shared/lib/cn';
 import { useDebouncedValue } from '@/shared/hooks/useDebouncedValue';
-import type { LibraryAssetOut } from '@/shared/api/schema';
+import type { LibraryAssetKind, LibraryAssetOut } from '@/shared/api/schema';
 import { useLibrarySelectionInfinite, useLibraryTags } from '../api/library.queries';
 import { displayName } from '../model/types';
 import { tagLabel } from '../model/tagTree';
 import { writeLibraryDrag, type LibraryAssetDrag } from '@/shared/lib/libraryDrag';
+
+/** 默认只看图片：文本资产默认不进「挑参考图」的悬浮栏，需要时由调用方显式放开 */
+const DEFAULT_FLYOUT_KINDS: LibraryAssetKind[] = ['image'];
 
 export interface LibraryFlyoutProps {
   onClose: () => void;
@@ -30,6 +33,8 @@ export interface LibraryFlyoutProps {
   pickedIds: string[];
   /** 点击「＋」加入。拖拽走 `drag.ts` 的载荷，不经过这里 */
   onPick: (asset: LibraryAssetDrag) => void;
+  /** 允许出现的类型；不传默认只有 image。显式含 'text' 才显示文本资产 */
+  kinds?: LibraryAssetKind[];
 }
 
 /** 缩略图优先封面；没有封面就退回预览地址，再没有就交给 CoverImage 画占位 */
@@ -41,7 +46,13 @@ function dragPayloadOf(asset: LibraryAssetOut): LibraryAssetDrag {
   };
 }
 
-export function LibraryFlyout({ onClose, max, pickedIds, onPick }: LibraryFlyoutProps) {
+export function LibraryFlyout({
+  onClose,
+  max,
+  pickedIds,
+  onPick,
+  kinds = DEFAULT_FLYOUT_KINDS,
+}: LibraryFlyoutProps) {
   const [keyword, setKeyword] = useState('');
   const [tagId, setTagId] = useState('');
   const debounced = useDebouncedValue(keyword, 250);
@@ -49,17 +60,22 @@ export function LibraryFlyout({ onClose, max, pickedIds, onPick }: LibraryFlyout
   // 标签计数按入口变化；这里固定「全部素材」口径，与选择器的可见集一致
   const tagScope = useMemo(() => ({ state: 'active' as const, library: 'all' as const }), []);
 
+  /* 单一类型直接下发给服务端（分页才对得上）；多类型不传 kind，再在前端按 kinds 收窄 */
+  const singleKind = kinds.length === 1 ? kinds[0] : undefined;
   const query = useLibrarySelectionInfinite({
     keyword: debounced || undefined,
-    kind: 'image',
+    kind: singleKind,
     tagIds: tagId ? [tagId] : undefined,
     pageSize: 24,
   });
   const tags = useLibraryTags(tagScope);
 
   const items = useMemo(
-    () => (query.data?.pages ?? []).flatMap((page) => page.items ?? []),
-    [query.data],
+    () =>
+      (query.data?.pages ?? [])
+        .flatMap((page) => page.items ?? [])
+        .filter((item) => kinds.includes(item.kind)),
+    [query.data, kinds],
   );
   // total 每页都带同一个值：取最后一页的即可，不用另开一个 count 接口
   const total = query.data?.pages.at(-1)?.total ?? 0;
@@ -176,16 +192,29 @@ export function LibraryFlyout({ onClose, max, pickedIds, onPick }: LibraryFlyout
                     blocked ? 'cursor-default' : 'cursor-grab active:cursor-grabbing',
                   )}
                 >
-                  <CoverImage
-                    src={asset.coverUrl ?? undefined}
-                    seed={asset.id}
-                    className="aspect-[4/3] rounded-md"
-                  />
+                  {asset.kind === 'text' ? (
+                    /* 文本资产没有缩略图：用摘要画文字卡，避免一张 404 破图 */
+                    <div className="flex aspect-[4/3] flex-col overflow-hidden rounded-md bg-panel-soft p-1.5">
+                      <span className="line-clamp-4 whitespace-pre-wrap break-words text-[10px] leading-[13px] text-ink-soft">
+                        {asset.textExcerpt?.trim() || '（空文本）'}
+                      </span>
+                    </div>
+                  ) : (
+                    <CoverImage
+                      src={asset.coverUrl ?? undefined}
+                      seed={asset.id}
+                      className="aspect-[4/3] rounded-md"
+                    />
+                  )}
                   <div className="mt-1 truncate text-[11px] text-ink">
                     {displayName(asset.name)}
                   </div>
                   <div className="truncate text-[10px] text-ink-mute">
-                    {asset.width && asset.height ? `${asset.width}×${asset.height}` : '图片'}
+                    {asset.kind === 'text'
+                      ? '文本资产'
+                      : asset.width && asset.height
+                        ? `${asset.width}×${asset.height}`
+                        : '图片'}
                   </div>
 
                   {picked ? (
@@ -244,6 +273,8 @@ export function LibraryFlyout({ onClose, max, pickedIds, onPick }: LibraryFlyout
       <div className="shrink-0 border-t border-line-soft px-3 py-2 text-[10.5px] leading-snug text-ink-mute">
         {full ? (
           <span className="text-warn-deep">已达上限 {max} 张，移除一张后可继续添加</span>
+        ) : kinds.includes('text') ? (
+          '拖文本卡到左侧，或点卡片右上角 ＋ 加入。只显示所选类型，顺序即提交顺序。'
         ) : (
           '拖缩略图到左侧参考图框，或点卡片右上角 ＋ 加入。只显示图片素材，顺序即提交顺序。'
         )}

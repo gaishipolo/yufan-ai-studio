@@ -53,6 +53,7 @@ from modules.library.models import (
     LibraryDraftReview,
     LibraryPackItem,
     LibraryShareRequest,
+    LibraryTextVersion,
 )
 from modules.library.schema import (
     DraftDecisionIn,
@@ -407,6 +408,12 @@ class LifecycleService:
         )
         await self.session.execute(
             delete(LibraryAssetGeneration).where(LibraryAssetGeneration.asset_id == row.id)
+        )
+        # 文本版本快照是行内正文，purge 后没有资产行可挂。版本行留着只会让
+        # 注入口按 asset_id 查到一段「已经彻底删掉」的正文（可读性判据查的是
+        # `library_assets`，这里不删就绕过删除语义了）。
+        await self.session.execute(
+            delete(LibraryTextVersion).where(LibraryTextVersion.asset_id == row.id)
         )
         # 资产没了，挂在它上面的 pending 申请单必须一起关掉：否则审批人点
         # 「通过 / 驳回」只会拿到 404「资产不存在」，申请单永远留在待办列表里

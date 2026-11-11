@@ -48,7 +48,7 @@ NotImplemented，这条路只能靠环境配置兜，换个部署就复发。
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import quote
@@ -80,8 +80,12 @@ class Served:
     chunks: AsyncIterator[bytes] | None = None
     #: 转发时的 `Content-Length`。不知道就不设，让响应退化成 chunked。
     size: int | None = None
+    #: 额外的响应头。文本取件用它带 `X-Content-Type-Options: nosniff`——
+    #: 只声明 `text/plain` 不够，浏览器仍可能嗅探后把 `.md` 里的片段当 HTML 执行。
+    headers: Mapping[str, str] | None = None
 
     def response(self) -> Response:
+        extra = dict(self.headers or {})
         if self.path is not None:
             if not self.path.is_file():
                 # 「库里有记录、盘上文件没了」是必然会发生的：GC 误删、迁移中断、
@@ -90,9 +94,14 @@ class Served:
                 # 而这其实只是一次正常的「产物不在了」，该 404 该重试。
                 raise NotFound("产物文件已不存在，请重新生成或重新登记")
             # FileResponse 支持 Range：本地驱动下拖进度条不需要把文件读进内存
-            return FileResponse(self.path, media_type=self.mime, filename=self.filename)
+            return FileResponse(
+                self.path,
+                media_type=self.mime,
+                filename=self.filename,
+                headers=extra or None,
+            )
         if self.chunks is not None:
-            headers: dict[str, str] = {}
+            headers = extra
             if self.size is not None:
                 # 有长度浏览器才显示进度百分比；没有就是一根不确定进度的转圈
                 headers["Content-Length"] = str(self.size)
@@ -106,15 +115,28 @@ class Served:
             )
         if self.url is None:
             raise NotFound("产物字节不存在，请重新生成")
-        return RedirectResponse(self.url, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+        return RedirectResponse(
+            self.url,
+            status_code=status.HTTP_307_TEMPORARY_REDIRECT,
+            headers=extra or None,
+        )
 
     @classmethod
-    def local(cls, path: Path, mime: str, *, filename: str | None = None) -> Served:
-        return cls(path=path, mime=mime, filename=filename)
+    def local(
+        cls,
+        path: Path,
+        mime: str,
+        *,
+        filename: str | None = None,
+        headers: Mapping[str, str] | None = None,
+    ) -> Served:
+        return cls(path=path, mime=mime, filename=filename, headers=headers)
 
     @classmethod
-    def remote(cls, url: str, mime: str) -> Served:
-        return cls(url=url, mime=mime)
+    def remote(
+        cls, url: str, mime: str, *, headers: Mapping[str, str] | None = None
+    ) -> Served:
+        return cls(url=url, mime=mime, headers=headers)
 
     @classmethod
     def stream(
@@ -124,6 +146,13 @@ class Served:
         *,
         filename: str | None = None,
         size: int | None = None,
+        headers: Mapping[str, str] | None = None,
     ) -> Served:
         """同源转发。只在「前端会用 XHR 取、且目标存储不保证 CORS」时用。"""
-        return cls(chunks=chunks, mime=mime, filename=filename, size=size)
+        return cls(
+            chunks=chunks,
+            mime=mime,
+            filename=filename,
+            size=size,
+            headers=headers,
+        )

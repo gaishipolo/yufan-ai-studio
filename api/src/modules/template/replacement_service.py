@@ -20,15 +20,17 @@ import asyncio
 import hashlib
 import re
 import shutil
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.exc import StaleDataError
 
 from core import audit
+from core.context import CurrentUser
 from core.exceptions import (
     AppError,
     BadRequest,
@@ -38,6 +40,12 @@ from core.exceptions import (
     UpstreamError,
 )
 from core.feed import ReplacementFeedRecord
+from core.library_text import (
+    dumps_text_refs,
+    freeze_text_refs,
+    inject_masked_text_refs,
+    mask_text_refs,
+)
 from core.logging import get_logger
 from core.media import StoredMedia
 from core.ports.media import get_asset_lookup
@@ -176,11 +184,31 @@ class ReplacementService:
     # 准备
     # ------------------------------------------------------------------ #
     async def prepare(
-        self, payload: PrepareReplacement, owner: str, *, can_read_assets: bool = True
+        self, payload: PrepareReplacement, actor: CurrentUser, *, can_read_assets: bool = True
     ) -> ReplacementRunOut:
+        """`actor` 而不是 `owner: str`：文本素材的可读性要按当前主体的共享范围
+        判（`{{Text N}}` 不能把别人的私有文案抄进提示词），光有一个 id 判不了。"""
+        owner = actor.id
         if not can_read_assets:
             raise Forbidden("需要素材读取权限")
         require_channel(payload.channel)
+
+        # 文本快照在受理期冻结：编译器不收花括号，所以这里只做「校验 + 冻结」，
+        # 真正的注入在 `_materialize_inputs` 编译完之后（见那里的注释）。
+        prompt_source = "\n".join(
+            str(value or "")
+            for value in (
+                payload.scene_prompt,
+                payload.replacement_scope,
+                payload.notes,
+            )
+        )
+        text_refs = await freeze_text_refs(
+            self.session,
+            actor,
+            payload.text_library_ids,
+            prompt=prompt_source,
+        )
 
         # 必须带已发布版本：散图路径在 HTTP 入口一律拒绝，脚本/测试用
         # `require_pack=False` 的旧入口已随重建移除（见文档的「刻意保留的差异」）。
@@ -289,8 +317,12 @@ class ReplacementService:
                 pack_id=payload.pack_id,
                 pack_version=payload.pack_version,
                 configuration=payload.model_dump(mode="json"),
+                text_json=dumps_text_refs(text_refs),
             )
             await self.runs.add(run)
+        # 幂等重入（`prepare_failed` 后带同一 request_id 重试）也要把快照写回：
+        # 上一次可能在冻结之后、编译之前失败，不能让新一次的正文与旧行对不上。
+        run.text_json = dumps_text_refs(text_refs)
         await self.session.commit()
 
         # 目录 + `run.json` + 索引指针一起建：`run_path()` 认指针，
@@ -323,6 +355,7 @@ class ReplacementService:
                 roles,
                 character_fronts,
                 selected_packs,
+                text_refs,
             )
         except Exception:
             logger.exception("替换输入准备失败 run_id=%s", run.id)
@@ -768,6 +801,8 @@ class ReplacementService:
             finished_at=run.finished_at,
             elapsed_sec=elapsed_seconds(run),
             prompt=run.prompt,
+            text_library_ids=run.text_library_ids,
+            text_bindings=run.text_bindings,
             prompt_mode=prompt_mode,
             video_template_name=template_name,
             display_title=_display_title(run, _source_name(summary) if summary else None),
@@ -1021,6 +1056,7 @@ def _materialize_inputs(
     roles: dict[str, str] | None = None,
     character_fronts: list[str] | None = None,
     selected_packs: list[dict] | None = None,
+    text_refs: Sequence[Mapping[str, Any]] = (),
 ) -> tuple[dict[str, object], Compilation, ReplacementInputSummary]:
     """把输入落到工作区并编译提示词。**同步函数**：调用方放进线程池。
 
@@ -1077,10 +1113,22 @@ def _materialize_inputs(
         source.sha256,
     )
 
-    variables = {"state_constraints": payload.notes, "replacement_scope": payload.replacement_scope}
+    # 编译器（Node）对用户输入一律拒绝 `{{` / `}}`，最终提示词里也只认
+    # `{{Mixed N}}`。所以 `{{Text N}}` 先换成不含花括号的占位串，编译完再换回
+    # 正文——否则一段 Markdown 文案里恰好写了 `{{...}}` 会让整次准备失败。
+    variables = {
+        "state_constraints": mask_text_refs(payload.notes, text_refs),
+        "replacement_scope": mask_text_refs(payload.replacement_scope, text_refs),
+    }
     if frozen is not None and (frozen.features or frozen.instructions):
         variables["state_constraints"] = "\n".join(
-            text for text in (frozen.features, frozen.instructions, payload.notes) if text
+            text
+            for text in (
+                frozen.features,
+                frozen.instructions,
+                mask_text_refs(payload.notes, text_refs),
+            )
+            if text
         )
     if payload.kind == "character":
         variables.update(
@@ -1128,7 +1176,7 @@ def _materialize_inputs(
     }
     if video_template is not None and is_scene_text(video_template.rules):
         spec["inputMode"] = "video_scene_text"
-        variables["scene_prompt"] = payload.scene_prompt or ""
+        variables["scene_prompt"] = mask_text_refs(payload.scene_prompt or "", text_refs)
     if selected_packs:
         spec["selectedPacks"] = selected_packs
     if video_template is not None:
@@ -1158,6 +1206,10 @@ def _materialize_inputs(
         compiled.prompt = translate_prompt(compiled.prompt, bindings)
         compiled.compiler_version += "+bailian-references-v1"
 
+    # 编译已结束，占位串在这里换成冻结的正文。档案 `prompt.txt` 与请求体
+    # （`run.prompt` → GenerationRecord.prompt）用的是同一份字符串，不会出现
+    # 「档案里还是 {{Text 1}}、实际发出去是别的文案」。
+    compiled.prompt = inject_masked_text_refs(compiled.prompt, text_refs)
     (path / "inputs/prompt.txt").write_text(compiled.prompt, encoding="utf-8", newline="\n")
     storage.write(path / "inputs/prompt-spec.json", spec)
     storage.write(path / "inputs/configuration.json", payload.model_dump(mode="json"))

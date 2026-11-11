@@ -43,14 +43,17 @@ import { LibraryTagManager } from './LibraryTagManager';
 import { LibraryTagPicker } from './LibraryTagPicker';
 import { LibraryToolbar } from './LibraryToolbar';
 import { LibraryUploadModal } from './LibraryUploadModal';
+import { TextAssetModal } from './TextAssetModal';
 import { ShareRequestsModal } from './ShareRequestsModal';
 import { useCreateTagInline } from './use-create-tag-inline';
 import type { LibraryCardAction } from './LibraryCard';
 
 const PAGE_SIZE = 24;
 /* 不含 `pack`：类型筛选里没有「封装」这一档（见 KIND_OPTIONS 注释）。
-   老的 `?kind=pack` 链接会落到「全部」，而不是筛出一个空列表。 */
-const KINDS = new Set(['all', 'video', 'image', 'audio']);
+   老的 `?kind=pack` 链接会落到「全部」，而不是筛出一个空列表。
+   `text` 必须在这里：KIND_OPTIONS 新增「文本」后，点它会把 ?kind=text 写进 URL，
+   白名单不收就会被判成 `all`，筛选看似点了却没生效。 */
+const KINDS = new Set(['all', 'video', 'image', 'audio', 'text']);
 const SORTS = new Set(['-createdAt', 'createdAt', 'name', '-sizeBytes']);
 
 interface ConfirmState {
@@ -132,6 +135,7 @@ export function LibraryWorkspace() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [detailId, setDetailId] = useState<string | null>(null);
   const [uploadOpen, setUploadOpen] = useState(false);
+  const [textModalOpen, setTextModalOpen] = useState(false);
   const [pack, setPack] = useState<{ open: boolean; preselected: string[] }>({
     open: false,
     preselected: [],
@@ -542,6 +546,7 @@ export function LibraryWorkspace() {
           onKeyword={(value) => update({ q: value || null, page: null })}
           onSort={(next) => update({ sort: next, page: null })}
           onUpload={() => setUploadOpen(true)}
+          onNewText={() => setTextModalOpen(true)}
           onPack={() => setPack({ open: true, preselected: [...selected] })}
           onRequests={() => setRequestsOpen(true)}
         />
@@ -621,6 +626,10 @@ export function LibraryWorkspace() {
       />
 
       <LibraryUploadModal open={uploadOpen} tags={tags.data ?? []} onClose={() => setUploadOpen(false)} />
+
+      {textModalOpen && (
+        <TextAssetModal open mode="create" onClose={() => setTextModalOpen(false)} />
+      )}
 
       {tagPicker && (
         <LibraryTagPicker

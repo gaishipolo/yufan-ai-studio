@@ -29,6 +29,7 @@ from typing import Any
 from sqlalchemy import JSON, DateTime, Float, Index, Integer, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column
 
+from core.library_text import parse_text_refs, text_ref_bindings
 from db.base import Base, TimestampMixin, UUIDMixin
 
 # 封装生命周期。`disabled` 是运营主动下架，与「还没发布」（version=0）不是一回事。
@@ -203,6 +204,9 @@ class ReplacementRun(Base, UUIDMixin, TimestampMixin):
 
     # 编译后的提示词：详情页与任务中心直接展示，不再回读文件
     prompt: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    # 文本素材冻结快照（JSON 文本）。`{{Text N}}` 在编译后注入进 `prompt`，
+    # 但快照要留着：详情页要说清「当时用的是哪一稿」，重跑也不该重新读资产。
+    text_json: Mapped[str] = mapped_column(Text, default="", nullable=False)
     # 编译输入快照：回溯「这条提示词是怎么来的」唯一依据
     prompt_spec: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     # 提交时的完整配置（PrepareReplacement 的 model_dump），重跑要用
@@ -242,6 +246,19 @@ class ReplacementRun(Base, UUIDMixin, TimestampMixin):
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    @property
+    def text_refs(self) -> list[dict[str, Any]]:
+        return parse_text_refs(self.text_json)
+
+    @property
+    def text_library_ids(self) -> list[str]:
+        return [str(item.get("assetId") or "") for item in self.text_refs if item.get("assetId")]
+
+    @property
+    def text_bindings(self) -> list[dict[str, Any]]:
+        """出参投影，不带正文。"""
+        return text_ref_bindings(self.text_refs)
 
     __table_args__ = (
         # 任务列表：我的 + 未删除 + 按时间倒序。这是最热的一条查询。

@@ -38,17 +38,21 @@ from sqlalchemy.sql.elements import ColumnElement
 
 from core.config import settings
 from core.context import CurrentUser
-from core.exceptions import BadRequest, NotFound
+from core.exceptions import AppError, BadRequest, NotFound
 from core.ports.library_references import get_library_references, has_library_references
 from core.response import PageParams
 from core.serving import Served
 from infra.media_probe import (
     EXTENSIONS,
     MAX_BYTES,
+    MAX_TEXT_BYTES,
     PREVIEW_VERSION,
+    TEXT_EXTENSIONS,
     create_browser_preview,
     create_preview,
+    decode_text,
     inspect,
+    text_excerpt,
 )
 from infra.storage.base import ObjectStorage, StorageError
 from modules.library import access
@@ -56,6 +60,7 @@ from modules.library.errors import (
     AssetNotEditable,
     LibraryFileTooLarge,
     LibraryFileTypeNotAllowed,
+    LibraryTextTooLarge,
     PackHasNoOriginal,
 )
 from modules.library.models import (
@@ -65,6 +70,7 @@ from modules.library.models import (
     LibraryPackItem,
     LibraryShareRequest,
     LibraryTag,
+    LibraryTextVersion,
 )
 from modules.library.schema import (
     AssetPatchIn,
@@ -112,7 +118,11 @@ def _digest_and_size(path: Path) -> tuple[str, int]:
 def _kind_of(mime: str) -> str:
     if mime.startswith("video/"):
         return "video"
-    return "audio" if mime.startswith("audio/") else "image"
+    if mime.startswith("audio/"):
+        return "audio"
+    if mime.startswith("text/"):
+        return "text"
+    return "image"
 
 
 def blob_key(digest: str, extension: str) -> str:
@@ -449,6 +459,10 @@ class LibraryService:
             # 「删除」必须真的拿不到文件，否则回收站只是前端的一个标签页。
             # 恢复后立刻可用，所以这不是永久拒绝。
             raise NotFound("回收站内的资产不提供预览与下载")
+        if preview and row.kind == "text":
+            # 文本没有缩略图，卡片按 `textExcerpt` 画文字卡。这里直接说清楚，
+            # 别让前端对每张文字卡发一次注定 404 的 `/thumbnail`。
+            raise NotFound("文本资产没有缩略图")
         key = row.cover_key if preview else row.storage_key
         if not preview and row.kind == "pack":
             # 封装只有从成员借来的封面，没有自己的原文件。用 404 会让用户
@@ -459,13 +473,19 @@ class LibraryService:
             # 两种取件共用一个函数，提示必须分开：以前无论是下载原文件还是
             # 取缩略图，都报「没有缩略图」，把排查方向带偏了。
             raise NotFound("此资产没有缩略图" if preview else "此资产没有原文件")
+        is_text = not preview and row.kind == "text"
         return await self._serve(
             key,
-            "image/jpeg" if preview else row.mime_type,
+            # `.md` 也按纯文本给：渲染口径是「Markdown 不转 HTML」，
+            # 让浏览器拿到 `text/markdown` 只会诱发各种嗅探差异。
+            "text/plain; charset=utf-8" if is_text else (
+                "image/jpeg" if preview else row.mime_type
+            ),
             filename=None if preview else row.name,
             # 缩略图给 `<img>` 直接引用；原文件一律同源转发（见 `_serve` 的注释）
             proxy=not preview,
             size=None if preview else row.size_bytes,
+            headers={"X-Content-Type-Options": "nosniff"} if is_text else None,
         )
 
     async def preview(self, asset_id: str, actor: CurrentUser) -> Served:
@@ -577,10 +597,21 @@ class LibraryService:
         mime = EXTENSIONS.get(extension)
         if mime is None or _kind_of(mime) != kind.value:
             raise LibraryFileTypeNotAllowed()
+        # 文本走独立的一档上限：正文会被整份读进内存做注入，300MB 的
+        # 「提示词」既没意义也会把 worker 打爆。这里先卡请求体，探测里再卡一次
+        # 规范化后的字节（BOM 剥离不改变上限，但两道都要有）。
+        text_upload = kind is UploadKind.TEXT
+        if text_upload and extension not in TEXT_EXTENSIONS:
+            raise LibraryFileTypeNotAllowed()
         scoped_key = f"upload:{actor.id}:{source_key}" if source_key else None
         with tempfile.TemporaryDirectory(prefix="library-upload-") as folder:
             temporary = Path(folder) / f"source{extension}"
-            size = await self._receive(temporary, chunks)
+            size = await self._receive(
+                temporary,
+                chunks,
+                limit=MAX_TEXT_BYTES if text_upload else MAX_BYTES,
+                too_large=LibraryTextTooLarge if text_upload else LibraryFileTooLarge,
+            )
             return await self._ingest(
                 temporary,
                 filename=filename,
@@ -595,7 +626,14 @@ class LibraryService:
 
     # ------------------------------------------------------------------ 内部
 
-    async def _receive(self, target: Path, chunks: AsyncIterator[bytes]) -> int:
+    async def _receive(
+        self,
+        target: Path,
+        chunks: AsyncIterator[bytes],
+        *,
+        limit: int = MAX_BYTES,
+        too_large: type[AppError] = LibraryFileTooLarge,
+    ) -> int:
         total = 0
         stream = await asyncio.to_thread(target.open, "xb")
         try:
@@ -603,8 +641,8 @@ class LibraryService:
                 if not chunk:
                     continue
                 total += len(chunk)
-                if total > MAX_BYTES:
-                    raise LibraryFileTooLarge(details={"maxBytes": MAX_BYTES})
+                if total > limit:
+                    raise too_large(details={"maxBytes": limit})
                 await asyncio.to_thread(stream.write, chunk)
         finally:
             await asyncio.to_thread(stream.close)
@@ -627,7 +665,13 @@ class LibraryService:
     ) -> LibraryAssetOut:
         info = await asyncio.to_thread(inspect, path, extension)
         digest, measured = await asyncio.to_thread(_digest_and_size, path)
-        if measured != size:
+        is_text = kind == "text"
+        if is_text:
+            # `inspect` 会剥掉 BOM 并**原地回写**规范化后的字节，所以读回的大小
+            # 与请求体大小不同是预期结果：内容寻址的 key 必须以规范化后的字节为准，
+            # 否则同一段文字带不带 BOM 会存成两份，sha256 与编辑器正文也对不上。
+            size = measured
+        elif measured != size:
             # 写盘与读回不一致只可能是并发截断/磁盘故障；宁可拒绝，也别落一条
             # 「大小字段与字节不符」的行——它会让配额、下载包大小全部失真。
             raise LibraryFileTypeNotAllowed("文件在写入过程中发生变化，请重试")
@@ -643,8 +687,13 @@ class LibraryService:
         key = blob_key(digest, extension)
         await self.storage.put_file(key, path, mime)
         cover_key = ""
-        if kind != "audio":
+        if kind not in {"audio", "text"}:
             cover_key = await self._ensure_preview(path, digest, kind)
+        # 文本正文同时进 `library_text_versions`：注入口只读这张表就能拿到
+        # 「当前第几版、正文是什么」，不必为每条引用再开一次对象存储的读。
+        text_content = (
+            decode_text(await asyncio.to_thread(path.read_bytes)) if is_text else ""
+        )
 
         row = LibraryAsset(
             name=Path(filename).name[:200] or f"{kind}{extension}",
@@ -659,6 +708,8 @@ class LibraryService:
             height=int(info["height"]),
             duration=float(info["duration"]),
             has_audio=bool(info["hasAudio"]),
+            text_excerpt=text_excerpt(text_content) if is_text else "",
+            text_version=1,
             owner_id=actor.id,
             visibility="personal",
             state="active",
@@ -668,6 +719,21 @@ class LibraryService:
         )
         try:
             self.session.add(row)
+            if is_text:
+                # `UUIDMixin.id` 是 flush 期默认值，构造完还拿不到；先 flush
+                # 再插版本行，两次写仍在同一个事务里（commit 一起提交）。
+                await self.session.flush()
+                self.session.add(
+                    LibraryTextVersion(
+                        asset_id=row.id,
+                        version=1,
+                        content=text_content,
+                        sha256=digest,
+                        size_bytes=size,
+                        note="上传" if origin == "upload" else "站内新建",
+                        created_by=actor.id,
+                    )
+                )
             await self.session.commit()
         except IntegrityError:
             # 并发上传同一份文件 / 同一个 sourceKey：唯一索引兜底。回滚后按同样
@@ -701,10 +767,11 @@ class LibraryService:
         filename: str | None = None,
         proxy: bool = False,
         size: int | None = None,
+        headers: dict[str, str] | None = None,
     ) -> Served:
         path = self.storage.local_path(key)
         if path is not None:
-            return Served.local(path, mime, filename=filename)
+            return Served.local(path, mime, filename=filename, headers=headers)
         if proxy:
             # 原文件这条路的消费方全是 XHR：详情页播放音视频也是 `fetch` 成 blob
             # 再 `createObjectURL`，下载原件同样是 blob。`307` 到对象存储会让浏览器
@@ -712,11 +779,17 @@ class LibraryService:
             # 「blocked by CORS policy」（MinIO 的 `PutBucketCors` 当前是 NotImplemented）。
             # 同源转发不依赖任何桶配置。
             return Served.stream(
-                self.storage.iter_chunks(key), mime, filename=filename, size=size or None
+                self.storage.iter_chunks(key),
+                mime,
+                filename=filename,
+                size=size or None,
+                headers=headers,
             )
         # 缩略图走 `<img>` / `<video poster>`：不受 CORS 限制，交给对象存储
         # 省掉一次中转，Range 也由它处理。
-        return Served.remote(await self.storage.presigned_download_url(key), mime)
+        return Served.remote(
+            await self.storage.presigned_download_url(key), mime, headers=headers
+        )
 
     async def _find_duplicate(self, owner_id: str, digest: str, kind: str) -> LibraryAsset | None:
         return await self.session.scalar(
@@ -884,6 +957,13 @@ class LibraryService:
             tags=list(tags),
             trash_reason=row.trash_reason,
             trash_expires_at=row.trash_expires_at,
+            text_excerpt=(row.text_excerpt or None) if row.kind == "text" else None,
+            text_version=row.text_version if row.kind == "text" else 0,
+            text_url=(
+                f"{settings.api_prefix}/library/assets/{row.id}/text/raw"
+                if row.kind == "text"
+                else None
+            ),
             created_at=row.created_at,
             updated_at=row.updated_at,
         )

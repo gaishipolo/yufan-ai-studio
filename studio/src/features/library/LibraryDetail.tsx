@@ -1,9 +1,12 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   ArrowUpRight,
+  Copy,
   Download,
   FileAudio,
+  FileText,
   Film,
+  History,
   Image as ImageIcon,
   Package,
   Pencil,
@@ -43,9 +46,12 @@ import {
   useLibraryDetail,
   useLibraryMedia,
   usePatchAsset,
+  useReadText,
   useSaveAssetFile,
 } from '@/entities/library/api/library.queries';
 import type { LibraryCardAction } from './LibraryCard';
+import { TextAssetModal } from './TextAssetModal';
+import { TextVersionHistory } from './TextVersionHistory';
 import { useCreateTagInline } from './use-create-tag-inline';
 
 export interface LibraryDetailProps {
@@ -117,7 +123,12 @@ function DetailBody({
   const hasMedia = asset.kind === 'video' || asset.kind === 'audio';
   const media = useLibraryMedia(asset.id, hasMedia);
   const [renaming, setRenaming] = useState(false);
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const nameInput = useRef<HTMLInputElement>(null);
+  /* 文本资产没有可预览的媒体字节：正文走 /text 单独取，纯文本展示 */
+  const isText = asset.kind === 'text';
+  const text = useReadText(asset.id, isText);
   /* 输入框里只有主体名：后缀是文件的属性，改不了也不该看起来能改。
      保存时后端 `keep_extension` 会把后缀拼回去，所以这里传裸名是对的。 */
   const [name, setName] = useState(displayName(asset.name));
@@ -175,11 +186,45 @@ function DetailBody({
     );
   };
 
+  /** 复制全文：剪贴板可能被浏览器策略禁用（非 HTTPS / 无权限），失败要给人一条可执行的兜底 */
+  const copyText = async () => {
+    try {
+      await navigator.clipboard.writeText(text.data?.content ?? '');
+      toast('已复制全文');
+    } catch {
+      toast('复制失败，请在正文中手动全选复制', 'error');
+    }
+  };
+
   return (
     <div className="max-h-[76vh] space-y-3 overflow-auto p-[18px]">
       {/* 1. 媒体区 */}
       <section className="overflow-hidden rounded-card border border-line-soft bg-panel-soft">
-        {asset.kind === 'pack' ? (
+        {asset.kind === 'text' ? (
+          <div className="space-y-2 p-3">
+            <div className="flex items-center justify-between gap-2">
+              <span className="flex items-center gap-1.5 text-[13px] text-ink-soft">
+                <FileText size={14} /> 正文（纯文本）
+              </span>
+              <Button
+                size="sm"
+                variant="secondary"
+                icon={<Copy size={12} />}
+                onClick={() => void copyText()}
+              >
+                复制全文
+              </Button>
+            </div>
+            {/* 纯文本，不做 Markdown → HTML 渲染，避免把用户正文当页面执行 */}
+            <pre className="max-h-[360px] overflow-auto whitespace-pre-wrap rounded-lg border border-line-soft bg-white px-2.5 py-2 text-[13px] leading-relaxed text-ink-soft">
+              {text.isPending
+                ? '正在读取正文…'
+                : text.isError
+                  ? '正文读取失败'
+                  : text.data?.content || '（空文本）'}
+            </pre>
+          </div>
+        ) : asset.kind === 'pack' ? (
           <PackMembers asset={asset} onOpenAsset={onOpenAsset} />
         ) : asset.kind === 'image' ? (
           <MediaImage asset={asset} />
@@ -452,10 +497,51 @@ function DetailBody({
             )}
           </>
         )}
+        {isText && asset.state === 'active' && (
+          <>
+            {canEdit && (
+              <Button
+                size="sm"
+                variant="secondary"
+                icon={<Pencil size={13} />}
+                onClick={() => setEditorOpen(true)}
+              >
+                编辑
+              </Button>
+            )}
+            <Button
+              size="sm"
+              variant="secondary"
+              icon={<History size={13} />}
+              onClick={() => setHistoryOpen(true)}
+            >
+              版本历史
+            </Button>
+          </>
+        )}
         <Button size="sm" variant="ghost" className="ml-auto" onClick={onClose}>
           关闭
         </Button>
       </div>
+
+      {/* 详情里就地打开编辑与版本历史：两个弹窗都用 Portal，不受上面滚动容器影响 */}
+      {editorOpen && (
+        <TextAssetModal
+          open
+          mode="edit"
+          assetId={asset.id}
+          assetName={displayName(asset.name)}
+          onClose={() => setEditorOpen(false)}
+        />
+      )}
+      {historyOpen && (
+        <TextVersionHistory
+          open
+          assetId={asset.id}
+          assetName={displayName(asset.name)}
+          onClose={() => setHistoryOpen(false)}
+        />
+      )}
     </div>
   );
 }

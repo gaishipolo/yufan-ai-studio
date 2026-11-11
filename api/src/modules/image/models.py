@@ -15,6 +15,7 @@ from typing import Any
 from sqlalchemy import DateTime, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
+from core.library_text import parse_text_refs, text_ref_bindings
 from db.base import Base, TimestampMixin, UUIDMixin
 from generation.spec import STATUS_QUEUED
 
@@ -43,6 +44,10 @@ class ImageJob(Base, TimestampMixin, UUIDMixin):
     # 而构造请求的那一步没有数据库会话（`build_request(record)` 只拿到记录）。
     # 资产被删也不影响重试——存储是内容寻址的，同一份字节可能还有别处在用。
     reference_json: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    # 文本素材冻结快照（JSON 数组，元素见 `core.library_text`）。**必须落库**：
+    # 重试从这条记录重建 `GenerationRecord`，而资产可能已经被编辑或删除；
+    # 不存快照，重试就会用改过稿的正文（或干脆丢掉注入）。
+    text_json: Mapped[str] = mapped_column(Text, default="", nullable=False)
 
     status: Mapped[str] = mapped_column(
         String(20), default=STATUS_QUEUED, nullable=False, index=True
@@ -106,6 +111,21 @@ class ImageJob(Base, TimestampMixin, UUIDMixin):
         `assets.id`」的标记，而这里存的是 v2 素材库的 id。
         """
         return [item["assetId"] for item in self.references if item.get("assetId")]
+
+    @property
+    def text_refs(self) -> list[dict[str, Any]]:
+        """文本素材冻结快照（含正文），只给提交期注入用，不进出参。"""
+        return parse_text_refs(self.text_json)
+
+    @property
+    def text_library_ids(self) -> list[str]:
+        """契约用：本次绑定了哪几份文本素材（顺序即 `{{Text N}}` 的编号）。"""
+        return [str(item.get("assetId") or "") for item in self.text_refs if item.get("assetId")]
+
+    @property
+    def text_bindings(self) -> list[dict[str, Any]]:
+        """契约用：绑定了哪些文案、各是第几版（**不带正文**）。"""
+        return text_ref_bindings(self.text_refs)
 
 
 def dumps_params(params: Mapping[str, Any]) -> str:

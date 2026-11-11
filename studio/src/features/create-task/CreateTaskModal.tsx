@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Library, Sparkles, X } from 'lucide-react';
 import { Button, Chip, Modal, Select } from '@/shared/ui';
 import { LibraryPicker } from '@/entities/library/ui/LibraryPicker';
+import { TextRefPicker } from '@/features/library/TextRefPicker';
 import { useCan } from '@/shared/access/use-access';
 import type { LibraryAssetOut } from '@/shared/api/schema';
 import { cn } from '@/shared/lib/cn';
@@ -26,6 +27,7 @@ export function CreateTaskModal({ open, onClose, onCreated }: CreateTaskModalPro
   const [ratio, setRatio] = useState<AspectRatio>('9:16');
   const [error, setError] = useState('');
   const [references, setReferences] = useState<LibraryAssetOut[]>([]);
+  const [textRefs, setTextRefs] = useState<LibraryAssetOut[]>([]);
   const [pickerOpen, setPickerOpen] = useState(false);
   const canReadLibrary = useCan('library:read');
 
@@ -69,6 +71,7 @@ export function CreateTaskModal({ open, onClose, onCreated }: CreateTaskModalPro
       setPrompt('');
       setError('');
       setReferences([]);
+      setTextRefs([]);
     }
   }, [open]);
 
@@ -85,6 +88,7 @@ export function CreateTaskModal({ open, onClose, onCreated }: CreateTaskModalPro
         durationSec: Number(duration),
         aspectRatio: ratio,
         ...(references.length ? { referenceAssetIds: references.map((item) => item.id) } : {}),
+        ...(textRefs.length ? { textLibraryIds: textRefs.map((item) => item.id) } : {}),
       },
       {
         onSuccess: (task) => {
@@ -116,6 +120,15 @@ export function CreateTaskModal({ open, onClose, onCreated }: CreateTaskModalPro
             )}
           />
           {error && <p className="mt-1 text-[11px] text-danger">{error}</p>}
+        </div>
+
+        <div>
+          <TextRefPicker
+            value={textRefs}
+            onChange={setTextRefs}
+            prompt={prompt}
+            onPromptChange={setPrompt}
+          />
         </div>
 
         <div className="grid grid-cols-2 gap-2.5">

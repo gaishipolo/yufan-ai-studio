@@ -64,7 +64,7 @@ async def prepare_run(
     payload: PrepareReplacement, actor: WriteDep, service: ReplacementServiceDep
 ) -> ApiResponse[ReplacementRunOut]:
     return ApiResponse.ok(
-        await service.prepare(payload, actor.id, can_read_assets=actor.has("asset:read"))
+        await service.prepare(payload, actor, can_read_assets=actor.has("asset:read"))
     )
 
 

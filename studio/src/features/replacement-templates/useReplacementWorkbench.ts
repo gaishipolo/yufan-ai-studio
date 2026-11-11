@@ -4,7 +4,8 @@ import { useArchiveAssets, useArchiveUpload, useArchiveSelection } from '@/entit
 import { useExecuteReplacement, usePrepareReplacement, useReplacementCatalog } from '@/entities/template/api/replacement.queries';
 import { isStateChanged } from '@/shared/api/types';
 import { useVideoTemplates } from '@/entities/video-template/api/videoTemplate.queries';
-import type { ReplacementChannelOut, VideoTemplateOut } from '@/shared/api/schema';
+import type { LibraryAssetOut, ReplacementChannelOut, VideoTemplateOut } from '@/shared/api/schema';
+import { hasForeignMustache } from '@/features/library/textRefs';
 import { replacementKind, type ReplacementKind, type ReplacementRun, type ReplacementInput } from '@/entities/template/model/replacement.types';
 import { toast } from '@/shared/lib/toast';
 import { isReplacementPackAvailable } from '@/entities/template/model/replacementPack';
@@ -33,6 +34,7 @@ export function useReplacementWorkbench() {
     setExtraPackIds([]);
     setScopes([]);
     setNotes('');
+    setTextRefs([]);
     patchParams({kind: value, packId: null, packVersion: null, videoTemplateId: null});
   }
   /* 原片选择只有一个来源：URL。选择、清空、深链带入都改同一个参数，
@@ -41,6 +43,7 @@ export function useReplacementWorkbench() {
   function setSourceId(id: string | null) {
     setExtraPackIds([]);
     setScopes([]);
+    setTextRefs([]);
     patchParams({sourceId: id, videoTemplateId: null});
   }
   function setPackId(id: string) {
@@ -49,6 +52,9 @@ export function useReplacementWorkbench() {
   }
   const [scopes, setScopes] = useState<string[]>([]);
   const [notes, setNotes] = useState('');
+  /* 文本引用：占位符写在 scenePrompt / notes / replacementScope 里，
+     提交时把绑定顺序的 id 放进 textLibraryIds（与参考图/素材包互不混用） */
+  const [textRefs, setTextRefs] = useState<LibraryAssetOut[]>([]);
   const [reviewId, setReviewId] = useState<string | null>(null);
   const detailId = params.get('run');
   const setDetailId = (id: string | null) => patchParams({run: id});
@@ -127,6 +133,7 @@ export function useReplacementWorkbench() {
   function applyVideoTemplate(binding: VideoTemplateOut, id = sourceId) {
     setExtraPackIds([]);
     setScopes([]);
+    setTextRefs([]);
     updatePackId(binding.packId ?? '');
     setNotes('');
     setReviewId(null);
@@ -242,7 +249,8 @@ export function useReplacementWorkbench() {
   const channelBlocked = channel !== 'libtv' && !currentChannel?.enabled;
   const missing = channelBlocked ? currentChannel?.unavailableReason || '所选模型渠道暂不可用'
     : isTextScene && !scenePrompt.trim() ? '请填写场景描述'
-    : isTextScene && (scenePrompt.length > 4000 || scenePrompt.includes('{{') || scenePrompt.includes('}}')) ? '场景描述最多 4000 字，请使用普通文字'
+    /* 文字换场景允许 {{Text N}} 文本引用占位符，但其它手写模板括号仍拒绝 */
+    : isTextScene && (scenePrompt.length > 4000 || hasForeignMustache(scenePrompt)) ? '场景描述最多 4000 字，只允许 {{Text N}} 文本引用占位符'
     : slots > 1 && !everyoneChosen ? `还需选择 ${slots - chosenPacks.length} 位人物`
     : references.length > 10 ? `所选人物参考图合计 ${references.length} 张，最多支持 10 张，请选择更精简的角色卡`
     : !packReady ? `请选择一个可用的${template.short}素材包`
@@ -280,7 +288,8 @@ export function useReplacementWorkbench() {
         ...(isTextScene ? {scenePrompt} : {}),
         extraPackIds: extraIds,
         ...(extraIds.length && extraVersions.length === extraIds.length ? {extraPackVersions: extraVersions} : {}),
-        replacementScope: showScope ? scopes.join('、') : '', notes: isTextScene ? '' : notes, aspectRatio: 'adaptive'};
+        replacementScope: showScope ? scopes.join('、') : '', notes: isTextScene ? '' : notes, aspectRatio: 'adaptive',
+        ...(textRefs.length ? {textLibraryIds: textRefs.map(item => item.id)} : {})};
       const key = JSON.stringify(config);
       const previous = catalog.data?.runs.find(run => run.id === preparedIds.current.get(key));
       if (previous?.deletedAt) requestIds.current.delete(key);
@@ -349,7 +358,7 @@ export function useReplacementWorkbench() {
       event.target.value = '';
 
   }
-  return { channel, setChannel, channels, currentChannel, isTextScene, scenePrompt, setScenePrompt, defaultScenePrompt, setBatchPreparing, sourceScope, setSourceScope, sourcePage, setSourcePage, linkedSource, params, kind, setKind, sourceId, setSourceId, selectSource, references, target, packId, setPackId, wardrobeMode, selectedPack, packs, scopes, setScopes, availableScopes, showScope, functionOptions, selectFunction, notes, setNotes, reviewId, setReviewId, detailId, setDetailId, search, setSearch, historyTrash, historyStatus, historySearch, setHistoryFilter, preparing, submitting, feedback, setFeedback, uploadInput, assets, catalog, upload, template, videos, currentDetail, review, busy, missing, toggle, pickUpload, prepareTask, submitRun, handleUpload, videoTemplates, templateForSource, boundTemplate, activeVideoTemplate, slots, slotPacks, toggleCharacterPack, chosenPacks };
+  return { channel, setChannel, channels, currentChannel, isTextScene, scenePrompt, setScenePrompt, defaultScenePrompt, setBatchPreparing, sourceScope, setSourceScope, sourcePage, setSourcePage, linkedSource, params, kind, setKind, sourceId, setSourceId, selectSource, references, target, packId, setPackId, wardrobeMode, selectedPack, packs, scopes, setScopes, availableScopes, showScope, functionOptions, selectFunction, notes, setNotes, textRefs, setTextRefs, reviewId, setReviewId, detailId, setDetailId, search, setSearch, historyTrash, historyStatus, historySearch, setHistoryFilter, preparing, submitting, feedback, setFeedback, uploadInput, assets, catalog, upload, template, videos, currentDetail, review, busy, missing, toggle, pickUpload, prepareTask, submitRun, handleUpload, videoTemplates, templateForSource, boundTemplate, activeVideoTemplate, slots, slotPacks, toggleCharacterPack, chosenPacks };
 }
 
 export type ReplacementWorkbench = ReturnType<typeof useReplacementWorkbench>;

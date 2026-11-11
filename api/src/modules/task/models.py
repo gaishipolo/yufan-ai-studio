@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import JSON, Boolean, DateTime, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
+from core.library_text import parse_text_refs, text_ref_bindings
 from db.base import Base, TimestampMixin, UUIDMixin
 from modules.task.enums import AspectRatio, TaskStatus
 
@@ -32,6 +34,9 @@ class VideoTask(Base, UUIDMixin, TimestampMixin):
     # 生成风格预设与参考素材：契约里声明了就必须落库，否则客户端会「以为生效了」
     style_preset: Mapped[str | None] = mapped_column(String(64), nullable=True)
     reference_asset_ids: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    # 文本素材冻结快照（JSON 文本），见 `core.library_text`。重试从本行重建
+    # GenerationRecord，不落库就会在用户改稿后静默换一段提示词。
+    text_json: Mapped[str] = mapped_column(Text, default="", nullable=False)
 
     progress: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     cover_url: Mapped[str] = mapped_column(String(512), default="", nullable=False)
@@ -59,6 +64,20 @@ class VideoTask(Base, UUIDMixin, TimestampMixin):
         Index("ix_video_tasks_author_created", "author_id", "created_at"),
         Index("ix_video_tasks_status_created", "status", "created_at"),
     )
+
+    @property
+    def text_refs(self) -> list[dict[str, Any]]:
+        """冻结的文本快照（含正文），只给提交期注入用。"""
+        return parse_text_refs(self.text_json)
+
+    @property
+    def text_library_ids(self) -> list[str]:
+        return [str(item.get("assetId") or "") for item in self.text_refs if item.get("assetId")]
+
+    @property
+    def text_bindings(self) -> list[dict[str, Any]]:
+        """出参用的精简投影，不带正文。"""
+        return text_ref_bindings(self.text_refs)
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"<VideoTask {self.id} {self.status} {self.title[:16]!r}>"

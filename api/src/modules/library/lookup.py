@@ -21,11 +21,12 @@ from core.ports.library_lookup import (
     LibraryAssetRef,
     LibraryAssetState,
     LibraryLookup,
+    LibraryTextRef,
     LibraryVisibility,
     register_library_lookup,
 )
 from modules.library.access import readable_rows
-from modules.library.models import LibraryAsset
+from modules.library.models import LibraryAsset, LibraryTextVersion
 
 __all__ = ["SqlLibraryLookup", "lookup", "install"]
 
@@ -63,6 +64,52 @@ class SqlLibraryLookup(LibraryLookup):
                 has_audio=row.has_audio,
             )
             for row in rows
+        }
+
+    async def read_text_many(
+        self, session: AsyncSession, actor: CurrentUser, asset_ids: Sequence[str]
+    ) -> Mapping[str, LibraryTextRef]:
+        """文本正文快照。**判据只有 `readable_rows` 一份**：共享出去的、
+        靠封装成员身份读到的都算，失权的一律不返回，调用方按缺失报错而不是
+        「查不到就当没引用」把别人的私有文案跳过。
+
+        正文来自 `library_text_versions` 的最新版，不读 blob：注入发生在提交期，
+        那时候不该再为每条引用开一次对象存储的读。版本行是行内不可变快照，
+        编辑资产不会改写它，重试拿到的是同一段正文。
+        """
+        wanted = [asset_id for asset_id in dict.fromkeys(asset_ids) if asset_id]
+        if not wanted:
+            return {}
+        rows = await readable_rows(session, wanted, actor)
+        text_ids = [
+            asset_id
+            for asset_id, row in rows.items()
+            if row.kind == "text" and row.state == "active"
+        ]
+        if not text_ids:
+            return {}
+        versions = (
+            await session.scalars(
+                select(LibraryTextVersion).where(
+                    LibraryTextVersion.asset_id.in_(text_ids)
+                )
+            )
+        ).all()
+        latest: dict[str, LibraryTextVersion] = {}
+        for version in versions:
+            current = latest.get(version.asset_id)
+            if current is None or version.version > current.version:
+                latest[version.asset_id] = version
+        return {
+            asset_id: LibraryTextRef(
+                id=asset_id,
+                name=rows[asset_id].name,
+                version=version.version,
+                sha256=version.sha256,
+                content=version.content,
+                size_bytes=version.size_bytes,
+            )
+            for asset_id, version in latest.items()
         }
 
 

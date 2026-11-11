@@ -72,6 +72,8 @@ export interface CreateTaskPayload {
   durationSec: number;
   aspectRatio: AspectRatio;
   referenceAssetIds?: string[];
+  /** 提示词 {{Text N}} 对应的文本资产 id，顺序即编号顺序；与参考素材互不混用 */
+  textLibraryIds?: string[];
   stylePreset?: string;
 }
 

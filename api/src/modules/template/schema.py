@@ -11,7 +11,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from pydantic import Field, model_validator
@@ -128,6 +128,13 @@ class PrepareReplacement(CamelModel):
     scene_prompt: str | None = Field(default=None, max_length=4000,
                                     description="文字换场景的描述；省略使用模板默认值，空白拒绝")
     reference_ids: list[str] = Field(default_factory=list, max_length=10)
+    # 与生图 / 视频同一套 `{{Text N}}`：在 scenePrompt / notes / replacementScope
+    # 里写占位符，受理期按当时版本冻结正文，编译后再注入（编译器不收花括号）。
+    text_library_ids: list[str] = Field(
+        default_factory=list,
+        max_length=8,
+        description="绑定的文本资产 id，按顺序对应 `{{Text N}}`；最多 8 份",
+    )
     # 多人物替换：模板声明了几个「正面身份图」槽位，工作台就要求选几个人物卡。
     # 第 1 位仍走 `packId` + `packVersion`（版本要锁），这里只放第 2 位起的包，
     # 顺序即提示词槽位顺序。空列表就是原来的单人/产品替换，行为不变。
@@ -185,6 +192,12 @@ class ReplacementRunOut(CamelModel):
         description="确认提交到结束的耗时（秒）；未完成时按到此刻计，未开始为 null",
     )
     prompt: str
+    text_library_ids: list[str] = Field(
+        default_factory=list, description="本次绑定的文本资产 id（顺序即 `{{Text N}}` 编号）"
+    )
+    text_bindings: list[dict[str, Any]] = Field(
+        default_factory=list, description="绑定的文案与版本快照（不含正文）"
+    )
     prompt_mode: Literal["fixed", "compiled"] = Field(
         default="compiled",
         description=(

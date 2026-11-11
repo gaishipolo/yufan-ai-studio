@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { Inbox, PackagePlus, Upload } from 'lucide-react';
+import { FileText, Inbox, PackagePlus, Upload } from 'lucide-react';
 import { Button, Chip, SearchInput, Select, Tabs } from '@/shared/ui';
 import type { LibraryFacets } from '@/shared/api/schema';
 import {
@@ -26,6 +26,8 @@ export interface LibraryToolbarProps {
   onKeyword: (keyword: string) => void;
   onSort: (sort: LibrarySortKey) => void;
   onUpload: () => void;
+  /** 站内新建文本资产，显隐与上传一致 */
+  onNewText: () => void;
   onPack: () => void;
   onRequests: () => void;
 }
@@ -108,6 +110,15 @@ export function LibraryToolbar(props: LibraryToolbarProps) {
                   onClick={props.onPack}
                 >
                   封装
+                </Button>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  icon={<FileText size={13} />}
+                  disabled={props.busy}
+                  onClick={props.onNewText}
+                >
+                  新建文本
                 </Button>
                 <Button
                   size="sm"

@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core import audit
 from core.context import CurrentUser
 from core.exceptions import BadRequest, Forbidden, InvalidState, UpstreamError
+from core.library_text import dumps_text_refs, freeze_text_refs
 from core.logging import get_logger
 from core.param_schema import resolve_params
 from core.ports.library_lookup import LibraryAssetKind, get_library_lookup
@@ -204,6 +205,15 @@ class ImageService:
         references = await _resolve_references(
             self.session, actor, payload.reference_library_ids, spec
         )
+        # 文本在**受理期**冻结：提交 / 重试只读这份快照，资产之后被编辑也不会
+        # 让同一条任务的两跳用上不同的提示词。校验 `{{Text N}}` 编号也在这里，
+        # 写错了当场 400，而不是等异步任务失败。
+        text_refs = await freeze_text_refs(
+            self.session,
+            actor,
+            payload.text_library_ids,
+            prompt=payload.prompt,
+        )
 
         # 尺寸 / 张数在表里是独立列（历史列表、卡片角标都按列读），其余参数
         # 按模型声明自由扩展，统一进 params_json。别把它们并进同一条 JSON：
@@ -219,6 +229,7 @@ class ImageService:
             count=count,
             params_json=dumps_params(extra),
             reference_json=dumps_references(references),
+            text_json=dumps_text_refs(text_refs),
             status=STATUS_QUEUED,
             model=spec.label,
             model_id=spec.id,
@@ -241,6 +252,10 @@ class ImageService:
                 # 参考图留痕只记 id：字节内容没必要进审计日志，但「用了别人的哪张图」
                 # 要能查出来（尤其是在排查「生成结果像某个素材」的时候）
                 "referenceLibraryIds": [item["assetId"] for item in references],
+                # 文本留痕只记 id + 版本：正文进审计日志既浪费也含用户内容，
+                # 但「这一版提示词用的是哪一稿」必须能查。
+                "textLibraryIds": [item["assetId"] for item in text_refs],
+                "textVersions": [item["version"] for item in text_refs],
             },
         )
 

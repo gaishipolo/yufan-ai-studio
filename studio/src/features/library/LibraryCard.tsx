@@ -1,4 +1,4 @@
-import { Check, Download, FileAudio, Film, Image as ImageIcon, Package, Plus, RotateCcw, Share2, Trash2, Undo2, X } from 'lucide-react';
+import { Check, Download, FileAudio, FileText, Film, Image as ImageIcon, Package, Plus, RotateCcw, Share2, Trash2, Undo2, X } from 'lucide-react';
 import { Button, Chip, CoverImage, IconButton } from '@/shared/ui';
 import { cn } from '@/shared/lib/cn';
 import { formatBytes, formatDuration } from '@/shared/lib/format';
@@ -45,6 +45,7 @@ const KIND_ICON = {
   audio: FileAudio,
   image: ImageIcon,
   pack: Package,
+  text: FileText,
 } as const;
 
 /**
@@ -107,18 +108,32 @@ export function LibraryCard({
           className="block w-full text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
           aria-label={`查看 ${title}`}
         >
-          <CoverImage
-            src={asset.coverUrl ?? undefined}
-            seed={asset.id}
-            className="aspect-[4/3]"
-            imgClassName="transition-transform duration-300 ease-smooth group-hover:scale-[1.03]"
-          />
-          {/* 没有封面（音频、抽帧失败的视频）时给一个类型图标：空渐变块在网格里
-              看起来像加载失败，用户分不清「没有图」和「图挂了」。 */}
-          {!asset.coverUrl && (
-            <span className="pointer-events-none absolute inset-0 grid place-items-center">
-              <Icon size={30} className="text-white/75" strokeWidth={1.6} />
-            </span>
+          {asset.kind === 'text' ? (
+            /* 文本资产没有缩略图：不去请求 /thumbnail，直接用摘要画一张文字卡 */
+            <div className="relative flex aspect-[4/3] flex-col overflow-hidden bg-panel-soft p-2.5">
+              <pre className="line-clamp-5 whitespace-pre-wrap break-words font-sans text-[12px] leading-[18px] text-ink-soft">
+                {asset.textExcerpt?.trim() || '（空文本）'}
+              </pre>
+              <span className="absolute right-1.5 top-1.5 rounded-[5px] border border-line-soft bg-panel px-1.5 py-px text-[10.5px] text-ink-mute">
+                文本
+              </span>
+            </div>
+          ) : (
+            <>
+              <CoverImage
+                src={asset.coverUrl ?? undefined}
+                seed={asset.id}
+                className="aspect-[4/3]"
+                imgClassName="transition-transform duration-300 ease-smooth group-hover:scale-[1.03]"
+              />
+              {/* 没有封面（音频、抽帧失败的视频）时给一个类型图标：空渐变块在网格里
+                  看起来像加载失败，用户分不清「没有图」和「图挂了」。 */}
+              {!asset.coverUrl && (
+                <span className="pointer-events-none absolute inset-0 grid place-items-center">
+                  <Icon size={30} className="text-white/75" strokeWidth={1.6} />
+                </span>
+              )}
+            </>
           )}
           <div className="pointer-events-none absolute inset-x-0 bottom-0 flex items-end justify-between gap-1 bg-gradient-to-t from-[rgba(12,24,30,.62)] via-[rgba(12,24,30,.28)] to-transparent px-2 pb-1.5 pt-7">
             <span className="inline-flex items-center gap-1 text-[12.5px] font-medium text-white/95">
@@ -159,7 +174,8 @@ export function LibraryCard({
         </label>
 
         {asset.visibility !== 'personal' && view !== 'trash' && (
-          <span className="absolute right-1.5 top-1.5 drop-shadow-sm">
+          /* 文本卡右上角已有「文本」徽标，共享徽标往下让一格，避免两块叠在一起 */
+          <span className={cn('absolute right-1.5 drop-shadow-sm', asset.kind === 'text' ? 'top-9' : 'top-1.5')}>
             <Chip tone={asset.visibility === 'team' ? 'primary' : 'ok'}>
               {asset.visibility === 'team' ? '团队' : '小组'}
             </Chip>

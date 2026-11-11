@@ -11,7 +11,7 @@ import { useCreateTagInline } from './use-create-tag-inline';
 
 interface UploadItem {
   file: File;
-  kind: 'image' | 'audio' | null;
+  kind: 'image' | 'audio' | 'text' | null;
   status: 'ready' | 'uploading' | 'done' | 'failed';
   ratio: number;
   error?: string;
@@ -24,6 +24,8 @@ export interface LibraryUploadModalProps {
 }
 
 const MAX_BYTES = 200 * 1024 * 1024;
+/** 文本资产是 UTF-8 纯文本、后端上限 1 MB；前端先拦，省掉一次注定失败的请求 */
+const TEXT_MAX_BYTES = 1024 * 1024;
 
 /**
  * 上传弹窗：一次挑多个文件，逐条上传、逐条给结果。
@@ -56,15 +58,23 @@ export function LibraryUploadModal({ open, tags, onClose }: LibraryUploadModalPr
 
   const pick = (files: FileList | null) => {
     const next: UploadItem[] = Array.from(files ?? []).map((file) => {
-      const kind = file.type.startsWith('image/')
-        ? 'image'
-        : file.type.startsWith('audio/')
-          ? 'audio'
-          : null;
+      /* .txt/.md 有些浏览器给的 file.type 是空串，按扩展名认最稳 */
+      const lower = file.name.toLowerCase();
+      const isText = lower.endsWith('.txt') || lower.endsWith('.md');
+      const kind = isText
+        ? 'text'
+        : file.type.startsWith('image/')
+          ? 'image'
+          : file.type.startsWith('audio/')
+            ? 'audio'
+            : null;
       if (!kind) {
-        return { file, kind, status: 'failed', ratio: 0, error: '只支持图片与音频；视频请走模板库原片入口' };
+        return { file, kind, status: 'failed', ratio: 0, error: '只支持图片、音频与 .txt/.md 文本；视频请走模板库原片入口' };
       }
-      if (file.size > MAX_BYTES) {
+      if (kind === 'text' && file.size > TEXT_MAX_BYTES) {
+        return { file, kind, status: 'failed', ratio: 0, error: '文本文件不能超过 1 MB（UTF-8 纯文本）' };
+      }
+      if (kind !== 'text' && file.size > MAX_BYTES) {
         return { file, kind, status: 'failed', ratio: 0, error: '单个文件不能超过 200 MB' };
       }
       return { file, kind, status: 'ready', ratio: 0 };
@@ -87,7 +97,7 @@ export function LibraryUploadModal({ open, tags, onClose }: LibraryUploadModalPr
       try {
         const asset = await upload.mutateAsync({
           file: target.file,
-          kind: target.kind as 'image' | 'audio',
+          kind: target.kind as 'image' | 'audio' | 'text',
           onProgress: (ratio) =>
             setItems((previous) => previous.map((item, i) => (i === index ? { ...item, ratio } : item))),
         });
@@ -130,7 +140,7 @@ export function LibraryUploadModal({ open, tags, onClose }: LibraryUploadModalPr
           ref={input}
           type="file"
           multiple
-          accept="image/*,audio/*"
+          accept="image/*,audio/*,.txt,.md"
           className="sr-only"
           aria-label="选择上传文件"
           onChange={(event) => {
@@ -150,8 +160,10 @@ export function LibraryUploadModal({ open, tags, onClose }: LibraryUploadModalPr
           )}
         >
           <FileUp size={22} className="text-ink-mute" />
-          <span className="text-[14.5px] font-medium">选择图片或音频</span>
-          <span className="text-[13px] text-ink-mute">可多选；单个不超过 200 MB，相同内容自动秒传</span>
+          <span className="text-[14.5px] font-medium">选择图片、音频或文本</span>
+          <span className="text-[13px] text-ink-mute">
+            可多选；图片/音频单个 ≤ 200 MB，.txt/.md 为 UTF-8 纯文本、≤ 1 MB
+          </span>
         </button>
 
         <div>

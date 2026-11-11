@@ -7,6 +7,9 @@ import type {
   DraftDecisionIn,
   ShareDecisionIn,
   ShareRequestIn,
+  TextAssetIn,
+  TextAssetRestoreIn,
+  TextAssetUpdateIn,
 } from '@/shared/api/schema';
 import { ApiError } from '@/shared/api/types';
 import { saveBlob } from '@/shared/lib/download';
@@ -32,6 +35,11 @@ export const libraryKeys = {
   download: (id: string) => [...libraryKeys.all, 'download', id] as const,
   requests: (scope: 'mine' | 'pending') => [...libraryKeys.all, 'requests', scope] as const,
   selection: (params: object) => [...libraryKeys.all, 'selection', params] as const,
+  /** 文本正文按资产隔离：编辑保存后只失效这一条，不惊动别处 */
+  texts: (id: string) => [...libraryKeys.all, 'text', id] as const,
+  textVersions: (id: string) => [...libraryKeys.all, 'textVersions', id] as const,
+  textVersion: (id: string, version: number) =>
+    [...libraryKeys.textVersions(id), version] as const,
 };
 
 export function useLibraryList(params: LibraryListParams) {
@@ -196,7 +204,7 @@ export function useUploadAsset() {
       onProgress,
     }: {
       file: File;
-      kind: 'image' | 'audio';
+      kind: 'image' | 'audio' | 'text';
       onProgress?: (ratio: number) => void;
     }) => libraryApi.upload(file, kind, { onProgress }),
     onSuccess: invalidate,
@@ -406,4 +414,68 @@ export function useLibraryMedia(assetId: string | null, enabled: boolean) {
   }, [query.data]);
 
   return { url, ...query };
+}
+
+/* -------------------------------------------------------------- 文本资产 */
+
+/** 文本写操作会同时改「列表摘要 / 详情 / 正文 / 版本历史」四处缓存，一起失效 */
+function useInvalidateText() {
+  const client = useQueryClient();
+  const invalidateLibrary = useInvalidateLibrary();
+  return (id: string) => {
+    invalidateLibrary();
+    void client.invalidateQueries({ queryKey: libraryKeys.texts(id) });
+    void client.invalidateQueries({ queryKey: libraryKeys.textVersions(id) });
+  };
+}
+
+/** 读正文与当前内容版本。编辑器每次打开都重新取，保证 expectedVersion 是最新的。 */
+export function useReadText(id: string | null, enabled = true) {
+  return useQuery({
+    queryKey: libraryKeys.texts(id ?? ''),
+    queryFn: () => libraryApi.readText(id ?? ''),
+    enabled: !!id && enabled,
+  });
+}
+
+export function useTextVersions(id: string | null, enabled = true) {
+  return useQuery({
+    queryKey: libraryKeys.textVersions(id ?? ''),
+    queryFn: () => libraryApi.listTextVersions(id ?? ''),
+    enabled: !!id && enabled,
+  });
+}
+
+export function useTextVersion(id: string | null, version: number | null, enabled = true) {
+  return useQuery({
+    queryKey: libraryKeys.textVersion(id ?? '', version ?? 0),
+    queryFn: () => libraryApi.readTextVersion(id ?? '', version ?? 0),
+    enabled: !!id && version != null && enabled,
+  });
+}
+
+export function useCreateTextAsset() {
+  const invalidate = useInvalidateLibrary();
+  return useMutation({
+    mutationFn: (body: TextAssetIn) => libraryApi.createTextAsset(body),
+    onSuccess: invalidate,
+  });
+}
+
+export function useUpdateText() {
+  const invalidate = useInvalidateText();
+  return useMutation({
+    mutationFn: ({ id, body }: { id: string; body: TextAssetUpdateIn }) =>
+      libraryApi.updateText(id, body),
+    onSuccess: (_data, variables) => invalidate(variables.id),
+  });
+}
+
+export function useRestoreTextVersion() {
+  const invalidate = useInvalidateText();
+  return useMutation({
+    mutationFn: ({ id, body }: { id: string; body: TextAssetRestoreIn }) =>
+      libraryApi.restoreTextVersion(id, body),
+    onSuccess: (_data, variables) => invalidate(variables.id),
+  });
 }

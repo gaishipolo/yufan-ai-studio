@@ -22,8 +22,17 @@ EXTENSIONS = {
     ".webp": "image/webp",
     ".mp3": "audio/mpeg",
     ".wav": "audio/wav",
+    # 文本资产（第 5 种文件型资产）。只收纯文本，不收 .html / .svg：
+    # 那两种会被浏览器当标记语言执行，与「正文一律纯文本渲染」的口径冲突。
+    ".txt": "text/plain; charset=utf-8",
+    ".md": "text/markdown; charset=utf-8",
 }
+TEXT_EXTENSIONS = frozenset({".txt", ".md"})
 MAX_BYTES = 300 * 1024 * 1024
+#: 文本单独一档：提示词素材不会是 300MB，但会被整份读进内存做注入。
+MAX_TEXT_BYTES = 1024 * 1024
+#: 列表卡片上的摘要长度（字符数，不是字节）。
+TEXT_EXCERPT_LIMIT = 160
 # 探测单次上限。超过它就不是「这个文件有点慢」，而是解析不出来。
 PROBE_TIMEOUT_SEC = 30.0
 PREVIEW_VERSION = "hd-v2"
@@ -49,9 +58,57 @@ class MediaInfo(TypedDict):
     hasAudio: bool
 
 
+def decode_text(data: bytes) -> str:
+    """严格 UTF-8 解码，剥掉开头 BOM；失败一律 400 而不是静默替换字符。
+
+    `errors="replace"` 会把一段坏字节变成 U+FFFD，用户拿到一条「看起来能读」
+    的提示词资产，提交给供应商时却少了半句话。BOM 也要剥：它落进正文会变成
+    提示词开头一个不可见字符，且同一份内容带不带 BOM 会算出两个 sha256，
+    秒传与版本去重都会失效。
+    """
+    if data.startswith(b"\xef\xbb\xbf"):
+        data = data[3:]
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise BadRequest("文本文件必须是 UTF-8 编码（不支持 GBK 等其它编码）") from exc
+
+
+def encode_text(text: str) -> bytes:
+    """规范化后的落盘字节：无 BOM、LF 不动、严格 UTF-8。"""
+    return text.encode("utf-8")
+
+
+def text_excerpt(text: str) -> str:
+    """列表卡片摘要：压掉换行与多余空白，避免一段 Markdown 把卡片撑成十行。"""
+    return " ".join(text.split())[:TEXT_EXCERPT_LIMIT]
+
+
+def normalize_text_file(path: Path) -> str:
+    """校验并**原地规范化**上传的临时文件，返回解码后的正文。
+
+    重写这一步不能省：内容寻址的 key 是规范化后字节的 sha256。若只解码、
+    不回写，同一段文字带 BOM / 不带 BOM 会存成两份不同的字节，编辑器读到的
+    正文与 `sha256` 也对不上。文本上限只有 1MB，整份读写是安全的。
+    """
+    data = path.read_bytes()
+    if len(data) > MAX_TEXT_BYTES:
+        raise BadRequest("文本文件不能超过 1MB")
+    text = decode_text(data)
+    if not text.strip():
+        raise BadRequest("文本内容不能为空")
+    if len(encode_text(text)) > MAX_TEXT_BYTES:
+        raise BadRequest("文本文件不能超过 1MB")
+    path.write_bytes(encode_text(text))
+    return text
+
+
 def inspect(path: Path, extension: str) -> MediaInfo:
     if extension not in EXTENSIONS:
-        raise BadRequest("支持 MP4、PNG、JPG、WebP、MP3 和 WAV")
+        raise BadRequest("支持 MP4、PNG、JPG、WebP、MP3、WAV、TXT 和 MD")
+    if extension in TEXT_EXTENSIONS:
+        normalize_text_file(path)
+        return {"width": 0, "height": 0, "duration": 0, "hasAudio": False}
     if not 0 < path.stat().st_size <= MAX_BYTES:
         raise BadRequest("文件不能为空，且不能超过 300MB")
     if EXTENSIONS[extension].startswith("image/"):
@@ -116,7 +173,9 @@ def _probe_stream(path: Path) -> str:
 
 
 def create_preview(source: Path, destination: Path, kind: str) -> bool:
-    if kind == "audio":
+    # 文本没有缩略图：卡片按 `textExcerpt` 画文字卡。`cover_key` 恒为空，
+    # 前端必须按 `previewUrl === null` 跳过 `/thumbnail`，否则每张卡一次 404。
+    if kind in {"audio", "text"}:
         return False
     destination.parent.mkdir(parents=True, exist_ok=True)
     if destination.exists():

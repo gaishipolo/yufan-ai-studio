@@ -17,6 +17,8 @@ import { aspectOptionsFor, durationOptionsFor, useModels } from '@/entities/mode
 import { useShots } from '@/entities/shot/api/shot.api';
 import { LibraryFlyout } from '@/entities/library/ui/LibraryFlyout';
 import { useUploadAsset } from '@/entities/library/api/library.queries';
+import { TextRefPicker } from '@/features/library/TextRefPicker';
+import type { LibraryAssetOut } from '@/shared/api/schema';
 import { useCan } from '@/shared/access/use-access';
 import type { LibraryAssetDrag } from '@/shared/lib/libraryDrag';
 import type { AspectRatio } from '@/entities/task/model/types';
@@ -51,6 +53,8 @@ export default function StudioPage() {
   /* 参考图：先落素材库拿 id，再随请求下发 id —— 与生图页同一条通道，
      提交的是 id 而不是图片字节，同一张素材可以被多个任务反复引用 */
   const [references, setReferences] = useState<ReferenceItem[]>([]);
+  // 文本引用：独立通道，提交时只发 textLibraryIds，不进 referenceAssetIds
+  const [textRefs, setTextRefs] = useState<LibraryAssetOut[]>([]);
   const [libraryOpen, setLibraryOpen] = useState(false);
   const canReadLibrary = useCan('library:read');
   const upload = useUploadAsset();
@@ -159,11 +163,13 @@ export default function StudioPage() {
         aspectRatio: ratio,
         stylePreset: style,
         ...(references.length ? { referenceAssetIds: references.map((item) => item.id) } : {}),
+        ...(textRefs.length ? { textLibraryIds: textRefs.map((item) => item.id) } : {}),
       },
       {
         onSuccess: () => {
           // 参考图跟着这次请求走了，留着会让下一个任务莫名其妙沿用旧图
           setReferences([]);
+          setTextRefs([]);
           setLibraryOpen(false);
           toast('已提交生成，正在跳转任务中心', 'success');
           navigate('/tasks');
@@ -221,6 +227,15 @@ export default function StudioPage() {
             />
             {error && <p className="mt-1 text-[11px] text-danger">{error}</p>}
           </Field>
+
+          <div className="mb-2.5">
+            <TextRefPicker
+              value={textRefs}
+              onChange={setTextRefs}
+              prompt={prompt}
+              onPromptChange={setPrompt}
+            />
+          </div>
 
           <div className="grid grid-cols-2 gap-2.5">
             <Field label="生成模型">

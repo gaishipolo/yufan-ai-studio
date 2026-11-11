@@ -60,6 +60,11 @@ __all__ = [
     "ShareTarget",
     "TagIn",
     "TagParentIn",
+    "TextAssetIn",
+    "TextAssetOut",
+    "TextAssetRestoreIn",
+    "TextAssetUpdateIn",
+    "TextAssetVersionOut",
     "UploadKind",
 ]
 
@@ -194,6 +199,13 @@ class LibraryAssetOut(CamelModel):
     # 在库里时为 null，不要在响应里省略——省略会让前端多一层「有没有这个键」的判断。
     trash_reason: str | None = None
     trash_expires_at: UtcDateTime | None = None
+    #: 仅 `kind=text` 有值。列表随行返回，卡片不必为一句摘要再读 blob。
+    text_excerpt: str | None = None
+    #: 文本的内容版本（从 1 开始）；其它类型恒为 0。
+    text_version: int = 0
+    #: 正文的纯文本取件地址（`text/plain; charset=utf-8` + nosniff）。
+    #: 非文本为 null，前端据此决定「详情显示 <pre> 还是播放器」。
+    text_url: str | None = None
     created_at: UtcDateTime
     updated_at: UtcDateTime | None = None
 
@@ -223,15 +235,75 @@ class LibraryAssetPage(Page[LibraryAssetOut]):
 
 
 class UploadKind(StrEnum):
-    """上传接口允许的媒体类型。
+    """上传接口允许的文件类型。
 
-    分成三个值而不是复用 `LibraryAssetKind`：`pack` 不是上传出来的，
-    它是封装动作的产物；让上传接口收 `pack` 只会得到一个没有字节的资产行。
+    不复用 `LibraryAssetKind`：`pack` 不是上传出来的，它是封装动作的产物；
+    让上传接口收 `pack` 只会得到一个没有字节的资产行。`TEXT` 走同一条上传链，
+    但体积上限与探测规则单独一档（见 `infra/media_probe.MAX_TEXT_BYTES`）。
     """
 
     IMAGE = "image"
     AUDIO = "audio"
     VIDEO = "video"
+    TEXT = "text"
+
+
+# --------------------------------------------------------------------------- #
+# 文本资产：站内新建 / 在线编辑 / 版本历史
+# --------------------------------------------------------------------------- #
+class TextAssetIn(CamelModel):
+    """站内新建一份文本资产（不传文件，直接写正文）。
+
+    `extension` 只认 md / txt：文件名后缀决定 `mime_type` 与内容寻址 key 的后缀，
+    不能由用户随便给一个 `.html`——那会让下载下来的东西被浏览器当页面执行。
+    """
+
+    name: str = Field(min_length=1, max_length=200)
+    content: str = Field(min_length=1, max_length=1_048_576)
+    extension: str = Field(default="md", pattern="^(md|txt)$")
+    tag_ids: list[str] = Field(default_factory=list)
+
+
+class TextAssetUpdateIn(CamelModel):
+    """在线编辑。`expected_version` 是**内容版本**，不是 `stateVersion`：
+    两个人同时打开编辑框时，后保存的人必须看到「正文已被改过」而不是静默覆盖。"""
+
+    content: str = Field(min_length=1, max_length=1_048_576)
+    expected_version: int = Field(default=0, ge=0)
+    note: str = Field(default="", max_length=200)
+
+
+class TextAssetOut(CamelModel):
+    """文本正文 + 当前版本。详情页与编辑器用，不进列表。"""
+
+    id: str
+    name: str
+    content: str
+    version: int
+    sha256: str
+    size_bytes: int
+    excerpt: str
+    updated_at: UtcDateTime | None = None
+
+
+class TextAssetVersionOut(CamelModel):
+    """一条历史版本。列表默认不带正文，按版本读时才带。"""
+
+    version: int
+    sha256: str
+    size_bytes: int
+    excerpt: str
+    note: str = ""
+    created_by: str
+    created_at: UtcDateTime
+    content: str | None = None
+
+
+class TextAssetRestoreIn(CamelModel):
+    """把某一历史版本重新写成**新的一版**，不改历史行。"""
+
+    version: int = Field(ge=1)
+    expected_version: int = Field(default=0, ge=0)
 
 
 class LibraryGenerationOut(CamelModel):

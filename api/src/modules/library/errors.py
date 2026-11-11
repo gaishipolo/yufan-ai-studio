@@ -146,7 +146,7 @@ class LibraryFileTypeNotAllowed(AppError):
     """
 
     code = errors.code(400, 2)
-    message = "支持 MP4、PNG、JPG、WebP、MP3 和 WAV"
+    message = "支持 MP4、PNG、JPG、WebP、MP3、WAV、TXT 和 MD"
     http_status = 400
 
 
@@ -270,6 +270,26 @@ class DownloadTooLarge(AppError):
     http_status = 413
 
 
+class LibraryTextInvalid(AppError):
+    """文本资产校验失败：非 UTF-8、空正文、后缀不合法、或拿非文本资产调文本接口。
+
+    400 段的第 9 个槽位（最后一个）。再要新语义按 `EXTENDING.md` §7.1 扩号段，
+    不要复用这个码去表达别的意思——前端按 code 分流。
+    """
+
+    code = errors.code(400, 9)
+    message = "文本资产只支持 UTF-8 纯文本（.txt / .md），且不能为空"
+    http_status = 400
+
+
+class LibraryTextTooLarge(AppError):
+    """文本正文超过 1MB。`details.maxBytes` 给前端显示具体上限。"""
+
+    code = errors.code(413, 3)
+    message = "文本资产不能超过 1MB"
+    http_status = 413
+
+
 __all__ = [
     "AssetNotInTrash",
     "DownloadEmpty",
@@ -280,6 +300,8 @@ __all__ = [
     "GenerationSourceInvalid",
     "LibraryFileTooLarge",
     "LibraryFileTypeNotAllowed",
+    "LibraryTextInvalid",
+    "LibraryTextTooLarge",
     "PackEmpty",
     "PackItemInvalid",
     "PackMemberShareBlocked",

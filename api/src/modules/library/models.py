@@ -1,4 +1,4 @@
-"""资产库 v2 ORM 实体（10 张 `library_*` 表）。
+"""资产库 v2 ORM 实体（11 张 `library_*` 表）。
 
 **与现役 `assets` 表完全独立**：不共享主键、不共享字节前缀、不共享权限。
 并存期两套库同时对在线，任何「顺手复用一下旧表」的改动都会让切换与回滚失效。
@@ -32,6 +32,7 @@ from sqlalchemy import (
     Index,
     Integer,
     String,
+    Text,
     text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
@@ -79,6 +80,11 @@ class LibraryAsset(Base, UUIDMixin, TimestampMixin):
 
     # 乐观锁：批量写、审核、共享决定都带版本。从 1 开始，0 表示「没带版本」。
     state_version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    # 文本资产专用，其它类型恒为空串 / 1。`text_excerpt` 随列表一起返回，
+    # 否则 24 张文字卡就要读 24 次 blob；`text_version` 是**内容版本**，
+    # 与 `state_version`（并发乐观锁）不是一回事，别混用。
+    text_excerpt: Mapped[str] = mapped_column(String(320), default="", nullable=False)
+    text_version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     ref_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     # 幂等键：`sourceModule:sourceTaskId[:index]`，或上传方自己给的 `sourceKey`。
     source_key: Mapped[str | None] = mapped_column(String(160), nullable=True)
@@ -312,6 +318,37 @@ class LibraryAssetGeneration(Base):
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utcnow
+    )
+
+
+class LibraryTextVersion(Base, UUIDMixin):
+    """文本资产的**不可变**版本快照。
+
+    为什么把整份正文再存一遍（而不是只存 `storage_key`）：blob 的 GC
+    （`app prune-blobs`）按 `library_assets.storage_key` / `cover_key` 数引用，
+    编辑会换 key，旧版本若只剩一个版本行里的 key，那块字节会被当成孤儿删掉，
+    历史就再也读不回来。文本上限 1MB，行内留一份是最省心的做法。
+
+    刻意为「只增不删」：恢复旧版本是**再写一版**，不改历史行——否则
+    「第 3 版当时是什么」会随着一次恢复操作被改写，快照就失去证据意义。
+    """
+
+    __tablename__ = "library_text_versions"
+
+    asset_id: Mapped[str] = mapped_column(String(32), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    note: Mapped[str] = mapped_column(String(200), default="", nullable=False)
+    created_by: Mapped[str] = mapped_column(String(32), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow
+    )
+
+    __table_args__ = (
+        Index("uq_library_text_versions_number", "asset_id", "version", unique=True),
+        Index("ix_library_text_versions_asset", "asset_id", "created_at"),
     )
 
 

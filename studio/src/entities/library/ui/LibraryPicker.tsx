@@ -20,6 +20,9 @@ export interface LibraryPickerProps {
   onConfirm: (assets: LibraryAssetOut[]) => void;
 }
 
+/** 未显式传 `kinds` 时的候选类型：文本资产是给提示词占位符用的，默认不进选择器 */
+const DEFAULT_KINDS: LibraryAssetKind[] = ['video', 'image', 'audio'];
+
 /**
  * 资产库选择器：给模板库 / 生图 / 工作台挑素材用。
  *
@@ -28,6 +31,10 @@ export interface LibraryPickerProps {
  *
  * 选中项按 **id → 资产** 存在本地：确认时要把名称一起带回去（调用方要显示
  * 「已选 3 项：主视觉、产品图…」），只回 id 就得再查一次。
+ *
+ * 类型口径：`kinds` 未传时默认只给「成片 / 图片 / 音频」，**排除 text 与 pack**。
+ * 只有调用方显式把 `'text'` 放进 `kinds`（文本引用选择器）才会显示文本资产，
+ * 否则图片/视频/参考图选择器不会因为后端多返回一种类型就混进文本。
  */
 export function LibraryPicker({
   open,
@@ -44,9 +51,12 @@ export function LibraryPicker({
   const [picked, setPicked] = useState<Record<string, LibraryAssetOut>>({});
   const debounced = useDebouncedValue(keyword, 250);
 
+  /* kinds 只有一个时把类型下发给服务端：前端过滤会让 total 与分页对不上，
+     文本资产排在图片后面时可能翻好几页都看不到。 */
+  const singleKind = kinds?.length === 1 ? kinds[0] : undefined;
   const query = useLibrarySelection({
     keyword: debounced || undefined,
-    kind: kind || undefined,
+    kind: kind || singleKind || undefined,
     page,
     pageSize: 24,
   });
@@ -61,8 +71,8 @@ export function LibraryPicker({
 
   const items = useMemo(() => {
     const list = query.data?.items ?? [];
-    if (!kinds?.length) return list.filter((item) => item.kind !== 'pack');
-    return list.filter((item) => kinds.includes(item.kind));
+    const allowed = kinds?.length ? kinds : DEFAULT_KINDS;
+    return list.filter((item) => allowed.includes(item.kind));
   }, [query.data?.items, kinds]);
 
   /* 已选 id 里可能有不在当前页的条目：等它们出现在结果里时补进 picked，
@@ -112,7 +122,7 @@ export function LibraryPicker({
             <Select
               options={[
                 { value: '', label: '全部类型' },
-                ...(kinds ?? (['video', 'image', 'audio'] as LibraryAssetKind[])).map((item) => ({
+                ...(kinds ?? DEFAULT_KINDS).map((item) => ({
                   value: item,
                   label: KIND_LABEL[item],
                 })),
@@ -152,7 +162,16 @@ export function LibraryPicker({
                       : 'border-line-soft bg-panel hover:border-line-strong',
                   )}
                 >
-                  <CoverImage src={asset.coverUrl ?? undefined} seed={asset.id} className="aspect-[4/3] rounded-md" />
+                  {asset.kind === 'text' ? (
+                    /* 文本资产没有缩略图，用摘要画文字卡，别去请求 /thumbnail 落一张破图 */
+                    <div className="flex aspect-[4/3] flex-col overflow-hidden rounded-md bg-panel-soft p-1.5">
+                      <span className="line-clamp-4 whitespace-pre-wrap break-words text-[10.5px] leading-[14px] text-ink-soft">
+                        {asset.textExcerpt?.trim() || '（空文本）'}
+                      </span>
+                    </div>
+                  ) : (
+                    <CoverImage src={asset.coverUrl ?? undefined} seed={asset.id} className="aspect-[4/3] rounded-md" />
+                  )}
                   <div className="mt-1 truncate text-[11.5px] text-ink">{displayName(asset.name)}</div>
                   <div className="truncate text-[10.5px] text-ink-mute">{KIND_LABEL[asset.kind]}</div>
                   {active && (

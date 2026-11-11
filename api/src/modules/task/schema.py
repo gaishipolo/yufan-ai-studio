@@ -9,6 +9,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import Field
 
 from core.response import Page
@@ -43,6 +45,12 @@ class TaskOut(CamelModel):
     style_preset: str | None = Field(default=None, description="风格预设标识，未设置时为 null")
     reference_asset_ids: list[str] = Field(
         default_factory=list, description="参考素材 ID 列表（图生视频用）"
+    )
+    text_library_ids: list[str] = Field(
+        default_factory=list, description="绑定的文本资产 id（顺序即 `{{Text N}}` 编号）"
+    )
+    text_bindings: list[dict[str, Any]] = Field(
+        default_factory=list, description="绑定的文案与版本快照（不含正文）"
     )
     author_id: str = Field(description="作者用户 ID")
     author_name: str = Field(default="", description="作者昵称快照（改名不回填历史）")
@@ -107,6 +115,15 @@ class CreateTaskIn(CamelModel):
     )
     reference_asset_ids: list[str] = Field(
         default_factory=list, max_length=20, description="参考素材 ID 列表（最多 20 个）"
+    )
+    text_library_ids: list[str] = Field(
+        default_factory=list,
+        max_length=8,
+        description=(
+            "要拼进提示词的文本资产 id，按顺序对应 `{{Text 1}}` / `{{Text 2}}`…；"
+            "提交时按当时版本冻结正文，之后编辑资产不影响本次生成与重试。"
+            "只接受当前账号可读、在库的 text 类型资产，最多 8 份"
+        ),
     )
     style_preset: str | None = Field(
         default=None, max_length=64, description="风格预设标识，留空为不套风格"

@@ -2,7 +2,7 @@
 
 > 此文件由 `app export-openapi` 自动生成，请勿手工编辑。
 >
-> 版本 `0.2.0`｜共 **141** 个接口 / **12** 个模块
+> 版本 `0.2.0`｜共 **148** 个接口 / **12** 个模块
 >
 > 重新生成：`cd api && .venv/Scripts/python -m cli export-openapi`
 
@@ -174,13 +174,14 @@ Authorization: Bearer <accessToken>
 | `40023` | 400 | identity | `TeamGrantForbidden` | 团队基础权限不能包含管理类权限或通配符 |
 | `40051` | 400 | asset | `FileTypeNotAllowed` | 支持 MP4、PNG、JPG、WebP、MP3 和 WAV |
 | `40081` | 400 | library | `RevokeReasonRequired` | 撤销共享必须填写理由 |
-| `40082` | 400 | library | `LibraryFileTypeNotAllowed` | 支持 MP4、PNG、JPG、WebP、MP3 和 WAV |
+| `40082` | 400 | library | `LibraryFileTypeNotAllowed` | 支持 MP4、PNG、JPG、WebP、MP3、WAV、TXT 和 MD |
 | `40083` | 400 | library | `PackItemInvalid` | 封装里有不可用的成员 |
 | `40084` | 400 | library | `PackEmpty` | 封装至少需要一个成员 |
 | `40085` | 400 | library | `GenerationSourceInvalid` | 生成结果必须提供可读取的 storageKey 或 sourceUrl |
 | `40086` | 400 | library | `DownloadEmpty` | 选中的条目都不在可下载范围内 |
 | `40087` | 400 | library | `PackHasNoOriginal` | 封装没有单独的原文件，请使用「下载」打包其中素材 |
 | `40088` | 400 | library | `AssetNotEditable` | 回收站里的素材不能修改，请先恢复 |
+| `40089` | 400 | library | `LibraryTextInvalid` | 文本资产只支持 UTF-8 纯文本（.txt / .md），且不能为空 |
 | `40100` | 401 | 框架 | `Unauthorized` | 请先登录 |
 | `40121` | 401 | identity | `CredentialInvalid` | 用户名或密码错误 |
 | `40122` | 401 | identity | `RefreshTokenInvalid` | 刷新令牌已失效，请重新登录 |
@@ -224,6 +225,7 @@ Authorization: Bearer <accessToken>
 | `41352` | 413 | asset | `AssetQuotaExceeded` | 归档空间已用完，请先清理回收站或联系管理员提升配额 |
 | `41381` | 413 | library | `LibraryFileTooLarge` | 文件不能超过 300MB |
 | `41382` | 413 | library | `DownloadTooLarge` | 单次打包超出上限 |
+| `41383` | 413 | library | `LibraryTextTooLarge` | 文本资产不能超过 1MB |
 | `42900` | 429 | 框架 | `RateLimited` | 请求过于频繁，请稍后再试 |
 | `50100` | 501 | 框架 | `NotImplementedFeature` | 该功能尚未实现 |
 | `50200` | 502 | 框架 | `UpstreamError` | 上游服务异常 |
@@ -245,7 +247,7 @@ Authorization: Bearer <accessToken>
 | 镜头库 | 1 | 见下方 `4.8` |
 | 系统 | 2 | 见下方 `4.9` |
 | 导出 | 6 | 见下方 `4.10` |
-| 资产库 | 38 | 见下方 `4.11` |
+| 资产库 | 45 | 见下方 `4.11` |
 | 模型驱动 | 6 | 见下方 `4.12` |
 
 ### 4.1 身份（39 个）
@@ -1115,6 +1117,7 @@ Authorization: Bearer <accessToken>
 | `durationSec` | `number \| null` | 否 | 视频时长（秒），缺省取模型的默认档位 |
 | `aspectRatio` | `AspectRatio` | 否 | 画幅比例，缺省 9:16 竖屏 |
 | `referenceAssetIds` | `string[]` | 否 | 参考素材 ID 列表（最多 20 个） |
+| `textLibraryIds` | `string[]` | 否 | 要拼进提示词的文本资产 id，按顺序对应 `{{Text 1}}` / `{{Text 2}}`…；提交时按当时版本冻结正文，之后编辑资产不影响本次生成与重试。只接受当前账号可读、在库的 text 类型资产，最多 8 份 |
 | `stylePreset` | `string \| null` | 否 | 风格预设标识，留空为不套风格 |
 
 **响应** `ApiResponse<core__response__ApiResponse_TaskOut___2>`（前端取 `res.data`）
@@ -1645,6 +1648,7 @@ Authorization: Bearer <accessToken>
 | `params` | `Record<string, unknown>` | 否 | 模型声明的其他参数，键与 `GET /models` 返回的 `paramSchema` 一致（如 `quality` / `seed`）。未声明的键会被 400 拒绝，避免打错字被静默忽略；与顶层 `size` / `count` 重复时以顶层为准 |
 | `model` | `string` | 否 | 模型 id，留空取默认 |
 | `referenceLibraryIds` | `string[]` | 否 | 参考图（图生图 / 多图合成）的素材库资产 id，**按顺序生效**：多图合成时提示词里的「第一张 / 第二张」指的就是这个顺序，重排会让提示词与图片错位。只接受 `image` 类型且当前账号能读的资产，张数上限由模型 `maxReferences` 决定（`0` = 该模型不支持参考图）。传 id 而不是 URL：我们的取件链接是私签的、供应商访问不到，服务端读字节后以 `data:image/...;base64,...` 交给供应商 |
+| `textLibraryIds` | `string[]` | 否 | 要拼进提示词的文本资产 id，**按顺序生效**：`{{Text 1}}` 指第 1 份、`{{Text 2}}` 指第 2 份。提交时把正文按当时版本冻结进任务，之后编辑资产不会改变这次生成与它的重试。只接受当前账号可读、在库的 `text` 类型资产；一次最多 8 份 |
 
 **响应** `ApiResponse<ImageJobOut>`（前端取 `res.data`）
 
@@ -1667,6 +1671,8 @@ Authorization: Bearer <accessToken>
 | `previousExternalId` | `string \| null` | 否 | 上一次提交的供应商任务号；带 confirmCharged 重试后保留的对账凭证 |
 | `previousExternalIds` | `string[]` | 否 | 被替换掉的全部供应商任务号（旧的在前）。连续多次确认已扣费重试时，previousExternalId 只保留最近一个，全量凭证看这里 |
 | `referenceLibraryIds` | `string[]` | 否 | 提交时带的参考图资产 id（顺序即提交顺序）；纯文生图为空 |
+| `textLibraryIds` | `string[]` | 否 | 绑定的文本资产 id（顺序即提示词里 `{{Text N}}` 的编号顺序） |
+| `textBindings` | `Record<string, unknown>[]` | 否 | 绑定的文案与版本快照（不含正文）：assetId / name / version / sha256 |
 | `createdAt` | `string` | 是 | 创建时间（UTC） |
 
 #### `GET /api/v1/images`
@@ -1935,6 +1941,7 @@ Authorization: Bearer <accessToken>
 | `videoTemplateId` | `string \| null` | 否 |  |
 | `scenePrompt` | `string \| null` | 否 | 文字换场景的描述；省略使用模板默认值，空白拒绝 |
 | `referenceIds` | `string[]` | 否 |  |
+| `textLibraryIds` | `string[]` | 否 | 绑定的文本资产 id，按顺序对应 `{{Text N}}`；最多 8 份 |
 | `extraPackIds` | `string[]` | 否 | 第 2 位及以后的素材包 id，按提示词槽位顺序；第一包仍用 packId |
 | `extraPackVersions` | `number[]` | 否 | 与 extraPackIds 顺序对应的发布版本；旧调用省略时由服务端解析并冻结 |
 | `wardrobeMode` | `"preserve" \| "reference"` | 否 |  |
@@ -1960,6 +1967,8 @@ Authorization: Bearer <accessToken>
 | `finishedAt` | `string \| null` | 否 | 这一轮结束的时间；未结束为 null |
 | `elapsedSec` | `number \| null` | 否 | 确认提交到结束的耗时（秒）；未完成时按到此刻计，未开始为 null |
 | `prompt` | `string` | 是 |  |
+| `textLibraryIds` | `string[]` | 否 | 本次绑定的文本资产 id（顺序即 `{{Text N}}` 编号） |
+| `textBindings` | `Record<string, unknown>[]` | 否 | 绑定的文案与版本快照（不含正文） |
 | `promptMode` | `"fixed" \| "compiled"` | 否 | fixed=封装视频模板时写死的原文，逐字提交；compiled=按素材与替换范围现编。展示层据此告诉用户「跑的就是你封装时那份提示词」。 |
 | `videoTemplateName` | `string \| null` | 否 | fixed 时出自哪条视频模板；compiled 为 null |
 | `displayTitle` | `string` | 否 | 统一展示名，列表/弹窗/任务中心共用 |
@@ -1999,6 +2008,8 @@ Authorization: Bearer <accessToken>
 | `finishedAt` | `string \| null` | 否 | 这一轮结束的时间；未结束为 null |
 | `elapsedSec` | `number \| null` | 否 | 确认提交到结束的耗时（秒）；未完成时按到此刻计，未开始为 null |
 | `prompt` | `string` | 是 |  |
+| `textLibraryIds` | `string[]` | 否 | 本次绑定的文本资产 id（顺序即 `{{Text N}}` 编号） |
+| `textBindings` | `Record<string, unknown>[]` | 否 | 绑定的文案与版本快照（不含正文） |
 | `promptMode` | `"fixed" \| "compiled"` | 否 | fixed=封装视频模板时写死的原文，逐字提交；compiled=按素材与替换范围现编。展示层据此告诉用户「跑的就是你封装时那份提示词」。 |
 | `videoTemplateName` | `string \| null` | 否 | fixed 时出自哪条视频模板；compiled 为 null |
 | `displayTitle` | `string` | 否 | 统一展示名，列表/弹窗/任务中心共用 |
@@ -2038,6 +2049,8 @@ Authorization: Bearer <accessToken>
 | `finishedAt` | `string \| null` | 否 | 这一轮结束的时间；未结束为 null |
 | `elapsedSec` | `number \| null` | 否 | 确认提交到结束的耗时（秒）；未完成时按到此刻计，未开始为 null |
 | `prompt` | `string` | 是 |  |
+| `textLibraryIds` | `string[]` | 否 | 本次绑定的文本资产 id（顺序即 `{{Text N}}` 编号） |
+| `textBindings` | `Record<string, unknown>[]` | 否 | 绑定的文案与版本快照（不含正文） |
 | `promptMode` | `"fixed" \| "compiled"` | 否 | fixed=封装视频模板时写死的原文，逐字提交；compiled=按素材与替换范围现编。展示层据此告诉用户「跑的就是你封装时那份提示词」。 |
 | `videoTemplateName` | `string \| null` | 否 | fixed 时出自哪条视频模板；compiled 为 null |
 | `displayTitle` | `string` | 否 | 统一展示名，列表/弹窗/任务中心共用 |
@@ -2079,6 +2092,8 @@ Authorization: Bearer <accessToken>
 | `finishedAt` | `string \| null` | 否 | 这一轮结束的时间；未结束为 null |
 | `elapsedSec` | `number \| null` | 否 | 确认提交到结束的耗时（秒）；未完成时按到此刻计，未开始为 null |
 | `prompt` | `string` | 是 |  |
+| `textLibraryIds` | `string[]` | 否 | 本次绑定的文本资产 id（顺序即 `{{Text N}}` 编号） |
+| `textBindings` | `Record<string, unknown>[]` | 否 | 绑定的文案与版本快照（不含正文） |
 | `promptMode` | `"fixed" \| "compiled"` | 否 | fixed=封装视频模板时写死的原文，逐字提交；compiled=按素材与替换范围现编。展示层据此告诉用户「跑的就是你封装时那份提示词」。 |
 | `videoTemplateName` | `string \| null` | 否 | fixed 时出自哪条视频模板；compiled 为 null |
 | `displayTitle` | `string` | 否 | 统一展示名，列表/弹窗/任务中心共用 |
@@ -2156,6 +2171,8 @@ Authorization: Bearer <accessToken>
 | `finishedAt` | `string \| null` | 否 | 这一轮结束的时间；未结束为 null |
 | `elapsedSec` | `number \| null` | 否 | 确认提交到结束的耗时（秒）；未完成时按到此刻计，未开始为 null |
 | `prompt` | `string` | 是 |  |
+| `textLibraryIds` | `string[]` | 否 | 本次绑定的文本资产 id（顺序即 `{{Text N}}` 编号） |
+| `textBindings` | `Record<string, unknown>[]` | 否 | 绑定的文案与版本快照（不含正文） |
 | `promptMode` | `"fixed" \| "compiled"` | 否 | fixed=封装视频模板时写死的原文，逐字提交；compiled=按素材与替换范围现编。展示层据此告诉用户「跑的就是你封装时那份提示词」。 |
 | `videoTemplateName` | `string \| null` | 否 | fixed 时出自哪条视频模板；compiled 为 null |
 | `displayTitle` | `string` | 否 | 统一展示名，列表/弹窗/任务中心共用 |
@@ -2195,6 +2212,8 @@ Authorization: Bearer <accessToken>
 | `finishedAt` | `string \| null` | 否 | 这一轮结束的时间；未结束为 null |
 | `elapsedSec` | `number \| null` | 否 | 确认提交到结束的耗时（秒）；未完成时按到此刻计，未开始为 null |
 | `prompt` | `string` | 是 |  |
+| `textLibraryIds` | `string[]` | 否 | 本次绑定的文本资产 id（顺序即 `{{Text N}}` 编号） |
+| `textBindings` | `Record<string, unknown>[]` | 否 | 绑定的文案与版本快照（不含正文） |
 | `promptMode` | `"fixed" \| "compiled"` | 否 | fixed=封装视频模板时写死的原文，逐字提交；compiled=按素材与替换范围现编。展示层据此告诉用户「跑的就是你封装时那份提示词」。 |
 | `videoTemplateName` | `string \| null` | 否 | fixed 时出自哪条视频模板；compiled 为 null |
 | `displayTitle` | `string` | 否 | 统一展示名，列表/弹窗/任务中心共用 |
@@ -2243,6 +2262,8 @@ Authorization: Bearer <accessToken>
 | `finishedAt` | `string \| null` | 否 | 这一轮结束的时间；未结束为 null |
 | `elapsedSec` | `number \| null` | 否 | 确认提交到结束的耗时（秒）；未完成时按到此刻计，未开始为 null |
 | `prompt` | `string` | 是 |  |
+| `textLibraryIds` | `string[]` | 否 | 本次绑定的文本资产 id（顺序即 `{{Text N}}` 编号） |
+| `textBindings` | `Record<string, unknown>[]` | 否 | 绑定的文案与版本快照（不含正文） |
 | `promptMode` | `"fixed" \| "compiled"` | 否 | fixed=封装视频模板时写死的原文，逐字提交；compiled=按素材与替换范围现编。展示层据此告诉用户「跑的就是你封装时那份提示词」。 |
 | `videoTemplateName` | `string \| null` | 否 | fixed 时出自哪条视频模板；compiled 为 null |
 | `displayTitle` | `string` | 否 | 统一展示名，列表/弹窗/任务中心共用 |
@@ -2665,20 +2686,26 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 
 **响应** `ApiResponse<unknown>`（前端取 `res.data`）
 
-### 4.11 资产库（38 个）
+### 4.11 资产库（45 个）
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
 | `GET` | `/api/v1/library/assets` | 资产库列表（分页 + 分面） | 🔒 |
 | `POST` | `/api/v1/library/assets/bulk` | 批量写：逐条判定，部分失败返回明细 | 🔒 |
 | `POST` | `/api/v1/library/assets/from-generation` | 生成结果入库（落草稿箱，按 sourceKey 幂等） | 🔒 |
-| `POST` | `/api/v1/library/assets/upload` | 上传图片 / 音频（流式，按内容秒传） | 🔒 |
+| `POST` | `/api/v1/library/assets/upload` | 上传图片 / 音频 / 文本（流式，按内容秒传） | 🔒 |
 | `PATCH` | `/api/v1/library/assets/{asset_id}` | 改名 / 换标签（不含可见性） | 🔒 |
 | `DELETE` | `/api/v1/library/assets/{asset_id}` | 移入回收站（软删，可恢复） | 🔒 |
 | `GET` | `/api/v1/library/assets/{asset_id}` | 资产详情（含标签与生成参数） | 🔒 |
 | `GET` | `/api/v1/library/assets/{asset_id}/file` | 下载或预览原文件 | 🔒 |
 | `GET` | `/api/v1/library/assets/{asset_id}/preview` | 受控公共预览（视频给派生流） | 🔒 |
 | `GET` | `/api/v1/library/assets/{asset_id}/stream` | 浏览器兼容视频预览（派生流，不改原片） | 🔒 |
+| `GET` | `/api/v1/library/assets/{asset_id}/text` | 读取文本正文与当前版本 | 🔒 |
+| `PUT` | `/api/v1/library/assets/{asset_id}/text` | 在线编辑文本（追加一版，可带 expectedVersion 防覆盖） | 🔒 |
+| `GET` | `/api/v1/library/assets/{asset_id}/text/raw` | 纯文本取件（text/plain + nosniff） | 🔒 |
+| `POST` | `/api/v1/library/assets/{asset_id}/text/restore` | 恢复历史版本（写成新的一版，不改历史行） | 🔒 |
+| `GET` | `/api/v1/library/assets/{asset_id}/text/versions` | 文本版本历史（默认不带正文） | 🔒 |
+| `GET` | `/api/v1/library/assets/{asset_id}/text/versions/{number}` | 读取某一历史版本正文 | 🔒 |
 | `GET` | `/api/v1/library/assets/{asset_id}/thumbnail` | 读取缩略图 | 🔒 |
 | `GET` | `/api/v1/library/downloads` | 我最近发起的打包任务 | 🔒 |
 | `POST` | `/api/v1/library/downloads` | 发起批量打包（异步，返回任务） | 🔒 |
@@ -2705,6 +2732,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `PATCH` | `/api/v1/library/tags/{tag_id}` | 重命名标签（不做隐式合并） | 🔒 |
 | `DELETE` | `/api/v1/library/tags/{tag_id}` | 删除标签（旗下二级提升为一级，资产不受影响） | 🔒 |
 | `PATCH` | `/api/v1/library/tags/{tag_id}/parent` | 移动标签层级（parentId 为空则提升为一级） | 🔒 |
+| `POST` | `/api/v1/library/text-assets` | 站内新建文本资产（直接写正文，不传文件） | 🔒 |
 | `DELETE` | `/api/v1/library/trash/{asset_id}` | 彻底删除（不可逆，先过引用检查） | 🔒 |
 | `POST` | `/api/v1/library/trash/{asset_id}/restore` | 从回收站恢复（强制回到个人库，不恢复共享） | 🔒 |
 
@@ -2795,7 +2823,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 
 #### `POST /api/v1/library/assets/upload`
 
-**上传图片 / 音频（流式，按内容秒传）**
+**上传图片 / 音频 / 文本（流式，按内容秒传）**
 
 只收图片与音频：视频走 `/source-videos`（模板库专用）。
 
@@ -2836,6 +2864,9 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `tags` | `LibraryTagOut[]` | 否 |  |
 | `trashReason` | `string \| null` | 否 |  |
 | `trashExpiresAt` | `string \| null` | 否 |  |
+| `textExcerpt` | `string \| null` | 否 |  |
+| `textVersion` | `number` | 否 |  |
+| `textUrl` | `string \| null` | 否 |  |
 | `createdAt` | `string` | 是 |  |
 | `updatedAt` | `string \| null` | 否 |  |
 
@@ -2882,6 +2913,9 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `tags` | `LibraryTagOut[]` | 否 |  |
 | `trashReason` | `string \| null` | 否 |  |
 | `trashExpiresAt` | `string \| null` | 否 |  |
+| `textExcerpt` | `string \| null` | 否 |  |
+| `textVersion` | `number` | 否 |  |
+| `textUrl` | `string \| null` | 否 |  |
 | `createdAt` | `string` | 是 |  |
 | `updatedAt` | `string \| null` | 否 |  |
 | `groups` | `LibraryGroupRef[]` | 否 |  |
@@ -2948,6 +2982,9 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `tags` | `LibraryTagOut[]` | 否 |  |
 | `trashReason` | `string \| null` | 否 |  |
 | `trashExpiresAt` | `string \| null` | 否 |  |
+| `textExcerpt` | `string \| null` | 否 |  |
+| `textVersion` | `number` | 否 |  |
+| `textUrl` | `string \| null` | 否 |  |
 | `createdAt` | `string` | 是 |  |
 | `updatedAt` | `string \| null` | 否 |  |
 | `groups` | `LibraryGroupRef[]` | 否 |  |
@@ -2999,6 +3036,137 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `asset_id` | path | `string` | 是 |  |
 
 **响应** `ApiResponse<unknown>`（前端取 `res.data`）
+
+#### `GET /api/v1/library/assets/{asset_id}/text`
+
+**读取文本正文与当前版本**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `asset_id` | path | `string` | 是 |  |
+
+**响应** `ApiResponse<TextAssetOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `content` | `string` | 是 |  |
+| `version` | `number` | 是 |  |
+| `sha256` | `string` | 是 |  |
+| `sizeBytes` | `number` | 是 |  |
+| `excerpt` | `string` | 是 |  |
+| `updatedAt` | `string \| null` | 否 |  |
+
+#### `PUT /api/v1/library/assets/{asset_id}/text`
+
+**在线编辑文本（追加一版，可带 expectedVersion 防覆盖）**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `asset_id` | path | `string` | 是 |  |
+
+**请求体** `TextAssetUpdateIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `content` | `string` | 是 |  |
+| `expectedVersion` | `number` | 否 |  |
+| `note` | `string` | 否 |  |
+
+**响应** `ApiResponse<TextAssetOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `content` | `string` | 是 |  |
+| `version` | `number` | 是 |  |
+| `sha256` | `string` | 是 |  |
+| `sizeBytes` | `number` | 是 |  |
+| `excerpt` | `string` | 是 |  |
+| `updatedAt` | `string \| null` | 否 |  |
+
+#### `GET /api/v1/library/assets/{asset_id}/text/raw`
+
+**纯文本取件（text/plain + nosniff）**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `asset_id` | path | `string` | 是 |  |
+
+**响应** `ApiResponse<unknown>`（前端取 `res.data`）
+
+#### `POST /api/v1/library/assets/{asset_id}/text/restore`
+
+**恢复历史版本（写成新的一版，不改历史行）**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `asset_id` | path | `string` | 是 |  |
+
+**请求体** `TextAssetRestoreIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `version` | `number` | 是 |  |
+| `expectedVersion` | `number` | 否 |  |
+
+**响应** `ApiResponse<TextAssetOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `content` | `string` | 是 |  |
+| `version` | `number` | 是 |  |
+| `sha256` | `string` | 是 |  |
+| `sizeBytes` | `number` | 是 |  |
+| `excerpt` | `string` | 是 |  |
+| `updatedAt` | `string \| null` | 否 |  |
+
+#### `GET /api/v1/library/assets/{asset_id}/text/versions`
+
+**文本版本历史（默认不带正文）**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `asset_id` | path | `string` | 是 |  |
+
+**响应** `ApiResponse<TextAssetVersionOut[]>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `[].version` | `number` | 是 |  |
+| `[].sha256` | `string` | 是 |  |
+| `[].sizeBytes` | `number` | 是 |  |
+| `[].excerpt` | `string` | 是 |  |
+| `[].note` | `string` | 否 |  |
+| `[].createdBy` | `string` | 是 |  |
+| `[].createdAt` | `string` | 是 |  |
+| `[].content` | `string \| null` | 否 |  |
+
+#### `GET /api/v1/library/assets/{asset_id}/text/versions/{number}`
+
+**读取某一历史版本正文**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `asset_id` | path | `string` | 是 |  |
+| `number` | path | `number` | 是 |  |
+
+**响应** `ApiResponse<TextAssetVersionOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `version` | `number` | 是 |  |
+| `sha256` | `string` | 是 |  |
+| `sizeBytes` | `number` | 是 |  |
+| `excerpt` | `string` | 是 |  |
+| `note` | `string` | 否 |  |
+| `createdBy` | `string` | 是 |  |
+| `createdAt` | `string` | 是 |  |
+| `content` | `string \| null` | 否 |  |
 
 #### `GET /api/v1/library/assets/{asset_id}/thumbnail`
 
@@ -3121,6 +3289,9 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `tags` | `LibraryTagOut[]` | 否 |  |
 | `trashReason` | `string \| null` | 否 |  |
 | `trashExpiresAt` | `string \| null` | 否 |  |
+| `textExcerpt` | `string \| null` | 否 |  |
+| `textVersion` | `number` | 否 |  |
+| `textUrl` | `string \| null` | 否 |  |
 | `createdAt` | `string` | 是 |  |
 | `updatedAt` | `string \| null` | 否 |  |
 | `groups` | `LibraryGroupRef[]` | 否 |  |
@@ -3176,6 +3347,9 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `tags` | `LibraryTagOut[]` | 否 |  |
 | `trashReason` | `string \| null` | 否 |  |
 | `trashExpiresAt` | `string \| null` | 否 |  |
+| `textExcerpt` | `string \| null` | 否 |  |
+| `textVersion` | `number` | 否 |  |
+| `textUrl` | `string \| null` | 否 |  |
 | `createdAt` | `string` | 是 |  |
 | `updatedAt` | `string \| null` | 否 |  |
 | `groups` | `LibraryGroupRef[]` | 否 |  |
@@ -3287,6 +3461,9 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `tags` | `LibraryTagOut[]` | 否 |  |
 | `trashReason` | `string \| null` | 否 |  |
 | `trashExpiresAt` | `string \| null` | 否 |  |
+| `textExcerpt` | `string \| null` | 否 |  |
+| `textVersion` | `number` | 否 |  |
+| `textUrl` | `string \| null` | 否 |  |
 | `createdAt` | `string` | 是 |  |
 | `updatedAt` | `string \| null` | 否 |  |
 | `groups` | `LibraryGroupRef[]` | 否 |  |
@@ -3335,6 +3512,9 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `tags` | `LibraryTagOut[]` | 否 |  |
 | `trashReason` | `string \| null` | 否 |  |
 | `trashExpiresAt` | `string \| null` | 否 |  |
+| `textExcerpt` | `string \| null` | 否 |  |
+| `textVersion` | `number` | 否 |  |
+| `textUrl` | `string \| null` | 否 |  |
 | `createdAt` | `string` | 是 |  |
 | `updatedAt` | `string \| null` | 否 |  |
 | `groups` | `LibraryGroupRef[]` | 否 |  |
@@ -3393,6 +3573,9 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `tags` | `LibraryTagOut[]` | 否 |  |
 | `trashReason` | `string \| null` | 否 |  |
 | `trashExpiresAt` | `string \| null` | 否 |  |
+| `textExcerpt` | `string \| null` | 否 |  |
+| `textVersion` | `number` | 否 |  |
+| `textUrl` | `string \| null` | 否 |  |
 | `createdAt` | `string` | 是 |  |
 | `updatedAt` | `string \| null` | 否 |  |
 | `groups` | `LibraryGroupRef[]` | 否 |  |
@@ -3654,6 +3837,9 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `tags` | `LibraryTagOut[]` | 否 |  |
 | `trashReason` | `string \| null` | 否 |  |
 | `trashExpiresAt` | `string \| null` | 否 |  |
+| `textExcerpt` | `string \| null` | 否 |  |
+| `textVersion` | `number` | 否 |  |
+| `textUrl` | `string \| null` | 否 |  |
 | `createdAt` | `string` | 是 |  |
 | `updatedAt` | `string \| null` | 否 |  |
 
@@ -3765,6 +3951,34 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `parentName` | `string \| null` | 否 |  |
 | `depth` | `number` | 否 |  |
 
+#### `POST /api/v1/library/text-assets`
+
+**站内新建文本资产（直接写正文，不传文件）**
+
+`.txt` / `.md`、UTF-8、≤1MB。正文按纯文本保存，Markdown 不转 HTML。
+
+**请求体** `TextAssetIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `name` | `string` | 是 |  |
+| `content` | `string` | 是 |  |
+| `extension` | `string` | 否 |  |
+| `tagIds` | `string[]` | 否 |  |
+
+**响应** `ApiResponse<TextAssetOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `content` | `string` | 是 |  |
+| `version` | `number` | 是 |  |
+| `sha256` | `string` | 是 |  |
+| `sizeBytes` | `number` | 是 |  |
+| `excerpt` | `string` | 是 |  |
+| `updatedAt` | `string \| null` | 否 |  |
+
 #### `DELETE /api/v1/library/trash/{asset_id}`
 
 **彻底删除（不可逆，先过引用检查）**
@@ -3814,6 +4028,9 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `tags` | `LibraryTagOut[]` | 否 |  |
 | `trashReason` | `string \| null` | 否 |  |
 | `trashExpiresAt` | `string \| null` | 否 |  |
+| `textExcerpt` | `string \| null` | 否 |  |
+| `textVersion` | `number` | 否 |  |
+| `textUrl` | `string \| null` | 否 |  |
 | `createdAt` | `string` | 是 |  |
 | `updatedAt` | `string \| null` | 否 |  |
 | `groups` | `LibraryGroupRef[]` | 否 |  |
@@ -4074,6 +4291,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `durationSec` | `number \| null` | 否 | 视频时长（秒），缺省取模型的默认档位 |
 | `aspectRatio` | `AspectRatio` | 否 | 画幅比例，缺省 9:16 竖屏 |
 | `referenceAssetIds` | `string[]` | 否 | 参考素材 ID 列表（最多 20 个） |
+| `textLibraryIds` | `string[]` | 否 | 要拼进提示词的文本资产 id，按顺序对应 `{{Text 1}}` / `{{Text 2}}`…；提交时按当时版本冻结正文，之后编辑资产不影响本次生成与重试。只接受当前账号可读、在库的 text 类型资产，最多 8 份 |
 | `stylePreset` | `string \| null` | 否 | 风格预设标识，留空为不套风格 |
 
 ### `DeleteTasksIn`
@@ -4291,6 +4509,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `params` | `Record<string, unknown>` | 否 | 模型声明的其他参数，键与 `GET /models` 返回的 `paramSchema` 一致（如 `quality` / `seed`）。未声明的键会被 400 拒绝，避免打错字被静默忽略；与顶层 `size` / `count` 重复时以顶层为准 |
 | `model` | `string` | 否 | 模型 id，留空取默认 |
 | `referenceLibraryIds` | `string[]` | 否 | 参考图（图生图 / 多图合成）的素材库资产 id，**按顺序生效**：多图合成时提示词里的「第一张 / 第二张」指的就是这个顺序，重排会让提示词与图片错位。只接受 `image` 类型且当前账号能读的资产，张数上限由模型 `maxReferences` 决定（`0` = 该模型不支持参考图）。传 id 而不是 URL：我们的取件链接是私签的、供应商访问不到，服务端读字节后以 `data:image/...;base64,...` 交给供应商 |
+| `textLibraryIds` | `string[]` | 否 | 要拼进提示词的文本资产 id，**按顺序生效**：`{{Text 1}}` 指第 1 份、`{{Text 2}}` 指第 2 份。提交时把正文按当时版本冻结进任务，之后编辑资产不会改变这次生成与它的重试。只接受当前账号可读、在库的 `text` 类型资产；一次最多 8 份 |
 
 ### `GenerationKind`（枚举）
 
@@ -4407,6 +4626,8 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `previousExternalId` | `string \| null` | 否 | 上一次提交的供应商任务号；带 confirmCharged 重试后保留的对账凭证 |
 | `previousExternalIds` | `string[]` | 否 | 被替换掉的全部供应商任务号（旧的在前）。连续多次确认已扣费重试时，previousExternalId 只保留最近一个，全量凭证看这里 |
 | `referenceLibraryIds` | `string[]` | 否 | 提交时带的参考图资产 id（顺序即提交顺序）；纯文生图为空 |
+| `textLibraryIds` | `string[]` | 否 | 绑定的文本资产 id（顺序即提示词里 `{{Text N}}` 的编号顺序） |
+| `textBindings` | `Record<string, unknown>[]` | 否 | 绑定的文案与版本快照（不含正文）：assetId / name / version / sha256 |
 | `createdAt` | `string` | 是 | 创建时间（UTC） |
 
 ### `ImageRetryOut`
@@ -4493,6 +4714,9 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `tags` | `LibraryTagOut[]` | 否 |  |
 | `trashReason` | `string \| null` | 否 |  |
 | `trashExpiresAt` | `string \| null` | 否 |  |
+| `textExcerpt` | `string \| null` | 否 |  |
+| `textVersion` | `number` | 否 |  |
+| `textUrl` | `string \| null` | 否 |  |
 | `createdAt` | `string` | 是 |  |
 | `updatedAt` | `string \| null` | 否 |  |
 | `groups` | `LibraryGroupRef[]` | 否 |  |
@@ -4508,7 +4732,7 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 
 ### `LibraryAssetKind`（枚举）
 
-取值：`video`、`audio`、`image`、`pack`
+取值：`video`、`audio`、`image`、`pack`、`text`
 
 ### `LibraryAssetOrigin`（枚举）
 
@@ -4547,6 +4771,9 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `tags` | `LibraryTagOut[]` | 否 |  |
 | `trashReason` | `string \| null` | 否 |  |
 | `trashExpiresAt` | `string \| null` | 否 |  |
+| `textExcerpt` | `string \| null` | 否 |  |
+| `textVersion` | `number` | 否 |  |
+| `textUrl` | `string \| null` | 否 |  |
 | `createdAt` | `string` | 是 |  |
 | `updatedAt` | `string \| null` | 否 |  |
 
@@ -4929,6 +5156,7 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `videoTemplateId` | `string \| null` | 否 |  |
 | `scenePrompt` | `string \| null` | 否 | 文字换场景的描述；省略使用模板默认值，空白拒绝 |
 | `referenceIds` | `string[]` | 否 |  |
+| `textLibraryIds` | `string[]` | 否 | 绑定的文本资产 id，按顺序对应 `{{Text N}}`；最多 8 份 |
 | `extraPackIds` | `string[]` | 否 | 第 2 位及以后的素材包 id，按提示词槽位顺序；第一包仍用 packId |
 | `extraPackVersions` | `number[]` | 否 | 与 extraPackIds 顺序对应的发布版本；旧调用省略时由服务端解析并冻结 |
 | `wardrobeMode` | `"preserve" \| "reference"` | 否 |  |
@@ -5097,6 +5325,8 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `finishedAt` | `string \| null` | 否 | 这一轮结束的时间；未结束为 null |
 | `elapsedSec` | `number \| null` | 否 | 确认提交到结束的耗时（秒）；未完成时按到此刻计，未开始为 null |
 | `prompt` | `string` | 是 |  |
+| `textLibraryIds` | `string[]` | 否 | 本次绑定的文本资产 id（顺序即 `{{Text N}}` 编号） |
+| `textBindings` | `Record<string, unknown>[]` | 否 | 绑定的文案与版本快照（不含正文） |
 | `promptMode` | `"fixed" \| "compiled"` | 否 | fixed=封装视频模板时写死的原文，逐字提交；compiled=按素材与替换范围现编。展示层据此告诉用户「跑的就是你封装时那份提示词」。 |
 | `videoTemplateName` | `string \| null` | 否 | fixed 时出自哪条视频模板；compiled 为 null |
 | `displayTitle` | `string` | 否 | 统一展示名，列表/弹窗/任务中心共用 |
@@ -5438,6 +5668,70 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 
 取值：`all`、`queued`、`running`、`completed`、`failed`
 
+### `TextAssetIn`
+
+站内新建一份文本资产（不传文件，直接写正文）。
+
+`extension` 只认 md / txt：文件名后缀决定 `mime_type` 与内容寻址 key 的后缀，
+不能由用户随便给一个 `.html`——那会让下载下来的东西被浏览器当页面执行。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `name` | `string` | 是 |  |
+| `content` | `string` | 是 |  |
+| `extension` | `string` | 否 |  |
+| `tagIds` | `string[]` | 否 |  |
+
+### `TextAssetOut`
+
+文本正文 + 当前版本。详情页与编辑器用，不进列表。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `content` | `string` | 是 |  |
+| `version` | `number` | 是 |  |
+| `sha256` | `string` | 是 |  |
+| `sizeBytes` | `number` | 是 |  |
+| `excerpt` | `string` | 是 |  |
+| `updatedAt` | `string \| null` | 否 |  |
+
+### `TextAssetRestoreIn`
+
+把某一历史版本重新写成**新的一版**，不改历史行。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `version` | `number` | 是 |  |
+| `expectedVersion` | `number` | 否 |  |
+
+### `TextAssetUpdateIn`
+
+在线编辑。`expected_version` 是**内容版本**，不是 `stateVersion`：
+两个人同时打开编辑框时，后保存的人必须看到「正文已被改过」而不是静默覆盖。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `content` | `string` | 是 |  |
+| `expectedVersion` | `number` | 否 |  |
+| `note` | `string` | 否 |  |
+
+### `TextAssetVersionOut`
+
+一条历史版本。列表默认不带正文，按版本读时才带。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `version` | `number` | 是 |  |
+| `sha256` | `string` | 是 |  |
+| `sizeBytes` | `number` | 是 |  |
+| `excerpt` | `string` | 是 |  |
+| `note` | `string` | 否 |  |
+| `createdBy` | `string` | 是 |  |
+| `createdAt` | `string` | 是 |  |
+| `content` | `string \| null` | 否 |  |
+
 ### `TokenOut`
 
 | 字段 | 类型 | 必填 | 说明 |
@@ -5460,7 +5754,7 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 
 ### `UploadKind`（枚举）
 
-取值：`image`、`audio`、`video`
+取值：`image`、`audio`、`video`、`text`
 
 ### `UserCreateIn`
 
@@ -5721,6 +6015,8 @@ mixedList 里的一项；下标 +1 就是 {{Mixed N}} 编号。
 | `prompt` | `string` | 否 | 画面描述 |
 | `stylePreset` | `string \| null` | 否 | 风格预设标识，未设置时为 null |
 | `referenceAssetIds` | `string[]` | 否 | 参考素材 ID 列表（图生视频用） |
+| `textLibraryIds` | `string[]` | 否 | 绑定的文本资产 id（顺序即 `{{Text N}}` 编号） |
+| `textBindings` | `Record<string, unknown>[]` | 否 | 绑定的文案与版本快照（不含正文） |
 | `authorId` | `string` | 是 | 作者用户 ID |
 | `authorName` | `string` | 否 | 作者昵称快照（改名不回填历史） |
 | `favorited` | `boolean` | 否 | 当前账号是否已收藏 |

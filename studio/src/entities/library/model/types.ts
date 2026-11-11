@@ -115,6 +115,7 @@ export const KIND_OPTIONS: ReadonlyArray<{ value: KindFilter; label: string }> =
   { value: 'video', label: '成片' },
   { value: 'image', label: '图片' },
   { value: 'audio', label: '音频' },
+  { value: 'text', label: '文本' },
 ];
 
 export const SORT_OPTIONS: ReadonlyArray<{ value: LibrarySortKey; label: string }> = [
@@ -129,6 +130,7 @@ export const KIND_LABEL: Record<LibraryAssetKind, string> = {
   audio: '音频',
   image: '图片',
   pack: '封装',
+  text: '文本',
 };
 
 export const ORIGIN_LABEL: Record<string, string> = {

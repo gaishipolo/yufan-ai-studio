@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.context import CurrentUser
 from core.exceptions import Forbidden, InvalidState, UpstreamError
+from core.library_text import dumps_text_refs, freeze_text_refs
 from core.logging import get_logger
 from core.response import PageParams
 from generation.runner import get_runner
@@ -110,6 +111,15 @@ class TaskService:
         duration_sec = resolve_duration(spec, payload.duration_sec)
         aspect_ratio = resolve_aspect_ratio(spec, AspectRatio(payload.aspect_ratio).value)
 
+        # 文本快照在受理期冻结，与生图同一口径：提交 / 重试只读这份，
+        # 资产改稿不会让同一条任务的两跳用上不同的提示词。
+        text_refs = await freeze_text_refs(
+            self.session,
+            actor,
+            payload.text_library_ids,
+            prompt=payload.prompt,
+        )
+
         title = (payload.title or payload.prompt).strip()[:200]
         task = VideoTask(
             title=title or DEFAULT_TITLE,
@@ -124,6 +134,7 @@ class TaskService:
             progress=0,
             style_preset=payload.style_preset,
             reference_asset_ids=list(payload.reference_asset_ids),
+            text_json=dumps_text_refs(text_refs),
             cover_url=self._placeholder_cover(),
             author_id=actor.id,
             author_name=actor.name,

@@ -40,8 +40,8 @@ function renderCard(overrides: Partial<ComponentProps<typeof LibraryCard>> = {})
     onAddTag,
     ...overrides,
   };
-  render(<LibraryCard {...props} />);
-  return { onRemoveTag, onAddTag };
+  const view = render(<LibraryCard {...props} />);
+  return { onRemoveTag, onAddTag, container: view.container };
 }
 
 describe('LibraryCard · 标签', () => {
@@ -87,5 +87,33 @@ describe('LibraryCard · 标签', () => {
     renderCard({ viewer: { id: 'someone-else', canDeleteAny: false } });
     expect(screen.queryByRole('button', { name: /^移除标签/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /添加标签/ })).not.toBeInTheDocument();
+  });
+});
+
+const TEXT_ASSET: LibraryAssetOut = {
+  ...ASSET,
+  id: 't1',
+  name: '分镜脚本.md',
+  kind: 'text',
+  coverUrl: null,
+  previewUrl: null,
+  textExcerpt: '第一段：雨夜街头，霓虹灯牌。\n第二段：镜头缓缓推近。',
+  textVersion: 3,
+};
+
+describe('LibraryCard · 文本资产', () => {
+  it('不渲染缩略图（不请求 /thumbnail），改用 textExcerpt 画文字摘要', () => {
+    const { container } = renderCard({ asset: TEXT_ASSET });
+    // 其它类型会交给 CoverImage 画 <img>；文本卡一张都不该有
+    expect(container.querySelector('img')).toBeNull();
+    expect(screen.getByText(/第一段：雨夜街头/)).toBeInTheDocument();
+    // 右上角「文本」徽标 + 底部类型条都会标出「文本」
+    expect(screen.getAllByText('文本').length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('没有摘录时显示「（空文本）」，仍不渲染破图', () => {
+    const { container } = renderCard({ asset: { ...TEXT_ASSET, textExcerpt: null } });
+    expect(screen.getByText('（空文本）')).toBeInTheDocument();
+    expect(container.querySelector('img')).toBeNull();
   });
 });

@@ -43,6 +43,7 @@ from modules.library.dependencies import (
     PackServiceDep,
     ShareServiceDep,
     TagServiceDep,
+    TextServiceDep,
 )
 from modules.library.schema import (
     AssetPatchIn,
@@ -72,6 +73,11 @@ from modules.library.schema import (
     ShareRequestOut,
     TagIn,
     TagParentIn,
+    TextAssetIn,
+    TextAssetOut,
+    TextAssetRestoreIn,
+    TextAssetUpdateIn,
+    TextAssetVersionOut,
     UploadKind,
 )
 
@@ -170,7 +176,7 @@ async def selection(
 @router.post(
     "/assets/upload",
     status_code=status.HTTP_201_CREATED,
-    summary="上传图片 / 音频（流式，按内容秒传）",
+    summary="上传图片 / 音频 / 文本（流式，按内容秒传）",
     dependencies=[
         # 上传是重 IO：一次按 3 次计入额度，与旧素材库同一档
         Depends(
@@ -387,6 +393,83 @@ async def asset_preview(
     可见性仍由 `load_visible` 判定，这个端点不额外发权限，只负责「视频别给原件」。
     """
     return (await service.preview(asset_id, actor)).response()
+
+
+# --------------------------------------------------------------------------- #
+# 文本资产（站内新建 / 在线编辑 / 版本历史）
+#
+# 路径都挂在 `/assets/{asset_id}/text...` 下：它仍是同一条资产行，共享、
+# 标签、回收站、取件走的是同一套接口，不另起一套 id 空间。
+# --------------------------------------------------------------------------- #
+@router.post(
+    "/text-assets",
+    status_code=status.HTTP_201_CREATED,
+    summary="站内新建文本资产（直接写正文，不传文件）",
+    dependencies=[Depends(rate_limit("library.text_write", limit=60))],
+)
+async def create_text_asset(
+    payload: TextAssetIn, actor: LibraryCreateDep, service: TextServiceDep
+) -> ApiResponse[TextAssetOut]:
+    """`.txt` / `.md`、UTF-8、≤1MB。正文按纯文本保存，Markdown 不转 HTML。"""
+    return ApiResponse.ok(await service.create(payload, actor))
+
+
+@router.get("/assets/{asset_id}/text", summary="读取文本正文与当前版本")
+async def read_text_asset(
+    asset_id: str, actor: LibraryReadDep, service: TextServiceDep
+) -> ApiResponse[TextAssetOut]:
+    return ApiResponse.ok(await service.read(asset_id, actor))
+
+
+@router.put(
+    "/assets/{asset_id}/text",
+    summary="在线编辑文本（追加一版，可带 expectedVersion 防覆盖）",
+    dependencies=[Depends(rate_limit("library.text_write", limit=60))],
+)
+async def update_text_asset(
+    asset_id: str,
+    payload: TextAssetUpdateIn,
+    actor: LibraryUpdateDep,
+    service: TextServiceDep,
+) -> ApiResponse[TextAssetOut]:
+    return ApiResponse.ok(await service.update(asset_id, payload, actor))
+
+
+@router.get(
+    "/assets/{asset_id}/text/versions", summary="文本版本历史（默认不带正文）"
+)
+async def list_text_versions(
+    asset_id: str, actor: LibraryReadDep, service: TextServiceDep
+) -> ApiResponse[list[TextAssetVersionOut]]:
+    return ApiResponse.ok(await service.versions(asset_id, actor))
+
+
+@router.get("/assets/{asset_id}/text/versions/{number}", summary="读取某一历史版本正文")
+async def read_text_version(
+    asset_id: str, number: int, actor: LibraryReadDep, service: TextServiceDep
+) -> ApiResponse[TextAssetVersionOut]:
+    return ApiResponse.ok(await service.version(asset_id, number, actor))
+
+
+@router.post(
+    "/assets/{asset_id}/text/restore",
+    summary="恢复历史版本（写成新的一版，不改历史行）",
+    dependencies=[Depends(rate_limit("library.text_write", limit=60))],
+)
+async def restore_text_version(
+    asset_id: str,
+    payload: TextAssetRestoreIn,
+    actor: LibraryUpdateDep,
+    service: TextServiceDep,
+) -> ApiResponse[TextAssetOut]:
+    return ApiResponse.ok(await service.restore(asset_id, payload, actor))
+
+
+@router.get("/assets/{asset_id}/text/raw", summary="纯文本取件（text/plain + nosniff）")
+async def raw_text_asset(
+    asset_id: str, actor: LibraryReadDep, service: TextServiceDep
+) -> Response:
+    return (await service.raw(asset_id, actor)).response()
 
 
 # --------------------------------------------------------------------------- #

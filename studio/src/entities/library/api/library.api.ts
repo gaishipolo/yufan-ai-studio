@@ -17,6 +17,11 @@ import type {
   ShareDecisionIn,
   ShareRequestIn,
   ShareRequestOut,
+  TextAssetIn,
+  TextAssetOut,
+  TextAssetRestoreIn,
+  TextAssetUpdateIn,
+  TextAssetVersionOut,
 } from '@/shared/api/schema';
 import { viewQuery, type LibraryView } from '../model/types';
 
@@ -76,7 +81,7 @@ export const libraryApi = {
   /** 上传：文件字节直接做 body，文件名与类型走 query（与旧素材库同一套约定） */
   upload: (
     file: File,
-    kind: 'image' | 'audio',
+    kind: 'image' | 'audio' | 'text',
     options?: { sourceKey?: string; onProgress?: (ratio: number) => void },
   ) =>
     api.post<LibraryAssetOut>(
@@ -93,6 +98,37 @@ export const libraryApi = {
         },
       },
     ),
+
+  /* ------------------------------------------------------------ 文本资产 */
+  /** 站内新建：直接写正文，不传文件。extension 只认 md / txt。 */
+  createTextAsset: (body: TextAssetIn) =>
+    api.post<TextAssetOut>(`/library/text-assets`, body),
+
+  /** 读正文与当前内容版本（列表里只有 textExcerpt，正文要单独取）。 */
+  readText: (id: string) => api.get<TextAssetOut>(`/library/assets/${id}/text`),
+
+  /** 在线编辑：带 expectedVersion 防并发覆盖，409 由调用方给明确提示。 */
+  updateText: (id: string, body: TextAssetUpdateIn) =>
+    api.put<TextAssetOut>(`/library/assets/${id}/text`, body),
+
+  /** 版本历史：默认不带正文，按版本读时才带。 */
+  listTextVersions: (id: string) =>
+    api.get<TextAssetVersionOut[]>(`/library/assets/${id}/text/versions`),
+
+  /** 读取某一历史版本的正文。 */
+  readTextVersion: (id: string, version: number) =>
+    api.get<TextAssetVersionOut>(`/library/assets/${id}/text/versions/${version}`),
+
+  /** 恢复历史版本：服务端写成新的一版，不改历史行。 */
+  restoreTextVersion: (id: string, body: TextAssetRestoreIn) =>
+    api.post<TextAssetOut>(`/library/assets/${id}/text/restore`, body),
+
+  /** 纯文本取件（text/plain + nosniff）：禁止 axios 把响应当 JSON 解析。 */
+  rawText: (id: string) =>
+    api.get<string>(`/library/assets/${id}/text/raw`, undefined, {
+      responseType: 'text',
+      transformResponse: [(data: unknown) => data],
+    }),
 
   approveDraft: (id: string, body: DraftDecisionIn) =>
     api.post<LibraryAssetDetailOut>(`/library/drafts/${id}/approve`, body),

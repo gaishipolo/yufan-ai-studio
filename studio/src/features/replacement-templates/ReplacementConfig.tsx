@@ -9,6 +9,7 @@ import { ReplacementPackPicker } from './ReplacementPackPicker';
 import { ReplacementSelectedSources } from './ReplacementSelectedSources';
 import type { ReplacementWorkbench } from './useReplacementWorkbench';
 import { TemplatePromptDialog } from './TemplatePromptDialog';
+import { TextRefPicker } from '@/features/library/TextRefPicker';
 
 interface ReplacementConfigProps { model: ReplacementWorkbench }
 export function ReplacementConfig({ model }: ReplacementConfigProps) {
@@ -68,10 +69,13 @@ export function ReplacementConfig({ model }: ReplacementConfigProps) {
           <textarea id={`${id}-scene`} className={FIELD_CLASS} rows={7} value={model.scenePrompt} maxLength={4000} onChange={event => model.setScenePrompt(event.target.value)} aria-describedby={`${id}-scene-hint`} />
           <div className="flex items-center justify-between gap-2 text-xs text-ink-mute"><Button size="sm" disabled={busy || model.scenePrompt === model.defaultScenePrompt} onClick={() => model.setScenePrompt(model.defaultScenePrompt)}>恢复默认场景描述</Button><span>{model.scenePrompt.length}/4000</span></div>
           <p id={`${id}-scene-hint`} className="text-xs leading-5 text-ink-soft">描述想要的环境、空间与氛围。人物、产品、动作和音频等保留要求由模板固定；下一步可核对完整提示词。</p>
+          <TextRefPicker value={model.textRefs} onChange={model.setTextRefs} prompt={model.scenePrompt} onPromptChange={model.setScenePrompt} />
         </div> : <>
         <ReplacementPackPicker model={model} hintId={`${id}-pack-hint`} />
         <ReplacementScope model={model} id={id} />
         <details className="text-xs text-ink-soft"><summary className="cursor-pointer py-1">补充要求（选填）</summary><label htmlFor={`${id}-notes`} className="mt-2 block space-y-2"><span>需要特别保留或调整的细节</span><textarea id={`${id}-notes`} className={FIELD_CLASS} rows={3} value={notes} maxLength={2000} onChange={event => setNotes(event.target.value)} placeholder="需要保留的动作、出现时机或细节" /></label></details>
+        <TextRefPicker value={model.textRefs} onChange={model.setTextRefs} prompt={notes} onPromptChange={setNotes} />
+        <p className="text-xs leading-5 text-ink-mute">占位符也可写在场景描述、补充要求与替换范围里；编号按上方绑定顺序对应。</p>
         </>}
         </div>}
         </fieldset>

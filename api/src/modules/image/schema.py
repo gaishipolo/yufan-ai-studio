@@ -53,6 +53,14 @@ class ImageJobOut(CamelModel):
         default_factory=list,
         description="提交时带的参考图资产 id（顺序即提交顺序）；纯文生图为空",
     )
+    text_library_ids: list[str] = Field(
+        default_factory=list,
+        description="绑定的文本资产 id（顺序即提示词里 `{{Text N}}` 的编号顺序）",
+    )
+    text_bindings: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="绑定的文案与版本快照（不含正文）：assetId / name / version / sha256",
+    )
     created_at: UtcDateTime = Field(description="创建时间（UTC）")
 
 
@@ -105,5 +113,18 @@ class GenerateImageIn(CamelModel):
             "张数上限由模型 `maxReferences` 决定（`0` = 该模型不支持参考图）。"
             "传 id 而不是 URL：我们的取件链接是私签的、供应商访问不到，"
             "服务端读字节后以 `data:image/...;base64,...` 交给供应商"
+        ),
+    )
+    # 文本不是参考图，也不是模型参数：它是一段要拼进 prompt 的正文。
+    # 单独一个字段，避免 `_validate_params` 的「未声明键 400」把文案 id 拦掉，
+    # 也避免和 `reference_library_ids` 混在一起让 `maxReferences` 少算一张图。
+    text_library_ids: list[str] = Field(
+        default_factory=list,
+        max_length=8,
+        description=(
+            "要拼进提示词的文本资产 id，**按顺序生效**：`{{Text 1}}` 指第 1 份、"
+            "`{{Text 2}}` 指第 2 份。提交时把正文按当时版本冻结进任务，"
+            "之后编辑资产不会改变这次生成与它的重试。只接受当前账号可读、"
+            "在库的 `text` 类型资产；一次最多 8 份"
         ),
     )

@@ -3435,7 +3435,7 @@
         "tags": [
           "资产库"
         ],
-        "summary": "上传图片 / 音频（流式，按内容秒传）",
+        "summary": "上传图片 / 音频 / 文本（流式，按内容秒传）",
         "description": "只收图片与音频：视频走 `/source-videos`（模板库专用）。\n\n分开的理由不是「类型不同」，而是**来源语义不同**：这个接口是用户自己挑文件，\n视频上传属于模板库的参考素材流程，它需要 `origin=template_source` 才能在\n切换后继续喂给模板封装。混成一个接口会让来源变成前端传参，写错了没人发现。",
         "operationId": "upload_api_v1_library_assets_upload_post",
         "security": [
@@ -3981,6 +3981,360 @@
         "summary": "受控公共预览（视频给派生流）",
         "description": "旧库把「非本人的公共原片」的 url 改写成 `/assets/{id}/preview`；v2 补同款。\n\n可见性仍由 `load_visible` 判定，这个端点不额外发权限，只负责「视频别给原件」。",
         "operationId": "asset_preview_api_v1_library_assets__asset_id__preview_get",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "asset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Asset Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/library/text-assets": {
+      "post": {
+        "tags": [
+          "资产库"
+        ],
+        "summary": "站内新建文本资产（直接写正文，不传文件）",
+        "description": "`.txt` / `.md`、UTF-8、≤1MB。正文按纯文本保存，Markdown 不转 HTML。",
+        "operationId": "create_text_asset_api_v1_library_text_assets_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TextAssetIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_TextAssetOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/library/assets/{asset_id}/text": {
+      "get": {
+        "tags": [
+          "资产库"
+        ],
+        "summary": "读取文本正文与当前版本",
+        "operationId": "read_text_asset_api_v1_library_assets__asset_id__text_get",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "asset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Asset Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_TextAssetOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "资产库"
+        ],
+        "summary": "在线编辑文本（追加一版，可带 expectedVersion 防覆盖）",
+        "operationId": "update_text_asset_api_v1_library_assets__asset_id__text_put",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "asset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Asset Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TextAssetUpdateIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_TextAssetOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/library/assets/{asset_id}/text/versions": {
+      "get": {
+        "tags": [
+          "资产库"
+        ],
+        "summary": "文本版本历史（默认不带正文）",
+        "operationId": "list_text_versions_api_v1_library_assets__asset_id__text_versions_get",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "asset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Asset Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_list_TextAssetVersionOut__"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/library/assets/{asset_id}/text/versions/{number}": {
+      "get": {
+        "tags": [
+          "资产库"
+        ],
+        "summary": "读取某一历史版本正文",
+        "operationId": "read_text_version_api_v1_library_assets__asset_id__text_versions__number__get",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "asset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Asset Id"
+            }
+          },
+          {
+            "name": "number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_TextAssetVersionOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/library/assets/{asset_id}/text/restore": {
+      "post": {
+        "tags": [
+          "资产库"
+        ],
+        "summary": "恢复历史版本（写成新的一版，不改历史行）",
+        "operationId": "restore_text_version_api_v1_library_assets__asset_id__text_restore_post",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "asset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Asset Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TextAssetRestoreIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_TextAssetOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/library/assets/{asset_id}/text/raw": {
+      "get": {
+        "tags": [
+          "资产库"
+        ],
+        "summary": "纯文本取件（text/plain + nosniff）",
+        "operationId": "raw_text_asset_api_v1_library_assets__asset_id__text_raw_get",
         "security": [
           {
             "bearerAuth": []
@@ -8489,6 +8843,60 @@
         "type": "object",
         "title": "ApiResponse[TaskStats]"
       },
+      "ApiResponse_TextAssetOut_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TextAssetOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[TextAssetOut]"
+      },
+      "ApiResponse_TextAssetVersionOut_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TextAssetVersionOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[TextAssetVersionOut]"
+      },
       "ApiResponse_TokenOut_": {
         "properties": {
           "code": {
@@ -8844,6 +9252,37 @@
         },
         "type": "object",
         "title": "ApiResponse[list[ShareRequestOut]]"
+      },
+      "ApiResponse_list_TextAssetVersionOut__": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/TextAssetVersionOut"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Data"
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[list[TextAssetVersionOut]]"
       },
       "ApiResponse_list_UserOut__": {
         "properties": {
@@ -9415,6 +9854,15 @@
             "maxItems": 20,
             "title": "Referenceassetids",
             "description": "参考素材 ID 列表（最多 20 个）"
+          },
+          "textLibraryIds": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 8,
+            "title": "Textlibraryids",
+            "description": "要拼进提示词的文本资产 id，按顺序对应 `{{Text 1}}` / `{{Text 2}}`…；提交时按当时版本冻结正文，之后编辑资产不影响本次生成与重试。只接受当前账号可读、在库的 text 类型资产，最多 8 份"
           },
           "stylePreset": {
             "anyOf": [
@@ -10219,6 +10667,15 @@
             "maxItems": 16,
             "title": "Referencelibraryids",
             "description": "参考图（图生图 / 多图合成）的素材库资产 id，**按顺序生效**：多图合成时提示词里的「第一张 / 第二张」指的就是这个顺序，重排会让提示词与图片错位。只接受 `image` 类型且当前账号能读的资产，张数上限由模型 `maxReferences` 决定（`0` = 该模型不支持参考图）。传 id 而不是 URL：我们的取件链接是私签的、供应商访问不到，服务端读字节后以 `data:image/...;base64,...` 交给供应商"
+          },
+          "textLibraryIds": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 8,
+            "title": "Textlibraryids",
+            "description": "要拼进提示词的文本资产 id，**按顺序生效**：`{{Text 1}}` 指第 1 份、`{{Text 2}}` 指第 2 份。提交时把正文按当时版本冻结进任务，之后编辑资产不会改变这次生成与它的重试。只接受当前账号可读、在库的 `text` 类型资产；一次最多 8 份"
           }
         },
         "type": "object",
@@ -10691,6 +11148,23 @@
             "title": "Referencelibraryids",
             "description": "提交时带的参考图资产 id（顺序即提交顺序）；纯文生图为空"
           },
+          "textLibraryIds": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Textlibraryids",
+            "description": "绑定的文本资产 id（顺序即提示词里 `{{Text N}}` 的编号顺序）"
+          },
+          "textBindings": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Textbindings",
+            "description": "绑定的文案与版本快照（不含正文）：assetId / name / version / sha256"
+          },
           "createdAt": {
             "type": "string",
             "title": "Createdat",
@@ -10978,6 +11452,33 @@
             ],
             "title": "Trashexpiresat"
           },
+          "textExcerpt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Textexcerpt"
+          },
+          "textVersion": {
+            "type": "integer",
+            "title": "Textversion",
+            "default": 0
+          },
+          "textUrl": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Texturl"
+          },
           "createdAt": {
             "type": "string",
             "title": "Createdat"
@@ -11113,10 +11614,11 @@
           "video",
           "audio",
           "image",
-          "pack"
+          "pack",
+          "text"
         ],
         "title": "LibraryAssetKind",
-        "description": "资产类型。`pack` 是封装，成员关系在 `library_pack_items`。"
+        "description": "资产类型。`pack` 是封装，成员关系在 `library_pack_items`。\n\n`text` 是第 5 种「文件型资产」：`.txt` / `.md`，正文即文件内容，\n不是另起一张文本表。它有版本历史（`library_text_versions`），\n但去重、权限、可见性、回收站与取件都和前四种走同一套。"
       },
       "LibraryAssetOrigin": {
         "type": "string",
@@ -11301,6 +11803,33 @@
               }
             ],
             "title": "Trashexpiresat"
+          },
+          "textExcerpt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Textexcerpt"
+          },
+          "textVersion": {
+            "type": "integer",
+            "title": "Textversion",
+            "default": 0
+          },
+          "textUrl": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Texturl"
           },
           "createdAt": {
             "type": "string",
@@ -12738,6 +13267,15 @@
             "maxItems": 10,
             "title": "Referenceids"
           },
+          "textLibraryIds": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 8,
+            "title": "Textlibraryids",
+            "description": "绑定的文本资产 id，按顺序对应 `{{Text N}}`；最多 8 份"
+          },
           "extraPackIds": {
             "items": {
               "type": "string"
@@ -13566,6 +14104,23 @@
           "prompt": {
             "type": "string",
             "title": "Prompt"
+          },
+          "textLibraryIds": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Textlibraryids",
+            "description": "本次绑定的文本资产 id（顺序即 `{{Text N}}` 编号）"
+          },
+          "textBindings": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Textbindings",
+            "description": "绑定的文案与版本快照（不含正文）"
           },
           "promptMode": {
             "type": "string",
@@ -14873,6 +15428,201 @@
         "title": "TaskStatusFilter",
         "description": "列表筛选值：`all` 与具体状态并列，避免路由层出现联合类型。"
       },
+      "TextAssetIn": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "content": {
+            "type": "string",
+            "maxLength": 1048576,
+            "minLength": 1,
+            "title": "Content"
+          },
+          "extension": {
+            "type": "string",
+            "pattern": "^(md|txt)$",
+            "title": "Extension",
+            "default": "md"
+          },
+          "tagIds": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Tagids"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "content"
+        ],
+        "title": "TextAssetIn",
+        "description": "站内新建一份文本资产（不传文件，直接写正文）。\n\n`extension` 只认 md / txt：文件名后缀决定 `mime_type` 与内容寻址 key 的后缀，\n不能由用户随便给一个 `.html`——那会让下载下来的东西被浏览器当页面执行。"
+      },
+      "TextAssetOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "content": {
+            "type": "string",
+            "title": "Content"
+          },
+          "version": {
+            "type": "integer",
+            "title": "Version"
+          },
+          "sha256": {
+            "type": "string",
+            "title": "Sha256"
+          },
+          "sizeBytes": {
+            "type": "integer",
+            "title": "Sizebytes"
+          },
+          "excerpt": {
+            "type": "string",
+            "title": "Excerpt"
+          },
+          "updatedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updatedat"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "content",
+          "version",
+          "sha256",
+          "sizeBytes",
+          "excerpt"
+        ],
+        "title": "TextAssetOut",
+        "description": "文本正文 + 当前版本。详情页与编辑器用，不进列表。"
+      },
+      "TextAssetRestoreIn": {
+        "properties": {
+          "version": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Version"
+          },
+          "expectedVersion": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Expectedversion",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "version"
+        ],
+        "title": "TextAssetRestoreIn",
+        "description": "把某一历史版本重新写成**新的一版**，不改历史行。"
+      },
+      "TextAssetUpdateIn": {
+        "properties": {
+          "content": {
+            "type": "string",
+            "maxLength": 1048576,
+            "minLength": 1,
+            "title": "Content"
+          },
+          "expectedVersion": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Expectedversion",
+            "default": 0
+          },
+          "note": {
+            "type": "string",
+            "maxLength": 200,
+            "title": "Note",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "content"
+        ],
+        "title": "TextAssetUpdateIn",
+        "description": "在线编辑。`expected_version` 是**内容版本**，不是 `stateVersion`：\n两个人同时打开编辑框时，后保存的人必须看到「正文已被改过」而不是静默覆盖。"
+      },
+      "TextAssetVersionOut": {
+        "properties": {
+          "version": {
+            "type": "integer",
+            "title": "Version"
+          },
+          "sha256": {
+            "type": "string",
+            "title": "Sha256"
+          },
+          "sizeBytes": {
+            "type": "integer",
+            "title": "Sizebytes"
+          },
+          "excerpt": {
+            "type": "string",
+            "title": "Excerpt"
+          },
+          "note": {
+            "type": "string",
+            "title": "Note",
+            "default": ""
+          },
+          "createdBy": {
+            "type": "string",
+            "title": "Createdby"
+          },
+          "createdAt": {
+            "type": "string",
+            "title": "Createdat"
+          },
+          "content": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content"
+          }
+        },
+        "type": "object",
+        "required": [
+          "version",
+          "sha256",
+          "sizeBytes",
+          "excerpt",
+          "createdBy",
+          "createdAt"
+        ],
+        "title": "TextAssetVersionOut",
+        "description": "一条历史版本。列表默认不带正文，按版本读时才带。"
+      },
       "TokenOut": {
         "properties": {
           "accessToken": {
@@ -14953,10 +15703,11 @@
         "enum": [
           "image",
           "audio",
-          "video"
+          "video",
+          "text"
         ],
         "title": "UploadKind",
-        "description": "上传接口允许的媒体类型。\n\n分成三个值而不是复用 `LibraryAssetKind`：`pack` 不是上传出来的，\n它是封装动作的产物；让上传接口收 `pack` 只会得到一个没有字节的资产行。"
+        "description": "上传接口允许的文件类型。\n\n不复用 `LibraryAssetKind`：`pack` 不是上传出来的，它是封装动作的产物；\n让上传接口收 `pack` 只会得到一个没有字节的资产行。`TEXT` 走同一条上传链，\n但体积上限与探测规则单独一档（见 `infra/media_probe.MAX_TEXT_BYTES`）。"
       },
       "UserCreateIn": {
         "properties": {
@@ -16113,6 +16864,23 @@
             "type": "array",
             "title": "Referenceassetids",
             "description": "参考素材 ID 列表（图生视频用）"
+          },
+          "textLibraryIds": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Textlibraryids",
+            "description": "绑定的文本资产 id（顺序即 `{{Text N}}` 编号）"
+          },
+          "textBindings": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Textbindings",
+            "description": "绑定的文案与版本快照（不含正文）"
           },
           "authorId": {
             "type": "string",

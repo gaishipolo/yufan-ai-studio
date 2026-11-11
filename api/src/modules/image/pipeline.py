@@ -22,6 +22,7 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.library_text import inject_text_refs
 from core.logging import get_logger
 from core.ports.library_ingest import IngestRequest
 from core.ports.library_lookup import LibraryAssetKind
@@ -135,7 +136,10 @@ class ImageJobStore:
             id=job.id,
             kind=KIND_IMAGE,
             model=job.model_id or job.model,
-            prompt=job.prompt,
+            # `{{Text N}}` 在这里一次性展开成正文，用的是受理期冻结的快照。
+            # 重试 / 启动恢复都从本方法重建记录，拿到的是同一段文字；
+            # `job.prompt` 本身仍保留用户写的占位符，历史页才能原样展示。
+            prompt=inject_text_refs(job.prompt, job.text_refs),
             status=job.status,
             owner_id=job.owner_id,
             params={**job.params, "size": job.size, "count": job.count},

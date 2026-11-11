@@ -2,7 +2,7 @@
 
 # Mock 覆盖率（只记录，不作门禁）
 
-后端端点 141 条（来自 `schema.ts` 的 `EndpointData`），
+后端端点 148 条（来自 `schema.ts` 的 `EndpointData`），
 已注册 mock 路由 86 条（来自 `mockRouteTable()`），
 按「同方法 + 正则能匹配」判定疑似覆盖 88 条。
 
@@ -59,7 +59,14 @@
 | POST | `/api/v1/images/{}/retry` |
 | GET | `/api/v1/library/assets/{}/preview` |
 | GET | `/api/v1/library/assets/{}/stream` |
+| GET | `/api/v1/library/assets/{}/text` |
+| PUT | `/api/v1/library/assets/{}/text` |
+| GET | `/api/v1/library/assets/{}/text/raw` |
+| POST | `/api/v1/library/assets/{}/text/restore` |
+| GET | `/api/v1/library/assets/{}/text/versions` |
+| GET | `/api/v1/library/assets/{}/text/versions/{}` |
 | PATCH | `/api/v1/library/tags/{}/parent` |
+| POST | `/api/v1/library/text-assets` |
 | GET | `/api/v1/model-driver/drivers` |
 | GET | `/api/v1/model-driver/models` |
 | POST | `/api/v1/model-driver/tasks` |
@@ -91,4 +98,4 @@
 | POST | `/api/v1/templates/video-templates/{}/pin` |
 | PATCH | `/api/v1/templates/video-templates/{}/prompt` |
 
-（未命中 53 条；已命中 88 条不在本表重复列出。）
+（未命中 60 条；已命中 88 条不在本表重复列出。）

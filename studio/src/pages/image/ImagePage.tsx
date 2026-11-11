@@ -25,6 +25,8 @@ import {
 import { ParamFields } from '@/entities/model/ui/ParamFields';
 import { LibraryFlyout } from '@/entities/library/ui/LibraryFlyout';
 import { useUploadAsset } from '@/entities/library/api/library.queries';
+import { TextRefPicker } from '@/features/library/TextRefPicker';
+import type { LibraryAssetOut } from '@/shared/api/schema';
 import type { LibraryAssetDrag } from '@/shared/lib/libraryDrag';
 import { useGenerateImage, useImages } from '@/entities/image/api/image.api';
 import type { GenerateImagePayload } from '@/entities/image/model/types';
@@ -39,6 +41,8 @@ export default function ImagePage() {
   // 参考图：先传到素材库拿 id，再随请求下发 id（后端读字节转 Data URI 交给供应商）。
   // 不放图片本身进请求：几 MB 的 base64 走 HTTP 只是白费带宽，后端还得再解一遍。
   const [references, setReferences] = useState<ReferenceItem[]>([]);
+  // 文本引用：与参考图完全分开的一条通道，提交时只发 textLibraryIds
+  const [textRefs, setTextRefs] = useState<LibraryAssetOut[]>([]);
   // 素材库悬浮栏：默认收起，从参考图区的「素材库」按钮打开
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [page, setPage] = useState(1);
@@ -137,11 +141,14 @@ export default function ImagePage() {
     if (references.length) payload.referenceLibraryIds = references.map((item) => item.id);
     // 默认模型留空，交给后端取默认；只有用户显式改选才传 model
     if (!model.isDefault) payload.model = model.id;
+    // 文本引用按顺序冻结正文；与 referenceLibraryIds 互不混用
+    if (textRefs.length) payload.textLibraryIds = textRefs.map((item) => item.id);
 
     generate.mutate(payload, {
       onSuccess: () => {
         toast('已提交，正在排队生成', 'success');
         setPrompt('');
+        setTextRefs([]);
         // 参考图跟着这次请求走了，留着会让下一次生成莫名其妙还用旧图
         setReferences([]);
         // 新任务在最前面：停在旧页会看不到自己刚提交的那张。
@@ -174,6 +181,15 @@ export default function ImagePage() {
               rows={4}
               placeholder="例：赛博朋克街头，霓虹灯牌，雨夜地面反光，电影级打光，超高细节"
               className="w-full resize-y rounded-lg border border-line bg-panel-soft px-2.5 py-2 text-[12.5px] leading-relaxed outline-none transition placeholder:text-[#a9b8bf] focus:border-primary-line focus:bg-white focus:shadow-ring"
+            />
+          </div>
+
+          <div className="mb-2.5">
+            <TextRefPicker
+              value={textRefs}
+              onChange={setTextRefs}
+              prompt={prompt}
+              onPromptChange={setPrompt}
             />
           </div>
 

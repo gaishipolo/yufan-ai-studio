@@ -31,8 +31,10 @@ from modules.library.packs import PackService
 from modules.library.service import LibraryService
 from modules.library.sharing import ShareService
 from modules.library.tags import TagService
+from modules.library.text_assets import TextAssetService
 
 __all__ = [
+    "TextServiceDep",
     "BulkServiceDep",
     "DownloadServiceDep",
     "GenerationIngestDep",
@@ -121,6 +123,12 @@ def get_bulk_service(session: SessionDep, storage: StorageDep) -> BulkService:
     return BulkService(session=session, storage=storage)
 
 
+def get_text_asset_service(
+    session: SessionDep, storage: StorageDep
+) -> TextAssetService:
+    return TextAssetService(session=session, storage=storage)
+
+
 LibraryServiceDep = Annotated[LibraryService, Depends(get_library_service)]
 LifecycleServiceDep = Annotated[LifecycleService, Depends(get_lifecycle_service)]
 PackServiceDep = Annotated[PackService, Depends(get_pack_service)]
@@ -129,3 +137,4 @@ GenerationIngestDep = Annotated[GenerationIngest, Depends(get_ingest_service)]
 ShareServiceDep = Annotated[ShareService, Depends(get_share_service)]
 TagServiceDep = Annotated[TagService, Depends(get_tag_service)]
 BulkServiceDep = Annotated[BulkService, Depends(get_bulk_service)]
+TextServiceDep = Annotated[TextAssetService, Depends(get_text_asset_service)]

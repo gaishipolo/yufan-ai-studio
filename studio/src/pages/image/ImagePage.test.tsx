@@ -30,6 +30,8 @@ vi.mock('@/entities/library/api/library.queries', () => ({
   useUploadAsset: () => ({ mutateAsync: uploadMock, isPending: false }),
   useLibrarySelectionInfinite: selectionMock,
   useLibraryTags: () => ({ data: [] }),
+  // TextRefPicker 里的 LibraryPicker 只有打开才挂载，这里备一个空结果即可
+  useLibrarySelection: () => ({ data: { items: [], total: 0 }, isPending: false }),
 }));
 
 // paramForm 用真实实现：这里要验的就是控件确实来自 paramSchema
@@ -41,6 +43,33 @@ vi.mock('@/entities/model/api/model.queries', async (importOriginal) => ({
 vi.mock('@/shared/lib/toast', async (importOriginal) => ({
   ...((await importOriginal()) as Record<string, unknown>),
   toast: toastMock,
+}));
+
+/* 文本绑定的挑选/重编号在 TextRefPicker.test.tsx 里单独测；这里只验「绑定后
+   提交体」：mock 成一键绑定，避免再拉一遍选择器的数据源 */
+vi.mock('@/features/library/TextRefPicker', () => ({
+  TextRefPicker: ({ onChange }: { onChange: (assets: LibraryAssetOut[]) => void }) => (
+    <button
+      type="button"
+      onClick={() =>
+        onChange([
+          {
+            id: 'txt-1',
+            name: '脚本.md',
+            kind: 'text',
+            origin: 'upload',
+            ownerId: 'u-1',
+            visibility: 'personal',
+            state: 'active',
+            createdAt: '2026-11-01T00:00:00Z',
+            textVersion: 2,
+          },
+        ])
+      }
+    >
+      插入文本引用
+    </button>
+  ),
 }));
 
 const AGNES: ModelSpec = {
@@ -223,6 +252,19 @@ describe('ImagePage · 表单参数来自模型目录', () => {
       count: 3,
       model: 'seedream-3',
     });
+  });
+
+  it('绑定文本资产后提交带 textLibraryIds，且不把它塞进 referenceLibraryIds', async () => {
+    const user = userEvent.setup();
+    render(<ImagePage />);
+
+    await user.click(screen.getByRole('button', { name: '插入文本引用' }));
+    await user.type(screen.getByPlaceholderText(/赛博朋克街头/), '一只白猫');
+    await user.click(screen.getByRole('button', { name: '开始生成' }));
+
+    const payload = mutateMock.mock.calls[0][0];
+    expect(payload.textLibraryIds).toEqual(['txt-1']);
+    expect(payload.referenceLibraryIds).toBeUndefined();
   });
 
   it('空提示词不提交', async () => {

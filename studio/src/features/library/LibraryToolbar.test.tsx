@@ -27,6 +27,7 @@ function renderToolbar(overrides: Partial<LibraryToolbarProps> = {}) {
     onKeyword: vi.fn(),
     onSort: vi.fn(),
     onUpload: vi.fn(),
+    onNewText: vi.fn(),
     onPack: vi.fn(),
     onRequests: vi.fn(),
   };
@@ -68,5 +69,17 @@ describe('LibraryToolbar · 一级入口', () => {
     renderToolbar({ view: 'trash' });
     expect(screen.queryByRole('button', { name: '上传' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '封装' })).not.toBeInTheDocument();
+  });
+
+  it('「新建文本」与上传同显隐，点击回传一次', async () => {
+    const user = userEvent.setup();
+    const { props, unmount } = renderToolbar();
+    const button = screen.getByRole('button', { name: '新建文本' });
+    await user.click(button);
+    expect(props.onNewText).toHaveBeenCalledTimes(1);
+    unmount();
+
+    renderToolbar({ view: 'trash' });
+    expect(screen.queryByRole('button', { name: '新建文本' })).not.toBeInTheDocument();
   });
 });

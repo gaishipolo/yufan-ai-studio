@@ -8,7 +8,14 @@
 > 来源：`CODE_REVIEW_2026-11-06_R11~R14`、`CODE_REVIEW_2026-11-06_FE6`、
 > `EXTENSIBILITY_GAPS.md` 的 B1/C1/C2、素材分支合并时新发现的项，以及
 > **2026-11-11 全面审查**（框架 / 资产库 / 模型启动，P0×2 · P1×9 · P2×11 已全修）与 PR#4 评审遗留。
-> 最后更新：2026-11-11 17:35 —— 资产库标签改**两级**（一级分组、二级才能打标），
+> 最后更新：2026-11-11 20:50 —— **文本资产落地（方案 B+C）**：`kind=text` 仍是一条
+> `library_assets` 行，另加不可变快照表 `library_text_versions`；站内新建 / 在线编辑 /
+> 版本历史 / 恢复走 `/library/assets/{id}/text...`，引用注入走 `{{Text N}}` +
+> `textLibraryIds`（生图、视频、替换链三条链各一份冻结快照）。只收 `.txt`/`.md`、
+> 严格 UTF-8、≤1MB，Markdown **不转 HTML**（取件固定 `text/plain` + `nosniff`）；
+> 图片 / 视频 / 封装选择器默认排除文本，需显式 `kind=text` 才出现。
+> 迁移 `e2b7c4a9f310`，用例 `test_library_text_assets.py` / `test_library_text_refs.py`。
+> 早前：资产库标签改**两级**（一级分组、二级才能打标），
 > 存量按「产品 → 3030 / T35，角色 → 菜菜」回填，其余留一级；资产库页面字号整体调大一档。
 > 口径：`library_tags.parent_id`（空串=一级）、`UNIQUE(name, parent_id)`；
 > 计数 / 筛选 / 打标三处同一套口径（`tags.py`），归层命令 `app library init-tag-tree`。

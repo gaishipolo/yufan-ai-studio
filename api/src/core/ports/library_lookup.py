@@ -34,6 +34,7 @@ __all__ = [
     "LibraryAssetRef",
     "LibraryAssetState",
     "LibraryAssetKind",
+    "LibraryTextRef",
     "LibraryVisibility",
     "LibraryLookup",
     "get_library_lookup",
@@ -44,12 +45,18 @@ __all__ = [
 
 
 class LibraryAssetKind(StrEnum):
-    """资产类型。`pack` 是封装，成员关系在 `library_pack_items`。"""
+    """资产类型。`pack` 是封装，成员关系在 `library_pack_items`。
+
+    `text` 是第 5 种「文件型资产」：`.txt` / `.md`，正文即文件内容，
+    不是另起一张文本表。它有版本历史（`library_text_versions`），
+    但去重、权限、可见性、回收站与取件都和前四种走同一套。
+    """
 
     VIDEO = "video"
     AUDIO = "audio"
     IMAGE = "image"
     PACK = "pack"
+    TEXT = "text"
 
 
 class LibraryAssetState(StrEnum):
@@ -89,6 +96,26 @@ class LibraryAssetRef:
     has_audio: bool = False
 
 
+@dataclass(frozen=True, slots=True)
+class LibraryTextRef:
+    """一条可读文本资产的内容快照，供 `{{Text N}}` 注入用。
+
+    刻意带 `version` / `sha256`：注入是把内容**抄进**生成的提示词，
+    之后资产可能被编辑。生成档案必须能回答「当时用的是哪一版正文」，
+    只存 assetId 会在用户改完稿后变成不可复现的历史。
+
+    `content` 是已经严格 UTF-8 解码、去掉 BOM 的纯文本；调用方不得把它
+    当 HTML 渲染，也不得二次解析其中的 `{{...}}`（见 `core.prompt_refs`）。
+    """
+
+    id: str
+    name: str
+    version: int
+    sha256: str
+    content: str
+    size_bytes: int
+
+
 @runtime_checkable
 class LibraryLookup(Protocol):
     """按 id 批量取 v2 资产元数据，并回答「这批 id 里哪些我能读」。"""
@@ -117,6 +144,20 @@ class LibraryLookup(Protocol):
         调用方（生成链路把素材当参考图）必须过这一关：能读到 id 不等于能读到
         内容以外的用途，但**读不到内容却能把图交给供应商、再取回产物**，等于
         绕过整个共享审批把别人的私有素材复制出来。
+        """
+        ...
+
+    async def read_text_many(
+        self, session: AsyncSession, actor: CurrentUser, asset_ids: Sequence[str]
+    ) -> Mapping[str, LibraryTextRef]:
+        """批量读文本正文，**只返回 actor 现在可读的 `active` / `text` 条目**。
+
+        为什么单独一个方法而不塞进 `get_many()`：正文是字节（可能 1MB），
+        列表 / 溯源查询只需要元数据，带上正文会让 24 条列表白读 24 份文件。
+        可读性判据仍只有 `library/access.py` 一份——正文比缩略图更敏感，
+        这里不做第二套「共享」判断，也不接受「查不到就当没引用」。
+
+        返回顺序**不保证**与入参一致：调用方按 id 取，顺序由自己的列表决定。
         """
         ...
 

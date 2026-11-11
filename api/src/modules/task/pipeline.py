@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.library_text import inject_text_refs
 from generation.pipeline import register_pipeline
 from generation.spec import STATUS_QUEUED, STATUS_RUNNING, GenerationRecord
 from infra.ai.base import Capability, GenerationRequest
@@ -47,7 +48,9 @@ class VideoTaskStore:
             kind=KIND_VIDEO,
             # 路由供应商用目录 id；历史数据可能只有可读名（ModelRouter 两种都认）
             model=task.model_id or task.model,
-            prompt=task.prompt,
+            # 与生图同口径：把 `{{Text N}}` 展开成受理期冻结的正文，
+            # 行上的 `prompt` 仍保留占位符供历史页原样展示。
+            prompt=inject_text_refs(task.prompt, task.text_refs),
             status=task.status,
             owner_id=task.author_id,
             params=params,

@@ -52,9 +52,9 @@ export const ExportSource_VALUES = ["tasks", "audit_events"] as const;
 export type GenerationKind = "video" | "image";
 export const GenerationKind_VALUES = ["video", "image"] as const;
 
-/** 取值：video, audio, image, pack */
-export type LibraryAssetKind = "video" | "audio" | "image" | "pack";
-export const LibraryAssetKind_VALUES = ["video", "audio", "image", "pack"] as const;
+/** 取值：video, audio, image, pack, text */
+export type LibraryAssetKind = "video" | "audio" | "image" | "pack" | "text";
+export const LibraryAssetKind_VALUES = ["video", "audio", "image", "pack", "text"] as const;
 
 /** 取值：upload, generated, template_source, imported, pack */
 export type LibraryAssetOrigin = "upload" | "generated" | "template_source" | "imported" | "pack";
@@ -96,9 +96,9 @@ export const TaskStatus_VALUES = ["queued", "running", "completed", "failed"] as
 export type TaskStatusFilter = "all" | "queued" | "running" | "completed" | "failed";
 export const TaskStatusFilter_VALUES = ["all", "queued", "running", "completed", "failed"] as const;
 
-/** 取值：image, audio, video */
-export type UploadKind = "image" | "audio" | "video";
-export const UploadKind_VALUES = ["image", "audio", "video"] as const;
+/** 取值：image, audio, video, text */
+export type UploadKind = "image" | "audio" | "video" | "text";
+export const UploadKind_VALUES = ["image", "audio", "video", "text"] as const;
 
 /* ------------------------------ 模型 ------------------------------ */
 
@@ -209,6 +209,8 @@ export interface CreateTaskIn {
   aspectRatio?: AspectRatio;
   /** 参考素材 ID 列表（最多 20 个） */
   referenceAssetIds?: string[];
+  /** 要拼进提示词的文本资产 id，按顺序对应 `{{Text 1}}` / `{{Text 2}}`…；提交时按当时版本冻结正文，之后编辑资产不影响本次生成与重试。只接受当前账号可读、在库的 text 类型资产，最多 8 份 */
+  textLibraryIds?: string[];
   /** 风格预设标识，留空为不套风格 */
   stylePreset?: string | null;
 }
@@ -412,6 +414,8 @@ export interface GenerateImageIn {
   model?: string;
   /** 参考图（图生图 / 多图合成）的素材库资产 id，**按顺序生效**：多图合成时提示词里的「第一张 / 第二张」指的就是这个顺序，重排会让提示词与图片错位。只接受 `image` 类型且当前账号能读的资产，张数上限由模型 `maxReferences` 决定（`0` = 该模型不支持参考图）。传 id 而不是 URL：我们的取件链接是私签的、供应商访问不到，服务端读字节后以 `data:image/...;base64,...` 交给供应商 */
   referenceLibraryIds?: string[];
+  /** 要拼进提示词的文本资产 id，**按顺序生效**：`{{Text 1}}` 指第 1 份、`{{Text 2}}` 指第 2 份。提交时把正文按当时版本冻结进任务，之后编辑资产不会改变这次生成与它的重试。只接受当前账号可读、在库的 `text` 类型资产；一次最多 8 份 */
+  textLibraryIds?: string[];
 }
 
 /** 生成参数快照。字段与 `library_asset_generation` 一一对应，全部可选。 */
@@ -540,6 +544,10 @@ export interface ImageJobOut {
   previousExternalIds?: string[];
   /** 提交时带的参考图资产 id（顺序即提交顺序）；纯文生图为空 */
   referenceLibraryIds?: string[];
+  /** 绑定的文本资产 id（顺序即提示词里 `{{Text N}}` 的编号顺序） */
+  textLibraryIds?: string[];
+  /** 绑定的文案与版本快照（不含正文）：assetId / name / version / sha256 */
+  textBindings?: Record<string, unknown>[];
   /** 创建时间（UTC） */
   createdAt: string;
 }
@@ -617,6 +625,9 @@ export interface LibraryAssetDetailOut {
   tags?: LibraryTagOut[];
   trashReason?: string | null;
   trashExpiresAt?: string | null;
+  textExcerpt?: string | null;
+  textVersion?: number;
+  textUrl?: string | null;
   createdAt: string;
   updatedAt?: string | null;
   groups?: LibraryGroupRef[];
@@ -661,6 +672,9 @@ export interface LibraryAssetOut {
   tags?: LibraryTagOut[];
   trashReason?: string | null;
   trashExpiresAt?: string | null;
+  textExcerpt?: string | null;
+  textVersion?: number;
+  textUrl?: string | null;
   createdAt: string;
   updatedAt?: string | null;
 }
@@ -1004,6 +1018,8 @@ export interface PrepareReplacement {
   /** 文字换场景的描述；省略使用模板默认值，空白拒绝 */
   scenePrompt?: string | null;
   referenceIds?: string[];
+  /** 绑定的文本资产 id，按顺序对应 `{{Text N}}`；最多 8 份 */
+  textLibraryIds?: string[];
   /** 第 2 位及以后的素材包 id，按提示词槽位顺序；第一包仍用 packId */
   extraPackIds?: string[];
   /** 与 extraPackIds 顺序对应的发布版本；旧调用省略时由服务端解析并冻结 */
@@ -1170,6 +1186,10 @@ export interface ReplacementRunOut {
   /** 确认提交到结束的耗时（秒）；未完成时按到此刻计，未开始为 null */
   elapsedSec?: number | null;
   prompt: string;
+  /** 本次绑定的文本资产 id（顺序即 `{{Text N}}` 编号） */
+  textLibraryIds?: string[];
+  /** 绑定的文案与版本快照（不含正文） */
+  textBindings?: Record<string, unknown>[];
   /** fixed=封装视频模板时写死的原文，逐字提交；compiled=按素材与替换范围现编。展示层据此告诉用户「跑的就是你封装时那份提示词」。 */
   promptMode?: "fixed" | "compiled";
   /** fixed 时出自哪条视频模板；compiled 为 null */
@@ -1510,6 +1530,55 @@ export interface TaskStats {
   failed?: number;
 }
 
+/** 站内新建一份文本资产（不传文件，直接写正文）。
+
+`extension` 只认 md / txt：文件名后缀决定 `mime_type` 与内容寻址 key 的后缀，
+不能由用户随便给一个 `.html`——那会让下载下来的东西被浏览器当页面执行。 */
+export interface TextAssetIn {
+  name: string;
+  content: string;
+  extension?: string;
+  tagIds?: string[];
+}
+
+/** 文本正文 + 当前版本。详情页与编辑器用，不进列表。 */
+export interface TextAssetOut {
+  id: string;
+  name: string;
+  content: string;
+  version: number;
+  sha256: string;
+  sizeBytes: number;
+  excerpt: string;
+  updatedAt?: string | null;
+}
+
+/** 把某一历史版本重新写成**新的一版**，不改历史行。 */
+export interface TextAssetRestoreIn {
+  version: number;
+  expectedVersion?: number;
+}
+
+/** 在线编辑。`expected_version` 是**内容版本**，不是 `stateVersion`：
+两个人同时打开编辑框时，后保存的人必须看到「正文已被改过」而不是静默覆盖。 */
+export interface TextAssetUpdateIn {
+  content: string;
+  expectedVersion?: number;
+  note?: string;
+}
+
+/** 一条历史版本。列表默认不带正文，按版本读时才带。 */
+export interface TextAssetVersionOut {
+  version: number;
+  sha256: string;
+  sizeBytes: number;
+  excerpt: string;
+  note?: string;
+  createdBy: string;
+  createdAt: string;
+  content?: string | null;
+}
+
 /** TokenOut */
 export interface TokenOut {
   /** 访问令牌，放进 `Authorization: Bearer <token>` */
@@ -1832,6 +1901,10 @@ export interface modules__task__schema__TaskOut {
   stylePreset?: string | null;
   /** 参考素材 ID 列表（图生视频用） */
   referenceAssetIds?: string[];
+  /** 绑定的文本资产 id（顺序即 `{{Text N}}` 编号） */
+  textLibraryIds?: string[];
+  /** 绑定的文案与版本快照（不含正文） */
+  textBindings?: Record<string, unknown>[];
   /** 作者用户 ID */
   authorId: string;
   /** 作者昵称快照（改名不回填历史） */
@@ -1984,7 +2057,7 @@ export interface EndpointData {
   "POST /api/v1/library/assets/bulk": BulkOut;
   /** 生成结果入库（落草稿箱，按 sourceKey 幂等） */
   "POST /api/v1/library/assets/from-generation": IngestOut;
-  /** 上传图片 / 音频（流式，按内容秒传） */
+  /** 上传图片 / 音频 / 文本（流式，按内容秒传） */
   "POST /api/v1/library/assets/upload": LibraryAssetOut;
   /** 移入回收站（软删，可恢复） */
   "DELETE /api/v1/library/assets/{asset_id}": null;
@@ -1998,6 +2071,18 @@ export interface EndpointData {
   "GET /api/v1/library/assets/{asset_id}/preview": unknown;
   /** 浏览器兼容视频预览（派生流，不改原片） */
   "GET /api/v1/library/assets/{asset_id}/stream": unknown;
+  /** 读取文本正文与当前版本 */
+  "GET /api/v1/library/assets/{asset_id}/text": TextAssetOut;
+  /** 在线编辑文本（追加一版，可带 expectedVersion 防覆盖） */
+  "PUT /api/v1/library/assets/{asset_id}/text": TextAssetOut;
+  /** 纯文本取件（text/plain + nosniff） */
+  "GET /api/v1/library/assets/{asset_id}/text/raw": unknown;
+  /** 恢复历史版本（写成新的一版，不改历史行） */
+  "POST /api/v1/library/assets/{asset_id}/text/restore": TextAssetOut;
+  /** 文本版本历史（默认不带正文） */
+  "GET /api/v1/library/assets/{asset_id}/text/versions": TextAssetVersionOut[];
+  /** 读取某一历史版本正文 */
+  "GET /api/v1/library/assets/{asset_id}/text/versions/{number}": TextAssetVersionOut;
   /** 读取缩略图 */
   "GET /api/v1/library/assets/{asset_id}/thumbnail": unknown;
   /** 我最近发起的打包任务 */
@@ -2050,6 +2135,8 @@ export interface EndpointData {
   "PATCH /api/v1/library/tags/{tag_id}": LibraryTagOut;
   /** 移动标签层级（parentId 为空则提升为一级） */
   "PATCH /api/v1/library/tags/{tag_id}/parent": LibraryTagOut;
+  /** 站内新建文本资产（直接写正文，不传文件） */
+  "POST /api/v1/library/text-assets": TextAssetOut;
   /** 彻底删除（不可逆，先过引用检查） */
   "DELETE /api/v1/library/trash/{asset_id}": null;
   /** 从回收站恢复（强制回到个人库，不恢复共享） */

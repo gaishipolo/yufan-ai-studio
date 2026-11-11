@@ -40,6 +40,8 @@ vi.mock('@/entities/library/api/library.queries', () => ({
   useUploadAsset: () => ({ mutateAsync: uploadMock, isPending: false }),
   useLibrarySelectionInfinite: selectionMock,
   useLibraryTags: () => ({ data: [] }),
+  // TextRefPicker 里的 LibraryPicker 只有打开才挂载，这里备一个空结果即可
+  useLibrarySelection: () => ({ data: { items: [], total: 0 }, isPending: false }),
 }));
 
 vi.mock('@/shared/access/use-access', () => ({ useCan: () => true }));
