@@ -79,7 +79,18 @@ class DoctorReport:
 
 
 def _check_ports(report: DoctorReport) -> None:
-    """CLI 默认不发现模块，注入口就不会注册 —— 自检必须先加载它们。"""
+    """CLI 默认不发现模块，注入口就不会注册 —— 自检必须先加载它们。
+
+    这里核的是三个 **fail-closed** 注入口。它们的共同点：没注册时系统照常启动、
+    接口照常返回 200，只是功能**静默半残**——所以只能靠自检把人叫回来。
+
+    - `library-references`：删除不再被拦（不可逆的数据错误）
+    - `library-ingest`：生成成功但写不进草稿箱（用户看到「完成」，库里总是空的）
+    - `model-generation`：下游模块（模板/分镜）发起不了生成
+
+    只核 references 那一个是不够的：另外两个缺了之后，`app doctor` 一片绿，
+    而线上表现是「功能不见了」。这类问题排查成本极高，因为没有任何报错。
+    """
     from api.discovery import discover_modules
     from app import load_extension_points
     from core.audit import has_audit_sink
@@ -88,6 +99,8 @@ def _check_ports(report: DoctorReport) -> None:
         reference_source_count,
         reference_source_gaps,
     )
+    from core.ports.library_ingest import has_library_ingest
+    from core.ports.model_generation import has_model_generation
 
     # CLI 不跑 lifespan，两个扩展点都要手动装配；否则会误报「审计未注册」
     load_extension_points()
@@ -125,6 +138,27 @@ def _check_ports(report: DoctorReport) -> None:
         report.add("ports.audit", "FAIL", "生产环境审计写入端未注册，留痕会全部丢失")
     else:
         report.add("ports.audit", "INFO", "审计写入端未注册（非生产环境允许）")
+
+    # 这两条不分环境：缺了就是「功能静默消失」，开发环境更需要看见——
+    # 开发环境恰恰是它最容易被踩到的地方（草稿箱一直是空的，就是这么来的）。
+    if has_library_ingest():
+        report.add("ports.ingest", "PASS", "生成结果入库端已注册")
+    else:
+        report.add(
+            "ports.ingest",
+            "FAIL",
+            "没有模块注册 LibraryIngest：生成结果写不进草稿箱，"
+            "用户会看到「生成完成」而资产库里什么都没有",
+        )
+
+    if has_model_generation():
+        report.add("ports.generation", "PASS", "统一生成接口已注册")
+    else:
+        report.add(
+            "ports.generation",
+            "FAIL",
+            "没有模块注册 ModelGeneration：模板/分镜等下游模块发起不了生成",
+        )
 
 
 def _check_assembly(report: DoctorReport) -> None:
