@@ -107,8 +107,9 @@ describe('LibraryCard · 文本资产', () => {
     // 其它类型会交给 CoverImage 画 <img>；文本卡一张都不该有
     expect(container.querySelector('img')).toBeNull();
     expect(screen.getByText(/第一段：雨夜街头/)).toBeInTheDocument();
-    // 右上角「文本」徽标 + 底部类型条都会标出「文本」
-    expect(screen.getAllByText('文本').length).toBeGreaterThanOrEqual(2);
+    // 只有右上角那枚「文本」徽标；底部深色类型条是给封面图用的白底文字卡不要
+    expect(screen.getAllByText('文本')).toHaveLength(1);
+    expect(container.querySelector('.bg-gradient-to-t')).toBeNull();
   });
 
   it('没有摘录时显示「（空文本）」，仍不渲染破图', () => {

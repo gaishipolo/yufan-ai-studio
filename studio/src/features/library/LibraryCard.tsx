@@ -109,8 +109,10 @@ export function LibraryCard({
           aria-label={`查看 ${title}`}
         >
           {asset.kind === 'text' ? (
-            /* 文本资产没有缩略图：不去请求 /thumbnail，直接用摘要画一张文字卡 */
-            <div className="relative flex aspect-[4/3] flex-col overflow-hidden bg-panel-soft p-2.5">
+            /* 文本资产没有缩略图：不去请求 /thumbnail，直接用摘要画一张文字卡。
+               `pt-7` 让开左上角 20px 的勾选框、`right-1.5 top-1.5` 的类型徽标，
+               否则首行开头会被勾选框压掉、行尾会被徽标吃掉（真机截图踩过）。 */
+            <div className="relative flex aspect-[4/3] flex-col overflow-hidden bg-panel-soft px-2.5 pb-2.5 pt-7">
               <pre className="line-clamp-5 whitespace-pre-wrap break-words font-sans text-[12px] leading-[18px] text-ink-soft">
                 {asset.textExcerpt?.trim() || '（空文本）'}
               </pre>
@@ -135,17 +137,27 @@ export function LibraryCard({
               )}
             </>
           )}
-          <div className="pointer-events-none absolute inset-x-0 bottom-0 flex items-end justify-between gap-1 bg-gradient-to-t from-[rgba(12,24,30,.62)] via-[rgba(12,24,30,.28)] to-transparent px-2 pb-1.5 pt-7">
-            <span className="inline-flex items-center gap-1 text-[12.5px] font-medium text-white/95">
-              <Icon size={11} />
-              {KIND_LABEL[asset.kind]}
-            </span>
-            {view === 'trash' && days != null && (
-              <span className="rounded bg-black/40 px-1 text-[12px] text-white/90">
+          {asset.kind === 'text' ? (
+            /* 文字卡是白底，那层深色渐变压上去只剩一条黑带、还会盖住摘要末行；
+               右上角已经有「文本」徽标，其余信息不再重复。只有回收站的天数要留。 */
+            view === 'trash' && days != null ? (
+              <span className="pointer-events-none absolute bottom-1.5 right-1.5 rounded bg-[rgba(12,24,30,.62)] px-1 text-[12px] text-white/90">
                 {expired ? '已过期' : `剩余 ${days} 天`}
               </span>
-            )}
-          </div>
+            ) : null
+          ) : (
+            <div className="pointer-events-none absolute inset-x-0 bottom-0 flex items-end justify-between gap-1 bg-gradient-to-t from-[rgba(12,24,30,.62)] via-[rgba(12,24,30,.28)] to-transparent px-2 pb-1.5 pt-7">
+              <span className="inline-flex items-center gap-1 text-[12.5px] font-medium text-white/95">
+                <Icon size={11} />
+                {KIND_LABEL[asset.kind]}
+              </span>
+              {view === 'trash' && days != null && (
+                <span className="rounded bg-black/40 px-1 text-[12px] text-white/90">
+                  {expired ? '已过期' : `剩余 ${days} 天`}
+                </span>
+              )}
+            </div>
+          )}
         </button>
 
         {/* 勾选框要在**任意**底图上都看得见。原来未选中是「白底 + 白边 + 只在

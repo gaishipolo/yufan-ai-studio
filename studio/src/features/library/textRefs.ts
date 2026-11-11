@@ -21,6 +21,11 @@ export interface RetargetResult {
  * 按 **id** 而不是按位置重编号：删除中间一项时，它后面的引用整体前移一位，
  * 不会出现「{{Text 3}} 却只剩 2 份绑定」这种越界；已解绑的 token 直接删掉，
  * 新增的绑定在末尾追加对应编号。一次 replace 完成，避免逐个替换互相干扰。
+ *
+ * 两种情况**原地保留**，不动用户写好的位置：
+ * 1. 编号此前没有绑定过（用户先手写 `{{Text 1}}` 再挑素材）——只要新顺序里
+ *    还有这一位，它就自动指向新绑的那份，没必要清掉再追加到末尾；
+ * 2. 已经有对应编号的 token 存在时，新绑定不再重复追加。
  */
 export function retargetTextTokens(
   prompt: string,
@@ -32,8 +37,11 @@ export function retargetTextTokens(
   let dropped = 0;
 
   let text = prompt.replace(TEXT_TOKEN, (_match, digits: string) => {
-    const id = oldIds[Number(digits) - 1];
+    const slot = Number(digits);
+    const id = oldIds[slot - 1];
     if (!id) {
+      // 该位此前没有绑定：用户手写的占位符，范围仍合法就留着
+      if (slot >= 1 && slot <= newIds.length) return `{{Text ${slot}}}`;
       dropped += 1;
       return '';
     }
@@ -47,6 +55,8 @@ export function retargetTextTokens(
 
   for (const [index, id] of newIds.entries()) {
     if (oldIds.includes(id)) continue;
+    // 提示词里已经有这一位（手写或上一步重编号来的）就不再追加
+    if (new RegExp(`\\{\\{\\s*Text\\s+${index + 1}\\s*\\}\\}`, 'i').test(text)) continue;
     const token = `{{Text ${index + 1}}}`;
     text = text ? `${text.replace(/\s+$/, '')} ${token}` : token;
   }

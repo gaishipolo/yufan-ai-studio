@@ -133,6 +133,26 @@ describe('retargetTextTokens · 按 id 重编号', () => {
     expect(result.dropped).toBe(1);
   });
 
+  it('用户先手写 {{Text 1}} 再挑素材：占位符原地保留，不搬到末尾', () => {
+    // 回归：旧实现把「该位从未绑定」当成失效 token 删掉，再追加到结尾，
+    // 结果 `把 {{Text 1}} 的卖点做成海报` 变成 `把  的卖点做成海报 {{Text 1}}`
+    const result = retargetTextTokens('把 {{Text 1}} 的卖点做成海报', [], [A]);
+    expect(result.text).toBe('把 {{Text 1}} 的卖点做成海报');
+    expect(result.dropped).toBe(0);
+  });
+
+  it('新增绑定不会重复追加已有的编号', () => {
+    const result = retargetTextTokens('{{Text 1}} 配 {{Text 2}}', [A], [A, B]);
+    expect(result.text).toBe('{{Text 1}} 配 {{Text 2}}');
+    expect(result.dropped).toBe(0);
+  });
+
+  it('手写编号超出新绑定数量才丢弃', () => {
+    const result = retargetTextTokens('{{Text 1}} 和 {{Text 3}}', [], [A]);
+    expect(result.text).toBe('{{Text 1}} 和 ');
+    expect(result.dropped).toBe(1);
+  });
+
   it('hasForeignMustache 放行 {{Text N}}，拦其它模板括号', () => {
     expect(hasForeignMustache('照 {{Text 1}} 写')).toBe(false);
     expect(hasForeignMustache('照 {{Foo}} 写')).toBe(true);
