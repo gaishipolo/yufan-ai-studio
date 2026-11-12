@@ -109,6 +109,26 @@ def test_mask_round_trip_survives_braced_content() -> None:
     )
 
 
+def test_generation_prompt_column_has_no_length_cap() -> None:
+    """溯源快照的 `prompt` 存的是**注入正文之后**的提示词，不能有 4000 字上限。
+
+    这列原先是 `String(4000)`：绑一份 4000 字以上的文案（文本资产上限 1MB）后，
+    PG 插入报 `value too long`，而这次插入发生在 `runner._archive` 里、被
+    `except Exception` 兜成一行日志 —— 任务状态「已完成」、草稿箱里没有东西、
+    也没有重试路径。修法是迁移 `b7c4e2a18d63` 把它改成 TEXT。
+
+    为什么只能断言「声明无上限」：测试跑在 SQLite 上，SQLite 根本不校验
+    VARCHAR 长度，任何写库用例在这里都是绿的（这也正是它当初漏到线上的原因）。
+    """
+    from sqlalchemy import Text
+
+    from modules.library.models import LibraryAssetGeneration
+
+    column = LibraryAssetGeneration.__table__.c.prompt
+    assert isinstance(column.type, Text)
+    assert column.type.length is None
+
+
 def test_snapshot_roundtrip_and_binding_projection() -> None:
     refs = _refs("第一段", "第二段")
     restored = parse_text_refs(dumps_text_refs(refs))

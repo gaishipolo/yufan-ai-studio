@@ -12,6 +12,7 @@ import pytest
 from core.events import EventBus
 from core.exceptions import BadRequest, Forbidden, UpstreamError
 from core.registry import NamedRegistry, RegistryError
+from generation.events import EVT_GENERATION_SUCCEEDED
 from generation.pipeline import register_pipeline
 from generation.runner import JOB_POLL, JOB_SUBMIT, GenerationRunner
 from infra.ai.base import Capability, GenerationProgress, GenerationState
@@ -659,6 +660,102 @@ def test_cancelled_during_poll_discards_result(monkeypatch: pytest.MonkeyPatch) 
 
     assert archived == [], "已取消的记录不该进草稿箱"
     assert emitted == [], "已取消的记录不该再发「生成成功」事件"
+
+
+def test_success_tail_runs_outside_the_poll_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`mark_succeeded` 落库之后，入库与发事件不能再被轮询超时打断。
+
+    budget = `job.timeout_sec * 0.8`，慢盘上归档一个大视频就可能吃掉它。曾经的写法
+    把归档/`artifact_urls`/事件全留在 `asyncio.timeout` 块里：超时抛 TimeoutError，
+    被外层的 `except Exception` 当成「这一跳失败」，而下一跳看到记录已终态直接
+    return —— 「任务已完成、草稿箱里没有东西、订阅方收不到事件」三件事同时成立，
+    且没有任何重试路径。
+
+    这里把预算压到 0.08s、让归档睡 0.2s：修好之后它睡得完，修之前归档会被取消。
+    """
+    import generation.runner as runner_module
+
+    archived: list[str] = []
+    emitted: list[str] = []
+
+    class _Store:
+        async def load(self, record_id: str) -> GenerationRecord:
+            return GenerationRecord(
+                id=record_id,
+                kind="test-slow-archive",
+                model="seedance-2.5",
+                prompt="p",
+                status="running",
+                owner_id="u_001",
+                external_id="ext-1",
+                progress=40,
+            )
+
+        async def mark_succeeded(self, record_id: str, **kwargs: object) -> bool:
+            return True
+
+        async def mark_progress(self, record_id: str, progress: int) -> bool:
+            return True
+
+        async def mark_failed(self, record_id: str, error: str) -> bool:  # pragma: no cover
+            return True
+
+    class _Provider:
+        async def poll(
+            self, external_id: str, model: str | None = None
+        ) -> GenerationProgress:
+            return GenerationProgress(
+                external_id=external_id,
+                state=GenerationState.SUCCEEDED,
+                progress=100,
+                output_url="https://example.com/a.png",
+            )
+
+    class _Pipeline:
+        kind = "test-slow-archive"
+        capability = Capability.IMAGE
+
+        def store(self, session: object) -> _Store:
+            return _Store()
+
+        async def build_request(self, record: object) -> None:  # pragma: no cover
+            return None
+
+    class _Router:
+        def provider_for(self, model: str, *, allow_fallback: bool = True) -> _Provider:
+            return _Provider()
+
+    async def slow_archive(
+        self: GenerationRunner, kind: str, session: object, record_id: str, output_url: object
+    ) -> None:
+        await asyncio.sleep(0.2)
+        archived.append(record_id)
+
+    async def fake_emit(self: GenerationRunner, name: str, **payload: object) -> None:
+        emitted.append(name)
+
+    register_pipeline(_Pipeline)
+    monkeypatch.setattr(runner_module, "get_model_router", _Router)
+    monkeypatch.setattr(runner_module.GenerationRunner, "_archive", slow_archive)
+    monkeypatch.setattr(runner_module.GenerationRunner, "_emit", fake_emit)
+
+    async def scenario() -> None:
+        await GenerationRunner(MemoryJobQueue()).handle_poll(
+            Job(
+                name=JOB_POLL,
+                payload={"kind": "test-slow-archive", "record_id": "r1", "polls": 1},
+                max_attempts=1,
+                # 预算 = 0.1 * 0.8 = 0.08s，比归档的 0.2s 短得多
+                timeout_sec=0.1,
+            )
+        )
+
+    asyncio.run(scenario())
+
+    assert archived == ["r1"], "已经落库成功，归档不该被轮询预算取消"
+    assert emitted == [EVT_GENERATION_SUCCEEDED], "归档超时也不该让成功事件发不出去"
 
 
 def test_submit_budget_follows_driver_declaration(
