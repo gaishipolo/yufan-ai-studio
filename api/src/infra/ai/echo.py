@@ -4,6 +4,22 @@
     AI_PROVIDERS=echo,volcengine
 
 它同时演示了接入真实供应商时要提供什么：三个方法 + 一份模型清单。
+
+**这里声明的模型全部标了 `placeholder=True`**，所以它们**不会出现在用户的
+模型选择器里**（`public_models()` 过滤掉），但 `resolve()` 仍能按 id 解析到。
+
+为什么必须挡在选择器外面：这些 id / label 长得跟真的第三方模型一模一样
+（Seedream 3 / Seedance 2.5 / 可灵 2.1），而 echo 根本不调外部 API ——
+提交后按时间推算进度，最后返回 `https://example.com/mock/...` 的占位图。
+用户选中「Seedream 3」会拿到一张假图，**全程没有任何报错**，看起来像接了
+字节的豆包，其实什么都没接。
+
+`placeholder` 与 `internal` 是两回事，别混用：`internal` 是「只能自己的
+业务链路调」（替换链专用渠道，露脸必然 400）；`placeholder` 是「实现是假的」。
+
+老的示例驱动（`drivers/_mock_async.py` 等）靠**文件名前缀 `_`** 不自动载入，
+但那条约定只对新路径 `drivers/` 有效——老路径 `AI_PROVIDERS` 是白名单，
+写进去就注册，所以这里只能靠 `placeholder` 标记挡住。
 """
 
 from __future__ import annotations
@@ -50,6 +66,7 @@ MODELS: tuple[ModelSpec, ...] = (
         provider="echo",
         param_schema=_VIDEO_SCHEMA,
         description="通用短视频生成，支持首尾帧参考",
+        placeholder=True,
     ),
     ModelSpec(
         id="kling-2.1",
@@ -58,6 +75,7 @@ MODELS: tuple[ModelSpec, ...] = (
         provider="echo",
         param_schema=_VIDEO_SCHEMA,
         description="写实风格运镜，适合商品与人物",
+        placeholder=True,
     ),
     ModelSpec(
         id="seedream-3",
@@ -65,6 +83,7 @@ MODELS: tuple[ModelSpec, ...] = (
         capability=Capability.IMAGE,
         provider="echo",
         param_schema=_IMAGE_SCHEMA,
+        placeholder=True,
     ),
     ModelSpec(
         id="tts-v3",
@@ -72,6 +91,7 @@ MODELS: tuple[ModelSpec, ...] = (
         capability=Capability.AUDIO,
         provider="echo",
         param_schema={"voice": {"type": "enum", "options": ["female-warm", "male-calm"]}},
+        placeholder=True,
     ),
 )
 

@@ -299,11 +299,22 @@ def test_create_rejects_wrong_capability(client: TestClient, api: str) -> None:
 
 
 def test_create_defaults_come_from_catalog(client: TestClient, api: str) -> None:
-    """不传模型/时长时取目录默认值，而不是代码里写死的 15s（超上限）。"""
+    """不传模型/时长时取目录默认值，而不是代码里写死的 15s（超上限）。
+
+    默认值必须是**公开且真实**的模型：占位模型（echo 的 `seedance-2.5`）
+    实现是假的，`internal` 模型（`libtv-wan3-replacement`）露脸必然 400 ——
+    两者当默认都会让用户「不传 model」然后拿到跑不通的结果。
+    """
     task = _create(client, api, prompt="默认值任务", model=None, durationSec=None)
-    assert task["modelId"] == "seedance-2.5"
-    assert task["model"] == "Seedance 2.5"
+    assert task["modelId"] == "agnes-video-2.5-flash"
     assert task["durationSec"] == 5
+
+    # 默认值必须落在用户能选到的公开模型上
+    catalog = client.get(f"{api}/models", params={"capability": "video"}).json()["data"]
+    public_ids = {item["id"] for item in catalog["items"]}
+    assert task["modelId"] in public_ids
+    defaults = [item["id"] for item in catalog["items"] if item["isDefault"]]
+    assert defaults == [task["modelId"]]
 
 
 def test_create_normalizes_model_id_and_label(client: TestClient, api: str) -> None:

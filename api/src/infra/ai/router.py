@@ -86,9 +86,31 @@ class ModelRouter:
         for spec in provider.models:
             self._models[spec.id] = spec
             self._register_alias(spec)
-            self._default.setdefault(spec.capability, spec.id)
+            self._set_default_if_absent(spec)
 
         self._apply_preferred(provider)
+
+    def _set_default_if_absent(self, spec: ModelSpec) -> None:
+        """该能力还没有默认模型时用它当默认——**但占位模型与内部模型不当默认**。
+
+        默认模型是「用户不传 model 时后端替他选的那个」。它必须**公开且真实**，
+        否则会出两种烂局面：
+
+        - 占位模型（`placeholder=True`）当默认：它不在公开目录里，而目录里的
+          `is_default` 只跟公开模型比对 → 前端看到的是真实模型、目录里一个
+          `is_default` 都没有 → 前端「不传 model」→ 后端按默认取到占位模型
+          → 跑出一张 `example.com/mock/` 的假图。**全程没有任何报错**。
+        - 内部模型（`internal=True`）当默认：替换链的模型带 `archiveRunId`
+          校验，用户不传 model 提交 → 必然 400「调用档案标识不匹配」，
+          而这句话完全指不到「这个模型不该出现在这里」。
+
+        宁可这个能力**没有默认**：前端必须显式带上 id，走 `resolve()` 照样
+        能拿到实现（离线联调与替换链都不受影响），但不会在用户毫不知情时
+        替他选了不能用的模型。
+        """
+        if spec.internal or spec.placeholder:
+            return
+        self._default.setdefault(spec.capability, spec.id)
 
     def _apply_preferred(self, provider: ModelProvider) -> None:
         """应用供应商声明的「该能力的首选默认模型」（可选字段 `preferred_for`）。
@@ -102,8 +124,13 @@ class ModelRouter:
         """
         preferred = getattr(provider, "preferred_for", ()) or ()
         for capability in preferred:
+            # 默认模型必须公开且真实：占位模型是假实现，内部模型露脸必然 400
             candidates = [
-                spec.id for spec in provider.models if spec.capability is capability
+                spec.id
+                for spec in provider.models
+                if spec.capability is capability
+                and not spec.internal
+                and not spec.placeholder
             ]
             if not candidates:
                 logger.warning(
@@ -121,7 +148,7 @@ class ModelRouter:
                 raise RegistryError(f"模型 {spec.id} 归属与注册名不一致")
             self._models.setdefault(spec.id, spec)
             self._register_alias(spec)
-            self._default.setdefault(spec.capability, spec.id)
+            self._set_default_if_absent(spec)
 
     def _register_alias(self, spec: ModelSpec) -> None:
         """登记 label → id 的别名，冲突时**不能静默**。
@@ -198,14 +225,25 @@ class ModelRouter:
         return tuple(sorted(specs, key=lambda s: (s.capability, s.id)))
 
     def public_models(self, capability: Capability | None = None) -> tuple[ModelSpec, ...]:
-        """能出现在「模型选择器」里的模型：过滤掉 `internal=True`。
+        """能出现在「模型选择器」里的模型：过滤掉 `internal=True` 与 `placeholder=True`。
 
         凡是给人挑的地方（`GET /models`、统一门面的模型清单）都用这个；凡是
         「按 id 找实现」的地方（`resolve` / `provider_for` / 巡检）仍然走
         `models()` —— 替换链就是拿着 `bailian-wan3-*` 的 id 直接提交的，
         在这里过滤掉会让它 400。
+
+        两类被过滤的模型，**原因完全不同**，别混为一谈：
+
+        - `internal`：替换链专用渠道，露脸必然 400（标识校验）。
+        - `placeholder`：**实现是假的**（本地 echo 占位供应商），露脸不会报错，
+          但用户选中后拿到的是 `example.com/mock/...` 的占位图——这类才是
+          「看起来实现了其实没实现」的入口，必须挡在选择器外面。
         """
-        return tuple(spec for spec in self.models(capability) if not spec.internal)
+        return tuple(
+            spec
+            for spec in self.models(capability)
+            if not spec.internal and not spec.placeholder
+        )
 
     def provider_names(self) -> list[str]:
         return self._providers.names()
@@ -230,10 +268,10 @@ class ModelRouter:
                 self._alias.pop(spec.label, None)
         self._providers.remove(provider_name)
 
-        # 重算默认值：按剩余供应商的注册顺序取第一个
+        # 重算默认值：按剩余供应商的注册顺序取第一个（跳过占位模型）
         self._default.clear()
         for spec in self._models.values():
-            self._default.setdefault(spec.capability, spec.id)
+            self._set_default_if_absent(spec)
         return True
 
     def summary(self) -> RouterSummary:

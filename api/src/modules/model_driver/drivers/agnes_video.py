@@ -161,11 +161,17 @@ class AgnesVideoDriver:
     models = MODELS
     # 异步供应商：必须显式声明，缺省按 False 处理（恢复器会把在途任务判死）。
     supports_poll = True
-    # 刻意**不声明** `preferred_for`：声明了就会把默认视频模型从 echo 的
-    # `seedance-2.5` 换成这个真实供应商，属于产品口径变更（`GET /models` 的
-    # isDefault、创建任务的默认选中、`test_task_api` 里那条「默认值来自目录」
-    # 的断言都会跟着变）。要切成默认时加一行 `preferred_for = frozenset({Capability.VIDEO})`
-    # 并同步那条用例即可。
+    # 声明这个供应商是视频能力的默认首选。
+    #
+    # 之前刻意不声明，因为默认视频模型是 echo 的 `seedance-2.5`——**那是占位
+    # 模型**（`placeholder=True`，实现是假的，不调外部 API）。现在占位模型
+    # 已经被挡在公开目录外、也不再当默认，默认位空出来；而 `libtv-wan3-
+    # replacement` 是 `internal=True` 的替换链专用模型（带 `archiveRunId`
+    # 校验，用户不传 model 提交必然 400），同样不能当默认。
+    #
+    # 结果就是：视频能力唯一公开且真实的模型就是这个，必须由它接任默认，
+    # 否则默认要么是假模型、要么是必然 400 的内部模型。
+    preferred_for = frozenset({Capability.VIDEO})
 
     def __init__(
         self,
