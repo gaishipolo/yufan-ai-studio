@@ -12,6 +12,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from fastapi.testclient import TestClient
 from library_support import (
     LIB_RW,
@@ -153,6 +155,64 @@ def test_purge_frees_our_blob_even_when_someone_else_has_the_same_bytes(
     )
     assert blob_exists(row_theirs["storage_key"]), "别人那份对象一个字节都不能动"
     assert blob_exists(row_mine["cover_key"] or ""), "缩略图还被别人的行用着，不能跟着删"
+
+
+def test_purge_of_a_pack_keeps_the_member_blob_it_borrowed_as_cover(
+    client: TestClient, api: str
+) -> None:
+    """封装的封面借的是成员原片时，解散封装不能把成员那份文件删掉。
+
+    成员**没有缩略图**时 `pack_cover_key()` 直接返回 `member.storage_key`，
+    于是封装的 `cover_key` 就是成员的原片对象。删除时若只按 `cover_key` 一列数
+    持有者，数到 0 就会把成员那份字节删掉 —— 引用检查按 `asset_id` 拦不住
+    （成员本身没被引用），且不可逆：成员行还在，文件没了。
+    """
+    admin = admin_headers(client)
+    owner, owner_h = make_user(client, admin, LIB_RW)
+    member = upload_image(client, api, owner_h, name="成员.png", color="olive")
+
+    # 造出「成员没有缩略图」这个前提：历史导入、旧 assets 表迁移、
+    # 以及任何跳过 preview 的写入路径都会产生这种行
+    _clear_cover_key(member["id"])
+    row = fetch_asset(member["id"])
+    assert row is not None and not row["cover_key"]
+
+    created = client.post(
+        f"{api}/library/packs",
+        json={"name": "借用封面的封装", "assetIds": [member["id"]]},
+        headers=owner_h,
+    )
+    assert created.status_code == 201, created.text
+    pack = created.json()["data"]
+    pack_row = fetch_asset(pack["id"])
+    assert pack_row is not None
+    assert pack_row["cover_key"] == row["storage_key"], "前提：封面直接借了成员的原片"
+
+    client.delete(f"{api}/library/assets/{pack['id']}", headers=owner_h)
+    purged = client.delete(f"{api}/library/trash/{pack['id']}", headers=owner_h)
+    assert purged.status_code == 200, purged.text
+
+    assert fetch_asset(member["id"]) is not None, "成员本身不该跟着封装一起消失"
+    assert blob_exists(row["storage_key"]), "成员的原片被当封面借用，删封装不能删它"
+
+
+def _clear_cover_key(asset_id: str) -> None:
+    """把缩略图键清空：模拟「这条资产没有 preview」的存量数据。"""
+    from sqlalchemy import update
+
+    from db.session import get_session_factory
+    from modules.library.models import LibraryAsset
+
+    async def run() -> None:
+        async with get_session_factory()() as session:
+            await session.execute(
+                update(LibraryAsset)
+                .where(LibraryAsset.id == asset_id)
+                .values(cover_key="")
+            )
+            await session.commit()
+
+    asyncio.run(run())
 
 
 def test_purge_is_blocked_while_referenced(client: TestClient, api: str) -> None:

@@ -222,8 +222,14 @@ async def test_unknown_asset_is_rejected() -> None:
 
 
 def test_non_image_asset_is_rejected() -> None:
+    # 必须是 active：`insert_asset` 默认造草稿，而草稿会先被「状态不可用」挡掉 ——
+    # 这条用例要钉的是「类型不对」，所以把状态摆正。
     asset_id = insert_asset(
-        owner_id="u_admin", kind="video", mime_type="video/mp4", storage_key="v/1.mp4"
+        owner_id="u_admin",
+        state="active",
+        kind="video",
+        mime_type="video/mp4",
+        storage_key="v/1.mp4",
     )
 
     with pytest.raises(BadRequest, match="不是图片"):
@@ -257,6 +263,27 @@ def test_team_visible_asset_is_allowed() -> None:
     refs = asyncio.run(_resolve([asset_id], _spec()))
 
     assert refs == [{"assetId": asset_id, "storageKey": "t/shared.jpg", "mimeType": "image/jpeg"}]
+
+
+@pytest.mark.parametrize("state", ["trash", "draft"])
+def test_non_active_asset_is_rejected(state: str) -> None:
+    """自己回收站 / 草稿里的图不能当参考图。
+
+    `readable_ids` 过的是 `access.can_read`：对回收站放行 owner、对草稿放行 owner
+    （还放行 `library:draft:review` 的人）。但 `/library/assets/{id}/file` 对这两种
+    状态都是 404 —— 参考图这条链会把图读成 base64 交给供应商、再由供应商出图，
+    不拦就等于「删除」在这里不生效，持代审权的人还能把别人的草稿图复制一份出来。
+    """
+    asset_id = insert_asset(
+        owner_id="u_admin",
+        state=state,
+        visibility="personal",
+        mime_type="image/png",
+        storage_key=f"p/{state}.png",
+    )
+
+    with pytest.raises(BadRequest, match="参考图不可用"):
+        asyncio.run(_resolve([asset_id], _spec()))
 
 
 async def test_empty_list_is_a_noop() -> None:

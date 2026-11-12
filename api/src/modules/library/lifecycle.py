@@ -337,11 +337,15 @@ class LifecycleService:
         # 上游去重（`_find_duplicate`）要的是「未删除」，这里要的是「还有人引用」，
         # 两个问题不同，条件也就不能抄。
         payload_owners = await self._other_holders(storage_key, row.id, column="storage")
-        preview_holders = (
-            await self._other_holders(cover_key, row.id, column="cover")
-            if cover_key and cover_key != storage_key
-            else 0
-        )
+        # 封面键可能**借的是成员的原片对象**：成员没有缩略图时 `pack_cover_key()`
+        # 直接返回 `member.storage_key`（见 `packs.pack_cover_key`）。只数
+        # `cover_key` 一列会漏掉「成员还在拿它当原片」，于是删封装顺手把成员的
+        # 原始文件删掉——引用检查按 `asset_id` 拦不住，且不可逆。所以两列都要数。
+        preview_holders = 0
+        if cover_key and cover_key != storage_key:
+            preview_holders = await self._other_holders(
+                cover_key, row.id, column="cover"
+            ) + await self._other_holders(cover_key, row.id, column="storage")
         # 真正会被删掉的对象：原始字节与缩略图是**两个独立对象**，要分开判。
         # 缩略图按 digest 归一，通常被同一份字节的多个行共用；原始字节带扩展名，
         # 通常只有一行指着。合成一个判断，必然是一边多删一边少删。
