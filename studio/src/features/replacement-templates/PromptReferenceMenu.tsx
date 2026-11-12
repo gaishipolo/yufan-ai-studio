@@ -5,7 +5,7 @@ import { ArchivedThumbnail } from '@/entities/asset/ui/ArchivedThumbnail';
 import type { PromptMediaItem } from './PromptMediaView';
 import { promptMediaLabel } from './promptMentions';
 
-export interface PromptReferenceOption extends PromptMediaItem { label: string; subtitle?: string; disabled: boolean }
+export interface PromptReferenceOption extends PromptMediaItem { label: string; subtitle?: string; disabled: boolean; referenced?: boolean }
 export type PromptReferenceKind = 'all' | 'image' | 'video';
 interface Props {
   id: string; options: PromptReferenceOption[]; prompt: string; query: string; active: number;
@@ -22,10 +22,14 @@ export function PromptReferenceMenu({id, options, prompt, query, active, anchor,
   const visible = options;
   const selectable = visible.filter(item => !item.disabled);
   const current = selectable[active % Math.max(1, selectable.length)];
+  // 跨封装候选项的 token 是 `pack:<id>:<version>:<assetId>`，永远不会出现在正文里，
+  // 所以「是否已引用」由编辑器按 assetId 算好传进来；没有该字段时才回退到正文匹配。
+  const isReferenced = (item: PromptReferenceOption) =>
+    item.referenced ?? (!!item.token && prompt.includes(item.token));
   const groups = [
-    {name: '已引用', items: visible.filter(item => item.token && prompt.includes(item.token))},
-    {name: '当前模板其他素材', items: visible.filter(item => !item.subtitle && (!item.token || !prompt.includes(item.token)))},
-    {name: '全部已封装素材', items: visible.filter(item => !!item.subtitle)},
+    {name: '已引用', items: visible.filter(isReferenced)},
+    {name: '当前模板其他素材', items: visible.filter(item => !item.subtitle && !isReferenced(item))},
+    {name: '全部已封装素材', items: visible.filter(item => !!item.subtitle && !isReferenced(item))},
   ];
   useEffect(() => {if (focusSearch) search.current?.focus();}, [focusSearch]);
   useEffect(() => {

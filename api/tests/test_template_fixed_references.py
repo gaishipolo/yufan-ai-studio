@@ -287,3 +287,32 @@ def test_pack_name_search_metadata_save_reopen_prepare_and_revoke(client, tmp_pa
     )
     assert response.status_code == 200, response.text
     assert len(response.json()["data"]["mediaOrder"]) == 1
+
+
+def test_fixed_reference_budget_counts_images_not_slots(tmp_path, monkeypatch):
+    """base_count 含 1 个原片：图片预算是 MAX_REFERENCE_IMAGES，不是 Mixed 槽位数。
+
+    保存端与 prepare 端共用这个常量，否则会出现「模板存下了、换个图更多的包准备被拒」。
+    """
+    from modules.template.video_template_schema import MAX_REFERENCE_IMAGES
+
+    path = tmp_path / "catalog.json"
+    monkeypatch.setattr(store, "CATALOG_PATH", path)
+    path.write_text(json.dumps({"items": [record()]}), encoding="utf-8")
+    before = path.read_text(encoding="utf-8")
+    base_count = len(store.get_out("template-1").media_order)
+    overflow = MAX_REFERENCE_IMAGES - (base_count - 1) + 1
+    fixed = [
+        {
+            "token": f"{{{{Mixed {base_count + index + 1}}}}}",
+            "packId": "p",
+            "packVersion": 1,
+            "assetId": f"fixed-{index}",
+            "name": f"fixed-{index}",
+        }
+        for index in range(overflow)
+    ]
+    prompt = "{{Mixed 1}} " + " ".join(item["token"] for item in fixed)
+    with pytest.raises(BadRequest, match="最多"):
+        store.update_prompt("template-1", prompt, fixed)
+    assert path.read_text(encoding="utf-8") == before

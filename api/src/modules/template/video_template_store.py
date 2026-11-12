@@ -49,6 +49,7 @@ from modules.template.video_template_bindings import (
 )
 from modules.template.video_template_options import is_scene_text, validate_options
 from modules.template.video_template_schema import (
+    MAX_REFERENCE_IMAGES,
     VideoTemplateDraftIn,
     VideoTemplateListOut,
     VideoTemplateMedia,
@@ -549,8 +550,15 @@ def update_prompt(
                  else rules.get("fixedReferences", []))
         fixed_tokens = {ref["token"] for ref in fixed}
         expected = [f"{{{{Mixed {base_count + n + 1}}}}}" for n in range(len(fixed))]
-        if [ref["token"] for ref in fixed] != expected or base_count + len(fixed) > 11:
-            raise BadRequest("固定引用必须紧接模板媒体连续编号，最多10张参考图片")
+        # base_count 里有 1 项是原片，真正参与上限的图片数是 base_count - 1 + 固定引用。
+        # 与 prepare 端的 MAX_REFERENCE_IMAGES 用同一个常量，避免两处口径漂移。
+        if (
+            [ref["token"] for ref in fixed] != expected
+            or base_count - 1 + len(fixed) > MAX_REFERENCE_IMAGES
+        ):
+            raise BadRequest(
+                f"固定引用必须紧接模板媒体连续编号，最多{MAX_REFERENCE_IMAGES}张参考图片"
+            )
         media = media[:base_count] + [VideoTemplateMedia(
             token=ref["token"], role="fixed", type="image", asset_id=ref["assetId"],
             name=ref["name"], in_prompt=ref["token"] in prompt,

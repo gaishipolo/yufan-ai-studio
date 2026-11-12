@@ -1,4 +1,12 @@
-"""已发布封装中的固定图片引用；元数据和权限只从服务端解析。"""
+"""已发布封装中的固定图片引用；元数据和权限只从服务端解析。
+
+**与 `create` 的口径差异是有意为之**：`VideoTemplateStore.create` 要求
+「封装处理类型必须与所选素材包类型一致」，而 `PATCH /video-templates/{id}/prompt`
+允许把任意 kind 的已发布包图片固定到任意 default_kind 的模板上（回归用例
+`test_product_template_uses_fixed_image_from_another_kind_of_pack` 锁定了这个行为）。
+本模块只校验「图片分类 == 它所属包的分类」，**不校验包 kind 与模板 kind 的关系**。
+若将来要收紧，必须同时修改 create 的约束、这条注释和上述用例，不能只改一处。
+"""
 
 from __future__ import annotations
 

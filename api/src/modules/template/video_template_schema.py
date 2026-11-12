@@ -17,6 +17,11 @@ from core.schema import CamelModel, UtcDateTime, VerbatimText
 
 ReplacementKindLiteral = Literal["character", "product", "scene"]
 
+# 通用编译器对 mixedList 里「图片」的硬上限（原片不计入）。保存端按封装时的
+# 基础媒体算、准备端按本次所选素材包算，两侧必须共用这个值，否则会出现
+# 「模板保存成功、换个图片更多的包准备时被拒」。
+MAX_REFERENCE_IMAGES = 10
+
 
 class VideoTemplateMedia(CamelModel):
     """mixedList 里的一项；下标 +1 就是 {{Mixed N}} 编号。"""
@@ -124,7 +129,9 @@ class VideoTemplatePromptIn(CamelModel):
         min_length=1, max_length=20000, description="新的固定提示词原文，含 {{Mixed N}} 占位符"
     )
     references: list[VideoTemplatePackReferenceIn] | None = Field(
-        default=None, max_length=10, description="跨封装固定图片引用；省略保留原绑定，空数组清除"
+        default=None,
+        max_length=MAX_REFERENCE_IMAGES,
+        description="跨封装固定图片引用；省略保留原绑定，空数组清除",
     )
 
 

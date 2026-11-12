@@ -664,3 +664,37 @@ attach，否则卡片会被拆成两张：旧原片留着没换的那几条，�
 「米兰之夜 · 产品替换」，与同原片的「米兰之夜 · 文字换场景」「米兰之夜 · 三人换脸」
 命名对齐（原片早已换成 `我穿的是米兰之夜.mp4`，名字里的 3030 是历史遗留）。
 `templateKey`、`packId`、`mediaOrder`、提示词、`workbenchLabel` 一律不动。
+
+## 2026-11-12：跨封装固定引用的契约（提示词编辑器）
+
+`PATCH /templates/video-templates/{id}/prompt` 除了改正文，还能带 `references`
+把**任意已发布封装包里的图片**固定到模板上。保存时服务端解析并冻结元数据
+（`template_references.resolve_pack_references`），前端 `TemplatePromptEditor`
+的 `@` 菜单从目录挑图，只插入 `{{Mixed N}}`，不会把图片描述拼进正文。
+
+必须一起满足的约束：
+
+1. **编号连续且独占**：固定引用 token 必须严格是
+   `{{Mixed fixedBaseMediaCount+1}}`、`+2`…；`fixedBaseMediaCount` 是「不含固定引用的
+   基础媒体数」，与 `fixedReferences` 成对写入，两个字段只能由接口一起改。
+2. **图片预算 10 张**：`MAX_REFERENCE_IMAGES = 10`（`video_template_schema.py`）。
+   保存端按 `fixedBaseMediaCount - 1 + 固定引用数` 校验（减掉原片），准备端按
+   `当前所选素材包图片数 + 固定引用数` 校验。**换用图片更多的包仍可能超限**，
+   此时准备接口会明确提示「减少固定引用或换回图片更少的素材包」。
+3. **锁定发布版本**：每条引用固定 `packId + packVersion + assetId`，服务端校验包已发布、
+   版本存在、图片在该版本内、图片归属/分类/类型正确、`assetId` 与 token 不重复。
+   前端按 `assetId` 去重并禁用已引用项，避免保存时才撞上这条约束。
+4. **双层拒绝**：包停用或版本失效时，`prepare` 与 `execute`（含 upload 前后复核）
+   都会拒绝；执行期还会复核图片本身未被软删、改类型或转给别的所有者。
+5. **省略 vs 空数组**：`references` 省略 = 保留原有固定引用；显式 `[]` = 清除。
+   正文里删掉 `{{Mixed N}}` 标记**不会**删除实际输入图片，只把 `inPrompt` 置 false。
+
+**手工改目录文件的额外警告**：上一节的三步做法仍然可用，但带固定引用的模板
+必须同时维护 `rules.fixedReferences` 与 `rules.fixedBaseMediaCount`，且 token 连续。
+只改 `mediaOrder` 会让 `_media_in_mixed_order` 读 `rules["fixedBaseMediaCount"]`
+时取不到值或编号错乱 —— 改这类模板优先走 `PATCH /prompt`。
+
+**已知口径差异**：`create` 要求「封装处理类型必须与所选素材包类型一致」，而
+`PATCH /prompt` 允许把任意 kind 的已发布包图片固定到任意 `default_kind` 的模板
+（回归用例 `test_product_template_uses_fixed_image_from_another_kind_of_pack` 锁定）。
+这是有意例外，收紧时必须同时改 `create` 约束、`template_references.py` 顶部说明和该用例。

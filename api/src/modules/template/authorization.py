@@ -64,12 +64,24 @@ async def authorization_gap(session: AsyncSession, run: ReplacementRun) -> str |
                 return "额外人物包的发布版本已不可用，请重新准备"
     rows = await RunRepository(session).inputs(run.id)
     configuration = run.configuration if isinstance(run.configuration, dict) else {}
-    for ref in configuration.get("fixed_references", []):
+    fixed_refs = configuration.get("fixed_references", [])
+    fixed_media = (
+        await get_asset_lookup().get_many(session, [ref["assetId"] for ref in fixed_refs])
+        if fixed_refs
+        else {}
+    )
+    for ref in fixed_refs:
         pack = await PackRepository(session).get(ref["packId"])
         frozen = await PackRepository(session).get_version(ref["packId"], ref["packVersion"])
         if (pack is None or pack.deleted_at or pack.status != "published" or frozen is None
                 or ref["assetId"] not in frozen.reference_ids):
             return "固定引用的素材包已停用或版本不可用，请重新准备"
+        # 发布版本不可变，但图片本身仍可能被软删、改类型/分类或转给别的所有者。
+        # 保存端 resolve_pack_references 会查这四条，执行端必须同口径复核。
+        asset = fixed_media.get(ref["assetId"])
+        if (asset is None or asset.deleted_at or asset.type != "image"
+                or asset.owner_id != pack.owner_id or asset.category != pack.kind):
+            return "固定引用的参考图已不可用，请重新准备"
     if rows:
         media = await get_asset_lookup().get_many(session, [row.asset_id for row in rows])
         # 两个条件都要：`get_many` 不排除软删，行还在、`deleted_at` 已置位——

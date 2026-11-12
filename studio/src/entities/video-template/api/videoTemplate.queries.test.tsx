@@ -27,4 +27,19 @@ describe('保存封装提示词请求', () => {
     unmount();
     client.clear();
   });
+
+  it('带固定引用时把 references 原样送进 PATCH 请求体', async () => {
+    mock.patch.mockClear();
+    const client = new QueryClient({defaultOptions: {mutations: {retry: false}}});
+    const previous = {id: 'template-1', prompt: '原文', updatedAt: '2026-11-12T00:00:00Z'} as VideoTemplateOut;
+    mock.patch.mockResolvedValueOnce({...previous, updatedAt: '2026-11-12T01:00:00Z'});
+    const {result, unmount} = renderHook(() => useUpdateVideoTemplatePrompt(), {
+      wrapper: ({children}: {children: ReactNode}) => <QueryClientProvider client={client}>{children}</QueryClientProvider>,
+    });
+    const references = [{token: '{{Mixed 4}}', packId: 'pack', packVersion: 1, assetId: 'sea'}];
+    await act(async () => {await result.current.mutateAsync({id: previous.id, prompt: '原文', references});});
+    expect(mock.patch).toHaveBeenCalledWith('/templates/video-templates/template-1/prompt', {prompt: '原文', references});
+    unmount();
+    client.clear();
+  });
 });

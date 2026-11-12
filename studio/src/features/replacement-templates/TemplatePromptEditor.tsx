@@ -16,6 +16,10 @@ import { fixedBaseCount, packReferencePayload, removeFixedPackReference, type Fi
 import type { PromptRange } from './promptEditorDom';
 import './prompt-canvas.css';
 
+// 后端 MAX_REFERENCE_IMAGES(10 张图片) + 1 个原片槽位。保存端按
+// `fixedBaseMediaCount + 固定引用数` 校验，这里必须用同一个上限。
+const MAX_MIXED_SLOTS = 11;
+
 interface Props {
   template: VideoTemplateOut; media: PromptMediaItem[]; value: string; uploaded: ArchivedAsset[];
   packs: ReplacementPack[]; references: FixedPackReference[]; dirty: boolean;
@@ -54,6 +58,8 @@ export function TemplatePromptEditor({template, media, value: draft, uploaded, p
     return {...item, label: `${owner?.name ?? ''} · ${item.name} · ${role}${alias ? `（${alias}）` : ''}`, disabled: item.type === 'image' && !item.url};
   });
   const currentIds = new Set(current.map(item => item.id));
+  const referencedIds = new Set(references.map(ref => ref.assetId));
+  const seenPackaged = new Set<string>();
   const packaged = packs.flatMap(pack => pack.referenceIds.filter(assetId => !currentIds.has(assetId)).map(assetId => {
     const index = pack.referenceIds.indexOf(assetId);
     const role = PACK_ROLES[pack.kind]?.[pack.bindings?.[index]?.role ?? ''] ?? '参考图';
@@ -64,10 +70,19 @@ export function TemplatePromptEditor({template, media, value: draft, uploaded, p
     return {id: assetId, token: `pack:${pack.id}:${pack.version}:${assetId}`, name, type: 'image', url, previewUrl: url,
       label: `${pack.name} · ${name} · ${role}`, subtitle: `${pack.kind === 'character' ? '人物' : pack.kind === 'scene' ? '场景' : '产品'}素材包 · ${role}`,
       disabled: pack.available === false || !pack.version, catalogRef};
-  }));
+  }))
+    // 同一张图可能被多个包收录；后端按 assetId 拒绝重复引用，这里先去重、
+    // 再把已引用项禁用，避免「选了两次 → 保存必 400」且界面看不出原因。
+    .filter(item => {
+      if (seenPackaged.has(item.id)) return false;
+      seenPackaged.add(item.id);
+      return true;
+    })
+    .map(item => ({...item, disabled: item.disabled || referencedIds.has(item.id)}));
   const options: (PromptReferenceOption & {catalogRef?: FixedPackReference})[] = [...current, ...packaged]
     .filter(item => (referenceKind === 'all' || item.type === referenceKind) && (!query || `${item.label} ${item.token}`.toLocaleLowerCase().includes(query.toLocaleLowerCase())))
-    .sort((a, b) => Number(!!b.token && draft.includes(b.token)) - Number(!!a.token && draft.includes(a.token)));
+    .map(item => ({...item, referenced: 'catalogRef' in item ? referencedIds.has(item.id) : !!item.token && draft.includes(item.token)}))
+    .sort((a, b) => Number(!!b.referenced) - Number(!!a.referenced));
   const selectable = options.filter(item => !item.disabled);
   const activeItem = selectable[active % Math.max(1, selectable.length)];
 
@@ -87,10 +102,22 @@ export function TemplatePromptEditor({template, media, value: draft, uploaded, p
     if (!mention || saving.current) return;
     const selected = options.find(item => item.token === token);
     let actualToken = token;
-    if (selected?.catalogRef) {
-      if (media.length >= 11) {setError('每次最多使用10张参考图，请先减少参考图'); return;}
-      actualToken = `{{Mixed ${fixedBaseCount(template) + references.length + 1}}}`;
-      onReferencesChange([...references, {...selected.catalogRef, token: actualToken}]);
+    const catalogRef = selected?.catalogRef;
+    if (catalogRef) {
+      const existing = references.find(ref => ref.assetId === catalogRef.assetId);
+      if (existing) {
+        // 同一张图已在引用中：复用它的编号，只插入正文标记，不新增引用。
+        // 后端 resolve_pack_references 会按 assetId 拒绝重复，新增引用必然保存失败。
+        actualToken = existing.token;
+      } else {
+        // media.length 含当前包的辅助图，会虚高；与后端同用「基础 + 固定引用」口径。
+        if (fixedBaseCount(template) + references.length + 1 > MAX_MIXED_SLOTS) {
+          setError(`每次最多使用${MAX_MIXED_SLOTS - 1}张参考图，请先减少参考图`);
+          return;
+        }
+        actualToken = `{{Mixed ${fixedBaseCount(template) + references.length + 1}}}`;
+        onReferencesChange([...references, {...catalogRef, token: actualToken}]);
+      }
     }
     input.current?.replace(mention, actualToken);
     setMention(null); setError('');

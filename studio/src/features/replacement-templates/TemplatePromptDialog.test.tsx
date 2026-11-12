@@ -50,7 +50,15 @@ function mount(permissions = ['*'], templates = [template], packs = [pack]) {
 beforeEach(() => {
   mock.save.mockReset();
   mock.upload.mockReset();
-  mock.save.mockImplementation(async ({id, prompt: text}: {id: string; prompt: string}) => ({...template, id, prompt: text}));
+  // 真实 PATCH 返回完整 VideoTemplateOut（含 rules.fixedReferences）。旧 mock 把
+  // 固定引用丢掉，导致「保存→重开引用还在」这条契约根本没被断言到。
+  mock.save.mockImplementation(async ({id, prompt: text, references}: {id: string; prompt: string; references?: {token: string; packId: string; packVersion: number; assetId: string}[]}) => ({
+    ...template, id, prompt: text,
+    rules: references?.length ? {...template.rules,
+      fixedReferences: references.map(ref => ({...ref, name: '固定参考图.png', url: '/preview'})),
+      fixedBaseMediaCount: template.mediaOrder?.length ?? 0} : template.rules,
+    updatedAt: '2026-11-12T01:00:00Z',
+  }));
 });
 
 describe('封装提示词编辑', () => {
@@ -74,6 +82,48 @@ describe('封装提示词编辑', () => {
       {token: '{{Mixed 4}}', packId: 'other', packVersion: 1, assetId: 'sea'},
     ]}));
   });
+
+  it('同一张跨封装图不重复绑定：跨包去重、重复点击保存只发一条引用', async () => {
+    const other = {...pack, id: 'other', name: '海边场景包', kind: 'scene' as const,
+      referenceIds: ['sea'], referenceNames: ['机位蓝图.png'],
+      bindings: [{role: 'main'}], previewUrls: ['/sea']};
+    const duplicatePack = {...other, id: 'other2', name: '重复收录包'};
+    mount(['*'], [template], [pack, other, duplicatePack]);
+    fireEvent.click(screen.getByRole('button', {name: '编辑提示词'}));
+    fireEvent.click(screen.getByRole('button', {name: '插入引用 @'}));
+    fireEvent.change(screen.getByRole('textbox', {name: '搜索引用素材'}), {target: {value: '机位蓝图'}});
+    // 同一 assetId 被两个包收录时，菜单只应出现一个候选项（后端按 assetId 拒绝重复）。
+    expect(screen.getAllByRole('option', {name: /机位蓝图/})).toHaveLength(1);
+    fireEvent.click(screen.getByRole('option', {name: /机位蓝图/}));
+    fireEvent.click(screen.getByRole('button', {name: '插入引用 @'}));
+    fireEvent.change(screen.getByRole('textbox', {name: '搜索引用素材'}), {target: {value: '机位蓝图'}});
+    // 再点一次（可能是「当前模板其他素材」里同图的项，也可能是被禁用的跨包项），
+    // 两种路径都不该产生第二条引用：choose 对同 assetId 复用原 token。
+    const again = screen.queryByRole('option', {name: /机位蓝图/});
+    if (again) fireEvent.click(again);
+    fireEvent.click(screen.getByRole('button', {name: '保存提示词'}));
+    await vi.waitFor(() => expect(mock.save).toHaveBeenCalled());
+    expect(mock.save.mock.calls.at(-1)?.[0].references).toEqual([
+      {token: '{{Mixed 4}}', packId: 'other', packVersion: 1, assetId: 'sea'},
+    ]);
+  });
+
+  it('保存后结束编辑再打开，固定引用仍在', async () => {
+    const other = {...pack, id: 'other', name: '海边场景包', kind: 'scene' as const,
+      referenceIds: ['sea'], referenceNames: ['机位蓝图.png'],
+      bindings: [{role: 'main'}], previewUrls: ['/sea']};
+    mount(['*'], [template], [pack, other]);
+    fireEvent.click(screen.getByRole('button', {name: '编辑提示词'}));
+    fireEvent.click(screen.getByRole('button', {name: '插入引用 @'}));
+    fireEvent.change(screen.getByRole('textbox', {name: '搜索引用素材'}), {target: {value: '机位蓝图'}});
+    fireEvent.click(screen.getByRole('option', {name: /机位蓝图/}));
+    fireEvent.click(screen.getByRole('button', {name: '保存提示词'}));
+    expect(await screen.findByText('当前功能提示词已保存')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', {name: '结束编辑'}));
+    fireEvent.click(screen.getByRole('button', {name: '编辑提示词'}));
+    expect(screen.getByLabelText('已绑定封装参考图')).toHaveTextContent('固定参考图.png');
+  });
+
   it('正文直接显示缩略图引用标签，标签文字不进入保存原文', () => {
     mount();
     fireEvent.click(screen.getByRole('button', {name: '编辑提示词'}));

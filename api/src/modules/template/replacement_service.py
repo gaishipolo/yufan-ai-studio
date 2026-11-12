@@ -78,6 +78,7 @@ from modules.template.video_template_options import (
     scope_options,
     validate_options,
 )
+from modules.template.video_template_schema import MAX_REFERENCE_IMAGES
 from modules.template.workspace import (
     BRIDGE,
     RUNTIME,
@@ -303,8 +304,13 @@ class ReplacementService:
         _, fixed_refs = await resolve_pack_references(self.session, [
             VideoTemplatePackReferenceIn.model_validate(item) for item in fixed_data
         ])
-        if len(refs) + len(fixed_refs) > 10:
-            raise BadRequest("当前素材包与固定引用合计最多10张参考图片")
+        if len(refs) + len(fixed_refs) > MAX_REFERENCE_IMAGES:
+            # 保存端按「封装时那个包」的图数校验，这里按「本次所选包」算，
+            # 两者可能不同；报错必须说清怎么自助恢复，否则用户只会看到模板明明存下了却跑不了。
+            raise BadRequest(
+                f"当前素材包与固定引用合计最多{MAX_REFERENCE_IMAGES}张参考图片；"
+                "换用图片更多的素材包会超出上限，请减少固定引用或换回图片更少的素材包"
+            )
         run = await self.runs.get(payload.request_id.hex)
         fingerprint = _fingerprint(owner, payload)
         if run is not None:
@@ -961,7 +967,8 @@ def _media_in_mixed_order(
         return place_source(source, [by_id[asset_id] for asset_id in ordered_ids], template.rules)
     by_role = roles or {}
     remaining = list(refs)
-    ordered: list[StoredMedia] = []
+    # 上面的固定引用分支已给 ordered 赋值，这里不能再带类型注解（mypy no-redef）。
+    ordered = []
     for item in template.media_order:
         if item.type != "image":
             continue

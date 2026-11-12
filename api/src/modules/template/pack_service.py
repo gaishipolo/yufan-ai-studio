@@ -21,6 +21,7 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.exceptions import AppError, BadRequest, Conflict, NotFound
@@ -338,11 +339,14 @@ class PackService:
         在列表里但不可选。直接隐藏会让运营以为「发布没生效」，如实标注至少能解释。
         """
         shaped = self._shape(pack, refs)
-        names = await get_asset_lookup().get_many(self.session, shaped.reference_ids)
         available = True
         try:
+            # 素材名查询与字节校验都是「能不能解释这个包」的一环，必须一起降级。
+            # 放在 try 外时，DB 抖动或异常 reference_ids 会让整个素材目录 500。
+            names = await get_asset_lookup().get_many(self.session, shaped.reference_ids)
             await self._verify_bytes(refs)
-        except (AppError, OSError):
+        except (AppError, OSError, SQLAlchemyError):
+            names = {}
             available = False
         if self.gaps(pack, refs):
             available = False
