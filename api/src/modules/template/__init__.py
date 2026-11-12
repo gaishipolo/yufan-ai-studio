@@ -16,6 +16,7 @@ from core.ports.assets import AssetReferenceSource, bind_asset_reference_sources
 from modules.template.asset_references import PackAssetReferences
 from modules.template.cli import register as register_cli
 from modules.template.feed_provider import read_feed
+from modules.template.health import check as health_check
 from modules.template.pipeline import KIND_REPLACEMENT
 from modules.template.router import router
 from modules.template.seed import seed as seed_demo
@@ -62,6 +63,9 @@ module = ModuleSpec(
         "libtv.download",
         "template.replacement.recover",
     ),
+    # 部署自检：Node 版本 / 适配器快照哈希 / 远端归档是否显式配根 / 三个目录可写。
+    # 只报告，不拦启动 —— 「启动即失败」是计划步 5 的事。
+    doctor=health_check,
     seed=seed_demo,
     seed_order=30,
     # 运维命令：import-template-legacy —— 把 catalog/*.json 与 runs/<id>/run.json

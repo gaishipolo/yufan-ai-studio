@@ -78,6 +78,19 @@ RECOVERY_LOCK_GIVEUPS = METRICS.counter(
     "替换任务恢复因抢不到档案锁而放弃等待的次数",
 )
 
+# 归档与投影都是「失败也不报错」的降级路径：前者让任务显示成功却播不了，
+# 后者让执行器读到旧状态。没有计数时这两类问题只能靠翻日志。
+ARCHIVE_PUBLISH_TOTAL = METRICS.counter(
+    "replacement_archive_publish_total",
+    "成片归档到对象存储的结果分布",
+    labels=("result",),
+)
+PROJECTION_SKIPPED = METRICS.counter(
+    "replacement_projection_skipped_total",
+    "状态投影（run.json）写不进去而本次跳过的次数",
+    labels=("reason",),
+)
+
 SUBMISSION_UNKNOWN = "提交回执未知，禁止重提，请先核对上游记录"
 SUBMISSION_UNKNOWN_CONFIRM = (
     "上一次提交可能已产生费用（上游任务号没有落库）：请先凭上游记录核对；"
@@ -137,9 +150,13 @@ def _sync_out(run: ReplacementRun, path) -> bool:
             _write_projection(run, path)
             return True
     except Conflict:
+        # 上面那些 `return False` 是「本轮不需要写」，不是「写不进去」；
+        # 只有这两条异常分支才是真正的降级，计数也只加在这里。
+        PROJECTION_SKIPPED.inc(reason="lock")
         return False
     except OSError:
         logger.warning("状态投影暂时写不进去（工作区不可达），本次跳过 run=%s", run.id)
+        PROJECTION_SKIPPED.inc(reason="io")
         return False
 
 
@@ -721,15 +738,21 @@ async def publish_output(run_id: str) -> None:
     folder = run_path(run_id) / "outputs/generated.mp4"
     if not folder.is_file():
         logger.warning("成片不存在，跳过归档 run_id=%s", run_id)
+        ARCHIVE_PUBLISH_TOTAL.inc(result="missing")
         return
     key = f"runs/{run_id}/outputs/generated.mp4"
     try:
         await asyncio.to_thread(get_archive_storage().copy, folder, key)
     except Exception:  # noqa: BLE001 - 上传失败要降级，不能让任务被判失败
         logger.exception("成片归档失败，暂时只能从工作区读取 run_id=%s", run_id)
+        ARCHIVE_PUBLISH_TOTAL.inc(result="failed")
         return
     if not await _update_column(run_id, lambda run: setattr(run, "output_key", key)):
         logger.warning("成片已归档但输出键没落库，下次下载重试会补上 run_id=%s", run_id)
+        # 字节进了桶、行上的键没写：任务显示成功但播不了，和上传失败一样要告警。
+        ARCHIVE_PUBLISH_TOTAL.inc(result="unrecorded")
+        return
+    ARCHIVE_PUBLISH_TOTAL.inc(result="ok")
 
 
 async def enqueue_recovery(run_id: str, *, delay: float = 0, attempt: int = 0) -> None:

@@ -28,6 +28,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.config import settings
+from core.exceptions import Unavailable
 from infra.archive import ArchiveStorage
 from infra.archive.runs import runs_root
 from modules.template.models import (
@@ -88,6 +89,16 @@ def _dt(value: Any) -> datetime | None:
 async def import_legacy(
     session: AsyncSession, storage: ArchiveStorage, *, dry_run: bool = False
 ) -> ImportReport:
+    # 归档根不可用是**部署故障**，不是「这条档案不在本机」。以前 `_run_dir` 把它
+    # 吞成 `None`，整次导入会显示「0 条导入、N 条跳过」并以 0 退出 —— 运维看到
+    # 的是「没有存量数据」，而真相是配置少了一项。这里前置探测，直接失败。
+    try:
+        runs_root()
+    except Exception as exc:  # noqa: BLE001 - 任何原因都意味着工作区不可确定
+        raise Unavailable(
+            "运行工作区根不可用，无法导入调用档案："
+            "检查 REPLACEMENT_RUNS_ROOT 或 ARCHIVE_DRIVER 配置"
+        ) from exc
     report = ImportReport()
     await _import_packs(session, storage, report, dry_run=dry_run)
     await _import_runs(session, storage, report, dry_run=dry_run)
@@ -409,16 +420,19 @@ def _run_dir(raw_path: str, run_id: str) -> Path | None:
 
     「指针在、工作区不在」不是数据损坏，换台机器的必然表现。这里返回 None 让
     调用方记一条 note 后跳过，而不是让整次导入失败。
+
+    `runs_root()` 的失败**不在这里处理**：它是部署配置问题，由 `import_legacy()`
+    前置校验成整次失败。两件事以前混在一起，结果是「配置少一项」被报成
+    「这批档案都不在这台机器上」。
     """
-    try:
-        root = runs_root()
-    except Exception:  # noqa: BLE001 - 归档根没配时工作区无法确定，按「不在本机」处理
-        return None
+    root = runs_root().resolve()
     # 老指针存「相对归档根」（`runs/2026/...`），新指针存「相对工作区根」，两种都认。
     relative = raw_path[len("runs/") :] if raw_path.startswith("runs/") else raw_path
     if relative:
         candidate = (root / relative).resolve()
-        if (candidate / "run.json").is_file():
+        # 指针来自老 JSON，绝对路径或 `..` 都能让它跳出归档根。导入本身只读，
+        # 但把工作区之外的文件当档案读进来仍是越界，一条判断就能拦住。
+        if candidate.is_relative_to(root) and (candidate / "run.json").is_file():
             return candidate
     if not run_id:
         return None

@@ -274,14 +274,10 @@ EXEMPT_WRITE_ROUTES: Mapping[str, Exemption] = {
         why="幂等开关，单行更新，无外部调用",
         review_by=NEAR_TERM,
     ),
-    # ---- 替换模板：贵的在 execute 上，这里都是元数据 ----
-    "POST /templates/replacement-runs": Exemption(
-        why=(
-            "建草稿：只写元数据，不提交供应商（真正的提交由 `/execute` 限流"
-            "）"
-        ),
-        review_by=NEAR_TERM,
-    ),
+    # ---- 替换模板：prepare / execute 各自挂限流，其余都是元数据 ----
+    # `POST /templates/replacement-runs` 已从本表移除（2026-11-13）：原理由
+    # 「只写元数据」与实现不符 —— 那个入口会物化每份输入、跑 Node 编译器、
+    # 复制整个运行时。现在路由上挂 `template.replacement.prepare`，额度低于 execute。
     "POST /templates/replacement-runs/{run_id}/reconfirm": Exemption(
         why=(
             "只翻一个确认位；真正重提由 `/execute` 限流，这里加限流反而会挡"

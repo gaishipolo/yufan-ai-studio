@@ -24,6 +24,7 @@ from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
+from time import perf_counter
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -48,6 +49,7 @@ from core.library_text import (
 )
 from core.logging import get_logger
 from core.media import StoredMedia
+from core.metrics import METRICS
 from core.ports.media import get_asset_lookup
 from core.serving import Served
 from infra.ai.libtv import get_libtv_settings
@@ -93,6 +95,20 @@ if TYPE_CHECKING:
     from modules.template.video_template_schema import VideoTemplateOut
 
 logger = get_logger(__name__)
+
+# 准备是全模块最重的 IO 端点（物化素材 + Node 编译 + 复制运行时），却只靠日志
+# 记录成败；失败率高时没有任何数字能看出来。命名沿用本模块既有的 `replacement_`
+# 前缀（`worker.RECOVERY_LOCK_GIVEUPS` 就是这一族），别另起 `template_`。
+PREPARE_TOTAL = METRICS.counter(
+    "replacement_prepare_total",
+    "替换任务准备（POST /replacement-runs）的成功与失败次数",
+    labels=("result",),
+)
+COMPILE_SECONDS = METRICS.histogram(
+    "replacement_compile_seconds",
+    "提示词编译（Node 子进程）耗时，含超时与失败",
+    buckets=(0.2, 0.5, 1, 2, 5, 10, 20, 30),
+)
 
 # 参考图在提示词里的角色名。封装里的 `kind` 决定它替换的是什么，
 # 这张表把「业务分类」翻译成「编译器认识的角色」。
@@ -188,7 +204,22 @@ class ReplacementService:
         self, payload: PrepareReplacement, actor: CurrentUser, *, can_read_assets: bool = True
     ) -> ReplacementRunOut:
         """`actor` 而不是 `owner: str`：文本素材的可读性要按当前主体的共享范围
-        判（`{{Text N}}` 不能把别人的私有文案抄进提示词），光有一个 id 判不了。"""
+        判（`{{Text N}}` 不能把别人的私有文案抄进提示词），光有一个 id 判不了。
+
+        计数在外层：`_prepare` 内部有十来处提前 raise（权限、参数、渠道、授权闸），
+        只在它自己的 `except` 处加指标会漏掉这些分支。
+        """
+        try:
+            out = await self._prepare(payload, actor, can_read_assets=can_read_assets)
+        except Exception:
+            PREPARE_TOTAL.inc(result="failed")
+            raise
+        PREPARE_TOTAL.inc(result="ok")
+        return out
+
+    async def _prepare(
+        self, payload: PrepareReplacement, actor: CurrentUser, *, can_read_assets: bool = True
+    ) -> ReplacementRunOut:
         owner = actor.id
         if not can_read_assets:
             raise Forbidden("需要素材读取权限")
@@ -1225,7 +1256,13 @@ def _materialize_inputs(
         spec["videoTemplateName"] = video_template.name
         spec["fixedPromptSha256"] = video_template.prompt_sha256
         spec["fixed_prompt"] = video_template.prompt
-    compiled = compile_prompt(spec, node=get_libtv_settings().node)
+    compile_started = perf_counter()
+    try:
+        compiled = compile_prompt(spec, node=get_libtv_settings().node)
+    finally:
+        # finally 而不是 else：超时与失败也要能看到「编译卡了多久」，
+        # 那正是需要排查的那一次。
+        COMPILE_SECONDS.observe(perf_counter() - compile_started)
     if (
         video_template is None
         and payload.kind == "character"

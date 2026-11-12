@@ -638,11 +638,16 @@ sha256）写进 `records/prompt-compilation.json`；`app doctor` 加一项校验
 **改法（最小集，别一次铺开）**：
 
 ```
-template_prepare_total{result=ok|failed}          # 准备成功/失败
-template_compile_seconds                          # Node 编译耗时（含超时）
-template_archive_publish_total{result=ok|failed}  # 成片归档，失败要能告警
-template_projection_skipped_total                # 投影写不进去
+replacement_prepare_total{result=ok|failed}            # 准备成功/失败
+replacement_compile_seconds                            # Node 编译耗时（含超时）
+replacement_archive_publish_total{result=ok|failed|missing|unrecorded}
+replacement_projection_skipped_total{reason=lock|io}   # 投影写不进去
 ```
+
+**命名统一为 `replacement_`**（不是原稿的 `template_`）：本模块唯一的存量指标
+`worker.RECOVERY_LOCK_GIVEUPS` 就是这一族，同一个模块出现两套前缀会让看板要对两次。
+`archive_publish` 比原稿多两个枚举值，因为「成片文件不在」与「字节进桶但键没落库」
+是两种不同的静默失败，合成一个 `failed` 就分不出该修哪边。
 
 配合 §10.3，这四个能把「不报错的失败」变成可看的数。
 
@@ -1595,3 +1600,46 @@ W1（步 0.5 成片进草稿箱）不受影响，仍可先做。开工前仍需�
   framework，别顺手做。
 - W1（步 0.5 成片进草稿箱）仍不受影响，可先做；每步按
   `scripts/select_tests.py --print` 判级，不「保险起见跑全量」；**不自动 push**。
+
+---
+
+## 24. 执行记录与偏差（开工后持续追加）
+
+> 计划是计划，落地时会遇到计划没预料到的事。本节只记「与 §1–§23 不一致的地方」
+> 和「做完了但结论变了的地方」，不重复抄代码。每条按「做了什么 / 与计划的差异 /
+> 待确认」三段。
+
+### 24.1 步 0：观测与部署自检（2026-11-13 完成）
+
+**做了什么**
+
+| 项 | 落点 |
+|---|---|
+| 模块自检钩子 | 新建 `modules/template/health.py`，`ModuleSpec.doctor` 指向它（四项：`template.node` / `template.vendor` / `template.runs_root` / `template.dirs`） |
+| 4 个指标 | `replacement_prepare_total{result}`、`replacement_compile_seconds`、`replacement_archive_publish_total{result}`、`replacement_projection_skipped_total{reason}` |
+| `prepare` 限流 | `replacement_router.py` 挂 `rate_limit("template.replacement.prepare", limit=default//4)`，并从 `ratelimit_policy.py` 豁免表移除 |
+| `import_legacy` 静默跳过 | `import_legacy()` 前置探测 `runs_root()` 并抛 `Unavailable`；`_run_dir()` 不再吞异常，另加 `is_relative_to(root)`；CLI 捕获 `AppError` 后 exit 1 |
+| `prepare` 成功率 | `prepare()` 拆成「计数壳 + `_prepare()`」，壳里的 `try/except` 覆盖全部提前 raise 的分支 |
+
+**与计划的差异**
+
+1. **指标前缀**：原稿写 `template_*`，落地用 `replacement_*`（理由见 §10.4 改后文字）。
+2. **`archive_publish` 多两个枚举值**：`missing`（成片文件不在）/ `unrecorded`
+   （字节进桶但 `output_key` 没落库）。原稿只有 `ok|failed`，那两种静默失败会被压成一个数。
+3. **`_sync_out` 只在两条异常分支计数**：函数里还有多处 `return False` 表示
+   「本轮不需要写」（文件版本更新、task_id 不一致），那不是降级，计进去反而失义。
+4. **doctor 只报不拦**：`template.runs_root` 在「远端驱动 + 未配根」时报 **FAIL**，
+   但 `create_app()` 不据此拒启动；「启动即失败」仍归步 5，步 0 不改行为。
+
+**待确认**
+
+- **本机 Node 22.22.2 与 `vendor/manifest.json` 的 `verified_node: 22.14.0` 不一致**，
+  `app doctor` 现在会红这一条。处理方式二选一：① 把部署环境统一到 22.14.0；
+  ② 确认 22.22.2 下编译器输出与 golden 一致后更新清单。
+  **步 4 的 golden test 落地前不要改清单**，否则等于用未验证的版本换掉已验证的基线。
+- `template.dirs` 会真建目录并写一个瞬时临时文件（`delete=True`）：对只读挂载是
+  准确探测，代价是共享盘上短暂出现 `.doctor-*` 文件。
+
+**验证**：`select_tests.py` 判 `framework`（8 个文件，含 `api/ratelimit_policy.py`）
+→ 43 个测试文件 **565 passed / 67.96s**；`ruff check src tests` 通过；
+`mypy --platform win32 src` 289 files 无问题；`app doctor` 37 项，模板四项全部出现。

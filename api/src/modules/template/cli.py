@@ -37,7 +37,13 @@ def cmd_import_legacy(args: argparse.Namespace) -> None:
         async with get_session_factory()() as session:
             return await import_legacy(session, storage, dry_run=args.dry_run)
 
-    report = asyncio.run(run())
+    try:
+        report = asyncio.run(run())
+    except AppError as exc:
+        # 部署配置问题（归档根不可用等）要给一句人话并以非零退出，别甩 traceback：
+        # 这条命令是升级时必须跑的一次，运维看不懂栈就等于没提示。
+        print(exc.message, file=sys.stderr)
+        raise SystemExit(1) from exc
     for line in report.lines():
         print(line)
     if args.dry_run:

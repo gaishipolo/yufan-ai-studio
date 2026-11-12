@@ -3,8 +3,9 @@
 与重建前的路径、入参、出参、权限组合、限流点完全一致。**唯一的差别在服务端
 实现**：状态从 `run.json` 搬进 `replacement_runs` 表，owner 过滤下沉到 SQL。
 
-`execute` 是这套接口里最贵的入口（一次提交 = 一次真实计费），所以单独挂限流，
-额度对齐生图那一档而不是普通读接口。
+两个入口各挂限流，理由不同：`execute` 贵在**计费**（一次提交 = 一次真实扣费），
+额度对齐生图那一档；`prepare` 贵在**机器成本**（物化每份输入、Node 编译、
+复制运行时），不提交供应商但比 `execute` 重得多，额度反而更低。
 """
 
 from __future__ import annotations
@@ -61,7 +62,18 @@ async def catalog(
 
 @router.post("/replacement-runs", status_code=201, summary="归档输入并预览最终提示词，不提交生成")
 async def prepare_run(
-    payload: PrepareReplacement, actor: WriteDep, service: ReplacementServiceDep
+    payload: PrepareReplacement,
+    actor: WriteDep,
+    service: ReplacementServiceDep,
+    # 这里**不是**「只写元数据」：物化每份输入、跑 Node 编译器（30s 上限）、
+    # 复制整个运行时、生成缩略图，是全模块最重的 IO 端点，比 execute（仅入队）重得多。
+    # 额度因此比 execute 更低：一个账号高频打这里能同时打满线程池、磁盘和子进程。
+    _: None = Depends(
+        rate_limit(
+            "template.replacement.prepare",
+            limit=max(1, settings.rate_limit_default_per_min // 4),
+        )
+    ),
 ) -> ApiResponse[ReplacementRunOut]:
     return ApiResponse.ok(
         await service.prepare(payload, actor, can_read_assets=actor.has("asset:read"))
