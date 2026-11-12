@@ -1,20 +1,15 @@
 import { ReplacementTemplates } from '@/features/replacement-templates/ReplacementTemplates';
-import { VideoTemplateLibrary } from '@/features/video-templates/VideoTemplateLibrary';
 import { PageHeader } from '@/shared/ui';
 
 export default function TemplatesPage() {
   /* 用户进来先看的是「全部模板」卡片：封装结果本身就是一张可选择的视频卡片，
-     和 0507 高端姐一样。封装管理（固定蓝本 / 复制 / 新建）收在页面底部。 */
+     和 0507 高端姐一样。
+     模板的封装与维护目前走接口（新建封装 / 改提示词 / 换原片 / 加功能），前端不再
+     提供入口——固定蓝本（pinned）在这条维护路径上用不到，页面因此不再显示它。
+     `features/video-templates/VideoTemplateLibrary` 组件与它的一套测试原样保留，
+     需要恢复面板时把 import 与 <VideoTemplateLibrary embedded /> 挂回来即可。 */
   return <>
     <PageHeader title="模板库" description="选择视频模板或已封装的替换素材包，将人物、产品或场景替换成你的内容。" />
     <ReplacementTemplates />
-    <details className="mt-6 rounded-xl border border-line bg-panel p-4">
-      <summary className="cursor-pointer text-sm font-semibold text-ink">视频模板封装管理</summary>
-      <p className="mt-2 text-xs leading-relaxed text-ink-mute">
-        封装后的模板会出现在上方的「全部模板」里，选中卡片即自动套用绑定的替换配置。
-        这里用于复制固定蓝本、封装后续模板。
-      </p>
-      <VideoTemplateLibrary embedded />
-    </details>
   </>;
 }

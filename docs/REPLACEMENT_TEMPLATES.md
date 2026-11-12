@@ -628,3 +628,73 @@ attach，否则卡片会被拆成两张：旧原片留着没换的那几条，�
 （挂着全部功能）。把旧原片 `PUT /assets/{id}/deleted` 收进回收站即只剩一张；
 回收前确认两件事：待确认（`prepared`）任务的 `inputs/` 已含 `source-original.mp4`
 快照（它们不从资产现取），历史任务的详情缩略图读各自运行目录——两者都不依赖该资产。
+
+## 2026-11-12：模板维护走接口，前端不再显示封装面板与固定蓝本
+
+`/templates` 页面只保留「全部模板」卡片流，底部「视频模板封装管理」整块移除
+（`TemplatesPage` 少一个 `<details>` 与一个 import）。原因是维护路径已经稳定走接口：
+新建封装、改提示词（`PATCH /{id}/prompt`）、换原片（`POST /{id}/attach-source`）
+都不需要点面板；而固定蓝本（`pinned`）在这条路径上用不到——它只服务于「面板里
+一键复制样板」这一件事，当前库里 12 条模板**全部 `pinned=false`**，页面上本来
+也没有徽标或置顶效果可看。
+
+组件与测试**原样保留**（`features/video-templates/VideoTemplateLibrary.tsx` +
+7 项单测），要恢复面板只需把 import 与 `<VideoTemplateLibrary embedded />` 挂回
+`TemplatesPage`。注意那 7 项测试是点「复制固定蓝本」按钮预填表单的，所以真要
+**删掉**蓝本 UI，得连测试一起改，不是删三行的事。
+
+**蓝本不是文件**：`store.CATALOG_PATH`（共享盘 `catalog.json`）装的是全部模板，
+蓝本只是某条记录上的 `"pinned": true` 字段，全库至多一条。删蓝本不等于删库。
+
+### 没有删除/改名的接口，只能改目录文件
+
+`video_template_router` 只有 list / get / create / pin / patch-prompt / attach-source。
+本次清掉孤儿模板、改模板名都是**直接改目录文件**，做法固定：
+
+1. 先把目标记录整条备份到 `D:/python_file/template_inputs/_deleted/{前缀}-{动作}-{时间戳}.json`；
+2. 读全量 → 改 → 写同目录 `.tmp` → `os.replace` 原子替换（不要就地覆盖，断在中途会丢整库）；
+3. 改完直接打接口验证：`GET /templates/video-templates` 现读文件，立刻生效，无需重启。
+
+删模板**不影响历史档案**：`prepare` 时已把 `videoTemplateName` 写进运行 spec，
+反查模板名的那条路径（`_cached_template_name`）异常时降级为 `None`。本次删
+「三人开箱长椅 · 产品替换」后，引用它的档案 `fd7a9004…` 列表与详情均正常（200），
+仍显示当时的模板名。
+
+改动结果：模板 12 → 11；`a2976eb7`「我穿的是米兰之夜3030 · 产品替换」→
+「米兰之夜 · 产品替换」，与同原片的「米兰之夜 · 文字换场景」「米兰之夜 · 三人换脸」
+命名对齐（原片早已换成 `我穿的是米兰之夜.mp4`，名字里的 3030 是历史遗留）。
+`templateKey`、`packId`、`mediaOrder`、提示词、`workbenchLabel` 一律不动。
+
+## 2026-11-12：跨封装固定引用的契约（提示词编辑器）
+
+`PATCH /templates/video-templates/{id}/prompt` 除了改正文，还能带 `references`
+把**任意已发布封装包里的图片**固定到模板上。保存时服务端解析并冻结元数据
+（`template_references.resolve_pack_references`），前端 `TemplatePromptEditor`
+的 `@` 菜单从目录挑图，只插入 `{{Mixed N}}`，不会把图片描述拼进正文。
+
+必须一起满足的约束：
+
+1. **编号连续且独占**：固定引用 token 必须严格是
+   `{{Mixed fixedBaseMediaCount+1}}`、`+2`…；`fixedBaseMediaCount` 是「不含固定引用的
+   基础媒体数」，与 `fixedReferences` 成对写入，两个字段只能由接口一起改。
+2. **图片预算 10 张**：`MAX_REFERENCE_IMAGES = 10`（`video_template_schema.py`）。
+   保存端按 `fixedBaseMediaCount - 1 + 固定引用数` 校验（减掉原片），准备端按
+   `当前所选素材包图片数 + 固定引用数` 校验。**换用图片更多的包仍可能超限**，
+   此时准备接口会明确提示「减少固定引用或换回图片更少的素材包」。
+3. **锁定发布版本**：每条引用固定 `packId + packVersion + assetId`，服务端校验包已发布、
+   版本存在、图片在该版本内、图片归属/分类/类型正确、`assetId` 与 token 不重复。
+   前端按 `assetId` 去重并禁用已引用项，避免保存时才撞上这条约束。
+4. **双层拒绝**：包停用或版本失效时，`prepare` 与 `execute`（含 upload 前后复核）
+   都会拒绝；执行期还会复核图片本身未被软删、改类型或转给别的所有者。
+5. **省略 vs 空数组**：`references` 省略 = 保留原有固定引用；显式 `[]` = 清除。
+   正文里删掉 `{{Mixed N}}` 标记**不会**删除实际输入图片，只把 `inPrompt` 置 false。
+
+**手工改目录文件的额外警告**：上一节的三步做法仍然可用，但带固定引用的模板
+必须同时维护 `rules.fixedReferences` 与 `rules.fixedBaseMediaCount`，且 token 连续。
+只改 `mediaOrder` 会让 `_media_in_mixed_order` 读 `rules["fixedBaseMediaCount"]`
+时取不到值或编号错乱 —— 改这类模板优先走 `PATCH /prompt`。
+
+**已知口径差异**：`create` 要求「封装处理类型必须与所选素材包类型一致」，而
+`PATCH /prompt` 允许把任意 kind 的已发布包图片固定到任意 `default_kind` 的模板
+（回归用例 `test_product_template_uses_fixed_image_from_another_kind_of_pack` 锁定）。
+这是有意例外，收紧时必须同时改 `create` 约束、`template_references.py` 顶部说明和该用例。

@@ -919,6 +919,7 @@ export interface PackManaged {
   available?: boolean | null;
   coverUrl?: string | null;
   previewUrls?: string[];
+  referenceNames?: string[];
   bindings?: PackBinding[];
   requiredRoles?: string[];
   supportedScopes?: string[];
@@ -1134,6 +1135,7 @@ export interface ReplacementPack {
   available?: boolean | null;
   coverUrl?: string | null;
   previewUrls?: string[];
+  referenceNames?: string[];
   bindings?: PackBinding[];
   requiredRoles?: string[];
   supportedScopes?: string[];
@@ -1781,13 +1783,23 @@ export interface VideoTemplateOut {
   updatedAt: string;
 }
 
-/** 只换固定提示词原文：媒体清单、素材包、档位与名称都不动。
+/** VideoTemplatePackReferenceIn */
+export interface VideoTemplatePackReferenceIn {
+  token: string;
+  packId: string;
+  packVersion: number;
+  assetId: string;
+}
 
-`{{Mixed N}}` 的引用关系按新原文**重算**（新增引用会把槽位补进 bindings，
-不再引用的图片降为「仅插入接口」），所以不需要连同媒体一起提交。 */
+/** 原地保存固定提示词及跨封装图片引用，不改原片、档位或默认素材包。
+
+既有用途引用按新原文重算；跨封装引用锁定包与版本，图片追加到基础媒体之后。
+不再点名的图片仍可作为辅助输入；references 省略时保留，显式空数组清除固定引用。 */
 export interface VideoTemplatePromptIn {
   /** 新的固定提示词原文，含 {{Mixed N}} 占位符 */
   prompt: string;
+  /** 跨封装固定图片引用；省略保留原绑定，空数组清除 */
+  references?: VideoTemplatePackReferenceIn[] | null;
 }
 
 /** ApiResponse[ModelListOut] */
@@ -2223,6 +2235,6 @@ export interface EndpointData {
   "POST /api/v1/templates/video-templates/{template_id}/attach-source": VideoTemplateOut;
   /** 设为固定蓝本（全库仅一个） */
   "POST /api/v1/templates/video-templates/{template_id}/pin": VideoTemplateOut;
-  /** 改固定提示词（媒体清单与素材包不动） */
+  /** 保存固定提示词与跨封装图片引用 */
   "PATCH /api/v1/templates/video-templates/{template_id}/prompt": VideoTemplateOut;
 }

@@ -21,6 +21,7 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.exceptions import AppError, BadRequest, Conflict, NotFound
@@ -340,8 +341,12 @@ class PackService:
         shaped = self._shape(pack, refs)
         available = True
         try:
+            # 素材名查询与字节校验都是「能不能解释这个包」的一环，必须一起降级。
+            # 放在 try 外时，DB 抖动或异常 reference_ids 会让整个素材目录 500。
+            names = await get_asset_lookup().get_many(self.session, shaped.reference_ids)
             await self._verify_bytes(refs)
-        except (AppError, OSError):
+        except (AppError, OSError, SQLAlchemyError):
+            names = {}
             available = False
         if self.gaps(pack, refs):
             available = False
@@ -355,6 +360,8 @@ class PackService:
                 "available": available,
                 "cover_url": urls[0] if urls else None,
                 "preview_urls": urls,
+                "reference_names": [names[item].name if item in names else "素材不可用"
+                                    for item in shaped.reference_ids],
             }
         )
 

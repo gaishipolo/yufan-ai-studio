@@ -78,6 +78,7 @@ from modules.template.video_template_options import (
     scope_options,
     validate_options,
 )
+from modules.template.video_template_schema import MAX_REFERENCE_IMAGES
 from modules.template.workspace import (
     BRIDGE,
     RUNTIME,
@@ -296,6 +297,20 @@ class ReplacementService:
             scope_required=video_template is None,
             pack_owners=pack_owners,
         )
+        from modules.template.template_references import resolve_pack_references
+        from modules.template.video_template_schema import VideoTemplatePackReferenceIn
+
+        fixed_data = video_template.rules.get("fixedReferences", []) if video_template else []
+        _, fixed_refs = await resolve_pack_references(self.session, [
+            VideoTemplatePackReferenceIn.model_validate(item) for item in fixed_data
+        ])
+        if len(refs) + len(fixed_refs) > MAX_REFERENCE_IMAGES:
+            # 保存端按「封装时那个包」的图数校验，这里按「本次所选包」算，
+            # 两者可能不同；报错必须说清怎么自助恢复，否则用户只会看到模板明明存下了却跑不了。
+            raise BadRequest(
+                f"当前素材包与固定引用合计最多{MAX_REFERENCE_IMAGES}张参考图片；"
+                "换用图片更多的素材包会超出上限，请减少固定引用或换回图片更少的素材包"
+            )
         run = await self.runs.get(payload.request_id.hex)
         fingerprint = _fingerprint(owner, payload)
         if run is not None:
@@ -323,6 +338,7 @@ class ReplacementService:
         # 幂等重入（`prepare_failed` 后带同一 request_id 重试）也要把快照写回：
         # 上一次可能在冻结之后、编译之前失败，不能让新一次的正文与旧行对不上。
         run.text_json = dumps_text_refs(text_refs)
+        run.configuration = {**(run.configuration or {}), "fixed_references": fixed_data}
         await self.session.commit()
 
         # 目录 + `run.json` + 索引指针一起建：`run_path()` 认指针，
@@ -356,6 +372,7 @@ class ReplacementService:
                 character_fronts,
                 selected_packs,
                 text_refs,
+                fixed_refs,
             )
         except Exception:
             logger.exception("替换输入准备失败 run_id=%s", run.id)
@@ -391,7 +408,8 @@ class ReplacementService:
                     "",
                 )
                 for position, item in enumerate(
-                    _media_in_mixed_order(video_template, source, refs, roles, character_fronts)
+                    _media_in_mixed_order(video_template, source, refs, roles, character_fronts,
+                                          fixed_refs=fixed_refs)
                 )
             ],
         )
@@ -864,7 +882,8 @@ def _check_video_template(
         raise BadRequest("请为每位出镜人物分别选择人物素材包")
     if declared is not None:
         order_reference_ids(list(roles), roles, declared, kind)
-    images = [item for item in template.media_order if item.type == "image"]
+    images = [item for item in template.media_order
+              if item.type == "image" and item.role != "fixed"]
     provided = set(roles.values())
     needed = dict.fromkeys(
         declared if declared is not None else (item.role for item in images if item.role)
@@ -881,10 +900,11 @@ def _check_video_template(
     # 按封装时的图片数校验会放过「换了一个图更少的包」这种越界：mixedList 只有
     # N 项，提示词却写着 {{Mixed N+1}}，执行器拿不到那一项。
     upper = len(roles) + 1
+    fixed_tokens = {ref["token"] for ref in template.rules.get("fixedReferences", [])}
     bad = [
         token
         for token in re.findall(r"\{\{([^{}]+)\}\}", template.prompt)
-        if token != "ReplacementScope"
+        if token != "ReplacementScope" and f"{{{{{token}}}}}" not in fixed_tokens
         and (not re.fullmatch(r"Mixed \d+", token) or not 1 <= int(token[6:]) <= upper)
     ]
     if bad:
@@ -900,6 +920,7 @@ def _media_in_mixed_order(
     refs: list[StoredMedia],
     roles: dict[str, str] | None = None,
     character_fronts: list[str] | None = None,
+    fixed_refs: dict[str, StoredMedia] | None = None,
 ) -> list[StoredMedia]:
     """mixedList 的顺序：普通原片沿用「参考图 + 原片」；视频模板按**用途**排。
 
@@ -908,6 +929,19 @@ def _media_in_mixed_order(
     是那个包的正面主图、`{{Mixed 3}}` 永远是三视图，封装一次就能到处用。
     模板没声明用途、或包里还有没用上的图，按原序补在后面，一张都不少。
     """
+    if template is not None and fixed_refs:
+        count = int(template.rules["fixedBaseMediaCount"])
+        base_template = template.model_copy(update={"media_order": template.media_order[:count]})
+        ordered = _media_in_mixed_order(base_template, source, refs, roles, character_fronts)
+        if len(ordered) < count:
+            raise BadRequest("当前素材包缺少模板基础参考图，无法保持固定引用编号")
+        extras = [fixed_refs[item["token"]] for item in template.rules["fixedReferences"]]
+        fixed_ids = {item.id for item in extras}
+        result = [*ordered[:count], *extras,
+                  *(item for item in ordered[count:] if item.id not in fixed_ids)]
+        if len({item.id for item in result}) != len(result):
+            raise BadRequest("固定参考图与当前素材包图片重复，请调整引用")
+        return result
     if template is None:
         return [*refs, source]
     from modules.template.video_template_bindings import (
@@ -933,7 +967,8 @@ def _media_in_mixed_order(
         return place_source(source, [by_id[asset_id] for asset_id in ordered_ids], template.rules)
     by_role = roles or {}
     remaining = list(refs)
-    ordered: list[StoredMedia] = []
+    # 上面的固定引用分支已给 ordered 赋值，这里不能再带类型注解（mypy no-redef）。
+    ordered = []
     for item in template.media_order:
         if item.type != "image":
             continue
@@ -1057,6 +1092,7 @@ def _materialize_inputs(
     character_fronts: list[str] | None = None,
     selected_packs: list[dict] | None = None,
     text_refs: Sequence[Mapping[str, Any]] = (),
+    fixed_refs: dict[str, StoredMedia] | None = None,
 ) -> tuple[dict[str, object], Compilation, ReplacementInputSummary]:
     """把输入落到工作区并编译提示词。**同步函数**：调用方放进线程池。
 
@@ -1068,7 +1104,8 @@ def _materialize_inputs(
     同一顺序产出，执行器那套「顺序、类型、摘要」校验一个都不绕过。
     """
     ensure_layout(path)
-    media = _media_in_mixed_order(video_template, source, refs, roles, character_fronts)
+    media = _media_in_mixed_order(video_template, source, refs, roles, character_fronts,
+                                fixed_refs=fixed_refs)
     bindings: list[dict[str, str]] = []
     for index, item in enumerate(media):
         with storage.materialize(item.path) as original:
@@ -1176,6 +1213,7 @@ def _materialize_inputs(
     }
     if video_template is not None and is_scene_text(video_template.rules):
         spec["inputMode"] = "video_scene_text"
+        spec["fixedReferenceTokens"] = list(fixed_refs or {})
         variables["scene_prompt"] = mask_text_refs(payload.scene_prompt or "", text_refs)
     if selected_packs:
         spec["selectedPacks"] = selected_packs

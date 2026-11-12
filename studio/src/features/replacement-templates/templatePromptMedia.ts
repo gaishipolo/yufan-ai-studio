@@ -1,11 +1,27 @@
 import type { ArchivedAsset, ReplacementPack, VideoTemplateOut } from '@/shared/api/schema';
 import { PACK_ROLES } from '@/entities/template/model/packRoles';
 import type { PromptMediaItem } from './PromptMediaView';
+import { fixedPackReferences, insertFixedMedia, withoutFixedReferences } from './fixedPackReferences';
 
 type Source = Pick<ArchivedAsset, 'id' | 'name' | 'url'> & Partial<Pick<ArchivedAsset, 'previewUrl'>>;
 
+/** 编辑时新点名的辅助槽位，必须按保存端 mediaOrder 的用途找图，不能取换包后的偶然顺序。 */
+export function templatePromptEditorMedia(template: VideoTemplateOut, source?: Source, pack?: ReplacementPack, currentPacks?: ReplacementPack[]): PromptMediaItem[] {
+  if (fixedPackReferences(template).length) return insertFixedMedia(
+    templatePromptEditorMedia(withoutFixedReferences(template), source, pack, currentPacks), template);
+  const declared = template.mediaOrder ?? [];
+  // 多人槽位由已声明的 front 决定，辅助身份图不能被算成新增人物。
+  if (template.defaultKind === 'character' || !declared.length || declared.some(item => !item.role)) {
+    return templatePromptMedia(template, source, pack, currentPacks);
+  }
+  const referenceBindings = Object.fromEntries(declared.map(item => [item.token, item.type === 'video' ? 'source_video' : item.role]));
+  return templatePromptMedia({...template, rules: {...template.rules, referenceBindings}}, source, pack, currentPacks);
+}
+
 /** 仅供准备前预览；历史任务必须使用自己的 inputSummary，不能调用此函数推断。 */
 export function templatePromptMedia(template: VideoTemplateOut, source?: Source, pack?: ReplacementPack, currentPacks?: ReplacementPack[]): PromptMediaItem[] {
+  if (fixedPackReferences(template).length) return insertFixedMedia(
+    templatePromptMedia(withoutFixedReferences(template), source, pack, currentPacks), template);
   const video: PromptMediaItem = {id: source?.id ?? template.sourceVideoAssetId ?? 'source',
     token: '', name: source?.name ?? template.sourceVideoName ?? '原片',
     type: 'video', url: source?.url, previewUrl: source?.previewUrl};

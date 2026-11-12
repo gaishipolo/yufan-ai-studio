@@ -7589,7 +7589,7 @@
           "模板",
           "视频模板"
         ],
-        "summary": "改固定提示词（媒体清单与素材包不动）",
+        "summary": "保存固定提示词与跨封装图片引用",
         "description": "只换提示词原文，`{{Mixed N}}` 引用按新原文重算。\n\n不提供「删掉重建」：同原片同类型下 `find_for_run` 取最早创建的那条，\n重建出来的新版会一直输给旧版。改提示词会影响此后每一次生成，留审计。",
         "operationId": "update_video_template_prompt_api_v1_templates_video_templates__template_id__prompt_patch",
         "security": [
@@ -12818,6 +12818,13 @@
             "type": "array",
             "title": "Previewurls"
           },
+          "referenceNames": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Referencenames"
+          },
           "bindings": {
             "items": {
               "$ref": "#/components/schemas/PackBinding"
@@ -13830,6 +13837,13 @@
             },
             "type": "array",
             "title": "Previewurls"
+          },
+          "referenceNames": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Referencenames"
           },
           "bindings": {
             "items": {
@@ -16445,6 +16459,40 @@
         ],
         "title": "VideoTemplateOut"
       },
+      "VideoTemplatePackReferenceIn": {
+        "properties": {
+          "token": {
+            "type": "string",
+            "pattern": "^\\{\\{Mixed [1-9]\\d*\\}\\}$",
+            "title": "Token"
+          },
+          "packId": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Packid"
+          },
+          "packVersion": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Packversion"
+          },
+          "assetId": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Assetid"
+          }
+        },
+        "type": "object",
+        "required": [
+          "token",
+          "packId",
+          "packVersion",
+          "assetId"
+        ],
+        "title": "VideoTemplatePackReferenceIn"
+      },
       "VideoTemplatePromptIn": {
         "properties": {
           "prompt": {
@@ -16453,6 +16501,22 @@
             "minLength": 1,
             "title": "Prompt",
             "description": "新的固定提示词原文，含 {{Mixed N}} 占位符"
+          },
+          "references": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/VideoTemplatePackReferenceIn"
+                },
+                "type": "array",
+                "maxItems": 10
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "References",
+            "description": "跨封装固定图片引用；省略保留原绑定，空数组清除"
           }
         },
         "type": "object",
@@ -16460,7 +16524,7 @@
           "prompt"
         ],
         "title": "VideoTemplatePromptIn",
-        "description": "只换固定提示词原文：媒体清单、素材包、档位与名称都不动。\n\n`{{Mixed N}}` 的引用关系按新原文**重算**（新增引用会把槽位补进 bindings，\n不再引用的图片降为「仅插入接口」），所以不需要连同媒体一起提交。"
+        "description": "原地保存固定提示词及跨封装图片引用，不改原片、档位或默认素材包。\n\n既有用途引用按新原文重算；跨封装引用锁定包与版本，图片追加到基础媒体之后。\n不再点名的图片仍可作为辅助输入；references 省略时保留，显式空数组清除固定引用。"
       },
       "core__response__ApiResponse_ModelListOut___1": {
         "properties": {

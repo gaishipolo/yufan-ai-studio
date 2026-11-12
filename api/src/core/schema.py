@@ -6,7 +6,7 @@ import re
 from datetime import UTC, datetime
 from typing import Annotated, Any, TypeVar
 
-from pydantic import BaseModel, ConfigDict, PlainSerializer
+from pydantic import BaseModel, ConfigDict, PlainSerializer, StringConstraints
 
 _CAMEL_RE = re.compile(r"_([a-z0-9])")
 
@@ -26,6 +26,9 @@ def _iso_utc(value: datetime) -> str:
 
 # 时间字段统一使用该类型，保证出入参格式一致
 UtcDateTime = Annotated[datetime, PlainSerializer(_iso_utc, return_type=str)]
+
+# 经用户测试的提示词必须逐字保存，不能继承 CamelModel 的首尾去空白行为。
+VerbatimText = Annotated[str, StringConstraints(strip_whitespace=False)]
 
 
 def to_camel(snake: str) -> str:

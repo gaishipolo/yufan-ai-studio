@@ -94,6 +94,26 @@ beforeEach(() => {
 });
 
 describe('替换模板工作台', () => {
+  it('配置区提示词窗口可切换同原片的其他场景，预览使用各场景自己的默认描述', () => {
+    const base: VideoTemplateOut = {
+      id: 'scene-sea', templateKey: 'scene-sea', name: '海边场景', description: '',
+      prompt: '编辑 {{Mixed 1}}，{{ScenePrompt}}', promptSha256: 'hash',
+      sourceVideoName: '我穿的是米兰之夜模板测试.mp4', sourceVideoAssetId: 'source-template',
+      sourceVideoPath: '', sourceDurationSec: 5.31, aspectRatio: '9:16', defaultKind: 'scene',
+      mediaOrder: [{token: '{{Mixed 1}}', type: 'video', role: 'source_video'}],
+      rules: {inputMode: 'video_scene_text', scenePromptDefault: '海边沙滩'},
+      createdAt: '2026-11-12T00:00:00Z', updatedAt: '2026-11-12T00:00:00Z',
+    };
+    mock.videoTemplates = [base, {...base, id: 'scene-forest', templateKey: 'scene-forest', name: '森林场景', rules: {inputMode: 'video_scene_text', scenePromptDefault: '森林木屋'}}];
+    render(<App url='/templates?sourceId=source-template&kind=scene&videoTemplateId=scene-forest' />);
+    fireEvent.click(screen.getByRole('button', {name: '查看当前功能提示词'}));
+    const dialog = screen.getByRole('dialog', {name: '模板提示词与输入预览'});
+    const selector = within(dialog).getByRole('combobox', {name: '查看封装功能'});
+    expect(selector).toHaveValue('scene-forest');
+    fireEvent.change(selector, {target: {value: 'scene-sea'}});
+    expect(dialog).toHaveTextContent('海边沙滩');
+    expect(dialog).not.toHaveTextContent('森林木屋');
+  });
   it('单条和批量准备保存所选渠道，换渠道使用独立请求', async () => {
     mock.catalog.data.channels = [
       {id: 'libtv', label: 'LibTV', model: 'seedance', enabled: true, billing: 'libtv'},
@@ -824,7 +844,8 @@ describe('替换模板工作台', () => {
     expect(screen.getByRole('button', {name: '产品替换'})).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getByLabelText('地址').textContent).toContain('kind=product');
     expect(screen.getByLabelText('地址').textContent).toContain('packId=product-pack');
-    expect(screen.getByText(/已套用视频模板「米兰之夜 · 3030 粉色」/)).toBeVisible();
+    expect(screen.queryByText(/已套用视频模板/)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', {name: '查看当前功能提示词'})).toBeEnabled();
   });
 
   it('封装只有产品替换时，不显示其他功能或未声明的范围参数', () => {
@@ -839,7 +860,7 @@ describe('替换模板工作台', () => {
     }];
     render(<App />);
     fireEvent.click(screen.getByRole('button', {name: '选择模板：我穿的是米兰之夜模板测试.mp4'}));
-    expect(screen.getByText(/已套用视频模板/)).toBeVisible();
+    expect(screen.queryByText(/已套用视频模板/)).not.toBeInTheDocument();
     expect(screen.queryByRole('button', {name: '人物替换'})).not.toBeInTheDocument();
     expect(screen.queryByRole('button', {name: '场景替换'})).not.toBeInTheDocument();
     expect(screen.queryByRole('heading', {name: '替换范围'})).not.toBeInTheDocument();

@@ -17,6 +17,7 @@ from core import audit
 from core.context import CurrentUser
 from core.response import ApiResponse
 from modules.template import video_template_store as store
+from modules.template.template_references import resolve_pack_references
 from modules.template.video_template_schema import (
     VideoTemplateAttachSourceIn,
     VideoTemplateDraftIn,
@@ -75,16 +76,19 @@ async def pin_video_template(
     return ApiResponse.ok(result)
 
 
-@router.patch("/{template_id}/prompt", summary="改固定提示词（媒体清单与素材包不动）")
+@router.patch("/{template_id}/prompt", summary="保存固定提示词与跨封装图片引用")
 async def update_video_template_prompt(
-    template_id: str, payload: VideoTemplatePromptIn, actor: ManageDep
+    template_id: str, payload: VideoTemplatePromptIn, actor: ManageDep, session: SessionDep
 ) -> ApiResponse[VideoTemplateOut]:
     """只换提示词原文，`{{Mixed N}}` 引用按新原文重算。
 
     不提供「删掉重建」：同原片同类型下 `find_for_run` 取最早创建的那条，
     重建出来的新版会一直输给旧版。改提示词会影响此后每一次生成，留审计。
     """
-    result = await asyncio.to_thread(store.update_prompt, template_id, payload.prompt)
+    references = None
+    if payload.references is not None:
+        references, _ = await resolve_pack_references(session, payload.references)
+    result = await asyncio.to_thread(store.update_prompt, template_id, payload.prompt, references)
     await audit.record(
         "template.video_template.update_prompt",
         actor_id=actor.id,

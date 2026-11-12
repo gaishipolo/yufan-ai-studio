@@ -1,8 +1,27 @@
 import { describe, expect, it } from 'vitest';
 import type { ReplacementPack, VideoTemplateOut } from '@/shared/api/schema';
-import { templatePromptMedia } from './templatePromptMedia';
+import { templatePromptEditorMedia, templatePromptMedia } from './templatePromptMedia';
 
 describe('模板提示词的预览绑定', () => {
+  it('编辑时辅助槽位也按模板用途对齐，换包后不会把细节图当成三视图引用', () => {
+    const template = {defaultKind: 'product', rules: {referenceBindings: {
+      '{{Mixed 1}}': 'source_video', '{{Mixed 2}}': 'front',
+    }}, mediaOrder: [
+      {token: '{{Mixed 1}}', type: 'video', role: 'source_video'},
+      {token: '{{Mixed 2}}', type: 'image', role: 'front'},
+      {token: '{{Mixed 3}}', type: 'image', role: 'multiview'},
+    ]} as unknown as VideoTemplateOut;
+    const pack = {id: 'new', name: '另一个产品', kind: 'product', version: 1,
+      referenceIds: ['detail', 'view', 'front'],
+      bindings: [{role: 'detail'}, {role: 'multiview'}, {role: 'front'}],
+      previewUrls: ['/detail', '/view', '/front'],
+    } as ReplacementPack;
+    const result = templatePromptEditorMedia(template, undefined, pack);
+    expect(result.slice(0, 3).map(item => item.id)).toEqual(['source', 'front', 'view']);
+    expect(result[2].token).toBe('{{Mixed 3}}');
+    expect(result[2].url).toBe('/view');
+    expect(template.rules?.referenceBindings).toEqual({'{{Mixed 1}}': 'source_video', '{{Mixed 2}}': 'front'});
+  });
   it('三个人物逐包对应原编号，原片可在第4位，A的第二张正面图不占B的位置', () => {
     const template = {defaultKind: 'character', rules: {referenceBindings: {
       '{{Mixed 1}}': 'front', '{{Mixed 2}}': 'front', '{{Mixed 3}}': 'front', '{{Mixed 4}}': 'source_video',

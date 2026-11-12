@@ -46,10 +46,6 @@ export function ReplacementConfig({ model }: ReplacementConfigProps) {
   return (
       <aside ref={panelRef} className="replacement-config" aria-label="替换配置">
         <div className="replacement-config-heading"><SlidersHorizontal size={16} /><h2>替换配置</h2><span>{sourceId ? '已选 1 条' : '等待选择'}</span></div>
-        {model.activeVideoTemplate && <div className="replacement-template-binding" role="status">
-          <Layers size={14} />
-          <span>{model.isTextScene ? '文字换场景 · 仅输入原视频，场景描述可修改' : <>已套用视频模板「{model.activeVideoTemplate.name}」：{model.functionOptions.find(item => item.id === model.activeVideoTemplate?.id)?.label} · {model.slots > 1 ? '现选人物' : '现选素材包'}「{model.chosenPacks.map(pack => pack.name).join('、')}」· 换包不换提示词</>}</span>
-        </div>}
         {model.boundTemplate && <div className="px-4 pb-2"><Button size="sm" onClick={() => setShowPrompt(true)}>查看当前功能提示词</Button></div>}
         <div className="replacement-kind-picker" aria-label="替换类型">
           {model.boundTemplate ? model.functionOptions.map(item => <button key={item.id} disabled={busy} aria-pressed={model.boundTemplate?.id === item.id} onClick={() => model.selectFunction(item.id)}><item.icon size={17} />{item.label}</button>) : TYPES.map(item => <button key={item.kind} disabled={busy || model.videoTemplates.isPending || !!model.videoTemplates.error} aria-pressed={kind === item.kind} onClick={() => setKind(item.kind)}><item.icon size={17} />{item.label}</button>)}
@@ -88,7 +84,7 @@ export function ReplacementConfig({ model }: ReplacementConfigProps) {
         <p className="text-xs leading-5 text-ink-mute">{model.channel === 'libtv' ? '核对后再生成，仅零积分，不自动付费。' : '核对后再生成，使用阿里云 API 计费。'}</p>
         </div>}
         <div className="replacement-config-footer"><span>{model.channel === 'libtv' ? 'LibTV · 720P · 仅 0 积分' : (model.currentChannel?.label ?? '百炼') + ' · 阿里云 API 计费'}</span><Link to="/assets">管理素材 →</Link></div>
-        {showPrompt && model.boundTemplate && <TemplatePromptDialog key={model.boundTemplate.id} source={model.videos.find(video => video.id === sourceId) ?? model.linkedSource.data ?? undefined} templates={[model.boundTemplate]} packs={catalog.data?.packs ?? []} scenePrompt={model.isTextScene ? model.scenePrompt : undefined} currentPack={model.selectedPack} currentPacks={model.slots > 1 ? model.chosenPacks : undefined} onClose={() => setShowPrompt(false)} />}
+        {showPrompt && model.boundTemplate && <TemplatePromptDialog key={model.boundTemplate.id} source={model.videos.find(video => video.id === sourceId) ?? model.linkedSource.data ?? undefined} templates={model.boundTemplates} selectedTemplateId={model.boundTemplate.id} packs={catalog.data?.packs ?? []} scenePrompt={model.isTextScene ? model.scenePrompt : undefined} currentPack={model.selectedPack} currentPacks={model.slots > 1 ? model.chosenPacks : undefined} onClose={() => setShowPrompt(false)} />}
       </aside>
   );
 }

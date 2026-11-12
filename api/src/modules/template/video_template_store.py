@@ -49,6 +49,7 @@ from modules.template.video_template_bindings import (
 )
 from modules.template.video_template_options import is_scene_text, validate_options
 from modules.template.video_template_schema import (
+    MAX_REFERENCE_IMAGES,
     VideoTemplateDraftIn,
     VideoTemplateListOut,
     VideoTemplateMedia,
@@ -389,6 +390,8 @@ def _validate_media(
 
 
 async def create(payload: VideoTemplateDraftIn, session: AsyncSession) -> VideoTemplateOut:
+    if payload.rules.get("fixedReferences"):
+        raise BadRequest("跨封装引用请通过模板提示词编辑接口绑定")
     validate_options(payload.prompt, payload.rules)
     if payload.pack_id:
         pack = await session.get(TemplatePack, payload.pack_id)
@@ -516,7 +519,9 @@ def _cited_slots(prompt: str, *, scene_text: bool = False) -> tuple[list[int], b
     return numbers, scope
 
 
-def update_prompt(template_id: str, prompt: str) -> VideoTemplateOut:
+def update_prompt(
+    template_id: str, prompt: str, fixed_references: list[dict[str, Any]] | None = None,
+) -> VideoTemplateOut:
     """换掉固定提示词原文，槽位引用按新原文重算。
 
     **为什么只能原地改**：`find_for_run` 在同原片同类型下按创建时间取最早那条，
@@ -538,20 +543,43 @@ def update_prompt(template_id: str, prompt: str) -> VideoTemplateOut:
             raise NotFound("视频模板不存在")
         record = data["items"][index]
         template = _as_out(record)
+        rules = dict(template.rules)
+        media = [item.model_copy() for item in template.media_order]
+        base_count = int(rules.get("fixedBaseMediaCount", len(media)))
+        fixed = (fixed_references if fixed_references is not None
+                 else rules.get("fixedReferences", []))
+        fixed_tokens = {ref["token"] for ref in fixed}
+        expected = [f"{{{{Mixed {base_count + n + 1}}}}}" for n in range(len(fixed))]
+        # base_count 里有 1 项是原片，真正参与上限的图片数是 base_count - 1 + 固定引用。
+        # 与 prepare 端的 MAX_REFERENCE_IMAGES 用同一个常量，避免两处口径漂移。
+        if (
+            [ref["token"] for ref in fixed] != expected
+            or base_count - 1 + len(fixed) > MAX_REFERENCE_IMAGES
+        ):
+            raise BadRequest(
+                f"固定引用必须紧接模板媒体连续编号，最多{MAX_REFERENCE_IMAGES}张参考图片"
+            )
+        media = media[:base_count] + [VideoTemplateMedia(
+            token=ref["token"], role="fixed", type="image", asset_id=ref["assetId"],
+            name=ref["name"], in_prompt=ref["token"] in prompt,
+        ) for ref in fixed]
+        if fixed:
+            rules.update(fixedReferences=fixed, fixedBaseMediaCount=base_count)
+        else:
+            rules.pop("fixedReferences", None)
+            rules.pop("fixedBaseMediaCount", None)
         scene_text = is_scene_text(template.rules)
         if scene_text:
-            validate_options(prompt, template.rules)
+            validate_options(prompt, rules)
         numbers, scope = _cited_slots(prompt, scene_text=scene_text)
         if not numbers and not scene_text:
             raise BadRequest("提示词至少要引用原片槽位")
-        media = [item.model_copy() for item in template.media_order]
         if not media:
             raise BadRequest("模板没有媒体清单，无法改写提示词")
         for number in numbers:
             if number > len(media):
                 raise BadRequest(f"{{{{Mixed {number}}}}} 超出模板媒体数量 {len(media)}")
 
-        rules = dict(template.rules)
         bindings = rules.get("referenceBindings")
         if isinstance(bindings, dict) and bindings:
             declared = {str(token): str(role) for token, role in bindings.items()}
@@ -571,7 +599,9 @@ def update_prompt(template_id: str, prompt: str) -> VideoTemplateOut:
             raise BadRequest("提示词必须至少点名一张参考图")
 
         if declared and not scene_text:
-            upper = max(max(numbers), len(declared))
+            dynamic_numbers = [number for number in numbers
+                               if f"{{{{Mixed {number}}}}}" not in fixed_tokens]
+            upper = max(max(dynamic_numbers, default=1), len(declared))
             for number in range(1, upper + 1):
                 token = f"{{{{Mixed {number}}}}}"
                 if token in declared:
@@ -602,8 +632,8 @@ def update_prompt(template_id: str, prompt: str) -> VideoTemplateOut:
         for number, item in enumerate(media, 1):
             item.in_prompt = number in numbers
 
-        # 走一遍模型校验再落盘：`CamelModel` 会 strip 首尾空白，`model_copy` 不会。
-        # 少了这步，目录里的 prompt 与读出来看到的差一个换行，sha256 也就跟着对不上。
+        # 走模型校验再落盘；prompt 使用 VerbatimText，逐字保留画布测试的原文，
+        # 摘要也按同一份原文计算，不附加图片用途或描述。
         candidate = template.model_copy(
             update={
                 "prompt": prompt,

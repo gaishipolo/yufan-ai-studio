@@ -31,7 +31,8 @@ def reference_roles(rules: dict[str, Any], prompt: str, kind: str) -> list[str] 
         for token in re.findall(r"\{\{([^{}]+)\}\}", prompt)
         if token != "ReplacementScope"
     }
-    if not cited <= set(tokens):
+    fixed_tokens = {ref["token"] for ref in rules.get("fixedReferences", [])}
+    if not cited <= set(tokens) | fixed_tokens:
         raise BadRequest("提示词中的每个 Mixed 引用都必须在 bindings 中声明")
     if kind == "character" and roles.count("front") > 1 and set(roles) != {"front"}:
         raise BadRequest("多人换脸请为每位人物声明一个 front 槽位，其余图片自动作为辅助参考附带")

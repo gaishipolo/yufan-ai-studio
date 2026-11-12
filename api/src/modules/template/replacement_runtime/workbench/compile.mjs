@@ -7,7 +7,8 @@ export async function compileWorkbench(spec){
   if(spec?.inputMode==='video_scene_text'){
     const refs=spec.references;
     const fixed=spec.fixed_prompt, description=spec.variables?.scene_prompt;
-    if(spec.task!=='scene'||!Array.isArray(refs)||refs.length!==1||refs[0]?.role!=='source_video'||refs[0]?.type!=='video'
+    const fixedTokens=spec.fixedReferenceTokens??[];
+    if(spec.task!=='scene'||!Array.isArray(refs)||refs.length!==1+fixedTokens.length||refs[0]?.role!=='source_video'||refs[0]?.type!=='video'
       ||typeof refs[0]?.id!=='string'||!refs[0].id||!refs[0].file)
       throw new Error('Text scene requires exactly one source video');
     if(typeof fixed!=='string'||fixed.split('{{ScenePrompt}}').length!==2
@@ -18,9 +19,10 @@ export async function compileWorkbench(spec){
       throw new Error('Invalid scene video generation parameters');
     const prompt=fixed.replaceAll('{{ScenePrompt}}',()=>description);
     const tokens=[...prompt.matchAll(/\{\{([^{}]+)\}\}/g)].map(match=>match[1]);
-    if(tokens.some(token=>token!=='Mixed 1'))throw new Error('Unknown scene prompt token');
+    if(refs.slice(1).some((ref,index)=>ref.type!=='image'||fixedTokens[index]!==`{{Mixed ${index+2}}}`))throw new Error('Invalid fixed scene reference');
+    if(tokens.some(token=>token!=='Mixed 1'&&!fixedTokens.includes(`{{${token}}}`)))throw new Error('Unknown scene prompt token');
     return {compiler_version:'scene-video-text-v1',task:'scene',model:'wanx3.0',modeType:'mixed2video',
-      prompt,bindings:[{index:0,...refs[0],token:'{{Mixed 1}}'}],warnings:['场景描述来自本次输入，其余约束来自封装模板'],
+      prompt,bindings:refs.map((ref,index)=>({index,...ref,token:`{{Mixed ${index+1}}}`})),warnings:['场景描述来自本次输入，其余约束来自封装模板'],
       template_sha256:createHash('sha256').update(fixed).digest('hex'),
       spec_sha256:createHash('sha256').update(JSON.stringify(spec)).digest('hex'),generation_verified:false};
   }

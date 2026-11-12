@@ -16,7 +16,7 @@ from uuid import UUID
 
 from pydantic import Field, model_validator
 
-from core.schema import CamelModel, UtcDateTime
+from core.schema import CamelModel, UtcDateTime, VerbatimText
 from modules.template.channels import ReplacementChannel
 from modules.template.pack_roles import BASE_ROLE, PACK_ROLES, PACK_SCOPES
 
@@ -191,7 +191,7 @@ class ReplacementRunOut(CamelModel):
         default=None,
         description="确认提交到结束的耗时（秒）；未完成时按到此刻计，未开始为 null",
     )
-    prompt: str
+    prompt: VerbatimText
     text_library_ids: list[str] = Field(
         default_factory=list, description="本次绑定的文本资产 id（顺序即 `{{Text N}}` 编号）"
     )
@@ -252,6 +252,7 @@ class ReplacementPack(CamelModel):
     available: bool | None = None
     cover_url: str | None = None
     preview_urls: list[str] = Field(default_factory=list)
+    reference_names: list[str] = Field(default_factory=list)
     # 逐图用途与 reference_ids 同序；缺省时前端按基准用途展示
     bindings: list[PackBinding] = Field(default_factory=list)
     required_roles: list[str] = Field(default_factory=list)
