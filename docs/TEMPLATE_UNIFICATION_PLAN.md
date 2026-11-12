@@ -1680,3 +1680,56 @@ W1（步 0.5 成片进草稿箱）不受影响，仍可先做。开工前仍需�
 无 `output_key` 时返回 None、task_id 变化换幂等键）；**反向验证**把方法改名后 3 条全红；
 `select_tests.py` 判 `targeted`（3 个文件）→ 11 个测试文件 **202 passed / 17.16s**；
 `ruff check src tests` 通过；`mypy --platform win32 src` 289 files 无问题。
+
+### 24.3 步 2.5a：v2 删除保护补到完整守卫（2026-11-13 完成）
+
+**做了什么**（照 `core/ports/assets.py` 的形状整套搬过来，两套 id 空间各自独立）
+
+| 层 | 落点 |
+|---|---|
+| 端口 | `core/ports/library_references.py` 重写为「声明 + 对账 + 聚合」：`LibraryReferenceSource` / `bind_library_reference_sources()` / `declare_expected_library_reference_sources()` / `library_reference_gaps()` / `library_references_ready()` / `require_library_references()` / `ask_library_references()`。`get_library_references()` 单例 getter 删除 |
+| 声明 | `ModuleSpec.library_reference_sources`（`api/module.py`，与 `asset_reference_sources` **并列不合并**） |
+| 装配对账 | `api/discovery.py` 在 `discover_modules()` 与 `active_modules()` 各调一次 `declare_expected_library_reference_sources(specs)`（幂等） |
+| 来源实现 | `library`：`library_pack_items.asset_id`（`PackMemberReferences`）+ `library_download_jobs.asset_ids`（`DownloadJobReferences`），原 `SqlLibraryReferences` 拆成两个类，一个来源一个类；`image`：`image_jobs.reference_json`（`ImageJobReferences`） |
+| 调用点 | `lifecycle.purge()` / `purge_expired()` → `ask_library_references()`；`service._references()` → `library_references_ready()` + `require_complete=False`；`health.py` 与 `api/ports.py` 改走 `library_references_ready()` |
+| 框架自检 | `api/diagnostics.py` 新增 `ports.library_references`。**原来只有 v1 的 `ports.references`**，而 `_check_ports` 的 docstring 早就写着「核 `library-references`」——文档与实现一直对不上，这次补上 |
+| AST 守卫 | `test_architecture.py`：`_LIBRARY_REFERENCE_FIELDS` + `test_every_library_reference_writer_declares_a_source` + `test_library_reference_sources_are_complete_after_discovery` |
+
+**四个计划没写、落地才定的口径**
+
+1. **`text_library_ids` / `textLibraryIds` 不进 v2 引用字段集**。计划 §23.3 只说要「与 v1
+   字段分开」，没说清这两个算不算。落地时按「purge 之后会不会坏」判：
+   `text_json` 快照冻结的是**正文本身**，删掉文本资产既不影响历史展示，也不影响已经注入
+   过的提示词 → 不是引用。算成引用会让「用过一次的文案永远删不掉」，而过度保护的真实
+   后果是用户要求关掉整道闸，比漏保护更糟。反例是参考图：`reference_json` 只冻结
+   `storageKey`，重试要按 key 去存储读字节 → 真引用。
+2. **`pack_id` / `extra_pack_ids` 不是 v2 字段**。`modules/template/schema.py` 里那两个
+   指的是模板库自己的 `TemplatePackVersion` 主键。真正指向 v2 封装的字段按 §23.5 定名
+   `library_pack_id` / `libraryPackId`，已进字段集（当前无人使用，等步 3 接入）。
+3. **`require_library_references()` 单独抽出来**。`test_library_skeleton.py` 的
+   `test_v2_ports_are_fail_closed` 需要一个「未装配就抛 503」的同步探针，而
+   `ask_library_references()` 是 async、还要 session。抽一个同步前置断言既给了探针，
+   也让 fail-closed 的文案只有一份。
+4. **teardown 要按「全部模块的声明」补装，不能只补 library**。
+   `reset_library_references()` 清的是全部 `_sources` 与 `_expected`，image 在 import 期
+   登记的那条会一起没掉；只补自己那份会让后面所有删除用例 503，而报错读起来像
+   「purge 坏了」。`test_library_skeleton.py` 的 autouse fixture 改成遍历
+   `active_modules()`。
+
+**验证**
+
+- `select_tests.py --print` 判 **full**（动了 `api/module.py`、`api/discovery.py`、
+  `api/ports.py`、`core/ports/`——装配声明层），全量 **158 个测试文件，exit 0**（2m54s）。
+- `ruff check src tests` 通过；`mypy --platform win32 src` 290 files 无问题。
+- **反向验证 1**：把 `modules/image/__init__.py` 的
+  `library_reference_sources=LIBRARY_REFERENCE_SOURCES` 删掉 →
+  `test_every_library_reference_writer_declares_a_source` 红。
+- **反向验证 2**：保留声明、只删掉 import 期的 `bind_library_reference_sources("image", …)`
+  → `app doctor` 的 `ports.library_references` FAIL →
+  `test_doctor_ports.py::test_real_assembly_passes_the_port_checks` 红。
+  （第一次跑这条是**绿**的：当时 `ports.*` 只核 v1，`library.ports` 那条模块自检虽然
+  FAIL 了，但没有任何守卫断言它。「补了检查却没补断言」——已一并补上。）
+
+**留给后续步的**：`template` / `task` 目前**没有** v2 引用来源，因为它们还没把
+v2 资产 id 持久化到「purge 之后会坏」的位置（只存冻结正文的 `text_json`）。步 3 接
+§23.5 的 `libraryPackId` 时，AST 守卫会自动把它们要红，届时补 checker。

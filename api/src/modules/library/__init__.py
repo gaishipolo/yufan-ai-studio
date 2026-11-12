@@ -13,13 +13,16 @@ from api.module import ModuleSpec
 from core.permissions import PermissionSpec
 from core.ports.assets import AssetReferenceSource, bind_asset_reference_sources
 from core.ports.library_ingest import register_library_ingest
-from core.ports.library_references import register_library_references
+from core.ports.library_references import (
+    LibraryReferenceSource,
+    bind_library_reference_sources,
+)
 from modules.library.asset_references import GenerationAssetReferences
 from modules.library.cli import register as register_cli
 from modules.library.health import check as health_check
 from modules.library.ingest import SqlLibraryIngest
 from modules.library.lookup import install as install_lookup
-from modules.library.references import SqlLibraryReferences
+from modules.library.references import DownloadJobReferences, PackMemberReferences
 from modules.library.router import router
 
 # 必须 import：注册 @periodic("library.trash.gc") / @periodic("library.download.gc") /
@@ -38,7 +41,27 @@ register_library_ingest(SqlLibraryIngest())
 
 # 彻底删除前的引用检查：v2 自己的封装成员与下载任务在这里聚合。
 # fail-closed —— 没接上时 `purge` 一律 503，不把「查不到」当「没人引用」。
-register_library_references(SqlLibraryReferences())
+#
+# **一个来源一条声明**，`location` 指向真实写入点：`tests/test_architecture.py`
+# 的 `test_library_reference_sources_are_complete_after_discovery` 拿它做完备性对账，
+# 而 `test_every_library_reference_writer_declares_a_source` 反过来扫源码里的
+# `reference_library_ids` / `library_pack_id` 一类字段——新增一处写入却忘了在这里
+# 声明，CI 直接红，不必等用户发现「删掉的图在封装里裂了」。
+LIBRARY_REFERENCE_SOURCES = (
+    LibraryReferenceSource(
+        name="library_pack_items.asset_id",
+        checker=PackMemberReferences(),
+        location="modules/library/models.py:LibraryPackItem.asset_id",
+        description="v2 封装的成员；已解散（在回收站）的封装不算",
+    ),
+    LibraryReferenceSource(
+        name="library_download_jobs.asset_ids",
+        checker=DownloadJobReferences(),
+        location="modules/library/models.py:LibraryDownloadJob.asset_ids",
+        description="已经打进下载包的任务（仅 queued / running / succeeded）",
+    ),
+)
+bind_library_reference_sources("library", LIBRARY_REFERENCE_SOURCES)
 
 # v2 绝大多数 `asset_id` 列指向 `library_assets.id`，与旧 `assets.id` 无关；
 # 唯一例外是生成溯源里记录的旧素材参考图——删掉旧图会让历史详情页留白。
@@ -106,5 +129,6 @@ module = ModuleSpec(
     # 运维命令：旧素材导入、回收站 GC、打包产物清理
     cli=register_cli,
     asset_reference_sources=ASSET_REFERENCE_SOURCES,
+    library_reference_sources=LIBRARY_REFERENCE_SOURCES,
     doctor=health_check,
 )

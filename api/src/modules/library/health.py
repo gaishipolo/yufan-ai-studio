@@ -29,7 +29,7 @@ from api.module import DoctorReportLike, Level
 from core.config import settings
 from core.ports.library_ingest import has_library_ingest
 from core.ports.library_lookup import has_library_lookup
-from core.ports.library_references import has_library_references
+from core.ports.library_references import library_reference_gaps, library_references_ready
 from db.session import get_session_factory
 from modules.library.downloads import QUEUED, RUNNING, STUCK_AFTER, SUCCEEDED
 from modules.library.import_archive import reconcile_legacy
@@ -50,16 +50,20 @@ async def check(report: DoctorReportLike) -> None:
         for name, connected in (
             ("library-lookup", has_library_lookup()),
             ("library-ingest", has_library_ingest()),
-            ("library-references", has_library_references()),
+            ("library-references", library_references_ready()),
         )
         if not connected
     ]
     if missing:
+        # 引用检查单独说清「差哪一条」：`library_references_ready()` 判的是
+        # 「声明 ⊆ 实现」，只报「没接上」会把「接上了但漏了一个来源」也说成没接。
+        gaps = library_reference_gaps()
         report.add(
             "library.ports",
             "FAIL",
             f"注入口未接上：{', '.join(missing)}"
-            "（引用检查缺失会让彻底删除一律 503，入库缺失会让生成结果无处可写）",
+            "（引用检查缺失会让彻底删除一律 503，入库缺失会让生成结果无处可写）"
+            + (f"；引用来源缺口：{'；'.join(gaps)}" if gaps else ""),
         )
     else:
         report.add("library.ports", "PASS", "读 / 写 / 引用三个注入口均已接上")

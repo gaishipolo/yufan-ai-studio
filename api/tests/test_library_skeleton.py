@@ -22,7 +22,10 @@ from core.exceptions import AppError, Unavailable
 from core.permissions import catalog
 from core.ports.library_ingest import get_library_ingest, reset_library_ingest
 from core.ports.library_lookup import get_library_lookup, reset_library_lookup
-from core.ports.library_references import get_library_references, reset_library_references
+from core.ports.library_references import (
+    require_library_references,
+    reset_library_references,
+)
 from modules.library import errors as library_errors
 
 #: 已接入 `ModuleSpec` 的权限点（M3 完成态）。清单必须与真实判定点同步：
@@ -72,22 +75,23 @@ def _restore_ports() -> Iterator[None]:
         register_library_ingest,
     )
     from core.ports.library_lookup import has_library_lookup
-    from core.ports.library_references import (
-        has_library_references,
-        register_library_references,
-    )
+    from core.ports.library_references import bind_library_reference_sources
     from modules.library.ingest import SqlLibraryIngest
     from modules.library.lookup import install as install_lookup
-    from modules.library.references import SqlLibraryReferences
 
     # 只在「被本用例清空过」时补装：注入口不允许重复注册（那是配置错误），
     # 无条件补装会把每个用例的 teardown 都变成 RegistryError。
     if not has_library_lookup():
         install_lookup()
-    if not has_library_references():
-        register_library_references(SqlLibraryReferences())
     if not has_library_ingest():
         register_library_ingest(SqlLibraryIngest())
+
+    # 引用来源是「多模块声明」的，必须按**全部**模块的声明补装，不能只补 library：
+    # `reset_library_references()` 会把 image 等模块在 import 期登记的来源一起清掉，
+    # 只补自己那份会让后面所有删除用例 503（表现为「purge 坏了」，极难定位）。
+    for spec in active_modules():
+        if spec.library_reference_sources:
+            bind_library_reference_sources(spec.name, spec.library_reference_sources)
 
 
 def test_library_list_returns_the_contract_shape(client: TestClient, api: str) -> None:
@@ -166,7 +170,9 @@ def test_library_paths_are_registered_in_openapi(client: TestClient, api: str) -
     [
         (reset_library_lookup, get_library_lookup),
         (reset_library_ingest, get_library_ingest),
-        (reset_library_references, get_library_references),
+        # 引用检查没有单例 getter 了（来源是「声明 + 实现」两表对账），
+        # 用同步前置断言 `require_library_references()` 当探针，语义一模一样。
+        (reset_library_references, require_library_references),
     ],
     ids=["lookup", "ingest", "references"],
 )

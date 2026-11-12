@@ -81,10 +81,13 @@ class DoctorReport:
 def _check_ports(report: DoctorReport) -> None:
     """CLI 默认不发现模块，注入口就不会注册 —— 自检必须先加载它们。
 
-    这里核的是三个 **fail-closed** 注入口。它们的共同点：没注册时系统照常启动、
+    这里核的是 **fail-closed** 注入口。它们的共同点：没注册时系统照常启动、
     接口照常返回 200，只是功能**静默半残**——所以只能靠自检把人叫回来。
 
-    - `library-references`：删除不再被拦（不可逆的数据错误）
+    - `ports.references`：v1 `assets.id` 的引用来源不齐 → 旧素材删除不再被拦
+      （不可逆的数据错误）
+    - `ports.library_references`：v2 `library_assets.id` 的引用来源不齐 → v2 资产的
+      「彻底删除」不再被拦（同一个失败方向，但两套 id 空间，必须分开对账）
     - `library-ingest`：生成成功但写不进草稿箱（用户看到「完成」，库里总是空的）
     - `model-generation`：下游模块（模板/分镜）发起不了生成
 
@@ -100,6 +103,7 @@ def _check_ports(report: DoctorReport) -> None:
         reference_source_gaps,
     )
     from core.ports.library_ingest import has_library_ingest
+    from core.ports.library_references import library_reference_count, library_reference_gaps
     from core.ports.model_generation import has_model_generation
 
     # CLI 不跑 lifespan，两个扩展点都要手动装配；否则会误报「审计未注册」
@@ -130,6 +134,23 @@ def _check_ports(report: DoctorReport) -> None:
             "ports.references",
             "PASS",
             f"{reference_source_count()} 个来源齐全且全部有声明（fail-closed 生效）",
+        )
+
+    # v2 资产是另一套 id 空间（`library_assets.id`），必须单独对账：
+    # 合并成一条会让「v1 齐全、v2 缺一个」显示成 PASS —— 那正是删掉 v2 图之后
+    # 封装里裂图、而自检一片绿的情形。
+    library_gaps = library_reference_gaps()
+    if library_gaps:
+        report.add(
+            "ports.library_references",
+            "FAIL",
+            "v2 资产的彻底删除会被拒绝：" + "；".join(library_gaps),
+        )
+    else:
+        report.add(
+            "ports.library_references",
+            "PASS",
+            f"{library_reference_count()} 个 v2 引用来源齐全且全部有声明（fail-closed 生效）",
         )
 
     if has_audit_sink():

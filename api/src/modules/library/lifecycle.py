@@ -32,7 +32,7 @@ from core.config import settings
 from core.context import CurrentUser
 from core.exceptions import Conflict, NotFound
 from core.logging import get_logger
-from core.ports.library_references import get_library_references
+from core.ports.library_references import ask_library_references
 from infra.storage.base import ObjectStorage
 from modules.library import access
 from modules.library.errors import (
@@ -278,8 +278,8 @@ class LifecycleService:
         if row.state != "trash":
             raise AssetNotInTrash()
 
-        # fail-closed：注入口没接上时抛 503，绝不把「查不到」当「没人引用」
-        references = await get_library_references().references(self.session, [row.id])
+        # fail-closed：来源不齐或任一来源查询失败时抛 503，绝不把「查不到」当「没人引用」
+        references = await ask_library_references(self.session, [row.id])
         blocked = references.get(row.id)
         if blocked:
             raise TrashEntryReferenced(details={"references": list(blocked)})
@@ -314,7 +314,7 @@ class LifecycleService:
         row = await self.session.get(LibraryAsset, asset_id)
         if row is None or row.state != "trash":
             return False
-        references = await get_library_references().references(self.session, [row.id])
+        references = await ask_library_references(self.session, [row.id])
         if references.get(row.id):
             return False
         await self._purge_row(row, None)

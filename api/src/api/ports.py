@@ -75,7 +75,7 @@ from core.ports.assets import reference_source_gaps
 from core.ports.export_sources import export_sources
 from core.ports.library_ingest import has_library_ingest
 from core.ports.library_lookup import has_library_lookup
-from core.ports.library_references import has_library_references
+from core.ports.library_references import library_references_ready
 from core.ports.media import has_asset_lookup
 from core.ports.model_generation import has_model_generation
 from core.ports.org_directory import has_org_directory
@@ -212,7 +212,9 @@ PORT_CATALOG: tuple[PortSpec, ...] = (
         implementer="modules/library（聚合 v2 封装成员、下载任务与将来接入的跨模块来源）",
         when_unregistered="fail-closed：抛 503，v2 资产一律不可彻底删除。"
         "「查不到 = 没人引用」在这里等于静默放行不可逆删除",
-        is_registered=has_library_references,
+        # 判「声明 ⊆ 实现」而不是「有没有人注册」：注册了却漏声明时，某个来源会
+        # 被静默忽略，删除照样放行——这正是 v1 那条 `reference_source_gaps()` 的教训。
+        is_registered=library_references_ready,
     ),
     PortSpec(
         name="model-generation",

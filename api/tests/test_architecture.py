@@ -698,6 +698,109 @@ def test_reference_sources_are_complete_after_discovery() -> None:
 
 
 # --------------------------------------------------------------------------- #
+# v2 资产（`library_assets.id`）引用来源完备性：与上面两条**不能合并**
+# --------------------------------------------------------------------------- #
+#: 装着 v2 资产 id 的字段名。**精确匹配**，不做子串匹配 —— 与 `_REFERENCE_FIELDS`
+#: （v1 `assets.id`）是两套 id 空间，混在一起会把「A 引用了同名 id」当成「B 被引用」。
+#:
+#: 刻意**不含** `text_library_ids` / `textLibraryIds`：文本素材的快照冻结了正文
+#: 本身，删掉资产既不影响历史展示，也不影响已经注入过的提示词。把它算成引用会
+#: 让「用过一次的文案永远删不掉」——过度保护的结果是用户要求关掉整道闸，比漏保护更糟
+#: （判据写在 `modules/image/library_references.py` 的 docstring 里）。
+#:
+#: 也**不含** `pack_id` / `extra_pack_ids`：那两个是模板库自己的
+#: `TemplatePackVersion` 主键（`modules/template/schema.py`），与 v2 封装无关。
+#: 真正指向 v2 封装的字段按 §23.5 的约定叫 `library_pack_id`。
+_LIBRARY_REFERENCE_FIELDS = frozenset(
+    {
+        "reference_library_ids",
+        "referenceLibraryIds",
+        "library_pack_id",
+        "libraryPackId",
+    }
+)
+
+
+def _library_reference_field_files() -> list[str]:
+    """找出所有声明了「装着 v2 资产 id 的集合」字段的源码文件。
+
+    只看模型/契约层的字段定义（赋值 + 精确名字匹配），不看读它的 checker。
+    新增一处把 `library_assets.id` 存进自己表或 JSON 的模块，这个集合就会多一项。
+    """
+    found: set[str] = set()
+    for path in _python_files(SRC):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            names: list[str] = []
+            if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+                names.append(node.target.id)
+            elif isinstance(node, ast.Assign):
+                names.extend(t.id for t in node.targets if isinstance(t, ast.Name))
+            if any(name in _LIBRARY_REFERENCE_FIELDS for name in names):
+                found.add(path.relative_to(SRC).as_posix())
+                break
+    return sorted(found)
+
+
+def test_every_library_reference_writer_declares_a_source() -> None:
+    """任何写入 v2 资产 id 的模块都必须在 ModuleSpec 里声明引用来源。
+
+    v1 那条守卫（`test_every_asset_reference_writer_declares_a_source`）只看
+    `assets.id`，v2 的 `library_assets.id` 完全不在它的视野里 —— 于是「模板/任务
+    引用了某张 v2 图，用户把图彻底删掉」这条路一直是静默裂图。这条补上它。
+
+    失败方向与 v1 一致：漏声明 → `ask_library_references()` 返回的映射里没有
+    这个来源 → 删除照常成功 → 引用方裂图，不可逆且没有告警。
+    """
+    from api.discovery import active_modules
+
+    specs = active_modules()
+    declared = {
+        source.location.split(":", 1)[0]
+        for spec in specs
+        for source in spec.library_reference_sources
+    }
+    by_module = {spec.name for spec in specs if spec.library_reference_sources}
+
+    uncovered: list[str] = []
+    for relative in _library_reference_field_files():
+        parts = relative.split("/")
+        if parts[0] == "modules":
+            if parts[1] not in by_module:
+                uncovered.append(f"{relative}（模块 {parts[1]} 未声明来源）")
+        elif relative not in declared:
+            # core 层定义、被业务模块持久化的共享契约，必须由某个声明显式指认
+            uncovered.append(f"{relative}（共享契约，没有任何来源声明指向它）")
+
+    missing_files = sorted(path for path in declared if not (SRC / path).is_file())
+    details = uncovered + [f"声明指向不存在的文件：{path}" for path in missing_files]
+    assert not details, (
+        "v2 引用来源对账失败：\n"
+        + "\n".join(f"  - {item}" for item in details)
+        + "\n在对应模块的 ModuleSpec.library_reference_sources 里补声明，并在 "
+        "core/ports/library_references.py 的聚合口注册实现；否则 v2 资产的彻底删除"
+        "会放行一次不可逆的裂图。"
+    )
+
+
+def test_library_reference_sources_are_complete_after_discovery() -> None:
+    """discover_modules 之后必须零缺口：v2 声明集合 ⊆ 已注册实现。"""
+    from api.discovery import active_modules
+    from core.ports import library_references as port
+
+    port.reset_library_references()
+    specs = active_modules()
+    # 模块 import 期已注册过；测试间可能清空了全局表，这里按声明重新装配一次。
+    for spec in specs:
+        if spec.library_reference_sources:
+            port.bind_library_reference_sources(spec.name, spec.library_reference_sources)
+    assert port.declared_library_reference_sources(), "期望集合为空：没有模块声明 v2 引用来源"
+    assert port.library_references_ready(), (
+        f"v2 资产的彻底删除会被拒绝：{port.library_reference_gaps()}"
+    )
+
+
+# --------------------------------------------------------------------------- #
 # 事务边界
 # --------------------------------------------------------------------------- #
 def test_routers_do_not_manage_transactions() -> None:

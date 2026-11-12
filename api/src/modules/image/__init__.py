@@ -5,14 +5,29 @@
 """
 
 from api.module import ModuleSpec
+from core.ports.library_references import LibraryReferenceSource, bind_library_reference_sources
 from modules.image import (
     maintenance,  # noqa: F401  副作用导入：注册周期任务 image.reconcile
     pipeline,  # noqa: F401  副作用导入：把流水线注册到 generation.pipeline
 )
 from modules.image.health import check as health_check
+from modules.image.library_references import ImageJobReferences
 from modules.image.permissions import SPECS
 from modules.image.router import router
 from modules.image.seed import seed
+
+# 参考图快照只冻结 `storageKey`，purge 之后这条作业的重试读不到字节，
+# 所以必须声明成 v2 引用来源（漏了 = 删得掉，但重试静默失败）。
+# `text_json` 不算：正文已冻结进快照，删资产不影响历史可读。
+LIBRARY_REFERENCE_SOURCES = (
+    LibraryReferenceSource(
+        name="image_jobs.reference_json",
+        checker=ImageJobReferences(),
+        location="modules/image/models.py:ImageJob.reference_json",
+        description="生图作业的参考图快照（存 storageKey，purge 后重试读不到字节）",
+    ),
+)
+bind_library_reference_sources("image", LIBRARY_REFERENCE_SOURCES)
 
 module = ModuleSpec(
     name="image",
@@ -29,4 +44,5 @@ module = ModuleSpec(
     periodic=("image.reconcile",),
     # 部署自检：历史行里还有没有旧 /static 地址（见 modules/image/health.py）
     doctor=health_check,
+    library_reference_sources=LIBRARY_REFERENCE_SOURCES,
 )

@@ -39,7 +39,7 @@ from sqlalchemy.sql.elements import ColumnElement
 from core.config import settings
 from core.context import CurrentUser
 from core.exceptions import AppError, BadRequest, NotFound
-from core.ports.library_references import get_library_references, has_library_references
+from core.ports.library_references import ask_library_references, library_references_ready
 from core.response import PageParams
 from core.serving import Served
 from infra.media_probe import (
@@ -389,14 +389,21 @@ class LibraryService:
         return result
 
     async def _references(self, row: LibraryAsset) -> list[str] | None:
-        """谁在用它。`None` 表示注入口没接上（**不可判定**），不是「没人用」。
+        """谁在用它。`None` 表示**不可判定**（来源不齐），不是「没人用」。
 
         详情页据此决定是「可以彻底删除」还是「暂时查不了」——把两者都说成
         空数组，会让用户在一个装配故障的实例上删掉正在被引用的素材。
+
+        判据是 `library_references_ready()`（声明 ⊆ 实现）而不是「有没有人注册」：
+        注册了却漏声明，某个来源会被静默忽略，这种实例「查得动」但答案不完整。
+        只读展示传 `require_complete=False` —— 删除路径（`lifecycle.purge`）才需要
+        抛 503，这里抛了会连详情页都打不开。
         """
-        if not has_library_references():
+        if not library_references_ready():
             return None
-        references = await get_library_references().references(self.session, [row.id])
+        references = await ask_library_references(
+            self.session, [row.id], require_complete=False
+        )
         return list(references.get(row.id, []))
 
     async def _share_history(self, row: LibraryAsset) -> list[ShareHistoryItem]:
