@@ -234,6 +234,7 @@ export function CreateTaskModal({ open, onClose, onCreated }: CreateTaskModalPro
         open={pickerOpen}
         title="选择参考素材"
         value={references.map((item) => item.id)}
+        valueItems={references}
         kinds={['image']}
         onClose={() => setPickerOpen(false)}
         onConfirm={(assets) => setReferences(assets.slice(0, 4))}

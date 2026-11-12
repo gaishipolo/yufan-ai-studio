@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Check, Library } from 'lucide-react';
 import { Button, Chip, CoverImage, Modal, SearchInput, Select, Skeleton } from '@/shared/ui';
 import { cn } from '@/shared/lib/cn';
@@ -16,6 +16,15 @@ export interface LibraryPickerProps {
   kinds?: LibraryAssetKind[];
   /** 已选 id：打开时回显 */
   value?: string[];
+  /**
+   * 已选项的完整对象（可选）。
+   *
+   * 只有 id 时，**翻页/搜索后看不到的已选项会在确认时凭空消失**：`picked` 里没有它，
+   * 调用方拿到的数组就缺一项，于是「解绑了」这件事被当成用户的意图。文本引用那条链
+   * 更严重——数组顺序就是 `{{Text N}}` 的编号顺序，少一项会让后面的编号整体前移。
+   * 传了它就按 `value` 的顺序原样带回。
+   */
+  valueItems?: LibraryAssetOut[];
   onClose: () => void;
   onConfirm: (assets: LibraryAssetOut[]) => void;
 }
@@ -42,6 +51,7 @@ export function LibraryPicker({
   multiple = true,
   kinds,
   value,
+  valueItems,
   onClose,
   onConfirm,
 }: LibraryPickerProps) {
@@ -50,6 +60,14 @@ export function LibraryPicker({
   const [page, setPage] = useState(1);
   const [picked, setPicked] = useState<Record<string, LibraryAssetOut>>({});
   const debounced = useDebouncedValue(keyword, 250);
+
+  /* 打开那一刻要把 `valueItems` 铺进 picked，而这个 useEffect 只认 `open`：
+     直接把 valueItems 写进依赖，调用方每次渲染都新建一个数组，会把用户刚点的
+     选择重置掉。用 ref 拿「最新的一份」，只在真的打开时才读。 */
+  const seed = useRef(valueItems);
+  useEffect(() => {
+    seed.current = valueItems;
+  }, [valueItems]);
 
   /* kinds 只有一个时把类型下发给服务端：前端过滤会让 total 与分页对不上，
      文本资产排在图片后面时可能翻好几页都看不到。 */
@@ -66,7 +84,10 @@ export function LibraryPicker({
     setKeyword('');
     setKind('');
     setPage(1);
-    setPicked({});
+    // 已选项的完整对象先铺进去：翻页 / 搜索之后看不到的项也必须留在结果里，
+    // 否则确认时它凭空消失，调用方只能当成「用户解绑了」——文本引用那条链
+    // 还会因此把后面的 {{Text N}} 整体前移。
+    setPicked(Object.fromEntries((seed.current ?? []).map((item) => [item.id, item])));
   }, [open]);
 
   const items = useMemo(() => {
@@ -88,7 +109,18 @@ export function LibraryPicker({
     });
   }, [items, value]);
 
-  const chosen = Object.values(picked);
+  const chosen = useMemo(() => {
+    const loaded = Object.values(picked);
+    // 单选就是「换一个」，顺序没有意义
+    if (!multiple) return loaded;
+    const order = value ?? [];
+    const known = new Set(order);
+    // 已选的按 `value` 的顺序排：那是「已经定下来的编号」，不能被后点进来的挤乱
+    const preserved = order
+      .map((id) => picked[id])
+      .filter((item): item is LibraryAssetOut => !!item);
+    return [...preserved, ...loaded.filter((item) => !known.has(item.id))];
+  }, [picked, value, multiple]);
 
   const toggle = (asset: LibraryAssetOut) => {
     setPicked((previous) => {
