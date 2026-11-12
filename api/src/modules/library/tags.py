@@ -294,6 +294,7 @@ class TagService:
         *,
         state: str = "active",
         library: LibraryTab = LibraryTab.ALL,
+        kind: str = "",
     ) -> list[LibraryTagStatOut]:
         """标签栏的数据：全部标签 + 当前入口下各标签的素材数。
 
@@ -304,9 +305,13 @@ class TagService:
           封装的成员在列表里不单列，计数里也不该算）；
         - 草稿 / 回收站按权限点收窄到本人或全量，忽略 `library`。
 
+        **`kind` 与列表的类别筛选同口径**：悬浮栏按类别看库时，胶囊上的数字
+        必须也是「这一类里有几条」。不按类别算的话，用户在「图片」下看到
+        胶囊写 9、点进去只有 4 条——数字说的是全库，筛的是本类。
+
         **不受当前标签筛选影响**：计数是「这个入口里有多少素材属于该标签」，
         不是「再叠上已选标签后还剩多少」；否则每点一次筛选，其余标签的数字
-        都会跳一遍，反而没法读。关键词与类型筛选同理不计入。
+        都会跳一遍，反而没法读。关键词筛选同理不计入。
 
         排序按 `created_at` 升序（先加的在前），`id` 收尾保证同秒创建时稳定。
         """
@@ -322,7 +327,7 @@ class TagService:
             if row.parent_id:
                 children.setdefault(row.parent_id, []).append(row.id)
 
-        per_tag = await self._asset_ids_by_tag(actor, groups, state, library)
+        per_tag = await self._asset_ids_by_tag(actor, groups, state, library, kind)
         # 一级标签的数字 = 自身 + 旗下二级，按资产 id 去重。这与「点一级展开到
         # 子级」的筛选口径完全一致；`count(distinct)` 做不到跨标签的并集去重，
         # 所以这里把绑定行取回来在内存里归并（当前入口的可见集本来就不大）。
@@ -353,17 +358,23 @@ class TagService:
         groups: list[str],
         state: str,
         library: LibraryTab,
+        kind: str = "",
     ) -> dict[str, set[str]]:
         """当前入口下「每个标签 → 可见资产 id 集合」，一次查询取回。
 
         可见条件与 `LibraryService.list_assets` 一字不差；比旧的 `group by count`
         多取一列 asset_id，是为了给一级标签做「自身 ∪ 子级」的资产级去重。
+
+        `kind` 是类别筛选（image / video / audio / text），与列表的类别口径
+        一致；留空表示不按类别收窄。
         """
         query = (
             select(LibraryAssetTag.tag_id, LibraryAssetTag.asset_id)
             .join(LibraryAsset, LibraryAsset.id == LibraryAssetTag.asset_id)
             .where(LibraryAsset.state == state)
         )
+        if kind:
+            query = query.where(LibraryAsset.kind == kind)
         if state == "active":
             query = query.where(
                 LibraryAsset.deleted_at.is_(None),

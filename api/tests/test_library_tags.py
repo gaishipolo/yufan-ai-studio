@@ -127,3 +127,39 @@ def test_tag_counts_update_after_untag_and_trash(client: TestClient, api: str) -
     assert deleted.status_code == 200, deleted.text
     assert _counts(client, api, owner_h)[tag_b["id"]]["assetCount"] == 0
     assert _counts(client, api, owner_h, state="trash")[tag_b["id"]]["assetCount"] == 1
+
+
+def test_tag_counts_can_be_scoped_to_one_kind(client: TestClient, api: str) -> None:
+    """标签计数必须能按**类别**收窄。
+
+    素材库悬浮栏顶部切成「图片 / 成片 / 音频 / 文本」四类，胶囊上的数字
+    却还是全类的——写着 9、点进去只有 4 条，用户以为数据丢了。
+    """
+    headers = admin_headers(client)
+    tag = _create_tag(client, api, headers, f"分类计数{suffix()}")
+
+    image = upload_image(client, api, headers, name=f"计数图{suffix()}.png")
+    text = client.post(
+        f"{api}/library/text-assets",
+        json={"name": f"计数文{suffix()}.md", "content": f"正文{suffix()}", "extension": "md"},
+        headers=headers,
+    )
+    assert text.status_code == 201, text.text
+    text_asset = text.json()["data"]
+
+    _add_tags(client, api, headers, image["id"], [tag["id"]])
+    _add_tags(client, api, headers, text_asset["id"], [tag["id"]])
+
+    def _count(**params: object) -> int:
+        response = client.get(f"{api}/library/tags", params=params, headers=headers)
+        assert response.status_code == 200, response.text
+        items = {item["id"]: item for item in response.json()["data"]}
+        return int(items[tag["id"]]["assetCount"])
+
+    # 全类：图 + 文，两条
+    assert _count(state="active", library="all") == 2
+    # 按类别：各自一条
+    assert _count(state="active", library="all", kind="image") == 1
+    assert _count(state="active", library="all", kind="text") == 1
+    # 这个类别里没有带这个标签的素材
+    assert _count(state="active", library="all", kind="video") == 0

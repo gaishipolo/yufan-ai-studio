@@ -22,6 +22,8 @@
  *    该组全部（后端把一级展开成「自身 + 旗下二级」）；点了二级就把一级从条件里
  *    换成二级，避免 OR 叠加后等于没筛。
  * 3. 当前一级**从选中派生**，不另存一份 state：刷新/切换类别后两行仍对得上。
+ * 4. 标签胶囊的计数**按当前类别算**（`/library/tags?kind=…`）：抽屉切到「图片」
+ *    就显示图片的条数。写成全库口径的话，胶囊写着 9、点进去只有 4 条。
  */
 import { useMemo, useState } from 'react';
 import { Check, Library, Plus, X } from 'lucide-react';
@@ -162,8 +164,13 @@ export function LibraryFlyout({
   const [childTagId, setChildTagId] = useState('');
   const debounced = useDebouncedValue(keyword, 250);
 
-  // 标签计数按入口变化；这里固定「全部素材」口径，与选择器的可见集一致
-  const tagScope = useMemo(() => ({ state: 'active' as const, library: 'all' as const }), []);
+  // 标签计数按入口变化；这里固定「全部素材」口径，与选择器的可见集一致。
+  // **再按当前类别收窄**：抽屉顶部已经切成「图片 / 成片 / 音频 / 文本」，
+  // 胶囊上的数字却还是全类的——写着 9、点进去只有 4 条，用户以为数据丢了。
+  const tagScope = useMemo(
+    () => ({ state: 'active' as const, library: 'all' as const, kind }),
+    [kind],
+  );
   const tags = useLibraryTags(tagScope);
 
   const allTags = useMemo(() => tags.data ?? [], [tags.data]);

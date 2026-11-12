@@ -7,6 +7,7 @@ import type {
   DownloadJobOut,
   DraftDecisionIn,
   LibraryAssetDetailOut,
+  LibraryAssetKind,
   LibraryAssetOut,
   LibraryAssetPage,
   LibraryFacets,
@@ -45,8 +46,16 @@ export function toRequestParams(params: LibraryListParams): Record<string, unkno
   return { ...viewQuery(view), ...rest };
 }
 
-/** 标签栏的计数范围：与列表同一个视图，避免「写 8 点进去只有 3 条」。 */
-export type LibraryTagScope = ReturnType<typeof viewQuery>;
+/**
+ * 标签栏的计数范围：与列表同一个视图，避免「写 8 点进去只有 3 条」。
+ *
+ * `kind` 是可选的**类别**收窄：悬浮栏按「图片 / 成片 / 音频 / 文本」分类
+ * 浏览时，胶囊上的数字必须也是这一类里的条数。不传就是全类计数
+ * （资产库页的标签栏就是全类，它不按类别切）。
+ */
+export type LibraryTagScope = ReturnType<typeof viewQuery> & {
+  kind?: LibraryAssetKind;
+};
 
 export const libraryApi = {
   list: (params: LibraryListParams) =>

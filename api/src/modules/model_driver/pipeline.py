@@ -26,6 +26,14 @@ class ModelDriverPipeline:
     # 只是满足形状要求的默认值，不参与任何路由判断。
     capability = Capability.IMAGE
 
+    # 统一门面的任务也要按当次记录的模型找回原供应商。驱动文件被删掉 /
+    # 模型被下线之后，兜底会让重启恢复把任务打到别的驱动上，产物根本不是
+    # 用户要的那个模型。
+    strict_model = True
+
+    # 模型从目录里消失 = 这条记录不可能再有结果 → 当场判失败。
+    fail_on_model_gone = True
+
     def store(self, session: AsyncSession) -> DriverJobStore:
         return DriverJobStore(session)
 

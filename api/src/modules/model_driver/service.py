@@ -69,6 +69,21 @@ class ModelGenerationFacade:
         # 未声明的键则被静默丢弃——两种都让用户以为改的值生效了。
         params = resolve_params(spec.id, spec.param_schema or {}, request.params)
 
+        # 参考图张数同理：`max_references` 是模型声明的契约，**这条链上没人
+        # 校验它**——生图那条链在 `ImageService._resolve_references` 里拦，
+        # 统一门面是自己开的口子，绕过去就等于没有上限。
+        # 超量的参考图会被驱动静默截断（只算前 N 张），用户以为 5 张都生效了。
+        references = tuple(url for url in request.reference_urls if url.strip())
+        limit = max(0, spec.max_references)
+        if references and limit == 0:
+            raise BadRequest(
+                f"模型 {spec.label} 不支持参考图（纯文生图），请换一个支持图生图 / 多图合成的模型"
+            )
+        if len(references) > limit:
+            raise BadRequest(
+                f"模型 {spec.label} 最多接受 {limit} 张参考图，本次传了 {len(references)} 张"
+            )
+
         job = DriverJob(
             name=(request.name.strip() or request.prompt.strip()[:60] or "统一生成"),
             prompt=request.prompt,
@@ -76,7 +91,7 @@ class ModelGenerationFacade:
             # 但原串透传给上游只会 404「不认这个模型」（agnes/bailian 都如此）。
             model=spec.id,
             capability=spec.capability.value,
-            params_json=encode_request(params, tuple(request.reference_urls)),
+            params_json=encode_request(params, references),
             source=request.source[:64],
             owner_id=request.owner_id,
         )

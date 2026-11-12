@@ -64,6 +64,11 @@ def _normalize(content: str) -> tuple[str, bytes]:
         content = content[1:]
     if not content.strip():
         raise LibraryTextInvalid("文本内容不能为空")
+    # NUL 与「非法 UTF-8」归成一类：两者都是**存不进数据库**的正文，
+    # 而正文入库失败会留下没人引用的 blob（上传链先 put 后落库）。
+    # 拦在落盘之前，用户看到的是「你的文本有问题」而不是 500。
+    if "\x00" in content:
+        raise LibraryTextInvalid("文本里含有 U+0000 空字符，无法保存，请删除后重试")
     try:
         data = encode_text(content)
     except UnicodeEncodeError as exc:
@@ -137,6 +142,19 @@ class TextAssetService:
         mime = EXTENSIONS[extension]
         content, data = _normalize(payload.content)
         digest = hashlib.sha256(data).hexdigest()
+
+        # 站内新建也要查重。唯一索引 `uq_library_assets_owner_sha_kind` 拦的是
+        # 「同 owner + 同内容 + 同类型」，但撞它时用户看到的是通用 409
+        # 「请检查唯一性或关联引用」——他没做错任何事，只是把同一段文字又存了一遍。
+        # 上传链有 `_find_duplicate` 先查后写，站内新建当时没跟上。
+        duplicate = await self._find_duplicate(actor.id, digest, "text")
+        if duplicate is not None:
+            # 秒传口径：**直接返回已有那条**，不新建第二个副本。
+            # 用户要的是「这份文案在库里」，不是「库里必须有第二份一模一样的」。
+            # 名字不同也不另建：同一段正文存两份，等于之后编辑其中一份时
+            # 另一份悄悄成了旧版，引用它的提示词也就对不上了。
+            return self._out(duplicate, await self._latest(duplicate.id))
+
         key = blob_key(digest, extension)
         await self.storage.put(key, data, mime)
         # 后缀由 `extension` 决定，用户写在名字里的后缀一律剥掉重拼——
@@ -196,6 +214,17 @@ class TextAssetService:
             # 内容没变就不制造一个空版本：用户只是点了保存，历史里不该多一版。
             return self._out(row, await self._latest(row.id))
 
+        # 编辑到「自己名下另一条一模一样的正文」同样会撞唯一索引。
+        # 这里必须拦在写库之前：撞了索引只有通用 409，用户看不出是自己
+        # 撞了库里已有的那份。指路到那一条，他改成引用或先删掉即可。
+        duplicate = await self._find_duplicate(actor.id, digest, "text")
+        if duplicate is not None and duplicate.id != row.id:
+            raise Conflict(
+                f"库里已经有一份内容相同的文本素材「{duplicate.name}」，"
+                "不能保存成两份一模一样的正文",
+                details={"duplicateId": duplicate.id, "duplicateName": duplicate.name},
+            )
+
         extension = _extension_of(row)
         key = blob_key(digest, extension)
         await self.storage.put(key, data, EXTENSIONS[extension])
@@ -251,6 +280,24 @@ class TextAssetService:
                 # 与 `LibraryService.patch` 同口径：能看不等于能改。
                 raise NotFound("资产不存在")
         return row
+
+    async def _find_duplicate(
+        self, owner_id: str, digest: str, kind: str
+    ) -> LibraryAsset | None:
+        """同 owner + 同内容 + 同类型、未删除的那条。
+
+        口径必须与 `LibraryService._find_duplicate` **一字不差**：同一个唯一
+        索引 `uq_library_assets_owner_sha_kind` 在两处兜底，任何一边多算/
+        少算都会出现「查重说没有、写入却撞索引」。
+        """
+        return await self.session.scalar(
+            select(LibraryAsset).where(
+                LibraryAsset.owner_id == owner_id,
+                LibraryAsset.sha256 == digest,
+                LibraryAsset.kind == kind,
+                LibraryAsset.deleted_at.is_(None),
+            )
+        )
 
     async def _latest(self, asset_id: str) -> LibraryTextVersion:
         row = await self.session.scalar(

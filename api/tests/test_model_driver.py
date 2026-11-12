@@ -428,3 +428,49 @@ def test_provider_for_can_refuse_the_only_provider_fallback() -> None:
         router.provider_for("made-up", allow_fallback=False)
     # 已声明的模型不受影响
     assert router.provider_for("a-1", allow_fallback=False).name == "alpha"
+
+
+# ------------------------------------------------------------------- 参考图上限
+def test_model_list_exposes_max_references(client: TestClient) -> None:
+    """`/model-driver/models` 必须出 `maxReferences`。
+
+    服务端知道每个模型最多收几张参考图，接口不告诉调用方，调用方就只能
+    「几张都行」地提交——上限形同虚设。
+    """
+    resp = client.get(f"{API}/model-driver/models")
+    assert resp.status_code == 200, resp.text
+    items = {item["id"]: item for item in resp.json()["data"]["items"]}
+    assert "md-sync-image" in items
+    assert items["md-sync-image"]["maxReferences"] == 4
+
+
+def test_submit_rejects_more_references_than_model_allows(client: TestClient) -> None:
+    """统一门面必须按模型声明校验参考图张数。
+
+    少了这道校验，超量的参考图会被驱动**静默截断**（只算前 N 张），
+    用户以为 5 张都生效了。
+    """
+    resp = client.post(
+        f"{API}/model-driver/tasks",
+        json={
+            "model": "md-sync-image",
+            "prompt": "超量参考图",
+            "referenceUrls": [f"https://example.com/{index}.png" for index in range(5)],
+        },
+    )
+    assert resp.status_code == 400, resp.text
+    assert "最多接受 4 张" in resp.json()["message"]
+
+
+def test_submit_rejects_references_for_text_only_model(client: TestClient) -> None:
+    """`max_references=0` 的模型不许带参考图（纯文生图）。"""
+    resp = client.post(
+        f"{API}/model-driver/tasks",
+        json={
+            "model": "md-async-video",
+            "prompt": "纯文生图模型带参考图",
+            "referenceUrls": ["https://example.com/a.png"],
+        },
+    )
+    assert resp.status_code == 400, resp.text
+    assert "不支持参考图" in resp.json()["message"]

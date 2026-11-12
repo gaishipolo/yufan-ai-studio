@@ -87,10 +87,11 @@ def test_injection_follows_submit_order_and_never_expands_twice() -> None:
 
 
 def test_out_of_range_token_is_rejected_at_intake() -> None:
+    """受理期严格：编号越界当场 400。"""
     with pytest.raises(BadRequest, match="只绑定了 1 份"):
         validate_text_refs("用 {{Text 2}} 写", _refs("唯一"))
     with pytest.raises(BadRequest, match="只绑定了 0 份"):
-        inject_text_refs("用 {{Text 1}} 写", [])
+        validate_text_refs("用 {{Text 1}} 写", [])
     # 绑定了但还没想好插在哪，是正常编辑中间态，不该拦
     assert inject_text_refs("暂不引用", _refs("备用")) == "暂不引用"
 
@@ -297,3 +298,62 @@ def test_text_probe_rejects_bad_encoding_empty_and_oversize(tmp_path: Path) -> N
     huge.write_bytes(b"x" * (media_probe.MAX_TEXT_BYTES + 1))
     with pytest.raises(BadRequest, match="1MB"):
         media_probe.inspect(huge, ".txt")
+
+
+# --------------------------------------------------------------------------- 读路径容错
+
+
+def test_inject_keeps_placeholder_when_snapshot_is_missing() -> None:
+    """读路径（轮询 / 重试 / 恢复）**不许**因为快照缺失就 400。
+
+    历史任务的 `text_json` 可能为空，而提示词里留着 `{{Text 1}}`——文本资产
+    功能上线之前的老记录，或数据被裁剪过。此时抛错会让这条记录从此**既不能
+    轮询也不能重试**，一个坏字段就报废整条任务。
+    """
+    # 完全没有快照
+    assert inject_text_refs("用 {{Text 1}} 写", []) == "用 {{Text 1}} 写"
+    # 编号越界
+    assert inject_text_refs("用 {{Text 9}} 写", _refs("正文")) == "用 {{Text 9}} 写"
+    # 快照里那份正文是空的：占位符被换成空串，句子结构还在
+    assert inject_text_refs("用 {{Text 1}} 写", _refs("")) == "用  写"
+
+
+def test_masked_inject_keeps_placeholder_when_snapshot_is_missing() -> None:
+    """替换链的读路径同口径：占位串找不到正文就原样留着，不抛。"""
+    assert inject_masked_text_refs("用 __YUFAN_TEXT_1__ 写", []) == "用 __YUFAN_TEXT_1__ 写"
+    assert (
+        inject_masked_text_refs("用 __YUFAN_TEXT_9__ 写", _refs("正文"))
+        == "用 __YUFAN_TEXT_9__ 写"
+    )
+
+
+def test_validate_still_rejects_out_of_range_at_accept_time() -> None:
+    """受理期照旧严格：口径错误要当场 400，不能被读路径的宽容带过去。
+
+    `inject_text_refs` 不再调 `validate_text_refs`，但 `freeze_text_refs`
+    仍然调——受理与读是两条路，各有各的判据。
+    """
+    with pytest.raises(BadRequest):
+        validate_text_refs("用 {{Text 3}} 写", _refs("正文"))
+    with pytest.raises(BadRequest):
+        validate_text_refs("用 {{Text 1}} 写", [])
+
+
+# --------------------------------------------------------------------------- 总量上限
+
+
+def test_total_text_bytes_over_limit_is_rejected_at_accept_time() -> None:
+    """8 份 × 1MB 拼起来是几 MB 的提示词，供应商侧只回一句参数错误。
+
+    「几份」与「每份多大」两个闸门缺一不可，这里钉的是**总量**那个。
+    """
+    from core.library_text import MAX_TEXT_REF_BYTES
+
+    over = _refs("x" * (MAX_TEXT_REF_BYTES // 2 + 10), "y" * (MAX_TEXT_REF_BYTES // 2 + 10))
+    with pytest.raises(BadRequest) as excinfo:
+        validate_text_refs("用 {{Text 1}} 写", over)
+    assert "超过" in str(excinfo.value)
+
+    # 刚好在上限内要放过
+    under = _refs("x" * 1024, "y" * 1024)
+    validate_text_refs("用 {{Text 1}} 写", under)

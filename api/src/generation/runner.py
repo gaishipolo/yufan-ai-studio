@@ -43,11 +43,17 @@ from generation.events import (
     EVT_GENERATION_SUBMITTED,
     EVT_GENERATION_SUCCEEDED,
 )
-from generation.pipeline import GenerationPipeline, get_pipeline, strict_model
+from generation.pipeline import (
+    GenerationPipeline,
+    fail_on_model_gone,
+    get_pipeline,
+    strict_model,
+)
 from generation.spec import GenerationRecord
 from generation.store import GenerationStore
 from infra import get_model_router
 from infra.ai.base import GenerationProgress, GenerationState, ModelProvider
+from infra.ai.router import ModelUnavailable
 from infra.artifacts import artifact_urls
 from infra.queue.base import Job, JobQueue
 
@@ -254,6 +260,21 @@ class GenerationRunner:
                 try:
                     provider = _provider_for(pipeline, record.model)
                     request = await pipeline.build_request(record)
+                except ModelUnavailable as exc:
+                    # 模型已下线：直接把这个原因说给用户，不要包成「无法构造」
+                    logger.warning(
+                        "模型已下线，提交终止 kind=%s id=%s err=%s", kind, record_id, exc
+                    )
+                    await store.clear_submit_attempt(record_id)
+                    await self._fail(
+                        store=store,
+                        session=session,
+                        kind=kind,
+                        record_id=record_id,
+                        owner_id=record.owner_id,
+                        message=str(exc)[:_MAX_ERROR_LEN],
+                    )
+                    return
                 except Exception as exc:  # noqa: BLE001
                     logger.exception(
                         "生成请求构造失败（未调用供应商）kind=%s id=%s", kind, record_id
@@ -414,7 +435,47 @@ class GenerationRunner:
                             )
                         return
 
-                    provider = _provider_for(pipeline, record.model)
+                    try:
+                        provider = _provider_for(pipeline, record.model)
+                    except ModelUnavailable as exc:
+                        # 模型已下线：这条历史记录**不可能再有结果**。
+                        # 当场判失败，别把它当成瞬时故障退避重试——退避会让它
+                        # 在队列里反复醒来又失败，用户等满墙钟预算看到的却是
+                        # 「生成超时，请重试」，完全指不出真正原因。
+                        #
+                        # 但「判失败」不是所有流水线都想要的：替换链跑的是**已经
+                        # 付费**的任务，渠道停用只说明联系不上供应商，判失败会
+                        # 诱导用户重试 → 重复计费。它声明 `fail_on_model_gone=False`，
+                        # 保留 `running` 等人工核对。
+                        if not fail_on_model_gone(pipeline):
+                            logger.warning(
+                                "模型已下线，按流水线声明保留任务等人工处理 "
+                                "kind=%s id=%s polls=%d err=%s",
+                                kind,
+                                record_id,
+                                polls,
+                                exc,
+                            )
+                            next_delay = self._backoff(polls)
+                        else:
+                            message = str(exc)[:_MAX_ERROR_LEN]
+                            logger.warning(
+                                "模型已下线，终止轮询 kind=%s id=%s polls=%d err=%s",
+                                kind,
+                                record_id,
+                                polls,
+                                exc,
+                            )
+                            if await store.mark_failed(record_id, message):
+                                await session.commit()
+                                await self._emit(
+                                    EVT_GENERATION_FAILED,
+                                    kind=kind,
+                                    record_id=record_id,
+                                    owner_id=record.owner_id,
+                                    error=message,
+                                )
+                            return
                     try:
                         result = await provider.poll(record.external_id, model=record.model)
                     except Exception as exc:  # noqa: BLE001

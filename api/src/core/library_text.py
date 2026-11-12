@@ -38,9 +38,21 @@ from core.ports.library_lookup import get_library_lookup
 #: 反复拼进提示词，供应商侧按 token 计费时这是一笔看不见的开销。
 MAX_TEXT_REFS = 8
 
+#: 单次生成注入的正文**总量**上限（字节）。
+#:
+#: 「几份」与「每份多大」两个闸门缺一不可：8 份 × 1MB = 8MB 的提示词，
+#: 供应商侧会被自己的长度上限拒掉，用户只看到一句「请求参数非法」，
+#: 查不出是自己贴了 8 份长文。这个值已经远大于正常用法（一两段文案），
+#: 又小到任何供应商都不会拒。
+MAX_TEXT_REF_BYTES = 256 * 1024
+
 _TOKEN = re.compile(r"\{\{\s*Text\s+(\d+)\s*\}\}")
 
 _SNAPSHOT_KEYS = ("assetId", "name", "version", "sha256", "content", "sizeBytes")
+
+
+def _total_bytes(refs: Sequence[Mapping[str, Any]]) -> int:
+    return sum(len(str(item.get("content") or "")) for item in refs)
 
 
 def dumps_text_refs(refs: Sequence[Mapping[str, Any]]) -> str:
@@ -78,13 +90,22 @@ def validate_text_refs(prompt: str, refs: Sequence[Mapping[str, Any]]) -> None:
     放在受理而不是提交，是为了让「编号写错」当场 400，不是等异步任务跑起来
     才失败。反过来不要求每个绑定都被引用——用户先挑了文案、还没想好插在哪，
     是一次正常的编辑中间态，不该拦。
+
+    总量上限也在这里拦：份数与单份大小是两个闸门，缺一个都会让「8 份长文」
+    拼出几 MB 的提示词，被供应商的长度上限拒成一句看不懂的参数错误。
     """
     for match in _TOKEN.finditer(prompt):
         number = int(match[1])
         if number < 1 or number > len(refs):
             raise BadRequest(
-                f"提示词引用了 {{{{Text {number}}}}}，但本次只绑定了 {len(refs)} 份文本素材"
+                f"提示词引用了 {{{{Text {number}}}}}, 但本次只绑定了 {len(refs)} 份文本素材"
             )
+    total = _total_bytes(refs)
+    if total > MAX_TEXT_REF_BYTES:
+        raise BadRequest(
+            f"本次绑定的文本素材合计 {total // 1024} KB，超过 "
+            f"{MAX_TEXT_REF_BYTES // 1024} KB 上限，请精简后再试"
+        )
 
 
 def inject_text_refs(prompt: str, refs: Sequence[Mapping[str, Any]]) -> str:
@@ -92,13 +113,29 @@ def inject_text_refs(prompt: str, refs: Sequence[Mapping[str, Any]]) -> str:
 
     `re.sub` 不会重新扫描替换进去的内容：文案里就算写着 `{{Text 1}}` 也只会被
     当成普通文本交给供应商，不会被二次展开成注入攻击面。
+
+    ## 读路径必须宽容
+
+    这是**读**路径（轮询 / 重试 / 启动恢复都会重建记录），不是受理路径：
+
+    - 历史任务的 `text_json` 可能为空，而提示词里留着 `{{Text 1}}`——那是
+      文本资产功能上线**之前**的老记录，或者数据被裁剪过。此时抛 400 会让
+      这条记录从此**既不能轮询也不能重试**，一个坏字段就报废整条任务。
+    - 快照里某一份正文缺失（脏数据）同理。
+
+    所以这里**不抛错**：找不到正文就把占位符原样留着，交给供应商。产物内容
+    差一点，总好过任务卡死。真正的口径错误在受理期（`freeze_text_refs`
+    → `validate_text_refs`）就已经拦掉了——**这里刻意不再调它**。
     """
     if not refs and not _TOKEN.search(prompt):
         return prompt
-    validate_text_refs(prompt, refs)
 
     def replace(match: re.Match[str]) -> str:
-        return str(refs[int(match[1]) - 1].get("content") or "")
+        number = int(match[1])
+        if number < 1 or number > len(refs):
+            # 编号越界：留原文，不抛。理由同上。
+            return match[0]
+        return str(refs[number - 1].get("content") or "")
 
     return _TOKEN.sub(replace, prompt)
 
@@ -165,14 +202,19 @@ def mask_text_refs(prompt: str, refs: Sequence[Mapping[str, Any]]) -> str:
 def inject_masked_text_refs(
     prompt: str, refs: Sequence[Mapping[str, Any]]
 ) -> str:
-    """编译后：占位串 → 正文。此时正文里就算有 `{{...}}` 也已是纯文本。"""
+    """编译后：占位串 → 正文。此时正文里就算有 `{{...}}` 也已是纯文本。
+
+    与 `inject_text_refs` 同口径：这是**读路径**（重试 / 恢复会重跑编译），
+    快照缺失时把占位串原样留下，不抛错。受理期（`mask_text_refs`）已经
+    拦过编号越界，这里的容错只兜住历史脏数据。
+    """
     if not refs:
         return prompt
 
     def replace(match: re.Match[str]) -> str:
         number = int(match[1])
         if number < 1 or number > len(refs):
-            raise BadRequest(f"提示词引用了不存在的文本素材 {{{{Text {number}}}}}")
+            return match[0]
         return str(refs[number - 1].get("content") or "")
 
     return _MASK_TOKEN.sub(replace, prompt)

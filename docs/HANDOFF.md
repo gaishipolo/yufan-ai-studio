@@ -143,6 +143,11 @@ curl -sS --noproxy '*' -H "Authorization: Bearer $TOKEN" \
 - **供应商解析只有一处**：`ModelRouter.provider_for(model, allow_fallback=...)`；
   历史记录（轮询/重试/恢复）不许兜底——流水线声明 `strict_model = True`。
   **别再写 `pipeline.resolve_provider`**。
+- **模型下线 ≠ 任务失败**：`provider_for` 严格模式抛 `ModelUnavailable`
+  （`infra/ai/router.py`）。轮询侧默认**当场判失败**（`fail_on_model_gone` 默认 True），
+  不许退避重试到超时——用户最后只看到「生成超时」，指不出真正原因。
+  跑**已付费**任务的流水线要声明 `fail_on_model_gone = False`（替换链就是），
+  渠道停用只说明联系不上供应商，判失败会诱导重试 → 重复计费。
 - **彻底删除**：先取 `id` 到局部变量再 `rollback`（ORM 实例会过期），最终 `DELETE` 的
   `rowcount != 1` 就整段放弃；引用计数按 `storage_key` / `cover_key`，不按 `sha256`
   （内容相同 ≠ 同一个对象）。

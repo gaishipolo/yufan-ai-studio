@@ -26,6 +26,10 @@ MODELS = (
         label="示例同步生图",
         capability=Capability.IMAGE,
         provider="md_sync",
+        # 声明支持参考图（上限 4 张）。不声明就是 `0` = 纯文生图，
+        # 统一门面的提交端会据此拒掉带参考图的请求——那个校验是对的，
+        # 只是这个示例驱动本来就在测「参考图能不能活到 build_request」。
+        max_references=4,
     ),
 )
 

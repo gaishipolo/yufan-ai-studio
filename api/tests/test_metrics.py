@@ -153,3 +153,34 @@ def test_http_request_counter_can_hold_every_route_with_its_status_codes() -> No
         f"http_requests_total 上限 {REQUESTS.max_series} 装不下 {operations} 个操作 × 8 个状态码，"
         "超出的接口会静默丢样本"
     )
+
+
+def test_redeclaring_metric_takes_the_stricter_max_series() -> None:
+    """重复声明时 `max_series` **取更严的那个**，不取「先声明的」。
+
+    丢掉后来的 `max_series` 意味着上限写在哪个模块里取决于 import 顺序：
+    模块 A 声明 500、模块 B 声明 2000，A 后 import 时上限就变成 2000——
+    B 写的上限对 A 生效，反过来也一样。取 min 让「谁声明都一样」。
+    """
+    registry = Registry()
+    registry.counter("demo_total", "演示计数", ("kind",), max_series=2000)
+    registry.counter("demo_total", "演示计数", ("kind",), max_series=500)
+
+    metric = registry.counter("demo_total", "演示计数", ("kind",))
+    assert metric.max_series == 500
+
+
+def test_redeclaring_metric_keeps_the_stricter_limit_effective() -> None:
+    """收紧后的上限必须真的生效：新序列该丢就丢。"""
+    registry = Registry()
+    registry.counter("demo_total", "演示计数", ("kind",), max_series=10)
+    registry.counter("demo_total", "演示计数", ("kind",), max_series=2)
+
+    counter = registry.counter("demo_total", "演示计数", ("kind",))
+    counter.inc(kind="a")
+    counter.inc(kind="b")
+    counter.inc(kind="c")  # 超限，丢弃
+
+    assert counter.series_count() == 2
+    assert counter.dropped_count() == 1
+    assert 'app_metrics_series_dropped_total{metric="demo_total"} 1' in registry.render()

@@ -5286,7 +5286,7 @@
           "资产库"
         ],
         "summary": "标签列表（两级平铺，含当前入口的素材数，按添加时间排序）",
-        "description": "计数按 `state` + `library` 与列表同口径；`state=draft|trash` 时忽略 `library`。",
+        "description": "计数按 `state` + `library` + `kind` 与列表同口径。\n\n`state=draft|trash` 时忽略 `library`；`kind` 与列表的类别筛选同口径\n（悬浮栏按类别看库时，胶囊上的数字必须也是「这一类里有几条」）。",
         "operationId": "list_tags_api_v1_library_tags_get",
         "security": [
           {
@@ -5310,6 +5310,22 @@
             "schema": {
               "$ref": "#/components/schemas/LibraryAssetState",
               "default": "active"
+            }
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/LibraryAssetKind"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Kind"
             }
           }
         ],
@@ -16665,6 +16681,12 @@
             "additionalProperties": true,
             "type": "object",
             "title": "Paramschema"
+          },
+          "maxReferences": {
+            "type": "integer",
+            "title": "Maxreferences",
+            "description": "这个模型最多接受几张参考图（图生图 / 多图合成），`0` 表示纯文生图。参考图不是 `paramSchema` 里的参数：它的值是「一批图片」，提交时走 `referenceUrls` 这条独立入参",
+            "default": 0
           }
         },
         "type": "object",

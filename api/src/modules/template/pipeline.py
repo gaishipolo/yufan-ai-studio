@@ -281,6 +281,12 @@ class ReplacementPipeline:
     # 这是**声明**，不是自定义解析——怎么找供应商只有 `ModelRouter` 一处。
     strict_model = True
 
+    # 渠道停用 ≠ 任务失败。替换链的任务**已经付费**（`task_id` 在供应商侧），
+    # 解析不到渠道只说明「我们联系不上供应商」。判失败会诱导用户去重试 →
+    # 重复计费。保留 `running` 等人工核对，框架默认的「模型没了就判失败」
+    # 在这里不适用。
+    fail_on_model_gone = False
+
     def store(self, session: AsyncSession) -> ReplacementStore:
         return ReplacementStore(session)
 

@@ -168,7 +168,7 @@ Authorization: Bearer <accessToken>
 | code | HTTP | 来源 | 异常类 | 默认文案 |
 |---|---|---|---|---|
 | `40000` | 400 | 框架 | `BadRequest` | 请求参数有误 |
-| `40001` | 400 | 框架 | `ValidationFailed` | 参数校验失败 |
+| `40001` | 400 | 框架 | `ModelUnavailable` | 模型已下线 |
 | `40021` | 400 | identity | `OldPasswordMismatch` | 原密码不正确 |
 | `40022` | 400 | identity | `UnknownPermission` | 存在无法识别的权限点 |
 | `40023` | 400 | identity | `TeamGrantForbidden` | 团队基础权限不能包含管理类权限或通配符 |
@@ -3847,12 +3847,16 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 
 **标签列表（两级平铺，含当前入口的素材数，按添加时间排序）**
 
-计数按 `state` + `library` 与列表同口径；`state=draft|trash` 时忽略 `library`。
+计数按 `state` + `library` + `kind` 与列表同口径。
+
+`state=draft|trash` 时忽略 `library`；`kind` 与列表的类别筛选同口径
+（悬浮栏按类别看库时，胶囊上的数字必须也是「这一类里有几条」）。
 
 | 参数 | 位置 | 类型 | 必填 | 说明 |
 |---|---|---|---|---|
 | `library` | query | `LibraryTab` | 否 |  |
 | `state` | query | `LibraryAssetState` | 否 |  |
+| `kind` | query | `LibraryAssetKind | null` | 否 |  |
 
 **响应** `ApiResponse<LibraryTagStatOut[]>`（前端取 `res.data`）
 
@@ -5977,6 +5981,7 @@ mixedList 里的一项；下标 +1 就是 {{Mixed N}} 编号。
 | `provider` | `string` | 是 |  |
 | `description` | `string` | 否 |  |
 | `paramSchema` | `Record<string, unknown>` | 否 |  |
+| `maxReferences` | `number` | 否 | 这个模型最多接受几张参考图（图生图 / 多图合成），`0` 表示纯文生图。参考图不是 `paramSchema` 里的参数：它的值是「一批图片」，提交时走 `referenceUrls` 这条独立入参 |
 
 ### `modules__model_driver__schema__TaskOut`
 

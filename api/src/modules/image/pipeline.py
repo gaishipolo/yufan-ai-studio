@@ -374,6 +374,16 @@ class ImageGenerationPipeline:
     kind = KIND_IMAGE
     capability = Capability.IMAGE
 
+    # 历史记录必须按**当次那条记录**的模型找回原供应商。模型被下线 / 改名
+    # 之后，路由的兜底会把任务悄悄打到另一家：产物风格、单价、合规口径
+    # 全变，日志里还看不出异常——用户看到的只是「又出了一张图」。
+    # 声明式开关，怎么找供应商仍然只有 `ModelRouter` 一处实现。
+    strict_model = True
+
+    # 模型从目录里消失 = 这条记录不可能再有结果 → 当场判失败，
+    # 不许退避重试到超时（用户最后只看到「生成超时」，指不出真正原因）。
+    fail_on_model_gone = True
+
     def store(self, session: AsyncSession) -> ImageJobStore:
         return ImageJobStore(session)
 
