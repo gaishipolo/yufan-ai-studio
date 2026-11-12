@@ -48,6 +48,7 @@
 | T33 | 替换链专用模型出现在通用模型目录 —— **2026-11-11 已修** | 给 `ModelSpec` 加 `internal`，目录层用 `public_models()` 过滤 | 后端（小） |
 | T34 | 生图链路没有参考图，Agnes 实际只能文生图 —— **2026-11-11 已修** | `referenceLibraryIds` + `reference_json` + Data URI 内联，前端按 `maxReferences` 出控件 | 后端 + 前端 |
 | T35 | PR#5 自报的六条遗留（409 未进契约、continuation 不查 rowcount、`_absorb` 下界、`resume` 全扫、`publish_output` 失败仍记 success、libtv 监督无超时） | 进度、启动耗时与「成功但没片子」这类静默问题 | 后端 |
+| T36 | 2026-11-11 主线复审剩下的九条 P2 | 都是「不报错但口径不对」，单条影响小、攒着会互相掩护 | 后端 + 前端 |
 
 ---
 
@@ -324,6 +325,40 @@ Base64 直传），届时改 `drivers/bailian.py` 的 `prepare_inputs` 一处即
    状态却是成功，用户以为有片子。
 6. **`libtv` 监督进程 `communicate` 没有外层超时**（中）：卡住会一直占用线程池
    槽位，与调度器 handler 超时那轮的修法可以参考。
+
+**验收**：逐条补用例后从本表删掉。
+
+---
+
+## T36 · 2026-11-11 主线复审剩下的九条 P2
+
+上一轮复审共留 18 条。**已修 8 条**（`b7c4e2a` 迁移放宽 `library_asset_generation.prompt`、
+`runner._finish_success` 移出轮询超时预算、队列续接查 rowcount、参考图判 `state=="active"`、
+限流 `limit >= cost` 与「缩放不能算成 0」、封装封面按两列数引用、投放区接住桌面文件、
+选择器确认按 `value` 顺序且不丢跨页项）。剩下这九条按代价从低到高：
+
+1. **文本站内新建/编辑不走秒传查重**（小）：上传链有 `_find_duplicate`，站内新建没有，
+   同内容第二次写入撞 `uq_library_assets_owner_sha_kind` → 409 文案是「请检查唯一性或
+   关联引用」，对用户毫无意义。落点 `modules/library/text_assets.py` 的 create/update。
+2. **`retargetTextTokens` 的「换绑」仍把 token 搬到末尾**（小）：解 A 同时绑 B 时
+   `把 {{Text 1}} 的卖点` → `把  的卖点 {{Text 1}}`，与文件头「原地保留」的承诺不符。
+   落点 `features/library/textRefs.ts`。
+3. **悬浮栏标签计数不按当前类别**（小）：胶囊写 9、点进去 4 条（计数取「全部素材」口径）。
+   落点 `entities/library/ui/LibraryFlyout.tsx`，加类别后才有感。
+4. **`.txt` 含 `\x00` → 500 + 孤儿 blob**（小）：U+0000 是合法 UTF-8 但 PG 拒存，
+   此时 blob 已经 `put` 完成。落点 `infra/media_probe.py` 的上传校验。
+5. **历史任务 `text_json` 为空但 prompt 里含 `{{Text N}}` → 读路径 400**（中）：
+   该记录从此无法轮询/重试。落点 `core/library_text.py` 的 `inject_text_refs`。
+6. **注入后没有总量上限**（中）：8 份 × 1MB 原样拼进 prompt，`MAX_TEXT_REFS` 的注释
+   自己写了成本顾虑但没有执行点。
+7. **同名指标重复声明时 `max_series` 被忽略**（中）：今天的 2000 只在「第一条声明」
+   生效；落点 `core/metrics.py` 的 `_instrument`。
+8. **`/model-driver/tasks` 不校验 `reference_urls` 数量**，`/models` 又把
+   `maxReferences` 丢了（service 给了、schema 没字段）→ 统一门面绕过 `max_references`。
+9. **image / task / model_driver 三条历史链路没声明 `strict_model`**（中）：单供应商
+   部署下模型下线会被兜底换渠道重放，轮询侧还把「模型已下线」当瞬时故障退避到超时。
+   顺带 `app.py` 停机的 `wait_for(scheduler_task, 30)` 超时不构成上界，非
+   `TimeoutError` 异常会跳过 `worker.stop()` / `close_http()` / `dispose_engine()`。
 
 **验收**：逐条补用例后从本表删掉。
 
