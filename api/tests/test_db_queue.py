@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from datetime import timedelta
 from typing import Any
@@ -577,6 +578,59 @@ def test_staged_successor_is_fenced_and_discarded_on_retry() -> None:
         await queue.nack(second)
         assert (await _row(first.id)).next_job is None
         assert await queue.size() == 1
+
+    asyncio.run(run())
+
+
+def test_lost_continuation_creates_a_fresh_row() -> None:
+    """父行已被回执删掉时，续接必须补一跳，不能「假装排上了」。
+
+    回归：以前 `UPDATE ... WHERE lease_token=父` 的 rowcount 被丢弃，落空也
+    `return parent.id`。调用方（轮询链）以为下一跳已在队列里，实际什么都没有，
+    记录就永久停在 running —— 只有重启时的恢复扫描才可能捡回来。
+    """
+    from infra.queue.base import job_execution
+
+    async def run():
+        await _reset()
+        queue = _queue()
+        await queue.enqueue(Job(name="poll", payload={"step": 1}, idempotency_key="chain"))
+        first = await queue.dequeue(timeout=0.1)
+        # 另一个 worker 已经跑完并回执：父行连同 next_job 一起没了
+        await queue.ack(first)
+        with job_execution(first):
+            await queue.enqueue(Job(name="poll", payload={"step": 2}, idempotency_key="chain"))
+        successor = await _queue().dequeue(timeout=0.05)
+        assert successor is not None, "续接落空又没补一跳，链路断在这里"
+        assert successor.payload == {"step": 2}
+        assert successor.id != first.id
+        await queue.ack(successor)
+
+    asyncio.run(run())
+
+
+def test_continuation_with_a_staged_successor_is_not_duplicated() -> None:
+    """父行还在（已 staging 过下一跳）时只认那一条，不再补新行。
+
+    这是原注释守的边界：同一个 handler 重复排下一跳不能把队列里的下一跳换掉，
+    也不能多出一行。
+    """
+    from infra.queue.base import job_execution
+
+    async def run():
+        await _reset()
+        queue = _queue()
+        await queue.enqueue(Job(name="poll", payload={"step": 1}, idempotency_key="chain"))
+        first = await queue.dequeue(timeout=0.1)
+        with job_execution(first):
+            await queue.enqueue(Job(name="poll", payload={"step": 2}, idempotency_key="chain"))
+            again = await queue.enqueue(
+                Job(name="poll", payload={"step": 3}, idempotency_key="chain")
+            )
+            assert again == first.id
+        assert await queue.size() == 1, "同一幂等键不该多出一行"
+        staged = json.loads((await _row(first.id)).next_job)
+        assert staged["payload"] == {"step": 2}, "已 staging 的下一跳被后来的覆盖了"
 
     asyncio.run(run())
 

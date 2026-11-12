@@ -20,6 +20,21 @@ from infra.ai.base import Capability, ModelProvider, ModelSpec
 logger = get_logger(__name__)
 
 
+class ModelUnavailable(BadRequest):
+    """**模型已不在目录里**（原渠道停用 / 改名 / 模型下线）。
+
+    单独一个类型，不复用通用 `BadRequest`：调用方要靠它区分「这次请求
+    写错了」（用户改一下就好）和「这条历史记录再也跑不了了」（用户等
+    再久也不会有结果）。历史轮询链路必须在**第一跳**就判失败，不能把它
+    当成瞬时故障退避重试——那会让一条注定失败的任务在队列里反复退避到
+    超时，用户最后看到的是「生成超时，请重试」，完全指不出真正原因。
+    """
+
+    code = 40001
+    message = "模型已下线"
+    http_status = 400
+
+
 class ModelSummaryItem(TypedDict):
     id: str
     label: str
@@ -152,8 +167,10 @@ class ModelRouter:
             return self._providers.require()
         if not allow_fallback:
             # 走严格模式的都是「按历史记录找原渠道」，说法要指向真正的原因，
-            # 否则用户只会看到「未知模型」而不知道是自己停用了某个渠道
-            raise BadRequest(
+            # 否则用户只会看到「未知模型」而不知道是自己停用了某个渠道。
+            # 抛专用类型：历史轮询链路靠它识别「这条任务不可能再有结果」，
+            # 当场失败而不是退避到超时。
+            raise ModelUnavailable(
                 f"模型 {model!r} 不在当前模型目录中（原渠道可能已停用），"
                 f"可用模型: {sorted(self._models)}"
             )
@@ -192,6 +209,32 @@ class ModelRouter:
 
     def provider_names(self) -> list[str]:
         return self._providers.names()
+
+    def unregister(self, provider_name: str) -> bool:
+        """摘掉一个供应商及其模型。返回是否真的摘掉了。
+
+        仅测试使用：示例驱动显式装上后要能摘干净，否则会漏给后面的用例
+        （路由是进程单例，一个用例装上就影响整场）。
+
+        摘掉时连带清掉它注册的模型与别名，并**重算该能力的默认模型**——
+        默认值是「第一个注册进来的」，摘掉默认值所在的供应商后，默认必须
+        跟着走，否则会指向一个已经不存在的模型。
+        """
+        if provider_name not in self._providers.names():
+            return False
+
+        specs = [spec for spec in self._models.values() if spec.provider == provider_name]
+        for spec in specs:
+            self._models.pop(spec.id, None)
+            if self._alias.get(spec.label) == spec.id:
+                self._alias.pop(spec.label, None)
+        self._providers.remove(provider_name)
+
+        # 重算默认值：按剩余供应商的注册顺序取第一个
+        self._default.clear()
+        for spec in self._models.values():
+            self._default.setdefault(spec.capability, spec.id)
+        return True
 
     def summary(self) -> RouterSummary:
         return {

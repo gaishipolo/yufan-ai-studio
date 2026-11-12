@@ -67,6 +67,13 @@ class NamedRegistry(Generic[T]):
     def find(self, name: str) -> T | None:
         return self._items.get(name)
 
+    def remove(self, name: str) -> bool:
+        """摘掉一个注册项，返回是否真的摘掉了。
+
+        仅测试使用：注册表是进程单例，一个用例装上的东西会留给后面的用例。
+        """
+        return self._items.pop(name, None) is not None
+
     def require(self, *, expect: type | tuple[type, ...] | None = None) -> T:
         """取唯一实现（用于「一类只允许一个」的场景）。"""
         if len(self._items) != 1:

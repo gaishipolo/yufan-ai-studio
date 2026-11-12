@@ -22,10 +22,13 @@ export interface RetargetResult {
  * 不会出现「{{Text 3}} 却只剩 2 份绑定」这种越界；已解绑的 token 直接删掉，
  * 新增的绑定在末尾追加对应编号。一次 replace 完成，避免逐个替换互相干扰。
  *
- * 两种情况**原地保留**，不动用户写好的位置：
+ * 三种情况**原地保留**，不动用户写好的位置：
  * 1. 编号此前没有绑定过（用户先手写 `{{Text 1}}` 再挑素材）——只要新顺序里
  *    还有这一位，它就自动指向新绑的那份，没必要清掉再追加到末尾；
- * 2. 已经有对应编号的 token 存在时，新绑定不再重复追加。
+ * 2. 已经有对应编号的 token 存在时，新绑定不再重复追加；
+ * 3. **解绑一份、同时在同一位绑上新的**：token 留在原位指向新绑的那份，
+ *    不被摘掉再补到句尾（否则「把 {{Text 1}} 的卖点」会变成
+ *    「把  的卖点 {{Text 1}}」）。
  */
 export function retargetTextTokens(
   prompt: string,
@@ -44,6 +47,20 @@ export function retargetTextTokens(
       if (slot >= 1 && slot <= newIds.length) return `{{Text ${slot}}}`;
       dropped += 1;
       return '';
+    }
+    // **这一位被新绑定的素材顶上了** → token 原地保留，不动位置。
+    //
+    // 场景：解绑 A、同时绑定 B，B 落在同一个位置（列表里第 1 位）。
+    // 按 id 重编号的话，A 被删 → token 被摘掉 → 末尾的追加循环再把 B 的
+    // `{{Text 1}}` 补到句尾，「把 {{Text 1}} 的卖点」变成「把  的卖点 {{Text 1}}」，
+    // 与文件头「原地保留」的承诺不符。
+    //
+    // 判据是「**新位是不是新加的**」：只有新加的资产才享有原地保留。
+    // 若新位上是别的旧资产（用户换序），那一位仍是老位置的重编号，
+    // 按 id 走；否则会出现两个 token 指向同一份文案。
+    const newcomer = newIds[slot - 1];
+    if (newcomer && !oldIds.includes(newcomer)) {
+      return `{{Text ${slot}}}`;
     }
     const index = newIds.indexOf(id);
     if (index < 0) {

@@ -25,6 +25,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from datetime import UTC, datetime
+from typing import Any
 
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -42,11 +43,17 @@ from generation.events import (
     EVT_GENERATION_SUBMITTED,
     EVT_GENERATION_SUCCEEDED,
 )
-from generation.pipeline import GenerationPipeline, get_pipeline, strict_model
+from generation.pipeline import (
+    GenerationPipeline,
+    fail_on_model_gone,
+    get_pipeline,
+    strict_model,
+)
 from generation.spec import GenerationRecord
 from generation.store import GenerationStore
 from infra import get_model_router
 from infra.ai.base import GenerationProgress, GenerationState, ModelProvider
+from infra.ai.router import ModelUnavailable
 from infra.artifacts import artifact_urls
 from infra.queue.base import Job, JobQueue
 
@@ -253,6 +260,21 @@ class GenerationRunner:
                 try:
                     provider = _provider_for(pipeline, record.model)
                     request = await pipeline.build_request(record)
+                except ModelUnavailable as exc:
+                    # 模型已下线：直接把这个原因说给用户，不要包成「无法构造」
+                    logger.warning(
+                        "模型已下线，提交终止 kind=%s id=%s err=%s", kind, record_id, exc
+                    )
+                    await store.clear_submit_attempt(record_id)
+                    await self._fail(
+                        store=store,
+                        session=session,
+                        kind=kind,
+                        record_id=record_id,
+                        owner_id=record.owner_id,
+                        message=str(exc)[:_MAX_ERROR_LEN],
+                    )
+                    return
                 except Exception as exc:  # noqa: BLE001
                     logger.exception(
                         "生成请求构造失败（未调用供应商）kind=%s id=%s", kind, record_id
@@ -362,12 +384,19 @@ class GenerationRunner:
 
         try:
             budget = (job.timeout_sec or 120.0) * 0.8
-            # 轮询也有硬上限：单次 poll 卡住（供应商不回、连接半开）会一直占着协程，
-            # 队列 timeout 到点直接丢弃 job，整条轮询链就断了。超时按普通异常兜住，
-            # 由下面的 except 排下一跳。
-            async with asyncio.timeout(budget):
-                async with factory() as session:
-                    store = pipeline.store(session)
+            # 会话开在超时块**外面**：成功了还要用它做入库，而入库属于
+            # 「落库之后的收尾」，绝不能算进轮询预算（见下方 pending 的注释）。
+            async with factory() as session:
+                store = pipeline.store(session)
+                # 成功时的收尾参数。落库在预算内、入库与发事件在预算外：
+                # 超时只是「这一跳没拿到结果」，而 `mark_succeeded` 一旦提交，
+                # 用户界面上就是「已完成」——再被超时打断，草稿箱空、订阅方收不到
+                # 事件，且下一跳看到终态直接 return，没有任何补偿路径。
+                pending: tuple[Any, str | None, str | None] | None = None
+                # 轮询也有硬上限：单次 poll 卡住（供应商不回、连接半开）会一直占着协程，
+                # 队列 timeout 到点直接丢弃 job，整条轮询链就断了。超时按普通异常兜住，
+                # 由下面的 except 排下一跳。
+                async with asyncio.timeout(budget):
                     record = await store.load(record_id)
                     if record is None or record.terminal:
                         return
@@ -406,7 +435,47 @@ class GenerationRunner:
                             )
                         return
 
-                    provider = _provider_for(pipeline, record.model)
+                    try:
+                        provider = _provider_for(pipeline, record.model)
+                    except ModelUnavailable as exc:
+                        # 模型已下线：这条历史记录**不可能再有结果**。
+                        # 当场判失败，别把它当成瞬时故障退避重试——退避会让它
+                        # 在队列里反复醒来又失败，用户等满墙钟预算看到的却是
+                        # 「生成超时，请重试」，完全指不出真正原因。
+                        #
+                        # 但「判失败」不是所有流水线都想要的：替换链跑的是**已经
+                        # 付费**的任务，渠道停用只说明联系不上供应商，判失败会
+                        # 诱导用户重试 → 重复计费。它声明 `fail_on_model_gone=False`，
+                        # 保留 `running` 等人工核对。
+                        if not fail_on_model_gone(pipeline):
+                            logger.warning(
+                                "模型已下线，按流水线声明保留任务等人工处理 "
+                                "kind=%s id=%s polls=%d err=%s",
+                                kind,
+                                record_id,
+                                polls,
+                                exc,
+                            )
+                            next_delay = self._backoff(polls)
+                        else:
+                            message = str(exc)[:_MAX_ERROR_LEN]
+                            logger.warning(
+                                "模型已下线，终止轮询 kind=%s id=%s polls=%d err=%s",
+                                kind,
+                                record_id,
+                                polls,
+                                exc,
+                            )
+                            if await store.mark_failed(record_id, message):
+                                await session.commit()
+                                await self._emit(
+                                    EVT_GENERATION_FAILED,
+                                    kind=kind,
+                                    record_id=record_id,
+                                    owner_id=record.owner_id,
+                                    error=message,
+                                )
+                            return
                     try:
                         result = await provider.poll(record.external_id, model=record.model)
                     except Exception as exc:  # noqa: BLE001
@@ -441,23 +510,9 @@ class GenerationRunner:
                             await session.commit()
                             # 生成成功是既成事实，先落库再往资产库送：入库失败不该
                             # 把用户已经看到的结果改回失败（见 `_archive`）。
-                            await self._archive(kind, session, record_id, output_url)
-                            # 落库存 key（与存储驱动无关），事件给地址（订阅方要能直接用）
-                            public_output, public_cover = await artifact_urls(
-                                [output_url, cover_url]
-                            )
-                            await self._emit(
-                                EVT_GENERATION_SUCCEEDED,
-                                kind=kind,
-                                record_id=record_id,
-                                owner_id=record.owner_id,
-                                model=record.model,
-                                output_url=public_output,
-                                cover_url=public_cover,
-                            )
-                            return
-
-                        if state == GenerationState.FAILED:
+                            # 收尾动作留给超时块外的 `_finish_success`。
+                            pending = (record, output_url, cover_url)
+                        elif state == GenerationState.FAILED:
                             if result.retryable and polls + 1 < settings.generation_max_polls:
                                 next_delay = self._backoff(polls)
                             else:
@@ -495,6 +550,15 @@ class GenerationRunner:
                                     progress=progress,
                                 )
                             next_delay = settings.generation_poll_interval_sec
+
+                if pending is not None:
+                    # 已经终态并提交，收尾失败只能留痕：这里再抛出去会被下面的
+                    # except 当成「这一跳失败」，而下一跳看到终态直接 return，
+                    # 结果就是「任务成功、草稿箱空、事件没发」三件事同时成立。
+                    record, output_url, cover_url = pending
+                    await self._finish_success(
+                        kind, session, record, record_id, output_url, cover_url
+                    )
         except Exception:  # noqa: BLE001
             # 轮询 job 的 max_attempts=1，异常冒到 worker 会被直接丢弃；一旦丢弃，
             # 任务就永久停在 running（队列里已经没它的 job 了）。
@@ -580,6 +644,45 @@ class GenerationRunner:
             result.asset_id,
             result.created,
         )
+
+    async def _finish_success(
+        self,
+        kind: str,
+        session: AsyncSession,
+        record: Any,
+        record_id: str,
+        output_url: str | None,
+        cover_url: str | None,
+    ) -> None:
+        """落库之后的收尾：进草稿箱 + 发 `generation.succeeded` 事件。
+
+        **必须在轮询超时预算之外执行**（`handle_poll` 里与 `asyncio.timeout` 同级）。
+        预算按 `job.timeout_sec * 0.8` 算，慢盘上归档一个大视频就可能吃掉它；一旦在
+        `mark_succeeded` 提交之后被超时打断，用户看到的是「已完成」，草稿箱里却没有
+        东西、订阅方（通知 / 计费）也收不到事件 —— 而下一跳因为记录已终态直接返回，
+        没有任何补偿路径。放到预算外，最坏情况是这次轮询慢，而不是结果静默丢掉。
+
+        两步各自兜住异常：入库失败不能连带事件不发，事件发不出也不该让这一跳失败。
+        """
+        await self._archive(kind, session, record_id, output_url)
+        # 落库存 key（与存储驱动无关），事件给地址（订阅方要能直接用）
+        try:
+            public_output, public_cover = await artifact_urls([output_url, cover_url])
+        except Exception:  # noqa: BLE001 - 地址算不出来也要把「成功」发出去
+            logger.exception("产物地址转换失败，事件改用原始值 kind=%s id=%s", kind, record_id)
+            public_output, public_cover = output_url or "", cover_url or ""
+        try:
+            await self._emit(
+                EVT_GENERATION_SUCCEEDED,
+                kind=kind,
+                record_id=record_id,
+                owner_id=record.owner_id,
+                model=record.model,
+                output_url=public_output,
+                cover_url=public_cover,
+            )
+        except Exception:  # noqa: BLE001 - 订阅方报错不该让轮询这一跳失败
+            logger.exception("成功事件发送失败 kind=%s id=%s", kind, record_id)
 
     @staticmethod
     def _persisted_cover(

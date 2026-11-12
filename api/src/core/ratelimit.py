@@ -178,12 +178,35 @@ def resolve_budget(
     window: float = DEFAULT_WINDOW_SEC,
     cost: int = 1,
 ) -> Budget:
-    """把「路由上写的额度」换算成「这次真正要用的额度」。"""
+    """把「路由上写的额度」换算成「这次真正要用的额度」。
+
+    两个下界都在这里收，别指望调用方记住：
+
+    1. **缩放不能把额度算成 0**。`round(10 * 0.05) == 0`，而 `limit == 0` 的语义是
+       「该接口不限流」——故障期把 `RATE_LIMIT_SCALE` 调小本来是为了收紧，算成 0
+       却变成全站放行，配置写的和实际生效的正好相反。真正「全关」只有
+       `SCALE == 0` 这一个入口（见模块文档），任何正数倍率都至少留 1 次。
+    2. **额度不能小于单次消耗**。`hit()` 判的是 `estimate <= limit`，而
+       `estimate` 至少是 `cost`：limit=1、cost=2 时每次必 429，`retry_after`
+       永远指着窗口边界，照着它重试也不可能成功。抬到刚好放行一次。
+    """
     effective = parsed_overrides().get(scope, limit)
+    cost = max(1, int(cost))
     scale = get_settings().rate_limit_scale
-    if scale != 1.0:
-        effective = max(0, round(effective * scale))
-    return Budget(limit=int(effective), window=window, cost=max(1, int(cost)))
+    if scale == 0:
+        # 唯一的「整体关闸」入口：显式写成 0，不是算出来的 0
+        effective = 0
+    elif scale != 1.0 and effective > 0:
+        effective = max(1, round(effective * scale))
+    if 0 < effective < cost:
+        logger.warning(
+            "限流额度 %s 小于单次消耗 %s，按「刚好放行一次」处理（scope=%s）",
+            effective,
+            cost,
+            scope,
+        )
+        effective = cost
+    return Budget(limit=int(effective), window=window, cost=cost)
 
 
 def unknown_overrides(known: Iterable[str]) -> list[str]:

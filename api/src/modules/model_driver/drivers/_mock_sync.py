@@ -3,6 +3,11 @@
 有些图片厂商的 API 本身就是「请求里等图」。这类驱动 `submit` 返回
 `GenerationProgress` 而不是任务号，`poll` 不会被调用，`supports_poll=False`。
 框架拿到终态快照会直接结算、不再排轮询。
+
+**文件名以下划线开头**，所以 `registry._iter_driver_modules()` 会跳过它：
+示例模型不进模型目录、不进前端选择器、不进 `app drivers list`。
+需要离线联调时显式调用
+`modules.model_driver.registry.register_example_drivers()`。
 """
 
 from __future__ import annotations
@@ -26,6 +31,10 @@ MODELS = (
         label="示例同步生图",
         capability=Capability.IMAGE,
         provider="md_sync",
+        # 声明支持参考图（上限 4 张）。不声明就是 `0` = 纯文生图，
+        # 统一门面的提交端会据此拒掉带参考图的请求——那个校验是对的，
+        # 只是这个示例驱动本来就在测「参考图能不能活到 build_request」。
+        max_references=4,
     ),
 )
 

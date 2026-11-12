@@ -212,8 +212,8 @@ class DbJobQueue:
         run_at = utcnow() + timedelta(seconds=max(0.0, delay))
         parent = current_job()
         if parent and job.idempotency_key and parent.idempotency_key == job.idempotency_key:
-            # Never fall through to normal enqueue on lost ownership: a stale
-            # handler must not create a replacement after another worker finished.
+            # 续接：下一跳**写进父任务那一行**，由 ack 原地转成 pending，
+            # 既不新建行也不占幂等键。
             continuation = json.dumps(
                 {
                     "name": job.name,
@@ -228,7 +228,7 @@ class DbJobQueue:
                 default=str,
             )
             async with self._session() as session:
-                await session.execute(
+                staged = await session.execute(
                     update(QueuedJob)
                     .where(
                         QueuedJob.id == parent.id,
@@ -239,7 +239,25 @@ class DbJobQueue:
                     .values(next_job=continuation)
                 )
                 await session.commit()
-            return parent.id
+            if getattr(staged, "rowcount", 0) == 1:
+                return parent.id
+            # 续接没写进去 = 这一跳的下一跳没人接手。以前这里不检查、照样
+            # `return parent.id`，调用方以为排上了，记录于是永远停在 running
+            # （典型死法：这一跳拖过了租约，巡检把它重新排成 pending，
+            # `lease_token` 不再匹配）。
+            logger.warning(
+                "续接落空（租约已失效或已有下一跳）id=%s name=%s", parent.id, job.name
+            )
+            async with self._session() as session:
+                if await session.scalar(select(QueuedJob.id).where(QueuedJob.id == parent.id)):
+                    # 父行还在：被别人接手了，或者已经 staging 过下一跳。接手者有
+                    # 它自己的续接 —— 这时再补一跳，才是原注释担心的「另一个 worker
+                    # 跑完之后又被排一次」。
+                    return parent.id
+            # 父行已经没了：回执（ack）在没有后继的情况下把它删掉了，链路到此为
+            # 止。此时「不补一跳」就等于永久卡住，所以退到普通入队（幂等键会先
+            # 查一遍在途行，不会和巡检排好的那行重复）。
+            logger.warning("续接的父行已不存在，改为新建一跳 id=%s name=%s", parent.id, job.name)
         async with self._session() as session:
             if job.idempotency_key:
                 existing = await session.scalar(

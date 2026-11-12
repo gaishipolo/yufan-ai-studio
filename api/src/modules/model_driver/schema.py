@@ -44,6 +44,18 @@ class ModelOut(CamelModel):
     provider: str
     description: str = ""
     param_schema: dict[str, Any] = Field(default_factory=dict)
+    # 这个模型最多收几张参考图，`0` = 纯文生图。**必须出参**：前端据此决定
+    # 要不要渲染参考图入口，提交端据此拦住超量的 `reference_urls`。
+    # 少了这个字段，统一门面就成了绕过 `max_references` 的后门——
+    # 服务端知道上限、接口不告诉调用方，调用方就永远按「几张都行」提交。
+    max_references: int = Field(
+        default=0,
+        description=(
+            "这个模型最多接受几张参考图（图生图 / 多图合成），`0` 表示纯文生图。"
+            "参考图不是 `paramSchema` 里的参数：它的值是「一批图片」，"
+            "提交时走 `referenceUrls` 这条独立入参"
+        ),
+    )
 
 
 class ModelListOut(CamelModel):

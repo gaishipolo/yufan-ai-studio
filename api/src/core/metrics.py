@@ -14,7 +14,10 @@
    只表现为「内存慢涨」，在 Prometheus 侧表现为「查询超时 / 抓取失败」，两边都
    很难定位。`max_series` 是兜底，不是许可证：撞上限会丢样本并打一条警告。
 2. **每个指标只在导入期声明一次**。同名同标签的重复声明返回既有实例，因此
-   `--reload` 与测试里反复 import 都不会抛「重复注册」。
+   `--reload` 与测试里反复 import 都不会抛「重复注册」。重复声明时
+   `max_series` **取更严的那个**（min），不取「先声明的」——否则上限写在
+   哪个模块里取决于 import 顺序，写 2000 的那个模块后 import 就会把别的
+   模块的上限也放大成 2000。
 3. **单进程语义**。多 worker 部署时每个进程各暴露一份，聚合交给 Prometheus
    （`sum by (le)` / `sum by (instance)`）。本模块不做跨进程聚合，也不落盘。
 
@@ -313,6 +316,12 @@ class Registry:
                         f"指标 {name} 已以 {type(existing).__name__}"
                         f"{existing.label_names} 注册，不能改成 {cls.__name__}{tuple(labels)}"
                     )
+                # 重复声明时**取更严的那个上限**。丢掉后来的 `max_series`
+                # 意味着「谁先 import 谁说了算」：模块 A 声明 500、模块 B 声明
+                # 2000，A 后 import 时基数上限就变成 2000 —— 上限写在 B 的代码里
+                # 却对 A 生效，反过来也一样。取 min 让「谁声明都一样」，
+                # 也保证上限确实是上限，不会被某次 import 顺序放大。
+                existing.max_series = min(existing.max_series, max_series)
                 return existing
             metric: _Metric
             if cls is Histogram:

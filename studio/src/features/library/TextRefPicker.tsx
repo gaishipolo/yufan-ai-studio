@@ -124,6 +124,7 @@ export function TextRefPicker({
           multiple
           kinds={['text']}
           value={value.map((asset) => asset.id)}
+          valueItems={value}
           onClose={() => setOpen(false)}
           onConfirm={(assets) => {
             apply(assets);

@@ -140,6 +140,13 @@ class VideoGenerationPipeline:
     kind = KIND_VIDEO
     capability = Capability.VIDEO
 
+    # 与生图同口径：历史记录按当次那条记录的模型找回原供应商。视频单条
+    # 成本更高，兜底换渠道的后果比生图更贵（时长、分辨率、计费口径全不同）。
+    strict_model = True
+
+    # 模型从目录里消失 = 这条记录不可能再有结果 → 当场判失败。
+    fail_on_model_gone = True
+
     def store(self, session: AsyncSession) -> VideoTaskStore:
         return VideoTaskStore(session)
 

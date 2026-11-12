@@ -1867,6 +1867,8 @@ export interface modules__model_driver__schema__ModelOut {
   provider: string;
   description?: string;
   paramSchema?: Record<string, unknown>;
+  /** 这个模型最多接受几张参考图（图生图 / 多图合成），`0` 表示纯文生图。参考图不是 `paramSchema` 里的参数：它的值是「一批图片」，提交时走 `referenceUrls` 这条独立入参 */
+  maxReferences?: number;
 }
 
 /** TaskOut */

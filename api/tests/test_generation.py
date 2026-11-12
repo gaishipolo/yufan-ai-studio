@@ -12,6 +12,7 @@ import pytest
 from core.events import EventBus
 from core.exceptions import BadRequest, Forbidden, UpstreamError
 from core.registry import NamedRegistry, RegistryError
+from generation.events import EVT_GENERATION_SUCCEEDED
 from generation.pipeline import register_pipeline
 from generation.runner import JOB_POLL, JOB_SUBMIT, GenerationRunner
 from infra.ai.base import Capability, GenerationProgress, GenerationState
@@ -661,6 +662,102 @@ def test_cancelled_during_poll_discards_result(monkeypatch: pytest.MonkeyPatch) 
     assert emitted == [], "已取消的记录不该再发「生成成功」事件"
 
 
+def test_success_tail_runs_outside_the_poll_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`mark_succeeded` 落库之后，入库与发事件不能再被轮询超时打断。
+
+    budget = `job.timeout_sec * 0.8`，慢盘上归档一个大视频就可能吃掉它。曾经的写法
+    把归档/`artifact_urls`/事件全留在 `asyncio.timeout` 块里：超时抛 TimeoutError，
+    被外层的 `except Exception` 当成「这一跳失败」，而下一跳看到记录已终态直接
+    return —— 「任务已完成、草稿箱里没有东西、订阅方收不到事件」三件事同时成立，
+    且没有任何重试路径。
+
+    这里把预算压到 0.08s、让归档睡 0.2s：修好之后它睡得完，修之前归档会被取消。
+    """
+    import generation.runner as runner_module
+
+    archived: list[str] = []
+    emitted: list[str] = []
+
+    class _Store:
+        async def load(self, record_id: str) -> GenerationRecord:
+            return GenerationRecord(
+                id=record_id,
+                kind="test-slow-archive",
+                model="seedance-2.5",
+                prompt="p",
+                status="running",
+                owner_id="u_001",
+                external_id="ext-1",
+                progress=40,
+            )
+
+        async def mark_succeeded(self, record_id: str, **kwargs: object) -> bool:
+            return True
+
+        async def mark_progress(self, record_id: str, progress: int) -> bool:
+            return True
+
+        async def mark_failed(self, record_id: str, error: str) -> bool:  # pragma: no cover
+            return True
+
+    class _Provider:
+        async def poll(
+            self, external_id: str, model: str | None = None
+        ) -> GenerationProgress:
+            return GenerationProgress(
+                external_id=external_id,
+                state=GenerationState.SUCCEEDED,
+                progress=100,
+                output_url="https://example.com/a.png",
+            )
+
+    class _Pipeline:
+        kind = "test-slow-archive"
+        capability = Capability.IMAGE
+
+        def store(self, session: object) -> _Store:
+            return _Store()
+
+        async def build_request(self, record: object) -> None:  # pragma: no cover
+            return None
+
+    class _Router:
+        def provider_for(self, model: str, *, allow_fallback: bool = True) -> _Provider:
+            return _Provider()
+
+    async def slow_archive(
+        self: GenerationRunner, kind: str, session: object, record_id: str, output_url: object
+    ) -> None:
+        await asyncio.sleep(0.2)
+        archived.append(record_id)
+
+    async def fake_emit(self: GenerationRunner, name: str, **payload: object) -> None:
+        emitted.append(name)
+
+    register_pipeline(_Pipeline)
+    monkeypatch.setattr(runner_module, "get_model_router", _Router)
+    monkeypatch.setattr(runner_module.GenerationRunner, "_archive", slow_archive)
+    monkeypatch.setattr(runner_module.GenerationRunner, "_emit", fake_emit)
+
+    async def scenario() -> None:
+        await GenerationRunner(MemoryJobQueue()).handle_poll(
+            Job(
+                name=JOB_POLL,
+                payload={"kind": "test-slow-archive", "record_id": "r1", "polls": 1},
+                max_attempts=1,
+                # 预算 = 0.1 * 0.8 = 0.08s，比归档的 0.2s 短得多
+                timeout_sec=0.1,
+            )
+        )
+
+    asyncio.run(scenario())
+
+    assert archived == ["r1"], "已经落库成功，归档不该被轮询预算取消"
+    assert emitted == [EVT_GENERATION_SUCCEEDED], "归档超时也不该让成功事件发不出去"
+
+
 def test_submit_budget_follows_driver_declaration(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -824,3 +921,122 @@ def test_strict_pipeline_wins_through_the_router_not_a_backdoor(
     with pytest.raises(BadRequest):
         runner_module._provider_for(_Strict(), "m")
     assert seen[-1] is False, "冻结渠道的流水线必须把兜底关掉"
+
+
+def test_history_pipelines_declare_strict_model() -> None:
+    """三条历史链路都必须声明 `strict_model = True`。
+
+    模型被下线 / 改名之后，路由的兜底会把历史任务悄悄打到另一家：产物风格、
+    单价、合规口径全变，日志里还看不出异常——用户只看到「又出了一张图」。
+    """
+    from modules.image.pipeline import ImageGenerationPipeline
+    from modules.model_driver.pipeline import ModelDriverPipeline
+    from modules.task.pipeline import VideoGenerationPipeline
+    from modules.template.pipeline import ReplacementPipeline
+
+    for pipeline in (
+        ImageGenerationPipeline,
+        VideoGenerationPipeline,
+        ModelDriverPipeline,
+        ReplacementPipeline,
+    ):
+        assert getattr(pipeline, "strict_model", False) is True, (
+            f"{pipeline.__name__} 必须在历史链路上关掉「单供应商兜底」"
+        )
+
+
+def test_only_replacement_pipeline_keeps_paid_task_running_when_model_is_gone() -> None:
+    """「模型没了就判失败」不是所有流水线都想要的。
+
+    替换链跑的是**已经付费**的任务（`task_id` 在供应商侧），渠道停用只说明
+    「我们联系不上供应商」。判失败会诱导用户去重试 → 重复计费。
+    """
+    from modules.image.pipeline import ImageGenerationPipeline
+    from modules.model_driver.pipeline import ModelDriverPipeline
+    from modules.task.pipeline import VideoGenerationPipeline
+    from modules.template.pipeline import ReplacementPipeline
+
+    assert ReplacementPipeline.fail_on_model_gone is False
+    for pipeline in (
+        ImageGenerationPipeline,
+        VideoGenerationPipeline,
+        ModelDriverPipeline,
+    ):
+        assert pipeline.fail_on_model_gone is True, (
+            f"{pipeline.__name__} 的模型下线后必须当场判失败，不许退避到超时"
+        )
+
+
+def test_poll_fails_immediately_when_model_is_gone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """模型已下线：轮询**当场判失败**，不许退避重试到超时。
+
+    退避会让这条注定失败的任务在队列里反复醒来又失败，用户等满墙钟预算
+    看到的却是「生成超时，请重试」，完全指不出真正原因。
+    """
+    from generation import runner as runner_module
+    from infra.ai.router import ModelUnavailable
+
+    failed: list[tuple[str, str]] = []
+    scheduled: list[int] = []
+
+    class _Store:
+        async def load(self, record_id: str) -> GenerationRecord:
+            return GenerationRecord(
+                id=record_id,
+                kind="test-model-gone",
+                model="已下线的模型",
+                prompt="p",
+                status="running",
+                owner_id="u_001",
+                external_id="ext-1",
+                progress=40,
+            )
+
+        async def mark_failed(self, record_id: str, message: str) -> bool:
+            failed.append((record_id, message))
+            return True
+
+    class _Pipeline:
+        kind = "test-model-gone"
+        capability = Capability.IMAGE
+        strict_model = True
+
+        def store(self, session: object) -> _Store:
+            return _Store()
+
+        async def build_request(self, record: object) -> None:  # pragma: no cover
+            return None
+
+    class _Router:
+        def provider_for(self, model: str, *, allow_fallback: bool = True) -> object:
+            raise ModelUnavailable("模型 '已下线的模型' 不在当前模型目录中")
+
+    async def fake_emit(self: GenerationRunner, name: str, **payload: object) -> None:
+        return None
+
+    async def fake_schedule(
+        self: GenerationRunner, kind: str, record_id: str, *, polls: int = 0, delay: float = 0
+    ) -> None:
+        scheduled.append(polls)
+
+    register_pipeline(_Pipeline)
+    monkeypatch.setattr(runner_module, "get_model_router", _Router)
+    monkeypatch.setattr(runner_module.GenerationRunner, "_emit", fake_emit)
+    monkeypatch.setattr(runner_module.GenerationRunner, "_schedule_poll", fake_schedule)
+
+    async def scenario() -> None:
+        await GenerationRunner(MemoryJobQueue()).handle_poll(
+            Job(
+                name=JOB_POLL,
+                payload={"kind": "test-model-gone", "record_id": "r1", "polls": 1},
+                max_attempts=1,
+            )
+        )
+
+    asyncio.run(scenario())
+
+    assert failed, "模型已下线必须立刻判失败"
+    assert "不在当前模型目录中" in failed[0][1]
+    assert scheduled == [], "不该再排下一跳轮询（退避到超时）"

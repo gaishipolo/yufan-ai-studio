@@ -734,10 +734,20 @@ async def list_tags(
     service: TagServiceDep,
     library: LibraryTab = LibraryTab.ALL,
     state: LibraryAssetState = LibraryAssetState.ACTIVE,
+    kind: LibraryAssetKind | None = None,
 ) -> ApiResponse[list[LibraryTagStatOut]]:
-    """计数按 `state` + `library` 与列表同口径；`state=draft|trash` 时忽略 `library`。"""
+    """计数按 `state` + `library` + `kind` 与列表同口径。
+
+    `state=draft|trash` 时忽略 `library`；`kind` 与列表的类别筛选同口径
+    （悬浮栏按类别看库时，胶囊上的数字必须也是「这一类里有几条」）。
+    """
     return ApiResponse.ok(
-        await service.list_tags(actor, state=state.value, library=library)
+        await service.list_tags(
+            actor,
+            state=state.value,
+            library=library,
+            kind=kind.value if kind else "",
+        )
     )
 
 

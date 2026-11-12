@@ -76,6 +76,16 @@ export function ReferenceImages({
   const accepts = (dataTransfer: DataTransfer) =>
     !full && !!onAddAsset && hasLibraryDrag(dataTransfer.types);
 
+  /**
+   * 从操作系统拖进来的文件（不是素材库里的资产）。
+   *
+   * 必须认这一类：投放区看起来就是个虚线框，用户从桌面把图拖进来是最自然的动作。
+   * 不接住的话浏览器按默认动作打开 `file:///…`，**整页导航**——还没提交的提示词、
+   * 参数、已选的参考图全丢，且没有任何提示。
+   */
+  const carriesFiles = (dataTransfer: DataTransfer) =>
+    Array.from(dataTransfer.types ?? []).includes('Files');
+
   return (
     <div className="mb-2.5">
       <div className="mb-1.5 flex items-center gap-1.5 text-[11.5px] text-ink-soft">
@@ -107,6 +117,14 @@ export function ReferenceImages({
         aria-label="参考图投放区"
         // 整块都是投放区：拖到缩略图上、空白处、「添加」按钮上都应该能落下
         onDragOver={(event) => {
+          // 文件先拦：只要不 preventDefault，浏览器就会把这次投放当成「打开文件」，
+          // drop 永远不会到我们手上，页面直接跳走
+          if (carriesFiles(event.dataTransfer)) {
+            event.preventDefault();
+            event.dataTransfer.dropEffect = 'copy';
+            setDragOver(!full);
+            return;
+          }
           if (!accepts(event.dataTransfer)) return;
           // 不 preventDefault 浏览器就不认这是投放目标，drop 永远不会触发
           event.preventDefault();
@@ -119,6 +137,15 @@ export function ReferenceImages({
           setDragOver(false);
         }}
         onDrop={(event) => {
+          // 桌面上拖来的文件直接走「本地上传」那条路（先入库换 id）：让它落进
+          // 一个真正能用的入口，比只弹一句「请先上传到素材库」少两步
+          const files = event.dataTransfer.files;
+          if (files?.length) {
+            event.preventDefault();
+            setDragOver(false);
+            onPick(files);
+            return;
+          }
           if (!accepts(event.dataTransfer)) return;
           event.preventDefault();
           setDragOver(false);

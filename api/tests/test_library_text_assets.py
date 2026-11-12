@@ -230,3 +230,82 @@ def test_text_endpoints_reject_non_text_assets(client: TestClient, api: str) -> 
         client.get(f"{api}/library/assets/{asset_id}/text/raw", headers=headers).status_code
         == 400
     )
+
+
+# --------------------------------------------------------------------------- 查重 / NUL
+
+
+def test_create_same_content_twice_returns_existing_instead_of_conflict(
+    client: TestClient,
+) -> None:
+    """站内新建同一段正文两次：**返回已有那条**，不新建第二份。
+
+    唯一索引 `uq_library_assets_owner_sha_kind` 拦的是「同 owner + 同内容 +
+    同类型」。站内新建当时没先查重，于是撞索引只抛通用 409
+    「请检查唯一性或关联引用」——用户没做错任何事，只是把同一段文字又存了一遍。
+    """
+    headers = _headers(client)
+    content = f"重复正文{suffix()}"
+    first = _create(client, headers, content)
+    second = _create(client, headers, content)
+
+    # 秒传口径：同一条资产，不是两条
+    assert second["id"] == first["id"]
+    assert second["sha256"] == first["sha256"]
+
+    # 库里确实只有一条
+    listing = client.get(
+        f"{API}/library/assets",
+        params={"view": "personal", "kind": "text"},
+        headers=headers,
+    )
+    assert listing.status_code == 200, listing.text
+    ids = [item["id"] for item in listing.json()["data"]["items"]]
+    assert ids.count(first["id"]) == 1
+    assert first["id"] in ids
+
+
+def test_update_to_another_asset_content_reports_duplicate_instead_of_409(
+    client: TestClient,
+) -> None:
+    """编辑成「自己名下另一条一模一样的正文」要指名道姓，不能只丢一个 409。"""
+    headers = _headers(client)
+    marker = suffix()
+    first = _create(client, headers, f"甲{marker}")
+    second = _create(client, headers, f"乙{marker}")
+
+    response = client.put(
+        f"{API}/library/assets/{second['id']}/text",
+        json={"content": f"甲{marker}", "expectedVersion": second["version"]},
+        headers=headers,
+    )
+    assert response.status_code == 409, response.text
+    body = response.json()
+    # 文案要指向那一条同名素材，用户才知道该删哪份
+    assert first["name"] in body["message"]
+    assert body["details"]["duplicateId"] == first["id"]
+
+
+def test_text_containing_nul_is_rejected_without_leaving_orphan_bytes(
+    client: TestClient,
+) -> None:
+    """U+0000 是合法 UTF-8，但 PostgreSQL 的 text 列拒存。
+
+    上传链是「先 put blob、再落库」，不在落盘前拦就会留下**没人引用的字节**，
+    而库里那条记录根本没建成，用户只看到一个 500。
+    """
+    headers = _headers(client)
+    marker = suffix()
+
+    created = client.post(
+        f"{API}/library/text-assets",
+        json={"name": f"带空字符{suffix()}", "content": f"前{marker}\x00后", "extension": "md"},
+        headers=headers,
+    )
+    assert created.status_code == 400, created.text
+    assert "U+0000" in created.json()["message"]
+
+    # 上传链同样要拦
+    uploaded = _upload(client, headers, f"前{marker}\x00后".encode(), filename="nul.md")
+    assert uploaded.status_code == 400, uploaded.text
+    assert "U+0000" in uploaded.json()["message"]

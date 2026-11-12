@@ -17,7 +17,12 @@
   `GenerationProgress`，`supports_poll = False`，`poll` 不会被调用。
 
 同步形态会占住一个 worker 槽位直到出结果，这是供应商的事实约束。
-两种形态的完整可运行版本见同目录 `mock_async.py` / `mock_sync.py`。
+两种形态的完整可运行版本见同目录 `_mock_async.py` / `_mock_sync.py`。
+
+那两个示例驱动同样以下划线开头，所以**不会被自动载入**——示例模型要是混进
+模型目录，前端选择器里就会多出「示例同步生图」这种用户点不了、提交了也只
+返回占位图的条目。需要离线联调时，显式调用
+`modules.model_driver.registry.register_example_drivers()` 装上它们。
 """
 
 from __future__ import annotations

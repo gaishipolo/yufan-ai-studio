@@ -11,7 +11,7 @@ import { LibraryFlyout } from './LibraryFlyout';
  * 比去猜 DOM 里选中了哪个胶囊更接近契约。
  */
 
-const { selectionCalls, tagsData, itemsData } = vi.hoisted(() => ({
+const { selectionCalls, tagsData, itemsData, tagScopeCalls } = vi.hoisted(() => ({
   selectionCalls: [] as {
     kind?: string;
     tagIds?: string[];
@@ -19,10 +19,14 @@ const { selectionCalls, tagsData, itemsData } = vi.hoisted(() => ({
   }[],
   tagsData: { current: [] as LibraryTagStatOut[] },
   itemsData: { current: [] as LibraryAssetOut[] },
+  tagScopeCalls: [] as { state?: string; library?: string; kind?: string }[],
 }));
 
 vi.mock('../api/library.queries', () => ({
-  useLibraryTags: () => ({ data: tagsData.current }),
+  useLibraryTags: (scope: { state?: string; library?: string; kind?: string }) => {
+    tagScopeCalls.push(scope);
+    return { data: tagsData.current };
+  },
   useLibrarySelectionInfinite: (params: { kind?: string; tagIds?: string[]; keyword?: string }) => {
     selectionCalls.push(params);
     return {
@@ -222,5 +226,42 @@ describe('LibraryFlyout · 一级 / 二级标签', () => {
     // 整行消失会让人以为「又只有一级」，还会让下面内容往上跳
     const second = childRow();
     expect(second).toHaveTextContent('该一级下还没有二级标签');
+  });
+});
+
+describe('LibraryFlyout · 标签计数按当前类别', () => {
+  beforeEach(() => {
+    selectionCalls.length = 0;
+    tagScopeCalls.length = 0;
+    itemsData.current = [];
+    tagsData.current = TAGS;
+  });
+
+  it('默认按「图片」类别请求标签计数', () => {
+    renderFlyout();
+    expect(tagScopeCalls.at(-1)).toMatchObject({
+      state: 'active',
+      library: 'all',
+      kind: 'image',
+    });
+  });
+
+  it('切到别的类别，标签计数跟着换口径', async () => {
+    const user = userEvent.setup();
+    renderFlyout(['image', 'text']);
+
+    await user.click(screen.getByRole('button', { name: '文本' }));
+    expect(tagScopeCalls.at(-1)).toMatchObject({
+      state: 'active',
+      library: 'all',
+      kind: 'text',
+    });
+  });
+
+  it('胶囊上的数字就是当前类别这一档的条数', () => {
+    // 后端按 kind 返回的计数直接显示：全类是 9，图片这一档是 4
+    tagsData.current = [tag('p1', '产品', { assetCount: 4, childCount: 0 })];
+    renderFlyout();
+    expect(within(topRow()).getByRole('button', { name: /^产品/ })).toHaveTextContent('4');
   });
 });

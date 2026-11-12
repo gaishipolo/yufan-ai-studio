@@ -418,6 +418,40 @@ def test_scale_zero_turns_everything_off(
     assert _spam(dependency, _actor(), 5) == [True] * 5
 
 
+def test_scale_never_silently_turns_limiting_off(
+    budget_env: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`SCALE=0.05` 是收紧，不是「全关」。
+
+    `round(10 * 0.05) == 0`，而 `limit == 0` 的语义是「该接口不限流」——一次
+    故障期的收紧会静默变成全站放行，配置里写的和实际生效的正好相反。
+    """
+    import api.deps as deps
+
+    budget_env(rate_limit_scale=0.05)
+    limiter = _limiter()
+    monkeypatch.setattr(deps, "get_rate_limiter", lambda: limiter)
+
+    dependency = rate_limit("demo.scale.tiny", limit=10)
+    assert _spam(dependency, _actor(), 3) == [True, False, False]
+
+
+def test_budget_never_falls_below_a_single_call(budget_env: Any) -> None:
+    """额度比单次消耗还小时抬到「刚好放行一次」。
+
+    `hit()` 判的是 `estimate <= limit`，而 `estimate` 至少是 `cost`：
+    limit=1、cost=2 时每次必 429，`retryAfter` 永远指着窗口边界，重试也不可能成功。
+    """
+    from core.ratelimit import resolve_budget
+
+    budget_env()
+    budget = resolve_budget("demo.cost", limit=1, cost=2)
+    assert (budget.limit, budget.cost) == (2, 2)
+
+    # 显式关闭（0）不能被抬上来：那是「这个接口不限流」的声明
+    assert resolve_budget("demo.cost.off", limit=0, cost=2).disabled
+
+
 def test_override_cannot_survive_scale_zero(
     budget_env: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:

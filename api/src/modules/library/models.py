@@ -299,7 +299,10 @@ class LibraryAssetGeneration(Base):
     source_task_id: Mapped[str] = mapped_column(String(64), nullable=False)
     model: Mapped[str] = mapped_column(String(80), default="", nullable=False)
     model_id: Mapped[str] = mapped_column(String(80), default="", nullable=False)
-    prompt: Mapped[str] = mapped_column(String(4000), default="", nullable=False)
+    # 不设长度：这里存的是**注入正文之后**的提示词（`{{Text N}}` 会被换成整段文案，
+    # 单份上限 1MB）。`String(4000)` 时代 PG 会报 `value too long`，而异常被
+    # `runner._archive` 吞成一行日志 —— 任务显示成功、草稿箱里没有东西。
+    prompt: Mapped[str] = mapped_column(Text, default="", nullable=False)
     size: Mapped[str] = mapped_column(String(32), default="", nullable=False)
     count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     duration_sec: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)

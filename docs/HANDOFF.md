@@ -72,6 +72,7 @@ T34 参考图（含素材库侧边悬浮栏 + 拖拽）→ 标签两级分类 �
 | `bailian` 不再是 `AI_PROVIDERS` 里的名字：`.env` 若还写着它，**启动会失败**（`infra/ai/bailian.py` 已删） | 运维 | 删掉那一段即可，驱动会自动载入；只需留 `BAILIAN_API_KEY` 等私有配置 |
 | 百炼渠道可用性改由驱动回答（`InputPreparer.unavailable_reason`） | 前端/运维 | 没配密钥时渠道目录返回「服务端尚未配置百炼密钥」，文案与以前一致 |
 | `GET /models` 不再返回 `internal=True` 的模型（`bailian-wan3-*` / `libtv-wan3-*`） | 前端/脚本 | 它们是替换链专用（要 `archiveRunId`）。按 id 仍能提交；只是不再出现在「可选清单」和「可用模型」报错提示里 |
+| `drivers/` 里**文件名带 `_` 前缀的驱动不自动载入** | 驱动开发者 | `_mock_async.py` / `_mock_sync.py` / `_template.py` 都不进模型目录、不进 `app drivers list`、不出现在用户可见的下拉里。需要离线联调时显式调 `registry.register_example_drivers()` |
 | 资产库多了 `kind=text`：`POST /library/text-assets` + `/assets/{id}/text{,/versions,/restore,/raw}` | 前端/脚本 | 只收 `.txt`/`.md`、UTF-8、≤1MB；`coverUrl` 恒为 null，卡片改画 `textExcerpt`。老资产读到 `textExcerpt/textVersion/textUrl` 分别是 null / 0 / null |
 | 生图 `GenerateImageIn`、视频 `CreateTaskIn`、替换 `PrepareReplacement` 各多 `textLibraryIds` + 出参 `textBindings` | 前端/脚本 | 提示词里写 `{{Text N}}`，提交时冻结正文注入；出参只回「哪几份、第几版」不回正文。替换工作台只认 `{{Text N}}`，别的手写花括号会被前端拦 |
 | 上传接口 `kind=text` | 前端/脚本 | 请求体上限从 300MB 降到 **1MB**（`LibraryTextTooLarge` 413）；非 UTF-8 一律 400，不做替换字符兜底 |
@@ -86,6 +87,48 @@ T34 参考图（含素材库侧边悬浮栏 + 拖拽）→ 标签两级分类 �
    这道闸目前只负责暴露方言差异、不阻塞合并。哪天要收紧，照 TODO 的前置检查做。
 2. **被移出小组后 owner 看不到素材**（产品口径待定，暂按现状）。
 3. 其余存量：T2/T8/T9/T10/T22~T26/T29，均带验收口径。
+
+## 3.1 测试范围怎么定（2026-11-12 用户拍板：别每次都跑全量）
+
+全量 `pytest -q` 是 **169 秒 / 1570 条**。多数改动只碰一两个模块，跑全量是浪费。
+**判据交给工具，不要凭印象挑**（凭印象会漏）：
+
+```bash
+cd api && ./.venv/Scripts/python.exe scripts/select_tests.py --print
+```
+
+它做三件事：
+
+1. **依赖反查**：静态解析每个测试文件的 `import`，建「源文件 → 测试文件」反向图；
+   改了 `src/modules/library/tags.py` 就命中 `tests/test_library_tags.py`。
+2. **只向上游传一层**：谁 import 我 → 也复测；**不向下传**（我 import 谁不算）。
+   双向传递会让 `core/registry.py` 的改动扩散到全部 286 个源文件，等于全量。
+3. **分级**：
+
+   | 级别 | 触发条件 | 跑什么 |
+   |---|---|---|
+   | `targeted` | 业务模块 / 纯扩展改动 | 依赖图算出的测试文件 |
+   | `framework` | `core/` `api/` `db/` `infra/` `generation/` **且改了已有语义** | 依赖图 + 全部架构守卫 |
+   | `contract` | 改了 `modules/*/router.py` / `schema.py` / `permissions.py` | 依赖图 + `export-openapi --check` |
+   | `full` | 端口目录 / 装配声明 / `modules/*/spec.py` / 迁移 / `pyproject.toml` | 全量 |
+
+**「纯扩展」与「改语义」的区分**：diff 里只有新增行、没有删除行 → 纯扩展
+（给 `NamedRegistry` 加个 `remove()` 方法，53 个依赖它的测试一个都不会坏），
+按 `targeted` 跑；有删除行（改了已有函数体）→ 改语义，按上层规则走。
+
+**升级到全量的硬条件**（工具自动判断）：`src/api/ports.py`、`src/api/assembly.py`、
+`src/api/discovery.py`、`src/core/exceptions.py`、`src/core/response.py`、
+`src/generation/runner.py`、`pyproject.toml`、`migrations/`、`modules/*/spec.py`。
+
+**永远要跑的守卫**（工具自动包含）：`test_architecture.py`、`test_internal_models.py`、
+`test_openapi_contract.py` —— 它们不快，但正是「改错了没人发现」的那一类。
+
+**别做的事**：别自己凭印象挑测试文件（会漏）；别因为「保险起见」就跑全量；
+也别跳过 `ruff` / `mypy`（那两个是秒级的，与测试范围无关）。
+前端同理：`npm run verify` 只在改了 `studio/` 时跑。
+
+**自查工具准不准**：把改动临时还原，跑它选出的测试 —— 应当**变红**。
+（本次已验：还原示例驱动的旧命名，`test_internal_models.py` 准确变红。）
 
 已关闭、留结论防重复劳动：
 
@@ -107,9 +150,15 @@ T34 参考图（含素材库侧边悬浮栏 + 拖拽）→ 标签两级分类 �
 cd api && ./.venv/Scripts/app.exe serve --reload
 
 # 后端门禁：basetemp 每轮必须换一个全新目录（复用到旧目录会出成片假错误）
+# 全量（169s / 1570 条）只在改动触发「结构性条件」时才跑
 cd api && ./.venv/Scripts/python.exe -m pytest -q --basetemp=var/pytest-$(date +%s)
 ./.venv/Scripts/python.exe -m ruff check src tests
 ./.venv/Scripts/python.exe -m mypy --platform win32 src     # 与 CI 同口径
+
+# **平时按改动范围跑，不必每次全量**（2026-11-11 用户拍板）：
+# 先算出该跑哪些，再跑。工具会同时给出分级理由。
+cd api && ./.venv/Scripts/python.exe scripts/select_tests.py --print
+# 典型耗时：定向 ~20s vs 全量 ~169s
 
 # 契约（改了接口就跑，四份一起提交）
 ./.venv/Scripts/app.exe export-openapi                       # --check 只比对不写盘
@@ -143,6 +192,11 @@ curl -sS --noproxy '*' -H "Authorization: Bearer $TOKEN" \
 - **供应商解析只有一处**：`ModelRouter.provider_for(model, allow_fallback=...)`；
   历史记录（轮询/重试/恢复）不许兜底——流水线声明 `strict_model = True`。
   **别再写 `pipeline.resolve_provider`**。
+- **模型下线 ≠ 任务失败**：`provider_for` 严格模式抛 `ModelUnavailable`
+  （`infra/ai/router.py`）。轮询侧默认**当场判失败**（`fail_on_model_gone` 默认 True），
+  不许退避重试到超时——用户最后只看到「生成超时」，指不出真正原因。
+  跑**已付费**任务的流水线要声明 `fail_on_model_gone = False`（替换链就是），
+  渠道停用只说明联系不上供应商，判失败会诱导重试 → 重复计费。
 - **彻底删除**：先取 `id` 到局部变量再 `rollback`（ORM 实例会过期），最终 `DELETE` 的
   `rowcount != 1` 就整段放弃；引用计数按 `storage_key` / `cover_key`，不按 `sha256`
   （内容相同 ≠ 同一个对象）。

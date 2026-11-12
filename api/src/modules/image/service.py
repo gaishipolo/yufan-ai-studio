@@ -18,7 +18,11 @@ from core.exceptions import BadRequest, Forbidden, InvalidState, UpstreamError
 from core.library_text import dumps_text_refs, freeze_text_refs
 from core.logging import get_logger
 from core.param_schema import resolve_params
-from core.ports.library_lookup import LibraryAssetKind, get_library_lookup
+from core.ports.library_lookup import (
+    LibraryAssetKind,
+    LibraryAssetState,
+    get_library_lookup,
+)
 from core.response import Page, PageParams
 from db.repository import BaseRepository
 from generation.runner import get_runner
@@ -98,6 +102,18 @@ async def _resolve_references(
     denied = [asset_id for asset_id in wanted if asset_id not in readable]
     if denied:
         raise Forbidden(f"无权限使用这些参考图（可能是他人的私有素材）：{denied}")
+
+    # 「读得到」不等于「能用来生成」。`readable_ids` 只过了 `access.can_read`，
+    # 而它对回收站放行 owner、对草稿放行 owner（还放行 `library:draft:review`），
+    # 也就是自己删掉的图、别人待审的草稿图都算「可读」。参考图这条链会把图
+    # 读成 base64 交给供应商再造一份 —— 不拦就等于「删除」在这里不生效，
+    # 持代审权的人还能把别人的草稿图复制出来（`/assets/{id}/file` 对这两种
+    # 状态是 404，口径必须一致）。
+    unavailable = [
+        asset_id for asset_id in wanted if found[asset_id].state is not LibraryAssetState.ACTIVE
+    ]
+    if unavailable:
+        raise BadRequest(f"参考图不可用（在回收站或尚未采纳的草稿里）：{unavailable}")
 
     references: list[dict[str, str]] = []
     for asset_id in wanted:

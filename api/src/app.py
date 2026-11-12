@@ -12,7 +12,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -55,6 +55,20 @@ DESCRIPTION = """
 - 字段命名：出入参均为 camelCase，与前端 TypeScript 类型一一对应
 - 生成任务：提交与轮询走队列，业务侧只调用 `runner.dispatch()`
 """
+
+
+async def _shutdown_step(name: str, action: Callable[[], Awaitable[None]]) -> None:
+    """执行一步收尾，失败只记账不外抛。
+
+    收尾步骤之间是**并列关系**：任何一步失败都不该让后面的步骤被跳过
+    （跳过 `dispose_engine()` = 每次 `--reload` 漏一批连接池）。所以每步
+    各自兜住，把异常变成一条 error 日志——停机过程没人盯着日志，但
+    「端口没释放」「连接池泄漏」这类问题会被运维从日志里翻出来。
+    """
+    try:
+        await action()
+    except Exception:  # noqa: BLE001 - 收尾失败不能中断其它收尾
+        logger.exception("收尾步骤失败：%s", name)
 
 
 def load_extension_points() -> None:
@@ -175,6 +189,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
+        # 停机必须**按顺序全部走完**：调度器 → 队列 worker → 出站连接 → 数据库
+        # 引擎 → 线程池。任何一步抛异常都不能让后面的步骤被跳过——
+        # 跳过 `dispose_engine()` 会留下未关闭的连接池（`--reload` 每轮漏一批，
+        # 端口占用），跳过 `worker.stop()` 会让队列里的任务停在半途。
+        #
+        # 之前这里是「一串 await」：调度器那一步抛出非 TimeoutError 的异常
+        # （比如任务内部抛了 RuntimeError）时，`finally` 直接中断，
+        # 后面四个收尾动作**一个都不会执行**。现在每一段各自兜住并记账，
+        # 收尾动作一个都不少。
         stop_scheduler.set()
         if scheduler_task is not None:
             # **先给宽限期，再强杀。** `serve()` 只在两轮之间检查 stop，
@@ -191,13 +214,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 )
             except asyncio.CancelledError:
                 pass
-        await worker.stop()
+            except Exception:  # noqa: BLE001 - 调度器自身崩了不能拖累收尾
+                logger.exception("调度器退出时异常，继续收尾")
+
         # 出站连接池：不显式关闭的话，`--reload` 每轮都会把一批 keep-alive 连接
         # 留给内核，几分钟后开始出现 TIME_WAIT 堆积与「连接被重置」
         from infra.http import close_http
 
-        await close_http()
-        await dispose_engine()
+        await _shutdown_step("队列 worker", worker.stop)
+        await _shutdown_step("出站连接池", close_http)
+        await _shutdown_step("数据库引擎", dispose_engine)
         # 口令线程池不随进程退出立刻回收（靠 atexit join），`--reload` 时每轮都留一组线程
         shutdown_hash_pool()
         logger.info("已关闭")

@@ -54,6 +54,20 @@ def strict_model(pipeline: GenerationPipeline) -> bool:
     return bool(getattr(pipeline, "strict_model", False))
 
 
+def fail_on_model_gone(pipeline: GenerationPipeline) -> bool:
+    """模型从目录里消失时，轮询链路**当场判失败**还是**保留等人工**。
+
+    默认 True（框架通用行为）：模型都没了，这条记录不可能再有结果，
+    继续退避重试只会让用户等满墙钟预算、最后看到一句「生成超时」，
+    完全指不出真正原因。
+
+    替换链声明 False：它跑的是**已经付费**的任务（`task_id` 落在供应商侧），
+    渠道停用只说明「我们联系不上供应商」，不代表任务失败。判失败会诱导用户
+    去重试 → 重复计费。保留 `running` 等人工核对才是对的。
+    """
+    return bool(getattr(pipeline, "fail_on_model_gone", True))
+
+
 pipelines = NamedRegistry[GenerationPipeline]("generation.pipeline")
 
 

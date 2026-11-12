@@ -48,6 +48,7 @@
 | T33 | 替换链专用模型出现在通用模型目录 —— **2026-11-11 已修** | 给 `ModelSpec` 加 `internal`，目录层用 `public_models()` 过滤 | 后端（小） |
 | T34 | 生图链路没有参考图，Agnes 实际只能文生图 —— **2026-11-11 已修** | `referenceLibraryIds` + `reference_json` + Data URI 内联，前端按 `maxReferences` 出控件 | 后端 + 前端 |
 | T35 | PR#5 自报的六条遗留（409 未进契约、continuation 不查 rowcount、`_absorb` 下界、`resume` 全扫、`publish_output` 失败仍记 success、libtv 监督无超时） | 进度、启动耗时与「成功但没片子」这类静默问题 | 后端 |
+| T36 | 2026-11-11 主线复审剩下的九条 P2 —— **2026-11-12 已修** | 都是「不报错但口径不对」；修法与理由见下方段落 | 后端 + 前端 |
 
 ---
 
@@ -326,6 +327,34 @@ Base64 直传），届时改 `drivers/bailian.py` 的 `prepare_inputs` 一处即
    槽位，与调度器 handler 超时那轮的修法可以参考。
 
 **验收**：逐条补用例后从本表删掉。
+
+---
+
+## T36 · 2026-11-11 主线复审剩下的九条 P2
+
+**2026-11-12 已全部修完，九条从本表删除。** 上一轮复审共留 18 条，前 8 条
+（`b7c4e2a` 迁移放宽 `library_asset_generation.prompt`、`runner._finish_success`
+移出轮询超时预算、队列续接查 rowcount、参考图判 `state=="active"`、限流
+`limit >= cost` 与「缩放不能算成 0」、封装封面按两列数引用、投放区接住桌面文件、
+选择器确认按 `value` 顺序且不丢跨页项）在 2026-11-12 推的 `e12bb98..6110a06` 里。
+
+这九条的处理方式（留在这里防止重复劳动，也说明**为什么这么改**）：
+
+| # | 结论 | 落点 |
+|---|---|---|
+| 1 | 站内新建同内容**返回已有那条**（秒传口径，不新建第二份）；编辑撞另一条同名正文时报 409 并在 `details` 里给 `duplicateId`/`duplicateName` | `modules/library/text_assets.py` |
+| 2 | 「解 A 同时在同一位绑 B」→ token **原地保留**指向新绑的；判据是「**新位是不是新加的**」，否则换序时会出现两个 token 指向同一份 | `features/library/textRefs.ts` |
+| 3 | `/library/tags` 加 `kind` 参数，计数与列表的类别筛选同口径 | `modules/library/tags.py` + `LibraryFlyout.tsx` |
+| 4 | NUL 在**落盘前**拦（`encode_text` 是所有文本落盘路径的唯一出口），用户看到 400 而不是 500 + 孤儿 blob | `infra/media_probe.py` |
+| 5 | 读路径（轮询/重试/恢复）**不抛错**：找不到正文就把占位符原样留着。受理期仍由 `validate_text_refs` 严格拦 | `core/library_text.py` |
+| 6 | 注入总量上限 `MAX_TEXT_REF_BYTES = 256KB`，与「几份」两个闸门缺一不可 | `core/library_text.py` |
+| 7 | 重复声明时 `max_series` **取 min**，上限不再取决于 import 顺序 | `core/metrics.py` |
+| 8 | `/model-driver/models` 补 `maxReferences`；`/model-driver/tasks` 按 `spec.max_references` 校验张数 | `modules/model_driver/` |
+| 9 | 三条历史链路声明 `strict_model = True`；新增 `ModelUnavailable` 异常类型，轮询侧**当场判失败**而不是退避到超时。**但判不判失败由流水线声明**（`fail_on_model_gone`）——替换链跑的是已付费任务，渠道停用只说明联系不上供应商，判失败会诱导重试→重复计费，它声明 `False` | `generation/pipeline.py` + `generation/runner.py` |
+
+顺带修掉的：停机收尾改成**每一步各自兜住**（`app._shutdown_step`）——之前
+调度器那一步抛非 `TimeoutError` 的异常会让 `finally` 中断，`worker.stop()` /
+`close_http()` / `dispose_engine()` 一个都不执行。
 
 ---
 

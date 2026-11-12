@@ -75,7 +75,17 @@ def decode_text(data: bytes) -> str:
 
 
 def encode_text(text: str) -> bytes:
-    """规范化后的落盘字节：无 BOM、LF 不动、严格 UTF-8。"""
+    """规范化后的落盘字节：无 BOM、LF 不动、严格 UTF-8。
+
+    **顺带拦掉 U+0000**：它是合法 UTF-8（编码成一个 0x00 字节），但 PostgreSQL
+    的 text 类型拒存 NUL —— 那一列写入会直接抛数据库错误。结果是用户看到 500，
+    而不是「你的文本里有不能存的东西」；更糟的是上传链是「先 `put` blob、再落库」，
+    于是对象存储里多出一份**没人引用的字节**，而库里那条记录根本没建成。
+
+    所以这一关必须放在**落盘之前**：这里抛 `BadRequest`，调用方还没写任何字节。
+    """
+    if "\x00" in text:
+        raise BadRequest("文本里含有 U+0000 空字符，无法保存，请删除后重试")
     return text.encode("utf-8")
 
 
