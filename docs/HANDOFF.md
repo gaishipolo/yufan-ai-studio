@@ -88,6 +88,48 @@ T34 参考图（含素材库侧边悬浮栏 + 拖拽）→ 标签两级分类 �
 2. **被移出小组后 owner 看不到素材**（产品口径待定，暂按现状）。
 3. 其余存量：T2/T8/T9/T10/T22~T26/T29，均带验收口径。
 
+## 3.1 测试范围怎么定（2026-11-12 用户拍板：别每次都跑全量）
+
+全量 `pytest -q` 是 **169 秒 / 1570 条**。多数改动只碰一两个模块，跑全量是浪费。
+**判据交给工具，不要凭印象挑**（凭印象会漏）：
+
+```bash
+cd api && ./.venv/Scripts/python.exe scripts/select_tests.py --print
+```
+
+它做三件事：
+
+1. **依赖反查**：静态解析每个测试文件的 `import`，建「源文件 → 测试文件」反向图；
+   改了 `src/modules/library/tags.py` 就命中 `tests/test_library_tags.py`。
+2. **只向上游传一层**：谁 import 我 → 也复测；**不向下传**（我 import 谁不算）。
+   双向传递会让 `core/registry.py` 的改动扩散到全部 286 个源文件，等于全量。
+3. **分级**：
+
+   | 级别 | 触发条件 | 跑什么 |
+   |---|---|---|
+   | `targeted` | 业务模块 / 纯扩展改动 | 依赖图算出的测试文件 |
+   | `framework` | `core/` `api/` `db/` `infra/` `generation/` **且改了已有语义** | 依赖图 + 全部架构守卫 |
+   | `contract` | 改了 `modules/*/router.py` / `schema.py` / `permissions.py` | 依赖图 + `export-openapi --check` |
+   | `full` | 端口目录 / 装配声明 / `modules/*/spec.py` / 迁移 / `pyproject.toml` | 全量 |
+
+**「纯扩展」与「改语义」的区分**：diff 里只有新增行、没有删除行 → 纯扩展
+（给 `NamedRegistry` 加个 `remove()` 方法，53 个依赖它的测试一个都不会坏），
+按 `targeted` 跑；有删除行（改了已有函数体）→ 改语义，按上层规则走。
+
+**升级到全量的硬条件**（工具自动判断）：`src/api/ports.py`、`src/api/assembly.py`、
+`src/api/discovery.py`、`src/core/exceptions.py`、`src/core/response.py`、
+`src/generation/runner.py`、`pyproject.toml`、`migrations/`、`modules/*/spec.py`。
+
+**永远要跑的守卫**（工具自动包含）：`test_architecture.py`、`test_internal_models.py`、
+`test_openapi_contract.py` —— 它们不快，但正是「改错了没人发现」的那一类。
+
+**别做的事**：别自己凭印象挑测试文件（会漏）；别因为「保险起见」就跑全量；
+也别跳过 `ruff` / `mypy`（那两个是秒级的，与测试范围无关）。
+前端同理：`npm run verify` 只在改了 `studio/` 时跑。
+
+**自查工具准不准**：把改动临时还原，跑它选出的测试 —— 应当**变红**。
+（本次已验：还原示例驱动的旧命名，`test_internal_models.py` 准确变红。）
+
 已关闭、留结论防重复劳动：
 
 - **T31 · 素材直传阿里云 OSS**：**不是合规遗漏，是有意设计**。部分视频模型只接受
@@ -108,9 +150,15 @@ T34 参考图（含素材库侧边悬浮栏 + 拖拽）→ 标签两级分类 �
 cd api && ./.venv/Scripts/app.exe serve --reload
 
 # 后端门禁：basetemp 每轮必须换一个全新目录（复用到旧目录会出成片假错误）
+# 全量（169s / 1570 条）只在改动触发「结构性条件」时才跑
 cd api && ./.venv/Scripts/python.exe -m pytest -q --basetemp=var/pytest-$(date +%s)
 ./.venv/Scripts/python.exe -m ruff check src tests
 ./.venv/Scripts/python.exe -m mypy --platform win32 src     # 与 CI 同口径
+
+# **平时按改动范围跑，不必每次全量**（2026-11-11 用户拍板）：
+# 先算出该跑哪些，再跑。工具会同时给出分级理由。
+cd api && ./.venv/Scripts/python.exe scripts/select_tests.py --print
+# 典型耗时：定向 ~20s vs 全量 ~169s
 
 # 契约（改了接口就跑，四份一起提交）
 ./.venv/Scripts/app.exe export-openapi                       # --check 只比对不写盘
