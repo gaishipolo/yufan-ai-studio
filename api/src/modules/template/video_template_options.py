@@ -56,7 +56,8 @@ def validate_options(prompt: str, rules: dict[str, Any]) -> None:
                 "文字换场景模板必须且只能包含一个 {{ScenePrompt}} 参数，不配置替换范围"
             )
         tokens = re.findall(r"\{\{([^{}]+)\}\}", prompt)
-        if any(token not in {"ScenePrompt", "Mixed 1"} for token in tokens):
+        fixed = {ref["token"][2:-2] for ref in rules.get("fixedReferences", [])}
+        if any(token not in {"ScenePrompt", "Mixed 1"} | fixed for token in tokens):
             raise BadRequest("文字换场景只允许 {{ScenePrompt}} 参数和 {{Mixed 1}} 原视频引用")
     elif SCENE_TOKEN in prompt:
         raise BadRequest("只有文字换场景模板可使用 {{ScenePrompt}} 参数")

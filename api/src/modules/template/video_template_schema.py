@@ -13,7 +13,7 @@ from typing import Any, Literal
 
 from pydantic import Field
 
-from core.schema import CamelModel, UtcDateTime
+from core.schema import CamelModel, UtcDateTime, VerbatimText
 
 ReplacementKindLiteral = Literal["character", "product", "scene"]
 
@@ -45,7 +45,7 @@ class VideoTemplateDraftIn(CamelModel):
         description="稳定标识：同键同配置返回原模板，同键异配置409；留空自动生成。固定蓝本状态独立管理",
     )
     description: str = Field(default="", max_length=2000, description="模板说明")
-    prompt: str = Field(
+    prompt: VerbatimText = Field(
         min_length=1, max_length=20000, description="固定提示词原文，含 {{Mixed N}} 占位符"
     )
     source_video_name: str = Field(default="", max_length=200, description="样片文件名")
@@ -78,7 +78,7 @@ class VideoTemplateOut(CamelModel):
     template_key: str
     name: str
     description: str
-    prompt: str
+    prompt: VerbatimText
     prompt_sha256: str = Field(description="提示词 sha256，防止文字被悄悄改掉")
     source_video_name: str
     source_video_asset_id: str | None = None
@@ -106,15 +106,25 @@ class VideoTemplateAttachSourceIn(CamelModel):
     )
 
 
-class VideoTemplatePromptIn(CamelModel):
-    """只换固定提示词原文：媒体清单、素材包、档位与名称都不动。
+class VideoTemplatePackReferenceIn(CamelModel):
+    token: str = Field(pattern=r"^\{\{Mixed [1-9]\d*\}\}$")
+    pack_id: str = Field(min_length=1, max_length=64)
+    pack_version: int = Field(ge=1)
+    asset_id: str = Field(min_length=1, max_length=64)
 
-    `{{Mixed N}}` 的引用关系按新原文**重算**（新增引用会把槽位补进 bindings，
-    不再引用的图片降为「仅插入接口」），所以不需要连同媒体一起提交。
+
+class VideoTemplatePromptIn(CamelModel):
+    """原地保存固定提示词及跨封装图片引用，不改原片、档位或默认素材包。
+
+    既有用途引用按新原文重算；跨封装引用锁定包与版本，图片追加到基础媒体之后。
+    不再点名的图片仍可作为辅助输入；references 省略时保留，显式空数组清除固定引用。
     """
 
-    prompt: str = Field(
+    prompt: VerbatimText = Field(
         min_length=1, max_length=20000, description="新的固定提示词原文，含 {{Mixed N}} 占位符"
+    )
+    references: list[VideoTemplatePackReferenceIn] | None = Field(
+        default=None, max_length=10, description="跨封装固定图片引用；省略保留原绑定，空数组清除"
     )
 
 

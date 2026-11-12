@@ -1745,7 +1745,7 @@ Authorization: Bearer <accessToken>
 | `GET` | `/api/v1/templates/video-templates/{template_id}` | 视频模板详情（含提示词与媒体顺序） | 🔒 |
 | `POST` | `/api/v1/templates/video-templates/{template_id}/attach-source` | 绑定样片原片资产 | 🔒 |
 | `POST` | `/api/v1/templates/video-templates/{template_id}/pin` | 设为固定蓝本（全库仅一个） | 🔒 |
-| `PATCH` | `/api/v1/templates/video-templates/{template_id}/prompt` | 改固定提示词（媒体清单与素材包不动） | 🔒 |
+| `PATCH` | `/api/v1/templates/video-templates/{template_id}/prompt` | 保存固定提示词与跨封装图片引用 | 🔒 |
 
 #### `GET /api/v1/templates/replacement-catalog`
 
@@ -1832,6 +1832,7 @@ Authorization: Bearer <accessToken>
 | `available` | `boolean \| null` | 否 |  |
 | `coverUrl` | `string \| null` | 否 |  |
 | `previewUrls` | `string[]` | 否 |  |
+| `referenceNames` | `string[]` | 否 |  |
 | `bindings` | `PackBinding[]` | 否 |  |
 | `requiredRoles` | `string[]` | 否 |  |
 | `supportedScopes` | `string[]` | 否 |  |
@@ -1869,6 +1870,7 @@ Authorization: Bearer <accessToken>
 | `available` | `boolean \| null` | 否 |  |
 | `coverUrl` | `string \| null` | 否 |  |
 | `previewUrls` | `string[]` | 否 |  |
+| `referenceNames` | `string[]` | 否 |  |
 | `bindings` | `PackBinding[]` | 否 |  |
 | `requiredRoles` | `string[]` | 否 |  |
 | `supportedScopes` | `string[]` | 否 |  |
@@ -1918,6 +1920,7 @@ Authorization: Bearer <accessToken>
 | `available` | `boolean \| null` | 否 |  |
 | `coverUrl` | `string \| null` | 否 |  |
 | `previewUrls` | `string[]` | 否 |  |
+| `referenceNames` | `string[]` | 否 |  |
 | `bindings` | `PackBinding[]` | 否 |  |
 | `requiredRoles` | `string[]` | 否 |  |
 | `supportedScopes` | `string[]` | 否 |  |
@@ -2458,7 +2461,7 @@ Authorization: Bearer <accessToken>
 
 #### `PATCH /api/v1/templates/video-templates/{template_id}/prompt`
 
-**改固定提示词（媒体清单与素材包不动）**
+**保存固定提示词与跨封装图片引用**
 
 只换提示词原文，`{{Mixed N}}` 引用按新原文重算。
 
@@ -2474,6 +2477,7 @@ Authorization: Bearer <accessToken>
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `prompt` | `string` | 是 | 新的固定提示词原文，含 {{Mixed N}} 占位符 |
+| `references` | `VideoTemplatePackReferenceIn[] \| null` | 否 | 跨封装固定图片引用；省略保留原绑定，空数组清除 |
 
 **响应** `ApiResponse<VideoTemplateOut>`（前端取 `res.data`）
 
@@ -5057,6 +5061,7 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `available` | `boolean \| null` | 否 |  |
 | `coverUrl` | `string \| null` | 否 |  |
 | `previewUrls` | `string[]` | 否 |  |
+| `referenceNames` | `string[]` | 否 |  |
 | `bindings` | `PackBinding[]` | 否 |  |
 | `requiredRoles` | `string[]` | 否 |  |
 | `supportedScopes` | `string[]` | 否 |  |
@@ -5273,6 +5278,7 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `available` | `boolean \| null` | 否 |  |
 | `coverUrl` | `string \| null` | 否 |  |
 | `previewUrls` | `string[]` | 否 |  |
+| `referenceNames` | `string[]` | 否 |  |
 | `bindings` | `PackBinding[]` | 否 |  |
 | `requiredRoles` | `string[]` | 否 |  |
 | `supportedScopes` | `string[]` | 否 |  |
@@ -5897,16 +5903,26 @@ mixedList 里的一项；下标 +1 就是 {{Mixed N}} 编号。
 | `createdAt` | `string` | 是 |  |
 | `updatedAt` | `string` | 是 |  |
 
+### `VideoTemplatePackReferenceIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `token` | `string` | 是 |  |
+| `packId` | `string` | 是 |  |
+| `packVersion` | `number` | 是 |  |
+| `assetId` | `string` | 是 |  |
+
 ### `VideoTemplatePromptIn`
 
-只换固定提示词原文：媒体清单、素材包、档位与名称都不动。
+原地保存固定提示词及跨封装图片引用，不改原片、档位或默认素材包。
 
-`{{Mixed N}}` 的引用关系按新原文**重算**（新增引用会把槽位补进 bindings，
-不再引用的图片降为「仅插入接口」），所以不需要连同媒体一起提交。
+既有用途引用按新原文重算；跨封装引用锁定包与版本，图片追加到基础媒体之后。
+不再点名的图片仍可作为辅助输入；references 省略时保留，显式空数组清除固定引用。
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `prompt` | `string` | 是 | 新的固定提示词原文，含 {{Mixed N}} 占位符 |
+| `references` | `VideoTemplatePackReferenceIn[] \| null` | 否 | 跨封装固定图片引用；省略保留原绑定，空数组清除 |
 
 ### `core__response__ApiResponse_ModelListOut___1`
 

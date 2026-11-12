@@ -63,6 +63,13 @@ async def authorization_gap(session: AsyncSession, run: ReplacementRun) -> str |
             if index < len(versions) and await packs.get_version(pack_id, versions[index]) is None:
                 return "额外人物包的发布版本已不可用，请重新准备"
     rows = await RunRepository(session).inputs(run.id)
+    configuration = run.configuration if isinstance(run.configuration, dict) else {}
+    for ref in configuration.get("fixed_references", []):
+        pack = await PackRepository(session).get(ref["packId"])
+        frozen = await PackRepository(session).get_version(ref["packId"], ref["packVersion"])
+        if (pack is None or pack.deleted_at or pack.status != "published" or frozen is None
+                or ref["assetId"] not in frozen.reference_ids):
+            return "固定引用的素材包已停用或版本不可用，请重新准备"
     if rows:
         media = await get_asset_lookup().get_many(session, [row.asset_id for row in rows])
         # 两个条件都要：`get_many` 不排除软删，行还在、`deleted_at` 已置位——

@@ -145,7 +145,7 @@ def test_scope_configuration_must_fit_prepare_request() -> None:
         })
 
 
-def compile_spec(fixed_prompt: str) -> subprocess.CompletedProcess[str]:
+def compile_spec(fixed_prompt: str, usage: str = "") -> subprocess.CompletedProcess[str]:
     node = shutil.which("node")
     if not node:
         pytest.skip("本机没有 node，跳过编译器回归")
@@ -172,6 +172,10 @@ def compile_spec(fixed_prompt: str) -> subprocess.CompletedProcess[str]:
         },
         "fixed_prompt": fixed_prompt,
     }
+    if usage:
+        for ref in spec["references"]:
+            if ref["type"] == "image":
+                ref["usage"] = usage
     return subprocess.run(
         [node, str(RUNTIME / "workbench/compile.mjs")],
         input=json.dumps(spec, ensure_ascii=False),

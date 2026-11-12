@@ -338,6 +338,7 @@ class PackService:
         在列表里但不可选。直接隐藏会让运营以为「发布没生效」，如实标注至少能解释。
         """
         shaped = self._shape(pack, refs)
+        names = await get_asset_lookup().get_many(self.session, shaped.reference_ids)
         available = True
         try:
             await self._verify_bytes(refs)
@@ -355,6 +356,8 @@ class PackService:
                 "available": available,
                 "cover_url": urls[0] if urls else None,
                 "preview_urls": urls,
+                "reference_names": [names[item].name if item in names else "素材不可用"
+                                    for item in shaped.reference_ids],
             }
         )
 
