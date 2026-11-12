@@ -19,6 +19,9 @@ from sqlalchemy import case, or_, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.exceptions import AppError, Conflict
+from core.logging import get_logger
+from core.ports.library_ingest import IngestRequest
+from core.ports.library_lookup import LibraryAssetKind
 from generation.pipeline import register_pipeline
 from generation.spec import GenerationRecord
 from infra.ai.base import Capability, GenerationRequest
@@ -27,6 +30,9 @@ from modules.template.channels import CHANNEL_MODELS, run_channel
 from modules.template.models import ReplacementRun
 from modules.template.repository import RunRepository
 from modules.template.run_clock import set_status
+from modules.template.titles import KIND_LABELS
+
+logger = get_logger(__name__)
 
 KIND_REPLACEMENT = "template_replacement"
 
@@ -297,4 +303,62 @@ class ReplacementPipeline:
             prompt=record.prompt,
             params=record.params,
             request_id=record.id,
+        )
+
+    async def archive_request(
+        self, session: AsyncSession, record: GenerationRecord, stored: str
+    ) -> IngestRequest | None:
+        """把一条成功的替换运行翻译成「入草稿箱」的请求（可选钩子）。
+
+        与 image / task 两条链的关键差别：模板成片的字节**不在主对象存储里**，
+        而在归档存储（`worker.publish_output` 搬过去的
+        `runs/{id}/outputs/generated.mp4`）。所以走 `archive_key` 而不是
+        `storage_key`——`library_ingest` 的协议注释写明了这条分工：归档盘有自己的
+        清理周期，只登记一个跨存储指针迟早悬空，必须由入库方物化一份。
+
+        `stored` 在这条链上是**站内取件地址**（`libtv.poll` 返回
+        `/api/v1/templates/replacement-runs/{id}/output`），不是可下载的字节来源，
+        因此不直接用它；真正的 key 在 `run.output_key`。
+
+        返回 `None` = 这一跳不入库：`output_key` 还没写（libtv 由 `libtv.download`
+        作业搬，其它渠道在 `mark_succeeded` 里搬）。那时入库只能存一个随后会失效的
+        站内地址；宁可等下一跳，真的搬不上去由
+        `replacement_archive_publish_total{result=failed}` 暴露。
+        """
+        # `populate_existing`：`output_key` 是 `publish_output` 另起事务更新的，
+        # 当前 session 里的对象可能是提交前的快照，直接读会误判「还没搬完」。
+        run = await session.get(ReplacementRun, record.id, populate_existing=True)
+        if run is None:
+            return None
+        if not run.output_key:
+            logger.warning("成片还没有归档键，本次不入草稿箱 run_id=%s", record.id)
+            return None
+        label = KIND_LABELS.get(run.kind, "替换")
+        target = (run.target or "").strip()
+        name = f"{target} · {label}替换" if target else f"{label}替换-{run.id[:8]}"
+        config = run.configuration or {}
+        return IngestRequest(
+            source_module="template",
+            source_task_id=run.id,
+            # 幂等键带供应商任务号：`reconfirm` 后重提会换 task_id、出另一条片子；
+            # 只用 `template:{id}` 的话新片会被判成「已入过库」，草稿箱停在旧版。
+            # 同一跳轮询重复回调时 task_id 不变，仍是同一行。
+            source_key=f"template:{run.id}:{run.task_id or 'v0'}",
+            kind=LibraryAssetKind.VIDEO,
+            owner_id=run.owner_id,
+            name=name,
+            archive_key=run.output_key,
+            mime_type="video/mp4",
+            generation={
+                "model": record.model,
+                "prompt": run.prompt,
+                "duration_sec": run.duration,
+                "aspect_ratio": config.get("aspect_ratio"),
+                "pack_id": run.pack_id,
+                "pack_version": run.pack_version,
+                "prompt_spec": run.prompt_spec,
+                "configuration": run.configuration,
+                "external_id": run.task_id,
+                "credits": run.credits,
+            },
         )

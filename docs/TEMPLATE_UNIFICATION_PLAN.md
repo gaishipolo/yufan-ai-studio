@@ -1643,3 +1643,40 @@ W1（步 0.5 成片进草稿箱）不受影响，仍可先做。开工前仍需�
 **验证**：`select_tests.py` 判 `framework`（8 个文件，含 `api/ratelimit_policy.py`）
 → 43 个测试文件 **565 passed / 67.96s**；`ruff check src tests` 通过；
 `mypy --platform win32 src` 289 files 无问题；`app doctor` 37 项，模板四项全部出现。
+
+### 24.2 步 0.5 / W1：成片进 v2 草稿箱（2026-11-13 完成）
+
+**做了什么**：`ReplacementPipeline.archive_request()`（`template/pipeline.py`）把一条成功的
+`replacement_runs` 行翻译成 `IngestRequest`，走 **`archive_key`**（不是 `storage_key`，
+也不是 `source_url`）。
+
+**计划里没写、落地才确认的四件事**
+
+1. **`stored` 在替换链上不是字节来源**。`libtv.poll()` 返回的是站内取件地址
+   `/api/v1/templates/replacement-runs/{id}/output`（`infra/ai/libtv.py:365`），
+   而模板没实现 `persist_output`，`_persist()` 会原样返回它。真正的 key 是
+   `run.output_key`。照抄 image / task 的 `storage_key` / `source_url` 写法会把站内
+   地址存进草稿箱，run 一删就裂。
+2. **时序上 `output_key` 已就绪**。libtv：`libtv.download` 作业先 `publish_output`
+   再让 `run.json` 变 `success`，而 `poll()` 只在 `meta.status == "success"` 时返回
+   SUCCEEDED；其它渠道：`ReplacementStore.mark_succeeded` 先 `publish_output`
+   再改状态。两条路都保证 `_finish_success` 触发时 key 已写。
+3. **`session.get(..., populate_existing=True)` 是必须的**：`output_key` 由
+   `publish_output` 另起事务写，沿用 session 里的旧快照会读到 `None` 而误判「还没搬完」。
+4. **幂等键取数据库行的 `task_id`**（`mark_submitted` 写的），不是调用方手里的
+   `record.external_id`。测试里只改后者测不出「重提换新行」这条判据。
+
+**与计划的差异**
+
+- 计划说「补一个方法即闭环」，基本成立；但**新增了「`output_key` 为空就返回 `None`」**
+  这个分支——计划没讨论「成片还没搬完」的情形，而它在 bailian 渠道与 libtv 的作业
+  顺序里都会命中。返回 `None` 后 `_archive()` 直接 return，**没有补偿路径**；
+  真正的失败由 `replacement_archive_publish_total{result=failed}` 暴露，不在这里
+  造半条指向站内地址的草稿。
+- `tests/test_library_ingest_archive.py` 的 docstring 原写「不实现 `archive_request`，
+  等口径再接」，已同步改掉——文档与代码互相打脸比没有文档更糟。
+
+**验证**：新增 `tests/test_replacement_ingest.py`（3 条：archiveKey 映射与快照键、
+无 `output_key` 时返回 None、task_id 变化换幂等键）；**反向验证**把方法改名后 3 条全红；
+`select_tests.py` 判 `targeted`（3 个文件）→ 11 个测试文件 **202 passed / 17.16s**；
+`ruff check src tests` 通过；`mypy --platform win32 src` 289 files 无问题。

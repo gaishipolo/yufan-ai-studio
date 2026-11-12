@@ -2,8 +2,9 @@
 
 模板库成片由 `template/worker.publish_output` 搬进 `ArchiveStorage`
 （`runs/{id}/outputs/generated.mp4`），与资产库用的主对象存储是两个驱动。
-本批只验证「把归档盘的字节登记成草稿」这条路通不通，**不实现**
-`ReplacementPipeline.archive_request`：业务现状保持不变，等口径再接。
+本文件只验证「把归档盘的字节登记成草稿」这条路本身；
+生成侧的接入已于 2026-11-13 落地（`ReplacementPipeline.archive_request`），
+翻译层由 `test_replacement_ingest.py` 钉住。
 
 断言方向：
 
@@ -12,7 +13,7 @@
 3. 归档 key 取不到字节时报错，不留下半截资产；
 4. 三种来源的优先级（storageKey > archiveKey > sourceUrl）；
 5. 端点仍由 `library:generation:ingest` 守护；
-6. **端口协议直调也成立** —— 将来 `archive_request` 一行调用即可，不必经过 HTTP。
+6. **端口协议直调也成立** —— 这正是 `archive_request` 现在的调用方式，不经过 HTTP。
 """
 
 from __future__ import annotations
