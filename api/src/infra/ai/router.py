@@ -210,6 +210,32 @@ class ModelRouter:
     def provider_names(self) -> list[str]:
         return self._providers.names()
 
+    def unregister(self, provider_name: str) -> bool:
+        """摘掉一个供应商及其模型。返回是否真的摘掉了。
+
+        仅测试使用：示例驱动显式装上后要能摘干净，否则会漏给后面的用例
+        （路由是进程单例，一个用例装上就影响整场）。
+
+        摘掉时连带清掉它注册的模型与别名，并**重算该能力的默认模型**——
+        默认值是「第一个注册进来的」，摘掉默认值所在的供应商后，默认必须
+        跟着走，否则会指向一个已经不存在的模型。
+        """
+        if provider_name not in self._providers.names():
+            return False
+
+        specs = [spec for spec in self._models.values() if spec.provider == provider_name]
+        for spec in specs:
+            self._models.pop(spec.id, None)
+            if self._alias.get(spec.label) == spec.id:
+                self._alias.pop(spec.label, None)
+        self._providers.remove(provider_name)
+
+        # 重算默认值：按剩余供应商的注册顺序取第一个
+        self._default.clear()
+        for spec in self._models.values():
+            self._default.setdefault(spec.capability, spec.id)
+        return True
+
     def summary(self) -> RouterSummary:
         return {
             "providers": self.provider_names(),

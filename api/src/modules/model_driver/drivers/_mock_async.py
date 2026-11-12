@@ -3,6 +3,11 @@
 演示「怎么调用 / 怎么查询结果 / 怎么停止」三件事的最小写法：
 `submit` 返回供应商任务号，框架会按节奏回来调 `poll`。
 真实厂商把这里的假时间换成 HTTP 请求即可，其余一行不用改。
+
+**文件名以下划线开头**，所以 `registry._iter_driver_modules()` 会跳过它：
+示例模型不进模型目录、不进前端选择器、不进 `app drivers list`。
+需要离线联调时显式调用
+`modules.model_driver.registry.register_example_drivers()`。
 """
 
 from __future__ import annotations

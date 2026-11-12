@@ -111,6 +111,47 @@ def test_replacement_channel_models_are_declared_internal() -> None:
             assert spec.internal, f"{label}: {spec.id} 未标记 internal"
 
 
+def test_underscore_prefixed_driver_files_are_skipped() -> None:
+    """文件名带 `_` 前缀的驱动**不自动载入**。
+
+    约定写在 `_template.py` 的文件头：「文件名以下划线开头，`registry.
+    _iter_driver_modules()` 会跳过它，所以这份骨架不会被当成真驱动载入」。
+    骨架守住了，**示例驱动没守住**——它们叫 `mock_async.py` / `mock_sync.py`，
+    于是真被扫进来：用户在生成工作台里能选中「示例同步生图」「示例异步视频」，
+    提交后只拿到 `https://example.com/mock/...` 的占位图。下拉里多出来的条目
+    在真实部署里根本不该存在。
+
+    这条守卫钉住「下划线 = 不载入」这个约定本身：新增示例驱动时若忘了加
+    `_`，这里会红。
+    """
+    from modules.model_driver.registry import _iter_driver_modules
+
+    discovered = {name for name, _ in _iter_driver_modules()}
+    assert "_template" not in discovered
+    assert "_mock_async" not in discovered
+    assert "_mock_sync" not in discovered
+    # 反过来：真实驱动必须在发现列表里
+    assert {"agnes", "agnes_video", "bailian"} <= discovered
+
+
+def test_example_driver_models_stay_out_of_public_catalog() -> None:
+    """示例驱动的模型不得出现在给人挑的目录里。
+
+    兜底断言：不依赖「文件名带 `_`」这条实现约定，直接钉住**结果**——
+    用户可见的模型目录里不能有示例模型。
+    """
+    from infra import get_model_router
+    from modules.model_driver.registry import ensure_drivers_registered
+
+    ensure_drivers_registered()
+    public_ids = {spec.id for spec in get_model_router().public_models()}
+    assert not public_ids & {
+        "md-sync-image",
+        "md-async-image",
+        "md-async-video",
+    }
+
+
 def test_internal_flag_defaults_to_false() -> None:
     """没写这个字段的驱动保持「公开」——否则接入一个新供应商会静默从目录消失。"""
     spec: Any = _spec("public-image")

@@ -225,7 +225,9 @@ EXIT_CASES: dict[str, Callable[[TestClient], Awaitable[None]]] = {
 
 
 @pytest.mark.parametrize("kind", sorted(EXIT_CASES))
-async def test_declared_exit_actually_works(kind: str, client: TestClient) -> None:
+async def test_declared_exit_actually_works(
+    kind: str, client: TestClient, example_drivers: None
+) -> None:
     await EXIT_CASES[kind](client)
 
 

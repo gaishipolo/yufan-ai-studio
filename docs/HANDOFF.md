@@ -72,6 +72,7 @@ T34 参考图（含素材库侧边悬浮栏 + 拖拽）→ 标签两级分类 �
 | `bailian` 不再是 `AI_PROVIDERS` 里的名字：`.env` 若还写着它，**启动会失败**（`infra/ai/bailian.py` 已删） | 运维 | 删掉那一段即可，驱动会自动载入；只需留 `BAILIAN_API_KEY` 等私有配置 |
 | 百炼渠道可用性改由驱动回答（`InputPreparer.unavailable_reason`） | 前端/运维 | 没配密钥时渠道目录返回「服务端尚未配置百炼密钥」，文案与以前一致 |
 | `GET /models` 不再返回 `internal=True` 的模型（`bailian-wan3-*` / `libtv-wan3-*`） | 前端/脚本 | 它们是替换链专用（要 `archiveRunId`）。按 id 仍能提交；只是不再出现在「可选清单」和「可用模型」报错提示里 |
+| `drivers/` 里**文件名带 `_` 前缀的驱动不自动载入** | 驱动开发者 | `_mock_async.py` / `_mock_sync.py` / `_template.py` 都不进模型目录、不进 `app drivers list`、不出现在用户可见的下拉里。需要离线联调时显式调 `registry.register_example_drivers()` |
 | 资产库多了 `kind=text`：`POST /library/text-assets` + `/assets/{id}/text{,/versions,/restore,/raw}` | 前端/脚本 | 只收 `.txt`/`.md`、UTF-8、≤1MB；`coverUrl` 恒为 null，卡片改画 `textExcerpt`。老资产读到 `textExcerpt/textVersion/textUrl` 分别是 null / 0 / null |
 | 生图 `GenerateImageIn`、视频 `CreateTaskIn`、替换 `PrepareReplacement` 各多 `textLibraryIds` + 出参 `textBindings` | 前端/脚本 | 提示词里写 `{{Text N}}`，提交时冻结正文注入；出参只回「哪几份、第几版」不回正文。替换工作台只认 `{{Text N}}`，别的手写花括号会被前端拦 |
 | 上传接口 `kind=text` | 前端/脚本 | 请求体上限从 300MB 降到 **1MB**（`LibraryTextTooLarge` 413）；非 UTF-8 一律 400，不做替换字符兜底 |

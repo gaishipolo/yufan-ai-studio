@@ -153,3 +153,30 @@ def _clean_rate_limit_counters() -> None:
 
     asyncio.run(get_cache().clear())
 
+
+@pytest.fixture
+def example_drivers() -> Iterator[None]:
+    """显式装上示例驱动，用例结束后摘干净。
+
+    示例驱动的文件名带 `_` 前缀，所以**不会自动载入**——这是刻意的：
+    它们是给开发者看的骨架，不该出现在用户可见的模型目录里（以前叫
+    `mock_async.py` / `mock_sync.py`，于是真被扫进来了，用户在生成工作台
+    里能选中「示例同步生图」，提交后只拿到一张占位图）。
+
+    但框架自己的用例需要一个**离线可跑**的供应商——不能真调外部厂商——
+    所以留了这个显式入口。
+
+    摘掉是必须的：模型路由是进程单例，示例驱动装上后会漏给后面的用例，
+    而「示例模型不在公开目录里」那条断言会被自己人破坏。
+    """
+    from modules.model_driver.registry import (
+        register_example_drivers,
+        unregister_example_drivers,
+    )
+
+    register_example_drivers()
+    try:
+        yield
+    finally:
+        unregister_example_drivers()
+

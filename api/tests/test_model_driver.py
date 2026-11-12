@@ -34,7 +34,9 @@ from modules.model_driver.registry import (
     driver_summaries,
     ensure_drivers_registered,
     load_errors,
+    register_example_drivers,
     reset_drivers,
+    unregister_example_drivers,
 )
 from modules.model_driver.service import ModelGenerationFacade
 from modules.model_driver.spec import validate_driver
@@ -72,23 +74,61 @@ def _me(client: TestClient) -> str:
 
 # --------------------------------------------------------------------- 自动载入
 def test_drivers_are_auto_loaded_without_env_listing(client: TestClient) -> None:
+    """真实驱动不进 `.env` 也能被扫描到并接上路由。"""
     ensure_drivers_registered()
     infos = {item.name: item for item in driver_summaries()}
-    assert {"md_async", "md_sync"} <= set(infos)
     assert all(item.loaded for item in infos.values()), load_errors()
     assert not load_errors()
-    # 关键：这两个名字不在配置清单里，是扫描 drivers/ 得来的
-    assert "md_async" not in settings.ai_provider_list
-    assert "md_sync" not in settings.ai_provider_list
+    # 关键：这些名字不在配置清单里，是扫描 drivers/ 得来的
+    assert "agnes" not in settings.ai_provider_list
     router = get_model_router()
-    assert {"md_async", "md_sync"} <= set(router.provider_names())
-    assert router.resolve("md-sync-image") is not None
-    assert router.provider_for("md-async-video").name == "md_async"
+    assert "agnes" in router.provider_names()
+    assert router.resolve("agnes-image-2.5-flash") is not None
+
+
+def test_example_drivers_are_not_auto_loaded(client: TestClient) -> None:
+    """示例驱动**不自动载入**——文件名带 `_` 前缀即被目录扫描跳过。
+
+    它们以前叫 `mock_async.py` / `mock_sync.py`，于是真的被扫进来：用户在
+    生成工作台里能选中「示例同步生图」，提交后只拿到一张占位图，而下拉里
+    多出来的三个条目在真实部署里根本不该存在。
+    """
+    ensure_drivers_registered()
+    infos = {item.name: item for item in driver_summaries()}
+    assert "md_async" not in infos
+    assert "md_sync" not in infos
+
+    router = get_model_router()
+    assert "md_async" not in router.provider_names()
+    assert "md_sync" not in router.provider_names()
+    assert router.resolve("md-sync-image") is None
+    assert router.resolve("md-async-video") is None
+
+    # 公开目录里也不该有示例模型
+    assert not {spec.id for spec in router.public_models()} & {
+        "md-sync-image",
+        "md-async-image",
+        "md-async-video",
+    }
+
+
+def test_example_drivers_can_be_registered_explicitly(client: TestClient) -> None:
+    """测试与离线联调需要离线可跑的供应商，所以留了显式入口。"""
+    register_example_drivers()
+    try:
+        router = get_model_router()
+        assert {"md_async", "md_sync"} <= set(router.provider_names())
+        assert router.resolve("md-sync-image") is not None
+        assert router.provider_for("md-async-video").name == "md_async"
+        # 幂等：再调一次不报「驱动名已注册」
+        assert set(register_example_drivers()) == {"md_async", "md_sync"}
+    finally:
+        unregister_example_drivers()
 
 
 def test_contract_validation_rejects_broken_drivers() -> None:
-    from modules.model_driver.drivers.mock_async import MockAsyncDriver
-    from modules.model_driver.drivers.mock_sync import MockSyncDriver
+    from modules.model_driver.drivers._mock_async import MockAsyncDriver
+    from modules.model_driver.drivers._mock_sync import MockSyncDriver
 
     assert validate_driver(MockAsyncDriver()) == []
     assert validate_driver(MockSyncDriver()) == []
@@ -143,7 +183,7 @@ def test_pipeline_exposes_recovery_hook(client: TestClient) -> None:
 
 
 # ------------------------------------------------------------------- 门面 / REST
-def test_submit_query_and_cancel_via_rest(client: TestClient) -> None:
+def test_submit_query_and_cancel_via_rest(client: TestClient, example_drivers: None) -> None:
     resp = client.post(
         f"{API}/model-driver/tasks",
         json={"model": "md-sync-image", "prompt": "冒烟", "source": "pytest"},
@@ -168,7 +208,7 @@ def test_submit_query_and_cancel_via_rest(client: TestClient) -> None:
         _cleanup([job_id])
 
 
-def test_port_direct_submit(client: TestClient) -> None:
+def test_port_direct_submit(client: TestClient, example_drivers: None) -> None:
     """下游模块不经 HTTP、直接调注入口也必须能落库并入队。"""
     ticket = asyncio.run(
         get_model_generation().submit(
@@ -190,7 +230,7 @@ def test_port_direct_submit(client: TestClient) -> None:
         _cleanup([ticket.task_id])
 
 
-def test_reference_urls_survive_to_build_request(client: TestClient) -> None:
+def test_reference_urls_survive_to_build_request(client: TestClient, example_drivers: None) -> None:
     """参考图必须原样活到 `build_request`——图生图/多图合成全靠这条链。
 
     链路是 REST/端口 → `encode_request(params, reference_urls)` 落库 →
@@ -232,7 +272,7 @@ def test_unknown_model_is_rejected(client: TestClient) -> None:
     assert resp.status_code == 400
 
 
-def test_catalog_and_driver_endpoints(client: TestClient) -> None:
+def test_catalog_and_driver_endpoints(client: TestClient, example_drivers: None) -> None:
     models = client.get(f"{API}/model-driver/models")
     assert models.status_code == 200
     assert "md-sync-image" in {item["id"] for item in models.json()["data"]["items"]}
@@ -251,7 +291,7 @@ def test_cli_check_passes(client: TestClient, capsys: pytest.CaptureFixture[str]
     assert "PASS" in capsys.readouterr().out
 
 
-def test_retry_requires_confirm_charged(client: TestClient) -> None:
+def test_retry_requires_confirm_charged(client: TestClient, example_drivers: None) -> None:
     job = DriverJob(
         name="retry-exit",
         prompt="出口用例",
@@ -431,7 +471,7 @@ def test_provider_for_can_refuse_the_only_provider_fallback() -> None:
 
 
 # ------------------------------------------------------------------- 参考图上限
-def test_model_list_exposes_max_references(client: TestClient) -> None:
+def test_model_list_exposes_max_references(client: TestClient, example_drivers: None) -> None:
     """`/model-driver/models` 必须出 `maxReferences`。
 
     服务端知道每个模型最多收几张参考图，接口不告诉调用方，调用方就只能
@@ -444,7 +484,9 @@ def test_model_list_exposes_max_references(client: TestClient) -> None:
     assert items["md-sync-image"]["maxReferences"] == 4
 
 
-def test_submit_rejects_more_references_than_model_allows(client: TestClient) -> None:
+def test_submit_rejects_more_references_than_model_allows(
+    client: TestClient, example_drivers: None
+) -> None:
     """统一门面必须按模型声明校验参考图张数。
 
     少了这道校验，超量的参考图会被驱动**静默截断**（只算前 N 张），
@@ -462,7 +504,9 @@ def test_submit_rejects_more_references_than_model_allows(client: TestClient) ->
     assert "最多接受 4 张" in resp.json()["message"]
 
 
-def test_submit_rejects_references_for_text_only_model(client: TestClient) -> None:
+def test_submit_rejects_references_for_text_only_model(
+    client: TestClient, example_drivers: None
+) -> None:
     """`max_references=0` 的模型不许带参考图（纯文生图）。"""
     resp = client.post(
         f"{API}/model-driver/tasks",

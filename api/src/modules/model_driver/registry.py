@@ -187,6 +187,105 @@ def reset_drivers() -> None:
     _errors.clear()
 
 
+# --------------------------------------------------------------------- 示例驱动
+# 示例驱动的文件名以下划线开头，`_iter_driver_modules()` 会跳过它们，于是
+# **不自动载入**：示例模型不进模型目录、不进前端选择器、不进 `app drivers list`。
+# 以前它们叫 `mock_async.py` / `mock_sync.py`，于是真的被扫进来了——用户在
+# 生成工作台里能选中「示例同步生图」，提交后只拿到一张占位图。
+#
+# 但框架自己的用例需要一个**离线可跑**的供应商（不能真调外部厂商），所以
+# 保留显式入口：测试调用它把示例驱动装进路由与驱动清单。
+_EXAMPLE_DRIVERS = ("_mock_async", "_mock_sync")
+
+# 模块名 → 驱动名。摘除时要按**驱动名**找路由里的注册项，而驱动名由驱动
+# 自己声明（`name`），不一定等于文件名。
+_EXAMPLE_PROVIDER_NAMES = {
+    "_mock_async": "md_async",
+    "_mock_sync": "md_sync",
+}
+
+
+def register_example_drivers() -> tuple[str, ...]:
+    """显式装上示例驱动，返回它们的名字。
+
+    幂等：已注册过的直接跳过，不重复报「驱动名已注册」。
+
+    示例驱动会进模型目录，所以**只在测试与离线联调时调用**，生产路径不要碰。
+    """
+    ensure_drivers_registered()
+    router = get_model_router()
+    registered: list[str] = []
+    for module_name in _EXAMPLE_DRIVERS:
+        try:
+            module = importlib.import_module(f"{_DRIVERS_PACKAGE}.{module_name}")
+        except Exception as exc:  # noqa: BLE001 - 示例驱动缺失不该拖垮调用方
+            message = f"{module_name}.py: {exc}"
+            if message not in _errors:
+                _errors.append(message)
+            continue
+
+        factory = getattr(module, "Driver", None)
+        if factory is None:
+            continue
+        provider = _instantiate(factory)
+        if provider.name not in router.provider_names():
+            try:
+                router.register(provider)
+            except Exception as exc:  # noqa: BLE001 - 模型 id 撞车不能拖垮路由
+                message = f"示例驱动 {provider.name!r} 注册失败：{exc}"
+                if message not in _errors:
+                    _errors.append(message)
+                logger.error("示例驱动注册失败 %s", message)
+                continue
+            logger.info("已显式载入示例驱动 %s", provider.name)
+        registered.append(provider.name)
+        _remember_example(module_name, provider, module)
+    return tuple(registered)
+
+
+def _remember_example(module_name: str, provider: ModelProvider, module: Any) -> None:
+    """把显式装上的示例驱动记进驱动清单。
+
+    与 `_discover()` 的产物同构，所以 `driver_summaries()` / `app drivers list`
+    照样能看到它们——只是这条路径**只有测试与离线联调**会走。
+    """
+    if _state is None:
+        return
+    meta = getattr(module, "META", None)
+    if not isinstance(meta, standard.DriverMeta):
+        meta = standard.DEFAULT_META
+    summary = DriverSummary(
+        name=provider.name,
+        path=f"{_DRIVERS_PACKAGE.replace('.', '/')}/{module_name}.py",
+        label=meta.label or provider.name,
+        version=meta.version,
+        capabilities=tuple(sorted(c.value for c in provider.capabilities)),
+        model_count=len(provider.models),
+        supports_poll=bool(getattr(provider, "supports_poll", False)),
+        loaded=True,
+    )
+    _state[provider.name] = _LoadedDriver(provider=provider, summary=summary)
+
+
+def unregister_example_drivers() -> tuple[str, ...]:
+    """把显式装上的示例驱动摘干净，返回摘掉的名字。
+
+    仅测试使用：路由是进程单例，示例驱动装上后必须能摘掉，否则会漏给
+    后面的用例（那几条用例要断言「示例模型不在公开目录里」）。
+    """
+    router = get_model_router()
+    removed: list[str] = []
+    for module_name in _EXAMPLE_DRIVERS:
+        provider = _EXAMPLE_PROVIDER_NAMES.get(module_name)
+        if provider is None:
+            continue
+        if router.unregister(provider):
+            removed.append(provider)
+        if _state is not None:
+            _state.pop(provider, None)
+    return tuple(removed)
+
+
 async def bootstrap() -> None:
     """`ModuleSpec.bootstrap`：任何实例启动时都确保驱动已接上路由。
 

@@ -131,8 +131,16 @@ async def submit(self, request: GenerationRequest) -> GenerationProgress:
 ```
 
 同步形态会占住一个 worker 槽位直到出结果，这是厂商事实约束，不是框架缺陷。
-参考实现见 `drivers/mock_async.py`（异步）与 `drivers/mock_sync.py`（同步），
+参考实现见 `drivers/_mock_async.py`（异步）与 `drivers/_mock_sync.py`（同步），
 两个都能离线跑通；真实厂商的行文见 `drivers/agnes.py`（同步 + 图生图/多图合成）。
+
+> **文件名以下划线开头的驱动不会被载入。** `_iter_driver_modules()` 跳过它们，
+> 所以 `_template.py` 这类骨架、以及两个示例驱动都不会进模型目录、不进
+> `app drivers list`、也不会出现在用户可见的模型下拉里。
+> 需要离线联调时显式调用
+> `modules.model_driver.registry.register_example_drivers()`。
+> （示例驱动以前叫 `mock_async.py` / `mock_sync.py`，于是真被扫进来了，
+> 用户在生成工作台里能选中「示例同步生图」，提交后只拿到占位图。）
 
 ## 3.5 参数声明（param_schema）
 
