@@ -14,14 +14,13 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
-
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.module import SeedContext
 from core.context import CurrentUser
 from core.logging import get_logger
 from core.ports.library_lookup import LibraryAssetKind, get_library_lookup
+from db.base import utcnow
 from modules.template.id_space import ASSET_ID_SPACE_V2
 from modules.template.models import TemplatePack, TemplatePackReference, TemplatePackVersion
 
@@ -65,7 +64,7 @@ async def seed(session: AsyncSession, context: SeedContext) -> int:
             features="同一人物在不同镜头里保持发型、肤色与面部特征一致。",
             instructions="不要改变原片人物的动作与背景。",
             required_roles=["front"],
-            published_at=datetime.now(UTC),
+            published_at=utcnow(),
         )
         session.add(pack)
         await session.flush()

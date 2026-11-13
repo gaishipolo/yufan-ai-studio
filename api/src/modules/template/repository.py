@@ -11,7 +11,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import NamedTuple
 
 from sqlalchemy import Select, and_, delete, func, select
@@ -19,6 +19,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.exceptions import Conflict, NotFound
+from db.base import utcnow
 from modules.template.models import (
     ReplacementReview,
     ReplacementRun,
@@ -46,7 +47,7 @@ class RunInputRow(NamedTuple):
 
 
 def _now() -> datetime:
-    return datetime.now(UTC)
+    return utcnow()
 
 
 # --------------------------------------------------------------------------- #

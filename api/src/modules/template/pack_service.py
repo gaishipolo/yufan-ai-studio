@@ -19,7 +19,6 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
 
 from sqlalchemy.exc import SQLAlchemyError
@@ -35,6 +34,7 @@ from core.ports.library_lookup import (
 )
 from core.ports.media import get_asset_lookup
 from core.serving import Served
+from db.base import utcnow
 from infra import get_storage
 from infra.archive import BlobStore, get_archive_storage, preview_key
 from modules.template.asset_source import resolve_assets, resolve_names
@@ -244,12 +244,12 @@ class PackService:
                 features=pack.features,
                 instructions=pack.instructions,
                 wardrobe_mode=pack.wardrobe_mode,
-                published_at=datetime.now(UTC),
+                published_at=utcnow(),
             )
 
         pack.version = await self.repo.create_version(pack.id, pack.version + 1, build)
         pack.status = "published"
-        pack.published_at = datetime.now(UTC)
+        pack.published_at = utcnow()
         await self.repo.save(pack)
         await self.session.commit()
         return await self.managed(pack)

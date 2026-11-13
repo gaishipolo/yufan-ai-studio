@@ -186,6 +186,36 @@ async def test_publishing_same_revision_twice_is_idempotent(client: TestClient) 
         await drop_pack(draft.id)
 
 
+async def test_publish_time_comes_from_the_shared_clock(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """发布时间要能钉住：它得取自 `db.base.utcnow`，而不是各处自己 `datetime.now`。
+
+    时间源各自为政时，想验「发布时间落在这条版本上」只能等、或者放开容差——
+    而这一列是判断「哪一版先发」的唯一依据。
+    """
+    from modules.template import pack_service
+
+    pinned = datetime(2026, 11, 13, 4, 30, tzinfo=UTC)
+    ids = upload_ids(client, "character", 1)
+    async with get_session_factory()() as session:
+        draft = await pack_service.PackService(session).save(_draft(ids), ADMIN)
+    try:
+        monkeypatch.setattr(pack_service, "utcnow", lambda: pinned)
+        async with get_session_factory()() as session:
+            await pack_service.PackService(session).publish(draft.id, ADMIN, draft.revision)
+        async with get_session_factory()() as session:
+            versions = await PackRepository(session).list_versions(draft.id)
+            row = await session.get(TemplatePack, draft.id)
+        # 版本行与封装行两处都取自同一个钟：漏一处就会「包说 A 时发的、版本说 B 时」。
+        # sqlite 不带时区，取回来的是 naive，比较前补上 UTC（值本身没变）。
+        assert [version.published_at.replace(tzinfo=UTC) for version in versions] == [pinned]
+        assert row is not None and row.published_at is not None
+        assert row.published_at.replace(tzinfo=UTC) == pinned
+    finally:
+        await drop_pack(draft.id)
+
+
 def _draft(ids: list[str], **extra):
     import uuid
 

@@ -22,7 +22,6 @@ import re
 import shutil
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
-from datetime import UTC, datetime
 from pathlib import Path
 from time import perf_counter
 from typing import TYPE_CHECKING, Any, NamedTuple, TypeAlias
@@ -59,6 +58,7 @@ from core.ports.library_lookup import (
 )
 from core.ports.media import get_asset_lookup
 from core.serving import Served
+from db.base import utcnow
 from infra.archive import ArchiveStorage, get_archive_storage
 from infra.media_probe import encode_text
 from modules.template import video_template_service
@@ -750,7 +750,7 @@ class ReplacementService:
     ) -> ReplacementRunOut:
         run = await self.runs.get_or_404(run_id, owner=owner)
         if deleted and run.deleted_at is None:
-            run.deleted_at = datetime.now(UTC)
+            run.deleted_at = utcnow()
         elif not deleted and run.deleted_at is not None:
             run.deleted_at = None
         else:
@@ -780,7 +780,7 @@ class ReplacementService:
             reason_codes=payload.reason_codes,
             comment=payload.comment,
             reviewed_by=owner,
-            reviewed_at=datetime.now(UTC),
+            reviewed_at=utcnow(),
         )
         # history 只放**这一条之前**的结论：出参里 `status` 已经是当前值，
         # 再把当前塞进 history，前端时间线最后一条会重复，版本号也对不上。
