@@ -222,6 +222,12 @@ class ReplacementRun(Base, UUIDMixin, TimestampMixin):
 
     # 编译后的提示词：详情页与任务中心直接展示，不再回读文件
     prompt: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    # **实际发出去那段字节**的 sha256，在所有后处理之后由 Python 算一次。
+    # 编译器自己那两个哈希（`template_sha256` / `spec_sha256`）哈希的是模板和输入，
+    # 中间还会被 `inject_masked_text_refs` / `translate_prompt` 改写，事后拿着它们
+    # 复核不了「当时到底发了什么」。NULL = 这一行是在加这列之前准备的，**不回填**：
+    # 回填只能哈希现在这一列 `prompt`，而那恰好是无法自证的部分。
+    prompt_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # 文本素材冻结快照（JSON 文本）。`{{Text N}}` 在编译后注入进 `prompt`，
     # 但快照要留着：详情页要说清「当时用的是哪一稿」，重跑也不该重新读资产。
     text_json: Mapped[str] = mapped_column(Text, default="", nullable=False)

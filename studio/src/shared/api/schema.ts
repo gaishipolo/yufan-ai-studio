@@ -1200,6 +1200,8 @@ export interface ReplacementRunOut {
   /** 确认提交到结束的耗时（秒）；未完成时按到此刻计，未开始为 null */
   elapsedSec?: number | null;
   prompt: string;
+  /** 实际发出去那段提示词的 sha256（所有后处理之后）。档案里另外两个哈希（template/spec）哈希的是模板与输入，复核不了最终字节。加这列之前准备的任务为 null，不回填。 */
+  promptSha256?: string | null;
   /** 本次绑定的文本资产 id（顺序即 `{{Text N}}` 编号） */
   textLibraryIds?: string[];
   /** 绑定的文案与版本快照（不含正文） */

@@ -629,6 +629,10 @@ class ReplacementService:
         run.status = "prepared"
         run.fingerprint = fingerprint
         run.prompt = compiled.prompt
+        # 与 `prompt` 同一份字节的摘要：详情页/审计拿它复核「实际发出去的是不是这段」。
+        # 只在这一处写（`prepare` 成功分支），别在提交/重试时重算——那会把「发出去的
+        # 是哪段」和「现在库里是哪段」混成同一个问题。
+        run.prompt_sha256 = compiled.prompt_sha256
         run.prompt_spec = spec
         # `spec["duration"]` 是 `_materialize_inputs` 刚算出来的 int（1..15），
         # 不是外部输入；这里过 `isinstance` 只为把 `dict[str, object]` 收窄成 int，
@@ -1208,6 +1212,7 @@ class ReplacementService:
             finished_at=run.finished_at,
             elapsed_sec=elapsed_seconds(run),
             prompt=run.prompt,
+            prompt_sha256=run.prompt_sha256,
             text_library_ids=run.text_library_ids,
             text_bindings=run.text_bindings,
             prompt_mode=prompt_mode,
@@ -1644,6 +1649,10 @@ def _materialize_inputs(
     # （`run.prompt` → GenerationRecord.prompt）用的是同一份字符串，不会出现
     # 「档案里还是 {{Text 1}}、实际发出去是别的文案」。
     compiled.prompt = inject_masked_text_refs(compiled.prompt, text_refs)
+    # **所有后处理都在上面**，这一份字节就是发出去的那一份。摘要在这里算一次，
+    # 并且刻意在写文件之前：文件、档案 JSON、`replacement_runs` 三处必须是同一个
+    # 字符串变量的产物——先写文件再读回来算，等于又给了它们一次不一致的机会。
+    compiled.prompt_sha256 = hashlib.sha256(compiled.prompt.encode("utf-8")).hexdigest()
     (path / "inputs/prompt.txt").write_text(compiled.prompt, encoding="utf-8", newline="\n")
     storage.write(path / "inputs/prompt-spec.json", spec)
     storage.write(path / "inputs/configuration.json", payload.model_dump(mode="json"))

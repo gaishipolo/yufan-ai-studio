@@ -42,6 +42,12 @@ class Compilation(BaseModel):
     model_config = ConfigDict(extra="allow")
     prompt: str
     compiler_version: str
+    # **不是编译器算的**：编译器只交 `template_sha256`（哈希模板）和
+    # `spec_sha256`（哈希输入），而 `prepare` 之后还会注入文本正文、改写引用写法。
+    # 这一段字节的摘要由 `replacement_service` 在所有后处理之后填进来，
+    # 再与 `prompt.txt`、`replacement_runs.prompt_sha256` 三处保持一致。
+    # 留空默认值是为了让「还没算」和「算出来是空」可区分——空串永远不是合法摘要。
+    prompt_sha256: str = ""
 
 
 def run_path(run_id: str) -> Path:

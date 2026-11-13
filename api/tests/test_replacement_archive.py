@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import subprocess
@@ -274,6 +275,39 @@ async def test_published_configuration_wins_over_request(client: TestClient, mat
             assert "已发布人物" in run["prompt"]
             path = Path(run["archivePath"])
             assert (path / "code/runtime/bridge.mjs").is_file(), "编译器快照缺失后无法复现提示词"
+        finally:
+            await drop_run(run["id"])
+    finally:
+        await drop_pack(pack.id)
+
+
+async def test_prompt_sha256_covers_the_bytes_that_are_actually_sent(
+    client: TestClient, materials
+) -> None:
+    """`prompt_sha256` 必须与 `prompt.txt`、档案 JSON 里那一份同源同值。
+
+    编译器交的 `template_sha256` / `spec_sha256` 哈希的是模板和输入，而之后 Python
+    还会注入文本正文、改写引用写法——它们对不上「实际发出去的那段字节」。这条用例
+    盯的就是那个缺口：三处（接口出参、`inputs/prompt.txt`、`records/prompt-compilation.json`）
+    必须是同一份字符串的摘要，少一处就没法复核。
+    """
+    video, image = materials()
+    pack = await _pack(image_ids=[image["id"]])
+    try:
+        run = client.post(
+            f"{API}/templates/replacement-runs", json=_payload("character", video["id"], pack)
+        ).json()["data"]
+        try:
+            path = Path(run["archivePath"])
+            prompt_txt = (path / "inputs/prompt.txt").read_text(encoding="utf-8")
+            digest = hashlib.sha256(prompt_txt.encode("utf-8")).hexdigest()
+
+            assert run["prompt"] == prompt_txt
+            assert run["promptSha256"] == digest
+            record = json.loads(
+                (path / "records/prompt-compilation.json").read_text(encoding="utf-8")
+            )
+            assert record["prompt_sha256"] == digest
         finally:
             await drop_run(run["id"])
     finally:

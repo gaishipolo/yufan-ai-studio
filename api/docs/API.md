@@ -1977,6 +1977,7 @@ Authorization: Bearer <accessToken>
 | `finishedAt` | `string \| null` | 否 | 这一轮结束的时间；未结束为 null |
 | `elapsedSec` | `number \| null` | 否 | 确认提交到结束的耗时（秒）；未完成时按到此刻计，未开始为 null |
 | `prompt` | `string` | 是 |  |
+| `promptSha256` | `string \| null` | 否 | 实际发出去那段提示词的 sha256（所有后处理之后）。档案里另外两个哈希（template/spec）哈希的是模板与输入，复核不了最终字节。加这列之前准备的任务为 null，不回填。 |
 | `textLibraryIds` | `string[]` | 否 | 本次绑定的文本资产 id（顺序即 `{{Text N}}` 编号） |
 | `textBindings` | `Record<string, unknown>[]` | 否 | 绑定的文案与版本快照（不含正文） |
 | `promptMode` | `"fixed" \| "compiled"` | 否 | fixed=封装视频模板时写死的原文，逐字提交；compiled=按素材与替换范围现编。展示层据此告诉用户「跑的就是你封装时那份提示词」。 |
@@ -2018,6 +2019,7 @@ Authorization: Bearer <accessToken>
 | `finishedAt` | `string \| null` | 否 | 这一轮结束的时间；未结束为 null |
 | `elapsedSec` | `number \| null` | 否 | 确认提交到结束的耗时（秒）；未完成时按到此刻计，未开始为 null |
 | `prompt` | `string` | 是 |  |
+| `promptSha256` | `string \| null` | 否 | 实际发出去那段提示词的 sha256（所有后处理之后）。档案里另外两个哈希（template/spec）哈希的是模板与输入，复核不了最终字节。加这列之前准备的任务为 null，不回填。 |
 | `textLibraryIds` | `string[]` | 否 | 本次绑定的文本资产 id（顺序即 `{{Text N}}` 编号） |
 | `textBindings` | `Record<string, unknown>[]` | 否 | 绑定的文案与版本快照（不含正文） |
 | `promptMode` | `"fixed" \| "compiled"` | 否 | fixed=封装视频模板时写死的原文，逐字提交；compiled=按素材与替换范围现编。展示层据此告诉用户「跑的就是你封装时那份提示词」。 |
@@ -2059,6 +2061,7 @@ Authorization: Bearer <accessToken>
 | `finishedAt` | `string \| null` | 否 | 这一轮结束的时间；未结束为 null |
 | `elapsedSec` | `number \| null` | 否 | 确认提交到结束的耗时（秒）；未完成时按到此刻计，未开始为 null |
 | `prompt` | `string` | 是 |  |
+| `promptSha256` | `string \| null` | 否 | 实际发出去那段提示词的 sha256（所有后处理之后）。档案里另外两个哈希（template/spec）哈希的是模板与输入，复核不了最终字节。加这列之前准备的任务为 null，不回填。 |
 | `textLibraryIds` | `string[]` | 否 | 本次绑定的文本资产 id（顺序即 `{{Text N}}` 编号） |
 | `textBindings` | `Record<string, unknown>[]` | 否 | 绑定的文案与版本快照（不含正文） |
 | `promptMode` | `"fixed" \| "compiled"` | 否 | fixed=封装视频模板时写死的原文，逐字提交；compiled=按素材与替换范围现编。展示层据此告诉用户「跑的就是你封装时那份提示词」。 |
@@ -2102,6 +2105,7 @@ Authorization: Bearer <accessToken>
 | `finishedAt` | `string \| null` | 否 | 这一轮结束的时间；未结束为 null |
 | `elapsedSec` | `number \| null` | 否 | 确认提交到结束的耗时（秒）；未完成时按到此刻计，未开始为 null |
 | `prompt` | `string` | 是 |  |
+| `promptSha256` | `string \| null` | 否 | 实际发出去那段提示词的 sha256（所有后处理之后）。档案里另外两个哈希（template/spec）哈希的是模板与输入，复核不了最终字节。加这列之前准备的任务为 null，不回填。 |
 | `textLibraryIds` | `string[]` | 否 | 本次绑定的文本资产 id（顺序即 `{{Text N}}` 编号） |
 | `textBindings` | `Record<string, unknown>[]` | 否 | 绑定的文案与版本快照（不含正文） |
 | `promptMode` | `"fixed" \| "compiled"` | 否 | fixed=封装视频模板时写死的原文，逐字提交；compiled=按素材与替换范围现编。展示层据此告诉用户「跑的就是你封装时那份提示词」。 |
@@ -2181,6 +2185,7 @@ Authorization: Bearer <accessToken>
 | `finishedAt` | `string \| null` | 否 | 这一轮结束的时间；未结束为 null |
 | `elapsedSec` | `number \| null` | 否 | 确认提交到结束的耗时（秒）；未完成时按到此刻计，未开始为 null |
 | `prompt` | `string` | 是 |  |
+| `promptSha256` | `string \| null` | 否 | 实际发出去那段提示词的 sha256（所有后处理之后）。档案里另外两个哈希（template/spec）哈希的是模板与输入，复核不了最终字节。加这列之前准备的任务为 null，不回填。 |
 | `textLibraryIds` | `string[]` | 否 | 本次绑定的文本资产 id（顺序即 `{{Text N}}` 编号） |
 | `textBindings` | `Record<string, unknown>[]` | 否 | 绑定的文案与版本快照（不含正文） |
 | `promptMode` | `"fixed" \| "compiled"` | 否 | fixed=封装视频模板时写死的原文，逐字提交；compiled=按素材与替换范围现编。展示层据此告诉用户「跑的就是你封装时那份提示词」。 |
@@ -2222,6 +2227,7 @@ Authorization: Bearer <accessToken>
 | `finishedAt` | `string \| null` | 否 | 这一轮结束的时间；未结束为 null |
 | `elapsedSec` | `number \| null` | 否 | 确认提交到结束的耗时（秒）；未完成时按到此刻计，未开始为 null |
 | `prompt` | `string` | 是 |  |
+| `promptSha256` | `string \| null` | 否 | 实际发出去那段提示词的 sha256（所有后处理之后）。档案里另外两个哈希（template/spec）哈希的是模板与输入，复核不了最终字节。加这列之前准备的任务为 null，不回填。 |
 | `textLibraryIds` | `string[]` | 否 | 本次绑定的文本资产 id（顺序即 `{{Text N}}` 编号） |
 | `textBindings` | `Record<string, unknown>[]` | 否 | 绑定的文案与版本快照（不含正文） |
 | `promptMode` | `"fixed" \| "compiled"` | 否 | fixed=封装视频模板时写死的原文，逐字提交；compiled=按素材与替换范围现编。展示层据此告诉用户「跑的就是你封装时那份提示词」。 |
@@ -2272,6 +2278,7 @@ Authorization: Bearer <accessToken>
 | `finishedAt` | `string \| null` | 否 | 这一轮结束的时间；未结束为 null |
 | `elapsedSec` | `number \| null` | 否 | 确认提交到结束的耗时（秒）；未完成时按到此刻计，未开始为 null |
 | `prompt` | `string` | 是 |  |
+| `promptSha256` | `string \| null` | 否 | 实际发出去那段提示词的 sha256（所有后处理之后）。档案里另外两个哈希（template/spec）哈希的是模板与输入，复核不了最终字节。加这列之前准备的任务为 null，不回填。 |
 | `textLibraryIds` | `string[]` | 否 | 本次绑定的文本资产 id（顺序即 `{{Text N}}` 编号） |
 | `textBindings` | `Record<string, unknown>[]` | 否 | 绑定的文案与版本快照（不含正文） |
 | `promptMode` | `"fixed" \| "compiled"` | 否 | fixed=封装视频模板时写死的原文，逐字提交；compiled=按素材与替换范围现编。展示层据此告诉用户「跑的就是你封装时那份提示词」。 |
@@ -5361,6 +5368,7 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `finishedAt` | `string \| null` | 否 | 这一轮结束的时间；未结束为 null |
 | `elapsedSec` | `number \| null` | 否 | 确认提交到结束的耗时（秒）；未完成时按到此刻计，未开始为 null |
 | `prompt` | `string` | 是 |  |
+| `promptSha256` | `string \| null` | 否 | 实际发出去那段提示词的 sha256（所有后处理之后）。档案里另外两个哈希（template/spec）哈希的是模板与输入，复核不了最终字节。加这列之前准备的任务为 null，不回填。 |
 | `textLibraryIds` | `string[]` | 否 | 本次绑定的文本资产 id（顺序即 `{{Text N}}` 编号） |
 | `textBindings` | `Record<string, unknown>[]` | 否 | 绑定的文案与版本快照（不含正文） |
 | `promptMode` | `"fixed" \| "compiled"` | 否 | fixed=封装视频模板时写死的原文，逐字提交；compiled=按素材与替换范围现编。展示层据此告诉用户「跑的就是你封装时那份提示词」。 |
