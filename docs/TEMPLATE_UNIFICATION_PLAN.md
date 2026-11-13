@@ -2031,3 +2031,30 @@ foreign 一个都没混进来。**反向验证**：把循环条件改成恒假�
 标记列可比。要么在元素里加 `assetIdSpace`，要么整块跟随 `template_pack_versions`
 的空间（它冻的是同一次发布的图）。**倾向后者**（少一个字段、且天然与包版本一致），
 但需要确认「固定引用能不能跨包版本混空间」，确认前不动。
+
+### 24.9 步 2.5c（二）：名字解析的分流适配层（2026-11-13）
+
+`video_template_service` 里有两处 `get_asset_lookup().get_many()` 只用来给媒体清单
+填 `name`，改成 `asset_source.resolve_names(session, [(assetId, space)])`：
+
+| 旧写法 | 新写法 |
+|---|---|
+| `lookup = await get_asset_lookup().get_many(session, ids)` → `getattr(row, "name", "")` | 按 `(asset_id, asset_id_space)` 分流，v1 问 `AssetLookup`、v2 问 `LibraryLookup`，拿 `{id: name}` |
+
+**为什么只做「名字」**：把 `StoredMedia` 与 `LibraryAssetRef` 揉成一个统一快照，
+等于在这一层重新定义「什么算已删除 / 谁有权限」——那是 `readable_ids()` 的职责。
+两份判据必然漂移，而漂移方向总是「多给权限」。所以适配层只回答展示名，
+授权仍在原处；`asset_source.py` 的 docstring 写清了这条边界。
+
+**两条口径**（都用例钉住）：
+- 未知空间名忽略、`None` id 忽略 —— 「取不到名字」在界面上是可见的（显示裸 id），
+  为一条坏标记挡住整次保存没有收益；
+- **不做隐式兜底**：标了 v2 的 v1 id 必须取不到。这条是「禁止先查 v2 再回退 v1」
+  的可执行版本 —— 名字回退错了只是显示问题，同一写法搬到授权闸就是把别人的
+  私有图交给供应商。
+
+**验证**：`select_tests` 判 **targeted**（4 个文件）→ 81 passed；另外单独跑了
+10 个会走 `create()` 的模板用例（packager 全链路 / 固定引用 / 绑定 / 提示词…）
+**81 passed**；ruff 通过；mypy 295 files 无问题。
+**反向验证**：在 `resolve_names` 末尾加「v2 没找到就回退问 v1」→
+`assert {'v1-…': '只在 v1 里.jpg'} == {}` 红。

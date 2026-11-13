@@ -26,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.exceptions import BadRequest, Conflict, NotFound
 from core.ports.media import get_asset_lookup
+from modules.template.asset_source import resolve_names
 from modules.template.models import TemplatePack, VideoTemplate
 from modules.template.pack_roles import PACK_ROLES
 from modules.template.repository import PackRepository
@@ -207,7 +208,9 @@ async def _resolve_media(
             ]
         else:
             ordered = list(order_reference_ids(ids, roles, required, payload.default_kind))
-        lookup = await get_asset_lookup().get_many(session, ids)
+        names = await resolve_names(
+            session, [(ref.asset_id, ref.asset_id_space) for ref in refs]
+        )
         source_media = VideoTemplateMedia(
             token="",
             role="source_video",
@@ -230,7 +233,7 @@ async def _resolve_media(
                     type="image",
                     asset_id=asset_id,
                     name=(
-                        getattr(lookup.get(asset_id), "name", "") or asset_id
+                        names.get(asset_id) or asset_id
                         if asset_id
                         else f"运行时选{labels.get(role, role)}"
                     ),
@@ -265,7 +268,9 @@ async def _resolve_media(
     refs = list(await PackRepository(session).references(pack.id))
     if not refs:
         raise BadRequest("该素材包没有参考图，无法封装视频模板")
-    lookup = await get_asset_lookup().get_many(session, [ref.asset_id for ref in refs])
+    names = await resolve_names(
+        session, [(ref.asset_id, ref.asset_id_space) for ref in refs]
+    )
 
     media = [
         VideoTemplateMedia(
@@ -279,14 +284,13 @@ async def _resolve_media(
     ]
     for index, ref in enumerate(refs, 2):
         token = f"{{{{Mixed {index}}}}}"
-        row = lookup.get(ref.asset_id)
         media.append(
             VideoTemplateMedia(
                 token=token,
                 role=ref.role,
                 type="image",
                 asset_id=ref.asset_id,
-                name=getattr(row, "name", "") or ref.asset_id,
+                name=names.get(ref.asset_id) or ref.asset_id,
                 in_prompt=token in tokens,
             )
         )
