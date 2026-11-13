@@ -128,6 +128,32 @@ def test_receipt_power_reads_the_settled_charge(tmp_path: Path, monkeypatch) -> 
     assert worker.receipt_power("any") is None
 
 
+def test_receipt_power_survives_the_receipt_rewrite_window(tmp_path: Path, monkeypatch) -> None:
+    """回执被原子替换的瞬间读不到，不能当成「还没结算」。
+
+    执行器边跑边写这份回执，SMB 的 `rename` 又不保证 POSIX 语义。以前这里直接
+    `read_text`，落进窗口就返回 None，账单上那条任务一直显示「待核对」。
+    走 `read_json`（有限重试）之后，重试内成功就该拿到结算值。
+    """
+    (tmp_path / "records").mkdir()
+    receipt = tmp_path / "records/submission.json"
+    monkeypatch.setattr(worker, "run_path", lambda _run_id: tmp_path)
+    receipt.write_text(json.dumps({"code": 0, "data": {"power": 7}}), encoding="utf-8")
+
+    original = Path.read_text
+    calls = {"n": 0}
+
+    def flaky(source, *args, **kwargs):
+        if source.name == "submission.json" and calls["n"] == 0:
+            calls["n"] += 1
+            raise FileNotFoundError(source)
+        return original(source, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", flaky)
+    assert worker.receipt_power("any") == 7.0
+    assert calls["n"] == 1, "第一次就该抛过（否则这条用例没测到窗口）"
+
+
 def test_billing_adapter_opts_out_only_for_the_credits_request() -> None:
     script = (
         "import {applyBilling, activeZeroPowerTags, isZeroPowerBenefitTag} from "

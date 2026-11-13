@@ -13,7 +13,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from contextlib import nullcontext
 from uuid import uuid4
 
@@ -29,7 +28,7 @@ from infra import get_queue
 from infra.ai.libtv import execute_stage
 from infra.ai.libtv_state import RUN_LOCK
 from infra.archive import get_archive_storage
-from infra.archive.base import lease
+from infra.archive.base import lease, read_json
 from infra.queue.base import Job
 from modules.template.authorization import authorization_gap
 from modules.template.channels import CHANNEL_MODELS, run_channel
@@ -256,10 +255,12 @@ def receipt_power(run_id: str) -> float | None:
     数据库因此长期显示「待核对账单」。只在结算后的回执里取数，不猜、不累积。
     """
     try:
-        payload = json.loads(
-            (run_path(run_id) / "records/submission.json").read_text(encoding="utf-8")
-        )
+        # 回执是执行器**边跑边写**的：`read_json` 的有限重试要能跨过共享盘的替换
+        # 窗口，否则轮询期间会偶尔读到「没有回执」，账单就一直显示待核对。
+        payload = read_json(run_path(run_id) / "records/submission.json")
     except (OSError, ValueError):
+        return None
+    if not isinstance(payload, dict):
         return None
     value = (payload.get("data") or {}).get("power")
     if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
@@ -802,7 +803,7 @@ def _libtv_task(path, run_id: str, state: dict) -> str | None:
     if isinstance(task, str) and task:
         return task
     try:
-        receipt = json.loads((path / "records/submission.json").read_text(encoding="utf-8"))
+        receipt = read_json(path / "records/submission.json")
     except (OSError, ValueError):
         return None
     if not isinstance(receipt, dict) or receipt.get("id", run_id) != run_id:
@@ -862,11 +863,12 @@ async def _restore_bailian_receipt(session, repo, run: ReplacementRun) -> None:
         return
     try:
         path = await asyncio.to_thread(run_path, run.id)
-        raw = await asyncio.to_thread(
-            (path / "records/bailian-submission.json").read_text, encoding="utf-8"
+        receipt = await asyncio.to_thread(
+            read_json, path / "records/bailian-submission.json"
         )
-        receipt = json.loads(raw)
     except (OSError, ValueError, NotFound):
+        return
+    if not isinstance(receipt, dict):
         return
     task_id = receipt.get("task_id") or (receipt.get("output") or {}).get("task_id")
     if not isinstance(task_id, str) or not task_id:
@@ -890,7 +892,11 @@ def archive_bailian_unknown_receipt(run_id: str) -> None:
         receipt = path / "records/bailian-submission.json"
         if not receipt.is_file():
             return
-        payload = json.loads(receipt.read_text(encoding="utf-8"))
+        payload = read_json(receipt)
+        if not isinstance(payload, dict):
+            # 读不出来就当**不能确认**：这条路径是「已花钱的任务要不要重提」，
+            # 把「读不到回执」当成「没有任务号」会直接导致重复计费。
+            raise Conflict("提交回执无法解读，请稍后重试；在此之前不要重复提交")
         if payload.get("task_id") or (payload.get("output") or {}).get("task_id"):
             raise Conflict("百炼已有上游任务号，请继续查询原任务，不能重新提交")
         receipt.rename(path / f"records/bailian-reconfirmed-{uuid4().hex}.json")
