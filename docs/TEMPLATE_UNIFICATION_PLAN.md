@@ -1981,3 +1981,53 @@ foreign 一个都没混进来。**反向验证**：把循环条件改成恒假�
 
 `downgrade()` 只 drop 三个索引与新表，不碰老 `catalog.json`；`app import-video-templates
 --dry-run` 可先看会写多少条。老文件在导入完成后仍保留在 `api/var/video_templates/`。
+
+### 24.8 步 2.5c 开工：先补一处被漏掉的 id 空间标记（2026-11-13）
+
+计划里 2.5b「新增来源标记列」列了四列：`template_packs.cover_asset_id_space`、
+`template_pack_references.asset_id_space`、`template_pack_versions.reference_ids_space`、
+`replacement_run_inputs.asset_id_space`。**`video_templates` 不在里面** —— 不是因为
+它不需要，而是那时这张表还不存在（它是步 2 才建的）。
+
+步 2 的导入把 `catalog.json` 里的原片 id 原样写进 `source_video_asset_id`，
+这些是 v1 id；切换后新封装的参考视频是 v2 id —— **同一列必然混装两套 id，而两者
+都是 32 位 hex、形状不可区分**。没有标记，`_resolve_media` / `find_for_run` 只能靠
+「查不到再回退另一侧」的隐式兜底，正是 `core/ports/library_lookup.py:8-10` 明令禁止的。
+
+所以 2.5c 的第一个提交不是「切读路径」，而是补这一列：
+
+| 动作 | 落点 |
+|---|---|
+| 新列 `source_video_asset_id_space` | `models.py`（默认值仍是 `asset_id_space_default()`，**不硬编码 v1**） |
+| 迁移 `f2d7a91c4b83` | 照 `c3a8f1d62b74` 的三步：`nullable=True` → 回填 `v1` → `nullable=False` |
+| 导入显式写 `v1` | `video_template_import._row_from_record()`，理由见下 |
+| 用例 | `test_import_marks_the_id_space_explicitly` |
+
+**为什么导入要显式写 v1 而不是靠列默认值**：默认值会在 2.5c 把
+`CURRENT_ASSET_ID_SPACE` 翻成 `v2` 时一起翻，而 `catalog.json` 的内容不会跟着变。
+漏写的话，切换之后重跑导入会把历史模板的原片标成 v2 → 运行时报「原片不可用」。
+用例的做法是把 `CURRENT_ASSET_ID_SPACE` 打补丁成 v2 再导入，断言落库仍是 v1 ——
+**验证的是「不随默认值漂移」，不是「等于某常量」**。
+
+**反向验证**：删掉那行 `source_video_asset_id_space=ASSET_ID_SPACE_V1` →
+`assert 'v2' == 'v1'` 红。
+
+**2.5c 剩下的三块（按风险从低到高，各自独立提交）**
+
+1. **名字解析适配层**：`video_template_service` 里三处 `get_asset_lookup().get_many()`
+   只用来取 `name`，可以整体换成一个按空间分流的适配器（v2 走
+   `get_library_lookup().get_many()`），语义损失为零，是切读路径的第一刀。
+2. **三道授权闸**（`authorization.py` / `pack_service._check_references` /
+   `template_references.resolve_pack_references`）：判据换成
+   `readable_ids()`，同时删掉 `category` 反推（§22.3 第 3 项）。这一块不能只换端口：
+   `pack_service` 的 `_verify_bytes` / `preview` 用的是 v1 的
+   `path` / `sha256` / `preview_path`，v2 对应 `storage_key` + 库自己的预览链路，
+   **得逐个确认字节从哪来**，否则会变成「封装能保存、发布时 404」。
+3. **契约字段**（`referenceLibraryIds` / `sourceVideoLibraryId`）：必须与 2.5d 的
+   前端切换同批，否则前端的 `/assets` 选择器会把 v1 id 填进 v2 字段。
+   按 §21.4 双读口径，**不能靠请求里猜空间**，只认字段名。
+
+**留一个问题给 2.5c 第 3 块**：`rules.fixedReferences[].assetId` 是 JSON，没有空间
+标记列可比。要么在元素里加 `assetIdSpace`，要么整块跟随 `template_pack_versions`
+的空间（它冻的是同一次发布的图）。**倾向后者**（少一个字段、且天然与包版本一致），
+但需要确认「固定引用能不能跨包版本混空间」，确认前不动。

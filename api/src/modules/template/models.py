@@ -375,6 +375,12 @@ class VideoTemplate(Base, UUIDMixin, TimestampMixin):
     prompt_sha256: Mapped[str] = mapped_column(String(64), default="", nullable=False)
 
     source_video_asset_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # 原片 id 属于哪套空间（见 `modules/template/id_space.py`）。
+    # 与 `template_pack_references` 等四列同一形状、同一理由：两套 id 形状不可区分，
+    # `catalog.json` 导入的是 v1，切换后新上传的是 v2，同一列必然混装。
+    source_video_asset_id_space: Mapped[str] = mapped_column(
+        String(4), nullable=False, default=asset_id_space_default
+    )
     source_video_path: Mapped[str] = mapped_column(String(512), default="", nullable=False)
     source_video_name: Mapped[str] = mapped_column(String(200), default="", nullable=False)
     source_duration_sec: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)

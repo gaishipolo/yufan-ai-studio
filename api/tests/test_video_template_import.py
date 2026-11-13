@@ -98,6 +98,8 @@ def test_import_creates_rows_and_fills_defaults(tmp_path: Path) -> None:
         assert first.aspect_ratio == "9:16"
         assert first.default_kind == "product"
         assert first.pinned is False
+        # 老目录的 id 空间必然是 v1（见专门的标记用例）
+        assert first.source_video_asset_id_space == "v1"
     finally:
         remove("imp-a")
         remove("imp-b")
@@ -216,6 +218,27 @@ def test_duplicate_template_key_is_skipped_and_reported(tmp_path: Path) -> None:
     finally:
         remove("imp-dup-a")
         remove("imp-dup-b")
+
+
+def test_import_marks_the_id_space_explicitly(tmp_path: Path, monkeypatch) -> None:
+    """老目录里的原片 id 永远是 v1 —— 即使「当前空间」已经翻到 v2。
+
+    这一列不是元数据装饰：`source_video_asset_id` 里 v1/v2 的 id 形状完全一样，
+    没有标记就只能靠「查不到再回退另一侧」的隐式兜底（端口注释明令禁止）。
+    导入若跟着 `CURRENT_ASSET_ID_SPACE` 走，切换之后导入的历史模板会拿 v1 id
+    去 v2 里找，表现是「原片不可用」。
+    """
+    from modules.template import id_space
+
+    monkeypatch.setattr(id_space, "CURRENT_ASSET_ID_SPACE", id_space.ASSET_ID_SPACE_V2)
+    path = _write(tmp_path, [_row(id="imp-space", sourceVideoAssetId="v1-source")])
+    try:
+        assert _import(path).created == 1
+        row = run(_get("imp-space"))
+        assert row is not None
+        assert row.source_video_asset_id_space == id_space.ASSET_ID_SPACE_V1
+    finally:
+        remove("imp-space")
 
 
 def test_dry_run_reports_without_writing(tmp_path: Path) -> None:
