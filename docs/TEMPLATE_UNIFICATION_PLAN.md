@@ -2501,3 +2501,73 @@ v2 目前**没有对应语义**的东西：
 
 单测：从零声明 → 加两个槽位 → 删中间那个 → 保存，断言提交的
 `referenceBindings` 是 `1:source_video / 2:front / 3:multiview`、`packId` 为 null。
+
+### 24.17 步 3（二）：B 直接选资产库封装当参考（`libraryPackId`）
+
+**开工前先对账**：§23.5 说这一步「需要给 `LibraryLookup` 加按 pack 展开成员的
+端口方法」——那件事在步 2.5b 已经做完了（`expand_packs`，`core/ports/library_lookup.py`）。
+所以本轮只动了模板模块一侧，框架层零改动。
+
+**契约（`PrepareReplacement.library_pack_id`）**
+
+- 与 `packId` / `packVersion` / `referenceIds` / `extraPackIds` / `extraPackVersions`
+  **互斥**，同时给直接 400。两套 id 形状一样（都是 32 位 hex），允许同时填就等于让
+  「谁优先」变成隐式行为，手滑一次就换掉整条片子的参考图且不报错。
+- 文字换场景那条分支也把它列进「不附带其他参数」，否则它会静默被忽略。
+- 字段名沿用 §23.5 约定的 `library_pack_id`，架构守卫
+  `_LIBRARY_REFERENCE_FIELDS` 里早就留了这个名字，不用改守卫。
+
+**展开与冻结（`_library_pack_inputs`）**
+
+`expand_packs()` 已经承担「封装可读 + 成员逐个可读」两次判定（与 `readable_ids()`
+同一条判据，含「靠封装成员身份读到」这条入口），模板侧**不重写**。这次补的是它
+不管的三件事：
+
+1. 封装自己得是 `active` 的 `kind=pack`——回收站里的封装 owner 仍然「可读」，
+   但不能拿去生成（与 v1「封装已停用」同口径）；拿一张图片 id 来也不算空封装；
+2. 成员必须 `image` + `active` + `readable`，报错要指到人（「封装《X》里的『Y』
+   已删除或已停止共享」）；
+3. `role` 必须落在 `PACK_ROLES[kind]` 词表里，**认不出就报错并指回资产库封装页**，
+   不按 `position` 猜主图；同一用途出现两张也拒（`{{Mixed N}}` 按用途取位，
+   取哪张都算猜）。
+
+**冻结落在哪**：v2 封装没有不可变发布版本（`PATCH /library/packs/{id}` 的 `items`
+是整体替换），所以 prepare 时把成员 id / 用途 / 顺序冻进
+`run.configuration["library_pack"]`，**不新增 `packVersion` 语义、不造代理版本行**
+（那是第二事实来源，且会让删除保护永远 409）。`run.pack_id` 保持 NULL——它是
+模板封装的列，混装进去就是两套 id 空间互相解释的老问题。
+
+**两处刻意的「不限制」**
+
+- `replacement_scope`：v2 封装没有「运营审核过的替换范围」这一层元数据，所以
+  `LibraryPackSnapshot.supported_scopes` 显式给全量 `PACK_SCOPES`（而不是让
+  `_check_scope()` 对 v2 分支短路——短路会让「产品替换必须选范围」这条规则
+  在一条路径上悄悄消失）。
+- `wardrobe_mode` / `features` / `instructions`：v2 封装没有这三项，快照里给
+  `preserve` 与空串。留空串是为了让 `_materialize_inputs()` 不必按快照类型分叉
+  （它只判断「有没有内容」），而不是假装 v2 封装支持它们。
+
+**已知缺口（写在这，别当没看见）**
+
+多人物模板（`character_slots > 1`）走 `libraryPackId` 时，报错仍是
+`_check_video_template()` 那句「请为每位出镜人物分别选择人物素材包」——对 v2 路径
+是**指错了动作**（这里根本没有「选多个库封装」的入口）。要么补「多位人物各选一个
+库封装」，要么在这里给一句专门的文案；属于产品口径，先不动。
+
+**验证**
+
+- `select_tests --print` 判 **contract**（改了 `PrepareReplacement`）；实跑 16 个文件
+  **228 passed**；`ruff` / `mypy --platform win32 src` 通过；四份生成物重导出后
+  `--check` 无变化（`API.md` / `openapi.json` / `schema.ts` 各多几行）。
+- 新增 `tests/test_template_library_pack.py` 8 条：成员顺序与用途进说明文字、
+  用途为空 / 用途重复 / 成员进回收站 / 封装进回收站 / 别人的个人封装 /
+  两路来源同填 / 拿图片 id 当封装。
+- **反向验证**（逐字改回，三次都变红）：
+  ① 关掉用途白名单 → 「用途为空」那条红；
+  ② 关掉「成员 active + readable」→ 「成员进回收站」那条红（此时错误落到
+     `_validate_inputs` 的「参考图需为资产库中有效的图片」，指不到是哪张）；
+  ③ 去掉互斥 → 「两路来源同填」那条红。
+
+**下一步**：前端给 B 一个「从资产库选封装」的入口（复用 `useLibrarySelection`
+的 `includePacks`），以及封装页能声明成员用途——现在 v2 封装成员的 `role` 只能
+靠接口写，页面上没有编辑器，B 选中后必然撞「没有声明可用途」。
