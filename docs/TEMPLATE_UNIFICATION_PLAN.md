@@ -2146,3 +2146,80 @@ CI 机器慢时就会等超时。
 
 **下一步**：步 2.5c 第 3 块契约字段（与 2.5d 前端同批），随后再动物化；
 当前提交不改变任何 HTTP 请求/响应字段。
+
+### 24.12 步 2.5c（四）：v2 固定引用的生成物化（2026-11-13）
+
+上一节把「v2 固定引用」在 prepare 里显式拒绝了（`资产库 v2 固定引用暂未接入生成物化`）。
+这一节把那条守卫换成真的物化：**字节从 `ObjectStorage` 搬进本次 run 的工作区**，
+之后与 v1 引用走同一条归档流水线。
+
+**做了什么**
+
+1. `LibraryAssetRef` 补三个字段（`core/ports/library_lookup.py`）：`sha256` /
+   `width` / `height`。理由都是「下游缺了只能编」：
+   - `sha256` 是 `ArchiveStorage.link(..., digest)` 的入参，没有它就得把图再读一遍算摘要；
+   - `width` / `height` 进 `records/media-inputs.json`，执行器拿它拼供应商请求体，
+     缺了只能传 0（图被当成未知尺寸）。
+   实现侧 `modules/library/lookup.py` 从 `library_assets` 如实映射。
+2. 新增 `modules/template/library_media.py`：
+   - `stage_library_refs(workspace, {token: ref})` → `{token: StagedMedia}`；
+   - 本地驱动走 `ObjectStorage.local_path()` **零拷贝**（blob 本身就是可读文件）；
+     远端驱动 `iter_chunks()` 分块写进 `inputs/.staging/`，先 `.part` 后改名；
+   - 只删**自己下载的**副本（`StagedMedia.temporary`）；零拷贝那条路径指向内容寻址
+     的 blob，删掉等于删别人的素材；
+   - 半途失败（第二张取不到 / 协程被取消）由这一层自己清理，调用方拿不到
+     `staged` 没法替它收尸；
+   - 认不出扩展名当场 400，不猜 `.bin`（猜了会让供应商那头把类型当未知）。
+3. `_materialize_inputs` / `_media_in_mixed_order` 的媒体类型从 `StoredMedia` 放宽成
+   `RunMedia = StoredMedia | StagedMedia`：两者只共用「可读本地文件 + 摘要 + 宽高时长」，
+   **不共用权限语义**（可读性在进 prepare 之前就判完了）。取字节改走
+   `_readable_source()`：`StagedMedia` 直出路径，`StoredMedia` 仍交
+   `ArchiveStorage.materialize()`。**没有**把 `storage_key` 当旧 `path` 用。
+4. `RunRepository.replace_inputs()` 的参数从 5 元组改成 `RunInputRow`，`asset_id_space`
+   必填。运行输入行现在显式写 `v2`——写成默认 `v1` 的话，`execute()` 的复核会拿
+   v2 id 去旧表找，报「本次输入的素材已被删除」，一条本来能跑的任务被自己的标记挡死。
+5. `MAX_REFERENCE_IMAGES` 的计数把 v2 固定引用一起算：两者最终都进 mixedList，
+   不因为来源不同多给额度。
+
+**落地时发现的两点**
+
+- `_media_in_mixed_order` 的固定引用分支靠 `if fixed_refs:` 判「有没有固定引用」。
+  暂存整体失败时字典为空，会退化成本次少图 → 编译器报「提示词编译失败，请检查参考素材和配置」。
+  它**不会静默出片**，但报错指不到根因；真正该看到的是 `stage_library_refs` 抛的
+  「参考图《X》的字节缺失」。所以暂存必须在排序之前、且失败要带素材名。
+- 反向验证时发现「用 heredoc 打补丁」并不可靠（补丁没写进去，用例照样绿）。
+  本节的两次反向验证改用编辑工具逐字改、逐字恢复，结果见下。
+
+**阶段性限制（仍未做）**
+
+- `CURRENT_ASSET_ID_SPACE` 仍是 `v1`，契约字段（`referenceLibraryIds` /
+  `sourceVideoLibraryId`）尚未加入 —— 也就是说**目前还不能通过 HTTP 建出 v2 封装**，
+  这条链路只有测试能走到。
+- v2 封装的**展示地址仍是断的**：`_public()` 的 `previewUrls` 与固定引用的 `url` 都指向
+  `…/replacement-packs/{id}/preview/…`，而 `preview()` 对非 v1 版本明确 404。
+  要连同 `cover_key` / `Served` 一起设计（公共预览是「已发布版本授权」，
+  不等于「当前用户对资产库条目有读权限」），**不能简单 307 到 `/library/assets/{id}/thumbnail`**。
+- v2 **原片**（`sourceVideoLibraryId`）还没接：`prepare` 的原片路径仍只查 v1
+  (`assets.category='source'`)，要连 `_validate_inputs` 与时长/音轨校验一起改。
+
+**验证**
+
+- `scripts/select_tests.py --print` 判 **targeted**（28 个路径）；实际跑了 29 个文件
+  （补 `test_replacement_archive.py`，它断言存档布局却不被依赖图带出来）
+  → **407 passed / 52.06s**（全新 `--basetemp`）。
+- 新增 `tests/test_template_v2_materialization.py` **5 passed**：
+  1. 端到端 prepare：v2 固定引用真的落进 `inputs/`、`input-map.json` 摘要 == 实算、
+     `media-inputs.json` 带 64×96、运行输入行 `v2`、`authorization_gap` 为 None、
+     且零拷贝的 blob 没被清理掉；
+  2. 远端驱动（`local_path()` 返回 None）走分块下载，且暂存副本被清掉；
+  3. 字节缺失 → 400 且报错里点名那张图；
+  4. 扩展名认不出 → 400；
+  5. 第二张失败时第一张也不留在工作区。
+- **反向验证 1**：`staged_v2 = {}`（不暂存）→ 3 条红（编译失败 / 没落地 / 报错文案不符）。
+- **反向验证 2**：运行输入行改回 `ASSET_ID_SPACE_V1` → `assert 'v1' == 'v2'` 红。
+- **反向验证 3**：停用半途失败清理 → 第 5 条红。
+- `ruff check src tests` 通过；`mypy --platform win32 src` 296 files 无问题。
+- 未改任何 HTTP 字段，四份生成物无需重生成。
+
+**下一步**：契约字段（`referenceLibraryIds` / `sourceVideoLibraryId`）与 2.5d 前端切换同批；
+随后 v2 封装/固定引用的展示地址与 `cover_key` / `Served` 一起收口。

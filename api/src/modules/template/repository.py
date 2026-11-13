@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
+from typing import NamedTuple
 
 from sqlalchemy import Select, and_, delete, func, select
 from sqlalchemy.exc import IntegrityError
@@ -26,6 +27,22 @@ from modules.template.models import (
     TemplatePackReference,
     TemplatePackVersion,
 )
+
+
+class RunInputRow(NamedTuple):
+    """一条「这次实际用到的素材」。
+
+    `asset_id_space` 是**必填**：两套 id 空间形状相同，靠默认值猜空间等于让
+    历史任务在常量翻转后被重新解释（`authorization_gap` 会拿错的表去查，
+    报「输入已被删除」）。调用方手里本来就知道来源，别在这里省一个字段。
+    """
+
+    asset_id: str
+    asset_id_space: str
+    role: str
+    position: int
+    usage: str = ""
+    storage_key: str = ""
 
 
 def _now() -> datetime:
@@ -220,21 +237,20 @@ class RunRepository:
         )
         return (await self.session.scalars(stmt)).all()
 
-    async def replace_inputs(
-        self, run_id: str, rows: list[tuple[str, str, int, str, str]]
-    ) -> None:
+    async def replace_inputs(self, run_id: str, rows: Sequence[RunInputRow]) -> None:
         await self.session.execute(
             delete(ReplacementRunInput).where(ReplacementRunInput.run_id == run_id)
         )
-        for asset_id, role, position, usage, storage_key in rows:
+        for row in rows:
             self.session.add(
                 ReplacementRunInput(
                     run_id=run_id,
-                    asset_id=asset_id,
-                    role=role,
-                    position=position,
-                    usage=usage,
-                    storage_key=storage_key,
+                    asset_id=row.asset_id,
+                    asset_id_space=row.asset_id_space,
+                    role=row.role,
+                    position=row.position,
+                    usage=row.usage,
+                    storage_key=row.storage_key,
                 )
             )
 

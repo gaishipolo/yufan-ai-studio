@@ -75,6 +75,9 @@ class SqlLibraryLookup(LibraryLookup):
                 mime_type=row.mime_type,
                 storage_key=row.storage_key,
                 size_bytes=row.size_bytes,
+                sha256=row.sha256 or "",
+                width=row.width,
+                height=row.height,
                 duration_ms=int(row.duration * 1000) if row.duration else None,
                 has_audio=row.has_audio,
             )

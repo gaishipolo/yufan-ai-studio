@@ -93,6 +93,13 @@ class LibraryAssetRef:
     mime_type: str = ""
     storage_key: str = ""
     size_bytes: int = 0
+    # 内容寻址的摘要。`library_assets.sha256` 允许为空（历史行 / 未探测完），
+    # 消费方必须能自己算，不能假设它一定有值。
+    sha256: str = ""
+    # 宽高时长是**生成请求体**的一部分（执行器按文件拼 `media-inputs.json`），
+    # 缺了只能传 0，模型侧会把图当未知尺寸。所以和 `duration_ms` 一起给出来。
+    width: int = 0
+    height: int = 0
     duration_ms: int | None = None
     has_audio: bool = False
 

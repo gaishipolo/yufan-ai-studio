@@ -20,11 +20,12 @@ import asyncio
 import hashlib
 import re
 import shutil
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from time import perf_counter
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeAlias
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.exc import StaleDataError
@@ -56,10 +57,12 @@ from infra.archive import ArchiveStorage, get_archive_storage
 from modules.template import video_template_service
 from modules.template.authorization import authorization_gap
 from modules.template.channels import CHANNEL_LABELS, channel_catalog, require_channel, run_channel
+from modules.template.id_space import ASSET_ID_SPACE_V1, ASSET_ID_SPACE_V2
+from modules.template.library_media import StagedMedia, discard_staged, stage_library_refs
 from modules.template.models import ReplacementReview as ReviewRow
 from modules.template.models import ReplacementRun
 from modules.template.pack_roles import PACK_ROLES, PACK_SCOPES, usage_for
-from modules.template.repository import PackRepository, RunRepository
+from modules.template.repository import PackRepository, RunInputRow, RunRepository
 from modules.template.run_clock import elapsed_seconds
 from modules.template.schema import (
     PackBinding,
@@ -94,6 +97,11 @@ if TYPE_CHECKING:
     from modules.template.video_template_schema import VideoTemplateOut
 
 logger = get_logger(__name__)
+
+#: 归档流水线能处理的素材：v1 归档素材，或本次刚从资产库 v2 落地的暂存副本。
+#: 两者只共用「可读本地文件 + 摘要 + 宽高时长」这几个属性，**不共用权限语义**：
+#: 谁可读在进 prepare 之前就判完了（`authorization` / `readable_ids()`），这里只搬字节。
+RunMedia: TypeAlias = "StoredMedia | StagedMedia"
 
 # 准备是全模块最重的 IO 端点（物化素材 + Node 编译 + 复制运行时），却只靠日志
 # 记录成败；失败率高时没有任何数字能看出来。命名沿用本模块既有的 `replacement_`
@@ -354,12 +362,9 @@ class ReplacementService:
             [VideoTemplatePackReferenceIn.model_validate(item) for item in fixed_data],
             actor,
         )
-        if fixed_refs_v2:
-            # 本提交只切授权闸。v2 字节在 ObjectStorage，旧物化器只接 ArchiveStorage
-            # + StoredMedia；显式拒绝比丢图或把 storage_key 当旧 path 安全。
-            # 契约字段切换时与 ObjectStorage 物化一起接通。
-            raise BadRequest("资产库 v2 固定引用暂未接入生成物化，请暂勿用于生成")
-        if len(refs) + len(fixed_refs) > MAX_REFERENCE_IMAGES:
+        # v2 固定引用与 v1 一样占参考图名额：两者最终都进 mixedList，按图数上限算，
+        # 不能因为「来源不同」就多给额度。
+        if len(refs) + len(fixed_refs) + len(fixed_refs_v2) > MAX_REFERENCE_IMAGES:
             # 保存端按「封装时那个包」的图数校验，这里按「本次所选包」算，
             # 两者可能不同；报错必须说清怎么自助恢复，否则用户只会看到模板明明存下了却跑不了。
             raise BadRequest(
@@ -411,7 +416,15 @@ class ReplacementService:
                 "submit_attempts": run.submit_attempts,
             },
         )
+        staged_v2: dict[str, StagedMedia] = {}
+        # 固定引用在 `{{Mixed N}}` 里的编号与来源空间无关，这里合成一张 token 表；
+        # 落库那一步（`replace_inputs`）也要用它，所以放在 try 外面。
+        fixed_media: dict[str, RunMedia] = dict(fixed_refs)
         try:
+            # v2 固定引用的字节在对象存储里：先落到工作区，之后与 v1 引用走同一条
+            # 归档流水线（`storage.link` 优先硬链接，同盘零拷贝）。
+            staged_v2 = await stage_library_refs(path, fixed_refs_v2)
+            fixed_media.update(staged_v2)
             # 文件 IO 与 subprocess 放线程池：它们会阻塞几十毫秒到几秒，
             # 在事件循环里跑会把同进程的其他请求一起卡住。
             spec, compiled, summary = await asyncio.to_thread(
@@ -427,7 +440,7 @@ class ReplacementService:
                 character_fronts,
                 selected_packs,
                 text_refs,
-                fixed_refs,
+                fixed_media,
             )
         except Exception:
             logger.exception("替换输入准备失败 run_id=%s", run.id)
@@ -438,6 +451,9 @@ class ReplacementService:
             await self.runs.save(run)
             await self.session.commit()
             raise
+        finally:
+            # 只删本次下载的副本：零拷贝那条路径指向内容寻址的 blob，删了等于删素材。
+            await asyncio.to_thread(discard_staged, staged_v2)
 
         run = await self.runs.get_or_404(run.id)
         run.status = "prepared"
@@ -455,16 +471,17 @@ class ReplacementService:
         await self.runs.replace_inputs(
             run.id,
             [
-                (
-                    item.id,
-                    "source_video" if item is source else _REFERENCE_ROLE[payload.kind],
-                    position,
-                    "",
-                    "",
+                RunInputRow(
+                    asset_id=item.id,
+                    # 显式写空间：`execute()` 的授权复核按行上的空间去查对应的表，
+                    # 靠默认值会在常量翻转后把历史任务重新解释成另一套 id。
+                    asset_id_space=_media_space(item),
+                    role="source_video" if item is source else _REFERENCE_ROLE[payload.kind],
+                    position=position,
                 )
                 for position, item in enumerate(
                     _media_in_mixed_order(video_template, source, refs, roles, character_fronts,
-                                          fixed_refs=fixed_refs)
+                                          fixed_refs=fixed_media)
                 )
             ],
         )
@@ -971,12 +988,12 @@ def _check_video_template(
 
 def _media_in_mixed_order(
     template: VideoTemplateOut | None,
-    source: StoredMedia,
-    refs: list[StoredMedia],
+    source: RunMedia,
+    refs: Sequence[RunMedia],
     roles: dict[str, str] | None = None,
     character_fronts: list[str] | None = None,
-    fixed_refs: dict[str, StoredMedia] | None = None,
-) -> list[StoredMedia]:
+    fixed_refs: Mapping[str, RunMedia] | None = None,
+) -> list[RunMedia]:
     """mixedList 的顺序：普通原片沿用「参考图 + 原片」；视频模板按**用途**排。
 
     `{{Mixed 1}}` 永远是原片；第 2 位起按模板声明的用途（主图 / 三视图 / 细节）
@@ -1127,19 +1144,39 @@ def _check_scope(
         raise BadRequest("替换范围超出素材包已审核的支持范围：" + "、".join(allowed))
 
 
+def _media_space(item: RunMedia) -> str:
+    """这条归档素材的 id 来自哪套空间。**只按来源对象判**，不看当前常量。"""
+    return ASSET_ID_SPACE_V2 if isinstance(item, StagedMedia) else ASSET_ID_SPACE_V1
+
+
+@contextmanager
+def _readable_source(storage: ArchiveStorage, item: RunMedia) -> Iterator[Path]:
+    """拿到这份素材**当前**可读的本地路径。
+
+    v1 是归档存储里的位置，交给驱动解析（本地直出、远端下载）；v2 在 prepare 前
+    已经落到工作区，本身就是可读文件——再走一次 `materialize()` 会把它当归档
+    key 解析到别的根目录下，取到的要么不存在、要么是另一个同名文件。
+    """
+    if isinstance(item, StagedMedia):
+        yield item.path
+        return
+    with storage.materialize(item.path) as original:
+        yield original
+
+
 def _materialize_inputs(
     storage: ArchiveStorage,
     path: Path,
     payload: PrepareReplacement,
-    source: StoredMedia,
-    refs: list[StoredMedia],
+    source: RunMedia,
+    refs: Sequence[RunMedia],
     frozen,
     video_template: VideoTemplateOut | None = None,
     roles: dict[str, str] | None = None,
     character_fronts: list[str] | None = None,
     selected_packs: list[dict] | None = None,
     text_refs: Sequence[Mapping[str, Any]] = (),
-    fixed_refs: dict[str, StoredMedia] | None = None,
+    fixed_refs: Mapping[str, RunMedia] | None = None,
 ) -> tuple[dict[str, object], Compilation, ReplacementInputSummary]:
     """把输入落到工作区并编译提示词。**同步函数**：调用方放进线程池。
 
@@ -1155,7 +1192,7 @@ def _materialize_inputs(
                                 fixed_refs=fixed_refs)
     bindings: list[dict[str, str]] = []
     for index, item in enumerate(media):
-        with storage.materialize(item.path) as original:
+        with _readable_source(storage, item) as original:
             filename = (
                 "reference-video.mp4"
                 if item is source
@@ -1368,7 +1405,7 @@ def _materialize_inputs(
     return spec, compiled, summary
 
 
-def _usage_for_asset(item: StoredMedia, refs: list[StoredMedia], frozen, kind: str) -> str:
+def _usage_for_asset(item: RunMedia, refs: Sequence[RunMedia], frozen, kind: str) -> str:
     """这张图在提示词里的说明：用途文字 + 封装里为它写的补充说明。"""
     try:
         index = refs.index(item)
