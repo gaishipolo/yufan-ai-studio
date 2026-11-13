@@ -2914,3 +2914,81 @@ NUL 是合法 UTF-8、sqlite 也存得下，所以裸 `write_text` 在本地永�
 **下一步**：W3 的其余落点（`workspace.py:104,119` 的 `read_text`、`worker.py:243/782/870`、
 `video_template_store.py:133` 的 `json.load`），然后 W8（时间源统一 `utcnow`、
 `import_legacy` 路径校验、工作区 GC 保留策略）。
+
+### 24.23 步 5（二）：W3 收尾 + W8 的三条里两条（2026-11-13 完成两条，一条待拍板）
+
+**W3 收尾：JSON 读写各走一条路的事清完了**
+
+| 落点 | 改法 | 先说清原来为什么会坏 |
+|---|---|---|
+| `workspace.read_state` | `read_json` + `(FileNotFoundError, ValueError) → {}` | 「先 `is_file()` 再 `read_text`」，两步之间正好落进 SMB 的 rename 窗口，轮询偶尔 500 |
+| `workspace.input_checksums` | 同上 | 同一个文件族、同一个窗口，没必要两条读法 |
+| `worker.receipt_power` / `_libtv_task` | 同上 | 落进窗口就返回 None：账单永远「待核对」/「刚提交却查不到任务号」 |
+| `worker._restore_bailian_receipt` | `asyncio.to_thread(read_json, …)` | 恢复时读不到回执就当没提交过，会重复提交 |
+| `worker.archive_bailian_unknown_receipt` | `read_json` + **读不出一律 409** | 这里是「已花钱的任务要不要重提」，把「读不到」当「没有任务号」= 重复计费，所以它**不能**跟上面几处一样返回 None |
+
+顺带修掉一类 500：`read_json` 返回 `object`（原来 `json.loads` 是 `Any`），每处补
+`isinstance(dict)`。以前回执被写成列表或字符串时会在 `.get` 上抛 `AttributeError`。
+
+计划里点到的 `video_template_store.py:133` **已经不存在**——`catalog.json` 落表时
+（§24.7）那份 store 一起删了，20 份备份轮转也随之消失。这条可以从清单上划掉。
+
+**W8-1 时间源：统一到 `db.base.utcnow`**
+
+`pack_service`（两处 `published_at`）、`replacement_service`（`deleted_at` /
+`reviewed_at`）、`seed.py`、`repository._now()` 各写了一遍 `datetime.now(UTC)`。
+语义一模一样，代价是**没法钉时钟**：想验「这一版是什么时候发布的」只能等或放宽容差，
+而这一列是判断「哪一版先发」的唯一依据。
+
+用例 `test_publish_time_comes_from_the_shared_clock` 把 `pack_service.utcnow` 钉到固定
+时刻，断言**版本行与封装行两处**都是它（漏一处就会「包说 A 时发的、版本说 B 时」）。
+反向验证：版本行退回 `datetime.now(UTC)` → 红。sqlite 取回来是 naive，比较前补
+`tzinfo=UTC`（值没变，只是数据库不带时区）。
+
+**W8-2 `import_legacy` 路径校验：已经有了，不用做**
+
+`_run_dir()` 里已经是：
+
+```python
+candidate = (root / relative).resolve()
+if candidate.is_relative_to(root) and (candidate / "run.json").is_file():
+```
+
+`resolve()` 之后再判 `is_relative_to`，绝对路径和 `..` 都拦得住。计划里那条是
+按当时代码写的，现在勾掉。
+
+**W8-3 工作区 GC / 保留策略：待拍板，先不动手**
+
+现状：每个 run 都在归档根下留一份完整工作区（`inputs/` 素材副本 + `records/` +
+`code/runtime/` 编译器快照 + 3 个中文模板）。`api/var/` 下测试残留已经堆了很多副本。
+**没有任何清理机制**（`modules/asset/archive_purge.py` 清的是 v1 素材 blob，不是 run
+工作区）。
+
+为什么不能顺手写一个「删 N 天前的目录」：工作区不是缓存，它承担三件事——
+
+1. `inputs/` 是**验收依据**（素材后来被删/换了内容，评价页仍要能打开当初喂给模型的图）；
+2. `records/` 是**证据**（提交回执、账单、状态流转），`prompt.txt` 是「发了什么」；
+3. `code/runtime/` 是**复现依据**（当时跑的是哪一版编译器）。
+
+删了就没有第二份。所以这是产品口径，三个候选：
+
+| 候选 | 做法 | 代价 |
+|---|---|---|
+| A | 不删，只加 `app template workspaces` 盘点命令（列出占用、最老/最新） | 盘会一直涨；但零风险，先能看见 |
+| B | 按「任务终态 + N 天」删 `inputs/` 与 `code/`，**保留 `records/`** | 验收与复现能力有期限；`prompt.txt` 挪进 `records/` 才能一起保住 |
+| C | 只对**测试/演示数据**（`var/` 下、非归档根）做清理脚本 | 生产盘照样涨，但开发和 CI 不再越跑越胖 |
+
+判断：C 可以立刻做（不碰用户数据），A 是 B 的前置（先有盘点才知道该留多久），
+B 等产品给「已付费任务留多久」的结论。**本轮只记录，不动手。**
+
+**验证**
+
+- 44 文件 **506 passed**（含新增 3 条窗口用例与 1 条钉时钟用例）；
+- `ruff check src tests`、`mypy --platform win32 src`（297 files）通过；
+- 反向验证两次：`read_state` 退回 `is_file()+read_text` → `test_read_state_survives_the_smb_rename_window` 红；
+  `receipt_power` 退回 `read_text` → `test_receipt_power_survives_the_receipt_rewrite_window` 红；
+  版本行退回 `datetime.now(UTC)` → 钉时钟用例红。
+
+**下一步（步 2.5e / 步 6）**：清掉 §23.2 剩下的两类使用方（`modules/task` 与前端旧入口），
+再下线 v1 素材库——v1 下线时 `import_legacy` 里那条 `{api_prefix}/assets/{id}/file`
+的老档案 URL 会 404，随那一步一起决定（改文案 / 置空 / 保留 404 并在详情页标注）。
