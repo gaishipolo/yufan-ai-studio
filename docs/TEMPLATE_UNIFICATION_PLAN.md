@@ -2437,3 +2437,51 @@ v2 目前**没有对应语义**的东西：
 
 **下一步**：步 3（契约与归属）——`packId` 从必填降为可选（A 只声明槽位、B 按用途取图），
 以及「B 直接选用资产库 v2 封装」的 `libraryPackId` 适配器（§23.5「缺的一跳」）。
+
+### 24.16 步 3（部分）：槽位声明与封装整包导入（2026-11-13）
+
+**`packId` 降为可选（提交 `5283451`）**
+
+两段式封装的目标态是「A 只声明槽位、B 调用时选包」，但 `_resolve_media` 一句
+`if payload.media_order or not payload.pack_id: raise` 把它堵死了。理由写的是
+「由服务端生成完整媒体清单」——可清单只依赖 `referenceBindings` 的用途序列，
+包只决定**这一次填哪几张图**，那是调用期的事。
+
+- `required is not None` 且无 `packId`：按声明的用途生成槽位（`assetId` 留空、
+  名字「运行时选正面图」），`packName="" / packVersion=0`；空槽是既有语义
+  （多人物模板的部分槽位本来就这么标），`validate_media` 不会当重复图片；
+- 没有 `referenceBindings` 又没给包 → 仍然 400（生成不出清单）；
+- 前端：素材包下拉新增「不绑定默认包（调用时按用途取图）」，校验按「有没有
+  `referenceBindings`」分流；提示词可用编号与卡片信息按**槽位**而不是包里几张图展示。
+
+这条路径当前的入口是「复制固定蓝本 → 清空素材包」：`referenceBindings` 只在蓝本里
+带得过来，页面上还没有独立的槽位编辑器。**补一个槽位编辑器**才能让 A 从零写
+「{{Mixed 2}} 是正面、{{Mixed 3}} 是三视图」，记在这里当下一步。
+
+**封装整包导入（提交 `33ded5e`）**
+
+资产库里「同一产品的三视图/细节图」本来就是一个封装，编辑器却只能逐张勾选。
+现在左侧多一个下拉，选中封装即按成员顺序带入图、用途与补充说明：
+
+- 用途照成员自己的 `role` 走，认不出来退回基准用途并**列出是哪几张** ——
+  不按位置猜「第一张是主图」（`{{Mixed N}}` 与用途绑死，猜错是静默错片）；
+- 只带 `kind=image` + `state=active`；超过 10 张取前 10 张并明说；
+- 缩略图走 `/library/assets/{id}/thumbnail`（带鉴权），不用 `/static` 公开地址；
+- 数据源是既有 `GET /library/packs/{id}`，后端零改动。`useLibrarySelection`
+  增 `includePacks`（默认 false：封装不能嵌套，只有这里要挑封装本身）。
+
+**验证**
+
+- 后端 `5283451`：`select_tests` 判 targeted（14 文件）；实跑 **17 个文件 250 passed**
+  （补 `test_template_v2_materialization`、`test_template_packager`、
+  `test_replacement_archive`）。`ruff` / `mypy`（297 files）通过，四份生成物
+  重新导出后 `--check` 无变化（只改了 `packId` 的描述文案）。
+  新增 `tests/test_template_no_pack.py` 三条。
+- **反向验证**：恢复旧的「必须有 packId」限制 → 第 1、3 条红（创建 400 /
+  准备 400），逐字恢复。
+- 前端：`npm run verify`、`gen:routes --check`、`gen:mock-coverage --check` 全绿；
+  封装编辑器单测 6 条（新增封装导入那条：`role=multiview` 与空 role 两张成员，
+  断言用途、补充说明，以及空 role 没有被按位置猜成主图）。
+
+**下一步**：A 侧槽位编辑器（从零声明用途序列）；B 侧 `libraryPackId`（§23.5
+「缺的一跳」，需要给 `LibraryLookup` 加「按 pack 展开成员」的端口方法）。
