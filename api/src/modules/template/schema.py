@@ -245,6 +245,14 @@ class ReplacementPack(CamelModel):
     name: str
     reference_ids: list[str]
     cover_reference_id: str | None = None
+    reference_id_space: str = Field(
+        default="",
+        description=(
+            "referenceIds 属于哪套素材库（v1 / v2）。回写草稿时要按它选字段名："
+            "`v2` 填 referenceLibraryIds，其它填 referenceIds——否则一次编辑保存"
+            "就会把这份封装重新解释成另一侧的同名 id。"
+        ),
+    )
     wardrobe_mode: Literal["preserve", "reference"] = "preserve"
     features: str = ""
     instructions: str = ""
@@ -272,6 +280,13 @@ class PackDraftIn(CamelModel):
     name: str = Field(default="", max_length=160)
     reference_ids: list[str] = Field(default_factory=list, max_length=10)
     cover_reference_id: str | None = None
+    # 资产库 v2 的等价字段。**按字段名判空间，不看 id 形状**——两套 id 都是
+    # 32 位 hex，靠猜只会让「模板库拿到的是哪一侧的图」变成隐式行为。
+    # 两组互斥：同时填直接 400，不做「谁优先」的静默选择。
+    reference_library_ids: list[str] = Field(default_factory=list, max_length=10)
+    cover_library_id: str | None = Field(
+        default=None, description="资产库 v2 封面的 asset id；与 coverReferenceId 互斥"
+    )
     wardrobe_mode: Literal["preserve", "reference"] = "preserve"
     features: str = Field(default="", max_length=2000)
     instructions: str = Field(default="", max_length=2000)

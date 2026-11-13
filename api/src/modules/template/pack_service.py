@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -27,8 +28,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.context import CurrentUser
 from core.exceptions import AppError, BadRequest, Conflict, NotFound
 from core.logging import get_logger
-from core.ports.library_lookup import LibraryAssetKind, LibraryAssetState
+from core.ports.library_lookup import (
+    LibraryAssetKind,
+    LibraryAssetState,
+    get_library_lookup,
+)
 from core.ports.media import get_asset_lookup
+from core.serving import Served
 from infra import get_storage
 from infra.archive import BlobStore, get_archive_storage, preview_key
 from modules.template.asset_source import resolve_assets, resolve_names
@@ -55,6 +61,19 @@ from modules.template.schema import (
 )
 
 logger = get_logger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class _DraftRefs:
+    """草稿里「用哪几张图」的归一化结果：id 列表 + 空间 + 封面。
+
+    请求侧是两个字段（`referenceIds` / `referenceLibraryIds`），到业务层合成一份，
+    后面的校验、落库、发布都只认它——各写一遍「用哪个字段」迟早漏一处。
+    """
+
+    ids: list[str]
+    space: str
+    cover: str | None
 
 
 class PackService:
@@ -117,8 +136,9 @@ class PackService:
     # ------------------------------------------------------------------ #
     async def save(self, payload: PackDraftIn, owner: str) -> PackManaged:
         """保存草稿。`request_id` 就是封装 id——幂等边界落在主键上。"""
-        self._check_roles(payload)
-        await self._check_references(payload, owner)
+        draft = self._draft_refs(payload)
+        self._check_roles(payload, len(draft.ids))
+        await self._check_references(draft, payload.kind, owner)
 
         pack = await self.repo.get(payload.request_id.hex)
         if pack is not None and pack.deleted_at is not None:
@@ -154,21 +174,21 @@ class PackService:
         pack.instructions = payload.instructions
         pack.wardrobe_mode = payload.wardrobe_mode
 
-        bindings = aligned_bindings(payload.kind, payload.reference_ids, payload.bindings)
+        bindings = aligned_bindings(payload.kind, draft.ids, payload.bindings)
         required = aligned_required_roles(payload.kind, payload.required_roles)
         await self.repo.replace_references(
             pack.id,
+            draft.space,
             [
                 (asset_id, position, binding.role, binding.description)
                 for position, (asset_id, binding) in enumerate(
-                    zip(payload.reference_ids, bindings, strict=True)
+                    zip(draft.ids, bindings, strict=True)
                 )
             ],
         )
-        pack.cover_asset_id = payload.cover_reference_id
-        # 草稿请求暂时没有独立空间字段：旧字段在当前写入空间里解释，落库后
-        # 不再随 CURRENT_ASSET_ID_SPACE 翻转。契约字段切换时再显式化请求侧。
-        pack.cover_asset_id_space = CURRENT_ASSET_ID_SPACE
+        pack.cover_asset_id = draft.cover
+        # 封面与引用同空间：写入时定死，之后不随 `CURRENT_ASSET_ID_SPACE` 翻转。
+        pack.cover_asset_id_space = draft.space
         # 待发布状态：发布时整块冻结进版本行（见 `publish`）。
         pack.required_roles = required
         pack.supported_scopes = list(payload.supported_scopes)
@@ -257,13 +277,38 @@ class PackService:
             raise BadRequest("同一封装不能混用不同空间的素材")
         return next(iter(spaces), CURRENT_ASSET_ID_SPACE)
 
-    def _check_roles(self, payload: PackDraftIn) -> None:
+    @staticmethod
+    def _draft_refs(payload: PackDraftIn) -> _DraftRefs:
+        """按**字段名**判空间，两套字段互斥。
+
+        不写「哪个优先」的规则：两套 id 形状相同，允许同时填之后再来一次
+        「优先取 v2」，就等于让一次手滑的请求悄悄换成另一侧的图。
+        """
+        legacy = list(payload.reference_ids)
+        library = list(payload.reference_library_ids)
+        if legacy and library:
+            raise BadRequest("同一封装不能同时使用 referenceIds 与 referenceLibraryIds")
+        if library:
+            if payload.cover_reference_id:
+                raise BadRequest("referenceLibraryIds 只能配 coverLibraryId")
+            return _DraftRefs(
+                ids=library, space=ASSET_ID_SPACE_V2, cover=payload.cover_library_id
+            )
+        if payload.cover_library_id:
+            raise BadRequest("coverLibraryId 只能配 referenceLibraryIds")
+        # 旧字段跟随「当前写入空间」：这是迁移开关（翻转常量即整体切到 v2），
+        # 不是兜底。落库后每行都带自己的空间，不会再被翻转重新解释。
+        return _DraftRefs(
+            ids=legacy, space=CURRENT_ASSET_ID_SPACE, cover=payload.cover_reference_id
+        )
+
+    def _check_roles(self, payload: PackDraftIn, reference_count: int) -> None:
         """用途写错不该被静默改成基准用途：那会让封装者以为设置生效了。"""
         allowed = roles_for(payload.kind)
         unknown = sorted({b.role for b in payload.bindings if b.role and b.role not in allowed})
         if unknown:
             raise BadRequest(f"图片用途无效：{'、'.join(unknown)}")
-        if payload.bindings and len(payload.bindings) != len(payload.reference_ids):
+        if payload.bindings and len(payload.bindings) != reference_count:
             raise BadRequest("图片用途需与参考图一一对应，请重新勾选")
         extra_required = [role for role in payload.required_roles if role not in allowed]
         if extra_required:
@@ -274,28 +319,28 @@ class PackService:
         if bad_scopes:
             raise BadRequest(f"替换范围无效：{'、'.join(bad_scopes)}")
 
-    async def _check_references(self, payload: PackDraftIn, owner: str) -> None:
+    async def _check_references(self, draft: _DraftRefs, kind: str, owner: str) -> None:
         """v1 保留本人/同类/未删除；v2 只认可读的已采纳图片。
 
         v2 没有 `category`，人物/产品/场景由封装的槽位绑定表达。小组与封装成员
         能否读由 `readable_ids()` 统一回答，这里不反推标签或重写共享规则。
         """
-        if not payload.reference_ids:
+        if not draft.ids:
             return
-        space = CURRENT_ASSET_ID_SPACE
+        space = draft.space
         assets = await resolve_assets(
             self.session,
-            [(asset_id, space) for asset_id in payload.reference_ids],
+            [(asset_id, space) for asset_id in draft.ids],
             actor=CurrentUser(id=owner, name=owner),
         )
-        for asset_id in payload.reference_ids:
+        for asset_id in draft.ids:
             if space == ASSET_ID_SPACE_V1:
                 row = assets.v1.get(asset_id)
                 if (
                     row is None
                     or row.deleted_at
                     or row.owner_id != owner
-                    or row.category != payload.kind
+                    or row.category != kind
                 ):
                     raise BadRequest("只能封装本人同类参考图片")
             elif space == ASSET_ID_SPACE_V2:
@@ -368,6 +413,7 @@ class PackService:
             kind=pack.kind,  # type: ignore[arg-type]
             name=pack.name,
             reference_ids=reference_ids,
+            reference_id_space=refs[0].asset_id_space if refs else "",
             cover_reference_id=(
                 pack.cover_asset_id
                 if pack.cover_asset_id in reference_ids
@@ -422,25 +468,33 @@ class PackService:
     # ------------------------------------------------------------------ #
     # 预览
     # ------------------------------------------------------------------ #
-    async def preview(self, pack_id: str, asset_id: str, version: int) -> tuple[Path, str]:
-        """返回 `(可读路径, content-type)`。缺预览就现生成一份，生成失败宁可 404。"""
+    async def preview(self, pack_id: str, asset_id: str, version: int) -> Served:
+        """包内预览：**由「已发布版本」授权**，不是「当前用户对资产库条目有读权限」。
+
+        v1 读旧素材表 + 归档盘派生预览；v2 直接取库自己的缩略图（`cover_key`），
+        没有缩略图就退回原件。两条路都不做资产库授权检查——这份图已经随
+        「已发布版本」对外了，再加一道 `readable_ids()` 会让「能看模板、看不了包」
+        的矛盾状态出现（共享审批与模板可见范围本来就是两件事）。
+
+        也不把 v2 重定向到 `/library/assets/{id}/thumbnail`：那个端点会做资产库
+        授权，非成员拿到的是 403 而不是这张图。
+        """
         pack = await self.repo.get_or_404(pack_id)
         frozen = await self.repo.get_version(pack.id, version)
         if frozen is None:
             raise NotFound("发布版本不存在")
         if asset_id not in frozen.reference_ids:
             raise NotFound("包内预览不存在")
+        if frozen.reference_ids_space == ASSET_ID_SPACE_V2:
+            return await self._library_preview(asset_id)
         if frozen.reference_ids_space != ASSET_ID_SPACE_V1:
-            # 公共预览由「已发布版本」授权，不等于当前用户对资产库条目有读权限。
-            # v2 预览要连同 cover_key / Served 一起设计；此处显式拒绝，绝不拿
-            # v2 id 去旧表碰运气，也不重定向到会 403 的资产库缩略图端点。
             raise NotFound("包内预览暂不可用")
         media = await get_asset_lookup().get_many(self.session, [asset_id])
         row = media.get(asset_id)
         if row is None or row.deleted_at or row.owner_id != pack.owner_id:
             raise NotFound("包内素材不可用")
         if row.preview_path:
-            return self._materialized(row.preview_path), "image/jpeg"
+            return Served.local(self._materialized(row.preview_path), "image/jpeg")
         # 公共预览不开放原件下载：缺预览就现生成一份，生成失败宁可 404。
         derived = preview_key(row.sha256)
         try:
@@ -449,7 +503,29 @@ class PackService:
             raise NotFound("包内预览不可用，请重新登记素材后再封装") from exc
         if not created:
             raise NotFound("包内预览不可用，请重新登记素材后再封装")
-        return self._materialized(derived), "image/jpeg"
+        return Served.local(self._materialized(derived), "image/jpeg")
+
+    async def _library_preview(self, asset_id: str) -> Served:
+        """v2 包内预览的字节来源：优先缩略图，其次原件。"""
+        ref = (await get_library_lookup().get_many(self.session, [asset_id])).get(asset_id)
+        if (
+            ref is None
+            or ref.state != LibraryAssetState.ACTIVE
+            or ref.kind != LibraryAssetKind.IMAGE
+        ):
+            raise NotFound("包内素材不可用")
+        key = ref.cover_key or ref.storage_key
+        if not key:
+            raise NotFound("包内素材不可用")
+        mime = ref.mime_type or "image/jpeg"
+        storage = get_storage()
+        local = storage.local_path(key)
+        if local is not None:
+            return Served.local(local, mime)
+        if not await storage.exists(key):
+            raise NotFound("包内素材不可用")
+        # 远端驱动不把字节搬进进程：签名地址交给浏览器直接取（`<img>` 不走 CORS）。
+        return Served.remote(await storage.presigned_download_url(key), mime)
 
     def _materialized(self, key: str) -> Path:
         """交出可读路径。退出上下文是安全的：驱动承诺物化缓存不会被立即回收。"""

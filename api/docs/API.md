@@ -1809,6 +1809,8 @@ Authorization: Bearer <accessToken>
 | `name` | `string` | 否 |  |
 | `referenceIds` | `string[]` | 否 |  |
 | `coverReferenceId` | `string \| null` | 否 |  |
+| `referenceLibraryIds` | `string[]` | 否 |  |
+| `coverLibraryId` | `string \| null` | 否 | 资产库 v2 封面的 asset id；与 coverReferenceId 互斥 |
 | `wardrobeMode` | `"preserve" \| "reference"` | 否 |  |
 | `features` | `string` | 否 |  |
 | `instructions` | `string` | 否 |  |
@@ -1825,6 +1827,7 @@ Authorization: Bearer <accessToken>
 | `name` | `string` | 是 |  |
 | `referenceIds` | `string[]` | 是 |  |
 | `coverReferenceId` | `string \| null` | 否 |  |
+| `referenceIdSpace` | `string` | 否 | referenceIds 属于哪套素材库（v1 / v2）。回写草稿时要按它选字段名：`v2` 填 referenceLibraryIds，其它填 referenceIds——否则一次编辑保存就会把这份封装重新解释成另一侧的同名 id。 |
 | `wardrobeMode` | `"preserve" \| "reference"` | 否 |  |
 | `features` | `string` | 否 |  |
 | `instructions` | `string` | 否 |  |
@@ -1863,6 +1866,7 @@ Authorization: Bearer <accessToken>
 | `name` | `string` | 是 |  |
 | `referenceIds` | `string[]` | 是 |  |
 | `coverReferenceId` | `string \| null` | 否 |  |
+| `referenceIdSpace` | `string` | 否 | referenceIds 属于哪套素材库（v1 / v2）。回写草稿时要按它选字段名：`v2` 填 referenceLibraryIds，其它填 referenceIds——否则一次编辑保存就会把这份封装重新解释成另一侧的同名 id。 |
 | `wardrobeMode` | `"preserve" \| "reference"` | 否 |  |
 | `features` | `string` | 否 |  |
 | `instructions` | `string` | 否 |  |
@@ -1913,6 +1917,7 @@ Authorization: Bearer <accessToken>
 | `name` | `string` | 是 |  |
 | `referenceIds` | `string[]` | 是 |  |
 | `coverReferenceId` | `string \| null` | 否 |  |
+| `referenceIdSpace` | `string` | 否 | referenceIds 属于哪套素材库（v1 / v2）。回写草稿时要按它选字段名：`v2` 填 referenceLibraryIds，其它填 referenceIds——否则一次编辑保存就会把这份封装重新解释成另一侧的同名 id。 |
 | `wardrobeMode` | `"preserve" \| "reference"` | 否 |  |
 | `features` | `string` | 否 |  |
 | `instructions` | `string` | 否 |  |
@@ -5001,6 +5006,8 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `name` | `string` | 否 |  |
 | `referenceIds` | `string[]` | 否 |  |
 | `coverReferenceId` | `string \| null` | 否 |  |
+| `referenceLibraryIds` | `string[]` | 否 |  |
+| `coverLibraryId` | `string \| null` | 否 | 资产库 v2 封面的 asset id；与 coverReferenceId 互斥 |
 | `wardrobeMode` | `"preserve" \| "reference"` | 否 |  |
 | `features` | `string` | 否 |  |
 | `instructions` | `string` | 否 |  |
@@ -5058,6 +5065,7 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `name` | `string` | 是 |  |
 | `referenceIds` | `string[]` | 是 |  |
 | `coverReferenceId` | `string \| null` | 否 |  |
+| `referenceIdSpace` | `string` | 否 | referenceIds 属于哪套素材库（v1 / v2）。回写草稿时要按它选字段名：`v2` 填 referenceLibraryIds，其它填 referenceIds——否则一次编辑保存就会把这份封装重新解释成另一侧的同名 id。 |
 | `wardrobeMode` | `"preserve" \| "reference"` | 否 |  |
 | `features` | `string` | 否 |  |
 | `instructions` | `string` | 否 |  |
@@ -5275,6 +5283,7 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `name` | `string` | 是 |  |
 | `referenceIds` | `string[]` | 是 |  |
 | `coverReferenceId` | `string \| null` | 否 |  |
+| `referenceIdSpace` | `string` | 否 | referenceIds 属于哪套素材库（v1 / v2）。回写草稿时要按它选字段名：`v2` 填 referenceLibraryIds，其它填 referenceIds——否则一次编辑保存就会把这份封装重新解释成另一侧的同名 id。 |
 | `wardrobeMode` | `"preserve" \| "reference"` | 否 |  |
 | `features` | `string` | 否 |  |
 | `instructions` | `string` | 否 |  |

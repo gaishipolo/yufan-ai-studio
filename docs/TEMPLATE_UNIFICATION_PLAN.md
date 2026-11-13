@@ -2223,3 +2223,78 @@ CI 机器慢时就会等超时。
 
 **下一步**：契约字段（`referenceLibraryIds` / `sourceVideoLibraryId`）与 2.5d 前端切换同批；
 随后 v2 封装/固定引用的展示地址与 `cover_key` / `Served` 一起收口。
+
+### 24.13 步 2.5c（五）：v2 封装契约字段 + 包内公共预览 + 引用来源声明（2026-11-13）
+
+§24.12 末尾那句「目前还不能通过 HTTP 建出 v2 封装」这一节消掉了：请求侧多了
+`referenceLibraryIds` / `coverLibraryId`，出参多了 `referenceIdSpace`，`preview()` 的 v2 分支
+（原来一律 404）换成了真的发字节。
+
+**做了什么**
+
+1. 契约（`modules/template/schema.py`）：`PackDraftIn` 增 `reference_library_ids`
+   （≤10）/ `cover_library_id`；`ReplacementPack` 增 `reference_id_space`。
+2. `pack_service._draft_refs()` 把两个请求字段归一成 `_DraftRefs(ids, space, cover)`：
+   **只按字段名判空间**，两组互斥（同时填 400、`coverLibraryId` 单独出现也 400），
+   旧字段仍跟随 `CURRENT_ASSET_ID_SPACE`。校验文案分两套：v1「只能封装本人同类参考图片」/
+   v2「只能封装可读的已采纳参考图片」（判据是 `readable_ids()` + `ACTIVE` + `IMAGE`）。
+3. `PackRepository.replace_references()` 增必填的 `asset_id_space`：**不靠列默认值猜空间**
+   ——翻转常量后靠默认值写行，等于让历史封装在下次编辑时被重新解释成另一侧。
+4. `preview()` 改为返回 `Served`（`pack_router` 只调 `served.response()`）：v2 取
+   `cover_key or storage_key`，本地驱动 `Served.local`，远端 `Served.remote(presigned)`；
+   **不做资产库授权检查**，也不重定向到 `/library/assets/{id}/thumbnail`。
+5. 补 v2 引用来源声明：`modules/template/library_references.py` + `ModuleSpec.library_reference_sources`。
+
+**与计划的差异 / 落地才确认的四件事**
+
+1. **出参必须带 `referenceIdSpace`**。前端编辑一个 v2 封装时会拿 `referenceIds` 回写；
+   出参不给空间，同一批 id 就被重新解释成 v1（保存成功、之后每次预览都 404）。
+   这不是「多给一个字段」，是让 dual-read 期的读-改-写闭环有依据。
+2. **不写「谁优先」**。两套 id 形状相同，允许同时填再定优先级，等于让一次手滑的请求
+   静默换成另一侧的图。
+3. **包内公共预览不走资产库端点**。「已发布版本授权」与「当前用户对资产库条目有读权限」
+   是两套语义：307 到缩略图端点会让非成员拿到 403 而不是这张图。同理不能用
+   `FileResponse` 直发本地路径——远端驱动没有本地文件，必须走 `Served`。
+4. **新增 `reference_library_ids` 会命中 AST 守卫**
+   （`test_every_library_reference_writer_declares_a_source`）：模板模块此前只声明了 v1 的
+   `asset_references`，v2 一路没声明。补声明时口径选了**不按 `asset_id_space` 过滤**：
+   两套 id 都是 uuid4、跨表不可能撞，多加一个谓词只会在「空间标记写错」时**少一条引用**，
+   而少一条引用 = 放行一次不可逆删除。与 `PackMemberReferences` 的「孤儿行也算引用」同一取舍。
+   不拦的四处（冻结版本 / 运行输入 / `video_templates.media_order` / 封面）在文件 docstring
+   里逐条写了理由，共同点是「删了也还能再出一条同样的片」。
+
+**阶段性限制（仍未做）**
+
+- v2 **原片**（`sourceVideoLibraryId`）仍未接：`prepare` 的原片路径只查 v1
+  (`assets.category='source'`)，要连 `_validate_inputs` 与时长/音轨校验一起改。
+- 历史版本预览仍读**活字节**（与 v1 同口径）：发布过 v2 封装后又把图从封装里换掉，
+  带 `?version=1` 的预览会 404，由 `app doctor` 报告，不进删除拦截。
+- `CURRENT_ASSET_ID_SPACE` 仍是 `v1`：v2 只能显式传 `referenceLibraryIds` 走通，
+  旧前端继续走 v1（这是 2.5d 之前的状态，不是缺陷）。
+
+**验证**
+
+- `scripts/select_tests.py --print` 判 **contract**（13 个改动路径 → 46 个测试文件）
+  → **508 passed / 57.96s**（全新 `--basetemp`）。
+- `tests/test_pack_library_draft.py` **8 passed**：v2 草稿→发布→预览字节、
+  `referenceIdSpace == "v2"`、目录 `previewUrls`、优先发缩略图、混用字段/孤立封面 400、
+  旧字段仍写 v1、草稿/回收站/非图片被拒，以及新增的
+  **「封装引用的 v2 图被挡住彻底删除」**（409 + `details.references` 里点得出封装名；
+  移除封装后同一条目可删，防「引用永久卡住」）。
+- `test_template_v2_authorization.py` 适配新的 `_draft_refs()` / `_check_references()` 签名。
+- **反向验证 1**：去掉 `ModuleSpec.library_reference_sources` → 架构守卫红
+  （`modules/template/schema.py（模块 template 未声明来源）`）。
+- **反向验证 2**：声明保留、去掉 `bind_library_reference_sources()` → 彻底删除变 **503**
+  「来源 template_pack_references.library_asset_id（应由 template 提供）未注册」，新用例红。
+- **反向验证 3**：checker 直接 `return {}` → 新用例红（409 不再出现）。
+- `ruff check src tests` 通过；`mypy --platform win32 src` **297** files 无问题；
+  四份生成物 `export-openapi --check` 全部「无变化」；`cd studio && npm run verify` 通过。
+
+**排查记录（一次自造的红灯）**：`test_partial_failure_cleans_what_was_already_downloaded`
+中途连续两次红，现象是 `.staging/` 里同时残留副本与 `.part`。根因不是清理逻辑，而是
+**同一时间有两个 pytest 进程在写同一个 `var/` 子树**（前一条被超时 SIGTERM 的循环留下了子进程），
+Windows 上 `unlink` 撞到占用被 `except OSError` 吞掉。单独重跑 4 次全绿。教训：
+本地跑测试不要叠进程，`--basetemp` 每次换新目录。
+
+**下一步**：v2 原片字段 + `_validate_inputs` 切 v2（时长/音轨校验同批），随后 2.5d 前端
+只换数据源（`PackEditor.tsx` 等，UI 不动）。

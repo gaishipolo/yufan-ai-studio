@@ -77,13 +77,19 @@ async def _drop_assets(asset_ids: list[str]) -> None:
         await session.commit()
 
 
-def _draft(reference_ids: list[str]) -> PackDraftIn:
+def _draft(reference_ids: list[str], *, library: bool = True) -> PackDraftIn:
+    """`library=True` 用 v2 字段，否则用旧字段。
+
+    空间由**字段名**决定（`referenceLibraryIds` → v2，`referenceIds` → 当前写入空间），
+    不再靠 monkeypatch 常量：那是迁移开关，不是逐次请求的判断依据。
+    """
+    field = "referenceLibraryIds" if library else "referenceIds"
     return PackDraftIn.model_validate(
         {
             "requestId": uuid.uuid4(),
             "kind": "character",
             "name": "v2 授权测试",
-            "referenceIds": reference_ids,
+            field: reference_ids,
         }
     )
 
@@ -118,33 +124,30 @@ async def _gap(run_id: str) -> str | None:
     ],
 )
 async def test_draft_gate_requires_active_readable_v2_image(
-    monkeypatch: pytest.MonkeyPatch,
     owner_id: str,
     state: str,
     kind: str,
     visibility: str,
     allowed: bool,
 ) -> None:
-    monkeypatch.setattr(pack_service, "CURRENT_ASSET_ID_SPACE", ASSET_ID_SPACE_V2)
     asset_id = await _asset(owner_id, state=state, kind=kind, visibility=visibility)
+    draft = PackService._draft_refs(_draft([asset_id]))
     try:
         async with get_session_factory()() as session:
             if allowed:
-                await PackService(session)._check_references(_draft([asset_id]), CONSUMER)
+                await PackService(session)._check_references(draft, "character", CONSUMER)
             else:
                 with pytest.raises(BadRequest, match="只能封装可读的已采纳参考图片"):
-                    await PackService(session)._check_references(_draft([asset_id]), CONSUMER)
+                    await PackService(session)._check_references(draft, "character", CONSUMER)
     finally:
         await _drop_assets([asset_id])
 
 
-async def test_draft_gate_reuses_pack_member_read_entry(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_draft_gate_reuses_pack_member_read_entry() -> None:
     """成员图仍是私有的；可读封装共享后，消费者可读成员，撤销后立即失效。"""
-    monkeypatch.setattr(pack_service, "CURRENT_ASSET_ID_SPACE", ASSET_ID_SPACE_V2)
     image_id = await _asset(PACK_OWNER)
     container_id = await _asset(PACK_OWNER, kind="pack", visibility="team")
+    draft = PackService._draft_refs(_draft([image_id]))
     async with get_session_factory()() as session:
         session.add(LibraryPackItem(pack_id=container_id, asset_id=image_id, position=1))
         await session.commit()
@@ -156,7 +159,7 @@ async def test_draft_gate_reuses_pack_member_read_entry(
                 actor=CurrentUser(id=CONSUMER, name=CONSUMER),
             )
             assert assets.readable_v2 == frozenset({image_id})
-            await PackService(session)._check_references(_draft([image_id]), CONSUMER)
+            await PackService(session)._check_references(draft, "character", CONSUMER)
             container = await session.get(LibraryAsset, container_id)
             assert container is not None
             container.visibility = "personal"
@@ -169,7 +172,7 @@ async def test_draft_gate_reuses_pack_member_read_entry(
             )
             assert revoked.readable_v2 == frozenset()
             with pytest.raises(BadRequest, match="只能封装可读的已采纳参考图片"):
-                await PackService(session)._check_references(_draft([image_id]), CONSUMER)
+                await PackService(session)._check_references(draft, "character", CONSUMER)
     finally:
         await _drop_assets([container_id, image_id])
 
@@ -187,11 +190,15 @@ async def test_publish_uses_reference_space_and_checks_v2_object_bytes() -> None
             frozen = await PackRepository(session).get_version(pack.id, 1)
             assert frozen is not None
             assert frozen.reference_ids_space == ASSET_ID_SPACE_V2
-            with pytest.raises(NotFound, match="包内预览暂不可用"):
-                await service.preview(pack.id, asset_id, 1)
+            # 包内预览由「已发布版本」授权：v2 直接给库里的字节（无 cover_key 时退原件）
+            served = await service.preview(pack.id, asset_id, 1)
+            assert served.path is not None
+            assert served.path.read_bytes() == b"v2-image-bytes"
 
         await get_storage().delete(key)
         async with get_session_factory()() as session:
+            with pytest.raises(NotFound, match="包内素材不可用"):
+                await PackService(session).preview(pack.id, asset_id, 1)
             refs = await PackRepository(session).references(pack.id)
             with pytest.raises(BadRequest, match="素材字节缺失"):
                 await PackService(session)._verify_bytes(refs)

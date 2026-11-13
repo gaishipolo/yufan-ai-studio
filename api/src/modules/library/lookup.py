@@ -74,6 +74,7 @@ class SqlLibraryLookup(LibraryLookup):
                 visibility=LibraryVisibility(row.visibility),
                 mime_type=row.mime_type,
                 storage_key=row.storage_key,
+                cover_key=row.cover_key,
                 size_bytes=row.size_bytes,
                 sha256=row.sha256 or "",
                 width=row.width,

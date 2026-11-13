@@ -92,6 +92,9 @@ class LibraryAssetRef:
     visibility: LibraryVisibility
     mime_type: str = ""
     storage_key: str = ""
+    #: 我们托管的缩略图 key（音轨 / 文本没有）。模板包内预览优先用它：
+    #: 列表页一次几十张图，拿原件当缩略图是纯浪费带宽。空串表示没有缩略图。
+    cover_key: str = ""
     size_bytes: int = 0
     # 内容寻址的摘要。`library_assets.sha256` 允许为空（历史行 / 未探测完），
     # 消费方必须能自己算，不能假设它一定有值。

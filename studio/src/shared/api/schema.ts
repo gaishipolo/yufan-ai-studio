@@ -865,6 +865,9 @@ export interface PackDraftIn {
   name?: string;
   referenceIds?: string[];
   coverReferenceId?: string | null;
+  referenceLibraryIds?: string[];
+  /** 资产库 v2 封面的 asset id；与 coverReferenceId 互斥 */
+  coverLibraryId?: string | null;
   wardrobeMode?: "preserve" | "reference";
   features?: string;
   instructions?: string;
@@ -912,6 +915,8 @@ export interface PackManaged {
   name: string;
   referenceIds: string[];
   coverReferenceId?: string | null;
+  /** referenceIds 属于哪套素材库（v1 / v2）。回写草稿时要按它选字段名：`v2` 填 referenceLibraryIds，其它填 referenceIds——否则一次编辑保存就会把这份封装重新解释成另一侧的同名 id。 */
+  referenceIdSpace?: string;
   wardrobeMode?: "preserve" | "reference";
   features?: string;
   instructions?: string;
@@ -1128,6 +1133,8 @@ export interface ReplacementPack {
   name: string;
   referenceIds: string[];
   coverReferenceId?: string | null;
+  /** referenceIds 属于哪套素材库（v1 / v2）。回写草稿时要按它选字段名：`v2` 填 referenceLibraryIds，其它填 referenceIds——否则一次编辑保存就会把这份封装重新解释成另一侧的同名 id。 */
+  referenceIdSpace?: string;
   wardrobeMode?: "preserve" | "reference";
   features?: string;
   instructions?: string;

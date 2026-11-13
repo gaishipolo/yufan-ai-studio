@@ -10,7 +10,6 @@ from __future__ import annotations
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
-from fastapi.responses import FileResponse
 
 from api.deps import require
 from core import audit
@@ -99,6 +98,6 @@ async def preview(
     actor: ReadDep,
     service: PackServiceDep,
     version: int = Query(ge=1),
-) -> FileResponse:
-    path, mime = await service.preview(pack_id, asset_id, version)
-    return FileResponse(path, media_type=mime)
+):
+    served = await service.preview(pack_id, asset_id, version)
+    return served.response()

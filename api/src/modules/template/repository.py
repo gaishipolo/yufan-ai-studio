@@ -104,13 +104,17 @@ class PackRepository:
         return (await self.session.scalars(stmt)).all()
 
     async def replace_references(
-        self, pack_id: str, refs: list[tuple[str, int, str, str]]
+        self, pack_id: str, asset_id_space: str, refs: list[tuple[str, int, str, str]]
     ) -> None:
         """整组覆盖：先删后插。
 
         为什么不逐条 diff：参考图最多 10 张，整组覆盖的成本远低于「算出增删改」
         的复杂度，而且它天然保证 `position` 连续——`position` 一旦断号，
         提示词里的 `reference-1` / `reference-3` 就会跳号。
+
+        `asset_id_space` 必填且整组同一个：一次封装只属于一套素材库，
+        混用的行会让发布期 `_reference_space()` 报错，而错误发生在「发布」，
+        离「保存」很远——用户会觉得是自己点错了。
         """
         await self.session.execute(
             delete(TemplatePackReference).where(TemplatePackReference.pack_id == pack_id)
@@ -120,6 +124,7 @@ class PackRepository:
                 TemplatePackReference(
                     pack_id=pack_id,
                     asset_id=asset_id,
+                    asset_id_space=asset_id_space,
                     position=position,
                     role=role,
                     description=description,
