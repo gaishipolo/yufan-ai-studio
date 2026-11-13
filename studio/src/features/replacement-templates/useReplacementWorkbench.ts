@@ -12,7 +12,8 @@ import { createId } from '@/shared/lib/id';
 import { isReplacementPackAvailable } from '@/entities/template/model/replacementPack';
 import { NEXT_ACTION, RETRY, TYPES } from './replacementOptions';
 import { videoTemplateLabel, videoTemplateScopes, videoTemplatesForSource } from './videoTemplateFunctions';
-import { sourceVideoOfLibrary, SOURCE_ORIGINS, type SourceVideo } from './sourceVideo';
+import { SOURCE_VIDEO_ORIGINS } from '@/entities/library/model/types';
+import { sourceVideoOfLibrary, type SourceVideo } from './sourceVideo';
 
 /** 编排页面动作；服务端记录由 Query 保存，仅持有选择和反馈等 UI 状态。 */
 export function useReplacementWorkbench() {
@@ -114,7 +115,7 @@ export function useReplacementWorkbench() {
      同一套判据：`public` 就是团队可见（公共原片池），不是另一个可见性档。 */
   const sourceSelection = useLibrarySelection({
     kind: 'video',
-    origin: SOURCE_ORIGINS,
+    origin: SOURCE_VIDEO_ORIGINS,
     library: sourceScope === 'public' ? 'team' : 'personal',
     keyword: search,
     page: sourcePage,

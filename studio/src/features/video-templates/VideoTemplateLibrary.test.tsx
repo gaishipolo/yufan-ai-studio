@@ -13,6 +13,7 @@ const mock = vi.hoisted(() => {
     promptSha256: 'abc123',
     sourceVideoName: '我穿的是米兰之夜模板测试.mp4',
     sourceVideoAssetId: 'ac1d588d36294fa49c809d46bb1dbb6d',
+    sourceVideoIdSpace: 'v2',
     sourceVideoPath: '',
     sourceDurationSec: 5.312,
     aspectRatio: '9:16',
@@ -47,11 +48,12 @@ vi.mock('@/entities/video-template/api/videoTemplate.queries', () => ({
   }),
 }));
 
-vi.mock('@/entities/asset/api/archive.queries', () => ({
-  useArchiveAssets: () => ({data: {items: [
+/* 原片候选改读资产库 v2：`durationSec` 是库的字段名（旧库叫 `duration`） */
+vi.mock('@/entities/library/api/library.queries', () => ({
+  useLibrarySelection: () => ({data: {items: [
     {id: 'ac1d588d36294fa49c809d46bb1dbb6d', name: '我穿的是米兰之夜模板测试.mp4',
-      category: 'source', type: 'video', duration: 5.31, hasAudio: true},
-  ], total: 1}}),
+      kind: 'video', origin: 'template_source', durationSec: 5.31, hasAudio: true},
+  ], total: 1}, isPending: false, error: null}),
 }));
 
 vi.mock('@/entities/template/api/pack.queries', () => ({
@@ -125,12 +127,19 @@ describe('模板库里的视频模板', () => {
     expect(screen.getByDisplayValue(mock.template.prompt)).toBeVisible();
   });
 
-  it('卡片标明已绑定原片，复制封装时沿用原片与默认产品替换', () => {
+  it('卡片标明已绑定原片，复制封装时沿用原片、原片空间与默认产品替换', async () => {
     render(<VideoTemplateLibrary />);
     expect(screen.getByText(/已绑定原片卡片 · 默认产品替换/)).toBeVisible();
     fireEvent.click(screen.getByRole('button', {name: '复制固定蓝本'}));
     expect(screen.getByLabelText(/样片原片/)).toHaveValue('ac1d588d36294fa49c809d46bb1dbb6d');
     expect(screen.getByLabelText('默认替换类型')).toHaveValue('product');
+    /* 原片 id 的两套空间形状一样：只抄 id 不抄空间，保存后服务端会把它当另一侧解释 */
+    fireEvent.change(screen.getByLabelText('替换素材包'), {target: {value: mock.template.packId}});
+    fireEvent.click(screen.getByRole('button', {name: '保存封装'}));
+    await vi.waitFor(() => expect(mock.create).toHaveBeenCalledWith(expect.objectContaining({
+      sourceVideoAssetId: 'ac1d588d36294fa49c809d46bb1dbb6d',
+      sourceVideoIdSpace: 'v2',
+    })));
   });
 
   it('封装编辑器保存功能名称及提示词范围参数', async () => {

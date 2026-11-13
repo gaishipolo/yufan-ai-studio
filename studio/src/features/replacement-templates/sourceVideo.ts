@@ -2,16 +2,6 @@ import type { ArchivedAsset, LibraryAssetOut } from '@/shared/api/schema';
 import type { ReplacementFitness } from '@/entities/asset/model/archive-fit';
 
 /**
- * 原片在资产库里的两种来源，**必须一起取**：
- *
- * - `template_source`：模板库切换后新上传的原片（`POST /library/source-videos`）；
- * - `imported`：并存期从旧素材库导入的存量原片。
- *
- * 漏掉后者等于切完只剩新传的片子，用户会以为原来的原片被删了。
- */
-export const SOURCE_ORIGINS: string[] = ['template_source', 'imported'];
-
-/**
  * 工作台里的「原片视图」：只留卡片、适配判定与提示词预览真正读的几项。
  *
  * **为什么不直接复用 `ArchivedAsset`**：v2 的 `library_assets` 不对外暴露

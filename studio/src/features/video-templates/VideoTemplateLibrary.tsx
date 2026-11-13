@@ -1,11 +1,12 @@
 import { useState } from 'react';
-import { useArchiveAssets } from '@/entities/asset/api/archive.queries';
+import { useLibrarySelection } from '@/entities/library/api/library.queries';
 import { useAvailablePacks } from '@/entities/template/api/pack.queries';
 import { baseRole, rolesFor } from '@/entities/template/model/packRoles';
 import { useVideoTemplateMutations, useVideoTemplates } from '@/entities/video-template/api/videoTemplate.queries';
 import type { VideoTemplateDraftIn, VideoTemplateOut } from '@/shared/api/schema';
 import { Button, EmptyState, ErrorState, Modal } from '@/shared/ui';
 import { toast } from '@/shared/lib/toast';
+import { SOURCE_VIDEO_ORIGINS } from '@/entities/library/model/types';
 
 interface FormState {
   name: string;
@@ -14,6 +15,8 @@ interface FormState {
   prompt: string;
   sourceVideoName: string;
   sourceVideoAssetId: string;
+  /** 原片 id 属于哪套素材库：两套 id 形状一样，写错字段等于让服务端重新解释它 */
+  sourceVideoIdSpace: 'v1' | 'v2';
   sourceVideoPath: string;
   sourceDurationSec: string;
   aspectRatio: string;
@@ -44,6 +47,8 @@ interface SourceOption {
   label: string;
   name: string;
   durationSec?: number;
+  /** 列表只取资产库 v2，所以恒为 v2；留着字段是为了提交时不用另写一处常量 */
+  idSpace: 'v2';
 }
 
 const ASPECTS = ['9:16', '16:9', '1:1'];
@@ -56,7 +61,8 @@ const KINDS = [
 function emptyForm(): FormState {
   return {
     name: '', templateKey: '', description: '', prompt: '',
-    sourceVideoName: '', sourceVideoAssetId: '', sourceVideoPath: '', sourceDurationSec: '', aspectRatio: '9:16',
+    sourceVideoName: '', sourceVideoAssetId: '', sourceVideoIdSpace: 'v2',
+    sourceVideoPath: '', sourceDurationSec: '', aspectRatio: '9:16',
     packId: '', defaultKind: 'product', pinned: false, order: [],
   };
 }
@@ -70,6 +76,8 @@ function formFromBlueprint(template: VideoTemplateOut): FormState {
     prompt: template.prompt,
     sourceVideoName: template.sourceVideoName ?? '',
     sourceVideoAssetId: template.sourceVideoAssetId ?? '',
+    /* 复制蓝本沿用原片的**空间**：只抄 id 会让一条 v1 原片在保存后被当成 v2 解释 */
+    sourceVideoIdSpace: template.sourceVideoIdSpace === 'v2' ? 'v2' : 'v1',
     sourceVideoPath: template.sourceVideoPath ?? '',
     sourceDurationSec: String(template.sourceDurationSec ?? 0),
     aspectRatio: template.aspectRatio || '9:16',
@@ -212,6 +220,7 @@ function VideoTemplateEditor({initial, packs, sources, busy, onClose, onSubmit}:
       prompt: form.prompt,
       sourceVideoName: form.sourceVideoName,
       sourceVideoAssetId: form.sourceVideoAssetId || null,
+      sourceVideoIdSpace: form.sourceVideoIdSpace,
       sourceVideoPath: form.sourceVideoPath,
       sourceDurationSec: Number(form.sourceDurationSec) || 0,
       aspectRatio: form.aspectRatio,
@@ -319,6 +328,8 @@ function VideoTemplateEditor({initial, packs, sources, busy, onClose, onSubmit}:
           <select className={input} value={form.sourceVideoAssetId} required onChange={event => {
             const picked = sources.find(source => source.id === event.target.value);
             patch({sourceVideoAssetId: event.target.value,
+              /* 空间跟着选中的那条走：清空选择时保持不动，回退到未选状态即可 */
+              ...(picked ? {sourceVideoIdSpace: picked.idSpace} : {}),
               ...(picked ? {sourceVideoName: picked.name} : {}),
               ...(picked?.durationSec ? {sourceDurationSec: String(picked.durationSec)} : {})});
           }}>
@@ -354,7 +365,14 @@ export function VideoTemplateLibrary({embedded = false}: {embedded?: boolean} = 
   const query = useVideoTemplates();
   const mutations = useVideoTemplateMutations();
   const packsQuery = useAvailablePacks('all', '', 1);
-  const sourcesQuery = useArchiveAssets('source', {scope: 'mine', pageSize: 100});
+  /* 候选来自资产库 v2（`origin` 两个值一起取：新传的 + 并存期导入的）。
+     入口不按「我的」收窄：模板是全库共用资源（固定蓝本全库唯一），封装者
+     能绑到自己读得到的任何原片，而不是只有他上传的那些。 */
+  const sourcesQuery = useLibrarySelection({
+    kind: 'video',
+    origin: SOURCE_VIDEO_ORIGINS,
+    pageSize: 100,
+  });
   const [editing, setEditing] = useState<FormState | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
 
@@ -368,14 +386,13 @@ export function VideoTemplateLibrary({embedded = false}: {embedded?: boolean} = 
     assetIds: pack.referenceIds ?? [],
     previews: pack.previewUrls ?? [],
   }));
-  const sources: SourceOption[] = (sourcesQuery.data?.items ?? [])
-    .filter(asset => asset.category === 'source')
-    .map(asset => ({
-      id: asset.id,
-      label: `${asset.name}（${asset.duration ?? 0}s）`,
-      name: asset.name,
-      durationSec: asset.duration,
-    }));
+  const sources: SourceOption[] = (sourcesQuery.data?.items ?? []).map(asset => ({
+    id: asset.id,
+    label: `${asset.name}（${asset.durationSec ?? 0}s）`,
+    name: asset.name,
+    durationSec: asset.durationSec ?? undefined,
+    idSpace: 'v2',
+  }));
 
   async function handleSubmit(payload: VideoTemplateDraftIn) {
     await mutations.create.mutateAsync(payload);

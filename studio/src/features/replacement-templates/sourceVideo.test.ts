@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { SOURCE_ORIGINS, sourceVideoFitness, sourceVideoOfArchive, sourceVideoOfLibrary, type SourceVideo } from './sourceVideo';
+import { SOURCE_VIDEO_ORIGINS } from '@/entities/library/model/types';
+import { sourceVideoFitness, sourceVideoOfArchive, sourceVideoOfLibrary, type SourceVideo } from './sourceVideo';
 
 function video(extra: Partial<SourceVideo> = {}): SourceVideo {
   return {id: 'v1', name: '原片.mp4', type: 'video', url: '/api/v1/library/assets/v1/file',
@@ -34,6 +35,6 @@ describe('原片视图', () => {
   });
 
   it('原片的两个来源必须一起取', () => {
-    expect(SOURCE_ORIGINS).toEqual(['template_source', 'imported']);
+    expect(SOURCE_VIDEO_ORIGINS).toEqual(['template_source', 'imported']);
   });
 });
