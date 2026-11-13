@@ -424,8 +424,7 @@ pytest 14 → 87 → 204 → 292 → 325 → **346**；前端 46 → 221 → 245
 
 1. `EXTENSIBILITY_GAPS.md` 的 B1（权限点自动进内置角色，仍需人跑 `app sync-roles`）、
    C1（轮询节奏全局化）、C2（重试是作业级不是任务级）。
-2. 已修（2026-11-07）：CI 注释、`REPLACEMENT_TEMPLATES.md`、`ARCHITECTURE.md` 的
-   「三份生成物」改为四份；历史评审报告保留为事实快照。
+2. 已修（2026-11-07）：CI 注释与 `ARCHITECTURE.md` 的「三份生成物」改为四份。
 3. pre-commit 未接入；目前靠 CI 与提交前手动跑命令。
 4. ESLint zone 只拦 `@/xxx` 别名，相对路径跨层仍需人看（FE-02）。
 5. `useMe` 的 5 分钟 `staleTime`（`session.queries.ts:31`）会让降权延迟可见。

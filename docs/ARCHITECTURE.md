@@ -4,7 +4,8 @@
 > ① 一个请求从浏览器到数据库经过哪些文件；② 要加一个新功能该动哪些文件；③ 哪些文件是「别乱改」的骨架。
 >
 > 本文只讲结构与文件职责。写代码规范看 [`CODE_STYLE.md`](CODE_STYLE.md)，
-> 前后端扩展流程看 [`FRONTEND_EXTENSION.md`](FRONTEND_EXTENSION.md)，替换模板业务看 [`REPLACEMENT_TEMPLATES.md`](REPLACEMENT_TEMPLATES.md)。
+> 前后端扩展流程看 [`FRONTEND_EXTENSION.md`](FRONTEND_EXTENSION.md)，模板库 v2 的设计与契约看
+> [`TEMPLATE_LIBRARY_V2.md`](TEMPLATE_LIBRARY_V2.md)。下文 §5.4 描述的是**待重做的老替换链路**。
 
 ---
 
@@ -705,7 +706,7 @@ CreateTaskModal → POST /tasks
    有：只续轮询（不重复提交，否则重复扣费）；无：重置现场重新排队
 ```
 
-### 5.4 替换模板（同事新增的链路，细节见 `REPLACEMENT_TEMPLATES.md`）
+### 5.4 替换模板（老链路，v2 重做中；现状与契约见 `TEMPLATE_LIBRARY_V2.md`）
 
 ```
 ① 上传 / 登记    POST /assets/archive/upload | /import   → 落归档盘 + 索引（非计费）
@@ -803,10 +804,8 @@ npm run gen:module <name>           # 生成模块骨架
 | [`README.md`](../README.md) | 技术栈、启动、演示账号 |
 | [`CODE_STYLE.md`](CODE_STYLE.md) | 命名、分层、错误码、注释要求 |
 | [`FRONTEND_EXTENSION.md`](FRONTEND_EXTENSION.md) | 前端怎么加模块、插槽、权限、登录态接入 |
-| [`REPLACEMENT_TEMPLATES.md`](REPLACEMENT_TEMPLATES.md) | 替换模板业务全流程 |
+| [`TEMPLATE_LIBRARY_V2.md`](TEMPLATE_LIBRARY_V2.md) | 模板库 v2 的五向 I/O 契约与待拍板项 |
 | [`REVIEW_CHECKLIST.md`](REVIEW_CHECKLIST.md) | 提交前自检清单 |
-| [`BACKEND_REQUIREMENTS_IDENTITY.md`](BACKEND_REQUIREMENTS_IDENTITY.md) | 身份模块需求与接口清单 |
-| `CODE_REVIEW_2026-11-05_*.md` | 历次评审记录（含每条问题的根因，排查同类问题时很好用） |
 
 ---
 

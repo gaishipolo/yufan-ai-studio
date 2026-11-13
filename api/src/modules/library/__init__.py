@@ -1,7 +1,8 @@
 """资产库 v2：草稿箱 / 个人 / 小组 / 团队 / 回收站五入口的统一资产库。
 
 2026-11-13 起它是**唯一的**资产库：旧素材库（`modules/asset` + `/assets` + `assets`
-表）已彻底下线，两套 id 空间的并存期结束（见 `docs/TEMPLATE_UNIFICATION_PLAN.md` §24.26–§24.27）。
+表）已彻底下线（迁移 `f5b2d8c4a173`），两套 id 空间的并存期结束。
+历史任务里的 v1 id 不再解析得到素材名，详情页按「素材已删除」降级。
 """
 
 from api.module import ModuleSpec

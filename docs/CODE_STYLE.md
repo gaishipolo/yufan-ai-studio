@@ -603,14 +603,13 @@ npm run test:coverage
 | `vite build` | ✅ 入口 `index` 80.09 kB（gzip 27.48 kB），产物无演示口令 |
 
 > 这张表是「评估这次改动有没有让仓库变差」的起点，每轮评审刷新一次；
-> 历史值见 `REVIEW_CHECKLIST.md` 附录 A 与各轮 `CODE_REVIEW_*.md`。
+> 历史值见 `REVIEW_CHECKLIST.md` 附录 A（历次评审报告已于 2026-11-13 清理，需要时从 git 历史取回）。
 
 ### 仍然靠人守的缺口
 
 **文档 / 流程欠债**
 
-- 已修（2026-11-07）：CI 注释、`REPLACEMENT_TEMPLATES.md`、`ARCHITECTURE.md` 的
-  「三份生成物」都改成了四份，历史评审报告保留为事实快照。
+- 已修（2026-11-07）：CI 注释与 `ARCHITECTURE.md` 的「三份生成物」都改成了四份。
 - `EXTENSIBILITY_GAPS.md` 剩余 B1（权限点自动进内置角色，需人记得跑 `app sync-roles`）、
   C1（轮询节奏全局化）、C2（重试是作业级不是任务级）。
 - pre-commit 仍未接入；目前靠 CI 与提交前手动跑命令。

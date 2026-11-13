@@ -37,12 +37,12 @@
 | **新** `ModuleSpec.jobs` 声明了但无人消费 | **已修** | 删掉字段（`discovery` 与 `app modules` 同步）。宁可删，也不留一个只用来打印的假承诺 |
 | **新** 周期任务没有扩展点（七维之一） | **已修** | 新增 `core/scheduler.py`（`@periodic` + 进程内单调度器 + `SCHEDULER_ENABLED`）；生图用它补 `image.reconcile`：捞回进程重启后卡在 `queued` 的作业 |
 | **新** 模型能力声明未参与校验，靠供应商兜底 | **已修** | `param_schema` 原来只给前端渲染表单、受理时不看。后果是「声明支持 4 张、供应商只接受 1 张」——201 受理、几秒后异步失败。现在 `ImageService._validate_params` 按模型声明的 enum / min-max 在**受理时**拒绝，报错带可选值；`agnes` 的 `count` 上限从 4 改为 1 |
-| **新** 尺寸字面量格式不统一（全角 `×` vs 半角 `x`） | **已修** | `echo.py` 的 `_IMAGE_SCHEMA` 用全角 `×` 而 `agnes.py` 用半角 `x`，同一套前端不可能同时满足；且 `size` 只校验长度，非法值穿透到供应商。已统一半角并把白名单校验接上（前端 `ImagePage` 的 `×` 仍待改，见 [`BACKEND_DELIVERY_IMAGE.md`](BACKEND_DELIVERY_IMAGE.md)） |
+| **新** 尺寸字面量格式不统一（全角 `×` vs 半角 `x`） | **已修** | `echo.py` 的 `_IMAGE_SCHEMA` 用全角 `×` 而 `agnes.py` 用半角 `x`，同一套前端不可能同时满足；且 `size` 只校验长度，非法值穿透到供应商。已统一半角并把白名单校验接上（前端 `ImagePage` 的 `×` 仍待改，见早期交付说明（文档已清理，见 git 历史）） |
 | A2 归档存储不走 driver loader | **已修** | 新增 `infra/archive/`（`base` 协议 / `local` 驱动 / `__init__` 工厂），`ARCHIVE_DRIVER` 选实现；provider 与子进程里 5 处直接 `new` 全部改走 `get_archive_storage()`，并加测试禁止再直接实例化 |
 | A3 跨模块协作无成文规则 | **已修** | 新增 `api/ports.py` 的 `PORT_CATALOG`（协议 / 谁实现 / 未注册时的行为），注入口形状写进 `EXTENDING.md §5.1`；三个架构测试守住「漏登记就红」「缺 has 就红」；`app modules` 与启动日志都会列出未接上的注入口 |
 | A4 外部进程位置参数 | **已修** | 参数改为 stdin 的 JSON + `version`（`LIBTV_PROCESS_PROTOCOL`），两侧各自校验；版本不认就退出码 2，启动方按「协议不一致」报错而不是干等结果文件 |
 | B1 权限点不自动进内置角色 | 未修 | 已有 `app sync-roles`，但仍需人记得跑 |
-| B2 前端权限清单手抄 | **已修** | `app export-openapi` 增加第四份生成物 `studio/src/shared/api/permissions.ts`（来源是 `ModuleSpec.permissions`），`--check` 与契约测试拦住忘记生成。前端改法见 [`BACKEND_DELIVERY_IMAGE.md` 第四节](BACKEND_DELIVERY_IMAGE.md)：不是「一行 re-export」——生成物是 `as const` 的 readonly 元组，`new Set()` 要显式 `Set<string>` 否则类型不过；那条解析 Python 源码的 vitest 比对可以一起删（它在单独检出前端时静默跳过，等于没有） |
+| B2 前端权限清单手抄 | **已修** | `app export-openapi` 增加第四份生成物 `studio/src/shared/api/permissions.ts`（来源是 `ModuleSpec.permissions`），`--check` 与契约测试拦住忘记生成。前端改法（早期交付说明已清理）：不是「一行 re-export」——生成物是 `as const` 的 readonly 元组，`new Set()` 要显式 `Set<string>` 否则类型不过；那条解析 Python 源码的 vitest 比对可以一起删（它在单独检出前端时静默跳过，等于没有） |
 | B4 任务不校验 owner 状态 | **已修** | 注入口从 `api/accounts.py` 下移到 `core/ports/accounts.py`（`generation` 也能用，不再反向依赖），`runner.handle_submit` 在**提交前**检查，停用即失败且不留提交意图 |
 | C1 轮询节奏全局化 | 未修 | 仍读 `settings.generation_poll_interval_sec` |
 | C2 重试是作业级不是任务级 | 未修 | 仍是 `Job.max_attempts` |
@@ -510,7 +510,7 @@ module = ModuleSpec(name="voice", router=router, config=VoiceSettings)
 
 ## R11 复核后的补充修复（2026-11-06）
 
-`docs/CODE_REVIEW_2026-11-06_R11.md` 用真实探针指出：这份 13 条对账是
+早期评审 R11（文档已清理）用真实探针指出：这份 13 条对账是
 **「按维度数插槽是否造出来」**，没有做**「按模块 × 插槽」**的矩阵，
 所以两条 🔴 一条都不在原清单里——新加的 `image` 接齐了「让它跑起来」的插槽，
 「出事后能恢复」的一个没接，而 292 个用例、ruff、mypy、契约检查全部照常通过。
@@ -537,7 +537,7 @@ module = ModuleSpec(name="voice", router=router, config=VoiceSettings)
 
 ## R12 复核后的补充修复（2026-11-06）
 
-`docs/CODE_REVIEW_2026-11-06_R12.md` 复核了 R11 的修复，并指出一个新形状：
+早期评审 R12（文档已清理）复核了 R11 的修复，并指出一个新形状：
 **两个各自正确、各自有测试的修复，组合到同一条记录上破了一条硬不变量**
 ——恢复器把「同步供应商的 running 孤儿」置成 failed「请重试」，retry 清掉
 `external_id` 重新 dispatch，于是「绝不重复计费」被绕过，且对账凭证同时丢失。

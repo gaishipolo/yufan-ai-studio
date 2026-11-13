@@ -61,13 +61,11 @@ Windows 防火墙需允许工作台的 TCP 5173 入站；将远端范围限制�
 
 ## 文档导航
 
-人物 / 产品 / 场景替换与 Z 盘素材归档，见 [替换模板使用与开发说明](docs/REPLACEMENT_TEMPLATES.md)。
-
 | 文档 | 读它是因为 |
 |---|---|
 | [docs/HANDOFF.md](docs/HANDOFF.md) | **接手先读这个**：当前状态、这一轮改了什么、还差什么、本机坑与不变量 |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 全局形状、逐文件职责、请求/登录/生成三条主线、常见坑 |
-| [docs/CHAIN_REPLACEMENT.md](docs/CHAIN_REPLACEMENT.md) | 产品替换从点击到成片的完整链路：12 跳逐文件、状态机、共享盘产物、失败恢复 |
+| [docs/TEMPLATE_LIBRARY_V2.md](docs/TEMPLATE_LIBRARY_V2.md) | 模板库 v2：五向 I/O 契约、复用/删除清单、待拍板项 |
 | [docs/AI_TEMPLATE_PACKAGER_V2.md](docs/AI_TEMPLATE_PACKAGER_V2.md) | AI 会话封装视频卡片：复用工作台素材包、按用途绑定编号、完整上传辅助参考图 |
 | [docs/EXTENSIBILITY_GAPS.md](docs/EXTENSIBILITY_GAPS.md) | 扩展框架的问题清单（PR #1 合并暴露）：13 条缺口、优先级、以及暂缓的配置分层提案 |
 | [api/README.md](api/README.md) | 后端目录、命令表、接口约定、演示数据 |
@@ -75,9 +73,7 @@ Windows 防火墙需允许工作台的 TCP 5173 入站；将远端范围限制�
 | [api/docs/API.md](api/docs/API.md) | 接口清单与字段表（前端对接主入口） |
 | [api/docs/PARALLEL_WORK.md](api/docs/PARALLEL_WORK.md) | 多人并行时怎么切分、怎么避免迁移冲突 |
 | [docs/FRONTEND_EXTENSION.md](docs/FRONTEND_EXTENSION.md) | 前端目录职责、模块注册、新增页面 |
-| [docs/BACKEND_DELIVERY_IMAGE.md](docs/BACKEND_DELIVERY_IMAGE.md) | **前端接生图先读这个**：两个实测会 100% 失败的写法、异步语义与轮询、权限点改用生成物 |
 | [docs/CODE_STYLE.md](docs/CODE_STYLE.md) | 命名、分层、异常与日志约定 |
-| [docs/BACKEND_REQUIREMENTS_IDENTITY.md](docs/BACKEND_REQUIREMENTS_IDENTITY.md) | 身份与会话那批需求单（**已全部落地**，留作决策记录） |
 
 ## 质量门禁
 
