@@ -166,11 +166,11 @@ def test_delete_is_blocked_when_referenced(
     拦截点在「移入回收站」这一步，不在彻底删除那一步：等它进了回收站才发现被引用，
     用户已经看不到它了，却还得再翻回来恢复。
 
-    真实实现（`video_tasks.reference_asset_ids` / `template_pack_references.asset_id`）
-    的端到端覆盖见 `test_asset_references.py`；这里用替身，是为了单独验证
+    真实实现（`template_pack_references.asset_id`）的端到端覆盖见
+    `test_asset_reference_sources.py`；任务的参考图已切到 v2，见
+    `test_task_library_references.py`。这里用替身，是为了单独验证
     「服务层确实问了注入口」且描述原样透出。
     """
-    from modules.task.asset_references import TaskAssetReferences
     from modules.template.asset_references import PackAssetReferences
 
     asset = create("used.png", png_bytes((20, 20), "blue"))
@@ -186,7 +186,6 @@ def test_delete_is_blocked_when_referenced(
         response = _trash(client, api, asset)
     finally:
         reset_asset_reference_checker()
-        register_asset_reference_checker(TaskAssetReferences())
         register_asset_reference_checker(PackAssetReferences())
 
     assert response.status_code == 409

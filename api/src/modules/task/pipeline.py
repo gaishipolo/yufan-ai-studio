@@ -219,7 +219,9 @@ def _snapshot(task: VideoTask | None, record: GenerationRecord) -> dict[str, obj
         "duration_sec": float(task.duration_sec),
         "aspect_ratio": task.aspect_ratio,
         "style_preset": task.style_preset or "",
-        "reference_asset_ids": list(task.reference_asset_ids or []),
+        # v2 口径：这列存的是资产库 id。以前写成 `reference_asset_ids`（v1 列名），
+        # 等于把 v2 id 混进「旧素材」那一列，档案里那行参考图指向另一套 id 空间。
+        "reference_library_ids": list(task.reference_library_ids or []),
         "external_id": task.external_id or "",
         "generated_at": task.finished_at,
     }

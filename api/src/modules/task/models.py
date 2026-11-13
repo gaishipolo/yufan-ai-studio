@@ -31,9 +31,14 @@ class VideoTask(Base, UUIDMixin, TimestampMixin):
     aspect_ratio: Mapped[str] = mapped_column(
         String(8), default=AspectRatio.PORTRAIT.value, nullable=False
     )
-    # 生成风格预设与参考素材：契约里声明了就必须落库，否则客户端会「以为生效了」
+    # 生成风格预设与参考图：契约里声明了就必须落库，否则客户端会「以为生效了」。
+    # 参考图存的是**资产库 v2 的 id**（`library_assets.id`），不是旧 `assets.id`：
+    # 前端先传进资产库拿到 id 再下发的。名字里带 `library` 是为了让架构守卫与
+    # 删除保护都按 v2 口径认它（见 `modules/task/library_references.py`）。
     style_preset: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    reference_asset_ids: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    reference_library_ids: Mapped[list[str]] = mapped_column(
+        JSON, default=list, nullable=False
+    )
     # 文本素材冻结快照（JSON 文本），见 `core.library_text`。重试从本行重建
     # GenerationRecord，不落库就会在用户改稿后静默换一段提示词。
     text_json: Mapped[str] = mapped_column(Text, default="", nullable=False)

@@ -48,7 +48,7 @@ def _create_task(**overrides: object) -> str:
             "duration_sec": 8,
             "aspect_ratio": "9:16",
             "style_preset": "电影感",
-            "reference_asset_ids": ["lib_a", "lib_b"],
+            "reference_library_ids": ["lib_a", "lib_b"],
             "progress": 100,
             "external_id": "task_abc123",
             "output_url": "https://cdn.example/video/task_abc123.mp4",
@@ -145,7 +145,7 @@ def test_snapshot_uses_library_field_names() -> None:
     assert snapshot["duration_sec"] == 8.0
     assert snapshot["aspect_ratio"] == "9:16"
     assert snapshot["style_preset"] == "电影感"
-    assert snapshot["reference_asset_ids"] == ["lib_a", "lib_b"]
+    assert snapshot["reference_library_ids"] == ["lib_a", "lib_b"]
     assert snapshot["external_id"] == "task_abc123"
     assert "durationSec" not in snapshot and "aspectRatio" not in snapshot
 

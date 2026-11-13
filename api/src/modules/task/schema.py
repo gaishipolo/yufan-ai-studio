@@ -43,8 +43,12 @@ class TaskOut(CamelModel):
     cover_url: str = Field(default="", description="封面图 URL，未生成完时为空串")
     prompt: str = Field(default="", description="画面描述")
     style_preset: str | None = Field(default=None, description="风格预设标识，未设置时为 null")
-    reference_asset_ids: list[str] = Field(
-        default_factory=list, description="参考素材 ID 列表（图生视频用）"
+    reference_library_ids: list[str] = Field(
+        default_factory=list,
+        description=(
+            "参考图资产 id（资产库 v2），**按顺序生效**；图生视频用。"
+            "只接受 `image` 类型、当前账号可读、未在回收站或草稿里的资产"
+        ),
     )
     text_library_ids: list[str] = Field(
         default_factory=list, description="绑定的文本资产 id（顺序即 `{{Text N}}` 编号）"
@@ -113,8 +117,14 @@ class CreateTaskIn(CamelModel):
     aspect_ratio: AspectRatio = Field(
         default=AspectRatio.PORTRAIT, description="画幅比例，缺省 9:16 竖屏"
     )
-    reference_asset_ids: list[str] = Field(
-        default_factory=list, max_length=20, description="参考素材 ID 列表（最多 20 个）"
+    reference_library_ids: list[str] = Field(
+        default_factory=list,
+        max_length=20,
+        description=(
+            "参考图（图生视频）的资产库 v2 资产 id，最多 20 个，**顺序即提交顺序**。"
+            "受理时校验：必须存在、当前账号能读、不在回收站 / 草稿里、且是 `image` 类型。"
+            "传 id 而不是 URL：取件链接是私签的，供应商取不到"
+        ),
     )
     text_library_ids: list[str] = Field(
         default_factory=list,

@@ -25,13 +25,12 @@ from core.ports.assets import (
     register_asset_reference_checker,
     reset_asset_reference_checker,
 )
-from modules.task.asset_references import TaskAssetReferences
 from modules.template.asset_references import PackAssetReferences
 
 
 def _restore_defaults() -> None:
+    # 任务模块的参考图已切到 v2（`library_references`），v1 这里只剩封装一个真实来源
     reset_asset_reference_checker()
-    register_asset_reference_checker(TaskAssetReferences())
     register_asset_reference_checker(PackAssetReferences())
 
 

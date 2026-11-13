@@ -7,10 +7,13 @@
 """
 
 from api.module import ModuleSpec
-from core.ports.assets import AssetReferenceSource, bind_asset_reference_sources
 from core.ports.export_sources import register_export_source
-from modules.task.asset_references import TaskAssetReferences
+from core.ports.library_references import (
+    LibraryReferenceSource,
+    bind_library_reference_sources,
+)
 from modules.task.export_source import TASK_EXPORT_SOURCE
+from modules.task.library_references import TaskLibraryReferences
 from modules.task.permissions import SPECS
 from modules.task.router import router
 from modules.task.seed import seed as seed_demo
@@ -23,17 +26,18 @@ from modules.task.worker import resume_unfinished_tasks  # noqa: E402
 # 见 core/ports/export_sources.py 的说明。
 register_export_source(TASK_EXPORT_SOURCE)
 
-# 素材删除前问「还有谁在用」：本模块把 `assets.id` 写进 video_tasks 的这一列。
-# 声明是同一份常量：ModuleSpec 供框架对账，import 期注册供运行时聚合。
-ASSET_REFERENCE_SOURCES = (
-    AssetReferenceSource(
-        name="video_tasks.reference_asset_ids",
-        checker=TaskAssetReferences(),
-        location="modules/task/models.py:VideoTask.reference_asset_ids",
-        description="视频生成任务的参考图",
+# 参考图存的是**资产库 v2 的 id**，所以归 v2 的删除保护管：彻底删除一张被任务
+# 引用的图，任务详情页的参考图会裂，而那一步不可逆。
+# 声明是同一份常量：ModuleSpec 供装配期对账与 AST 守卫，import 期注册供运行时聚合。
+LIBRARY_REFERENCE_SOURCES = (
+    LibraryReferenceSource(
+        name="video_tasks.reference_library_ids",
+        checker=TaskLibraryReferences(),
+        location="modules/task/models.py:VideoTask.reference_library_ids",
+        description="视频生成任务的参考图（资产库 v2 资产 id）",
     ),
 )
-bind_asset_reference_sources("task", ASSET_REFERENCE_SOURCES)
+bind_library_reference_sources("task", LIBRARY_REFERENCE_SOURCES)
 
 
 async def _startup() -> None:
@@ -53,7 +57,7 @@ module = ModuleSpec(
     # 已有自己的恢复器（worker.resume_unfinished_tasks），框架恢复器会跳过，
     # 但声明负责的 kind 让架构守卫能画出完整的「模块 × 插槽」矩阵。
     recovery_kinds=(pipeline.KIND_VIDEO,),
-    asset_reference_sources=ASSET_REFERENCE_SOURCES,
+    library_reference_sources=LIBRARY_REFERENCE_SOURCES,
     seed=seed_demo,
     seed_order=60,
 )

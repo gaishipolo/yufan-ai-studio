@@ -9871,14 +9871,14 @@
             "description": "画幅比例，缺省 9:16 竖屏",
             "default": "9:16"
           },
-          "referenceAssetIds": {
+          "referenceLibraryIds": {
             "items": {
               "type": "string"
             },
             "type": "array",
             "maxItems": 20,
-            "title": "Referenceassetids",
-            "description": "参考素材 ID 列表（最多 20 个）"
+            "title": "Referencelibraryids",
+            "description": "参考图（图生视频）的资产库 v2 资产 id，最多 20 个，**顺序即提交顺序**。受理时校验：必须存在、当前账号能读、不在回收站 / 草稿里、且是 `image` 类型。传 id 而不是 URL：取件链接是私签的，供应商取不到"
           },
           "textLibraryIds": {
             "items": {
@@ -17061,13 +17061,13 @@
             "title": "Stylepreset",
             "description": "风格预设标识，未设置时为 null"
           },
-          "referenceAssetIds": {
+          "referenceLibraryIds": {
             "items": {
               "type": "string"
             },
             "type": "array",
-            "title": "Referenceassetids",
-            "description": "参考素材 ID 列表（图生视频用）"
+            "title": "Referencelibraryids",
+            "description": "参考图资产 id（资产库 v2），**按顺序生效**；图生视频用。只接受 `image` 类型、当前账号可读、未在回收站或草稿里的资产"
           },
           "textLibraryIds": {
             "items": {

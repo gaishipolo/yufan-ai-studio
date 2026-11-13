@@ -207,8 +207,8 @@ export interface CreateTaskIn {
   durationSec?: number | null;
   /** 画幅比例，缺省 9:16 竖屏 */
   aspectRatio?: AspectRatio;
-  /** 参考素材 ID 列表（最多 20 个） */
-  referenceAssetIds?: string[];
+  /** 参考图（图生视频）的资产库 v2 资产 id，最多 20 个，**顺序即提交顺序**。受理时校验：必须存在、当前账号能读、不在回收站 / 草稿里、且是 `image` 类型。传 id 而不是 URL：取件链接是私签的，供应商取不到 */
+  referenceLibraryIds?: string[];
   /** 要拼进提示词的文本资产 id，按顺序对应 `{{Text 1}}` / `{{Text 2}}`…；提交时按当时版本冻结正文，之后编辑资产不影响本次生成与重试。只接受当前账号可读、在库的 text 类型资产，最多 8 份 */
   textLibraryIds?: string[];
   /** 风格预设标识，留空为不套风格 */
@@ -1934,8 +1934,8 @@ export interface modules__task__schema__TaskOut {
   prompt?: string;
   /** 风格预设标识，未设置时为 null */
   stylePreset?: string | null;
-  /** 参考素材 ID 列表（图生视频用） */
-  referenceAssetIds?: string[];
+  /** 参考图资产 id（资产库 v2），**按顺序生效**；图生视频用。只接受 `image` 类型、当前账号可读、未在回收站或草稿里的资产 */
+  referenceLibraryIds?: string[];
   /** 绑定的文本资产 id（顺序即 `{{Text N}}` 编号） */
   textLibraryIds?: string[];
   /** 绑定的文案与版本快照（不含正文） */

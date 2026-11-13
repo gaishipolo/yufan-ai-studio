@@ -6,6 +6,7 @@ import asyncio
 
 import pytest
 from fastapi.testclient import TestClient
+from library_support import LIB_RW, admin_headers, make_user, upload_image
 
 TEST_PASSWORD = "test-pass-123"
 
@@ -327,21 +328,59 @@ def test_create_normalizes_model_id_and_label(client: TestClient, api: str) -> N
     assert by_label["modelId"] == "kling-2.1"
 
 
-def test_create_echoes_style_and_reference_assets(client: TestClient, api: str) -> None:
-    """契约里声明的字段必须真的落库并回显，不能「收了就丢」。"""
+def test_create_echoes_style_and_reference_images(client: TestClient, api: str) -> None:
+    """契约里声明的字段必须真的落库并回显，不能「收了就丢」。
+
+    参考图存的是**资产库 v2 的 id**（前端先上传拿 id 再下发），受理时就要过一遍
+    可见性，所以这里必须造真资产：随手编两个 id 会被 400 挡在门口（下一条用例）。
+    """
+    first = upload_image(client, api, {}, name="front.png", color="seagreen")
+    second = upload_image(client, api, {}, name="back.png", color="navy")
     task = _create(
         client,
         api,
         prompt="带参考图",
-        referenceAssetIds=["a1", "a2"],
+        referenceLibraryIds=[first["id"], second["id"]],
         stylePreset="电影感",
     )
-    assert task["referenceAssetIds"] == ["a1", "a2"]
+    assert task["referenceLibraryIds"] == [first["id"], second["id"]]
     assert task["stylePreset"] == "电影感"
 
     detail = client.get(f"{api}/tasks/{task['id']}").json()["data"]
-    assert detail["referenceAssetIds"] == ["a1", "a2"]
+    assert detail["referenceLibraryIds"] == [first["id"], second["id"]]
     assert detail["stylePreset"] == "电影感"
+
+
+def test_create_rejects_reference_image_that_does_not_exist(
+    client: TestClient, api: str
+) -> None:
+    """不存在的 id 当场 400，而不是「落库成功、详情页裂图」。"""
+    response = client.post(
+        f"{api}/tasks",
+        json={"prompt": "参考图不存在", "referenceLibraryIds": ["0" * 32]},
+    )
+    assert response.status_code == 400, response.text
+    assert "不存在或已被删除" in response.json()["message"]
+
+
+def test_create_rejects_someone_elses_private_reference_image(
+    client: TestClient, api: str
+) -> None:
+    """id 不是所有权凭证：拿别人的私有图当参考图必须 403。
+
+    这条链路以前直接落库，等于「猜中一个 id 就能让任务详情页把别人的图显示出来」，
+    共享审批整条被绕过。
+    """
+    admin = admin_headers(client)
+    _, other_h = make_user(client, admin, LIB_RW)
+    asset = upload_image(client, api, other_h, name="private.png", color="orangered")
+
+    response = client.post(
+        f"{api}/tasks",
+        json={"prompt": "用别人的图", "referenceLibraryIds": [asset["id"]]},
+    )
+    assert response.status_code == 403, response.text
+    assert "无权限" in response.json()["message"]
 
 
 

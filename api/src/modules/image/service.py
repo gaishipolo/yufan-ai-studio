@@ -15,14 +15,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core import audit
 from core.context import CurrentUser
 from core.exceptions import BadRequest, Forbidden, InvalidState, UpstreamError
+from core.library_refs import resolve_reference_images
 from core.library_text import dumps_text_refs, freeze_text_refs
 from core.logging import get_logger
 from core.param_schema import resolve_params
-from core.ports.library_lookup import (
-    LibraryAssetKind,
-    LibraryAssetState,
-    get_library_lookup,
-)
 from core.response import Page, PageParams
 from db.repository import BaseRepository
 from generation.runner import get_runner
@@ -69,68 +65,34 @@ async def _resolve_references(
 ) -> list[dict[str, str]]:
     """把参考图的资产 id 解析成「提交时要用的快照」。
 
-    三件事必须在这里做完，不能留到异步提交时才发现：
+    准入判据（存在 / 可读 / 在库 / 是图片）在 `core.library_refs` 一处，
+    视频任务那条链路也走它。这里只补生图特有的两件事：
 
     1. **张数上限**按模型声明的 `max_references`（`0` = 纯文生图）；
-    2. **可读性**：资产 id 不是所有权凭证。能读到别人的私有素材当参考图，
-       等于让供应商替我们复制一份再取回来——共享审批被整条绕过；
-    3. **能不能交给供应商**：必须是 image、MIME 在白名单里、体积别太大。
+    2. **能不能交给供应商**：MIME 在白名单里、体积别太大（要转 base64 发出去）。
 
     返回顺序**与入参一致**：多图合成时提示词里的「第一张」指的是这个顺序。
     """
-    wanted = [item.strip() for item in asset_ids]
-    # 去重保序：同一张图传两遍只会让供应商出更差的图，也不会多算一张的额度
-    wanted = [item for item in dict.fromkeys(wanted) if item]
-    if not wanted:
-        return []
-
     limit = max(0, spec.max_references)
     if limit == 0:
         raise BadRequest(
             f"模型 {spec.label} 不支持参考图（纯文生图），请换一个支持图生图 / 多图合成的模型"
         )
-    if len(wanted) > limit:
-        raise BadRequest(f"模型 {spec.label} 最多接受 {limit} 张参考图，本次传了 {len(wanted)} 张")
-
-    lookup = get_library_lookup()
-    found = await lookup.get_many(session, wanted)
-    missing = [asset_id for asset_id in wanted if asset_id not in found]
-    if missing:
-        raise BadRequest(f"参考图不存在或已被删除：{missing}")
-
-    readable = await lookup.readable_ids(session, actor, wanted)
-    denied = [asset_id for asset_id in wanted if asset_id not in readable]
-    if denied:
-        raise Forbidden(f"无权限使用这些参考图（可能是他人的私有素材）：{denied}")
-
-    # 「读得到」不等于「能用来生成」。`readable_ids` 只过了 `access.can_read`，
-    # 而它对回收站放行 owner、对草稿放行 owner（还放行 `library:draft:review`），
-    # 也就是自己删掉的图、别人待审的草稿图都算「可读」。参考图这条链会把图
-    # 读成 base64 交给供应商再造一份 —— 不拦就等于「删除」在这里不生效，
-    # 持代审权的人还能把别人的草稿图复制出来（`/assets/{id}/file` 对这两种
-    # 状态是 404，口径必须一致）。
-    unavailable = [
-        asset_id for asset_id in wanted if found[asset_id].state is not LibraryAssetState.ACTIVE
-    ]
-    if unavailable:
-        raise BadRequest(f"参考图不可用（在回收站或尚未采纳的草稿里）：{unavailable}")
+    refs = await resolve_reference_images(session, actor, asset_ids, limit=limit)
 
     references: list[dict[str, str]] = []
-    for asset_id in wanted:
-        ref = found[asset_id]
-        if ref.kind is not LibraryAssetKind.IMAGE:
-            raise BadRequest(f"参考图 {ref.name or asset_id} 不是图片（当前为 {ref.kind.value}）")
+    for ref in refs:
         mime = _reference_mime(ref.storage_key, ref.mime_type)
         if not mime:
             raise BadRequest(
-                f"参考图 {ref.name or asset_id} 的格式不受支持，请换 png / jpeg / webp 的图"
+                f"参考图 {ref.name or ref.id} 的格式不受支持，请换 png / jpeg / webp 的图"
             )
         if ref.size_bytes > MAX_REFERENCE_BYTES:
             raise BadRequest(
-                f"参考图 {ref.name or asset_id} 超过 "
+                f"参考图 {ref.name or ref.id} 超过 "
                 f"{MAX_REFERENCE_BYTES // (1024 * 1024)}MB，请先压缩后再用"
             )
-        references.append({"assetId": asset_id, "storageKey": ref.storage_key, "mimeType": mime})
+        references.append({"assetId": ref.id, "storageKey": ref.storage_key, "mimeType": mime})
     return references
 
 

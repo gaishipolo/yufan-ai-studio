@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.context import CurrentUser
 from core.exceptions import Forbidden, InvalidState, UpstreamError
+from core.library_refs import resolve_reference_images
 from core.library_text import dumps_text_refs, freeze_text_refs
 from core.logging import get_logger
 from core.response import PageParams
@@ -111,6 +112,15 @@ class TaskService:
         duration_sec = resolve_duration(spec, payload.duration_sec)
         aspect_ratio = resolve_aspect_ratio(spec, AspectRatio(payload.aspect_ratio).value)
 
+        # 参考图在受理期就过一遍资产库：存在 / 可读 / 在库 / 是图片。
+        # 不做这一步的话，前端传一个别人的私有资产 id 也会被原样落库——
+        # 任务详情页能把 id 变成图，等于靠「猜 id」绕过了共享审批。
+        # 视频侧目前没有把参考图交给供应商的通道（`maxReferences` 都声明 0），
+        # 这里守住的是「记录的东西是真的」与删除保护能把 id 认回来。
+        references = await resolve_reference_images(
+            self.session, actor, payload.reference_library_ids
+        )
+
         # 文本快照在受理期冻结，与生图同一口径：提交 / 重试只读这份，
         # 资产改稿不会让同一条任务的两跳用上不同的提示词。
         text_refs = await freeze_text_refs(
@@ -133,7 +143,8 @@ class TaskService:
             aspect_ratio=aspect_ratio,
             progress=0,
             style_preset=payload.style_preset,
-            reference_asset_ids=list(payload.reference_asset_ids),
+            # 存去重保序之后的 id：同一张图传两遍不会多占一个保护名额
+            reference_library_ids=[ref.id for ref in references],
             text_json=dumps_text_refs(text_refs),
             cover_url=self._placeholder_cover(),
             author_id=actor.id,

@@ -137,9 +137,10 @@ PORT_CATALOG: tuple[PortSpec, ...] = (
         module="core.ports.assets",
         protocol="AssetReferenceChecker",
         implementer="由 `ModuleSpec.asset_reference_sources` 声明。当前实现者："
-        "modules/task（`video_tasks.reference_asset_ids`）、"
+        "modules/library（生成溯源快照里的 v1 参考图）、"
         "modules/template（`template_pack_references.asset_id`，只算封装 head，"
-        "已发布的历史版本不算引用）",
+        "已发布的历史版本不算引用）。任务模块的参考图已切到 v2，"
+        "改由下面的 `library-references` 管",
         when_unregistered="fail-closed（见本文件开头的例外说明）：来源不齐抛 503，"
         "删除一律拒绝。这里返回中性值等于静默放行不可逆删除",
         is_registered=lambda: not reference_source_gaps(),
@@ -209,7 +210,9 @@ PORT_CATALOG: tuple[PortSpec, ...] = (
         name="library-references",
         module="core.ports.library_references",
         protocol="LibraryReferenceChecker",
-        implementer="modules/library（聚合 v2 封装成员、下载任务与将来接入的跨模块来源）",
+        implementer="modules/library（v2 封装成员、下载任务）、modules/image"
+        "（参考图快照，purge 后重试读不到字节）、modules/task"
+        "（`video_tasks.reference_library_ids`）",
         when_unregistered="fail-closed：抛 503，v2 资产一律不可彻底删除。"
         "「查不到 = 没人引用」在这里等于静默放行不可逆删除",
         # 判「声明 ⊆ 实现」而不是「有没有人注册」：注册了却漏声明时，某个来源会
