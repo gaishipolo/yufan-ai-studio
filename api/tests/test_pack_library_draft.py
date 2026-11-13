@@ -18,7 +18,7 @@ import hashlib
 import uuid
 
 import pytest
-from tests_template_helpers import ADMIN, drop_pack, login, png_bytes, upload
+from tests_template_helpers import ADMIN, drop_pack, login, png_bytes, upload, video_bytes
 
 from db.session import get_session_factory
 from infra import get_storage
@@ -324,6 +324,70 @@ def test_pack_reference_blocks_library_purge(client) -> None:
         asyncio.run(drop_pack(pack_id))
         purged = client.delete(f"{API}/library/trash/{asset_id}", headers=headers)
         assert purged.status_code == 200, purged.text
+    finally:
+        asyncio.run(drop_pack(pack_id))
+        asyncio.run(get_storage().delete(key))
+        asyncio.run(_drop_assets([asset_id]))
+
+
+def test_published_v2_pack_can_actually_run(client) -> None:
+    """整条链的验收：草稿写 v2 图 → 发布 → 选它跑一次准备。
+
+    三段分开看都「绿」，合起来曾经断在中间（`prepare` 拿 v2 的 id 去旧表查）。
+    这里不构造任何内部行，全部走 HTTP：封装发布的版本就是调用时冻结的那一份。
+    """
+    headers = login(client)
+    key = f"library/blobs/ac/{uuid.uuid4().hex}.png"
+    content = png_bytes((48, 64))
+    asyncio.run(get_storage().put(key, content, "image/png"))
+    asset_id = asyncio.run(_library_asset(content, key=key))
+    pack_id = uuid.uuid4().hex
+    source = upload(client, "v2-pack-run.mp4", "source", video_bytes(2))
+    try:
+        created = _draft(
+            client,
+            headers,
+            {
+                "requestId": pack_id,
+                "kind": "product",
+                "name": "能跑起来的 v2 封装",
+                "referenceLibraryIds": [asset_id],
+                "bindings": [{"role": "front", "description": ""}],
+                "supportedScopes": ["worn"],
+            },
+        )
+        assert created["status"] == 200, created["text"]
+        version = client.post(
+            f"{API}/templates/replacement-packs/{pack_id}/publish",
+            headers=headers,
+            json={"expectedRevision": created["body"]["data"]["revision"]},
+        ).json()["data"]["version"]
+
+        response = client.post(
+            f"{API}/templates/replacement-runs",
+            headers=headers,
+            json={
+                "requestId": uuid.uuid4().hex,
+                "kind": "product",
+                "sourceId": source["id"],
+                "packId": pack_id,
+                "packVersion": version,
+                "replacementScope": "人物上身穿着",
+            },
+        )
+        assert response.status_code == 201, response.text
+        run = response.json()["data"]
+        # 没绑视频模板的普通链路顺序是「参考图 + 原片」（与 v1 素材包一致）：
+        # 两个 id 空间各来一张，一个不少、谁是谁也不能混
+        assets = run["inputSummary"]["assets"]
+        assert [item["id"] for item in assets] == [asset_id, source["id"]]
+        # 出参的 role 是「编译器认识的角色」，不是封装里的用途（`front`）：
+        # v2 图必须被当成产品图喂进去，而不是因为来源不同就丢了角色
+        assert [item["role"] for item in assets] == ["target_product", "source_video"]
+        # 归档快照落在本次任务目录下：v2 的字节确实被复制进来，而不是只记了个 id
+        archived = client.get(assets[0]["url"], headers=headers)
+        assert archived.status_code == 200, archived.text
+        assert archived.content == content
     finally:
         asyncio.run(drop_pack(pack_id))
         asyncio.run(get_storage().delete(key))
