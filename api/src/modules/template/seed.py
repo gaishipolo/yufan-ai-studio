@@ -146,7 +146,13 @@ async def _asset_ids(session: AsyncSession, context: SeedContext) -> list[str]:
         id=context.demo_user_id, name=context.demo_user_name, permissions=frozenset()
     )
     asset_ids = await get_library_lookup().find_ids(
-        session, actor, kind=LibraryAssetKind.IMAGE, limit=_DEMO_IMAGE_LIMIT
+        session,
+        actor,
+        kind=LibraryAssetKind.IMAGE,
+        # 收死到演示账号自己名下：`find_ids` 的可读性只能逐行判，不收范围时
+        # 「取到几张」取决于库里别人有多少资产（CI 上就因为这个少拿了两张）。
+        owner_id=context.demo_user_id,
+        limit=_DEMO_IMAGE_LIMIT,
     )
     if not asset_ids:
         logger.warning(

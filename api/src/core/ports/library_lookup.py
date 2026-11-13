@@ -217,6 +217,7 @@ class LibraryLookup(Protocol):
         *,
         kind: LibraryAssetKind | None = None,
         tag_ids: Sequence[str] = (),
+        owner_id: str | None = None,
         limit: int = 50,
     ) -> list[str]:
         """按条件列 id：**只要 actor 现在可读、且已采纳（`active`）的那批**。
@@ -228,6 +229,11 @@ class LibraryLookup(Protocol):
         判据与选择器接口（`GET /library/selection`）同口径：`state=active` 硬过滤、
         标签多选按 OR 展开到二级。草稿与回收站永远不出现——调用方忘了传就会把
         用户删掉的东西塞进演示数据或历史任务。
+
+        `owner_id` 不是筛选糖，是**确定性开关**：可读性是逐行判的（要查小组），
+        没法在一条 SQL 里表达，所以实现只能「先取一批候选再过滤」。不给 owner 时
+        「取到多少条」取决于库里别人有多少资产——演示数据要的是「就是这几张」，
+        必须把范围收死。
         """
         ...
 

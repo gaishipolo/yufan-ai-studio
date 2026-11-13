@@ -216,6 +216,43 @@ def test_find_ids_only_returns_active_readable_assets(
     assert foreign not in found, "别人的私有不出现"
 
 
+def test_find_ids_fills_the_limit_even_with_unreadable_rows_ahead(
+    client: TestClient, api: str
+) -> None:
+    """别人的私有资产排在前面时，仍要凑满 `limit` 条可读 id。
+
+    这条是 CI 抓到的真实缺陷的回归：`find_ids` 的可读性只能逐行判（要查小组），
+    没法压进一条 SQL，所以第一版写成了「取 limit 条候选 → 过滤」。库里别人先有
+    20 张私有图时，候选全被过滤掉，调用方静默拿到一个偏短的列表——演示数据少
+    一半，而且 `app seed` 照常 exit 0。
+
+    「别人的私有不出现」和「凑得满」是两件事，必须同时成立。
+    """
+    admin = admin_headers(client)
+    stranger, stranger_h = make_user(client, admin, LIB_RW)
+    # 先让别人的私有资产占满时间序的前排
+    foreign = [
+        insert_asset(
+            name=f"别人的私有 {index}.png",
+            kind="image",
+            owner_id=stranger["id"],
+            state="active",
+        )
+        for index in range(20)
+    ]
+    owner, owner_h = make_user(client, admin, LIB_RW)
+    # 颜色必须各不相同：内容寻址会去重，同色的三张图会落成同一个资产 id，
+    # 那样「凑满 3 条」永远做不到（第一次写这条用例就踩了）。
+    for color in ("orchid", "olive", "teal"):
+        upload_image(client, api, owner_h, name=f"我的 {color}.png", color=color)
+
+    found = _find(owner["id"], kind=LibraryAssetKind.IMAGE, limit=3)
+    # 不写 `set(found) == set(mine)`：整场会话里别的用例可能留下了团队可见的图，
+    # 那些也算「可读」。要守的是两条独立性质——凑得满、且别人的私有没混进来。
+    assert len(found) == 3, f"没凑满：{found}"
+    assert not (set(found) & set(foreign)), f"别人的私有资产混进来了：{found}"
+
+
 def test_find_ids_expands_parent_tags(client: TestClient, api: str) -> None:
     """选中一级标签要连旗下二级一起命中（与 `/library/selection` 同口径）。"""
     admin = admin_headers(client)

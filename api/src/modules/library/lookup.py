@@ -37,6 +37,14 @@ from modules.library.tags import expand_tag_ids
 
 __all__ = ["SqlLibraryLookup", "lookup", "install"]
 
+#: 候选窗口 = `limit` × 这个倍数。见 `find_ids()` 的 docstring：可读性只能逐行判，
+#: 窗口太窄会让「过滤完的条数」取决于别人的库有多大。
+_CANDIDATE_FACTOR = 5
+#: 单页最小条数。`limit=1` 时乘出来的窗口太小，一次只看 5 条就翻页很浪费。
+_MIN_PAGE = 50
+#: 翻页上限。再大就退化成「把整张表拉进内存」，而调用方要的只是几十个 id。
+_MAX_CANDIDATES = 500
+
 
 class SqlLibraryLookup(LibraryLookup):
     async def readable_ids(
@@ -203,6 +211,7 @@ class SqlLibraryLookup(LibraryLookup):
         *,
         kind: LibraryAssetKind | None = None,
         tag_ids: Sequence[str] = (),
+        owner_id: str | None = None,
         limit: int = 50,
     ) -> list[str]:
         """按条件列 id。`state=active` 是硬过滤，`tag_ids` 按 OR 展开到二级。
@@ -210,34 +219,47 @@ class SqlLibraryLookup(LibraryLookup):
         判据与 `GET /library/selection` 同口径（同一张表、同一套标签展开、
         同一条 `readable_rows`），差别只是这里只回 id：调用方（演示数据、导入器）
         拿着 id 还要自己决定挑哪几张，先取 24 份元数据纯属浪费。
+
+        **分页捞到够为止**：可读性是逐行判的（`readable_rows` 要查小组），压不进
+        这一条 SQL，所以只能「取一批 → 过滤 → 不够再取」。只取一次的话，
+        「凑到几条」取决于库里别人有多少资产排在前面——调用方会静默拿到一个偏短的
+        列表（演示数据少一半，而且不报错）。翻页上限 `_MAX_CANDIDATES` 兜住
+        「整库都不可读」这种极端情况，避免扫全表。
         """
-        query = select(LibraryAsset.id).where(LibraryAsset.state == "active")
-        if kind is not None:
-            query = query.where(LibraryAsset.kind == kind.value)
-        if tag_ids:
-            expanded = await expand_tag_ids(session, tag_ids)
-            query = query.where(
-                LibraryAsset.id.in_(
-                    select(LibraryAssetTag.asset_id).where(
-                        LibraryAssetTag.tag_id.in_(expanded)
+        picked: list[str] = []
+        offset = 0
+        page_size = max(limit * _CANDIDATE_FACTOR, _MIN_PAGE)
+        # 标签展开只做一次：它在循环里每轮都要查一次标签表，而结果与 offset 无关。
+        expanded = await expand_tag_ids(session, tag_ids) if tag_ids else []
+        while len(picked) < limit and offset < _MAX_CANDIDATES:
+            query = select(LibraryAsset.id).where(LibraryAsset.state == "active")
+            if kind is not None:
+                query = query.where(LibraryAsset.kind == kind.value)
+            if owner_id:
+                query = query.where(LibraryAsset.owner_id == owner_id)
+            if expanded:
+                query = query.where(
+                    LibraryAsset.id.in_(
+                        select(LibraryAssetTag.asset_id).where(
+                            LibraryAssetTag.tag_id.in_(expanded)
+                        )
                     )
                 )
+            page = list(
+                (
+                    await session.scalars(
+                        query.order_by(LibraryAsset.created_at, LibraryAsset.id)
+                        .offset(offset)
+                        .limit(page_size)
+                    )
+                ).all()
             )
-        # 先按创建时间取一批候选，再按可读性过滤。顺序反过来（先取全部再筛）会在
-        # 大库上把整张表拉进内存；`limit` 是「最多给这么多 id」，不是「一定给够」。
-        candidates = list(
-            (
-                await session.scalars(
-                    query.order_by(LibraryAsset.created_at, LibraryAsset.id).limit(
-                        max(1, limit)
-                    )
-                )
-            ).all()
-        )
-        if not candidates:
-            return []
-        readable = await readable_rows(session, candidates, actor)
-        return [asset_id for asset_id in candidates if asset_id in readable]
+            if not page:
+                break
+            readable = await readable_rows(session, page, actor)
+            picked.extend(asset_id for asset_id in page if asset_id in readable)
+            offset += len(page)
+        return picked[:limit]
 
 
 lookup = SqlLibraryLookup()
