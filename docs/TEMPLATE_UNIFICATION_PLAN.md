@@ -2720,3 +2720,63 @@ v1 素材表（§24.14 已记）。要切的是：
 两批原片不会同时出现在同一个列表里，所以「A 封装的模板」在 B 侧暂时看不到。
 这是并存期的已知断点，不藏着：`find_for_run` 按 id 匹配（两套 id 都是 uuid4，不会
 撞），只要 A 侧也切过来就接得上。
+
+### 24.20 步 2.5d（四）：A 侧也切完，两批原片终于同一批
+
+§24.19 结尾留的「A 侧仍未切」这一步补上了，拆成后端 + 前端两个提交。
+
+**后端（`b23972e`）**
+
+`video_templates.source_video_asset_id_space` 列早就存在（导入器一直在写 v1），
+但**写入端从来没人写过它**：`create` / `attach_source` 只认 v1 素材表。所以 A
+把原片上到资产库之后，封装页面里根本选不到它。
+
+- 契约：`VideoTemplateDraftIn` / `VideoTemplateAttachSourceIn` 增
+  `sourceVideoIdSpace`（默认 `v1`，老调用一个字都不用改），`VideoTemplateOut`
+  回显它（前端回写草稿要按它选字段，与 §24.15 封装页 `referenceIdSpace` 同一条
+  理由）；
+- `_library_source()` 一次判定「存在 + 我读得到 + 是视频」，「不存在」与「不可读」
+  合并成同一句；
+- **名字与时长以资产库那一行为准**：封装卡上写的是库里的事实。`duration_ms`
+  缺失时不动调用方的值——探测失败与「确实很短」是两件事，写 0 会让档位静默掉到
+  最小值；
+- `attach_source` 的 `id_space` **跟着 id 一起写**；`_CONFIG_COLUMNS` 加上这一列
+  （同一 id 标成另一侧是另一份配置，不该「同键同配置」返回原行）；
+- `to_out` / `apply_out` 一一对应。这一条踩过：以为「漏了会冲回默认值」，
+  实际 `update_prompt` 写回的是原值，所以拆掉它测试也绿——真正会漏的是
+  `to_out` 少一列（出参直接读不到）。反向验证因此改成拆 `to_out` 那一行。
+
+**前端（`c068741`）**
+
+- 候选换 `useLibrarySelection({kind:'video', origin: SOURCE_VIDEO_ORIGINS})`，
+  **不按「我的」收窄**：模板是全库共用资源（固定蓝本全库唯一），封装者应当能绑
+  自己读得到的任何原片；v1 的 `scope=mine` 是当时列表能力有限的产物；
+- 表单多一个 `sourceVideoIdSpace`：新封装默认 `v2`，复制蓝本 / 编辑沿用它自己那
+  一行的值。**只抄 id 不抄空间**等于让服务端在保存后把它当另一侧解释（与
+  §24.15 那条「编辑 v1 老包不能顺势写 v2 字段」是同一个坑）；
+- `SOURCE_VIDEO_ORIGINS` 上移到 `entities/library/model/types.ts`：两个 feature
+  都要用，让 feature 互相 import 是错的层。
+
+**至此 §24.19 的并存期断点消失**：A 在工作台（v2）上传原片 → 封装页（v2）选中并
+保存 → B 在工作台（v2）看到这张卡片 → prepare 走 `sourceLibraryId`。整条链路只剩
+v2 一套 id。**v1 原片不再是任何新流程的入口**，但它仍然是历史模板的行值
+（`source_video_asset_id_space='v1'`），所以读路径不能提前删（步 6 的条件）。
+
+**验证**
+
+- 后端：按 contract 口径跑 20 个文件 **257 passed**（含新增 5 条：
+  名字时长取库、老调用仍落 v1、v2 id 不存在、图片当原片、换原片 + 改提示词后
+  空间不回退）；`ruff` / `mypy`（297 files）通过；四份生成物 `--check` 无变化；
+  反向验证两次都变红（拆 `to_out` 列 / 去掉 `kind` 判定）。
+- 前端：`npm run verify` 88 文件 **705 passed**；两个 `gen --check` 无变化；
+  反向验证：提交体恒 `'v1'` → 「复制封装时沿用原片空间」变红。
+
+**下一步（按依赖顺序）**
+
+1. 步 4：编译链（先补 golden test，覆盖「带固定引用的文字换场景」这组 spec）；
+   W3 的文本/JSON 落盘与 W4 的 `prompt_compiler` 端口同批；
+2. 步 5：W5（`node` 路径从 `core/config` 取）、W8（时间源、`import_legacy` 路径
+   校验、工作区 GC）；
+3. 步 2.5e / 步 6：dual-read 观察期结束后清掉 v1 素材库的四类使用方并下线。
+   现在模板模块里**只剩历史行**还指向 v1，新写入全在 v2——这一步的前提基本齐了，
+   缺的是 §23.2 里 `modules/task` 与前端旧入口那两处。
