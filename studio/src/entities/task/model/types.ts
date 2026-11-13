@@ -17,9 +17,10 @@ export interface VideoTask {
   /** 视频时长（秒） */
   durationSec: number;
   aspectRatio: AspectRatio;
-  /** 风格预设与参考素材（创建时提交，详情回显） */
+  /** 风格预设与参考图（创建时提交，详情回显） */
   stylePreset?: string | null;
-  referenceAssetIds?: string[];
+  /** 参考图的**资产库 v2** 资产 id，顺序即提交顺序 */
+  referenceLibraryIds?: string[];
   /** 0-100，仅 running 时有意义 */
   progress: number;
   coverUrl: string;
@@ -71,7 +72,8 @@ export interface CreateTaskPayload {
   model: string;
   durationSec: number;
   aspectRatio: AspectRatio;
-  referenceAssetIds?: string[];
+  /** 参考图：资产库 v2 的资产 id，顺序即提交顺序（后端按顺序解析，不是所有权凭证） */
+  referenceLibraryIds?: string[];
   /** 提示词 {{Text N}} 对应的文本资产 id，顺序即编号顺序；与参考素材互不混用 */
   textLibraryIds?: string[];
   stylePreset?: string;

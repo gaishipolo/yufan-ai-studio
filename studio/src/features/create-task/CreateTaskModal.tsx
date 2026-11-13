@@ -87,7 +87,7 @@ export function CreateTaskModal({ open, onClose, onCreated }: CreateTaskModalPro
         model: currentModel?.id ?? '',
         durationSec: Number(duration),
         aspectRatio: ratio,
-        ...(references.length ? { referenceAssetIds: references.map((item) => item.id) } : {}),
+        ...(references.length ? { referenceLibraryIds: references.map((item) => item.id) } : {}),
         ...(textRefs.length ? { textLibraryIds: textRefs.map((item) => item.id) } : {}),
       },
       {

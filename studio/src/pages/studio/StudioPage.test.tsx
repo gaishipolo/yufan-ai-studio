@@ -157,7 +157,7 @@ describe('StudioPage · 参考图（与生图页同一条通道）', () => {
     fireEvent.click(screen.getByRole('button', { name: '生成视频任务' }));
 
     // 顺序即语义：多图合成时提示词里的「第一张」指的就是这个顺序
-    expect(mutateMock.mock.calls[0][0].referenceAssetIds).toEqual(['a-1', 'a-2']);
+    expect(mutateMock.mock.calls[0][0].referenceLibraryIds).toEqual(['a-1', 'a-2']);
   });
 
   it('从素材库点「＋」加入，不重复上传一份', () => {
@@ -168,7 +168,7 @@ describe('StudioPage · 参考图（与生图页同一条通道）', () => {
     fireEvent.change(prompt(), { target: { value: '照着这张拍' } });
     fireEvent.click(screen.getByRole('button', { name: '生成视频任务' }));
 
-    expect(mutateMock.mock.calls[0][0].referenceAssetIds).toEqual(['lib-1']);
+    expect(mutateMock.mock.calls[0][0].referenceLibraryIds).toEqual(['lib-1']);
     expect(uploadMock).not.toHaveBeenCalled();
   });
 
@@ -181,7 +181,7 @@ describe('StudioPage · 参考图（与生图页同一条通道）', () => {
     fireEvent.change(prompt(), { target: { value: '把角色放进场景' } });
     fireEvent.click(screen.getByRole('button', { name: '生成视频任务' }));
 
-    expect(mutateMock.mock.calls[0][0].referenceAssetIds).toEqual(['lib-2', 'lib-1']);
+    expect(mutateMock.mock.calls[0][0].referenceLibraryIds).toEqual(['lib-2', 'lib-1']);
   });
 
   it('同一张拖两次只算一张，不白占名额', () => {

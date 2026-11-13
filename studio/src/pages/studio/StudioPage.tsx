@@ -30,9 +30,9 @@ const STYLE_PRESETS = ['电影感', '纪实手持', '广告质感', '胶片复�
  *
  * 生图页那边「模型的 `maxReferences` 是 0 就不画上传框」，因为供应商确实不收；
  * 视频侧目前所有模型都还没声明这个字段（后端 `task/pipeline.py` 尚未把
- * `reference_asset_ids` 转成供应商要的 `reference_urls`），照搬那条规则会让
- * 整块参考图区直接消失。所以这里取「模型声明了正数才采信，否则用工作台档位」，
- * 等后端打通后再改成以模型声明为准。
+ * `reference_library_ids` 转成供应商要的 `reference_urls`，参考图只是**如实记录**
+ * 在这次任务上），照搬那条规则会让整块参考图区直接消失。所以这里取「模型声明了
+ * 正数才采信，否则用工作台档位」，等后端打通后再改成以模型声明为准。
  */
 const DEFAULT_REFERENCE_SLOTS = 4;
 
@@ -53,7 +53,7 @@ export default function StudioPage() {
   /* 参考图：先落素材库拿 id，再随请求下发 id —— 与生图页同一条通道，
      提交的是 id 而不是图片字节，同一张素材可以被多个任务反复引用 */
   const [references, setReferences] = useState<ReferenceItem[]>([]);
-  // 文本引用：独立通道，提交时只发 textLibraryIds，不进 referenceAssetIds
+  // 文本引用：独立通道，提交时只发 textLibraryIds，不进 referenceLibraryIds
   const [textRefs, setTextRefs] = useState<LibraryAssetOut[]>([]);
   const [libraryOpen, setLibraryOpen] = useState(false);
   const canReadLibrary = useCan('library:read');
@@ -162,7 +162,7 @@ export default function StudioPage() {
         durationSec: Number(duration),
         aspectRatio: ratio,
         stylePreset: style,
-        ...(references.length ? { referenceAssetIds: references.map((item) => item.id) } : {}),
+        ...(references.length ? { referenceLibraryIds: references.map((item) => item.id) } : {}),
         ...(textRefs.length ? { textLibraryIds: textRefs.map((item) => item.id) } : {}),
       },
       {

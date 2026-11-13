@@ -226,7 +226,7 @@ function seed() {
         prompt: '人物转身慢动作，影棚白底，120fps',
         durationSec: 5,
         aspectRatio: '9:16',
-        referenceAssetIds: ['a101'],
+        referenceLibraryIds: ['a1'],
         generatedAt: iso(-0.3),
       },
     }),
