@@ -801,6 +801,9 @@ vendor 哈希清单完好、远端归档时 `REPLACEMENT_RUNS_ROOT` 必须显式
 | **4**（新） | **先加编译器 golden test**，再统一 `prompt_sha256`、下沉音频内嵌分支、补 vendor 版本记录（E/F/G/H） | 中 | framework | 无（可与 0/1 并行） |
 | **5** | `runs_root()` 启动/自检校验 + 删 `TemplateBusy` + packager 归位 + 时间源统一 | 低 | targeted/framework | 步 0 |
 
+**进度（2026-11-13 收官时更新）**：步 0 / 0.5 / 1 / 2 / 2.5a / 2.5b 已完成，
+执行记录见 §24.1–§24.7；**下一步是步 2.5c**（后端读路径与三道授权闸切 v2）。
+
 **为什么 0 在最前**：全是「加观测和校验」，不改任何行为，却能把后面每一步的
 「成功却静默丢东西」变成可见。而且它最小、独立、可单独上线。
 
@@ -1887,3 +1890,94 @@ foreign 一个都没混进来。**反向验证**：把循环条件改成恒假�
 **教训（写进判断流程）**：新增/修改**端口**时，「targeted 够不够」的判据不能只看
 「谁 import 了它」，还要看**行为是否依赖全局库状态**。这次的分级错误代价是一次 CI 往返；
 以后动 `core/ports/` 里带查询语义的方法，直接跑全量。
+
+### 24.7 步 2：`catalog.json` 落表（问题 A，2026-11-13 完成）
+
+**做了什么**
+
+`video_template_store.py` 766 行整份删除，按「纯函数 / 存取 / 业务 / 一次性运维」拆成四份：
+
+| 文件 | 职责 | 关键约束 |
+|---|---|---|
+| `video_template_media.py` | 槽位与 token 解析（`slot_number` / `prompt_tokens` / `cited_slots` / `apply_pack_roles` / `validate_media`） | **零 IO、零数据库**，所以能被 router、packager、脚本同时 import 而不引入循环 |
+| `video_template_repository.py` | 行级读写（`get` / `get_by_key` / `list_all` / `bound_for_source` / `unpin_others` / `names`） | 只拼 SQL，不做校验、不抛业务错；排序在这里定义一次（`pinned desc, created_at desc, id`） |
+| `video_template_service.py` | 出参投影 + 业务规则（`create` / `update_prompt` / `pin` / `find_for_run` / `attach_source` / `template_name`） | 事务边界在这一层（`get_session()` 不自动提交），所以每个写方法都显式 `commit()` |
+| `video_template_import.py` | 老 JSON → 表的一次性导入（`app import-video-templates`） | 幂等、`--dry-run` 不写库、不删老文件（回滚依据） |
+
+**与计划的差异（三处，都是落地才看清的）**
+
+1. **`_LOCK` 换成部分唯一索引，不只是「换个地方存」**。原来的「抢占固定蓝本」
+   靠进程内 `threading.Lock`，多 worker 下等于没有；现在是
+   `uq_video_templates_pinned`（`WHERE pinned`），两个并发写入只有一个能成功。
+   代价是**写入顺序变成契约**：必须先 `unpin_others()` 再设 `pinned=True`，
+   因为部分唯一索引不是延迟约束、同一事务里先后顺序照样判。这条写进了
+   `repository.unpin_others()` 的 docstring，并由
+   `test_pinned_is_unique_at_the_database_level` 在数据库层钉住。
+2. **`catalog_stamp()`（拿文件 mtime 当缓存代次）没了，换成 `_NAME_CACHE` 显式预热**。
+   缓存不再是「文件变了就失效」，而是「谁拼运行记录谁先 `prefetch_names()` 一次」。
+   两个原因：表里没有 mtime 可比；`_run_out()` 是纯同步投影，不能在里面查库。
+   `reset_name_cache()` 留给测试。
+3. **`ensure_no_subtitle_prompt.py` 从「读文件」改成「读表」**，并且**空表返回 2**。
+   一个连错库的盘点最不该给的结论就是「全部提示词都合规」。同理 `health.py` 的
+   `template.dirs` 不再检查 `catalog.json`（它已经只是导入源），只查打包器进度目录
+   与运行工作区。
+
+**导入这一步的两个非显然口径**
+
+- **多条 `pinned` 收敛成 `createdAt` 最新那条**，其余清标记并记 note。不收敛的话
+  导入会撞唯一索引，而那时的报错指向「约束冲突」，不会告诉你「老目录里有三个蓝本」。
+- **`template_key` 重复跳过后来的**。旧实现把它当「脚本重试的稳定标识」
+  （`_append_record`：同键同配置复用、同键不同配置 409），所以真实目录里不该重复；
+  但 `catalog.json` 是人工可编辑文件，真重复时按先到先得跳过并在报告里点名两条 id，
+  避免一条坏数据让整份导入失败。
+
+**测试基础设施：造数入口从「临时 JSON」改成「表里的行」**
+
+新增 `tests/video_template_support.py`（`record` / `put` / `aput` / `remove` /
+`put_template` / `update_prompt` / `unpin_all`）。隔离口径随之变化且**必须记住**：
+
+- 以前每个用例把 `CATALOG_PATH` 指向自己的 `tmp_path`，天然隔离；
+- 现在 `tests/conftest.py` 是**整场共用一个 sqlite 文件**，所以隔离只能靠
+  「每个用例用自己的 id」+「只断言自己那几行」；
+- 凡是会写 `pinned=True` 的造数（包括导入、迁移这类绕过 service 的路径）都要先让位
+  （`put()` 内置、导入用例显式 `unpin_all()`），否则撞的是别人的蓝本。
+
+`row_from()` 复用 `apply_out()` 而不是再写一份字段映射 —— 两份映射迟早漂移，
+漂移的表现是「测试通过、线上少一列」。
+
+**全量跑抓到两个本地局部跑没抓到的回归**
+
+1. `test_replacement_archive.py::test_selected_video_function_controls_prompt_and_scope`
+   在 `async def` 用例里调了同步 `put()` → `asyncio.run() cannot be called from a
+   running event loop`，而 pytest 把报错打在协程回收的位置，读起来像 flaky。
+   → `video_template_support` 补 `aput()` / `aremove()`，同步版改成
+   `run(aput(...))` 的薄包装。
+2. 同一个用例里两条模板**共用一个 `templateKey`**。旧测试直写 `catalog.json`，
+   绕过了 `_append_record` 的同键去重（真实路径上同键不同配置是 409），所以
+   一直绿。落表后变成 `UNIQUE constraint failed` → 改为各用各的 key，并在注释里
+   写清「为什么以前能过」。
+3. 顺带清理：`ruff` 报的 `ASYNC240`（async 函数里做 pathlib IO）拆成
+   `_exists()` / `_read_catalog()` 两个同步小函数，比加 `noqa` 干净 ——
+   这条规则在请求路径上有价值，在一次性运维脚本上只是噪音。
+
+**验证**
+
+- `scripts/select_tests.py --print` → **full**（25 个文件，触发了迁移）→
+  **1614 passed / 12 skipped / 196.46s**（全新 `--basetemp`）。
+- 新增 `tests/test_video_template_import.py` **10 passed**：建行 + 默认值、snake_case、
+  幂等（第二次 `unchanged=N`）、只更新改动行、多条 pinned 收敛、重复 key 跳过、
+  `--dry-run` 不写库、文件不存在不报错、坏文件抛 `BadRequest`、`VIDEO_TEMPLATE_CATALOG`
+  仍决定导入源位置。
+- `pytest tests/test_migrations.py` **9 passed**（`compare_metadata` 零漂移）。
+- `ruff check src tests` 通过；`mypy --platform win32 src` **294 files** 无问题。
+- **反向验证 1**：把 `uq_video_templates_pinned` 改成 `unique=False` →
+  `test_pinned_is_unique_at_the_database_level` 红（`DID NOT RAISE IntegrityError`）。
+  *注*：同一次验证里 `test_import_keeps_only_the_newest_pinned` 仍绿 —— 说明它测的是
+  **导入的收敛逻辑**、不是索引本身，两者职责没有重合（这是预期的，不是漏测）。
+- **反向验证 2**：把收敛逻辑从 `pinned[-1]` 改成 `pinned[0]`（留最旧）→
+  `assert ... and False is True` 红。
+
+**回滚**
+
+`downgrade()` 只 drop 三个索引与新表，不碰老 `catalog.json`；`app import-video-templates
+--dry-run` 可先看会写多少条。老文件在导入完成后仍保留在 `api/var/video_templates/`。

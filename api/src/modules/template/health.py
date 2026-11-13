@@ -11,9 +11,11 @@
   `runs_root()` 这时会**静默回落到本机**（`infra/archive/runs.py:50`），
   多实例下表现为「生成成功但换台机器打不开」。本节只把它报成 FAIL，
   **不拦启动**；「启动即失败」是计划步 5 的事，别在这里改行为。
-- `template.dirs`：视频模板目录、打包器进度目录、运行工作区三个位置可写。
+- `template.dirs`：打包器进度目录、运行工作区两个位置可写。
   它们默认在 `api/var` 下，多机部署要指向共享盘；不可写时要等到第一次
   封装 / 准备才发现，而那时用户已经填完整个表单。
+  （视频模板目录**已不在列表里**：它随问题 A 落表，`catalog.json` 只剩
+  导入用的只读副本，不再是运行时目录。）
 
 纪律与其它模块自检一致：只往报告里加自己那几条，不改别人的结论。
 """
@@ -33,7 +35,6 @@ from core.config import settings
 from infra.ai.libtv import get_libtv_settings
 from infra.ai.libtv_process import VENDOR
 from infra.archive.runs import runs_root, workspace_needs_attention
-from modules.template.video_template_store import CATALOG_PATH
 
 __all__ = ["check"]
 
@@ -164,7 +165,6 @@ async def check(report: DoctorReportLike) -> None:
             report.add("template.runs_root", "PASS", f"运行工作区 {root}")
 
     targets: list[tuple[str, Path]] = [
-        ("视频模板目录", CATALOG_PATH.parent),
         ("打包器进度目录", _packager_dir()),
     ]
     if root is not None:

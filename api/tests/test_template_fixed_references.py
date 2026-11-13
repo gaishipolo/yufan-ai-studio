@@ -1,34 +1,24 @@
-import json
+"""跨封装固定图片引用：`rules.fixedReferences` 与提示词一起保存、一起回放。
+
+模板目录落表之后，这里造数据从「写一份 catalog.json」变成「插一行」，
+断言也从「文件没被改」变成「那一行没被改」——后者才是用户能看到的真相。
+"""
+
 from types import SimpleNamespace
 
 import pytest
-from test_video_template_binding import record
+from video_template_support import get_template, put_template, update_prompt
 
 from core.exceptions import BadRequest
-from modules.template import video_template_store as store
 from modules.template.replacement_service import _media_in_mixed_order
 
+_REF_BINDINGS = {
+    "referenceBindings": {"{{Mixed 1}}": "source_video", "{{Mixed 2}}": "multiview"}
+}
 
-def test_fixed_references_saved_with_verbatim_prompt_and_original_bindings(tmp_path, monkeypatch):
-    path = tmp_path / "catalog.json"
-    monkeypatch.setattr(store, "CATALOG_PATH", path)
-    path.write_text(
-        json.dumps(
-            {
-                "items": [
-                    record(
-                        rules={
-                            "referenceBindings": {
-                                "{{Mixed 1}}": "source_video",
-                                "{{Mixed 2}}": "multiview",
-                            }
-                        }
-                    )
-                ]
-            }
-        ),
-        encoding="utf-8",
-    )
+
+def test_fixed_references_saved_with_verbatim_prompt_and_original_bindings() -> None:
+    put_template("template-1", rules=_REF_BINDINGS)
     fixed = [
         {
             "token": "{{Mixed 5}}",
@@ -40,14 +30,12 @@ def test_fixed_references_saved_with_verbatim_prompt_and_original_bindings(tmp_p
         }
     ]
     raw = "  编辑 {{Mixed 1}}，参考 {{Mixed 5}}。\n\n"
-    updated = store.update_prompt("template-1", raw, fixed)
+    updated = update_prompt("template-1", raw, fixed)
     assert updated.prompt == raw
     assert updated.rules["fixedReferences"] == fixed
-    assert updated.rules["referenceBindings"] == {
-        "{{Mixed 1}}": "source_video",
-        "{{Mixed 2}}": "multiview",
-    }
-    assert store.get_out("template-1").media_order[-1].asset_id == "fixed"
+    assert updated.rules["referenceBindings"] == _REF_BINDINGS["referenceBindings"]
+    assert get_template("template-1").media_order[-1].asset_id == "fixed"
+
     source, a, b, c, extra, fixed_image = [
         SimpleNamespace(id=name) for name in ["source", "a", "b", "c", "extra", "fixed"]
     ]
@@ -61,13 +49,11 @@ def test_fixed_references_saved_with_verbatim_prompt_and_original_bindings(tmp_p
     assert [item.id for item in ordered] == ["source", "a", "b", "c", "fixed", "extra"]
 
 
-def test_invalid_fixed_reference_number_does_not_change_template(tmp_path, monkeypatch):
-    path = tmp_path / "catalog.json"
-    monkeypatch.setattr(store, "CATALOG_PATH", path)
-    path.write_text(json.dumps({"items": [record()]}), encoding="utf-8")
-    before = path.read_text(encoding="utf-8")
+def test_invalid_fixed_reference_number_does_not_change_template() -> None:
+    put_template("template-1")
+    before = get_template("template-1")
     with pytest.raises(BadRequest):
-        store.update_prompt(
+        update_prompt(
             "template-1",
             "{{Mixed 1}} {{Mixed 9}}",
             [
@@ -80,52 +66,37 @@ def test_invalid_fixed_reference_number_does_not_change_template(tmp_path, monke
                 },
             ],
         )
-    assert path.read_text(encoding="utf-8") == before
+    assert get_template("template-1") == before
 
 
-def test_product_template_uses_fixed_image_from_another_kind_of_pack(client, tmp_path, monkeypatch):
+def test_product_template_uses_fixed_image_from_another_kind_of_pack(client) -> None:
     import asyncio
     from uuid import uuid4
 
     from tests_template_helpers import add_pack, login, png_bytes, upload, video_bytes
 
-    path = tmp_path / "catalog.json"
-    monkeypatch.setattr(store, "CATALOG_PATH", path)
     headers = login(client)
     source = upload(client, "product-fixed-source.mp4", "source", video_bytes(2))
     front = upload(client, "产品正面.png", "product", png_bytes())
     identity = upload(client, "人物正面.png", "character", png_bytes())
     base = asyncio.run(add_pack(kind="product", reference_ids=[front["id"]]))
     other = asyncio.run(add_pack(kind="character", reference_ids=[identity["id"]]))
-    path.write_text(
-        json.dumps(
+    put_template(
+        "template-1",
+        sourceVideoAssetId=source["id"],
+        packId=base.id,
+        packVersion=1,
+        mediaOrder=[
+            {"token": "{{Mixed 1}}", "type": "video", "role": "source_video"},
             {
-                "items": [
-                    record(
-                        sourceVideoAssetId=source["id"],
-                        packId=base.id,
-                        packVersion=1,
-                        mediaOrder=[
-                            {"token": "{{Mixed 1}}", "type": "video", "role": "source_video"},
-                            {
-                                "token": "{{Mixed 2}}",
-                                "type": "image",
-                                "role": "front",
-                                "assetId": front["id"],
-                                "name": front["name"],
-                            },
-                        ],
-                        rules={
-                            "referenceBindings": {
-                                "{{Mixed 1}}": "source_video",
-                                "{{Mixed 2}}": "front",
-                            }
-                        },
-                    )
-                ]
-            }
-        ),
-        encoding="utf-8",
+                "token": "{{Mixed 2}}",
+                "type": "image",
+                "role": "front",
+                "assetId": front["id"],
+                "name": front["name"],
+            },
+        ],
+        rules={"referenceBindings": {"{{Mixed 1}}": "source_video", "{{Mixed 2}}": "front"}},
     )
     raw = " \n编辑 {{Mixed 1}}，产品 {{Mixed 2}}，参考人物 {{Mixed 3}}。\n\n"
     response = client.patch(
@@ -166,12 +137,11 @@ def test_product_template_uses_fixed_image_from_another_kind_of_pack(client, tmp
     ]
 
 
-def test_pack_name_search_metadata_save_reopen_prepare_and_revoke(client, tmp_path, monkeypatch):
+def test_pack_name_search_metadata_save_reopen_prepare_and_revoke(client) -> None:
     from uuid import uuid4
 
     from tests_template_helpers import login, png_bytes, upload, video_bytes
 
-    monkeypatch.setattr(store, "CATALOG_PATH", tmp_path / "catalog.json")
     headers = login(client)
     source = upload(client, "fixed-ref-source.mp4", "source", video_bytes(2))
     image = upload(client, "海边机位蓝图.png", "scene", png_bytes())
@@ -257,7 +227,7 @@ def test_pack_name_search_metadata_save_reopen_prepare_and_revoke(client, tmp_pa
         json={"prompt": raw, "references": [bad]},
     )
     assert response.status_code == 400
-    assert store.get_out(template_id).prompt == raw
+    assert get_template(template_id).prompt == raw
     response = client.post(
         f"/api/v1/templates/replacement-packs/{pack_id}/disable",
         headers=headers,
@@ -289,18 +259,16 @@ def test_pack_name_search_metadata_save_reopen_prepare_and_revoke(client, tmp_pa
     assert len(response.json()["data"]["mediaOrder"]) == 1
 
 
-def test_fixed_reference_budget_counts_images_not_slots(tmp_path, monkeypatch):
+def test_fixed_reference_budget_counts_images_not_slots() -> None:
     """base_count 含 1 个原片：图片预算是 MAX_REFERENCE_IMAGES，不是 Mixed 槽位数。
 
     保存端与 prepare 端共用这个常量，否则会出现「模板存下了、换个图更多的包准备被拒」。
     """
     from modules.template.video_template_schema import MAX_REFERENCE_IMAGES
 
-    path = tmp_path / "catalog.json"
-    monkeypatch.setattr(store, "CATALOG_PATH", path)
-    path.write_text(json.dumps({"items": [record()]}), encoding="utf-8")
-    before = path.read_text(encoding="utf-8")
-    base_count = len(store.get_out("template-1").media_order)
+    put_template("template-1")
+    before = get_template("template-1")
+    base_count = len(before.media_order)
     overflow = MAX_REFERENCE_IMAGES - (base_count - 1) + 1
     fixed = [
         {
@@ -314,5 +282,5 @@ def test_fixed_reference_budget_counts_images_not_slots(tmp_path, monkeypatch):
     ]
     prompt = "{{Mixed 1}} " + " ".join(item["token"] for item in fixed)
     with pytest.raises(BadRequest, match="最多"):
-        store.update_prompt("template-1", prompt, fixed)
-    assert path.read_text(encoding="utf-8") == before
+        update_prompt("template-1", prompt, fixed)
+    assert get_template("template-1") == before

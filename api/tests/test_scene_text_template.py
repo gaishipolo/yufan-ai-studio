@@ -8,8 +8,8 @@ from uuid import uuid4
 import httpx
 import pytest
 from tests_template_helpers import login, upload, video_bytes
+from video_template_support import get_template
 
-from modules.template import video_template_store
 from template_packager.client import PackagingClient
 from template_packager.manifest import load_manifest
 from template_packager.runner import apply_manifest
@@ -46,8 +46,7 @@ def test_text_scene_preflight_rejects_non_video_tokens(tmp_path, extra):
         load_manifest(path)
 
 
-def test_scene_prompt_only_flow_from_packaging_to_snapshot(client, tmp_path, monkeypatch):
-    monkeypatch.setattr(video_template_store, "CATALOG_PATH", tmp_path / "catalog.json")
+def test_scene_prompt_only_flow_from_packaging_to_snapshot(client, tmp_path):
     source = upload(client, "scene-text.mp4", "source", video_bytes(2, audio=True))
     (tmp_path / "prompt.txt").write_text("{{ScenePrompt}}\n\n" + FIXED + "\n", encoding="utf-8")
     config = {
@@ -90,7 +89,7 @@ def test_scene_prompt_only_flow_from_packaging_to_snapshot(client, tmp_path, mon
     assert writes == ["/api/v1/templates/video-templates"]
     item = report["functions"][0]
     assert item["requiredPackCount"] == 0
-    template = video_template_store.get_out(item["videoTemplateId"])
+    template = get_template(item["videoTemplateId"])
     assert template.pack_id is None
     assert len(template.media_order) == 1 and template.media_order[0].type == "video"
     base = {"kind": "scene", "sourceId": source["id"], "videoTemplateId": template.id}

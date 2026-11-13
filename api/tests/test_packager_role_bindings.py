@@ -163,11 +163,9 @@ def test_real_api_reuses_all_three_pack_types_and_switches_to_smaller_pack(
     import httpx
     from tests_template_helpers import add_pack, login, png_bytes, upload, video_bytes
 
-    from modules.template import video_template_store
     from template_packager.client import PackagingClient
     from template_packager.runner import apply_manifest
 
-    monkeypatch.setattr(video_template_store, "CATALOG_PATH", tmp_path / "catalog.json")
     source = upload(client, "reuse-video.mp4", "source", video_bytes(2, audio=True))
     data = {
         "key": "reuse-all",

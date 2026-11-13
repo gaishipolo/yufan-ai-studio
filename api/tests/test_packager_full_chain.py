@@ -19,7 +19,6 @@ from tests_template_helpers import (
 )
 
 from db.session import get_session_factory
-from modules.template import video_template_store
 from modules.template.authorization import authorization_gap
 from modules.template.models import TemplatePack, TemplatePackReference
 from modules.template.repository import RunRepository
@@ -29,7 +28,6 @@ from template_packager.runner import apply_manifest
 
 
 def test_three_flows_keep_original_tokens_and_pack_identity(client, tmp_path, monkeypatch):
-    monkeypatch.setattr(video_template_store, "CATALOG_PATH", tmp_path / "catalog.json")
     source = upload(client, "original-order.mp4", "source", video_bytes(2, audio=True))
     selected = {}
     for name, kind, roles in [

@@ -303,18 +303,16 @@ def test_cli_preflight_is_offline_and_missing_token_is_actionable(tmp_path, caps
     assert not (tmp_path / "state.json").exists()
 
 
-def test_real_api_packages_and_prepares_each_function(client, tmp_path, monkeypatch):
-    """真实素材探测、DB发布、模板目录和提示词编译均走项目 API；不执行生成。"""
+def test_real_api_packages_and_prepares_each_function(client, tmp_path):
+    """真实素材探测、DB发布、模板落库和提示词编译均走项目 API；不执行生成。"""
     from uuid import uuid4
 
     from tests_template_helpers import login, png_bytes, video_bytes
-
-    from modules.template import video_template_store
+    from video_template_support import get_template
 
     path = manifest_file(tmp_path)
     (tmp_path / "clip.mp4").write_bytes(video_bytes(2, audio=True))
     (tmp_path / "front.png").write_bytes(png_bytes())
-    monkeypatch.setattr(video_template_store, "CATALOG_PATH", tmp_path / "catalog.json")
     headers = login(client, "admin", "admin@12345")
     writes = []
 
@@ -340,7 +338,12 @@ def test_real_api_packages_and_prepares_each_function(client, tmp_path, monkeypa
         # 进度文件丢失也从远端找回已发布包与模板，不产生新发布版本。
         assert apply_manifest(loaded, api, tmp_path / "recovered-state.json") == report
         assert not any(path.endswith("/publish") for path in writes[len(before) :])
-    assert len(video_template_store.list_out().items) == 2
+    # 两个功能各封一条模板：按 report 里的 id 逐条核对，而不是数整张表
+    # （测试库整场共用，别的用例也会往里写）。
+    template_ids = [result["videoTemplateId"] for result in report["functions"]]
+    assert len(set(template_ids)) == 2
+    for template_id in template_ids:
+        assert get_template(template_id).id == template_id
     for function, result in zip(loaded.spec.functions, report["functions"], strict=True):
         payload = {
             "requestId": str(uuid4()),

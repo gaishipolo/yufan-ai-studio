@@ -13,104 +13,71 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
-from datetime import UTC, datetime
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from video_template_support import IMAGES, PACK_ID, SOURCE_ID, put, record, run
 
 from core.exceptions import BadRequest
-from modules.template import video_template_store as store
+from db.session import get_session_factory
+from modules.template import video_template_service as service
 from modules.template.replacement_service import (
     _check_video_template,
     _media_in_mixed_order,
     _prompt_origin,
 )
+from modules.template.video_template_media import apply_pack_roles
 from modules.template.video_template_schema import VideoTemplateMedia, VideoTemplateOut
 from modules.template.workspace import RUNTIME
-
-NOW = datetime.now(UTC).isoformat().replace("+00:00", "Z")
-SOURCE_ID = "ac1d588d36294fa49c809d46bb1dbb6d"
-PACK_ID = "1cbf52ffeeb044f1ad2cc84aa484b941"
-IMAGES = ["front-asset", "multiview-asset", "detail-asset"]
-
-
-def record(**overrides: object) -> dict:
-    base = {
-        "id": "template-1",
-        "templateKey": "milan_night_3030_pink",
-        "name": "米兰之夜 · 3030 粉色",
-        "description": "",
-        "prompt": "对 {{Mixed 1}} 做替换，以 {{Mixed 3}} 三视图为准。",
-        "promptSha256": "0" * 64,
-        "sourceVideoName": "我穿的是米兰之夜模板测试.mp4",
-        "sourceVideoAssetId": SOURCE_ID,
-        "sourceVideoPath": "",
-        "sourceDurationSec": 5.312,
-        "aspectRatio": "9:16",
-        "packId": PACK_ID,
-        "packName": "3030 粉色",
-        "packVersion": 2,
-        "defaultKind": "product",
-        "mediaOrder": [
-            {"token": "{{Mixed 1}}", "role": "source_video", "type": "video", "name": "样片"},
-            *[
-                {"token": f"{{{{Mixed {index}}}}}", "role": "multiview", "type": "image",
-                 "assetId": asset_id, "name": asset_id}
-                for index, asset_id in enumerate(IMAGES, 2)
-            ],
-        ],
-        "generation": {"duration": 5, "ratio": "9:16"},
-        "rules": {"promptMode": "fixed_no_compilation"},
-        "coverUrl": "",
-        "pinned": True,
-        "createdAt": NOW,
-        "updatedAt": NOW,
-    }
-    base.update(overrides)
-    return base
 
 
 def template(**overrides: object) -> VideoTemplateOut:
     return VideoTemplateOut.model_validate(record(**overrides))
 
 
-def catalog(path: Path, items: list[dict]) -> None:
-    path.write_text(
-        json.dumps({"version": 1, "items": items}, ensure_ascii=False), encoding="utf-8"
-    )
+def find_for_run(*args: object, **kwargs: object) -> VideoTemplateOut | None:
+    """同步调用包装：这条链上的用例都不走 HTTP，自建一个事件循环就够。"""
+
+    async def go():
+        async with get_session_factory()() as session:
+            return await service.find_for_run(*args, session=session, **kwargs)
+
+    return run(go())
 
 
-def test_find_for_run_needs_both_source_and_pack(tmp_path: Path, monkeypatch) -> None:
-    target = tmp_path / "catalog.json"
-    monkeypatch.setattr(store, "CATALOG_PATH", target)
-    catalog(target, [
-        record(id="older", pinned=False, createdAt="2026-01-01T00:00:00Z"),
-        record(id="pinned", pinned=True, createdAt="2026-01-02T00:00:00Z"),
-        record(id="other-pack", packId="another-pack", pinned=False),
-        record(id="no-source", sourceVideoAssetId=None, pinned=False),
-    ])
-    found = store.find_for_run(SOURCE_ID, PACK_ID)
-    assert found is not None and found.id == "pinned"
+def test_find_for_run_needs_both_source_and_pack() -> None:
+    owner_source = "source-dual-key"
+    put(**record(id="older", templateKey="older", pinned=False, sourceVideoAssetId=owner_source,
+                 createdAt="2026-01-01T00:00:00Z"))
+    put(**record(id="pinned", templateKey="pinned", pinned=True, sourceVideoAssetId=owner_source,
+                 createdAt="2026-01-02T00:00:00Z"))
+    put(**record(id="other-pack", templateKey="other-pack", packId="another-pack",
+                 sourceVideoAssetId=owner_source, pinned=False))
+    put(**record(id="no-source", templateKey="no-source", sourceVideoAssetId=None, pinned=False))
+
+    found = find_for_run(owner_source, PACK_ID)
+    assert found is not None
+    assert found.id == "pinned"
     assert found.default_kind == "product"
-    assert store.find_for_run(SOURCE_ID, "another-pack") is not None
-    assert store.find_for_run("0507-source", PACK_ID) is None
-    assert store.find_for_run(SOURCE_ID, None) is None
-    assert store.find_for_run("", "") is None
+    assert find_for_run(owner_source, "another-pack") is not None
+    assert find_for_run("0507-source", PACK_ID) is None
+    assert find_for_run(owner_source, None) is None
+    assert find_for_run("", "") is None
 
 
-def test_explicit_function_selection_cannot_fall_back(tmp_path: Path, monkeypatch) -> None:
-    target = tmp_path / "catalog.json"
-    monkeypatch.setattr(store, "CATALOG_PATH", target)
-    catalog(target, [record(id="a", pinned=True), record(id="b", pinned=False)])
-    assert store.find_for_run(SOURCE_ID, PACK_ID, "product", "b").id == "b"
+def test_explicit_function_selection_cannot_fall_back() -> None:
+    # 用自己的原片 id：测试库整场共用，共用一个 id 会让别的用例留下的行混进候选集
+    owner_source = "source-explicit"
+    put(**record(id="a", templateKey="a", pinned=True, sourceVideoAssetId=owner_source))
+    put(**record(id="b", templateKey="b", pinned=False, sourceVideoAssetId=owner_source))
+    assert find_for_run(owner_source, PACK_ID, "product", "b").id == "b"
     for source, kind, selected in [
-        (SOURCE_ID, "product", "missing"),
+        (owner_source, "product", "missing"),
         ("another-source", "product", "b"),
-        (SOURCE_ID, "character", "b"),
+        (owner_source, "character", "b"),
     ]:
         with pytest.raises(BadRequest):
-            store.find_for_run(source, PACK_ID, kind, selected)
+            find_for_run(source, PACK_ID, kind, selected)
 
 
 def test_template_scope_is_optional_and_prompt_owned() -> None:
@@ -280,7 +247,8 @@ def test_media_order_roles_are_taken_from_the_pack_not_the_client() -> None:
         SimpleNamespace(asset_id="a", role="front"),
         SimpleNamespace(asset_id="b", role="multiview"),
     ]
-    store._apply_pack_roles(media, refs)
+    store_apply = apply_pack_roles
+    store_apply(media, refs)
     assert [item.role for item in media] == ["source_video", "front", "multiview"]
 
 
@@ -294,21 +262,25 @@ async def test_pinning_writes_an_audit_event(monkeypatch) -> None:
     seen: dict[str, object] = {}
     events: list[tuple[str, dict[str, object]]] = []
 
-    def fake_pin(template_id: str) -> VideoTemplateOut:
+    async def fake_pin(template_id: str, session: object) -> VideoTemplateOut:
         seen["id"] = template_id
+        seen["session"] = session
         return template(id=template_id)
 
     async def fake_record(action: str, **kwargs: object) -> None:
         events.append((action, kwargs))
 
-    monkeypatch.setattr(router_module.store, "pin", fake_pin)
+    monkeypatch.setattr(router_module.service, "pin", fake_pin)
     monkeypatch.setattr(router_module.audit, "record", fake_record)
 
+    marker = object()
     result = await router_module.pin_video_template(
-        "template-1", SimpleNamespace(id="u_001")
+        "template-1", SimpleNamespace(id="u_001"), marker
     )
 
     assert seen["id"] == "template-1"
+    # 会话必须由路由透传下去，别在 service 里另开一个（那样审计与写入不在一事务）
+    assert seen["session"] is marker
     assert result.data.id == "template-1"
     assert events == [
         (
@@ -323,23 +295,22 @@ async def test_pinning_writes_an_audit_event(monkeypatch) -> None:
     ]
 
 
-def test_find_for_run_is_pack_agnostic(tmp_path: Path, monkeypatch) -> None:
+def test_find_for_run_is_pack_agnostic() -> None:
     """同一原片换任意产品包仍命中同一条模板；未绑定的原片仍走通用提示词。"""
-    target = tmp_path / "catalog.json"
-    monkeypatch.setattr(store, "CATALOG_PATH", target)
-    catalog(target, [
-        record(id="fixed", pinned=True),
-        record(id="another", packId="other-pack", sourceVideoAssetId="three-ladies",
-               defaultKind="product", pinned=False),
-    ])
-    assert store.find_for_run(SOURCE_ID, PACK_ID).id == "fixed"
-    assert store.find_for_run(SOURCE_ID, "another-pack").id == "fixed"
-    assert store.find_for_run("three-ladies", "any-product-pack").id == "another"
-    assert store.find_for_run("three-ladies", "any-product-pack", kind="character") is None
-    assert store.find_for_run("0507-source", PACK_ID) is None
+    # 独立原片 id：见上一个用例的说明（库是整场共用的）
+    owner_source = "source-agnostic"
+    put(**record(id="fixed", templateKey="fixed", pinned=True,
+                 sourceVideoAssetId=owner_source))
+    put(**record(id="another", templateKey="another", packId="other-pack",
+                 sourceVideoAssetId="three-ladies", defaultKind="product", pinned=False))
+    assert find_for_run(owner_source, PACK_ID).id == "fixed"
+    assert find_for_run(owner_source, "another-pack").id == "fixed"
+    assert find_for_run("three-ladies", "any-product-pack").id == "another"
+    assert find_for_run("three-ladies", "any-product-pack", kind="character") is None
+    assert find_for_run("0507-source", PACK_ID) is None
 
 
-def test_prompt_origin_tells_where_the_prompt_came_from(tmp_path: Path, monkeypatch) -> None:
+def test_prompt_origin_tells_where_the_prompt_came_from() -> None:
     """档案要能回答「提示词是谁写的」：两种文本长得一样，用户没法自己判断。
 
     `compiled` 说清楚是现编的，`fixed` 要说清出自哪条模板；老档案只有模板 id
@@ -350,9 +321,13 @@ def test_prompt_origin_tells_where_the_prompt_came_from(tmp_path: Path, monkeypa
     named = {"promptMode": "fixed_video_template", "videoTemplateName": "三人高端姐"}
     assert _prompt_origin(named) == ("fixed", "三人高端姐")
 
-    target = tmp_path / "catalog.json"
-    monkeypatch.setattr(store, "CATALOG_PATH", target)
-    catalog(target, [record(id="legacy-id", name="老档案用的模板")])
+    put(**record(id="legacy-id", templateKey="legacy-id", name="老档案用的模板"))
+
+    async def warm() -> None:
+        async with get_session_factory()() as session:
+            await service.prefetch_names(session, ["legacy-id"])
+
+    run(warm())
     assert _prompt_origin(
         {"promptMode": "fixed_video_template", "videoTemplateId": "legacy-id"}
     ) == ("fixed", "老档案用的模板")
@@ -361,7 +336,7 @@ def test_prompt_origin_tells_where_the_prompt_came_from(tmp_path: Path, monkeypa
     ) == ("fixed", None)
 
 
-def test_prompt_origin_survives_string_spec(tmp_path: Path, monkeypatch) -> None:
+def test_prompt_origin_survives_string_spec() -> None:
     """历史档案里 `prompt_spec` 可能是 JSON 文本：不能因此把列表接口打成 500。"""
     assert _prompt_origin('{"promptMode": "fixed_video_template"}') == ("compiled", None)
     assert _prompt_origin({}) == ("compiled", None)

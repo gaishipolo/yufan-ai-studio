@@ -22,7 +22,6 @@ import re
 import shutil
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
-from functools import lru_cache
 from pathlib import Path
 from time import perf_counter
 from typing import TYPE_CHECKING, Any
@@ -54,7 +53,7 @@ from core.ports.media import get_asset_lookup
 from core.serving import Served
 from infra.ai.libtv import get_libtv_settings
 from infra.archive import ArchiveStorage, get_archive_storage
-from modules.template import video_template_store
+from modules.template import video_template_service
 from modules.template.authorization import authorization_gap
 from modules.template.channels import CHANNEL_LABELS, channel_catalog, require_channel, run_channel
 from modules.template.models import ReplacementReview as ReviewRow
@@ -146,12 +145,31 @@ class ReplacementService:
         口径（那里删掉的记录不该再出现），不是这里的。
         """
         rows = await self.runs.list_owned(owner, include_deleted=True)
+        await self._warm_template_names(rows)
         reviews = await self._review_map([row.id for row in rows])
         return [self._run_out(row, reviews.get(row.id)) for row in rows]
 
     async def detail(self, run_id: str, owner: str) -> ReplacementRunOut:
         row = await self.runs.get_or_404(run_id, owner=owner)
+        await self._warm_template_names([row])
         return self._run_out(row, await self.runs.review(row.id))
+
+    async def _warm_template_names(self, rows: Sequence[ReplacementRun]) -> None:
+        """给「只有 `videoTemplateId`、没有名字」的老档案批量补名字。
+
+        `_run_out` 是同步投影，不能在里面查库（要么把整条投影链路改成 async，
+        要么退化成 N+1）。所以在读入口预热一次缓存，投影只读缓存。
+        """
+        wanted: list[str] = []
+        for row in rows:
+            spec = row.prompt_spec
+            if not isinstance(spec, dict) or spec.get("videoTemplateName"):
+                continue
+            template_id = spec.get("videoTemplateId")
+            if isinstance(template_id, str) and template_id:
+                wanted.append(template_id)
+        if wanted:
+            await video_template_service.prefetch_names(self.session, wanted)
 
     async def feed_records(self, owner: str) -> list[ReplacementFeedRecord]:
         """任务中心只读镜像：不读提示词与完整输入摘要，只取列表要的字段。
@@ -247,13 +265,12 @@ class ReplacementService:
         # 视频模板按**原片**套用：工作台里换产品包，模板照样生效 —— 提示词不动，
         # 图片按「用途」（主图/三视图/细节）从当前素材包里取。没有模板的普通原片
         # （例如 0507 高端姐）走原来的通用提示词，行为一个字都不变。
-        # 读模板目录是同步文件 IO，进线程池：prepare 是高频入口，不能卡事件循环。
-        video_template = await asyncio.to_thread(
-            video_template_store.find_for_run,
+        video_template = await video_template_service.find_for_run(
             payload.source_id,
             payload.pack_id,
             payload.kind,
             payload.video_template_id,
+            session=self.session,
         )
         text_scene = video_template is not None and is_scene_text(video_template.rules)
         frozen = None
@@ -1046,21 +1063,13 @@ def _prompt_origin(spec: dict[str, object] | None) -> tuple[str, str | None]:
 
 
 def _template_name(template_id: str) -> str | None:
-    """老档案只存了模板 id：反查名字，读不到就当没有（展示层自己降级）。
+    """老档案只存了模板 id：从缓存反查名字，读不到就当没有（展示层自己降级）。
 
-    缓存以目录文件的 mtime 为代次：模板重新封装、改名或置顶后目录被重写，
-    mtime 一变缓存自然失效，不会让档案列表一直显示旧名字。
+    缓存由调用方（列表 / 详情入口）先 `prefetch_names()` 批量预热——`_run_out`
+    是同步投影，不能在这里查库，否则要么把整条投影链路改成 async，
+    要么退化成逐条查询（一个列表页 N 次）。
     """
-    return _cached_template_name(template_id, video_template_store.catalog_stamp())
-
-
-@lru_cache(maxsize=64)
-def _cached_template_name(template_id: str, _stamp: float) -> str | None:
-    try:
-        return video_template_store.get_out(template_id).name
-    except Exception:  # noqa: BLE001 - 模板被删/目录损坏都不该让档案列表 500
-        logger.debug("视频模板反查失败 template_id=%s", template_id, exc_info=True)
-        return None
+    return video_template_service.template_name(template_id)
 
 
 def _archive_path(run_id: str) -> str | None:

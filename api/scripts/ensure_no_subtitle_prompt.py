@@ -6,18 +6,20 @@
 会残留半截字幕或把原字幕当画面纹理重绘。显式在**开头**写一句「全片无字幕」，
 比末尾那句「移除全部原字幕」更像硬约束——两条都要有。
 
-## 为什么走接口而不是改目录
+## 为什么走接口而不是直接改库
 
 `PATCH /templates/video-templates/{id}/prompt` 是唯一的改写入口：它按新原文重算
 `{{Mixed N}}` 引用、保持未引用的槽位不缩短、并写一条 `update_prompt` 审计。
-直接改 `catalog.json` 会绕过这些，且不会留下「谁在什么时候改了哪份提示词」。
+直接 `UPDATE video_templates SET prompt = ...` 会绕过这些，且不会留下
+「谁在什么时候改了哪份提示词」。
 
-**盘点例外**：待补清单是直接读 `VIDEO_TEMPLATE_CATALOG` 指向的那份文件的（只读），
-所以它必须与服务端使用**同一份**目录——脚本会把实际读取的路径打进报告，
-共享盘部署时先核对这一行，别盘点了一台机器的副本却去改另一台。
+**盘点读数据库**：模板目录落到 `video_templates` 表之后，这里和服务端读的是
+同一份数据，不再存在「盘点了一台机器的 `catalog.json`、却去改另一台」的老问题。
 
-改写前的快照写在目录文件同级的 `backup/`（与 `video_template_store` 的写前快照
-同一套滚动规则，保留最近 20 份），不落在本机 `api/var`。
+## 空结果不等于合规
+
+表里一条都没有时**退出码 2**：一个连错库或还没导入存量数据的盘点，
+最不该给的就是「全部提示词都带全片无字幕」这个最令人放心的结论。
 
 ## 用法（在 api/ 目录下）
 
@@ -30,17 +32,17 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import os
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import httpx  # noqa: E402
-
-from modules.template import video_template_store as store  # noqa: E402
 
 MARKER = "全片无字幕"
 #: 补在开头；带句号是因为它是一句完整的话，后面再接正文。
@@ -51,32 +53,62 @@ def _already(text: str) -> bool:
     return MARKER in text
 
 
+async def _load_templates() -> list[dict[str, Any]]:
+    """只读整表：盘点要的是「全部模板」，这条命令不在请求路径上。"""
+    from sqlalchemy import select
+
+    from db.session import get_session_factory
+    from modules.template.models import VideoTemplate
+
+    async with get_session_factory()() as session:
+        rows = (await session.scalars(select(VideoTemplate))).all()
+        return [
+            {
+                "id": row.id,
+                "name": row.name,
+                "prompt": row.prompt or "",
+                "packId": row.pack_id,
+                "updatedAt": row.updated_at.isoformat() if row.updated_at else None,
+            }
+            for row in rows
+        ]
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--apply", action="store_true", help="补齐缺失的提示词")
     parser.add_argument("--api-url", default="http://127.0.0.1:8080/api/v1")
+    parser.add_argument(
+        "--backup-dir",
+        default="",
+        help="改写前的整体快照落点（默认 api/var/video_templates/backup）",
+    )
     args = parser.parse_args(argv)
 
-    catalog = store.CATALOG_PATH
-    if not catalog.is_file():
-        # `_read()` 对「文件不存在」和「文件里没有条目」都返回空 items，
-        # 直接往下走会报出「全部提示词都带全片无字幕」——一个路径配错或共享盘
-        # 没挂上的运维脚本，最不该给的就是这个最令人放心的结论。
+    try:
+        items = asyncio.run(_load_templates())
+    except Exception as exc:  # noqa: BLE001 - 连不上库要给人话，不是 traceback
         print(
-            f"模板目录文件不存在：{catalog}\n"
-            "这不是「全部合规」，而是这份盘点根本没读到东西；"
-            "请确认 VIDEO_TEMPLATE_CATALOG 指向服务端实际使用的那一份。",
+            f"读不到视频模板表：{type(exc).__name__}: {exc}\n"
+            "这不是「全部合规」，而是这份盘点根本没读到东西；请确认 DB_URL 指向服务端那个库。",
             file=sys.stderr,
         )
         return 2
-    items = store._read()["items"]
-    todo = [item for item in items if not _already(item.get("prompt") or "")]
-    report = {
+    if not items:
+        print(
+            "视频模板表里一条记录都没有。\n"
+            "这不是「全部合规」，而是这份盘点根本没读到东西；"
+            "存量数据需要先跑 `app import-video-templates`。",
+            file=sys.stderr,
+        )
+        return 2
+
+    todo = [item for item in items if not _already(item["prompt"])]
+    report: dict[str, Any] = {
         "mode": "apply" if args.apply else "preflight",
-        "catalog": str(catalog),
         "total": len(items),
         "missing": [
-            {"id": item.get("id"), "name": item.get("name"), "chars": len(item.get("prompt") or "")}
+            {"id": item["id"], "name": item["name"], "chars": len(item["prompt"])}
             for item in todo
         ],
     }
@@ -97,18 +129,18 @@ def main(argv=None) -> int:
     if not token:
         print("请设置 YUFAN_API_TOKEN 环境变量", file=sys.stderr)
         return 1
-    # 改写前先留一份目录快照：提示词是逐字资产，改坏了要能一眼看出原样。
-    # 快照必须跟着目录文件走——目录可能在共享盘上（`VIDEO_TEMPLATE_CATALOG`），
-    # 备份落回本机 `api/var` 的话，换台机器就找不到这份「改之前的样子」。
-    # 命名沿用 `catalog-<stamp>` 前缀，与 `video_template_store._backup_current`
-    # 共用「保留最近 20 份」的滚动规则（时间戳定宽，排序仍然按时间）。
-    backup_dir = catalog.parent / "backup"
+    # 改写前留一份整体快照：提示词是逐字资产，改坏了要能一眼看出原样。
+    # 落点默认仍是 `api/var/video_templates/backup`（与旧目录文件同级的习惯位置），
+    # 共享盘部署时用 `--backup-dir` 指过去。
+    backup_dir = (
+        Path(args.backup_dir).expanduser()
+        if args.backup_dir
+        else Path(__file__).resolve().parents[1] / "var" / "video_templates" / "backup"
+    )
     backup_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%f")
-    backup = backup_dir / f"catalog-{stamp}-pre-subtitle.json"
-    backup.write_text(
-        json.dumps(store._read(), ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    backup = backup_dir / f"video-templates-{stamp}-pre-subtitle.json"
+    backup.write_text(json.dumps(items, ensure_ascii=False, indent=2), encoding="utf-8")
     report["backup"] = str(backup)
     # 不继承进程里的代理与 TLS 调试变量，行为与封装器一致。
     with httpx.Client(
@@ -118,7 +150,7 @@ def main(argv=None) -> int:
     ) as http:
         results = []
         for item in todo:
-            before = item.get("prompt") or ""
+            before = item["prompt"]
             response = http.patch(
                 f"{args.api_url}/templates/video-templates/{item['id']}/prompt",
                 json={"prompt": PREFIX + before},
@@ -127,7 +159,7 @@ def main(argv=None) -> int:
                 results.append(
                     {
                         "id": item["id"],
-                        "name": item.get("name"),
+                        "name": item["name"],
                         "status": f"失败 HTTP {response.status_code}",
                     }
                 )
@@ -136,7 +168,7 @@ def main(argv=None) -> int:
             results.append(
                 {
                     "id": item["id"],
-                    "name": item.get("name"),
+                    "name": item["name"],
                     "status": "已补齐",
                     "chars": f"{len(before)} → {len(after)}",
                     "prefixOk": after.startswith(PREFIX.rstrip("\n")),

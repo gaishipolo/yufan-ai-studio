@@ -7,7 +7,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
@@ -16,7 +15,7 @@ from api.deps import SessionDep, require
 from core import audit
 from core.context import CurrentUser
 from core.response import ApiResponse
-from modules.template import video_template_store as store
+from modules.template import video_template_service as service
 from modules.template.template_references import resolve_pack_references
 from modules.template.video_template_schema import (
     VideoTemplateAttachSourceIn,
@@ -37,17 +36,16 @@ ManageDep = Annotated[
 
 @router.get("", summary="视频模板列表（固定蓝本优先）")
 async def list_video_templates(
-    actor: ReadDep,
+    actor: ReadDep, session: SessionDep
 ) -> ApiResponse[VideoTemplateListOut]:
-    # 读目录是同步文件 IO，进线程池；对应 `CODE_STYLE.md` §2.3。
-    return ApiResponse.ok(await asyncio.to_thread(store.list_out))
+    return ApiResponse.ok(await service.list_out(session))
 
 
 @router.get("/{template_id}", summary="视频模板详情（含提示词与媒体顺序）")
 async def get_video_template(
-    template_id: str, actor: ReadDep
+    template_id: str, actor: ReadDep, session: SessionDep
 ) -> ApiResponse[VideoTemplateOut]:
-    return ApiResponse.ok(await asyncio.to_thread(store.get_out, template_id))
+    return ApiResponse.ok(await service.get_out(session, template_id))
 
 
 @router.post("", summary="封装一条视频模板", openapi_extra={
@@ -56,16 +54,16 @@ async def get_video_template(
 async def create_video_template(
     payload: VideoTemplateDraftIn, actor: ManageDep, session: SessionDep
 ) -> ApiResponse[VideoTemplateOut]:
-    return ApiResponse.ok(await store.create(payload, session))
+    return ApiResponse.ok(await service.create(payload, session))
 
 
 @router.post("/{template_id}/pin", summary="设为固定蓝本（全库仅一个）")
 async def pin_video_template(
-    template_id: str, actor: ManageDep
+    template_id: str, actor: ManageDep, session: SessionDep
 ) -> ApiResponse[VideoTemplateOut]:
     # 切的是**全库**蓝本：所有封装者下次都以它复制，属「发布级」管理动作，
     # 与 pack publish/disable 同一口径留审计；create/attach 只算保存，不记。
-    result = await asyncio.to_thread(store.pin, template_id)
+    result = await service.pin(template_id, session)
     await audit.record(
         "template.video_template.pin",
         actor_id=actor.id,
@@ -88,7 +86,9 @@ async def update_video_template_prompt(
     references = None
     if payload.references is not None:
         references, _ = await resolve_pack_references(session, payload.references)
-    result = await asyncio.to_thread(store.update_prompt, template_id, payload.prompt, references)
+    result = await service.update_prompt(
+        template_id, payload.prompt, references, session=session
+    )
     await audit.record(
         "template.video_template.update_prompt",
         actor_id=actor.id,
@@ -108,5 +108,5 @@ async def attach_video_template_source(
 ) -> ApiResponse[VideoTemplateOut]:
     """绑定后，这条模板对应的原片才会在「全部模板」里被当作可选卡片。"""
     return ApiResponse.ok(
-        await store.attach_source(template_id, payload.source_video_asset_id, session)
+        await service.attach_source(template_id, payload.source_video_asset_id, session)
     )

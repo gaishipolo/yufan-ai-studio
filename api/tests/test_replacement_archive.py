@@ -36,6 +36,7 @@ from tests_template_helpers import (
     video_bytes,
     workspace,
 )
+from video_template_support import aput
 
 from core.config import settings
 from infra.ai.libtv import get_libtv_settings
@@ -342,8 +343,6 @@ async def test_product_scope_must_come_from_the_pack(client: TestClient, materia
 async def test_selected_video_function_controls_prompt_and_scope(
     client: TestClient, materials, tmp_path: Path, monkeypatch, selectable_scope: bool
 ) -> None:
-    from modules.template import video_template_store as store
-
     video, image = materials(kind="product")
     pack = await _pack("product", image_ids=[image["id"]], scopes=["worn"])
     prompt = "编辑 {{Mixed 1}}，使用 {{Mixed 2}}。"
@@ -356,15 +355,18 @@ async def test_selected_video_function_controls_prompt_and_scope(
         "packId": pack.id, "defaultKind": "product", "mediaOrder": [],
         "createdAt": "2026-11-09T00:00:00Z", "updatedAt": "2026-11-09T00:00:00Z",
     }
+    # 两条模板必须各有 `templateKey`：它是「重试稳定标识」，表上唯一。
+    # 旧用例里两条共用一个 key 之所以能过，是因为造数直接写 catalog.json，
+    # 绕过了 `_append_record` 的同键去重（同键不同配置在真实路径上是 409）。
     records = [
-        {**base, "id": "pinned", "name": "另一功能", "pinned": True,
-         "prompt": "另一功能 {{Mixed 1}} {{Mixed 2}}"},
-        {**base, "id": "selected", "name": "所选功能", "prompt": prompt,
+        {**base, "id": "pinned", "templateKey": "function-a", "name": "另一功能",
+         "pinned": True, "prompt": "另一功能 {{Mixed 1}} {{Mixed 2}}"},
+        {**base, "id": "selected", "templateKey": "function-b", "name": "所选功能",
+         "prompt": prompt,
          "rules": {"scopeOptions": ["只换前景"] if selectable_scope else []}},
     ]
-    target = tmp_path / "functions.json"
-    target.write_text(json.dumps({"items": records}), encoding="utf-8")
-    monkeypatch.setattr(store, "CATALOG_PATH", target)
+    for item in records:
+        await aput(**item)
     try:
         response = client.post(f"{API}/templates/replacement-runs", json=_payload(
             "product", video["id"], pack, videoTemplateId="selected",
@@ -384,11 +386,8 @@ async def test_selected_video_function_controls_prompt_and_scope(
 async def test_function_editor_persists_options_and_rejects_pack_type_mismatch(
     client: TestClient, materials, tmp_path: Path, monkeypatch
 ) -> None:
-    from modules.template import video_template_store as store
-
     video, image = materials(kind="product")
     pack = await _pack("product", image_ids=[image["id"]], scopes=["worn"])
-    monkeypatch.setattr(store, "CATALOG_PATH", tmp_path / "catalog.json")
     draft = {
         "name": "新功能", "sourceVideoAssetId": video["id"], "packId": pack.id,
         "prompt": "{{Mixed 1}} {{Mixed 2}} 范围：{{ReplacementScope}}",
@@ -706,8 +705,6 @@ async def test_multi_character_slots_are_filled_by_extra_packs(
     **槽位顺序**把第 1/2/3 个人的正面图填进去。每种用途只声明一个槽位的模板
     仍按老规矩报缺项，不能被这条放宽带沟里。
     """
-    from modules.template import video_template_store as store
-
     video, face1 = materials("character")
     face2 = upload(client, "face2.png", "character", png_bytes())
     face3 = upload(client, "face3.png", "character", png_bytes())
@@ -719,7 +716,6 @@ async def test_multi_character_slots_are_filled_by_extra_packs(
         )
         for index, face in enumerate([face1, face2, face3], 1)
     ]
-    monkeypatch.setattr(store, "CATALOG_PATH", tmp_path / "catalog.json")
     draft = {
         "name": "三人换脸",
         "sourceVideoAssetId": video["id"],

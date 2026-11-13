@@ -50,6 +50,31 @@ def cmd_import_legacy(args: argparse.Namespace) -> None:
         print("（--dry-run：以上变更未写库）")
 
 
+def cmd_import_video_templates(args: argparse.Namespace) -> None:
+    """把老的 `catalog.json` 视频模板目录导进 `video_templates` 表（幂等）。"""
+    from pathlib import Path
+
+    from core.exceptions import AppError
+    from db.session import get_session_factory
+    from modules.template.video_template_import import import_catalog, legacy_catalog_path
+
+    path = Path(args.path).expanduser() if args.path else legacy_catalog_path()
+
+    async def run():
+        async with get_session_factory()() as session:
+            return await import_catalog(session, path, dry_run=args.dry_run)
+
+    try:
+        report = asyncio.run(run())
+    except AppError as exc:
+        print(exc.message, file=sys.stderr)
+        raise SystemExit(1) from exc
+    for line in report.lines():
+        print(line)
+    if args.dry_run:
+        print("（--dry-run：以上变更未写库）")
+
+
 def register(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     """把本模块的运维命令挂到 `app` 上（框架组装解析器时调用一次）。"""
     parser = sub.add_parser(
@@ -60,3 +85,15 @@ def register(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
         "--dry-run", action="store_true", help="只统计将要发生的变更，不写库"
     )
     parser.set_defaults(func=cmd_import_legacy)
+
+    catalog = sub.add_parser(
+        "import-video-templates",
+        help="把老的 video_templates/catalog.json 导入 video_templates 表（幂等，不删 JSON）",
+    )
+    catalog.add_argument(
+        "--path", default="", help="老目录文件路径（默认按 VIDEO_TEMPLATE_CATALOG 或 api/var）"
+    )
+    catalog.add_argument(
+        "--dry-run", action="store_true", help="只统计将要发生的变更，不写库"
+    )
+    catalog.set_defaults(func=cmd_import_video_templates)
