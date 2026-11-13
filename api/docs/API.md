@@ -2317,7 +2317,7 @@ Authorization: Bearer <accessToken>
 | `sourceVideoPath` | `string` | 否 | 样片本地路径（可选） |
 | `sourceDurationSec` | `number` | 否 | 样片真实时长，用于提示与档位说明 |
 | `aspectRatio` | `string` | 否 | 输出画幅 |
-| `packId` | `string \| null` | 否 | 关联的已发布替换素材包 |
+| `packId` | `string \| null` | 否 | 关联的已发布替换素材包；**可省略**——用途绑定模式下省略即「只声明槽位」，调用时按用途从用户自己选的包里取图 |
 | `defaultKind` | `"character" \| "product" \| "scene"` | 否 | 选中这张原片卡片时，替换配置默认切到的替换类型 |
 | `mediaOrder` | `VideoTemplateMedia[]` | 否 | 留空则由素材包顺序生成 |
 | `generation` | `Record<string, unknown>` | 否 | 生成参数，覆盖默认值 |
@@ -5861,7 +5861,7 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `sourceVideoPath` | `string` | 否 | 样片本地路径（可选） |
 | `sourceDurationSec` | `number` | 否 | 样片真实时长，用于提示与档位说明 |
 | `aspectRatio` | `string` | 否 | 输出画幅 |
-| `packId` | `string \| null` | 否 | 关联的已发布替换素材包 |
+| `packId` | `string \| null` | 否 | 关联的已发布替换素材包；**可省略**——用途绑定模式下省略即「只声明槽位」，调用时按用途从用户自己选的包里取图 |
 | `defaultKind` | `"character" \| "product" \| "scene"` | 否 | 选中这张原片卡片时，替换配置默认切到的替换类型 |
 | `mediaOrder` | `VideoTemplateMedia[]` | 否 | 留空则由素材包顺序生成 |
 | `generation` | `Record<string, unknown>` | 否 | 生成参数，覆盖默认值 |

@@ -111,14 +111,20 @@ function validateForm(form: FormState, images: number): string {
     if (tokens.filter(token => token === 'ScenePrompt').length !== 1 || tokens.some(token => !['ScenePrompt', 'Mixed 1'].includes(token)) || scopes.length) return '文字换场景需包含一个 {{ScenePrompt}}，只允许引用原视频 {{Mixed 1}}，不配置范围';
     return '';
   }
-  if (!form.packId) return '请选择已发布的替换素材包';
-  if (images < 1) return '所选素材包没有参考图，无法生成媒体顺序';
   /* 用途绑定模式下媒体清单由服务端按声明生成、`mediaOrder` 不随请求发送，
      于是 `order` 不再是这份清单的来源，不能再拿它和素材包图片数做等值校验。
      蓝本里的「运行时选卡」空槽会被 `formFromBlueprint` 滤掉，包里有辅助图时
      两者必然不等——以前这里会把「复制固定蓝本」堵在一个用户看不见原因的报错上。 */
   const declaredBindings = form.rules?.referenceBindings;
   const usesBindings = !!declaredBindings && typeof declaredBindings === 'object' && !Array.isArray(declaredBindings);
+  if (!form.packId) {
+    /* **只声明槽位**：不绑默认包是合法配置，但前提是模板已经声明了用途绑定，
+       否则服务端拿不到「要几张图、各是什么用途」。报错要说清下一步点哪里，
+       而不是只说「不能为空」。 */
+    if (!usesBindings) return '请选择已发布的替换素材包，或先复制一份带用途绑定的固定蓝本再清空素材包';
+  } else if (images < 1) {
+    return '所选素材包没有参考图，无法生成媒体顺序';
+  }
   if (!usesBindings && form.order.length !== images) return '媒体顺序与素材包图片数量对不上，请重新选择素材包';
   if (!form.prompt.trim()) return '请填写固定提示词';
   const tokens = [...form.prompt.matchAll(/\{\{([^{}]+)\}\}/g)].map(match => match[1]);
@@ -139,7 +145,9 @@ function validateForm(form: FormState, images: number): string {
   if (!numbers.some(number => number !== sourceSlot)) return '提示词必须至少点名一张产品图';
   const max = Math.max(1 + images, Object.keys(bindings ?? {}).length);
   if (numbers.some(number => number > max)) {
-    return `编号超出范围：该素材包 ${images} 张图，最大可用 {{Mixed ${max}}}`;
+    return form.packId
+      ? `编号超出范围：该素材包 ${images} 张图，最大可用 {{Mixed ${max}}}`
+      : `编号超出范围：模板声明了 ${Object.keys(bindings ?? {}).length} 个用途槽位，最大可用 {{Mixed ${max}}}`;
   }
   return '';
 }
@@ -173,7 +181,7 @@ function VideoTemplateEditor({initial, packs, sources, busy, onClose, onSubmit}:
       sourceVideoPath: form.sourceVideoPath,
       sourceDurationSec: Number(form.sourceDurationSec) || 0,
       aspectRatio: form.aspectRatio,
-      packId: form.textScene ? null : form.packId,
+      packId: form.textScene || !form.packId ? null : form.packId,
       defaultKind: form.defaultKind,
       // 顺序由这里定：{{Mixed 1}} 永远是原片，其后按 form.order 排，提示词里的编号就指向它
       mediaOrder: form.textScene || form.rules?.referenceBindings ? [] : [
@@ -213,14 +221,15 @@ function VideoTemplateEditor({initial, packs, sources, busy, onClose, onSubmit}:
         <label className="flex items-center gap-2 text-xs sm:col-span-2"><input type="checkbox" checked={!!form.textScene} onChange={event => patch({textScene: event.target.checked, packId: '', order: [], scopeOptionsText: '', rules: {}, ...(event.target.checked ? {defaultKind: 'scene'} : {})})} />文字换场景（仅原片和场景描述）</label>
         {form.textScene ? <label className="block text-xs sm:col-span-2">默认场景描述<textarea className={input} rows={4} maxLength={4000} value={form.scenePromptDefault ?? ''} onChange={event => patch({scenePromptDefault: event.target.value})} /></label> : <>
         <label className="block text-xs sm:col-span-2">替换素材包
-          <select className={input} value={form.packId} required onChange={event => {
+          <select className={input} value={form.packId} onChange={event => {
             const picked = packs.find(pack => pack.id === event.target.value);
             patch({packId: event.target.value, order: picked ? [...picked.assetIds] : [],
               ...(picked?.kind ? {defaultKind: picked.kind} : {})});
           }}>
-            <option value="">请选择已发布素材包</option>
+            <option value="">不绑定默认包（调用时按用途取图）</option>
             {packs.map(pack => <option key={pack.id} value={pack.id}>{pack.label} · {pack.images} 张图</option>)}
           </select>
+          {!form.packId && <span className="mt-1 block text-[11px] text-ink-mute">不绑包时只声明用途槽位：调用者选自己的素材包，按「正面 / 三视图 / 细节」取图，编号不变。需要模板已声明用途绑定（复制固定蓝本即可带上）。</span>}
         </label>
         {form.rules?.referenceBindings ? <p className="text-xs text-ink-mute sm:col-span-2">媒体按模板声明的用途由服务端排列，原有编号保持不变。</p> : <div className="text-xs sm:col-span-2" aria-label="媒体顺序">
           <span>媒体顺序（决定提示词里的编号指向哪张图）</span>
@@ -270,7 +279,7 @@ function VideoTemplateEditor({initial, packs, sources, busy, onClose, onSubmit}:
       </div>
       <label className="block text-xs">固定提示词
         <textarea className={`${input} h-40 font-mono leading-relaxed`} value={form.prompt} onChange={event => patch({prompt: event.target.value})} placeholder={'对输入的原视频 {{Mixed 1}} 进行局部替换，目标外观由 {{Mixed 2}} 中的款式决定。'} />
-        <span className="mt-1 block text-[11px] text-ink-mute">{form.textScene ? '请在固定提示词放入一个 {{ScenePrompt}}，工作台仅替换这段描述。' : <>当前素材包可用编号：{'{{Mixed 1}}'} 原片，{'{{Mixed 2}}'} 起为上面「媒体顺序」里的图片，最大 {`{{Mixed ${1 + images}}}`}。</>}</span>
+        <span className="mt-1 block text-[11px] text-ink-mute">{form.textScene ? '请在固定提示词放入一个 {{ScenePrompt}}，工作台仅替换这段描述。' : form.packId ? <>当前素材包可用编号：{'{{Mixed 1}}'} 原片，{'{{Mixed 2}}'} 起为上面「媒体顺序」里的图片，最大 {`{{Mixed ${1 + images}}}`}。</> : <>按用途声明的编号：{'{{Mixed 1}}'} 原片，{'{{Mixed 2}}'} 起为用途槽位，最大 {`{{Mixed ${Math.max(1, Object.keys(form.rules?.referenceBindings ?? {}).length)}}}`}。</>}</span>
       </label>
       <label className="flex items-center gap-2 text-xs text-ink-soft"><input type="checkbox" checked={form.pinned} onChange={event => patch({pinned: event.target.checked})} />设为固定蓝本（全库仅一个，后续可一键复制）</label>
       {error && <p role="alert" className="rounded-lg bg-danger/5 p-2 text-xs text-danger">{error}</p>}
@@ -353,7 +362,7 @@ export function VideoTemplateLibrary({embedded = false}: {embedded?: boolean} = 
             <h3 className="text-xs font-semibold text-ink">{template.name}</h3>
             {template.pinned && <span className="shrink-0 rounded bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary">固定蓝本</span>}
           </div>
-          <p className="text-[11px] text-ink-mute">{template.rules?.inputMode === 'video_scene_text' ? '文字换场景 · 仅原片' : `${template.packName} v${template.packVersion}`} · {template.aspectRatio} · {String(template.generation?.duration ?? '—')} 秒 · {images.length} 张图</p>
+          <p className="text-[11px] text-ink-mute">{template.rules?.inputMode === 'video_scene_text' ? '文字换场景 · 仅原片' : template.packId ? `${template.packName} v${template.packVersion}` : '按用途取图 · 调用时选包'} · {template.aspectRatio} · {String(template.generation?.duration ?? '—')} 秒 · {images.length} 张图</p>
           <p className="text-[11px] text-ink-soft">{template.sourceVideoName || '未登记样片'}</p>
           <p className={template.sourceVideoAssetId ? 'text-[11px] text-primary' : 'text-[11px] text-danger'}>
             {template.sourceVideoAssetId ? `已绑定原片卡片 · 默认${KINDS.find(kind => kind.value === template.defaultKind)?.label ?? '产品替换'}` : '未绑定原片，不会出现在「全部模板」'}

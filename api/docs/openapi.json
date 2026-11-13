@@ -16224,7 +16224,7 @@
               }
             ],
             "title": "Packid",
-            "description": "关联的已发布替换素材包"
+            "description": "关联的已发布替换素材包；**可省略**——用途绑定模式下省略即「只声明槽位」，调用时按用途从用户自己选的包里取图"
           },
           "defaultKind": {
             "type": "string",

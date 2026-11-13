@@ -1724,7 +1724,7 @@ export interface VideoTemplateDraftIn {
   sourceDurationSec?: number;
   /** 输出画幅 */
   aspectRatio?: string;
-  /** 关联的已发布替换素材包 */
+  /** 关联的已发布替换素材包；**可省略**——用途绑定模式下省略即「只声明槽位」，调用时按用途从用户自己选的包里取图 */
   packId?: string | null;
   /** 选中这张原片卡片时，替换配置默认切到的替换类型 */
   defaultKind?: "character" | "product" | "scene";

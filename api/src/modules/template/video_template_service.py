@@ -188,8 +188,38 @@ async def _resolve_media(
 
     required = reference_roles(payload.rules, payload.prompt, payload.default_kind)
     if required is not None:
-        if payload.media_order or not payload.pack_id:
-            raise BadRequest("用途绑定模式需提供已发布 packId，并由服务端生成完整媒体清单")
+        if payload.media_order:
+            raise BadRequest("用途绑定模式由服务端生成媒体清单，不接受 mediaOrder")
+        if not payload.pack_id:
+            # **A 只声明槽位**：不绑默认包，B 调用时按用途从自己选的包里取图。
+            # 空 `assetId` 是既有语义（多人物模板的部分槽位就这么标），
+            # `validate_media` 不会把空槽当重复图片；运行期 `_media_in_mixed_order`
+            # 按 `referenceBindings` 重新配图，编号仍然不动。
+            # 不绑包时**没有辅助图**：辅助图来自包成员，包是运行时才定的。
+            labels = PACK_ROLES.get(payload.default_kind, {})
+            source_media = VideoTemplateMedia(
+                token="",
+                role="source_video",
+                type="video",
+                asset_id=payload.source_video_asset_id,
+                name=payload.source_video_name,
+                in_prompt=True,
+            )
+            slots = [
+                VideoTemplateMedia(
+                    token="",
+                    role=role,
+                    type="image",
+                    asset_id=None,
+                    name=f"运行时选{labels.get(role, role)}",
+                )
+                for role in required
+            ]
+            media = place_source(source_media, slots, payload.rules)
+            for index, item in enumerate(media, 1):
+                item.token = f"{{{{Mixed {index}}}}}"
+                item.in_prompt = item.token in tokens
+            return media, "", 0
         pack = await session.get(TemplatePack, payload.pack_id)
         if pack is None or pack.deleted_at is not None or pack.status != "published":
             raise BadRequest("请选择已发布的替换素材包")

@@ -60,7 +60,11 @@ class VideoTemplateDraftIn(CamelModel):
         default=0, ge=0, description="样片真实时长，用于提示与档位说明"
     )
     aspect_ratio: str = Field(default="9:16", max_length=16, description="输出画幅")
-    pack_id: str | None = Field(default=None, description="关联的已发布替换素材包")
+    pack_id: str | None = Field(
+        default=None,
+        description="关联的已发布替换素材包；**可省略**——用途绑定模式下省略即"
+        "「只声明槽位」，调用时按用途从用户自己选的包里取图",
+    )
     default_kind: ReplacementKindLiteral = Field(
         default="product",
         description="选中这张原片卡片时，替换配置默认切到的替换类型",
