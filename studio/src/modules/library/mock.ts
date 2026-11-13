@@ -46,6 +46,13 @@ function packTags(
   return TAGS.filter((tag) => ids.has(tag.id));
 }
 
+/** 封装成员入参（`POST` / `PATCH /library/packs` 的 `items`）。 */
+type PackItemBody = { assetId: string; role?: string; description?: string };
+
+function packItemsIn(body: Record<string, unknown>): PackItemBody[] {
+  return ((body.items as PackItemBody[] | undefined) ?? []).filter((item) => !!item?.assetId);
+}
+
 /** `isLeader` 现在只服务删除窄口（§3.4.1）；审批资格按权限点与目标范围判，
  *  和这个字段无关——mock 没有当前用户的权限模型，申请单列表也就不按组长筛。 */
 const GROUPS: LibraryGroupOut[] = [
@@ -702,7 +709,9 @@ export const routes: MockRoute[] = [
     method: 'POST',
     pattern: /^\/library\/packs$/,
     handler: (ctx) => {
-      const assetIds = (ctx.body.assetIds as string[]) ?? [];
+      const items = packItemsIn(ctx.body);
+      // `assetIds` 是「勾选一批直接封装」的简写，追加在 `items` 之后（与后端同口径）
+      const assetIds = [...items.map((item) => item.assetId), ...((ctx.body.assetIds as string[]) ?? [])];
       const members = assetIds.map((id) => find(id));
       if (!members.length) throw new HttpError(400, '封装至少需要一个成员');
       const row = asset({
@@ -719,8 +728,9 @@ export const routes: MockRoute[] = [
         kind: item.kind,
         state: item.state,
         position: index,
-        role: '',
-        description: '',
+        // 用途跟着成员走：模板库按它决定 `{{Mixed N}}` 的取位
+        role: items.find((entry) => entry.assetId === item.id)?.role ?? '',
+        description: items.find((entry) => entry.assetId === item.id)?.description ?? '',
         sizeBytes: item.sizeBytes ?? 0,
         coverUrl: item.coverUrl ?? null,
       }));
@@ -735,6 +745,24 @@ export const routes: MockRoute[] = [
     handler: (ctx) => {
       const row = find(ctx.path.split('/').pop() ?? '');
       if (ctx.body.name) row.name = String(ctx.body.name);
+      // `items` 是整体替换（不是增量）：只改用途时调用方也要给全量清单
+      if (ctx.body.items) {
+        const items = packItemsIn(ctx.body);
+        row.packItems = items.map((item, index) => {
+          const member = find(item.assetId);
+          return {
+            assetId: member.id,
+            name: member.name,
+            kind: member.kind,
+            state: member.state,
+            position: index,
+            role: item.role ?? '',
+            description: item.description ?? '',
+            sizeBytes: member.sizeBytes ?? 0,
+            coverUrl: member.coverUrl ?? null,
+          };
+        });
+      }
       return (row);
     },
   },

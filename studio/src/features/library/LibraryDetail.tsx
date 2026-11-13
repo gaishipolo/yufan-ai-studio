@@ -42,11 +42,13 @@ import {
   trashDaysLeft,
 } from '@/entities/library/model/types';
 import { tagLabel, tagOptions } from '@/entities/library/model/tagTree';
+import { PACK_ITEM_ROLES, packItemRoleLabel } from '@/entities/library/model/packItemRoles';
 import {
   useLibraryDetail,
   useLibraryMedia,
   usePatchAsset,
   useReadText,
+  useUpdatePack,
   useSaveAssetFile,
 } from '@/entities/library/api/library.queries';
 import type { LibraryCardAction } from './LibraryCard';
@@ -112,6 +114,7 @@ function DetailBody({
   onOpenAsset,
 }: LibraryDetailProps & { asset: LibraryAssetDetailOut }) {
   const patch = usePatchAsset();
+  const updatePack = useUpdatePack();
   const saveFile = useSaveAssetFile();
   const createTag = useCreateTagInline();
   const offer = deleteOffer(asset, viewer);
@@ -176,13 +179,35 @@ function DetailBody({
     );
   };
 
+  /**
+   * 改封装成员的用途。
+   *
+   * `PATCH /library/packs/{id}` 的 `items` 是**整体替换**，所以每次都要把完整成员
+   * 清单带上（顺序与 `position` 一致），只改目标那一项。**不带 `expectedVersion`**：
+   * 这是逐项勾选式的连续提交（和标签一样），`asset` 要等 invalidate 后才刷新，
+   * 带版本号第二项必然 409。成员列表本身来自服务端快照，不存在「本地拼错顺序」。
+   */
+  const savePackRole = (assetId: string, role: string) => {
+    const items = (asset.packItems ?? []).map((item) => ({
+      assetId: item.assetId,
+      role: item.assetId === assetId ? role : item.role,
+      description: item.description,
+    }));
+    updatePack.mutate(
+      { id: asset.id, items, expectedVersion: 0 },
+      {
+        onSuccess: () => toast('已保存用途'),
+        onError: (error) => toast(error.message, 'error'),
+      },
+    );
+  };
+
   const download = () => {
     saveFile.mutate(
       { id: asset.id, filename: asset.name },
       {
         onSuccess: () => toast('已开始下载'),
-        onError: (error) => toast(error.message, 'error'),
-      },
+        onError: (error) => toast(error.message, 'error'),      },
     );
   };
 
@@ -225,7 +250,12 @@ function DetailBody({
             </pre>
           </div>
         ) : asset.kind === 'pack' ? (
-          <PackMembers asset={asset} onOpenAsset={onOpenAsset} />
+          <PackMembers
+            asset={asset}
+            editable={canEdit}
+            onRoleChange={savePackRole}
+            onOpenAsset={onOpenAsset}
+          />
         ) : asset.kind === 'image' ? (
           <MediaImage asset={asset} />
         ) : asset.kind === 'video' ? (
@@ -592,9 +622,14 @@ function MediaFallback({ icon, loading }: { icon: ReactNode; loading: boolean })
 
 function PackMembers({
   asset,
+  editable,
+  onRoleChange,
   onOpenAsset,
 }: {
   asset: LibraryAssetDetailOut;
+  /** 只有所有者（或管理员）能改用途；服务端同样按归属判，这里只是不给无效按钮 */
+  editable: boolean;
+  onRoleChange: (assetId: string, role: string) => void;
   onOpenAsset: (id: string) => void;
 }) {
   if (!asset.packItems?.length) {
@@ -608,22 +643,48 @@ function PackMembers({
   return (
     <div className="grid grid-cols-[repeat(auto-fill,minmax(120px,1fr))] gap-2 p-2.5">
       {asset.packItems.map((item) => (
-        <button
+        <div
           key={`${item.assetId}-${item.position}`}
-          type="button"
-          onClick={() => onOpenAsset(item.assetId)}
           className="group rounded-lg border border-line-soft bg-panel p-1.5 text-left transition hover:border-primary-line"
         >
-          <CoverImage src={item.coverUrl ?? undefined} seed={item.assetId} className="aspect-[4/3] rounded-md" />
-          <div className="mt-1 flex items-center gap-1">
-            <span className="truncate text-[13.5px] text-ink">{item.name || item.assetId}</span>
-            <ArrowUpRight size={11} className="ml-auto shrink-0 text-ink-mute" />
-          </div>
-          <div className="truncate text-[12.5px] text-ink-mute">
-            {KIND_LABEL[item.kind]}
-            {item.role ? ` · ${item.role}` : ''}
-          </div>
-        </button>
+          <button
+            type="button"
+            onClick={() => onOpenAsset(item.assetId)}
+            className="block w-full text-left"
+            aria-label={`打开 ${item.name || item.assetId}`}
+          >
+            <CoverImage src={item.coverUrl ?? undefined} seed={item.assetId} className="aspect-[4/3] rounded-md" />
+            <div className="mt-1 flex items-center gap-1">
+              <span className="truncate text-[13.5px] text-ink">{item.name || item.assetId}</span>
+              <ArrowUpRight size={11} className="ml-auto shrink-0 text-ink-mute" />
+            </div>
+          </button>
+          {/*
+            `role` 是「用途」：模板库把封装当参考图用时，`{{Mixed N}}` 按用途取位。
+            就地改而不是另开编辑弹窗——成员顺序（`position`）不动，改的是一个字段，
+            开一个大表单反而容易让人以为顺序也能拖。
+          */}
+          {editable && item.kind === 'image' ? (
+            <select
+              value={item.role}
+              onChange={(event) => onRoleChange(item.assetId, event.target.value)}
+              aria-label={`${item.name || item.assetId} 的用途`}
+              className="mt-1 h-7 w-full rounded-md border border-line bg-white px-1 text-[12.5px] text-ink outline-none focus:border-primary-line"
+            >
+              <option value="">不声明用途</option>
+              {PACK_ITEM_ROLES.map((role) => (
+                <option key={role} value={role}>
+                  {packItemRoleLabel(role)}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <div className="mt-1 truncate text-[12.5px] text-ink-mute">
+              {KIND_LABEL[item.kind]}
+              {item.role ? ` · ${packItemRoleLabel(item.role)}` : ''}
+            </div>
+          )}
+        </div>
       ))}
     </div>
   );

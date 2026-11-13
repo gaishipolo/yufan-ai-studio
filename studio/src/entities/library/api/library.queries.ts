@@ -13,7 +13,7 @@ import type {
 } from '@/shared/api/schema';
 import { ApiError } from '@/shared/api/types';
 import { saveBlob } from '@/shared/lib/download';
-import { libraryApi, type LibraryListParams, type LibraryTagScope } from './library.api';
+import { libraryApi, type LibraryListParams, type LibraryTagScope, type PackItemInput } from './library.api';
 
 /**
  * 查询键第一段固定 `library`：并存期要能一次失效整块，且不能误伤
@@ -220,8 +220,30 @@ export function useUploadAsset() {
 export function useCreatePack() {
   const invalidate = useInvalidateLibrary();
   return useMutation({
-    mutationFn: (body: { name: string; assetIds: string[]; tagIds?: string[] }) =>
+    mutationFn: (body: { name: string; items: PackItemInput[]; tagIds?: string[] }) =>
       libraryApi.createPack(body),
+    onSuccess: invalidate,
+  });
+}
+
+/**
+ * 改封装成员（含成员的**用途**）。
+ *
+ * 服务端 `items` 是整体替换，所以调用方要给全量清单；只改用途时也必须把
+ * 其余成员的 `assetId` / 顺序原样带上，否则等于把别人悄悄删了。
+ */
+export function useUpdatePack() {
+  const invalidate = useInvalidateLibrary();
+  return useMutation({
+    mutationFn: ({
+      id,
+      items,
+      expectedVersion,
+    }: {
+      id: string;
+      items: PackItemInput[];
+      expectedVersion?: number;
+    }) => libraryApi.updatePack(id, { items, expectedVersion }),
     onSuccess: invalidate,
   });
 }

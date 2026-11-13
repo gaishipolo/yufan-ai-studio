@@ -30,6 +30,13 @@ import { viewQuery, type LibraryView } from '../model/types';
  * axios 默认的 `tagIds[]=a` 它解析不到，会静默变成「不筛选」。 */
 const REPEATED_ARRAY = { indexes: null } as const;
 
+/** 封装成员入参。`role` 是模板替换用的用途（`front` / `multiview` …），可空。 */
+export interface PackItemInput {
+  assetId: string;
+  role?: string;
+  description?: string;
+}
+
 export interface LibraryListParams {
   view: LibraryView;
   kind?: string;
@@ -156,6 +163,8 @@ export const libraryApi = {
 
   createPack: (body: {
     name: string;
+    /** 成员。带 `role` 才能被模板库当成参考图用（`{{Mixed N}}` 按用途取位）。 */
+    items?: PackItemInput[];
     assetIds?: string[];
     coverAssetId?: string;
     tagIds?: string[];
@@ -163,7 +172,14 @@ export const libraryApi = {
 
   updatePack: (
     id: string,
-    body: { name?: string; assetIds?: string[]; coverAssetId?: string; expectedVersion?: number },
+    body: {
+      name?: string;
+      /** 整体替换（不是增量）：服务端按这份清单重写成员与顺序。 */
+      items?: PackItemInput[];
+      assetIds?: string[];
+      coverAssetId?: string;
+      expectedVersion?: number;
+    },
   ) => api.patch<LibraryAssetDetailOut>(`/library/packs/${id}`, body),
 
   deletePack: (id: string) => api.delete<null>(`/library/packs/${id}`),
