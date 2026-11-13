@@ -214,10 +214,17 @@ def test_template_asset_id_space_is_backfilled_as_v1(
 
     两套主键都是 32 位 uuid hex、形状不可区分，所以标记列一旦被回填成 `v2`
     （或漏填成 NULL 再被读成 `v2`），历史封装就会去 v2 找那几张图 —— 找不到，
-    表现是「老封装的图片全空」。而 `template_pack_versions.reference_ids` 是
-    已冻结的历史证据，批量改写成 v2 id 会让历史任务不可复现。
+    表现是「老封装的图片全空」。
 
-    做法与 `app_meta` 那条一致：升到上一版 → 塞历史行 → 升到 head → 逐字段比对。
+    做法与 `app_meta` 那条一致：升到上一版 → 塞历史行 → 升级 → 逐字段比对。
+
+    **本用例钉两段语义**（步 6 之后升级不再是一步）：
+
+    1. 升到 `b7e3d9f2a418`（回填那一版）：三处历史行的 id 与标记都必须是 `v1`；
+    2. 再升到 head（`d41c7a9e5f28` 改写活引用）：这条历史行**没有 v2 前身**
+       （`library_assets` 里没有 `legacy:asset_v1_a`），所以必须**中止并提示
+       先跑 `import-archive`**。静默置空等于让封装悄悄少一张参考图，
+       要到用户生成失败时才发现。
     """
     import sqlite3
 
@@ -269,7 +276,7 @@ def test_template_asset_id_space_is_backfilled_as_v1(
             conn.commit()
         finally:
             conn.close()
-        command.upgrade(config, "head")
+        command.upgrade(config, "b7e3d9f2a418")
         conn = sqlite3.connect(db_file)
         try:
             refs = conn.execute(
@@ -283,13 +290,17 @@ def test_template_asset_id_space_is_backfilled_as_v1(
             ).fetchall()
         finally:
             conn.close()
+
+        assert refs == [("asset_v1_a", "v1")], f"封装参考行的 id 或标记被改了：{refs}"
+        assert versions == [('["asset_v1_a"]', "v1")], f"冻结版本的 id 或标记被改了：{versions}"
+        assert inputs == [("asset_v1_b", "v1")], f"运行输入的 id 或标记被改了：{inputs}"
+
+        # 步 6：缺 v2 前身时必须中止，而不是静默置空或跳过
+        with pytest.raises(RuntimeError, match="import-archive"):
+            command.upgrade(config, "head")
     finally:
         reload_settings()
         db_session.reset_state_for_tests()
-
-    assert refs == [("asset_v1_a", "v1")], f"封装参考行的 id 或标记被改了：{refs}"
-    assert versions == [('["asset_v1_a"]', "v1")], f"冻结版本的 id 或标记被改了：{versions}"
-    assert inputs == [("asset_v1_b", "v1")], f"运行输入的 id 或标记被改了：{inputs}"
 
 
 def test_inflight_jobs_survive_the_lease_token_migration(

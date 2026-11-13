@@ -3146,3 +3146,44 @@ A（盘点）与 C（只清测试/演示残留）这一轮落地。
 **下一步**：B 仍等产品口径（已付费任务留多久、`inputs/` 与 `code/` 是否同期限）。
 
 
+
+### 24.26 步 6（一）：v1 活引用切 v2，以及一处推翻了原计划的发现
+
+**开工时的数据事实**（本机开发库实测，不是推算）：
+
+| 事实 | 数值 |
+|---|---|
+| 旧 `assets` 表行数 | 32（其中 4 条已删 → 28 条在册） |
+| v2 里 `source_key='legacy:<id>'` 行 | 迁移前 22 条，`import-archive` 追平后 31 条 |
+| `template_packs` 封面指向 v1 | 17 个包（**16 published / 1 disabled**） |
+| `template_pack_references` 指向 v1 | 20 条 |
+| `template_pack_versions.reference_ids` 冻结快照是 v1 | 21 条 |
+| `replacement_run_inputs` 是 v1 | 148 条 |
+
+**发现（推翻 §23.2 的一条假设）**：那 17 个包是**真实在用**的（T35 有 15 次运行、
+3030 有 6 次、旋转与镜像 6 次）。**删掉 `assets` 表会让这 16 个已发布模板包全部
+无法生成**——`authorization.py:78-92` 读 `versions.reference_ids` + `reference_ids_space`
+去 `resolve_assets()`，而冻结快照按 §21.4 **不许改写**成 v2 id。于是：
+
+> 「删表」与「不改写冻结快照」两条同时成立时，历史版本必须有一个**只读的
+> v1 id 解析来源**。
+
+**所以 `assets` 表降级为只读索引，不删**：保留 `models.Asset` 与
+`lookup.get_many()`（历史版本解析 + 历史 run 回放的 `storage_key` 来源），
+删掉的是**用户可见的素材库功能**（12 个 `/assets` 端点、上传/登记/改名/分享/
+回收站/彻底删除、`seed`）与**归档盘运维**（`asset.mirror`、`asset.gc`、
+`prune-blobs`、`rebuild-mirrors`、配额水位与镜像一致性自检）。
+归档盘上的字节一个不动，也不再由代码托管——历史回放仍按 `storage_key` 直接读。
+
+**已落地**：
+
+1. `app library import-archive` 追平 9 条（73,285,666 字节），`legacy:` 映射
+   从 22 → 31 条，37 处活引用全部可映射；
+2. 迁移 `d41c7a9e5f28` 把两处**活引用**改写成 v2 id：
+   `template_packs.cover_asset_id(+space)` 17 行、`template_pack_references.asset_id(+space)`
+   20 行，改完 v1 残留 0；缺映射则**中止并列出 id**（先跑 `import-archive`），
+   不静默置空；
+3. 冻结快照原样保留：`versions` 21 条、`run_inputs` 148 条仍是 v1 id。
+
+**下一步**：`modules/asset` 瘦身 → 前端旧入口下线 → 守卫（全仓 `get_asset_lookup`
+只允许出现在历史解析路径、`FROM assets` 只允许出现在 `lookup.py`）→ 契约重导出。
