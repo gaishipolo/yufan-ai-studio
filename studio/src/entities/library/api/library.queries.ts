@@ -85,11 +85,15 @@ export function useLibrarySelection(params: {
   tagIds?: string[];
   page?: number;
   pageSize?: number;
+  /** 暂不需要这份候选时先不发请求（例如封装编辑器正在编辑旧素材库的包） */
+  enabled?: boolean;
 }) {
+  const { enabled = true, ...rest } = params;
   return useQuery({
-    queryKey: libraryKeys.selection(params),
-    queryFn: () => libraryApi.selection({ ...params, includePacks: false }),
+    queryKey: libraryKeys.selection(rest),
+    queryFn: () => libraryApi.selection({ ...rest, includePacks: false }),
     placeholderData: (previous) => previous,
+    enabled,
   });
 }
 

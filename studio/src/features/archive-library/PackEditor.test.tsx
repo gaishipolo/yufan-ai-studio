@@ -5,16 +5,26 @@ import { PackEditor } from './PackEditor';
 
 const mock = vi.hoisted(() => ({
   save: vi.fn(), action: vi.fn(),
+  /* 旧素材库候选（编辑既有 v1 封装时才读） */
   items: [
     {id: 'p1', name: '产品正面', previewUrl: '/thumb/p1'},
     {id: 'p2', name: '产品三视图', previewUrl: '/thumb/p2'},
     {id: 'p3', name: '产品细节', previewUrl: '/thumb/p3'},
+  ],
+  /* 资产库 v2 候选（新建 / 编辑 v2 封装） */
+  libraryItems: [
+    {id: 'l1', name: '库-产品正面', previewUrl: '/api/v1/library/assets/l1/thumbnail'},
+    {id: 'l2', name: '库-产品三视图', previewUrl: null},
+    {id: 'l3', name: '库-产品细节', previewUrl: '/api/v1/library/assets/l3/thumbnail'},
   ],
 }));
 
 vi.mock('@/entities/asset/api/archive.queries', () => ({
   useArchiveAssets: () => ({data: {items: mock.items, total: 3}, isPending: false, error: null, refetch: vi.fn()}),
   useArchivedMedia: () => ({data: undefined, error: null}),
+}));
+vi.mock('@/entities/library/api/library.queries', () => ({
+  useLibrarySelection: () => ({data: {items: mock.libraryItems, total: 3}, isPending: false, error: null, refetch: vi.fn()}),
 }));
 vi.mock('@/entities/template/api/pack.queries', () => ({
   usePackMutations: () => ({
@@ -26,6 +36,7 @@ vi.mock('@/entities/template/api/pack.queries', () => ({
 const pack: PackManaged = {
   id: 'a'.repeat(32), kind: 'product', name: '3030', referenceIds: ['p1', 'p3'],
   coverReferenceId: 'p1', version: 1, revision: 3, status: 'published', gaps: [],
+  referenceIdSpace: 'v1',
 };
 
 beforeEach(() => {
@@ -48,12 +59,12 @@ describe('封装编辑器', () => {
     expect(within(check).getByText('1–10 张参考图')).toBeVisible();
   });
 
-  it('补齐名称、用途和范围后按顺序保存并发布，用途随参考图一起提交', async () => {
+  it('新建封装从资产库选图，按顺序保存并发布，字段用 referenceLibraryIds', async () => {
     const onClose = vi.fn();
     render(<PackEditor pack={null} onClose={onClose} />);
     fireEvent.change(screen.getByLabelText('对象名称'), {target: {value: '3030 粉色'}});
-    fireEvent.click(screen.getByRole('button', {name: /产品正面/}));
-    fireEvent.click(screen.getByRole('button', {name: /产品细节/}));
+    fireEvent.click(screen.getByRole('button', {name: /库-产品正面/}));
+    fireEvent.click(screen.getByRole('button', {name: /库-产品细节/}));
     fireEvent.change(screen.getByLabelText('第 2 张的用途'), {target: {value: 'detail'}});
     fireEvent.click(screen.getByLabelText('产品细节图'));
     fireEvent.click(screen.getByLabelText('人物上身穿着'));
@@ -66,7 +77,11 @@ describe('封装编辑器', () => {
     await vi.waitFor(() => expect(mock.action).toHaveBeenCalledOnce());
     const payload = mock.save.mock.calls[0][0];
     expect(payload.name).toBe('3030 粉色');
-    expect(payload.referenceIds).toEqual(['p1', 'p3']);
+    /* 新建一律写 v2：`referenceIds` 与 `referenceLibraryIds` 是两套 id 空间，
+       混着写会让同一批 hex 被另一侧解释成别人的素材。 */
+    expect(payload.referenceLibraryIds).toEqual(['l1', 'l3']);
+    expect(payload.coverLibraryId).toBe('l1');
+    expect(payload.referenceIds).toBeUndefined();
     expect(payload.bindings).toEqual([
       {role: 'front', description: ''},
       {role: 'detail', description: ''},
@@ -76,10 +91,24 @@ describe('封装编辑器', () => {
     await vi.waitFor(() => expect(onClose).toHaveBeenCalled());
   });
 
-  it('只保存草稿时不发布', async () => {
+  it('编辑旧素材库的封装仍写 referenceIds，不会被重新解释成 v2', async () => {
     render(<PackEditor pack={pack} onClose={vi.fn()} />);
     fireEvent.click(screen.getByRole('button', {name: '保存草稿'}));
     await vi.waitFor(() => expect(mock.save).toHaveBeenCalledOnce());
+    const payload = mock.save.mock.calls[0][0];
+    expect(payload.referenceIds).toEqual(['p1', 'p3']);
+    expect(payload.coverReferenceId).toBe('p1');
+    expect(payload.referenceLibraryIds).toBeUndefined();
     expect(mock.action).not.toHaveBeenCalled();
+  });
+
+  it('编辑 v2 封装写 referenceLibraryIds，字段名跟着空间走', async () => {
+    render(<PackEditor pack={{...pack, referenceIds: ['l1', 'l2'], coverReferenceId: 'l1', referenceIdSpace: 'v2'}} onClose={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', {name: '保存草稿'}));
+    await vi.waitFor(() => expect(mock.save).toHaveBeenCalledOnce());
+    const payload = mock.save.mock.calls[0][0];
+    expect(payload.referenceLibraryIds).toEqual(['l1', 'l2']);
+    expect(payload.coverLibraryId).toBe('l1');
+    expect(payload.referenceIds).toBeUndefined();
   });
 });

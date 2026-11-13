@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { ArrowDown, ArrowUp, Check, Circle, Trash2 } from 'lucide-react';
 import { useArchiveAssets } from '@/entities/asset/api/archive.queries';
+import { useLibrarySelection } from '@/entities/library/api/library.queries';
 import { usePackMutations } from '@/entities/template/api/pack.queries';
 import { PACK_SCOPES, baseRole, rolesFor } from '@/entities/template/model/packRoles';
 import type { PackBinding, PackDraftIn, PackManaged } from '@/shared/api/schema';
@@ -11,11 +12,19 @@ import { ArchivedThumbnail } from '@/entities/asset/ui/ArchivedThumbnail';
 
 type Kind = 'product' | 'character' | 'scene';
 
+/**
+ * 参考图 id 属于哪套素材库。**只按字段名判，不按「查得到哪张表」猜**：
+ * 两套 id 都是 32 位 hex，形状完全一样，猜错的方向是「把别人的图当自己的」
+ * 或者「编辑一次封装就把同一批 id 重新解释成另一侧」。
+ */
+type Space = 'v1' | 'v2';
+
 interface Form {
   requestId: string;
   expectedRevision: number;
   kind: Kind;
   name: string;
+  space: Space;
   referenceIds: string[];
   coverReferenceId: string | null;
   wardrobeMode: 'preserve' | 'reference';
@@ -25,6 +34,16 @@ interface Form {
   requiredRoles: string[];
   supportedScopes: string[];
 }
+
+/** 候选图统一形状：两套素材库字段名不同，列表只认这三样。 */
+interface Candidate {
+  id: string;
+  name: string;
+  previewUrl: string | null;
+}
+
+/** 已选图的展示信息缓存：翻页后当前页里找不到它，名称和缩略图仍要画得出来。 */
+type PickedInfo = Record<string, { name: string; previewUrl: string | null }>;
 
 /** 一页只放 24 张，翻页不影响已选：选择状态只存在表单里。 */
 const PAGE_SIZE = 24;
@@ -39,6 +58,8 @@ function initialForm(pack: PackManaged | null): Form {
     expectedRevision: pack?.revision ?? 0,
     kind,
     name: pack?.name ?? '',
+    // 新建一律写资产库 v2；编辑旧包沿用它的空间，否则一次保存就会把 v1 id 当 v2 重解释。
+    space: pack ? (pack.referenceIdSpace === 'v2' ? 'v2' : 'v1') : 'v2',
     referenceIds,
     coverReferenceId: pack?.coverReferenceId ?? referenceIds[0] ?? null,
     wardrobeMode: pack?.wardrobeMode === 'reference' ? 'reference' : 'preserve',
@@ -51,6 +72,18 @@ function initialForm(pack: PackManaged | null): Form {
     requiredRoles: pack?.requiredRoles?.length ? pack.requiredRoles : [baseRole(kind)],
     supportedScopes: pack?.supportedScopes ?? [],
   };
+}
+
+/** 编辑既有包时把它的缩略图与名称先灌进缓存：首屏不该出现「参考图 1 / 参考图 2」。 */
+function initialPicked(pack: PackManaged | null): PickedInfo {
+  const seeded: PickedInfo = {};
+  (pack?.referenceIds ?? []).forEach((id, index) => {
+    seeded[id] = {
+      name: pack?.referenceNames?.[index] ?? '',
+      previewUrl: pack?.previewUrls?.[index] ?? null,
+    };
+  });
+  return seeded;
 }
 
 /** 新加一张图时优先补没被占用的用途，避免整包全是主图。 */
@@ -75,23 +108,52 @@ export function PackEditor({pack, onClose}: {pack: PackManaged | null; onClose: 
   const [form, setForm] = useState<Form>(() => initialForm(pack));
   const [page, setPage] = useState(1);
   const [error, setError] = useState('');
-  const [names, setNames] = useState<Record<string, string>>({});
-  const assets = useArchiveAssets(form.kind, {scope: 'mine', page, pageSize: PAGE_SIZE});
+  const [picked, setPicked] = useState<PickedInfo>(() => initialPicked(pack));
+  const legacy = useArchiveAssets(form.kind, {
+    scope: 'mine',
+    page,
+    pageSize: PAGE_SIZE,
+    enabled: form.space === 'v1',
+  });
+  const library = useLibrarySelection({
+    kind: 'image',
+    page,
+    pageSize: PAGE_SIZE,
+    enabled: form.space === 'v2',
+  });
   const {save, action} = usePackMutations();
   const busy = save.isPending || action.isPending;
   const labels = rolesFor(form.kind);
   const gaps = gapsOf(form);
+  /* 两套数据源只有字段名不同；这里收敛成同一形状，下面的渲染一个字都不用改。 */
+  const candidates: Candidate[] = form.space === 'v2'
+    ? (library.data?.items ?? []).map(item => ({
+        id: item.id,
+        name: item.name,
+        // 缩略图端点是带鉴权的取图接口，与本页用的 `ArchivedThumbnail` 走同一条路；
+        // `coverUrl` 是对象存储的公开地址（`/static/...`），拼不进 API 相对路径。
+        previewUrl: item.previewUrl ?? null,
+      }))
+    : (legacy.data?.items ?? []).map(item => ({
+        id: item.id,
+        name: item.name,
+        previewUrl: item.previewUrl ?? null,
+      }));
+  const total = (form.space === 'v2' ? library.data?.total : legacy.data?.total) ?? 0;
+  const listError = form.space === 'v2' ? library.error : legacy.error;
+  const listPending = form.space === 'v2' ? library.isPending : legacy.isPending;
+  const refetch = () => {void (form.space === 'v2' ? library.refetch() : legacy.refetch());};
 
   const patch = (next: Partial<Form>) => setForm(value => ({...value, ...next}));
 
-  function add(id: string) {
-    setNames(value => ({...value, [id]: assets.data?.items.find(asset => asset.id === id)?.name ?? value[id] ?? ''}));
+  function add(candidate: Candidate) {
+    setPicked(value => ({...value, [candidate.id]: {name: candidate.name, previewUrl: candidate.previewUrl}}));
     setForm(value => {
-      if (value.referenceIds.includes(id) || value.referenceIds.length >= 10) return value;
+      if (value.referenceIds.includes(candidate.id) || value.referenceIds.length >= 10) return value;
       return {
         ...value,
-        referenceIds: [...value.referenceIds, id],
-        coverReferenceId: value.coverReferenceId ?? id,
+        referenceIds: [...value.referenceIds, candidate.id],
+        coverReferenceId: value.coverReferenceId ?? candidate.id,
         bindings: [...value.bindings, {role: suggestRole(value), description: ''}],
       };
     });
@@ -137,7 +199,24 @@ export function PackEditor({pack, onClose}: {pack: PackManaged | null; onClose: 
 
   async function submit(publish: boolean) {
     setError('');
-    const payload: PackDraftIn = {...form, bindings: form.bindings.slice(0, form.referenceIds.length)};
+    /* 字段名由空间决定：`referenceLibraryIds` / `coverLibraryId` 进资产库 v2，
+       `referenceIds` / `coverReferenceId` 仍走旧素材库。两组互斥，后端也这么判。 */
+    const refs = form.space === 'v2'
+      ? {referenceLibraryIds: form.referenceIds, coverLibraryId: form.coverReferenceId}
+      : {referenceIds: form.referenceIds, coverReferenceId: form.coverReferenceId};
+    const payload: PackDraftIn = {
+      requestId: form.requestId,
+      expectedRevision: form.expectedRevision,
+      kind: form.kind,
+      name: form.name,
+      wardrobeMode: form.wardrobeMode,
+      features: form.features,
+      instructions: form.instructions,
+      requiredRoles: form.requiredRoles,
+      supportedScopes: form.supportedScopes,
+      bindings: form.bindings.slice(0, form.referenceIds.length),
+      ...refs,
+    };
     try {
       const saved = await save.mutateAsync(payload);
       if (!publish) { onClose(); return; }
@@ -156,7 +235,7 @@ export function PackEditor({pack, onClose}: {pack: PackManaged | null; onClose: 
         <label className="block text-xs">对象类型<select className="mt-1 w-full rounded-lg border border-line bg-panel p-2" value={form.kind} disabled={!!pack || busy} onChange={event => {
           const kind = event.target.value as Kind;
           setForm({...initialForm(null), kind, name: form.name, requiredRoles: [baseRole(kind)]});
-          setNames({});
+          setPicked({});
           setPage(1);
         }}><option value="product">产品</option><option value="character">人物</option><option value="scene">场景</option></select></label>
         <label className="block text-xs sm:col-span-2">对象名称<input maxLength={160} required className="mt-1 w-full rounded-lg border border-line bg-panel p-2" placeholder="例如：3030 粉色" value={form.name} onChange={event => patch({name: event.target.value})} /></label>
@@ -165,20 +244,20 @@ export function PackEditor({pack, onClose}: {pack: PackManaged | null; onClose: 
       <div className="grid gap-4 lg:grid-cols-[1.05fr_1fr]">
         <section aria-label="从素材库选择参考图" className="space-y-2">
           <h3 className="text-sm font-semibold text-ink">1. 选择同类参考图<span className="ml-2 text-xs font-normal text-ink-mute">已选 {form.referenceIds.length}/10</span></h3>
-          {assets.error && <ErrorState error={assets.error} title="参考素材读取失败" onRetry={() => {void assets.refetch();}} />}
-          {assets.isPending && <p role="status" className="text-xs">正在读取参考图…</p>}
-          {!assets.error && !assets.isPending && !assets.data?.items.length && <p className="rounded-lg bg-panel-soft p-3 text-xs text-ink-soft">还没有可用的同类素材，请先到「我的素材」上传后回来。</p>}
-          <div className="grid max-h-[320px] grid-cols-3 gap-2 overflow-y-auto pr-1">{assets.data?.items.map(asset => {
-            const picked = form.referenceIds.indexOf(asset.id);
-            return <button type="button" key={asset.id} aria-pressed={picked >= 0} disabled={busy || (picked < 0 && form.referenceIds.length >= 10)}
-              onClick={() => picked >= 0 ? removeAt(picked) : add(asset.id)}
-              className={`relative rounded-lg border p-1.5 text-left text-[11px] transition-colors ${picked >= 0 ? 'border-primary ring-1 ring-primary' : 'border-line hover:border-primary-line'} disabled:opacity-50`}>
-              <span className="mb-1 block h-16"><ArchivedThumbnail url={asset.previewUrl ?? null} type="image" /></span>
-              <span className="block truncate text-ink-soft">{asset.name}</span>
-              {picked >= 0 && <span className="absolute right-1 top-1 rounded-full bg-primary px-1 text-[10px] text-white">{picked + 1}</span>}
+          {listError && <ErrorState error={listError} title="参考素材读取失败" onRetry={refetch} />}
+          {listPending && <p role="status" className="text-xs">正在读取参考图…</p>}
+          {!listError && !listPending && !candidates.length && <p className="rounded-lg bg-panel-soft p-3 text-xs text-ink-soft">还没有可用的同类素材，请先到「我的素材」上传后回来。</p>}
+          <div className="grid max-h-[320px] grid-cols-3 gap-2 overflow-y-auto pr-1">{candidates.map(candidate => {
+            const at = form.referenceIds.indexOf(candidate.id);
+            return <button type="button" key={candidate.id} aria-pressed={at >= 0} disabled={busy || (at < 0 && form.referenceIds.length >= 10)}
+              onClick={() => at >= 0 ? removeAt(at) : add(candidate)}
+              className={`relative rounded-lg border p-1.5 text-left text-[11px] transition-colors ${at >= 0 ? 'border-primary ring-1 ring-primary' : 'border-line hover:border-primary-line'} disabled:opacity-50`}>
+              <span className="mb-1 block h-16"><ArchivedThumbnail url={candidate.previewUrl} type="image" /></span>
+              <span className="block truncate text-ink-soft">{candidate.name}</span>
+              {at >= 0 && <span className="absolute right-1 top-1 rounded-full bg-primary px-1 text-[10px] text-white">{at + 1}</span>}
             </button>;
           })}</div>
-          <div className="flex items-center justify-between text-xs"><Button size="sm" disabled={page <= 1 || busy} onClick={() => setPage(page - 1)}>上一页</Button><span className="text-ink-mute">第 {page} 页</span><Button size="sm" disabled={busy || !assets.data || page * PAGE_SIZE >= assets.data.total} onClick={() => setPage(page + 1)}>下一页</Button></div>
+          <div className="flex items-center justify-between text-xs"><Button size="sm" disabled={page <= 1 || busy} onClick={() => setPage(page - 1)}>上一页</Button><span className="text-ink-mute">第 {page} 页</span><Button size="sm" disabled={busy || page * PAGE_SIZE >= total} onClick={() => setPage(page + 1)}>下一页</Button></div>
         </section>
 
         <section aria-label="已选参考图与用途" className="space-y-2">
@@ -187,9 +266,9 @@ export function PackEditor({pack, onClose}: {pack: PackManaged | null; onClose: 
           <ol className="max-h-[320px] space-y-2 overflow-y-auto pr-1">{form.referenceIds.map((id, index) => <li key={id} className="rounded-lg border border-line bg-panel p-2">
             <div className="flex items-start gap-2">
               <span className="mt-0.5 w-5 shrink-0 text-center text-xs font-semibold text-ink-mute">{index + 1}</span>
-              <span className="h-12 w-12 shrink-0 overflow-hidden rounded"><ArchivedThumbnail url={assets.data?.items.find(asset => asset.id === id)?.previewUrl ?? null} type="image" /></span>
+              <span className="h-12 w-12 shrink-0 overflow-hidden rounded"><ArchivedThumbnail url={picked[id]?.previewUrl ?? null} type="image" /></span>
               <div className="min-w-0 flex-1 space-y-1">
-                <p className="truncate text-xs text-ink">{assets.data?.items.find(asset => asset.id === id)?.name ?? names[id] ?? `参考图 ${index + 1}`}</p>
+                <p className="truncate text-xs text-ink">{picked[id]?.name || `参考图 ${index + 1}`}</p>
                 <div className="flex flex-wrap items-center gap-1.5">
                   <select aria-label={`第 ${index + 1} 张的用途`} className="rounded border border-line bg-panel px-1.5 py-1 text-[11px]" value={form.bindings[index]?.role ?? baseRole(form.kind)} onChange={event => setBinding(index, {role: event.target.value})} disabled={busy}>
                     {Object.entries(labels).map(([role, label]) => <option key={role} value={role}>{label}</option>)}
