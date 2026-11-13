@@ -1069,7 +1069,7 @@ A 全新表 / B 一次性迁移 / C 双写灰度）。**该方案不再执行**�
 | **W1** | 补 `ReplacementPipeline.archive_request()`，成片进 v2 草稿箱 | `template/pipeline.py` | targeted | **步 0.5（新）** |
 | W2 | 三个取件端点改 `Served`，MIME 改 `media_probe` | `replacement_router.py` / `pack_router.py` / `pack_service.py` | contract | 步 3（与契约变更同批） |
 | W3 | 文本/JSON 落盘改调 `encode_text` / `archive.base` | `replacement_service.py` / `workspace.py` / `worker.py` / `video_template_store.py` | targeted | 步 4（与编译链同批） |
-| W4 | Node 编译器抽 `core/ports/prompt_compiler.py` 端口（先补 golden test） | `core/ports/` + `infra/` + `PORT_CATALOG` | framework | 步 4 |
+| W4 | Node 编译器抽 `core/ports/prompt_compiler.py` 端口（先补 golden test） | `core/ports/` + `infra/` + `PORT_CATALOG` | framework | 步 4（**2026-11-13 暂缓，理由见 §24.22**：唯一消费者就是模板自己，等第二个消费者再抽） |
 | **W5** | `node` 路径从 `core/config` 取，删 `get_libtv_settings()` 依赖 | `core/config.py` + `infra/ai/libtv.py` | targeted/framework | 步 5（**2026-11-13 完成，见 §24.21**） |
 | W6 | 授权闸调用点收成单一授权服务（规则不变） | `replacement_service.py` / `worker.py` | targeted | 步 3 |
 | W7 | 恢复失败改发事件，可选 `@periodic` 对账（**不删 `startup`**） | `worker.py` / `__init__.py` | targeted | 步 0（观测项） |
@@ -2842,3 +2842,75 @@ LibTV 小节只留一句「旧名 `LIBTV_NODE` 已注册为别名」。
 **没做的一件（留给步 4）**：`compile_prompt(spec, node=...)` 仍然是函数参数传递，
 `core/ports/prompt_compiler.py` 端口（W4）落地后再由端口自己取 node，调用点就不用知道
 node 从哪来。
+
+### 24.22 步 4（一）：编译链的四件事，W4 暂缓（2026-11-13 完成）
+
+这笔改动的前提是§14.2 那句话：「编译链要改，先补 golden test，否则新增分支仍无人
+看守」。所以顺序是**先用例、再改编译器**，两个提交分开。
+
+**① golden test（`tests/test_prompt_compilation_golden.py`）**
+
+`video_scene_text` 分支整段自己拼 prompt、不经过通用编译器，它有没有被跑到只有出口
+文案能证明——错了不报错，只会生成一条「场景对了但产品没换」的视频。用例锁三样：
+
+- 出口文案 / bindings / `template_sha256` / `spec_sha256` **逐字**断言（哈希变了
+  就是发给模型的字节变了，该有人确认，不该顺手改期望值）；
+- 固定引用表的长度 = 参考数量 − 1（少一张、多一张、原片位被换成图片都拒绝）；
+- token 只能来自固定引用表、`{{ScenePrompt}}` 恰好一处、描述里不许自带花括号。
+
+**② F：内嵌音轨下沉成编译器分支，删掉 Python 的两处 `str.replace`**
+
+`wardrobe_mode=reference` 分支靠 `tokens('source_audio')` 拼两句话。原片自带音轨时
+那个 token 是空串，文案变成「；提供同片原音轨」「声音：为完整原片音轨」这种病句，
+再由 Python 替换去修。**补丁不命中没有任何症状**：模板文案一改，病句照发，而
+`compiler_version` 仍标着 `+embedded-audio-v1`。
+
+改法：`compile.mjs` 按「有没有音轨参考」各写一份（`duty` / `voice`），出口字节与
+那两处替换**逐字相同**（用整段 prompt 的 sha256 锁住 `2f9c1162…`）；版本标记也交给
+编译器打，并且**固定提示词整段覆盖时不打**——那时这段文案根本没发出去，标它等于撒谎。
+
+**③ `prompt_sha256`：档案里第一次有了「实际发出去那段字节」的摘要**
+
+编译器交的两个哈希都不是最终 prompt 的摘要（`template_sha256` 哈希模板、
+`spec_sha256` 哈希输入），而后处理还会注入文本正文、bailian 渠道还会改写引用写法。
+于是已付费任务的档案里没有任何值能对上实际发出的字节。
+
+- `replacement_runs.prompt_sha256`（迁移 `a4d5e8c21f37`），**老行留 NULL 不回填**：
+  回填只能哈希现在这一列 `prompt`，而那恰好是没法自证的部分；
+- 在 `inject_masked_text_refs` 之后、写盘之前算一次，文件/档案 JSON/数据库三处同源；
+- 出参 `ReplacementRunOut.promptSha256`（可空），四份契约产物重生成。
+
+**④ 顺带：`inputs/prompt.txt` 改走 `encode_text`**
+
+NUL 是合法 UTF-8、sqlite 也存得下，所以裸 `write_text` 在本地永远绿；到 PG 上那一列
+写不进去，用户看到 500，而盘上已经多了一份没人引用的提示词。`scenePrompt` 是
+**用户输入**、真的能带进来（`test_scene_text_template.py` 里补了这条：退成裸
+`write_text` 后它立刻红，201）。摘要也从**写下去的那份 bytes** 算，不再对字符串另做
+一次 `.encode()`——结果一样，但契约是「哈希与文件同源」。
+
+**W4（`core/ports/prompt_compiler.py`）暂缓，理由**
+
+端口的意义是「调用方不知道实现」，而这里唯一的调用方就是模板模块自己，编译器脚本
+（`compile.mjs` + `prompt-compiler.mjs`）拼的又是模板自己的文案——把它搬进 `infra/`
+只是把路径搬走，调用方还是同一个。真正与 infra 有关的只剩「跑一个 node 脚本」这一
+条，W5 之后那个依赖收缩成一个参数（`get_settings().node_binary`）。
+
+所以判断是：**等第二个消费者出现再抽**（例如生图模板也要编译提示词，或者换成远程
+编译服务）。现在抽等于加一层没有分歧点的间接，而 `PORT_CATALOG` 每多一个端口就多一条
+「未注册时怎么办」的约定要守。§18 的 W4 行标注为暂缓，不删除——条件写在这里。
+
+**验证**
+
+- 每个提交按 `select_tests.py --print` 定级跑：golden test 那笔 targeted（4 文件 89
+  passed）；编译器分支那笔 targeted + 手工补 `test_replacement_archive.py` /
+  `test_replacement_guards.py`（205 passed）；`prompt_sha256` 那笔触发**全量**
+  （迁移 = full，169 文件 **1694 passed / 12 skipped**）；NUL 那笔 targeted
+  （12 文件 185 passed）；
+- 前端 `npm run verify` 88 文件 **705 passed**（`schema.ts` 只多了 `promptSha256?`）；
+- `ruff` / `mypy --platform win32 src`（297 files）；`app export-openapi --check` 无变化；
+- 反向验证三次：去掉 token 守卫 → 越界 token 用例红；`replaceAll` 改 `replace` →
+  golden 两条红；把病句放回去 → `test_character_reference_without_audio_*` 红。
+
+**下一步**：W3 的其余落点（`workspace.py:104,119` 的 `read_text`、`worker.py:243/782/870`、
+`video_template_store.py:133` 的 `json.load`），然后 W8（时间源统一 `utcnow`、
+`import_legacy` 路径校验、工作区 GC 保留策略）。
