@@ -27,6 +27,7 @@ from sqlalchemy import delete
 from db.session import get_session_factory
 from infra.archive import get_archive_storage
 from infra.archive.runs import relative_key, runs_root, save_pointer
+from modules.template.id_space import asset_id_space_default
 from modules.template.models import (
     ReplacementReview,
     ReplacementRun,
@@ -96,18 +97,26 @@ async def add_review(run_id: str, *, status: str = "accepted", version: int = 1)
         await session.commit()
 
 
-async def add_input(run_id: str, asset_id: str, *, role: str = "reference", position: int = 0):
+async def add_input(
+    run_id: str,
+    asset_id: str,
+    *,
+    role: str = "reference",
+    position: int = 0,
+    asset_id_space: str | None = None,
+):
+    values: dict[str, Any] = {
+        "run_id": run_id,
+        "asset_id": asset_id,
+        "role": role,
+        "position": position,
+        "usage": "",
+        "storage_key": "",
+    }
+    if asset_id_space is not None:
+        values["asset_id_space"] = asset_id_space
     async with get_session_factory()() as session:
-        session.add(
-            ReplacementRunInput(
-                run_id=run_id,
-                asset_id=asset_id,
-                role=role,
-                position=position,
-                usage="",
-                storage_key="",
-            )
-        )
+        session.add(ReplacementRunInput(**values))
         await session.commit()
 
 
@@ -156,6 +165,7 @@ async def add_pack(
     features: str = "",
     instructions: str = "",
     wardrobe_mode: str = "preserve",
+    asset_id_space: str | None = None,
 ) -> TemplatePack:
     """造一个封装行（可选带一份已发布版本）。
 
@@ -173,6 +183,7 @@ async def add_pack(
         version=version if status == "published" else 0,
         revision=1,
         cover_asset_id=refs[0] if refs else None,
+        cover_asset_id_space=asset_id_space or asset_id_space_default(),
         features=features,
         instructions=instructions,
         wardrobe_mode=wardrobe_mode,
@@ -190,6 +201,7 @@ async def add_pack(
                     position=position,
                     role=bindings[position] if position < len(bindings) else "front",
                     description="",
+                    asset_id_space=asset_id_space or asset_id_space_default(),
                 )
             )
         if pack.status == "published":
@@ -198,6 +210,7 @@ async def add_pack(
                     pack_id=pack.id,
                     version=pack.version,
                     reference_ids=refs,
+                    reference_ids_space=asset_id_space or asset_id_space_default(),
                     bindings=[
                         {"role": bindings[index] if index < len(bindings) else "front",
                          "description": ""}

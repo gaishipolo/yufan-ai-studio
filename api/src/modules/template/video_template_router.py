@@ -85,7 +85,7 @@ async def update_video_template_prompt(
     """
     references = None
     if payload.references is not None:
-        references, _ = await resolve_pack_references(session, payload.references)
+        references, _, _ = await resolve_pack_references(session, payload.references, actor)
     result = await service.update_prompt(
         template_id, payload.prompt, references, session=session
     )

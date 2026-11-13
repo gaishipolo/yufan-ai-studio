@@ -14,9 +14,13 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.context import CurrentUser
 from core.exceptions import BadRequest
 from core.media import StoredMedia
-from core.ports.media import get_asset_lookup
+from core.ports.library_lookup import LibraryAssetKind, LibraryAssetRef, LibraryAssetState
+from modules.template.asset_source import resolve_assets
+from modules.template.id_space import ASSET_ID_SPACE_V1, ASSET_ID_SPACE_V2
+from modules.template.models import TemplatePack, TemplatePackVersion
 from modules.template.repository import PackRepository
 from modules.template.video_template_schema import VideoTemplatePackReferenceIn
 
@@ -24,16 +28,23 @@ from modules.template.video_template_schema import VideoTemplatePackReferenceIn
 async def resolve_pack_references(
     session: AsyncSession,
     references: list[VideoTemplatePackReferenceIn],
-) -> tuple[list[dict[str, Any]], dict[str, StoredMedia]]:
+    actor: CurrentUser,
+) -> tuple[
+    list[dict[str, Any]],
+    dict[str, StoredMedia],
+    dict[str, LibraryAssetRef],
+]:
+    """返回展示数据与按空间分开的固定引用。
+
+    第三个返回值是 v2 元数据。当前替换物化器仍只接 v1 `StoredMedia`，调用方若在
+    prepare 遇到非空第三项必须显式拒绝，不能静默少图，也不能把 `storage_key`
+    当成旧归档的 `path`。输入物化与契约字段在同一切换步骤接入。
+    """
     repo = PackRepository(session)
-    media = await get_asset_lookup().get_many(session, [ref.asset_id for ref in references])
-    result: list[dict[str, Any]] = []
-    resolved: dict[str, StoredMedia] = {}
-    seen: set[str] = set()
+    validated: list[tuple[VideoTemplatePackReferenceIn, TemplatePack, TemplatePackVersion]] = []
     for ref in references:
         pack = await repo.get(ref.pack_id)
         frozen = await repo.get_version(ref.pack_id, ref.pack_version)
-        row = media.get(ref.asset_id)
         if (
             pack is None
             or pack.deleted_at
@@ -42,29 +53,61 @@ async def resolve_pack_references(
             or ref.asset_id not in frozen.reference_ids
         ):
             raise BadRequest("引用的封装已停用、版本不可用或图片不在该发布版本中")
-        if (
-            row is None
-            or row.deleted_at
-            or row.type != "image"
-            or row.owner_id != pack.owner_id
-            or row.category != pack.kind
-        ):
-            raise BadRequest("封装参考图不可用，请重新选择")
-        if ref.asset_id in seen or ref.token in resolved:
+        validated.append((ref, pack, frozen))
+
+    assets = await resolve_assets(
+        session,
+        [
+            (ref.asset_id, frozen.reference_ids_space)
+            for ref, _pack, frozen in validated
+        ],
+        actor=actor,
+    )
+    result: list[dict[str, Any]] = []
+    resolved: dict[str, StoredMedia] = {}
+    resolved_v2: dict[str, LibraryAssetRef] = {}
+    seen: set[str] = set()
+    for ref, pack, frozen in validated:
+        if ref.asset_id in seen or ref.token in resolved or ref.token in resolved_v2:
             raise BadRequest("固定参考图或引用编号不能重复")
+        space = frozen.reference_ids_space
+        if space == ASSET_ID_SPACE_V1:
+            row = assets.v1.get(ref.asset_id)
+            if (
+                row is None
+                or row.deleted_at
+                or row.type != "image"
+                or row.owner_id != pack.owner_id
+                or row.category != pack.kind
+            ):
+                raise BadRequest("封装参考图不可用，请重新选择")
+            name = row.name
+            resolved[ref.token] = row
+        elif space == ASSET_ID_SPACE_V2:
+            row_v2 = assets.v2.get(ref.asset_id)
+            if (
+                row_v2 is None
+                or row_v2.state != LibraryAssetState.ACTIVE
+                or row_v2.kind != LibraryAssetKind.IMAGE
+                or ref.asset_id not in assets.readable_v2
+            ):
+                raise BadRequest("封装参考图不可用，请重新选择")
+            name = row_v2.name
+            resolved_v2[ref.token] = row_v2
+        else:
+            raise BadRequest("封装参考图不可用，请重新选择")
         seen.add(ref.asset_id)
         url = (
-            f"/api/v1/templates/replacement-packs/{pack.id}/preview/{row.id}"
+            f"/api/v1/templates/replacement-packs/{pack.id}/preview/{ref.asset_id}"
             f"?version={ref.pack_version}"
         )
         result.append(
             {
                 **ref.model_dump(by_alias=True),
-                "name": row.name,
+                "name": name,
                 "packName": pack.name,
                 "type": "image",
                 "url": url,
             }
         )
-        resolved[ref.token] = row
-    return result, resolved
+    return result, resolved, resolved_v2

@@ -1,39 +1,80 @@
-"""按 id 空间**显式分流**地取素材展示名（dual-read 兼容期唯一的分流点）。
-
-## 为什么需要这一层
+"""按 id 空间**显式分流**地读素材元数据与 v2 可读性。
 
 v1 `assets.id` 与 v2 `library_assets.id` 都是 32 位 uuid hex，形状不可区分。
-`core/ports/library_lookup.py:9-11` 明令禁止「先查 v2、查不到回退 v1」的隐式兜底——
-那会让某一侧悄悄读到另一半数据，而且只在删除之后才暴露成裂图。所以调用方必须
-把**空间**一起交进来，由这里按空间各问各的端口。
+调用方必须把空间一起交进来，由这里各问各的端口；绝不「先查 v2、查不到回退 v1」。
 
-## 为什么不返回元数据快照
+`ResolvedAssets` 刻意保留两份元数据映射，不把 `StoredMedia` 与 `LibraryAssetRef`
+揉成一个带第二套权限语义的快照。v2 可读性也只转发 `LibraryLookup.readable_ids()`：
+小组共享、封装成员等判据仍只有资产库 `access.py` 一份。没传 actor 时可读集合为空，
+授权调用方漏传主体时会 fail-closed，不会退化成「查得到元数据就能用」。
 
-现在唯一的消费方是「给媒体清单填展示名」（`video_template_service`），它只需要
-`name`。把 `StoredMedia` 与 `LibraryAssetRef` 揉成一个统一快照，等于在这一层
-重新定义「什么算已删除 / 谁有权限」——那正是 `readable_ids()` 的职责，两处判据
-必然漂移，且漂移方向总是「多给权限」。等真正需要统一快照时（授权闸切换），
-应当连同 `readable_ids()` 一起设计，而不是在这里顺手长出第二份规则。
-
-## 名字不是授权
-
-`get_many()` 不判可读性：拿到别人的 id 就能读到名字。这可以接受，因为这里的
-名字只用于**给调用方已经持有的 id 填展示名**（模板/封装自己的参考图），而
-「这张图能不能用」由授权闸与 `readable_ids()` 决定。反过来，若在这里顺手
-加一层过滤，就会造出「名字有、图片没有」的第二种不一致，比泄漏一个文件名更难查。
+名字不是授权：`resolve_names()` 只给调用方已经持有的 id 填展示名；能不能把内容
+交给供应商，必须由授权闸另外检查 `readable_v2`。
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.ports.library_lookup import get_library_lookup
+from core.context import CurrentUser
+from core.media import StoredMedia
+from core.ports.library_lookup import LibraryAssetRef, get_library_lookup
 from core.ports.media import get_asset_lookup
 from modules.template.id_space import ASSET_ID_SPACE_V1, ASSET_ID_SPACE_V2
 
-__all__ = ["resolve_names"]
+__all__ = ["ResolvedAssets", "resolve_assets", "resolve_names"]
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedAssets:
+    """一批显式分流的元数据；`readable_v2` 只含 actor 当前可读的 v2 id。"""
+
+    v1: Mapping[str, StoredMedia]
+    v2: Mapping[str, LibraryAssetRef]
+    readable_v2: frozenset[str] = frozenset()
+
+
+def _partition(refs: Iterable[tuple[str | None, str]]) -> dict[str, set[str]]:
+    wanted: dict[str, set[str]] = {ASSET_ID_SPACE_V1: set(), ASSET_ID_SPACE_V2: set()}
+    for asset_id, space in refs:
+        if asset_id and space in wanted:
+            wanted[space].add(asset_id)
+    return wanted
+
+
+async def resolve_assets(
+    session: AsyncSession,
+    refs: Iterable[tuple[str | None, str]],
+    *,
+    actor: CurrentUser | None = None,
+) -> ResolvedAssets:
+    """按空间批量取元数据；给了 actor 就同时取 v2 可读集合。
+
+    两个 `get_many()` 都只在对应空间非空时调用，因此「标成 v2 的 v1 id」不会
+    触发任何旧库查询，更不存在查不到后的跨空间回退。
+    """
+    wanted = _partition(refs)
+    legacy = (
+        await get_asset_lookup().get_many(session, sorted(wanted[ASSET_ID_SPACE_V1]))
+        if wanted[ASSET_ID_SPACE_V1]
+        else {}
+    )
+    library = (
+        await get_library_lookup().get_many(session, sorted(wanted[ASSET_ID_SPACE_V2]))
+        if wanted[ASSET_ID_SPACE_V2]
+        else {}
+    )
+    readable = (
+        await get_library_lookup().readable_ids(
+            session, actor, sorted(wanted[ASSET_ID_SPACE_V2])
+        )
+        if actor is not None and wanted[ASSET_ID_SPACE_V2]
+        else set()
+    )
+    return ResolvedAssets(v1=legacy, v2=library, readable_v2=frozenset(readable))
 
 
 async def resolve_names(
@@ -41,28 +82,10 @@ async def resolve_names(
 ) -> dict[str, str]:
     """`[(id, 空间)]` → `{id: 展示名}`，两套 id 混在一批里也照办。
 
-    - 不存在的 id 不出现在结果里（调用方自己决定回落到什么，通常是回落成 id）；
-    - 未知空间名忽略：这一列只可能是 `v1` / `v2`（列默认值 + 迁移回填），
-      真出现第三种说明数据被改坏了。这里不抛，因为「取不到名字」在界面上是
-      可见的（显示成裸 id），而为一个坏标记挡住整次保存没有收益。
-
-    结果按 id 扁平化，前提是在这个系统里同一个 id 不会同时属于两套空间
-    （两套表各自发号，都是 32 位随机 hex）。
+    不存在的 id 与未知空间名不出现在结果里。结果按 id 扁平化，前提与现有
+    约定一致：同一个随机 hex id 不会同时属于两套空间。
     """
-    wanted: dict[str, set[str]] = {ASSET_ID_SPACE_V1: set(), ASSET_ID_SPACE_V2: set()}
-    for asset_id, space in refs:
-        if asset_id and space in wanted:
-            wanted[space].add(asset_id)
-
-    names: dict[str, str] = {}
-    if wanted[ASSET_ID_SPACE_V1]:
-        stored = await get_asset_lookup().get_many(
-            session, sorted(wanted[ASSET_ID_SPACE_V1])
-        )
-        names.update({asset_id: row.name for asset_id, row in stored.items()})
-    if wanted[ASSET_ID_SPACE_V2]:
-        library = await get_library_lookup().get_many(
-            session, sorted(wanted[ASSET_ID_SPACE_V2])
-        )
-        names.update({asset_id: row.name for asset_id, row in library.items()})
+    assets = await resolve_assets(session, refs)
+    names = {asset_id: row.name for asset_id, row in assets.v1.items()}
+    names.update({asset_id: row.name for asset_id, row in assets.v2.items()})
     return names

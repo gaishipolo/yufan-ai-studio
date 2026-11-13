@@ -2074,3 +2074,75 @@ CI 机器慢时就会等超时。
 **没有当场改**（属另一件事）：候选修法是给 sqlite 的 `connect_args` 加
 `"timeout": 30`，或把这条用例的写操作挪到事务外。两者都要单独跑一轮验证，
 不塞进模板迁移的提交里；下次再遇到同一条红，直接按上面的方向修。
+
+### 24.11 步 2.5c（三）：三道授权闸与 v2 字节存在性（2026-11-13）
+
+**做了什么**
+
+1. `asset_source.py` 从「只取展示名」扩成 `resolve_assets()`：
+   - 输入 `[(assetId, space)]`，按空间分别调 `AssetLookup.get_many()` /
+     `LibraryLookup.get_many()`；
+   - 传了 `actor` 且存在 v2 id 时才调 `readable_ids()`，结果放
+     `ResolvedAssets.readable_v2`；
+   - 没传 actor 时该集合为空，授权调用方漏传主体会 **fail-closed**；
+   - 只在对应空间非空时查该端口，**没有跨空间回退**；`resolve_names()` 复用它。
+2. `PackService`：
+   - 草稿保存把 `cover_asset_id_space` 显式落成 `CURRENT_ASSET_ID_SPACE`；
+   - 发布版本的 `reference_ids_space` 取自**实际引用行**，混合空间直接 400；
+   - 幂等发布比较把空间纳入，避免同 id 不同空间被误判为同一版本；
+   - v1 仍是「本人、同类、未删除」且文案不变；v2 额外要求
+     `ACTIVE` + `IMAGE` + `readable_v2`（生命状态校验，不是第二套共享规则）；
+   - `_verify_bytes()` 按空间分流：v1 仍查 `BlobStore.exists(row.path)`，v2 查
+     `get_storage().exists(row.storage_key)`；
+   - 公开目录的名字按引用行空间解析；包内预览对非 v1 版本明确返回
+     `NotFound("包内预览暂不可用")`，不拿 v2 id 去旧表碰运气，也不重定向到
+     资产库缩略图端点。
+3. `resolve_pack_references()` 显式接收 `actor`，按
+   `frozen.reference_ids_space` 分流，并把 v1 / v2 固定引用**分开返回**。
+   v2 判据同样是 `ACTIVE` + `IMAGE` + `readable_v2`。
+4. `authorization_gap()` 以 `run.owner_id` 构造主体：
+   - 固定引用取发布版本的空间；
+   - 每个运行输入取**该输入行自己的空间**，不随当前常量重新解释历史任务；
+   - v2 原片要求 `VIDEO` 且可读，其他输入要求 `IMAGE` 且可读；
+   - v1 的软删、公共池原片规则与错误文案保持不变。
+5. `ReplacementService.prepare()` 遇到 v2 固定引用时**显式 400**：
+   `资产库 v2 固定引用暂未接入生成物化，请暂勿用于生成`。
+   这是阶段性防误用守卫，不是最终产品形态。
+
+**落地时修掉的两个问题（都是接上后才暴露）**
+
+- `template_references` 的重复检查原来写在写入 `resolved` **之后**，导致第二条起
+  必然误判重复；已挪到分支判定之前。
+- `authorization_gap` 的固定引用循环一度把 `TemplatePackVersion` 当成空间字符串；
+  已改为读取 `frozen.reference_ids_space`。
+
+**阶段性限制（不要误报成 v2 生成全链路可用）**
+
+- `CURRENT_ASSET_ID_SPACE` **仍是 `v1`**：草稿请求还没有独立空间字段，前端旧 UI
+  提交的 id 仍按 v1 解释；契约字段切换时再显式化。
+- v2 包内**公共预览尚未实现**，当前是显式 404。
+- v2 固定引用的**生成物化尚未接通**：旧物化器只认 `ArchiveStorage` + `StoredMedia`，
+  不能把 `storage_key` 冒充旧 `path`，所以 prepare 先拒绝。
+- 这些必须与 `referenceLibraryIds` / `sourceVideoLibraryId`、前端切换、
+  `ObjectStorage` 物化一起收口，不能分两次半切。
+
+**验证**
+
+- `scripts/select_tests.py --print` 判 **targeted**（18 个路径）→
+  **234 passed / 30.71s**（全新 `--basetemp`）；`ruff check src tests` 通过；
+  `mypy --platform win32 src` 295 files 无问题。
+- 新增 `tests/test_template_v2_authorization.py` **24 passed**：草稿准入 6 种
+  状态/类型/归属组合、封装成员读入口及撤销、发布版本空间与对象存储字节、
+  标成 v2 的 v1 id 无回退、固定引用 resolver、执行期固定引用 5 种状态、
+  运行输入 8 种角色/归属组合、v2 原片标记无 v1 回退。
+- 原 v1 固定引用 / 执行授权 / 字节用例 23 passed，文案与行为未变。
+- **反向验证 1**：同时删掉 5 处 `readable_v2` 判据 → **6 failed**，覆盖草稿闸、
+  固定引用 resolver、执行期固定引用、执行期原片与其他输入；已逐字恢复。
+- **反向验证 2**：把 v2 字节判据改成「行存在即通过」→
+  `test_publish_uses_reference_space_and_checks_v2_object_bytes` 红
+  （`DID NOT RAISE BadRequest`）；已恢复。
+- **反向验证 3**：把发布版本空间改回 `CURRENT_ASSET_ID_SPACE` →
+  `assert 'v1' == 'v2'` 红；已恢复。
+
+**下一步**：步 2.5c 第 3 块契约字段（与 2.5d 前端同批），随后再动物化；
+当前提交不改变任何 HTTP 请求/响应字段。

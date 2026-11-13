@@ -24,10 +24,19 @@ from pathlib import Path
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.context import CurrentUser
 from core.exceptions import AppError, BadRequest, Conflict, NotFound
 from core.logging import get_logger
+from core.ports.library_lookup import LibraryAssetKind, LibraryAssetState
 from core.ports.media import get_asset_lookup
+from infra import get_storage
 from infra.archive import BlobStore, get_archive_storage, preview_key
+from modules.template.asset_source import resolve_assets, resolve_names
+from modules.template.id_space import (
+    ASSET_ID_SPACE_V1,
+    ASSET_ID_SPACE_V2,
+    CURRENT_ASSET_ID_SPACE,
+)
 from modules.template.models import TemplatePack, TemplatePackReference, TemplatePackVersion
 from modules.template.pack_roles import (
     PACK_SCOPES,
@@ -157,6 +166,9 @@ class PackService:
             ],
         )
         pack.cover_asset_id = payload.cover_reference_id
+        # 草稿请求暂时没有独立空间字段：旧字段在当前写入空间里解释，落库后
+        # 不再随 CURRENT_ASSET_ID_SPACE 翻转。契约字段切换时再显式化请求侧。
+        pack.cover_asset_id_space = CURRENT_ASSET_ID_SPACE
         # 待发布状态：发布时整块冻结进版本行（见 `publish`）。
         pack.required_roles = required
         pack.supported_scopes = list(payload.supported_scopes)
@@ -172,6 +184,7 @@ class PackService:
             raise Conflict("草稿已变化，请刷新后重新发布")
 
         refs = await self.repo.references(pack.id)
+        reference_space = self._reference_space(refs)
         # 已经按**这份内容**发布过就返回成功：发布接口是「幂等地让当前内容对外可见」，
         # 超时重发与双击都不该再占一个版号。
         #
@@ -183,7 +196,7 @@ class PackService:
         if (
             pack.status == "published"
             and frozen is not None
-            and self._same_as_version(pack, refs, frozen)
+            and self._same_as_version(pack, refs, frozen, reference_space)
         ):
             return await self.managed(pack)
 
@@ -202,6 +215,9 @@ class PackService:
                 pack_id=pack.id,
                 version=version,
                 reference_ids=reference_ids,
+                # 空间来自实际引用行，不能读「此刻的默认值」：那会把 dual-read
+                # 期间已有的 v1 草稿在切换后发布成一份假冒的 v2 冻结版本。
+                reference_ids_space=reference_space,
                 bindings=bindings,
                 required_roles=list(required),
                 supported_scopes=list(scopes),
@@ -233,6 +249,14 @@ class PackService:
     # ------------------------------------------------------------------ #
     # 校验
     # ------------------------------------------------------------------ #
+    @staticmethod
+    def _reference_space(refs: Sequence[TemplatePackReference]) -> str:
+        """一次发布只能冻结一个 id 空间；空草稿沿用当前写入空间。"""
+        spaces = {ref.asset_id_space for ref in refs}
+        if len(spaces) > 1:
+            raise BadRequest("同一封装不能混用不同空间的素材")
+        return next(iter(spaces), CURRENT_ASSET_ID_SPACE)
+
     def _check_roles(self, payload: PackDraftIn) -> None:
         """用途写错不该被静默改成基准用途：那会让封装者以为设置生效了。"""
         allowed = roles_for(payload.kind)
@@ -251,23 +275,40 @@ class PackService:
             raise BadRequest(f"替换范围无效：{'、'.join(bad_scopes)}")
 
     async def _check_references(self, payload: PackDraftIn, owner: str) -> None:
-        """参考图必须是本人的、同类的、未删除的图片。
+        """v1 保留本人/同类/未删除；v2 只认可读的已采纳图片。
 
-        走 `AssetLookup` 注入口而不是直连素材表：模板不认识 `assets` 的 schema，
-        这是 `EXTENDING.md` §5.1 的红线。查不到实现时抛 503，不静默放行。
+        v2 没有 `category`，人物/产品/场景由封装的槽位绑定表达。小组与封装成员
+        能否读由 `readable_ids()` 统一回答，这里不反推标签或重写共享规则。
         """
         if not payload.reference_ids:
             return
-        media = await get_asset_lookup().get_many(self.session, payload.reference_ids)
+        space = CURRENT_ASSET_ID_SPACE
+        assets = await resolve_assets(
+            self.session,
+            [(asset_id, space) for asset_id in payload.reference_ids],
+            actor=CurrentUser(id=owner, name=owner),
+        )
         for asset_id in payload.reference_ids:
-            row = media.get(asset_id)
-            if (
-                row is None
-                or row.deleted_at
-                or row.owner_id != owner
-                or row.category != payload.kind
-            ):
-                raise BadRequest("只能封装本人同类参考图片")
+            if space == ASSET_ID_SPACE_V1:
+                row = assets.v1.get(asset_id)
+                if (
+                    row is None
+                    or row.deleted_at
+                    or row.owner_id != owner
+                    or row.category != payload.kind
+                ):
+                    raise BadRequest("只能封装本人同类参考图片")
+            elif space == ASSET_ID_SPACE_V2:
+                row_v2 = assets.v2.get(asset_id)
+                if (
+                    row_v2 is None
+                    or row_v2.state != LibraryAssetState.ACTIVE
+                    or row_v2.kind != LibraryAssetKind.IMAGE
+                    or asset_id not in assets.readable_v2
+                ):
+                    raise BadRequest("只能封装可读的已采纳参考图片")
+            else:
+                raise BadRequest("素材空间无效")
 
     def gaps(self, pack: TemplatePack, refs: Sequence[TemplatePackReference]) -> list[str]:
         """发布前还差什么；顺序就是封装者该补的顺序。"""
@@ -291,12 +332,23 @@ class PackService:
         即字节正确。以前每次发布都要把包内所有图片全读一遍，再用
         `(path, mtime, size)` 缓存猜「文件是不是被换过」——那是可变存储的补丁。
         """
-        media = await get_asset_lookup().get_many(
-            self.session, [ref.asset_id for ref in refs]
+        assets = await resolve_assets(
+            self.session, [(ref.asset_id, ref.asset_id_space) for ref in refs]
         )
         for ref in refs:
-            row = media.get(ref.asset_id)
-            if row is None or not self.blobs.exists(row.path):
+            if ref.asset_id_space == ASSET_ID_SPACE_V1:
+                row = assets.v1.get(ref.asset_id)
+                present = row is not None and self.blobs.exists(row.path)
+            elif ref.asset_id_space == ASSET_ID_SPACE_V2:
+                row_v2 = assets.v2.get(ref.asset_id)
+                present = (
+                    row_v2 is not None
+                    and bool(row_v2.storage_key)
+                    and await get_storage().exists(row_v2.storage_key)
+                )
+            else:
+                present = False
+            if not present:
                 raise BadRequest("素材字节缺失，请重新登记")
 
     # ------------------------------------------------------------------ #
@@ -343,7 +395,9 @@ class PackService:
         try:
             # 素材名查询与字节校验都是「能不能解释这个包」的一环，必须一起降级。
             # 放在 try 外时，DB 抖动或异常 reference_ids 会让整个素材目录 500。
-            names = await get_asset_lookup().get_many(self.session, shaped.reference_ids)
+            names = await resolve_names(
+                self.session, [(ref.asset_id, ref.asset_id_space) for ref in refs]
+            )
             await self._verify_bytes(refs)
         except (AppError, OSError, SQLAlchemyError):
             names = {}
@@ -360,7 +414,7 @@ class PackService:
                 "available": available,
                 "cover_url": urls[0] if urls else None,
                 "preview_urls": urls,
-                "reference_names": [names[item].name if item in names else "素材不可用"
+                "reference_names": [names.get(item, "素材不可用")
                                     for item in shaped.reference_ids],
             }
         )
@@ -376,6 +430,11 @@ class PackService:
             raise NotFound("发布版本不存在")
         if asset_id not in frozen.reference_ids:
             raise NotFound("包内预览不存在")
+        if frozen.reference_ids_space != ASSET_ID_SPACE_V1:
+            # 公共预览由「已发布版本」授权，不等于当前用户对资产库条目有读权限。
+            # v2 预览要连同 cover_key / Served 一起设计；此处显式拒绝，绝不拿
+            # v2 id 去旧表碰运气，也不重定向到会 403 的资产库缩略图端点。
+            raise NotFound("包内预览暂不可用")
         media = await get_asset_lookup().get_many(self.session, [asset_id])
         row = media.get(asset_id)
         if row is None or row.deleted_at or row.owner_id != pack.owner_id:
@@ -413,7 +472,11 @@ class PackService:
         )
 
     def _same_as_version(
-        self, pack: TemplatePack, refs: Sequence[TemplatePackReference], frozen: TemplatePackVersion
+        self,
+        pack: TemplatePack,
+        refs: Sequence[TemplatePackReference],
+        frozen: TemplatePackVersion,
+        reference_space: str,
     ) -> bool:
         """当前草稿是否与这份已发布版本内容相同。
 
@@ -425,7 +488,8 @@ class PackService:
         """
         bindings = [{"role": ref.role, "description": ref.description} for ref in refs]
         return (
-            list(frozen.reference_ids) == [ref.asset_id for ref in refs]
+            frozen.reference_ids_space == reference_space
+            and list(frozen.reference_ids) == [ref.asset_id for ref in refs]
             and list(frozen.bindings) == bindings
             and list(frozen.required_roles) == list(pack.required_roles)
             and list(frozen.supported_scopes) == list(pack.supported_scopes)

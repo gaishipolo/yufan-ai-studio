@@ -349,9 +349,16 @@ class ReplacementService:
         from modules.template.video_template_schema import VideoTemplatePackReferenceIn
 
         fixed_data = video_template.rules.get("fixedReferences", []) if video_template else []
-        _, fixed_refs = await resolve_pack_references(self.session, [
-            VideoTemplatePackReferenceIn.model_validate(item) for item in fixed_data
-        ])
+        _, fixed_refs, fixed_refs_v2 = await resolve_pack_references(
+            self.session,
+            [VideoTemplatePackReferenceIn.model_validate(item) for item in fixed_data],
+            actor,
+        )
+        if fixed_refs_v2:
+            # 本提交只切授权闸。v2 字节在 ObjectStorage，旧物化器只接 ArchiveStorage
+            # + StoredMedia；显式拒绝比丢图或把 storage_key 当旧 path 安全。
+            # 契约字段切换时与 ObjectStorage 物化一起接通。
+            raise BadRequest("资产库 v2 固定引用暂未接入生成物化，请暂勿用于生成")
         if len(refs) + len(fixed_refs) > MAX_REFERENCE_IMAGES:
             # 保存端按「封装时那个包」的图数校验，这里按「本次所选包」算，
             # 两者可能不同；报错必须说清怎么自助恢复，否则用户只会看到模板明明存下了却跑不了。
