@@ -115,6 +115,16 @@ def test_scene_prompt_only_flow_from_packaging_to_snapshot(client, tmp_path):
             json={**base, "requestId": str(uuid4()), "scenePrompt": invalid},
         )
         assert response.status_code == 400, response.text
+    # U+0000 是合法 UTF-8，sqlite 也存得下，所以它必须由落盘那一关拦——
+    # 提示词走 `encode_text`（所有文本写盘的唯一出口），在写任何字节之前抛 400。
+    # 少了那一关，这里会 201 并留下一条 PG 上必炸（`value too long`/NUL）的档案。
+    response = client.post(
+        "/api/v1/templates/replacement-runs",
+        headers=headers,
+        json={**base, "requestId": str(uuid4()), "scenePrompt": "海边落地窗\x00会客厅"},
+    )
+    assert response.status_code == 400, response.text
+    assert "U+0000" in response.json()["message"]
     # 不能在该模式夹带散图、包或额外人物。
     response = client.post(
         "/api/v1/templates/replacement-runs",

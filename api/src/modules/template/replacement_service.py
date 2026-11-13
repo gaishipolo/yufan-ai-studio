@@ -60,6 +60,7 @@ from core.ports.library_lookup import (
 from core.ports.media import get_asset_lookup
 from core.serving import Served
 from infra.archive import ArchiveStorage, get_archive_storage
+from infra.media_probe import encode_text
 from modules.template import video_template_service
 from modules.template.asset_source import resolve_assets
 from modules.template.authorization import authorization_gap
@@ -1649,11 +1650,16 @@ def _materialize_inputs(
     # （`run.prompt` → GenerationRecord.prompt）用的是同一份字符串，不会出现
     # 「档案里还是 {{Text 1}}、实际发出去是别的文案」。
     compiled.prompt = inject_masked_text_refs(compiled.prompt, text_refs)
-    # **所有后处理都在上面**，这一份字节就是发出去的那一份。摘要在这里算一次，
-    # 并且刻意在写文件之前：文件、档案 JSON、`replacement_runs` 三处必须是同一个
-    # 字符串变量的产物——先写文件再读回来算，等于又给了它们一次不一致的机会。
-    compiled.prompt_sha256 = hashlib.sha256(compiled.prompt.encode("utf-8")).hexdigest()
-    (path / "inputs/prompt.txt").write_text(compiled.prompt, encoding="utf-8", newline="\n")
+    # **所有后处理都在上面**，这一份字节就是发出去的那一份。落盘与摘要都从同一个
+    # `bytes` 出来，顺序也刻意是「先编码、再同时写盘和算摘要」：
+    # - 编码走 `encode_text`（所有文本写盘的唯一出口），它在这里拦掉 U+0000——
+    #   PG 的 text 列存不下 0x00，而先写盘再落库时，盘上会留一份没人引用的字节，
+    #   执行器还会在一个跟文案毫无关系的位置失败；
+    # - 摘要算的是**写下去的那份字节**，不是再 `.encode()` 一次（同一份字符串两次
+    #   编码虽然结果一样，但那是巧合，不是契约）。
+    prompt_bytes = encode_text(compiled.prompt)
+    compiled.prompt_sha256 = hashlib.sha256(prompt_bytes).hexdigest()
+    (path / "inputs/prompt.txt").write_bytes(prompt_bytes)
     storage.write(path / "inputs/prompt-spec.json", spec)
     storage.write(path / "inputs/configuration.json", payload.model_dump(mode="json"))
     # 这两份是**执行器**的输入，不是给人看的：`bridge.mjs` 读 input-map 逐条上传、
