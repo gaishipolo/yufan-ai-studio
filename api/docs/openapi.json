@@ -7709,6 +7709,444 @@
           }
         }
       }
+    },
+    "/api/v1/template-packs": {
+      "get": {
+        "tags": [
+          "封装模板"
+        ],
+        "summary": "封装模板列表",
+        "description": "列表。\n\n**不传 `ownerId` 时只返回已发布的**：别人的草稿是私有工作区。\n传 `ownerId` 看自己的全部（含草稿）。",
+        "operationId": "list_packs_api_v1_template_packs_get",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "ownerId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "只看某人的模板",
+              "default": "",
+              "title": "Ownerid"
+            },
+            "description": "只看某人的模板"
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "按状态筛选",
+              "default": "",
+              "title": "Status"
+            },
+            "description": "按状态筛选"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_TemplatePackListOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "封装模板"
+        ],
+        "summary": "保存封装模板草稿",
+        "description": "保存草稿。幂等：同 `templateKey` 同配置返回原模板，异配置 409。",
+        "operationId": "save_pack_api_v1_template_packs_post",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TemplatePackDraftIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_TemplatePackOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/template-packs/{pack_id}": {
+      "get": {
+        "tags": [
+          "封装模板"
+        ],
+        "summary": "封装模板详情",
+        "operationId": "get_pack_api_v1_template_packs__pack_id__get",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "pack_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pack Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_TemplatePackOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/template-packs/{pack_id}/publish": {
+      "post": {
+        "tags": [
+          "封装模板"
+        ],
+        "summary": "发布封装模板",
+        "description": "发布：进入模板库，别人可以取用。",
+        "operationId": "publish_pack_api_v1_template_packs__pack_id__publish_post",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "pack_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pack Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_TemplatePackOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/template-packs/{pack_id}/disable": {
+      "post": {
+        "tags": [
+          "封装模板"
+        ],
+        "summary": "停用封装模板",
+        "description": "停用：保留历史，但不再对外。",
+        "operationId": "disable_pack_api_v1_template_packs__pack_id__disable_post",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "pack_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pack Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_TemplatePackOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/template-packs/{pack_id}/prompt": {
+      "patch": {
+        "tags": [
+          "封装模板"
+        ],
+        "summary": "改固定提示词",
+        "description": "只改提示词原文。仅限未发布的模板。",
+        "operationId": "patch_prompt_api_v1_template_packs__pack_id__prompt_patch",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "pack_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pack Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TemplatePackPromptIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_TemplatePackOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/template-packs/{pack_id}/candidates": {
+      "get": {
+        "tags": [
+          "封装模板"
+        ],
+        "summary": "取筛选槽位的合规素材池",
+        "description": "运行时选素材用。\n\n**候选池由服务端算**：筛选条件（标签 + 类别）与可见性都有各自的判据，\n前端自己筛一遍必然漂移。",
+        "operationId": "list_candidates_api_v1_template_packs__pack_id__candidates_get",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "pack_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pack Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "槽位标识，如 {{Mixed 2}}",
+              "title": "Token"
+            },
+            "description": "槽位标识，如 {{Mixed 2}}"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "default": 100,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_TemplatePackCandidateListOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/template-packs/{pack_id}/verify": {
+      "post": {
+        "tags": [
+          "封装模板"
+        ],
+        "summary": "复核运行时选材是否满足筛选条件",
+        "description": "提交生成任务前的最后一道闸。\n\n**前端过滤只是 UI 便利，接口可以被直接调用。** 筛选条件是模板的业务\n契约 —— 用户在模板库看到的「只能选产品标签的图」如果只在界面上生效，\n拿个接口一调就能绕过。所以服务端必须再判一次。\n\n不满足直接 400，不给「差一点点」的余地：筛选要么满足，要么不满足。",
+        "operationId": "verify_pack_picks_api_v1_template_packs__pack_id__verify_post",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "pack_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pack Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TemplatePackVerifyIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_TemplatePackVerifyOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -8867,6 +9305,114 @@
         },
         "type": "object",
         "title": "ApiResponse[TaskStats]"
+      },
+      "ApiResponse_TemplatePackCandidateListOut_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TemplatePackCandidateListOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[TemplatePackCandidateListOut]"
+      },
+      "ApiResponse_TemplatePackListOut_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TemplatePackListOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[TemplatePackListOut]"
+      },
+      "ApiResponse_TemplatePackOut_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TemplatePackOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[TemplatePackOut]"
+      },
+      "ApiResponse_TemplatePackVerifyOut_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TemplatePackVerifyOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[TemplatePackVerifyOut]"
       },
       "ApiResponse_TextAssetOut_": {
         "properties": {
@@ -15550,6 +16096,568 @@
         ],
         "title": "TaskStatusFilter",
         "description": "列表筛选值：`all` 与具体状态并列，避免路由层出现联合类型。"
+      },
+      "TemplatePackCandidateItem": {
+        "properties": {
+          "assetId": {
+            "type": "string",
+            "title": "Assetid"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "coverUrl": {
+            "type": "string",
+            "title": "Coverurl",
+            "default": ""
+          },
+          "sizeBytes": {
+            "type": "integer",
+            "title": "Sizebytes",
+            "default": 0
+          },
+          "width": {
+            "type": "integer",
+            "title": "Width",
+            "default": 0
+          },
+          "height": {
+            "type": "integer",
+            "title": "Height",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "assetId",
+          "name",
+          "kind"
+        ],
+        "title": "TemplatePackCandidateItem",
+        "description": "候选素材池里的一项。"
+      },
+      "TemplatePackCandidateListOut": {
+        "properties": {
+          "token": {
+            "type": "string",
+            "title": "Token"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label",
+            "default": ""
+          },
+          "filterKind": {
+            "type": "string",
+            "title": "Filterkind",
+            "default": ""
+          },
+          "filterTagIds": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Filtertagids"
+          },
+          "filterTagNames": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Filtertagnames"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/TemplatePackCandidateItem"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "token"
+        ],
+        "title": "TemplatePackCandidateListOut",
+        "description": "某个筛选槽位的合规素材池。"
+      },
+      "TemplatePackDraftIn": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Name",
+            "description": "模板名称"
+          },
+          "templateKey": {
+            "type": "string",
+            "maxLength": 80,
+            "title": "Templatekey",
+            "description": "稳定标识：同键同配置返回原模板，同键异配置 409；留空自动生成",
+            "default": ""
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 2000,
+            "title": "Description",
+            "description": "模板说明",
+            "default": ""
+          },
+          "prompt": {
+            "type": "string",
+            "maxLength": 20000,
+            "minLength": 1,
+            "title": "Prompt",
+            "description": "固定提示词原文，含 {{Mixed N}} 占位符"
+          },
+          "sourceVideoAssetId": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Sourcevideoassetid",
+            "description": "参考视频的资产库 id"
+          },
+          "sourceVideoIdSpace": {
+            "type": "string",
+            "enum": [
+              "v1",
+              "v2"
+            ],
+            "title": "Sourcevideoidspace",
+            "description": "参考视频 id 属于哪套库",
+            "default": "v2"
+          },
+          "sourceDurationSec": {
+            "type": "number",
+            "minimum": 0.0,
+            "title": "Sourcedurationsec",
+            "description": "参考视频时长（秒）",
+            "default": 0
+          },
+          "aspectRatio": {
+            "type": "string",
+            "maxLength": 16,
+            "title": "Aspectratio",
+            "description": "输出画幅",
+            "default": "9:16"
+          },
+          "slots": {
+            "items": {
+              "$ref": "#/components/schemas/TemplatePackSlotIn"
+            },
+            "type": "array",
+            "maxItems": 11,
+            "minItems": 1,
+            "title": "Slots",
+            "description": "槽位清单；第 1 项固定是参考视频"
+          },
+          "coverUrl": {
+            "type": "string",
+            "maxLength": 512,
+            "title": "Coverurl",
+            "description": "封面地址",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "prompt",
+          "sourceVideoAssetId",
+          "slots"
+        ],
+        "title": "TemplatePackDraftIn",
+        "description": "保存一条封装模板（草稿）。幂等：同 key 同配置返回原行。"
+      },
+      "TemplatePackListOut": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/TemplatePackOut"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "title": "TemplatePackListOut"
+      },
+      "TemplatePackOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "templateKey": {
+            "type": "string",
+            "title": "Templatekey"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description"
+          },
+          "prompt": {
+            "type": "string",
+            "title": "Prompt"
+          },
+          "promptSha256": {
+            "type": "string",
+            "title": "Promptsha256",
+            "description": "提示词 sha256，防止文字被悄悄改掉"
+          },
+          "sourceVideoAssetId": {
+            "type": "string",
+            "title": "Sourcevideoassetid"
+          },
+          "sourceVideoIdSpace": {
+            "type": "string",
+            "title": "Sourcevideoidspace",
+            "default": "v2"
+          },
+          "sourceDurationSec": {
+            "type": "number",
+            "title": "Sourcedurationsec",
+            "default": 0.0
+          },
+          "aspectRatio": {
+            "type": "string",
+            "title": "Aspectratio",
+            "default": "9:16"
+          },
+          "coverUrl": {
+            "type": "string",
+            "title": "Coverurl",
+            "default": ""
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "published",
+              "disabled"
+            ],
+            "title": "Status",
+            "default": "draft"
+          },
+          "ownerId": {
+            "type": "string",
+            "title": "Ownerid"
+          },
+          "slots": {
+            "items": {
+              "$ref": "#/components/schemas/TemplatePackSlotOut"
+            },
+            "type": "array",
+            "title": "Slots"
+          },
+          "publishedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Publishedat"
+          },
+          "createdAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Createdat"
+          },
+          "updatedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updatedat"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "templateKey",
+          "name",
+          "description",
+          "prompt",
+          "promptSha256",
+          "sourceVideoAssetId",
+          "ownerId"
+        ],
+        "title": "TemplatePackOut",
+        "description": "一条封装模板的完整出参。"
+      },
+      "TemplatePackPromptIn": {
+        "properties": {
+          "prompt": {
+            "type": "string",
+            "maxLength": 20000,
+            "minLength": 1,
+            "title": "Prompt",
+            "description": "新的固定提示词原文"
+          }
+        },
+        "type": "object",
+        "required": [
+          "prompt"
+        ],
+        "title": "TemplatePackPromptIn",
+        "description": "改固定提示词原文。槽位引用按新原文重算。"
+      },
+      "TemplatePackSlotIn": {
+        "properties": {
+          "token": {
+            "type": "string",
+            "pattern": "^\\{\\{Mixed [1-9]\\d*\\}\\}$",
+            "title": "Token",
+            "description": "占位符原文，如 {{Mixed 2}}；必须与 position 对应"
+          },
+          "slotKind": {
+            "type": "string",
+            "enum": [
+              "fixed",
+              "filtered"
+            ],
+            "title": "Slotkind",
+            "description": "fixed=钉死素材，filtered=声明准入规则"
+          },
+          "label": {
+            "type": "string",
+            "maxLength": 64,
+            "title": "Label",
+            "description": "槽位显示名",
+            "default": ""
+          },
+          "assetId": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assetid",
+            "description": "fixed：钉死的素材 id"
+          },
+          "assetIdSpace": {
+            "type": "string",
+            "enum": [
+              "v1",
+              "v2"
+            ],
+            "title": "Assetidspace",
+            "description": "fixed：素材 id 属于哪套库；两套都是 32 位 hex，不能靠形状推断",
+            "default": "v2"
+          },
+          "mediaType": {
+            "type": "string",
+            "enum": [
+              "video",
+              "image",
+              "audio"
+            ],
+            "title": "Mediatype",
+            "description": "fixed：素材类别",
+            "default": "image"
+          },
+          "filterKind": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "video",
+                  "image",
+                  "audio"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filterkind",
+            "description": "filtered：素材类别（不含 text）"
+          },
+          "filterTagIds": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 20,
+            "title": "Filtertagids",
+            "description": "filtered：一级标签 id 列表；选中一级会展开成「自身+直属二级」"
+          },
+          "filterTagMatch": {
+            "type": "string",
+            "const": "any",
+            "title": "Filtertagmatch",
+            "description": "filtered：标签组合方式。只支持 any（任一命中即可）——资产库的筛选口径唯一（标签 OR 展开到二级），提供 all 会承诺一个兑现不了的更严筛选",
+            "default": "any"
+          },
+          "required": {
+            "type": "boolean",
+            "title": "Required",
+            "description": "该槽位是否必填",
+            "default": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "token",
+          "slotKind"
+        ],
+        "title": "TemplatePackSlotIn",
+        "description": "一个槽位的入参。两种形态的字段互斥，service 会校验。"
+      },
+      "TemplatePackSlotOut": {
+        "properties": {
+          "position": {
+            "type": "integer",
+            "title": "Position"
+          },
+          "token": {
+            "type": "string",
+            "title": "Token"
+          },
+          "slotKind": {
+            "type": "string",
+            "enum": [
+              "fixed",
+              "filtered"
+            ],
+            "title": "Slotkind"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label",
+            "default": ""
+          },
+          "assetId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assetid"
+          },
+          "assetIdSpace": {
+            "type": "string",
+            "title": "Assetidspace",
+            "default": "v2"
+          },
+          "mediaType": {
+            "type": "string",
+            "title": "Mediatype",
+            "default": "image"
+          },
+          "assetName": {
+            "type": "string",
+            "title": "Assetname",
+            "default": ""
+          },
+          "filterKind": {
+            "type": "string",
+            "title": "Filterkind",
+            "default": ""
+          },
+          "filterTagIds": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Filtertagids"
+          },
+          "filterTagNames": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Filtertagnames"
+          },
+          "filterTagMatch": {
+            "type": "string",
+            "title": "Filtertagmatch",
+            "default": "any"
+          },
+          "required": {
+            "type": "boolean",
+            "title": "Required",
+            "default": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "position",
+          "token",
+          "slotKind"
+        ],
+        "title": "TemplatePackSlotOut",
+        "description": "一个槽位的出参。两种形态的字段都带出来，由 `slotKind` 区分。"
+      },
+      "TemplatePackVerifyIn": {
+        "properties": {
+          "picks": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Picks",
+            "description": "槽位选材：{token: assetId}。只填需要用户选择的槽位"
+          }
+        },
+        "type": "object",
+        "title": "TemplatePackVerifyIn",
+        "description": "运行时提交的用户选材。\n\n`picks` 是 `{槽位标识: 素材 id}`，键用提示词里出现的原文\n（如 `{{Mixed 2}}`），值是资产库 id。"
+      },
+      "TemplatePackVerifyOut": {
+        "properties": {
+          "picks": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Picks",
+            "description": "通过复核的 {token: assetId}"
+          }
+        },
+        "type": "object",
+        "title": "TemplatePackVerifyOut",
+        "description": "复核结果。通过复核的槽位与素材 id。"
       },
       "TextAssetIn": {
         "properties": {

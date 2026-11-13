@@ -79,6 +79,7 @@ from core.ports.library_references import library_references_ready
 from core.ports.media import has_asset_lookup
 from core.ports.model_generation import has_model_generation
 from core.ports.org_directory import has_org_directory
+from core.ports.template_pack import has_template_pack
 
 __all__ = ["PORT_CATALOG", "PortSpec", "port_status"]
 
@@ -227,6 +228,16 @@ PORT_CATALOG: tuple[PortSpec, ...] = (
         when_unregistered="fail-closed：抛 503。退化成「空模型列表」会把装配故障"
         "报成用户没配模型，是最难排查的一类问题",
         is_registered=has_model_generation,
+    ),
+    PortSpec(
+        name="template-pack",
+        module="core.ports.template_pack",
+        protocol="TemplatePackPort",
+        implementer="modules/template_pack（带筛选约束的封装模板，import 期注册）",
+        when_unregistered="返回空结果：「没有已封装的模板」是合法状态（新库就是空的），"
+        "抛异常会让「删掉这个模块」变成「别的模块起不来」。"
+        "与 model-generation 的 fail-closed 刻意不同",
+        is_registered=has_template_pack,
     ),
 )
 
