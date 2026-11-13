@@ -78,6 +78,33 @@ async def _drop_library_asset(asset_id: str) -> None:
             await session.commit()
 
 
+async def _library_video(
+    key: str, content: bytes, *, duration: float, has_audio: bool = True
+) -> str:
+    """造一条 v2 原片。走上传接口会被 ffprobe 拦（假字节不是真 mp4）。"""
+    row = LibraryAsset(
+        id=uuid.uuid4().hex,
+        name=f"v2-source-{uuid.uuid4().hex[:8]}.mp4",
+        kind="video",
+        origin="upload",
+        mime_type="video/mp4",
+        size_bytes=len(content),
+        sha256=hashlib.sha256(content).hexdigest(),
+        storage_key=key,
+        duration=duration,
+        has_audio=has_audio,
+        width=1080,
+        height=1920,
+        owner_id=ADMIN,
+        visibility="personal",
+        state="active",
+    )
+    async with get_session_factory()() as session:
+        session.add(row)
+        await session.commit()
+    return row.id
+
+
 async def _run_inputs(run_id: str) -> list[tuple[str, str]]:
     async with get_session_factory()() as session:
         run = await session.get(ReplacementRun, run_id)
@@ -93,6 +120,17 @@ async def _gap(run_id: str) -> str | None:
         run = await session.get(ReplacementRun, run_id)
         assert run is not None
         return await authorization_gap(session, run)
+
+
+def _run_spec(run_id: str) -> dict:
+    """编译输入快照：时长这类「算出来的值」只在这里，出参不重复暴露。"""
+    async def read() -> dict:
+        async with get_session_factory()() as session:
+            run = await session.get(ReplacementRun, run_id)
+            assert run is not None
+            return dict(run.prompt_spec or {})
+
+    return asyncio.run(read())
 
 
 def _template(client, headers, *, source_id: str, pack_id: str) -> str:
@@ -394,3 +432,105 @@ def test_partial_failure_cleans_what_was_already_downloaded(
     assert "丢的图" in str(caught.value)
     staging = tmp_path / "inputs" / library_media.STAGING_DIR
     assert not staging.exists() or not any(staging.iterdir())
+
+
+def test_prepare_accepts_v2_source_video(client) -> None:
+    """v2 原片走 `sourceLibraryId`：字节落成 `inputs/reference-video.mp4`，输入行记 v2。
+
+    这是整条链上最容易「看起来成功」的一处：原片没落盘时编译器仍能产出提示词，
+    执行器要到上传阶段才发现 mixedList 第一项没有文件。
+    """
+    headers = login(client)
+    # 尾部加一段随机字节：`library_assets` 有 (owner, sha256, kind) 唯一约束，
+    # 同一条 mp4 造两份会直接撞键。prepare 只搬字节、不解析容器，尾部多余数据无影响。
+    content = video_bytes(2) + uuid.uuid4().bytes
+    key = f"library/blobs/af/{uuid.uuid4().hex}.mp4"
+    asyncio.run(get_storage().put(key, content, "video/mp4"))
+    source_id = asyncio.run(_library_video(key, content, duration=2.0))
+    front = upload(client, "v2-源片-产品主图.png", "product", png_bytes())
+    pack = asyncio.run(
+        add_pack(kind="product", reference_ids=[front["id"]], roles=["front"], scopes=["worn"])
+    )
+    try:
+        response = client.post(
+            f"{API}/templates/replacement-runs",
+            headers=headers,
+            json={
+                "requestId": uuid.uuid4().hex,
+                "kind": "product",
+                "sourceLibraryId": source_id,
+                "packId": pack.id,
+                "packVersion": 1,
+                "replacementScope": "人物上身穿着",
+            },
+        )
+        assert response.status_code == 201, response.text
+        run = response.json()["data"]
+        inputs = run_path(run["id"]) / "inputs"
+        assert (inputs / "reference-video.mp4").read_bytes() == content
+        # 原片与参考图分属两套空间，行上的标记必须各记各的
+        spaces = dict(asyncio.run(_run_inputs(run["id"])))
+        assert spaces[source_id] == "v2"
+        assert spaces[front["id"]] == "v1"
+        # 时长取自 `duration_ms`，不是 ffprobe 现算——原片可能已被移出资产库
+        assert _run_spec(run["id"])["duration"] == 2
+        assert asyncio.run(_gap(run["id"])) is None
+    finally:
+        asyncio.run(drop_pack(pack.id))
+        asyncio.run(get_storage().delete(key))
+        asyncio.run(_drop_library_asset(source_id))
+
+
+def test_source_space_is_decided_by_field_name_only(client) -> None:
+    """两套原片字段互斥、缺一个就拒；v2 片还得是带音轨的 1–15 秒视频。"""
+    headers = login(client)
+    plain_video = video_bytes(2)
+    good_content = plain_video + uuid.uuid4().bytes
+    silent_content = plain_video + uuid.uuid4().bytes
+    good_key = f"library/blobs/b0/{uuid.uuid4().hex}.mp4"
+    silent_key = f"library/blobs/b1/{uuid.uuid4().hex}.mp4"
+    asyncio.run(get_storage().put(good_key, good_content, "video/mp4"))
+    asyncio.run(get_storage().put(silent_key, silent_content, "video/mp4"))
+    muted = asyncio.run(_library_video(silent_key, silent_content, duration=2.0, has_audio=False))
+    long_one = asyncio.run(_library_video(good_key, good_content, duration=30.0))
+    legacy = upload(client, "v1-源片.mp4", "source", video_bytes(2))
+    front = upload(client, "字段互斥-产品主图.png", "product", png_bytes())
+    pack = asyncio.run(
+        add_pack(kind="product", reference_ids=[front["id"]], roles=["front"], scopes=["worn"])
+    )
+
+    def prepare(**extra) -> dict:
+        body = {
+            "requestId": uuid.uuid4().hex,
+            "kind": "product",
+            "packId": pack.id,
+            "packVersion": 1,
+            "replacementScope": "人物上身穿着",
+            **extra,
+        }
+        response = client.post(f"{API}/templates/replacement-runs", headers=headers, json=body)
+        return {"status": response.status_code, "body": response.json(), "text": response.text}
+
+    try:
+        both = prepare(sourceId=legacy["id"], sourceLibraryId=long_one)
+        assert both["status"] == 400, both["text"]
+        assert "不能同时使用" in both["body"]["message"]
+
+        neither = prepare()
+        assert neither["status"] == 400, neither["text"]
+        assert "请选择要替换的原片" in neither["body"]["message"]
+
+        no_audio = prepare(sourceLibraryId=muted)
+        assert no_audio["status"] == 400, no_audio["text"]
+        assert "带音轨" in no_audio["body"]["message"]
+
+        too_long = prepare(sourceLibraryId=long_one)
+        assert too_long["status"] == 400, too_long["text"]
+        assert "1–15 秒" in too_long["body"]["message"]
+    finally:
+        asyncio.run(drop_pack(pack.id))
+        asyncio.run(get_storage().delete(good_key))
+        asyncio.run(get_storage().delete(silent_key))
+        asyncio.run(_drop_library_asset(muted))
+        asyncio.run(_drop_library_asset(long_one))
+

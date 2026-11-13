@@ -13281,7 +13281,21 @@
           },
           "sourceId": {
             "type": "string",
-            "title": "Sourceid"
+            "title": "Sourceid",
+            "description": "旧素材库的原片 id；与 sourceLibraryId 互斥（同时给直接 400）",
+            "default": ""
+          },
+          "sourceLibraryId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sourcelibraryid",
+            "description": "资产库 v2 的原片 id；与 sourceId 互斥"
           },
           "videoTemplateId": {
             "anyOf": [
@@ -13403,8 +13417,7 @@
         "type": "object",
         "required": [
           "requestId",
-          "kind",
-          "sourceId"
+          "kind"
         ],
         "title": "PrepareReplacement"
       },

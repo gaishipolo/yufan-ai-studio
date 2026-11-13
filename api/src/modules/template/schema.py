@@ -123,7 +123,14 @@ class PrepareReplacement(CamelModel):
     channel: ReplacementChannel = "libtv"
     kind: ReplacementKind
     target: str = Field(default="", max_length=160)
-    source_id: str
+    source_id: str = Field(
+        default="",
+        description="旧素材库的原片 id；与 sourceLibraryId 互斥（同时给直接 400）",
+    )
+    source_library_id: str | None = Field(
+        default=None,
+        description="资产库 v2 的原片 id；与 sourceId 互斥",
+    )
     video_template_id: str | None = Field(default=None, max_length=64)
     scene_prompt: str | None = Field(default=None, max_length=4000,
                                     description="文字换场景的描述；省略使用模板默认值，空白拒绝")

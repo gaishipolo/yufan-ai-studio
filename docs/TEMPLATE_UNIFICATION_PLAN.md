@@ -2298,3 +2298,65 @@ Windows 上 `unlink` 撞到占用被 `except OSError` 吞掉。单独重跑 4 �
 
 **下一步**：v2 原片字段 + `_validate_inputs` 切 v2（时长/音轨校验同批），随后 2.5d 前端
 只换数据源（`PackEditor.tsx` 等，UI 不动）。
+
+### 24.14 步 2.5c（六）：v2 原片进 prepare（2026-11-13）
+
+§24.13 剩下的那条限制（「v2 原片仍未接」）这一节消掉了：`PrepareReplacement` 增
+`sourceLibraryId`，`_validate_inputs` 按字段名分流，原片的字节与固定引用走同一个暂存器。
+
+**做了什么**
+
+1. 契约：`sourceId` 从必填变可选（`default=""`），新增 `sourceLibraryId`。
+2. `_validate_inputs` 返回 `ResolvedInputs(source, source_v2, refs)`：
+   - **原片按字段名判空间**，两个都填 400「不能同时使用 sourceId 与 sourceLibraryId」，
+     都不填 400「请选择要替换的原片」——不做「谁优先」；
+   - v2 判据：`state == ACTIVE` + `readable_ids()`（不可读与不存在**合并成同一句**
+     「原片不存在或已停止共享」，不能告诉调用方这张片确实存在）+ `kind == VIDEO`
+     + `duration_ms` 换算后 1–15 秒 + `has_audio`；
+   - 参考图这一轮仍只有 v1（工作台选图属 2.5d），所以 v1 分支保持「原片 + 参考图一次
+     批量查」，v2 分支再单独查一次参考图。
+3. 暂存：原片以 `SOURCE_TOKEN = "source"` 塞进 `stage_library_refs()` 的同一张表，
+   落成 `inputs/reference-video.mp4`；**但那个 token 不并进 `fixed_media`**——那张表会被
+   写进 `spec["fixedReferenceTokens"]` 当 `{{Mixed N}}` 用，混进去会让编译器看到
+   一个不存在的引用位。`finally` 里的 `discard_staged` 收的是**合并后的**暂存表，
+   原片的临时副本也一起清。
+4. `_media_space(item)` 判空间只认对象类型（`StagedMedia` → v2），所以原片那一行的
+   `asset_id_space` 自动写对；`_assert_still_authorized` 读行上的空间，不需要额外传参。
+
+**落地才确认的两点**
+
+- **`source` 的类型放宽不用改 `_materialize_inputs`**：它只用 `.sha256` / `.duration` /
+  `.id` / `.type`，`StagedMedia` 全都有；`item is source` 的身份判断也天然成立
+  （传下去的就是暂存表里那一个对象）。
+- **`library_assets` 有 `(owner, sha256, kind)` 唯一约束**：同一段 mp4 造两条会撞键。
+  测试里用「真 mp4 + 随机尾巴」区分摘要——prepare 只搬字节、不解析容器，尾巴不影响。
+
+**阶段性限制（仍未做）**
+
+- **视频模板还不能从 v2 原片封装**：`video_templates.source_video_asset_id_space` 已存在，
+  但 `video_template_service` 的创建与 `source_video_path` 复制仍只认 v1 素材表。
+  `find_for_run()` 按 id 匹配（两套 id 都是 uuid4，不会撞），所以 v2 原片**能命中**
+  已存在的 v1 原片模板这条路径不需要改。
+- `CURRENT_ASSET_ID_SPACE` 仍是 `v1`；旧前端不带 `sourceLibraryId`，行为一个字不变。
+
+**验证**
+
+- `scripts/select_tests.py --print` 判 **contract**（6 个改动路径 → 17 个文件）；实际跑
+  **26 个文件**（手工补了 `test_replacement_archive/guards/output/management/ingest`、
+  `test_scene_text_template`、`test_template_packager`、`test_replacement_timing`
+  ——它们走 `POST /replacement-runs`，但依赖图里没连到 `replacement_service`）
+  → **319 passed / 44.67s**（全新 `--basetemp`）。
+- `tests/test_template_v2_materialization.py` **7 passed**，新增两条：
+  1. `sourceLibraryId` 端到端：字节落成 `inputs/reference-video.mp4`、原片行 `v2` /
+     参考图行 `v1`、`prompt_spec["duration"] == 2`（取自 `duration_ms` 而非现算）、
+     `authorization_gap` 为 None；
+  2. 字段互斥与门禁：两个都填 / 都不填 / 无音轨 / 30 秒，四条各自 400 且文案对得上。
+- **反向验证 1**：不把原片放进暂存表 → 准备阶段 400「请选择要替换的原片」，第 1 条红。
+- **反向验证 2**：去掉「两字段互斥」判断 → 第 2 条在「不能同时使用」上红
+  （实际返回的是「原片需为带音轨…」，正好证明缺了互斥就会静默按 v2 解释）。
+- `ruff check src tests` 通过；`mypy --platform win32 src` 297 files 无问题；
+  四份生成物重新导出（`schema.ts` 里 `sourceId` 变可选、`sourceLibraryId` 新增），
+  `export-openapi --check` 通过。
+
+**下一步**：2.5d 前端只换数据源——`PackEditor.tsx` / 替换工作台把 `/assets...` 换成
+`/library/selection`，提交时按 `referenceIdSpace` 选字段回写；UI 结构与布局不动。

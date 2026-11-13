@@ -1945,7 +1945,8 @@ Authorization: Bearer <accessToken>
 | `channel` | `"libtv" \| "bailian" \| "bailian-prime"` | 否 |  |
 | `kind` | `"character" \| "product" \| "scene"` | 是 |  |
 | `target` | `string` | 否 |  |
-| `sourceId` | `string` | 是 |  |
+| `sourceId` | `string` | 否 | 旧素材库的原片 id；与 sourceLibraryId 互斥（同时给直接 400） |
+| `sourceLibraryId` | `string \| null` | 否 | 资产库 v2 的原片 id；与 sourceId 互斥 |
 | `videoTemplateId` | `string \| null` | 否 |  |
 | `scenePrompt` | `string \| null` | 否 | 文字换场景的描述；省略使用模板默认值，空白拒绝 |
 | `referenceIds` | `string[]` | 否 |  |
@@ -5169,7 +5170,8 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `channel` | `"libtv" \| "bailian" \| "bailian-prime"` | 否 |  |
 | `kind` | `"character" \| "product" \| "scene"` | 是 |  |
 | `target` | `string` | 否 |  |
-| `sourceId` | `string` | 是 |  |
+| `sourceId` | `string` | 否 | 旧素材库的原片 id；与 sourceLibraryId 互斥（同时给直接 400） |
+| `sourceLibraryId` | `string \| null` | 否 | 资产库 v2 的原片 id；与 sourceId 互斥 |
 | `videoTemplateId` | `string \| null` | 否 |  |
 | `scenePrompt` | `string \| null` | 否 | 文字换场景的描述；省略使用模板默认值，空白拒绝 |
 | `referenceIds` | `string[]` | 否 |  |

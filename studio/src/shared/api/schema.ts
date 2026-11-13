@@ -1019,7 +1019,10 @@ export interface PrepareReplacement {
   channel?: "libtv" | "bailian" | "bailian-prime";
   kind: "character" | "product" | "scene";
   target?: string;
-  sourceId: string;
+  /** 旧素材库的原片 id；与 sourceLibraryId 互斥（同时给直接 400） */
+  sourceId?: string;
+  /** 资产库 v2 的原片 id；与 sourceId 互斥 */
+  sourceLibraryId?: string | null;
   videoTemplateId?: string | null;
   /** 文字换场景的描述；省略使用模板默认值，空白拒绝 */
   scenePrompt?: string | null;
