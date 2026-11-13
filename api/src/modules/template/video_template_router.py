@@ -54,7 +54,7 @@ async def get_video_template(
 async def create_video_template(
     payload: VideoTemplateDraftIn, actor: ManageDep, session: SessionDep
 ) -> ApiResponse[VideoTemplateOut]:
-    return ApiResponse.ok(await service.create(payload, session))
+    return ApiResponse.ok(await service.create(payload, session, actor=actor))
 
 
 @router.post("/{template_id}/pin", summary="设为固定蓝本（全库仅一个）")
@@ -108,5 +108,11 @@ async def attach_video_template_source(
 ) -> ApiResponse[VideoTemplateOut]:
     """绑定后，这条模板对应的原片才会在「全部模板」里被当作可选卡片。"""
     return ApiResponse.ok(
-        await service.attach_source(template_id, payload.source_video_asset_id, session)
+        await service.attach_source(
+            template_id,
+            payload.source_video_asset_id,
+            session,
+            payload.source_video_id_space,
+            actor=actor,
+        )
     )

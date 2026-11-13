@@ -2315,6 +2315,7 @@ Authorization: Bearer <accessToken>
 | `prompt` | `string` | 是 | 固定提示词原文，含 {{Mixed N}} 占位符 |
 | `sourceVideoName` | `string` | 否 | 样片文件名 |
 | `sourceVideoAssetId` | `string \| null` | 否 | 样片在素材库中的 asset id |
+| `sourceVideoIdSpace` | `"v1" \| "v2"` | 否 | 样片 id 属于哪套素材库：v1 是旧素材表，v2 是资产库。两套 id 都是 32 位 hex，**不能靠形状推断**，所以必须显式声明；缺省 v1 让旧调用一个字都不用改 |
 | `sourceVideoPath` | `string` | 否 | 样片本地路径（可选） |
 | `sourceDurationSec` | `number` | 否 | 样片真实时长，用于提示与档位说明 |
 | `aspectRatio` | `string` | 否 | 输出画幅 |
@@ -2338,6 +2339,7 @@ Authorization: Bearer <accessToken>
 | `promptSha256` | `string` | 是 | 提示词 sha256，防止文字被悄悄改掉 |
 | `sourceVideoName` | `string` | 是 |  |
 | `sourceVideoAssetId` | `string \| null` | 否 |  |
+| `sourceVideoIdSpace` | `string` | 否 |  |
 | `sourceVideoPath` | `string` | 是 |  |
 | `sourceDurationSec` | `number` | 是 |  |
 | `aspectRatio` | `string` | 是 |  |
@@ -2373,6 +2375,7 @@ Authorization: Bearer <accessToken>
 | `promptSha256` | `string` | 是 | 提示词 sha256，防止文字被悄悄改掉 |
 | `sourceVideoName` | `string` | 是 |  |
 | `sourceVideoAssetId` | `string \| null` | 否 |  |
+| `sourceVideoIdSpace` | `string` | 否 |  |
 | `sourceVideoPath` | `string` | 是 |  |
 | `sourceDurationSec` | `number` | 是 |  |
 | `aspectRatio` | `string` | 是 |  |
@@ -2402,7 +2405,8 @@ Authorization: Bearer <accessToken>
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `sourceVideoAssetId` | `string` | 是 | 素材库里 category=source 的 asset id |
+| `sourceVideoAssetId` | `string` | 是 | 原片 id：v1 是素材库里 category=source 的行，v2 是资产库里的视频 |
+| `sourceVideoIdSpace` | `"v1" \| "v2"` | 否 | 原片 id 属于哪套素材库；缺省 v1 |
 
 **响应** `ApiResponse<VideoTemplateOut>`（前端取 `res.data`）
 
@@ -2416,6 +2420,7 @@ Authorization: Bearer <accessToken>
 | `promptSha256` | `string` | 是 | 提示词 sha256，防止文字被悄悄改掉 |
 | `sourceVideoName` | `string` | 是 |  |
 | `sourceVideoAssetId` | `string \| null` | 否 |  |
+| `sourceVideoIdSpace` | `string` | 否 |  |
 | `sourceVideoPath` | `string` | 是 |  |
 | `sourceDurationSec` | `number` | 是 |  |
 | `aspectRatio` | `string` | 是 |  |
@@ -2451,6 +2456,7 @@ Authorization: Bearer <accessToken>
 | `promptSha256` | `string` | 是 | 提示词 sha256，防止文字被悄悄改掉 |
 | `sourceVideoName` | `string` | 是 |  |
 | `sourceVideoAssetId` | `string \| null` | 否 |  |
+| `sourceVideoIdSpace` | `string` | 否 |  |
 | `sourceVideoPath` | `string` | 是 |  |
 | `sourceDurationSec` | `number` | 是 |  |
 | `aspectRatio` | `string` | 是 |  |
@@ -2498,6 +2504,7 @@ Authorization: Bearer <accessToken>
 | `promptSha256` | `string` | 是 | 提示词 sha256，防止文字被悄悄改掉 |
 | `sourceVideoName` | `string` | 是 |  |
 | `sourceVideoAssetId` | `string \| null` | 否 |  |
+| `sourceVideoIdSpace` | `string` | 否 |  |
 | `sourceVideoPath` | `string` | 是 |  |
 | `sourceDurationSec` | `number` | 是 |  |
 | `aspectRatio` | `string` | 是 |  |
@@ -5848,7 +5855,8 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `sourceVideoAssetId` | `string` | 是 | 素材库里 category=source 的 asset id |
+| `sourceVideoAssetId` | `string` | 是 | 原片 id：v1 是素材库里 category=source 的行，v2 是资产库里的视频 |
+| `sourceVideoIdSpace` | `"v1" \| "v2"` | 否 | 原片 id 属于哪套素材库；缺省 v1 |
 
 ### `VideoTemplateDraftIn`
 
@@ -5866,6 +5874,7 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `prompt` | `string` | 是 | 固定提示词原文，含 {{Mixed N}} 占位符 |
 | `sourceVideoName` | `string` | 否 | 样片文件名 |
 | `sourceVideoAssetId` | `string \| null` | 否 | 样片在素材库中的 asset id |
+| `sourceVideoIdSpace` | `"v1" \| "v2"` | 否 | 样片 id 属于哪套素材库：v1 是旧素材表，v2 是资产库。两套 id 都是 32 位 hex，**不能靠形状推断**，所以必须显式声明；缺省 v1 让旧调用一个字都不用改 |
 | `sourceVideoPath` | `string` | 否 | 样片本地路径（可选） |
 | `sourceDurationSec` | `number` | 否 | 样片真实时长，用于提示与档位说明 |
 | `aspectRatio` | `string` | 否 | 输出画幅 |
@@ -5911,6 +5920,7 @@ mixedList 里的一项；下标 +1 就是 {{Mixed N}} 编号。
 | `promptSha256` | `string` | 是 | 提示词 sha256，防止文字被悄悄改掉 |
 | `sourceVideoName` | `string` | 是 |  |
 | `sourceVideoAssetId` | `string \| null` | 否 |  |
+| `sourceVideoIdSpace` | `string` | 否 |  |
 | `sourceVideoPath` | `string` | 是 |  |
 | `sourceDurationSec` | `number` | 是 |  |
 | `aspectRatio` | `string` | 是 |  |

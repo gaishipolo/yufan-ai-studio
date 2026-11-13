@@ -24,9 +24,12 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.context import CurrentUser
 from core.exceptions import BadRequest, Conflict, NotFound
+from core.ports.library_lookup import LibraryAssetRef
 from core.ports.media import get_asset_lookup
-from modules.template.asset_source import resolve_names
+from modules.template.asset_source import resolve_assets, resolve_names
+from modules.template.id_space import ASSET_ID_SPACE_V1, ASSET_ID_SPACE_V2
 from modules.template.models import TemplatePack, VideoTemplate
 from modules.template.pack_roles import PACK_ROLES
 from modules.template.repository import PackRepository
@@ -77,6 +80,8 @@ _CONFIG_COLUMNS = (
     "prompt",
     "prompt_sha256",
     "source_video_asset_id",
+    # 空间进比较：同一个 id 标成另一侧是**另一份配置**，不能算「同配置」返回原行
+    "source_video_asset_id_space",
     "source_video_path",
     "source_video_name",
     "source_duration_sec",
@@ -107,6 +112,7 @@ def to_out(row: VideoTemplate) -> VideoTemplateOut:
         prompt_sha256=row.prompt_sha256,
         source_video_name=row.source_video_name,
         source_video_asset_id=row.source_video_asset_id,
+        source_video_id_space=row.source_video_asset_id_space,
         source_video_path=row.source_video_path,
         source_duration_sec=row.source_duration_sec,
         aspect_ratio=row.aspect_ratio,
@@ -132,6 +138,11 @@ def apply_out(row: VideoTemplate, out: VideoTemplateOut) -> None:
     row.prompt_sha256 = out.prompt_sha256
     row.source_video_name = out.source_video_name
     row.source_video_asset_id = out.source_video_asset_id
+    # 出参与回写必须一一对应（`to_out` 出的每一列这里都要写回）：少一列就是有损
+    # 往返。`update_prompt` 现在写回的是原值，看不出差别；换个来源的出参（导入 /
+    # 复制）就会把 v2 原片冲成默认的 v1。
+    row.source_video_asset_id_space = out.source_video_id_space
+    # `update_prompt` 走的是「出参 → 行」，漏了这一列就等于把 v2 原片改成 v1
     row.source_video_path = out.source_video_path
     row.source_duration_sec = out.source_duration_sec
     row.aspect_ratio = out.aspect_ratio
@@ -330,10 +341,54 @@ async def _resolve_media(
 # --------------------------------------------------------------------------- #
 # 封装
 # --------------------------------------------------------------------------- #
-async def create(payload: VideoTemplateDraftIn, session: AsyncSession) -> VideoTemplateOut:
+async def _library_source(
+    session: AsyncSession, asset_id: str, actor: CurrentUser | None
+) -> LibraryAssetRef:
+    """资产库 v2 的原片：存在 + 我读得到 + 是视频。
+
+    「不存在」与「不可读」合并成同一句：后者不该告诉调用方这条素材确实存在
+    （与 `replacement_service._validate_inputs` 同一口径）。
+    """
+    resolved = await resolve_assets(session, [(asset_id, ASSET_ID_SPACE_V2)], actor=actor)
+    row = resolved.v2.get(asset_id)
+    if row is None or (actor is not None and asset_id not in resolved.readable_v2):
+        raise BadRequest("原片不存在或已停止共享，请重新选择")
+    if row.kind != "video":
+        raise BadRequest("请选择资产库里的视频原片")
+    return row
+
+
+def _library_source_fields(row: LibraryAssetRef) -> dict[str, Any]:
+    """名字与时长**以资产库为准**：封面上写的是库里那一行，前端手里的可能是旧的。
+
+    时长缺失（`duration_ms is None`）时不动调用方的值——探测失败与「确实很短」
+    是两件事，写 0 会让档位静默掉到最小值。
+    """
+    fields: dict[str, Any] = {}
+    if row.name:
+        fields["source_video_name"] = row.name
+    if row.duration_ms:
+        fields["source_duration_sec"] = row.duration_ms / 1000
+    return fields
+
+
+async def create(
+    payload: VideoTemplateDraftIn,
+    session: AsyncSession,
+    *,
+    actor: CurrentUser | None = None,
+) -> VideoTemplateOut:
     if payload.rules.get("fixedReferences"):
         raise BadRequest("跨封装引用请通过模板提示词编辑接口绑定")
     validate_options(payload.prompt, payload.rules)
+    if payload.source_video_id_space == ASSET_ID_SPACE_V2:
+        if not payload.source_video_asset_id:
+            raise BadRequest("请选择资产库里的视频原片")
+        payload = payload.model_copy(
+            update=_library_source_fields(
+                await _library_source(session, payload.source_video_asset_id, actor)
+            )
+        )
     if payload.pack_id:
         pack = await session.get(TemplatePack, payload.pack_id)
         if pack is None or pack.deleted_at is not None or pack.status != "published":
@@ -386,6 +441,7 @@ async def create(payload: VideoTemplateDraftIn, session: AsyncSession) -> VideoT
         prompt_sha256=hashlib.sha256(payload.prompt.encode("utf-8")).hexdigest(),
         source_video_name=payload.source_video_name,
         source_video_asset_id=payload.source_video_asset_id,
+        source_video_asset_id_space=payload.source_video_id_space,
         source_video_path=payload.source_video_path,
         source_duration_sec=payload.source_duration_sec,
         aspect_ratio=payload.aspect_ratio,
@@ -618,7 +674,12 @@ async def find_for_run(
 
 
 async def attach_source(
-    template_id: str, asset_id: str, session: AsyncSession
+    template_id: str,
+    asset_id: str,
+    session: AsyncSession,
+    id_space: str = ASSET_ID_SPACE_V1,
+    *,
+    actor: CurrentUser | None = None,
 ) -> VideoTemplateOut:
     """把样片上传后的 source 资产绑定到模板，让它出现在「全部模板」卡片流里。
 
@@ -626,20 +687,31 @@ async def attach_source(
     会让封装管理里继续显示上一支片的名字和秒数，生成档位也还按旧时长取整
     （6 秒的片按 5 秒出，白丢一秒）。档位只在它确实等于旧时长取整时才跟着改
     ——手调过的值不覆盖。
+
+    **两套空间显式分流**：`id_space` 从调用方来，不靠「v1 查不到再查 v2」。
+    同一个 id 形状两边都像，兜底只会让某一侧悄悄读到另一半数据。
     """
-    lookup = await get_asset_lookup().get_many(session, [asset_id])
-    asset = lookup.get(asset_id)
-    if asset is None or asset.deleted_at:
-        raise NotFound("样片原片不存在或已删除")
-    if asset.category != "source" or asset.type != "video":
-        raise BadRequest("请选择已归档的 source 视频原片")
+    name: str = ""
+    duration: float = 0.0
+    if id_space == ASSET_ID_SPACE_V2:
+        row_v2 = await _library_source(session, asset_id, actor)
+        name, duration = row_v2.name, (row_v2.duration_ms or 0) / 1000
+    else:
+        lookup = await get_asset_lookup().get_many(session, [asset_id])
+        asset = lookup.get(asset_id)
+        if asset is None or asset.deleted_at:
+            raise NotFound("样片原片不存在或已删除")
+        if asset.category != "source" or asset.type != "video":
+            raise BadRequest("请选择已归档的 source 视频原片")
+        name, duration = asset.name, float(asset.duration or 0)
     repo = VideoTemplateRepository(session)
     row = await repo.get_or_404(template_id)
     previous = float(row.source_duration_sec or 0)
     row.source_video_asset_id = asset_id
-    if asset.name:
-        row.source_video_name = asset.name
-    duration = float(asset.duration or 0)
+    # 空间跟着 id 一起写：只写 id 会让「换成 v2 原片」的模板继续按 v1 解释
+    row.source_video_asset_id_space = id_space
+    if name:
+        row.source_video_name = name
     if duration > 0:
         row.source_duration_sec = duration
         generation = dict(row.generation or {})

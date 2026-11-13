@@ -1698,8 +1698,10 @@ export interface ValidationError {
 
 /** 把样片登记后的 source 资产绑定到模板：绑定后它才是「全部模板」里可选的卡片。 */
 export interface VideoTemplateAttachSourceIn {
-  /** 素材库里 category=source 的 asset id */
+  /** 原片 id：v1 是素材库里 category=source 的行，v2 是资产库里的视频 */
   sourceVideoAssetId: string;
+  /** 原片 id 属于哪套素材库；缺省 v1 */
+  sourceVideoIdSpace?: "v1" | "v2";
 }
 
 /** 封装一条新的视频模板。
@@ -1720,6 +1722,8 @@ export interface VideoTemplateDraftIn {
   sourceVideoName?: string;
   /** 样片在素材库中的 asset id */
   sourceVideoAssetId?: string | null;
+  /** 样片 id 属于哪套素材库：v1 是旧素材表，v2 是资产库。两套 id 都是 32 位 hex，**不能靠形状推断**，所以必须显式声明；缺省 v1 让旧调用一个字都不用改 */
+  sourceVideoIdSpace?: "v1" | "v2";
   /** 样片本地路径（可选） */
   sourceVideoPath?: string;
   /** 样片真实时长，用于提示与档位说明 */
@@ -1779,6 +1783,7 @@ export interface VideoTemplateOut {
   promptSha256: string;
   sourceVideoName: string;
   sourceVideoAssetId?: string | null;
+  sourceVideoIdSpace?: string;
   sourceVideoPath: string;
   sourceDurationSec: number;
   aspectRatio: string;
