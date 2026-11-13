@@ -23,6 +23,7 @@ from typing import Any
 from fastapi.testclient import TestClient
 from library_support import LIB_RW, admin_headers, make_user, upload_image
 from tests_template_helpers import upload, video_bytes
+from video_template_support import remove as remove_template
 
 API = "/api/v1"
 
@@ -268,3 +269,94 @@ def test_library_pack_must_be_a_pack_not_an_image(client: TestClient) -> None:
     )
     assert response.status_code == 400, response.text
     assert "不存在或已停止共享" in response.json()["message"]
+
+
+def test_library_pack_cannot_fill_a_multi_person_template(client: TestClient) -> None:
+    """多人模板 + 资产库封装 → 400，且文案要指回**能做这件事**的地方。
+
+    常见坑：这里照抄素材包那句「请为每位出镜人物分别选择人物素材包」——v2 入口
+    只有一个 `libraryPackId`，页面上一共就一个选择框，用户会去点一个不存在的按钮。
+
+    为什么不去支持「一个包里放 N 张正面图」：**放不下**。封装层的用途查重先报错
+    （同一用途有两张就无法确定用哪一张，见下一条用例），所以一个 v2 包最多只有
+    一组人物形象；多人只能靠模板库「每位人物一个包」那条路。
+    """
+    admin = admin_headers(client)
+    face = upload_image(client, API, admin, name="单人物.png", color="orchid")
+    pack = _pack(client, admin, "单人封装的包", [{"assetId": face["id"], "role": "front"}])
+    source = upload(client, "multi-person.mp4", "source", video_bytes(2))
+    created = client.post(
+        f"{API}/templates/video-templates",
+        json={
+            "name": "三人换脸",
+            "sourceVideoAssetId": source["id"],
+            "defaultKind": "character",
+            "prompt": (
+                "编辑 {{Mixed 1}}：{{Mixed 2}} 是第 1 位，{{Mixed 3}} 是第 2 位，"
+                "{{Mixed 4}} 是第 3 位。"
+            ),
+            "rules": {
+                "referenceBindings": {
+                    "{{Mixed 1}}": "source_video",
+                    "{{Mixed 2}}": "front",
+                    "{{Mixed 3}}": "front",
+                    "{{Mixed 4}}": "front",
+                }
+            },
+        },
+        headers=admin,
+    )
+    assert created.status_code == 200, created.text
+    template_id = created.json()["data"]["id"]
+    try:
+        response = _prepare(
+            client,
+            {
+                "requestId": uuid.uuid4().hex,
+                "kind": "character",
+                "sourceId": source["id"],
+                "videoTemplateId": template_id,
+                "libraryPackId": pack["id"],
+            },
+            admin,
+        )
+        assert response.status_code == 400, response.text
+        message = response.json()["message"]
+        assert "3 位出镜人物" in message, message
+        # 指对动作：模板库的人物素材包，而不是这里根本没有的「再选一个封装」
+        assert "人物素材包" in message, message
+    finally:
+        remove_template(template_id)
+
+
+def test_library_pack_refuses_two_members_with_the_same_role(client: TestClient) -> None:
+    """一个包放两张「正面身份图」→ 400。这是「多人只能靠模板库」的**结构性原因**：
+    包里放不下 N 组人物形象，所以 v2 这条路连凑齐槽位的机会都没有。
+    """
+    admin = admin_headers(client)
+    first = upload_image(client, API, admin, name="正面甲.png", color="orchid")
+    second = upload_image(client, API, admin, name="正面乙.png", color="olive")
+    pack = _pack(
+        client,
+        admin,
+        "两张正面",
+        [
+            {"assetId": first["id"], "role": "front"},
+            {"assetId": second["id"], "role": "front"},
+        ],
+    )
+    source = upload(client, "library-pack-two-fronts.mp4", "source", video_bytes(2))
+
+    response = _prepare(
+        client,
+        {
+            "requestId": uuid.uuid4().hex,
+            "kind": "character",
+            "sourceId": source["id"],
+            "libraryPackId": pack["id"],
+            "replacementScope": "人物上身穿着",
+        },
+        admin,
+    )
+    assert response.status_code == 400, response.text
+    assert "不止一张" in response.json()["message"]

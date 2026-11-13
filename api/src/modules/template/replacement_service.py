@@ -440,7 +440,7 @@ class ReplacementService:
                 frozen = snapshot
                 if video_template is not None:
                     _check_video_template(
-                        video_template, roles, payload.kind, character_fronts
+                        video_template, roles, payload.kind, character_fronts, library_pack=True
                     )
             else:
                 if not payload.pack_id or not payload.pack_version:
@@ -1256,12 +1256,23 @@ def _check_video_template(
     roles: dict[str, str],
     kind: str,
     character_fronts: list[str] | None = None,
+    *,
+    library_pack: bool = False,
 ) -> None:
     """模板按**原片**套用，图片按用途对应：换素材包时提示词与编号都不动。
 
     所以这里校验的是「当前素材包能不能凑出模板要的那几种用途」，而不是
     某几张固定 asset：素材包换图、升版都不再要求重新封装；凑不齐用途才拦下，
     并且要说清缺的是哪一张。
+
+    `library_pack` 只影响**多人模板**那一句报错：v2 封装的入口一次只能选一个包、
+    没有「按人物逐个选」这一步，照抄素材包那句会让用户去点一个不存在的按钮。
+
+    也不必想着「包里多放几张正面图就能凑槽位」：封装层的用途查重不允许一个包里
+    有两张「正面身份图」（见 `_library_pack_inputs`），v2 这条路的包里天生只有
+    一组人物形象。退一步说，就算放得进去，封装页也没有「第 N 位人物 = 第 N 张图」
+    这个声明，按成员顺序对齐就是拿位置猜身份——错配不会报错，只是把第 2 个人
+    换成了第 1 个人。
     """
     validate_options(template.prompt, template.rules)
     from modules.template.video_template_bindings import (
@@ -1271,9 +1282,14 @@ def _check_video_template(
     )
 
     declared = reference_roles(template.rules, template.prompt, kind)
-    if character_slots(template) > 1 and (
-        character_fronts is None or len(character_fronts) != character_slots(template)
-    ):
+    slots = character_slots(template)
+    if slots > 1 and (character_fronts is None or len(character_fronts) != slots):
+        if library_pack:
+            raise BadRequest(
+                f"这个模板要 {slots} 位出镜人物，资产库封装只能整包套用、按用途取图，"
+                "无法按人物分别指定；请改用模板库的人物素材包（每位人物一个），"
+                "或换一个单人出镜的模板"
+            )
         raise BadRequest("请为每位出镜人物分别选择人物素材包")
     if declared is not None:
         order_reference_ids(list(roles), roles, declared, kind)
