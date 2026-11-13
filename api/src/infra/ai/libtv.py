@@ -14,6 +14,7 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
+from core.config import get_settings
 from core.exceptions import BadRequest, UpstreamError
 from core.logging import get_logger
 from infra import get_queue
@@ -48,8 +49,8 @@ class LibTvSettings(DriverSettings):
 
     model_config = driver_config("LIBTV")
 
-    # node 可执行文件；模板模块编译提示词时也用这个
-    node: str = "node"
+    # node 可执行文件**不在这里**：它是运行期依赖，归 `core.config.node_binary`
+    # （`LIBTV_NODE` 已注册为该字段的别名，旧部署照旧生效）。
     # 适配器从已登录的本地浏览器读 Cookie；显式下发，避免依赖 API 进程继承的环境变量。
     browser_url: str = "http://127.0.0.1:9226"
 
@@ -201,7 +202,7 @@ async def _execute_stage(run_id: str, stage: str) -> ExecutorResult:
             "version": LIBTV_PROCESS_PROTOCOL,
             "stage": stage,
             "run": str(path),
-            "node": get_libtv_settings().node,
+            "node": get_settings().node_binary,
             "result": str(resultfile),
         },
         ensure_ascii=False,

@@ -709,7 +709,7 @@ $MEDIA_ARCHIVE_ROOT/
 | 条件 | 配置项 / 环境变量 | 缺失时的表现 |
 |---|---|---|
 | 共享盘可读写 | `MEDIA_ARCHIVE_ROOT` | 「素材归档盘不可用，请检查 Z 盘连接」 |
-| Node 可用 | `LIBTV_NODE`（默认 `node`） | 「提示词编译器不可用，请检查 Node 配置」 |
+| Node 可用 | `NODE_BINARY`（旧名 `LIBTV_NODE` 仍生效，默认 `node`） | 「提示词编译器不可用，请检查 Node 配置」 |
 | 固定版适配器 | `libtv_runtime/vendor/`（随代码入库，无需配置） | manifest 哈希不符 → `RELEASE_INVALID` |
 | 已登录的浏览器会话 | 环境变量 `JS_REVERSE_BROWSER_URL` | `LOGIN_REQUIRED`（状态显示「需要登录」） |
 | worker 开启 | `WORKER_ENABLED=true` | 「后台执行器未启用」 |

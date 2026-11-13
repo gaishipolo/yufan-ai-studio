@@ -32,7 +32,6 @@ from pathlib import Path
 
 from api.module import DoctorReportLike
 from core.config import settings
-from infra.ai.libtv import get_libtv_settings
 from infra.ai.libtv_process import VENDOR
 from infra.archive.runs import runs_root, workspace_needs_attention
 
@@ -68,10 +67,10 @@ def _vendor_gaps() -> tuple[int, list[str]]:
 
 def _node_version() -> tuple[str, str]:
     """返回 (版本号, 失败原因)。版本号为空时第二项说明为什么拿不到。"""
-    node = get_libtv_settings().node
+    node = settings.node_binary
     executable = shutil.which(node)
     if executable is None:
-        return "", f"PATH 里找不到 {node!r}（配 LIBTV_NODE，或把 node 加进 PATH）"
+        return "", f"PATH 里找不到 {node!r}（配 NODE_BINARY，或把 node 加进 PATH）"
     try:
         proc = subprocess.run(
             [executable, "--version"],

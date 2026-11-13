@@ -39,7 +39,6 @@ from tests_template_helpers import (
 from video_template_support import aput
 
 from core.config import settings
-from infra.ai.libtv import get_libtv_settings
 from infra.archive import checksum, get_archive_storage
 from infra.archive.local import get_archive_settings
 from infra.archive.runs import read_pointer, runs_root
@@ -563,7 +562,6 @@ def _run_bridge(path: Path, vendor: Path, commands: list[str], *, quote: int) ->
 
     argv 第 5 项是适配器目录（生产由监督进程算出仓库内 vendor），测试换成替身目录。
     """
-    settings = get_libtv_settings()
     script = (
         f"import {{main}} from {json.dumps(BRIDGE.as_uri())};"
         f"process.argv={json.dumps(['node', 'test', 'upload', str(path), str(vendor)])};"
@@ -571,7 +569,7 @@ def _run_bridge(path: Path, vendor: Path, commands: list[str], *, quote: int) ->
         + "".join(f"process.argv[2]={json.dumps(command)!s};await main();" for command in commands)
     )
     response = subprocess.run(
-        [settings.node, "--input-type=module", "-e", script],
+        [settings.node_binary, "--input-type=module", "-e", script],
         env={**os.environ, "TEST_QUOTE": str(quote)},
         capture_output=True,
     )
@@ -606,7 +604,7 @@ def test_free_quote_gate_and_uncertain_states() -> None:
       assert.equal(canSubmit({{status:'uploaded',task_id:null}}),true);
     """
     subprocess.run(
-        [get_libtv_settings().node, "--input-type=module", "-e", script],
+        [settings.node_binary, "--input-type=module", "-e", script],
         check=True,
         capture_output=True,
     )

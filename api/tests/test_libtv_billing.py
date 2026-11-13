@@ -16,7 +16,6 @@ from tests_template_helpers import add_run, drop_run
 
 from core.config import settings
 from db.session import get_session_factory
-from infra.ai.libtv import get_libtv_settings
 from modules.template import worker
 from modules.template.workspace import write_state
 
@@ -26,7 +25,7 @@ VENDOR = RUNTIME / "vendor"
 
 def _run_node(script: str) -> None:
     subprocess.run(
-        [get_libtv_settings().node, "--input-type=module", "-e", script],
+        [settings.node_binary, "--input-type=module", "-e", script],
         check=True,
         capture_output=True,
     )

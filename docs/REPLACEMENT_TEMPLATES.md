@@ -122,7 +122,7 @@ Z:\yufan_ai_studio\
 
 ## LibTV 执行
 
-固定版适配器（libtv-canvas v1.2.0）随代码入库在 `api/src/infra/ai/libtv_runtime/vendor/`，按源仓库原相对路径存放，`vendor/manifest.json` 记录逐文件 sha256。桥接层启动先按清单校验完整性，再从该目录加载上传、提交与查询组件；**不需要任何指向外部项目的路径配置**，校验失败按 `RELEASE_INVALID` 处理。`LIBTV_NODE` 可设置 Node 22+ 的绝对路径。浏览器登录态继续由已登录的专用浏览器提供（`LIBTV_BROWSER_URL`），登录过期时在该浏览器正常登录，不导出 Cookie。
+固定版适配器（libtv-canvas v1.2.0）随代码入库在 `api/src/infra/ai/libtv_runtime/vendor/`，按源仓库原相对路径存放，`vendor/manifest.json` 记录逐文件 sha256。桥接层启动先按清单校验完整性，再从该目录加载上传、提交与查询组件；**不需要任何指向外部项目的路径配置**，校验失败按 `RELEASE_INVALID` 处理。`NODE_BINARY`（旧名 `LIBTV_NODE` 仍生效）可设置 Node 22+ 的绝对路径。浏览器登录态继续由已登录的专用浏览器提供（`LIBTV_BROWSER_URL`），登录过期时在该浏览器正常登录，不导出 Cookie。
 
 积分加速适配器（`vendor/libtv/adapters/billing.mjs`）已接入。源仓库 main 没有这个文件，2026-11-09 通过已登录浏览器的 CDP 逆向「0 积分畅用」开关补齐，同样纳入 `vendor/manifest.json` 逐文件哈希校验。开关分两层：**账号级**「优先使用 0 积分畅用」一律不动；**单次请求级**由 `params.infiniteSwitch` 控制（`0` = 走 0 积分畅用的免费队列，`1` = 本次关掉畅用走积分队列），同时在请求顶层与 `params` 内带上 `disableBenefitTags`（账号当前生效的 0 积分权益标签，如 `rateLimit_powerZero_20261111`），并重新生成 `requestId`。标签由 `GET https://api2.liblib.art/api/www/commerce/activity/benefit?productTypes=3` 用浏览器同一套登录头读取，只取 `benefitStatus` 为 1 且未过期的 `powerZero` / `rateLimit_powerZero_*` 项；查不到有效标签时明确报错，不静默排回免费队列。已提交的任务照常查询。
 

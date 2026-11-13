@@ -12,7 +12,7 @@ import os
 from pathlib import Path
 from typing import Annotated, Literal
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 # 生产环境 JWT 密钥最小长度（HS256 推荐值，见 RFC 7518 §3.2）
@@ -68,6 +68,27 @@ class Settings(BaseSettings):
     app_env: Literal["dev", "test", "prod"] = "dev"
     debug: bool = True
     api_prefix: str = "/api/v1"
+
+    # ---------- 运行期依赖 ----------
+    # node 可执行文件：提示词编译器要用它，执行器子进程也要用它。
+    # **不挂在某个驱动/供应商的设置下**：模板模块为了「编译一段提示词」去读
+    # `LIBTV_*`，等于把供应商当成运行环境，别的供应商接进来就没有 node 可用。
+    # `LIBTV_NODE` 作为别名继续生效——旧部署写的是这个名字，改了要现场配环境。
+    node_binary: str = Field(
+        "node", validation_alias=AliasChoices("NODE_BINARY", "LIBTV_NODE")
+    )
+
+    @field_validator("node_binary", mode="before")
+    @classmethod
+    def _empty_node_means_default(cls, v: object) -> object:
+        """`NODE_BINARY=`（写成空）等同于没配。
+
+        空串不是「走 PATH」而是「找不到可执行文件」：`shutil.which("")` 返回 None，
+        自检会报 `PATH 里找不到 ''`，而配置看上去是配了。
+        """
+        if isinstance(v, str) and not v.strip():
+            return "node"
+        return v
 
     # ---------- 演示数据 ----------
     # `app seed` 种出来的演示账号是谁。放在配置里而不是写死成某个模块的常量：

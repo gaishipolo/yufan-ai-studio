@@ -31,6 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.exc import StaleDataError
 
 from core import audit
+from core.config import get_settings
 from core.context import CurrentUser
 from core.exceptions import (
     AppError,
@@ -58,7 +59,6 @@ from core.ports.library_lookup import (
 )
 from core.ports.media import get_asset_lookup
 from core.serving import Served
-from infra.ai.libtv import get_libtv_settings
 from infra.archive import ArchiveStorage, get_archive_storage
 from modules.template import video_template_service
 from modules.template.asset_source import resolve_assets
@@ -1628,7 +1628,7 @@ def _materialize_inputs(
         spec["fixed_prompt"] = video_template.prompt
     compile_started = perf_counter()
     try:
-        compiled = compile_prompt(spec, node=get_libtv_settings().node)
+        compiled = compile_prompt(spec, node=get_settings().node_binary)
     finally:
         # finally 而不是 else：超时与失败也要能看到「编译卡了多久」，
         # 那正是需要排查的那一次。
