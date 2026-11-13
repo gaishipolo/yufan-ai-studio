@@ -18,7 +18,9 @@ from core.exceptions import BadRequest, Conflict, InvalidState, NotFound
 from core.param_schema import resolve_params
 from core.ports.model_generation import (
     DriverSummary,
+    ExecutorOutcome,
     GenerationTicket,
+    LibTVPaths,
     ModelSummary,
     ReplacementChannelInfo,
     SubmitSpec,
@@ -218,3 +220,16 @@ class ModelGenerationFacade:
     async def prepare_inputs(self, model: str, run_id: str) -> None:
         ensure_drivers_registered()
         await channels.prepare_inputs(model, run_id)
+
+    def libtv_paths(self) -> LibTVPaths:
+        """执行器资产位置由本模块给出，模板库只经端口问路。"""
+        from modules.model_driver.libtv.process import RUNTIME, VENDOR
+        from modules.model_driver.libtv.state import RUN_LOCK
+
+        return LibTVPaths(vendor=VENDOR, bridge=RUNTIME, run_lock=RUN_LOCK)
+
+    async def libtv_execute_stage(self, run_id: str, stage: str) -> ExecutorOutcome:
+        from modules.model_driver.libtv import executor
+
+        result = await executor.execute_stage(run_id, stage)
+        return ExecutorOutcome(code=result.code, message=result.message)

@@ -80,7 +80,7 @@ def test_drivers_are_auto_loaded_without_env_listing(client: TestClient) -> None
     assert all(item.loaded for item in infos.values()), load_errors()
     assert not load_errors()
     # 关键：这些名字不在配置清单里，是扫描 drivers/ 得来的
-    assert "agnes" not in settings.ai_provider_list
+    assert not hasattr(settings, "ai_provider_list"), "白名单配置已整体下线"
     router = get_model_router()
     assert "agnes" in router.provider_names()
     assert router.resolve("agnes-image-2.5-flash") is not None

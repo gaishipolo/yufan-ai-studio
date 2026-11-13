@@ -25,13 +25,13 @@ from sqlalchemy import delete, select
 from db.session import get_session_factory
 from generation.runner import JOB_POLL, GenerationRunner
 from infra.ai.base import GenerationProgress, GenerationState
-from infra.ai.echo import EchoProvider
 from infra.queue.base import Job
 from infra.queue.memory import MemoryJobQueue
 from modules.identity.models import User
 from modules.image.models import ImageJob
 from modules.image.pipeline import ImageGenerationPipeline
 from modules.library.models import LibraryAsset
+from modules.model_driver.drivers.echo import EchoProvider
 
 _EXTERNAL_A = "echo-image-deadbeef-1"
 _EXTERNAL_B = "echo-image-cafebabe-2"

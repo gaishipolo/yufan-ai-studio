@@ -96,7 +96,6 @@ def test_prod_guard_imports_active_driver_before_checking(
     for key in ("S3_ENDPOINT", "S3_BUCKET", "S3_ACCESS_KEY", "S3_SECRET_KEY"):
         monkeypatch.delenv(key, raising=False)
     monkeypatch.setattr(settings, "storage_driver", "s3")
-    monkeypatch.setattr(settings, "ai_providers", "")
 
     with pytest.raises(RuntimeError, match="S3Settings"):
         dc.ensure_prod_driver_settings("prod")

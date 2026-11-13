@@ -106,9 +106,9 @@ class ModelSpec:
     # 选中后跑完拿到一张 `example.com/mock/...` 的占位图**，全程没有任何报错。
     # 用户看到「Seedream 3」以为接了字节的豆包，其实什么都没接。
     #
-    # 典型来源是 `infra/ai/echo.py`（本地开发占位供应商，走老的
-    # `AI_PROVIDERS` 路径）。老的示例驱动已经有 `_` 前缀不自动载入的约定，
-    # 但**老路径不受那个约定管**——`AI_PROVIDERS` 是白名单，写进去就会注册。
+    # 典型来源是 `drivers/echo.py`（本地开发占位驱动）。示例驱动靠文件名
+    # `_` 前缀不自动载入；echo 不带前缀是故意的——离线联调按 id 提交要能
+    # 解析得到。挡在选择器外靠 `placeholder`，不靠文件名。
     #
     # 与 `internal` 一样，`resolve()` 仍能解析到它：模板库迁移到 `drivers/`
     # 之前，老链路按 id 提交照常能跑（只是拿占位结果）。区别只在于
@@ -160,8 +160,8 @@ class ModelProvider(Protocol):
     # 同样可选的声明式字段：`preferred_for = frozenset({Capability.IMAGE})`
     # 表示「我这个供应商的模型是该能力的默认首选」。不写则沿用「注册顺序第一个」
     # （见 `ModelRouter._apply_preferred`）。为什么需要它：默认模型不该由
-    # 「谁先被 import」决定——供应商来源有 `AI_PROVIDERS` 与 `drivers/` 两条，
-    # 顺序是装配细节，换个接入方式就会静默换掉默认模型。
+    # 「谁先被 import」决定——`drivers/` 的扫描顺序是装配细节，增删一个
+    # 驱动文件就会静默换掉默认模型。
     # preferred_for: frozenset[Capability]
 
     async def submit(self, request: GenerationRequest) -> SubmitResult:

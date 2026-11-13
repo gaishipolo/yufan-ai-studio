@@ -43,6 +43,7 @@
 | `17b3813` | 事件循环用例按**观察窗口**定工作量，不再按轮数定额 | 快机器上不再「窗口太短」假红 |
 | `e521df9` | 新增本交接文档 + 修正 6 处过期口径 | 新会话不用重新摸现状 |
 | 本轮 | **`bailian` 迁进 `drivers/`**（T32，`a18e927`）：新增可选协议 `InputPreparer` + `core/prompt_refs.py`，替换链改为「从路由拿实例、按类型判断」 | 百炼不再靠 `AI_PROVIDERS` 加载；未配密钥在选渠道时就说清 |
+| 本轮 | **模型供应商整体迁移**（2026-11-13）：废弃 `AI_PROVIDERS` 白名单；`echo` → `drivers/echo.py`，`libtv` 执行器（`executor.py` / `process.py` / `state.py` / `runtime/`）→ `modules/model_driver/libtv/`；模板库经 `core/ports/model_generation` 的 `libtv_paths()` / `libtv_execute_stage()` 问执行器 | 只剩 `drivers/` 一条接入路径；`core/config.py` 白名单字段、`.env` 的 `AI_PROVIDERS`、`infra/ai/<name>.py` 全删；子进程入口改成 `-m modules.model_driver.libtv.process` |
 | `cfc0508` | `ModelSpec.internal` + `ModelRouter.public_models()`：替换链专用模型不再出现在目录（T33） | 视频下拉里不再有选中即 400 的 `*-replacement` |
 
 表格之后又连续落了几件事（提交见 `git log --oneline -12`）：PR#5 语义合并 →
@@ -69,7 +70,7 @@ T34 参考图（含素材库侧边悬浮栏 + 拖拽）→ 标签两级分类 �
 | agnes 提交预算 **120s → 210s**（驱动声明 180 + 余量 30） | 运维/上游 | 以前上游慢于 120s 会被框架取消并判「提交结果未知」 |
 | `APP_ENV=test` 时 scrypt 用 `2**10`，其他环境仍 `2**14` | 测试 | 参数编码在哈希串里，存量口令不用迁移 |
 | 指标超限丢弃可在 `/metrics` 看到 `app_metrics_series_dropped_total{metric}` | 运维 | 以前是静默丢 |
-| `bailian` 不再是 `AI_PROVIDERS` 里的名字：`.env` 若还写着它，**启动会失败**（`infra/ai/bailian.py` 已删） | 运维 | 删掉那一段即可，驱动会自动载入；只需留 `BAILIAN_API_KEY` 等私有配置 |
+| `.env` 里不再有 `AI_PROVIDERS`：模型供应商全部由 `drivers/` 自动扫描载入，没有启用清单 | 运维 | 删掉那一行；只需留 `BAILIAN_API_KEY` / `AGNES_API_KEY` 等私有配置 |
 | 百炼渠道可用性改由驱动回答（`InputPreparer.unavailable_reason`） | 前端/运维 | 没配密钥时渠道目录返回「服务端尚未配置百炼密钥」，文案与以前一致 |
 | `GET /models` 不再返回 `internal=True` 的模型（`bailian-wan3-*` / `libtv-wan3-*`） | 前端/脚本 | 它们是替换链专用（要 `archiveRunId`）。按 id 仍能提交；只是不再出现在「可选清单」和「可用模型」报错提示里 |
 | `drivers/` 里**文件名带 `_` 前缀的驱动不自动载入** | 驱动开发者 | `_mock_async.py` / `_mock_sync.py` / `_template.py` 都不进模型目录、不进 `app drivers list`、不出现在用户可见的下拉里。需要离线联调时显式调 `registry.register_example_drivers()` |

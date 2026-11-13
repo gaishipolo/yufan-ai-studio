@@ -496,16 +496,11 @@ app create-admin --username admin      # 交互式输入密码；--password 可�
 
 ## 3. 案例：接入一个新的模型供应商
 
-> **先选接入方式**：如果只是想「丢一个 Python 文件就自动生效」，或者要让其他
-> 业务模块通过统一接口发起生成，走 **模型驱动模块**——见
-> `docs/MODEL_DRIVER_STANDARD.md`，不需要改 `.env`、不需要本节的配置清单。
-> 本节是另一条并存的老路径（`infra/ai/<name>.py` + `AI_PROVIDERS`），
-> 适合框架基础设施层的供应商适配；两条路径共用 `ModelProvider` 协议与
-> `ModelRouter`，模型 id 撞车会被报出来。
->
-> **现成例子**：agnes 就走驱动那条路（`modules/model_driver/drivers/agnes.py`），
-> 支持文生图 / 图生图 / 多图合成，可直接当模板读。它**不**在 `AI_PROVIDERS` 里——
-> 把驱动名再写进那张清单，启动时会因「同名但模型清单不同」或重复注册而报错。
+> **本节是历史记录（2026-11-13 起老路径已下线）**：`AI_PROVIDERS` 白名单与
+> `infra/ai/<name>.py` 不再存在，所有供应商（含 echo、libtv）统一由
+> `modules/model_driver/drivers/` 自动扫描载入。**新接供应商请直接读
+> `docs/MODEL_DRIVER_STANDARD.md`**，下面的 `AI_PROVIDERS` 配置步骤已失效，
+> 保留只为解释迁移前的代码形状。
 
 假设要接火山引擎。
 
@@ -552,11 +547,9 @@ class VolcengineProvider:
 Driver = VolcengineProvider
 ```
 
-**② 改配置**
+**② 不需要改配置**（历史步骤：`AI_PROVIDERS=echo,volcengine` 已作废）
 
-```dotenv
-AI_PROVIDERS=echo,volcengine
-```
+现在把文件放进 `drivers/` 就会自动载入；`core/config.py` 里没有启用清单。
 
 如果这个供应商需要部署参数（base_url / api_key / 区域），**在它自己的文件里声明配置**，
 不要加进 `core/config.py`：
@@ -839,7 +832,7 @@ async def ask_xxx(...) -> ...:              # **未注册时返回中性值，�
 | `storage` | `STORAGE_DRIVER` | `local` / `s3`（S3 或 MinIO，MinIO 必须 path-style） |
 | `queue` | `QUEUE_DRIVER` | `memory`（开发）/ `db`（`queued_jobs`，重启不丢） |
 | `cache` | `CACHE_DRIVER` | `memory`（LRU + TTL） |
-| `ai` | `AI_PROVIDERS`（可多选） | `echo`（演示/单测）/ `libtv`（模板链视频，跑本地 Node 运行时）。**`agnes` / `bailian` 已迁走**，它们在 `modules/model_driver/drivers/` 里自动载入，不要写进这张清单 |
+| `ai` | **已下线** | 模型供应商全部由 `modules/model_driver/drivers/` 自动扫描载入，没有启用清单；见 `docs/MODEL_DRIVER_STANDARD.md` |
 | `archive` | `ARCHIVE_DRIVER` | `local`（本地 / 共享盘）/ `s3`（默认分桶；`create()` 是集群级 CAS 原语，发布版号与选主租约靠它） |
 
 新增一个只需两步：写 `infra/<kind>/<name>.py`（`Driver = 你的类`），改 `.env`。

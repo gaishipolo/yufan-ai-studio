@@ -225,7 +225,7 @@ def test_retry_policy_skips_permanent_errors() -> None:
 # --------------------------------------------------------------------------- #
 from generation.spec import GenerationRecord  # noqa: E402
 from infra.ai.base import GenerationRequest  # noqa: E402
-from infra.ai.echo import EchoProvider  # noqa: E402
+from modules.model_driver.drivers.echo import EchoProvider  # noqa: E402
 
 
 class _SubmitProbeStore:

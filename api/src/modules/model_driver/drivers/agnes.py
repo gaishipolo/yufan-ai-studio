@@ -1,7 +1,7 @@
 """Agnes 生图驱动（按 `docs/MODEL_DRIVER_STANDARD.md` 写的单文件驱动）。
 
 一个文件 = 一个供应商：`META` + `MODELS` + 实现 `submit/poll/cancel` 的类。
-放进 `drivers/` 就自动载入，**不需要**改 `.env` 的 `AI_PROVIDERS`、不需要注册。
+放进 `drivers/` 就自动载入，不改 `.env`、不改 import、不需要注册。
 
 ## 契约（2026-11-10 实测，含与官方文档的出入）
 
@@ -176,9 +176,9 @@ class AgnesDriver:
     # generation/recovery.py 据此不调 runner.resume()，否则 poll() 会把记录判死。
     supports_poll = False
     # 声明「生图默认选我」：默认模型不再由注册顺序决定。
-    # 顺序是装配细节（infra 供应商先注册、drivers 后注册），把它当默认值来源，
-    # 等于「谁先 import 谁说了算」——把 agnes 从 AI_PROVIDERS 挪进 drivers 就会
-    # 把默认生图模型悄悄换成 echo 的 seedream-3，而没有任何一处报错。
+    # 顺序是装配细节（`drivers/` 按文件名字典序扫描），把它当默认值来源，
+    # 等于「谁先 import 谁说了算」——历史上因此把默认生图模型悄悄换成
+    # echo 的 seedream-3，而没有任何一处报错。
     preferred_for = frozenset({Capability.IMAGE})
 
     @property

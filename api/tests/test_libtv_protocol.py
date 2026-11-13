@@ -17,8 +17,8 @@ from typing import Any
 
 import pytest
 
-from infra.ai import libtv_process
-from infra.ai.libtv_state import LIBTV_PROCESS_PROTOCOL, ExecutorResult
+from modules.model_driver.libtv import process as libtv_process
+from modules.model_driver.libtv.state import LIBTV_PROCESS_PROTOCOL, ExecutorResult
 
 
 def _feed(monkeypatch: pytest.MonkeyPatch, payload: dict[str, Any] | bytes) -> None:
@@ -121,7 +121,7 @@ def test_executor_env_drops_delete_semantics_shims(monkeypatch: pytest.MonkeyPat
     批量删除守卫」；执行器清 `records/worker.lock` 时撞上守卫会直接退出，任务被写成
     「LibTV 查询中断：safe-delete 安全守卫……」而上游其实一切正常。
     """
-    from infra.ai import libtv
+    from modules.model_driver.libtv import executor as libtv
 
     monkeypatch.setenv("PYTHONPATH", r"D:/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim")
     monkeypatch.setenv("NODE_OPTIONS", "--require shim.cjs")

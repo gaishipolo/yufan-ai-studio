@@ -1,6 +1,6 @@
 """阿里云百炼 Wan 3.0 视频驱动（北京地域，异步任务 + 计费回执）。
 
-放进 `drivers/` 就自动载入，**不需要**改 `.env` 的 `AI_PROVIDERS`、不需要注册。
+放进 `drivers/` 就自动载入，不改 `.env`、不改 import、不需要注册。
 它是模板工作台「替换渠道」的第三个可选渠道（`libtv` / `bailian` / `bailian-prime`），
 `bailian-wan3-*` 这两个模型 id 只在那条链里用，通用生成入口用 `agnes-*`。
 

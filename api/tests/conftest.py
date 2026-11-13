@@ -34,8 +34,6 @@ os.environ.update(
         # 「本机绿、CI 红」就是这么来的。测试永远是本地盘。
         "STORAGE_DRIVER": "local",
         "ARCHIVE_DRIVER": "local",
-        "AI_PROVIDER": "echo",
-        "AI_PROVIDERS": "echo",
         # 测试永远使用临时磁盘，不能读写开发环境 Z 盘的真实素材。
         "STORAGE_LOCAL_ROOT": str(_TMP_DB.parent / "storage"),
         "MEDIA_ARCHIVE_ROOT": str(_TMP_DB.parent),

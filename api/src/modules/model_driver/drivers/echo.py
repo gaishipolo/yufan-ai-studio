@@ -1,8 +1,7 @@
 """Echo 供应商：本地开发占位，不调用任何外部 API。
 
-用于跑通「提交 → 轮询 → 完成」的完整链路，接入真实厂商后由配置切换：
-    AI_PROVIDERS=echo,volcengine
-
+用于跑通「提交 → 轮询 → 完成」的完整链路。整体迁移后它也在 `drivers/` 里
+自动载入，接真实厂商时把这个文件删掉或标 `placeholder` 即可，不需要改 `.env`。
 它同时演示了接入真实供应商时要提供什么：三个方法 + 一份模型清单。
 
 **这里声明的模型全部标了 `placeholder=True`**，所以它们**不会出现在用户的
@@ -17,9 +16,9 @@
 `placeholder` 与 `internal` 是两回事，别混用：`internal` 是「只能自己的
 业务链路调」（替换链专用渠道，露脸必然 400）；`placeholder` 是「实现是假的」。
 
-老的示例驱动（`drivers/_mock_async.py` 等）靠**文件名前缀 `_`** 不自动载入，
-但那条约定只对新路径 `drivers/` 有效——老路径 `AI_PROVIDERS` 是白名单，
-写进去就注册，所以这里只能靠 `placeholder` 标记挡住。
+示例驱动（`_mock_async.py` 等）靠**文件名前缀 `_`** 不自动载入；本文件不带
+前缀，会被扫进来——这是故意的：生成框架的离线联调按 id 提交要能解析得到。
+挡在选择器外靠 `placeholder`，不靠文件名。
 """
 
 from __future__ import annotations

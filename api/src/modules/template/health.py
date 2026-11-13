@@ -32,19 +32,24 @@ from pathlib import Path
 
 from api.module import DoctorReportLike
 from core.config import settings
-from infra.ai.libtv_process import VENDOR
+from core.ports.model_generation import get_model_generation
 from infra.archive.runs import runs_root, workspace_needs_attention
 
 __all__ = ["check"]
 
 _NODE_VERSION = re.compile(r"v?(\d+\.\d+\.\d+)")
+
+
+def _vendor() -> Path:
+    """固定版适配器目录由模型驱动层给出，模板库只经端口问路。"""
+    return get_model_generation().libtv_paths().vendor
 # .../api/src/modules/template/health.py -> parents[3] = .../api
 _API_ROOT = Path(__file__).resolve().parents[3]
 
 
 def _vendor_manifest() -> dict:
     try:
-        raw = (VENDOR / "manifest.json").read_text(encoding="utf-8")
+        raw = (_vendor() / "manifest.json").read_text(encoding="utf-8")
         return json.loads(raw)
     except (OSError, ValueError):
         return {}
@@ -56,7 +61,7 @@ def _vendor_gaps() -> tuple[int, list[str]]:
     gaps: list[str] = []
     for rel, expected in files.items():
         try:
-            actual = hashlib.sha256((VENDOR / rel).read_bytes()).hexdigest()
+            actual = hashlib.sha256((_vendor() / rel).read_bytes()).hexdigest()
         except OSError:
             gaps.append(f"{rel} 缺失")
             continue
@@ -138,7 +143,7 @@ async def check(report: DoctorReportLike) -> None:
             + more,
         )
     elif total == 0:
-        report.add("template.vendor", "FAIL", f"清单为空或不可读：{VENDOR / 'manifest.json'}")
+        report.add("template.vendor", "FAIL", f"清单为空或不可读：{_vendor() / 'manifest.json'}")
     else:
         report.add("template.vendor", "PASS", f"{total} 个适配器文件哈希与清单一致")
 

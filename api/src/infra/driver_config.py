@@ -178,9 +178,8 @@ def _driver_is_active(cls: type[DriverSettings]) -> bool:
         return settings.queue_driver == cls.driver_name
     if kind == "cache":
         return settings.cache_driver == cls.driver_name
-    if kind == "ai":
-        names = {item.strip() for item in settings.ai_providers.split(",") if item.strip()}
-        return cls.driver_name in names
+    # 模型驱动不再有「启用清单」：drivers/ 下的单文件驱动全部自动载入，
+    # 所以它们的 Settings 全部纳入启动巡检（没配密钥要早报，不等第一次提交）。
     return True
 
 
@@ -201,11 +200,8 @@ def _ensure_active_drivers_imported() -> None:
         ("queue", settings.queue_driver),
         ("cache", settings.cache_driver),
     ]
-    targets += [
-        ("ai", name.strip())
-        for name in settings.ai_providers.split(",")
-        if name.strip()
-    ]
+    # 模型驱动不在这里按名字 import：`modules/model_driver/registry.py` 扫描
+    # `drivers/` 时已经把每个文件加载过一遍，各自的 Settings 也就登记完了。
 
     for kind, name in targets:
         module = f"infra.{kind}.{name}"

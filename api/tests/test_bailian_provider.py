@@ -325,7 +325,7 @@ def test_driver_is_auto_loaded_without_env_listing(client) -> None:  # noqa: ANN
     from infra import get_model_router
     from modules.model_driver.registry import driver_summaries, load_errors
 
-    assert "bailian" not in settings.ai_provider_list, "它不该再靠配置清单加载"
+    assert not hasattr(settings, "ai_provider_list"), "白名单配置已整体下线"
     assert not load_errors(), load_errors()
 
     infos = {item.name: item for item in driver_summaries()}

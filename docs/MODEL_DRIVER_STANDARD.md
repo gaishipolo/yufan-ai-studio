@@ -8,7 +8,8 @@
 ## 0. 这套东西解决什么
 
 以前接一个模型供应商，要同时改 `.env` 的 `AI_PROVIDERS`、写 `infra/ai/<name>.py`、
-在模型目录里登记、给每个调用方各写一遍提交与轮询。现在拆成两层：
+在模型目录里登记、给每个调用方各写一遍提交与轮询。现在拆成两层
+（**2026-11-13 起老路径已整体下线，仓库里只剩下面这一条接入方式**）：
 
 - **上游（驱动开发者）**：只写一个 Python 文件，放进 `drivers/`，不用改配置、不用注册。
 - **下游（业务模块）**：只认 `core/ports/model_generation` 一个注入口，
@@ -57,10 +58,10 @@ submit_timeout_sec = 180.0                     # 单次提交最多等多久（�
 
 单条模型上的 `ModelSpec(internal=True)` 另算，见下面「只给自己的业务链路用的模型」。
 
-`preferred_for` 不写就沿用「注册顺序第一个」，而 `drivers/` 永远后于
-`AI_PROVIDERS` 注册——所以想当默认必须显式声明，否则默认会落在老的 infra
-供应商上（agnes 就是这么踩过一次：从 `AI_PROVIDERS` 搬进 `drivers/` 后，
-默认生图模型差点悄悄变成 echo 的 `seedream-3`）。
+`preferred_for` 不写就沿用「注册顺序第一个」，而 `drivers/` 按文件名字典序
+扫描——增删一个驱动文件就会换掉默认，所以想当默认必须显式声明。历史上 agnes
+从配置白名单搬进 `drivers/` 时，默认生图模型差点悄悄变成 echo 的假模型
+`seedream-3`。配置白名单已下线，但「顺序不可靠」这条纪律不变。
 
 `submit_timeout_sec` 是**提交动作**的预算，不是整条生成的预算（后者由
 `generation_timeout_sec` 管）。框架默认 120 秒，会再加上 30 秒余量作为提交
@@ -232,7 +233,7 @@ models 非空且归属一致、三个方法可调用。
 **失败处理**：单个驱动文件出错只记一条错误，不会让服务起不来。
 错误会出现在 `GET /model-driver/drivers` 的 `errors`、
 `app drivers check`（exit 1）与 `app doctor` 的 `model_driver.drivers` 条目里。
-模型 id 与别的驱动撞车、或与 `AI_PROVIDERS` 同名但模型清单不同，同样只红那一条。
+模型 id 与别的驱动撞车、或同名驱动模型清单不同，同样只红那一条。
 
 **为什么不另起注册表**：`generation.runner.handle_submit()` 里是
 `get_model_router().provider_for(record.model)`，这是整条编排链唯一找供应商的地方。
@@ -317,28 +318,28 @@ cd api
 
 - **不做热重载**：驱动改动重启生效。运行中的任务持有供应商任务号，热替换会让续查打到另一套实现。
 - **不复制编排逻辑**：不自己写队列/轮询/状态机，全部交给 `generation.runner`。
-- **不改 `.env`**：这与 `infra/ai/<name>.py` + `AI_PROVIDERS` 是两条并存的接入方式，
-  老驱动不受影响；名字撞车且模型清单不同会被报出来。
+- **不改 `.env`**：所有供应商都由 `drivers/` 自动载入；名字撞车且模型清单不同会被报出来。
 - **不做生成结果入草稿箱**：本模块目前不实现 `pipeline.archive_request`，
   产物只在 `output_url`；与资产库草稿箱的联动口径仍未拍板。
 
-## 11. 仍走老路径的供应商（豁免登记）
+## 11. 整体迁移已完成（2026-11-13）
 
-新接入的供应商**一律进 `drivers/`**。下面两个留在 `infra/ai/<name>.py` + `AI_PROVIDERS`，
-是**登记过的例外**，不是漏迁——原因是它们不属于「纯协议适配」，迁过去会变成
-「驱动里再 import 一堆替换链/运行时」，反而破坏 `drivers/` 的单文件可复制性：
+`AI_PROVIDERS` 白名单、`infra/ai/<name>.py` 这条老路径**已彻底下线**：
 
-| 供应商 | 为什么不迁 | 迁的话要动什么 |
-|---|---|---|
-| `echo` | 演示与单测用的假供应商（无网络）。它的价值在「零依赖跑通全链路」，测试直接以 `AI_PROVIDERS=echo` 起服 | 无收益；迁了还要同步改测试与 `param_schema` 断言 |
-| `libtv` | 真跑**本地 Node 运行时脚本**（`libtv_process.py` / `libtv_runtime/`、`settings.libtv_node`），不是 HTTP 轮询；替换链还依赖 `libtv_state` 的作业状态 | 把 subprocess 运行时与状态文件一并搬进 `drivers/`，并让替换链改读新位置 |
+- `echo`（占位模型）迁进 `drivers/echo.py`，同样自动载入，仍靠 `placeholder=True`
+  挡在选择器外；离线联调按 id 提交照常能解析得到。
+- `libtv` 的 Provider 在 `drivers/libtv.py`，执行器监督层与固定版 Node 适配器
+  整体搬进 `modules/model_driver/libtv/`（`executor.py` / `process.py` /
+  `state.py` / `runtime/`），子进程以 `-m modules.model_driver.libtv.process`
+  启动，`runtime/vendor` 按模块自身位置定位。
+- 模板库不许直接 import 业务模块，经 `core/ports/model_generation` 的
+  `libtv_paths()` / `libtv_execute_stage()` 问执行器。
+- `core/config.py` 的 `ai_provider` / `ai_providers` / `ai_provider_list` 与
+  `.env` 的 `AI_PROVIDERS` 一并删除；`get_model_router()` 只持有单例，
+  注册统一由 `ensure_drivers_registered()` 完成。
 
-两条纪律：
-
-- **别把驱动名再写进 `AI_PROVIDERS`**（`agnes`、`bailian` 都已迁走）。同名但模型清单
-  不同会在启动时报错，重复注册同理。
-- 想把上表某一行迁走，先在 `docs/TODO.md` 立项并写清验收口径（协议一致性用例要在
-  新位置同样通过），不要顺手搬。
+**接入纪律**：新供应商一律在 `drivers/` 放一个 py 文件；没有启用清单可改。
+`infra/ai/` 只剩协议类型（`base.py`）与路由（`router.py`）。
 
 **已迁走的先例：`bailian`（2026-11-11，T32）**。它当初也在这张表里，理由是「依赖
 run 工作区、归档租约、计费回执」。真正搬的时候并不需要把这些搬进驱动，而是把

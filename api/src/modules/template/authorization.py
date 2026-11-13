@@ -2,7 +2,7 @@
 
 ## 这道闸为什么在业务层
 
-它原来在 `infra/ai/libtv_process.run_node` 的 `submit` 阶段，调用
+它原来在 `modules/model_driver/libtv/process.run_node` 的 `submit` 阶段，调用
 `MediaCatalog.check_run(run)`。那里执行器是个独立子进程，手里只有归档盘和
 `run.json`，所以要为「原片被删了但档案还在」专门造一份 JSON 镜像去比对。
 2026-11-08 随模板库重建搬到业务层：这里能直接查库，判断与真正花钱的时刻之间

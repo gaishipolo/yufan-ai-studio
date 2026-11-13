@@ -32,8 +32,9 @@ from infra.archive.base import read_json, write_json
 from infra.archive.runs import check_id, lock_path, relative_key, runs_root
 
 RUNTIME = Path(__file__).parent / "replacement_runtime"
-# 执行器本体在 infra 层：它是「怎么提交到供应商」的实现，不属于业务模块。
-BRIDGE = Path(__file__).parents[2] / "infra/ai/libtv_runtime/bridge.mjs"
+# 桥接脚本由 `modules/model_driver/libtv/runtime/` 拥有。这里只记一个**文件路径**：
+# prepare 要把它复制进归档当冻结证据，不是导入驱动实现（业务模块不许横向 import）。
+BRIDGE = Path(__file__).parents[2] / "modules/model_driver/libtv/runtime/bridge.mjs"
 
 FOLDERS = ("inputs", "outputs", "records", "review", "code")
 

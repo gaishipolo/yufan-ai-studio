@@ -583,8 +583,8 @@ async def test_browser_down_is_not_mistaken_for_a_login_problem(monkeypatch) -> 
     生产上出现过这条：执行器浏览器进程停了，档案报 `LOGIN_REQUIRED`，
     人去重登一个仍然有效的会话（cookie 还有四天），真正停掉的浏览器一直没人管。
     """
-    from infra.ai.libtv_state import ExecutorResult
     from infra.queue.base import Job
+    from modules.model_driver.libtv.state import ExecutorResult
 
     run = await add_run(status="queued")
     workspace(run.id)
@@ -615,8 +615,8 @@ async def test_browser_down_is_not_mistaken_for_a_login_problem(monkeypatch) -> 
 
 async def test_missing_browser_login_lands_on_needs_login(monkeypatch) -> None:
     """浏览器在、但里面没登录 → `needs_login`（可继续），不是 service_error。"""
-    from infra.ai.libtv_state import ExecutorResult
     from infra.queue.base import Job
+    from modules.model_driver.libtv.state import ExecutorResult
 
     run = await add_run(status="queued")
     workspace(run.id)

@@ -10,10 +10,12 @@ from types import SimpleNamespace
 import pytest
 
 from core.exceptions import UpstreamError
-from infra.ai import libtv, libtv_process
 from infra.ai.base import GenerationState
-from infra.ai.libtv_state import ExecutorResult, LibTVState
 from infra.archive.base import read_json, write_json
+from modules.model_driver.drivers.libtv import LibTVProvider
+from modules.model_driver.libtv import executor as libtv
+from modules.model_driver.libtv import process as libtv_process
+from modules.model_driver.libtv.state import ExecutorResult, LibTVState
 
 
 @pytest.mark.parametrize("failure", [PermissionError, RuntimeError])
@@ -230,7 +232,7 @@ async def test_poll_stops_on_executor_fault_without_resubmitting(monkeypatch, tm
         return ExecutorResult(code=code, stage="poll", message="需要核对执行环境")
 
     monkeypatch.setattr(libtv, "execute_stage", failed)
-    result = await libtv.LibTVProvider().poll("a" * 32 + ":upstream")
+    result = await LibTVProvider().poll("a" * 32 + ":upstream")
     assert result.state == GenerationState.FAILED
     assert not result.retryable
     assert "查询" in result.error
@@ -288,7 +290,7 @@ async def test_busy_executor_remains_retryable(monkeypatch, tmp_path):
 
     monkeypatch.setattr(libtv, "execute_stage", busy)
     with pytest.raises(UpstreamError):
-        await libtv.LibTVProvider().poll("a" * 32 + ":upstream")
+        await LibTVProvider().poll("a" * 32 + ":upstream")
 
 
 async def test_log_permission_failure_stops_before_starting_process(monkeypatch, tmp_path):

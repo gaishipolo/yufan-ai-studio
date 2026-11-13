@@ -115,8 +115,8 @@ def test_replacement_channel_models_are_declared_internal() -> None:
     `bailian` / `libtv` 都是替换链专用（提交要带 `archiveRunId`），加新模型
     时同样要带上 `internal=True`。
     """
-    from infra.ai.libtv import LibTVProvider
     from modules.model_driver.drivers import bailian
+    from modules.model_driver.drivers.libtv import LibTVProvider
 
     # libtv 的清单挂在供应商类上（老路径），bailian 是驱动模块级 `MODELS`
     for label, specs in (
@@ -226,11 +226,11 @@ def test_echo_placeholder_models_stay_out_of_public_catalog() -> None:
     提交后拿到 `https://example.com/mock/image.mp4` 的占位图——**全程
     不报错**，看起来像接了豆包，其实什么都没接。
 
-    这批模型在 `infra/ai/echo.py`（老的 `AI_PROVIDERS` 路径）。老的示例驱动
-    靠文件名前缀 `_` 不自动载入，但**那条约定只对新路径 `drivers/` 有效**：
-    老路径是白名单，写进 `.env` 的 `AI_PROVIDERS` 就注册。
+    这批模型在 `drivers/echo.py`：整体迁移后它和其他驱动一样自动载入，
+    不带 `_` 前缀是故意的（离线联调按 id 提交要能解析得到），
+    只靠 `placeholder` 挡在选择器外。
     """
-    from infra.ai.echo import EchoProvider
+    from modules.model_driver.drivers.echo import EchoProvider
 
     public_ids = {spec.id for spec in get_model_router().public_models()}
     echo_ids = {spec.id for spec in EchoProvider.models}
@@ -246,7 +246,7 @@ def test_echo_models_are_all_marked_placeholder() -> None:
     兜底断言：不依赖上面那条「结果」守卫（那条只查当前交集），
     直接钉住「echo 的模型全部是占位」这条声明本身。
     """
-    from infra.ai.echo import EchoProvider
+    from modules.model_driver.drivers.echo import EchoProvider
 
     for spec in EchoProvider.models:
         assert spec.placeholder, f"echo: {spec.id} 未标记 placeholder"
@@ -265,7 +265,7 @@ def test_placeholder_models_do_not_shadow_real_models() -> None:
     隐患提前钉住。
     """
     from infra import get_model_router
-    from infra.ai.echo import EchoProvider
+    from modules.model_driver.drivers.echo import EchoProvider
 
     router = get_model_router()
     echo_ids = {spec.id for spec in EchoProvider.models}

@@ -76,7 +76,7 @@ class TemplateDriver:
     # submit_timeout_sec = 180.0
 
     # 可选：声明「我的模型是该能力的默认」（frozenset({Capability.IMAGE})）。
-    # 不写就按注册顺序，而 drivers/ 永远晚于 AI_PROVIDERS 注册。
+    # 不写就按 `drivers/` 的扫描顺序，增删一个驱动文件就会换掉默认。
     # preferred_for = frozenset({Capability.IMAGE})
 
     async def submit(self, request: GenerationRequest) -> SubmitResult:

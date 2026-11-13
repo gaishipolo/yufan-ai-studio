@@ -10,7 +10,7 @@ from tests_template_helpers import ADMIN, add_run, drop_run, workspace
 
 from core.exceptions import Conflict
 from db.session import get_session_factory
-from infra.ai.libtv import MODEL_ID
+from modules.model_driver.drivers.libtv import MODEL_ID
 from modules.template import worker
 from modules.template.pipeline import ReplacementStore
 from modules.template.schema import PrepareReplacement
@@ -22,11 +22,11 @@ async def test_disabled_channel_poll_preserves_task_and_never_uses_fallback(monk
     import infra
     from generation import runner as generation_runner
     from infra.ai.base import GenerationProgress, GenerationState
-    from infra.ai.echo import EchoProvider
     from infra.ai.router import ModelRouter
     from infra.archive.local import get_archive_settings
     from infra.queue.base import Job
     from infra.queue.memory import MemoryJobQueue
+    from modules.model_driver.drivers.echo import EchoProvider
 
     monkeypatch.setattr(get_archive_settings(), "root", str(tmp_path))
     router = ModelRouter()
@@ -65,11 +65,11 @@ async def test_disabled_channel_submit_does_not_call_fallback_or_mark_billing_un
 
     import infra
     from generation import runner as generation_runner
-    from infra.ai.echo import EchoProvider
     from infra.ai.router import ModelRouter
     from infra.archive.local import get_archive_settings
     from infra.queue.base import Job
     from infra.queue.memory import MemoryJobQueue
+    from modules.model_driver.drivers.echo import EchoProvider
 
     monkeypatch.setattr(get_archive_settings(), "root", str(tmp_path))
     router = ModelRouter()

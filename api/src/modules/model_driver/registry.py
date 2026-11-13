@@ -126,7 +126,7 @@ def ensure_drivers_registered() -> None:
         if name in existing:
             # 路由里已经有同名：可能是我们上一轮注册的实例（路由单例没换，
             # 而 reset_drivers() 让 Driver 类重新实例化了一次），也可能是
-            # AI_PROVIDERS 配置的同名驱动。按**模型清单**区分：一致就是同一个
+            # 另一轮装配留下的同名实例。按**模型清单**区分：一致就是同一个
             # 驱动的等价实例，复用路由里那份；不一致才是真重名。
             declared = {spec.id for spec in item.provider.models}
             routed = {spec.id for spec in router.models() if spec.provider == name}
@@ -141,7 +141,7 @@ def ensure_drivers_registered() -> None:
                 continue
             message = (
                 f"驱动名 {name!r} 已被加载但模型清单不同（drivers/ 声明 {sorted(declared)}，"
-                f"路由已有 {sorted(routed)}）：请改名或核对 AI_PROVIDERS"
+                f"路由已有 {sorted(routed)}）：请改名或核对已注册的驱动"
             )
             if message not in _errors:
                 _errors.append(message)

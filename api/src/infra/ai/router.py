@@ -115,10 +115,10 @@ class ModelRouter:
     def _apply_preferred(self, provider: ModelProvider) -> None:
         """应用供应商声明的「该能力的首选默认模型」（可选字段 `preferred_for`）。
 
-        默认模型原本完全由注册顺序决定（`setdefault` 先到先得），而顺序是装配
-        细节：`AI_PROVIDERS` 里的供应商先注册、`drivers/` 里的驱动后注册。于是
-        把 agnes 从 `AI_PROVIDERS` 挪进 `drivers/`，默认生图模型就会**静默**
-        变成 echo 的 seedream-3——没有一处报错，用户只看到出的是占位图。
+        默认模型原本完全由注册顺序决定（`setdefault` 先到先得），而 `drivers/`
+        的扫描顺序是装配细节。历史上把 agnes 从配置白名单挪进 `drivers/` 时，
+        默认生图模型就**静默**变成 echo 的 seedream-3——没有一处报错，用户
+        只看到出的是占位图。白名单已整体下线，但「顺序不可靠」这条没变。
 
         所以「谁是默认」必须由供应商自己声明，而不是靠谁先被 import。
         """

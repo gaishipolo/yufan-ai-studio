@@ -12,7 +12,7 @@
 - 读不到 stdin / JSON 不合法 → 同上；
 - 可选参数都有默认值，新增参数不会再要求启动方同步改一遍。
 
-适配器目录（`libtv_runtime/vendor`）由本模块按自身位置计算，不出现在参数里：
+适配器目录（`runtime/vendor`）由本模块按自身位置计算，不出现在参数里：
 它属于代码，不属于部署配置；桥接层启动时校验 `vendor/manifest.json` 的哈希。
 """
 
@@ -30,16 +30,20 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 
 from core.exceptions import AppError, Conflict
 from core.logging import get_logger
-from infra.ai.libtv import get_libtv_settings
-from infra.ai.libtv_state import LIBTV_PROCESS_PROTOCOL, RUN_LOCK, ExecutorResult
 from infra.archive import ArchiveStorage, get_archive_storage, lease
 from infra.archive.runs import lock_path
+from modules.model_driver.libtv.executor import get_libtv_settings
+from modules.model_driver.libtv.state import (
+    LIBTV_PROCESS_PROTOCOL,
+    RUN_LOCK,
+    ExecutorResult,
+)
 
 PROTOCOL_VERSION = LIBTV_PROCESS_PROTOCOL
 logger = get_logger(__name__)
 
 STAGES = {"upload": 1500, "submit": 100, "poll": 45, "download": 240}
-RUNTIME = Path(__file__).parent / "libtv_runtime/bridge.mjs"
+RUNTIME = Path(__file__).parent / "runtime/bridge.mjs"
 # 固定版适配器已随代码一起入库；监督进程把这个仓库内绝对路径交给桥接层，
 # 不再是部署时填的环境变量，也不指向任何外部项目。
 VENDOR = RUNTIME.parent / "vendor"

@@ -7,7 +7,7 @@
    比 `owner_id`，注释里写着「留待单独一轮」——本轮就是那一轮。
 2. **幂等从指纹文件变成主键**。`id` 就是前端传的 `request_id`，重复提交命中
    同一行；指纹只用来区分「同一 id 但配置变了」。
-3. **最终授权校验前移到业务层**。执行器（`libtv_process.run_node`）只有文件
+3. **最终授权校验前移到业务层**。执行器（`process.run_node`）只有文件
    系统、查不了库，现在由这里在排队前校验「原片还可用、封装还已发布」。
 
 **状态机的语义没变**，尤其 `submission_unknown`：它表示「上一次提交可能已经
@@ -1090,7 +1090,7 @@ class ReplacementService:
     async def _assert_still_authorized(self, run_id: str, owner: str) -> None:
         """提交前的最终授权：原片还可用、封装还已发布、档案还能提交。
 
-        旧位置在 `libtv_process.run_node`（执行器的 submit 阶段），那里只有
+        旧位置在 `process.run_node`（执行器的 submit 阶段），那里只有
         文件系统。细节与三处调用点见 `authorization.authorization_gap`——这里
         只负责把它变成用户看得懂的 400。
         """

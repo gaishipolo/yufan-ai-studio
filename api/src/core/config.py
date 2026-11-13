@@ -358,10 +358,6 @@ class Settings(BaseSettings):
     # 否则「有哪些开关」这个问题得靠 grep 才能回答。
     feature_flags: Annotated[dict[str, bool], NoDecode] = Field(default_factory=dict)
 
-    # 兼容旧的单值写法 AI_PROVIDER；推荐使用 AI_PROVIDERS=echo,volcengine
-    ai_provider: str = "echo"
-    ai_providers: str = ""
-
     # ---------- 生成编排 ----------
     # 轮询用「延迟投递」实现，不占 worker 槽位，因此可以设得比较密
     generation_poll_interval_sec: float = 2.0
@@ -382,12 +378,6 @@ class Settings(BaseSettings):
         if self.allow_anonymous is not None:
             return self.allow_anonymous
         return self.app_env in ("dev", "test")
-
-    @property
-    def ai_provider_list(self) -> list[str]:
-        """要加载的供应商列表。`AI_PROVIDERS` 优先，回退到单值 `AI_PROVIDER`。"""
-        raw = self.ai_providers or self.ai_provider or "echo"
-        return [name.strip() for name in raw.split(",") if name.strip()]
 
     @property
     def is_sqlite(self) -> bool:

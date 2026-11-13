@@ -327,7 +327,7 @@ def test_executor_does_not_report_authorization_codes() -> None:
     断言用 `code="..."` 精确匹配，不看注释里提到的名字。
     """
     source = (
-        Path(__file__).resolve().parents[1] / "src/infra/ai/libtv_process.py"
+        Path(__file__).resolve().parents[1] / "src/modules/model_driver/libtv/process.py"
     ).read_text(encoding="utf-8")
     assert 'code="AUTHORIZATION_REVOKED"' not in source
     assert 'code="EXECUTOR_FAILED"' in source, "兜底分支要诚实地表示「执行器没跑成」"

@@ -7,7 +7,7 @@
 
 数据搬到数据库之后，`run.json` 的角色变了：它从**事实来源**降为**给执行器的投影**。
 数据库是权威，`run.json` 由本模块单向写下去（`write_state`），执行器的回执再读回来
-（`read_state`）。这样执行器（`bridge.mjs` / `libtv_process`）一行都不用改。
+（`read_state`）。这样执行器（`bridge.mjs` / 监督进程）一行都不用改。
 """
 
 from __future__ import annotations
@@ -23,10 +23,9 @@ from core.exceptions import Conflict, NotFound, Unavailable, UpstreamError
 from core.logging import get_logger
 from core.metrics import METRICS
 from core.ports.accounts import account_is_active
+from core.ports.model_generation import get_model_generation
 from generation.runner import get_runner
 from infra import get_queue
-from infra.ai.libtv import execute_stage
-from infra.ai.libtv_state import RUN_LOCK
 from infra.archive import get_archive_storage
 from infra.archive.base import lease, read_json
 from infra.queue.base import Job
@@ -40,6 +39,17 @@ from modules.template.workspace import input_checksums, read_state, run_path, wr
 from workers import register_handler
 
 logger = get_logger(__name__)
+
+
+async def execute_stage(run_id: str, stage: str):
+    """执行器调用只经统一端口转发，模板库不认识驱动实现。
+
+    单独留一个模块级函数（而不是在调用点直接写 `get_model_generation()...`）
+    是为了给测试一个稳定的替换锚点：后台任务的失败分支要能注入
+    「执行器返回 EXECUTOR_BUSY / 浏览器没登录」，改在端口实现上会影响
+    同一进程里其它用例。
+    """
+    return await get_model_generation().libtv_execute_stage(run_id, stage)
 
 # 可以重新提交的状态：`failed` / `service_error` 是「上一轮输了」，允许重来。
 RETRYABLE = {
@@ -126,7 +136,7 @@ def _sync_out(run: ReplacementRun, path) -> bool:
     不是**任务**的问题。
     """
     try:
-        with lease(path / RUN_LOCK):
+        with lease(path / get_model_generation().libtv_paths().run_lock):
             state = read_state(path)
             file_version = state.get("state_version")
             if isinstance(file_version, int) and file_version > getattr(run, "state_version", 1):
@@ -335,7 +345,12 @@ async def set_billing_mode(session, run_id: str, owner: str, mode: str) -> None:
         path = None
     # Enter and exit on the event-loop thread. Acquisition is nonblocking;
     # keep the supervisor excluded through receipt recovery and the DB commit.
-    with lease(path / RUN_LOCK) if path is not None else nullcontext():
+    executor_lock = (
+        path / get_model_generation().libtv_paths().run_lock
+        if path is not None
+        else None
+    )
+    with lease(executor_lock) if executor_lock is not None else nullcontext():
         await session.refresh(run)
         if not run.task_id and path is not None:
             task_id = await asyncio.to_thread(_libtv_task, path, run.id, read_state(path))
@@ -813,7 +828,7 @@ def _accepted_libtv_task(run_id: str) -> str | None:
         path = run_path(run_id)
     except NotFound:
         return None
-    with lease(path / RUN_LOCK):
+    with lease(path / get_model_generation().libtv_paths().run_lock):
         return _libtv_task(path, run_id, read_state(path))
 
 

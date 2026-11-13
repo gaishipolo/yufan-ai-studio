@@ -1,7 +1,7 @@
 # 北京百炼视频渠道
 
 > 本渠道是 `drivers/` 里的单文件驱动（`modules/model_driver/drivers/bailian.py`），
-> 进程启动时自动载入——**不要把 `bailian` 写进 `AI_PROVIDERS`**（同名但模型清单
+> 进程启动时自动载入——**没有启用清单可写**（旧文档里的 `AI_PROVIDERS` 已下线；同名但模型清单
 > 不同会启动报错，重复注册同理）。它比通用驱动多实现一个可选协议
 > `infra.ai.base.InputPreparer`：参考素材必须先上传到百炼自己的 OSS，因为 Wan
 > 只接受公网 URL 作素材，不认本地文件。协议说明见
@@ -15,7 +15,7 @@
 ## 服务端配置
 
 在不提交版本库的 `api/.env` 中配置（这些是**驱动私有配置**，前缀规则见
-`infra/driver_config.py`；不需要改 `AI_PROVIDERS`）：
+`infra/driver_config.py`；不需要改任何启用清单）：
 
 ```dotenv
 BAILIAN_BASE_URL=https://llm-cz0qm1j8cl2weo19.cn-beijing.maas.aliyuncs.com/api/v1

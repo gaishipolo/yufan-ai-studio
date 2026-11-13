@@ -19,7 +19,7 @@ from db.session import get_session_factory
 from modules.template import worker
 from modules.template.workspace import write_state
 
-RUNTIME = Path(__file__).resolve().parents[1] / "src/infra/ai/libtv_runtime"
+RUNTIME = Path(__file__).resolve().parents[1] / "src/modules/model_driver/libtv/runtime"
 VENDOR = RUNTIME / "vendor"
 
 
