@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useArchiveAssets } from '@/entities/asset/api/archive.queries';
 import { useAvailablePacks } from '@/entities/template/api/pack.queries';
+import { baseRole, rolesFor } from '@/entities/template/model/packRoles';
 import { useVideoTemplateMutations, useVideoTemplates } from '@/entities/video-template/api/videoTemplate.queries';
 import type { VideoTemplateDraftIn, VideoTemplateOut } from '@/shared/api/schema';
 import { Button, EmptyState, ErrorState, Modal } from '@/shared/ui';
@@ -95,6 +96,36 @@ function move<T>(list: T[], from: number, to: number): T[] {
   return next;
 }
 
+/** 模板是否声明了用途槽位。`referenceBindings` 是唯一判据，空对象也算声明。 */
+function hasBindings(form: FormState): boolean {
+  const raw = form.rules?.referenceBindings;
+  return !!raw && typeof raw === 'object' && !Array.isArray(raw);
+}
+
+/** 除原片之外的槽位用途，顺序即 `{{Mixed 2}}` 起的编号。 */
+function slotRolesOf(form: FormState): string[] {
+  const raw = form.rules?.referenceBindings;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return [];
+  return Object.values(raw as Record<string, string>).filter(role => role !== 'source_video');
+}
+
+/** 重写槽位：原片恒在第 1 位，其余按传进来的用途顺序重排编号（删中间一项不会留空洞）。 */
+function withSlots(form: FormState, roles: string[]): Record<string, unknown> {
+  return {
+    ...(form.rules ?? {}),
+    referenceBindings: {
+      '{{Mixed 1}}': 'source_video',
+      ...Object.fromEntries(roles.map((role, index) => [`{{Mixed ${index + 2}}}`, role])),
+    },
+  };
+}
+
+function withoutSlots(form: FormState): Record<string, unknown> {
+  const rules = {...(form.rules ?? {})};
+  delete rules.referenceBindings;
+  return rules;
+}
+
 /** 前端先挡一轮：token 编号必须落在「原片 + 素材包参考图」范围内。 */
 function validateForm(form: FormState, images: number): string {
   const scopes = (form.scopeOptionsText ?? '').split('\n').map(item => item.trim()).filter(Boolean);
@@ -116,7 +147,7 @@ function validateForm(form: FormState, images: number): string {
      蓝本里的「运行时选卡」空槽会被 `formFromBlueprint` 滤掉，包里有辅助图时
      两者必然不等——以前这里会把「复制固定蓝本」堵在一个用户看不见原因的报错上。 */
   const declaredBindings = form.rules?.referenceBindings;
-  const usesBindings = !!declaredBindings && typeof declaredBindings === 'object' && !Array.isArray(declaredBindings);
+  const usesBindings = hasBindings(form);
   if (!form.packId) {
     /* **只声明槽位**：不绑默认包是合法配置，但前提是模板已经声明了用途绑定，
        否则服务端拿不到「要几张图、各是什么用途」。报错要说清下一步点哪里，
@@ -164,6 +195,9 @@ function VideoTemplateEditor({initial, packs, sources, busy, onClose, onSubmit}:
   const [error, setError] = useState('');
   const patch = (next: Partial<FormState>) => setForm(value => ({...value, ...next}));
   const images = packs.find(pack => pack.id === form.packId)?.images ?? 0;
+  const slotRoles = slotRolesOf(form);
+  const slotLabels = rolesFor(form.defaultKind);
+  const usesBindings = hasBindings(form);
   const input = 'w-full rounded-lg border border-line bg-panel p-2 text-xs';
 
   async function submit() {
@@ -231,7 +265,30 @@ function VideoTemplateEditor({initial, packs, sources, busy, onClose, onSubmit}:
           </select>
           {!form.packId && <span className="mt-1 block text-[11px] text-ink-mute">不绑包时只声明用途槽位：调用者选自己的素材包，按「正面 / 三视图 / 细节」取图，编号不变。需要模板已声明用途绑定（复制固定蓝本即可带上）。</span>}
         </label>
-        {form.rules?.referenceBindings ? <p className="text-xs text-ink-mute sm:col-span-2">媒体按模板声明的用途由服务端排列，原有编号保持不变。</p> : <div className="text-xs sm:col-span-2" aria-label="媒体顺序">
+        {usesBindings ? <div className="space-y-1 text-xs sm:col-span-2" aria-label="用途槽位">
+          <span>用途槽位（编号固定：{'{{Mixed 1}}'} 是原片，其余按下面的用途在调用时取图）</span>
+          <ol className="mt-1 space-y-1">
+            <li className="flex items-center gap-2 rounded-lg border border-line bg-panel-soft p-2">
+              <span className="w-24 shrink-0 font-mono text-[11px] text-ink-mute">{'{{Mixed 1}}'}</span>
+              <span className="min-w-0 flex-1 truncate text-ink-soft">{form.sourceVideoName || '原片（固定第 1 位）'}</span>
+              <span className="shrink-0 text-[11px] text-ink-mute">原片</span>
+            </li>
+            {slotRoles.map((role, index) => <li key={`${role}-${index}`} className="flex items-center gap-2 rounded-lg border border-line bg-panel p-2">
+              <span className="w-24 shrink-0 font-mono text-[11px] text-ink-mute">{`{{Mixed ${index + 2}}}`}</span>
+              <select aria-label={`{{Mixed ${index + 2}}} 用途`} className="min-w-0 flex-1 rounded border border-line bg-panel px-1.5 py-1 text-[11px]"
+                value={role} onChange={event => patch({rules: withSlots(form, slotRoles.map((item, position) => position === index ? event.target.value : item))})}>
+                {Object.entries(slotLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+              </select>
+              <button type="button" aria-label={`删除 {{Mixed ${index + 2}}}`} className="shrink-0 rounded px-1 text-ink-mute"
+                onClick={() => patch({rules: withSlots(form, slotRoles.filter((_, position) => position !== index))})}>×</button>
+            </li>)}
+          </ol>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button size="sm" type="button" onClick={() => patch({rules: withSlots(form, [...slotRoles, baseRole(form.defaultKind)])})}>加一个用途槽位</Button>
+            <Button size="sm" type="button" variant="ghost" onClick={() => patch({rules: withoutSlots(form)})}>改回按包内顺序</Button>
+          </div>
+          <span className="block text-[11px] text-ink-mute">不绑默认包时，调用者选自己的包，按这些用途取图；编号不变。</span>
+        </div> : <div className="text-xs sm:col-span-2" aria-label="媒体顺序">
           <span>媒体顺序（决定提示词里的编号指向哪张图）</span>
           <ol className="mt-1 space-y-1">
             <li className="flex items-center gap-2 rounded-lg border border-line bg-panel-soft p-2">
@@ -255,6 +312,7 @@ function VideoTemplateEditor({initial, packs, sources, busy, onClose, onSubmit}:
             })}
           </ol>
           <span className="mt-1 block text-[11px] text-ink-mute">默认沿用素材包顺序；只有这里的顺序会进接口，素材包本身不改。</span>
+          <Button size="sm" type="button" variant="ghost" className="mt-1" onClick={() => patch({rules: withSlots(form, [baseRole(form.defaultKind)]), order: []})}>改为按用途声明槽位</Button>
         </div>}
         </>}
         <label className="block text-xs sm:col-span-2">样片原片（绑定后才是「全部模板」里的可选卡片）

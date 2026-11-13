@@ -149,3 +149,36 @@ describe('模板库里的视频模板', () => {
     })));
   });
 });
+
+describe('用途槽位', () => {
+  it('可以从零声明槽位、加/删槽位，不绑素材包也能保存', async () => {
+    mock.create.mockClear();
+    render(<VideoTemplateLibrary />);
+    fireEvent.click(screen.getByRole('button', {name: '新建封装'}));
+    fireEvent.click(screen.getByRole('button', {name: '改为按用途声明槽位'}));
+    expect(screen.getByLabelText('{{Mixed 2}} 用途')).toHaveValue('front');
+
+    fireEvent.click(screen.getByRole('button', {name: '加一个用途槽位'}));
+    fireEvent.change(screen.getByLabelText('{{Mixed 3}} 用途'), {target: {value: 'multiview'}});
+    fireEvent.click(screen.getByRole('button', {name: '加一个用途槽位'}));
+    // 删掉中间那个不会留空洞：编号按剩余用途重排
+    fireEvent.click(screen.getByLabelText('删除 {{Mixed 4}}'));
+
+    fireEvent.change(screen.getByLabelText('模板名称'), {target: {value: '只声明槽位'}});
+    fireEvent.change(screen.getByLabelText(/样片原片/), {target: {value: 'ac1d588d36294fa49c809d46bb1dbb6d'}});
+    fireEvent.change(screen.getByLabelText(/固定提示词/), {target: {value: '对 {{Mixed 1}} 替换，参考 {{Mixed 3}}。'}});
+    fireEvent.click(screen.getByRole('button', {name: '保存封装'}));
+
+    await vi.waitFor(() => expect(mock.create).toHaveBeenCalledWith(expect.objectContaining({
+      packId: null,
+      mediaOrder: [],
+      rules: expect.objectContaining({
+        referenceBindings: {
+          '{{Mixed 1}}': 'source_video',
+          '{{Mixed 2}}': 'front',
+          '{{Mixed 3}}': 'multiview',
+        },
+      }),
+    })));
+  });
+});
