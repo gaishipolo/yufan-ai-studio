@@ -2,7 +2,7 @@
 
 # Mock 覆盖率（只记录，不作门禁）
 
-后端端点 144 条（来自 `schema.ts` 的 `EndpointData`），
+后端端点 150 条（来自 `schema.ts` 的 `EndpointData`），
 已注册 mock 路由 88 条（来自 `mockRouteTable()`），
 按「同方法 + 正则能匹配」判定疑似覆盖 90 条。
 
@@ -68,6 +68,12 @@
 | GET | `/api/v1/model-driver/tasks/{}` |
 | POST | `/api/v1/model-driver/tasks/{}/cancel` |
 | POST | `/api/v1/model-driver/tasks/{}/retry` |
+| GET | `/api/v1/template-manifests` |
+| POST | `/api/v1/template-manifests` |
+| GET | `/api/v1/template-manifests/{}` |
+| POST | `/api/v1/template-manifests/{}/disable` |
+| POST | `/api/v1/template-manifests/{}/publish` |
+| POST | `/api/v1/template-manifests/validate` |
 | GET | `/api/v1/templates/replacement-catalog` |
 | GET | `/api/v1/templates/replacement-packs` |
 | POST | `/api/v1/templates/replacement-packs/{}/disable` |
@@ -92,4 +98,4 @@
 | POST | `/api/v1/templates/video-templates/{}/pin` |
 | PATCH | `/api/v1/templates/video-templates/{}/prompt` |
 
-（未命中 54 条；已命中 90 条不在本表重复列出。）
+（未命中 60 条；已命中 90 条不在本表重复列出。）

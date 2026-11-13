@@ -78,6 +78,7 @@ from core.ports.library_lookup import has_library_lookup
 from core.ports.library_references import library_references_ready
 from core.ports.model_generation import has_model_generation
 from core.ports.org_directory import has_org_directory
+from core.ports.template_catalog import has_template_catalog
 from core.ports.template_pack import has_template_pack
 
 __all__ = ["PORT_CATALOG", "PortSpec", "port_status"]
@@ -223,6 +224,17 @@ PORT_CATALOG: tuple[PortSpec, ...] = (
         "抛异常会让「删掉这个模块」变成「别的模块起不来」。"
         "与 model-generation 的 fail-closed 刻意不同",
         is_registered=has_template_pack,
+    ),
+    PortSpec(
+        name="template-catalog",
+        module="core.ports.template_catalog",
+        protocol="TemplateCatalogPort",
+        implementer="modules/template_pack 的 `catalog_port_impl`（读已发布的 "
+        "manifest / packs / functions，组装成 core 层不可变快照）",
+        when_unregistered="返回空结果：库里还没有已发布封装是合法状态，"
+        "抛异常会把「模块没装配」和「用户没配置」混成一件事。"
+        "只跑消费方单测时就是这个状态",
+        is_registered=has_template_catalog,
     ),
 )
 

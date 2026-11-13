@@ -12,9 +12,9 @@
 | 项 | 值 |
 |---|---|
 | 仓库 / 分支 | `https://github.com/gaishipolo/yufan-ai-studio` · `main` |
-| HEAD | 本地领先 `origin/main`：`3aaf40f` 起 **5 笔未推送**（含本轮「任务中心接生图」，推送前先问用户），hash 见 `git log --oneline -6`。未跟踪的只有 `var/`、临时脚本（如 `var_fix_fe.py`）、快捷方式 `.lnk`、`vite.config.ts.timestamp-*.mjs` 与用户私有的 `EXCHANGE_TOPICS_2026-11-12.md`，都不该进提交 |
+| HEAD | 本地领先 `origin/main`：`3aaf40f` 起 **7 笔未推送**（含「任务中心接生图」与「模板封装迁移阶段 A/B/C1」，推送前先问用户），hash 见 `git log --oneline -8`。未跟踪的只有 `var/`、临时脚本（如 `var_fix_fe.py`）、快捷方式 `.lnk`、`vite.config.ts.timestamp-*.mjs` 与用户私有的 `EXCHANGE_TOPICS_2026-11-12.md`，都不该进提交 |
 | CI | 此前连续多轮全绿（含 `bc0940e`）；本轮推送后照 §4 核对。PG 迁移仍在观察期（`continue-on-error`） |
-| 本机门禁 | 本轮（2026-11-13 任务中心接生图）按 §3.1 定级 **`full`**（动 `core/ports/generation_feed.py` 与 `api/ports.py`）：后端全量 **1664 passed / 12 skipped / 0 failed**（214s，EXIT=0）；`test_task_feed.py` 17 passed、架构 / 注入口 / 契约守卫 91 passed；`ruff` / `mypy --platform win32` / `export-openapi --check` 四份无差异 / `gen:routes --check` / `gen:mock-coverage --check` 全绿；`npm run verify` 全绿（82 files / 667 tests） |
+| 本机门禁 | 本轮（2026-11-14 模板封装迁移 C1）按 §3.1 定级 **`full`**（动 `api/ports.py` 装配声明）：后端全量 **1678 passed / 12 skipped / 0 failed**（198s，EXIT=0）；`ruff` 0 / `mypy --platform win32` 297 文件 0 / `export-openapi --check` 四份无差异 / `gen:routes --check` / `gen:mock-coverage --check` / `npm run verify` 全绿。阶段 B 单独也跑过 `full`：1672 passed / 12 skipped |
 | 规模 | 12 个业务模块 · **118 条路径 / 148 个端点**（文本资产 +7）· **57 个权限码**（本轮未新增）· **4 份**契约生成物 |
 | 后端 | `api/.venv/Scripts/app.exe serve --reload` → 8080，前缀 **`/api/v1`**（裸 `/health` 会返回 40400） |
 | 前端 | `cd studio && npm run dev` → 5173，`/api` 已代理到 8080 |
@@ -47,6 +47,7 @@
 | 本轮 | **三个替换模型通用化**（2026-11-13）：取消 `internal=True` 进 `/models`；新增 `modules/model_driver/generic_inputs.py` 把 `/tasks` 的 `prompt + referenceKeys + params` 物化成替换链同款归档工作区；LibTV 通用链在提交前补跑 `upload` 阶段 | 生成工作台可以直接选百炼/LibTV 替换模型；`maxReferences=0` 的模型带参考素材当场 400，不再静默丢弃；`tests/test_generic_inputs.py` 8 条钉住档案形状与幂等 |
 | `cfc0508` | `ModelSpec.internal` + `ModelRouter.public_models()`：替换链专用模型不再出现在目录（T33，后被本轮取代） | 当时视频下拉里不再有选中即 400 的 `*-replacement` |
 | 本轮 | **任务中心接生图 + 补齐自身真实操作**（2026-11-13）：`GET /tasks/feed` 从「视频 + 替换档案」扩成三路；新增 `core.ports.generation_feed` 注入口，生图模块在 import 期注册 `feed_provider.read_generation_feed`；前端加 `ImageTaskCard` / `ImagePreviewModal` 与来源 `source=image` | 生图记录进任务中心，统计 / 搜索 / 状态分组 / 现签产物地址三路同口径；批量下载、显式 `PATCH` 收藏、`DELETE /tasks` 删除（回 `skipped`）、视频 / 替换成片下载从假按钮变真实操作。**用户明确「v2 先不用管」，本轮完全没碰模板库 v2** |
+| 本轮 | **模板封装迁移 A/B/C1**（2026-11-14）：A 纯规则上移 `core/template_rules/`；B `manifest.json` DB 化四张表（迁移 `a3c7e91b2d45`）；C1 新 `/template-manifests` 配置服务（预检 / 幂等保存 / 发布 / 停用）+ `core.ports.template_catalog` 只读端口 | 素材一律 `library_assets.id`，本地文件、文件 sha256、journal 进度文件、HTTP 客户端整套没搬；`template_packager` 的能力改为 DB 内预检 + 版本回执。旧 `/template-packs` 与 `modules/template` 的 ①② 暂留，等 C2 收敛 |
 
 表格之后又连续落了几件事（提交见 `git log --oneline -12`）：PR#5 语义合并 →
 T34 参考图（含素材库侧边悬浮栏 + 拖拽）→ 标签两级分类 → worktree
@@ -254,6 +255,16 @@ curl -sS --noproxy '*' -H "Authorization: Bearer $TOKEN" \
   **别改成抛异常**，否则只跑任务模块的单测 / 裁剪装配时会整页 500。
 - **聚合页产物地址一律现签**：库里存对象 key，出参才按当前存储驱动
   `artifact_urls()` 转换；视频 / 生图 / 替换三路都别把裸 key 交给前端。
+- **模板封装模块只管数据、通过 ports 对外提供**（用户拍板）：生成是
+  `modules/task` 的消费行为，不在封装模块实现、也不由封装模块去接。
+  `core.ports.template_catalog` 是只读窄接口，没有 `verify_picks` / 候选判定；
+  旧的 `TemplatePackPort`（fixed/filtered 槽位）随 C2 一起下线，别合并。
+- **service 层显式 commit**：`db.session.get_session()` 只在异常时回滚。
+  `save` / `publish` / `disable` 漏 `await session.commit()` 的症状是「接口 201、
+  紧接着的读全 404」，很容易误判成权限或缓存问题。写侧新建实体还要在
+  **第一次 flush 之前**填满所有 NOT NULL 列，否则被框架兜成 409 看不出真因。
+- **POST 路由一律挂 `rate_limit`**：`test_route_policy.py` 按 HTTP 方法扫，
+  连「只预检不落库」的 `/validate` 也算写路由，不挂就得进豁免表。
 
 ## 6. 本机环境坑（Windows 开发机）
 

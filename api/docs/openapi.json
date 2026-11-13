@@ -7047,6 +7047,7 @@
     "/api/v1/template-packs": {
       "get": {
         "tags": [
+          "模板封装",
           "封装模板"
         ],
         "summary": "封装模板列表",
@@ -7108,6 +7109,7 @@
       },
       "post": {
         "tags": [
+          "模板封装",
           "封装模板"
         ],
         "summary": "保存封装模板草稿",
@@ -7155,6 +7157,7 @@
     "/api/v1/template-packs/{pack_id}": {
       "get": {
         "tags": [
+          "模板封装",
           "封装模板"
         ],
         "summary": "封装模板详情",
@@ -7202,6 +7205,7 @@
     "/api/v1/template-packs/{pack_id}/publish": {
       "post": {
         "tags": [
+          "模板封装",
           "封装模板"
         ],
         "summary": "发布封装模板",
@@ -7250,6 +7254,7 @@
     "/api/v1/template-packs/{pack_id}/disable": {
       "post": {
         "tags": [
+          "模板封装",
           "封装模板"
         ],
         "summary": "停用封装模板",
@@ -7298,6 +7303,7 @@
     "/api/v1/template-packs/{pack_id}/prompt": {
       "patch": {
         "tags": [
+          "模板封装",
           "封装模板"
         ],
         "summary": "改固定提示词",
@@ -7356,6 +7362,7 @@
     "/api/v1/template-packs/{pack_id}/candidates": {
       "get": {
         "tags": [
+          "模板封装",
           "封装模板"
         ],
         "summary": "取筛选槽位的合规素材池",
@@ -7427,6 +7434,7 @@
     "/api/v1/template-packs/{pack_id}/verify": {
       "post": {
         "tags": [
+          "模板封装",
           "封装模板"
         ],
         "summary": "复核运行时选材是否满足筛选条件",
@@ -7465,6 +7473,306 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApiResponse_TemplatePackVerifyOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/template-manifests/validate": {
+      "post": {
+        "tags": [
+          "模板封装",
+          "模板封装配置"
+        ],
+        "summary": "预检 manifest 配置（不落库）",
+        "description": "结构、用途、Mixed 编号、素材可读性的全套预检；返回幂等指纹。",
+        "operationId": "validate_manifest_api_v1_template_manifests_validate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ManifestDraftIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_ManifestValidateOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/template-manifests": {
+      "post": {
+        "tags": [
+          "模板封装",
+          "模板封装配置"
+        ],
+        "summary": "保存 manifest 草稿",
+        "description": "幂等：同 key 同配置返回原行；已发布配置改内容 409。",
+        "operationId": "save_manifest_api_v1_template_manifests_post",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ManifestDraftIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_ManifestOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "模板封装",
+          "模板封装配置"
+        ],
+        "summary": "manifest 配置列表",
+        "description": "别人的草稿不进列表；传 `mineOnly` 只看自己的全部（含草稿）。",
+        "operationId": "list_manifests_api_v1_template_manifests_get",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "mineOnly",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Mineonly"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Status"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_ManifestListOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/template-manifests/{key}": {
+      "get": {
+        "tags": [
+          "模板封装",
+          "模板封装配置"
+        ],
+        "summary": "manifest 配置详情",
+        "operationId": "get_manifest_api_v1_template_manifests__key__get",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_ManifestOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/template-manifests/{key}/publish": {
+      "post": {
+        "tags": [
+          "模板封装",
+          "模板封装配置"
+        ],
+        "summary": "发布 manifest 配置",
+        "description": "状态流转 + 版本号 +1；返回每张工作台卡片的 `workbenchPath`。",
+        "operationId": "publish_manifest_api_v1_template_manifests__key__publish_post",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_ManifestPublishOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/template-manifests/{key}/disable": {
+      "post": {
+        "tags": [
+          "模板封装",
+          "模板封装配置"
+        ],
+        "summary": "停用 manifest 配置",
+        "description": "停用不是删除：模板是资产，历史版本还要能回放。",
+        "operationId": "disable_manifest_api_v1_template_manifests__key__disable_post",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_ManifestOut_"
                 }
               }
             }
@@ -7997,6 +8305,114 @@
         },
         "type": "object",
         "title": "ApiResponse[LoginEventListOut]"
+      },
+      "ApiResponse_ManifestListOut_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ManifestListOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[ManifestListOut]"
+      },
+      "ApiResponse_ManifestOut_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ManifestOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[ManifestOut]"
+      },
+      "ApiResponse_ManifestPublishOut_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ManifestPublishOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[ManifestPublishOut]"
+      },
+      "ApiResponse_ManifestValidateOut_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ManifestValidateOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[ManifestValidateOut]"
       },
       "ApiResponse_MeOut_": {
         "properties": {
@@ -12058,6 +12474,467 @@
         ],
         "title": "LoginIn"
       },
+      "ManifestDraftIn": {
+        "properties": {
+          "key": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9_-]{1,40}$",
+            "title": "Key"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 2000,
+            "title": "Description",
+            "default": ""
+          },
+          "video": {
+            "$ref": "#/components/schemas/ManifestVideoIn"
+          },
+          "packs": {
+            "items": {
+              "$ref": "#/components/schemas/ManifestPackIn"
+            },
+            "type": "array",
+            "maxItems": 20,
+            "title": "Packs"
+          },
+          "functions": {
+            "items": {
+              "$ref": "#/components/schemas/ManifestFunctionIn"
+            },
+            "type": "array",
+            "maxItems": 30,
+            "minItems": 1,
+            "title": "Functions"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "key",
+          "name",
+          "video",
+          "functions"
+        ],
+        "title": "ManifestDraftIn"
+      },
+      "ManifestFunctionIn": {
+        "properties": {
+          "key": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9_-]{1,40}$",
+            "title": "Key"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "pack": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pack"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "product",
+                  "character",
+                  "scene"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kind"
+          },
+          "scenePromptDefault": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scenepromptdefault"
+          },
+          "prompt": {
+            "type": "string",
+            "maxLength": 20000,
+            "minLength": 1,
+            "title": "Prompt"
+          },
+          "mediaOrder": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 10,
+            "title": "Mediaorder"
+          },
+          "bindings": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bindings"
+          },
+          "scopeOptions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 30,
+            "title": "Scopeoptions"
+          },
+          "aspectRatio": {
+            "type": "string",
+            "enum": [
+              "9:16",
+              "16:9",
+              "1:1"
+            ],
+            "title": "Aspectratio",
+            "default": "9:16"
+          },
+          "duration": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 15.0,
+                "minimum": 2.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "key",
+          "name",
+          "prompt"
+        ],
+        "title": "ManifestFunctionIn"
+      },
+      "ManifestListOut": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ManifestOut"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "title": "ManifestListOut"
+      },
+      "ManifestOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "key": {
+            "type": "string",
+            "title": "Key"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description"
+          },
+          "ownerId": {
+            "type": "string",
+            "title": "Ownerid"
+          },
+          "video": {
+            "$ref": "#/components/schemas/ManifestVideoIn"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "version": {
+            "type": "integer",
+            "title": "Version"
+          },
+          "revision": {
+            "type": "integer",
+            "title": "Revision"
+          },
+          "fingerprint": {
+            "type": "string",
+            "title": "Fingerprint"
+          },
+          "publishedAt": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Publishedat"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Createdat"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updatedat"
+          },
+          "packs": {
+            "items": {
+              "$ref": "#/components/schemas/ManifestPackIn"
+            },
+            "type": "array",
+            "title": "Packs"
+          },
+          "functions": {
+            "items": {
+              "$ref": "#/components/schemas/ManifestFunctionIn"
+            },
+            "type": "array",
+            "title": "Functions"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "key",
+          "name",
+          "description",
+          "ownerId",
+          "video",
+          "status",
+          "version",
+          "revision",
+          "fingerprint",
+          "createdAt",
+          "updatedAt"
+        ],
+        "title": "ManifestOut",
+        "description": "配置详情。嵌套体直接复用入参模型：形状一致，不另造一份会漂移的出参。"
+      },
+      "ManifestPackIn": {
+        "properties": {
+          "key": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9_-]{1,40}$",
+            "title": "Key"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 160,
+            "title": "Name",
+            "default": ""
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "product",
+              "character",
+              "scene"
+            ],
+            "title": "Kind"
+          },
+          "packId": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Packid"
+          },
+          "references": {
+            "items": {
+              "$ref": "#/components/schemas/ManifestReferenceIn"
+            },
+            "type": "array",
+            "maxItems": 10,
+            "title": "References"
+          },
+          "requiredRoles": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 8,
+            "title": "Requiredroles"
+          },
+          "supportedScopes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 8,
+            "title": "Supportedscopes"
+          },
+          "wardrobeMode": {
+            "type": "string",
+            "enum": [
+              "preserve",
+              "reference"
+            ],
+            "title": "Wardrobemode",
+            "default": "preserve"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "key",
+          "kind"
+        ],
+        "title": "ManifestPackIn"
+      },
+      "ManifestPublishOut": {
+        "properties": {
+          "manifest": {
+            "$ref": "#/components/schemas/ManifestOut"
+          },
+          "version": {
+            "type": "integer",
+            "title": "Version"
+          },
+          "templates": {
+            "items": {
+              "$ref": "#/components/schemas/PublishedTemplateOut"
+            },
+            "type": "array",
+            "title": "Templates"
+          }
+        },
+        "type": "object",
+        "required": [
+          "manifest",
+          "version"
+        ],
+        "title": "ManifestPublishOut",
+        "description": "发布回执：`templateId` 即工作台卡片 id，前端拼 `workbenchPath` 用。"
+      },
+      "ManifestReferenceIn": {
+        "properties": {
+          "key": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9_-]{1,40}$",
+            "title": "Key"
+          },
+          "assetId": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Assetid"
+          },
+          "role": {
+            "type": "string",
+            "maxLength": 24,
+            "minLength": 1,
+            "title": "Role"
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 2000,
+            "title": "Description",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "key",
+          "assetId",
+          "role"
+        ],
+        "title": "ManifestReferenceIn"
+      },
+      "ManifestValidateOut": {
+        "properties": {
+          "valid": {
+            "type": "boolean",
+            "title": "Valid",
+            "default": true
+          },
+          "fingerprint": {
+            "type": "string",
+            "title": "Fingerprint"
+          }
+        },
+        "type": "object",
+        "required": [
+          "fingerprint"
+        ],
+        "title": "ManifestValidateOut",
+        "description": "只预检不落库：返回会用于幂等判定的配置指纹。"
+      },
+      "ManifestVideoIn": {
+        "properties": {
+          "assetId": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Assetid"
+          },
+          "shared": {
+            "type": "boolean",
+            "title": "Shared",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "assetId"
+        ],
+        "title": "ManifestVideoIn"
+      },
       "MeOut": {
         "properties": {
           "id": {
@@ -13183,6 +14060,39 @@
         "type": "object",
         "title": "ProfileUpdateIn",
         "description": "`PATCH /identity/me` 的自助可写字段。\n\n刻意**不含** `is_active`：停用是管理动作，用户误点一下就把自己锁在门外，\n而恢复只有管理员一个入口。自助路径能改的只有「展示信息」。"
+      },
+      "PublishedTemplateOut": {
+        "properties": {
+          "functionKey": {
+            "type": "string",
+            "title": "Functionkey"
+          },
+          "templateId": {
+            "type": "string",
+            "title": "Templateid"
+          },
+          "templateKey": {
+            "type": "string",
+            "title": "Templatekey"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "workbenchPath": {
+            "type": "string",
+            "title": "Workbenchpath"
+          }
+        },
+        "type": "object",
+        "required": [
+          "functionKey",
+          "templateId",
+          "templateKey",
+          "name",
+          "workbenchPath"
+        ],
+        "title": "PublishedTemplateOut"
       },
       "ReadyOut": {
         "properties": {

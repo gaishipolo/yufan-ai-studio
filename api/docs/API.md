@@ -2,7 +2,7 @@
 
 > 此文件由 `app export-openapi` 自动生成，请勿手工编辑。
 >
-> 版本 `0.2.0`｜共 **144** 个接口 / **12** 个模块
+> 版本 `0.2.0`｜共 **150** 个接口 / **12** 个模块
 >
 > 重新生成：`cd api && .venv/Scripts/python -m cli export-openapi`
 
@@ -99,11 +99,11 @@ Authorization: Bearer <accessToken>
 | `template:read` | 查看行业模板 |  |
 | `template:review` | 评价自己的替换成片 |  |
 | `template:use` | 使用替换模板并提交零积分生成 |  |
-| `template_pack:create` | 创建封装模板 |  |
-| `template_pack:publish` | 发布或停用封装模板 |  |
-| `template_pack:read` | 查看封装模板 |  |
-| `template_pack:update` | 编辑未发布的封装模板 |  |
-| `template_pack:use` | 使用封装模板选素材 |  |
+| `template_pack:create` | 创建或保存模板封装草稿 |  |
+| `template_pack:publish` | 发布或停用模板封装 |  |
+| `template_pack:read` | 查看模板封装 |  |
+| `template_pack:update` | 编辑未发布的模板封装 |  |
+| `template_pack:use` | 使用模板封装 |  |
 
 **系统**
 
@@ -244,7 +244,7 @@ Authorization: Bearer <accessToken>
 | 导出 | 6 | 见下方 `4.9` |
 | 资产库 | 45 | 见下方 `4.10` |
 | 模型驱动 | 6 | 见下方 `4.11` |
-| 封装模板 | 8 | 见下方 `4.12` |
+| 模板封装 | 14 | 见下方 `4.12` |
 
 ### 4.1 身份（39 个）
 
@@ -3838,10 +3838,16 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `message` | `string` | 否 |  |
 | `data` | `modules__model_driver__schema__TaskOut \| null` | 否 |  |
 
-### 4.12 封装模板（8 个）
+### 4.12 模板封装（14 个）
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
+| `POST` | `/api/v1/template-manifests` | 保存 manifest 草稿 | 🔒 |
+| `GET` | `/api/v1/template-manifests` | manifest 配置列表 | 🔒 |
+| `POST` | `/api/v1/template-manifests/validate` | 预检 manifest 配置（不落库） | 🔒 |
+| `GET` | `/api/v1/template-manifests/{key}` | manifest 配置详情 | 🔒 |
+| `POST` | `/api/v1/template-manifests/{key}/disable` | 停用 manifest 配置 | 🔒 |
+| `POST` | `/api/v1/template-manifests/{key}/publish` | 发布 manifest 配置 | 🔒 |
 | `GET` | `/api/v1/template-packs` | 封装模板列表 | 🔒 |
 | `POST` | `/api/v1/template-packs` | 保存封装模板草稿 | 🔒 |
 | `GET` | `/api/v1/template-packs/{pack_id}` | 封装模板详情 | 🔒 |
@@ -3850,6 +3856,161 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `PATCH` | `/api/v1/template-packs/{pack_id}/prompt` | 改固定提示词 | 🔒 |
 | `POST` | `/api/v1/template-packs/{pack_id}/publish` | 发布封装模板 | 🔒 |
 | `POST` | `/api/v1/template-packs/{pack_id}/verify` | 复核运行时选材是否满足筛选条件 | 🔒 |
+
+#### `POST /api/v1/template-manifests`
+
+**保存 manifest 草稿**
+
+幂等：同 key 同配置返回原行；已发布配置改内容 409。
+
+**请求体** `ManifestDraftIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `key` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `description` | `string` | 否 |  |
+| `video` | `ManifestVideoIn` | 是 |  |
+| `packs` | `ManifestPackIn[]` | 否 |  |
+| `functions` | `ManifestFunctionIn[]` | 是 |  |
+
+**响应** `ApiResponse<ManifestOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `key` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `description` | `string` | 是 |  |
+| `ownerId` | `string` | 是 |  |
+| `video` | `ManifestVideoIn` | 是 |  |
+| `status` | `string` | 是 |  |
+| `version` | `number` | 是 |  |
+| `revision` | `number` | 是 |  |
+| `fingerprint` | `string` | 是 |  |
+| `publishedAt` | `string \| null` | 否 |  |
+| `createdAt` | `string` | 是 |  |
+| `updatedAt` | `string` | 是 |  |
+| `packs` | `ManifestPackIn[]` | 否 |  |
+| `functions` | `ManifestFunctionIn[]` | 否 |  |
+
+#### `GET /api/v1/template-manifests`
+
+**manifest 配置列表**
+
+别人的草稿不进列表；传 `mineOnly` 只看自己的全部（含草稿）。
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `mineOnly` | query | `boolean` | 否 |  |
+| `status` | query | `string` | 否 |  |
+
+**响应** `ApiResponse<ManifestListOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `items` | `ManifestOut[]` | 否 |  |
+| `total` | `number` | 否 |  |
+
+#### `POST /api/v1/template-manifests/validate`
+
+**预检 manifest 配置（不落库）**
+
+结构、用途、Mixed 编号、素材可读性的全套预检；返回幂等指纹。
+
+**请求体** `ManifestDraftIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `key` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `description` | `string` | 否 |  |
+| `video` | `ManifestVideoIn` | 是 |  |
+| `packs` | `ManifestPackIn[]` | 否 |  |
+| `functions` | `ManifestFunctionIn[]` | 是 |  |
+
+**响应** `ApiResponse<ManifestValidateOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `valid` | `boolean` | 否 |  |
+| `fingerprint` | `string` | 是 |  |
+
+#### `GET /api/v1/template-manifests/{key}`
+
+**manifest 配置详情**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `key` | path | `string` | 是 |  |
+
+**响应** `ApiResponse<ManifestOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `key` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `description` | `string` | 是 |  |
+| `ownerId` | `string` | 是 |  |
+| `video` | `ManifestVideoIn` | 是 |  |
+| `status` | `string` | 是 |  |
+| `version` | `number` | 是 |  |
+| `revision` | `number` | 是 |  |
+| `fingerprint` | `string` | 是 |  |
+| `publishedAt` | `string \| null` | 否 |  |
+| `createdAt` | `string` | 是 |  |
+| `updatedAt` | `string` | 是 |  |
+| `packs` | `ManifestPackIn[]` | 否 |  |
+| `functions` | `ManifestFunctionIn[]` | 否 |  |
+
+#### `POST /api/v1/template-manifests/{key}/disable`
+
+**停用 manifest 配置**
+
+停用不是删除：模板是资产，历史版本还要能回放。
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `key` | path | `string` | 是 |  |
+
+**响应** `ApiResponse<ManifestOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `key` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `description` | `string` | 是 |  |
+| `ownerId` | `string` | 是 |  |
+| `video` | `ManifestVideoIn` | 是 |  |
+| `status` | `string` | 是 |  |
+| `version` | `number` | 是 |  |
+| `revision` | `number` | 是 |  |
+| `fingerprint` | `string` | 是 |  |
+| `publishedAt` | `string \| null` | 否 |  |
+| `createdAt` | `string` | 是 |  |
+| `updatedAt` | `string` | 是 |  |
+| `packs` | `ManifestPackIn[]` | 否 |  |
+| `functions` | `ManifestFunctionIn[]` | 否 |  |
+
+#### `POST /api/v1/template-manifests/{key}/publish`
+
+**发布 manifest 配置**
+
+状态流转 + 版本号 +1；返回每张工作台卡片的 `workbenchPath`。
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `key` | path | `string` | 是 |  |
+
+**响应** `ApiResponse<ManifestPublishOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `manifest` | `ManifestOut` | 是 |  |
+| `version` | `number` | 是 |  |
+| `templates` | `PublishedTemplateOut[]` | 否 |  |
 
 #### `GET /api/v1/template-packs`
 
@@ -4852,6 +5013,110 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `username` | `string` | 是 | 用户名 |
 | `password` | `string` | 是 | 密码 |
 
+### `ManifestDraftIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `key` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `description` | `string` | 否 |  |
+| `video` | `ManifestVideoIn` | 是 |  |
+| `packs` | `ManifestPackIn[]` | 否 |  |
+| `functions` | `ManifestFunctionIn[]` | 是 |  |
+
+### `ManifestFunctionIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `key` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `pack` | `string \| null` | 否 |  |
+| `kind` | `"product" \| "character" \| "scene" \| null` | 否 |  |
+| `scenePromptDefault` | `string \| null` | 否 |  |
+| `prompt` | `string` | 是 |  |
+| `mediaOrder` | `string[]` | 否 |  |
+| `bindings` | `Record<string, string> \| null` | 否 |  |
+| `scopeOptions` | `string[]` | 否 |  |
+| `aspectRatio` | `"9:16" \| "16:9" \| "1:1"` | 否 |  |
+| `duration` | `number \| null` | 否 |  |
+
+### `ManifestListOut`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `items` | `ManifestOut[]` | 否 |  |
+| `total` | `number` | 否 |  |
+
+### `ManifestOut`
+
+配置详情。嵌套体直接复用入参模型：形状一致，不另造一份会漂移的出参。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `key` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `description` | `string` | 是 |  |
+| `ownerId` | `string` | 是 |  |
+| `video` | `ManifestVideoIn` | 是 |  |
+| `status` | `string` | 是 |  |
+| `version` | `number` | 是 |  |
+| `revision` | `number` | 是 |  |
+| `fingerprint` | `string` | 是 |  |
+| `publishedAt` | `string \| null` | 否 |  |
+| `createdAt` | `string` | 是 |  |
+| `updatedAt` | `string` | 是 |  |
+| `packs` | `ManifestPackIn[]` | 否 |  |
+| `functions` | `ManifestFunctionIn[]` | 否 |  |
+
+### `ManifestPackIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `key` | `string` | 是 |  |
+| `name` | `string` | 否 |  |
+| `kind` | `"product" \| "character" \| "scene"` | 是 |  |
+| `packId` | `string \| null` | 否 |  |
+| `references` | `ManifestReferenceIn[]` | 否 |  |
+| `requiredRoles` | `string[]` | 否 |  |
+| `supportedScopes` | `string[]` | 否 |  |
+| `wardrobeMode` | `"preserve" \| "reference"` | 否 |  |
+
+### `ManifestPublishOut`
+
+发布回执：`templateId` 即工作台卡片 id，前端拼 `workbenchPath` 用。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `manifest` | `ManifestOut` | 是 |  |
+| `version` | `number` | 是 |  |
+| `templates` | `PublishedTemplateOut[]` | 否 |  |
+
+### `ManifestReferenceIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `key` | `string` | 是 |  |
+| `assetId` | `string` | 是 |  |
+| `role` | `string` | 是 |  |
+| `description` | `string` | 否 |  |
+
+### `ManifestValidateOut`
+
+只预检不落库：返回会用于幂等判定的配置指纹。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `valid` | `boolean` | 否 |  |
+| `fingerprint` | `string` | 是 |  |
+
+### `ManifestVideoIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `assetId` | `string` | 是 |  |
+| `shared` | `boolean` | 否 |  |
+
 ### `MeOut`
 
 `GET /identity/me`：前端靠 `permissions` 渲染菜单与按钮。
@@ -5085,6 +5350,16 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `avatarUrl` | `string \| null` | 否 | 头像 URL；传 null 清空 |
 | `phone` | `string \| null` | 否 | 手机号；传 null 清空 |
 | `position` | `string \| null` | 否 | 职务；传 null 清空 |
+
+### `PublishedTemplateOut`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `functionKey` | `string` | 是 |  |
+| `templateId` | `string` | 是 |  |
+| `templateKey` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `workbenchPath` | `string` | 是 |  |
 
 ### `ReadyOut`
 

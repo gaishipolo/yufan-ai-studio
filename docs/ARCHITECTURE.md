@@ -134,6 +134,7 @@
 | `core/audit.py` | 操作留痕扩展点：`record(action, actor, target, detail)`，写入端由 `db/audit_sink.py` 注册；**写失败不影响业务**。 |
 | `core/ports/accounts.py` | 账号状态注入口（从 `api/` 下移）：低层（`generation`）也能问「发起人还在不在」，三态语义，未注册按放行。 |
 | `core/ports/generation_feed.py` | 任务中心的**生成来源**注入口（`Port(multi=False)` + 注册 / 复位 / 探测三件套）：来源方自带筛选、统计、分页候选与产物现签，聚合方不认识它的表。与 `core/feed.py`（老替换档案按 owner 全量返回）刻意分开；未注册返回空页是合法状态，另外两路照常显示。 |
+| `core/ports/template_catalog.py` | 模板封装的**对外只读目录**注入口：只列 / 取已发布的卡片与素材包快照（core 层不可变 dataclass），没有生成动作、没有素材判定。与旧 `core/ports/template_pack.py`（fixed/filtered 槽位，暴露 `verify_picks`）刻意不合并；未注册返回空结果是合法状态。 |
 | `core/scheduler.py` | 周期任务扩展点：`@periodic("模块.动作", every=秒)` 注册，进程内单调度器；模块自己说「多久问一次」，框架不认识任何具体任务。 |
 | `core/response.py` | 统一响应包装 `{code,message,data}` 与分页原语 `Page`。 |
 | `core/schema.py` | Pydantic 基座：统一 camelCase 契约，与前端 TypeScript 类型一一对应。 |

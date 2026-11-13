@@ -799,6 +799,95 @@ export interface LoginIn {
   password: string;
 }
 
+/** ManifestDraftIn */
+export interface ManifestDraftIn {
+  key: string;
+  name: string;
+  description?: string;
+  video: ManifestVideoIn;
+  packs?: ManifestPackIn[];
+  functions: ManifestFunctionIn[];
+}
+
+/** ManifestFunctionIn */
+export interface ManifestFunctionIn {
+  key: string;
+  name: string;
+  pack?: string | null;
+  kind?: "product" | "character" | "scene" | null;
+  scenePromptDefault?: string | null;
+  prompt: string;
+  mediaOrder?: string[];
+  bindings?: Record<string, string> | null;
+  scopeOptions?: string[];
+  aspectRatio?: "9:16" | "16:9" | "1:1";
+  duration?: number | null;
+}
+
+/** ManifestListOut */
+export interface ManifestListOut {
+  items?: ManifestOut[];
+  total?: number;
+}
+
+/** 配置详情。嵌套体直接复用入参模型：形状一致，不另造一份会漂移的出参。 */
+export interface ManifestOut {
+  id: string;
+  key: string;
+  name: string;
+  description: string;
+  ownerId: string;
+  video: ManifestVideoIn;
+  status: string;
+  version: number;
+  revision: number;
+  fingerprint: string;
+  publishedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  packs?: ManifestPackIn[];
+  functions?: ManifestFunctionIn[];
+}
+
+/** ManifestPackIn */
+export interface ManifestPackIn {
+  key: string;
+  name?: string;
+  kind: "product" | "character" | "scene";
+  packId?: string | null;
+  references?: ManifestReferenceIn[];
+  requiredRoles?: string[];
+  supportedScopes?: string[];
+  wardrobeMode?: "preserve" | "reference";
+}
+
+/** 发布回执：`templateId` 即工作台卡片 id，前端拼 `workbenchPath` 用。 */
+export interface ManifestPublishOut {
+  manifest: ManifestOut;
+  version: number;
+  templates?: PublishedTemplateOut[];
+}
+
+/** ManifestReferenceIn */
+export interface ManifestReferenceIn {
+  key: string;
+  assetId: string;
+  role: string;
+  description?: string;
+}
+
+/** 只预检不落库：返回会用于幂等判定的配置指纹。 */
+export interface ManifestValidateOut {
+  valid?: boolean;
+  fingerprint: string;
+}
+
+/** ManifestVideoIn */
+export interface ManifestVideoIn {
+  assetId: string;
+  shared?: boolean;
+}
+
 /** `GET /identity/me`：前端靠 `permissions` 渲染菜单与按钮。 */
 export interface MeOut {
   /** 用户 ID */
@@ -1034,6 +1123,15 @@ export interface ProfileUpdateIn {
   phone?: string | null;
   /** 职务；传 null 清空 */
   position?: string | null;
+}
+
+/** PublishedTemplateOut */
+export interface PublishedTemplateOut {
+  functionKey: string;
+  templateId: string;
+  templateKey: string;
+  name: string;
+  workbenchPath: string;
 }
 
 /** 就绪状态。`checks` 说明每一项依赖的结论，status ∈ ok / degraded / down。 */
@@ -2287,6 +2385,18 @@ export interface EndpointData {
   "POST /api/v1/tasks/{task_id}/favorite": core__response__ApiResponse_TaskOut___2;
   /** 重试任务 */
   "POST /api/v1/tasks/{task_id}/retry": TaskRetryOut;
+  /** manifest 配置列表 */
+  "GET /api/v1/template-manifests": ManifestListOut;
+  /** 保存 manifest 草稿 */
+  "POST /api/v1/template-manifests": ManifestOut;
+  /** 预检 manifest 配置（不落库） */
+  "POST /api/v1/template-manifests/validate": ManifestValidateOut;
+  /** manifest 配置详情 */
+  "GET /api/v1/template-manifests/{key}": ManifestOut;
+  /** 停用 manifest 配置 */
+  "POST /api/v1/template-manifests/{key}/disable": ManifestOut;
+  /** 发布 manifest 配置 */
+  "POST /api/v1/template-manifests/{key}/publish": ManifestPublishOut;
   /** 封装模板列表 */
   "GET /api/v1/template-packs": TemplatePackListOut;
   /** 保存封装模板草稿 */
