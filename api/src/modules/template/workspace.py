@@ -28,7 +28,7 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict
 
 from core.exceptions import BadRequest, UpstreamError
-from infra.archive.base import write_json
+from infra.archive.base import read_json, write_json
 from infra.archive.runs import check_id, lock_path, relative_key, runs_root
 
 RUNTIME = Path(__file__).parent / "replacement_runtime"
@@ -104,10 +104,13 @@ def read_state(path: Path) -> dict[str, object]:
 
     调用方要能区分「没写过」和「写成空」：这里不造默认值，缺失就是缺失。
     """
-    target = path / "run.json"
-    if not target.is_file():
+    try:
+        # 走 `read_json` 而不是自己 `read_text`：共享盘上 `rename` 不保证 POSIX 语义，
+        # 桥接层每次 `update()` 重写 `run.json` 的瞬间路径可能不存在。自己读的话那个
+        # 窗口会漏成 500（轮询期间真的见过），而调用方只想知道状态。
+        value = read_json(path / "run.json")
+    except (FileNotFoundError, ValueError):
         return {}
-    value = json.loads(target.read_text(encoding="utf-8"))
     return value if isinstance(value, dict) else {}
 
 
@@ -118,11 +121,8 @@ def input_checksums(path: Path) -> dict[str, str]:
     从清单派生而不是重算一遍字节：素材 key 本身就是摘要，清单里那份就是当初
     物化出来的字节的摘要；而重算要把原片再读一遍（几百 MB）。
     """
-    target = path / "inputs" / "input-map.json"
-    if not target.is_file():
-        return {}
     try:
-        entries = json.loads(target.read_text(encoding="utf-8"))
+        entries = read_json(path / "inputs" / "input-map.json")
     except (OSError, ValueError):
         return {}
     if not isinstance(entries, list):

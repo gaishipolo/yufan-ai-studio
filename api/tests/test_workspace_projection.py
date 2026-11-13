@@ -7,6 +7,29 @@ from infra.archive.base import lease
 from modules.template import worker, workspace
 
 
+async def test_read_state_survives_the_smb_rename_window(tmp_path, monkeypatch):
+    """共享盘上 `run.json` 被原子替换的瞬间读不到，不能当成 500。
+
+    桥接层每次 `update()` 都重写这份文件，而 SMB 的 `rename` 不保证 POSIX 语义——
+    路径会短暂不存在。以前 `read_state` 先 `is_file()` 再 `read_text`，两步之间
+    正好落进那个窗口，轮询接口就 500 一次。现在它走 `read_json`（有限重试），
+    重试内成功就该拿到完整回执。
+    """
+    workspace.write_state(tmp_path, {"id": "clip", "status": "uploaded"})
+    original = Path.read_text
+    calls = {"n": 0}
+
+    def flaky(source, *args, **kwargs):
+        if source.name == "run.json" and calls["n"] == 0:
+            calls["n"] += 1
+            raise FileNotFoundError(source)
+        return original(source, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", flaky)
+    assert workspace.read_state(tmp_path) == {"id": "clip", "status": "uploaded"}
+    assert calls["n"] == 1, "第一次就该抛过（否则这条用例没测到窗口）"
+
+
 def test_write_state_failed_atomic_replace_preserves_old_file(tmp_path, monkeypatch):
     workspace.write_state(tmp_path, {"id": "old"})
     original = Path.replace
