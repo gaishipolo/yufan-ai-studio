@@ -25,8 +25,7 @@ from core.ports.library_lookup import LibraryAssetKind
 from generation.pipeline import register_pipeline
 from generation.spec import GenerationRecord
 from infra.ai.base import Capability, GenerationRequest
-from infra.ai.libtv import MODEL_ID
-from modules.template.channels import CHANNEL_MODELS, run_channel
+from modules.template.channels import model_for_channel, run_channel, submit_mode
 from modules.template.models import ReplacementRun
 from modules.template.repository import RunRepository
 from modules.template.run_clock import set_status
@@ -35,26 +34,6 @@ from modules.template.titles import KIND_LABELS
 logger = get_logger(__name__)
 
 KIND_REPLACEMENT = "template_replacement"
-
-
-def _snapshot_submit_mode(model: str = MODEL_ID) -> str | None:
-    """提交成功时把供应商形态写进记录（与 `image.pipeline` 同一口径）。
-
-    使用任务冻结渠道对应的模型。取不到就留 `None`——快照是给恢复器分类用的，
-    解析不出来宁可让它
-    按「不能续查、请人核对」处理，也不猜一个可能把记录判死的答案。整段吞异常：
-    一次成功提交绝不能因为这个增强动作而失败。
-    """
-    from infra import get_model_router
-
-    try:
-        router = get_model_router()
-        if router.resolve(model) is None:
-            return None
-        provider = router.provider_for(model)
-    except Exception:  # noqa: BLE001 - 快照是增强，不能让一次成功提交失败
-        return None
-    return "async" if getattr(provider, "supports_poll", False) else "sync"
 
 
 class ReplacementStore:
@@ -77,7 +56,7 @@ class ReplacementStore:
         record = GenerationRecord(
             id=run.id,
             kind=KIND_REPLACEMENT,
-            model=CHANNEL_MODELS[run_channel(run.configuration)],
+            model=model_for_channel(run_channel(run.configuration)),
             prompt=run.prompt,
             status=run.framework_status or "queued",
             owner_id=run.owner_id,
@@ -232,7 +211,7 @@ class ReplacementStore:
             run.framework_status = "running"
             run.submit_attempts = 0
             run.last_error = None
-            run.submit_mode = _snapshot_submit_mode(CHANNEL_MODELS[run_channel(run.configuration)])
+            run.submit_mode = submit_mode(model_for_channel(run_channel(run.configuration)))
 
         # 补回执要能穿透「已被接管方判成 submission_unknown/failed」的终态标记，
         # 否则真正的任务号永远写不回去（见 _update 里 allow_terminal_framework 的注释）。

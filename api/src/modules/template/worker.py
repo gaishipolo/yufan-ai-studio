@@ -31,7 +31,7 @@ from infra.archive import get_archive_storage
 from infra.archive.base import lease, read_json
 from infra.queue.base import Job
 from modules.template.authorization import authorization_gap
-from modules.template.channels import CHANNEL_MODELS, run_channel
+from modules.template.channels import model_for_channel, prepare_inputs, run_channel
 from modules.template.models import ReplacementRun
 from modules.template.pipeline import KIND_REPLACEMENT
 from modules.template.repository import RunRepository
@@ -542,19 +542,12 @@ async def _stop_if_unauthorized(session, repo, run: ReplacementRun) -> bool:
 
 
 async def _prepare_channel_inputs(run_id: str, model: str) -> None:
-    """渠道要求「先上传素材」时，走供应商的可选协议。
+    """渠道要求「先上传素材」时交给模型驱动层。
 
-    替换链不认识具体供应商：能不能上传、密钥配没配，都由驱动自己回答
-    （`infra.ai.base.InputPreparer`）。这样接一个新渠道不必回来改这里，
-    也不会出现 `modules/template` 直接 import 某个驱动文件的横向依赖。
+    能不能上传、密钥配没配、走哪家供应商，都由驱动自己回答：模板库既不认识
+    供应商的可选协议，也不该直接拿模型路由里的实例。
     """
-    from infra import get_model_router
-    from infra.ai.base import InputPreparer
-
-    provider = get_model_router().provider_for(model, allow_fallback=False)
-    if not isinstance(provider, InputPreparer):
-        raise Unavailable(f"渠道 {model} 不支持素材上传，无法提交")
-    await provider.prepare_inputs(run_id, model=model)
+    await prepare_inputs(model, run_id)
 
 
 @register_handler("template.replacement.prepare")
@@ -608,7 +601,7 @@ async def prepare_upload(job: Job) -> None:
         if run_channel(run.configuration) != "libtv":
             try:
                 await _prepare_channel_inputs(
-                    run_id, CHANNEL_MODELS[run_channel(run.configuration)]
+                    run_id, model_for_channel(run_channel(run.configuration))
                 )
             except Exception:
                 logger.exception("百炼素材上传失败 run_id=%s", run_id)

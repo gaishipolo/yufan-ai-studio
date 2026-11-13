@@ -140,6 +140,28 @@ def test_modules_do_not_import_each_other() -> None:
     assert not offenders, "业务模块之间出现横向依赖：\n" + "\n".join(offenders)
 
 
+def test_template_module_does_not_resolve_model_providers_itself() -> None:
+    """模板库不许自己解析模型层。
+
+    拆分前 `channels.py` / `pipeline.py` / `worker.py` 直接拿模型路由、判断供应商
+    的可选协议、硬编码渠道→模型映射。这类改动**不会报错**，只会让「接一家新
+    供应商」要回来改业务模块，并让测试里 monkeypatch 的路由失效（顶层绑定取不到
+    补丁后的实例）。渠道、可用性、提交形态、素材准备统一由
+    `modules/model_driver` 经 `core.ports.model_generation` 提供。
+    """
+    banned = ("get_model_router", "InputPreparer", "CHANNEL_MODELS", "CHANNEL_LABELS")
+    offenders = [
+        f"{path.name}: {name}"
+        for path in _python_files(MODULES_DIR / "template")
+        for name in banned
+        if name in path.read_text(encoding="utf-8")
+    ]
+    assert not offenders, (
+        "模板库又自己解析模型层了（应走 core.ports.model_generation → "
+        "modules/model_driver）：\n" + "\n".join(offenders)
+    )
+
+
 # `api` 只提供装配点：模块契约、依赖注入、主体解析与账户状态注入。
 # 其它 `api.*` 是装配层内部实现，模块引用会形成反向边，环和启动顺序问题都会回来。
 ASSEMBLY_POINTS = ("api.module", "api.deps", "api.accounts", "api.authn")

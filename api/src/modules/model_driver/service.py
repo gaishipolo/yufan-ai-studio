@@ -1,9 +1,13 @@
 """统一生成门面：`core/ports/model_generation` 的实现。
 
-下游模块只调这里的四个方法（submit / query / cancel / models），
-不需要知道驱动文件、模型路由、任务表，也不需要自己实现 `GenerationStore`。
-每次提交落一行 `driver_jobs` 后交给 `generation.runner` 编排，所以队列、
-轮询、退避重试、墙钟超时、启动恢复与 `generation` 现有能力完全一致。
+下游模块通过这里提交 / 查询 / 取消 / 挑模型，不需要知道驱动文件、模型路由、
+任务表，也不需要自己实现 `GenerationStore`。每次提交落一行 `driver_jobs` 后
+交给 `generation.runner` 编排，所以队列、轮询、退避重试、墙钟超时、启动恢复
+与 `generation` 现有能力完全一致。
+
+门面还兼作「问模型层」的唯一出口：替换链的渠道别名、可用性、提交形态与
+提交前素材准备都委托给 `replacement_channels.py`。这样 `modules/template`
+不必自己拿 `ModelRouter` / `InputPreparer`，供应商细节不会散进业务模块。
 """
 
 from __future__ import annotations
@@ -16,12 +20,14 @@ from core.ports.model_generation import (
     DriverSummary,
     GenerationTicket,
     ModelSummary,
+    ReplacementChannelInfo,
     SubmitSpec,
 )
 from db.session import get_session_factory
 from generation.runner import get_runner
 from infra import get_model_router
 from infra.ai.base import Capability
+from modules.model_driver import replacement_channels as channels
 from modules.model_driver.models import (
     KIND_MODEL_DRIVER,
     STATUS_CANCELLED,
@@ -193,3 +199,22 @@ class ModelGenerationFacade:
 
     def drivers(self) -> tuple[DriverSummary, ...]:
         return driver_summaries()
+
+    # ---- 替换链支持：模型层的事不留给 modules/template 自己做 ----
+
+    def replacement_channels(self) -> tuple[ReplacementChannelInfo, ...]:
+        ensure_drivers_registered()
+        return channels.replacement_channels()
+
+    def model_for_channel(self, channel: str) -> str:
+        return channels.model_for_channel(channel)
+
+    def channel_label(self, channel: str) -> str:
+        return channels.channel_label(channel)
+
+    def submit_mode(self, model: str) -> str | None:
+        return channels.submit_mode(model)
+
+    async def prepare_inputs(self, model: str, run_id: str) -> None:
+        ensure_drivers_registered()
+        await channels.prepare_inputs(model, run_id)

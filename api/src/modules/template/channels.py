@@ -1,27 +1,24 @@
-"""Per-run video channel selection; legacy configuration belongs to LibTV."""
+"""Per-run video channel selection; the model layer owns the actual routing.
+
+模板库只认 channel 这个 UI 枚举与「读历史行」的降级逻辑。渠道对应哪个模型、
+供应商是否可用、提交形态、提交前要不要上传素材，全部经
+`core.ports.model_generation` 交给 `modules/model_driver` 回答
+（见 `modules/model_driver/replacement_channels.py`）。
+"""
 
 from __future__ import annotations
 
 import logging
 from collections.abc import Mapping
-from typing import Literal, cast
+from typing import Literal, cast, get_args
 
 from core.exceptions import BadRequest
+from core.ports.model_generation import get_model_generation
 
 logger = logging.getLogger(__name__)
 
 ReplacementChannel = Literal["libtv", "bailian", "bailian-prime"]
-
-CHANNEL_MODELS = {
-    "libtv": "libtv-wan3-replacement",
-    "bailian": "bailian-wan3-replacement",
-    "bailian-prime": "bailian-wan3-prime-replacement",
-}
-CHANNEL_LABELS = {
-    "libtv": "LibTV · Wan 3.0 · 720P",
-    "bailian": "阿里云百炼 · Wan 3.0 · 北京 · 720P",
-    "bailian-prime": "阿里云百炼 · Wan 3.0 高速版 · 北京 · 720P",
-}
+_CHANNEL_IDS = frozenset(get_args(ReplacementChannel))
 
 
 def run_channel(configuration: Mapping | None) -> ReplacementChannel:
@@ -37,37 +34,47 @@ def run_channel(configuration: Mapping | None) -> ReplacementChannel:
             logger.warning("任务配置不是对象，按 libtv 处理: %r", configuration)
         return "libtv"
     value = configuration.get("channel", "libtv")
-    if value not in CHANNEL_MODELS:
+    if value not in _CHANNEL_IDS:
         logger.warning("任务的模型渠道 %r 无法识别，按 libtv 处理（历史数据）", value)
         return "libtv"
     return cast(ReplacementChannel, value)
 
 
+def model_for_channel(channel: ReplacementChannel) -> str:
+    """冻结渠道 → 模型 id。启动恢复 / 轮询链靠它把历史行还原成 GenerationRecord。"""
+    return get_model_generation().model_for_channel(channel)
+
+
+def channel_label(channel: ReplacementChannel) -> str:
+    return get_model_generation().channel_label(channel)
+
+
+def submit_mode(model: str) -> str | None:
+    """提交形态快照是增强字段：解析不出来留 None，绝不拖垮一次成功提交。"""
+    try:
+        return get_model_generation().submit_mode(model)
+    except Exception:  # noqa: BLE001 - 快照是增强，不能让一次成功提交失败
+        return None
+
+
+async def prepare_inputs(model: str, run_id: str) -> None:
+    """渠道要求「先上传素材」时，由模型驱动层调驱动的可选协议。"""
+    await get_model_generation().prepare_inputs(model, run_id)
+
+
 def channel_catalog() -> list[dict]:
-    """渠道清单：模型在目录里、且供应商自报可用，才允许选。
-
-    密钥一类的就绪判断由**供应商自己**回答（`InputPreparer.unavailable_reason`）：
-    替换链不该知道某家供应商要配哪个环境变量，否则每接一个渠道就要改一次这里。
-    """
-    from infra import get_model_router
-    from infra.ai.base import InputPreparer
-
-    router = get_model_router()
-    result = []
-    for channel, model in CHANNEL_MODELS.items():
-        enabled = router.resolve(model) is not None
-        reason = "" if enabled else "服务端未启用此渠道"
-        if enabled:
-            provider = router.provider_for(model, allow_fallback=False)
-            if isinstance(provider, InputPreparer):
-                blocked = provider.unavailable_reason()
-                if blocked:
-                    enabled, reason = False, blocked
-        result.append({"id": channel, "label": CHANNEL_LABELS[channel],
-                       "model": model, "enabled": enabled,
-                       "billing": "libtv" if channel == "libtv" else "aliyun",
-                       "unavailable_reason": reason})
-    return result
+    """渠道清单整体来自模型驱动层：模板库不认识模型 id，也不问供应商是否可用。"""
+    return [
+        {
+            "id": item.id,
+            "label": item.label,
+            "model": item.model,
+            "enabled": item.enabled,
+            "billing": item.billing,
+            "unavailable_reason": item.unavailable_reason,
+        }
+        for item in get_model_generation().replacement_channels()
+    ]
 
 
 def require_channel(channel: ReplacementChannel) -> None:

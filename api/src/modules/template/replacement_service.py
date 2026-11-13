@@ -61,7 +61,7 @@ from infra.media_probe import encode_text
 from modules.template import video_template_service
 from modules.template.asset_source import resolve_assets
 from modules.template.authorization import authorization_gap
-from modules.template.channels import CHANNEL_LABELS, channel_catalog, require_channel, run_channel
+from modules.template.channels import channel_catalog, channel_label, require_channel, run_channel
 from modules.template.library_media import StagedMedia, discard_staged, stage_library_refs
 from modules.template.models import ReplacementReview as ReviewRow
 from modules.template.models import ReplacementRun, TemplatePackVersion
@@ -1127,7 +1127,7 @@ class ReplacementService:
         return ReplacementRunOut(
             id=run.id,
             channel=run_channel(run.configuration),
-            channel_label=CHANNEL_LABELS[run_channel(run.configuration)],
+            channel_label=channel_label(run_channel(run.configuration)),
             kind=run.kind,  # type: ignore[arg-type]
             target=run.target,
             status=run.status,

@@ -32,6 +32,7 @@ __all__ = [
     "GenerationTicket",
     "ModelGeneration",
     "ModelSummary",
+    "ReplacementChannelInfo",
     "SubmitSpec",
     "get_model_generation",
     "has_model_generation",
@@ -102,6 +103,26 @@ class DriverSummary:
     error: str = ""
 
 
+@dataclass(frozen=True, slots=True)
+class ReplacementChannelInfo:
+    """替换链的一条可选渠道快照。
+
+    「渠道」是替换链自己的 UI 别名（libtv / bailian / …），真正决定走哪家
+    供应商的是 `model`。这张表由 `modules/model_driver` 组装：只有它认识
+    `ModelRouter` 与驱动的可选协议，替换链不该自己解析供应商实例。
+
+    `enabled` 与 `unavailable_reason` 是**提交前**的闸门，不是模型目录的
+    装饰：密钥没配 / 驱动没载入时让用户在选渠道那一步就看到原因。
+    """
+
+    id: str
+    label: str
+    model: str
+    enabled: bool
+    billing: str
+    unavailable_reason: str = ""
+
+
 @runtime_checkable
 class ModelGeneration(Protocol):
     """对下游暴露的标准生成接口。
@@ -115,6 +136,16 @@ class ModelGeneration(Protocol):
     async def cancel(self, task_id: str) -> GenerationTicket | None: ...
     def models(self, capability: str = "") -> tuple[ModelSummary, ...]: ...
     def drivers(self) -> tuple[DriverSummary, ...]: ...
+
+    # 替换链专用：模型 id 的别名表、可用性、提交形态与「提交前上传素材」都在
+    # 模型驱动层。`modules/template` 只认 channel 这个 UI 枚举，不许自己拿
+    # `ModelRouter` / `InputPreparer`——那会把供应商细节散进业务模块。
+    # 老模板库下线后这四个方法随之删除。
+    def replacement_channels(self) -> tuple[ReplacementChannelInfo, ...]: ...
+    def model_for_channel(self, channel: str) -> str: ...
+    def channel_label(self, channel: str) -> str: ...
+    def submit_mode(self, model: str) -> str | None: ...
+    async def prepare_inputs(self, model: str, run_id: str) -> None: ...
 
 
 _generation: Port[ModelGeneration] = Port("model-generation", multi=False)
