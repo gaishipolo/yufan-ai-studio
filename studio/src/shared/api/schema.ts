@@ -1546,6 +1546,142 @@ export interface TaskStats {
   failed?: number;
 }
 
+/** 候选素材池里的一项。 */
+export interface TemplatePackCandidateItem {
+  assetId: string;
+  name: string;
+  kind: string;
+  coverUrl?: string;
+  sizeBytes?: number;
+  width?: number;
+  height?: number;
+}
+
+/** 某个筛选槽位的合规素材池。 */
+export interface TemplatePackCandidateListOut {
+  token: string;
+  label?: string;
+  filterKind?: string;
+  filterTagIds?: string[];
+  filterTagNames?: string[];
+  items?: TemplatePackCandidateItem[];
+  total?: number;
+}
+
+/** 保存一条封装模板（草稿）。幂等：同 key 同配置返回原行。 */
+export interface TemplatePackDraftIn {
+  /** 模板名称 */
+  name: string;
+  /** 稳定标识：同键同配置返回原模板，同键异配置 409；留空自动生成 */
+  templateKey?: string;
+  /** 模板说明 */
+  description?: string;
+  /** 固定提示词原文，含 {{Mixed N}} 占位符 */
+  prompt: string;
+  /** 参考视频的资产库 id */
+  sourceVideoAssetId: string;
+  /** 参考视频 id 属于哪套库 */
+  sourceVideoIdSpace?: "v1" | "v2";
+  /** 参考视频时长（秒） */
+  sourceDurationSec?: number;
+  /** 输出画幅 */
+  aspectRatio?: string;
+  /** 槽位清单；第 1 项固定是参考视频 */
+  slots: TemplatePackSlotIn[];
+  /** 封面地址 */
+  coverUrl?: string;
+}
+
+/** TemplatePackListOut */
+export interface TemplatePackListOut {
+  items?: TemplatePackOut[];
+  total?: number;
+}
+
+/** 一条封装模板的完整出参。 */
+export interface TemplatePackOut {
+  id: string;
+  templateKey: string;
+  name: string;
+  description: string;
+  prompt: string;
+  /** 提示词 sha256，防止文字被悄悄改掉 */
+  promptSha256: string;
+  sourceVideoAssetId: string;
+  sourceVideoIdSpace?: string;
+  sourceDurationSec?: number;
+  aspectRatio?: string;
+  coverUrl?: string;
+  status?: "draft" | "published" | "disabled";
+  ownerId: string;
+  slots?: TemplatePackSlotOut[];
+  publishedAt?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+}
+
+/** 改固定提示词原文。槽位引用按新原文重算。 */
+export interface TemplatePackPromptIn {
+  /** 新的固定提示词原文 */
+  prompt: string;
+}
+
+/** 一个槽位的入参。两种形态的字段互斥，service 会校验。 */
+export interface TemplatePackSlotIn {
+  /** 占位符原文，如 {{Mixed 2}}；必须与 position 对应 */
+  token: string;
+  /** fixed=钉死素材，filtered=声明准入规则 */
+  slotKind: "fixed" | "filtered";
+  /** 槽位显示名 */
+  label?: string;
+  /** fixed：钉死的素材 id */
+  assetId?: string | null;
+  /** fixed：素材 id 属于哪套库；两套都是 32 位 hex，不能靠形状推断 */
+  assetIdSpace?: "v1" | "v2";
+  /** fixed：素材类别 */
+  mediaType?: "video" | "image" | "audio";
+  /** filtered：素材类别（不含 text） */
+  filterKind?: "video" | "image" | "audio" | null;
+  /** filtered：一级标签 id 列表；选中一级会展开成「自身+直属二级」 */
+  filterTagIds?: string[];
+  /** filtered：标签组合方式。只支持 any（任一命中即可）——资产库的筛选口径唯一（标签 OR 展开到二级），提供 all 会承诺一个兑现不了的更严筛选 */
+  filterTagMatch?: "any";
+  /** 该槽位是否必填 */
+  required?: boolean;
+}
+
+/** 一个槽位的出参。两种形态的字段都带出来，由 `slotKind` 区分。 */
+export interface TemplatePackSlotOut {
+  position: number;
+  token: string;
+  slotKind: "fixed" | "filtered";
+  label?: string;
+  assetId?: string | null;
+  assetIdSpace?: string;
+  mediaType?: string;
+  assetName?: string;
+  filterKind?: string;
+  filterTagIds?: string[];
+  filterTagNames?: string[];
+  filterTagMatch?: string;
+  required?: boolean;
+}
+
+/** 运行时提交的用户选材。
+
+`picks` 是 `{槽位标识: 素材 id}`，键用提示词里出现的原文
+（如 `{{Mixed 2}}`），值是资产库 id。 */
+export interface TemplatePackVerifyIn {
+  /** 槽位选材：{token: assetId}。只填需要用户选择的槽位 */
+  picks?: Record<string, string>;
+}
+
+/** 复核结果。通过复核的槽位与素材 id。 */
+export interface TemplatePackVerifyOut {
+  /** 通过复核的 {token: assetId} */
+  picks?: Record<string, string>;
+}
+
 /** 站内新建一份文本资产（不传文件，直接写正文）。
 
 `extension` 只认 md / txt：文件名后缀决定 `mime_type` 与内容寻址 key 的后缀，
@@ -2210,6 +2346,22 @@ export interface EndpointData {
   "POST /api/v1/tasks/{task_id}/favorite": core__response__ApiResponse_TaskOut___2;
   /** 重试任务 */
   "POST /api/v1/tasks/{task_id}/retry": TaskRetryOut;
+  /** 封装模板列表 */
+  "GET /api/v1/template-packs": TemplatePackListOut;
+  /** 保存封装模板草稿 */
+  "POST /api/v1/template-packs": TemplatePackOut;
+  /** 封装模板详情 */
+  "GET /api/v1/template-packs/{pack_id}": TemplatePackOut;
+  /** 取筛选槽位的合规素材池 */
+  "GET /api/v1/template-packs/{pack_id}/candidates": TemplatePackCandidateListOut;
+  /** 停用封装模板 */
+  "POST /api/v1/template-packs/{pack_id}/disable": TemplatePackOut;
+  /** 改固定提示词 */
+  "PATCH /api/v1/template-packs/{pack_id}/prompt": TemplatePackOut;
+  /** 发布封装模板 */
+  "POST /api/v1/template-packs/{pack_id}/publish": TemplatePackOut;
+  /** 复核运行时选材是否满足筛选条件 */
+  "POST /api/v1/template-packs/{pack_id}/verify": TemplatePackVerifyOut;
   /** 人物/产品/场景替换模板与调用档案 */
   "GET /api/v1/templates/replacement-catalog": ReplacementCatalog;
   /** 本人封装草稿和历史包 */

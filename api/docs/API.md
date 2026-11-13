@@ -2,7 +2,7 @@
 
 > 此文件由 `app export-openapi` 自动生成，请勿手工编辑。
 >
-> 版本 `0.2.0`｜共 **148** 个接口 / **12** 个模块
+> 版本 `0.2.0`｜共 **156** 个接口 / **13** 个模块
 >
 > 重新生成：`cd api && .venv/Scripts/python -m cli export-openapi`
 
@@ -99,6 +99,11 @@ Authorization: Bearer <accessToken>
 | `template:read` | 查看行业模板 |  |
 | `template:review` | 评价自己的替换成片 |  |
 | `template:use` | 使用替换模板并提交零积分生成 |  |
+| `template_pack:create` | 创建封装模板 |  |
+| `template_pack:publish` | 发布或停用封装模板 |  |
+| `template_pack:read` | 查看封装模板 |  |
+| `template_pack:update` | 编辑未发布的封装模板 |  |
+| `template_pack:use` | 使用封装模板选素材 |  |
 
 **系统**
 
@@ -207,6 +212,8 @@ Authorization: Bearer <accessToken>
 | `40925` | 409 | identity | `CannotTargetSelf` | 不能停用或删除自己的账号 |
 | `40926` | 409 | identity | `LastSuperuser` | 系统必须保留至少一个启用的超级管理员 |
 | `40927` | 409 | identity | `GroupNameTaken` | 小组名称已被占用 |
+| `40931` | 409 | template_pack | `TemplatePackConflict` | 该稳定标识已被另一份配置使用，请换一个 |
+| `40932` | 409 | template_pack | `TemplatePackStateError` | 该封装模板已发布，不能再修改内容 |
 | `40951` | 409 | asset | `AssetInUse` | 素材仍被引用，不能删除 |
 | `40971` | 409 | template | `TemplateBusy` | 模板正在处理中，请稍后再试 |
 | `40981` | 409 | library | `SharedAssetNotDeletable` | 该资产仍处于共享状态，请先撤销共享后再删除 |
@@ -249,6 +256,7 @@ Authorization: Bearer <accessToken>
 | 导出 | 6 | 见下方 `4.10` |
 | 资产库 | 45 | 见下方 `4.11` |
 | 模型驱动 | 6 | 见下方 `4.12` |
+| 封装模板 | 8 | 见下方 `4.13` |
 
 ### 4.1 身份（39 个）
 
@@ -4190,6 +4198,270 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `message` | `string` | 否 |  |
 | `data` | `modules__model_driver__schema__TaskOut \| null` | 否 |  |
 
+### 4.13 封装模板（8 个）
+
+| 方法 | 路径 | 说明 | 鉴权 |
+|---|---|---|---|
+| `GET` | `/api/v1/template-packs` | 封装模板列表 | 🔒 |
+| `POST` | `/api/v1/template-packs` | 保存封装模板草稿 | 🔒 |
+| `GET` | `/api/v1/template-packs/{pack_id}` | 封装模板详情 | 🔒 |
+| `GET` | `/api/v1/template-packs/{pack_id}/candidates` | 取筛选槽位的合规素材池 | 🔒 |
+| `POST` | `/api/v1/template-packs/{pack_id}/disable` | 停用封装模板 | 🔒 |
+| `PATCH` | `/api/v1/template-packs/{pack_id}/prompt` | 改固定提示词 | 🔒 |
+| `POST` | `/api/v1/template-packs/{pack_id}/publish` | 发布封装模板 | 🔒 |
+| `POST` | `/api/v1/template-packs/{pack_id}/verify` | 复核运行时选材是否满足筛选条件 | 🔒 |
+
+#### `GET /api/v1/template-packs`
+
+**封装模板列表**
+
+列表。
+
+**不传 `ownerId` 时只返回已发布的**：别人的草稿是私有工作区。
+传 `ownerId` 看自己的全部（含草稿）。
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `ownerId` | query | `string` | 否 | 只看某人的模板 |
+| `status` | query | `string` | 否 | 按状态筛选 |
+
+**响应** `ApiResponse<TemplatePackListOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `items` | `TemplatePackOut[]` | 否 |  |
+| `total` | `number` | 否 |  |
+
+#### `POST /api/v1/template-packs`
+
+**保存封装模板草稿**
+
+保存草稿。幂等：同 `templateKey` 同配置返回原模板，异配置 409。
+
+**请求体** `TemplatePackDraftIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `name` | `string` | 是 | 模板名称 |
+| `templateKey` | `string` | 否 | 稳定标识：同键同配置返回原模板，同键异配置 409；留空自动生成 |
+| `description` | `string` | 否 | 模板说明 |
+| `prompt` | `string` | 是 | 固定提示词原文，含 {{Mixed N}} 占位符 |
+| `sourceVideoAssetId` | `string` | 是 | 参考视频的资产库 id |
+| `sourceVideoIdSpace` | `"v1" \| "v2"` | 否 | 参考视频 id 属于哪套库 |
+| `sourceDurationSec` | `number` | 否 | 参考视频时长（秒） |
+| `aspectRatio` | `string` | 否 | 输出画幅 |
+| `slots` | `TemplatePackSlotIn[]` | 是 | 槽位清单；第 1 项固定是参考视频 |
+| `coverUrl` | `string` | 否 | 封面地址 |
+
+**响应** `ApiResponse<TemplatePackOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `templateKey` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `description` | `string` | 是 |  |
+| `prompt` | `string` | 是 |  |
+| `promptSha256` | `string` | 是 | 提示词 sha256，防止文字被悄悄改掉 |
+| `sourceVideoAssetId` | `string` | 是 |  |
+| `sourceVideoIdSpace` | `string` | 否 |  |
+| `sourceDurationSec` | `number` | 否 |  |
+| `aspectRatio` | `string` | 否 |  |
+| `coverUrl` | `string` | 否 |  |
+| `status` | `"draft" \| "published" \| "disabled"` | 否 |  |
+| `ownerId` | `string` | 是 |  |
+| `slots` | `TemplatePackSlotOut[]` | 否 |  |
+| `publishedAt` | `string \| null` | 否 |  |
+| `createdAt` | `string \| null` | 否 |  |
+| `updatedAt` | `string \| null` | 否 |  |
+
+#### `GET /api/v1/template-packs/{pack_id}`
+
+**封装模板详情**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `pack_id` | path | `string` | 是 |  |
+
+**响应** `ApiResponse<TemplatePackOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `templateKey` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `description` | `string` | 是 |  |
+| `prompt` | `string` | 是 |  |
+| `promptSha256` | `string` | 是 | 提示词 sha256，防止文字被悄悄改掉 |
+| `sourceVideoAssetId` | `string` | 是 |  |
+| `sourceVideoIdSpace` | `string` | 否 |  |
+| `sourceDurationSec` | `number` | 否 |  |
+| `aspectRatio` | `string` | 否 |  |
+| `coverUrl` | `string` | 否 |  |
+| `status` | `"draft" \| "published" \| "disabled"` | 否 |  |
+| `ownerId` | `string` | 是 |  |
+| `slots` | `TemplatePackSlotOut[]` | 否 |  |
+| `publishedAt` | `string \| null` | 否 |  |
+| `createdAt` | `string \| null` | 否 |  |
+| `updatedAt` | `string \| null` | 否 |  |
+
+#### `GET /api/v1/template-packs/{pack_id}/candidates`
+
+**取筛选槽位的合规素材池**
+
+运行时选素材用。
+
+**候选池由服务端算**：筛选条件（标签 + 类别）与可见性都有各自的判据，
+前端自己筛一遍必然漂移。
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `pack_id` | path | `string` | 是 |  |
+| `token` | query | `string` | 是 | 槽位标识，如 {{Mixed 2}} |
+| `limit` | query | `number` | 否 |  |
+
+**响应** `ApiResponse<TemplatePackCandidateListOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `token` | `string` | 是 |  |
+| `label` | `string` | 否 |  |
+| `filterKind` | `string` | 否 |  |
+| `filterTagIds` | `string[]` | 否 |  |
+| `filterTagNames` | `string[]` | 否 |  |
+| `items` | `TemplatePackCandidateItem[]` | 否 |  |
+| `total` | `number` | 否 |  |
+
+#### `POST /api/v1/template-packs/{pack_id}/disable`
+
+**停用封装模板**
+
+停用：保留历史，但不再对外。
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `pack_id` | path | `string` | 是 |  |
+
+**响应** `ApiResponse<TemplatePackOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `templateKey` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `description` | `string` | 是 |  |
+| `prompt` | `string` | 是 |  |
+| `promptSha256` | `string` | 是 | 提示词 sha256，防止文字被悄悄改掉 |
+| `sourceVideoAssetId` | `string` | 是 |  |
+| `sourceVideoIdSpace` | `string` | 否 |  |
+| `sourceDurationSec` | `number` | 否 |  |
+| `aspectRatio` | `string` | 否 |  |
+| `coverUrl` | `string` | 否 |  |
+| `status` | `"draft" \| "published" \| "disabled"` | 否 |  |
+| `ownerId` | `string` | 是 |  |
+| `slots` | `TemplatePackSlotOut[]` | 否 |  |
+| `publishedAt` | `string \| null` | 否 |  |
+| `createdAt` | `string \| null` | 否 |  |
+| `updatedAt` | `string \| null` | 否 |  |
+
+#### `PATCH /api/v1/template-packs/{pack_id}/prompt`
+
+**改固定提示词**
+
+只改提示词原文。仅限未发布的模板。
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `pack_id` | path | `string` | 是 |  |
+
+**请求体** `TemplatePackPromptIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `prompt` | `string` | 是 | 新的固定提示词原文 |
+
+**响应** `ApiResponse<TemplatePackOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `templateKey` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `description` | `string` | 是 |  |
+| `prompt` | `string` | 是 |  |
+| `promptSha256` | `string` | 是 | 提示词 sha256，防止文字被悄悄改掉 |
+| `sourceVideoAssetId` | `string` | 是 |  |
+| `sourceVideoIdSpace` | `string` | 否 |  |
+| `sourceDurationSec` | `number` | 否 |  |
+| `aspectRatio` | `string` | 否 |  |
+| `coverUrl` | `string` | 否 |  |
+| `status` | `"draft" \| "published" \| "disabled"` | 否 |  |
+| `ownerId` | `string` | 是 |  |
+| `slots` | `TemplatePackSlotOut[]` | 否 |  |
+| `publishedAt` | `string \| null` | 否 |  |
+| `createdAt` | `string \| null` | 否 |  |
+| `updatedAt` | `string \| null` | 否 |  |
+
+#### `POST /api/v1/template-packs/{pack_id}/publish`
+
+**发布封装模板**
+
+发布：进入模板库，别人可以取用。
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `pack_id` | path | `string` | 是 |  |
+
+**响应** `ApiResponse<TemplatePackOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `templateKey` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `description` | `string` | 是 |  |
+| `prompt` | `string` | 是 |  |
+| `promptSha256` | `string` | 是 | 提示词 sha256，防止文字被悄悄改掉 |
+| `sourceVideoAssetId` | `string` | 是 |  |
+| `sourceVideoIdSpace` | `string` | 否 |  |
+| `sourceDurationSec` | `number` | 否 |  |
+| `aspectRatio` | `string` | 否 |  |
+| `coverUrl` | `string` | 否 |  |
+| `status` | `"draft" \| "published" \| "disabled"` | 否 |  |
+| `ownerId` | `string` | 是 |  |
+| `slots` | `TemplatePackSlotOut[]` | 否 |  |
+| `publishedAt` | `string \| null` | 否 |  |
+| `createdAt` | `string \| null` | 否 |  |
+| `updatedAt` | `string \| null` | 否 |  |
+
+#### `POST /api/v1/template-packs/{pack_id}/verify`
+
+**复核运行时选材是否满足筛选条件**
+
+提交生成任务前的最后一道闸。
+
+**前端过滤只是 UI 便利，接口可以被直接调用。** 筛选条件是模板的业务
+契约 —— 用户在模板库看到的「只能选产品标签的图」如果只在界面上生效，
+拿个接口一调就能绕过。所以服务端必须再判一次。
+
+不满足直接 400，不给「差一点点」的余地：筛选要么满足，要么不满足。
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `pack_id` | path | `string` | 是 |  |
+
+**请求体** `TemplatePackVerifyIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `picks` | `Record<string, string>` | 否 | 槽位选材：{token: assetId}。只填需要用户选择的槽位 |
+
+**响应** `ApiResponse<TemplatePackVerifyOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `picks` | `Record<string, string>` | 否 | 通过复核的 {token: assetId} |
+
 ---
 
 ## 5. 数据模型
@@ -5711,6 +5983,146 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 ### `TaskStatusFilter`（枚举）
 
 取值：`all`、`queued`、`running`、`completed`、`failed`
+
+### `TemplatePackCandidateItem`
+
+候选素材池里的一项。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `assetId` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `kind` | `string` | 是 |  |
+| `coverUrl` | `string` | 否 |  |
+| `sizeBytes` | `number` | 否 |  |
+| `width` | `number` | 否 |  |
+| `height` | `number` | 否 |  |
+
+### `TemplatePackCandidateListOut`
+
+某个筛选槽位的合规素材池。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `token` | `string` | 是 |  |
+| `label` | `string` | 否 |  |
+| `filterKind` | `string` | 否 |  |
+| `filterTagIds` | `string[]` | 否 |  |
+| `filterTagNames` | `string[]` | 否 |  |
+| `items` | `TemplatePackCandidateItem[]` | 否 |  |
+| `total` | `number` | 否 |  |
+
+### `TemplatePackDraftIn`
+
+保存一条封装模板（草稿）。幂等：同 key 同配置返回原行。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `name` | `string` | 是 | 模板名称 |
+| `templateKey` | `string` | 否 | 稳定标识：同键同配置返回原模板，同键异配置 409；留空自动生成 |
+| `description` | `string` | 否 | 模板说明 |
+| `prompt` | `string` | 是 | 固定提示词原文，含 {{Mixed N}} 占位符 |
+| `sourceVideoAssetId` | `string` | 是 | 参考视频的资产库 id |
+| `sourceVideoIdSpace` | `"v1" \| "v2"` | 否 | 参考视频 id 属于哪套库 |
+| `sourceDurationSec` | `number` | 否 | 参考视频时长（秒） |
+| `aspectRatio` | `string` | 否 | 输出画幅 |
+| `slots` | `TemplatePackSlotIn[]` | 是 | 槽位清单；第 1 项固定是参考视频 |
+| `coverUrl` | `string` | 否 | 封面地址 |
+
+### `TemplatePackListOut`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `items` | `TemplatePackOut[]` | 否 |  |
+| `total` | `number` | 否 |  |
+
+### `TemplatePackOut`
+
+一条封装模板的完整出参。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `templateKey` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `description` | `string` | 是 |  |
+| `prompt` | `string` | 是 |  |
+| `promptSha256` | `string` | 是 | 提示词 sha256，防止文字被悄悄改掉 |
+| `sourceVideoAssetId` | `string` | 是 |  |
+| `sourceVideoIdSpace` | `string` | 否 |  |
+| `sourceDurationSec` | `number` | 否 |  |
+| `aspectRatio` | `string` | 否 |  |
+| `coverUrl` | `string` | 否 |  |
+| `status` | `"draft" \| "published" \| "disabled"` | 否 |  |
+| `ownerId` | `string` | 是 |  |
+| `slots` | `TemplatePackSlotOut[]` | 否 |  |
+| `publishedAt` | `string \| null` | 否 |  |
+| `createdAt` | `string \| null` | 否 |  |
+| `updatedAt` | `string \| null` | 否 |  |
+
+### `TemplatePackPromptIn`
+
+改固定提示词原文。槽位引用按新原文重算。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `prompt` | `string` | 是 | 新的固定提示词原文 |
+
+### `TemplatePackSlotIn`
+
+一个槽位的入参。两种形态的字段互斥，service 会校验。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `token` | `string` | 是 | 占位符原文，如 {{Mixed 2}}；必须与 position 对应 |
+| `slotKind` | `"fixed" \| "filtered"` | 是 | fixed=钉死素材，filtered=声明准入规则 |
+| `label` | `string` | 否 | 槽位显示名 |
+| `assetId` | `string \| null` | 否 | fixed：钉死的素材 id |
+| `assetIdSpace` | `"v1" \| "v2"` | 否 | fixed：素材 id 属于哪套库；两套都是 32 位 hex，不能靠形状推断 |
+| `mediaType` | `"video" \| "image" \| "audio"` | 否 | fixed：素材类别 |
+| `filterKind` | `"video" \| "image" \| "audio" \| null` | 否 | filtered：素材类别（不含 text） |
+| `filterTagIds` | `string[]` | 否 | filtered：一级标签 id 列表；选中一级会展开成「自身+直属二级」 |
+| `filterTagMatch` | `"any"` | 否 | filtered：标签组合方式。只支持 any（任一命中即可）——资产库的筛选口径唯一（标签 OR 展开到二级），提供 all 会承诺一个兑现不了的更严筛选 |
+| `required` | `boolean` | 否 | 该槽位是否必填 |
+
+### `TemplatePackSlotOut`
+
+一个槽位的出参。两种形态的字段都带出来，由 `slotKind` 区分。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `position` | `number` | 是 |  |
+| `token` | `string` | 是 |  |
+| `slotKind` | `"fixed" \| "filtered"` | 是 |  |
+| `label` | `string` | 否 |  |
+| `assetId` | `string \| null` | 否 |  |
+| `assetIdSpace` | `string` | 否 |  |
+| `mediaType` | `string` | 否 |  |
+| `assetName` | `string` | 否 |  |
+| `filterKind` | `string` | 否 |  |
+| `filterTagIds` | `string[]` | 否 |  |
+| `filterTagNames` | `string[]` | 否 |  |
+| `filterTagMatch` | `string` | 否 |  |
+| `required` | `boolean` | 否 |  |
+
+### `TemplatePackVerifyIn`
+
+运行时提交的用户选材。
+
+`picks` 是 `{槽位标识: 素材 id}`，键用提示词里出现的原文
+（如 `{{Mixed 2}}`），值是资产库 id。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `picks` | `Record<string, string>` | 否 | 槽位选材：{token: assetId}。只填需要用户选择的槽位 |
+
+### `TemplatePackVerifyOut`
+
+复核结果。通过复核的槽位与素材 id。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `picks` | `Record<string, string>` | 否 | 通过复核的 {token: assetId} |
 
 ### `TextAssetIn`
 

@@ -42,6 +42,11 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
       { code: 'template:read', name: '查看行业模板', description: '' },
       { code: 'template:review', name: '评价自己的替换成片', description: '' },
       { code: 'template:use', name: '使用替换模板并提交零积分生成', description: '' },
+      { code: 'template_pack:create', name: '创建封装模板', description: '' },
+      { code: 'template_pack:publish', name: '发布或停用封装模板', description: '' },
+      { code: 'template_pack:read', name: '查看封装模板', description: '' },
+      { code: 'template_pack:update', name: '编辑未发布的封装模板', description: '' },
+      { code: 'template_pack:use', name: '使用封装模板选素材', description: '' },
     ],
   },
   {
@@ -159,6 +164,11 @@ export const PERMISSION_CODES = [
   'template:read',
   'template:review',
   'template:use',
+  'template_pack:create',
+  'template_pack:publish',
+  'template_pack:read',
+  'template_pack:update',
+  'template_pack:use',
 ] as const;
 
 export type PermissionCode = (typeof PERMISSION_CODES)[number];
