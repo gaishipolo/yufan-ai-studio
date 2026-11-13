@@ -10781,6 +10781,13 @@
             "type": "array",
             "title": "Referenceassetids"
           },
+          "referenceLibraryIds": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Referencelibraryids"
+          },
           "packId": {
             "type": "string",
             "maxLength": 32,
@@ -12026,6 +12033,13 @@
             },
             "type": "array",
             "title": "Referenceassetids"
+          },
+          "referenceLibraryIds": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Referencelibraryids"
           },
           "packId": {
             "type": "string",

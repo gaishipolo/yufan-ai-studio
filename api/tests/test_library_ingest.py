@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
 from library_support import (
     LIB_RW,
@@ -23,6 +24,9 @@ from library_support import (
     put_blob,
     upload_image,
 )
+
+from core.exceptions import BadRequest
+from modules.library.ingest import _snapshot_values
 
 
 def _ingest(client: TestClient, api: str, headers: dict[str, str], body: dict):
@@ -65,7 +69,7 @@ def test_from_generation_lands_in_draft_with_snapshot(
                 "size": "1024x1024",
                 "count": 4,
                 "seed": "12345",
-                "referenceAssetIds": [uploaded["id"]],
+                "referenceLibraryIds": [uploaded["id"]],
                 "configuration": {"steps": 28},
                 "credits": 3.5,
             },
@@ -89,6 +93,10 @@ def test_from_generation_lands_in_draft_with_snapshot(
     assert generation["configuration"] == {"steps": 28}
     assert generation["sourceModule"] == "image"
     assert generation["sourceTaskId"] == "job-42"
+    # 契约名 `referenceAssetIds` 传进来的是 v2 资产 id：必须落到 v2 那列，
+    # 不能混进 v1 列（那列只服务 `import-archive` 的历史行）。
+    assert generation["referenceLibraryIds"] == [uploaded["id"]]
+    assert generation["referenceAssetIds"] == []
 
     # 草稿只出现在草稿箱，不进个人库也不进选择器
     personal = client.get(
@@ -216,3 +224,30 @@ def test_from_generation_rejects_bad_kind_and_missing_source(
     )
     assert missing.status_code == 400
     assert missing.json()["code"] == 40085
+
+
+def test_snapshot_rejects_two_spellings_of_the_same_reference_column() -> None:
+    """同一列的两种写法给了不同值 → 400，而不是「最后一个说了算」。
+
+    `reference_library_ids`（列名）与 `referenceLibraryIds`（契约名）都映射到
+    同一列：内部调用方（流水线）混着用是可能的，而静默取最后一个会让「档案里
+    记的是哪几张图」取决于键在字典里的顺序——这种错平时看不见。
+    """
+    with pytest.raises(BadRequest, match="两个不同的取值"):
+        _snapshot_values(
+            {
+                "reference_library_ids": ["a1"],
+                "referenceLibraryIds": ["b2"],
+            }
+        )
+
+
+def test_snapshot_accepts_one_spelling_and_keeps_v1_separate() -> None:
+    """两种写法各自落到各自的列：v2 那列不会被 v1 的键串进来。
+
+    键名照真实来源写：HTTP 进来的 `GenerationSnapshotIn` 是模型对象，读的是属性名
+    （snake）；流水线（生图 / 任务）传的是原始字典，生图用契约名 `referenceLibraryIds`。
+    """
+    values = _snapshot_values({"reference_asset_ids": ["old"], "referenceLibraryIds": ["new"]})
+    assert values["reference_asset_ids"] == ["old"]
+    assert values["reference_library_ids"] == ["new"]

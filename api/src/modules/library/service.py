@@ -180,6 +180,8 @@ def snapshot_out(row: LibraryAssetGeneration) -> LibraryGenerationOut:
         style_preset=row.style_preset,
         seed=row.seed,
         reference_asset_ids=list(row.reference_asset_ids or []),
+        # 迁移前的老行没有这一列，`or []` 兜住 NULL（JSON 列在 SQLite 上可能是 None）
+        reference_library_ids=list(row.reference_library_ids or []),
         pack_id=row.pack_id,
         pack_version=row.pack_version,
         prompt_spec=dict(row.prompt_spec or {}),

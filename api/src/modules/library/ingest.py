@@ -53,6 +53,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.context import CurrentUser, get_current_user
+from core.exceptions import BadRequest
 from core.logging import get_logger
 from core.ports.library_ingest import IngestRequest, IngestResult
 from core.ports.library_lookup import LibraryAssetKind
@@ -86,6 +87,11 @@ _SNAPSHOT_FIELDS: tuple[tuple[str, str], ...] = (
     ("style_preset", "style_preset"),
     ("seed", "seed"),
     ("reference_asset_ids", "reference_asset_ids"),
+    # v2 参考图。两个键写同一列不是笔误：生图流水线用的是契约名
+    # `referenceLibraryIds`（它直接照抄出参），任务流水线用的是列名。以前前者
+    # 被当成「不认识的键」静默丢掉，后者被写进上面那列 v1 字段——两边都错。
+    ("reference_library_ids", "reference_library_ids"),
+    ("referenceLibraryIds", "reference_library_ids"),
     ("pack_id", "pack_id"),
     ("pack_version", "pack_version"),
     ("prompt_spec", "prompt_spec"),
@@ -296,6 +302,10 @@ def _snapshot_values(snapshot: Any) -> dict[str, Any]:
 
     `None` 一律视为「没给」，只有 `generated_at` 例外（它本来就可空）：
     其余列都是 NOT NULL，把 None 写进去只会在 commit 时炸成 500。
+
+    同一列有两个入参写法时（`reference_library_ids` / `referenceLibraryIds`），
+    两个都给且值不同直接 400：静默取最后一个会让「档案里记的是哪几张图」取决于
+    键在字典里的顺序，而这种错查不出来。
     """
     if snapshot is None:
         return {}
@@ -307,6 +317,8 @@ def _snapshot_values(snapshot: Any) -> dict[str, Any]:
             value = getattr(snapshot, source, None)
         if value is None and column not in _NULLABLE_SNAPSHOT:
             continue
+        if column in values and values[column] != value:
+            raise BadRequest(f"快照里 {column} 出现了两个不同的取值，请只传一种写法")
         values[column] = value
     return values
 

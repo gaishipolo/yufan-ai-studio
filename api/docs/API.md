@@ -4566,6 +4566,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `stylePreset` | `string` | 否 |  |
 | `seed` | `string` | 否 |  |
 | `referenceAssetIds` | `string[]` | 否 |  |
+| `referenceLibraryIds` | `string[]` | 否 |  |
 | `packId` | `string` | 否 |  |
 | `packVersion` | `number` | 否 |  |
 | `promptSpec` | `Record<string, unknown>` | 否 |  |
@@ -4864,6 +4865,7 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `stylePreset` | `string` | 否 |  |
 | `seed` | `string` | 否 |  |
 | `referenceAssetIds` | `string[]` | 否 |  |
+| `referenceLibraryIds` | `string[]` | 否 |  |
 | `packId` | `string` | 否 |  |
 | `packVersion` | `number` | 否 |  |
 | `promptSpec` | `Record<string, unknown>` | 否 |  |

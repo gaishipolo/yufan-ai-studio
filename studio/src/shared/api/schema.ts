@@ -430,6 +430,7 @@ export interface GenerationSnapshotIn {
   stylePreset?: string;
   seed?: string;
   referenceAssetIds?: string[];
+  referenceLibraryIds?: string[];
   packId?: string;
   packVersion?: number;
   promptSpec?: Record<string, unknown>;
@@ -717,6 +718,7 @@ export interface LibraryGenerationOut {
   stylePreset?: string;
   seed?: string;
   referenceAssetIds?: string[];
+  referenceLibraryIds?: string[];
   packId?: string;
   packVersion?: number;
   promptSpec?: Record<string, unknown>;
