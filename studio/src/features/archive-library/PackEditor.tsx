@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { ArrowDown, ArrowUp, Check, Circle, Trash2 } from 'lucide-react';
 import { useArchiveAssets } from '@/entities/asset/api/archive.queries';
+import { libraryApi } from '@/entities/library/api/library.api';
 import { useLibrarySelection } from '@/entities/library/api/library.queries';
 import { usePackMutations } from '@/entities/template/api/pack.queries';
 import { PACK_SCOPES, baseRole, rolesFor } from '@/entities/template/model/packRoles';
@@ -121,6 +122,18 @@ export function PackEditor({pack, onClose}: {pack: PackManaged | null; onClose: 
     pageSize: PAGE_SIZE,
     enabled: form.space === 'v2',
   });
+  /* 「从资产库封装导入」：同一产品的三视图/细节图在库里已经是一个封装，
+     逐张勾选既慢又容易漏，直接把成员按用途带进来。只在 v2 空间可用——
+     v1 没有封装这个概念。 */
+  const libraryPacks = useLibrarySelection({
+    kind: 'pack',
+    page: 1,
+    pageSize: 50,
+    includePacks: true,
+    enabled: form.space === 'v2',
+  });
+  const [importing, setImporting] = useState(false);
+  const [importNote, setImportNote] = useState('');
   const {save, action} = usePackMutations();
   const busy = save.isPending || action.isPending;
   const labels = rolesFor(form.kind);
@@ -197,6 +210,63 @@ export function PackEditor({pack, onClose}: {pack: PackManaged | null; onClose: 
     }));
   }
 
+  /**
+   * 把一个资产库封装整包带进来。
+   *
+   * 用途**照成员自己的 `role` 走**，认不出来就退回基准用途并在界面上点出来——
+   * 不按成员位置猜「第一张是主图」：`{{Mixed N}}` 与用途绑死，猜错会生成
+   * 「拿细节图当主图」的成片且不报错。成员超过 10 张只取前 10 张并说明。
+   */
+  async function importLibraryPack(packId: string) {
+    if (!packId || busy || importing) return;
+    setError('');
+    setImportNote('');
+    setImporting(true);
+    try {
+      const detail = await libraryApi.packDetail(packId);
+      const images = (detail.packItems ?? []).filter(
+        item => item.kind === 'image' && item.state === 'active',
+      );
+      if (!images.length) {
+        setError('这个封装里没有可用的图片，请先到资产库补齐成员');
+        return;
+      }
+      const kept = images.slice(0, 10);
+      const labels = rolesFor(form.kind);
+      const unmapped: string[] = [];
+      const bindings = kept.map((item, index) => {
+        const mapped = item.role && item.role in labels ? item.role : '';
+        if (!mapped) unmapped.push(item.name || `第 ${index + 1} 张`);
+        return {role: mapped || baseRole(form.kind), description: item.description ?? ''};
+      });
+      setPicked(value => {
+        const next = {...value};
+        kept.forEach((item, index) => {
+          next[item.assetId] = {
+            name: item.name || `参考图 ${index + 1}`,
+            // 缩略图端点要鉴权，走 `ArchivedThumbnail` 同一条取图路径
+            previewUrl: `/library/assets/${item.assetId}/thumbnail`,
+          };
+        });
+        return next;
+      });
+      setForm(value => ({
+        ...value,
+        referenceIds: kept.map(item => item.assetId),
+        coverReferenceId: kept[0].assetId,
+        bindings,
+      }));
+      const notes: string[] = [];
+      if (unmapped.length) notes.push(`这些图的用途需要你确认：${unmapped.join('、')}`);
+      if (images.length > kept.length) notes.push(`成员 ${images.length} 张，只带入前 10 张`);
+      setImportNote(notes.join('；'));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '封装读取失败，请刷新后重试');
+    } finally {
+      setImporting(false);
+    }
+  }
+
   async function submit(publish: boolean) {
     setError('');
     /* 字段名由空间决定：`referenceLibraryIds` / `coverLibraryId` 进资产库 v2，
@@ -244,6 +314,14 @@ export function PackEditor({pack, onClose}: {pack: PackManaged | null; onClose: 
       <div className="grid gap-4 lg:grid-cols-[1.05fr_1fr]">
         <section aria-label="从素材库选择参考图" className="space-y-2">
           <h3 className="text-sm font-semibold text-ink">1. 选择同类参考图<span className="ml-2 text-xs font-normal text-ink-mute">已选 {form.referenceIds.length}/10</span></h3>
+          {form.space === 'v2' && <label className="block text-xs">从资产库封装导入
+            <select className="mt-1 w-full rounded-lg border border-line bg-panel p-2" value="" disabled={busy || importing}
+              onChange={event => {void importLibraryPack(event.target.value);}}>
+              <option value="">{importing ? '正在读取封装…' : '已在资产库里封好的三视图／细节图'}</option>
+              {(libraryPacks.data?.items ?? []).map(pack => <option key={pack.id} value={pack.id}>{pack.name}</option>)}
+            </select>
+            {importNote && <span className="mt-1 block text-[11px] text-ink-mute">{importNote}</span>}
+          </label>}
           {listError && <ErrorState error={listError} title="参考素材读取失败" onRetry={refetch} />}
           {listPending && <p role="status" className="text-xs">正在读取参考图…</p>}
           {!listError && !listPending && !candidates.length && <p className="rounded-lg bg-panel-soft p-3 text-xs text-ink-soft">还没有可用的同类素材，请先到「我的素材」上传后回来。</p>}

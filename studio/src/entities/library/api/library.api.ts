@@ -72,6 +72,9 @@ export const libraryApi = {
 
   detail: (id: string) => api.get<LibraryAssetDetailOut>(`/library/assets/${id}`),
 
+  /** 封装详情（含有序成员）。封装的读入口单独一条路由，与资产详情不是同一个端点。 */
+  packDetail: (id: string) => api.get<LibraryAssetDetailOut>(`/library/packs/${id}`),
+
   /** 原文件字节。预览与下载共用同一个端点：v2 不做转码派流。 */
   file: (id: string) =>
     api.get<Blob>(`/library/assets/${id}/file`, undefined, {

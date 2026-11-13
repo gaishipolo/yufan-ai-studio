@@ -4,7 +4,7 @@ import type { PackManaged } from '@/shared/api/schema';
 import { PackEditor } from './PackEditor';
 
 const mock = vi.hoisted(() => ({
-  save: vi.fn(), action: vi.fn(),
+  save: vi.fn(), action: vi.fn(), packDetail: vi.fn(),
   /* 旧素材库候选（编辑既有 v1 封装时才读） */
   items: [
     {id: 'p1', name: '产品正面', previewUrl: '/thumb/p1'},
@@ -17,6 +17,8 @@ const mock = vi.hoisted(() => ({
     {id: 'l2', name: '库-产品三视图', previewUrl: null},
     {id: 'l3', name: '库-产品细节', previewUrl: '/api/v1/library/assets/l3/thumbnail'},
   ],
+  /* 资产库封装（「从封装导入」的候选） */
+  packs: [{id: 'pack-1', name: '3030 三件套'}],
 }));
 
 vi.mock('@/entities/asset/api/archive.queries', () => ({
@@ -24,7 +26,12 @@ vi.mock('@/entities/asset/api/archive.queries', () => ({
   useArchivedMedia: () => ({data: undefined, error: null}),
 }));
 vi.mock('@/entities/library/api/library.queries', () => ({
-  useLibrarySelection: () => ({data: {items: mock.libraryItems, total: 3}, isPending: false, error: null, refetch: vi.fn()}),
+  useLibrarySelection: (params: {kind?: string} = {}) => params.kind === 'pack'
+    ? {data: {items: mock.packs, total: 1}, isPending: false, error: null, refetch: vi.fn()}
+    : {data: {items: mock.libraryItems, total: 3}, isPending: false, error: null, refetch: vi.fn()},
+}));
+vi.mock('@/entities/library/api/library.api', () => ({
+  libraryApi: {packDetail: mock.packDetail},
 }));
 vi.mock('@/entities/template/api/pack.queries', () => ({
   usePackMutations: () => ({
@@ -42,6 +49,7 @@ const pack: PackManaged = {
 beforeEach(() => {
   mock.save.mockReset().mockResolvedValue({id: 'a'.repeat(32), revision: 4});
   mock.action.mockReset().mockResolvedValue({});
+  mock.packDetail.mockReset();
 });
 
 describe('封装编辑器', () => {
@@ -100,6 +108,23 @@ describe('封装编辑器', () => {
     expect(payload.coverReferenceId).toBe('p1');
     expect(payload.referenceLibraryIds).toBeUndefined();
     expect(mock.action).not.toHaveBeenCalled();
+  });
+
+  it('从资产库封装导入成员：用途照成员角色走，认不出的退回基准并提示', async () => {
+    mock.packDetail.mockResolvedValue({
+      packItems: [
+        {assetId: 'l2', name: '库-三视图', kind: 'image', state: 'active', position: 1, role: 'multiview', description: '左视 45°'},
+        {assetId: 'l3', name: '库-细节', kind: 'image', state: 'active', position: 2, role: '', description: ''},
+      ],
+    });
+    render(<PackEditor pack={null} onClose={vi.fn()} />);
+    fireEvent.change(screen.getByLabelText('从资产库封装导入'), {target: {value: 'pack-1'}});
+    await vi.waitFor(() => expect(screen.getByLabelText('第 1 张的用途')).toHaveValue('multiview'));
+    /* 第 2 张的 role 是空串：不按位置猜成「主图」，而是退回基准用途并让人确认 */
+    expect(screen.getByLabelText('第 2 张的用途')).toHaveValue('front');
+    expect(screen.getByText(/用途需要你确认/)).toBeVisible();
+    expect(screen.getByLabelText('第 1 张的补充说明')).toHaveValue('左视 45°');
+    expect(mock.packDetail).toHaveBeenCalledWith('pack-1');
   });
 
   it('编辑 v2 封装写 referenceLibraryIds，字段名跟着空间走', async () => {

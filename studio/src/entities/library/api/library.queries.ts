@@ -78,20 +78,22 @@ export function useLibraryTags(scope: LibraryTagScope) {
   });
 }
 
-/** 选择器：硬过滤 `state=active`，封装也不出现在候选里（禁嵌套） */
+/** 选择器：硬过滤 `state=active`，默认不出封装（禁嵌套） */
 export function useLibrarySelection(params: {
   keyword?: string;
   kind?: string;
   tagIds?: string[];
   page?: number;
   pageSize?: number;
+  /** 只有「从封装导入」这类场景要挑封装本身，默认 false（封装不能嵌套） */
+  includePacks?: boolean;
   /** 暂不需要这份候选时先不发请求（例如封装编辑器正在编辑旧素材库的包） */
   enabled?: boolean;
 }) {
-  const { enabled = true, ...rest } = params;
+  const { enabled = true, includePacks = false, ...rest } = params;
   return useQuery({
-    queryKey: libraryKeys.selection(rest),
-    queryFn: () => libraryApi.selection({ ...rest, includePacks: false }),
+    queryKey: libraryKeys.selection({ ...rest, includePacks }),
+    queryFn: () => libraryApi.selection({ ...rest, includePacks }),
     placeholderData: (previous) => previous,
     enabled,
   });
