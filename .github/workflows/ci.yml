@@ -45,7 +45,8 @@ jobs:
           cache: pip
           cache-dependency-path: api/pyproject.toml
 
-      # 替换模板的部分测试会真实执行 settings.libtv_node 指向的 Node 运行时脚本。
+      # 替换模板的部分测试会真实执行 `settings.node_binary` 指向的 Node 运行时脚本
+      # （编译链的 golden test 就在其中，缺 node 时它们 skip，等于白绿）。
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
