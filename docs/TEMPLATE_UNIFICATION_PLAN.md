@@ -2616,3 +2616,107 @@ v2 目前**没有对应语义**的东西：
 
 **至此 §23.5「缺的一跳」闭环**：A 建封装并声明用途 → B 在工作台选中 → prepare 展开、
 逐个成员判可读、用途对词表、冻结成员 id 与顺序 → 物化进本次任务归档。
+
+### 24.19 步 2.5d（三）：公共原片的口径与工作台原片切 v2
+
+§24.15 留下的那条「原片列表没切，先要拍板 v2 里怎么表达公共原片」，这一轮先把它
+**查清并落到既有机制上**，再把 B 侧（工作台）切完。A 侧（视频模板封装）仍未切，
+原因写在最后。
+
+**「公共原片」在 v2 里不是什么新东西**
+
+全仓核查后结论是：不需要新增可见性档。v2 早有一档语义完全对应的东西：
+
+| 口径 | v1 `assets` | v2 `library_assets` |
+|---|---|---|
+| 我的 | `scope=mine` + `owner_id` | `visibility=personal` + `owner_id`（`LibraryTab.PERSONAL`） |
+| 公共（谁都能用） | `shared=1`（`scope=public`） | `visibility=team`（`LibraryTab.TEAM`） |
+| 判定实现 | `repository` 里各处手写 | `access.active_visible_clause()` 第三支：`visibility == "team"` 对所有登录用户成立 |
+
+`team` 那一支没有任何「按人授权」的二次判断（`active_visible_clause` 里它是纯
+`or_` 的一支），所以「团队可见」就是 v1 的公共池。**要补的只是一个选择器参数**：
+`GET /library/selection` 原先固定 `library=all`，没有「只看团队可见」的入口。
+提交 `3dce4bd` 给它加了 `library`（默认 `all`，旧调用一个字段都不变），
+直接复用列表那个枚举与 `access.tab_clause`——**没有**另造 `scope=mine|public`：
+那等于给可见性写第二套定义，两套一漂移就是「列表里没有、选择器里有」。
+
+**这一步没有改掉的那件事（要拍板，不是技术问题）**
+
+存量原片在 v2 里是**导入进来的、`visibility=personal`**
+（`modules/library/import_archive.py:256`）。也就是说切完之后：
+
+- B 能看到**自己**的原片（`personal`）；
+- A 上传的原片，如果 A 没共享到团队，B 在「公共原片」里看不到；
+- 共享到团队这一步要过 `library:share:direct`（持码且是自己的资产 → 立即生效），
+  否则落一条 `pending` 审批单（`sharing._request_share`）。
+
+所以真正要定的是**产品口径**：原片这种「内部工作素材」是否允许免审批地团队可见。
+三个候选（**本轮都不做，等拍板**）：
+
+| 候选 | 做法 | 代价 |
+|---|---|---|
+| A（当前落地形态） | 原片照常走共享审批，`library:share:direct` 的人一步到位 | 没这个码的人每次传片都要等审批，工作台会「看不见同事的片」 |
+| B | 给原片来源（`origin=template_source`）一个隐式规则：上传即 `team` | 免审批把客户素材推给全员，与「范围一律留 pending」的设计原则冲突 |
+| C | 加一个「模板原片池」白名单端口（`origin=template_source` + 全员可读） | 等于新增第三档可见性，与用户「不新增可见性机制」的约束冲突 |
+
+**B 侧切完了（提交 `f195ce7`）**
+
+`useReplacementWorkbench` 的四个字段一起换，界面结构一行没动：
+
+| 项 | 切换前 | 切换后 |
+|---|---|---|
+| 列表 | `GET /assets?category=source&scope=mine\|public` | `GET /library/selection?kind=video&origin=template_source,imported&library=personal\|team` |
+| 上传 | `POST /assets/upload?category=source` | `POST /library/source-videos`（服务端写死 `origin=template_source`） |
+| 提交 | `sourceId` | `sourceLibraryId`（`sourceId` 留空，两个都填服务端 400） |
+| 深链详情 | `GET /assets/{id}` | `GET /library/assets/{id}`（`useLibraryDetail`） |
+
+三点必须这么写：
+
+1. **`origin` 必须两个值一起给**。只认 `template_source` 会把并存期导入的存量原片
+   整体漏掉（导入器写的是 `origin=imported`）；只按 `kind=video` 取又会把已生成的
+   成片列成「原片」——成片也是 `kind=video`。
+2. **「公共原片」映射到 `library=team`**，不是「除我之外的所有人」。共享到团队的
+   原片会从个人入口消失（`active_visible_clause` 只把 `personal` 算进「我的」），
+   与资产库列表同一口径，前端不另做并集。
+3. **新增 `sourceVideo.ts` 做视图投影，不硬塞 `ArchivedAsset`**。v2 不暴露
+   `path` / `sha256`，投影成旧类型只能编两个空串；那种「看起来有、其实是空的」
+   字段迟早被下载 / 去重 / 缓存键当真用。副作用是 `replaceFitness` 的
+   `category` 判据在 v2 上不可表达——「是不是原片」由列表的 `origin` 决定。
+
+**顺手拆掉的一处假守卫**
+
+`isReplacementPackAvailable(pack, assets)` 的第二个参数是「拿工作台的原片列表
+逐张比对包内图片」，判据 `asset.category === pack.kind && asset.type === 'image'`。
+线上那张列表是 `category=source` 的视频，这个条件**从来没成立过**；切 v2 之后更
+无从比对（列表里只有视频）。现在只认服务端 `available`（`_public` 发布时已校验
+字节与用途，缺一项就 `False`），漏标时退回结构自检（非空 / ≤10 / 无重复）。
+前端单测里那些「不完整包」的夹具相应改成 `available: false, version: 1`——这才是
+真实返回的形状。
+
+**验证**
+
+- 后端 `3dce4bd`：`select_tests --print` 判 **contract**（改查询参数）→ 22 文件
+  **229 passed**；`ruff` / `mypy`（297 files）通过；四份生成物重导出，
+  `--check` 无变化。反向验证：把 `library=library` 改回 `LibraryTab.ALL`，
+  新用例变红。
+- 前端 `f195ce7`：`npm run verify` 88 文件 **705 passed**（+1 文件 5 条用例）；
+  `gen:routes --check`、`gen:mock-coverage --check` 无变化。反向验证：提交体改回
+  只给 `sourceId`，准备与上传两条用例变红。
+- mock 的两条种子视频分别标成 `imported`（团队可见、含音轨）与
+  `template_source`（个人、无音轨），开发时同时能看到两个入口与「不可选 + 原因」。
+
+**A 侧仍未切（下一步）**
+
+`video_templates.source_video_asset_id_space` 列已经存在，但
+`video_template_service` 的创建 / `attach_source` / `source_video_path` 复制仍只认
+v1 素材表（§24.14 已记）。要切的是：
+
+1. `VideoTemplateDraftIn` 增「原片 id 属于哪一侧」（与 `source_video_asset_id`
+   并列的显式字段，不靠形状推断）；
+2. `attach_source` 按空间分流（v2 走 `LibraryLookup`，判 `kind=video` + 可读）；
+3. 前端 `VideoTemplateLibrary` 的原片选择器换 `useLibrarySelection`。
+
+在那之前，**A 侧封装的模板绑的仍是 v1 原片 id**，而 B 侧工作台只列 v2 原片——
+两批原片不会同时出现在同一个列表里，所以「A 封装的模板」在 B 侧暂时看不到。
+这是并存期的已知断点，不藏着：`find_for_run` 按 id 匹配（两套 id 都是 uuid4，不会
+撞），只要 A 侧也切过来就接得上。
