@@ -207,6 +207,91 @@ def test_upgrade_keeps_existing_rows(tmp_path: Path, monkeypatch: pytest.MonkeyP
     )
 
 
+def test_template_asset_id_space_is_backfilled_as_v1(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """加「id 空间标记」列之后，历史行必须是 `v1`，且 id 一个字节都不改。
+
+    两套主键都是 32 位 uuid hex、形状不可区分，所以标记列一旦被回填成 `v2`
+    （或漏填成 NULL 再被读成 `v2`），历史封装就会去 v2 找那几张图 —— 找不到，
+    表现是「老封装的图片全空」。而 `template_pack_versions.reference_ids` 是
+    已冻结的历史证据，批量改写成 v2 id 会让历史任务不可复现。
+
+    做法与 `app_meta` 那条一致：升到上一版 → 塞历史行 → 升到 head → 逐字段比对。
+    """
+    import sqlite3
+
+    from core.config import reload_settings
+    from db import session as db_session
+
+    db_file = tmp_path / "id_space.db"
+    monkeypatch.setenv("DB_URL", f"sqlite+aiosqlite:///{db_file.as_posix()}")
+    reload_settings()
+    db_session.reset_state_for_tests()
+    try:
+        config = _config()
+        command.upgrade(config, "b7c4e2a18d63")
+        conn = sqlite3.connect(db_file)
+        try:
+            conn.execute(
+                "INSERT INTO template_pack_references"
+                " (id, pack_id, asset_id, position, role, description)"
+                " VALUES (?, ?, ?, ?, ?, ?)",
+                ("ref1", "pack1", "asset_v1_a", 0, "front", "历史行"),
+            )
+            conn.execute(
+                "INSERT INTO template_pack_versions"
+                " (id, pack_id, version, reference_ids, bindings, required_roles,"
+                "  supported_scopes, features, instructions, wardrobe_mode,"
+                "  created_at, updated_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    "ver1",
+                    "pack1",
+                    1,
+                    '["asset_v1_a"]',
+                    "[]",
+                    "[]",
+                    "[]",
+                    "",
+                    "",
+                    "preserve",
+                    "2026-01-01 00:00:00.000000",
+                    "2026-01-01 00:00:00.000000",
+                ),
+            )
+            conn.execute(
+                "INSERT INTO replacement_run_inputs"
+                " (id, run_id, asset_id, role, position, usage, storage_key)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                ("in1", "run1", "asset_v1_b", "target_product", 0, "", "inputs/ref-1.jpg"),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        command.upgrade(config, "head")
+        conn = sqlite3.connect(db_file)
+        try:
+            refs = conn.execute(
+                "SELECT asset_id, asset_id_space FROM template_pack_references"
+            ).fetchall()
+            versions = conn.execute(
+                "SELECT reference_ids, reference_ids_space FROM template_pack_versions"
+            ).fetchall()
+            inputs = conn.execute(
+                "SELECT asset_id, asset_id_space FROM replacement_run_inputs"
+            ).fetchall()
+        finally:
+            conn.close()
+    finally:
+        reload_settings()
+        db_session.reset_state_for_tests()
+
+    assert refs == [("asset_v1_a", "v1")], f"封装参考行的 id 或标记被改了：{refs}"
+    assert versions == [('["asset_v1_a"]', "v1")], f"冻结版本的 id 或标记被改了：{versions}"
+    assert inputs == [("asset_v1_b", "v1")], f"运行输入的 id 或标记被改了：{inputs}"
+
+
 def test_inflight_jobs_survive_the_lease_token_migration(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

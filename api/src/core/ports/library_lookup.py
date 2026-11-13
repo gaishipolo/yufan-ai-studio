@@ -34,6 +34,7 @@ __all__ = [
     "LibraryAssetRef",
     "LibraryAssetState",
     "LibraryAssetKind",
+    "LibraryPackMember",
     "LibraryTextRef",
     "LibraryVisibility",
     "LibraryLookup",
@@ -116,6 +117,34 @@ class LibraryTextRef:
     size_bytes: int
 
 
+@dataclass(frozen=True, slots=True)
+class LibraryPackMember:
+    """v2 封装（`kind=pack`）的一个成员，按 `position` 有序。
+
+    为什么带 `readable` 而不是「不可读的直接不返回」：封装可读 ≠ 成员可读
+    （共享审批是按单个资产批的）。把不可读的成员悄悄丢掉，调用方会拿到一个
+    「少了一张图」的封装，然后把错误的槽位顺序喂给编译器——错误要一路传到
+    成片才看得出来。带一个布尔值，调用方才能给出「封装《X》的成员 Y 无权访问」
+    这种指得到人的报错，也能显式拒绝而不是静默降级。
+
+    `role` 是封装时声明的用途（产品主图 / 多视结构图…），**不做枚举校验**：
+    词表在模板库（`modules/template/pack_roles.py`），`core` 不该反向依赖它；
+    白名单在调用方 fail-closed 地判。
+    """
+
+    id: str
+    name: str
+    kind: LibraryAssetKind
+    state: LibraryAssetState
+    position: int
+    role: str = ""
+    description: str = ""
+    readable: bool = False
+    mime_type: str = ""
+    storage_key: str = ""
+    size_bytes: int = 0
+
+
 @runtime_checkable
 class LibraryLookup(Protocol):
     """按 id 批量取 v2 资产元数据，并回答「这批 id 里哪些我能读」。"""
@@ -158,6 +187,47 @@ class LibraryLookup(Protocol):
         这里不做第二套「共享」判断，也不接受「查不到就当没引用」。
 
         返回顺序**不保证**与入参一致：调用方按 id 取，顺序由自己的列表决定。
+        """
+        ...
+
+    async def expand_packs(
+        self, session: AsyncSession, actor: CurrentUser, pack_ids: Sequence[str]
+    ) -> Mapping[str, Sequence[LibraryPackMember]]:
+        """把 v2 封装展开成有序成员列表。**只返回 actor 现在可读的封装。**
+
+        为什么必须有这一跳：`library_assets` 里 `kind=pack` 的那一行是**无字节空壳**，
+        成员关系在 `library_pack_items`。调用方拿到的是一个 id，但它真正要的是
+        「这个产品的三视图 / 细节图分别是哪几张」。让每个调用方自己去 JOIN
+        `library_pack_items` 就等于把「成员可读性」这件事复制到所有地方——而
+        重写这份判据的方向永远是「多给权限」。
+
+        契约：
+
+        - 不可读 / 不存在的封装**不出现在结果的键里**（不造空列表冒充「空封装」）；
+        - 返回的成员**是全部**，包括读不到的，用 `readable` 标出来。理由见
+          `LibraryPackMember` 的 docstring：静默少一张图比明确报错危险得多；
+        - 顺序按 `position`，调用方不得重排（槽位即顺序）。
+        """
+        ...
+
+    async def find_ids(
+        self,
+        session: AsyncSession,
+        actor: CurrentUser,
+        *,
+        kind: LibraryAssetKind | None = None,
+        tag_ids: Sequence[str] = (),
+        limit: int = 50,
+    ) -> list[str]:
+        """按条件列 id：**只要 actor 现在可读、且已采纳（`active`）的那批**。
+
+        给演示数据（`seed.py`）与旧库导入用。它们原来的做法是裸 SQL
+        `SELECT id FROM assets WHERE category = ...`——v2 没有 `category`，
+        也不该在模板模块里再写一条 SQL 去猜「哪个标签相当于产品图」。
+
+        判据与选择器接口（`GET /library/selection`）同口径：`state=active` 硬过滤、
+        标签多选按 OR 展开到二级。草稿与回收站永远不出现——调用方忘了传就会把
+        用户删掉的东西塞进演示数据或历史任务。
         """
         ...
 

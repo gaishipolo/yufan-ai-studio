@@ -31,6 +31,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from core.library_text import parse_text_refs, text_ref_bindings
 from db.base import Base, TimestampMixin, UUIDMixin
+from modules.template.id_space import asset_id_space_default
 
 # 封装生命周期。`disabled` 是运营主动下架，与「还没发布」（version=0）不是一回事。
 PACK_STATUSES = ("draft", "published", "disabled")
@@ -81,6 +82,12 @@ class TemplatePack(Base, UUIDMixin, TimestampMixin):
     # 主图：为空时按 `position=0` 那张。显式存的原因是「换主图」不该等于
     # 「把那张图拖到第一位」——重排会改变提示词里的编号顺序。
     cover_asset_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # `cover_asset_id` 属于哪套 id 空间（`v1` 旧 `assets` / `v2` `library_assets`）。
+    # 两套 id 都是 32 位 uuid hex、形状不可区分，dual-read 期必须显式分流；
+    # 见 `modules/template/id_space.py` 的「为什么需要它」。
+    cover_asset_id_space: Mapped[str] = mapped_column(
+        String(4), nullable=False, default=asset_id_space_default
+    )
 
     # 以下是**待发布状态**：草稿编辑中随手改，发布时整块冻结进版本行。
     # 放 head 而不放 reference 表：它们描述「整个包」而不是「某一张图」，
@@ -129,6 +136,11 @@ class TemplatePackReference(Base, UUIDMixin):
     role: Mapped[str] = mapped_column(String(24), default="", nullable=False)
     # 这张图在提示词里的补充说明，只写本次特有的事实
     description: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    # `asset_id` 属于哪套 id 空间。历史行是 `v1`，切换后新行是 `v2`
+    # （见 `modules/template/id_space.py`：两套 id 形状不可区分，只能显式标记）。
+    asset_id_space: Mapped[str] = mapped_column(
+        String(4), nullable=False, default=asset_id_space_default
+    )
 
     __table_args__ = (
         Index("uq_template_pack_references_position", "pack_id", "position", unique=True),
@@ -154,6 +166,11 @@ class TemplatePackVersion(Base, UUIDMixin, TimestampMixin):
     version: Mapped[int] = mapped_column(Integer, nullable=False)
 
     reference_ids: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    # `reference_ids` 里每个 id 属于哪套空间。整个版本共用一行标记，因为一次发布
+    # 只可能来自一次编辑，不会出现「一半 v1 一半 v2」；真要混，那说明发布逻辑写错了。
+    reference_ids_space: Mapped[str] = mapped_column(
+        String(4), nullable=False, default=asset_id_space_default
+    )
     # 逐图用途，与 reference_ids 同序：[{role, description}, ...]
     bindings: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list, nullable=False)
     required_roles: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
@@ -291,6 +308,12 @@ class ReplacementRunInput(Base, UUIDMixin):
     usage: Mapped[str] = mapped_column(Text, default="", nullable=False)
     # 物化后的对象存储 key（inputs/reference-1.jpg）。执行器按它取字节。
     storage_key: Mapped[str] = mapped_column(String(256), default="", nullable=False)
+    # `asset_id` 属于哪套 id 空间。历史 run 是 `v1`，切换后新 run 是 `v2`。
+    # **`storage_key` 不受它影响**：字节已经物化，回放不依赖任何一侧的表
+    # （这也是 v1 下线后历史任务仍可复核的依据）。
+    asset_id_space: Mapped[str] = mapped_column(
+        String(4), nullable=False, default=asset_id_space_default
+    )
 
     __table_args__ = (
         Index("uq_replacement_run_inputs_position", "run_id", "position", unique=True),

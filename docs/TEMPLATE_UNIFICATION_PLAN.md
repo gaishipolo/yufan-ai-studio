@@ -1733,3 +1733,68 @@ W1（步 0.5 成片进草稿箱）不受影响，仍可先做。开工前仍需�
 **留给后续步的**：`template` / `task` 目前**没有** v2 引用来源，因为它们还没把
 v2 资产 id 持久化到「purge 之后会坏」的位置（只存冻结正文的 `text_json`）。步 3 接
 §23.5 的 `libraryPackId` 时，AST 守卫会自动把它们要红，届时补 checker。
+
+### 24.4 步 2.5b：扩 `LibraryLookup` + 来源标记列 + 迁移（2026-11-13 完成）
+
+**端口扩了两条**
+
+| 方法 | 用途 | 关键契约 |
+|---|---|---|
+| `expand_packs(session, actor, pack_ids)` | v2 封装 → 有序成员（§23.5「B 选封装当参考」） | 不可读的封装**不出现在键里**（空列表的含义是「这个封装是空的」，两件事不能混）；成员**全给**、用 `readable` 标出来 |
+| `find_ids(session, actor, *, kind, tag_ids, limit)` | 按条件列 id（`seed.py` / 导入器） | `state=active` 硬过滤；标签多选按 OR 展开到二级（与 `GET /library/selection` 同口径） |
+
+新增 `LibraryPackMember`（`id/name/kind/state/position/role/description/readable/mime_type/storage_key/size_bytes`）。
+
+**三个计划没写、落地才定的口径**
+
+1. **不可读成员不丢弃，只标 `readable=False`**。计划 §23.5 只说「逐个 `readable_ids()`」。
+   落地时的判断是：静默少一张图 → 槽位顺序整体前移 → 错误一路传到成片的提示词编号，
+   而界面上只看到「生成结果不对」。带布尔值，调用方才能报出「封装《X》的第 2 张已不存在」。
+   孤儿成员（`library_pack_items` 指向已彻底删除的资产）走同一条路：占位 + `readable=False`。
+2. **`role` 不做枚举校验**。词表在 `modules/template/pack_roles.py`，`core` 不该反向依赖它；
+   白名单在调用方 fail-closed 地判（这条计划里有，但没说清「端口层一律不管」）。
+3. **来源标记列不是布尔，是 `String(4)` 空间名**（`v1` / `v2`）。`is_v2` / `legacy` 会诱导出
+   「`not is_v2` 就是 v1」的推断，而导入器将来可能带来第三套外部 id。
+
+**为什么标记列必须有**：v1 `assets.id` 与 v2 `library_assets.id` 都是 32 位 uuid hex
+（`db/base.py::UUIDMixin`），**形状上完全不可区分**。没有标记就只能写「先查 v2、查不到回退 v1」
+的隐式兜底，而 `core/ports/library_lookup.py:8-10` 明令禁止——兜底会让某一侧悄悄读到另一半数据，
+且只在删除之后才暴露成裂图。
+
+**默认值取「当前空间」而不是硬编码 `v1`**（`modules/template/id_space.py`）：
+`CURRENT_ASSET_ID_SPACE` 一个常量，步 2.5c 切换读写路径时**只改这一行**，不用逐个 INSERT 点
+改口径。`mapped_column(default=asset_id_space_default)` 传的是**函数**而不是常量——常量在
+import 时就固化了，那样「改一行常量」的承诺不成立。历史行的值由迁移显式回填成 `v1`。
+
+**四列**（都是「一列 asset id + 一个空间标记」的同一形状）：
+
+| 表 | 列 |
+|---|---|
+| `template_packs` | `cover_asset_id_space` |
+| `template_pack_references` | `asset_id_space` |
+| `template_pack_versions` | `reference_ids_space` |
+| `replacement_run_inputs` | `asset_id_space` |
+
+**`template_pack_versions` 也要标记**：已经发布的版本是 `v1` 冻结证据，切换后新发布的版本是
+`v2`。同一张表混着两套，不标就没法回放。**绝不批量改写 `reference_ids` 本身**（改了就
+不可复现，§21.4）。
+
+**迁移写法**：`nullable=True` → `UPDATE ... = 'v1'` → `nullable=False`，三步分开。
+`tests/test_migrations.py:153` 的注释记着本仓库踩过的坑：加列与去默认值写在同一个 batch 块里，
+sqlite 重建表时 `INSERT ... SELECT` 只带原有列 → `NOT NULL constraint failed`。
+downgrade 直接丢列：标记可重建（`v1` 是唯一初始值），而把 `v2` 行改回 `v1` 会让它们指向不存在的旧素材。
+
+**验证**
+
+- `select_tests.py --print` 判 **full**（动迁移 + 框架端口）。
+- `tests/test_migrations.py` **9 passed**，含新增
+  `test_template_asset_id_space_is_backfilled_as_v1`：升到上一版 → 塞三条历史行
+  （参考行 / 冻结版本 / 运行输入）→ 升到 head → 逐字段比对 id 与标记。
+- **反向验证**：把迁移的回填值改成 `'v2'` → 该用例红（`[('asset_v1_a', 'v2')]`），已还原。
+- 新增 `tests/test_library_lookup_packs.py` **7 passed**：位置顺序与 `role`/`description`、
+  不可读封装不出现在键里、孤儿成员占位且 `readable=False`、非封装 id 不被当空封装、
+  空封装返回空列表、`find_ids` 排除草稿/回收站/他人私有、父标签展开到二级。
+- `ruff check src tests` 通过；`mypy --platform win32 src` 291 files 无问题。
+
+**踩到的两个小坑（记下来免得下次再查）**：`library_pack_items.position` 从 **1** 开始
+（不是 0）；换标签走 `PATCH /library/assets/{id}` 的 `tagIds`，没有 `/assets/{id}/tags` 子资源。
