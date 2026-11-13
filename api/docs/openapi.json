@@ -13330,6 +13330,19 @@
             "maxItems": 10,
             "title": "Referenceids"
           },
+          "libraryPackId": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 32
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Librarypackid",
+            "description": "资产库 v2 封装的 id；成员按 position 顺序当参考图，用途取自成员自己声明的 role。与 packId / packVersion / referenceIds / extraPackIds 互斥；prepare 时展开并冻结，之后封装改成员不影响已准备的任务"
+          },
           "textLibraryIds": {
             "items": {
               "type": "string"

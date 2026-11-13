@@ -1027,6 +1027,8 @@ export interface PrepareReplacement {
   /** 文字换场景的描述；省略使用模板默认值，空白拒绝 */
   scenePrompt?: string | null;
   referenceIds?: string[];
+  /** 资产库 v2 封装的 id；成员按 position 顺序当参考图，用途取自成员自己声明的 role。与 packId / packVersion / referenceIds / extraPackIds 互斥；prepare 时展开并冻结，之后封装改成员不影响已准备的任务 */
+  libraryPackId?: string | null;
   /** 绑定的文本资产 id，按顺序对应 `{{Text N}}`；最多 8 份 */
   textLibraryIds?: string[];
   /** 第 2 位及以后的素材包 id，按提示词槽位顺序；第一包仍用 packId */

@@ -135,6 +135,19 @@ class PrepareReplacement(CamelModel):
     scene_prompt: str | None = Field(default=None, max_length=4000,
                                     description="文字换场景的描述；省略使用模板默认值，空白拒绝")
     reference_ids: list[str] = Field(default_factory=list, max_length=10)
+    # 第二个参考来源：资产库 v2 封装（用户 A 把同一产品的三视图/细节图打成一个包）。
+    # 与 `packId` / `packVersion` / `referenceIds` / `extraPackIds` **互斥**：
+    # 一次任务只能有一个参考来源，两路都填必须 400 而不是「谁优先」——
+    # 两套 id 形状一样（都是 32 位 hex），静默取一路等于让手滑改掉整条片子。
+    library_pack_id: str | None = Field(
+        default=None,
+        max_length=32,
+        description=(
+            "资产库 v2 封装的 id；成员按 position 顺序当参考图，用途取自成员自己声明的 role。"
+            "与 packId / packVersion / referenceIds / extraPackIds 互斥；"
+            "prepare 时展开并冻结，之后封装改成员不影响已准备的任务"
+        ),
+    )
     # 与生图 / 视频同一套 `{{Text N}}`：在 scenePrompt / notes / replacementScope
     # 里写占位符，受理期按当时版本冻结正文，编译后再注入（编译器不收花括号）。
     text_library_ids: list[str] = Field(

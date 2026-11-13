@@ -50,7 +50,12 @@ from core.library_text import (
 from core.logging import get_logger
 from core.media import StoredMedia
 from core.metrics import METRICS
-from core.ports.library_lookup import LibraryAssetKind, LibraryAssetRef, LibraryAssetState
+from core.ports.library_lookup import (
+    LibraryAssetKind,
+    LibraryAssetRef,
+    LibraryAssetState,
+    get_library_lookup,
+)
 from core.ports.media import get_asset_lookup
 from core.serving import Served
 from infra.ai.libtv import get_libtv_settings
@@ -62,7 +67,7 @@ from modules.template.channels import CHANNEL_LABELS, channel_catalog, require_c
 from modules.template.id_space import ASSET_ID_SPACE_V1, ASSET_ID_SPACE_V2
 from modules.template.library_media import StagedMedia, discard_staged, stage_library_refs
 from modules.template.models import ReplacementReview as ReviewRow
-from modules.template.models import ReplacementRun
+from modules.template.models import ReplacementRun, TemplatePackVersion
 from modules.template.pack_roles import PACK_ROLES, PACK_SCOPES, usage_for
 from modules.template.repository import PackRepository, RunInputRow, RunRepository
 from modules.template.run_clock import elapsed_seconds
@@ -121,6 +126,46 @@ class ResolvedInputs(NamedTuple):
     #: 封装发布版本自己声明的 v2 参考图。它们不是「用户临时挑的散图」，
     #: 而是 `frozen.reference_ids` 那一批，顺序即 `{{Mixed N}}` 的编号顺序。
     refs_v2: list[LibraryAssetRef]
+
+
+class LibraryPackSnapshot(NamedTuple):
+    """资产库 v2 封装在 prepare 那一刻展开出来的成员清单（本次任务专用）。
+
+    **刻意不长成一个「封装版本」**：v2 封装没有不可变发布版本，成员是整体替换的
+    可变列表（`PATCH /library/packs/{id}`）。如果任务直接引用「当前封装」，A 改一次
+    成员，同一份历史配置就会指向另外几张图。正确做法是 prepare 时把成员 id 与用途
+    冻进本次任务：**包可变、任务不可变**，与 v1 的 `TemplatePackVersion` 一个意思，
+    但不新增 `packVersion` 语义、也不造一条代理版本行（那是第二事实来源）。
+
+    字段刻意与 `TemplatePackVersion` 对齐的那几项同名（`reference_ids` / `bindings`），
+    因为下游 `_usage_for_asset()` 只认「按位置对齐的 bindings」这一个形状；多造一套
+    就等于让同一段提示词拼装写两遍。
+    """
+
+    pack_id: str
+    name: str
+    reference_ids: list[str]
+    #: `[{"role": "front", "description": "..."}]`，与 `reference_ids` **按位置对齐**。
+    bindings: list[dict[str, str]]
+    #: 空间标记只用来提醒「这批 id 属于 v2」；prepare 已显式传 `refs_space`，
+    #: 不靠它兜底（两套 id 形状一样，兜底必然出错）。
+    reference_ids_space: str = ASSET_ID_SPACE_V2
+    #: v2 封装没有这两项（它们是模板封装的「附加约束 / 补充说明」）。留空字符串是为了
+    #: 让 `_materialize_inputs()` 不必按快照类型分叉——它只判断「有没有内容」。
+    features: str = ""
+    instructions: str = ""
+    wardrobe_mode: str = "preserve"
+    #: v2 封装没有「运营审核过的替换范围」这一层元数据（`PACK_SCOPES` 是模板封装的
+    #: 字段）。这里显式给全量，而不是让 `_check_scope()` 对 v2 分支短路：短路会让
+    #: 「产品替换必须选范围」这条规则在一条路径上悄悄消失。
+    supported_scopes: tuple[str, ...] = ()
+
+
+#: 一次任务「参考图从哪来」的两种冻结形状。刻意用 `TypeAlias` 而不是给下游传
+#: `Any`：两者共用 `reference_ids` / `bindings` / `features` / `instructions` /
+#: `wardrobe_mode` / `supported_scopes` / `reference_ids_space` 这七个属性，
+#: 少了哪一个 mypy 会当场报，而不是等到某个分支才 AttributeError。
+PackSnapshot: TypeAlias = "TemplatePackVersion | LibraryPackSnapshot"
 
 # 准备是全模块最重的 IO 端点（物化素材 + Node 编译 + 复制运行时），却只靠日志
 # 记录成败；失败率高时没有任何数字能看出来。命名沿用本模块既有的 `replacement_`
@@ -273,6 +318,21 @@ class ReplacementService:
         if not can_read_assets:
             raise Forbidden("需要素材读取权限")
         require_channel(payload.channel)
+        # 两套参考来源（模板封装 / 资产库封装）**互斥**：它们的 id 形状完全一样
+        # （都是 32 位 hex），允许同时填就等于让「谁优先」变成隐式行为，手滑一次
+        # 就换掉整条片子的参考图，而且不会报错。
+        if payload.library_pack_id and any(
+            (
+                payload.pack_id,
+                payload.pack_version,
+                payload.reference_ids,
+                payload.extra_pack_ids,
+                payload.extra_pack_versions,
+            )
+        ):
+            raise BadRequest(
+                "资产库封装与模板素材包不能同时选择：一次任务只能有一个参考来源"
+            )
 
         # 文本快照在受理期冻结：编译器不收花括号，所以这里只做「校验 + 冻结」，
         # 真正的注入在 `_materialize_inputs` 编译完之后（见那里的注释）。
@@ -307,7 +367,10 @@ class ReplacementService:
             session=self.session,
         )
         text_scene = video_template is not None and is_scene_text(video_template.rules)
-        frozen = None
+        # 参考来源的两条互斥取值：模板封装的冻结版本，或资产库封装展开出的快照。
+        # 下游（`_materialize_inputs` / `_usage_for_asset`）只认它们共同的形状：
+        # `reference_ids` + 按位置对齐的 `bindings`。
+        frozen: PackSnapshot | None = None
         pack_owner = ""
         if text_scene:
             assert video_template is not None
@@ -319,6 +382,7 @@ class ReplacementService:
                     payload.reference_ids,
                     payload.extra_pack_ids,
                     payload.extra_pack_versions,
+                    payload.library_pack_id,
                     payload.replacement_scope,
                     payload.notes,
                 )
@@ -336,41 +400,79 @@ class ReplacementService:
                     "wardrobe_mode": "preserve",
                 }
             )
-            roles, pack_owners, character_fronts, selected_packs = {}, set(), [], []
+            # 显式标注：三个分支各给一份空值，字面量分别推断会打架（mypy `var-annotated`
+            # / `no-redef`）；`set()` 还会被推成 `set[Any]`。
+            roles: dict[str, str] = {}
+            pack_owners: set[str] = set()
+            character_fronts: list[str] = []
+            selected_packs: list[dict[str, Any]] = []
         else:
             if payload.scene_prompt is not None:
                 raise BadRequest("当前功能不支持编辑场景描述，请选择文字换场景功能")
-            if not payload.pack_id or not payload.pack_version:
-                raise BadRequest("必须选择专员发布的对象与版本，不能直接使用散图")
-            frozen = await self.packs.get_version(payload.pack_id, payload.pack_version)
-            pack = await self.packs.get_or_404(payload.pack_id)
-            if frozen is None or pack.status != "published":
-                raise BadRequest("素材包未发布或已停用，请重新选择")
-            if pack.kind != payload.kind:
-                raise BadRequest("素材包不存在或类型不匹配")
-            payload = payload.model_copy(
-                update={
-                    "target": pack.name,
-                    "reference_ids": list(frozen.reference_ids),
-                    "wardrobe_mode": frozen.wardrobe_mode,
-                }
-            )
-            _check_scope(frozen.supported_scopes, payload, video_template)
-            (
-                payload,
-                roles,
-                pack_owners,
-                character_fronts,
-                selected_packs,
-            ) = await self._selected_pack_inputs(
-                payload,
-                video_template,
-                pack,
-                frozen,
-            )
-            pack_owner = pack.owner_id
-            if video_template is not None:
-                _check_video_template(video_template, roles, pack.kind, character_fronts)
+            if payload.library_pack_id:
+                # B 直接选 A 在资产库封的包：展开 → 逐个成员判可读 → 用途对词表。
+                # 展开结果**当场冻结**（`snapshot`），之后 A 改成员不影响这次任务。
+                snapshot = await self._library_pack_inputs(
+                    payload.library_pack_id, payload.kind, actor
+                )
+                payload = payload.model_copy(
+                    update={
+                        "target": snapshot.name,
+                        "reference_ids": list(snapshot.reference_ids),
+                        "wardrobe_mode": snapshot.wardrobe_mode,
+                    }
+                )
+                # v2 封装没有「运营审核过的替换范围」这一层元数据（那是模板封装的
+                # 字段），所以不按包限制；`replacement_scope` 仍必填，它进提示词变量。
+                _check_scope(list(snapshot.supported_scopes), payload, video_template)
+                roles = dict(
+                    zip(
+                        snapshot.reference_ids,
+                        (binding["role"] for binding in snapshot.bindings),
+                        strict=True,
+                    )
+                )
+                # 资产库封装没有「归属包」这个概念：成员可能分散在多人手里，
+                # 逐个成员的可读性已在 `_library_pack_inputs()` 判完，这里不按
+                # 归属再判一次（会连带把「A 共享给我的封装」判死）。
+                pack_owners, character_fronts, selected_packs = set(), [], []
+                frozen = snapshot
+                if video_template is not None:
+                    _check_video_template(
+                        video_template, roles, payload.kind, character_fronts
+                    )
+            else:
+                if not payload.pack_id or not payload.pack_version:
+                    raise BadRequest("必须选择专员发布的对象与版本，不能直接使用散图")
+                frozen = await self.packs.get_version(payload.pack_id, payload.pack_version)
+                pack = await self.packs.get_or_404(payload.pack_id)
+                if frozen is None or pack.status != "published":
+                    raise BadRequest("素材包未发布或已停用，请重新选择")
+                if pack.kind != payload.kind:
+                    raise BadRequest("素材包不存在或类型不匹配")
+                payload = payload.model_copy(
+                    update={
+                        "target": pack.name,
+                        "reference_ids": list(frozen.reference_ids),
+                        "wardrobe_mode": frozen.wardrobe_mode,
+                    }
+                )
+                _check_scope(frozen.supported_scopes, payload, video_template)
+                (
+                    payload,
+                    roles,
+                    pack_owners,
+                    character_fronts,
+                    selected_packs,
+                ) = await self._selected_pack_inputs(
+                    payload,
+                    video_template,
+                    pack,
+                    frozen,
+                )
+                pack_owner = pack.owner_id
+                if video_template is not None:
+                    _check_video_template(video_template, roles, pack.kind, character_fronts)
 
         inputs = await self._validate_inputs(
             payload,
@@ -434,6 +536,19 @@ class ReplacementService:
         # 上一次可能在冻结之后、编译之前失败，不能让新一次的正文与旧行对不上。
         run.text_json = dumps_text_refs(text_refs)
         run.configuration = {**(run.configuration or {}), "fixed_references": fixed_data}
+        if isinstance(frozen, LibraryPackSnapshot):
+            # 资产库封装**没有**不可变发布版本，冻结只能落在本次任务这一行上：
+            # 成员 id / 用途 / 顺序都在这里，之后 A 改包、删成员都不影响这次任务。
+            # 不另建「封装版本表」——那是第二事实来源，且会让删除保护永远 409。
+            run.configuration = {
+                **(run.configuration or {}),
+                "library_pack": {
+                    "id": frozen.pack_id,
+                    "name": frozen.name,
+                    "referenceIds": list(frozen.reference_ids),
+                    "bindings": [dict(item) for item in frozen.bindings],
+                },
+            }
         await self.session.commit()
 
         # 目录 + `run.json` + 索引指针一起建：`run_path()` 认指针，
@@ -747,6 +862,87 @@ class ReplacementService:
     # ------------------------------------------------------------------ #
     # 内部
     # ------------------------------------------------------------------ #
+    async def _library_pack_inputs(
+        self, pack_id: str, kind: str, actor: CurrentUser
+    ) -> LibraryPackSnapshot:
+        """资产库 v2 封装 → 本次任务的参考图清单（顺序即 `{{Mixed 2}}` 起的编号）。
+
+        三道判据都不能省，缺一条就是一个「看得见却不能用」或者「能用但不该用」：
+
+        1. **封装本身可读**：`expand_packs()` 只返回调用者现在能读的封装；拿别人的
+           id 来展开得到空。与「不存在」合并成同一句话——不能告诉调用方这个封装
+           确实存在（那就成了一把探测别人资产的口子）。
+        2. **成员逐个可读**：封装可读 ≠ 成员可读。打包时可以把别人共享给你的一张图
+           收进自己的包，之后共享被撤销，包还在、图不该再被用。`readable` 与
+           `readable_ids()` 是同一条判据（含「靠封装成员身份读到」这条入口），
+           这里不另写一套：重写必然漂移，而漂移的方向总是「多给权限」。
+        3. **用途必须落在词表里**：v2 的 `role` 是自由字符串、历史封装可能全空，
+           模板侧只认 `PACK_ROLES[kind]`。认不出就**报错并让人回封装页补**，
+           绝不按 `position` 猜 `front/multiview/detail` —— `{{Mixed N}}` 与用途
+           绑死，猜错的结果是「拿细节图当主图」的成片，而且不报错。
+        """
+        lookup = get_library_lookup()
+        pack = (await lookup.get_many(self.session, [pack_id])).get(pack_id)
+        members = (await lookup.expand_packs(self.session, actor, [pack_id])).get(pack_id)
+        # 回收站里的封装仍然「可读」（owner 自己看得到），但不能再被拿去生成：
+        # 与 v1「封装被停用」同一个口径，用户要做的动作都是「重新选一个」。
+        if (
+            pack is None
+            or pack.kind != LibraryAssetKind.PACK
+            or pack.state != LibraryAssetState.ACTIVE
+            or members is None
+        ):
+            raise BadRequest("所选封装不存在或已停止共享，请重新选择")
+
+        vocabulary = PACK_ROLES.get(kind) or {}
+        ids: list[str] = []
+        bindings: list[dict[str, str]] = []
+        seen: dict[str, str] = {}
+        for position, member in enumerate(members, 1):
+            label = member.name or f"第{position}张图"
+            if (
+                member.kind != LibraryAssetKind.IMAGE
+                or member.state != LibraryAssetState.ACTIVE
+                or not member.readable
+            ):
+                raise BadRequest(
+                    f"封装《{pack.name}》里的「{label}」已删除或已停止共享，"
+                    "请重新选择封装或换一张图"
+                )
+            role = member.role.strip()
+            if role not in vocabulary:
+                # 空用途与「词表里没有」合并成一句话：用户要做的事一样（回封装页
+                # 选一个用途），分成两句只会让人以为其中一种是数据坏了。
+                raise BadRequest(
+                    f"封装《{pack.name}》里的「{label}」没有声明可用途，"
+                    "替换时不知道该把它当主图还是细节图；"
+                    "请到资产库封装页给它选一个用途后再来使用"
+                )
+            if role in seen:
+                # 同一用途两张图：`{{Mixed N}}` 是按用途取位的，取哪张都算猜。
+                raise BadRequest(
+                    f"封装《{pack.name}》里有不止一张「{vocabulary[role]}」"
+                    f"（「{seen[role]}」与「{label}」），无法确定用哪一张；"
+                    "请到资产库封装页改成不同用途"
+                )
+            seen[role] = label
+            ids.append(member.id)
+            bindings.append({"role": role, "description": member.description})
+        if not ids:
+            raise BadRequest(f"封装《{pack.name}》里没有图片，请先添加成员")
+        if len(ids) > MAX_REFERENCE_IMAGES:
+            # 与 v1 同一个上限：最终都进 mixedList，来源不同不该多给额度。
+            raise BadRequest(
+                f"封装《{pack.name}》有 {len(ids)} 张图，超过单次最多"
+                f"{MAX_REFERENCE_IMAGES}张参考图片；请精简封装后再使用"
+            )
+        return LibraryPackSnapshot(
+            pack_id=pack_id,
+            name=pack.name,
+            reference_ids=ids,
+            bindings=bindings,
+            supported_scopes=tuple(PACK_SCOPES),
+        )
     async def _selected_pack_inputs(self, payload, template, primary, frozen):
         """每个已选人物包各贡献一个身份槽位；所有参考与用途以发布快照为准。"""
         from modules.template.schema import aligned_bindings

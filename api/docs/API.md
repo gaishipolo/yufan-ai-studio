@@ -1950,6 +1950,7 @@ Authorization: Bearer <accessToken>
 | `videoTemplateId` | `string \| null` | 否 |  |
 | `scenePrompt` | `string \| null` | 否 | 文字换场景的描述；省略使用模板默认值，空白拒绝 |
 | `referenceIds` | `string[]` | 否 |  |
+| `libraryPackId` | `string \| null` | 否 | 资产库 v2 封装的 id；成员按 position 顺序当参考图，用途取自成员自己声明的 role。与 packId / packVersion / referenceIds / extraPackIds 互斥；prepare 时展开并冻结，之后封装改成员不影响已准备的任务 |
 | `textLibraryIds` | `string[]` | 否 | 绑定的文本资产 id，按顺序对应 `{{Text N}}`；最多 8 份 |
 | `extraPackIds` | `string[]` | 否 | 第 2 位及以后的素材包 id，按提示词槽位顺序；第一包仍用 packId |
 | `extraPackVersions` | `number[]` | 否 | 与 extraPackIds 顺序对应的发布版本；旧调用省略时由服务端解析并冻结 |
@@ -5175,6 +5176,7 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `videoTemplateId` | `string \| null` | 否 |  |
 | `scenePrompt` | `string \| null` | 否 | 文字换场景的描述；省略使用模板默认值，空白拒绝 |
 | `referenceIds` | `string[]` | 否 |  |
+| `libraryPackId` | `string \| null` | 否 | 资产库 v2 封装的 id；成员按 position 顺序当参考图，用途取自成员自己声明的 role。与 packId / packVersion / referenceIds / extraPackIds 互斥；prepare 时展开并冻结，之后封装改成员不影响已准备的任务 |
 | `textLibraryIds` | `string[]` | 否 | 绑定的文本资产 id，按顺序对应 `{{Text N}}`；最多 8 份 |
 | `extraPackIds` | `string[]` | 否 | 第 2 位及以后的素材包 id，按提示词槽位顺序；第一包仍用 packId |
 | `extraPackVersions` | `number[]` | 否 | 与 extraPackIds 顺序对应的发布版本；旧调用省略时由服务端解析并冻结 |
