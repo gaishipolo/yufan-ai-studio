@@ -1,14 +1,14 @@
 import { useState } from 'react';
 import { Check, Play } from 'lucide-react';
-import { archivePreviewUrl, type ArchivedAsset } from '@/entities/asset/model/archive.types';
-import { replacementFitness } from '@/entities/asset/model/archive-fit';
+import { archivePreviewUrl } from '@/entities/asset/model/archive.types';
 import { ArchivedThumbnail } from '@/entities/asset/ui/ArchivedThumbnail';
 import { cn } from '@/shared/lib/cn';
 import { SourceHoverPreview } from './SourceHoverPreview';
+import { sourceVideoFitness, type SourceVideo } from './sourceVideo';
 import { Button } from '@/shared/ui';
 
 interface SourceTemplateCardProps {
-  video: ArchivedAsset;
+  video: SourceVideo;
   selected: boolean;
   disabled?: boolean;
   badge?: string;
@@ -18,7 +18,7 @@ interface SourceTemplateCardProps {
 
 export function SourceTemplateCard({ video, selected, disabled, badge, onToggle, onViewPrompt }: SourceTemplateCardProps) {
   const [preview, setPreview] = useState(false);
-  const duration = video.duration ?? 0;
+  const duration = video.durationSec ?? 0;
   const width = video.width ?? 0;
   const height = video.height ?? 0;
   const hasDimensions = width > 0 && height > 0;
@@ -28,8 +28,8 @@ export function SourceTemplateCard({ video, selected, disabled, badge, onToggle,
       : width === height ? '方形' : width > height ? '横屏' : '竖屏'
     : '画幅待识别';
   const resolution = hasDimensions ? `原始分辨率：${video.width} × ${video.height} 像素` : undefined;
-  /* 与素材库共用同一条判定：两边各写一份，改规则时必然漏掉一边。 */
-  const fitness = replacementFitness(video);
+  /* 与后端 prepare 的门禁同口径；v2 原片没有 category，判据里不再有「是不是原片」 */
+  const fitness = sourceVideoFitness(video);
   const valid = fitness.ok;
   const reason = fitness.ok ? '' : `${fitness.reason}，暂不可用`;
   // 事件挂在卡片外层：按钮 disabled 时不派发鼠标事件，异常原片也需要能悬停查看。

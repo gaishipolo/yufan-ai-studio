@@ -155,6 +155,8 @@ function seed() {
     asset({
       name: '夜跑城市街头 运镜 A',
       kind: 'video',
+      /* 并存期从旧素材库导入的存量原片：模板工作台的「公共原片」靠它 */
+      origin: 'imported',
       mimeType: 'video/mp4',
       visibility: 'team',
       durationSec: 12,
@@ -168,6 +170,8 @@ function seed() {
     asset({
       name: '咖啡店晨间氛围 空镜',
       kind: 'video',
+      /* 模板库切换后新传的原片；无音轨，正好演示「不可选 + 原因」 */
+      origin: 'template_source',
       mimeType: 'video/mp4',
       durationSec: 8,
       hasAudio: false,
@@ -437,6 +441,10 @@ function listOf(
     }
   }
   if (kind) rows = rows.filter((row) => row.kind === kind);
+  /* `origin` 是数组参数（`origin=a&origin=b`），axios 传进来的就是数组，
+     统一按逗号拆——与 `tagIds` 同一套约定。模板工作台靠它只挑原片。 */
+  const origins = String(params.origin ?? '').split(',').filter(Boolean);
+  if (origins.length) rows = rows.filter((row) => origins.includes(row.origin ?? ''));
   // 排除某几类要在 `total` 之前：滤掉 items 之后再减总数，分页就会多出一页。
   if (excludeKinds.length) rows = rows.filter((row) => !excludeKinds.includes(row.kind ?? ''));
   if (keyword) rows = rows.filter((row) => row.name.toLowerCase().includes(keyword));

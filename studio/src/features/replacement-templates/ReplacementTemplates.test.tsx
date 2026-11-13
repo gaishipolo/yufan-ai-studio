@@ -1,15 +1,15 @@
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ArchivedAsset, ArchiveCategory } from '@/entities/asset/model/archive.types';
-import type { VideoTemplateOut } from '@/shared/api/schema';
+import type { LibraryAssetOut, VideoTemplateOut } from '@/shared/api/schema';
 import { AccessProvider } from '@/shared/access/AccessProvider';
 import type { ReplacementChannelOut, ReplacementPack } from '@/shared/api/schema';
 import type { ReplacementRun } from '@/entities/template/model/replacement.types';
 import { ReplacementTemplates } from './ReplacementTemplates';
 
 interface UploadCallbacks {
-  onSuccess: (asset: ArchivedAsset) => void;
+  /** 资产库 v2 的上传出参（原片走 `/library/source-videos`） */
+  onSuccess: (asset: LibraryAssetOut) => void;
   onError: (reason: Error) => void;
 }
 
@@ -22,7 +22,12 @@ const mock = vi.hoisted(() => ({
   libraryPack: undefined as undefined | {id: string; name: string; state: string; packItems: {
     assetId: string; name: string; kind: string; state: string; position: number; role: string;
     description: string; coverUrl?: string | null }[]},
-  upload: vi.fn<(input: {file: File; category: ArchiveCategory}, callbacks: UploadCallbacks) => void>(),
+  upload: vi.fn<(input: {file: File}, callbacks: UploadCallbacks) => void>(),
+  /** 资产库 v2 的原片行（工作台列表现在读 `/library/selection?kind=video`） */
+  sourceVideos: [] as LibraryVideo[],
+  /** 原片列表每次发出的查询条件，用来钉住「我的 / 公共」映射到哪个入口 */
+  sourceQuery: [] as {kind?: string; library?: string; origin?: string[]}[],
+  sourceDetails: {} as Record<string, LibraryVideo>,
   uploadPending: false,
   catalog: { data: { root: 'Z:/yufan_ai_studio', packs: [] as ReplacementPack[], runs: [] as ReplacementRun[],
     packScopes: {worn: '人物上身穿着', held: '手持展示产品', boxed: '盒内可见产品', screen: '手机详情页产品图'},
@@ -62,9 +67,29 @@ vi.mock('@/entities/template/api/replacement.queries', () => ({
  * 这个套件不挂 QueryClient，所以按需替身：默认没有库封装可选（与「只用模板素材包」
  * 这条老路径一致），需要时由 `mock.libraryPacks` / `mock.libraryPack` 打开。
  */
+/** 工作台要用的 v2 原片行；`durationSec` 是资产库的字段名（不是旧库的 `duration`） */
+interface LibraryVideo {
+  id: string; name: string; url: string; previewUrl?: string | null;
+  durationSec: number; width?: number; height?: number; hasAudio: boolean;
+}
+function video(id: string, name: string, durationSec: number, extra: Partial<LibraryVideo> = {}): LibraryVideo {
+  return {id, name, url: `/api/v1/library/assets/${id}/file`,
+    previewUrl: `/api/v1/library/assets/${id}/thumbnail`, durationSec, hasAudio: true, ...extra};
+}
+/*
+ * 原片列表改读资产库 v2 之后，同一个 `useLibrarySelection` 还要给「从资产库选封装」
+ * 出候选，`useLibraryDetail` 还要给「选中的库封装」和「深链带入的原片」各取一次详情
+ * ——所以两个替身都按参数分流，不再固定返回一份。
+ */
 vi.mock('@/entities/library/api/library.queries', () => ({
-  useLibrarySelection: () => ({data: {items: mock.libraryPacks, total: mock.libraryPacks.length}, isPending: false, error: null}),
-  useLibraryDetail: () => ({data: mock.libraryPack, isPending: false, error: null}),
+  useLibrarySelection: (params: {kind?: string; library?: string; origin?: string[]} = {}) => params.kind === 'video'
+    ? (mock.sourceQuery.push(params), {data: mock.assetsHidden ? undefined : {items: mock.assetsEmpty ? [] : mock.sourceVideos,
+        total: mock.sourceVideos.length, page: 1, pageSize: 24},
+      isPending: mock.assetsLoading, error: mock.assetsError, refetch: mock.assetsRefetch})
+    : {data: {items: mock.libraryPacks, total: mock.libraryPacks.length}, isPending: false, error: null, refetch: vi.fn()},
+  useLibraryDetail: (id: string | null) => ({data: id && mock.libraryPack?.id === id ? mock.libraryPack : mock.sourceDetails[id ?? ''],
+    isPending: false, error: null}),
+  useUploadSourceVideo: () => ({isPending: mock.uploadPending, mutate: mock.upload}),
 }));
 vi.mock('@/shared/lib/toast', () => ({ toast: vi.fn() }));
 
@@ -89,11 +114,22 @@ beforeEach(() => {
   mock.catalog.data.channels = undefined;
   mock.libraryPacks = [];
   mock.libraryPack = undefined;
+  /* `available` / `version` 由服务端给：工作台的原片列表切到 v2 之后只有视频，
+     前端再也拿不到包内图片来「自检可用性」，不能靠漏标默认成可用。 */
   mock.catalog.data.packs = [
-    {id: 'character-pack', kind: 'character', name: '测试人物', referenceIds: ['image'], coverReferenceId: 'image'},
-    {id: 'other-character', kind: 'character', name: '另一人物', referenceIds: ['image'], coverReferenceId: 'image'},
-    {id: 'product-pack', kind: 'product', name: '测试产品', referenceIds: ['product-back', 'product-front', 'product-detail'], coverReferenceId: 'product-front', supportedScopes: ['worn', 'held', 'boxed', 'screen']},
+    {id: 'character-pack', kind: 'character', name: '测试人物', referenceIds: ['image'], coverReferenceId: 'image', version: 1, available: true},
+    {id: 'other-character', kind: 'character', name: '另一人物', referenceIds: ['image'], coverReferenceId: 'image', version: 1, available: true},
+    {id: 'product-pack', kind: 'product', name: '测试产品', referenceIds: ['product-back', 'product-front', 'product-detail'], coverReferenceId: 'product-front', supportedScopes: ['worn', 'held', 'boxed', 'screen'], version: 1, available: true,
+      coverUrl: '/api/v1/templates/replacement-packs/product-pack/preview/product-back?version=1'},
   ];
+  mock.sourceVideos = [
+    video('source', '测试原片', 2),
+    video('source-15s', '十五秒原片', 15),
+    video('source-third', '第三原片', 3),
+    video('source-template', '我穿的是米兰之夜模板测试.mp4', 5.31),
+  ];
+  mock.sourceDetails = {};
+  mock.sourceQuery = [];
   mock.assetsLoading = false;
   mock.assetsError = null;
   mock.assetsHidden = false;
@@ -521,9 +557,10 @@ describe('替换模板工作台', () => {
     render(<App url="/templates?kind=product" />);
     fireEvent.click(screen.getByRole('button', {name: '选择模板：测试原片'}));
     expect(screen.getByRole('button', {name: '下一步：确认替换'})).toBeDisabled();
-    expect(mock.mediaUrls).toContain('/thumbnail/product-front?v=hd-v2');
-    expect(mock.mediaUrls).not.toContain('/thumbnail/product-back?v=hd-v2');
-    expect(mock.mediaUrls).not.toContain('/thumbnail/product-detail?v=hd-v2');
+    /* 封装主图走服务端给的 `coverUrl`（= 包内首个引用的预览），不再按
+       referenceId 去原片列表里反查——v2 原片列表里只有视频，反查必然落空。 */
+    expect(mock.mediaUrls).toContain('/api/v1/templates/replacement-packs/product-pack/preview/product-back?version=1');
+    expect(mock.mediaUrls).not.toContain('/thumbnail/product-front?v=hd-v2');
     fireEvent.click(screen.getByRole('button', {name: '选择产品：测试产品'}));
     fireEvent.click(screen.getByRole('checkbox', {name: '手持展示产品'}));
     expect(screen.queryByRole('combobox', {name: '已封装素材包'})).not.toBeInTheDocument();
@@ -545,7 +582,8 @@ describe('替换模板工作台', () => {
   });
 
   it('素材包不完整时不可选，切换类型会清除原选择', () => {
-    mock.catalog.data.packs.push({id: 'broken', kind: 'character', name: '缺失素材', referenceIds: ['not-found']});
+    mock.catalog.data.packs.push({id: 'broken', kind: 'character', name: '缺失素材',
+      referenceIds: ['not-found'], version: 1, available: false});
     render(<App />);
     fireEvent.click(screen.getByRole('button', {name: '选择模板：测试原片'}));
     expect(screen.getByRole('button', {name: '选择人物：缺失素材'})).toBeDisabled();
@@ -606,7 +644,7 @@ describe('替换模板工作台', () => {
     fireEvent.click(screen.getByRole('button', {name: '下一步：确认替换'}));
     await screen.findByRole('dialog', {name: '核对替换任务'});
     expect(mock.prepare).toHaveBeenCalledTimes(2);
-    expect(mock.prepare.mock.calls.map(args => args[0].sourceId)).toEqual(['source-third', 'source-third']);
+    expect(mock.prepare.mock.calls.map(args => args[0].sourceLibraryId)).toEqual(['source-third', 'source-third']);
     expect(mock.prepare.mock.calls[0][0].requestId).toBe(mock.prepare.mock.calls[1][0].requestId);
   });
 
@@ -688,16 +726,18 @@ describe('替换模板工作台', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('素材上传失败：文件不合规');
     fireEvent.change(input, {target: {files: [file]}});
     expect(mock.upload).toHaveBeenCalledTimes(2);
-    const asset: ArchivedAsset = {id: 'uploaded', name: '原片.mp4', category: 'source', type: 'video',
-      url: '/file', previewUrl: null, duration: 2, hasAudio: true, width: 720, height: 1280,
-      path: 'library/source.mp4', sha256: 'hash', sizeBytes: 5, mimeType: 'video/mp4', createdAt: '2026-11-06T00:00:00Z'};
+    /* 资产库 v2 的出参：时长是 `durationSec`，没有 `category` / `path` / `sha256` */
+    const asset = {id: 'uploaded', name: '原片.mp4', kind: 'video' as const, origin: 'template_source',
+      url: '/api/v1/library/assets/uploaded/file', previewUrl: null, durationSec: 2, hasAudio: true,
+      width: 720, height: 1280, mimeType: 'video/mp4', sizeBytes: 5, ownerId: 'u_test',
+      visibility: 'personal' as const, state: 'active' as const, createdAt: '2026-11-06T00:00:00Z'};
     await act(async () => {mock.upload.mock.calls[1][1].onSuccess(asset);});
     expect(screen.getByText(/“原片.mp4”已保存到素材库/).closest('[role="status"]')).toBeInTheDocument();
     expect(screen.getByRole('button', {name: '选择模板：测试原片'})).toHaveAttribute('aria-pressed', 'false');
     fireEvent.click(screen.getByRole('button', {name: '选择人物：测试人物'}));
     fireEvent.click(screen.getByRole('button', {name: '下一步：确认替换'}));
     await vi.waitFor(() => expect(mock.prepare).toHaveBeenCalledOnce());
-    expect(mock.prepare.mock.calls[0][0].sourceId).toBe('uploaded');
+    expect(mock.prepare.mock.calls[0][0].sourceLibraryId).toBe('uploaded');
   });
 
   it('首次加载展示骨架，不把尚未读取的数据解释为空', () => {
@@ -828,8 +868,8 @@ describe('替换模板工作台', () => {
     const card = screen.getByRole('button', { name: '选择模板：十五秒原片' });
     expect(card).toBeEnabled();
     fireEvent.mouseEnter(card.closest('article')!);
-    expect(mock.mediaUrls).toContain('/api/v1/assets/source-15s/stream?v=hd-v2');
-    expect(mock.mediaUrls).not.toContain('/api/v1/assets/source-15s/stream');
+    expect(mock.mediaUrls).toContain('/api/v1/library/assets/source-15s/stream?v=hd-v2');
+    expect(mock.mediaUrls).not.toContain('/api/v1/library/assets/source-15s/file');
     expect(mock.mediaUrls).not.toContain('/api/v1/assets/source-15s/file');
   });
 
@@ -1048,5 +1088,17 @@ describe('替换模板工作台', () => {
     expect(screen.queryByRole('checkbox', {name: '盒内可见产品'})).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', {name: 'a'}));
     expect(screen.queryByRole('heading', {name: '替换范围'})).not.toBeInTheDocument();
+  });
+
+  it('原片列表走资产库一级入口：我的 = personal，公共 = team（含导入的存量原片）', () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', {name: '选择模板：测试原片'}));
+    const latest = () => mock.sourceQuery[mock.sourceQuery.length - 1];
+    /* `origin` 两值缺一不可：只认新传的会让并存期导入的存量原片整体消失 */
+    expect(latest()).toMatchObject({kind: 'video', library: 'personal',
+      origin: ['template_source', 'imported']});
+    fireEvent.click(screen.getByRole('button', {name: '公共原片'}));
+    /* 公共原片不是另一个可见性档，就是「团队可见」这一档 */
+    expect(latest()).toMatchObject({library: 'team'});
   });
 });

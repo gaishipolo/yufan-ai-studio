@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { isReplacementPackAvailable, replacementPackCoverId } from '@/entities/template/model/replacementPack';
+import { isReplacementPackAvailable } from '@/entities/template/model/replacementPack';
 import { useLibrarySelection } from '@/entities/library/api/library.queries';
 import { displayName } from '@/entities/library/model/types';
 import { ErrorState } from '@/shared/ui/ErrorState';
@@ -35,11 +35,10 @@ export function ReplacementPackPicker({model, hintId}: ReplacementPackPickerProp
       {!!packs.length && <div className="grid grid-cols-2 gap-3">{packs.map(pack => {
         const index = selectedIds.indexOf(pack.id);
         return <ReplacementPackCard key={pack.id} pack={pack}
-        cover={assets.data?.items.find(asset => asset.id === replacementPackCoverId(pack))}
         selected={multiple ? index >= 0 : packId === pack.id}
         selectionOrder={multiple && index >= 0 ? index + 1 : undefined}
         disabled={busy || !!error || (multiple && index < 0 && selectedIds.length >= slots)}
-        unavailable={!isReplacementPackAvailable(pack, assets.data?.items ?? [])}
+        unavailable={!isReplacementPackAvailable(pack)}
         label={template.short} onSelect={() => multiple ? toggleCharacterPack(pack.id) : setPackId(pack.id)} />;
       })}</div>}
 

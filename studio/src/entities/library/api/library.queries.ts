@@ -85,6 +85,10 @@ export function useLibrarySelection(params: {
   tagIds?: string[];
   page?: number;
   pageSize?: number;
+  /** 一级入口：模板工作台用 `personal` / `team` 表达「我的 / 公共」 */
+  library?: string;
+  /** 只挑某一类来源（原片 = `template_source` + `imported`） */
+  origin?: string[];
   /** 只有「从封装导入」这类场景要挑封装本身，默认 false（封装不能嵌套） */
   includePacks?: boolean;
   /** 暂不需要这份候选时先不发请求（例如封装编辑器正在编辑旧素材库的包） */
@@ -213,6 +217,21 @@ export function useUploadAsset() {
       kind: 'image' | 'audio' | 'text';
       onProgress?: (ratio: number) => void;
     }) => libraryApi.upload(file, kind, { onProgress }),
+    onSuccess: invalidate,
+  });
+}
+
+/** 原片视频上传：走后端 `/library/source-videos`，来源由服务端写死 `template_source`。 */
+export function useUploadSourceVideo() {
+  const invalidate = useInvalidateLibrary();
+  return useMutation({
+    mutationFn: ({
+      file,
+      onProgress,
+    }: {
+      file: File;
+      onProgress?: (ratio: number) => void;
+    }) => libraryApi.uploadSourceVideo(file, { onProgress }),
     onSuccess: invalidate,
   });
 }

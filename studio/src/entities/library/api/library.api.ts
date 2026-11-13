@@ -47,6 +47,24 @@ export interface LibraryListParams {
   pageSize?: number;
 }
 
+/**
+ * 选择器的筛选条件。
+ *
+ * `library` 与列表同一个枚举（`personal` / `group` / `team` / `all`）——模板
+ * 工作台的「我的原片 / 公共原片」就是 `personal` / `team`，不另造 `scope`。
+ * `origin` 用来只挑某一类来源：工作台的原片是 `template_source`（切换后新传）
+ * 加 `imported`（并存期导入的存量），漏一个就少一半候选。
+ */
+export type LibrarySelectionParams = {
+  kind?: string;
+  tagIds?: string[];
+  keyword?: string;
+  page?: number;
+  pageSize?: number;
+  library?: string;
+  origin?: string[];
+};
+
 /** 视图在 API 层就翻译成 `state` / `library`，不让调用方各拼一遍 */
 export function toRequestParams(params: LibraryListParams): Record<string, unknown> {
   const { view, ...rest } = params;
@@ -72,7 +90,7 @@ export const libraryApi = {
 
   facets: () => api.get<LibraryFacets>(`/library/facets`),
 
-  selection: (params: Omit<LibraryListParams, 'view' | 'sort'> & { includePacks?: boolean }) =>
+  selection: (params: LibrarySelectionParams & { includePacks?: boolean }) =>
     api.get<LibrarySelectionPage>(`/library/selection`, params, {
       paramsSerializer: REPEATED_ARRAY,
     }),
@@ -108,6 +126,32 @@ export const libraryApi = {
       file,
       {
         params: { filename: file.name, kind, sourceKey: options?.sourceKey },
+        headers: { 'Content-Type': 'application/octet-stream' },
+        timeout: 600_000,
+        onUploadProgress: (event) => {
+          if (!options?.onProgress) return;
+          const ratio = event.total ? event.loaded / event.total : 0;
+          options.onProgress(Math.min(1, ratio));
+        },
+      },
+    ),
+
+  /**
+   * 上传模板库的原片视频。
+   *
+   * 与 `upload` 分开的不是「类型不同」而是**来源不同**：这条走后端
+   * `/library/source-videos`，落库时 `origin=template_source`，模板库随后靠它
+   * 只挑原片；混进通用上传会让来源变成前端传参，写错没人发现。
+   */
+  uploadSourceVideo: (file: File, options?: {
+    sourceKey?: string;
+    onProgress?: (ratio: number) => void;
+  }) =>
+    api.post<LibraryAssetOut>(
+      `/library/source-videos`,
+      file,
+      {
+        params: { filename: file.name, sourceKey: options?.sourceKey },
         headers: { 'Content-Type': 'application/octet-stream' },
         timeout: 600_000,
         onUploadProgress: (event) => {

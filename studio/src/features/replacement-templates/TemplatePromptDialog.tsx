@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { ArchivedAsset, ReplacementPack, VideoTemplateOut } from '@/shared/api/schema';
+import type { SourceVideo } from './sourceVideo';
 import { Button, Modal } from '@/shared/ui';
 import { Can } from '@/shared/access/Can';
 import { MediaGallery, PromptMediaView } from './PromptMediaView';
@@ -9,7 +10,7 @@ import { TemplatePromptEditor } from './TemplatePromptEditor';
 import { fixedPackReferences, packReferencePayload, withFixedReferences, type FixedPackReference } from './fixedPackReferences';
 
 interface Props {
-  source?: ArchivedAsset;
+  source?: SourceVideo;
   scenePrompt?: string;
   templates: VideoTemplateOut[];
   packs: ReplacementPack[];

@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useArchivedMedia } from '@/entities/asset/api/archive.queries';
-import { archivePreviewUrl, archiveStreamUrl, type ArchivedAsset } from '@/entities/asset/model/archive.types';
+import { archivePreviewUrl, archiveStreamUrl } from '@/entities/asset/model/archive.types';
+import type { SourceVideo } from './sourceVideo';
 
-interface SourceHoverPreviewProps { video: ArchivedAsset }
+interface SourceHoverPreviewProps { video: SourceVideo }
 export function SourceHoverPreview({ video }: SourceHoverPreviewProps) {
   const { data, error } = useArchivedMedia(archivePreviewUrl(archiveStreamUrl(video.url)));
   const [url, setUrl] = useState('');

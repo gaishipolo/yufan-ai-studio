@@ -1,10 +1,9 @@
 import { useEffect, useRef, useState, type ChangeEvent } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { useArchiveAssets, useArchiveUpload, useArchiveSelection } from '@/entities/asset/api/archive.queries';
 import { useExecuteReplacement, usePrepareReplacement, useReplacementCatalog } from '@/entities/template/api/replacement.queries';
 import { isStateChanged } from '@/shared/api/types';
 import { useVideoTemplates } from '@/entities/video-template/api/videoTemplate.queries';
-import { useLibraryDetail } from '@/entities/library/api/library.queries';
+import { useLibraryDetail, useLibrarySelection, useUploadSourceVideo } from '@/entities/library/api/library.queries';
 import type { LibraryAssetOut, ReplacementChannelOut, VideoTemplateOut } from '@/shared/api/schema';
 import { hasForeignMustache } from '@/features/library/textRefs';
 import { replacementKind, type ReplacementKind, type ReplacementRun, type ReplacementInput } from '@/entities/template/model/replacement.types';
@@ -13,6 +12,7 @@ import { createId } from '@/shared/lib/id';
 import { isReplacementPackAvailable } from '@/entities/template/model/replacementPack';
 import { NEXT_ACTION, RETRY, TYPES } from './replacementOptions';
 import { videoTemplateLabel, videoTemplateScopes, videoTemplatesForSource } from './videoTemplateFunctions';
+import { sourceVideoOfLibrary, SOURCE_ORIGINS, type SourceVideo } from './sourceVideo';
 
 /** 编排页面动作；服务端记录由 Query 保存，仅持有选择和反馈等 UI 状态。 */
 export function useReplacementWorkbench() {
@@ -109,8 +109,23 @@ export function useReplacementWorkbench() {
   const sourcePage = Math.max(1, Number(params.get('sourcePage')) || 1);
   const setSourceScope = (scope: string) => patchParams({sourceScope: scope, sourcePage: '1'});
   const setSourcePage = (page: number) => patchParams({sourcePage: String(page)});
-  const assets = useArchiveAssets('source', {scope: sourceScope, keyword: search, page: sourcePage, pageSize: 24});
-  const linkedSource = useArchiveSelection(sourceId);
+  /* 原片列表改读资产库 v2：`origin` 只要「切换后新传的」与「并存期导入的」两类
+     ——按 `kind=video` 全取会把已生成的成片也列进来。入口用 `library`，与列表
+     同一套判据：`public` 就是团队可见（公共原片池），不是另一个可见性档。 */
+  const sourceSelection = useLibrarySelection({
+    kind: 'video',
+    origin: SOURCE_ORIGINS,
+    library: sourceScope === 'public' ? 'team' : 'personal',
+    keyword: search,
+    page: sourcePage,
+    pageSize: 24,
+  });
+  /* 深链（`?sourceId=`）带进来的原片可能不在当前页，单独取详情补齐卡片信息。 */
+  const sourceDetail = useLibraryDetail(sourceId);
+  const linkedSource: {data: SourceVideo | undefined; error: Error | null} = {
+    data: sourceDetail.data ? sourceVideoOfLibrary(sourceDetail.data) : undefined,
+    error: sourceDetail.error,
+  };
   const catalog = useReplacementCatalog();
   const channels: ReplacementChannelOut[] = catalog.data?.channels?.length
     ? catalog.data.channels
@@ -122,9 +137,19 @@ export function useReplacementWorkbench() {
   const videoTemplates = useVideoTemplates();
   const prepare = usePrepareReplacement();
   const execute = useExecuteReplacement();
-  const upload = useArchiveUpload();
+  const upload = useUploadSourceVideo();
   const template = TYPES.find(item => item.kind === kind) ?? TYPES[0];
-  const videos = assets.data?.items.filter(asset => asset.category === 'source' && asset.name.toLowerCase().includes(search.toLowerCase())) ?? [];
+  const videos: SourceVideo[] = (sourceSelection.data?.items ?? [])
+    .filter(asset => asset.name.toLowerCase().includes(search.toLowerCase()))
+    .map(sourceVideoOfLibrary);
+  /* 组件仍按 `assets.isLoading` / `assets.data.items` 读，形状在这里对齐一次，
+     免得每个卡片各判一遍「加载中」。 */
+  const assets = {
+    isLoading: sourceSelection.isPending,
+    error: sourceSelection.error,
+    refetch: sourceSelection.refetch,
+    data: sourceSelection.data ? {items: videos, total: sourceSelection.data.total ?? 0} : undefined,
+  };
   const currentDetail = catalog.data?.runs.find(run => run.id === detailId);
   const review = catalog.data?.runs.find(run => !run.deletedAt && run.id === reviewId);
   const busy = preparing || submitting || upload.isPending || batchPreparing;
@@ -210,7 +235,7 @@ export function useReplacementWorkbench() {
     if (current.includes(id)) {
       next = current.filter(selected => selected !== id);
     } else {
-      if (current.length >= slots || !isReplacementPackAvailable(packs.find(pack => pack.id === id), assets.data?.items ?? [])) return;
+      if (current.length >= slots || !isReplacementPackAvailable(packs.find(pack => pack.id === id))) return;
       next = [...current, id];
     }
     setExtraPackIds(next.slice(1));
@@ -276,7 +301,7 @@ export function useReplacementWorkbench() {
   const requestedVersion = params.get('packId') === packId ? params.get('packVersion') : null;
   const everyoneChosen = chosenPacks.length === slots;
   const templatePackReady = isTextScene || everyoneChosen
-    && chosenPacks.every(pack => isReplacementPackAvailable(pack, assets.data?.items ?? []))
+    && chosenPacks.every(pack => isReplacementPackAvailable(pack))
     && (!requestedVersion || String(selectedPack?.version) === requestedVersion);
   /* 资产库封装：只要拉到了成员就算选好；用途缺失与张数超限单独提示（见 `missing`），
      不在这里混成一个「请选择素材包」。 */
@@ -325,7 +350,10 @@ export function useReplacementWorkbench() {
         .filter((value): value is number => typeof value === 'number');
       /* 两路参考来源只能给一路：选了资产库封装就**不带** `referenceIds` / `packId`，
          带了会被服务端判成「同时给了两个来源」直接 400（那边刻意不做谁优先）。 */
-      const config: Omit<ReplacementInput, 'requestId'> = {kind, channel, target: target.trim(), sourceId,
+      /* 原片来源显式分流：v2 走 `sourceLibraryId`，`sourceId` 留空。两个都填
+         服务端会直接 400（那边刻意不做「谁优先」），所以这里不能两个都给。 */
+      const config: Omit<ReplacementInput, 'requestId'> = {kind, channel, target: target.trim(),
+        sourceId: '', sourceLibraryId: sourceId ?? '',
         referenceIds: libraryMode ? [] : references, wardrobeMode,
         ...(libraryMode ? {libraryPackId} : {}),
         packId: isTextScene || libraryMode ? null : packId || null,
@@ -391,8 +419,9 @@ export function useReplacementWorkbench() {
   }
   function handleUpload(event: ChangeEvent<HTMLInputElement>) {
       const file = event.target.files?.[0]; if (!file || busy) return;
-      upload.mutate({file, category: 'source'}, {onSuccess: asset => {
-        if (!asset.hasAudio || (asset.duration ?? 0) < 1 || (asset.duration ?? 0) > 15) {
+      upload.mutate({file}, {onSuccess: asset => {
+        const duration = asset.durationSec ?? 0;
+        if (!asset.hasAudio || duration < 1 || duration > 15) {
           report('success', `“${asset.name}”已保存，但不符合 1–15 秒且含音轨的要求，未加入选择。请换一条合规原片。`);
           return;
         }
