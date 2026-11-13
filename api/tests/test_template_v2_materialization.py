@@ -481,6 +481,114 @@ def test_prepare_accepts_v2_source_video(client) -> None:
         asyncio.run(_drop_library_asset(source_id))
 
 
+def test_prepare_accepts_pack_made_of_v2_references(client) -> None:
+    """整包都是 v2 图的封装：prepare 要按发布版本的空间取字节，不能回旧表找。
+
+    这一条是「资产库封装能被模板调用」的落点。`referenceIds` 里装的其实是
+    `frozen.reference_ids` —— 形状与 v1 id 完全一样，只有
+    `template_pack_versions.reference_ids_space` 说得清该去哪张表取。判错方向是
+    静默的：报「参考图不存在或已删除」，用户以为自己选的封装坏了。
+    """
+    headers = login(client)
+    source = upload(client, "v2-整包-原片.mp4", "source", video_bytes(2))
+    content = png_bytes((80, 120))
+    key = f"library/blobs/ba/{uuid.uuid4().hex}.png"
+    asyncio.run(get_storage().put(key, content, "image/png"))
+    library_id = asyncio.run(_library_asset(key, content, width=80, height=120))
+    pack = asyncio.run(
+        add_pack(
+            kind="product",
+            reference_ids=[library_id],
+            roles=["front"],
+            scopes=["worn"],
+            asset_id_space="v2",
+        )
+    )
+    try:
+        response = client.post(
+            f"{API}/templates/replacement-runs",
+            headers=headers,
+            json={
+                "requestId": uuid.uuid4().hex,
+                "kind": "product",
+                "sourceId": source["id"],
+                "packId": pack.id,
+                "packVersion": 1,
+                "replacementScope": "人物上身穿着",
+            },
+        )
+        assert response.status_code == 201, response.text
+        run = response.json()["data"]
+        inputs = run_path(run["id"]) / "inputs"
+        archived = [path for path in inputs.iterdir() if path.is_file()]
+        assert any(path.read_bytes() == content for path in archived), sorted(
+            path.name for path in archived
+        )
+        # 包内参考图不是固定引用：它不该出现在 `fixedReferenceTokens` 里，
+        # 否则编译器会把它当 `{{Mixed N}}` 再插一遍，编号整体错位。
+        spec = _run_spec(run["id"])
+        assert not spec.get("fixedReferenceTokens")
+        spaces = dict(asyncio.run(_run_inputs(run["id"])))
+        assert spaces[library_id] == "v2"
+        assert spaces[source["id"]] == "v1"
+        assert asyncio.run(_gap(run["id"])) is None
+    finally:
+        asyncio.run(drop_pack(pack.id))
+        asyncio.run(get_storage().delete(key))
+        asyncio.run(_drop_library_asset(library_id))
+
+
+def test_v2_pack_with_trashed_reference_is_rejected(client) -> None:
+    """发布后素材进了回收站：prepare 当场拒绝，不能拿一条已删除的图去出片。
+
+    判据是 `state == active`（生命周期），不是再写一套共享规则——可读性已经由
+    `readable_ids()` 放行（本人永远可读自己的回收站条目），所以这条必须单独拦。
+    """
+    headers = login(client)
+    source = upload(client, "v2-回收站-原片.mp4", "source", video_bytes(2))
+    content = png_bytes((40, 40))
+    key = f"library/blobs/bb/{uuid.uuid4().hex}.png"
+    asyncio.run(get_storage().put(key, content, "image/png"))
+    library_id = asyncio.run(_library_asset(key, content, width=40, height=40))
+    pack = asyncio.run(
+        add_pack(
+            kind="product",
+            reference_ids=[library_id],
+            roles=["front"],
+            scopes=["worn"],
+            asset_id_space="v2",
+        )
+    )
+
+    async def trash() -> None:
+        async with get_session_factory()() as session:
+            row = await session.get(LibraryAsset, library_id)
+            assert row is not None
+            row.state = "trash"
+            await session.commit()
+
+    try:
+        asyncio.run(trash())
+        response = client.post(
+            f"{API}/templates/replacement-runs",
+            headers=headers,
+            json={
+                "requestId": uuid.uuid4().hex,
+                "kind": "product",
+                "sourceId": source["id"],
+                "packId": pack.id,
+                "packVersion": 1,
+                "replacementScope": "人物上身穿着",
+            },
+        )
+        assert response.status_code == 400, response.text
+        assert "有效的图片" in response.json()["message"]
+    finally:
+        asyncio.run(drop_pack(pack.id))
+        asyncio.run(get_storage().delete(key))
+        asyncio.run(_drop_library_asset(library_id))
+
+
 def test_source_space_is_decided_by_field_name_only(client) -> None:
     """两套原片字段互斥、缺一个就拒；v2 片还得是带音轨的 1–15 秒视频。"""
     headers = login(client)

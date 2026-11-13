@@ -107,16 +107,20 @@ RunMedia: TypeAlias = "StoredMedia | StagedMedia"
 
 
 class ResolvedInputs(NamedTuple):
-    """`_validate_inputs()` 的结果：**原片恰好一个来源**，参考图仍只有 v1。
+    """`_validate_inputs()` 的结果：**原片恰好一个来源**，参考图按空间二选一。
 
-    原片为什么留两个字段而不是合成一个 `RunMedia`：v2 的字节要先落进工作区才有
-    本地路径，而工作区在 `create_workspace()` 之后才存在。校验阶段只能先交回
-    「从哪取」（`LibraryAssetRef`），落盘与合并放在 prepare 的 try 块里。
+    为什么不能合成一个 `RunMedia` 列表：v2 的字节要先落进工作区才有本地路径，
+    而工作区在 `create_workspace()` 之后才存在。校验阶段只能先交回「从哪取」
+    （`LibraryAssetRef`），落盘与合并放在 prepare 的 try 块里，排序用的仍是一份
+    `RunMedia` 列表（`refs` / `refs_v2` 互斥，不会同时非空）。
     """
 
     source: StoredMedia | None
     source_v2: LibraryAssetRef | None
     refs: list[StoredMedia]
+    #: 封装发布版本自己声明的 v2 参考图。它们不是「用户临时挑的散图」，
+    #: 而是 `frozen.reference_ids` 那一批，顺序即 `{{Mixed N}}` 的编号顺序。
+    refs_v2: list[LibraryAssetRef]
 
 # 准备是全模块最重的 IO 端点（物化素材 + Node 编译 + 复制运行时），却只靠日志
 # 记录成败；失败率高时没有任何数字能看出来。命名沿用本模块既有的 `replacement_`
@@ -374,8 +378,15 @@ class ReplacementService:
             pack_owner,
             scope_required=video_template is None,
             pack_owners=pack_owners,
+            # 空间只从「所选封装的那份冻结版本」来：`payload.referenceIds` 已经在
+            # 上面被 `frozen.reference_ids` 覆盖，两个字段形状一样，判不出谁是谁。
+            refs_space=(
+                (frozen.reference_ids_space or ASSET_ID_SPACE_V1)
+                if frozen is not None
+                else ASSET_ID_SPACE_V1
+            ),
         )
-        refs = inputs.refs
+        refs: list[RunMedia] = list(inputs.refs)
         from modules.template.template_references import resolve_pack_references
         from modules.template.video_template_schema import VideoTemplatePackReferenceIn
 
@@ -387,7 +398,8 @@ class ReplacementService:
         )
         # v2 固定引用与 v1 一样占参考图名额：两者最终都进 mixedList，按图数上限算，
         # 不能因为「来源不同」就多给额度。
-        if len(refs) + len(fixed_refs) + len(fixed_refs_v2) > MAX_REFERENCE_IMAGES:
+        wanted = len(refs) + len(inputs.refs_v2) + len(fixed_refs) + len(fixed_refs_v2)
+        if wanted > MAX_REFERENCE_IMAGES:
             # 保存端按「封装时那个包」的图数校验，这里按「本次所选包」算，
             # 两者可能不同；报错必须说清怎么自助恢复，否则用户只会看到模板明明存下了却跑不了。
             raise BadRequest(
@@ -443,6 +455,10 @@ class ReplacementService:
         # 固定引用在 `{{Mixed N}}` 里的编号与来源空间无关，这里合成一张 token 表；
         # 落库那一步（`replace_inputs`）也要用它，所以放在 try 外面。
         fixed_media: dict[str, RunMedia] = dict(fixed_refs)
+        # 固定引用的键就是 `{{Mixed N}}` token；包内参考图没有 token（编号由
+        # `_media_in_mixed_order` 按用途排出），所以单独加前缀，免得被当成固定引用
+        # 塞进 `spec["fixedReferenceTokens"]`。
+        pack_tokens = {row.id: f"packref:{row.id}" for row in inputs.refs_v2}
         try:
             # v2 素材的字节在对象存储里：先落到工作区，之后与 v1 走同一条归档流水线
             # （`storage.link` 优先硬链接，同盘零拷贝）。原片也走这里——它一样要有
@@ -450,12 +466,17 @@ class ReplacementService:
             pending: dict[str, LibraryAssetRef] = dict(fixed_refs_v2)
             if inputs.source_v2 is not None:
                 pending[SOURCE_TOKEN] = inputs.source_v2
+            pending.update({pack_tokens[row.id]: row for row in inputs.refs_v2})
             staged = await stage_library_refs(path, pending)
             # 原片那个 token 只用于「本次取哪份字节」，**不能进固定引用表**：
             # 它会被写进 `spec["fixedReferenceTokens"]` 并交给编译器当 `{{Mixed N}}` 用。
             fixed_media.update(
-                {token: item for token, item in staged.items() if token != SOURCE_TOKEN}
+                {token: item for token, item in staged.items() if token in fixed_refs_v2}
             )
+            # 包内 v2 参考图换成已落地的副本，顺序与 `frozen.reference_ids` 一致：
+            # 后面的用途/描述是按位置对齐 `frozen.bindings` 取的。
+            if inputs.refs_v2:
+                refs = [staged[pack_tokens[row.id]] for row in inputs.refs_v2]
             source: RunMedia | None = staged.get(SOURCE_TOKEN) or inputs.source
             if source is None:  # pragma: no cover - `_validate_inputs` 已保证二选一
                 raise BadRequest("请选择要替换的原片")
@@ -821,20 +842,28 @@ class ReplacementService:
         *,
         scope_required: bool = True,
         pack_owners: set[str] | None = None,
+        refs_space: str = ASSET_ID_SPACE_V1,
     ) -> ResolvedInputs:
-        """校验原片与参考图。**原片按字段名判空间**，参考图这一轮仍只有 v1。
+        """校验原片与参考图。**两者都按来源判空间，不靠「先查 v2 再回退 v1」。**
 
         原片是两套字段（`sourceId` / `sourceLibraryId`），不做「谁优先」：两套 id
         形状相同，允许同时填再定优先级，等于让一次手滑的请求悄悄换掉整条片子。
-        参考图的 v2 通道属于 2.5d（工作台选图），与这里的原片不是同一件事。
+
+        参考图没有独立字段：`referenceIds` 里装的是**所选封装的发布版本**
+        （`prepare` 已经用 `frozen.reference_ids` 覆盖过），所以空间只能从
+        `frozen.reference_ids_space` 传进来。缺了它就会拿 v2 的 id 去旧素材表查，
+        报「参考图不存在或已删除」——一条本来能跑的任务被自己的空间标记挡死。
         """
         if payload.source_id and payload.source_library_id:
             raise BadRequest("同一请求不能同时使用 sourceId 与 sourceLibraryId")
         if not payload.source_id and not payload.source_library_id:
             raise BadRequest("请选择要替换的原片")
+        if refs_space not in (ASSET_ID_SPACE_V1, ASSET_ID_SPACE_V2):
+            raise BadRequest("参考图来源无法识别，请重新选择素材包")
         source_v2: LibraryAssetRef | None = None
         source: StoredMedia | None = None
         refs: list[StoredMedia] = []
+        refs_v2: list[LibraryAssetRef] = []
         lookup = get_asset_lookup()
         # v1 原片与参考图同表，一次批量查完；v2 原片在另一张表，参考图再单独查一次。
         media: Mapping[str, StoredMedia] = {}
@@ -875,18 +904,35 @@ class ReplacementService:
                 raise BadRequest("原片需为带音轨的完整 MP4，时长 1–15 秒；不会自动截断")
         if len(set(payload.reference_ids)) != len(payload.reference_ids):
             raise BadRequest("参考素材不能重复")
-        if payload.reference_ids and not media:
-            media = await lookup.get_many(self.session, list(payload.reference_ids))
-        allowed_owners = pack_owners or {pack_owner}
-        for asset_id in payload.reference_ids:
-            ref_row = media.get(asset_id)
-            if ref_row is None or ref_row.deleted_at:
-                raise BadRequest("参考图不存在或已删除")
-            if ref_row.owner_id not in allowed_owners:
-                raise BadRequest("参考图不属于该素材包")
-            if ref_row.category != payload.kind or ref_row.type != "image":
-                raise BadRequest("参考图分类需与人物/产品/场景替换类型一致")
-            refs.append(ref_row)
+        if refs_space == ASSET_ID_SPACE_V2:
+            # v2 的判据只有三条：在当前主体可读范围内、仍是有效（active）的、
+            # 确实是图片。**不查分类**：v2 没有 `category`，角色/场景/产品由封装时
+            # 的用途绑定表达；反推素材类型会把「别人的封装借给我用」判死。
+            assets_v2 = await resolve_assets(
+                self.session,
+                [(asset_id, ASSET_ID_SPACE_V2) for asset_id in payload.reference_ids],
+                actor=CurrentUser(id=owner, name=owner),
+            )
+            for asset_id in payload.reference_ids:
+                row = assets_v2.v2.get(asset_id)
+                if row is None or asset_id not in assets_v2.readable_v2:
+                    raise BadRequest("参考图不存在或已删除")
+                if row.state != LibraryAssetState.ACTIVE or row.kind != LibraryAssetKind.IMAGE:
+                    raise BadRequest("参考图需为资产库中有效的图片")
+                refs_v2.append(row)
+        else:
+            if payload.reference_ids and not media:
+                media = await lookup.get_many(self.session, list(payload.reference_ids))
+            allowed_owners = pack_owners or {pack_owner}
+            for asset_id in payload.reference_ids:
+                ref_row = media.get(asset_id)
+                if ref_row is None or ref_row.deleted_at:
+                    raise BadRequest("参考图不存在或已删除")
+                if ref_row.owner_id not in allowed_owners:
+                    raise BadRequest("参考图不属于该素材包")
+                if ref_row.category != payload.kind or ref_row.type != "image":
+                    raise BadRequest("参考图分类需与人物/产品/场景替换类型一致")
+                refs.append(ref_row)
         texts = (payload.target, payload.notes, payload.replacement_scope)
         if any("{{" in text or "}}" in text for text in texts):
             raise BadRequest("请使用普通文字，不要手写素材引用标记")
@@ -894,7 +940,9 @@ class ReplacementService:
             scope_required and payload.kind == "product" and not payload.replacement_scope.strip()
         ):
             raise BadRequest("请填写目标名称并选择产品替换范围")
-        return ResolvedInputs(source=source, source_v2=source_v2, refs=refs)
+        return ResolvedInputs(
+            source=source, source_v2=source_v2, refs=refs, refs_v2=refs_v2
+        )
 
     def _output_available(self, run: ReplacementRun) -> bool:
         """成片还在不在：归档存储优先，工作区兜底（与 `output()` 同一套判断）。
