@@ -1633,17 +1633,6 @@ def _materialize_inputs(
         # finally 而不是 else：超时与失败也要能看到「编译卡了多久」，
         # 那正是需要排查的那一次。
         COMPILE_SECONDS.observe(perf_counter() - compile_started)
-    if (
-        video_template is None
-        and payload.kind == "character"
-        and payload.wardrobe_mode == "reference"
-    ):
-        compiled.prompt = compiled.prompt.replace("；提供同片原音轨", "；原片内嵌音轨提供声音")
-        compiled.prompt = compiled.prompt.replace(
-            "声音：为完整原片音轨", "声音：原片内嵌音轨为完整原片音轨"
-        )
-        compiled.compiler_version += "+embedded-audio-v1"
-
     if payload.channel != "libtv":
         from core.prompt_refs import translate_prompt
 

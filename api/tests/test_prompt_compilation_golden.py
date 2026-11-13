@@ -236,3 +236,96 @@ def test_scene_text_failure_surfaces_as_bad_request() -> None:
     spec["fixedReferenceTokens"] = ["{{Product}}"]
     with pytest.raises(BadRequest):
         compile_prompt(spec, node=_node())
+
+
+# --------------------------------------------------------------------------- #
+# `wardrobe_mode=reference` 的「内嵌音轨」两句
+#
+# 原片自带音轨时没有 `source_audio` 参考，`tokens('source_audio')` 是空串，整段文案会
+# 出现「；提供同片原音轨」「声音：为完整原片音轨」这种病句。以前是 Python 拿两次
+# `str.replace` 去修：模板文案一改，替换静默不命中，病句照样发出去，而
+# `compiler_version` 仍标着 `+embedded-audio-v1`——等于盖了个假章。
+# 现在这两句由编译器按「有没有音轨参考」各写一份，用例锁的是「字节没变」。
+# --------------------------------------------------------------------------- #
+CHARACTER_REFERENCE_PROMPT_SHA256 = (
+    "2f9c11626aedd6ba7f5b77b706234ebf41901307a155c47b3a6729265e0687f9"
+)
+
+
+def character_spec(*, audio: bool, fixed_prompt: str | None = None) -> dict[str, Any]:
+    references: list[dict[str, Any]] = [
+        {
+            "id": "clip",
+            "role": "source_video",
+            "type": "video",
+            "file": "inputs/reference-video.mp4",
+        },
+        {
+            "id": "who",
+            "role": "identity",
+            "type": "image",
+            "file": "inputs/reference-2.png",
+        },
+    ]
+    if audio:
+        references.append(
+            {
+                "id": "voice",
+                "role": "source_audio",
+                "type": "audio",
+                "file": "inputs/reference-3.mp3",
+            }
+        )
+    spec: dict[str, Any] = {
+        "task": "character",
+        "duration": 5,
+        "aspect_ratio": "9:16",
+        "wardrobe_mode": "reference",
+        "references": references,
+        "variables": {"source_subject": "原片主角"},
+    }
+    if fixed_prompt is not None:
+        spec["fixed_prompt"] = fixed_prompt
+    return spec
+
+
+def _compile_ok(spec: dict[str, Any]) -> dict[str, Any]:
+    result = compile_raw(spec)
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout)
+
+
+def test_character_reference_without_audio_writes_the_sentence_in_the_compiler() -> None:
+    """没有音轨参考：两句话由编译器直出，整段文案的摘要与改造前逐字相同。"""
+    compiled = _compile_ok(character_spec(audio=False))
+    prompt = compiled["prompt"]
+    assert hashlib.sha256(prompt.encode("utf-8")).hexdigest() == (
+        CHARACTER_REFERENCE_PROMPT_SHA256
+    )
+    assert "；原片内嵌音轨提供声音。" in prompt
+    assert "声音：原片内嵌音轨为完整原片音轨，沿用原台词" in prompt
+    # 病句不能再出现——它现在是「替换没命中」的唯一可见症状
+    assert "；提供同片原音轨" not in prompt
+    assert "声音：为完整原片音轨" not in prompt
+    assert compiled["compiler_version"] == "1.0.0+embedded-audio-v1"
+
+
+def test_character_reference_with_audio_keeps_the_reference_sentence() -> None:
+    """有音轨参考：句子里点的是 `source_audio` 那个 token，不该被改写成「内嵌」。"""
+    compiled = _compile_ok(character_spec(audio=True))
+    prompt = compiled["prompt"]
+    assert "；{{Mixed 3}}提供同片原音轨。" in prompt
+    assert "声音：{{Mixed 3}}为完整原片音轨，沿用原台词" in prompt
+    assert "内嵌音轨" not in prompt
+    assert compiled["compiler_version"] == "1.0.0"
+
+
+def test_embedded_audio_marker_is_not_stamped_under_a_fixed_prompt() -> None:
+    """固定提示词整段覆盖文案时不许标「内嵌音轨改写」：那段文案根本没发出去。"""
+    compiled = _compile_ok(
+        character_spec(audio=False, fixed_prompt="对 {{Mixed 1}} 做替换。")
+    )
+    assert compiled["prompt"] == "对 {{Mixed 1}} 做替换。"
+    assert "embedded-audio-v1" not in compiled["compiler_version"]
+    assert compiled["compiler_version"].endswith("+fixed-video-template-v1")
+
