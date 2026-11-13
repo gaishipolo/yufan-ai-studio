@@ -1798,3 +1798,62 @@ downgrade 直接丢列：标记可重建（`v1` 是唯一初始值），而把 `
 
 **踩到的两个小坑（记下来免得下次再查）**：`library_pack_items.position` 从 **1** 开始
 （不是 0）；换标签走 `PATCH /library/assets/{id}` 的 `tagIds`，没有 `/assets/{id}/tags` 子资源。
+
+### 24.5 步 1：`seed.py` 去裸 SQL + 加守卫（2026-11-13 完成）
+
+`modules/template/seed.py` 原来是一条
+`SELECT id FROM assets WHERE owner_id = ... AND category = ... AND type = 'image'`。
+换成 `LibraryLookup.find_ids(session, actor, kind=IMAGE, limit=5)`。
+
+**为什么不能只是「换条 SQL」**：v2 没有 `category`（§22：分类从素材行移到封装时的槽位
+绑定），所以「按 category 取 3 张人物图 / 2 张产品图」这件事在新模型里**没有对应表达**。
+落地的口径是：取 5 张图，前 3 张归人物包、后 2 张归产品包。演示数据要证明的是
+「有两种封装形态」，不是「这些图属于某个产品」——为了演示去给素材硬塞分类标签，
+等于把刚删掉的概念用标签重建一遍。
+
+**演示封装的 `asset_id_space` 必须显式写 `v2`**。默认值是 `CURRENT_ASSET_ID_SPACE`
+（此刻还是 `v1`），所以**知道自己在用 v2 资产的地方必须显式声明**。漏写的话，
+等 2.5c 把默认值翻成 v2 之前，这批演示数据会拿 v2 的 id 去旧表里找。这条由
+`tests/test_template_seed.py` 钉住。
+
+**新增守卫 `test_seed_hooks_do_not_query_other_modules_tables`**：扫所有
+`modules/*/seed.py` 里的字符串字面量，按 `FROM|JOIN|UPDATE|INTO <表名>` 提取表名，
+再按 ORM 类所在包判定「这张表归谁」，跨模块即红。
+
+三个实现细节值得记：
+1. **必须排除 docstring**。本仓库的 docstring 会把旧写法当反例引用
+   （`seed.py` 自己就写着 `SELECT id FROM assets ...` 解释为什么删掉它），
+   不排除会把「解释为什么不该这么写」判成「正在这么写」。
+2. **表归属按 `mapper.class_.__module__` 判，不按表名前缀猜**。
+   `template_packs`→`template`、`video_tasks`→`task` 前缀猜法恰好都对，
+   但 `library_asset_generation` 一类跨概念命名会立刻猜错。
+3. 断言前先校验 `owners` 非空——ORM 没加载时映射为空，这条守卫会永远绿。
+
+**⚠️ 留了一个已知行为变化，必须在步 2.5d 补掉**：`modules/library` **没有 seed 钩子**，
+所以 `app seed` 跑完 v2 `library_assets` 是空的，模板演示数据只会种出草稿封装
+（原来能种出「已发布的人物包 + 待补范围的产品草稿」）。这不是 bug 而是阶段错位：
+
+- 修法不是「回退去读 v1」，而是给 `modules/library` 加一个 `seed_order=25` 的 seed 钩子；
+- 但它需要一个**设计决定**：v2 的演示素材要不要落真实字节。`core/demo.py` 明确写着
+  「演示数据不落真实字节：`app seed` 不该产生存储写入」，而 v2 的 `LibraryAsset`
+  没有「远端占位地址」字段（远端封面不进 v2，见 `models.py:55`）。没有字节的行
+  在列表 / 详情里是裂图，比没有行更糟。
+- 所以这件事归 2.5d（与前端数据源切换同批），不在步 1 里临时造一个半成品。
+- 过渡期不是静默的：`_asset_ids()` 取到空列表时会打
+  `资产库 v2 没有可用的演示图片，模板演示数据只种草稿封装` 的 WARNING。
+
+**验证**
+
+- `select_tests.py --print` 判 **targeted**（3 个文件：`seed.py` / `test_architecture.py` /
+  新增 `test_template_seed.py`）→ 39 个测试文件 **450 passed / 56.17s**。
+- 新增 `tests/test_template_seed.py` **2 passed**：5 张 v2 图 → 两个封装、5 条参考行
+  全标 `v2`、发布版本也标 `v2`；空库只种草稿且不抛。
+- **反向验证 1**：往 `seed.py` 塞一条 `SELECT id FROM library_assets` → seed 守卫红
+  （`modules/template/seed.py 直接查了模块 library 的表 library_assets`）。
+- **反向验证 2**：删掉 `_bind` 里的 `asset_id_space=ASSET_ID_SPACE_V2` →
+  `assert ['v1',...] == ['v2',...]` 红。
+- `ruff check src tests` 通过；`mypy --platform win32 src` 291 files 无问题。
+
+**踩到的坑（写下来免得下次再查）**：`find_ids` 的排序是 `(created_at, id)`，同一瞬间
+插入的行按随机 hex id 决胜——**不能断言「前 3 张就是我先插的那 3 张」**。测试账号也要
+每次 `suffix()` 唯一，否则第二次跑会挑到上一次的数据。

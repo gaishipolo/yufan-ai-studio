@@ -801,6 +801,94 @@ def test_library_reference_sources_are_complete_after_discovery() -> None:
 
 
 # --------------------------------------------------------------------------- #
+# 演示数据：`seed.py` 不许裸查别人的表
+# --------------------------------------------------------------------------- #
+#: 一条 SQL 里「后面跟表名」的关键字。只用于扫字符串字面量，不解析方言。
+_SQL_TABLE = re.compile(r"\b(?:FROM|JOIN|UPDATE|INTO)\s+([a-z_][a-z0-9_]*)", re.IGNORECASE)
+
+
+def _table_owners() -> dict[str, str]:
+    """表名 → 拥有它的模块名（`library_assets` → `library`）。
+
+    「拥有」按 ORM 类所在的包判定，而不是按表名前缀猜：`template_packs` 归
+    `template`、`video_tasks` 归 `task`，前缀猜法在这两个上恰好都对，但
+    `library_asset_generation` 一类跨概念的命名会立刻猜错。
+    """
+    from db import registry
+    from db.base import Base
+
+    registry.load_all_models()
+    owners: dict[str, str] = {}
+    for mapper in Base.registry.mappers:
+        module = mapper.class_.__module__
+        if not module.startswith("modules."):
+            continue
+        owners[mapper.local_table.name] = module.split(".")[1]
+    return owners
+
+
+def _docstring_nodes(tree: ast.AST) -> set[int]:
+    """所有 docstring 常量节点的 id。
+
+    必须排除：本仓库的 docstring 会把「旧写法」当反例引在注释里
+    （`seed.py` 就写着 `SELECT id FROM assets ...` 解释为什么删掉它）。
+    不排除会把「解释为什么不该这么写」判成「正在这么写」。
+    """
+    found: set[int] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            continue
+        body = getattr(node, "body", None)
+        if not body:
+            continue
+        first = body[0]
+        if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant):
+            found.add(id(first.value))
+    return found
+
+
+def test_seed_hooks_do_not_query_other_modules_tables() -> None:
+    """`modules/*/seed.py` 里不许出现「读别的模块的表」的 SQL。
+
+    演示数据是模块之间**唯一**允许「随便造数据」的地方，所以它最容易长成
+    「一条 SELECT 省事」。代价是：那个模块改名 / 换库 / 下线时，seed 静默失效
+    （`app seed` 照常 exit 0，只是少了一半演示数据），而且删掉一个模块会让
+    另一个模块的 seed 直接崩。
+
+    `modules/template/seed.py` 曾经用 `SELECT id FROM assets WHERE category = ...`
+    读素材库 v1——v2 没有 `category`，那条 SQL 在切换后会「查得动但查不到」，
+    比报错更难发现。现在它走 `LibraryLookup.find_ids()`。
+
+    真要读别人的数据就加端口（`core/ports/`），别写 SQL。
+    """
+    owners = _table_owners()
+    assert owners, "表归属映射为空：ORM 模型没加载，这条守卫会永远绿"
+
+    problems: list[str] = []
+    for path in sorted(MODULES_DIR.glob("*/seed.py")):
+        module = path.parent.name
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        skip = _docstring_nodes(tree)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
+                continue
+            if id(node) in skip:
+                continue
+            for table in _SQL_TABLE.findall(node.value):
+                owner = owners.get(table)
+                if owner is not None and owner != module:
+                    problems.append(
+                        f"{path.relative_to(SRC).as_posix()} 直接查了模块 {owner} 的表 {table}"
+                    )
+    assert not problems, (
+        "演示数据绕过端口直查别人的表：\n"
+        + "\n".join(f"  - {item}" for item in problems)
+        + "\n改用对应的注入口（`core/ports/`）；端口缺能力就先扩端口，"
+        "别在 seed 里写 SQL。"
+    )
+
+
+# --------------------------------------------------------------------------- #
 # 事务边界
 # --------------------------------------------------------------------------- #
 def test_routers_do_not_manage_transactions() -> None:
