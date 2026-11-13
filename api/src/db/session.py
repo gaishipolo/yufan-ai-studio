@@ -106,13 +106,39 @@ async def get_session() -> AsyncIterator[AsyncSession]:
             raise
 
 
-async def init_db(*, drop: bool = False) -> None:
-    """开发/测试用：按 ORM 元数据建表。生产环境请执行 Alembic 迁移。"""
+async def init_db(*, drop: bool = False, force: bool = False) -> None:
+    """按 ORM 元数据建表。**只在没被迁移管过的库上做。**
+
+    历史上这里无条件 `create_all`，于是同一个库被两条建表路径同时管：
+    ORM 抢先建出迁移链里还没有的表 → `alembic_version` 落后 → 之后
+    `alembic upgrade head` 在 `create_table` 处撞 `DuplicateTableError`，
+    整条迁移链卡死，而卡住的位置离「当初是谁建的这张表」十万八千里。
+
+    现在按 `db.migrations.plan_schema_bootstrap()` 的判据分流：
+
+    - 库里有 `alembic_version` → 归 Alembic 管，**不建表**。这时正确的动作
+      是跑迁移（由调用方决定），而不是让 ORM 建表——那正是把偏差造出来的动作。
+    - 库里没有 `alembic_version` → 从未被迁移管过（测试库、一次性开发库），
+      按 ORM 建表。
+
+    `force=True` 跳过判据（`app init-db` 这条显式命令用）——用户明确要求
+    「按 ORM 建表」时不该被静默跳过；但跳过之后这个库就归 ORM 管了，
+    混着来的后果由调用方自己负责。
+
+    `drop=True` 同样无视判据：删表是不可逆操作，调用方既然点名了就照做。
+    """
     from db import registry
+    from db.migrations import SchemaAction, plan_schema_bootstrap
 
     registry.load_all_models()
 
     engine = get_engine()
+    if not force and not drop:
+        plan = await plan_schema_bootstrap(engine)
+        if plan.action != SchemaAction.CREATE_ALL:
+            logger.info("跳过 ORM 建表：%s", plan.reason)
+            return
+
     async with engine.begin() as conn:
         if drop:
             await conn.run_sync(Base.metadata.drop_all)

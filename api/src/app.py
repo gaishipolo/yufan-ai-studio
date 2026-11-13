@@ -91,6 +91,50 @@ def load_extension_points() -> None:
     from generation import worker as _generation_worker  # noqa: F401
 
 
+async def _bootstrap_dev_schema() -> None:
+    """开发/测试环境的建表：按判据分流，只有一条建表路径。
+
+    以前这里是 `await init_db()`，而 `init_db()` 无条件 `create_all`。后果是
+    同一个库被两条路径同时管：ORM 抢先建出迁移链里还没有的表 →
+    `alembic_version` 落后 → 之后 `alembic upgrade head` 在 `create_table`
+    处撞 `DuplicateTableError`，整条迁移链卡死。本仓为此手工核对过 7 个
+    迁移才把本机库对齐。
+
+    现在按 `db.migrations.plan_schema_bootstrap()` 分三种情况：
+
+    - 库里没有 `alembic_version`（从未被迁移管过）→ 按 ORM 建表；
+    - 库归迁移管且落后 head → **跑迁移**（不是 create_all，那正是造偏差的动作）；
+    - 库已在 head / 状态不明确 → 什么都不做。
+
+    **迁移失败不阻断启动**：开发环境里迁移写错了还要改代码继续调，
+    起不来的话连改都改不了。失败会记 error 日志，`app doctor` 也会报出来。
+    """
+    from db.migrations import SchemaAction, plan_schema_bootstrap, upgrade_to_head
+    from db.session import get_engine
+
+    engine = get_engine()
+    plan = await plan_schema_bootstrap(engine)
+    if plan.action == SchemaAction.CREATE_ALL:
+        logger.info("按 ORM 元数据建表：%s", plan.reason)
+        await init_db()
+        return
+    if plan.action == SchemaAction.NONE:
+        logger.info("schema 维持现状：%s", plan.reason)
+        return
+
+    logger.info("升级数据库：%s", plan.reason)
+    try:
+        await asyncio.to_thread(upgrade_to_head)
+    except Exception as exc:  # noqa: BLE001 - 迁移失败不该让开发环境起不来
+        logger.error(
+            "自动迁移失败：%s: %s。请手工执行 `alembic upgrade head` 看清原因。",
+            type(exc).__name__,
+            exc,
+        )
+        return
+    logger.info("数据库已升到 head（%s）", plan.head)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
@@ -117,7 +161,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     logger.info("提交预算预检：%s", precheck_submit_budgets() or "无驱动声明")
 
     if settings.app_env != "prod":
-        await init_db()
+        await _bootstrap_dev_schema()
 
     # 启动恢复的唯一入口：模块自带的 startup 与框架恢复都在里面执行。
     # `worker_enabled` 是动作级约束（本实例不消费队列 → 不做恢复），

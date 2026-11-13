@@ -1,7 +1,7 @@
 """命令行入口：`app <command>`。
 
 app serve                          # 启动开发服务器
-app init-db                        # 按 ORM 元数据建表
+app init-db [--force]             # 建表：按判据走（归迁移管的库改跑迁移；--force 无条件建表）
 app seed [--reset]                 # 灌演示数据
 app create-admin --username admin  # 创建/修复超级管理员（生产首启必跑一次）
 app modules                        # 列出已发现的模块与权限点
@@ -56,11 +56,33 @@ def _cmd_serve(args: argparse.Namespace) -> None:
     )
 
 
-def _cmd_init_db(_: argparse.Namespace) -> None:
-    from db.session import init_db
+def _cmd_init_db(args: argparse.Namespace) -> None:
+    """按 ORM 元数据建表。
 
-    asyncio.run(init_db())
-    print("数据表已创建")
+    默认**跟着判据走**：库归 Alembic 管（有 `alembic_version`）就不建表——
+    这是防止「表存在但版本号落后」的偏差再次发生的唯一办法。
+    `--force` 才无条件建表，用它的人要自己负责后续 `alembic upgrade` 的冲突。
+    """
+    from db.migrations import SchemaAction, plan_schema_bootstrap
+    from db.session import get_engine, init_db
+
+    async def run() -> str:
+        engine = get_engine()
+        plan = await plan_schema_bootstrap(engine)
+        if args.force:
+            await init_db(force=True)
+            return "数据表已按 ORM 元数据创建（--force：未按判据检查）"
+        if plan.action == SchemaAction.CREATE_ALL:
+            await init_db()
+            return "数据表已按 ORM 元数据创建"
+        if plan.action == SchemaAction.UPGRADE:
+            from db.migrations import upgrade_to_head
+
+            await asyncio.to_thread(upgrade_to_head)
+            return f"数据库已从 {plan.current} 升到 head（{plan.head}）"
+        return f"未改动 schema：{plan.reason}"
+
+    print(asyncio.run(run()))
 
 
 def _cmd_seed(args: argparse.Namespace) -> None:
@@ -762,6 +784,12 @@ def main(argv: list[str] | None = None) -> int:
     p_serve.set_defaults(func=_cmd_serve)
 
     p_init = sub.add_parser("init-db", help="按 ORM 元数据建表")
+    p_init.add_argument(
+        "--force",
+        action="store_true",
+        help="无条件按 ORM 建表，不问「这个库归不归 Alembic 管」"
+        "（库里有 alembic_version 时慎用：会让版本号与实际表结构脱节）",
+    )
     p_init.set_defaults(func=_cmd_init_db)
 
     p_seed = sub.add_parser("seed", help="写入演示数据")

@@ -19,7 +19,6 @@ import urllib.error
 import urllib.request
 from contextlib import suppress
 from dataclasses import dataclass, field
-from pathlib import Path
 
 from api.module import Level
 from core.config import settings
@@ -27,22 +26,6 @@ from infra.archive import get_archive_storage
 from infra.archive.integrity import verify_blobs
 
 _CAS_PROBE = "catalog/locks/_doctor_cas.json"
-
-# `api/` 目录（本文件在 api/src/api/diagnostics.py）：alembic.ini 与 migrations/ 的锚点。
-# 放在模块级而不是协程里：`Path.resolve()` 是阻塞调用，写进 async 函数会被 ASYNC240 拦下，
-# 也确实会在慢盘上卡住事件循环。
-_API_ROOT = Path(__file__).resolve().parents[2]
-
-
-def _migration_heads(api_root: Path) -> list[str]:
-    """读迁移图的 head。文件 I/O，调用方负责丢进线程池。"""
-    from alembic.config import Config
-    from alembic.script import ScriptDirectory
-
-    cfg = Config(str(api_root / "alembic.ini"))
-    cfg.set_main_option("script_location", str(api_root / "migrations"))
-    return list(ScriptDirectory.from_config(cfg).get_heads())
-
 
 __all__ = ["Check", "DoctorReport", "run_doctor"]
 
@@ -419,35 +402,21 @@ async def _check_schema_head(report: DoctorReport) -> None:
     开发/测试用 `Base.metadata.create_all` 建表，生产用 Alembic —— 两条路径。
     生产环境一旦是 create_all 建的（或升级时漏跑迁移），表现是「代码更新了、
     表还是旧的」，第一条访问新列的查询才 500。自检要在这里把它拦下。
+
+    判据复用 `db.migrations.plan_schema_bootstrap()`：启动、建表、doctor
+    三处对「这个库归谁管」的判断必须是同一个，否则会出现「doctor 说该跑迁移、
+    启动却按 ORM 建了表」这种自相矛盾的状态——而矛盾的解法总是「把判据删掉」。
     """
-    from sqlalchemy import text
+    from db.migrations import SchemaAction, plan_schema_bootstrap
+    from db.session import get_engine
 
-    from db.session import get_session_factory
-
-    try:
-        heads = await asyncio.to_thread(_migration_heads, _API_ROOT)
-    except Exception as exc:  # noqa: BLE001 - 打包部署里可能没带 migrations/
-        report.add("schema.head", "WARN", f"读不到迁移目录：{type(exc).__name__}: {exc}")
+    plan = await plan_schema_bootstrap(get_engine())
+    if plan.forked:
+        # 分叉必须 FAIL：这不是「状态不明确」，是 `upgrade head` **一定会失败**。
+        # 判据里 `head` 会塌成空串，所以要用原始 head 列表判断，不能看 `plan.head`。
+        report.add("schema.head", "FAIL", plan.reason)
         return
-
-    if len(heads) != 1:
-        report.add("schema.head", "FAIL", f"迁移出现分叉：{heads}（upgrade head 会失败）")
-        return
-    expected = heads[0]
-
-    current = ""
-    try:
-        async with get_session_factory()() as session:
-            current = str(
-                await session.scalar(text("SELECT version_num FROM alembic_version")) or ""
-            )
-    except Exception:  # noqa: BLE001 - 表不存在就是「没跑过迁移」
-        current = ""
-
-    if current == expected:
-        report.add("schema.head", "PASS", f"数据库已到 head（{expected}）")
-        return
-    if not current:
+    if plan.action == SchemaAction.CREATE_ALL:
         level: Level = "FAIL" if settings.app_env == "prod" else "INFO"
         report.add(
             "schema.head",
@@ -456,11 +425,18 @@ async def _check_schema_head(report: DoctorReport) -> None:
             "生产必须用 `alembic upgrade head`，否则后续迁移无法增量执行",
         )
         return
-    report.add(
-        "schema.head",
-        "FAIL",
-        f"数据库停在 {current}，迁移 head 是 {expected}：先执行 `alembic upgrade head`",
-    )
+    if plan.action == SchemaAction.UPGRADE:
+        report.add(
+            "schema.head",
+            "FAIL",
+            f"数据库停在 {plan.current}，迁移 head 是 {plan.head}："
+            "先执行 `alembic upgrade head`",
+        )
+        return
+    if plan.current == plan.head:
+        report.add("schema.head", "PASS", f"数据库已到 head（{plan.head}）")
+        return
+    report.add("schema.head", "WARN", plan.reason)
 
 
 async def _check_outbox_channel(report: DoctorReport) -> None:
