@@ -104,7 +104,7 @@ def test_fixed_prompt_scope_parameter_is_rendered() -> None:
 
 
 def test_scope_configuration_must_fit_prepare_request() -> None:
-    from modules.template.video_template_options import validate_options
+    from core.template_rules.options import validate_options
 
     with pytest.raises(BadRequest):
         validate_options("{{Mixed 1}} {{Mixed 2}} {{ReplacementScope}}", {

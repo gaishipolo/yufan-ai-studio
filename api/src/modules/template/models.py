@@ -126,7 +126,7 @@ class TemplatePackReference(Base, UUIDMixin):
     pack_id: Mapped[str] = mapped_column(String(32), nullable=False)
     asset_id: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     position: Mapped[int] = mapped_column(Integer, nullable=False)
-    # 用途 key（front / multiview / detail…），词表在 modules/template/pack_roles.py
+    # 用途 key（front / multiview / detail…），词表在 core/template_rules/roles.py
     role: Mapped[str] = mapped_column(String(24), default="", nullable=False)
     # 这张图在提示词里的补充说明，只写本次特有的事实
     description: Mapped[str] = mapped_column(Text, default="", nullable=False)

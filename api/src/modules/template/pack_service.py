@@ -32,15 +32,15 @@ from core.ports.library_lookup import (
     get_library_lookup,
 )
 from core.serving import Served
-from db.base import utcnow
-from infra import get_storage
-from modules.template.asset_source import resolve_assets, resolve_names
-from modules.template.models import TemplatePack, TemplatePackReference, TemplatePackVersion
-from modules.template.pack_roles import (
+from core.template_rules.roles import (
     PACK_SCOPES,
     missing_role_labels,
     roles_for,
 )
+from db.base import utcnow
+from infra import get_storage
+from modules.template.asset_source import resolve_assets, resolve_names
+from modules.template.models import TemplatePack, TemplatePackReference, TemplatePackVersion
 from modules.template.repository import PackRepository
 from modules.template.schema import (
     PackDraftIn,

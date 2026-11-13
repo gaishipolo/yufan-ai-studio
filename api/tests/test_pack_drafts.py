@@ -24,8 +24,8 @@ from fastapi.testclient import TestClient
 from tests_template_helpers import ADMIN, actor_id, add_pack, drop_pack, png_bytes, upload
 
 from core.exceptions import BadRequest, Conflict, NotFound
+from core.template_rules.roles import PACK_ROLES, PACK_SCOPES
 from db.session import get_session_factory
-from modules.template.pack_roles import PACK_ROLES, PACK_SCOPES
 from modules.template.pack_service import PackService
 from modules.template.repository import PackRepository
 from modules.template.schema import PackDraftIn
@@ -374,7 +374,7 @@ def test_every_kind_has_base_role_and_usage_text() -> None:
     漏一条的症状是「编辑器里能选，生成时那段说明是空的」——提示词少一句约束，
     出来的片子人物不像、产品换了颜色，而日志里没有任何异常。
     """
-    from modules.template.pack_roles import BASE_ROLE, ROLE_USAGE, usage_for
+    from core.template_rules.roles import BASE_ROLE, ROLE_USAGE, usage_for
 
     for kind, roles in PACK_ROLES.items():
         assert BASE_ROLE[kind] in roles, f"{kind} 的基准用途不在自己的用途表里"

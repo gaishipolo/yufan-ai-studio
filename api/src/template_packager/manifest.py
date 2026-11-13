@@ -13,14 +13,14 @@ from pydantic import ConfigDict, Field, model_validator
 
 from core.exceptions import BadRequest
 from core.schema import CamelModel
-from modules.template.pack_roles import BASE_ROLE, PACK_ROLES, PACK_SCOPES
-from modules.template.video_template_bindings import (
+from core.template_rules.bindings import (
     allows_partial_slots,
     ensure_distinct_roles,
     order_reference_ids,
     reference_roles,
 )
-from modules.template.video_template_options import validate_options
+from core.template_rules.options import validate_options
+from core.template_rules.roles import BASE_ROLE, PACK_ROLES, PACK_SCOPES
 
 
 class Config(CamelModel):

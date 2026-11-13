@@ -248,6 +248,6 @@ def test_three_flows_keep_original_tokens_and_pack_identity(client, tmp_path, mo
 
 @pytest.mark.parametrize("kind", ["product", "scene"])
 def test_non_character_contract_stays_single_pack(kind):
-    from modules.template.video_template_bindings import allows_partial_slots
+    from core.template_rules.bindings import allows_partial_slots
 
     assert not allows_partial_slots(["front", "front"], kind)

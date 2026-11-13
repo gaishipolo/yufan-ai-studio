@@ -55,6 +55,13 @@ from core.ports.library_lookup import (
     get_library_lookup,
 )
 from core.serving import Served
+from core.template_rules.options import (
+    is_scene_text,
+    scene_description,
+    scope_options,
+    validate_options,
+)
+from core.template_rules.roles import PACK_ROLES, PACK_SCOPES, usage_for
 from db.base import utcnow
 from infra.archive import ArchiveStorage, get_archive_storage
 from infra.media_probe import encode_text
@@ -65,7 +72,6 @@ from modules.template.channels import channel_catalog, channel_label, require_ch
 from modules.template.library_media import StagedMedia, discard_staged, stage_library_refs
 from modules.template.models import ReplacementReview as ReviewRow
 from modules.template.models import ReplacementRun, TemplatePackVersion
-from modules.template.pack_roles import PACK_ROLES, PACK_SCOPES, usage_for
 from modules.template.repository import PackRepository, RunInputRow, RunRepository
 from modules.template.run_clock import elapsed_seconds
 from modules.template.schema import (
@@ -80,12 +86,6 @@ from modules.template.schema import (
     ReplacementRunOut,
 )
 from modules.template.titles import task_name
-from modules.template.video_template_options import (
-    is_scene_text,
-    scene_description,
-    scope_options,
-    validate_options,
-)
 from modules.template.video_template_schema import MAX_REFERENCE_IMAGES
 from modules.template.workspace import (
     BRIDGE,
@@ -922,8 +922,8 @@ class ReplacementService:
         )
     async def _selected_pack_inputs(self, payload, template, primary, frozen):
         """每个已选人物包各贡献一个身份槽位；所有参考与用途以发布快照为准。"""
+        from core.template_rules.bindings import character_slots
         from modules.template.schema import aligned_bindings
-        from modules.template.video_template_bindings import character_slots
 
         count = character_slots(template)
         ids = [payload.pack_id, *payload.extra_pack_ids]
@@ -1199,7 +1199,7 @@ def _check_video_template(
     换成了第 1 个人。
     """
     validate_options(template.prompt, template.rules)
-    from modules.template.video_template_bindings import (
+    from core.template_rules.bindings import (
         character_slots,
         order_reference_ids,
         reference_roles,
@@ -1279,7 +1279,7 @@ def _media_in_mixed_order(
         return result
     if template is None:
         return [*refs, source]
-    from modules.template.video_template_bindings import (
+    from core.template_rules.bindings import (
         character_slots,
         order_reference_ids,
         place_source,

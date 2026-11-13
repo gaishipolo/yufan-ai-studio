@@ -14,13 +14,13 @@ from typing import Any, Literal
 from pydantic import Field
 
 from core.schema import CamelModel, UtcDateTime, VerbatimText
+from core.template_rules import MAX_REFERENCE_IMAGES
 
 ReplacementKindLiteral = Literal["character", "product", "scene"]
 
 # 通用编译器对 mixedList 里「图片」的硬上限（原片不计入）。保存端按封装时的
 # 基础媒体算、准备端按本次所选素材包算，两侧必须共用这个值，否则会出现
 # 「模板保存成功、换个图片更多的包准备时被拒」。
-MAX_REFERENCE_IMAGES = 10
 
 
 class VideoTemplateMedia(CamelModel):

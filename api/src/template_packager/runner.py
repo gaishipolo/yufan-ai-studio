@@ -12,8 +12,8 @@ from typing import Any
 from urllib.parse import urlencode
 from uuid import NAMESPACE_URL, uuid5
 
+from core.template_rules.roles import BASE_ROLE
 from modules.library.schema import SOURCE_VIDEO_ORIGINS
-from modules.template.pack_roles import BASE_ROLE
 from template_packager.client import PackagingClient
 from template_packager.manifest import LoadedManifest, digest_file
 from template_packager.reuse import resolve_existing_packs, server_options

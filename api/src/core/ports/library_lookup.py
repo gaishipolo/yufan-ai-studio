@@ -138,7 +138,7 @@ class LibraryPackMember:
     这种指得到人的报错，也能显式拒绝而不是静默降级。
 
     `role` 是封装时声明的用途（产品主图 / 多视结构图…），**不做枚举校验**：
-    词表在模板库（`modules/template/pack_roles.py`），`core` 不该反向依赖它；
+    词表在模板库（`core/template_rules/roles.py`），`core` 不该反向依赖它；
     白名单在调用方 fail-closed 地判。
     """
 

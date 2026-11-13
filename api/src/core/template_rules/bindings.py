@@ -6,8 +6,8 @@ import re
 from typing import Any
 
 from core.exceptions import BadRequest
-from modules.template.pack_roles import PACK_ROLES
-from modules.template.video_template_options import is_scene_text
+from core.template_rules.options import is_scene_text
+from core.template_rules.roles import PACK_ROLES
 
 
 def reference_roles(rules: dict[str, Any], prompt: str, kind: str) -> list[str] | None:

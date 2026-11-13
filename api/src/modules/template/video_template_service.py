@@ -27,11 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.context import CurrentUser
 from core.exceptions import BadRequest, Conflict
 from core.ports.library_lookup import LibraryAssetRef
-from modules.template.asset_source import resolve_assets, resolve_names
-from modules.template.models import TemplatePack, VideoTemplate
-from modules.template.pack_roles import PACK_ROLES
-from modules.template.repository import PackRepository
-from modules.template.video_template_bindings import (
+from core.template_rules.bindings import (
     allows_partial_slots,
     ensure_distinct_roles,
     order_reference_ids,
@@ -39,13 +35,17 @@ from modules.template.video_template_bindings import (
     reference_roles,
     source_position,
 )
+from core.template_rules.options import is_scene_text, validate_options
+from core.template_rules.roles import PACK_ROLES
+from modules.template.asset_source import resolve_assets, resolve_names
+from modules.template.models import TemplatePack, VideoTemplate
+from modules.template.repository import PackRepository
 from modules.template.video_template_media import (
     apply_pack_roles,
     cited_slots,
     prompt_tokens,
     validate_media,
 )
-from modules.template.video_template_options import is_scene_text, validate_options
 from modules.template.video_template_repository import VideoTemplateRepository
 from modules.template.video_template_schema import (
     MAX_REFERENCE_IMAGES,

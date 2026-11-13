@@ -17,8 +17,8 @@ from uuid import UUID
 from pydantic import Field, model_validator
 
 from core.schema import CamelModel, UtcDateTime, VerbatimText
+from core.template_rules.roles import BASE_ROLE, PACK_ROLES, PACK_SCOPES
 from modules.template.channels import ReplacementChannel
-from modules.template.pack_roles import BASE_ROLE, PACK_ROLES, PACK_SCOPES
 
 ReplacementKind = Literal["character", "product", "scene"]
 ReviewReason = Literal["replacement", "preservation", "visual", "audio", "other"]

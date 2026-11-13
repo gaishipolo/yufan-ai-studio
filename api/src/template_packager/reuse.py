@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from core.exceptions import BadRequest
-from modules.template.video_template_bindings import (
+from core.template_rules.bindings import (
     allows_partial_slots,
     ensure_distinct_roles,
     order_reference_ids,
