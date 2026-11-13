@@ -3295,7 +3295,7 @@
           "资产库"
         ],
         "summary": "选择器：只返回库内资产",
-        "description": "生成页 / 工作台挑素材用。\n\n**硬过滤 `state=active`**：草稿与回收站永远不出现在选择器里。这不是一个\n可选的筛选参数——调用方忘了传就会把用户删掉的东西塞进生成任务。",
+        "description": "生成页 / 工作台挑素材用。\n\n**硬过滤 `state=active`**：草稿与回收站永远不出现在选择器里。这不是一个\n可选的筛选参数——调用方忘了传就会把用户删掉的东西塞进生成任务。\n\n`library` 与列表同一个枚举、同一份判定（`access.tab_clause`）：模板工作台\n的「我的原片 / 公共原片」就是 `personal` / `team`。**不新造一个\n`scope=mine|public` 参数**——那等于给可见性写第二套定义，两套一漂移就是\n「列表里没有、选择器里有」。默认 `all` 与切换前的行为完全一致。",
         "operationId": "selection_api_v1_library_selection_get",
         "security": [
           {
@@ -3376,6 +3376,15 @@
                 }
               ],
               "title": "Origin"
+            }
+          },
+          {
+            "name": "library",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/LibraryTab",
+              "default": "all"
             }
           },
           {

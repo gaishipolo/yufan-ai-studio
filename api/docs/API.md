@@ -3619,6 +3619,11 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 **硬过滤 `state=active`**：草稿与回收站永远不出现在选择器里。这不是一个
 可选的筛选参数——调用方忘了传就会把用户删掉的东西塞进生成任务。
 
+`library` 与列表同一个枚举、同一份判定（`access.tab_clause`）：模板工作台
+的「我的原片 / 公共原片」就是 `personal` / `team`。**不新造一个
+`scope=mine|public` 参数**——那等于给可见性写第二套定义，两套一漂移就是
+「列表里没有、选择器里有」。默认 `all` 与切换前的行为完全一致。
+
 | 参数 | 位置 | 类型 | 必填 | 说明 |
 |---|---|---|---|---|
 | `kind` | query | `LibraryAssetKind | null` | 否 |  |
@@ -3626,6 +3631,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `keyword` | query | `string` | 否 |  |
 | `includePacks` | query | `boolean` | 否 |  |
 | `origin` | query | `LibraryAssetOrigin[] | null` | 否 |  |
+| `library` | query | `LibraryTab` | 否 |  |
 | `page` | query | `number` | 否 | 页码，从 1 开始 |
 | `pageSize` | query | `number` | 否 | 每页条数 |
 

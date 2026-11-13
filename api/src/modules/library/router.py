@@ -136,16 +136,22 @@ async def selection(
     keyword: str = Query(default="", max_length=100),
     include_packs: Annotated[bool, Query(alias="includePacks")] = True,
     origin: Annotated[list[LibraryAssetOrigin] | None, Query()] = None,
+    library: LibraryTab = LibraryTab.ALL,
 ) -> ApiResponse[LibrarySelectionPage]:
     """生成页 / 工作台挑素材用。
 
     **硬过滤 `state=active`**：草稿与回收站永远不出现在选择器里。这不是一个
     可选的筛选参数——调用方忘了传就会把用户删掉的东西塞进生成任务。
+
+    `library` 与列表同一个枚举、同一份判定（`access.tab_clause`）：模板工作台
+    的「我的原片 / 公共原片」就是 `personal` / `team`。**不新造一个
+    `scope=mine|public` 参数**——那等于给可见性写第二套定义，两套一漂移就是
+    「列表里没有、选择器里有」。默认 `all` 与切换前的行为完全一致。
     """
     result = await service.list_assets(
         actor,
         page,
-        library=LibraryTab.ALL,
+        library=library,
         state="active",
         kind=kind.value if kind else None,
         tag_ids=tag_ids,

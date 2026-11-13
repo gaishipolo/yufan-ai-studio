@@ -165,3 +165,41 @@ def test_all_scope_excludes_trash_and_tag_counts_follow(
     _share_to(client, api, admin, headers, live, target="team")
     assert count(state="active", library="all") == 1
     assert count(state="active", library="personal") == 0
+
+
+def test_selection_takes_the_same_tab_as_the_list(client: TestClient, api: str) -> None:
+    """选择器也要能按一级入口收窄（模板工作台的「我的 / 公共原片」）。
+
+    这条钉的是**同一套判据**：`library` 走列表同一个枚举、同一个
+    `access.tab_clause`，不是给选择器另写一份 `scope=mine|public`。
+    旧前端不传这个参数时行为必须一个字不变（默认 `all`）。
+    """
+    admin = admin_headers(client)
+    owner, owner_h = make_user(client, admin, PERMISSIONS)
+    viewer, viewer_h = make_user(client, admin, READ_ONLY)
+
+    own = upload_image(client, api, owner_h, color="orchid")["id"]
+    in_team = upload_image(client, api, owner_h, color="salmon")["id"]
+    _share_to(client, api, admin, owner_h, in_team, target="team")
+
+    def picked(headers: dict[str, str], **params: str) -> set[str]:
+        response = client.get(
+            f"{api}/library/selection",
+            params={"pageSize": 100, **params},
+            headers=headers,
+        )
+        assert response.status_code == 200, response.text
+        return {item["id"] for item in response.json()["data"]["items"]}
+
+    # 上传者：共享出去的那条离开个人入口，且不会同时出现在两个入口
+    assert own in picked(owner_h, library="personal")
+    assert in_team not in picked(owner_h, library="personal")
+    assert in_team in picked(owner_h, library="team")
+    assert own not in picked(owner_h, library="team")
+
+    # 别人：团队共享就是「公共原片」的来源，个人入口里没有别人的东西
+    assert in_team in picked(viewer_h, library="team")
+    assert own not in picked(viewer_h, library="personal")
+
+    # 不传 `library` = 全量可见集（与切换前的选择器完全一致）
+    assert {own, in_team} <= picked(owner_h)
