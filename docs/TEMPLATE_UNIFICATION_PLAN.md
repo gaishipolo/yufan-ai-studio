@@ -2360,3 +2360,80 @@ Windows 上 `unlink` 撞到占用被 `except OSError` 吞掉。单独重跑 4 �
 
 **下一步**：2.5d 前端只换数据源——`PackEditor.tsx` / 替换工作台把 `/assets...` 换成
 `/library/selection`，提交时按 `referenceIdSpace` 选字段回写；UI 结构与布局不动。
+
+### 24.15 步 2.5d（一）（二）：v2 封装可被调用 + 封装编辑器换数据源（2026-11-13）
+
+**为什么要先补后端（提交 `069d911`）**
+
+`b3f1f34` 让封装草稿能写 v2 参考图并发布，但「发布成功」之后一次都跑不起来：
+`prepare()` 用 `frozen.reference_ids` 整批覆盖 `payload.referenceIds`，而
+`_validate_inputs` 仍去 `assets` 表查——两套 id 都是 32 位 hex，判错的唯一表现是
+400「参考图不存在或已删除」，用户会以为**自己选的封装坏了**。这不是 2.5d 的前端问题，
+是 2.5c 少了一半。
+
+- `ResolvedInputs.refs_v2`：包内 v2 参考图交回的「从哪取」；
+- `_validate_inputs(refs_space=...)`：空间只从 `frozen.reference_ids_space` 来，
+  v2 分支判据 = 可读（`readable_ids()`）+ `state=active` + `kind=image`，
+  **不查 `category`**（v2 没有这个字段；分类由封装时的用途绑定表达，
+  反推素材类型会把「别人的封装借给我用」判死）；
+- prepare 把包内 v2 图一起暂存，再按 `frozen.reference_ids` 顺序换成 `StagedMedia`
+  交给 `_media_in_mixed_order`；暂存键加 `packref:` 前缀 —— 固定引用的键是
+  `{{Mixed N}}` token，混进去会被写进 `spec["fixedReferenceTokens"]`，
+  编译器把同一张图插两遍、编号整体错位；
+- 参考图名额把 v2 那批一起算（`MAX_REFERENCE_IMAGES` 不因来源不同放宽）。
+
+**前端（提交 `73f2478`）**
+
+`PackEditor.tsx` 保留原页面结构，只换数据源与字段：
+
+| 项 | 切换前 | 切换后 |
+|---|---|---|
+| 候选图 | `GET /assets?category=<kind>` | `GET /library/selection?kind=image`（新建 / v2 包） |
+| 请求字段 | `referenceIds` / `coverReferenceId` | `referenceLibraryIds` / `coverLibraryId` |
+| 空间判据 | 无（只有一套） | `PackManaged.referenceIdSpace`；新建一律 v2 |
+| 已选图信息 | 按当前页列表反查 | `picked` 缓存，编辑时用 `referenceNames` / `previewUrls` 预灌 |
+
+三点口径：
+
+1. **编辑 v1 老包不能顺势写 v2 字段**：同一批 id 形状一样，写错字段等于让服务端
+   把旧 id 当 v2 重解释。空间只看 `referenceIdSpace`，缺省按 v1。
+2. **缩略图用 `previewUrl` 不用 `coverUrl`**：前者是带鉴权的
+   `/api/v1/library/assets/{id}/thumbnail`，与 `ArchivedThumbnail` 同一条取图路径；
+   `coverUrl` 是对象存储的公开地址（`/static/...`），拼不进 API 相对路径。
+3. **候选只按 `kind=image` 筛，不再按 `category`**：分类迁到标签/用途绑定后
+   由步 3 的封装页接手，这里不抢跑、不新增标签筛选 UI（§21.6 第 4 项）。
+
+**验证**
+
+- 后端 `069d911`：`select_tests` 判 targeted（11 文件）；实际跑 **15 个文件**
+  （补 `test_replacement_archive/guards/output`、`test_template_packager` ——
+  它们走 `POST /replacement-runs` 但依赖图没连到 `replacement_service`）
+  → **223 passed / 42.77s**。`ruff` 通过，`mypy` 297 files 无问题，
+  四份生成物 `--check` 无变化（无契约改动）。
+  新增两条：整包 v2 的封装能准备（字节落盘 / 输入行 `v2` / `fixedReferenceTokens` 为空）、
+  发布后素材进回收站当场 400。
+- **反向验证**：去掉 `refs_space` → 复现 400「参考图不存在或已删除」；
+  不把暂存副本换进 `refs` → 编译器报「提示词编译失败」（`{{Mixed 2}}` 没有媒体）。
+  两条都逐字恢复。
+- 前端 `73f2478`：`npm run verify`（typecheck / lint / 5+ 条单测 / build）通过，
+  `gen:routes --check`、`gen:mock-coverage --check` 同步无变化。
+  封装编辑器单测从 4 条扩到 5 条：新建走 v2 字段、编辑 v1 包仍写 v1、
+  编辑 v2 包写 v2（三条把字段名与空间的关系钉死）。
+
+**遗留：替换工作台的原片列表没切（需要拍板，不是技术问题）**
+
+`useReplacementWorkbench` 仍读 `GET /assets?category=source`，原因是 v1 有一层
+v2 目前**没有对应语义**的东西：
+
+- v1 的 `scope=mine|public` 是「公共原片池」（别人 `shared` 的原片谁都能用）；
+- v2 的可见性是 `personal / group / team` + 共享审批，**没有「公开池」这一档**，
+  `GET /library/selection` 也没有「只看别人给我的」这个筛选。
+
+而 A 侧（`VideoTemplateLibrary.tsx`）一旦改成绑定 v2 原片，B 的工作台就必须能看到
+同一批 v2 原片，否则「A 封装的模板」整体从卡片流里消失。所以两侧必须同一批切换，
+且切换前要定：**v2 里用什么表达「公共原片」**（团队可见？显式共享？还是加一个
+`origin=template_source` + 全员可读的白名单？）。这是产品口径，不是实现细节，
+先记在这里，不在本轮硬塞。
+
+**下一步**：步 3（契约与归属）——`packId` 从必填降为可选（A 只声明槽位、B 按用途取图），
+以及「B 直接选用资产库 v2 封装」的 `libraryPackId` 适配器（§23.5「缺的一跳」）。
