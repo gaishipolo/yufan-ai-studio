@@ -3,32 +3,45 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { FolderOpen, Info } from 'lucide-react';
 import { PageHeader, CardSkeletonGrid, EmptyState, ErrorState, Pager, Select, Tabs, type TabItem } from '@/shared/ui';
 import { toast } from '@/shared/lib/toast';
+import { downloadUrl } from '@/shared/lib/download';
 import { useCan } from '@/shared/access/use-access';
 import { useDebouncedValue } from '@/shared/hooks/useDebouncedValue';
 import { TaskCard } from '@/entities/task/ui/TaskCard';
-import { useTaskFeed } from '@/entities/task/api/task.queries';
+import { ImageTaskCard } from '@/entities/task/ui/ImageTaskCard';
+import { useDeleteTasks, useTaskFeed, useUpdateTask } from '@/entities/task/api/task.queries';
 import type { TaskScope, TaskSort } from '@/entities/task/model/types';
-import type { TaskFeedParams, TaskFeedSource, TaskFeedStatus } from '@/entities/task/model/feed.types';
+import type { TaskFeedItem, TaskFeedParams, TaskFeedSource, TaskFeedStatus } from '@/entities/task/model/feed.types';
 import { REPLACEMENT_STATUS } from '@/entities/template/model/replacement.labels';
 import { TaskToolbar } from '@/features/task-filter/ui/TaskToolbar';
 import { TaskSearchRow } from '@/features/task-filter/ui/TaskSearchRow';
 import { TaskPreviewModal } from '@/features/task-preview/TaskPreviewModal';
+import { ImagePreviewModal } from '@/features/task-preview/ImagePreviewModal';
 import { CreateTaskModal } from '@/features/create-task/CreateTaskModal';
 
 type StatusFilter = TaskFeedStatus;
 
+/** 成片文件名：视频/替换档案固定 mp4，生图按真实地址后缀，别让用户下载到无后缀文件 */
+function artifactName(item: TaskFeedItem): string {
+  const url = item.outputUrl ?? '';
+  const suffix = item.source === 'image'
+    ? (/\.(png|jpe?g|webp|gif)/i.exec(url.split('?')[0] ?? '')?.[0] ?? '.png')
+    : '.mp4';
+  return `${item.title.replace(/[\\/:*?"<>|]/g, '_')}${suffix}`;
+}
+
 export default function TaskCenterPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [previewId, setPreviewId] = useState<string | null>(null);
+  const [preview, setPreview] = useState<TaskFeedItem | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const canReadTemplates = useCan('template:read');
+  const canReadImages = useCan('image:read');
 
   /* ---------- 筛选条件全部由 URL 承载：可分享 / 可回退 / 刷新不丢 ---------- */
   const statusParam = searchParams.get('status') ?? 'all';
   const status = (['all', 'queued', 'running', 'completed', 'failed', 'attention'].includes(statusParam) ? statusParam : 'all') as StatusFilter;
   const sourceParam = searchParams.get('source') ?? 'all';
-  const source = (['all', 'video', 'replacement'].includes(sourceParam) ? sourceParam : 'all') as TaskFeedSource;
+  const source = (['all', 'video', 'image', 'replacement'].includes(sourceParam) ? sourceParam : 'all') as TaskFeedSource;
   const keyword = searchParams.get('keyword') ?? '';
   const sortParam = searchParams.get('sort') ?? 'createdAt_desc';
   const sort = (['createdAt_desc', 'createdAt_asc', 'title_asc'].includes(sortParam) ? sortParam : 'createdAt_desc') as TaskSort;
@@ -73,7 +86,10 @@ export default function TaskCenterPage() {
   );
 
   const { data, isLoading, isFetching, isError, error, refetch } = useTaskFeed(params);
-  const items = data?.items ?? [];
+  const deleteTasks = useDeleteTasks();
+  const updateTask = useUpdateTask();
+  // 用 useMemo 稳住引用：`openPreview` 依赖 items，裸的 `?? []` 每次渲染都会换数组
+  const items = useMemo(() => data?.items ?? [], [data?.items]);
   const videoItems = items.flatMap(item => item.video ? [item.video] : []);
   const stats = data?.stats;
   const canReadAll = data?.canReadAll ?? false;
@@ -88,7 +104,7 @@ export default function TaskCenterPage() {
     }
   }, [data, canReadAll, scope, patchFilter]);
 
-  /* ---------- 选择 ---------- */
+  /* ---------- 选择：只有通用视频任务支持批量删除/收藏 ---------- */
   const toggleSelect = useCallback((id: string) => {
     setSelected((prev) => {
       const next = new Set(prev);
@@ -106,6 +122,47 @@ export default function TaskCenterPage() {
     });
   };
 
+  const openPreview = useCallback(
+    (id: string) => setPreview(items.find(item => item.id === id) ?? null),
+    [items],
+  );
+
+  const handleDownload = () => {
+    if (!selected.size) return toast('请先勾选需要下载的任务', 'error');
+    const ready = items.filter(item => selected.has(item.id) && item.outputUrl);
+    if (!ready.length) return toast('勾选的任务还没有成片', 'error');
+    ready.forEach(item => item.outputUrl && downloadUrl(item.outputUrl, artifactName(item)));
+    toast(
+      `已打开 ${ready.length} 个成片${ready.length < selected.size ? `，${selected.size - ready.length} 个暂无成片` : ''}`,
+      'success',
+    );
+  };
+
+  const handleCollect = async () => {
+    if (!selected.size) return toast('请先勾选需要收藏的任务', 'error');
+    try {
+      await Promise.all([...selected].map(id => updateTask.mutateAsync({ id, favorited: true })));
+      toast(`已收藏 ${selected.size} 个任务`, 'success');
+      setSelected(new Set());
+    } catch (e) {
+      toast(e instanceof Error ? e.message : '收藏失败', 'error');
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!selected.size) return toast('请先勾选要删除的任务', 'error');
+    try {
+      const result = await deleteTasks.mutateAsync([...selected]);
+      toast(
+        `已删除 ${result.deleted} 个任务${result.skipped.length ? `，${result.skipped.length} 个未删除` : ''}`,
+        result.skipped.length ? 'error' : 'success',
+      );
+      setSelected(new Set());
+    } catch (e) {
+      toast(e instanceof Error ? e.message : '删除失败', 'error');
+    }
+  };
+
   /* 统计未知时不显示 0：请求失败时「全部 0」会让人以为任务被清空了 */
   const statusTabs: TabItem<StatusFilter>[] = [
     { value: 'all', label: '全部', count: stats?.all },
@@ -119,7 +176,7 @@ export default function TaskCenterPage() {
     <>
       <PageHeader
         title="任务中心"
-        description="统一跟踪通用视频生成与模板替换任务，自动同步进度、成片与待处理事项。"
+        description="统一跟踪视频生成、生图与模板替换任务，自动同步进度、成片与待处理事项。"
         actions={
           <TaskToolbar
             scope={scope}
@@ -131,33 +188,29 @@ export default function TaskCenterPage() {
             onSortChange={(v) => patchFilter({ sort: v })}
             selectedCount={selected.size}
             onSelectAll={toggleSelectAll}
-            onDownload={() =>
-              selected.size
-                ? toast(`准备下载 ${selected.size} 个视频（待接入下载接口）`)
-                : toast('请先勾选需要下载的任务', 'error')
-            }
-            onCollect={() => toast(selected.size ? '已加入收藏' : '请先选择任务', selected.size ? 'success' : 'error')}
-            onRecycle={() => toast('回收站为空')}
+            onDownload={handleDownload}
+            onCollect={handleCollect}
+            onDelete={handleDelete}
             onCreate={() => setCreateOpen(true)}
+            busy={deleteTasks.isPending || updateTask.isPending}
           />
         }
       />
 
       <p className="mt-2.5 flex flex-wrap items-center gap-1 text-[11.5px] leading-relaxed text-ink-mute">
         <Info size={12} className="shrink-0" aria-hidden />
-        两类任务统一展示；替换任务仅含本人的档案，完成后可查看成片与下载。批量选择仅适用于通用任务。
-        {canReadTemplates && (
-          <Link to="/templates" className="text-primary hover:underline">
-            创建替换任务 →
-          </Link>
-        )}
+        三类任务统一展示；生图与替换档案按各自权限只显示本人，完成后可查看成片与下载。批量操作仅适用于通用视频任务。
+        {canReadImages && <Link to="/image" className="text-primary hover:underline">生图工作台 →</Link>}
+        {canReadTemplates && <Link to="/templates" className="text-primary hover:underline">创建替换任务 →</Link>}
       </p>
 
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <Select aria-label="任务来源" value={source} onChange={event => patchFilter({source: event.target.value})}
           options={[{value: 'all', label: '全部来源'}, {value: 'video', label: '通用视频生成'},
+            ...(canReadImages ? [{value: 'image', label: '生图'}] : []),
             ...(canReadTemplates ? [{value: 'replacement', label: '模板替换'}] : [])]} />
         {source === 'replacement' && !canReadTemplates && <p className="text-xs text-ink-mute">当前账号没有替换任务读取权限。</p>}
+        {source === 'image' && !canReadImages && <p className="text-xs text-ink-mute">当前账号没有生图读取权限。</p>}
       </div>
       {data?.warnings.map(warning => <p key={warning} role="alert" className="mt-3 text-sm text-danger">{warning}</p>)}
 
@@ -195,8 +248,10 @@ export default function TaskCenterPage() {
                 task={item.video}
                 selected={selected.has(item.id)}
                 onToggleSelect={toggleSelect}
-                onOpen={setPreviewId}
+                onOpen={openPreview}
               />
+            ) : item.image ? (
+              <ImageTaskCard key={item.key} item={item.image} onOpen={openPreview} />
             ) : (
               <article key={item.key} className="flex flex-col gap-3 rounded-card border border-line-soft bg-panel p-4">
                 <span className="text-xs font-semibold text-primary">模板替换</span>
@@ -206,7 +261,18 @@ export default function TaskCenterPage() {
                 {item.errorMessage && <p className="break-words text-xs text-danger">{item.errorMessage}</p>}
                 <p className="break-all text-[11px] text-ink-mute">任务编号：{item.id}</p>
                 <time dateTime={item.createdAt} className="text-[11px] text-ink-mute">{new Date(item.createdAt).toLocaleString()}</time>
-                {item.detailUrl && <Link to={item.detailUrl} className="mt-auto text-xs text-primary hover:underline">{item.outputUrl ? '查看成片与档案 →' : '查看替换档案 →'}</Link>}
+                <div className="mt-auto flex flex-wrap items-center gap-2">
+                  {item.detailUrl && <Link to={item.detailUrl} className="text-xs text-primary hover:underline">{item.outputUrl ? '查看成片与档案 →' : '查看替换档案 →'}</Link>}
+                  {item.outputUrl && (
+                    <button
+                      type="button"
+                      onClick={() => downloadUrl(item.outputUrl as string, artifactName(item))}
+                      className="text-xs text-primary hover:underline"
+                    >
+                      下载成片
+                    </button>
+                  )}
+                </div>
               </article>
             ))}
           </div>
@@ -222,7 +288,15 @@ export default function TaskCenterPage() {
         className="mt-3 rounded-card border border-line-soft bg-panel"
       />
 
-      <TaskPreviewModal taskId={previewId} onClose={() => setPreviewId(null)} />
+      <TaskPreviewModal
+        taskId={preview?.source === 'video' ? preview.id : null}
+        outputUrl={preview?.outputUrl}
+        onClose={() => setPreview(null)}
+      />
+      <ImagePreviewModal
+        item={preview?.source === 'image' ? preview : null}
+        onClose={() => setPreview(null)}
+      />
       <CreateTaskModal
         open={createOpen}
         onClose={() => setCreateOpen(false)}

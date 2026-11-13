@@ -17,7 +17,7 @@
 | 我该先读哪 10 个文件 | §2 |
 | `api/src` 里某个文件是干嘛的 | §3（逐文件） |
 | `studio/src` 里某个文件是干嘛的 | §4（逐文件） |
-| 一个请求 / 一次登录 / 一条生成任务怎么走 | §5 |
+| 一个请求 / 一次登录 / 一条生成任务 / 任务中心怎么走 | §5 |
 | 我要加个新功能，动哪里 | §6 |
 | 有哪些坑是别人踩过的 | §7 |
 
@@ -133,6 +133,7 @@
 | `core/registry.py` | 命名注册表：进程内「按名字注册 → 按名字解析」的通用容器（供应商、驱动都靠它）。 |
 | `core/audit.py` | 操作留痕扩展点：`record(action, actor, target, detail)`，写入端由 `db/audit_sink.py` 注册；**写失败不影响业务**。 |
 | `core/ports/accounts.py` | 账号状态注入口（从 `api/` 下移）：低层（`generation`）也能问「发起人还在不在」，三态语义，未注册按放行。 |
+| `core/ports/generation_feed.py` | 任务中心的**生成来源**注入口（`Port(multi=False)` + 注册 / 复位 / 探测三件套）：来源方自带筛选、统计、分页候选与产物现签，聚合方不认识它的表。与 `core/feed.py`（老替换档案按 owner 全量返回）刻意分开；未注册返回空页是合法状态，另外两路照常显示。 |
 | `core/scheduler.py` | 周期任务扩展点：`@periodic("模块.动作", every=秒)` 注册，进程内单调度器；模块自己说「多久问一次」，框架不认识任何具体任务。 |
 | `core/response.py` | 统一响应包装 `{code,message,data}` 与分页原语 `Page`。 |
 | `core/schema.py` | Pydantic 基座：统一 camelCase 契约，与前端 TypeScript 类型一一对应。 |
@@ -246,6 +247,8 @@
 | `modules/task/pipeline.py` | 把 `video_tasks` 表适配到通用生成框架。 |
 | `modules/task/dependencies.py` | 依赖装配。 |
 | `modules/task/worker.py` | 启动恢复：进程重启后把在飞任务接回去。 |
+| `modules/task/feed_schema.py` | 任务中心聚合契约：`TaskFeedItem` 用「来源前缀 + id」当 key，`video` / `image` 两路投影互斥，另带 `stats` / `warnings`。 |
+| `modules/task/feed_service.py` | 三路聚合（视频 / 生图 / 老替换档案）：逐路鉴权、逐路取统计与候选，合并排序后再切一次页；产物 key 在这里批量现签。 |
 
 **asset · 素材资产（含归档库）**
 
@@ -289,6 +292,7 @@
 | `modules/catalog/router.py` | 模型目录路由：前端「模型选择器」的唯一数据源。 |
 | `modules/catalog/schema.py` | 模型目录出参。 |
 | `modules/image/router.py` / `service.py` / `pipeline.py` / `schema.py` / `models.py` / `permissions.py` | 生图：作业提交（建记录 + 投递）、历史与 `POST /images/{id}/retry`（带 `confirmCharged` 确认开关）、`image_jobs ↔ GenerationRecord` 映射与终态保护、`persist_output` 落盘（host 白名单 / 逐跳校验 / 大小上限 / 魔数）、`list_unfinished` 供框架恢复器调用、权限点（含 `image:retry:any`）。`models.py` 另存 `previous_external_id`（重试前的对账凭证）与 `submit_mode`（供应商形态快照）。 |
+| `modules/image/feed_provider.py` | 生图 → 任务中心的只读来源：注册在 `modules/image/__init__.py`，关键词 / 范围 / 状态 / 排序都在 SQL 里做完，`limit=0` 只回统计；出参批量现签封面与成图 URL。`succeeded` 但成图不在归 `attention`。 |
 | `modules/image/maintenance.py` | 生图周期任务 `image.reconcile`：捞回卡在 `queued` / `running` 且无 `external_id` 的记录（已受理的不碰）。阈值只取声明了 IMAGE 提交预算的驱动的 `timeout_sec`、按 `coalesce(started_at, created_at)` 判陈旧、cutoff 按 dialect 选 aware/naive、`LIMIT` 下推到 SQL、日志按「重投 / 待人工核对」分分支。 |
 | `modules/image/seed.py` | 生图演示数据：由 `ModuleSpec.seed` 调用，不再改 `src/seed.py`；演示记录必须是终态，否则会被巡检重投到真实供应商。 |
 | `modules/shot/router.py` / `service.py` / `schema.py` / `models.py` | 镜头库：可复用的运镜指令词条。 |
@@ -313,6 +317,7 @@
 | `test_sessions.py` | 会话：`sid` 校验、续期轮换、吊销、踢设备。 |
 | `test_password_offload.py` | 口令哈希不阻塞事件循环。 |
 | `test_task_api.py` | 任务接口。 |
+| `test_task_feed.py` | 任务中心三路聚合：混合分页 / 状态分组 / 搜索 / 权限 / 未注册 reader 返回空页 / 产物 URL 现签。 |
 | `test_generation.py` | 生成编排：提交/轮询/重试/超时。 |
 | `test_resume.py` | 进程重启后的任务恢复。 |
 | `test_catalog.py` | 模型目录。 |
@@ -388,11 +393,13 @@
 
 | 文件 | 职责 |
 |---|---|
-| `entities/task/api/task.api.ts` | 任务接口：列表、详情、创建、重试、删除。 |
+| `entities/task/api/task.api.ts` | 任务接口：列表、详情、创建、重试、PATCH 更新（标题 / 收藏）、批量删除（回 `skipped`）。 |
 | `entities/task/api/task.queries.ts` | 任务查询键与 hooks。 |
 | `entities/task/model/types.ts` | 任务类型与状态机（queued → running → completed / failed）。 |
 | `entities/task/model/types.test.ts` | 状态机与展示名兜底的用例。 |
+| `entities/task/model/feed.types.ts` | 任务中心三路聚合的类型（`TaskFeedItem` / `TaskFeedStats` / `TaskFeedSource`）。 |
 | `entities/task/ui/TaskCard.tsx` | 任务卡片（状态、进度、操作）。 |
+| `entities/task/ui/ImageTaskCard.tsx` | 生图卡片：与视频卡同栅格，但**不参与勾选**（批量操作只作用于通用视频任务）；`attention` 显示「成图待恢复」。 |
 | `entities/task/ui/TaskCard.test.tsx` | 卡片渲染与状态文案。 |
 
 **user · 用户**
@@ -474,7 +481,8 @@
 | `features/role-editor/RolePermissionsModal.test.tsx` | 「有效权限码」计算与对象引用一致性。 |
 | `features/task-filter/ui/TaskSearchRow.tsx` | 任务搜索行（未知总数时传 `undefined`，不显示「共 0 条」）。 |
 | `features/task-filter/ui/TaskToolbar.tsx` | 任务筛选工具条（状态、范围；`team` 范围待后端实现）。 |
-| `features/task-preview/TaskPreviewModal.tsx` | 任务结果预览弹窗。 |
+| `features/task-preview/TaskPreviewModal.tsx` | 视频任务结果预览弹窗：下载成片走 feed 已现签的 `outputUrl`。 |
+| `features/task-preview/ImagePreviewModal.tsx` | 生图详情弹窗：直接用 feed 的 `image` 投影，不再发详情请求；下载成图、失败重试（可能已扣费时二次确认）、跳生图历史。 |
 | `features/create-task/CreateTaskModal.tsx` | 创建生成任务（模型、时长、比例全部来自 `/models`）。 |
 
 ### 4.5 `modules/` —— 模块清单（**加功能先加这里**）
@@ -506,7 +514,7 @@
 | `pages/storyboards/StoryboardsPage.tsx` | 分镜模板页。 |
 | `pages/image/ImagePage.tsx` | 生图历史页（分页器在「总数未知」时不回退页码）。 |
 | `pages/studio/StudioPage.tsx` | 创作台：模型/时长/比例全部来自 `/models`，加模型不改这里。 |
-| `pages/task-center/TaskCenterPage.tsx` | 任务中心：筛选条件全部由 URL 承载，可分享、可回退。 |
+| `pages/task-center/TaskCenterPage.tsx` | 任务中心：三路来源（视频 / 生图 / 替换档案）、筛选全由 URL 承载；批量下载 / 收藏 / 删除只作用于勾选的通用视频任务。 |
 | `pages/usage/UsagePage.tsx` | 用量看板 · 骨架占位页。 |
 | `pages/login/LoginPage.tsx` | 登录页（裸布局）+ 会话结束原因文案。 |
 | `pages/not-found/NotFoundPage.tsx` | 404。 |
@@ -596,6 +604,7 @@
 |---|---|
 | `shared/config/app.ts` | 应用级常量（`HOME_PATH`、`APP_NAME` 等）。骨架配置，改需评审。 |
 | `shared/config/app.test.ts` | 产品名只有两个落点且必须一致。 |
+| `shared/lib/download.ts` | 下载两个出口：`saveBlob`（本地字节）与 `downloadUrl`（feed 已现签的产物地址）。后者用 `<a download>` 直连、不走 `fetch Blob`，避开对象存储 / CDN 的 CORS。 |
 | `shared/lib/cn.ts` | 合并 className（后者覆盖前者冲突项）。 |
 | `shared/lib/format.ts` | 秒 → `11s` / `1m20s`、字节 → `1.2 MB` 等格式化。 |
 | `shared/lib/format.test.ts` | 格式化用例（本地时区构造，避免时差断言）。 |
@@ -630,9 +639,9 @@
 | `mocks/registry.ts` | mock 路由注册表。 |
 | `mocks/routes/index.ts` | mock 文件自动发现（`modules/<id>/mock.ts` 由各模块自带）。 |
 | `mocks/routes/catalog.mock.ts` | 资产 / 模板 / 分镜 / 镜头 / 生图记录的 mock。 |
-| `mocks/routes/generation.mock.ts` | 生成（同步返回任务 / 生图记录）的 mock。 |
+| `mocks/routes/generation.mock.ts` | 生成（同步返回任务 / 生图记录）的 mock，含 `POST /images/{id}/retry`。 |
 | `mocks/routes/models.mock.ts` | 模型目录 mock（与后端 echo 供应商声明一致）。 |
-| `mocks/routes/task.mock.ts` | 任务 mock。 |
+| `mocks/routes/task.mock.ts` | 任务 mock：`/tasks/feed` 三路聚合、PATCH 幂等置位收藏、批量删除回 `skipped`。 |
 
 ### 4.10 构建配置与脚本
 
@@ -719,6 +728,23 @@ CreateTaskModal → POST /tasks
 
 停用账号的闸门在 `prepare_upload` 里，位置在 `task_id` 分支**之后** ——
 意思是「已经提交给上游的任务」不因为账号被停用而中断（钱已经花了，让它跑完）。
+
+### 5.5 任务中心（只读三路聚合）
+
+```
+GET /tasks/feed ── modules/task/feed_service.py
+  ├─ video_tasks       本模块 repository          （task:read / task:read:all）
+  ├─ image_jobs        core.ports.generation_feed → modules/image/feed_provider
+  │                                             （image:read / image:read:all）
+  └─ replacement_runs  core.feed → modules/template/feed_provider（template:read）
+```
+
+逐路鉴权、逐路取统计与候选 → 合并排序 → 再切一次页；`statsOnly` 只回统计与 `total`。
+生图与视频的产物 key 在出参按当前存储驱动批量现签（`infra/artifacts.artifact_urls`），
+前端拿到的 `outputUrl` / `coverUrl` 就是可访问地址，换存储驱动不会裂图。
+**这一层只读**：收藏走 `PATCH /tasks/{id}`（显式 `{favorited:true}`，不用 toggle）、
+批量删除走 `DELETE /tasks`、生图失败重试走 `POST /images/{id}/retry`；
+各写侧只作用于自己那一类来源，生图与替换档案不参与勾选。
 
 ---
 

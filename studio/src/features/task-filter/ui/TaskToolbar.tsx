@@ -30,8 +30,10 @@ export interface TaskToolbarProps {
   onSelectAll: () => void;
   onDownload: () => void;
   onCollect: () => void;
-  onRecycle: () => void;
+  /** 删除选中的通用视频任务；生图与替换档案没有删除接口，不参与勾选 */
+  onDelete: () => void;
   onCreate: () => void;
+  busy?: boolean;
 }
 
 export function TaskToolbar({
@@ -46,8 +48,9 @@ export function TaskToolbar({
   onSelectAll,
   onDownload,
   onCollect,
-  onRecycle,
+  onDelete,
   onCreate,
+  busy = false,
 }: TaskToolbarProps) {
   return (
     <>
@@ -63,11 +66,11 @@ export function TaskToolbar({
       <Button size="sm" icon={<Download size={13} />} onClick={onDownload}>
         下载<span className="text-ink-mute">({selectedCount})</span>
       </Button>
-      <Button size="sm" icon={<Bookmark size={13} />} onClick={onCollect}>
+      <Button size="sm" icon={<Bookmark size={13} />} onClick={onCollect} disabled={busy}>
         收藏
       </Button>
-      <Button size="sm" icon={<Trash2 size={13} />} onClick={onRecycle}>
-        回收站
+      <Button size="sm" icon={<Trash2 size={13} />} onClick={onDelete} disabled={busy}>
+        删除
       </Button>
       <Button size="sm" variant="ghost" onClick={onSelectAll}>
         全选

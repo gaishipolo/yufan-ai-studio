@@ -108,6 +108,18 @@ export function useToggleFavorite() {
   });
 }
 
+/** 改标题 / 显式置收藏：批量收藏不能用 toggleFavorite（会把已收藏的取消掉） */
+export function useUpdateTask() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...patch }: { id: string; title?: string; favorited?: boolean }) =>
+      taskApi.update(id, patch),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: taskKeys.all });
+    },
+  });
+}
+
 export function useDeleteTasks() {
   const qc = useQueryClient();
   return useMutation({

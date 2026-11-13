@@ -5,11 +5,13 @@
 """
 
 from api.module import ModuleSpec
+from core.ports.generation_feed import register_generation_feed
 from core.ports.library_references import LibraryReferenceSource, bind_library_reference_sources
 from modules.image import (
     maintenance,  # noqa: F401  副作用导入：注册周期任务 image.reconcile
     pipeline,  # noqa: F401  副作用导入：把流水线注册到 generation.pipeline
 )
+from modules.image.feed_provider import read_generation_feed
 from modules.image.health import check as health_check
 from modules.image.library_references import ImageJobReferences
 from modules.image.permissions import SPECS
@@ -28,6 +30,10 @@ LIBRARY_REFERENCE_SOURCES = (
     ),
 )
 bind_library_reference_sources("image", LIBRARY_REFERENCE_SOURCES)
+
+# 任务中心要显示生图记录，但业务模块之间不许互相 import：由本模块在 import 期
+# 把只读 reader 交给 core 注入口，任务中心只认 `GenerationFeedPage` 这份契约。
+register_generation_feed(read_generation_feed)
 
 module = ModuleSpec(
     name="image",

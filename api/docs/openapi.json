@@ -5255,7 +5255,7 @@
         "tags": [
           "任务"
         ],
-        "summary": "统一任务中心：通用生成与本人可见的替换档案",
+        "summary": "统一任务中心：视频生成、生图与本人可见的替换档案",
         "operationId": "task_feed_api_v1_tasks_feed_get",
         "security": [
           {
@@ -5271,6 +5271,7 @@
               "enum": [
                 "all",
                 "video",
+                "image",
                 "replacement"
               ],
               "type": "string",
@@ -10620,6 +10621,149 @@
         ],
         "title": "HealthOut"
       },
+      "ImageFeedItem": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "生图记录 ID"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title",
+            "description": "展示标题（记录名）"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "description": "原始状态：queued / running / succeeded / failed"
+          },
+          "group": {
+            "type": "string",
+            "enum": [
+              "all",
+              "queued",
+              "running",
+              "completed",
+              "failed",
+              "attention"
+            ],
+            "title": "Group",
+            "description": "统一筛选分组"
+          },
+          "createdAt": {
+            "type": "string",
+            "title": "Createdat",
+            "description": "创建时间（UTC）"
+          },
+          "progress": {
+            "type": "integer",
+            "title": "Progress",
+            "description": "生成进度 0-100",
+            "default": 0
+          },
+          "model": {
+            "type": "string",
+            "title": "Model",
+            "description": "模型可读名",
+            "default": ""
+          },
+          "modelId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Modelid",
+            "description": "模型目录 id"
+          },
+          "size": {
+            "type": "string",
+            "title": "Size",
+            "description": "尺寸，如 1024x1024",
+            "default": ""
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count",
+            "description": "一次生成的张数",
+            "default": 1
+          },
+          "prompt": {
+            "type": "string",
+            "title": "Prompt",
+            "description": "画面描述",
+            "default": ""
+          },
+          "coverUrl": {
+            "type": "string",
+            "title": "Coverurl",
+            "description": "封面图地址（已按当前存储驱动现签，可直接用于 <img>）",
+            "default": ""
+          },
+          "outputUrl": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outputurl",
+            "description": "成图地址（成功后才有），同样已现签"
+          },
+          "errorMessage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Errormessage",
+            "description": "失败原因"
+          },
+          "externalId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Externalid",
+            "description": "供应商任务号；有值时重试需先确认可能已扣费"
+          },
+          "detailUrl": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detailurl",
+            "description": "生图历史页深链接"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "status",
+          "group",
+          "createdAt"
+        ],
+        "title": "ImageFeedItem",
+        "description": "一条生图记录的任务中心投影，字段够卡片与详情弹窗用即可。"
+      },
       "ImageJobOut": {
         "properties": {
           "id": {
@@ -14721,12 +14865,13 @@
           "id": {
             "type": "string",
             "title": "Id",
-            "description": "原始任务或替换档案 ID"
+            "description": "原始任务、生图记录或替换档案 ID"
           },
           "source": {
             "type": "string",
             "enum": [
               "video",
+              "image",
               "replacement"
             ],
             "title": "Source",
@@ -14740,7 +14885,7 @@
           "status": {
             "type": "string",
             "title": "Status",
-            "description": "原始状态，保留替换链路的精确状态"
+            "description": "原始状态，保留各链路的精确状态"
           },
           "group": {
             "type": "string",
@@ -14782,7 +14927,7 @@
               }
             ],
             "title": "Outputurl",
-            "description": "替换成片预览和下载地址"
+            "description": "成片 / 成图地址，三路都已按当前存储驱动现签；没有产物时为 null"
           },
           "errorMessage": {
             "anyOf": [
@@ -14806,7 +14951,7 @@
               }
             ],
             "title": "Detailurl",
-            "description": "替换档案深链接"
+            "description": "来源页面的深链接"
           },
           "video": {
             "anyOf": [
@@ -14817,7 +14962,18 @@
                 "type": "null"
               }
             ],
-            "description": "通用任务数据；替换任务为 null"
+            "description": "通用视频任务数据；其他来源为 null"
+          },
+          "image": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ImageFeedItem"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "生图任务数据；其他来源为 null"
           }
         },
         "type": "object",

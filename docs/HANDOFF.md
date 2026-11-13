@@ -12,9 +12,9 @@
 | 项 | 值 |
 |---|---|
 | 仓库 / 分支 | `https://github.com/gaishipolo/yufan-ai-studio` · `main` |
-| HEAD | 本地领先 `origin/main`：`3aaf40f` 起数笔**未推送**（推送前先问用户），hash 见 `git log --oneline -6`。未跟踪的只有 `var/`、临时脚本、快捷方式 `.lnk`、`vite.config.ts.timestamp-*.mjs` 与用户私有的 `EXCHANGE_TOPICS_2026-11-12.md`，都不该进提交 |
+| HEAD | 本地领先 `origin/main`：`3aaf40f` 起 **5 笔未推送**（含本轮「任务中心接生图」，推送前先问用户），hash 见 `git log --oneline -6`。未跟踪的只有 `var/`、临时脚本（如 `var_fix_fe.py`）、快捷方式 `.lnk`、`vite.config.ts.timestamp-*.mjs` 与用户私有的 `EXCHANGE_TOPICS_2026-11-12.md`，都不该进提交 |
 | CI | 此前连续多轮全绿（含 `bc0940e`）；本轮推送后照 §4 核对。PG 迁移仍在观察期（`continue-on-error`） |
-| 本机门禁 | 后端 **1515 passed / 12 skipped**（约 220s，历史全量）；`npm run verify` 全绿；`app export-openapi --check` 四份无差异。**本轮（2026-11-13 模型通用化）按 §3.1 定级 `framework`：78 个测试文件 · 1005 passed / 12 skipped / 0 failed**（95s），未跑全量；`ruff` / `mypy` / `drivers check` 全绿。两条新增守卫已做反向验证（写回 `internal=True` / 删掉 `maxReferences=0` 拒绝，均按预期变红后还原） |
+| 本机门禁 | 本轮（2026-11-13 任务中心接生图）按 §3.1 定级 **`full`**（动 `core/ports/generation_feed.py` 与 `api/ports.py`）：后端全量 **1664 passed / 12 skipped / 0 failed**（214s，EXIT=0）；`test_task_feed.py` 17 passed、架构 / 注入口 / 契约守卫 91 passed；`ruff` / `mypy --platform win32` / `export-openapi --check` 四份无差异 / `gen:routes --check` / `gen:mock-coverage --check` 全绿；`npm run verify` 全绿（82 files / 667 tests） |
 | 规模 | 12 个业务模块 · **118 条路径 / 148 个端点**（文本资产 +7）· **57 个权限码**（本轮未新增）· **4 份**契约生成物 |
 | 后端 | `api/.venv/Scripts/app.exe serve --reload` → 8080，前缀 **`/api/v1`**（裸 `/health` 会返回 40400） |
 | 前端 | `cd studio && npm run dev` → 5173，`/api` 已代理到 8080 |
@@ -46,6 +46,7 @@
 | 本轮 | **模型供应商整体迁移**（2026-11-13）：废弃 `AI_PROVIDERS` 白名单；`echo` → `drivers/echo.py`，`libtv` 执行器（`executor.py` / `process.py` / `state.py` / `runtime/`）→ `modules/model_driver/libtv/`；模板库经 `core/ports/model_generation` 的 `libtv_paths()` / `libtv_execute_stage()` 问执行器 | 只剩 `drivers/` 一条接入路径；`core/config.py` 白名单字段、`.env` 的 `AI_PROVIDERS`、`infra/ai/<name>.py` 全删；子进程入口改成 `-m modules.model_driver.libtv.process` |
 | 本轮 | **三个替换模型通用化**（2026-11-13）：取消 `internal=True` 进 `/models`；新增 `modules/model_driver/generic_inputs.py` 把 `/tasks` 的 `prompt + referenceKeys + params` 物化成替换链同款归档工作区；LibTV 通用链在提交前补跑 `upload` 阶段 | 生成工作台可以直接选百炼/LibTV 替换模型；`maxReferences=0` 的模型带参考素材当场 400，不再静默丢弃；`tests/test_generic_inputs.py` 8 条钉住档案形状与幂等 |
 | `cfc0508` | `ModelSpec.internal` + `ModelRouter.public_models()`：替换链专用模型不再出现在目录（T33，后被本轮取代） | 当时视频下拉里不再有选中即 400 的 `*-replacement` |
+| 本轮 | **任务中心接生图 + 补齐自身真实操作**（2026-11-13）：`GET /tasks/feed` 从「视频 + 替换档案」扩成三路；新增 `core.ports.generation_feed` 注入口，生图模块在 import 期注册 `feed_provider.read_generation_feed`；前端加 `ImageTaskCard` / `ImagePreviewModal` 与来源 `source=image` | 生图记录进任务中心，统计 / 搜索 / 状态分组 / 现签产物地址三路同口径；批量下载、显式 `PATCH` 收藏、`DELETE /tasks` 删除（回 `skipped`）、视频 / 替换成片下载从假按钮变真实操作。**用户明确「v2 先不用管」，本轮完全没碰模板库 v2** |
 
 表格之后又连续落了几件事（提交见 `git log --oneline -12`）：PR#5 语义合并 →
 T34 参考图（含素材库侧边悬浮栏 + 拖拽）→ 标签两级分类 → worktree
@@ -80,6 +81,10 @@ T34 参考图（含素材库侧边悬浮栏 + 拖拽）→ 标签两级分类 �
 | 生图 `GenerateImageIn`、视频 `CreateTaskIn`、替换 `PrepareReplacement` 各多 `textLibraryIds` + 出参 `textBindings` | 前端/脚本 | 提示词里写 `{{Text N}}`，提交时冻结正文注入；出参只回「哪几份、第几版」不回正文。替换工作台只认 `{{Text N}}`，别的手写花括号会被前端拦 |
 | 上传接口 `kind=text` | 前端/脚本 | 请求体上限从 300MB 降到 **1MB**（`LibraryTextTooLarge` 413）；非 UTF-8 一律 400，不做替换字符兜底 |
 | `library_assets` + 三张生成表各加列、新增 `library_text_versions`（迁移 `e2b7c4a9f310`） | 运维 | 存量行靠 `server_default` 天然是「没有文本引用」，**无需回填**；purge 由 `lifecycle._purge_row` 显式删版本行 |
+| `GET /tasks/feed` 的 `source` 多 `image`；`TaskFeedItem` 多 `image` 投影与 `outputUrl` | 前端/脚本 | 三路分别鉴权（`task:read` / `image:read` / `template:read`），`statsOnly` 只回统计与 `total`；产物 URL 在出参现签。无 `image:read` 或未注册 `generation-feed` 时这一路不出现，另外两路照常 |
+| 生图 `succeeded` 但成图不在 → 分组 `attention`（不是 `completed`） | 前端 | 与替换档案同款口径，避免「已完成却点不出图」；卡片显示「成图待恢复」 |
+| 任务中心批量收藏改 `PATCH /tasks/{id}` 显式 `{favorited:true}` | 前端 | 不用 toggle 的 `POST /favorite`（点两次会取消收藏）；批量删除走 `DELETE /tasks` 并如实显示 `skipped`。两类操作只作用于勾选的通用视频任务 |
+| 下载走 feed 已现签的 `outputUrl`，不新增后端下载端点 | 前端 | `shared/lib/download.ts::downloadUrl` 用 `<a download>` 直连，避开对象存储 / CDN 的 CORS；跨源时浏览器忽略 `download` 但仍能打开产物 |
 
 ## 3. 没做完的（直接从这里开工）
 
@@ -90,6 +95,9 @@ T34 参考图（含素材库侧边悬浮栏 + 拖拽）→ 标签两级分类 �
    这道闸目前只负责暴露方言差异、不阻塞合并。哪天要收紧，照 TODO 的前置检查做。
 2. **被移出小组后 owner 看不到素材**（产品口径待定，暂按现状）。
 3. 其余存量：T2/T8/T9/T10/T22~T26/T29，均带验收口径。
+4. **任务中心 `canReadAll` 仍只表示 `task:read:all`**：生图 reader 自己支持
+   `image:read:all`，但前端范围下拉只有一套、由 `task:read:all` 驱动。当前不会越权
+   （后端三路各自判权限），要拆「生图全站范围」得连契约字段一起改。
 
 ## 3.1 测试范围怎么定（2026-11-12 用户拍板：别每次都跑全量）
 
@@ -240,6 +248,12 @@ curl -sS --noproxy '*' -H "Authorization: Bearer $TOKEN" \
 - **选择器默认排除文本**：`LibraryPicker` / `LibraryFlyout` 只有显式 `kinds` 含
   `'text'` 才显示；图片 / 视频 / 封装选择器不能因为多了一种类型就把文案混进去。
   文本也**不是**参考图，别塞进 `referenceLibraryIds` / `referenceAssetIds`。
+- **任务中心不许 import 别的业务模块**：读别人的表走 `core.ports.generation_feed`
+  （生图，SQL 侧筛选 / 统计 / 分页）或 `core.feed`（老替换档案，按 owner 全量）。
+  第三个生成来源也自带 reader；`generation-feed` 未注册返回空页是合法状态，
+  **别改成抛异常**，否则只跑任务模块的单测 / 裁剪装配时会整页 500。
+- **聚合页产物地址一律现签**：库里存对象 key，出参才按当前存储驱动
+  `artifact_urls()` 转换；视频 / 生图 / 替换三路都别把裸 key 交给前端。
 
 ## 6. 本机环境坑（Windows 开发机）
 

@@ -49,4 +49,23 @@ export const routes: MockRoute[] = [
     },
     status: 201,
   },
+  {
+    // 任务中心里生图详情弹窗的「重新生成」出口，与后端 /images/{id}/retry 同形
+    method: 'POST',
+    pattern: /^\/images\/([\w-]+)\/retry$/,
+    handler: (ctx) => {
+      const id = ctx.path.split('/')[2];
+      const job = db.imageJobs.find((item) => item.id === id);
+      if (!job) throw new HttpError(404, '生图记录不存在');
+      if (job.status !== 'failed') throw new HttpError(409, '仅失败的生图任务可以重试');
+      job.status = 'queued';
+      job.progress = 0;
+      job.errorMessage = null;
+      job.coverUrl = '';
+      job.outputUrl = null;
+      // tick() 按 createdAt 推算进度：不重置的话重试刚入队就立刻又完成
+      job.createdAt = new Date().toISOString();
+      return { id: job.id, status: job.status };
+    },
+  },
 ];

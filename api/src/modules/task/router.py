@@ -1,6 +1,7 @@
 """任务模块路由：只做 HTTP 协议转换，业务逻辑在 service。
 
 路径与前端 `entities/task/api/task.api.ts` 严格对齐：
+GET    /tasks/feed           统一任务中心（视频 / 生图 / 替换档案）
 GET    /tasks                列表（含 stats）
 GET    /tasks/stats          仅统计
 GET    /tasks/{id}           详情
@@ -49,7 +50,7 @@ router = APIRouter(prefix="/tasks", tags=["任务"])
 TaskId = Annotated[str, Path(description="任务 ID")]
 
 
-@router.get("/feed", summary="统一任务中心：通用生成与本人可见的替换档案")
+@router.get("/feed", summary="统一任务中心：视频生成、生图与本人可见的替换档案")
 async def task_feed(
     service: TaskServiceDep,
     actor: TaskReadDep,

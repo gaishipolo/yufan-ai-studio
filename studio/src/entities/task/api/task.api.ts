@@ -23,5 +23,10 @@ export const taskApi = {
 
   toggleFavorite: (id: string) => api.post<VideoTask>(`/tasks/${id}/favorite`),
 
-  remove: (ids: string[]) => api.delete<{ deleted: number }>('/tasks', { ids }),
+  /** 批量收藏走 PATCH 而不是 favorite：后者是「切换」，点两次会把已收藏的取消掉 */
+  update: (id: string, patch: { title?: string; favorited?: boolean }) =>
+    api.patch<VideoTask>(`/tasks/${id}`, patch),
+
+  remove: (ids: string[]) =>
+    api.delete<{ deleted: number; skipped: string[] }>('/tasks', { ids }),
 };

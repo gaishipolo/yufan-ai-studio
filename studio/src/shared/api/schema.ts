@@ -459,6 +459,42 @@ export interface HealthOut {
   version?: string;
 }
 
+/** 一条生图记录的任务中心投影，字段够卡片与详情弹窗用即可。 */
+export interface ImageFeedItem {
+  /** 生图记录 ID */
+  id: string;
+  /** 展示标题（记录名） */
+  title: string;
+  /** 原始状态：queued / running / succeeded / failed */
+  status: string;
+  /** 统一筛选分组 */
+  group: "all" | "queued" | "running" | "completed" | "failed" | "attention";
+  /** 创建时间（UTC） */
+  createdAt: string;
+  /** 生成进度 0-100 */
+  progress?: number;
+  /** 模型可读名 */
+  model?: string;
+  /** 模型目录 id */
+  modelId?: string | null;
+  /** 尺寸，如 1024x1024 */
+  size?: string;
+  /** 一次生成的张数 */
+  count?: number;
+  /** 画面描述 */
+  prompt?: string;
+  /** 封面图地址（已按当前存储驱动现签，可直接用于 <img>） */
+  coverUrl?: string;
+  /** 成图地址（成功后才有），同样已现签 */
+  outputUrl?: string | null;
+  /** 失败原因 */
+  errorMessage?: string | null;
+  /** 供应商任务号；有值时重试需先确认可能已扣费 */
+  externalId?: string | null;
+  /** 生图历史页深链接 */
+  detailUrl?: string | null;
+}
+
 /** ImageJobOut */
 export interface ImageJobOut {
   /** 生图记录 ID */
@@ -1389,13 +1425,13 @@ export interface TagParentIn {
 export interface TaskFeedItem {
   /** 带来源前缀的唯一键，不是上游任务 ID */
   key: string;
-  /** 原始任务或替换档案 ID */
+  /** 原始任务、生图记录或替换档案 ID */
   id: string;
   /** 任务来源 */
-  source: "video" | "replacement";
+  source: "video" | "image" | "replacement";
   /** 展示标题 */
   title: string;
-  /** 原始状态，保留替换链路的精确状态 */
+  /** 原始状态，保留各链路的精确状态 */
   status: string;
   /** 统一筛选分组；running 包含排队 */
   group: "all" | "queued" | "running" | "completed" | "failed" | "attention";
@@ -1405,14 +1441,16 @@ export interface TaskFeedItem {
   progress?: number;
   /** 替换原片名称 */
   sourceName?: string;
-  /** 替换成片预览和下载地址 */
+  /** 成片 / 成图地址，三路都已按当前存储驱动现签；没有产物时为 null */
   outputUrl?: string | null;
   /** 失败或需处理原因 */
   errorMessage?: string | null;
-  /** 替换档案深链接 */
+  /** 来源页面的深链接 */
   detailUrl?: string | null;
-  /** 通用任务数据；替换任务为 null */
+  /** 通用视频任务数据；其他来源为 null */
   video?: modules__task__schema__TaskOut | null;
+  /** 生图任务数据；其他来源为 null */
+  image?: ImageFeedItem | null;
 }
 
 /** TaskFeedOut */
@@ -2237,7 +2275,7 @@ export interface EndpointData {
   "GET /api/v1/tasks": TaskListOut;
   /** 创建任务 */
   "POST /api/v1/tasks": core__response__ApiResponse_TaskOut___2;
-  /** 统一任务中心：通用生成与本人可见的替换档案 */
+  /** 统一任务中心：视频生成、生图与本人可见的替换档案 */
   "GET /api/v1/tasks/feed": TaskFeedOut;
   /** 任务统计（侧边栏角标） */
   "GET /api/v1/tasks/stats": TaskStats;

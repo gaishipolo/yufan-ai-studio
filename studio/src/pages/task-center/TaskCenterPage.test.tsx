@@ -1,13 +1,19 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { AccessProvider } from '@/shared/access/AccessProvider';
 import type { VideoTask } from '@/entities/task/model/types';
-import type { TaskFeedParams, TaskFeedResult } from '@/entities/task/model/feed.types';
+import type { TaskFeedItem, TaskFeedParams, TaskFeedResult } from '@/entities/task/model/feed.types';
 import TaskCenterPage from './TaskCenterPage';
 
-const mock = vi.hoisted(() => ({ list: {} as Record<string, unknown>, params: {} as TaskFeedParams }));
+const mock = vi.hoisted(() => ({
+  list: {} as Record<string, unknown>,
+  params: {} as TaskFeedParams,
+  deleteCalls: [] as string[][],
+  updateCalls: [] as unknown[],
+  deleted: { deleted: 1, skipped: [] as string[] },
+}));
 
 vi.mock('@/entities/task/api/task.queries', () => ({
   useTaskFeed: (params: TaskFeedParams) => {mock.params = params; return mock.list;},
@@ -15,7 +21,15 @@ vi.mock('@/entities/task/api/task.queries', () => ({
   useCreateTask: () => ({mutateAsync: vi.fn(), isPending: false}),
   useRetryTask: () => ({mutateAsync: vi.fn(), isPending: false}),
   useToggleFavorite: () => ({mutateAsync: vi.fn(), isPending: false}),
-  useDeleteTasks: () => ({mutateAsync: vi.fn(), isPending: false}),
+  useDeleteTasks: () => ({
+    mutateAsync: vi.fn(async (ids: string[]) => { mock.deleteCalls.push(ids); return mock.deleted; }),
+    isPending: false,
+  }),
+  useUpdateTask: () => ({
+    mutateAsync: vi.fn(async (patch: unknown) => { mock.updateCalls.push(patch); return {}; }),
+    isPending: false,
+  }),
+  taskKeys: { all: ['tasks'], feeds: () => ['tasks', 'feed'] },
 }));
 vi.mock('@/shared/lib/toast', () => ({toast: vi.fn()}));
 
@@ -49,6 +63,9 @@ function App({permissions = ['task:read']}: {permissions?: string[]}) {
 
 beforeEach(() => {
   mock.list = {data: listResult(), isLoading: false, isFetching: false, isError: false, error: null, refetch: vi.fn()};
+  mock.deleteCalls = [];
+  mock.updateCalls = [];
+  mock.deleted = { deleted: 1, skipped: [] };
 });
 
 describe('任务中心页面', () => {
@@ -74,10 +91,12 @@ describe('任务中心页面', () => {
     expect(mock.params.page).toBe(1);
   });
 
-  it('没有 template:read 时不提供替换任务来源选项或创建入口', () => {
+  it('没有 template:read / image:read 时不提供对应来源选项或创建入口', () => {
     render(<App permissions={['task:read']} />);
     expect(screen.queryByRole('option', {name: '模板替换'})).not.toBeInTheDocument();
+    expect(screen.queryByRole('option', {name: '生图'})).not.toBeInTheDocument();
     expect(screen.queryByRole('link', {name: /创建替换任务/})).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', {name: /生图工作台/})).not.toBeInTheDocument();
   });
 
   it('替换归档盘离线时明确显示统计不完整，仍展示通用任务', () => {
@@ -85,5 +104,42 @@ describe('任务中心页面', () => {
     render(<App />);
     expect(screen.getByRole('alert')).toHaveTextContent('当前统计不含替换任务');
     expect(screen.getByRole('button', {name: '查看任务：测试任务'})).toBeVisible();
+  });
+
+  const imageItem: TaskFeedItem = {
+    key: 'image:img1', id: 'img1', source: 'image', title: '一只猫', status: 'succeeded',
+    group: 'completed', createdAt: task.createdAt, progress: 100, sourceName: '',
+    outputUrl: '/static/cat.png',
+    image: {
+      id: 'img1', title: '一只猫', status: 'succeeded', group: 'completed',
+      createdAt: task.createdAt, progress: 100, model: '生图模型', size: '1024x1024',
+      count: 1, prompt: '一只猫', coverUrl: '/static/cat.png', outputUrl: '/static/cat.png',
+      detailUrl: '/image?job=img1',
+    },
+  };
+
+  it('生图作为第三类来源展示，并可按来源筛选', () => {
+    mock.list.data = listResult({items: [...listResult().items, imageItem], total: 2});
+    render(<App permissions={['task:read', 'image:read']} />);
+    expect(screen.getByRole('button', {name: '查看生图：一只猫'})).toBeVisible();
+    expect(screen.getByRole('option', {name: '生图'})).toBeInTheDocument();
+    fireEvent.change(screen.getByRole('combobox', {name: '任务来源'}), {target: {value: 'image'}});
+    expect(mock.params.source).toBe('image');
+  });
+
+  it('批量删除走真实接口，不再弹空回收站', async () => {
+    mock.deleted = {deleted: 1, skipped: ['task-missing']};
+    render(<App />);
+    expect(screen.queryByRole('button', {name: '回收站'})).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', {name: '选择任务：测试任务'}));
+    fireEvent.click(screen.getByRole('button', {name: '删除'}));
+    await waitFor(() => expect(mock.deleteCalls).toEqual([['task1']]));
+  });
+
+  it('批量收藏用显式置位而不是切换', async () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', {name: '选择任务：测试任务'}));
+    fireEvent.click(screen.getByRole('button', {name: '收藏'}));
+    await waitFor(() => expect(mock.updateCalls).toEqual([{id: 'task1', favorited: true}]));
   });
 });

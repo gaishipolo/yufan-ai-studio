@@ -1,7 +1,9 @@
 import { AxiosHeaders, type InternalAxiosRequestConfig } from 'axios';
 import { describe, expect, it } from 'vitest';
 import { mockAdapter } from './adapter';
+import { db } from './db';
 import type { ApiResponse } from '@/shared/api/types';
+import type { TaskFeedResult } from '@/entities/task/model/feed.types';
 import type { TaskListResult, VideoTask } from '@/entities/task/model/types';
 
 interface MockResult<T> {
@@ -134,5 +136,53 @@ describe('mock adapter · 写操作', () => {
 
     expect(afterToggle).toBe(!before);
     expect(afterSecondToggle).toBe(before);
+  });
+});
+
+describe('mock adapter · 任务中心三路聚合与批量操作', () => {
+  it('source=image 只返回生图，并带上生图投影', async () => {
+    const { body } = await call<TaskFeedResult>('get', '/tasks/feed', {
+      params: { source: 'image', pageSize: 100 },
+    });
+    const items = body.data?.items ?? [];
+    expect(items.length).toBeGreaterThan(0);
+    expect(items.every((item) => item.source === 'image' && item.image)).toBe(true);
+    expect(body.data?.stats.all).toBe(items.length);
+  });
+
+  it('PATCH 显式置收藏是幂等置位，不是切换', async () => {
+    const list = await listTasks({ scope: 'all', pageSize: 1 });
+    const id = list.body.data?.items[0].id as string;
+    const once = await call<VideoTask>('patch', `/tasks/${id}`, { data: { favorited: true } });
+    const twice = await call<VideoTask>('patch', `/tasks/${id}`, { data: { favorited: true } });
+    expect(once.body.data?.favorited).toBe(true);
+    expect(twice.body.data?.favorited).toBe(true);
+  });
+
+  it('生图重试把失败记录重新排队，非失败记录被拒绝', async () => {
+    const job = db.imageJobs[0];
+    const snapshot = { ...job };
+    job.status = 'failed';
+    try {
+      const { body } = await call<{ id: string; status: string }>(
+        'post', `/images/${job.id}/retry`,
+      );
+      expect(body.data?.status).toBe('queued');
+      await expect(call('post', `/images/${db.imageJobs[1].id}/retry`)).rejects.toThrow(
+        '仅失败的生图任务可以重试',
+      );
+    } finally {
+      Object.assign(job, snapshot);
+    }
+  });
+
+  it('批量删除如实回报 skipped，不把不存在的 id 算成已删', async () => {
+    const list = await listTasks({ scope: 'all', pageSize: 1 });
+    const id = list.body.data?.items[0].id as string;
+    const { body } = await call<{ deleted: number; skipped: string[] }>('delete', '/tasks', {
+      data: { ids: [id, 'not-exist'] },
+    });
+    expect(body.data?.deleted).toBe(1);
+    expect(body.data?.skipped).toEqual(['not-exist']);
   });
 });

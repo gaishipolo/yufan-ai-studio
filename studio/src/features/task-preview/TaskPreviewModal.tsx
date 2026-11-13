@@ -1,12 +1,15 @@
 import { Bookmark, Download, RotateCcw } from 'lucide-react';
 import { Button, Chip, CoverImage, Modal, Skeleton } from '@/shared/ui';
 import { toast } from '@/shared/lib/toast';
+import { downloadUrl } from '@/shared/lib/download';
 import { formatDateTime, formatDuration } from '@/shared/lib/format';
 import { useRetryTask, useTaskDetail, useToggleFavorite } from '@/entities/task/api/task.queries';
 import { TASK_STATUS_LABEL } from '@/entities/task/model/types';
 
 export interface TaskPreviewModalProps {
   taskId: string | null;
+  /** 成片地址由 feed 提供（后端已按当前存储驱动现签），详情接口不返回它 */
+  outputUrl?: string | null;
   onClose: () => void;
 }
 
@@ -17,7 +20,7 @@ const STATUS_TONE = {
   failed: 'danger',
 } as const;
 
-export function TaskPreviewModal({ taskId, onClose }: TaskPreviewModalProps) {
+export function TaskPreviewModal({ taskId, outputUrl, onClose }: TaskPreviewModalProps) {
   const { data: task, isLoading } = useTaskDetail(taskId);
   const retry = useRetryTask();
   const favorite = useToggleFavorite();
@@ -82,11 +85,11 @@ export function TaskPreviewModal({ taskId, onClose }: TaskPreviewModalProps) {
                 size="sm"
                 variant="primary"
                 icon={<Download size={13} />}
-                disabled={!task.downloadable}
+                disabled={!task.downloadable || !outputUrl}
                 onClick={() =>
-                  task.downloadable
-                    ? toast('开始下载成片（等待接入下载接口）')
-                    : toast('成片尚未生成完成', 'error')
+                  outputUrl
+                    ? downloadUrl(outputUrl, `${task.title}.mp4`)
+                    : toast('成片地址暂不可用，请稍后刷新', 'error')
                 }
               >
                 下载成片
@@ -119,11 +122,6 @@ export function TaskPreviewModal({ taskId, onClose }: TaskPreviewModalProps) {
               </Button>
             </div>
 
-            <p className="mt-4 rounded-[10px] border border-line-soft bg-panel-soft px-3 py-2.5 text-[11.5px] leading-relaxed text-ink-mute">
-              播放器与下载走的是占位逻辑，接入后端后替换为真实资源地址即可；任务详情通过
-              <code className="mx-1 rounded bg-white px-1 py-px text-[11px] text-ink-soft">GET /tasks/:id</code>
-              拉取。
-            </p>
           </div>
         </div>
       )}

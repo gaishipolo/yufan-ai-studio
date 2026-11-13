@@ -72,6 +72,7 @@ from core.audit import has_audit_sink
 from core.feed import has_replacement_feed
 from core.ports.accounts import has_account_status_checker
 from core.ports.export_sources import export_sources
+from core.ports.generation_feed import has_generation_feed
 from core.ports.library_ingest import has_library_ingest
 from core.ports.library_lookup import has_library_lookup
 from core.ports.library_references import library_references_ready
@@ -140,6 +141,16 @@ PORT_CATALOG: tuple[PortSpec, ...] = (
         when_unregistered="任务中心看到空列表：替换档案不计入待办与统计，"
         "但页面本身仍可用",
         is_registered=has_replacement_feed,
+    ),
+    PortSpec(
+        name="generation-feed",
+        module="core.ports.generation_feed",
+        protocol="",  # 类型是 Callable 别名，没有具名协议类
+        implementer="modules/image 的 `feed_provider.read_generation_feed`（读 "
+        "`image_jobs` 表，筛选/统计/现签 URL 都在来源方完成）",
+        when_unregistered="任务中心不显示生图记录：统计与列表里都不计入这一路，"
+        "视频与替换档案照常显示。只跑任务模块的单测就是这个状态",
+        is_registered=has_generation_feed,
     ),
     PortSpec(
         name="export-sources",
