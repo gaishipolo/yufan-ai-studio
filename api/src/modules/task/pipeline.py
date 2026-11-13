@@ -11,11 +11,13 @@ from pathlib import Path
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.exceptions import BadRequest
 from core.library_text import inject_text_refs
 from core.ports.library_ingest import IngestRequest
-from core.ports.library_lookup import LibraryAssetKind
+from core.ports.library_lookup import LibraryAssetKind, get_library_lookup
 from generation.pipeline import register_pipeline
 from generation.spec import STATUS_QUEUED, STATUS_RUNNING, GenerationRecord
+from infra import get_model_router
 from infra.ai.base import Capability, GenerationRequest
 from modules.task.enums import TaskStatus
 from modules.task.models import VideoTask
@@ -46,6 +48,38 @@ class VideoTaskStore:
         }
         if task.style_preset:
             params["stylePreset"] = task.style_preset
+        # 把受理期校验过的资产库 id 换成驱动能直接取字节的存储键。物化器
+        # （`modules/model_driver/generic_inputs.py`）只认这批 key，不查库、
+        # 不认用户：权限与存在性在 POST /tasks 受理时已经判完。
+        #
+        # 只有「声明了能收参考素材」的模型才需要这一步：纯文生视频模型压根
+        # 不会读 params.referenceKeys，为它们查库 + 严格校验只会让历史行
+        # （删过的图、迁移前的假 id）在轮询时莫名失败。
+        spec = get_model_router().spec_for(task.model_id or task.model)
+        if task.reference_library_ids and spec and spec.max_references > 0:
+            found = await get_library_lookup().get_many(
+                self.session, task.reference_library_ids
+            )
+            # 删除保护（`modules/task/library_references.py`）保证任务行还在时
+            # 资产不会被 purge；万一有历史脏行或运维直改，这里必须**整条拒绝**，
+            # 不能像列表推导那样「查不到就悄悄跳过一张」——那会生成一段与提示词
+            # 里「第二张图」对不上的成片，而且没有任何报错。
+            lost = [
+                asset_id
+                for asset_id in task.reference_library_ids
+                if asset_id not in found or not found[asset_id].storage_key
+            ]
+            if lost:
+                raise BadRequest(f"参考素材已不可用，无法重建生成请求：{lost}")
+            params["referenceKeys"] = [
+                {
+                    "id": asset_id,
+                    "key": found[asset_id].storage_key,
+                    "kind": found[asset_id].kind.value,
+                    "name": found[asset_id].name,
+                }
+                for asset_id in task.reference_library_ids
+            ]
         return GenerationRecord(
             id=task.id,
             kind=KIND_VIDEO,

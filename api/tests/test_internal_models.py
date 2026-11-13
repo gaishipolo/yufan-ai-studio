@@ -1,14 +1,16 @@
-"""`internal=True` 的模型：不在目录里露脸，但仍能被按 id 解析。
+"""`internal` / `placeholder` 两个标记：不在目录里露脸，但仍能被按 id 解析。
 
-背景（T33）：替换链的 `bailian-wan3-*` / `libtv-wan3-*` 提交时要求 `params`
-里带 `archiveRunId`。它们出现在通用生图 / 视频页的下拉里时，用户选中必然
-400「调用档案标识不匹配」——报错完全指不到「这个模型不该出现在这里」。
+背景（T33）：替换链的 `bailian-wan3-*` / `libtv-wan3-*` 原先提交时要求
+`params` 里带 `archiveRunId`，出现在通用生图 / 视频页必然 400，所以标
+`internal=True`。2026-11-13 起通用入口会补出同款归档工作区
+（`modules/model_driver/generic_inputs.py`），这三个模型已经**公开**；
+本文件剩下的用例钉住「标记机制本身」与「公开模型必须自己说清输入」。
 
-所以两件事必须同时成立，缺一条就是 bug：
+两件事必须同时成立，缺一条就是 bug：
 
-1. 给人挑的地方（`GET /models`、门面的模型清单）看不到它们；
-2. 按 id 找实现的地方（`resolve()` / `provider_for()`，替换链正是这么调的）
-   仍然找得到——在解析层过滤等于把替换链打断。
+1. 给人挑的地方（`GET /models`、门面的模型清单）看不到 internal / placeholder；
+2. 按 id 找实现的地方（`resolve()` / `provider_for()`）仍然找得到——
+   在解析层过滤等于把替换链打断。
 """
 
 from __future__ import annotations
@@ -109,23 +111,55 @@ def test_public_default_is_still_marked() -> None:
     assert [item.is_default for item in listed.items] == [True]
 
 
-def test_replacement_channel_models_are_declared_internal() -> None:
-    """真实声明：漏标一个，用户在通用页就能选中它然后 400。
-
-    `bailian` / `libtv` 都是替换链专用（提交要带 `archiveRunId`），加新模型
-    时同样要带上 `internal=True`。
-    """
+def _replacement_specs() -> tuple[ModelSpec, ...]:
     from modules.model_driver.drivers import bailian
-    from modules.model_driver.drivers.libtv import LibTVProvider
+    from modules.model_driver.drivers.libtv import MODELS as LIBTV_MODELS
 
-    # libtv 的清单挂在供应商类上（老路径），bailian 是驱动模块级 `MODELS`
-    for label, specs in (
-        ("bailian", bailian.MODELS),
-        ("libtv", LibTVProvider.models),
-    ):
-        assert specs, f"{label} 没声明任何模型"
-        for spec in specs:
-            assert spec.internal, f"{label}: {spec.id} 未标记 internal"
+    return (*bailian.MODELS, *LIBTV_MODELS)
+
+
+def test_replacement_channel_models_are_public_and_declare_inputs() -> None:
+    """真实声明：三个替换模型进了生成工作台，就必须自己说清吃什么输入。
+
+    以前的约束是「必须标 `internal=True`」——缺 `archiveRunId` 会 400。
+    通用入口补出归档工作区之后约束换了一组：漏掉其中任意一条，用户都能在
+    下拉里选中它，却拿不到参数区 / 参考素材入口，或者提交后才看到一句
+    「输入尚未完成上传审核」，指不到真正原因。
+    """
+    from modules.catalog.service import CatalogService
+    from modules.model_driver.registry import ensure_drivers_registered
+
+    ensure_drivers_registered()
+    specs = _replacement_specs()
+    assert len(specs) == 3, "替换模型数量变了，请同步核对这份守卫"
+    public = {
+        item.id
+        for item in CatalogService(get_model_router()).list_models(Capability.VIDEO).items
+    }
+    for spec in specs:
+        assert not spec.internal, f"{spec.id} 又被标回 internal，通用页选中必然 400"
+        assert not spec.placeholder, f"{spec.id} 不该是占位实现"
+        assert spec.capability is Capability.VIDEO
+        assert spec.max_references > 0, f"{spec.id} 没声明参考素材上限"
+        assert {"durationSec", "aspectRatio"} <= set(spec.param_schema), (
+            f"{spec.id} 的参数区缺少时长 / 画幅声明"
+        )
+        assert spec.id in public, f"{spec.id} 没进 GET /models"
+
+
+def test_replacement_models_do_not_take_the_video_default() -> None:
+    """公开 ≠ 可以当默认：它们要收参考素材、还要跑长耗时的上传准备。
+
+    默认模型是「用户不传 model 时后端替他选的」，必须落在纯文生视频那种
+    开箱即用的模型上；替换模型抢到默认位，不传 model 的请求会静默变成
+    一条需要素材准备的任务。
+    """
+    from modules.model_driver.registry import ensure_drivers_registered
+
+    ensure_drivers_registered()
+    default = get_model_router().default_model_or_none(Capability.VIDEO)
+    assert default is not None
+    assert default not in {spec.id for spec in _replacement_specs()}
 
 
 def test_underscore_prefixed_driver_files_are_skipped() -> None:
@@ -179,7 +213,7 @@ def test_internal_flag_defaults_to_false() -> None:
 # placeholder：占位模型（实现是假的）
 #
 # 与 `internal` 是**两回事**，别混用：
-# - `internal` = 只能自己的业务链路调（替换链专用），露脸必然 400；
+# - `internal` = 只能自己的业务链路调，通用入口选中必然 400；
 # - `placeholder` = **实现是假的**（本地 echo 占位供应商），露脸不报错，
 #   但用户选中后拿到的是 `example.com/mock/...` 的占位图。
 #
@@ -282,7 +316,7 @@ def test_placeholder_models_do_not_shadow_real_models() -> None:
 def test_placeholder_and_internal_are_separate_concerns() -> None:
     """两个标记不能互相替代。
 
-    `internal` 的语义是「露脸必然 400」（替换链的标识校验）；
+    `internal` 的语义是「露脸必然 400」（专属档案 / 标识校验）；
     `placeholder` 的语义是「露脸不报错但结果是假的」。
     把替换链模型错标成 placeholder，它就会**露脸**给用户 —— 那是回归；
     把占位模型错标成 internal，用户会以为「这个模型没实现」，但实际

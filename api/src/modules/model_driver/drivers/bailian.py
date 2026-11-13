@@ -1,8 +1,10 @@
 """阿里云百炼 Wan 3.0 视频驱动（北京地域，异步任务 + 计费回执）。
 
 放进 `drivers/` 就自动载入，不改 `.env`、不改 import、不需要注册。
-它是模板工作台「替换渠道」的第三个可选渠道（`libtv` / `bailian` / `bailian-prime`），
-`bailian-wan3-*` 这两个模型 id 只在那条链里用，通用生成入口用 `agnes-*`。
+它是模板工作台「替换渠道」的第三个可选渠道（`libtv` / `bailian` / `bailian-prime`）。
+2026-11-13 起两个 `bailian-wan3-*` 也公开进 `GET /models`：通用生成入口没有
+`archiveRunId` 时，`_submit` 先调 `generic_inputs.materialize()` 补出同款工作区，
+后面的 `prepare_inputs` / 回执 / 计费纪律与替换链完全一致。
 
 ## 为什么需要「先上传素材」
 
@@ -75,6 +77,7 @@ from infra.archive import get_archive_storage, run_dir
 from infra.archive.base import lease
 from infra.archive.runs import check_id
 from infra.driver_config import DriverSettings, driver_config
+from modules.model_driver.generic_inputs import materialize
 from modules.model_driver.spec import DriverMeta
 
 META = DriverMeta(
@@ -88,24 +91,34 @@ MODEL_ID = "bailian-wan3-replacement"
 PRIME_MODEL_ID = "bailian-wan3-prime-replacement"
 _MODELS = {MODEL_ID: "wan3.0-video", PRIME_MODEL_ID: "wan3.0-video-prime"}
 
+_PARAM_SCHEMA = {
+    # 键名与 `modules/task/params.py` 对齐：前端按 paramSchema 渲染，不加代码。
+    "durationSec": {"type": "int", "min": 2, "max": 30, "step": 1, "default": 5},
+    "aspectRatio": {
+        "type": "enum",
+        "options": ["9:16", "16:9", "1:1"],
+        "default": "9:16",
+    },
+}
+
 MODELS: tuple[ModelSpec, ...] = (
     ModelSpec(
         id=MODEL_ID,
         label="百炼万相3.0",
         capability=Capability.VIDEO,
         provider="bailian",
-        description="替换渠道：720P，参考视频 + 图 + 音频混合输入",
-        # 替换链专用（提交要带 `archiveRunId`，见 `submit` 里的标识校验）。
-        # 不在目录里露脸，避免用户在通用视频页选中后 400。
-        internal=True,
+        description="720P，参考视频 + 图 + 音频混合输入",
+        param_schema=_PARAM_SCHEMA,
+        max_references=10,
     ),
     ModelSpec(
         id=PRIME_MODEL_ID,
         label="百炼万相3.0高速版",
         capability=Capability.VIDEO,
         provider="bailian",
-        description="替换渠道：与标准版同参数，出片更快、单价更高",
-        internal=True,
+        description="与标准版同参数，出片更快、单价更高",
+        param_schema=_PARAM_SCHEMA,
+        max_references=10,
     ),
 )
 
@@ -389,8 +402,11 @@ class BailianProvider:
             raise BadRequest("百炼通道仅支持视频生成")
         _real_model(request.model)
         run_id = request.request_id
-        if not run_id or request.params.get("archiveRunId") != run_id:
-            raise BadRequest("百炼调用档案标识不匹配")
+        if not run_id:
+            raise BadRequest("缺少任务标识")
+        if request.params.get("archiveRunId") != run_id:
+            # 通用生成入口：补出替换链同款档案，下面的素材上传与回执照旧。
+            await materialize(request)
         folder = await asyncio.to_thread(run_path, run_id)
         receipt_file = folder / "records/bailian-submission.json"
         if await asyncio.to_thread(receipt_file.exists):

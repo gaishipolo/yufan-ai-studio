@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 
 from core.exceptions import BadRequest, UpstreamError
 from infra import get_queue
@@ -24,12 +25,13 @@ from infra.ai.base import (
     ModelSpec,
 )
 from infra.queue.base import Job
+from modules.model_driver.generic_inputs import materialize
 from modules.model_driver.libtv import executor
 from modules.model_driver.spec import DriverMeta
 
 META = DriverMeta(
     label="LibTV",
-    description="Wan 3.0 替换模板专用（归档输入 + 免费/积分队列）",
+    description="Wan 3.0 视频替换（归档输入 + 免费/积分队列）",
     version="1.0.0",
     author="",
 )
@@ -47,18 +49,32 @@ EXECUTOR_BLOCKED = frozenset(
     }
 )
 
+_PARAM_SCHEMA = {
+    # 键名与 `modules/task/params.py` 对齐：前端按 paramSchema 渲染，不加代码。
+    "durationSec": {"type": "int", "min": 2, "max": 30, "step": 1, "default": 5},
+    "aspectRatio": {
+        "type": "enum",
+        "options": ["9:16", "16:9", "1:1"],
+        "default": "9:16",
+    },
+}
+
 MODELS: tuple[ModelSpec, ...] = (
     ModelSpec(
         id=MODEL_ID,
-        label="LibTV · 720P 替换模板专用",
+        label="LibTV · 720P 视频替换",
         provider="libtv",
         capability=Capability.VIDEO,
-        description="需先在替换模板归档输入；支持 0 积分畅用队列与积分加速队列",
-        # 替换链专用：submit 要求 params 里带 archiveRunId，通用视频页
-        # 选中它必然 400。不进模型目录，但 provider_for() 仍能按 id 解析。
-        internal=True,
+        description="720P 视频替换；支持 0 积分畅用队列与积分加速队列",
+        param_schema=_PARAM_SCHEMA,
+        max_references=5,
     ),
 )
+
+
+def _request_ready(path: Path) -> bool:
+    """`inputs/request.json` 是 upload 阶段的产物，submit 阶段必须读它。"""
+    return (path / "inputs/request.json").is_file()
 
 
 class LibTVProvider:
@@ -67,17 +83,41 @@ class LibTVProvider:
     # 返回任务 ID、由框架续轮询；恢复器按缺省 False 处理，必须显式声明
     supports_poll = True
     models = MODELS
+    # 通用入口要在本跳里先跑 `upload` 再跑 `submit`（模板库那条链把 upload
+    # 排成独立的 prepare job，这里没有）。监督进程给的两个阶段预算是
+    # 1500s + 100s；框架会再加 30s 余量。写小了会在上传素材时被队列硬超时
+    # 取消，而那时「提交意图」已经落库 → 被判成「可能已计费」。
+    submit_timeout_sec = 1650.0
 
     async def submit(self, request: GenerationRequest) -> str:
-        value = request.params.get("archiveRunId")
-        if not isinstance(value, str) or value != request.request_id:
-            raise BadRequest("此模型需从人物/产品/场景替换模板使用")
+        # 归档工作区 id 只能是字符串：模板库那条链把它放在 `archiveRunId`，
+        # 通用链没有这个键（None → ""），于是用任务 id 当工作区 id。
+        value = str(request.params.get("archiveRunId") or "")
+        generic = value != request.request_id
+        if generic:
+            # 通用生成入口没有模板库写的档案：补出同款工作区，后面的提交、
+            # 回执、去重与计费纪律全部照旧。模板库带 archiveRunId 时不进这里。
+            await materialize(request)
+            value = request.request_id
         path = await asyncio.to_thread(executor.run_path, value)
+        if generic and not await asyncio.to_thread(_request_ready, path):
+            # `upload` 只做「传素材 + 估价」，不向上游下单；`submit` 才是花钱
+            # 的那一步。缺了它，桥接层会读不到 `inputs/request.json`，报一个
+            # 和用户输入完全无关的 ENOENT。
+            upload = await executor.execute_stage(value, "upload")
+            if upload.code != "OK":
+                raise BadRequest(f"素材上传准备未完成：{upload.message or upload.code}")
         previous = await asyncio.to_thread(executor.state, path)
         if previous.task_id:
             return f"{value}:{previous.task_id}"
         if previous.status == "submission_unknown":
             raise UpstreamError("提交回执未知，禁止重提，请先核对上游记录")
+        # upload 阶段可能停在「等免费」或「适配器报错」：这时不许再调 submit，
+        # 否则桥接层只会抛 "Refusing duplicate or uncertain submission"。
+        if generic and previous.status == "waiting_free":
+            raise BadRequest("当前报价非零，等待免费；未提交生成")
+        if generic and previous.status == "service_error" and previous.last_error:
+            raise BadRequest(f"{previous.last_error}；未提交生成")
         if previous.status != "uploaded":
             raise BadRequest("输入尚未完成上传审核，请先继续准备")
         result = await executor.execute_stage(value, "submit")

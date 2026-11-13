@@ -255,6 +255,11 @@ Base64 直传），届时改 `drivers/bailian.py` 的 `prepare_inputs` 一处即
 
 ## T33 · 替换链专用模型出现在通用模型目录（T32 顺带发现）
 
+> **2026-11-13 口径已变**：三个 `*-replacement` 模型取消 `internal=True`、公开进
+> `GET /models`，通用 `/tasks` 由 `modules/model_driver/generic_inputs.py` 补出归档
+> 工作区后就能提交。下面这段是当时的修法与原因，机制本身仍保留（见
+> `MODEL_DRIVER_STANDARD.md` §2.5.1），但**别再按「替换模型必须 internal」改回去**。
+
 **2026-11-11 已修**：`ModelSpec.internal: bool = False`，`bailian` / `libtv` 的三条
 模型声明都带上；`ModelRouter.public_models()` 是给人挑的唯一来源
 （`GET /models`、`GET /model-driver/models`、`task/params.py` 与 `image/service.py`

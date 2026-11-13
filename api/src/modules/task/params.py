@@ -38,8 +38,8 @@ def resolve_model(
 
     spec = router.spec_for(model)
     if spec is None:
-        # 只提示公开模型：`internal=True` 的（替换链渠道）按 id 仍能解析，
-        # 但列进「可用模型」会把人往 400 上引
+        # 只提示公开模型：`internal=True` / `placeholder=True` 的按 id 仍能解析，
+        # 但列进「可用模型」会把人往 400 / 占位图上引
         public = router.public_models(capability)
         available = [f"{s.id}（{s.label}）" for s in public]
         raise BadRequest(

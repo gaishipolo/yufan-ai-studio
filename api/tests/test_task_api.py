@@ -10,6 +10,11 @@ from library_support import LIB_RW, admin_headers, make_user, upload_image
 
 TEST_PASSWORD = "test-pass-123"
 
+# 参考素材用例必须用「声明了能收参考素材」的模型：纯文生视频模型
+# `maxReferences=0`，受理期就会把带素材的请求挡掉，测不到后面的
+# 落库 / 不存在 / 越权判据。
+_REF_MODEL = "libtv-wan3-replacement"
+
 
 def _provision(sub: str, name: str, permissions: tuple[str, ...]) -> None:
     """给测试主体造一个真实的「用户 + 专属角色 + 权限」组合。
@@ -303,8 +308,8 @@ def test_create_defaults_come_from_catalog(client: TestClient, api: str) -> None
     """不传模型/时长时取目录默认值，而不是代码里写死的 15s（超上限）。
 
     默认值必须是**公开且真实**的模型：占位模型（echo 的 `seedance-2.5`）
-    实现是假的，`internal` 模型（`libtv-wan3-replacement`）露脸必然 400 ——
-    两者当默认都会让用户「不传 model」然后拿到跑不通的结果。
+    实现是假的；替换模型虽已公开，却要收参考素材、还要跑长耗时的上传准备，
+    也不该被默认选中。两者当默认都会让用户「不传 model」拿到跑不通的结果。
     """
     task = _create(client, api, prompt="默认值任务", model=None, durationSec=None)
     assert task["modelId"] == "agnes-video-2.5-flash"
@@ -340,6 +345,7 @@ def test_create_echoes_style_and_reference_images(client: TestClient, api: str) 
         client,
         api,
         prompt="带参考图",
+        model=_REF_MODEL,
         referenceLibraryIds=[first["id"], second["id"]],
         stylePreset="电影感",
     )
@@ -357,7 +363,11 @@ def test_create_rejects_reference_image_that_does_not_exist(
     """不存在的 id 当场 400，而不是「落库成功、详情页裂图」。"""
     response = client.post(
         f"{api}/tasks",
-        json={"prompt": "参考图不存在", "referenceLibraryIds": ["0" * 32]},
+        json={
+            "prompt": "参考图不存在",
+            "model": _REF_MODEL,
+            "referenceLibraryIds": ["0" * 32],
+        },
     )
     assert response.status_code == 400, response.text
     assert "不存在或已被删除" in response.json()["message"]
@@ -377,11 +387,32 @@ def test_create_rejects_someone_elses_private_reference_image(
 
     response = client.post(
         f"{api}/tasks",
-        json={"prompt": "用别人的图", "referenceLibraryIds": [asset["id"]]},
+        json={
+            "prompt": "用别人的图",
+            "model": _REF_MODEL,
+            "referenceLibraryIds": [asset["id"]],
+        },
     )
     assert response.status_code == 403, response.text
     assert "无权限" in response.json()["message"]
 
+
+def test_create_rejects_references_for_text_only_model(
+    client: TestClient, api: str
+) -> None:
+    """`maxReferences=0` 的模型收了参考素材要当场 400，不能收下再静默丢掉。"""
+    asset = upload_image(client, api, {}, name="unused.png")
+
+    response = client.post(
+        f"{api}/tasks",
+        json={
+            "prompt": "纯文生视频别带图",
+            "model": "Seedance 2.5",
+            "referenceLibraryIds": [asset["id"]],
+        },
+    )
+    assert response.status_code == 400, response.text
+    assert "不支持参考素材" in response.json()["message"]
 
 
 # --------------------------------------------------------------------------- #

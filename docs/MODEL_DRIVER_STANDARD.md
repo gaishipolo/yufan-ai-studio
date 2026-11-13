@@ -88,24 +88,42 @@ async def prepare_inputs(self, run_id: str, model: str = "") -> dict: ...   # �
 
 写 `ModelSpec(..., internal=True)` 的模型不会出现在**给人挑**的地方：`GET /models`、
 统一门面的模型清单、以及「未知模型，可用模型: …」这句报错里的候选列表。但
-`resolve()` / `provider_for()` 仍然按 id 解析——替换链正是拿 id 直接提交的，
+`resolve()` / `provider_for()` 仍然按 id 解析——某条业务链自己拿 id 直接提交时，
 在解析层过滤等于把它打断。
-
-为什么需要这个开关：替换工作台的渠道（`bailian-wan3-*` / `libtv-wan3-*`）提交时
-要求 `params` 里带 `archiveRunId`（见 `bailian.submit` 的标识校验 / `libtv.submit`
-的「请从替换模板使用」）。它们漏进通用生图 / 视频页的下拉后，用户选中必然 400，
-而报错是「调用档案标识不匹配」——没人能从这句话推出「这个模型压根不该出现在这里」。
 
 两条配套规则：
 
-- 新增「只有自己的入口才该用」的模型时**必须**带 `internal=True`，
-  `tests/test_internal_models.py` 会逐条检查 `bailian` / `libtv` 的声明；
+- 新增「只有自己的入口才该用」的模型时**必须**带 `internal=True`；
 - 过滤只发生在**目录**层，不要在 `router.models()` 里过滤。跨模块取模型清单请用
   `public_models()`，装配巡检、维护任务、按 id 找实现仍用 `models()`。
 
 一个边角：若某个能力的默认模型恰好是 `internal`，目录接口**不会**把默认标记挪给
 别的模型（前端会「以为默认是 A 所以不传 model」，后端却取到 B，直接 400）。宁可
 一个默认都没有，让前端显式带上 id。
+
+### 2.5.1 替换模型已经不靠 `internal` 藏了（2026-11-13）
+
+`bailian-wan3-replacement` / `bailian-wan3-prime-replacement` /
+`libtv-wan3-replacement` 原先标 `internal=True`，因为它们的 `submit` 只认替换链
+写好的归档工作区（`params.archiveRunId` 必须等于任务 id），通用生成页选中必然 400。
+现在三个模型**公开**，`GET /models` 能看到，生成工作台（`/tasks`）也能提交：
+
+- `modules/model_driver/generic_inputs.py::materialize(request)` 把
+  `prompt + params.referenceKeys + params.durationSec/aspectRatio` 物化成替换链同款
+  工作区（`run.json` / `input-map.json` / `prompt-spec.json` / `media-inputs.json` /
+  `prompt-compilation.json`）；驱动只在**没有** `archiveRunId` 时调它，模板库那条链
+  一行没改。
+- `modules/task/pipeline.py::VideoTaskStore.load()` 把受理期校验过的
+  `referenceLibraryIds` 换成 `{id, key, kind, name}` 冻结进 `params`；查不到的资产
+  **整条拒绝**，不许悄悄少一张图。
+- LibTV 的 `submit` 还要先跑一次 `upload` 阶段（写 `inputs/request.json`）才轮到
+  真正花钱的 `submit`；模板库那条链把 `upload` 排成独立的 prepare job，通用入口
+  没有，所以在本跳里补上，并声明 `submit_timeout_sec = 1650`。
+
+因此公开替换模型的守卫换了口径（`tests/test_internal_models.py`）：不再是「必须
+标 internal」，而是「不能标 internal/placeholder、必须声明 `paramSchema` 与
+`maxReferences`、且不能抢默认模型」。`internal` 这个开关本身保留，给将来真正
+只服务某条业务链的模型用。
 
 ## 3. 两种供应商形态
 
@@ -348,6 +366,6 @@ run 工作区、归档租约、计费回执」。真正搬的时候并不需要�
 下移到 `core/prompt_refs.py`。驱动仍读写 run 工作区里的档案（那是替换链编排期写下的
 格式），但它不再被任何业务模块 import。**新供应商照这条路径走，不要照抄「豁免」**。
 
-模型 id 归属：`libtv-*` / `bailian-wan3-*` 只在替换模板链里用；通用生成入口用
-`drivers/` 里的模型（`agnes-image-2.5-flash` 等）。`bailian` 不声明 `preferred_for`，
-所以它进 `drivers/` 不会抢通用生成页的默认视频模型。
+模型 id 归属：三个 `*-replacement` 现在**同时**服务替换模板链与通用生成入口
+（见 §2.5.1）；其余模型仍按各自声明的能力走。`bailian` / `libtv` 都不声明
+`preferred_for`，默认视频模型一直是 `agnes-video-2.5-flash`。

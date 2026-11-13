@@ -12,9 +12,9 @@
 | 项 | 值 |
 |---|---|
 | 仓库 / 分支 | `https://github.com/gaishipolo/yufan-ai-studio` · `main` |
-| HEAD | 与 `origin/main` 一致，本轮提交 hash 见 `git log -1`（未跟踪的只有 `var/`、快捷方式 `.lnk`、`vite.config.ts.timestamp-*.mjs`，都不该进提交） |
+| HEAD | 本地领先 `origin/main`：`3aaf40f` 起数笔**未推送**（推送前先问用户），hash 见 `git log --oneline -6`。未跟踪的只有 `var/`、临时脚本、快捷方式 `.lnk`、`vite.config.ts.timestamp-*.mjs` 与用户私有的 `EXCHANGE_TOPICS_2026-11-12.md`，都不该进提交 |
 | CI | 此前连续多轮全绿（含 `bc0940e`）；本轮推送后照 §4 核对。PG 迁移仍在观察期（`continue-on-error`） |
-| 本机门禁 | 后端 **1515 passed / 12 skipped**（约 220s）；`npm run verify` 全绿（**614 passed / 74 files**）；`app export-openapi --check` 四份无差异；`gen:routes` / `gen:mock-coverage` 两个 `--check` 同步 |
+| 本机门禁 | 后端 **1515 passed / 12 skipped**（约 220s，历史全量）；`npm run verify` 全绿；`app export-openapi --check` 四份无差异。**本轮（2026-11-13 模型通用化）按 §3.1 定级 `framework`：78 个测试文件 · 1005 passed / 12 skipped / 0 failed**（95s），未跑全量；`ruff` / `mypy` / `drivers check` 全绿。两条新增守卫已做反向验证（写回 `internal=True` / 删掉 `maxReferences=0` 拒绝，均按预期变红后还原） |
 | 规模 | 12 个业务模块 · **118 条路径 / 148 个端点**（文本资产 +7）· **57 个权限码**（本轮未新增）· **4 份**契约生成物 |
 | 后端 | `api/.venv/Scripts/app.exe serve --reload` → 8080，前缀 **`/api/v1`**（裸 `/health` 会返回 40400） |
 | 前端 | `cd studio && npm run dev` → 5173，`/api` 已代理到 8080 |
@@ -44,7 +44,8 @@
 | `e521df9` | 新增本交接文档 + 修正 6 处过期口径 | 新会话不用重新摸现状 |
 | 本轮 | **`bailian` 迁进 `drivers/`**（T32，`a18e927`）：新增可选协议 `InputPreparer` + `core/prompt_refs.py`，替换链改为「从路由拿实例、按类型判断」 | 百炼不再靠 `AI_PROVIDERS` 加载；未配密钥在选渠道时就说清 |
 | 本轮 | **模型供应商整体迁移**（2026-11-13）：废弃 `AI_PROVIDERS` 白名单；`echo` → `drivers/echo.py`，`libtv` 执行器（`executor.py` / `process.py` / `state.py` / `runtime/`）→ `modules/model_driver/libtv/`；模板库经 `core/ports/model_generation` 的 `libtv_paths()` / `libtv_execute_stage()` 问执行器 | 只剩 `drivers/` 一条接入路径；`core/config.py` 白名单字段、`.env` 的 `AI_PROVIDERS`、`infra/ai/<name>.py` 全删；子进程入口改成 `-m modules.model_driver.libtv.process` |
-| `cfc0508` | `ModelSpec.internal` + `ModelRouter.public_models()`：替换链专用模型不再出现在目录（T33） | 视频下拉里不再有选中即 400 的 `*-replacement` |
+| 本轮 | **三个替换模型通用化**（2026-11-13）：取消 `internal=True` 进 `/models`；新增 `modules/model_driver/generic_inputs.py` 把 `/tasks` 的 `prompt + referenceKeys + params` 物化成替换链同款归档工作区；LibTV 通用链在提交前补跑 `upload` 阶段 | 生成工作台可以直接选百炼/LibTV 替换模型；`maxReferences=0` 的模型带参考素材当场 400，不再静默丢弃；`tests/test_generic_inputs.py` 8 条钉住档案形状与幂等 |
+| `cfc0508` | `ModelSpec.internal` + `ModelRouter.public_models()`：替换链专用模型不再出现在目录（T33，后被本轮取代） | 当时视频下拉里不再有选中即 400 的 `*-replacement` |
 
 表格之后又连续落了几件事（提交见 `git log --oneline -12`）：PR#5 语义合并 →
 T34 参考图（含素材库侧边悬浮栏 + 拖拽）→ 标签两级分类 → worktree
@@ -72,7 +73,8 @@ T34 参考图（含素材库侧边悬浮栏 + 拖拽）→ 标签两级分类 �
 | 指标超限丢弃可在 `/metrics` 看到 `app_metrics_series_dropped_total{metric}` | 运维 | 以前是静默丢 |
 | `.env` 里不再有 `AI_PROVIDERS`：模型供应商全部由 `drivers/` 自动扫描载入，没有启用清单 | 运维 | 删掉那一行；只需留 `BAILIAN_API_KEY` / `AGNES_API_KEY` 等私有配置 |
 | 百炼渠道可用性改由驱动回答（`InputPreparer.unavailable_reason`） | 前端/运维 | 没配密钥时渠道目录返回「服务端尚未配置百炼密钥」，文案与以前一致 |
-| `GET /models` 不再返回 `internal=True` 的模型（`bailian-wan3-*` / `libtv-wan3-*`） | 前端/脚本 | 它们是替换链专用（要 `archiveRunId`）。按 id 仍能提交；只是不再出现在「可选清单」和「可用模型」报错提示里 |
+| `GET /models` 不再返回 `internal=True` / `placeholder=True` 的模型 | 前端/脚本 | 过滤仍在目录层；按 id 解析不受影响（`public_models()` 对 `models()`） |
+| **三个替换模型已公开**（`bailian-wan3-*` / `libtv-wan3-replacement`，2026-11-13） | 前端/脚本 | 取消 `internal=True`，带 `paramSchema` 与 `maxReferences` 进 `/models`；通用 `/tasks` 会把 `referenceLibraryIds` 冻结成 `referenceKeys` 并物化成替换链同款归档工作区。`maxReferences=0` 的模型带参考素材会当场 400，不再「收下再静默丢掉」 |
 | `drivers/` 里**文件名带 `_` 前缀的驱动不自动载入** | 驱动开发者 | `_mock_async.py` / `_mock_sync.py` / `_template.py` 都不进模型目录、不进 `app drivers list`、不出现在用户可见的下拉里。需要离线联调时显式调 `registry.register_example_drivers()` |
 | 资产库多了 `kind=text`：`POST /library/text-assets` + `/assets/{id}/text{,/versions,/restore,/raw}` | 前端/脚本 | 只收 `.txt`/`.md`、UTF-8、≤1MB；`coverUrl` 恒为 null，卡片改画 `textExcerpt`。老资产读到 `textExcerpt/textVersion/textUrl` 分别是 null / 0 / null |
 | 生图 `GenerateImageIn`、视频 `CreateTaskIn`、替换 `PrepareReplacement` 各多 `textLibraryIds` + 出参 `textBindings` | 前端/脚本 | 提示词里写 `{{Text N}}`，提交时冻结正文注入；出参只回「哪几份、第几版」不回正文。替换工作台只认 `{{Text N}}`，别的手写花括号会被前端拦 |
@@ -143,6 +145,10 @@ cd api && ./.venv/Scripts/python.exe scripts/select_tests.py --print
 - **T33 · 替换链专用模型漏进目录**：`ModelSpec.internal` + `public_models()`。
   过滤只发生在**目录层**，`resolve()` / `provider_for()` 不动——替换链正是拿
   `bailian-wan3-*` 的 id 直接提交的。
+  **2026-11-13 后续**：三个替换模型不再标 `internal`。通用入口现在会补出归档
+  工作区（`modules/model_driver/generic_inputs.py`），所以「露脸必然 400」这个
+  前提消失了；`internal` 机制本身保留给将来真正只服务某条业务链的模型。
+  守卫改成「公开模型必须声明 `paramSchema` / `maxReferences`，且不当默认」。
 
 ## 4. 新会话怎么接手
 

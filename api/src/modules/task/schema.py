@@ -121,9 +121,10 @@ class CreateTaskIn(CamelModel):
         default_factory=list,
         max_length=20,
         description=(
-            "参考图（图生视频）的资产库 v2 资产 id，最多 20 个，**顺序即提交顺序**。"
-            "受理时校验：必须存在、当前账号能读、不在回收站 / 草稿里、且是 `image` 类型。"
-            "传 id 而不是 URL：取件链接是私签的，供应商取不到"
+            "参考素材的资产库 v2 资产 id，最多 20 个，**顺序即提交顺序**。"
+            "受理时校验：必须存在、当前账号能读、不在回收站 / 草稿里，且是"
+            " `image` / `video` / `audio` 之一（能否收图、收几张由模型的"
+            " `maxReferences` 决定）。传 id 而不是 URL：取件链接是私签的，供应商取不到"
         ),
     )
     text_library_ids: list[str] = Field(

@@ -10,6 +10,11 @@
 替换工作台的「替换配置 → 模型渠道」可选择 LibTV、百炼 Wan 3.0 标准版或高速版。
 单条与批量准备均保存当次渠道；后续更改选择不会改变已保存任务的渠道。
 
+两个百炼模型（2026-11-13 起）也已公开进 `GET /models`，可从生成工作台 `POST /tasks`
+直接选择：`referenceLibraryIds` 会在受理期冻结成 `referenceKeys`，提交前由
+`modules/model_driver/generic_inputs.py` 物化成替换链同款归档工作区，之后的
+`prepare_inputs` / OSS 直传 / 计费回执与模板库那条链完全一致。
+
 百炼输出为 720P，确认页面显示「阿里云 API 计费」，不提供 LibTV 的免费队列或积分加速选项。费用以阿里云账单为准，工作台不将百炼费用显示为 LibTV 积分。
 
 ## 服务端配置

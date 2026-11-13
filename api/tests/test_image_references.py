@@ -6,7 +6,7 @@ Agnes 的 `submit()` 一直支持 `reference_urls`（`extra_body.image`），断
 
 这个文件钉住三件容易悄悄退化的事：
 
-1. **受理前就拒**：张数超限 / 非图片 / 无权读 必须是 400/403，不能放进队列再异步失败；
+1. **受理前就拒**：张数超限 / 类型不受支持 / 无权读 必须是 400/403，不能放进队列再异步失败；
 2. **落库并重试可还原**：重试是从 `_to_record` 重建请求的，丢一列就静默变回纯文生图；
 3. **字节真的进去了**：供应商拿不到我们私签的取件链接，只有 Data URI 一条路。
 """
@@ -232,7 +232,7 @@ def test_non_image_asset_is_rejected() -> None:
         storage_key="v/1.mp4",
     )
 
-    with pytest.raises(BadRequest, match="不是图片"):
+    with pytest.raises(BadRequest, match="类型不受支持"):
         asyncio.run(_resolve([asset_id], _spec()))
 
 

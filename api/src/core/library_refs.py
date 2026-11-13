@@ -15,7 +15,9 @@
 3. **在库**：`state is ACTIVE`。「读得到」不等于「能用来生成」——`can_read`
    对回收站放行 owner、对草稿放行 owner（还放行代审权），照抄就会让
    「删除」在生成链路上不生效；
-4. **是图片**：`kind is IMAGE`。音频 / 视频 / 封装不能当参考图。
+4. **类型受支持**：默认只允许 `IMAGE`（生图、历史视频任务都是这条口径）。
+   视频替换模型要收「原片视频 + 参考图 + 音频」，由 `modules/task` 显式传
+   `kinds` 放宽——默认值收窄是故意的，免得别的调用方顺手把视频交给纯生图接口。
 
 `text_library_ids` 不在这里：文本是**正文内联**，走 `core.library_text`。
 """
@@ -49,6 +51,7 @@ async def resolve_reference_images(
     asset_ids: Sequence[str],
     *,
     limit: int | None = None,
+    kinds: Sequence[LibraryAssetKind] = (LibraryAssetKind.IMAGE,),
 ) -> list[LibraryAssetRef]:
     """按入参顺序返回可用的参考图快照；任何一条不合格就整批拒绝。
 
@@ -56,7 +59,9 @@ async def resolve_reference_images(
     悄悄少一张会让整段描述错位，而且是查不出来的错位。
 
     `limit` 由调用方给（生图看模型的 `maxReferences`，视频看接口契约），
-    留空表示不在这里卡张数。
+    留空表示不在这里卡张数。`kinds` 默认只允许图片；视频替换模型还要收
+    原片视频与音频，由 `modules/task` 显式放宽——默认值收窄是故意的，
+    免得别的调用方因为一次「顺手放宽」把视频当参考图交给纯生图接口。
     """
     wanted = normalize_reference_ids(asset_ids)
     if not wanted:
@@ -83,7 +88,9 @@ async def resolve_reference_images(
 
     for asset_id in wanted:
         ref = found[asset_id]
-        if ref.kind is not LibraryAssetKind.IMAGE:
-            raise BadRequest(f"参考图 {ref.name or asset_id} 不是图片（当前为 {ref.kind.value}）")
+        if ref.kind not in kinds:
+            raise BadRequest(
+                f"参考素材 {ref.name or asset_id} 的类型不受支持（当前为 {ref.kind.value}）"
+            )
 
     return [found[asset_id] for asset_id in wanted]

@@ -165,12 +165,11 @@ class AgnesVideoDriver:
     #
     # 之前刻意不声明，因为默认视频模型是 echo 的 `seedance-2.5`——**那是占位
     # 模型**（`placeholder=True`，实现是假的，不调外部 API）。现在占位模型
-    # 已经被挡在公开目录外、也不再当默认，默认位空出来；而 `libtv-wan3-
-    # replacement` 是 `internal=True` 的替换链专用模型（带 `archiveRunId`
-    # 校验，用户不传 model 提交必然 400），同样不能当默认。
+    # 已经被挡在公开目录外、也不再当默认；三个 `*-replacement` 虽然从
+    # 2026-11-13 起也公开了，却要收参考素材、还要跑长耗时的上传准备，
+    # 不适合「用户不传 model 时替他选的那个」。
     #
-    # 结果就是：视频能力唯一公开且真实的模型就是这个，必须由它接任默认，
-    # 否则默认要么是假模型、要么是必然 400 的内部模型。
+    # 结果就是：默认必须落在这个开箱即用的文生视频模型上，由它接任默认。
     preferred_for = frozenset({Capability.VIDEO})
 
     def __init__(

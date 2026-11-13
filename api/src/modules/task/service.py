@@ -15,10 +15,11 @@ from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.context import CurrentUser
-from core.exceptions import Forbidden, InvalidState, UpstreamError
+from core.exceptions import BadRequest, Forbidden, InvalidState, UpstreamError
 from core.library_refs import resolve_reference_images
 from core.library_text import dumps_text_refs, freeze_text_refs
 from core.logging import get_logger
+from core.ports.library_lookup import LibraryAssetKind
 from core.response import PageParams
 from generation.runner import get_runner
 from infra.ai.base import Capability
@@ -112,13 +113,28 @@ class TaskService:
         duration_sec = resolve_duration(spec, payload.duration_sec)
         aspect_ratio = resolve_aspect_ratio(spec, AspectRatio(payload.aspect_ratio).value)
 
-        # 参考图在受理期就过一遍资产库：存在 / 可读 / 在库 / 是图片。
+        # 参考素材在受理期就过一遍资产库：存在 / 可读 / 在库 / 类型受支持。
         # 不做这一步的话，前端传一个别人的私有资产 id 也会被原样落库——
         # 任务详情页能把 id 变成图，等于靠「猜 id」绕过了共享审批。
-        # 视频侧目前没有把参考图交给供应商的通道（`maxReferences` 都声明 0），
-        # 这里守住的是「记录的东西是真的」与删除保护能把 id 认回来。
+        # 现在这批 id 会真的交给驱动（`VideoTaskStore.load` 换成 storage key），
+        # 所以「模型声明 0 张」必须当场拒：收下再静默丢掉，用户只会拿到一段
+        # 与参考素材毫无关系的成片，界面上却没有任何异常。
+        if payload.reference_library_ids and spec.max_references <= 0:
+            raise BadRequest(
+                f"模型 {spec.label} 不支持参考素材，请换用支持参考素材的模型"
+            )
         references = await resolve_reference_images(
-            self.session, actor, payload.reference_library_ids
+            self.session,
+            actor,
+            payload.reference_library_ids,
+            limit=spec.max_references,
+            # 视频替换模型吃「原片视频 + 参考图 + 音频」混合输入；纯文生视频
+            # 模型在上面已经被 0 张上限挡掉了。
+            kinds=(
+                LibraryAssetKind.IMAGE,
+                LibraryAssetKind.VIDEO,
+                LibraryAssetKind.AUDIO,
+            ),
         )
 
         # 文本快照在受理期冻结，与生图同一口径：提交 / 重试只读这份，

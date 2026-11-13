@@ -18,9 +18,16 @@ from library_support import blob_exists, upload_image
 
 
 def _create_task(client: TestClient, api: str, title: str, library_ids: list[str]) -> dict:
+    # 要用「声明了能收参考素材」的模型：纯文生视频模型 maxReferences=0，
+    # 受理期就会把带素材的请求挡掉，测不到后面的删除保护。
     response = client.post(
         f"{api}/tasks",
-        json={"prompt": title, "title": title, "referenceLibraryIds": library_ids},
+        json={
+            "prompt": title,
+            "title": title,
+            "model": "libtv-wan3-replacement",
+            "referenceLibraryIds": library_ids,
+        },
     )
     assert response.status_code == 201, response.text
     return response.json()["data"]

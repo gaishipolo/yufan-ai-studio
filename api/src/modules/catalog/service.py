@@ -16,12 +16,12 @@ class CatalogService:
         self.router = router
 
     def list_models(self, capability: Capability | None = None) -> ModelListOut:
-        """给人挑的模型清单：过滤 `internal=True`（替换链专用渠道）。
+        """给人挑的模型清单：过滤 `internal=True` / `placeholder=True` 的模型。
 
-        `is_default` 只在公开模型里点亮。内部模型若恰好是该能力的默认值，
+        `is_default` 只在公开模型里点亮。默认模型落在被过滤掉的模型上时，
         这里**不会**把默认标记挪给别的模型——那样前端会「认为默认是 A、
-        于是不传 model」，后端却按默认取到内部模型 B，直接 400。宁可一个
-        默认都没有，让前端显式带上 id。
+        于是不传 model」，后端却按默认取到 B，直接 400。宁可一个默认都没有，
+        让前端显式带上 id（`ModelRouter` 在注册时也已跳过 internal / placeholder）。
         """
         items = [
             ModelOut(
