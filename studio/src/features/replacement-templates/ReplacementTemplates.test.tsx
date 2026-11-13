@@ -33,23 +33,13 @@ const mock = vi.hoisted(() => ({
     packScopes: {worn: '人物上身穿着', held: '手持展示产品', boxed: '盒内可见产品', screen: '手机详情页产品图'},
     channels: undefined as ReplacementChannelOut[] | undefined, packRoles: {}, baseRoles: {} }, refetch: vi.fn(), isLoading: false, isFetching: false, error: null as Error | null },
 }));
-vi.mock('@/entities/asset/api/archive.queries', () => ({
-  useArchiveSelection: () => ({data: undefined, error: null}),
-  useArchiveAssets: () => ({ isLoading: mock.assetsLoading, error: mock.assetsError, refetch: mock.assetsRefetch, data: mock.assetsHidden ? undefined : { items: mock.assetsEmpty ? [] : [
-    { id: 'source', name: '测试原片', category: 'source', type: 'video', duration: 2, hasAudio: true,
-      url: '/api/v1/assets/source/file' },
-    { id: 'source-15s', name: '十五秒原片', category: 'source', type: 'video', duration: 15, hasAudio: true,
-      url: '/api/v1/assets/source-15s/file' },
-    { id: 'image', name: '人物参考', category: 'character', type: 'image', url: '/image', previewUrl: '/thumbnail/image' },
-    { id: 'product-front', name: '产品正面', category: 'product', type: 'image', url: '/product-front', previewUrl: '/thumbnail/product-front' },
-    { id: 'product-back', name: '产品背面', category: 'product', type: 'image', url: '/product-back', previewUrl: '/thumbnail/product-back' },
-    { id: 'product-detail', name: '产品细节', category: 'product', type: 'image', url: '/product-detail', previewUrl: '/thumbnail/product-detail' },
-    { id: 'source-third', name: '第三原片', category: 'source', type: 'video', duration: 3, hasAudio: true, url: '/api/v1/assets/source-third/file' },
-    { id: 'source-template', name: '我穿的是米兰之夜模板测试.mp4', category: 'source', type: 'video', duration: 5.31, hasAudio: true, url: '/api/v1/assets/source-template/file' },
-  ] } }),
-  useArchiveUpload: () => ({ isPending: mock.uploadPending, mutate: mock.upload }),
-  useArchiveDownload: () => ({mutate: vi.fn(), isPending: false, error: null}),
-  useArchivedMedia: (url?: string) => {if (url) mock.mediaUrls.push(url); return {data: undefined};},
+/*
+ * 缩略图与预览统一走 `useRemoteBlob`（受保护媒体按 URL 取字节）。这个套件不挂
+ * QueryClient，所以按 URL 记账后返回空：断言的是「问哪个地址要字节」，不是画面。
+ */
+vi.mock('@/shared/lib/remoteBlob', () => ({
+  useRemoteBlob: (url?: string) => {if (url) mock.mediaUrls.push(url); return {data: undefined};},
+  useRemoteDownload: () => ({mutate: vi.fn(), isPending: false, error: null}),
 }));
 vi.mock('@/entities/video-template/api/videoTemplate.queries', () => ({
   useVideoTemplates: () => ({data: {items: mock.videoTemplates, total: mock.videoTemplates.length, pinnedId: null},
@@ -340,7 +330,7 @@ describe('替换模板工作台', () => {
 
   it('只读用户和回收站任务没有重试按钮', () => {
     mock.catalog.data.runs = [run('failed')];
-    const view = render(<App url='/templates?run=run1' permissions={['template:read', 'asset:read']} />);
+    const view = render(<App url='/templates?run=run1' permissions={['template:read', 'library:read']} />);
     expect(screen.queryByRole('button', {name: '重试'})).not.toBeInTheDocument();
     view.unmount();
     mock.catalog.data.runs = [{...run('failed'), deletedAt: '2026-11-10T00:00:00Z'}];
@@ -513,7 +503,7 @@ describe('替换模板工作台', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('共享盘不可用');
     expect(screen.getByRole('button', {name: /测试人物.*查看档案/})).toBeVisible();
     view.unmount();
-    render(<App permissions={['template:read', 'asset:read']} />);
+    render(<App permissions={['template:read', 'library:read']} />);
     expect(screen.queryByRole('button', {name: '移入回收站'})).not.toBeInTheDocument();
   });
   it('从资产库选封装：准备只带 libraryPackId，不再带模板包与散图 id', async () => {
@@ -661,7 +651,7 @@ describe('替换模板工作台', () => {
 
   it('真实权限门禁隐藏上传、准备和继续执行操作', () => {
     mock.catalog.data.runs = [run('prepared')];
-    render(<App permissions={['template:read', 'asset:read']} />);
+    render(<App permissions={['template:read', 'library:read']} />);
     expect(screen.queryByRole('button', {name: '上传原片'})).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', {name: '选择模板：测试原片'}));
     expect(screen.queryByRole('button', {name: '上传参考图'})).not.toBeInTheDocument();

@@ -76,7 +76,6 @@ _CONFIG_COLUMNS = (
     "prompt",
     "prompt_sha256",
     "source_video_asset_id",
-    "source_video_id_space",
     "source_duration_sec",
     "aspect_ratio",
     "cover_url",
@@ -92,7 +91,6 @@ def _slot_out(
         slot_kind=slot.slot_kind,  # type: ignore[arg-type]
         label=slot.label,
         asset_id=slot.asset_id or None,
-        asset_id_space=slot.asset_id_space,
         media_type=slot.media_type,
         asset_name=names.get(slot.asset_id, "") if slot.asset_id else "",
         filter_kind=slot.filter_kind,
@@ -140,7 +138,6 @@ async def to_out(
         prompt=row.prompt,
         prompt_sha256=row.prompt_sha256,
         source_video_asset_id=row.source_video_asset_id,
-        source_video_id_space=row.source_video_id_space,
         source_duration_sec=row.source_duration_sec,
         aspect_ratio=row.aspect_ratio,
         cover_url=row.cover_url,
@@ -160,7 +157,6 @@ def apply_out(row: TemplatePackRow, out: TemplatePackOut) -> None:
     row.prompt = out.prompt
     row.prompt_sha256 = out.prompt_sha256
     row.source_video_asset_id = out.source_video_asset_id
-    row.source_video_id_space = out.source_video_id_space
     row.source_duration_sec = out.source_duration_sec
     row.aspect_ratio = out.aspect_ratio
     row.cover_url = out.cover_url
@@ -256,7 +252,6 @@ def _build_slot_rows(
             if not item.asset_id:
                 raise BadRequest(f"{item.token} 是固定素材槽位，必须指定素材")
             row.asset_id = item.asset_id
-            row.asset_id_space = item.asset_id_space
             row.media_type = item.media_type
         else:
             parsed = parse_filtered_slot(
@@ -321,7 +316,6 @@ async def save(
         prompt=payload.prompt,
         prompt_sha256=hashlib.sha256(payload.prompt.encode("utf-8")).hexdigest(),
         source_video_asset_id=payload.source_video_asset_id,
-        source_video_id_space=payload.source_video_id_space,
         source_duration_sec=source_fields.get(
             "source_duration_sec", payload.source_duration_sec
         ),
@@ -359,7 +353,6 @@ def _config_of(
         "prompt": payload.prompt,
         "prompt_sha256": hashlib.sha256(payload.prompt.encode("utf-8")).hexdigest(),
         "source_video_asset_id": payload.source_video_asset_id,
-        "source_video_id_space": payload.source_video_id_space,
         "source_duration_sec": source_fields.get(
             "source_duration_sec", payload.source_duration_sec
         ),
@@ -371,7 +364,6 @@ def _config_of(
                 item.slot_kind,
                 item.label,
                 item.asset_id or "",
-                item.asset_id_space,
                 item.media_type if item.slot_kind == "fixed" else (item.filter_kind or ""),
                 item.filter_kind or "",
                 tuple(dict.fromkeys(tag_id for tag_id in item.filter_tag_ids if tag_id)),
@@ -393,7 +385,6 @@ def _row_config_of(
         "prompt": row.prompt,
         "prompt_sha256": row.prompt_sha256,
         "source_video_asset_id": row.source_video_asset_id,
-        "source_video_id_space": row.source_video_id_space,
         "source_duration_sec": float(row.source_duration_sec or 0),
         "aspect_ratio": row.aspect_ratio,
         "cover_url": row.cover_url,
@@ -403,7 +394,6 @@ def _row_config_of(
                 slot.slot_kind,
                 slot.label,
                 slot.asset_id or "",
-                slot.asset_id_space,
                 slot.media_type,
                 slot.filter_kind or "",
                 tuple(slot.filter_tag_ids or []),
@@ -456,7 +446,6 @@ async def _apply_draft(
             prompt=payload.prompt,
             prompt_sha256=hashlib.sha256(payload.prompt.encode("utf-8")).hexdigest(),
             source_video_asset_id=payload.source_video_asset_id,
-            source_video_id_space=payload.source_video_id_space,
             source_duration_sec=source_fields.get(
                 "source_duration_sec", payload.source_duration_sec
             ),
@@ -492,14 +481,12 @@ async def publish(
             name=row.name,
             prompt=row.prompt,
             sourceVideoAssetId=row.source_video_asset_id,
-            sourceVideoIdSpace=row.source_video_id_space,
             slots=[
                 TemplatePackSlotIn(
                     token=slot.token,
                     slotKind=slot.slot_kind,  # type: ignore[arg-type]
                     label=slot.label,
                     assetId=slot.asset_id or None,
-                    assetIdSpace=slot.asset_id_space,  # type: ignore[arg-type]
                     mediaType=slot.media_type,  # type: ignore[arg-type]
                     filterKind=slot.filter_kind or None,  # type: ignore[arg-type]
                     filterTagIds=list(slot.filter_tag_ids or []),

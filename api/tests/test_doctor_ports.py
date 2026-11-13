@@ -21,7 +21,7 @@ def test_ports_check_covers_all_three_fail_closed_entries() -> None:
     _check_ports(report)
 
     names = set(_levels(report))
-    assert {"ports.references", "ports.ingest", "ports.generation"} <= names
+    assert {"ports.library_references", "ports.ingest", "ports.generation"} <= names
     assert _levels(report)["ports.ingest"] == "PASS"
     assert _levels(report)["ports.generation"] == "PASS"
 

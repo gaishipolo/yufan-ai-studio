@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Download } from 'lucide-react';
 import { Button } from '@/shared/ui';
 import { ErrorState } from '@/shared/ui/ErrorState';
-import { useArchiveDownload, useArchivedMedia } from '../api/archive.queries';
+import { useRemoteBlob, useRemoteDownload } from '@/shared/lib/remoteBlob';
 
 interface ArchivedMediaProps {
   /** 原件地址：图片/音频直接预览，视频作为下载来源。 */
@@ -23,8 +23,8 @@ interface ArchivedMediaProps {
  */
 export function ArchivedMedia({url, name, type, previewUrl, downloadAllowed = true}: ArchivedMediaProps) {
   const playback = type === 'video' && previewUrl ? previewUrl : url;
-  const media = useArchivedMedia(playback);
-  const download = useArchiveDownload();
+  const media = useRemoteBlob(playback);
+  const download = useRemoteDownload();
   const [source, setSource] = useState('');
   const [decodeError, setDecodeError] = useState(false);
   useEffect(() => {

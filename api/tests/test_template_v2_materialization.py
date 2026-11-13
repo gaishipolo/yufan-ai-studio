@@ -5,8 +5,8 @@
 
 1. 字节必须真的进工作区（`input-map.json` 的摘要与实算一致，执行器才肯上传）；
 2. 宽高要带过去（`media-inputs.json` 少了它，供应商那头把图当未知尺寸）；
-3. 运行输入行必须写上 `v2`（写成默认 `v1`，执行前的复核会去旧表找这个 id，
-   报「输入已被删除」——一条本来能跑的任务被自己的标记挡死）。
+3. 三条来源都要落地——原片、包内参考图、封装外的固定引用各走各的分支，
+   少一条时编译器仍能产出提示词，执行器要到上传阶段才发现 mixedList 缺项。
 """
 
 from __future__ import annotations
@@ -105,14 +105,27 @@ async def _library_video(
     return row.id
 
 
-async def _run_inputs(run_id: str) -> list[tuple[str, str]]:
+async def _storage_key(asset_id: str) -> str:
+    """资产库行上的 `storage_key`：远端驱动只认自己手里那几份，得按它铺数据。"""
+    async with get_session_factory()() as session:
+        row = await session.get(LibraryAsset, asset_id)
+        assert row is not None
+        return row.storage_key
+
+
+async def _run_inputs(run_id: str) -> list[str]:
+    """这条 run 的输入清单（按落库顺序）。
+
+    v1 下线后 `asset_id` 只剩 v2 一个解释，行上不再有空间标记可断言——这里
+    能验证的是「该落进来的 id 都进来了」，字节是否真搬进工作区由各用例自己看。
+    """
     async with get_session_factory()() as session:
         run = await session.get(ReplacementRun, run_id)
         assert run is not None
         from modules.template.repository import RunRepository
 
         rows = await RunRepository(session).inputs(run_id)
-        return [(row.asset_id, row.asset_id_space) for row in rows]
+        return [row.asset_id for row in rows]
 
 
 async def _gap(run_id: str) -> str | None:
@@ -185,7 +198,7 @@ def _prepare(client, headers, *, source_id: str, template_id: str, pack_id: str)
         json={
             "requestId": uuid.uuid4().hex,
             "kind": "product",
-            "sourceId": source_id,
+            "sourceLibraryId": source_id,
             "videoTemplateId": template_id,
             "packId": pack_id,
             "packVersion": 1,
@@ -211,7 +224,6 @@ def test_prepare_materializes_v2_fixed_reference(client) -> None:
             kind="product",
             reference_ids=[library_id],
             roles=["detail"],
-            asset_id_space="v2",
         )
     )
     template_id = ""
@@ -253,9 +265,10 @@ def test_prepare_materializes_v2_fixed_reference(client) -> None:
         assert media[f"inputs/{matches[0]}"]["width"] == 64
         assert media[f"inputs/{matches[0]}"]["height"] == 96
 
-        assert dict(asyncio.run(_run_inputs(run["id"])))[library_id] == "v2"
-        assert dict(asyncio.run(_run_inputs(run["id"])))[front["id"]] == "v1"
-        # 行上的空间若被写成默认 v1，这里会返回「固定引用的参考图已不可用」
+        input_ids = asyncio.run(_run_inputs(run["id"]))
+        assert library_id in input_ids
+        assert front["id"] in input_ids
+        # 固定引用被登记成输入行，复核时才能发现「封面上那张图后来被删了」
         assert asyncio.run(_gap(run["id"])) is None
         # 零拷贝那条路径指向内容寻址的 blob：清理临时副本时绝不能把它删掉
         assert asyncio.run(get_storage().exists(key)) is True
@@ -301,14 +314,20 @@ def test_remote_storage_is_downloaded_then_cleaned(
     client, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     headers = login(client)
-    source = upload(client, "v2-remote-source.mp4", "source", video_bytes(2))
-    front = upload(client, "v2-远端产品主图.png", "product", png_bytes())
+    video = video_bytes(2)
+    source = upload(client, "v2-remote-source.mp4", "source", video)
+    picture = png_bytes()
+    front = upload(client, "v2-远端产品主图.png", "product", picture)
     base = asyncio.run(
         add_pack(kind="product", reference_ids=[front["id"]], roles=["front"])
     )
     content = png_bytes((48, 72))
     key = f"library/blobs/cc/{uuid.uuid4().hex}.png"
     remote = _RemoteStorage({key: content})
+    # 原片与包内参考图现在也都在同一个对象存储里，远端驱动拿不到的 key 就是
+    # 「字节缺失」。按行上的 key 把实传字节铺进去，才算一个真实的远端现场。
+    remote.blobs[asyncio.run(_storage_key(source["id"]))] = video
+    remote.blobs[asyncio.run(_storage_key(front["id"]))] = picture
     monkeypatch.setattr(library_media, "get_storage", lambda: remote)
     library_id = asyncio.run(_library_asset(key, content, width=48, height=72))
     detail = asyncio.run(
@@ -316,7 +335,6 @@ def test_remote_storage_is_downloaded_then_cleaned(
             kind="product",
             reference_ids=[library_id],
             roles=["detail"],
-            asset_id_space="v2",
         )
     )
     template_id = ""
@@ -328,7 +346,8 @@ def test_remote_storage_is_downloaded_then_cleaned(
         )
         assert result["status"] == 201, result["text"]
         run = result["body"]["data"]
-        assert remote.reads == [key]
+        # 固定引用走的是「分块下载」那条分支（本地驱动零拷贝，永远走不到）
+        assert key in remote.reads
         inputs = run_path(run["id"]) / "inputs"
         assert any(
             path.is_file() and path.read_bytes() == content for path in inputs.iterdir()
@@ -361,7 +380,6 @@ def test_missing_v2_bytes_fail_with_actionable_message(client) -> None:
             kind="product",
             reference_ids=[library_id],
             roles=["detail"],
-            asset_id_space="v2",
         )
     )
     template_id = ""
@@ -468,10 +486,10 @@ def test_prepare_accepts_v2_source_video(client) -> None:
         run = response.json()["data"]
         inputs = run_path(run["id"]) / "inputs"
         assert (inputs / "reference-video.mp4").read_bytes() == content
-        # 原片与参考图分属两套空间，行上的标记必须各记各的
-        spaces = dict(asyncio.run(_run_inputs(run["id"])))
-        assert spaces[source_id] == "v2"
-        assert spaces[front["id"]] == "v1"
+        # 原片与参考图都进了输入清单，字节也都落了盘
+        input_ids = asyncio.run(_run_inputs(run["id"]))
+        assert source_id in input_ids
+        assert front["id"] in input_ids
         # 时长取自 `duration_ms`，不是 ffprobe 现算——原片可能已被移出资产库
         assert _run_spec(run["id"])["duration"] == 2
         assert asyncio.run(_gap(run["id"])) is None
@@ -501,7 +519,6 @@ def test_prepare_accepts_pack_made_of_v2_references(client) -> None:
             reference_ids=[library_id],
             roles=["front"],
             scopes=["worn"],
-            asset_id_space="v2",
         )
     )
     try:
@@ -511,7 +528,7 @@ def test_prepare_accepts_pack_made_of_v2_references(client) -> None:
             json={
                 "requestId": uuid.uuid4().hex,
                 "kind": "product",
-                "sourceId": source["id"],
+                "sourceLibraryId": source["id"],
                 "packId": pack.id,
                 "packVersion": 1,
                 "replacementScope": "人物上身穿着",
@@ -528,9 +545,9 @@ def test_prepare_accepts_pack_made_of_v2_references(client) -> None:
         # 否则编译器会把它当 `{{Mixed N}}` 再插一遍，编号整体错位。
         spec = _run_spec(run["id"])
         assert not spec.get("fixedReferenceTokens")
-        spaces = dict(asyncio.run(_run_inputs(run["id"])))
-        assert spaces[library_id] == "v2"
-        assert spaces[source["id"]] == "v1"
+        input_ids = asyncio.run(_run_inputs(run["id"]))
+        assert library_id in input_ids
+        assert source["id"] in input_ids
         assert asyncio.run(_gap(run["id"])) is None
     finally:
         asyncio.run(drop_pack(pack.id))
@@ -556,7 +573,6 @@ def test_v2_pack_with_trashed_reference_is_rejected(client) -> None:
             reference_ids=[library_id],
             roles=["front"],
             scopes=["worn"],
-            asset_id_space="v2",
         )
     )
 
@@ -575,7 +591,7 @@ def test_v2_pack_with_trashed_reference_is_rejected(client) -> None:
             json={
                 "requestId": uuid.uuid4().hex,
                 "kind": "product",
-                "sourceId": source["id"],
+                "sourceLibraryId": source["id"],
                 "packId": pack.id,
                 "packVersion": 1,
                 "replacementScope": "人物上身穿着",
@@ -589,8 +605,8 @@ def test_v2_pack_with_trashed_reference_is_rejected(client) -> None:
         asyncio.run(_drop_library_asset(library_id))
 
 
-def test_source_space_is_decided_by_field_name_only(client) -> None:
-    """两套原片字段互斥、缺一个就拒；v2 片还得是带音轨的 1–15 秒视频。"""
+def test_source_video_must_be_a_short_clip_with_audio(client) -> None:
+    """原片得是带音轨的 1–15 秒视频；缺字段直接拒，别让它跑成一条静音废片。"""
     headers = login(client)
     plain_video = video_bytes(2)
     good_content = plain_video + uuid.uuid4().bytes
@@ -601,7 +617,6 @@ def test_source_space_is_decided_by_field_name_only(client) -> None:
     asyncio.run(get_storage().put(silent_key, silent_content, "video/mp4"))
     muted = asyncio.run(_library_video(silent_key, silent_content, duration=2.0, has_audio=False))
     long_one = asyncio.run(_library_video(good_key, good_content, duration=30.0))
-    legacy = upload(client, "v1-源片.mp4", "source", video_bytes(2))
     front = upload(client, "字段互斥-产品主图.png", "product", png_bytes())
     pack = asyncio.run(
         add_pack(kind="product", reference_ids=[front["id"]], roles=["front"], scopes=["worn"])
@@ -620,10 +635,6 @@ def test_source_space_is_decided_by_field_name_only(client) -> None:
         return {"status": response.status_code, "body": response.json(), "text": response.text}
 
     try:
-        both = prepare(sourceId=legacy["id"], sourceLibraryId=long_one)
-        assert both["status"] == 400, both["text"]
-        assert "不能同时使用" in both["body"]["message"]
-
         neither = prepare()
         assert neither["status"] == 400, neither["text"]
         assert "请选择要替换的原片" in neither["body"]["message"]

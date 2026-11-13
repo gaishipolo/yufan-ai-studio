@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { PromptCanvasInput } from './PromptCanvasInput';
 import { readPromptDom, setPromptSelection } from './promptEditorDom';
 
-vi.mock('@/entities/asset/api/archive.queries', () => ({useArchivedMedia: () => ({data: undefined})}));
+vi.mock('@/shared/lib/remoteBlob', () => ({useRemoteBlob: () => ({data: undefined})}));
 const original = '  编辑 {{Mixed 1}}，参考 {{Mixed 2}}。\n\n';
 const media = [{id: 'video', token: '{{Mixed 1}}', name: '原片', type: 'video'}, {id: 'image', token: '{{Mixed 2}}', name: '正面图', type: 'image', url: '/front'}];
 

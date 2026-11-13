@@ -155,7 +155,7 @@ def test_three_flows_keep_original_tokens_and_pack_identity(client, tmp_path, mo
         payload = {
             "requestId": str(uuid4()),
             "kind": kind,
-            "sourceId": source["id"],
+            "sourceLibraryId": source["id"],
             "packId": default.id,
             "packVersion": 1,
             "videoTemplateId": result_by_kind[kind]["videoTemplateId"],

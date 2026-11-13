@@ -102,55 +102,6 @@ export const UploadKind_VALUES = ["image", "audio", "video", "text"] as const;
 
 /* ------------------------------ 模型 ------------------------------ */
 
-/** ArchiveChange */
-export interface ArchiveChange {
-  expectedVersion: number;
-  name?: string | null;
-  shared?: boolean | null;
-  deleted?: boolean | null;
-}
-
-/** 列表出参。
-
-**没有 `root`**：那是本地归档根的绝对路径，远端驱动下根本不存在，
-前端也早已不再展示（原来「归档位置」那一行在切 S3 后恒为空）。
-要位置信息就用 `storageKey`，它才是与驱动无关的那一层。 */
-export interface ArchiveList {
-  items: ArchivedAsset[];
-  total: number;
-  usedBytes: number;
-  quotaBytes?: number;
-  ownerUsedBytes?: number;
-  page?: number;
-  pageSize?: number;
-}
-
-/** ArchivedAsset */
-export interface ArchivedAsset {
-  id: string;
-  name: string;
-  category: "source" | "character" | "product" | "scene" | "audio";
-  type: "image" | "video" | "audio";
-  mimeType: string;
-  sizeBytes: number;
-  path: string;
-  sha256: string;
-  createdAt: string;
-  width?: number;
-  height?: number;
-  duration?: number;
-  hasAudio?: boolean;
-  url: string;
-  previewUrl?: string | null;
-  ownerId?: string;
-  shared?: boolean;
-  sharedAt?: string | null;
-  deletedAt?: string | null;
-  stateVersion?: number;
-  editable?: boolean;
-  downloadAllowed?: boolean;
-}
-
 /** 改名 / 换标签。**不含可见性**：共享必须走申请单，否则审批就没有意义了。 */
 export interface AssetPatchIn {
   name?: string | null;
@@ -429,7 +380,6 @@ export interface GenerationSnapshotIn {
   aspectRatio?: string;
   stylePreset?: string;
   seed?: string;
-  referenceAssetIds?: string[];
   referenceLibraryIds?: string[];
   packId?: string;
   packVersion?: number;
@@ -562,12 +512,6 @@ export interface ImageRetryOut {
   id: string;
   /** 重试后的状态，固定为 `queued` */
   status: string;
-}
-
-/** ImportAsset */
-export interface ImportAsset {
-  relativePath: string;
-  category: "source" | "character" | "product" | "scene" | "audio";
 }
 
 /** 生成入库结果。`created=False` = 命中幂等（sourceKey 重复或内容相同）。
@@ -717,7 +661,6 @@ export interface LibraryGenerationOut {
   aspectRatio?: string;
   stylePreset?: string;
   seed?: string;
-  referenceAssetIds?: string[];
   referenceLibraryIds?: string[];
   packId?: string;
   packVersion?: number;
@@ -865,10 +808,9 @@ export interface PackDraftIn {
   expectedRevision?: number;
   kind: "character" | "product" | "scene";
   name?: string;
-  referenceIds?: string[];
-  coverReferenceId?: string | null;
+  /** 封装用的参考图 id，按顺序 */
   referenceLibraryIds?: string[];
-  /** 资产库 v2 封面的 asset id；与 coverReferenceId 互斥 */
+  /** 封面的 asset id；必须出现在 referenceLibraryIds 里 */
   coverLibraryId?: string | null;
   wardrobeMode?: "preserve" | "reference";
   features?: string;
@@ -917,8 +859,6 @@ export interface PackManaged {
   name: string;
   referenceIds: string[];
   coverReferenceId?: string | null;
-  /** referenceIds 属于哪套素材库（v1 / v2）。回写草稿时要按它选字段名：`v2` 填 referenceLibraryIds，其它填 referenceIds——否则一次编辑保存就会把这份封装重新解释成另一侧的同名 id。 */
-  referenceIdSpace?: string;
   wardrobeMode?: "preserve" | "reference";
   features?: string;
   instructions?: string;
@@ -1021,9 +961,7 @@ export interface PrepareReplacement {
   channel?: "libtv" | "bailian" | "bailian-prime";
   kind: "character" | "product" | "scene";
   target?: string;
-  /** 旧素材库的原片 id；与 sourceLibraryId 互斥（同时给直接 400） */
-  sourceId?: string;
-  /** 资产库 v2 的原片 id；与 sourceId 互斥 */
+  /** 原片（资产库里的视频）id */
   sourceLibraryId?: string | null;
   videoTemplateId?: string | null;
   /** 文字换场景的描述；省略使用模板默认值，空白拒绝 */
@@ -1140,8 +1078,6 @@ export interface ReplacementPack {
   name: string;
   referenceIds: string[];
   coverReferenceId?: string | null;
-  /** referenceIds 属于哪套素材库（v1 / v2）。回写草稿时要按它选字段名：`v2` 填 referenceLibraryIds，其它填 referenceIds——否则一次编辑保存就会把这份封装重新解释成另一侧的同名 id。 */
-  referenceIdSpace?: string;
   wardrobeMode?: "preserve" | "reference";
   features?: string;
   instructions?: string;
@@ -1582,8 +1518,6 @@ export interface TemplatePackDraftIn {
   prompt: string;
   /** 参考视频的资产库 id */
   sourceVideoAssetId: string;
-  /** 参考视频 id 属于哪套库 */
-  sourceVideoIdSpace?: "v1" | "v2";
   /** 参考视频时长（秒） */
   sourceDurationSec?: number;
   /** 输出画幅 */
@@ -1610,7 +1544,6 @@ export interface TemplatePackOut {
   /** 提示词 sha256，防止文字被悄悄改掉 */
   promptSha256: string;
   sourceVideoAssetId: string;
-  sourceVideoIdSpace?: string;
   sourceDurationSec?: number;
   aspectRatio?: string;
   coverUrl?: string;
@@ -1636,10 +1569,8 @@ export interface TemplatePackSlotIn {
   slotKind: "fixed" | "filtered";
   /** 槽位显示名 */
   label?: string;
-  /** fixed：钉死的素材 id */
+  /** fixed：钉死的素材 id（资产库） */
   assetId?: string | null;
-  /** fixed：素材 id 属于哪套库；两套都是 32 位 hex，不能靠形状推断 */
-  assetIdSpace?: "v1" | "v2";
   /** fixed：素材类别 */
   mediaType?: "video" | "image" | "audio";
   /** filtered：素材类别（不含 text） */
@@ -1659,7 +1590,6 @@ export interface TemplatePackSlotOut {
   slotKind: "fixed" | "filtered";
   label?: string;
   assetId?: string | null;
-  assetIdSpace?: string;
   mediaType?: string;
   assetName?: string;
   filterKind?: string;
@@ -1838,10 +1768,8 @@ export interface ValidationError {
 
 /** 把样片登记后的 source 资产绑定到模板：绑定后它才是「全部模板」里可选的卡片。 */
 export interface VideoTemplateAttachSourceIn {
-  /** 原片 id：v1 是素材库里 category=source 的行，v2 是资产库里的视频 */
+  /** 原片 id（资产库里的视频） */
   sourceVideoAssetId: string;
-  /** 原片 id 属于哪套素材库；缺省 v1 */
-  sourceVideoIdSpace?: "v1" | "v2";
 }
 
 /** 封装一条新的视频模板。
@@ -1860,10 +1788,8 @@ export interface VideoTemplateDraftIn {
   prompt: string;
   /** 样片文件名 */
   sourceVideoName?: string;
-  /** 样片在素材库中的 asset id */
+  /** 样片在资产库中的 asset id */
   sourceVideoAssetId?: string | null;
-  /** 样片 id 属于哪套素材库：v1 是旧素材表，v2 是资产库。两套 id 都是 32 位 hex，**不能靠形状推断**，所以必须显式声明；缺省 v1 让旧调用一个字都不用改 */
-  sourceVideoIdSpace?: "v1" | "v2";
   /** 样片本地路径（可选） */
   sourceVideoPath?: string;
   /** 样片真实时长，用于提示与档位说明 */
@@ -1923,7 +1849,6 @@ export interface VideoTemplateOut {
   promptSha256: string;
   sourceVideoName: string;
   sourceVideoAssetId?: string | null;
-  sourceVideoIdSpace?: string;
   sourceVideoPath: string;
   sourceDurationSec: number;
   aspectRatio: string;
@@ -2098,30 +2023,6 @@ export interface modules__task__schema__TaskOut {
 
 /** 键是 `METHOD path`，值是去掉 {code,message,data} 封套后的类型 */
 export interface EndpointData {
-  /** 归档素材列表与空间占用 */
-  "GET /api/v1/assets": ArchiveList;
-  /** 从 Z 盘 inbox 登记现有素材 */
-  "POST /api/v1/assets/import": ArchivedAsset;
-  /** 流式上传素材至归档盘 */
-  "POST /api/v1/assets/upload": ArchivedAsset;
-  /** 彻底删除回收站中的归档素材 */
-  "DELETE /api/v1/assets/{asset_id}": unknown;
-  /** 读取本人或共享原片详情 */
-  "GET /api/v1/assets/{asset_id}": ArchivedAsset;
-  /** 将本人素材移入回收站或恢复 */
-  "PUT /api/v1/assets/{asset_id}/deleted": ArchivedAsset;
-  /** 预览或下载已归档素材 */
-  "GET /api/v1/assets/{asset_id}/file": unknown;
-  /** 修改本人素材名称 */
-  "PUT /api/v1/assets/{asset_id}/name": ArchivedAsset;
-  /** 受控公共原片预览 */
-  "GET /api/v1/assets/{asset_id}/preview": unknown;
-  /** 分享或取消分享本人原片 */
-  "PUT /api/v1/assets/{asset_id}/sharing": ArchivedAsset;
-  /** 浏览器兼容视频预览（派生文件，不改原片） */
-  "GET /api/v1/assets/{asset_id}/stream": unknown;
-  /** 读取归档素材缩略图 */
-  "GET /api/v1/assets/{asset_id}/thumbnail": unknown;
   /** 我的导出记录 */
   "GET /api/v1/exports": Page<ExportOut>;
   /** 创建导出（异步生成，202） */

@@ -63,7 +63,7 @@ def test_doctor_reports_cas_and_cleans_up_probe() -> None:
     names = {check.name: check for check in report.checks}
     assert "archive.cas" in names
     assert names["archive.cas"].level == "PASS", names["archive.cas"].message
-    assert "ports.references" in names
+    assert "ports.library_references" in names
     assert "archive.integrity" in names
     assert not storage.exists(_CAS_PROBE)
     assert report.render().startswith("[")

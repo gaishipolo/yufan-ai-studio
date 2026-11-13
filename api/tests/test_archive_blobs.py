@@ -2,30 +2,30 @@
 
 这层替换掉了原先「位置寻址 + 发布前重算 sha256 发现被改」的做法，所以要守住三件事：
 
-1. 同一份字节登记到不同分类，物理上只有一份；
+1. 同一份字节再传一次不落第二条行、也不写第二份 blob（秒传）；
 2. 发布校验只看 key 在不在，不再读全量字节；
 3. 存量记录（`library/…` 旧布局）不改也能继续读 —— 迁移是可选动作，不是前置条件。
 
-重建只改了「发布校验由谁调」：`PackService.verify(pack)` 换成内部
-`_verify_bytes(refs)`（refs 来自 `template_pack_references`）。判据一字未改：
-**不重算摘要**，key 存在即字节正确。
+v1 时代这里还守着「两条记录共享一个 path」与 `catalog/assets/<id>.json` 镜像；
+前者随 `assets` 表变成「秒传直接命中同一行」，后者由 `modules/asset` 的镜像投影
+写出、随该模块一起删掉了。
 """
 
 from __future__ import annotations
 
+import asyncio
 import io
-import json
 import os
-import shutil
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
-from tests_template_helpers import ADMIN, add_pack, drop_pack, upload
+from tests_template_helpers import add_pack, drop_pack, login, upload
 
 from core.exceptions import BadRequest, NotFound
 from db.session import get_session_factory
+from infra import get_storage
 from infra.archive import BlobStore, blob_key, is_blob_key, preview_key
 from infra.archive.local import LocalArchiveStorage, get_archive_settings
 from modules.template.pack_service import PackService
@@ -44,9 +44,16 @@ def png(color: str | None = None) -> bytes:
     return buffer.getvalue()
 
 
-def _mirror(root: Path, asset_id: str) -> dict:
-    """镜像 JSON 是只读投影，仍旧写在 `catalog/assets` 下（前端与运维都在看它）。"""
-    return json.loads((root / "catalog" / "assets" / f"{asset_id}.json").read_text("utf-8"))
+def _storage_key(client: TestClient, asset_id: str) -> str:
+    """字节在对象存储里的 key。
+
+    v2 不把 `storage_key` 放在列表出参里（那是内部寻址细节），只在**详情**的
+    `archive` 段给所有者与管理员看——所以这里要带登录头并且是单条读。
+    """
+    detail = client.get(
+        f"/api/v1/library/assets/{asset_id}", headers=login(client)
+    ).json()["data"]
+    return detail["archive"]["storageKey"]
 
 
 def test_blob_key_is_content_addressed() -> None:
@@ -63,19 +70,21 @@ def test_blob_key_rejects_non_digest() -> None:
         blob_key("../etc/passwd")
 
 
-def test_same_bytes_share_one_blob(client: TestClient, archive_root: Path) -> None:
-    """同一张图当人物参考和场景参考是两条记录，但字节只有一份。"""
-    data = png()
-    character = upload(client, "人物.png", "character", data)
-    scene = upload(client, "场景.png", "scene", data)
+def test_same_bytes_are_deduplicated_by_digest(client: TestClient) -> None:
+    """同一份字节再传一次：直接命中同一行，也不再写第二份 blob。
 
-    assert character["path"] == scene["path"]
-    assert character["path"].startswith("blobs/")
-    assert (archive_root / character["path"]).is_file()
-    # 预览也按摘要命名：同一份字节不会生成两份缩略图
-    assert _mirror(archive_root, character["id"])["previewPath"] == _mirror(
-        archive_root, scene["id"]
-    )["previewPath"]
+    v1 的判据是「两条记录共享一个 path」（分类不同算两条记录）；v2 的判据更强：
+    同一个人 + 同摘要 + 同类型直接秒传回已有那条，连记录都不会多一条。
+    """
+    data = png()
+    first = upload(client, "人物.png", "character", data)
+    again = upload(client, "人物-副本.png", "character", data)
+
+    assert again["id"] == first["id"]
+    key = _storage_key(client, first["id"])
+    assert key.startswith("library/blobs/")
+    # 资产库的字节在 STORAGE_LOCAL_ROOT 下，与归档盘的 ARCHIVE_ROOT 是两个根
+    assert asyncio.run(get_storage().exists(key))
 
 
 async def test_publish_checks_blob_presence_not_content(
@@ -94,7 +103,7 @@ async def test_publish_checks_blob_presence_not_content(
             refs = await PackRepository(session).references(pack.id)
             await PackService(session)._verify_bytes(refs)
 
-        (archive_root / item["path"]).unlink()
+        await get_storage().delete(_storage_key(client, item["id"]))
 
         async with get_session_factory()() as session:
             refs = await PackRepository(session).references(pack.id)
@@ -111,18 +120,22 @@ def test_materialize_missing_key_is_not_found(archive_root: Path) -> None:
         pass
 
 
-def test_legacy_library_key_still_reads(client: TestClient, archive_root: Path) -> None:
-    """存量素材还是 `library/…` 位置寻址：按 key 直达，不需要先迁移。"""
-    item = upload(client, "人物.png", "character", png())
-    legacy = f"library/character/2026/01/{item['id']}.png"
+def test_legacy_library_key_still_reads(archive_root: Path) -> None:
+    """存量素材还是 `library/…` 位置寻址：按 key 直达，不需要先迁移。
+
+    这里不经过上传接口：要验的是 `BlobStore.materialize` 认不认任意 key，
+    与「这条记录怎么来的」无关。v1 的 `migrate-blobs` 命令已随 `modules/asset`
+    删除，所以「存量还在原位」这个状态只能手工造。
+    """
+    legacy = "library/character/2026/01/asset.png"
     target = archive_root / legacy
     target.parent.mkdir(parents=True, exist_ok=True)
-    shutil.move(str(archive_root / item["path"]), str(target))
+    target.write_bytes(b"legacy-bytes")
 
     blobs = BlobStore(LocalArchiveStorage())
     with blobs.materialize(legacy) as path:
         assert path.is_file()
-        assert path == target
+        assert path.read_bytes() == b"legacy-bytes"
 
 
 def test_link_prefers_hardlink(archive_root: Path) -> None:
@@ -148,15 +161,3 @@ def test_link_refuses_conflicting_content(archive_root: Path) -> None:
         storage.link(source, "runs/a/inputs/copy.bin", "0" * 64)
 
 
-def test_mirror_keeps_serving_old_readers(archive_root: Path, client: TestClient) -> None:
-    """`catalog/assets/<id>.json` 镜像仍是「零改动」的兼容层：老读者照旧能读。
-
-    重建没有动它（索引早已在 `assets` 表），这条只是防止有人顺手把镜像删掉——
-    删了之后运维脚本和旧版前端会同时失效，而接口一切正常，很难归因。
-    """
-    item = upload(client, "镜像.png", "character", png())
-    mirror = _mirror(archive_root, item["id"])
-    assert mirror["id"] == item["id"]
-    assert mirror["path"] == item["path"]
-    assert mirror["sha256"] == item["sha256"]
-    assert ADMIN  # 明确：这条记录属于演示超管（夹具默认 owner）

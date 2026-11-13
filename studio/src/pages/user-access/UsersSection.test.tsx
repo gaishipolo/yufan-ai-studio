@@ -40,7 +40,7 @@ const mocks = vi.hoisted(() => ({
       name: '内容组',
       description: '',
       createdAt: '2026-01-01T00:00:00.000Z',
-      permissions: ['asset:create'],
+      permissions: ['library:create'],
       memberIds: ['u_2'],
       memberCount: 1,
     },

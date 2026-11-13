@@ -7,19 +7,21 @@
 
 from __future__ import annotations
 
+import uuid
+
 import pytest
 from video_template_support import put, record, run
 
 from core.exceptions import NotFound
 from db.session import get_session_factory
-from modules.asset.models import Asset
+from modules.library.models import LibraryAsset
 from modules.template import video_template_service as service
 
 NEW_ASSET = "ffeeb073241c5e7d76bf46fc8544e887fe0da464"
 
 
 def source_asset(asset_id: str, name: str, duration: float) -> None:
-    """造一条 v1 `source` 原片：`attach_source` 只认这一类。
+    """造一条资产库 v2 视频原片：`attach_source` 只认这一类。
 
     **同 id 覆盖**而不是「存在就跳过」：测试库整场共用，前面的用例可能已经用
     同一个 id 造过一条时长不同的原片，跳过会让这条用例拿到别人的 6 秒。
@@ -27,15 +29,19 @@ def source_asset(asset_id: str, name: str, duration: float) -> None:
 
     async def go() -> None:
         async with get_session_factory()() as session:
-            row = await session.get(Asset, asset_id)
+            row = await session.get(LibraryAsset, asset_id)
             if row is None:
                 session.add(
-                    Asset(
+                    LibraryAsset(
                         id=asset_id,
                         name=name,
-                        type="video",
-                        category="source",
+                        kind="video",
+                        origin="upload",
+                        mime_type="video/mp4",
+                        storage_key=f"tests/attach-source/{uuid.uuid4().hex}.mp4",
                         owner_id="u_001",
+                        visibility="personal",
+                        state="active",
                         duration=duration,
                     )
                 )

@@ -246,17 +246,8 @@ class Settings(BaseSettings):
     # 周期任务调度器（模块自己 @periodic 注册）。多副本部署时每个进程都会跑一份，
     # 所以 handler 必须幂等；需要「全集群只跑一次」要先换掉 queue_driver。
     scheduler_enabled: bool = True
-    # 归档 GC 默认关闭：删除不可逆，而调度器没有分布式选主，多实例会各跑一份。
-    # 单机确认后再开；间隔、保护期、回收站保留期都可单独调。
-    archive_gc_enabled: bool = False
-    archive_gc_interval_sec: float = 86400.0
-    archive_gc_min_age_hours: float = 24.0
-    archive_gc_trash_days: float = 30.0
-    # 每个用户的归档逻辑容量上限（字节）；0 = 不限。只算未删除的归档素材，
-    # 内容寻址让同一份字节在物理上共用，但配额按「每个人登记了什么」算。
-    archive_quota_bytes_per_user: int = 0
-    # 资产库 v2 的回收站：保留期到了才允许物理删除，删除前还要过引用检查。
-    # GC 默认关闭，理由与归档 GC 相同（删除不可逆、调度器默认单实例选主）。
+    # 回收站 GC 默认关闭：删除不可逆，而调度器没有分布式选主，多实例会各跑一份。
+    # 单机确认后再开；间隔、保留期都可单独调。
     # 周期任务是**小时级扫描**而不是「每日 03:00」：调度器只支持间隔，没有 cron；
     # 保留期是 30 天，早一小时晚一小时对用户无差别，而漏跑一天差别很大。
     library_trash_gc_enabled: bool = False
@@ -277,10 +268,6 @@ class Settings(BaseSettings):
     # 用户点开只会看到 409，所以默认开启；多实例仍靠 leader_only 收敛到一台。
     library_download_gc_enabled: bool = True
     library_download_gc_interval_sec: float = 3600.0
-    # 镜像对账：只读 DB + 按 stateVersion 幂等覆盖写，多实例各跑一份结果相同，
-    # 所以默认开启（与 GC 不同，它不需要选主）。也可随时 `app rebuild-mirrors`。
-    archive_mirror_enabled: bool = True
-    archive_mirror_interval_sec: float = 3600.0
     # 周期任务的集群协调能力：local = 单实例直接跑；backend = 用归档存储的
     # 条件写抢租约，全集群只有一个实例执行「不可逆/非幂等」的任务。
     leader_elector: str = "local"

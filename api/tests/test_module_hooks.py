@@ -32,7 +32,7 @@ def test_identity_seeds_before_any_other_module() -> None:
     from api.discovery import active_modules
 
     seeding = [spec for spec in active_modules() if spec.seed is not None]
-    assert {spec.name for spec in seeding} >= {"identity", "asset", "task", "image"}
+    assert {spec.name for spec in seeding} >= {"identity", "task", "image"}
 
     ordered = sorted(seeding, key=lambda spec: (spec.seed_order, spec.name))
     assert ordered[0].name == "identity"
@@ -73,7 +73,9 @@ class _CapturingSession:
 
 @pytest.mark.parametrize(
     ("module_name", "owner_attr"),
-    [("task", "author_id"), ("asset", "owner_id"), ("image", "owner_id")],
+    # 只剩这两个模块的演示行带「谁创建的」：`asset` 已下线；`template` 的 seed
+    # 要先查资产库解析原片，需要真 session，不适合用「只记 add」的探针测。
+    [("task", "author_id"), ("image", "owner_id")],
 )
 def test_seed_uses_the_context_user_instead_of_a_hardcoded_id(
     module_name: str, owner_attr: str
@@ -129,14 +131,19 @@ def test_demo_user_is_seeded_with_the_configured_id() -> None:
 # cli：命令来自模块，且不能互相踩
 # --------------------------------------------------------------------------- #
 MODULE_COMMANDS = {
+    # identity
     "create-admin",
     "prune-logins",
     "prune-sessions",
     "sync-roles",
-    "import-archive-index",
-    "migrate-blobs",
-    "prune-blobs",
-    "rebuild-mirrors",
+    # library（v1 的 import-archive-index / migrate-blobs / prune-blobs /
+    # rebuild-mirrors 随 `modules/asset` 一起删了）
+    "library",
+    # template / model_driver
+    "import-template-legacy",
+    "import-video-templates",
+    "template-workspaces",
+    "drivers",
 }
 
 

@@ -98,6 +98,13 @@ class LibraryAssetOrigin(StrEnum):
     PACK = "pack"
 
 
+#: 「能当模板原片」的来源集合。前端选择器与封装工具都按这一份判定，
+#: 只认 `template_source` 会把切换前导入的存量原片全漏掉。
+SOURCE_VIDEO_ORIGINS = frozenset(
+    {LibraryAssetOrigin.TEMPLATE_SOURCE.value, LibraryAssetOrigin.IMPORTED.value}
+)
+
+
 class AssetSort(StrEnum):
     """排序键。默认按创建时间倒序。"""
 
@@ -320,9 +327,6 @@ class LibraryGenerationOut(CamelModel):
     aspect_ratio: str = ""
     style_preset: str = ""
     seed: str = ""
-    reference_asset_ids: list[str] = Field(default_factory=list)
-    # 这次生成用的 v2 参考图。与上一行是两套 id 空间：上面只服务历史 v1 导入行，
-    # 新生成一律记在这里（前端按 `referenceLibraryIds` 读）。
     reference_library_ids: list[str] = Field(default_factory=list)
     pack_id: str = ""
     pack_version: int = 0
@@ -668,9 +672,6 @@ class GenerationSnapshotIn(CamelModel):
     aspect_ratio: str = Field(default="", max_length=16)
     style_preset: str = Field(default="", max_length=40)
     seed: str = Field(default="", max_length=64)
-    reference_asset_ids: list[str] = Field(default_factory=list)
-    # v2 参考图（`referenceLibraryIds`）。与上一行不是同一套 id：上面留给历史
-    # v1 导入，新写入一律填这个。两个都填成不同的值会被 400 拒绝（见 `ingest.py`）。
     reference_library_ids: list[str] = Field(default_factory=list)
     pack_id: str = Field(default="", max_length=32)
     pack_version: int = Field(default=0, ge=0)

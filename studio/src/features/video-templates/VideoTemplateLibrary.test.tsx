@@ -13,7 +13,6 @@ const mock = vi.hoisted(() => {
     promptSha256: 'abc123',
     sourceVideoName: '我穿的是米兰之夜模板测试.mp4',
     sourceVideoAssetId: 'ac1d588d36294fa49c809d46bb1dbb6d',
-    sourceVideoIdSpace: 'v2',
     sourceVideoPath: '',
     sourceDurationSec: 5.312,
     aspectRatio: '9:16',
@@ -138,7 +137,6 @@ describe('模板库里的视频模板', () => {
     fireEvent.click(screen.getByRole('button', {name: '保存封装'}));
     await vi.waitFor(() => expect(mock.create).toHaveBeenCalledWith(expect.objectContaining({
       sourceVideoAssetId: 'ac1d588d36294fa49c809d46bb1dbb6d',
-      sourceVideoIdSpace: 'v2',
     })));
   });
 

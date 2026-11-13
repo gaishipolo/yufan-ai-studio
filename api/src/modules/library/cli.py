@@ -1,9 +1,5 @@
 """资产库 v2 的运维命令。
 
-- `library import-archive`：把旧素材库搬进 v2。必须能反复跑（幂等），因为并存期
-  会先试跑一次、切换前一天再跑一次追平增量。
-- `library reconcile`：只读对账，回答「两边还是不是同一批东西」。观察期每天跑一次：
-  有缺口退出码非 0，CI / 值班脚本据此报警，不用人肉比对列表。
 - `library trash-gc`：手动跑一轮回收站清理。周期任务默认关闭（删除不可逆），
   所以运维需要一个「我看过了，现在清」的入口；`--dry-run` 只列 id。
 - `library download-gc`：清过期的打包 zip。它删的是我们自己生成的临时产物，
@@ -27,66 +23,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import sys
-
-
-def cmd_import_archive(args: argparse.Namespace) -> None:
-    from core.exceptions import AppError
-    from db.session import get_session_factory
-    from infra import get_storage
-    from infra.archive import get_archive_storage
-    from modules.library.import_archive import import_legacy_assets
-
-    async def run():
-        async with get_session_factory()() as session:
-            return await import_legacy_assets(
-                session,
-                get_archive_storage(),
-                get_storage(),
-                dry_run=args.dry_run,
-                limit=args.limit,
-                owner=args.owner,
-            )
-
-    try:
-        report = asyncio.run(run())
-    except AppError as exc:
-        print(exc.message, file=sys.stderr)
-        raise SystemExit(1) from exc
-
-    for line in report.lines():
-        print(line)
-
-    # 有缺口就以非 0 退出：CI / 运维脚本靠退出码判断「能不能切换」，
-    # 不能只看最后一行有没有「失败」两个字。
-    if not report.dry_run and (report.missing_bytes or report.skipped_unsupported):
-        raise SystemExit(1)
-
-
-def cmd_reconcile(args: argparse.Namespace) -> None:
-    from sqlalchemy.exc import SQLAlchemyError
-
-    from db.session import get_session_factory
-    from modules.library.import_archive import reconcile_legacy
-
-    async def run():
-        async with get_session_factory()() as session:
-            return await reconcile_legacy(session, owner=args.owner)
-
-    try:
-        report = asyncio.run(run())
-    except SQLAlchemyError as exc:
-        # 旧表不存在（新部署、或已彻底下线旧模块）不是错误，是「没有可对账的东西」。
-        # 与 `health.py` 同口径：这条命令不该因为旧表缺席而报红。
-        print(f"跳过对账：旧素材表不可读（{type(exc).__name__}）", file=sys.stderr)
-        return
-
-    for line in report.lines(limit=args.limit):
-        print(line)
-
-    # 缺口即非 0：观察期靠退出码判断「今天能不能放心继续观察 / 能不能切换」。
-    if not report.in_sync:
-        raise SystemExit(1)
 
 
 def cmd_trash_gc(args: argparse.Namespace) -> None:
@@ -160,19 +96,6 @@ def cmd_tag_tree_init(args: argparse.Namespace) -> None:
 def register(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     parser = sub.add_parser("library", help="资产库 v2 运维命令")
     actions = parser.add_subparsers(dest="library_action", required=True)
-
-    importer = actions.add_parser(
-        "import-archive", help="把旧素材库导入 v2（幂等，可先 --dry-run）"
-    )
-    importer.add_argument("--dry-run", action="store_true", help="只统计，不读字节、不写库")
-    importer.add_argument("--limit", type=int, default=0, help="最多处理多少条（0 = 全部）")
-    importer.add_argument("--owner", default="", help="只导入指定 owner_id 的素材")
-    importer.set_defaults(func=cmd_import_archive)
-
-    reconcile = actions.add_parser("reconcile", help="只读对账：旧库与 v2 的差集")
-    reconcile.add_argument("--owner", default="", help="只看指定 owner_id 的素材")
-    reconcile.add_argument("--limit", type=int, default=20, help="每类最多列几个 id")
-    reconcile.set_defaults(func=cmd_reconcile)
 
     gc = actions.add_parser("trash-gc", help="清理过期的回收站条目（默认试运行）")
     gc.add_argument(

@@ -69,7 +69,6 @@ class TemplatePackSlot:
     slot_kind: str
     label: str = ""
     asset_id: str = ""
-    asset_id_space: str = "v2"
     media_type: str = "image"
     filter_kind: str = ""
     filter_tag_ids: tuple[str, ...] = ()
@@ -93,7 +92,6 @@ class TemplatePackSummary:
     prompt_sha256: str = ""
     owner_id: str = ""
     source_video_asset_id: str = ""
-    source_video_id_space: str = "v2"
     source_duration_sec: float = 0.0
     aspect_ratio: str = "9:16"
     cover_url: str = ""

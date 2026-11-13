@@ -47,8 +47,8 @@ async def record(...) -> None:                            # 4. 消费函数：**
 是「不许两个实现抢同一个位置」（`api.authn`、`core.ports.accounts`）。改造前这
 两种语义在五个文件里各写各的，谁也没发现它们不一致。
 
-**唯一例外：判定结果会放行不可逆操作的注入口**（`core.ports.assets` 的引用检查）。
-那里「中性值 = 没人引用 = 可以删」，一次漏注册就是永久丢数据，所以必须
+**唯一例外：判定结果会放行不可逆操作的注入口**（`core.ports.library_references` 的
+引用检查）。那里「中性值 = 没人引用 = 可以删」，一次漏注册就是永久丢数据，所以必须
 fail-closed：来源不齐抛 `Unavailable`(503)，宁可暂时删不掉。新增这类注入口时
 要在 `PORT_CATALOG` 的 `when_unregistered` 里写明这是刻意的，别照抄「返回中性值」。
 
@@ -71,12 +71,10 @@ from api.authn import has_principal_resolver
 from core.audit import has_audit_sink
 from core.feed import has_replacement_feed
 from core.ports.accounts import has_account_status_checker
-from core.ports.assets import reference_source_gaps
 from core.ports.export_sources import export_sources
 from core.ports.library_ingest import has_library_ingest
 from core.ports.library_lookup import has_library_lookup
 from core.ports.library_references import library_references_ready
-from core.ports.media import has_asset_lookup
 from core.ports.model_generation import has_model_generation
 from core.ports.org_directory import has_org_directory
 from core.ports.template_pack import has_template_pack
@@ -132,30 +130,6 @@ PORT_CATALOG: tuple[PortSpec, ...] = (
         when_unregistered="record() 静默跳过：留痕是可选依赖，不能拖垮业务；"
         "但生产环境启动自检会直接报错",
         is_registered=has_audit_sink,
-    ),
-    PortSpec(
-        name="asset-references",
-        module="core.ports.assets",
-        protocol="AssetReferenceChecker",
-        implementer="由 `ModuleSpec.asset_reference_sources` 声明。当前实现者："
-        "modules/library（生成溯源快照里的 v1 参考图）、"
-        "modules/template（`template_pack_references.asset_id`，只算封装 head，"
-        "已发布的历史版本不算引用）。任务模块的参考图已切到 v2，"
-        "改由下面的 `library-references` 管",
-        when_unregistered="fail-closed（见本文件开头的例外说明）：来源不齐抛 503，"
-        "删除一律拒绝。这里返回中性值等于静默放行不可逆删除",
-        is_registered=lambda: not reference_source_gaps(),
-    ),
-    PortSpec(
-        name="asset-lookup",
-        module="core.ports.media",
-        protocol="AssetLookup",
-        implementer="modules/asset 的 `lookup.SqlAssetLookup`（模块 import 期 "
-        "`install()` 注册）。与 `asset-references` 分工：那个回答「谁还在引用它」，"
-        "这个回答「它本身是什么」",
-        when_unregistered="fail-closed（见本文件开头的例外说明）：抛 503，不返回 "
-        "空映射。这里退化成「查不到就算素材不存在」会把配置故障报成用户数据问题",
-        is_registered=has_asset_lookup,
     ),
     PortSpec(
         name="replacement-feed",
@@ -217,7 +191,7 @@ PORT_CATALOG: tuple[PortSpec, ...] = (
         when_unregistered="fail-closed：抛 503，v2 资产一律不可彻底删除。"
         "「查不到 = 没人引用」在这里等于静默放行不可逆删除",
         # 判「声明 ⊆ 实现」而不是「有没有人注册」：注册了却漏声明时，某个来源会
-        # 被静默忽略，删除照样放行——这正是 v1 那条 `reference_source_gaps()` 的教训。
+        # 被静默忽略，删除照样放行——这正是已下线的 v1 `asset-references` 的教训。
         is_registered=library_references_ready,
     ),
     PortSpec(

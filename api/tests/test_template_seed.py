@@ -1,14 +1,11 @@
-"""模板演示数据：走 `LibraryLookup` 取素材，并**显式标记 v2 空间**。
+"""模板演示数据：走 `LibraryLookup` 取素材。
 
-这条用例是「步 1：seed 去裸 SQL」的验收。它守两件事：
+这条用例是「步 1：seed 去裸 SQL」的验收：换成 `find_ids()` 之后演示数据仍然成立。
+原来那条 `SELECT id FROM assets WHERE category = ...` 换个来源后如果什么都不产出，
+`app seed` 会照常 exit 0，只是第一屏少了「可用的包」；这种退化没人会报。
 
-1. 换成 `find_ids()` 之后演示数据仍然成立——原来那条
-   `SELECT id FROM assets WHERE category = ...` 换个来源后如果什么都不产出，
-   `app seed` 会照常 exit 0，只是第一屏少了「可用的包」；这种退化没人会报。
-2. 演示封装里落的 `asset_id_space` 必须是 `v2`。默认值是「当前空间」（此刻还是
-   `v1`），所以**知道自己在用 v2 资产的地方必须显式写**——漏写的话，等步 2.5c
-   把默认值翻成 `v2` 之前，这批演示数据会被当成 v1 id 去旧表里找，找到的是
-   不存在的素材。
+（`asset_id_space` 曾经是这里的第二条断言——并存期默认值是 v1，用 v2 资产的地方
+必须显式写。v1 `assets` 表已于 2026-11-13 下线，那一列连同这条断言一起消失了。）
 """
 
 from __future__ import annotations
@@ -54,20 +51,16 @@ def _seed(owner_id: str) -> tuple[int, list[tuple], list[tuple]]:
             my_packs = select(TemplatePack.id).where(TemplatePack.owner_id == owner_id)
             refs = (
                 await session.execute(
-                    select(
-                        TemplatePackReference.asset_id,
-                        TemplatePackReference.asset_id_space,
-                    )
+                    select(TemplatePackReference.asset_id)
                     .where(TemplatePackReference.pack_id.in_(my_packs))
                     .order_by(TemplatePackReference.pack_id, TemplatePackReference.position)
                 )
             ).all()
             versions = (
                 await session.execute(
-                    select(
-                        TemplatePackVersion.reference_ids,
-                        TemplatePackVersion.reference_ids_space,
-                    ).where(TemplatePackVersion.pack_id.in_(my_packs))
+                    select(TemplatePackVersion.reference_ids).where(
+                        TemplatePackVersion.pack_id.in_(my_packs)
+                    )
                 )
             ).all()
             return created, [tuple(row) for row in refs], [tuple(row) for row in versions]
@@ -92,7 +85,7 @@ def test_seed_builds_both_packs_from_v2_assets() -> None:
     created, refs, versions = _seed(DEMO_USER)
 
     assert created == 2, "应当同时种出「已发布的人物包」与「待补范围的产品草稿」"
-    seeded = [asset_id for asset_id, _space in refs]
+    seeded = [asset_id for (asset_id,) in refs]
     assert set(seeded) <= set(ids), "演示封装引用了不是 v2 的资产 id"
     assert len(seeded) == 5, "3 张人物 + 2 张产品，一张都不该丢"
     assert set(seeded) == set(ids), "5 张图应当全部被收进两个封装"
@@ -100,11 +93,7 @@ def test_seed_builds_both_packs_from_v2_assets() -> None:
     # 同一瞬间插入的行按 id 决胜，而 id 是随机 hex。切片顺序本身不重要，
     # 演示数据要证明的是「有两种封装形态」，不是「哪张图属于哪个包」。
 
-    assert [space for _asset_id, space in refs] == ["v2"] * 5, (
-        "参考行必须显式标 v2：默认值还是 v1，漏写会被当成旧素材 id"
-    )
     assert versions, "已发布的包必须写一条冻结版本"
-    assert [space for _ids, space in versions] == ["v2"] * len(versions)
 
 
 def test_seed_without_v2_assets_only_creates_the_draft() -> None:

@@ -55,8 +55,8 @@ def _payload(kind: str, ids: list[str], **extra: Any) -> PackDraftIn:
         "requestId": uuid.uuid4(),
         "kind": kind,
         "name": "测试对象",
-        "referenceIds": ids,
-        "coverReferenceId": ids[0] if ids else None,
+        "referenceLibraryIds": ids,
+        "coverLibraryId": ids[0] if ids else None,
     }
     values.update(extra)
     return PackDraftIn.model_validate(values)
@@ -148,7 +148,7 @@ async def test_save_rejects_scope_on_non_product(client: TestClient) -> None:
 async def test_save_rejects_foreign_reference(client: TestClient) -> None:
     """参考图必须是本人的：拿别人的素材 id 拼包等于绕过素材权限。"""
     ids = await _register(client, "character", 1)
-    with pytest.raises(BadRequest, match="只能封装本人同类参考图片"):
+    with pytest.raises(BadRequest, match="只能封装可读的已采纳参考图片"):
         await _save(_payload("character", ids), "someone-else")
 
 

@@ -58,12 +58,6 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
   {
     group: '素材',
     items: [
-      { code: 'asset:create', name: '上传素材', description: '' },
-      { code: 'asset:delete', name: '删除素材', description: '' },
-      { code: 'asset:read', name: '查看素材', description: '' },
-      { code: 'asset:reference:manage', name: '维护封装参考素材与登记文件', description: '' },
-      { code: 'asset:share', name: '分享或撤回本人原片', description: '' },
-      { code: 'asset:update', name: '修改本人素材名称', description: '' },
       { code: 'template:pack:manage', name: '维护本人封装草稿', description: '' },
       { code: 'template:pack:publish', name: '发布或停用本人封装对象', description: '' },
     ],
@@ -107,12 +101,6 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
 ];
 
 export const PERMISSION_CODES = [
-  'asset:create',
-  'asset:delete',
-  'asset:read',
-  'asset:reference:manage',
-  'asset:share',
-  'asset:update',
   'catalog:read',
   'export:create',
   'export:delete',

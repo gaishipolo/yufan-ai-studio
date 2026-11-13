@@ -67,10 +67,9 @@ def _check_ports(report: DoctorReport) -> None:
     这里核的是 **fail-closed** 注入口。它们的共同点：没注册时系统照常启动、
     接口照常返回 200，只是功能**静默半残**——所以只能靠自检把人叫回来。
 
-    - `ports.references`：v1 `assets.id` 的引用来源不齐 → 旧素材删除不再被拦
-      （不可逆的数据错误）
-    - `ports.library_references`：v2 `library_assets.id` 的引用来源不齐 → v2 资产的
-      「彻底删除」不再被拦（同一个失败方向，但两套 id 空间，必须分开对账）
+    - `ports.library_references`：`library_assets.id` 的引用来源不齐 → v2 资产的
+      「彻底删除」不再被拦（不可逆的数据错误）。
+      v1 的 `ports.references` 随 `assets` 表于 2026-11-13 下线，只剩这一条。
     - `library-ingest`：生成成功但写不进草稿箱（用户看到「完成」，库里总是空的）
     - `model-generation`：下游模块（模板/分镜）发起不了生成
 
@@ -80,13 +79,12 @@ def _check_ports(report: DoctorReport) -> None:
     from api.discovery import discover_modules
     from app import load_extension_points
     from core.audit import has_audit_sink
-    from core.ports.assets import (
-        declared_reference_sources,
-        reference_source_count,
-        reference_source_gaps,
-    )
     from core.ports.library_ingest import has_library_ingest
-    from core.ports.library_references import library_reference_count, library_reference_gaps
+    from core.ports.library_references import (
+        declared_library_reference_sources,
+        library_reference_count,
+        library_reference_gaps,
+    )
     from core.ports.model_generation import has_model_generation
 
     # CLI 不跑 lifespan，两个扩展点都要手动装配；否则会误报「审计未注册」
@@ -95,45 +93,32 @@ def _check_ports(report: DoctorReport) -> None:
 
     # 不再「数够 2 个就 PASS」：那对第三个来源漏登记毫无察觉，而失败方向是永久丢数据。
     # 现在对账 ModuleSpec 声明集合 vs 实际注册集合，缺一即 FAIL。
-    gaps = reference_source_gaps()
-    declared = declared_reference_sources()
+    library_gaps = library_reference_gaps()
+    declared = declared_library_reference_sources()
     module_names = {spec.name for spec in specs}
     undeclared = sorted(
         name
         for name, module in declared.items()
         if not module.startswith("_") and module not in module_names
     )
-    if gaps:
-        report.add("ports.references", "FAIL", "删除会被拒绝：" + "；".join(gaps))
-    elif undeclared:
-        report.add(
-            "ports.references",
-            "WARN",
-            f"{reference_source_count()} 个来源已注册，但这些来源没有 ModuleSpec 声明："
-            + "、".join(undeclared),
-        )
-    else:
-        report.add(
-            "ports.references",
-            "PASS",
-            f"{reference_source_count()} 个来源齐全且全部有声明（fail-closed 生效）",
-        )
-
-    # v2 资产是另一套 id 空间（`library_assets.id`），必须单独对账：
-    # 合并成一条会让「v1 齐全、v2 缺一个」显示成 PASS —— 那正是删掉 v2 图之后
-    # 封装里裂图、而自检一片绿的情形。
-    library_gaps = library_reference_gaps()
     if library_gaps:
         report.add(
             "ports.library_references",
             "FAIL",
-            "v2 资产的彻底删除会被拒绝：" + "；".join(library_gaps),
+            "资产的彻底删除会被拒绝：" + "；".join(library_gaps),
+        )
+    elif undeclared:
+        report.add(
+            "ports.library_references",
+            "WARN",
+            f"{library_reference_count()} 个来源已注册，但这些来源没有 ModuleSpec 声明："
+            + "、".join(undeclared),
         )
     else:
         report.add(
             "ports.library_references",
             "PASS",
-            f"{library_reference_count()} 个 v2 引用来源齐全且全部有声明（fail-closed 生效）",
+            f"{library_reference_count()} 个引用来源齐全且全部有声明（fail-closed 生效）",
         )
 
     if has_audit_sink():
@@ -290,18 +275,19 @@ def _check_workspace_and_blobs(report: DoctorReport, sample: int) -> None:
 
     elector = get_leader_elector()
     mode = elector.name
-    if settings.archive_gc_enabled and mode == "local":
+    if settings.library_trash_gc_enabled and mode == "local":
         report.add(
             "runtime.leader",
             "FAIL",
-            "ARCHIVE_GC_ENABLED=true 但 LEADER_ELECTOR=local：多实例会各删一份。"
+            "LIBRARY_TRASH_GC_ENABLED=true 但 LEADER_ELECTOR=local：多实例会各删一份。"
             "改成 backend（归档存储条件写租约），或确认全集群只有一个进程",
         )
     else:
         report.add(
             "runtime.leader",
             "PASS" if mode == "backend" else "INFO",
-            f"周期任务选主={mode}；GC={'开启' if settings.archive_gc_enabled else '关闭'}",
+            f"周期任务选主={mode}；"
+            f"回收站 GC={'开启' if settings.library_trash_gc_enabled else '关闭'}",
         )
     cache = client_cache_info()
     report.add(

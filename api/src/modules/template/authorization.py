@@ -26,7 +26,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.context import CurrentUser
 from core.ports.library_lookup import LibraryAssetKind, LibraryAssetState
 from modules.template.asset_source import resolve_assets
-from modules.template.id_space import ASSET_ID_SPACE_V1, ASSET_ID_SPACE_V2
 from modules.template.models import ReplacementRun, TemplatePack, TemplatePackVersion
 from modules.template.repository import PackRepository, RunRepository
 
@@ -81,71 +80,44 @@ async def authorization_gap(session: AsyncSession, run: ReplacementRun) -> str |
 
     fixed_assets = await resolve_assets(
         session,
-        [
-            (str(ref["assetId"]), frozen.reference_ids_space)
-            for ref, _pack, frozen in validated
-        ],
+        [str(ref["assetId"]) for ref, _pack, _frozen in validated],
         actor=actor,
     )
-    for ref, pack, frozen in validated:
+    for ref, _pack, _frozen in validated:
         asset_id = str(ref["assetId"])
-        space = frozen.reference_ids_space
-        if space == ASSET_ID_SPACE_V1:
-            # v1 判据与原文案保持不变：发布版本不可变，但素材本身仍可软删、
-            # 改类型/分类或转给别的所有者。
-            asset = fixed_assets.v1.get(asset_id)
-            if (asset is None or asset.deleted_at or asset.type != "image"
-                    or asset.owner_id != pack.owner_id or asset.category != pack.kind):
-                return "固定引用的参考图已不可用，请重新准备"
-        elif space == ASSET_ID_SPACE_V2:
-            asset_v2 = fixed_assets.v2.get(asset_id)
-            if (
-                asset_v2 is None
-                or asset_v2.state != LibraryAssetState.ACTIVE
-                or asset_v2.kind != LibraryAssetKind.IMAGE
-                or asset_id not in fixed_assets.readable_v2
-            ):
-                return "固定引用的参考图已不可用，请重新准备"
-        else:
+        asset_v2 = fixed_assets.v2.get(asset_id)
+        if (
+            asset_v2 is None
+            or asset_v2.state != LibraryAssetState.ACTIVE
+            or asset_v2.kind != LibraryAssetKind.IMAGE
+            or asset_id not in fixed_assets.readable_v2
+        ):
             return "固定引用的参考图已不可用，请重新准备"
 
     input_assets = await resolve_assets(
         session,
-        [(row.asset_id, row.asset_id_space) for row in rows],
+        [row.asset_id for row in rows],
         actor=actor,
     )
     gone: list[str] = []
     for row in rows:
-        if row.asset_id_space == ASSET_ID_SPACE_V1:
-            asset = input_assets.v1.get(row.asset_id)
-            if asset is None or asset.deleted_at is not None:
-                gone.append(row.asset_id)
-        elif row.asset_id_space == ASSET_ID_SPACE_V2:
-            asset_v2 = input_assets.v2.get(row.asset_id)
-            if asset_v2 is None or asset_v2.state != LibraryAssetState.ACTIVE:
-                gone.append(row.asset_id)
-        else:
+        asset_v2 = input_assets.v2.get(row.asset_id)
+        if asset_v2 is None or asset_v2.state != LibraryAssetState.ACTIVE:
             gone.append(row.asset_id)
     if gone:
         return "本次输入的素材已被删除，请重新准备"
 
     for row in rows:
-        if row.asset_id_space == ASSET_ID_SPACE_V2:
-            asset_v2 = input_assets.v2[row.asset_id]
-            if row.role == "source_video":
-                if (
-                    asset_v2.kind != LibraryAssetKind.VIDEO
-                    or row.asset_id not in input_assets.readable_v2
-                ):
-                    return "原片不存在或已停止共享"
-            elif (
-                asset_v2.kind != LibraryAssetKind.IMAGE
+        asset_v2 = input_assets.v2[row.asset_id]
+        if row.role == "source_video":
+            if (
+                asset_v2.kind != LibraryAssetKind.VIDEO
                 or row.asset_id not in input_assets.readable_v2
             ):
-                return "本次输入的素材已被删除，请重新准备"
-        elif row.role == "source_video":
-            # v1 原片仍遵循公共池规则；包内参考图由发布授权，不要求共享。
-            source = input_assets.v1[row.asset_id]
-            if source.owner_id != run.owner_id and not source.shared:
                 return "原片不存在或已停止共享"
+        elif (
+            asset_v2.kind != LibraryAssetKind.IMAGE
+            or row.asset_id not in input_assets.readable_v2
+        ):
+            return "本次输入的素材已被删除，请重新准备"
     return None

@@ -12,12 +12,10 @@
 from api.module import ModuleSpec
 from core.feed import register_replacement_feed
 from core.permissions import PermissionSpec
-from core.ports.assets import AssetReferenceSource, bind_asset_reference_sources
 from core.ports.library_references import (
     LibraryReferenceSource,
     bind_library_reference_sources,
 )
-from modules.template.asset_references import PackAssetReferences
 from modules.template.cli import register as register_cli
 from modules.template.feed_provider import read_feed
 from modules.template.health import check as health_check
@@ -34,23 +32,9 @@ from modules.template import worker  # noqa: E402,F401  isort: skip
 
 register_replacement_feed(read_feed)
 
-# 素材删除前问「还有谁在用」：封装 head 把 assets.id 写进
-# template_pack_references。声明与运行时注册是同一份常量。
-ASSET_REFERENCE_SOURCES = (
-    AssetReferenceSource(
-        name="template_pack_references.asset_id",
-        checker=PackAssetReferences(),
-        location="modules/template/models.py:TemplatePackReference.asset_id",
-        description="封装 head 把 assets.id 写进 template_pack_references；"
-        "已发布的历史版本（template_pack_versions）不算引用，否则老素材永远删不掉",
-    ),
-)
-bind_asset_reference_sources("template", ASSET_REFERENCE_SOURCES)
-
-# v2 资产的「彻底删除」问的是另一套 id、另一个注入口。名字必须与上面那条区分开
-# （`name` 全局唯一，写进日志与 `app doctor` 报告），否则 `bind_*` 会按名字互相覆盖。
-# 不拦的四处（冻结版本 / 运行输入 / 视频模板清单 / 封面）在 `library_references.py`
-# 的表格里逐条写了理由。
+# 资产「彻底删除」前问「还有谁在用」。v1 `assets` 表已下线，只剩 v2 一套 id 空间，
+# 所以这里只有一份来源声明；不拦的四处（冻结版本 / 运行输入 / 视频模板清单 / 封面）
+# 在 `library_references.py` 的表格里逐条写了理由。
 LIBRARY_REFERENCE_SOURCES = (
     LibraryReferenceSource(
         name="template_pack_references.library_asset_id",
@@ -76,7 +60,6 @@ module = ModuleSpec(
     startup=resume,
     # 已有自己的恢复器（worker.resume 扫数据库）；声明负责的 kind 供架构守卫对账。
     recovery_kinds=(KIND_REPLACEMENT,),
-    asset_reference_sources=ASSET_REFERENCE_SOURCES,
     library_reference_sources=LIBRARY_REFERENCE_SOURCES,
     jobs=(
         "template.replacement.prepare",

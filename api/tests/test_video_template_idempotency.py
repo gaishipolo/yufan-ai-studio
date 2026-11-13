@@ -14,18 +14,42 @@
 from __future__ import annotations
 
 import pytest
+from library_support import insert_asset
 from video_template_support import run
 
+from core.config import settings
 from core.exceptions import Conflict
 from db.session import get_session_factory
 from modules.template import video_template_service as service
 from modules.template.video_template_schema import VideoTemplateDraftIn, VideoTemplateMedia
+
+_SOURCE: str | None = None
+
+
+def source_id() -> str:
+    """一条可读的视频原片，整个文件共用一个。
+
+    封装前置条件从「传了 id」变成「资产库里真有这条视频」，所以这里必须先造
+    一行。它只是让 `create()` 过闸，本文件的题目是 `templateKey` 的幂等语义，
+    所以不打算为每个用例各造一条。
+    """
+    global _SOURCE
+    if _SOURCE is None:
+        _SOURCE = insert_asset(
+            owner_id=settings.demo_user_id,
+            kind="video",
+            state="active",
+            name="原片.mp4",
+            mime_type="video/mp4",
+        )
+    return _SOURCE
 
 
 def draft(**overrides: object) -> VideoTemplateDraftIn:
     base: dict[str, object] = {
         "name": "并发重试模板",
         "template_key": "concurrent-retry",
+        "source_video_asset_id": source_id(),
         "prompt": "对 {{Mixed 1}} 做替换，使用 {{Mixed 2}}。",
         "media_order": [
             VideoTemplateMedia(

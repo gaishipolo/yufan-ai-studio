@@ -54,12 +54,8 @@ class VideoTemplateDraftIn(CamelModel):
         min_length=1, max_length=20000, description="固定提示词原文，含 {{Mixed N}} 占位符"
     )
     source_video_name: str = Field(default="", max_length=200, description="样片文件名")
-    source_video_asset_id: str | None = Field(default=None, description="样片在素材库中的 asset id")
-    source_video_id_space: Literal["v1", "v2"] = Field(
-        default="v1",
-        description="样片 id 属于哪套素材库：v1 是旧素材表，v2 是资产库。"
-        "两套 id 都是 32 位 hex，**不能靠形状推断**，所以必须显式声明；"
-        "缺省 v1 让旧调用一个字都不用改",
+    source_video_asset_id: str | None = Field(
+        default=None, description="样片在资产库中的 asset id"
     )
     source_video_path: str = Field(default="", max_length=512, description="样片本地路径（可选）")
     source_duration_sec: float = Field(
@@ -97,7 +93,6 @@ class VideoTemplateOut(CamelModel):
     prompt_sha256: str = Field(description="提示词 sha256，防止文字被悄悄改掉")
     source_video_name: str
     source_video_asset_id: str | None = None
-    source_video_id_space: str = "v1"
     source_video_path: str
     source_duration_sec: float
     aspect_ratio: str
@@ -118,12 +113,7 @@ class VideoTemplateAttachSourceIn(CamelModel):
     """把样片登记后的 source 资产绑定到模板：绑定后它才是「全部模板」里可选的卡片。"""
 
     source_video_asset_id: str = Field(
-        min_length=1,
-        max_length=64,
-        description="原片 id：v1 是素材库里 category=source 的行，v2 是资产库里的视频",
-    )
-    source_video_id_space: Literal["v1", "v2"] = Field(
-        default="v1", description="原片 id 属于哪套素材库；缺省 v1"
+        min_length=1, max_length=64, description="原片 id（资产库里的视频）"
     )
 
 

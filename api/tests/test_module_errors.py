@@ -91,15 +91,15 @@ def test_real_modules_land_in_their_own_segment() -> None:
     锁定的是编号规则本身（`状态码 × 100 + slot × 10 + seq`）：
     三位前缀是 HTTP 状态码，十位是号段。改了任何一个，这条会红。
     """
-    from modules.asset.errors import AssetInUse, AssetNotFound
     from modules.export.errors import ExportBusy
     from modules.identity.errors import CredentialInvalid
+    from modules.library.errors import AssetNotEditable, SharedAssetNotDeletable
 
-    assert AssetNotFound.code == 40451  # asset, slot 5
-    assert AssetInUse.code == 40951
+    assert AssetNotEditable.code == 40088  # library, slot 8
+    assert SharedAssetNotDeletable.code == 40981
     assert ExportBusy.code == 40991  # export, slot 9
     assert CredentialInvalid.code == 40121  # identity, slot 2
-    assert AssetInUse.code != ExportBusy.code
+    assert SharedAssetNotDeletable.code != ExportBusy.code
 
 
 def test_discovery_loads_errors_without_business_import() -> None:

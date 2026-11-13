@@ -122,8 +122,9 @@ class Server:
             return httpx.Response(
                 200, json={"code": 0, "data": {"items": list(self.templates.values())}}
             )
-        if request.method == "GET" and path.startswith("/assets/"):
-            return httpx.Response(200, json={"code": 0, "data": self.assets[path.split("/")[-1]]})
+        if request.method == "GET" and path.startswith("/library/assets/"):
+            asset = self.assets[path.split("/")[-1]]
+            return httpx.Response(200, json={"code": 0, "data": asset})
         if request.method == "GET" and path == "/templates/replacement-packs":
             return httpx.Response(
                 200, json={"code": 0, "data": {"items": list(self.packs.values())}}
@@ -134,35 +135,47 @@ class Server:
             if request.headers.get("content-type") == "application/json"
             else {}
         )
-        if path == "/assets/upload":
+        if path in ("/library/assets/upload", "/library/source-videos"):
             import hashlib
 
             digest = hashlib.sha256(request.content).hexdigest()
+            source = path == "/library/source-videos"
             asset = {
                 "id": digest[:32],
-                "sha256": digest,
                 "name": request.url.params["filename"],
-                "category": request.url.params["category"],
-                "duration": 5.3,
-                "hasAudio": True,
-                "shared": False,
+                # 视频走 `/source-videos`（origin 由服务端写死），其余按 query 的 kind 落
+                "kind": "video" if source else request.url.params["kind"],
+                "origin": "template_source" if source else "upload",
+                "sizeBytes": len(request.content),
+                "durationSec": 5.3 if source else None,
+                "hasAudio": source,
+                "visibility": "personal",
+                "state": "active",
                 "stateVersion": 0,
-                "deletedAt": None,
             }
             self.assets[asset["id"]] = asset
             result = asset
-        elif path.endswith("/sharing"):
-            asset = self.assets[path.split("/")[-2]]
-            asset["shared"] = payload["shared"]
-            result = asset
+        elif path == "/library/share-requests":
+            asset = self.assets[payload["assetId"]]
+            # 带 `library:share:direct` 的账号提交即生效（这个假服务不模拟审批流）
+            asset["visibility"] = "team"
+            asset["stateVersion"] = asset.get("stateVersion", 0) + 1
+            result = {"id": "req-1", "status": "approved"}
         elif path == "/templates/replacement-packs/draft":
+            # 出参沿用 `ReplacementPack` 的老字段名（`referenceIds`），入参才是
+            # `referenceLibraryIds`；假服务必须照抄这个不对称，否则重跑时的
+            # 「远端配置是否变化」比对会拿 None 跟列表比，每次都误报。
             result = {
                 **payload,
+                "referenceIds": payload["referenceLibraryIds"],
+                "coverReferenceId": payload["coverLibraryId"],
                 "id": payload["requestId"].replace("-", ""),
                 "revision": 1,
                 "status": "draft",
                 "version": 0,
             }
+            result.pop("referenceLibraryIds", None)
+            result.pop("coverLibraryId", None)
             self.packs[result["id"]] = result
         elif path.endswith("/publish"):
             result = self.packs[path.split("/")[-2]]
@@ -209,7 +222,7 @@ def test_two_functions_share_source_and_pack_and_rerun_without_writes(tmp_path):
     assert len(server.packs) == 1
     assert server.writes == before
     assert not any(path.endswith("/execute") for path in server.writes)
-    assert not any(path.endswith("/sharing") for path in server.writes)
+    assert not any(path.endswith("/share-requests") for path in server.writes)
     assert len({t["sourceVideoAssetId"] for t in server.templates.values()}) == 1
     assert report["functions"][1]["workbenchPath"].find("videoTemplateId=") > 0
     assert "secret" not in (tmp_path / "state.json").read_text(encoding="utf-8")
@@ -284,7 +297,7 @@ def test_explicit_share_and_changed_prompt_file_fingerprint(tmp_path):
     server = Server()
     with client_for(server) as api:
         apply_manifest(loaded, api, tmp_path / "state.json")
-    assert sum(path.endswith("/sharing") for path in server.writes) == 1
+    assert sum(path.endswith("/share-requests") for path in server.writes) == 1
     (tmp_path / "prompt.txt").write_text("编辑 {{Mixed 1}} 使用 {{Mixed 2}}", encoding="utf-8")
     assert load_manifest(path).fingerprint != loaded.fingerprint
 
@@ -347,7 +360,7 @@ def test_real_api_packages_and_prepares_each_function(client, tmp_path):
     for function, result in zip(loaded.spec.functions, report["functions"], strict=True):
         payload = {
             "requestId": str(uuid4()),
-            "sourceId": report["sourceId"],
+            "sourceLibraryId": report["sourceLibraryId"],
             "packId": result["packId"],
             "packVersion": result["packVersion"],
             "kind": "product",

@@ -78,9 +78,9 @@ const roles: MockRole[] = [
     sortOrder: 10,
     createdAt: '2026-01-01T00:00:00.000Z',
     permissions: [
-      'asset:create',
-      'asset:delete',
-      'asset:read',
+      'library:create',
+      'library:delete',
+      'library:read',
       'catalog:read',
       'image:create',
       'image:read',
@@ -104,7 +104,7 @@ const roles: MockRole[] = [
     sortOrder: 20,
     createdAt: '2026-01-01T00:00:00.000Z',
     permissions: [
-      'asset:read',
+      'library:read',
       'catalog:read',
       'image:read',
       'shot:read',
@@ -123,7 +123,7 @@ const roles: MockRole[] = [
     sortOrder: 30,
     createdAt: '2026-02-10T08:00:00.000Z',
     // 故意留一个已下线的权限码，用来验证页面的「失效权限」提示
-    permissions: ['task:read', 'task:read:all', 'asset:read', 'video:publish'],
+    permissions: ['task:read', 'task:read:all', 'library:read', 'video:publish'],
   },
 ];
 
@@ -140,7 +140,7 @@ const groups: MockGroup[] = [
     name: '内容组',
     description: '模板与素材的编辑同学',
     createdAt: '2026-02-01T00:00:00.000Z',
-    permissions: ['asset:create', 'template:read'],
+    permissions: ['library:create', 'template:read'],
     memberIds: ['u_002'],
   },
   {
@@ -155,7 +155,7 @@ const groups: MockGroup[] = [
 
 /** 团队层默认 = 内置 viewer 角色的 7 条只读权限（与后端 TEAM_BASE_PERMISSIONS 同源口径） */
 let teamPermissions: string[] = [
-  'asset:read',
+  'library:read',
   'catalog:read',
   'image:read',
   'shot:read',
@@ -165,7 +165,7 @@ let teamPermissions: string[] = [
 ];
 
 /** 个人单独授予；一人可属多组，但个人层只有一份 */
-const personalPermissions = new Map<string, string[]>([['u_002', ['asset:update']]]);
+const personalPermissions = new Map<string, string[]>([['u_002', ['library:update']]]);
 
 const users: MockUser[] = [
   {

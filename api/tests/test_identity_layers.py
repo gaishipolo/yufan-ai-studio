@@ -110,7 +110,7 @@ def test_effective_permissions_are_the_union_of_all_four_layers() -> None:
         assert set(TEAM_BASE_PERMISSIONS) <= identity.permissions
         assert {"template:use", "template:review"} <= identity.permissions
         # 既不能因为小组授权丢掉角色权限，也不能因为个人授权丢掉小组权限
-        assert "asset:read" in identity.permissions
+        assert "library:read" in identity.permissions
         assert not identity.is_superuser
 
     asyncio.run(_with_service(check))

@@ -86,10 +86,12 @@ def test_periodic_name_prefix_does_not_excuse_missing_declaration() -> None:
 
     名字对了不代表注册过；真正的证明是模块在 `spec.periodic` 里写了它。
     """
-    gaps = assembly_gaps([], jobs={}, periodic={"asset.gc": "modules.asset.tasks"})
+    gaps = assembly_gaps(
+        [], jobs={}, periodic={"library.trash.gc": "modules.library.worker"}
+    )
 
     assert [gap.problem for gap in gaps] == ["registered-but-undeclared"]
-    assert gaps[0].owner == "asset"
+    assert gaps[0].owner == "library"
 
 
 def test_real_modules_have_no_gaps() -> None:

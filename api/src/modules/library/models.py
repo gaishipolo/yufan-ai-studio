@@ -309,10 +309,8 @@ class LibraryAssetGeneration(Base):
     aspect_ratio: Mapped[str] = mapped_column(String(16), default="", nullable=False)
     style_preset: Mapped[str] = mapped_column(String(40), default="", nullable=False)
     seed: Mapped[str] = mapped_column(String(64), default="", nullable=False)
-    reference_asset_ids: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
     reference_library_ids: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
-    # 这次生成用了哪几份 **v2** 资产当参考图。与上一列是两套 id 空间，不能合：
-    # 上面那列只给历史 v1 导入行用（`library import-archive`），新写入一律进这里。
+    # 这次生成用了哪几份资产当参考图（v2 `library_assets.id`）。
     # 只做溯源展示，**不算删除保护**（快照本身冻结了 id，产物早已入库，删源图
     # 不影响这份产物），所以 `references.py` 的说明里也没把它列成 v2 引用来源。
     pack_id: Mapped[str] = mapped_column(String(32), default="", nullable=False)

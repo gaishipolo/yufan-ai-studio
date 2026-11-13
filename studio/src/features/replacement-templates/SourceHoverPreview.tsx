@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react';
-import { useArchivedMedia } from '@/entities/asset/api/archive.queries';
+import { useRemoteBlob } from '@/shared/lib/remoteBlob';
 import { archivePreviewUrl, archiveStreamUrl } from '@/entities/asset/model/archive.types';
 import type { SourceVideo } from './sourceVideo';
 
 interface SourceHoverPreviewProps { video: SourceVideo }
 export function SourceHoverPreview({ video }: SourceHoverPreviewProps) {
-  const { data, error } = useArchivedMedia(archivePreviewUrl(archiveStreamUrl(video.url)));
+  const { data, error } = useRemoteBlob(archivePreviewUrl(archiveStreamUrl(video.url)));
   const [url, setUrl] = useState('');
   useEffect(() => {
     if (!data) {setUrl(''); return;}

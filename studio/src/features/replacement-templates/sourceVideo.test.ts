@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { SOURCE_VIDEO_ORIGINS } from '@/entities/library/model/types';
-import { sourceVideoFitness, sourceVideoOfArchive, sourceVideoOfLibrary, type SourceVideo } from './sourceVideo';
+import { sourceVideoFitness, sourceVideoOfLibrary, type SourceVideo } from './sourceVideo';
 
 function video(extra: Partial<SourceVideo> = {}): SourceVideo {
   return {id: 'v1', name: '原片.mp4', type: 'video', url: '/api/v1/library/assets/v1/file',
@@ -14,15 +14,6 @@ describe('原片视图', () => {
       id: 'v2', name: '库原片', type: 'video', url: '/file', previewUrl: '/thumb',
       durationSec: 3.5, width: 1080, height: 1920, hasAudio: false,
     });
-  });
-
-  it('旧库行按 duration 映射，缺值一律留 null 而不是 0', () => {
-    const mapped = sourceVideoOfArchive({id: 'v1', name: '旧原片', category: 'source',
-      type: 'video', url: '/old', mimeType: 'video/mp4', sizeBytes: 5, path: 'a.mp4',
-      sha256: 'hash', createdAt: '2026-11-06T00:00:00Z'});
-    expect(mapped.durationSec).toBeNull();
-    expect(mapped.hasAudio).toBeNull();
-    expect(mapped.previewUrl).toBeNull();
   });
 
   it('适配判定与后端门禁同口径：音轨、时长未知、1–15 秒', () => {

@@ -123,9 +123,3 @@ def test_unknown_asset_is_404(client: TestClient, api: str) -> None:
     assert client.get(f"{api}/library/assets/does-not-exist").status_code == 404
 
 
-def test_legacy_assets_still_works_after_upload(client: TestClient, api: str) -> None:
-    """并存期最容易被破坏的东西：v2 的上传把旧路由吃掉，或者反过来。"""
-    _upload(client, api, png_bytes(color="silver"))
-    legacy = client.get(f"{api}/assets")
-    assert legacy.status_code == 200
-    assert "items" in legacy.json()["data"]

@@ -243,28 +243,6 @@ EXEMPT_WRITE_ROUTES: Mapping[str, Exemption] = {
         why="设置个人权限：需要 `identity:user:permission:manage`，低频的整组替换",
         review_by=NEAR_TERM,
     ),
-    # ---- 素材归档：单条记录的状态位 ----
-    "PUT /assets/{asset_id}/name": Exemption(
-        why="只改自己那条记录的名字，单行更新",
-        review_by=NEAR_TERM,
-    ),
-    "PUT /assets/{asset_id}/sharing": Exemption(
-        why="分享开关，单行更新，进入公共原片池由权限点管",
-        review_by=NEAR_TERM,
-    ),
-    "PUT /assets/{asset_id}/deleted": Exemption(
-        why="回收站开关，单行更新，可逆",
-        review_by=NEAR_TERM,
-    ),
-    "DELETE /assets/{asset_id}": Exemption(
-        why=(
-            "彻底删除单条：前置要求记录已在回收站（二次确认）、引用检查通过（被引用"
-            "直接 409），且受 `asset:delete` 限制；实际删除量受数据约束。"
-            "两套素材接口合并前这里是两条同名豁免，合并时必须并成一条，"
-            "否则后写的那条会静默覆盖前一条的理由"
-        ),
-        review_by=NEAR_TERM,
-    ),
     # ---- 任务 ----
     "PATCH /tasks/{task_id}": Exemption(
         why="改标题/收藏标记，单行更新，无外部调用",

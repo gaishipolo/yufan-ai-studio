@@ -83,7 +83,7 @@ export function ReplacementConfig({ model }: ReplacementConfigProps) {
         {missing && <p className="text-xs text-ink-mute">{missing}，完成后即可准备任务。</p>}
         <p className="text-xs leading-5 text-ink-mute">{model.channel === 'libtv' ? '核对后再生成，仅零积分，不自动付费。' : '核对后再生成，使用阿里云 API 计费。'}</p>
         </div>}
-        <div className="replacement-config-footer"><span>{model.channel === 'libtv' ? 'LibTV · 720P · 仅 0 积分' : (model.currentChannel?.label ?? '百炼') + ' · 阿里云 API 计费'}</span><Link to="/assets">管理素材 →</Link></div>
+        <div className="replacement-config-footer"><span>{model.channel === 'libtv' ? 'LibTV · 720P · 仅 0 积分' : (model.currentChannel?.label ?? '百炼') + ' · 阿里云 API 计费'}</span><Link to="/library">管理素材 →</Link></div>
         {showPrompt && model.boundTemplate && <TemplatePromptDialog key={model.boundTemplate.id} source={model.videos.find(video => video.id === sourceId) ?? model.linkedSource.data ?? undefined} templates={model.boundTemplates} selectedTemplateId={model.boundTemplate.id} packs={catalog.data?.packs ?? []} scenePrompt={model.isTextScene ? model.scenePrompt : undefined} currentPack={model.selectedPack} currentPacks={model.slots > 1 ? model.chosenPacks : undefined} onClose={() => setShowPrompt(false)} />}
       </aside>
   );

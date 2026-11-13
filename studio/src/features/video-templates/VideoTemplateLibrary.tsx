@@ -15,8 +15,6 @@ interface FormState {
   prompt: string;
   sourceVideoName: string;
   sourceVideoAssetId: string;
-  /** 原片 id 属于哪套素材库：两套 id 形状一样，写错字段等于让服务端重新解释它 */
-  sourceVideoIdSpace: 'v1' | 'v2';
   sourceVideoPath: string;
   sourceDurationSec: string;
   aspectRatio: string;
@@ -47,8 +45,6 @@ interface SourceOption {
   label: string;
   name: string;
   durationSec?: number;
-  /** 列表只取资产库 v2，所以恒为 v2；留着字段是为了提交时不用另写一处常量 */
-  idSpace: 'v2';
 }
 
 const ASPECTS = ['9:16', '16:9', '1:1'];
@@ -61,7 +57,7 @@ const KINDS = [
 function emptyForm(): FormState {
   return {
     name: '', templateKey: '', description: '', prompt: '',
-    sourceVideoName: '', sourceVideoAssetId: '', sourceVideoIdSpace: 'v2',
+    sourceVideoName: '', sourceVideoAssetId: '',
     sourceVideoPath: '', sourceDurationSec: '', aspectRatio: '9:16',
     packId: '', defaultKind: 'product', pinned: false, order: [],
   };
@@ -76,8 +72,6 @@ function formFromBlueprint(template: VideoTemplateOut): FormState {
     prompt: template.prompt,
     sourceVideoName: template.sourceVideoName ?? '',
     sourceVideoAssetId: template.sourceVideoAssetId ?? '',
-    /* 复制蓝本沿用原片的**空间**：只抄 id 会让一条 v1 原片在保存后被当成 v2 解释 */
-    sourceVideoIdSpace: template.sourceVideoIdSpace === 'v2' ? 'v2' : 'v1',
     sourceVideoPath: template.sourceVideoPath ?? '',
     sourceDurationSec: String(template.sourceDurationSec ?? 0),
     aspectRatio: template.aspectRatio || '9:16',
@@ -220,7 +214,6 @@ function VideoTemplateEditor({initial, packs, sources, busy, onClose, onSubmit}:
       prompt: form.prompt,
       sourceVideoName: form.sourceVideoName,
       sourceVideoAssetId: form.sourceVideoAssetId || null,
-      sourceVideoIdSpace: form.sourceVideoIdSpace,
       sourceVideoPath: form.sourceVideoPath,
       sourceDurationSec: Number(form.sourceDurationSec) || 0,
       aspectRatio: form.aspectRatio,
@@ -329,7 +322,6 @@ function VideoTemplateEditor({initial, packs, sources, busy, onClose, onSubmit}:
             const picked = sources.find(source => source.id === event.target.value);
             patch({sourceVideoAssetId: event.target.value,
               /* 空间跟着选中的那条走：清空选择时保持不动，回退到未选状态即可 */
-              ...(picked ? {sourceVideoIdSpace: picked.idSpace} : {}),
               ...(picked ? {sourceVideoName: picked.name} : {}),
               ...(picked?.durationSec ? {sourceDurationSec: String(picked.durationSec)} : {})});
           }}>
@@ -391,7 +383,6 @@ export function VideoTemplateLibrary({embedded = false}: {embedded?: boolean} = 
     label: `${asset.name}（${asset.durationSec ?? 0}s）`,
     name: asset.name,
     durationSec: asset.durationSec ?? undefined,
-    idSpace: 'v2',
   }));
 
   async function handleSubmit(payload: VideoTemplateDraftIn) {

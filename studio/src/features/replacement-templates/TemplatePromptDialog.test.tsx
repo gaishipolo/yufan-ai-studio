@@ -9,9 +9,17 @@ const mock = vi.hoisted(() => ({save: vi.fn(), upload: vi.fn()}));
 vi.mock('@/entities/video-template/api/videoTemplate.queries', () => ({
   useUpdateVideoTemplatePrompt: () => ({mutateAsync: mock.save, isPending: false}),
 }));
-vi.mock('@/entities/asset/api/archive.queries', () => ({
-  useArchivedMedia: () => ({data: undefined}),
-  useArchiveUpload: () => ({mutateAsync: mock.upload}),
+/**
+ * 缩略图与预览现在都走 `useRemoteBlob`（受保护媒体按 URL 取字节），这个套件
+ * 不挂 QueryClient，所以替身成「取不到字节」：断言的是编辑行为，不是渲染画面。
+ */
+vi.mock('@/shared/lib/remoteBlob', () => ({
+  useRemoteBlob: () => ({data: undefined}),
+  useRemoteDownload: () => ({mutate: vi.fn(), isPending: false, error: null}),
+}));
+/** 上传固定参考图走资产库 v2（`library:create` + `kind=image`）。 */
+vi.mock('@/entities/library/api/library.queries', () => ({
+  useUploadAsset: () => ({mutateAsync: mock.upload, isPending: false}),
 }));
 
 const prompt = '  编辑 {{Mixed 1}}，参考 {{Mixed 2}}。\n\n';
@@ -155,13 +163,13 @@ describe('封装提示词编辑', () => {
   });
 
   it('上传调用素材接口，结果按功能隔离且不自动写入提示词或生成引用', async () => {
-    const asset = {id: 'uploaded', name: '上传正面图.png', url: '/uploaded', type: 'image', category: 'product'};
+    const asset = {id: 'uploaded', name: '上传正面图.png', url: '/uploaded', kind: 'image'};
     mock.upload.mockResolvedValue(asset);
     mount(['*'], [template, {...template, id: 'other', name: '另一个功能'}]);
     fireEvent.click(screen.getByRole('button', {name: '编辑提示词'}));
     const file = new File(['test'], '上传正面图.png', {type: 'image/png'});
     fireEvent.change(screen.getByLabelText('上传模板固定参考图'), {target: {files: [file]}});
-    await vi.waitFor(() => expect(mock.upload).toHaveBeenCalledWith({file, category: 'product'}));
+    await vi.waitFor(() => expect(mock.upload).toHaveBeenCalledWith({file, kind: 'image'}));
     expect(await screen.findByLabelText('新上传固定参考图')).toHaveTextContent('待接入生成');
     expect(readPromptDom(screen.getByRole('textbox', {name: '封装提示词原文'}))).toBe(prompt);
     expect(mock.save).not.toHaveBeenCalled();

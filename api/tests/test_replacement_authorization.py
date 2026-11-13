@@ -6,7 +6,6 @@ import uuid
 from datetime import UTC, datetime
 
 import pytest
-from sqlalchemy import delete
 from tests_template_helpers import (
     ADMIN,
     add_input,
@@ -19,7 +18,7 @@ from tests_template_helpers import (
 
 from core.exceptions import BadRequest, Conflict, NotFound
 from db.session import get_session_factory
-from modules.asset.models import Asset
+from modules.library.models import LibraryAsset
 from modules.template import worker
 from modules.template.authorization import authorization_gap
 from modules.template.models import TemplatePack
@@ -114,39 +113,73 @@ async def test_execute_recovers_receipt_before_disabled_pack_gate(
         await drop_pack(pack.id)
 
 
-@pytest.mark.parametrize(
-    ("source_owner", "shared", "allowed"),
-    [("other-owner", False, False), ("other-owner", True, True), (ADMIN, False, True)],
-)
-async def test_new_submission_rechecks_source_sharing_without_requiring_shared_pack_images(
-    source_owner: str, shared: bool, allowed: bool
-) -> None:
-    source = Asset(
-        id=uuid.uuid4().hex, name="source.mp4", type="video", category="source",
-        owner_id=source_owner, shared=True, duration=5, has_audio=True,
-    )
-    reference = Asset(
-        id=uuid.uuid4().hex, name="private.png", type="image", category="character",
-        owner_id="pack-owner", shared=False,
-    )
+async def _library_asset(
+    owner: str,
+    *,
+    kind: str = "video",
+    visibility: str = "personal",
+    duration: float = 5.0,
+    has_audio: bool = True,
+) -> str:
+    asset_id = uuid.uuid4().hex
     async with get_session_factory()() as session:
-        session.add_all([source, reference])
+        session.add(
+            LibraryAsset(
+                id=asset_id,
+                name=f"{kind}.{'mp4' if kind == 'video' else 'png'}",
+                kind=kind,
+                origin="upload",
+                mime_type="video/mp4" if kind == "video" else "image/png",
+                storage_key=f"tests/replacement-auth/{asset_id}",
+                owner_id=owner,
+                visibility=visibility,
+                state="active",
+                duration=duration,
+                has_audio=has_audio,
+            )
+        )
         await session.commit()
-    pack = await add_pack(owner="pack-owner", reference_ids=[reference.id])
+    return asset_id
+
+
+@pytest.mark.parametrize(
+    ("source_visibility", "allowed"),
+    [("personal", False), ("team", True)],
+)
+async def test_new_submission_rechecks_source_sharing(
+    source_visibility: str, allowed: bool
+) -> None:
+    """prepare 通过之后原片被别人收回共享，重提必须当场拦住。
+
+    v1 时代这条靠 `assets.shared` 开关表达；v2 里等价的是 `visibility`
+    （`personal` 只有本人可读，`team` 全站可读），判据在
+    `resolve_assets().readable_v2` 与 `authorization_gap()`。
+    """
+    source = await _library_asset(
+        "other-owner", kind="video", visibility="team", duration=5.0
+    )
+    reference = await _library_asset("pack-owner", kind="image", visibility="team")
+    pack = await add_pack(owner="pack-owner", reference_ids=[reference])
     run = await add_run(pack_id=pack.id, pack_version=1)
-    await add_input(run.id, source.id, role="source_video")
-    await add_input(run.id, reference.id, role="identity", position=1)
+    await add_input(run.id, source, role="source_video")
+    await add_input(run.id, reference, role="identity", position=1)
     payload = PrepareReplacement(
-        request_id=uuid.uuid4(), kind="character", target="test", source_id=source.id,
-        reference_ids=[reference.id], pack_id=pack.id, pack_version=1,
+        request_id=uuid.uuid4(),
+        kind="character",
+        target="test",
+        source_library_id=source,
+        reference_ids=[reference],
+        pack_id=pack.id,
+        pack_version=1,
     )
     try:
         async with get_session_factory()() as session:
             service = ReplacementService(session)
-            # It was valid at prepare time, including the pack owner's private image.
-            await service._validate_inputs(payload, ADMIN, "pack-owner")
-            stored_source = await session.get(Asset, source.id)
-            stored_source.shared = shared
+            # prepare 时有效：原片对外共享、封装图也可读。
+            await service._validate_inputs(payload, ADMIN)
+            stored_source = await session.get(LibraryAsset, source)
+            assert stored_source is not None
+            stored_source.visibility = source_visibility
             await session.commit()
         async with get_session_factory()() as session:
             service = ReplacementService(session)
@@ -154,16 +187,17 @@ async def test_new_submission_rechecks_source_sharing_without_requiring_shared_p
             gap = await authorization_gap(session, stored)
             if allowed:
                 assert gap is None
-                await service._validate_inputs(payload, ADMIN, "pack-owner")
+                await service._validate_inputs(payload, ADMIN)
             else:
                 assert gap == "原片不存在或已停止共享"
                 with pytest.raises(NotFound):
-                    await service._validate_inputs(payload, ADMIN, "pack-owner")
+                    await service._validate_inputs(payload, ADMIN)
                 with pytest.raises(BadRequest, match="停止共享"):
                     await service.execute(run.id, ADMIN)
     finally:
         await drop_run(run.id)
         await drop_pack(pack.id)
         async with get_session_factory()() as session:
-            await session.execute(delete(Asset).where(Asset.id.in_([source.id, reference.id])))
+            await session.delete(await session.get(LibraryAsset, source))
+            await session.delete(await session.get(LibraryAsset, reference))
             await session.commit()

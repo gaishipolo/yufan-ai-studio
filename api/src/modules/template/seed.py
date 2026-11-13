@@ -21,7 +21,6 @@ from core.context import CurrentUser
 from core.logging import get_logger
 from core.ports.library_lookup import LibraryAssetKind, get_library_lookup
 from db.base import utcnow
-from modules.template.id_space import ASSET_ID_SPACE_V2
 from modules.template.models import TemplatePack, TemplatePackReference, TemplatePackVersion
 
 logger = get_logger(__name__)
@@ -60,7 +59,6 @@ async def seed(session: AsyncSession, context: SeedContext) -> int:
             version=1,
             revision=1,
             cover_asset_id=character_ids[0],
-            cover_asset_id_space=ASSET_ID_SPACE_V2,
             features="同一人物在不同镜头里保持发型、肤色与面部特征一致。",
             instructions="不要改变原片人物的动作与背景。",
             required_roles=["front"],
@@ -74,7 +72,6 @@ async def seed(session: AsyncSession, context: SeedContext) -> int:
                 pack_id=pack.id,
                 version=1,
                 reference_ids=character_ids,
-                reference_ids_space=ASSET_ID_SPACE_V2,
                 bindings=[
                     {"role": role, "description": desc}
                     for role, desc in _CHARACTER_BINDINGS[: len(character_ids)]
@@ -99,7 +96,6 @@ async def seed(session: AsyncSession, context: SeedContext) -> int:
             version=0,
             revision=1,
             cover_asset_id=product_ids[0],
-            cover_asset_id_space=ASSET_ID_SPACE_V2,
             features="",
             instructions="",
             required_roles=["front"],
@@ -124,7 +120,6 @@ def _bind(session: AsyncSession, pack_id: str, asset_ids: list[str], bindings) -
                 asset_id=asset_id,
                 position=position,
                 role=role,
-                asset_id_space=ASSET_ID_SPACE_V2,
                 description=description,
             )
         )

@@ -192,7 +192,7 @@ def test_personal_permissions_and_effective_sources(client: TestClient) -> None:
     assert detail["roles"]
     assert "template:use" in detail["effective"]
     assert "template:review" in detail["effective"]
-    assert "asset:read" in detail["effective"]
+    assert "library:read" in detail["effective"]
 
 
 def test_cannot_grant_a_permission_you_do_not_have(client: TestClient) -> None:

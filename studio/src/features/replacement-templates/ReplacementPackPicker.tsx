@@ -23,7 +23,7 @@ export function ReplacementPackPicker({model, hintId}: ReplacementPackPickerProp
   if (catalog.isLoading && !catalog.data) {
     return <div role="status" aria-label="正在加载素材包" className="grid grid-cols-2 gap-3"><Skeleton className="aspect-square" /><Skeleton className="aspect-square" /></div>;
   }
-  const empty = <div className="replacement-reference-empty"><p>暂无可用的{template.short}素材包</p><p>请联系素材维护人员封装并发布后，再刷新这里。</p><Button size="sm" loading={catalog.isFetching} onClick={() => {void catalog.refetch();}}>刷新素材包</Button><p><Link to="/assets">查看素材库 →</Link></p></div>;
+  const empty = <div className="replacement-reference-empty"><p>暂无可用的{template.short}素材包</p><p>请联系素材维护人员封装并发布后，再刷新这里。</p><Button size="sm" loading={catalog.isFetching} onClick={() => {void catalog.refetch();}}>刷新素材包</Button><p><Link to="/library">查看素材库 →</Link></p></div>;
   return <section aria-label={`目标${template.short}`} aria-describedby={hintId} className="space-y-3">
     {error && <ErrorState error={error} title="素材包加载失败" onRetry={() => {void catalog.refetch(); void assets.refetch();}} />}
     {!packs.length && !error && !(libraryPacks.data?.items?.length) ? empty : <>

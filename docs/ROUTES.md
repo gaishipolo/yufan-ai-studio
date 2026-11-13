@@ -2,14 +2,13 @@
 
 # 前端路由清单
 
-共 15 条路由，来自 12 个模块。
+共 14 条路由，来自 11 个模块。
 
 > 路由由 `src/app/registry/index.ts` 的 `import.meta.glob` 自动发现；
 > 新增模块只需写 `module.ts`，本文件由 `npm run gen:routes` 重新生成。
 
 | 路径 | 模块 | 外壳 | 权限 | 侧栏 | 宫格 |
 | --- | --- | --- | --- | --- | --- |
-| `/assets` | assets | shell | `asset:read` | 资产与数据 / 素材资产库（旧版） | ✓ |
 | `/image` | image | shell | `image:read` | 创作 / 生图 | — |
 | `/library` | library | shell | `library:read` | 资产与数据 / 资产库 | ✓ |
 | `/login` | auth | bare | — | — | — |
@@ -37,7 +36,6 @@
   - 镜头库 → `/shots`
 - **资产与数据**（order 3）
   - 资产库 → `/library`
-  - 素材资产库（旧版） → `/assets`
   - 任务中心 → `/tasks`
   - 用量看板 → `/usage`
 - **系统管理**（order 9）
@@ -47,7 +45,6 @@
 
 | 模块 | 路由 | 导航 | 卡片 | 插槽 |
 | --- | --- | --- | --- | --- |
-| assets | 1 | 1 | 1 | 0 |
 | auth | 1 | 0 | 0 | 1 |
 | image | 1 | 1 | 0 | 0 |
 | library | 1 | 1 | 1 | 0 |

@@ -1,7 +1,8 @@
-"""模板三道授权闸的 v2 分流：可读性、生命周期与对象存储字节。
+"""模板三道授权闸：可读性、生命周期与对象存储字节。
 
-`CURRENT_ASSET_ID_SPACE` 仍为 v1，所以草稿准入用例只在函数级临时切换写入空间；
-冻结版本与运行输入则用例级显式写 `v2`，验证历史行不会被当前常量重新解释。
+判据全部落在 v2 资产（`library_assets`）上：`state == active` + `kind` 匹配 +
+`in readable_v2`。v1 `assets` 表已于 2026-11-13 下线，所以这里不再有「同一批 id
+混着两套空间」的用例——结构上已经没有第二个数据源可以回退。
 """
 
 from __future__ import annotations
@@ -23,11 +24,9 @@ from core.context import CurrentUser
 from core.exceptions import BadRequest, NotFound
 from db.session import get_session_factory
 from infra import get_storage
-from modules.asset.models import Asset
 from modules.library.models import LibraryAsset, LibraryPackItem
 from modules.template import pack_service
 from modules.template.authorization import authorization_gap
-from modules.template.id_space import ASSET_ID_SPACE_V2
 from modules.template.models import ReplacementRun
 from modules.template.pack_service import PackService
 from modules.template.repository import PackRepository
@@ -77,19 +76,14 @@ async def _drop_assets(asset_ids: list[str]) -> None:
         await session.commit()
 
 
-def _draft(reference_ids: list[str], *, library: bool = True) -> PackDraftIn:
-    """`library=True` 用 v2 字段，否则用旧字段。
-
-    空间由**字段名**决定（`referenceLibraryIds` → v2，`referenceIds` → 当前写入空间），
-    不再靠 monkeypatch 常量：那是迁移开关，不是逐次请求的判断依据。
-    """
-    field = "referenceLibraryIds" if library else "referenceIds"
+def _draft(reference_ids: list[str]) -> PackDraftIn:
+    """封装草稿只认 `referenceLibraryIds`（v2 的 `library_assets.id`）。"""
     return PackDraftIn.model_validate(
         {
             "requestId": uuid.uuid4(),
             "kind": "character",
-            "name": "v2 授权测试",
-            field: reference_ids,
+            "name": "授权测试",
+            "referenceLibraryIds": reference_ids,
         }
     )
 
@@ -155,7 +149,7 @@ async def test_draft_gate_reuses_pack_member_read_entry() -> None:
         async with get_session_factory()() as session:
             assets = await pack_service.resolve_assets(
                 session,
-                [(image_id, ASSET_ID_SPACE_V2)],
+                [image_id],
                 actor=CurrentUser(id=CONSUMER, name=CONSUMER),
             )
             assert assets.readable_v2 == frozenset({image_id})
@@ -167,7 +161,7 @@ async def test_draft_gate_reuses_pack_member_read_entry() -> None:
         async with get_session_factory()() as session:
             revoked = await pack_service.resolve_assets(
                 session,
-                [(image_id, ASSET_ID_SPACE_V2)],
+                [image_id],
                 actor=CurrentUser(id=CONSUMER, name=CONSUMER),
             )
             assert revoked.readable_v2 == frozenset()
@@ -177,10 +171,10 @@ async def test_draft_gate_reuses_pack_member_read_entry() -> None:
         await _drop_assets([container_id, image_id])
 
 
-async def test_publish_uses_reference_space_and_checks_v2_object_bytes() -> None:
+async def test_publish_checks_v2_object_bytes() -> None:
     key = f"tests/template-v2/{uuid.uuid4().hex}.png"
     asset_id = await _asset(ADMIN, storage_key=key)
-    pack = await add_pack(reference_ids=[asset_id], status="draft", asset_id_space="v2")
+    pack = await add_pack(reference_ids=[asset_id], status="draft")
     try:
         await get_storage().put(key, b"v2-image-bytes", "image/png")
         async with get_session_factory()() as session:
@@ -189,7 +183,6 @@ async def test_publish_uses_reference_space_and_checks_v2_object_bytes() -> None
             assert published.version == 1
             frozen = await PackRepository(session).get_version(pack.id, 1)
             assert frozen is not None
-            assert frozen.reference_ids_space == ASSET_ID_SPACE_V2
             # 包内预览由「已发布版本」授权：v2 直接给库里的字节（无 cover_key 时退原件）
             served = await service.preview(pack.id, asset_id, 1)
             assert served.path is not None
@@ -208,44 +201,16 @@ async def test_publish_uses_reference_space_and_checks_v2_object_bytes() -> None
         await _drop_assets([asset_id])
 
 
-async def test_v2_marker_never_falls_back_to_v1_bytes() -> None:
-    legacy_id = uuid.uuid4().hex
-    async with get_session_factory()() as session:
-        session.add(
-            Asset(
-                id=legacy_id,
-                name="同 id 的 v1 图",
-                type="image",
-                category="character",
-                owner_id=ADMIN,
-                storage_key="blobs/legacy/still-must-not-be-read.png",
-            )
-        )
-        await session.commit()
-    pack = await add_pack(reference_ids=[legacy_id], asset_id_space="v2")
-    try:
-        async with get_session_factory()() as session:
-            refs = await PackRepository(session).references(pack.id)
-            with pytest.raises(BadRequest, match="素材字节缺失"):
-                await PackService(session)._verify_bytes(refs)
-    finally:
-        await drop_pack(pack.id)
-        async with get_session_factory()() as session:
-            await session.execute(delete(Asset).where(Asset.id == legacy_id))
-            await session.commit()
-
-
 async def test_fixed_reference_resolver_uses_frozen_space_and_current_actor() -> None:
     asset_id = await _asset(PACK_OWNER, visibility="team")
-    pack = await add_pack(owner=PACK_OWNER, reference_ids=[asset_id], asset_id_space="v2")
+    pack = await add_pack(owner=PACK_OWNER, reference_ids=[asset_id])
     actor = CurrentUser(id=CONSUMER, name=CONSUMER)
     try:
         async with get_session_factory()() as session:
-            shown, legacy, library = await resolve_pack_references(
+            shown, library = await resolve_pack_references(
                 session, [_fixed(pack.id, asset_id)], actor
             )
             assert shown[0]["name"].startswith("image-")
-            assert legacy == {}
             assert set(library) == {"{{Mixed 2}}"}
         async with get_session_factory()() as session:
             asset = await session.get(LibraryAsset, asset_id)
@@ -274,7 +239,7 @@ async def test_execute_gate_rechecks_v2_fixed_reference(
     state: str, kind: str, visibility: str
 ) -> None:
     asset_id = await _asset(PACK_OWNER, state=state, kind=kind, visibility=visibility)
-    pack = await add_pack(owner=PACK_OWNER, reference_ids=[asset_id], asset_id_space="v2")
+    pack = await add_pack(owner=PACK_OWNER, reference_ids=[asset_id])
     run = await add_run(
         owner=CONSUMER,
         configuration={
@@ -323,33 +288,9 @@ async def test_execute_gate_rechecks_each_v2_run_input(
 ) -> None:
     asset_id = await _asset(owner_id, state=state, kind=kind, visibility=visibility)
     run = await add_run(owner=CONSUMER)
-    await add_input(run.id, asset_id, role=role, asset_id_space="v2")
+    await add_input(run.id, asset_id, role=role)
     try:
         assert await _gap(run.id) == expected
     finally:
         await drop_run(run.id)
         await _drop_assets([asset_id])
-
-
-async def test_v2_run_input_never_falls_back_to_v1_row() -> None:
-    legacy_id = uuid.uuid4().hex
-    async with get_session_factory()() as session:
-        session.add(
-            Asset(
-                id=legacy_id,
-                name="只存在 v1 的原片",
-                type="video",
-                category="source",
-                owner_id=CONSUMER,
-            )
-        )
-        await session.commit()
-    run = await add_run(owner=CONSUMER)
-    await add_input(run.id, legacy_id, role="source_video", asset_id_space="v2")
-    try:
-        assert await _gap(run.id) == INPUT_GONE
-    finally:
-        await drop_run(run.id)
-        async with get_session_factory()() as session:
-            await session.execute(delete(Asset).where(Asset.id == legacy_id))
-            await session.commit()

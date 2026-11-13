@@ -1,14 +1,13 @@
-"""视频模板的原片可以来自资产库 v2。
+"""视频模板的原片只能来自资产库 v2。
 
-两套 id 都是 32 位 hex，`source_video_asset_id` 一列必然混装，所以写入端必须
-**显式**接收「这个 id 属于哪一侧」（`sourceVideoIdSpace`），并且：
+`source_video_asset_id` 现在只有 v2 一个解释——v1 素材库连表都不在了，所以
+写入端不再接收「这个 id 属于哪一侧」这种字段，收到 id 就直接按资产库行解析：
 
 1. 名字与时长以资产库那一行为准——封装卡上写的是库里的事实，前端手里的可能
    是上一次取详情时的旧值；
-2. 空间要跟着 id 一起落库，**改提示词那条路径（出参 → 行）不能把它冲回 v1**；
-3. 老调用不传这个字段时行为一个字不变（默认 v1）。
+2. 换原片要连名字/时长一起换，**改提示词那条路径（出参 → 行）不能把它冲掉**。
 
-这三条任一漏掉都是「成功但静默错」：模板看着封装好了，生成时按另一侧解释 id，
+这两条任一漏掉都是「成功但静默错」：模板看着封装好了，生成时按旧值解释，
 最后报「原片不存在」或干脆取了另一条片。
 """
 
@@ -109,37 +108,23 @@ def test_create_takes_name_and_duration_from_the_library_row(
     source_id = _library_video("资产库里的原片.mp4", duration=6.0)
     response = client.post(
         f"{api}/templates/video-templates",
-        json=_draft(source_id, sourceVideoIdSpace="v2"),
+        json=_draft(source_id),
     )
     assert response.status_code == 200, response.text
     data = response.json()["data"]
     assert data["sourceVideoAssetId"] == source_id
-    assert data["sourceVideoIdSpace"] == "v2"
     # 库里是 6 秒、名字是资产库那一行的：前端传的 12 秒与旧名字都不该胜出
     assert data["sourceVideoName"] == "资产库里的原片.mp4"
     assert data["sourceDurationSec"] == 6.0
     # 档位按真实时长取整，不是按前端传的 12
     assert data["generation"]["duration"] == 6
-    assert _row(data["id"]).source_video_asset_id_space == "v2"
+    assert _row(data["id"]).source_video_asset_id == source_id
 
 
-def test_old_callers_keep_landing_on_v1(client: TestClient, api: str) -> None:
-    """不传 `sourceVideoIdSpace` 的调用一个字都不用改：行上仍是 v1。"""
-    v1_id = uuid.uuid4().hex
+def test_unknown_source_is_rejected(client: TestClient, api: str) -> None:
     response = client.post(
         f"{api}/templates/video-templates",
-        json=_draft(v1_id, sourceVideoName="旧库原片.mp4", sourceDurationSec=3.0),
-    )
-    assert response.status_code == 200, response.text
-    data = response.json()["data"]
-    assert data["sourceVideoIdSpace"] == "v1"
-    assert _row(data["id"]).source_video_asset_id_space == "v1"
-
-
-def test_unknown_v2_source_is_rejected(client: TestClient, api: str) -> None:
-    response = client.post(
-        f"{api}/templates/video-templates",
-        json=_draft(uuid.uuid4().hex, sourceVideoIdSpace="v2"),
+        json=_draft(uuid.uuid4().hex),
     )
     assert response.status_code == 400, response.text
     # 「不存在」与「不可读」同一句：不能告诉调用方这条素材确实存在
@@ -150,25 +135,25 @@ def test_image_cannot_be_a_source_video(client: TestClient, api: str) -> None:
     image_id = _library_video("一张图.png", kind="image")
     response = client.post(
         f"{api}/templates/video-templates",
-        json=_draft(image_id, sourceVideoIdSpace="v2"),
+        json=_draft(image_id),
     )
     assert response.status_code == 400, response.text
     assert "视频原片" in response.text
 
 
-def test_attach_source_switches_space_and_prompt_edit_keeps_it(
+def test_attach_source_switches_row_and_prompt_edit_keeps_it(
     client: TestClient, api: str
 ) -> None:
-    """换原片要连空间一起换；改提示词不能把它冲回 v1。
+    """换原片要连名字/时长一起换；改提示词不能把 id 冲掉。
 
-    改提示词走的是「出参 → 行」（`apply_out`），空间列漏在 `VideoTemplateOut`
-    之外时，一次保存就会把 v2 原片重新解释成 v1——表现是之后每次生成都报
-    「原片不存在」，而用户什么都没做错。
+    改提示词走的是「出参 → 行」（`apply_out`），原片字段漏在 `VideoTemplateOut`
+    之外时，一次保存就会把它清空——表现是之后每次生成都报「原片不存在」，
+    而用户什么都没做错。
     """
     first = _library_video("第一支.mp4", duration=3.0)
     created = client.post(
         f"{api}/templates/video-templates",
-        json=_draft(first, sourceVideoIdSpace="v2"),
+        json=_draft(first),
     )
     assert created.status_code == 200, created.text
     template_id = created.json()["data"]["id"]
@@ -176,19 +161,18 @@ def test_attach_source_switches_space_and_prompt_edit_keeps_it(
     second = _library_video("第二支.mp4", duration=5.0)
     attached = client.post(
         f"{api}/templates/video-templates/{template_id}/attach-source",
-        json={"sourceVideoAssetId": second, "sourceVideoIdSpace": "v2"},
+        json={"sourceVideoAssetId": second},
     )
     assert attached.status_code == 200, attached.text
     data = attached.json()["data"]
     assert data["sourceVideoAssetId"] == second
     assert data["sourceVideoName"] == "第二支.mp4"
     assert data["sourceDurationSec"] == 5.0
-    assert data["sourceVideoIdSpace"] == "v2"
 
     saved = client.patch(
         f"{api}/templates/video-templates/{template_id}/prompt",
         json={"prompt": "把 {{Mixed 1}} 里的产品换成 {{Mixed 2}}，保持分镜。"},
     )
     assert saved.status_code == 200, saved.text
-    assert saved.json()["data"]["sourceVideoIdSpace"] == "v2"
-    assert _row(template_id).source_video_asset_id_space == "v2"
+    assert saved.json()["data"]["sourceVideoAssetId"] == second
+    assert _row(template_id).source_video_asset_id == second

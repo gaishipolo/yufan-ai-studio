@@ -3187,3 +3187,69 @@ A（盘点）与 C（只清测试/演示残留）这一轮落地。
 
 **下一步**：`modules/asset` 瘦身 → 前端旧入口下线 → 守卫（全仓 `get_asset_lookup`
 只允许出现在历史解析路径、`FROM assets` 只允许出现在 `lookup.py`）→ 契约重导出。
+
+### 24.27 步 6（二）：推翻 §24.26，v1 素材库整体删除（2026-11-13 完成）
+
+**§24.26 的结论被用户当场推翻**：「还是删了吧，现在只是开发阶段，不影响，我要的
+是彻底下线 v1」。于是「`assets` 表降级成只读索引」作废，改成真删（迁移
+`f5b2d8c4a173`）。
+
+被一并接受、且是**明确代价而非漏改**的两处：
+
+| 残留 | 后果 |
+|---|---|
+| `replacement_run_inputs.asset_id` 148 行指向已删行 | 历史任务详情页按「素材已删除」降级展示 |
+| `template_pack_versions.reference_ids` 23 个 v1 id | 冻结快照仍能列出「当时用了哪些」，但打不开预览 |
+
+**删掉的东西**（这次的边界）：
+
+- 后端：`modules/asset` 整个模块、`core/media.py`、`core/ports/assets.py`、
+  `core/ports/media.py`、`modules/template/id_space.py`、
+  `modules/library/import_archive.py`、两份 `asset_references.py`（v1 引用声明）、
+  `identity/asset_roles.py`、四个一次性迁移脚本；
+- 数据结构：`assets` 表 + 全部 `*_id_space` / `asset_id_space` 标记列；
+- 前端：`/assets` 页面与 `modules/assets`、`entities/asset/api/*`、
+  `features/archive-library/*`（后者删到最后发现 `PackManager` / `PackEditor` /
+  `PublicPacks` 三个文件**已经没有任何 import**——旧封装管理界面早被
+  `pages/template-pack` 取代，只是没人回头删）；
+- 配置：`ARCHIVE_GC_*` / `ARCHIVE_MIRROR_*` / `ARCHIVE_QUOTA_BYTES_PER_USER` 六项。
+  `archive_gc_enabled` 保留——它其实是资产库回收站 GC 的开关，只是名字还没改。
+
+**两个「改完不报错、只静默错」的坑**（都已修，测试钉住）：
+
+1. **封装草稿的入参/出参字段不对称**。入参是 `referenceLibraryIds` /
+   `coverLibraryId`（`PackDraftIn`），出参仍是 `referenceIds` / `coverReferenceId`
+   （`ReplacementPack` 既有契约）。任何「重跑一遍再比对远端配置」的代码必须做字段
+   映射：`template_packager` 就是拿 `current.get("referenceIds")`（永远 `None`）
+   去比列表，于是每次都判「远端素材包配置已变化」。改完把这份目录留在
+   `runner.py` 的 `comparable` 字典里，别写成两处字面量。
+2. **`PackService.save` 从不校验封面是否在包内**（真 bug，不是测试问题）。
+   `cover_library_id` 随便传一个不在 `reference_library_ids` 里的 id 也返回 200，
+   写进 `cover_asset_id`，而出参只回「包内引用里的那个」→ 用户设了封面、保存成功、
+   回读是 `null`。现在 `_check_cover()` 在写库前拒绝。
+
+**顺带发现一个此前完全没被迁到 v2 的调用方**：`src/template_packager/` 五个文件
+一直在打 v1 的 `/assets/upload`、`/assets/{id}`、`PUT /assets/{id}/sharing`。
+它不在任何测试的默认路径上（要真起服务跑 `packager` 才触发），全量测试全绿也
+不会提醒。已整迁：原片走 `/library/source-videos`（落库写死
+`origin=template_source`）、图片走 `/library/assets/upload?kind=image`、共享走
+`/library/share-requests` 并**回读复核 `visibility == "team"`**（提交成功 ≠ 直接
+生效：没有 `library:share:direct` 的账号只留待审单）。
+
+**测试侧的两条口径变化**：
+
+- **v2 上传是「秒传」不是「共享字节」**：同一人 + 同摘要 + 同 kind 直接返回**已有
+  那一行**（`_find_duplicate`）。v1 时代「两条记录共享一个 path」的断言作废，改成
+  断言 `again["id"] == first["id"]`；
+- **资产库字节根 ≠ 归档盘根**：`STORAGE_LOCAL_ROOT` 与 `ARCHIVE_ROOT` 是两个目录。
+  查资产库字节要 `get_storage().exists(key)`（`get_storage` 在 `infra/__init__.py`），
+  拿 `archive_root / key` 判断「字节在不在」永远 False。
+
+**验收**：后端全量 `1651 passed, 12 skipped, 0 failed`；前端 `82 files / 664 tests`
+全绿 + `typecheck` / `lint` 干净；四份契约重导出后 `export-openapi --check` 无变化；
+新增守卫 `tests/test_v1_asset_library_is_gone.py`（模块可导入 / 路由不存在 /
+配置项无人读三件事）。
+
+**还没做的**（都不阻塞这次提交）：`scripts/tp_live_check.py` 是打另一套
+`/template-packs/{id}/candidates|verify` 的手工冒烟脚本，这次只清掉两个 `IdSpace`
+字段，整条链路没在活服务上重跑过。

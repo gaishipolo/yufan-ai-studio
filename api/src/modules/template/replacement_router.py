@@ -76,7 +76,7 @@ async def prepare_run(
     ),
 ) -> ApiResponse[ReplacementRunOut]:
     return ApiResponse.ok(
-        await service.prepare(payload, actor, can_read_assets=actor.has("asset:read"))
+        await service.prepare(payload, actor, can_read_assets=actor.has("library:read"))
     )
 
 

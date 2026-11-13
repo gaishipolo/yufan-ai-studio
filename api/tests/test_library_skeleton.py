@@ -1,11 +1,11 @@
-"""资产库 v2 骨架：并存隔离、契约与 fail-closed。
+"""资产库骨架：契约与 fail-closed。
 
 这份文件守的是**跨批次不变的那几件事**，与具体业务行为无关：
 
-1. **并存**：`/library` 与 `/assets` 同时在线，且响应形状互不污染；
-2. **契约**：权限点集合、错误码编码、空页字段齐全；
-3. **注入口**：三个 v2 注入口未注册时 fail-closed（返回中性值等于静默放行）；
-4. **装配**：模块被自动发现，路由挂在 `/api/v1/library` 下。
+1. **契约**：权限点集合、错误码编码、空页字段齐全；
+2. **注入口**：三个 v2 注入口未注册时 fail-closed（返回中性值等于静默放行）；
+3. **装配**：模块被自动发现，路由挂在 `/api/v1/library` 下，且 v1 的 `/assets`
+   一个都没回来（`test_v1_asset_library_is_gone` 另有源码级守卫）。
 
 业务行为（上传、共享、删除矩阵、状态机）在 M1–M3 各自的测试文件里，不放这里。
 """
@@ -141,28 +141,11 @@ def test_library_facets_endpoint(client: TestClient, api: str) -> None:
     assert all(isinstance(value, int) and value >= 0 for value in data.values())
 
 
-def test_legacy_assets_and_library_coexist(client: TestClient, api: str) -> None:
-    """并存期的核心断言：两个入口都活着，而且没有互相串数据。
-
-    没有这一条，v2 的新路由一旦写成 `/assets/...` 或模块 order 抢占，
-    症状是旧页面「素材全没了」——但两边的单元测试都会绿。
-    """
-    legacy = client.get(f"{api}/assets")
-    assert legacy.status_code == 200
-    legacy_data = legacy.json()["data"]
-    assert "items" in legacy_data
-    assert "facets" not in legacy_data, "旧 /assets 不该出现 v2 的分面字段"
-
-    library = client.get(f"{api}/library/assets")
-    assert library.status_code == 200
-    assert "facets" in library.json()["data"]
-
-
 def test_library_paths_are_registered_in_openapi(client: TestClient, api: str) -> None:
     paths = client.get("/openapi.json").json()["paths"]
     assert "/api/v1/library/assets" in paths
     assert "/api/v1/library/facets" in paths
-    assert "/api/v1/assets" in paths
+    assert "/api/v1/assets" not in paths, "v1 素材接口已下线"
 
 
 @pytest.mark.parametrize(

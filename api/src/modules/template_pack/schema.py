@@ -68,10 +68,7 @@ class TemplatePackSlotIn(CamelModel):
 
     # ---- fixed 形态 ----
     asset_id: str | None = Field(
-        default=None, max_length=64, description="fixed：钉死的素材 id"
-    )
-    asset_id_space: Literal["v1", "v2"] = Field(
-        default="v2", description="fixed：素材 id 属于哪套库；两套都是 32 位 hex，不能靠形状推断"
+        default=None, max_length=64, description="fixed：钉死的素材 id（资产库）"
     )
     media_type: MediaKind = Field(
         default="image", description="fixed：素材类别"
@@ -111,9 +108,6 @@ class TemplatePackDraftIn(CamelModel):
     source_video_asset_id: str = Field(
         min_length=1, max_length=64, description="参考视频的资产库 id"
     )
-    source_video_id_space: Literal["v1", "v2"] = Field(
-        default="v2", description="参考视频 id 属于哪套库"
-    )
     source_duration_sec: float = Field(
         default=0, ge=0, description="参考视频时长（秒）"
     )
@@ -134,7 +128,6 @@ class TemplatePackSlotOut(CamelModel):
     slot_kind: SlotKind
     label: str = ""
     asset_id: str | None = None
-    asset_id_space: str = "v2"
     media_type: str = "image"
     asset_name: str = ""
     filter_kind: str = ""
@@ -154,7 +147,6 @@ class TemplatePackOut(CamelModel):
     prompt: VerbatimText
     prompt_sha256: str = Field(description="提示词 sha256，防止文字被悄悄改掉")
     source_video_asset_id: str
-    source_video_id_space: str = "v2"
     source_duration_sec: float = 0.0
     aspect_ratio: str = "9:16"
     cover_url: str = ""

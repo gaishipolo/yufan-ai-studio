@@ -1,23 +1,16 @@
 """资产库 v2：草稿箱 / 个人 / 小组 / 团队 / 回收站五入口的统一资产库。
 
-**与现役 `modules/asset` 并行的第二版素材库**，不是它的重构。并存期两边
-完全隔离：表（`library_*`）、路由（`/library`）、权限（`library:*`）、
-注入口（`library-lookup` / `library-ingest` / `library-references`）、
-前端路径（`/library`）。删掉本模块不影响现役素材库。
-
-M5 起入口已切到本模块（`/library` 是主入口）。**旧库不下线**：`/assets` 仍是可用的
-旧版入口，观察期用 `app library reconcile` 与周期任务 `library.legacy.sync` 对账。
+2026-11-13 起它是**唯一的**资产库：旧素材库（`modules/asset` + `/assets` + `assets`
+表）已彻底下线，两套 id 空间的并存期结束（见 `docs/TEMPLATE_UNIFICATION_PLAN.md` §24.26–§24.27）。
 """
 
 from api.module import ModuleSpec
 from core.permissions import PermissionSpec
-from core.ports.assets import AssetReferenceSource, bind_asset_reference_sources
 from core.ports.library_ingest import register_library_ingest
 from core.ports.library_references import (
     LibraryReferenceSource,
     bind_library_reference_sources,
 )
-from modules.library.asset_references import GenerationAssetReferences
 from modules.library.cli import register as register_cli
 from modules.library.health import check as health_check
 from modules.library.ingest import SqlLibraryIngest
@@ -25,11 +18,10 @@ from modules.library.lookup import install as install_lookup
 from modules.library.references import DownloadJobReferences, PackMemberReferences
 from modules.library.router import router
 
-# 必须 import：注册 @periodic("library.trash.gc") / @periodic("library.download.gc") /
-# @periodic("library.legacy.sync") 与 @register_handler（副作用导入）
+# 必须 import：注册 @periodic("library.trash.gc") / @periodic("library.download.gc")
+# 与 @register_handler（副作用导入）
 from modules.library import downloads  # noqa: E402,F401  isort: skip
 from modules.library import maintenance  # noqa: E402,F401  isort: skip
-from modules.library import observation  # noqa: E402,F401  isort: skip
 
 # 把「v2 资产是什么」挂到注入口：模板 / 任务 / 选择器在并存期要读它，
 # 但它们不能 import 本模块（业务模块之间不许互相 import）。
@@ -62,18 +54,6 @@ LIBRARY_REFERENCE_SOURCES = (
     ),
 )
 bind_library_reference_sources("library", LIBRARY_REFERENCE_SOURCES)
-
-# v2 绝大多数 `asset_id` 列指向 `library_assets.id`，与旧 `assets.id` 无关；
-# 唯一例外是生成溯源里记录的旧素材参考图——删掉旧图会让历史详情页留白。
-ASSET_REFERENCE_SOURCES = (
-    AssetReferenceSource(
-        name="library_asset_generation.reference_asset_ids",
-        checker=GenerationAssetReferences(),
-        location="modules/library/models.py:LibraryAssetGeneration.reference_asset_ids",
-        description="生成溯源快照里记录的旧素材库参考图",
-    ),
-)
-bind_asset_reference_sources("library", ASSET_REFERENCE_SOURCES)
 
 # 权限点**随实现分批进入 ModuleSpec**，不是一次性声明 11 个。
 #
@@ -122,13 +102,10 @@ module = ModuleSpec(
         ),
     ),
     # 声明了就必须注册，`create_app()` 会核对：上面三条 import 就是注册动作。
-    # `library.legacy.sync` 是并存观察期的每日对账（只读、只记日志）；
-    # 观察期结束后随旧模块一起删掉，它不再是 v2 的部署条件。
     jobs=("library.download.build",),
-    periodic=("library.trash.gc", "library.download.gc", "library.legacy.sync"),
-    # 运维命令：旧素材导入、回收站 GC、打包产物清理
+    periodic=("library.trash.gc", "library.download.gc"),
+    # 运维命令：回收站 GC、打包产物清理
     cli=register_cli,
-    asset_reference_sources=ASSET_REFERENCE_SOURCES,
     library_reference_sources=LIBRARY_REFERENCE_SOURCES,
     doctor=health_check,
 )

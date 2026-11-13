@@ -66,7 +66,7 @@ def test_library_pack_supplies_images_in_member_order(client: TestClient) -> Non
         {
             "requestId": uuid.uuid4().hex,
             "kind": "product",
-            "sourceId": source["id"],
+            "sourceLibraryId": source["id"],
             "libraryPackId": pack["id"],
             "replacementScope": "人物上身穿着",
         },
@@ -108,7 +108,7 @@ def test_library_pack_member_without_role_is_rejected(client: TestClient) -> Non
         {
             "requestId": uuid.uuid4().hex,
             "kind": "product",
-            "sourceId": source["id"],
+            "sourceLibraryId": source["id"],
             "libraryPackId": pack["id"],
             "replacementScope": "人物上身穿着",
         },
@@ -142,7 +142,7 @@ def test_library_pack_with_duplicate_roles_is_rejected(client: TestClient) -> No
         {
             "requestId": uuid.uuid4().hex,
             "kind": "product",
-            "sourceId": source["id"],
+            "sourceLibraryId": source["id"],
             "libraryPackId": pack["id"],
             "replacementScope": "人物上身穿着",
         },
@@ -166,7 +166,7 @@ def test_library_pack_member_moved_to_trash_is_rejected(client: TestClient) -> N
         {
             "requestId": uuid.uuid4().hex,
             "kind": "product",
-            "sourceId": source["id"],
+            "sourceLibraryId": source["id"],
             "libraryPackId": pack["id"],
             "replacementScope": "人物上身穿着",
         },
@@ -192,7 +192,7 @@ def test_library_pack_in_trash_is_rejected(client: TestClient) -> None:
         {
             "requestId": uuid.uuid4().hex,
             "kind": "product",
-            "sourceId": source["id"],
+            "sourceLibraryId": source["id"],
             "libraryPackId": pack["id"],
             "replacementScope": "人物上身穿着",
         },
@@ -215,7 +215,7 @@ def test_library_pack_of_another_user_is_rejected(client: TestClient) -> None:
         {
             "requestId": uuid.uuid4().hex,
             "kind": "product",
-            "sourceId": source["id"],
+            "sourceLibraryId": source["id"],
             "libraryPackId": pack["id"],
             "replacementScope": "人物上身穿着",
         },
@@ -237,7 +237,7 @@ def test_library_pack_cannot_be_combined_with_template_pack(client: TestClient) 
         {
             "requestId": uuid.uuid4().hex,
             "kind": "product",
-            "sourceId": source["id"],
+            "sourceLibraryId": source["id"],
             "libraryPackId": pack["id"],
             "packId": "0123456789abcdef0123456789abcdef",
             "packVersion": 1,
@@ -261,7 +261,7 @@ def test_library_pack_must_be_a_pack_not_an_image(client: TestClient) -> None:
         {
             "requestId": uuid.uuid4().hex,
             "kind": "product",
-            "sourceId": source["id"],
+            "sourceLibraryId": source["id"],
             "libraryPackId": image["id"],
             "replacementScope": "人物上身穿着",
         },
@@ -314,7 +314,7 @@ def test_library_pack_cannot_fill_a_multi_person_template(client: TestClient) ->
             {
                 "requestId": uuid.uuid4().hex,
                 "kind": "character",
-                "sourceId": source["id"],
+                "sourceLibraryId": source["id"],
                 "videoTemplateId": template_id,
                 "libraryPackId": pack["id"],
             },
@@ -352,7 +352,7 @@ def test_library_pack_refuses_two_members_with_the_same_role(client: TestClient)
         {
             "requestId": uuid.uuid4().hex,
             "kind": "character",
-            "sourceId": source["id"],
+            "sourceLibraryId": source["id"],
             "libraryPackId": pack["id"],
             "replacementScope": "人物上身穿着",
         },

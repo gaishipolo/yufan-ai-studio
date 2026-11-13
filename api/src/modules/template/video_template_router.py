@@ -85,7 +85,7 @@ async def update_video_template_prompt(
     """
     references = None
     if payload.references is not None:
-        references, _, _ = await resolve_pack_references(session, payload.references, actor)
+        references, _ = await resolve_pack_references(session, payload.references, actor)
     result = await service.update_prompt(
         template_id, payload.prompt, references, session=session
     )
@@ -109,10 +109,6 @@ async def attach_video_template_source(
     """绑定后，这条模板对应的原片才会在「全部模板」里被当作可选卡片。"""
     return ApiResponse.ok(
         await service.attach_source(
-            template_id,
-            payload.source_video_asset_id,
-            session,
-            payload.source_video_id_space,
-            actor=actor,
+            template_id, payload.source_video_asset_id, session, actor=actor
         )
     )

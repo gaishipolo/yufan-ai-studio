@@ -437,7 +437,7 @@ export function useSaveAssetFile() {
 /**
  * 取受保护的原文件并转成 object URL（视频/音频预览用）。
  *
- * 不能直接把 `/assets/{id}/file` 塞进 `<video src>`：那个地址要 Bearer 头，
+ * 不能直接把 `/library/assets/{id}/file` 塞进 `<video src>`：那个地址要 Bearer 头，
  * 浏览器发媒体请求时不会带上，结果是 401 而不是画面。
  */
 export function useLibraryMedia(assetId: string | null, enabled: boolean) {

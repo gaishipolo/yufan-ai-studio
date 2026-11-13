@@ -13,7 +13,6 @@
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -36,7 +35,7 @@ from tests_template_helpers import (
 
 from db.session import get_session_factory
 from infra.queue.base import Job
-from modules.asset.models import Asset
+from modules.library.models import LibraryAsset
 from modules.template import worker
 from modules.template.authorization import authorization_gap
 from modules.template.models import TemplatePack
@@ -263,8 +262,8 @@ async def test_disabled_pack_stops_the_queue_before_upload(client: TestClient) -
 async def test_trashed_input_asset_counts_as_gone(client: TestClient) -> None:
     """输入素材被移入回收站也要拦：只查「id 还在不在」永远查不到。
 
-    `AssetLookup.get_many` 不排除软删——行还在、`deleted_at` 已置位。按
-    「键是否存在」判断会放行一份已经不存在的输入，等执行器 upload 阶段
+    `LibraryLookup.get_many` 不按生命周期过滤——行还在、`state` 已是 `trash`。
+    按「键是否存在」判断会放行一份已经不存在的输入，等执行器 upload 阶段
     才以 ENOENT 的形式暴露，而那时任务已经排在付费队列里了。
 
     这里直接改库而不是走删除接口：接口那一步会被引用检查挡下（409），
@@ -279,9 +278,11 @@ async def test_trashed_input_asset_counts_as_gone(client: TestClient) -> None:
     await add_input(run.id, image["id"], position=1)
     try:
         async with get_session_factory()() as session:
-            row = await session.get(Asset, image["id"])
+            row = await session.get(LibraryAsset, image["id"])
             assert row is not None
-            row.deleted_at = datetime.now(UTC)
+            row.state = "trash"
+            # 草稿/回收站必须同时是私有的（`models.py` 的不变量 A）
+            row.visibility = "personal"
             await session.commit()
 
         async with get_session_factory()() as session:

@@ -31,15 +31,9 @@ from modules.template.models import (
 
 
 class RunInputRow(NamedTuple):
-    """一条「这次实际用到的素材」。
-
-    `asset_id_space` 是**必填**：两套 id 空间形状相同，靠默认值猜空间等于让
-    历史任务在常量翻转后被重新解释（`authorization_gap` 会拿错的表去查，
-    报「输入已被删除」）。调用方手里本来就知道来源，别在这里省一个字段。
-    """
+    """一条「这次实际用到的素材」（`library_assets.id`）。"""
 
     asset_id: str
-    asset_id_space: str
     role: str
     position: int
     usage: str = ""
@@ -105,17 +99,13 @@ class PackRepository:
         return (await self.session.scalars(stmt)).all()
 
     async def replace_references(
-        self, pack_id: str, asset_id_space: str, refs: list[tuple[str, int, str, str]]
+        self, pack_id: str, refs: list[tuple[str, int, str, str]]
     ) -> None:
         """整组覆盖：先删后插。
 
         为什么不逐条 diff：参考图最多 10 张，整组覆盖的成本远低于「算出增删改」
         的复杂度，而且它天然保证 `position` 连续——`position` 一旦断号，
         提示词里的 `reference-1` / `reference-3` 就会跳号。
-
-        `asset_id_space` 必填且整组同一个：一次封装只属于一套素材库，
-        混用的行会让发布期 `_reference_space()` 报错，而错误发生在「发布」，
-        离「保存」很远——用户会觉得是自己点错了。
         """
         await self.session.execute(
             delete(TemplatePackReference).where(TemplatePackReference.pack_id == pack_id)
@@ -125,7 +115,6 @@ class PackRepository:
                 TemplatePackReference(
                     pack_id=pack_id,
                     asset_id=asset_id,
-                    asset_id_space=asset_id_space,
                     position=position,
                     role=role,
                     description=description,
@@ -252,7 +241,6 @@ class RunRepository:
                 ReplacementRunInput(
                     run_id=run_id,
                     asset_id=row.asset_id,
-                    asset_id_space=row.asset_id_space,
                     role=row.role,
                     position=row.position,
                     usage=row.usage,

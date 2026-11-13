@@ -1,13 +1,12 @@
-"""封装草稿的资产库 v2 契约字段：`referenceLibraryIds` / `coverLibraryId`。
+"""封装草稿的资产库契约：`referenceLibraryIds` / `coverLibraryId`。
 
-三条判据（都是「错了不会报错」的那类）：
+v1 素材库已于 2026-11-13 下线，「两套字段谁优先」的判断随 `assets` 表一起删掉了：
+现在只可能有一套。剩下的判据都是「错了不会报错」的那类：
 
-1. 空间只按**字段名**判，两套字段同时填直接 400，不做「谁优先」的静默选择；
-2. 出参带回 `referenceIdSpace`，否则前端编辑一次 v2 封装就会用 `referenceIds`
-   回写，把同一批 id 重新解释成 v1；
-3. 包内预览由「已发布版本」授权：v2 图走库自己的缩略图，不做资产库授权检查
+1. 封面必须出现在 `referenceLibraryIds` 里，只给 `coverLibraryId` 直接 400；
+2. 包内预览由「已发布版本」授权：图走库自己的缩略图，不做资产库授权检查
    （那是另一个端点的事），也不拼 `storage_key` 当旧 `path`。
-4. 封装引用的 v2 图不能被「彻底删除」：这条走注入口全链路，只声明来源不接实现
+3. 封装引用的图不能被「彻底删除」：这条走注入口全链路，只声明来源不接实现
    一样会静默放行。
 """
 
@@ -23,7 +22,6 @@ from tests_template_helpers import ADMIN, drop_pack, login, png_bytes, upload, v
 from db.session import get_session_factory
 from infra import get_storage
 from modules.library.models import LibraryAsset
-from modules.template.repository import PackRepository
 
 API = "/api/v1"
 
@@ -68,11 +66,6 @@ async def _drop_assets(asset_ids: list[str]) -> None:
         await session.commit()
 
 
-async def _reference_spaces(pack_id: str) -> set[str]:
-    async with get_session_factory()() as session:
-        return {ref.asset_id_space for ref in await PackRepository(session).references(pack_id)}
-
-
 def _draft(client, headers, body: dict) -> dict:
     response = client.put(
         f"{API}/templates/replacement-packs/draft", headers=headers, json=body
@@ -107,9 +100,6 @@ def test_library_reference_draft_publishes_and_previews_v2_bytes(client) -> None
         assert created["status"] == 200, created["text"]
         data = created["body"]["data"]
         assert data["referenceIds"] == [asset_id]
-        # 前端靠它决定回写哪个字段
-        assert data["referenceIdSpace"] == "v2"
-        assert asyncio.run(_reference_spaces(pack_id)) == {"v2"}
 
         response = client.post(
             f"{API}/templates/replacement-packs/{pack_id}/publish",
@@ -132,7 +122,6 @@ def test_library_reference_draft_publishes_and_previews_v2_bytes(client) -> None
             f"{API}/templates/replacement-catalog", headers=headers
         ).json()["data"]["packs"]
         listed = next(item for item in catalog if item["id"] == pack_id)
-        assert listed["referenceIdSpace"] == "v2"
         assert listed["previewUrls"] == [
             f"/api/v1/templates/replacement-packs/{pack_id}/preview/{asset_id}"
             f"?version={version}"
@@ -188,28 +177,18 @@ def test_preview_prefers_library_thumbnail(client) -> None:
         asyncio.run(_drop_assets([asset_id]))
 
 
-def test_mixing_reference_fields_is_rejected(client) -> None:
+def test_cover_must_be_one_of_the_references(client) -> None:
+    """只给封面、不给参考图 = 封面落在一个不在包内的 id 上，必须 400。
+
+    v1 下线前这里还有一半是「两套字段同时填 → 400」；入参只剩一套之后那半边
+    已经没有输入空间了，删掉而不是留着一条永远为真的断言。
+    """
     headers = login(client)
     key = f"library/blobs/ac/{uuid.uuid4().hex}.png"
     content = png_bytes()
     asyncio.run(get_storage().put(key, content, "image/png"))
     asset_id = asyncio.run(_library_asset(content, key=key))
-    legacy = upload(client, "v1-混用.png", "product", png_bytes())
     try:
-        mixed = _draft(
-            client,
-            headers,
-            {
-                "requestId": uuid.uuid4().hex,
-                "kind": "product",
-                "name": "混用两套字段",
-                "referenceIds": [legacy["id"]],
-                "referenceLibraryIds": [asset_id],
-            },
-        )
-        assert mixed["status"] == 400, mixed["text"]
-        assert "不能同时使用" in mixed["body"]["message"]
-
         cover_only = _draft(
             client,
             headers,
@@ -221,34 +200,10 @@ def test_mixing_reference_fields_is_rejected(client) -> None:
             },
         )
         assert cover_only["status"] == 400, cover_only["text"]
-        assert "coverLibraryId" in cover_only["body"]["message"]
+        assert "封面必须从参考图里选" in cover_only["body"]["message"]
     finally:
         asyncio.run(get_storage().delete(key))
         asyncio.run(_drop_assets([asset_id]))
-
-
-def test_legacy_field_still_writes_v1_space(client) -> None:
-    """旧 UI 不变：`referenceIds` 仍按当前写入空间（v1）解释，出参也如实标注。"""
-    headers = login(client)
-    image = upload(client, "v1-空格回归.png", "product", png_bytes())
-    pack_id = uuid.uuid4().hex
-    try:
-        created = _draft(
-            client,
-            headers,
-            {
-                "requestId": pack_id,
-                "kind": "product",
-                "name": "v1 封装",
-                "referenceIds": [image["id"]],
-                "bindings": [{"role": "front", "description": ""}],
-            },
-        )
-        assert created["status"] == 200, created["text"]
-        assert created["body"]["data"]["referenceIdSpace"] == "v1"
-        assert asyncio.run(_reference_spaces(pack_id)) == {"v1"}
-    finally:
-        asyncio.run(drop_pack(pack_id))
 
 
 @pytest.mark.parametrize(
@@ -369,7 +324,7 @@ def test_published_v2_pack_can_actually_run(client) -> None:
             json={
                 "requestId": uuid.uuid4().hex,
                 "kind": "product",
-                "sourceId": source["id"],
+                "sourceLibraryId": source["id"],
                 "packId": pack_id,
                 "packVersion": version,
                 "replacementScope": "人物上身穿着",

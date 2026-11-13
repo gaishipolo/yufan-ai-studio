@@ -162,13 +162,12 @@ def main() -> int:
             "description": "真服务冒烟",
             "prompt": "按 {{Mixed 1}} 的节奏，用 {{Mixed 2}} 做主图",
             "sourceVideoAssetId": video["id"],
-            "sourceVideoIdSpace": "v2",
             "sourceDurationSec": 2.0,
             "aspectRatio": "9:16",
             "slots": [
                 {
                     "token": "{{Mixed 1}}", "slotKind": "fixed", "label": "参考视频",
-                    "assetId": video["id"], "assetIdSpace": "v2", "mediaType": "video",
+                    "assetId": video["id"], "mediaType": "video",
                 },
                 {
                     "token": "{{Mixed 2}}", "slotKind": "filtered", "label": "产品主图",
@@ -194,14 +193,13 @@ def main() -> int:
             "description": "真服务冒烟",
             "prompt": "按 {{Mixed 1}} 的节奏，用 {{Mixed 2}} 做主图",
             "sourceVideoAssetId": video["id"],
-            "sourceVideoIdSpace": "v2",
             "sourceDurationSec": 2.0,
             "aspectRatio": "9:16",
             "templateKey": pack["templateKey"],
             "slots": [
                 {
                     "token": "{{Mixed 1}}", "slotKind": "fixed", "label": "参考视频",
-                    "assetId": video["id"], "assetIdSpace": "v2", "mediaType": "video",
+                    "assetId": video["id"], "mediaType": "video",
                 },
                 {
                     "token": "{{Mixed 2}}", "slotKind": "filtered", "label": "产品主图",

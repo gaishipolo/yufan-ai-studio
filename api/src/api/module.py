@@ -18,7 +18,6 @@ from fastapi import APIRouter
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.permissions import PermissionSpec
-from core.ports.assets import AssetReferenceSource
 from core.ports.library_references import LibraryReferenceSource
 
 # 自检结论的档位。定义在这里而不是 `api/diagnostics.py`：模块要按它填报告，
@@ -137,15 +136,9 @@ class ModuleSpec:
     # 公开模块：健康检查、探活等无需登录/权限的接口。
     # 默认 False —— 新模块默认受权限保护，避免「忘了加权限点」变成裸奔。
     public: bool = False
-    # 本模块把 `assets.id` 写进了哪些持久化位置。**漏声明 = 删除会被 fail-closed
-    # 挡住（503），CI 的 AST 守卫也会红**：素材彻底删除不可逆，不能靠「记得注册」。
-    # 声明与实现是同一份常量：模块 import 期调 `register_asset_reference_sources()`
-    # 交给注入口，框架用这里的声明做完备性对账（`core/ports/assets.py`）。
-    asset_reference_sources: tuple[AssetReferenceSource, ...] = ()
     # 本模块把 `library_assets.id`（v2 资产）写进了哪些持久化位置。
-    # 与上面的 `asset_reference_sources` **不能合并**：那是 v1 `assets.id` 的引用
-    # （`video_tasks`、模板库老引用），这是 v2 的 id 空间，两套 id 混查会把
-    # 「A 引用了同名 id」当成「B 被引用」——两边都是不可逆删除前的最后一道闸。
+    # 只有一套 id 空间了（v1 `assets` 表已于 2026-11-13 下线），所以这里
+    # 不需要再区分「哪个 id 空间的引用」。
     # **漏声明 = 删除会被 fail-closed 挡住（503），CI 的 AST 守卫也会红**。
     library_reference_sources: tuple[LibraryReferenceSource, ...] = ()
     # 本模块注册的 job handler 名（`workers.register_handler` 的 key）。

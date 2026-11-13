@@ -2,7 +2,7 @@
 
 > 此文件由 `app export-openapi` 自动生成，请勿手工编辑。
 >
-> 版本 `0.2.0`｜共 **156** 个接口 / **13** 个模块
+> 版本 `0.2.0`｜共 **144** 个接口 / **12** 个模块
 >
 > 重新生成：`cd api && .venv/Scripts/python -m cli export-openapi`
 
@@ -115,12 +115,6 @@ Authorization: Bearer <accessToken>
 
 | 权限码 | 名称 | 说明 |
 |---|---|---|
-| `asset:create` | 上传素材 |  |
-| `asset:delete` | 删除素材 |  |
-| `asset:read` | 查看素材 |  |
-| `asset:reference:manage` | 维护封装参考素材与登记文件 |  |
-| `asset:share` | 分享或撤回本人原片 |  |
-| `asset:update` | 修改本人素材名称 |  |
 | `template:pack:manage` | 维护本人封装草稿 |  |
 | `template:pack:publish` | 发布或停用本人封装对象 |  |
 
@@ -177,7 +171,6 @@ Authorization: Bearer <accessToken>
 | `40021` | 400 | identity | `OldPasswordMismatch` | 原密码不正确 |
 | `40022` | 400 | identity | `UnknownPermission` | 存在无法识别的权限点 |
 | `40023` | 400 | identity | `TeamGrantForbidden` | 团队基础权限不能包含管理类权限或通配符 |
-| `40051` | 400 | asset | `FileTypeNotAllowed` | 支持 MP4、PNG、JPG、WebP、MP3 和 WAV |
 | `40081` | 400 | library | `RevokeReasonRequired` | 撤销共享必须填写理由 |
 | `40082` | 400 | library | `LibraryFileTypeNotAllowed` | 支持 MP4、PNG、JPG、WebP、MP3、WAV、TXT 和 MD |
 | `40083` | 400 | library | `PackItemInvalid` | 封装里有不可用的成员 |
@@ -202,7 +195,6 @@ Authorization: Bearer <accessToken>
 | `40422` | 404 | identity | `RoleNotFound` | 角色不存在 |
 | `40423` | 404 | identity | `SessionNotFound` | 会话不存在或已失效 |
 | `40424` | 404 | identity | `GroupNotFound` | 小组不存在 |
-| `40451` | 404 | asset | `AssetNotFound` | 素材不存在 |
 | `40900` | 409 | 框架 | `Conflict` | 资源冲突 |
 | `40902` | 409 | 框架 | `InvalidState` | 当前状态不允许该操作 |
 | `40921` | 409 | identity | `UsernameTaken` | 用户名已被占用 |
@@ -214,7 +206,6 @@ Authorization: Bearer <accessToken>
 | `40927` | 409 | identity | `GroupNameTaken` | 小组名称已被占用 |
 | `40931` | 409 | template_pack | `TemplatePackConflict` | 该稳定标识已被另一份配置使用，请换一个 |
 | `40932` | 409 | template_pack | `TemplatePackStateError` | 该封装模板已发布，不能再修改内容 |
-| `40951` | 409 | asset | `AssetInUse` | 素材仍被引用，不能删除 |
 | `40971` | 409 | template | `TemplateBusy` | 模板正在处理中，请稍后再试 |
 | `40981` | 409 | library | `SharedAssetNotDeletable` | 该资产仍处于共享状态，请先撤销共享后再删除 |
 | `40982` | 409 | library | `TeamDeleteForbidden` | 团队库资产不能直接删除，请先撤销团队共享 |
@@ -228,8 +219,6 @@ Authorization: Bearer <accessToken>
 | `40991` | 409 | export | `ExportBusy` | 同一份数据正在导出中，请等待它完成 |
 | `40992` | 409 | export | `ExportNotReady` | 导出尚未生成完成，请稍后再试 |
 | `41091` | 410 | export | `ExportGone` | 导出文件已过保留期被回收，请重新导出 |
-| `41351` | 413 | asset | `FileTooLarge` | 文件不能超过 50MB |
-| `41352` | 413 | asset | `AssetQuotaExceeded` | 归档空间已用完，请先清理回收站或联系管理员提升配额 |
 | `41381` | 413 | library | `LibraryFileTooLarge` | 文件不能超过 300MB |
 | `41382` | 413 | library | `DownloadTooLarge` | 单次打包超出上限 |
 | `41383` | 413 | library | `LibraryTextTooLarge` | 文本资产不能超过 1MB |
@@ -247,16 +236,15 @@ Authorization: Bearer <accessToken>
 | 身份 | 39 | 见下方 `4.1` |
 | 任务 | 9 | 见下方 `4.2` |
 | 模型 | 1 | 见下方 `4.3` |
-| 素材 | 12 | 见下方 `4.4` |
-| 生图 | 3 | 见下方 `4.5` |
-| 模板 | 23 | 见下方 `4.6` |
-| 分镜模板 | 1 | 见下方 `4.7` |
-| 镜头库 | 1 | 见下方 `4.8` |
-| 系统 | 2 | 见下方 `4.9` |
-| 导出 | 6 | 见下方 `4.10` |
-| 资产库 | 45 | 见下方 `4.11` |
-| 模型驱动 | 6 | 见下方 `4.12` |
-| 封装模板 | 8 | 见下方 `4.13` |
+| 生图 | 3 | 见下方 `4.4` |
+| 模板 | 23 | 见下方 `4.5` |
+| 分镜模板 | 1 | 见下方 `4.6` |
+| 镜头库 | 1 | 见下方 `4.7` |
+| 系统 | 2 | 见下方 `4.8` |
+| 导出 | 6 | 见下方 `4.9` |
+| 资产库 | 45 | 见下方 `4.10` |
+| 模型驱动 | 6 | 见下方 `4.11` |
+| 封装模板 | 8 | 见下方 `4.12` |
 
 ### 4.1 身份（39 个）
 
@@ -1297,342 +1285,7 @@ Authorization: Bearer <accessToken>
 | `message` | `string` | 否 |  |
 | `data` | `modules__catalog__schema__ModelListOut \| null` | 否 |  |
 
-### 4.4 素材（12 个）
-
-| 方法 | 路径 | 说明 | 鉴权 |
-|---|---|---|---|
-| `GET` | `/api/v1/assets` | 归档素材列表与空间占用 | 🔒 |
-| `POST` | `/api/v1/assets/import` | 从 Z 盘 inbox 登记现有素材 | 🔒 |
-| `POST` | `/api/v1/assets/upload` | 流式上传素材至归档盘 | 🔒 |
-| `GET` | `/api/v1/assets/{asset_id}` | 读取本人或共享原片详情 | 🔒 |
-| `DELETE` | `/api/v1/assets/{asset_id}` | 彻底删除回收站中的归档素材 | 🔒 |
-| `PUT` | `/api/v1/assets/{asset_id}/deleted` | 将本人素材移入回收站或恢复 | 🔒 |
-| `GET` | `/api/v1/assets/{asset_id}/file` | 预览或下载已归档素材 | 🔒 |
-| `PUT` | `/api/v1/assets/{asset_id}/name` | 修改本人素材名称 | 🔒 |
-| `GET` | `/api/v1/assets/{asset_id}/preview` | 受控公共原片预览 | 🔒 |
-| `PUT` | `/api/v1/assets/{asset_id}/sharing` | 分享或取消分享本人原片 | 🔒 |
-| `GET` | `/api/v1/assets/{asset_id}/stream` | 浏览器兼容视频预览（派生文件，不改原片） | 🔒 |
-| `GET` | `/api/v1/assets/{asset_id}/thumbnail` | 读取归档素材缩略图 | 🔒 |
-
-#### `GET /api/v1/assets`
-
-**归档素材列表与空间占用**
-
-| 参数 | 位置 | 类型 | 必填 | 说明 |
-|---|---|---|---|---|
-| `category` | query | `"all" | "source" | "character" | "product" | "scene" | "audio"` | 否 |  |
-| `scope` | query | `"mine" | "public" | "trash"` | 否 |  |
-| `keyword` | query | `string` | 否 |  |
-| `state` | query | `"all" | "private" | "shared"` | 否 |  |
-| `page` | query | `number` | 否 |  |
-| `pageSize` | query | `number` | 否 |  |
-
-**响应** `ApiResponse<ArchiveList>`（前端取 `res.data`）
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `items` | `ArchivedAsset[]` | 是 |  |
-| `total` | `number` | 是 |  |
-| `usedBytes` | `number` | 是 |  |
-| `quotaBytes` | `number` | 否 |  |
-| `ownerUsedBytes` | `number` | 否 |  |
-| `page` | `number` | 否 |  |
-| `pageSize` | `number` | 否 |  |
-
-#### `POST /api/v1/assets/import`
-
-**从 Z 盘 inbox 登记现有素材**
-
-**请求体** `ImportAsset`
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `relativePath` | `string` | 是 |  |
-| `category` | `"source" \| "character" \| "product" \| "scene" \| "audio"` | 是 |  |
-
-**响应** `ApiResponse<ArchivedAsset>`（前端取 `res.data`）
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `id` | `string` | 是 |  |
-| `name` | `string` | 是 |  |
-| `category` | `"source" \| "character" \| "product" \| "scene" \| "audio"` | 是 |  |
-| `type` | `"image" \| "video" \| "audio"` | 是 |  |
-| `mimeType` | `string` | 是 |  |
-| `sizeBytes` | `number` | 是 |  |
-| `path` | `string` | 是 |  |
-| `sha256` | `string` | 是 |  |
-| `createdAt` | `string` | 是 |  |
-| `width` | `number` | 否 |  |
-| `height` | `number` | 否 |  |
-| `duration` | `number` | 否 |  |
-| `hasAudio` | `boolean` | 否 |  |
-| `url` | `string` | 是 |  |
-| `previewUrl` | `string \| null` | 否 |  |
-| `ownerId` | `string` | 否 |  |
-| `shared` | `boolean` | 否 |  |
-| `sharedAt` | `string \| null` | 否 |  |
-| `deletedAt` | `string \| null` | 否 |  |
-| `stateVersion` | `number` | 否 |  |
-| `editable` | `boolean` | 否 |  |
-| `downloadAllowed` | `boolean` | 否 |  |
-
-#### `POST /api/v1/assets/upload`
-
-**流式上传素材至归档盘**
-
-| 参数 | 位置 | 类型 | 必填 | 说明 |
-|---|---|---|---|---|
-| `category` | query | `"source" | "character" | "product" | "scene" | "audio"` | 是 |  |
-| `filename` | query | `string` | 是 |  |
-
-**响应** `ApiResponse<ArchivedAsset>`（前端取 `res.data`）
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `id` | `string` | 是 |  |
-| `name` | `string` | 是 |  |
-| `category` | `"source" \| "character" \| "product" \| "scene" \| "audio"` | 是 |  |
-| `type` | `"image" \| "video" \| "audio"` | 是 |  |
-| `mimeType` | `string` | 是 |  |
-| `sizeBytes` | `number` | 是 |  |
-| `path` | `string` | 是 |  |
-| `sha256` | `string` | 是 |  |
-| `createdAt` | `string` | 是 |  |
-| `width` | `number` | 否 |  |
-| `height` | `number` | 否 |  |
-| `duration` | `number` | 否 |  |
-| `hasAudio` | `boolean` | 否 |  |
-| `url` | `string` | 是 |  |
-| `previewUrl` | `string \| null` | 否 |  |
-| `ownerId` | `string` | 否 |  |
-| `shared` | `boolean` | 否 |  |
-| `sharedAt` | `string \| null` | 否 |  |
-| `deletedAt` | `string \| null` | 否 |  |
-| `stateVersion` | `number` | 否 |  |
-| `editable` | `boolean` | 否 |  |
-| `downloadAllowed` | `boolean` | 否 |  |
-
-#### `GET /api/v1/assets/{asset_id}`
-
-**读取本人或共享原片详情**
-
-| 参数 | 位置 | 类型 | 必填 | 说明 |
-|---|---|---|---|---|
-| `asset_id` | path | `string` | 是 |  |
-
-**响应** `ApiResponse<ArchivedAsset>`（前端取 `res.data`）
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `id` | `string` | 是 |  |
-| `name` | `string` | 是 |  |
-| `category` | `"source" \| "character" \| "product" \| "scene" \| "audio"` | 是 |  |
-| `type` | `"image" \| "video" \| "audio"` | 是 |  |
-| `mimeType` | `string` | 是 |  |
-| `sizeBytes` | `number` | 是 |  |
-| `path` | `string` | 是 |  |
-| `sha256` | `string` | 是 |  |
-| `createdAt` | `string` | 是 |  |
-| `width` | `number` | 否 |  |
-| `height` | `number` | 否 |  |
-| `duration` | `number` | 否 |  |
-| `hasAudio` | `boolean` | 否 |  |
-| `url` | `string` | 是 |  |
-| `previewUrl` | `string \| null` | 否 |  |
-| `ownerId` | `string` | 否 |  |
-| `shared` | `boolean` | 否 |  |
-| `sharedAt` | `string \| null` | 否 |  |
-| `deletedAt` | `string \| null` | 否 |  |
-| `stateVersion` | `number` | 否 |  |
-| `editable` | `boolean` | 否 |  |
-| `downloadAllowed` | `boolean` | 否 |  |
-
-#### `DELETE /api/v1/assets/{asset_id}`
-
-**彻底删除回收站中的归档素材**
-
-清空单条回收站记录。与 `PUT /deleted` 分成两步：软删可恢复，真删不可逆。
-
-| 参数 | 位置 | 类型 | 必填 | 说明 |
-|---|---|---|---|---|
-| `asset_id` | path | `string` | 是 |  |
-
-**响应** `ApiResponse<unknown>`（前端取 `res.data`）
-
-#### `PUT /api/v1/assets/{asset_id}/deleted`
-
-**将本人素材移入回收站或恢复**
-
-| 参数 | 位置 | 类型 | 必填 | 说明 |
-|---|---|---|---|---|
-| `asset_id` | path | `string` | 是 |  |
-
-**请求体** `ArchiveChange`
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `expectedVersion` | `number` | 是 |  |
-| `name` | `string \| null` | 否 |  |
-| `shared` | `boolean \| null` | 否 |  |
-| `deleted` | `boolean \| null` | 否 |  |
-
-**响应** `ApiResponse<ArchivedAsset>`（前端取 `res.data`）
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `id` | `string` | 是 |  |
-| `name` | `string` | 是 |  |
-| `category` | `"source" \| "character" \| "product" \| "scene" \| "audio"` | 是 |  |
-| `type` | `"image" \| "video" \| "audio"` | 是 |  |
-| `mimeType` | `string` | 是 |  |
-| `sizeBytes` | `number` | 是 |  |
-| `path` | `string` | 是 |  |
-| `sha256` | `string` | 是 |  |
-| `createdAt` | `string` | 是 |  |
-| `width` | `number` | 否 |  |
-| `height` | `number` | 否 |  |
-| `duration` | `number` | 否 |  |
-| `hasAudio` | `boolean` | 否 |  |
-| `url` | `string` | 是 |  |
-| `previewUrl` | `string \| null` | 否 |  |
-| `ownerId` | `string` | 否 |  |
-| `shared` | `boolean` | 否 |  |
-| `sharedAt` | `string \| null` | 否 |  |
-| `deletedAt` | `string \| null` | 否 |  |
-| `stateVersion` | `number` | 否 |  |
-| `editable` | `boolean` | 否 |  |
-| `downloadAllowed` | `boolean` | 否 |  |
-
-#### `GET /api/v1/assets/{asset_id}/file`
-
-**预览或下载已归档素材**
-
-| 参数 | 位置 | 类型 | 必填 | 说明 |
-|---|---|---|---|---|
-| `asset_id` | path | `string` | 是 |  |
-
-**响应** `ApiResponse<unknown>`（前端取 `res.data`）
-
-#### `PUT /api/v1/assets/{asset_id}/name`
-
-**修改本人素材名称**
-
-| 参数 | 位置 | 类型 | 必填 | 说明 |
-|---|---|---|---|---|
-| `asset_id` | path | `string` | 是 |  |
-
-**请求体** `ArchiveChange`
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `expectedVersion` | `number` | 是 |  |
-| `name` | `string \| null` | 否 |  |
-| `shared` | `boolean \| null` | 否 |  |
-| `deleted` | `boolean \| null` | 否 |  |
-
-**响应** `ApiResponse<ArchivedAsset>`（前端取 `res.data`）
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `id` | `string` | 是 |  |
-| `name` | `string` | 是 |  |
-| `category` | `"source" \| "character" \| "product" \| "scene" \| "audio"` | 是 |  |
-| `type` | `"image" \| "video" \| "audio"` | 是 |  |
-| `mimeType` | `string` | 是 |  |
-| `sizeBytes` | `number` | 是 |  |
-| `path` | `string` | 是 |  |
-| `sha256` | `string` | 是 |  |
-| `createdAt` | `string` | 是 |  |
-| `width` | `number` | 否 |  |
-| `height` | `number` | 否 |  |
-| `duration` | `number` | 否 |  |
-| `hasAudio` | `boolean` | 否 |  |
-| `url` | `string` | 是 |  |
-| `previewUrl` | `string \| null` | 否 |  |
-| `ownerId` | `string` | 否 |  |
-| `shared` | `boolean` | 否 |  |
-| `sharedAt` | `string \| null` | 否 |  |
-| `deletedAt` | `string \| null` | 否 |  |
-| `stateVersion` | `number` | 否 |  |
-| `editable` | `boolean` | 否 |  |
-| `downloadAllowed` | `boolean` | 否 |  |
-
-#### `GET /api/v1/assets/{asset_id}/preview`
-
-**受控公共原片预览**
-
-| 参数 | 位置 | 类型 | 必填 | 说明 |
-|---|---|---|---|---|
-| `asset_id` | path | `string` | 是 |  |
-
-**响应** `ApiResponse<unknown>`（前端取 `res.data`）
-
-#### `PUT /api/v1/assets/{asset_id}/sharing`
-
-**分享或取消分享本人原片**
-
-| 参数 | 位置 | 类型 | 必填 | 说明 |
-|---|---|---|---|---|
-| `asset_id` | path | `string` | 是 |  |
-
-**请求体** `ArchiveChange`
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `expectedVersion` | `number` | 是 |  |
-| `name` | `string \| null` | 否 |  |
-| `shared` | `boolean \| null` | 否 |  |
-| `deleted` | `boolean \| null` | 否 |  |
-
-**响应** `ApiResponse<ArchivedAsset>`（前端取 `res.data`）
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `id` | `string` | 是 |  |
-| `name` | `string` | 是 |  |
-| `category` | `"source" \| "character" \| "product" \| "scene" \| "audio"` | 是 |  |
-| `type` | `"image" \| "video" \| "audio"` | 是 |  |
-| `mimeType` | `string` | 是 |  |
-| `sizeBytes` | `number` | 是 |  |
-| `path` | `string` | 是 |  |
-| `sha256` | `string` | 是 |  |
-| `createdAt` | `string` | 是 |  |
-| `width` | `number` | 否 |  |
-| `height` | `number` | 否 |  |
-| `duration` | `number` | 否 |  |
-| `hasAudio` | `boolean` | 否 |  |
-| `url` | `string` | 是 |  |
-| `previewUrl` | `string \| null` | 否 |  |
-| `ownerId` | `string` | 否 |  |
-| `shared` | `boolean` | 否 |  |
-| `sharedAt` | `string \| null` | 否 |  |
-| `deletedAt` | `string \| null` | 否 |  |
-| `stateVersion` | `number` | 否 |  |
-| `editable` | `boolean` | 否 |  |
-| `downloadAllowed` | `boolean` | 否 |  |
-
-#### `GET /api/v1/assets/{asset_id}/stream`
-
-**浏览器兼容视频预览（派生文件，不改原片）**
-
-| 参数 | 位置 | 类型 | 必填 | 说明 |
-|---|---|---|---|---|
-| `asset_id` | path | `string` | 是 |  |
-
-**响应** `ApiResponse<unknown>`（前端取 `res.data`）
-
-#### `GET /api/v1/assets/{asset_id}/thumbnail`
-
-**读取归档素材缩略图**
-
-| 参数 | 位置 | 类型 | 必填 | 说明 |
-|---|---|---|---|---|
-| `asset_id` | path | `string` | 是 |  |
-
-**响应** `ApiResponse<unknown>`（前端取 `res.data`）
-
-### 4.5 生图（3 个）
+### 4.4 生图（3 个）
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
@@ -1727,7 +1380,7 @@ Authorization: Bearer <accessToken>
 | `id` | `string` | 是 | 生图记录 ID |
 | `status` | `string` | 是 | 重试后的状态，固定为 `queued` |
 
-### 4.6 模板（23 个）
+### 4.5 模板（23 个）
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
@@ -1815,10 +1468,8 @@ Authorization: Bearer <accessToken>
 | `expectedRevision` | `number` | 否 |  |
 | `kind` | `"character" \| "product" \| "scene"` | 是 |  |
 | `name` | `string` | 否 |  |
-| `referenceIds` | `string[]` | 否 |  |
-| `coverReferenceId` | `string \| null` | 否 |  |
-| `referenceLibraryIds` | `string[]` | 否 |  |
-| `coverLibraryId` | `string \| null` | 否 | 资产库 v2 封面的 asset id；与 coverReferenceId 互斥 |
+| `referenceLibraryIds` | `string[]` | 否 | 封装用的参考图 id，按顺序 |
+| `coverLibraryId` | `string \| null` | 否 | 封面的 asset id；必须出现在 referenceLibraryIds 里 |
 | `wardrobeMode` | `"preserve" \| "reference"` | 否 |  |
 | `features` | `string` | 否 |  |
 | `instructions` | `string` | 否 |  |
@@ -1835,7 +1486,6 @@ Authorization: Bearer <accessToken>
 | `name` | `string` | 是 |  |
 | `referenceIds` | `string[]` | 是 |  |
 | `coverReferenceId` | `string \| null` | 否 |  |
-| `referenceIdSpace` | `string` | 否 | referenceIds 属于哪套素材库（v1 / v2）。回写草稿时要按它选字段名：`v2` 填 referenceLibraryIds，其它填 referenceIds——否则一次编辑保存就会把这份封装重新解释成另一侧的同名 id。 |
 | `wardrobeMode` | `"preserve" \| "reference"` | 否 |  |
 | `features` | `string` | 否 |  |
 | `instructions` | `string` | 否 |  |
@@ -1874,7 +1524,6 @@ Authorization: Bearer <accessToken>
 | `name` | `string` | 是 |  |
 | `referenceIds` | `string[]` | 是 |  |
 | `coverReferenceId` | `string \| null` | 否 |  |
-| `referenceIdSpace` | `string` | 否 | referenceIds 属于哪套素材库（v1 / v2）。回写草稿时要按它选字段名：`v2` 填 referenceLibraryIds，其它填 referenceIds——否则一次编辑保存就会把这份封装重新解释成另一侧的同名 id。 |
 | `wardrobeMode` | `"preserve" \| "reference"` | 否 |  |
 | `features` | `string` | 否 |  |
 | `instructions` | `string` | 否 |  |
@@ -1925,7 +1574,6 @@ Authorization: Bearer <accessToken>
 | `name` | `string` | 是 |  |
 | `referenceIds` | `string[]` | 是 |  |
 | `coverReferenceId` | `string \| null` | 否 |  |
-| `referenceIdSpace` | `string` | 否 | referenceIds 属于哪套素材库（v1 / v2）。回写草稿时要按它选字段名：`v2` 填 referenceLibraryIds，其它填 referenceIds——否则一次编辑保存就会把这份封装重新解释成另一侧的同名 id。 |
 | `wardrobeMode` | `"preserve" \| "reference"` | 否 |  |
 | `features` | `string` | 否 |  |
 | `instructions` | `string` | 否 |  |
@@ -1953,8 +1601,7 @@ Authorization: Bearer <accessToken>
 | `channel` | `"libtv" \| "bailian" \| "bailian-prime"` | 否 |  |
 | `kind` | `"character" \| "product" \| "scene"` | 是 |  |
 | `target` | `string` | 否 |  |
-| `sourceId` | `string` | 否 | 旧素材库的原片 id；与 sourceLibraryId 互斥（同时给直接 400） |
-| `sourceLibraryId` | `string \| null` | 否 | 资产库 v2 的原片 id；与 sourceId 互斥 |
+| `sourceLibraryId` | `string \| null` | 否 | 原片（资产库里的视频）id |
 | `videoTemplateId` | `string \| null` | 否 |  |
 | `scenePrompt` | `string \| null` | 否 | 文字换场景的描述；省略使用模板默认值，空白拒绝 |
 | `referenceIds` | `string[]` | 否 |  |
@@ -2329,8 +1976,7 @@ Authorization: Bearer <accessToken>
 | `description` | `string` | 否 | 模板说明 |
 | `prompt` | `string` | 是 | 固定提示词原文，含 {{Mixed N}} 占位符 |
 | `sourceVideoName` | `string` | 否 | 样片文件名 |
-| `sourceVideoAssetId` | `string \| null` | 否 | 样片在素材库中的 asset id |
-| `sourceVideoIdSpace` | `"v1" \| "v2"` | 否 | 样片 id 属于哪套素材库：v1 是旧素材表，v2 是资产库。两套 id 都是 32 位 hex，**不能靠形状推断**，所以必须显式声明；缺省 v1 让旧调用一个字都不用改 |
+| `sourceVideoAssetId` | `string \| null` | 否 | 样片在资产库中的 asset id |
 | `sourceVideoPath` | `string` | 否 | 样片本地路径（可选） |
 | `sourceDurationSec` | `number` | 否 | 样片真实时长，用于提示与档位说明 |
 | `aspectRatio` | `string` | 否 | 输出画幅 |
@@ -2354,7 +2000,6 @@ Authorization: Bearer <accessToken>
 | `promptSha256` | `string` | 是 | 提示词 sha256，防止文字被悄悄改掉 |
 | `sourceVideoName` | `string` | 是 |  |
 | `sourceVideoAssetId` | `string \| null` | 否 |  |
-| `sourceVideoIdSpace` | `string` | 否 |  |
 | `sourceVideoPath` | `string` | 是 |  |
 | `sourceDurationSec` | `number` | 是 |  |
 | `aspectRatio` | `string` | 是 |  |
@@ -2390,7 +2035,6 @@ Authorization: Bearer <accessToken>
 | `promptSha256` | `string` | 是 | 提示词 sha256，防止文字被悄悄改掉 |
 | `sourceVideoName` | `string` | 是 |  |
 | `sourceVideoAssetId` | `string \| null` | 否 |  |
-| `sourceVideoIdSpace` | `string` | 否 |  |
 | `sourceVideoPath` | `string` | 是 |  |
 | `sourceDurationSec` | `number` | 是 |  |
 | `aspectRatio` | `string` | 是 |  |
@@ -2420,8 +2064,7 @@ Authorization: Bearer <accessToken>
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `sourceVideoAssetId` | `string` | 是 | 原片 id：v1 是素材库里 category=source 的行，v2 是资产库里的视频 |
-| `sourceVideoIdSpace` | `"v1" \| "v2"` | 否 | 原片 id 属于哪套素材库；缺省 v1 |
+| `sourceVideoAssetId` | `string` | 是 | 原片 id（资产库里的视频） |
 
 **响应** `ApiResponse<VideoTemplateOut>`（前端取 `res.data`）
 
@@ -2435,7 +2078,6 @@ Authorization: Bearer <accessToken>
 | `promptSha256` | `string` | 是 | 提示词 sha256，防止文字被悄悄改掉 |
 | `sourceVideoName` | `string` | 是 |  |
 | `sourceVideoAssetId` | `string \| null` | 否 |  |
-| `sourceVideoIdSpace` | `string` | 否 |  |
 | `sourceVideoPath` | `string` | 是 |  |
 | `sourceDurationSec` | `number` | 是 |  |
 | `aspectRatio` | `string` | 是 |  |
@@ -2471,7 +2113,6 @@ Authorization: Bearer <accessToken>
 | `promptSha256` | `string` | 是 | 提示词 sha256，防止文字被悄悄改掉 |
 | `sourceVideoName` | `string` | 是 |  |
 | `sourceVideoAssetId` | `string \| null` | 否 |  |
-| `sourceVideoIdSpace` | `string` | 否 |  |
 | `sourceVideoPath` | `string` | 是 |  |
 | `sourceDurationSec` | `number` | 是 |  |
 | `aspectRatio` | `string` | 是 |  |
@@ -2519,7 +2160,6 @@ Authorization: Bearer <accessToken>
 | `promptSha256` | `string` | 是 | 提示词 sha256，防止文字被悄悄改掉 |
 | `sourceVideoName` | `string` | 是 |  |
 | `sourceVideoAssetId` | `string \| null` | 否 |  |
-| `sourceVideoIdSpace` | `string` | 否 |  |
 | `sourceVideoPath` | `string` | 是 |  |
 | `sourceDurationSec` | `number` | 是 |  |
 | `aspectRatio` | `string` | 是 |  |
@@ -2535,7 +2175,7 @@ Authorization: Bearer <accessToken>
 | `createdAt` | `string` | 是 |  |
 | `updatedAt` | `string` | 是 |  |
 
-### 4.7 分镜模板（1 个）
+### 4.6 分镜模板（1 个）
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
@@ -2552,7 +2192,7 @@ Authorization: Bearer <accessToken>
 | `items` | `StoryboardOut[]` | 否 |  |
 | `total` | `number` | 否 |  |
 
-### 4.8 镜头库（1 个）
+### 4.7 镜头库（1 个）
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
@@ -2573,7 +2213,7 @@ Authorization: Bearer <accessToken>
 | `items` | `ShotPresetOut[]` | 否 |  |
 | `total` | `number` | 否 |  |
 
-### 4.9 系统（2 个）
+### 4.8 系统（2 个）
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
@@ -2615,7 +2255,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `queueSize` | `number` | 是 |  |
 | `checks` | `RuntimeCheckOut[]` | 否 |  |
 
-### 4.10 导出（6 个）
+### 4.9 导出（6 个）
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
@@ -2719,7 +2359,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 
 **响应** `ApiResponse<unknown>`（前端取 `res.data`）
 
-### 4.11 资产库（45 个）
+### 4.10 资产库（45 个）
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
@@ -4087,7 +3727,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `rejectReason` | `string \| null` | 否 |  |
 | `trashedFromState` | `string \| null` | 否 |  |
 
-### 4.12 模型驱动（6 个）
+### 4.11 模型驱动（6 个）
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
@@ -4198,7 +3838,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `message` | `string` | 否 |  |
 | `data` | `modules__model_driver__schema__TaskOut \| null` | 否 |  |
 
-### 4.13 封装模板（8 个）
+### 4.12 封装模板（8 个）
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
@@ -4247,7 +3887,6 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `description` | `string` | 否 | 模板说明 |
 | `prompt` | `string` | 是 | 固定提示词原文，含 {{Mixed N}} 占位符 |
 | `sourceVideoAssetId` | `string` | 是 | 参考视频的资产库 id |
-| `sourceVideoIdSpace` | `"v1" \| "v2"` | 否 | 参考视频 id 属于哪套库 |
 | `sourceDurationSec` | `number` | 否 | 参考视频时长（秒） |
 | `aspectRatio` | `string` | 否 | 输出画幅 |
 | `slots` | `TemplatePackSlotIn[]` | 是 | 槽位清单；第 1 项固定是参考视频 |
@@ -4264,7 +3903,6 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `prompt` | `string` | 是 |  |
 | `promptSha256` | `string` | 是 | 提示词 sha256，防止文字被悄悄改掉 |
 | `sourceVideoAssetId` | `string` | 是 |  |
-| `sourceVideoIdSpace` | `string` | 否 |  |
 | `sourceDurationSec` | `number` | 否 |  |
 | `aspectRatio` | `string` | 否 |  |
 | `coverUrl` | `string` | 否 |  |
@@ -4294,7 +3932,6 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `prompt` | `string` | 是 |  |
 | `promptSha256` | `string` | 是 | 提示词 sha256，防止文字被悄悄改掉 |
 | `sourceVideoAssetId` | `string` | 是 |  |
-| `sourceVideoIdSpace` | `string` | 否 |  |
 | `sourceDurationSec` | `number` | 否 |  |
 | `aspectRatio` | `string` | 否 |  |
 | `coverUrl` | `string` | 否 |  |
@@ -4353,7 +3990,6 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `prompt` | `string` | 是 |  |
 | `promptSha256` | `string` | 是 | 提示词 sha256，防止文字被悄悄改掉 |
 | `sourceVideoAssetId` | `string` | 是 |  |
-| `sourceVideoIdSpace` | `string` | 否 |  |
 | `sourceDurationSec` | `number` | 否 |  |
 | `aspectRatio` | `string` | 否 |  |
 | `coverUrl` | `string` | 否 |  |
@@ -4391,7 +4027,6 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `prompt` | `string` | 是 |  |
 | `promptSha256` | `string` | 是 | 提示词 sha256，防止文字被悄悄改掉 |
 | `sourceVideoAssetId` | `string` | 是 |  |
-| `sourceVideoIdSpace` | `string` | 否 |  |
 | `sourceDurationSec` | `number` | 否 |  |
 | `aspectRatio` | `string` | 否 |  |
 | `coverUrl` | `string` | 否 |  |
@@ -4423,7 +4058,6 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `prompt` | `string` | 是 |  |
 | `promptSha256` | `string` | 是 | 提示词 sha256，防止文字被悄悄改掉 |
 | `sourceVideoAssetId` | `string` | 是 |  |
-| `sourceVideoIdSpace` | `string` | 否 |  |
 | `sourceDurationSec` | `number` | 否 |  |
 | `aspectRatio` | `string` | 否 |  |
 | `coverUrl` | `string` | 否 |  |
@@ -4465,60 +4099,6 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 ---
 
 ## 5. 数据模型
-
-### `ArchiveChange`
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `expectedVersion` | `number` | 是 |  |
-| `name` | `string \| null` | 否 |  |
-| `shared` | `boolean \| null` | 否 |  |
-| `deleted` | `boolean \| null` | 否 |  |
-
-### `ArchiveList`
-
-列表出参。
-
-**没有 `root`**：那是本地归档根的绝对路径，远端驱动下根本不存在，
-前端也早已不再展示（原来「归档位置」那一行在切 S3 后恒为空）。
-要位置信息就用 `storageKey`，它才是与驱动无关的那一层。
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `items` | `ArchivedAsset[]` | 是 |  |
-| `total` | `number` | 是 |  |
-| `usedBytes` | `number` | 是 |  |
-| `quotaBytes` | `number` | 否 |  |
-| `ownerUsedBytes` | `number` | 否 |  |
-| `page` | `number` | 否 |  |
-| `pageSize` | `number` | 否 |  |
-
-### `ArchivedAsset`
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `id` | `string` | 是 |  |
-| `name` | `string` | 是 |  |
-| `category` | `"source" \| "character" \| "product" \| "scene" \| "audio"` | 是 |  |
-| `type` | `"image" \| "video" \| "audio"` | 是 |  |
-| `mimeType` | `string` | 是 |  |
-| `sizeBytes` | `number` | 是 |  |
-| `path` | `string` | 是 |  |
-| `sha256` | `string` | 是 |  |
-| `createdAt` | `string` | 是 |  |
-| `width` | `number` | 否 |  |
-| `height` | `number` | 否 |  |
-| `duration` | `number` | 否 |  |
-| `hasAudio` | `boolean` | 否 |  |
-| `url` | `string` | 是 |  |
-| `previewUrl` | `string \| null` | 否 |  |
-| `ownerId` | `string` | 否 |  |
-| `shared` | `boolean` | 否 |  |
-| `sharedAt` | `string \| null` | 否 |  |
-| `deletedAt` | `string \| null` | 否 |  |
-| `stateVersion` | `number` | 否 |  |
-| `editable` | `boolean` | 否 |  |
-| `downloadAllowed` | `boolean` | 否 |  |
 
 ### `AspectRatio`（枚举）
 
@@ -4837,7 +4417,6 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `aspectRatio` | `string` | 否 |  |
 | `stylePreset` | `string` | 否 |  |
 | `seed` | `string` | 否 |  |
-| `referenceAssetIds` | `string[]` | 否 |  |
 | `referenceLibraryIds` | `string[]` | 否 |  |
 | `packId` | `string` | 否 |  |
 | `packVersion` | `number` | 否 |  |
@@ -4949,13 +4528,6 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 |---|---|---|---|
 | `id` | `string` | 是 | 生图记录 ID |
 | `status` | `string` | 是 | 重试后的状态，固定为 `queued` |
-
-### `ImportAsset`
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `relativePath` | `string` | 是 |  |
-| `category` | `"source" \| "character" \| "product" \| "scene" \| "audio"` | 是 |  |
 
 ### `IngestOut`
 
@@ -5136,7 +4708,6 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `aspectRatio` | `string` | 否 |  |
 | `stylePreset` | `string` | 否 |  |
 | `seed` | `string` | 否 |  |
-| `referenceAssetIds` | `string[]` | 否 |  |
 | `referenceLibraryIds` | `string[]` | 否 |  |
 | `packId` | `string` | 否 |  |
 | `packVersion` | `number` | 否 |  |
@@ -5300,10 +4871,8 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `expectedRevision` | `number` | 否 |  |
 | `kind` | `"character" \| "product" \| "scene"` | 是 |  |
 | `name` | `string` | 否 |  |
-| `referenceIds` | `string[]` | 否 |  |
-| `coverReferenceId` | `string \| null` | 否 |  |
-| `referenceLibraryIds` | `string[]` | 否 |  |
-| `coverLibraryId` | `string \| null` | 否 | 资产库 v2 封面的 asset id；与 coverReferenceId 互斥 |
+| `referenceLibraryIds` | `string[]` | 否 | 封装用的参考图 id，按顺序 |
+| `coverLibraryId` | `string \| null` | 否 | 封面的 asset id；必须出现在 referenceLibraryIds 里 |
 | `wardrobeMode` | `"preserve" \| "reference"` | 否 |  |
 | `features` | `string` | 否 |  |
 | `instructions` | `string` | 否 |  |
@@ -5361,7 +4930,6 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `name` | `string` | 是 |  |
 | `referenceIds` | `string[]` | 是 |  |
 | `coverReferenceId` | `string \| null` | 否 |  |
-| `referenceIdSpace` | `string` | 否 | referenceIds 属于哪套素材库（v1 / v2）。回写草稿时要按它选字段名：`v2` 填 referenceLibraryIds，其它填 referenceIds——否则一次编辑保存就会把这份封装重新解释成另一侧的同名 id。 |
 | `wardrobeMode` | `"preserve" \| "reference"` | 否 |  |
 | `features` | `string` | 否 |  |
 | `instructions` | `string` | 否 |  |
@@ -5465,8 +5033,7 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `channel` | `"libtv" \| "bailian" \| "bailian-prime"` | 否 |  |
 | `kind` | `"character" \| "product" \| "scene"` | 是 |  |
 | `target` | `string` | 否 |  |
-| `sourceId` | `string` | 否 | 旧素材库的原片 id；与 sourceLibraryId 互斥（同时给直接 400） |
-| `sourceLibraryId` | `string \| null` | 否 | 资产库 v2 的原片 id；与 sourceId 互斥 |
+| `sourceLibraryId` | `string \| null` | 否 | 原片（资产库里的视频）id |
 | `videoTemplateId` | `string \| null` | 否 |  |
 | `scenePrompt` | `string \| null` | 否 | 文字换场景的描述；省略使用模板默认值，空白拒绝 |
 | `referenceIds` | `string[]` | 否 |  |
@@ -5581,7 +5148,6 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `name` | `string` | 是 |  |
 | `referenceIds` | `string[]` | 是 |  |
 | `coverReferenceId` | `string \| null` | 否 |  |
-| `referenceIdSpace` | `string` | 否 | referenceIds 属于哪套素材库（v1 / v2）。回写草稿时要按它选字段名：`v2` 填 referenceLibraryIds，其它填 referenceIds——否则一次编辑保存就会把这份封装重新解释成另一侧的同名 id。 |
 | `wardrobeMode` | `"preserve" \| "reference"` | 否 |  |
 | `features` | `string` | 否 |  |
 | `instructions` | `string` | 否 |  |
@@ -6025,7 +5591,6 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `description` | `string` | 否 | 模板说明 |
 | `prompt` | `string` | 是 | 固定提示词原文，含 {{Mixed N}} 占位符 |
 | `sourceVideoAssetId` | `string` | 是 | 参考视频的资产库 id |
-| `sourceVideoIdSpace` | `"v1" \| "v2"` | 否 | 参考视频 id 属于哪套库 |
 | `sourceDurationSec` | `number` | 否 | 参考视频时长（秒） |
 | `aspectRatio` | `string` | 否 | 输出画幅 |
 | `slots` | `TemplatePackSlotIn[]` | 是 | 槽位清单；第 1 项固定是参考视频 |
@@ -6051,7 +5616,6 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `prompt` | `string` | 是 |  |
 | `promptSha256` | `string` | 是 | 提示词 sha256，防止文字被悄悄改掉 |
 | `sourceVideoAssetId` | `string` | 是 |  |
-| `sourceVideoIdSpace` | `string` | 否 |  |
 | `sourceDurationSec` | `number` | 否 |  |
 | `aspectRatio` | `string` | 否 |  |
 | `coverUrl` | `string` | 否 |  |
@@ -6079,8 +5643,7 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `token` | `string` | 是 | 占位符原文，如 {{Mixed 2}}；必须与 position 对应 |
 | `slotKind` | `"fixed" \| "filtered"` | 是 | fixed=钉死素材，filtered=声明准入规则 |
 | `label` | `string` | 否 | 槽位显示名 |
-| `assetId` | `string \| null` | 否 | fixed：钉死的素材 id |
-| `assetIdSpace` | `"v1" \| "v2"` | 否 | fixed：素材 id 属于哪套库；两套都是 32 位 hex，不能靠形状推断 |
+| `assetId` | `string \| null` | 否 | fixed：钉死的素材 id（资产库） |
 | `mediaType` | `"video" \| "image" \| "audio"` | 否 | fixed：素材类别 |
 | `filterKind` | `"video" \| "image" \| "audio" \| null` | 否 | filtered：素材类别（不含 text） |
 | `filterTagIds` | `string[]` | 否 | filtered：一级标签 id 列表；选中一级会展开成「自身+直属二级」 |
@@ -6098,7 +5661,6 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `slotKind` | `"fixed" \| "filtered"` | 是 |  |
 | `label` | `string` | 否 |  |
 | `assetId` | `string \| null` | 否 |  |
-| `assetIdSpace` | `string` | 否 |  |
 | `mediaType` | `string` | 否 |  |
 | `assetName` | `string` | 否 |  |
 | `filterKind` | `string` | 否 |  |
@@ -6277,8 +5839,7 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `sourceVideoAssetId` | `string` | 是 | 原片 id：v1 是素材库里 category=source 的行，v2 是资产库里的视频 |
-| `sourceVideoIdSpace` | `"v1" \| "v2"` | 否 | 原片 id 属于哪套素材库；缺省 v1 |
+| `sourceVideoAssetId` | `string` | 是 | 原片 id（资产库里的视频） |
 
 ### `VideoTemplateDraftIn`
 
@@ -6295,8 +5856,7 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `description` | `string` | 否 | 模板说明 |
 | `prompt` | `string` | 是 | 固定提示词原文，含 {{Mixed N}} 占位符 |
 | `sourceVideoName` | `string` | 否 | 样片文件名 |
-| `sourceVideoAssetId` | `string \| null` | 否 | 样片在素材库中的 asset id |
-| `sourceVideoIdSpace` | `"v1" \| "v2"` | 否 | 样片 id 属于哪套素材库：v1 是旧素材表，v2 是资产库。两套 id 都是 32 位 hex，**不能靠形状推断**，所以必须显式声明；缺省 v1 让旧调用一个字都不用改 |
+| `sourceVideoAssetId` | `string \| null` | 否 | 样片在资产库中的 asset id |
 | `sourceVideoPath` | `string` | 否 | 样片本地路径（可选） |
 | `sourceDurationSec` | `number` | 否 | 样片真实时长，用于提示与档位说明 |
 | `aspectRatio` | `string` | 否 | 输出画幅 |
@@ -6342,7 +5902,6 @@ mixedList 里的一项；下标 +1 就是 {{Mixed N}} 编号。
 | `promptSha256` | `string` | 是 | 提示词 sha256，防止文字被悄悄改掉 |
 | `sourceVideoName` | `string` | 是 |  |
 | `sourceVideoAssetId` | `string \| null` | 否 |  |
-| `sourceVideoIdSpace` | `string` | 否 |  |
 | `sourceVideoPath` | `string` | 是 |  |
 | `sourceDurationSec` | `number` | 是 |  |
 | `aspectRatio` | `string` | 是 |  |

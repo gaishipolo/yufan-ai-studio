@@ -68,15 +68,41 @@ class PackagingClient:
             raise ValueError("接口未返回成功结果，请检查服务日志")
         return body["data"]
 
-    def upload(self, file: Path, category: str):
+    def upload(self, file: Path, kind: str):
+        """上传一份素材，返回资产库 v2 的资产行。
+
+        视频必须走 `/library/source-videos`：那条路由落库时写死
+        `origin=template_source`，模板库正是靠这个来源把原片挑出来。其余类型走
+        `/library/assets/upload`。v1 的 `category` 参数随 `assets` 表下线——v2 只分
+        `kind`（文件类型）与 `origin`（来源，由服务端决定，不由调用方传）。
+        """
+        source = kind == "video"
         with file.open("rb") as handle:
             return self.request(
                 "POST",
-                "/assets/upload",
-                params={"category": category, "filename": file.name},
+                "/library/source-videos" if source else "/library/assets/upload",
+                params={"filename": file.name} if source else {"filename": file.name, "kind": kind},
                 content=handle,
                 headers={"Content-Type": "application/octet-stream"},
             )
+
+    def share_to_team(self, asset: dict):
+        """把原片共享到团队库。
+
+        账号带 `library:share:direct` 时服务端直接生效，否则只留下一条待审申请——
+        审批通过之前原片仍然只有自己能看见，所以调用方必须回读 `visibility` 复核，
+        不能凭「接口 200」就当共享成功。
+        """
+        return self.request(
+            "POST",
+            "/library/share-requests",
+            json={
+                "assetId": asset["id"],
+                "action": "share",
+                "target": "team",
+                "expectedVersion": asset.get("stateVersion", 0),
+            },
+        )
 
     def check_server(
         self, *, sharing=False, creating_packs=True, uploading=True, role_bindings=False,
@@ -98,13 +124,15 @@ class PackagingClient:
             raise ValueError("后端尚未加载文字换场景契约，请更新并重启后端后再执行")
         me = self.request("GET", "/identity/me")
         permissions = me.get("permissions", [])
-        required = ["asset:read", "template:read", "template:pack:manage"]
-        if uploading:
-            required.append("asset:create")
+        required = ["library:read", "template:read", "template:pack:manage"]
+        if uploading or creating_packs:
+            # 封装成员只能是「我上传的 / 我看得见的」资产，v2 把这两件事都收在
+            # `library:create` 上（v1 时代是 `asset:create` + `asset:reference:manage`）。
+            required.append("library:create")
         if creating_packs:
-            required.extend(["asset:reference:manage", "template:pack:publish"])
+            required.append("template:pack:publish")
         if sharing:
-            required.append("asset:share")
+            required.extend(["library:share", "library:share:direct"])
         missing = [
             permission
             for permission in required

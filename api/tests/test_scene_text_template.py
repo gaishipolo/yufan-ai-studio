@@ -92,7 +92,7 @@ def test_scene_prompt_only_flow_from_packaging_to_snapshot(client, tmp_path):
     template = get_template(item["videoTemplateId"])
     assert template.pack_id is None
     assert len(template.media_order) == 1 and template.media_order[0].type == "video"
-    base = {"kind": "scene", "sourceId": source["id"], "videoTemplateId": template.id}
+    base = {"kind": "scene", "sourceLibraryId": source["id"], "videoTemplateId": template.id}
     changed = "将背景换成海边落地窗会客厅，保持真实透视与原有人物。"
     prepared = []
     for text in (None, changed):

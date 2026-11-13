@@ -1,9 +1,14 @@
-import type { ArchivedAsset, ReplacementPack, VideoTemplateOut } from '@/shared/api/schema';
+import type { ReplacementPack, VideoTemplateOut } from '@/shared/api/schema';
 import { PACK_ROLES } from '@/entities/template/model/packRoles';
 import type { PromptMediaItem } from './PromptMediaView';
 import { fixedPackReferences, insertFixedMedia, withoutFixedReferences } from './fixedPackReferences';
 
-type Source = Pick<ArchivedAsset, 'id' | 'name' | 'url'> & Partial<Pick<ArchivedAsset, 'previewUrl'>>;
+/**
+ * 提示词预览只需要这四个字段，所以这里用结构类型而不是 `LibraryAssetOut`：
+ * 调用方传进来的是工作台的 `SourceVideo`（多几个字段），照契约写反而要在
+ * 调用点做一次无意义的投影。
+ */
+type Source = { id: string; name: string; url?: string | null; previewUrl?: string | null };
 
 /** 编辑时新点名的辅助槽位，必须按保存端 mediaOrder 的用途找图，不能取换包后的偶然顺序。 */
 export function templatePromptEditorMedia(template: VideoTemplateOut, source?: Source, pack?: ReplacementPack, currentPacks?: ReplacementPack[]): PromptMediaItem[] {

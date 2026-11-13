@@ -93,10 +93,8 @@ def test_from_generation_lands_in_draft_with_snapshot(
     assert generation["configuration"] == {"steps": 28}
     assert generation["sourceModule"] == "image"
     assert generation["sourceTaskId"] == "job-42"
-    # 契约名 `referenceAssetIds` 传进来的是 v2 资产 id：必须落到 v2 那列，
-    # 不能混进 v1 列（那列只服务 `import-archive` 的历史行）。
+    # v1 下线后只剩一列：`referenceLibraryIds` 就是它，不再有「另一列是不是空的」。
     assert generation["referenceLibraryIds"] == [uploaded["id"]]
-    assert generation["referenceAssetIds"] == []
 
     # 草稿只出现在草稿箱，不进个人库也不进选择器
     personal = client.get(
@@ -242,12 +240,15 @@ def test_snapshot_rejects_two_spellings_of_the_same_reference_column() -> None:
         )
 
 
-def test_snapshot_accepts_one_spelling_and_keeps_v1_separate() -> None:
-    """两种写法各自落到各自的列：v2 那列不会被 v1 的键串进来。
+def test_snapshot_accepts_either_spelling_of_the_reference_column() -> None:
+    """同一列的两个键名都能用，且落到同一个列名上。
 
-    键名照真实来源写：HTTP 进来的 `GenerationSnapshotIn` 是模型对象，读的是属性名
-    （snake）；流水线（生图 / 任务）传的是原始字典，生图用契约名 `referenceLibraryIds`。
+    HTTP 进来的 `GenerationSnapshotIn` 是模型对象，读的是属性名（snake）；
+    流水线（生图 / 任务）传的是原始字典，生图用契约名 `referenceLibraryIds`。
+    v1 那条独立的 `reference_asset_ids` 列已随 `assets` 表删除，所以这里只验
+    「两种写法归一」，不再验「互不串列」。
     """
-    values = _snapshot_values({"reference_asset_ids": ["old"], "referenceLibraryIds": ["new"]})
-    assert values["reference_asset_ids"] == ["old"]
-    assert values["reference_library_ids"] == ["new"]
+    assert _snapshot_values({"referenceLibraryIds": ["new"]})["reference_library_ids"] == ["new"]
+    assert (
+        _snapshot_values({"reference_library_ids": ["new"]})["reference_library_ids"] == ["new"]
+    )

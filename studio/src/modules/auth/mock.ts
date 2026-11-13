@@ -72,8 +72,8 @@ const CONTENT_PERMISSIONS = [
   'task:update',
   'template:read',
   'template:review',
-  'asset:create',
-  'asset:read',
+  'library:create',
+  'library:read',
 ];
 
 const accounts: MockAccount[] = [
@@ -115,7 +115,7 @@ const accounts: MockAccount[] = [
     createdAt: '2026-01-12T00:00:00.000Z',
     roles: [ROLE_VIEWER],
     permissions: [
-      'asset:read',
+      'library:read',
       'catalog:read',
       'image:read',
       'shot:read',

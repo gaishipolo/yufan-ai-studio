@@ -121,7 +121,7 @@ def test_product_template_uses_fixed_image_from_another_kind_of_pack(client) -> 
         json={
             "requestId": str(uuid4()),
             "kind": "product",
-            "sourceId": source["id"],
+            "sourceLibraryId": source["id"],
             "videoTemplateId": "template-1",
             "packId": base.id,
             "packVersion": 1,
@@ -153,7 +153,7 @@ def test_pack_name_search_metadata_save_reopen_prepare_and_revoke(client) -> Non
             "requestId": pack_id,
             "kind": "scene",
             "name": "海边场景封装",
-            "referenceIds": [image["id"]],
+            "referenceLibraryIds": [image["id"]],
             "bindings": [{"role": "main", "description": "不得附加这段描述"}],
         },
     )
@@ -211,7 +211,7 @@ def test_pack_name_search_metadata_save_reopen_prepare_and_revoke(client) -> Non
         json={
             "requestId": str(uuid4()),
             "kind": "scene",
-            "sourceId": source["id"],
+            "sourceLibraryId": source["id"],
             "videoTemplateId": template_id,
         },
     )
@@ -245,7 +245,7 @@ def test_pack_name_search_metadata_save_reopen_prepare_and_revoke(client) -> Non
         json={
             "requestId": str(uuid4()),
             "kind": "scene",
-            "sourceId": source["id"],
+            "sourceLibraryId": source["id"],
             "videoTemplateId": template_id,
         },
     )

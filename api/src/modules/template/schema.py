@@ -123,13 +123,8 @@ class PrepareReplacement(CamelModel):
     channel: ReplacementChannel = "libtv"
     kind: ReplacementKind
     target: str = Field(default="", max_length=160)
-    source_id: str = Field(
-        default="",
-        description="旧素材库的原片 id；与 sourceLibraryId 互斥（同时给直接 400）",
-    )
     source_library_id: str | None = Field(
-        default=None,
-        description="资产库 v2 的原片 id；与 sourceId 互斥",
+        default=None, description="原片（资产库里的视频）id"
     )
     video_template_id: str | None = Field(default=None, max_length=64)
     scene_prompt: str | None = Field(default=None, max_length=4000,
@@ -273,14 +268,6 @@ class ReplacementPack(CamelModel):
     name: str
     reference_ids: list[str]
     cover_reference_id: str | None = None
-    reference_id_space: str = Field(
-        default="",
-        description=(
-            "referenceIds 属于哪套素材库（v1 / v2）。回写草稿时要按它选字段名："
-            "`v2` 填 referenceLibraryIds，其它填 referenceIds——否则一次编辑保存"
-            "就会把这份封装重新解释成另一侧的同名 id。"
-        ),
-    )
     wardrobe_mode: Literal["preserve", "reference"] = "preserve"
     features: str = ""
     instructions: str = ""
@@ -306,14 +293,11 @@ class PackDraftIn(CamelModel):
     expected_revision: int = Field(default=0, ge=0)
     kind: ReplacementKind
     name: str = Field(default="", max_length=160)
-    reference_ids: list[str] = Field(default_factory=list, max_length=10)
-    cover_reference_id: str | None = None
-    # 资产库 v2 的等价字段。**按字段名判空间，不看 id 形状**——两套 id 都是
-    # 32 位 hex，靠猜只会让「模板库拿到的是哪一侧的图」变成隐式行为。
-    # 两组互斥：同时填直接 400，不做「谁优先」的静默选择。
-    reference_library_ids: list[str] = Field(default_factory=list, max_length=10)
+    reference_library_ids: list[str] = Field(
+        default_factory=list, max_length=10, description="封装用的参考图 id，按顺序"
+    )
     cover_library_id: str | None = Field(
-        default=None, description="资产库 v2 封面的 asset id；与 coverReferenceId 互斥"
+        default=None, description="封面的 asset id；必须出现在 referenceLibraryIds 里"
     )
     wardrobe_mode: Literal["preserve", "reference"] = "preserve"
     features: str = Field(default="", max_length=2000)

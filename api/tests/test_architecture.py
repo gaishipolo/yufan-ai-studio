@@ -270,13 +270,13 @@ def test_required_codes_are_declared_somewhere() -> None:
     """路由里 `require` 的权限码必须在**某个模块**的 `ModuleSpec` 里声明过。
 
     上面三条测试都只看「声明侧」，没有一条管「路由真的用了什么」。而拼错一个
-    字母、或者把 `asset:read` 写成 `assets:read`，声明的集合依然自洽，
+    字母、或者把 `library:read` 写成 `librarys:read`，声明的集合依然自洽，
     症状却是：超级管理员（`*`）一切正常，其他人永远 403。
     启动、doctor、契约生成、既有测试全都不报错——这种「只有一部分人会遇到」
     的问题最难查，所以在静态分析这一层拦住。
 
-    刻意不要求「必须自己声明」：`template` 的封装接口同时要求 `asset:read`
-    是组合语义（要封装素材，先得能看素材），跨模块借用权限码是允许的。
+    刻意不要求「必须自己声明」：`template` 的路由同时要求 `library:read`
+    是组合语义（要拿素材拼封装，先得能看素材），跨模块借用权限码是允许的。
     """
     all_declared = set(catalog.codes())
     problems = [
@@ -615,93 +615,13 @@ def test_every_kind_has_a_user_retry_exit() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# 素材引用来源完备性：唯一「漏一处就静默永久丢数据」的扩展点
+# 资产引用来源完备性：唯一「漏一处就静默永久丢数据」的扩展点
 # --------------------------------------------------------------------------- #
-_REFERENCE_FIELDS = frozenset({"reference_asset_ids", "reference_ids", "referenceIds"})
-
-
-def _reference_field_files() -> list[str]:
-    """找出所有声明了「装着 assets.id 的集合」字段的源码文件。
-
-    只看模型/契约层的字段定义（赋值 + 名字匹配），不看读它的 checker。
-    新增一个把 `assets.id` 存进自己表或 JSON 的模块，这个集合就会多一项。
-    """
-    found: set[str] = set()
-    for path in _python_files(SRC):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        for node in ast.walk(tree):
-            names: list[str] = []
-            if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
-                names.append(node.target.id)
-            elif isinstance(node, ast.Assign):
-                names.extend(t.id for t in node.targets if isinstance(t, ast.Name))
-            if any(name in _REFERENCE_FIELDS for name in names):
-                found.add(path.relative_to(SRC).as_posix())
-                break
-    return sorted(found)
-
-
-def test_every_asset_reference_writer_declares_a_source() -> None:
-    """任何写入 `assets.id` 的模块都必须在 ModuleSpec 里声明引用来源。
-
-    删除保护靠 `core/ports/assets.py` 聚合所有来源；漏登记一个来源，删除会
-    返回成功、引用方从此裂图，是不可逆且没有告警的失败。所以既要有运行时
-    fail-closed，也要在 CI 里对账「写入点 → 声明」这条静态链。
-    """
-    from api.discovery import active_modules
-
-    specs = active_modules()
-    declared = {
-        source.location.split(":", 1)[0]
-        for spec in specs
-        for source in spec.asset_reference_sources
-    }
-    by_module = {
-        spec.name for spec in specs if spec.asset_reference_sources
-    }
-
-    uncovered: list[str] = []
-    for relative in _reference_field_files():
-        parts = relative.split("/")
-        if parts[0] == "modules":
-            if parts[1] not in by_module:
-                uncovered.append(f"{relative}（模块 {parts[1]} 未声明来源）")
-        elif relative not in declared:
-            # core 层定义、被业务模块持久化的共享模型，必须由某个声明显式指认
-            uncovered.append(f"{relative}（共享模型，没有任何来源声明指向它）")
-
-    missing_files = sorted(path for path in declared if not (SRC / path).is_file())
-    details = uncovered + [f"声明指向不存在的文件：{path}" for path in missing_files]
-    assert not details, (
-        "引用来源对账失败：\n"
-        + "\n".join(f"  - {item}" for item in details)
-        + "\n在对应模块的 ModuleSpec.asset_reference_sources 里补声明，并在 "
-        "core/ports/assets.py 的聚合口注册实现；否则删除会被 fail-closed 挡住。"
-    )
-
-
-def test_reference_sources_are_complete_after_discovery() -> None:
-    """discover_modules 之后必须零缺口：声明集合 ⊆ 已注册实现。"""
-    from api.discovery import active_modules
-    from core.ports import assets as port
-
-    port.reset_asset_reference_checker()
-    specs = active_modules()
-    # 模块 import 期已注册过；测试间可能清空了全局表，这里按声明重新装配一次。
-    for spec in specs:
-        if spec.asset_reference_sources:
-            port.bind_asset_reference_sources(spec.name, spec.asset_reference_sources)
-    assert port.declared_reference_sources(), "期望集合为空：没有模块声明引用来源"
-    assert not port.reference_source_gaps(), (
-        f"删除会被拒绝：{port.reference_source_gaps()}"
-    )
-
-
-# --------------------------------------------------------------------------- #
-# v2 资产（`library_assets.id`）引用来源完备性：与上面两条**不能合并**
-# --------------------------------------------------------------------------- #
-#: 装着 v2 资产 id 的字段名。**精确匹配**，不做子串匹配 —— 与 `_REFERENCE_FIELDS`
-#: （v1 `assets.id`）是两套 id 空间，混在一起会把「A 引用了同名 id」当成「B 被引用」。
+#: 装着 v2 资产 id 的字段名。**精确匹配**，不做子串匹配 ——
+#: `reference_ids` / `referenceIds`（模板封装的参考图）也是 v2 id，但它们是
+#: `TemplatePackVersion` 自己的冻结快照字段，由 `template` 模块声明来源；
+#: `reference_asset_ids` 则是已下线的 v1 列名（`assets` 表 2026-11-13 删除），
+#: 留在集合里只会让这个字段名在守卫里继续「有意义」。
 #:
 #: 刻意**不含** `text_library_ids` / `textLibraryIds`：文本素材的快照冻结了正文
 #: 本身，删掉资产既不影响历史展示，也不影响已经注入过的提示词。把它算成引用会
@@ -989,4 +909,4 @@ def test_require_scan_is_not_vacuous() -> None:
         "扫描口径退化了，路由权限守卫实际上没在检查"
     )
     assert len(codes) >= 15, f"只扫到 {len(codes)} 个字面量权限码（预期 ≥15）：解析口径变了"
-    assert "asset:read" in codes, "连确定以字面量出现的 asset:read 都没扫到，文件定位有问题"
+    assert "library:read" in codes, "连确定以字面量出现的 library:read 都没扫到，文件定位有问题"

@@ -12,6 +12,7 @@ from typing import Any
 from urllib.parse import urlencode
 from uuid import NAMESPACE_URL, uuid5
 
+from modules.library.schema import SOURCE_VIDEO_ORIGINS
 from modules.template.pack_roles import BASE_ROLE
 from template_packager.client import PackagingClient
 from template_packager.manifest import LoadedManifest, digest_file
@@ -88,45 +89,50 @@ def apply_manifest(loaded: LoadedManifest, api: PackagingClient, state_path: Pat
         reused = resolve_existing_packs(spec, api, state)
         checkpoint()  # 自动选择结果持久化；后续重试不悄悄换默认包。
 
-        def upload(file: Path, category: str) -> dict:
+        def upload(file: Path, kind: str) -> dict:
             digest = loaded.digests[file]
-            key = f"{category}:{digest}"
+            key = f"{kind}:{digest}"
             previous = state["assets"].get(key)
             if previous:
-                asset = api.request("GET", f"/assets/{previous['id']}")
+                asset = api.request("GET", f"/library/assets/{previous['id']}")
             else:
                 # 防止预检后、执行前文件被改，摘要不能与实际上传字节脱节。
                 if digest_file(file) != digest:
                     raise ValueError("配置或素材已变化，请重新预检")
-                asset = api.upload(file, category)
+                asset = api.upload(file, kind)
+            # v2 出参不再暴露 `sha256`（字节寻址是服务端内部细节），所以落地校验
+            # 只能比对「类型 + 字节数 + 在库状态」：这三样一起错的可能性远低于
+            # 「传错文件」，而真正防篡改的那一关在上面的 `digest_file`。
             if (
-                asset.get("deletedAt")
-                or asset.get("sha256") != digest
-                or asset.get("category") != category
+                asset.get("state") != "active"
+                or asset.get("kind") != kind
+                or asset.get("sizeBytes") != file.stat().st_size
             ):
-                raise ValueError("已登记素材状态或摘要与配置不一致，请核对素材库")
+                raise ValueError("已登记素材状态或大小与配置不一致，请核对素材库")
             state["assets"][key] = {"id": asset["id"]}
             checkpoint()
             return asset
 
         if spec.video.file is not None:
-            source = upload(spec.video.file, "source")
+            source = upload(spec.video.file, "video")
         else:
-            source = api.request("GET", f"/assets/{spec.video.asset_id}")
+            source = api.request("GET", f"/library/assets/{spec.video.asset_id}")
             if (
-                source.get("deletedAt")
-                or source.get("category") != "source"
-                or source.get("type") != "video"
+                source.get("state") != "active"
+                or source.get("kind") != "video"
+                or source.get("origin") not in SOURCE_VIDEO_ORIGINS
             ):
                 raise ValueError("assetId 必须是当前账号可读取的有效视频原片")
-        if not source.get("hasAudio") or not 1 <= source.get("duration", 0) <= 15:
+        if not source.get("hasAudio") or not 1 <= (source.get("durationSec") or 0) <= 15:
             raise ValueError("原片需为1–15秒且含音轨；已上传素材保留供核对")
-        if spec.video.shared and not source.get("shared"):
-            source = api.request(
-                "PUT",
-                f"/assets/{source['id']}/sharing",
-                json={"expectedVersion": source["stateVersion"], "shared": True},
-            )
+        if spec.video.shared and source.get("visibility") != "team":
+            api.share_to_team(source)
+            # 共享申请在没带 `library:share:direct` 的账号上只会留下一条待审单，
+            # 回读一次才知道到底生效没有——凭 200 当成功会让后面所有函数都用
+            # 一个别人看不见的原片建模板。
+            source = api.request("GET", f"/library/assets/{source['id']}")
+            if source.get("visibility") != "team":
+                raise ValueError("原片共享未生效：账号缺少 library:share:direct 或申请仍在审批中")
 
         managed = (
             {
@@ -143,7 +149,7 @@ def apply_manifest(loaded: LoadedManifest, api: PackagingClient, state_path: Pat
                 packs[pack.key] = reused[pack.key]
                 assets[pack.key] = {}
                 continue
-            refs = [upload(ref.file, pack.kind) for ref in pack.references]
+            refs = [upload(ref.file, "image") for ref in pack.references]
             assets[pack.key] = {
                 ref.key: asset for ref, asset in zip(pack.references, refs, strict=True)
             }
@@ -153,8 +159,8 @@ def apply_manifest(loaded: LoadedManifest, api: PackagingClient, state_path: Pat
                 "expectedRevision": 0,
                 "name": pack.name,
                 "kind": pack.kind,
-                "referenceIds": [ref["id"] for ref in refs],
-                "coverReferenceId": refs[0]["id"],
+                "referenceLibraryIds": [ref["id"] for ref in refs],
+                "coverLibraryId": refs[0]["id"],
                 "wardrobeMode": pack.wardrobe_mode,
                 "bindings": [
                     {"role": ref.role, "description": ref.description} for ref in pack.references
@@ -165,16 +171,22 @@ def apply_manifest(loaded: LoadedManifest, api: PackagingClient, state_path: Pat
             # requestId 是包主键；丢失本地进度仍能在服务端找到同一草稿/发布版本。
             current = managed.get(request_id.hex)
             if current:
-                comparable = [
-                    "name",
-                    "kind",
-                    "referenceIds",
-                    "coverReferenceId",
-                    "wardrobeMode",
-                    "bindings",
-                    "supportedScopes",
-                ]
-                if any(current.get(key) != payload[key] for key in comparable):
+                # 入参与出参的字段名不同：请求叫 `referenceLibraryIds`，响应仍叫
+                # `referenceIds`（那是 ReplacementPack 的既有契约）。逐项比对要先
+                # 映射一遍，否则每次重跑都会误判成「远端配置已变化」。
+                comparable = {
+                    "name": "name",
+                    "kind": "kind",
+                    "referenceIds": "referenceLibraryIds",
+                    "coverReferenceId": "coverLibraryId",
+                    "wardrobeMode": "wardrobeMode",
+                    "bindings": "bindings",
+                    "supportedScopes": "supportedScopes",
+                }
+                if any(
+                    current.get(remote) != payload[local]
+                    for remote, local in comparable.items()
+                ):
                     raise ValueError("远端素材包配置已变化，请使用新的封装 key")
                 if not set(payload["requiredRoles"]) <= set(current.get("requiredRoles", [])):
                     raise ValueError("远端素材包必备用途已变化")
@@ -235,7 +247,7 @@ def apply_manifest(loaded: LoadedManifest, api: PackagingClient, state_path: Pat
                 "prompt": prompt,
                 "sourceVideoAssetId": source["id"],
                 "sourceVideoName": source["name"],
-                "sourceDurationSec": source["duration"],
+                "sourceDurationSec": source["durationSec"],
                 "defaultKind": function_pack["kind"],
                 "packId": function_pack["id"],
                 "mediaOrder": media,
@@ -292,7 +304,7 @@ def apply_manifest(loaded: LoadedManifest, api: PackagingClient, state_path: Pat
                         if not scene_text
                         else {}
                     ),
-                    "sourceScope": "public" if source.get("shared") else "mine",
+                    "sourceScope": "public" if source.get("visibility") == "team" else "mine",
                 }
             )
             functions.append(
@@ -334,9 +346,11 @@ def apply_manifest(loaded: LoadedManifest, api: PackagingClient, state_path: Pat
         report = {
             "key": spec.key,
             "fingerprint": loaded.fingerprint,
-            "sourceId": source["id"],
+            # 键名跟着契约走：v1 下线后「原片」只有 `sourceLibraryId` 一种叫法。
+            # （`workbenchPath` 里的 `sourceId` 是前端路由参数，与这里不是一回事。）
+            "sourceLibraryId": source["id"],
             "sourceName": source["name"],
-            "shared": source.get("shared", False),
+            "shared": source.get("visibility") == "team",
             "functions": functions,
         }
         state["report"] = report

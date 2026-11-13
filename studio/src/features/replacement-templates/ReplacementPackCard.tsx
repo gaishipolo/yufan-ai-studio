@@ -1,13 +1,11 @@
 import { useEffect, useState } from 'react';
 import { CheckCircle2, Package } from 'lucide-react';
-import type { ArchivedAsset, ReplacementPack } from '@/shared/api/schema';
-import { useArchivedMedia } from '@/entities/asset/api/archive.queries';
-import { archivePreviewUrl } from '@/entities/asset/model/archive.types';
+import type { ReplacementPack } from '@/shared/api/schema';
+import { useRemoteBlob } from '@/shared/lib/remoteBlob';
 import { cn } from '@/shared/lib/cn';
 
 interface ReplacementPackCardProps {
   pack: ReplacementPack;
-  cover?: ArchivedAsset;
   selected: boolean;
   disabled: boolean;
   unavailable: boolean;
@@ -16,8 +14,14 @@ interface ReplacementPackCardProps {
   onSelect: () => void;
 }
 
-export function ReplacementPackCard({pack, cover, selected, disabled, unavailable, label, selectionOrder, onSelect}: ReplacementPackCardProps) {
-  const {data, error} = useArchivedMedia(pack.coverUrl ?? (cover ? archivePreviewUrl(cover.previewUrl ?? cover.url) : undefined));
+/**
+ * 素材包卡片。封面只认 `pack.coverUrl`。
+ *
+ * v1 那套「另传一张 `ArchivedAsset` 兜底」的入参随 `assets` 表下线一起删了：
+ * 服务端回的地址已经带画质版本，前端不必再拼一次 `archivePreviewUrl`。
+ */
+export function ReplacementPackCard({pack, selected, disabled, unavailable, label, selectionOrder, onSelect}: ReplacementPackCardProps) {
+  const {data, error} = useRemoteBlob(pack.coverUrl ?? undefined);
   const [url, setUrl] = useState('');
   useEffect(() => {
     if (!data) {setUrl(''); return;}

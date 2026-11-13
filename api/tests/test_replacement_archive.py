@@ -85,7 +85,7 @@ def _payload(kind: str, source_id: str, pack, **extra) -> dict:
     values = {
         "requestId": str(uuid.uuid4()),
         "kind": kind,
-        "sourceId": source_id,
+        "sourceLibraryId": source_id,
         "packId": pack.id,
         "packVersion": pack.version,
         "replacementScope": "人物上身穿着" if kind == "product" else "",
@@ -340,7 +340,7 @@ async def test_scattered_references_are_rejected(client: TestClient, materials) 
             json={
                 "requestId": str(uuid.uuid4()),
                 "kind": "character",
-                "sourceId": video["id"],
+                "sourceLibraryId": video["id"],
                 "referenceIds": [image["id"]],
                 "target": "随便",
             },
@@ -467,14 +467,15 @@ def test_write_permission_is_required(client: TestClient, archive_root: Path) ->
     from core.context import CurrentUser
 
     client.app.dependency_overrides[get_actor] = lambda: CurrentUser(
-        id="limited", name="只读", permissions=frozenset({"template:read", "asset:read"})
+        id="limited", name="只读", permissions=frozenset({"template:read", "library:read"})
     )
     try:
         assert client.post(f"{API}/templates/replacement-runs", json={}).status_code == 403
+        # 只有 `library:read` 传不了图：上传要 `library:create`
         assert (
             client.post(
-                f"{API}/assets/upload",
-                params={"filename": "test.png", "category": "character"},
+                f"{API}/library/assets/upload",
+                params={"filename": "test.png", "kind": "image"},
                 content=b"test",
             ).status_code
             == 403

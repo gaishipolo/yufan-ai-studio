@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { ArchivedAsset, ReplacementPack, VideoTemplateOut } from '@/shared/api/schema';
+import type { LibraryAssetOut, ReplacementPack, VideoTemplateOut } from '@/shared/api/schema';
 import type { SourceVideo } from './sourceVideo';
 import { Button, Modal } from '@/shared/ui';
 import { Can } from '@/shared/access/Can';
@@ -28,7 +28,7 @@ export function TemplatePromptDialog({source, templates, packs, selectedTemplate
   const [exitTarget, setExitTarget] = useState<'close' | 'preview'>('close');
   const [saved, setSaved] = useState<Record<string, VideoTemplateOut>>({});
   const [drafts, setDrafts] = useState<Record<string, string>>({});
-  const [uploads, setUploads] = useState<Record<string, ArchivedAsset[]>>({});
+  const [uploads, setUploads] = useState<Record<string, LibraryAssetOut[]>>({});
   const [referenceDrafts, setReferenceDrafts] = useState<Record<string, FixedPackReference[]>>({});
   const base = templates.find(item => item.id === selected) ?? templates[0];
   const latest = base && saved[base.id];

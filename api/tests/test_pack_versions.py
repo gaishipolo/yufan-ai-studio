@@ -225,8 +225,8 @@ def _draft(ids: list[str], **extra):
         "requestId": uuid.uuid4(),
         "kind": "character",
         "name": "幂等发布",
-        "referenceIds": ids,
-        "coverReferenceId": ids[0] if ids else None,
+        "referenceLibraryIds": ids,
+        "coverLibraryId": ids[0] if ids else None,
     }
     values.update(extra)
     return PackDraftIn.model_validate(values)

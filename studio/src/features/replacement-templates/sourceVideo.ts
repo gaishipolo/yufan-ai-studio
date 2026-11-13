@@ -1,13 +1,11 @@
-import type { ArchivedAsset, LibraryAssetOut } from '@/shared/api/schema';
-import type { ReplacementFitness } from '@/entities/asset/model/archive-fit';
+import type { LibraryAssetOut } from '@/shared/api/schema';
 
 /**
  * 工作台里的「原片视图」：只留卡片、适配判定与提示词预览真正读的几项。
  *
- * **为什么不直接复用 `ArchivedAsset`**：v2 的 `library_assets` 不对外暴露
- * `path` / `sha256`，投影过去只能编两个空串——「看起来有、其实是空的」字段
- * 迟早被别处当真用（下载、去重、缓存键都读过它们）。这里两个来源各自显式
- * 映射，页面只认这一份形状，不再感知 id 空间。
+ * 唯一的来源是 v2 的 `library_assets`（`GET /library/selection?kind=video`）。
+ * v1 素材库那条 `ArchivedAsset` 路径随 `assets` 表于 2026-11-13 下线，
+ * 页面上不再有两个来源需要各自映射。
  */
 export interface SourceVideo {
   id: string;
@@ -22,20 +20,6 @@ export interface SourceVideo {
   width: number | null;
   height: number | null;
   hasAudio: boolean | null;
-}
-
-export function sourceVideoOfArchive(asset: ArchivedAsset): SourceVideo {
-  return {
-    id: asset.id,
-    name: asset.name,
-    type: 'video',
-    url: asset.url,
-    previewUrl: asset.previewUrl ?? null,
-    durationSec: asset.duration ?? null,
-    width: asset.width ?? null,
-    height: asset.height ?? null,
-    hasAudio: asset.hasAudio ?? null,
-  };
 }
 
 /** 列表项与详情项共同的字段；详情比列表多几个，投影不关心。 */
@@ -57,6 +41,9 @@ export function sourceVideoOfLibrary(asset: LibraryVideo): SourceVideo {
     hasAudio: asset.hasAudio ?? null,
   };
 }
+
+/** 适配判定的结果：失败时必须给出人话理由，卡片上直接显示它。 */
+export type ReplacementFitness = { ok: true } | { ok: false; reason: string };
 
 /**
  * 能不能拿这条原片做替换。

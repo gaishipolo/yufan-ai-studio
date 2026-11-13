@@ -11,7 +11,6 @@ export interface TemplatePackSlotDraft {
   slotKind: 'fixed' | 'filtered';
   label: string;
   assetId: string;
-  assetIdSpace: 'v1' | 'v2';
   mediaType: string;
   filterKind: string;
   filterTagIds: string[];
@@ -59,7 +58,6 @@ export function initialSlots(): TemplatePackSlotDraft[] {
       slotKind: 'fixed',
       label: '参考视频',
       assetId: '',
-      assetIdSpace: 'v2',
       mediaType: 'video',
       filterKind: '',
       filterTagIds: [],
@@ -70,7 +68,6 @@ export function initialSlots(): TemplatePackSlotDraft[] {
       slotKind: 'filtered',
       label: '',
       assetId: '',
-      assetIdSpace: 'v2',
       mediaType: 'image',
       filterKind: 'image',
       filterTagIds: [],
@@ -91,7 +88,6 @@ export function toSlotIn(draft: TemplatePackSlotDraft): TemplatePackSlotIn {
     return {
       ...base,
       assetId: draft.assetId,
-      assetIdSpace: draft.assetIdSpace,
       mediaType: draft.mediaType as TemplatePackSlotIn['mediaType'],
     };
   }

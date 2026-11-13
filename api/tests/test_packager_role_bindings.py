@@ -228,7 +228,7 @@ def test_real_api_reuses_all_three_pack_types_and_switches_to_smaller_pack(
         )
         if request.url.path.endswith("/identity/me"):
             body = response.json()
-            body["data"]["permissions"] = ["asset:read", "template:read", "template:pack:manage"]
+            body["data"]["permissions"] = ["library:read", "template:read", "template:pack:manage"]
             return httpx.Response(200, json=body)
         return httpx.Response(response.status_code, content=response.content)
 
@@ -253,7 +253,7 @@ def test_real_api_reuses_all_three_pack_types_and_switches_to_smaller_pack(
             headers=headers,
             json={
                 "requestId": str(uuid4()),
-                "sourceId": source["id"],
+                "sourceLibraryId": source["id"],
                 "kind": result["key"],
                 "videoTemplateId": result["videoTemplateId"],
                 "packId": other.id,

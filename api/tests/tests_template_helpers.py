@@ -27,7 +27,6 @@ from sqlalchemy import delete
 from db.session import get_session_factory
 from infra.archive import get_archive_storage
 from infra.archive.runs import relative_key, runs_root, save_pointer
-from modules.template.id_space import asset_id_space_default
 from modules.template.models import (
     ReplacementReview,
     ReplacementRun,
@@ -103,7 +102,6 @@ async def add_input(
     *,
     role: str = "reference",
     position: int = 0,
-    asset_id_space: str | None = None,
 ):
     values: dict[str, Any] = {
         "run_id": run_id,
@@ -113,8 +111,6 @@ async def add_input(
         "usage": "",
         "storage_key": "",
     }
-    if asset_id_space is not None:
-        values["asset_id_space"] = asset_id_space
     async with get_session_factory()() as session:
         session.add(ReplacementRunInput(**values))
         await session.commit()
@@ -165,7 +161,6 @@ async def add_pack(
     features: str = "",
     instructions: str = "",
     wardrobe_mode: str = "preserve",
-    asset_id_space: str | None = None,
 ) -> TemplatePack:
     """造一个封装行（可选带一份已发布版本）。
 
@@ -183,7 +178,6 @@ async def add_pack(
         version=version if status == "published" else 0,
         revision=1,
         cover_asset_id=refs[0] if refs else None,
-        cover_asset_id_space=asset_id_space or asset_id_space_default(),
         features=features,
         instructions=instructions,
         wardrobe_mode=wardrobe_mode,
@@ -201,7 +195,6 @@ async def add_pack(
                     position=position,
                     role=bindings[position] if position < len(bindings) else "front",
                     description="",
-                    asset_id_space=asset_id_space or asset_id_space_default(),
                 )
             )
         if pack.status == "published":
@@ -210,7 +203,6 @@ async def add_pack(
                     pack_id=pack.id,
                     version=pack.version,
                     reference_ids=refs,
-                    reference_ids_space=asset_id_space or asset_id_space_default(),
                     bindings=[
                         {"role": bindings[index] if index < len(bindings) else "front",
                          "description": ""}
@@ -288,16 +280,42 @@ def video_bytes(duration: float = 2, *, audio: bool = True) -> bytes:
         return target.read_bytes()
 
 
+#: 旧素材库的分类 → 资产库 v2 的 `kind`。
+#: v2 没有「角色/产品/场景」这些业务分类（那由封装时的用途绑定表达），
+#: 所以这里的 `category` 只用来决定走哪个上传入口、落成什么 kind。
+_UPLOAD_KIND = {
+    "source": "video",
+    "audio": "audio",
+    "character": "image",
+    "product": "image",
+    "scene": "image",
+}
+
+
 def upload(
     client: TestClient, filename: str, category: str, content: bytes
 ) -> dict[str, Any]:
-    """走真实上传接口登记素材，返回与前端完全一致的出参。"""
-    response = client.post(
-        f"{API}/assets/upload",
-        params={"filename": filename, "category": category},
-        content=content,
-        headers={"Content-Type": "application/octet-stream"},
-    )
+    """走资产库 v2 的真实上传接口登记素材，返回与前端完全一致的出参。
+
+    `category` 保留旧签名，只为让几十条用例不用一起改：v2 只认 `kind`
+    （图片 / 音频走 `/library/assets/upload`，视频原片走模板库专用的
+    `/library/source-videos`）。
+    """
+    kind = _UPLOAD_KIND.get(category, "image")
+    if kind == "video":
+        response = client.post(
+            f"{API}/library/source-videos",
+            params={"filename": filename},
+            content=content,
+            headers={"Content-Type": "application/octet-stream"},
+        )
+    else:
+        response = client.post(
+            f"{API}/library/assets/upload",
+            params={"filename": filename, "kind": kind},
+            content=content,
+            headers={"Content-Type": "application/octet-stream"},
+        )
     assert response.status_code == 201, response.text
     data = response.json()["data"]
     assert isinstance(data, dict)

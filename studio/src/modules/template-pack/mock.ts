@@ -20,7 +20,6 @@ interface MockSlot {
   slotKind: 'fixed' | 'filtered';
   label: string;
   assetId: string | null;
-  assetIdSpace: string;
   mediaType: string;
   assetName: string;
   filterKind: string;
@@ -37,7 +36,6 @@ interface MockPack {
   prompt: string;
   promptSha256: string;
   sourceVideoAssetId: string;
-  sourceVideoIdSpace: string;
   sourceDurationSec: number;
   aspectRatio: string;
   coverUrl: string;
@@ -76,7 +74,6 @@ const PACKS: MockPack[] = [
     prompt: '按 {{Mixed 1}} 的节奏，用 {{Mixed 2}} 做主图',
     promptSha256: 'demo',
     sourceVideoAssetId: 'a5',
-    sourceVideoIdSpace: 'v2',
     sourceDurationSec: 5,
     aspectRatio: '9:16',
     coverUrl: '',
@@ -89,7 +86,6 @@ const PACKS: MockPack[] = [
         slotKind: 'fixed',
         label: '参考视频',
         assetId: 'a5',
-        assetIdSpace: 'v2',
         mediaType: 'video',
         assetName: '开场视频.mp4',
         filterKind: '',
@@ -103,7 +99,6 @@ const PACKS: MockPack[] = [
         slotKind: 'filtered',
         label: '产品主图',
         assetId: null,
-        assetIdSpace: 'v2',
         mediaType: 'image',
         assetName: '',
         filterKind: 'image',
@@ -124,7 +119,6 @@ const PACKS: MockPack[] = [
     prompt: '用 {{Mixed 2}} 做主图',
     promptSha256: 'demo',
     sourceVideoAssetId: 'a5',
-    sourceVideoIdSpace: 'v2',
     sourceDurationSec: 5,
     aspectRatio: '9:16',
     coverUrl: '',
@@ -137,7 +131,6 @@ const PACKS: MockPack[] = [
         slotKind: 'fixed',
         label: '参考视频',
         assetId: 'a5',
-        assetIdSpace: 'v2',
         mediaType: 'video',
         assetName: '开场视频.mp4',
         filterKind: '',
@@ -193,7 +186,6 @@ function toOut(pack: MockPack): TemplatePackOut {
     prompt: pack.prompt,
     promptSha256: pack.promptSha256,
     sourceVideoAssetId: pack.sourceVideoAssetId,
-    sourceVideoIdSpace: pack.sourceVideoIdSpace,
     sourceDurationSec: pack.sourceDurationSec,
     aspectRatio: pack.aspectRatio,
     coverUrl: pack.coverUrl,
@@ -228,7 +220,6 @@ export const routes: MockRoute[] = [
         slotKind: slot.slotKind,
         label: slot.label ?? '',
         assetId: slot.assetId ?? null,
-        assetIdSpace: slot.assetIdSpace ?? 'v2',
         mediaType: slot.mediaType ?? 'image',
         assetName: '',
         filterKind: slot.filterKind ?? '',
@@ -244,7 +235,6 @@ export const routes: MockRoute[] = [
         prompt: String(body.prompt ?? ''),
         promptSha256: 'demo',
         sourceVideoAssetId: String(body.sourceVideoAssetId ?? ''),
-        sourceVideoIdSpace: String(body.sourceVideoIdSpace ?? 'v2'),
         sourceDurationSec: Number(body.sourceDurationSec ?? 0),
         aspectRatio: String(body.aspectRatio ?? '9:16'),
         coverUrl: String(body.coverUrl ?? ''),

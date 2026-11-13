@@ -36,7 +36,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.config import settings
 from core.exceptions import BadRequest
-from modules.template.id_space import ASSET_ID_SPACE_V1
 from modules.template.models import VideoTemplate
 
 #: .../api/src/modules/template/ -> parents[3] = .../api
@@ -103,16 +102,9 @@ def _row_from_record(record: dict[str, Any]) -> VideoTemplate | None:
         description=str(_pick(record, "description", default="")),
         prompt=prompt,
         prompt_sha256=str(_pick(record, "promptSha256", "prompt_sha256", default="")),
+        # 老目录里的原片 id 指向旧素材库（已下线），导入后只作为历史标注保留；
+        # 模板的提示词 / 规则 / 用途顺序仍可正常使用。
         source_video_asset_id=_pick(record, "sourceVideoAssetId", "source_video_asset_id"),
-        # 老目录里的原片 id 必然是 v1 `assets` 的：那时还没有 v2。
-        # 显式写 v1 而不是靠列默认值——默认值会随 `CURRENT_ASSET_ID_SPACE` 翻转，
-        # 而这份文件的内容不会。漏写的话，切换之后导入的历史模板会拿 v1 id
-        # 去 v2 里找，表现是「原片不可用」。
-        source_video_asset_id_space=ASSET_ID_SPACE_V1,
-        # 老目录里的原片 id 必然是 v1 `assets` 的：那时还没有 v2。
-        # 显式写 v1 而不是靠列默认值——默认值会随 `CURRENT_ASSET_ID_SPACE` 翻转，
-        # 而这份文件的内容不会。漏写的话，切换之后导入的历史模板会拿 v1 id
-        # 去 v2 里找，表现是「原片不可用」。
         source_video_path=str(_pick(record, "sourceVideoPath", "source_video_path", default="")),
         source_video_name=str(
             _pick(record, "sourceVideoName", "source_video_name", default="")

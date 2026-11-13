@@ -6,673 +6,6 @@
     "version": "0.2.0"
   },
   "paths": {
-    "/api/v1/assets": {
-      "get": {
-        "tags": [
-          "素材"
-        ],
-        "summary": "归档素材列表与空间占用",
-        "operationId": "list_archive_api_v1_assets_get",
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "category",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "enum": [
-                "all",
-                "source",
-                "character",
-                "product",
-                "scene",
-                "audio"
-              ],
-              "type": "string",
-              "default": "all",
-              "title": "Category"
-            }
-          },
-          {
-            "name": "scope",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "enum": [
-                "mine",
-                "public",
-                "trash"
-              ],
-              "type": "string",
-              "default": "mine",
-              "title": "Scope"
-            }
-          },
-          {
-            "name": "keyword",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "default": "",
-              "title": "Keyword"
-            }
-          },
-          {
-            "name": "state",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "enum": [
-                "all",
-                "private",
-                "shared"
-              ],
-              "type": "string",
-              "default": "all",
-              "title": "State"
-            }
-          },
-          {
-            "name": "page",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "default": 1,
-              "title": "Page"
-            }
-          },
-          {
-            "name": "pageSize",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "maximum": 200,
-              "minimum": 1,
-              "default": 200,
-              "title": "Pagesize"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse_ArchiveList_"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/assets/upload": {
-      "post": {
-        "tags": [
-          "素材"
-        ],
-        "summary": "流式上传素材至归档盘",
-        "operationId": "upload_api_v1_assets_upload_post",
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "category",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "enum": [
-                "source",
-                "character",
-                "product",
-                "scene",
-                "audio"
-              ],
-              "type": "string",
-              "title": "Category"
-            }
-          },
-          {
-            "name": "filename",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 200,
-              "title": "Filename"
-            }
-          }
-        ],
-        "responses": {
-          "201": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse_ArchivedAsset_"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/assets/import": {
-      "post": {
-        "tags": [
-          "素材"
-        ],
-        "summary": "从 Z 盘 inbox 登记现有素材",
-        "operationId": "import_asset_api_v1_assets_import_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ImportAsset"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse_ArchivedAsset_"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      }
-    },
-    "/api/v1/assets/{asset_id}/file": {
-      "get": {
-        "tags": [
-          "素材"
-        ],
-        "summary": "预览或下载已归档素材",
-        "operationId": "asset_file_api_v1_assets__asset_id__file_get",
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "asset_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Asset Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/assets/{asset_id}/thumbnail": {
-      "get": {
-        "tags": [
-          "素材"
-        ],
-        "summary": "读取归档素材缩略图",
-        "operationId": "asset_thumbnail_api_v1_assets__asset_id__thumbnail_get",
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "asset_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Asset Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/assets/{asset_id}/stream": {
-      "get": {
-        "tags": [
-          "素材"
-        ],
-        "summary": "浏览器兼容视频预览（派生文件，不改原片）",
-        "operationId": "asset_stream_api_v1_assets__asset_id__stream_get",
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "asset_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Asset Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/assets/{asset_id}": {
-      "get": {
-        "tags": [
-          "素材"
-        ],
-        "summary": "读取本人或共享原片详情",
-        "operationId": "archive_detail_api_v1_assets__asset_id__get",
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "asset_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Asset Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse_ArchivedAsset_"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "delete": {
-        "tags": [
-          "素材"
-        ],
-        "summary": "彻底删除回收站中的归档素材",
-        "description": "清空单条回收站记录。与 `PUT /deleted` 分成两步：软删可恢复，真删不可逆。",
-        "operationId": "purge_api_v1_assets__asset_id__delete",
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "asset_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Asset Id"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "Successful Response"
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/assets/{asset_id}/preview": {
-      "get": {
-        "tags": [
-          "素材"
-        ],
-        "summary": "受控公共原片预览",
-        "operationId": "public_preview_api_v1_assets__asset_id__preview_get",
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "asset_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Asset Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/assets/{asset_id}/name": {
-      "put": {
-        "tags": [
-          "素材"
-        ],
-        "summary": "修改本人素材名称",
-        "operationId": "rename_api_v1_assets__asset_id__name_put",
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "asset_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Asset Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ArchiveChange"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse_ArchivedAsset_"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/assets/{asset_id}/sharing": {
-      "put": {
-        "tags": [
-          "素材"
-        ],
-        "summary": "分享或取消分享本人原片",
-        "operationId": "sharing_api_v1_assets__asset_id__sharing_put",
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "asset_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Asset Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ArchiveChange"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse_ArchivedAsset_"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/assets/{asset_id}/deleted": {
-      "put": {
-        "tags": [
-          "素材"
-        ],
-        "summary": "将本人素材移入回收站或恢复",
-        "operationId": "deleted_api_v1_assets__asset_id__deleted_put",
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "asset_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Asset Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ArchiveChange"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse_ArchivedAsset_"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/v1/models": {
       "get": {
         "tags": [
@@ -8151,60 +7484,6 @@
   },
   "components": {
     "schemas": {
-      "ApiResponse_ArchiveList_": {
-        "properties": {
-          "code": {
-            "type": "integer",
-            "title": "Code",
-            "description": "0 表示成功，其余为业务错误码",
-            "default": 0
-          },
-          "message": {
-            "type": "string",
-            "title": "Message",
-            "default": "OK"
-          },
-          "data": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/ArchiveList"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "type": "object",
-        "title": "ApiResponse[ArchiveList]"
-      },
-      "ApiResponse_ArchivedAsset_": {
-        "properties": {
-          "code": {
-            "type": "integer",
-            "title": "Code",
-            "description": "0 表示成功，其余为业务错误码",
-            "default": 0
-          },
-          "message": {
-            "type": "string",
-            "title": "Message",
-            "default": "OK"
-          },
-          "data": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/ArchivedAsset"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "type": "object",
-        "title": "ApiResponse[ArchivedAsset]"
-      },
       "ApiResponse_BulkOut_": {
         "properties": {
           "code": {
@@ -9917,250 +9196,6 @@
         "type": "object",
         "title": "ApiResponse[list[str]]"
       },
-      "ArchiveChange": {
-        "properties": {
-          "expectedVersion": {
-            "type": "integer",
-            "minimum": 0.0,
-            "title": "Expectedversion"
-          },
-          "name": {
-            "anyOf": [
-              {
-                "type": "string",
-                "maxLength": 160,
-                "minLength": 1
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Name"
-          },
-          "shared": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Shared"
-          },
-          "deleted": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Deleted"
-          }
-        },
-        "type": "object",
-        "required": [
-          "expectedVersion"
-        ],
-        "title": "ArchiveChange"
-      },
-      "ArchiveList": {
-        "properties": {
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/ArchivedAsset"
-            },
-            "type": "array",
-            "title": "Items"
-          },
-          "total": {
-            "type": "integer",
-            "title": "Total"
-          },
-          "usedBytes": {
-            "type": "integer",
-            "title": "Usedbytes"
-          },
-          "quotaBytes": {
-            "type": "integer",
-            "title": "Quotabytes",
-            "default": 0
-          },
-          "ownerUsedBytes": {
-            "type": "integer",
-            "title": "Ownerusedbytes",
-            "default": 0
-          },
-          "page": {
-            "type": "integer",
-            "title": "Page",
-            "default": 1
-          },
-          "pageSize": {
-            "type": "integer",
-            "title": "Pagesize",
-            "default": 200
-          }
-        },
-        "type": "object",
-        "required": [
-          "items",
-          "total",
-          "usedBytes"
-        ],
-        "title": "ArchiveList",
-        "description": "列表出参。\n\n**没有 `root`**：那是本地归档根的绝对路径，远端驱动下根本不存在，\n前端也早已不再展示（原来「归档位置」那一行在切 S3 后恒为空）。\n要位置信息就用 `storageKey`，它才是与驱动无关的那一层。"
-      },
-      "ArchivedAsset": {
-        "properties": {
-          "id": {
-            "type": "string",
-            "title": "Id"
-          },
-          "name": {
-            "type": "string",
-            "title": "Name"
-          },
-          "category": {
-            "type": "string",
-            "enum": [
-              "source",
-              "character",
-              "product",
-              "scene",
-              "audio"
-            ],
-            "title": "Category"
-          },
-          "type": {
-            "type": "string",
-            "enum": [
-              "image",
-              "video",
-              "audio"
-            ],
-            "title": "Type"
-          },
-          "mimeType": {
-            "type": "string",
-            "title": "Mimetype"
-          },
-          "sizeBytes": {
-            "type": "integer",
-            "title": "Sizebytes"
-          },
-          "path": {
-            "type": "string",
-            "title": "Path"
-          },
-          "sha256": {
-            "type": "string",
-            "title": "Sha256"
-          },
-          "createdAt": {
-            "type": "string",
-            "title": "Createdat"
-          },
-          "width": {
-            "type": "integer",
-            "title": "Width",
-            "default": 0
-          },
-          "height": {
-            "type": "integer",
-            "title": "Height",
-            "default": 0
-          },
-          "duration": {
-            "type": "number",
-            "title": "Duration",
-            "default": 0
-          },
-          "hasAudio": {
-            "type": "boolean",
-            "title": "Hasaudio",
-            "default": false
-          },
-          "url": {
-            "type": "string",
-            "title": "Url"
-          },
-          "previewUrl": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Previewurl"
-          },
-          "ownerId": {
-            "type": "string",
-            "title": "Ownerid",
-            "default": ""
-          },
-          "shared": {
-            "type": "boolean",
-            "title": "Shared",
-            "default": false
-          },
-          "sharedAt": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Sharedat"
-          },
-          "deletedAt": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Deletedat"
-          },
-          "stateVersion": {
-            "type": "integer",
-            "title": "Stateversion",
-            "default": 0
-          },
-          "editable": {
-            "type": "boolean",
-            "title": "Editable",
-            "default": false
-          },
-          "downloadAllowed": {
-            "type": "boolean",
-            "title": "Downloadallowed",
-            "default": true
-          }
-        },
-        "type": "object",
-        "required": [
-          "id",
-          "name",
-          "category",
-          "type",
-          "mimeType",
-          "sizeBytes",
-          "path",
-          "sha256",
-          "createdAt",
-          "url"
-        ],
-        "title": "ArchivedAsset"
-      },
       "AspectRatio": {
         "type": "string",
         "enum": [
@@ -11320,13 +10355,6 @@
             "title": "Seed",
             "default": ""
           },
-          "referenceAssetIds": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Referenceassetids"
-          },
           "referenceLibraryIds": {
             "items": {
               "type": "string"
@@ -11779,33 +10807,6 @@
         ],
         "title": "ImageRetryOut",
         "description": "重试只回 id / status。\n\n不回整份 `ImageJobOut`：持有 `image:retry:any` 的人可以帮别人重跑，\n但没有 `image:read:all`，不该顺带读到别人的 prompt（与 task 的重试同一口径）。"
-      },
-      "ImportAsset": {
-        "properties": {
-          "relativePath": {
-            "type": "string",
-            "maxLength": 500,
-            "minLength": 1,
-            "title": "Relativepath"
-          },
-          "category": {
-            "type": "string",
-            "enum": [
-              "source",
-              "character",
-              "product",
-              "scene",
-              "audio"
-            ],
-            "title": "Category"
-          }
-        },
-        "type": "object",
-        "required": [
-          "relativePath",
-          "category"
-        ],
-        "title": "ImportAsset"
       },
       "IngestOut": {
         "properties": {
@@ -12573,13 +11574,6 @@
             "title": "Seed",
             "default": ""
           },
-          "referenceAssetIds": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Referenceassetids"
-          },
           "referenceLibraryIds": {
             "items": {
               "type": "string"
@@ -13094,32 +12088,14 @@
             "title": "Name",
             "default": ""
           },
-          "referenceIds": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "maxItems": 10,
-            "title": "Referenceids"
-          },
-          "coverReferenceId": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Coverreferenceid"
-          },
           "referenceLibraryIds": {
             "items": {
               "type": "string"
             },
             "type": "array",
             "maxItems": 10,
-            "title": "Referencelibraryids"
+            "title": "Referencelibraryids",
+            "description": "封装用的参考图 id，按顺序"
           },
           "coverLibraryId": {
             "anyOf": [
@@ -13131,7 +12107,7 @@
               }
             ],
             "title": "Coverlibraryid",
-            "description": "资产库 v2 封面的 asset id；与 coverReferenceId 互斥"
+            "description": "封面的 asset id；必须出现在 referenceLibraryIds 里"
           },
           "wardrobeMode": {
             "type": "string",
@@ -13353,12 +12329,6 @@
               }
             ],
             "title": "Coverreferenceid"
-          },
-          "referenceIdSpace": {
-            "type": "string",
-            "title": "Referenceidspace",
-            "description": "referenceIds 属于哪套素材库（v1 / v2）。回写草稿时要按它选字段名：`v2` 填 referenceLibraryIds，其它填 referenceIds——否则一次编辑保存就会把这份封装重新解释成另一侧的同名 id。",
-            "default": ""
           },
           "wardrobeMode": {
             "type": "string",
@@ -13848,12 +12818,6 @@
             "title": "Target",
             "default": ""
           },
-          "sourceId": {
-            "type": "string",
-            "title": "Sourceid",
-            "description": "旧素材库的原片 id；与 sourceLibraryId 互斥（同时给直接 400）",
-            "default": ""
-          },
           "sourceLibraryId": {
             "anyOf": [
               {
@@ -13864,7 +12828,7 @@
               }
             ],
             "title": "Sourcelibraryid",
-            "description": "资产库 v2 的原片 id；与 sourceId 互斥"
+            "description": "原片（资产库里的视频）id"
           },
           "videoTemplateId": {
             "anyOf": [
@@ -14405,12 +13369,6 @@
               }
             ],
             "title": "Coverreferenceid"
-          },
-          "referenceIdSpace": {
-            "type": "string",
-            "title": "Referenceidspace",
-            "description": "referenceIds 属于哪套素材库（v1 / v2）。回写草稿时要按它选字段名：`v2` 填 referenceLibraryIds，其它填 referenceIds——否则一次编辑保存就会把这份封装重新解释成另一侧的同名 id。",
-            "default": ""
           },
           "wardrobeMode": {
             "type": "string",
@@ -16228,16 +15186,6 @@
             "title": "Sourcevideoassetid",
             "description": "参考视频的资产库 id"
           },
-          "sourceVideoIdSpace": {
-            "type": "string",
-            "enum": [
-              "v1",
-              "v2"
-            ],
-            "title": "Sourcevideoidspace",
-            "description": "参考视频 id 属于哪套库",
-            "default": "v2"
-          },
           "sourceDurationSec": {
             "type": "number",
             "minimum": 0.0,
@@ -16328,11 +15276,6 @@
           "sourceVideoAssetId": {
             "type": "string",
             "title": "Sourcevideoassetid"
-          },
-          "sourceVideoIdSpace": {
-            "type": "string",
-            "title": "Sourcevideoidspace",
-            "default": "v2"
           },
           "sourceDurationSec": {
             "type": "number",
@@ -16470,17 +15413,7 @@
               }
             ],
             "title": "Assetid",
-            "description": "fixed：钉死的素材 id"
-          },
-          "assetIdSpace": {
-            "type": "string",
-            "enum": [
-              "v1",
-              "v2"
-            ],
-            "title": "Assetidspace",
-            "description": "fixed：素材 id 属于哪套库；两套都是 32 位 hex，不能靠形状推断",
-            "default": "v2"
+            "description": "fixed：钉死的素材 id（资产库）"
           },
           "mediaType": {
             "type": "string",
@@ -16574,11 +15507,6 @@
               }
             ],
             "title": "Assetid"
-          },
-          "assetIdSpace": {
-            "type": "string",
-            "title": "Assetidspace",
-            "default": "v2"
           },
           "mediaType": {
             "type": "string",
@@ -17290,17 +16218,7 @@
             "maxLength": 64,
             "minLength": 1,
             "title": "Sourcevideoassetid",
-            "description": "原片 id：v1 是素材库里 category=source 的行，v2 是资产库里的视频"
-          },
-          "sourceVideoIdSpace": {
-            "type": "string",
-            "enum": [
-              "v1",
-              "v2"
-            ],
-            "title": "Sourcevideoidspace",
-            "description": "原片 id 属于哪套素材库；缺省 v1",
-            "default": "v1"
+            "description": "原片 id（资产库里的视频）"
           }
         },
         "type": "object",
@@ -17357,17 +16275,7 @@
               }
             ],
             "title": "Sourcevideoassetid",
-            "description": "样片在素材库中的 asset id"
-          },
-          "sourceVideoIdSpace": {
-            "type": "string",
-            "enum": [
-              "v1",
-              "v2"
-            ],
-            "title": "Sourcevideoidspace",
-            "description": "样片 id 属于哪套素材库：v1 是旧素材表，v2 是资产库。两套 id 都是 32 位 hex，**不能靠形状推断**，所以必须显式声明；缺省 v1 让旧调用一个字都不用改",
-            "default": "v1"
+            "description": "样片在资产库中的 asset id"
           },
           "sourceVideoPath": {
             "type": "string",
@@ -17583,11 +16491,6 @@
               }
             ],
             "title": "Sourcevideoassetid"
-          },
-          "sourceVideoIdSpace": {
-            "type": "string",
-            "title": "Sourcevideoidspace",
-            "default": "v1"
           },
           "sourceVideoPath": {
             "type": "string",

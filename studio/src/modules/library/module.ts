@@ -2,15 +2,13 @@ import { Library } from 'lucide-react';
 import { defineModule } from '@/shared/registry/define-module';
 
 /**
- * 资产库 v2（/library）—— 与现役「素材资产库」（/assets）并行的第二版。
+ * 资产库（/library）—— 全站唯一的素材入口。
  *
- * M5 起它是**主入口**：侧栏与首页宫格里排在旧库前面。旧库不删、不藏，
- * 两个入口同时可用——并存观察期需要「能随时退回去对比」，藏起来等于
- * 把回退路径变成「改一行代码再重启」。
+ * v1 素材库（`/assets`、`assets` 表、`modules/asset`、权限前缀 `asset:*`）已于
+ * 2026-11-13 彻底下线：两套 id 空间形状相同、不可区分，并存期每个下游都要判断
+ * 「这个 id 属于谁」。删掉之后只剩 `library_assets` 一个 id 空间。
  *
- * 权限用新前缀 `library:*`，与旧 `asset:*` 完全隔离：给旧库配的权限
- * 不会顺带打开 v2 的可见范围。所以只配了 `asset:read` 的账号看得到旧入口、
- * 看不到这个，这是预期的，不是漏配。
+ * 权限前缀 `library:*` 因此也是唯一的一套。
  */
 export default defineModule({
   id: 'library',

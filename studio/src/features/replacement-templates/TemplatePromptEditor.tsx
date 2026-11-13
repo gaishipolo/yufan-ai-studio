@@ -1,12 +1,12 @@
 import { useId, useRef, useState, type KeyboardEvent } from 'react';
 import { AtSign, ImagePlus, Upload, X } from 'lucide-react';
 import { useUpdateVideoTemplatePrompt } from '@/entities/video-template/api/videoTemplate.queries';
-import { useArchiveUpload } from '@/entities/asset/api/archive.queries';
+import { useUploadAsset } from '@/entities/library/api/library.queries';
 import { ArchivedThumbnail } from '@/entities/asset/ui/ArchivedThumbnail';
 import { ArchivedMedia } from '@/entities/asset/ui/ArchivedMedia';
 import { PACK_ROLES } from '@/entities/template/model/packRoles';
 import { useCan } from '@/shared/access/use-access';
-import type { ArchivedAsset, ReplacementPack, VideoTemplateOut } from '@/shared/api/schema';
+import type { LibraryAssetOut, ReplacementPack, VideoTemplateOut } from '@/shared/api/schema';
 import { Button } from '@/shared/ui';
 import { MediaGallery, type PromptMediaItem } from './PromptMediaView';
 import { findPromptMention, promptMediaLabel, validateTemplatePrompt, type PromptMention } from './promptMentions';
@@ -21,11 +21,11 @@ import './prompt-canvas.css';
 const MAX_MIXED_SLOTS = 11;
 
 interface Props {
-  template: VideoTemplateOut; media: PromptMediaItem[]; value: string; uploaded: ArchivedAsset[];
+  template: VideoTemplateOut; media: PromptMediaItem[]; value: string; uploaded: LibraryAssetOut[];
   packs: ReplacementPack[]; references: FixedPackReference[]; dirty: boolean;
   hasSavedReferences: boolean;
   onReferencesChange: (refs: FixedPackReference[]) => void;
-  onChange: (text: string) => void; onUploaded: (asset: ArchivedAsset) => void; onRemoveUpload: (id: string) => void;
+  onChange: (text: string) => void; onUploaded: (asset: LibraryAssetOut) => void; onRemoveUpload: (id: string) => void;
   onSaved: (template: VideoTemplateOut) => void; onCancel: () => void; onBusyChange: (busy: boolean) => void;
 }
 
@@ -47,8 +47,8 @@ export function TemplatePromptEditor({template, media, value: draft, uploaded, p
   const saving = useRef(false);
   const selection = useRef<PromptRange>({start: draft.length, end: draft.length});
   const mutation = useUpdateVideoTemplatePrompt();
-  const upload = useArchiveUpload();
-  const canUpload = useCan('asset:create');
+  const upload = useUploadAsset();
+  const canUpload = useCan('library:create');
   const id = useId();
   const current = media.filter(item => template.mediaOrder?.some(slot => slot.token === item.token)).map(item => {
     const slot = template.mediaOrder?.find(slot => slot.token === item.token);
@@ -136,7 +136,7 @@ export function TemplatePromptEditor({template, media, value: draft, uploaded, p
     if (uploaded.length + files.length > 10) {setError('当前功能最多暂存 10 张固定参考图'); return;}
     saving.current = true; setBusy(true); setUploading(true); onBusyChange(true); setError(''); setMention(null);
     try {
-      for (const file of files) onUploaded(await upload.mutateAsync({file, category: template.defaultKind ?? 'product'}));
+      for (const file of files) onUploaded(await upload.mutateAsync({file, kind: 'image'}));
       setSuccess('图片已上传，固定参考图的生成调用后续接入。');
     } catch (reason) {setError(reason instanceof Error ? reason.message : '上传失败，请重试');}
     finally {saving.current = false; setBusy(false); setUploading(false); onBusyChange(false); if (uploadInput.current) uploadInput.current.value = '';}

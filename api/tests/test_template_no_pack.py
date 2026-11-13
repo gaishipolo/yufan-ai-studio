@@ -107,7 +107,7 @@ def test_run_takes_images_from_the_callers_pack_by_role(client) -> None:
             json={
                 "requestId": uuid.uuid4().hex,
                 "kind": "product",
-                "sourceId": source["id"],
+                "sourceLibraryId": source["id"],
                 "videoTemplateId": template_id,
                 "packId": pack.id,
                 "packVersion": 1,

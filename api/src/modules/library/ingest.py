@@ -86,10 +86,8 @@ _SNAPSHOT_FIELDS: tuple[tuple[str, str], ...] = (
     ("aspect_ratio", "aspect_ratio"),
     ("style_preset", "style_preset"),
     ("seed", "seed"),
-    ("reference_asset_ids", "reference_asset_ids"),
-    # v2 参考图。两个键写同一列不是笔误：生图流水线用的是契约名
-    # `referenceLibraryIds`（它直接照抄出参），任务流水线用的是列名。以前前者
-    # 被当成「不认识的键」静默丢掉，后者被写进上面那列 v1 字段——两边都错。
+    # 参考图。两个键写同一列不是笔误：生图流水线用的是契约名
+    # `referenceLibraryIds`（它直接照抄出参），任务流水线用的是列名。
     ("reference_library_ids", "reference_library_ids"),
     ("referenceLibraryIds", "reference_library_ids"),
     ("pack_id", "pack_id"),

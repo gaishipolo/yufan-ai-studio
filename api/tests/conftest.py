@@ -102,11 +102,11 @@ def _assembled_ports() -> None:
     全局夹具里，测试就不必各写一遍 finally，也不会因为漏写而互相污染。
     """
     from api.discovery import active_modules
-    from core.ports.assets import bind_asset_reference_sources
+    from core.ports.library_references import bind_library_reference_sources
 
     for spec in active_modules():
-        if spec.asset_reference_sources:
-            bind_asset_reference_sources(spec.name, spec.asset_reference_sources)
+        if spec.library_reference_sources:
+            bind_library_reference_sources(spec.name, spec.library_reference_sources)
     if _PERIODIC_SNAPSHOT:
         restore_periodic_jobs(_PERIODIC_SNAPSHOT)
 

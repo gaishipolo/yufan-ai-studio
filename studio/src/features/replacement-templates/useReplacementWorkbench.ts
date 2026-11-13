@@ -351,10 +351,8 @@ export function useReplacementWorkbench() {
         .filter((value): value is number => typeof value === 'number');
       /* 两路参考来源只能给一路：选了资产库封装就**不带** `referenceIds` / `packId`，
          带了会被服务端判成「同时给了两个来源」直接 400（那边刻意不做谁优先）。 */
-      /* 原片来源显式分流：v2 走 `sourceLibraryId`，`sourceId` 留空。两个都填
-         服务端会直接 400（那边刻意不做「谁优先」），所以这里不能两个都给。 */
       const config: Omit<ReplacementInput, 'requestId'> = {kind, channel, target: target.trim(),
-        sourceId: '', sourceLibraryId: sourceId ?? '',
+        sourceLibraryId: sourceId ?? '',
         referenceIds: libraryMode ? [] : references, wardrobeMode,
         ...(libraryMode ? {libraryPackId} : {}),
         packId: isTextScene || libraryMode ? null : packId || null,

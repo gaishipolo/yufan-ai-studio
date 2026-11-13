@@ -66,10 +66,8 @@ class TemplatePackRow(Base, UUIDMixin, TimestampMixin):
     #: 提示词摘要。防止文字被悄悄改掉 —— 归档要能回答「当时发出去的是哪一版」。
     prompt_sha256: Mapped[str] = mapped_column(String(64), default="", nullable=False)
 
-    #: 参考视频。id 空间显式声明：v1 与 v2 都是 32 位 hex，形状不可区分，
-    #: 靠猜会把一侧的 id 读成另一侧的空壳。
+    #: 参考视频（`library_assets.id`）。
     source_video_asset_id: Mapped[str] = mapped_column(String(64), default="", nullable=False)
-    source_video_id_space: Mapped[str] = mapped_column(String(8), default="v2", nullable=False)
     source_duration_sec: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
 
     aspect_ratio: Mapped[str] = mapped_column(String(16), default="9:16", nullable=False)
@@ -114,7 +112,6 @@ class TemplatePackSlotRow(Base, UUIDMixin, TimestampMixin):
 
     # ---- fixed 形态 ----
     asset_id: Mapped[str] = mapped_column(String(64), default="", nullable=False)
-    asset_id_space: Mapped[str] = mapped_column(String(8), default="v2", nullable=False)
     media_type: Mapped[str] = mapped_column(String(16), default="image", nullable=False)
 
     # ---- filtered 形态 ----

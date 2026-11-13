@@ -62,7 +62,6 @@ export default function TemplatePackEditorPage() {
         slotKind: slot.slotKind,
         label: slot.label ?? '',
         assetId: slot.assetId ?? '',
-        assetIdSpace: (slot.assetIdSpace as 'v1' | 'v2') ?? 'v2',
         mediaType: slot.mediaType ?? 'image',
         filterKind: slot.filterKind ?? '',
         filterTagIds: slot.filterTagIds ?? [],

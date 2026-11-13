@@ -4,9 +4,16 @@
 其中 `identity:role:manage` 单独拆出来：**能改昵称不等于能给自己提权**，
 角色与权限的改动必须是一个独立开关。
 
-内置角色模板里出现的 `task:*` / `asset:*` 是**字符串常量**，不是 import——
+内置角色模板里出现的 `task:*` / `library:*` 是**字符串常量**，不是 import——
 权限点的权威仍然在各自模块的 `ModuleSpec` 里，这里只是默认角色的初始值。
 用通配而不是逐个列举，是为了让别的模块新增权限点后，内置角色自动覆盖到它。
+
+2026-11-13：v1 素材库（`assets` 表 + `modules/asset`）下线，内置角色里的
+`asset:read/create/update/delete/share` 一一换成 `library:*` 的同名动作。
+`asset:reference:manage`（维护**他人**的参考素材）没有对应项——v2 里最接近的
+`library:delete:any` 是跨人删除，授给「素材专员」属于越权，所以直接不补。
+已经建好的角色行不会被这段模板改写（那需要显式迁移），本仓也没有那样的迁移：
+开发阶段按需重建角色即可。
 """
 
 from __future__ import annotations
@@ -115,11 +122,13 @@ BUILTIN_ROLES: tuple[BuiltinRole, ...] = (
         permissions=(
             "catalog:read",
             "task:*",
-            "asset:read",
-            "asset:create",
-            "asset:update",
-            "asset:delete",
-            "asset:share",
+            # 资产库 v2 的码（v1 的 `asset:*` 随 `assets` 表于 2026-11-13 下线）。
+            # 一一对应：能看、能传、能改、能删、能发起共享。
+            "library:read",
+            "library:create",
+            "library:update",
+            "library:delete",
+            "library:share",
             "image:*",
             "template:read",
             # 模板替换的「提交生成」：editor 本来就持有 task:* / image:*，
@@ -139,7 +148,7 @@ BUILTIN_ROLES: tuple[BuiltinRole, ...] = (
         permissions=(
             "catalog:read",
             "task:read",
-            "asset:read",
+            "library:read",
             "image:read",
             "template:read",
             "storyboard:read",
@@ -152,11 +161,11 @@ BUILTIN_ROLES: tuple[BuiltinRole, ...] = (
         description="维护本人参考素材、封装和发布公共对象；执行任务需另授内容编辑角色",
         sort_order=15,
         permissions=(
-            "asset:read",
-            "asset:create",
-            "asset:update",
-            "asset:delete",
-            "asset:reference:manage",
+            "library:read",
+            "library:create",
+            "library:update",
+            "library:delete",
+            "library:share",
             "template:read",
             "template:pack:manage",
             "template:pack:publish",

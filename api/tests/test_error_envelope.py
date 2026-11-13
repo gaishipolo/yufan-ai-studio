@@ -54,7 +54,7 @@ def test_wrong_method_is_405_with_envelope(client: TestClient, api: str) -> None
 
 def test_validation_error_names_the_offending_field(client: TestClient, api: str) -> None:
     """422 必须带 `details[].field`：只说「参数不合法」，前端无法定位到输入框。"""
-    response = client.get(f"{api}/assets", params={"page": "abc"})
+    response = client.get(f"{api}/library/assets", params={"page": "abc"})
 
     body = _envelope(response)
     assert response.status_code == 422
@@ -73,7 +73,7 @@ def test_validation_envelope_is_the_known_segment_exception(client: TestClient, 
     文档改成「400 段 = 调用方错误」——不论怎么改，这条断言都会提醒改的人
     前端有 `code // 100` 这个用法（见 `studio/src/shared/api/http.ts`）。
     """
-    response = client.get(f"{api}/assets", params={"page": "abc"})
+    response = client.get(f"{api}/library/assets", params={"page": "abc"})
 
     assert response.status_code == 422
     assert response.json()["code"] // 100 == 400
@@ -82,7 +82,7 @@ def test_validation_envelope_is_the_known_segment_exception(client: TestClient, 
 
 def test_business_not_found_uses_the_exact_code(client: TestClient, api: str) -> None:
     """`AppError` 走的是另一条分支：码来自类定义，不是算出来的。"""
-    response = client.get(f"{api}/assets/{'0' * 32}")
+    response = client.get(f"{api}/library/assets/{'0' * 32}")
 
     body = _envelope(response)
     assert response.status_code == 404

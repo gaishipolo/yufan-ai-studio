@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Film, Image as ImageIcon, Music } from 'lucide-react';
-import { useArchivedMedia } from '../api/archive.queries';
+import { useRemoteBlob } from '@/shared/lib/remoteBlob';
 
 interface ArchivedThumbnailProps {
   /** 缩略图或可以当封面用的原件地址；为空表示这条素材没有封面。 */
@@ -17,7 +17,7 @@ interface ArchivedThumbnailProps {
  * 重试入口在详情弹窗。
  */
 export function ArchivedThumbnail({url, type = 'image'}: ArchivedThumbnailProps) {
-  const {data, error} = useArchivedMedia(url ?? undefined);
+  const {data, error} = useRemoteBlob(url ?? undefined);
   const [source, setSource] = useState('');
   const [broken, setBroken] = useState(false);
   useEffect(() => {

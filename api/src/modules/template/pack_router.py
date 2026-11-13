@@ -1,8 +1,10 @@
 """封装管理的 HTTP 契约：草稿、发布、停用、包内预览。
 
-与重建前的**路径、入参、出参完全一致**，包括权限点组合
-（`asset:read` + `template:pack:manage`）。多带一个 `asset:read` 不是冗余：
-封装编辑器的每一步都要读素材，只有 `pack:manage` 的人进得来、却选不了图。
+路径、入参、出参与重建前一致；权限点组合是 `library:read` +
+`template:pack:manage`。多带一个 `library:read` 不是冗余：封装编辑器的每一步
+都要挑资产库里的图，只有 `pack:manage` 的人进得来、却选不了图。
+
+（原先是 `asset:read`——v1 素材库已于 2026-11-13 下线，那个码不再存在。）
 """
 
 from __future__ import annotations
@@ -26,11 +28,11 @@ from modules.template.schema import (
 
 router = APIRouter(prefix="/replacement-packs", tags=["素材封装"])
 
-ManageDep = Annotated[CurrentUser, Depends(require("asset:read", "template:pack:manage"))]
+ManageDep = Annotated[CurrentUser, Depends(require("library:read", "template:pack:manage"))]
 PublishDep = Annotated[
-    CurrentUser, Depends(require("asset:read", "template:pack:manage", "template:pack:publish"))
+    CurrentUser, Depends(require("library:read", "template:pack:manage", "template:pack:publish"))
 ]
-ReadDep = Annotated[CurrentUser, Depends(require("asset:read", "template:read"))]
+ReadDep = Annotated[CurrentUser, Depends(require("library:read", "template:read"))]
 
 
 @router.get("", summary="本人封装草稿和历史包")

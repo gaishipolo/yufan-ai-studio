@@ -64,7 +64,6 @@ export function TemplatePackSlotEditor({
         slotKind: 'filtered',
         label: '',
         assetId: '',
-        assetIdSpace: 'v2',
         mediaType: 'image',
         filterKind: 'image',
         filterTagIds: [],
