@@ -2058,3 +2058,19 @@ foreign 一个都没混进来。**反向验证**：把循环条件改成恒假�
 **81 passed**；ruff 通过；mypy 295 files 无问题。
 **反向验证**：在 `resolve_names` 末尾加「v2 没找到就回退问 v1」→
 `assert {'v1-…': '只在 v1 里.jpg'} == {}` 红。
+
+### 24.10 CI 观察：`test_db_queue` 的 sqlite 锁 flake（未改代码，先记着）
+
+`7124b3d` 的 CI 在 pytest 步红了：`test_db_queue.py::test_claim_cannot_return_pre_promotion_payload`
+报 `sqlite3.OperationalError: database is locked`（`DELETE FROM queued_jobs`），
+其余 1630 passed。**同一提交重跑即绿**，本地全量两次也绿 —— 是并发时序 flake，
+不是这次改动引入的（该用例与模板模块无关）。
+
+成因：这条用例靠 monkeypatch `AsyncSession.get`，在**读事务中途**去写
+`ack()`（`_queue().ack(current)`），于是同一时刻有两个连接要拿写锁；sqlite 的
+busy timeout 取 `sqlite3` 默认 5 秒（`db/session.py` 只传了 `check_same_thread`），
+CI 机器慢时就会等超时。
+
+**没有当场改**（属另一件事）：候选修法是给 sqlite 的 `connect_args` 加
+`"timeout": 30`，或把这条用例的写操作挪到事务外。两者都要单独跑一轮验证，
+不塞进模板迁移的提交里；下次再遇到同一条红，直接按上面的方向修。
