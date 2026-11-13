@@ -993,7 +993,8 @@ A 全新表 / B 一次性迁移 / C 双写灰度）。**该方案不再执行**�
 **能力下沉、状态留在本模块**。
 
 **两处残留耦合不是模型能力**：`replacement_service.py:1228` 的
-`get_libtv_settings().node` 要的只是 `node` 可执行文件；`worker.py:612/681` 的
+`get_libtv_settings().node` 要的只是 `node` 可执行文件（已收进
+`core.config.Settings.node_binary`，见 §24.21）；`worker.py:612/681` 的
 `execute_stage("upload"/"download")` 是 LibTV 执行器协议。
 `pipeline.py:83` 的 `params["archiveRunId"]` 则是隐式协议——
 `infra/ai/libtv.py:294`、`modules/model_driver/drivers/bailian.py:392` 校验后
@@ -1069,7 +1070,7 @@ A 全新表 / B 一次性迁移 / C 双写灰度）。**该方案不再执行**�
 | W2 | 三个取件端点改 `Served`，MIME 改 `media_probe` | `replacement_router.py` / `pack_router.py` / `pack_service.py` | contract | 步 3（与契约变更同批） |
 | W3 | 文本/JSON 落盘改调 `encode_text` / `archive.base` | `replacement_service.py` / `workspace.py` / `worker.py` / `video_template_store.py` | targeted | 步 4（与编译链同批） |
 | W4 | Node 编译器抽 `core/ports/prompt_compiler.py` 端口（先补 golden test） | `core/ports/` + `infra/` + `PORT_CATALOG` | framework | 步 4 |
-| W5 | `node` 路径从 `core/config` 取，删 `get_libtv_settings()` 依赖 | `replacement_service.py:1228` | targeted/framework | 步 5 |
+| **W5** | `node` 路径从 `core/config` 取，删 `get_libtv_settings()` 依赖 | `core/config.py` + `infra/ai/libtv.py` | targeted/framework | 步 5（**2026-11-13 完成，见 §24.21**） |
 | W6 | 授权闸调用点收成单一授权服务（规则不变） | `replacement_service.py` / `worker.py` | targeted | 步 3 |
 | W7 | 恢复失败改发事件，可选 `@periodic` 对账（**不删 `startup`**） | `worker.py` / `__init__.py` | targeted | 步 0（观测项） |
 | W8 | 时间源统一 `utcnow`、`import_legacy` 路径校验、工作区 GC 保留策略 | 见 §10.9 M | targeted | 步 5 |
@@ -2780,3 +2781,64 @@ v2 一套 id。**v1 原片不再是任何新流程的入口**，但它仍然是�
 3. 步 2.5e / 步 6：dual-read 观察期结束后清掉 v1 素材库的四类使用方并下线。
    现在模板模块里**只剩历史行**还指向 v1，新写入全在 v2——这一步的前提基本齐了，
    缺的是 §23.2 里 `modules/task` 与前端旧入口那两处。
+
+### 24.21 步 5 之一 / W5：`node` 从供应商配置挪进运行期配置（2026-11-13 完成）
+
+**问题不是「多一次 import」**。`replacement_service.py` 编译提示词时读的是
+`get_libtv_settings().node`——模板模块为了拿一个可执行文件名，要去读某个**供应商**的
+配置对象。后果有两条，都不是报错式的：
+
+1. 换供应商（`AI_PROVIDERS` 里没有 libtv 的部署）时，模板模块的编译链**没有 node 可读**，
+   因为那个字段长在 libtv 的设置类上；
+2. 「用哪个 node」随供应商配置漂移：`LIBTV_NODE` 是驱动参数，改它等于改模板模块的运行时。
+
+**改法**：`core.config.Settings` 新增 `node_binary`（`NODE_BINARY`），
+`infra/ai/libtv.py` 的 `LibTvSettings.node` 直接删掉，全仓只剩一处取值
+（`get_settings().node_binary`）。三处调用点跟着改：执行器 payload
+（`libtv.py::_execute_stage` 的 `"node"`）、编译（`replacement_service.py`）、
+部署自检（`health.py::_node_version`）。
+
+**为什么不是「留个空默认值 + 或运算」**：那样等于有两个解析点——`get_libtv_settings().node
+or get_settings().node_binary` 谁先读谁说了算，而且模板模块仍然 import 供应商模块，
+问题 1 一点没解。现在两个环境变量名落到**同一个字段**：
+
+```python
+node_binary: str = Field("node", validation_alias=AliasChoices("NODE_BINARY", "LIBTV_NODE"))
+```
+
+`LIBTV_NODE` 是别名而不是「也读一下」：旧部署写的就是这个名字，改成只认新名等于要求
+现场改环境；用别名则两个名字永远解析到同一处，不存在「哪个优先」的解释空间。
+**`NODE_BINARY=` 写空时回落到 `node`**（`_empty_node_means_default`）——空串不是
+「走 PATH」，`shutil.which("")` 返回 None，自检会报「PATH 里找不到 `''`」，而配置看上去
+是配了的。
+
+**这次是配置守卫先抓到的**。删掉 `LibTvSettings.node` 后第一次跑
+`test_config_guard.py` 立刻红：
+
+```
+AssertionError: .env.example 里有无法被任何 Settings 识别的键：['LIBTV_NODE']
+```
+
+这就是 `extra="ignore"` 那一类静默失效的反面——`.env.example` 里留着一个已经没字段接的键，
+部署照着配、实际没有任何代码读它。修法是 `.env.example` 新增「运行期依赖」小节放
+`NODE_BINARY=node`（**不放在「驱动私有配置」小节**：放那里就是在暗示它属于某个驱动），
+LibTV 小节只留一句「旧名 `LIBTV_NODE` 已注册为别名」。
+
+**验证**
+
+- 配置守卫三条一起过：新字段有读取点（`test_every_setting_is_referenced`）、
+  示例有该键（`test_env_example_lists_every_key`）、示例无孤儿键
+  （`test_env_example_has_no_unknown_key`）；
+- 别名与回落手工验过四种组合：只设 `LIBTV_NODE` → 取到它；只设 `NODE_BINARY` → 取到它；
+  两个都设 → `NODE_BINARY` 赢；`NODE_BINARY=` 空串 → 回落 `node`；
+- 按 `select_tests.py --print` 定级 **framework**（`core/config.py` + `infra/ai/libtv.py`
+  有删除行 = 改语义），跑它算出的 136 个文件；
+- `ruff check src tests` 与 `mypy --platform win32 src`（297 files）通过；
+- 反向验证：往 `Settings` 里插一个没人读的 `node_binary_x` →
+  `test_every_setting_is_referenced` 红并点名它（`这些配置项没有任何代码读取：['node_binary_x']`），
+  删掉后 17 passed。这条证明的是「新字段写了没人读」这一类；
+  「示例里有孤儿键」那一类不用造——删 `LibTvSettings.node` 时它自己先红了（见上）。
+
+**没做的一件（留给步 4）**：`compile_prompt(spec, node=...)` 仍然是函数参数传递，
+`core/ports/prompt_compiler.py` 端口（W4）落地后再由端口自己取 node，调用点就不用知道
+node 从哪来。
