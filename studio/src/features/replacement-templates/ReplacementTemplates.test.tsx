@@ -18,6 +18,10 @@ const mock = vi.hoisted(() => ({
   videoTemplates: [] as VideoTemplateOut[],
   assetsLoading: false, assetsError: null as Error | null, assetsHidden: false, assetsEmpty: false, assetsRefetch: vi.fn(),
   catalogHidden: false,
+  libraryPacks: [] as {id: string; name: string; kind: string; coverUrl?: string | null}[],
+  libraryPack: undefined as undefined | {id: string; name: string; state: string; packItems: {
+    assetId: string; name: string; kind: string; state: string; position: number; role: string;
+    description: string; coverUrl?: string | null }[]},
   upload: vi.fn<(input: {file: File; category: ArchiveCategory}, callbacks: UploadCallbacks) => void>(),
   uploadPending: false,
   catalog: { data: { root: 'Z:/yufan_ai_studio', packs: [] as ReplacementPack[], runs: [] as ReplacementRun[],
@@ -53,6 +57,15 @@ vi.mock('@/entities/template/api/replacement.queries', () => ({
   useReviewReplacement: () => ({mutateAsync: mock.review, isPending: false}),
   useManageReplacement: () => ({mutateAsync: mock.manage, isPending: false, reset: vi.fn()}),
 }));
+/*
+ * 工作台现在也能选「资产库封装」（`libraryPackId`），于是它引用了资产库的查询 hook。
+ * 这个套件不挂 QueryClient，所以按需替身：默认没有库封装可选（与「只用模板素材包」
+ * 这条老路径一致），需要时由 `mock.libraryPacks` / `mock.libraryPack` 打开。
+ */
+vi.mock('@/entities/library/api/library.queries', () => ({
+  useLibrarySelection: () => ({data: {items: mock.libraryPacks, total: mock.libraryPacks.length}, isPending: false, error: null}),
+  useLibraryDetail: () => ({data: mock.libraryPack, isPending: false, error: null}),
+}));
 vi.mock('@/shared/lib/toast', () => ({ toast: vi.fn() }));
 
 function Location() { return <output aria-label="地址">{useLocation().search}</output>; }
@@ -74,6 +87,8 @@ beforeEach(() => {
   mock.videoTemplates = [];
   mock.catalog.data.runs = [];
   mock.catalog.data.channels = undefined;
+  mock.libraryPacks = [];
+  mock.libraryPack = undefined;
   mock.catalog.data.packs = [
     {id: 'character-pack', kind: 'character', name: '测试人物', referenceIds: ['image'], coverReferenceId: 'image'},
     {id: 'other-character', kind: 'character', name: '另一人物', referenceIds: ['image'], coverReferenceId: 'image'},
@@ -465,6 +480,42 @@ describe('替换模板工作台', () => {
     render(<App permissions={['template:read', 'asset:read']} />);
     expect(screen.queryByRole('button', {name: '移入回收站'})).not.toBeInTheDocument();
   });
+  it('从资产库选封装：准备只带 libraryPackId，不再带模板包与散图 id', async () => {
+    /* 用户 A 在资产库打的包（三视图 + 主图）：成员顺序与用途都由服务端展开，
+       前端只给 id。两路参考来源同时给会被后端判成「两个来源」直接 400，
+       所以这里连空数组的 referenceIds 与 packId 都不能带。 */
+    mock.libraryPacks = [{id: 'lib-pack', name: '资产库三视图', kind: 'pack', coverUrl: null}];
+    mock.libraryPack = {id: 'lib-pack', name: '资产库三视图', state: 'active', packItems: [
+      {assetId: 'lv-front', name: '正面', kind: 'image', state: 'active', position: 1, role: 'front', description: ''},
+      {assetId: 'lv-multi', name: '三视图', kind: 'image', state: 'active', position: 2, role: 'multiview', description: ''},
+    ]};
+    mock.prepare.mockResolvedValue({...run('prepared'), kind: 'product', target: '资产库三视图'});
+    render(<App url="/templates?kind=product&libPack=lib-pack" />);
+    fireEvent.click(screen.getByRole('button', {name: '选择模板：测试原片'}));
+    /* v2 封装没有「审核过的替换范围」，可选范围给全量；但仍要显式勾选，它进提示词 */
+    fireEvent.click(screen.getByRole('checkbox', {name: '手持展示产品'}));
+    fireEvent.click(screen.getByRole('button', {name: '下一步：确认替换'}));
+    await vi.waitFor(() => expect(mock.prepare).toHaveBeenCalledOnce());
+    expect(mock.prepare.mock.calls[0][0]).toMatchObject({
+      libraryPackId: 'lib-pack', packId: null, packVersion: null, referenceIds: [],
+      target: '资产库三视图', kind: 'product',
+    });
+  });
+
+  it('资产库封装里有图没声明用途时先拦下，不发起注定失败的准备', () => {
+    mock.libraryPacks = [{id: 'lib-pack', name: '没用途的包', kind: 'pack', coverUrl: null}];
+    mock.libraryPack = {id: 'lib-pack', name: '没用途的包', state: 'active', packItems: [
+      {assetId: 'lv-front', name: '正面', kind: 'image', state: 'active', position: 1, role: '', description: ''},
+      {assetId: 'lv-multi', name: '三视图', kind: 'image', state: 'active', position: 2, role: 'multiview', description: ''},
+    ]};
+    render(<App url="/templates?kind=product&libPack=lib-pack" />);
+    fireEvent.click(screen.getByRole('button', {name: '选择模板：测试原片'}));
+    fireEvent.click(screen.getByRole('checkbox', {name: '手持展示产品'}));
+    expect(screen.getByRole('button', {name: '下一步：确认替换'})).toBeDisabled();
+    expect(screen.getByText(/还有 1 张图没声明用途/)).toBeVisible();
+    expect(mock.prepare).not.toHaveBeenCalled();
+  });
+
   it('产品只展示正面封面，准备任务仍携带完整素材包的全部视角', async () => {
     mock.prepare.mockResolvedValue({...run('prepared'), kind: 'product', target: '测试产品'});
     render(<App url="/templates?kind=product" />);

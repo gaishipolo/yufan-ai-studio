@@ -29,11 +29,15 @@ export function ReplacementBatch({model}: {model: ReplacementWorkbench}) {
           mark(row.id, {state: 'failed', error: '当前封装功能只适用于绑定的原片，请为该原片单独选择功能'});
           break;
         }
-        const config = {channel: model.channel, kind: model.kind, sourceId: row.id, packId: model.isTextScene ? null : model.selectedPack?.id,
+        /* 参考来源二选一：选了资产库封装就只传 `libraryPackId`。两路都传会被服务端按
+           「同时给了两个来源」拒掉，批量的每一条都会 400。 */
+        const config = {channel: model.channel, kind: model.kind, sourceId: row.id,
+          packId: model.isTextScene || model.libraryMode ? null : model.selectedPack?.id,
+          ...(model.libraryMode ? {libraryPackId: model.libraryPackId} : {}),
           videoTemplateId: model.boundTemplate?.id,
           extraPackIds: model.slots > 1 ? model.slotPacks.slice(1).filter(Boolean) : [],
           extraPackVersions: model.slots > 1 ? model.chosenPacks.slice(1).map(pack => pack.version || 1) : [],
-          packVersion: model.isTextScene ? null : model.selectedPack?.version || 1, replacementScope: model.showScope ? model.scopes.join('、') : '',
+          packVersion: model.isTextScene || model.libraryMode ? null : model.selectedPack?.version || 1, replacementScope: model.showScope ? model.scopes.join('、') : '',
           ...(model.isTextScene ? {scenePrompt: model.scenePrompt} : {}),
           notes: model.isTextScene ? '' : model.notes, aspectRatio: 'adaptive' as const};
         const key = JSON.stringify(config);

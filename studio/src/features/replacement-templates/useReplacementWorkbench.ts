@@ -4,6 +4,7 @@ import { useArchiveAssets, useArchiveUpload, useArchiveSelection } from '@/entit
 import { useExecuteReplacement, usePrepareReplacement, useReplacementCatalog } from '@/entities/template/api/replacement.queries';
 import { isStateChanged } from '@/shared/api/types';
 import { useVideoTemplates } from '@/entities/video-template/api/videoTemplate.queries';
+import { useLibraryDetail } from '@/entities/library/api/library.queries';
 import type { LibraryAssetOut, ReplacementChannelOut, VideoTemplateOut } from '@/shared/api/schema';
 import { hasForeignMustache } from '@/features/library/textRefs';
 import { replacementKind, type ReplacementKind, type ReplacementRun, type ReplacementInput } from '@/entities/template/model/replacement.types';
@@ -36,7 +37,7 @@ export function useReplacementWorkbench() {
     setScopes([]);
     setNotes('');
     setTextRefs([]);
-    patchParams({kind: value, packId: null, packVersion: null, videoTemplateId: null});
+    patchParams({kind: value, packId: null, packVersion: null, libPack: null, videoTemplateId: null});
   }
   /* 原片选择只有一个来源：URL。选择、清空、深链带入都改同一个参数，
      否则刷新会复活旧选择，`linkedSource` 提示也可能指向另一条素材。 */
@@ -49,8 +50,30 @@ export function useReplacementWorkbench() {
   }
   function setPackId(id: string) {
     updatePackId(id);
-    patchParams({packId: id || null, packVersion: null});
+    // 模板素材包与资产库封装是**两个参考来源**：选一个必须清掉另一个，
+    // 否则服务端会按「同时给了两路」直接 400（两套 id 形状一样，不允许谁优先）。
+    patchParams({packId: id || null, packVersion: null, libPack: null});
   }
+  /* 第二个参考来源：资产库 v2 封装（`libraryPackId`）。与模板素材包互斥，
+     选择写进 URL 的 `libPack`，刷新与分享都还原同一个来源。 */
+  const libraryPackId = params.get('libPack') ?? '';
+  function setLibraryPackId(id: string) {
+    updatePackId('');
+    setExtraPackIds([]);
+    setScopes([]);
+    patchParams({libPack: id || null, packId: null, packVersion: null});
+  }
+  const libraryPackQuery = useLibraryDetail(libraryPackId || null);
+  const libraryPack = libraryPackId ? libraryPackQuery.data : undefined;
+  /* 只有能进提示词的那几张：非图片成员（音频/文本）与已不可用的成员不该出现在
+     张数统计里——它们由服务端单独判，这里统计的是「用户以为会喂进去的图」。 */
+  const libraryPackImages = (libraryPack?.packItems ?? []).filter(
+    item => item.kind === 'image' && item.state === 'active',
+  );
+  /* 用途没声明的张数：服务端会拒（不按位置猜主图），但那是「下一步」之后才报，
+     而准备是全模块最重的 IO 端点。同一条判据提前一次，避免一次注定失败的调用。 */
+  const libraryPackMissingRoles = libraryPackImages.filter(item => !item.role).length;
+  const libraryMode = !!libraryPackId;
   const [scopes, setScopes] = useState<string[]>([]);
   const [notes, setNotes] = useState('');
   /* 文本引用：占位符写在 scenePrompt / notes / replacementScope 里，
@@ -138,7 +161,7 @@ export function useReplacementWorkbench() {
     updatePackId(binding.packId ?? '');
     setNotes('');
     setReviewId(null);
-    patchParams({sourceId: id, kind: templateKind(binding), packId: binding.packId || null, packVersion: null, videoTemplateId: binding.id});
+    patchParams({sourceId: id, kind: templateKind(binding), packId: binding.packId || null, packVersion: null, libPack: null, videoTemplateId: binding.id});
   }
   const boundTemplates = videoTemplatesForSource(videoTemplates.data?.items ?? [],
     sourceId ? videos.find(video => video.id === sourceId) ?? linkedSource.data ?? undefined : undefined,
@@ -162,7 +185,7 @@ export function useReplacementWorkbench() {
      且用户确实选了一个包。包 id 不锁死——后端按原片命中模板、按用途从当前包
      取图，换产品包时提示词仍是同一份，这正是提示词动态化的落点。 */
   const activeVideoTemplate = boundTemplate
-    && (!!packId || isTextScene)
+    && (!!packId || libraryMode || isTextScene)
     && kind === templateKind(boundTemplate)
     ? boundTemplate : undefined;
   /* 模板声明了几个「正面身份图」槽位，就要求选几位人物：提示词里的
@@ -211,7 +234,7 @@ export function useReplacementWorkbench() {
     const keepPack = kind === templateKind(binding) && !!params.get('packId');
     setExtraPackIds([]);
     updatePackId(keepPack ? params.get('packId')! : binding.packId ?? '');
-    patchParams({kind: templateKind(binding), videoTemplateId: binding.id,
+    patchParams({kind: templateKind(binding), videoTemplateId: binding.id, libPack: null,
       ...(!keepPack ? {packId: binding.packId || null, packVersion: null} : {})});
   };
   useEffect(() => {
@@ -219,12 +242,15 @@ export function useReplacementWorkbench() {
   }, [bindingSignature]);
   /* 固定提示词的参数由封装定义；通用替换继续使用素材包审核范围。 */
   const scopeLabels = catalog.data?.packScopes ?? {};
+  /* 资产库封装没有「运营审核过的替换范围」这一层元数据（那是模板封装的字段），
+     所以给全量：范围仍必须由用户显式勾选，它进提示词变量。 */
   const availableScopes = boundTemplate ? videoTemplateScopes(boundTemplate)
+    : libraryMode ? Object.values(scopeLabels)
     : (selectedPack?.supportedScopes ?? []).map(key => scopeLabels[key] ?? key);
   const showScope = boundTemplate ? availableScopes.length > 0 : true;
   /* 范围必须明确勾选。换包、换版本或目录刷新只剔除已不支持的位置，
      不能把可选范围当成用户选择，更不能自动扩大已经选定的范围。 */
-  const scopeSignature = `${boundTemplate?.id ?? ''}:${selectedPack?.id ?? ''}:${selectedPack?.version ?? 0}:${availableScopes.join('|')}`;
+  const scopeSignature = `${boundTemplate?.id ?? ''}:${libraryPackId}:${selectedPack?.id ?? ''}:${selectedPack?.version ?? 0}:${availableScopes.join('|')}`;
   const scopesToApply = useRef<string[]>([]);
   scopesToApply.current = availableScopes;
   useEffect(() => {
@@ -232,18 +258,29 @@ export function useReplacementWorkbench() {
   }, [scopeSignature]);
   /* 多人物：每个槽位贡献自己的参考图，顺序就是 `{{Mixed 2/3/4}}` 的顺序。
      单人 / 产品仍是「所选包的全部参考图」，行为一个字不变。 */
-  const references = isTextScene ? [] : slots > 1
+  /* 选了资产库封装时，参考图由**服务端**按成员展开（`libraryPackId`），前端不再
+     传 `referenceIds`——两路同时给会被判成「两个参考来源」直接 400。这里的 id 清单
+     只用于张数提示，不提交。 */
+  const references = isTextScene ? [] : libraryMode
+    ? libraryPackImages.map(item => item.assetId)
+    : slots > 1
     ? [...new Set(chosenPacks.flatMap(pack => pack.referenceIds))]
     : selectedPack?.referenceIds ?? [];
-  const target = isTextScene ? '文字换场景' : slots > 1
+  const target = isTextScene ? '文字换场景' : libraryMode
+    ? libraryPack?.name ?? ''
+    : slots > 1
     ? chosenPacks.map(pack => pack.name).join('、')
     : selectedPack?.name ?? '';
-  const wardrobeMode = selectedPack?.wardrobeMode ?? 'preserve';
+  /* v2 封装没有「服装模式」声明：保持原片服装是最保守的一档 */
+  const wardrobeMode = libraryMode ? 'preserve' : selectedPack?.wardrobeMode ?? 'preserve';
   const requestedVersion = params.get('packId') === packId ? params.get('packVersion') : null;
   const everyoneChosen = chosenPacks.length === slots;
-  const packReady = isTextScene || everyoneChosen
+  const templatePackReady = isTextScene || everyoneChosen
     && chosenPacks.every(pack => isReplacementPackAvailable(pack, assets.data?.items ?? []))
     && (!requestedVersion || String(selectedPack?.version) === requestedVersion);
+  /* 资产库封装：只要拉到了成员就算选好；用途缺失与张数超限单独提示（见 `missing`），
+     不在这里混成一个「请选择素材包」。 */
+  const packReady = libraryMode ? !!libraryPack && libraryPackImages.length > 0 : templatePackReady;
   /* 与后端 `require_channel` 同口径：LibTV 允许「执行期才注册 provider」的安装方式，
      目录里的 enabled=false 只用于在选择器里灰显，不能变成提交门禁。否则一个没注册
      LibTV provider 的部署（新机器、本地联调）整站都点不了「下一步」。 */
@@ -253,6 +290,8 @@ export function useReplacementWorkbench() {
     /* 文字换场景允许 {{Text N}} 文本引用占位符，但其它手写模板括号仍拒绝 */
     : isTextScene && (scenePrompt.length > 4000 || hasForeignMustache(scenePrompt)) ? '场景描述最多 4000 字，只允许 {{Text N}} 文本引用占位符'
     : slots > 1 && !everyoneChosen ? `还需选择 ${slots - chosenPacks.length} 位人物`
+    : libraryMode && libraryPackMissingRoles > 0
+      ? `封装里还有 ${libraryPackMissingRoles} 张图没声明用途，替换时不知道该当主图还是细节图；请到资产库封装页补上`
     : references.length > 10 ? `所选人物参考图合计 ${references.length} 张，最多支持 10 张，请选择更精简的角色卡`
     : !packReady ? `请选择一个可用的${template.short}素材包`
     : showScope && (boundTemplate || kind === 'product') && !scopes.length ? '请选择至少一个产品替换位置'
@@ -284,8 +323,13 @@ export function useReplacementWorkbench() {
       const extraVersions = extraIds
         .map(id => chosenPacks.find(pack => pack.id === id)?.version)
         .filter((value): value is number => typeof value === 'number');
-      const config: Omit<ReplacementInput, 'requestId'> = {kind, channel, target: target.trim(), sourceId, referenceIds: references, wardrobeMode,
-        packId: isTextScene ? null : packId || null, packVersion: isTextScene ? null : selectedPack?.version || 1, videoTemplateId: boundTemplate?.id,
+      /* 两路参考来源只能给一路：选了资产库封装就**不带** `referenceIds` / `packId`，
+         带了会被服务端判成「同时给了两个来源」直接 400（那边刻意不做谁优先）。 */
+      const config: Omit<ReplacementInput, 'requestId'> = {kind, channel, target: target.trim(), sourceId,
+        referenceIds: libraryMode ? [] : references, wardrobeMode,
+        ...(libraryMode ? {libraryPackId} : {}),
+        packId: isTextScene || libraryMode ? null : packId || null,
+        packVersion: isTextScene || libraryMode ? null : selectedPack?.version || 1, videoTemplateId: boundTemplate?.id,
         ...(isTextScene ? {scenePrompt} : {}),
         extraPackIds: extraIds,
         ...(extraIds.length && extraVersions.length === extraIds.length ? {extraPackVersions: extraVersions} : {}),
@@ -359,7 +403,7 @@ export function useReplacementWorkbench() {
       event.target.value = '';
 
   }
-  return { boundTemplates, channel, setChannel, channels, currentChannel, isTextScene, scenePrompt, setScenePrompt, defaultScenePrompt, setBatchPreparing, sourceScope, setSourceScope, sourcePage, setSourcePage, linkedSource, params, kind, setKind, sourceId, setSourceId, selectSource, references, target, packId, setPackId, wardrobeMode, selectedPack, packs, scopes, setScopes, availableScopes, showScope, functionOptions, selectFunction, notes, setNotes, textRefs, setTextRefs, reviewId, setReviewId, detailId, setDetailId, search, setSearch, historyTrash, historyStatus, historySearch, setHistoryFilter, preparing, submitting, feedback, setFeedback, uploadInput, assets, catalog, upload, template, videos, currentDetail, review, busy, missing, toggle, pickUpload, prepareTask, submitRun, handleUpload, videoTemplates, templateForSource, boundTemplate, activeVideoTemplate, slots, slotPacks, toggleCharacterPack, chosenPacks };
+  return { boundTemplates, channel, setChannel, channels, currentChannel, isTextScene, scenePrompt, setScenePrompt, defaultScenePrompt, setBatchPreparing, sourceScope, setSourceScope, sourcePage, setSourcePage, linkedSource, params, kind, setKind, sourceId, setSourceId, selectSource, references, target, packId, setPackId, libraryPackId, setLibraryPackId, libraryPack, libraryPackImages, libraryPackMissingRoles, libraryMode, wardrobeMode, selectedPack, packs, scopes, setScopes, availableScopes, showScope, functionOptions, selectFunction, notes, setNotes, textRefs, setTextRefs, reviewId, setReviewId, detailId, setDetailId, search, setSearch, historyTrash, historyStatus, historySearch, setHistoryFilter, preparing, submitting, feedback, setFeedback, uploadInput, assets, catalog, upload, template, videos, currentDetail, review, busy, missing, toggle, pickUpload, prepareTask, submitRun, handleUpload, videoTemplates, templateForSource, boundTemplate, activeVideoTemplate, slots, slotPacks, toggleCharacterPack, chosenPacks };
 }
 
 export type ReplacementWorkbench = ReturnType<typeof useReplacementWorkbench>;
