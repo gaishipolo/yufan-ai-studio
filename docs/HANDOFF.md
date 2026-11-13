@@ -12,7 +12,7 @@
 | 项 | 值 |
 |---|---|
 | 仓库 / 分支 | `https://github.com/gaishipolo/yufan-ai-studio` · `main` |
-| HEAD | 本地领先 `origin/main`：`3aaf40f` 起 **7 笔未推送**（含「任务中心接生图」与「模板封装迁移阶段 A/B/C1」，推送前先问用户），hash 见 `git log --oneline -8`。未跟踪的只有 `var/`、临时脚本（如 `var_fix_fe.py`）、快捷方式 `.lnk`、`vite.config.ts.timestamp-*.mjs` 与用户私有的 `EXCHANGE_TOPICS_2026-11-12.md`，都不该进提交 |
+| HEAD | 本地领先 `origin/main`：`3aaf40f` 起多笔**未推送**（含「任务中心接生图」与「模板封装迁移阶段 A/B/C1」，推送前先问用户）；笔数以 `git rev-list --count origin/main..HEAD` 为准，hash 见 `git log --oneline origin/main..HEAD`。未跟踪的只有 `var/`、临时脚本（如 `var_fix_fe.py`）、快捷方式 `.lnk`、`vite.config.ts.timestamp-*.mjs` 与用户私有的 `EXCHANGE_TOPICS_2026-11-12.md`，都不该进提交 |
 | CI | 此前连续多轮全绿（含 `bc0940e`）；本轮推送后照 §4 核对。PG 迁移仍在观察期（`continue-on-error`） |
 | 本机门禁 | 本轮（2026-11-14 模板封装迁移 C1）按 §3.1 定级 **`full`**（动 `api/ports.py` 装配声明）：后端全量 **1678 passed / 12 skipped / 0 failed**（198s，EXIT=0）；`ruff` 0 / `mypy --platform win32` 297 文件 0 / `export-openapi --check` 四份无差异 / `gen:routes --check` / `gen:mock-coverage --check` / `npm run verify` 全绿。阶段 B 单独也跑过 `full`：1672 passed / 12 skipped |
 | 规模 | 12 个业务模块 · **118 条路径 / 148 个端点**（文本资产 +7）· **57 个权限码**（本轮未新增）· **4 份**契约生成物 |
