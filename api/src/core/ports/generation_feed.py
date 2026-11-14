@@ -61,6 +61,14 @@ class ImageFeedItem(CamelModel):
     size: str = Field(default="", description="尺寸，如 1024x1024")
     count: int = Field(default=1, description="一次生成的张数")
     prompt: str = Field(default="", description="画面描述")
+    #: 提示词里的 `{{Text N}}` / `{{Mixed N}}` 要能就地换成正文与缩略图，所以把
+    #: 两份 id 一起带出来：只给 prompt，前端只能看到占位符。
+    reference_library_ids: list[str] = Field(
+        default_factory=list, description="参考图资产 id，顺序即 `{{Mixed N}}`"
+    )
+    text_library_ids: list[str] = Field(
+        default_factory=list, description="文本资产 id，顺序即 `{{Text N}}`"
+    )
     cover_url: str = Field(
         default="", description="封面图地址（已按当前存储驱动现签，可直接用于 <img>）"
     )

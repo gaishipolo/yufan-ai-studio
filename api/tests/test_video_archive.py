@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -118,20 +119,26 @@ def test_source_key_carries_external_id_so_retry_lands_separately() -> None:
     assert first.source_key != second.source_key
 
 
-def test_asset_name_gets_real_suffix() -> None:
-    """标题是人写的，没有后缀；后缀只认真实产物——否则库里是「双击打不开」的文件。"""
-    plain = _build(_create_task(title="雨夜街道"), "https://cdn.example/x.mp4")
-    assert plain.name == "雨夜街道.mp4"
+def test_asset_name_is_author_and_timestamp_with_real_suffix() -> None:
+    """条目名 = `作者-年-月-日-时-分-秒` + **真实产物**的后缀。
 
-    # 标题里自带后缀时不重复拼
-    already = _build(_create_task(title="雨夜街道.mp4"), "https://cdn.example/y.mp4")
-    assert already.name == "雨夜街道.mp4"
+    标题不再进名字：标题是一句描述，同一句话能生成十次，下载目录里分不清哪个是
+    新的（见 `core.naming`）。后缀只认 `stored` —— 标题里自带什么都不算数，
+    否则库里会出现「双击打不开」的文件。
+
+    时间戳用正则断言：这条用例跑在「现在」，具体到秒的值不稳定。
+    """
+    stamp = r"\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-\d{2}"
+
+    plain = _build(_create_task(title="雨夜街道"), "https://cdn.example/x.mp4")
+    assert re.fullmatch(rf".+-{stamp}\.mp4", plain.name), plain.name
+    assert "雨夜街道" not in plain.name, "标题不该再进文件名"
 
     # 产物没有后缀时保持原样，不凭空造一个
     no_suffix = _build(
         _create_task(title="雨夜街道"), f"videos/{os.urandom(4).hex()}"
     )
-    assert no_suffix.name == "雨夜街道"
+    assert re.fullmatch(rf".+-{stamp}", no_suffix.name), no_suffix.name
 
 
 def test_snapshot_uses_library_field_names() -> None:

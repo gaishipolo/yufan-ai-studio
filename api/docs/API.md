@@ -3742,6 +3742,8 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `size` | `string` | 否 | 尺寸，如 1024x1024 |
 | `count` | `number` | 否 | 一次生成的张数 |
 | `prompt` | `string` | 否 | 画面描述 |
+| `referenceLibraryIds` | `string[]` | 否 | 参考图资产 id，顺序即 `{{Mixed N}}` |
+| `textLibraryIds` | `string[]` | 否 | 文本资产 id，顺序即 `{{Text N}}` |
 | `coverUrl` | `string` | 否 | 封面图地址（已按当前存储驱动现签，可直接用于 <img>） |
 | `outputUrl` | `string \| null` | 否 | 成图地址（成功后才有），同样已现签 |
 | `errorMessage` | `string \| null` | 否 | 失败原因 |

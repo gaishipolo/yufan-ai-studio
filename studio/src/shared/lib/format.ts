@@ -56,3 +56,35 @@ export function formatBytes(bytes: number): string {
 export function formatNumber(n: number): string {
   return n.toLocaleString('zh-CN');
 }
+
+/** 文件名里的时间戳：`2026-11-14-17-27-19`（浏览器本地时区）。 */
+export function fileStamp(iso?: string | null): string {
+  const d = iso ? new Date(iso) : new Date();
+  const at = Number.isNaN(d.getTime()) ? new Date() : d;
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return [
+    at.getFullYear(),
+    pad(at.getMonth() + 1),
+    pad(at.getDate()),
+    pad(at.getHours()),
+    pad(at.getMinutes()),
+    pad(at.getSeconds()),
+  ].join('-');
+}
+
+/**
+ * 生成产物的下载文件名：`用户名-2026-11-14-17-27-19.mp4`。
+ *
+ * 与后端入库命名同一条规则（`core/naming.py`）：标题是给人读的一句话，同一句话
+ * 可以生成十次，下载目录里就分不清哪个是新的。名字里放作者与时间。
+ *
+ * 昵称里可能有空格或 `/`（Windows 不允许），统一剥掉；剥空了退回「用户」。
+ */
+export function generatedFileName(
+  author: string,
+  iso: string | null | undefined,
+  suffix: string,
+): string {
+  const who = (author || '').trim().replace(/[\\/:*?"<>|\s]+/g, '').slice(0, 32);
+  return `${who || '用户'}-${fileStamp(iso)}${suffix}`;
+}

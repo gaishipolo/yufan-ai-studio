@@ -90,6 +90,8 @@
 
 | 本轮 | **模板库支持图片模板**（2026-11-14）：提交按模型能力分流，`video` → `POST /tasks`、`image` → `POST /generations/image`；`taskPayload.ts` 分成 `toTaskPayload` / `toImagePayload` / `toSubmitPayload`；右栏「参数」改为按模型 `paramSchema` 渲染（图片显示尺寸/张数），按钮文案分「生成图片 / 生成视频」 | 起因：`简单测试-图片` 在模板库点生成报「这些参数无法提交给通用生成任务：count」—— 封装页能选图片模型，填表页却只发 `/tasks`（按 `Capability.VIDEO` 解析）。后端一行未改，两个接口本来都支持 `textLibraryIds` |
 
+| 本轮 | **占位符在界面上换成真实数据 + 生成产物按「用户名-时间」命名**（2026-11-14）：新增 `PromptRefs`（`entities/library/ui`），模板库/任务中心/资产库的提示词里 `{{slot:key}}` / `{{Text N}}` / `{{Mixed N}}` 就地渲染成正文或与文字同高的缩略图，模板库未选位置给「选择」按钮；后端 `ImageFeedItem` 补两个 id（只读投影，守卫豁免）、视频入库快照存注入后的提示词、生图作业名用注入后的文案；产物名改 `core/naming.py`（`用户名-年-月-日-时-分-秒`），前端下载同步 `format.generatedFileName` | 封装页**保持**显示 `{{slot:key}}`（作者要看见引用）。解析不到就保留占位符，不静默吞。命名按本地时区：库里存 UTC，直接格式化会让东八区用户看到早八小时 |
+
 | 变化 | 谁受影响 | 说明 |
 |---|---|---|
 | 未在 `param_schema` 声明的参数 → **400** + `availableParams` | 前端/脚本 | 前端参数区本来就由 `GET /models` 渲染，无需改动；手写参数的地方会立刻看到 400 |

@@ -42,6 +42,7 @@ import {
   trashDaysLeft,
 } from '@/entities/library/model/types';
 import { tagLabel, tagOptions } from '@/entities/library/model/tagTree';
+import { PromptRefs } from '@/entities/library/ui/PromptRefs';
 import { PACK_ITEM_ROLES, packItemRoleLabel } from '@/entities/library/model/packItemRoles';
 import {
   useLibraryDetail,
@@ -410,9 +411,13 @@ function DetailBody({
           {asset.generation.prompt && (
             <div className="rounded-lg border border-line-soft bg-panel-soft px-2.5 py-2">
               <div className="mb-1 text-[13px] text-ink-mute">最终提示词</div>
-              <p className="whitespace-pre-wrap text-[14px] leading-relaxed text-ink-soft">
-                {asset.generation.prompt}
-              </p>
+              {/* 快照里存的是注入正文之后的提示词，`{{Mixed N}}` 还在：按
+                  `referenceLibraryIds` 就地换成缩略图，别让用户读到编号。 */}
+              <PromptRefs
+                value={asset.generation.prompt}
+                referenceIds={asset.generation.referenceLibraryIds}
+                className="block text-[14px] leading-relaxed text-ink-soft"
+              />
             </div>
           )}
           {Object.keys(asset.generation.promptSpec ?? {}).length > 0 && (

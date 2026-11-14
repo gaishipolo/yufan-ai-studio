@@ -16,7 +16,7 @@ from core import audit
 from core.context import CurrentUser
 from core.exceptions import BadRequest, Forbidden, InvalidState, UpstreamError
 from core.library_refs import resolve_reference_images
-from core.library_text import dumps_text_refs, freeze_text_refs
+from core.library_text import dumps_text_refs, freeze_text_refs, inject_text_refs
 from core.logging import get_logger
 from core.param_schema import resolve_params
 from core.response import Page, PageParams
@@ -200,8 +200,12 @@ class ImageService:
         count = int(params.get("count") or payload.count or 1)  # type: ignore[call-overload]
         extra = {key: value for key, value in params.items() if key not in ("size", "count")}
 
+        # 作业名给人看（生图历史 / 任务中心卡片），所以把 `{{Text N}}` 换成正文：
+        # 模板生成的图取名 `{{Text 1}}` 谁也不知道那是什么。真正的 prompt 列
+        # 保持原样（重试与注入都读它）。文本已在上面冻结，这里只做展示替换。
+        display = inject_text_refs(payload.prompt, text_refs).strip()
         job = ImageJob(
-            name=payload.prompt.strip()[:_MAX_JOB_NAME] or "未命名",
+            name=display[:_MAX_JOB_NAME] or "未命名",
             prompt=payload.prompt,
             size=size,
             count=count,

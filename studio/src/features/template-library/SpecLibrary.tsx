@@ -5,6 +5,7 @@ import { ArrowRight, ImageOff, Play, X } from 'lucide-react';
 import { libraryApi } from '@/entities/library/api/library.api';
 import { useLibraryDetail } from '@/entities/library/api/library.queries';
 import { AssetPreview } from '@/entities/library/ui/AssetPreview';
+import { PromptRefs } from '@/entities/library/ui/PromptRefs';
 import { useGenerateImage } from '@/entities/image/api/image.api';
 import { useModels } from '@/entities/model/api/model.queries';
 import { useCreateTask } from '@/entities/task/api/task.queries';
@@ -344,28 +345,6 @@ export function SpecLibrary() {
     return (values[slot.key] ?? []).length < minOf(slot);
   });
 
-  /* 提示词里写的是 `{{slot:key}}`，用户看到的是「第几位」。这里按与 compile 同一条规则
-     （attachment 不占号、`*` 表示整组）把两者对上，纯展示，不参与提交。 */
-  /* 两套编号：视觉参考是 `{{Mixed N}}`（第 N 位），文本是 `{{Text N}}`（第 N 份文案）。 */
-  const refLegend = (() => {
-    let mixed = 0;
-    let text = 0;
-    return slots
-      .filter(slot => (slot.refMode ?? 'mixed') === 'mixed' || slot.type === 'text')
-      .map(slot => {
-        if (slot.type === 'text') {
-          text += 1;
-          return {key: slot.key, at: text, kind: 'text' as const, many: false};
-        }
-        mixed += 1;
-        return {
-          key: slot.key,
-          at: mixed,
-          kind: 'mixed' as const,
-          many: maxOf(slot) > 1 || slot.source === 'pack',
-        };
-      });
-  })();
   /* 参数只读展示，键与顺序都来自模型的 `paramSchema`：图片模型是尺寸/张数，
      视频模型是画幅/时长，前端不写死任何一种。模型不在目录里就整块不渲染。 */
   const paramChips = Object.entries(model?.paramSchema ?? {}).map(([key, field]) => {
@@ -578,34 +557,51 @@ export function SpecLibrary() {
                 </PanelSection>
               )}
 
-              {/* 提示词只有一段：模板库不改文字，要可变就填文本槽位。 */}
+              {/* 提示词：占位符就地换成用户选的东西 —— 文本显示正文，图 / 视频显示
+                  跟文字同高的缩略块；还没选的位置给一个「选择」按钮，点开就是选择器。 */}
               {promptText.trim() && (
                 <PanelSection
                   title="提示词"
                   extra={<span className="text-[10px] text-ink-mute">不可编辑</span>}
                 >
-                  <div className="max-h-40 overflow-y-auto whitespace-pre-wrap rounded-lg bg-panel-soft px-2.5 py-2 text-[11px] leading-relaxed text-ink-soft">
-                    {promptText}
-                  </div>
-                  {refLegend.length > 0 && (
-                    <div className="flex flex-wrap items-center gap-1 text-[10px] text-ink-mute">
-                      {refLegend.map(item => (
-                        <span
-                          key={item.key}
-                          className="flex items-center gap-1 rounded border border-line-soft px-1.5 py-0.5"
-                        >
-                          <code>{`{{slot:${item.key}${item.many ? '*' : ''}}}`}</code>
-                          <span className="text-ink-soft">
-                            {item.kind === 'text'
-                              ? `第 ${item.at} 份文案`
-                              : item.at === 1
-                                ? '第 1 位'
-                                : `第 ${item.at} 位${item.many ? '起' : ''}`}
-                          </span>
-                        </span>
-                      ))}
-                    </div>
-                  )}
+                  <PromptRefs
+                    value={promptText}
+                    className="block max-h-52 overflow-y-auto rounded-lg bg-panel-soft px-2.5 py-2 text-[11px] leading-relaxed text-ink-soft"
+                    slot={(key, mode) => {
+                      const target = slots.find(item => item.key === key);
+                      if (!target) return null;
+                      const fixed = target.binding === 'fixed';
+                      if (target.source === 'pack') {
+                        // 封装是「一组成员」，占位符位置上给不出单张缩略图：
+                        // 保持一个可点的标签，别让用户以为这里是张图。
+                        return {
+                          kind: 'empty',
+                          label: fixed ? '已固定封装' : '选择封装',
+                          onPick: fixed ? undefined : () => setPicker(key),
+                        };
+                      }
+                      const picked = fixed
+                        ? [target.assetId].filter(Boolean) as string[]
+                        : (values[key] ?? []);
+                      if (picked.length === 0) {
+                        return {
+                          kind: 'empty',
+                          label: `选择${TYPE_LABEL[target.type] ?? '素材'}`,
+                          onPick: () => setPicker(key),
+                        };
+                      }
+                      const ids =
+                        mode.kind === 'all'
+                          ? picked
+                          : mode.kind === 'index'
+                            ? picked.slice(mode.at - 1, mode.at)
+                            : picked.slice(0, 1);
+                      if (ids.length === 0) {
+                        return {kind: 'empty', label: '未选到这一份'};
+                      }
+                      return {kind: target.type === 'text' ? 'text' : 'asset', ids};
+                    }}
+                  />
                 </PanelSection>
               )}
 

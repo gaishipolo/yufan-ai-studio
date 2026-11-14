@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 
 import pytest
 from library_support import png_bytes, put_blob, suffix
@@ -189,8 +190,11 @@ def test_generated_image_lands_in_draft(client, api: str, succeeded_output: _Out
         assert (row.state, row.visibility, row.origin) == ("draft", "personal", "generated")
         assert row.kind == "image"
         assert row.owner_id == owner
-        # 名字带真实后缀：卡片显示时会剥掉，打包下载时要有
-        assert row.name == "产品主图.png"
+        # 名字 = 作者-时间戳 + 真实后缀：卡片显示时会剥掉后缀，打包下载时要有；
+        # 不再是「作业名」，否则模板生成的图会直接叫 `{{Text 1}}`（见 `core.naming`）。
+        assert re.fullmatch(r".+-\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-\d{2}\.png", row.name), (
+            row.name
+        )
         assert row.size_bytes > 0 and (row.storage_key or "").startswith("library/blobs/")
         assert row.cover_key, "草稿也要有缩略图，否则卡片只能显示渐变块"
 

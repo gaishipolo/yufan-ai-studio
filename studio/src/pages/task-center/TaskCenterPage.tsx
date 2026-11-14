@@ -16,16 +16,26 @@ import { TaskSearchRow } from '@/features/task-filter/ui/TaskSearchRow';
 import { TaskPreviewModal } from '@/features/task-preview/TaskPreviewModal';
 import { ImagePreviewModal } from '@/features/task-preview/ImagePreviewModal';
 import { CreateTaskModal } from '@/features/create-task/CreateTaskModal';
+import { generatedFileName } from '@/shared/lib/format';
+import { useSessionStore } from '@/shared/access/session';
 
 type StatusFilter = TaskFeedStatus;
 
-/** 成片文件名：视频/替换档案固定 mp4，生图按真实地址后缀，别让用户下载到无后缀文件 */
-function artifactName(item: TaskFeedItem): string {
+/**
+ * 成片文件名：`作者-年-月-日-时-分-秒` + 真实后缀（见 `generatedFileName`）。
+ *
+ * 后缀按来源真实产物给：视频固定 mp4，生图看地址本身——写死会让 png 存成 .mp4，
+ * 下载下来双击打不开。作者取任务作者，生图记录没有作者字段时用当前账号。
+ */
+function artifactName(item: TaskFeedItem, me: string): string {
   const url = item.outputUrl ?? '';
-  const suffix = item.source === 'image'
-    ? (/\.(png|jpe?g|webp|gif)/i.exec(url.split('?')[0] ?? '')?.[0] ?? '.png')
-    : '.mp4';
-  return `${item.title.replace(/[\\/:*?"<>|]/g, '_')}${suffix}`;
+  const suffix =
+    item.source === 'image'
+      ? (/\.(png|jpe?g|webp|gif)/i.exec(url.split('?')[0] ?? '')?.[0] ?? '.png')
+      : '.mp4';
+  const author = item.video?.authorName || me;
+  const at = item.video?.createdAt ?? item.image?.createdAt ?? item.createdAt;
+  return generatedFileName(author, at, suffix);
 }
 
 export default function TaskCenterPage() {
@@ -34,6 +44,7 @@ export default function TaskCenterPage() {
   const [preview, setPreview] = useState<TaskFeedItem | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const canReadImages = useCan('image:read');
+  const me = useSessionStore(state => state.subject.name);
 
   /* ---------- 筛选条件全部由 URL 承载：可分享 / 可回退 / 刷新不丢 ---------- */
   const statusParam = searchParams.get('status') ?? 'all';
@@ -129,7 +140,7 @@ export default function TaskCenterPage() {
     if (!selected.size) return toast('请先勾选需要下载的任务', 'error');
     const ready = items.filter(item => selected.has(item.id) && item.outputUrl);
     if (!ready.length) return toast('勾选的任务还没有成片', 'error');
-    ready.forEach(item => item.outputUrl && downloadUrl(item.outputUrl, artifactName(item)));
+    ready.forEach(item => item.outputUrl && downloadUrl(item.outputUrl, artifactName(item, me)));
     toast(
       `已打开 ${ready.length} 个成片${ready.length < selected.size ? `，${selected.size - ready.length} 个暂无成片` : ''}`,
       'success',

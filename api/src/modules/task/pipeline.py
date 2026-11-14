@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.exceptions import BadRequest
 from core.library_text import inject_text_refs
+from core.naming import generated_file_name
 from core.ports.library_ingest import IngestRequest
 from core.ports.library_lookup import LibraryAssetKind, get_library_lookup
 from generation.pipeline import register_pipeline
@@ -209,7 +210,12 @@ class VideoGenerationPipeline:
         存储里，供应商链接以后失效也不影响库里的那一份。
         """
         task = await session.get(VideoTask, record.id)
-        name = (task.title if task is not None else "") or f"生成视频-{record.id[:8]}"
+        # 资产库里的名字用「作者-生成时间」而不是标题：标题是一句描述，同一句话
+        # 可以生成十次；用户下载后要能分清哪个是新的（见 `core.naming`）。
+        name = generated_file_name(
+            task.author_name if task is not None else "",
+            task.finished_at or task.created_at if task is not None else None,
+        )
         is_url = stored.startswith(("http://", "https://"))
         return IngestRequest(
             source_module=KIND_VIDEO,
@@ -249,7 +255,10 @@ def _snapshot(task: VideoTask | None, record: GenerationRecord) -> dict[str, obj
     return {
         "model": task.model,
         "model_id": task.model_id or record.model,
-        "prompt": task.prompt,
+        # 存**注入正文之后**的提示词：资产库详情是给人看的，`{{Text 1}}` 在那里
+        # 没有上下文可解析（快照不带文案 id）。与生图快照同口径。
+        # `{{Mixed N}}` 保持原样 —— 资产库有 `reference_library_ids`，前端能还原缩略图。
+        "prompt": inject_text_refs(task.prompt, task.text_refs),
         "duration_sec": float(task.duration_sec),
         "aspect_ratio": task.aspect_ratio,
         "style_preset": task.style_preset or "",

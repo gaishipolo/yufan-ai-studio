@@ -24,8 +24,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.library_text import inject_text_refs
 from core.logging import get_logger
+from core.naming import generated_file_name
 from core.ports.library_ingest import IngestRequest
 from core.ports.library_lookup import LibraryAssetKind
+from core.ports.org_directory import user_names
 from generation.pipeline import register_pipeline
 from generation.spec import (
     STATUS_FAILED,
@@ -416,7 +418,14 @@ class ImageGenerationPipeline:
         是直接发给供应商的请求体，往里面塞 `name` 会变成供应商收到的多余字段。
         """
         job = await session.get(ImageJob, record.id)
-        name = (job.name if job is not None else "") or f"生成图片-{record.id[:8]}"
+        # 名字用「作者-生成时间」而不是作业名：作业名是从提示词派生的，模板生成的
+        # 那张图会直接叫「{{Text 1}}」（见 `core.naming`）。作者名走组织目录端口，
+        # 生图模块不 import 身份模块。
+        author = (await user_names(session, [record.owner_id])).get(record.owner_id, "")
+        name = generated_file_name(
+            author,
+            (job.finished_at or job.created_at) if job is not None else None,
+        )
         is_url = stored.startswith(("http://", "https://"))
         # 额外参数（quality / seed…）一并留档：资产详情里的「生成参数」要能还原
         # 当时到底怎么出的图，只留 size / count 的话复现不出来

@@ -19,8 +19,10 @@ export interface VideoTask {
   aspectRatio: AspectRatio;
   /** 风格预设与参考图（创建时提交，详情回显） */
   stylePreset?: string | null;
-  /** 参考图的**资产库 v2** 资产 id，顺序即提交顺序 */
+  /** 参考图的**资产库 v2** 资产 id，顺序即提交顺序（对应提示词里的 `{{Mixed N}}`） */
   referenceLibraryIds?: string[];
+  /** 绑定的文本资产 id，顺序即提示词里 `{{Text N}}` 的编号 */
+  textLibraryIds?: string[];
   /** 0-100，仅 running 时有意义 */
   progress: number;
   coverUrl: string;

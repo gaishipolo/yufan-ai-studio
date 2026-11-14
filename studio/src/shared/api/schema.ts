@@ -480,6 +480,10 @@ export interface ImageFeedItem {
   count?: number;
   /** 画面描述 */
   prompt?: string;
+  /** 参考图资产 id，顺序即 `{{Mixed N}}` */
+  referenceLibraryIds?: string[];
+  /** 文本资产 id，顺序即 `{{Text N}}` */
+  textLibraryIds?: string[];
   /** 封面图地址（已按当前存储驱动现签，可直接用于 <img>） */
   coverUrl?: string;
   /** 成图地址（成功后才有），同样已现签 */

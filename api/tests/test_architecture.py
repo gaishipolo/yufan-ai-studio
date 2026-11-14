@@ -663,6 +663,17 @@ _LIBRARY_REFERENCE_FIELDS = frozenset(
 )
 
 
+#: **只读投影**：字段名与「引用写入点」相同，但值是从别处读出来给界面看的，本文件
+#: 既不持久化也不负责引用完整性。真正写入方在 `modules/image`，已单独声明来源。
+#: 在这里列出来而不是让某个模块补一条假声明 —— 假声明会让删除保护多一个查不到
+#: 实现的来源，反而更危险。
+_REFERENCE_PROJECTIONS = {
+    # `ImageFeedItem`：任务中心把 `image_jobs.reference_library_ids` 带出来，让前端
+    # 把提示词里的 `{{Mixed N}}` 换成缩略图。这张 DTO 不落库。
+    "core/ports/generation_feed.py",
+}
+
+
 def _library_reference_field_files() -> list[str]:
     """找出所有声明了「装着 v2 资产 id 的集合」字段的源码文件。
 
@@ -706,6 +717,8 @@ def test_every_library_reference_writer_declares_a_source() -> None:
 
     uncovered: list[str] = []
     for relative in _library_reference_field_files():
+        if relative in _REFERENCE_PROJECTIONS:
+            continue
         parts = relative.split("/")
         if parts[0] == "modules":
             if parts[1] not in by_module:

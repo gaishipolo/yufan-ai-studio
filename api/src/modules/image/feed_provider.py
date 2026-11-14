@@ -130,6 +130,8 @@ async def read_generation_feed(query: GenerationFeedQuery) -> GenerationFeedPage
                 size=job.size,
                 count=job.count,
                 prompt=job.prompt,
+                reference_library_ids=list(job.reference_library_ids or []),
+                text_library_ids=list(job.text_library_ids or []),
                 cover_url=urls[index * 2],
                 output_url=urls[index * 2 + 1] or None,
                 error_message=job.error_message,

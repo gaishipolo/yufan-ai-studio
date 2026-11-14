@@ -2,8 +2,9 @@ import { Bookmark, Download, RotateCcw } from 'lucide-react';
 import { Button, Chip, CoverImage, Modal, Skeleton } from '@/shared/ui';
 import { toast } from '@/shared/lib/toast';
 import { downloadUrl } from '@/shared/lib/download';
-import { formatDateTime, formatDuration } from '@/shared/lib/format';
+import { formatDateTime, formatDuration, generatedFileName } from '@/shared/lib/format';
 import { useRetryTask, useTaskDetail, useToggleFavorite } from '@/entities/task/api/task.queries';
+import { PromptRefs } from '@/entities/library/ui/PromptRefs';
 import { TASK_STATUS_LABEL } from '@/entities/task/model/types';
 
 export interface TaskPreviewModalProps {
@@ -71,7 +72,15 @@ export function TaskPreviewModal({ taskId, outputUrl, onClose }: TaskPreviewModa
               <dd className="text-ink">{formatDateTime(task.createdAt)}</dd>
 
               <dt className="text-ink-mute">画面描述</dt>
-              <dd className="text-ink">{task.prompt}</dd>
+              <dd className="text-ink">
+                {/* 占位符换成真的东西：`{{Text N}}` → 正文、`{{Mixed N}}` → 缩略图。
+                    解析不到（历史任务缺快照）就原样留着，比如实吞掉好。 */}
+                <PromptRefs
+                  value={task.prompt ?? ''}
+                  textIds={task.textLibraryIds}
+                  referenceIds={task.referenceLibraryIds}
+                />
+              </dd>
             </dl>
 
             {task.errorMessage && (
@@ -88,7 +97,10 @@ export function TaskPreviewModal({ taskId, outputUrl, onClose }: TaskPreviewModa
                 disabled={!task.downloadable || !outputUrl}
                 onClick={() =>
                   outputUrl
-                    ? downloadUrl(outputUrl, `${task.title}.mp4`)
+                    ? downloadUrl(
+                        outputUrl,
+                        generatedFileName(task.authorName ?? '', task.createdAt, '.mp4'),
+                      )
                     : toast('成片地址暂不可用，请稍后刷新', 'error')
                 }
               >

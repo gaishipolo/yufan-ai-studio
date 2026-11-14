@@ -5,8 +5,10 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button, Chip, CoverImage, Modal } from '@/shared/ui';
 import { toast } from '@/shared/lib/toast';
 import { downloadUrl } from '@/shared/lib/download';
-import { formatDateTime } from '@/shared/lib/format';
+import { formatDateTime, generatedFileName } from '@/shared/lib/format';
 import { imageApi } from '@/entities/image/api/image.api';
+import { PromptRefs } from '@/entities/library/ui/PromptRefs';
+import { useSessionStore } from '@/shared/access/session';
 import { taskKeys } from '@/entities/task/api/task.queries';
 import type { TaskFeedItem } from '@/entities/task/model/feed.types';
 
@@ -33,6 +35,7 @@ export function ImagePreviewModal({ item, onClose }: ImagePreviewModalProps) {
   const qc = useQueryClient();
   const [needConfirm, setNeedConfirm] = useState(false);
   const image = item?.image;
+  const me = useSessionStore(state => state.subject.name);
 
   useEffect(() => setNeedConfirm(false), [item?.id]);
 
@@ -90,7 +93,18 @@ export function ImagePreviewModal({ item, onClose }: ImagePreviewModalProps) {
               <dd className="text-ink">{formatDateTime(image.createdAt)}</dd>
 
               <dt className="text-ink-mute">画面描述</dt>
-              <dd className="break-words text-ink">{image.prompt || '—'}</dd>
+              <dd className="break-words text-ink">
+                {/* 与任务详情同一套：文案给正文、参考图给缩略块，解析不到就留占位符 */}
+                {image.prompt ? (
+                  <PromptRefs
+                    value={image.prompt}
+                    textIds={image.textLibraryIds}
+                    referenceIds={image.referenceLibraryIds}
+                  />
+                ) : (
+                  '—'
+                )}
+              </dd>
             </dl>
 
             {image.errorMessage && (
@@ -110,7 +124,13 @@ export function ImagePreviewModal({ item, onClose }: ImagePreviewModalProps) {
                 variant="primary"
                 icon={<Download size={13} />}
                 disabled={!outputUrl}
-                onClick={() => outputUrl && downloadUrl(outputUrl, `${image.title}${suffixOf(outputUrl)}`)}
+                onClick={() =>
+                  outputUrl &&
+                  downloadUrl(
+                    outputUrl,
+                    generatedFileName(me, image.createdAt, suffixOf(outputUrl)),
+                  )
+                }
               >
                 下载成图
               </Button>

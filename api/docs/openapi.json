@@ -9561,6 +9561,22 @@
             "description": "画面描述",
             "default": ""
           },
+          "referenceLibraryIds": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Referencelibraryids",
+            "description": "参考图资产 id，顺序即 `{{Mixed N}}`"
+          },
+          "textLibraryIds": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Textlibraryids",
+            "description": "文本资产 id，顺序即 `{{Text N}}`"
+          },
           "coverUrl": {
             "type": "string",
             "title": "Coverurl",
