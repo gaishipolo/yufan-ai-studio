@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { FolderOpen, Info } from 'lucide-react';
-import { PageHeader, CardSkeletonGrid, EmptyState, ErrorState, Pager, Select, Tabs, type TabItem } from '@/shared/ui';
+import { FolderOpen, Plus } from 'lucide-react';
+import { Button, PageHeader, CardSkeletonGrid, EmptyState, ErrorState, Pager, Tabs, type TabItem } from '@/shared/ui';
 import { toast } from '@/shared/lib/toast';
 import { downloadUrl } from '@/shared/lib/download';
 import { useCan } from '@/shared/access/use-access';
@@ -11,8 +11,8 @@ import { ImageTaskCard } from '@/entities/task/ui/ImageTaskCard';
 import { useDeleteTasks, useTaskFeed, useUpdateTask } from '@/entities/task/api/task.queries';
 import type { TaskScope, TaskSort } from '@/entities/task/model/types';
 import type { TaskFeedItem, TaskFeedParams, TaskFeedSource, TaskFeedStatus } from '@/entities/task/model/feed.types';
-import { TaskToolbar } from '@/features/task-filter/ui/TaskToolbar';
-import { TaskSearchRow } from '@/features/task-filter/ui/TaskSearchRow';
+import { TaskFilterBar } from '@/features/task-filter/ui/TaskFilterBar';
+import { TaskBulkBar } from '@/features/task-filter/ui/TaskBulkBar';
 import { TaskPreviewModal } from '@/features/task-preview/TaskPreviewModal';
 import { ImagePreviewModal } from '@/features/task-preview/ImagePreviewModal';
 import { CreateTaskModal } from '@/features/create-task/CreateTaskModal';
@@ -88,6 +88,12 @@ export default function TaskCenterPage() {
   useEffect(() => {
     if (debouncedKeyword !== keyword) patchFilter({ keyword: debouncedKeyword });
   }, [debouncedKeyword, keyword, patchFilter]);
+
+  /* 反向同步（URL → 输入框）：浏览器回退 / 点「清空筛选」时 URL 变了，
+     输入框里的旧词不跟着清，用户会看到"框里有字但没有筛"的矛盾状态。 */
+  useEffect(() => {
+    setKeywordInput(current => (current === keyword ? current : keyword));
+  }, [keyword]);
 
   const params = useMemo<TaskFeedParams>(
     () => ({ source, status, keyword, sort, scope, onlyAuthorized, page, pageSize }),
@@ -185,55 +191,62 @@ export default function TaskCenterPage() {
     <>
       <PageHeader
         title="任务中心"
-        description="统一跟踪视频生成、生图与模板替换任务，自动同步进度、成片与待处理事项。"
         actions={
-          <TaskToolbar
-            scope={scope}
-            onScopeChange={(v) => patchFilter({ scope: v })}
-            canReadAll={canReadAll}
-            onlyAuthorized={onlyAuthorized}
-            onAuthorizedChange={(v) => patchFilter({ auth: v ? '1' : undefined })}
-            sort={sort}
-            onSortChange={(v) => patchFilter({ sort: v })}
-            selectedCount={selected.size}
-            onSelectAll={toggleSelectAll}
-            onDownload={handleDownload}
-            onCollect={handleCollect}
-            onDelete={handleDelete}
-            onCreate={() => setCreateOpen(true)}
-            busy={deleteTasks.isPending || updateTask.isPending}
-          />
+          <Button variant="primary" icon={<Plus size={13} />} onClick={() => setCreateOpen(true)}>
+            创建任务
+          </Button>
         }
       />
 
-      <p className="mt-2.5 flex flex-wrap items-center gap-1 text-[11.5px] leading-relaxed text-ink-mute">
-        <Info size={12} className="shrink-0" aria-hidden />
-        视频与生图统一展示；生图按 `image:read` 只显示本人记录，完成后可查看成片与下载。批量操作仅适用于通用视频任务。
-        {canReadImages && <Link to="/image" className="text-primary hover:underline">生图工作台 →</Link>}
-        <Link to="/templates/library" className="text-primary hover:underline">从模板生成 →</Link>
-      </p>
-
-      <div className="mt-3 flex flex-wrap items-center gap-2">
-        <Select aria-label="任务来源" value={source} onChange={event => patchFilter({source: event.target.value})}
-          options={[{value: 'all', label: '全部来源'}, {value: 'video', label: '通用视频生成'},
-            ...(canReadImages ? [{value: 'image', label: '生图'}] : [])]} />
-        {source === 'image' && !canReadImages && <p className="text-xs text-ink-mute">当前账号没有生图读取权限。</p>}
+      {/* 筛选一条：来源 / 范围 / 排序 / 仅可下载 / 搜索 / 刷新 / 条数 */}
+      <div className="mt-3">
+        <TaskFilterBar
+          keyword={keywordInput}
+          onKeywordChange={setKeywordInput}
+          source={source}
+          onSourceChange={v => patchFilter({ source: v === 'all' ? undefined : v })}
+          canReadImages={canReadImages}
+          scope={scope}
+          onScopeChange={v => patchFilter({ scope: v === 'mine' ? undefined : v })}
+          canReadAll={canReadAll}
+          sort={sort}
+          onSortChange={v => patchFilter({ sort: v === 'createdAt_desc' ? undefined : v })}
+          onlyAuthorized={onlyAuthorized}
+          onAuthorizedChange={v => patchFilter({ auth: v ? '1' : undefined })}
+          onRefresh={() => void refetch()}
+          isFetching={isFetching}
+          total={isError ? undefined : data?.total}
+        />
       </div>
-      {data?.warnings.map(warning => <p key={warning} role="alert" className="mt-3 text-sm text-danger">{warning}</p>)}
 
-      <TaskSearchRow
-        keyword={keywordInput}
-        onKeywordChange={setKeywordInput}
-        onRefresh={() => {
-          void refetch();
-          toast('已刷新任务列表');
-        }}
-        isFetching={isFetching}
-        total={isError ? undefined : data?.total}
-      />
+      {data?.warnings.map(warning => (
+        <p key={warning} role="alert" className="mt-3 text-[11.5px] text-danger">
+          {warning}
+        </p>
+      ))}
 
-      <div className="mt-4 border-b border-line-soft pb-3">
-        <Tabs items={statusTabs} value={status} onChange={(v) => patchFilter({ status: v })} />
+      {/* 页签与批量条同一行：没勾选时右边是"从模板生成"的入口，勾选后就地换成批量操作，
+          不再让四个不可用按钮常驻页头 */}
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
+        <Tabs items={statusTabs} value={status} onChange={v => patchFilter({ status: v })} />
+        {selected.size > 0 ? (
+          <TaskBulkBar
+            count={selected.size}
+            busy={deleteTasks.isPending || updateTask.isPending}
+            onSelectAll={toggleSelectAll}
+            onClear={() => setSelected(new Set())}
+            onDownload={handleDownload}
+            onCollect={handleCollect}
+            onDelete={handleDelete}
+          />
+        ) : (
+          <Link
+            to="/templates/library"
+            className="text-[11.5px] text-ink-mute transition-colors hover:text-primary"
+          >
+            从模板生成 →
+          </Link>
+        )}
       </div>
 
       <div className="mt-3.5">

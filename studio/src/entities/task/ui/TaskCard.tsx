@@ -48,12 +48,12 @@ export const TaskCard = memo(function TaskCard({
           src={task.coverUrl}
           seed={task.id}
           alt={task.title}
-          className="aspect-[4/4.6] w-full"
+          className="aspect-[4/5] w-full"
           imgClassName="transition-transform duration-300 group-hover:scale-[1.04]"
         />
 
-        {/* 上下渐隐遮罩，保证角标可读 */}
-        <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(180deg,rgba(8,20,26,.28)_0%,rgba(8,20,26,0)_34%,rgba(8,20,26,.55)_100%)]" />
+        {/* 上下渐隐遮罩，保证角标可读；比上一版轻一档，浅色封面不再发灰 */}
+        <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(180deg,rgba(8,20,26,.2)_0%,rgba(8,20,26,0)_32%,rgba(8,20,26,.46)_100%)]" />
 
         <span
           className={cn(
@@ -65,14 +65,18 @@ export const TaskCard = memo(function TaskCard({
           {TASK_STATUS_LABEL[task.status]}
         </span>
 
-        <span className="absolute bottom-2 left-2 inline-flex items-center gap-1 rounded-pill border border-white/20 bg-[rgba(10,22,28,.58)] px-1.5 py-px text-[10.5px] text-white backdrop-blur-[6px]">
-          <Play size={9} className="fill-current" />
-          预览
-        </span>
+        {task.status !== 'failed' && (
+          <span className="absolute bottom-2 left-2 inline-flex items-center gap-1 rounded-pill border border-white/20 bg-[rgba(10,22,28,.5)] px-1.5 py-px text-[10px] text-white backdrop-blur-[6px]">
+            <Play size={9} className="fill-current" />
+            预览
+          </span>
+        )}
 
-        {!inFlight && (
-          <span className="absolute bottom-2 right-2 rounded-[5px] bg-[rgba(10,22,28,.5)] px-1.5 py-px text-[10.5px] tabular-nums text-white">
-            {formatDuration(task.durationSec)}
+        {!inFlight && task.status !== 'failed' && (
+          /* 画幅与时长合并成一个角标：它们都是"这条片子是什么规格"，
+             分成两个 pill 会把封面右下角塞满。失败的任务没有片子，不摆这张标签。 */
+          <span className="absolute bottom-2 right-2 rounded-[5px] bg-[rgba(10,22,28,.5)] px-1.5 py-px text-[10px] tabular-nums text-white">
+            {task.aspectRatio} · {formatDuration(task.durationSec)}
           </span>
         )}
 
@@ -108,16 +112,20 @@ export const TaskCard = memo(function TaskCard({
                 style={{ width: `${task.progress}%` }}
               />
             </div>
-            <div className="mt-2 flex items-center gap-1.5 text-[10.5px] text-ink-mute">
-              <Chip tone="primary">{task.model}</Chip>
-              <span className="tabular-nums">{task.progress}%</span>
+            <div className="mt-2 flex items-center justify-between gap-2 text-[10.5px] text-ink-mute">
+              <Chip tone="primary" className="max-w-[70%] truncate">
+                {task.model}
+              </Chip>
+              <span className="shrink-0 tabular-nums">{task.progress}%</span>
             </div>
           </>
         ) : (
-          <div className="mt-2 flex items-center gap-1.5 text-[10.5px] text-ink-mute">
-            <Chip tone="primary">{task.model}</Chip>
-            <span>{task.aspectRatio}</span>
-            <span className="truncate">{formatDateTime(task.createdAt)}</span>
+          /* 规格已经搬到封面角标上，这一行只留「哪个模型」和「什么时候」 */
+          <div className="mt-2 flex items-center justify-between gap-2 text-[10.5px] text-ink-mute">
+            <Chip tone="primary" className="max-w-[62%] truncate">
+              {task.model}
+            </Chip>
+            <span className="shrink-0 truncate">{formatDateTime(task.createdAt)}</span>
           </div>
         )}
       </div>
