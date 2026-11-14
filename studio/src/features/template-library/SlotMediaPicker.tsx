@@ -54,6 +54,10 @@ export function SlotMediaPicker({
   });
   const items = list.data?.items ?? [];
 
+  /* 已选但不在当前这档标签下的素材（换标签之后才会出现），见下面的渲染注释。 */
+  const shown = new Set(items.map(item => item.id));
+  const hiddenPicked = selected.filter(id => !shown.has(id));
+
   const toggle = (assetId: string) => {
     const next = pickWithin(selected, assetId, max);
     if (next !== selected) onChange(next);
@@ -81,9 +85,12 @@ export function SlotMediaPicker({
         </p>
       )}
 
-      {selected.length > 0 && (
+      {/* 已选的素材不再单独列一排 chip：网格里打了勾、右上角还写着「已选 2/3」，
+          再列一遍只是重复。只留"选了但不在当前这档标签里"的那些 —— 它们在网格中
+          看不见，不留 chip 就只能靠切回原标签才删得掉（满额时还会卡死：全部置灰）。 */}
+      {list.isSuccess && hiddenPicked.length > 0 && (
         <div className="mt-1.5 flex flex-wrap gap-1.5">
-          {selected.map(assetId => (
+          {hiddenPicked.map(assetId => (
             <AssetChip
               key={assetId}
               assetId={assetId}
