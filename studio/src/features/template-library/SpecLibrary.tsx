@@ -158,6 +158,23 @@ export function SpecLibrary() {
     return (values[slot.key] ?? []).length < minOf(slot);
   });
 
+  /* 提示词里写的是 `{{slot:key}}`，用户看到的是「第几位」。这里按与 compile 同一条规则
+     （attachment 不占号、`*` 表示整组）把两者对上，纯展示，不参与提交。 */
+  const refLegend = (() => {
+    let at = 0;
+    return slots
+      .filter(slot => (slot.refMode ?? 'mixed') === 'mixed')
+      .map(slot => {
+        at += 1;
+        return {
+          key: slot.key,
+          at,
+          label: slot.label || slot.key,
+          many: maxOf(slot) > 1 || slot.source === 'pack',
+        };
+      });
+  })();
+
   const editableChanged = !!version && override !== editableText;
   const busy = compile.isPending || createTask.isPending;
 
@@ -236,30 +253,26 @@ export function SpecLibrary() {
                 type="button"
                 onClick={() => setSelectedKey(item.key)}
                 className={cn(
-                  'overflow-hidden rounded-2xl border text-left transition-colors',
+                  'flex flex-col gap-2 rounded-2xl border p-3 text-left transition-colors',
                   item.key === spec?.key
                     ? 'border-primary-line bg-primary/5'
                     : 'border-line-soft hover:border-primary-line',
                 )}
               >
-                <div className="relative aspect-[16/10]">
-                  {/* 规格本身没有封面字段：用 key 生成稳定渐变，不伪造一张"模板示意图"。 */}
-                  <CoverImage seed={item.key} className="h-full w-full" />
-                  <span className="absolute left-2 top-2">
-                    <Chip>v{item.currentVersion}</Chip>
-                  </span>
-                </div>
-                <div className="flex flex-col gap-1.5 p-3">
+                {/* 规格没有封面字段，就不摆一块空渐变冒充缩略图：卡片按「叫什么、几版、
+                    要几样素材」排，选中的那个在右栏才出图。 */}
+                <div className="flex items-center justify-between gap-2">
                   <span className="truncate text-[13px] font-medium text-ink">{item.name}</span>
-                  <div className="flex flex-wrap gap-1">
-                    <Chip>{itemSlots.length} 个槽位</Chip>
-                    {fixed > 0 && <Chip>{fixed} 固定</Chip>}
-                    {itemSlots.length - fixed > 0 && <Chip>{itemSlots.length - fixed} 待填</Chip>}
-                  </div>
-                  <span className="truncate text-[11px] text-ink-mute">
-                    {item.latest?.model ?? '未声明模型'}
-                  </span>
+                  <Chip>v{item.currentVersion}</Chip>
                 </div>
+                <div className="flex flex-wrap gap-1">
+                  <Chip>{itemSlots.length} 个槽位</Chip>
+                  {fixed > 0 && <Chip>{fixed} 固定</Chip>}
+                  {itemSlots.length - fixed > 0 && <Chip>{itemSlots.length - fixed} 待填</Chip>}
+                </div>
+                <span className="truncate text-[11px] text-ink-mute">
+                  {item.latest?.model ?? '未声明模型'}
+                </span>
               </button>
             );
           })}
@@ -375,7 +388,7 @@ export function SpecLibrary() {
                   模板固定部分
                   <span className="text-[10px] font-normal text-ink-mute">不可编辑</span>
                 </h3>
-                <div className="whitespace-pre-wrap rounded-xl border border-line-soft bg-panel-soft px-2.5 py-2 text-[11px] leading-relaxed text-ink-mute">
+                <div className="whitespace-pre-wrap rounded-xl border border-line-soft bg-panel-soft px-2.5 py-2 text-[11px] leading-relaxed text-ink-soft">
                   {lockedText}
                 </div>
               </section>
@@ -397,9 +410,20 @@ export function SpecLibrary() {
                 </p>
               )}
               {editableText.trim() && (
-                <p className="text-[10px] text-ink-mute">
-                  `{"{{slot:key}}"}` 由系统按实际填了几张展开成编号，不要手写编号。
-                </p>
+                <div className="flex flex-wrap items-center gap-1 text-[10px] text-ink-mute">
+                  {refLegend.map(item => (
+                    <span
+                      key={item.key}
+                      className="flex items-center gap-1 rounded-md bg-line-soft px-1.5 py-0.5"
+                    >
+                      <code>{`{{slot:${item.key}${item.many ? '*' : ''}}}`}</code>
+                      <span className="text-ink-soft">
+                        {item.at === 1 ? '第 1 位' : `第 ${item.at} 位${item.many ? '起' : ''}`}
+                      </span>
+                    </span>
+                  ))}
+                  <span>编号按实际填了几张现算，别手写。</span>
+                </div>
               )}
             </section>
 
