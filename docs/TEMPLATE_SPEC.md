@@ -313,9 +313,22 @@
 
 | 期 | 内容 | 验收 |
 |---|---|---|
-| **P1 定表 + 接读** | `core/` 加 `InputSlot`/`TemplateSpec` 词表与编译纯函数；三张表 + 迁移（含旧 manifest→spec、旧素材包→资产库封装）；六个接口（含 `compile`）；封装页改成 §9 单页；**替换链的 `template-runtime` 端口实现改为读 spec 版本**（旧 `video_templates` 只读） | `compile` 输出与旧模板的 `mediaOrder` **逐项等价**；拿一条历史模板复跑一次 `prepare` 成功（证明只读兼容 + 新读法都对）；预检挡住所有非法组合（§12） |
+| **P1 定表** | `core/` 加 `InputSlot`/`TemplateSpec` 词表与编译纯函数；三张表 + 迁移（含旧 manifest→spec、旧素材包→资产库封装）；六个接口（含 `compile`）；封装页改成 §9 单页 | `compile` 输出与旧模板的 `mediaOrder` **逐项等价**；预检挡住所有非法组合（§12）；**不写 `video_templates`、也不假装能读**（见下方"接读为什么不在 P1"） |
 | **P2 填表** | 模板库填表页（`source=pack` 的槽位走资产库封装选择器）；`compile → /tasks` 走通 | 四种组合各跑通一次：纯提示词（`agnes-video-2.5-flash`，maxRefs=0）、多图（`agnes-image-*`，maxRefs=4）、图+视频、加音频附件；另加一条"选一个资产库封装填一个槽位" |
-| **P3 删表 + capability 化** | 删 `video_templates` / `template_packs*`；替换能力作为 task 的一个 capability（driver 侧声明分类上限）；`supportedScopes`/`wardrobeMode` → `spec.attributes`；成片复核 → 任务中心；`modules/template` 的编排与物化下线。细则见 §11.1 | §11.1 的三条判据全绿；替换业务与历史档案不中断 |
+| **P3 接读 + 删表 + capability 化** | 替换链的 `template-runtime` 端口改读 spec 版本（旧 `video_templates` 只读）；删 `video_templates` / `template_packs*`；替换能力作为 task 的一个 capability；`supportedScopes`/`wardrobeMode` → `spec.attributes`；成片复核 → 任务中心；`modules/template` 的编排与物化下线。细则见 §11.1 | §11.1 的三条判据全绿；替换业务与历史档案不中断；`prepare` 用 spec 驱动的模板跑通 |
+
+#### 接读为什么不在 P1（2026-11-14 实现时确认）
+
+原稿把「runtime 改读 spec」放在 P1，理由是"不许投影回旧表"。真做时撞上一个事实：
+替换链按「原片 + 素材包」找模板（`find_template_for_run(source_asset_id, pack_id, template_id)`），
+而一条 spec 可能根本没有视频槽位、也没有包槽位 —— 要让它读 spec，先得有一条判据说
+"哪条 spec 是可替换模板"（模型属于替换通道？有 fixed video 槽？有 fixed pack 槽？）。
+
+这条判据本质属于 P3「替换变成 task 的一个 capability」，P1 硬定就是猜。所以：
+
+- **P1 只定表**，不写 `video_templates`（不产生第二份数据），替换链继续读自己的旧表；
+- **P3 一次性接读**，并把判据写进 capability 声明（模型侧声明"我是替换能力"，
+  spec 侧只按槽位组合校验），避免用启发式推断。
 
 ### 11.1 P3 终局：统一到 task（2026-11-14 拍板）
 

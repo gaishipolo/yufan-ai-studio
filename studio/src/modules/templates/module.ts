@@ -1,4 +1,4 @@
-import { LayoutGrid, PackagePlus } from 'lucide-react';
+import { LayoutGrid, Layers3, PackagePlus } from 'lucide-react';
 import { defineModule } from '@/shared/registry/define-module';
 
 export default defineModule({
@@ -35,6 +35,20 @@ export default defineModule({
         group: '模板与镜头',
         groupOrder: 2,
         order: 2,
+      },
+    },
+    {
+      /* 通用模板（槽位 + 提示词 + 模型）。与上面的「模板封装」是两种东西：
+         那条写的是替换模板（原片 + 素材包），这条写的是任意生成模板。 */
+      path: 'templates/specs',
+      load: () => import('@/pages/templates/SpecsPage'),
+      permissions: ['template_pack:read'],
+      nav: {
+        label: '模板规格',
+        icon: Layers3,
+        group: '模板与镜头',
+        groupOrder: 2,
+        order: 3,
       },
     },
   ],

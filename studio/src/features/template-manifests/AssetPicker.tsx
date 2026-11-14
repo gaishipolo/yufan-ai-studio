@@ -10,9 +10,12 @@ export interface PickedAsset {
   coverUrl?: string;
 }
 
+/** 选择器支持的素材类型。`pack` 是资产库封装（多成员、带角色与顺序）。 */
+export type PickKind = 'image' | 'video' | 'audio' | 'text' | 'pack';
+
 export interface AssetPickerProps {
   open: boolean;
-  kind: 'image' | 'video';
+  kind: PickKind;
   /** 已选的 id：再次点击就是取消选择（多选语义）。 */
   selected: string[];
   onClose: () => void;
@@ -20,6 +23,22 @@ export interface AssetPickerProps {
 }
 
 const PAGE_SIZE = 24;
+
+const TITLES: Record<PickKind, string> = {
+  image: '选择参考图',
+  video: '选择视频',
+  audio: '选择音频',
+  text: '选择文本',
+  pack: '选择封装',
+};
+
+const KIND_LABELS: Record<PickKind, string> = {
+  image: '图片',
+  video: '视频',
+  audio: '音频',
+  text: '文本',
+  pack: '封装',
+};
 
 /**
  * 素材选择器：直接复用素材库的选择接口，不另造一套目录。
@@ -41,7 +60,7 @@ export function AssetPicker({open, kind, selected, onClose, onToggle}: AssetPick
   const items = query.data?.items ?? [];
 
   return (
-    <Modal open={open} onClose={onClose} title={kind === 'video' ? '选择原片' : '选择参考图'} width={880}>
+    <Modal open={open} onClose={onClose} title={TITLES[kind]} width={880}>
       <div className="flex flex-col gap-3">
         <SearchInput
           value={keyword}
@@ -52,7 +71,7 @@ export function AssetPicker({open, kind, selected, onClose, onToggle}: AssetPick
           <p className="py-10 text-center text-xs text-ink-mute">正在读取素材…</p>
         ) : items.length === 0 ? (
           <p className="py-10 text-center text-xs text-ink-mute">
-            没有可用的{kind === 'video' ? '视频' : '图片'}。先到素材库上传。
+            没有可用的{KIND_LABELS[kind]}。先到素材库上传。
           </p>
         ) : (
           <div className="grid max-h-[420px] grid-cols-3 gap-3 overflow-y-auto pr-1 sm:grid-cols-4">

@@ -1,0 +1,94 @@
+import { describe, expect, it } from 'vitest';
+import type { TemplateSpecOut } from '@/shared/api/schema';
+import {
+  blankSlot,
+  blankSpec,
+  fromSpecOut,
+  insertRef,
+  normalize,
+  referenceChips,
+} from './specDraft';
+
+describe('模板规格草稿', () => {
+  it('新草稿自带一个图片槽位，位置从 0 开始', () => {
+    const spec = blankSpec();
+    const slots = spec.slots ?? [];
+    expect(slots).toHaveLength(1);
+    expect(slots[0].position).toBe(0);
+    expect(slots[0].type).toBe('image');
+    expect(slots[0].binding).toBe('user');
+  });
+
+  it('插入引用时只在需要的一侧补空格，并把光标放到引用之后', () => {
+    // 光标在末尾：只需前导空格，不该凭空多一个尾空格。
+    const atEnd = insertRef('替换成', '{{slot:hero}}', 3);
+    expect(atEnd.text).toBe('替换成 {{slot:hero}}');
+    expect(atEnd.caret).toBe('替换成 {{slot:hero}}'.length);
+
+    // 光标在中间：两侧都要断开，否则 token 会和中文粘成一个词。
+    const middle = insertRef('替换成同款', '{{slot:hero}}', 3);
+    expect(middle.text).toBe('替换成 {{slot:hero}} 同款');
+  });
+
+  it('插入到空文本不产生前后空格', () => {
+    expect(insertRef('', '{{slot:hero}}', 0).text).toBe('{{slot:hero}}');
+  });
+
+  it('只有 mixed 槽位能引用；多值槽位额外给「全部」', () => {
+    const spec = blankSpec();
+    spec.slots = [
+      {...blankSlot(0), key: 'hero', label: '主图', minCount: 1, maxCount: 1},
+      {...blankSlot(1), key: 'detail', label: '细节', minCount: 0, maxCount: 3},
+      {...blankSlot(2), key: 'bgm', type: 'audio', refMode: 'attachment'},
+    ];
+    const chips = referenceChips(spec);
+    expect(chips.map(chip => chip.token)).toEqual([
+      '{{slot:hero}}',
+      '{{slot:detail}}',
+      '{{slot:detail*}}',
+    ]);
+    // 音频不参与编号，给入口就等于让用户写出一条必然 400 的引用。
+    expect(chips.some(chip => chip.token.includes('bgm'))).toBe(false);
+  });
+
+  it('已发布但没有草稿时，用最近发布版本还原草稿', () => {
+    const out: TemplateSpecOut = {
+      id: 'm1',
+      key: 'demo',
+      name: '演示',
+      description: '',
+      ownerId: 'u1',
+      status: 'published',
+      revision: 3,
+      fingerprint: 'fp',
+      currentVersion: 2,
+      createdAt: '2026-11-14T00:00:00Z',
+      updatedAt: '2026-11-14T00:00:00Z',
+      latest: {
+        version: 2,
+        model: 'libtv-wan3-replacement',
+        params: {aspectRatio: '9:16'},
+        prompt: {locked: '固定', editable: '{{slot:hero}}'},
+        slots: [{...blankSlot(0), key: 'hero'}, {...blankSlot(5), key: 'extra'}],
+        fingerprint: 'fp2',
+        publishedBy: 'u1',
+        publishedAt: '2026-11-14T00:00:00Z',
+      },
+    };
+    const draft = fromSpecOut(out);
+    expect(draft.key).toBe('demo');
+    expect(draft.revision).toBe(3);
+    expect(draft.model).toBe('libtv-wan3-replacement');
+    // 位置按数组顺序重排：发布快照里的 position 可能不连续（历史数据）。
+    expect((draft.slots ?? []).map(slot => slot.position)).toEqual([0, 1]);
+  });
+
+  it('提交前按当前顺序重排 position', () => {
+    const spec = blankSpec();
+    spec.slots = [{...blankSlot(7), key: 'b'}, {...blankSlot(2), key: 'a'}];
+    expect((normalize(spec).slots ?? []).map(slot => [slot.key, slot.position])).toEqual([
+      ['b', 0],
+      ['a', 1],
+    ]);
+  });
+});
