@@ -30,6 +30,13 @@ class ModelOut(CamelModel):
             "提交时走 `referenceLibraryIds` 这条独立入参"
         ),
     )
+    replacement: bool = Field(
+        default=False,
+        description=(
+            "这个模型能不能跑替换链（按「原片 + 素材包」替换）。由驱动声明，"
+            "模板目录按它筛；调用方不得从槽位组合推断"
+        ),
+    )
     is_default: bool = False
 
 

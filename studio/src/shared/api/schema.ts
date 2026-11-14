@@ -2075,6 +2075,8 @@ export interface modules__catalog__schema__ModelOut {
   paramSchema?: Record<string, unknown>;
   /** 这个模型最多接受几张参考图（图生图 / 多图合成），`0` 表示纯文生图。参考图不是 `paramSchema` 里的参数：它的值是「一批图片」，提交时走 `referenceLibraryIds` 这条独立入参 */
   maxReferences?: number;
+  /** 这个模型能不能跑替换链（按「原片 + 素材包」替换）。由驱动声明，模板目录按它筛；调用方不得从槽位组合推断 */
+  replacement?: boolean;
   isDefault?: boolean;
 }
 
@@ -2092,6 +2094,8 @@ export interface modules__model_driver__schema__ModelOut {
   provider: string;
   description?: string;
   paramSchema?: Record<string, unknown>;
+  /** 这个模型能不能跑替换链（按「原片 + 素材包」替换人物/产品/场景）。由驱动声明：模板目录据此筛选，调用方不得从槽位组合推断 */
+  replacement?: boolean;
   /** 这个模型最多接受几张参考图（图生图 / 多图合成），`0` 表示纯文生图。参考图不是 `paramSchema` 里的参数：它的值是「一批图片」，提交时走 `referenceUrls` 这条独立入参 */
   maxReferences?: number;
 }

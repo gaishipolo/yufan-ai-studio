@@ -195,6 +195,7 @@ class ModelGenerationFacade:
                 param_schema=dict(spec.param_schema),
                 description=spec.description,
                 max_references=spec.max_references,
+                replacement=spec.replacement,
             )
             for spec in get_model_router().public_models(wanted)
         )

@@ -7558,6 +7558,23 @@
             }
           },
           {
+            "name": "target",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "all",
+                "replacement",
+                "generation"
+              ],
+              "type": "string",
+              "description": "按模型声明的替换能力筛：replacement / generation / all",
+              "default": "all",
+              "title": "Target"
+            },
+            "description": "按模型声明的替换能力筛：replacement / generation / all"
+          },
+          {
             "name": "page",
             "in": "query",
             "required": false,
@@ -18053,6 +18070,12 @@
             "description": "这个模型最多接受几张参考图（图生图 / 多图合成），`0` 表示纯文生图。参考图不是 `paramSchema` 里的参数：它的值是「一批图片」，提交时走 `referenceLibraryIds` 这条独立入参",
             "default": 0
           },
+          "replacement": {
+            "type": "boolean",
+            "title": "Replacement",
+            "description": "这个模型能不能跑替换链（按「原片 + 素材包」替换）。由驱动声明，模板目录按它筛；调用方不得从槽位组合推断",
+            "default": false
+          },
           "isDefault": {
             "type": "boolean",
             "title": "Isdefault",
@@ -18113,6 +18136,12 @@
             "additionalProperties": true,
             "type": "object",
             "title": "Paramschema"
+          },
+          "replacement": {
+            "type": "boolean",
+            "title": "Replacement",
+            "description": "这个模型能不能跑替换链（按「原片 + 素材包」替换人物/产品/场景）。由驱动声明：模板目录据此筛选，调用方不得从槽位组合推断",
+            "default": false
           },
           "maxReferences": {
             "type": "integer",

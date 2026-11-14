@@ -22,7 +22,7 @@ import json
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
 
-from sqlalchemy import func, select
+from sqlalchemy import ColumnElement, and_, false, func, select, true
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.context import CurrentUser
@@ -447,9 +447,15 @@ async def list_out(
     status: str = "",
     keyword: str = "",
     published_only: bool = False,
+    target: str = "all",
     page: int = 1,
     page_size: int = 20,
 ) -> TemplateSpecListOut:
+    """`target` 按**模型声明**筛：`replacement` 只留能跑替换链的，`generation` 反过来。
+
+    判据来自 `GET /models` 的 `replacement`（驱动声明），**不看槽位组合** ——
+    靠"有 fixed video 槽 + 有 pack 槽"猜，普通多图模板会被误判成可替换模板。
+    """
     stmt = select(SpecRow).where(SpecRow.deleted_at.is_(None))
     count_stmt = select(func.count()).select_from(SpecRow).where(
         SpecRow.deleted_at.is_(None)
@@ -460,6 +466,28 @@ async def list_out(
     elif status:
         stmt = stmt.where(SpecRow.status == status)
         count_stmt = count_stmt.where(SpecRow.status == status)
+    if target != "all":
+        replaceable = [
+            item.id
+            for item in get_model_generation().models()
+            if item.replacement
+        ]
+        condition: ColumnElement[bool]
+        if target == "replacement":
+            condition = (
+                TemplateSpecVersion.model.in_(replaceable) if replaceable else false()
+            )
+        else:
+            condition = (
+                TemplateSpecVersion.model.notin_(replaceable) if replaceable else true()
+            )
+        # 只跟「当前发布版本」 join：草稿里的模型不算数，停用后重新编辑过也一样。
+        join_on = and_(
+            TemplateSpecVersion.spec_id == SpecRow.id,
+            TemplateSpecVersion.version == SpecRow.current_version,
+        )
+        stmt = stmt.join(TemplateSpecVersion, join_on).where(condition)
+        count_stmt = count_stmt.join(TemplateSpecVersion, join_on).where(condition)
     needle = keyword.strip()
     if needle:
         # 名称或 key 命中即可：运营记的是其中一个，不该逼他们想另一个。

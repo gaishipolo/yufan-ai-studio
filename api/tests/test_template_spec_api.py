@@ -13,7 +13,13 @@ from library_support import LIB_RW, admin_headers, make_user, suffix
 from tests_template_helpers import png_bytes, upload, video_bytes
 
 API = "/api/v1/template-specs"
-PERMS = ["template_pack:read", "template_pack:create", "template_pack:publish", *LIB_RW]
+PERMS = [
+    "template_pack:read",
+    "template_pack:create",
+    "template_pack:publish",
+    "catalog:read",
+    *LIB_RW,
+]
 #: 真实驱动目录里的模型（`_check_model` 会查目录，不能用假 id）。
 MODEL = "libtv-wan3-replacement"
 
@@ -422,3 +428,52 @@ def test_compile_rejects_override_that_overflows(client: TestClient) -> None:
     )
     assert body.status_code == 400
     assert "编译后的提示词" in body.json()["message"]
+
+
+def test_models_expose_replacement_declaration(client: TestClient) -> None:
+    """能否跑替换链由**模型**声明，目录必须出参。
+
+    调用方不许从槽位组合推断（"有 fixed video 槽 + 有 pack 槽就是替换模板"）：
+    普通多图模板会被误判，然后在替换链路里以「没有绑定档案」失败。
+    """
+    body = client.get("/api/v1/models", headers=_headers(client))
+    assert body.status_code == 200, body.text
+    items = {item["id"]: item for item in body.json()["data"]["items"]}
+    for model in ("libtv-wan3-replacement", "bailian-wan3-replacement"):
+        assert items[model]["replacement"] is True, model
+    assert items["agnes-video-2.5-flash"]["replacement"] is False
+
+
+def test_published_filters_by_model_replacement(client: TestClient) -> None:
+    """`?target=` 按模型声明筛，不按槽位形状猜。"""
+    headers = _headers(client)
+    video, first, second = _media(client, headers)
+
+    replace_spec = _draft(video, first, second)
+    _save(client, headers, replace_spec)
+    assert client.post(f"{API}/{replace_spec['key']}/publish", headers=headers).status_code == 200
+
+    plain = {
+        "key": f"plain-{suffix()}",
+        "name": "纯提示词",
+        "model": "agnes-video-2.5-flash",
+        "params": {"aspectRatio": "9:16", "durationSec": 5},
+        "prompt": {"locked": "", "editable": "一段描述"},
+        "slots": [],
+    }
+    _save(client, headers, plain)
+    assert client.post(f"{API}/{plain['key']}/publish", headers=headers).status_code == 200
+
+    def keys(target: str) -> set[str]:
+        query = client.get(
+            f"{API}/published",
+            params={"target": target, "pageSize": 100},
+            headers=headers,
+        )
+        assert query.status_code == 200, query.text
+        return {item["key"] for item in query.json()["data"]["items"]}
+
+    assert replace_spec["key"] in keys("replacement")
+    assert plain["key"] not in keys("replacement")
+    assert plain["key"] in keys("generation")
+    assert replace_spec["key"] not in keys("generation")

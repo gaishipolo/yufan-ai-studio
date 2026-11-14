@@ -48,6 +48,13 @@ class ModelOut(CamelModel):
     # 要不要渲染参考图入口，提交端据此拦住超量的 `reference_urls`。
     # 少了这个字段，统一门面就成了绕过 `max_references` 的后门——
     # 服务端知道上限、接口不告诉调用方，调用方就永远按「几张都行」提交。
+    replacement: bool = Field(
+        default=False,
+        description=(
+            "这个模型能不能跑替换链（按「原片 + 素材包」替换人物/产品/场景）。"
+            "由驱动声明：模板目录据此筛选，调用方不得从槽位组合推断"
+        ),
+    )
     max_references: int = Field(
         default=0,
         description=(

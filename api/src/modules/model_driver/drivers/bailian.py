@@ -110,6 +110,7 @@ MODELS: tuple[ModelSpec, ...] = (
         description="720P，参考视频 + 图 + 音频混合输入",
         param_schema=_PARAM_SCHEMA,
         max_references=10,
+        replacement=True,
     ),
     ModelSpec(
         id=PRIME_MODEL_ID,
@@ -119,6 +120,7 @@ MODELS: tuple[ModelSpec, ...] = (
         description="与标准版同参数，出片更快、单价更高",
         param_schema=_PARAM_SCHEMA,
         max_references=10,
+        replacement=True,
     ),
 )
 

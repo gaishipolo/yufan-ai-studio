@@ -13,6 +13,8 @@ create=存草稿、publish=发布/下架。
 
 from __future__ import annotations
 
+from typing import Annotated, Literal
+
 from fastapi import APIRouter, Depends, Query, status
 
 from api.deps import SessionDep, rate_limit
@@ -96,6 +98,10 @@ async def list_published_specs(
     session: SessionDep,
     actor: TemplatePackReadDep,
     keyword: str = Query(default="", max_length=80),
+    target: Annotated[
+        Literal["all", "replacement", "generation"],
+        Query(description="按模型声明的替换能力筛：replacement / generation / all"),
+    ] = "all",
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100, alias="pageSize"),
 ) -> ApiResponse[TemplateSpecListOut]:
@@ -104,6 +110,7 @@ async def list_published_specs(
             session,
             published_only=True,
             keyword=keyword,
+            target=target,
             page=page,
             page_size=page_size,
         )

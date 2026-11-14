@@ -68,6 +68,8 @@ MODELS: tuple[ModelSpec, ...] = (
         description="720P 视频替换；支持 0 积分畅用队列与积分加速队列",
         param_schema=_PARAM_SCHEMA,
         max_references=5,
+        # 替换链的模型：有原片 + 素材包的档案工作区，能按模板做替换。
+        replacement=True,
     ),
 )
 

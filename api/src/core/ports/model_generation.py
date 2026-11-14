@@ -89,6 +89,8 @@ class ModelSummary:
     # 这个模型最多收几张参考图，`0` = 纯文生图。下游据此决定要不要渲染
     # 参考图入口、以及提交时该不该带 `reference_urls`
     max_references: int = 0
+    #: 能不能跑替换链（按「原片 + 素材包」替换）。由驱动声明，不靠槽位组合推断。
+    replacement: bool = False
 
 
 @dataclass(frozen=True, slots=True)

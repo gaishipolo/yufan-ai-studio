@@ -253,7 +253,7 @@
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| `GET` | `/template-specs/published` | 模板库卡片：已发布版本的快照（slots + 两段 prompt + model + params），不返回 draft |
+| `GET` | `/template-specs/published` | 模板库卡片：已发布版本的快照（slots + 两段 prompt + model + params），不返回 draft。`?target=replacement\|generation\|all` 按**模型声明**筛（见 §11.0），不按槽位形状猜 |
 | `POST` | `/template-specs/{key}/compile` | **纯函数式**：入参 `{version?, slotValues, promptOverride?}`，出参见 §6.5。不落库、不调 task |
 
 `compile` 之所以存在：展开与校验是**模板语义**，不能下放前端（否则编号规则有两份），也不该让封装去调 task（跨模块）。它只做映射，不产生副作用，天然可缓存、可单测。
@@ -390,6 +390,26 @@ P3 补上 capability 判据后，迁移只需要让这份守卫继续绿，就�
   （旧数据里"用哪个模型跑替换"是运行时按渠道定的，不是模板里的一列）。
 - **幂等**：以 `spec.attributes.migratedFrom = "template_pack:<id>"` 为标记，重跑跳过；
   资产库封装按 `(owner, 成员 asset 序列)` 去重，避免第二次跑就多出一批同内容的封装。
+
+### 11.0 P3 第一刀已落地：替换能力由模型声明（2026-11-14）
+
+替换链要按「原片 + 素材包」找回对应模板。判据**不能**从槽位组合推断
+（"有 fixed video 槽 + 有 pack 槽就是替换模板"）—— 普通多图模板会被误判，
+然后在替换链路里以「没有绑定档案」失败，那是个和用户操作毫无关系的错。
+
+所以判据落在模型侧：
+
+- `ModelSpec.replacement: bool = False`（`infra/ai/base.py`）—— 驱动声明「我能跑替换」；
+  三个 `*-replacement` 模型置 `True`，其余默认 `False`；
+- 经 `ModelSummary`（core 端口）→ `GET /models` 与 `/model-driver/models` 出参；
+- `GET /template-specs/published?target=replacement|generation|all` 按它筛，
+  只跟**当前发布版本** join（草稿里的模型不算数）。
+
+实测（dev 库 6 个模板）：`/models` 三个替换模型 `replacement=true`；`?target=replacement`
+拿到 5 个（全是 libtv），`?target=generation` 拿到 1 个（纯提示词，agnes 模型）。
+
+**这一刀不动表、不动替换链**：下一步才是"runtime 端口读 spec"。先有稳定判据，
+接读时才不用回头改筛选口径。
 
 ### 11.1 P3 终局：统一到 task（2026-11-14 拍板）
 

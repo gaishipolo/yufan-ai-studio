@@ -3684,6 +3684,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | 参数 | 位置 | 类型 | 必填 | 说明 |
 |---|---|---|---|---|
 | `keyword` | query | `string` | 否 |  |
+| `target` | query | `"all" | "replacement" | "generation"` | 否 | 按模型声明的替换能力筛：replacement / generation / all |
 | `page` | query | `number` | 否 |  |
 | `pageSize` | query | `number` | 否 |  |
 
@@ -6264,6 +6265,7 @@ mixedList 里的一项；下标 +1 就是 {{Mixed N}} 编号。
 | `description` | `string` | 否 |  |
 | `paramSchema` | `Record<string, unknown>` | 否 |  |
 | `maxReferences` | `number` | 否 | 这个模型最多接受几张参考图（图生图 / 多图合成），`0` 表示纯文生图。参考图不是 `paramSchema` 里的参数：它的值是「一批图片」，提交时走 `referenceLibraryIds` 这条独立入参 |
+| `replacement` | `boolean` | 否 | 这个模型能不能跑替换链（按「原片 + 素材包」替换）。由驱动声明，模板目录按它筛；调用方不得从槽位组合推断 |
 | `isDefault` | `boolean` | 否 |  |
 
 ### `modules__model_driver__schema__ModelListOut`
@@ -6283,6 +6285,7 @@ mixedList 里的一项；下标 +1 就是 {{Mixed N}} 编号。
 | `provider` | `string` | 是 |  |
 | `description` | `string` | 否 |  |
 | `paramSchema` | `Record<string, unknown>` | 否 |  |
+| `replacement` | `boolean` | 否 | 这个模型能不能跑替换链（按「原片 + 素材包」替换人物/产品/场景）。由驱动声明：模板目录据此筛选，调用方不得从槽位组合推断 |
 | `maxReferences` | `number` | 否 | 这个模型最多接受几张参考图（图生图 / 多图合成），`0` 表示纯文生图。参考图不是 `paramSchema` 里的参数：它的值是「一批图片」，提交时走 `referenceUrls` 这条独立入参 |
 
 ### `modules__model_driver__schema__TaskOut`

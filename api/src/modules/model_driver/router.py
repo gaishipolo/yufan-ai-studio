@@ -93,6 +93,7 @@ async def list_models(
             description=model.description,
             param_schema=dict(model.param_schema),
             max_references=model.max_references,
+            replacement=model.replacement,
         )
         for model in facade.models(capability)
     ]
