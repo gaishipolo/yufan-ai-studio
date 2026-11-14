@@ -10,10 +10,7 @@ import { PageHeader } from '@/shared/ui';
 export default function LibraryPage() {
   return (
     <>
-      <PageHeader
-        title="模板库"
-        description="选一份已发布的模板，填上它要的素材，直接生成。"
-      />
+      <PageHeader title="模板库" />
       <SpecLibrary />
     </>
   );

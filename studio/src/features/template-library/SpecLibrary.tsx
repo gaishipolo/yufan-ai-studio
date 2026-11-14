@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { Play, X } from 'lucide-react';
+import { ArrowRight, ImageOff, Play, X } from 'lucide-react';
 import { libraryApi } from '@/entities/library/api/library.api';
 import { useLibraryDetail } from '@/entities/library/api/library.queries';
 import { AssetPreview } from '@/entities/library/ui/AssetPreview';
@@ -88,26 +88,150 @@ function DemoCase({
   assetId,
   className,
   big = false,
+  seed = '',
 }: {
   assetId: string | null;
   className?: string;
   big?: boolean;
+  /** 没案例时兜底渐变的种子，传模板 key：同一张模板每次都同一个色，不会闪。 */
+  seed?: string;
 }) {
   if (!assetId) {
+    /* 空封面用资产卡的兜底渐变，不摆虚线框：5:6 的位置上那圈虚线比图还显眼，
+       还容易被读成"加载失败"。渐变按 key 轮换，一排里不会全是同一块灰。 */
     return (
-      <div
-        className={cn(
-          'flex items-center justify-center rounded-lg border border-dashed border-line-strong bg-panel-soft text-[10px] text-ink-mute',
-          className,
-        )}
-      >
-        暂无案例
+      <div className={cn('relative overflow-hidden', className)}>
+        <CoverImage seed={seed || 'template'} className="h-full w-full" />
+        <span className="absolute inset-0 flex flex-col items-center justify-center gap-1 text-white/75">
+          <ImageOff size={16} />
+          <span className="text-[10px]">暂无案例</span>
+        </span>
       </div>
     );
   }
   /* 卡片里只给封面（视频带角标），详情里才可播：播放要取整份 blob，
      列表上每张卡都拉一遍视频流不值得。 */
   return <AssetPreview assetId={assetId} className={cn('rounded-lg', className)} playable={big} />;
+}
+
+/**
+ * 模板卡片：竖版封面 + 名称/版本 + 「要什么素材」两行 + 底部动作。
+ *
+ * 封面按 4:5 给：模板案例多是竖屏成片，横着裁会把主体裁掉；文字部分只留这两行，
+ * 再多就得进右栏看 —— 卡片是选，不是读。
+ */
+function TemplateCard({
+  item,
+  selected,
+  onSelect,
+}: {
+  item: TemplateSpecOut;
+  selected: boolean;
+  onSelect: () => void;
+}) {
+  const itemSlots = slotsOf(item);
+  const fixed = itemSlots.filter(slot => slot.binding === 'fixed').length;
+  const pending = itemSlots.length - fixed;
+  // 要什么类型的素材：卡片上一眼能看出来，省得点进去才发现是视频模板。
+  const kinds = [...new Set(itemSlots.map(slot => slot.type))];
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      className={cn(
+        'group flex flex-col overflow-hidden rounded-xl border bg-panel text-left transition-all',
+        selected
+          ? 'border-primary-line shadow-[0_0_0_3px_rgba(43,124,255,0.10)]'
+          : 'border-line hover:border-line-strong hover:shadow-card',
+      )}
+    >
+      <div className="relative">
+        <DemoCase
+          assetId={item.demoAssetId ?? null}
+          seed={item.key}
+          className="aspect-[5/6] w-full"
+        />
+        {item.demoAssetId && (
+          <span className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/60 via-black/20 to-transparent px-2 pb-1.5 pt-8 text-[10px] text-white/90">
+            {selected ? '正在填写' : '点击填写素材'}
+          </span>
+        )}
+      </div>
+      <div className="flex flex-1 flex-col gap-1.5 p-2.5">
+        <div className="flex items-center gap-1.5">
+          <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-ink">
+            {item.name}
+          </span>
+          <Chip>v{item.currentVersion}</Chip>
+        </div>
+        <div className="flex flex-wrap gap-1">
+          {itemSlots.length === 0 ? (
+            <Chip tone="ok">纯提示词</Chip>
+          ) : pending > 0 ? (
+            <Chip tone="warn">待填 {pending}</Chip>
+          ) : (
+            <Chip tone="ok">素材已固定</Chip>
+          )}
+          {kinds.map(kind => (
+            <Chip key={kind} tone="primary">
+              {TYPE_LABEL[kind] ?? kind}
+            </Chip>
+          ))}
+          {fixed > 0 && pending > 0 && <Chip>{fixed} 固定</Chip>}
+        </div>
+        <dl className="mt-0.5 flex flex-col gap-0.5 text-[11px] leading-relaxed">
+          <div className="flex gap-2">
+            <dt className="w-8 shrink-0 text-ink-mute">模型</dt>
+            <dd className="min-w-0 flex-1 truncate text-ink-soft">
+              {item.latest?.model ?? '—'}
+            </dd>
+          </div>
+          <div className="flex gap-2">
+            <dt className="w-8 shrink-0 text-ink-mute">素材</dt>
+            <dd className="min-w-0 flex-1 truncate text-ink-soft">
+              {itemSlots.length > 0
+                ? `${itemSlots.length} 个槽位${fixed > 0 ? ` · ${fixed} 个已固定` : ''}`
+                : '—'}
+            </dd>
+          </div>
+        </dl>
+        <div className="mt-auto flex items-center justify-between border-t border-line-soft pt-1.5 text-[11px]">
+          <span className="text-ink-mute">
+            {pending > 0 ? `需填 ${pending} 项` : '无需填素材'}
+          </span>
+          <span
+            className={cn(
+              'flex items-center gap-0.5 transition-colors',
+              selected ? 'text-primary' : 'text-ink-mute group-hover:text-primary',
+            )}
+          >
+            填写 <ArrowRight size={11} />
+          </span>
+        </div>
+      </div>
+    </button>
+  );
+}
+
+/** 右栏分区：标题一行 + 内容；分区之间用细线，不再套一层边框盒。 */
+function PanelSection({
+  title,
+  extra,
+  children,
+}: {
+  title: string;
+  extra?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <section className="flex flex-col gap-1.5 border-t border-line-soft pt-3 first:border-t-0 first:pt-0">
+      <div className="flex items-center justify-between gap-2">
+        <h3 className="text-[11px] font-medium text-ink-soft">{title}</h3>
+        {extra}
+      </div>
+      {children}
+    </section>
+  );
 }
 
 /** 资产库封装：成员数由库给，这里只显示「N 张」与首图，不展开成员顺序。 */
@@ -253,9 +377,9 @@ export function SpecLibrary() {
 
   if (published.isLoading) {
     return (
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+      <div className="grid gap-3 sm:grid-cols-2 2xl:grid-cols-3">
         {Array.from({length: 6}).map((_, index) => (
-          <Skeleton key={index} className="h-44 rounded-2xl" />
+          <Skeleton key={index} className="h-[320px] rounded-xl" />
         ))}
       </div>
     );
@@ -265,215 +389,216 @@ export function SpecLibrary() {
     return (
       <EmptyState
         title="还没有已发布的模板"
-        description="先在「模板规格」里定一张表并发布，它就会出现在这里供填表使用。"
+        description="先在「模板封装」里定一张表并发布，它就会出现在这里供填表使用。"
       />
     );
   }
 
   return (
-    <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
+    <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_392px]">
       <div className="flex flex-col gap-3">
-        <SearchInput value={keyword} onChange={event => setKeyword(event.target.value)} placeholder="按名称筛选" />
+        <div className="flex items-center gap-2">
+          <SearchInput
+            value={keyword}
+            onChange={event => setKeyword(event.target.value)}
+            placeholder="按名称筛选"
+            wrapperClassName="w-52 bg-panel"
+          />
+          <span className="text-[11px] text-ink-mute">{items.length} 个模板</span>
+        </div>
         <div className="grid gap-3 sm:grid-cols-2 2xl:grid-cols-3">
-          {items.map(item => {
-            const itemSlots = slotsOf(item);
-            const fixed = itemSlots.filter(slot => slot.binding === 'fixed').length;
-            return (
-              <button
-                key={item.key}
-                type="button"
-                onClick={() => setSelectedKey(item.key)}
-                className={cn(
-                  'flex flex-col gap-2 rounded-2xl border p-3 text-left transition-colors',
-                  item.key === spec?.key
-                    ? 'border-primary-line bg-primary/5'
-                    : 'border-line-soft hover:border-primary-line',
-                )}
-              >
-                <DemoCase assetId={item.demoAssetId ?? null} className="h-24 w-full" />
-                <div className="flex items-center justify-between gap-2">
-                  <span className="truncate text-[13px] font-medium text-ink">{item.name}</span>
-                  <Chip>v{item.currentVersion}</Chip>
-                </div>
-                <div className="flex flex-wrap gap-1">
-                  <Chip>{itemSlots.length} 个槽位</Chip>
-                  {fixed > 0 && <Chip>{fixed} 固定</Chip>}
-                  {itemSlots.length - fixed > 0 && <Chip>{itemSlots.length - fixed} 待填</Chip>}
-                </div>
-                <span className="truncate text-[11px] text-ink-mute">
-                  {item.latest?.model ?? '未声明模型'}
-                </span>
-              </button>
-            );
-          })}
+          {items.map(item => (
+            <TemplateCard
+              key={item.key}
+              item={item}
+              selected={item.key === spec?.key}
+              onSelect={() => setSelectedKey(item.key)}
+            />
+          ))}
         </div>
       </div>
 
-      <aside className="flex flex-col gap-3 rounded-2xl border border-line-soft bg-panel p-4 xl:sticky xl:top-4">
+      <aside className="flex flex-col overflow-hidden rounded-xl border border-line bg-panel xl:sticky xl:top-4">
         {spec && version ? (
           <>
-            <div className="flex items-start justify-between gap-2">
+            <header className="flex items-start justify-between gap-2 border-b border-line-soft px-4 py-3">
               <div className="min-w-0">
-                <div className="truncate text-[15px] font-medium text-ink">{spec.name}</div>
-                <div className="mt-0.5 text-[11px] text-ink-mute">
+                <div className="truncate text-[14px] font-medium text-ink">{spec.name}</div>
+                <div className="mt-0.5 truncate text-[11px] text-ink-mute">
                   v{version.version} · {version.model}
                 </div>
               </div>
-              <Link to="/templates/specs" className="shrink-0 text-[11px] text-ink-mute hover:text-primary">
+              <Link
+                to="/templates/specs"
+                className="shrink-0 text-[11px] text-ink-mute transition-colors hover:text-primary"
+              >
                 改模板
               </Link>
-            </div>
+            </header>
 
-            <DemoCase assetId={spec.demoAssetId ?? null} className="h-40 w-full" big />
+            <div className="flex flex-col gap-3 px-4 py-3">
+              {spec.demoAssetId && (
+                <DemoCase
+                  assetId={spec.demoAssetId}
+                  seed={spec.key}
+                  className="aspect-[16/9] w-full rounded-lg"
+                  big
+                />
+              )}
 
-            {/* 槽位：fixed 只读展示，user 就地挑素材。纯提示词模板没有槽位，整块不渲染。 */}
-            {slots.length > 0 && (
-            <section className="flex flex-col gap-2">
-              <h3 className="text-[12px] font-medium text-ink-soft">
-                填入素材
-                {missing.length > 0 && (
-                  <span className="ml-1 font-normal text-ink-mute">· 还缺 {missing.length} 项</span>
-                )}
-              </h3>
-              {slots.map((slot, index) => {
-                const filled = values[slot.key] ?? [];
-                const fixed = slot.binding === 'fixed';
-                const locked = fixed && (slot.source === 'pack' ? !!slot.packId : !!slot.assetId);
-                return (
-                  <div
-                    key={slot.key}
-                    className="rounded-xl border border-line-soft bg-panel-soft p-2.5"
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="flex min-w-0 items-center gap-1.5">
-                        <span className="text-[11px] text-ink-mute">{index + 1}</span>
-                        <span className="truncate text-[12px] text-ink">
-                          {slot.label || slot.key}
-                        </span>
-                        <Chip>{TYPE_LABEL[slot.type] ?? slot.type}</Chip>
-                        {fixed ? (
-                          <Chip>封装固定</Chip>
-                        ) : minOf(slot) > 0 ? (
-                          <Chip tone="warn">必填</Chip>
-                        ) : null}
-                      </div>
-                      {!fixed && !locked && (
-                        <button
-                          type="button"
-                          onClick={() => setPicker(slot.key)}
-                          className="shrink-0 text-[11px] text-primary hover:underline"
-                        >
-                          {filled.length > 0 ? '更换' : '选择'}
-                        </button>
-                      )}
-                    </div>
+              {slots.length > 0 && (
+                <PanelSection
+                  title="填入素材"
+                  extra={
+                    missing.length > 0 ? (
+                      <span className="text-[11px] text-warn-deep">还缺 {missing.length} 项</span>
+                    ) : (
+                      <span className="text-[11px] text-ok-deep">已填满</span>
+                    )
+                  }
+                >
+                  <div className="flex flex-col divide-y divide-line-soft">
+                    {slots.map((slot, index) => {
+                      const filled = values[slot.key] ?? [];
+                      const fixed = slot.binding === 'fixed';
+                      const locked = fixed && (slot.source === 'pack' ? !!slot.packId : !!slot.assetId);
+                      return (
+                        <div key={slot.key} className="flex gap-2 py-2 first:pt-0 last:pb-0">
+                          <div className="flex w-24 shrink-0 flex-col gap-0.5">
+                            <span className="flex items-baseline gap-1 text-[12px] leading-tight text-ink">
+                              <span className="shrink-0 text-ink-mute">{index + 1}.</span>
+                              <span className="line-clamp-2">{slot.label || slot.key}</span>
+                              {!fixed && minOf(slot) > 0 && (
+                                <span className="text-warn-deep">*</span>
+                              )}
+                            </span>
+                            <span className="text-[10px] text-ink-mute">
+                              {TYPE_LABEL[slot.type] ?? slot.type}
+                              {fixed
+                                ? ' · 已固定'
+                                : maxOf(slot) > 1
+                                  ? ` · 最多 ${maxOf(slot)}`
+                                  : ''}
+                            </span>
+                          </div>
 
-                    <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                      {fixed && slot.source === 'pack' && slot.packId && (
-                        <PackSummary packId={slot.packId} />
-                      )}
-                      {fixed && slot.source !== 'pack' && slot.assetId && (
-                        <AssetChip assetId={slot.assetId} />
-                      )}
-                      {!fixed && slot.source === 'pack' && filled[0] && (
-                        <PackSummary
-                          packId={filled[0]}
-                          onRemove={() => setValues(current => ({...current, [slot.key]: []}))}
-                        />
-                      )}
-                      {!fixed &&
-                        slot.source !== 'pack' &&
-                        filled.map(assetId => (
-                          <AssetChip
-                            key={assetId}
-                            assetId={assetId}
-                            onRemove={() =>
-                              setValues(current => ({
-                                ...current,
-                                [slot.key]: (current[slot.key] ?? []).filter(id => id !== assetId),
-                              }))
-                            }
-                          />
+                          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+                            {fixed && slot.source === 'pack' && slot.packId && (
+                              <PackSummary packId={slot.packId} />
+                            )}
+                            {fixed && slot.source !== 'pack' && slot.assetId && (
+                              <AssetChip assetId={slot.assetId} />
+                            )}
+                            {!fixed && slot.source === 'pack' && filled[0] && (
+                              <PackSummary
+                                packId={filled[0]}
+                                onRemove={() => setValues(current => ({...current, [slot.key]: []}))}
+                              />
+                            )}
+                            {!fixed &&
+                              slot.source !== 'pack' &&
+                              filled.map(assetId => (
+                                <AssetChip
+                                  key={assetId}
+                                  assetId={assetId}
+                                  onRemove={() =>
+                                    setValues(current => ({
+                                      ...current,
+                                      [slot.key]: (current[slot.key] ?? []).filter(
+                                        id => id !== assetId,
+                                      ),
+                                    }))
+                                  }
+                                />
+                              ))}
+                            {!fixed && !locked && (
+                              <button
+                                type="button"
+                                onClick={() => setPicker(slot.key)}
+                                className="rounded-md border border-dashed border-line px-1.5 py-0.5 text-[11px] text-ink-mute transition-colors hover:border-primary-line hover:text-primary"
+                              >
+                                {filled.length > 0
+                                  ? '再选'
+                                  : `选择${slot.source === 'pack' ? '封装' : (TYPE_LABEL[slot.type] ?? '素材')}`}
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  {/* 用途说明只在该槽位还没填时出现：填完它就是噪音。 */}
+                  {slots.some(slot => slot.usage && (values[slot.key] ?? []).length === 0) && (
+                    <ul className="mt-1 flex flex-col gap-0.5 border-t border-line-soft pt-2 text-[10px] leading-relaxed text-ink-mute">
+                      {slots
+                        .filter(slot => slot.usage && (values[slot.key] ?? []).length === 0)
+                        .map(slot => (
+                          <li key={slot.key} className="truncate">
+                            {slot.label || slot.key}：{slot.usage}
+                          </li>
                         ))}
-                      {!fixed && filled.length === 0 && (
-                        <button
-                          type="button"
-                          onClick={() => setPicker(slot.key)}
-                          className="rounded-lg border border-dashed border-line px-2 py-1 text-[11px] text-ink-mute hover:border-primary-line hover:text-primary"
+                    </ul>
+                  )}
+                </PanelSection>
+              )}
+
+              {/* 提示词只有一段：模板库不改文字，要可变就填文本槽位。 */}
+              {promptText.trim() && (
+                <PanelSection
+                  title="提示词"
+                  extra={<span className="text-[10px] text-ink-mute">不可编辑</span>}
+                >
+                  <div className="max-h-40 overflow-y-auto whitespace-pre-wrap rounded-lg bg-panel-soft px-2.5 py-2 text-[11px] leading-relaxed text-ink-soft">
+                    {promptText}
+                  </div>
+                  {refLegend.length > 0 && (
+                    <div className="flex flex-wrap items-center gap-1 text-[10px] text-ink-mute">
+                      {refLegend.map(item => (
+                        <span
+                          key={item.key}
+                          className="flex items-center gap-1 rounded border border-line-soft px-1.5 py-0.5"
                         >
-                          选择{slot.source === 'pack' ? '封装' : (TYPE_LABEL[slot.type] ?? '素材')}
-                          {maxOf(slot) > 1 ? `（最多 ${maxOf(slot)}）` : ''}
-                        </button>
-                      )}
-                    </div>
-                    {slot.usage && (
-                      <p className="mt-1.5 text-[11px] leading-relaxed text-ink-mute">{slot.usage}</p>
-                    )}
-                  </div>
-                );
-              })}
-            </section>
-            )}
-
-            {/* 提示词只有一段：模板库不改文字，要可变就填文本槽位。 */}
-            {promptText.trim() && (
-              <section className="flex flex-col gap-1.5">
-                <h3 className="flex items-center gap-1.5 text-[12px] font-medium text-ink-soft">
-                  提示词
-                  <span className="text-[10px] font-normal text-ink-mute">不可编辑</span>
-                </h3>
-                <div className="whitespace-pre-wrap rounded-xl border border-line-soft bg-panel-soft px-2.5 py-2 text-[11px] leading-relaxed text-ink-soft">
-                  {promptText}
-                </div>
-                {refLegend.length > 0 && (
-                  <div className="flex flex-wrap items-center gap-1 text-[10px] text-ink-mute">
-                    {refLegend.map(item => (
-                      <span
-                        key={item.key}
-                        className="flex items-center gap-1 rounded-md bg-line-soft px-1.5 py-0.5"
-                      >
-                        <code>{`{{slot:${item.key}${item.many ? '*' : ''}}}`}</code>
-                        <span className="text-ink-soft">
-                          {item.kind === 'text'
-                            ? `第 ${item.at} 份文案`
-                            : item.at === 1
-                              ? '第 1 位'
-                              : `第 ${item.at} 位${item.many ? '起' : ''}`}
+                          <code>{`{{slot:${item.key}${item.many ? '*' : ''}}}`}</code>
+                          <span className="text-ink-soft">
+                            {item.kind === 'text'
+                              ? `第 ${item.at} 份文案`
+                              : item.at === 1
+                                ? '第 1 位'
+                                : `第 ${item.at} 位${item.many ? '起' : ''}`}
+                          </span>
                         </span>
-                      </span>
-                    ))}
-                  </div>
-                )}
-              </section>
-            )}
+                      ))}
+                    </div>
+                  )}
+                </PanelSection>
+              )}
 
-            <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-ink-mute">
-              <span>参数</span>
-              <Chip>{String(version.params?.aspectRatio ?? defaults.aspectRatio ?? '9:16')}</Chip>
-              <Chip>{String(version.params?.durationSec ?? defaults.durationSec ?? '—')} 秒</Chip>
+              <PanelSection title="参数">
+                <div className="flex flex-wrap gap-1.5">
+                  <Chip>{String(version.params?.aspectRatio ?? defaults.aspectRatio ?? '9:16')}</Chip>
+                  <Chip>{String(version.params?.durationSec ?? defaults.durationSec ?? '—')} 秒</Chip>
+                </div>
+              </PanelSection>
             </div>
 
-            {error && <p className="text-[11px] text-danger">{error}</p>}
-            {note && (
-              <p className="flex items-center gap-2 text-[11px] text-ink-soft">
-                <span>{note}</span>
-                <Link to="/tasks" className="text-primary hover:underline">
-                  去任务中心
-                </Link>
-              </p>
-            )}
-
-            <Button
-              block
-              disabled={busy || missing.length > 0}
-              onClick={() => void submit()}
-            >
-              <Play size={13} />
-              {busy ? '提交中…' : missing.length > 0 ? `还缺 ${missing.length} 项素材` : '生成'}
-            </Button>
+            <div className="flex flex-col gap-2 border-t border-line-soft px-4 py-3">
+              {error && <p className="text-[11px] text-danger">{error}</p>}
+              {note && (
+                <p className="flex items-center gap-2 text-[11px] text-ink-soft">
+                  <span className="truncate">{note}</span>
+                  <Link to="/tasks" className="shrink-0 text-primary hover:underline">
+                    去任务中心
+                  </Link>
+                </p>
+              )}
+              <Button block disabled={busy || missing.length > 0} onClick={() => void submit()}>
+                <Play size={13} />
+                {busy ? '提交中…' : missing.length > 0 ? `还缺 ${missing.length} 项素材` : '生成'}
+              </Button>
+            </div>
           </>
         ) : (
-          <p className="text-[12px] text-ink-mute">左侧选一个模板。</p>
+          <p className="px-4 py-8 text-center text-[12px] text-ink-mute">左侧选一个模板。</p>
         )}
       </aside>
 
