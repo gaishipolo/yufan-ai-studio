@@ -1,8 +1,10 @@
 import { useState } from 'react';
-import { Plus } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { GripVertical, Plus } from 'lucide-react';
 import { useAvailablePacks } from '@/entities/template/api/pack.queries';
 import { useManifestMutations, useManifests } from '@/entities/template-manifest/api/manifest.queries';
-import type { ManifestOut } from '@/shared/api/schema';
+import { useCan } from '@/shared/access';
+import type { ManifestOut, PublishedTemplateOut } from '@/shared/api/schema';
 import { Button, Chip, EmptyState, FormField, Select, TextInput } from '@/shared/ui';
 import { cn } from '@/shared/lib/cn';
 import { PACK_SCOPES, baseRole, roleLabel, rolesFor } from '@/entities/template/model/packRoles';
@@ -14,6 +16,7 @@ import {
   blankPack,
   bindingsFor,
   fromManifest,
+  moveItem,
   toPayload,
   type AspectRatio,
   type Draft,
@@ -38,21 +41,34 @@ const STATUS_LABELS: Record<string, string> = {
   disabled: '已停用',
 };
 
+/** 拖拽中的参考图：包用 `key` 而不是下标，重排过程中下标会变。 */
+type RefDrag = {packKey: string; index: number};
+
 export function ManifestWorkspace() {
   const list = useManifests();
   const {validate, save, publish, disable} = useManifestMutations();
   const available = useAvailablePacks('all', '', 1);
+  const canWrite = useCan('template_pack:create');
+  const canPublish = useCan('template_pack:publish');
   const [draft, setDraft] = useState<Draft | null>(null);
   const [note, setNote] = useState('');
   const [error, setError] = useState('');
+  const [published, setPublished] = useState<PublishedTemplateOut[]>([]);
   const [picker, setPicker] = useState<{kind: 'image' | 'video'; target: string} | null>(null);
+  const [refDrag, setRefDrag] = useState<RefDrag | null>(null);
+  const [fnDrag, setFnDrag] = useState<number | null>(null);
 
   const packs = available.data?.items ?? [];
   const busy = save.isPending || publish.isPending || disable.isPending || validate.isPending;
 
-  const report = (run: () => Promise<unknown>, ok: string) => {
+  const clearReport = () => {
     setError('');
     setNote('');
+    setPublished([]);
+  };
+
+  const report = (run: () => Promise<unknown>, ok: string) => {
+    clearReport();
     run()
       .then(() => setNote(ok))
       .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : String(reason)));
@@ -61,8 +77,7 @@ export function ManifestWorkspace() {
   const submit = async (action: 'validate' | 'save' | 'publish') => {
     if (!draft) return;
     const payload = toPayload(draft);
-    setError('');
-    setNote('');
+    clearReport();
     try {
       if (action === 'validate') {
         const result = await validate.mutateAsync(payload);
@@ -76,10 +91,8 @@ export function ManifestWorkspace() {
         return;
       }
       const receipt = await publish.mutateAsync(saved.key);
-      const links = (receipt.templates ?? [])
-        .map(item => `${item.name} → ${item.workbenchPath}`)
-        .join('\n');
-      setNote(`已发布 v${receipt.version}\n${links}`);
+      setNote(`已发布 v${receipt.version}`);
+      setPublished(receipt.templates ?? []);
       setDraft(fromManifest(receipt.manifest));
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
@@ -97,7 +110,7 @@ export function ManifestWorkspace() {
     const exists = pack.refs.some(ref => ref.assetId === picked.id);
     const refs = exists
       ? pack.refs.filter(ref => ref.assetId !== picked.id)
-      : [...pack.refs, {assetId: picked.id, role: baseRole(pack.kind)}];
+      : [...pack.refs, {assetId: picked.id, role: baseRole(pack.kind), description: ''}];
     updatePack(index, {refs});
   };
 
@@ -106,6 +119,14 @@ export function ManifestWorkspace() {
     const next = draft.packs.slice();
     next[index] = {...next[index], ...patch};
     setDraft({...draft, packs: next});
+  };
+
+  const updateRef = (packIndex: number, refIndex: number, patch: {role?: string; description?: string}) => {
+    if (!draft) return;
+    const pack = draft.packs[packIndex];
+    const refs = pack.refs.slice();
+    refs[refIndex] = {...refs[refIndex], ...patch};
+    updatePack(packIndex, {refs});
   };
 
   const pickerSelected = (() => {
@@ -120,9 +141,11 @@ export function ManifestWorkspace() {
       <section className="flex flex-col gap-4">
         <div className="flex items-center justify-between">
           <p className="text-xs text-ink-mute">一份配置描述一支原片与它的若干功能，发布后成为模板库里的卡片。</p>
-          <Button onClick={() => setDraft(blankDraft())}>
-            <Plus size={14} /> 新建封装
-          </Button>
+          {canWrite && (
+            <Button onClick={() => setDraft(blankDraft())}>
+              <Plus size={14} /> 新建封装
+            </Button>
+          )}
         </div>
         {error && <p className="text-xs text-danger">{error}</p>}
         {list.isLoading ? (
@@ -136,10 +159,10 @@ export function ManifestWorkspace() {
                 key={item.id}
                 item={item}
                 busy={busy}
+                canPublish={canPublish}
                 onEdit={() => {
                   setDraft(fromManifest(item));
-                  setNote('');
-                  setError('');
+                  clearReport();
                 }}
                 onPublish={() => report(() => publish.mutateAsync(item.key), `已发布 ${item.name}`)}
                 onDisable={() => report(() => disable.mutateAsync(item.key), `已停用 ${item.name}`)}
@@ -161,30 +184,42 @@ export function ManifestWorkspace() {
             className="text-xs text-ink-mute hover:text-ink"
             onClick={() => {
               setDraft(null);
-              setNote('');
-              setError('');
+              clearReport();
             }}
           >
             ← 返回列表
           </button>
           <Chip>{draft.name || '未命名封装'}</Chip>
         </div>
-        <div className="flex items-center gap-2">
-          <Button variant="ghost" disabled={busy} onClick={() => void submit('validate')}>预检</Button>
-          <Button variant="ghost" disabled={busy} onClick={() => void submit('save')}>保存草稿</Button>
-          <Button disabled={busy} onClick={() => void submit('publish')}>保存并发布</Button>
-        </div>
+        {canWrite && (
+          <div className="flex items-center gap-2">
+            <Button variant="ghost" disabled={busy} onClick={() => void submit('validate')}>预检</Button>
+            <Button variant="ghost" disabled={busy} onClick={() => void submit('save')}>保存草稿</Button>
+            {canPublish && (
+              <Button disabled={busy} onClick={() => void submit('publish')}>保存并发布</Button>
+            )}
+          </div>
+        )}
       </div>
 
-      {(note || error) && (
-        <pre
+      {(note || error || published.length > 0) && (
+        <div
           className={cn(
-            'whitespace-pre-wrap rounded-xl border px-3 py-2 text-[11px] leading-relaxed',
+            'rounded-xl border px-3 py-2 text-[11px] leading-relaxed',
             error ? 'border-danger/40 bg-danger/5 text-danger' : 'border-line bg-panel-soft text-ink-soft',
           )}
         >
-          {error || note}
-        </pre>
+          <p className="whitespace-pre-wrap">{error || note}</p>
+          {published.length > 0 && (
+            <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1">
+              {published.map(item => (
+                <Link key={item.templateId} to={item.workbenchPath} className="text-primary hover:underline">
+                  {item.name} →
+                </Link>
+              ))}
+            </div>
+          )}
+        </div>
       )}
 
       <div className="grid gap-4 lg:grid-cols-[1.1fr_1fr]">
@@ -235,7 +270,11 @@ export function ManifestWorkspace() {
                         onChange={event =>
                           updatePack(index, {
                             kind: event.target.value as PackKind,
-                            refs: pack.refs.map(ref => ({assetId: ref.assetId, role: baseRole(event.target.value)})),
+                            refs: pack.refs.map(ref => ({
+                              assetId: ref.assetId,
+                              role: baseRole(event.target.value),
+                              description: ref.description,
+                            })),
                           })
                         }
                       />
@@ -305,7 +344,7 @@ export function ManifestWorkspace() {
                       <div className="mt-2">
                         <div className="mb-1 flex items-center justify-between">
                           <span className="text-[11px] text-ink-mute">
-                            参考图 {pack.refs.length} 张 · 每张在提示词里的用途
+                            参考图 {pack.refs.length} 张 · 拖动手柄调整编号
                           </span>
                           <Button variant="ghost" onClick={() => setPicker({kind: 'image', target: `pack:${index}`})}>
                             选择图片
@@ -313,21 +352,54 @@ export function ManifestWorkspace() {
                         </div>
                         <div className="flex flex-col gap-1.5">
                           {pack.refs.map((ref, refIndex) => (
-                            <div key={ref.assetId} className="flex items-center gap-2">
-                              <span className="w-16 shrink-0 text-[11px] text-ink-mute">第 {refIndex + 1} 张</span>
-                              <Select
-                                block
-                                value={ref.role}
-                                options={Object.entries(rolesFor(pack.kind)).map(([value, label]) => ({value, label}))}
-                                onChange={event => {
-                                  const refs = pack.refs.slice();
-                                  refs[refIndex] = {...ref, role: event.target.value};
-                                  updatePack(index, {refs});
-                                }}
-                              />
-                              <span className="shrink-0 text-[11px] text-ink-mute">
-                                {`{{Mixed ${refIndex + 2}}}`}
-                              </span>
+                            <div
+                              key={ref.assetId}
+                              onDragOver={event => {
+                                if (refDrag?.packKey === pack.key) event.preventDefault();
+                              }}
+                              onDrop={event => {
+                                if (refDrag?.packKey !== pack.key) return;
+                                event.preventDefault();
+                                const refs = moveItem(pack.refs, refDrag.index, refIndex);
+                                setRefDrag(null);
+                                if (refs !== pack.refs) updatePack(index, {refs});
+                              }}
+                              className={cn(
+                                'rounded-lg border border-transparent px-1 py-1 transition-colors',
+                                refDrag?.packKey === pack.key &&
+                                  refDrag.index === refIndex &&
+                                  'border-primary-line bg-primary/5',
+                              )}
+                            >
+                              <div className="flex items-center gap-2">
+                                <span
+                                  draggable
+                                  onDragStart={() => setRefDrag({packKey: pack.key, index: refIndex})}
+                                  onDragEnd={() => setRefDrag(null)}
+                                  className="cursor-grab text-ink-mute active:cursor-grabbing"
+                                  title="拖动调整顺序"
+                                >
+                                  <GripVertical size={13} />
+                                </span>
+                                <span className="w-14 shrink-0 text-[11px] text-ink-mute">第 {refIndex + 1} 张</span>
+                                <Select
+                                  block
+                                  value={ref.role}
+                                  options={Object.entries(rolesFor(pack.kind)).map(([value, label]) => ({value, label}))}
+                                  onChange={event => updateRef(index, refIndex, {role: event.target.value})}
+                                />
+                                <span className="shrink-0 text-[11px] text-ink-mute">
+                                  {`{{Mixed ${refIndex + 2}}}`}
+                                </span>
+                              </div>
+                              <div className="mt-1 pl-[22px]">
+                                <TextInput
+                                  value={ref.description}
+                                  placeholder="这图看什么（可选）"
+                                  onChange={event => updateRef(index, refIndex, {description: event.target.value})}
+                                  className="w-full"
+                                />
+                              </div>
                             </div>
                           ))}
                         </div>
@@ -356,8 +428,50 @@ export function ManifestWorkspace() {
                 next[index] = {...fn, ...patch};
                 setDraft({...draft, functions: next});
               };
+              const move = (to: number) => {
+                const functions = moveItem(draft.functions, index, to);
+                if (functions !== draft.functions) setDraft({...draft, functions});
+              };
               return (
-                <div key={fn.key} className="rounded-xl border border-line-soft bg-panel-soft p-3">
+                <div
+                  key={fn.key}
+                  onDragOver={event => {
+                    if (fnDrag !== null) event.preventDefault();
+                  }}
+                  onDrop={event => {
+                    if (fnDrag === null) return;
+                    event.preventDefault();
+                    move(fnDrag);
+                    setFnDrag(null);
+                  }}
+                  className={cn(
+                    'rounded-xl border border-line-soft bg-panel-soft p-3 transition-colors',
+                    fnDrag === index && 'border-primary-line bg-primary/5',
+                  )}
+                >
+                  <div className="mb-2 flex items-center justify-between">
+                    <span
+                      draggable
+                      onDragStart={() => setFnDrag(index)}
+                      onDragEnd={() => setFnDrag(null)}
+                      className="flex cursor-grab items-center gap-1 text-[11px] text-ink-mute active:cursor-grabbing"
+                      title="拖动调整顺序"
+                    >
+                      <GripVertical size={13} />
+                      第 {index + 1} 个
+                    </span>
+                    {draft.functions.length > 1 && (
+                      <button
+                        type="button"
+                        className="text-[11px] text-ink-mute hover:text-danger"
+                        onClick={() =>
+                          setDraft({...draft, functions: draft.functions.filter(item => item.key !== fn.key)})
+                        }
+                      >
+                        移除
+                      </button>
+                    )}
+                  </div>
                   <div className="grid gap-2 sm:grid-cols-2">
                     <FormField label="功能 key">
                       <TextInput value={fn.key} onChange={event => update({key: event.target.value})} />
@@ -438,7 +552,6 @@ export function ManifestWorkspace() {
                       )}
                     </div>
                   )}
-                  {scene && !fn.scenePrompt ? null : null}
                 </div>
               );
             })}
@@ -460,12 +573,14 @@ export function ManifestWorkspace() {
 function ManifestRow({
   item,
   busy,
+  canPublish,
   onEdit,
   onPublish,
   onDisable,
 }: {
   item: ManifestOut;
   busy: boolean;
+  canPublish: boolean;
   onEdit: () => void;
   onPublish: () => void;
   onDisable: () => void;
@@ -486,10 +601,10 @@ function ManifestRow({
       </div>
       <div className="flex items-center gap-1.5">
         <Button variant="ghost" onClick={onEdit}>编辑</Button>
-        {item.status === 'draft' && (
+        {canPublish && item.status === 'draft' && (
           <Button variant="ghost" disabled={busy} onClick={onPublish}>发布</Button>
         )}
-        {item.status === 'published' && (
+        {canPublish && item.status === 'published' && (
           <Button variant="ghost" disabled={busy} onClick={onDisable}>停用</Button>
         )}
       </div>

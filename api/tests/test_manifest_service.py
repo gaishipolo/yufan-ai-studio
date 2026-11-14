@@ -51,6 +51,10 @@ def _media(client: TestClient, headers: dict[str, str]) -> tuple[str, str]:
     return str(video["id"]), str(image["id"])
 
 
+#: 逐图说明：前端可填，进提示词细节；投影后必须原样落到素材包绑定上。
+REF_DESCRIPTION = "正面全身，袖口与领口细节清晰"
+
+
 def _spec(video_id: str, image_id: str, **overrides: Any) -> dict[str, Any]:
     spec: dict[str, Any] = {
         "key": f"demo-{suffix()}",
@@ -63,7 +67,12 @@ def _spec(video_id: str, image_id: str, **overrides: Any) -> dict[str, Any]:
                 "kind": "product",
                 "supportedScopes": ["worn"],
                 "references": [
-                    {"key": "front", "assetId": image_id, "role": "front"}
+                    {
+                        "key": "front",
+                        "assetId": image_id,
+                        "role": "front",
+                        "description": REF_DESCRIPTION,
+                    }
                 ],
             }
         ],
@@ -390,6 +399,8 @@ def test_publish_projects_into_runtime_tables(client: TestClient) -> None:
     pack = next(item for item in available["items"] if item["id"] == packs[0].published_pack_id)
     assert pack["version"] == 1
     assert pack["referenceIds"] == [image]
+    # 逐图说明跟着投影落到素材包绑定上：前端填的那句话不能丢在第 2 层。
+    assert [item["description"] for item in pack["bindings"]] == [REF_DESCRIPTION]
 
 
 def test_reused_pack_receipt_points_to_source_version(client: TestClient) -> None:

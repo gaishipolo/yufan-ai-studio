@@ -13,6 +13,8 @@ export type AspectRatio = '9:16' | '16:9' | '1:1';
 export interface DraftRef {
   assetId: string;
   role: string;
+  /** 逐图说明：进提示词里的细节描述，打包时写进素材包绑定的 `description`。 */
+  description: string;
 }
 
 export interface DraftPack {
@@ -116,7 +118,11 @@ export function fromManifest(out: ManifestOut): Draft {
       name: pack.name ?? '',
       kind: pack.kind,
       packId: pack.packId ?? '',
-      refs: (pack.references ?? []).map(ref => ({assetId: ref.assetId, role: ref.role})),
+      refs: (pack.references ?? []).map(ref => ({
+        assetId: ref.assetId,
+        role: ref.role,
+        description: ref.description ?? '',
+      })),
       scopes: pack.supportedScopes ?? [],
     })),
     functions: (out.functions ?? []).map(fn => ({
@@ -146,6 +152,7 @@ export function toPayload(draft: Draft): ManifestDraftIn {
         key: `ref${index + 1}`,
         assetId: ref.assetId,
         role: ref.role || baseRole(pack.kind),
+        ...(ref.description.trim() ? {description: ref.description.trim()} : {}),
       })),
       supportedScopes: pack.scopes,
     };
@@ -189,4 +196,18 @@ export function toPayload(draft: Draft): ManifestDraftIn {
 /** 功能可选的用途清单（给只读预览用）：按当前包的类型取词表。 */
 export function roleOptions(kind: PackKind): {value: string; label: string}[] {
   return Object.entries(rolesFor(kind)).map(([value, label]) => ({value, label}));
+}
+
+/**
+ * 就地移动一项。
+ *
+ * 顺序就是契约：参考图的次序决定 `{{Mixed N}}` 编号，功能的次序决定卡片在
+ * 模板库里的排列，所以这里只搬位置、不改内容。
+ */
+export function moveItem<T>(list: T[], from: number, to: number): T[] {
+  if (from === to || from < 0 || to < 0 || from >= list.length || to >= list.length) return list;
+  const next = list.slice();
+  const [item] = next.splice(from, 1);
+  next.splice(to, 0, item);
+  return next;
 }
