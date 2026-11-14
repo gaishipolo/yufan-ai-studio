@@ -354,7 +354,7 @@ override 里写 `{{Mixed N}}` 也 400（编号是派生的，写死会在少填�
 |---|---|---|
 | **P1 定表** | `core/` 加 `InputSlot`/`TemplateSpec` 词表与编译纯函数；三张表（迁移 `d4a9f1c73b20`）；六个接口（含 `compile`）；封装页改成 §9 单页 | `compile` 输出与旧模板的 `mediaOrder` **逐项等价**（`tests/test_template_spec_equivalence.py`，已用"注入重排"验过会红）；预检挡住所有非法组合（§12）；**不写 `video_templates`、也不假装能读**（见下方"接读为什么不在 P1"） |
 | **P2 填表**（已完成） | 模板库填表页 `/templates/library`（两栏：左选模板 / 右填素材；`source=pack` 走封装选择器；`promptOverride` 只在改动时发）；`compile → 摊平 → /tasks` 走通 | 五种形状各跑一次（真实素材，每条 `POST /tasks` 201 后删掉）：纯提示词（0 槽）/ 多图（2 张）/ 图+视频 / 图+音频附件（`attachment` 不占编号）/ 图+文本（正文进 `textLibraryIds`）；另加"选一个资产库封装填一个槽位"（更早已验） |
-| **P3 接读 + 迁移 + 删表 + capability 化** | 替换链的 `template-runtime` 端口改读 spec 版本（旧 `video_templates` 只读）；**旧数据迁移**（上表那套映射，含旧素材包 → 资产库封装）；删 `video_templates` / `template_packs*`；替换能力作为 task 的一个 capability；`supportedScopes`/`wardrobeMode` → `spec.attributes`；成片复核 → 任务中心；`modules/template` 的编排与物化下线。细则见 §11.1 | §11.1 的三条判据全绿；替换业务与历史档案不中断；`prepare` 用 spec 驱动的模板跑通；迁移出的 spec 与旧模板 `mediaOrder` 逐项等价 |
+| **P3 接读 + 迁移 + 删表 + capability 化**（迁移与能力声明已落地，见 §11.0 / §11.2） | 替换链的 `template-runtime` 端口改读 spec 版本（旧 `video_templates` 只读）；~~旧数据迁移~~ ✅；删 `video_templates` / `template_packs*`；替换能力作为 task 的一个 capability；`supportedScopes`/`wardrobeMode` → `spec.attributes`；成片复核 → 任务中心；`modules/template` 的编排与物化下线。细则见 §11.1 | §11.1 的三条判据全绿；替换业务与历史档案不中断；`prepare` 用 spec 驱动的模板跑通；迁移出的 spec 与旧模板 `mediaOrder` 逐项等价 |
 
 #### 接读为什么不在 P1（2026-11-14 实现时确认）
 
@@ -410,6 +410,31 @@ P3 补上 capability 判据后，迁移只需要让这份守卫继续绿，就�
 
 **这一刀不动表、不动替换链**：下一步才是"runtime 端口读 spec"。先有稳定判据，
 接读时才不用回头改筛选口径。
+
+### 11.2 旧数据迁移已落地：`scripts/migrate_templates_to_specs.py`（2026-11-14）
+
+把旧 `video_templates`（连同它的素材包）迁成 **spec 草稿**。只增不删，跑错删新行即可回滚。
+
+| 旧 | 新 |
+|---|---|
+| `source_video_asset_id` | 一个 `source=asset, binding=fixed` 的 video 槽位（`position=0`） |
+| 素材包（`template_packs` + 引用） | **先落成资产库封装**（`kind=pack`，`position`/`role`/`description` 原样带），再用**一个** `source=pack, binding=fixed` 槽位引用它 |
+| 无素材包时的参考图 | 降级：每张一个 `source=asset, binding=fixed` 槽位（模板重新拥有一份结构，报告里逐条标出） |
+| `prompt` | `editable` 段；**`{{Mixed N}}` 逐个翻成槽位引用**（见下） |
+| `aspect_ratio` / `generation.duration` | `params.aspectRatio` / `params.durationSec` |
+| — | `attributes.migratedFrom = "video_template:<id>"`（描述里也带一份，人可读） |
+
+**编号必须逐个翻译，不能整组替换**：旧提示词的 `{{Mixed N}}` 是 `media_order` 下标
+（1 = 原片，2 起是参考图）。新模型里封装槽位占 N 个号，所以 `{{Mixed 2}}` →
+`{{slot:views.1}}`、`{{Mixed 3}}` → `{{slot:views.2}}`。用整组 `{{slot:views*}}` 会把
+「以 {{Mixed 3}} 三视图为准」变成「三张都为准」——语义变了却不报错。
+某个编号找不到落点 → **整条跳过**并在报告里点名，不写一份引用不到的草稿。
+
+**只有草稿、不自动发布**：旧数据里"用哪个模型跑替换"不是模板的一列（运行时按渠道定），
+所以 `--model` 必填且必须声明 `replacement`（见 §11.0）。默认只读打印计划，`--apply` 才写。
+
+**实测（dev 库 3 条旧模板）**：迁移 → 发布 → `compile`，三条的提示词与素材顺序与旧模板
+**逐字/逐项相同**（旧 `{{Mixed N}}` 与新派生编号完全对齐）。重跑一次全部跳过。
 
 ### 11.1 P3 终局：统一到 task（2026-11-14 拍板）
 

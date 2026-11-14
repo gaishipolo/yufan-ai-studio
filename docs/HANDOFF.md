@@ -14,7 +14,7 @@
 | 仓库 / 分支 | `https://github.com/gaishipolo/yufan-ai-studio` · `main` |
 | HEAD | 本地领先 `origin/main`：`3aaf40f` 起多笔**未推送**（含「任务中心接生图」与「模板封装迁移阶段 A/B/C1」，推送前先问用户）；笔数以 `git rev-list --count origin/main..HEAD` 为准，hash 见 `git log --oneline origin/main..HEAD`。未跟踪的只有 `var/`、临时脚本（如 `var_fix_fe.py`）、快捷方式 `.lnk`、`vite.config.ts.timestamp-*.mjs` 与用户私有的 `EXCHANGE_TOPICS_2026-11-12.md`，都不该进提交 |
 | CI | 此前连续多轮全绿（含 `bc0940e`）；本轮推送后照 §4 核对。PG 迁移仍在观察期（`continue-on-error`） |
-| 本机门禁 | 本轮（2026-11-14 P3 第一刀：替换能力由模型声明）按 §3.1 定级 **`contract`**（动 `infra/ai/base.py` + 两处 `/models` 出参 + 新查询参数）：18 个测试文件 **356 passed / 0 failed**；`ruff` 0；`mypy --platform win32` 300 文件 0；契约四份重新生成后 `--check` 无差异（`replacement` 字段 + `target` 查询参数）；前端 `npm run verify` 全绿（670 条 vitest + build），`gen:*` 无漂移。上一轮 P2 收尾定级 `framework`：7 文件 123 passed |
+| 本机门禁 | 本轮（2026-11-14 P3 迁移：旧模板 → spec 草稿）只加一个运维脚本 + 一组纯函数单测，按 §3.1 定级 **`targeted`**：5 个测试文件 **100 passed / 0 failed**；`ruff check src tests scripts` 0；`mypy --platform win32` 300 文件 0；契约零变动。上一轮 P3 能力声明定级 `contract`：18 文件 356 passed |
 | 规模 | 12 个业务模块 · **118 条路径 / 148 个端点**（文本资产 +7）· **57 个权限码**（本轮未新增）· **4 份**契约生成物 |
 | 后端 | `api/.venv/Scripts/app.exe serve --reload` → 8080，前缀 **`/api/v1`**（裸 `/health` 会返回 40400） |
 | 前端 | `cd studio && npm run dev` → 5173，`/api` 已代理到 8080 |
@@ -73,6 +73,7 @@
 | 本轮 | **模板库填表页（P2）**（2026-11-14）：新增 `/templates/library`「模板库」——左列已发布模板卡片、右栏就地填表（`fixed` 只读缩略图 / `user` 走素材或封装选择器 / 固定段灰显不可编辑 / 可编辑段 textarea），提交 = `compile` → 字段摊平 → `POST /tasks`；原 `/templates` 的导航名改成「替换工作台」以免与新「模板库」混淆（P3 它下线） | 页面无本地规则：数量上下限、可读性、编号展开仍在服务端。两道防"静默丢"：`params` 里出现 `/tasks` 表达不了的键（`size`/`count`）**报错不丢**；时长缺省取模型默认档、两处都没有才报错，不编 5 秒。`compile` 新增 `promptOverride`（只改 `editable` 段；`locked` 永不可改；模板 EDITABLE 为空时 400；写 `{{Mixed N}}` 也 400）。真实素材实测：固定原片 + 3030粉 封装 → `{{Mixed 1..4}}`、任务 `queued`（6 秒 / 9:16 / 4 张参考） |
 | 本轮 | **P2 功能收尾**（2026-11-14）：① 五种素材形状逐条真跑（纯提示词 0 槽 / 多图 2 张 / 图+视频 / 图+音频附件 / 图+文本），每条 `compile → 摊平 → POST /tasks` 均 201，跑完删任务；② 补掉"长提示词晚失败"：新增 `EXECUTION_PROMPT_LIMIT=2000`（= `CreateTaskIn.prompt` 的 `max_length`），草稿不判、预检/发布粗判、`compile` 按展开后精判 | 两个上限不是一回事：`MAX_PROMPT=20000` 是编写上限（旧模板有 2 万字级提示词，P3 迁移要能先存成草稿），`EXECUTION_PROMPT_LIMIT=2000` 才是执行上限。漂移由 `test_execution_prompt_limit_matches_task_schema` 直接读 `CreateTaskIn` 的 `MaxLen` 钉住。填表页顺带修两处渲染：纯提示词模板不再渲染空的「填入素材」区、无引用槽位时不显示编号说明 |
 | 本轮 | **P3 第一刀：替换能力改由模型声明**（2026-11-14）：`ModelSpec.replacement` （驱动声明，三个 `*-replacement` 为 true）→ `ModelSummary` → `/models` 与 `/model-driver/models` 出参；`GET /template-specs/published?target=replacement|generation|all` 按它筛（只 join 当前发布版本） | **判据不许从槽位组合推断**："有 fixed video 槽 + 有 pack 槽就是替换模板"会把普通多图模板误判，然后在替换链路里以「没有绑定档案」失败。实测 6 个模板：replacement 5 / generation 1，分得干净。这一刀不动表、不动替换链 —— 下一步才是 runtime 端口读 spec |
+| 本轮 | **P3 迁移：旧模板 → spec 草稿**（2026-11-14）：新增 `scripts/migrate_templates_to_specs.py`（默认只读预览、`--apply` 才写、`--model` 必填且须声明 `replacement`）；旧素材包先落成资产库封装（`kind=pack`，position/role/description 原样），spec 用**一个** `source=pack, binding=fixed` 槽位引用 | 三处踩过的坑都写进注释：① 派生 key **不能粗暴截断**（`ai_<hex>_<fn>` 截 40 位会把函数名切掉，同一 manifest 的功能算出同一个 key）；② 旧提示词的 `{{Mixed N}}` 要**逐个**翻成 `{{slot:views.j}}`，整组 `*` 会把"以某一张为准"改成"全都要"，找不到落点就整条跳过；③ 同一轮里多个模板指向同一个旧包时，plan 阶段都还没建封装，要按名字记一份本轮的账，否则会建两份。实测 3 条旧模板：迁移→发布→compile，提示词与素材顺序与旧模板逐字/逐项相同；重跑全部跳过 |
 
 | 变化 | 谁受影响 | 说明 |
 |---|---|---|
