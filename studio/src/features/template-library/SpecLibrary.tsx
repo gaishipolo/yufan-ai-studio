@@ -87,12 +87,10 @@ function AssetChip({assetId, onRemove}: {assetId: string; onRemove?: () => void}
 function DemoCase({
   assetId,
   className,
-  big = false,
   seed = '',
 }: {
   assetId: string | null;
   className?: string;
-  big?: boolean;
   /** 没案例时兜底渐变的种子，传模板 key：同一张模板每次都同一个色，不会闪。 */
   seed?: string;
 }) {
@@ -109,9 +107,9 @@ function DemoCase({
       </div>
     );
   }
-  /* 卡片里只给封面（视频带角标），详情里才可播：播放要取整份 blob，
-     列表上每张卡都拉一遍视频流不值得。 */
-  return <AssetPreview assetId={assetId} className={cn('rounded-lg', className)} playable={big} />;
+  /* 卡片：图片给封面，视频给封面 + 悬停自动播（静音循环）。取流只在 hover 时发生，
+     一排卡片不会把每条视频都拉一遍。 */
+  return <AssetPreview assetId={assetId} className={className} hoverPlay />;
 }
 
 /**
@@ -152,7 +150,7 @@ function TemplateCard({
           className="aspect-[5/6] w-full"
         />
         {item.demoAssetId && (
-          <span className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/60 via-black/20 to-transparent px-2 pb-1.5 pt-8 text-[10px] text-white/90">
+          <span className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/60 via-black/20 to-transparent px-2 pb-1.5 pt-8 text-[10px] text-white/90 transition-opacity group-hover:opacity-0">
             {selected ? '正在填写' : '点击填写素材'}
           </span>
         )}
@@ -437,15 +435,6 @@ export function SpecLibrary() {
             </header>
 
             <div className="flex flex-col gap-3 px-4 py-3">
-              {spec.demoAssetId && (
-                <DemoCase
-                  assetId={spec.demoAssetId}
-                  seed={spec.key}
-                  className="aspect-[16/9] w-full rounded-lg"
-                  big
-                />
-              )}
-
               {slots.length > 0 && (
                 <PanelSection
                   title="填入素材"

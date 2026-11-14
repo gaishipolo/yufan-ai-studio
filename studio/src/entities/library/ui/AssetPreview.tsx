@@ -16,19 +16,28 @@ import { cn } from '@/shared/lib/cn';
 export function AssetPreview({
   assetId,
   className,
-  /** 允许播放。列表卡片里关掉：那里只需要"看一眼是什么"，点开详情再播。 */
+  /** 点一下才播（详情/编辑器用）：按钮明确，不会因为鼠标路过就动。 */
   playable = true,
+  /** 悬停自动播（列表卡片用）：静音、循环，鼠标移开回到封面。 */
+  hoverPlay = false,
   alt = '展示案例',
 }: {
   assetId: string;
   className?: string;
   playable?: boolean;
+  hoverPlay?: boolean;
   alt?: string;
 }) {
   const detail = useLibraryDetail(assetId);
   const isVideo = detail.data?.kind === 'video';
   const [playing, setPlaying] = useState(false);
-  const media = useLibraryMedia(assetId, isVideo && playable && playing);
+  const [hovered, setHovered] = useState(false);
+  /* 取流只在真的要播时才发：卡片上一排视频各拉一份 blob 是浪费，hover 一次也只发一次
+     （`useLibraryMedia` 有 5 分钟缓存）。 */
+  const media = useLibraryMedia(
+    assetId,
+    isVideo && ((playable && playing) || (hoverPlay && hovered)),
+  );
 
   if (isVideo && playable && playing) {
     if (!media.url) {
@@ -72,6 +81,37 @@ export function AssetPreview({
   }
 
   const cover = detail.data?.coverUrl ?? undefined;
+
+  if (isVideo && hoverPlay) {
+    const playingNow = hovered && !!media.url;
+    return (
+      <div
+        className={cn('relative overflow-hidden', className)}
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+      >
+        <CoverImage src={cover} seed={assetId} alt={alt} className="h-full w-full" />
+        {/* 视频压在封面上而不是替换它：下载没完成时看到的仍是封面，不是黑块。 */}
+        {playingNow && (
+          <video
+            src={media.url}
+            muted
+            loop
+            autoPlay
+            playsInline
+            aria-hidden
+            className="absolute inset-0 h-full w-full object-cover"
+          />
+        )}
+        {!playingNow && (
+          <span className="absolute bottom-1.5 right-1.5 rounded bg-black/55 px-1 py-0.5 text-[10px] text-white">
+            视频
+          </span>
+        )}
+      </div>
+    );
+  }
+
   const playableVideo = isVideo && playable;
   return (
     <div className={cn('relative overflow-hidden', className)}>
