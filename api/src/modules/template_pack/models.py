@@ -1,174 +1,52 @@
-"""template_pack 的 ORM 实体。
+"""模板封装的 ORM 实体：素材包（head / 参考图 / 冻结版本）+ 视频模板 + manifest 配置。
 
-## 过渡状态（迁移阶段 B）
+## 两套表，各管一段
 
-本文件暂时**并存两套表**：
+| 表 | 谁写 | 谁读 |
+|---|---|---|
+| `template_manifests` 四表 | 运营在 `/template-manifests` 配好并发布 | 编写侧目录端口 |
+| `template_packs` 四表 | 同一次发布的**投影** | `template_runtime` 端口（运行侧） |
 
-- `template_pack_templates` / `template_pack_slots`：旧的「带筛选约束的封装模板」。
-  用户已拍板由 `template_packager` 的完整能力覆盖，阶段 C 连同 service / router
-  一起下线，届时删表。
-- `template_manifests` / `template_manifest_packs` / `template_manifest_references` /
-  `template_manifest_functions`：`manifest.json` DB 化后的配置层（本阶段新增）。
+配置层是「运营改了什么」，投影层是「运行时要用的冻结版本 + 模板原文」。两层
+刻意不合并：编写侧每加一个字段都会影响界面，而运行侧只需要不会随编辑界面演进的
+那几十个字段。
 
-`db.registry.load_all_models()` 只扫 `modules.*.models`，所以新表必须放在这个
-文件里；另起 `manifest_models.py` 不会被发现，会让 `create_all` 与 Alembic 都缺表。
+**2026-11-14 C2**：这四张表原本在 `modules/template`，与替换执行链混在一个模块里。
+用户拍板「封装模块只管数据、通过 ports 对外提供」，于是整块搬到这里，表名不变
+（不需要数据迁移）。
 
-## manifest 四张表为什么这么切
+## 素材一律引用 `library_assets.id`（内容寻址）
 
-原 manifest 是两层：`key/name/video` + `packs[]` + `functions[]`，且 `packs[]`
-可被多个 function 按 key 共享、可复用已发布包。
+不再存本地文件路径：字节变了就是新 id，packager 原来「算文件 sha256 + 防预检后
+被换」那套补偿逻辑整块不需要。配置指纹只由结构与 asset id 决定，换机器 / 换存储
+驱动都不变。
 
-- head 表存整份配置的身份、原片与发布状态；
-- packs 独立成表（复用靠 `reuse_pack_id`，发布回执存 `published_pack_version`）；
-- references 独立成表：删素材前要问「还有谁在用」，扫 JSON 列做不到；
-- functions 是最终的工作台卡片，发布后对应一条 `video_templates` 行。
+## 为什么不用外键
 
-**素材一律引用 `library_assets.id`（内容寻址）**，不再存本地文件路径：字节变了
-就是新 id，packager 原来「算文件 sha256 + 防预检后被换」那套补偿逻辑整块不需要。
-配置指纹只由结构与 asset id 决定，换机器 / 换存储驱动都不变。
-
-## 表名为什么带 `templates` 后缀
-
-`modules/template` 已经占了 `template_packs` / `template_pack_references` /
-`template_pack_versions` 三张表（那套是「素材包 + 视频模板」）。
-本模块是**另一套东西**——带筛选约束的封装模板——但同属「模板」语义，
-沿用 `template_pack_` 前缀会让人分不清两张表各是什么。
-
-于是主表叫 `template_pack_templates`（模块名 + 实体名），槽位表叫
-`template_pack_slots`。读表名就知道谁是谁，不必去翻 models.py。
-
-## 两张表的分工
-
-主表存「模板是什么」：名字、提示词原文、原片、状态。
-槽位表存「提示词里每个 `{{Mixed N}}` 指向什么」：要么钉死一条素材
-（`slot_kind=fixed`），要么声明一条准入规则（`slot_kind=filtered`）。
-
-**槽位独立成表而不是塞进主表的 JSON 列**，理由与 `modules/template` 把
-`media_order` 存 JSON 的做法相反，理由有三：
-
-1. 槽位要按 `position` 排序并按 `template_id` 查 —— JSON 列查不动，
-   「列出所有已发布模板的第 2 号槽位」这种问题会逼着扫全表再在 Python 里筛。
-2. 筛选条件是**业务约束**，不是展示字段。JSON 列里的东西没有索引、没有
-   外键、没有类型保证，改坏了要等运行时才发现。
-3. `filter_tag_ids` 是 JSON 数组（一级标签可以有多个），这个确实适合 JSON 列 ——
-   但它是**槽位内部的一个字段**，不影响槽位本身要独立成行这件事。
+全项目没有一处 `ForeignKey`，靠字符串 id + 应用层校验（跨 sqlite/postgres 行为
+一致，删记录不会级联炸掉历史）。唯一性靠复合索引表达。
 """
-
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 
-from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import JSON, Boolean, DateTime, Float, Index, Integer, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from db.base import Base, TimestampMixin, UUIDMixin
 
 __all__ = [
-    "TemplatePackRow",
-    "TemplatePackSlotRow",
+    "MANIFEST_STATUSES",
     "TemplateManifest",
+    "TemplateManifestFunction",
     "TemplateManifestPack",
     "TemplateManifestReference",
-    "TemplateManifestFunction",
-    "MANIFEST_STATUSES",
+    "TemplatePack",
+    "TemplatePackReference",
+    "TemplatePackVersion",
+    "VideoTemplate",
 ]
-
-#: 模板状态。`draft` 只有作者可见；`published` 进模板库；`disabled` 保留历史
-#: 但不再对外。终态（published/disabled）不可再改内容 —— 要改就发新版本。
-STATUS_DRAFT = "draft"
-STATUS_PUBLISHED = "published"
-STATUS_DISABLED = "disabled"
-
-
-class TemplatePackRow(Base, UUIDMixin, TimestampMixin):
-    """一条封装模板。"""
-
-    __tablename__ = "template_pack_templates"
-
-    #: 稳定标识：同键同配置返回原行（幂等），同键异配置 409。
-    #: 脚本重试的边界靠它 —— 没有它，重试一次就多一条模板。
-    #:
-    #: **不写 `index=True`**：唯一索引（`uq_template_pack_templates_key`）已经
-    #: 能按它查，再加一个普通索引是重复；而 `alembic check` 会把两者当成
-    #: 「两个不同的索引」报差异。
-    template_key: Mapped[str] = mapped_column(String(80), nullable=False)
-
-    name: Mapped[str] = mapped_column(String(160), nullable=False)
-    description: Mapped[str] = mapped_column(String(2000), default="", nullable=False)
-
-    #: 提示词原文，逐字保存（`VerbatimText` 语义）。
-    prompt: Mapped[str] = mapped_column(String(20000), nullable=False)
-    #: 提示词摘要。防止文字被悄悄改掉 —— 归档要能回答「当时发出去的是哪一版」。
-    prompt_sha256: Mapped[str] = mapped_column(String(64), default="", nullable=False)
-
-    #: 参考视频（`library_assets.id`）。
-    source_video_asset_id: Mapped[str] = mapped_column(String(64), default="", nullable=False)
-    source_duration_sec: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
-
-    aspect_ratio: Mapped[str] = mapped_column(String(16), default="9:16", nullable=False)
-    cover_url: Mapped[str] = mapped_column(String(512), default="", nullable=False)
-
-    status: Mapped[str] = mapped_column(
-        String(16), default=STATUS_DRAFT, nullable=False, index=True
-    )
-    owner_id: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
-    published_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-
-    __table_args__ = (
-        Index("uq_template_pack_templates_key", "template_key", unique=True),
-    )
-
-
-class TemplatePackSlotRow(Base, UUIDMixin, TimestampMixin):
-    """提示词里的一个槽位。
-
-    **二选一**：`slot_kind=fixed` 时 `asset_id` 有值、`filter_*` 为空；
-    `slot_kind=filtered` 时反过来。两种形态混在一行里会让「这个槽位到底
-    是钉死的还是可选的」变成读代码才知道的事 —— 所以用显式枚举，
-    并在 service 里做互斥校验。
-    """
-
-    __tablename__ = "template_pack_slots"
-
-    template_id: Mapped[str] = mapped_column(
-        String(32), ForeignKey("template_pack_templates.id"), nullable=False, index=True
-    )
-    #: 槽位序号，从 1 起。**决定 `{{Mixed N}}` 编号**。
-    position: Mapped[int] = mapped_column(Integer, nullable=False)
-
-    #: `fixed` / `filtered`
-    slot_kind: Mapped[str] = mapped_column(String(16), nullable=False)
-    #: 占位符原文，如 `{{Mixed 2}}`。
-    token: Mapped[str] = mapped_column(String(32), nullable=False)
-    #: 槽位显示名，如「产品主图」。给用户看的，不参与任何判定。
-    label: Mapped[str] = mapped_column(String(64), default="", nullable=False)
-
-    # ---- fixed 形态 ----
-    asset_id: Mapped[str] = mapped_column(String(64), default="", nullable=False)
-    media_type: Mapped[str] = mapped_column(String(16), default="image", nullable=False)
-
-    # ---- filtered 形态 ----
-    #: 素材类别白名单：image / video / audio。**不含 text** —— 文本资产不是参考图。
-    filter_kind: Mapped[str] = mapped_column(String(16), default="", nullable=False)
-    #: 一级标签 id 列表。存 id 不存名字：改名不该让已发布模板的约束失效。
-    filter_tag_ids: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
-    #: 标签组合方式。**只有 `any`**：资产库的 `find_ids` 唯一口径就是 OR
-    #: （`tag_id.in_(expanded)`），没有「全部匹配」的实现。留着 `all` 会
-    #: 让用户选了一个说好更严、实际更松的条件 —— 筛选只收窄不放宽。
-    filter_tag_match: Mapped[str] = mapped_column(String(8), default="any", nullable=False)
-    #: 该槽位是否必填。默认必填 —— 少了它，提示词就会指向一个空槽位。
-    required: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-
-    __table_args__ = (
-        Index("uq_template_pack_slots_position", "template_id", "position", unique=True),
-    )
-
-
-# ---------------------------------------------------------------------------
-# manifest 配置层（阶段 B 新增）
-# ---------------------------------------------------------------------------
 
 #: 与旧 `PACK_STATUSES` 同口径。`draft` 只作者可见，`published` 进模板库，
 #: `disabled` 保留历史但不再对外。终态不可再改内容 —— 要改就发新版本。
@@ -333,4 +211,189 @@ class TemplateManifestFunction(Base, UUIDMixin, TimestampMixin):
             "position",
             unique=True,
         ),
+    )
+
+
+class TemplatePack(Base, UUIDMixin, TimestampMixin):
+    """封装 head：草稿与已发布共用一行，靠 `status` 区分。
+
+    拆成「草稿表 + 发布表」会让每次保存都要同步两张表，而草稿的唯一用途就是
+    被发布覆盖。合成一行的代价只有一个：`version` 与 `revision` 必须分清——
+    `revision` 是乐观锁（每次保存 +1），`version` 是已发布版本号（只在发布时 +1）。
+    """
+
+    __tablename__ = "template_packs"
+
+    kind: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(160), default="", nullable=False)
+    owner_id: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+
+    status: Mapped[str] = mapped_column(String(16), default="draft", nullable=False, index=True)
+    # 已发布版本号，0 表示从未发布。发布时只增不减；停用不改它。
+    version: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    # 乐观锁：前端提交 `expectedRevision`，对不上就是「别人改过了」。
+    revision: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    features: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    instructions: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    wardrobe_mode: Mapped[str] = mapped_column(String(16), default="preserve", nullable=False)
+
+    # 主图：为空时按 `position=0` 那张。显式存的原因是「换主图」不该等于
+    # 「把那张图拖到第一位」——重排会改变提示词里的编号顺序。
+    cover_asset_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
+    # 以下是**待发布状态**：草稿编辑中随手改，发布时整块冻结进版本行。
+    # 放 head 而不放 reference 表：它们描述「整个包」而不是「某一张图」，
+    # 且与版本行一一对应，发布时直接拷贝。
+    required_roles: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    supported_scopes: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        # 「我管理的封装」列表形状：owner + 未删除，按更新时间倒序
+        Index(
+            "ix_template_packs_owner_active",
+            "owner_id",
+            "updated_at",
+            sqlite_where=text("deleted_at IS NULL"),
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
+        # 「可用封装」列表形状：已发布 + 未删除，按类型过滤
+        Index(
+            "ix_template_packs_public",
+            "kind",
+            "published_at",
+            sqlite_where=text("status = 'published' AND deleted_at IS NULL"),
+            postgresql_where=text("status = 'published' AND deleted_at IS NULL"),
+        ),
+    )
+
+
+class TemplatePackReference(Base, UUIDMixin):
+    """封装里的一张参考图。
+
+    `position` 而不是只存数组：`bindings` 与 `reference_ids` 必须**同序**，
+    提示词编译器按这个顺序编号（`reference-1.jpg`、`reference-2.jpg`）。
+    存 JSON 数组会让「调换主图」变成一次整列重写，且没法按 `asset_id` 建索引
+    ——而索引正是「删除素材前问还有谁在用」要的东西。
+    """
+
+    __tablename__ = "template_pack_references"
+
+    pack_id: Mapped[str] = mapped_column(String(32), nullable=False)
+    asset_id: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    # 用途 key（front / multiview / detail…），词表在 core/template_rules/roles.py
+    role: Mapped[str] = mapped_column(String(24), default="", nullable=False)
+    # 这张图在提示词里的补充说明，只写本次特有的事实
+    description: Mapped[str] = mapped_column(Text, default="", nullable=False)
+
+    __table_args__ = (
+        Index("uq_template_pack_references_position", "pack_id", "position", unique=True),
+        Index("ix_template_pack_references_asset", "asset_id", "pack_id"),
+    )
+
+
+class TemplatePackVersion(Base, UUIDMixin, TimestampMixin):
+    """已发布封装的不可变快照。
+
+    **唯一性约束就是 CAS**：上一版靠 `storage.create()`（`If-None-Match: *`）
+    原子抢版号，现在换成 `UNIQUE(pack_id, version)`——两个实例同时想写 v3，
+    数据库只会让一个成功，另一个拿到 IntegrityError 后重试 v4。语义完全一致，
+    但不再需要「抢版本文件」这种绕法。
+
+    内容存 JSON 而不是拆子表：版本是**冻结证据**，只整块读、从不按字段查。
+    拆表会让「发布」变成一次多表插入，而它本来就该是一次原子写。
+    """
+
+    __tablename__ = "template_pack_versions"
+
+    pack_id: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    reference_ids: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    # 逐图用途，与 reference_ids 同序：[{role, description}, ...]
+    bindings: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list, nullable=False)
+    required_roles: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    supported_scopes: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+
+    features: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    instructions: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    wardrobe_mode: Mapped[str] = mapped_column(String(16), default="preserve", nullable=False)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        # 这条索引同时是「版本号不被覆盖」的保证，别删。
+        Index("uq_template_pack_versions_number", "pack_id", "version", unique=True),
+    )
+
+
+class VideoTemplate(Base, UUIDMixin, TimestampMixin):
+    """一条视频模板：固定样片 + 固定提示词 + 一个已发布替换素材包。
+
+    **为什么从 JSON 目录搬进表**：`api/var/video_templates/catalog.json` 时期
+    「读全量 → 追加 → 写全量」只能靠一把**进程内** `threading.Lock` 互斥，
+    多 worker 下两个封装并发时后写的会把前一条整份覆盖——丢数据且不报错。
+    当时不用表的理由（部署库的 `alembic_version` 指向不存在的 revision）已经
+    不成立：`b4e2d8f1a630` 就在迁移链里，`alembic current` 就是 head。
+
+    搬过来顺带解决三件事：`catalog_stamp()`（拿文件 mtime 当缓存代次）不再需要、
+    每次写前复制 20 份整份备份不再需要、`_LOCK` 里「抢占固定蓝本」换成了
+    `uq_video_templates_pinned` 这条**部分唯一索引**——两个并发写入只有一个能成功，
+    另一个由数据库拒绝，语义与原来一样但跨进程成立。
+
+    **没有 `owner_id`**：这一版仍然「全库共享同一份模板目录」，归属校验是计划
+    步 3 的事。现在加一列却没有消费方，等于给后面留一个「看起来有权限其实没判」
+    的字段，比没有更糟。
+    """
+
+    __tablename__ = "video_templates"
+
+    # 稳定标识：脚本重试边界。同键同配置返回原行，同键异配置 409
+    # （对应 `video_template_service.create` 里的比对，不是靠唯一索引报错）。
+    template_key: Mapped[str] = mapped_column(String(80), nullable=False, unique=True)
+
+    name: Mapped[str] = mapped_column(String(160), nullable=False)
+    description: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    # 固定提示词原文，逐字保留（`VerbatimText`），摘要按同一份原文算
+    prompt: Mapped[str] = mapped_column(Text, nullable=False)
+    prompt_sha256: Mapped[str] = mapped_column(String(64), default="", nullable=False)
+
+    source_video_asset_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    source_video_path: Mapped[str] = mapped_column(String(512), default="", nullable=False)
+    source_video_name: Mapped[str] = mapped_column(String(200), default="", nullable=False)
+    source_duration_sec: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    aspect_ratio: Mapped[str] = mapped_column(String(16), default="9:16", nullable=False)
+
+    # 快照：封装时的包名与版本。包后来改名/升版不影响这条模板的展示与回放
+    pack_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    pack_name: Mapped[str] = mapped_column(String(160), default="", nullable=False)
+    pack_version: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    default_kind: Mapped[str] = mapped_column(String(16), default="product", nullable=False)
+
+    # 媒体清单（`[{token, role, type, assetId, name, file, inPrompt}]`）。
+    # 存 JSON 而不是子表：它只被整块读，且**顺序即语义**（下标 +1 就是 {{Mixed N}}），
+    # 拆表要额外维护 position 且每次读都重排，换不来任何查询能力。
+    media_order: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list, nullable=False)
+    generation: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    rules: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+
+    cover_url: Mapped[str] = mapped_column(String(512), default="", nullable=False)
+    # 固定蓝本：全库仅一条。唯一性由下面的部分唯一索引保证，不靠应用层先清后设
+    pinned: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    __table_args__ = (
+        # 部分唯一索引 = 「全库只有一个固定蓝本」，跨进程成立。
+        # `WHERE pinned` 在两个库上都合法：sqlite 把非 0 当真。
+        Index(
+            "uq_video_templates_pinned",
+            "pinned",
+            unique=True,
+            sqlite_where=text("pinned"),
+            postgresql_where=text("pinned"),
+        ),
+        # `find_for_run()` 的主查询路径：按原片 + 处理类型找模板。
+        Index("ix_video_templates_source_kind", "source_video_asset_id", "default_kind"),
     )

@@ -25,14 +25,14 @@ from core.exceptions import BadRequest, NotFound
 from db.session import get_session_factory
 from infra import get_storage
 from modules.library.models import LibraryAsset, LibraryPackItem
-from modules.template import pack_service
 from modules.template.authorization import authorization_gap
 from modules.template.models import ReplacementRun
-from modules.template.pack_service import PackService
-from modules.template.repository import PackRepository
-from modules.template.schema import PackDraftIn
-from modules.template.template_references import resolve_pack_references
-from modules.template.video_template_schema import VideoTemplatePackReferenceIn
+from modules.template_pack import pack_service
+from modules.template_pack.pack_service import PackService
+from modules.template_pack.repository import PackRepository
+from modules.template_pack.schema import PackDraftIn
+from modules.template_pack.template_references import resolve_pack_references
+from modules.template_pack.video_template_schema import VideoTemplatePackReferenceIn
 
 CONSUMER = "template-v2-consumer"
 PACK_OWNER = "template-v2-pack-owner"

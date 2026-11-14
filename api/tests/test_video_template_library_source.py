@@ -20,7 +20,7 @@ from fastapi.testclient import TestClient
 
 from db.session import get_session_factory
 from modules.library.models import LibraryAsset
-from modules.template.models import VideoTemplate
+from modules.template_pack.models import VideoTemplate
 
 OWNER = "u_001"
 

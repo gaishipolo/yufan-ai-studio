@@ -17,8 +17,8 @@ from api.deps import require
 from core import audit
 from core.context import CurrentUser
 from core.response import ApiResponse
-from modules.template.dependencies import PackServiceDep
-from modules.template.schema import (
+from modules.template_pack.dependencies import PackServiceDep
+from modules.template_pack.schema import (
     PackAction,
     PackDraftIn,
     PackManaged,

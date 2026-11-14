@@ -14,7 +14,7 @@
 | 仓库 / 分支 | `https://github.com/gaishipolo/yufan-ai-studio` · `main` |
 | HEAD | 本地领先 `origin/main`：`3aaf40f` 起多笔**未推送**（含「任务中心接生图」与「模板封装迁移阶段 A/B/C1」，推送前先问用户）；笔数以 `git rev-list --count origin/main..HEAD` 为准，hash 见 `git log --oneline origin/main..HEAD`。未跟踪的只有 `var/`、临时脚本（如 `var_fix_fe.py`）、快捷方式 `.lnk`、`vite.config.ts.timestamp-*.mjs` 与用户私有的 `EXCHANGE_TOPICS_2026-11-12.md`，都不该进提交 |
 | CI | 此前连续多轮全绿（含 `bc0940e`）；本轮推送后照 §4 核对。PG 迁移仍在观察期（`continue-on-error`） |
-| 本机门禁 | 本轮（2026-11-14 C2 第一刀 / `template-runtime` 端口）按 §3.1 定级 **`full`**（改 `api/ports.py` 装配声明）：后端全量 **1690 passed / 12 skipped / 0 failed**（225s，EXIT=0），`ruff check src tests` 0 / `mypy --platform win32` 299 文件 0 / `export-openapi --check` 四份无差异（契约零变化）；前端与路由未动，按约定不跑 `npm run verify` 与两个 `gen:* --check`。上一轮 C1.5 定级 `targeted`：4 个测试文件 87 passed；C1 定级 `full`：1678 passed / 12 skipped，并跑过 `gen:routes --check` / `gen:mock-coverage --check` / `npm run verify` 全绿；阶段 B 也跑过 `full`：1672 passed / 12 skipped |
+| 本机门禁 | 本轮（2026-11-14 C2 正刀 / 封装整体搬进 `template_pack`）按 §3.1 定级 **`full`**（改 `api/ports.py`、删迁移、动模块装配）：后端全量 **1663 passed / 12 skipped / 0 failed**（272s，EXIT=0），`ruff check src tests` 0 / `mypy --platform win32` 299 文件 0 / `export-openapi --check` 四份无差异（已重新生成：去 6 个 v1 `/template-packs` 端点、去 2 个权限码）/ `npm run verify` 全绿 / `gen:routes --check`（10 条路由）/ `gen:mock-coverage --check` 全绿。上一轮 C2 第一刀定级 `full`：1690 passed / 12 skipped；C1.5 定级 `targeted`：87 passed |
 | 规模 | 12 个业务模块 · **118 条路径 / 148 个端点**（文本资产 +7）· **57 个权限码**（本轮未新增）· **4 份**契约生成物 |
 | 后端 | `api/.venv/Scripts/app.exe serve --reload` → 8080，前缀 **`/api/v1`**（裸 `/health` 会返回 40400） |
 | 前端 | `cd studio && npm run dev` → 5173，`/api` 已代理到 8080 |
@@ -50,6 +50,7 @@
 | 本轮 | **模板封装迁移 A/B/C1**（2026-11-14）：A 纯规则上移 `core/template_rules/`；B `manifest.json` DB 化四张表（迁移 `a3c7e91b2d45`）；C1 新 `/template-manifests` 配置服务（预检 / 幂等保存 / 发布 / 停用）+ `core.ports.template_catalog` 只读端口 | 素材一律 `library_assets.id`，本地文件、文件 sha256、journal 进度文件、HTTP 客户端整套没搬；`template_packager` 的能力改为 DB 内预检 + 版本回执。旧 `/template-packs` 与 `modules/template` 的 ①② 暂留，等 C2 收敛 |
 | 本轮 | **C1.5 发布回执闭环**：`publish()` 冻结 `published_pack_id` / `published_pack_version` / `published_template_id`，`template-catalog` 快照带出回执；复用包 `packId` 预检改成查库确认「存在且已发布」 | 模型里三列此前声明了却从未写入（journal 语义断在这里）。新建包回执指向自己 + 本次 version，复用包指向被复用行及其版本；停用不清空（下架 ≠ 抹历史）。发布投影（`video_templates` 行）仍等 C2 搬表后同模块直写 |
 | 本轮 | **C2 第一刀（绞杀者）**：新增 `core.ports.template_runtime`（`template-runtime` 注入口，实现暂由仍持有表的 `modules/template/runtime_port_impl.py` 注册）；`replacement_service` / `authorization` / 固定引用解析全部改走端口，执行链不再 import `PackRepository` / `video_template_service` / `TemplatePackVersion` | 目的是让「搬表」变成纯机械动作：C2 正刀只需挪文件 + 换注册点，消费方一行不改。执行链的模板名缓存从进程级全局字典（`video_template_service._NAME_CACHE`，已删）改为**每请求一份** `self._template_names`，`_prompt_origin` 改成纯函数、显式收名字表。目录卡片仍走 camelCase dict（封装模块自己的对外形状），消费方 `ReplacementPack.model_validate` 校验一次 |
+| 本轮 | **C2 正刀：封装整体搬进 `template_pack`**（2026-11-14）：`template_packs` / `_references` / `_versions` / `video_templates` 四表、`pack_service` / `pack_router` / `video_template_*` / `template_references` / `library_references` / `seed` / `runtime_port_impl` 全部迁入；`models` / `repository` / `schema` / `dependencies` 按表拆分；旧 `template_pack_templates` / `_slots` 与 `/template-packs` 端点、前端「封装模板」页面一并下线（迁移 `c6f0a2d7e813`） | 路径与权限码一个没改（`/templates/replacement-packs`、`/templates/video-templates`、`template:pack:*`）；`asset_source.py` 上移 `core/library_assets.py`、`ReplacementPack` 形状上移 `core/template_pack_view.py`、老 JSON 读盘约定上移 `core/legacy_json.py`；`import-template-legacy` 拆成 `import-template-packs` + `import-template-runs` |
 
 表格之后又连续落了几件事（提交见 `git log --oneline -12`）：PR#5 语义合并 →
 T34 参考图（含素材库侧边悬浮栏 + 拖拽）→ 标签两级分类 → worktree
@@ -269,8 +270,25 @@ curl -sS --noproxy '*' -H "Authorization: Bearer $TOKEN" \
   合并会让编辑界面每加一个字段都去改运行侧快照。未注册时 **fail-closed**
   （`require_template_runtime()` 抛 `RegistryError`）——执行链拿不到冻结版本就
   准备不了任务，退化成「封装不存在」的 400 会把装配故障说成用户选错包。
-  C2 正刀搬表时只需把 `register_template_runtime()` 的调用点挪到
-  `modules/template_pack/__init__.py`，消费方不用动。
+  **C2 正刀已完成**：`register_template_runtime()` 的调用点已挪到
+  `modules/template_pack/__init__.py`，`replacement_service` / `authorization`
+  一行没改。搬表时唯一没预料到的是 `asset_source.py`（替换链侧）被
+  `template_pack` 三个文件共用，已上移 `core/library_assets.py`。
+- **迁移之后两个模板模块的边界**（C2 正刀，2026-11-14）：`modules/template` 只剩
+  替换执行链（三张 `replacement_*` 表 + 路由 + worker + 编译器），
+  `modules/template_pack` 拥有素材包 / 视频模板 / manifest 六张表与全部封装路由。
+  两边**只能**经 `core.ports.template_runtime`（运行侧）与
+  `core.ports.template_catalog`（编写侧）交换数据。共用词汇上移 core：
+  `core/library_assets.py`（素材元数据）、`core/template_pack_view.py`
+  （`ReplacementPack` 卡片形状）、`core/legacy_json.py`（老盘 JSON 读法）。
+- **权限码由 `template` 声明、`template_pack` 的路由去 require**：
+  `template:pack:manage` / `publish` 沿用重建前的命名（改名会让已有角色静默
+  失去权限），而 `test_permission_codes_are_namespaced_by_module` 要求码前缀
+  等于**声明它的模块名**，所以只能登记在 `template` 的 `ModuleSpec` 里。
+  别为了「看起来对齐」把这两个码搬去 `template_pack`：那条守卫会红。
+- **`import-template-legacy` 已拆成两条命令**：`import-template-packs`（写封装三表）
+  与 `import-template-runs`（写调用档案三表）。拆分原因是业务模块不许互相 import，
+  合起来就得让一半去写别人的表。升级时按 `packs → runs` 顺序跑。
 - **模板名不再有进程级缓存**：`_prompt_origin` 是纯函数，名字表由读入口
   （`list_runs` / `detail` → `_warm_template_names`）经端口批量预热进
   `self._template_names`。别再把字典提回模块级：那是跨请求串味、且无法失效。

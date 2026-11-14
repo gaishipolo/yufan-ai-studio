@@ -25,11 +25,14 @@ from core.ports.template_runtime import (
     RuntimeTemplate,
     RuntimeTemplateMedia,
 )
-from modules.template import video_template_service
-from modules.template.models import TemplatePack, TemplatePackVersion
-from modules.template.repository import PackRepository
-from modules.template.video_template_repository import VideoTemplateRepository
-from modules.template.video_template_schema import VideoTemplateOut
+from modules.template_pack import video_template_service
+from modules.template_pack.models import (
+    TemplatePack,
+    TemplatePackVersion,
+)
+from modules.template_pack.repository import PackRepository
+from modules.template_pack.video_template_repository import VideoTemplateRepository
+from modules.template_pack.video_template_schema import VideoTemplateOut
 
 __all__ = ["TemplateRuntime", "to_runtime"]
 
@@ -107,7 +110,7 @@ class TemplateRuntime:
     async def available_packs(self, session: AsyncSession) -> list[dict[str, Any]]:
         # 惰性 import：`pack_service` 自己依赖业务 schema，放在模块顶部会让
         # `modules.template` 的包初始化多绕一圈（`__init__` 已 import 了 router）。
-        from modules.template.pack_service import PackService
+        from modules.template_pack.pack_service import PackService
 
         packs = await PackService(session).available()
         return [pack.model_dump(by_alias=True) for pack in packs]
@@ -142,8 +145,8 @@ class TemplateRuntime:
         *,
         actor: CurrentUser,
     ) -> dict[str, LibraryAssetRef]:
-        from modules.template.template_references import resolve_pack_references
-        from modules.template.video_template_schema import VideoTemplatePackReferenceIn
+        from modules.template_pack.template_references import resolve_pack_references
+        from modules.template_pack.video_template_schema import VideoTemplatePackReferenceIn
 
         parsed = [VideoTemplatePackReferenceIn.model_validate(item) for item in references]
         _, resolved = await resolve_pack_references(session, parsed, actor)

@@ -21,9 +21,9 @@ from typing import Any, TypeVar
 from sqlalchemy import update
 
 from db.session import get_session_factory
-from modules.template.models import VideoTemplate
-from modules.template.video_template_schema import VideoTemplateOut
-from modules.template.video_template_service import apply_out, to_out
+from modules.template_pack.models import VideoTemplate
+from modules.template_pack.video_template_schema import VideoTemplateOut
+from modules.template_pack.video_template_service import apply_out, to_out
 
 T = TypeVar("T")
 
@@ -188,7 +188,7 @@ def put_template(template_id: str, **overrides: object):
 
 
 def get_template(template_id: str):
-    from modules.template import video_template_service as service
+    from modules.template_pack import video_template_service as service
 
     async def go():
         async with get_session_factory()() as session:
@@ -198,7 +198,7 @@ def get_template(template_id: str):
 
 
 def update_prompt(template_id: str, prompt: str, fixed: list[dict] | None = None):
-    from modules.template import video_template_service as service
+    from modules.template_pack import video_template_service as service
 
     async def go():
         async with get_session_factory()() as session:

@@ -21,16 +21,16 @@ from video_template_support import IMAGES, PACK_ID, SOURCE_ID, put, record, run
 from core.exceptions import BadRequest
 from core.ports.template_runtime import RuntimeTemplate
 from db.session import get_session_factory
-from modules.template import video_template_service as service
 from modules.template.replacement_service import (
     _check_video_template,
     _media_in_mixed_order,
     _prompt_origin,
 )
-from modules.template.runtime_port_impl import to_runtime
-from modules.template.video_template_media import apply_pack_roles
-from modules.template.video_template_schema import VideoTemplateMedia, VideoTemplateOut
 from modules.template.workspace import RUNTIME
+from modules.template_pack import video_template_service as service
+from modules.template_pack.runtime_port_impl import to_runtime
+from modules.template_pack.video_template_media import apply_pack_roles
+from modules.template_pack.video_template_schema import VideoTemplateMedia, VideoTemplateOut
 
 
 def template(**overrides: object) -> RuntimeTemplate:
@@ -265,7 +265,7 @@ async def test_pinning_writes_an_audit_event(monkeypatch) -> None:
 
     与 pack publish/disable 同一口径；create/attach-source 只算保存，不记。
     """
-    from modules.template import video_template_router as router_module
+    from modules.template_pack import video_template_router as router_module
 
     seen: dict[str, object] = {}
     events: list[tuple[str, dict[str, object]]] = []

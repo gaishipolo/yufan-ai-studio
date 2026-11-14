@@ -16,11 +16,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.context import CurrentUser
 from core.exceptions import BadRequest
+from core.library_assets import resolve_assets
 from core.ports.library_lookup import LibraryAssetKind, LibraryAssetRef, LibraryAssetState
-from modules.template.asset_source import resolve_assets
-from modules.template.models import TemplatePack, TemplatePackVersion
-from modules.template.repository import PackRepository
-from modules.template.video_template_schema import VideoTemplatePackReferenceIn
+from modules.template_pack.models import (
+    TemplatePack,
+    TemplatePackVersion,
+)
+from modules.template_pack.repository import PackRepository
+from modules.template_pack.video_template_schema import VideoTemplatePackReferenceIn
 
 
 async def resolve_pack_references(

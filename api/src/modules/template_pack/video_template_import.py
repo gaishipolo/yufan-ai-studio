@@ -36,7 +36,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.config import settings
 from core.exceptions import BadRequest
-from modules.template.models import VideoTemplate
+from modules.template_pack.models import VideoTemplate
 
 #: .../api/src/modules/template/ -> parents[3] = .../api
 _API_ROOT = Path(__file__).resolve().parents[3]

@@ -41,6 +41,7 @@ from core.exceptions import (
     UpstreamError,
 )
 from core.feed import ReplacementFeedRecord
+from core.library_assets import resolve_assets
 from core.library_text import (
     dumps_text_refs,
     freeze_text_refs,
@@ -57,6 +58,11 @@ from core.ports.library_lookup import (
 )
 from core.ports.template_runtime import require_template_runtime
 from core.serving import Served
+from core.template_pack_view import (
+    PackBinding,
+    ReplacementPack,
+)
+from core.template_rules import MAX_REFERENCE_IMAGES
 from core.template_rules.options import (
     is_scene_text,
     scene_description,
@@ -67,28 +73,27 @@ from core.template_rules.roles import PACK_ROLES, PACK_SCOPES, usage_for
 from db.base import utcnow
 from infra.archive import ArchiveStorage, get_archive_storage
 from infra.media_probe import encode_text
-from modules.template.asset_source import resolve_assets
 from modules.template.authorization import authorization_gap
 from modules.template.channels import channel_catalog, channel_label, require_channel, run_channel
 from modules.template.library_media import StagedMedia, discard_staged, stage_library_refs
 from modules.template.models import ReplacementReview as ReviewRow
 from modules.template.models import ReplacementRun
-from modules.template.repository import RunInputRow, RunRepository
+from modules.template.repository import (
+    RunInputRow,
+    RunRepository,
+)
 from modules.template.run_clock import elapsed_seconds
 from modules.template.schema import (
-    PackBinding,
     PrepareReplacement,
     ReplacementCatalog,
     ReplacementInputAsset,
     ReplacementInputSummary,
-    ReplacementPack,
     ReplacementReview,
     ReplacementReviewEvent,
     ReplacementReviewIn,
     ReplacementRunOut,
 )
 from modules.template.titles import task_name
-from modules.template.video_template_schema import MAX_REFERENCE_IMAGES
 from modules.template.workspace import (
     BRIDGE,
     RUNTIME,
@@ -949,8 +954,8 @@ class ReplacementService:
         )
     async def _selected_pack_inputs(self, payload, template, primary, frozen):
         """每个已选人物包各贡献一个身份槽位；所有参考与用途以发布快照为准。"""
+        from core.template_pack_view import aligned_bindings
         from core.template_rules.bindings import character_slots
-        from modules.template.schema import aligned_bindings
 
         count = character_slots(template)
         ids = [payload.pack_id, *payload.extra_pack_ids]

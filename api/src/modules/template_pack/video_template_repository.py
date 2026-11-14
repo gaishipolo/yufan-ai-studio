@@ -17,7 +17,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.exceptions import NotFound
-from modules.template.models import VideoTemplate
+from modules.template_pack.models import VideoTemplate
 
 __all__ = ["VideoTemplateRepository"]
 

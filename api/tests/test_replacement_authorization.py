@@ -21,9 +21,9 @@ from db.session import get_session_factory
 from modules.library.models import LibraryAsset
 from modules.template import worker
 from modules.template.authorization import authorization_gap
-from modules.template.models import TemplatePack
 from modules.template.replacement_service import ReplacementService
 from modules.template.schema import PrepareReplacement
+from modules.template_pack.models import TemplatePack
 
 
 @pytest.mark.parametrize("revocation", ["pack", "input"])

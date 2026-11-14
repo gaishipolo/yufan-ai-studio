@@ -11,7 +11,7 @@ from video_template_support import get_template, put_template, update_prompt
 
 from core.exceptions import BadRequest
 from modules.template.replacement_service import _media_in_mixed_order
-from modules.template.runtime_port_impl import to_runtime
+from modules.template_pack.runtime_port_impl import to_runtime
 
 _REF_BINDINGS = {
     "referenceBindings": {"{{Mixed 1}}": "source_video", "{{Mixed 2}}": "multiview"}
@@ -265,7 +265,7 @@ def test_fixed_reference_budget_counts_images_not_slots() -> None:
 
     保存端与 prepare 端共用这个常量，否则会出现「模板存下了、换个图更多的包准备被拒」。
     """
-    from modules.template.video_template_schema import MAX_REFERENCE_IMAGES
+    from modules.template_pack.video_template_schema import MAX_REFERENCE_IMAGES
 
     put_template("template-1")
     before = get_template("template-1")

@@ -20,8 +20,8 @@ from video_template_support import NOW, put, record, run
 
 from core.exceptions import BadRequest, NotFound
 from db.session import get_session_factory
-from modules.template import video_template_service as service
-from modules.template.models import VideoTemplate
+from modules.template_pack import video_template_service as service
+from modules.template_pack.models import VideoTemplate
 
 TID = "template-prompt"
 
@@ -185,7 +185,10 @@ def test_prompt_is_preserved_verbatim_before_hashing() -> None:
 
 def test_prompt_request_preserves_whitespace() -> None:
     from modules.template.schema import ReplacementRunOut
-    from modules.template.video_template_schema import VideoTemplateDraftIn, VideoTemplatePromptIn
+    from modules.template_pack.video_template_schema import (
+        VideoTemplateDraftIn,
+        VideoTemplatePromptIn,
+    )
 
     raw = " \n编辑 {{Mixed 1}}，参考 {{Mixed 2}}。\n\n "
     assert VideoTemplatePromptIn(prompt=raw).prompt == raw

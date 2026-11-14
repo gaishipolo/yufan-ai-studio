@@ -32,8 +32,8 @@ from core.ports.template_runtime import (
 )
 from db.base import utcnow
 from db.session import get_session_factory
-from modules.template.models import TemplatePack
-from modules.template.runtime_port_impl import TemplateRuntime
+from modules.template_pack.models import TemplatePack
+from modules.template_pack.runtime_port_impl import TemplateRuntime
 
 
 def test_module_registers_an_implementation() -> None:
@@ -172,7 +172,7 @@ async def test_template_names_batch_lookup() -> None:
 
 async def test_available_packs_projection_stays_camel_case() -> None:
     """目录投影是封装模块自己的对外形状：消费方用自己的出参模型校验一次。"""
-    from modules.template.schema import ReplacementPack
+    from core.template_pack_view import ReplacementPack
 
     pack = await add_pack(
         kind="character",

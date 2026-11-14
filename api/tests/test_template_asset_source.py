@@ -19,8 +19,8 @@ from library_support import insert_asset, suffix
 from video_template_support import run
 
 from core.config import settings
+from core.library_assets import resolve_names
 from db.session import get_session_factory
-from modules.template.asset_source import resolve_names
 
 
 def resolve(refs: Iterable[str]) -> dict[str, str]:

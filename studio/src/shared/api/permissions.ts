@@ -45,8 +45,6 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
       { code: 'template_pack:create', name: '创建或保存模板封装草稿', description: '' },
       { code: 'template_pack:publish', name: '发布或停用模板封装', description: '' },
       { code: 'template_pack:read', name: '查看模板封装', description: '' },
-      { code: 'template_pack:update', name: '编辑未发布的模板封装', description: '' },
-      { code: 'template_pack:use', name: '使用模板封装', description: '' },
     ],
   },
   {
@@ -155,8 +153,6 @@ export const PERMISSION_CODES = [
   'template_pack:create',
   'template_pack:publish',
   'template_pack:read',
-  'template_pack:update',
-  'template_pack:use',
 ] as const;
 
 export type PermissionCode = (typeof PERMISSION_CODES)[number];

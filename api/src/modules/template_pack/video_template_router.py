@@ -15,9 +15,9 @@ from api.deps import SessionDep, require
 from core import audit
 from core.context import CurrentUser
 from core.response import ApiResponse
-from modules.template import video_template_service as service
-from modules.template.template_references import resolve_pack_references
-from modules.template.video_template_schema import (
+from modules.template_pack import video_template_service as service
+from modules.template_pack.template_references import resolve_pack_references
+from modules.template_pack.video_template_schema import (
     VideoTemplateAttachSourceIn,
     VideoTemplateDraftIn,
     VideoTemplateListOut,

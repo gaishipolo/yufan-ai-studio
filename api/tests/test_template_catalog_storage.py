@@ -22,7 +22,7 @@ from sqlalchemy.exc import IntegrityError
 from video_template_support import put, record, remove, run
 
 from db.session import get_session_factory
-from modules.template.models import VideoTemplate
+from modules.template_pack.models import VideoTemplate
 
 API_ROOT = Path(__file__).resolve().parents[1]
 
@@ -74,7 +74,7 @@ def test_pinned_is_unique_at_the_database_level() -> None:
 
 def test_second_pin_clears_the_first() -> None:
     """`pin()` 换蓝本时，前一条必须落回 `pinned=False`。"""
-    from modules.template import video_template_service as service
+    from modules.template_pack import video_template_service as service
 
     put(**record(id="pin-one", templateKey="pin-one"))
     put(**record(id="pin-two", templateKey="pin-two", pinned=False))

@@ -136,6 +136,9 @@
 | `core/ports/generation_feed.py` | 任务中心的**生成来源**注入口（`Port(multi=False)` + 注册 / 复位 / 探测三件套）：来源方自带筛选、统计、分页候选与产物现签，聚合方不认识它的表。与 `core/feed.py`（老替换档案按 owner 全量返回）刻意分开；未注册返回空页是合法状态，另外两路照常显示。 |
 | `core/ports/template_catalog.py` | 模板封装的**对外只读目录**注入口：只列 / 取已发布的卡片与素材包快照（core 层不可变 dataclass），没有生成动作、没有素材判定。与旧 `core/ports/template_pack.py`（fixed/filtered 槽位，暴露 `verify_picks`）刻意不合并；未注册返回空结果是合法状态。 |
 | `core/ports/template_runtime.py` | 替换执行链读**封装运行投影**的注入口：素材包头部 / 冻结发布版本 / 视频模板快照 / 模板名批量反查 / 固定引用解析。与 `template_catalog` 读的是两套数据（编写侧 manifest vs 运行侧投影），刻意分开；未注册 **fail-closed**（抛 `RegistryError`），因为执行链拿不到冻结版本就准备不了任务，退化成「封装不存在」的 400 会把装配故障说成用户选错包。 |
+| `core/library_assets.py` | 批量取 v2 资产元数据与可读性：可读性只转发 `LibraryLookup`，没传 actor 时 fail-closed。两个模板模块共用。 |
+| `core/legacy_json.py` | 老归档盘 JSON 的读取约定（两种字段写法都认、坏文件只跳过）；`import-template-packs` 与 `import-template-runs` 各用一半。 |
+| `core/template_pack_view.py` | 素材包卡片 `ReplacementPack` 的形状与对齐规则：封装模块产出、替换模块嵌进 `/replacement-catalog`，谁都不能 import 对方。 |
 | `core/scheduler.py` | 周期任务扩展点：`@periodic("模块.动作", every=秒)` 注册，进程内单调度器；模块自己说「多久问一次」，框架不认识任何具体任务。 |
 | `core/response.py` | 统一响应包装 `{code,message,data}` 与分页原语 `Page`。 |
 | `core/schema.py` | Pydantic 基座：统一 camelCase 契约，与前端 TypeScript 类型一一对应。 |
@@ -272,19 +275,34 @@
 | `modules/asset/archive_schema.py` | 归档契约（`ArchivedAssetOut` 等）。 |
 | `modules/asset/archive_dependencies.py` | 归档 HTTP 依赖装配。 |
 
-**template · 模板与替换模板（同事新增的那个功能）**
+**template · 替换执行链**
 
 | 文件 | 职责 |
 |---|---|
-| `modules/template/router.py` / `service.py` / `schema.py` / `models.py` | 行业模板的常规四件套。 |
-| `modules/template/replacement_router.py` | 替换模板 HTTP 契约：IO 与状态规则交给 service。 |
-| `modules/template/replacement_service.py` | 业务编排：归档先登记后准备，失败可安全续做。 |
-| `modules/template/replacement_repository.py` | 替换调用仓储：类型化旧 JSON，保持归档目录兼容。 |
-| `modules/template/replacement_schema.py` | 契约；已准备与已生成是不同状态。 |
-| `modules/template/replacement_pipeline.py` | 替换档案到生成框架（`GenerationStore` / `Pipeline`）的适配。 |
-| `modules/template/replacement_worker.py` | 上传准备与下载为非计费阶段；提交/轮询/超时复用生成框架。停用账号闸门、重试退避也在这。 |
-| `modules/template/replacement_dependencies.py` | 替换模板 HTTP 依赖装配。 |
+| `modules/template/router.py` | `/templates` 前缀下的替换子路由（素材包与视频模板的子路由在 `template_pack`）。 |
+| `modules/template/replacement_router.py` | 替换 HTTP 契约：IO 与状态规则交给 service。 |
+| `modules/template/replacement_service.py` | 业务编排：准备（物化素材 + 编译提示词）与状态流转；封装数据一律经 `template-runtime` 端口读。 |
+| `modules/template/repository.py` | 替换调用仓储（`replacement_runs` / `_run_inputs` / `_reviews`）。 |
+| `modules/template/schema.py` | 替换契约；已准备与已生成是不同状态。 |
+| `modules/template/pipeline.py` | 替换档案到生成框架（`GenerationStore` / `Pipeline`）的适配。 |
+| `modules/template/worker.py` | 上传准备与下载为非计费阶段；提交/轮询/超时复用生成框架。停用账号闸门、重试退避也在这。 |
+| `modules/template/dependencies.py` | 替换服务与三个权限码的依赖装配。 |
+| `modules/template/import_legacy.py` | `app import-template-runs`：老 `run.json` → `replacement_*` 三表（幂等）。 |
 | `modules/template/replacement_runtime/` | 执行器运行时：`prompt-compiler.mjs`（提示词编译）、`prompts/*.txt`（三类中文提示词模板）、`workbench/`（浏览器侧预览）。 |
+
+**template_pack · 模板封装（素材包 / 视频模板 / manifest）**
+
+| 文件 | 职责 |
+|---|---|
+| `modules/template_pack/router.py` | `/templates` 下的 `/replacement-packs` 与 `/video-templates`（路径与搬之前一致）。 |
+| `modules/template_pack/models.py` | manifest 四表（编写侧）+ `template_packs` 四表（运行侧投影）。 |
+| `modules/template_pack/manifest_service.py` | manifest 预检 / 幂等保存 / 发布 / 停用，发布时投影并冻结回执。 |
+| `modules/template_pack/pack_service.py` | 素材包草稿与发布、可用性判定（字节 + 用途齐全）。 |
+| `modules/template_pack/video_template_service.py` | 视频模板的创建、改提示词、绑定样片、固定蓝本。 |
+| `modules/template_pack/catalog_port_impl.py` | `template-catalog` 端口实现（读编写侧）。 |
+| `modules/template_pack/runtime_port_impl.py` | `template-runtime` 端口实现（读运行侧，替换链唯一入口）。 |
+| `modules/template_pack/import_legacy.py` / `video_template_import.py` | `app import-template-packs` / `import-video-templates`。 |
+| `modules/template_pack/seed.py` | 演示封装（一个已发布人物包 + 一个产品草稿）。 |
 
 **其余模块（结构同上，看文件名即可）**
 

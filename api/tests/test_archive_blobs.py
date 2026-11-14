@@ -28,8 +28,8 @@ from db.session import get_session_factory
 from infra import get_storage
 from infra.archive import BlobStore, blob_key, is_blob_key, preview_key
 from infra.archive.local import LocalArchiveStorage, get_archive_settings
-from modules.template.pack_service import PackService
-from modules.template.repository import PackRepository
+from modules.template_pack.pack_service import PackService
+from modules.template_pack.repository import PackRepository
 
 
 @pytest.fixture

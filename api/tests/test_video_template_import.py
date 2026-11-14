@@ -24,8 +24,8 @@ from video_template_support import remove, run, unpin_all
 from core.config import settings
 from core.exceptions import BadRequest
 from db.session import get_session_factory
-from modules.template.models import VideoTemplate
-from modules.template.video_template_import import (
+from modules.template_pack.models import VideoTemplate
+from modules.template_pack.video_template_import import (
     import_catalog,
     legacy_catalog_path,
 )

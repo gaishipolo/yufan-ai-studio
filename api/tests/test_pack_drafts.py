@@ -26,9 +26,9 @@ from tests_template_helpers import ADMIN, actor_id, add_pack, drop_pack, png_byt
 from core.exceptions import BadRequest, Conflict, NotFound
 from core.template_rules.roles import PACK_ROLES, PACK_SCOPES
 from db.session import get_session_factory
-from modules.template.pack_service import PackService
-from modules.template.repository import PackRepository
-from modules.template.schema import PackDraftIn
+from modules.template_pack.pack_service import PackService
+from modules.template_pack.repository import PackRepository
+from modules.template_pack.schema import PackDraftIn
 
 KINDS = ("character", "product", "scene")
 

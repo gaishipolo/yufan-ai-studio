@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.context import CurrentUser
 from core.exceptions import AppError, BadRequest, Conflict, NotFound
+from core.library_assets import resolve_assets, resolve_names
 from core.logging import get_logger
 from core.ports.library_lookup import (
     LibraryAssetKind,
@@ -32,6 +33,11 @@ from core.ports.library_lookup import (
     get_library_lookup,
 )
 from core.serving import Served
+from core.template_pack_view import (
+    ReplacementPack,
+    aligned_bindings,
+    aligned_required_roles,
+)
 from core.template_rules.roles import (
     PACK_SCOPES,
     missing_role_labels,
@@ -39,17 +45,17 @@ from core.template_rules.roles import (
 )
 from db.base import utcnow
 from infra import get_storage
-from modules.template.asset_source import resolve_assets, resolve_names
-from modules.template.models import TemplatePack, TemplatePackReference, TemplatePackVersion
-from modules.template.repository import PackRepository
-from modules.template.schema import (
+from modules.template_pack.models import (
+    TemplatePack,
+    TemplatePackReference,
+    TemplatePackVersion,
+)
+from modules.template_pack.repository import PackRepository
+from modules.template_pack.schema import (
     PackDraftIn,
     PackManaged,
     PackManagedList,
     PackPublicList,
-    ReplacementPack,
-    aligned_bindings,
-    aligned_required_roles,
 )
 
 logger = get_logger(__name__)

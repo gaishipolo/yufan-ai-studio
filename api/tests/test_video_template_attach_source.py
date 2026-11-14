@@ -15,7 +15,7 @@ from video_template_support import put, record, run
 from core.exceptions import NotFound
 from db.session import get_session_factory
 from modules.library.models import LibraryAsset
-from modules.template import video_template_service as service
+from modules.template_pack import video_template_service as service
 
 NEW_ASSET = "ffeeb073241c5e7d76bf46fc8544e887fe0da464"
 

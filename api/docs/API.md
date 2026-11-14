@@ -2,7 +2,7 @@
 
 > 此文件由 `app export-openapi` 自动生成，请勿手工编辑。
 >
-> 版本 `0.2.0`｜共 **150** 个接口 / **12** 个模块
+> 版本 `0.2.0`｜共 **142** 个接口 / **12** 个模块
 >
 > 重新生成：`cd api && .venv/Scripts/python -m cli export-openapi`
 
@@ -102,8 +102,6 @@ Authorization: Bearer <accessToken>
 | `template_pack:create` | 创建或保存模板封装草稿 |  |
 | `template_pack:publish` | 发布或停用模板封装 |  |
 | `template_pack:read` | 查看模板封装 |  |
-| `template_pack:update` | 编辑未发布的模板封装 |  |
-| `template_pack:use` | 使用模板封装 |  |
 
 **系统**
 
@@ -204,8 +202,6 @@ Authorization: Bearer <accessToken>
 | `40925` | 409 | identity | `CannotTargetSelf` | 不能停用或删除自己的账号 |
 | `40926` | 409 | identity | `LastSuperuser` | 系统必须保留至少一个启用的超级管理员 |
 | `40927` | 409 | identity | `GroupNameTaken` | 小组名称已被占用 |
-| `40931` | 409 | template_pack | `TemplatePackConflict` | 该稳定标识已被另一份配置使用，请换一个 |
-| `40932` | 409 | template_pack | `TemplatePackStateError` | 该封装模板已发布，不能再修改内容 |
 | `40971` | 409 | template | `TemplateBusy` | 模板正在处理中，请稍后再试 |
 | `40981` | 409 | library | `SharedAssetNotDeletable` | 该资产仍处于共享状态，请先撤销共享后再删除 |
 | `40982` | 409 | library | `TeamDeleteForbidden` | 团队库资产不能直接删除，请先撤销团队共享 |
@@ -237,14 +233,14 @@ Authorization: Bearer <accessToken>
 | 任务 | 9 | 见下方 `4.2` |
 | 模型 | 1 | 见下方 `4.3` |
 | 生图 | 3 | 见下方 `4.4` |
-| 模板 | 23 | 见下方 `4.5` |
+| 模板 | 11 | 见下方 `4.5` |
 | 分镜模板 | 1 | 见下方 `4.6` |
 | 镜头库 | 1 | 见下方 `4.7` |
 | 系统 | 2 | 见下方 `4.8` |
 | 导出 | 6 | 见下方 `4.9` |
 | 资产库 | 45 | 见下方 `4.10` |
 | 模型驱动 | 6 | 见下方 `4.11` |
-| 模板封装 | 14 | 见下方 `4.12` |
+| 模板封装 | 18 | 见下方 `4.12` |
 
 ### 4.1 身份（39 个）
 
@@ -1380,17 +1376,11 @@ Authorization: Bearer <accessToken>
 | `id` | `string` | 是 | 生图记录 ID |
 | `status` | `string` | 是 | 重试后的状态，固定为 `queued` |
 
-### 4.5 模板（23 个）
+### 4.5 模板（11 个）
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
 | `GET` | `/api/v1/templates/replacement-catalog` | 人物/产品/场景替换模板与调用档案 | 🔒 |
-| `GET` | `/api/v1/templates/replacement-packs` | 本人封装草稿和历史包 | 🔒 |
-| `GET` | `/api/v1/templates/replacement-packs/available` | 全工作台已发布对象 | 🔒 |
-| `PUT` | `/api/v1/templates/replacement-packs/draft` | 保存封装草稿（请求标识及版本防重） | 🔒 |
-| `POST` | `/api/v1/templates/replacement-packs/{pack_id}/disable` | 停用已发布封装对象 | 🔒 |
-| `GET` | `/api/v1/templates/replacement-packs/{pack_id}/preview/{asset_id}` | 读取授权发布版本的包内预览 | 🔒 |
-| `POST` | `/api/v1/templates/replacement-packs/{pack_id}/publish` | 发布不可变封装版本 | 🔒 |
 | `POST` | `/api/v1/templates/replacement-runs` | 归档输入并预览最终提示词，不提交生成 | 🔒 |
 | `DELETE` | `/api/v1/templates/replacement-runs/{run_id}` | 将本人替换任务与调用档案移入回收站，不取消生成 | 🔒 |
 | `GET` | `/api/v1/templates/replacement-runs/{run_id}` | 替换任务状态与提示词 | 🔒 |
@@ -1401,12 +1391,6 @@ Authorization: Bearer <accessToken>
 | `POST` | `/api/v1/templates/replacement-runs/{run_id}/reconfirm` | 确认上次提交可能已计费后放行重提（默认拒绝） | 🔒 |
 | `POST` | `/api/v1/templates/replacement-runs/{run_id}/restore` | 恢复本人回收站中的替换任务与调用档案 | 🔒 |
 | `PUT` | `/api/v1/templates/replacement-runs/{run_id}/review` | 保存人工验收，版本冲突需重新核对 | 🔒 |
-| `GET` | `/api/v1/templates/video-templates` | 视频模板列表（固定蓝本优先） | 🔒 |
-| `POST` | `/api/v1/templates/video-templates` | 封装一条视频模板 | 🔒 |
-| `GET` | `/api/v1/templates/video-templates/{template_id}` | 视频模板详情（含提示词与媒体顺序） | 🔒 |
-| `POST` | `/api/v1/templates/video-templates/{template_id}/attach-source` | 绑定样片原片资产 | 🔒 |
-| `POST` | `/api/v1/templates/video-templates/{template_id}/pin` | 设为固定蓝本（全库仅一个） | 🔒 |
-| `PATCH` | `/api/v1/templates/video-templates/{template_id}/prompt` | 保存固定提示词与跨封装图片引用 | 🔒 |
 
 #### `GET /api/v1/templates/replacement-catalog`
 
@@ -1425,169 +1409,6 @@ Authorization: Bearer <accessToken>
 | `packRoles` | `Record<string, Record<string, string>>` | 否 |  |
 | `baseRoles` | `Record<string, string>` | 否 |  |
 | `packScopes` | `Record<string, string>` | 否 |  |
-
-#### `GET /api/v1/templates/replacement-packs`
-
-**本人封装草稿和历史包**
-
-**响应** `ApiResponse<PackManagedList>`（前端取 `res.data`）
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `items` | `PackManaged[]` | 是 |  |
-
-#### `GET /api/v1/templates/replacement-packs/available`
-
-**全工作台已发布对象**
-
-| 参数 | 位置 | 类型 | 必填 | 说明 |
-|---|---|---|---|---|
-| `kind` | query | `string` | 否 |  |
-| `keyword` | query | `string` | 否 |  |
-| `page` | query | `number` | 否 |  |
-| `pageSize` | query | `number` | 否 |  |
-
-**响应** `ApiResponse<PackPublicList>`（前端取 `res.data`）
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `items` | `ReplacementPack[]` | 是 |  |
-| `total` | `number` | 是 |  |
-| `page` | `number` | 是 |  |
-| `pageSize` | `number` | 是 |  |
-
-#### `PUT /api/v1/templates/replacement-packs/draft`
-
-**保存封装草稿（请求标识及版本防重）**
-
-**请求体** `PackDraftIn`
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `requestId` | `string` | 是 |  |
-| `expectedRevision` | `number` | 否 |  |
-| `kind` | `"character" \| "product" \| "scene"` | 是 |  |
-| `name` | `string` | 否 |  |
-| `referenceLibraryIds` | `string[]` | 否 | 封装用的参考图 id，按顺序 |
-| `coverLibraryId` | `string \| null` | 否 | 封面的 asset id；必须出现在 referenceLibraryIds 里 |
-| `wardrobeMode` | `"preserve" \| "reference"` | 否 |  |
-| `features` | `string` | 否 |  |
-| `instructions` | `string` | 否 |  |
-| `bindings` | `PackBinding[]` | 否 |  |
-| `requiredRoles` | `string[]` | 否 |  |
-| `supportedScopes` | `string[]` | 否 |  |
-
-**响应** `ApiResponse<PackManaged>`（前端取 `res.data`）
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `id` | `string` | 是 |  |
-| `kind` | `"character" \| "product" \| "scene"` | 是 |  |
-| `name` | `string` | 是 |  |
-| `referenceIds` | `string[]` | 是 |  |
-| `coverReferenceId` | `string \| null` | 否 |  |
-| `wardrobeMode` | `"preserve" \| "reference"` | 否 |  |
-| `features` | `string` | 否 |  |
-| `instructions` | `string` | 否 |  |
-| `version` | `number` | 否 |  |
-| `available` | `boolean \| null` | 否 |  |
-| `coverUrl` | `string \| null` | 否 |  |
-| `previewUrls` | `string[]` | 否 |  |
-| `referenceNames` | `string[]` | 否 |  |
-| `bindings` | `PackBinding[]` | 否 |  |
-| `requiredRoles` | `string[]` | 否 |  |
-| `supportedScopes` | `string[]` | 否 |  |
-| `revision` | `number` | 否 |  |
-| `status` | `"draft" \| "published" \| "disabled"` | 否 |  |
-| `gaps` | `string[]` | 否 |  |
-
-#### `POST /api/v1/templates/replacement-packs/{pack_id}/disable`
-
-**停用已发布封装对象**
-
-| 参数 | 位置 | 类型 | 必填 | 说明 |
-|---|---|---|---|---|
-| `pack_id` | path | `string` | 是 |  |
-
-**请求体** `PackAction`
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `expectedRevision` | `number` | 是 |  |
-
-**响应** `ApiResponse<PackManaged>`（前端取 `res.data`）
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `id` | `string` | 是 |  |
-| `kind` | `"character" \| "product" \| "scene"` | 是 |  |
-| `name` | `string` | 是 |  |
-| `referenceIds` | `string[]` | 是 |  |
-| `coverReferenceId` | `string \| null` | 否 |  |
-| `wardrobeMode` | `"preserve" \| "reference"` | 否 |  |
-| `features` | `string` | 否 |  |
-| `instructions` | `string` | 否 |  |
-| `version` | `number` | 否 |  |
-| `available` | `boolean \| null` | 否 |  |
-| `coverUrl` | `string \| null` | 否 |  |
-| `previewUrls` | `string[]` | 否 |  |
-| `referenceNames` | `string[]` | 否 |  |
-| `bindings` | `PackBinding[]` | 否 |  |
-| `requiredRoles` | `string[]` | 否 |  |
-| `supportedScopes` | `string[]` | 否 |  |
-| `revision` | `number` | 否 |  |
-| `status` | `"draft" \| "published" \| "disabled"` | 否 |  |
-| `gaps` | `string[]` | 否 |  |
-
-#### `GET /api/v1/templates/replacement-packs/{pack_id}/preview/{asset_id}`
-
-**读取授权发布版本的包内预览**
-
-| 参数 | 位置 | 类型 | 必填 | 说明 |
-|---|---|---|---|---|
-| `pack_id` | path | `string` | 是 |  |
-| `asset_id` | path | `string` | 是 |  |
-| `version` | query | `number` | 是 |  |
-
-**响应** `ApiResponse<unknown>`（前端取 `res.data`）
-
-#### `POST /api/v1/templates/replacement-packs/{pack_id}/publish`
-
-**发布不可变封装版本**
-
-| 参数 | 位置 | 类型 | 必填 | 说明 |
-|---|---|---|---|---|
-| `pack_id` | path | `string` | 是 |  |
-
-**请求体** `PackAction`
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `expectedRevision` | `number` | 是 |  |
-
-**响应** `ApiResponse<PackManaged>`（前端取 `res.data`）
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `id` | `string` | 是 |  |
-| `kind` | `"character" \| "product" \| "scene"` | 是 |  |
-| `name` | `string` | 是 |  |
-| `referenceIds` | `string[]` | 是 |  |
-| `coverReferenceId` | `string \| null` | 否 |  |
-| `wardrobeMode` | `"preserve" \| "reference"` | 否 |  |
-| `features` | `string` | 否 |  |
-| `instructions` | `string` | 否 |  |
-| `version` | `number` | 否 |  |
-| `available` | `boolean \| null` | 否 |  |
-| `coverUrl` | `string \| null` | 否 |  |
-| `previewUrls` | `string[]` | 否 |  |
-| `referenceNames` | `string[]` | 否 |  |
-| `bindings` | `PackBinding[]` | 否 |  |
-| `requiredRoles` | `string[]` | 否 |  |
-| `supportedScopes` | `string[]` | 否 |  |
-| `revision` | `number` | 否 |  |
-| `status` | `"draft" \| "published" \| "disabled"` | 否 |  |
-| `gaps` | `string[]` | 否 |  |
 
 #### `POST /api/v1/templates/replacement-runs`
 
@@ -1950,230 +1771,6 @@ Authorization: Bearer <accessToken>
 | `outputUrl` | `string \| null` | 否 |  |
 | `deletedAt` | `string \| null` | 否 |  |
 | `billingMode` | `"free" \| "credits"` | 否 | free=0 积分权益队列；credits=本次任务用积分进正常队列 |
-
-#### `GET /api/v1/templates/video-templates`
-
-**视频模板列表（固定蓝本优先）**
-
-**响应** `ApiResponse<VideoTemplateListOut>`（前端取 `res.data`）
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `items` | `VideoTemplateOut[]` | 否 |  |
-| `total` | `number` | 否 |  |
-| `pinnedId` | `string \| null` | 否 | 当前固定蓝本的 id |
-
-#### `POST /api/v1/templates/video-templates`
-
-**封装一条视频模板**
-
-**请求体** `VideoTemplateDraftIn`
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `name` | `string` | 是 | 模板名称 |
-| `templateKey` | `string` | 否 | 稳定标识：同键同配置返回原模板，同键异配置409；留空自动生成。固定蓝本状态独立管理 |
-| `description` | `string` | 否 | 模板说明 |
-| `prompt` | `string` | 是 | 固定提示词原文，含 {{Mixed N}} 占位符 |
-| `sourceVideoName` | `string` | 否 | 样片文件名 |
-| `sourceVideoAssetId` | `string \| null` | 否 | 样片在资产库中的 asset id |
-| `sourceVideoPath` | `string` | 否 | 样片本地路径（可选） |
-| `sourceDurationSec` | `number` | 否 | 样片真实时长，用于提示与档位说明 |
-| `aspectRatio` | `string` | 否 | 输出画幅 |
-| `packId` | `string \| null` | 否 | 关联的已发布替换素材包；**可省略**——用途绑定模式下省略即「只声明槽位」，调用时按用途从用户自己选的包里取图 |
-| `defaultKind` | `"character" \| "product" \| "scene"` | 否 | 选中这张原片卡片时，替换配置默认切到的替换类型 |
-| `mediaOrder` | `VideoTemplateMedia[]` | 否 | 留空则由素材包顺序生成 |
-| `generation` | `Record<string, unknown>` | 否 | 生成参数，覆盖默认值 |
-| `rules` | `Record<string, unknown>` | 否 | 封装规则；referenceBindings 将连续 Mixed 编号绑定到 source_video/图片用途，服务端排列声明槽位并完整附带当前包其余图片，无需逐图引用 |
-| `coverUrl` | `string` | 否 | 封面地址 |
-| `pinned` | `boolean` | 否 | 是否设为固定蓝本（全库仅一个） |
-
-**响应** `ApiResponse<VideoTemplateOut>`（前端取 `res.data`）
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `id` | `string` | 是 |  |
-| `templateKey` | `string` | 是 |  |
-| `name` | `string` | 是 |  |
-| `description` | `string` | 是 |  |
-| `prompt` | `string` | 是 |  |
-| `promptSha256` | `string` | 是 | 提示词 sha256，防止文字被悄悄改掉 |
-| `sourceVideoName` | `string` | 是 |  |
-| `sourceVideoAssetId` | `string \| null` | 否 |  |
-| `sourceVideoPath` | `string` | 是 |  |
-| `sourceDurationSec` | `number` | 是 |  |
-| `aspectRatio` | `string` | 是 |  |
-| `packId` | `string \| null` | 否 |  |
-| `packName` | `string` | 否 |  |
-| `packVersion` | `number` | 否 |  |
-| `defaultKind` | `"character" \| "product" \| "scene"` | 否 |  |
-| `mediaOrder` | `VideoTemplateMedia[]` | 否 |  |
-| `generation` | `Record<string, unknown>` | 否 |  |
-| `rules` | `Record<string, unknown>` | 否 |  |
-| `coverUrl` | `string` | 否 |  |
-| `pinned` | `boolean` | 否 |  |
-| `createdAt` | `string` | 是 |  |
-| `updatedAt` | `string` | 是 |  |
-
-#### `GET /api/v1/templates/video-templates/{template_id}`
-
-**视频模板详情（含提示词与媒体顺序）**
-
-| 参数 | 位置 | 类型 | 必填 | 说明 |
-|---|---|---|---|---|
-| `template_id` | path | `string` | 是 |  |
-
-**响应** `ApiResponse<VideoTemplateOut>`（前端取 `res.data`）
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `id` | `string` | 是 |  |
-| `templateKey` | `string` | 是 |  |
-| `name` | `string` | 是 |  |
-| `description` | `string` | 是 |  |
-| `prompt` | `string` | 是 |  |
-| `promptSha256` | `string` | 是 | 提示词 sha256，防止文字被悄悄改掉 |
-| `sourceVideoName` | `string` | 是 |  |
-| `sourceVideoAssetId` | `string \| null` | 否 |  |
-| `sourceVideoPath` | `string` | 是 |  |
-| `sourceDurationSec` | `number` | 是 |  |
-| `aspectRatio` | `string` | 是 |  |
-| `packId` | `string \| null` | 否 |  |
-| `packName` | `string` | 否 |  |
-| `packVersion` | `number` | 否 |  |
-| `defaultKind` | `"character" \| "product" \| "scene"` | 否 |  |
-| `mediaOrder` | `VideoTemplateMedia[]` | 否 |  |
-| `generation` | `Record<string, unknown>` | 否 |  |
-| `rules` | `Record<string, unknown>` | 否 |  |
-| `coverUrl` | `string` | 否 |  |
-| `pinned` | `boolean` | 否 |  |
-| `createdAt` | `string` | 是 |  |
-| `updatedAt` | `string` | 是 |  |
-
-#### `POST /api/v1/templates/video-templates/{template_id}/attach-source`
-
-**绑定样片原片资产**
-
-绑定后，这条模板对应的原片才会在「全部模板」里被当作可选卡片。
-
-| 参数 | 位置 | 类型 | 必填 | 说明 |
-|---|---|---|---|---|
-| `template_id` | path | `string` | 是 |  |
-
-**请求体** `VideoTemplateAttachSourceIn`
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `sourceVideoAssetId` | `string` | 是 | 原片 id（资产库里的视频） |
-
-**响应** `ApiResponse<VideoTemplateOut>`（前端取 `res.data`）
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `id` | `string` | 是 |  |
-| `templateKey` | `string` | 是 |  |
-| `name` | `string` | 是 |  |
-| `description` | `string` | 是 |  |
-| `prompt` | `string` | 是 |  |
-| `promptSha256` | `string` | 是 | 提示词 sha256，防止文字被悄悄改掉 |
-| `sourceVideoName` | `string` | 是 |  |
-| `sourceVideoAssetId` | `string \| null` | 否 |  |
-| `sourceVideoPath` | `string` | 是 |  |
-| `sourceDurationSec` | `number` | 是 |  |
-| `aspectRatio` | `string` | 是 |  |
-| `packId` | `string \| null` | 否 |  |
-| `packName` | `string` | 否 |  |
-| `packVersion` | `number` | 否 |  |
-| `defaultKind` | `"character" \| "product" \| "scene"` | 否 |  |
-| `mediaOrder` | `VideoTemplateMedia[]` | 否 |  |
-| `generation` | `Record<string, unknown>` | 否 |  |
-| `rules` | `Record<string, unknown>` | 否 |  |
-| `coverUrl` | `string` | 否 |  |
-| `pinned` | `boolean` | 否 |  |
-| `createdAt` | `string` | 是 |  |
-| `updatedAt` | `string` | 是 |  |
-
-#### `POST /api/v1/templates/video-templates/{template_id}/pin`
-
-**设为固定蓝本（全库仅一个）**
-
-| 参数 | 位置 | 类型 | 必填 | 说明 |
-|---|---|---|---|---|
-| `template_id` | path | `string` | 是 |  |
-
-**响应** `ApiResponse<VideoTemplateOut>`（前端取 `res.data`）
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `id` | `string` | 是 |  |
-| `templateKey` | `string` | 是 |  |
-| `name` | `string` | 是 |  |
-| `description` | `string` | 是 |  |
-| `prompt` | `string` | 是 |  |
-| `promptSha256` | `string` | 是 | 提示词 sha256，防止文字被悄悄改掉 |
-| `sourceVideoName` | `string` | 是 |  |
-| `sourceVideoAssetId` | `string \| null` | 否 |  |
-| `sourceVideoPath` | `string` | 是 |  |
-| `sourceDurationSec` | `number` | 是 |  |
-| `aspectRatio` | `string` | 是 |  |
-| `packId` | `string \| null` | 否 |  |
-| `packName` | `string` | 否 |  |
-| `packVersion` | `number` | 否 |  |
-| `defaultKind` | `"character" \| "product" \| "scene"` | 否 |  |
-| `mediaOrder` | `VideoTemplateMedia[]` | 否 |  |
-| `generation` | `Record<string, unknown>` | 否 |  |
-| `rules` | `Record<string, unknown>` | 否 |  |
-| `coverUrl` | `string` | 否 |  |
-| `pinned` | `boolean` | 否 |  |
-| `createdAt` | `string` | 是 |  |
-| `updatedAt` | `string` | 是 |  |
-
-#### `PATCH /api/v1/templates/video-templates/{template_id}/prompt`
-
-**保存固定提示词与跨封装图片引用**
-
-只换提示词原文，`{{Mixed N}}` 引用按新原文重算。
-
-不提供「删掉重建」：同原片同类型下 `find_for_run` 取最早创建的那条，
-重建出来的新版会一直输给旧版。改提示词会影响此后每一次生成，留审计。
-
-| 参数 | 位置 | 类型 | 必填 | 说明 |
-|---|---|---|---|---|
-| `template_id` | path | `string` | 是 |  |
-
-**请求体** `VideoTemplatePromptIn`
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `prompt` | `string` | 是 | 新的固定提示词原文，含 {{Mixed N}} 占位符 |
-| `references` | `VideoTemplatePackReferenceIn[] \| null` | 否 | 跨封装固定图片引用；省略保留原绑定，空数组清除 |
-
-**响应** `ApiResponse<VideoTemplateOut>`（前端取 `res.data`）
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `id` | `string` | 是 |  |
-| `templateKey` | `string` | 是 |  |
-| `name` | `string` | 是 |  |
-| `description` | `string` | 是 |  |
-| `prompt` | `string` | 是 |  |
-| `promptSha256` | `string` | 是 | 提示词 sha256，防止文字被悄悄改掉 |
-| `sourceVideoName` | `string` | 是 |  |
-| `sourceVideoAssetId` | `string \| null` | 否 |  |
-| `sourceVideoPath` | `string` | 是 |  |
-| `sourceDurationSec` | `number` | 是 |  |
-| `aspectRatio` | `string` | 是 |  |
-| `packId` | `string \| null` | 否 |  |
-| `packName` | `string` | 否 |  |
-| `packVersion` | `number` | 否 |  |
-| `defaultKind` | `"character" \| "product" \| "scene"` | 否 |  |
-| `mediaOrder` | `VideoTemplateMedia[]` | 否 |  |
-| `generation` | `Record<string, unknown>` | 否 |  |
-| `rules` | `Record<string, unknown>` | 否 |  |
-| `coverUrl` | `string` | 否 |  |
-| `pinned` | `boolean` | 否 |  |
-| `createdAt` | `string` | 是 |  |
-| `updatedAt` | `string` | 是 |  |
 
 ### 4.6 分镜模板（1 个）
 
@@ -3838,7 +3435,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `message` | `string` | 否 |  |
 | `data` | `modules__model_driver__schema__TaskOut \| null` | 否 |  |
 
-### 4.12 模板封装（14 个）
+### 4.12 模板封装（18 个）
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
@@ -3848,14 +3445,18 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `GET` | `/api/v1/template-manifests/{key}` | manifest 配置详情 | 🔒 |
 | `POST` | `/api/v1/template-manifests/{key}/disable` | 停用 manifest 配置 | 🔒 |
 | `POST` | `/api/v1/template-manifests/{key}/publish` | 发布 manifest 配置 | 🔒 |
-| `GET` | `/api/v1/template-packs` | 封装模板列表 | 🔒 |
-| `POST` | `/api/v1/template-packs` | 保存封装模板草稿 | 🔒 |
-| `GET` | `/api/v1/template-packs/{pack_id}` | 封装模板详情 | 🔒 |
-| `GET` | `/api/v1/template-packs/{pack_id}/candidates` | 取筛选槽位的合规素材池 | 🔒 |
-| `POST` | `/api/v1/template-packs/{pack_id}/disable` | 停用封装模板 | 🔒 |
-| `PATCH` | `/api/v1/template-packs/{pack_id}/prompt` | 改固定提示词 | 🔒 |
-| `POST` | `/api/v1/template-packs/{pack_id}/publish` | 发布封装模板 | 🔒 |
-| `POST` | `/api/v1/template-packs/{pack_id}/verify` | 复核运行时选材是否满足筛选条件 | 🔒 |
+| `GET` | `/api/v1/templates/replacement-packs` | 本人封装草稿和历史包 | 🔒 |
+| `GET` | `/api/v1/templates/replacement-packs/available` | 全工作台已发布对象 | 🔒 |
+| `PUT` | `/api/v1/templates/replacement-packs/draft` | 保存封装草稿（请求标识及版本防重） | 🔒 |
+| `POST` | `/api/v1/templates/replacement-packs/{pack_id}/disable` | 停用已发布封装对象 | 🔒 |
+| `GET` | `/api/v1/templates/replacement-packs/{pack_id}/preview/{asset_id}` | 读取授权发布版本的包内预览 | 🔒 |
+| `POST` | `/api/v1/templates/replacement-packs/{pack_id}/publish` | 发布不可变封装版本 | 🔒 |
+| `GET` | `/api/v1/templates/video-templates` | 视频模板列表（固定蓝本优先） | 🔒 |
+| `POST` | `/api/v1/templates/video-templates` | 封装一条视频模板 | 🔒 |
+| `GET` | `/api/v1/templates/video-templates/{template_id}` | 视频模板详情（含提示词与媒体顺序） | 🔒 |
+| `POST` | `/api/v1/templates/video-templates/{template_id}/attach-source` | 绑定样片原片资产 | 🔒 |
+| `POST` | `/api/v1/templates/video-templates/{template_id}/pin` | 设为固定蓝本（全库仅一个） | 🔒 |
+| `PATCH` | `/api/v1/templates/video-templates/{template_id}/prompt` | 保存固定提示词与跨封装图片引用 | 🔒 |
 
 #### `POST /api/v1/template-manifests`
 
@@ -4012,77 +3613,207 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `version` | `number` | 是 |  |
 | `templates` | `PublishedTemplateOut[]` | 否 |  |
 
-#### `GET /api/v1/template-packs`
+#### `GET /api/v1/templates/replacement-packs`
 
-**封装模板列表**
+**本人封装草稿和历史包**
 
-列表。
-
-**不传 `ownerId` 时只返回已发布的**：别人的草稿是私有工作区。
-传 `ownerId` 看自己的全部（含草稿）。
-
-| 参数 | 位置 | 类型 | 必填 | 说明 |
-|---|---|---|---|---|
-| `ownerId` | query | `string` | 否 | 只看某人的模板 |
-| `status` | query | `string` | 否 | 按状态筛选 |
-
-**响应** `ApiResponse<TemplatePackListOut>`（前端取 `res.data`）
+**响应** `ApiResponse<PackManagedList>`（前端取 `res.data`）
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `items` | `TemplatePackOut[]` | 否 |  |
+| `items` | `PackManaged[]` | 是 |  |
+
+#### `GET /api/v1/templates/replacement-packs/available`
+
+**全工作台已发布对象**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `kind` | query | `string` | 否 |  |
+| `keyword` | query | `string` | 否 |  |
+| `page` | query | `number` | 否 |  |
+| `pageSize` | query | `number` | 否 |  |
+
+**响应** `ApiResponse<PackPublicList>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `items` | `ReplacementPack[]` | 是 |  |
+| `total` | `number` | 是 |  |
+| `page` | `number` | 是 |  |
+| `pageSize` | `number` | 是 |  |
+
+#### `PUT /api/v1/templates/replacement-packs/draft`
+
+**保存封装草稿（请求标识及版本防重）**
+
+**请求体** `PackDraftIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `requestId` | `string` | 是 |  |
+| `expectedRevision` | `number` | 否 |  |
+| `kind` | `"character" \| "product" \| "scene"` | 是 |  |
+| `name` | `string` | 否 |  |
+| `referenceLibraryIds` | `string[]` | 否 | 封装用的参考图 id，按顺序 |
+| `coverLibraryId` | `string \| null` | 否 | 封面的 asset id；必须出现在 referenceLibraryIds 里 |
+| `wardrobeMode` | `"preserve" \| "reference"` | 否 |  |
+| `features` | `string` | 否 |  |
+| `instructions` | `string` | 否 |  |
+| `bindings` | `PackBinding[]` | 否 |  |
+| `requiredRoles` | `string[]` | 否 |  |
+| `supportedScopes` | `string[]` | 否 |  |
+
+**响应** `ApiResponse<PackManaged>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `kind` | `"character" \| "product" \| "scene"` | 是 |  |
+| `name` | `string` | 是 |  |
+| `referenceIds` | `string[]` | 是 |  |
+| `coverReferenceId` | `string \| null` | 否 |  |
+| `wardrobeMode` | `"preserve" \| "reference"` | 否 |  |
+| `features` | `string` | 否 |  |
+| `instructions` | `string` | 否 |  |
+| `version` | `number` | 否 |  |
+| `available` | `boolean \| null` | 否 |  |
+| `coverUrl` | `string \| null` | 否 |  |
+| `previewUrls` | `string[]` | 否 |  |
+| `referenceNames` | `string[]` | 否 |  |
+| `bindings` | `PackBinding[]` | 否 |  |
+| `requiredRoles` | `string[]` | 否 |  |
+| `supportedScopes` | `string[]` | 否 |  |
+| `revision` | `number` | 否 |  |
+| `status` | `"draft" \| "published" \| "disabled"` | 否 |  |
+| `gaps` | `string[]` | 否 |  |
+
+#### `POST /api/v1/templates/replacement-packs/{pack_id}/disable`
+
+**停用已发布封装对象**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `pack_id` | path | `string` | 是 |  |
+
+**请求体** `PackAction`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `expectedRevision` | `number` | 是 |  |
+
+**响应** `ApiResponse<PackManaged>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `kind` | `"character" \| "product" \| "scene"` | 是 |  |
+| `name` | `string` | 是 |  |
+| `referenceIds` | `string[]` | 是 |  |
+| `coverReferenceId` | `string \| null` | 否 |  |
+| `wardrobeMode` | `"preserve" \| "reference"` | 否 |  |
+| `features` | `string` | 否 |  |
+| `instructions` | `string` | 否 |  |
+| `version` | `number` | 否 |  |
+| `available` | `boolean \| null` | 否 |  |
+| `coverUrl` | `string \| null` | 否 |  |
+| `previewUrls` | `string[]` | 否 |  |
+| `referenceNames` | `string[]` | 否 |  |
+| `bindings` | `PackBinding[]` | 否 |  |
+| `requiredRoles` | `string[]` | 否 |  |
+| `supportedScopes` | `string[]` | 否 |  |
+| `revision` | `number` | 否 |  |
+| `status` | `"draft" \| "published" \| "disabled"` | 否 |  |
+| `gaps` | `string[]` | 否 |  |
+
+#### `GET /api/v1/templates/replacement-packs/{pack_id}/preview/{asset_id}`
+
+**读取授权发布版本的包内预览**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `pack_id` | path | `string` | 是 |  |
+| `asset_id` | path | `string` | 是 |  |
+| `version` | query | `number` | 是 |  |
+
+**响应** `ApiResponse<unknown>`（前端取 `res.data`）
+
+#### `POST /api/v1/templates/replacement-packs/{pack_id}/publish`
+
+**发布不可变封装版本**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `pack_id` | path | `string` | 是 |  |
+
+**请求体** `PackAction`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `expectedRevision` | `number` | 是 |  |
+
+**响应** `ApiResponse<PackManaged>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `kind` | `"character" \| "product" \| "scene"` | 是 |  |
+| `name` | `string` | 是 |  |
+| `referenceIds` | `string[]` | 是 |  |
+| `coverReferenceId` | `string \| null` | 否 |  |
+| `wardrobeMode` | `"preserve" \| "reference"` | 否 |  |
+| `features` | `string` | 否 |  |
+| `instructions` | `string` | 否 |  |
+| `version` | `number` | 否 |  |
+| `available` | `boolean \| null` | 否 |  |
+| `coverUrl` | `string \| null` | 否 |  |
+| `previewUrls` | `string[]` | 否 |  |
+| `referenceNames` | `string[]` | 否 |  |
+| `bindings` | `PackBinding[]` | 否 |  |
+| `requiredRoles` | `string[]` | 否 |  |
+| `supportedScopes` | `string[]` | 否 |  |
+| `revision` | `number` | 否 |  |
+| `status` | `"draft" \| "published" \| "disabled"` | 否 |  |
+| `gaps` | `string[]` | 否 |  |
+
+#### `GET /api/v1/templates/video-templates`
+
+**视频模板列表（固定蓝本优先）**
+
+**响应** `ApiResponse<VideoTemplateListOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `items` | `VideoTemplateOut[]` | 否 |  |
 | `total` | `number` | 否 |  |
+| `pinnedId` | `string \| null` | 否 | 当前固定蓝本的 id |
 
-#### `POST /api/v1/template-packs`
+#### `POST /api/v1/templates/video-templates`
 
-**保存封装模板草稿**
+**封装一条视频模板**
 
-保存草稿。幂等：同 `templateKey` 同配置返回原模板，异配置 409。
-
-**请求体** `TemplatePackDraftIn`
+**请求体** `VideoTemplateDraftIn`
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `name` | `string` | 是 | 模板名称 |
-| `templateKey` | `string` | 否 | 稳定标识：同键同配置返回原模板，同键异配置 409；留空自动生成 |
+| `templateKey` | `string` | 否 | 稳定标识：同键同配置返回原模板，同键异配置409；留空自动生成。固定蓝本状态独立管理 |
 | `description` | `string` | 否 | 模板说明 |
 | `prompt` | `string` | 是 | 固定提示词原文，含 {{Mixed N}} 占位符 |
-| `sourceVideoAssetId` | `string` | 是 | 参考视频的资产库 id |
-| `sourceDurationSec` | `number` | 否 | 参考视频时长（秒） |
+| `sourceVideoName` | `string` | 否 | 样片文件名 |
+| `sourceVideoAssetId` | `string \| null` | 否 | 样片在资产库中的 asset id |
+| `sourceVideoPath` | `string` | 否 | 样片本地路径（可选） |
+| `sourceDurationSec` | `number` | 否 | 样片真实时长，用于提示与档位说明 |
 | `aspectRatio` | `string` | 否 | 输出画幅 |
-| `slots` | `TemplatePackSlotIn[]` | 是 | 槽位清单；第 1 项固定是参考视频 |
+| `packId` | `string \| null` | 否 | 关联的已发布替换素材包；**可省略**——用途绑定模式下省略即「只声明槽位」，调用时按用途从用户自己选的包里取图 |
+| `defaultKind` | `"character" \| "product" \| "scene"` | 否 | 选中这张原片卡片时，替换配置默认切到的替换类型 |
+| `mediaOrder` | `VideoTemplateMedia[]` | 否 | 留空则由素材包顺序生成 |
+| `generation` | `Record<string, unknown>` | 否 | 生成参数，覆盖默认值 |
+| `rules` | `Record<string, unknown>` | 否 | 封装规则；referenceBindings 将连续 Mixed 编号绑定到 source_video/图片用途，服务端排列声明槽位并完整附带当前包其余图片，无需逐图引用 |
 | `coverUrl` | `string` | 否 | 封面地址 |
+| `pinned` | `boolean` | 否 | 是否设为固定蓝本（全库仅一个） |
 
-**响应** `ApiResponse<TemplatePackOut>`（前端取 `res.data`）
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `id` | `string` | 是 |  |
-| `templateKey` | `string` | 是 |  |
-| `name` | `string` | 是 |  |
-| `description` | `string` | 是 |  |
-| `prompt` | `string` | 是 |  |
-| `promptSha256` | `string` | 是 | 提示词 sha256，防止文字被悄悄改掉 |
-| `sourceVideoAssetId` | `string` | 是 |  |
-| `sourceDurationSec` | `number` | 否 |  |
-| `aspectRatio` | `string` | 否 |  |
-| `coverUrl` | `string` | 否 |  |
-| `status` | `"draft" \| "published" \| "disabled"` | 否 |  |
-| `ownerId` | `string` | 是 |  |
-| `slots` | `TemplatePackSlotOut[]` | 否 |  |
-| `publishedAt` | `string \| null` | 否 |  |
-| `createdAt` | `string \| null` | 否 |  |
-| `updatedAt` | `string \| null` | 否 |  |
-
-#### `GET /api/v1/template-packs/{pack_id}`
-
-**封装模板详情**
-
-| 参数 | 位置 | 类型 | 必填 | 说明 |
-|---|---|---|---|---|
-| `pack_id` | path | `string` | 是 |  |
-
-**响应** `ApiResponse<TemplatePackOut>`（前端取 `res.data`）
+**响应** `ApiResponse<VideoTemplateOut>`（前端取 `res.data`）
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
@@ -4092,55 +3823,32 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `description` | `string` | 是 |  |
 | `prompt` | `string` | 是 |  |
 | `promptSha256` | `string` | 是 | 提示词 sha256，防止文字被悄悄改掉 |
-| `sourceVideoAssetId` | `string` | 是 |  |
-| `sourceDurationSec` | `number` | 否 |  |
-| `aspectRatio` | `string` | 否 |  |
+| `sourceVideoName` | `string` | 是 |  |
+| `sourceVideoAssetId` | `string \| null` | 否 |  |
+| `sourceVideoPath` | `string` | 是 |  |
+| `sourceDurationSec` | `number` | 是 |  |
+| `aspectRatio` | `string` | 是 |  |
+| `packId` | `string \| null` | 否 |  |
+| `packName` | `string` | 否 |  |
+| `packVersion` | `number` | 否 |  |
+| `defaultKind` | `"character" \| "product" \| "scene"` | 否 |  |
+| `mediaOrder` | `VideoTemplateMedia[]` | 否 |  |
+| `generation` | `Record<string, unknown>` | 否 |  |
+| `rules` | `Record<string, unknown>` | 否 |  |
 | `coverUrl` | `string` | 否 |  |
-| `status` | `"draft" \| "published" \| "disabled"` | 否 |  |
-| `ownerId` | `string` | 是 |  |
-| `slots` | `TemplatePackSlotOut[]` | 否 |  |
-| `publishedAt` | `string \| null` | 否 |  |
-| `createdAt` | `string \| null` | 否 |  |
-| `updatedAt` | `string \| null` | 否 |  |
+| `pinned` | `boolean` | 否 |  |
+| `createdAt` | `string` | 是 |  |
+| `updatedAt` | `string` | 是 |  |
 
-#### `GET /api/v1/template-packs/{pack_id}/candidates`
+#### `GET /api/v1/templates/video-templates/{template_id}`
 
-**取筛选槽位的合规素材池**
-
-运行时选素材用。
-
-**候选池由服务端算**：筛选条件（标签 + 类别）与可见性都有各自的判据，
-前端自己筛一遍必然漂移。
+**视频模板详情（含提示词与媒体顺序）**
 
 | 参数 | 位置 | 类型 | 必填 | 说明 |
 |---|---|---|---|---|
-| `pack_id` | path | `string` | 是 |  |
-| `token` | query | `string` | 是 | 槽位标识，如 {{Mixed 2}} |
-| `limit` | query | `number` | 否 |  |
+| `template_id` | path | `string` | 是 |  |
 
-**响应** `ApiResponse<TemplatePackCandidateListOut>`（前端取 `res.data`）
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `token` | `string` | 是 |  |
-| `label` | `string` | 否 |  |
-| `filterKind` | `string` | 否 |  |
-| `filterTagIds` | `string[]` | 否 |  |
-| `filterTagNames` | `string[]` | 否 |  |
-| `items` | `TemplatePackCandidateItem[]` | 否 |  |
-| `total` | `number` | 否 |  |
-
-#### `POST /api/v1/template-packs/{pack_id}/disable`
-
-**停用封装模板**
-
-停用：保留历史，但不再对外。
-
-| 参数 | 位置 | 类型 | 必填 | 说明 |
-|---|---|---|---|---|
-| `pack_id` | path | `string` | 是 |  |
-
-**响应** `ApiResponse<TemplatePackOut>`（前端取 `res.data`）
+**响应** `ApiResponse<VideoTemplateOut>`（前端取 `res.data`）
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
@@ -4150,34 +3858,40 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `description` | `string` | 是 |  |
 | `prompt` | `string` | 是 |  |
 | `promptSha256` | `string` | 是 | 提示词 sha256，防止文字被悄悄改掉 |
-| `sourceVideoAssetId` | `string` | 是 |  |
-| `sourceDurationSec` | `number` | 否 |  |
-| `aspectRatio` | `string` | 否 |  |
+| `sourceVideoName` | `string` | 是 |  |
+| `sourceVideoAssetId` | `string \| null` | 否 |  |
+| `sourceVideoPath` | `string` | 是 |  |
+| `sourceDurationSec` | `number` | 是 |  |
+| `aspectRatio` | `string` | 是 |  |
+| `packId` | `string \| null` | 否 |  |
+| `packName` | `string` | 否 |  |
+| `packVersion` | `number` | 否 |  |
+| `defaultKind` | `"character" \| "product" \| "scene"` | 否 |  |
+| `mediaOrder` | `VideoTemplateMedia[]` | 否 |  |
+| `generation` | `Record<string, unknown>` | 否 |  |
+| `rules` | `Record<string, unknown>` | 否 |  |
 | `coverUrl` | `string` | 否 |  |
-| `status` | `"draft" \| "published" \| "disabled"` | 否 |  |
-| `ownerId` | `string` | 是 |  |
-| `slots` | `TemplatePackSlotOut[]` | 否 |  |
-| `publishedAt` | `string \| null` | 否 |  |
-| `createdAt` | `string \| null` | 否 |  |
-| `updatedAt` | `string \| null` | 否 |  |
+| `pinned` | `boolean` | 否 |  |
+| `createdAt` | `string` | 是 |  |
+| `updatedAt` | `string` | 是 |  |
 
-#### `PATCH /api/v1/template-packs/{pack_id}/prompt`
+#### `POST /api/v1/templates/video-templates/{template_id}/attach-source`
 
-**改固定提示词**
+**绑定样片原片资产**
 
-只改提示词原文。仅限未发布的模板。
+绑定后，这条模板对应的原片才会在「全部模板」里被当作可选卡片。
 
 | 参数 | 位置 | 类型 | 必填 | 说明 |
 |---|---|---|---|---|
-| `pack_id` | path | `string` | 是 |  |
+| `template_id` | path | `string` | 是 |  |
 
-**请求体** `TemplatePackPromptIn`
+**请求体** `VideoTemplateAttachSourceIn`
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `prompt` | `string` | 是 | 新的固定提示词原文 |
+| `sourceVideoAssetId` | `string` | 是 | 原片 id（资产库里的视频） |
 
-**响应** `ApiResponse<TemplatePackOut>`（前端取 `res.data`）
+**响应** `ApiResponse<VideoTemplateOut>`（前端取 `res.data`）
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
@@ -4187,28 +3901,32 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `description` | `string` | 是 |  |
 | `prompt` | `string` | 是 |  |
 | `promptSha256` | `string` | 是 | 提示词 sha256，防止文字被悄悄改掉 |
-| `sourceVideoAssetId` | `string` | 是 |  |
-| `sourceDurationSec` | `number` | 否 |  |
-| `aspectRatio` | `string` | 否 |  |
+| `sourceVideoName` | `string` | 是 |  |
+| `sourceVideoAssetId` | `string \| null` | 否 |  |
+| `sourceVideoPath` | `string` | 是 |  |
+| `sourceDurationSec` | `number` | 是 |  |
+| `aspectRatio` | `string` | 是 |  |
+| `packId` | `string \| null` | 否 |  |
+| `packName` | `string` | 否 |  |
+| `packVersion` | `number` | 否 |  |
+| `defaultKind` | `"character" \| "product" \| "scene"` | 否 |  |
+| `mediaOrder` | `VideoTemplateMedia[]` | 否 |  |
+| `generation` | `Record<string, unknown>` | 否 |  |
+| `rules` | `Record<string, unknown>` | 否 |  |
 | `coverUrl` | `string` | 否 |  |
-| `status` | `"draft" \| "published" \| "disabled"` | 否 |  |
-| `ownerId` | `string` | 是 |  |
-| `slots` | `TemplatePackSlotOut[]` | 否 |  |
-| `publishedAt` | `string \| null` | 否 |  |
-| `createdAt` | `string \| null` | 否 |  |
-| `updatedAt` | `string \| null` | 否 |  |
+| `pinned` | `boolean` | 否 |  |
+| `createdAt` | `string` | 是 |  |
+| `updatedAt` | `string` | 是 |  |
 
-#### `POST /api/v1/template-packs/{pack_id}/publish`
+#### `POST /api/v1/templates/video-templates/{template_id}/pin`
 
-**发布封装模板**
-
-发布：进入模板库，别人可以取用。
+**设为固定蓝本（全库仅一个）**
 
 | 参数 | 位置 | 类型 | 必填 | 说明 |
 |---|---|---|---|---|
-| `pack_id` | path | `string` | 是 |  |
+| `template_id` | path | `string` | 是 |  |
 
-**响应** `ApiResponse<TemplatePackOut>`（前端取 `res.data`）
+**响应** `ApiResponse<VideoTemplateOut>`（前端取 `res.data`）
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
@@ -4218,44 +3936,69 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `description` | `string` | 是 |  |
 | `prompt` | `string` | 是 |  |
 | `promptSha256` | `string` | 是 | 提示词 sha256，防止文字被悄悄改掉 |
-| `sourceVideoAssetId` | `string` | 是 |  |
-| `sourceDurationSec` | `number` | 否 |  |
-| `aspectRatio` | `string` | 否 |  |
+| `sourceVideoName` | `string` | 是 |  |
+| `sourceVideoAssetId` | `string \| null` | 否 |  |
+| `sourceVideoPath` | `string` | 是 |  |
+| `sourceDurationSec` | `number` | 是 |  |
+| `aspectRatio` | `string` | 是 |  |
+| `packId` | `string \| null` | 否 |  |
+| `packName` | `string` | 否 |  |
+| `packVersion` | `number` | 否 |  |
+| `defaultKind` | `"character" \| "product" \| "scene"` | 否 |  |
+| `mediaOrder` | `VideoTemplateMedia[]` | 否 |  |
+| `generation` | `Record<string, unknown>` | 否 |  |
+| `rules` | `Record<string, unknown>` | 否 |  |
 | `coverUrl` | `string` | 否 |  |
-| `status` | `"draft" \| "published" \| "disabled"` | 否 |  |
-| `ownerId` | `string` | 是 |  |
-| `slots` | `TemplatePackSlotOut[]` | 否 |  |
-| `publishedAt` | `string \| null` | 否 |  |
-| `createdAt` | `string \| null` | 否 |  |
-| `updatedAt` | `string \| null` | 否 |  |
+| `pinned` | `boolean` | 否 |  |
+| `createdAt` | `string` | 是 |  |
+| `updatedAt` | `string` | 是 |  |
 
-#### `POST /api/v1/template-packs/{pack_id}/verify`
+#### `PATCH /api/v1/templates/video-templates/{template_id}/prompt`
 
-**复核运行时选材是否满足筛选条件**
+**保存固定提示词与跨封装图片引用**
 
-提交生成任务前的最后一道闸。
+只换提示词原文，`{{Mixed N}}` 引用按新原文重算。
 
-**前端过滤只是 UI 便利，接口可以被直接调用。** 筛选条件是模板的业务
-契约 —— 用户在模板库看到的「只能选产品标签的图」如果只在界面上生效，
-拿个接口一调就能绕过。所以服务端必须再判一次。
-
-不满足直接 400，不给「差一点点」的余地：筛选要么满足，要么不满足。
+不提供「删掉重建」：同原片同类型下 `find_for_run` 取最早创建的那条，
+重建出来的新版会一直输给旧版。改提示词会影响此后每一次生成，留审计。
 
 | 参数 | 位置 | 类型 | 必填 | 说明 |
 |---|---|---|---|---|
-| `pack_id` | path | `string` | 是 |  |
+| `template_id` | path | `string` | 是 |  |
 
-**请求体** `TemplatePackVerifyIn`
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `picks` | `Record<string, string>` | 否 | 槽位选材：{token: assetId}。只填需要用户选择的槽位 |
-
-**响应** `ApiResponse<TemplatePackVerifyOut>`（前端取 `res.data`）
+**请求体** `VideoTemplatePromptIn`
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `picks` | `Record<string, string>` | 否 | 通过复核的 {token: assetId} |
+| `prompt` | `string` | 是 | 新的固定提示词原文，含 {{Mixed N}} 占位符 |
+| `references` | `VideoTemplatePackReferenceIn[] \| null` | 否 | 跨封装固定图片引用；省略保留原绑定，空数组清除 |
+
+**响应** `ApiResponse<VideoTemplateOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `templateKey` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `description` | `string` | 是 |  |
+| `prompt` | `string` | 是 |  |
+| `promptSha256` | `string` | 是 | 提示词 sha256，防止文字被悄悄改掉 |
+| `sourceVideoName` | `string` | 是 |  |
+| `sourceVideoAssetId` | `string \| null` | 否 |  |
+| `sourceVideoPath` | `string` | 是 |  |
+| `sourceDurationSec` | `number` | 是 |  |
+| `aspectRatio` | `string` | 是 |  |
+| `packId` | `string \| null` | 否 |  |
+| `packName` | `string` | 否 |  |
+| `packVersion` | `number` | 否 |  |
+| `defaultKind` | `"character" \| "product" \| "scene"` | 否 |  |
+| `mediaOrder` | `VideoTemplateMedia[]` | 否 |  |
+| `generation` | `Record<string, unknown>` | 否 |  |
+| `rules` | `Record<string, unknown>` | 否 |  |
+| `coverUrl` | `string` | 否 |  |
+| `pinned` | `boolean` | 否 |  |
+| `createdAt` | `string` | 是 |  |
+| `updatedAt` | `string` | 是 |  |
 
 ---
 
@@ -5850,142 +5593,6 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 ### `TaskStatusFilter`（枚举）
 
 取值：`all`、`queued`、`running`、`completed`、`failed`
-
-### `TemplatePackCandidateItem`
-
-候选素材池里的一项。
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `assetId` | `string` | 是 |  |
-| `name` | `string` | 是 |  |
-| `kind` | `string` | 是 |  |
-| `coverUrl` | `string` | 否 |  |
-| `sizeBytes` | `number` | 否 |  |
-| `width` | `number` | 否 |  |
-| `height` | `number` | 否 |  |
-
-### `TemplatePackCandidateListOut`
-
-某个筛选槽位的合规素材池。
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `token` | `string` | 是 |  |
-| `label` | `string` | 否 |  |
-| `filterKind` | `string` | 否 |  |
-| `filterTagIds` | `string[]` | 否 |  |
-| `filterTagNames` | `string[]` | 否 |  |
-| `items` | `TemplatePackCandidateItem[]` | 否 |  |
-| `total` | `number` | 否 |  |
-
-### `TemplatePackDraftIn`
-
-保存一条封装模板（草稿）。幂等：同 key 同配置返回原行。
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `name` | `string` | 是 | 模板名称 |
-| `templateKey` | `string` | 否 | 稳定标识：同键同配置返回原模板，同键异配置 409；留空自动生成 |
-| `description` | `string` | 否 | 模板说明 |
-| `prompt` | `string` | 是 | 固定提示词原文，含 {{Mixed N}} 占位符 |
-| `sourceVideoAssetId` | `string` | 是 | 参考视频的资产库 id |
-| `sourceDurationSec` | `number` | 否 | 参考视频时长（秒） |
-| `aspectRatio` | `string` | 否 | 输出画幅 |
-| `slots` | `TemplatePackSlotIn[]` | 是 | 槽位清单；第 1 项固定是参考视频 |
-| `coverUrl` | `string` | 否 | 封面地址 |
-
-### `TemplatePackListOut`
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `items` | `TemplatePackOut[]` | 否 |  |
-| `total` | `number` | 否 |  |
-
-### `TemplatePackOut`
-
-一条封装模板的完整出参。
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `id` | `string` | 是 |  |
-| `templateKey` | `string` | 是 |  |
-| `name` | `string` | 是 |  |
-| `description` | `string` | 是 |  |
-| `prompt` | `string` | 是 |  |
-| `promptSha256` | `string` | 是 | 提示词 sha256，防止文字被悄悄改掉 |
-| `sourceVideoAssetId` | `string` | 是 |  |
-| `sourceDurationSec` | `number` | 否 |  |
-| `aspectRatio` | `string` | 否 |  |
-| `coverUrl` | `string` | 否 |  |
-| `status` | `"draft" \| "published" \| "disabled"` | 否 |  |
-| `ownerId` | `string` | 是 |  |
-| `slots` | `TemplatePackSlotOut[]` | 否 |  |
-| `publishedAt` | `string \| null` | 否 |  |
-| `createdAt` | `string \| null` | 否 |  |
-| `updatedAt` | `string \| null` | 否 |  |
-
-### `TemplatePackPromptIn`
-
-改固定提示词原文。槽位引用按新原文重算。
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `prompt` | `string` | 是 | 新的固定提示词原文 |
-
-### `TemplatePackSlotIn`
-
-一个槽位的入参。两种形态的字段互斥，service 会校验。
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `token` | `string` | 是 | 占位符原文，如 {{Mixed 2}}；必须与 position 对应 |
-| `slotKind` | `"fixed" \| "filtered"` | 是 | fixed=钉死素材，filtered=声明准入规则 |
-| `label` | `string` | 否 | 槽位显示名 |
-| `assetId` | `string \| null` | 否 | fixed：钉死的素材 id（资产库） |
-| `mediaType` | `"video" \| "image" \| "audio"` | 否 | fixed：素材类别 |
-| `filterKind` | `"video" \| "image" \| "audio" \| null` | 否 | filtered：素材类别（不含 text） |
-| `filterTagIds` | `string[]` | 否 | filtered：一级标签 id 列表；选中一级会展开成「自身+直属二级」 |
-| `filterTagMatch` | `"any"` | 否 | filtered：标签组合方式。只支持 any（任一命中即可）——资产库的筛选口径唯一（标签 OR 展开到二级），提供 all 会承诺一个兑现不了的更严筛选 |
-| `required` | `boolean` | 否 | 该槽位是否必填 |
-
-### `TemplatePackSlotOut`
-
-一个槽位的出参。两种形态的字段都带出来，由 `slotKind` 区分。
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `position` | `number` | 是 |  |
-| `token` | `string` | 是 |  |
-| `slotKind` | `"fixed" \| "filtered"` | 是 |  |
-| `label` | `string` | 否 |  |
-| `assetId` | `string \| null` | 否 |  |
-| `mediaType` | `string` | 否 |  |
-| `assetName` | `string` | 否 |  |
-| `filterKind` | `string` | 否 |  |
-| `filterTagIds` | `string[]` | 否 |  |
-| `filterTagNames` | `string[]` | 否 |  |
-| `filterTagMatch` | `string` | 否 |  |
-| `required` | `boolean` | 否 |  |
-
-### `TemplatePackVerifyIn`
-
-运行时提交的用户选材。
-
-`picks` 是 `{槽位标识: 素材 id}`，键用提示词里出现的原文
-（如 `{{Mixed 2}}`），值是资产库 id。
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `picks` | `Record<string, string>` | 否 | 槽位选材：{token: assetId}。只填需要用户选择的槽位 |
-
-### `TemplatePackVerifyOut`
-
-复核结果。通过复核的槽位与素材 id。
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `picks` | `Record<string, string>` | 否 | 通过复核的 {token: assetId} |
 
 ### `TextAssetIn`
 

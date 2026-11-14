@@ -37,12 +37,12 @@ def _seed(owner_id: str) -> tuple[int, list[tuple], list[tuple]]:
         from sqlalchemy import select
 
         from db.session import get_session_factory
-        from modules.template.models import (
-            TemplatePack,
-            TemplatePackReference,
-            TemplatePackVersion,
-        )
-        from modules.template.seed import seed
+        from modules.template_pack.models import (
+    TemplatePack,
+    TemplatePackReference,
+    TemplatePackVersion,
+)
+        from modules.template_pack.seed import seed
 
         async with get_session_factory()() as session:
             created = await seed(

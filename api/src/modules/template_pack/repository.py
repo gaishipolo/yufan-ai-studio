@@ -1,116 +1,197 @@
-"""封装模板的表访问层：只认 SQLAlchemy，不含业务规则。
+"""封装数据的访问层：素材包 head / 参考图 / 冻结版本 / 版本号抢占。
 
-与 `modules/template` 的 repository 分开：本模块的表是「模板 + 槽位」
-两张，槽位要按 `template_id` 批量取、按 `position` 排序，且**槽位的
-唯一性约束在数据库层**（`uq_template_pack_slots_position`）。
+从 `modules/template/repository.py` 拆出来（2026-11-14 C2）：这张表的读写在
+封装模块内，替换执行链只经 `core.ports.template_runtime` 取快照。
+
+**没有一处 `select(Model)` 全表读**：列表查询都带 owner 或 status 前缀，
+分页走 `limit/offset`，排序键以主键收尾（见 `docs/EXTENDING.md` §1.1）。
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
+from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import Select, and_, delete, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.exceptions import NotFound
-from modules.template_pack.models import TemplatePackRow, TemplatePackSlotRow
+from core.exceptions import Conflict, NotFound
+from db.base import utcnow
+from modules.template_pack.models import (
+    TemplatePack,
+    TemplatePackReference,
+    TemplatePackVersion,
+)
 
-__all__ = ["TemplatePackRepository"]
+
+def _now() -> datetime:
+    return utcnow()
 
 
-class TemplatePackRepository:
+class PackRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def get(self, pack_id: str) -> TemplatePackRow | None:
-        return await self.session.get(TemplatePackRow, pack_id)
+    async def get(self, pack_id: str) -> TemplatePack | None:
+        return await self.session.get(TemplatePack, pack_id)
 
-    async def get_or_404(self, pack_id: str) -> TemplatePackRow:
-        row = await self.get(pack_id)
-        if row is None:
-            raise NotFound("封装模板不存在")
-        return row
+    async def get_or_404(self, pack_id: str, *, owner: str | None = None) -> TemplatePack:
+        """`owner` 给了就顺带校验归属：不匹配一律 404，不泄露「存在但不是你的」。"""
+        pack = await self.get(pack_id)
+        if pack is None or pack.deleted_at is not None:
+            raise NotFound("封装不存在")
+        if owner is not None and pack.owner_id != owner:
+            raise NotFound("封装不存在")
+        return pack
 
-    async def get_by_key(self, template_key: str) -> TemplatePackRow | None:
-        """稳定标识的唯一命中行。空键不查：`save` 会给它自动生成一个。"""
-        if not template_key:
-            return None
-        stmt = select(TemplatePackRow).where(
-            TemplatePackRow.template_key == template_key
+    async def list_owned(self, owner: str) -> Sequence[TemplatePack]:
+        stmt = (
+            select(TemplatePack)
+            .where(
+                TemplatePack.owner_id == owner,
+                TemplatePack.deleted_at.is_(None),
+            )
+            .order_by(TemplatePack.updated_at.desc(), TemplatePack.id)
+        )
+        return (await self.session.scalars(stmt)).all()
+
+    async def list_published(self, kind: str | None = None) -> Sequence[TemplatePack]:
+        # `select(Model)` 在这一版 SQLAlchemy 的类型里是 `Select[Model]`，
+        # 不是 `Select[tuple[Model]]`：写后者会让 `stmt.where(...)`（返回 `Self`）
+        # 被判定成不兼容，同时 `session.scalars(stmt)` 被推成 `tuple[Model]`，
+        # 于是一个单纯的排序查询报出两处「类型不对」。
+        stmt: Select[TemplatePack] = select(TemplatePack).where(
+            TemplatePack.status == "published",
+            TemplatePack.version > 0,
+            TemplatePack.deleted_at.is_(None),
+        )
+        if kind and kind != "all":
+            stmt = stmt.where(TemplatePack.kind == kind)
+        stmt = stmt.order_by(TemplatePack.published_at.desc(), TemplatePack.id)
+        return (await self.session.scalars(stmt)).all()
+
+    async def references(self, pack_id: str) -> Sequence[TemplatePackReference]:
+        """逐图引用，按 position 升序——这个顺序就是提示词里的编号顺序。"""
+        stmt = (
+            select(TemplatePackReference)
+            .where(TemplatePackReference.pack_id == pack_id)
+            .order_by(TemplatePackReference.position)
+        )
+        return (await self.session.scalars(stmt)).all()
+
+    async def replace_references(
+        self, pack_id: str, refs: list[tuple[str, int, str, str]]
+    ) -> None:
+        """整组覆盖：先删后插。
+
+        为什么不逐条 diff：参考图最多 10 张，整组覆盖的成本远低于「算出增删改」
+        的复杂度，而且它天然保证 `position` 连续——`position` 一旦断号，
+        提示词里的 `reference-1` / `reference-3` 就会跳号。
+        """
+        await self.session.execute(
+            delete(TemplatePackReference).where(TemplatePackReference.pack_id == pack_id)
+        )
+        for asset_id, position, role, description in refs:
+            self.session.add(
+                TemplatePackReference(
+                    pack_id=pack_id,
+                    asset_id=asset_id,
+                    position=position,
+                    role=role,
+                    description=description,
+                )
+            )
+
+    async def add(self, pack: TemplatePack) -> TemplatePack:
+        self.session.add(pack)
+        await self.session.flush()
+        return pack
+
+    async def save(self, pack: TemplatePack) -> None:
+        await self.session.flush()
+
+    # ---------- 版本 ----------
+    async def get_version(self, pack_id: str, version: int) -> TemplatePackVersion | None:
+        stmt = select(TemplatePackVersion).where(
+            TemplatePackVersion.pack_id == pack_id,
+            TemplatePackVersion.version == version,
         )
         return await self.session.scalar(stmt)
 
-    async def list_all(
-        self, *, owner_id: str = "", status: str = ""
-    ) -> Sequence[TemplatePackRow]:
-        """列表。`owner_id` 非空时只看本人的，`status` 非空时按状态收窄。
-
-        排序键以主键收尾（`EXTENDING.md` §1.1）：`created_at` 在同一瞬间插入
-        的两行上可能相同，不收尾会让列表顺序在两次请求之间抖动。
-        """
-        stmt = select(TemplatePackRow)
-        if owner_id:
-            stmt = stmt.where(TemplatePackRow.owner_id == owner_id)
-        if status:
-            stmt = stmt.where(TemplatePackRow.status == status)
-        stmt = stmt.order_by(
-            TemplatePackRow.created_at.desc(), TemplatePackRow.id
+    async def list_versions(self, pack_id: str) -> Sequence[TemplatePackVersion]:
+        stmt = (
+            select(TemplatePackVersion)
+            .where(TemplatePackVersion.pack_id == pack_id)
+            .order_by(TemplatePackVersion.version.desc())
         )
         return (await self.session.scalars(stmt)).all()
 
-    async def slots(self, template_id: str) -> Sequence[TemplatePackSlotRow]:
-        """某模板的全部槽位，按 `position` 升序。
+    async def create_version(
+        self, pack_id: str, start: int, build: VersionBuilder
+    ) -> int:
+        """抢一个没人占用的版号，靠 `UNIQUE(pack_id, version)` 做 CAS。
 
-        顺序是**契约**：`position` 决定 `{{Mixed N}}` 指向谁，调用方不得重排。
+        与旧实现（`storage.create()` 的 `If-None-Match: *`）语义完全一致：
+        两个实例同时想写 v3，数据库只让一个成功，另一个拿到 IntegrityError
+        后试 v4。区别是不再需要「抢版本文件」这种绕法，也不可能留下
+        「两份内容不同却同版本号」的包。
+
+        **每轮重试走 savepoint**：撞唯一约束时回滚的只能是这一次插入。
+        直接 `session.rollback()` 会把调用方同一事务里已经写好的封装 head
+        一起回滚掉——那是「发布失败」变成「草稿也没了」。
         """
-        stmt = (
-            select(TemplatePackSlotRow)
-            .where(TemplatePackSlotRow.template_id == template_id)
-            .order_by(TemplatePackSlotRow.position)
+        version = start
+        for _ in range(5):
+            row = build(version)
+            try:
+                async with self.session.begin_nested():
+                    self.session.add(row)
+            except IntegrityError:
+                version += 1
+                continue
+            return version
+        raise Conflict("发布冲突过于频繁，请稍后刷新重试")
+
+
+# 版本行构造函数：`create_version` 需要为每次重试生成一个新的待插入对象
+VersionBuilder = Callable[[int], TemplatePackVersion]
+
+
+
+
+async def packs_referencing(
+    session: AsyncSession, asset_ids: Sequence[str]
+) -> dict[str, list[str]]:
+    """哪些封装的 head 里还引用着这些素材。
+
+    **只查 head，不查历史版本**：`template_pack_versions` 是冻结证据，每次发布
+    都留一份；把它算成引用会让几乎所有老素材永远删不掉。历史版本的可用性由
+    `app doctor` 的镜像/字节检查负责报告，不进删除拦截。
+
+    返回 `{asset_id: ["封装《名字》(id)", ...]}`，直接嵌进「不能删除」的报错里。
+    """
+    wanted = {asset_id for asset_id in asset_ids if asset_id}
+    if not wanted:
+        return {}
+    stmt = (
+        select(TemplatePackReference.asset_id, TemplatePack.name, TemplatePack.id)
+        .join(TemplatePack, TemplatePack.id == TemplatePackReference.pack_id)
+        .where(
+            TemplatePackReference.asset_id.in_(list(wanted)),
+            TemplatePack.deleted_at.is_(None),
         )
-        return (await self.session.scalars(stmt)).all()
+    )
+    found: dict[str, list[str]] = {}
+    for asset_id, name, pack_id in await session.execute(stmt):
+        label = f"封装《{name or '未命名'}》({pack_id})"
+        found.setdefault(asset_id, []).append(label)
+    return found
 
-    async def slots_of(
-        self, template_ids: Sequence[str]
-    ) -> dict[str, list[TemplatePackSlotRow]]:
-        """批量取多个模板的槽位。
 
-        列表页要一次拿到多条模板的槽位，逐条查就是 N 次往返。
-        """
-        wanted = [item for item in dict.fromkeys(template_ids) if item]
-        if not wanted:
-            return {}
-        stmt = (
-            select(TemplatePackSlotRow)
-            .where(TemplatePackSlotRow.template_id.in_(wanted))
-            .order_by(TemplatePackSlotRow.template_id, TemplatePackSlotRow.position)
-        )
-        grouped: dict[str, list[TemplatePackSlotRow]] = {item: [] for item in wanted}
-        for row in (await self.session.scalars(stmt)).all():
-            grouped.setdefault(row.template_id, []).append(row)
-        return grouped
-
-    async def add(self, row: TemplatePackRow) -> TemplatePackRow:
-        self.session.add(row)
-        await self.session.flush()
-        return row
-
-    async def replace_slots(
-        self, template_id: str, slots: Sequence[TemplatePackSlotRow]
-    ) -> None:
-        """整体替换某模板的槽位。
-
-        先删后插是刻意的：槽位是「模板的完整定义」，不是增量补丁。
-        留着没被新定义提到的旧槽位，会让 `{{Mixed N}}` 指向一个作者已经
-        删掉的东西 —— 而且前端看不到它，因为它不在新的槽位清单里。
-        """
-        existing = list(await self.slots(template_id))
-        for row in existing:
-            await self.session.delete(row)
-        await self.session.flush()
-        for row in slots:
-            self.session.add(row)
-        await self.session.flush()
-
-    async def save(self) -> None:
-        await self.session.flush()
+async def count_published(session: AsyncSession) -> int:
+    stmt = select(func.count()).select_from(TemplatePack).where(
+        TemplatePack.status == "published",
+        and_(TemplatePack.version > 0, TemplatePack.deleted_at.is_(None)),
+    )
+    return int(await session.scalar(stmt) or 0)

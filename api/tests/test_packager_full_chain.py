@@ -20,8 +20,11 @@ from tests_template_helpers import (
 
 from db.session import get_session_factory
 from modules.template.authorization import authorization_gap
-from modules.template.models import TemplatePack, TemplatePackReference
 from modules.template.repository import RunRepository
+from modules.template_pack.models import (
+    TemplatePack,
+    TemplatePackReference,
+)
 from template_packager.client import PackagingClient
 from template_packager.manifest import load_manifest
 from template_packager.runner import apply_manifest

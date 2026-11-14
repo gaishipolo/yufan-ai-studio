@@ -21,7 +21,11 @@ from core.context import CurrentUser
 from core.logging import get_logger
 from core.ports.library_lookup import LibraryAssetKind, get_library_lookup
 from db.base import utcnow
-from modules.template.models import TemplatePack, TemplatePackReference, TemplatePackVersion
+from modules.template_pack.models import (
+    TemplatePack,
+    TemplatePackReference,
+    TemplatePackVersion,
+)
 
 logger = get_logger(__name__)
 

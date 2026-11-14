@@ -20,9 +20,7 @@ MANIFESTS = "/api/v1/template-manifests"
 PERMS = [
     "template_pack:read",
     "template_pack:create",
-    "template_pack:update",
     "template_pack:publish",
-    "template_pack:use",
     *LIB_RW,
 ]
 

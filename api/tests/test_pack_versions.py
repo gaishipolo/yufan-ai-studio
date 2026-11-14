@@ -23,8 +23,11 @@ from tests_template_helpers import ADMIN, add_pack, drop_pack, upload_ids
 
 from core.exceptions import Conflict
 from db.session import get_session_factory
-from modules.template.models import TemplatePack, TemplatePackVersion
-from modules.template.repository import PackRepository
+from modules.template_pack.models import (
+    TemplatePack,
+    TemplatePackVersion,
+)
+from modules.template_pack.repository import PackRepository
 
 
 def _build(pack_id: str, name: str):
@@ -167,7 +170,7 @@ async def test_publishing_same_revision_twice_is_idempotent(client: TestClient) 
     判据是「已发布 + 版号 > 0 + revision 相同」，不是「revision 相同」——后者
     会让一次真正的重发冒出一个空版本。
     """
-    from modules.template.pack_service import PackService
+    from modules.template_pack.pack_service import PackService
 
     ids = upload_ids(client, "character", 1)
     async with get_session_factory()() as session:
@@ -194,7 +197,7 @@ async def test_publish_time_comes_from_the_shared_clock(
     时间源各自为政时，想验「发布时间落在这条版本上」只能等、或者放开容差——
     而这一列是判断「哪一版先发」的唯一依据。
     """
-    from modules.template import pack_service
+    from modules.template_pack import pack_service
 
     pinned = datetime(2026, 11, 13, 4, 30, tzinfo=UTC)
     ids = upload_ids(client, "character", 1)
@@ -219,7 +222,7 @@ async def test_publish_time_comes_from_the_shared_clock(
 def _draft(ids: list[str], **extra):
     import uuid
 
-    from modules.template.schema import PackDraftIn
+    from modules.template_pack.schema import PackDraftIn
 
     values = {
         "requestId": uuid.uuid4(),
@@ -238,7 +241,7 @@ async def test_same_revision_with_new_content_still_mints_a_version(client: Test
     漏了这条，补一张参考图后再点发布会被当成重发：界面显示「发布成功」，
     实际对外可见的版本还是旧的，而且没有任何报错能看出来。
     """
-    from modules.template.pack_service import PackService
+    from modules.template_pack.pack_service import PackService
 
     ids = upload_ids(client, "character", 2)
     async with get_session_factory()() as session:

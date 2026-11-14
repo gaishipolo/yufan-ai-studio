@@ -38,8 +38,8 @@ from infra.queue.base import Job
 from modules.library.models import LibraryAsset
 from modules.template import worker
 from modules.template.authorization import authorization_gap
-from modules.template.models import TemplatePack
 from modules.template.repository import RunRepository
+from modules.template_pack.models import TemplatePack
 
 ADMIN = ("admin", "admin@12345")
 

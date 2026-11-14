@@ -24,13 +24,13 @@ from __future__ import annotations
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.context import CurrentUser
+from core.library_assets import resolve_assets
 from core.ports.library_lookup import LibraryAssetKind, LibraryAssetState
 from core.ports.template_runtime import (
     RuntimePack,
     RuntimePackVersion,
     require_template_runtime,
 )
-from modules.template.asset_source import resolve_assets
 from modules.template.models import ReplacementRun
 from modules.template.repository import RunRepository
 

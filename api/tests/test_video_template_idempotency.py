@@ -20,8 +20,8 @@ from video_template_support import run
 from core.config import settings
 from core.exceptions import Conflict
 from db.session import get_session_factory
-from modules.template import video_template_service as service
-from modules.template.video_template_schema import VideoTemplateDraftIn, VideoTemplateMedia
+from modules.template_pack import video_template_service as service
+from modules.template_pack.video_template_schema import VideoTemplateDraftIn, VideoTemplateMedia
 
 _SOURCE: str | None = None
 

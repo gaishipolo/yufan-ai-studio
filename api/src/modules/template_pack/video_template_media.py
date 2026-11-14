@@ -19,7 +19,7 @@ import re
 from typing import Any
 
 from core.exceptions import BadRequest
-from modules.template.video_template_schema import VideoTemplateMedia
+from modules.template_pack.video_template_schema import VideoTemplateMedia
 
 __all__ = [
     "SLOT_RE",

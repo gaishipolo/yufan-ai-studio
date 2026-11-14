@@ -17,49 +17,12 @@ from uuid import UUID
 from pydantic import Field, model_validator
 
 from core.schema import CamelModel, UtcDateTime, VerbatimText
+from core.template_pack_view import ReplacementPack
 from core.template_rules.roles import BASE_ROLE, PACK_ROLES, PACK_SCOPES
 from modules.template.channels import ReplacementChannel
 
 ReplacementKind = Literal["character", "product", "scene"]
 ReviewReason = Literal["replacement", "preservation", "visual", "audio", "other"]
-
-
-# --------------------------------------------------------------------------- #
-# 封装：逐图用途
-# --------------------------------------------------------------------------- #
-class PackBinding(CamelModel):
-    """一张参考图在封装里的用途；description 只补充本次任务特有的事实。"""
-
-    role: str = ""
-    description: str = ""
-
-
-def aligned_bindings(kind: str, reference_ids: list[str], bindings: list) -> list[PackBinding]:
-    """把用途对齐到参考图列表：非法或缺失的用途落到基准用途，多余的截掉。
-
-    旧包只有 reference_ids、没有用途，读出来必须是「每张都能用」的状态；
-    前端提交的 bindings 长度不一致时也走这里兜底，不让脏数据进存储。
-    """
-    allowed = PACK_ROLES.get(kind, {})
-    base = BASE_ROLE.get(kind, "front")
-    rows = [b if isinstance(b, PackBinding) else PackBinding.model_validate(b) for b in bindings]
-    roles = [row.role if row.role in allowed else base for row in rows]
-    roles = (roles + [base] * len(reference_ids))[: len(reference_ids)]
-    return [
-        PackBinding(
-            role=role,
-            description=rows[index].description if index < len(rows) else "",
-        )
-        for index, role in enumerate(roles)
-    ]
-
-
-def aligned_required_roles(kind: str, required: list[str]) -> list[str]:
-    """必填用途永远包含基准用途，顺序按用途表固定。"""
-    allowed = PACK_ROLES.get(kind, {})
-    base = BASE_ROLE.get(kind, "front")
-    picked = [role for role in required if role in allowed and role != base]
-    return [base, *picked]
 
 
 # --------------------------------------------------------------------------- #
@@ -257,76 +220,6 @@ class ExecuteReplacement(CamelModel):
     """
 
     billing_mode: Literal["free", "credits"] | None = None
-
-
-# --------------------------------------------------------------------------- #
-# 封装：对外形状
-# --------------------------------------------------------------------------- #
-class ReplacementPack(CamelModel):
-    id: str
-    kind: ReplacementKind
-    name: str
-    reference_ids: list[str]
-    cover_reference_id: str | None = None
-    wardrobe_mode: Literal["preserve", "reference"] = "preserve"
-    features: str = ""
-    instructions: str = ""
-    version: int = 0
-    available: bool | None = None
-    cover_url: str | None = None
-    preview_urls: list[str] = Field(default_factory=list)
-    reference_names: list[str] = Field(default_factory=list)
-    # 逐图用途与 reference_ids 同序；缺省时前端按基准用途展示
-    bindings: list[PackBinding] = Field(default_factory=list)
-    required_roles: list[str] = Field(default_factory=list)
-    supported_scopes: list[str] = Field(default_factory=list)
-
-    @model_validator(mode="after")
-    def align_pack_bindings(self) -> ReplacementPack:
-        self.bindings = aligned_bindings(self.kind, self.reference_ids, self.bindings)
-        self.required_roles = aligned_required_roles(self.kind, self.required_roles)
-        return self
-
-
-class PackDraftIn(CamelModel):
-    request_id: UUID
-    expected_revision: int = Field(default=0, ge=0)
-    kind: ReplacementKind
-    name: str = Field(default="", max_length=160)
-    reference_library_ids: list[str] = Field(
-        default_factory=list, max_length=10, description="封装用的参考图 id，按顺序"
-    )
-    cover_library_id: str | None = Field(
-        default=None, description="封面的 asset id；必须出现在 referenceLibraryIds 里"
-    )
-    wardrobe_mode: Literal["preserve", "reference"] = "preserve"
-    features: str = Field(default="", max_length=2000)
-    instructions: str = Field(default="", max_length=2000)
-    bindings: list[PackBinding] = Field(default_factory=list, max_length=10)
-    required_roles: list[str] = Field(default_factory=list, max_length=8)
-    supported_scopes: list[str] = Field(default_factory=list, max_length=8)
-
-
-class PackAction(CamelModel):
-    expected_revision: int = Field(ge=0)
-
-
-class PackManaged(ReplacementPack):
-    revision: int = 0
-    status: Literal["draft", "published", "disabled"] = "draft"
-    # 服务端算好的「还差什么」，草稿列表和发布按钮直接用它，避免前后端各写一套规则
-    gaps: list[str] = Field(default_factory=list)
-
-
-class PackManagedList(CamelModel):
-    items: list[PackManaged]
-
-
-class PackPublicList(CamelModel):
-    items: list[ReplacementPack]
-    total: int
-    page: int
-    page_size: int
 
 
 class ReplacementChannelOut(CamelModel):
