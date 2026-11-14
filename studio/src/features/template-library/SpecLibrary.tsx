@@ -370,6 +370,9 @@ export function SpecLibrary() {
       const next = limit > 1 ? [...existing, asset.id] : [asset.id];
       return {...current, [key]: next.slice(0, limit)};
     });
+    /* 单选（含封装）选完就关：留着一个已经选好的弹层，用户只能再去点右上角，
+       而这时提示词里的缩略图早就该出来了。多选槽位仍然不关，一次挑三张。 */
+    if (limit <= 1) setPicker(null);
   };
 
   const submit = async () => {
@@ -572,12 +575,16 @@ export function SpecLibrary() {
                       if (!target) return null;
                       const fixed = target.binding === 'fixed';
                       if (target.source === 'pack') {
-                        // 封装是「一组成员」，占位符位置上给不出单张缩略图：
-                        // 保持一个可点的标签，别让用户以为这里是张图。
+                        // 封装是「一组成员」：选定之后摊开前两张 + 「N 张」，
+                        // 点开看全部。没选还是给「选择封装」按钮。
+                        const packId = fixed
+                          ? target.packId
+                          : (values[key] ?? [])[0];
+                        if (packId) return {kind: 'pack', packId};
                         return {
                           kind: 'empty',
-                          label: fixed ? '已固定封装' : '选择封装',
-                          onPick: fixed ? undefined : () => setPicker(key),
+                          label: '选择封装',
+                          onPick: () => setPicker(key),
                         };
                       }
                       const picked = fixed
