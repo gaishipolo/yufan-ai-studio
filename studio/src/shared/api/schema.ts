@@ -1492,7 +1492,11 @@ export interface SpecCompileIn {
   slotValues?: Record<string, string[]>;
 }
 
-/** 可直接转发给 `POST /tasks` 的请求体。 */
+/** 编译结果（模板层）。
+
+**不是**任何端点的请求体：`/tasks` 的时长与画幅是顶层字段、不接受自由
+`params`。摊平由提交方按目标端点做（模板库页面对照生成的 `CreateTaskIn` 类型），
+这里刻意不假设端点，否则换端点就要改编译规则。 */
 export interface SpecCompileOut {
   version: number;
   model: string;

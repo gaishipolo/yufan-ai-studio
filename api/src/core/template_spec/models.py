@@ -122,7 +122,12 @@ class FilledSlot:
 
 @dataclass(frozen=True, slots=True)
 class CompiledRequest:
-    """编译产物：一份可以直接交给 `POST /tasks` 的请求体。
+    """编译产物：**模板层**结果（提示词 + 素材序 + 模型 + 参数）。
+
+    它还不是任何端点的请求体：`POST /tasks` 把时长/画幅放在顶层、不接受自由
+    `params`，生图端点又是另一套摆法。**摊平由提交方做**（模板库页面对照生成的
+    `CreateTaskIn` 类型摊 `params`，类型检查即守卫）——compile 完全不认识执行层，
+    否则换一个执行端点就要改编译规则。
 
     `slot_tokens` 只给前端画角标（哪张图是 `{{Mixed 3}}`），不参与提交。
     """

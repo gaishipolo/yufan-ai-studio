@@ -186,6 +186,13 @@
 
 `slotTokens` 只回给前端做展示（角标编号），不参与提交。
 
+**这份出参是「模板层」结果，不是任何端点的请求体。** `POST /tasks` 把时长与画幅放在
+**顶层**（`durationSec` / `aspectRatio`），不接受自由 `params`；生图端点又是另一套摆法。
+摊平由提交方按目标端点做 —— 模板库页面对照生成的 `CreateTaskIn` 类型把 `params` 展开，
+类型检查就是那份映射的守卫。`compile` 刻意不假设端点：否则换一个执行端点就要改编译规则，
+而那属于 P3 的 capability 声明。
+
+
 ## 7. 数据模型
 
 三张表，全部在 `modules/template_pack/models.py`（`db/registry.py` 只扫 `modules.*.models`）。沿用全项目约定：**无外键**，靠字符串 id + 应用层校验；唯一性靠复合索引。
@@ -403,5 +410,11 @@ P3 补上 capability 判据后，迁移只需要让这份守卫继续绿，就�
    `compile` 只需调用它，不需要给资产库加任何字段。
 3. **`attributes` 归一**：旧 `supportedScopes`、`wardrobeMode` 统一放进 `spec.attributes`（`dict[str, str]`），避免每收编一个概念就加一列。键名先定 `scope` / `wardrobe`，其余按需加。
 4. **`compile` 的缓存**：入参 `(version, slotValues)` 是纯输入，可加一层进程内 LRU；但先不上，等有性能证据。
-5. **历史替换档案的归宿**（P3 前必须定）：`replacement_runs` 是只读归档、还是整表导出成对象存储后删表？
+5. **提示词上限两处不一致**（P2 提交前必须定）：spec 的 `MAX_PROMPT` 是 20000，
+   而 `POST /tasks` 的 `CreateTaskIn.prompt` 是 `max_length=2000`。于是 3000 字的规格
+   能发布、能在 `compile` 里成功，提交时才 422 —— 正是"晚失败"。上限其实是**目标能力**
+   的属性（替换链接受长提示词，通用视频端点不接受），所以要随 §13.1 的 `accepts` 一起
+   由 `ModelSpec` 声明，在发布或 `compile` 时挡。别把 spec 的上限直接降到 2000：
+   旧模板里有 20000 字级别的提示词，P3 迁移会被一刀切拒掉。
+6. **历史替换档案的归宿**（P3 前必须定）：`replacement_runs` 是只读归档、还是整表导出成对象存储后删表？
    它是"重跑与复核的唯一依据"，因此至少要保住只读可查；具体形态等 P3 开工时拍。
