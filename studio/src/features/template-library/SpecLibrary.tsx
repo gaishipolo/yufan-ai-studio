@@ -5,7 +5,6 @@ import { KIND_LABEL } from '@/entities/library/model/types';
 import { AssetChip } from '@/entities/library/ui/AssetChip';
 import { CaseCover } from '@/entities/library/ui/CaseCover';
 import { PackChip } from '@/entities/library/ui/PackChip';
-import { PromptRefs } from '@/entities/library/ui/PromptRefs';
 import { SlotMediaPicker } from './SlotMediaPicker';
 import { useGenerateImage } from '@/entities/image/api/image.api';
 import { useModels } from '@/entities/model/api/model.queries';
@@ -175,8 +174,10 @@ export function SpecLibrary() {
 
   const spec = items.find(item => item.key === selectedKey) ?? items[0];
   const slots = slotsOf(spec);
+  /* 只列「使用时填」的槽位：固定槽位是作者在封装页选死的，填表的人既不能换也用不着
+     知道它长什么样 —— 一排只读的 chip 只会让人以为这里还能点。 */
+  const fillSlots = slots.filter(slot => slot.binding === 'user');
   const version = spec?.latest;
-  const promptText = version?.prompt ?? '';
   const focused = spec?.key ?? null;
 
   /* 换模板就清空上一次的填写：不做"记忆上次填的素材"，
@@ -229,10 +230,10 @@ export function SpecLibrary() {
     return {key: control.key, label: control.label, text};
   });
 
-  /* 填了几项：固定槽位天然算填好，剩下的看用户选了没。进度条用它，省得只在
-     按钮上写一句「还缺 2 项」——那句话得滚到底才看得见。 */
-  const filledCount = slots.length - missing.length;
-  const progress = slots.length > 0 ? Math.round((filledCount / slots.length) * 100) : 0;
+  /* 填了几项：只看要用户填的那几个槽位。进度条用它，省得只在按钮上写一句
+     「还缺 2 项」——那句话得滚到底才看得见。 */
+  const filledCount = fillSlots.length - missing.length;
+  const progress = fillSlots.length > 0 ? Math.round((filledCount / fillSlots.length) * 100) : 0;
 
   const busy = compile.isPending || createTask.isPending || generateImage.isPending;
 
@@ -362,7 +363,7 @@ export function SpecLibrary() {
                 8px 的全局滚动条会把槽位块挤窄。"stable" 让有没有滚动条两种情况等宽，
                 切模板时内容不会左右跳。 */}
             <div className="scroll-thin flex min-h-0 flex-1 flex-col gap-3.5 overflow-y-auto overscroll-contain px-4 py-3.5 [scrollbar-gutter:stable]">
-              {slots.length > 0 && (
+              {fillSlots.length > 0 ? (
                 <PanelSection
                   title="填入素材"
                   extra={
@@ -373,25 +374,23 @@ export function SpecLibrary() {
                         <span
                           className={cn(
                             'block h-full rounded-full transition-all duration-300 ease-smooth',
-                            filledCount === slots.length ? 'bg-ok' : 'bg-primary',
+                            filledCount === fillSlots.length ? 'bg-ok' : 'bg-primary',
                           )}
                           style={{width: `${progress}%`}}
                         />
                       </span>
                       <span className="text-[10px] tabular-nums text-ink-mute">
-                        {filledCount}/{slots.length}
+                        {filledCount}/{fillSlots.length}
                       </span>
                     </span>
                   }
                 >
                   <div className="flex flex-col gap-2">
-                    {slots.map((slot, index) => {
+                    {fillSlots.map((slot, index) => {
                       const filled = values[slot.key] ?? [];
-                      const fixed = slot.binding === 'fixed';
-                      const locked = fixed && (slot.type === 'pack' ? !!slot.packId : !!slot.assetId);
-                      /* 要让用户填的图片/视频：按「一级标签 · 槽位名」分组、点二级标签看素材。
-                         其余（固定槽位、文本/音频/封装）保留原来的行式写法。 */
-                      if (!fixed && (slot.type === 'image' || slot.type === 'video')) {
+                      /* 图片/视频：按「一级标签 · 槽位名」分组、点二级标签看素材。
+                         其余（文本/音频/封装）保留行式写法。 */
+                      if (slot.type === 'image' || slot.type === 'video') {
                         return (
                           <SlotMediaPicker
                             key={slot.key}
@@ -409,35 +408,22 @@ export function SpecLibrary() {
                             <span className="flex items-baseline gap-1 text-[12px] leading-tight text-ink">
                               <span className="shrink-0 text-ink-mute">{index + 1}.</span>
                               <span className="line-clamp-2">{slot.label || slot.key}</span>
-                              {!fixed && minOf(slot) > 0 && (
-                                <span className="text-warn-deep">*</span>
-                              )}
+                              {minOf(slot) > 0 && <span className="text-warn-deep">*</span>}
                             </span>
                             <span className="text-[10px] text-ink-mute">
                               {TYPE_LABEL[slot.type] ?? slot.type}
-                              {fixed
-                                ? ' · 已固定'
-                                : maxOf(slot) > 1
-                                  ? ` · 最多 ${maxOf(slot)}`
-                                  : ''}
+                              {maxOf(slot) > 1 ? ` · 最多 ${maxOf(slot)}` : ''}
                             </span>
                           </div>
 
                           <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
-                            {fixed && slot.type === 'pack' && slot.packId && (
-                              <PackChip packId={slot.packId} />
-                            )}
-                            {fixed && slot.type !== 'pack' && slot.assetId && (
-                              <AssetChip assetId={slot.assetId} />
-                            )}
-                            {!fixed && slot.type === 'pack' && filled[0] && (
+                            {slot.type === 'pack' && filled[0] && (
                               <PackChip
                                 packId={filled[0]}
                                 onRemove={() => setValues(current => ({...current, [slot.key]: []}))}
                               />
                             )}
-                            {!fixed &&
-                              slot.type !== 'pack' &&
+                            {slot.type !== 'pack' &&
                               filled.map(assetId => (
                                 <AssetChip
                                   key={assetId}
@@ -452,27 +438,25 @@ export function SpecLibrary() {
                                   }
                                 />
                               ))}
-                            {!fixed && !locked && (
-                              <button
-                                type="button"
-                                onClick={() => setPicker(slot.key)}
-                                className="flex items-center gap-1 rounded-lg border border-line-soft bg-panel-soft px-2 py-1 text-[11px] text-ink-soft transition-colors hover:border-primary-line hover:bg-primary-soft hover:text-primary"
-                              >
-                                <Plus size={11} />
-                                {filled.length > 0
-                                  ? '再选'
-                                  : `选择${slot.type === 'pack' ? '封装' : (TYPE_LABEL[slot.type] ?? '素材')}`}
-                              </button>
-                            )}
+                            <button
+                              type="button"
+                              onClick={() => setPicker(slot.key)}
+                              className="flex items-center gap-1 rounded-lg border border-line-soft bg-panel-soft px-2 py-1 text-[11px] text-ink-soft transition-colors hover:border-primary-line hover:bg-primary-soft hover:text-primary"
+                            >
+                              <Plus size={11} />
+                              {filled.length > 0
+                                ? '再选'
+                                : `选择${slot.type === 'pack' ? '封装' : (TYPE_LABEL[slot.type] ?? '素材')}`}
+                            </button>
                           </div>
                         </div>
                       );
                     })}
                   </div>
                   {/* 用途说明只在该槽位还没填时出现：填完它就是噪音。 */}
-                  {slots.some(slot => slot.usage && (values[slot.key] ?? []).length === 0) && (
+                  {fillSlots.some(slot => slot.usage && (values[slot.key] ?? []).length === 0) && (
                     <ul className="mt-1 flex flex-col gap-0.5 border-t border-line-soft pt-2 text-[10px] leading-relaxed text-ink-mute">
-                      {slots
+                      {fillSlots
                         .filter(slot => slot.usage && (values[slot.key] ?? []).length === 0)
                         .map(slot => (
                           <li key={slot.key} className="truncate">
@@ -482,58 +466,14 @@ export function SpecLibrary() {
                     </ul>
                   )}
                 </PanelSection>
-              )}
-
-              {/* 提示词：占位符就地换成用户选的东西 —— 文本显示正文，图 / 视频显示
-                  跟文字同高的缩略块；还没选的位置给一个「选择」按钮，点开就是选择器。 */}
-              {promptText.trim() && (
-                <PanelSection
-                  title="提示词"
-                  extra={<span className="text-[10px] text-ink-mute">不可编辑</span>}
-                >
-                  <PromptRefs
-                    value={promptText}
-                    className="block max-h-52 overflow-y-auto rounded-lg bg-panel-soft px-2.5 py-2 text-[11px] leading-relaxed text-ink-soft"
-                    slot={(key, mode) => {
-                      const target = slots.find(item => item.key === key);
-                      if (!target) return null;
-                      const fixed = target.binding === 'fixed';
-                      if (target.type === 'pack') {
-                        // 封装是「一组成员」：选定之后摊开前两张 + 「N 张」，
-                        // 点开看全部。没选还是给「选择封装」按钮。
-                        const packId = fixed
-                          ? target.packId
-                          : (values[key] ?? [])[0];
-                        if (packId) return {kind: 'pack', packId};
-                        return {
-                          kind: 'empty',
-                          label: '选择封装',
-                          onPick: () => setPicker(key),
-                        };
-                      }
-                      const picked = fixed
-                        ? [target.assetId].filter(Boolean) as string[]
-                        : (values[key] ?? []);
-                      if (picked.length === 0) {
-                        return {
-                          kind: 'empty',
-                          label: `选择${TYPE_LABEL[target.type] ?? '素材'}`,
-                          onPick: () => setPicker(key),
-                        };
-                      }
-                      const ids =
-                        mode.kind === 'all'
-                          ? picked
-                          : mode.kind === 'index'
-                            ? picked.slice(mode.at - 1, mode.at)
-                            : picked.slice(0, 1);
-                      if (ids.length === 0) {
-                        return {kind: 'empty', label: '未选到这一份'};
-                      }
-                      return {kind: target.type === 'text' ? 'text' : 'asset', ids};
-                    }}
-                  />
-                </PanelSection>
+              ) : (
+                /* 没有要填的槽位（纯提示词，或者素材全被作者固定）：这一栏不必空着占位，
+                    说一句能直接生成就够。两种情况的说法分开，别让人以为漏了槽位。 */
+                <p className="text-[11px] text-ink-mute">
+                  {slots.length === 0
+                    ? '这个模板是纯提示词，直接生成即可。'
+                    : '素材都由作者固定了，直接生成即可。'}
+                </p>
               )}
 
               {paramChips.length > 0 && (
