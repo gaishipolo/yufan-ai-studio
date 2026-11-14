@@ -6,19 +6,26 @@ import { CoverImage } from '@/shared/ui';
  * 素材 chip：缩略图 + 名字（+ 可选移除）。
  *
  * 每个 id 一条详情查询 —— React Query 按 id 缓存，切模板或换标签时不会重复拉。
- * 放在独立文件里而不是 `SpecLibrary.tsx` 内部：素材选择块（`SlotMediaPicker`）
- * 也要用它显示"已选"，而选择块本身被 `SpecLibrary` 引用，留在同一个文件里就成环。
+ * 放在实体层而不是某个 feature 里：填表页（`SlotMediaPicker`）、模板封装编辑器、
+ * 提示词里的引用块都要显示"这条素材叫什么"，各写一份就会出现三种缩略图尺寸。
  */
 export function AssetChip({
   assetId,
   onRemove,
+  className,
 }: {
   assetId: string;
   onRemove?: () => void;
+  className?: string;
 }) {
   const detail = useLibraryDetail(assetId);
   return (
-    <span className="flex items-center gap-1.5 rounded-lg border border-line-soft bg-panel px-1.5 py-1">
+    <span
+      className={[
+        'flex items-center gap-1.5 rounded-lg border border-line-soft bg-panel px-1.5 py-1',
+        className ?? '',
+      ].join(' ')}
+    >
       <CoverImage
         src={detail.data?.coverUrl ?? undefined}
         seed={assetId}

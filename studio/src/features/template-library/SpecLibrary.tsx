@@ -1,20 +1,20 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { ArrowRight, ImageOff, Play, X } from 'lucide-react';
-import { libraryApi } from '@/entities/library/api/library.api';
+import { ArrowRight, Play, Plus } from 'lucide-react';
 import { KIND_LABEL } from '@/entities/library/model/types';
-import { AssetPreview } from '@/entities/library/ui/AssetPreview';
+import { AssetChip } from '@/entities/library/ui/AssetChip';
+import { CaseCover } from '@/entities/library/ui/CaseCover';
+import { PackChip } from '@/entities/library/ui/PackChip';
 import { PromptRefs } from '@/entities/library/ui/PromptRefs';
-import { AssetChip } from './AssetChip';
 import { SlotMediaPicker } from './SlotMediaPicker';
 import { useGenerateImage } from '@/entities/image/api/image.api';
 import { useModels } from '@/entities/model/api/model.queries';
+import { paramControlsFor, resolveParamValues, type ParamValue } from '@/entities/model/lib/paramForm';
 import { useCreateTask } from '@/entities/task/api/task.queries';
 import { usePublishedSpecs, useSpecCompile } from '@/entities/template-spec/api/spec.queries';
 import type { SpecSlotOut, TemplateSpecOut } from '@/shared/api/schema';
 import { AssetPicker, type PickedAsset } from '@/features/template-specs/AssetPicker';
-import { Button, Chip, CoverImage, EmptyState, SearchInput, Skeleton } from '@/shared/ui';
+import { Button, Chip, EmptyState, SearchInput, Skeleton } from '@/shared/ui';
 import { cn } from '@/shared/lib/cn';
 import { toSubmitPayload, type SubmitKind } from './taskPayload';
 
@@ -32,25 +32,6 @@ import { toSubmitPayload, type SubmitKind } from './taskPayload';
 /* 类型名与卡片上的类型标签同源：都是资产库的 kind。别再写一份本地表 ——
    漏掉 `pack` 时页面上会直接印出英文 `pack`（真机截到过）。 */
 const TYPE_LABEL: Record<string, string> = KIND_LABEL;
-
-/** 参数的展示名：图片看尺寸/张数，视频看画幅/时长，其余按 key 原样。 */
-const PARAM_LABEL: Record<string, string> = {
-  size: '尺寸',
-  count: '张数',
-  durationSec: '时长',
-  aspectRatio: '画幅',
-  stylePreset: '风格',
-};
-
-/** 参数值的可读文案。没有值时明写「默认」，不摆一个空白 chip 让人猜。 */
-function formatParam(key: string, value: unknown): string {
-  const text = value === null || value === undefined || value === '' ? '' : String(value);
-  if (!text) return `${PARAM_LABEL[key] ?? key} · 默认`;
-  if (key === 'durationSec') return `${text} 秒`;
-  if (key === 'count') return `${text} 张`;
-  // 素材库里尺寸都写成 `1024x1536`，展示时换成乘号更像尺寸而不是型号
-  return key === 'size' ? text.replace('x', '×') : text;
-}
 
 function slotsOf(spec: TemplateSpecOut | undefined): SpecSlotOut[] {
   return spec?.latest?.slots ?? [];
@@ -71,39 +52,11 @@ function maxOf(slot: SpecSlotOut): number {
  * 没设就明写「暂无案例」，不摆渐变块冒充缩略图 —— 那会让人以为模板带图。
  * 它是**纯展示**字段（存在草稿里、不进发布快照），所以这里只读、不可交互。
  */
-function DemoCase({
-  assetId,
-  className,
-  seed = '',
-}: {
-  assetId: string | null;
-  className?: string;
-  /** 没案例时兜底渐变的种子，传模板 key：同一张模板每次都同一个色，不会闪。 */
-  seed?: string;
-}) {
-  if (!assetId) {
-    /* 空封面用资产卡的兜底渐变，不摆虚线框：5:6 的位置上那圈虚线比图还显眼，
-       还容易被读成"加载失败"。渐变按 key 轮换，一排里不会全是同一块灰。 */
-    return (
-      <div className={cn('relative overflow-hidden', className)}>
-        <CoverImage seed={seed || 'template'} className="h-full w-full" />
-        <span className="absolute inset-0 flex flex-col items-center justify-center gap-1 text-white/75">
-          <ImageOff size={16} />
-          <span className="text-[10px]">暂无案例</span>
-        </span>
-      </div>
-    );
-  }
-  /* 卡片：图片给封面，视频给封面 + 悬停自动播（静音循环）。取流只在 hover 时发生，
-     一排卡片不会把每条视频都拉一遍。 */
-  return <AssetPreview assetId={assetId} className={className} hoverPlay />;
-}
-
 /**
- * 模板卡片：竖版封面 + 名称/版本 + 「要什么素材」两行 + 底部动作。
+ * 模板卡片：案例封面 + 压在图上的名称 + 「要什么素材」的标签 + 一行模型。
  *
- * 封面按 4:5 给：模板案例多是竖屏成片，横着裁会把主体裁掉；文字部分只留这两行，
- * 再多就得进右栏看 —— 卡片是选，不是读。
+ * 名称压在封面底部而不是另起一行：卡片是「挑图」，图应该占满视觉重心，文字只做
+ * 标注。版本号反而放右上角 —— 它是作者关心的东西，不该占掉选模板时的注意力。
  */
 function TemplateCard({
   item,
@@ -124,31 +77,28 @@ function TemplateCard({
       type="button"
       onClick={onSelect}
       className={cn(
-        'group flex flex-col overflow-hidden rounded-xl border bg-panel text-left transition-all',
+        'group flex flex-col rounded-2xl border bg-panel p-1.5 text-left transition-all duration-200',
         selected
-          ? 'border-primary-line shadow-[0_0_0_3px_rgba(43,124,255,0.10)]'
-          : 'border-line hover:border-line-strong hover:shadow-card',
+          ? 'border-primary-line shadow-ring'
+          : 'border-line-soft hover:-translate-y-0.5 hover:border-line hover:shadow-card',
       )}
     >
-      <div className="relative">
-        <DemoCase
-          assetId={item.demoAssetId ?? null}
+      <div className="relative overflow-hidden rounded-xl">
+        <CaseCover
+          assetId={item.demoAssetId}
           seed={item.key}
-          className="aspect-[5/6] w-full"
+          className="aspect-[4/5] w-full"
+          hoverPlay
         />
-        {item.demoAssetId && (
-          <span className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/60 via-black/20 to-transparent px-2 pb-1.5 pt-8 text-[10px] text-white/90 transition-opacity group-hover:opacity-0">
-            {selected ? '正在填写' : '点击填写素材'}
-          </span>
-        )}
-      </div>
-      <div className="flex flex-1 flex-col gap-1.5 p-2.5">
-        <div className="flex items-center gap-1.5">
-          <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-ink">
-            {item.name}
-          </span>
-          <Chip>v{item.currentVersion}</Chip>
+        <span className="pointer-events-none absolute right-1.5 top-1.5 rounded-full bg-black/40 px-1.5 py-0.5 text-[10px] font-medium leading-[14px] text-white/95 backdrop-blur-sm">
+          v{item.currentVersion}
+        </span>
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 via-black/25 to-transparent px-2.5 pb-1.5 pt-9">
+          <div className="truncate text-[12.5px] font-medium text-white">{item.name}</div>
         </div>
+      </div>
+
+      <div className="flex flex-col gap-1.5 px-1 pb-0.5 pt-2">
         <div className="flex flex-wrap gap-1">
           {itemSlots.length === 0 ? (
             <Chip tone="ok">纯提示词</Chip>
@@ -162,31 +112,14 @@ function TemplateCard({
               {TYPE_LABEL[kind] ?? kind}
             </Chip>
           ))}
-          {fixed > 0 && pending > 0 && <Chip>{fixed} 固定</Chip>}
         </div>
-        <dl className="mt-0.5 flex flex-col gap-0.5 text-[11px] leading-relaxed">
-          <div className="flex gap-2">
-            <dt className="w-8 shrink-0 text-ink-mute">模型</dt>
-            <dd className="min-w-0 flex-1 truncate text-ink-soft">
-              {item.latest?.model ?? '—'}
-            </dd>
-          </div>
-          <div className="flex gap-2">
-            <dt className="w-8 shrink-0 text-ink-mute">素材</dt>
-            <dd className="min-w-0 flex-1 truncate text-ink-soft">
-              {itemSlots.length > 0
-                ? `${itemSlots.length} 个槽位${fixed > 0 ? ` · ${fixed} 个已固定` : ''}`
-                : '—'}
-            </dd>
-          </div>
-        </dl>
-        <div className="mt-auto flex items-center justify-between border-t border-line-soft pt-1.5 text-[11px]">
-          <span className="text-ink-mute">
-            {pending > 0 ? `需填 ${pending} 项` : '无需填素材'}
+        <div className="mt-0.5 flex items-center justify-between gap-2 border-t border-line-soft pt-1.5">
+          <span className="min-w-0 truncate text-[10.5px] text-ink-mute">
+            {item.latest?.model ?? '—'}
           </span>
           <span
             className={cn(
-              'flex items-center gap-0.5 transition-colors',
+              'flex shrink-0 items-center gap-0.5 text-[11px] transition-colors',
               selected ? 'text-primary' : 'text-ink-mute group-hover:text-primary',
             )}
           >
@@ -209,47 +142,13 @@ function PanelSection({
   children: ReactNode;
 }) {
   return (
-    <section className="flex flex-col gap-1.5 border-t border-line-soft pt-3 first:border-t-0 first:pt-0">
+    <section className="flex flex-col gap-2 border-t border-line-soft pt-3 first:border-t-0 first:pt-0">
       <div className="flex items-center justify-between gap-2">
-        <h3 className="text-[11px] font-medium text-ink-soft">{title}</h3>
+        <h3 className="text-[11.5px] font-semibold tracking-[.2px] text-ink">{title}</h3>
         {extra}
       </div>
       {children}
     </section>
-  );
-}
-
-/** 资产库封装：成员数由库给，这里只显示「N 张」与首图，不展开成员顺序。 */
-function PackSummary({packId, onRemove}: {packId: string; onRemove?: () => void}) {
-  const pack = useQuery({
-    queryKey: ['library', 'pack', packId],
-    queryFn: () => libraryApi.packDetail(packId),
-    enabled: !!packId,
-    staleTime: 30_000,
-  });
-  const items = pack.data?.packItems ?? [];
-  return (
-    <span className="flex items-center gap-1.5 rounded-lg border border-line-soft bg-panel px-1.5 py-1">
-      <CoverImage
-        src={items[0]?.coverUrl ?? undefined}
-        seed={packId}
-        className="h-7 w-7 shrink-0 rounded"
-      />
-      <span className="max-w-[180px] truncate text-[11px] text-ink-soft">
-        {pack.data?.name ?? packId.slice(0, 8)}
-      </span>
-      <span className="text-[11px] text-ink-mute">{items.length} 张</span>
-      {onRemove && (
-        <button
-          type="button"
-          onClick={onRemove}
-          className="text-ink-mute transition-colors hover:text-danger"
-          title="移除"
-        >
-          <X size={11} />
-        </button>
-      )}
-    </span>
   );
 }
 
@@ -311,12 +210,29 @@ export function SpecLibrary() {
     return (values[slot.key] ?? []).length < minOf(slot);
   });
 
-  /* 参数只读展示，键与顺序都来自模型的 `paramSchema`：图片模型是尺寸/张数，
-     视频模型是画幅/时长，前端不写死任何一种。模型不在目录里就整块不渲染。 */
-  const paramChips = Object.entries(model?.paramSchema ?? {}).map(([key, field]) => {
-    const value = version?.params?.[key] ?? field?.default;
-    return {key, text: formatParam(key, value)};
+  /* 参数只读展示，标签与档位文案全部来自模型的 `paramSchema`（`paramControlsFor`）：
+     模型多声明一个参数，这里就多一枚 chip，前端不写死任何一种、也不印英文 key。 */
+  const paramControls = paramControlsFor(model);
+  const overrides: Record<string, ParamValue> = {};
+  for (const [key, value] of Object.entries(version?.params ?? {})) {
+    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+      overrides[key] = value;
+    }
+  }
+  const paramValues = resolveParamValues(paramControls, overrides);
+  const paramChips = paramControls.map(control => {
+    const raw = paramValues[control.key];
+    const option = control.options.find(item => item.value === String(raw));
+    const text =
+      option?.label ??
+      (raw === '' || raw === undefined ? '默认' : String(raw).replace(/(\d)x(\d)/, '$1×$2'));
+    return {key: control.key, label: control.label, text};
   });
+
+  /* 填了几项：固定槽位天然算填好，剩下的看用户选了没。进度条用它，省得只在
+     按钮上写一句「还缺 2 项」——那句话得滚到底才看得见。 */
+  const filledCount = slots.length - missing.length;
+  const progress = slots.length > 0 ? Math.round((filledCount / slots.length) * 100) : 0;
 
   const busy = compile.isPending || createTask.isPending || generateImage.isPending;
 
@@ -370,9 +286,9 @@ export function SpecLibrary() {
 
   if (published.isLoading) {
     return (
-      <div className="grid gap-3 sm:grid-cols-2 2xl:grid-cols-3">
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
         {Array.from({length: 6}).map((_, index) => (
-          <Skeleton key={index} className="h-[320px] rounded-xl" />
+          <Skeleton key={index} className="h-[360px] rounded-2xl" />
         ))}
       </div>
     );
@@ -388,18 +304,21 @@ export function SpecLibrary() {
   }
 
   return (
-    <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_392px]">
+    <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_400px]">
       <div className="flex flex-col gap-3">
-        <div className="flex items-center gap-2">
+        {/* 工具栏吸顶：模板多到要滚的时候，筛选框不该跟着滚走。
+            偏移 54px 是顶栏高度 —— 那条 `sticky top-0` 的 header 在最上层，
+            不躲开就会被盖住（第一次就是被它盖成一团糊影）。 */}
+        <div className="sticky top-[54px] z-10 -mx-1 flex items-center gap-2.5 border-b border-line-soft bg-panel px-1 py-2">
           <SearchInput
             value={keyword}
             onChange={event => setKeyword(event.target.value)}
             placeholder="按名称筛选"
-            wrapperClassName="w-52 bg-panel"
+            wrapperClassName="w-56"
           />
           <span className="text-[11px] text-ink-mute">{items.length} 个模板</span>
         </div>
-        <div className="grid gap-3 sm:grid-cols-2 2xl:grid-cols-3">
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
           {items.map(item => (
             <TemplateCard
               key={item.key}
@@ -411,34 +330,52 @@ export function SpecLibrary() {
         </div>
       </div>
 
-      <aside className="flex flex-col overflow-hidden rounded-xl border border-line bg-panel xl:sticky xl:top-4">
+      <aside className="flex flex-col overflow-hidden rounded-2xl border border-line bg-panel shadow-[0_1px_2px_rgba(16,42,55,.05)] xl:sticky xl:top-[66px]">
         {spec && version ? (
           <>
-            <header className="flex items-start justify-between gap-2 border-b border-line-soft px-4 py-3">
-              <div className="min-w-0">
-                <div className="truncate text-[14px] font-medium text-ink">{spec.name}</div>
-                <div className="mt-0.5 truncate text-[11px] text-ink-mute">
-                  v{version.version} · {version.model}
+            <header className="border-b border-line-soft bg-gradient-to-b from-panel-soft to-panel px-4 pb-3 pt-3.5">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="truncate text-[15px] font-semibold leading-tight text-ink">
+                    {spec.name}
+                  </div>
+                  <div className="mt-1 flex min-w-0 items-center gap-1.5 text-[11px] text-ink-mute">
+                    <span className="shrink-0 rounded-[5px] bg-panel px-1 py-px text-[10px] ring-1 ring-inset ring-line-soft">
+                      v{version.version}
+                    </span>
+                    <span className="truncate">{version.model}</span>
+                  </div>
                 </div>
+                <Link
+                  to="/templates/specs"
+                  className="shrink-0 rounded-md border border-line px-1.5 py-0.5 text-[11px] text-ink-soft transition-colors hover:border-primary-line hover:text-primary"
+                >
+                  改模板
+                </Link>
               </div>
-              <Link
-                to="/templates/specs"
-                className="shrink-0 text-[11px] text-ink-mute transition-colors hover:text-primary"
-              >
-                改模板
-              </Link>
             </header>
 
-            <div className="flex flex-col gap-3 px-4 py-3">
+            <div className="flex flex-col gap-3.5 px-4 py-3.5">
               {slots.length > 0 && (
                 <PanelSection
                   title="填入素材"
                   extra={
-                    missing.length > 0 ? (
-                      <span className="text-[11px] text-warn-deep">还缺 {missing.length} 项</span>
-                    ) : (
-                      <span className="text-[11px] text-ok-deep">已填满</span>
-                    )
+                    /* 进度放在它衡量的东西旁边：放在标题栏里会变成一条压在名字下的
+                       粗线，看着像分隔符，而不是"填了几项"。 */
+                    <span className="flex items-center gap-1.5">
+                      <span className="h-1 w-16 overflow-hidden rounded-full bg-line-soft">
+                        <span
+                          className={cn(
+                            'block h-full rounded-full transition-all duration-300 ease-smooth',
+                            filledCount === slots.length ? 'bg-ok' : 'bg-primary',
+                          )}
+                          style={{width: `${progress}%`}}
+                        />
+                      </span>
+                      <span className="text-[10px] tabular-nums text-ink-mute">
+                        {filledCount}/{slots.length}
+                      </span>
+                    </span>
                   }
                 >
                   <div className="flex flex-col gap-2">
@@ -482,13 +419,13 @@ export function SpecLibrary() {
 
                           <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
                             {fixed && slot.type === 'pack' && slot.packId && (
-                              <PackSummary packId={slot.packId} />
+                              <PackChip packId={slot.packId} />
                             )}
                             {fixed && slot.type !== 'pack' && slot.assetId && (
                               <AssetChip assetId={slot.assetId} />
                             )}
                             {!fixed && slot.type === 'pack' && filled[0] && (
-                              <PackSummary
+                              <PackChip
                                 packId={filled[0]}
                                 onRemove={() => setValues(current => ({...current, [slot.key]: []}))}
                               />
@@ -513,8 +450,9 @@ export function SpecLibrary() {
                               <button
                                 type="button"
                                 onClick={() => setPicker(slot.key)}
-                                className="rounded-md border border-dashed border-line px-1.5 py-0.5 text-[11px] text-ink-mute transition-colors hover:border-primary-line hover:text-primary"
+                                className="flex items-center gap-1 rounded-lg border border-line-soft bg-panel-soft px-2 py-1 text-[11px] text-ink-soft transition-colors hover:border-primary-line hover:bg-primary-soft hover:text-primary"
                               >
+                                <Plus size={11} />
                                 {filled.length > 0
                                   ? '再选'
                                   : `选择${slot.type === 'pack' ? '封装' : (TYPE_LABEL[slot.type] ?? '素材')}`}
@@ -596,14 +534,17 @@ export function SpecLibrary() {
                 <PanelSection title="参数">
                   <div className="flex flex-wrap gap-1.5">
                     {paramChips.map(item => (
-                      <Chip key={item.key}>{item.text}</Chip>
+                      <Chip key={item.key}>
+                        <span className="text-ink-mute">{item.label}</span>
+                        <span className="ml-1 text-ink-soft">{item.text}</span>
+                      </Chip>
                     ))}
                   </div>
                 </PanelSection>
               )}
             </div>
 
-            <div className="flex flex-col gap-2 border-t border-line-soft px-4 py-3">
+            <div className="flex flex-col gap-2 border-t border-line-soft bg-panel-soft/60 px-4 py-3">
               {error && <p className="text-[11px] text-danger">{error}</p>}
               {note && (
                 <p className="flex items-center gap-2 text-[11px] text-ink-soft">
@@ -613,7 +554,12 @@ export function SpecLibrary() {
                   </Link>
                 </p>
               )}
-              <Button block disabled={busy || missing.length > 0} onClick={() => void submit()}>
+              <Button
+                block
+                size="lg"
+                disabled={busy || missing.length > 0}
+                onClick={() => void submit()}
+              >
                 <Play size={13} />
                 {busy
                   ? '提交中…'

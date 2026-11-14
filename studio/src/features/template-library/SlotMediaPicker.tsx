@@ -8,7 +8,7 @@ import { KIND_LABEL, viewQuery } from '@/entities/library/model/types';
 import type { SpecSlotOut } from '@/shared/api/schema';
 import { CoverImage } from '@/shared/ui';
 import { cn } from '@/shared/lib/cn';
-import { AssetChip } from './AssetChip';
+import { AssetChip } from '@/entities/library/ui/AssetChip';
 import { pickWithin } from './slotPick';
 
 const PAGE_SIZE = 24;
@@ -62,7 +62,7 @@ export function SlotMediaPicker({
   const full = selected.length >= max;
 
   return (
-    <div className="rounded-xl border border-line-soft bg-panel p-2.5">
+    <div className="rounded-xl border border-line-soft bg-panel-soft p-2.5">
       <div className="flex items-baseline gap-1.5">
         <span className="min-w-0 truncate text-[12px] font-medium text-ink">
           {group ? `${group.name} · ${slot.label || slot.key}` : (slot.label || slot.key)}
@@ -180,10 +180,10 @@ function ScopeChip({
       aria-pressed={active}
       onClick={onClick}
       className={cn(
-        'rounded-full border px-2 py-[2px] text-[10.5px] transition',
+        'rounded-full border px-2 py-[2px] text-[10.5px] transition-colors',
         active
           ? 'border-primary-line bg-primary-soft font-medium text-primary-deep'
-          : 'border-line-soft bg-panel-soft text-ink-soft hover:border-line-strong',
+          : 'border-line bg-panel text-ink-soft hover:border-line-strong hover:text-ink',
       )}
     >
       {label}

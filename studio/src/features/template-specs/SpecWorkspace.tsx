@@ -1,9 +1,27 @@
 import { useMemo, useRef, useState, type ReactNode } from 'react';
-import { GripVertical, ImagePlus, Plus, RotateCcw, Trash2, Upload } from 'lucide-react';
+import {
+  ChevronLeft,
+  GripVertical,
+  ImageOff,
+  ImagePlus,
+  Plus,
+  RotateCcw,
+  Trash2,
+  Upload,
+} from 'lucide-react';
 import { useModels } from '@/entities/model/api/model.queries';
+import { ParamFields } from '@/entities/model/ui/ParamFields';
+import {
+  paramControlsFor,
+  resolveParamValues,
+  type ParamValue,
+} from '@/entities/model/lib/paramForm';
 import { libraryApi } from '@/entities/library/api/library.api';
 import { useLibraryDetail, useLibraryTags } from '@/entities/library/api/library.queries';
 import { KIND_OPTIONS, viewQuery } from '@/entities/library/model/types';
+import { AssetChip } from '@/entities/library/ui/AssetChip';
+import { CaseCover } from '@/entities/library/ui/CaseCover';
+import { PackChip } from '@/entities/library/ui/PackChip';
 import { AssetPreview } from '@/entities/library/ui/AssetPreview';
 import {
   useSpecMutations,
@@ -303,9 +321,11 @@ export function SpecWorkspace() {
             }
           />
         ) : (
-          <div className="overflow-hidden rounded-2xl border border-line bg-panel">
+          /* 卡片而不是表格行：一张模板的"长相"是它的案例封面，列表里也该看得见。
+             操作放在卡片脚上，扫一眼就知道哪张能发布、哪张已停用。 */
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {rows.map(item => (
-              <SpecRow
+              <SpecCard
                 key={item.id}
                 item={item}
                 busy={busy}
@@ -342,24 +362,38 @@ export function SpecWorkspace() {
   }
 
   /* ---------- 编辑器 ---------- */
-  const paramFields = models.find(item => item.id === draft.model)?.paramSchema ?? {};
+  /* 参数控件由模型声明驱动（中文标签、档位文案都在 `paramControlsFor` 里）：
+     以前这里拿 `Object.entries(paramSchema)` 直接渲染，界面上印的是 `durationSec`
+     这种英文 key，枚举值也是裸的 `9:16`。 */
+  const paramControls = paramControlsFor(models.find(item => item.id === draft.model));
+  const paramOverrides: Record<string, ParamValue> = {};
+  for (const [key, value] of Object.entries(draft.params ?? {})) {
+    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+      paramOverrides[key] = value;
+    }
+  }
+  const paramValues = resolveParamValues(paramControls, paramOverrides);
   return (
     <section className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
+      {/* 操作栏吸顶：槽位一多就要滚很久，保存/发布不该被滚出屏幕。
+          `top-[54px]` 让开顶栏那条同为 sticky 的 header，否则会被它盖住。 */}
+      <div className="sticky top-[54px] z-20 -mx-1 flex flex-wrap items-center justify-between gap-3 border-b border-line-soft bg-panel px-1 py-2">
+        <div className="flex min-w-0 items-center gap-2">
           <button
             type="button"
-            className="text-xs text-ink-mute hover:text-ink"
+            className="flex shrink-0 items-center gap-1 rounded-lg border border-line-soft bg-panel px-2 py-1 text-[11px] text-ink-soft transition-colors hover:border-line hover:text-ink"
             onClick={() => {
               setDraft(null);
               clear();
             }}
           >
-            ← 返回列表
+            <ChevronLeft size={12} /> 列表
           </button>
-          <Chip>{draft.name || '未命名模板'}</Chip>
+          <span className="min-w-0 truncate text-[13.5px] font-medium text-ink">
+            {draft.name || '未命名模板'}
+          </span>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5">
           <Button variant="ghost" disabled={busy} onClick={() => void submit('validate')}>
             预检
           </Button>
@@ -374,7 +408,7 @@ export function SpecWorkspace() {
 
       {(note || error) && <Notice error={error} note={note} />}
 
-      <div className="grid items-start gap-4 lg:grid-cols-[1.05fr_1fr]">
+      <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)]">
         <div className="flex flex-col gap-4">
           <Section tone="primary" title="基本信息">
             <div className="grid gap-3 sm:grid-cols-[1.4fr_1fr]">
@@ -397,44 +431,16 @@ export function SpecWorkspace() {
                 />
               </FormField>
             </div>
-            {Object.keys(paramFields).length > 0 && (
-              <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                {Object.entries(paramFields).map(([name, field]) => (
-                  <FormField key={name} label={name}>
-                    {field.type === 'enum' ? (
-                      <Select
-                        block
-                        value={String(draft.params?.[name] ?? field.default ?? '')}
-                        options={(field.options ?? []).map(option => ({
-                          value: String(option),
-                          label: String(option),
-                        }))}
-                        onChange={event =>
-                          setDraft({
-                            ...draft,
-                            params: {...draft.params, [name]: event.target.value},
-                          })
-                        }
-                      />
-                    ) : (
-                      <TextInput
-                        value={String(draft.params?.[name] ?? '')}
-                        inputMode="numeric"
-                        onChange={event =>
-                          setDraft({
-                            ...draft,
-                            params: {
-                              ...draft.params,
-                              [name]:
-                                event.target.value === '' ? undefined : Number(event.target.value),
-                            },
-                          })
-                        }
-                      />
-                    )}
-                  </FormField>
-                ))}
-              </div>
+            {paramControls.length > 0 && (
+              <ParamFields
+                className="mt-3"
+                idPrefix="spec-param"
+                controls={paramControls}
+                values={paramValues}
+                onChange={(key, value) =>
+                  setDraft({...draft, params: {...draft.params, [key]: value}})
+                }
+              />
             )}
           </Section>
 
@@ -444,15 +450,18 @@ export function SpecWorkspace() {
             extra={
               /* 「加槽位」也按资产库的 kind 生成：库里多一类，这里就多一个入口，
                  和槽位卡片里的「类型」下拉同源（曾经这里写死四个按钮）。 */
-              TYPE_OPTIONS.map(item => (
-                <Button
-                  key={item.value}
-                  variant="ghost"
-                  onClick={() => addSlot(item.value as SpecSlotIn['type'])}
-                >
-                  <Plus size={13} /> {item.label}
-                </Button>
-              ))
+              <div className="flex flex-wrap items-center gap-0.5 rounded-full border border-line-soft bg-panel-soft p-0.5">
+                {TYPE_OPTIONS.map(item => (
+                  <button
+                    key={item.value}
+                    type="button"
+                    onClick={() => addSlot(item.value as SpecSlotIn['type'])}
+                    className="flex items-center gap-0.5 rounded-full px-2 py-[3px] text-[11px] text-ink-soft transition-colors hover:bg-panel hover:text-primary"
+                  >
+                    <Plus size={11} /> {item.label}
+                  </button>
+                ))}
+              </div>
             }
           >
             <div className="flex flex-col gap-2">
@@ -476,7 +485,9 @@ export function SpecWorkspace() {
                     }}
                     className={cn(
                       'rounded-xl border p-3 transition-colors',
-                      fixed ? 'border-ok-line bg-ok-soft/40' : 'border-line-soft bg-panel-soft',
+                      fixed
+                        ? 'border-ok-line bg-ok-soft/50'
+                        : 'border-line-soft bg-panel-soft hover:border-line',
                       drag?.key === slot.key && 'border-primary-line bg-primary-soft/60',
                     )}
                   >
@@ -489,13 +500,16 @@ export function SpecWorkspace() {
                         title="拖动调整顺序（顺序即编号）"
                       >
                         <GripVertical size={13} />
-                        <span className="flex h-4 w-4 items-center justify-center rounded-full bg-primary text-[10px] font-medium text-white">
+                        <span className="flex h-[18px] w-[18px] items-center justify-center rounded-full bg-primary text-[10px] font-semibold text-white shadow-[0_1px_3px_rgba(43,124,255,.35)]">
                           {index + 1}
+                        </span>
+                        <span className="text-[10.5px] text-ink-mute">
+                          {SLOT_TYPE_LABELS[slot.type]}
                         </span>
                       </span>
                       <button
                         type="button"
-                        className="text-[11px] text-ink-mute hover:text-danger"
+                        className="rounded-md p-1 text-ink-mute transition-colors hover:bg-danger-soft hover:text-danger"
                         title="删除槽位"
                         onClick={() => {
                           const name = slot.label?.trim() || SLOT_TYPE_LABELS[slot.type];
@@ -558,55 +572,63 @@ export function SpecWorkspace() {
                         />
                       </FormField>
                     </div>
-                    <div className="mt-2 grid gap-2 sm:grid-cols-[1fr_auto]">
-                      <FormField label="进提示词的用途说明">
+                    <div className="mt-2 flex flex-wrap items-end gap-2">
+                      <FormField label="进提示词的用途说明" className="min-w-[220px] flex-1">
                         <TextInput
                           value={slot.usage ?? ''}
                           placeholder="例如：确定同款同色外观；只补纹理与扣件"
                           onChange={event => patchSlot(index, {usage: event.target.value})}
                         />
                       </FormField>
-                      <div className="flex items-end gap-2">
-                        {slot.type !== 'pack' &&
-                          (slot.binding ?? 'user') === 'user' &&
-                          slot.type !== 'text' && (
-                            <>
-                              <FormField label="最少">
-                                <TextInput
-                                  value={String(slot.minCount ?? 1)}
-                                  onChange={event =>
-                                    patchSlot(index, {minCount: Number(event.target.value || 0)})
-                                  }
-                                  className="w-16"
-                                />
-                              </FormField>
-                              <FormField label="最多">
-                                <TextInput
-                                  value={String(slot.maxCount ?? 1)}
-                                  onChange={event =>
-                                    patchSlot(index, {maxCount: Number(event.target.value || 1)})
-                                  }
-                                  className="w-16"
-                                />
-                              </FormField>
-                            </>
-                          )}
-                        {fixed && (
-                          <Button
-                            variant="ghost"
-                            onClick={() => setPicker({target: 'slot', index})}
-                          >
-                            {slot.type === 'pack' ? '选择封装' : '选择素材'}
-                          </Button>
+                      {slot.type !== 'pack' &&
+                        (slot.binding ?? 'user') === 'user' &&
+                        slot.type !== 'text' && (
+                          <>
+                            <FormField label="最少">
+                              <TextInput
+                                value={String(slot.minCount ?? 1)}
+                                onChange={event =>
+                                  patchSlot(index, {minCount: Number(event.target.value || 0)})
+                                }
+                                className="w-[58px] text-center"
+                              />
+                            </FormField>
+                            <FormField label="最多">
+                              <TextInput
+                                value={String(slot.maxCount ?? 1)}
+                                onChange={event =>
+                                  patchSlot(index, {maxCount: Number(event.target.value || 1)})
+                                }
+                                className="w-[58px] text-center"
+                              />
+                            </FormField>
+                          </>
+                        )}
+                      {fixed && (
+                        <Button
+                          variant="secondary"
+                          onClick={() => setPicker({target: 'slot', index})}
+                        >
+                          {slot.type === 'pack' ? '选择封装' : '选择素材'}
+                        </Button>
+                      )}
+                    </div>
+                    {/* 固定槽位已经选好了东西：显示它是什么，而不是一串 id——
+                        那串 id 对作者没有任何信息量，还会被当成"是不是选错了"。 */}
+                    {fixed && (
+                      <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                        {slot.type === 'pack' ? (
+                          slot.packId ? (
+                            <PackChip packId={slot.packId} />
+                          ) : (
+                            <span className="text-[11px] text-ink-mute">还没选封装</span>
+                          )
+                        ) : slot.assetId ? (
+                          <AssetChip assetId={slot.assetId} />
+                        ) : (
+                          <span className="text-[11px] text-ink-mute">还没选素材</span>
                         )}
                       </div>
-                    </div>
-                    {fixed && (
-                      <p className="mt-1 truncate text-[11px] text-ink-mute">
-                        {slot.type === 'pack'
-                          ? `封装：${slot.packId || '未选择'}`
-                          : `素材：${slot.assetId || '未选择'}`}
-                      </p>
                     )}
                     {(slot.refMode ?? 'mixed') === 'attachment' && slot.type === 'text' && (
                       <p className="mt-1 text-[11px] text-ink-mute">
@@ -625,24 +647,26 @@ export function SpecWorkspace() {
           </Section>
         </div>
 
-        <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-4 lg:sticky lg:top-[112px]">
           <Section
             tone="ok"
             title="展示案例"
             extra={
               <>
-                <Button variant="ghost" disabled={busy} onClick={() => fileRef.current?.click()}>
-                  <Upload size={13} /> 上传
+                <Button variant="ghost" size="sm" disabled={busy} onClick={() => fileRef.current?.click()}>
+                  <Upload size={12} /> 上传
                 </Button>
                 <Button
                   variant="ghost"
+                  size="sm"
                   disabled={busy}
                   onClick={() => setPicker({target: 'demo', kind: 'image'})}
                 >
-                  <ImagePlus size={13} /> 选图片
+                  <ImagePlus size={12} /> 选图片
                 </Button>
                 <Button
                   variant="ghost"
+                  size="sm"
                   disabled={busy}
                   onClick={() => setPicker({target: 'demo', kind: 'video'})}
                 >
@@ -672,8 +696,8 @@ export function SpecWorkspace() {
             tone="primary"
             title="提示词"
             extra={
-              <Button variant="ghost" onClick={() => addSlot('text')}>
-                <Plus size={13} /> 文本素材
+              <Button variant="ghost" size="sm" onClick={() => addSlot('text')}>
+                <Plus size={12} /> 文本素材
               </Button>
             }
           >
@@ -714,9 +738,12 @@ function DemoCase({assetId, onClear}: {assetId: string | null; onClear: () => vo
   const detail = useLibraryDetail(assetId);
   if (!assetId) {
     return (
-      <p className="flex h-32 items-center justify-center rounded-xl border border-dashed border-line-strong bg-panel-soft px-3 text-[11px] text-ink-mute">
-        暂无案例
-      </p>
+      <div className="flex h-40 flex-col items-center justify-center gap-2 rounded-xl border border-line-soft bg-panel-soft">
+        <span className="grid size-9 place-items-center rounded-full bg-panel text-ink-mute ring-1 ring-inset ring-line-soft">
+          <ImageOff size={15} />
+        </span>
+        <span className="text-[11px] text-ink-mute">暂无案例</span>
+      </div>
     );
   }
   return (
@@ -762,12 +789,12 @@ function Section({
   return (
     <div className="rounded-2xl border border-line bg-panel p-4 shadow-[0_1px_2px_rgba(16,42,55,0.04)]">
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <h3 className="flex items-center gap-2 text-xs font-semibold text-ink">
-          <span className={cn('h-3 w-1 rounded-full', bar)} />
+        <h3 className="flex items-center gap-2 text-[12.5px] font-semibold tracking-[.2px] text-ink">
+          <span className={cn('h-3.5 w-[3px] rounded-full', bar)} />
           {title}
           {hint && <span className="font-normal text-ink-mute">· {hint}</span>}
         </h3>
-        {extra && <div className="flex items-center gap-1">{extra}</div>}
+        {extra && <div className="flex flex-wrap items-center gap-1">{extra}</div>}
       </div>
       {children}
     </div>
@@ -816,8 +843,9 @@ function PromptBox({
         }}
         onSelect={event => onCaret(event.currentTarget.selectionStart ?? 0)}
         className={cn(
-          'w-full rounded-lg border px-2.5 py-2 text-xs leading-relaxed outline-none',
-          'border-primary-line bg-primary-soft/30 text-ink focus:border-primary',
+          'w-full resize-y rounded-xl border px-3 py-2.5 text-xs leading-[1.7] outline-none transition-colors',
+          'border-line-soft bg-panel-soft text-ink placeholder:text-[#a9b8bf]',
+          'hover:border-line focus:border-primary-line focus:bg-panel focus:ring-2 focus:ring-primary/10',
         )}
       />
       <div className="mt-2 flex flex-wrap gap-1.5">
@@ -845,7 +873,13 @@ function PromptBox({
   );
 }
 
-function SpecRow({
+/**
+ * 模板卡片（列表页）。
+ *
+ * 用卡片而不是表格行：一张模板的"长相"是它的案例封面，表格里这条信息全丢了，
+ * 一排十一行看起来像数据库导出。操作放在卡片脚上 —— 扫一眼就知道哪张能发布。
+ */
+function SpecCard({
   item,
   busy,
   trashed,
@@ -865,53 +899,105 @@ function SpecRow({
   onRestore: () => void;
 }) {
   const slotCount = item.draft?.slots?.length ?? item.latest?.slots?.length ?? 0;
+  const model = item.draft?.model || item.latest?.model || '';
   return (
-    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line-soft px-4 py-3 last:border-b-0">
-      <div className="min-w-0">
-        <div className="flex items-center gap-2">
-          <span className="truncate text-xs font-medium text-ink">{item.name}</span>
-          {!trashed && (
+    <div className="group flex flex-col overflow-hidden rounded-2xl border border-line-soft bg-panel transition-all duration-200 hover:border-line hover:shadow-card">
+      <button
+        type="button"
+        onClick={onEdit}
+        disabled={trashed}
+        className="relative block w-full disabled:cursor-default"
+      >
+        <CaseCover
+          assetId={item.demoAssetId}
+          seed={item.key}
+          className="aspect-[16/9] w-full"
+          hoverPlay
+        />
+        <span className="absolute left-2 top-2">
+          {trashed ? (
+            <Chip tone="danger">回收站</Chip>
+          ) : (
             <Chip
               tone={
                 item.status === 'published' ? 'ok' : item.status === 'disabled' ? 'warn' : 'default'
               }
+              className="backdrop-blur-sm"
             >
               {STATUS_LABELS[item.status] ?? item.status}
             </Chip>
           )}
-          {!trashed && item.currentVersion > 0 && (
-            <span className="text-[11px] text-ink-mute">v{item.currentVersion}</span>
-          )}
-        </div>
-        <p className="mt-0.5 truncate text-[11px] text-ink-mute">
+        </span>
+        {!trashed && item.currentVersion > 0 && (
+          <span className="absolute right-2 top-2 rounded-full bg-black/40 px-1.5 py-0.5 text-[10px] font-medium leading-[14px] text-white/95 backdrop-blur-sm">
+            v{item.currentVersion}
+          </span>
+        )}
+      </button>
+
+      <div className="flex min-w-0 flex-1 flex-col gap-0.5 px-3 pt-2.5">
+        <button
+          type="button"
+          onClick={onEdit}
+          disabled={trashed}
+          className="truncate text-left text-[13px] font-medium text-ink transition-colors hover:text-primary disabled:cursor-default disabled:hover:text-ink"
+        >
+          {item.name}
+        </button>
+        <p className="truncate text-[11px] text-ink-mute">
           {trashed
             ? `删除于 ${item.deletedAt ? new Date(item.deletedAt).toLocaleString() : '—'}`
-            : `${slotCount} 个槽位`}
+            : `${slotCount} 个槽位${model ? ` · ${model}` : ''}`}
         </p>
       </div>
-      <div className="flex items-center gap-1.5">
+
+      <div className="mt-2 flex items-center gap-3 border-t border-line-soft px-3 py-2 text-[11px]">
         {trashed ? (
-          <Button variant="ghost" disabled={busy} onClick={onRestore}>
-            <RotateCcw size={13} /> 恢复
-          </Button>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={onRestore}
+            className="flex items-center gap-1 text-ink-soft transition-colors hover:text-primary disabled:opacity-50"
+          >
+            <RotateCcw size={11} /> 恢复
+          </button>
         ) : (
           <>
-            <Button variant="ghost" onClick={onEdit}>
+            <button
+              type="button"
+              onClick={onEdit}
+              className="font-medium text-primary transition-colors hover:text-primary-deep"
+            >
               编辑
-            </Button>
+            </button>
             {item.status !== 'disabled' && (
-              <Button variant="ghost" disabled={busy} onClick={onPublish}>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={onPublish}
+                className="text-ink-soft transition-colors hover:text-primary disabled:opacity-50"
+              >
                 发布
-              </Button>
+              </button>
             )}
             {item.status === 'published' && (
-              <Button variant="ghost" disabled={busy} onClick={onDisable}>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={onDisable}
+                className="text-ink-soft transition-colors hover:text-warn-deep disabled:opacity-50"
+              >
                 停用
-              </Button>
+              </button>
             )}
-            <Button variant="ghost" disabled={busy} onClick={onRemove}>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={onRemove}
+              className="ml-auto text-ink-mute transition-colors hover:text-danger disabled:opacity-50"
+            >
               删除
-            </Button>
+            </button>
           </>
         )}
       </div>
