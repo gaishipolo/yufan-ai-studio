@@ -425,6 +425,49 @@ def test_reused_pack_receipt_points_to_source_version(client: TestClient) -> Non
     assert functions[0].published_template_id
 
 
+def test_workbench_path_kind_follows_pack_not_function(client: TestClient) -> None:
+    """回执里的 `kind` 必须等于**投影出来的替换类型**，不是「没写就 product」。
+
+    manifest 里的功能 `kind` 是可选的：省略时投影照样按素材包的 kind 建模板。
+    如果回执写 `or 'product'`，人物包会被说成产品包，工作台据此把「替换范围」
+    和准备请求都按 product 发 —— 一条能用的模板被深链打开后当场 400。
+    """
+    headers = _headers(client)
+    video, image = _media(client, headers)
+    spec = {
+        "key": f"person-{suffix()}",
+        "name": "人物封装",
+        "video": {"assetId": video},
+        "packs": [
+            {
+                "key": "model",
+                "name": "目标人物",
+                "kind": "character",
+                "references": [{"key": "front", "assetId": image, "role": "front"}],
+            }
+        ],
+        "functions": [
+            {
+                "key": "swap",
+                "name": "换人",
+                "pack": "model",
+                "prompt": "把 {{Mixed 1}} 的人物换成 {{Mixed 2}}。",
+            }
+        ],
+    }
+    assert client.post(MANIFESTS, json=spec, headers=headers).status_code == 201
+    body = _publish(client, headers, spec["key"])
+    path = body["templates"][0]["workbenchPath"]
+    assert "kind=character" in path, path
+
+    templates = client.get("/api/v1/templates/video-templates", headers=headers).json()["data"]
+    projected = next(
+        item for item in templates["items"] if item["id"] == body["templates"][0]["templateId"]
+    )
+    # 回执说的类型必须和投影落的类型一致，否则深链打开的就是另一个模式。
+    assert projected["defaultKind"] == "character"
+
+
 def test_reuse_unknown_pack_is_rejected(client: TestClient) -> None:
     """预检就要挡住「指向不存在的已发布包」，别等发布时才发现。"""
     headers = _headers(client)

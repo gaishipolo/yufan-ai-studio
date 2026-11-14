@@ -711,6 +711,18 @@ def _shot(bundle: _Bundle) -> _Shot:
     )
 
 
+def _kind_of(function: _FunctionShot, packs: dict[str, tuple[str, str, str, int]]) -> str:
+    """这条功能实际落到哪种替换：文字换场景固定 scene，其余跟素材包走。
+
+    **不能用 `function.kind`**：manifest 里它是可选的，省略时投影仍按包的 kind
+    建模板，而回执写 `or 'product'` 会把人物包、场景包都说成产品包 —— 工作台
+    按这个参数决定「替换范围」与准备请求，人物包会当场 400。
+    """
+    if function.scene_prompt_default is not None:
+        return "scene"
+    return packs[function.pack_key][2]
+
+
 def _namespace(owner_id: str, key: str) -> Any:
     """与离线 packager 完全一致的命名空间。
 
@@ -881,7 +893,7 @@ async def publish(
             name=f"{shot.name} · {fn.name}",
             workbench_path=(
                 f"/templates?sourceId={shot.video_asset_id}"
-                f"&videoTemplateId={template_ids[fn.key]}&kind={fn.kind or 'product'}"
+                f"&videoTemplateId={template_ids[fn.key]}&kind={_kind_of(fn, packs)}"
             ),
         )
         for fn in shot.functions
