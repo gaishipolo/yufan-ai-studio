@@ -1,85 +1,47 @@
-# 通过 AI 会话封装视频模板
+# 通过 AI 会话封装模板（已迁移，入口见 `TEMPLATE_SPEC.md`）
 
-封装 = 一份 manifest 配置 + 一次发布。2026-11-14 起入口是
-`POST /api/v1/template-manifests` 系列接口（配置存库、发布时投影成工作台卡片），
-离线脚本 `api/scripts/package_video_template.py` 已下线。
+> **2026-11-14：本文描述的 `/template-manifests` 三步接口已随替换链下线。**
+> 封装入口现在是 `POST /api/v1/template-specs`（草稿）→ `/{key}/publish`（发布），
+> 契约与字段含义看 `docs/TEMPLATE_SPEC.md` §4（槽位词汇）/ §6（编号与编译）/ §8（接口）。
 
-## 前置：素材先进资产库
+## 为什么变了
 
-manifest 里只写 `assetId`，不再接受本地文件路径。先把原片与参考图上传：
+旧的 manifest 是「一份配置 = 原片 + 若干素材包 + 若干功能」，发布时投影成
+`video_templates` 行给替换工作台用。工作台下线之后这套投影没有读者了，而它表达不了
+「纯提示词 / 多图 / 图+视频 / 加音频」这些组合。新的模型把「一份模板 = 槽位 + 两段提示词
++ 模型」直接写进 `template_specs`，发布快照就是运行侧唯一事实。
 
-```bash
-curl -X POST "http://127.0.0.1:8080/api/v1/library/source-videos?filename=clip.mp4" \
-  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/octet-stream" \
-  --data-binary @clip.mp4
-curl -X POST "http://127.0.0.1:8080/api/v1/library/assets/upload?filename=front.png&kind=image" \
-  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/octet-stream" \
-  --data-binary @front.png
+## 现在怎么封装
+
+```
+① 素材先进资产库（模板里只存 asset id，不存本地路径）
+   POST /library/source-videos?filename=clip.mp4          # 视频原片
+   POST /library/assets/upload?filename=front.png&kind=image
+   （多视图属于同一对象时先封成「资产库封装」kind=pack，模板只引用它的 id）
+
+② 写一份规格
+   POST /template-specs
+   {
+     "key": "product-swap", "name": "产品替换", "model": "libtv-wan3-replacement",
+     "slots": [
+       {"key": "source", "type": "video", "binding": "fixed", "assetId": "<原片 id>", "position": 0},
+       {"key": "views", "type": "image", "source": "pack", "binding": "fixed",
+        "packId": "<封装 id>", "position": 1}
+     ],
+     "prompt": {"locked": "", "editable": "把 {{slot:source}} 里的人物换成 {{slot:views}} 的同款产品"}
+   }
+
+③ 发布并自检
+   POST /template-specs/{key}/publish     # 冻结版本，回执含 tokensPreview
+   POST /template-specs/{key}/compile     # 用一组真实素材看展开后的编号
 ```
 
-两个响应里的 `data.id` 就是 manifest 要的 `video.assetId` 与 `references[].assetId`。
+要点：
 
-## 三步发布
-
-```bash
-# 1. 预检：纯规则 + 素材存在性，不落库；返回配置指纹
-curl -X POST http://127.0.0.1:8080/api/v1/template-manifests/validate \
-  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d @manifest.json
-
-# 2. 保存草稿（幂等：同 key 同指纹返回原配置）
-curl -X POST http://127.0.0.1:8080/api/v1/template-manifests \
-  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d @manifest.json
-
-# 3. 发布：写素材包 + 视频模板，返回每张卡片的 templateId 与 workbenchPath
-curl -X POST http://127.0.0.1:8080/api/v1/template-manifests/<key>/publish \
-  -H "Authorization: Bearer $TOKEN"
-```
-
-需要 `template_pack:read` / `template_pack:create` / `template_pack:publish`；
-投影出来的素材包与模板另需 `template:pack:manage` / `template:pack:publish`。
-
-## manifest 形状
-
-```json
-{
-  "key": "dress-demo",
-  "name": "连衣裙演示",
-  "video": {"assetId": "<source-video-id>", "shared": false},
-  "packs": [
-    {
-      "key": "dress",
-      "name": "连衣裙",
-      "kind": "product",
-      "supportedScopes": ["worn"],
-      "references": [{"key": "front", "assetId": "<image-id>", "role": "front"}]
-    }
-  ],
-  "functions": [
-    {"key": "replace", "name": "产品替换", "pack": "dress",
-     "prompt": "对 {{Mixed 1}} 使用 {{Mixed 2}}。"}
-  ]
-}
-```
-
-- `packs` 可以为空（例如只做「文字换场景」）；`functions[].pack` 指向包 key。
-- **复用已发布素材包**：`{"key": "reuse", "kind": "product", "packId": "<id>"}`，
-  `packId` 取自 `GET /templates/replacement-packs/available`（**运行素材包** id，
-  不是配置行 id）；复用包不能覆盖名称 / 用途 / 范围。
-- `functions[].bindings` 与 `mediaOrder` 二选一：给了 bindings 就按用途绑定编号，
-  不给则由 `mediaOrder`（或素材包原序）决定 `{{Mixed N}}`。
-- 文字换场景：`functions[].kind = "scene"` + `scenePromptDefault`，不提供 `pack`、
-  `references`、`scopeOptions`。
-
-严格模式：未声明的键直接 422，不会静默忽略。
-
-## 幂等与版本
-
-- 同 `key` + 同指纹重复保存 → 返回原配置，不新增行。
-- 同 `key` 不同内容 → 409；**已发布的配置不可再改**，要改就换 `key` 发新版本。
-- 发布回执里的 `publishedPackId` / `publishedTemplateId` 指向**投影出来的运行行**，
-  重跑时拿它们比对远端即可；停用只下架、不清空历史。
-
-## 恢复会话
-
-把这份 manifest 与 `key` 交给 AI 即可继续：用同一个 `key` 和同样的内容重发
-`/validate` → `POST` → `/publish`，不需要进度文件（幂等边界在数据库上）。
+- **只写 `{{slot:key}}`**，别手写 `{{Mixed N}}` —— 编号由 `compile` 按 `position` 与实际
+  填充量算，写死了少填一张就全体错位（`compile` 会直接 400）。
+- **发布即冻结**：改模板 = 新版本，`template_spec_versions` 只插入不更新。
+- **执行上限 2000 字**：`compile` 产出要交给 `POST /tasks`，超过会 422，所以在发布与
+  编译两处提前拦（编写上限是 20000）。
+- 素材校验一律经 `core.ports.library_lookup`，模板不取字节、不查元数据 —— 字节只由
+  task 的 `generic_inputs.materialize` 落地。

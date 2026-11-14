@@ -133,7 +133,7 @@
 | `core/registry.py` | 命名注册表：进程内「按名字注册 → 按名字解析」的通用容器（供应商、驱动都靠它）。 |
 | `core/audit.py` | 操作留痕扩展点：`record(action, actor, target, detail)`，写入端由 `db/audit_sink.py` 注册；**写失败不影响业务**。 |
 | `core/ports/accounts.py` | 账号状态注入口（从 `api/` 下移）：低层（`generation`）也能问「发起人还在不在」，三态语义，未注册按放行。 |
-| `core/ports/generation_feed.py` | 任务中心的**生成来源**注入口（`Port(multi=False)` + 注册 / 复位 / 探测三件套）：来源方自带筛选、统计、分页候选与产物现签，聚合方不认识它的表。与 `core/feed.py`（老替换档案按 owner 全量返回）刻意分开；未注册返回空页是合法状态，另外两路照常显示。 |
+| `core/ports/generation_feed.py` | 任务中心的**生成来源**注入口（`Port(multi=False)` + 注册 / 复位 / 探测三件套）：来源方自带筛选、统计、分页候选与产物现签，聚合方不认识它的表。来源是「视频（tasks）+ 生图（image_jobs）」两路；未注册返回空页是合法状态，视频那一路照常显示。 |
 | `core/ports/template_catalog.py` | 模板封装的**对外只读目录**注入口：只列 / 取已发布的卡片与素材包快照（core 层不可变 dataclass），没有生成动作、没有素材判定。与旧 `core/ports/template_pack.py`（fixed/filtered 槽位，暴露 `verify_picks`）刻意不合并；未注册返回空结果是合法状态。 |
 | `core/ports/template_runtime.py` | 替换执行链读**封装运行投影**的注入口：素材包头部 / 冻结发布版本 / 视频模板快照 / 模板名批量反查 / 固定引用解析。与 `template_catalog` 读的是两套数据（编写侧 manifest vs 运行侧投影），刻意分开；未注册 **fail-closed**（抛 `RegistryError`），因为执行链拿不到冻结版本就准备不了任务，退化成「封装不存在」的 400 会把装配故障说成用户选错包。 |
 | `core/library_assets.py` | 批量取 v2 资产元数据与可读性：可读性只转发 `LibraryLookup`，没传 actor 时 fail-closed。两个模板模块共用。 |
@@ -254,7 +254,7 @@
 | `modules/task/dependencies.py` | 依赖装配。 |
 | `modules/task/worker.py` | 启动恢复：进程重启后把在飞任务接回去。 |
 | `modules/task/feed_schema.py` | 任务中心聚合契约：`TaskFeedItem` 用「来源前缀 + id」当 key，`video` / `image` 两路投影互斥，另带 `stats` / `warnings`。 |
-| `modules/task/feed_service.py` | 三路聚合（视频 / 生图 / 老替换档案）：逐路鉴权、逐路取统计与候选，合并排序后再切一次页；产物 key 在这里批量现签。 |
+| `modules/task/feed_service.py` | 两路聚合（视频 / 生图）：逐路鉴权、逐路取统计与候选，合并排序后再切一次页；产物 key 在这里批量现签。 |
 
 **asset · 素材资产（含归档库）**
 
@@ -276,34 +276,18 @@
 | `modules/asset/archive_schema.py` | 归档契约（`ArchivedAssetOut` 等）。 |
 | `modules/asset/archive_dependencies.py` | 归档 HTTP 依赖装配。 |
 
-**template · 替换执行链**
+**template_pack · 模板封装（模板规格：槽位 + 提示词 + 模型）**
+
+2026-11-14 P3 之后项目里只剩两个概念：**模板（本模块）与任务（task）**。
+`modules/template`（替换执行链）、素材包、视频模板、manifest 配置与替换调用档案
+全部下线；替换 = 普通 `POST /tasks` + 一个声明了 `replacement` 的模型。
 
 | 文件 | 职责 |
 |---|---|
-| `modules/template/router.py` | `/templates` 前缀下的替换子路由（素材包与视频模板的子路由在 `template_pack`）。 |
-| `modules/template/replacement_router.py` | 替换 HTTP 契约：IO 与状态规则交给 service。 |
-| `modules/template/replacement_service.py` | 业务编排：准备（物化素材 + 编译提示词）与状态流转；封装数据一律经 `template-runtime` 端口读。 |
-| `modules/template/repository.py` | 替换调用仓储（`replacement_runs` / `_run_inputs` / `_reviews`）。 |
-| `modules/template/schema.py` | 替换契约；已准备与已生成是不同状态。 |
-| `modules/template/pipeline.py` | 替换档案到生成框架（`GenerationStore` / `Pipeline`）的适配。 |
-| `modules/template/worker.py` | 上传准备与下载为非计费阶段；提交/轮询/超时复用生成框架。停用账号闸门、重试退避也在这。 |
-| `modules/template/dependencies.py` | 替换服务与三个权限码的依赖装配。 |
-| `modules/template/import_legacy.py` | `app import-template-runs`：老 `run.json` → `replacement_*` 三表（幂等）。 |
-| `modules/template/replacement_runtime/` | 执行器运行时：`prompt-compiler.mjs`（提示词编译）、`prompts/*.txt`（三类中文提示词模板）、`workbench/`（浏览器侧预览）。 |
-
-**template_pack · 模板封装（素材包 / 视频模板 / manifest）**
-
-| 文件 | 职责 |
-|---|---|
-| `modules/template_pack/router.py` | `/templates` 下的 `/replacement-packs` 与 `/video-templates`（路径与搬之前一致）。 |
-| `modules/template_pack/models.py` | manifest 四表（编写侧）+ `template_packs` 四表（运行侧投影）。 |
-| `modules/template_pack/manifest_service.py` | manifest 预检 / 幂等保存 / 发布 / 停用，发布时投影并冻结回执。 |
-| `modules/template_pack/pack_service.py` | 素材包草稿与发布、可用性判定（字节 + 用途齐全）。 |
-| `modules/template_pack/video_template_service.py` | 视频模板的创建、改提示词、绑定样片、固定蓝本。 |
-| `modules/template_pack/catalog_port_impl.py` | `template-catalog` 端口实现（读编写侧）。 |
-| `modules/template_pack/runtime_port_impl.py` | `template-runtime` 端口实现（读运行侧，替换链唯一入口）。 |
-| `modules/template_pack/import_legacy.py` / `video_template_import.py` | `app import-template-packs` / `import-video-templates`。 |
-| `modules/template_pack/seed.py` | 演示封装（一个已发布人物包 + 一个产品草稿）。 |
+| `modules/template_pack/models.py` | 三张表：`template_specs`（草稿 + 生命周期）/ `_versions`（发布快照，只插不改）/ `_slots`（槽位，`position` 即编号顺序）。 |
+| `modules/template_pack/spec_service.py` | 预检 / 幂等保存 / 发布冻结 / 编译（`compile` 是纯函数，不落库、不调 task）。 |
+| `modules/template_pack/spec_router.py` | `/template-specs` 六条 + `/{key}/compile`；权限 `template_pack:read/create/publish`。 |
+| `modules/template_pack/library_references.py` | 已发布版本里 `binding=fixed` 槽位咬住的资产 → 删除保护。 |
 
 **其余模块（结构同上，看文件名即可）**
 
@@ -338,7 +322,7 @@
 | `test_sessions.py` | 会话：`sid` 校验、续期轮换、吊销、踢设备。 |
 | `test_password_offload.py` | 口令哈希不阻塞事件循环。 |
 | `test_task_api.py` | 任务接口。 |
-| `test_task_feed.py` | 任务中心三路聚合：混合分页 / 状态分组 / 搜索 / 权限 / 未注册 reader 返回空页 / 产物 URL 现签。 |
+| `test_task_feed.py` | 任务中心两路聚合：混合分页 / 状态分组 / 搜索 / 权限 / 未注册 reader 返回空页 / 产物 URL 现签。 |
 | `test_generation.py` | 生成编排：提交/轮询/重试/超时。 |
 | `test_resume.py` | 进程重启后的任务恢复。 |
 | `test_catalog.py` | 模型目录。 |
@@ -418,7 +402,7 @@
 | `entities/task/api/task.queries.ts` | 任务查询键与 hooks。 |
 | `entities/task/model/types.ts` | 任务类型与状态机（queued → running → completed / failed）。 |
 | `entities/task/model/types.test.ts` | 状态机与展示名兜底的用例。 |
-| `entities/task/model/feed.types.ts` | 任务中心三路聚合的类型（`TaskFeedItem` / `TaskFeedStats` / `TaskFeedSource`）。 |
+| `entities/task/model/feed.types.ts` | 任务中心两路聚合的类型（`TaskFeedItem` / `TaskFeedStats` / `TaskFeedSource`）。 |
 | `entities/task/ui/TaskCard.tsx` | 任务卡片（状态、进度、操作）。 |
 | `entities/task/ui/ImageTaskCard.tsx` | 生图卡片：与视频卡同栅格，但**不参与勾选**（批量操作只作用于通用视频任务）；`attention` 显示「成图待恢复」。 |
 | `entities/task/ui/TaskCard.test.tsx` | 卡片渲染与状态文案。 |
@@ -535,7 +519,7 @@
 | `pages/storyboards/StoryboardsPage.tsx` | 分镜模板页。 |
 | `pages/image/ImagePage.tsx` | 生图历史页（分页器在「总数未知」时不回退页码）。 |
 | `pages/studio/StudioPage.tsx` | 创作台：模型/时长/比例全部来自 `/models`，加模型不改这里。 |
-| `pages/task-center/TaskCenterPage.tsx` | 任务中心：三路来源（视频 / 生图 / 替换档案）、筛选全由 URL 承载；批量下载 / 收藏 / 删除只作用于勾选的通用视频任务。 |
+| `pages/task-center/TaskCenterPage.tsx` | 任务中心：两路来源（视频 / 生图）、筛选全由 URL 承载；批量下载 / 收藏 / 删除只作用于勾选的通用视频任务。 |
 | `pages/usage/UsagePage.tsx` | 用量看板 · 骨架占位页。 |
 | `pages/login/LoginPage.tsx` | 登录页（裸布局）+ 会话结束原因文案。 |
 | `pages/not-found/NotFoundPage.tsx` | 404。 |
@@ -662,7 +646,7 @@
 | `mocks/routes/catalog.mock.ts` | 资产 / 模板 / 分镜 / 镜头 / 生图记录的 mock。 |
 | `mocks/routes/generation.mock.ts` | 生成（同步返回任务 / 生图记录）的 mock，含 `POST /images/{id}/retry`。 |
 | `mocks/routes/models.mock.ts` | 模型目录 mock（与后端 echo 供应商声明一致）。 |
-| `mocks/routes/task.mock.ts` | 任务 mock：`/tasks/feed` 三路聚合、PATCH 幂等置位收藏、批量删除回 `skipped`。 |
+| `mocks/routes/task.mock.ts` | 任务 mock：`/tasks/feed` 两路聚合、PATCH 幂等置位收藏、批量删除回 `skipped`。 |
 
 ### 4.10 构建配置与脚本
 
@@ -736,28 +720,31 @@ CreateTaskModal → POST /tasks
    有：只续轮询（不重复提交，否则重复扣费）；无：重置现场重新排队
 ```
 
-### 5.4 替换模板（老链路，v2 重做中；现状与契约见 `TEMPLATE_LIBRARY_V2.md`）
+### 5.4 模板（规格 → 填表 → 任务）
 
 ```
-① 上传 / 登记    POST /assets/archive/upload | /import   → 落归档盘 + 索引（非计费）
-② 准备          POST /templates/replacement-runs          → 归档校验、算 sha256、写清单
-③ 提交          POST /templates/replacement-runs/{id}/execute
-                    └─ 仅当估价 = 0 积分才提交（花额度前必须过权限 template:use）
-④ 轮询 / 恢复     generation 框架 + replacement_worker（准备与下载不计费）
-⑤ 成片          library/ 下，索引进 runs/，前端 ArchivedResults 展示
+① 封装          POST /template-specs（草稿）→ /publish（冻结版本）
+                   slots[] + prompt{locked, editable} + model + params
+② 填表          GET /template-specs/published → 用户填槽位
+③ 编译          POST /template-specs/{key}/compile  → 纯函数，⟶ 请求体形状
+④ 提交          POST /tasks（前端摊平字段，模板层不 import task）
 ```
 
-停用账号的闸门在 `prepare_upload` 里，位置在 `task_id` 分支**之后** ——
-意思是「已经提交给上游的任务」不因为账号被停用而中断（钱已经花了，让它跑完）。
+`{{Mixed N}}` 由 `compile` 按 `position` + 实际填充量算出来，不落库；模板库看到的是
+缩略图，不是数字。历史任务只认 `tasks` 那一行 —— **task 不知道模板存在**。
 
-### 5.5 任务中心（只读三路聚合）
+旧的替换工作台（`/templates/replacement-runs` 那套：原片 + 素材包 + 成片复核）已在
+2026-11-14 整体下线，替换改由 `POST /tasks` 承载（模型侧声明 `replacement`）。
+
+### 5.5 任务中心（只读两路聚合）
 
 ```
 GET /tasks/feed ── modules/task/feed_service.py
   ├─ video_tasks       本模块 repository          （task:read / task:read:all）
-  ├─ image_jobs        core.ports.generation_feed → modules/image/feed_provider
-  │                                             （image:read / image:read:all）
-  └─ replacement_runs  core.feed → modules/template/feed_provider（template:read）
+  └─ image_jobs        core.ports.generation_feed → modules/image/feed_provider
+                                                    （image:read / image:read:all）
+
+（第三路「替换档案」随替换链在 2026-11-14 下线：替换任务就是 tasks 里的一行）
 ```
 
 逐路鉴权、逐路取统计与候选 → 合并排序 → 再切一次页；`statsOnly` 只回统计与 `total`。
@@ -765,7 +752,7 @@ GET /tasks/feed ── modules/task/feed_service.py
 前端拿到的 `outputUrl` / `coverUrl` 就是可访问地址，换存储驱动不会裂图。
 **这一层只读**：收藏走 `PATCH /tasks/{id}`（显式 `{favorited:true}`，不用 toggle）、
 批量删除走 `DELETE /tasks`、生图失败重试走 `POST /images/{id}/retry`；
-各写侧只作用于自己那一类来源，生图与替换档案不参与勾选。
+各写侧只作用于自己那一类来源，生图不参与勾选。
 
 ---
 
