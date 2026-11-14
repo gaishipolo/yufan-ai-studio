@@ -3,13 +3,14 @@ import { GripVertical, ImagePlus, Plus, RotateCcw, Trash2, Upload } from 'lucide
 import { useModels } from '@/entities/model/api/model.queries';
 import { libraryApi } from '@/entities/library/api/library.api';
 import { useLibraryDetail } from '@/entities/library/api/library.queries';
+import { AssetPreview } from '@/entities/library/ui/AssetPreview';
 import {
   useSpecMutations,
   useSpecs,
   useTrashedSpecs,
 } from '@/entities/template-spec/api/spec.queries';
 import type { SpecSlotIn, TemplateSpecIn, TemplateSpecOut } from '@/shared/api/schema';
-import { Button, Chip, CoverImage, EmptyState, FormField, Select, TextInput } from '@/shared/ui';
+import { Button, Chip, EmptyState, FormField, Select, TextInput } from '@/shared/ui';
 import { cn } from '@/shared/lib/cn';
 import { AssetPicker, type PickKind, type PickedAsset } from '@/features/template-specs/AssetPicker';
 import {
@@ -413,48 +414,6 @@ export function SpecWorkspace() {
           </Section>
 
           <Section
-            tone="ok"
-            title="展示案例"
-            extra={
-              <>
-                <Button variant="ghost" disabled={busy} onClick={() => fileRef.current?.click()}>
-                  <Upload size={13} /> 上传
-                </Button>
-                <Button
-                  variant="ghost"
-                  disabled={busy}
-                  onClick={() => setPicker({target: 'demo', kind: 'image'})}
-                >
-                  <ImagePlus size={13} /> 选图片
-                </Button>
-                <Button
-                  variant="ghost"
-                  disabled={busy}
-                  onClick={() => setPicker({target: 'demo', kind: 'video'})}
-                >
-                  选视频
-                </Button>
-              </>
-            }
-          >
-            <DemoCase
-              assetId={draft.demoAssetId ?? null}
-              onClear={() => setDraft({...draft, demoAssetId: null})}
-            />
-            <input
-              ref={fileRef}
-              type="file"
-              accept="image/*,video/*"
-              className="hidden"
-              onChange={event => {
-                const file = event.target.files?.[0];
-                event.target.value = '';
-                if (file) void uploadDemo(file);
-              }}
-            />
-          </Section>
-
-          <Section
             tone="violet"
             title="槽位"
             extra={
@@ -634,6 +593,48 @@ export function SpecWorkspace() {
 
         <div className="flex flex-col gap-4">
           <Section
+            tone="ok"
+            title="展示案例"
+            extra={
+              <>
+                <Button variant="ghost" disabled={busy} onClick={() => fileRef.current?.click()}>
+                  <Upload size={13} /> 上传
+                </Button>
+                <Button
+                  variant="ghost"
+                  disabled={busy}
+                  onClick={() => setPicker({target: 'demo', kind: 'image'})}
+                >
+                  <ImagePlus size={13} /> 选图片
+                </Button>
+                <Button
+                  variant="ghost"
+                  disabled={busy}
+                  onClick={() => setPicker({target: 'demo', kind: 'video'})}
+                >
+                  选视频
+                </Button>
+              </>
+            }
+          >
+            <DemoCase
+              assetId={draft.demoAssetId ?? null}
+              onClear={() => setDraft({...draft, demoAssetId: null})}
+            />
+            <input
+              ref={fileRef}
+              type="file"
+              accept="image/*,video/*"
+              className="hidden"
+              onChange={event => {
+                const file = event.target.files?.[0];
+                event.target.value = '';
+                if (file) void uploadDemo(file);
+              }}
+            />
+          </Section>
+
+          <Section
             tone="primary"
             title="提示词"
             extra={
@@ -687,31 +688,23 @@ function DemoCase({assetId, onClear}: {assetId: string | null; onClear: () => vo
   const detail = useLibraryDetail(assetId);
   if (!assetId) {
     return (
-      <p className="rounded-xl border border-dashed border-line-strong bg-panel-soft px-3 py-6 text-center text-[11px] text-ink-mute">
+      <p className="flex h-32 items-center justify-center rounded-xl border border-dashed border-line-strong bg-panel-soft px-3 text-[11px] text-ink-mute">
         暂无案例
       </p>
     );
   }
-  const video = detail.data?.kind === 'video';
-  const src = detail.data?.previewUrl ?? detail.data?.streamUrl ?? detail.data?.url;
   return (
-    <div className="flex items-center gap-3 rounded-xl border border-line-soft bg-panel-soft p-2">
-      {video && src ? (
-        <video src={src} muted controls className="h-24 w-40 rounded-lg bg-black object-contain" />
-      ) : (
-        <CoverImage
-          src={detail.data?.coverUrl ?? undefined}
-          seed={assetId}
-          alt="展示案例"
-          className="h-24 w-40 rounded-lg"
-        />
-      )}
-      <div className="min-w-0 flex-1">
-        <p className="truncate text-[11px] text-ink-soft">{detail.data?.name ?? assetId.slice(0, 8)}</p>
+    <div className="rounded-xl border border-line-soft bg-panel-soft p-2">
+      {/* 视频只给封面 + 播放按钮，点开才取流；封面一直有，不会出现黑块。 */}
+      <AssetPreview assetId={assetId} className="h-44 w-full rounded-lg" />
+      <div className="mt-2 flex items-center justify-between gap-2 px-1">
+        <p className="truncate text-[11px] text-ink-soft">
+          {detail.data?.name ?? assetId.slice(0, 8)}
+        </p>
         <button
           type="button"
           onClick={onClear}
-          className="mt-1 text-[11px] text-ink-mute transition-colors hover:text-danger"
+          className="shrink-0 text-[11px] text-ink-mute transition-colors hover:text-danger"
         >
           移除案例
         </button>

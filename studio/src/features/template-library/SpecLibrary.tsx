@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom';
 import { Play, X } from 'lucide-react';
 import { libraryApi } from '@/entities/library/api/library.api';
 import { useLibraryDetail } from '@/entities/library/api/library.queries';
+import { AssetPreview } from '@/entities/library/ui/AssetPreview';
 import { useModels } from '@/entities/model/api/model.queries';
 import { useCreateTask } from '@/entities/task/api/task.queries';
 import { usePublishedSpecs, useSpecCompile } from '@/entities/template-spec/api/spec.queries';
@@ -92,7 +93,6 @@ function DemoCase({
   className?: string;
   big?: boolean;
 }) {
-  const detail = useLibraryDetail(assetId);
   if (!assetId) {
     return (
       <div
@@ -105,26 +105,9 @@ function DemoCase({
       </div>
     );
   }
-  const src = detail.data?.previewUrl ?? detail.data?.streamUrl ?? detail.data?.url;
-  if (detail.data?.kind === 'video' && src) {
-    return (
-      <video
-        src={src}
-        controls={big}
-        muted
-        playsInline
-        className={cn('rounded-lg bg-black object-cover', className)}
-      />
-    );
-  }
-  return (
-    <CoverImage
-      src={detail.data?.coverUrl ?? undefined}
-      seed={assetId}
-      alt="展示案例"
-      className={cn('rounded-lg', className)}
-    />
-  );
+  /* 卡片里只给封面（视频带角标），详情里才可播：播放要取整份 blob，
+     列表上每张卡都拉一遍视频流不值得。 */
+  return <AssetPreview assetId={assetId} className={cn('rounded-lg', className)} playable={big} />;
 }
 
 /** 资产库封装：成员数由库给，这里只显示「N 张」与首图，不展开成员顺序。 */
