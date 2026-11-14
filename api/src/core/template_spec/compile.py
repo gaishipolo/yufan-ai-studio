@@ -59,6 +59,7 @@ def compile_spec(
     attachment_ids: list[str] = []
     text_ids: list[str] = []
     counter = 0
+    text_counter = 0
 
     for slot in ordered:
         assets = _assets_of(slot, fills.get(slot.key))
@@ -83,11 +84,19 @@ def compile_spec(
                 )
 
         if slot.ref_mode == "attachment":
-            # 附加输入不占号：音频/文本塞进视觉编号会让后面的图整体偏移。
-            tokens[slot.key] = ()
+            # 附加输入不占**视觉**编号：音频/文本塞进 Mixed 会让后面的图整体偏移。
+            # 但文本另有自己的编号空间（`{{Text N}}`）：执行层按 `textLibraryIds`
+            # 的顺序注入正文，所以 N 必须与本段追加进 `text_ids` 的顺序一致。
             if slot.type == "text":
+                assigned = tuple(
+                    f"{{{{Text {text_counter + index + 1}}}}}"
+                    for index in range(len(assets))
+                )
+                text_counter += len(assets)
+                tokens[slot.key] = assigned
                 text_ids.extend(asset.asset_id for asset in assets)
             else:
+                tokens[slot.key] = ()
                 attachment_ids.extend(asset.asset_id for asset in assets)
             continue
 
@@ -104,11 +113,8 @@ def compile_spec(
             "请把一组图放进资产库封装，或用附加输入"
         )
 
-    expander = _expander(by_key, tokens)
-    prompt = _join(
-        expander(spec.prompt.locked, "固定段"),
-        expander(spec.prompt.editable, "可编辑段"),
-    )
+    prepend = _expander(by_key, tokens)
+    prompt = prepend(spec.prompt, "提示词")
     return CompiledRequest(
         model=spec.model,
         prompt=prompt,
@@ -154,7 +160,8 @@ def _expander(
             slot = by_key.get(key)
             if slot is None:
                 raise BadRequest(f"{where}引用了不存在的槽位：{key}")
-            if slot.ref_mode == "attachment":
+            if slot.ref_mode == "attachment" and slot.type != "text":
+                # 文本槽位有 `{{Text N}}` 这个独立编号空间，可以引用；音频没有。
                 raise BadRequest(
                     f"{where}不能引用「{_label(slot)}」：它是附加输入，不参与编号"
                 )
@@ -182,11 +189,6 @@ def _expander(
         return result.strip()
 
     return expand
-
-
-def _join(*parts: str) -> str:
-    """两段之间的分隔固定为两个换行；空段直接略过，不留空行。"""
-    return "\n\n".join(part for part in parts if part)
 
 
 def _label(slot: InputSlot) -> str:

@@ -81,6 +81,13 @@
 | 权限码 `template:read/use/review`、`template:pack:manage/publish` **已删** | 角色配置 | 填表用 `template_pack:read`，封装用 `template_pack:create/publish`。内置角色已改（viewer/editor 只读、asset_specialist 可封装）；自建角色里若还留着旧码，会显示成「无法识别」 |
 | `GET /tasks/feed` 的 `source` 只剩 `all` / `video` / `image` | 前端/脚本 | `source=replacement` 会 422；替换任务就是 `tasks` 里的一行 |
 
+| 本轮 | **提示词合成一段 + 展示案例 + 回收站**（2026-11-14）：`prompt_locked`/`prompt_editable` → 单个 `prompt`（迁移 `c9a1f4e27b53`，草稿 JSON 一并改写）；`compile` 去掉 `promptOverride`，文本槽位改出 `{{Text N}}` 并进 `textLibraryIds`；新增 `demoAssetId`（只存草稿、不进快照）＋模板库卡片/详情展示，没设显示「暂无案例」；规格删除改软删并加回收站（`DELETE` / `GET /trash` / `POST /{key}/restore`） | 用户原话「提示词不用区分固定段和可编辑段，要可变通过文本插槽实现」—— 两段的存在理由只有"模板库改 editable"，入口一取消就没有区别了。**改类型时槽位 key 只在没被引用过时跟着改名**（引用过改名会让 `{{slot:…}}` 静默失效）。封装页 key 全部自动生成、界面不显示 |
+
+| `TemplateSpec.prompt` 由 `{locked, editable}` 变成**一段字符串** | 前端/脚本 | 迁移已把两段用空行拼好；`promptOverride` 一并删除，传它会 422 |
+| `compile` 出参里文本槽位的 token 是 `{{Text N}}` | 前端/脚本 | 与 `textLibraryIds` 顺序一一对应；`audio` 仍然不可引用 |
+| 新增 `demoAssetId`（模板出参） | 前端 | 展示案例，图或视频；**不进发布快照**，改它不用发新版 |
+| `DELETE /template-specs/{key}` 是软删 | 前端/运维 | 进回收站，`GET /trash` 列出、`POST /{key}/restore` 恢复；资产引用照旧算（不按 `deleted_at` 过滤） |
+
 | 变化 | 谁受影响 | 说明 |
 |---|---|---|
 | 未在 `param_schema` 声明的参数 → **400** + `availableParams` | 前端/脚本 | 前端参数区本来就由 `GET /models` 渲染，无需改动；手写参数的地方会立刻看到 400 |

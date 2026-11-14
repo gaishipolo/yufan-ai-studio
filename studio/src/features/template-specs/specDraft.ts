@@ -1,5 +1,4 @@
 import type {
-  SpecPromptIn,
   SpecSlotIn,
   TemplateSpecIn,
   TemplateSpecOut,
@@ -26,10 +25,6 @@ export const SLOT_TYPE_LABELS: Record<SlotType, string> = {
 
 export function newKey(prefix: string): string {
   return `${prefix}-${Math.random().toString(36).slice(2, 8)}`;
-}
-
-export function blankPrompt(): SpecPromptIn {
-  return {locked: '', editable: ''};
 }
 
 /** 槽位 key 的前缀：自动生成、界面上不显示，但提示词里的 `{{slot:image_1}}` 要人能读。 */
@@ -73,7 +68,7 @@ export function blankSpec(): TemplateSpecIn {
     description: '',
     model: '',
     params: {},
-    prompt: blankPrompt(),
+    prompt: '',
     slots: [blankSlot(0, 'image', [])],
     attributes: {},
   };
@@ -89,13 +84,39 @@ export function fromSpecOut(out: TemplateSpecOut): TemplateSpecIn {
       description: out.description,
       model: out.latest.model,
       params: out.latest.params ?? {},
-      prompt: out.latest.prompt ?? blankPrompt(),
+      prompt: out.latest.prompt ?? '',
       slots: (out.latest.slots ?? []).map((slot, index) => ({...slot, position: index})),
       attributes: {},
       revision: out.revision,
     };
   }
   return {...blankSpec(), key: out.key, name: out.name, revision: out.revision};
+}
+
+/**
+ * 改槽位类型时顺带改名 —— **只在没被引用过时**。
+ *
+ * key 是按类型自动生成的（`image_1`），类型改成视频后还叫 `image_1` 会误导人；
+ * 但提示词里可能已经有 `{{slot:image_1}}`，改名等于让那条引用静默失效（编译期
+ * 报「引用了不存在的槽位」）。所以：用过就不动，没用过才跟着类型改名。
+ */
+export function rekeySlot(
+  slots: SpecSlotIn[],
+  index: number,
+  nextType: SlotType,
+  prompt: string,
+): SpecSlotIn[] {
+  const slot = slots[index];
+  if (!slot || slot.type === nextType) return slots;
+  const used = new RegExp(`\\{\\{slot:${slot.key}(?:\\*|\\.\\d+)?\\}\\}`).test(prompt);
+  if (used) return slots;
+  const next = slots.slice();
+  next[index] = {
+    ...slot,
+    type: nextType,
+    key: nextSlotKey(slots.filter((_, position) => position !== index), nextType),
+  };
+  return next;
 }
 
 /** 提交前把槽位按当前顺序重排 `position`：拖拽之后位置就是唯一真相。 */
@@ -117,13 +138,15 @@ export interface RefChip {
 /**
  * 可被提示词引用的槽位。
  *
- * `attachment`（音频/文本）不参与编号，所以不能引用 —— 服务端会 400。
- * 这里提前不显示，避免用户写出必然失败的引用。
+ * `text` 槽位虽然是附加输入（不占 Mixed 编号），但有自己的一套编号：编译时
+ * 按槽位顺序拆成 `{{Text N}}`，执行层再按 `textLibraryIds` 把正文注进去。
+ * 这是模板里唯一"填表时可换内容"的地方，所以它必须能引用。
+ * `audio` 没有编号空间，引用必然 400 —— 这里直接不显示。
  */
 export function referenceChips(spec: TemplateSpecIn): RefChip[] {
   let ordinal = 0;
   return (spec.slots ?? [])
-    .filter(slot => (slot.refMode ?? 'mixed') === 'mixed')
+    .filter(slot => (slot.refMode ?? 'mixed') === 'mixed' || slot.type === 'text')
     .sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
     .flatMap(slot => {
       ordinal += 1;

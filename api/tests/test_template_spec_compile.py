@@ -13,7 +13,6 @@ from core.template_spec import (
     FilledAsset,
     FilledSlot,
     InputSlot,
-    PromptParts,
     TemplateSpec,
     compile_spec,
     validate_spec,
@@ -28,12 +27,18 @@ NOTE = FilledAsset("t-note", "text", name="文案.md")
 
 
 def _spec(*slots: InputSlot, locked: str = "", editable: str = "x {{slot:hero}}") -> TemplateSpec:
+    """`locked` / `editable` 只是这套用例的写法习惯，落到模型上是**一段**提示词。
+
+    两段合并之后（2026-11-14）"哪段能被模板库改"这个概念不存在了，但把两段拼起来
+    的语义与旧 `compile` 一致（空段不留空行），所以这里保留两个参数、拼成一段，
+    用例关注的东西（编号派生、引用展开）一个字都不用改。
+    """
     return TemplateSpec(
         key="demo",
         name="演示",
         model="libtv-wan3-replacement",
         slots=tuple(slots),
-        prompt=PromptParts(locked=locked, editable=editable),
+        prompt="\n\n".join(part for part in (locked, editable) if part),
     )
 
 
@@ -152,7 +157,13 @@ def test_fixed_pack_cannot_be_swapped() -> None:
         compile_spec(spec, {"detail": FilledSlot("detail", (DETAIL_1,), pack_id="pack-2")})
 
 
-def test_text_slot_goes_to_text_ids_and_never_takes_a_number() -> None:
+def test_text_slot_gets_its_own_number_space() -> None:
+    """文本槽位**不占 Mixed 编号**，但有独立的 `{{Text N}}` 编号。
+
+    执行层按 `textLibraryIds` 的顺序把 `{{Text N}}` 换成正文（`core/library_text.py`），
+    所以 N 必须与 `text_ids` 的顺序一致 —— 这正是"提示词哪里要可变就放一个文本槽位"
+    的实现方式：模板库选哪份文案，第 N 份就是它。
+    """
     spec = _spec(
         _source(),
         _user("hero", 1),
@@ -160,14 +171,40 @@ def test_text_slot_goes_to_text_ids_and_never_takes_a_number() -> None:
             key="brief", type="text", binding="user", ref_mode="attachment",
             position=2, label="文案",
         ),
-        editable="{{slot:hero}}",
+        editable="{{slot:hero}}｜{{slot:brief}}",
     )
     out = compile_spec(
         spec, _fills(source=(VIDEO,), hero=(HERO,), brief=(NOTE,))
     )
     assert out.text_ids == ("t-note",)
     assert out.reference_ids == ("v-src", "i-hero")
-    assert "brief" not in out.slot_tokens
+    assert out.prompt == "{{Mixed 2}}｜{{Text 1}}"
+    assert out.slot_tokens["brief"] == ("{{Text 1}}",)
+    # 视觉编号不受文本槽位影响：两个 Mixed，一个 Text，各数各的
+    assert out.slot_tokens["hero"] == ("{{Mixed 2}}",)
+
+
+def test_two_text_slots_number_in_slot_order() -> None:
+    """两份文案：`{{Text N}}` 按槽位顺序排，与 `text_ids` 的顺序必须逐项对齐。"""
+    spec = _spec(
+        _source(),
+        InputSlot(
+            key="brief", type="text", binding="user", ref_mode="attachment",
+            position=1, label="文案",
+        ),
+        InputSlot(
+            key="tone", type="text", binding="user", ref_mode="attachment",
+            position=2, label="语气",
+        ),
+        locked="{{slot:tone}} / {{slot:brief}}",
+        editable="{{slot:source}}",
+    )
+    out = compile_spec(
+        spec,
+        _fills(source=(VIDEO,), brief=(NOTE,), tone=(FilledAsset("t-tone", "text"),)),
+    )
+    assert out.text_ids == ("t-note", "t-tone")
+    assert out.prompt.startswith("{{Text 2}} / {{Text 1}}")
 
 
 @pytest.mark.parametrize(

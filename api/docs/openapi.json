@@ -12271,25 +12271,12 @@
             },
             "type": "object",
             "title": "Slotvalues"
-          },
-          "promptOverride": {
-            "anyOf": [
-              {
-                "type": "string",
-                "maxLength": 20000
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Promptoverride",
-            "description": "改写后的可编辑段提示词；`locked` 段不受影响"
           }
         },
         "additionalProperties": false,
         "type": "object",
         "title": "SpecCompileIn",
-        "description": "填表结果：`{slotKey: [assetId…]}`，可带一份改写后的可编辑段提示词。\n\n`source=pack` 的槽位传一个封装 id；`source=asset` 的槽位按用户挑选顺序传。\n`version` 为空表示用当前发布版本。\n\n`promptOverride` 是**填表时改写的 `editable` 段**（`locked` 段永不可改）。\n不传 = 用发布版本里那份原文。模板的 `editable` 为空（提示词全固定）时传它会 400 ——\n那是模板作者明确关掉的入口，不该由调用方绕开。"
+        "description": "填表结果：`{slotKey: [assetId…]}`。\n\n`source=pack` 的槽位传一个封装 id；`source=asset` 的槽位按用户挑选顺序传。\n`version` 为空表示用当前发布版本。\n\n**没有 `promptOverride`**（2026-11-14 起）：模板库不改文字。需要可变内容的地方\n在模板里放 `text` 槽位 —— 填表时选一份文案，`compile` 把它排在 `{{Text N}}`\n的第 N 位，执行层按 `textLibraryIds` 注入正文。这个入口曾经存在（改写\"可编辑段\"），\n与\"提示词只有一段\"冲突，一并删掉。"
       },
       "SpecCompileOut": {
         "properties": {
@@ -12341,25 +12328,6 @@
         ],
         "title": "SpecCompileOut",
         "description": "编译结果（模板层）。\n\n**不是**任何端点的请求体：`/tasks` 的时长与画幅是顶层字段、不接受自由\n`params`。摊平由提交方按目标端点做（模板库页面对照生成的 `CreateTaskIn` 类型），\n这里刻意不假设端点，否则换端点就要改编译规则。"
-      },
-      "SpecPromptIn": {
-        "properties": {
-          "locked": {
-            "type": "string",
-            "maxLength": 20000,
-            "title": "Locked",
-            "default": ""
-          },
-          "editable": {
-            "type": "string",
-            "maxLength": 20000,
-            "title": "Editable",
-            "default": ""
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "title": "SpecPromptIn"
       },
       "SpecPublishOut": {
         "properties": {
@@ -12633,7 +12601,8 @@
             "title": "Params"
           },
           "prompt": {
-            "$ref": "#/components/schemas/SpecPromptIn"
+            "type": "string",
+            "title": "Prompt"
           },
           "slots": {
             "items": {
@@ -13214,7 +13183,10 @@
             "title": "Params"
           },
           "prompt": {
-            "$ref": "#/components/schemas/SpecPromptIn"
+            "type": "string",
+            "maxLength": 20000,
+            "minLength": 1,
+            "title": "Prompt"
           },
           "slots": {
             "items": {
@@ -13230,6 +13202,18 @@
             },
             "type": "object",
             "title": "Attributes"
+          },
+          "demoAssetId": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 32
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Demoassetid"
           },
           "revision": {
             "anyOf": [
@@ -13371,6 +13355,17 @@
                 "type": "null"
               }
             ]
+          },
+          "demoAssetId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Demoassetid"
           },
           "latest": {
             "anyOf": [

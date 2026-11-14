@@ -36,7 +36,6 @@ from core.template_spec import (
     FilledAsset,
     FilledSlot,
     InputSlot,
-    PromptParts,
     TemplateSpec,
     compile_spec,
     validate_spec,
@@ -53,7 +52,6 @@ from modules.template_pack.spec_schema import (
     CompiledSlotOut,
     SpecCompileIn,
     SpecCompileOut,
-    SpecPromptIn,
     SpecPublishOut,
     SpecSlotOut,
     SpecValidateOut,
@@ -75,9 +73,7 @@ def to_core(payload: TemplateSpecIn) -> TemplateSpec:
         description=payload.description,
         model=payload.model,
         params=dict(payload.params),
-        prompt=PromptParts(
-            locked=payload.prompt.locked, editable=payload.prompt.editable
-        ),
+        prompt=payload.prompt,
         slots=tuple(
             InputSlot(
                 key=slot.key,
@@ -96,6 +92,7 @@ def to_core(payload: TemplateSpecIn) -> TemplateSpec:
             for slot in payload.slots
         ),
         attributes=dict(payload.attributes),
+        demo_asset_id=payload.demo_asset_id,
     )
 
 
@@ -147,14 +144,13 @@ def _spec_out(
         created_at=head.created_at,
         updated_at=head.updated_at,
         draft=draft,
+        demo_asset_id=(draft.demo_asset_id if draft is not None else None),
         latest=(
             SpecVersionOut(
                 version=latest.version,
                 model=latest.model,
                 params=dict(latest.params or {}),
-                prompt=SpecPromptIn(
-                    locked=latest.prompt_locked, editable=latest.prompt_editable
-                ),
+                prompt=latest.prompt,
                 slots=[_slot_out(slot) for slot in slots],
                 fingerprint=latest.fingerprint,
                 published_by=latest.published_by,
@@ -219,7 +215,7 @@ def _check_executable(spec: TemplateSpec) -> None:
     真正的判据在 `compile_for()` 里按展开后的成品长度算（那一处是精确的）。
     两处同一个常量，改上限只改 `EXECUTION_PROMPT_LIMIT`。
     """
-    total = len(spec.prompt.locked) + len(spec.prompt.editable)
+    total = len(spec.prompt)
     if total > EXECUTION_PROMPT_LIMIT:
         raise BadRequest(
             f"提示词共 {total} 字，超过执行层上限 {EXECUTION_PROMPT_LIMIT} 字"
@@ -385,8 +381,7 @@ async def publish(session: AsyncSession, actor: CurrentUser, key: str) -> SpecPu
         version=version,
         model=spec.model,
         params=dict(spec.params),
-        prompt_locked=spec.prompt.locked,
-        prompt_editable=spec.prompt.editable,
+        prompt=spec.prompt,
         fingerprint=fingerprint,
         published_by=actor.id,
     )
@@ -584,11 +579,9 @@ async def compile_for(
         name=head.name,
         model=row.model,
         params=dict(row.params or {}),
-        prompt=PromptParts(locked=row.prompt_locked, editable=row.prompt_editable),
+        prompt=row.prompt,
         slots=tuple(_slot_core(item) for item in slots),
     )
-    if payload.prompt_override is not None:
-        spec = _with_override(spec, payload.prompt_override)
     fills = await _fills(session, actor, spec, payload.slot_values)
     compiled = compile_spec(spec, fills)
     # 展开后的成品才是真正要发出去的那段：`{{slot:key*}}` 一次展开可能多出几十字。
@@ -598,23 +591,6 @@ async def compile_for(
             f"{EXECUTION_PROMPT_LIMIT} 字；少填几张参考图或缩短描述"
         )
     return _compile_out(version_no, compiled, spec, fills)
-
-
-def _with_override(spec: TemplateSpec, text: str) -> TemplateSpec:
-    """把填表时改写的提示词换进 `editable` 段。
-
-    三条口径，都是为了"模板作者定的边界不许被调用方绕开"：
-
-    1. `locked` 段永不可改 —— 它对应封装时写死的画面约束；
-    2. 模板的 `editable` 为空 = 作者关掉了这个入口，传 override 就 400（不是静默忽略）；
-    3. override 里不许写 `{{Mixed N}}` —— 编号是编译派生的，写死会在少填时错位
-       （与 `validate_spec()` 同一条判据，只是这里发生在填表侧）。
-    """
-    if not spec.prompt.editable.strip():
-        raise BadRequest("该模板的提示词由封装固定，不能修改")
-    if "{{Mixed" in text:
-        raise BadRequest("提示词里不要直接写 {{Mixed N}}，用 {{slot:key}} 引用槽位")
-    return replace(spec, prompt=PromptParts(locked=spec.prompt.locked, editable=text))
 
 
 def _slot_core(row: TemplateSpecSlot) -> InputSlot:

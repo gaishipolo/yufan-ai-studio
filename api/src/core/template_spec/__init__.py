@@ -6,7 +6,7 @@
 
 - `modules/template_pack`（封装定表）产出 `TemplateSpec`；
 - 前端经 `compile` 拿到执行请求（`CompiledRequest` 的 JSON 形态）；
-- 替换链经 `template-runtime` 端口读它，转成自己的快照。
+- 模板库填表页读 `compile` 的出参，按「请求体形状」摊平后提交。
 
 与资产库封装词表的分工：那边是"用途词表"这类静态规则（归资产库模块），这边是
 "规格长什么样 + 怎么算编号"。都不放 `core/ports/`——ports 回答「谁来实现」，
@@ -23,7 +23,6 @@ from core.template_spec.models import (
     FilledAsset,
     FilledSlot,
     InputSlot,
-    PromptParts,
     RefMode,
     SlotBinding,
     SlotSource,
@@ -41,7 +40,6 @@ __all__ = [
     "FilledAsset",
     "FilledSlot",
     "InputSlot",
-    "PromptParts",
     "RefMode",
     "SlotBinding",
     "SlotSource",

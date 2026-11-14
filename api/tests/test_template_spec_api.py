@@ -53,11 +53,8 @@ def _draft(
         "name": "演示规格",
         "model": MODEL,
         "params": {},
-        "prompt": {
-            "locked": "8 秒 · 9:16 竖屏",
-            "editable": editable
-            or "{{slot:hero}} 与 {{slot:note*}}；原片 {{slot:source}}",
-        },
+        "prompt": "8 秒 · 9:16 竖屏\n\n"
+        + (editable or "{{slot:hero}} 与 {{slot:note*}}；原片 {{slot:source}}"),
         "slots": [
             {
                 "key": "source",
@@ -161,7 +158,7 @@ def test_publish_freezes_versions_and_repeats_idempotently(client: TestClient) -
     assert repeat.json()["data"]["version"] == 1
 
     # 改草稿再发：新版本，旧版本内容必须保持发布那一刻。
-    changed = dict(draft, prompt={"locked": "8 秒 · 9:16 竖屏", "editable": "{{slot:hero}} 换掉"})
+    changed = dict(draft, prompt="8 秒 · 9:16 竖屏\n\n{{slot:hero}} 换掉")
     _save(client, headers, changed)
     second_publish = client.post(f"{API}/{draft['key']}/publish", headers=headers)
     assert second_publish.json()["data"]["version"] == 2
@@ -169,7 +166,7 @@ def test_publish_freezes_versions_and_repeats_idempotently(client: TestClient) -
     detail = client.get(f"{API}/{draft['key']}", headers=headers).json()["data"]
     assert detail["currentVersion"] == 2
     assert detail["latest"]["version"] == 2
-    assert detail["latest"]["prompt"]["editable"] == "{{slot:hero}} 换掉"
+    assert detail["latest"]["prompt"] == "8 秒 · 9:16 竖屏\n\n{{slot:hero}} 换掉"
     assert len(detail["latest"]["slots"]) == 3
 
 
@@ -225,7 +222,7 @@ def test_compile_expands_library_pack_without_reordering(client: TestClient) -> 
     pack_id = pack.json()["data"]["id"]
 
     draft = _draft(video, first, second)
-    draft["prompt"]["editable"] = "{{slot:detail*}} 换成 {{slot:source}}"
+    draft["prompt"] = "{{slot:detail*}} 换成 {{slot:source}}"
     draft["slots"] = [
         draft["slots"][0],
         {
@@ -361,34 +358,53 @@ def test_restore_rejects_a_spec_that_is_not_in_trash(client: TestClient) -> None
     assert "不在回收站" in response.json()["message"]
 
 
-def test_compile_applies_prompt_override(client: TestClient) -> None:
-    """填表时改写 `editable` 段：`locked` 段与编号都不受影响。"""
+def test_text_literal_is_rejected_like_mixed(client: TestClient) -> None:
+    """`{{Text N}}` 与 `{{Mixed N}}` 一样是派生编号，手写就错位。"""
+    headers = _headers(client)
+    video, first, second = _media(client, headers)
+    draft = _draft(video, first, second, editable="把 {{Text 1}} 念出来")
+    response = client.post(f"{API}/validate", json=draft, headers=headers)
+    assert response.status_code == 400
+    assert "不要直接写" in response.json()["message"]
+
+
+def test_demo_asset_round_trips_but_never_enters_the_snapshot(
+    client: TestClient,
+) -> None:
+    """展示案例只存在草稿里：改案例不该要求发新版本，也不该进发布快照。
+
+    模板库卡片与详情读的是 `demoAssetId`（出参顶层字段），发布快照
+    （`latest`）里没有它 —— 这条守的是"它会丢"和"它不该在那里"两种错。
+    """
     headers = _headers(client)
     video, first, second = _media(client, headers)
     draft = _draft(video, first, second)
-    _save(client, headers, draft)
+    draft["demoAssetId"] = first
+    saved = _save(client, headers, draft)
+    assert saved["demoAssetId"] == first
+
     client.post(f"{API}/{draft['key']}/publish", headers=headers)
+    detail = client.get(f"{API}/{draft['key']}", headers=headers).json()["data"]
+    assert detail["demoAssetId"] == first
+    assert "demoAssetId" not in (detail["latest"] or {})
 
-    body = client.post(
-        f"{API}/{draft['key']}/compile",
-        json={
-            "slotValues": {"hero": [first]},
-            "promptOverride": "把 {{slot:hero}} 换成同款米白色",
-        },
-        headers=headers,
-    )
-    assert body.status_code == 200, body.text
-    data = body.json()["data"]
-    # locked 段原样保留在最前，override 替换了 editable 段，编号仍然派生。
-    assert data["prompt"] == "8 秒 · 9:16 竖屏\n\n把 {{Mixed 2}} 换成同款米白色"
+    # 换一张案例：只改草稿，版本号不动
+    again = dict(draft, demoAssetId=second)
+    updated = _save(client, headers, again)
+    assert updated["demoAssetId"] == second
+    assert updated["currentVersion"] == 1
 
 
-def test_prompt_override_is_rejected_when_template_is_fixed(client: TestClient) -> None:
-    """`editable` 为空 = 作者关掉了改写入口，不是"随便写"。"""
+def test_compile_no_longer_accepts_prompt_override(client: TestClient) -> None:
+    """提示词不再分固定段 / 可编辑段，`promptOverride` 这个入口一并取消。
+
+    要可变内容就放一个 `text` 槽位：填表时选哪份文案，`compile` 就把它排在
+    `{{Text N}}` 的第 N 位。字段本身被 `extra="forbid"` 拒掉，不是静默忽略 ——
+    旧前端若还传它，会当场 422 而不是"看着成功、内容没改"。
+    """
     headers = _headers(client)
     video, first, second = _media(client, headers)
     draft = _draft(video, first, second)
-    draft["prompt"] = {"locked": "固定画面描述 {{slot:hero}}", "editable": ""}
     _save(client, headers, draft)
     client.post(f"{API}/{draft['key']}/publish", headers=headers)
 
@@ -397,25 +413,40 @@ def test_prompt_override_is_rejected_when_template_is_fixed(client: TestClient) 
         json={"slotValues": {"hero": [first]}, "promptOverride": "我自己的描述"},
         headers=headers,
     )
-    assert body.status_code == 400
-    assert "不能修改" in body.json()["message"]
+    assert body.status_code == 422, body.text
 
 
-def test_prompt_override_cannot_hardcode_numbers(client: TestClient) -> None:
-    """填表侧也拦 `{{Mixed N}}`：写死编号会在少填一张时整体错位。"""
+def test_text_slot_is_the_only_way_to_make_prompt_variable(client: TestClient) -> None:
+    """文本槽位 → `{{Text N}}` + `textLibraryIds`：模板库换文案不改模板。"""
     headers = _headers(client)
     video, first, second = _media(client, headers)
+    note = upload(client, f"文案-{suffix()}.md", "text", "# 标题\n正文".encode(), headers=headers)
     draft = _draft(video, first, second)
+    draft["prompt"] = "{{slot:hero}}；口播文案：{{slot:brief}}"
+    draft["slots"] = [
+        draft["slots"][0],
+        draft["slots"][1],
+        {
+            "key": "brief",
+            "type": "text",
+            "binding": "user",
+            "refMode": "attachment",
+            "position": 2,
+            "label": "口播文案",
+        },
+    ]
     _save(client, headers, draft)
     client.post(f"{API}/{draft['key']}/publish", headers=headers)
 
     body = client.post(
         f"{API}/{draft['key']}/compile",
-        json={"slotValues": {"hero": [first]}, "promptOverride": "把 {{Mixed 1}} 换掉"},
+        json={"slotValues": {"hero": [first], "brief": [note["id"]]}},
         headers=headers,
     )
-    assert body.status_code == 400
-    assert "不要直接写" in body.json()["message"]
+    assert body.status_code == 200, body.text
+    data = body.json()["data"]
+    assert data["prompt"] == "{{Mixed 2}}；口播文案：{{Text 1}}"
+    assert data["textLibraryIds"] == [note["id"]]
 
 
 def test_execution_prompt_limit_matches_task_schema() -> None:
@@ -444,10 +475,7 @@ def test_draft_can_be_long_but_publish_checks_execution_limit(client: TestClient
     headers = _headers(client)
     video, first, second = _media(client, headers)
     draft = _draft(video, first, second)
-    draft["prompt"] = {
-        "locked": "固定画面",
-        "editable": "长" * (EXECUTION_PROMPT_LIMIT + 50),
-    }
+    draft["prompt"] = "固定画面" + "长" * (EXECUTION_PROMPT_LIMIT + 50)
     # 保存草稿不挡：作者可能只是先存着，或者这段是给别的执行端点准备的。
     assert client.post(API, json=draft, headers=headers).status_code == 200
 
@@ -455,27 +483,6 @@ def test_draft_can_be_long_but_publish_checks_execution_limit(client: TestClient
     assert publish.status_code == 400
     assert "执行层上限" in publish.json()["message"]
 
-
-def test_compile_rejects_override_that_overflows(client: TestClient) -> None:
-    """填表时改写也可能超：`compile` 按**展开后的成品**判，不只判原文。"""
-    from core.template_spec import EXECUTION_PROMPT_LIMIT
-
-    headers = _headers(client)
-    video, first, second = _media(client, headers)
-    draft = _draft(video, first, second)
-    _save(client, headers, draft)
-    client.post(f"{API}/{draft['key']}/publish", headers=headers)
-
-    body = client.post(
-        f"{API}/{draft['key']}/compile",
-        json={
-            "slotValues": {"hero": [first]},
-            "promptOverride": "长" * (EXECUTION_PROMPT_LIMIT + 10),
-        },
-        headers=headers,
-    )
-    assert body.status_code == 400
-    assert "编译后的提示词" in body.json()["message"]
 
 
 def test_models_expose_replacement_declaration(client: TestClient) -> None:
@@ -506,7 +513,7 @@ def test_published_filters_by_model_replacement(client: TestClient) -> None:
         "name": "纯提示词",
         "model": "agnes-video-2.5-flash",
         "params": {"aspectRatio": "9:16", "durationSec": 5},
-        "prompt": {"locked": "", "editable": "一段描述"},
+        "prompt": "一段描述",
         "slots": [],
     }
     _save(client, headers, plain)

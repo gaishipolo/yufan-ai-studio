@@ -95,10 +95,7 @@ def _spec_draft(
         "name": "等价性规格",
         "model": MODEL,
         "params": {},
-        "prompt": {
-            "locked": "",
-            "editable": "把 {{slot:source}} 换成 {{slot:views*}}",
-        },
+        "prompt": "把 {{slot:source}} 换成 {{slot:views*}}",
         "slots": [
             {
                 "key": "source",

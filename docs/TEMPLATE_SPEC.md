@@ -74,7 +74,7 @@
 ┌─────────────────────────────┐  发布   ┌──────────────────────────┐   compile   ┌──────────────┐
 │ TemplateSpec                │ ──────▶ │ 卡片 = 已发布版本快照      │ ─────────▶ │ /tasks       │
 │  slots[]（槽位声明）         │  冻结   │ 渲染槽位表单（fixed 只读） │  填表结果    │ 只认 prompt + │
-│  prompt{locked, editable}   │         │ 提交前调 compile 拿请求体  │             │ references +  │
+│  prompt（整段）             │         │ 提交前调 compile 拿请求体  │             │ references +  │
 │  model + params             │         └──────────────────────────┘             │ params        │
 └─────────────────────────────┘                                                  └──────────────┘
 ```
@@ -121,10 +121,9 @@
   "description": "",
   "model": "libtv-wan3-replacement",   // 必须是目录里存在的公开模型
   "params": { "aspectRatio": "9:16", "durationSec": 6 },  // 键必须在该模型 param_schema 内
-  "prompt": {
-    "locked": "8 秒 · 9:16 竖屏写实短片，眼平正面中景…严格跟随参考图生成。",  // 封装写死，模板库只读
-    "editable": "把 {{slot:source}} 里的内衣换成 {{slot:hero}} 的同款。{{slot:detail*}} 只补细节。"  // 模板库可改
-  },
+  // 整段提示词，只有一段：模板库不改文字，要可变内容就放 text 槽位（见 §5）
+  "prompt": "8 秒 · 9:16 竖屏写实短片，眼平正面中景…把 {{slot:source}} 里的内衣换成 {{slot:hero}} 的同款。{{slot:detail*}} 只补细节。",
+  "demoAssetId": "7179dd76…",          // 展示案例（图或视频）；纯展示，不进发布快照
   "slots": [
     { "key": "source", "type": "video", "binding": "fixed", "refMode": "mixed",
       "min": 1, "max": 1, "position": 0, "label": "原片", "assetId": "0a2062…" },
@@ -135,17 +134,25 @@
     { "key": "look",   "type": "image", "source": "asset", "binding": "user", "refMode": "mixed",
       "min": 0, "max": 2, "position": 3, "label": "补充参考" },          // 用户挑散图
     { "key": "bgm",    "type": "audio", "binding": "user",  "refMode": "attachment",
-      "min": 0, "max": 1, "position": 3, "label": "背景音乐" }
+      "min": 0, "max": 1, "position": 4, "label": "背景音乐" },
+    { "key": "brief",  "type": "text",  "binding": "user",  "refMode": "attachment",
+      "min": 1, "max": 1, "position": 5, "label": "口播文案" }   // 提示词里唯一可变的地方
   ]
 }
 ```
 
-## 5. 提示词的两段
+## 5. 提示词只有一段
 
-- `locked`：封装时写死，模板库只读、灰显。对应截图里的「定量（强制固定，严禁改劝）」块。
-- `editable`：模板库可改，默认值由封装给；为空表示"整段固定"。
+`prompt` 是**一段字符串**（2026-11-14 合并，见 `c9a1f4e27b53`）。原来的
+`locked`（封装写死）/ `editable`（模板库可改）两段，存在理由只有一个：
+"模板库允许改那一半"。用户拍板取消这个入口之后，两段就没有区别了。
 
-编译顺序固定为 `locked + "\n\n" + editable`，两段都做同一套引用与上限校验。字数上限沿用 `MAX_PROMPT = 20000`，分别统计、总和校验。
+**要可变内容，用 `text` 槽位**：模板里声明 `type=text` 的槽位（填表时选一份文案），
+编译时按槽位顺序拆成 `{{Text N}}`，执行层再按 `textLibraryIds` 把正文注入。
+模板库因此**不改任何文字**，只选素材 —— 这也让"模板改一个字就换版本"的问题消失。
+
+字数上限沿用 `MAX_PROMPT = 20000`（编写）、`EXECUTION_PROMPT_LIMIT = 2000`（执行，
+按展开后的成品判）。
 
 ## 6. 编号与编译规则（唯一一处）
 
@@ -167,8 +174,12 @@
      `LibraryLookup.expand_packs()` 展开成员 —— **顺序由库给，编译不得重排**；成员必须同类型、
      全部 `readable`（有不可读成员就报"封装《X》的成员 Y 无权访问"，不静默少一张）；
    - 单资产的可读性与存在性一律经 `library_lookup`，不直查表。
-2. 按 `position` 升序，只对 `ref_mode=mixed` 的槽位累加计数，得到 `slot_key → [token…]`；`attachment` 槽位跳过（不占号）。
-3. 把 `{{slot:…}}` 替换成对应 token；`attachment` 槽位被引用 → 400（它不该出现在提示词里）。
+2. 按 `position` 升序累加计数，得到 `slot_key → [token…]`：
+   - `mixed` 槽位用 `{{Mixed N}}`（视觉编号）；
+   - `text` 槽位用**自己的** `{{Text N}}`（N = 文本素材的序号，与 `text_library_ids` 的顺序逐一对应）；
+   - `audio` 槽位没有编号空间，跳过。
+3. 把 `{{slot:…}}` 替换成对应 token。`audio` 槽位被引用 → 400；`text` 槽位可以引用
+   （它就是"提示词里可变的那一处"）。
    `source=pack` 的槽位，其成员的 `role` 作为该 token 的角色写进执行请求（`expand_packs` 已带出）。
 4. 校验总量：`mixed` 展开后总数 ≤ `min(10, 模型 max_references)`；音频/文本数量按模型声明另判（§13 开放问题）。
 5. 产出执行请求：
@@ -176,11 +187,12 @@
 ```jsonc
 {
   "model": "libtv-wan3-replacement",
-  "prompt": "<locked>\n\n<editable，token 已展开>",
+  "prompt": "<整段提示词，token 已展开>",
   "params": { "aspectRatio": "9:16", "durationSec": 6 },
   "referenceLibraryIds": ["0a2062…", "454955…", "5987f1…"],   // mixed 按编号序 + attachment 追加在后
   "textLibraryIds": ["…"],                                      // text 槽位
-  "slotTokens": { "source": ["{{Mixed 1}}"], "hero": ["{{Mixed 2}}"], "detail": ["{{Mixed 3}}"] }
+  "slotTokens": { "source": ["{{Mixed 1}}"], "hero": ["{{Mixed 2}}"], "detail": ["{{Mixed 3}}"],
+                  "brief": ["{{Text 1}}"] }
 }
 ```
 
@@ -220,7 +232,7 @@
 | `id` / `spec_id` | `unique(spec_id, version)` |
 | `version` | 从 1 递增 |
 | `model` / `params`(JSON) | 发布那一刻冻结 |
-| `prompt_locked` / `prompt_editable` | `Text` |
+| `prompt` | `Text`（整段；2026-11-14 由两段合并） |
 | `fingerprint` | 本次发布内容的摘要（回执与重发比对用） |
 | `published_by` / `published_at` | |
 
@@ -248,6 +260,7 @@
 | `GET` | `/template-specs` / `/template-specs/{key}` | 列表 / 详情（含 draft 与最新版本） |
 | `POST` | `/template-specs/{key}/publish` | 冻结发布：draft → version + slots，回执含 `version` 与 `tokensPreview` |
 | `POST` | `/template-specs/{key}/disable` | 下架（历史版本保留） |
+| — | `demoAssetId`（`POST`/`GET` 出参） | 展示案例：图或视频的资产 id。**只存在草稿、不进发布快照** —— 改案例不用发新版 |
 | `DELETE` | `/template-specs/{key}` | **软删**进回收站（`deleted_at`）。列表与模板库都看不到，可恢复 |
 | `POST` | `/template-specs/{key}/restore` | 从回收站恢复 |
 | `GET` | `/template-specs/trash` | 回收站列表（按删除时间倒序；不看 status / target） |
@@ -257,7 +270,7 @@
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | `GET` | `/template-specs/published` | 模板库卡片：已发布版本的快照（slots + 两段 prompt + model + params），不返回 draft。`?target=replacement\|generation\|all` 按**模型声明**筛（见 §11.0），不按槽位形状猜 |
-| `POST` | `/template-specs/{key}/compile` | **纯函数式**：入参 `{version?, slotValues, promptOverride?}`，出参见 §6.5。不落库、不调 task |
+| `POST` | `/template-specs/{key}/compile` | **纯函数式**：入参 `{version?, slotValues}`，出参见 §6。不落库、不调 task |
 
 `compile` 之所以存在：展开与校验是**模板语义**，不能下放前端（否则编号规则有两份），也不该让封装去调 task（跨模块）。它只做映射，不产生副作用，天然可缓存、可单测。
 
@@ -267,9 +280,8 @@
 丢掉等于按模型默认值跑，而模板里明明写了。映射只在前端一处
 （`features/template-library/taskPayload.ts`），单测直接断言它产出的形状。
 
-`promptOverride` 是填表时改写的 `editable` 段，三条硬口径（服务端判，不信调用方）：
-`locked` 段永不可改；模板的 `editable` 为空（作者关掉了入口）时传它 400；
-override 里写 `{{Mixed N}}` 也 400（编号是派生的，写死会在少填时错位）。
+`compile` **不再有 `promptOverride`**（2026-11-14）：模板库不改文字，可变内容走 `text` 槽位。
+旧字段会被 `extra="forbid"` 拒成 422，不是静默忽略。
 
 ## 9. 封装页 UI 规格（按参考截图）
 
@@ -280,8 +292,8 @@ override 里写 `{{Mixed N}}` 也 400（编号是派生的，写死会在少填�
 │ [+ 上传] [从资产库选]      │  ┌ 已引用（= 槽位清单，可点回定位/删） │
 │ ┌──┐┌──┐                  │  │  6036 / 米兰之夜6036-产品…          │
 │ │1 ││2 │  ← 角标 = 编号    │  └────────────────────────────────────┘
-│ └──┘└──┘                  │  [locked 段：灰底，只读]                │
-│ 槽位卡片：类型/固定或待选/  │  [editable 段：可编辑，@ 唤起引用弹层]  │
+│ └──┘└──┘                  │  [整段提示词：可写描述文字]              │
+│ 槽位卡片：类型/固定或待选/  │  [引用用 chip 插入，手写大括号会被拦]    │
 │ min-max/用途说明            │  总字数 961 / 20000（分段计）           │
 ├───────────────────────────┴────────────────────────────────────────┤
 │ [模型 ⌄] [模式/参数：9:16·720P·8s·1个 ⌄]              [预检][发布]   │
@@ -307,7 +319,7 @@ override 里写 `{{Mixed N}}` 也 400（编号是派生的，写死会在少填�
 
 同一份 spec 的**只读镜像**：
 
-- `locked` 段灰显不可编辑；`editable` 段可改，但 `{{slot:…}}` 引用不可手改（点击 chip 可定位到槽位）；
+- 提示词**整段只读**；要可变就用 `text` 槽位（填表时选文案）；
 - `fixed` 槽位显示缩略图 + 「封装时固定」；`user` 槽位显示占位，按 `source` 走不同选择器：
   `source=asset` → `/library/selection`（按 `type` 过滤，`min/max` 决定单选或多选）；
   `source=pack` → 资产库封装选择器（只列同 `type` 成员的封装），选中后展示「N 张」与角色列表；
@@ -324,8 +336,7 @@ override 里写 `{{Mixed N}}` 也 400（编号是派生的，写死会在少填�
   排；选中的那一份才在右栏出图。
 - 槽位卡片左上角是序号（= 编号顺序），`fixed` 显示缩略图 + 「封装固定」且**没有选择按钮**，
   `user` 显示「选择 / 更换」；封装槽位只显示「N 张」与首图，成员顺序不在这里展开。
-- 固定段灰显 + 「不可编辑」；可编辑段是一个 textarea，改动才随 `promptOverride` 发出
-  （没改就不发，服务端用发布版本原文）。
+- 提示词整段只读（`不可编辑`），下面一列「`{{slot:key}}` → 第几位 / 第几份文案」。
 - 提示词框下面一列「`{{slot:source}}` → 第 1 位 / `{{slot:detail*}}` → 第 2 位起」：
   用户看到的是位置、模板里写的是 key，这一行把两者对上（纯展示，编号仍由 `compile` 算）。
 - 底部按钮在必填未满足时禁用并说明缺几项 —— 这是提交前置条件，不是业务规则；
@@ -347,7 +358,7 @@ override 里写 `{{Mixed N}}` 也 400（编号是派生的，写死会在少填�
 | `manifest.video.assetId` | 一个 `fixed / video / mixed` 槽位（`position=0`，key `source`） |
 | `manifest.packs[]`（旧素材包） | **首选**：整体落成一个资产库封装（`kind=pack`，成员 `position`/`role`/`description` 原样带过去），spec 里用一个 `source=pack, binding=fixed` 槽位指向它 —— 这样"多视图属于同一对象"的结构归位到资产库。<br>**降级**（仅当这批图互不相关）：拆成多个 `source=asset, binding=fixed` 槽位。降级会让模板重新拥有一份结构，只在旧包本身没有对象语义时使用，并在迁移报告里逐条标出 |
 | `manifest.functions[]` | **每个 function 拆成一条 spec**（key = `manifest.key:function.key`）。一 spec = 一张卡片，与原"一功能一卡片"一致 |
-| `manifest.functions[].prompt` | `prompt.editable`（原样）；`locked` 留空（旧模型本来整段只读，语义上更接近 locked，但为了让模板库可改，先放 editable 并在迁移报告里注明） |
+| `manifest.functions[].prompt` | 整段进 `prompt`（现在只有一段） |
 | `manifest.functions[].scopeOptions` | 暂不迁（替换专属，见 P3） |
 | `video_templates` | **只读历史，不再写入**。替换链的 `template-runtime` 端口在 **P3** 改为读 spec 版本（见下方"接读为什么不在 P1"）；旧行保留到 P3 删除 |
 
@@ -356,7 +367,7 @@ override 里写 `{{Mixed N}}` 也 400（编号是派生的，写死会在少填�
 | 期 | 内容 | 验收 |
 |---|---|---|
 | **P1 定表** | `core/` 加 `InputSlot`/`TemplateSpec` 词表与编译纯函数；三张表（迁移 `d4a9f1c73b20`）；六个接口（含 `compile`）；封装页改成 §9 单页 | `compile` 输出与旧模板的 `mediaOrder` **逐项等价**（`tests/test_template_spec_equivalence.py`，已用"注入重排"验过会红）；预检挡住所有非法组合（§12）；**不写 `video_templates`、也不假装能读**（见下方"接读为什么不在 P1"） |
-| **P2 填表**（已完成） | 模板库填表页 `/templates/library`（两栏：左选模板 / 右填素材；`source=pack` 走封装选择器；`promptOverride` 只在改动时发）；`compile → 摊平 → /tasks` 走通 | 五种形状各跑一次（真实素材，每条 `POST /tasks` 201 后删掉）：纯提示词（0 槽）/ 多图（2 张）/ 图+视频 / 图+音频附件（`attachment` 不占编号）/ 图+文本（正文进 `textLibraryIds`）；另加"选一个资产库封装填一个槽位"（更早已验） |
+| **P2 填表**（已完成） | 模板库填表页 `/templates/library`（两栏：左选模板 / 右填素材；`source=pack` 走封装选择器）；`compile → 摊平 → /tasks` 走通 | 五种形状各跑一次（真实素材，每条 `POST /tasks` 201 后删掉）：纯提示词（0 槽）/ 多图（2 张）/ 图+视频 / 图+音频附件（`attachment` 不占编号）/ 图+文本（正文进 `textLibraryIds`）；另加"选一个资产库封装填一个槽位"（更早已验） |
 | **P3 接读 + 迁移 + 删表 + capability 化**（已全部落地，见 §11.0 / §11.2 / §11.3；「接读」按 §11.3 的结论改为**直接下线**） | 替换链的 `template-runtime` 端口改读 spec 版本（旧 `video_templates` 只读）；~~旧数据迁移~~ ✅；删 `video_templates` / `template_packs*`；替换能力作为 task 的一个 capability；`supportedScopes`/`wardrobeMode` → `spec.attributes`；成片复核 → 任务中心；`modules/template` 的编排与物化下线。细则见 §11.1 | §11.1 的三条判据全绿；替换业务与历史档案不中断；`prepare` 用 spec 驱动的模板跑通；迁移出的 spec 与旧模板 `mediaOrder` 逐项等价 |
 
 #### 接读为什么不在 P1（2026-11-14 实现时确认）

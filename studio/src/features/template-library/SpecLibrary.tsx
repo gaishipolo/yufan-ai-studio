@@ -77,6 +77,56 @@ function AssetChip({assetId, onRemove}: {assetId: string; onRemove?: () => void}
   );
 }
 
+/**
+ * 展示案例：作者上传/选的样例图或视频。
+ *
+ * 没设就明写「暂无案例」，不摆渐变块冒充缩略图 —— 那会让人以为模板带图。
+ * 它是**纯展示**字段（存在草稿里、不进发布快照），所以这里只读、不可交互。
+ */
+function DemoCase({
+  assetId,
+  className,
+  big = false,
+}: {
+  assetId: string | null;
+  className?: string;
+  big?: boolean;
+}) {
+  const detail = useLibraryDetail(assetId);
+  if (!assetId) {
+    return (
+      <div
+        className={cn(
+          'flex items-center justify-center rounded-lg border border-dashed border-line-strong bg-panel-soft text-[10px] text-ink-mute',
+          className,
+        )}
+      >
+        暂无案例
+      </div>
+    );
+  }
+  const src = detail.data?.previewUrl ?? detail.data?.streamUrl ?? detail.data?.url;
+  if (detail.data?.kind === 'video' && src) {
+    return (
+      <video
+        src={src}
+        controls={big}
+        muted
+        playsInline
+        className={cn('rounded-lg bg-black object-cover', className)}
+      />
+    );
+  }
+  return (
+    <CoverImage
+      src={detail.data?.coverUrl ?? undefined}
+      seed={assetId}
+      alt="展示案例"
+      className={cn('rounded-lg', className)}
+    />
+  );
+}
+
 /** 资产库封装：成员数由库给，这里只显示「N 张」与首图，不展开成员顺序。 */
 function PackSummary({packId, onRemove}: {packId: string; onRemove?: () => void}) {
   const pack = useQuery({
@@ -120,7 +170,6 @@ export function SpecLibrary() {
   const [keyword, setKeyword] = useState('');
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [values, setValues] = useState<Record<string, string[]>>({});
-  const [override, setOverride] = useState('');
   const [picker, setPicker] = useState<string | null>(null);
   const [note, setNote] = useState('');
   const [error, setError] = useState('');
@@ -134,18 +183,16 @@ export function SpecLibrary() {
   const spec = items.find(item => item.key === selectedKey) ?? items[0];
   const slots = slotsOf(spec);
   const version = spec?.latest;
-  const lockedText = version?.prompt.locked ?? '';
-  const editableText = version?.prompt.editable ?? '';
+  const promptText = version?.prompt ?? '';
   const focused = spec?.key ?? null;
 
-  /* 换模板就清空上一次的填写与提示词：不做"记忆上次填的素材"，
+  /* 换模板就清空上一次的填写：不做"记忆上次填的素材"，
      那会让用户以为新模板也用了同一张图。 */
   useEffect(() => {
     setValues({});
-    setOverride(editableText);
     setNote('');
     setError('');
-  }, [focused, version?.version, editableText]);
+  }, [focused, version?.version]);
 
   const model = videoModels.find(item => item.id === version?.model);
   const defaults = {
@@ -160,22 +207,26 @@ export function SpecLibrary() {
 
   /* 提示词里写的是 `{{slot:key}}`，用户看到的是「第几位」。这里按与 compile 同一条规则
      （attachment 不占号、`*` 表示整组）把两者对上，纯展示，不参与提交。 */
+  /* 两套编号：视觉参考是 `{{Mixed N}}`（第 N 位），文本是 `{{Text N}}`（第 N 份文案）。 */
   const refLegend = (() => {
-    let at = 0;
+    let mixed = 0;
+    let text = 0;
     return slots
-      .filter(slot => (slot.refMode ?? 'mixed') === 'mixed')
+      .filter(slot => (slot.refMode ?? 'mixed') === 'mixed' || slot.type === 'text')
       .map(slot => {
-        at += 1;
+        if (slot.type === 'text') {
+          text += 1;
+          return {key: slot.key, at: text, kind: 'text' as const, many: false};
+        }
+        mixed += 1;
         return {
           key: slot.key,
-          at,
-          label: slot.label || slot.key,
+          at: mixed,
+          kind: 'mixed' as const,
           many: maxOf(slot) > 1 || slot.source === 'pack',
         };
       });
   })();
-
-  const editableChanged = !!version && override !== editableText;
   const busy = compile.isPending || createTask.isPending;
 
   const pickerSlot = slots.find(slot => slot.key === picker);
@@ -203,10 +254,7 @@ export function SpecLibrary() {
     try {
       const compiled = await compile.mutateAsync({
         key: spec.key,
-        payload: {
-          slotValues: values,
-          ...(editableChanged ? {promptOverride: override} : {}),
-        },
+        payload: {slotValues: values},
       });
       const result = toTaskPayload(compiled, spec.name, defaults);
       if (!result.ok) {
@@ -259,8 +307,7 @@ export function SpecLibrary() {
                     : 'border-line-soft hover:border-primary-line',
                 )}
               >
-                {/* 规格没有封面字段，就不摆一块空渐变冒充缩略图：卡片按「叫什么、几版、
-                    要几样素材」排，选中的那个在右栏才出图。 */}
+                <DemoCase assetId={item.demoAssetId ?? null} className="h-24 w-full" />
                 <div className="flex items-center justify-between gap-2">
                   <span className="truncate text-[13px] font-medium text-ink">{item.name}</span>
                   <Chip>v{item.currentVersion}</Chip>
@@ -293,6 +340,8 @@ export function SpecLibrary() {
                 改模板
               </Link>
             </div>
+
+            <DemoCase assetId={spec.demoAssetId ?? null} className="h-40 w-full" big />
 
             {/* 槽位：fixed 只读展示，user 就地挑素材。纯提示词模板没有槽位，整块不渲染。 */}
             {slots.length > 0 && (
@@ -383,51 +432,37 @@ export function SpecLibrary() {
             </section>
             )}
 
-            {/* 固定段：只读。对应封装时写死的画面约束。 */}
-            {lockedText.trim() && (
+            {/* 提示词只有一段：模板库不改文字，要可变就填文本槽位。 */}
+            {promptText.trim() && (
               <section className="flex flex-col gap-1.5">
                 <h3 className="flex items-center gap-1.5 text-[12px] font-medium text-ink-soft">
-                  模板固定部分
+                  提示词
                   <span className="text-[10px] font-normal text-ink-mute">不可编辑</span>
                 </h3>
                 <div className="whitespace-pre-wrap rounded-xl border border-line-soft bg-panel-soft px-2.5 py-2 text-[11px] leading-relaxed text-ink-soft">
-                  {lockedText}
+                  {promptText}
                 </div>
+                {refLegend.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-1 text-[10px] text-ink-mute">
+                    {refLegend.map(item => (
+                      <span
+                        key={item.key}
+                        className="flex items-center gap-1 rounded-md bg-line-soft px-1.5 py-0.5"
+                      >
+                        <code>{`{{slot:${item.key}${item.many ? '*' : ''}}}`}</code>
+                        <span className="text-ink-soft">
+                          {item.kind === 'text'
+                            ? `第 ${item.at} 份文案`
+                            : item.at === 1
+                              ? '第 1 位'
+                              : `第 ${item.at} 位${item.many ? '起' : ''}`}
+                        </span>
+                      </span>
+                    ))}
+                  </div>
+                )}
               </section>
             )}
-
-            {/* 可编辑段：作者留了口子才可改；空 = 提示词全固定。 */}
-            <section className="flex flex-col gap-1.5">
-              <h3 className="text-[12px] font-medium text-ink-soft">提示词</h3>
-              {editableText.trim() ? (
-                <textarea
-                  value={override}
-                  onChange={event => setOverride(event.target.value)}
-                  rows={3}
-                  className="w-full resize-y rounded-xl border border-line-soft bg-panel-soft px-2.5 py-2 text-[11px] leading-relaxed text-ink outline-none focus:border-primary-line"
-                />
-              ) : (
-                <p className="rounded-xl border border-line-soft bg-panel-soft px-2.5 py-2 text-[11px] text-ink-mute">
-                  这份模板的提示词已固定，不需要填写。
-                </p>
-              )}
-              {editableText.trim() && (
-                <div className="flex flex-wrap items-center gap-1 text-[10px] text-ink-mute">
-                  {refLegend.map(item => (
-                    <span
-                      key={item.key}
-                      className="flex items-center gap-1 rounded-md bg-line-soft px-1.5 py-0.5"
-                    >
-                      <code>{`{{slot:${item.key}${item.many ? '*' : ''}}}`}</code>
-                      <span className="text-ink-soft">
-                        {item.at === 1 ? '第 1 位' : `第 ${item.at} 位${item.many ? '起' : ''}`}
-                      </span>
-                    </span>
-                  ))}
-                  {refLegend.length > 0 && <span>编号按实际填了几张现算，别手写。</span>}
-                </div>
-              )}
-            </section>
 
             <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-ink-mute">
               <span>参数</span>

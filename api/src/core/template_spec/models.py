@@ -77,18 +77,6 @@ class InputSlot:
 
 
 @dataclass(frozen=True, slots=True)
-class PromptParts:
-    """提示词两段。
-
-    `locked` 封装时写死、模板库只读（对应参考截图里"定量（强制固定，严禁劝改）"
-    那一块）；`editable` 模板库可改。两段都允许 `{{slot:key}}` 引用。
-    """
-
-    locked: str = ""
-    editable: str = ""
-
-
-@dataclass(frozen=True, slots=True)
 class TemplateSpec:
     """一份模板规格（发布版本的快照形状，也是草稿的形状）。"""
 
@@ -96,12 +84,17 @@ class TemplateSpec:
     name: str
     model: str
     slots: tuple[InputSlot, ...]
-    prompt: PromptParts
+    #: 整段提示词。**不分固定段/可编辑段**：模板库不改文字，需要可变的地方
+    #: 用 `text` 槽位（填表时选一份文案，编译成 `{{Text N}}` 由执行层注入正文）。
+    prompt: str
     #: 传给执行层的参数默认值。键必须在该模型的 `param_schema` 里（发布时校验）。
     params: Mapping[str, Any] = field(default_factory=dict)
     description: str = ""
     #: 收编替换链时承载 `scope` / `wardrobe` 这类非核心开关，避免每来一个概念加一列。
     attributes: Mapping[str, str] = field(default_factory=dict)
+    #: 展示案例（图片或视频的资产 id）。**纯展示**：不进发布快照、不参与编译，
+    #: 改案例不该要求发新版本。模板库卡片与详情用它给用户看"长什么样"。
+    demo_asset_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

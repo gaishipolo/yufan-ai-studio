@@ -55,11 +55,6 @@ class SpecSlotIn(StrictIn):
     position: int = Field(default=0, ge=0, le=MAX_SLOTS * 10)
 
 
-class SpecPromptIn(StrictIn):
-    locked: str = Field(default="", max_length=MAX_PROMPT)
-    editable: str = Field(default="", max_length=MAX_PROMPT)
-
-
 class TemplateSpecIn(StrictIn):
     """一份规格（草稿的整份内容）。`key` 是幂等边界，发布后不可改名。"""
 
@@ -68,9 +63,12 @@ class TemplateSpecIn(StrictIn):
     description: str = Field(default="", max_length=2000)
     model: str = Field(min_length=1, max_length=80)
     params: dict[str, Any] = Field(default_factory=dict)
-    prompt: SpecPromptIn
+    #: 整段提示词。需要可变的地方用 `text` 槽位，不要指望模板库改文字。
+    prompt: str = Field(min_length=1, max_length=MAX_PROMPT)
     slots: list[SpecSlotIn] = Field(default_factory=list, max_length=MAX_SLOTS)
     attributes: dict[str, str] = Field(default_factory=dict)
+    #: 展示案例（图片/视频资产 id）。纯展示：不进发布快照，改图不用发新版。
+    demo_asset_id: str | None = Field(default=None, max_length=32)
     #: 乐观锁：与 head 上的 `revision` 比对。为空表示"不校验版本"（首次保存）。
     revision: int | None = Field(default=None, ge=0)
 
@@ -93,7 +91,7 @@ class SpecVersionOut(CamelModel):
     version: int
     model: str
     params: dict[str, Any]
-    prompt: SpecPromptIn
+    prompt: str
     slots: list[SpecSlotOut]
     fingerprint: str = ""
     published_by: str = ""
@@ -118,6 +116,8 @@ class TemplateSpecOut(CamelModel):
     updated_at: datetime
     #: 正在编辑的整份内容；为空表示还没保存过。
     draft: TemplateSpecIn | None = None
+    #: 展示案例（图片/视频资产 id）。存在草稿里，不进发布快照 —— 改案例不用发新版。
+    demo_asset_id: str | None = None
     #: 最近一次发布；为空表示从未发布。
     latest: SpecVersionOut | None = None
 
@@ -138,23 +138,19 @@ class SpecPublishOut(CamelModel):
 
 
 class SpecCompileIn(StrictIn):
-    """填表结果：`{slotKey: [assetId…]}`，可带一份改写后的可编辑段提示词。
+    """填表结果：`{slotKey: [assetId…]}`。
 
     `source=pack` 的槽位传一个封装 id；`source=asset` 的槽位按用户挑选顺序传。
     `version` 为空表示用当前发布版本。
 
-    `promptOverride` 是**填表时改写的 `editable` 段**（`locked` 段永不可改）。
-    不传 = 用发布版本里那份原文。模板的 `editable` 为空（提示词全固定）时传它会 400 ——
-    那是模板作者明确关掉的入口，不该由调用方绕开。
+    **没有 `promptOverride`**（2026-11-14 起）：模板库不改文字。需要可变内容的地方
+    在模板里放 `text` 槽位 —— 填表时选一份文案，`compile` 把它排在 `{{Text N}}`
+    的第 N 位，执行层按 `textLibraryIds` 注入正文。这个入口曾经存在（改写"可编辑段"），
+    与"提示词只有一段"冲突，一并删掉。
     """
 
     version: int | None = Field(default=None, ge=1)
     slot_values: dict[str, list[str]] = Field(default_factory=dict)
-    prompt_override: str | None = Field(
-        default=None,
-        max_length=20000,
-        description="改写后的可编辑段提示词；`locked` 段不受影响",
-    )
 
 
 class CompiledSlotOut(CamelModel):

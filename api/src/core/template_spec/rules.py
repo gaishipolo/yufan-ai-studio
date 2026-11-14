@@ -23,7 +23,9 @@ _KEY = re.compile(r"^[a-z][a-z0-9_]{0,39}$")
 #: 规格 key：URL 段 + 运营可读，允许连字符（`product-swap-6036`）。
 _SPEC_KEY = re.compile(r"^[a-z][a-z0-9_-]{0,39}$")
 #: 规格里**不许**出现编号。编号是编译产物（见 `compile.py` 的说明）。
+#: `{{Text N}}` 同理：文本槽位在第几份由槽位顺序决定，写死会在少选一份时错位。
 _MIXED_LITERAL = re.compile(r"\{\{\s*Mixed\s+\d+\s*\}\}")
+_TEXT_LITERAL = re.compile(r"\{\{\s*Text\s+\d+\s*\}\}")
 
 
 def validate_spec(spec: TemplateSpec) -> None:
@@ -52,16 +54,19 @@ def validate_spec(spec: TemplateSpec) -> None:
         positions.add(slot.position)
         _validate_slot(slot)
 
-    for label, text in (("固定段", spec.prompt.locked), ("可编辑段", spec.prompt.editable)):
-        if _MIXED_LITERAL.search(text):
-            raise BadRequest(
-                f"{label}不要直接写 {{{{Mixed N}}}}：编号由槽位顺序与填充数量派生，"
-                "写死会在少填一张时全部错位"
-            )
-    total = len(spec.prompt.locked) + len(spec.prompt.editable)
-    if total > MAX_PROMPT:
-        raise BadRequest(f"提示词合计不能超过 {MAX_PROMPT} 字（现在 {total}）")
-    if not (spec.prompt.locked.strip() or spec.prompt.editable.strip()):
+    if _MIXED_LITERAL.search(spec.prompt):
+        raise BadRequest(
+            "提示词不要直接写 {{Mixed N}}：编号由槽位顺序与填充数量派生，"
+            "写死会在少填一张时全部错位"
+        )
+    if _TEXT_LITERAL.search(spec.prompt):
+        raise BadRequest(
+            "提示词不要直接写 {{Text N}}：文本槽位排第几由槽位顺序决定，"
+            "写死会在少选一份时错位"
+        )
+    if len(spec.prompt) > MAX_PROMPT:
+        raise BadRequest(f"提示词不能超过 {MAX_PROMPT} 字（现在 {len(spec.prompt)}）")
+    if not spec.prompt.strip():
         raise BadRequest("提示词不能为空")
 
 

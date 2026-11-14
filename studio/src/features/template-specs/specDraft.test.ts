@@ -7,6 +7,7 @@ import {
   insertRef,
   nextSlotKey,
   normalize,
+  rekeySlot,
   referenceChips,
 } from './specDraft';
 
@@ -46,21 +47,35 @@ describe('模板规格草稿', () => {
     expect(insertRef('', '{{slot:hero}}', 0).text).toBe('{{slot:hero}}');
   });
 
-  it('只有 mixed 槽位能引用；多值槽位额外给「全部」', () => {
+  it('视觉槽位与文本槽位都能引用；多值槽位额外给「全部」', () => {
     const spec = blankSpec();
     spec.slots = [
       {...blankSlot(0), key: 'hero', label: '主图', minCount: 1, maxCount: 1},
       {...blankSlot(1), key: 'detail', label: '细节', minCount: 0, maxCount: 3},
-      {...blankSlot(2), key: 'bgm', type: 'audio', refMode: 'attachment'},
+      // 文本槽位是"提示词里唯一可变的地方"：编译成 {{Text N}}，必须能引用。
+      {...blankSlot(2, 'text', []), key: 'brief', type: 'text', refMode: 'attachment', label: '口播'},
+      {...blankSlot(3), key: 'bgm', type: 'audio', refMode: 'attachment'},
     ];
     const chips = referenceChips(spec);
     expect(chips.map(chip => chip.token)).toEqual([
       '{{slot:hero}}',
       '{{slot:detail}}',
       '{{slot:detail*}}',
+      '{{slot:brief}}',
     ]);
-    // 音频不参与编号，给入口就等于让用户写出一条必然 400 的引用。
+    // 音频没有编号空间，给入口就等于让用户写出一条必然 400 的引用。
     expect(chips.some(chip => chip.token.includes('bgm'))).toBe(false);
+  });
+
+  it('改类型时改名：没被引用过才改，引用过就留着', () => {
+    const slots = [{...blankSlot(0), key: 'image_1', type: 'image' as const}];
+    // 没引用 → 跟着类型改成 video_1
+    const renamed = rekeySlot(slots, 0, 'video', '把 {{slot:other}} 换掉');
+    expect(renamed[0].key).toBe('video_1');
+    expect(renamed[0].type).toBe('video');
+    // 已被引用 → 原名不动，否则提示词里的引用会静默失效
+    const kept = rekeySlot(slots, 0, 'video', '把 {{slot:image_1}} 换掉');
+    expect(kept[0].key).toBe('image_1');
   });
 
   it('已发布但没有草稿时，用最近发布版本还原草稿', () => {
@@ -80,7 +95,7 @@ describe('模板规格草稿', () => {
         version: 2,
         model: 'libtv-wan3-replacement',
         params: {aspectRatio: '9:16'},
-        prompt: {locked: '固定', editable: '{{slot:hero}}'},
+        prompt: '固定\n\n{{slot:hero}}',
         slots: [{...blankSlot(0), key: 'hero'}, {...blankSlot(5), key: 'extra'}],
         fingerprint: 'fp2',
         publishedBy: 'u1',

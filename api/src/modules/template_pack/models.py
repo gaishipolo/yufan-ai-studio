@@ -101,6 +101,8 @@ class TemplateSpecVersion(Base, UUIDMixin):
 
     提示词存在这里而不是引用 head 的 draft：head 会继续被编辑，而历史任务必须
     永远看到它发布那一刻的原文（`tests/test_template_spec_api.py` 钉这条）。
+    展示案例（`demo_asset_id`）**不在这里**：它只影响卡片长什么样，改图不该要求
+    发新版本 —— 所以它只存在 head 的草稿里。
     """
 
     __tablename__ = "template_spec_versions"
@@ -114,8 +116,9 @@ class TemplateSpecVersion(Base, UUIDMixin):
     #: 发布时该模型必须在目录里存在；参数键必须落在它的 `param_schema` 内。
     model: Mapped[str] = mapped_column(String(80), nullable=False)
     params: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
-    prompt_locked: Mapped[str] = mapped_column(Text, default="", nullable=False)
-    prompt_editable: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    #: 整段提示词。**不分固定段 / 可编辑段**（2026-11-14）：模板库不改文字，
+    #: 需要可变的地方用 `text` 槽位（编译成 `{{Text N}}` 由执行层注入正文）。
+    prompt: Mapped[str] = mapped_column(Text, default="", nullable=False)
     fingerprint: Mapped[str] = mapped_column(String(64), default="", nullable=False)
     published_by: Mapped[str] = mapped_column(String(32), default="", nullable=False)
     published_at: Mapped[datetime] = mapped_column(

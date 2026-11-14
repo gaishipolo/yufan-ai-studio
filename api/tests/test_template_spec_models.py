@@ -64,7 +64,9 @@ def test_draft_lives_on_head_only() -> None:
     """草稿是整份 JSON；版本表存展开后的两段正文，不再留 JSON 草稿列。"""
     assert "draft" in _columns("template_specs")
     version_columns = _columns("template_spec_versions")
-    assert {"prompt_locked", "prompt_editable"} <= version_columns
+    assert "prompt" in version_columns
+    # 两段合并（2026-11-14）：旧列必须真的没了，否则"哪段能被模板库改"会以列的形式残留
+    assert not {"prompt_locked", "prompt_editable"} & version_columns
     assert "draft" not in version_columns
 
 

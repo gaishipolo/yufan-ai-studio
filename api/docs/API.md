@@ -3056,9 +3056,10 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `description` | `string` | 否 |  |
 | `model` | `string` | 是 |  |
 | `params` | `Record<string, unknown>` | 否 |  |
-| `prompt` | `SpecPromptIn` | 是 |  |
+| `prompt` | `string` | 是 |  |
 | `slots` | `SpecSlotIn[]` | 否 |  |
 | `attributes` | `Record<string, string>` | 否 |  |
+| `demoAssetId` | `string \| null` | 否 |  |
 | `revision` | `number \| null` | 否 |  |
 
 **响应** `ApiResponse<TemplateSpecOut>`（前端取 `res.data`）
@@ -3080,6 +3081,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `createdAt` | `string` | 是 |  |
 | `updatedAt` | `string` | 是 |  |
 | `draft` | `TemplateSpecIn \| null` | 否 |  |
+| `demoAssetId` | `string \| null` | 否 |  |
 | `latest` | `SpecVersionOut \| null` | 否 |  |
 
 #### `GET /api/v1/template-specs`
@@ -3150,9 +3152,10 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `description` | `string` | 否 |  |
 | `model` | `string` | 是 |  |
 | `params` | `Record<string, unknown>` | 否 |  |
-| `prompt` | `SpecPromptIn` | 是 |  |
+| `prompt` | `string` | 是 |  |
 | `slots` | `SpecSlotIn[]` | 否 |  |
 | `attributes` | `Record<string, string>` | 否 |  |
+| `demoAssetId` | `string \| null` | 否 |  |
 | `revision` | `number \| null` | 否 |  |
 
 **响应** `ApiResponse<SpecValidateOut>`（前端取 `res.data`）
@@ -3189,6 +3192,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `createdAt` | `string` | 是 |  |
 | `updatedAt` | `string` | 是 |  |
 | `draft` | `TemplateSpecIn \| null` | 否 |  |
+| `demoAssetId` | `string \| null` | 否 |  |
 | `latest` | `SpecVersionOut \| null` | 否 |  |
 
 #### `DELETE /api/v1/template-specs/{key}`
@@ -3218,6 +3222,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `createdAt` | `string` | 是 |  |
 | `updatedAt` | `string` | 是 |  |
 | `draft` | `TemplateSpecIn \| null` | 否 |  |
+| `demoAssetId` | `string \| null` | 否 |  |
 | `latest` | `SpecVersionOut \| null` | 否 |  |
 
 #### `POST /api/v1/template-specs/{key}/compile`
@@ -3239,7 +3244,6 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 |---|---|---|---|
 | `version` | `number \| null` | 否 |  |
 | `slotValues` | `Record<string, string[]>` | 否 |  |
-| `promptOverride` | `string \| null` | 否 | 改写后的可编辑段提示词；`locked` 段不受影响 |
 
 **响应** `ApiResponse<SpecCompileOut>`（前端取 `res.data`）
 
@@ -3280,6 +3284,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `createdAt` | `string` | 是 |  |
 | `updatedAt` | `string` | 是 |  |
 | `draft` | `TemplateSpecIn \| null` | 否 |  |
+| `demoAssetId` | `string \| null` | 否 |  |
 | `latest` | `SpecVersionOut \| null` | 否 |  |
 
 #### `POST /api/v1/template-specs/{key}/publish`
@@ -3324,6 +3329,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `createdAt` | `string` | 是 |  |
 | `updatedAt` | `string` | 是 |  |
 | `draft` | `TemplateSpecIn \| null` | 否 |  |
+| `demoAssetId` | `string \| null` | 否 |  |
 | `latest` | `SpecVersionOut \| null` | 否 |  |
 
 ---
@@ -4418,20 +4424,20 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 
 ### `SpecCompileIn`
 
-填表结果：`{slotKey: [assetId…]}`，可带一份改写后的可编辑段提示词。
+填表结果：`{slotKey: [assetId…]}`。
 
 `source=pack` 的槽位传一个封装 id；`source=asset` 的槽位按用户挑选顺序传。
 `version` 为空表示用当前发布版本。
 
-`promptOverride` 是**填表时改写的 `editable` 段**（`locked` 段永不可改）。
-不传 = 用发布版本里那份原文。模板的 `editable` 为空（提示词全固定）时传它会 400 ——
-那是模板作者明确关掉的入口，不该由调用方绕开。
+**没有 `promptOverride`**（2026-11-14 起）：模板库不改文字。需要可变内容的地方
+在模板里放 `text` 槽位 —— 填表时选一份文案，`compile` 把它排在 `{{Text N}}`
+的第 N 位，执行层按 `textLibraryIds` 注入正文。这个入口曾经存在（改写"可编辑段"），
+与"提示词只有一段"冲突，一并删掉。
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `version` | `number \| null` | 否 |  |
 | `slotValues` | `Record<string, string[]>` | 否 |  |
-| `promptOverride` | `string \| null` | 否 | 改写后的可编辑段提示词；`locked` 段不受影响 |
 
 ### `SpecCompileOut`
 
@@ -4450,13 +4456,6 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `referenceLibraryIds` | `string[]` | 否 |  |
 | `textLibraryIds` | `string[]` | 否 |  |
 | `slots` | `CompiledSlotOut[]` | 否 |  |
-
-### `SpecPromptIn`
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `locked` | `string` | 否 |  |
-| `editable` | `string` | 否 |  |
 
 ### `SpecPublishOut`
 
@@ -4517,7 +4516,7 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `version` | `number` | 是 |  |
 | `model` | `string` | 是 |  |
 | `params` | `Record<string, unknown>` | 是 |  |
-| `prompt` | `SpecPromptIn` | 是 |  |
+| `prompt` | `string` | 是 |  |
 | `slots` | `SpecSlotOut[]` | 是 |  |
 | `fingerprint` | `string` | 否 |  |
 | `publishedBy` | `string` | 否 |  |
@@ -4681,9 +4680,10 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `description` | `string` | 否 |  |
 | `model` | `string` | 是 |  |
 | `params` | `Record<string, unknown>` | 否 |  |
-| `prompt` | `SpecPromptIn` | 是 |  |
+| `prompt` | `string` | 是 |  |
 | `slots` | `SpecSlotIn[]` | 否 |  |
 | `attributes` | `Record<string, string>` | 否 |  |
+| `demoAssetId` | `string \| null` | 否 |  |
 | `revision` | `number \| null` | 否 |  |
 
 ### `TemplateSpecListOut`
@@ -4712,6 +4712,7 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `createdAt` | `string` | 是 |  |
 | `updatedAt` | `string` | 是 |  |
 | `draft` | `TemplateSpecIn \| null` | 否 |  |
+| `demoAssetId` | `string \| null` | 否 |  |
 | `latest` | `SpecVersionOut \| null` | 否 |  |
 
 ### `TextAssetIn`

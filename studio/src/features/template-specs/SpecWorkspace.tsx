@@ -1,15 +1,17 @@
 import { useMemo, useRef, useState, type ReactNode } from 'react';
-import { GripVertical, Plus, RotateCcw, Trash2 } from 'lucide-react';
+import { GripVertical, ImagePlus, Plus, RotateCcw, Trash2, Upload } from 'lucide-react';
 import { useModels } from '@/entities/model/api/model.queries';
+import { libraryApi } from '@/entities/library/api/library.api';
+import { useLibraryDetail } from '@/entities/library/api/library.queries';
 import {
   useSpecMutations,
   useSpecs,
   useTrashedSpecs,
 } from '@/entities/template-spec/api/spec.queries';
 import type { SpecSlotIn, TemplateSpecIn, TemplateSpecOut } from '@/shared/api/schema';
-import { Button, Chip, EmptyState, FormField, Select, TextInput } from '@/shared/ui';
+import { Button, Chip, CoverImage, EmptyState, FormField, Select, TextInput } from '@/shared/ui';
 import { cn } from '@/shared/lib/cn';
-import { AssetPicker, type PickedAsset } from '@/features/template-specs/AssetPicker';
+import { AssetPicker, type PickKind, type PickedAsset } from '@/features/template-specs/AssetPicker';
 import {
   SLOT_TYPE_LABELS,
   blankSlot,
@@ -18,6 +20,7 @@ import {
   insertRef,
   normalize,
   referenceChips,
+  rekeySlot,
 } from './specDraft';
 
 const TYPE_OPTIONS = (Object.keys(SLOT_TYPE_LABELS) as (keyof typeof SLOT_TYPE_LABELS)[]).map(
@@ -43,6 +46,9 @@ const STATUS_LABELS: Record<string, string> = {
 /** 槽位拖拽中的下标；用 key 定位比下标稳（重排过程中下标会变）。 */
 type DragState = {key: string} | null;
 
+/** 素材选择器的目标：某个槽位，或展示案例。 */
+type PickTarget = {target: 'slot'; index: number} | {target: 'demo'; kind: PickKind};
+
 export function SpecWorkspace() {
   const list = useSpecs();
   const trash = useTrashedSpecs();
@@ -57,9 +63,11 @@ export function SpecWorkspace() {
   const [note, setNote] = useState('');
   const [error, setError] = useState('');
   const [hint, setHint] = useState('');
-  const [picker, setPicker] = useState<number | null>(null);
+  const [picker, setPicker] = useState<PickTarget | null>(null);
+  const [uploading, setUploading] = useState(false);
   const [drag, setDrag] = useState<DragState>(null);
-  const [caret, setCaret] = useState<{field: 'locked' | 'editable'; at: number} | null>(null);
+  const [caret, setCaret] = useState<number | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   const busy =
     validate.isPending ||
@@ -67,7 +75,8 @@ export function SpecWorkspace() {
     publish.isPending ||
     disable.isPending ||
     remove.isPending ||
-    restore.isPending;
+    restore.isPending ||
+    uploading;
   // 契约里 `slots` 是可选的（后端有默认空列表），编辑器一律按非空处理。
   const slots = draft?.slots ?? [];
 
@@ -121,7 +130,12 @@ export function SpecWorkspace() {
       next.packId = null;
     }
     nextSlots[index] = next;
-    setDraft({...draft, slots: nextSlots});
+    // 改类型时跟着改名（只在提示词没引用过时；引用过就留着，别让引用静默失效）。
+    const rekeyed =
+      patch.type !== undefined
+        ? rekeySlot(nextSlots, index, next.type, draft.prompt ?? '')
+        : nextSlots;
+    setDraft({...draft, slots: rekeyed});
   };
 
   const moveSlot = (from: number, to: number) => {
@@ -136,26 +150,47 @@ export function SpecWorkspace() {
     if (!draft) return;
     const slot = blankSlot(slots.length, type, slots);
     setDraft({...draft, slots: [...slots, slot]});
-    if (type === 'text') setPicker(slots.length);
+    if (type === 'text') setPicker({target: 'slot', index: slots.length});
   };
 
   const pick = (asset: PickedAsset) => {
-    if (!draft || picker === null) return;
-    const slot = slots[picker];
-    patchSlot(picker, {
-      assetId: asset.id,
-      packId: slot.source === 'pack' ? asset.id : null,
-      label: slot.label?.trim() ? slot.label : asset.name,
-    });
+    if (!draft || !picker) return;
+    if (picker.target === 'demo') {
+      setDraft({...draft, demoAssetId: asset.id});
+    } else {
+      const id = picker.index;
+      const slot = slots[id];
+      patchSlot(id, {
+        assetId: asset.id,
+        packId: slot.source === 'pack' ? asset.id : null,
+        label: slot.label?.trim() ? slot.label : asset.name,
+      });
+    }
     setPicker(null);
   };
 
-  const writeRef = (field: 'locked' | 'editable', token: string) => {
+  const uploadDemo = async (file: File) => {
     if (!draft) return;
-    const at = caret?.field === field ? caret.at : (draft.prompt[field] ?? '').length;
-    const result = insertRef(draft.prompt[field] ?? '', token, at);
-    setDraft({...draft, prompt: {...draft.prompt, [field]: result.text}});
-    setCaret({field, at: result.caret});
+    clear();
+    setUploading(true);
+    try {
+      const asset = file.type.startsWith('video/')
+        ? await libraryApi.uploadSourceVideo(file)
+        : await libraryApi.upload(file, 'image');
+      setDraft(current => (current ? {...current, demoAssetId: asset.id} : current));
+    } catch (reason) {
+      fail(reason);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const writeRef = (token: string) => {
+    if (!draft) return;
+    const at = caret ?? (draft.prompt ?? '').length;
+    const result = insertRef(draft.prompt ?? '', token, at);
+    setDraft({...draft, prompt: result.text});
+    setCaret(result.caret);
     setHint('');
   };
 
@@ -166,16 +201,16 @@ export function SpecWorkspace() {
    * `{{Mixed N}}` → 数字与本次填充量对不上，少填一张就整体错位。所以这里直接
    * 拒绝新增花括号：要么删字，要么用下面的按钮。
    */
-  const setPromptText = (field: 'locked' | 'editable', text: string) => {
+  const setPromptText = (text: string) => {
     if (!draft) return;
-    const before = draft.prompt[field] ?? '';
+    const before = draft.prompt ?? '';
     const braces = (value: string) => (value.match(/[{}]/g) ?? []).length;
     if (braces(text) > braces(before)) {
       setHint('引用请用下方按钮插入，不要手写大括号');
       return;
     }
     setHint('');
-    setDraft({...draft, prompt: {...draft.prompt, [field]: text}});
+    setDraft({...draft, prompt: text});
   };
 
   const chips = draft ? referenceChips(draft) : [];
@@ -378,6 +413,48 @@ export function SpecWorkspace() {
           </Section>
 
           <Section
+            tone="ok"
+            title="展示案例"
+            extra={
+              <>
+                <Button variant="ghost" disabled={busy} onClick={() => fileRef.current?.click()}>
+                  <Upload size={13} /> 上传
+                </Button>
+                <Button
+                  variant="ghost"
+                  disabled={busy}
+                  onClick={() => setPicker({target: 'demo', kind: 'image'})}
+                >
+                  <ImagePlus size={13} /> 选图片
+                </Button>
+                <Button
+                  variant="ghost"
+                  disabled={busy}
+                  onClick={() => setPicker({target: 'demo', kind: 'video'})}
+                >
+                  选视频
+                </Button>
+              </>
+            }
+          >
+            <DemoCase
+              assetId={draft.demoAssetId ?? null}
+              onClear={() => setDraft({...draft, demoAssetId: null})}
+            />
+            <input
+              ref={fileRef}
+              type="file"
+              accept="image/*,video/*"
+              className="hidden"
+              onChange={event => {
+                const file = event.target.files?.[0];
+                event.target.value = '';
+                if (file) void uploadDemo(file);
+              }}
+            />
+          </Section>
+
+          <Section
             tone="violet"
             title="槽位"
             extra={
@@ -522,7 +599,10 @@ export function SpecWorkspace() {
                             </>
                           )}
                         {fixed && (
-                          <Button variant="ghost" onClick={() => setPicker(index)}>
+                          <Button
+                            variant="ghost"
+                            onClick={() => setPicker({target: 'slot', index})}
+                          >
                             {(slot.source ?? 'asset') === 'pack' ? '选择封装' : '选择素材'}
                           </Button>
                         )}
@@ -535,7 +615,12 @@ export function SpecWorkspace() {
                           : `素材：${slot.assetId || '未选择'}`}
                       </p>
                     )}
-                    {(slot.refMode ?? 'mixed') === 'attachment' && (
+                    {(slot.refMode ?? 'mixed') === 'attachment' && slot.type === 'text' && (
+                      <p className="mt-1 text-[11px] text-ink-mute">
+                        文本槽位：占 {`{{Text N}}`} 的第 N 位，正文由所选文案注入
+                      </p>
+                    )}
+                    {(slot.refMode ?? 'mixed') === 'attachment' && slot.type === 'audio' && (
                       <p className="mt-1 text-[11px] text-ink-mute">
                         附加输入：不占编号，提示词里不引用它
                       </p>
@@ -548,20 +633,9 @@ export function SpecWorkspace() {
         </div>
 
         <div className="flex flex-col gap-4">
-          <Section tone="warn" title="固定段" hint="模板库只读">
-            <PromptBox
-              value={draft.prompt.locked ?? ''}
-              chips={chips}
-              onRef={token => writeRef('locked', token)}
-              onCaret={at => setCaret({field: 'locked', at})}
-              onChange={text => setPromptText('locked', text)}
-              readOnly
-            />
-          </Section>
           <Section
             tone="primary"
-            title="可编辑段"
-            hint="模板库可改"
+            title="提示词"
             extra={
               <Button variant="ghost" onClick={() => addSlot('text')}>
                 <Plus size={13} /> 文本素材
@@ -569,11 +643,11 @@ export function SpecWorkspace() {
             }
           >
             <PromptBox
-              value={draft.prompt.editable ?? ''}
+              value={draft.prompt ?? ''}
               chips={chips}
-              onRef={token => writeRef('editable', token)}
-              onCaret={at => setCaret({field: 'editable', at})}
-              onChange={text => setPromptText('editable', text)}
+              onRef={writeRef}
+              onCaret={setCaret}
+              onChange={setPromptText}
             />
             {hint && <p className="mt-2 text-[11px] text-warn-deep">{hint}</p>}
           </Section>
@@ -583,20 +657,66 @@ export function SpecWorkspace() {
       <AssetPicker
         open={picker !== null}
         kind={
-          picker === null
-            ? 'image'
-            : ((slots[picker].source === 'pack' ? 'pack' : slots[picker].type) as
-                | 'image'
-                | 'video'
-                | 'audio'
-                | 'text'
-                | 'pack')
+          picker?.target === 'demo'
+            ? picker.kind
+            : picker === null
+              ? 'image'
+              : ((slots[picker.index].source === 'pack' ? 'pack' : slots[picker.index].type) as
+                  | 'image'
+                  | 'video'
+                  | 'audio'
+                  | 'text'
+                  | 'pack')
         }
-        selected={picker === null ? [] : [slots[picker].assetId ?? ''].filter(Boolean)}
+        selected={
+          picker === null
+            ? []
+            : picker.target === 'demo'
+              ? [draft.demoAssetId ?? ''].filter(Boolean)
+              : [slots[picker.index].assetId ?? ''].filter(Boolean)
+        }
         onClose={() => setPicker(null)}
         onToggle={pick}
       />
     </section>
+  );
+}
+
+/** 展示案例：没设就明说没有，不要拿渐变块冒充缩略图。 */
+function DemoCase({assetId, onClear}: {assetId: string | null; onClear: () => void}) {
+  const detail = useLibraryDetail(assetId);
+  if (!assetId) {
+    return (
+      <p className="rounded-xl border border-dashed border-line-strong bg-panel-soft px-3 py-6 text-center text-[11px] text-ink-mute">
+        暂无案例
+      </p>
+    );
+  }
+  const video = detail.data?.kind === 'video';
+  const src = detail.data?.previewUrl ?? detail.data?.streamUrl ?? detail.data?.url;
+  return (
+    <div className="flex items-center gap-3 rounded-xl border border-line-soft bg-panel-soft p-2">
+      {video && src ? (
+        <video src={src} muted controls className="h-24 w-40 rounded-lg bg-black object-contain" />
+      ) : (
+        <CoverImage
+          src={detail.data?.coverUrl ?? undefined}
+          seed={assetId}
+          alt="展示案例"
+          className="h-24 w-40 rounded-lg"
+        />
+      )}
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-[11px] text-ink-soft">{detail.data?.name ?? assetId.slice(0, 8)}</p>
+        <button
+          type="button"
+          onClick={onClear}
+          className="mt-1 text-[11px] text-ink-mute transition-colors hover:text-danger"
+        >
+          移除案例
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -608,13 +728,18 @@ function Section({
   extra,
   children,
 }: {
-  tone: 'primary' | 'violet' | 'warn';
+  tone: 'primary' | 'violet' | 'warn' | 'ok';
   title: string;
   hint?: string;
   extra?: ReactNode;
   children: ReactNode;
 }) {
-  const bar = {primary: 'bg-primary', violet: 'bg-violet', warn: 'bg-warn'}[tone];
+  const bar = {
+    primary: 'bg-primary',
+    violet: 'bg-violet',
+    warn: 'bg-warn',
+    ok: 'bg-ok',
+  }[tone];
   return (
     <div className="rounded-2xl border border-line bg-panel p-4 shadow-[0_1px_2px_rgba(16,42,55,0.04)]">
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
@@ -651,14 +776,12 @@ function PromptBox({
   onRef,
   onCaret,
   onChange,
-  readOnly = false,
 }: {
   value: string;
   chips: {token: string; label: string; all: boolean}[];
   onRef: (token: string) => void;
   onCaret: (at: number) => void;
   onChange: (text: string) => void;
-  readOnly?: boolean;
 }) {
   const ref = useRef<HTMLTextAreaElement>(null);
   return (
@@ -666,11 +789,8 @@ function PromptBox({
       <textarea
         ref={ref}
         value={value}
-        rows={7}
-        readOnly={readOnly}
-        placeholder={
-          readOnly ? '这段由封装决定，模板库不可改' : '写描述文字；引用用下方按钮插入'
-        }
+        rows={10}
+        placeholder="写提示词；要可变的内容加一个文本槽位，再用下方按钮插入引用"
         onChange={event => {
           onChange(event.target.value);
           onCaret(event.target.selectionStart ?? 0);
@@ -678,9 +798,7 @@ function PromptBox({
         onSelect={event => onCaret(event.currentTarget.selectionStart ?? 0)}
         className={cn(
           'w-full rounded-lg border px-2.5 py-2 text-xs leading-relaxed outline-none',
-          readOnly
-            ? 'cursor-default border-line-soft bg-canvas/60 text-ink-soft'
-            : 'border-primary-line bg-primary-soft/30 text-ink focus:border-primary',
+          'border-primary-line bg-primary-soft/30 text-ink focus:border-primary',
         )}
       />
       <div className="mt-2 flex flex-wrap gap-1.5">

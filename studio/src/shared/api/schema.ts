@@ -1132,19 +1132,18 @@ export interface ShotPresetOut {
   popularity: number;
 }
 
-/** 填表结果：`{slotKey: [assetId…]}`，可带一份改写后的可编辑段提示词。
+/** 填表结果：`{slotKey: [assetId…]}`。
 
 `source=pack` 的槽位传一个封装 id；`source=asset` 的槽位按用户挑选顺序传。
 `version` 为空表示用当前发布版本。
 
-`promptOverride` 是**填表时改写的 `editable` 段**（`locked` 段永不可改）。
-不传 = 用发布版本里那份原文。模板的 `editable` 为空（提示词全固定）时传它会 400 ——
-那是模板作者明确关掉的入口，不该由调用方绕开。 */
+**没有 `promptOverride`**（2026-11-14 起）：模板库不改文字。需要可变内容的地方
+在模板里放 `text` 槽位 —— 填表时选一份文案，`compile` 把它排在 `{{Text N}}`
+的第 N 位，执行层按 `textLibraryIds` 注入正文。这个入口曾经存在（改写"可编辑段"），
+与"提示词只有一段"冲突，一并删掉。 */
 export interface SpecCompileIn {
   version?: number | null;
   slotValues?: Record<string, string[]>;
-  /** 改写后的可编辑段提示词；`locked` 段不受影响 */
-  promptOverride?: string | null;
 }
 
 /** 编译结果（模板层）。
@@ -1160,12 +1159,6 @@ export interface SpecCompileOut {
   referenceLibraryIds?: string[];
   textLibraryIds?: string[];
   slots?: CompiledSlotOut[];
-}
-
-/** SpecPromptIn */
-export interface SpecPromptIn {
-  locked?: string;
-  editable?: string;
 }
 
 /** SpecPublishOut */
@@ -1217,7 +1210,7 @@ export interface SpecVersionOut {
   version: number;
   model: string;
   params: Record<string, unknown>;
-  prompt: SpecPromptIn;
+  prompt: string;
   slots: SpecSlotOut[];
   fingerprint?: string;
   publishedBy?: string;
@@ -1375,9 +1368,10 @@ export interface TemplateSpecIn {
   description?: string;
   model: string;
   params?: Record<string, unknown>;
-  prompt: SpecPromptIn;
+  prompt: string;
   slots?: SpecSlotIn[];
   attributes?: Record<string, string>;
+  demoAssetId?: string | null;
   revision?: number | null;
 }
 
@@ -1404,6 +1398,7 @@ export interface TemplateSpecOut {
   createdAt: string;
   updatedAt: string;
   draft?: TemplateSpecIn | null;
+  demoAssetId?: string | null;
   latest?: SpecVersionOut | null;
 }
 
