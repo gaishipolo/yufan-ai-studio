@@ -8,7 +8,7 @@ import { useCan } from '@/shared/access/use-access';
 import { useDebouncedValue } from '@/shared/hooks/useDebouncedValue';
 import { TaskCard } from '@/entities/task/ui/TaskCard';
 import { ImageTaskCard } from '@/entities/task/ui/ImageTaskCard';
-import { useDeleteTasks, useTaskFeed, useUpdateTask } from '@/entities/task/api/task.queries';
+import { useDeleteImages, useDeleteTasks, useTaskFeed, useUpdateTask } from '@/entities/task/api/task.queries';
 import type { TaskScope, TaskSort } from '@/entities/task/model/types';
 import type { TaskFeedItem, TaskFeedParams, TaskFeedSource, TaskFeedStatus } from '@/entities/task/model/feed.types';
 import { TaskFilterBar } from '@/features/task-filter/ui/TaskFilterBar';
@@ -102,10 +102,20 @@ export default function TaskCenterPage() {
 
   const { data, isLoading, isFetching, isError, error, refetch } = useTaskFeed(params);
   const deleteTasks = useDeleteTasks();
+  const deleteImages = useDeleteImages();
   const updateTask = useUpdateTask();
   // 用 useMemo 稳住引用：`openPreview` 依赖 items，裸的 `?? []` 每次渲染都会换数组
   const items = useMemo(() => data?.items ?? [], [data?.items]);
-  const videoItems = items.flatMap(item => item.video ? [item.video] : []);
+  // 批量操作按来源分流：视频走 DELETE /tasks，生图走 DELETE /images。后端是两套表，
+  // 一个端点认不了两种 id（生图 id 传进 /tasks 只会被 skipped）
+  const sourceOf = useMemo(
+    () => new Map(items.map(item => [item.id, item.source])),
+    [items],
+  );
+  const deletableItems = useMemo(
+    () => items.flatMap(item => (item.video || item.image ? [item] : [])),
+    [items],
+  );
   const stats = data?.stats;
   const canReadAll = data?.canReadAll ?? false;
   // 0 = 还不知道总数（加载中 / 失败）。越界回收统一由 Pager 做，这里只负责把"不知道"如实传下去
@@ -131,9 +141,10 @@ export default function TaskCenterPage() {
 
   const toggleSelectAll = () => {
     setSelected((prev) => {
-      const allSelected = videoItems.length > 0 && videoItems.every((t) => prev.has(t.id));
+      const allSelected =
+        deletableItems.length > 0 && deletableItems.every((item) => prev.has(item.id));
       if (allSelected) return new Set();
-      return new Set(videoItems.map((t) => t.id));
+      return new Set(deletableItems.map((item) => item.id));
     });
   };
 
@@ -148,16 +159,24 @@ export default function TaskCenterPage() {
     if (!ready.length) return toast('勾选的任务还没有成片', 'error');
     ready.forEach(item => item.outputUrl && downloadUrl(item.outputUrl, artifactName(item, me)));
     toast(
-      `已打开 ${ready.length} 个成片${ready.length < selected.size ? `，${selected.size - ready.length} 个暂无成片` : ''}`,
+      `已打开 ${ready.length} 个产物${ready.length < selected.size ? `，${selected.size - ready.length} 个暂无产物` : ''}`,
       'success',
     );
   };
 
   const handleCollect = async () => {
     if (!selected.size) return toast('请先勾选需要收藏的任务', 'error');
+    // 收藏只存在于视频任务（`PATCH /tasks/{id}`）；生图记录没有这个字段，
+    // 混选时跳过它们并把话说清楚，而不是整批失败
+    const videoIds = [...selected].filter(id => sourceOf.get(id) === 'video');
+    if (!videoIds.length) return toast('生图记录暂不支持收藏', 'error');
     try {
-      await Promise.all([...selected].map(id => updateTask.mutateAsync({ id, favorited: true })));
-      toast(`已收藏 ${selected.size} 个任务`, 'success');
+      await Promise.all(videoIds.map(id => updateTask.mutateAsync({ id, favorited: true })));
+      const skipped = selected.size - videoIds.length;
+      toast(
+        `已收藏 ${videoIds.length} 个任务${skipped > 0 ? `；${skipped} 条生图记录不支持收藏` : ''}`,
+        'success',
+      );
       setSelected(new Set());
     } catch (e) {
       toast(e instanceof Error ? e.message : '收藏失败', 'error');
@@ -166,11 +185,25 @@ export default function TaskCenterPage() {
 
   const handleDelete = async () => {
     if (!selected.size) return toast('请先勾选要删除的任务', 'error');
+    const ids = [...selected];
+    const videoIds = ids.filter(id => sourceOf.get(id) === 'video');
+    const imageIds = ids.filter(id => sourceOf.get(id) === 'image');
     try {
-      const result = await deleteTasks.mutateAsync([...selected]);
+      let deleted = 0;
+      const skipped: string[] = [];
+      if (videoIds.length) {
+        const result = await deleteTasks.mutateAsync(videoIds);
+        deleted += result.deleted;
+        skipped.push(...result.skipped);
+      }
+      if (imageIds.length) {
+        const result = await deleteImages.mutateAsync(imageIds);
+        deleted += result.deleted;
+        skipped.push(...result.skipped);
+      }
       toast(
-        `已删除 ${result.deleted} 个任务${result.skipped.length ? `，${result.skipped.length} 个未删除` : ''}`,
-        result.skipped.length ? 'error' : 'success',
+        `已删除 ${deleted} 个任务${skipped.length ? `，${skipped.length} 个未删除` : ''}`,
+        skipped.length ? 'error' : 'success',
       );
       setSelected(new Set());
     } catch (e) {
@@ -232,7 +265,7 @@ export default function TaskCenterPage() {
         {selected.size > 0 ? (
           <TaskBulkBar
             count={selected.size}
-            busy={deleteTasks.isPending || updateTask.isPending}
+            busy={deleteTasks.isPending || deleteImages.isPending || updateTask.isPending}
             onSelectAll={toggleSelectAll}
             onClear={() => setSelected(new Set())}
             onDownload={handleDownload}
@@ -271,7 +304,13 @@ export default function TaskCenterPage() {
                 onOpen={openPreview}
               />
             ) : item.image ? (
-              <ImageTaskCard key={item.key} item={item.image} onOpen={openPreview} />
+              <ImageTaskCard
+                key={item.key}
+                item={item.image}
+                selected={selected.has(item.id)}
+                onToggleSelect={toggleSelect}
+                onOpen={openPreview}
+              />
             ) : null)}
           </div>
         )}

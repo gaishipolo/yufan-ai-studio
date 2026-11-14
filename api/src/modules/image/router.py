@@ -14,8 +14,19 @@ from fastapi import APIRouter, Depends, Query, status
 from api.deps import PageDep, rate_limit
 from core.config import settings
 from core.response import ApiResponse, Page
-from modules.image.dependencies import ImageCreateDep, ImageReadDep, ImageServiceDep
-from modules.image.schema import GenerateImageIn, ImageJobOut, ImageRetryOut
+from modules.image.dependencies import (
+    ImageCreateDep,
+    ImageDeleteDep,
+    ImageReadDep,
+    ImageServiceDep,
+)
+from modules.image.schema import (
+    DeleteImagesIn,
+    DeleteImagesOut,
+    GenerateImageIn,
+    ImageJobOut,
+    ImageRetryOut,
+)
 
 router = APIRouter(tags=["生图"])
 
@@ -45,6 +56,29 @@ async def generate_image(
 ) -> ApiResponse[ImageJobOut]:
     job = await service.generate(actor, payload)
     return ApiResponse.ok(await service.out(job), message="已提交")
+
+
+@router.delete("/images", summary="批量删除生图记录")
+async def delete_images(
+    service: ImageServiceDep,
+    actor: ImageDeleteDep,
+    payload: DeleteImagesIn,
+    # 批量写没有天然上限（一次 200 条），额度给得比生成宽，但要有
+    _: None = Depends(rate_limit("image.delete", limit=settings.rate_limit_default_per_min)),
+) -> ApiResponse[DeleteImagesOut]:
+    """删除生成历史（含进行中的记录）。
+
+    与 `DELETE /tasks` 同一套语义：能删本人的，有 `image:read:all` 才能删别人的；
+    不存在或无权限的 id 回在 `skipped` 里，不整批 403。
+
+    **删了就不能再重试**：失败记录上的 `externalId` 是核对"是否已扣费"的凭证。
+    用户 2026-11-15 明确接受这个取舍，所以这里不拦进行中的任务、也不要求二次确认。
+    """
+    deleted, skipped = await service.delete_jobs(payload.ids, actor)
+    message = (
+        f"已删除 {deleted} 条" if not skipped else f"已删除 {deleted} 条，{len(skipped)} 条未删除"
+    )
+    return ApiResponse.ok(DeleteImagesOut(deleted=deleted, skipped=skipped), message=message)
 
 
 @router.post("/images/{job_id}/retry", summary="重试失败的生图")

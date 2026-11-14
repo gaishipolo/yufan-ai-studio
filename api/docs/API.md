@@ -2,7 +2,7 @@
 
 > 此文件由 `app export-openapi` 自动生成，请勿手工编辑。
 >
-> 版本 `0.2.0`｜共 **124** 个接口 / **11** 个模块
+> 版本 `0.2.0`｜共 **125** 个接口 / **11** 个模块
 >
 > 重新生成：`cd api && .venv/Scripts/python -m cli export-openapi`
 
@@ -82,6 +82,7 @@ Authorization: Bearer <accessToken>
 | `export:delete` | 删除导出 |  |
 | `export:read` | 查看导出 |  |
 | `image:create` | 提交生图任务 |  |
+| `image:delete` | 删除生图记录 | 删除生成历史，删除后不可再重试；不含删除他人记录（那需要 image:read:all 的数据范围） |
 | `image:read` | 查看生图历史 |  |
 | `image:read:all` | 查看他人生图历史 | 列表的数据范围开关；与 task:read:all 同义，不含提交他人的生图任务 |
 | `image:retry:any` | 重试他人生图任务 | 只开关「替别人点重试」，不蕴含 image:read:all |
@@ -221,7 +222,7 @@ Authorization: Bearer <accessToken>
 | 身份 | 39 | 见下方 `4.1` |
 | 任务 | 9 | 见下方 `4.2` |
 | 模型 | 1 | 见下方 `4.3` |
-| 生图 | 3 | 见下方 `4.4` |
+| 生图 | 4 | 见下方 `4.4` |
 | 分镜模板 | 1 | 见下方 `4.5` |
 | 镜头库 | 1 | 见下方 `4.6` |
 | 系统 | 2 | 见下方 `4.7` |
@@ -1269,12 +1270,13 @@ Authorization: Bearer <accessToken>
 | `message` | `string` | 否 |  |
 | `data` | `modules__catalog__schema__ModelListOut \| null` | 否 |  |
 
-### 4.4 生图（3 个）
+### 4.4 生图（4 个）
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
 | `POST` | `/api/v1/generations/image` | 提交生图 | 🔒 |
 | `GET` | `/api/v1/images` | 生图历史（分页） | 🔒 |
+| `DELETE` | `/api/v1/images` | 批量删除生图记录 | 🔒 |
 | `POST` | `/api/v1/images/{job_id}/retry` | 重试失败的生图 | 🔒 |
 
 #### `POST /api/v1/generations/image`
@@ -1337,6 +1339,31 @@ Authorization: Bearer <accessToken>
 | `total` | `number` | 是 | 总条数（用于分页器） |
 | `page` | `number` | 是 | 当前页码，从 1 开始 |
 | `pageSize` | `number` | 是 | 每页条数 |
+
+#### `DELETE /api/v1/images`
+
+**批量删除生图记录**
+
+删除生成历史（含进行中的记录）。
+
+与 `DELETE /tasks` 同一套语义：能删本人的，有 `image:read:all` 才能删别人的；
+不存在或无权限的 id 回在 `skipped` 里，不整批 403。
+
+**删了就不能再重试**：失败记录上的 `externalId` 是核对"是否已扣费"的凭证。
+用户 2026-11-15 明确接受这个取舍，所以这里不拦进行中的任务、也不要求二次确认。
+
+**请求体** `DeleteImagesIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `ids` | `string[]` | 是 | 要删除的生图记录 ID 列表 |
+
+**响应** `ApiResponse<DeleteImagesOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `deleted` | `number` | 是 | 实际删除的条数 |
+| `skipped` | `string[]` | 否 | 被跳过的记录 ID：不存在，或属于他人且没有 `image:read:all` |
 
 #### `POST /api/v1/images/{job_id}/retry`
 
@@ -3426,6 +3453,24 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `referenceLibraryIds` | `string[]` | 否 | 参考素材的资产库 v2 资产 id，最多 20 个，**顺序即提交顺序**。受理时校验：必须存在、当前账号能读、不在回收站 / 草稿里，且是 `image` / `video` / `audio` 之一（能否收图、收几张由模型的 `maxReferences` 决定）。传 id 而不是 URL：取件链接是私签的，供应商取不到 |
 | `textLibraryIds` | `string[]` | 否 | 要拼进提示词的文本资产 id，按顺序对应 `{{Text 1}}` / `{{Text 2}}`…；提交时按当时版本冻结正文，之后编辑资产不影响本次生成与重试。只接受当前账号可读、在库的 text 类型资产，最多 8 份 |
 | `stylePreset` | `string \| null` | 否 | 风格预设标识，留空为不套风格 |
+
+### `DeleteImagesIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `ids` | `string[]` | 是 | 要删除的生图记录 ID 列表 |
+
+### `DeleteImagesOut`
+
+与 `DELETE /tasks` 同一形状：删了几条、哪些被跳过。
+
+跳过的原因是「不存在」或「属于他人且没有 `image:read:all`」——两者对外
+不做区分（不向无权限者泄漏「这个 id 存在」），细节只进服务端日志。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `deleted` | `number` | 是 | 实际删除的条数 |
+| `skipped` | `string[]` | 否 | 被跳过的记录 ID：不存在，或属于他人且没有 `image:read:all` |
 
 ### `DeleteTasksIn`
 

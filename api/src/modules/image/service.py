@@ -244,6 +244,41 @@ class ImageService:
         await get_runner().dispatch(KIND_IMAGE, job.id)
         return job
 
+    async def delete_jobs(
+        self, ids: list[str], actor: CurrentUser
+    ) -> tuple[int, list[str]]:
+        """批量删除生成历史，返回（删除条数, 被跳过的 id）。
+
+        与 `DELETE /tasks` 同一口径：
+
+        - 可见性只看「本人」或 `image:read:all`（数据范围开关）；
+        - 「不存在」与「没权限」都记为 skipped，对外不区分（不向无权限者泄漏
+          「这个 id 存在」），细节进服务端日志；
+        - 一条越权不该让整批 403，但调用方必须能看见哪些没删成。
+
+        **删除即放弃重试**（用户 2026-11-15 拍板）：失败记录上的 `external_id`
+        原本是核对"是否已扣费"的凭证，删了就没有可重试、可核对的入口了。
+        这是明确选择，不是遗漏。产物字节不在这里删：图片已进资产库，
+        对象存储的生命周期归库自己的回收，删一条历史不该顺带毁掉一份素材。
+        """
+        if not ids:
+            return 0, []
+        can_read_all = actor.has(PERM_READ_ALL)
+        rows = await self.session.scalars(select(ImageJob).where(ImageJob.id.in_(ids)))
+        owned = [row for row in rows if can_read_all or row.owner_id == actor.id]
+        owned_ids = {row.id for row in owned}
+        skipped = [job_id for job_id in ids if job_id not in owned_ids]
+        for row in owned:
+            await self.session.delete(row)
+        await self.session.commit()
+        if skipped:
+            logger.warning(
+                "生图记录批量删除跳过 %d 条（不存在或无权限）: %s",
+                len(skipped),
+                skipped[:20],
+            )
+        return len(owned), skipped
+
     async def retry(
         self, actor: CurrentUser, job_id: str, *, confirm_charged: bool = False
     ) -> ImageJob:

@@ -75,6 +75,26 @@ class ImageRetryOut(CamelModel):
     status: str = Field(description="重试后的状态，固定为 `queued`")
 
 
+class DeleteImagesIn(CamelModel):
+    ids: list[str] = Field(
+        min_length=1, max_length=200, description="要删除的生图记录 ID 列表"
+    )
+
+
+class DeleteImagesOut(CamelModel):
+    """与 `DELETE /tasks` 同一形状：删了几条、哪些被跳过。
+
+    跳过的原因是「不存在」或「属于他人且没有 `image:read:all`」——两者对外
+    不做区分（不向无权限者泄漏「这个 id 存在」），细节只进服务端日志。
+    """
+
+    deleted: int = Field(description="实际删除的条数")
+    skipped: list[str] = Field(
+        default_factory=list,
+        description="被跳过的记录 ID：不存在，或属于他人且没有 `image:read:all`",
+    )
+
+
 class GenerateImageIn(CamelModel):
     prompt: str = Field(min_length=1, max_length=2000, description="画面描述")
     size: str = Field(

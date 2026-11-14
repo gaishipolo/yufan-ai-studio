@@ -29,4 +29,9 @@ export const taskApi = {
 
   remove: (ids: string[]) =>
     api.delete<{ deleted: number; skipped: string[] }>('/tasks', { ids }),
+
+  /* 生图与视频是两套记录（`image_jobs` / `video_tasks`），删除也走两个接口：
+     任务中心的批量删除按来源分流，别指望后端一个端点认两种 id。 */
+  removeImages: (ids: string[]) =>
+    api.delete<{ deleted: number; skipped: string[] }>('/images', { ids }),
 };

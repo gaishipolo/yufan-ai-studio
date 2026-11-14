@@ -2,7 +2,7 @@
 
 # Mock 覆盖率（只记录，不作门禁）
 
-后端端点 124 条（来自 `schema.ts` 的 `EndpointData`），
+后端端点 125 条（来自 `schema.ts` 的 `EndpointData`），
 已注册 mock 路由 80 条（来自 `mockRouteTable()`），
 按「同方法 + 正则能匹配」判定疑似覆盖 82 条。
 
@@ -51,6 +51,7 @@
 | GET | `/api/v1/identity/password-policy` |
 | GET | `/api/v1/identity/users/{}/logins` |
 | POST | `/api/v1/identity/users/{}/revoke-sessions` |
+| DELETE | `/api/v1/images` |
 | GET | `/api/v1/library/assets/{}/preview` |
 | GET | `/api/v1/library/assets/{}/stream` |
 | GET | `/api/v1/library/assets/{}/text` |
@@ -79,4 +80,4 @@
 | GET | `/api/v1/template-specs/trash` |
 | POST | `/api/v1/template-specs/validate` |
 
-（未命中 42 条；已命中 82 条不在本表重复列出。）
+（未命中 43 条；已命中 82 条不在本表重复列出。）

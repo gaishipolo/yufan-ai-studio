@@ -11,6 +11,7 @@ const mock = vi.hoisted(() => ({
   list: {} as Record<string, unknown>,
   params: {} as TaskFeedParams,
   deleteCalls: [] as string[][],
+  deleteImageCalls: [] as string[][],
   updateCalls: [] as unknown[],
   deleted: { deleted: 1, skipped: [] as string[] },
 }));
@@ -23,6 +24,10 @@ vi.mock('@/entities/task/api/task.queries', () => ({
   useToggleFavorite: () => ({mutateAsync: vi.fn(), isPending: false}),
   useDeleteTasks: () => ({
     mutateAsync: vi.fn(async (ids: string[]) => { mock.deleteCalls.push(ids); return mock.deleted; }),
+    isPending: false,
+  }),
+  useDeleteImages: () => ({
+    mutateAsync: vi.fn(async (ids: string[]) => { mock.deleteImageCalls.push(ids); return mock.deleted; }),
     isPending: false,
   }),
   useUpdateTask: () => ({
@@ -64,6 +69,7 @@ function App({permissions = ['task:read']}: {permissions?: string[]}) {
 beforeEach(() => {
   mock.list = {data: listResult(), isLoading: false, isFetching: false, isError: false, error: null, refetch: vi.fn()};
   mock.deleteCalls = [];
+  mock.deleteImageCalls = [];
   mock.updateCalls = [];
   mock.deleted = { deleted: 1, skipped: [] };
 });
@@ -128,5 +134,15 @@ describe('任务中心页面', () => {
     fireEvent.click(screen.getByRole('button', {name: '选择任务：测试任务'}));
     fireEvent.click(screen.getByRole('button', {name: '收藏'}));
     await waitFor(() => expect(mock.updateCalls).toEqual([{id: 'task1', favorited: true}]));
+  });
+
+  it('勾选生图记录后删除走 DELETE /images，不和视频混批', async () => {
+    mock.list.data = listResult({items: [...listResult().items, imageItem], total: 2});
+    render(<App permissions={['task:read', 'image:read']} />);
+    fireEvent.click(screen.getByRole('button', {name: '选择生图：一只猫'}));
+    fireEvent.click(screen.getByRole('button', {name: '删除'}));
+    await waitFor(() => expect(mock.deleteImageCalls).toEqual([['img1']]));
+    // 视频那条没被选中，不该跟着发出去：两套表两个端点，混批会有一半被 skipped
+    expect(mock.deleteCalls).toEqual([]);
   });
 });

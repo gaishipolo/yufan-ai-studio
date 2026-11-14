@@ -129,3 +129,14 @@ export function useDeleteTasks() {
     },
   });
 }
+
+/** 删除生图记录（`DELETE /images`）。失效范围同上：任务中心是一份聚合缓存。 */
+export function useDeleteImages() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (ids: string[]) => taskApi.removeImages(ids),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: taskKeys.all });
+    },
+  });
+}

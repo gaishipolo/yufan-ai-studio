@@ -296,7 +296,7 @@
 | `modules/catalog/service.py` | 模型目录服务：把 `ModelRouter` 的模型清单翻译成前端可直接用的结构。 |
 | `modules/catalog/router.py` | 模型目录路由：前端「模型选择器」的唯一数据源。 |
 | `modules/catalog/schema.py` | 模型目录出参。 |
-| `modules/image/router.py` / `service.py` / `pipeline.py` / `schema.py` / `models.py` / `permissions.py` | 生图：作业提交（建记录 + 投递）、历史与 `POST /images/{id}/retry`（带 `confirmCharged` 确认开关）、`image_jobs ↔ GenerationRecord` 映射与终态保护、`persist_output` 落盘（host 白名单 / 逐跳校验 / 大小上限 / 魔数）、`list_unfinished` 供框架恢复器调用、权限点（含 `image:retry:any`）。`models.py` 另存 `previous_external_id`（重试前的对账凭证）与 `submit_mode`（供应商形态快照）。 |
+| `modules/image/router.py` / `service.py` / `pipeline.py` / `schema.py` / `models.py` / `permissions.py` | 生图：作业提交（建记录 + 投递）、历史与 `POST /images/{id}/retry`（带 `confirmCharged` 确认开关）、`DELETE /images`（批量删历史，回 `deleted` / `skipped`，与 `DELETE /tasks` 同语义）、`image_jobs ↔ GenerationRecord` 映射与终态保护、`persist_output` 落盘（host 白名单 / 逐跳校验 / 大小上限 / 魔数）、`list_unfinished` 供框架恢复器调用、权限点（含 `image:retry:any` / `image:delete`）。`models.py` 另存 `previous_external_id`（重试前的对账凭证）与 `submit_mode`（供应商形态快照）。 |
 | `modules/image/feed_provider.py` | 生图 → 任务中心的只读来源：注册在 `modules/image/__init__.py`，关键词 / 范围 / 状态 / 排序都在 SQL 里做完，`limit=0` 只回统计；出参批量现签封面与成图 URL。`succeeded` 但成图不在归 `attention`。 |
 | `modules/image/maintenance.py` | 生图周期任务 `image.reconcile`：捞回卡在 `queued` / `running` 且无 `external_id` 的记录（已受理的不碰）。阈值只取声明了 IMAGE 提交预算的驱动的 `timeout_sec`、按 `coalesce(started_at, created_at)` 判陈旧、cutoff 按 dialect 选 aware/naive、`LIMIT` 下推到 SQL、日志按「重投 / 待人工核对」分分支。 |
 | `modules/image/seed.py` | 生图演示数据：由 `ModuleSpec.seed` 调用，不再改 `src/seed.py`；演示记录必须是终态，否则会被巡检重投到真实供应商。 |
@@ -519,7 +519,7 @@
 | `pages/storyboards/StoryboardsPage.tsx` | 分镜模板页。 |
 | `pages/image/ImagePage.tsx` | 生图历史页（分页器在「总数未知」时不回退页码）。 |
 | `pages/studio/StudioPage.tsx` | 创作台：模型/时长/比例全部来自 `/models`，加模型不改这里。 |
-| `pages/task-center/TaskCenterPage.tsx` | 任务中心：两路来源（视频 / 生图）、筛选全由 URL 承载；批量下载 / 收藏 / 删除只作用于勾选的通用视频任务。 |
+| `pages/task-center/TaskCenterPage.tsx` | 任务中心：两路来源（视频 / 生图）、筛选全由 URL 承载；批量下载 / 删除对两路都生效（删除按来源分流到 `DELETE /tasks` 与 `DELETE /images`），收藏只对视频任务（生图记录没有 `favorited` 字段）。 |
 | `pages/usage/UsagePage.tsx` | 用量看板 · 骨架占位页。 |
 | `pages/login/LoginPage.tsx` | 登录页（裸布局）+ 会话结束原因文案。 |
 | `pages/not-found/NotFoundPage.tsx` | 404。 |

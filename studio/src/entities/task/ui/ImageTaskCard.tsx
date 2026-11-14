@@ -1,5 +1,5 @@
 import { memo } from 'react';
-import { Images } from 'lucide-react';
+import { Check, Images } from 'lucide-react';
 import type { ImageFeedItem } from '@/shared/api/schema';
 import { cn } from '@/shared/lib/cn';
 import { formatDateTime } from '@/shared/lib/format';
@@ -7,6 +7,8 @@ import { Chip, CoverImage } from '@/shared/ui';
 
 export interface ImageTaskCardProps {
   item: ImageFeedItem;
+  selected: boolean;
+  onToggleSelect: (id: string) => void;
   onOpen: (id: string) => void;
 }
 
@@ -24,16 +26,24 @@ const STATUS_STYLE: Record<string, string> = {
   failed: 'bg-[rgba(242,84,75,.92)]',
 };
 
-/** 任务中心里的生图卡片：与视频卡同栅格，但没有勾选框（生图不支持批量删除/收藏）。 */
-export const ImageTaskCard = memo(function ImageTaskCard({ item, onOpen }: ImageTaskCardProps) {
+/** 任务中心里的生图卡片：与视频卡同栅格、同样可勾选（批量删除 / 下载都支持）。 */
+export const ImageTaskCard = memo(function ImageTaskCard({
+  item,
+  selected,
+  onToggleSelect,
+  onOpen,
+}: ImageTaskCardProps) {
   const inFlight = item.status === 'queued' || item.status === 'running';
   const cover = item.coverUrl || item.outputUrl || '';
 
   return (
     <article
       className={cn(
-        'group relative cursor-pointer overflow-hidden rounded-card border border-line-soft bg-panel transition-all duration-200',
-        'hover:-translate-y-0.5 hover:border-line-strong hover:shadow-card',
+        'group relative cursor-pointer overflow-hidden rounded-card border bg-panel transition-all duration-200',
+        'hover:-translate-y-0.5 hover:shadow-card',
+        selected
+          ? 'border-primary shadow-[0_0_0_2px_rgba(43,124,255,.18)]'
+          : 'border-line-soft hover:border-line-strong',
       )}
     >
       <button
@@ -73,6 +83,26 @@ export const ImageTaskCard = memo(function ImageTaskCard({ item, onOpen }: Image
           {/* 后端 size 是 `1024x1024`：x 换成乘号，和模板库参数区同一写法 */}
           {(item.size ?? '').replace('x', '×')} · ×{item.count ?? 1}
         </span>
+
+        {/* 勾选与视频卡同一位置/样式：两类卡混在一屏里，操作习惯必须一致 */}
+        <button
+          type="button"
+          aria-label={selected ? `取消选择：${item.title}` : `选择生图：${item.title}`}
+          aria-pressed={selected}
+          onClick={event => {
+            event.stopPropagation();
+            onToggleSelect(item.id);
+          }}
+          className={cn(
+            'absolute right-2 top-2 z-[2] grid h-[17px] w-[17px] place-items-center rounded-[5px] border-[1.5px] transition-opacity',
+            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50',
+            selected
+              ? 'border-primary bg-primary text-white opacity-100'
+              : 'border-white/85 bg-[rgba(10,22,28,.25)] text-white opacity-0 group-hover:opacity-100',
+          )}
+        >
+          {selected && <Check size={11} strokeWidth={3} />}
+        </button>
       </div>
 
       <div className="relative px-2.5 pb-2.5 pt-2">

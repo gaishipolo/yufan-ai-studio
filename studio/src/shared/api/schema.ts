@@ -173,6 +173,23 @@ export interface CreateTaskIn {
   stylePreset?: string | null;
 }
 
+/** DeleteImagesIn */
+export interface DeleteImagesIn {
+  /** 要删除的生图记录 ID 列表 */
+  ids: string[];
+}
+
+/** 与 `DELETE /tasks` 同一形状：删了几条、哪些被跳过。
+
+跳过的原因是「不存在」或「属于他人且没有 `image:read:all`」——两者对外
+不做区分（不向无权限者泄漏「这个 id 存在」），细节只进服务端日志。 */
+export interface DeleteImagesOut {
+  /** 实际删除的条数 */
+  deleted: number;
+  /** 被跳过的记录 ID：不存在，或属于他人且没有 `image:read:all` */
+  skipped?: string[];
+}
+
 /** DeleteTasksIn */
 export interface DeleteTasksIn {
   /** 要删除的任务 ID 列表 */
@@ -1797,6 +1814,8 @@ export interface EndpointData {
   "POST /api/v1/identity/users/{user_id}/revoke-sessions": RevokedSessionsOut;
   /** 设置用户角色（整组替换） */
   "PUT /api/v1/identity/users/{user_id}/roles": UserOut;
+  /** 批量删除生图记录 */
+  "DELETE /api/v1/images": DeleteImagesOut;
   /** 生图历史（分页） */
   "GET /api/v1/images": Page<ImageJobOut>;
   /** 重试失败的生图 */

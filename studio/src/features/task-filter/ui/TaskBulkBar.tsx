@@ -8,7 +8,8 @@ import { Button } from '@/shared/ui';
  * 按钮，占着最显眼的位置。现在没选中就只有一个「从模板生成」的入口，选中后这一条
  * 才出现，并明确写着选了几项。
  *
- * 只作用于通用视频任务：生图与模板替换没有批量删除接口（见页面注释）。
+ * 三种动作的能力边界不一样：下载和删除**视频与生图都支持**（删除由页面按来源分流到
+ * `/tasks` 与 `/images`），收藏只有视频任务有（生图记录没有 favorited 字段）。
  */
 export function TaskBulkBar({
   count,
@@ -41,6 +42,7 @@ export function TaskBulkBar({
         icon={<Bookmark size={12} />}
         disabled={busy}
         onClick={onCollect}
+        title="只有视频任务支持收藏，生图记录会被跳过"
       >
         收藏
       </Button>
