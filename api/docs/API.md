@@ -2,7 +2,7 @@
 
 > 此文件由 `app export-openapi` 自动生成，请勿手工编辑。
 >
-> 版本 `0.2.0`｜共 **142** 个接口 / **12** 个模块
+> 版本 `0.2.0`｜共 **150** 个接口 / **12** 个模块
 >
 > 重新生成：`cd api && .venv/Scripts/python -m cli export-openapi`
 
@@ -240,7 +240,7 @@ Authorization: Bearer <accessToken>
 | 导出 | 6 | 见下方 `4.9` |
 | 资产库 | 45 | 见下方 `4.10` |
 | 模型驱动 | 6 | 见下方 `4.11` |
-| 模板封装 | 18 | 见下方 `4.12` |
+| 模板封装 | 26 | 见下方 `4.12` |
 
 ### 4.1 身份（39 个）
 
@@ -3435,7 +3435,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `message` | `string` | 否 |  |
 | `data` | `modules__model_driver__schema__TaskOut \| null` | 否 |  |
 
-### 4.12 模板封装（18 个）
+### 4.12 模板封装（26 个）
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
@@ -3445,6 +3445,14 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `GET` | `/api/v1/template-manifests/{key}` | manifest 配置详情 | 🔒 |
 | `POST` | `/api/v1/template-manifests/{key}/disable` | 停用 manifest 配置 | 🔒 |
 | `POST` | `/api/v1/template-manifests/{key}/publish` | 发布 manifest 配置 | 🔒 |
+| `POST` | `/api/v1/template-specs` | 保存草稿（同内容幂等，revision 冲突 409） | 🔒 |
+| `GET` | `/api/v1/template-specs` | 本人可见的规格列表 | 🔒 |
+| `GET` | `/api/v1/template-specs/published` | 模板库：已发布的规格卡片 | 🔒 |
+| `POST` | `/api/v1/template-specs/validate` | 预检模板规格（不落库） | 🔒 |
+| `GET` | `/api/v1/template-specs/{key}` | 规格详情（含草稿与最近发布） | 🔒 |
+| `POST` | `/api/v1/template-specs/{key}/compile` | 填表结果 → 执行请求体（纯映射，不落库） | 🔒 |
+| `POST` | `/api/v1/template-specs/{key}/disable` | 下架（历史版本保留） | 🔒 |
+| `POST` | `/api/v1/template-specs/{key}/publish` | 发布：把当前草稿冻结成新版本 | 🔒 |
 | `GET` | `/api/v1/templates/replacement-packs` | 本人封装草稿和历史包 | 🔒 |
 | `GET` | `/api/v1/templates/replacement-packs/available` | 全工作台已发布对象 | 🔒 |
 | `PUT` | `/api/v1/templates/replacement-packs/draft` | 保存封装草稿（请求标识及版本防重） | 🔒 |
@@ -3612,6 +3620,207 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `manifest` | `ManifestOut` | 是 |  |
 | `version` | `number` | 是 |  |
 | `templates` | `PublishedTemplateOut[]` | 否 |  |
+
+#### `POST /api/v1/template-specs`
+
+**保存草稿（同内容幂等，revision 冲突 409）**
+
+**请求体** `TemplateSpecIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `key` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `description` | `string` | 否 |  |
+| `model` | `string` | 是 |  |
+| `params` | `Record<string, unknown>` | 否 |  |
+| `prompt` | `SpecPromptIn` | 是 |  |
+| `slots` | `SpecSlotIn[]` | 否 |  |
+| `attributes` | `Record<string, string>` | 否 |  |
+| `revision` | `number \| null` | 否 |  |
+
+**响应** `ApiResponse<TemplateSpecOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `key` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `description` | `string` | 是 |  |
+| `ownerId` | `string` | 是 |  |
+| `status` | `"draft" \| "published" \| "disabled"` | 是 |  |
+| `revision` | `number` | 是 |  |
+| `fingerprint` | `string` | 是 |  |
+| `currentVersion` | `number` | 是 |  |
+| `publishedAt` | `string \| null` | 否 |  |
+| `disabledAt` | `string \| null` | 否 |  |
+| `createdAt` | `string` | 是 |  |
+| `updatedAt` | `string` | 是 |  |
+| `draft` | `TemplateSpecIn \| null` | 否 |  |
+| `latest` | `SpecVersionOut \| null` | 否 |  |
+
+#### `GET /api/v1/template-specs`
+
+**本人可见的规格列表**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `status` | query | `string` | 否 |  |
+| `keyword` | query | `string` | 否 |  |
+| `page` | query | `number` | 否 |  |
+| `pageSize` | query | `number` | 否 |  |
+
+**响应** `ApiResponse<TemplateSpecListOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `items` | `TemplateSpecOut[]` | 否 |  |
+| `total` | `number` | 否 |  |
+
+#### `GET /api/v1/template-specs/published`
+
+**模板库：已发布的规格卡片**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `keyword` | query | `string` | 否 |  |
+| `page` | query | `number` | 否 |  |
+| `pageSize` | query | `number` | 否 |  |
+
+**响应** `ApiResponse<TemplateSpecListOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `items` | `TemplateSpecOut[]` | 否 |  |
+| `total` | `number` | 否 |  |
+
+#### `POST /api/v1/template-specs/validate`
+
+**预检模板规格（不落库）**
+
+**请求体** `TemplateSpecIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `key` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `description` | `string` | 否 |  |
+| `model` | `string` | 是 |  |
+| `params` | `Record<string, unknown>` | 否 |  |
+| `prompt` | `SpecPromptIn` | 是 |  |
+| `slots` | `SpecSlotIn[]` | 否 |  |
+| `attributes` | `Record<string, string>` | 否 |  |
+| `revision` | `number \| null` | 否 |  |
+
+**响应** `ApiResponse<SpecValidateOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `valid` | `boolean` | 否 |  |
+| `fingerprint` | `string` | 是 |  |
+
+#### `GET /api/v1/template-specs/{key}`
+
+**规格详情（含草稿与最近发布）**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `key` | path | `string` | 是 |  |
+
+**响应** `ApiResponse<TemplateSpecOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `key` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `description` | `string` | 是 |  |
+| `ownerId` | `string` | 是 |  |
+| `status` | `"draft" \| "published" \| "disabled"` | 是 |  |
+| `revision` | `number` | 是 |  |
+| `fingerprint` | `string` | 是 |  |
+| `currentVersion` | `number` | 是 |  |
+| `publishedAt` | `string \| null` | 否 |  |
+| `disabledAt` | `string \| null` | 否 |  |
+| `createdAt` | `string` | 是 |  |
+| `updatedAt` | `string` | 是 |  |
+| `draft` | `TemplateSpecIn \| null` | 否 |  |
+| `latest` | `SpecVersionOut \| null` | 否 |  |
+
+#### `POST /api/v1/template-specs/{key}/compile`
+
+**填表结果 → 执行请求体（纯映射，不落库）**
+
+给模板库用：拿到出参后由前端直接 `POST /tasks`。
+
+挂 `rate_limit` 是因为路由策略按 HTTP 方法扫写路由（POST 一律要限流），
+而这条虽然无副作用，形状上是 POST。
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `key` | path | `string` | 是 |  |
+
+**请求体** `SpecCompileIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `version` | `number \| null` | 否 |  |
+| `slotValues` | `Record<string, string[]>` | 否 |  |
+
+**响应** `ApiResponse<SpecCompileOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `version` | `number` | 是 |  |
+| `model` | `string` | 是 |  |
+| `prompt` | `string` | 是 |  |
+| `params` | `Record<string, unknown>` | 是 |  |
+| `referenceLibraryIds` | `string[]` | 否 |  |
+| `textLibraryIds` | `string[]` | 否 |  |
+| `slots` | `CompiledSlotOut[]` | 否 |  |
+
+#### `POST /api/v1/template-specs/{key}/disable`
+
+**下架（历史版本保留）**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `key` | path | `string` | 是 |  |
+
+**响应** `ApiResponse<TemplateSpecOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `key` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `description` | `string` | 是 |  |
+| `ownerId` | `string` | 是 |  |
+| `status` | `"draft" \| "published" \| "disabled"` | 是 |  |
+| `revision` | `number` | 是 |  |
+| `fingerprint` | `string` | 是 |  |
+| `currentVersion` | `number` | 是 |  |
+| `publishedAt` | `string \| null` | 否 |  |
+| `disabledAt` | `string \| null` | 否 |  |
+| `createdAt` | `string` | 是 |  |
+| `updatedAt` | `string` | 是 |  |
+| `draft` | `TemplateSpecIn \| null` | 否 |  |
+| `latest` | `SpecVersionOut \| null` | 否 |  |
+
+#### `POST /api/v1/template-specs/{key}/publish`
+
+**发布：把当前草稿冻结成新版本**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `key` | path | `string` | 是 |  |
+
+**响应** `ApiResponse<SpecPublishOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `version` | `number` | 是 |  |
+| `spec` | `TemplateSpecOut` | 是 |  |
 
 #### `GET /api/v1/templates/replacement-packs`
 
@@ -4058,6 +4267,16 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 ### `Capability`（枚举）
 
 取值：`video`、`image`、`audio`
+
+### `CompiledSlotOut`
+
+哪几张素材拿到了哪个编号 —— 只给前端画角标，不参与提交。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `key` | `string` | 是 |  |
+| `tokens` | `string[]` | 否 |  |
+| `assetIds` | `string[]` | 否 |  |
 
 ### `CreateExportIn`
 
@@ -5447,6 +5666,104 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `coverUrl` | `string` | 是 |  |
 | `popularity` | `number` | 是 |  |
 
+### `SpecCompileIn`
+
+填表结果：`{slotKey: [assetId…]}`。
+
+`source=pack` 的槽位传一个封装 id；`source=asset` 的槽位按用户挑选顺序传。
+`version` 为空表示用当前发布版本。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `version` | `number \| null` | 否 |  |
+| `slotValues` | `Record<string, string[]>` | 否 |  |
+
+### `SpecCompileOut`
+
+可直接转发给 `POST /tasks` 的请求体。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `version` | `number` | 是 |  |
+| `model` | `string` | 是 |  |
+| `prompt` | `string` | 是 |  |
+| `params` | `Record<string, unknown>` | 是 |  |
+| `referenceLibraryIds` | `string[]` | 否 |  |
+| `textLibraryIds` | `string[]` | 否 |  |
+| `slots` | `CompiledSlotOut[]` | 否 |  |
+
+### `SpecPromptIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `locked` | `string` | 否 |  |
+| `editable` | `string` | 否 |  |
+
+### `SpecPublishOut`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `version` | `number` | 是 |  |
+| `spec` | `TemplateSpecOut` | 是 |  |
+
+### `SpecSlotIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `key` | `string` | 是 |  |
+| `type` | `"image" \| "video" \| "audio" \| "text"` | 是 |  |
+| `source` | `"asset" \| "pack"` | 否 |  |
+| `binding` | `"fixed" \| "user"` | 否 |  |
+| `refMode` | `"mixed" \| "attachment"` | 否 |  |
+| `minCount` | `number` | 否 |  |
+| `maxCount` | `number` | 否 |  |
+| `label` | `string` | 否 |  |
+| `usage` | `string` | 否 |  |
+| `assetId` | `string \| null` | 否 |  |
+| `packId` | `string \| null` | 否 |  |
+| `position` | `number` | 否 |  |
+
+### `SpecSlotOut`
+
+槽位出参：与入参同形。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `key` | `string` | 是 |  |
+| `type` | `"image" \| "video" \| "audio" \| "text"` | 是 |  |
+| `source` | `"asset" \| "pack"` | 否 |  |
+| `binding` | `"fixed" \| "user"` | 否 |  |
+| `refMode` | `"mixed" \| "attachment"` | 否 |  |
+| `minCount` | `number` | 否 |  |
+| `maxCount` | `number` | 否 |  |
+| `label` | `string` | 否 |  |
+| `usage` | `string` | 否 |  |
+| `assetId` | `string \| null` | 否 |  |
+| `packId` | `string \| null` | 否 |  |
+| `position` | `number` | 否 |  |
+
+### `SpecValidateOut`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `valid` | `boolean` | 否 |  |
+| `fingerprint` | `string` | 是 |  |
+
+### `SpecVersionOut`
+
+一次发布快照。`slots` 的顺序就是编号顺序（`position` 升序返回）。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `version` | `number` | 是 |  |
+| `model` | `string` | 是 |  |
+| `params` | `Record<string, unknown>` | 是 |  |
+| `prompt` | `SpecPromptIn` | 是 |  |
+| `slots` | `SpecSlotOut[]` | 是 |  |
+| `fingerprint` | `string` | 否 |  |
+| `publishedBy` | `string` | 否 |  |
+| `publishedAt` | `string \| null` | 否 |  |
+
 ### `StoryboardListOut`
 
 | 字段 | 类型 | 必填 | 说明 |
@@ -5593,6 +5910,49 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 ### `TaskStatusFilter`（枚举）
 
 取值：`all`、`queued`、`running`、`completed`、`failed`
+
+### `TemplateSpecIn`
+
+一份规格（草稿的整份内容）。`key` 是幂等边界，发布后不可改名。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `key` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `description` | `string` | 否 |  |
+| `model` | `string` | 是 |  |
+| `params` | `Record<string, unknown>` | 否 |  |
+| `prompt` | `SpecPromptIn` | 是 |  |
+| `slots` | `SpecSlotIn[]` | 否 |  |
+| `attributes` | `Record<string, string>` | 否 |  |
+| `revision` | `number \| null` | 否 |  |
+
+### `TemplateSpecListOut`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `items` | `TemplateSpecOut[]` | 否 |  |
+| `total` | `number` | 否 |  |
+
+### `TemplateSpecOut`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `key` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `description` | `string` | 是 |  |
+| `ownerId` | `string` | 是 |  |
+| `status` | `"draft" \| "published" \| "disabled"` | 是 |  |
+| `revision` | `number` | 是 |  |
+| `fingerprint` | `string` | 是 |  |
+| `currentVersion` | `number` | 是 |  |
+| `publishedAt` | `string \| null` | 否 |  |
+| `disabledAt` | `string \| null` | 否 |  |
+| `createdAt` | `string` | 是 |  |
+| `updatedAt` | `string` | 是 |  |
+| `draft` | `TemplateSpecIn \| null` | 否 |  |
+| `latest` | `SpecVersionOut \| null` | 否 |  |
 
 ### `TextAssetIn`
 

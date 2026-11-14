@@ -49,10 +49,12 @@ from modules.template_pack.manifest_router import router as manifest_router
 from modules.template_pack.router import router as templates_router
 from modules.template_pack.runtime_port_impl import TemplateRuntime
 from modules.template_pack.seed import seed as seed_demo
+from modules.template_pack.spec_router import router as spec_router
 
 router = APIRouter()
 router.include_router(templates_router)
 router.include_router(manifest_router)
+router.include_router(spec_router)
 
 # 资产「彻底删除」前问「还有谁在用」。素材包 head 里的引用由本模块声明；
 # 不拦的四处（冻结版本 / 运行输入 / 视频模板清单 / 封面）在

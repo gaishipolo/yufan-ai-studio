@@ -18,15 +18,20 @@ from core.template_spec.models import (
     TemplateSpec,
 )
 
+#: 槽位 key：会出现在 `{{slot:key}}` 里，只允许下划线（连字符会让引用语法更难读）。
 _KEY = re.compile(r"^[a-z][a-z0-9_]{0,39}$")
+#: 规格 key：URL 段 + 运营可读，允许连字符（`product-swap-6036`）。
+_SPEC_KEY = re.compile(r"^[a-z][a-z0-9_-]{0,39}$")
 #: 规格里**不许**出现编号。编号是编译产物（见 `compile.py` 的说明）。
 _MIXED_LITERAL = re.compile(r"\{\{\s*Mixed\s+\d+\s*\}\}")
 
 
 def validate_spec(spec: TemplateSpec) -> None:
     """校验槽位声明与提示词形状。任一不合法就抛 `BadRequest`（带可读原因）。"""
-    if not _KEY.match(spec.key):
-        raise BadRequest("模板 key 只能是小写字母开头、含小写字母/数字/下划线的 1~40 字")
+    if not _SPEC_KEY.match(spec.key):
+        raise BadRequest(
+            "模板 key 只能是小写字母开头、含小写字母/数字/下划线/连字符的 1~40 字"
+        )
     if not spec.name.strip():
         raise BadRequest("模板名称不能为空")
     if not spec.model.strip():

@@ -288,6 +288,7 @@ def video_bytes(duration: float = 2, *, audio: bool = True) -> bytes:
 _UPLOAD_KIND = {
     "source": "video",
     "audio": "audio",
+    "text": "text",
     "character": "image",
     "product": "image",
     "scene": "image",

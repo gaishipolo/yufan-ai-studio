@@ -7355,6 +7355,458 @@
           }
         }
       }
+    },
+    "/api/v1/template-specs/validate": {
+      "post": {
+        "tags": [
+          "模板封装",
+          "模板规格"
+        ],
+        "summary": "预检模板规格（不落库）",
+        "operationId": "validate_spec_draft_api_v1_template_specs_validate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TemplateSpecIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_SpecValidateOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/template-specs": {
+      "post": {
+        "tags": [
+          "模板封装",
+          "模板规格"
+        ],
+        "summary": "保存草稿（同内容幂等，revision 冲突 409）",
+        "operationId": "save_spec_api_v1_template_specs_post",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TemplateSpecIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_TemplateSpecOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "模板封装",
+          "模板规格"
+        ],
+        "summary": "本人可见的规格列表",
+        "operationId": "list_specs_api_v1_template_specs_get",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 16,
+              "default": "",
+              "title": "Status"
+            }
+          },
+          {
+            "name": "keyword",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 80,
+              "default": "",
+              "title": "Keyword"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1,
+              "title": "Page"
+            }
+          },
+          {
+            "name": "pageSize",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 20,
+              "title": "Pagesize"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_TemplateSpecListOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/template-specs/published": {
+      "get": {
+        "tags": [
+          "模板封装",
+          "模板规格"
+        ],
+        "summary": "模板库：已发布的规格卡片",
+        "operationId": "list_published_specs_api_v1_template_specs_published_get",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "keyword",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 80,
+              "default": "",
+              "title": "Keyword"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1,
+              "title": "Page"
+            }
+          },
+          {
+            "name": "pageSize",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 20,
+              "title": "Pagesize"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_TemplateSpecListOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/template-specs/{key}": {
+      "get": {
+        "tags": [
+          "模板封装",
+          "模板规格"
+        ],
+        "summary": "规格详情（含草稿与最近发布）",
+        "operationId": "get_spec_api_v1_template_specs__key__get",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_TemplateSpecOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/template-specs/{key}/publish": {
+      "post": {
+        "tags": [
+          "模板封装",
+          "模板规格"
+        ],
+        "summary": "发布：把当前草稿冻结成新版本",
+        "operationId": "publish_spec_api_v1_template_specs__key__publish_post",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_SpecPublishOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/template-specs/{key}/disable": {
+      "post": {
+        "tags": [
+          "模板封装",
+          "模板规格"
+        ],
+        "summary": "下架（历史版本保留）",
+        "operationId": "disable_spec_api_v1_template_specs__key__disable_post",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_TemplateSpecOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/template-specs/{key}/compile": {
+      "post": {
+        "tags": [
+          "模板封装",
+          "模板规格"
+        ],
+        "summary": "填表结果 → 执行请求体（纯映射，不落库）",
+        "description": "给模板库用：拿到出参后由前端直接 `POST /tasks`。\n\n挂 `rate_limit` 是因为路由策略按 HTTP 方法扫写路由（POST 一律要限流），\n而这条虽然无副作用，形状上是 POST。",
+        "operationId": "compile_spec_request_api_v1_template_specs__key__compile_post",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SpecCompileIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_SpecCompileOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -8433,6 +8885,87 @@
         "type": "object",
         "title": "ApiResponse[ShotListOut]"
       },
+      "ApiResponse_SpecCompileOut_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SpecCompileOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[SpecCompileOut]"
+      },
+      "ApiResponse_SpecPublishOut_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SpecPublishOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[SpecPublishOut]"
+      },
+      "ApiResponse_SpecValidateOut_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SpecValidateOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[SpecValidateOut]"
+      },
       "ApiResponse_StoryboardListOut_": {
         "properties": {
           "code": {
@@ -8567,6 +9100,60 @@
         },
         "type": "object",
         "title": "ApiResponse[TaskStats]"
+      },
+      "ApiResponse_TemplateSpecListOut_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TemplateSpecListOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[TemplateSpecListOut]"
+      },
+      "ApiResponse_TemplateSpecOut_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TemplateSpecOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[TemplateSpecOut]"
       },
       "ApiResponse_TextAssetOut_": {
         "properties": {
@@ -9255,6 +9842,34 @@
         ],
         "title": "Capability",
         "description": "生成能力。新增能力（如 3D、配音）只需在此加一项。"
+      },
+      "CompiledSlotOut": {
+        "properties": {
+          "key": {
+            "type": "string",
+            "title": "Key"
+          },
+          "tokens": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Tokens"
+          },
+          "assetIds": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Assetids"
+          }
+        },
+        "type": "object",
+        "required": [
+          "key"
+        ],
+        "title": "CompiledSlotOut",
+        "description": "哪几张素材拿到了哪个编号 —— 只给前端画角标，不参与提交。"
       },
       "CreateExportIn": {
         "properties": {
@@ -15071,6 +15686,421 @@
         ],
         "title": "ShotPresetOut"
       },
+      "SpecCompileIn": {
+        "properties": {
+          "version": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          },
+          "slotValues": {
+            "additionalProperties": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "type": "object",
+            "title": "Slotvalues"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "SpecCompileIn",
+        "description": "填表结果：`{slotKey: [assetId…]}`。\n\n`source=pack` 的槽位传一个封装 id；`source=asset` 的槽位按用户挑选顺序传。\n`version` 为空表示用当前发布版本。"
+      },
+      "SpecCompileOut": {
+        "properties": {
+          "version": {
+            "type": "integer",
+            "title": "Version"
+          },
+          "model": {
+            "type": "string",
+            "title": "Model"
+          },
+          "prompt": {
+            "type": "string",
+            "title": "Prompt"
+          },
+          "params": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Params"
+          },
+          "referenceLibraryIds": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Referencelibraryids"
+          },
+          "textLibraryIds": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Textlibraryids"
+          },
+          "slots": {
+            "items": {
+              "$ref": "#/components/schemas/CompiledSlotOut"
+            },
+            "type": "array",
+            "title": "Slots"
+          }
+        },
+        "type": "object",
+        "required": [
+          "version",
+          "model",
+          "prompt",
+          "params"
+        ],
+        "title": "SpecCompileOut",
+        "description": "可直接转发给 `POST /tasks` 的请求体。"
+      },
+      "SpecPromptIn": {
+        "properties": {
+          "locked": {
+            "type": "string",
+            "maxLength": 20000,
+            "title": "Locked",
+            "default": ""
+          },
+          "editable": {
+            "type": "string",
+            "maxLength": 20000,
+            "title": "Editable",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "SpecPromptIn"
+      },
+      "SpecPublishOut": {
+        "properties": {
+          "version": {
+            "type": "integer",
+            "title": "Version"
+          },
+          "spec": {
+            "$ref": "#/components/schemas/TemplateSpecOut"
+          }
+        },
+        "type": "object",
+        "required": [
+          "version",
+          "spec"
+        ],
+        "title": "SpecPublishOut"
+      },
+      "SpecSlotIn": {
+        "properties": {
+          "key": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{0,39}$",
+            "title": "Key"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "image",
+              "video",
+              "audio",
+              "text"
+            ],
+            "title": "Type"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "asset",
+              "pack"
+            ],
+            "title": "Source",
+            "default": "asset"
+          },
+          "binding": {
+            "type": "string",
+            "enum": [
+              "fixed",
+              "user"
+            ],
+            "title": "Binding",
+            "default": "user"
+          },
+          "refMode": {
+            "type": "string",
+            "enum": [
+              "mixed",
+              "attachment"
+            ],
+            "title": "Refmode",
+            "default": "mixed"
+          },
+          "minCount": {
+            "type": "integer",
+            "maximum": 10.0,
+            "minimum": 0.0,
+            "title": "Mincount",
+            "default": 1
+          },
+          "maxCount": {
+            "type": "integer",
+            "maximum": 10.0,
+            "minimum": 1.0,
+            "title": "Maxcount",
+            "default": 1
+          },
+          "label": {
+            "type": "string",
+            "maxLength": 80,
+            "title": "Label",
+            "default": ""
+          },
+          "usage": {
+            "type": "string",
+            "maxLength": 500,
+            "title": "Usage",
+            "default": ""
+          },
+          "assetId": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 32
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assetid"
+          },
+          "packId": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 32
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Packid"
+          },
+          "position": {
+            "type": "integer",
+            "maximum": 200.0,
+            "minimum": 0.0,
+            "title": "Position",
+            "default": 0
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "key",
+          "type"
+        ],
+        "title": "SpecSlotIn"
+      },
+      "SpecSlotOut": {
+        "properties": {
+          "key": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{0,39}$",
+            "title": "Key"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "image",
+              "video",
+              "audio",
+              "text"
+            ],
+            "title": "Type"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "asset",
+              "pack"
+            ],
+            "title": "Source",
+            "default": "asset"
+          },
+          "binding": {
+            "type": "string",
+            "enum": [
+              "fixed",
+              "user"
+            ],
+            "title": "Binding",
+            "default": "user"
+          },
+          "refMode": {
+            "type": "string",
+            "enum": [
+              "mixed",
+              "attachment"
+            ],
+            "title": "Refmode",
+            "default": "mixed"
+          },
+          "minCount": {
+            "type": "integer",
+            "maximum": 10.0,
+            "minimum": 0.0,
+            "title": "Mincount",
+            "default": 1
+          },
+          "maxCount": {
+            "type": "integer",
+            "maximum": 10.0,
+            "minimum": 1.0,
+            "title": "Maxcount",
+            "default": 1
+          },
+          "label": {
+            "type": "string",
+            "maxLength": 80,
+            "title": "Label",
+            "default": ""
+          },
+          "usage": {
+            "type": "string",
+            "maxLength": 500,
+            "title": "Usage",
+            "default": ""
+          },
+          "assetId": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 32
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assetid"
+          },
+          "packId": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 32
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Packid"
+          },
+          "position": {
+            "type": "integer",
+            "maximum": 200.0,
+            "minimum": 0.0,
+            "title": "Position",
+            "default": 0
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "key",
+          "type"
+        ],
+        "title": "SpecSlotOut",
+        "description": "槽位出参：与入参同形。"
+      },
+      "SpecValidateOut": {
+        "properties": {
+          "valid": {
+            "type": "boolean",
+            "title": "Valid",
+            "default": true
+          },
+          "fingerprint": {
+            "type": "string",
+            "title": "Fingerprint"
+          }
+        },
+        "type": "object",
+        "required": [
+          "fingerprint"
+        ],
+        "title": "SpecValidateOut"
+      },
+      "SpecVersionOut": {
+        "properties": {
+          "version": {
+            "type": "integer",
+            "title": "Version"
+          },
+          "model": {
+            "type": "string",
+            "title": "Model"
+          },
+          "params": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Params"
+          },
+          "prompt": {
+            "$ref": "#/components/schemas/SpecPromptIn"
+          },
+          "slots": {
+            "items": {
+              "$ref": "#/components/schemas/SpecSlotOut"
+            },
+            "type": "array",
+            "title": "Slots"
+          },
+          "fingerprint": {
+            "type": "string",
+            "title": "Fingerprint",
+            "default": ""
+          },
+          "publishedBy": {
+            "type": "string",
+            "title": "Publishedby",
+            "default": ""
+          },
+          "publishedAt": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Publishedat"
+          }
+        },
+        "type": "object",
+        "required": [
+          "version",
+          "model",
+          "params",
+          "prompt",
+          "slots"
+        ],
+        "title": "SpecVersionOut",
+        "description": "一次发布快照。`slots` 的顺序就是编号顺序（`position` 升序返回）。"
+      },
       "StoryboardListOut": {
         "properties": {
           "items": {
@@ -15578,6 +16608,210 @@
         ],
         "title": "TaskStatusFilter",
         "description": "列表筛选值：`all` 与具体状态并列，避免路由层出现联合类型。"
+      },
+      "TemplateSpecIn": {
+        "properties": {
+          "key": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_-]{0,39}$",
+            "title": "Key"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 2000,
+            "title": "Description",
+            "default": ""
+          },
+          "model": {
+            "type": "string",
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Model"
+          },
+          "params": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Params"
+          },
+          "prompt": {
+            "$ref": "#/components/schemas/SpecPromptIn"
+          },
+          "slots": {
+            "items": {
+              "$ref": "#/components/schemas/SpecSlotIn"
+            },
+            "type": "array",
+            "maxItems": 20,
+            "title": "Slots"
+          },
+          "attributes": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Attributes"
+          },
+          "revision": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revision"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "key",
+          "name",
+          "model",
+          "prompt"
+        ],
+        "title": "TemplateSpecIn",
+        "description": "一份规格（草稿的整份内容）。`key` 是幂等边界，发布后不可改名。"
+      },
+      "TemplateSpecListOut": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/TemplateSpecOut"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "title": "TemplateSpecListOut"
+      },
+      "TemplateSpecOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "key": {
+            "type": "string",
+            "title": "Key"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description"
+          },
+          "ownerId": {
+            "type": "string",
+            "title": "Ownerid"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "published",
+              "disabled"
+            ],
+            "title": "Status"
+          },
+          "revision": {
+            "type": "integer",
+            "title": "Revision"
+          },
+          "fingerprint": {
+            "type": "string",
+            "title": "Fingerprint"
+          },
+          "currentVersion": {
+            "type": "integer",
+            "title": "Currentversion"
+          },
+          "publishedAt": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Publishedat"
+          },
+          "disabledAt": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Disabledat"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Createdat"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updatedat"
+          },
+          "draft": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TemplateSpecIn"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "latest": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SpecVersionOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "key",
+          "name",
+          "description",
+          "ownerId",
+          "status",
+          "revision",
+          "fingerprint",
+          "currentVersion",
+          "createdAt",
+          "updatedAt"
+        ],
+        "title": "TemplateSpecOut"
       },
       "TextAssetIn": {
         "properties": {

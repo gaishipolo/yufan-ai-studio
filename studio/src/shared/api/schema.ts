@@ -134,6 +134,13 @@ export interface BulkOut {
   results?: BulkItemResult[];
 }
 
+/** 哪几张素材拿到了哪个编号 —— 只给前端画角标，不参与提交。 */
+export interface CompiledSlotOut {
+  key: string;
+  tokens?: string[];
+  assetIds?: string[];
+}
+
 /** CreateExportIn */
 export interface CreateExportIn {
   /** 数据源，见 enums.ExportSource */
@@ -1476,6 +1483,88 @@ export interface ShotPresetOut {
   popularity: number;
 }
 
+/** 填表结果：`{slotKey: [assetId…]}`。
+
+`source=pack` 的槽位传一个封装 id；`source=asset` 的槽位按用户挑选顺序传。
+`version` 为空表示用当前发布版本。 */
+export interface SpecCompileIn {
+  version?: number | null;
+  slotValues?: Record<string, string[]>;
+}
+
+/** 可直接转发给 `POST /tasks` 的请求体。 */
+export interface SpecCompileOut {
+  version: number;
+  model: string;
+  prompt: string;
+  params: Record<string, unknown>;
+  referenceLibraryIds?: string[];
+  textLibraryIds?: string[];
+  slots?: CompiledSlotOut[];
+}
+
+/** SpecPromptIn */
+export interface SpecPromptIn {
+  locked?: string;
+  editable?: string;
+}
+
+/** SpecPublishOut */
+export interface SpecPublishOut {
+  version: number;
+  spec: TemplateSpecOut;
+}
+
+/** SpecSlotIn */
+export interface SpecSlotIn {
+  key: string;
+  type: "image" | "video" | "audio" | "text";
+  source?: "asset" | "pack";
+  binding?: "fixed" | "user";
+  refMode?: "mixed" | "attachment";
+  minCount?: number;
+  maxCount?: number;
+  label?: string;
+  usage?: string;
+  assetId?: string | null;
+  packId?: string | null;
+  position?: number;
+}
+
+/** 槽位出参：与入参同形。 */
+export interface SpecSlotOut {
+  key: string;
+  type: "image" | "video" | "audio" | "text";
+  source?: "asset" | "pack";
+  binding?: "fixed" | "user";
+  refMode?: "mixed" | "attachment";
+  minCount?: number;
+  maxCount?: number;
+  label?: string;
+  usage?: string;
+  assetId?: string | null;
+  packId?: string | null;
+  position?: number;
+}
+
+/** SpecValidateOut */
+export interface SpecValidateOut {
+  valid?: boolean;
+  fingerprint: string;
+}
+
+/** 一次发布快照。`slots` 的顺序就是编号顺序（`position` 升序返回）。 */
+export interface SpecVersionOut {
+  version: number;
+  model: string;
+  params: Record<string, unknown>;
+  prompt: SpecPromptIn;
+  slots: SpecSlotOut[];
+  fingerprint?: string;
+  publishedBy?: string;
+  publishedAt?: string | null;
+}
+
 /** StoryboardListOut */
 export interface StoryboardListOut {
   items?: StoryboardOut[];
@@ -1618,6 +1707,44 @@ export interface TaskStats {
   completed?: number;
   /** 失败 */
   failed?: number;
+}
+
+/** 一份规格（草稿的整份内容）。`key` 是幂等边界，发布后不可改名。 */
+export interface TemplateSpecIn {
+  key: string;
+  name: string;
+  description?: string;
+  model: string;
+  params?: Record<string, unknown>;
+  prompt: SpecPromptIn;
+  slots?: SpecSlotIn[];
+  attributes?: Record<string, string>;
+  revision?: number | null;
+}
+
+/** TemplateSpecListOut */
+export interface TemplateSpecListOut {
+  items?: TemplateSpecOut[];
+  total?: number;
+}
+
+/** TemplateSpecOut */
+export interface TemplateSpecOut {
+  id: string;
+  key: string;
+  name: string;
+  description: string;
+  ownerId: string;
+  status: "draft" | "published" | "disabled";
+  revision: number;
+  fingerprint: string;
+  currentVersion: number;
+  publishedAt?: string | null;
+  disabledAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  draft?: TemplateSpecIn | null;
+  latest?: SpecVersionOut | null;
 }
 
 /** 站内新建一份文本资产（不传文件，直接写正文）。
@@ -2267,6 +2394,22 @@ export interface EndpointData {
   "POST /api/v1/template-manifests/{key}/disable": ManifestOut;
   /** 发布 manifest 配置 */
   "POST /api/v1/template-manifests/{key}/publish": ManifestPublishOut;
+  /** 本人可见的规格列表 */
+  "GET /api/v1/template-specs": TemplateSpecListOut;
+  /** 保存草稿（同内容幂等，revision 冲突 409） */
+  "POST /api/v1/template-specs": TemplateSpecOut;
+  /** 模板库：已发布的规格卡片 */
+  "GET /api/v1/template-specs/published": TemplateSpecListOut;
+  /** 预检模板规格（不落库） */
+  "POST /api/v1/template-specs/validate": SpecValidateOut;
+  /** 规格详情（含草稿与最近发布） */
+  "GET /api/v1/template-specs/{key}": TemplateSpecOut;
+  /** 填表结果 → 执行请求体（纯映射，不落库） */
+  "POST /api/v1/template-specs/{key}/compile": SpecCompileOut;
+  /** 下架（历史版本保留） */
+  "POST /api/v1/template-specs/{key}/disable": TemplateSpecOut;
+  /** 发布：把当前草稿冻结成新版本 */
+  "POST /api/v1/template-specs/{key}/publish": SpecPublishOut;
   /** 人物/产品/场景替换模板与调用档案 */
   "GET /api/v1/templates/replacement-catalog": ReplacementCatalog;
   /** 本人封装草稿和历史包 */
