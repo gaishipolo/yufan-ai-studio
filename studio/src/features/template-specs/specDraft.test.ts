@@ -9,6 +9,7 @@ import {
   normalize,
   rekeySlot,
   referenceChips,
+  stripSlotRefs,
 } from './specDraft';
 
 describe('模板规格草稿', () => {
@@ -65,6 +66,25 @@ describe('模板规格草稿', () => {
     ]);
     // 音频没有编号空间，给入口就等于让用户写出一条必然 400 的引用。
     expect(chips.some(chip => chip.token.includes('bgm'))).toBe(false);
+  });
+
+  it('删槽位时把它在提示词里的引用一并清掉，并回条数', () => {
+    // 留着的下场是「点生成才报引用了不存在的槽位」，看不出跟删槽位有关。
+    const text = '把 {{slot:source}} 换成 {{slot:hero*}} 与 {{slot:hero}}';
+    const one = stripSlotRefs(text, 'hero');
+    expect(one.count).toBe(2);
+    // 句子残了是必然的（"换成 与" 这种），这里只保证 token 清干净、别的不动
+    expect(one.text).not.toContain('slot:hero');
+    expect(one.text).toContain('{{slot:source}}');
+    expect(one.text).not.toMatch(/ {2,}/);
+    // 没引用过就原样返回，不要顺手重排空格
+    const untouched = stripSlotRefs('把 {{slot:source}} 换掉', 'hero');
+    expect(untouched).toEqual({text: '把 {{slot:source}} 换掉', count: 0});
+    // 前缀相同的 key 不能被误伤
+    const sibling = stripSlotRefs('{{slot:image_1}} 与 {{slot:image_10}}', 'image_1');
+    expect(sibling.count).toBe(1);
+    // 只清精确 key：`image_10` 不能被 `image_1` 连坐
+    expect(sibling.text.trim()).toBe('与 {{slot:image_10}}');
   });
 
   it('改类型时改名：没被引用过才改，引用过就留着', () => {

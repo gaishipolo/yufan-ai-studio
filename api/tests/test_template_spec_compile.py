@@ -261,6 +261,23 @@ def test_spec_must_not_hardcode_mixed_numbers() -> None:
         validate_spec(spec)
 
 
+def test_reference_to_a_missing_slot_is_rejected_by_validation() -> None:
+    """引用已删掉的槽位在**结构校验**就该报，而不是拖到 `compile` 才报。
+
+    槽位可以删到 0（纯提示词模板），所以"删了槽位但提示词里还留着 `{{slot:…}}`"
+    很容易出现。以前预检会放行、发布也放行，直到用户点生成才拿到一句跟操作看不出
+    关系的错 —— 那种错用户不会认为是自己删槽位删出来的。
+    """
+    spec = _spec(_user("hero", 1), editable="{{slot:hero}} 和 {{slot:gone*}}")
+    with pytest.raises(BadRequest, match="不存在的槽位「gone」"):
+        validate_spec(spec)
+
+    # 删到一个槽位都没了，提示词里也就不能再引用
+    empty = _spec(editable="{{slot:hero}}")
+    with pytest.raises(BadRequest, match="不存在的槽位「hero」"):
+        validate_spec(empty)
+
+
 def test_locked_segment_is_expanded_too_and_joins_without_blank_line() -> None:
     spec = _spec(
         _source(),

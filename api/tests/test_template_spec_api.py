@@ -499,6 +499,36 @@ def test_models_expose_replacement_declaration(client: TestClient) -> None:
     assert items["agnes-video-2.5-flash"]["replacement"] is False
 
 
+def test_spec_without_slots_compiles_to_a_plain_prompt(client: TestClient) -> None:
+    """槽位数量**下不封底**：纯提示词模板一个槽位都没有，也能发布、能编译。
+
+    守卫的是"至少一个槽位"这个常见的过度约束 —— 它在服务端并不存在
+    （`slots` 默认空列表），却在封装页被硬编码成"只有一个槽位时不给删"。
+    那种限制会让用户为了发一份纯提示词模板，被迫留下一个永远填不满的槽位。
+    """
+    headers = _headers(client)
+    draft = {
+        "key": f"plain-{suffix()}",
+        "name": "纯提示词",
+        "model": "agnes-video-2.5-flash",
+        "params": {"aspectRatio": "9:16", "durationSec": 5},
+        "prompt": "一只猫在窗台上打哈欠",
+        "slots": [],
+    }
+    _save(client, headers, draft)
+    assert client.post(f"{API}/{draft['key']}/publish", headers=headers).status_code == 200
+
+    body = client.post(
+        f"{API}/{draft['key']}/compile", json={"slotValues": {}}, headers=headers
+    )
+    assert body.status_code == 200, body.text
+    data = body.json()["data"]
+    assert data["prompt"] == "一只猫在窗台上打哈欠"
+    assert data["referenceLibraryIds"] == []
+    assert data["textLibraryIds"] == []
+    assert data["slots"] == []
+
+
 def test_published_filters_by_model_replacement(client: TestClient) -> None:
     """`?target=` 按模型声明筛，不按槽位形状猜。"""
     headers = _headers(client)

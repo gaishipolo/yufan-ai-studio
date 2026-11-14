@@ -177,6 +177,27 @@ export function insertRef(
   return {text: before + inserted + after, caret: at + inserted.length};
 }
 
+/**
+ * 删槽位时把它在提示词里的引用一起清掉。
+ *
+ * 留着就是一条必然失败的引用：编译期会报「引用了不存在的槽位」，而那句话出现在
+ * 用户点生成的时候，看不出跟"刚才删了个槽位"有关。所以删的时候一并清，并回一个
+ * 条数让调用方告诉用户清了几处 —— 不要静默改用户的提示词。
+ */
+export function stripSlotRefs(
+  text: string,
+  key: string,
+): {text: string; count: number} {
+  const pattern = new RegExp(
+    `\\{\\{\\s*slot:${key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:\\*|\\.\\d+)?\\s*\\}\\}`,
+    'g',
+  );
+  const count = (text.match(pattern) ?? []).length;
+  if (count === 0) return {text, count};
+  // 引用两边常各带一个空格（插入时补的），删掉后会把两处空格并成一处。
+  return {text: text.replace(pattern, '').replace(/[ \t]{2,}/g, ' '), count};
+}
+
 /** 提示词里引用了哪些槽位 —— 给编辑器提示"这条引用指向谁"。 */
 export function referencedKeys(text: string): string[] {
   const hits = text.matchAll(/\{\{slot:([a-z][a-z0-9_]{0,39})(?:\*|\.\d+)?\}\}/g);

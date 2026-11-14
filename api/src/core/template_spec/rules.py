@@ -26,6 +26,11 @@ _SPEC_KEY = re.compile(r"^[a-z][a-z0-9_-]{0,39}$")
 #: `{{Text N}}` 同理：文本槽位在第几份由槽位顺序决定，写死会在少选一份时错位。
 _MIXED_LITERAL = re.compile(r"\{\{\s*Mixed\s+\d+\s*\}\}")
 _TEXT_LITERAL = re.compile(r"\{\{\s*Text\s+\d+\s*\}\}")
+#: 提示词里的槽位引用：`{{slot:key}}` / `{{slot:key*}}` / `{{slot:key.N}}`。
+#: 抓 key 是为了核对它有没有对应槽位 —— 引用一个已删掉的槽位，`compile` 才会报
+#: 「引用了不存在的槽位」，而预检那一步会放行（它只管结构）。槽位可以删到 0，
+#: 这条就更容易踩到，所以把判据提到结构校验里。
+_SLOT_REF = re.compile(r"\{\{\s*slot:([a-z0-9_]+)(?:\*|\.\d+)?\s*\}\}")
 
 
 def validate_spec(spec: TemplateSpec) -> None:
@@ -53,6 +58,12 @@ def validate_spec(spec: TemplateSpec) -> None:
             raise BadRequest(f"槽位位置重复：{slot.position}")
         positions.add(slot.position)
         _validate_slot(slot)
+
+    for ref in sorted(set(_SLOT_REF.findall(spec.prompt))):
+        if ref not in keys:
+            raise BadRequest(
+                f"提示词引用了不存在的槽位「{ref}」：删槽位时要把它的引用一并删掉"
+            )
 
     if _MIXED_LITERAL.search(spec.prompt):
         raise BadRequest(

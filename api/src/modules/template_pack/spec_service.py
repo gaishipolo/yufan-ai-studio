@@ -20,7 +20,6 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Mapping, Sequence
-from dataclasses import replace
 
 from sqlalchemy import ColumnElement, and_, false, func, select, true
 from sqlalchemy.ext.asyncio import AsyncSession

@@ -22,6 +22,7 @@ import {
   normalize,
   referenceChips,
   rekeySlot,
+  stripSlotRefs,
 } from './specDraft';
 
 const TYPE_OPTIONS = (Object.keys(SLOT_TYPE_LABELS) as (keyof typeof SLOT_TYPE_LABELS)[]).map(
@@ -434,6 +435,11 @@ export function SpecWorkspace() {
             }
           >
             <div className="flex flex-col gap-2">
+              {slots.length === 0 && (
+                <p className="rounded-xl border border-dashed border-line-strong bg-panel-soft px-3 py-4 text-[11px] text-ink-mute">
+                  没有槽位。纯提示词的模板不需要素材，从上面的按钮加一个就行。
+                </p>
+              )}
               {slots.map((slot, index) => {
                 const fixed = (slot.binding ?? 'user') === 'fixed';
                 return (
@@ -466,20 +472,29 @@ export function SpecWorkspace() {
                           {index + 1}
                         </span>
                       </span>
-                      {slots.length > 1 && (
-                        <button
-                          type="button"
-                          className="text-[11px] text-ink-mute hover:text-danger"
-                          onClick={() =>
-                            setDraft({
-                              ...draft,
-                              slots: slots.filter(item => item.key !== slot.key),
-                            })
-                          }
-                        >
-                          <Trash2 size={13} />
-                        </button>
-                      )}
+                      <button
+                        type="button"
+                        className="text-[11px] text-ink-mute hover:text-danger"
+                        title="删除槽位"
+                        onClick={() => {
+                          const name = slot.label?.trim() || SLOT_TYPE_LABELS[slot.type];
+                          // 引用留着的下场是「点生成才报引用了不存在的槽位」，
+                          // 那句话看不出是刚才删槽位删出来的，所以一并清掉并告知条数。
+                          const stripped = stripSlotRefs(draft.prompt ?? '', slot.key);
+                          setDraft({
+                            ...draft,
+                            slots: slots.filter(item => item.key !== slot.key),
+                            prompt: stripped.text,
+                          });
+                          setNote(
+                            stripped.count > 0
+                              ? `已删除槽位「${name}」，提示词里的 ${stripped.count} 处引用一并清掉`
+                              : `已删除槽位「${name}」`,
+                          );
+                        }}
+                      >
+                        <Trash2 size={13} />
+                      </button>
                     </div>
                     <div className="grid gap-2 sm:grid-cols-[1.6fr_1fr_1fr_1fr]">
                       <FormField label="展示名">
