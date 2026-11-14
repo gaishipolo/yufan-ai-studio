@@ -91,7 +91,7 @@ const roles: MockRole[] = [
       'task:read',
       'task:read:all',
       'task:update',
-      'template:read',
+      'template_pack:read',
     ],
   },
   {
@@ -110,7 +110,7 @@ const roles: MockRole[] = [
       'shot:read',
       'storyboard:read',
       'task:read',
-      'template:read',
+      'template_pack:read',
     ],
   },
   {
@@ -140,7 +140,7 @@ const groups: MockGroup[] = [
     name: '内容组',
     description: '模板与素材的编辑同学',
     createdAt: '2026-02-01T00:00:00.000Z',
-    permissions: ['library:create', 'template:read'],
+    permissions: ['library:create', 'template_pack:read'],
     memberIds: ['u_002'],
   },
   {
@@ -161,7 +161,7 @@ let teamPermissions: string[] = [
   'shot:read',
   'storyboard:read',
   'task:read',
-  'template:read',
+  'template_pack:read',
 ];
 
 /** 个人单独授予；一人可属多组，但个人层只有一份 */

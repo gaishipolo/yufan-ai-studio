@@ -4,10 +4,6 @@
 任务表，也不需要自己实现 `GenerationStore`。每次提交落一行 `driver_jobs` 后
 交给 `generation.runner` 编排，所以队列、轮询、退避重试、墙钟超时、启动恢复
 与 `generation` 现有能力完全一致。
-
-门面还兼作「问模型层」的唯一出口：替换链的渠道别名、可用性、提交形态与
-提交前素材准备都委托给 `replacement_channels.py`。这样 `modules/template`
-不必自己拿 `ModelRouter` / `InputPreparer`，供应商细节不会散进业务模块。
 """
 
 from __future__ import annotations
@@ -18,18 +14,14 @@ from core.exceptions import BadRequest, Conflict, InvalidState, NotFound
 from core.param_schema import resolve_params
 from core.ports.model_generation import (
     DriverSummary,
-    ExecutorOutcome,
     GenerationTicket,
-    LibTVPaths,
     ModelSummary,
-    ReplacementChannelInfo,
     SubmitSpec,
 )
 from db.session import get_session_factory
 from generation.runner import get_runner
 from infra import get_model_router
 from infra.ai.base import Capability
-from modules.model_driver import replacement_channels as channels
 from modules.model_driver.models import (
     KIND_MODEL_DRIVER,
     STATUS_CANCELLED,
@@ -202,35 +194,3 @@ class ModelGenerationFacade:
 
     def drivers(self) -> tuple[DriverSummary, ...]:
         return driver_summaries()
-
-    # ---- 替换链支持：模型层的事不留给 modules/template 自己做 ----
-
-    def replacement_channels(self) -> tuple[ReplacementChannelInfo, ...]:
-        ensure_drivers_registered()
-        return channels.replacement_channels()
-
-    def model_for_channel(self, channel: str) -> str:
-        return channels.model_for_channel(channel)
-
-    def channel_label(self, channel: str) -> str:
-        return channels.channel_label(channel)
-
-    def submit_mode(self, model: str) -> str | None:
-        return channels.submit_mode(model)
-
-    async def prepare_inputs(self, model: str, run_id: str) -> None:
-        ensure_drivers_registered()
-        await channels.prepare_inputs(model, run_id)
-
-    def libtv_paths(self) -> LibTVPaths:
-        """执行器资产位置由本模块给出，模板库只经端口问路。"""
-        from modules.model_driver.libtv.process import RUNTIME, VENDOR
-        from modules.model_driver.libtv.state import RUN_LOCK
-
-        return LibTVPaths(vendor=VENDOR, bridge=RUNTIME, run_lock=RUN_LOCK)
-
-    async def libtv_execute_stage(self, run_id: str, stage: str) -> ExecutorOutcome:
-        from modules.model_driver.libtv import executor
-
-        result = await executor.execute_stage(run_id, stage)
-        return ExecutorOutcome(code=result.code, message=result.message)

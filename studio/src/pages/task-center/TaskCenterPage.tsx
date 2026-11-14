@@ -11,7 +11,6 @@ import { ImageTaskCard } from '@/entities/task/ui/ImageTaskCard';
 import { useDeleteTasks, useTaskFeed, useUpdateTask } from '@/entities/task/api/task.queries';
 import type { TaskScope, TaskSort } from '@/entities/task/model/types';
 import type { TaskFeedItem, TaskFeedParams, TaskFeedSource, TaskFeedStatus } from '@/entities/task/model/feed.types';
-import { REPLACEMENT_STATUS } from '@/entities/template/model/replacement.labels';
 import { TaskToolbar } from '@/features/task-filter/ui/TaskToolbar';
 import { TaskSearchRow } from '@/features/task-filter/ui/TaskSearchRow';
 import { TaskPreviewModal } from '@/features/task-preview/TaskPreviewModal';
@@ -34,14 +33,13 @@ export default function TaskCenterPage() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [preview, setPreview] = useState<TaskFeedItem | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
-  const canReadTemplates = useCan('template:read');
   const canReadImages = useCan('image:read');
 
   /* ---------- 筛选条件全部由 URL 承载：可分享 / 可回退 / 刷新不丢 ---------- */
   const statusParam = searchParams.get('status') ?? 'all';
   const status = (['all', 'queued', 'running', 'completed', 'failed', 'attention'].includes(statusParam) ? statusParam : 'all') as StatusFilter;
   const sourceParam = searchParams.get('source') ?? 'all';
-  const source = (['all', 'video', 'image', 'replacement'].includes(sourceParam) ? sourceParam : 'all') as TaskFeedSource;
+  const source = (['all', 'video', 'image'].includes(sourceParam) ? sourceParam : 'all') as TaskFeedSource;
   const keyword = searchParams.get('keyword') ?? '';
   const sortParam = searchParams.get('sort') ?? 'createdAt_desc';
   const sort = (['createdAt_desc', 'createdAt_asc', 'title_asc'].includes(sortParam) ? sortParam : 'createdAt_desc') as TaskSort;
@@ -199,17 +197,15 @@ export default function TaskCenterPage() {
 
       <p className="mt-2.5 flex flex-wrap items-center gap-1 text-[11.5px] leading-relaxed text-ink-mute">
         <Info size={12} className="shrink-0" aria-hidden />
-        三类任务统一展示；生图与替换档案按各自权限只显示本人，完成后可查看成片与下载。批量操作仅适用于通用视频任务。
+        视频与生图统一展示；生图按 `image:read` 只显示本人记录，完成后可查看成片与下载。批量操作仅适用于通用视频任务。
         {canReadImages && <Link to="/image" className="text-primary hover:underline">生图工作台 →</Link>}
-        {canReadTemplates && <Link to="/templates" className="text-primary hover:underline">创建替换任务 →</Link>}
+        <Link to="/templates/library" className="text-primary hover:underline">从模板生成 →</Link>
       </p>
 
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <Select aria-label="任务来源" value={source} onChange={event => patchFilter({source: event.target.value})}
           options={[{value: 'all', label: '全部来源'}, {value: 'video', label: '通用视频生成'},
-            ...(canReadImages ? [{value: 'image', label: '生图'}] : []),
-            ...(canReadTemplates ? [{value: 'replacement', label: '模板替换'}] : [])]} />
-        {source === 'replacement' && !canReadTemplates && <p className="text-xs text-ink-mute">当前账号没有替换任务读取权限。</p>}
+            ...(canReadImages ? [{value: 'image', label: '生图'}] : [])]} />
         {source === 'image' && !canReadImages && <p className="text-xs text-ink-mute">当前账号没有生图读取权限。</p>}
       </div>
       {data?.warnings.map(warning => <p key={warning} role="alert" className="mt-3 text-sm text-danger">{warning}</p>)}
@@ -252,29 +248,7 @@ export default function TaskCenterPage() {
               />
             ) : item.image ? (
               <ImageTaskCard key={item.key} item={item.image} onOpen={openPreview} />
-            ) : (
-              <article key={item.key} className="flex flex-col gap-3 rounded-card border border-line-soft bg-panel p-4">
-                <span className="text-xs font-semibold text-primary">模板替换</span>
-                <h2 className="break-words text-sm font-semibold text-ink">{item.title}</h2>
-                <p className="text-xs text-ink-soft">{item.status === 'success' && !item.outputUrl ? '结果文件待恢复' : REPLACEMENT_STATUS[item.status] ?? item.status}</p>
-                {item.group === 'running' && <p className="text-xs text-ink-mute">进度 {item.progress}%</p>}
-                {item.errorMessage && <p className="break-words text-xs text-danger">{item.errorMessage}</p>}
-                <p className="break-all text-[11px] text-ink-mute">任务编号：{item.id}</p>
-                <time dateTime={item.createdAt} className="text-[11px] text-ink-mute">{new Date(item.createdAt).toLocaleString()}</time>
-                <div className="mt-auto flex flex-wrap items-center gap-2">
-                  {item.detailUrl && <Link to={item.detailUrl} className="text-xs text-primary hover:underline">{item.outputUrl ? '查看成片与档案 →' : '查看替换档案 →'}</Link>}
-                  {item.outputUrl && (
-                    <button
-                      type="button"
-                      onClick={() => downloadUrl(item.outputUrl as string, artifactName(item))}
-                      className="text-xs text-primary hover:underline"
-                    >
-                      下载成片
-                    </button>
-                  )}
-                </div>
-              </article>
-            ))}
+            ) : null)}
           </div>
         )}
       </div>

@@ -259,16 +259,6 @@ export interface EffectivePermissionsOut {
   effective?: string[];
 }
 
-/** 提交或加速一条替换任务。
-
-`credits` 只作用于这条任务：提交时关掉账号的 0 积分权益标签，走正常积分队列，
-**不动账号级开关**，因此不会让同账号的其他人下一次提交莫名其妙开始花钱。
-不传表示沿用档案里当前的计费模式——「继续查询 / 重试原任务」走的就是这条路，
-它们不该顺带把一条已加速的任务改回免费队列。 */
-export interface ExecuteReplacement {
-  billingMode?: "free" | "credits" | null;
-}
-
 /** 详情多一个 `downloadable`：让前端不必重复实现「能不能下」的判断。
 
 这条规则有两处（`succeeded` 且未被回收），前端各写一遍必然和回收任务
@@ -806,95 +796,6 @@ export interface LoginIn {
   password: string;
 }
 
-/** ManifestDraftIn */
-export interface ManifestDraftIn {
-  key: string;
-  name: string;
-  description?: string;
-  video: ManifestVideoIn;
-  packs?: ManifestPackIn[];
-  functions: ManifestFunctionIn[];
-}
-
-/** ManifestFunctionIn */
-export interface ManifestFunctionIn {
-  key: string;
-  name: string;
-  pack?: string | null;
-  kind?: "product" | "character" | "scene" | null;
-  scenePromptDefault?: string | null;
-  prompt: string;
-  mediaOrder?: string[];
-  bindings?: Record<string, string> | null;
-  scopeOptions?: string[];
-  aspectRatio?: "9:16" | "16:9" | "1:1";
-  duration?: number | null;
-}
-
-/** ManifestListOut */
-export interface ManifestListOut {
-  items?: ManifestOut[];
-  total?: number;
-}
-
-/** 配置详情。嵌套体直接复用入参模型：形状一致，不另造一份会漂移的出参。 */
-export interface ManifestOut {
-  id: string;
-  key: string;
-  name: string;
-  description: string;
-  ownerId: string;
-  video: ManifestVideoIn;
-  status: string;
-  version: number;
-  revision: number;
-  fingerprint: string;
-  publishedAt?: string | null;
-  createdAt: string;
-  updatedAt: string;
-  packs?: ManifestPackIn[];
-  functions?: ManifestFunctionIn[];
-}
-
-/** ManifestPackIn */
-export interface ManifestPackIn {
-  key: string;
-  name?: string;
-  kind: "product" | "character" | "scene";
-  packId?: string | null;
-  references?: ManifestReferenceIn[];
-  requiredRoles?: string[];
-  supportedScopes?: string[];
-  wardrobeMode?: "preserve" | "reference";
-}
-
-/** 发布回执：`templateId` 即工作台卡片 id，前端拼 `workbenchPath` 用。 */
-export interface ManifestPublishOut {
-  manifest: ManifestOut;
-  version: number;
-  templates?: PublishedTemplateOut[];
-}
-
-/** ManifestReferenceIn */
-export interface ManifestReferenceIn {
-  key: string;
-  assetId: string;
-  role: string;
-  description?: string;
-}
-
-/** 只预检不落库：返回会用于幂等判定的配置指纹。 */
-export interface ManifestValidateOut {
-  valid?: boolean;
-  fingerprint: string;
-}
-
-/** ManifestVideoIn */
-export interface ManifestVideoIn {
-  assetId: string;
-  shared?: boolean;
-}
-
 /** `GET /identity/me`：前端靠 `permissions` 渲染菜单与按钮。 */
 export interface MeOut {
   /** 用户 ID */
@@ -921,35 +822,6 @@ export interface MeOut {
   roles?: RoleBriefOut[];
   /** 展开后的权限码；含 `*` 表示超级管理员 */
   permissions?: string[];
-}
-
-/** PackAction */
-export interface PackAction {
-  expectedRevision: number;
-}
-
-/** 一张参考图在封装里的用途；description 只补充本次任务特有的事实。 */
-export interface PackBinding {
-  role?: string;
-  description?: string;
-}
-
-/** PackDraftIn */
-export interface PackDraftIn {
-  requestId: string;
-  expectedRevision?: number;
-  kind: "character" | "product" | "scene";
-  name?: string;
-  /** 封装用的参考图 id，按顺序 */
-  referenceLibraryIds?: string[];
-  /** 封面的 asset id；必须出现在 referenceLibraryIds 里 */
-  coverLibraryId?: string | null;
-  wardrobeMode?: "preserve" | "reference";
-  features?: string;
-  instructions?: string;
-  bindings?: PackBinding[];
-  requiredRoles?: string[];
-  supportedScopes?: string[];
 }
 
 /** 建封装。
@@ -984,34 +856,6 @@ export interface PackItemOut {
   coverUrl?: string | null;
 }
 
-/** PackManaged */
-export interface PackManaged {
-  id: string;
-  kind: "character" | "product" | "scene";
-  name: string;
-  referenceIds: string[];
-  coverReferenceId?: string | null;
-  wardrobeMode?: "preserve" | "reference";
-  features?: string;
-  instructions?: string;
-  version?: number;
-  available?: boolean | null;
-  coverUrl?: string | null;
-  previewUrls?: string[];
-  referenceNames?: string[];
-  bindings?: PackBinding[];
-  requiredRoles?: string[];
-  supportedScopes?: string[];
-  revision?: number;
-  status?: "draft" | "published" | "disabled";
-  gaps?: string[];
-}
-
-/** PackManagedList */
-export interface PackManagedList {
-  items: PackManaged[];
-}
-
 /** 改封装。`items` 提供即**整体替换**（不是增量追加）——增量语义要前端自己
 算差集，而算错了就是悄悄多一个成员，不如让调用方给全量。 */
 export interface PackPatchIn {
@@ -1020,14 +864,6 @@ export interface PackPatchIn {
   coverAssetId?: string | null;
   tagIds?: string[] | null;
   expectedVersion?: number;
-}
-
-/** PackPublicList */
-export interface PackPublicList {
-  items: ReplacementPack[];
-  total: number;
-  page: number;
-  pageSize: number;
 }
 
 /** PasswordChangeIn */
@@ -1087,34 +923,6 @@ export interface PermissionsIn {
   permissions?: string[];
 }
 
-/** PrepareReplacement */
-export interface PrepareReplacement {
-  requestId: string;
-  channel?: "libtv" | "bailian" | "bailian-prime";
-  kind: "character" | "product" | "scene";
-  target?: string;
-  /** 原片（资产库里的视频）id */
-  sourceLibraryId?: string | null;
-  videoTemplateId?: string | null;
-  /** 文字换场景的描述；省略使用模板默认值，空白拒绝 */
-  scenePrompt?: string | null;
-  referenceIds?: string[];
-  /** 资产库 v2 封装的 id；成员按 position 顺序当参考图，用途取自成员自己声明的 role。与 packId / packVersion / referenceIds / extraPackIds 互斥；prepare 时展开并冻结，之后封装改成员不影响已准备的任务 */
-  libraryPackId?: string | null;
-  /** 绑定的文本资产 id，按顺序对应 `{{Text N}}`；最多 8 份 */
-  textLibraryIds?: string[];
-  /** 第 2 位及以后的素材包 id，按提示词槽位顺序；第一包仍用 packId */
-  extraPackIds?: string[];
-  /** 与 extraPackIds 顺序对应的发布版本；旧调用省略时由服务端解析并冻结 */
-  extraPackVersions?: number[];
-  wardrobeMode?: "preserve" | "reference";
-  replacementScope?: string;
-  notes?: string;
-  packId?: string | null;
-  packVersion?: number | null;
-  aspectRatio?: "9:16" | "16:9" | "1:1" | "adaptive";
-}
-
 /** `PATCH /identity/me` 的自助可写字段。
 
 刻意**不含** `is_active`：停用是管理动作，用户误点一下就把自己锁在门外，
@@ -1132,15 +940,6 @@ export interface ProfileUpdateIn {
   position?: string | null;
 }
 
-/** PublishedTemplateOut */
-export interface PublishedTemplateOut {
-  functionKey: string;
-  templateId: string;
-  templateKey: string;
-  name: string;
-  workbenchPath: string;
-}
-
 /** 就绪状态。`checks` 说明每一项依赖的结论，status ∈ ok / degraded / down。 */
 export interface ReadyOut {
   status: string;
@@ -1149,160 +948,10 @@ export interface ReadyOut {
   checks?: RuntimeCheckOut[];
 }
 
-/** 确认「上一次提交可能已经花了钱」后才允许重提。
-
-默认 False：一次误点就变成第二次计费，是这套流程里最贵的一个操作。 */
-export interface ReconfirmReplacement {
-  /** 确认上一次提交可能已产生费用，仍要重新提交（默认拒绝） */
-  confirmCharged?: boolean;
-}
-
 /** RefreshIn */
 export interface RefreshIn {
   /** 登录时拿到的刷新令牌 */
   refreshToken: string;
-}
-
-/** ReplacementCatalog */
-export interface ReplacementCatalog {
-  channels?: ReplacementChannelOut[];
-  provider?: string;
-  maxCredits?: number;
-  kinds?: string[];
-  runs: ReplacementRunOut[];
-  packs?: ReplacementPack[];
-  packRoles?: Record<string, Record<string, string>>;
-  baseRoles?: Record<string, string>;
-  packScopes?: Record<string, string>;
-}
-
-/** ReplacementChannelOut */
-export interface ReplacementChannelOut {
-  id: "libtv" | "bailian" | "bailian-prime";
-  label: string;
-  model: string;
-  enabled: boolean;
-  billing: "libtv" | "aliyun";
-  unavailableReason?: string;
-}
-
-/** ReplacementInputAsset */
-export interface ReplacementInputAsset {
-  id: string;
-  name: string;
-  role: string;
-  type: string;
-  url: string;
-  /** 当次输入的 Mixed 编号，无法从历史快照确定时留空 */
-  token?: string;
-  /** 当次快照中记录的媒体用途说明 */
-  usage?: string;
-  /** 授权读取当次输入快照的缩略图 */
-  previewUrl?: string | null;
-}
-
-/** ReplacementInputSummary */
-export interface ReplacementInputSummary {
-  assets?: ReplacementInputAsset[];
-  coverReferenceId?: string | null;
-  wardrobeMode?: string;
-  replacementScope?: string;
-  notes?: string;
-  /** 本次实际使用的可编辑场景描述 */
-  scenePrompt?: string | null;
-}
-
-/** ReplacementPack */
-export interface ReplacementPack {
-  id: string;
-  kind: "character" | "product" | "scene";
-  name: string;
-  referenceIds: string[];
-  coverReferenceId?: string | null;
-  wardrobeMode?: "preserve" | "reference";
-  features?: string;
-  instructions?: string;
-  version?: number;
-  available?: boolean | null;
-  coverUrl?: string | null;
-  previewUrls?: string[];
-  referenceNames?: string[];
-  bindings?: PackBinding[];
-  requiredRoles?: string[];
-  supportedScopes?: string[];
-}
-
-/** ReplacementReview */
-export interface ReplacementReview {
-  status?: string;
-  version?: number;
-  reasonCodes?: ("replacement" | "preservation" | "visual" | "audio" | "other")[];
-  comment?: string;
-  reviewedBy?: string | null;
-  reviewedAt?: string | null;
-  history?: ReplacementReviewEvent[];
-}
-
-/** ReplacementReviewEvent */
-export interface ReplacementReviewEvent {
-  status?: string;
-  version?: number;
-  reasonCodes?: ("replacement" | "preservation" | "visual" | "audio" | "other")[];
-  comment?: string;
-  reviewedBy?: string | null;
-  reviewedAt?: string | null;
-}
-
-/** ReplacementReviewIn */
-export interface ReplacementReviewIn {
-  status: "accepted" | "rejected";
-  expectedVersion: number;
-  reasonCodes?: ("replacement" | "preservation" | "visual" | "audio" | "other")[];
-  comment?: string;
-}
-
-/** ReplacementRunOut */
-export interface ReplacementRunOut {
-  id: string;
-  channel?: "libtv" | "bailian" | "bailian-prime";
-  channelLabel?: string;
-  kind: "character" | "product" | "scene";
-  target: string;
-  status: string;
-  /** 工作区绝对路径（排查用）；目录已被清理或换机器后为 null */
-  archivePath?: string | null;
-  createdAt: string;
-  /** 确认提交（进入排队）的时间，未开始为 null */
-  startedAt?: string | null;
-  /** 这一轮结束的时间；未结束为 null */
-  finishedAt?: string | null;
-  /** 确认提交到结束的耗时（秒）；未完成时按到此刻计，未开始为 null */
-  elapsedSec?: number | null;
-  prompt: string;
-  /** 实际发出去那段提示词的 sha256（所有后处理之后）。档案里另外两个哈希（template/spec）哈希的是模板与输入，复核不了最终字节。加这列之前准备的任务为 null，不回填。 */
-  promptSha256?: string | null;
-  /** 本次绑定的文本资产 id（顺序即 `{{Text N}}` 编号） */
-  textLibraryIds?: string[];
-  /** 绑定的文案与版本快照（不含正文） */
-  textBindings?: Record<string, unknown>[];
-  /** fixed=封装视频模板时写死的原文，逐字提交；compiled=按素材与替换范围现编。展示层据此告诉用户「跑的就是你封装时那份提示词」。 */
-  promptMode?: "fixed" | "compiled";
-  /** fixed 时出自哪条视频模板；compiled 为 null */
-  videoTemplateName?: string | null;
-  /** 统一展示名，列表/弹窗/任务中心共用 */
-  displayTitle?: string;
-  taskId?: string | null;
-  estimatedCredits?: number | null;
-  credits?: number | null;
-  progress?: number;
-  reviewStatus?: string;
-  review?: ReplacementReview | null;
-  inputSummary?: ReplacementInputSummary | null;
-  lastError?: string | null;
-  outputUrl?: string | null;
-  deletedAt?: string | null;
-  /** free=0 积分权益队列；credits=本次任务用积分进正常队列 */
-  billingMode?: "free" | "credits";
 }
 
 /** ResetPasswordIn */
@@ -1622,10 +1271,10 @@ export interface TagParentIn {
 export interface TaskFeedItem {
   /** 带来源前缀的唯一键，不是上游任务 ID */
   key: string;
-  /** 原始任务、生图记录或替换档案 ID */
+  /** 原始任务或生图记录 ID */
   id: string;
   /** 任务来源 */
-  source: "video" | "image" | "replacement";
+  source: "video" | "image";
   /** 展示标题 */
   title: string;
   /** 原始状态，保留各链路的精确状态 */
@@ -1636,9 +1285,9 @@ export interface TaskFeedItem {
   createdAt: string;
   /** 生成进度 */
   progress?: number;
-  /** 替换原片名称 */
+  /** 来源名称（当前两路都留空） */
   sourceName?: string;
-  /** 成片 / 成图地址，三路都已按当前存储驱动现签；没有产物时为 null */
+  /** 成片 / 成图地址，两路都已按当前存储驱动现签；没有产物时为 null */
   outputUrl?: string | null;
   /** 失败或需处理原因 */
   errorMessage?: string | null;
@@ -1907,124 +1556,6 @@ export interface ValidationError {
   type: string;
   input?: unknown;
   ctx?: Record<string, unknown>;
-}
-
-/** 把样片登记后的 source 资产绑定到模板：绑定后它才是「全部模板」里可选的卡片。 */
-export interface VideoTemplateAttachSourceIn {
-  /** 原片 id（资产库里的视频） */
-  sourceVideoAssetId: string;
-}
-
-/** 封装一条新的视频模板。
-
-`mediaOrder` 决定 mixedList 顺序（即 `{{Mixed N}}` 指向谁）：显式给出时按它拼，
-旧模式必须原片第1位、其余图片与素材包同一批；用途绑定模式不传 mediaOrder，
-服务端按 referenceBindings 生成，保留视频所在编号并完整附带辅助参考。 */
-export interface VideoTemplateDraftIn {
-  /** 模板名称 */
-  name: string;
-  /** 稳定标识：同键同配置返回原模板，同键异配置409；留空自动生成。固定蓝本状态独立管理 */
-  templateKey?: string;
-  /** 模板说明 */
-  description?: string;
-  /** 固定提示词原文，含 {{Mixed N}} 占位符 */
-  prompt: string;
-  /** 样片文件名 */
-  sourceVideoName?: string;
-  /** 样片在资产库中的 asset id */
-  sourceVideoAssetId?: string | null;
-  /** 样片本地路径（可选） */
-  sourceVideoPath?: string;
-  /** 样片真实时长，用于提示与档位说明 */
-  sourceDurationSec?: number;
-  /** 输出画幅 */
-  aspectRatio?: string;
-  /** 关联的已发布替换素材包；**可省略**——用途绑定模式下省略即「只声明槽位」，调用时按用途从用户自己选的包里取图 */
-  packId?: string | null;
-  /** 选中这张原片卡片时，替换配置默认切到的替换类型 */
-  defaultKind?: "character" | "product" | "scene";
-  /** 留空则由素材包顺序生成 */
-  mediaOrder?: VideoTemplateMedia[];
-  /** 生成参数，覆盖默认值 */
-  generation?: Record<string, unknown>;
-  /** 封装规则；referenceBindings 将连续 Mixed 编号绑定到 source_video/图片用途，服务端排列声明槽位并完整附带当前包其余图片，无需逐图引用 */
-  rules?: Record<string, unknown>;
-  /** 封面地址 */
-  coverUrl?: string;
-  /** 是否设为固定蓝本（全库仅一个） */
-  pinned?: boolean;
-}
-
-/** VideoTemplateListOut */
-export interface VideoTemplateListOut {
-  items?: VideoTemplateOut[];
-  total?: number;
-  /** 当前固定蓝本的 id */
-  pinnedId?: string | null;
-}
-
-/** mixedList 里的一项；下标 +1 就是 {{Mixed N}} 编号。 */
-export interface VideoTemplateMedia {
-  /** 形如 {{Mixed 3}}，与所在下标严格对应 */
-  token: string;
-  /** source_video / front / multiview / detail 等用途 */
-  role?: string;
-  /** video / image / audio */
-  type?: string;
-  /** 素材库 asset id */
-  assetId?: string | null;
-  /** 素材显示名 */
-  name?: string;
-  /** 本地文件相对路径（可选） */
-  file?: string;
-  /** 是否被提示词显式引用 */
-  inPrompt?: boolean;
-}
-
-/** VideoTemplateOut */
-export interface VideoTemplateOut {
-  id: string;
-  templateKey: string;
-  name: string;
-  description: string;
-  prompt: string;
-  /** 提示词 sha256，防止文字被悄悄改掉 */
-  promptSha256: string;
-  sourceVideoName: string;
-  sourceVideoAssetId?: string | null;
-  sourceVideoPath: string;
-  sourceDurationSec: number;
-  aspectRatio: string;
-  packId?: string | null;
-  packName?: string;
-  packVersion?: number;
-  defaultKind?: "character" | "product" | "scene";
-  mediaOrder?: VideoTemplateMedia[];
-  generation?: Record<string, unknown>;
-  rules?: Record<string, unknown>;
-  coverUrl?: string;
-  pinned?: boolean;
-  createdAt: string;
-  updatedAt: string;
-}
-
-/** VideoTemplatePackReferenceIn */
-export interface VideoTemplatePackReferenceIn {
-  token: string;
-  packId: string;
-  packVersion: number;
-  assetId: string;
-}
-
-/** 原地保存固定提示词及跨封装图片引用，不改原片、档位或默认素材包。
-
-既有用途引用按新原文重算；跨封装引用锁定包与版本，图片追加到基础媒体之后。
-不再点名的图片仍可作为辅助输入；references 省略时保留，显式空数组清除固定引用。 */
-export interface VideoTemplatePromptIn {
-  /** 新的固定提示词原文，含 {{Mixed N}} 占位符 */
-  prompt: string;
-  /** 跨封装固定图片引用；省略保留原绑定，空数组清除 */
-  references?: VideoTemplatePackReferenceIn[] | null;
 }
 
 /** ApiResponse[ModelListOut] */
@@ -2396,18 +1927,6 @@ export interface EndpointData {
   "POST /api/v1/tasks/{task_id}/favorite": core__response__ApiResponse_TaskOut___2;
   /** 重试任务 */
   "POST /api/v1/tasks/{task_id}/retry": TaskRetryOut;
-  /** manifest 配置列表 */
-  "GET /api/v1/template-manifests": ManifestListOut;
-  /** 保存 manifest 草稿 */
-  "POST /api/v1/template-manifests": ManifestOut;
-  /** 预检 manifest 配置（不落库） */
-  "POST /api/v1/template-manifests/validate": ManifestValidateOut;
-  /** manifest 配置详情 */
-  "GET /api/v1/template-manifests/{key}": ManifestOut;
-  /** 停用 manifest 配置 */
-  "POST /api/v1/template-manifests/{key}/disable": ManifestOut;
-  /** 发布 manifest 配置 */
-  "POST /api/v1/template-manifests/{key}/publish": ManifestPublishOut;
   /** 本人可见的规格列表 */
   "GET /api/v1/template-specs": TemplateSpecListOut;
   /** 保存草稿（同内容幂等，revision 冲突 409） */
@@ -2424,50 +1943,4 @@ export interface EndpointData {
   "POST /api/v1/template-specs/{key}/disable": TemplateSpecOut;
   /** 发布：把当前草稿冻结成新版本 */
   "POST /api/v1/template-specs/{key}/publish": SpecPublishOut;
-  /** 人物/产品/场景替换模板与调用档案 */
-  "GET /api/v1/templates/replacement-catalog": ReplacementCatalog;
-  /** 本人封装草稿和历史包 */
-  "GET /api/v1/templates/replacement-packs": PackManagedList;
-  /** 全工作台已发布对象 */
-  "GET /api/v1/templates/replacement-packs/available": PackPublicList;
-  /** 保存封装草稿（请求标识及版本防重） */
-  "PUT /api/v1/templates/replacement-packs/draft": PackManaged;
-  /** 停用已发布封装对象 */
-  "POST /api/v1/templates/replacement-packs/{pack_id}/disable": PackManaged;
-  /** 读取授权发布版本的包内预览 */
-  "GET /api/v1/templates/replacement-packs/{pack_id}/preview/{asset_id}": unknown;
-  /** 发布不可变封装版本 */
-  "POST /api/v1/templates/replacement-packs/{pack_id}/publish": PackManaged;
-  /** 归档输入并预览最终提示词，不提交生成 */
-  "POST /api/v1/templates/replacement-runs": ReplacementRunOut;
-  /** 将本人替换任务与调用档案移入回收站，不取消生成 */
-  "DELETE /api/v1/templates/replacement-runs/{run_id}": ReplacementRunOut;
-  /** 替换任务状态与提示词 */
-  "GET /api/v1/templates/replacement-runs/{run_id}": ReplacementRunOut;
-  /** 提交替换任务；billingMode=credits 表示本任务用积分加速 */
-  "POST /api/v1/templates/replacement-runs/{run_id}/execute": ReplacementRunOut;
-  /** 读取当次归档输入快照 */
-  "GET /api/v1/templates/replacement-runs/{run_id}/inputs/{asset_id}": unknown;
-  /** 读取当次输入快照缩略图 */
-  "GET /api/v1/templates/replacement-runs/{run_id}/inputs/{asset_id}/thumbnail": unknown;
-  /** 预览或下载原始生成结果 */
-  "GET /api/v1/templates/replacement-runs/{run_id}/output": unknown;
-  /** 确认上次提交可能已计费后放行重提（默认拒绝） */
-  "POST /api/v1/templates/replacement-runs/{run_id}/reconfirm": ReplacementRunOut;
-  /** 恢复本人回收站中的替换任务与调用档案 */
-  "POST /api/v1/templates/replacement-runs/{run_id}/restore": ReplacementRunOut;
-  /** 保存人工验收，版本冲突需重新核对 */
-  "PUT /api/v1/templates/replacement-runs/{run_id}/review": ReplacementRunOut;
-  /** 视频模板列表（固定蓝本优先） */
-  "GET /api/v1/templates/video-templates": VideoTemplateListOut;
-  /** 封装一条视频模板 */
-  "POST /api/v1/templates/video-templates": VideoTemplateOut;
-  /** 视频模板详情（含提示词与媒体顺序） */
-  "GET /api/v1/templates/video-templates/{template_id}": VideoTemplateOut;
-  /** 绑定样片原片资产 */
-  "POST /api/v1/templates/video-templates/{template_id}/attach-source": VideoTemplateOut;
-  /** 设为固定蓝本（全库仅一个） */
-  "POST /api/v1/templates/video-templates/{template_id}/pin": VideoTemplateOut;
-  /** 保存固定提示词与跨封装图片引用 */
-  "PATCH /api/v1/templates/video-templates/{template_id}/prompt": VideoTemplateOut;
 }

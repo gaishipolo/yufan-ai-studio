@@ -95,7 +95,8 @@ def register_exception_handlers(app: FastAPI) -> None:
     async def _stale_write(_: Request, exc: StaleDataError) -> JSONResponse:
         """乐观锁落败 → 409，不是 500。
 
-        `replacement_runs.state_version` 是 `version_id_col`：任何 `UPDATE` 都带
+        各业务表（`video_tasks` / `image_jobs` / `template_specs`）的 `state_version`
+        或 `revision` 是乐观锁列：任何 `UPDATE` 都带
         `WHERE state_version = <读到的值>`，输的一方抛 `StaleDataError`。它继承
         `SQLAlchemyError`，落到下面那个通用处理器就会变成 500「数据库操作失败」
         ——一次「用户点删除时轮询正好在写进度」被报成服务端故障，用户不知道该

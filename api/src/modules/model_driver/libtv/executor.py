@@ -2,7 +2,7 @@
 
 本模块由 `drivers/libtv.py` 的 Provider 调用，也通过 `core/ports/model_generation`
 暴露给模板库（业务模块不许直接 import `modules/*`）。归档工作区的目录约定
-在 `modules/template/workspace.py`，这里只认 `run.json` 与执行回执。
+由 `infra.archive` 与 `generic_inputs` 负责，这里只认 `run.json` 与执行回执。
 """
 
 from __future__ import annotations

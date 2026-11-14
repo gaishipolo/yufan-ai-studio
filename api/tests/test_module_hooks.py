@@ -139,11 +139,7 @@ MODULE_COMMANDS = {
     # library（v1 的 import-archive-index / migrate-blobs / prune-blobs /
     # rebuild-mirrors 随 `modules/asset` 一起删了）
     "library",
-    # template（替换链）/ template_pack（封装）
-    "import-template-runs",
-    "import-template-packs",
-    "import-video-templates",
-    "template-workspaces",
+    # 模板（替换链 / 旧封装表）的导入命令随 P3 下线：数据已经没有落点了
     "drivers",
 }
 

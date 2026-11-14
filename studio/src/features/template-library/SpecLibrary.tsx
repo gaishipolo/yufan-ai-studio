@@ -8,7 +8,7 @@ import { useModels } from '@/entities/model/api/model.queries';
 import { useCreateTask } from '@/entities/task/api/task.queries';
 import { usePublishedSpecs, useSpecCompile } from '@/entities/template-spec/api/spec.queries';
 import type { SpecSlotOut, TemplateSpecOut } from '@/shared/api/schema';
-import { AssetPicker, type PickKind, type PickedAsset } from '@/features/template-manifests/AssetPicker';
+import { AssetPicker, type PickKind, type PickedAsset } from '@/features/template-specs/AssetPicker';
 import { Button, Chip, CoverImage, EmptyState, SearchInput, Skeleton } from '@/shared/ui';
 import { cn } from '@/shared/lib/cn';
 import { toTaskPayload } from './taskPayload';

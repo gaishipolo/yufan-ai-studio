@@ -288,7 +288,7 @@ class LibraryAssetGeneration(Base):
     """生成溯源快照，1:1 对应资产行，主键就是 `asset_id`。
 
     **冻结写入**：入库那一刻的业务表值抄进来，之后不再联表查询。生成参数散落在
-    `image_jobs` / `video_tasks` / `replacement_runs` 三张表，且历史数据没有完整
+    `image_jobs` / `video_tasks` 等生成表里，且历史数据没有完整
     记录；详情页对缺失字段显示「未记录」，而不是去别的模块现查。
     """
 

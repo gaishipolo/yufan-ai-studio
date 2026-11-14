@@ -1,33 +1,21 @@
-import { LayoutGrid, Layers3, PackagePlus, Wand2 } from 'lucide-react';
+import { Layers3, Wand2 } from 'lucide-react';
 import { defineModule } from '@/shared/registry/define-module';
 
+/**
+ * 模板与镜头：两条路由，两种动作。
+ *
+ * - `/templates/library`：**填表**——选一份已发布模板，把槽位填满，直接生成；
+ * - `/templates/specs`：**封装**——定槽位、写提示词、选模型，发布后进模板库。
+ *
+ * 2026-11-14 P3 之后只剩这两条：「替换工作台」(`/templates`) 与「模板封装」
+ * (`/templates/manifests`) 随替换链和旧封装表一起下线 —— 替换不再是平行链路，
+ * 而是“某份模板 + 某个声明了替换能力的模型”的普通生成，落的就是任务中心那张表。
+ */
 export default defineModule({
   id: 'templates',
   title: '模板库',
   routes: [
     {
-      path: 'templates',
-      load: () => import('@/pages/templates/TemplatesPage'),
-      permissions: ['template:read'],
-      nav: {
-        /* 这条是**替换工作台**（原片 + 素材包替换），不是新的「模板库填表」。
-           P3 收编后它下线，届时只剩 `/templates/library` 一条。 */
-        label: '替换工作台',
-        icon: LayoutGrid,
-        group: '模板与镜头',
-        groupOrder: 2,
-        order: 1,
-      },
-      card: {
-        subtitle: '跨产品复用',
-        gradient: 'linear-gradient(140deg,#9b8cff,#7c5cff)',
-        order: 4,
-        matchPrefixes: ['/templates', '/storyboards', '/shots'],
-      },
-    },
-    {
-      /* 填表入口：选已发布模板 → 填素材 → 生成。与「模板库」原页面（替换工作台）
-         是两种动作，所以单开一条；P3 收编后替换工作台下线，这条就是唯一的模板库。 */
       path: 'templates/library',
       load: () => import('@/pages/templates/LibraryPage'),
       permissions: ['template_pack:read'],
@@ -38,33 +26,23 @@ export default defineModule({
         groupOrder: 2,
         order: 0,
       },
-    },
-    {
-      /* 封装入口单独一条：它写的是「配置」，与模板库「选模板」是两种动作。
-         同一模块下挂两条路由，侧边栏因此出现第二项，权限也分开判。 */
-      path: 'templates/manifests',
-      load: () => import('@/pages/templates/ManifestsPage'),
-      permissions: ['template_pack:read'],
-      nav: {
-        label: '模板封装',
-        icon: PackagePlus,
-        group: '模板与镜头',
-        groupOrder: 2,
-        order: 2,
+      card: {
+        subtitle: '填素材即生成',
+        gradient: 'linear-gradient(140deg,#9b8cff,#7c5cff)',
+        order: 4,
+        matchPrefixes: ['/templates', '/storyboards', '/shots'],
       },
     },
     {
-      /* 通用模板（槽位 + 提示词 + 模型）。与上面的「模板封装」是两种东西：
-         那条写的是替换模板（原片 + 素材包），这条写的是任意生成模板。 */
       path: 'templates/specs',
       load: () => import('@/pages/templates/SpecsPage'),
       permissions: ['template_pack:read'],
       nav: {
-        label: '模板规格',
+        label: '模板封装',
         icon: Layers3,
         group: '模板与镜头',
         groupOrder: 2,
-        order: 3,
+        order: 1,
       },
     },
   ],

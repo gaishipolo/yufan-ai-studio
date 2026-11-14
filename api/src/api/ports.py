@@ -43,7 +43,7 @@ async def record(...) -> None:                            # 4. 消费函数：**
 变成必选依赖 —— 删掉 identity 模块整个系统就起不来，那还不如直接 import。
 
 **`set_*` vs `register_*` 是两种语义，别混用**：`set_*`（配 `replace=True`）是
-「后写覆盖」，本来就有权威来源会变（`core.audit`、`core.feed`）；`register_*`
+「后写覆盖」，本来就有权威来源会变（`core.audit`）；`register_*`
 是「不许两个实现抢同一个位置」（`api.authn`、`core.ports.accounts`）。改造前这
 两种语义在五个文件里各写各的，谁也没发现它们不一致。
 
@@ -69,7 +69,6 @@ from dataclasses import dataclass
 
 from api.authn import has_principal_resolver
 from core.audit import has_audit_sink
-from core.feed import has_replacement_feed
 from core.ports.accounts import has_account_status_checker
 from core.ports.export_sources import export_sources
 from core.ports.generation_feed import has_generation_feed
@@ -78,8 +77,6 @@ from core.ports.library_lookup import has_library_lookup
 from core.ports.library_references import library_references_ready
 from core.ports.model_generation import has_model_generation
 from core.ports.org_directory import has_org_directory
-from core.ports.template_catalog import has_template_catalog
-from core.ports.template_runtime import has_template_runtime
 
 __all__ = ["PORT_CATALOG", "PortSpec", "port_status"]
 
@@ -133,17 +130,7 @@ PORT_CATALOG: tuple[PortSpec, ...] = (
         "但生产环境启动自检会直接报错",
         is_registered=has_audit_sink,
     ),
-    PortSpec(
-        name="replacement-feed",
-        module="core.feed",
-        protocol="",  # 类型是 Callable 别名，没有具名协议类
-        implementer="modules/template 的 `feed_provider.read_feed`，读 "
-        "`replacement_runs` 表（不再扫归档盘上的指针）",
-        when_unregistered="任务中心看到空列表：替换档案不计入待办与统计，"
-        "但页面本身仍可用",
-        is_registered=has_replacement_feed,
-    ),
-    PortSpec(
+        PortSpec(
         name="generation-feed",
         module="core.ports.generation_feed",
         protocol="",  # 类型是 Callable 别名，没有具名协议类
@@ -215,30 +202,7 @@ PORT_CATALOG: tuple[PortSpec, ...] = (
         "报成用户没配模型，是最难排查的一类问题",
         is_registered=has_model_generation,
     ),
-    PortSpec(
-        name="template-catalog",
-        module="core.ports.template_catalog",
-        protocol="TemplateCatalogPort",
-        implementer="modules/template_pack 的 `catalog_port_impl`（读已发布的 "
-        "manifest / packs / functions，组装成 core 层不可变快照）",
-        when_unregistered="返回空结果：库里还没有已发布封装是合法状态，"
-        "抛异常会把「模块没装配」和「用户没配置」混成一件事。"
-        "只跑消费方单测时就是这个状态",
-        is_registered=has_template_catalog,
-    ),
-    PortSpec(
-        name="template-runtime",
-        module="core.ports.template_runtime",
-        protocol="TemplateRuntimePort",
-        implementer="现在由 modules/template 的 `runtime_port_impl` 注册（读它自己的 "
-        "template_packs / _versions / video_templates）；C2 把这三张表搬进 "
-        "modules/template_pack 后，注册点跟着搬，消费方不改",
-        when_unregistered="fail-closed：抛 RegistryError（500）。替换执行链拿不到"
-        "冻结版本与模板原文就根本准备不了任务，退化成「封装不存在」的 400 会把"
-        "装配故障说成用户选错了包。与 template-catalog 的「空结果」刻意相反",
-        is_registered=has_template_runtime,
-    ),
-)
+        )
 
 
 def port_status() -> list[tuple[PortSpec, bool]]:

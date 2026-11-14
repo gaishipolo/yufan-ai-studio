@@ -252,59 +252,6 @@ EXEMPT_WRITE_ROUTES: Mapping[str, Exemption] = {
         why="幂等开关，单行更新，无外部调用",
         review_by=NEAR_TERM,
     ),
-    # ---- 替换模板：prepare / execute 各自挂限流，其余都是元数据 ----
-    # `POST /templates/replacement-runs` 已从本表移除（2026-11-13）：原理由
-    # 「只写元数据」与实现不符 —— 那个入口会物化每份输入、跑 Node 编译器、
-    # 复制整个运行时。现在路由上挂 `template.replacement.prepare`，额度低于 execute。
-    "POST /templates/replacement-runs/{run_id}/reconfirm": Exemption(
-        why=(
-            "只翻一个确认位；真正重提由 `/execute` 限流，这里加限流反而会挡"
-            "住正常补救"
-        ),
-        review_by=NEAR_TERM,
-    ),
-    "POST /templates/replacement-runs/{run_id}/restore": Exemption(
-        why="从回收站恢复单条记录，幂等（重复调用结果相同）",
-        review_by=NEAR_TERM,
-    ),
-    "DELETE /templates/replacement-runs/{run_id}": Exemption(
-        why="软删单条（进回收站），不取消生成",
-        review_by=NEAR_TERM,
-    ),
-    "PUT /templates/replacement-runs/{run_id}/review": Exemption(
-        why="审核结论落库，单行更新，需要 `template:review`",
-        review_by=NEAR_TERM,
-    ),
-    "PUT /templates/replacement-packs/draft": Exemption(
-        why="保存整包草稿，整包覆盖写，需要 `template:pack:manage`",
-        review_by=NEAR_TERM,
-    ),
-    "POST /templates/replacement-packs/{pack_id}/publish": Exemption(
-        why="发布整包，需要 `template:pack:publish`，低频管理动作",
-        review_by=NEAR_TERM,
-    ),
-    "POST /templates/replacement-packs/{pack_id}/disable": Exemption(
-        why="下架整包，同为低频管理动作",
-        review_by=NEAR_TERM,
-    ),
-    # ---- 视频模板目录：只写本地目录，不触发任何供应商调用 ----
-    "POST /templates/video-templates": Exemption(
-        why="封装视频模板：写本地模板目录，需要 `template:pack:manage`，低频管理动作",
-        review_by=NEAR_TERM,
-    ),
-    "POST /templates/video-templates/{template_id}/pin": Exemption(
-        why="切换固定蓝本：单条标记更新且幂等，需要 `template:pack:manage`",
-        review_by=NEAR_TERM,
-    ),
-    "POST /templates/video-templates/{template_id}/attach-source": Exemption(
-        why="绑定样片原片：单条目录字段更新，需要 `template:pack:manage`，低频管理动作",
-        review_by=NEAR_TERM,
-    ),
-    "PATCH /templates/video-templates/{template_id}/prompt": Exemption(
-        why="改固定提示词：同一条模板原地改原文，需要 `template:pack:manage`，"
-        "与封装同频的存量维护动作，不产生上游调用",
-        review_by=NEAR_TERM,
-    ),
 }
 
 

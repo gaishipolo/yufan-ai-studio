@@ -41,7 +41,7 @@ async def _set_role_codes(service: IdentityService, code: str, codes: set[str]) 
 def restores_role_state():
     """备份并恢复「快照 + editor 权限」，避免用例之间互相污染。
 
-    测试库是 session 级的：一条用例把 `template:use` 摘掉之后若不复原，
+    测试库是 session 级的：一条用例把 `template_pack:read` 摘掉之后若不复原，
     后面任何「非超管能不能用模板」的断言都会莫名其妙地 403。
     """
     from db.session import get_session_factory as factory
@@ -101,34 +101,34 @@ def test_admin_removed_permission_is_not_added_back(restores_role_state) -> None
         async with factory()() as session:
             service = IdentityService(session)
             codes = await _role_codes(service, EDITOR)
-            await _set_role_codes(service, EDITOR, codes - {"template:use"})
+            await _set_role_codes(service, EDITOR, codes - {"template_pack:read"})
         await _write_snapshot(set(catalog.codes()))
         added = await _sync()
         async with factory()() as session:
             return await _role_codes(IdentityService(session), EDITOR), added
 
     codes, added = asyncio.run(scenario())
-    assert "template:use" not in codes, "管理员手工移除的权限被重启加回来了"
+    assert "template_pack:read" not in codes, "管理员手工移除的权限被重启加回来了"
     assert added == {}
 
 
 def test_newly_declared_permission_is_auto_added(restores_role_state) -> None:
-    """快照里没有 `template:use`（模拟上一版还没声明它）→ 自动补进 editor。"""
+    """快照里没有 `template_pack:read`（模拟上一版还没声明它）→ 自动补进 editor。"""
     from db.session import get_session_factory as factory
 
     async def scenario() -> tuple[set[str], dict[str, list[str]]]:
         async with factory()() as session:
             service = IdentityService(session)
             codes = await _role_codes(service, EDITOR)
-            await _set_role_codes(service, EDITOR, codes - {"template:use"})
-        await _write_snapshot(set(catalog.codes()) - {"template:use"})
+            await _set_role_codes(service, EDITOR, codes - {"template_pack:read"})
+        await _write_snapshot(set(catalog.codes()) - {"template_pack:read"})
         added = await _sync()
         async with factory()() as session:
             return await _role_codes(IdentityService(session), EDITOR), added
 
     codes, added = asyncio.run(scenario())
-    assert "template:use" in codes
-    assert added.get(EDITOR) == ["template:use"]
+    assert "template_pack:read" in codes
+    assert added.get(EDITOR) == ["template_pack:read"]
 
 
 def test_snapshot_is_refreshed_after_sync(restores_role_state) -> None:
@@ -136,7 +136,7 @@ def test_snapshot_is_refreshed_after_sync(restores_role_state) -> None:
     from db.session import get_session_factory as factory
 
     async def scenario() -> object:
-        await _write_snapshot(set(catalog.codes()) - {"template:use"})
+        await _write_snapshot(set(catalog.codes()) - {"template_pack:read"})
         await _sync()
         async with factory()() as session:
             return await get_json(session, PERMISSION_SNAPSHOT_KEY)
@@ -152,7 +152,7 @@ def test_first_run_backfills_whole_spec(restores_role_state) -> None:
         async with factory()() as session:
             service = IdentityService(session)
             codes = await _role_codes(service, EDITOR)
-            await _set_role_codes(service, EDITOR, codes - {"template:use", "template:review"})
+            await _set_role_codes(service, EDITOR, codes - {"template_pack:read"})
             await session.execute(delete(AppMeta).where(AppMeta.key == PERMISSION_SNAPSHOT_KEY))
             await session.commit()
         await _sync()
@@ -161,7 +161,7 @@ def test_first_run_backfills_whole_spec(restores_role_state) -> None:
             return await _role_codes(IdentityService(session), EDITOR), snapshot
 
     codes, snapshot = asyncio.run(scenario())
-    assert {"template:use", "template:review"} <= codes
+    assert "template_pack:read" in codes
     assert set(snapshot) == set(catalog.codes())
 
 
@@ -176,7 +176,7 @@ def test_unknown_permission_does_not_break_sync(restores_role_state) -> None:
     from db.session import get_session_factory as factory
 
     async def scenario() -> object:
-        await _write_snapshot((set(catalog.codes()) | {"demo:ghost"}) - {"template:use"})
+        await _write_snapshot((set(catalog.codes()) | {"demo:ghost"}) - {"template_pack:read"})
         await _sync()
         async with factory()() as session:
             return await get_json(session, PERMISSION_SNAPSHOT_KEY)
@@ -197,7 +197,7 @@ def test_old_instance_cannot_shrink_snapshot(restores_role_state, monkeypatch) -
     from modules.identity import service as service_module
 
     wide = set(catalog.codes())
-    narrow = wide - {"template:use", "template:review"}
+    narrow = wide - {"template_pack:read", "template_pack:publish"}
     assert narrow < wide
 
     class _StaleCatalog:
@@ -238,7 +238,7 @@ def test_conflict_makes_it_recompute_instead_of_overwrite(restores_role_state) -
         return await real_set(session, key, value, **kwargs)
 
     async def scenario() -> object:
-        await _write_snapshot(set(catalog.codes()) - {"template:use"})
+        await _write_snapshot(set(catalog.codes()) - {"template_pack:read"})
         rounds.clear()
         service_module.set_json = flaky
         try:
@@ -253,7 +253,7 @@ def test_conflict_makes_it_recompute_instead_of_overwrite(restores_role_state) -
     assert set(snapshot) == set(catalog.codes()) | {"concurrent:only"}, (
         "冲突后没有重读重算：别人的写入被盖掉了"
     )
-    assert "template:use" in snapshot, "重算的差集没把新增权限补进去"
+    assert "template_pack:read" in snapshot, "重算的差集没把新增权限补进去"
 
 
 def test_prune_snapshot_can_shrink(restores_role_state) -> None:
@@ -283,7 +283,7 @@ def test_dry_run_reports_without_writing(restores_role_state) -> None:
         async with factory()() as session:
             service = IdentityService(session)
             codes = await _role_codes(service, EDITOR)
-            await _set_role_codes(service, EDITOR, codes - {"template:use"})
+            await _set_role_codes(service, EDITOR, codes - {"template_pack:read"})
         async with factory()() as session:
             planned = await IdentityService(session).sync_builtin_role_permissions(
                 dry_run=True
@@ -292,8 +292,8 @@ def test_dry_run_reports_without_writing(restores_role_state) -> None:
             return planned, await _role_codes(IdentityService(session), EDITOR)
 
     planned, codes = asyncio.run(scenario())
-    assert planned.get(EDITOR) == ["template:use"]
-    assert "template:use" not in codes, "dry-run 写库了"
+    assert planned.get(EDITOR) == ["template_pack:read"]
+    assert "template_pack:read" not in codes, "dry-run 写库了"
 
 
 def test_empty_catalog_refuses_to_write_snapshot(restores_role_state, monkeypatch) -> None:

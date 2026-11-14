@@ -39,9 +39,6 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
       { code: 'task:read:all', name: '查看并管理他人任务', description: '列表 scope=all / 详情 / 删除的跨用户判定依据；不含重试' },
       { code: 'task:retry:any', name: '重试他人任务', description: '会消耗额度：重试他人任务前额外校验此权限' },
       { code: 'task:update', name: '编辑/重试自己的任务', description: '' },
-      { code: 'template:read', name: '查看行业模板', description: '' },
-      { code: 'template:review', name: '评价自己的替换成片', description: '' },
-      { code: 'template:use', name: '使用替换模板并提交零积分生成', description: '' },
       { code: 'template_pack:create', name: '创建或保存模板封装草稿', description: '' },
       { code: 'template_pack:publish', name: '发布或停用模板封装', description: '' },
       { code: 'template_pack:read', name: '查看模板封装', description: '' },
@@ -51,13 +48,6 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
     group: '系统',
     items: [
       { code: 'export:read:audit', name: '导出操作留痕', description: '' },
-    ],
-  },
-  {
-    group: '素材',
-    items: [
-      { code: 'template:pack:manage', name: '维护本人封装草稿', description: '' },
-      { code: 'template:pack:publish', name: '发布或停用本人封装对象', description: '' },
     ],
   },
   {
@@ -145,11 +135,6 @@ export const PERMISSION_CODES = [
   'task:read:all',
   'task:retry:any',
   'task:update',
-  'template:pack:manage',
-  'template:pack:publish',
-  'template:read',
-  'template:review',
-  'template:use',
   'template_pack:create',
   'template_pack:publish',
   'template_pack:read',

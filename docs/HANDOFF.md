@@ -75,6 +75,12 @@
 | 本轮 | **P3 第一刀：替换能力改由模型声明**（2026-11-14）：`ModelSpec.replacement` （驱动声明，三个 `*-replacement` 为 true）→ `ModelSummary` → `/models` 与 `/model-driver/models` 出参；`GET /template-specs/published?target=replacement|generation|all` 按它筛（只 join 当前发布版本） | **判据不许从槽位组合推断**："有 fixed video 槽 + 有 pack 槽就是替换模板"会把普通多图模板误判，然后在替换链路里以「没有绑定档案」失败。实测 6 个模板：replacement 5 / generation 1，分得干净。这一刀不动表、不动替换链 —— 下一步才是 runtime 端口读 spec |
 | 本轮 | **P3 迁移：旧模板 → spec 草稿**（2026-11-14）：新增 `scripts/migrate_templates_to_specs.py`（默认只读预览、`--apply` 才写、`--model` 必填且须声明 `replacement`）；旧素材包先落成资产库封装（`kind=pack`，position/role/description 原样），spec 用**一个** `source=pack, binding=fixed` 槽位引用 | 三处踩过的坑都写进注释：① 派生 key **不能粗暴截断**（`ai_<hex>_<fn>` 截 40 位会把函数名切掉，同一 manifest 的功能算出同一个 key）；② 旧提示词的 `{{Mixed N}}` 要**逐个**翻成 `{{slot:views.j}}`，整组 `*` 会把"以某一张为准"改成"全都要"，找不到落点就整条跳过；③ 同一轮里多个模板指向同一个旧包时，plan 阶段都还没建封装，要按名字记一份本轮的账，否则会建两份。实测 3 条旧模板：迁移→发布→compile，提示词与素材顺序与旧模板逐字/逐项相同；重跑全部跳过 |
 
+| 本轮 | **P3 收尾：替换链整体下线**（2026-11-14）：删 `modules/template`（执行链 / 物化 / 归档工作区 / 运维命令 / `replacement_runtime`）、`template_manifests` 四表、`template_packs*`、`video_templates`、`replacement_runs*`；四个跨模块契约（`core.feed`、`template_runtime` 端口、`template_catalog` 端口、`template_pack_view`）与 `core/template_rules` 一并删除；迁移 `b8e4c1f90d27`（11 张表，**不可降级**） | 「接读」没做，改成直接下线 —— 终局本来就不留独立工作台，先接读等于给要拆的桥加固。任务中心从三路变两路（视频 / 生图）；前端只剩 `/templates/library`（填表）与 `/templates/specs`（封装，导航名改成「模板封装」）。历史调用档案按用户拍板**直接删**（开发库 49 行，升级前 `pg_dump` 备份在 `api/var/db-backup-before-p3-*.dump`）。守卫没丢：编号等价性改成对照冻结常量、`test_user_retry_exits` 去掉 `template_replacement` kind、`test_generation` 不再有 `fail_on_model_gone=False` 的例外 |
+
+| **模板只剩 `template_specs` 一套表**：`video_templates` / `template_packs*` / `template_manifests*` / `replacement_runs*` 已删 | 前端/脚本/运维 | 想拿「某模板要什么素材」读 `GET /template-specs/published`；提交走 `compile` → `POST /tasks`。旧的 `/templates/replacement-*`、`/templates/video-templates`、`/template-manifests` 端点全部 404 |
+| 权限码 `template:read/use/review`、`template:pack:manage/publish` **已删** | 角色配置 | 填表用 `template_pack:read`，封装用 `template_pack:create/publish`。内置角色已改（viewer/editor 只读、asset_specialist 可封装）；自建角色里若还留着旧码，会显示成「无法识别」 |
+| `GET /tasks/feed` 的 `source` 只剩 `all` / `video` / `image` | 前端/脚本 | `source=replacement` 会 422；替换任务就是 `tasks` 里的一行 |
+
 | 变化 | 谁受影响 | 说明 |
 |---|---|---|
 | 未在 `param_schema` 声明的参数 → **400** + `availableParams` | 前端/脚本 | 前端参数区本来就由 `GET /models` 渲染，无需改动；手写参数的地方会立刻看到 400 |

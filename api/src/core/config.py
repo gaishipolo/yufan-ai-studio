@@ -231,13 +231,10 @@ class Settings(BaseSettings):
     # 归档盘驱动。以前归档盘是写死的 `LocalArchiveStorage()`，`.env.example`
     # 里「换实现只改这里」这句承诺对它不成立；现在它和 storage / queue 同形态。
     archive_driver: str = "local"
-    # 替换任务的运行工作区（执行器要真实目录：inputs/outputs/records）。
+    # 生成运行的归档工作区（执行器要真实目录：inputs/outputs/records）。
     # 留空 = 本地驱动沿用 `<归档根>/runs`；归档切远端时落到 `api/var/runs`。
+    # 名字沿用 `replacement_` 前缀是历史原因：现在它服务的是全部生成链。
     replacement_runs_root: str = ""
-    # 视频模板目录（卡片 + 提示词）。它是「读全量 → 改一条 → 写全量」的 JSON，
-    # 必须能原子重命名，所以只能放本地盘或共享盘，不能放对象存储。
-    # 留空 = `api/var/video_templates/catalog.json`；多机部署指向共享盘上的同一份文件。
-    video_template_catalog: str = ""
     worker_enabled: bool = True
     worker_concurrency: int = 2
     # 周期任务调度器（模块自己 @periodic 注册）。多副本部署时每个进程都会跑一份，

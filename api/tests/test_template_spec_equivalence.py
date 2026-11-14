@@ -21,7 +21,6 @@ from typing import Any
 from fastapi.testclient import TestClient
 from library_support import LIB_RW, admin_headers, make_user, suffix
 from tests_template_helpers import png_bytes, upload, video_bytes
-from video_template_support import put_template
 
 API = "/api/v1/template-specs"
 PERMS = ["template_pack:read", "template_pack:create", "template_pack:publish", *LIB_RW]
@@ -71,10 +70,13 @@ def _pack(client: TestClient, headers: dict[str, str], images: list[str]) -> str
 def _legacy(
     video: str, images: list[str]
 ) -> list[tuple[str, str | None, str]]:
-    """按旧模型落一条模板，返回它的 `[(token, asset_id, role)]`。
+    """旧模板 `media_order` 的**冻结快照**：`[(token, asset_id, role)]`。
 
-    这条行是**旧语义的唯一来源**：`media_order` 的顺序就是编号，读回来什么样，
-    新模型就必须编成什么样。
+    这批常量来自 `cb9122d` 之前的 `video_templates.media_order`（旧链路已下线，
+    表也删了，所以语义只能以常量的形式留在这里）。它的用途只有一个：给新模型
+    一个不随实现漂移的对照物 —— 同一批素材、同一顺序，编号 → 素材必须逐项相等，
+    否则迁移会**悄悄换掉用户熟悉的编号**：提示词里还是 `{{Mixed 2}}`，指向的却
+    已经是另一张图，这种错不报错，只生成错。
     """
     ordered = [
         ("{{Mixed 1}}", video, "source_video"),
@@ -82,23 +84,7 @@ def _legacy(
         ("{{Mixed 3}}", images[1], "multiview"),
         ("{{Mixed 4}}", images[2], "detail"),
     ]
-    legacy = put_template(
-        f"equiv-{suffix()}",
-        prompt="把 {{Mixed 1}} 换成 {{Mixed 2}}、{{Mixed 3}}、{{Mixed 4}}",
-        mediaOrder=[
-            {
-                "token": token,
-                "role": role,
-                "type": "video" if role == "source_video" else "image",
-                "assetId": asset_id,
-                "name": role,
-                "inPrompt": True,
-            }
-            for token, asset_id, role in ordered
-        ],
-        sourceVideoAssetId=video,
-    )
-    return [(item.token, item.asset_id, item.role) for item in legacy.media_order]
+    return ordered
 
 
 def _spec_draft(

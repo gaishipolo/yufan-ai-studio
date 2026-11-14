@@ -53,7 +53,7 @@ class IngestRequest:
     """一次生成结果入库请求。
 
     `generation` 是**冻结快照**，不是联表查询：生成参数散落在
-    `image_jobs` / `video_tasks` / `replacement_runs` 三张表里，且历史数据
+    `image_jobs` / `video_tasks` / `model_driver` 的作业表里，且历史数据
     没有完整记录。入库时能拿到什么就存什么，详情页对缺失字段显示「未记录」。
     """
 

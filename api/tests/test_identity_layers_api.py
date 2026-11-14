@@ -69,11 +69,11 @@ def test_team_permissions_roundtrip_and_forbidden_codes(client: TestClient) -> N
 
     updated = client.put(
         f"{API}/team/permissions",
-        json={"permissions": [*TEAM_BASE_PERMISSIONS, "template:use"]},
+        json={"permissions": [*TEAM_BASE_PERMISSIONS, "template_pack:create"]},
         headers=admin,
     )
     assert updated.status_code == 200, updated.text
-    assert "template:use" in updated.json()["data"]
+    assert "template_pack:create" in updated.json()["data"]
 
     for forbidden in ("identity:read", "identity:*", "*"):
         denied = client.put(
@@ -86,7 +86,7 @@ def test_team_permissions_roundtrip_and_forbidden_codes(client: TestClient) -> N
 
     assert set(client.get(f"{API}/team/permissions", headers=admin).json()["data"]) == {
         *TEAM_BASE_PERMISSIONS,
-        "template:use",
+        "template_pack:create",
     }
 
 
@@ -116,23 +116,23 @@ def test_group_crud_members_and_permissions(client: TestClient) -> None:
 
     perms = client.put(
         f"{API}/groups/{gid}/permissions",
-        json={"permissions": ["template:use"]},
+        json={"permissions": ["template_pack:create"]},
         headers=admin,
     )
-    assert perms.json()["data"]["permissions"] == ["template:use"]
+    assert perms.json()["data"]["permissions"] == ["template_pack:create"]
 
     # 同一张已登录令牌：小组授权立即生效，不需要重新登录
     login = client.post(
         f"{API}/login", json={"username": "viewer", "password": "viewer@12345"}
     )
     headers = {"Authorization": f"Bearer {login.json()['data']['accessToken']}"}
-    assert "template:use" in client.get(f"{API}/me", headers=headers).json()["data"][
+    assert "template_pack:create" in client.get(f"{API}/me", headers=headers).json()["data"][
         "permissions"
     ]
 
     assert client.delete(f"{API}/groups/{gid}", headers=admin).status_code == 200
     assert client.get(f"{API}/groups/{gid}", headers=admin).status_code == 404
-    assert "template:use" not in client.get(f"{API}/me", headers=headers).json()["data"][
+    assert "template_pack:create" not in client.get(f"{API}/me", headers=headers).json()["data"][
         "permissions"
     ]
 
@@ -169,29 +169,29 @@ def test_personal_permissions_and_effective_sources(client: TestClient) -> None:
     )
     client.put(
         f"{API}/groups/{group['id']}/permissions",
-        json={"permissions": ["template:use"]},
+        json={"permissions": ["template_pack:create"]},
         headers=admin,
     )
     client.put(
         f"{API}/users/{uid}/permissions",
-        json={"permissions": ["template:review"]},
+        json={"permissions": ["template_pack:publish"]},
         headers=admin,
     )
 
     assert client.get(f"{API}/users/{uid}/permissions", headers=admin).json()[
         "data"
-    ] == ["template:review"]
+    ] == ["template_pack:publish"]
     detail = client.get(
         f"{API}/users/{uid}/effective-permissions", headers=admin
     ).json()["data"]
     assert set(detail["team"]) == set(TEAM_BASE_PERMISSIONS)
     assert detail["groups"] == [
-        {"id": group["id"], "name": group["name"], "permissions": ["template:use"]}
+        {"id": group["id"], "name": group["name"], "permissions": ["template_pack:create"]}
     ]
-    assert detail["personal"] == ["template:review"]
+    assert detail["personal"] == ["template_pack:publish"]
     assert detail["roles"]
-    assert "template:use" in detail["effective"]
-    assert "template:review" in detail["effective"]
+    assert "template_pack:create" in detail["effective"]
+    assert "template_pack:publish" in detail["effective"]
     assert "library:read" in detail["effective"]
 
 
@@ -281,7 +281,7 @@ def test_create_user_can_join_groups_and_inherits_group_permissions(
     group = _create_group(client, admin, "建号入组-" + _suffix())
     granted = client.put(
         f"{API}/groups/{group['id']}/permissions",
-        json={"permissions": ["template:use"]},
+        json={"permissions": ["template_pack:create"]},
         headers=admin,
     )
     assert granted.status_code == 200, granted.text
@@ -307,7 +307,7 @@ def test_create_user_can_join_groups_and_inherits_group_permissions(
     effective = client.get(
         f"{API}/users/{user_id}/effective-permissions", headers=admin
     ).json()["data"]
-    assert "template:use" in effective["effective"]
+    assert "template_pack:create" in effective["effective"]
     assert any(layer["id"] == group["id"] for layer in effective["groups"])
 
     # 不传 groupIds 的老调用仍是「不进任何组」
@@ -349,7 +349,7 @@ def test_create_user_cannot_join_a_group_above_the_actor(client: TestClient) -> 
     group = _create_group(client, admin, "高权限组-" + _suffix())
     granted = client.put(
         f"{API}/groups/{group['id']}/permissions",
-        json={"permissions": ["template:use"]},
+        json={"permissions": ["template_pack:create"]},
         headers=admin,
     )
     assert granted.status_code == 200, granted.text
@@ -384,7 +384,7 @@ def test_group_member_manager_cannot_add_itself_to_a_stronger_group(
     group = _create_group(client, admin, "运维组-" + _suffix())
     granted = client.put(
         f"{API}/groups/{group['id']}/permissions",
-        json={"permissions": ["template:use"]},
+        json={"permissions": ["template_pack:create"]},
         headers=admin,
     )
     assert granted.status_code == 200, granted.text

@@ -21,15 +21,12 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
-from tests_template_helpers import add_pack, drop_pack, login, upload
+from tests_template_helpers import login, upload
 
 from core.exceptions import BadRequest, NotFound
-from db.session import get_session_factory
 from infra import get_storage
 from infra.archive import BlobStore, blob_key, is_blob_key, preview_key
 from infra.archive.local import LocalArchiveStorage, get_archive_settings
-from modules.template_pack.pack_service import PackService
-from modules.template_pack.repository import PackRepository
 
 
 @pytest.fixture
@@ -85,32 +82,6 @@ def test_same_bytes_are_deduplicated_by_digest(client: TestClient) -> None:
     assert key.startswith("library/blobs/")
     # 资产库的字节在 STORAGE_LOCAL_ROOT 下，与归档盘的 ARCHIVE_ROOT 是两个根
     assert asyncio.run(get_storage().exists(key))
-
-
-async def test_publish_checks_blob_presence_not_content(
-    client: TestClient, archive_root: Path
-) -> None:
-    """发布只问「字节在不在」：key 就是摘要，在即正确。
-
-    删掉字节才报缺失——这条正是「不重算 sha256」的回归：如果实现又回去全量读一遍，
-    这里依然会红，因为报错文案会变成「字节被篡改」。
-    """
-    item = upload(client, "人物.png", "character", png())
-    pack = await add_pack(name="测试封装", reference_ids=[item["id"]], status="draft")
-
-    try:
-        async with get_session_factory()() as session:
-            refs = await PackRepository(session).references(pack.id)
-            await PackService(session)._verify_bytes(refs)
-
-        await get_storage().delete(_storage_key(client, item["id"]))
-
-        async with get_session_factory()() as session:
-            refs = await PackRepository(session).references(pack.id)
-            with pytest.raises(BadRequest, match="缺失"):
-                await PackService(session)._verify_bytes(refs)
-    finally:
-        await drop_pack(pack.id)
 
 
 def test_materialize_missing_key_is_not_found(archive_root: Path) -> None:

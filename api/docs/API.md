@@ -2,7 +2,7 @@
 
 > 此文件由 `app export-openapi` 自动生成，请勿手工编辑。
 >
-> 版本 `0.2.0`｜共 **150** 个接口 / **12** 个模块
+> 版本 `0.2.0`｜共 **121** 个接口 / **11** 个模块
 >
 > 重新生成：`cd api && .venv/Scripts/python -m cli export-openapi`
 
@@ -96,9 +96,6 @@ Authorization: Bearer <accessToken>
 | `task:read:all` | 查看并管理他人任务 | 列表 scope=all / 详情 / 删除的跨用户判定依据；不含重试 |
 | `task:retry:any` | 重试他人任务 | 会消耗额度：重试他人任务前额外校验此权限 |
 | `task:update` | 编辑/重试自己的任务 |  |
-| `template:read` | 查看行业模板 |  |
-| `template:review` | 评价自己的替换成片 |  |
-| `template:use` | 使用替换模板并提交零积分生成 |  |
 | `template_pack:create` | 创建或保存模板封装草稿 |  |
 | `template_pack:publish` | 发布或停用模板封装 |  |
 | `template_pack:read` | 查看模板封装 |  |
@@ -108,13 +105,6 @@ Authorization: Bearer <accessToken>
 | 权限码 | 名称 | 说明 |
 |---|---|---|
 | `export:read:audit` | 导出操作留痕 |  |
-
-**素材**
-
-| 权限码 | 名称 | 说明 |
-|---|---|---|
-| `template:pack:manage` | 维护本人封装草稿 |  |
-| `template:pack:publish` | 发布或停用本人封装对象 |  |
 
 **组织管理**
 
@@ -202,7 +192,6 @@ Authorization: Bearer <accessToken>
 | `40925` | 409 | identity | `CannotTargetSelf` | 不能停用或删除自己的账号 |
 | `40926` | 409 | identity | `LastSuperuser` | 系统必须保留至少一个启用的超级管理员 |
 | `40927` | 409 | identity | `GroupNameTaken` | 小组名称已被占用 |
-| `40971` | 409 | template | `TemplateBusy` | 模板正在处理中，请稍后再试 |
 | `40981` | 409 | library | `SharedAssetNotDeletable` | 该资产仍处于共享状态，请先撤销共享后再删除 |
 | `40982` | 409 | library | `TeamDeleteForbidden` | 团队库资产不能直接删除，请先撤销团队共享 |
 | `40983` | 409 | library | `ShareRevokePending` | 撤销共享正在审批中，通过后再删除 |
@@ -233,14 +222,13 @@ Authorization: Bearer <accessToken>
 | 任务 | 9 | 见下方 `4.2` |
 | 模型 | 1 | 见下方 `4.3` |
 | 生图 | 3 | 见下方 `4.4` |
-| 模板 | 11 | 见下方 `4.5` |
-| 分镜模板 | 1 | 见下方 `4.6` |
-| 镜头库 | 1 | 见下方 `4.7` |
-| 系统 | 2 | 见下方 `4.8` |
-| 导出 | 6 | 见下方 `4.9` |
-| 资产库 | 45 | 见下方 `4.10` |
-| 模型驱动 | 6 | 见下方 `4.11` |
-| 模板封装 | 26 | 见下方 `4.12` |
+| 分镜模板 | 1 | 见下方 `4.5` |
+| 镜头库 | 1 | 见下方 `4.6` |
+| 系统 | 2 | 见下方 `4.7` |
+| 导出 | 6 | 见下方 `4.8` |
+| 资产库 | 45 | 见下方 `4.9` |
+| 模型驱动 | 6 | 见下方 `4.10` |
+| 模板封装 | 8 | 见下方 `4.11` |
 
 ### 4.1 身份（39 个）
 
@@ -1143,7 +1131,7 @@ Authorization: Bearer <accessToken>
 
 | 参数 | 位置 | 类型 | 必填 | 说明 |
 |---|---|---|---|---|
-| `source` | query | `"all" | "video" | "image" | "replacement"` | 否 |  |
+| `source` | query | `"all" | "video" | "image"` | 否 |  |
 | `status` | query | `"all" | "queued" | "running" | "completed" | "failed" | "attention"` | 否 |  |
 | `keyword` | query | `string` | 否 |  |
 | `sort` | query | `TaskSort` | 否 |  |
@@ -1376,403 +1364,7 @@ Authorization: Bearer <accessToken>
 | `id` | `string` | 是 | 生图记录 ID |
 | `status` | `string` | 是 | 重试后的状态，固定为 `queued` |
 
-### 4.5 模板（11 个）
-
-| 方法 | 路径 | 说明 | 鉴权 |
-|---|---|---|---|
-| `GET` | `/api/v1/templates/replacement-catalog` | 人物/产品/场景替换模板与调用档案 | 🔒 |
-| `POST` | `/api/v1/templates/replacement-runs` | 归档输入并预览最终提示词，不提交生成 | 🔒 |
-| `DELETE` | `/api/v1/templates/replacement-runs/{run_id}` | 将本人替换任务与调用档案移入回收站，不取消生成 | 🔒 |
-| `GET` | `/api/v1/templates/replacement-runs/{run_id}` | 替换任务状态与提示词 | 🔒 |
-| `POST` | `/api/v1/templates/replacement-runs/{run_id}/execute` | 提交替换任务；billingMode=credits 表示本任务用积分加速 | 🔒 |
-| `GET` | `/api/v1/templates/replacement-runs/{run_id}/inputs/{asset_id}` | 读取当次归档输入快照 | 🔒 |
-| `GET` | `/api/v1/templates/replacement-runs/{run_id}/inputs/{asset_id}/thumbnail` | 读取当次输入快照缩略图 | 🔒 |
-| `GET` | `/api/v1/templates/replacement-runs/{run_id}/output` | 预览或下载原始生成结果 | 🔒 |
-| `POST` | `/api/v1/templates/replacement-runs/{run_id}/reconfirm` | 确认上次提交可能已计费后放行重提（默认拒绝） | 🔒 |
-| `POST` | `/api/v1/templates/replacement-runs/{run_id}/restore` | 恢复本人回收站中的替换任务与调用档案 | 🔒 |
-| `PUT` | `/api/v1/templates/replacement-runs/{run_id}/review` | 保存人工验收，版本冲突需重新核对 | 🔒 |
-
-#### `GET /api/v1/templates/replacement-catalog`
-
-**人物/产品/场景替换模板与调用档案**
-
-**响应** `ApiResponse<ReplacementCatalog>`（前端取 `res.data`）
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `channels` | `ReplacementChannelOut[]` | 否 |  |
-| `provider` | `string` | 否 |  |
-| `maxCredits` | `number` | 否 |  |
-| `kinds` | `string[]` | 否 |  |
-| `runs` | `ReplacementRunOut[]` | 是 |  |
-| `packs` | `ReplacementPack[]` | 否 |  |
-| `packRoles` | `Record<string, Record<string, string>>` | 否 |  |
-| `baseRoles` | `Record<string, string>` | 否 |  |
-| `packScopes` | `Record<string, string>` | 否 |  |
-
-#### `POST /api/v1/templates/replacement-runs`
-
-**归档输入并预览最终提示词，不提交生成**
-
-**请求体** `PrepareReplacement`
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `requestId` | `string` | 是 |  |
-| `channel` | `"libtv" \| "bailian" \| "bailian-prime"` | 否 |  |
-| `kind` | `"character" \| "product" \| "scene"` | 是 |  |
-| `target` | `string` | 否 |  |
-| `sourceLibraryId` | `string \| null` | 否 | 原片（资产库里的视频）id |
-| `videoTemplateId` | `string \| null` | 否 |  |
-| `scenePrompt` | `string \| null` | 否 | 文字换场景的描述；省略使用模板默认值，空白拒绝 |
-| `referenceIds` | `string[]` | 否 |  |
-| `libraryPackId` | `string \| null` | 否 | 资产库 v2 封装的 id；成员按 position 顺序当参考图，用途取自成员自己声明的 role。与 packId / packVersion / referenceIds / extraPackIds 互斥；prepare 时展开并冻结，之后封装改成员不影响已准备的任务 |
-| `textLibraryIds` | `string[]` | 否 | 绑定的文本资产 id，按顺序对应 `{{Text N}}`；最多 8 份 |
-| `extraPackIds` | `string[]` | 否 | 第 2 位及以后的素材包 id，按提示词槽位顺序；第一包仍用 packId |
-| `extraPackVersions` | `number[]` | 否 | 与 extraPackIds 顺序对应的发布版本；旧调用省略时由服务端解析并冻结 |
-| `wardrobeMode` | `"preserve" \| "reference"` | 否 |  |
-| `replacementScope` | `string` | 否 |  |
-| `notes` | `string` | 否 |  |
-| `packId` | `string \| null` | 否 |  |
-| `packVersion` | `number \| null` | 否 |  |
-| `aspectRatio` | `"9:16" \| "16:9" \| "1:1" \| "adaptive"` | 否 |  |
-
-**响应** `ApiResponse<ReplacementRunOut>`（前端取 `res.data`）
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `id` | `string` | 是 |  |
-| `channel` | `"libtv" \| "bailian" \| "bailian-prime"` | 否 |  |
-| `channelLabel` | `string` | 否 |  |
-| `kind` | `"character" \| "product" \| "scene"` | 是 |  |
-| `target` | `string` | 是 |  |
-| `status` | `string` | 是 |  |
-| `archivePath` | `string \| null` | 否 | 工作区绝对路径（排查用）；目录已被清理或换机器后为 null |
-| `createdAt` | `string` | 是 |  |
-| `startedAt` | `string \| null` | 否 | 确认提交（进入排队）的时间，未开始为 null |
-| `finishedAt` | `string \| null` | 否 | 这一轮结束的时间；未结束为 null |
-| `elapsedSec` | `number \| null` | 否 | 确认提交到结束的耗时（秒）；未完成时按到此刻计，未开始为 null |
-| `prompt` | `string` | 是 |  |
-| `promptSha256` | `string \| null` | 否 | 实际发出去那段提示词的 sha256（所有后处理之后）。档案里另外两个哈希（template/spec）哈希的是模板与输入，复核不了最终字节。加这列之前准备的任务为 null，不回填。 |
-| `textLibraryIds` | `string[]` | 否 | 本次绑定的文本资产 id（顺序即 `{{Text N}}` 编号） |
-| `textBindings` | `Record<string, unknown>[]` | 否 | 绑定的文案与版本快照（不含正文） |
-| `promptMode` | `"fixed" \| "compiled"` | 否 | fixed=封装视频模板时写死的原文，逐字提交；compiled=按素材与替换范围现编。展示层据此告诉用户「跑的就是你封装时那份提示词」。 |
-| `videoTemplateName` | `string \| null` | 否 | fixed 时出自哪条视频模板；compiled 为 null |
-| `displayTitle` | `string` | 否 | 统一展示名，列表/弹窗/任务中心共用 |
-| `taskId` | `string \| null` | 否 |  |
-| `estimatedCredits` | `number \| null` | 否 |  |
-| `credits` | `number \| null` | 否 |  |
-| `progress` | `number` | 否 |  |
-| `reviewStatus` | `string` | 否 |  |
-| `review` | `ReplacementReview \| null` | 否 |  |
-| `inputSummary` | `ReplacementInputSummary \| null` | 否 |  |
-| `lastError` | `string \| null` | 否 |  |
-| `outputUrl` | `string \| null` | 否 |  |
-| `deletedAt` | `string \| null` | 否 |  |
-| `billingMode` | `"free" \| "credits"` | 否 | free=0 积分权益队列；credits=本次任务用积分进正常队列 |
-
-#### `DELETE /api/v1/templates/replacement-runs/{run_id}`
-
-**将本人替换任务与调用档案移入回收站，不取消生成**
-
-| 参数 | 位置 | 类型 | 必填 | 说明 |
-|---|---|---|---|---|
-| `run_id` | path | `string` | 是 |  |
-
-**响应** `ApiResponse<ReplacementRunOut>`（前端取 `res.data`）
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `id` | `string` | 是 |  |
-| `channel` | `"libtv" \| "bailian" \| "bailian-prime"` | 否 |  |
-| `channelLabel` | `string` | 否 |  |
-| `kind` | `"character" \| "product" \| "scene"` | 是 |  |
-| `target` | `string` | 是 |  |
-| `status` | `string` | 是 |  |
-| `archivePath` | `string \| null` | 否 | 工作区绝对路径（排查用）；目录已被清理或换机器后为 null |
-| `createdAt` | `string` | 是 |  |
-| `startedAt` | `string \| null` | 否 | 确认提交（进入排队）的时间，未开始为 null |
-| `finishedAt` | `string \| null` | 否 | 这一轮结束的时间；未结束为 null |
-| `elapsedSec` | `number \| null` | 否 | 确认提交到结束的耗时（秒）；未完成时按到此刻计，未开始为 null |
-| `prompt` | `string` | 是 |  |
-| `promptSha256` | `string \| null` | 否 | 实际发出去那段提示词的 sha256（所有后处理之后）。档案里另外两个哈希（template/spec）哈希的是模板与输入，复核不了最终字节。加这列之前准备的任务为 null，不回填。 |
-| `textLibraryIds` | `string[]` | 否 | 本次绑定的文本资产 id（顺序即 `{{Text N}}` 编号） |
-| `textBindings` | `Record<string, unknown>[]` | 否 | 绑定的文案与版本快照（不含正文） |
-| `promptMode` | `"fixed" \| "compiled"` | 否 | fixed=封装视频模板时写死的原文，逐字提交；compiled=按素材与替换范围现编。展示层据此告诉用户「跑的就是你封装时那份提示词」。 |
-| `videoTemplateName` | `string \| null` | 否 | fixed 时出自哪条视频模板；compiled 为 null |
-| `displayTitle` | `string` | 否 | 统一展示名，列表/弹窗/任务中心共用 |
-| `taskId` | `string \| null` | 否 |  |
-| `estimatedCredits` | `number \| null` | 否 |  |
-| `credits` | `number \| null` | 否 |  |
-| `progress` | `number` | 否 |  |
-| `reviewStatus` | `string` | 否 |  |
-| `review` | `ReplacementReview \| null` | 否 |  |
-| `inputSummary` | `ReplacementInputSummary \| null` | 否 |  |
-| `lastError` | `string \| null` | 否 |  |
-| `outputUrl` | `string \| null` | 否 |  |
-| `deletedAt` | `string \| null` | 否 |  |
-| `billingMode` | `"free" \| "credits"` | 否 | free=0 积分权益队列；credits=本次任务用积分进正常队列 |
-
-#### `GET /api/v1/templates/replacement-runs/{run_id}`
-
-**替换任务状态与提示词**
-
-| 参数 | 位置 | 类型 | 必填 | 说明 |
-|---|---|---|---|---|
-| `run_id` | path | `string` | 是 |  |
-
-**响应** `ApiResponse<ReplacementRunOut>`（前端取 `res.data`）
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `id` | `string` | 是 |  |
-| `channel` | `"libtv" \| "bailian" \| "bailian-prime"` | 否 |  |
-| `channelLabel` | `string` | 否 |  |
-| `kind` | `"character" \| "product" \| "scene"` | 是 |  |
-| `target` | `string` | 是 |  |
-| `status` | `string` | 是 |  |
-| `archivePath` | `string \| null` | 否 | 工作区绝对路径（排查用）；目录已被清理或换机器后为 null |
-| `createdAt` | `string` | 是 |  |
-| `startedAt` | `string \| null` | 否 | 确认提交（进入排队）的时间，未开始为 null |
-| `finishedAt` | `string \| null` | 否 | 这一轮结束的时间；未结束为 null |
-| `elapsedSec` | `number \| null` | 否 | 确认提交到结束的耗时（秒）；未完成时按到此刻计，未开始为 null |
-| `prompt` | `string` | 是 |  |
-| `promptSha256` | `string \| null` | 否 | 实际发出去那段提示词的 sha256（所有后处理之后）。档案里另外两个哈希（template/spec）哈希的是模板与输入，复核不了最终字节。加这列之前准备的任务为 null，不回填。 |
-| `textLibraryIds` | `string[]` | 否 | 本次绑定的文本资产 id（顺序即 `{{Text N}}` 编号） |
-| `textBindings` | `Record<string, unknown>[]` | 否 | 绑定的文案与版本快照（不含正文） |
-| `promptMode` | `"fixed" \| "compiled"` | 否 | fixed=封装视频模板时写死的原文，逐字提交；compiled=按素材与替换范围现编。展示层据此告诉用户「跑的就是你封装时那份提示词」。 |
-| `videoTemplateName` | `string \| null` | 否 | fixed 时出自哪条视频模板；compiled 为 null |
-| `displayTitle` | `string` | 否 | 统一展示名，列表/弹窗/任务中心共用 |
-| `taskId` | `string \| null` | 否 |  |
-| `estimatedCredits` | `number \| null` | 否 |  |
-| `credits` | `number \| null` | 否 |  |
-| `progress` | `number` | 否 |  |
-| `reviewStatus` | `string` | 否 |  |
-| `review` | `ReplacementReview \| null` | 否 |  |
-| `inputSummary` | `ReplacementInputSummary \| null` | 否 |  |
-| `lastError` | `string \| null` | 否 |  |
-| `outputUrl` | `string \| null` | 否 |  |
-| `deletedAt` | `string \| null` | 否 |  |
-| `billingMode` | `"free" \| "credits"` | 否 | free=0 积分权益队列；credits=本次任务用积分进正常队列 |
-
-#### `POST /api/v1/templates/replacement-runs/{run_id}/execute`
-
-**提交替换任务；billingMode=credits 表示本任务用积分加速**
-
-| 参数 | 位置 | 类型 | 必填 | 说明 |
-|---|---|---|---|---|
-| `run_id` | path | `string` | 是 |  |
-
-**请求体**（内联结构）
-
-**响应** `ApiResponse<ReplacementRunOut>`（前端取 `res.data`）
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `id` | `string` | 是 |  |
-| `channel` | `"libtv" \| "bailian" \| "bailian-prime"` | 否 |  |
-| `channelLabel` | `string` | 否 |  |
-| `kind` | `"character" \| "product" \| "scene"` | 是 |  |
-| `target` | `string` | 是 |  |
-| `status` | `string` | 是 |  |
-| `archivePath` | `string \| null` | 否 | 工作区绝对路径（排查用）；目录已被清理或换机器后为 null |
-| `createdAt` | `string` | 是 |  |
-| `startedAt` | `string \| null` | 否 | 确认提交（进入排队）的时间，未开始为 null |
-| `finishedAt` | `string \| null` | 否 | 这一轮结束的时间；未结束为 null |
-| `elapsedSec` | `number \| null` | 否 | 确认提交到结束的耗时（秒）；未完成时按到此刻计，未开始为 null |
-| `prompt` | `string` | 是 |  |
-| `promptSha256` | `string \| null` | 否 | 实际发出去那段提示词的 sha256（所有后处理之后）。档案里另外两个哈希（template/spec）哈希的是模板与输入，复核不了最终字节。加这列之前准备的任务为 null，不回填。 |
-| `textLibraryIds` | `string[]` | 否 | 本次绑定的文本资产 id（顺序即 `{{Text N}}` 编号） |
-| `textBindings` | `Record<string, unknown>[]` | 否 | 绑定的文案与版本快照（不含正文） |
-| `promptMode` | `"fixed" \| "compiled"` | 否 | fixed=封装视频模板时写死的原文，逐字提交；compiled=按素材与替换范围现编。展示层据此告诉用户「跑的就是你封装时那份提示词」。 |
-| `videoTemplateName` | `string \| null` | 否 | fixed 时出自哪条视频模板；compiled 为 null |
-| `displayTitle` | `string` | 否 | 统一展示名，列表/弹窗/任务中心共用 |
-| `taskId` | `string \| null` | 否 |  |
-| `estimatedCredits` | `number \| null` | 否 |  |
-| `credits` | `number \| null` | 否 |  |
-| `progress` | `number` | 否 |  |
-| `reviewStatus` | `string` | 否 |  |
-| `review` | `ReplacementReview \| null` | 否 |  |
-| `inputSummary` | `ReplacementInputSummary \| null` | 否 |  |
-| `lastError` | `string \| null` | 否 |  |
-| `outputUrl` | `string \| null` | 否 |  |
-| `deletedAt` | `string \| null` | 否 |  |
-| `billingMode` | `"free" \| "credits"` | 否 | free=0 积分权益队列；credits=本次任务用积分进正常队列 |
-
-#### `GET /api/v1/templates/replacement-runs/{run_id}/inputs/{asset_id}`
-
-**读取当次归档输入快照**
-
-| 参数 | 位置 | 类型 | 必填 | 说明 |
-|---|---|---|---|---|
-| `run_id` | path | `string` | 是 |  |
-| `asset_id` | path | `string` | 是 |  |
-
-**响应** `ApiResponse<unknown>`（前端取 `res.data`）
-
-#### `GET /api/v1/templates/replacement-runs/{run_id}/inputs/{asset_id}/thumbnail`
-
-**读取当次输入快照缩略图**
-
-| 参数 | 位置 | 类型 | 必填 | 说明 |
-|---|---|---|---|---|
-| `run_id` | path | `string` | 是 |  |
-| `asset_id` | path | `string` | 是 |  |
-
-**响应** `ApiResponse<unknown>`（前端取 `res.data`）
-
-#### `GET /api/v1/templates/replacement-runs/{run_id}/output`
-
-**预览或下载原始生成结果**
-
-| 参数 | 位置 | 类型 | 必填 | 说明 |
-|---|---|---|---|---|
-| `run_id` | path | `string` | 是 |  |
-
-**响应** `ApiResponse<unknown>`（前端取 `res.data`）
-
-#### `POST /api/v1/templates/replacement-runs/{run_id}/reconfirm`
-
-**确认上次提交可能已计费后放行重提（默认拒绝）**
-
-| 参数 | 位置 | 类型 | 必填 | 说明 |
-|---|---|---|---|---|
-| `run_id` | path | `string` | 是 |  |
-
-**请求体** `ReconfirmReplacement`
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `confirmCharged` | `boolean` | 否 | 确认上一次提交可能已产生费用，仍要重新提交（默认拒绝） |
-
-**响应** `ApiResponse<ReplacementRunOut>`（前端取 `res.data`）
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `id` | `string` | 是 |  |
-| `channel` | `"libtv" \| "bailian" \| "bailian-prime"` | 否 |  |
-| `channelLabel` | `string` | 否 |  |
-| `kind` | `"character" \| "product" \| "scene"` | 是 |  |
-| `target` | `string` | 是 |  |
-| `status` | `string` | 是 |  |
-| `archivePath` | `string \| null` | 否 | 工作区绝对路径（排查用）；目录已被清理或换机器后为 null |
-| `createdAt` | `string` | 是 |  |
-| `startedAt` | `string \| null` | 否 | 确认提交（进入排队）的时间，未开始为 null |
-| `finishedAt` | `string \| null` | 否 | 这一轮结束的时间；未结束为 null |
-| `elapsedSec` | `number \| null` | 否 | 确认提交到结束的耗时（秒）；未完成时按到此刻计，未开始为 null |
-| `prompt` | `string` | 是 |  |
-| `promptSha256` | `string \| null` | 否 | 实际发出去那段提示词的 sha256（所有后处理之后）。档案里另外两个哈希（template/spec）哈希的是模板与输入，复核不了最终字节。加这列之前准备的任务为 null，不回填。 |
-| `textLibraryIds` | `string[]` | 否 | 本次绑定的文本资产 id（顺序即 `{{Text N}}` 编号） |
-| `textBindings` | `Record<string, unknown>[]` | 否 | 绑定的文案与版本快照（不含正文） |
-| `promptMode` | `"fixed" \| "compiled"` | 否 | fixed=封装视频模板时写死的原文，逐字提交；compiled=按素材与替换范围现编。展示层据此告诉用户「跑的就是你封装时那份提示词」。 |
-| `videoTemplateName` | `string \| null` | 否 | fixed 时出自哪条视频模板；compiled 为 null |
-| `displayTitle` | `string` | 否 | 统一展示名，列表/弹窗/任务中心共用 |
-| `taskId` | `string \| null` | 否 |  |
-| `estimatedCredits` | `number \| null` | 否 |  |
-| `credits` | `number \| null` | 否 |  |
-| `progress` | `number` | 否 |  |
-| `reviewStatus` | `string` | 否 |  |
-| `review` | `ReplacementReview \| null` | 否 |  |
-| `inputSummary` | `ReplacementInputSummary \| null` | 否 |  |
-| `lastError` | `string \| null` | 否 |  |
-| `outputUrl` | `string \| null` | 否 |  |
-| `deletedAt` | `string \| null` | 否 |  |
-| `billingMode` | `"free" \| "credits"` | 否 | free=0 积分权益队列；credits=本次任务用积分进正常队列 |
-
-#### `POST /api/v1/templates/replacement-runs/{run_id}/restore`
-
-**恢复本人回收站中的替换任务与调用档案**
-
-| 参数 | 位置 | 类型 | 必填 | 说明 |
-|---|---|---|---|---|
-| `run_id` | path | `string` | 是 |  |
-
-**响应** `ApiResponse<ReplacementRunOut>`（前端取 `res.data`）
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `id` | `string` | 是 |  |
-| `channel` | `"libtv" \| "bailian" \| "bailian-prime"` | 否 |  |
-| `channelLabel` | `string` | 否 |  |
-| `kind` | `"character" \| "product" \| "scene"` | 是 |  |
-| `target` | `string` | 是 |  |
-| `status` | `string` | 是 |  |
-| `archivePath` | `string \| null` | 否 | 工作区绝对路径（排查用）；目录已被清理或换机器后为 null |
-| `createdAt` | `string` | 是 |  |
-| `startedAt` | `string \| null` | 否 | 确认提交（进入排队）的时间，未开始为 null |
-| `finishedAt` | `string \| null` | 否 | 这一轮结束的时间；未结束为 null |
-| `elapsedSec` | `number \| null` | 否 | 确认提交到结束的耗时（秒）；未完成时按到此刻计，未开始为 null |
-| `prompt` | `string` | 是 |  |
-| `promptSha256` | `string \| null` | 否 | 实际发出去那段提示词的 sha256（所有后处理之后）。档案里另外两个哈希（template/spec）哈希的是模板与输入，复核不了最终字节。加这列之前准备的任务为 null，不回填。 |
-| `textLibraryIds` | `string[]` | 否 | 本次绑定的文本资产 id（顺序即 `{{Text N}}` 编号） |
-| `textBindings` | `Record<string, unknown>[]` | 否 | 绑定的文案与版本快照（不含正文） |
-| `promptMode` | `"fixed" \| "compiled"` | 否 | fixed=封装视频模板时写死的原文，逐字提交；compiled=按素材与替换范围现编。展示层据此告诉用户「跑的就是你封装时那份提示词」。 |
-| `videoTemplateName` | `string \| null` | 否 | fixed 时出自哪条视频模板；compiled 为 null |
-| `displayTitle` | `string` | 否 | 统一展示名，列表/弹窗/任务中心共用 |
-| `taskId` | `string \| null` | 否 |  |
-| `estimatedCredits` | `number \| null` | 否 |  |
-| `credits` | `number \| null` | 否 |  |
-| `progress` | `number` | 否 |  |
-| `reviewStatus` | `string` | 否 |  |
-| `review` | `ReplacementReview \| null` | 否 |  |
-| `inputSummary` | `ReplacementInputSummary \| null` | 否 |  |
-| `lastError` | `string \| null` | 否 |  |
-| `outputUrl` | `string \| null` | 否 |  |
-| `deletedAt` | `string \| null` | 否 |  |
-| `billingMode` | `"free" \| "credits"` | 否 | free=0 积分权益队列；credits=本次任务用积分进正常队列 |
-
-#### `PUT /api/v1/templates/replacement-runs/{run_id}/review`
-
-**保存人工验收，版本冲突需重新核对**
-
-| 参数 | 位置 | 类型 | 必填 | 说明 |
-|---|---|---|---|---|
-| `run_id` | path | `string` | 是 |  |
-
-**请求体** `ReplacementReviewIn`
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `status` | `"accepted" \| "rejected"` | 是 |  |
-| `expectedVersion` | `number` | 是 |  |
-| `reasonCodes` | `("replacement" \| "preservation" \| "visual" \| "audio" \| "other")[]` | 否 |  |
-| `comment` | `string` | 否 |  |
-
-**响应** `ApiResponse<ReplacementRunOut>`（前端取 `res.data`）
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `id` | `string` | 是 |  |
-| `channel` | `"libtv" \| "bailian" \| "bailian-prime"` | 否 |  |
-| `channelLabel` | `string` | 否 |  |
-| `kind` | `"character" \| "product" \| "scene"` | 是 |  |
-| `target` | `string` | 是 |  |
-| `status` | `string` | 是 |  |
-| `archivePath` | `string \| null` | 否 | 工作区绝对路径（排查用）；目录已被清理或换机器后为 null |
-| `createdAt` | `string` | 是 |  |
-| `startedAt` | `string \| null` | 否 | 确认提交（进入排队）的时间，未开始为 null |
-| `finishedAt` | `string \| null` | 否 | 这一轮结束的时间；未结束为 null |
-| `elapsedSec` | `number \| null` | 否 | 确认提交到结束的耗时（秒）；未完成时按到此刻计，未开始为 null |
-| `prompt` | `string` | 是 |  |
-| `promptSha256` | `string \| null` | 否 | 实际发出去那段提示词的 sha256（所有后处理之后）。档案里另外两个哈希（template/spec）哈希的是模板与输入，复核不了最终字节。加这列之前准备的任务为 null，不回填。 |
-| `textLibraryIds` | `string[]` | 否 | 本次绑定的文本资产 id（顺序即 `{{Text N}}` 编号） |
-| `textBindings` | `Record<string, unknown>[]` | 否 | 绑定的文案与版本快照（不含正文） |
-| `promptMode` | `"fixed" \| "compiled"` | 否 | fixed=封装视频模板时写死的原文，逐字提交；compiled=按素材与替换范围现编。展示层据此告诉用户「跑的就是你封装时那份提示词」。 |
-| `videoTemplateName` | `string \| null` | 否 | fixed 时出自哪条视频模板；compiled 为 null |
-| `displayTitle` | `string` | 否 | 统一展示名，列表/弹窗/任务中心共用 |
-| `taskId` | `string \| null` | 否 |  |
-| `estimatedCredits` | `number \| null` | 否 |  |
-| `credits` | `number \| null` | 否 |  |
-| `progress` | `number` | 否 |  |
-| `reviewStatus` | `string` | 否 |  |
-| `review` | `ReplacementReview \| null` | 否 |  |
-| `inputSummary` | `ReplacementInputSummary \| null` | 否 |  |
-| `lastError` | `string \| null` | 否 |  |
-| `outputUrl` | `string \| null` | 否 |  |
-| `deletedAt` | `string \| null` | 否 |  |
-| `billingMode` | `"free" \| "credits"` | 否 | free=0 积分权益队列；credits=本次任务用积分进正常队列 |
-
-### 4.6 分镜模板（1 个）
+### 4.5 分镜模板（1 个）
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
@@ -1789,7 +1381,7 @@ Authorization: Bearer <accessToken>
 | `items` | `StoryboardOut[]` | 否 |  |
 | `total` | `number` | 否 |  |
 
-### 4.7 镜头库（1 个）
+### 4.6 镜头库（1 个）
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
@@ -1810,7 +1402,7 @@ Authorization: Bearer <accessToken>
 | `items` | `ShotPresetOut[]` | 否 |  |
 | `total` | `number` | 否 |  |
 
-### 4.8 系统（2 个）
+### 4.7 系统（2 个）
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
@@ -1852,7 +1444,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `queueSize` | `number` | 是 |  |
 | `checks` | `RuntimeCheckOut[]` | 否 |  |
 
-### 4.9 导出（6 个）
+### 4.8 导出（6 个）
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
@@ -1956,7 +1548,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 
 **响应** `ApiResponse<unknown>`（前端取 `res.data`）
 
-### 4.10 资产库（45 个）
+### 4.9 资产库（45 个）
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
@@ -3324,7 +2916,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `rejectReason` | `string \| null` | 否 |  |
 | `trashedFromState` | `string \| null` | 否 |  |
 
-### 4.11 模型驱动（6 个）
+### 4.10 模型驱动（6 个）
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
@@ -3435,16 +3027,10 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `message` | `string` | 否 |  |
 | `data` | `modules__model_driver__schema__TaskOut \| null` | 否 |  |
 
-### 4.12 模板封装（26 个）
+### 4.11 模板封装（8 个）
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
-| `POST` | `/api/v1/template-manifests` | 保存 manifest 草稿 | 🔒 |
-| `GET` | `/api/v1/template-manifests` | manifest 配置列表 | 🔒 |
-| `POST` | `/api/v1/template-manifests/validate` | 预检 manifest 配置（不落库） | 🔒 |
-| `GET` | `/api/v1/template-manifests/{key}` | manifest 配置详情 | 🔒 |
-| `POST` | `/api/v1/template-manifests/{key}/disable` | 停用 manifest 配置 | 🔒 |
-| `POST` | `/api/v1/template-manifests/{key}/publish` | 发布 manifest 配置 | 🔒 |
 | `POST` | `/api/v1/template-specs` | 保存草稿（同内容幂等，revision 冲突 409） | 🔒 |
 | `GET` | `/api/v1/template-specs` | 本人可见的规格列表 | 🔒 |
 | `GET` | `/api/v1/template-specs/published` | 模板库：已发布的规格卡片 | 🔒 |
@@ -3453,173 +3039,6 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `POST` | `/api/v1/template-specs/{key}/compile` | 填表结果 → 执行请求体（纯映射，不落库） | 🔒 |
 | `POST` | `/api/v1/template-specs/{key}/disable` | 下架（历史版本保留） | 🔒 |
 | `POST` | `/api/v1/template-specs/{key}/publish` | 发布：把当前草稿冻结成新版本 | 🔒 |
-| `GET` | `/api/v1/templates/replacement-packs` | 本人封装草稿和历史包 | 🔒 |
-| `GET` | `/api/v1/templates/replacement-packs/available` | 全工作台已发布对象 | 🔒 |
-| `PUT` | `/api/v1/templates/replacement-packs/draft` | 保存封装草稿（请求标识及版本防重） | 🔒 |
-| `POST` | `/api/v1/templates/replacement-packs/{pack_id}/disable` | 停用已发布封装对象 | 🔒 |
-| `GET` | `/api/v1/templates/replacement-packs/{pack_id}/preview/{asset_id}` | 读取授权发布版本的包内预览 | 🔒 |
-| `POST` | `/api/v1/templates/replacement-packs/{pack_id}/publish` | 发布不可变封装版本 | 🔒 |
-| `GET` | `/api/v1/templates/video-templates` | 视频模板列表（固定蓝本优先） | 🔒 |
-| `POST` | `/api/v1/templates/video-templates` | 封装一条视频模板 | 🔒 |
-| `GET` | `/api/v1/templates/video-templates/{template_id}` | 视频模板详情（含提示词与媒体顺序） | 🔒 |
-| `POST` | `/api/v1/templates/video-templates/{template_id}/attach-source` | 绑定样片原片资产 | 🔒 |
-| `POST` | `/api/v1/templates/video-templates/{template_id}/pin` | 设为固定蓝本（全库仅一个） | 🔒 |
-| `PATCH` | `/api/v1/templates/video-templates/{template_id}/prompt` | 保存固定提示词与跨封装图片引用 | 🔒 |
-
-#### `POST /api/v1/template-manifests`
-
-**保存 manifest 草稿**
-
-幂等：同 key 同配置返回原行；已发布配置改内容 409。
-
-**请求体** `ManifestDraftIn`
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `key` | `string` | 是 |  |
-| `name` | `string` | 是 |  |
-| `description` | `string` | 否 |  |
-| `video` | `ManifestVideoIn` | 是 |  |
-| `packs` | `ManifestPackIn[]` | 否 |  |
-| `functions` | `ManifestFunctionIn[]` | 是 |  |
-
-**响应** `ApiResponse<ManifestOut>`（前端取 `res.data`）
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `id` | `string` | 是 |  |
-| `key` | `string` | 是 |  |
-| `name` | `string` | 是 |  |
-| `description` | `string` | 是 |  |
-| `ownerId` | `string` | 是 |  |
-| `video` | `ManifestVideoIn` | 是 |  |
-| `status` | `string` | 是 |  |
-| `version` | `number` | 是 |  |
-| `revision` | `number` | 是 |  |
-| `fingerprint` | `string` | 是 |  |
-| `publishedAt` | `string \| null` | 否 |  |
-| `createdAt` | `string` | 是 |  |
-| `updatedAt` | `string` | 是 |  |
-| `packs` | `ManifestPackIn[]` | 否 |  |
-| `functions` | `ManifestFunctionIn[]` | 否 |  |
-
-#### `GET /api/v1/template-manifests`
-
-**manifest 配置列表**
-
-别人的草稿不进列表；传 `mineOnly` 只看自己的全部（含草稿）。
-
-| 参数 | 位置 | 类型 | 必填 | 说明 |
-|---|---|---|---|---|
-| `mineOnly` | query | `boolean` | 否 |  |
-| `status` | query | `string` | 否 |  |
-
-**响应** `ApiResponse<ManifestListOut>`（前端取 `res.data`）
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `items` | `ManifestOut[]` | 否 |  |
-| `total` | `number` | 否 |  |
-
-#### `POST /api/v1/template-manifests/validate`
-
-**预检 manifest 配置（不落库）**
-
-结构、用途、Mixed 编号、素材可读性的全套预检；返回幂等指纹。
-
-**请求体** `ManifestDraftIn`
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `key` | `string` | 是 |  |
-| `name` | `string` | 是 |  |
-| `description` | `string` | 否 |  |
-| `video` | `ManifestVideoIn` | 是 |  |
-| `packs` | `ManifestPackIn[]` | 否 |  |
-| `functions` | `ManifestFunctionIn[]` | 是 |  |
-
-**响应** `ApiResponse<ManifestValidateOut>`（前端取 `res.data`）
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `valid` | `boolean` | 否 |  |
-| `fingerprint` | `string` | 是 |  |
-
-#### `GET /api/v1/template-manifests/{key}`
-
-**manifest 配置详情**
-
-| 参数 | 位置 | 类型 | 必填 | 说明 |
-|---|---|---|---|---|
-| `key` | path | `string` | 是 |  |
-
-**响应** `ApiResponse<ManifestOut>`（前端取 `res.data`）
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `id` | `string` | 是 |  |
-| `key` | `string` | 是 |  |
-| `name` | `string` | 是 |  |
-| `description` | `string` | 是 |  |
-| `ownerId` | `string` | 是 |  |
-| `video` | `ManifestVideoIn` | 是 |  |
-| `status` | `string` | 是 |  |
-| `version` | `number` | 是 |  |
-| `revision` | `number` | 是 |  |
-| `fingerprint` | `string` | 是 |  |
-| `publishedAt` | `string \| null` | 否 |  |
-| `createdAt` | `string` | 是 |  |
-| `updatedAt` | `string` | 是 |  |
-| `packs` | `ManifestPackIn[]` | 否 |  |
-| `functions` | `ManifestFunctionIn[]` | 否 |  |
-
-#### `POST /api/v1/template-manifests/{key}/disable`
-
-**停用 manifest 配置**
-
-停用不是删除：模板是资产，历史版本还要能回放。
-
-| 参数 | 位置 | 类型 | 必填 | 说明 |
-|---|---|---|---|---|
-| `key` | path | `string` | 是 |  |
-
-**响应** `ApiResponse<ManifestOut>`（前端取 `res.data`）
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `id` | `string` | 是 |  |
-| `key` | `string` | 是 |  |
-| `name` | `string` | 是 |  |
-| `description` | `string` | 是 |  |
-| `ownerId` | `string` | 是 |  |
-| `video` | `ManifestVideoIn` | 是 |  |
-| `status` | `string` | 是 |  |
-| `version` | `number` | 是 |  |
-| `revision` | `number` | 是 |  |
-| `fingerprint` | `string` | 是 |  |
-| `publishedAt` | `string \| null` | 否 |  |
-| `createdAt` | `string` | 是 |  |
-| `updatedAt` | `string` | 是 |  |
-| `packs` | `ManifestPackIn[]` | 否 |  |
-| `functions` | `ManifestFunctionIn[]` | 否 |  |
-
-#### `POST /api/v1/template-manifests/{key}/publish`
-
-**发布 manifest 配置**
-
-状态流转 + 版本号 +1；返回每张工作台卡片的 `workbenchPath`。
-
-| 参数 | 位置 | 类型 | 必填 | 说明 |
-|---|---|---|---|---|
-| `key` | path | `string` | 是 |  |
-
-**响应** `ApiResponse<ManifestPublishOut>`（前端取 `res.data`）
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `manifest` | `ManifestOut` | 是 |  |
-| `version` | `number` | 是 |  |
-| `templates` | `PublishedTemplateOut[]` | 否 |  |
 
 #### `POST /api/v1/template-specs`
 
@@ -3824,393 +3243,6 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `version` | `number` | 是 |  |
 | `spec` | `TemplateSpecOut` | 是 |  |
 
-#### `GET /api/v1/templates/replacement-packs`
-
-**本人封装草稿和历史包**
-
-**响应** `ApiResponse<PackManagedList>`（前端取 `res.data`）
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `items` | `PackManaged[]` | 是 |  |
-
-#### `GET /api/v1/templates/replacement-packs/available`
-
-**全工作台已发布对象**
-
-| 参数 | 位置 | 类型 | 必填 | 说明 |
-|---|---|---|---|---|
-| `kind` | query | `string` | 否 |  |
-| `keyword` | query | `string` | 否 |  |
-| `page` | query | `number` | 否 |  |
-| `pageSize` | query | `number` | 否 |  |
-
-**响应** `ApiResponse<PackPublicList>`（前端取 `res.data`）
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `items` | `ReplacementPack[]` | 是 |  |
-| `total` | `number` | 是 |  |
-| `page` | `number` | 是 |  |
-| `pageSize` | `number` | 是 |  |
-
-#### `PUT /api/v1/templates/replacement-packs/draft`
-
-**保存封装草稿（请求标识及版本防重）**
-
-**请求体** `PackDraftIn`
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `requestId` | `string` | 是 |  |
-| `expectedRevision` | `number` | 否 |  |
-| `kind` | `"character" \| "product" \| "scene"` | 是 |  |
-| `name` | `string` | 否 |  |
-| `referenceLibraryIds` | `string[]` | 否 | 封装用的参考图 id，按顺序 |
-| `coverLibraryId` | `string \| null` | 否 | 封面的 asset id；必须出现在 referenceLibraryIds 里 |
-| `wardrobeMode` | `"preserve" \| "reference"` | 否 |  |
-| `features` | `string` | 否 |  |
-| `instructions` | `string` | 否 |  |
-| `bindings` | `PackBinding[]` | 否 |  |
-| `requiredRoles` | `string[]` | 否 |  |
-| `supportedScopes` | `string[]` | 否 |  |
-
-**响应** `ApiResponse<PackManaged>`（前端取 `res.data`）
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `id` | `string` | 是 |  |
-| `kind` | `"character" \| "product" \| "scene"` | 是 |  |
-| `name` | `string` | 是 |  |
-| `referenceIds` | `string[]` | 是 |  |
-| `coverReferenceId` | `string \| null` | 否 |  |
-| `wardrobeMode` | `"preserve" \| "reference"` | 否 |  |
-| `features` | `string` | 否 |  |
-| `instructions` | `string` | 否 |  |
-| `version` | `number` | 否 |  |
-| `available` | `boolean \| null` | 否 |  |
-| `coverUrl` | `string \| null` | 否 |  |
-| `previewUrls` | `string[]` | 否 |  |
-| `referenceNames` | `string[]` | 否 |  |
-| `bindings` | `PackBinding[]` | 否 |  |
-| `requiredRoles` | `string[]` | 否 |  |
-| `supportedScopes` | `string[]` | 否 |  |
-| `revision` | `number` | 否 |  |
-| `status` | `"draft" \| "published" \| "disabled"` | 否 |  |
-| `gaps` | `string[]` | 否 |  |
-
-#### `POST /api/v1/templates/replacement-packs/{pack_id}/disable`
-
-**停用已发布封装对象**
-
-| 参数 | 位置 | 类型 | 必填 | 说明 |
-|---|---|---|---|---|
-| `pack_id` | path | `string` | 是 |  |
-
-**请求体** `PackAction`
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `expectedRevision` | `number` | 是 |  |
-
-**响应** `ApiResponse<PackManaged>`（前端取 `res.data`）
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `id` | `string` | 是 |  |
-| `kind` | `"character" \| "product" \| "scene"` | 是 |  |
-| `name` | `string` | 是 |  |
-| `referenceIds` | `string[]` | 是 |  |
-| `coverReferenceId` | `string \| null` | 否 |  |
-| `wardrobeMode` | `"preserve" \| "reference"` | 否 |  |
-| `features` | `string` | 否 |  |
-| `instructions` | `string` | 否 |  |
-| `version` | `number` | 否 |  |
-| `available` | `boolean \| null` | 否 |  |
-| `coverUrl` | `string \| null` | 否 |  |
-| `previewUrls` | `string[]` | 否 |  |
-| `referenceNames` | `string[]` | 否 |  |
-| `bindings` | `PackBinding[]` | 否 |  |
-| `requiredRoles` | `string[]` | 否 |  |
-| `supportedScopes` | `string[]` | 否 |  |
-| `revision` | `number` | 否 |  |
-| `status` | `"draft" \| "published" \| "disabled"` | 否 |  |
-| `gaps` | `string[]` | 否 |  |
-
-#### `GET /api/v1/templates/replacement-packs/{pack_id}/preview/{asset_id}`
-
-**读取授权发布版本的包内预览**
-
-| 参数 | 位置 | 类型 | 必填 | 说明 |
-|---|---|---|---|---|
-| `pack_id` | path | `string` | 是 |  |
-| `asset_id` | path | `string` | 是 |  |
-| `version` | query | `number` | 是 |  |
-
-**响应** `ApiResponse<unknown>`（前端取 `res.data`）
-
-#### `POST /api/v1/templates/replacement-packs/{pack_id}/publish`
-
-**发布不可变封装版本**
-
-| 参数 | 位置 | 类型 | 必填 | 说明 |
-|---|---|---|---|---|
-| `pack_id` | path | `string` | 是 |  |
-
-**请求体** `PackAction`
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `expectedRevision` | `number` | 是 |  |
-
-**响应** `ApiResponse<PackManaged>`（前端取 `res.data`）
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `id` | `string` | 是 |  |
-| `kind` | `"character" \| "product" \| "scene"` | 是 |  |
-| `name` | `string` | 是 |  |
-| `referenceIds` | `string[]` | 是 |  |
-| `coverReferenceId` | `string \| null` | 否 |  |
-| `wardrobeMode` | `"preserve" \| "reference"` | 否 |  |
-| `features` | `string` | 否 |  |
-| `instructions` | `string` | 否 |  |
-| `version` | `number` | 否 |  |
-| `available` | `boolean \| null` | 否 |  |
-| `coverUrl` | `string \| null` | 否 |  |
-| `previewUrls` | `string[]` | 否 |  |
-| `referenceNames` | `string[]` | 否 |  |
-| `bindings` | `PackBinding[]` | 否 |  |
-| `requiredRoles` | `string[]` | 否 |  |
-| `supportedScopes` | `string[]` | 否 |  |
-| `revision` | `number` | 否 |  |
-| `status` | `"draft" \| "published" \| "disabled"` | 否 |  |
-| `gaps` | `string[]` | 否 |  |
-
-#### `GET /api/v1/templates/video-templates`
-
-**视频模板列表（固定蓝本优先）**
-
-**响应** `ApiResponse<VideoTemplateListOut>`（前端取 `res.data`）
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `items` | `VideoTemplateOut[]` | 否 |  |
-| `total` | `number` | 否 |  |
-| `pinnedId` | `string \| null` | 否 | 当前固定蓝本的 id |
-
-#### `POST /api/v1/templates/video-templates`
-
-**封装一条视频模板**
-
-**请求体** `VideoTemplateDraftIn`
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `name` | `string` | 是 | 模板名称 |
-| `templateKey` | `string` | 否 | 稳定标识：同键同配置返回原模板，同键异配置409；留空自动生成。固定蓝本状态独立管理 |
-| `description` | `string` | 否 | 模板说明 |
-| `prompt` | `string` | 是 | 固定提示词原文，含 {{Mixed N}} 占位符 |
-| `sourceVideoName` | `string` | 否 | 样片文件名 |
-| `sourceVideoAssetId` | `string \| null` | 否 | 样片在资产库中的 asset id |
-| `sourceVideoPath` | `string` | 否 | 样片本地路径（可选） |
-| `sourceDurationSec` | `number` | 否 | 样片真实时长，用于提示与档位说明 |
-| `aspectRatio` | `string` | 否 | 输出画幅 |
-| `packId` | `string \| null` | 否 | 关联的已发布替换素材包；**可省略**——用途绑定模式下省略即「只声明槽位」，调用时按用途从用户自己选的包里取图 |
-| `defaultKind` | `"character" \| "product" \| "scene"` | 否 | 选中这张原片卡片时，替换配置默认切到的替换类型 |
-| `mediaOrder` | `VideoTemplateMedia[]` | 否 | 留空则由素材包顺序生成 |
-| `generation` | `Record<string, unknown>` | 否 | 生成参数，覆盖默认值 |
-| `rules` | `Record<string, unknown>` | 否 | 封装规则；referenceBindings 将连续 Mixed 编号绑定到 source_video/图片用途，服务端排列声明槽位并完整附带当前包其余图片，无需逐图引用 |
-| `coverUrl` | `string` | 否 | 封面地址 |
-| `pinned` | `boolean` | 否 | 是否设为固定蓝本（全库仅一个） |
-
-**响应** `ApiResponse<VideoTemplateOut>`（前端取 `res.data`）
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `id` | `string` | 是 |  |
-| `templateKey` | `string` | 是 |  |
-| `name` | `string` | 是 |  |
-| `description` | `string` | 是 |  |
-| `prompt` | `string` | 是 |  |
-| `promptSha256` | `string` | 是 | 提示词 sha256，防止文字被悄悄改掉 |
-| `sourceVideoName` | `string` | 是 |  |
-| `sourceVideoAssetId` | `string \| null` | 否 |  |
-| `sourceVideoPath` | `string` | 是 |  |
-| `sourceDurationSec` | `number` | 是 |  |
-| `aspectRatio` | `string` | 是 |  |
-| `packId` | `string \| null` | 否 |  |
-| `packName` | `string` | 否 |  |
-| `packVersion` | `number` | 否 |  |
-| `defaultKind` | `"character" \| "product" \| "scene"` | 否 |  |
-| `mediaOrder` | `VideoTemplateMedia[]` | 否 |  |
-| `generation` | `Record<string, unknown>` | 否 |  |
-| `rules` | `Record<string, unknown>` | 否 |  |
-| `coverUrl` | `string` | 否 |  |
-| `pinned` | `boolean` | 否 |  |
-| `createdAt` | `string` | 是 |  |
-| `updatedAt` | `string` | 是 |  |
-
-#### `GET /api/v1/templates/video-templates/{template_id}`
-
-**视频模板详情（含提示词与媒体顺序）**
-
-| 参数 | 位置 | 类型 | 必填 | 说明 |
-|---|---|---|---|---|
-| `template_id` | path | `string` | 是 |  |
-
-**响应** `ApiResponse<VideoTemplateOut>`（前端取 `res.data`）
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `id` | `string` | 是 |  |
-| `templateKey` | `string` | 是 |  |
-| `name` | `string` | 是 |  |
-| `description` | `string` | 是 |  |
-| `prompt` | `string` | 是 |  |
-| `promptSha256` | `string` | 是 | 提示词 sha256，防止文字被悄悄改掉 |
-| `sourceVideoName` | `string` | 是 |  |
-| `sourceVideoAssetId` | `string \| null` | 否 |  |
-| `sourceVideoPath` | `string` | 是 |  |
-| `sourceDurationSec` | `number` | 是 |  |
-| `aspectRatio` | `string` | 是 |  |
-| `packId` | `string \| null` | 否 |  |
-| `packName` | `string` | 否 |  |
-| `packVersion` | `number` | 否 |  |
-| `defaultKind` | `"character" \| "product" \| "scene"` | 否 |  |
-| `mediaOrder` | `VideoTemplateMedia[]` | 否 |  |
-| `generation` | `Record<string, unknown>` | 否 |  |
-| `rules` | `Record<string, unknown>` | 否 |  |
-| `coverUrl` | `string` | 否 |  |
-| `pinned` | `boolean` | 否 |  |
-| `createdAt` | `string` | 是 |  |
-| `updatedAt` | `string` | 是 |  |
-
-#### `POST /api/v1/templates/video-templates/{template_id}/attach-source`
-
-**绑定样片原片资产**
-
-绑定后，这条模板对应的原片才会在「全部模板」里被当作可选卡片。
-
-| 参数 | 位置 | 类型 | 必填 | 说明 |
-|---|---|---|---|---|
-| `template_id` | path | `string` | 是 |  |
-
-**请求体** `VideoTemplateAttachSourceIn`
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `sourceVideoAssetId` | `string` | 是 | 原片 id（资产库里的视频） |
-
-**响应** `ApiResponse<VideoTemplateOut>`（前端取 `res.data`）
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `id` | `string` | 是 |  |
-| `templateKey` | `string` | 是 |  |
-| `name` | `string` | 是 |  |
-| `description` | `string` | 是 |  |
-| `prompt` | `string` | 是 |  |
-| `promptSha256` | `string` | 是 | 提示词 sha256，防止文字被悄悄改掉 |
-| `sourceVideoName` | `string` | 是 |  |
-| `sourceVideoAssetId` | `string \| null` | 否 |  |
-| `sourceVideoPath` | `string` | 是 |  |
-| `sourceDurationSec` | `number` | 是 |  |
-| `aspectRatio` | `string` | 是 |  |
-| `packId` | `string \| null` | 否 |  |
-| `packName` | `string` | 否 |  |
-| `packVersion` | `number` | 否 |  |
-| `defaultKind` | `"character" \| "product" \| "scene"` | 否 |  |
-| `mediaOrder` | `VideoTemplateMedia[]` | 否 |  |
-| `generation` | `Record<string, unknown>` | 否 |  |
-| `rules` | `Record<string, unknown>` | 否 |  |
-| `coverUrl` | `string` | 否 |  |
-| `pinned` | `boolean` | 否 |  |
-| `createdAt` | `string` | 是 |  |
-| `updatedAt` | `string` | 是 |  |
-
-#### `POST /api/v1/templates/video-templates/{template_id}/pin`
-
-**设为固定蓝本（全库仅一个）**
-
-| 参数 | 位置 | 类型 | 必填 | 说明 |
-|---|---|---|---|---|
-| `template_id` | path | `string` | 是 |  |
-
-**响应** `ApiResponse<VideoTemplateOut>`（前端取 `res.data`）
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `id` | `string` | 是 |  |
-| `templateKey` | `string` | 是 |  |
-| `name` | `string` | 是 |  |
-| `description` | `string` | 是 |  |
-| `prompt` | `string` | 是 |  |
-| `promptSha256` | `string` | 是 | 提示词 sha256，防止文字被悄悄改掉 |
-| `sourceVideoName` | `string` | 是 |  |
-| `sourceVideoAssetId` | `string \| null` | 否 |  |
-| `sourceVideoPath` | `string` | 是 |  |
-| `sourceDurationSec` | `number` | 是 |  |
-| `aspectRatio` | `string` | 是 |  |
-| `packId` | `string \| null` | 否 |  |
-| `packName` | `string` | 否 |  |
-| `packVersion` | `number` | 否 |  |
-| `defaultKind` | `"character" \| "product" \| "scene"` | 否 |  |
-| `mediaOrder` | `VideoTemplateMedia[]` | 否 |  |
-| `generation` | `Record<string, unknown>` | 否 |  |
-| `rules` | `Record<string, unknown>` | 否 |  |
-| `coverUrl` | `string` | 否 |  |
-| `pinned` | `boolean` | 否 |  |
-| `createdAt` | `string` | 是 |  |
-| `updatedAt` | `string` | 是 |  |
-
-#### `PATCH /api/v1/templates/video-templates/{template_id}/prompt`
-
-**保存固定提示词与跨封装图片引用**
-
-只换提示词原文，`{{Mixed N}}` 引用按新原文重算。
-
-不提供「删掉重建」：同原片同类型下 `find_for_run` 取最早创建的那条，
-重建出来的新版会一直输给旧版。改提示词会影响此后每一次生成，留审计。
-
-| 参数 | 位置 | 类型 | 必填 | 说明 |
-|---|---|---|---|---|
-| `template_id` | path | `string` | 是 |  |
-
-**请求体** `VideoTemplatePromptIn`
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `prompt` | `string` | 是 | 新的固定提示词原文，含 {{Mixed N}} 占位符 |
-| `references` | `VideoTemplatePackReferenceIn[] \| null` | 否 | 跨封装固定图片引用；省略保留原绑定，空数组清除 |
-
-**响应** `ApiResponse<VideoTemplateOut>`（前端取 `res.data`）
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `id` | `string` | 是 |  |
-| `templateKey` | `string` | 是 |  |
-| `name` | `string` | 是 |  |
-| `description` | `string` | 是 |  |
-| `prompt` | `string` | 是 |  |
-| `promptSha256` | `string` | 是 | 提示词 sha256，防止文字被悄悄改掉 |
-| `sourceVideoName` | `string` | 是 |  |
-| `sourceVideoAssetId` | `string \| null` | 否 |  |
-| `sourceVideoPath` | `string` | 是 |  |
-| `sourceDurationSec` | `number` | 是 |  |
-| `aspectRatio` | `string` | 是 |  |
-| `packId` | `string \| null` | 否 |  |
-| `packName` | `string` | 否 |  |
-| `packVersion` | `number` | 否 |  |
-| `defaultKind` | `"character" \| "product" \| "scene"` | 否 |  |
-| `mediaOrder` | `VideoTemplateMedia[]` | 否 |  |
-| `generation` | `Record<string, unknown>` | 否 |  |
-| `rules` | `Record<string, unknown>` | 否 |  |
-| `coverUrl` | `string` | 否 |  |
-| `pinned` | `boolean` | 否 |  |
-| `createdAt` | `string` | 是 |  |
-| `updatedAt` | `string` | 是 |  |
-
 ---
 
 ## 5. 数据模型
@@ -4400,19 +3432,6 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `personal` | `string[]` | 否 | 单独授予的权限 |
 | `roles` | `string[]` | 否 | 现有角色授予的权限 |
 | `effective` | `string[]` | 否 | 四层并集；`*` 表示超级管理员。require() 唯一判据 |
-
-### `ExecuteReplacement`
-
-提交或加速一条替换任务。
-
-`credits` 只作用于这条任务：提交时关掉账号的 0 积分权益标签，走正常积分队列，
-**不动账号级开关**，因此不会让同账号的其他人下一次提交莫名其妙开始花钱。
-不传表示沿用档案里当前的计费模式——「继续查询 / 重试原任务」走的就是这条路，
-它们不该顺带把一条已加速的任务改回免费队列。
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `billingMode` | `"free" \| "credits" \| null` | 否 |  |
 
 ### `ExportDetailOut`
 
@@ -4977,110 +3996,6 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `username` | `string` | 是 | 用户名 |
 | `password` | `string` | 是 | 密码 |
 
-### `ManifestDraftIn`
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `key` | `string` | 是 |  |
-| `name` | `string` | 是 |  |
-| `description` | `string` | 否 |  |
-| `video` | `ManifestVideoIn` | 是 |  |
-| `packs` | `ManifestPackIn[]` | 否 |  |
-| `functions` | `ManifestFunctionIn[]` | 是 |  |
-
-### `ManifestFunctionIn`
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `key` | `string` | 是 |  |
-| `name` | `string` | 是 |  |
-| `pack` | `string \| null` | 否 |  |
-| `kind` | `"product" \| "character" \| "scene" \| null` | 否 |  |
-| `scenePromptDefault` | `string \| null` | 否 |  |
-| `prompt` | `string` | 是 |  |
-| `mediaOrder` | `string[]` | 否 |  |
-| `bindings` | `Record<string, string> \| null` | 否 |  |
-| `scopeOptions` | `string[]` | 否 |  |
-| `aspectRatio` | `"9:16" \| "16:9" \| "1:1"` | 否 |  |
-| `duration` | `number \| null` | 否 |  |
-
-### `ManifestListOut`
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `items` | `ManifestOut[]` | 否 |  |
-| `total` | `number` | 否 |  |
-
-### `ManifestOut`
-
-配置详情。嵌套体直接复用入参模型：形状一致，不另造一份会漂移的出参。
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `id` | `string` | 是 |  |
-| `key` | `string` | 是 |  |
-| `name` | `string` | 是 |  |
-| `description` | `string` | 是 |  |
-| `ownerId` | `string` | 是 |  |
-| `video` | `ManifestVideoIn` | 是 |  |
-| `status` | `string` | 是 |  |
-| `version` | `number` | 是 |  |
-| `revision` | `number` | 是 |  |
-| `fingerprint` | `string` | 是 |  |
-| `publishedAt` | `string \| null` | 否 |  |
-| `createdAt` | `string` | 是 |  |
-| `updatedAt` | `string` | 是 |  |
-| `packs` | `ManifestPackIn[]` | 否 |  |
-| `functions` | `ManifestFunctionIn[]` | 否 |  |
-
-### `ManifestPackIn`
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `key` | `string` | 是 |  |
-| `name` | `string` | 否 |  |
-| `kind` | `"product" \| "character" \| "scene"` | 是 |  |
-| `packId` | `string \| null` | 否 |  |
-| `references` | `ManifestReferenceIn[]` | 否 |  |
-| `requiredRoles` | `string[]` | 否 |  |
-| `supportedScopes` | `string[]` | 否 |  |
-| `wardrobeMode` | `"preserve" \| "reference"` | 否 |  |
-
-### `ManifestPublishOut`
-
-发布回执：`templateId` 即工作台卡片 id，前端拼 `workbenchPath` 用。
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `manifest` | `ManifestOut` | 是 |  |
-| `version` | `number` | 是 |  |
-| `templates` | `PublishedTemplateOut[]` | 否 |  |
-
-### `ManifestReferenceIn`
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `key` | `string` | 是 |  |
-| `assetId` | `string` | 是 |  |
-| `role` | `string` | 是 |  |
-| `description` | `string` | 否 |  |
-
-### `ManifestValidateOut`
-
-只预检不落库：返回会用于幂等判定的配置指纹。
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `valid` | `boolean` | 否 |  |
-| `fingerprint` | `string` | 是 |  |
-
-### `ManifestVideoIn`
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `assetId` | `string` | 是 |  |
-| `shared` | `boolean` | 否 |  |
-
 ### `MeOut`
 
 `GET /identity/me`：前端靠 `permissions` 渲染菜单与按钮。
@@ -5099,38 +4014,6 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `createdAt` | `string` | 是 | 创建时间（UTC） |
 | `roles` | `RoleBriefOut[]` | 否 | 拥有的角色 |
 | `permissions` | `string[]` | 否 | 展开后的权限码；含 `*` 表示超级管理员 |
-
-### `PackAction`
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `expectedRevision` | `number` | 是 |  |
-
-### `PackBinding`
-
-一张参考图在封装里的用途；description 只补充本次任务特有的事实。
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `role` | `string` | 否 |  |
-| `description` | `string` | 否 |  |
-
-### `PackDraftIn`
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `requestId` | `string` | 是 |  |
-| `expectedRevision` | `number` | 否 |  |
-| `kind` | `"character" \| "product" \| "scene"` | 是 |  |
-| `name` | `string` | 否 |  |
-| `referenceLibraryIds` | `string[]` | 否 | 封装用的参考图 id，按顺序 |
-| `coverLibraryId` | `string \| null` | 否 | 封面的 asset id；必须出现在 referenceLibraryIds 里 |
-| `wardrobeMode` | `"preserve" \| "reference"` | 否 |  |
-| `features` | `string` | 否 |  |
-| `instructions` | `string` | 否 |  |
-| `bindings` | `PackBinding[]` | 否 |  |
-| `requiredRoles` | `string[]` | 否 |  |
-| `supportedScopes` | `string[]` | 否 |  |
 
 ### `PackIn`
 
@@ -5173,36 +4056,6 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `sizeBytes` | `number` | 否 |  |
 | `coverUrl` | `string \| null` | 否 |  |
 
-### `PackManaged`
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `id` | `string` | 是 |  |
-| `kind` | `"character" \| "product" \| "scene"` | 是 |  |
-| `name` | `string` | 是 |  |
-| `referenceIds` | `string[]` | 是 |  |
-| `coverReferenceId` | `string \| null` | 否 |  |
-| `wardrobeMode` | `"preserve" \| "reference"` | 否 |  |
-| `features` | `string` | 否 |  |
-| `instructions` | `string` | 否 |  |
-| `version` | `number` | 否 |  |
-| `available` | `boolean \| null` | 否 |  |
-| `coverUrl` | `string \| null` | 否 |  |
-| `previewUrls` | `string[]` | 否 |  |
-| `referenceNames` | `string[]` | 否 |  |
-| `bindings` | `PackBinding[]` | 否 |  |
-| `requiredRoles` | `string[]` | 否 |  |
-| `supportedScopes` | `string[]` | 否 |  |
-| `revision` | `number` | 否 |  |
-| `status` | `"draft" \| "published" \| "disabled"` | 否 |  |
-| `gaps` | `string[]` | 否 |  |
-
-### `PackManagedList`
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `items` | `PackManaged[]` | 是 |  |
-
 ### `PackPatchIn`
 
 改封装。`items` 提供即**整体替换**（不是增量追加）——增量语义要前端自己
@@ -5215,15 +4068,6 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `coverAssetId` | `string \| null` | 否 |  |
 | `tagIds` | `string[] \| null` | 否 |  |
 | `expectedVersion` | `number` | 否 |  |
-
-### `PackPublicList`
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `items` | `ReplacementPack[]` | 是 |  |
-| `total` | `number` | 是 |  |
-| `page` | `number` | 是 |  |
-| `pageSize` | `number` | 是 |  |
 
 ### `PasswordChangeIn`
 
@@ -5277,29 +4121,6 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 |---|---|---|---|
 | `permissions` | `string[]` | 否 | 整组替换；传空数组即清空。出现未登记的权限码会被拒绝 |
 
-### `PrepareReplacement`
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `requestId` | `string` | 是 |  |
-| `channel` | `"libtv" \| "bailian" \| "bailian-prime"` | 否 |  |
-| `kind` | `"character" \| "product" \| "scene"` | 是 |  |
-| `target` | `string` | 否 |  |
-| `sourceLibraryId` | `string \| null` | 否 | 原片（资产库里的视频）id |
-| `videoTemplateId` | `string \| null` | 否 |  |
-| `scenePrompt` | `string \| null` | 否 | 文字换场景的描述；省略使用模板默认值，空白拒绝 |
-| `referenceIds` | `string[]` | 否 |  |
-| `libraryPackId` | `string \| null` | 否 | 资产库 v2 封装的 id；成员按 position 顺序当参考图，用途取自成员自己声明的 role。与 packId / packVersion / referenceIds / extraPackIds 互斥；prepare 时展开并冻结，之后封装改成员不影响已准备的任务 |
-| `textLibraryIds` | `string[]` | 否 | 绑定的文本资产 id，按顺序对应 `{{Text N}}`；最多 8 份 |
-| `extraPackIds` | `string[]` | 否 | 第 2 位及以后的素材包 id，按提示词槽位顺序；第一包仍用 packId |
-| `extraPackVersions` | `number[]` | 否 | 与 extraPackIds 顺序对应的发布版本；旧调用省略时由服务端解析并冻结 |
-| `wardrobeMode` | `"preserve" \| "reference"` | 否 |  |
-| `replacementScope` | `string` | 否 |  |
-| `notes` | `string` | 否 |  |
-| `packId` | `string \| null` | 否 |  |
-| `packVersion` | `number \| null` | 否 |  |
-| `aspectRatio` | `"9:16" \| "16:9" \| "1:1" \| "adaptive"` | 否 |  |
-
 ### `ProfileUpdateIn`
 
 `PATCH /identity/me` 的自助可写字段。
@@ -5315,16 +4136,6 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `phone` | `string \| null` | 否 | 手机号；传 null 清空 |
 | `position` | `string \| null` | 否 | 职务；传 null 清空 |
 
-### `PublishedTemplateOut`
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `functionKey` | `string` | 是 |  |
-| `templateId` | `string` | 是 |  |
-| `templateKey` | `string` | 是 |  |
-| `name` | `string` | 是 |  |
-| `workbenchPath` | `string` | 是 |  |
-
 ### `ReadyOut`
 
 就绪状态。`checks` 说明每一项依赖的结论，status ∈ ok / degraded / down。
@@ -5336,157 +4147,11 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `queueSize` | `number` | 是 |  |
 | `checks` | `RuntimeCheckOut[]` | 否 |  |
 
-### `ReconfirmReplacement`
-
-确认「上一次提交可能已经花了钱」后才允许重提。
-
-默认 False：一次误点就变成第二次计费，是这套流程里最贵的一个操作。
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `confirmCharged` | `boolean` | 否 | 确认上一次提交可能已产生费用，仍要重新提交（默认拒绝） |
-
 ### `RefreshIn`
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `refreshToken` | `string` | 是 | 登录时拿到的刷新令牌 |
-
-### `ReplacementCatalog`
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `channels` | `ReplacementChannelOut[]` | 否 |  |
-| `provider` | `string` | 否 |  |
-| `maxCredits` | `number` | 否 |  |
-| `kinds` | `string[]` | 否 |  |
-| `runs` | `ReplacementRunOut[]` | 是 |  |
-| `packs` | `ReplacementPack[]` | 否 |  |
-| `packRoles` | `Record<string, Record<string, string>>` | 否 |  |
-| `baseRoles` | `Record<string, string>` | 否 |  |
-| `packScopes` | `Record<string, string>` | 否 |  |
-
-### `ReplacementChannelOut`
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `id` | `"libtv" \| "bailian" \| "bailian-prime"` | 是 |  |
-| `label` | `string` | 是 |  |
-| `model` | `string` | 是 |  |
-| `enabled` | `boolean` | 是 |  |
-| `billing` | `"libtv" \| "aliyun"` | 是 |  |
-| `unavailableReason` | `string` | 否 |  |
-
-### `ReplacementInputAsset`
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `id` | `string` | 是 |  |
-| `name` | `string` | 是 |  |
-| `role` | `string` | 是 |  |
-| `type` | `string` | 是 |  |
-| `url` | `string` | 是 |  |
-| `token` | `string` | 否 | 当次输入的 Mixed 编号，无法从历史快照确定时留空 |
-| `usage` | `string` | 否 | 当次快照中记录的媒体用途说明 |
-| `previewUrl` | `string \| null` | 否 | 授权读取当次输入快照的缩略图 |
-
-### `ReplacementInputSummary`
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `assets` | `ReplacementInputAsset[]` | 否 |  |
-| `coverReferenceId` | `string \| null` | 否 |  |
-| `wardrobeMode` | `string` | 否 |  |
-| `replacementScope` | `string` | 否 |  |
-| `notes` | `string` | 否 |  |
-| `scenePrompt` | `string \| null` | 否 | 本次实际使用的可编辑场景描述 |
-
-### `ReplacementPack`
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `id` | `string` | 是 |  |
-| `kind` | `"character" \| "product" \| "scene"` | 是 |  |
-| `name` | `string` | 是 |  |
-| `referenceIds` | `string[]` | 是 |  |
-| `coverReferenceId` | `string \| null` | 否 |  |
-| `wardrobeMode` | `"preserve" \| "reference"` | 否 |  |
-| `features` | `string` | 否 |  |
-| `instructions` | `string` | 否 |  |
-| `version` | `number` | 否 |  |
-| `available` | `boolean \| null` | 否 |  |
-| `coverUrl` | `string \| null` | 否 |  |
-| `previewUrls` | `string[]` | 否 |  |
-| `referenceNames` | `string[]` | 否 |  |
-| `bindings` | `PackBinding[]` | 否 |  |
-| `requiredRoles` | `string[]` | 否 |  |
-| `supportedScopes` | `string[]` | 否 |  |
-
-### `ReplacementReview`
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `status` | `string` | 否 |  |
-| `version` | `number` | 否 |  |
-| `reasonCodes` | `("replacement" \| "preservation" \| "visual" \| "audio" \| "other")[]` | 否 |  |
-| `comment` | `string` | 否 |  |
-| `reviewedBy` | `string \| null` | 否 |  |
-| `reviewedAt` | `string \| null` | 否 |  |
-| `history` | `ReplacementReviewEvent[]` | 否 |  |
-
-### `ReplacementReviewEvent`
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `status` | `string` | 否 |  |
-| `version` | `number` | 否 |  |
-| `reasonCodes` | `("replacement" \| "preservation" \| "visual" \| "audio" \| "other")[]` | 否 |  |
-| `comment` | `string` | 否 |  |
-| `reviewedBy` | `string \| null` | 否 |  |
-| `reviewedAt` | `string \| null` | 否 |  |
-
-### `ReplacementReviewIn`
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `status` | `"accepted" \| "rejected"` | 是 |  |
-| `expectedVersion` | `number` | 是 |  |
-| `reasonCodes` | `("replacement" \| "preservation" \| "visual" \| "audio" \| "other")[]` | 否 |  |
-| `comment` | `string` | 否 |  |
-
-### `ReplacementRunOut`
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `id` | `string` | 是 |  |
-| `channel` | `"libtv" \| "bailian" \| "bailian-prime"` | 否 |  |
-| `channelLabel` | `string` | 否 |  |
-| `kind` | `"character" \| "product" \| "scene"` | 是 |  |
-| `target` | `string` | 是 |  |
-| `status` | `string` | 是 |  |
-| `archivePath` | `string \| null` | 否 | 工作区绝对路径（排查用）；目录已被清理或换机器后为 null |
-| `createdAt` | `string` | 是 |  |
-| `startedAt` | `string \| null` | 否 | 确认提交（进入排队）的时间，未开始为 null |
-| `finishedAt` | `string \| null` | 否 | 这一轮结束的时间；未结束为 null |
-| `elapsedSec` | `number \| null` | 否 | 确认提交到结束的耗时（秒）；未完成时按到此刻计，未开始为 null |
-| `prompt` | `string` | 是 |  |
-| `promptSha256` | `string \| null` | 否 | 实际发出去那段提示词的 sha256（所有后处理之后）。档案里另外两个哈希（template/spec）哈希的是模板与输入，复核不了最终字节。加这列之前准备的任务为 null，不回填。 |
-| `textLibraryIds` | `string[]` | 否 | 本次绑定的文本资产 id（顺序即 `{{Text N}}` 编号） |
-| `textBindings` | `Record<string, unknown>[]` | 否 | 绑定的文案与版本快照（不含正文） |
-| `promptMode` | `"fixed" \| "compiled"` | 否 | fixed=封装视频模板时写死的原文，逐字提交；compiled=按素材与替换范围现编。展示层据此告诉用户「跑的就是你封装时那份提示词」。 |
-| `videoTemplateName` | `string \| null` | 否 | fixed 时出自哪条视频模板；compiled 为 null |
-| `displayTitle` | `string` | 否 | 统一展示名，列表/弹窗/任务中心共用 |
-| `taskId` | `string \| null` | 否 |  |
-| `estimatedCredits` | `number \| null` | 否 |  |
-| `credits` | `number \| null` | 否 |  |
-| `progress` | `number` | 否 |  |
-| `reviewStatus` | `string` | 否 |  |
-| `review` | `ReplacementReview \| null` | 否 |  |
-| `inputSummary` | `ReplacementInputSummary \| null` | 否 |  |
-| `lastError` | `string \| null` | 否 |  |
-| `outputUrl` | `string \| null` | 否 |  |
-| `deletedAt` | `string \| null` | 否 |  |
-| `billingMode` | `"free" \| "credits"` | 否 | free=0 积分权益队列；credits=本次任务用积分进正常队列 |
 
 ### `ResetPasswordIn`
 
@@ -5832,15 +4497,15 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `key` | `string` | 是 | 带来源前缀的唯一键，不是上游任务 ID |
-| `id` | `string` | 是 | 原始任务、生图记录或替换档案 ID |
-| `source` | `"video" \| "image" \| "replacement"` | 是 | 任务来源 |
+| `id` | `string` | 是 | 原始任务或生图记录 ID |
+| `source` | `"video" \| "image"` | 是 | 任务来源 |
 | `title` | `string` | 是 | 展示标题 |
 | `status` | `string` | 是 | 原始状态，保留各链路的精确状态 |
 | `group` | `"all" \| "queued" \| "running" \| "completed" \| "failed" \| "attention"` | 是 | 统一筛选分组；running 包含排队 |
 | `createdAt` | `string` | 是 | 创建时间 |
 | `progress` | `number` | 否 | 生成进度 |
-| `sourceName` | `string` | 否 | 替换原片名称 |
-| `outputUrl` | `string \| null` | 否 | 成片 / 成图地址，三路都已按当前存储驱动现签；没有产物时为 null |
+| `sourceName` | `string` | 否 | 来源名称（当前两路都留空） |
+| `outputUrl` | `string \| null` | 否 | 成片 / 成图地址，两路都已按当前存储驱动现签；没有产物时为 null |
 | `errorMessage` | `string \| null` | 否 | 失败或需处理原因 |
 | `detailUrl` | `string \| null` | 否 | 来源页面的深链接 |
 | `video` | `modules__task__schema__TaskOut \| null` | 否 | 通用视频任务数据；其他来源为 null |
@@ -6109,111 +4774,6 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `type` | `string` | 是 |  |
 | `input` | `unknown` | 否 |  |
 | `ctx` | `Record<string, unknown>` | 否 |  |
-
-### `VideoTemplateAttachSourceIn`
-
-把样片登记后的 source 资产绑定到模板：绑定后它才是「全部模板」里可选的卡片。
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `sourceVideoAssetId` | `string` | 是 | 原片 id（资产库里的视频） |
-
-### `VideoTemplateDraftIn`
-
-封装一条新的视频模板。
-
-`mediaOrder` 决定 mixedList 顺序（即 `{{Mixed N}}` 指向谁）：显式给出时按它拼，
-旧模式必须原片第1位、其余图片与素材包同一批；用途绑定模式不传 mediaOrder，
-服务端按 referenceBindings 生成，保留视频所在编号并完整附带辅助参考。
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `name` | `string` | 是 | 模板名称 |
-| `templateKey` | `string` | 否 | 稳定标识：同键同配置返回原模板，同键异配置409；留空自动生成。固定蓝本状态独立管理 |
-| `description` | `string` | 否 | 模板说明 |
-| `prompt` | `string` | 是 | 固定提示词原文，含 {{Mixed N}} 占位符 |
-| `sourceVideoName` | `string` | 否 | 样片文件名 |
-| `sourceVideoAssetId` | `string \| null` | 否 | 样片在资产库中的 asset id |
-| `sourceVideoPath` | `string` | 否 | 样片本地路径（可选） |
-| `sourceDurationSec` | `number` | 否 | 样片真实时长，用于提示与档位说明 |
-| `aspectRatio` | `string` | 否 | 输出画幅 |
-| `packId` | `string \| null` | 否 | 关联的已发布替换素材包；**可省略**——用途绑定模式下省略即「只声明槽位」，调用时按用途从用户自己选的包里取图 |
-| `defaultKind` | `"character" \| "product" \| "scene"` | 否 | 选中这张原片卡片时，替换配置默认切到的替换类型 |
-| `mediaOrder` | `VideoTemplateMedia[]` | 否 | 留空则由素材包顺序生成 |
-| `generation` | `Record<string, unknown>` | 否 | 生成参数，覆盖默认值 |
-| `rules` | `Record<string, unknown>` | 否 | 封装规则；referenceBindings 将连续 Mixed 编号绑定到 source_video/图片用途，服务端排列声明槽位并完整附带当前包其余图片，无需逐图引用 |
-| `coverUrl` | `string` | 否 | 封面地址 |
-| `pinned` | `boolean` | 否 | 是否设为固定蓝本（全库仅一个） |
-
-### `VideoTemplateListOut`
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `items` | `VideoTemplateOut[]` | 否 |  |
-| `total` | `number` | 否 |  |
-| `pinnedId` | `string \| null` | 否 | 当前固定蓝本的 id |
-
-### `VideoTemplateMedia`
-
-mixedList 里的一项；下标 +1 就是 {{Mixed N}} 编号。
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `token` | `string` | 是 | 形如 {{Mixed 3}}，与所在下标严格对应 |
-| `role` | `string` | 否 | source_video / front / multiview / detail 等用途 |
-| `type` | `string` | 否 | video / image / audio |
-| `assetId` | `string \| null` | 否 | 素材库 asset id |
-| `name` | `string` | 否 | 素材显示名 |
-| `file` | `string` | 否 | 本地文件相对路径（可选） |
-| `inPrompt` | `boolean` | 否 | 是否被提示词显式引用 |
-
-### `VideoTemplateOut`
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `id` | `string` | 是 |  |
-| `templateKey` | `string` | 是 |  |
-| `name` | `string` | 是 |  |
-| `description` | `string` | 是 |  |
-| `prompt` | `string` | 是 |  |
-| `promptSha256` | `string` | 是 | 提示词 sha256，防止文字被悄悄改掉 |
-| `sourceVideoName` | `string` | 是 |  |
-| `sourceVideoAssetId` | `string \| null` | 否 |  |
-| `sourceVideoPath` | `string` | 是 |  |
-| `sourceDurationSec` | `number` | 是 |  |
-| `aspectRatio` | `string` | 是 |  |
-| `packId` | `string \| null` | 否 |  |
-| `packName` | `string` | 否 |  |
-| `packVersion` | `number` | 否 |  |
-| `defaultKind` | `"character" \| "product" \| "scene"` | 否 |  |
-| `mediaOrder` | `VideoTemplateMedia[]` | 否 |  |
-| `generation` | `Record<string, unknown>` | 否 |  |
-| `rules` | `Record<string, unknown>` | 否 |  |
-| `coverUrl` | `string` | 否 |  |
-| `pinned` | `boolean` | 否 |  |
-| `createdAt` | `string` | 是 |  |
-| `updatedAt` | `string` | 是 |  |
-
-### `VideoTemplatePackReferenceIn`
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `token` | `string` | 是 |  |
-| `packId` | `string` | 是 |  |
-| `packVersion` | `number` | 是 |  |
-| `assetId` | `string` | 是 |  |
-
-### `VideoTemplatePromptIn`
-
-原地保存固定提示词及跨封装图片引用，不改原片、档位或默认素材包。
-
-既有用途引用按新原文重算；跨封装引用锁定包与版本，图片追加到基础媒体之后。
-不再点名的图片仍可作为辅助输入；references 省略时保留，显式空数组清除固定引用。
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `prompt` | `string` | 是 | 新的固定提示词原文，含 {{Mixed N}} 占位符 |
-| `references` | `VideoTemplatePackReferenceIn[] \| null` | 否 | 跨封装固定图片引用；省略保留原绑定，空数组清除 |
 
 ### `core__response__ApiResponse_ModelListOut___1`
 

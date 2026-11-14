@@ -130,12 +130,10 @@ BUILTIN_ROLES: tuple[BuiltinRole, ...] = (
             "library:delete",
             "library:share",
             "image:*",
-            "template:read",
-            # 模板替换的「提交生成」：editor 本来就持有 task:* / image:*，
-            # 替换只是把同一件事（产内容）换个入口。少了这一条，非超管点提交
-            # 会拿到 403——功能上线即不可用，而超管自测发现不了。
-            "template:use",
-            "template:review",
+            # 模板库填表要读已发布模板并调 `compile`（两者都要 `template_pack:read`）。
+            # 少了这一条，非超管进模板库会拿到 403——而超管自测发现不了。
+            # 「封装」（create / publish）不在编辑角色里：那是素材专员的活。
+            "template_pack:read",
             "storyboard:read",
             "shot:read",
         ),
@@ -150,7 +148,7 @@ BUILTIN_ROLES: tuple[BuiltinRole, ...] = (
             "task:read",
             "library:read",
             "image:read",
-            "template:read",
+            "template_pack:read",
             "storyboard:read",
             "shot:read",
         ),
@@ -166,9 +164,9 @@ BUILTIN_ROLES: tuple[BuiltinRole, ...] = (
             "library:update",
             "library:delete",
             "library:share",
-            "template:read",
-            "template:pack:manage",
-            "template:pack:publish",
+            "template_pack:read",
+            "template_pack:create",
+            "template_pack:publish",
         ),
     ),
 )

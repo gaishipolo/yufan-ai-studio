@@ -111,7 +111,7 @@ def run_node(
     shutil.copyfile(RUNTIME, code)
     if stage == "submit":
         # 最终授权校验（原片仍可用、封装仍已发布）已移到业务层
-        # （`modules/template` 的提交入口）在调用执行器之前完成：
+        # （`POST /tasks` 的受理与物化）在调用执行器之前完成：
         # 那里能查数据库，而这里只有文件系统。凡能走到这一步的调用都已被授权，
         # 这里只留一份「谁批准了这次提交」的凭据给事后排查。
         storage.write(run / "records/call-authorization.json", {"authorized": True})

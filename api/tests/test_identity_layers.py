@@ -99,8 +99,8 @@ def test_effective_permissions_are_the_union_of_all_four_layers() -> None:
     async def check(service: IdentityService) -> None:
         uid = await _viewer_id(service)
         group = await service.layers.create_group("并集测试组")
-        await service.layers.set_grants(SCOPE_GROUP, group.id, ["template:use"])
-        await service.layers.set_grants(SCOPE_USER, uid, ["template:review"])
+        await service.layers.set_grants(SCOPE_GROUP, group.id, ["template_pack:create"])
+        await service.layers.set_grants(SCOPE_USER, uid, ["template_pack:publish"])
         await service.layers.set_members(group.id, [uid])
         await service.session.commit()
 
@@ -108,7 +108,7 @@ def test_effective_permissions_are_the_union_of_all_four_layers() -> None:
         assert identity is not None
         # 角色层（viewer 的 7 条） + 团队层（同集合） + 小组 + 个人
         assert set(TEAM_BASE_PERMISSIONS) <= identity.permissions
-        assert {"template:use", "template:review"} <= identity.permissions
+        assert {"template_pack:create", "template_pack:publish"} <= identity.permissions
         # 既不能因为小组授权丢掉角色权限，也不能因为个人授权丢掉小组权限
         assert "library:read" in identity.permissions
         assert not identity.is_superuser
@@ -136,21 +136,21 @@ def test_multiple_groups_union_and_leaving_drops_only_that_group() -> None:
         uid = await _viewer_id(service)
         first = await service.layers.create_group("甲组")
         second = await service.layers.create_group("乙组")
-        await service.layers.set_grants(SCOPE_GROUP, first.id, ["template:use"])
-        await service.layers.set_grants(SCOPE_GROUP, second.id, ["template:review"])
+        await service.layers.set_grants(SCOPE_GROUP, first.id, ["template_pack:create"])
+        await service.layers.set_grants(SCOPE_GROUP, second.id, ["template_pack:publish"])
         await service.layers.set_members(first.id, [uid])
         await service.layers.set_members(second.id, [uid])
         await service.session.commit()
 
         layers = await service.layers.layer_codes(uid)
         assert layers.group_ids and len(layers.group_ids) == 2
-        assert set(layers.all_codes()) >= {"template:use", "template:review"}
+        assert set(layers.all_codes()) >= {"template_pack:create", "template_pack:publish"}
 
         await service.layers.set_members(first.id, [])
         await service.session.commit()
         after = await service.layers.layer_codes(uid)
-        assert "template:use" not in after.all_codes()
-        assert "template:review" in after.all_codes()
+        assert "template_pack:create" not in after.all_codes()
+        assert "template_pack:publish" in after.all_codes()
 
     asyncio.run(_with_service(check))
 
@@ -186,19 +186,19 @@ def test_layer_codes_keep_the_source_of_each_grant() -> None:
     async def check(service: IdentityService) -> None:
         uid = await _viewer_id(service)
         group = await service.layers.create_group("来源测试组")
-        await service.layers.set_grants(SCOPE_GROUP, group.id, ["template:use"])
-        await service.layers.set_grants(SCOPE_USER, uid, ["template:review"])
+        await service.layers.set_grants(SCOPE_GROUP, group.id, ["template_pack:create"])
+        await service.layers.set_grants(SCOPE_USER, uid, ["template_pack:publish"])
         await service.layers.set_members(group.id, [uid])
         await service.session.commit()
 
         layers = await service.layers.layer_codes(uid)
         assert isinstance(layers, LayerCodes)
         assert set(layers.team) == set(TEAM_BASE_PERMISSIONS)
-        assert layers.groups == {group.id: ("template:use",)}
-        assert layers.personal == ("template:review",)
+        assert layers.groups == {group.id: ("template_pack:create",)}
+        assert layers.personal == ("template_pack:publish",)
         assert set(layers.all_codes()) == set(layers.team) | {
-            "template:use",
-            "template:review",
+            "template_pack:create",
+            "template_pack:publish",
         }
 
     asyncio.run(_with_service(check))
@@ -208,7 +208,7 @@ def test_delete_group_clears_members_and_grants() -> None:
     async def check(service: IdentityService) -> None:
         uid = await _viewer_id(service)
         group = await service.layers.create_group("待删除组")
-        await service.layers.set_grants(SCOPE_GROUP, group.id, ["template:use"])
+        await service.layers.set_grants(SCOPE_GROUP, group.id, ["template_pack:create"])
         await service.layers.set_members(group.id, [uid])
         await service.session.commit()
 
@@ -217,7 +217,7 @@ def test_delete_group_clears_members_and_grants() -> None:
         assert await service.layers.get_group(group.id) is None
         assert (await service.layers.members_for([group.id])).get(group.id) == []
         assert await service.layers.grants(SCOPE_GROUP, group.id) == []
-        assert "template:use" not in (await service.layers.layer_codes(uid)).all_codes()
+        assert "template_pack:create" not in (await service.layers.layer_codes(uid)).all_codes()
         assert await service.layers.orphan_grants(set()) == []
 
         assert isinstance(service.layers, PermissionLayerRepository)

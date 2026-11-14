@@ -83,7 +83,6 @@ export const routes: MockRoute[] = [
     method: 'GET',
     pattern: /^\/tasks\/feed$/,
     handler: (ctx) => {
-      // 演示库没有替换档案；明确提示，不把演示数据伪装成真实归档。
       db.tick();
       const source = String(ctx.params.source ?? 'all');
       const status = String(ctx.params.status ?? 'all');
@@ -92,13 +91,13 @@ export const routes: MockRoute[] = [
       const onlyAuthorized = String(ctx.params.onlyAuthorized) === 'true';
 
       const data = listTasks({...ctx, params: {...ctx.params, status: 'all', page: 1, pageSize: Number.MAX_SAFE_INTEGER}}, Number.MAX_SAFE_INTEGER);
-      const videoItems: TaskFeedItem[] = source === 'image' || source === 'replacement' ? [] : data.items.map(video => ({
+      const videoItems: TaskFeedItem[] = source === 'image' ? [] : data.items.map(video => ({
         key: `video:${video.id}`, id: video.id, source: 'video', title: video.title,
         status: video.status, group: video.status === 'queued' ? 'running' : video.status,
         createdAt: video.createdAt, progress: video.progress, sourceName: '', video,
       }));
 
-      const imageItems: TaskFeedItem[] = source === 'video' || source === 'replacement' ? [] : db.imageJobs
+      const imageItems: TaskFeedItem[] = source === 'video' ? [] : db.imageJobs
         .filter(job => !keyword || [job.name, job.prompt, job.model, job.id].some(value => String(value ?? '').toLowerCase().includes(keyword)))
         .filter(job => !onlyAuthorized || Boolean(job.outputUrl))
         .map((job) => {
@@ -139,8 +138,7 @@ export const routes: MockRoute[] = [
       return {
         items: filtered.slice((page - 1) * pageSize, page * pageSize), total: filtered.length,
         page, pageSize, stats, canReadAll: true,
-        warnings: source === 'replacement' || source === 'all'
-          ? ['演示模式不读取真实替换档案，请连接后端查看替换任务。'] : [],
+        warnings: [],
       };
     },
   },

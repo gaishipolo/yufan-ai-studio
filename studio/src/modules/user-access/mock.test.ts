@@ -339,7 +339,7 @@ describe('mock adapter · 团队 / 小组 / 个人三层授权', () => {
     expect(detail.team).toContain('task:read');
     expect(detail.groups.map((group) => group.name)).toContain('内容组');
     expect(detail.personal).toContain('library:update');
-    expect(detail.roles).toContain('template:read');
+    expect(detail.roles).toContain('template_pack:read');
     // 并集：个人层的码必须出现在 effective 里，而不是只躺在 personal
     expect(detail.effective).toContain('library:update');
     expect(detail.effective).toContain('task:read');
@@ -400,7 +400,7 @@ describe('mock adapter · 团队 / 小组 / 个人三层授权', () => {
 
     // 复原
     await call('put', '/identity/groups/g_content/permissions', {
-      data: { permissions: ['library:create', 'template:read'] },
+      data: { permissions: ['library:create', 'template_pack:read'] },
     });
     await call('put', '/identity/users/u_002/permissions', { data: { permissions: ['library:update'] } });
   });

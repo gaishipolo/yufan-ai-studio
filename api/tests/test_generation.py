@@ -932,31 +932,29 @@ def test_history_pipelines_declare_strict_model() -> None:
     from modules.image.pipeline import ImageGenerationPipeline
     from modules.model_driver.pipeline import ModelDriverPipeline
     from modules.task.pipeline import VideoGenerationPipeline
-    from modules.template.pipeline import ReplacementPipeline
 
     for pipeline in (
         ImageGenerationPipeline,
         VideoGenerationPipeline,
         ModelDriverPipeline,
-        ReplacementPipeline,
     ):
         assert getattr(pipeline, "strict_model", False) is True, (
             f"{pipeline.__name__} 必须在历史链路上关掉「单供应商兜底」"
         )
 
 
-def test_only_replacement_pipeline_keeps_paid_task_running_when_model_is_gone() -> None:
-    """「模型没了就判失败」不是所有流水线都想要的。
+def test_every_pipeline_fails_fast_when_model_is_gone() -> None:
+    """模型没了就当场判失败，这不是所有流水线都天然想要的，所以逐条断言。
 
-    替换链跑的是**已经付费**的任务（`task_id` 在供应商侧），渠道停用只说明
-    「我们联系不上供应商」。判失败会诱导用户去重试 → 重复计费。
+    **替换链下线之后没有例外了**（2026-11-14 P3）：它曾经是唯一一个
+    `fail_on_model_gone=False` 的流水线（跑的是已在供应商侧付费的任务，判失败会
+    诱导用户重试 → 重复计费）。现在替换走普通 `POST /tasks`，与视频链同一条路，
+    计费纪律也一致。
     """
     from modules.image.pipeline import ImageGenerationPipeline
     from modules.model_driver.pipeline import ModelDriverPipeline
     from modules.task.pipeline import VideoGenerationPipeline
-    from modules.template.pipeline import ReplacementPipeline
 
-    assert ReplacementPipeline.fail_on_model_gone is False
     for pipeline in (
         ImageGenerationPipeline,
         VideoGenerationPipeline,

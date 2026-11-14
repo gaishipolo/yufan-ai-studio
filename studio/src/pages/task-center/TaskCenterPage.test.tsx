@@ -69,40 +69,27 @@ beforeEach(() => {
 });
 
 describe('任务中心页面', () => {
-  it('统一展示通用任务与替换任务，档案链接包含原始 run id', () => {
-    mock.list.data = listResult({items: [...listResult().items, {
-      key: 'replacement:run1', id: 'run1', source: 'replacement', title: '原片 · 人物替换 · 小雨',
-      status: 'waiting_free', group: 'attention', progress: 0, sourceName: '原片',
-      createdAt: task.createdAt, detailUrl: '/templates?kind=character&run=run1',
-    }], total: 2});
-    render(<App permissions={['task:read', 'template:read']} />);
-    expect(screen.getByRole('button', {name: '查看任务：测试任务'})).toBeVisible();
-    expect(screen.getByText('报价非零 · 等待免费')).toBeVisible();
-    expect(screen.getByRole('link', {name: '查看替换档案 →'})).toHaveAttribute('href', '/templates?kind=character&run=run1');
-    expect(screen.getByRole('link', {name: /创建替换任务/})).toHaveAttribute('href', '/templates');
-  });
-
   it('来源与待处理筛选传给聚合接口', () => {
-    render(<App permissions={['task:read', 'template:read']} />);
-    fireEvent.change(screen.getByRole('combobox', {name: '任务来源'}), {target: {value: 'replacement'}});
-    expect(mock.params.source).toBe('replacement');
+    render(<App permissions={['task:read', 'image:read']} />);
+    fireEvent.change(screen.getByRole('combobox', {name: '任务来源'}), {target: {value: 'image'}});
+    expect(mock.params.source).toBe('image');
     fireEvent.click(screen.getByRole('button', {name: /待处理/}));
     expect(mock.params.status).toBe('attention');
     expect(mock.params.page).toBe(1);
   });
 
-  it('没有 template:read / image:read 时不提供对应来源选项或创建入口', () => {
+  it('没有 image:read 时不提供生图来源与入口', () => {
     render(<App permissions={['task:read']} />);
-    expect(screen.queryByRole('option', {name: '模板替换'})).not.toBeInTheDocument();
     expect(screen.queryByRole('option', {name: '生图'})).not.toBeInTheDocument();
-    expect(screen.queryByRole('link', {name: /创建替换任务/})).not.toBeInTheDocument();
     expect(screen.queryByRole('link', {name: /生图工作台/})).not.toBeInTheDocument();
+    // 模板库不需要 task:read，所以「从模板生成」始终在
+    expect(screen.getByRole('link', {name: /从模板生成/})).toHaveAttribute('href', '/templates/library');
   });
 
-  it('替换归档盘离线时明确显示统计不完整，仍展示通用任务', () => {
-    mock.list.data = listResult({warnings: ['替换任务暂时无法读取，当前统计不含替换任务。']});
+  it('某个来源读不出来时显示告警，但不挡住其他来源', () => {
+    mock.list.data = listResult({warnings: ['生图任务暂时无法读取，稍后刷新。']});
     render(<App />);
-    expect(screen.getByRole('alert')).toHaveTextContent('当前统计不含替换任务');
+    expect(screen.getByRole('alert')).toHaveTextContent('生图任务暂时无法读取');
     expect(screen.getByRole('button', {name: '查看任务：测试任务'})).toBeVisible();
   });
 

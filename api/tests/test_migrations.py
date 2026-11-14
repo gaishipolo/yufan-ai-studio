@@ -269,7 +269,14 @@ def test_inflight_jobs_survive_the_lease_token_migration(
     )
 
 
-def test_call_chain_upgrade_preserves_paid_runs_and_queued_jobs(tmp_path, monkeypatch) -> None:
+def test_call_chain_upgrade_preserves_queued_jobs(tmp_path, monkeypatch) -> None:
+    """跨多个 revision 的升级不能弄丢在途队列。
+
+    **`replacement_runs` 那一半已经不需要守了**（2026-11-14 P3）：`b8e4c1f90d27`
+    会把这张表连同替换链一起删掉，所以「升级后已付费任务还在」从「必须成立」
+    变成了「明确不做」。仍在守的是另一件事：队列与在途作业跨 revision 升级后
+    必须原样可继续（`queued_jobs` 是执行层的命脉，丢了就是静默停摆）。
+    """
     import sqlite3
 
     from core.config import reload_settings
@@ -285,13 +292,6 @@ def test_call_chain_upgrade_preserves_paid_runs_and_queued_jobs(tmp_path, monkey
         conn = sqlite3.connect(db_file)
         try:
             conn.execute(
-                "INSERT INTO replacement_runs (id,kind,target,owner_id,status,fingerprint,"
-                "prompt,duration,progress_percent,billing_mode,submit_attempts,retry_count,"
-                "created_at,updated_at,task_id) VALUES "
-                "('paid-run','product','product','owner','running','fingerprint','prompt',"
-                "6,15,'credits',0,0,'2026-11-11','2026-11-11','accepted-upstream')"
-            )
-            conn.execute(
                 "INSERT INTO queued_jobs (id,name,payload,status,run_at,attempts,max_attempts,"
                 "trace_id,last_error,created_at,updated_at) VALUES "
                 "('poll-job','generation.poll','{}','pending','2026-11-11',0,1,"
@@ -303,9 +303,6 @@ def test_call_chain_upgrade_preserves_paid_runs_and_queued_jobs(tmp_path, monkey
         command.upgrade(config, "head")
         conn = sqlite3.connect(db_file)
         try:
-            assert conn.execute(
-                "SELECT task_id, state_version FROM replacement_runs WHERE id='paid-run'"
-            ).fetchone() == ("accepted-upstream", 1)
             assert conn.execute(
                 "SELECT status, next_job FROM queued_jobs WHERE id='poll-job'"
             ).fetchone() == ("pending", None)

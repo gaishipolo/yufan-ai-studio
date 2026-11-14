@@ -5,7 +5,7 @@
 子进程以 `-m modules.model_driver.libtv.process` 启动，`runtime/vendor`
 按模块自身位置定位。
 
-模板库（`modules/template`）不许直接 import 业务模块，所以它经
+调用方（`modules/task` 的通用链）不许直接 import 业务模块，所以它经
 `core/ports/model_generation` 拿 `execute_stage` / `VENDOR` / `RUN_LOCK`；
 本文件是唯一直接调执行器的地方。
 """

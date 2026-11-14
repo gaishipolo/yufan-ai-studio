@@ -5,7 +5,7 @@ import { useSpecMutations, useSpecs } from '@/entities/template-spec/api/spec.qu
 import type { SpecSlotIn, TemplateSpecIn, TemplateSpecOut } from '@/shared/api/schema';
 import { Button, Chip, EmptyState, FormField, Select, TextInput } from '@/shared/ui';
 import { cn } from '@/shared/lib/cn';
-import { AssetPicker, type PickedAsset } from '@/features/template-manifests/AssetPicker';
+import { AssetPicker, type PickedAsset } from '@/features/template-specs/AssetPicker';
 import {
   SLOT_TYPE_LABELS,
   blankSlot,

@@ -70,8 +70,7 @@ const CONTENT_PERMISSIONS = [
   'task:create',
   'task:read',
   'task:update',
-  'template:read',
-  'template:review',
+  'template_pack:read',
   'library:create',
   'library:read',
 ];
@@ -121,7 +120,7 @@ const accounts: MockAccount[] = [
       'shot:read',
       'storyboard:read',
       'task:read',
-      'template:read',
+      'template_pack:read',
     ],
   },
 ];

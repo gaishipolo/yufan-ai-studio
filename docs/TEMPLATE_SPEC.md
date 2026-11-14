@@ -354,7 +354,7 @@ override 里写 `{{Mixed N}}` 也 400（编号是派生的，写死会在少填�
 |---|---|---|
 | **P1 定表** | `core/` 加 `InputSlot`/`TemplateSpec` 词表与编译纯函数；三张表（迁移 `d4a9f1c73b20`）；六个接口（含 `compile`）；封装页改成 §9 单页 | `compile` 输出与旧模板的 `mediaOrder` **逐项等价**（`tests/test_template_spec_equivalence.py`，已用"注入重排"验过会红）；预检挡住所有非法组合（§12）；**不写 `video_templates`、也不假装能读**（见下方"接读为什么不在 P1"） |
 | **P2 填表**（已完成） | 模板库填表页 `/templates/library`（两栏：左选模板 / 右填素材；`source=pack` 走封装选择器；`promptOverride` 只在改动时发）；`compile → 摊平 → /tasks` 走通 | 五种形状各跑一次（真实素材，每条 `POST /tasks` 201 后删掉）：纯提示词（0 槽）/ 多图（2 张）/ 图+视频 / 图+音频附件（`attachment` 不占编号）/ 图+文本（正文进 `textLibraryIds`）；另加"选一个资产库封装填一个槽位"（更早已验） |
-| **P3 接读 + 迁移 + 删表 + capability 化**（迁移与能力声明已落地，见 §11.0 / §11.2） | 替换链的 `template-runtime` 端口改读 spec 版本（旧 `video_templates` 只读）；~~旧数据迁移~~ ✅；删 `video_templates` / `template_packs*`；替换能力作为 task 的一个 capability；`supportedScopes`/`wardrobeMode` → `spec.attributes`；成片复核 → 任务中心；`modules/template` 的编排与物化下线。细则见 §11.1 | §11.1 的三条判据全绿；替换业务与历史档案不中断；`prepare` 用 spec 驱动的模板跑通；迁移出的 spec 与旧模板 `mediaOrder` 逐项等价 |
+| **P3 接读 + 迁移 + 删表 + capability 化**（已全部落地，见 §11.0 / §11.2 / §11.3；「接读」按 §11.3 的结论改为**直接下线**） | 替换链的 `template-runtime` 端口改读 spec 版本（旧 `video_templates` 只读）；~~旧数据迁移~~ ✅；删 `video_templates` / `template_packs*`；替换能力作为 task 的一个 capability；`supportedScopes`/`wardrobeMode` → `spec.attributes`；成片复核 → 任务中心；`modules/template` 的编排与物化下线。细则见 §11.1 | §11.1 的三条判据全绿；替换业务与历史档案不中断；`prepare` 用 spec 驱动的模板跑通；迁移出的 spec 与旧模板 `mediaOrder` 逐项等价 |
 
 #### 接读为什么不在 P1（2026-11-14 实现时确认）
 
@@ -436,6 +436,41 @@ P3 补上 capability 判据后，迁移只需要让这份守卫继续绿，就�
 **实测（dev 库 3 条旧模板）**：迁移 → 发布 → `compile`，三条的提示词与素材顺序与旧模板
 **逐字/逐项相同**（旧 `{{Mixed N}}` 与新派生编号完全对齐）。重跑一次全部跳过。
 
+### 11.3 P3 收尾已落地：替换链整体下线（2026-11-14）
+
+「接读」没有做，改成了**直接下线** —— 接读的唯一目的是让旧工作台继续活着读新表，
+而终局（§11.1）本来就不留独立工作台。先接读再删表等于给一条要拆的桥加固。
+
+**一次删掉的（提交 `b8e4c1f90d27` 的迁移 + 同批代码）**
+
+| 删掉的东西 | 理由 |
+|---|---|
+| `modules/template` 整个模块（5664 行：执行链 / 物化 / 归档工作区 / 发布回执 / 运维命令） | 替换不再是平行链路；物化只由 `generic_inputs.materialize` 做 |
+| `video_templates`、`template_packs` / `_references` / `_versions` | 模板只存在于 `template_specs`；素材包语义归资产库封装 |
+| `template_manifests` 四表 + `/template-manifests` 前后端 | 它是 C1 的过渡态，产物是 `video_templates`；发布快照已经是唯一事实 |
+| `replacement_runs` / `_run_inputs` / `_reviews` | **用户拍板直接删**：形状与 `tasks` 不对应，迁不成新记录；留只读视图反而让人以为旧链路还活着 |
+| `core.feed`、`core.ports.template_runtime`、`core.ports.template_catalog`、`core/template_pack_view`、`core/template_rules` | 存在的理由都是「编写侧与运行侧是两套表」；现在只有一套 |
+| 权限码 `template:read/use/review`、`template:pack:manage/publish` | 随接口消失。内置角色改用 `template_pack:read`（填表）与 `template_pack:create/publish`（封装） |
+| 任务中心第三源（`source=replacement`） | 替换任务就是 `tasks` 里的一行，第一路已经能查到 |
+| 前端「替换工作台」`/templates` 与「模板封装」`/templates/manifests` | 只剩 `/templates/library`（填表）与 `/templates/specs`（封装） |
+
+**留下的守卫都还在，且换成不依赖旧表的形式**
+
+- 编号等价性（`test_template_spec_equivalence.py`）：旧 `media_order` 的语义冻结成常量，
+  继续钉「编号 → 素材」逐项相等；
+- `test_task_feed.py` 改成两路（视频 / 生图）；
+- `test_user_retry_exits.py` 去掉 `template_replacement` 这一 kind —— 替换走 `/tasks`，
+  自救出口与视频链同一条；
+- 「模型下线当场判失败」不再有例外（`test_generation.py`），替换链曾是唯一
+  `fail_on_model_gone=False` 的那条。
+
+**判据复核**（§11.1 的三条）：①②③ 都成立 —— 删掉旧表后替换业务由 `POST /tasks` +
+`replacement` 模型承载；`modules/template` 不存在了，字节只经 `generic_inputs`；
+`/tasks` 入参一字未改。
+
+**数据处置**：开发库 49 条历史调用档案随表删除（升级前 `pg_dump` 备份在
+`api/var/db-backup-before-p3-*.dump`）。这是明确接受的代价，不是遗漏。
+
 ### 11.1 P3 终局：统一到 task（2026-11-14 拍板）
 
 **不留独立替换工作台。** 替换不再是一条平行链路，而是"某个模型 + 某组槽位"的普通生成：
@@ -498,5 +533,8 @@ P3 补上 capability 判据后，迁移只需要让这份守卫继续绿，就�
    `test_execution_prompt_limit_matches_task_schema` 钉住 —— 它直接读 `CreateTaskIn`
    的 `MaxLen`，改哪边都会先红。
    等第二个执行端点进来，这个数应随**该能力**声明（届时按模型取），而不是继续全局一个。
-6. **历史替换档案的归宿**（P3 前必须定）：`replacement_runs` 是只读归档、还是整表导出成对象存储后删表？
-   它是"重跑与复核的唯一依据"，因此至少要保住只读可查；具体形态等 P3 开工时拍。
+6. **历史替换档案的归宿** —— **已定（2026-11-14，用户拍板「直接删」）**：`replacement_runs`
+   / `_run_inputs` / `_reviews` 随替换链一起删表，不导出、不留只读视图。理由：那批行记的是
+   旧链路的中间态（`prompt_sha256`、归档工作区指针、渠道快照），形状与 `tasks` 不对应，
+   迁不成新记录；留一份只读视图反而让人以为旧链路还活着。开发库 49 行历史记录随之消失，
+   升级前的 `pg_dump` 备份是唯一回溯途径。见 §11.3。

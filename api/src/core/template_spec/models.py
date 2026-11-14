@@ -25,8 +25,8 @@ RefMode = Literal["mixed", "attachment"]
 
 SLOT_TYPES: tuple[SlotType, ...] = ("image", "video", "audio", "text")
 
-#: `mixed` 槽位展开后的总张数上限。与 `core.template_rules.MAX_REFERENCE_IMAGES`
-#: 同口径：执行器侧的参考素材上限，超了必然 400，不如在编译期就说清。
+#: `mixed` 槽位展开后的总张数上限。执行器侧的参考素材上限，超了必然 400，
+#: 不如在编译期就说清。
 MAX_SLOT_REFS = 10
 #: 单个版本最多几个槽位。防"把整本画册塞进一个模板"。
 MAX_SLOTS = 20

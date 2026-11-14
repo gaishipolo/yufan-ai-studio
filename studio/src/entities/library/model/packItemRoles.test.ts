@@ -7,19 +7,20 @@ import {
 } from './packItemRoles';
 
 /**
- * 这份中性名是「v2 封装没有 kind」的补丁，不是第二份词表：key 必须与模板词表
- * 完全一致。少一个 → 封装页选不出那个用途（B 端 prepare 会报「没有声明可用途」）；
- * 多一个 → 用户能选一个服务端不认的用途（同样是 400，但错在页面）。
+ * 这份中性名是「资产库封装没有 kind」的补丁，服务端只把它当自由字符串
+ * （`role` 上限 40 字、不校验词表），所以这里守的是「不重不漏」与可读回退：
+ * 少一个 key → 下拉里选不到那个用途；出现未登记的 key → 卡片上显示原始英文。
  */
-describe('v2 封装成员用途的中性名', () => {
-  it('模板词表里出现的每个用途都有中性名', () => {
+describe('资产库封装成员用途的中性名', () => {
+  it('每个 key 都有中性名', () => {
     const missing = everyPackRoleKey().filter((role) => !(role in PACK_ITEM_ROLE_LABELS));
     expect(missing).toEqual([]);
   });
 
-  it('不出现模板词表里没有的用途', () => {
+  it('下拉选项与词表同源，不多不少', () => {
     const known = new Set(everyPackRoleKey());
     expect(PACK_ITEM_ROLES.filter((role) => !known.has(role))).toEqual([]);
+    expect(PACK_ITEM_ROLES).toHaveLength(known.size);
   });
 
   it('同一个 key 在不同 kind 下是同一个选项（不重复出条目）', () => {
