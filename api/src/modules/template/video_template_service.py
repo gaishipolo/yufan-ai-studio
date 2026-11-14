@@ -63,8 +63,6 @@ __all__ = [
     "get_out",
     "list_out",
     "pin",
-    "prefetch_names",
-    "template_name",
     "update_prompt",
 ]
 
@@ -692,35 +690,3 @@ async def attach_source(
     await repo.save()
     await session.commit()
     return to_out(row)
-
-
-# --------------------------------------------------------------------------- #
-# 老档案补模板名
-# --------------------------------------------------------------------------- #
-#: `{template_id: name}`。只在 `prefetch_names()` 里写，`template_name()` 只读。
-#: 名字没有改名接口（`update_prompt` 只动提示词），所以缓存不需要失效逻辑；
-#: 真加了改名接口，这里必须一起改，否则档案列表会一直显示旧名字。
-_NAME_CACHE: dict[str, str] = {}
-
-
-async def prefetch_names(session: AsyncSession, template_ids: list[str]) -> None:
-    """批量预热模板名缓存，给一次列表渲染里的 N 条老档案共用。
-
-    **为什么要预热而不是逐个查**：`_run_out` 是同步的出参投影，一个列表页里
-    每条老档案都要反查一次名字。让投影变 async 会把整条列表链路改成 async 传染；
-    在列表入口预热一次、投影只读缓存，两边都不用将就。
-    """
-    wanted = [item for item in dict.fromkeys(template_ids) if item and item not in _NAME_CACHE]
-    if not wanted:
-        return
-    _NAME_CACHE.update(await VideoTemplateRepository(session).names(wanted))
-
-
-def template_name(template_id: str) -> str | None:
-    """缓存里没有就返回 `None`——展示层自己降级，别让一条老档案打崩整页。"""
-    return _NAME_CACHE.get(template_id)
-
-
-def reset_name_cache() -> None:
-    """仅测试用。"""
-    _NAME_CACHE.clear()

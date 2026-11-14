@@ -135,6 +135,7 @@
 | `core/ports/accounts.py` | 账号状态注入口（从 `api/` 下移）：低层（`generation`）也能问「发起人还在不在」，三态语义，未注册按放行。 |
 | `core/ports/generation_feed.py` | 任务中心的**生成来源**注入口（`Port(multi=False)` + 注册 / 复位 / 探测三件套）：来源方自带筛选、统计、分页候选与产物现签，聚合方不认识它的表。与 `core/feed.py`（老替换档案按 owner 全量返回）刻意分开；未注册返回空页是合法状态，另外两路照常显示。 |
 | `core/ports/template_catalog.py` | 模板封装的**对外只读目录**注入口：只列 / 取已发布的卡片与素材包快照（core 层不可变 dataclass），没有生成动作、没有素材判定。与旧 `core/ports/template_pack.py`（fixed/filtered 槽位，暴露 `verify_picks`）刻意不合并；未注册返回空结果是合法状态。 |
+| `core/ports/template_runtime.py` | 替换执行链读**封装运行投影**的注入口：素材包头部 / 冻结发布版本 / 视频模板快照 / 模板名批量反查 / 固定引用解析。与 `template_catalog` 读的是两套数据（编写侧 manifest vs 运行侧投影），刻意分开；未注册 **fail-closed**（抛 `RegistryError`），因为执行链拿不到冻结版本就准备不了任务，退化成「封装不存在」的 400 会把装配故障说成用户选错包。 |
 | `core/scheduler.py` | 周期任务扩展点：`@periodic("模块.动作", every=秒)` 注册，进程内单调度器；模块自己说「多久问一次」，框架不认识任何具体任务。 |
 | `core/response.py` | 统一响应包装 `{code,message,data}` 与分页原语 `Page`。 |
 | `core/schema.py` | Pydantic 基座：统一 camelCase 契约，与前端 TypeScript 类型一一对应。 |

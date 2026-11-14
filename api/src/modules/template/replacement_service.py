@@ -21,6 +21,7 @@ import hashlib
 import re
 import shutil
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from pathlib import Path
 from time import perf_counter
 from typing import TYPE_CHECKING, Any, NamedTuple, TypeAlias
@@ -54,6 +55,7 @@ from core.ports.library_lookup import (
     LibraryAssetState,
     get_library_lookup,
 )
+from core.ports.template_runtime import require_template_runtime
 from core.serving import Served
 from core.template_rules.options import (
     is_scene_text,
@@ -65,14 +67,13 @@ from core.template_rules.roles import PACK_ROLES, PACK_SCOPES, usage_for
 from db.base import utcnow
 from infra.archive import ArchiveStorage, get_archive_storage
 from infra.media_probe import encode_text
-from modules.template import video_template_service
 from modules.template.asset_source import resolve_assets
 from modules.template.authorization import authorization_gap
 from modules.template.channels import channel_catalog, channel_label, require_channel, run_channel
 from modules.template.library_media import StagedMedia, discard_staged, stage_library_refs
 from modules.template.models import ReplacementReview as ReviewRow
-from modules.template.models import ReplacementRun, TemplatePackVersion
-from modules.template.repository import PackRepository, RunInputRow, RunRepository
+from modules.template.models import ReplacementRun
+from modules.template.repository import RunInputRow, RunRepository
 from modules.template.run_clock import elapsed_seconds
 from modules.template.schema import (
     PackBinding,
@@ -80,6 +81,7 @@ from modules.template.schema import (
     ReplacementCatalog,
     ReplacementInputAsset,
     ReplacementInputSummary,
+    ReplacementPack,
     ReplacementReview,
     ReplacementReviewEvent,
     ReplacementReviewIn,
@@ -98,7 +100,11 @@ from modules.template.workspace import (
 )
 
 if TYPE_CHECKING:
-    from modules.template.video_template_schema import VideoTemplateOut
+    from core.ports.template_runtime import (
+        RuntimePack,
+        RuntimePackVersion,
+        RuntimeTemplate,
+    )
 
 logger = get_logger(__name__)
 
@@ -157,7 +163,10 @@ class LibraryPackSnapshot(NamedTuple):
 #: `Any`：两者共用 `reference_ids` / `bindings` / `features` / `instructions` /
 #: `wardrobe_mode` / `supported_scopes` 这六个属性，少了哪一个 mypy 会当场报，
 #: 而不是等到某个分支才 AttributeError。
-PackSnapshot: TypeAlias = "TemplatePackVersion | LibraryPackSnapshot"
+#:
+#: 前一种来自 `template-runtime` 端口（core 层快照），**不是** ORM 行：执行链
+#: 不再认识封装的表，也就不会在搬迁时被表结构拖着走。
+PackSnapshot: TypeAlias = "RuntimePackVersion | LibraryPackSnapshot"
 
 # 准备是全模块最重的 IO 端点（物化素材 + Node 编译 + 复制运行时），却只靠日志
 # 记录成败；失败率高时没有任何数字能看出来。命名沿用本模块既有的 `replacement_`
@@ -192,17 +201,24 @@ class ReplacementService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
         self.runs = RunRepository(session)
-        self.packs = PackRepository(session)
+        # 封装数据一律经端口读（`core.ports.template_runtime`）：本模块只负责
+        # 「怎么替换」，不认 `template_packs` / `video_templates` 的表结构。
+        self.runtime = require_template_runtime()
+        #: 本次请求用到的模板名（`{template_id: name}`）。`_run_out` 是同步投影，
+        #: 在列表/详情入口预热一次，投影只读这里 —— 换成模块级缓存会让一个请求
+        #: 看到另一个请求的预热结果，也永远无法失效。
+        self._template_names: dict[str, str] = {}
         self.storage: ArchiveStorage = get_archive_storage()
 
     # ------------------------------------------------------------------ #
     # 读
     # ------------------------------------------------------------------ #
     async def catalog(self, owner: str) -> ReplacementCatalog:
-        from modules.template.pack_service import PackService
-
         runs = await self.list_runs(owner)
-        packs = await PackService(self.session).available()
+        packs = [
+            ReplacementPack.model_validate(item)
+            for item in await self.runtime.available_packs(self.session)
+        ]
         return ReplacementCatalog(runs=runs, packs=packs, channels=channel_catalog())
 
     async def list_runs(self, owner: str) -> list[ReplacementRunOut]:
@@ -226,7 +242,8 @@ class ReplacementService:
         """给「只有 `videoTemplateId`、没有名字」的老档案批量补名字。
 
         `_run_out` 是同步投影，不能在里面查库（要么把整条投影链路改成 async，
-        要么退化成 N+1）。所以在读入口预热一次缓存，投影只读缓存。
+        要么退化成 N+1）。所以在读入口预热一次 `self._template_names`，投影只读它。
+        名字经 `template-runtime` 端口批量反查，执行链不碰模板表。
         """
         wanted: list[str] = []
         for row in rows:
@@ -234,10 +251,21 @@ class ReplacementService:
             if not isinstance(spec, dict) or spec.get("videoTemplateName"):
                 continue
             template_id = spec.get("videoTemplateId")
-            if isinstance(template_id, str) and template_id:
+            if isinstance(template_id, str) and template_id and template_id not in (
+                self._template_names
+            ):
                 wanted.append(template_id)
         if wanted:
-            await video_template_service.prefetch_names(self.session, wanted)
+            self._template_names.update(
+                await self.runtime.template_names(self.session, wanted)
+            )
+
+    async def _pack_or_404(self, pack_id: str) -> RuntimePack:
+        """取素材包头部，不存在或已删除一律 404（不泄露「存在但不是你的」）。"""
+        pack = await self.runtime.get_pack(self.session, pack_id)
+        if pack is None or pack.deleted:
+            raise NotFound("封装不存在")
+        return pack
 
     async def feed_records(self, owner: str) -> list[ReplacementFeedRecord]:
         """任务中心只读镜像：不读提示词与完整输入摘要，只取列表要的字段。
@@ -351,12 +379,12 @@ class ReplacementService:
         #
         # 模板行里存的是原片 id。旧素材库下线后原片只有一个字段（`sourceLibraryId`），
         # 不再有「两套 id 取哪个」的判断。
-        video_template = await video_template_service.find_for_run(
-            payload.source_library_id or "",
-            payload.pack_id,
-            payload.kind,
-            payload.video_template_id,
-            session=self.session,
+        video_template = await self.runtime.find_template_for_run(
+            self.session,
+            source_asset_id=payload.source_library_id or "",
+            pack_id=payload.pack_id,
+            kind=payload.kind,
+            template_id=payload.video_template_id,
         )
         text_scene = video_template is not None and is_scene_text(video_template.rules)
         # 参考来源的两条互斥取值：模板封装的冻结版本，或资产库封装展开出的快照。
@@ -435,8 +463,10 @@ class ReplacementService:
             else:
                 if not payload.pack_id or not payload.pack_version:
                     raise BadRequest("必须选择专员发布的对象与版本，不能直接使用散图")
-                frozen = await self.packs.get_version(payload.pack_id, payload.pack_version)
-                pack = await self.packs.get_or_404(payload.pack_id)
+                frozen = await self.runtime.get_pack_version(
+                    self.session, payload.pack_id, payload.pack_version
+                )
+                pack = await self._pack_or_404(payload.pack_id)
                 if frozen is None or pack.status != "published":
                     raise BadRequest("素材包未发布或已停用，请重新选择")
                 if pack.kind != payload.kind:
@@ -467,14 +497,11 @@ class ReplacementService:
         inputs = await self._validate_inputs(
             payload, owner, scope_required=video_template is None
         )
-        from modules.template.template_references import resolve_pack_references
-        from modules.template.video_template_schema import VideoTemplatePackReferenceIn
-
         fixed_data = video_template.rules.get("fixedReferences", []) if video_template else []
-        _, fixed_refs = await resolve_pack_references(
-            self.session,
-            [VideoTemplatePackReferenceIn.model_validate(item) for item in fixed_data],
-            actor,
+        # 固定引用的形状校验与「图片确在该发布版本里」的判定都在封装侧，执行链
+        # 只拿一份能取字节的结果（按 `{{Mixed N}}` token 索引）。
+        fixed_refs = await self.runtime.resolve_fixed_references(
+            self.session, fixed_data, actor=actor
         )
         # v2 固定引用与 v1 一样占参考图名额：两者最终都进 mixedList，按图数上限算，
         # 不能因为「来源不同」就多给额度。
@@ -941,17 +968,17 @@ class ReplacementService:
         chosen = [(primary, frozen)]
         versions = []
         for index, pack_id in enumerate(payload.extra_pack_ids):
-            pack = await self.packs.get_or_404(pack_id)
+            pack = await self._pack_or_404(pack_id)
             if (
                 pack.status != "published"
-                or pack.deleted_at is not None
+                or pack.deleted
                 or pack.kind != payload.kind
             ):
                 raise BadRequest("额外人物包未发布、已停用或类型不匹配")
             version = (
                 payload.extra_pack_versions[index] if payload.extra_pack_versions else pack.version
             )
-            snapshot = await self.packs.get_version(pack_id, version)
+            snapshot = await self.runtime.get_pack_version(self.session, pack_id, version)
             if snapshot is None:
                 raise BadRequest("额外人物包的所选发布版本不存在，请重新选择")
             versions.append(version)
@@ -1119,7 +1146,7 @@ class ReplacementService:
         summary = (
             ReplacementInputSummary.model_validate(run.input_summary) if run.input_summary else None
         )
-        prompt_mode, template_name = _prompt_origin(run.prompt_spec)
+        prompt_mode, template_name = _prompt_origin(run.prompt_spec, self._template_names)
         if summary is not None:
             from modules.template.prompt_media import enrich_input_summary
 
@@ -1176,7 +1203,7 @@ def _role_labels(kind: str) -> dict[str, str]:
 
 
 def _check_video_template(
-    template: VideoTemplateOut,
+    template: RuntimeTemplate,
     roles: dict[str, str],
     kind: str,
     character_fronts: list[str] | None = None,
@@ -1250,7 +1277,7 @@ def _check_video_template(
 
 
 def _media_in_mixed_order(
-    template: VideoTemplateOut | None,
+    template: RuntimeTemplate | None,
     source: RunMedia,
     refs: Sequence[RunMedia],
     roles: dict[str, str] | None = None,
@@ -1266,7 +1293,7 @@ def _media_in_mixed_order(
     """
     if template is not None and fixed_refs:
         count = int(template.rules["fixedBaseMediaCount"])
-        base_template = template.model_copy(update={"media_order": template.media_order[:count]})
+        base_template = replace(template, media_order=template.media_order[:count])
         ordered = _media_in_mixed_order(base_template, source, refs, roles, character_fronts)
         if len(ordered) < count:
             raise BadRequest("当前素材包缺少模板基础参考图，无法保持固定引用编号")
@@ -1324,15 +1351,17 @@ def _display_title(run: ReplacementRun, source_name: str | None) -> str:
     return task_name(source_name, run.kind, run.target, run.id)
 
 
-def _prompt_origin(spec: dict[str, object] | None) -> tuple[str, str | None]:
+def _prompt_origin(
+    spec: dict[str, object] | None, names: Mapping[str, str]
+) -> tuple[str, str | None]:
     """这条提示词是「封装时写死的」还是「按素材现编的」，以及出自哪条模板。
 
     **为什么要在档案里回答这个**：两种提示词长得一样，用户没法从文本判断
     自己写的那份有没有被改写。`prompt_mode=fixed` 明确告诉他「跑的就是你
     封装时那份原文」；`compiled` 则是按素材与替换范围现编的。
 
-    `videoTemplateName` 是 prepare 时写进 spec 的；早期档案只有 id，
-    这时才去模板库里反查一次（模板库是本机 JSON，查不到就只报 fixed）。
+    `videoTemplateName` 是 prepare 时写进 spec 的；早期档案只有 id，这时才从
+    `names`（调用方在读入口经端口批量预热的模板名）里查一次，查不到就只报 fixed。
 
     `spec` 可能是 `None`，也可能是**字符串**（历史档案、手工导入的行直接存了
     JSON 文本）。这里只认字典，别的形状一律当「按素材现编」——列表接口不该
@@ -1345,18 +1374,18 @@ def _prompt_origin(spec: dict[str, object] | None) -> tuple[str, str | None]:
         return "fixed", name.strip()
     template_id = spec.get("videoTemplateId")
     if isinstance(template_id, str) and template_id:
-        return "fixed", _template_name(template_id)
+        return "fixed", _template_name(template_id, names)
     return "fixed", None
 
 
-def _template_name(template_id: str) -> str | None:
-    """老档案只存了模板 id：从缓存反查名字，读不到就当没有（展示层自己降级）。
+def _template_name(template_id: str, names: Mapping[str, str]) -> str | None:
+    """老档案只存了模板 id：从本次请求预热好的名字表取，读不到就当没有。
 
-    缓存由调用方（列表 / 详情入口）先 `prefetch_names()` 批量预热——`_run_out`
-    是同步投影，不能在这里查库，否则要么把整条投影链路改成 async，
+    名字表由 `_warm_template_names()` 经 `template-runtime` 端口批量填好——
+    `_run_out` 是同步投影，不能在这里查库，否则要么把整条投影链路改成 async，
     要么退化成逐条查询（一个列表页 N 次）。
     """
-    return video_template_service.template_name(template_id)
+    return names.get(template_id)
 
 
 def _archive_path(run_id: str) -> str | None:
@@ -1383,7 +1412,9 @@ def _source_name(summary: ReplacementInputSummary) -> str | None:
 
 
 def _check_scope(
-    scopes: list[str], payload: PrepareReplacement, template: VideoTemplateOut | None = None
+    scopes: Sequence[str],
+    payload: PrepareReplacement,
+    template: RuntimeTemplate | None = None,
 ) -> None:
     """产品替换位置必须落在素材包已审核的范围内，运营不能临时扩大。"""
     if template is not None:
@@ -1424,7 +1455,7 @@ def _materialize_inputs(
     source: RunMedia,
     refs: Sequence[RunMedia],
     frozen,
-    video_template: VideoTemplateOut | None = None,
+    video_template: RuntimeTemplate | None = None,
     roles: dict[str, str] | None = None,
     character_fronts: list[str] | None = None,
     selected_packs: list[dict] | None = None,

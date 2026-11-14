@@ -16,12 +16,14 @@ from core.ports.library_references import (
     LibraryReferenceSource,
     bind_library_reference_sources,
 )
+from core.ports.template_runtime import register_template_runtime
 from modules.template.cli import register as register_cli
 from modules.template.feed_provider import read_feed
 from modules.template.health import check as health_check
 from modules.template.library_references import PackLibraryReferences
 from modules.template.pipeline import KIND_REPLACEMENT
 from modules.template.router import router
+from modules.template.runtime_port_impl import TemplateRuntime
 from modules.template.seed import seed as seed_demo
 from modules.template.worker import resume
 
@@ -31,6 +33,13 @@ from modules.template.worker import resume
 from modules.template import worker  # noqa: E402,F401  isort: skip
 
 register_replacement_feed(read_feed)
+
+# 替换执行链读封装数据**只能**走这个端口（`core/ports/template_runtime.py`）：
+# 现在就由本模块注册实现，是为了让执行链先停止直接摸封装的仓储与 ORM 行；
+# 等素材包/视频模板的表整体搬进 `modules/template_pack`（C2），注册点跟着搬，
+# 消费方不用改。放在 import 期注册：`require_template_runtime()` 必须在任何
+# 请求之前就能拿到实现。
+register_template_runtime(TemplateRuntime())
 
 # 资产「彻底删除」前问「还有谁在用」。v1 `assets` 表已下线，只剩 v2 一套 id 空间，
 # 所以这里只有一份来源声明；不拦的四处（冻结版本 / 运行输入 / 视频模板清单 / 封面）

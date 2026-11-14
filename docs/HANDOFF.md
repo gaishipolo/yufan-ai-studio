@@ -14,7 +14,7 @@
 | 仓库 / 分支 | `https://github.com/gaishipolo/yufan-ai-studio` · `main` |
 | HEAD | 本地领先 `origin/main`：`3aaf40f` 起多笔**未推送**（含「任务中心接生图」与「模板封装迁移阶段 A/B/C1」，推送前先问用户）；笔数以 `git rev-list --count origin/main..HEAD` 为准，hash 见 `git log --oneline origin/main..HEAD`。未跟踪的只有 `var/`、临时脚本（如 `var_fix_fe.py`）、快捷方式 `.lnk`、`vite.config.ts.timestamp-*.mjs` 与用户私有的 `EXCHANGE_TOPICS_2026-11-12.md`，都不该进提交 |
 | CI | 此前连续多轮全绿（含 `bc0940e`）；本轮推送后照 §4 核对。PG 迁移仍在观察期（`continue-on-error`） |
-| 本机门禁 | 本轮（2026-11-14 C1.5 发布回执）按 §3.1 定级 **`targeted`**：4 个测试文件 **87 passed / 0 failed**（15s，EXIT=0），`ruff` 0 / `mypy --platform win32` 297 文件 0 / `export-openapi --check` 四份无差异；前端与路由未动，按约定不跑 `npm run verify` 与两个 `gen:* --check`。上一轮 C1 定级 `full`：后端全量 **1678 passed / 12 skipped**（198s），并跑过 `gen:routes --check` / `gen:mock-coverage --check` / `npm run verify` 全绿；阶段 B 单独也跑过 `full`：1672 passed / 12 skipped |
+| 本机门禁 | 本轮（2026-11-14 C2 第一刀 / `template-runtime` 端口）按 §3.1 定级 **`full`**（改 `api/ports.py` 装配声明）：后端全量 **1690 passed / 12 skipped / 0 failed**（225s，EXIT=0），`ruff check src tests` 0 / `mypy --platform win32` 299 文件 0 / `export-openapi --check` 四份无差异（契约零变化）；前端与路由未动，按约定不跑 `npm run verify` 与两个 `gen:* --check`。上一轮 C1.5 定级 `targeted`：4 个测试文件 87 passed；C1 定级 `full`：1678 passed / 12 skipped，并跑过 `gen:routes --check` / `gen:mock-coverage --check` / `npm run verify` 全绿；阶段 B 也跑过 `full`：1672 passed / 12 skipped |
 | 规模 | 12 个业务模块 · **118 条路径 / 148 个端点**（文本资产 +7）· **57 个权限码**（本轮未新增）· **4 份**契约生成物 |
 | 后端 | `api/.venv/Scripts/app.exe serve --reload` → 8080，前缀 **`/api/v1`**（裸 `/health` 会返回 40400） |
 | 前端 | `cd studio && npm run dev` → 5173，`/api` 已代理到 8080 |
@@ -49,6 +49,7 @@
 | 本轮 | **任务中心接生图 + 补齐自身真实操作**（2026-11-13）：`GET /tasks/feed` 从「视频 + 替换档案」扩成三路；新增 `core.ports.generation_feed` 注入口，生图模块在 import 期注册 `feed_provider.read_generation_feed`；前端加 `ImageTaskCard` / `ImagePreviewModal` 与来源 `source=image` | 生图记录进任务中心，统计 / 搜索 / 状态分组 / 现签产物地址三路同口径；批量下载、显式 `PATCH` 收藏、`DELETE /tasks` 删除（回 `skipped`）、视频 / 替换成片下载从假按钮变真实操作。**用户明确「v2 先不用管」，本轮完全没碰模板库 v2** |
 | 本轮 | **模板封装迁移 A/B/C1**（2026-11-14）：A 纯规则上移 `core/template_rules/`；B `manifest.json` DB 化四张表（迁移 `a3c7e91b2d45`）；C1 新 `/template-manifests` 配置服务（预检 / 幂等保存 / 发布 / 停用）+ `core.ports.template_catalog` 只读端口 | 素材一律 `library_assets.id`，本地文件、文件 sha256、journal 进度文件、HTTP 客户端整套没搬；`template_packager` 的能力改为 DB 内预检 + 版本回执。旧 `/template-packs` 与 `modules/template` 的 ①② 暂留，等 C2 收敛 |
 | 本轮 | **C1.5 发布回执闭环**：`publish()` 冻结 `published_pack_id` / `published_pack_version` / `published_template_id`，`template-catalog` 快照带出回执；复用包 `packId` 预检改成查库确认「存在且已发布」 | 模型里三列此前声明了却从未写入（journal 语义断在这里）。新建包回执指向自己 + 本次 version，复用包指向被复用行及其版本；停用不清空（下架 ≠ 抹历史）。发布投影（`video_templates` 行）仍等 C2 搬表后同模块直写 |
+| 本轮 | **C2 第一刀（绞杀者）**：新增 `core.ports.template_runtime`（`template-runtime` 注入口，实现暂由仍持有表的 `modules/template/runtime_port_impl.py` 注册）；`replacement_service` / `authorization` / 固定引用解析全部改走端口，执行链不再 import `PackRepository` / `video_template_service` / `TemplatePackVersion` | 目的是让「搬表」变成纯机械动作：C2 正刀只需挪文件 + 换注册点，消费方一行不改。执行链的模板名缓存从进程级全局字典（`video_template_service._NAME_CACHE`，已删）改为**每请求一份** `self._template_names`，`_prompt_origin` 改成纯函数、显式收名字表。目录卡片仍走 camelCase dict（封装模块自己的对外形状），消费方 `ReplacementPack.model_validate` 校验一次 |
 
 表格之后又连续落了几件事（提交见 `git log --oneline -12`）：PR#5 语义合并 →
 T34 参考图（含素材库侧边悬浮栏 + 拖拽）→ 标签两级分类 → worktree
@@ -258,8 +259,21 @@ curl -sS --noproxy '*' -H "Authorization: Bearer $TOKEN" \
   `artifact_urls()` 转换；视频 / 生图 / 替换三路都别把裸 key 交给前端。
 - **模板封装模块只管数据、通过 ports 对外提供**（用户拍板）：生成是
   `modules/task` 的消费行为，不在封装模块实现、也不由封装模块去接。
-  `core.ports.template_catalog` 是只读窄接口，没有 `verify_picks` / 候选判定；
+  `core.ports.template_catalog` 是编写侧的只读窄接口，没有 `verify_picks` / 候选判定；
   旧的 `TemplatePackPort`（fixed/filtered 槽位）随 C2 一起下线，别合并。
+- **替换执行链只经 `core.ports.template_runtime` 读封装数据**（C2 第一刀）：
+  `replacement_service` / `authorization` 不许 import `PackRepository` /
+  `video_template_service` / `TemplatePackVersion`，也不许拿 ORM 行。
+  与 `template_catalog` 刻意分成两个端口：那边读**编写侧**（manifest / packs /
+  functions），这边读**运行侧**（`template_packs` + `_versions` + `video_templates`）；
+  合并会让编辑界面每加一个字段都去改运行侧快照。未注册时 **fail-closed**
+  （`require_template_runtime()` 抛 `RegistryError`）——执行链拿不到冻结版本就
+  准备不了任务，退化成「封装不存在」的 400 会把装配故障说成用户选错包。
+  C2 正刀搬表时只需把 `register_template_runtime()` 的调用点挪到
+  `modules/template_pack/__init__.py`，消费方不用动。
+- **模板名不再有进程级缓存**：`_prompt_origin` 是纯函数，名字表由读入口
+  （`list_runs` / `detail` → `_warm_template_names`）经端口批量预热进
+  `self._template_names`。别再把字典提回模块级：那是跨请求串味、且无法失效。
 - **发布回执在发布那一刻冻结**：`published_pack_id` / `published_pack_version` /
   `published_template_id` 不是读时拼的，停用也不清空；`CatalogPack` /
   `CatalogTemplate` 快照原样带出。C2 同模块直写 `video_templates` 后，

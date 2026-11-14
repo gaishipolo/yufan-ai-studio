@@ -80,6 +80,7 @@ from core.ports.model_generation import has_model_generation
 from core.ports.org_directory import has_org_directory
 from core.ports.template_catalog import has_template_catalog
 from core.ports.template_pack import has_template_pack
+from core.ports.template_runtime import has_template_runtime
 
 __all__ = ["PORT_CATALOG", "PortSpec", "port_status"]
 
@@ -235,6 +236,18 @@ PORT_CATALOG: tuple[PortSpec, ...] = (
         "抛异常会把「模块没装配」和「用户没配置」混成一件事。"
         "只跑消费方单测时就是这个状态",
         is_registered=has_template_catalog,
+    ),
+    PortSpec(
+        name="template-runtime",
+        module="core.ports.template_runtime",
+        protocol="TemplateRuntimePort",
+        implementer="现在由 modules/template 的 `runtime_port_impl` 注册（读它自己的 "
+        "template_packs / _versions / video_templates）；C2 把这三张表搬进 "
+        "modules/template_pack 后，注册点跟着搬，消费方不改",
+        when_unregistered="fail-closed：抛 RegistryError（500）。替换执行链拿不到"
+        "冻结版本与模板原文就根本准备不了任务，退化成「封装不存在」的 400 会把"
+        "装配故障说成用户选错了包。与 template-catalog 的「空结果」刻意相反",
+        is_registered=has_template_runtime,
     ),
 )
 

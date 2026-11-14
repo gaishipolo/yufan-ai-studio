@@ -25,9 +25,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.context import CurrentUser
 from core.ports.library_lookup import LibraryAssetKind, LibraryAssetState
+from core.ports.template_runtime import (
+    RuntimePack,
+    RuntimePackVersion,
+    require_template_runtime,
+)
 from modules.template.asset_source import resolve_assets
-from modules.template.models import ReplacementRun, TemplatePack, TemplatePackVersion
-from modules.template.repository import PackRepository, RunRepository
+from modules.template.models import ReplacementRun
+from modules.template.repository import RunRepository
 
 __all__ = ["authorization_gap"]
 
@@ -40,13 +45,13 @@ async def authorization_gap(session: AsyncSession, run: ReplacementRun) -> str |
     把原因写进 `last_error` 并停住）。抛异常会让作业侧多写一层 try/except，
     而那个 except 一旦写漏，任务就会带着失效的授权继续跑到提交。
     """
+    runtime = require_template_runtime()
     if run.pack_id and run.pack_version:
-        packs = PackRepository(session)
-        frozen = await packs.get_version(run.pack_id, run.pack_version)
-        pack = await packs.get(run.pack_id)
+        frozen = await runtime.get_pack_version(session, run.pack_id, run.pack_version)
+        pack = await runtime.get_pack(session, run.pack_id)
         # 三种失效都归到一句话：冻结版本没了（历史数据缺行）、封装被删、
         # 封装被停用。对外不区分，用户要做的动作都是「重新选一个封装」。
-        if frozen is None or pack is None or pack.deleted_at is not None:
+        if frozen is None or pack is None or pack.deleted:
             return "素材包已停用，请重新选择后准备"
         if pack.status != "published":
             return "素材包已停用，请重新选择后准备"
@@ -54,26 +59,28 @@ async def authorization_gap(session: AsyncSession, run: ReplacementRun) -> str |
         extras = configuration.get("extra_pack_ids", [])
         versions = configuration.get("extra_pack_versions", [])
         for index, pack_id in enumerate(extras):
-            extra = await packs.get(pack_id)
+            extra = await runtime.get_pack(session, pack_id)
             if (
                 extra is None
-                or extra.deleted_at is not None
+                or extra.deleted
                 or extra.status != "published"
                 or extra.kind != run.kind
             ):
                 return f"第{index + 2}位人物素材包已停用，请重新选择后准备"
-            if index < len(versions) and await packs.get_version(pack_id, versions[index]) is None:
+            if (
+                index < len(versions)
+                and await runtime.get_pack_version(session, pack_id, versions[index]) is None
+            ):
                 return "额外人物包的发布版本已不可用，请重新准备"
     rows = await RunRepository(session).inputs(run.id)
     configuration = run.configuration if isinstance(run.configuration, dict) else {}
     fixed_refs = configuration.get("fixed_references", [])
     actor = CurrentUser(id=run.owner_id, name=run.owner_id)
-    packs = PackRepository(session)
-    validated: list[tuple[dict[str, object], TemplatePack, TemplatePackVersion]] = []
+    validated: list[tuple[dict[str, object], RuntimePack, RuntimePackVersion]] = []
     for ref in fixed_refs:
-        pack = await packs.get(ref["packId"])
-        frozen = await packs.get_version(ref["packId"], ref["packVersion"])
-        if (pack is None or pack.deleted_at or pack.status != "published" or frozen is None
+        pack = await runtime.get_pack(session, ref["packId"])
+        frozen = await runtime.get_pack_version(session, ref["packId"], ref["packVersion"])
+        if (pack is None or pack.deleted or pack.status != "published" or frozen is None
                 or ref["assetId"] not in frozen.reference_ids):
             return "固定引用的素材包已停用或版本不可用，请重新准备"
         validated.append((ref, pack, frozen))

@@ -69,9 +69,9 @@ def test_invalid_slot_declarations_fail_offline(tmp_path, bindings):
 
 def test_only_declared_roles_are_required_and_all_current_images_are_attached():
     configured = template(
-        rules={"referenceBindings": {"{{Mixed 1}}": "source_video", "{{Mixed 2}}": "front"}}
+        rules={"referenceBindings": {"{{Mixed 1}}": "source_video", "{{Mixed 2}}": "front"}},
+        prompt="使用 {{Mixed 1}} 和 {{Mixed 2}}。",
     )
-    configured.prompt = "使用 {{Mixed 1}} 和 {{Mixed 2}}。"
     # 样例包有三视图、细节图；当前包只有正面、侧面，也应该可以调用。
     current_roles = {"side": "side", "front": "front"}
     _check_video_template(configured, current_roles, "product")
@@ -95,9 +95,9 @@ def test_missing_declared_role_and_repeated_role_shortage_are_rejected():
                 "{{Mixed 2}}": "front",
                 "{{Mixed 3}}": "front",
             }
-        }
+        },
+        prompt="{{Mixed 1}} {{Mixed 2}} {{Mixed 3}}",
     )
-    configured.prompt = "{{Mixed 1}} {{Mixed 2}} {{Mixed 3}}"
     with pytest.raises(BadRequest):
         _check_video_template(configured, {"one": "front"}, "product")
 

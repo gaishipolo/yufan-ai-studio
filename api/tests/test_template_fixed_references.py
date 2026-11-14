@@ -11,6 +11,7 @@ from video_template_support import get_template, put_template, update_prompt
 
 from core.exceptions import BadRequest
 from modules.template.replacement_service import _media_in_mixed_order
+from modules.template.runtime_port_impl import to_runtime
 
 _REF_BINDINGS = {
     "referenceBindings": {"{{Mixed 1}}": "source_video", "{{Mixed 2}}": "multiview"}
@@ -40,7 +41,7 @@ def test_fixed_references_saved_with_verbatim_prompt_and_original_bindings() -> 
         SimpleNamespace(id=name) for name in ["source", "a", "b", "c", "extra", "fixed"]
     ]
     ordered = _media_in_mixed_order(
-        updated,
+        to_runtime(updated),
         source,
         [a, b, c, extra],
         {"a": "multiview", "b": "multiview", "c": "multiview", "extra": "detail"},

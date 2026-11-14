@@ -19,6 +19,7 @@ import pytest
 from video_template_support import IMAGES, PACK_ID, SOURCE_ID, put, record, run
 
 from core.exceptions import BadRequest
+from core.ports.template_runtime import RuntimeTemplate
 from db.session import get_session_factory
 from modules.template import video_template_service as service
 from modules.template.replacement_service import (
@@ -26,13 +27,20 @@ from modules.template.replacement_service import (
     _media_in_mixed_order,
     _prompt_origin,
 )
+from modules.template.runtime_port_impl import to_runtime
 from modules.template.video_template_media import apply_pack_roles
 from modules.template.video_template_schema import VideoTemplateMedia, VideoTemplateOut
 from modules.template.workspace import RUNTIME
 
 
-def template(**overrides: object) -> VideoTemplateOut:
-    return VideoTemplateOut.model_validate(record(**overrides))
+def template(**overrides: object) -> RuntimeTemplate:
+    """样板模板的**执行链快照**。
+
+    走 `to_runtime()` 而不是自己映射：执行链（`_media_in_mixed_order` /
+    `_check_video_template`）读的是 core 层快照，测试若拿业务出参模型去调，
+    `dataclasses.replace()` 会在运行时才发现对象不对。
+    """
+    return to_runtime(VideoTemplateOut.model_validate(record(**overrides)))
 
 
 def find_for_run(*args: object, **kwargs: object) -> VideoTemplateOut | None:
@@ -262,7 +270,7 @@ async def test_pinning_writes_an_audit_event(monkeypatch) -> None:
     seen: dict[str, object] = {}
     events: list[tuple[str, dict[str, object]]] = []
 
-    async def fake_pin(template_id: str, session: object) -> VideoTemplateOut:
+    async def fake_pin(template_id: str, session: object) -> RuntimeTemplate:
         seen["id"] = template_id
         seen["session"] = session
         return template(id=template_id)
@@ -314,29 +322,26 @@ def test_prompt_origin_tells_where_the_prompt_came_from() -> None:
     """档案要能回答「提示词是谁写的」：两种文本长得一样，用户没法自己判断。
 
     `compiled` 说清楚是现编的，`fixed` 要说清出自哪条模板；老档案只有模板 id
-    时反查一次，模板被删了就只报 fixed 不报名字（展示层自己降级）。
+    时从调用方预热好的名字表里取，取不到就只报 fixed 不报名字（展示层自己降级）。
+
+    名字表本身怎么来（经 `template-runtime` 端口批量反查）由
+    `test_template_runtime_port.py` 覆盖——这里只验投影的判定逻辑，不碰库。
     """
-    assert _prompt_origin(None) == ("compiled", None)
-    assert _prompt_origin({"promptMode": "compiled"}) == ("compiled", None)
+    assert _prompt_origin(None, {}) == ("compiled", None)
+    assert _prompt_origin({"promptMode": "compiled"}, {}) == ("compiled", None)
     named = {"promptMode": "fixed_video_template", "videoTemplateName": "三人高端姐"}
-    assert _prompt_origin(named) == ("fixed", "三人高端姐")
+    assert _prompt_origin(named, {}) == ("fixed", "三人高端姐")
 
-    put(**record(id="legacy-id", templateKey="legacy-id", name="老档案用的模板"))
-
-    async def warm() -> None:
-        async with get_session_factory()() as session:
-            await service.prefetch_names(session, ["legacy-id"])
-
-    run(warm())
+    names = {"legacy-id": "老档案用的模板"}
     assert _prompt_origin(
-        {"promptMode": "fixed_video_template", "videoTemplateId": "legacy-id"}
+        {"promptMode": "fixed_video_template", "videoTemplateId": "legacy-id"}, names
     ) == ("fixed", "老档案用的模板")
     assert _prompt_origin(
-        {"promptMode": "fixed_video_template", "videoTemplateId": "missing-id"}
+        {"promptMode": "fixed_video_template", "videoTemplateId": "missing-id"}, names
     ) == ("fixed", None)
 
 
 def test_prompt_origin_survives_string_spec() -> None:
     """历史档案里 `prompt_spec` 可能是 JSON 文本：不能因此把列表接口打成 500。"""
-    assert _prompt_origin('{"promptMode": "fixed_video_template"}') == ("compiled", None)
-    assert _prompt_origin({}) == ("compiled", None)
+    assert _prompt_origin('{"promptMode": "fixed_video_template"}', {}) == ("compiled", None)
+    assert _prompt_origin({}, {}) == ("compiled", None)
