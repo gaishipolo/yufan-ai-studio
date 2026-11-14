@@ -294,7 +294,8 @@ export function SpecLibrary() {
               </Link>
             </div>
 
-            {/* 槽位：fixed 只读展示，user 就地挑素材 */}
+            {/* 槽位：fixed 只读展示，user 就地挑素材。纯提示词模板没有槽位，整块不渲染。 */}
+            {slots.length > 0 && (
             <section className="flex flex-col gap-2">
               <h3 className="text-[12px] font-medium text-ink-soft">
                 填入素材
@@ -380,6 +381,7 @@ export function SpecLibrary() {
                 );
               })}
             </section>
+            )}
 
             {/* 固定段：只读。对应封装时写死的画面约束。 */}
             {lockedText.trim() && (
@@ -422,7 +424,7 @@ export function SpecLibrary() {
                       </span>
                     </span>
                   ))}
-                  <span>编号按实际填了几张现算，别手写。</span>
+                  {refLegend.length > 0 && <span>编号按实际填了几张现算，别手写。</span>}
                 </div>
               )}
             </section>

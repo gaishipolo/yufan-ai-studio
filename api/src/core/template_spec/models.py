@@ -30,8 +30,17 @@ SLOT_TYPES: tuple[SlotType, ...] = ("image", "video", "audio", "text")
 MAX_SLOT_REFS = 10
 #: 单个版本最多几个槽位。防"把整本画册塞进一个模板"。
 MAX_SLOTS = 20
-#: 提示词上限（两段合计），沿用旧 manifest 的口径。
+#: **编写**上限（两段合计），沿用旧 manifest 的口径。草稿可以这么长。
 MAX_PROMPT = 20000
+#: **执行**上限：编译产物要交给 `POST /tasks`，而它的 `CreateTaskIn.prompt` 是
+#: `max_length=2000`。超过它在填表页点「生成」才会 422 —— 那时用户已经填完素材，
+#: 错却出在提示词长度上，很不好解释。所以在发布（粗判）与 `compile`（按展开后精确判）
+#: 两处提前挡。
+#:
+#: 这个数是**执行端点**的属性，不是模板的属性：替换链吃 20000 级别的提示词（P3 之前的
+#: 旧模板就是这样）。将来第二个执行端点进来时，它应该随该能力声明，而不是改这里。
+#: 漂移由 `tests/test_template_spec_api.py::test_execution_prompt_limit_matches_task_schema` 钉住。
+EXECUTION_PROMPT_LIMIT = 2000
 
 
 @dataclass(frozen=True, slots=True)

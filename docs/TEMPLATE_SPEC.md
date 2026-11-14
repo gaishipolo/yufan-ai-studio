@@ -353,7 +353,7 @@ override 里写 `{{Mixed N}}` 也 400（编号是派生的，写死会在少填�
 | 期 | 内容 | 验收 |
 |---|---|---|
 | **P1 定表** | `core/` 加 `InputSlot`/`TemplateSpec` 词表与编译纯函数；三张表（迁移 `d4a9f1c73b20`）；六个接口（含 `compile`）；封装页改成 §9 单页 | `compile` 输出与旧模板的 `mediaOrder` **逐项等价**（`tests/test_template_spec_equivalence.py`，已用"注入重排"验过会红）；预检挡住所有非法组合（§12）；**不写 `video_templates`、也不假装能读**（见下方"接读为什么不在 P1"） |
-| **P2 填表**（页面已落地） | 模板库填表页 `/templates/library`（两栏：左选模板 / 右填素材；`source=pack` 走封装选择器；`promptOverride` 只在改动时发）；`compile → 摊平 → /tasks` 已用真实素材跑通（`queued`、6 秒、4 张参考） | 四种组合各跑通一次：纯提示词（`agnes-video-2.5-flash`，maxRefs=0）、多图（`agnes-image-*`，maxRefs=4）、图+视频、加音频附件；另加一条"选一个资产库封装填一个槽位"。**已完成**：固定原片 + 封装槽位（真实素材，任务 `queued`）；其余三种未跑 |
+| **P2 填表**（已完成） | 模板库填表页 `/templates/library`（两栏：左选模板 / 右填素材；`source=pack` 走封装选择器；`promptOverride` 只在改动时发）；`compile → 摊平 → /tasks` 走通 | 五种形状各跑一次（真实素材，每条 `POST /tasks` 201 后删掉）：纯提示词（0 槽）/ 多图（2 张）/ 图+视频 / 图+音频附件（`attachment` 不占编号）/ 图+文本（正文进 `textLibraryIds`）；另加"选一个资产库封装填一个槽位"（更早已验） |
 | **P3 接读 + 迁移 + 删表 + capability 化** | 替换链的 `template-runtime` 端口改读 spec 版本（旧 `video_templates` 只读）；**旧数据迁移**（上表那套映射，含旧素材包 → 资产库封装）；删 `video_templates` / `template_packs*`；替换能力作为 task 的一个 capability；`supportedScopes`/`wardrobeMode` → `spec.attributes`；成片复核 → 任务中心；`modules/template` 的编排与物化下线。细则见 §11.1 | §11.1 的三条判据全绿；替换业务与历史档案不中断；`prepare` 用 spec 驱动的模板跑通；迁移出的 spec 与旧模板 `mediaOrder` 逐项等价 |
 
 #### 接读为什么不在 P1（2026-11-14 实现时确认）
@@ -442,11 +442,16 @@ P3 补上 capability 判据后，迁移只需要让这份守卫继续绿，就�
    `compile` 只需调用它，不需要给资产库加任何字段。
 3. **`attributes` 归一**：旧 `supportedScopes`、`wardrobeMode` 统一放进 `spec.attributes`（`dict[str, str]`），避免每收编一个概念就加一列。键名先定 `scope` / `wardrobe`，其余按需加。
 4. **`compile` 的缓存**：入参 `(version, slotValues)` 是纯输入，可加一层进程内 LRU；但先不上，等有性能证据。
-5. **提示词上限两处不一致**（P2 提交前必须定）：spec 的 `MAX_PROMPT` 是 20000，
-   而 `POST /tasks` 的 `CreateTaskIn.prompt` 是 `max_length=2000`。于是 3000 字的规格
-   能发布、能在 `compile` 里成功，提交时才 422 —— 正是"晚失败"。上限其实是**目标能力**
-   的属性（替换链接受长提示词，通用视频端点不接受），所以要随 §13.1 的 `accepts` 一起
-   由 `ModelSpec` 声明，在发布或 `compile` 时挡。别把 spec 的上限直接降到 2000：
-   旧模板里有 20000 字级别的提示词，P3 迁移会被一刀切拒掉。
+5. **提示词上限两处不一致** —— **已定（2026-11-14）**：两个数不是一个东西，别合并。
+   - `MAX_PROMPT = 20000` 是**编写**上限（草稿能写多长），沿用旧 manifest 口径；
+   - `EXECUTION_PROMPT_LIMIT = 2000` 是**执行**上限，即 `CreateTaskIn.prompt` 的
+     `max_length`，放在 `core/template_spec`。
+   判据分三处：保存草稿**不判**（`validate_draft(executable=False)`，否则旧模板里
+   2 万字级别的提示词连草稿都存不进来，P3 迁移会被一刀切）；预检与发布按两段原文之和
+   **粗判**（运营正看着屏幕，这里说清最省事）；`compile` 按**展开后的成品**精判
+   （`{{slot:key*}}` 一次可能多出几十字）。漂移由
+   `test_execution_prompt_limit_matches_task_schema` 钉住 —— 它直接读 `CreateTaskIn`
+   的 `MaxLen`，改哪边都会先红。
+   等第二个执行端点进来，这个数应随**该能力**声明（届时按模型取），而不是继续全局一个。
 6. **历史替换档案的归宿**（P3 前必须定）：`replacement_runs` 是只读归档、还是整表导出成对象存储后删表？
    它是"重跑与复核的唯一依据"，因此至少要保住只读可查；具体形态等 P3 开工时拍。

@@ -30,6 +30,7 @@ from core.exceptions import BadRequest, Conflict, NotFound
 from core.ports.library_lookup import get_library_lookup
 from core.ports.model_generation import get_model_generation
 from core.template_spec import (
+    EXECUTION_PROMPT_LIMIT,
     MAX_SLOT_REFS,
     CompiledRequest,
     FilledAsset,
@@ -205,6 +206,21 @@ async def _spec_out_of(session: AsyncSession, head: SpecRow) -> TemplateSpecOut:
 # --------------------------------------------------------------------------- #
 # 预检：结构（core） + 现实（模型目录 / 资产库）
 # --------------------------------------------------------------------------- #
+def _check_executable(spec: TemplateSpec) -> None:
+    """提示词长度先按「两段原文之和」粗判。
+
+    `{{slot:key*}}` 展开后可能比原文更长，所以这里只是**发布时的早提醒**；
+    真正的判据在 `compile_for()` 里按展开后的成品长度算（那一处是精确的）。
+    两处同一个常量，改上限只改 `EXECUTION_PROMPT_LIMIT`。
+    """
+    total = len(spec.prompt.locked) + len(spec.prompt.editable)
+    if total > EXECUTION_PROMPT_LIMIT:
+        raise BadRequest(
+            f"提示词共 {total} 字，超过执行层上限 {EXECUTION_PROMPT_LIMIT} 字"
+            "（通用生成任务的 prompt 上限）"
+        )
+
+
 async def _check_model(spec: TemplateSpec) -> None:
     """模型必须存在，参数键必须落在它的 `param_schema` 内。
 
@@ -263,11 +279,21 @@ async def _check_fixed_refs(
 
 
 async def validate_draft(
-    session: AsyncSession, actor: CurrentUser, payload: TemplateSpecIn
+    session: AsyncSession,
+    actor: CurrentUser,
+    payload: TemplateSpecIn,
+    *,
+    executable: bool = True,
 ) -> SpecValidateOut:
-    """结构 + 模型 + 固定素材的全套预检；不落库，返回幂等指纹。"""
+    """结构 + 模型 + 固定素材的全套预检；不落库，返回幂等指纹。
+
+    `executable=False` 只给**保存草稿**用：草稿允许写超过执行上限的提示词（旧模板里
+    有 2 万字级别的那种，P3 迁移要能先落成草稿）。预检与发布才判"这段文字跑得起来吗"。
+    """
     spec = to_core(payload)
     validate_spec(spec)
+    if executable:
+        _check_executable(spec)
     await _check_model(spec)
     await _check_fixed_refs(session, actor, spec)
     return SpecValidateOut(valid=True, fingerprint=fingerprint_of(payload))
@@ -280,7 +306,7 @@ async def save(
     session: AsyncSession, actor: CurrentUser, payload: TemplateSpecIn
 ) -> TemplateSpecOut:
     """保存草稿。同 key 同内容幂等；`revision` 不匹配则 409。"""
-    await validate_draft(session, actor, payload)
+    await validate_draft(session, actor, payload, executable=False)
     fingerprint = fingerprint_of(payload)
     head = await _find(session, payload.key)
 
@@ -335,6 +361,7 @@ async def publish(session: AsyncSession, actor: CurrentUser, key: str) -> SpecPu
     payload = TemplateSpecIn.model_validate(head.draft)
     spec = to_core(payload)
     validate_spec(spec)
+    _check_executable(spec)
     await _check_model(spec)
     await _check_fixed_refs(session, actor, spec)
 
@@ -488,6 +515,12 @@ async def compile_for(
         spec = _with_override(spec, payload.prompt_override)
     fills = await _fills(session, actor, spec, payload.slot_values)
     compiled = compile_spec(spec, fills)
+    # 展开后的成品才是真正要发出去的那段：`{{slot:key*}}` 一次展开可能多出几十字。
+    if len(compiled.prompt) > EXECUTION_PROMPT_LIMIT:
+        raise BadRequest(
+            f"编译后的提示词 {len(compiled.prompt)} 字，超过执行层上限 "
+            f"{EXECUTION_PROMPT_LIMIT} 字；少填几张参考图或缩短描述"
+        )
     return _compile_out(version_no, compiled, spec, fills)
 
 

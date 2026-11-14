@@ -362,3 +362,63 @@ def test_prompt_override_cannot_hardcode_numbers(client: TestClient) -> None:
     )
     assert body.status_code == 400
     assert "不要直接写" in body.json()["message"]
+
+
+def test_execution_prompt_limit_matches_task_schema() -> None:
+    """提示词上限是**执行端点**的属性：常量必须和 `CreateTaskIn.prompt` 的 `max_length` 一致。
+
+    两处各写一个数字，漂移的表现是「模板能发布、填表能编译、点生成才 422」——
+    用户已经把素材填完了，错却出在别处。所以钉成一条断言，改哪边都会先红。
+    """
+    from annotated_types import MaxLen
+
+    from core.template_spec import EXECUTION_PROMPT_LIMIT
+    from modules.task.schema import CreateTaskIn
+
+    limits = [
+        item.max_length
+        for item in CreateTaskIn.model_fields["prompt"].metadata
+        if isinstance(item, MaxLen)
+    ]
+    assert limits == [EXECUTION_PROMPT_LIMIT]
+
+
+def test_draft_can_be_long_but_publish_checks_execution_limit(client: TestClient) -> None:
+    """草稿允许 20000 字（编写上限），发布要求能跑（执行上限 2000 字）。"""
+    from core.template_spec import EXECUTION_PROMPT_LIMIT
+
+    headers = _headers(client)
+    video, first, second = _media(client, headers)
+    draft = _draft(video, first, second)
+    draft["prompt"] = {
+        "locked": "固定画面",
+        "editable": "长" * (EXECUTION_PROMPT_LIMIT + 50),
+    }
+    # 保存草稿不挡：作者可能只是先存着，或者这段是给别的执行端点准备的。
+    assert client.post(API, json=draft, headers=headers).status_code == 200
+
+    publish = client.post(f"{API}/{draft['key']}/publish", headers=headers)
+    assert publish.status_code == 400
+    assert "执行层上限" in publish.json()["message"]
+
+
+def test_compile_rejects_override_that_overflows(client: TestClient) -> None:
+    """填表时改写也可能超：`compile` 按**展开后的成品**判，不只判原文。"""
+    from core.template_spec import EXECUTION_PROMPT_LIMIT
+
+    headers = _headers(client)
+    video, first, second = _media(client, headers)
+    draft = _draft(video, first, second)
+    _save(client, headers, draft)
+    client.post(f"{API}/{draft['key']}/publish", headers=headers)
+
+    body = client.post(
+        f"{API}/{draft['key']}/compile",
+        json={
+            "slotValues": {"hero": [first]},
+            "promptOverride": "长" * (EXECUTION_PROMPT_LIMIT + 10),
+        },
+        headers=headers,
+    )
+    assert body.status_code == 400
+    assert "编译后的提示词" in body.json()["message"]

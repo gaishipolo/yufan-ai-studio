@@ -15,6 +15,7 @@
 
 from core.template_spec.compile import compile_spec
 from core.template_spec.models import (
+    EXECUTION_PROMPT_LIMIT,
     MAX_PROMPT,
     MAX_SLOT_REFS,
     MAX_SLOTS,
@@ -32,6 +33,7 @@ from core.template_spec.models import (
 from core.template_spec.rules import validate_spec
 
 __all__ = [
+    "EXECUTION_PROMPT_LIMIT",
     "MAX_PROMPT",
     "MAX_SLOTS",
     "MAX_SLOT_REFS",
