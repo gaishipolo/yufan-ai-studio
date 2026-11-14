@@ -250,7 +250,7 @@
 | `modules/task/enums.py` | 枚举与状态机（queued → running → completed / failed）。 |
 | `modules/task/permissions.py` | 权限点单一常量，避免权限码散落成字符串。 |
 | `modules/task/params.py` | 「模型目录 → 创建入参」的校验：入口就把非法请求挡住。 |
-| `modules/task/pipeline.py` | 把 `video_tasks` 表适配到通用生成框架。 |
+| `modules/task/pipeline.py` | 把 `video_tasks` 表适配到通用生成框架。另实现 `attach_cover`：成片入库后把 `library` 抽好的首帧 key 写回 `cover_url`（供应商不回视频首帧）。 |
 | `modules/task/dependencies.py` | 依赖装配。 |
 | `modules/task/worker.py` | 启动恢复：进程重启后把在飞任务接回去。 |
 | `modules/task/feed_schema.py` | 任务中心聚合契约：`TaskFeedItem` 用「来源前缀 + id」当 key，`video` / `image` 两路投影互斥，另带 `stats` / `warnings`。 |

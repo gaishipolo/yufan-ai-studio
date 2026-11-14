@@ -112,7 +112,7 @@ async def get_task(
     service: TaskServiceDep, actor: TaskReadDep, task_id: TaskId
 ) -> ApiResponse[TaskOut]:
     task = await service.get_task(task_id, actor)
-    return ApiResponse.ok(service.to_out(task))
+    return ApiResponse.ok(await service.present(task))
 
 
 @router.post("", status_code=status.HTTP_201_CREATED, summary="创建任务")
@@ -125,7 +125,7 @@ async def create_task(
     _: None = Depends(rate_limit("task.create", limit=settings.rate_limit_default_per_min)),
 ) -> ApiResponse[TaskOut]:
     task = await service.create_task(actor, payload)
-    return ApiResponse.ok(service.to_out(task), message="任务已创建")
+    return ApiResponse.ok(await service.present(task), message="任务已创建")
 
 
 @router.patch("/{task_id}", summary="更新任务（标题 / 收藏）")
@@ -135,7 +135,7 @@ async def update_task(
     task = await service.update_task(
         task_id, actor, title=payload.title, favorited=payload.favorited
     )
-    return ApiResponse.ok(service.to_out(task))
+    return ApiResponse.ok(await service.present(task))
 
 
 @router.post("/{task_id}/retry", summary="重试任务")
@@ -160,7 +160,7 @@ async def toggle_favorite(
     service: TaskServiceDep, actor: TaskUpdateDep, task_id: TaskId
 ) -> ApiResponse[TaskOut]:
     task = await service.toggle_favorite(task_id, actor)
-    return ApiResponse.ok(service.to_out(task))
+    return ApiResponse.ok(await service.present(task))
 
 
 @router.delete("", summary="批量删除任务")

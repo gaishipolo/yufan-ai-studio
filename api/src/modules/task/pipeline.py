@@ -234,6 +234,24 @@ class VideoGenerationPipeline:
         )
 
 
+    async def attach_cover(
+        self, session: AsyncSession, record_id: str, cover_key: str
+    ) -> bool:
+        """把资产库派生好的首帧写回任务封面（可选钩子）。
+
+        Agnes 只回 mp4 直链、**不给首帧**，所以卡片封面只能来自我们自己抽的那张：
+        入库时 `library` 用 ffmpeg 取第一帧并登记 `cover_key`，框架在入库成功之后
+        把 key 交回这里。写 key 不写地址——`feed` 会按当前存储驱动现签，
+        换驱动不会整屏裂图。
+        """
+        task = await session.get(VideoTask, record_id)
+        if task is None:
+            return False
+        task.cover_url = cover_key
+        task.updated_at = datetime.now(tz=UTC)
+        return True
+
+
 def _with_suffix(name: str, stored: str) -> str:
     """给条目名补上真实产物的后缀（`mp4`）。
 

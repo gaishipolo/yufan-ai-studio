@@ -104,6 +104,9 @@ def test_create_and_detail(client: TestClient, api: str) -> None:
     assert task["status"] == "queued"
     assert task["title"] == "自定义标题"
     assert task["progress"] == 0
+    # 建任务时没有封面：以前塞一张第三方占位图（picsum），生成完又没人改它，
+    # 任务中心一直显示那张假风景 —— 用户以为「生成结果没出来」。
+    assert task["coverUrl"] == "", "空封面由前端渐变兜底，不能塞占位图"
 
     detail = client.get(f"{api}/tasks/{task['id']}").json()["data"]
     assert detail["id"] == task["id"]

@@ -8,7 +8,7 @@
 
 from __future__ import annotations
 
-import secrets
+from collections.abc import Sequence
 from datetime import UTC, datetime
 
 from sqlalchemy import update
@@ -24,6 +24,7 @@ from core.response import PageParams
 from generation.runner import get_runner
 from infra.ai.base import Capability
 from infra.ai.router import ModelRouter
+from infra.artifacts import artifact_urls
 from infra.queue.base import JobQueue
 from modules.task.enums import AspectRatio, TaskScope, TaskStatus
 from modules.task.models import VideoTask
@@ -68,7 +69,7 @@ class TaskService:
         stmt = self.repo.apply_sort(self.repo.apply_status(base, query.status), query.sort)
         rows, total = await self.repo.paginate(stmt, page)
 
-        items = [self.to_out(row) for row in rows]
+        items = await self.present_many(rows)
         return TaskListOut(
             items=items,
             total=total,
@@ -162,7 +163,11 @@ class TaskService:
             # 存去重保序之后的 id：同一张图传两遍不会多占一个保护名额
             reference_library_ids=[ref.id for ref in references],
             text_json=dumps_text_refs(text_refs),
-            cover_url=self._placeholder_cover(),
+            # 封面由真实结果决定：**不写占位图**。以前这里塞一张 picsum 风景照，
+            # 生成完又没人改它（供应商不回首帧），任务中心一直显示那张假图 ——
+            # 用户看到的是「生成结果没出来」，其实成片早就有了。
+            # 空串让前端走渐变兜底；成片入库后由 `attach_cover` 写回真实首帧。
+            cover_url="",
             author_id=actor.id,
             author_name=actor.name,
         )
@@ -195,6 +200,9 @@ class TaskService:
         task.submit_attempts = 0
         task.output_url = None
         task.downloadable = False
+        # 封面也是上一版产物的：不清掉，重试期间卡片会继续显示旧片的首帧，
+        # 用户以为「点了重试没反应」。新片入库后由 `attach_cover` 再写回来。
+        task.cover_url = ""
         task.finished_at = None
         task.updated_at = datetime.now(tz=UTC)
         await self.session.commit()
@@ -265,6 +273,38 @@ class TaskService:
             out.model_id = spec.id if spec else None
         return out
 
+    async def present(self, task: VideoTask) -> TaskOut:
+        """出参：`to_out` + 把封面 key 现签成地址。
+
+        「库里存 key、出参才变地址」是 `infra.artifacts` 定下的口径（换存储驱动
+        不裂图）。`feed` 一直在做这件事，详情 / 列表漏了：前端拿
+        `library/previews/xx.jpg` 当 URL 用，封面直接 404 —— 表现为任务卡空白、
+        预览弹窗的海报是一块黑。
+        """
+        out = self.to_out(task)
+        if out.cover_url:
+            try:
+                out.cover_url = (await artifact_urls([out.cover_url]))[0] or out.cover_url
+            except Exception:  # noqa: BLE001 - 地址算不出来不该让详情接口 500
+                logger.exception("任务封面地址转换失败 id=%s", task.id)
+        return out
+
+    async def present_many(self, tasks: Sequence[VideoTask]) -> list[TaskOut]:
+        """批量版 `present`：一次签名，避免列表页 24 条各签一次。"""
+        outs = [self.to_out(task) for task in tasks]
+        keys = [out.cover_url for out in outs]
+        if not any(keys):
+            return outs
+        try:
+            urls = await artifact_urls(keys)
+        except Exception:  # noqa: BLE001 - 同上：签不出来就留 key，前端兜底显示占位
+            logger.exception("任务封面地址批量转换失败 count=%d", len(outs))
+            return outs
+        for out, url in zip(outs, urls, strict=False):
+            if url:
+                out.cover_url = url
+        return outs
+
     def to_retry_out(self, task: VideoTask) -> TaskRetryOut:
         """重试的出参：**最小投影**。
 
@@ -291,15 +331,5 @@ class TaskService:
             task.finished_at = datetime.now(tz=UTC)
             await self.session.commit()
             raise UpstreamError("任务调度失败，请稍后重试") from None
-
-    @staticmethod
-    def _placeholder_cover() -> str:
-        """占位封面：真实实现由供应商返回首帧后写回。
-
-        种子用随机值而不是 prompt 哈希——占位图会给到第三方图片站，
-        没必要把用户的画面描述（哪怕只是摘要）带出去。
-        """
-        return f"https://picsum.photos/seed/{secrets.token_hex(4)}/720/1280"
-
 
 __all__ = ["KIND_VIDEO", "TaskService"]

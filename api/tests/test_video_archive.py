@@ -233,3 +233,37 @@ def test_completed_video_lands_in_draft_box(tmp_path: Path) -> None:
     assert asset.duration > 0, "时长来自 ffprobe，不能是 0"
     assert asset.storage_key and asset.storage_key != key, "字节要复制进库自己的 blob"
     assert asset.cover_key, "封面由 ffmpeg 抽首帧派生"
+
+
+def test_attach_cover_writes_library_key_back_to_task() -> None:
+    """封面写回：入库派生好的首帧 key 落到 `video_tasks.cover_url`。
+
+    供应商（Agnes）只回 mp4 直链、不回首帧，所以任务卡片的封面只能来自入库时
+    抽的那一帧。写成对象 key 而不是地址：`/tasks` 与 `feed` 出参时按当前存储
+    驱动现签，换驱动不用改库。
+    """
+    task_id = _create_task(cover_url="")
+    cover_key = "library/previews/aa/bb.jpg"
+
+    async def attach() -> str:
+        async with get_session_factory()() as session:
+            ok = await get_pipeline(KIND_VIDEO).attach_cover(session, task_id, cover_key)
+            assert ok is True
+            await session.commit()
+            task = await session.get(VideoTask, task_id)
+            assert task is not None
+            return task.cover_url
+
+    assert asyncio.run(attach()) == cover_key
+
+
+def test_attach_cover_reports_missing_task() -> None:
+    """任务被删掉之后补封面：返回 False，不抛异常（轮询收尾不能被一条陈旧回调打断）。"""
+
+    async def attach() -> bool:
+        async with get_session_factory()() as session:
+            return await get_pipeline(KIND_VIDEO).attach_cover(
+                session, "task_not_exists", "library/previews/aa/bb.jpg"
+            )
+
+    assert asyncio.run(attach()) is False

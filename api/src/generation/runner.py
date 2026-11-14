@@ -36,6 +36,7 @@ from core.exceptions import AppError, RateLimited
 from core.logging import get_logger
 from core.ports.accounts import account_is_active
 from core.ports.library_ingest import get_library_ingest, has_library_ingest
+from core.ports.library_lookup import get_library_lookup, has_library_lookup
 from db.session import get_session_factory
 from generation.events import (
     EVT_GENERATION_FAILED,
@@ -718,6 +719,43 @@ class GenerationRunner:
             result.asset_id,
             result.created,
         )
+        await self._attach_cover(
+            pipeline=pipeline, session=session, record_id=record_id, asset_id=result.asset_id
+        )
+
+    async def _attach_cover(
+        self,
+        *,
+        pipeline: GenerationPipeline,
+        session: AsyncSession,
+        record_id: str,
+        asset_id: str,
+    ) -> None:
+        """把库里抽好的封面写回业务记录（可选钩子 `pipeline.attach_cover`）。
+
+        供应商多半**不返回视频首帧**（Agnes 只给 mp4 直链），而任务中心 / 分享 /
+        导出都靠 `cover_url` 渲染卡片。以前这里没人补，卡片就一直显示创建时那张
+        占位图 —— 用户看到的是「生成结果没出来」，其实成片早就在库里了。
+        抽帧发生在入库那一步（`library` 的预览派生，ffmpeg 首帧），所以只能入库之后补。
+
+        写回的是**对象 key**（不是地址）：与 `output_url` 同一套口径，列表接口
+        按当前存储驱动现签。任何一步拿不到就安静退出 —— 封面的缺失不该把
+        「已经生成成功」改成失败。
+        """
+        attach = getattr(pipeline, "attach_cover", None)
+        if attach is None or not has_library_lookup():
+            return
+        try:
+            refs = await get_library_lookup().get_many(session, [asset_id])
+            cover_key = refs[asset_id].cover_key if asset_id in refs else ""
+            if not cover_key:
+                return
+            if await attach(session, record_id, cover_key):
+                await session.commit()
+        except Exception:  # noqa: BLE001 - 见 docstring：封面缺失不影响生成结果
+            logger.exception("封面写回失败 id=%s asset=%s", record_id, asset_id)
+            with contextlib.suppress(Exception):
+                await session.rollback()
 
     async def _finish_success(
         self,

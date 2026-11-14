@@ -39,12 +39,32 @@ export function TaskPreviewModal({ taskId, outputUrl, onClose }: TaskPreviewModa
         </div>
       ) : (
         <div className="grid gap-5 p-[18px] md:grid-cols-[250px_minmax(0,1fr)]">
-          <CoverImage
-            src={task.coverUrl}
-            seed={task.id}
-            alt={task.title}
-            className="mx-auto aspect-[4/4.8] w-full max-w-[240px] rounded-[10px] md:max-w-none"
-          />
+          {/* 成片能播就播：以前这里只放一张封面图，用户点开「预览」看到的是静止画面，
+              正文里也没有任何播放入口 —— 等于看不见生成结果。 */}
+          {task.status === 'completed' && outputUrl ? (
+            <div className="mx-auto w-full max-w-[240px] md:max-w-none">
+              <video
+                src={outputUrl}
+                poster={task.coverUrl || undefined}
+                controls
+                playsInline
+                preload="metadata"
+                aria-label={`成片：${task.title}`}
+                className="max-h-[420px] w-full rounded-[10px] bg-black object-contain"
+              >
+                {/* 生成成片没有字幕轨，但 a11y 规则要求 video 里必须有 track；
+                    与 `AssetPreview` 同一写法（空轨不改变播放行为）。 */}
+                <track kind="captions" />
+              </video>
+            </div>
+          ) : (
+            <CoverImage
+              src={task.coverUrl}
+              seed={task.id}
+              alt={task.title}
+              className="mx-auto aspect-[4/4.8] w-full max-w-[240px] rounded-[10px] md:max-w-none"
+            />
+          )}
 
           <div className="min-w-0">
             <dl className="grid grid-cols-[76px_minmax(0,1fr)] gap-x-2.5 gap-y-2 text-xs">
