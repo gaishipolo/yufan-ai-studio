@@ -51,4 +51,26 @@
   .scrollbar-none::-webkit-scrollbar {
     display: none;
   }
+
+  /* 面板内部的滚动条：右栏只有 400px 宽，全局那根 8px 会把内容挤窄。
+     滑块要给明确底色 —— 只写宽度不写 thumb 时 Chrome 画出来是透明的，
+     看起来像"没有滚动条"。 */
+  .scroll-thin {
+    scrollbar-width: thin;
+    scrollbar-color: #c3d2d8 transparent;
+  }
+  .scroll-thin::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  .scroll-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .scroll-thin::-webkit-scrollbar-thumb {
+    border-radius: 999px;
+    background-color: #c3d2d8;
+  }
+  .scroll-thin::-webkit-scrollbar-thumb:hover {
+    background-color: #a9bcc4;
+  }
 }

@@ -330,10 +330,13 @@ export function SpecLibrary() {
         </div>
       </div>
 
-      <aside className="flex flex-col overflow-hidden rounded-2xl border border-line bg-panel shadow-[0_1px_2px_rgba(16,42,55,.05)] xl:sticky xl:top-[66px]">
+      {/* 右栏固定（`xl` 以上吸顶），中间那一段自己滚：槽位多的时候整块会比视口还高，
+          不自己滚的话「生成」按钮就永久停在屏幕下面，填到最后还得滚页面去找它。
+          头（模板名/版本）和脚（提交按钮）留在滚动区外，滚的只有中间的素材区。 */}
+      <aside className="flex flex-col overflow-hidden rounded-2xl border border-line bg-panel shadow-[0_1px_2px_rgba(16,42,55,.05)] xl:sticky xl:top-[66px] xl:max-h-[calc(100vh-86px)]">
         {spec && version ? (
           <>
-            <header className="border-b border-line-soft bg-gradient-to-b from-panel-soft to-panel px-4 pb-3 pt-3.5">
+            <header className="shrink-0 border-b border-line-soft bg-gradient-to-b from-panel-soft to-panel px-4 pb-3 pt-3.5">
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
                   <div className="truncate text-[15px] font-semibold leading-tight text-ink">
@@ -355,7 +358,10 @@ export function SpecLibrary() {
               </div>
             </header>
 
-            <div className="flex flex-col gap-3.5 px-4 py-3.5">
+            {/* 滚动条用细的（`scroll-thin`，见 index.css）：这栏只有 400px 宽，
+                8px 的全局滚动条会把槽位块挤窄。"stable" 让有没有滚动条两种情况等宽，
+                切模板时内容不会左右跳。 */}
+            <div className="scroll-thin flex min-h-0 flex-1 flex-col gap-3.5 overflow-y-auto overscroll-contain px-4 py-3.5 [scrollbar-gutter:stable]">
               {slots.length > 0 && (
                 <PanelSection
                   title="填入素材"
@@ -544,7 +550,7 @@ export function SpecLibrary() {
               )}
             </div>
 
-            <div className="flex flex-col gap-2 border-t border-line-soft bg-panel-soft/60 px-4 py-3">
+            <div className="flex shrink-0 flex-col gap-2 border-t border-line-soft bg-panel-soft/60 px-4 py-3">
               {error && <p className="text-[11px] text-danger">{error}</p>}
               {note && (
                 <p className="flex items-center gap-2 text-[11px] text-ink-soft">
