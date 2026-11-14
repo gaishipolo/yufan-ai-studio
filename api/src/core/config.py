@@ -238,9 +238,6 @@ class Settings(BaseSettings):
     # 必须能原子重命名，所以只能放本地盘或共享盘，不能放对象存储。
     # 留空 = `api/var/video_templates/catalog.json`；多机部署指向共享盘上的同一份文件。
     video_template_catalog: str = ""
-    # 封装进度文件目录（按封装 key 幂等、失败可原样重跑）。
-    # 留空 = `api/var/template-packager`；与模板目录一同放共享盘，换机器才能接着重跑。
-    template_packager_state_dir: str = ""
     worker_enabled: bool = True
     worker_concurrency: int = 2
     # 周期任务调度器（模块自己 @periodic 注册）。多副本部署时每个进程都会跑一份，

@@ -1,6 +1,8 @@
 # AI 会话调用指南：按素材包用途封装视频模板
 
-适用项目：雨范 AI 工作台。命令入口：`api/scripts/package_video_template.py`。
+适用项目：雨范 AI 工作台。命令入口：`POST /api/v1/template-manifests`（预检 → 保存 → 发布）。
+> 2026-11-14：离线脚本 `api/scripts/package_video_template.py` 已下线；下面的 `--check-server` /
+> `--apply` 分别对应 `POST /template-manifests/validate` 与 `POST /template-manifests` + `/publish`。
 
 ## 约定
 
@@ -12,9 +14,9 @@
 
 会话可直接这样调用：
 
-> 按本指南为现有视频卡片新增“文字换场景”。原片资产 ID 为 ac1d588d36294fa49c809d46bb1dbb6d。使用 docs/examples/template-package/scene-text-hotel.json 和同目录的文字换场景提示词.txt。第一段酒店会客厅描述作为 scenePromptDefault，在工作台输入框预填并允许用户修改；其余提示词作为固定保留约束。只有原视频媒体，不选择场景包，不上传参考图。保留现有产品、人物和图片换场景功能，完成封装并返回入口，不提交生成。
+> 按本指南为现有视频卡片新增“文字换场景”。原片资产 ID 为 ac1d588d36294fa49c809d46bb1dbb6d。使用下面「文字换场景」一节的配置形状（示例文件已随离线打包器下线移除）。第一段酒店会客厅描述作为 scenePromptDefault，在工作台输入框预填并允许用户修改；其余提示词作为固定保留约束。只有原视频媒体，不选择场景包，不上传参考图。保留现有产品、人物和图片换场景功能，完成封装并返回入口，不提交生成。
 
-[完整酒店配置](examples/template-package/scene-text-hotel.json) 和 [固定约束提示词](examples/template-package/文字换场景提示词.txt) 已保存。配置里的 `video.assetId` 是本项目米兰之夜原片；用于其他视频时替换为实际原片 ID，并按该原片修改固定约束及封装 key。
+完整酒店配置 和 固定约束提示词 已保存。配置里的 `video.assetId` 是本项目米兰之夜原片；用于其他视频时替换为实际原片 ID，并按该原片修改固定约束及封装 key。
 
 ```json
 {
@@ -65,7 +67,7 @@
 
 > 按本指南封装三人换脸。保留提示词原文与编号，Mixed 1、2、3 分别对应第1、2、3位人物角色卡的正面身份图，Mixed 4 是原视频。运行时由用户在「选择目标人物」选择3张不同角色卡，各人物卡独立对应自己的提示词槽位，其他图片只补充该人物参考。不合并人物卡、不创建多人包，不提交生成。
 
-复制 [三人换脸配置](examples/template-package/three-characters.json) 和 [三人提示词示例](examples/template-package/三人替换提示词.txt) 即可使用这个编号布局。封装时只需一个兼容的默认人物包作第1位样例，第2、3位显示待选择；不要求预先把三个人物放在同一个包里。
+复制 三人换脸配置 和 三人提示词示例 即可参照这个编号布局（示例文件已移除，形状见上文 manifest 结构）。封装时只需一个兼容的默认人物包作第1位样例，第2、3位显示待选择；不要求预先把三个人物放在同一个包里。
 
 AI 执行时遵循以下步骤：
 
@@ -77,7 +79,7 @@ AI 执行时遵循以下步骤：
 
 ## 最小配置
 
-可以复制 [复用素材包示例](examples/template-package/reuse-pack.json) 及 [提示词示例](examples/template-package/产品替换提示词.txt)，放入原片所在目录。下面使用已归档原片：
+可以复制 复用素材包示例 及 提示词示例，放入原片所在目录。下面使用已归档原片：
 
 ```json
 {
@@ -114,18 +116,21 @@ AI 执行时遵循以下步骤：
 
 在项目根目录执行：
 
-```powershell
-# 离线预检：不联网、不上传、不写进度。现有资产、包可用性留待服务检查。
-.\api\.venv\Scripts\python.exe .\api\scripts\package_video_template.py D:\素材\manifest.json
+```bash
+# 预检：规则 + 素材存在性，不落库
+curl -X POST http://127.0.0.1:8080/api/v1/template-manifests/validate \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d @manifest.json
 
-# 只读检查契约、权限和默认包；结果包含 defaultPacks
-.\api\.venv\Scripts\python.exe .\api\scripts\package_video_template.py D:\素材\manifest.json --check-server
+# 保存配置（同 key 同指纹幂等）
+curl -X POST http://127.0.0.1:8080/api/v1/template-manifests \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d @manifest.json
 
-# 封装；复用模式不上传参考图、不新建或发布素材包
-.\api\.venv\Scripts\python.exe .\api\scripts\package_video_template.py D:\素材\manifest.json --apply
+# 发布：投影素材包与视频模板（复用模式不会新建或发布素材包）
+curl -X POST http://127.0.0.1:8080/api/v1/template-manifests/<key>/publish \
+  -H "Authorization: Bearer $TOKEN"
 ```
 
-认证从进程环境变量 `YUFAN_API_TOKEN` 读取。只复用已有视频和包时，需要 `asset:read`、`template:read`、`template:pack:manage`；上传新视频另需 `asset:create`，主动分享另需 `asset:share`。复用已有包不要求参考素材维护或素材包发布权限。服务端仍逐请求检查授权。
+认证用 `Authorization: Bearer $TOKEN`（令牌由已授权登录流程取得，只放环境变量）。只复用已有视频和包时，需要 `asset:read`、`template:read`、`template:pack:manage`；上传新视频另需 `asset:create`，主动分享另需 `asset:share`。复用已有包不要求参考素材维护或素材包发布权限。服务端仍逐请求检查授权。
 
 令牌通过已授权登录流程取得，只放环境变量，不写配置、进度、报告、命令参数或聊天正文。工具不自动登录、不抓取浏览器登录态。
 

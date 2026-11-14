@@ -14,7 +14,7 @@
 | 仓库 / 分支 | `https://github.com/gaishipolo/yufan-ai-studio` · `main` |
 | HEAD | 本地领先 `origin/main`：`3aaf40f` 起多笔**未推送**（含「任务中心接生图」与「模板封装迁移阶段 A/B/C1」，推送前先问用户）；笔数以 `git rev-list --count origin/main..HEAD` 为准，hash 见 `git log --oneline origin/main..HEAD`。未跟踪的只有 `var/`、临时脚本（如 `var_fix_fe.py`）、快捷方式 `.lnk`、`vite.config.ts.timestamp-*.mjs` 与用户私有的 `EXCHANGE_TOPICS_2026-11-12.md`，都不该进提交 |
 | CI | 此前连续多轮全绿（含 `bc0940e`）；本轮推送后照 §4 核对。PG 迁移仍在观察期（`continue-on-error`） |
-| 本机门禁 | 本轮（2026-11-14 C2 正刀 / 封装整体搬进 `template_pack`）按 §3.1 定级 **`full`**（改 `api/ports.py`、删迁移、动模块装配）：后端全量 **1663 passed / 12 skipped / 0 failed**（272s，EXIT=0），`ruff check src tests` 0 / `mypy --platform win32` 299 文件 0 / `export-openapi --check` 四份无差异（已重新生成：去 6 个 v1 `/template-packs` 端点、去 2 个权限码）/ `npm run verify` 全绿 / `gen:routes --check`（10 条路由）/ `gen:mock-coverage --check` 全绿。上一轮 C2 第一刀定级 `full`：1690 passed / 12 skipped；C1.5 定级 `targeted`：87 passed |
+| 本机门禁 | 本轮（2026-11-14 D / 离线打包器下线）按 §3.1 定级 **`full`**（删模块 + 改配置 + 改模块自检）：后端全量 **1627 passed / 12 skipped / 0 failed**（260s，EXIT=0；比上轮少 37 条 = 删掉的 CLI 用例），`ruff check src tests` 0 / `mypy --platform win32` 293 文件 0 / `export-openapi --check` 四份无差异（接口零变化）；前端与路由未动，按约定不跑 `npm run verify` 与两个 `gen:* --check` |
 | 规模 | 12 个业务模块 · **118 条路径 / 148 个端点**（文本资产 +7）· **57 个权限码**（本轮未新增）· **4 份**契约生成物 |
 | 后端 | `api/.venv/Scripts/app.exe serve --reload` → 8080，前缀 **`/api/v1`**（裸 `/health` 会返回 40400） |
 | 前端 | `cd studio && npm run dev` → 5173，`/api` 已代理到 8080 |
@@ -59,11 +59,14 @@
   已发布的模板会重复；回执 `published_pack_id` / `published_template_id` 与只读目录端口
   现在都指向运行行。投影**不是单事务**（复用 `PackService` / `create` 的既有提交语义），
   按 key 幂等、失败可重跑。`test_publish_projects_into_runtime_tables` 走对外接口断言 |
-| 待做 | **D：删离线打包器**（已解锁）：`api/src/template_packager`（6 文件）、
-  `scripts/package_video_template.py`、`core.config.template_packager_state_dir` 与
-  `health.py` 里那段 state-dir 自检、两份 `AI_TEMPLATE_PACKAGER*.md`；再重写
-  `test_template_packager` / `test_packager_full_chain` / `test_packager_role_bindings`
-  与 `test_scene_text_template` / `test_template_catalog_storage` 对 CLI 的依赖 |
+| 本轮 | **D：离线打包器下线**（2026-11-14）：删 `api/src/template_packager`（6 文件）、
+  `scripts/package_video_template.py`、`scripts/` 里的示例素材目录、
+  `core.config.template_packager_state_dir` 与 `health.py` 的进度目录自检；
+  `AI_TEMPLATE_PACKAGER*.md` 改成 `/template-manifests` 三步接口（预检 → 保存 → 发布） |
+  入口只剩 API：配置存 DB、进度靠 `fingerprint`/`revision` 幂等、回执指运行行。
+  测试：删掉 3 个 CLI 用例文件（37 条），`test_scene_text_template` 改写成走
+  `/template-manifests` 的端到端（发布出的模板直接喂 `/replacement-runs`），
+  `test_template_catalog_storage` 去掉 state-dir 那条。**整条迁移到此收口** |
 
 | 变化 | 谁受影响 | 说明 |
 |---|---|---|

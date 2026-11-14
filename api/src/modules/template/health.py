@@ -92,14 +92,6 @@ def _node_version() -> tuple[str, str]:
     return match.group(1), ""
 
 
-def _packager_dir() -> Path:
-    """与 `template_packager/__main__.py::_state_dir` 同一口径，这里只读不算。"""
-    configured = settings.template_packager_state_dir.strip()
-    if configured:
-        return Path(configured).expanduser()
-    return _API_ROOT / "var" / "template-packager"
-
-
 def _writable_problem(path: Path) -> str:
     """真的写一个临时文件，不用 `os.access`（Windows 上对目录不可靠）。"""
     try:
@@ -168,9 +160,9 @@ async def check(report: DoctorReportLike) -> None:
         else:
             report.add("template.runs_root", "PASS", f"运行工作区 {root}")
 
-    targets: list[tuple[str, Path]] = [
-        ("打包器进度目录", _packager_dir()),
-    ]
+    # 离线打包器已下线（配置改在 `/template-manifests`，进度落 DB），
+    # 所以只剩「运行工作区」一个需要检查可写的目录。
+    targets: list[tuple[str, Path]] = []
     if root is not None:
         targets.append(("运行工作区", root))
     problems = [msg for msg in (_writable_problem(path) for _, path in targets) if msg]

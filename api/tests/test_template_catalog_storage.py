@@ -96,20 +96,6 @@ def test_second_pin_clears_the_first() -> None:
     assert first.pinned is False
 
 
-def test_packager_state_dir_follows_settings(monkeypatch, tmp_path: Path) -> None:
-    """封装进度目录由 `TEMPLATE_PACKAGER_STATE_DIR` 决定，留空才回落到 api/var。"""
-    from core.config import settings
-    from template_packager.__main__ import _state_dir
-
-    monkeypatch.setattr(settings, "template_packager_state_dir", str(tmp_path / "shared"))
-    assert _state_dir() == tmp_path / "shared"
-
-    monkeypatch.setattr(settings, "template_packager_state_dir", "")
-    fallback = _state_dir()
-    assert fallback.name == "template-packager"
-    assert fallback.parent.name == "var"
-
-
 def _load_subtitle_script():
     spec = importlib.util.spec_from_file_location(
         "ensure_no_subtitle_prompt",
