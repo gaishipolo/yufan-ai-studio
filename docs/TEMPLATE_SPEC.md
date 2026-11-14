@@ -279,11 +279,21 @@
 
 `compile` 之所以存在：展开与校验是**模板语义**，不能下放前端（否则编号规则有两份），也不该让封装去调 task（跨模块）。它只做映射，不产生副作用，天然可缓存、可单测。
 
-模板库拿到 `compile` 出参后，由前端直接 `POST /tasks`。有一道**字段摊平**：`/tasks` 的
-`durationSec` / `aspectRatio` / `stylePreset` 是顶层字段、没有自由 `params`，所以
-`params` 里出现这三个以外的键（生图模型的 `size` / `count`）必须**报错而不是丢掉** ——
-丢掉等于按模型默认值跑，而模板里明明写了。映射只在前端一处
-（`features/template-library/taskPayload.ts`），单测直接断言它产出的形状。
+模板库拿到 `compile` 出参后，由前端提交到**模型能力对应的接口**（2026-11-14 起）：
+
+| 模型能力 | 接口 | 顶层字段 |
+|---|---|---|
+| `video` | `POST /tasks` | `durationSec` / `aspectRatio` / `stylePreset`，没有自由 `params` |
+| `image` | `POST /generations/image` | `size` / `count`，其余声明的参数进 `params` |
+
+**模板本身不声明「是图片还是视频」**：它只写模型，能力由 `GET /models` 决定。
+判错方向的代价很具体 —— 图片模板走 `/tasks` 会被按 `Capability.VIDEO` 拒掉，
+用户看到的是「这些参数无法提交给通用生成任务：count」，一句与模型无关的错。
+
+两条映射都在前端一处（`features/template-library/taskPayload.ts`：
+`toTaskPayload` / `toImagePayload` / `toSubmitPayload`）。共同口径是**参数不许静默丢**：
+视频那边多出来的键没有落点 → 报错；图片那边除 `size`/`count` 外的键进 `params`，
+由服务端按模型 `paramSchema` 校验（未声明即 400，也是看得见的失败）。
 
 `compile` **不再有 `promptOverride`**（2026-11-14）：模板库不改文字，可变内容走 `text` 槽位。
 旧字段会被 `extra="forbid"` 拒成 422，不是静默忽略。
@@ -329,7 +339,7 @@
   `source=asset` → `/library/selection`（按 `type` 过滤，`min/max` 决定单选或多选）；
   `source=pack` → 资产库封装选择器（只列同 `type` 成员的封装），选中后展示「N 张」与角色列表；
 - 提交按钮在 `min` 未满足时禁用，旁边说明缺哪个槽位（不写冗长引导语）；
-- 提交 = `compile` → **字段摊平** → `POST /tasks` → 提示 + 「去任务中心」。
+- 提交 = `compile` → **按模型能力摊平** → `/tasks` 或 `/generations/image` → 提示 + 「去任务中心」。
 
 ### 10.1 已落地的形态（2026-11-14，`/templates/library`）
 
@@ -350,7 +360,7 @@
 
 **浏览器实测（2026-11-14）**：Chrome headless 注入令牌打开 `/templates/library` →
 点槽位 2「选择」→ 弹层挑「3030粉」→ 按钮从「还缺 1 项素材」变「生成」→ 点生成 →
-`POST /tasks` **201**、右栏出现「已提交：… 去任务中心」；控制台无 error、无失败请求、
+提交接口 **201**（视频 `/tasks`、图片 `/generations/image`）、右栏出现「已提交：… 去任务中心」；控制台无 error、无失败请求、
 右栏 420px 无横向溢出（`scrollWidth > clientWidth` 的元素为空）。任务随即 DELETE，
 验证不留下扣费记录。
 

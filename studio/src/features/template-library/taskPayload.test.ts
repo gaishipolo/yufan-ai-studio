@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import type { SpecCompileOut } from '@/shared/api/schema';
-import { toTaskPayload } from './taskPayload';
+import { toImagePayload, toSubmitPayload, toTaskPayload } from './taskPayload';
 
 /**
- * `compile` → `POST /tasks` 的字段摊平。
+ * `compile` → 提交接口的字段摊平。
  *
- * 两件事必须钉死：参数不许静默丢（`/tasks` 没有自由 `params`），时长必须有来源
- * （不许凭空编一个 5 秒）。
+ * 三件事必须钉死：参数不许静默丢（视频没有自由 `params`，图片的额外参数进 `params`）、
+ * 时长必须有来源（不许凭空编一个 5 秒）、**图片模板不许走 /tasks**（那边只收视频能力，
+ * 会把 `count` 当非法参数拒掉，用户只看到一句跟模型无关的报错）。
  */
 
 function compiled(overrides: Partial<SpecCompileOut> = {}): SpecCompileOut {
@@ -80,5 +81,66 @@ describe('toTaskPayload', () => {
     if (!result.ok) return;
     expect(result.payload.referenceLibraryIds).toEqual(['c', 'a', 'b']);
     expect(result.payload.textLibraryIds).toEqual(['doc']);
+  });
+});
+
+describe('toImagePayload', () => {
+  it('尺寸与张数进顶层，其余声明的参数进 params', () => {
+    const result = toImagePayload(
+      compiled({model: 'agnes-image-2.5-flash', params: {size: '1024x1536', count: 2, quality: 'hd'}}),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.payload).toEqual({
+      prompt: '把 {{Mixed 1}} 换成 {{Mixed 2}}',
+      model: 'agnes-image-2.5-flash',
+      size: '1024x1536',
+      count: 2,
+      referenceLibraryIds: ['a', 'b'],
+      textLibraryIds: [],
+      params: {quality: 'hd'},
+    });
+  });
+
+  it('模板没声明尺寸时不出来空字符串，交给服务端取模型默认', () => {
+    const result = toImagePayload(
+      compiled({model: 'agnes-image-2.5-flash', params: {count: 1}}),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect('size' in result.payload).toBe(false);
+    expect(result.payload.count).toBe(1);
+  });
+
+  it('张数不合法当场报错，不四舍五入成一个奇怪的数', () => {
+    const bad = toImagePayload(compiled({params: {count: -2}}));
+    expect(bad.ok).toBe(false);
+    if (bad.ok) return;
+    expect(bad.message).toContain('张数');
+  });
+});
+
+describe('toSubmitPayload', () => {
+  it('图片模型走生图接口，视频模型走任务接口', () => {
+    const image = toSubmitPayload(
+      compiled({model: 'agnes-image-2.5-flash', params: {count: 1}}),
+      '简单测试-图片',
+      'image',
+    );
+    expect(image.ok && image.kind).toBe('image');
+
+    const video = toSubmitPayload(compiled(), '简单测试-视频', 'video');
+    expect(video.ok && video.kind).toBe('video');
+  });
+
+  it('同一个模板内容，按 video 提交就会因为 count 报错 —— 能力判错必须看得见', () => {
+    const result = toSubmitPayload(
+      compiled({model: 'agnes-image-2.5-flash', params: {count: 1}}),
+      't',
+      'video',
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.message).toContain('count');
   });
 });

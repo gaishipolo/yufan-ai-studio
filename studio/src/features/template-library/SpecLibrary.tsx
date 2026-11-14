@@ -5,6 +5,7 @@ import { ArrowRight, ImageOff, Play, X } from 'lucide-react';
 import { libraryApi } from '@/entities/library/api/library.api';
 import { useLibraryDetail } from '@/entities/library/api/library.queries';
 import { AssetPreview } from '@/entities/library/ui/AssetPreview';
+import { useGenerateImage } from '@/entities/image/api/image.api';
 import { useModels } from '@/entities/model/api/model.queries';
 import { useCreateTask } from '@/entities/task/api/task.queries';
 import { usePublishedSpecs, useSpecCompile } from '@/entities/template-spec/api/spec.queries';
@@ -12,7 +13,7 @@ import type { SpecSlotOut, TemplateSpecOut } from '@/shared/api/schema';
 import { AssetPicker, type PickKind, type PickedAsset } from '@/features/template-specs/AssetPicker';
 import { Button, Chip, CoverImage, EmptyState, SearchInput, Skeleton } from '@/shared/ui';
 import { cn } from '@/shared/lib/cn';
-import { toTaskPayload } from './taskPayload';
+import { toSubmitPayload, type SubmitKind } from './taskPayload';
 
 /**
  * 模板库（填表）：左边选模板，右边就地填素材 → 生成。
@@ -31,6 +32,25 @@ const TYPE_LABEL: Record<string, string> = {
   audio: '音频',
   text: '文本',
 };
+
+/** 参数的展示名：图片看尺寸/张数，视频看画幅/时长，其余按 key 原样。 */
+const PARAM_LABEL: Record<string, string> = {
+  size: '尺寸',
+  count: '张数',
+  durationSec: '时长',
+  aspectRatio: '画幅',
+  stylePreset: '风格',
+};
+
+/** 参数值的可读文案。没有值时明写「默认」，不摆一个空白 chip 让人猜。 */
+function formatParam(key: string, value: unknown): string {
+  const text = value === null || value === undefined || value === '' ? '' : String(value);
+  if (!text) return `${PARAM_LABEL[key] ?? key} · 默认`;
+  if (key === 'durationSec') return `${text} 秒`;
+  if (key === 'count') return `${text} 张`;
+  // 素材库里尺寸都写成 `1024x1536`，展示时换成乘号更像尺寸而不是型号
+  return key === 'size' ? text.replace('x', '×') : text;
+}
 
 const PICK_KIND: Record<string, PickKind> = {
   image: 'image',
@@ -270,7 +290,9 @@ export function SpecLibrary() {
   const published = usePublishedSpecs();
   const compile = useSpecCompile();
   const createTask = useCreateTask();
+  const generateImage = useGenerateImage();
   const videoModels = useModels('video');
+  const imageModels = useModels('image');
 
   const [keyword, setKeyword] = useState('');
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
@@ -299,11 +321,23 @@ export function SpecLibrary() {
     setError('');
   }, [focused, version?.version]);
 
-  const model = videoModels.find(item => item.id === version?.model);
-  const defaults = {
-    durationSec: Number(model?.paramSchema?.durationSec?.default ?? 0) || undefined,
-    aspectRatio: (model?.paramSchema?.aspectRatio?.default as string | undefined) ?? undefined,
-  };
+  /* 模板只声明模型，「提交到哪个接口」由模型能力决定：视频进 /tasks、图片进
+     /generations/image。判不出来（模型清单里没有）就按视频处理 —— 那是这条链路
+     原本唯一支持的方向，报错信息也比「静默当图片」清楚。 */
+  const imageModel = imageModels.find(item => item.id === version?.model);
+  const videoModel = videoModels.find(item => item.id === version?.model);
+  const model = imageModel ?? videoModel;
+  const kind: SubmitKind = imageModel ? 'image' : 'video';
+  const defaults =
+    kind === 'image'
+      ? {
+          size: String(imageModel?.paramSchema?.size?.default ?? '') || undefined,
+          count: Number(imageModel?.paramSchema?.count?.default ?? 0) || undefined,
+        }
+      : {
+          durationSec: Number(videoModel?.paramSchema?.durationSec?.default ?? 0) || undefined,
+          aspectRatio: (videoModel?.paramSchema?.aspectRatio?.default as string | undefined) ?? undefined,
+        };
 
   const missing = slots.filter(slot => {
     if (slot.binding !== 'user') return false;
@@ -332,7 +366,14 @@ export function SpecLibrary() {
         };
       });
   })();
-  const busy = compile.isPending || createTask.isPending;
+  /* 参数只读展示，键与顺序都来自模型的 `paramSchema`：图片模型是尺寸/张数，
+     视频模型是画幅/时长，前端不写死任何一种。模型不在目录里就整块不渲染。 */
+  const paramChips = Object.entries(model?.paramSchema ?? {}).map(([key, field]) => {
+    const value = version?.params?.[key] ?? field?.default;
+    return {key, text: formatParam(key, value)};
+  });
+
+  const busy = compile.isPending || createTask.isPending || generateImage.isPending;
 
   const pickerSlot = slots.find(slot => slot.key === picker);
 
@@ -361,13 +402,19 @@ export function SpecLibrary() {
         key: spec.key,
         payload: {slotValues: values},
       });
-      const result = toTaskPayload(compiled, spec.name, defaults);
-      if (!result.ok) {
-        setError(result.message);
+      const plan = toSubmitPayload(compiled, spec.name, kind, defaults);
+      if (!plan.ok) {
+        setError(plan.message);
         return;
       }
-      const task = await createTask.mutateAsync(result.payload);
-      setNote(`已提交：${task.title || task.id}`);
+      if (plan.kind === 'image') {
+        const job = await generateImage.mutateAsync(plan.payload);
+        // 生图的 `name` 是从提示词派生的，会显示成 `{{Text 1}}`；用模板名更好认
+        setNote(`已提交生图：${spec.name}（${job.id}）`);
+      } else {
+        const task = await createTask.mutateAsync(plan.payload);
+        setNote(`已提交：${task.title || task.id}`);
+      }
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     }
@@ -562,12 +609,15 @@ export function SpecLibrary() {
                 </PanelSection>
               )}
 
-              <PanelSection title="参数">
-                <div className="flex flex-wrap gap-1.5">
-                  <Chip>{String(version.params?.aspectRatio ?? defaults.aspectRatio ?? '9:16')}</Chip>
-                  <Chip>{String(version.params?.durationSec ?? defaults.durationSec ?? '—')} 秒</Chip>
-                </div>
-              </PanelSection>
+              {paramChips.length > 0 && (
+                <PanelSection title="参数">
+                  <div className="flex flex-wrap gap-1.5">
+                    {paramChips.map(item => (
+                      <Chip key={item.key}>{item.text}</Chip>
+                    ))}
+                  </div>
+                </PanelSection>
+              )}
             </div>
 
             <div className="flex flex-col gap-2 border-t border-line-soft px-4 py-3">
@@ -582,7 +632,13 @@ export function SpecLibrary() {
               )}
               <Button block disabled={busy || missing.length > 0} onClick={() => void submit()}>
                 <Play size={13} />
-                {busy ? '提交中…' : missing.length > 0 ? `还缺 ${missing.length} 项素材` : '生成'}
+                {busy
+                  ? '提交中…'
+                  : missing.length > 0
+                    ? `还缺 ${missing.length} 项素材`
+                    : kind === 'image'
+                      ? '生成图片'
+                      : '生成视频'}
               </Button>
             </div>
           </>

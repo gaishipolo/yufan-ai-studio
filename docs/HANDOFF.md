@@ -88,6 +88,8 @@
 | 新增 `demoAssetId`（模板出参） | 前端 | 展示案例，图或视频；**不进发布快照**，改它不用发新版 |
 | `DELETE /template-specs/{key}` 是软删 | 前端/运维 | 进回收站，`GET /trash` 列出、`POST /{key}/restore` 恢复；资产引用照旧算（不按 `deleted_at` 过滤） |
 
+| 本轮 | **模板库支持图片模板**（2026-11-14）：提交按模型能力分流，`video` → `POST /tasks`、`image` → `POST /generations/image`；`taskPayload.ts` 分成 `toTaskPayload` / `toImagePayload` / `toSubmitPayload`；右栏「参数」改为按模型 `paramSchema` 渲染（图片显示尺寸/张数），按钮文案分「生成图片 / 生成视频」 | 起因：`简单测试-图片` 在模板库点生成报「这些参数无法提交给通用生成任务：count」—— 封装页能选图片模型，填表页却只发 `/tasks`（按 `Capability.VIDEO` 解析）。后端一行未改，两个接口本来都支持 `textLibraryIds` |
+
 | 变化 | 谁受影响 | 说明 |
 |---|---|---|
 | 未在 `param_schema` 声明的参数 → **400** + `availableParams` | 前端/脚本 | 前端参数区本来就由 `GET /models` 渲染，无需改动；手写参数的地方会立刻看到 400 |
