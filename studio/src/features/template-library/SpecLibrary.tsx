@@ -3,10 +3,11 @@ import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { ArrowRight, ImageOff, Play, X } from 'lucide-react';
 import { libraryApi } from '@/entities/library/api/library.api';
-import { useLibraryDetail } from '@/entities/library/api/library.queries';
 import { KIND_LABEL } from '@/entities/library/model/types';
 import { AssetPreview } from '@/entities/library/ui/AssetPreview';
 import { PromptRefs } from '@/entities/library/ui/PromptRefs';
+import { AssetChip } from './AssetChip';
+import { SlotMediaPicker } from './SlotMediaPicker';
 import { useGenerateImage } from '@/entities/image/api/image.api';
 import { useModels } from '@/entities/model/api/model.queries';
 import { useCreateTask } from '@/entities/task/api/task.queries';
@@ -62,33 +63,6 @@ function minOf(slot: SpecSlotOut): number {
 
 function maxOf(slot: SpecSlotOut): number {
   return slot.type === 'pack' ? 1 : (slot.maxCount ?? 1);
-}
-
-/** 缩略图 + 名字。每个 id 一条详情查询，React Query 按 id 缓存，切换模板不重复拉。 */
-function AssetChip({assetId, onRemove}: {assetId: string; onRemove?: () => void}) {
-  const detail = useLibraryDetail(assetId);
-  return (
-    <span className="flex items-center gap-1.5 rounded-lg border border-line-soft bg-panel px-1.5 py-1">
-      <CoverImage
-        src={detail.data?.coverUrl ?? undefined}
-        seed={assetId}
-        className="h-7 w-7 shrink-0 rounded"
-      />
-      <span className="max-w-[150px] truncate text-[11px] text-ink-soft">
-        {detail.data?.name ?? assetId.slice(0, 8)}
-      </span>
-      {onRemove && (
-        <button
-          type="button"
-          onClick={onRemove}
-          className="text-ink-mute transition-colors hover:text-danger"
-          title="移除"
-        >
-          <X size={11} />
-        </button>
-      )}
-    </span>
-  );
 }
 
 /**
@@ -467,13 +441,27 @@ export function SpecLibrary() {
                     )
                   }
                 >
-                  <div className="flex flex-col divide-y divide-line-soft">
+                  <div className="flex flex-col gap-2">
                     {slots.map((slot, index) => {
                       const filled = values[slot.key] ?? [];
                       const fixed = slot.binding === 'fixed';
                       const locked = fixed && (slot.type === 'pack' ? !!slot.packId : !!slot.assetId);
+                      /* 要让用户填的图片/视频：按「一级标签 · 槽位名」分组、点二级标签看素材。
+                         其余（固定槽位、文本/音频/封装）保留原来的行式写法。 */
+                      if (!fixed && (slot.type === 'image' || slot.type === 'video')) {
+                        return (
+                          <SlotMediaPicker
+                            key={slot.key}
+                            slot={slot}
+                            selected={filled}
+                            onChange={ids =>
+                              setValues(current => ({...current, [slot.key]: ids}))
+                            }
+                          />
+                        );
+                      }
                       return (
-                        <div key={slot.key} className="flex gap-2 py-2 first:pt-0 last:pb-0">
+                        <div key={slot.key} className="flex gap-2">
                           <div className="flex w-24 shrink-0 flex-col gap-0.5">
                             <span className="flex items-baseline gap-1 text-[12px] leading-tight text-ink">
                               <span className="shrink-0 text-ink-mute">{index + 1}.</span>

@@ -208,17 +208,35 @@ async def _spec_out_of(session: AsyncSession, head: SpecRow) -> TemplateSpecOut:
 # 预检：结构（core） + 现实（模型目录 / 资产库）
 # --------------------------------------------------------------------------- #
 def _check_executable(spec: TemplateSpec) -> None:
-    """提示词长度先按「两段原文之和」粗判。
+    """发布前判「这份模板跑得起来吗」：提示词长度 + 素材候选集够不够明确。
 
-    `{{slot:key*}}` 展开后可能比原文更长，所以这里只是**发布时的早提醒**；
-    真正的判据在 `compile_for()` 里按展开后的成品长度算（那一处是精确的）。
-    两处同一个常量，改上限只改 `EXECUTION_PROMPT_LIMIT`。
+    提示词部分只是**早提醒**：`{{slot:key*}}` 展开后可能比原文更长，真正的判据在
+    `compile_for()` 里按展开后的成品长度算。两处同一个常量，改上限只改
+    `EXECUTION_PROMPT_LIMIT`。
     """
     total = len(spec.prompt)
     if total > EXECUTION_PROMPT_LIMIT:
         raise BadRequest(
             f"提示词共 {total} 字，超过执行层上限 {EXECUTION_PROMPT_LIMIT} 字"
             "（通用生成任务的 prompt 上限）"
+        )
+
+    # 模板库的填表区按「一级标签 · 槽位名」分组展示候选素材，所以**要让用户填的
+    # 图片/视频槽位必须有一个一级标签**：没有标签时那一段只能退化成"全部素材"，
+    # 素材一多就没法挑（这正是这一轮要消灭的形态）。
+    #
+    # 只要求 `binding=user`：固定槽位的内容作者已经选死了，模板使用者根本不挑，
+    # 逼作者再填一个标签只是多一步。文本/音频/封装也不要求 —— 它们走各自的
+    # 列表 / 封装选择器，没有"按标签分组"的概念。
+    missing = [
+        slot.label.strip() or slot.key
+        for slot in spec.slots
+        if slot.type in ("image", "video") and slot.binding == "user" and not slot.tag_id
+    ]
+    if missing:
+        raise BadRequest(
+            "这些槽位要给一级标签（模板库按标签分组让用户挑素材）："
+            + "、".join(missing)
         )
 
 

@@ -1,0 +1,180 @@
+import { useEffect, useMemo, useState } from 'react';
+import { Check } from 'lucide-react';
+import {
+  useLibrarySelection,
+  useLibraryTags,
+} from '@/entities/library/api/library.queries';
+import { KIND_LABEL, viewQuery } from '@/entities/library/model/types';
+import type { SpecSlotOut } from '@/shared/api/schema';
+import { CoverImage } from '@/shared/ui';
+import { cn } from '@/shared/lib/cn';
+import { AssetChip } from './AssetChip';
+import { pickWithin } from './slotPick';
+
+const PAGE_SIZE = 24;
+
+export function SlotMediaPicker({
+  slot,
+  selected,
+  onChange,
+}: {
+  slot: SpecSlotOut;
+  selected: string[];
+  onChange: (ids: string[]) => void;
+}) {
+  const kind = slot.type as 'image' | 'video';
+  const label = KIND_LABEL[kind];
+  const max = Math.max(1, slot.maxCount ?? 1);
+  const tagId = slot.tagId ?? '';
+
+  const tags = useLibraryTags({ ...viewQuery('all'), kind });
+  const group = (tags.data ?? []).find(tag => tag.id === tagId);
+  const children = useMemo(
+    () => (tags.data ?? []).filter(tag => tag.parentId === tagId),
+    [tags.data, tagId],
+  );
+
+  /* 当前选中的是哪一档：空 → 一级标签自身（"全部"）。换槽位要重置，
+     否则切模板后还停在上一个模板的标签上。 */
+  const [scope, setScope] = useState(tagId);
+  useEffect(() => setScope(tagId), [tagId, slot.key]);
+
+  const list = useLibrarySelection({
+    kind,
+    tagIds: scope ? [scope] : undefined,
+    pageSize: PAGE_SIZE,
+  });
+  const items = list.data?.items ?? [];
+
+  const toggle = (assetId: string) => {
+    const next = pickWithin(selected, assetId, max);
+    if (next !== selected) onChange(next);
+  };
+
+  const full = selected.length >= max;
+
+  return (
+    <div className="rounded-xl border border-line-soft bg-panel p-2.5">
+      <div className="flex items-baseline gap-1.5">
+        <span className="min-w-0 truncate text-[12px] font-medium text-ink">
+          {group ? `${group.name} · ${slot.label || slot.key}` : (slot.label || slot.key)}
+        </span>
+        {(slot.minCount ?? 1) > 0 && <span className="text-warn-deep">*</span>}
+        <span className="ml-auto shrink-0 text-[10px] text-ink-mute">
+          {label} · {max > 1 ? `已选 ${selected.length}/${max}` : '选 1 个'}
+          {typeof list.data?.total === 'number' && ` · 共 ${list.data.total}`}
+        </span>
+      </div>
+
+      {!tagId && (
+        /* 老模板（闸门加上之前发布的）没有一级标签：仍然能挑，但要说明为什么没有分组。 */
+        <p className="mt-1 text-[10px] leading-relaxed text-warn-deep">
+          这个槽位还没设一级标签（去「模板封装」补一个才能按标签分组），下面是全部{label}。
+        </p>
+      )}
+
+      {selected.length > 0 && (
+        <div className="mt-1.5 flex flex-wrap gap-1.5">
+          {selected.map(assetId => (
+            <AssetChip
+              key={assetId}
+              assetId={assetId}
+              onRemove={() => onChange(selected.filter(id => id !== assetId))}
+            />
+          ))}
+        </div>
+      )}
+
+      {children.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-1">
+          {/* 不带计数：标签接口的数字是「列表口径」（被装进封装的成员不单列），
+              而这里首屏挑素材用的是「选择器口径」（成员也要能挑），两者对不上。
+              真实条数放在右上角「共 N」——它来自这一档实际拉到的数据。 */}
+          <ScopeChip active={scope === tagId} label="全部" onClick={() => setScope(tagId)} />
+          {children.map(child => (
+            <ScopeChip
+              key={child.id}
+              active={scope === child.id}
+              label={child.name}
+              onClick={() => setScope(child.id)}
+            />
+          ))}
+        </div>
+      )}
+
+      {list.isLoading ? (
+        <p className="py-4 text-center text-[11px] text-ink-mute">正在读取素材…</p>
+      ) : items.length === 0 ? (
+        <p className="py-4 text-center text-[11px] text-ink-mute">
+          {tagId ? '这个标签下还没有素材，去资产库给它打上标签。' : `还没有${label}。`}
+        </p>
+      ) : (
+        <div className="mt-2 grid max-h-[188px] grid-cols-4 gap-1.5 overflow-y-auto pr-0.5">
+          {items.map(item => {
+            const picked = selected.includes(item.id);
+            const blocked = full && !picked && max > 1;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                title={item.name}
+                disabled={blocked}
+                onClick={() => toggle(item.id)}
+                className={cn(
+                  'group relative aspect-square overflow-hidden rounded-lg border transition',
+                  picked
+                    ? 'border-primary-line ring-2 ring-primary/25'
+                    : 'border-line-soft hover:border-line-strong',
+                  blocked && 'cursor-not-allowed opacity-40',
+                )}
+              >
+                <CoverImage
+                  src={item.coverUrl ?? undefined}
+                  seed={item.id}
+                  className="h-full w-full"
+                />
+                {picked && (
+                  <span className="absolute right-1 top-1 grid size-4 place-items-center rounded-full bg-primary text-white">
+                    <Check size={10} strokeWidth={3} />
+                  </span>
+                )}
+                {item.kind === 'video' && (
+                  <span className="absolute bottom-1 left-1 rounded bg-black/55 px-1 text-[10px] text-white">
+                    视频
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** 二级标签 / 「全部」的胶囊。计数来自标签接口（已按当前 kind 统计）。 */
+function ScopeChip({
+  active,
+  label,
+  onClick,
+}: {
+  active: boolean;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      aria-pressed={active}
+      onClick={onClick}
+      className={cn(
+        'rounded-full border px-2 py-[2px] text-[10.5px] transition',
+        active
+          ? 'border-primary-line bg-primary-soft font-medium text-primary-deep'
+          : 'border-line-soft bg-panel-soft text-ink-soft hover:border-line-strong',
+      )}
+    >
+      {label}
+    </button>
+  );
+}

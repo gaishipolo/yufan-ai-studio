@@ -39,6 +39,12 @@ def _media(client: TestClient, headers: dict[str, str]) -> tuple[str, str, str]:
     return str(video["id"]), str(first["id"]), str(second["id"])
 
 
+#: 用户填的图片槽位必须带一级标签（发布前校验），这些用例不关心标签本身，
+#: 用同一个占位 id —— 发布只检查"有没有给"，不检查"标签还在不在"（那个失败
+#: 在填表页表现为"这个标签下没有素材"，不拦发布）。
+_TAG = "tag-spec-tests"
+
+
 def _draft(
     video: str,
     first: str,
@@ -68,6 +74,7 @@ def _draft(
                 "key": "hero",
                 "type": "image",
                 "binding": "user",
+                "tagId": _TAG,
                 "minCount": 1,
                 "maxCount": 1,
                 "position": 1,
@@ -77,6 +84,7 @@ def _draft(
                 "key": "note",
                 "type": "image",
                 "binding": "user",
+                "tagId": _TAG,
                 "minCount": 0,
                 "maxCount": 2,
                 "position": 2,
@@ -393,6 +401,65 @@ def test_demo_asset_round_trips_but_never_enters_the_snapshot(
     updated = _save(client, headers, again)
     assert updated["demoAssetId"] == second
     assert updated["currentVersion"] == 1
+
+
+def test_user_filled_media_slot_must_declare_a_top_level_tag(
+    client: TestClient,
+) -> None:
+    """要让用户填的图片/视频槽位，发布前必须给一级标签。
+
+    模板库的填表区按「一级标签 · 槽位名」分组，二级标签当分档；没有标签时那一段
+    只能退化成"全部素材"，素材一多就没法挑。所以这是**发布闸门**，而不是填表时
+    才提醒 —— 发布时作者还在，能立刻补；等用户填到一半才发现，他补不了。
+
+    固定槽位不要求：内容作者已经选死，模板使用者根本不挑。草稿也不拦（存得下才谈得上补）。
+    """
+    headers = _headers(client)
+    video, first, second = _media(client, headers)
+    draft = _draft(video, first, second)
+    for slot in draft["slots"]:
+        slot.pop("tagId", None)
+
+    # 草稿能存
+    _save(client, headers, draft)
+
+    # 预检与发布都拦，并指名是哪几个槽位
+    checked = client.post(f"{API}/validate", json=draft, headers=headers)
+    assert checked.status_code == 400, checked.text
+    assert "一级标签" in checked.json()["message"]
+    assert "主图" in checked.json()["message"]
+
+    blocked = client.post(f"{API}/{draft['key']}/publish", headers=headers)
+    assert blocked.status_code == 400, blocked.text
+    assert "一级标签" in blocked.json()["message"]
+
+    # 只给一个不够：两个都要
+    draft["slots"][1]["tagId"] = _TAG
+    still = client.post(f"{API}/validate", json=draft, headers=headers)
+    assert still.status_code == 400, still.text
+    assert "细节" in still.json()["message"]
+
+    draft["slots"][2]["tagId"] = _TAG
+    ok = client.post(f"{API}/validate", json=draft, headers=headers)
+    assert ok.status_code == 200, ok.text
+
+
+def test_fixed_slot_does_not_need_a_tag(client: TestClient) -> None:
+    """固定槽位不参与"按标签分组挑素材"，所以不要求标签。
+
+    `原片` 是 `binding=fixed` 的 video 槽位：作者选死了，模板使用者只读。
+    要求它也给标签只是多一步，改不出任何效果。
+    """
+    headers = _headers(client)
+    video, first, second = _media(client, headers)
+    draft = _draft(video, first, second)
+    for slot in draft["slots"]:
+        slot.pop("tagId", None)
+    draft["slots"] = [draft["slots"][0]]  # 只剩那个固定的 video 槽位
+    draft["prompt"] = "{{slot:source}} 里的画面"
+
+    body = client.post(f"{API}/validate", json=draft, headers=headers)
+    assert body.status_code == 200, body.text
 
 
 def test_slot_source_field_is_gone_and_rejected(client: TestClient) -> None:
