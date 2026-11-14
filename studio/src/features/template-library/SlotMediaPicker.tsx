@@ -34,15 +34,23 @@ export function SlotMediaPicker({
     [tags.data, tagId],
   );
 
-  /* 当前选中的是哪一档：空 → 一级标签自身（"全部"）。换槽位要重置，
-     否则切模板后还停在上一个模板的标签上。 */
-  const [scope, setScope] = useState(tagId);
-  useEffect(() => setScope(tagId), [tagId, slot.key]);
+  /* 用户点的那一档二级标签；null = 还没点。换槽位要重置，否则切模板后还停在
+     上一个模板的标签上。 */
+  const [picked, setPicked] = useState<string | null>(null);
+  useEffect(() => setPicked(null), [tagId, slot.key]);
+
+  /* 有二级标签就必须先点一下再看素材：一行全摊开太长，干脆不设「全部」。
+     没有二级标签（或槽位还没设一级标签）时没有可点的，直接看一级标签自己。 */
+  const needPick = children.length > 0;
+  const scope = picked ?? (needPick ? '' : tagId);
 
   const list = useLibrarySelection({
     kind,
     tagIds: scope ? [scope] : undefined,
     pageSize: PAGE_SIZE,
+    /* 只有「标签已就绪、确实有二级标签、还没点」这一种情况才不发请求；
+       标签读取失败时别把整个选择器锁死，照旧给一级标签下的素材。 */
+    enabled: !(tags.isSuccess && needPick && picked === null),
   });
   const items = list.data?.items ?? [];
 
@@ -62,7 +70,7 @@ export function SlotMediaPicker({
         {(slot.minCount ?? 1) > 0 && <span className="text-warn-deep">*</span>}
         <span className="ml-auto shrink-0 text-[10px] text-ink-mute">
           {label} · {max > 1 ? `已选 ${selected.length}/${max}` : '选 1 个'}
-          {typeof list.data?.total === 'number' && ` · 共 ${list.data.total}`}
+          {typeof list.data?.total === 'number' && scope && ` · 共 ${list.data.total}`}
         </span>
       </div>
 
@@ -87,22 +95,26 @@ export function SlotMediaPicker({
 
       {children.length > 0 && (
         <div className="mt-2 flex flex-wrap gap-1">
-          {/* 不带计数：标签接口的数字是「列表口径」（被装进封装的成员不单列），
-              而这里首屏挑素材用的是「选择器口径」（成员也要能挑），两者对不上。
+          {/* 只有二级标签，不带「全部」：一行摊开本来就长，再放一个全量入口更乱。
+              也不带计数：标签接口的数字是「列表口径」（被装进封装的成员不单列），
+              而这里挑素材用的是「选择器口径」（成员也要能挑），两者对不上。
               真实条数放在右上角「共 N」——它来自这一档实际拉到的数据。 */}
-          <ScopeChip active={scope === tagId} label="全部" onClick={() => setScope(tagId)} />
           {children.map(child => (
             <ScopeChip
               key={child.id}
-              active={scope === child.id}
+              active={picked === child.id}
               label={child.name}
-              onClick={() => setScope(child.id)}
+              onClick={() => setPicked(child.id)}
             />
           ))}
         </div>
       )}
 
-      {list.isLoading ? (
+      {tags.isPending ? (
+        <p className="py-4 text-center text-[11px] text-ink-mute">正在读取标签…</p>
+      ) : needPick && !scope ? (
+        <p className="py-4 text-center text-[11px] text-ink-mute">点一个标签，下面是它的素材。</p>
+      ) : list.isLoading ? (
         <p className="py-4 text-center text-[11px] text-ink-mute">正在读取素材…</p>
       ) : items.length === 0 ? (
         <p className="py-4 text-center text-[11px] text-ink-mute">
@@ -111,8 +123,8 @@ export function SlotMediaPicker({
       ) : (
         <div className="mt-2 grid max-h-[188px] grid-cols-4 gap-1.5 overflow-y-auto pr-0.5">
           {items.map(item => {
-            const picked = selected.includes(item.id);
-            const blocked = full && !picked && max > 1;
+            const isPicked = selected.includes(item.id);
+            const blocked = full && !isPicked && max > 1;
             return (
               <button
                 key={item.id}
@@ -122,7 +134,7 @@ export function SlotMediaPicker({
                 onClick={() => toggle(item.id)}
                 className={cn(
                   'group relative aspect-square overflow-hidden rounded-lg border transition',
-                  picked
+                  isPicked
                     ? 'border-primary-line ring-2 ring-primary/25'
                     : 'border-line-soft hover:border-line-strong',
                   blocked && 'cursor-not-allowed opacity-40',
@@ -133,7 +145,7 @@ export function SlotMediaPicker({
                   seed={item.id}
                   className="h-full w-full"
                 />
-                {picked && (
+                {isPicked && (
                   <span className="absolute right-1 top-1 grid size-4 place-items-center rounded-full bg-primary text-white">
                     <Check size={10} strokeWidth={3} />
                   </span>
@@ -152,7 +164,7 @@ export function SlotMediaPicker({
   );
 }
 
-/** 二级标签 / 「全部」的胶囊。计数来自标签接口（已按当前 kind 统计）。 */
+/** 二级标签的胶囊。点一下只换「看哪一档」，不改已选的素材。 */
 function ScopeChip({
   active,
   label,
