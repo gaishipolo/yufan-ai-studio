@@ -6130,6 +6130,80 @@
         }
       }
     },
+    "/api/v1/template-specs/trash": {
+      "get": {
+        "tags": [
+          "模板封装",
+          "模板规格"
+        ],
+        "summary": "回收站：已软删的规格",
+        "description": "必须声明在 `/{key}` 之前，否则 `trash` 会被当成一个 key。",
+        "operationId": "list_trashed_specs_api_v1_template_specs_trash_get",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "keyword",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 80,
+              "default": "",
+              "title": "Keyword"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1,
+              "title": "Page"
+            }
+          },
+          {
+            "name": "pageSize",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 20,
+              "title": "Pagesize"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_TemplateSpecListOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/template-specs/{key}": {
       "get": {
         "tags": [
@@ -6138,6 +6212,52 @@
         ],
         "summary": "规格详情（含草稿与最近发布）",
         "operationId": "get_spec_api_v1_template_specs__key__get",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_TemplateSpecOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "模板封装",
+          "模板规格"
+        ],
+        "summary": "移进回收站（软删，可恢复）",
+        "operationId": "delete_spec_api_v1_template_specs__key__delete",
         "security": [
           {
             "bearerAuth": []
@@ -6234,6 +6354,54 @@
         ],
         "summary": "下架（历史版本保留）",
         "operationId": "disable_spec_api_v1_template_specs__key__disable_post",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_TemplateSpecOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/template-specs/{key}/restore": {
+      "post": {
+        "tags": [
+          "模板封装",
+          "模板规格"
+        ],
+        "summary": "从回收站恢复",
+        "operationId": "restore_spec_api_v1_template_specs__key__restore_post",
         "security": [
           {
             "bearerAuth": []
@@ -13171,6 +13339,18 @@
               }
             ],
             "title": "Disabledat"
+          },
+          "deletedAt": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deletedat"
           },
           "createdAt": {
             "type": "string",

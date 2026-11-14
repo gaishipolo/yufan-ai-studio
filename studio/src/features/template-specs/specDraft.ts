@@ -32,10 +32,29 @@ export function blankPrompt(): SpecPromptIn {
   return {locked: '', editable: ''};
 }
 
-export function blankSlot(position = 0): SpecSlotIn {
+/** 槽位 key 的前缀：自动生成、界面上不显示，但提示词里的 `{{slot:image_1}}` 要人能读。 */
+const SLOT_KEY_PREFIX: Record<SlotType, string> = {
+  image: 'image',
+  video: 'video',
+  audio: 'audio',
+  text: 'text',
+};
+
+/** 取一个同类型里最小可用的序号，避免 `image_1` 重复。 */
+export function nextSlotKey(slots: SpecSlotIn[], type: SlotType): string {
+  const used = new Set(slots.map(slot => slot.key));
+  const prefix = SLOT_KEY_PREFIX[type];
+  for (let index = 1; index <= 99; index += 1) {
+    const candidate = `${prefix}_${index}`;
+    if (!used.has(candidate)) return candidate;
+  }
+  return `${prefix}_${Math.random().toString(36).slice(2, 6)}`;
+}
+
+export function blankSlot(position = 0, type: SlotType = 'image', slots: SpecSlotIn[] = []): SpecSlotIn {
   return {
-    key: `slot_${Math.random().toString(36).slice(2, 6)}`,
-    type: 'image',
+    key: nextSlotKey(slots, type),
+    type,
     source: 'asset',
     binding: 'user',
     refMode: 'mixed',
@@ -55,7 +74,7 @@ export function blankSpec(): TemplateSpecIn {
     model: '',
     params: {},
     prompt: blankPrompt(),
-    slots: [blankSlot(0)],
+    slots: [blankSlot(0, 'image', [])],
     attributes: {},
   };
 }
@@ -102,11 +121,14 @@ export interface RefChip {
  * 这里提前不显示，避免用户写出必然失败的引用。
  */
 export function referenceChips(spec: TemplateSpecIn): RefChip[] {
+  let ordinal = 0;
   return (spec.slots ?? [])
     .filter(slot => (slot.refMode ?? 'mixed') === 'mixed')
     .sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
     .flatMap(slot => {
-      const name = slot.label?.trim() || slot.key;
+      ordinal += 1;
+      // key 是自动生成且界面上不显示，所以回退名用「图片 1」这种位置可读名。
+      const name = slot.label?.trim() || `${SLOT_TYPE_LABELS[slot.type]} ${ordinal}`;
       const chips: RefChip[] = [{token: `{{slot:${slot.key}}}`, label: name, all: false}];
       const max = slot.source === 'pack' ? 2 : (slot.maxCount ?? 1);
       if (max > 1 || slot.source === 'pack') {

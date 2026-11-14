@@ -36,10 +36,12 @@ from modules.template_pack.spec_schema import (
 )
 from modules.template_pack.spec_service import (
     compile_for,
+    delete,
     disable,
     get_out,
     list_out,
     publish,
+    restore,
     save,
     validate_draft,
 )
@@ -117,6 +119,22 @@ async def list_published_specs(
     )
 
 
+@router.get("/trash", summary="回收站：已软删的规格")
+async def list_trashed_specs(
+    session: SessionDep,
+    actor: TemplatePackReadDep,
+    keyword: str = Query(default="", max_length=80),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100, alias="pageSize"),
+) -> ApiResponse[TemplateSpecListOut]:
+    """必须声明在 `/{key}` 之前，否则 `trash` 会被当成一个 key。"""
+    return ApiResponse.ok(
+        await list_out(
+            session, keyword=keyword, trashed=True, page=page, page_size=page_size
+        )
+    )
+
+
 @router.get("/{key}", summary="规格详情（含草稿与最近发布）")
 async def get_spec(
     key: str, session: SessionDep, actor: TemplatePackReadDep
@@ -142,6 +160,22 @@ async def disable_spec(
     key: str, session: SessionDep, actor: TemplatePackPublishDep
 ) -> ApiResponse[TemplateSpecOut]:
     return ApiResponse.ok(await disable(session, actor, key))
+
+
+@router.delete("/{key}", summary="移进回收站（软删，可恢复）", dependencies=[_WRITE_LIMIT])
+async def delete_spec(
+    key: str, session: SessionDep, actor: TemplatePackPublishDep
+) -> ApiResponse[TemplateSpecOut]:
+    return ApiResponse.ok(await delete(session, actor, key))
+
+
+@router.post(
+    "/{key}/restore", summary="从回收站恢复", dependencies=[_WRITE_LIMIT]
+)
+async def restore_spec(
+    key: str, session: SessionDep, actor: TemplatePackPublishDep
+) -> ApiResponse[TemplateSpecOut]:
+    return ApiResponse.ok(await restore(session, actor, key))
 
 
 @router.post(

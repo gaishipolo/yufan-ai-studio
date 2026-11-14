@@ -143,6 +143,7 @@ def _spec_out(
         current_version=head.current_version,
         published_at=head.published_at,
         disabled_at=head.disabled_at,
+        deleted_at=head.deleted_at,
         created_at=head.created_at,
         updated_at=head.updated_at,
         draft=draft,
@@ -174,6 +175,11 @@ async def _find(session: AsyncSession, key: str) -> SpecRow | None:
             SpecRow.spec_key == key, SpecRow.deleted_at.is_(None)
         )
     )
+
+
+async def _find_any(session: AsyncSession, key: str) -> SpecRow | None:
+    """连回收站一起找：恢复入口要能摸到已软删的行。"""
+    return await session.scalar(select(SpecRow).where(SpecRow.spec_key == key))
 
 
 async def _latest(session: AsyncSession, head: SpecRow) -> TemplateSpecVersion | None:
@@ -431,6 +437,40 @@ async def disable(session: AsyncSession, actor: CurrentUser, key: str) -> Templa
     return out
 
 
+async def delete(session: AsyncSession, actor: CurrentUser, key: str) -> TemplateSpecOut:
+    """移进回收站（软删）。历史版本与已生成任务不受影响，可恢复。
+
+    为什么不硬删：`template_spec_versions` 记的是「当时的提示词原文」，硬删等于
+    让历史任务的溯源断掉；而模板本身是资产，误删的代价比留一行大得多。
+    """
+    head = await _find(session, key)
+    if head is None:
+        raise NotFound(f"配置不存在：{key}")
+    if head.owner_id != actor.id:
+        raise Conflict(f"配置 {key} 属于其他用户")
+    head.deleted_at = utcnow()
+    await session.flush()
+    out = await _spec_out_of(session, head)
+    await session.commit()
+    return out
+
+
+async def restore(session: AsyncSession, actor: CurrentUser, key: str) -> TemplateSpecOut:
+    """从回收站恢复。key 是唯一约束，所以不能出现「新行占了旧 key」的情况。"""
+    head = await _find_any(session, key)
+    if head is None:
+        raise NotFound(f"配置不存在：{key}")
+    if head.owner_id != actor.id:
+        raise Conflict(f"配置 {key} 属于其他用户")
+    if head.deleted_at is None:
+        raise Conflict(f"配置 {key} 不在回收站里")
+    head.deleted_at = None
+    await session.flush()
+    out = await _spec_out_of(session, head)
+    await session.commit()
+    return out
+
+
 # --------------------------------------------------------------------------- #
 # 读
 # --------------------------------------------------------------------------- #
@@ -448,6 +488,7 @@ async def list_out(
     keyword: str = "",
     published_only: bool = False,
     target: str = "all",
+    trashed: bool = False,
     page: int = 1,
     page_size: int = 20,
 ) -> TemplateSpecListOut:
@@ -456,17 +497,19 @@ async def list_out(
     判据来自 `GET /models` 的 `replacement`（驱动声明），**不看槽位组合** ——
     靠"有 fixed video 槽 + 有 pack 槽"猜，普通多图模板会被误判成可替换模板。
     """
-    stmt = select(SpecRow).where(SpecRow.deleted_at.is_(None))
-    count_stmt = select(func.count()).select_from(SpecRow).where(
-        SpecRow.deleted_at.is_(None)
-    )
-    if published_only:
+    alive = SpecRow.deleted_at.is_(None) if not trashed else SpecRow.deleted_at.is_not(None)
+    stmt = select(SpecRow).where(alive)
+    count_stmt = select(func.count()).select_from(SpecRow).where(alive)
+    if trashed:
+        # 回收站只按删除时间排，不认 status / target：已经删掉的东西再筛状态没有意义。
+        pass
+    elif published_only:
         stmt = stmt.where(SpecRow.status == "published")
         count_stmt = count_stmt.where(SpecRow.status == "published")
     elif status:
         stmt = stmt.where(SpecRow.status == status)
         count_stmt = count_stmt.where(SpecRow.status == status)
-    if target != "all":
+    if target != "all" and not trashed:
         replaceable = [
             item.id
             for item in get_model_generation().models()
@@ -498,8 +541,13 @@ async def list_out(
             SpecRow.name.contains(needle) | SpecRow.spec_key.contains(needle)
         )
     total = int(await session.scalar(count_stmt) or 0)
+    order = (
+        (SpecRow.deleted_at.desc(), SpecRow.id)
+        if trashed
+        else (SpecRow.updated_at.desc(), SpecRow.id)
+    )
     rows = await session.scalars(
-        stmt.order_by(SpecRow.updated_at.desc(), SpecRow.id)
+        stmt.order_by(*order)
         .limit(page_size)
         .offset((page - 1) * page_size)
     )

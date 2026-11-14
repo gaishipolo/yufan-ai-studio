@@ -1400,6 +1400,7 @@ export interface TemplateSpecOut {
   currentVersion: number;
   publishedAt?: string | null;
   disabledAt?: string | null;
+  deletedAt?: string | null;
   createdAt: string;
   updatedAt: string;
   draft?: TemplateSpecIn | null;
@@ -1933,8 +1934,12 @@ export interface EndpointData {
   "POST /api/v1/template-specs": TemplateSpecOut;
   /** 模板库：已发布的规格卡片 */
   "GET /api/v1/template-specs/published": TemplateSpecListOut;
+  /** 回收站：已软删的规格 */
+  "GET /api/v1/template-specs/trash": TemplateSpecListOut;
   /** 预检模板规格（不落库） */
   "POST /api/v1/template-specs/validate": SpecValidateOut;
+  /** 移进回收站（软删，可恢复） */
+  "DELETE /api/v1/template-specs/{key}": TemplateSpecOut;
   /** 规格详情（含草稿与最近发布） */
   "GET /api/v1/template-specs/{key}": TemplateSpecOut;
   /** 填表结果 → 执行请求体（纯映射，不落库） */
@@ -1943,4 +1948,6 @@ export interface EndpointData {
   "POST /api/v1/template-specs/{key}/disable": TemplateSpecOut;
   /** 发布：把当前草稿冻结成新版本 */
   "POST /api/v1/template-specs/{key}/publish": SpecPublishOut;
+  /** 从回收站恢复 */
+  "POST /api/v1/template-specs/{key}/restore": TemplateSpecOut;
 }

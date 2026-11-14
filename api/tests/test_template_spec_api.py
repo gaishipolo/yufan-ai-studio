@@ -313,6 +313,54 @@ def test_published_list_only_shows_published(client: TestClient) -> None:
     assert draft["key"] in {item["key"] for item in after["items"]}
 
 
+def test_delete_moves_spec_to_trash_and_restore_brings_it_back(
+    client: TestClient,
+) -> None:
+    """删除是软删：列表与模板库都看不见，回收站能捞回来，key 还能继续用。
+
+    硬删会让 `template_spec_versions` 里那份「当时的提示词原文」跟着消失，
+    历史任务的溯源就断了 —— 所以这条守的是「删了还在」。
+    """
+    headers = _headers(client)
+    video, first, second = _media(client, headers)
+    draft = _draft(video, first, second)
+    _save(client, headers, draft)
+    client.post(f"{API}/{draft['key']}/publish", headers=headers)
+
+    assert client.delete(f"{API}/{draft['key']}", headers=headers).status_code == 200
+
+    alive = client.get(API, params={"pageSize": 100}, headers=headers).json()["data"]
+    assert draft["key"] not in {item["key"] for item in alive["items"]}
+    published = client.get(f"{API}/published", params={"pageSize": 100}, headers=headers)
+    assert draft["key"] not in {item["key"] for item in published.json()["data"]["items"]}
+    # 已删的 key 不能再当活模板用
+    assert client.get(f"{API}/{draft['key']}", headers=headers).status_code == 404
+
+    trash = client.get(f"{API}/trash", headers=headers).json()["data"]
+    assert draft["key"] in {item["key"] for item in trash["items"]}
+
+    back = client.post(f"{API}/{draft['key']}/restore", headers=headers)
+    assert back.status_code == 200, back.text
+    assert back.json()["data"]["deletedAt"] is None
+    assert client.get(f"{API}/{draft['key']}", headers=headers).status_code == 200
+    # 恢复后发布版本还在，模板库照常能看到
+    published = client.get(f"{API}/published", params={"pageSize": 100}, headers=headers)
+    assert draft["key"] in {item["key"] for item in published.json()["data"]["items"]}
+
+    # 清理：别给别的用例留下这份模板
+    client.delete(f"{API}/{draft['key']}", headers=headers)
+
+
+def test_restore_rejects_a_spec_that_is_not_in_trash(client: TestClient) -> None:
+    headers = _headers(client)
+    video, first, second = _media(client, headers)
+    draft = _draft(video, first, second)
+    _save(client, headers, draft)
+    response = client.post(f"{API}/{draft['key']}/restore", headers=headers)
+    assert response.status_code == 409
+    assert "不在回收站" in response.json()["message"]
+
+
 def test_compile_applies_prompt_override(client: TestClient) -> None:
     """填表时改写 `editable` 段：`locked` 段与编号都不受影响。"""
     headers = _headers(client)

@@ -2,7 +2,7 @@
 
 > 此文件由 `app export-openapi` 自动生成，请勿手工编辑。
 >
-> 版本 `0.2.0`｜共 **121** 个接口 / **11** 个模块
+> 版本 `0.2.0`｜共 **124** 个接口 / **11** 个模块
 >
 > 重新生成：`cd api && .venv/Scripts/python -m cli export-openapi`
 
@@ -228,7 +228,7 @@ Authorization: Bearer <accessToken>
 | 导出 | 6 | 见下方 `4.8` |
 | 资产库 | 45 | 见下方 `4.9` |
 | 模型驱动 | 6 | 见下方 `4.10` |
-| 模板封装 | 8 | 见下方 `4.11` |
+| 模板封装 | 11 | 见下方 `4.11` |
 
 ### 4.1 身份（39 个）
 
@@ -3027,18 +3027,21 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `message` | `string` | 否 |  |
 | `data` | `modules__model_driver__schema__TaskOut \| null` | 否 |  |
 
-### 4.11 模板封装（8 个）
+### 4.11 模板封装（11 个）
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
 | `POST` | `/api/v1/template-specs` | 保存草稿（同内容幂等，revision 冲突 409） | 🔒 |
 | `GET` | `/api/v1/template-specs` | 本人可见的规格列表 | 🔒 |
 | `GET` | `/api/v1/template-specs/published` | 模板库：已发布的规格卡片 | 🔒 |
+| `GET` | `/api/v1/template-specs/trash` | 回收站：已软删的规格 | 🔒 |
 | `POST` | `/api/v1/template-specs/validate` | 预检模板规格（不落库） | 🔒 |
 | `GET` | `/api/v1/template-specs/{key}` | 规格详情（含草稿与最近发布） | 🔒 |
+| `DELETE` | `/api/v1/template-specs/{key}` | 移进回收站（软删，可恢复） | 🔒 |
 | `POST` | `/api/v1/template-specs/{key}/compile` | 填表结果 → 执行请求体（纯映射，不落库） | 🔒 |
 | `POST` | `/api/v1/template-specs/{key}/disable` | 下架（历史版本保留） | 🔒 |
 | `POST` | `/api/v1/template-specs/{key}/publish` | 发布：把当前草稿冻结成新版本 | 🔒 |
+| `POST` | `/api/v1/template-specs/{key}/restore` | 从回收站恢复 | 🔒 |
 
 #### `POST /api/v1/template-specs`
 
@@ -3073,6 +3076,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `currentVersion` | `number` | 是 |  |
 | `publishedAt` | `string \| null` | 否 |  |
 | `disabledAt` | `string \| null` | 否 |  |
+| `deletedAt` | `string \| null` | 否 |  |
 | `createdAt` | `string` | 是 |  |
 | `updatedAt` | `string` | 是 |  |
 | `draft` | `TemplateSpecIn \| null` | 否 |  |
@@ -3104,6 +3108,25 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 |---|---|---|---|---|
 | `keyword` | query | `string` | 否 |  |
 | `target` | query | `"all" | "replacement" | "generation"` | 否 | 按模型声明的替换能力筛：replacement / generation / all |
+| `page` | query | `number` | 否 |  |
+| `pageSize` | query | `number` | 否 |  |
+
+**响应** `ApiResponse<TemplateSpecListOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `items` | `TemplateSpecOut[]` | 否 |  |
+| `total` | `number` | 否 |  |
+
+#### `GET /api/v1/template-specs/trash`
+
+**回收站：已软删的规格**
+
+必须声明在 `/{key}` 之前，否则 `trash` 会被当成一个 key。
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `keyword` | query | `string` | 否 |  |
 | `page` | query | `number` | 否 |  |
 | `pageSize` | query | `number` | 否 |  |
 
@@ -3162,6 +3185,36 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `currentVersion` | `number` | 是 |  |
 | `publishedAt` | `string \| null` | 否 |  |
 | `disabledAt` | `string \| null` | 否 |  |
+| `deletedAt` | `string \| null` | 否 |  |
+| `createdAt` | `string` | 是 |  |
+| `updatedAt` | `string` | 是 |  |
+| `draft` | `TemplateSpecIn \| null` | 否 |  |
+| `latest` | `SpecVersionOut \| null` | 否 |  |
+
+#### `DELETE /api/v1/template-specs/{key}`
+
+**移进回收站（软删，可恢复）**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `key` | path | `string` | 是 |  |
+
+**响应** `ApiResponse<TemplateSpecOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `key` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `description` | `string` | 是 |  |
+| `ownerId` | `string` | 是 |  |
+| `status` | `"draft" \| "published" \| "disabled"` | 是 |  |
+| `revision` | `number` | 是 |  |
+| `fingerprint` | `string` | 是 |  |
+| `currentVersion` | `number` | 是 |  |
+| `publishedAt` | `string \| null` | 否 |  |
+| `disabledAt` | `string \| null` | 否 |  |
+| `deletedAt` | `string \| null` | 否 |  |
 | `createdAt` | `string` | 是 |  |
 | `updatedAt` | `string` | 是 |  |
 | `draft` | `TemplateSpecIn \| null` | 否 |  |
@@ -3223,6 +3276,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `currentVersion` | `number` | 是 |  |
 | `publishedAt` | `string \| null` | 否 |  |
 | `disabledAt` | `string \| null` | 否 |  |
+| `deletedAt` | `string \| null` | 否 |  |
 | `createdAt` | `string` | 是 |  |
 | `updatedAt` | `string` | 是 |  |
 | `draft` | `TemplateSpecIn \| null` | 否 |  |
@@ -3242,6 +3296,35 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 |---|---|---|---|
 | `version` | `number` | 是 |  |
 | `spec` | `TemplateSpecOut` | 是 |  |
+
+#### `POST /api/v1/template-specs/{key}/restore`
+
+**从回收站恢复**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `key` | path | `string` | 是 |  |
+
+**响应** `ApiResponse<TemplateSpecOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `key` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `description` | `string` | 是 |  |
+| `ownerId` | `string` | 是 |  |
+| `status` | `"draft" \| "published" \| "disabled"` | 是 |  |
+| `revision` | `number` | 是 |  |
+| `fingerprint` | `string` | 是 |  |
+| `currentVersion` | `number` | 是 |  |
+| `publishedAt` | `string \| null` | 否 |  |
+| `disabledAt` | `string \| null` | 否 |  |
+| `deletedAt` | `string \| null` | 否 |  |
+| `createdAt` | `string` | 是 |  |
+| `updatedAt` | `string` | 是 |  |
+| `draft` | `TemplateSpecIn \| null` | 否 |  |
+| `latest` | `SpecVersionOut \| null` | 否 |  |
 
 ---
 
@@ -4625,6 +4708,7 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `currentVersion` | `number` | 是 |  |
 | `publishedAt` | `string \| null` | 否 |  |
 | `disabledAt` | `string \| null` | 否 |  |
+| `deletedAt` | `string \| null` | 否 |  |
 | `createdAt` | `string` | 是 |  |
 | `updatedAt` | `string` | 是 |  |
 | `draft` | `TemplateSpecIn \| null` | 否 |  |

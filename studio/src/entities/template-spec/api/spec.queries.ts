@@ -18,6 +18,15 @@ export function useSpecs(status = '') {
   });
 }
 
+/** 回收站：已软删的规格。与「我的草稿」互斥，所以单开一个查询键。 */
+export function useTrashedSpecs() {
+  const owner = useSessionStore(s => s.subject.id);
+  return useQuery({
+    queryKey: [...specKeys.all(owner), 'trash'],
+    queryFn: () => specApi.trash({pageSize: 100}),
+  });
+}
+
 /** 模板库（填表）读的是**已发布**的规格，与「我的草稿」不是一个集合。 */
 export function usePublishedSpecs() {
   const owner = useSessionStore(s => s.subject.id);
@@ -48,5 +57,7 @@ export function useSpecMutations() {
     save: useMutation({mutationFn: specApi.save, onSettled: refresh}),
     publish: useMutation({mutationFn: specApi.publish, onSettled: refresh}),
     disable: useMutation({mutationFn: specApi.disable, onSettled: refresh}),
+    remove: useMutation({mutationFn: specApi.remove, onSettled: refresh}),
+    restore: useMutation({mutationFn: specApi.restore, onSettled: refresh}),
   };
 }

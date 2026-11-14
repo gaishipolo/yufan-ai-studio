@@ -112,6 +112,8 @@ class TemplateSpecOut(CamelModel):
     current_version: int
     published_at: datetime | None = None
     disabled_at: datetime | None = None
+    #: 软删时间。非空 = 在回收站里，列表与模板库都看不到它。
+    deleted_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
     #: 正在编辑的整份内容；为空表示还没保存过。

@@ -247,7 +247,10 @@
 | `POST` | `/template-specs` | 保存草稿；`key + fingerprint` 幂等，`revision` 冲突 409 |
 | `GET` | `/template-specs` / `/template-specs/{key}` | 列表 / 详情（含 draft 与最新版本） |
 | `POST` | `/template-specs/{key}/publish` | 冻结发布：draft → version + slots，回执含 `version` 与 `tokensPreview` |
-| `POST` | `/template-specs/{key}/disable` | 下架 |
+| `POST` | `/template-specs/{key}/disable` | 下架（历史版本保留） |
+| `DELETE` | `/template-specs/{key}` | **软删**进回收站（`deleted_at`）。列表与模板库都看不到，可恢复 |
+| `POST` | `/template-specs/{key}/restore` | 从回收站恢复 |
+| `GET` | `/template-specs/trash` | 回收站列表（按删除时间倒序；不看 status / target） |
 
 消费侧：
 

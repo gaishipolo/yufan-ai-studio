@@ -27,6 +27,11 @@ export const specApi = {
   save: (payload: TemplateSpecIn) => api.post<TemplateSpecOut>('/template-specs', payload),
   publish: (key: string) => api.post<SpecPublishOut>(`/template-specs/${key}/publish`),
   disable: (key: string) => api.post<TemplateSpecOut>(`/template-specs/${key}/disable`),
+  /** 回收站。删除是软删（`deletedAt`），可恢复。 */
+  trash: (params: {keyword?: string; page?: number; pageSize?: number} = {}) =>
+    api.get<TemplateSpecListOut>('/template-specs/trash', params),
+  remove: (key: string) => api.delete<TemplateSpecOut>(`/template-specs/${key}`),
+  restore: (key: string) => api.post<TemplateSpecOut>(`/template-specs/${key}/restore`),
   compile: (key: string, payload: SpecCompileIn) =>
     api.post<SpecCompileOut>(`/template-specs/${key}/compile`, payload),
 };

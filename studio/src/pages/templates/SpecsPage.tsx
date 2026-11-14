@@ -11,10 +11,7 @@ import { PageHeader } from '@/shared/ui';
 export default function SpecsPage() {
   return (
     <>
-      <PageHeader
-        title="模板封装"
-        description="描述一份模板要什么素材、写什么提示词、用哪个模型；发布后由模板库填表使用。"
-      />
+      <PageHeader title="模板封装" />
       <SpecWorkspace />
     </>
   );

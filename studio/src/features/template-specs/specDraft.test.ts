@@ -5,6 +5,7 @@ import {
   blankSpec,
   fromSpecOut,
   insertRef,
+  nextSlotKey,
   normalize,
   referenceChips,
 } from './specDraft';
@@ -17,6 +18,17 @@ describe('模板规格草稿', () => {
     expect(slots[0].position).toBe(0);
     expect(slots[0].type).toBe('image');
     expect(slots[0].binding).toBe('user');
+  });
+
+  it('槽位 key 自动生成且可读：同类型递增、不同类型不撞', () => {
+    // 界面上不显示 key，但提示词里的 `{{slot:image_1}}` 要人一眼能读。
+    expect(blankSlot(0, 'image', []).key).toBe('image_1');
+    const slots = [blankSlot(0, 'image', [])];
+    expect(nextSlotKey(slots, 'image')).toBe('image_2');
+    expect(nextSlotKey(slots, 'video')).toBe('video_1');
+    // 删掉中间那个之后序号可以复用，不要求连续
+    slots.push({...blankSlot(1, 'image', slots), key: 'image_3'});
+    expect(nextSlotKey(slots, 'image')).toBe('image_2');
   });
 
   it('插入引用时只在需要的一侧补空格，并把光标放到引用之后', () => {
