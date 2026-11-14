@@ -307,15 +307,15 @@
 | `manifest.functions[]` | **每个 function 拆成一条 spec**（key = `manifest.key:function.key`）。一 spec = 一张卡片，与原"一功能一卡片"一致 |
 | `manifest.functions[].prompt` | `prompt.editable`（原样）；`locked` 留空（旧模型本来整段只读，语义上更接近 locked，但为了让模板库可改，先放 editable 并在迁移报告里注明） |
 | `manifest.functions[].scopeOptions` | 暂不迁（替换专属，见 P3） |
-| `video_templates` | **只读历史，不再写入**。P1 起替换链的 `template-runtime` 端口实现改为读 spec 版本（见 §11 P1）；旧行保留到 P3 删除 |
+| `video_templates` | **只读历史，不再写入**。替换链的 `template-runtime` 端口在 **P3** 改为读 spec 版本（见下方"接读为什么不在 P1"）；旧行保留到 P3 删除 |
 
 三期，每期可独立上线、独立全绿：
 
 | 期 | 内容 | 验收 |
 |---|---|---|
-| **P1 定表** | `core/` 加 `InputSlot`/`TemplateSpec` 词表与编译纯函数；三张表 + 迁移（含旧 manifest→spec、旧素材包→资产库封装）；六个接口（含 `compile`）；封装页改成 §9 单页 | `compile` 输出与旧模板的 `mediaOrder` **逐项等价**；预检挡住所有非法组合（§12）；**不写 `video_templates`、也不假装能读**（见下方"接读为什么不在 P1"） |
+| **P1 定表** | `core/` 加 `InputSlot`/`TemplateSpec` 词表与编译纯函数；三张表（迁移 `d4a9f1c73b20`）；六个接口（含 `compile`）；封装页改成 §9 单页 | `compile` 输出与旧模板的 `mediaOrder` **逐项等价**（`tests/test_template_spec_equivalence.py`，已用"注入重排"验过会红）；预检挡住所有非法组合（§12）；**不写 `video_templates`、也不假装能读**（见下方"接读为什么不在 P1"） |
 | **P2 填表** | 模板库填表页（`source=pack` 的槽位走资产库封装选择器）；`compile → /tasks` 走通 | 四种组合各跑通一次：纯提示词（`agnes-video-2.5-flash`，maxRefs=0）、多图（`agnes-image-*`，maxRefs=4）、图+视频、加音频附件；另加一条"选一个资产库封装填一个槽位" |
-| **P3 接读 + 删表 + capability 化** | 替换链的 `template-runtime` 端口改读 spec 版本（旧 `video_templates` 只读）；删 `video_templates` / `template_packs*`；替换能力作为 task 的一个 capability；`supportedScopes`/`wardrobeMode` → `spec.attributes`；成片复核 → 任务中心；`modules/template` 的编排与物化下线。细则见 §11.1 | §11.1 的三条判据全绿；替换业务与历史档案不中断；`prepare` 用 spec 驱动的模板跑通 |
+| **P3 接读 + 迁移 + 删表 + capability 化** | 替换链的 `template-runtime` 端口改读 spec 版本（旧 `video_templates` 只读）；**旧数据迁移**（上表那套映射，含旧素材包 → 资产库封装）；删 `video_templates` / `template_packs*`；替换能力作为 task 的一个 capability；`supportedScopes`/`wardrobeMode` → `spec.attributes`；成片复核 → 任务中心；`modules/template` 的编排与物化下线。细则见 §11.1 | §11.1 的三条判据全绿；替换业务与历史档案不中断；`prepare` 用 spec 驱动的模板跑通；迁移出的 spec 与旧模板 `mediaOrder` 逐项等价 |
 
 #### 接读为什么不在 P1（2026-11-14 实现时确认）
 
@@ -329,6 +329,28 @@
 - **P1 只定表**，不写 `video_templates`（不产生第二份数据），替换链继续读自己的旧表；
 - **P3 一次性接读**，并把判据写进 capability 声明（模型侧声明"我是替换能力"，
   spec 侧只按槽位组合校验），避免用启发式推断。
+
+#### 数据迁移为什么也不在 P1（同日，同一根因）
+
+上表那套映射是**目标形状**，但它的验收标准依赖一个 P1 还不存在的东西："
+哪条 spec 与旧模板等价"。而 `compile` 产出的是 `POST /tasks` 的请求体，不是替换任务 ——
+把一条 `video_templates` 迁成 spec，运行行为就换了（没有审核范围校验、没有成片复核、
+不再走替换链）。在 P3 定清 capability 之前做这件事，会得到一个"看起来等价、
+跑起来不同"的模板集，比不迁更糟。
+
+所以 P1 只交**可机检的那一半**：`tests/test_template_spec_equivalence.py` 用旧
+`media_order` 与 spec `compile` 对同一组素材断言「编号 → 素材 → 角色」逐项相等。
+P3 补上 capability 判据后，迁移只需要让这份守卫继续绿，就算没换语义。
+
+迁移形态也一并定下（P3 照此实现，别重新推导）：
+
+- **位置**：`api/scripts/`（一次性运维脚本，不是模块）。它要同时写资产库（建 `kind=pack`）
+  和规格表，而业务模块之间不许互相 import —— 脚本在 `modules/` 之外，正是为此存在的
+  （先例 `scripts/migrate_asset_roles.py`）。
+- **只产草稿**：迁出来的 spec `status=draft`，不自动发布。原模板的模型/参数组合要人来确认
+  （旧数据里"用哪个模型跑替换"是运行时按渠道定的，不是模板里的一列）。
+- **幂等**：以 `spec.attributes.migratedFrom = "template_pack:<id>"` 为标记，重跑跳过；
+  资产库封装按 `(owner, 成员 asset 序列)` 去重，避免第二次跑就多出一批同内容的封装。
 
 ### 11.1 P3 终局：统一到 task（2026-11-14 拍板）
 
