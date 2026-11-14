@@ -270,12 +270,49 @@ async def _validate_media(
             need(ref.asset_id, LibraryAssetKind.IMAGE)
 
 
+async def _reused_pack_versions(
+    session: AsyncSession, pack_ids: set[str]
+) -> dict[str, int]:
+    """`packId` 指向已发布配置里的素材包行，返回 `{pack_id: 发布版本号}`。
+
+    packager 的 `--apply` 会先拉远端清单确认 `packId` 存在且已发布，DB 化后
+    这一步退化成一次 join：草稿里的包还没对外，不算可复用对象。查不到返回空
+    字典而不是抛异常 —— 预检要把它翻译成 400，发布时要用它填回执，两种
+    调用方对「缺失」的措辞不同。
+    """
+    if not pack_ids:
+        return {}
+    rows = (
+        await session.execute(
+            select(TemplateManifestPack.id, TemplateManifest.version)
+            .join(
+                TemplateManifest,
+                TemplateManifest.id == TemplateManifestPack.manifest_id,
+            )
+            .where(
+                TemplateManifestPack.id.in_(sorted(pack_ids)),
+                TemplateManifest.status == "published",
+                TemplateManifest.deleted_at.is_(None),
+            )
+        )
+    ).all()
+    return {str(pack_id): int(version) for pack_id, version in rows}
+
+
 async def validate(
     session: AsyncSession, actor: CurrentUser, spec: ManifestDraftIn
 ) -> ManifestValidateOut:
     """只预检不落库，返回将用于幂等判定的指纹。"""
     _validate_structure(spec)
     await _validate_media(session, actor, spec)
+    wanted = {pack.pack_id for pack in spec.packs if pack.pack_id}
+    if wanted:
+        found = await _reused_pack_versions(session, wanted)
+        missing = sorted(wanted - found.keys())
+        if missing:
+            raise BadRequest(f"复用的素材包不存在或尚未发布：{', '.join(missing)}")
+        if any(version <= 0 for version in found.values()):
+            raise BadRequest("复用的素材包没有已发布版本")
     return ManifestValidateOut(fingerprint=fingerprint_of(spec))
 
 
@@ -568,20 +605,39 @@ async def publish(
     head.status = "published"
     head.version += 1
     head.published_at = utcnow()
+
+    # 发布回执（packager 的 journal 语义）：本次真正对外的是哪几行、第几版。
+    # 远端投影（`video_templates` 行）要等 C2 把 ①② 搬进本模块后同模块直写，
+    # 但配置层锚点必须在发布这一刻冻结 —— 否则重跑时无从判断「上次发的是哪一行」，
+    # 「远端被手工改过」也就没有比对基准。复用包指向被复用的那一行及其版本，
+    # 新建包指向自己，两者都不重新解析配置。
+    reused = await _reused_pack_versions(
+        session,
+        {pack.reuse_pack_id for pack in bundle.packs if pack.reuse_pack_id},
+    )
+    for pack in bundle.packs:
+        if pack.reuse_pack_id:
+            pack.published_pack_id = pack.reuse_pack_id
+            pack.published_pack_version = reused.get(pack.reuse_pack_id, 0)
+        else:
+            pack.published_pack_id = pack.id
+            pack.published_pack_version = head.version
+    for function in bundle.functions:
+        function.published_template_id = function.id
     await session.flush()
 
     templates = [
         PublishedTemplateOut(
-            function_key=row.function_key,
-            template_id=row.id,
-            template_key=f"{head.template_key}:{row.function_key}",
-            name=f"{head.name} · {row.name}",
+            function_key=fn.function_key,
+            template_id=fn.published_template_id,
+            template_key=f"{head.template_key}:{fn.function_key}",
+            name=f"{head.name} · {fn.name}",
             workbench_path=(
                 f"/templates?sourceId={head.video_asset_id}"
-                f"&videoTemplateId={row.id}&kind={row.kind or 'product'}"
+                f"&videoTemplateId={fn.published_template_id}&kind={fn.kind or 'product'}"
             ),
         )
-        for row in bundle.functions
+        for fn in bundle.functions
     ]
     result = ManifestPublishOut(
         manifest=_to_out(bundle), version=head.version, templates=templates

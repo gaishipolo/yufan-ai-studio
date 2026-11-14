@@ -48,6 +48,7 @@
 | `cfc0508` | `ModelSpec.internal` + `ModelRouter.public_models()`：替换链专用模型不再出现在目录（T33，后被本轮取代） | 当时视频下拉里不再有选中即 400 的 `*-replacement` |
 | 本轮 | **任务中心接生图 + 补齐自身真实操作**（2026-11-13）：`GET /tasks/feed` 从「视频 + 替换档案」扩成三路；新增 `core.ports.generation_feed` 注入口，生图模块在 import 期注册 `feed_provider.read_generation_feed`；前端加 `ImageTaskCard` / `ImagePreviewModal` 与来源 `source=image` | 生图记录进任务中心，统计 / 搜索 / 状态分组 / 现签产物地址三路同口径；批量下载、显式 `PATCH` 收藏、`DELETE /tasks` 删除（回 `skipped`）、视频 / 替换成片下载从假按钮变真实操作。**用户明确「v2 先不用管」，本轮完全没碰模板库 v2** |
 | 本轮 | **模板封装迁移 A/B/C1**（2026-11-14）：A 纯规则上移 `core/template_rules/`；B `manifest.json` DB 化四张表（迁移 `a3c7e91b2d45`）；C1 新 `/template-manifests` 配置服务（预检 / 幂等保存 / 发布 / 停用）+ `core.ports.template_catalog` 只读端口 | 素材一律 `library_assets.id`，本地文件、文件 sha256、journal 进度文件、HTTP 客户端整套没搬；`template_packager` 的能力改为 DB 内预检 + 版本回执。旧 `/template-packs` 与 `modules/template` 的 ①② 暂留，等 C2 收敛 |
+| 本轮 | **C1.5 发布回执闭环**：`publish()` 冻结 `published_pack_id` / `published_pack_version` / `published_template_id`，`template-catalog` 快照带出回执；复用包 `packId` 预检改成查库确认「存在且已发布」 | 模型里三列此前声明了却从未写入（journal 语义断在这里）。新建包回执指向自己 + 本次 version，复用包指向被复用行及其版本；停用不清空（下架 ≠ 抹历史）。发布投影（`video_templates` 行）仍等 C2 搬表后同模块直写 |
 
 表格之后又连续落了几件事（提交见 `git log --oneline -12`）：PR#5 语义合并 →
 T34 参考图（含素材库侧边悬浮栏 + 拖拽）→ 标签两级分类 → worktree
@@ -259,6 +260,11 @@ curl -sS --noproxy '*' -H "Authorization: Bearer $TOKEN" \
   `modules/task` 的消费行为，不在封装模块实现、也不由封装模块去接。
   `core.ports.template_catalog` 是只读窄接口，没有 `verify_picks` / 候选判定；
   旧的 `TemplatePackPort`（fixed/filtered 槽位）随 C2 一起下线，别合并。
+- **发布回执在发布那一刻冻结**：`published_pack_id` / `published_pack_version` /
+  `published_template_id` 不是读时拼的，停用也不清空；`CatalogPack` /
+  `CatalogTemplate` 快照原样带出。C2 同模块直写 `video_templates` 后，
+  `published_template_id` 换成投影行 id，消费方只认「一个能点开的 id」即可。
+  复用包的 `packId` 必须查库确认「存在且已发布且 version > 0」，预检就挡。
 - **service 层显式 commit**：`db.session.get_session()` 只在异常时回滚。
   `save` / `publish` / `disable` 漏 `await session.commit()` 的症状是「接口 201、
   紧接着的读全 404」，很容易误判成权限或缓存问题。写侧新建实体还要在

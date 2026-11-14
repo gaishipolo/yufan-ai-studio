@@ -250,3 +250,163 @@ def test_invalid_specs_are_rejected(client: TestClient) -> None:
         assert response.status_code in (400, 422), (
             f"{label}: {response.status_code} {response.text}"
         )
+
+
+# ---------------------------------------------------------------------------
+# 发布回执（packager 的 journal 语义）
+# ---------------------------------------------------------------------------
+
+
+def _rows(key: str) -> tuple[list[Any], list[Any]]:
+    """按 template_key 精确取子行：用例之间共享测试库，不能全表扫。"""
+    from sqlalchemy import select
+
+    from db.session import get_session_factory
+    from modules.template_pack.models import (
+        TemplateManifest,
+        TemplateManifestFunction,
+        TemplateManifestPack,
+    )
+
+    async def run() -> tuple[list[Any], list[Any]]:
+        async with get_session_factory()() as session:
+            head = (
+                await session.scalars(
+                    select(TemplateManifest).where(TemplateManifest.template_key == key)
+                )
+            ).one_or_none()
+            assert head is not None, f"配置 {key} 不存在"
+            packs = list(
+                (
+                    await session.scalars(
+                        select(TemplateManifestPack).where(
+                            TemplateManifestPack.manifest_id == head.id
+                        )
+                    )
+                ).all()
+            )
+            functions = list(
+                (
+                    await session.scalars(
+                        select(TemplateManifestFunction).where(
+                            TemplateManifestFunction.manifest_id == head.id
+                        )
+                    )
+                ).all()
+            )
+            return packs, functions
+
+    return asyncio.run(run())
+
+
+def _publish(
+    client: TestClient, headers: dict[str, str], key: str
+) -> dict[str, Any]:
+    response = client.post(f"{MANIFESTS}/{key}/publish", headers=headers)
+    assert response.status_code == 200, response.text
+    return response.json()["data"]
+
+
+def _reuse_spec(video: str, image: str, pack_id: str) -> dict[str, Any]:
+    return _spec(
+        video,
+        image,
+        packs=[{"key": "reuse", "kind": "product", "packId": pack_id}],
+        functions=[
+            {
+                "key": "replace",
+                "name": "产品替换",
+                "pack": "reuse",
+                "prompt": "对 {{Mixed 2}} 使用 {{Mixed 1}}。",
+                "bindings": {
+                    "{{Mixed 1}}": "source_video",
+                    "{{Mixed 2}}": "front",
+                },
+            }
+        ],
+    )
+
+
+def test_publish_freezes_receipts(client: TestClient) -> None:
+    """草稿不带回执；发布把「哪几行、第几版」冻进配置层，端口快照带出去。"""
+    headers = _headers(client)
+    video, image = _media(client, headers)
+    spec = _spec(video, image)
+    key = spec["key"]
+
+    created = client.post(MANIFESTS, json=spec, headers=headers)
+    assert created.status_code == 201, created.text
+    draft_packs, draft_functions = _rows(key)
+    assert draft_packs and draft_functions
+    assert all(
+        row.published_pack_id == "" and row.published_pack_version == 0
+        for row in draft_packs
+    )
+    assert all(row.published_template_id == "" for row in draft_functions)
+
+    body = _publish(client, headers, key)
+    assert body["version"] == 1
+    packs, functions = _rows(key)
+    assert packs[0].published_pack_id == packs[0].id
+    assert packs[0].published_pack_version == 1
+    assert functions[0].published_template_id == functions[0].id
+    assert body["templates"][0]["templateId"] == functions[0].id
+
+    matched = [
+        row
+        for row in _catalog_templates()
+        if row.template_key == f"{key}:replace"
+    ]
+    assert len(matched) == 1
+    assert matched[0].published_template_id == functions[0].id
+
+
+def test_reused_pack_receipt_points_to_source_version(client: TestClient) -> None:
+    """复用包的回执指向被复用的那一行及其发布版本，不是自己、也不是当前版本。"""
+    headers = _headers(client)
+    video, image = _media(client, headers)
+    source = _spec(video, image)
+    assert client.post(MANIFESTS, json=source, headers=headers).status_code == 201
+    _publish(client, headers, source["key"])
+    source_packs, _ = _rows(source["key"])
+
+    reuse = _reuse_spec(video, image, source_packs[0].id)
+    checked = client.post(f"{MANIFESTS}/validate", json=reuse, headers=headers)
+    assert checked.status_code == 200, checked.text
+    saved = client.post(MANIFESTS, json=reuse, headers=headers)
+    assert saved.status_code == 201, saved.text
+    _publish(client, headers, reuse["key"])
+
+    packs, functions = _rows(reuse["key"])
+    assert packs[0].published_pack_id == source_packs[0].id
+    assert packs[0].published_pack_version == 1
+    assert functions[0].published_template_id == functions[0].id
+
+
+def test_reuse_unknown_pack_is_rejected(client: TestClient) -> None:
+    """预检就要挡住「指向不存在的已发布包」，别等发布时才发现。"""
+    headers = _headers(client)
+    video, image = _media(client, headers)
+    spec = _reuse_spec(video, image, "not-a-published-pack")
+    response = client.post(f"{MANIFESTS}/validate", json=spec, headers=headers)
+    assert response.status_code == 400, response.text
+    detail = client.get(f"{MANIFESTS}/{spec['key']}", headers=headers)
+    assert detail.status_code == 404, "预检失败不能顺手落库"
+
+
+def test_disable_keeps_receipts_but_hides_catalog(client: TestClient) -> None:
+    """停用是下架，不是抹掉历史：端口读不到，回执仍在库里。"""
+    headers = _headers(client)
+    video, image = _media(client, headers)
+    spec = _spec(video, image)
+    assert client.post(MANIFESTS, json=spec, headers=headers).status_code == 201
+    _publish(client, headers, spec["key"])
+    card_key = f"{spec['key']}:replace"
+    assert any(row.template_key == card_key for row in _catalog_templates())
+
+    disabled = client.post(f"{MANIFESTS}/{spec['key']}/disable", headers=headers)
+    assert disabled.status_code == 200, disabled.text
+    assert all(row.template_key != card_key for row in _catalog_templates())
+    packs, functions = _rows(spec["key"])
+    assert packs[0].published_pack_version == 1
+    assert functions[0].published_template_id

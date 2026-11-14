@@ -68,6 +68,7 @@ def _template(
         pack_id="",
         pack_version=0,
         published_at=head.published_at,
+        published_template_id=row.published_template_id,
     )
 
 
@@ -152,6 +153,8 @@ class TemplateCatalogImpl:
             required_roles=tuple(pack.required_roles or []),
             supported_scopes=tuple(pack.supported_scopes or []),
             wardrobe_mode=pack.wardrobe_mode,
+            published_pack_id=pack.published_pack_id,
+            published_pack_version=pack.published_pack_version,
             references=tuple(
                 CatalogReference(
                     asset_id=ref.asset_id,

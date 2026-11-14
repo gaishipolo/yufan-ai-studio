@@ -69,6 +69,10 @@ class CatalogPack:
     supported_scopes: tuple[str, ...] = ()
     wardrobe_mode: str = "preserve"
     references: tuple[CatalogReference, ...] = ()
+    #: 发布回执：这次对外的是哪个包的哪一版。C2 投影到 `video_templates` 时
+    #: 用它当锚点，不重新解析配置，也不把「最新一版」误当成「当时那一版」。
+    published_pack_id: str = ""
+    published_pack_version: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,6 +100,9 @@ class CatalogTemplate:
     pack_id: str = ""
     pack_version: int = 0
     published_at: datetime | None = None
+    #: 发布回执：发布时冻结的配置行 id。C2 同模块直写投影后，这里换成
+    #: `video_templates.id`；消费方只认「一个能点开的 id」，不用跟着改。
+    published_template_id: str = ""
 
 
 @runtime_checkable
