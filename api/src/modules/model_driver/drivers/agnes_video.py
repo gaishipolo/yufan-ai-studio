@@ -18,7 +18,7 @@
     GET {根地址}/agnesapi?video_id=<id>&model_name=agnes-video-2.5-flash
     → {"status":"completed","progress":100,"url":"https://.../x.mp4", ...}
 
-## 三处与文档不一致（实测为准，别照文档改回去）
+## 五处与文档不一致（实测为准，别照文档改回去）
 
 1. **错误体不是 `{"detail": ...}`**。`.cn` 网关返回
    `{"code":"invalid_request","message":"size 必须是 720P 之一","data":{"param":"size"}}`；
@@ -32,6 +32,12 @@
 3. **查询路径在根上**：`AGNES_BASE_URL` 是 `https://api.agnes-ai.cn`（生图驱动自己拼
    `/v1/images/generations`），视频查询是 `/agnesapi`。这里统一去掉尾部 `/v1`，
    两种写法的 `.env` 都能用。
+4. **查询接口限频**：2 秒一问（框架默认节奏）会连续收到
+   `429 查询过于频繁`，进度条卡在个位数。所以本驱动声明
+   `poll_interval_sec = 10`，由 runner 按这个节奏问。
+5. **提交侧的「队列满」是常态**：免费通道容量有限，503 `video_queue_full` 意味着
+   「没建任务、只是没轮到」。驱动把它归成 `RateLimited`，runner 会按
+   `GENERATION_THROTTLE_DELAYS` 排队重投（任务留在 `queued`），排满表才失败。
 
 ## 参考素材
 
@@ -161,6 +167,9 @@ class AgnesVideoDriver:
     models = MODELS
     # 异步供应商：必须显式声明，缺省按 False 处理（恢复器会把在途任务判死）。
     supports_poll = True
+    # 查询接口对频率敏感：2 秒一问（框架默认）会被 429「查询过于频繁」挡回来，
+    # 退避到 30 秒才勉强过。视频本来就要跑几分钟，10 秒一问足够灵敏也不挨限流。
+    poll_interval_sec = 10.0
     # 声明这个供应商是视频能力的默认首选。
     #
     # 之前刻意不声明，因为默认视频模型是 echo 的 `seedance-2.5`——**那是占位

@@ -273,11 +273,25 @@ class _SubmitProbeStore:
         return True
 
 
+class _SpyQueue(MemoryJobQueue):
+    """记下「重投了哪些作业、等了多久」，用来验证排队重投的间隔。"""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.enqueued: list[tuple[Job, float]] = []
+
+    async def enqueue(self, job: Job, *, delay: float = 0) -> str:  # type: ignore[override]
+        self.enqueued.append((job, delay))
+        return await super().enqueue(job, delay=delay)
+
+
 def _run_submit(
     monkeypatch: pytest.MonkeyPatch,
     kind: str,
     boom: BaseException | None = None,
     probe: _SubmitProbeStore | None = None,
+    queue: MemoryJobQueue | None = None,
+    payload_extra: dict[str, object] | None = None,
 ) -> _SubmitProbeStore:
     """把 echo 的 submit 换成指定异常，跑一次 handle_submit，返回探针。"""
     probe = probe or _SubmitProbeStore()
@@ -310,8 +324,11 @@ def _run_submit(
         register_pipeline(pipeline)
 
         try:
-            await GenerationRunner(MemoryJobQueue()).handle_submit(
-                Job(name=JOB_SUBMIT, payload={"kind": kind, "record_id": "r1"})
+            await GenerationRunner(queue or MemoryJobQueue()).handle_submit(
+                Job(
+                    name=JOB_SUBMIT,
+                    payload={"kind": kind, "record_id": "r1", **(payload_extra or {})},
+                )
             )
         except Exception as exc:  # noqa: BLE001
             # 可重试路径会把异常向上抛（交给 worker nack），探针记下来
@@ -358,6 +375,62 @@ def test_submit_4xx_is_cleared_without_retry(monkeypatch: pytest.MonkeyPatch) ->
     assert probe.failed_with is not None
 
 
+def test_submit_rate_limited_waits_in_line_instead_of_failing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """队列满 / 限流 = 还没轮到，不是失败：按排队表重投，任务保持 queued。
+
+    以前这类异常走 worker 的 2s / 4s 指数退避 —— 上游视频队列满了要等的是别人
+    跑完，6 秒内重打三次必然还是满的，用户看到的是一句像永久失败的
+    「提交生成失败」。真实上游（Agnes 免费视频队列）实测就是这样。
+    """
+    from core.config import settings
+    from core.exceptions import RateLimited
+
+    queue = _SpyQueue()
+    probe = _run_submit(
+        monkeypatch,
+        "test-submit-throttle",
+        RateLimited("视频队列已满，请稍后重试（HTTP 503 video_queue_full）"),
+        queue=queue,
+    )
+
+    assert probe.failed_with is None, "队列满不该把任务判死"
+    assert probe.raised is None, "也不该交给 worker 的 2s/4s 退避"
+    assert probe.submit_attempts == 0, "确认没受理，意图标记要清掉（允许安全重投）"
+
+    assert len(queue.enqueued) == 1, "应该重投一次提交作业"
+    job, delay = queue.enqueued[0]
+    first = float(str(settings.generation_throttle_delays).split(",")[0])
+    assert job.name == JOB_SUBMIT
+    assert delay == first, "第一次排队等表里的第一档，而不是 2 秒"
+    assert job.payload["throttle_retries"] == 1
+    assert job.max_attempts == 3, "排队作业仍按普通重试兜底别的瞬时故障"
+
+
+def test_submit_gives_up_only_after_the_whole_throttle_schedule(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """排队表用尽才如实失败：文案要说清「一直在排队」，别让人以为是参数写错了。"""
+    from core.config import settings
+    from core.exceptions import RateLimited
+
+    monkeypatch.setattr(settings, "generation_throttle_delays", "5,10")
+    queue = _SpyQueue()
+    probe = _run_submit(
+        monkeypatch,
+        "test-submit-throttle-done",
+        RateLimited("视频队列已满"),
+        queue=queue,
+        payload_extra={"throttle_retries": 2},
+    )
+
+    assert queue.enqueued == [], "排到头了不该再无限重投"
+    assert probe.failed_with is not None
+    assert "排队" in probe.failed_with
+    assert "视频队列已满" in probe.failed_with
+
+
 def test_submit_5xx_is_treated_as_possibly_delivered(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -388,6 +461,27 @@ def test_submit_not_implemented_fails_honestly(monkeypatch: pytest.MonkeyPatch) 
     assert probe.failed_with is not None
     assert "提交结果未知" not in probe.failed_with
     assert "提交生成失败" in probe.failed_with
+
+
+def test_driver_can_slow_down_polling() -> None:
+    """驱动能声明自己的轮询节奏：Agnes 视频 2 秒一问会被 429 挡回来。
+
+    默认仍是全局那 2 秒（延迟投递不占槽位，密一点更灵敏）；驱动声明
+    `poll_interval_sec` 后连退避的底也换成它，否则「主节奏 10 秒、失败退避 2 秒」
+    会互相打架。
+    """
+    from core.config import settings
+
+    class _Slow:
+        poll_interval_sec = 10.0
+
+    class _Plain:
+        pass
+
+    assert GenerationRunner._poll_interval(_Slow()) == 10.0
+    assert GenerationRunner._poll_interval(_Plain()) == settings.generation_poll_interval_sec
+    assert GenerationRunner._backoff(0, base=10.0) == 10.0
+    assert GenerationRunner._backoff(2, base=10.0) == 30.0, "退避仍封顶 30 秒"
 
 
 def test_submit_prepare_failure_is_not_blamed_on_billing(

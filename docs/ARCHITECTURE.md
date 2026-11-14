@@ -173,7 +173,7 @@
 |---|---|
 | `generation/pipeline.py` | 生成流水线注册表。 |
 | `generation/recovery.py` | 启动恢复器：按 `ModuleSpec.recovery_kinds` 捞未终态记录，分「续轮询 / 同步供应商孤儿 / 结果未知 / 重新投递」四类处置。分类优先读记录上的 `submit_mode` 快照，缺省 `supports_poll` 按 False（安全一边）；双声明模块跳过并告警。 |
-| `generation/runner.py` | 生成编排执行器：把「提交 / 轮询 / 重试 / 超时 / 事件」标准化。 |
+| `generation/runner.py` | 生成编排执行器：把「提交 / 轮询 / 重试 / 超时 / 事件」标准化。两类失败的节奏分开：**提交被限流/队列满**（`RateLimited`，确定没受理）不判失败，按 `GENERATION_THROTTLE_DELAYS`（默认 10/20/30/60/90/120/180/240 秒）重投、任务留 `queued`，排满表才如实失败；**轮询节奏**默认 2 秒，驱动声明 `poll_interval_sec` 时按它的来（Agnes 视频查询接口 2 秒一问就回 429）。 |
 | `generation/spec.py` | 生成编排的核心数据类型（阶段、结果、状态）。 |
 | `generation/store.py` | 业务侧需要实现的存储协议（读写 run 状态）。 |
 | `generation/worker.py` | 框架自带的两个 job handler：轮询与超时。 |

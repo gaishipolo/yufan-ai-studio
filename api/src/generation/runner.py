@@ -32,7 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.config import settings
 from core.events import get_event_bus
-from core.exceptions import AppError
+from core.exceptions import AppError, RateLimited
 from core.logging import get_logger
 from core.ports.accounts import account_is_active
 from core.ports.library_ingest import get_library_ingest, has_library_ingest
@@ -82,6 +82,27 @@ SUBMIT_UNKNOWN_MESSAGE = (
 )
 
 OWNER_DISABLED_MESSAGE = "发起人账号已停用，任务未提交（避免继续产生费用）"
+
+
+def _throttle_delays() -> tuple[float, ...]:
+    """解析 `GENERATION_THROTTLE_DELAYS`（秒，逗号分隔）。
+
+    坏值跳过而不是让整条链路崩：这是运维可调的等待表，写错一个字母的后果应该是
+    「少等一轮」，不是「所有任务提交都抛异常」。
+    """
+    delays: list[float] = []
+    for part in str(settings.generation_throttle_delays).split(","):
+        text = part.strip()
+        if not text:
+            continue
+        try:
+            value = float(text)
+        except ValueError:
+            logger.warning("GENERATION_THROTTLE_DELAYS 里有非数字，忽略：%r", text)
+            continue
+        if value > 0:
+            delays.append(value)
+    return tuple(delays)
 
 
 def _possibly_delivered(exc: BaseException) -> bool:
@@ -292,6 +313,54 @@ class GenerationRunner:
 
                 try:
                     delivered = await provider.submit(request)
+                except RateLimited as exc:
+                    # 限流 / 上游队列满：**确定没受理**（429 语义），所以可以安全重投；
+                    # 而且它不是失败，只是「还没轮到」。
+                    #
+                    # 这里不能交给 worker 的 2s/4s 指数退避：那张表是给瞬时抖动用的，
+                    # 上游视频队列满了要等的是别人跑完，6 秒内打三次必然还是满的，
+                    # 用户看到的是一句像永久失败的「提交生成失败」。
+                    # 所以按 `GENERATION_THROTTLE_DELAYS` 排队重投，任务保持 queued。
+                    logger.warning(
+                        "提交被上游限流，转入排队 kind=%s id=%s err=%s", kind, record_id, exc
+                    )
+                    await store.clear_submit_attempt(record_id)
+                    delays = _throttle_delays()
+                    used = int(job.payload.get("throttle_retries") or 0)
+                    if used < len(delays):
+                        await session.commit()
+                        await self._queue.enqueue(
+                            Job(
+                                name=job.name,
+                                # max_attempts 与原来一致：这条新作业万一撞上
+                                # 的是另一种瞬时故障，仍然按普通重试处理
+                                payload={**job.payload, "throttle_retries": used + 1},
+                                max_attempts=job.max_attempts,
+                                timeout_sec=job.timeout_sec,
+                            ),
+                            delay=delays[used],
+                        )
+                        logger.info(
+                            "排队重试 %d/%d：%0.0f 秒后再提交 kind=%s id=%s",
+                            used + 1,
+                            len(delays),
+                            delays[used],
+                            kind,
+                            record_id,
+                        )
+                        return
+                    await self._fail(
+                        store=store,
+                        session=session,
+                        kind=kind,
+                        record_id=record_id,
+                        owner_id=record.owner_id,
+                        message=(
+                            f"上游一直排队（等了 {sum(delays):.0f} 秒、重试 {used} 次仍被拒）："
+                            f"{exc}"
+                        )[:_MAX_ERROR_LEN],
+                    )
+                    return
                 except Exception as exc:  # noqa: BLE001
                     logger.exception("提交生成失败 kind=%s id=%s", kind, record_id)
 
@@ -435,8 +504,13 @@ class GenerationRunner:
                             )
                         return
 
+                    interval = settings.generation_poll_interval_sec
                     try:
                         provider = _provider_for(pipeline, record.model)
+                        # 轮询节奏可以由驱动收紧：Agnes 视频的查询接口对频率敏感
+                        # （2 秒一问会被 429「查询过于频繁」挡回来），驱动声明
+                        # `poll_interval_sec` 后，这一条链路按它的节奏问。
+                        interval = self._poll_interval(provider)
                     except ModelUnavailable as exc:
                         # 模型已下线：这条历史记录**不可能再有结果**。
                         # 当场判失败，别把它当成瞬时故障退避重试——退避会让它
@@ -486,7 +560,7 @@ class GenerationRunner:
                             polls,
                             exc,
                         )
-                        next_delay = self._backoff(polls)
+                        next_delay = self._backoff(polls, base=interval)
                     else:
                         state = result.state
 
@@ -514,7 +588,7 @@ class GenerationRunner:
                             pending = (record, output_url, cover_url)
                         elif state == GenerationState.FAILED:
                             if result.retryable and polls + 1 < settings.generation_max_polls:
-                                next_delay = self._backoff(polls)
+                                next_delay = self._backoff(polls, base=interval)
                             else:
                                 if not await store.mark_failed(
                                     record_id, (result.error or "生成失败")[:_MAX_ERROR_LEN]
@@ -549,7 +623,7 @@ class GenerationRunner:
                                     owner_id=record.owner_id,
                                     progress=progress,
                                 )
-                            next_delay = settings.generation_poll_interval_sec
+                            next_delay = interval
 
                 if pending is not None:
                     # 已经终态并提交，收尾失败只能留痕：这里再抛出去会被下面的
@@ -872,10 +946,23 @@ class GenerationRunner:
         return True
 
     @staticmethod
-    def _backoff(polls: int) -> float:
+    def _poll_interval(provider: ModelProvider) -> float:
+        """这条链路两次轮询之间等多久。
+
+        默认 `GENERATION_POLL_INTERVAL_SEC`（2 秒，够密，延迟投递不占 worker 槽位）；
+        驱动可以声明 `poll_interval_sec` 收紧——上游对查询频率敏感时（Agnes 视频
+        2 秒一问就回 429「查询过于频繁」），按它的节奏问比挨完 429 再退避划算。
+        """
+        declared = getattr(provider, "poll_interval_sec", None)
+        if isinstance(declared, (int, float)) and declared > 0:
+            return float(declared)
+        return settings.generation_poll_interval_sec
+
+    @staticmethod
+    def _backoff(polls: int, *, base: float | None = None) -> float:
         return min(
             _MAX_BACKOFF_SEC,
-            settings.generation_poll_interval_sec * (2 ** min(polls, 4)),
+            (base or settings.generation_poll_interval_sec) * (2 ** min(polls, 4)),
         )
 
     @staticmethod
