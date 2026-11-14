@@ -16,6 +16,13 @@ export type PickKind = 'image' | 'video' | 'audio' | 'text' | 'pack';
 export interface AssetPickerProps {
   open: boolean;
   kind: PickKind;
+  /**
+   * 候选集收窄到这些标签（含其下级）。空 = 不限。
+   *
+   * 槽位的一级标签就是从这里传进来的：模板作者挑固定素材、模板使用者填表，
+   * 看到的是**同一批**素材 —— 两处各筛各的，就会出现「作者选的图用户根本挑不到」。
+   */
+  tagIds?: string[];
   /** 已选的 id：再次点击就是取消选择（多选语义）。 */
   selected: string[];
   onClose: () => void;
@@ -46,14 +53,24 @@ const KIND_LABELS: Record<PickKind, string> = {
  * 只做「挑 id」这一件事——用途、顺序由调用方（素材包/功能）决定，
  * 选择器不该知道提示词编号。
  */
-export function AssetPicker({open, kind, selected, onClose, onToggle}: AssetPickerProps) {
+export function AssetPicker({
+  open,
+  kind,
+  tagIds,
+  selected,
+  onClose,
+  onToggle,
+}: AssetPickerProps) {
   const [keyword, setKeyword] = useState('');
+  const scope = tagIds ?? [];
   const params = useMemo(
-    () => ({kind, keyword, page: 1, pageSize: PAGE_SIZE, view: 'all'}),
-    [kind, keyword],
+    () => ({kind, keyword, page: 1, pageSize: PAGE_SIZE, view: 'all', tagIds: scope}),
+    // `scope` 是每次 render 新建的数组，用它当依赖会无限重取；用 join 后的串。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [kind, keyword, scope.join(',')],
   );
   const query = useQuery({
-    queryKey: ['library-selection', kind, keyword],
+    queryKey: ['library-selection', kind, keyword, scope.join(',')],
     queryFn: () => libraryApi.selection(params),
     enabled: open,
   });

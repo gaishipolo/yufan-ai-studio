@@ -12375,18 +12375,10 @@
               "image",
               "video",
               "audio",
-              "text"
-            ],
-            "title": "Type"
-          },
-          "source": {
-            "type": "string",
-            "enum": [
-              "asset",
+              "text",
               "pack"
             ],
-            "title": "Source",
-            "default": "asset"
+            "title": "Type"
           },
           "binding": {
             "type": "string",
@@ -12455,6 +12447,12 @@
               }
             ],
             "title": "Packid"
+          },
+          "tagId": {
+            "type": "string",
+            "maxLength": 32,
+            "title": "Tagid",
+            "default": ""
           },
           "position": {
             "type": "integer",
@@ -12485,18 +12483,10 @@
               "image",
               "video",
               "audio",
-              "text"
-            ],
-            "title": "Type"
-          },
-          "source": {
-            "type": "string",
-            "enum": [
-              "asset",
+              "text",
               "pack"
             ],
-            "title": "Source",
-            "default": "asset"
+            "title": "Type"
           },
           "binding": {
             "type": "string",
@@ -12565,6 +12555,12 @@
               }
             ],
             "title": "Packid"
+          },
+          "tagId": {
+            "type": "string",
+            "maxLength": 32,
+            "title": "Tagid",
+            "default": ""
           },
           "position": {
             "type": "integer",

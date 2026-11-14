@@ -6,7 +6,7 @@
 manifest 配置（`template_manifests` 四表）与替换调用档案（`replacement_runs` 三表）
 全部下线，模板只存在于 `template_specs`。它们是同一次「统一到 task」的几半：
 
-- 素材包 → 资产库封装（`kind=pack`），模板用 `source=pack` 槽位引用它的 id；
+- 素材包 → 资产库封装（`kind=pack`），模板用 `type=pack` 槽位引用它的 id；
 - 视频模板 / manifest 功能 → 一条 spec；
 - 替换专用编排 → 普通 `POST /tasks` + 声明了 `replacement` 的模型。
 
@@ -132,8 +132,11 @@ class TemplateSpecSlot(Base, UUIDMixin):
     `position` 就是 `{{Mixed N}}` 的顺序；**这里不存编号**（编号由编译按实际填充
     数量算出来，见 `core/template_spec/compile.py`）。
 
-    `source=pack` 时只存 `pack_id`，成员与角色留在资产库 —— 模板不复制成员清单，
+    `type=pack` 时只存 `pack_id`，成员与角色留在资产库 —— 模板不复制成员清单，
     否则库改了成员模板还按旧的算（§12 不变量 9）。
+
+    **没有 `source` 列**（2026-11-14 删）：`type=pack` 就是"要一个封装"，两根轴
+    表达同一件事时接口能收到自相矛盾的组合。`tag_id` 只是候选集范围。
     """
 
     __tablename__ = "template_spec_slots"
@@ -144,9 +147,8 @@ class TemplateSpecSlot(Base, UUIDMixin):
 
     version_id: Mapped[str] = mapped_column(String(32), nullable=False)
     slot_key: Mapped[str] = mapped_column(String(40), nullable=False)
+    #: `image` | `video` | `audio` | `text` | `pack`（= 资产库的 kind）
     type: Mapped[str] = mapped_column(String(16), nullable=False)
-    #: `asset` | `pack`
-    source: Mapped[str] = mapped_column(String(16), default="asset", nullable=False)
     #: `fixed` | `user`
     binding: Mapped[str] = mapped_column(String(16), default="user", nullable=False)
     #: `mixed` | `attachment`
@@ -157,4 +159,6 @@ class TemplateSpecSlot(Base, UUIDMixin):
     usage_text: Mapped[str] = mapped_column(String(500), default="", nullable=False)
     asset_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     pack_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    #: 一级标签 id（候选集范围）。空串 = 不限。
+    tag_id: Mapped[str] = mapped_column(String(32), default="", nullable=False)
     position: Mapped[int] = mapped_column(Integer, nullable=False)

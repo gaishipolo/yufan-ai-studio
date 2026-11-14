@@ -24,7 +24,6 @@ from core.template_spec import (
     MAX_SLOTS,
     RefMode,
     SlotBinding,
-    SlotSource,
     SlotType,
 )
 
@@ -42,8 +41,10 @@ class StrictIn(CamelModel):
 
 class SpecSlotIn(StrictIn):
     key: str = Field(pattern=_KEY)
+    #: 槽位要什么：就是资产库的 kind（图片 / 视频 / 音频 / 文本 / **封装**）。
+    #: 曾经另有一根 `source: asset|pack` 的轴，与 `type` 表达同一件事（封装槽位
+    #: 就是 `type=pack`），两处并存时接口能收到自相矛盾的组合，已合并。
     type: SlotType
-    source: SlotSource = "asset"
     binding: SlotBinding = "user"
     ref_mode: RefMode = "mixed"
     min_count: int = Field(default=1, ge=0, le=MAX_SLOT_REFS)
@@ -52,6 +53,9 @@ class SpecSlotIn(StrictIn):
     usage: str = Field(default="", max_length=500)
     asset_id: str | None = Field(default=None, max_length=32)
     pack_id: str | None = Field(default=None, max_length=32)
+    #: 一级标签 id：**候选集范围**，不是内容。空 = 不限。固定与填写都只在这个
+    #: 标签（及其下级）里挑；编译不看它。
+    tag_id: str = Field(default="", max_length=32)
     position: int = Field(default=0, ge=0, le=MAX_SLOTS * 10)
 
 

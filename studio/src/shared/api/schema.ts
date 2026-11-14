@@ -1174,8 +1174,7 @@ export interface SpecPublishOut {
 /** SpecSlotIn */
 export interface SpecSlotIn {
   key: string;
-  type: "image" | "video" | "audio" | "text";
-  source?: "asset" | "pack";
+  type: "image" | "video" | "audio" | "text" | "pack";
   binding?: "fixed" | "user";
   refMode?: "mixed" | "attachment";
   minCount?: number;
@@ -1184,14 +1183,14 @@ export interface SpecSlotIn {
   usage?: string;
   assetId?: string | null;
   packId?: string | null;
+  tagId?: string;
   position?: number;
 }
 
 /** 槽位出参：与入参同形。 */
 export interface SpecSlotOut {
   key: string;
-  type: "image" | "video" | "audio" | "text";
-  source?: "asset" | "pack";
+  type: "image" | "video" | "audio" | "text" | "pack";
   binding?: "fixed" | "user";
   refMode?: "mixed" | "attachment";
   minCount?: number;
@@ -1200,6 +1199,7 @@ export interface SpecSlotOut {
   usage?: string;
   assetId?: string | null;
   packId?: string | null;
+  tagId?: string;
   position?: number;
 }
 

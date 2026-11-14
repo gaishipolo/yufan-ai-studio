@@ -107,8 +107,8 @@ def _spec_draft(
             },
             {
                 "key": "views",
-                "type": "image",
-                "source": "pack",
+                # 槽位类型带 pack：这个槽位要的是「一整个封装」，不再有独立的 source 轴。
+                "type": "pack",
                 "binding": binding,
                 "packId": pack_id if binding == "fixed" else None,
                 "position": 1,

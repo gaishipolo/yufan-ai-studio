@@ -92,15 +92,15 @@
 | 字段 | 类型 | 说明 |
 |---|---|---|
 | `key` | `^[a-z][a-z0-9_]{0,39}$` | 槽位标识，提示词里用它引用；版本内唯一 |
-| `type` | `image \| video \| audio \| text` | 决定提哪种素材选择器、以及能进哪个字段 |
-| `source` | `asset \| pack` | 指向**单个资产**还是**资产库封装**（多成员、带角色与顺序） |
+| `type` | `image \| video \| audio \| text \| pack` | **就是资产库的 kind**：决定提哪种素材选择器、以及能进哪个字段。`pack` = 要一整个封装（多成员、带角色与顺序） |
 | `binding` | `fixed \| user` | `fixed`：封装时定死，模板库只读；`user`：模板库填 |
 | `ref_mode` | `mixed \| attachment` | `mixed` 参与 `{{Mixed N}}` 编号；`attachment` 作为附加输入、不占号（音频通常用这个） |
 | `min` / `max` | int | 数量范围。`min=0` 表示可选；`max` 上限受全局 10 与模型 `max_references` 双重约束 |
 | `label` | str(1..40) | 槽位名的展示文案（"产品主图"/"背景音乐"） |
 | `usage` | str(0..500) | 进提示词说明的用途描述（对应旧 `PACK_ROLES` 的说明与逐图 `description`） |
-| `asset_id` | str \| null | `source=asset` 且 `binding=fixed` 时必填；其余为空 |
-| `pack_id` | str \| null | `source=pack` 且 `binding=fixed` 时必填；其余为空 |
+| `asset_id` | str \| null | 非封装槽位且 `binding=fixed` 时必填；其余为空 |
+| `pack_id` | str \| null | `type=pack` 且 `binding=fixed` 时必填；其余为空 |
+| `tag_id` | str | **候选集范围**：一级标签 id，空 = 不限。固定与填写都只在这个标签（含下级）里挑；编译不看它 |
 | `position` | int | 排序，**就是编号顺序**，见 §6 |
 
 约束：
@@ -113,9 +113,14 @@
 - `type=text` 不许 `ref_mode=mixed`（文本不占视觉编号）；
 - `type=audio` 只允许 `ref_mode=attachment`；
 - 版本内 `position` 连续唯一；`key` 唯一；
-- `source=pack` 时 `type` 由成员推导（成员必须同类型），`min/max` 不参与（数量 = 成员数）；
-- `source=asset` 且 `binding=fixed` 只能表达**一个**资产；需要固定多张时，要么用 `source=pack`
+- `type=pack` 时 `min/max` 不参与（数量 = 成员数，恒为 1/1），且 `ref_mode` 必须是 `mixed`：
+  成员要占 `{{Mixed N}}` 的编号；
+- 非封装槽位且 `binding=fixed` 只能表达**一个**资产；需要固定多张时，要么用 `type=pack`
   指向一个资产库封装，要么拆成多个槽位（后者只在"几张互不相关的图"时才用）。
+
+**「要什么」只有一根轴**（2026-11-14 合并，见 §11.4）：曾经 `type`（image/video/…）与
+`source`（asset/pack）并列，两根轴表达同一件事时接口能收到 `type=image, source=pack` 这种
+自相矛盾的组合。「要一个封装」现在就是 `type=pack`，`is_pack` 只有一处定义（`InputSlot` 上）。
 
 ### 4.2 TemplateSpec
 
@@ -134,9 +139,10 @@
       "min": 1, "max": 1, "position": 0, "label": "原片", "assetId": "0a2062…" },
     { "key": "hero",   "type": "image", "binding": "user",  "refMode": "mixed",
       "min": 1, "max": 1, "position": 1, "label": "产品主图", "usage": "确定同款同色外观" },
-    { "key": "detail", "type": "image", "source": "pack", "binding": "user", "refMode": "mixed",
+    { "key": "detail", "type": "pack",  "binding": "user",  "refMode": "mixed",
       "position": 2, "label": "细节封装", "usage": "只补纹理与扣件" },   // 用户选一个资产库封装
-    { "key": "look",   "type": "image", "source": "asset", "binding": "user", "refMode": "mixed",
+    { "key": "look",   "type": "image", "binding": "user",  "refMode": "mixed",
+      "tagId": "d3567812…",                                               // 一级标签：只在这个标签下挑
       "min": 0, "max": 2, "position": 3, "label": "补充参考" },          // 用户挑散图
     { "key": "bgm",    "type": "audio", "binding": "user",  "refMode": "attachment",
       "min": 0, "max": 1, "position": 4, "label": "背景音乐" },
@@ -174,8 +180,8 @@
 展开算法（`compile()`，纯函数、不写库）：
 
 1. 解析填充：
-   - `source=asset`：`fixed` 取 spec 里的 `asset_id`；`user` 取入参 `slotValues[key]`（资产 id 列表），数量必须落在 `[min, max]`；
-   - `source=pack`：取 spec 的 `pack_id`（fixed）或入参（user）里的封装 id，调
+   - 非封装槽位：`fixed` 取 spec 里的 `asset_id`；`user` 取入参 `slotValues[key]`（资产 id 列表），数量必须落在 `[min, max]`；
+   - `type=pack`：取 spec 的 `pack_id`（fixed）或入参（user）里的封装 id，调
      `LibraryLookup.expand_packs()` 展开成员 —— **顺序由库给，编译不得重排**；成员必须同类型、
      全部 `readable`（有不可读成员就报"封装《X》的成员 Y 无权访问"，不静默少一张）；
    - 单资产的可读性与存在性一律经 `library_lookup`，不直查表。
@@ -185,7 +191,7 @@
    - `audio` 槽位没有编号空间，跳过。
 3. 把 `{{slot:…}}` 替换成对应 token。`audio` 槽位被引用 → 400；`text` 槽位可以引用
    （它就是"提示词里可变的那一处"）。
-   `source=pack` 的槽位，其成员的 `role` 作为该 token 的角色写进执行请求（`expand_packs` 已带出）。
+   `type=pack` 的槽位，其成员的 `role` 作为该 token 的角色写进执行请求（`expand_packs` 已带出）。
 4. 校验总量：`mixed` 展开后总数 ≤ `min(10, 模型 max_references)`；音频/文本数量按模型声明另判（§13 开放问题）。
 5. 产出执行请求：
 
@@ -319,9 +325,13 @@
 
 - 一级：`已引用`（当前槽位清单）+ `素材引用`：图片 / 视频 / 音频 / 文本 / 资产；
 - 二级：
-  - 图片 / 视频 / 音频 / 文本 → 插入 `source=asset, binding=user` 槽位（占位留空，模板库填）；
-  - 资产 → 选**单个资产**则插入 `source=asset` 槽位，选**资产库封装**（`kind=pack`）则插入
-    `source=pack` 槽位，成员数与角色由封装带出、界面上只显示「N 张 · 角色列表」；
+  - 图片 / 视频 / 音频 / 文本 → 插入 `type=<该 kind>, binding=user` 槽位（占位留空，模板库填）；
+  - 资产 → 选**单个资产**则插入 `type=<该 kind>` 槽位，选**资产库封装**则插入
+    `type=pack` 槽位（成员数与角色由封装带出）；
+  - **类型下拉的选项就是资产库的 kind**（图片 / 成片 / 音频 / 文本 / 封装），前端不再写一份
+    本地词表 —— 库里多一类，这里就多一档；
+  - **槽位的「一级标签」**把候选集收窄到某个一级标签（含其下级）：封装时挑固定素材、
+    模板库填写，两处看到的是同一批素材（`AssetPicker` 的 `tagIds` 从同一处传）；
   - 每个槽位卡片上有「封装时固定」开关：打开 = `binding=fixed`（模板库只读），关闭 = `user`。
 
 细节：
@@ -335,9 +345,9 @@
 同一份 spec 的**只读镜像**：
 
 - 提示词**整段只读**；要可变就用 `text` 槽位（填表时选文案）；
-- `fixed` 槽位显示缩略图 + 「封装时固定」；`user` 槽位显示占位，按 `source` 走不同选择器：
-  `source=asset` → `/library/selection`（按 `type` 过滤，`min/max` 决定单选或多选）；
-  `source=pack` → 资产库封装选择器（只列同 `type` 成员的封装），选中后展示「N 张」与角色列表；
+- `fixed` 槽位显示缩略图 + 「封装时固定」；`user` 槽位显示占位，按 `type` 走选择器：
+  非封装 → `/library/selection`（按 `type` + 槽位的 `tag_id` 过滤，`min/max` 决定单选或多选）；
+  `type=pack` → 资产库封装选择器，选中后展示「N 张」与角色列表；
 - 提交按钮在 `min` 未满足时禁用，旁边说明缺哪个槽位（不写冗长引导语）；
 - 提交 = `compile` → **按模型能力摊平** → `/tasks` 或 `/generations/image` → 提示 + 「去任务中心」。
 
@@ -404,7 +414,7 @@
 | 旧 | 新 |
 |---|---|
 | `manifest.video.assetId` | 一个 `fixed / video / mixed` 槽位（`position=0`，key `source`） |
-| `manifest.packs[]`（旧素材包） | **首选**：整体落成一个资产库封装（`kind=pack`，成员 `position`/`role`/`description` 原样带过去），spec 里用一个 `source=pack, binding=fixed` 槽位指向它 —— 这样"多视图属于同一对象"的结构归位到资产库。<br>**降级**（仅当这批图互不相关）：拆成多个 `source=asset, binding=fixed` 槽位。降级会让模板重新拥有一份结构，只在旧包本身没有对象语义时使用，并在迁移报告里逐条标出 |
+| `manifest.packs[]`（旧素材包） | **首选**：整体落成一个资产库封装（`kind=pack`，成员 `position`/`role`/`description` 原样带过去），spec 里用一个 `type=pack, binding=fixed` 槽位指向它 —— 这样"多视图属于同一对象"的结构归位到资产库。<br>**降级**（仅当这批图互不相关）：拆成多个 `type=<kind>, binding=fixed` 槽位。降级会让模板重新拥有一份结构，只在旧包本身没有对象语义时使用，并在迁移报告里逐条标出 |
 | `manifest.functions[]` | **每个 function 拆成一条 spec**（key = `manifest.key:function.key`）。一 spec = 一张卡片，与原"一功能一卡片"一致 |
 | `manifest.functions[].prompt` | 整段进 `prompt`（现在只有一段） |
 | `manifest.functions[].scopeOptions` | 暂不迁（替换专属，见 P3） |
@@ -479,9 +489,9 @@ P3 补上 capability 判据后，迁移只需要让这份守卫继续绿，就�
 
 | 旧 | 新 |
 |---|---|
-| `source_video_asset_id` | 一个 `source=asset, binding=fixed` 的 video 槽位（`position=0`） |
-| 素材包（`template_packs` + 引用） | **先落成资产库封装**（`kind=pack`，`position`/`role`/`description` 原样带），再用**一个** `source=pack, binding=fixed` 槽位引用它 |
-| 无素材包时的参考图 | 降级：每张一个 `source=asset, binding=fixed` 槽位（模板重新拥有一份结构，报告里逐条标出） |
+| `source_video_asset_id` | 一个 `type=video, binding=fixed` 的槽位（`position=0`） |
+| 素材包（`template_packs` + 引用） | **先落成资产库封装**（`kind=pack`，`position`/`role`/`description` 原样带），再用**一个** `type=pack, binding=fixed` 槽位引用它 |
+| 无素材包时的参考图 | 降级：每张一个 `type=<kind>, binding=fixed` 槽位（模板重新拥有一份结构，报告里逐条标出） |
 | `prompt` | `editable` 段；**`{{Mixed N}}` 逐个翻成槽位引用**（见下） |
 | `aspect_ratio` / `generation.duration` | `params.aspectRatio` / `params.durationSec` |
 | — | `attributes.migratedFrom = "video_template:<id>"`（描述里也带一份，人可读） |
@@ -533,6 +543,38 @@ P3 补上 capability 判据后，迁移只需要让这份守卫继续绿，就�
 **数据处置**：开发库 49 条历史调用档案随表删除（升级前 `pg_dump` 备份在
 `api/var/db-backup-before-p3-*.dump`）。这是明确接受的代价，不是遗漏。
 
+### 11.4 槽位「要什么」合成一根轴 + 一级标签（2026-11-14，迁移 `a7d3f0c85e21`）
+
+封装页的槽位卡片原来有两列要填：**类型**（图片/视频/音频/文本）与**来源**（单个资产/资产库封装）。
+用户看完直说：「类型这里应该是获取资产库的种类」「来源改成一**级标签**，获取资产库的所有一级标签，
+封装时固定选择素材只能选类型筛选、一级标签筛选后的素材；用户选择也一样」。
+
+**改法**
+
+| 原来 | 现在 |
+|---|---|
+| `type` ∈ image/video/audio/text | `type` ∈ **资产库的 kind**（多一个 `pack`） |
+| `source` ∈ asset/pack | **删掉**：`type=pack` 就是"要一个封装"（`InputSlot.is_pack` 唯一一处定义） |
+| （无） | `tag_id`：一级标签，**候选集范围**，空 = 不限 |
+
+为什么 `source` 要真的删、而不是留着不用：两根轴表达同一件事时，接口能收到
+`type=image, source=pack` 这种自相矛盾的组合，而代码里每一个 `if slot.source == "pack"`
+都得再回答一次"那 type 算什么"。合并之后判据只剩 `type`，`compile` / 校验 / 选择器 / 前端
+全部同一口径。`ref_mode` 显然也是派生的（audio/text → attachment，其余 → mixed），但它
+属于另一根轴、这轮不动 —— 记在这里免得下次误以为"漏了一个"。
+
+**候选集与内容分开**：`tag_id` 只决定"能选什么"，`compile` 完全不看它 —— 标签被改名、
+被删掉，已发布版本照旧能编译。它是作者写的声明，所以跟着槽位一起进发布快照（存在
+`template_spec_slots` 行里），而不是"编译时再查一次库"。
+
+**两处选择器同一批素材**：封装时挑固定素材（`SpecWorkspace`）与模板库填写（`SpecLibrary`）
+都把 `slot.tagId` 传给 `AssetPicker.tagIds` → `/library/selection` 的 `tagIds`（一级标签按
+`expand_tag_ids` 展开成"自身 + 直属子级"）。两处各筛各的，就会出现"作者选的图用户根本挑不到"。
+
+**迁移**：`template_spec_slots.source='pack'` 的行 → `type='pack'`；草稿 JSON 里的
+`"source"` 并进 `type` 后删键（漏了这一步，草稿一打开就 422 —— `extra="forbid"`）。
+降级能把 `source` 算回来，但**原来的 `type` 找不回来**（已被 `pack` 覆盖，按 `image` 写回）。
+
 ### 11.1 P3 终局：统一到 task（2026-11-14 拍板）
 
 **不留独立替换工作台。** 替换不再是一条平行链路，而是"某个模型 + 某组槽位"的普通生成：
@@ -540,7 +582,7 @@ P3 补上 capability 判据后，迁移只需要让这份守卫继续绿，就�
 | 现在的替换专属物 | P3 之后 |
 |---|---|
 | `video_templates` 表 + `/templates/video-templates` 路由 | **P1 起只读**（runtime 改读 spec），P3 删除。模板只在 `template_specs` |
-| `template_packs` / `_references` / `_versions` | 删。多图语义由 `source=pack` 槽位指向资产库封装表达（见 §4.1）；旧包在 P1 迁成资产库封装 |
+| `template_packs` / `_references` / `_versions` | 删。多图语义由 `type=pack` 槽位指向资产库封装表达（见 §4.1）；旧包在 P1 迁成资产库封装 |
 | `replacement_runs` / `_run_inputs` / `_reviews` | 删除或**只读归档**；新任务一律落 task 自己的记录 |
 | `supportedScopes` / `wardrobeMode` / `scopeOptions` | `spec.attributes: dict[str, str]`（`scope` / `wardrobe` 两个键），由 `compile` 读、进提示词变量 |
 | 成片复核（review / reconfirm） | 任务中心的评价能力；不再在模板模块里长第二套 |

@@ -4471,8 +4471,7 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `key` | `string` | 是 |  |
-| `type` | `"image" \| "video" \| "audio" \| "text"` | 是 |  |
-| `source` | `"asset" \| "pack"` | 否 |  |
+| `type` | `"image" \| "video" \| "audio" \| "text" \| "pack"` | 是 |  |
 | `binding` | `"fixed" \| "user"` | 否 |  |
 | `refMode` | `"mixed" \| "attachment"` | 否 |  |
 | `minCount` | `number` | 否 |  |
@@ -4481,6 +4480,7 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `usage` | `string` | 否 |  |
 | `assetId` | `string \| null` | 否 |  |
 | `packId` | `string \| null` | 否 |  |
+| `tagId` | `string` | 否 |  |
 | `position` | `number` | 否 |  |
 
 ### `SpecSlotOut`
@@ -4490,8 +4490,7 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `key` | `string` | 是 |  |
-| `type` | `"image" \| "video" \| "audio" \| "text"` | 是 |  |
-| `source` | `"asset" \| "pack"` | 否 |  |
+| `type` | `"image" \| "video" \| "audio" \| "text" \| "pack"` | 是 |  |
 | `binding` | `"fixed" \| "user"` | 否 |  |
 | `refMode` | `"mixed" \| "attachment"` | 否 |  |
 | `minCount` | `number` | 否 |  |
@@ -4500,6 +4499,7 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `usage` | `string` | 否 |  |
 | `assetId` | `string \| null` | 否 |  |
 | `packId` | `string \| null` | 否 |  |
+| `tagId` | `string` | 否 |  |
 | `position` | `number` | 否 |  |
 
 ### `SpecValidateOut`

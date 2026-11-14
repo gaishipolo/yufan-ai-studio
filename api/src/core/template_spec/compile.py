@@ -13,7 +13,7 @@
 ## 纯函数
 
 入参只有「规格」与「已解析好的填充」，没有 session、没有资产库、没有网络。
-`source=pack` 的成员展开由调用方先用 `LibraryLookup.expand_packs()` 做完再传进来
+`type=pack` 的成员展开由调用方先用 `LibraryLookup.expand_packs()` 做完再传进来
 ——那是唯一有权解释"封装里有什么"的地方，这里只管编号。
 
 同一个 `(spec, fills)` 调两次必须得到同一结果；这是 §12 不变量 4 的判据。
@@ -69,7 +69,7 @@ def compile_spec(
                 continue
             raise BadRequest(f"槽位「{_label(slot)}」至少需要 {slot.min_count} 个素材")
 
-        if slot.source == "asset" and slot.binding == "user":
+        if not slot.is_pack and slot.binding == "user":
             count = len(assets)
             if count < slot.min_count or count > slot.max_count:
                 raise BadRequest(
@@ -77,11 +77,14 @@ def compile_spec(
                     f"现在 {count} 个"
                 )
 
-        for asset in assets:
-            if asset.kind != slot.type:
-                raise BadRequest(
-                    f"槽位「{_label(slot)}」要 {slot.type}，填进来的是 {asset.kind}"
-                )
+        if not slot.is_pack:
+            # 封装槽位的成员由资产库决定（可能图片视频混装），类型不按槽位判；
+            # 数量也由成员数决定，上面那条 min/max 校验对它没有意义。
+            for asset in assets:
+                if asset.kind != slot.type:
+                    raise BadRequest(
+                        f"槽位「{_label(slot)}」要 {slot.type}，填进来的是 {asset.kind}"
+                    )
 
         if slot.ref_mode == "attachment":
             # 附加输入不占**视觉**编号：音频/文本塞进 Mixed 会让后面的图整体偏移。
@@ -130,7 +133,7 @@ def _assets_of(slot: InputSlot, fill: FilledSlot | None) -> tuple[FilledAsset, .
     """取本次填进该槽位的素材，并校验"固定的东西没被换掉"。"""
     assets: tuple[FilledAsset, ...] = () if fill is None else fill.assets
     if slot.binding == "fixed":
-        if slot.source == "asset":
+        if not slot.is_pack:
             got = [asset.asset_id for asset in assets]
             if got != [slot.asset_id]:
                 raise BadRequest(

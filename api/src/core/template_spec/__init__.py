@@ -25,7 +25,6 @@ from core.template_spec.models import (
     InputSlot,
     RefMode,
     SlotBinding,
-    SlotSource,
     SlotType,
     TemplateSpec,
 )
@@ -42,7 +41,6 @@ __all__ = [
     "InputSlot",
     "RefMode",
     "SlotBinding",
-    "SlotSource",
     "SlotType",
     "TemplateSpec",
     "compile_spec",

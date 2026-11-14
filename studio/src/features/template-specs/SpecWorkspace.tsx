@@ -2,7 +2,8 @@ import { useMemo, useRef, useState, type ReactNode } from 'react';
 import { GripVertical, ImagePlus, Plus, RotateCcw, Trash2, Upload } from 'lucide-react';
 import { useModels } from '@/entities/model/api/model.queries';
 import { libraryApi } from '@/entities/library/api/library.api';
-import { useLibraryDetail } from '@/entities/library/api/library.queries';
+import { useLibraryDetail, useLibraryTags } from '@/entities/library/api/library.queries';
+import { KIND_OPTIONS, viewQuery } from '@/entities/library/model/types';
 import { AssetPreview } from '@/entities/library/ui/AssetPreview';
 import {
   useSpecMutations,
@@ -25,14 +26,12 @@ import {
   stripSlotRefs,
 } from './specDraft';
 
-const TYPE_OPTIONS = (Object.keys(SLOT_TYPE_LABELS) as (keyof typeof SLOT_TYPE_LABELS)[]).map(
-  value => ({value, label: SLOT_TYPE_LABELS[value]}),
-);
+/* 类型 = **资产库的 kind**：槽位要什么，就是库里有的那几类（图片 / 成片 / 音频 /
+   文本 / 封装）。不另写一份本地词表 —— 库里多一类，这里就多一档。 */
+const TYPE_OPTIONS = KIND_OPTIONS.filter(item => item.value !== 'all');
 
-const SOURCE_OPTIONS = [
-  {value: 'asset', label: '单个资产'},
-  {value: 'pack', label: '资产库封装'},
-];
+/** 一级标签的「不限」哨兵：空串表示候选集不收窄。 */
+const TAG_ANY = '';
 
 const BINDING_OPTIONS = [
   {value: 'user', label: '使用时填'},
@@ -81,6 +80,21 @@ export function SpecWorkspace() {
     uploading;
   // 契约里 `slots` 是可选的（后端有默认空列表），编辑器一律按非空处理。
   const slots = draft?.slots ?? [];
+  const pickerSlot = picker?.target === 'slot' ? slots[picker.index] : undefined;
+
+  /* 一级标签：资产库的两级词表，槽位只用**一级**（二级是同一句话的细分，
+     拿来当候选集范围反而让人选不出来）。数量按全库算，跟槽位类型无关 ——
+     这里的用途是「挑范围」，不是「看有多少条」。 */
+  const tags = useLibraryTags(viewQuery('all'));
+  const tagOptions = useMemo(
+    () => [
+      {value: TAG_ANY, label: '不限'},
+      ...(tags.data ?? [])
+        .filter(tag => (tag.depth ?? (tag.parentId ? 2 : 1)) === 1)
+        .map(tag => ({value: tag.id, label: tag.name})),
+    ],
+    [tags.data],
+  );
 
   const clear = () => {
     setError('');
@@ -121,13 +135,14 @@ export function SpecWorkspace() {
     const next = {...nextSlots[index], ...patch};
     // 音频/文本一律是附加输入：类型一改就同步，别让用户先撞一次 400 再回来改。
     if (next.type === 'audio' || next.type === 'text') next.refMode = 'attachment';
-    if (next.type === 'image' || next.type === 'video') next.refMode = 'mixed';
-    if (next.type === 'text') next.source = 'asset';
-    if (next.source === 'pack') {
+    if (next.type === 'image' || next.type === 'video' || next.type === 'pack') {
+      next.refMode = 'mixed';
+    }
+    // 封装槽位：成员与顺序由资产库决定，所以数量恒为 1/1、不能绑单个素材。
+    if (next.type === 'pack') {
       next.assetId = null;
       next.minCount = 1;
       next.maxCount = 1;
-      if (next.type === 'text') next.type = 'image';
     } else {
       next.packId = null;
     }
@@ -162,11 +177,20 @@ export function SpecWorkspace() {
     } else {
       const id = picker.index;
       const slot = slots[id];
-      patchSlot(id, {
-        assetId: asset.id,
-        packId: slot.source === 'pack' ? asset.id : null,
-        label: slot.label?.trim() ? slot.label : asset.name,
-      });
+      patchSlot(
+        id,
+        slot.type === 'pack'
+          ? {
+              packId: asset.id,
+              assetId: null,
+              label: slot.label?.trim() ? slot.label : asset.name,
+            }
+          : {
+              assetId: asset.id,
+              packId: null,
+              label: slot.label?.trim() ? slot.label : asset.name,
+            },
+      );
     }
     setPicker(null);
   };
@@ -418,20 +442,17 @@ export function SpecWorkspace() {
             tone="violet"
             title="槽位"
             extra={
-              <>
-                <Button variant="ghost" onClick={() => addSlot('image')}>
-                  <Plus size={13} /> 图片
+              /* 「加槽位」也按资产库的 kind 生成：库里多一类，这里就多一个入口，
+                 和槽位卡片里的「类型」下拉同源（曾经这里写死四个按钮）。 */
+              TYPE_OPTIONS.map(item => (
+                <Button
+                  key={item.value}
+                  variant="ghost"
+                  onClick={() => addSlot(item.value as SpecSlotIn['type'])}
+                >
+                  <Plus size={13} /> {item.label}
                 </Button>
-                <Button variant="ghost" onClick={() => addSlot('video')}>
-                  <Plus size={13} /> 视频
-                </Button>
-                <Button variant="ghost" onClick={() => addSlot('audio')}>
-                  <Plus size={13} /> 音频
-                </Button>
-                <Button variant="ghost" onClick={() => addSlot('text')}>
-                  <Plus size={13} /> 文本
-                </Button>
-              </>
+              ))
             }
           >
             <div className="flex flex-col gap-2">
@@ -514,15 +535,13 @@ export function SpecWorkspace() {
                           }
                         />
                       </FormField>
-                      <FormField label="来源">
+                      <FormField label="一级标签">
                         <Select
                           block
-                          value={slot.source ?? 'asset'}
-                          options={SOURCE_OPTIONS}
+                          value={slot.tagId ?? TAG_ANY}
+                          options={tagOptions}
                           onChange={event =>
-                            patchSlot(index, {
-                              source: event.target.value as SpecSlotIn['source'],
-                            })
+                            patchSlot(index, {tagId: event.target.value})
                           }
                         />
                       </FormField>
@@ -548,7 +567,7 @@ export function SpecWorkspace() {
                         />
                       </FormField>
                       <div className="flex items-end gap-2">
-                        {(slot.source ?? 'asset') === 'asset' &&
+                        {slot.type !== 'pack' &&
                           (slot.binding ?? 'user') === 'user' &&
                           slot.type !== 'text' && (
                             <>
@@ -577,14 +596,14 @@ export function SpecWorkspace() {
                             variant="ghost"
                             onClick={() => setPicker({target: 'slot', index})}
                           >
-                            {(slot.source ?? 'asset') === 'pack' ? '选择封装' : '选择素材'}
+                            {slot.type === 'pack' ? '选择封装' : '选择素材'}
                           </Button>
                         )}
                       </div>
                     </div>
                     {fixed && (
                       <p className="mt-1 truncate text-[11px] text-ink-mute">
-                        {(slot.source ?? 'asset') === 'pack'
+                        {slot.type === 'pack'
                           ? `封装：${slot.packId || '未选择'}`
                           : `素材：${slot.assetId || '未选择'}`}
                       </p>
@@ -672,18 +691,10 @@ export function SpecWorkspace() {
 
       <AssetPicker
         open={picker !== null}
-        kind={
-          picker?.target === 'demo'
-            ? picker.kind
-            : picker === null
-              ? 'image'
-              : ((slots[picker.index].source === 'pack' ? 'pack' : slots[picker.index].type) as
-                  | 'image'
-                  | 'video'
-                  | 'audio'
-                  | 'text'
-                  | 'pack')
-        }
+        kind={picker?.target === 'demo' ? picker.kind : pickerSlot?.type ?? 'image'}
+        /* 一级标签是槽位的候选集范围：封装页挑固定素材时也要收窄，
+           否则作者能选到模板使用者那边根本看不到的东西。 */
+        tagIds={picker?.target === 'slot' && pickerSlot?.tagId ? [pickerSlot.tagId] : []}
         selected={
           picker === null
             ? []

@@ -3,6 +3,7 @@ import type {
   TemplateSpecIn,
   TemplateSpecOut,
 } from '@/shared/api/schema';
+import { KIND_LABEL } from '@/entities/library/model/types';
 
 /**
  * 封装编辑器的草稿模型：**直接复用契约类型**。
@@ -13,15 +14,15 @@ import type {
  */
 
 export type SlotType = SpecSlotIn['type'];
-export type SlotSource = NonNullable<SpecSlotIn['source']>;
 export type SlotBinding = NonNullable<SpecSlotIn['binding']>;
 
-export const SLOT_TYPE_LABELS: Record<SlotType, string> = {
-  image: '图片',
-  video: '视频',
-  audio: '音频',
-  text: '文本',
-};
+/**
+ * 槽位类型的展示名 = **资产库的 kind 标签**（图片 / 成片 / 音频 / 文本 / 封装）。
+ *
+ * 槽位的 `type` 就是资产库的 kind，所以不另写一份词表：库里给 `video` 改名，
+ * 这里跟着变。曾经这里写死「视频」、库里叫「成片」，同一个东西两个名字。
+ */
+export const SLOT_TYPE_LABELS: Record<SlotType, string> = KIND_LABEL;
 
 export function newKey(prefix: string): string {
   return `${prefix}-${Math.random().toString(36).slice(2, 8)}`;
@@ -33,6 +34,7 @@ const SLOT_KEY_PREFIX: Record<SlotType, string> = {
   video: 'video',
   audio: 'audio',
   text: 'text',
+  pack: 'pack',
 };
 
 /** 取一个同类型里最小可用的序号，避免 `image_1` 重复。 */
@@ -50,7 +52,6 @@ export function blankSlot(position = 0, type: SlotType = 'image', slots: SpecSlo
   return {
     key: nextSlotKey(slots, type),
     type,
-    source: 'asset',
     binding: 'user',
     refMode: 'mixed',
     minCount: 1,
@@ -153,8 +154,9 @@ export function referenceChips(spec: TemplateSpecIn): RefChip[] {
       // key 是自动生成且界面上不显示，所以回退名用「图片 1」这种位置可读名。
       const name = slot.label?.trim() || `${SLOT_TYPE_LABELS[slot.type]} ${ordinal}`;
       const chips: RefChip[] = [{token: `{{slot:${slot.key}}}`, label: name, all: false}];
-      const max = slot.source === 'pack' ? 2 : (slot.maxCount ?? 1);
-      if (max > 1 || slot.source === 'pack') {
+      // 封装槽位一定有多张（成员数由库决定），所以永远给一个「全部」引用。
+      const max = slot.type === 'pack' ? 2 : (slot.maxCount ?? 1);
+      if (max > 1 || slot.type === 'pack') {
         chips.push({token: `{{slot:${slot.key}*}}`, label: `${name}（全部）`, all: true});
       }
       return chips;

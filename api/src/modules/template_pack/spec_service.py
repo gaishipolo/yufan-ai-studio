@@ -4,7 +4,7 @@
 
 1. **发布即冻结**：`template_spec_versions` 只插入不更新；同一份草稿重复发布
    返回同一个版本号（幂等），改了草稿才会 +1。
-2. **不复制素材结构**：`source=pack` 的槽位只记包 id，编译时现场
+2. **不复制素材结构**：`type=pack` 的槽位只记包 id，编译时现场
    `expand_packs()` 展开；成员顺序由库给，本层不得重排。
 3. **不自己物化**：这里只做 id 与元数据的校验，字节由 task 的
    `generic_inputs.materialize()` 落地。所以本模块**没有**任何写文件/上传代码。
@@ -77,7 +77,6 @@ def to_core(payload: TemplateSpecIn) -> TemplateSpec:
             InputSlot(
                 key=slot.key,
                 type=slot.type,
-                source=slot.source,
                 binding=slot.binding,
                 ref_mode=slot.ref_mode,
                 min_count=slot.min_count,
@@ -86,6 +85,7 @@ def to_core(payload: TemplateSpecIn) -> TemplateSpec:
                 usage=slot.usage,
                 asset_id=slot.asset_id,
                 pack_id=slot.pack_id,
+                tag_id=slot.tag_id,
                 position=slot.position,
             )
             for slot in payload.slots
@@ -110,7 +110,6 @@ def _slot_out(row: TemplateSpecSlot) -> SpecSlotOut:
     return SpecSlotOut(
         key=row.slot_key,
         type=row.type,  # type: ignore[arg-type]
-        source=row.source,  # type: ignore[arg-type]
         binding=row.binding,  # type: ignore[arg-type]
         ref_mode=row.ref_mode,  # type: ignore[arg-type]
         min_count=row.min_count,
@@ -119,6 +118,7 @@ def _slot_out(row: TemplateSpecSlot) -> SpecSlotOut:
         usage=row.usage_text,
         asset_id=row.asset_id,
         pack_id=row.pack_id,
+        tag_id=row.tag_id,
         position=row.position,
     )
 
@@ -255,19 +255,13 @@ async def _check_fixed_refs(
 ) -> None:
     """固定槽位在发布时必须**现在就能解释**：资产可读、封装成员可读。"""
     lookup = get_library_lookup()
-    asset_ids = [
-        slot.asset_id
-        for slot in spec.slots
-        if slot.source == "asset" and slot.asset_id
-    ]
+    asset_ids = [slot.asset_id for slot in spec.slots if slot.asset_id and not slot.is_pack]
     if asset_ids:
         readable = await lookup.readable_ids(session, actor, asset_ids)
         missing = [item for item in asset_ids if item not in readable]
         if missing:
             raise BadRequest(f"固定素材不可用或无权访问：{'、'.join(missing)}")
-    pack_ids = [
-        slot.pack_id for slot in spec.slots if slot.source == "pack" and slot.pack_id
-    ]
+    pack_ids = [slot.pack_id for slot in spec.slots if slot.is_pack and slot.pack_id]
     if pack_ids:
         expanded = await lookup.expand_packs(session, actor, pack_ids)
         for pack_id in pack_ids:
@@ -392,7 +386,6 @@ async def publish(session: AsyncSession, actor: CurrentUser, key: str) -> SpecPu
                 version_id=row.id,
                 slot_key=slot.key,
                 type=slot.type,
-                source=slot.source,
                 binding=slot.binding,
                 ref_mode=slot.ref_mode,
                 min_count=slot.min_count,
@@ -401,6 +394,7 @@ async def publish(session: AsyncSession, actor: CurrentUser, key: str) -> SpecPu
                 usage_text=slot.usage,
                 asset_id=slot.asset_id,
                 pack_id=slot.pack_id,
+                tag_id=slot.tag_id,
                 position=slot.position,
             )
         )
@@ -596,7 +590,6 @@ def _slot_core(row: TemplateSpecSlot) -> InputSlot:
     return InputSlot(
         key=row.slot_key,
         type=row.type,  # type: ignore[arg-type]
-        source=row.source,  # type: ignore[arg-type]
         binding=row.binding,  # type: ignore[arg-type]
         ref_mode=row.ref_mode,  # type: ignore[arg-type]
         min_count=row.min_count,
@@ -605,6 +598,7 @@ def _slot_core(row: TemplateSpecSlot) -> InputSlot:
         usage=row.usage_text,
         asset_id=row.asset_id,
         pack_id=row.pack_id,
+        tag_id=row.tag_id,
         position=row.position,
     )
 
@@ -624,7 +618,7 @@ async def _fills(
     fills: dict[str, FilledSlot] = {}
     for slot in spec.slots:
         chosen = [item for item in values.get(slot.key, ()) if item]
-        if slot.source == "pack":
+        if slot.is_pack:
             pack_id = slot.pack_id if slot.binding == "fixed" else (
                 chosen[0] if chosen else ""
             )
@@ -655,7 +649,7 @@ async def _fills(
             )
             continue
 
-        # `source=asset`：固定槽位取 spec 里的 id，用户槽位按挑选顺序。
+        # 单个资产：固定槽位取 spec 里的 id，用户槽位按挑选顺序。
         asset_ids = [slot.asset_id] if slot.binding == "fixed" and slot.asset_id else chosen
         if not asset_ids:
             continue

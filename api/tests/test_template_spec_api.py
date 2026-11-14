@@ -204,7 +204,7 @@ def test_compile_without_required_slot_is_rejected(client: TestClient) -> None:
 
 
 def test_compile_expands_library_pack_without_reordering(client: TestClient) -> None:
-    """`source=pack` 的槽位由资产库给成员与顺序，编译只照抄。"""
+    """`type=pack` 的槽位由资产库给成员与顺序，编译只照抄。"""
     headers = _headers(client)
     video, first, second = _media(client, headers)
     pack = client.post(
@@ -227,8 +227,8 @@ def test_compile_expands_library_pack_without_reordering(client: TestClient) -> 
         draft["slots"][0],
         {
             "key": "detail",
-            "type": "image",
-            "source": "pack",
+            # 槽位类型就是资产库的 kind 之一：`pack` = 要一整个封装。
+            "type": "pack",
             "binding": "user",
             "position": 1,
             "label": "细节封装",
@@ -393,6 +393,58 @@ def test_demo_asset_round_trips_but_never_enters_the_snapshot(
     updated = _save(client, headers, again)
     assert updated["demoAssetId"] == second
     assert updated["currentVersion"] == 1
+
+
+def test_slot_source_field_is_gone_and_rejected(client: TestClient) -> None:
+    """`source` 并进 `type` 之后，旧字段必须**当场被拒**（422）。
+
+    静默忽略更糟：封装页把 `type` 当成「要什么」的唯一表达之后，还收着
+    `source=pack` 的客户端会以为自己在提交一个封装槽位，实际提交的是一个
+    `type=image` 的普通槽位 —— 直到编译才发现少了成员。
+    """
+    headers = _headers(client)
+    video, first, second = _media(client, headers)
+    draft = _draft(video, first, second)
+    draft["slots"][1]["source"] = "pack"
+
+    response = client.post(f"{API}/validate", json=draft, headers=headers)
+    assert response.status_code == 422, response.text
+    assert "source" in response.text
+
+
+def test_slot_tag_limits_the_candidate_set_but_not_the_compile(
+    client: TestClient,
+) -> None:
+    """一级标签只是**候选集范围**：存得住、回得来，但编译不看它。
+
+    封装页用它把「封装时固定」与「模板库填写」两处选择器收窄到同一个一级标签下；
+    而提示词编号、参考素材顺序与它无关 —— 标签被删、被改名，已发布的版本照旧能编译。
+    """
+    headers = _headers(client)
+    video, first, second = _media(client, headers)
+    tag = client.post(
+        "/api/v1/library/tags", json={"name": f"产品-{suffix()}"}, headers=headers
+    )
+    assert tag.status_code == 201, tag.text
+    tag_id = tag.json()["data"]["id"]
+
+    draft = _draft(video, first, second)
+    draft["slots"][1]["tagId"] = tag_id
+    saved = _save(client, headers, draft)
+    assert saved["draft"]["slots"][1]["tagId"] == tag_id
+
+    client.post(f"{API}/{draft['key']}/publish", headers=headers)
+    detail = client.get(f"{API}/{draft['key']}", headers=headers).json()["data"]
+    assert detail["latest"]["slots"][1]["tagId"] == tag_id
+
+    body = client.post(
+        f"{API}/{draft['key']}/compile",
+        json={"slotValues": {"hero": [first]}},
+        headers=headers,
+    )
+    assert body.status_code == 200, body.text
+    # 编号与参考序完全不受标签影响
+    assert body.json()["data"]["prompt"] == "8 秒 · 9:16 竖屏\n\n{{Mixed 2}} 与 ；原片 {{Mixed 1}}"
 
 
 def test_compile_no_longer_accepts_prompt_override(client: TestClient) -> None:

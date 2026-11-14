@@ -122,8 +122,8 @@ def test_pack_slot_keeps_library_order_and_never_reorders() -> None:
         _source(),
         InputSlot(
             key="detail",
-            type="image",
-            source="pack",
+            # 「要一整个封装」就是 type=pack，不再是单独的 source 轴。
+            type="pack",
             binding="user",
             position=1,
             label="细节封装",
@@ -148,13 +148,35 @@ def test_pack_slot_keeps_library_order_and_never_reorders() -> None:
 def test_fixed_pack_cannot_be_swapped() -> None:
     spec = _spec(
         InputSlot(
-            key="detail", type="image", source="pack", binding="fixed",
+            key="detail", type="pack", binding="fixed",
             pack_id="pack-1", position=0, label="细节封装",
         ),
         editable="{{slot:detail*}}",
     )
     with pytest.raises(BadRequest, match="已固定为封装"):
         compile_spec(spec, {"detail": FilledSlot("detail", (DETAIL_1,), pack_id="pack-2")})
+
+
+def test_pack_slot_must_take_part_in_numbering() -> None:
+    """封装槽位必须 `refMode=mixed`：成员要占 `{{Mixed N}}`。
+
+    标成 attachment 的话，这一组既被算进 `reference_ids` 又拿不到编号 ——
+    提示词里引不到它，用户会以为模板把封装吞了。
+    """
+    with pytest.raises(BadRequest, match="必须参与编号"):
+        validate_spec(
+            _spec(
+                InputSlot(
+                    key="views",
+                    type="pack",
+                    binding="user",
+                    ref_mode="attachment",
+                    position=0,
+                    label="三视图",
+                ),
+                editable="{{slot:views*}}",
+            )
+        )
 
 
 def test_text_slot_gets_its_own_number_space() -> None:

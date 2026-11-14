@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom';
 import { ArrowRight, ImageOff, Play, X } from 'lucide-react';
 import { libraryApi } from '@/entities/library/api/library.api';
 import { useLibraryDetail } from '@/entities/library/api/library.queries';
+import { KIND_LABEL } from '@/entities/library/model/types';
 import { AssetPreview } from '@/entities/library/ui/AssetPreview';
 import { PromptRefs } from '@/entities/library/ui/PromptRefs';
 import { useGenerateImage } from '@/entities/image/api/image.api';
@@ -11,7 +12,7 @@ import { useModels } from '@/entities/model/api/model.queries';
 import { useCreateTask } from '@/entities/task/api/task.queries';
 import { usePublishedSpecs, useSpecCompile } from '@/entities/template-spec/api/spec.queries';
 import type { SpecSlotOut, TemplateSpecOut } from '@/shared/api/schema';
-import { AssetPicker, type PickKind, type PickedAsset } from '@/features/template-specs/AssetPicker';
+import { AssetPicker, type PickedAsset } from '@/features/template-specs/AssetPicker';
 import { Button, Chip, CoverImage, EmptyState, SearchInput, Skeleton } from '@/shared/ui';
 import { cn } from '@/shared/lib/cn';
 import { toSubmitPayload, type SubmitKind } from './taskPayload';
@@ -27,12 +28,9 @@ import { toSubmitPayload, type SubmitKind } from './taskPayload';
  * 这里只把「还缺哪几个槽位」算出来禁用按钮 —— 那是提交前置条件，不是业务规则。
  */
 
-const TYPE_LABEL: Record<string, string> = {
-  image: '图片',
-  video: '视频',
-  audio: '音频',
-  text: '文本',
-};
+/* 类型名与卡片上的类型标签同源：都是资产库的 kind。别再写一份本地表 ——
+   漏掉 `pack` 时页面上会直接印出英文 `pack`（真机截到过）。 */
+const TYPE_LABEL: Record<string, string> = KIND_LABEL;
 
 /** 参数的展示名：图片看尺寸/张数，视频看画幅/时长，其余按 key 原样。 */
 const PARAM_LABEL: Record<string, string> = {
@@ -53,23 +51,17 @@ function formatParam(key: string, value: unknown): string {
   return key === 'size' ? text.replace('x', '×') : text;
 }
 
-const PICK_KIND: Record<string, PickKind> = {
-  image: 'image',
-  video: 'video',
-  audio: 'audio',
-  text: 'text',
-};
-
 function slotsOf(spec: TemplateSpecOut | undefined): SpecSlotOut[] {
   return spec?.latest?.slots ?? [];
 }
 
+/** 封装槽位的条数由成员数决定（1/1 是占位），所以上下限一律按 1 算。 */
 function minOf(slot: SpecSlotOut): number {
-  return slot.source === 'pack' ? 1 : (slot.minCount ?? 1);
+  return slot.type === 'pack' ? 1 : (slot.minCount ?? 1);
 }
 
 function maxOf(slot: SpecSlotOut): number {
-  return slot.source === 'pack' ? 1 : (slot.maxCount ?? 1);
+  return slot.type === 'pack' ? 1 : (slot.maxCount ?? 1);
 }
 
 /** 缩略图 + 名字。每个 id 一条详情查询，React Query 按 id 缓存，切换模板不重复拉。 */
@@ -479,7 +471,7 @@ export function SpecLibrary() {
                     {slots.map((slot, index) => {
                       const filled = values[slot.key] ?? [];
                       const fixed = slot.binding === 'fixed';
-                      const locked = fixed && (slot.source === 'pack' ? !!slot.packId : !!slot.assetId);
+                      const locked = fixed && (slot.type === 'pack' ? !!slot.packId : !!slot.assetId);
                       return (
                         <div key={slot.key} className="flex gap-2 py-2 first:pt-0 last:pb-0">
                           <div className="flex w-24 shrink-0 flex-col gap-0.5">
@@ -501,20 +493,20 @@ export function SpecLibrary() {
                           </div>
 
                           <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
-                            {fixed && slot.source === 'pack' && slot.packId && (
+                            {fixed && slot.type === 'pack' && slot.packId && (
                               <PackSummary packId={slot.packId} />
                             )}
-                            {fixed && slot.source !== 'pack' && slot.assetId && (
+                            {fixed && slot.type !== 'pack' && slot.assetId && (
                               <AssetChip assetId={slot.assetId} />
                             )}
-                            {!fixed && slot.source === 'pack' && filled[0] && (
+                            {!fixed && slot.type === 'pack' && filled[0] && (
                               <PackSummary
                                 packId={filled[0]}
                                 onRemove={() => setValues(current => ({...current, [slot.key]: []}))}
                               />
                             )}
                             {!fixed &&
-                              slot.source !== 'pack' &&
+                              slot.type !== 'pack' &&
                               filled.map(assetId => (
                                 <AssetChip
                                   key={assetId}
@@ -537,7 +529,7 @@ export function SpecLibrary() {
                               >
                                 {filled.length > 0
                                   ? '再选'
-                                  : `选择${slot.source === 'pack' ? '封装' : (TYPE_LABEL[slot.type] ?? '素材')}`}
+                                  : `选择${slot.type === 'pack' ? '封装' : (TYPE_LABEL[slot.type] ?? '素材')}`}
                               </button>
                             )}
                           </div>
@@ -574,7 +566,7 @@ export function SpecLibrary() {
                       const target = slots.find(item => item.key === key);
                       if (!target) return null;
                       const fixed = target.binding === 'fixed';
-                      if (target.source === 'pack') {
+                      if (target.type === 'pack') {
                         // 封装是「一组成员」：选定之后摊开前两张 + 「N 张」，
                         // 点开看全部。没选还是给「选择封装」按钮。
                         const packId = fixed
@@ -652,7 +644,9 @@ export function SpecLibrary() {
 
       <AssetPicker
         open={picker !== null}
-        kind={pickerSlot?.source === 'pack' ? 'pack' : (PICK_KIND[pickerSlot?.type ?? 'image'] ?? 'image')}
+        kind={pickerSlot?.type ?? 'image'}
+        /* 槽位的一级标签决定候选集：这里与封装页的固定选择器看的是同一批素材。 */
+        tagIds={pickerSlot?.tagId ? [pickerSlot.tagId] : []}
         selected={pickerSlot ? (values[pickerSlot.key] ?? []) : []}
         onClose={() => setPicker(null)}
         onToggle={togglePick}

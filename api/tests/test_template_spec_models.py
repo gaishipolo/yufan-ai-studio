@@ -45,9 +45,12 @@ def test_numbers_are_not_stored() -> None:
 
 def test_slot_carries_both_pointers_but_only_one_is_used() -> None:
     columns = _columns("template_spec_slots")
-    assert {"source", "binding", "ref_mode", "asset_id", "pack_id"} <= columns
-    # `source` 决定哪一列有值；两列都存在是刻意的（否则要建两张槽位表）。
-    assert {"source", "pack_id"} <= columns
+    assert {"type", "binding", "ref_mode", "asset_id", "pack_id", "tag_id"} <= columns
+    # `type=pack` 决定哪一列有值；两列都存在是刻意的（否则要建两张槽位表）。
+    assert "pack_id" in columns
+    # 「要一个封装」只有一条表达：`type=pack`。旧的 `source` 轴不许回来
+    # （两根轴并存时接口能收到 `type=image, source=pack` 这种自相矛盾的组合）。
+    assert "source" not in columns
 
 
 def test_version_snapshot_is_unique_per_spec() -> None:

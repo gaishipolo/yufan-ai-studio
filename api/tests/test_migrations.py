@@ -334,3 +334,104 @@ def _render_diff(diff: list) -> str:
             else:
                 lines.append(f"  - {kind}: {entry[1:]}")
     return "\n".join(lines)
+
+
+def test_slot_source_is_folded_into_type_with_data(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`source` 并进 `type` 的那一刀，**带数据的库**也要能升上来。
+
+    两处要改：`template_spec_slots.source = 'pack'` 的行要变成 `type = 'pack'`，
+    草稿 JSON（`template_specs.draft`）里的 `"source": "pack"` 要并进去再删键。
+    后者尤其容易漏 —— 它是 JSON，`compare_metadata` 看不见它，空库跑一百遍也不会
+    报错；而漏了之后 `SpecSlotIn` 的 `extra="forbid"` 会让那份草稿**一打开就 422**。
+
+    顺带守「加列 + 去默认值写在同一批 batch 里会炸」这个坑（见上一条用例）：
+    新列 `tag_id` 是 NOT NULL、最后还要去掉 server_default，重排表时不能丢值。
+    """
+    import json
+    import sqlite3
+
+    from core.config import reload_settings
+    from db import session as db_session
+
+    db_file = tmp_path / "slots.db"
+    monkeypatch.setenv("DB_URL", f"sqlite+aiosqlite:///{db_file.as_posix()}")
+    reload_settings()
+    db_session.reset_state_for_tests()
+    try:
+        config = _config()
+        command.upgrade(config, "f4b8d2a61c07")
+        draft = {
+            "key": "fold-demo",
+            "name": "合并演示",
+            "model": "agnes-video-2.5-flash",
+            "params": {},
+            "prompt": "把 {{slot:source}} 换成 {{slot:views*}}",
+            "slots": [
+                {
+                    "key": "source",
+                    "type": "video",
+                    "source": "asset",
+                    "binding": "fixed",
+                    "assetId": "v1",
+                    "position": 0,
+                },
+                {
+                    "key": "views",
+                    "type": "image",
+                    "source": "pack",
+                    "binding": "user",
+                    "position": 1,
+                },
+            ],
+        }
+        conn = sqlite3.connect(db_file)
+        try:
+            conn.execute(
+                "INSERT INTO template_specs (id, spec_key, name, description, owner_id,"
+                " status, draft, revision, fingerprint, current_version)"
+                " VALUES (?, ?, ?, '', 'u1', 'published', ?, 1, '', 1)",
+                ("spec-1", "fold-demo", "合并演示", json.dumps(draft, ensure_ascii=False)),
+            )
+            for slot_key, slot_type, source, position in (
+                ("source", "video", "asset", 0),
+                ("views", "image", "pack", 1),
+            ):
+                conn.execute(
+                    "INSERT INTO template_spec_slots (id, version_id, slot_key, type,"
+                    " source, binding, ref_mode, min_count, max_count, label,"
+                    " usage_text, asset_id, pack_id, position)"
+                    " VALUES (?, 'ver-1', ?, ?, ?, 'user', 'mixed', 1, 1, '', '',"
+                    " NULL, NULL, ?)",
+                    (f"slot-{position}", slot_key, slot_type, source, position),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+
+        command.upgrade(config, "head")
+
+        conn = sqlite3.connect(db_file)
+        try:
+            stored = json.loads(
+                conn.execute(
+                    "SELECT draft FROM template_specs WHERE id = 'spec-1'"
+                ).fetchone()[0]
+            )
+            rows = conn.execute(
+                "SELECT slot_key, type, tag_id FROM template_spec_slots ORDER BY position"
+            ).fetchall()
+            columns = [row[1] for row in conn.execute("PRAGMA table_info(template_spec_slots)")]
+        finally:
+            conn.close()
+    finally:
+        reload_settings()
+        db_session.reset_state_for_tests()
+
+    # 草稿 JSON：封装槽位 type 变 pack，`source` 键整体消失（不是留个空壳）
+    assert [slot["type"] for slot in stored["slots"]] == ["video", "pack"]
+    assert all("source" not in slot for slot in stored["slots"]), stored["slots"]
+    # 槽位行：同上，且新列有默认值
+    assert rows == [("source", "video", ""), ("views", "pack", "")]
+    assert "source" not in columns

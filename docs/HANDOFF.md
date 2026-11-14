@@ -97,6 +97,11 @@
 | `library_tags` 里不再有系统建的「封装」词 | 运维/前端 | 迁移删了它与绑定；封装的标签只剩「继承成员」与用户手选的那些。别再按标签找封装，用 `?kind=pack` |
 | `GET /library/assets?kind=` 实际支持 5 类 | 前端/脚本 | `video/image/audio/text/pack`；`all` 不是合法值（前端省略参数表示全部），传它会 422 |
 
+| 本轮 | **槽位「要什么」合成一根轴**（2026-11-14，迁移 `a7d3f0c85e21`）：`type` 收编 `pack`（资产库的 kind 就是槽位类型，含封装）、`source` 整个删掉（`InputSlot.is_pack` 唯一判据）、新增 `tag_id`（一级标签 = 候选集范围）；前端「类型」下拉与「加槽位」按钮都从 `KIND_OPTIONS` 生成、标签用 `KIND_LABEL`（不再写死「视频」而库叫「成片」）；「来源」换成「一级标签」，`AssetPicker.tagIds` 同时供封装页固定选择与模板库填写 | 两根轴表达同一件事时接口能收到 `type=image, source=pack` 这种自相矛盾的组合，而每个 `if slot.source == "pack"` 都得再回答「那 type 算什么」。`tag_id` 只是候选集：`compile` 不看它，标签改名或被删，已发布版本照旧能编译。旧字段 `source` 传了**当场 422**（不静默忽略）；草稿 JSON 也在迁移里改写（漏了那份草稿一打开就 422） |
+
+| 槽位契约：`type` 多了 `"pack"`，`source` **已删**，新增 `tagId` | 前端/脚本 | 封装槽位就是 `type=pack`；再传 `source` 会 422。`tagId` 是候选集范围（一级标签，含其下级），不参与编译 |
+| `GET /library/selection` 的 `tagIds` 现在有两处调用方 | 前端 | 封装页挑固定素材、模板库填写，都按槽位的 `tagId` 收窄 —— 两处看到同一批素材 |
+
 | 变化 | 谁受影响 | 说明 |
 |---|---|---|
 | 未在 `param_schema` 声明的参数 → **400** + `availableParams` | 前端/脚本 | 前端参数区本来就由 `GET /models` 渲染，无需改动；手写参数的地方会立刻看到 400 |
