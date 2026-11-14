@@ -335,7 +335,7 @@ curl -sS --noproxy '*' -H "Authorization: Bearer $TOKEN" \
 | `OPS.md` | **活文档**，部署与告警 |
 | `ROUTES.md` / `MOCK_COVERAGE.md` | 生成物，`--check` 校验，别手改 |
 | `TEMPLATE_LIBRARY_V2.md` | **活文档**，模板库 v2 的五向 I/O 契约与待拍板项（2026-11-13 新写） |
-| `TEMPLATE_SPEC.md` | **设计定稿、待实施**（2026-11-14）：模板封装泛化为 "槽位 + 两段提示词 + 模型绑定"，封装定表 / 模板库填表 / task 执行三层；替换链收编放在 P3。与 `TEMPLATE_LIBRARY_V2.md` 无关（那份是任务中心的旧计划） |
+| `TEMPLATE_SPEC.md` | **设计定稿、待实施**（2026-11-14）：模板封装泛化为 "槽位 + 两段提示词 + 模型绑定"，封装定表 / 模板库填表 / task 执行三层；**终态统一到 task**（P3 删掉独立替换工作台，替换成为 task 的 capability，复核并入任务中心）。与 `TEMPLATE_LIBRARY_V2.md` 无关（那份是任务中心的旧计划） |
 | 历史评审 / 计划 / 需求 / 设计文档 | **2026-11-13 已清理**，只留 git 历史；不要从 git 里捞回来当现状读 |
 
 ## 8. 已知偶发（不是回归，别急着改代码）

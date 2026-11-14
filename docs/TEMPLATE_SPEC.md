@@ -33,10 +33,12 @@
 3. 模板库只管「填表」：把槽位填满并提交。不复制校验规则。
 4. task 不知道「模板」存在。
 5. 素材取用只剩两处：`core/ports/library_lookup`（元数据/可读性）与 task 的 `generic_inputs.materialize`（字节落地）。
+6. **终态统一**（2026-11-14 用户拍板「统一」）：替换不再是平行链路，而是 task 的一个 capability；
+   不留独立替换工作台，成片复核并入任务中心。**注意是删掉重复的编排，不是把封装并进 task** ——
+   P3 之后项目里只有两个概念：模板（封装模块）与任务（task）。见 §11.1。
 
 **非目标（本期不做）**
 
-- 把替换链并进 task（见 §11 P3：先保留，语义另议）；
 - 槽位直接指向「资产库封装」（`binding: "pack"` 预留字段，见 §13）；
 - 模板市场 / 跨工作台共享 / 版本回滚 UI。
 
@@ -271,7 +273,34 @@
 |---|---|---|
 | **P1 定表** | `core/` 加 `InputSlot`/`TemplateSpec` 词表与编译纯函数；三张表 + 迁移；spec 六个接口（含 `compile`）；封装页改成 §9 单页 | 用现有 6036 素材配出「fixed 原片 + 2 个 user 图片槽」，`compile` 输出与旧模板的 `mediaOrder` **逐项等价**；预检能挡住所有非法组合（见 §12） |
 | **P2 填表** | 模板库填表页；`compile → /tasks` 走通 | 四种组合各跑通一次：纯提示词（`agnes-video-2.5-flash`，maxRefs=0）、多图（`agnes-image-*`，maxRefs=4）、图+视频、加音频附件 |
-| **P3 收编** | 替换链去留：把 `supportedScopes`/复核语义上移为 spec 的可选字段并作为 task 的一个 capability，或保留独立工作台 | 旧 `video_templates` 只读投影为 spec 视图，替换业务不中断；跑一轮历史任务复跑 |
+| **P3 统一** | **不留独立工作台**：替换能力作为 task 的一个 capability（driver 侧声明分类上限），`supportedScopes`/`wardrobeMode` → `spec.attributes`，成片复核 → 任务中心，`modules/template` 的编排与物化下线。细则见 §11.1 | §11.1 的三条判据全绿；替换业务与历史档案不中断 |
+
+### 11.1 P3 终局：统一到 task（2026-11-14 拍板）
+
+**不留独立替换工作台。** 替换不再是一条平行链路，而是"某个模型 + 某组槽位"的普通生成：
+
+| 现在的替换专属物 | P3 之后 |
+|---|---|
+| `video_templates` 表 + `/templates/video-templates` 路由 | 删。模板只在 `template_specs` |
+| `template_packs` / `_references` / `_versions` | 删。多图语义由"多值槽位"表达；跨模板复用的封装归资产库（`kind=pack`，见 §13.2） |
+| `replacement_runs` / `_run_inputs` / `_reviews` | 删除或**只读归档**；新任务一律落 task 自己的记录 |
+| `supportedScopes` / `wardrobeMode` / `scopeOptions` | `spec.attributes: dict[str, str]`（`scope` / `wardrobe` 两个键），由 `compile` 读、进提示词变量 |
+| 成片复核（review / reconfirm） | 任务中心的评价能力；不再在模板模块里长第二套 |
+| `modules/template` 的 `_materialize_inputs` / `stage_library_refs` / `pipeline.py` | 删。字节只由 `generic_inputs.materialize` 落地 |
+
+**保留但换位置的**
+
+- 发布即冻结（`template_spec_versions`）不变量不变；
+- 「审核范围不能临时扩大」这条规则保留 —— 只是载体从素材包表变成 `spec.attributes.scope`，由 `compile` 校验；
+- 历史档案（`replacement_runs`）不迁移成 task 记录（形状不同、字段不对应），保留只读视图供查历史，写入口关闭。
+
+**三条到达判据**（比看文件树可靠，缺一条就是"又长出一套平行的东西"）
+
+1. 删掉 `video_templates` 与 `template_pack_references` 后，替换业务仍完整；
+2. `modules/template` 里不再有物化素材的代码，字节只由 `generic_inputs` 落地；
+3. `/tasks` 入参与今天完全一致 —— 模板没有污染执行层。
+
+**为什么不合并模块**：封装仍只管"定表"、task 仍只管"执行"，`modules/template` 的下线是**删掉重复的编排**，不是把封装并进 task。P3 之后项目里只有两个概念：模板（在封装模块）与任务（在 task）。
 
 ## 12. 不变量与守卫（每条都要有测试）
 
@@ -288,5 +317,7 @@
 
 1. **模型能力声明不足**：`ModelSpec` 现在只有 `max_references`，分不出「接受几张图 / 几段音频 / 几支视频」。`attachment` 槽位（音频）到底能不能交，目前只能靠驱动自己 400。P2 前建议给 `ModelSpec` 加 `accepts: frozenset[str]`（`image/video/audio/text`）与分类型上限，`compile` 用它做受理前校验。
 2. **槽位指向资产库封装**（`binding: "pack"`，预留）：需要资产库封装先有"成员角色/顺序"语义。字段留着，本期不实现；实现时是纯增量。
-3. **`attributes` 归一**：旧 `supportedScopes`、`wardrobeMode` 这类替换专属开关，收编时统一放进 `spec.attributes`（`dict[str, str]`），避免每收编一个概念就加一列。
+3. **`attributes` 归一**：旧 `supportedScopes`、`wardrobeMode` 统一放进 `spec.attributes`（`dict[str, str]`），避免每收编一个概念就加一列。键名先定 `scope` / `wardrobe`，其余按需加。
 4. **`compile` 的缓存**：入参 `(version, slotValues)` 是纯输入，可加一层进程内 LRU；但先不上，等有性能证据。
+5. **历史替换档案的归宿**（P3 前必须定）：`replacement_runs` 是只读归档、还是整表导出成对象存储后删表？
+   它是"重跑与复核的唯一依据"，因此至少要保住只读可查；具体形态等 P3 开工时拍。
