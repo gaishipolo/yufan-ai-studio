@@ -139,6 +139,7 @@
 | `core/library_assets.py` | 批量取 v2 资产元数据与可读性：可读性只转发 `LibraryLookup`，没传 actor 时 fail-closed。两个模板模块共用。 |
 | `core/legacy_json.py` | 老归档盘 JSON 的读取约定（两种字段写法都认、坏文件只跳过）；`import-template-packs` 与 `import-template-runs` 各用一半。 |
 | `core/template_pack_view.py` | 素材包卡片 `ReplacementPack` 的形状与对齐规则：封装模块产出、替换模块嵌进 `/replacement-catalog`，谁都不能 import 对方。 |
+| `core/template_spec/` | 模板规格的跨模块词汇与纯函数：`InputSlot`（`source(asset\|pack)` × `binding(fixed\|user)` × `refMode(mixed\|attachment)`）、`TemplateSpec`（两段提示词 + 槽位 + 模型/参数）、`validate_spec()` 与 `compile_spec()`。**编号是编译产物**：spec 只写 `{{slot:key}}`，`{{Mixed N}}` 按 `position` 与实际填充量算出来，不落库；`source=pack` 的成员顺序由 `LibraryLookup.expand_packs()` 给定、编译不得重排。详见 `TEMPLATE_SPEC.md`。 |
 | `core/scheduler.py` | 周期任务扩展点：`@periodic("模块.动作", every=秒)` 注册，进程内单调度器；模块自己说「多久问一次」，框架不认识任何具体任务。 |
 | `core/response.py` | 统一响应包装 `{code,message,data}` 与分页原语 `Page`。 |
 | `core/schema.py` | Pydantic 基座：统一 camelCase 契约，与前端 TypeScript 类型一一对应。 |
