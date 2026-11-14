@@ -61,7 +61,17 @@
   （**必须沿用**，否则 CLI 时期已发布的模板会重复），模板 `template_key` 用
   `f"ai_{ns.hex}_{function.key}"`；`mediaOrder` / `rules.referenceBindings` /
   `rules.packagingFingerprint` / `generation.duration` 的拼法与 runner 一致；
-  同一 key 指纹变了要 409 而不是覆盖。做完再删 CLI 与 3 个 packager 测试
+  同一 key 指纹变了要 409 而不是覆盖。**开工前必须先定一件事（本轮试做时撞上的）**：`packId` 到底指哪种包。
+C1.5 的 `_reused_pack_versions()` 是查 `template_manifest_packs`（**配置行**）来校验
+「存在且已发布」的，而投影出来的 `video_templates.pack_id` 与替换链用的是
+**运行行** `template_packs`。两者 id 空间不同，于是「复用」在预检阶段通过、
+投影时按运行表查不到包。建议按原 packager 语义收口：`packId` = 运行包 id，
+把 `_reused_pack_versions()` 改成查 `TemplatePack` + `TemplatePackVersion`，
+并同步 `test_reused_pack_receipt_points_to_source_version` /
+`test_reuse_unknown_pack_is_rejected` / `_reuse_spec`。本轮已按此方向写过一版投影，
+因该语义冲突 + 时间不足回退，未留半成品代码。
+
+做完再删 CLI 与 3 个 packager 测试
   （`test_template_packager` / `test_packager_full_chain` / `test_packager_role_bindings`），
   并把 `test_scene_text_template` / `test_template_catalog_storage` 的 CLI 依赖改到
   `/template-manifests`。 |
