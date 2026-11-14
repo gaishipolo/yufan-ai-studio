@@ -50,7 +50,21 @@
 | 本轮 | **模板封装迁移 A/B/C1**（2026-11-14）：A 纯规则上移 `core/template_rules/`；B `manifest.json` DB 化四张表（迁移 `a3c7e91b2d45`）；C1 新 `/template-manifests` 配置服务（预检 / 幂等保存 / 发布 / 停用）+ `core.ports.template_catalog` 只读端口 | 素材一律 `library_assets.id`，本地文件、文件 sha256、journal 进度文件、HTTP 客户端整套没搬；`template_packager` 的能力改为 DB 内预检 + 版本回执。旧 `/template-packs` 与 `modules/template` 的 ①② 暂留，等 C2 收敛 |
 | 本轮 | **C1.5 发布回执闭环**：`publish()` 冻结 `published_pack_id` / `published_pack_version` / `published_template_id`，`template-catalog` 快照带出回执；复用包 `packId` 预检改成查库确认「存在且已发布」 | 模型里三列此前声明了却从未写入（journal 语义断在这里）。新建包回执指向自己 + 本次 version，复用包指向被复用行及其版本；停用不清空（下架 ≠ 抹历史）。发布投影（`video_templates` 行）仍等 C2 搬表后同模块直写 |
 | 本轮 | **C2 第一刀（绞杀者）**：新增 `core.ports.template_runtime`（`template-runtime` 注入口，实现暂由仍持有表的 `modules/template/runtime_port_impl.py` 注册）；`replacement_service` / `authorization` / 固定引用解析全部改走端口，执行链不再 import `PackRepository` / `video_template_service` / `TemplatePackVersion` | 目的是让「搬表」变成纯机械动作：C2 正刀只需挪文件 + 换注册点，消费方一行不改。执行链的模板名缓存从进程级全局字典（`video_template_service._NAME_CACHE`，已删）改为**每请求一份** `self._template_names`，`_prompt_origin` 改成纯函数、显式收名字表。目录卡片仍走 camelCase dict（封装模块自己的对外形状），消费方 `ReplacementPack.model_validate` 校验一次 |
-| 本轮 | **C2 正刀：封装整体搬进 `template_pack`**（2026-11-14）：`template_packs` / `_references` / `_versions` / `video_templates` 四表、`pack_service` / `pack_router` / `video_template_*` / `template_references` / `library_references` / `seed` / `runtime_port_impl` 全部迁入；`models` / `repository` / `schema` / `dependencies` 按表拆分；旧 `template_pack_templates` / `_slots` 与 `/template-packs` 端点、前端「封装模板」页面一并下线（迁移 `c6f0a2d7e813`） | 路径与权限码一个没改（`/templates/replacement-packs`、`/templates/video-templates`、`template:pack:*`）；`asset_source.py` 上移 `core/library_assets.py`、`ReplacementPack` 形状上移 `core/template_pack_view.py`、老 JSON 读盘约定上移 `core/legacy_json.py`；`import-template-legacy` 拆成 `import-template-packs` + `import-template-runs` |
+| 本轮 | **C2 正刀：封装整体搬进 `template_pack`**（2026-11-14）：`template_packs` / `_references` / `_versions` / `video_templates` 四表、`pack_service` / `pack_router` / `video_template_*` / `template_references` / `library_references` / `seed` / `runtime_port_impl` 全部迁入；`models` / `repository` / `schema` / `dependencies` 按表拆分；旧 `template_pack_templates` / `_slots` 与 `/template-packs` 端点、前端「封装模板」页面一并下线（迁移 `c6f0a2d7e813`） | 路径与权限码一个没改（`/templates/replacement-packs`、`/templates/video-templates`、`template:pack:*`）；`asset_source.py` 上移 `core/library_assets.py`、`ReplacementPack` 形状上移 `core/template_pack_view.py`、老 JSON 读盘约定上移 `core/legacy_json.py`；`import-template-legacy` 拆成 `import-template-packs` + `import-template-runs`。**但发布投影仍未做**（见下条） |
+
+| 待做 | **C2 剩下的一半：发布投影**（`manifest_service.publish()` 只改了配置层状态与回执，
+  **没有**写 `template_packs` / `_references` / `_versions` / `video_templates`）。因此
+  `api/src/template_packager/`（6 文件）与 `scripts/package_video_template.py` **还不能删**：
+  它仍是「manifest → 运行表」的唯一路径。搬迁时把这一半漏了，别再按「D 只剩删文件」理解。 |
+投影要 1:1 复刻 `template_packager/runner.py::apply_manifest` 的映射：包 id 用
+  `uuid5(NAMESPACE_URL, f"yufan-packager:{owner}:{manifest.key}")` 再 `uuid5(ns, "pack:"+key)`
+  （**必须沿用**，否则 CLI 时期已发布的模板会重复），模板 `template_key` 用
+  `f"ai_{ns.hex}_{function.key}"`；`mediaOrder` / `rules.referenceBindings` /
+  `rules.packagingFingerprint` / `generation.duration` 的拼法与 runner 一致；
+  同一 key 指纹变了要 409 而不是覆盖。做完再删 CLI 与 3 个 packager 测试
+  （`test_template_packager` / `test_packager_full_chain` / `test_packager_role_bindings`），
+  并把 `test_scene_text_template` / `test_template_catalog_storage` 的 CLI 依赖改到
+  `/template-manifests`。 |
 
 表格之后又连续落了几件事（提交见 `git log --oneline -12`）：PR#5 语义合并 →
 T34 参考图（含素材库侧边悬浮栏 + 拖拽）→ 标签两级分类 → worktree
