@@ -52,45 +52,18 @@
 | 本轮 | **C2 第一刀（绞杀者）**：新增 `core.ports.template_runtime`（`template-runtime` 注入口，实现暂由仍持有表的 `modules/template/runtime_port_impl.py` 注册）；`replacement_service` / `authorization` / 固定引用解析全部改走端口，执行链不再 import `PackRepository` / `video_template_service` / `TemplatePackVersion` | 目的是让「搬表」变成纯机械动作：C2 正刀只需挪文件 + 换注册点，消费方一行不改。执行链的模板名缓存从进程级全局字典（`video_template_service._NAME_CACHE`，已删）改为**每请求一份** `self._template_names`，`_prompt_origin` 改成纯函数、显式收名字表。目录卡片仍走 camelCase dict（封装模块自己的对外形状），消费方 `ReplacementPack.model_validate` 校验一次 |
 | 本轮 | **C2 正刀：封装整体搬进 `template_pack`**（2026-11-14）：`template_packs` / `_references` / `_versions` / `video_templates` 四表、`pack_service` / `pack_router` / `video_template_*` / `template_references` / `library_references` / `seed` / `runtime_port_impl` 全部迁入；`models` / `repository` / `schema` / `dependencies` 按表拆分；旧 `template_pack_templates` / `_slots` 与 `/template-packs` 端点、前端「封装模板」页面一并下线（迁移 `c6f0a2d7e813`） | 路径与权限码一个没改（`/templates/replacement-packs`、`/templates/video-templates`、`template:pack:*`）；`asset_source.py` 上移 `core/library_assets.py`、`ReplacementPack` 形状上移 `core/template_pack_view.py`、老 JSON 读盘约定上移 `core/legacy_json.py`；`import-template-legacy` 拆成 `import-template-packs` + `import-template-runs`。**但发布投影仍未做**（见下条） |
 
-| 待做 | **C2 剩下的一半：发布投影**（`manifest_service.publish()` 只改了配置层状态与回执，
-  **没有**写 `template_packs` / `_references` / `_versions` / `video_templates`）。因此
-  `api/src/template_packager/`（6 文件）与 `scripts/package_video_template.py` **还不能删**：
-  它仍是「manifest → 运行表」的唯一路径。搬迁时把这一半漏了，别再按「D 只剩删文件」理解。 |
-投影要 1:1 复刻 `template_packager/runner.py::apply_manifest` 的映射：包 id 用
-  `uuid5(NAMESPACE_URL, f"yufan-packager:{owner}:{manifest.key}")` 再 `uuid5(ns, "pack:"+key)`
-  （**必须沿用**，否则 CLI 时期已发布的模板会重复），模板 `template_key` 用
-  `f"ai_{ns.hex}_{function.key}"`；`mediaOrder` / `rules.referenceBindings` /
-  `rules.packagingFingerprint` / `generation.duration` 的拼法与 runner 一致；
-  同一 key 指纹变了要 409 而不是覆盖。**开工前必须先定一件事（本轮试做时撞上的）**：`packId` 到底指哪种包。
-C1.5 的 `_reused_pack_versions()` 是查 `template_manifest_packs`（**配置行**）来校验
-「存在且已发布」的，而投影出来的 `video_templates.pack_id` 与替换链用的是
-**运行行** `template_packs`。两者 id 空间不同，于是「复用」在预检阶段通过、
-投影时按运行表查不到包。建议按原 packager 语义收口：`packId` = 运行包 id，
-把 `_reused_pack_versions()` 改成查 `TemplatePack` + `TemplatePackVersion`，
-并同步 `test_reused_pack_receipt_points_to_source_version` /
-`test_reuse_unknown_pack_is_rejected` / `_reuse_spec`。本轮已按此方向写过一版投影，
-因该语义冲突 + 时间不足回退，未留半成品代码。
-
-做完再删 CLI 与 3 个 packager 测试
-  （`test_template_packager` / `test_packager_full_chain` / `test_packager_role_bindings`），
-  并把 `test_scene_text_template` / `test_template_catalog_storage` 的 CLI 依赖改到
-  `/template-manifests`。 |
-
-表格之后又连续落了几件事（提交见 `git log --oneline -12`）：PR#5 语义合并 →
-T34 参考图（含素材库侧边悬浮栏 + 拖拽）→ 标签两级分类 → worktree
-`main-7b123d58` 线性合并（Agnes Video 2.5 Flash 驱动）→ **文本资产 B+C**。
-最后这件的产品口径是用户拍板的：形态 **B+C**（既是可编辑的站内文本资产，
-也要能「挑去用」进提示词）、只收 `.txt`/`.md` 且 ≤1MB、按推荐定为
-「UTF-8 纯文本、Markdown 不转 HTML」。实现要点全在 §5 的三条不变量里。
-
-两个值得记住的结论：
-
-- **CI 从 `48ac435` 起每次都是 failure，只有 mypy 一步红**，而且红了很久没人看——
-  类型门禁实际上等于没有。push 完要主动看一眼这一步。
-- 全量测试一半时间在算口令哈希：`admin_headers()` / `make_user()` 走真实登录，
-  每拿一次 token 就是一次 scrypt。这不是「某个用例慢」，所以只能改成本参数，不能改用例。
-
-## 2. 行为变化（会打到前端与运维）
+| 本轮 | **发布投影 + `packId` 收口到运行行**（2026-11-14）：`publish()` 现在真的把配置投影成
+  `template_packs`（head / 参考图 / 冻结版本）+ `video_templates`；`packId` 改指已发布的
+  **运行素材包**（`template_packs.id`），校验同时要求冻结版本行存在 | 包 id 与模板 key
+  沿用离线 packager 的 `uuid5` 派生（`pack:<key>` / `ai_{ns.hex}_{fn}`），否则 CLI 时期
+  已发布的模板会重复；回执 `published_pack_id` / `published_template_id` 与只读目录端口
+  现在都指向运行行。投影**不是单事务**（复用 `PackService` / `create` 的既有提交语义），
+  按 key 幂等、失败可重跑。`test_publish_projects_into_runtime_tables` 走对外接口断言 |
+| 待做 | **D：删离线打包器**（已解锁）：`api/src/template_packager`（6 文件）、
+  `scripts/package_video_template.py`、`core.config.template_packager_state_dir` 与
+  `health.py` 里那段 state-dir 自检、两份 `AI_TEMPLATE_PACKAGER*.md`；再重写
+  `test_template_packager` / `test_packager_full_chain` / `test_packager_role_bindings`
+  与 `test_scene_text_template` / `test_template_catalog_storage` 对 CLI 的依赖 |
 
 | 变化 | 谁受影响 | 说明 |
 |---|---|---|
@@ -318,9 +291,12 @@ curl -sS --noproxy '*' -H "Authorization: Bearer $TOKEN" \
   `self._template_names`。别再把字典提回模块级：那是跨请求串味、且无法失效。
 - **发布回执在发布那一刻冻结**：`published_pack_id` / `published_pack_version` /
   `published_template_id` 不是读时拼的，停用也不清空；`CatalogPack` /
-  `CatalogTemplate` 快照原样带出。C2 同模块直写 `video_templates` 后，
-  `published_template_id` 换成投影行 id，消费方只认「一个能点开的 id」即可。
-  复用包的 `packId` 必须查库确认「存在且已发布且 version > 0」，预检就挡。
+  `CatalogTemplate` 快照原样带出。**它们指向投影出来的运行行**（`template_packs` /
+  `video_templates`），不是配置行 —— 配置行 id 在运行链路里从不出现。
+- **复用包的 `packId` 指运行素材包**（原 packager 口径）：预检查 `TemplatePack`
+  的 `status='published'` + `version>0` + 冻结版本行存在，查不到就 400。
+  别改回「配置行」（`template_manifest_packs`）：那样手工用封装编辑器建的包永远
+  复用不了，投影时也按运行表查不到。
 - **service 层显式 commit**：`db.session.get_session()` 只在异常时回滚。
   `save` / `publish` / `disable` 漏 `await session.commit()` 的症状是「接口 201、
   紧接着的读全 404」，很容易误判成权限或缓存问题。写侧新建实体还要在

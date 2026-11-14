@@ -295,7 +295,11 @@ _UPLOAD_KIND = {
 
 
 def upload(
-    client: TestClient, filename: str, category: str, content: bytes
+    client: TestClient,
+    filename: str,
+    category: str,
+    content: bytes,
+    headers: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """走资产库 v2 的真实上传接口登记素材，返回与前端完全一致的出参。
 
@@ -309,14 +313,14 @@ def upload(
             f"{API}/library/source-videos",
             params={"filename": filename},
             content=content,
-            headers={"Content-Type": "application/octet-stream"},
+            headers={"Content-Type": "application/octet-stream", **(headers or {})},
         )
     else:
         response = client.post(
             f"{API}/library/assets/upload",
             params={"filename": filename, "kind": kind},
             content=content,
-            headers={"Content-Type": "application/octet-stream"},
+            headers={"Content-Type": "application/octet-stream", **(headers or {})},
         )
     assert response.status_code == 201, response.text
     data = response.json()["data"]

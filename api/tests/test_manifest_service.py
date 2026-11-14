@@ -13,7 +13,8 @@ import asyncio
 from typing import Any
 
 from fastapi.testclient import TestClient
-from library_support import LIB_RW, admin_headers, insert_asset, make_user, suffix
+from library_support import LIB_RW, admin_headers, make_user, suffix
+from tests_template_helpers import png_bytes, upload, video_bytes
 
 MANIFESTS = "/api/v1/template-manifests"
 
@@ -38,24 +39,16 @@ def _headers(client: TestClient) -> dict[str, str]:
 
 
 def _media(client: TestClient, headers: dict[str, str]) -> tuple[str, str]:
-    owner = _user_id(client, headers)
-    video = insert_asset(
-        owner_id=owner,
-        name=f"clip-{suffix()}.mp4",
-        kind="video",
-        mime_type="video/mp4",
-        duration=3.0,
-        has_audio=True,
-        state="active",
+    """真实上传：发布要投影成素材包，而 `PackService.publish` 会校验字节存在。
+
+    直接插行（`insert_asset`）在「预检」阶段够用，到了发布会因为 `storage_key`
+    指向不存在的对象而 400 —— 所以这里走上传接口，字节与归属都是真的。
+    """
+    video = upload(
+        client, f"clip-{suffix()}.mp4", "source", video_bytes(2, audio=True), headers=headers
     )
-    image = insert_asset(
-        owner_id=owner,
-        name=f"front-{suffix()}.png",
-        kind="image",
-        mime_type="image/png",
-        state="active",
-    )
-    return video, image
+    image = upload(client, f"front-{suffix()}.png", "image", png_bytes(), headers=headers)
+    return str(video["id"]), str(image["id"])
 
 
 def _spec(video_id: str, image_id: str, **overrides: Any) -> dict[str, Any]:
@@ -345,10 +338,11 @@ def test_publish_freezes_receipts(client: TestClient) -> None:
     body = _publish(client, headers, key)
     assert body["version"] == 1
     packs, functions = _rows(key)
-    assert packs[0].published_pack_id == packs[0].id
+    # 回执指向**投影出来的运行行**，不是配置行：配置行 id 在运行链路里从不出现。
+    assert packs[0].published_pack_id and packs[0].published_pack_id != packs[0].id
     assert packs[0].published_pack_version == 1
-    assert functions[0].published_template_id == functions[0].id
-    assert body["templates"][0]["templateId"] == functions[0].id
+    assert functions[0].published_template_id
+    assert body["templates"][0]["templateId"] == functions[0].published_template_id
 
     matched = [
         row
@@ -356,7 +350,46 @@ def test_publish_freezes_receipts(client: TestClient) -> None:
         if row.template_key == f"{key}:replace"
     ]
     assert len(matched) == 1
-    assert matched[0].published_template_id == functions[0].id
+    # 端口带出的也是**运行行 id**：三处（回执列、发布出参、只读目录）必须同源。
+    assert matched[0].published_template_id == functions[0].published_template_id
+    assert matched[0].published_template_id != functions[0].id
+
+
+def test_publish_projects_into_runtime_tables(client: TestClient) -> None:
+    """发布必须真的生成工作台卡片与素材包 —— 否则 `/template-manifests` 只是空壳。
+
+    断言走**对外接口**（`/templates/video-templates`、`/replacement-packs/available`），
+    不查 ORM：投影的意义就是让替换链与前端拿到同一批行。
+    """
+    headers = _headers(client)
+    video, image = _media(client, headers)
+    spec = _spec(video, image)
+    assert client.post(MANIFESTS, json=spec, headers=headers).status_code == 201
+    body = _publish(client, headers, spec["key"])
+    packs, functions = _rows(spec["key"])
+
+    templates = client.get("/api/v1/templates/video-templates", headers=headers).json()["data"]
+    projected = next(
+        item for item in templates["items"] if item["id"] == body["templates"][0]["templateId"]
+    )
+    assert projected["name"] == "演示 · 产品替换"
+    assert projected["sourceVideoAssetId"] == video
+    assert projected["packId"] == packs[0].published_pack_id
+    # 无 bindings → 按 manifest 的 mediaOrder 投影；编号就是提示词里的 {{Mixed N}}。
+    assert [item["token"] for item in projected["mediaOrder"]] == ["{{Mixed 1}}", "{{Mixed 2}}"]
+    assert [item["role"] for item in projected["mediaOrder"]] == ["source_video", "front"]
+    assert [item["assetId"] for item in projected["mediaOrder"]] == [video, image]
+    assert projected["rules"]["workbenchLabel"] == "产品替换"
+    assert projected["rules"]["packagingFingerprint"]
+
+    available = client.get(
+        "/api/v1/templates/replacement-packs/available",
+        params={"kind": "all", "keyword": "连衣裙", "page": 1, "pageSize": 24},
+        headers=headers,
+    ).json()["data"]
+    pack = next(item for item in available["items"] if item["id"] == packs[0].published_pack_id)
+    assert pack["version"] == 1
+    assert pack["referenceIds"] == [image]
 
 
 def test_reused_pack_receipt_points_to_source_version(client: TestClient) -> None:
@@ -368,7 +401,7 @@ def test_reused_pack_receipt_points_to_source_version(client: TestClient) -> Non
     _publish(client, headers, source["key"])
     source_packs, _ = _rows(source["key"])
 
-    reuse = _reuse_spec(video, image, source_packs[0].id)
+    reuse = _reuse_spec(video, image, source_packs[0].published_pack_id)
     checked = client.post(f"{MANIFESTS}/validate", json=reuse, headers=headers)
     assert checked.status_code == 200, checked.text
     saved = client.post(MANIFESTS, json=reuse, headers=headers)
@@ -376,9 +409,9 @@ def test_reused_pack_receipt_points_to_source_version(client: TestClient) -> Non
     _publish(client, headers, reuse["key"])
 
     packs, functions = _rows(reuse["key"])
-    assert packs[0].published_pack_id == source_packs[0].id
+    assert packs[0].published_pack_id == source_packs[0].published_pack_id
     assert packs[0].published_pack_version == 1
-    assert functions[0].published_template_id == functions[0].id
+    assert functions[0].published_template_id
 
 
 def test_reuse_unknown_pack_is_rejected(client: TestClient) -> None:

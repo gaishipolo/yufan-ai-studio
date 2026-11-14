@@ -33,6 +33,7 @@ import json
 import re
 from dataclasses import dataclass
 from typing import Any
+from uuid import NAMESPACE_URL, uuid5
 
 from sqlalchemy import delete as sa_delete
 from sqlalchemy import select
@@ -40,6 +41,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.context import CurrentUser
 from core.exceptions import BadRequest, Conflict, NotFound
+from core.library_assets import resolve_assets
 from core.ports.library_lookup import (
     LibraryAssetKind,
     LibraryAssetState,
@@ -55,6 +57,7 @@ from core.template_rules.bindings import (
 from core.template_rules.options import validate_options
 from core.template_rules.roles import BASE_ROLE, PACK_ROLES, PACK_SCOPES
 from db.base import utcnow
+from modules.template_pack import video_template_service
 from modules.template_pack.manifest_schema import (
     MAX_PROMPT,
     ManifestDraftIn,
@@ -73,6 +76,14 @@ from modules.template_pack.models import (
     TemplateManifestFunction,
     TemplateManifestPack,
     TemplateManifestReference,
+    TemplatePack,
+    TemplatePackVersion,
+)
+from modules.template_pack.pack_service import PackService
+from modules.template_pack.schema import PackBinding, PackDraftIn
+from modules.template_pack.video_template_schema import (
+    VideoTemplateDraftIn,
+    VideoTemplateMedia,
 )
 
 #: 原 CLI 对本地 mp4 的唯一硬限制。资产库里 `size_bytes` 是已探测值，直接用。
@@ -273,30 +284,50 @@ async def _validate_media(
 async def _reused_pack_versions(
     session: AsyncSession, pack_ids: set[str]
 ) -> dict[str, int]:
-    """`packId` 指向已发布配置里的素材包行，返回 `{pack_id: 发布版本号}`。
+    """`packId` 指向**已发布的运行素材包**，返回 `{pack_id: 包自己的发布版本}`。
 
-    packager 的 `--apply` 会先拉远端清单确认 `packId` 存在且已发布，DB 化后
-    这一步退化成一次 join：草稿里的包还没对外，不算可复用对象。查不到返回空
-    字典而不是抛异常 —— 预检要把它翻译成 400，发布时要用它填回执，两种
-    调用方对「缺失」的措辞不同。
+    口径与原 packager 一致：它从 `/replacement-packs/available` 挑包，拿到的是
+    运行行的 id 与版本。DB 化后这一步退化成两次查询（head + 冻结版本行）。
+
+    **必须是运行行，不是配置行**：投影出来的 `video_templates.pack_id` 与替换链
+    用的都是 `template_packs.id`；配置行 id 在运行链路里从不出现，拿它当 `packId`
+    会让「预检通过、投影时查不到包」。手工用封装编辑器建的包也只在运行表里，
+    用配置行就永远复用不了它们。
+
+    同时要求**冻结版本行存在**：只看 head 会被「手工删过历史版本」骗过。
+    查不到返回空字典而不是抛异常 —— 预检把它翻译成 400，发布时用它填回执，
+    两种调用方对「缺失」的措辞不同。
     """
     if not pack_ids:
         return {}
     rows = (
         await session.execute(
-            select(TemplateManifestPack.id, TemplateManifest.version)
-            .join(
-                TemplateManifest,
-                TemplateManifest.id == TemplateManifestPack.manifest_id,
-            )
-            .where(
-                TemplateManifestPack.id.in_(sorted(pack_ids)),
-                TemplateManifest.status == "published",
-                TemplateManifest.deleted_at.is_(None),
+            select(TemplatePack.id, TemplatePack.version).where(
+                TemplatePack.id.in_(sorted(pack_ids)),
+                TemplatePack.status == "published",
+                TemplatePack.deleted_at.is_(None),
+                TemplatePack.version > 0,
             )
         )
     ).all()
-    return {str(pack_id): int(version) for pack_id, version in rows}
+    heads = {str(pack_id): int(version) for pack_id, version in rows}
+    if not heads:
+        return {}
+    frozen = {
+        (str(pack_id), int(version))
+        for pack_id, version in (
+            await session.execute(
+                select(TemplatePackVersion.pack_id, TemplatePackVersion.version).where(
+                    TemplatePackVersion.pack_id.in_(sorted(heads))
+                )
+            )
+        ).all()
+    }
+    return {
+        pack_id: version
+        for pack_id, version in heads.items()
+        if (pack_id, version) in frozen
+    }
 
 
 async def validate(
@@ -587,6 +618,226 @@ async def save(
     return result
 
 
+# ---------------------------------------------------------------------------
+# 发布投影：manifest → 运行表
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class _PackShot:
+    key: str
+    kind: str
+    name: str
+    reuse_pack_id: str
+    wardrobe_mode: str
+    required_roles: tuple[str, ...]
+    supported_scopes: tuple[str, ...]
+    #: `(ref_key, asset_id, role, description)`
+    refs: tuple[tuple[str, str, str, str], ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _FunctionShot:
+    key: str
+    name: str
+    pack_key: str
+    kind: str
+    prompt: str
+    scene_prompt_default: str | None
+    media_order: tuple[str, ...]
+    bindings: dict[str, str] | None
+    scope_options: tuple[str, ...]
+    aspect_ratio: str
+    duration: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class _Shot:
+    key: str
+    name: str
+    owner_id: str
+    video_asset_id: str
+    fingerprint: str
+    packs: tuple[_PackShot, ...]
+    functions: tuple[_FunctionShot, ...]
+
+
+def _shot(bundle: _Bundle) -> _Shot:
+    """把 ORM 行摊成纯值。
+
+    **必须在第一次 commit 之前拍**：投影复用 `PackService` / `create`，它们各自
+    提交，`expire_on_commit` 会让 ORM 属性变成需要重新加载（异步会话里读一下就
+    炸 MissingGreenlet）。摊平之后，后面只碰自己手里的值。
+    """
+    head = bundle.head
+    return _Shot(
+        key=head.template_key,
+        name=head.name,
+        owner_id=head.owner_id,
+        video_asset_id=head.video_asset_id,
+        fingerprint=head.fingerprint,
+        packs=tuple(
+            _PackShot(
+                key=row.pack_key,
+                kind=row.kind,
+                name=row.name,
+                reuse_pack_id=row.reuse_pack_id,
+                wardrobe_mode=row.wardrobe_mode,
+                required_roles=tuple(row.required_roles or ()),
+                supported_scopes=tuple(row.supported_scopes or ()),
+                refs=tuple(
+                    (ref.ref_key, ref.asset_id, ref.role, ref.description)
+                    for ref in bundle.references.get(row.id, [])
+                ),
+            )
+            for row in bundle.packs
+        ),
+        functions=tuple(
+            _FunctionShot(
+                key=row.function_key,
+                name=row.name,
+                pack_key=row.pack_key,
+                kind=row.kind,
+                prompt=row.prompt,
+                scene_prompt_default=row.scene_prompt_default,
+                media_order=tuple(row.media_order or ()),
+                bindings=dict(row.bindings) if row.bindings else None,
+                scope_options=tuple(row.scope_options or ()),
+                aspect_ratio=row.aspect_ratio,
+                duration=row.duration,
+            )
+            for row in bundle.functions
+        ),
+    )
+
+
+def _namespace(owner_id: str, key: str) -> Any:
+    """与离线 packager 完全一致的命名空间。
+
+    **必须沿用**：素材包 id 与 `video_templates.template_key` 都从这里派生。
+    换算法等于把 CLI 时期已经发布出去的模板当成另一条记录，工作台里会重复出现。
+    """
+    return uuid5(NAMESPACE_URL, f"yufan-packager:{owner_id}:{key}")
+
+
+async def _project(
+    session: AsyncSession, actor: CurrentUser, shot: _Shot
+) -> tuple[dict[str, tuple[str, str, str, int]], dict[str, str]]:
+    """把一份配置投影成运行表，返回 `{包 key: (id, name, kind, version)}` 与
+    `{功能 key: 模板 id}`。
+
+    **不是单事务**：复用 `PackService.save/publish` 与 `video_template_service.create`
+    （它们各自提交，那是 HTTP 接口的实现）。失败可重跑：包 id 与模板
+    `template_key` 都由 `(owner, manifest key, 子 key)` 派生，同配置重入返回原行
+    （异配置由 `_same_or_conflict` 判 409）。这与离线 packager 的 journal 语义一致，
+    比「一个横跨十几张表的大事务」更抗中断。
+    """
+    namespace = _namespace(shot.owner_id, shot.key)
+    service = PackService(session)
+    packs: dict[str, tuple[str, str, str, int]] = {}
+    for pack in shot.packs:
+        if pack.reuse_pack_id:
+            row = await session.get(TemplatePack, pack.reuse_pack_id)
+            if row is None:
+                raise BadRequest(f"素材包 {pack.key} 复用的包已不存在")
+            packs[pack.key] = (row.id, row.name, row.kind, row.version)
+            continue
+        managed = await service.save(
+            PackDraftIn(
+                request_id=uuid5(namespace, "pack:" + pack.key),
+                kind=pack.kind,
+                name=pack.name,
+                reference_library_ids=[ref[1] for ref in pack.refs],
+                cover_library_id=pack.refs[0][1] if pack.refs else None,
+                wardrobe_mode=pack.wardrobe_mode,
+                bindings=[
+                    PackBinding(role=role, description=description)
+                    for _key, _asset, role, description in pack.refs
+                ],
+                # 基准用途永远必填：原 packager 在这里补齐，下游不重复判断。
+                required_roles=list(
+                    dict.fromkeys([BASE_ROLE[pack.kind], *pack.required_roles])
+                ),
+                supported_scopes=list(pack.supported_scopes),
+            ),
+            shot.owner_id,
+        )
+        if managed.status != "published":
+            managed = await service.publish(managed.id, shot.owner_id, managed.revision)
+        packs[pack.key] = (managed.id, managed.name, managed.kind, managed.version)
+
+    media_assets = [shot.video_asset_id, *[ref[1] for pack in shot.packs for ref in pack.refs]]
+    resolved = await resolve_assets(session, media_assets, actor=actor)
+    names = {asset_id: row.name for asset_id, row in resolved.v2.items()}
+    refs_by_pack = {pack.key: {ref[0]: ref for ref in pack.refs} for pack in shot.packs}
+
+    templates: dict[str, str] = {}
+    for function in shot.functions:
+        scene_text = function.scene_prompt_default is not None
+        if scene_text:
+            pack_id, pack_kind = None, "scene"
+        else:
+            pack_id, _name, pack_kind, _version = packs[function.pack_key]
+        rules: dict[str, Any] = {
+            "workbenchLabel": function.name,
+            "scopeOptions": list(function.scope_options),
+            "packagingFingerprint": shot.fingerprint,
+        }
+        if function.bindings is not None:
+            rules["referenceBindings"] = dict(function.bindings)
+        if scene_text:
+            rules.update(
+                inputMode="video_scene_text",
+                scenePromptDefault=function.scene_prompt_default,
+            )
+        media: list[VideoTemplateMedia] = []
+        if function.bindings is None and not scene_text:
+            media.append(
+                VideoTemplateMedia(
+                    token="{{Mixed 1}}",
+                    role="source_video",
+                    type="video",
+                    asset_id=shot.video_asset_id,
+                    name=names.get(shot.video_asset_id, ""),
+                    in_prompt=True,
+                )
+            )
+            refs = refs_by_pack.get(function.pack_key, {})
+            for index, key in enumerate(function.media_order, 2):
+                ref = refs[key]
+                token = f"{{{{Mixed {index}}}}}"
+                media.append(
+                    VideoTemplateMedia(
+                        token=token,
+                        role=ref[2],
+                        type="image",
+                        asset_id=ref[1],
+                        name=names.get(ref[1], ""),
+                        in_prompt=token in function.prompt,
+                    )
+                )
+        out = await video_template_service.create(
+            VideoTemplateDraftIn(
+                template_key=f"ai_{namespace.hex}_{function.key}",
+                name=f"{shot.name} · {function.name}",
+                prompt=function.prompt,
+                source_video_asset_id=shot.video_asset_id,
+                aspect_ratio=function.aspect_ratio,
+                pack_id=pack_id,
+                default_kind=pack_kind,  # type: ignore[arg-type]
+                media_order=media,
+                generation=(
+                    {"duration": function.duration} if function.duration is not None else {}
+                ),
+                rules=rules,
+            ),
+            session,
+            actor=actor,
+        )
+        templates[function.key] = out.id
+    return packs, templates
+
+
 async def publish(
     session: AsyncSession, actor: CurrentUser, key: str
 ) -> ManifestPublishOut:
@@ -602,48 +853,47 @@ async def publish(
     if not bundle.functions:
         raise BadRequest("没有可发布的功能")
 
+    # 先摊平再投影：投影里会多次 commit（复用 PackService / create 的既有语义），
+    # 之后再读 ORM 属性就是「过期行 + 异步会话」，会炸 MissingGreenlet。
+    shot = _shot(bundle)
+    packs, template_ids = await _project(session, actor, shot)
+
     head.status = "published"
     head.version += 1
     head.published_at = utcnow()
+    version = head.version
 
     # 发布回执（packager 的 journal 语义）：本次真正对外的是哪几行、第几版。
-    # 远端投影（`video_templates` 行）要等 C2 把 ①② 搬进本模块后同模块直写，
-    # 但配置层锚点必须在发布这一刻冻结 —— 否则重跑时无从判断「上次发的是哪一行」，
-    # 「远端被手工改过」也就没有比对基准。复用包指向被复用的那一行及其版本，
-    # 新建包指向自己，两者都不重新解析配置。
-    reused = await _reused_pack_versions(
-        session,
-        {pack.reuse_pack_id for pack in bundle.packs if pack.reuse_pack_id},
-    )
-    for pack in bundle.packs:
-        if pack.reuse_pack_id:
-            pack.published_pack_id = pack.reuse_pack_id
-            pack.published_pack_version = reused.get(pack.reuse_pack_id, 0)
-        else:
-            pack.published_pack_id = pack.id
-            pack.published_pack_version = head.version
-    for function in bundle.functions:
-        function.published_template_id = function.id
-    await session.flush()
+    # 这两列现在指向**投影出来的运行行** —— 重跑时可以直接和远端比对。
+    for pack_row in bundle.packs:
+        pack_id, _name, _kind, pack_version = packs[pack_row.pack_key]
+        pack_row.published_pack_id = pack_id
+        pack_row.published_pack_version = pack_version
+    for fn_row in bundle.functions:
+        fn_row.published_template_id = template_ids[fn_row.function_key]
+    await session.commit()
 
     templates = [
         PublishedTemplateOut(
-            function_key=fn.function_key,
-            template_id=fn.published_template_id,
-            template_key=f"{head.template_key}:{fn.function_key}",
-            name=f"{head.name} · {fn.name}",
+            function_key=fn.key,
+            template_id=template_ids[fn.key],
+            template_key=f"{shot.key}:{fn.key}",
+            name=f"{shot.name} · {fn.name}",
             workbench_path=(
-                f"/templates?sourceId={head.video_asset_id}"
-                f"&videoTemplateId={fn.published_template_id}&kind={fn.kind or 'product'}"
+                f"/templates?sourceId={shot.video_asset_id}"
+                f"&videoTemplateId={template_ids[fn.key]}&kind={fn.kind or 'product'}"
             ),
         )
-        for fn in bundle.functions
+        for fn in shot.functions
     ]
-    result = ManifestPublishOut(
-        manifest=_to_out(bundle), version=head.version, templates=templates
+    stored = await _find(session, key)
+    if stored is None:  # pragma: no cover - 刚提交过，只可能是并发删除
+        raise NotFound(f"配置不存在：{key}")
+    return ManifestPublishOut(
+        manifest=_to_out(await _bundle(session, stored)),
+        version=version,
+        templates=templates,
     )
-    await session.commit()
-    return result
 
 
 async def disable(session: AsyncSession, actor: CurrentUser, key: str) -> ManifestOut:
