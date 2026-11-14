@@ -44,8 +44,13 @@ import { writeLibraryDrag, type LibraryAssetDrag } from '@/shared/lib/libraryDra
 const DEFAULT_FLYOUT_KINDS: LibraryAssetKind[] = ['image'];
 
 /** 四个素材类别：与资产库页的类别口径同一份来源，别在这里另抄一套文案 */
+/* 抽屉里的类别只列**文件型**素材：它挑的东西会进 `referenceLibraryIds` /
+   `textLibraryIds`，而封装不是可提交的单位（提交的是成员，成员在封装里）。
+   给一个只能浏览、永远挑不动的「封装」页签，等于让用户点进去问「为什么没有＋」。
+   要看封装内容去资产库（类型筛选里有那一档）。 */
 const CATEGORIES = KIND_OPTIONS.filter(
-  (item): item is { value: LibraryAssetKind; label: string } => item.value !== 'all',
+  (item): item is { value: LibraryAssetKind; label: string } =>
+    item.value !== 'all' && item.value !== 'pack',
 );
 
 export interface LibraryFlyoutProps {

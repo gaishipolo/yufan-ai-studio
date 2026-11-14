@@ -49,11 +49,10 @@ import { useCreateTagInline } from './use-create-tag-inline';
 import type { LibraryCardAction } from './LibraryCard';
 
 const PAGE_SIZE = 24;
-/* 不含 `pack`：类型筛选里没有「封装」这一档（见 KIND_OPTIONS 注释）。
-   老的 `?kind=pack` 链接会落到「全部」，而不是筛出一个空列表。
-   `text` 必须在这里：KIND_OPTIONS 新增「文本」后，点它会把 ?kind=text 写进 URL，
-   白名单不收就会被判成 `all`，筛选看似点了却没生效。 */
-const KINDS = new Set(['all', 'video', 'image', 'audio', 'text']);
+/* URL 里的 `kind` 白名单。**必须与 `KIND_OPTIONS` 逐项对齐**：漏一项，点它就
+   把 `?kind=…` 写进 URL 又被判回 `all`，筛选看似点了却没生效。
+   历史上漏过两次（`text`、`pack`），所以这里的注释比代码长。 */
+const KINDS = new Set(['all', 'video', 'image', 'audio', 'text', 'pack']);
 const SORTS = new Set(['-createdAt', 'createdAt', 'name', '-sizeBytes']);
 
 interface ConfirmState {

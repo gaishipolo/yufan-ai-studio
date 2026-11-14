@@ -75,7 +75,6 @@ def test_pack_inherits_every_member_tag(client: TestClient, api: str) -> None:
     )
     names = [tag["name"] for tag in pack["tags"]]
     assert set(names) == {
-        "封装",
         f"人物-{mark}",
         f"产品-{mark}",
         f"共用-{mark}",
@@ -83,6 +82,9 @@ def test_pack_inherits_every_member_tag(client: TestClient, api: str) -> None:
     }
     # 「共用」同时在两个成员上，不能在封装上出现两枚
     assert len(names) == len(set(names))
+    # 系统不再自动打「封装」标签：它已经由 `kind=pack` 表达，见
+    # `test_library_packs.py::test_pack_is_reachable_by_the_kind_filter_not_a_tag`
+    assert "封装" not in names
 
     # 按任一成员标签都该筛到封装；成员自己被 `hidden_by_pack_clause` 藏起来了
     for tag in (tag_a, tag_b, tag_shared):
@@ -132,7 +134,7 @@ def test_member_replace_merges_new_tags_but_keeps_manual_edits(
     assert f"老图-{mark}" not in names
     assert f"手动-{mark}" in names
 
-    # 换成员：新成员的标签并进来，手动加的标签和「封装」都还在
+    # 换成员：新成员的标签并进来，手动加的标签还在
     replaced = client.patch(
         f"{api}/library/packs/{pack['id']}",
         json={"items": [{"assetId": third["id"]}, {"assetId": second["id"]}]},
@@ -142,7 +144,8 @@ def test_member_replace_merges_new_tags_but_keeps_manual_edits(
     names = [tag["name"] for tag in replaced.json()["data"]["tags"]]
     assert f"新图-{mark}" in names
     assert f"手动-{mark}" in names
-    assert "封装" in names
+    # 换成员不会顺手补回任何系统标签（过去会补「封装」）
+    assert "封装" not in names
     # 老成员已经不在，刚被 × 去掉的标签也不会被补回：合并的是**当前成员**的
     # 标签并集，「只增不减」指不删封装上已有的绑定，不是把历史标签永久钉死。
     assert f"老图-{mark}" not in names

@@ -41,7 +41,7 @@ from modules.library.schema import (
     PackItemIn,
     PackPatchIn,
 )
-from modules.library.tags import PACK_TAG_NAME, ensure_tag, sync_pack_tags
+from modules.library.tags import sync_pack_tags
 
 __all__ = ["PackService", "pack_cover_key"]
 
@@ -102,14 +102,14 @@ class PackService:
         self.session.add(pack)
         await self.session.flush()
         await self._write_items(pack.id, items)
-        # 「封装」是固定标签（类型筛选里没有「封装」这一档，靠它找封装）；
         # 用户手选的标签 + 所有成员的标签一起并进来，`sync_pack_tags` 去重。
-        pack_tag = await ensure_tag(self.session, PACK_TAG_NAME, actor.id)
+        # **不再自动打「封装」标签**（2026-11-14）：类型筛选已经有「封装」这一档，
+        # 而「这是个封装」本来就是 `kind` 的事实，不该写成用户可以 × 掉的标签。
         await sync_pack_tags(
             self.session,
             pack.id,
             [member.id for member in members],
-            base=[pack_tag.id, *(payload.tag_ids or [])],
+            base=list(payload.tag_ids or []),
         )
         await self.session.commit()
         return await self._detail(pack.id, actor)

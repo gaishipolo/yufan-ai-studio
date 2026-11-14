@@ -40,7 +40,7 @@ export interface LibraryToolbarProps {
  * 全部标签、每个标签有多少素材、并直接点一下就筛，那是一个独立的标签条
  * （`LibraryTagBar`），不是塞在筛选行里的第三个控件。
  *
- * 上传与封装只在「全部素材」「个人」出现：草稿箱的内容来自生成入库，回收站
+ * 上传与新建封装只在「全部素材」「个人」出现：草稿箱的内容来自生成入库，回收站
  * 里的东西不该再被建封装——把按钮留在那儿只会让人点出一个 404。
  */
 export function LibraryToolbar(props: LibraryToolbarProps) {
@@ -109,7 +109,10 @@ export function LibraryToolbar(props: LibraryToolbarProps) {
                   disabled={props.busy}
                   onClick={props.onPack}
                 >
-                  封装
+                  {/* 类型筛选里已经有一档叫「封装」，这里再叫「封装」就成了
+                      同一行两个同名按钮：一个筛、一个建。叫「新建封装」既区分
+                      动作与筛选，也与旁边的「新建文本」并排成一套。 */}
+                  新建封装
                 </Button>
                 <Button
                   size="sm"

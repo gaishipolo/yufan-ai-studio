@@ -5,7 +5,7 @@
 `parent_id == ""` 是一级，非空是它旗下的二级，**固定两级、禁止三级**。
 一级是「分组」，二级是真正能打在素材上的词；但有子级的一级不再是叶子，
 所以打标守卫拦的是「**有子标签的标签**」而不是「所有一级」——否则存量里
-「音乐」「AI生成」「封装」这些孤立的一级会一夜之间变成看得见却打不上的死词。
+「音乐」「AI生成」这些孤立的一级会一夜之间变成看得见却打不上的死词。
 
 由此带来三个必须同一套口径的地方，错一处就会出现「标签旁写 8、点进去只有 3 条」：
 
@@ -46,10 +46,8 @@ from modules.library.schema import (
 )
 
 __all__ = [
-    "PACK_TAG_NAME",
     "TagService",
     "add_asset_tags",
-    "ensure_tag",
     "expand_tag_ids",
     "remove_asset_tags",
     "set_asset_tags",
@@ -57,13 +55,6 @@ __all__ = [
     "tag_ids_by_asset",
     "tag_ids_of_assets",
 ]
-
-#: 封装创建时自动打上的标签名。
-#:
-#: 为什么用标签而不是留一个 `kind=pack` 的筛选项：用户要的是「按封装找」这件事，
-#: 标签本来就可筛选、可改名、可组合，而 `kind` 是类型维度——把封装塞进类型筛选，
-#: 它会和「成片 / 图片 / 音频」并列，看起来像第四种素材，而它其实是个容器。
-PACK_TAG_NAME = "封装"
 
 
 def to_tag_out(row: LibraryTag, parent_name: str | None = None) -> LibraryTagOut:
@@ -75,23 +66,6 @@ def to_tag_out(row: LibraryTag, parent_name: str | None = None) -> LibraryTagOut
         parent_name=parent_name,
         depth=2 if row.parent_id else 1,
     )
-
-
-async def ensure_tag(session: AsyncSession, name: str, created_by: str) -> LibraryTag:
-    """按名字取**一级**标签，没有就建。与 `TagService.create` 同一个幂等口径。
-
-    只给系统自动标签用（`封装`）；`where(parent_id == "")` 是刻意的：允许不同
-    一级下有同名二级之后，光按名字查会把某个系列下的词误当成全站的那一个。
-    """
-    row = await session.scalar(
-        select(LibraryTag).where(LibraryTag.name == name, LibraryTag.parent_id == "")
-    )
-    if row is not None:
-        return row
-    row = LibraryTag(name=name, created_by=created_by)
-    session.add(row)
-    await session.flush()
-    return row
 
 
 async def expand_tag_ids(session: AsyncSession, tag_ids: Sequence[str]) -> list[str]:
@@ -192,7 +166,12 @@ async def sync_pack_tags(
 
     ## 口径（写时合并，不做实时联动）
 
-    - `base` 给了就是「整体替换」的基准（建封装时用：`封装` + 用户手选的标签）；
+    **不再自动打「封装」标签**（2026-11-14）：那是「这是个封装」这件事的**状态**，
+    已经由 `library_assets.kind = "pack"` 表达，而类型筛选现在有「封装」这一档。
+    写成标签的代价很具体：标签是用户可编辑的词表，卡片上的 × 一点就没了，之后这个
+    封装在任何筛选项里都找不到（只剩「全部」）。状态不能用可编辑词表表达。
+
+    - `base` 给了就是「整体替换」的基准（建封装时用：用户手选的标签）；
       没给就读出封装当前标签，在它上面**只增不减**。
     - 两种情形都会再并上成员标签的并集。所以封装的标签是真数据、能像普通素材
       一样被 × 去掉或 + 加上；不做「读的时候临时拼成员标签」那一套——那样
@@ -213,7 +192,7 @@ async def sync_pack_tags(
     wanted = list(dict.fromkeys([*current, *inherited]))
     added = len([tag_id for tag_id in inherited if tag_id not in current])
     if not dry_run and (base is not None or added):
-        # 合并的是「成员已有的绑定」与自动的 `封装` 标签，不是用户在界面上打标。
+        # 合并的是「成员已有的绑定」，不是用户在界面上打标。
         # 某个成员在两级改造前挂过一级标签、之后那个一级成了分组，不能因此
         # 让整个封装创建失败 —— 系统内部合并不做分组校验。
         await set_asset_tags(session, pack_id, wanted, reject_groups=False)

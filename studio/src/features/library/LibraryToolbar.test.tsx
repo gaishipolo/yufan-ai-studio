@@ -60,15 +60,24 @@ describe('LibraryToolbar · 一级入口', () => {
     expect(props.onView).toHaveBeenCalledWith('drafts');
   });
 
-  it('默认落地页「全部素材」也有上传/封装，草稿箱与回收站没有', () => {
+  it('默认落地页「全部素材」也有上传/新建封装，草稿箱与回收站没有', () => {
     const { unmount } = renderToolbar();
     expect(screen.getByRole('button', { name: '上传' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '封装' })).toBeInTheDocument();
+    // 动作叫「新建封装」：类型筛选里另有一档「封装」，同名两个按钮会让人分不清
+    // 哪个是筛、哪个是建（这也是它改名而不是筛选改名的原因）。
+    expect(screen.getByRole('button', { name: '新建封装' })).toBeInTheDocument();
     unmount();
 
     renderToolbar({ view: 'trash' });
     expect(screen.queryByRole('button', { name: '上传' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: '封装' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '新建封装' })).not.toBeInTheDocument();
+  });
+
+  it('类型筛选里有一档「封装」，和成片/图片/音频/文本并列', () => {
+    const { props } = renderToolbar();
+    const tab = screen.getByRole('button', { name: '封装' });
+    tab.click();
+    expect(props.onKind).toHaveBeenCalledWith('pack');
   });
 
   it('「新建文本」与上传同显隐，点击回传一次', async () => {

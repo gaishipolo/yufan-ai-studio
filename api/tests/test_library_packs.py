@@ -428,39 +428,58 @@ def test_trashed_member_is_not_readable_through_shared_pack(
     )
 
 
-def test_pack_gets_the_pack_tag_automatically(client: TestClient, api: str) -> None:
-    """类型筛选里没有「封装」这一档，找封装靠这个标签。
+def test_pack_is_reachable_by_the_kind_filter_not_a_tag(
+    client: TestClient, api: str
+) -> None:
+    """「这是个封装」是 `kind` 的事实，不是用户词表里的一个词。
 
-    标签是全局词表：两个封装共用同一条，不是每个封装各建一条同名的。
+    过去靠创建时自动打的「封装」标签找封装，理由写在 `tags.PACK_TAG_NAME` 旁边：
+    「类型筛选里没有『封装』这一档」。现在有了，两条路的差别就露出来了 ——
+    标签可被用户 × 掉，× 完之后这个封装在「图片 / 视频 / 音频 / 文本」里全都
+    筛不到，只剩「全部」能翻到，而它恰恰是那些素材唯一的容器。
+
+    这条同时守「类型筛选是个真正的划分」：`kind` 各档相加必须等于总数，
+    否则就有一批东西只能靠「全部」翻页找（改动前 40 条里有 6 条是这样）。
     """
     admin = admin_headers(client)
     owner, owner_h = make_user(client, admin, LIB_RW)
-    first = upload_image(client, api, owner_h, name="tag-a.png", color="plum")
-    second = upload_image(client, api, owner_h, name="tag-b.png", color="wheat")
+    first = upload_image(client, api, owner_h, name="kind-a.png", color="plum")
+    second = upload_image(client, api, owner_h, name="kind-b.png", color="wheat")
 
-    first_pack = _create_pack(
-        client, api, owner_h, {"name": "带标签 1", "assetIds": [first["id"]]}
+    pack = _create_pack(
+        client, api, owner_h, {"name": "按类型找封装", "assetIds": [first["id"]]}
     ).json()["data"]
-    second_pack = _create_pack(
-        client, api, owner_h, {"name": "带标签 2", "assetIds": [second["id"]]}
-    ).json()["data"]
+    assert pack["tags"] == [], "封装不该再被自动打上标签"
 
-    def pack_tag(pack: dict) -> str:
-        names = [tag["id"] for tag in pack.get("tags") or [] if tag["name"] == "封装"]
-        assert names, f"封装没有自动打上「封装」标签: {pack.get('tags')}"
-        return names[0]
+    def total(**params: str) -> int:
+        response = client.get(
+            f"{api}/library/assets",
+            params={"library": "personal", "pageSize": 100, **params},
+            headers=owner_h,
+        )
+        assert response.status_code == 200, response.text
+        return response.json()["data"]["total"]
 
-    assert pack_tag(first_pack) == pack_tag(second_pack)
-
-    # 按标签能筛出这两条（类型筛选已经不含封装，标签是唯一入口）
-    tag_id = pack_tag(first_pack)
-    response = client.get(
+    listed = client.get(
         f"{api}/library/assets",
-        params={"library": "personal", "tagIds": [tag_id], "pageSize": 100},
+        params={"library": "personal", "kind": "pack", "pageSize": 100},
         headers=owner_h,
     )
-    ids = {row["id"] for row in response.json()["data"]["items"]}
-    assert {first_pack["id"], second_pack["id"]} <= ids
+    ids = {row["id"] for row in listed.json()["data"]["items"]}
+    assert pack["id"] in ids
+
+    images = client.get(
+        f"{api}/library/assets",
+        params={"library": "personal", "kind": "image", "pageSize": 100},
+        headers=owner_h,
+    )
+    # 图片档里只剩「没被装进封装」的那一张：成员不单列，封装自己也不在图片档
+    assert {row["id"] for row in images.json()["data"]["items"]} == {second["id"]}
+
+    # 封装的成员不单列（`hidden_by_pack_clause`），所以个人库正好两条：
+    # 一个封装 + 一个还散着的图。各档相加必须等于它。
+    assert total() == 2
+    assert total(kind="pack") + total(kind="image") == total()
 
 
 def test_selection_still_offers_packed_members(client: TestClient, api: str) -> None:

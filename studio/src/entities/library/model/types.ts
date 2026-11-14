@@ -110,12 +110,22 @@ export function viewAllowsCreate(view: LibraryView): boolean {
  * 以为它是和「成片 / 图片 / 音频」并列的类型；而且封装创建后自动带上「封装」
  * 标签，按标签筛已经能找全，多一个入口只会两处口径。
  */
+/**
+ * 类型筛选。**封装也是这一档里的一项**（2026-11-14）。
+ *
+ * 它曾被排除在外，改由创建时自动打的「封装」标签代替（理由：「封装是个容器，
+ * 和成片并列看起来像第四种素材」）。代价是那个标签可被用户×掉 —— × 完这个
+ * 封装在图片/视频/音频/文本里全都筛不到，只剩「全部」能翻到，而它正是那些
+ * 素材唯一的容器。**状态不能写在可编辑的词表里**：`kind` 是行的事实，标签是
+ * 用户的词。现在这五档相加正好等于「全部」。
+ */
 export const KIND_OPTIONS: ReadonlyArray<{ value: KindFilter; label: string }> = [
   { value: 'all', label: '全部' },
   { value: 'video', label: '成片' },
   { value: 'image', label: '图片' },
   { value: 'audio', label: '音频' },
   { value: 'text', label: '文本' },
+  { value: 'pack', label: '封装' },
 ];
 
 export const SORT_OPTIONS: ReadonlyArray<{ value: LibrarySortKey; label: string }> = [
