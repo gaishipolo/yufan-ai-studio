@@ -7,8 +7,9 @@ import asyncio
 import json
 from pathlib import Path
 
-from db.session import get_session_factory
 from modules.identity.asset_roles import affected_users, apply, preview
+
+from db.session import get_session_factory
 
 
 async def run() -> None:

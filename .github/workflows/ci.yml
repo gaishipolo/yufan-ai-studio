@@ -152,10 +152,14 @@ jobs:
           APP_ENV: dev
           SETTINGS_ENV_FILE: ./.ci-no-such.env
           DB_URL: postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/app_ci
+        # 降级只回到「不可降级」的那道迁移 `b8e4c1f90d27`（下线替换链与旧封装表：
+        # 11 张表的数据随之消失，它的 downgrade 故意 raise）。回到它 = 把其后的
+        # 可逆迁移走一遍下行再升回来；再往下走没有意义，只会得到一句「降级成功但
+        # 数据没了」的谎话。哪天又出现不可逆迁移，把这里的锚点换成那道。
         run: |
           alembic upgrade head
           alembic check
-          alembic downgrade base
+          alembic downgrade b8e4c1f90d27
           alembic upgrade head
 
   frontend:
