@@ -136,14 +136,23 @@ class SpecPublishOut(CamelModel):
 
 
 class SpecCompileIn(StrictIn):
-    """填表结果：`{slotKey: [assetId…]}`。
+    """填表结果：`{slotKey: [assetId…]}`，可带一份改写后的可编辑段提示词。
 
     `source=pack` 的槽位传一个封装 id；`source=asset` 的槽位按用户挑选顺序传。
     `version` 为空表示用当前发布版本。
+
+    `promptOverride` 是**填表时改写的 `editable` 段**（`locked` 段永不可改）。
+    不传 = 用发布版本里那份原文。模板的 `editable` 为空（提示词全固定）时传它会 400 ——
+    那是模板作者明确关掉的入口，不该由调用方绕开。
     """
 
     version: int | None = Field(default=None, ge=1)
     slot_values: dict[str, list[str]] = Field(default_factory=dict)
+    prompt_override: str | None = Field(
+        default=None,
+        max_length=20000,
+        description="改写后的可编辑段提示词；`locked` 段不受影响",
+    )
 
 
 class CompiledSlotOut(CamelModel):

@@ -14,7 +14,7 @@
 | 仓库 / 分支 | `https://github.com/gaishipolo/yufan-ai-studio` · `main` |
 | HEAD | 本地领先 `origin/main`：`3aaf40f` 起多笔**未推送**（含「任务中心接生图」与「模板封装迁移阶段 A/B/C1」，推送前先问用户）；笔数以 `git rev-list --count origin/main..HEAD` 为准，hash 见 `git log --oneline origin/main..HEAD`。未跟踪的只有 `var/`、临时脚本（如 `var_fix_fe.py`）、快捷方式 `.lnk`、`vite.config.ts.timestamp-*.mjs` 与用户私有的 `EXCHANGE_TOPICS_2026-11-12.md`，都不该进提交 |
 | CI | 此前连续多轮全绿（含 `bc0940e`）；本轮推送后照 §4 核对。PG 迁移仍在观察期（`continue-on-error`） |
-| 本机门禁 | 本轮（2026-11-14 真机实测封装链）改 `modules/template_pack/manifest_service.py`，按 §3.1 定级 **`targeted`**：4 个测试文件 **89 passed / 0 failed**；`ruff check src tests` 0；`mypy --platform win32` 293 文件 0；`export-openapi --check` 四份无差异（接口零变化）。前端本轮未改代码（上一笔 `dad6873` 的 `npm run verify` 全绿） |
+| 本机门禁 | 本轮（2026-11-14 模板库填表页 P2）拆两段：**后端**改 `spec_schema` / `spec_service`（编译入参加 `promptOverride`）+ 3 条用例，按 §3.1 定级 **`targeted`**：8 个测试文件 **127 passed / 0 failed**；`ruff` 0；`mypy --platform win32` 300 文件 0；`export-openapi` 重新生成后 `--check` 四份无差异（新增可选入参字段，接口路径未变）。**前端**新增 `/templates/library` 页面 + `taskPayload` 映射：`npm run verify` 全绿（typecheck + lint + **670** 条 vitest + build），`gen:routes` 13 条 / `gen:mock-coverage` 82 端点无漂移。上一轮 P1 收尾定级 `targeted`：6 文件 105 passed |
 | 规模 | 12 个业务模块 · **118 条路径 / 148 个端点**（文本资产 +7）· **57 个权限码**（本轮未新增）· **4 份**契约生成物 |
 | 后端 | `api/.venv/Scripts/app.exe serve --reload` → 8080，前缀 **`/api/v1`**（裸 `/health` 会返回 40400） |
 | 前端 | `cd studio && npm run dev` → 5173，`/api` 已代理到 8080 |
@@ -70,6 +70,7 @@
 
 | 本轮 | **模板封装页面 + 四项补齐**（2026-11-14）：新增 `/templates/manifests`（侧边栏「模板封装」，与「模板库」并列的第二条路由，守卫 `template_pack:read`）—— 新建/编辑配置、选原片与参考图（复用 `/library/selection`，不另造素材目录）、素材包可新建或复用已发布包、写功能提示词、预检 / 保存草稿 / 保存并发布，发布回执给可点的工作台深链（`/templates?sourceId=&videoTemplateId=&kind=`，工作台本来就按这三个参数还原选择） | 按钮按 `template_pack:create` / `template_pack:publish` 隐藏（只读用户仍能看列表）；参考图与功能块可拖动改序，**顺序就是契约**：参考图次序决定 `{{Mixed N}}` 编号、也就是 `mediaOrder`，功能次序决定卡片排列；每张参考图可填逐图说明，投影时落到素材包绑定的 `description`。页面上不写操作指引，缺什么由服务端预检逐条报 |
 | 本轮 | **真机实测封装链（用资产库现有素材）**（2026-11-14）：连本地 PG + MinIO 起后端，用 `我穿的是米兰之夜.mp4`（6.0s、含音轨）+ 6036 系列两张产品图新建素材包、复用已发布人物包，走完 预检 → 保存 → 发布 → 投影 → 准备替换：`/replacement-runs` 返回 `prepared`、`promptMode=fixed`、`inputSummary` 三张输入各带 `usage`（逐图说明拼在用途说明之后）。实测揪出一个真缺陷：回执 `workbenchPath` 的 `kind` 用的是 `function.kind or "product"`，人物包被说成产品包 —— 改为与幂等投影同源的 `_kind_of()`（scene 看 `scenePromptDefault`，其余看素材包 kind），补 `test_workbench_path_kind_follows_pack_not_function` | 另一个「疑似缺陷」核实**不是**：模板 `rules.scopeOptions` 为空时工作台不显示范围控件（`showScope = boundTemplate ? availableScopes.length > 0 : true`），后端空对空直接放行；我第一次 curl 手填了`worn` 才撞 400，是调用方式错。**别给后端加「空即回落素材包范围」的兼容** —— 会破坏 `selectable_scope=False` 那组用例的语义 |
+| 本轮 | **模板库填表页（P2）**（2026-11-14）：新增 `/templates/library`「模板库」——左列已发布模板卡片、右栏就地填表（`fixed` 只读缩略图 / `user` 走素材或封装选择器 / 固定段灰显不可编辑 / 可编辑段 textarea），提交 = `compile` → 字段摊平 → `POST /tasks`；原 `/templates` 的导航名改成「替换工作台」以免与新「模板库」混淆（P3 它下线） | 页面无本地规则：数量上下限、可读性、编号展开仍在服务端。两道防"静默丢"：`params` 里出现 `/tasks` 表达不了的键（`size`/`count`）**报错不丢**；时长缺省取模型默认档、两处都没有才报错，不编 5 秒。`compile` 新增 `promptOverride`（只改 `editable` 段；`locked` 永不可改；模板 EDITABLE 为空时 400；写 `{{Mixed N}}` 也 400）。真实素材实测：固定原片 + 3030粉 封装 → `{{Mixed 1..4}}`、任务 `queued`（6 秒 / 9:16 / 4 张参考） |
 
 | 变化 | 谁受影响 | 说明 |
 |---|---|---|

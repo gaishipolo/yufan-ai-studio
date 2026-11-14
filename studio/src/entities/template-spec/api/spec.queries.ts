@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSessionStore } from '@/shared/access/session';
+import type { SpecCompileIn } from '@/shared/api/schema';
 import { specApi } from './spec.api';
 
 /** 列表与详情共用一个前缀；发布/停用会改状态，失效范围覆盖同前缀。 */
@@ -14,6 +15,23 @@ export function useSpecs(status = '') {
   return useQuery({
     queryKey: specKeys.list(owner, status),
     queryFn: () => specApi.list({status: status || undefined, pageSize: 100}),
+  });
+}
+
+/** 模板库（填表）读的是**已发布**的规格，与「我的草稿」不是一个集合。 */
+export function usePublishedSpecs() {
+  const owner = useSessionStore(s => s.subject.id);
+  return useQuery({
+    queryKey: [...specKeys.all(owner), 'published'],
+    queryFn: () => specApi.published({pageSize: 100}),
+  });
+}
+
+/** 编译是纯映射（不落库、不建任务），所以没有失效范围要管。 */
+export function useSpecCompile() {
+  return useMutation({
+    mutationFn: ({key, payload}: {key: string; payload: SpecCompileIn}) =>
+      specApi.compile(key, payload),
   });
 }
 

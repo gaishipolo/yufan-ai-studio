@@ -2,7 +2,7 @@
 
 # 前端路由清单
 
-共 12 条路由，来自 10 个模块。
+共 13 条路由，来自 10 个模块。
 
 > 路由由 `src/app/registry/index.ts` 的 `import.meta.glob` 自动发现；
 > 新增模块只需写 `module.ts`，本文件由 `npm run gen:routes` 重新生成。
@@ -17,7 +17,8 @@
 | `/studio` | studio | shell | `catalog:read` | 创作 / 生成工作台 | ✓ |
 | `/system/user-access` | user-access | shell | `identity:read` | 系统管理 / 用户与权限 | — |
 | `/tasks` | task-center | shell | `task:read` | 资产与数据 / 任务中心 | ✓ |
-| `/templates` | templates | shell | `template:read` | 模板与镜头 / 模板库 | ✓ |
+| `/templates` | templates | shell | `template:read` | 模板与镜头 / 替换工作台 | ✓ |
+| `/templates/library` | templates | shell | `template_pack:read` | 模板与镜头 / 模板库 | — |
 | `/templates/manifests` | templates | shell | `template_pack:read` | 模板与镜头 / 模板封装 | — |
 | `/templates/specs` | templates | shell | `template_pack:read` | 模板与镜头 / 模板规格 | — |
 | `/usage` | usage | shell | — | 资产与数据 / 用量看板 | — |
@@ -28,7 +29,8 @@
   - 生成工作台 → `/studio`
   - 生图 → `/image`
 - **模板与镜头**（order 2）
-  - 模板库 → `/templates`
+  - 模板库 → `/templates/library`
+  - 替换工作台 → `/templates`
   - 分镜模板库 → `/storyboards`
   - 模板封装 → `/templates/manifests`
   - 镜头库 → `/shots`
@@ -51,6 +53,6 @@
 | storyboards | 1 | 1 | 0 | 0 |
 | studio | 1 | 1 | 1 | 0 |
 | task-center | 1 | 1 | 1 | 0 |
-| templates | 3 | 3 | 1 | 0 |
+| templates | 4 | 4 | 1 | 0 |
 | usage | 1 | 1 | 0 | 0 |
 | user-access | 1 | 1 | 0 | 0 |

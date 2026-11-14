@@ -305,3 +305,60 @@ def test_published_list_only_shows_published(client: TestClient) -> None:
     client.post(f"{API}/{draft['key']}/publish", headers=headers)
     after = client.get(f"{API}/published", headers=headers).json()["data"]
     assert draft["key"] in {item["key"] for item in after["items"]}
+
+
+def test_compile_applies_prompt_override(client: TestClient) -> None:
+    """填表时改写 `editable` 段：`locked` 段与编号都不受影响。"""
+    headers = _headers(client)
+    video, first, second = _media(client, headers)
+    draft = _draft(video, first, second)
+    _save(client, headers, draft)
+    client.post(f"{API}/{draft['key']}/publish", headers=headers)
+
+    body = client.post(
+        f"{API}/{draft['key']}/compile",
+        json={
+            "slotValues": {"hero": [first]},
+            "promptOverride": "把 {{slot:hero}} 换成同款米白色",
+        },
+        headers=headers,
+    )
+    assert body.status_code == 200, body.text
+    data = body.json()["data"]
+    # locked 段原样保留在最前，override 替换了 editable 段，编号仍然派生。
+    assert data["prompt"] == "8 秒 · 9:16 竖屏\n\n把 {{Mixed 2}} 换成同款米白色"
+
+
+def test_prompt_override_is_rejected_when_template_is_fixed(client: TestClient) -> None:
+    """`editable` 为空 = 作者关掉了改写入口，不是"随便写"。"""
+    headers = _headers(client)
+    video, first, second = _media(client, headers)
+    draft = _draft(video, first, second)
+    draft["prompt"] = {"locked": "固定画面描述 {{slot:hero}}", "editable": ""}
+    _save(client, headers, draft)
+    client.post(f"{API}/{draft['key']}/publish", headers=headers)
+
+    body = client.post(
+        f"{API}/{draft['key']}/compile",
+        json={"slotValues": {"hero": [first]}, "promptOverride": "我自己的描述"},
+        headers=headers,
+    )
+    assert body.status_code == 400
+    assert "不能修改" in body.json()["message"]
+
+
+def test_prompt_override_cannot_hardcode_numbers(client: TestClient) -> None:
+    """填表侧也拦 `{{Mixed N}}`：写死编号会在少填一张时整体错位。"""
+    headers = _headers(client)
+    video, first, second = _media(client, headers)
+    draft = _draft(video, first, second)
+    _save(client, headers, draft)
+    client.post(f"{API}/{draft['key']}/publish", headers=headers)
+
+    body = client.post(
+        f"{API}/{draft['key']}/compile",
+        json={"slotValues": {"hero": [first]}, "promptOverride": "把 {{Mixed 1}} 换掉"},
+        headers=headers,
+    )
+    assert body.status_code == 400
+    assert "不要直接写" in body.json()["message"]

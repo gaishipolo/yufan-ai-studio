@@ -3766,6 +3766,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 |---|---|---|---|
 | `version` | `number \| null` | 否 |  |
 | `slotValues` | `Record<string, string[]>` | 否 |  |
+| `promptOverride` | `string \| null` | 否 | 改写后的可编辑段提示词；`locked` 段不受影响 |
 
 **响应** `ApiResponse<SpecCompileOut>`（前端取 `res.data`）
 
@@ -5668,15 +5669,20 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 
 ### `SpecCompileIn`
 
-填表结果：`{slotKey: [assetId…]}`。
+填表结果：`{slotKey: [assetId…]}`，可带一份改写后的可编辑段提示词。
 
 `source=pack` 的槽位传一个封装 id；`source=asset` 的槽位按用户挑选顺序传。
 `version` 为空表示用当前发布版本。
+
+`promptOverride` 是**填表时改写的 `editable` 段**（`locked` 段永不可改）。
+不传 = 用发布版本里那份原文。模板的 `editable` 为空（提示词全固定）时传它会 400 ——
+那是模板作者明确关掉的入口，不该由调用方绕开。
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `version` | `number \| null` | 否 |  |
 | `slotValues` | `Record<string, string[]>` | 否 |  |
+| `promptOverride` | `string \| null` | 否 | 改写后的可编辑段提示词；`locked` 段不受影响 |
 
 ### `SpecCompileOut`
 

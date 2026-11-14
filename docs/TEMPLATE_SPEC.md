@@ -254,11 +254,19 @@
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | `GET` | `/template-specs/published` | 模板库卡片：已发布版本的快照（slots + 两段 prompt + model + params），不返回 draft |
-| `POST` | `/template-specs/{key}/compile` | **纯函数式**：入参 `{version?, slotValues}`，出参见 §6.5。不落库、不调 task |
+| `POST` | `/template-specs/{key}/compile` | **纯函数式**：入参 `{version?, slotValues, promptOverride?}`，出参见 §6.5。不落库、不调 task |
 
 `compile` 之所以存在：展开与校验是**模板语义**，不能下放前端（否则编号规则有两份），也不该让封装去调 task（跨模块）。它只做映射，不产生副作用，天然可缓存、可单测。
 
-模板库拿到 `compile` 出参后，由前端直接 `POST /tasks`。这是一次纯转发，没有业务判断。
+模板库拿到 `compile` 出参后，由前端直接 `POST /tasks`。有一道**字段摊平**：`/tasks` 的
+`durationSec` / `aspectRatio` / `stylePreset` 是顶层字段、没有自由 `params`，所以
+`params` 里出现这三个以外的键（生图模型的 `size` / `count`）必须**报错而不是丢掉** ——
+丢掉等于按模型默认值跑，而模板里明明写了。映射只在前端一处
+（`features/template-library/taskPayload.ts`），单测直接断言它产出的形状。
+
+`promptOverride` 是填表时改写的 `editable` 段，三条硬口径（服务端判，不信调用方）：
+`locked` 段永不可改；模板的 `editable` 为空（作者关掉了入口）时传它 400；
+override 里写 `{{Mixed N}}` 也 400（编号是派生的，写死会在少填时错位）。
 
 ## 9. 封装页 UI 规格（按参考截图）
 
@@ -301,7 +309,22 @@
   `source=asset` → `/library/selection`（按 `type` 过滤，`min/max` 决定单选或多选）；
   `source=pack` → 资产库封装选择器（只列同 `type` 成员的封装），选中后展示「N 张」与角色列表；
 - 提交按钮在 `min` 未满足时禁用，旁边说明缺哪个槽位（不写冗长引导语）；
-- 提交 = `compile` → `POST /tasks` → 跳工作台或任务中心。
+- 提交 = `compile` → **字段摊平** → `POST /tasks` → 提示 + 「去任务中心」。
+
+### 10.1 已落地的形态（2026-11-14，`/templates/library`）
+
+两栏常驻：左列卡片（名称 / 版本 / 槽位数 / 固定数），右栏就地填表。换模板只换右栏，
+不跳页 —— 填到一半不会丢上下文。要点：
+
+- **卡片不伪造封面**：spec 没有封图字段，用 key 生成稳定渐变，不拿"第一张参考图"
+  冒充模板示意图（那会让人以为模板长那样）。
+- 槽位卡片左上角是序号（= 编号顺序），`fixed` 显示缩略图 + 「封装固定」且**没有选择按钮**，
+  `user` 显示「选择 / 更换」；封装槽位只显示「N 张」与首图，成员顺序不在这里展开。
+- 固定段灰显 + 「不可编辑」；可编辑段是一个 textarea，改动才随 `promptOverride` 发出
+  （没改就不发，服务端用发布版本原文）。
+- 底部按钮在必填未满足时禁用并说明缺几项 —— 这是提交前置条件，不是业务规则；
+  数量上下限、可读性、编号展开仍然只有服务端一份。
+- 模型与参数**只读展示**：模板定的是模板定的。要改参数回规格页改模板。
 
 ## 11. 迁移与分期
 
@@ -321,7 +344,7 @@
 | 期 | 内容 | 验收 |
 |---|---|---|
 | **P1 定表** | `core/` 加 `InputSlot`/`TemplateSpec` 词表与编译纯函数；三张表（迁移 `d4a9f1c73b20`）；六个接口（含 `compile`）；封装页改成 §9 单页 | `compile` 输出与旧模板的 `mediaOrder` **逐项等价**（`tests/test_template_spec_equivalence.py`，已用"注入重排"验过会红）；预检挡住所有非法组合（§12）；**不写 `video_templates`、也不假装能读**（见下方"接读为什么不在 P1"） |
-| **P2 填表** | 模板库填表页（`source=pack` 的槽位走资产库封装选择器）；`compile → /tasks` 走通 | 四种组合各跑通一次：纯提示词（`agnes-video-2.5-flash`，maxRefs=0）、多图（`agnes-image-*`，maxRefs=4）、图+视频、加音频附件；另加一条"选一个资产库封装填一个槽位" |
+| **P2 填表**（页面已落地） | 模板库填表页 `/templates/library`（两栏：左选模板 / 右填素材；`source=pack` 走封装选择器；`promptOverride` 只在改动时发）；`compile → 摊平 → /tasks` 已用真实素材跑通（`queued`、6 秒、4 张参考） | 四种组合各跑通一次：纯提示词（`agnes-video-2.5-flash`，maxRefs=0）、多图（`agnes-image-*`，maxRefs=4）、图+视频、加音频附件；另加一条"选一个资产库封装填一个槽位"。**已完成**：固定原片 + 封装槽位（真实素材，任务 `queued`）；其余三种未跑 |
 | **P3 接读 + 迁移 + 删表 + capability 化** | 替换链的 `template-runtime` 端口改读 spec 版本（旧 `video_templates` 只读）；**旧数据迁移**（上表那套映射，含旧素材包 → 资产库封装）；删 `video_templates` / `template_packs*`；替换能力作为 task 的一个 capability；`supportedScopes`/`wardrobeMode` → `spec.attributes`；成片复核 → 任务中心；`modules/template` 的编排与物化下线。细则见 §11.1 | §11.1 的三条判据全绿；替换业务与历史档案不中断；`prepare` 用 spec 驱动的模板跑通；迁移出的 spec 与旧模板 `mediaOrder` 逐项等价 |
 
 #### 接读为什么不在 P1（2026-11-14 实现时确认）

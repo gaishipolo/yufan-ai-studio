@@ -20,6 +20,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -483,9 +484,28 @@ async def compile_for(
         prompt=PromptParts(locked=row.prompt_locked, editable=row.prompt_editable),
         slots=tuple(_slot_core(item) for item in slots),
     )
+    if payload.prompt_override is not None:
+        spec = _with_override(spec, payload.prompt_override)
     fills = await _fills(session, actor, spec, payload.slot_values)
     compiled = compile_spec(spec, fills)
     return _compile_out(version_no, compiled, spec, fills)
+
+
+def _with_override(spec: TemplateSpec, text: str) -> TemplateSpec:
+    """把填表时改写的提示词换进 `editable` 段。
+
+    三条口径，都是为了"模板作者定的边界不许被调用方绕开"：
+
+    1. `locked` 段永不可改 —— 它对应封装时写死的画面约束；
+    2. 模板的 `editable` 为空 = 作者关掉了这个入口，传 override 就 400（不是静默忽略）；
+    3. override 里不许写 `{{Mixed N}}` —— 编号是编译派生的，写死会在少填时错位
+       （与 `validate_spec()` 同一条判据，只是这里发生在填表侧）。
+    """
+    if not spec.prompt.editable.strip():
+        raise BadRequest("该模板的提示词由封装固定，不能修改")
+    if "{{Mixed" in text:
+        raise BadRequest("提示词里不要直接写 {{Mixed N}}，用 {{slot:key}} 引用槽位")
+    return replace(spec, prompt=PromptParts(locked=spec.prompt.locked, editable=text))
 
 
 def _slot_core(row: TemplateSpecSlot) -> InputSlot:
