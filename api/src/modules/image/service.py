@@ -75,9 +75,15 @@ async def _resolve_references(
     """
     limit = max(0, spec.max_references)
     if limit == 0:
-        raise BadRequest(
-            f"模型 {spec.label} 不支持参考图（纯文生图），请换一个支持图生图 / 多图合成的模型"
-        )
+        # 只有「真的带了参考图」才是错。纯文生图模型（`max_references == 0`，
+        # 比如 echo 的示例模型）不带参考图时是正常请求，早先这里无条件 raise，
+        # 结果是这类模型的**每一次生图都 400**。
+        if asset_ids:
+            raise BadRequest(
+                f"模型 {spec.label} 不支持参考图（纯文生图），"
+                "请换一个支持图生图 / 多图合成的模型"
+            )
+        return []
     refs = await resolve_reference_images(session, actor, asset_ids, limit=limit)
 
     references: list[dict[str, str]] = []

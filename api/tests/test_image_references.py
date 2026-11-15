@@ -208,6 +208,16 @@ def test_text_to_image_model_rejects_references(client: TestClient) -> None:
         asyncio.run(_resolve([asset["id"]], _spec(max_references=0), actor))
 
 
+def test_text_to_image_model_without_references_is_allowed(client: TestClient) -> None:
+    """不带参考图时，`max_references=0` 是**正常请求**，不是错误。
+
+    上限校验曾经写在「有没有真的带参考图」之前且无条件 raise，于是这类模型的
+    每一次生图都 400 —— 能力声明成「纯文生图」，结果是「纯不能生图」。
+    """
+    _, actor = _login(client)
+    assert asyncio.run(_resolve([], _spec(max_references=0), actor)) == []
+
+
 def test_too_many_references_is_rejected(client: TestClient) -> None:
     headers, actor = _login(client)
     asset = upload_image(client, API, headers)
