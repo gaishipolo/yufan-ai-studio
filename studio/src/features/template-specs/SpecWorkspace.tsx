@@ -287,7 +287,10 @@ export function SpecWorkspace() {
     return (
       <section className="flex flex-col gap-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="flex items-center gap-0.5 rounded-full border border-line bg-panel p-0.5">
+          {/* 分段控件：外圈是一层凹槽（软底 + 内描边），选中项是"浮起来的白片"。
+              以前是两颗胶囊共享一个圆角边框，选中只换字色 —— 在一排白卡上面几乎看不出
+              当前在哪一档。 */}
+          <div className="inline-flex items-center gap-0.5 rounded-xl bg-canvas/90 p-0.5 shadow-[inset_0_1px_2px_rgba(21,50,61,.06)] ring-1 ring-inset ring-[rgba(203,218,224,.8)]">
             {(
               [
                 ['list', '模板'],
@@ -302,21 +305,22 @@ export function SpecWorkspace() {
                   clear();
                 }}
                 className={cn(
-                  'rounded-full px-3 py-1 text-[11px] transition-colors',
+                  'rounded-[10px] px-3 py-[5px] text-[11px] transition-all duration-150',
                   view === value
-                    ? 'bg-primary/10 font-medium text-primary'
-                    : 'text-ink-mute hover:text-ink',
+                    ? 'bg-panel font-medium text-ink shadow-[0_1px_3px_rgba(21,50,61,.12)]'
+                    : 'text-ink-mute hover:text-ink-soft',
                 )}
               >
                 {label}
                 {value === 'trash' && (trash.data?.total ?? 0) > 0 && (
-                  <span className="ml-1 text-ink-mute">{trash.data?.total}</span>
+                  <span className="ml-1 tabular-nums text-ink-mute">{trash.data?.total}</span>
                 )}
               </button>
             ))}
           </div>
+          {/* 列表页只有这一个动作，给它实心：整页就一个焦点，不用读字也知道从哪开始。 */}
           {!trashed && (
-            <Button onClick={() => setDraft(blankSpec())}>
+            <Button variant="primary" onClick={() => setDraft(blankSpec())}>
               <Plus size={14} /> 新建模板
             </Button>
           )}
@@ -409,13 +413,15 @@ export function SpecWorkspace() {
             </span>
           </div>
           <div className="flex items-center gap-1.5">
+            {/* 三个动作的权重必须分开：一页只留一个实心按钮（保存并发布），
+                否则三颗长得一样的白按钮并排，用户每次都要读字才知道该点哪个。 */}
             <Button variant="ghost" disabled={busy} onClick={() => void submit('validate')}>
               预检
             </Button>
-            <Button variant="ghost" disabled={busy} onClick={() => void submit('save')}>
+            <Button variant="secondary" disabled={busy} onClick={() => void submit('save')}>
               保存草稿
             </Button>
-            <Button disabled={busy} onClick={() => void submit('publish')}>
+            <Button variant="primary" disabled={busy} onClick={() => void submit('publish')}>
               保存并发布
             </Button>
           </div>
@@ -506,11 +512,15 @@ export function SpecWorkspace() {
                       if (from >= 0) moveSlot(from, index);
                     }}
                     className={cn(
-                      'rounded-xl border p-3 transition-colors',
+                      // 槽位是「分区里的一块凹槽」：比卡片白底暗一档 + 内高光，
+                      // 里面那排输入框才是凸起来的。固定的槽位偏绿、可填的偏灰，
+                      // 颜色就是「这条要不要你管」的判据，不用再加标签。
+                      'rounded-xl border p-3 shadow-[inset_0_1px_0_rgba(255,255,255,.9)] transition-all',
                       fixed
-                        ? 'border-ok-line bg-ok-soft/50'
-                        : 'border-line-soft bg-panel-soft hover:border-line',
-                      drag?.key === slot.key && 'border-primary-line bg-primary-soft/60',
+                        ? 'border-ok-line bg-ok-soft/45'
+                        : 'border-line-soft bg-canvas/35 hover:border-line',
+                      drag?.key === slot.key &&
+                        'border-primary-line bg-primary-soft/60 shadow-card ring-1 ring-primary/15',
                     )}
                   >
                     <div className="mb-2 flex items-center justify-between">
@@ -767,7 +777,7 @@ function DemoCase({assetId, onClear}: {assetId: string | null; onClear: () => vo
   const detail = useLibraryDetail(assetId);
   if (!assetId) {
     return (
-      <div className="flex h-40 flex-col items-center justify-center gap-2 rounded-xl border border-line-soft bg-panel-soft">
+      <div className="flex h-40 flex-col items-center justify-center gap-2 rounded-xl border border-[rgba(211,224,229,.7)] bg-canvas/40 shadow-[inset_0_1px_0_rgba(255,255,255,.9)]">
         <span className="grid size-9 place-items-center rounded-full bg-panel text-ink-mute ring-1 ring-inset ring-line-soft">
           <ImageOff size={15} />
         </span>
@@ -816,8 +826,11 @@ function Section({
     ok: 'bg-ok',
   }[tone];
   return (
-    <div className="rounded-2xl border border-line bg-panel p-4 shadow-[0_1px_2px_rgba(16,42,55,0.04)]">
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+    // 分区卡片：标题单独做成一条"带子"（浅底 + 下边线），内容区是白的。
+    // 以前标题和内容同一片白，四块卡片只剩四根 1px 边框在区分——缩到 50% 看，
+    // 整页就是四块一样的方块。有带子之后，眼睛能先认出「这是哪一块」，再读内容。
+    <div className="overflow-hidden rounded-2xl border border-line bg-panel shadow-[0_1px_2px_rgba(16,42,55,0.04)]">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line-soft bg-gradient-to-r from-panel-soft to-panel px-4 py-2.5">
         <h3 className="flex items-center gap-2 text-[12.5px] font-semibold tracking-[.2px] text-ink">
           <span className={cn('h-3.5 w-[3px] rounded-full', bar)} />
           {title}
@@ -825,7 +838,7 @@ function Section({
         </h3>
         {extra && <div className="flex flex-wrap items-center gap-1">{extra}</div>}
       </div>
-      {children}
+      <div className="p-4">{children}</div>
     </div>
   );
 }
@@ -930,7 +943,16 @@ function SpecCard({
   const slotCount = item.draft?.slots?.length ?? item.latest?.slots?.length ?? 0;
   const model = item.draft?.model || item.latest?.model || '';
   return (
-    <div className="group flex flex-col overflow-hidden rounded-2xl border border-line-soft bg-panel transition-all duration-200 hover:border-line hover:shadow-card">
+    <div
+      className={cn(
+        // 卡片是「浮起来的一层」：静止就有一线投影，悬停再抬半像素。
+        // 只描边的话，浅色封面与白底会连成一片（案例图经常是浅色），
+        // 卡片边界得靠投影与封面内描边一起撑住。
+        'group flex flex-col overflow-hidden rounded-2xl border border-line-soft bg-panel',
+        'shadow-[0_1px_2px_rgba(16,42,55,.05)] transition-all duration-200',
+        'hover:-translate-y-0.5 hover:border-line hover:shadow-card',
+      )}
+    >
       <button
         type="button"
         onClick={onEdit}
@@ -942,6 +964,10 @@ function SpecCard({
           seed={item.key}
           className="aspect-[16/9] w-full"
           hoverPlay
+        />
+        <span
+          aria-hidden
+          className="pointer-events-none absolute inset-0 rounded-t-2xl ring-1 ring-inset ring-black/[.04]"
         />
         <span className="absolute left-2 top-2">
           {trashed ? (
@@ -973,20 +999,30 @@ function SpecCard({
         >
           {item.name}
         </button>
-        <p className="truncate text-[11px] text-ink-mute">
-          {trashed
-            ? `删除于 ${item.deletedAt ? new Date(item.deletedAt).toLocaleString() : '—'}`
-            : `${slotCount} 个槽位${model ? ` · ${model}` : ''}`}
+        <p className="flex items-center gap-1.5 truncate text-[11px] text-ink-mute">
+          {trashed ? (
+            `删除于 ${item.deletedAt ? new Date(item.deletedAt).toLocaleString() : '—'}`
+          ) : (
+            <>
+              <span className="shrink-0 tabular-nums">{slotCount} 个槽位</span>
+              {model && (
+                <>
+                  <span className="shrink-0 text-line-strong">·</span>
+                  <span className="truncate text-ink-soft">{model}</span>
+                </>
+              )}
+            </>
+          )}
         </p>
       </div>
 
-      <div className="mt-2 flex items-center gap-3 border-t border-line-soft px-3 py-2 text-[11px]">
+      <div className="mt-2 flex items-center gap-1 border-t border-line-soft px-2 py-1.5 text-[11px]">
         {trashed ? (
           <button
             type="button"
             disabled={busy}
             onClick={onRestore}
-            className="flex items-center gap-1 text-ink-soft transition-colors hover:text-primary disabled:opacity-50"
+            className="flex items-center gap-1 rounded-md px-1.5 py-1 text-ink-soft transition-colors hover:bg-primary-soft hover:text-primary disabled:opacity-50"
           >
             <RotateCcw size={11} /> 恢复
           </button>
@@ -995,7 +1031,7 @@ function SpecCard({
             <button
               type="button"
               onClick={onEdit}
-              className="font-medium text-primary transition-colors hover:text-primary-deep"
+              className="rounded-md px-1.5 py-1 font-medium text-primary transition-colors hover:bg-primary-soft hover:text-primary-deep"
             >
               编辑
             </button>
@@ -1004,7 +1040,7 @@ function SpecCard({
                 type="button"
                 disabled={busy}
                 onClick={onPublish}
-                className="text-ink-soft transition-colors hover:text-primary disabled:opacity-50"
+                className="rounded-md px-1.5 py-1 text-ink-soft transition-colors hover:bg-panel-soft hover:text-primary disabled:opacity-50"
               >
                 发布
               </button>
@@ -1014,7 +1050,7 @@ function SpecCard({
                 type="button"
                 disabled={busy}
                 onClick={onDisable}
-                className="text-ink-soft transition-colors hover:text-warn-deep disabled:opacity-50"
+                className="rounded-md px-1.5 py-1 text-ink-soft transition-colors hover:bg-warn-soft hover:text-warn-deep disabled:opacity-50"
               >
                 停用
               </button>
@@ -1023,7 +1059,7 @@ function SpecCard({
               type="button"
               disabled={busy}
               onClick={onRemove}
-              className="ml-auto text-ink-mute transition-colors hover:text-danger disabled:opacity-50"
+              className="ml-auto rounded-md px-1.5 py-1 text-ink-mute transition-colors hover:bg-danger-soft hover:text-danger disabled:opacity-50"
             >
               删除
             </button>
