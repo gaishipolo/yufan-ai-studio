@@ -337,12 +337,9 @@ def test_driver_is_auto_loaded_without_env_listing(client) -> None:  # noqa: ANN
 
 def test_channel_reports_missing_key_before_any_upload() -> None:
     """没配密钥要在**选渠道时**就说清楚，不能等用户点了「开始」才在上传阶段炸。"""
-    from infra.ai.base import InputPreparer
-
     cold = bailian.BailianProvider(
         settings=bailian.BailianSettings(api_key="", _env_file=None)
     )
-    assert isinstance(cold, InputPreparer)
     assert "密钥" in cold.unavailable_reason()
 
     ready = bailian.BailianProvider(

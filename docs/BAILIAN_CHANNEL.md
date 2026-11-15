@@ -2,10 +2,10 @@
 
 > 本渠道是 `drivers/` 里的单文件驱动（`modules/model_driver/drivers/bailian.py`），
 > 进程启动时自动载入——**没有启用清单可写**（旧文档里的 `AI_PROVIDERS` 已下线；同名但模型清单
-> 不同会启动报错，重复注册同理）。它比通用驱动多实现一个可选协议
-> `infra.ai.base.InputPreparer`：参考素材必须先上传到百炼自己的 OSS，因为 Wan
-> 只接受公网 URL 作素材，不认本地文件。协议说明见
-> [`MODEL_DRIVER_STANDARD.md`](MODEL_DRIVER_STANDARD.md) §2 / §11。
+> 不同会启动报错，重复注册同理）。它有自己的 `prepare_inputs()`：参考素材必须先
+> 上传到百炼自己的 OSS，因为 Wan 只接受公网 URL 作素材，不认本地文件。这一步由
+> 驱动的 `submit()` 调用，不是跨模块协议（详见
+> [`MODEL_DRIVER_STANDARD.md`](MODEL_DRIVER_STANDARD.md) §2）。
 
 替换工作台的「替换配置 → 模型渠道」可选择 LibTV、百炼 Wan 3.0 标准版或高速版。
 单条与批量准备均保存当次渠道；后续更改选择不会改变已保存任务的渠道。
