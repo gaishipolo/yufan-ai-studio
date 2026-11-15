@@ -330,3 +330,23 @@ def test_unknown_fill_key_is_rejected() -> None:
     spec = _spec(_source(), _user("hero", 1), editable="{{slot:hero}}")
     with pytest.raises(BadRequest, match="未知槽位"):
         compile_spec(spec, {"other": FilledSlot("other", (HERO,))})
+
+
+def test_reference_with_spaces_compiles_like_the_tight_form() -> None:
+    """`{{ slot:hero }}`（带空格）与 `{{slot:hero}}` 必须编译出同一个结果。
+
+    结构校验（`rules._SLOT_REF`）一直是容空格的，编译这边曾经不容：于是带空格的
+    引用**预检与发布都能过**，到用户在模板库点生成时才 400「引用写坏了」。
+    同一个形状两处两种口径，迟早踩到。
+    """
+    spec = _spec(
+        _source(),
+        _user("hero", 1),
+        locked="原片 {{ slot:source }}",
+        editable="主图 {{slot:hero }} 与 {{ slot:hero* }}",
+    )
+
+    out = compile_spec(spec, _fills(source=(VIDEO,), hero=(HERO,)))
+
+    assert out.prompt == "原片 {{Mixed 1}}\n\n主图 {{Mixed 2}} 与 {{Mixed 2}}"
+    assert out.slot_tokens["hero"] == ("{{Mixed 2}}",)

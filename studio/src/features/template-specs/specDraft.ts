@@ -109,7 +109,8 @@ export function rekeySlot(
 ): SpecSlotIn[] {
   const slot = slots[index];
   if (!slot || slot.type === nextType) return slots;
-  const used = new RegExp(`\\{\\{slot:${slot.key}(?:\\*|\\.\\d+)?\\}\\}`).test(prompt);
+  // 用共享正则判断「提示词里有没有引用这个槽位」：容空格版本，和后端一致。
+  const used = slotRefPattern(slot.key).test(prompt);
   if (used) return slots;
   const next = slots.slice();
   next[index] = {
@@ -190,10 +191,7 @@ export function stripSlotRefs(
   text: string,
   key: string,
 ): {text: string; count: number} {
-  const pattern = new RegExp(
-    `\\{\\{\\s*slot:${key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:\\*|\\.\\d+)?\\s*\\}\\}`,
-    'g',
-  );
+  const pattern = slotRefPattern(key);
   const count = (text.match(pattern) ?? []).length;
   if (count === 0) return {text, count};
   // 引用两边常各带一个空格（插入时补的），删掉后会把两处空格并成一处。
@@ -202,6 +200,23 @@ export function stripSlotRefs(
 
 /** 提示词里引用了哪些槽位 —— 给编辑器提示"这条引用指向谁"。 */
 export function referencedKeys(text: string): string[] {
-  const hits = text.matchAll(/\{\{slot:([a-z][a-z0-9_]{0,39})(?:\*|\.\d+)?\}\}/g);
+  const hits = text.matchAll(slotRefPattern());
   return [...new Set([...hits].map(match => match[1]))];
 }
+
+/**
+ * 提示词里引用某个槽位的正则（`{{slot:key}}` / `{{slot:key*}}` / `{{slot:key.2}}`）。
+ *
+ * **两边允许空格**（`{{ slot:key }}`）：后端结构校验用的就是容空格版本，编译器也
+ * 跟着容了。这里曾经写成不容空格的严格版，于是「带空格引用」在前端被当成"没被
+ * 引用"——改槽位类型时会把 key 改名，下一次保存被后端以「引用了不存在的槽位」
+ * 拒绝，而界面完全没提这次改名（2026-11-15 审查 3.4）。
+ *
+ * 只有一处定义：`referencedKeys` / `rekeySlot` / `stripSlotRefs` 全用它，
+ * 别再各写一份。
+ */
+function slotRefPattern(key?: string): RegExp {
+  const name = key ? key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') : '[a-z][a-z0-9_]{0,39}';
+  return new RegExp(`\\{\\{\\s*slot:${name}(?:\\*|\\.\\d+)?\\s*\\}\\}`, 'g');
+}
+

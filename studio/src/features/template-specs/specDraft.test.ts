@@ -127,6 +127,18 @@ describe('模板规格草稿', () => {
     expect(kept[0].key).toBe('image_1');
   });
 
+  it('带空格的引用也算「被引用」：改类型时不改名', () => {
+    // 后端结构校验与编译都容空格；前端曾经只认紧贴写法，于是把带空格引用当成
+    // 「没引用」→ 改类型时把 key 改名 → 保存被 400「引用了不存在的槽位」，
+    // 而界面完全没提这次改名（审查 3.4）。
+    const slots = [{...blankSlot(0), key: 'image_1', type: 'image' as const}];
+    for (const prompt of ['用 {{ slot:image_1 }} 合成', '用 {{slot:image_1 }}', '用 {{ slot:image_1}}']) {
+      expect(rekeySlot(slots, 0, 'video', prompt)[0].key).toBe('image_1');
+    }
+    // 删槽位同理：带空格的那几处也要一起清掉
+    expect(stripSlotRefs('{{ slot:hero }} 与 {{slot:hero }}', 'hero').count).toBe(2);
+  });
+
   it('已发布但没有草稿时，用最近发布版本还原草稿', () => {
     const out: TemplateSpecOut = {
       id: 'm1',

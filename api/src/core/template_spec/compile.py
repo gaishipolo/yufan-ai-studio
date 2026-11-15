@@ -35,9 +35,13 @@ from core.template_spec.models import (
 )
 from core.template_spec.rules import validate_spec
 
-#: `{{slot:key}}` / `{{slot:key*}}` / `{{slot:key.2}}`。
+#: `{{slot:key}}` / `{{slot:key*}}` / `{{slot:key.2}}`，**两边允许空格**。
 #: 只匹配合法的 key 形状，写错的部分留在原地，由下面的"残留引用"检查兜住。
-_SLOT_REF = re.compile(r"\{\{slot:([a-z][a-z0-9_]{0,39})(\*|\.\d{1,3})?\}\}")
+#:
+#: 空格这一条必须与 `rules._SLOT_REF`（结构校验）一致：那边容空格、这边不容，
+#: 结果就是「预检与发布都过、用户在模板库点生成才 400」。同一个形状两处两种口径，
+#: 迟早踩到（2026-11-15 审查 3.4 的同源问题）。
+_SLOT_REF = re.compile(r"\{\{\s*slot:([a-z][a-z0-9_]{0,39})(\*|\.\d{1,3})?\s*\}\}")
 #: 替换后还残留这种片段，说明引用写坏了（少括号、含空格等）。
 _LEFTOVER = "{{slot:"
 
