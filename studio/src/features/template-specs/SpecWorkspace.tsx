@@ -41,6 +41,7 @@ import {
   normalize,
   referenceChips,
   rekeySlot,
+  slotsMissingTag,
   stripSlotRefs,
 } from './specDraft';
 
@@ -128,6 +129,19 @@ export function SpecWorkspace() {
     clear();
     try {
       const payload = normalize(draft);
+      // 发布闸门的前端预检：后端要求「要让用户填的图片/视频槽位必须有一级标签」，
+      // 而它只会说"这些槽位要给一级标签"、不指哪里。先在本地拦一次并点名，
+      // 省掉「点发布 → 400 → 回头逐个槽位找」那一轮。保存草稿不判（草稿允许半成品）。
+      if (action !== 'save') {
+        const missing = slotsMissingTag(payload.slots ?? []);
+        if (missing.length > 0) {
+          setError(
+            `这些槽位还缺一级标签：${missing.join('、')}。` +
+              '模板库按「标签 · 槽位名」分组让人挑素材，没有标签就只能退化成全部素材。',
+          );
+          return;
+        }
+      }
       if (action === 'validate') {
         const result = await validate.mutateAsync(payload);
         setNote(`预检通过 · 指纹 ${result.fingerprint.slice(0, 12)}`);
@@ -472,6 +486,11 @@ export function SpecWorkspace() {
               )}
               {slots.map((slot, index) => {
                 const fixed = (slot.binding ?? 'user') === 'fixed';
+                // 一级标签只对「让用户挑的图片/视频」有意义：模板库按「标签 · 槽位名」
+                // 分组给候选素材，文本/音频/封装走各自的选择器，固定槽位作者已经选死。
+                // 以前这里对**所有**类型都渲染一个默认「不限」的下拉，用户填着像是
+                // 可选，一点发布必被 400 打回，还不指名是哪个槽位（审查 3.3）。
+                const needsTag = slot.type === 'image' || slot.type === 'video';
                 return (
                   <div
                     key={slot.key}
@@ -531,7 +550,12 @@ export function SpecWorkspace() {
                         <Trash2 size={13} />
                       </button>
                     </div>
-                    <div className="grid gap-2 sm:grid-cols-[1.6fr_1fr_1fr_1fr]">
+                    <div
+                      className={cn(
+                        'grid gap-2',
+                        needsTag ? 'sm:grid-cols-[1.6fr_1fr_1fr_1fr]' : 'sm:grid-cols-[1.6fr_1fr_1fr]',
+                      )}
+                    >
                       <FormField label="展示名">
                         <TextInput
                           value={slot.label ?? ''}
@@ -549,16 +573,18 @@ export function SpecWorkspace() {
                           }
                         />
                       </FormField>
-                      <FormField label="一级标签">
-                        <Select
-                          block
-                          value={slot.tagId ?? TAG_ANY}
-                          options={tagOptions}
-                          onChange={event =>
-                            patchSlot(index, {tagId: event.target.value})
-                          }
-                        />
-                      </FormField>
+                      {needsTag && (
+                        <FormField label="一级标签">
+                          <Select
+                            block
+                            value={slot.tagId ?? TAG_ANY}
+                            options={tagOptions}
+                            onChange={event =>
+                              patchSlot(index, {tagId: event.target.value})
+                            }
+                          />
+                        </FormField>
+                      )}
                       <FormField label="谁定">
                         <Select
                           block

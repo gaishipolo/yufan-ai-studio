@@ -11,6 +11,7 @@ import {
   normalize,
   rekeySlot,
   referenceChips,
+  slotsMissingTag,
   stripSlotRefs,
 } from './specDraft';
 
@@ -137,6 +138,20 @@ describe('模板规格草稿', () => {
     }
     // 删槽位同理：带空格的那几处也要一起清掉
     expect(stripSlotRefs('{{ slot:hero }} 与 {{slot:hero }}', 'hero').count).toBe(2);
+  });
+
+  it('发布前预检：只有「让用户填的图片/视频」槽位缺一级标签', () => {
+    const slots = [
+      {...blankSlot(0, 'image', []), key: 'image_1', tagId: ''},
+      {...blankSlot(1, 'video', []), key: 'video_1', tagId: ''},
+      // 固定槽位、文本、音频都不要求标签
+      {...blankSlot(2, 'image', []), key: 'image_2', binding: 'fixed' as const, tagId: ''},
+      {...blankSlot(3, 'text', []), key: 'text_1', tagId: ''},
+      {...blankSlot(4, 'image', []), key: 'image_3', tagId: 'tag-1'},
+    ];
+    expect(slotsMissingTag(slots)).toEqual(['图片 1', '成片 2']);
+    // 都填了就是空数组（保存草稿不判，预检与发布判）
+    expect(slotsMissingTag([{...slots[0], tagId: 'tag-1'}])).toEqual([]);
   });
 
   it('已发布但没有草稿时，用最近发布版本还原草稿', () => {

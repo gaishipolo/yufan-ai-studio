@@ -220,3 +220,24 @@ function slotRefPattern(key?: string): RegExp {
   return new RegExp(`\\{\\{\\s*slot:${name}(?:\\*|\\.\\d+)?\\s*\\}\\}`, 'g');
 }
 
+/**
+ * 发布闸门的前端预检：哪些槽位还缺一级标签。
+ *
+ * 规则与后端 `_check_executable` 同一条：**要让用户填的**图片/视频槽位必须有
+ * 一级标签（模板库按「标签 · 槽位名」分组让人挑素材，没有标签只能退化成
+ * "全部素材"）。固定槽位、文本、音频、封装都不要求。
+ *
+ * 放在这里而不是组件里：保存草稿不判、预检与发布都要判，组件只管把结果讲给用户。
+ */
+export function slotsMissingTag(slots: SpecSlotIn[]): string[] {
+  return slots.flatMap((slot, index) => {
+    const needsTag =
+      (slot.type === 'image' || slot.type === 'video') &&
+      (slot.binding ?? 'user') === 'user' &&
+      !slot.tagId;
+    if (!needsTag) return [];
+    // 报给用户的名字用界面上的叫法（展示名，没填就用「类型 + 第几个」）——
+    // 别把 `image_1` 这种内部 key 甩到错误提示里。
+    return [slot.label?.trim() || `${SLOT_TYPE_LABELS[slot.type]} ${index + 1}`];
+  });
+}
