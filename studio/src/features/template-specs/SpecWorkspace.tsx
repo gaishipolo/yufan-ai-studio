@@ -391,36 +391,39 @@ export function SpecWorkspace() {
     <section className="flex flex-col gap-4">
       {/* 操作栏吸顶：槽位一多就要滚很久，保存/发布不该被滚出屏幕。
           `top-[54px]` 让开顶栏那条同为 sticky 的 header，否则会被它盖住。 */}
-      <div className="sticky top-[54px] z-20 -mx-1 flex flex-wrap items-center justify-between gap-3 border-b border-line-soft bg-panel px-1 py-2">
-        <div className="flex min-w-0 items-center gap-2">
-          <button
-            type="button"
-            className="flex shrink-0 items-center gap-1 rounded-lg border border-line-soft bg-panel px-2 py-1 text-[11px] text-ink-soft transition-colors hover:border-line hover:text-ink"
-            onClick={() => {
-              setDraft(null);
-              clear();
-            }}
-          >
-            <ChevronLeft size={12} /> 列表
-          </button>
-          <span className="min-w-0 truncate text-[13.5px] font-medium text-ink">
-            {draft.name || '未命名模板'}
-          </span>
+      <div className="sticky top-[54px] z-20 -mx-1 flex flex-col gap-1.5 border-b border-line-soft bg-panel px-1 py-2">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-2">
+            <button
+              type="button"
+              className="flex shrink-0 items-center gap-1 rounded-lg border border-line-soft bg-panel px-2 py-1 text-[11px] text-ink-soft transition-colors hover:border-line hover:text-ink"
+              onClick={() => {
+                setDraft(null);
+                clear();
+              }}
+            >
+              <ChevronLeft size={12} /> 列表
+            </button>
+            <span className="min-w-0 truncate text-[13.5px] font-medium text-ink">
+              {draft.name || '未命名模板'}
+            </span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <Button variant="ghost" disabled={busy} onClick={() => void submit('validate')}>
+              预检
+            </Button>
+            <Button variant="ghost" disabled={busy} onClick={() => void submit('save')}>
+              保存草稿
+            </Button>
+            <Button disabled={busy} onClick={() => void submit('publish')}>
+              保存并发布
+            </Button>
+          </div>
         </div>
-        <div className="flex items-center gap-1.5">
-          <Button variant="ghost" disabled={busy} onClick={() => void submit('validate')}>
-            预检
-          </Button>
-          <Button variant="ghost" disabled={busy} onClick={() => void submit('save')}>
-            保存草稿
-          </Button>
-          <Button disabled={busy} onClick={() => void submit('publish')}>
-            保存并发布
-          </Button>
-        </div>
+        {/* 提示放进吸顶区：槽位多的时候用户是在页面底部点「保存并发布」的，
+            提示留在页首等于没提示（预检失败/发布被拦正是最需要看见的时候）。 */}
+        {(note || error) && <Notice error={error} note={note} />}
       </div>
-
-      {(note || error) && <Notice error={error} note={note} />}
 
       <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)]">
         <div className="flex flex-col gap-4">
