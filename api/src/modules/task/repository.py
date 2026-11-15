@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
-from sqlalchemy import Select, func, or_, select
+from sqlalchemy import Select, delete, func, or_, select
 
 from core.context import CurrentUser
 from db.repository import BaseRepository
 from modules.task.enums import TaskScope, TaskSort, TaskStatus, TaskStatusFilter
-from modules.task.models import VideoTask
+from modules.task.models import TaskFavorite, VideoTask
 from modules.task.permissions import PERM_READ_ALL
 from modules.task.schema import TaskListQuery, TaskStats
 
@@ -102,6 +103,33 @@ class TaskRepository(BaseRepository[VideoTask]):
             return []
         rows = await self.session.scalars(select(VideoTask).where(VideoTask.id.in_(ids)))
         return list(rows)
+
+    async def favorite_task_ids(
+        self, user_id: str, task_ids: Sequence[str]
+    ) -> set[str]:
+        """这一批任务里，`user_id` 收藏了哪几条。
+
+        出参的 `favorited` 是「当前账号」的语义，所以列表每页要按当前 actor 现查
+        一次；一次 `IN` 查询取代「每行一次」是这里唯一要小心的地方（24 行 × 一次
+        往返在小库看不出来，放大之后就明显了）。
+        """
+        if not task_ids:
+            return set()
+        rows = await self.session.scalars(
+            select(TaskFavorite.task_id).where(
+                TaskFavorite.user_id == user_id,
+                TaskFavorite.task_id.in_(list(task_ids)),
+            )
+        )
+        return set(rows)
+
+    async def purge_favorites(self, task_ids: Sequence[str]) -> None:
+        """删任务时顺手清掉收藏行（没有外键级联，必须显式清）。"""
+        if not task_ids:
+            return
+        await self.session.execute(
+            delete(TaskFavorite).where(TaskFavorite.task_id.in_(list(task_ids)))
+        )
 
     def status_filter(self, base: Select[Any], status: str) -> Select[Any] | None:
         """按状态页签过滤；`attention` 只属于替换任务，通用任务没有对应状态。"""

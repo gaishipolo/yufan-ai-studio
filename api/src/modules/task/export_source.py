@@ -16,7 +16,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from modules.task.models import VideoTask
+from modules.task.models import TaskFavorite, VideoTask
 
 
 def _as_datetime(value: object) -> datetime | None:
@@ -82,6 +82,18 @@ class TaskExportSource:
         stmt = stmt.limit(limit)
 
         rows = (await session.execute(stmt)).scalars().all()
+        # 收藏按账号存（`task_favorites`），导出的 `favorited` 列同样只看**导出者自己**
+        # 的收藏 —— 这一列要是取全局值，等于把别人的收藏习惯混进你的导出文件。
+        favorited: set[str] = set()
+        if rows:
+            favorited = set(
+                await session.scalars(
+                    select(TaskFavorite.task_id).where(
+                        TaskFavorite.user_id == actor_id,
+                        TaskFavorite.task_id.in_([r.id for r in rows]),
+                    )
+                )
+            )
         return [
             [
                 r.id,
@@ -90,7 +102,7 @@ class TaskExportSource:
                 r.model,
                 r.duration_sec,
                 r.progress,
-                r.favorited,
+                r.id in favorited,
                 r.created_at,
                 r.finished_at,
                 r.error_message,

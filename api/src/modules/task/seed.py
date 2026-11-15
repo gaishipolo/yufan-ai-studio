@@ -7,12 +7,13 @@
 
 from __future__ import annotations
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.module import SeedContext
 from core.demo import minutes_ago, placeholder_image
 from modules.task.enums import AspectRatio, TaskStatus
-from modules.task.models import VideoTask
+from modules.task.models import TaskFavorite, VideoTask
 
 _TASKS: list[tuple[str, str, TaskStatus, str, int, AspectRatio]] = [
     ("冰川之上的机械鲸鱼", "黎明时分，一头由黄铜与齿轮构成的巨鲸破冰而出", TaskStatus.RUNNING, "Seedance 2.5", 15, AspectRatio.PORTRAIT),
@@ -48,7 +49,6 @@ async def seed(session: AsyncSession, context: SeedContext) -> int:
             cover_url=placeholder_image(f"sf{i}", 720, 1280),
             author_id=context.demo_user_id,
             author_name=context.demo_user_name,
-            favorited=i % 5 == 0,
             downloadable=status is TaskStatus.COMPLETED,
             error_message="上游模型返回超时" if status is TaskStatus.FAILED else None,
             created_at=minutes_ago(i * 47 + 12),
@@ -58,5 +58,25 @@ async def seed(session: AsyncSession, context: SeedContext) -> int:
         for i, (title, prompt, status, model, duration, ratio) in enumerate(_TASKS)
     ]
     session.add_all(rows)
+    await session.commit()
+
+    # 收藏是**按账号**的行（`task_favorites`），demo 数据里给每 5 条收藏一条。
+    # 先查一遍已有行：这段 seed 在演示库上不是只跑一次，重复插入会撞唯一约束。
+    target = [row.id for index, row in enumerate(rows) if index % 5 == 0]
+    existing = set(
+        await session.scalars(
+            select(TaskFavorite.task_id).where(
+                TaskFavorite.user_id == context.demo_user_id,
+                TaskFavorite.task_id.in_(target),
+            )
+        )
+    )
+    session.add_all(
+        [
+            TaskFavorite(user_id=context.demo_user_id, task_id=task_id)
+            for task_id in target
+            if task_id not in existing
+        ]
+    )
     await session.commit()
     return len(rows)

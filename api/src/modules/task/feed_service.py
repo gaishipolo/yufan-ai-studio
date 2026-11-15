@@ -140,8 +140,12 @@ async def list_feed(
         signed = await artifact_urls(
             [value for row in rows for value in (row.output_url, row.cover_url)]
         )
+        # 收藏是按账号的（`task_favorites`），整页一次查出「我收藏了哪几条」
+        favorites = await service.repo.favorite_task_ids(
+            actor.id, [row.id for row in rows]
+        )
         for index, row in enumerate(rows):
-            video = service.to_out(row)
+            video = service.to_out(row, favorited=row.id in favorites)
             # 封面是 `TaskOut` 的字段，需要现签；成片地址**不在** `TaskOut` 里
             # （详情接口刻意不返回它，成片只走外层 `TaskFeedItem.outputUrl`），
             # 所以这里不要去设 `video.output_url` —— 那是个不存在的字段，

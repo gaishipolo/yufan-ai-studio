@@ -11,7 +11,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 from datetime import UTC, datetime
 
-from sqlalchemy import update
+from sqlalchemy import delete, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.context import CurrentUser
@@ -27,7 +28,7 @@ from infra.ai.router import ModelRouter
 from infra.artifacts import artifact_urls
 from infra.queue.base import JobQueue
 from modules.task.enums import AspectRatio, TaskScope, TaskStatus
-from modules.task.models import VideoTask
+from modules.task.models import TaskFavorite, VideoTask
 from modules.task.params import resolve_aspect_ratio, resolve_duration, resolve_model
 from modules.task.permissions import PERM_READ_ALL, PERM_RETRY_ANY
 from modules.task.pipeline import KIND_VIDEO
@@ -69,7 +70,7 @@ class TaskService:
         stmt = self.repo.apply_sort(self.repo.apply_status(base, query.status), query.sort)
         rows, total = await self.repo.paginate(stmt, page)
 
-        items = await self.present_many(rows)
+        items = await self.present_many(rows, actor)
         return TaskListOut(
             items=items,
             total=total,
@@ -211,15 +212,30 @@ class TaskService:
         return task
 
     async def toggle_favorite(self, task_id: str, actor: CurrentUser) -> VideoTask:
-        """收藏切换用单语句完成，避免「读-改-写」在并发下丢更新。"""
+        """收藏切换，**按账号**存。
+
+        先查有没有：有就删（→ 取消），没有就插（→ 收藏）。并发两次点击可能同时
+        走到「插入」分支，靠 `(user_id, task_id)` 唯一约束兜住——撞上就说明另一路
+        已经插进去了，结果一样是「已收藏」，所以吞掉 IntegrityError 而不是 500。
+        """
         task = await self.get_task(task_id, actor)
-        await self.session.execute(
-            update(VideoTask)
-            .where(VideoTask.id == task.id)
-            .values(favorited=~VideoTask.favorited)
+        existing = await self.session.scalar(
+            select(TaskFavorite.id).where(
+                TaskFavorite.user_id == actor.id, TaskFavorite.task_id == task.id
+            )
         )
-        await self.session.commit()
-        await self.session.refresh(task)
+        if existing:
+            await self.session.execute(
+                delete(TaskFavorite).where(TaskFavorite.id == existing)
+            )
+            await self.session.commit()
+            return task
+
+        self.session.add(TaskFavorite(user_id=actor.id, task_id=task.id))
+        try:
+            await self.session.commit()
+        except IntegrityError:
+            await self.session.rollback()
         return task
 
     async def update_task(
@@ -230,7 +246,15 @@ class TaskService:
             # 空标题是合法输入（用户清空），落成占位名，而不是静默忽略
             task.title = title.strip()[:200] or DEFAULT_TITLE
         if favorited is not None:
-            task.favorited = favorited
+            # 显式置位（批量收藏走这条）：带 `WHERE` 的 DELETE 与「不存在才插」，
+            # 都不依赖当前值，重复调用幂等。
+            await self.session.execute(
+                delete(TaskFavorite).where(
+                    TaskFavorite.user_id == actor.id, TaskFavorite.task_id == task.id
+                )
+            )
+            if favorited:
+                self.session.add(TaskFavorite(user_id=actor.id, task_id=task.id))
         await self.session.commit()
         return task
 
@@ -250,6 +274,10 @@ class TaskService:
         # 「查不到」与「没权限」都落在这里：对外都是「这条没删成」，
         # 具体原因在服务端日志里区分（不向无权限者泄漏「这个 id 存在」）
         skipped = [task_id for task_id in ids if task_id not in owned_ids]
+        # 收藏行没有外键级联，任务删了不跟着清就会留下指向已删任务的孤儿行：
+        # 它们不影响读（永远查不到对应任务），但会在「我收藏了哪些」的查询里
+        # 一直占位，而且没人会再回来删它们。
+        await self.repo.purge_favorites([task.id for task in owned])
         for task in owned:
             await self.session.delete(task)
         await self.session.commit()
@@ -260,28 +288,34 @@ class TaskService:
         return len(owned), skipped
 
     # ------------------------------------------------------------------ 内部
-    def to_out(self, task: VideoTask) -> TaskOut:
+    def to_out(self, task: VideoTask, *, favorited: bool = False) -> TaskOut:
         """ORM → 出参，并补齐 `modelId`。
 
         历史数据（以及早期前端）里 `model` 存的是可读名，`model_id` 为空；
         这里用目录反查补齐，接口层面永远是「label + id」成对出现，
         调用方不需要知道库里存的是哪一种形态。
+
+        `favorited` 必须由调用方按**当前账号**传进来：收藏是 `task_favorites`
+        里的行，不在任务行上（见 `TaskFavorite`）。默认 False 是「没查出来」的
+        安全取值——宁可漏一个收藏标记，也不要凭空告诉某人他收藏过。
         """
         out = TaskOut.model_validate(task)
+        out.favorited = favorited
         if not out.model_id:
             spec = self.router.spec_for(task.model)
             out.model_id = spec.id if spec else None
         return out
 
-    async def present(self, task: VideoTask) -> TaskOut:
-        """出参：`to_out` + 把封面 key 现签成地址。
+    async def present(self, task: VideoTask, actor: CurrentUser) -> TaskOut:
+        """出参：`to_out` + 当前账号的收藏状态 + 封面 key 现签成地址。
 
         「库里存 key、出参才变地址」是 `infra.artifacts` 定下的口径（换存储驱动
         不裂图）。`feed` 一直在做这件事，详情 / 列表漏了：前端拿
         `library/previews/xx.jpg` 当 URL 用，封面直接 404 —— 表现为任务卡空白、
         预览弹窗的海报是一块黑。
         """
-        out = self.to_out(task)
+        favorited = bool(await self.repo.favorite_task_ids(actor.id, [task.id]))
+        out = self.to_out(task, favorited=favorited)
         if out.cover_url:
             try:
                 out.cover_url = (await artifact_urls([out.cover_url]))[0] or out.cover_url
@@ -289,9 +323,12 @@ class TaskService:
                 logger.exception("任务封面地址转换失败 id=%s", task.id)
         return out
 
-    async def present_many(self, tasks: Sequence[VideoTask]) -> list[TaskOut]:
-        """批量版 `present`：一次签名，避免列表页 24 条各签一次。"""
-        outs = [self.to_out(task) for task in tasks]
+    async def present_many(
+        self, tasks: Sequence[VideoTask], actor: CurrentUser
+    ) -> list[TaskOut]:
+        """批量版 `present`：封面一次签名、收藏一次查询，避免 24 条各来一遍。"""
+        favorites = await self.repo.favorite_task_ids(actor.id, [task.id for task in tasks])
+        outs = [self.to_out(task, favorited=task.id in favorites) for task in tasks]
         keys = [out.cover_url for out in outs]
         if not any(keys):
             return outs

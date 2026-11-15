@@ -622,3 +622,105 @@ def test_retry_returns_only_the_action_result(client: TestClient, api: str) -> N
     assert data["status"] == "queued"
     # 「看不见」和「拿不到」必须是同一件事
     assert client.get(f"{api}/tasks/{task_id}", headers=responder).status_code == 403
+
+
+# --------------------------------------------------------------------------- #
+# 收藏按账号：同一行数据，两个人各有一份收藏状态
+# --------------------------------------------------------------------------- #
+def test_favorites_are_per_account_not_on_the_task_row(
+    client: TestClient, api: str
+) -> None:
+    """A 收藏后 B 不该看到已收藏，B 取消收藏更不该把 A 的收藏清掉。
+
+    旧实现是 `video_tasks.favorited` 一个布尔，出参文案却写「当前账号是否已收藏」：
+    有 `task:read:all` 的人互相看得见对方的任务，于是 B 点一次「取消收藏」
+    （`PATCH {"favorited": false}`）就把 A 的收藏一起清掉。
+    """
+    owner = _bearer(
+        client,
+        "fav-owner",
+        "收藏的人",
+        ["task:read", "task:create", "task:update"],
+    )
+    colleague = _bearer(
+        client,
+        "fav-colleague",
+        "同事",
+        ["task:read", "task:read:all", "task:update"],
+    )
+
+    resp = client.post(
+        f"{api}/tasks",
+        headers=owner,
+        json={
+            "prompt": "收藏归属用例",
+            "model": "Seedance 2.5",
+            "durationSec": 5,
+            "aspectRatio": "9:16",
+        },
+    )
+    assert resp.status_code == 201, resp.text
+    task_id = resp.json()["data"]["id"]
+
+    def favorited(headers: dict[str, str]) -> bool:
+        body = client.get(f"{api}/tasks/{task_id}", headers=headers).json()["data"]
+        return bool(body["favorited"])
+
+    assert favorited(owner) is False
+    assert client.post(f"{api}/tasks/{task_id}/favorite", headers=owner).status_code == 200
+    assert favorited(owner) is True
+
+    # 同事看得到这条（read:all），但「自己的收藏」是空的
+    assert favorited(colleague) is False
+
+    # 同事显式置位 false：只清自己的（本来就没有），不能动别人的
+    client.patch(f"{api}/tasks/{task_id}", headers=colleague, json={"favorited": False})
+    assert favorited(owner) is True, "同事的取消收藏把别人的收藏清掉了"
+
+    # 两人各自收藏，互不覆盖
+    client.post(f"{api}/tasks/{task_id}/favorite", headers=colleague)
+    assert favorited(colleague) is True
+    assert favorited(owner) is True
+    client.post(f"{api}/tasks/{task_id}/favorite", headers=owner)  # owner 取消
+    assert favorited(owner) is False
+    assert favorited(colleague) is True
+
+
+def test_deleting_a_task_clears_its_favorite_rows(client: TestClient, api: str) -> None:
+    """删任务要顺手清收藏行：没有外键级联，留着就是一堆指向空任务的孤儿。"""
+    from db.session import get_session_factory
+    from modules.task.models import TaskFavorite
+
+    owner = _bearer(
+        client,
+        "fav-purge",
+        "删除的人",
+        ["task:read", "task:create", "task:update", "task:delete"],
+    )
+    resp = client.post(
+        f"{api}/tasks",
+        headers=owner,
+        json={"prompt": "删了就清收藏", "model": "Seedance 2.5", "durationSec": 5},
+    )
+    task_id = resp.json()["data"]["id"]
+    client.post(f"{api}/tasks/{task_id}/favorite", headers=owner)
+
+    async def rows() -> int:
+        from sqlalchemy import func, select
+
+        async with get_session_factory()() as session:
+            return int(
+                await session.scalar(
+                    select(func.count()).select_from(TaskFavorite).where(
+                        TaskFavorite.task_id == task_id
+                    )
+                )
+                or 0
+            )
+
+    assert asyncio.run(rows()) == 1
+    removed = client.request(
+        "DELETE", f"{api}/tasks", headers=owner, json={"ids": [task_id]}
+    )
+    assert removed.status_code == 200
+    assert asyncio.run(rows()) == 0

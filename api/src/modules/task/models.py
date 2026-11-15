@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import JSON, Boolean, DateTime, Index, Integer, String, Text
+from sqlalchemy import JSON, Boolean, DateTime, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from core.library_text import parse_text_refs, text_ref_bindings
@@ -49,7 +49,6 @@ class VideoTask(Base, UUIDMixin, TimestampMixin):
     author_id: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     author_name: Mapped[str] = mapped_column(String(64), default="", nullable=False)
 
-    favorited: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     downloadable: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     error_message: Mapped[str | None] = mapped_column(String(512), nullable=True)
@@ -86,3 +85,34 @@ class VideoTask(Base, UUIDMixin, TimestampMixin):
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"<VideoTask {self.id} {self.status} {self.title[:16]!r}>"
+
+
+class TaskFavorite(Base, UUIDMixin, TimestampMixin):
+    """谁收藏了哪条任务 —— 收藏是**按账号**的，不是任务行上的开关。
+
+    原来是 `video_tasks.favorited` 一个布尔，出参文案却写「当前账号是否已收藏」：
+    A 收藏之后 B 也看到 true，B 点一次「取消收藏」直接 `PATCH {"favorited": false}`
+    把 A 的收藏一起清掉。共享可见（`task:read:all`）下这不是小概率——只要有人
+    点开别人的任务卡片取消收藏就会发生。
+
+    一行 = 一个账号收藏一条任务。没有独立的 `id` 之外的业务键，唯一约束
+    `(user_id, task_id)` 就是「同一个人不能收藏两次」；重复收藏靠它拦，
+    不需要先读再写。
+
+    刻意不加外键：全项目都是「业务表之间只认 id」，级联清理写在 service 里
+    （`delete_tasks` 会顺手删掉对应的收藏行）。
+    """
+
+    __tablename__ = "task_favorites"
+
+    user_id: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    task_id: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "task_id", name="uq_task_favorites_user_task"),
+        # 「这一页里我收藏了哪几条」是列表每页都要跑的查询，按 (user, task) 走
+        Index("ix_task_favorites_user_task", "user_id", "task_id"),
+    )
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"<TaskFavorite {self.user_id} → {self.task_id}>"
