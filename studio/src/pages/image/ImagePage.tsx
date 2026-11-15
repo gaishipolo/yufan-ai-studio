@@ -16,6 +16,7 @@ import { cn } from '@/shared/lib/cn';
 import { toast } from '@/shared/lib/toast';
 import { formatDateTime } from '@/shared/lib/format';
 import { useImageModels } from '@/entities/model/api/model.queries';
+import { useCan } from '@/shared/access/use-access';
 import {
   isEmptyParamValue,
   paramControlsFor,
@@ -59,7 +60,10 @@ export default function ImagePage() {
   const controls = paramControlsFor(model);
   const values = resolveParamValues(controls, overrides);
   const modelOptions = models.map((m) => ({ value: m.id, label: m.label }));
-  const canSubmit = Boolean(model);
+  // 只读账号不该点到「开始生成」：路由守卫只要求 image:read，写动作要 image:create
+  // （2026-11-15 审查 3.1）。
+  const canGenerate = useCan('image:create');
+  const canSubmit = Boolean(model) && canGenerate;
   // 模型声明的上限决定这个入口出不出：0 或缺失 = 纯文生图
   const maxReferences = model?.maxReferences ?? 0;
 
@@ -251,6 +255,7 @@ export default function ImagePage() {
             icon={<Wand2 size={15} />}
             loading={generate.isPending}
             disabled={!canSubmit}
+            title={canGenerate ? undefined : '当前账号没有生图权限（image:create）'}
             onClick={submit}
           >
             开始生成

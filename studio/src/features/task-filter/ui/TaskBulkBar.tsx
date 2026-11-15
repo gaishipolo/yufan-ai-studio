@@ -19,6 +19,8 @@ export function TaskBulkBar({
   onDownload,
   onCollect,
   onDelete,
+  canCollect = true,
+  canDelete = true,
 }: {
   count: number;
   busy?: boolean;
@@ -27,6 +29,9 @@ export function TaskBulkBar({
   onDownload: () => void;
   onCollect: () => void;
   onDelete: () => void;
+  /** 没有写权限时整颗按钮不渲染：只读角色点到只会 403 */
+  canCollect?: boolean;
+  canDelete?: boolean;
 }) {
   if (count <= 0) return null;
   return (
@@ -36,26 +41,30 @@ export function TaskBulkBar({
       <Button size="sm" variant="ghost" icon={<Download size={12} />} onClick={onDownload}>
         下载
       </Button>
-      <Button
-        size="sm"
-        variant="ghost"
-        icon={<Bookmark size={12} />}
-        disabled={busy}
-        onClick={onCollect}
-        title="只有视频任务支持收藏，生图记录会被跳过"
-      >
-        收藏
-      </Button>
-      <Button
-        size="sm"
-        variant="ghost"
-        icon={<Trash2 size={12} />}
-        disabled={busy}
-        onClick={onDelete}
-        className="text-ink-soft hover:text-danger"
-      >
-        删除
-      </Button>
+      {canCollect && (
+        <Button
+          size="sm"
+          variant="ghost"
+          icon={<Bookmark size={12} />}
+          disabled={busy}
+          onClick={onCollect}
+          title="只有视频任务支持收藏，生图记录会被跳过"
+        >
+          收藏
+        </Button>
+      )}
+      {canDelete && (
+        <Button
+          size="sm"
+          variant="ghost"
+          icon={<Trash2 size={12} />}
+          disabled={busy}
+          onClick={onDelete}
+          className="text-ink-soft hover:text-danger"
+        >
+          删除
+        </Button>
+      )}
       <span className="mx-0.5 h-3.5 w-px bg-primary-line" aria-hidden />
       <Button size="sm" variant="ghost" onClick={onSelectAll}>
         全选

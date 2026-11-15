@@ -40,6 +40,13 @@ vi.mock('@/entities/model/api/model.queries', async (importOriginal) => ({
   useImageModels: modelsMock,
 }));
 
+// 权限只影响按钮能不能点：这里默认放开，单独留一条用例验无权限时禁用。
+const { canMock } = vi.hoisted(() => ({ canMock: { value: true } }));
+vi.mock('@/shared/access/use-access', async importOriginal => ({
+  ...((await importOriginal()) as Record<string, unknown>),
+  useCan: () => canMock.value,
+}));
+
 vi.mock('@/shared/lib/toast', async (importOriginal) => ({
   ...((await importOriginal()) as Record<string, unknown>),
   toast: toastMock,
@@ -191,6 +198,7 @@ function dropOn(element: HTMLElement, asset: LibraryAssetDrag) {
 }
 
 beforeEach(() => {
+  canMock.value = true;
   modelsMock.mockReset();
   imagesMock.mockReset();
   mutateMock.mockReset();
@@ -540,5 +548,16 @@ describe('ImagePage · 异步状态在页面上看得见', () => {
 
     // 成图上分不出「哪张是照着参考图做的」，对比时只能靠这个角标回溯
     expect(screen.getByText('参考 2')).toBeInTheDocument();
+  });
+});
+
+describe('ImagePage · 权限门禁', () => {
+  it('没有 image:create 时「开始生成」禁用', () => {
+    canMock.value = false;
+    render(<ImagePage />);
+
+    const submit = screen.getByRole('button', {name: '开始生成'});
+    expect(submit).toBeDisabled();
+    expect(submit).toHaveAttribute('title', '当前账号没有生图权限（image:create）');
   });
 });

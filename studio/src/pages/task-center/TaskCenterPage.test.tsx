@@ -122,7 +122,7 @@ describe('任务中心页面', () => {
 
   it('批量删除走真实接口，不再弹空回收站', async () => {
     mock.deleted = {deleted: 1, skipped: ['task-missing']};
-    render(<App />);
+    render(<App permissions={['task:read', 'task:delete']} />);
     expect(screen.queryByRole('button', {name: '回收站'})).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', {name: '选择任务：测试任务'}));
     fireEvent.click(screen.getByRole('button', {name: '删除'}));
@@ -130,7 +130,7 @@ describe('任务中心页面', () => {
   });
 
   it('批量收藏用显式置位而不是切换', async () => {
-    render(<App />);
+    render(<App permissions={['task:read', 'task:update']} />);
     fireEvent.click(screen.getByRole('button', {name: '选择任务：测试任务'}));
     fireEvent.click(screen.getByRole('button', {name: '收藏'}));
     await waitFor(() => expect(mock.updateCalls).toEqual([{id: 'task1', favorited: true}]));
@@ -138,11 +138,30 @@ describe('任务中心页面', () => {
 
   it('勾选生图记录后删除走 DELETE /images，不和视频混批', async () => {
     mock.list.data = listResult({items: [...listResult().items, imageItem], total: 2});
-    render(<App permissions={['task:read', 'image:read']} />);
+    render(<App permissions={['task:read', 'image:read', 'image:delete']} />);
     fireEvent.click(screen.getByRole('button', {name: '选择生图：一只猫'}));
     fireEvent.click(screen.getByRole('button', {name: '删除'}));
     await waitFor(() => expect(mock.deleteImageCalls).toEqual([['img1']]));
     // 视频那条没被选中，不该跟着发出去：两套表两个端点，混批会有一半被 skipped
     expect(mock.deleteCalls).toEqual([]);
+  });
+});
+
+describe('写操作按权限渲染', () => {
+  it('只读账号看不到创建、收藏与删除', () => {
+    render(<App permissions={['task:read', 'image:read']} />);
+
+    expect(screen.queryByRole('button', {name: '创建任务'})).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', {name: '选择任务：测试任务'}));
+    expect(screen.queryByRole('button', {name: '删除'})).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', {name: '收藏'})).not.toBeInTheDocument();
+    // 下载只读也要能点：它不写库
+    expect(screen.getByRole('button', {name: '下载'})).toBeVisible();
+  });
+
+  it('有 task:create 才出现创建任务', () => {
+    render(<App permissions={['task:read', 'task:create']} />);
+
+    expect(screen.getByRole('button', {name: '创建任务'})).toBeVisible();
   });
 });

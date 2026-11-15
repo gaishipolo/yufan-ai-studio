@@ -44,6 +44,13 @@ export default function TaskCenterPage() {
   const [preview, setPreview] = useState<TaskFeedItem | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const canReadImages = useCan('image:read');
+  // 写操作按权限藏起来：只读角色点到只会拿到 403（2026-11-15 审查 3.1）
+  const canCreate = useCan('task:create');
+  const canCollect = useCan('task:update');
+  // 两个 hook 都要调用（`||` 短路会让第二个变成条件调用），再取或
+  const canDeleteTask = useCan('task:delete');
+  const canDeleteImage = useCan('image:delete');
+  const canDelete = canDeleteTask || canDeleteImage;
   const me = useSessionStore(state => state.subject.name);
 
   /* ---------- 筛选条件全部由 URL 承载：可分享 / 可回退 / 刷新不丢 ---------- */
@@ -225,9 +232,15 @@ export default function TaskCenterPage() {
       <PageHeader
         title="任务中心"
         actions={
-          <Button variant="primary" icon={<Plus size={13} />} onClick={() => setCreateOpen(true)}>
-            创建任务
-          </Button>
+          canCreate ? (
+            <Button
+              variant="primary"
+              icon={<Plus size={13} />}
+              onClick={() => setCreateOpen(true)}
+            >
+              创建任务
+            </Button>
+          ) : null
         }
       />
 
@@ -271,6 +284,8 @@ export default function TaskCenterPage() {
             onDownload={handleDownload}
             onCollect={handleCollect}
             onDelete={handleDelete}
+            canCollect={canCollect}
+            canDelete={canDelete}
           />
         ) : (
           <Link
