@@ -324,7 +324,8 @@ def test_rate_limited_attempts_do_not_write_a_row_each(
     from modules.identity import throttle
 
     # 只测写入次数，不测等待：渐进延迟在别的用例里保证
-    monkeypatch.setattr(throttle, "penalty", lambda key: 0.0)
+    # 两个桶各调一次 penalty（第二个带 `limit=`），假实现要收得住关键字参数
+    monkeypatch.setattr(throttle, "penalty", lambda key, **_kwargs: 0.0)
 
     admin = _sign_in(client)
     victim = _provision(client, admin, "audit_flood", ["task:read"])
@@ -360,7 +361,8 @@ def test_disabled_account_does_not_confirm_the_password(
     """
     from modules.identity import throttle
 
-    monkeypatch.setattr(throttle, "penalty", lambda key: 0.0)
+    # 两个桶各调一次 penalty（第二个带 `limit=`），假实现要收得住关键字参数
+    monkeypatch.setattr(throttle, "penalty", lambda key, **_kwargs: 0.0)
 
     admin = _sign_in(client)
     victim = _provision(client, admin, "pwd_probe", ["task:read"])

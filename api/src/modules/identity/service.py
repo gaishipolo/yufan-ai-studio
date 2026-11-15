@@ -259,6 +259,13 @@ def _known_permission(code: str, known: frozenset[str], resources: set[str]) -> 
     return code.endswith(":*") and code[:-2] in resources
 
 
+def _record_failure(user_key: str, ip_key: str) -> None:
+    """失败计数同时记到用户名桶与 IP 桶（任一到阈值即 429）。"""
+    throttle.record_failure(user_key)
+    if ip_key:
+        throttle.record_failure(ip_key)
+
+
 class IdentityService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
@@ -296,8 +303,14 @@ class IdentityService:
         - `throttle.penalty()` 的等待留在闸门**外面**：那是有意的慢，不是并发，
           包进闸门等于让爆破者用 5 秒等待占满名额，比不加闸门更糟。
         """
-        key = f"{username}|{client_ip}"
-        wait = throttle.penalty(key)
+        # 两个桶各记一份，任一到阈值即拦（见 `throttle` 文件头「两个桶」）：
+        # 只按 `用户名|IP` 一个键的话，换源 IP 打同一账号每次都是新桶，
+        # 单账号爆破实际没有上限；一台机器换用户名喷则完全没有惩罚。
+        user_key = f"u:{username}"
+        ip_key = f"i:{client_ip}" if client_ip else ""
+        wait = throttle.penalty(user_key)
+        if ip_key:
+            wait = max(wait, throttle.penalty(ip_key, limit=throttle.IP_MAX_FAILURES))
         if wait:
             await asyncio.sleep(wait)
 
@@ -305,7 +318,7 @@ class IdentityService:
             user = await self.users.get_by_username(username)
 
             # 停用账号在**验密之前**就拒掉（R10-04）。之前这一步在验密之后，
-            # 而且前面先 `throttle.reset(key)`，于是有两个后果：
+            # 而且前面先 `throttle.reset(user_key)`，于是有两个后果：
             # 1) 403 与 401 的差异等于「口令猜对了」——对已知/疑似停用的账号
             #    （离职员工、被冻结的可疑账号）可以慢速验证口令，而这类账号
             #    恰恰是攻击者最想确认的；
@@ -315,7 +328,7 @@ class IdentityService:
             # （登录页那句「账号已停用，请联系管理员」），不是泄漏。
             # 也正因为状态码已经说明了这件事，早退导致的计时差不再多泄漏什么。
             if user is not None and not user.is_active:
-                throttle.record_failure(key)
+                _record_failure(user_key, ip_key)
                 await self._audit_login(
                     user_id=user.id,
                     username=username,
@@ -330,8 +343,10 @@ class IdentityService:
             encoded = user.password_hash if user is not None else await _dummy_hash()
             ok = await verify_password_async(password, encoded)
             if user is None or not ok:
-                throttle.record_failure(key)
-                locked = throttle.is_locked(key)
+                _record_failure(user_key, ip_key)
+                locked = throttle.is_locked(user_key) or bool(
+                    ip_key and throttle.is_locked(ip_key, limit=throttle.IP_MAX_FAILURES)
+                )
                 # 审计**在闸门里**写：这条路径原本是 `rollback()` 结束只读事务把连接
                 # 还回池，现在换成「插一行 + commit」——同样是结束事务、同样只占一个
                 # 连接，峰值不变（R7-01 / R9-01 的闸门容量仍然成立）。
@@ -356,10 +371,14 @@ class IdentityService:
                     ),
                 )
                 # 已经猜错太多次：给 429，让前端提示「别再试了」，而不是无限 401
-                throttle.reject(key)
+                throttle.reject(user_key)
+                if ip_key:
+                    throttle.reject(ip_key, limit=throttle.IP_MAX_FAILURES)
                 raise CredentialInvalid()
 
-            throttle.reset(key)
+            # 只清用户名桶：清 IP 桶等于给「拿一个已知正确的账号穿插着登」
+            # 开一条把喷洒计数归零的通道，那一档就白设了。
+            throttle.reset(user_key)
 
             user.last_login_at = utcnow()
             await self._audit_login(

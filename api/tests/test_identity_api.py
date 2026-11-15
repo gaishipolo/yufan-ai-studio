@@ -1052,3 +1052,82 @@ def test_delegated_role_can_rename_a_normal_user_but_not_touch_email(
     )
     assert blocked.status_code == 403
     assert blocked.json()["code"] == 40322
+
+
+# --------------------------------------------------------------------------- #
+# 登录限流：两个桶，而不是一个「用户名|IP」复合键
+#
+# 旧键的两种漏法：换源 IP 打同一账号 → 每次都是新桶 → 单账号爆破没有上限；
+# 一台机器换用户名喷 → 每个键只错一次 → penalty 恒为 0。
+# --------------------------------------------------------------------------- #
+def _fail_login(username: str, client_ip: str) -> None:
+    from db.session import get_session_factory
+    from modules.identity.service import IdentityService
+
+    async def run() -> None:
+        async with get_session_factory()() as session:
+            await IdentityService(session).authenticate(
+                username, "wrong-pass-1", client_ip=client_ip
+            )
+
+    asyncio.run(run())
+
+
+def test_switching_source_ip_does_not_reset_the_account_bucket() -> None:
+    """同一个账号换着 IP 猜：账号桶照样累计，第 6 次就 429。"""
+    from core.exceptions import RateLimited
+    from modules.identity import throttle
+    from modules.identity.errors import CredentialInvalid
+
+    throttle.clear()
+    for index in range(throttle.MAX_FAILURES):
+        with pytest.raises(CredentialInvalid):
+            _fail_login("ip-switch-target", f"198.51.100.{index + 1}")
+
+    with pytest.raises(RateLimited):
+        _fail_login("ip-switch-target", "198.51.100.99")
+
+
+def test_spraying_many_usernames_from_one_ip_is_blocked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """一台机器换用户名喷：IP 桶到阈值后同样 429。"""
+    from core.exceptions import RateLimited
+    from modules.identity import throttle
+    from modules.identity.errors import CredentialInvalid
+
+    monkeypatch.setattr(throttle, "IP_MAX_FAILURES", 3)
+    throttle.clear()
+    for index in range(3):
+        with pytest.raises(CredentialInvalid):
+            _fail_login(f"spray-user-{index}", "203.0.113.9")
+
+    with pytest.raises(RateLimited):
+        _fail_login("spray-user-999", "203.0.113.9")
+
+
+def test_success_clears_only_the_account_bucket() -> None:
+    """登录成功清用户名桶，但不清 IP 桶。
+
+    清 IP 桶等于给「拿一个已知正确的账号穿插着登」开一条把喷洒计数归零的通道。
+    """
+    from modules.identity import throttle
+
+    throttle.clear()
+    for _ in range(2):
+        with pytest.raises(Exception):  # noqa: B017 - 失败类型不是本用例的关注点
+            _fail_login("admin", "203.0.113.10")
+
+    async def ok() -> None:
+        from db.session import get_session_factory
+        from modules.identity.service import IdentityService
+
+        async with get_session_factory()() as session:
+            await IdentityService(session).authenticate(
+                "admin", "admin@12345", client_ip="203.0.113.10"
+            )
+
+    asyncio.run(ok())
+
+    assert "u:admin" not in throttle._failures, "成功登录该清账号桶"
+    assert throttle._failures.get("i:203.0.113.10"), "IP 桶不该被一次成功登录清零"

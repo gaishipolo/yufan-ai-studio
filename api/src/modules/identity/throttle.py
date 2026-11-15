@@ -14,8 +14,20 @@
    新记录，永不删除。这里用 `OrderedDict` 当 LRU（写入时 `move_to_end`），
    写过期扫描 + `MAX_KEYS` 封顶，两个维度都有界。
 
-键是 `用户名|客户端 IP`，不是只按 IP：多人共用出口 IP（公司 NAT、反代）时，
-只按 IP 会让一个人拖垮所有人；只按用户名则攻击者换个名字就绕过。
+**两个桶，不是一个复合键**（2026-11-15 改）。原来键是 `用户名|IP`，看着兼顾两头，
+实际两头都漏：换源 IP 打同一账号，每次都是新桶 → 单账号爆破没有上限；反过来在
+一台机器上换用户名喷，penalty 恒为 0。现在按**用户名**与**IP**各记一份，任一到阈值
+即 429：
+
+- `u:<username>` —— 防分布式撞库，阈值 `MAX_FAILURES`（5 次）；
+- `i:<ip>` —— 防「换用户名喷洒」，阈值 `IP_MAX_FAILURES`（50 次）。
+
+IP 桶的阈值刻意高一档：公司 NAT / 反向代理背后几十个人共用一个出口，
+按 5 次算会让一个人的手误把整间办公室锁 15 分钟。50 次仍然能在一小时内
+挡住「一个 IP 扫一堆账号」，而正常办公几乎碰不到。
+
+成功登录**只清用户名桶**，不清 IP 桶：否则拿一个已知正确的账号穿插着登，
+就能把喷洒计数一直清零，IP 这一档等于不存在。
 IP 的取法见 `core/net.py`——只有对端是可信代理时才读 `X-Forwarded-For`。
 
 另外这里的限流**不负责减少审计写入**：被 429 拦下的请求照样会写一行。所以审计
@@ -31,6 +43,8 @@ from collections import OrderedDict, deque
 from core.exceptions import RateLimited
 
 MAX_FAILURES = 5
+#: 同一个 IP 换用户名喷洒的阈值。比账号阈值高一档，见文件头「两个桶」。
+IP_MAX_FAILURES = 50
 WINDOW_SEC = 15 * 60.0
 # 上限：一个进程里最多同时跟踪多少个「用户名|IP」。超出按 LRU 淘汰最旧的。
 MAX_KEYS = 10_000
@@ -83,7 +97,7 @@ def _existing(key: str, now: float) -> deque[float] | None:
     return bucket if bucket else None
 
 
-def penalty(key: str) -> float:
+def penalty(key: str, *, limit: int = MAX_FAILURES) -> float:
     """超过阈值后建议的等待秒数（0 表示正常放行）。
 
     调用方应先 `await asyncio.sleep(penalty(key))` 再走验密：
@@ -91,13 +105,13 @@ def penalty(key: str) -> float:
     对爆破者的成本是真实的，对真实用户只是多等半秒。
     """
     bucket = _existing(key, time.monotonic())
-    if bucket is None or len(bucket) < MAX_FAILURES:
+    if bucket is None or len(bucket) < limit:
         return 0.0
-    extra = len(bucket) - MAX_FAILURES + 1
+    extra = len(bucket) - limit + 1
     return min(BASE_PENALTY_SEC * extra, MAX_PENALTY_SEC)
 
 
-def is_locked(key: str) -> bool:
+def is_locked(key: str, *, limit: int = MAX_FAILURES) -> bool:
     """失败次数是否**已用尽**允许值（第 `MAX_FAILURES + 1` 次才回 429）。
 
     允许的那 5 次仍然回 401：用户需要知道是"密码错了"，而不是"被锁了"——
@@ -105,12 +119,12 @@ def is_locked(key: str) -> bool:
     **只用于决定错误码**，不用于决定是否验密。
     """
     bucket = _existing(key, time.monotonic())
-    return bucket is not None and len(bucket) > MAX_FAILURES
+    return bucket is not None and len(bucket) > limit
 
 
-def reject(key: str) -> None:
+def reject(key: str, *, limit: int = MAX_FAILURES) -> None:
     """失败次数已达阈值时抛出 429（由调用方在验密**失败之后**调用）。"""
-    if is_locked(key):
+    if is_locked(key, limit=limit):
         minutes = int(WINDOW_SEC // 60)
         raise RateLimited(f"密码错误次数过多，请 {minutes} 分钟后再试")
 
@@ -160,6 +174,7 @@ __all__ = [
     "AUDIT_FOLD_SEC",
     "AUDIT_LOCK_FOLD_SEC",
     "BASE_PENALTY_SEC",
+    "IP_MAX_FAILURES",
     "MAX_FAILURES",
     "MAX_KEYS",
     "MAX_PENALTY_SEC",
