@@ -66,7 +66,8 @@ export function SlotMediaPicker({
   const full = selected.length >= max;
 
   return (
-    <div className="rounded-xl border border-line-soft bg-panel-soft p-2.5">
+    // 槽位是「卡片里的凹槽」：比面板暗一档、带内描边，里面的缩略图才有地方可放。
+    <div className="rounded-xl border border-[rgba(211,224,229,.7)] bg-canvas/45 p-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,.9)]">
       <div className="flex items-baseline gap-1.5">
         <span className="min-w-0 truncate text-[12px] font-medium text-ink">
           {group ? `${group.name} · ${slot.label || slot.key}` : (slot.label || slot.key)}

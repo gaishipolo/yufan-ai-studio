@@ -76,10 +76,13 @@ function TemplateCard({
       type="button"
       onClick={onSelect}
       className={cn(
+        // 三层深度的中间那层：卡片静止时也有一线投影（告诉眼睛"这是浮在页面上的"），
+        // 悬停抬起半像素并加深，选中的用蓝色投影而不是只描一圈边 —— 只描边在
+        // 一排白卡里几乎看不出来（尤其是缩略图把边压满的时候）。
         'group flex flex-col rounded-2xl border bg-panel p-1.5 text-left transition-all duration-200',
         selected
-          ? 'border-primary-line shadow-ring'
-          : 'border-line-soft hover:-translate-y-0.5 hover:border-line hover:shadow-card',
+          ? 'border-primary-line shadow-[0_10px_24px_-12px_rgba(43,124,255,.55)] ring-1 ring-primary/20'
+          : 'border-line-soft shadow-[0_1px_2px_rgba(16,42,55,.05)] hover:-translate-y-0.5 hover:border-line hover:shadow-card',
       )}
     >
       <div className="relative overflow-hidden rounded-xl">
@@ -118,11 +121,13 @@ function TemplateCard({
           </span>
           <span
             className={cn(
-              'flex shrink-0 items-center gap-0.5 text-[11px] transition-colors',
-              selected ? 'text-primary' : 'text-ink-mute group-hover:text-primary',
+              'flex shrink-0 items-center gap-0.5 rounded-full px-1.5 py-[1px] text-[10.5px] transition-colors',
+              selected
+                ? 'bg-primary text-white'
+                : 'bg-panel-soft text-ink-soft ring-1 ring-inset ring-line-soft group-hover:bg-primary-soft group-hover:text-primary group-hover:ring-primary-line',
             )}
           >
-            填写 <ArrowRight size={11} />
+            填写 <ArrowRight size={10} />
           </span>
         </div>
       </div>
@@ -141,9 +146,14 @@ function PanelSection({
   children: ReactNode;
 }) {
   return (
-    <section className="flex flex-col gap-2 border-t border-line-soft pt-3 first:border-t-0 first:pt-0">
+    <section className="flex flex-col gap-2.5 border-t border-line-soft pt-3.5 first:border-t-0 first:pt-0">
       <div className="flex items-center justify-between gap-2">
-        <h3 className="text-[11.5px] font-semibold tracking-[.2px] text-ink">{title}</h3>
+        {/* 3px 色标与封装页的分区标题同源：整页只有「标题栏 / 分区」这两级用彩色，
+            其余一律灰阶 —— 层次靠这个对比撑起来，不靠更多颜色。 */}
+        <h3 className="flex items-center gap-1.5 text-[11px] font-semibold tracking-[.3px] text-ink">
+          <span className="h-2.5 w-[3px] rounded-full bg-gradient-to-b from-primary to-brand" />
+          {title}
+        </h3>
         {extra}
       </div>
       {children}
@@ -308,46 +318,60 @@ export function SpecLibrary() {
     <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_400px]">
       <div className="flex flex-col gap-3">
         {/* 工具栏吸顶：模板多到要滚的时候，筛选框不该跟着滚走。
-            偏移 54px 是顶栏高度 —— 那条 `sticky top-0` 的 header 在最上层，
-            不躲开就会被盖住（第一次就是被它盖成一团糊影）。 */}
-        <div className="sticky top-[54px] z-10 -mx-1 flex items-center gap-2.5 border-b border-line-soft bg-panel px-1 py-2">
+            偏移 54px 是顶栏高度（那条 `sticky top-0` 的 header 在最上层，不躲开会被盖住）；
+            底部用渐变淡出而不是一条硬线 —— 内容从工具栏底下"化"进去，
+            看起来是浮在上层，而不是被一刀切开。 */}
+        <div className="sticky top-[54px] z-10 -mx-1 flex items-center gap-2.5 bg-[linear-gradient(180deg,#fff_0%,#fff_72%,rgba(255,255,255,0))] px-1 pb-3 pt-2">
           <SearchInput
             value={keyword}
             onChange={event => setKeyword(event.target.value)}
             placeholder="按名称筛选"
             wrapperClassName="w-56"
           />
-          <span className="text-[11px] text-ink-mute">{items.length} 个模板</span>
+          <span className="rounded-full bg-panel-soft px-2 py-[2px] text-[10.5px] text-ink-soft ring-1 ring-inset ring-line-soft">
+            {items.length} 个模板
+          </span>
         </div>
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-          {items.map(item => (
-            <TemplateCard
+        {/* 网格放在一层很淡的"托盘"上：卡片本身是白的，如果页面也是白的，
+            就只能靠 1px 描边区分，看一眼全是线。给托盘一点底色，卡片立刻浮起来
+            —— 比给每张卡加更重的阴影更省、也更不会脏。 */}
+        <div className="rounded-2xl bg-canvas/40 p-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,.9)] ring-1 ring-inset ring-[rgba(211,224,229,.45)]">
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            {items.map(item => (
+              <TemplateCard
               key={item.key}
               item={item}
-              selected={item.key === spec?.key}
-              onSelect={() => setSelectedKey(item.key)}
-            />
-          ))}
+                selected={item.key === spec?.key}
+                onSelect={() => setSelectedKey(item.key)}
+              />
+            ))}
+          </div>
         </div>
       </div>
 
       {/* 右栏固定（`xl` 以上吸顶），中间那一段自己滚：槽位多的时候整块会比视口还高，
           不自己滚的话「生成」按钮就永久停在屏幕下面，填到最后还得滚页面去找它。
           头（模板名/版本）和脚（提交按钮）留在滚动区外，滚的只有中间的素材区。 */}
-      <aside className="flex flex-col overflow-hidden rounded-2xl border border-line bg-panel shadow-[0_1px_2px_rgba(16,42,55,.05)] xl:sticky xl:top-[66px] xl:max-h-[calc(100vh-86px)]">
+      <aside className="relative flex flex-col overflow-hidden rounded-2xl border border-line bg-panel shadow-float xl:sticky xl:top-[66px] xl:max-h-[calc(100vh-86px)]">
+        {/* 一条从顶到底的渐变细线：右栏是「干活的地方」，左侧网格是「挑东西的地方」，
+            给干活的那一侧一条自己的脊线，视线落在整页右侧时不会跟卡片混在一起。 */}
+        <span
+          aria-hidden
+          className="pointer-events-none absolute inset-y-5 left-[1px] w-[2px] rounded-full bg-gradient-to-b from-primary/45 via-brand/25 to-transparent"
+        />
         {spec && version ? (
           <>
-            <header className="shrink-0 border-b border-line-soft bg-gradient-to-b from-panel-soft to-panel px-4 pb-3 pt-3.5">
+            <header className="shrink-0 border-b border-line-soft bg-gradient-to-b from-panel-soft via-panel-soft/60 to-panel px-4 pb-3.5 pt-4">
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
-                  <div className="truncate text-[15px] font-semibold leading-tight text-ink">
+                  <div className="truncate text-[15.5px] font-semibold leading-tight tracking-[.1px] text-ink">
                     {spec.name}
                   </div>
-                  <div className="mt-1 flex min-w-0 items-center gap-1.5 text-[11px] text-ink-mute">
-                    <span className="shrink-0 rounded-[5px] bg-panel px-1 py-px text-[10px] ring-1 ring-inset ring-line-soft">
+                  <div className="mt-1.5 flex min-w-0 items-center gap-1.5 text-[11px] text-ink-mute">
+                    <span className="shrink-0 rounded-full bg-primary-soft px-1.5 py-[1px] text-[10px] font-medium text-primary-deep ring-1 ring-inset ring-primary-line/60">
                       v{version.version}
                     </span>
-                    <span className="truncate">{version.model}</span>
+                    <span className="truncate text-ink-soft">{version.model}</span>
                   </div>
                 </div>
                 <Link
@@ -490,7 +514,7 @@ export function SpecLibrary() {
               )}
             </div>
 
-            <div className="flex shrink-0 flex-col gap-2 border-t border-line-soft bg-panel-soft/60 px-4 py-3">
+            <div className="flex shrink-0 flex-col gap-2 border-t border-line-soft bg-gradient-to-b from-panel to-panel-soft px-4 py-3">
               {error && <p className="text-[11px] text-danger">{error}</p>}
               {note && (
                 <p className="flex items-center gap-2 text-[11px] text-ink-soft">
@@ -500,9 +524,12 @@ export function SpecLibrary() {
                   </Link>
                 </p>
               )}
+              {/* 只有"真的能点"的时候才是实心：缺素材时它退成灰按钮 —— 半透明的
+                  蓝底白字既不像能点、也读不清，是最差的一种禁用态。 */}
               <Button
                 block
                 size="lg"
+                variant={missing.length > 0 ? 'secondary' : 'primary'}
                 disabled={busy || missing.length > 0}
                 onClick={() => void submit()}
               >
