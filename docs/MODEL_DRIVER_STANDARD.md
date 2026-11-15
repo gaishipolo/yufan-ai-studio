@@ -49,6 +49,13 @@ drivers/<name>.py  ──自动扫描──▶ ModelRouter ──▶ generation.
 （那里做了再导出）。`GenerationProgress` 会在构造时把 `state` 归一成枚举、
 把 `progress` 夹到 0–100，所以别在驱动外自己拼字典。
 
+**可选能力也是协议**（`infra.ai.base`，运行时判定用 `isinstance`）：
+`PollCapable`（`supports_poll`）、`PollPacing`（`poll_interval_sec`）、
+`SubmitBudget`（`submit_timeout_sec`）。三个刻意分开 —— 声明了 `supports_poll`
+但没写节奏的驱动不会被当成「不支持轮询」，只是按全局间隔问。
+**不要**用 `getattr(provider, "...", None)` 探测：属性名写错时它只会安静地返回
+`None`，然后退化成默认行为（轮询变 2 秒、预算变默认），日志里一句话都没有。
+
 **可选的声明式字段**：
 
 ```python

@@ -1157,3 +1157,42 @@ def test_poll_fails_immediately_when_model_is_gone(
     assert failed, "模型已下线必须立刻判失败"
     assert "不在当前模型目录中" in failed[0][1]
     assert scheduled == [], "不该再排下一跳轮询（退避到超时）"
+
+
+def test_optional_capabilities_are_detected_by_protocol() -> None:
+    """可选能力用协议判定，而不是 `getattr` 探测。
+
+    三件事刻意分开：`supports_poll`（能不能续查）与 `poll_interval_sec`（多久问一次）
+    经常只有一个。合成一个协议的话，声明了 `supports_poll=True` 却没写间隔的供应商
+    会被判成「不支持轮询」——最危险的方向（同步供应商的记录会被 resume 到恒失败的
+    poll 上）。这里把「只有一个」的组合钉住。
+    """
+    from generation.pipeline import CoverAttachable
+    from infra.ai.base import PollCapable, PollPacing, SubmitBudget
+
+    class PollOnly:
+        supports_poll = True
+
+    class PacingOnly:
+        poll_interval_sec = 10.0
+
+    class Both:
+        supports_poll = True
+        poll_interval_sec = 10.0
+        submit_timeout_sec = 180.0
+
+    class Cover:
+        async def attach_cover(self, session: object, record_id: str, cover_key: str) -> bool:
+            return True
+
+    assert isinstance(PollOnly(), PollCapable)
+    assert not isinstance(PollOnly(), PollPacing), "没有节奏声明就是没有"
+
+    assert isinstance(PacingOnly(), PollPacing)
+    assert not isinstance(PacingOnly(), PollCapable), "有节奏不代表能续查"
+
+    assert isinstance(Both(), PollCapable) and isinstance(Both(), PollPacing)
+    assert isinstance(Both(), SubmitBudget)
+
+    assert isinstance(Cover(), CoverAttachable)
+    assert not isinstance(Both(), CoverAttachable), "没实现钩子就不该被当成能补封面"

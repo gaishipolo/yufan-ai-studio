@@ -142,6 +142,42 @@ class ModelSpec:
         }
 
 
+# --------------------------------------------------------------------------- #
+# 可选能力：**用协议 + isinstance 表达，不要用 getattr 探测**
+#
+# 项目里「驱动可以多实现一点东西」一直靠 `getattr(provider, "xxx", None)` 探测。
+# 问题是它不是契约：字段名拼错、被改名、或者哪天挪到别处，探测只会安静地返回
+# None，然后**退化成默认行为** —— 轮询节奏退回 2 秒、提交预算退回默认、同步供应商
+# 被当成异步去 resume。协议把这件事变成可检查的：实现方照着写，调用方
+# `isinstance`，改名会立刻在这里失配而不是悄悄降级。
+#
+# 三个能力刻意分开：`supports_poll` 与 `poll_interval_sec` 经常只有一个。
+# 合成一个协议的话，声明了 `supports_poll=True` 但没写间隔的供应商会被判成
+# 「不支持轮询」—— 那正是最危险的方向。
+# --------------------------------------------------------------------------- #
+
+
+@runtime_checkable
+class PollCapable(Protocol):
+    """能查上游任务状态。同步供应商不声明（缺省按「不能续查」处理）。"""
+
+    supports_poll: bool
+
+
+@runtime_checkable
+class PollPacing(Protocol):
+    """自带查询节奏（秒）。没声明的按 `GENERATION_POLL_INTERVAL_SEC`。"""
+
+    poll_interval_sec: float
+
+
+@runtime_checkable
+class SubmitBudget(Protocol):
+    """提交这一步的预算（秒）。没声明按框架默认值。"""
+
+    submit_timeout_sec: float
+
+
 @runtime_checkable
 class ModelProvider(Protocol):
     """供应商适配器。实现三个方法即可接入一个新厂商。

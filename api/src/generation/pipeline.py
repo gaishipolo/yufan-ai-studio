@@ -40,6 +40,22 @@ class GenerationPipeline(Protocol):
     async def build_request(self, record: GenerationRecord) -> GenerationRequest: ...
 
 
+@runtime_checkable
+class CoverAttachable(Protocol):
+    """可选能力：把库里派生好的封面写回业务记录。
+
+    供应商多半不返回视频首帧（Agnes 只给 mp4 直链），而任务中心 / 分享 / 导出都靠
+    `cover_url` 渲染卡片 —— 所以入库之后要有人把 ffmpeg 抽好的那一帧补回去。
+
+    用协议而不是 `getattr(pipeline, "attach_cover", None)`：拼错的钩子名会让写回
+    **静默不发生**，而症状是「卡片一直显示占位图」，没人会想到去查钩子名。
+    """
+
+    async def attach_cover(
+        self, session: AsyncSession, record_id: str, cover_key: str
+    ) -> bool: ...
+
+
 def strict_model(pipeline: GenerationPipeline) -> bool:
     """该流水线是否**禁止**「只有一个供应商就兜底」。未声明 = 允许。
 

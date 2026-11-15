@@ -37,7 +37,7 @@ from generation.spec import (
     GenerationRecord,
 )
 from infra import get_storage
-from infra.ai.base import Capability, GenerationRequest
+from infra.ai.base import Capability, GenerationRequest, PollCapable
 from infra.driver_config import DriverSettings, driver_config
 from modules.image.models import ImageJob
 
@@ -222,7 +222,7 @@ class ImageJobStore:
             provider = router.provider_for(model)
         except Exception:  # noqa: BLE001 - 快照是增强，不能让一次成功提交失败
             return None
-        return "async" if getattr(provider, "supports_poll", False) else "sync"
+        return "async" if isinstance(provider, PollCapable) and provider.supports_poll else "sync"
 
     async def mark_submitted(self, record_id: str, external_id: str) -> bool:
         job = await _guard(self.session, record_id)

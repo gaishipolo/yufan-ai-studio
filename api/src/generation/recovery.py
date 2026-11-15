@@ -50,6 +50,7 @@ from generation.pipeline import get_pipeline
 from generation.runner import GenerationRunner, get_runner
 from generation.spec import GenerationRecord
 from infra import get_model_router
+from infra.ai.base import PollCapable
 
 logger = get_logger(__name__)
 
@@ -97,7 +98,8 @@ def _supports_poll(record: GenerationRecord) -> bool:
     except Exception:  # noqa: BLE001 - 模型目录被改过，不该让启动恢复整个崩掉
         logger.exception("恢复分类：解析供应商失败，按不支持续查处理 id=%s", record.id)
         return False
-    return bool(getattr(provider, "supports_poll", False))
+    # 协议判定：没实现 `PollCapable` 的供应商一律当「不能续查」（安全侧）。
+    return isinstance(provider, PollCapable) and bool(provider.supports_poll)
 
 
 async def _fail_unrecoverable(kind: str, record: GenerationRecord) -> None:

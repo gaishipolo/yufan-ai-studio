@@ -23,7 +23,7 @@ from typing import Any
 from core.logging import get_logger
 from core.ports.model_generation import DriverSummary
 from infra import get_model_router
-from infra.ai.base import ModelProvider
+from infra.ai.base import ModelProvider, PollCapable
 from modules.model_driver import spec as standard
 
 logger = get_logger(__name__)
@@ -84,7 +84,7 @@ def _discover() -> None:
                 version=meta.version,
                 capabilities=tuple(sorted(c.value for c in provider.capabilities)),
                 model_count=len(provider.models),
-                supports_poll=bool(getattr(provider, "supports_poll", False)),
+                supports_poll=isinstance(provider, PollCapable) and bool(provider.supports_poll),
                 loaded=True,
             )
             if provider.name in loaded:
@@ -261,7 +261,7 @@ def _remember_example(module_name: str, provider: ModelProvider, module: Any) ->
         version=meta.version,
         capabilities=tuple(sorted(c.value for c in provider.capabilities)),
         model_count=len(provider.models),
-        supports_poll=bool(getattr(provider, "supports_poll", False)),
+        supports_poll=isinstance(provider, PollCapable) and bool(provider.supports_poll),
         loaded=True,
     )
     _state[provider.name] = _LoadedDriver(provider=provider, summary=summary)

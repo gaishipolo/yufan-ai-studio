@@ -45,6 +45,7 @@ from generation.events import (
     EVT_GENERATION_SUCCEEDED,
 )
 from generation.pipeline import (
+    CoverAttachable,
     GenerationPipeline,
     fail_on_model_gone,
     get_pipeline,
@@ -53,7 +54,13 @@ from generation.pipeline import (
 from generation.spec import GenerationRecord
 from generation.store import GenerationStore
 from infra import get_model_router
-from infra.ai.base import GenerationProgress, GenerationState, ModelProvider
+from infra.ai.base import (
+    GenerationProgress,
+    GenerationState,
+    ModelProvider,
+    PollPacing,
+    SubmitBudget,
+)
 from infra.ai.router import ModelUnavailable
 from infra.artifacts import artifact_urls
 from infra.queue.base import Job, JobQueue
@@ -171,7 +178,11 @@ class GenerationRunner:
                 record = await get_pipeline(kind).store(session).load(record_id)
             if record is not None:
                 provider = _provider_for(get_pipeline(kind), record.model)
-                declared = getattr(provider, "submit_timeout_sec", None)
+                declared = (
+                    provider.submit_timeout_sec
+                    if isinstance(provider, SubmitBudget)
+                    else None
+                )
         except Exception:  # noqa: BLE001 - 预算算不出来不该阻止提交
             logger.warning("提交超时预算解析失败，按默认值 kind=%s id=%s", kind, record_id)
         if not isinstance(declared, (int, float)) or isinstance(declared, bool) or declared <= 0:
@@ -751,15 +762,15 @@ class GenerationRunner:
         按当前存储驱动现签。任何一步拿不到就安静退出 —— 封面的缺失不该把
         「已经生成成功」改成失败。
         """
-        attach = getattr(pipeline, "attach_cover", None)
-        if attach is None or not has_library_lookup():
+        # 协议判定：没实现 `CoverAttachable` 的流水线只是不补封面，不是错误。
+        if not isinstance(pipeline, CoverAttachable) or not has_library_lookup():
             return
         try:
             refs = await get_library_lookup().get_many(session, [asset_id])
             cover_key = refs[asset_id].cover_key if asset_id in refs else ""
             if not cover_key:
                 return
-            if await attach(session, record_id, cover_key):
+            if await pipeline.attach_cover(session, record_id, cover_key):
                 await session.commit()
         except Exception:  # noqa: BLE001 - 见 docstring：封面缺失不影响生成结果
             logger.exception("封面写回失败 id=%s asset=%s", record_id, asset_id)
@@ -1000,7 +1011,8 @@ class GenerationRunner:
         驱动可以声明 `poll_interval_sec` 收紧——上游对查询频率敏感时（Agnes 视频
         2 秒一问就回 429「查询过于频繁」），按它的节奏问比挨完 429 再退避划算。
         """
-        declared = getattr(provider, "poll_interval_sec", None)
+        declared = provider.poll_interval_sec if isinstance(provider, PollPacing) else None
+        # 仍然校验取值：驱动把间隔写成 0 或负数时不能把轮询变成忙等。
         if isinstance(declared, (int, float)) and declared > 0:
             return float(declared)
         return settings.generation_poll_interval_sec
