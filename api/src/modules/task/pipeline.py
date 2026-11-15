@@ -40,6 +40,27 @@ _RUN_OUTPUT_URL = re.compile(r"/replacement-runs/([a-f0-9]{32})/output$")
 _TERMINAL = (TaskStatus.COMPLETED.value, TaskStatus.FAILED.value)
 
 
+async def _guard(session: AsyncSession, record_id: str) -> VideoTask | None:
+    """终态保护：迟到的回调不许把已经结束的任务改回去。
+
+    必须先 `refresh` 再判断：SQLAlchemy 的 identity map 会直接返回本 session
+    缓存的旧对象，另一个 worker 刚提交的 `completed` / `failed` 在这里读不到，
+    不刷新等于没有保护。刷新前先 `flush()`：`refresh` 会 expire 并重载，
+    本会话尚未提交的改动（比如 `clear_submit_attempt`）会被一起丢弃。
+
+    没有这道守卫的症状很具体：`mark_progress` 无条件写 `RUNNING`，于是
+    「已经出片的任务被一条迟到的进度回调拖回生成中」，进度条永远停在 99%。
+    兄弟链路（`modules/image/pipeline.py`、`modules/model_driver/store.py`）
+    都有这道 guard，视频这条接生成框架时漏了。
+    """
+    task = await session.get(VideoTask, record_id)
+    if task is None:
+        return None
+    await session.flush()
+    await session.refresh(task)
+    return None if task.status in _TERMINAL else task
+
+
 class VideoTaskStore:
     """`video_tasks` ↔ `GenerationRecord` 的映射。不负责 commit，由框架统一提交。"""
 
@@ -114,21 +135,21 @@ class VideoTaskStore:
 
     async def mark_submitting(self, record_id: str) -> bool:
         """调用供应商前先落一次「提交意图」，崩在中途时重启能识别出来。"""
-        task = await self._get(record_id)
+        task = await _guard(self.session, record_id)
         if task is None:
             return False
         task.submit_attempts += 1
         return True
 
     async def clear_submit_attempt(self, record_id: str) -> bool:
-        task = await self._get(record_id)
+        task = await _guard(self.session, record_id)
         if task is None:
             return False
         task.submit_attempts = 0
         return True
 
     async def mark_submitted(self, record_id: str, external_id: str) -> bool:
-        task = await self._get(record_id)
+        task = await _guard(self.session, record_id)
         if task is None:
             return False
         task.external_id = external_id
@@ -141,7 +162,7 @@ class VideoTaskStore:
         return True
 
     async def mark_progress(self, record_id: str, progress: int) -> bool:
-        task = await self._get(record_id)
+        task = await _guard(self.session, record_id)
         if task is None:
             return False
         # 进度只增不减，且不提前到达 100（终态才置 100）
@@ -157,7 +178,7 @@ class VideoTaskStore:
         cover_url: str | None,
         progress: int = 100,
     ) -> bool:
-        task = await self._get(record_id)
+        task = await _guard(self.session, record_id)
         if task is None:
             return False
         task.status = TaskStatus.COMPLETED.value
@@ -171,7 +192,7 @@ class VideoTaskStore:
         return True
 
     async def mark_failed(self, record_id: str, error: str) -> bool:
-        task = await self._get(record_id)
+        task = await _guard(self.session, record_id)
         if task is None:
             return False
         task.status = TaskStatus.FAILED.value

@@ -333,3 +333,65 @@ def test_persist_output_reports_missing_run() -> None:
 
     with pytest.raises(NotFound):
         asyncio.run(get_pipeline(KIND_VIDEO).persist_output("t_persist4", url))
+
+
+# ---------- 终态保护：迟到的回调不许改写已经结束的任务 ----------
+
+def test_late_progress_cannot_reopen_a_completed_task() -> None:
+    """另一个进程已经把它标成 completed，本会话缓存的还是 running。
+
+    没有这道守卫时 `mark_progress` 无条件写 `RUNNING`：出片之后来一条迟到的
+    进度回调，任务就被拖回「生成中」，进度永远停在 99%，前端一直转圈。
+    """
+    task_id = _create_task(status=TaskStatus.RUNNING.value, progress=40)
+
+    async def run() -> tuple[bool, str, int]:
+        from modules.task.pipeline import VideoTaskStore
+
+        async with get_session_factory()() as stale:
+            store = VideoTaskStore(stale)
+            assert await store.load(task_id) is not None  # 把 running 版本塞进 identity map
+
+            async with get_session_factory()() as writer:
+                row = await writer.get(VideoTask, task_id)
+                assert row is not None
+                row.status = TaskStatus.COMPLETED.value
+                row.progress = 100
+                await writer.commit()
+
+            applied = await store.mark_progress(task_id, 60)
+            await stale.commit()
+
+        async with get_session_factory()() as check:
+            row = await check.get(VideoTask, task_id)
+            assert row is not None
+            return applied, row.status, row.progress
+
+    applied, status, progress = asyncio.run(run())
+    assert applied is False, "终态之后不该再接受写"
+    assert status == TaskStatus.COMPLETED.value
+    assert progress == 100
+
+
+def test_late_failure_cannot_overwrite_a_completed_task() -> None:
+    task_id = _create_task()
+
+    async def run() -> bool:
+        from modules.task.pipeline import VideoTaskStore
+
+        async with get_session_factory()() as session:
+            store = VideoTaskStore(session)
+            assert await store.load(task_id) is not None
+            applied = await store.mark_failed(task_id, "迟到的失败")
+            await session.commit()
+            return applied
+
+    assert asyncio.run(run()) is False
+
+    async def check() -> str:
+        async with get_session_factory()() as session:
+            row = await session.get(VideoTask, task_id)
+            assert row is not None
+            return f"{row.status}:{row.error_message}"
+
+    assert asyncio.run(check()) == f"{TaskStatus.COMPLETED.value}:None"
