@@ -16,7 +16,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from core.config import settings
-from core.exceptions import BadRequest, Unavailable
+from core.context import CurrentUser
+from core.exceptions import BadRequest, Forbidden, Unavailable
 from core.ports.model_generation import (
     ModelGeneration,
     SubmitSpec,
@@ -518,3 +519,104 @@ def test_submit_rejects_references_for_text_only_model(
     )
     assert resp.status_code == 400, resp.text
     assert "不支持参考图" in resp.json()["message"]
+
+
+# ---------- 归属判定：三个动作各有自己的闸门 ----------
+#
+# `model_driver:read` 只表示「能进这个模块」，不代表能看/能停别人的任务：
+# 详情里带 `externalId`（供应商任务号）与预签名产物直链，取消会真的调供应商
+# 停掉别人在跑的作业，重试会拿别人的模型额度再跑一次。三件事的代价不同，
+# 所以是三个开关，不能用一个 `read` 带过。
+
+
+def _actor(*codes: str) -> CurrentUser:
+    return CurrentUser(id="u_me", name="甲", permissions=frozenset(codes))
+
+
+def _job(owner_id: str, **overrides: object) -> DriverJob:
+    payload = {
+        "name": "归属用例",
+        "prompt": "p",
+        "model": "md-sync-image",
+        "capability": "image",
+        "owner_id": owner_id,
+    }
+    payload.update(overrides)
+    return DriverJob(**payload)
+
+
+def test_query_hides_other_users_job(client: TestClient) -> None:
+    """没 `read:all` 就只看得到自己的；有才放开他人的详情。"""
+    job_id = asyncio.run(_insert(_job("u_other")))
+    facade = ModelGenerationFacade()
+    try:
+        with pytest.raises(Forbidden):
+            asyncio.run(facade.query(job_id, _actor("model_driver:read")))
+        seen = asyncio.run(
+            facade.query(job_id, _actor("model_driver:read", "model_driver:read:all"))
+        )
+        assert seen is not None and seen.task_id == job_id
+    finally:
+        _cleanup([job_id])
+
+
+def test_cancel_needs_cancel_any_even_with_read_all(client: TestClient) -> None:
+    """`read:all` 不蕴含「替别人取消」：后者会真的停下别人在跑的供应商任务。"""
+    job_id = asyncio.run(_insert(_job("u_other")))
+    facade = ModelGenerationFacade()
+    try:
+        with pytest.raises(Forbidden):
+            asyncio.run(
+                facade.cancel(job_id, _actor("model_driver:read", "model_driver:read:all"))
+            )
+        ticket = asyncio.run(
+            facade.cancel(
+                job_id,
+                _actor("model_driver:read", "model_driver:read:all", "model_driver:cancel:any"),
+            )
+        )
+        assert ticket is not None and ticket.status == STATUS_CANCELLED
+    finally:
+        _cleanup([job_id])
+
+
+def test_retry_needs_retry_any_for_other_users_job(
+    client: TestClient, example_drivers: None
+) -> None:
+    """重试是花钱的动作：`read:all` 不够，必须 `retry:any`。"""
+    job_id = asyncio.run(
+        _insert(_job("u_other", status="failed", external_id="EXT-IDOR", submit_attempts=1))
+    )
+    facade = ModelGenerationFacade()
+    try:
+        with pytest.raises(Forbidden):
+            asyncio.run(
+                facade.retry(
+                    job_id,
+                    _actor("model_driver:read", "model_driver:read:all"),
+                    confirm_charged=True,
+                )
+            )
+        ticket = asyncio.run(
+            facade.retry(
+                job_id,
+                _actor("model_driver:read", "model_driver:read:all", "model_driver:retry:any"),
+                confirm_charged=True,
+            )
+        )
+        assert ticket.status == "queued"
+        assert ticket.submit_attempts == 0
+    finally:
+        _cleanup([job_id])
+
+
+def test_own_job_needs_no_extra_switch(client: TestClient) -> None:
+    """自己的任务不加任何额外闸门：别把归属判定做成「谁都得开 read:all」。"""
+    job_id = asyncio.run(_insert(_job("u_me")))
+    facade = ModelGenerationFacade()
+    try:
+        assert asyncio.run(facade.query(job_id, _actor("model_driver:read"))) is not None
+        ticket = asyncio.run(facade.cancel(job_id, _actor("model_driver:read")))
+        assert ticket is not None and ticket.status == STATUS_CANCELLED
+    finally:
+        _cleanup([job_id])

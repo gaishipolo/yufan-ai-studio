@@ -10,7 +10,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from core.exceptions import BadRequest, Conflict, InvalidState, NotFound
+from core.context import CurrentUser
+from core.exceptions import BadRequest, Conflict, Forbidden, InvalidState, NotFound
 from core.param_schema import resolve_params
 from core.ports.model_generation import (
     DriverSummary,
@@ -28,6 +29,11 @@ from modules.model_driver.models import (
     TERMINAL_STATUSES,
     DriverJob,
     encode_request,
+)
+from modules.model_driver.permissions import (
+    PERM_CANCEL_ANY,
+    PERM_READ_ALL,
+    PERM_RETRY_ANY,
 )
 from modules.model_driver.registry import driver_summaries, ensure_drivers_registered
 
@@ -106,16 +112,36 @@ class ModelGenerationFacade:
         await get_runner().dispatch(KIND_MODEL_DRIVER, ticket.task_id)
         return ticket
 
-    async def query(self, task_id: str) -> GenerationTicket | None:
-        async with get_session_factory()() as session:
-            job = await session.get(DriverJob, task_id)
-            return None if job is None else self._ticket(job)
+    async def query(self, task_id: str, actor: CurrentUser) -> GenerationTicket | None:
+        """查任务详情。
 
-    async def cancel(self, task_id: str) -> GenerationTicket | None:
+        归属按 `model_driver:read:all` 判定，与 `task` / `image` 同口径：
+        `model_driver:read` 只表示「能进这个模块」，不代表能看别人的任务
+        ——详情里带着 `externalId`（供应商任务号）与预签名产物直链，
+        能让不相干的人翻到。
+        """
         async with get_session_factory()() as session:
             job = await session.get(DriverJob, task_id)
             if job is None:
                 return None
+            if job.owner_id != actor.id and not actor.has(PERM_READ_ALL):
+                raise Forbidden("无权查看他人的生成任务")
+            return self._ticket(job)
+
+    async def cancel(
+        self, task_id: str, actor: CurrentUser
+    ) -> GenerationTicket | None:
+        """取消任务。
+
+        已提交到供应商的会真的调驱动 `cancel`，会**影响别人正在跑的任务**，
+        所以归属按 `model_driver:cancel:any` 判，不认 `read:all`。
+        """
+        async with get_session_factory()() as session:
+            job = await session.get(DriverJob, task_id)
+            if job is None:
+                return None
+            if job.owner_id != actor.id and not actor.has(PERM_CANCEL_ANY):
+                raise Forbidden("无权取消他人的生成任务")
             if job.status in TERMINAL_STATUSES:
                 raise Conflict(f"任务已结束（{job.status}），不能取消")
 
@@ -133,18 +159,25 @@ class ModelGenerationFacade:
             await session.commit()
             return ticket
 
-    async def retry(self, task_id: str, *, confirm_charged: bool = False) -> GenerationTicket:
+    async def retry(
+        self, task_id: str, actor: CurrentUser, *, confirm_charged: bool = False
+    ) -> GenerationTicket:
         """人工自救出口：把 failed 复位成 queued 并重新投递。
 
         与 `modules/image/service.py::retry` 同一口径：带 external_id 的失败
         说明供应商可能已受理并计费，默认拒绝，必须显式 `confirmCharged=true`。
         失败也必须清 `submit_attempts`，否则 `runner` 会把它判成「提交结果未知」
         再次置死，用户点多少次都是同一个结果。
+
+        重试是**花钱**的动作，替别人重跑要额外的 `model_driver:retry:any`：
+        `model_driver:read` 只表示能进这个模块，不代表能拿别人的额度再跑一次。
         """
         async with get_session_factory()() as session:
             job = await session.get(DriverJob, task_id)
             if job is None:
                 raise NotFound("生成任务不存在")
+            if job.owner_id != actor.id and not actor.has(PERM_RETRY_ANY):
+                raise Forbidden("无权重试他人的生成任务")
             if job.status != STATUS_FAILED:
                 raise InvalidState("仅失败的生成任务可以重试")
             if job.external_id and not confirm_charged:

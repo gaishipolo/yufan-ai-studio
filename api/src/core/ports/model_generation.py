@@ -8,10 +8,14 @@
     ticket = await get_model_generation().submit(
         SubmitSpec(model="seedream-3", prompt="...", owner_id=actor.id)
     )
-    ticket = await get_model_generation().query(ticket.task_id)
+    ticket = await get_model_generation().query(ticket.task_id, actor)
 
 数据类型刻意只用标准库与 `str`：core 层不需要认识 `infra.ai` 的枚举，
 端口协议才不会因为上层换供应商而改签名。
+
+**`query` / `cancel` 必须带 `actor`**：这两件事分别会泄露别人的任务详情
+（供应商任务号、预签名直链）与停掉别人正在跑的作业，所以归属判定不能靠
+「调用方自己记得查」，而是让不传 actor 就无法通过类型检查。
 
 未注册时 fail-closed（抛 503），不返回「空模型列表」——那会把装配故障
 报成「用户没配模型」，是最难排查的一类问题。
@@ -24,6 +28,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Protocol, runtime_checkable
 
+from core.context import CurrentUser
 from core.exceptions import Unavailable
 from core.ports.host import Port
 
@@ -113,8 +118,8 @@ class ModelGeneration(Protocol):
     """
 
     async def submit(self, request: SubmitSpec) -> GenerationTicket: ...
-    async def query(self, task_id: str) -> GenerationTicket | None: ...
-    async def cancel(self, task_id: str) -> GenerationTicket | None: ...
+    async def query(self, task_id: str, actor: CurrentUser) -> GenerationTicket | None: ...
+    async def cancel(self, task_id: str, actor: CurrentUser) -> GenerationTicket | None: ...
     def models(self, capability: str = "") -> tuple[ModelSummary, ...]: ...
     def drivers(self) -> tuple[DriverSummary, ...]: ...
 

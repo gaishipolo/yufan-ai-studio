@@ -87,8 +87,11 @@ Authorization: Bearer <accessToken>
 | `image:read:all` | 查看他人生图历史 | 列表的数据范围开关；与 task:read:all 同义，不含提交他人的生图任务 |
 | `image:retry:any` | 重试他人生图任务 | 只开关「替别人点重试」，不蕴含 image:read:all |
 | `model_driver:cancel` | 取消生成任务 |  |
+| `model_driver:cancel:any` | 取消他人生成任务 | 会真的调供应商取消，影响别人正在跑的任务；不认 read:all |
 | `model_driver:create` | 提交统一生成任务并重试失败记录 |  |
 | `model_driver:read` | 查看模型驱动、模型目录与生成任务 |  |
+| `model_driver:read:all` | 查看他人生成任务 | 跨用户可见：详情查询的归属判定依据；不含重试/取消他人任务 |
+| `model_driver:retry:any` | 重试他人生成任务 | 会消耗额度：重试他人任务前额外校验此权限 |
 | `shot:read` | 查看镜头库 |  |
 | `storyboard:read` | 查看分镜模板 |  |
 | `task:create` | 创建生成任务 |  |

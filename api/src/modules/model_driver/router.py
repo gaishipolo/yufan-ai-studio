@@ -125,7 +125,7 @@ async def submit_task(
 async def get_task(
     task_id: str, facade: FacadeDep, actor: DriverReadDep
 ) -> ApiResponse[TaskOut]:
-    ticket = await facade.query(task_id)
+    ticket = await facade.query(task_id, actor)
     if ticket is None:
         raise NotFound("生成任务不存在")
     return ApiResponse.ok(_task_out(ticket))
@@ -138,7 +138,7 @@ async def cancel_task(
     actor: DriverCancelDep,
     _: None = Depends(rate_limit("model_driver.cancel", limit=settings.rate_limit_default_per_min)),
 ) -> ApiResponse[TaskOut]:
-    ticket = await facade.cancel(task_id)
+    ticket = await facade.cancel(task_id, actor)
     if ticket is None:
         raise NotFound("生成任务不存在")
     return ApiResponse.ok(_task_out(ticket))
@@ -154,5 +154,5 @@ async def retry_task(
     ] = False,
     _: None = Depends(rate_limit("model_driver.retry", limit=settings.rate_limit_default_per_min)),
 ) -> ApiResponse[TaskOut]:
-    ticket = await facade.retry(task_id, confirm_charged=confirm_charged)
+    ticket = await facade.retry(task_id, actor, confirm_charged=confirm_charged)
     return ApiResponse.ok(_task_out(ticket))
