@@ -172,7 +172,17 @@ class S3ArchiveStorage:
         workspace = self._workspace(location)
         if workspace is not None:
             return workspace.is_file()
-        key = self._key(location)
+        return self.key_exists(self._key(location))
+
+    def key_exists(self, key: str) -> bool:
+        """`key` 必须**已经**是归一化后的对象名（含前缀）。
+
+        单独一个方法是为了让「手里已经有 key」的调用方别再走 `_key()`：
+        `copy()` 里先 `_key(destination)` 再 `exists(key)`，前缀就被加了两遍，
+        `S3_BUCKET_MODE=shared` 或配了 `S3_ARCHIVE_PREFIX` 时 head 查的是
+        `archive/archive/...` → 恒不存在，「已存在且摘要不符则拒绝覆盖」这条
+        协议承诺在那类部署下直接失效（2026-11-15 审查 2.11）。
+        """
         try:
             self._client.head_object(Bucket=self._bucket, Key=key)
         except ClientError as exc:
@@ -271,7 +281,7 @@ class S3ArchiveStorage:
             return _copy_file(source, workspace, digest or checksum(source))
         key = self._key(destination)
         expected = digest or checksum(source)
-        if self.exists(key):
+        if self.key_exists(key):
             # 内容寻址下重名即同内容；仍比对一次，防止有人手工往桶里塞了同名异物。
             if self._remote_digest(key) != expected:
                 raise UpstreamError(f"归档对象与本次写入不一致：{self._display(key)}")

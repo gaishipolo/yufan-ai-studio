@@ -194,3 +194,43 @@ def test_cache_eviction_tolerates_files_that_cannot_be_removed(
 
     monkeypatch.setattr(Path, "unlink", refuse)
     storage._evict()  # 不该抛
+
+
+class _RecordingClient:
+    """只记 key 的假客户端：head 一律 404，upload 只记账。"""
+
+    def __init__(self) -> None:
+        self.heads: list[str] = []
+        self.uploads: list[str] = []
+
+    def head_object(self, *, Bucket: str, Key: str) -> dict[str, Any]:
+        from botocore.exceptions import ClientError
+
+        self.heads.append(Key)
+        raise ClientError({"Error": {"Code": "404", "Message": "Not Found"}}, "HeadObject")
+
+    def upload_file(
+        self, source: str, bucket: str, key: str, ExtraArgs: dict[str, Any] | None = None
+    ) -> None:
+        self.uploads.append(key)
+
+
+def test_copy_does_not_prefix_the_key_twice(tmp_path: Path) -> None:
+    """`copy()` 里 key 已经归一化过，别再交给会二次加前缀的 `exists()`。
+
+    配了 `S3_ARCHIVE_PREFIX`（或 shared 模式带命名空间）时，旧写法 head 查的是
+    `archive/archive/...` → 恒不存在，「已存在且摘要不符则拒绝覆盖」那条协议
+    在这类部署下直接失效，而且是静默的。
+    """
+    client = _RecordingClient()
+    storage = S3ArchiveStorage(
+        settings=_settings(archive_bucket="arc", archive_prefix="archive")
+    )
+    storage._client = client
+    source = tmp_path / "video.mp4"
+    source.write_bytes(b"x" * 1024)
+
+    storage.copy(source, "catalog/blobs/a.mp4")
+
+    assert client.heads == ["archive/catalog/blobs/a.mp4"]
+    assert client.uploads == ["archive/catalog/blobs/a.mp4"]
