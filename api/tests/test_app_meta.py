@@ -234,3 +234,44 @@ def test_app_meta_row_exposes_version_column() -> None:
     """`version` 必须是真实的列（而不只是 dataclass 字段）：迁移里加了它。"""
     assert "version" in AppMeta.__table__.columns
     assert AppMeta.__table__.columns["version"].nullable is False
+
+
+def test_flush_conflict_rolls_back_so_the_session_stays_usable() -> None:
+    """被 `version_id_col` 拦下的写入必须回滚，否则会话立刻不能再用。
+
+    前面那条 `test_write_against_stale_version_is_refused` 走的是「读到的版本号
+    过期」这条早退路径（flush 根本没执行）。真正麻烦的是另一条：读之后、flush
+    之前被别人改掉 —— `StaleDataError` 在 flush 时才抛出来，会话进入「需要回滚」
+    状态，不回滚的话下一句 `read_entry` 直接 `PendingRollbackError`（500），
+    而 `merge_json` 的重试循环恰好要在失败之后重读。
+    """
+    key = _key()
+
+    async def scenario() -> tuple[bool, list[str]]:
+        factory = get_session_factory()
+        async with factory() as session:
+            assert await set_json(session, key, ["v1"], expected_version=0)
+            await session.commit()
+
+        async with factory() as stale, factory() as other:
+            row = await stale.get(AppMeta, key)
+            assert row is not None
+
+            # 另一个实例把它改成 v2
+            assert await set_json(other, key, ["v1", "v2"], expected_version=None)
+            await other.commit()
+
+            # 让 set_json 拿到缓存的 v1 那一行（真实场景是同一个会话早先读过）
+            async def cached_get(*args: object, **kwargs: object) -> object:
+                return row
+
+            stale.get = cached_get  # type: ignore[method-assign]
+
+            accepted = await set_json(stale, key, ["mine"], expected_version=None)
+            # 冲突之后会话必须还能读 —— 这就是修法要保证的那条性质
+            entry = await read_entry(stale, key)
+            return accepted, list(entry.value) if entry else []
+
+    accepted, value = asyncio.run(scenario())
+    assert accepted is False
+    assert value == ["v1", "v2"], "别人的写入被盖掉了"

@@ -205,7 +205,13 @@ async def set_json(
         await session.flush()
     except StaleDataError:
         # `version_id_col` 在 flush 时补上了 `WHERE version = <读到的值>`：
-        # 读到之后被别人改过，这里就不会命中任何行
+        # 读到之后被别人改过，这里就不会命中任何行。
+        #
+        # **必须回滚**：抛 StaleDataError 之后会话进入「需要回滚」状态，
+        # 不回滚的话调用方下一句读就是 `PendingRollbackError`（表现为 500），
+        # 而 CAS 失败本是预期内的并发结果 —— `merge_json` 的重试循环正是
+        # 「失败 → 重读 → 重算」，没有这句它连重读都做不到。
+        await session.rollback()
         return False
     await _record(session, key, row.version, actor, detail)
     return True
