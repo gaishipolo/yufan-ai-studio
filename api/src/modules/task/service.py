@@ -29,7 +29,12 @@ from infra.artifacts import artifact_urls
 from infra.queue.base import JobQueue
 from modules.task.enums import AspectRatio, TaskScope, TaskStatus
 from modules.task.models import TaskFavorite, VideoTask
-from modules.task.params import resolve_aspect_ratio, resolve_duration, resolve_model
+from modules.task.params import (
+    resolve_aspect_ratio,
+    resolve_duration,
+    resolve_model,
+    resolve_style_preset,
+)
 from modules.task.permissions import PERM_READ_ALL, PERM_RETRY_ANY
 from modules.task.pipeline import KIND_VIDEO
 from modules.task.repository import TaskRepository
@@ -114,6 +119,9 @@ class TaskService:
         spec = resolve_model(self.router, payload.model, capability=Capability.VIDEO)
         duration_sec = resolve_duration(spec, payload.duration_sec)
         aspect_ratio = resolve_aspect_ratio(spec, AspectRatio(payload.aspect_ratio).value)
+        # 风格预设也走模型 schema：模型没声明这个参数就明确拒绝，别把自造的键
+        # 原样发给供应商（上游要么忽略、要么 400，两种都不可控）。
+        style_preset = resolve_style_preset(spec, payload.style_preset)
 
         # 参考素材在受理期就过一遍资产库：存在 / 可读 / 在库 / 类型受支持。
         # 不做这一步的话，前端传一个别人的私有资产 id 也会被原样落库——
@@ -160,7 +168,7 @@ class TaskService:
             duration_sec=duration_sec,
             aspect_ratio=aspect_ratio,
             progress=0,
-            style_preset=payload.style_preset,
+            style_preset=style_preset,
             # 存去重保序之后的 id：同一张图传两遍不会多占一个保护名额
             reference_library_ids=[ref.id for ref in references],
             text_json=dumps_text_refs(text_refs),
@@ -201,8 +209,8 @@ class TaskService:
         task.submit_attempts = 0
         task.output_url = None
         task.downloadable = False
-        # 封面也是上一版产物的：不清掉，重试期间卡片会继续显示旧片的首帧，
-        # 用户以为「点了重试没反应」。新片入库后由 `attach_cover` 再写回来。
+        # 封面也是上一版产物的，**要清掉**：留着的话重试期间卡片会继续显示旧片的
+        # 首帧，用户以为「点了重试没反应」。新片入库后由 `attach_cover` 再写回来。
         task.cover_url = ""
         task.finished_at = None
         task.updated_at = datetime.now(tz=UTC)

@@ -169,7 +169,7 @@ export interface CreateTaskIn {
   referenceLibraryIds?: string[];
   /** 要拼进提示词的文本资产 id，按顺序对应 `{{Text 1}}` / `{{Text 2}}`…；提交时按当时版本冻结正文，之后编辑资产不影响本次生成与重试。只接受当前账号可读、在库的 text 类型资产，最多 8 份 */
   textLibraryIds?: string[];
-  /** 风格预设标识，留空为不套风格 */
+  /** 风格预设标识，留空为不套风格。**只在模型声明了 `stylePreset` 参数时可用**，取值须在它的 options 内；未声明的模型传非空值直接 400 */
   stylePreset?: string | null;
 }
 

@@ -336,11 +336,15 @@ def test_create_normalizes_model_id_and_label(client: TestClient, api: str) -> N
     assert by_label["modelId"] == "kling-2.1"
 
 
-def test_create_echoes_style_and_reference_images(client: TestClient, api: str) -> None:
+def test_create_echoes_reference_images(client: TestClient, api: str) -> None:
     """契约里声明的字段必须真的落库并回显，不能「收了就丢」。
 
     参考图存的是**资产库 v2 的 id**（前端先上传拿 id 再下发），受理时就要过一遍
     可见性，所以这里必须造真资产：随手编两个 id 会被 400 挡在门口（下一条用例）。
+
+    `stylePreset` 不在这条用例里：它现在要求**模型声明该参数**才收（见
+    `test_style_preset_must_be_declared_by_the_model`），而目录里暂时没有模型声明
+    风格预设 —— 这正是「字段在、能力没有」的诚实状态，不再假装收了就生效。
     """
     first = upload_image(client, api, {}, name="front.png", color="seagreen")
     second = upload_image(client, api, {}, name="back.png", color="navy")
@@ -350,14 +354,11 @@ def test_create_echoes_style_and_reference_images(client: TestClient, api: str) 
         prompt="带参考图",
         model=_REF_MODEL,
         referenceLibraryIds=[first["id"], second["id"]],
-        stylePreset="电影感",
     )
     assert task["referenceLibraryIds"] == [first["id"], second["id"]]
-    assert task["stylePreset"] == "电影感"
 
     detail = client.get(f"{api}/tasks/{task['id']}").json()["data"]
     assert detail["referenceLibraryIds"] == [first["id"], second["id"]]
-    assert detail["stylePreset"] == "电影感"
 
 
 def test_create_rejects_reference_image_that_does_not_exist(
@@ -724,3 +725,25 @@ def test_deleting_a_task_clears_its_favorite_rows(client: TestClient, api: str) 
     )
     assert removed.status_code == 200
     assert asyncio.run(rows()) == 0
+
+
+def test_style_preset_must_be_declared_by_the_model(client: TestClient, api: str) -> None:
+    """风格预设不能是「第三条路」：模型没声明就明确拒绝。
+
+    以前 `stylePreset` 契约里有、库里落、`params` 里原样发给供应商 ——
+    既不问模型支不支持，也不校验取值。模型没声明这个参数时，等于把一个自己编的
+    键塞进请求体：上游要么忽略（用户以为生效了）、要么 400（在异步阶段才炸）。
+    """
+    resp = client.post(
+        f"{api}/tasks",
+        json={
+            "prompt": "带风格的请求",
+            "model": "Seedance 2.5",
+            "durationSec": 5,
+            "aspectRatio": "9:16",
+            "stylePreset": "film",
+        },
+    )
+
+    assert resp.status_code == 400, resp.text
+    assert "风格" in resp.json()["message"]

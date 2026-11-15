@@ -137,7 +137,12 @@ class CreateTaskIn(CamelModel):
         ),
     )
     style_preset: str | None = Field(
-        default=None, max_length=64, description="风格预设标识，留空为不套风格"
+        default=None,
+        max_length=64,
+        description=(
+            "风格预设标识，留空为不套风格。**只在模型声明了 `stylePreset` 参数时可用**，"
+            "取值须在它的 options 内；未声明的模型传非空值直接 400"
+        ),
     )
 
 

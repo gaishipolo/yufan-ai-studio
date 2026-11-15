@@ -1102,7 +1102,7 @@ Authorization: Bearer <accessToken>
 | `aspectRatio` | `AspectRatio` | 否 | 画幅比例，缺省 9:16 竖屏 |
 | `referenceLibraryIds` | `string[]` | 否 | 参考素材的资产库 v2 资产 id，最多 20 个，**顺序即提交顺序**。受理时校验：必须存在、当前账号能读、不在回收站 / 草稿里，且是 `image` / `video` / `audio` 之一（能否收图、收几张由模型的 `maxReferences` 决定）。传 id 而不是 URL：取件链接是私签的，供应商取不到 |
 | `textLibraryIds` | `string[]` | 否 | 要拼进提示词的文本资产 id，按顺序对应 `{{Text 1}}` / `{{Text 2}}`…；提交时按当时版本冻结正文，之后编辑资产不影响本次生成与重试。只接受当前账号可读、在库的 text 类型资产，最多 8 份 |
-| `stylePreset` | `string \| null` | 否 | 风格预设标识，留空为不套风格 |
+| `stylePreset` | `string \| null` | 否 | 风格预设标识，留空为不套风格。**只在模型声明了 `stylePreset` 参数时可用**，取值须在它的 options 内；未声明的模型传非空值直接 400 |
 
 **响应** `ApiResponse<core__response__ApiResponse_TaskOut___2>`（前端取 `res.data`）
 
@@ -3455,7 +3455,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `aspectRatio` | `AspectRatio` | 否 | 画幅比例，缺省 9:16 竖屏 |
 | `referenceLibraryIds` | `string[]` | 否 | 参考素材的资产库 v2 资产 id，最多 20 个，**顺序即提交顺序**。受理时校验：必须存在、当前账号能读、不在回收站 / 草稿里，且是 `image` / `video` / `audio` 之一（能否收图、收几张由模型的 `maxReferences` 决定）。传 id 而不是 URL：取件链接是私签的，供应商取不到 |
 | `textLibraryIds` | `string[]` | 否 | 要拼进提示词的文本资产 id，按顺序对应 `{{Text 1}}` / `{{Text 2}}`…；提交时按当时版本冻结正文，之后编辑资产不影响本次生成与重试。只接受当前账号可读、在库的 text 类型资产，最多 8 份 |
-| `stylePreset` | `string \| null` | 否 | 风格预设标识，留空为不套风格 |
+| `stylePreset` | `string \| null` | 否 | 风格预设标识，留空为不套风格。**只在模型声明了 `stylePreset` 参数时可用**，取值须在它的 options 内；未声明的模型传非空值直接 400 |
 
 ### `DeleteImagesIn`
 

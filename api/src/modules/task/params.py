@@ -102,4 +102,41 @@ def _as_int(value: Any, *, fallback: int) -> int:
         return fallback
 
 
-__all__ = ["resolve_aspect_ratio", "resolve_duration", "resolve_model"]
+def resolve_style_preset(spec: ModelSpec, style_preset: str | None) -> str | None:
+    """按 `stylePreset` schema 校验风格预设。
+
+    原来这个字段是**第三条路**：契约里声明了、库里落了、`params["stylePreset"]`
+    原样发给供应商 —— 既不问模型支不支持，也不校验取值。模型没声明这个参数时，
+    等于把一个自己编的键塞进请求体（上游要么忽略、要么 400，两种都不可控）。
+
+    现在的口径与「未声明的参数键一律 400」一致（生图那条链就是这么做的）：
+    模型声明了就按它的 `options` 校验，没声明就明确拒绝，而不是默默带过去。
+    """
+    value = (style_preset or "").strip()
+    if not value:
+        return None
+
+    schema = _param(spec, "stylePreset")
+    if not schema:
+        raise BadRequest(
+            f"模型 {spec.label} 没有声明风格预设（stylePreset），不能指定风格",
+            details={"field": "stylePreset"},
+        )
+    options = schema.get("options")
+    if isinstance(options, (list, tuple)) and options:
+        allowed = [str(item) for item in options]
+        if value not in allowed:
+            raise BadRequest(
+                f"风格 {value!r} 不被模型 {spec.label} 支持，可选: {', '.join(allowed)}",
+                details={"field": "stylePreset", "options": allowed},
+            )
+    return value
+
+
+__all__ = [
+    "resolve_aspect_ratio",
+    "resolve_duration",
+    "resolve_model",
+    "resolve_style_preset",
+]
+
