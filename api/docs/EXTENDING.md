@@ -1162,7 +1162,8 @@ module = ModuleSpec(name="image", router=router, ..., doctor=check)
 - 检查必须**只读**。`doctor` 会在生产上被随手跑，写库/删文件的自检没人敢用。
 
 历史：`archive.mirrors` / `archive.mirror.reconcile` / `archive.quota` 三条原本
-写在 `api/diagnostics.py` 里，2026-11-08 随生图模块重建一起搬回 `modules/asset`。
+写在 `api/diagnostics.py` 里，2026-11-08 随生图模块重建一起搬回业务模块；那三条
+自检随 v1 素材库（`modules/asset`）一起下线，现在只剩 `library` 模块自己的。
 
 **⑤ 运维命令：`ModuleSpec.cli`**
 
@@ -1368,13 +1369,12 @@ module = ModuleSpec(..., asset_reference_sources=SOURCES)
 声明，没被任何来源 `location` 覆盖就 CI 红。运行时来源不齐抛 `Unavailable`(503)，
 **不会**退化成「没人引用、可以删」。
 
-### ② 写入 catalog JSON 前先问「DB 是不是唯一事实来源」
+### ② 别在 DB 之外再造一份「真相」
 
-替换模板的同步 worker 读 `catalog/assets/*.json`，所以镜像必须存在，但它是
-`modules/asset/mirror.py` 的**派生投影**：事务先 `commit`，之后才投影；镜像带
-`stateVersion`，`@periodic("asset.mirror")` 与 `app rebuild-mirrors` 按 DB 幂等对账。
-新增写路径不要自己拼 `catalog/assets/{id}.json`，也不要把「镜像写失败」当成
-整次业务失败——DB 已提交时抛 500 只会让用户重试出重复记录。
+`catalog/assets/*.json` 那套 JSON 镜像随 v1 素材库一起下线了（`modules/asset` 整个
+目录已删）。现在资产库的字节与元数据都在 DB + 对象存储里，没有第二份投影要对账。
+新增写路径时：**先 commit，再做可重试的外围动作**（对象存储、事件、缓存），
+外围失败不要当成整次业务失败——DB 已提交时抛 500 只会让用户重试出重复记录。
 
 ### ③ 不可逆的周期任务标 `leader_only`
 

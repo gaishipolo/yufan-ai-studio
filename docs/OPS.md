@@ -276,7 +276,7 @@ DB_URL=sqlite+aiosqlite:////tmp/rehearsal/app.db app doctor
   恢复后如果对象缺失，`app verify-blobs` 会列出缺失的 key。
 - **运行工作区（`REPLACEMENT_RUNS_ROOT`）也不在**。它是指向归档的指针集，
   恢复 DB 后 `app runs-status` 能看出「指针在、工作区不在本机」的档案数。
-- 恢复期间**不要**同时跑 `app prune-blobs` / GC：两份进程都认为自己是权威。
+- 恢复期间**不要**同时跑回收站 GC（`LIBRARY_TRASH_GC_ENABLED`）或下载包清理：两份进程都认为自己是权威。
 
 ---
 

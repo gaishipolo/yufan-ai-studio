@@ -109,7 +109,7 @@
 | 文件 | 职责 |
 |---|---|
 | `app.py` | 应用工厂：所有装配都在这里，`main.py` 只引用它。 |
-| `cli.py` | 命令行入口 `app <command>`：`serve` / `seed` / `export-openapi` / `import-archive-index` / `prune-sessions` / `sync-roles` / `meta`。 |
+| `cli.py` | 命令行入口 `app <command>`：`serve` / `seed` / `export-openapi` / `prune-sessions` / `sync-roles` / `meta` / `backup` / `restore`（业务命令由模块经 `ModuleSpec.cli` 挂上来，`app --help` 为准）。 |
 | `main.py` | ASGI 入口：`uvicorn main:app --reload`。 |
 | `openapi_export.py` | 契约导出：`openapi.json` / `API.md` / `schema.ts` / `permissions.ts` 四份一致文件。 |
 | `seed.py` | 演示数据装载（仅开发环境）：三个账号、示例素材、任务、模板。 |
@@ -254,26 +254,6 @@
 | `modules/task/worker.py` | 启动恢复：进程重启后把在飞任务接回去。 |
 | `modules/task/feed_schema.py` | 任务中心聚合契约：`TaskFeedItem` 用「来源前缀 + id」当 key，`video` / `image` 两路投影互斥，另带 `stats` / `warnings`。 |
 | `modules/task/feed_service.py` | 两路聚合（视频 / 生图）：逐路鉴权、逐路取统计与候选，合并排序后再切一次页；产物 key 在这里批量现签。 |
-
-**asset · 素材资产（含归档库）**
-
-`assets` 表是**全部素材的唯一索引**（网页上传 / 归档登记 / 生成产物），但字节分两套存储：
-`source='upload'` 走对象存储（`STORAGE_DRIVER`，本地或 S3），`source='archive'` 走归档盘
-（`MEDIA_ARCHIVE_ROOT`）。两套存储的 `storage_key` 不是同一命名空间，读文件时按 `source`
-选择驱动；两个列表接口也各自限定来源，避免把对方的行渲染成 404 封面。
-归档登记时仍写一份 `catalog/assets/{id}.json` 镜像——替换模板在 worker 里同步读它，
-这是「索引换 DB、替换模板零改动」的桥；JSON 不是真相源，丢了不影响列表与取文件。
-
-| 文件 | 职责 |
-|---|---|
-| `modules/asset/router.py` | 普通素材路由（`/assets`）。 |
-| `modules/asset/service.py` / `schema.py` / `models.py` | 素材资产的服务、出入参、ORM 实体。 |
-| `modules/asset/archive.py` | 归档路由：只声明 HTTP 参数与响应，业务在 `archive_service`。 |
-| `modules/asset/archive_service.py` | 归档编排：流式落盘、摘要去重、缩略图、写 JSON 镜像；磁盘操作在线程池执行。 |
-| `modules/asset/archive_repository.py` | 归档素材仓储：按 `source='archive'` 限定作用域查 `assets` 表，`CATEGORIES` 分类常量。 |
-| `modules/asset/archive_import.py` | `app import-archive-index` 的实现：JSON 索引 → `assets` 表，幂等、不删 JSON。 |
-| `modules/asset/archive_schema.py` | 归档契约（`ArchivedAssetOut` 等）。 |
-| `modules/asset/archive_dependencies.py` | 归档 HTTP 依赖装配。 |
 
 **template_pack · 模板封装（模板规格：槽位 + 提示词 + 模型）**
 
@@ -493,7 +473,7 @@
 
 | 文件 | 职责 |
 |---|---|
-| `modules/assets/module.ts` | 素材资产库：路由 `/assets` + 侧栏项 + 权限 `asset:read`。 |
+| `modules/library/module.ts` | 资产库：路由 `/library` + 侧栏项 + 权限 `library:read`（v1 `/assets` 已彻底下线）。 |
 | `modules/templates/module.ts` | 模板库：路由 `/templates` + 权限 `template:read/use`。 |
 | `modules/shots/module.ts` | 镜头库：路由 + 侧栏项 + 权限。 |
 | `modules/storyboards/module.ts` | 分镜模板：路由 + 侧栏项 + 权限。 |
@@ -817,7 +797,6 @@ cd api
 app serve --reload                  # http://127.0.0.1:8080/docs
 app seed --reset                    # 建表 + 演示数据
 app export-openapi                  # 生成四份契约（--check 只比对）
-app import-archive-index            # 归档 JSON 索引 → assets 表（幂等，--dry-run 预演）
 app sync-roles                      # 内置角色补齐缺失权限（只加不减）
 app sync-roles --prune-snapshot     # 顺带把权限目录快照收缩成当前声明（自动路径只增不减）
 app meta permissions.catalog        # 看这份状态的版本与写入轨迹

@@ -7,13 +7,9 @@ app create-admin --username admin  # 创建/修复超级管理员（生产首启
 app modules                        # 列出已发现的模块与权限点
 app models                         # 列出可用模型（供应商路由结果）
 app export-openapi                 # 导出接口契约（docs/ + 前端 TS 类型）
-app import-archive-index           # 归档目录的 JSON 索引 → assets 表（幂等）
 app migrate-storage                # 把本地 storage 根目录的对象搬进当前驱动（local → s3）
-app migrate-blobs                  # 归档素材改内容寻址布局（key = sha256，幂等）
 app migrate-archive                # 把本地归档根的内容搬进当前归档驱动（local → s3）
-app prune-blobs                    # 回收没人引用的孤儿素材字节（默认只报告）
 app verify-blobs [--all]           # 读回字节重算 sha256，报告损坏/缺失对象
-app rebuild-mirrors [--dry-run]    # 按 DB 幂等重建 JSON 镜像，清孤儿（DB 是唯一真相源）
 app doctor                         # 部署自检：条件写、预签名、镜像一致性、完整性抽检
 app jobs [--state dead] [--json]   # 看队列：在途/死信；--redrive <id> 重投、--drop <id> 删除
 app runs-status                    # 运行工作区现状：多少档案只在本机可见
@@ -23,11 +19,10 @@ app new-module voice --label 配音   # 生成新模块脚手架
 app meta [key]                     # 查看 app_meta 的运行期状态及其写入轨迹
 ```
 
-下面这些命令**不在这个文件里**，由业务模块通过 `ModuleSpec.cli` 自己挂上来：
+下面这些命令**不在这个文件里**，由业务模块通过 `ModuleSpec.cli` 自己挂上来
+（`app --help` 里能看到当前实际有哪些；`library` / `drivers` 就是这么来的）：
 
     create-admin / prune-logins / prune-sessions / sync-roles      ← modules/identity
-    import-archive-index / migrate-blobs / prune-blobs /
-    rebuild-mirrors                                               ← modules/asset
 
 判据是「这条命令认不认识业务表」：`migrate-storage` 扫 schema 里所有 `*_url` 列、
 `verify-blobs` 只读归档盘字节，都不认识业务模型，所以留在框架。
