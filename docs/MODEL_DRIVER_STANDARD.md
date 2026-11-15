@@ -240,6 +240,12 @@ Driver = MyDriver
 `request` 上能拿到：`capability` / `model` / `prompt` / `params`（自由参数字典）/
 `reference_urls` / `request_id`（本模块的任务 id，用于账单对账）。
 
+**`reference_urls` 在统一门面这一层只接内联 `data:` URI**（2026-11-15）：
+http(s) 地址会被受理期拒掉。收地址等于让供应商替调用方去取一个我们判不了归属的
+资源——我们自己的预签名链接一旦转发出去，拿到的人就能把那件私有素材复制成新图，
+绕开共享审批。`task` / `image` 两条链一直是「按资产 id 校验可读性 → 本地展开成
+data URI」，门面没有理由例外。
+
 ## 5. 自动载入与校验
 
 `registry.ensure_drivers_registered()` 做三件事：扫描 `drivers/` 包 →

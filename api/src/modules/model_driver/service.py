@@ -38,6 +38,9 @@ from modules.model_driver.permissions import (
 from modules.model_driver.registry import driver_summaries, ensure_drivers_registered
 
 STATUS_FAILED = "failed"
+#: 参考素材（内联 data URI）合计上限。多图合成一次发四张，
+#: 单张 2MB 左右就接近这个数了；再大应该先压图，而不是把请求体撑到几十 MB。
+MAX_INLINE_REFERENCES_BYTES = 12 * 1024 * 1024
 STATUS_QUEUED = "queued"
 
 
@@ -88,6 +91,30 @@ class ModelGenerationFacade:
         if len(references) > limit:
             raise BadRequest(
                 f"模型 {spec.label} 最多接受 {limit} 张参考图，本次传了 {len(references)} 张"
+            )
+
+        # 参考素材只收**内联 data: URI**，不收 http(s) 地址（2026-11-15）。
+        #
+        # 收地址等于让服务端/供应商替调用方去取一个我们判不了归属的资源：
+        # 我们自己的预签名链接一旦被转发（前端日志、聊天记录、工单），
+        # 拿到它的人就能让供应商把那件私有素材「复制」成一张新图，
+        # 绕开共享审批。而 `task` / `image` 两条链的参考素材都是先按资产 id
+        # 校验可读性、再在本地展开成 data URI 发出去的——统一门面没有理由例外。
+        #
+        # 代价是请求体变大：`image` 那条链一直如此（多图合成就是这么发的），
+        # 所以用总量上限兜住，别让一条请求把 `driver_jobs.params_json` 撑爆。
+        total_bytes = 0
+        for reference in references:
+            if not reference.startswith("data:"):
+                raise BadRequest(
+                    "参考素材只接受 data: URI：地址形态无法校验归属，"
+                    "请先用资产库的素材（图生图/多图合成）或自己内联后再提交"
+                )
+            total_bytes += len(reference)
+        if total_bytes > MAX_INLINE_REFERENCES_BYTES:
+            raise BadRequest(
+                f"参考素材合计 {total_bytes // (1024 * 1024)}MB，"
+                f"超过上限 {MAX_INLINE_REFERENCES_BYTES // (1024 * 1024)}MB"
             )
 
         job = DriverJob(

@@ -238,7 +238,11 @@ def test_reference_urls_survive_to_build_request(client: TestClient, example_dri
     `_to_record` 解回 → `build_request` 交给驱动。中间任何一环把它丢了，
     表现都是「提示词说改这张图，供应商却当成文生图重画一张」，而且不报错。
     """
-    refs = ["https://example.com/char-1.png", "https://example.com/char-2.png"]
+    # 参考素材只收内联 data URI（见 `submit` 里的归属说明）：地址形态判不了归属
+    refs = [
+        "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==",
+        "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYPjPAAACAgEAqiqeJwAAAABJRU5ErkJggg==",
+    ]
     resp = client.post(
         f"{API}/model-driver/tasks",
         json={
@@ -620,3 +624,38 @@ def test_own_job_needs_no_extra_switch(client: TestClient) -> None:
         assert ticket is not None and ticket.status == STATUS_CANCELLED
     finally:
         _cleanup([job_id])
+
+
+def test_submit_rejects_url_references(client: TestClient, example_drivers: None) -> None:
+    """参考素材不收 http(s) 地址：判不了归属，等于让供应商替人拷贝私有素材。"""
+    resp = client.post(
+        f"{API}/model-driver/tasks",
+        json={
+            "model": "md-sync-image",
+            "prompt": "用别人的预签名链接当参考图",
+            "referenceUrls": ["https://cdn.example/private.png"],
+        },
+    )
+
+    assert resp.status_code == 400, resp.text
+    assert "data: URI" in resp.json()["message"]
+
+
+def test_submit_rejects_oversized_inline_references(
+    client: TestClient, example_drivers: None
+) -> None:
+    """内联参考素材有总量上限：别让一条请求把 `params_json` 撑到几十 MB。"""
+    import base64
+
+    big = "data:image/png;base64," + base64.b64encode(b"x" * (13 * 1024 * 1024)).decode()
+    resp = client.post(
+        f"{API}/model-driver/tasks",
+        json={
+            "model": "md-sync-image",
+            "prompt": "超大参考图",
+            "referenceUrls": [big],
+        },
+    )
+
+    assert resp.status_code == 400, resp.text
+    assert "超过上限" in resp.json()["message"]
