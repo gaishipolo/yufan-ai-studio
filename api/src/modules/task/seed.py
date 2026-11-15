@@ -3,17 +3,21 @@
 这批任务覆盖四种状态（运行中 / 已完成 / 已失败 / 排队中），是为了让列表页的
 筛选、进度条、失败态、可下载标记在开发时都能被肉眼看到——只种「已完成」的话，
 「失败长什么样」要等到线上第一次出错才知道。
+
+**不带收藏**：收藏是按账号的行（`task_favorites`），种演示数据要额外查一次
+「这个人是不是已经收藏过」，而 seed 的契约是「只 add 不读」（`test_module_hooks`
+用只记 add 的探针会话验它有没有走 `ctx`）。为了几条演示星星把 seed 变成要真库，
+不值得 —— 演示账号自己点两下就有了。
 """
 
 from __future__ import annotations
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.module import SeedContext
 from core.demo import minutes_ago, placeholder_image
 from modules.task.enums import AspectRatio, TaskStatus
-from modules.task.models import TaskFavorite, VideoTask
+from modules.task.models import VideoTask
 
 _TASKS: list[tuple[str, str, TaskStatus, str, int, AspectRatio]] = [
     ("冰川之上的机械鲸鱼", "黎明时分，一头由黄铜与齿轮构成的巨鲸破冰而出", TaskStatus.RUNNING, "Seedance 2.5", 15, AspectRatio.PORTRAIT),
@@ -60,23 +64,4 @@ async def seed(session: AsyncSession, context: SeedContext) -> int:
     session.add_all(rows)
     await session.commit()
 
-    # 收藏是**按账号**的行（`task_favorites`），demo 数据里给每 5 条收藏一条。
-    # 先查一遍已有行：这段 seed 在演示库上不是只跑一次，重复插入会撞唯一约束。
-    target = [row.id for index, row in enumerate(rows) if index % 5 == 0]
-    existing = set(
-        await session.scalars(
-            select(TaskFavorite.task_id).where(
-                TaskFavorite.user_id == context.demo_user_id,
-                TaskFavorite.task_id.in_(target),
-            )
-        )
-    )
-    session.add_all(
-        [
-            TaskFavorite(user_id=context.demo_user_id, task_id=task_id)
-            for task_id in target
-            if task_id not in existing
-        ]
-    )
-    await session.commit()
     return len(rows)
