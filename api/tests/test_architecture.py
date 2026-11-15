@@ -108,8 +108,16 @@ def test_top_level_scripts_only_import_known_modules() -> None:
     下一个人就会以为它是刻意的。这张表的价值全在**准**，不准就只剩噪音。
     """
     problems: list[str] = []
-    for name, allowed in KNOWN_SCRIPT_MODULE_IMPORTS.items():
-        path = SRC / name
+    # 扫**源码根目录下的每一个 .py**，而不是遍历清单的键。
+    #
+    # 旧写法遍历 `KNOWN_SCRIPT_MODULE_IMPORTS.items()`，而那张表是空的 ——
+    # 循环体一次都不执行，`problems` 恒为 `[]`，「零容忍」只存在于注释里
+    # （2026-11-15 审查 2.9）。先扫文件，再用清单做豁免，才叫零容忍。
+    scripts = sorted(SRC.glob("*.py"))
+    assert scripts, "源码根目录下没有 .py：扫描口径坏了，这条守卫会永远绿"
+    for path in scripts:
+        name = path.name
+        allowed = KNOWN_SCRIPT_MODULE_IMPORTS.get(name, frozenset())
         actual = {
             imported
             for imported in _imported_modules(path)
@@ -119,6 +127,10 @@ def test_top_level_scripts_only_import_known_modules() -> None:
             problems.append(f"{name} 新增了业务模块依赖：{imported}（先问是不是设计缺口）")
         for imported in sorted(allowed - actual):
             problems.append(f"{name} 清单已过期：{imported} 早就不 import 了，删掉这一行")
+
+    # 清单里指向不存在的文件，同样是过期条目
+    for name in sorted(set(KNOWN_SCRIPT_MODULE_IMPORTS) - {path.name for path in scripts}):
+        problems.append(f"{name} 清单条目指向的文件不存在")
 
     assert not problems, "顶层脚本的模块依赖清单与代码不一致：\n" + "\n".join(problems)
 
@@ -150,9 +162,16 @@ def test_template_module_does_not_resolve_model_providers_itself() -> None:
     `modules/model_driver` 经 `core.ports.model_generation` 提供。
     """
     banned = ("get_model_router", "InputPreparer", "CHANNEL_MODELS", "CHANNEL_LABELS")
+    # 扫的是**现在的**模板模块：`modules/template` 随替换链在 P3 删掉了，
+    # 旧路径还留着的话这里会一个文件都扫不到、断言恒真（2026-11-15 审查 2.9）。
+    target = MODULES_DIR / "template_pack"
+    assert target.is_dir(), (
+        f"要扫的模板模块不存在：{target.name}。模板换了位置就同步改这里，"
+        "别让守卫静默变成空转"
+    )
     offenders = [
         f"{path.name}: {name}"
-        for path in _python_files(MODULES_DIR / "template")
+        for path in _python_files(target)
         for name in banned
         if name in path.read_text(encoding="utf-8")
     ]

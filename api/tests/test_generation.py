@@ -13,7 +13,7 @@ from core.events import EventBus
 from core.exceptions import BadRequest, Forbidden, UpstreamError
 from core.registry import NamedRegistry, RegistryError
 from generation.events import EVT_GENERATION_SUCCEEDED
-from generation.pipeline import register_pipeline
+from generation.pipeline import pipelines, register_pipeline
 from generation.runner import JOB_POLL, JOB_SUBMIT, GenerationRunner
 from infra.ai.base import Capability, GenerationProgress, GenerationState
 from infra.queue.base import Job
@@ -283,6 +283,20 @@ class _SpyQueue(MemoryJobQueue):
     async def enqueue(self, job: Job, *, delay: float = 0) -> str:  # type: ignore[override]
         self.enqueued.append((job, delay))
         return await super().enqueue(job, delay=delay)
+
+
+@pytest.fixture(autouse=True)
+def _drop_probe_pipelines():
+    """摘掉本用例装进去的探针流水线。
+
+    注册表是进程单例。留着 `test-*` 会让 `test_architecture` 的两条守卫红掉
+    （「每个 kind 都必须有模块声明恢复 / 有重试出口」——探针本来就不该被它看见）。
+    CI 里按字母序 `test_architecture` 先跑，所以一直躲在后面；本地按文件选跑就露出来。
+    """
+    before = set(pipelines.names())
+    yield
+    for kind in set(pipelines.names()) - before:
+        pipelines.remove(kind)
 
 
 def _run_submit(
