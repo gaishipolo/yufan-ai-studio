@@ -134,11 +134,8 @@
 | `core/audit.py` | 操作留痕扩展点：`record(action, actor, target, detail)`，写入端由 `db/audit_sink.py` 注册；**写失败不影响业务**。 |
 | `core/ports/accounts.py` | 账号状态注入口（从 `api/` 下移）：低层（`generation`）也能问「发起人还在不在」，三态语义，未注册按放行。 |
 | `core/ports/generation_feed.py` | 任务中心的**生成来源**注入口（`Port(multi=False)` + 注册 / 复位 / 探测三件套）：来源方自带筛选、统计、分页候选与产物现签，聚合方不认识它的表。来源是「视频（tasks）+ 生图（image_jobs）」两路；未注册返回空页是合法状态，视频那一路照常显示。 |
-| `core/ports/template_catalog.py` | 模板封装的**对外只读目录**注入口：只列 / 取已发布的卡片与素材包快照（core 层不可变 dataclass），没有生成动作、没有素材判定。与旧 `core/ports/template_pack.py`（fixed/filtered 槽位，暴露 `verify_picks`）刻意不合并；未注册返回空结果是合法状态。 |
-| `core/ports/template_runtime.py` | 替换执行链读**封装运行投影**的注入口：素材包头部 / 冻结发布版本 / 视频模板快照 / 模板名批量反查 / 固定引用解析。与 `template_catalog` 读的是两套数据（编写侧 manifest vs 运行侧投影），刻意分开；未注册 **fail-closed**（抛 `RegistryError`），因为执行链拿不到冻结版本就准备不了任务，退化成「封装不存在」的 400 会把装配故障说成用户选错包。 |
-| `core/library_assets.py` | 批量取 v2 资产元数据与可读性：可读性只转发 `LibraryLookup`，没传 actor 时 fail-closed。两个模板模块共用。 |
+| `core/library_assets.py` | 批量取 v2 资产元数据与可读性：可读性只转发 `LibraryLookup`，没传 actor 时 fail-closed。 |
 | `core/legacy_json.py` | 老归档盘 JSON 的读取约定（两种字段写法都认、坏文件只跳过）；`import-template-packs` 与 `import-template-runs` 各用一半。 |
-| `core/template_pack_view.py` | 素材包卡片 `ReplacementPack` 的形状与对齐规则：封装模块产出、替换模块嵌进 `/replacement-catalog`，谁都不能 import 对方。 |
 | `core/template_spec/` | 模板规格的跨模块词汇与纯函数：`InputSlot`（`type` = 资产库的 kind，含 `pack` × `binding(fixed\|user)` × `refMode(mixed\|attachment)`；`tag_id` 只是候选集范围）、`TemplateSpec`（两段提示词 + 槽位 + 模型/参数）、`validate_spec()` 与 `compile_spec()`。**编号是编译产物**：spec 只写 `{{slot:key}}`，`{{Mixed N}}` 按 `position` 与实际填充量算出来，不落库；`type=pack` 的成员顺序由 `LibraryLookup.expand_packs()` 给定、编译不得重排。详见 `TEMPLATE_SPEC.md`。 |
 | `core/scheduler.py` | 周期任务扩展点：`@periodic("模块.动作", every=秒)` 注册，进程内单调度器；模块自己说「多久问一次」，框架不认识任何具体任务。 |
 | `core/response.py` | 统一响应包装 `{code,message,data}` 与分页原语 `Page`。 |
@@ -195,10 +192,12 @@
 | `modules/model_driver/drivers/agnes.py` | Agnes 生图**驱动**（单文件，自动载入）：同步接口，`submit` 直接返回终态快照；支持图生图/多图合成（`reference_urls` → `extra_body.image`）。 |
 | `modules/model_driver/drivers/bailian.py` | 百炼 Wan3 视频**驱动**（自动载入）：异步任务；额外实现可选协议 `InputPreparer`——参考素材先直传百炼 OSS 再拼 `oss://` 直链（Wan 只认公网 URL）。付费提交只允许一次、回执落盘（`bailian-submission.json`），拒绝/未知分别收敛。 |
 | `infra/ai/router.py` | 模型路由：`model` 字符串 → 具体供应商。 |
-| `infra/ai/libtv.py` | LibTV 供应商：只接收归档引用，提交与轮询交给 `GenerationRunner`。 |
-| `infra/ai/libtv_process.py` | 独立监督进程：持有 OS 租约直至 Node 真正退出，API 重启不会释放活任务的锁。 |
-| `infra/ai/libtv_state.py` | LibTV 适配器的持久化执行状态，不含模板业务。 |
-| `infra/ai/libtv_runtime/` | 执行器运行时资源（Node 侧脚本）。 |
+| `modules/model_driver/drivers/libtv.py` | LibTV 视频**驱动**（自动载入）：模型 `libtv-wan3-replacement`，只接收归档工作区引用；提交 / 轮询 / 取消交给 `generation.runner`，通用入口缺 `inputs/request.json` 时它先补跑 `upload`。 |
+| `modules/model_driver/libtv/executor.py` | 执行器监督层：拉子进程跑 `-m modules.model_driver.libtv.process`，把阶段失败翻成可读码（浏览器没连上 / 浏览器没登录 / 遗留锁 / 安全守卫拦截分开报）。 |
+| `modules/model_driver/libtv/process.py` | 独立监督进程：持 OS 租约直到 Node 真正退出，API 重启不释放活任务的锁；阶段预算 1500/100/45/240 秒。 |
+| `modules/model_driver/libtv/worker.py` | `libtv.download` 后台作业：成片下载是 240 秒量级的非计费工作，不占轮询那一跳的预算。 |
+| `modules/model_driver/libtv/state.py` | 适配器的持久化状态（`run.json` 的 schema）与启动方 ⇄ 监督进程的参数协议版本。 |
+| `modules/model_driver/libtv/runtime/` | Node 桥接层与固定版适配器快照：`vendor/manifest.json` 逐文件 sha256 校验，源仓库 `libtv-canvas 1.2.0`。 |
 | `infra/queue/base.py` | 任务队列抽象。 |
 | `infra/queue/memory.py` | 内存队列：开发 / 单测使用，进程重启即丢。 |
 | `infra/queue/db.py` | 数据库队列（`QUEUE_DRIVER=db`）：job 落 `queued_jobs`，条件 UPDATE 领取 + 租约续租 + 死信留档，重启不丢。 |
