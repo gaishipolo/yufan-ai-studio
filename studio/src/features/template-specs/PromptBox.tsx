@@ -193,26 +193,32 @@ export function PromptBox({
         )}
       </div>
 
-      {/* chip 行降到 z-0：候选面板浮在上面时，它不该把面板压出一道缺口。 */}
-      <div className="relative z-0 mt-2 flex flex-wrap gap-1.5">
+      {/* chip 行降到 z-0：候选面板浮在上面时，它不该把面板压出一道缺口。
+          有了 @ 之后它是**辅助**路径（有人不知道能打 @），所以做小做淡，
+          不跟提示词正文抢注意力。 */}
+      <div className="relative z-0 mt-2 flex flex-wrap items-center gap-1">
         {chips.length === 0 ? (
-          <span className="text-[11px] text-ink-mute">先在左边加槽位，再引用</span>
+          <span className="text-[11px] text-ink-mute">先在左边加槽位，再打 @ 引用</span>
         ) : (
-          chips.map(chip => (
-            <button
-              key={chip.token}
-              type="button"
-              onClick={() => insertAtCaret(chip.token)}
-              className={cn(
-                'rounded-full border px-2 py-0.5 text-[11px] transition-colors',
-                chip.all
-                  ? 'border-violet/40 bg-violet/5 text-violet hover:bg-violet/10'
-                  : 'border-primary-line bg-panel text-ink-soft hover:border-primary hover:text-primary',
-              )}
-            >
-              {chip.label}
-            </button>
-          ))
+          <>
+            <span className="text-[10.5px] text-ink-mute">打 @ 引用</span>
+            {chips.map(chip => (
+              <button
+                key={chip.token}
+                type="button"
+                title={chip.token}
+                onClick={() => insertAtCaret(chip.token)}
+                className={cn(
+                  'rounded-md px-1.5 py-[1px] text-[10.5px] transition-colors',
+                  chip.all
+                    ? 'text-violet/80 hover:bg-violet/10 hover:text-violet'
+                    : 'text-ink-mute hover:bg-primary-soft hover:text-primary',
+                )}
+              >
+                {chip.label}
+              </button>
+            ))}
+          </>
         )}
       </div>
     </div>

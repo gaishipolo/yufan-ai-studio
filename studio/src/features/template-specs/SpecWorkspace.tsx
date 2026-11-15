@@ -1,13 +1,9 @@
 import { useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   ChevronLeft,
-  GripVertical,
   ImageOff,
-  ImagePlus,
   Plus,
   RotateCcw,
-  Trash2,
-  Upload,
 } from 'lucide-react';
 import { useModels } from '@/entities/model/api/model.queries';
 import { ParamFields } from '@/entities/model/ui/ParamFields';
@@ -19,9 +15,7 @@ import {
 import { libraryApi } from '@/entities/library/api/library.api';
 import { useLibraryDetail, useLibraryTags } from '@/entities/library/api/library.queries';
 import { KIND_OPTIONS, viewQuery } from '@/entities/library/model/types';
-import { AssetChip } from '@/entities/library/ui/AssetChip';
 import { CaseCover } from '@/entities/library/ui/CaseCover';
-import { PackChip } from '@/entities/library/ui/PackChip';
 import { AssetPreview } from '@/entities/library/ui/AssetPreview';
 import {
   useSpecMutations,
@@ -32,7 +26,10 @@ import type { SpecSlotIn, TemplateSpecIn, TemplateSpecOut } from '@/shared/api/s
 import { Button, Chip, EmptyState, FormField, Select, TextInput } from '@/shared/ui';
 import { cn } from '@/shared/lib/cn';
 import { AssetPicker, type PickKind, type PickedAsset } from '@/features/template-specs/AssetPicker';
+import { AddSlotMenu } from '@/features/template-specs/AddSlotMenu';
+import { DemoMenu } from '@/features/template-specs/DemoMenu';
 import { PromptBox } from '@/features/template-specs/PromptBox';
+import { SlotCard } from '@/features/template-specs/SlotCard';
 import {
   SLOT_TYPE_LABELS,
   blankSlot,
@@ -51,11 +48,6 @@ const TYPE_OPTIONS = KIND_OPTIONS.filter(item => item.value !== 'all');
 
 /** 一级标签的「不限」哨兵：空串表示候选集不收窄。 */
 const TAG_ANY = '';
-
-const BINDING_OPTIONS = [
-  {value: 'user', label: '使用时填'},
-  {value: 'fixed', label: '封装时固定'},
-];
 
 const STATUS_LABELS: Record<string, string> = {
   draft: '草稿',
@@ -475,215 +467,58 @@ export function SpecWorkspace() {
             extra={
               /* 「加槽位」也按资产库的 kind 生成：库里多一类，这里就多一个入口，
                  和槽位卡片里的「类型」下拉同源（曾经这里写死四个按钮）。 */
-              <div className="flex flex-wrap items-center gap-0.5 rounded-full border border-line-soft bg-panel-soft p-0.5">
-                {TYPE_OPTIONS.map(item => (
-                  <button
-                    key={item.value}
-                    type="button"
-                    onClick={() => addSlot(item.value as SpecSlotIn['type'])}
-                    className="flex items-center gap-0.5 rounded-full px-2 py-[3px] text-[11px] text-ink-soft transition-colors hover:bg-panel hover:text-primary"
-                  >
-                    <Plus size={11} /> {item.label}
-                  </button>
-                ))}
-              </div>
+              <AddSlotMenu
+                options={TYPE_OPTIONS}
+                onAdd={type => addSlot(type as SpecSlotIn['type'])}
+              />
             }
           >
-            <div className="flex flex-col gap-2">
+            {/* 槽位们坐在一块浅底托盘上（跟模板库的卡片语言一致）：
+                卡片是白片、托盘是凹陷的一层，一眼能数出有几个槽位、
+                也能看出拖拽时哪张被拎起来了。 */}
+            <div className="flex flex-col gap-2.5 rounded-xl bg-canvas/30 p-2">
               {slots.length === 0 && (
-                <p className="rounded-xl border border-dashed border-line-strong bg-panel-soft px-3 py-4 text-[11px] text-ink-mute">
+                <p className="rounded-lg border border-dashed border-line-strong bg-panel px-3 py-4 text-[11px] text-ink-mute">
                   没有槽位。纯提示词的模板不需要素材，从上面的按钮加一个就行。
                 </p>
               )}
-              {slots.map((slot, index) => {
-                const fixed = (slot.binding ?? 'user') === 'fixed';
-                // 一级标签只对「让用户挑的图片/视频」有意义：模板库按「标签 · 槽位名」
-                // 分组给候选素材，文本/音频/封装走各自的选择器，固定槽位作者已经选死。
-                // 以前这里对**所有**类型都渲染一个默认「不限」的下拉，用户填着像是
-                // 可选，一点发布必被 400 打回，还不指名是哪个槽位（审查 3.3）。
-                const needsTag = slot.type === 'image' || slot.type === 'video';
-                return (
-                  <div
-                    key={slot.key}
-                    onDragOver={event => drag && event.preventDefault()}
-                    onDrop={event => {
-                      if (!drag) return;
-                      event.preventDefault();
-                      const from = slots.findIndex(item => item.key === drag.key);
-                      setDrag(null);
-                      if (from >= 0) moveSlot(from, index);
-                    }}
-                    className={cn(
-                      // 槽位是「分区里的一块凹槽」：比卡片白底暗一档 + 内高光，
-                      // 里面那排输入框才是凸起来的。固定的槽位偏绿、可填的偏灰，
-                      // 颜色就是「这条要不要你管」的判据，不用再加标签。
-                      'rounded-xl border p-3 shadow-[inset_0_1px_0_rgba(255,255,255,.9)] transition-all',
-                      fixed
-                        ? 'border-ok-line bg-ok-soft/45'
-                        : 'border-line-soft bg-canvas/35 hover:border-line',
-                      drag?.key === slot.key &&
-                        'border-primary-line bg-primary-soft/60 shadow-card ring-1 ring-primary/15',
-                    )}
-                  >
-                    <div className="mb-2 flex items-center justify-between">
-                      <span
-                        draggable
-                        onDragStart={() => setDrag({key: slot.key})}
-                        onDragEnd={() => setDrag(null)}
-                        className="flex cursor-grab items-center gap-1.5 text-[11px] text-ink-mute active:cursor-grabbing"
-                        title="拖动调整顺序（顺序即编号）"
-                      >
-                        <GripVertical size={13} />
-                        <span className="flex h-[18px] w-[18px] items-center justify-center rounded-full bg-primary text-[10px] font-semibold text-white shadow-[0_1px_3px_rgba(43,124,255,.35)]">
-                          {index + 1}
-                        </span>
-                        <span className="text-[10.5px] text-ink-mute">
-                          {SLOT_TYPE_LABELS[slot.type]}
-                        </span>
-                      </span>
-                      <button
-                        type="button"
-                        className="rounded-md p-1 text-ink-mute transition-colors hover:bg-danger-soft hover:text-danger"
-                        title="删除槽位"
-                        onClick={() => {
-                          const name = slot.label?.trim() || SLOT_TYPE_LABELS[slot.type];
-                          // 引用留着的下场是「点生成才报引用了不存在的槽位」，
-                          // 那句话看不出是刚才删槽位删出来的，所以一并清掉并告知条数。
-                          const stripped = stripSlotRefs(draft.prompt ?? '', slot.key);
-                          setDraft({
-                            ...draft,
-                            slots: slots.filter(item => item.key !== slot.key),
-                            prompt: stripped.text,
-                          });
-                          setNote(
-                            stripped.count > 0
-                              ? `已删除槽位「${name}」，提示词里的 ${stripped.count} 处引用一并清掉`
-                              : `已删除槽位「${name}」`,
-                          );
-                        }}
-                      >
-                        <Trash2 size={13} />
-                      </button>
-                    </div>
-                    <div
-                      className={cn(
-                        'grid gap-2',
-                        needsTag ? 'sm:grid-cols-[1.6fr_1fr_1fr_1fr]' : 'sm:grid-cols-[1.6fr_1fr_1fr]',
-                      )}
-                    >
-                      <FormField label="展示名">
-                        <TextInput
-                          value={slot.label ?? ''}
-                          placeholder={`${SLOT_TYPE_LABELS[slot.type]} ${index + 1}`}
-                          onChange={event => patchSlot(index, {label: event.target.value})}
-                        />
-                      </FormField>
-                      <FormField label="类型">
-                        <Select
-                          block
-                          value={slot.type}
-                          options={TYPE_OPTIONS}
-                          onChange={event =>
-                            patchSlot(index, {type: event.target.value as SpecSlotIn['type']})
-                          }
-                        />
-                      </FormField>
-                      {needsTag && (
-                        <FormField label="一级标签">
-                          <Select
-                            block
-                            value={slot.tagId ?? TAG_ANY}
-                            options={tagOptions}
-                            onChange={event =>
-                              patchSlot(index, {tagId: event.target.value})
-                            }
-                          />
-                        </FormField>
-                      )}
-                      <FormField label="谁定">
-                        <Select
-                          block
-                          value={slot.binding ?? 'user'}
-                          options={BINDING_OPTIONS}
-                          onChange={event =>
-                            patchSlot(index, {
-                              binding: event.target.value as SpecSlotIn['binding'],
-                            })
-                          }
-                        />
-                      </FormField>
-                    </div>
-                    <div className="mt-2 flex flex-wrap items-end gap-2">
-                      <FormField label="进提示词的用途说明" className="min-w-[220px] flex-1">
-                        <TextInput
-                          value={slot.usage ?? ''}
-                          placeholder="例如：确定同款同色外观；只补纹理与扣件"
-                          onChange={event => patchSlot(index, {usage: event.target.value})}
-                        />
-                      </FormField>
-                      {slot.type !== 'pack' &&
-                        (slot.binding ?? 'user') === 'user' &&
-                        slot.type !== 'text' && (
-                          <>
-                            <FormField label="最少">
-                              <TextInput
-                                value={String(slot.minCount ?? 1)}
-                                onChange={event =>
-                                  patchSlot(index, {minCount: Number(event.target.value || 0)})
-                                }
-                                className="w-[58px] text-center"
-                              />
-                            </FormField>
-                            <FormField label="最多">
-                              <TextInput
-                                value={String(slot.maxCount ?? 1)}
-                                onChange={event =>
-                                  patchSlot(index, {maxCount: Number(event.target.value || 1)})
-                                }
-                                className="w-[58px] text-center"
-                              />
-                            </FormField>
-                          </>
-                        )}
-                      {fixed && (
-                        <Button
-                          variant="secondary"
-                          onClick={() => setPicker({target: 'slot', index})}
-                        >
-                          {slot.type === 'pack' ? '选择封装' : '选择素材'}
-                        </Button>
-                      )}
-                    </div>
-                    {/* 固定槽位已经选好了东西：显示它是什么，而不是一串 id——
-                        那串 id 对作者没有任何信息量，还会被当成"是不是选错了"。 */}
-                    {fixed && (
-                      <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                        {slot.type === 'pack' ? (
-                          slot.packId ? (
-                            <PackChip packId={slot.packId} />
-                          ) : (
-                            <span className="text-[11px] text-ink-mute">还没选封装</span>
-                          )
-                        ) : slot.assetId ? (
-                          <AssetChip assetId={slot.assetId} />
-                        ) : (
-                          <span className="text-[11px] text-ink-mute">还没选素材</span>
-                        )}
-                      </div>
-                    )}
-                    {(slot.refMode ?? 'mixed') === 'attachment' && slot.type === 'text' && (
-                      <p className="mt-1 text-[11px] text-ink-mute">
-                        文本槽位：占 {`{{Text N}}`} 的第 N 位，正文由所选文案注入
-                      </p>
-                    )}
-                    {(slot.refMode ?? 'mixed') === 'attachment' && slot.type === 'audio' && (
-                      <p className="mt-1 text-[11px] text-ink-mute">
-                        附加输入：不占编号，提示词里不引用它
-                      </p>
-                    )}
-                  </div>
-                );
-              })}
+              {slots.map((slot, index) => (
+                <SlotCard
+                  key={slot.key}
+                  slot={slot}
+                  index={index}
+                  dragging={drag?.key === slot.key}
+                  onDragStart={() => setDrag({key: slot.key})}
+                  onDragEnd={() => setDrag(null)}
+                  onDragOver={event => drag && event.preventDefault()}
+                  onDrop={() => {
+                    if (!drag) return;
+                    const from = slots.findIndex(item => item.key === drag.key);
+                    setDrag(null);
+                    if (from >= 0) moveSlot(from, index);
+                  }}
+                  onPatch={patch => patchSlot(index, patch)}
+                  onDelete={() => {
+                    const name = slot.label?.trim() || SLOT_TYPE_LABELS[slot.type];
+                    // 引用留着的下场是「点生成才报引用了不存在的槽位」，
+                    // 那句话看不出是刚才删槽位删出来的，所以一并清掉并告知条数。
+                    const stripped = stripSlotRefs(draft.prompt ?? '', slot.key);
+                    setDraft({
+                      ...draft,
+                      slots: slots.filter(item => item.key !== slot.key),
+                      prompt: stripped.text,
+                    });
+                    setNote(
+                      stripped.count > 0
+                        ? `已删除槽位「${name}」，提示词里的 ${stripped.count} 处引用一并清掉`
+                        : `已删除槽位「${name}」`,
+                    );
+                  }}
+                  onPickAsset={() => setPicker({target: 'slot', index})}
+                  tagOptions={tagOptions}
+                  typeOptions={TYPE_OPTIONS}
+                />
+              ))}
             </div>
           </Section>
         </div>
@@ -693,27 +528,12 @@ export function SpecWorkspace() {
             tone="ok"
             title="展示案例"
             extra={
-              <>
-                <Button variant="ghost" size="sm" disabled={busy} onClick={() => fileRef.current?.click()}>
-                  <Upload size={12} /> 上传
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  disabled={busy}
-                  onClick={() => setPicker({target: 'demo', kind: 'image'})}
-                >
-                  <ImagePlus size={12} /> 选图片
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  disabled={busy}
-                  onClick={() => setPicker({target: 'demo', kind: 'video'})}
-                >
-                  选视频
-                </Button>
-              </>
+              <DemoMenu
+                disabled={busy}
+                onUpload={() => fileRef.current?.click()}
+                onPickImage={() => setPicker({target: 'demo', kind: 'image'})}
+                onPickVideo={() => setPicker({target: 'demo', kind: 'video'})}
+              />
             }
           >
             <DemoCase
