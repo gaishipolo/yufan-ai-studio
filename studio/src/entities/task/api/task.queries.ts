@@ -5,6 +5,7 @@ import {
   useQueryClient,
 } from '@tanstack/react-query';
 import { taskApi } from './task.api';
+import { CACHE_PREFIX } from '@/shared/api/query-keys';
 import { useSessionStore } from '@/shared/access/session';
 import type { TaskFeedParams, TaskFeedResult } from '../model/feed.types';
 import {
@@ -16,7 +17,7 @@ import {
 
 /** 查询键工厂：所有任务相关缓存都从这里派生，避免失效范围写错 */
 export const taskKeys = {
-  all: ['tasks'] as const,
+  all: CACHE_PREFIX.tasks,
   feeds: () => [...taskKeys.all, 'feed'] as const,
   feed: (owner: string, params: TaskFeedParams) => [...taskKeys.feeds(), owner, params] as const,
   lists: () => [...taskKeys.all, 'list'] as const,
@@ -130,13 +131,16 @@ export function useDeleteTasks() {
   });
 }
 
-/** 删除生图记录（`DELETE /images`）。失效范围同上：任务中心是一份聚合缓存。 */
+/** 删除生图记录（`DELETE /images`）。 */
 export function useDeleteImages() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (ids: string[]) => taskApi.removeImages(ids),
     onSuccess: () => {
+      // 两套缓存各有一份投影：任务中心删掉后，生图历史页必须跟着消失，
+      // 否则那一页还列着它、点重试直接 404（2026-11-15 审查 3.2）。
       void qc.invalidateQueries({ queryKey: taskKeys.all });
+      void qc.invalidateQueries({ queryKey: CACHE_PREFIX.images });
     },
   });
 }

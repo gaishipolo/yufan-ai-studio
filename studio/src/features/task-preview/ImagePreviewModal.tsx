@@ -10,6 +10,7 @@ import { imageApi } from '@/entities/image/api/image.api';
 import { PromptRefs } from '@/entities/library/ui/PromptRefs';
 import { useSessionStore } from '@/shared/access/session';
 import { taskKeys } from '@/entities/task/api/task.queries';
+import { CACHE_PREFIX } from '@/shared/api/query-keys';
 import type { TaskFeedItem } from '@/entities/task/model/feed.types';
 
 export interface ImagePreviewModalProps {
@@ -44,6 +45,8 @@ export function ImagePreviewModal({ item, onClose }: ImagePreviewModalProps) {
     onSuccess: () => {
       toast('已重新排队', 'success');
       void qc.invalidateQueries({ queryKey: taskKeys.feeds() });
+      // 生图工作台那一页也要看到新状态（两边读同一张表，见 shared/api/query-keys）
+      void qc.invalidateQueries({ queryKey: CACHE_PREFIX.images });
       setNeedConfirm(false);
       onClose();
     },

@@ -1,12 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/shared/api/http';
+import { CACHE_PREFIX } from '@/shared/api/query-keys';
 import type { ImageRetryOut } from '@/shared/api/schema';
 import type { PageParams, Paginated } from '@/shared/api/types';
 import type { GenerateImagePayload, ImageJob } from '../model/types';
 import { imagePollInterval } from '../model/status';
 
 export const imageKeys = {
-  all: ['images'] as const,
+  all: CACHE_PREFIX.images,
   list: (page: number) => [...imageKeys.all, 'list', page] as const,
 };
 
@@ -37,7 +38,9 @@ export function useGenerateImage() {
   return useMutation({
     mutationFn: (payload: GenerateImagePayload) => imageApi.generate(payload),
     onSuccess: () => {
+      // 两边都失效：同一条记录会同时出现在生图历史与任务中心（2026-11-15 审查 3.2）
       void qc.invalidateQueries({ queryKey: imageKeys.all });
+      void qc.invalidateQueries({ queryKey: CACHE_PREFIX.tasks });
     },
   });
 }
