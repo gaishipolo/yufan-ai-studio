@@ -254,17 +254,24 @@ async def test_unknown_model_without_snapshot_is_not_resumed(
     assert (await _status(rid))[0] == STATUS_FAILED
 
 
-async def test_double_declaration_is_loud(caplog: Any) -> None:
-    """同时声明 startup 与 recovery_kinds 时必须留痕，不能静默跳过（R12-07）。"""
+async def test_double_declaration_is_logged_but_not_an_alarm(caplog: Any) -> None:
+    """「自带恢复器 + 声明负责的 kind」必须留痕，但**不是告警**（R12-07）。
+
+    这组合是预期状态（task 就是：自己的 `startup` 处理三条恢复路径，同时声明
+    `recovery_kinds=("video",)` 让矩阵守卫画得出来）。按 WARNING 打等于每次启动
+    响一次，只会教人忽略告警。
+    """
 
     class _Spec:
         name = "both"
         recovery_kinds = ("image",)
         startup = object()
 
-    with caplog.at_level("WARNING"):
+    with caplog.at_level("INFO"):
         assert await recover_declared([_Spec()]) == {}
-    assert "由模块自己的 startup 负责" in caplog.text
+    assert "自带恢复器" in caplog.text
+    assert "由该模块的 startup 负责" in caplog.text
+    assert not [r for r in caplog.records if r.levelname == "WARNING"]
 
 
 def test_audit_sink_is_catalogued() -> None:

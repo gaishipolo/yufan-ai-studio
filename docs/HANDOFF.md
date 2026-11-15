@@ -15,7 +15,7 @@
 | HEAD | 本地领先 `origin/main`：`3aaf40f` 起多笔**未推送**（含「任务中心接生图」与「模板封装迁移阶段 A/B/C1」，推送前先问用户）；笔数以 `git rev-list --count origin/main..HEAD` 为准，hash 见 `git log --oneline origin/main..HEAD`。未跟踪的只有 `var/`、临时脚本（如 `var_fix_fe.py`）、快捷方式 `.lnk`、`vite.config.ts.timestamp-*.mjs` 与用户私有的 `EXCHANGE_TOPICS_2026-11-12.md`，都不该进提交 |
 | CI | 此前连续多轮全绿（含 `bc0940e`）；本轮推送后照 §4 核对。PG 迁移仍在观察期（`continue-on-error`） |
 | 本机门禁 | 本轮（2026-11-14 P3 迁移：旧模板 → spec 草稿）只加一个运维脚本 + 一组纯函数单测，按 §3.1 定级 **`targeted`**：5 个测试文件 **100 passed / 0 failed**；`ruff check src tests scripts` 0；`mypy --platform win32` 300 文件 0；契约零变动。上一轮 P3 能力声明定级 `contract`：18 文件 356 passed |
-| 规模 | 12 个业务模块 · **118 条路径 / 148 个端点**（文本资产 +7）· **57 个权限码**（本轮未新增）· **4 份**契约生成物 |
+| 规模 | 11 个业务模块 · **95 条路径 / 125 个端点** · **53 个权限码** · **4 份**契约生成物（数字以 `app modules` 与 `api/docs/openapi.json` 为准，别再手抄） |
 | 后端 | `api/.venv/Scripts/app.exe serve --reload` → 8080，前缀 **`/api/v1`**（裸 `/health` 会返回 40400） |
 | 前端 | `cd studio && npm run dev` → 5173，`/api` 已代理到 8080 |
 

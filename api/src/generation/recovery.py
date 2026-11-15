@@ -174,11 +174,11 @@ async def recover_declared(specs: Sequence[object]) -> dict[str, dict[str, int]]
         kinds = getattr(spec, "recovery_kinds", ())
         startup = getattr(spec, "startup", None)
         if startup is not None and kinds:
-            # 双声明不是错误（旧模块自有恢复器），但必须留痕：否则作者以为
-            # 框架接管了这些 kind，实际声明被静默跳过，矩阵守卫却照常绿（R12-07）。
-            logger.warning(
-                "模块 %s 同时声明 startup 与 recovery_kinds=%s：框架恢复跳过，"
-                "这些 kind 由模块自己的 startup 负责",
+            # 「自带恢复器 + 声明负责的 kind」是**预期组合**（task 就是），留痕是为了
+            # 矩阵守卫与日志都能对上（R12-07），不该按告警报——它每次启动都会响一次，
+            # 只会教人忽略告警。真要说「框架接管」的那句在下面 `continue` 之后。
+            logger.info(
+                "模块 %s 自带恢复器，框架跳过 kind=%s（由该模块的 startup 负责）",
                 getattr(spec, "name", "?"),
                 ",".join(kinds),
             )
