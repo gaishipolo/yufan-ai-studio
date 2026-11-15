@@ -89,7 +89,12 @@ def test_public_entry_point_addition_counts_as_semantic() -> None:
 
 
 def test_structural_changes_are_classified_as_full() -> None:
-    """端口目录 / 装配声明 / 迁移 → 必须全量。"""
+    """端口目录 / 装配声明 / 迁移 → 必须全量。
+
+    装配声明指的是 `src/modules/<mod>/__init__.py` 里的 `ModuleSpec(...)`。
+    （旧判据写的是 `modules/*/spec.py` —— 那个路径只存在于
+    `model_driver/spec.py`，一份开发标准文档，等于这条规则从来没生效过。）
+    """
     graph = select_tests._build_reverse_graph()  # type: ignore[attr-defined]
     for changed in (
         ["src/api/ports.py"],
@@ -98,7 +103,7 @@ def test_structural_changes_are_classified_as_full() -> None:
         ["src/generation/runner.py"],
         ["pyproject.toml"],
         ["migrations/versions/abc_add_x.py"],
-        ["src/modules/library/spec.py"],
+        ["src/modules/library/__init__.py"],
     ):
         level = select_tests._classify(changed, set(), graph, {})  # type: ignore[attr-defined]
         assert level == "full", f"{changed} 应当升级到全量，实际 {level}"
@@ -156,3 +161,97 @@ def test_module_router_and_schema_are_contract_level(hint: str) -> None:
     hunks = {hint: [("-", "old"), ("+", "new")]}
     level = select_tests._classify([hint], set(), graph, hunks)  # type: ignore[attr-defined]
     assert level == "contract"
+
+
+# --------------------------------------------------------------------------- #
+# 2026-11-15 修复：黑盒 HTTP 测试在静态依赖图里是隐形的
+#
+# 资产库那批测试打的是真实接口（`client.post(f"{api}/library/tags", ...)`），
+# 它们**不 import 任何源模块** → 静态图看不见 → 改了 `library/tags.py`
+# 却不跑 `test_library_tags.py`。工具自己的 docstring 举的就是这个例子。
+# --------------------------------------------------------------------------- #
+def _selection_for(changed: list[str]) -> tuple[str, set[str]]:
+    """跑一遍真实的判据链，返回（级别, 选中的测试文件集合）。"""
+    graph = select_tests._build_reverse_graph()  # type: ignore[attr-defined]
+    hunks = {path: [("-", "old"), ("+", "new")] for path in changed}
+    affected = select_tests._affected_sources(changed, graph, hunks)  # type: ignore[attr-defined]
+    level = select_tests._classify(changed, affected, graph, hunks)  # type: ignore[attr-defined]
+    selected = select_tests._select_tests(changed, affected, graph, level)  # type: ignore[attr-defined]
+    return level, selected
+
+
+def test_black_box_http_tests_are_selected_by_module_path() -> None:
+    """改 `modules/library/tags.py` → 必须选中 `test_library_tags.py`。
+
+    这条是工具 docstring 自己许下的承诺（"改了 tags.py 就会命中
+    test_library_tags.py"）。修之前它是假的：黑盒测试不 import 源模块，
+    静态图里没有边。
+    """
+    _, selected = _selection_for(["src/modules/library/tags.py"])
+    assert "test_library_tags.py" in selected
+
+
+def test_module_change_selects_whole_module_http_tests() -> None:
+    """改模块里任何文件 → 打这个模块路径的测试都要跑。
+
+    粒度只能是模块：测试打的是 `/library/tags`，它依赖 library 里的哪个
+    文件，静态分析看不出来。
+    """
+    _, selected = _selection_for(["src/modules/library/service.py"])
+    for name in ("test_library_tags.py", "test_library_sharing.py", "test_library_upload.py"):
+        assert name in selected, f"{name} 没被选中"
+
+
+def test_other_module_change_does_not_pull_library_tests() -> None:
+    """改别的模块不该把资产库的测试也拉进来（别把工具做成全量）。"""
+    _, selected = _selection_for(["src/modules/shot/service.py"])
+    assert "test_library_tags.py" not in selected
+
+
+def test_module_spec_change_triggers_full() -> None:
+    """改模块装配声明（`__init__.py` 里的 `ModuleSpec`）→ 升级全量。
+
+    旧判据写的是 `modules/*/spec.py` —— 那个路径只存在于 `model_driver/spec.py`
+    （一份开发标准文档），所以这条规则从来没生效过：改真正的装配声明既不升
+    full，也不带上装配 / 权限对账那两道守门测试。
+    """
+    graph = select_tests._build_reverse_graph()  # type: ignore[attr-defined]
+    changed = ["src/modules/library/__init__.py"]
+    hunks = {changed[0]: [("-", "old"), ("+", "new")]}
+    level = select_tests._classify(changed, set(), graph, hunks)  # type: ignore[attr-defined]
+    assert level == "full"
+
+    selected = select_tests._select_tests(changed, set(), graph, "full")  # type: ignore[attr-defined]
+    assert "test_assembly.py" in selected
+    assert "test_permission_coverage.py" in selected
+
+
+def test_deleted_file_is_treated_as_semantic_change(monkeypatch: pytest.MonkeyPatch) -> None:
+    """删文件是最强的语义变更 → 必须算「改了语义」，并带上上游依赖者。
+
+    修之前：`+++ /dev/null`（删除）没有专门处理，`current` 还指着上一个文件，
+    被删的文件自己一条 hunk 都没有 → 判定成「纯新增」→ 不带上游。
+    """
+    diff = (
+        "diff --git a/api/src/core/aaa.py b/api/src/core/aaa.py\n"
+        "index 111..222 100644\n"
+        "--- a/api/src/core/aaa.py\n"
+        "+++ b/api/src/core/aaa.py\n"
+        "@@ -1 +1 @@\n"
+        "-old\n"
+        "+new\n"
+        "diff --git a/api/src/core/zzz.py b/api/src/core/zzz.py\n"
+        "deleted file mode 100644\n"
+        "index 333..000 100644\n"
+        "--- a/api/src/core/zzz.py\n"
+        "+++ /dev/null\n"
+        "@@ -1,2 +0,0 @@\n"
+        "-import os\n"
+        "-print(1)\n"
+    )
+    monkeypatch.setattr(select_tests, "_run_git", lambda args: diff)  # type: ignore[attr-defined]
+    hunks = select_tests._diff_hunks(None)  # type: ignore[attr-defined]
+    assert "src/core/zzz.py" in hunks, "被删的文件没有进 hunks"
+    assert select_tests._is_semantic_change("src/core/zzz.py", hunks["src/core/zzz.py"])  # type: ignore[attr-defined]
+    # 被删文件的删除行不许算到上一个文件头上
+    assert all(text != "import os" for _, text in hunks["src/core/aaa.py"])

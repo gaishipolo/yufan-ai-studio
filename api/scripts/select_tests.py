@@ -12,6 +12,12 @@
    改了 `src/modules/library/tags.py` 就会命中 `tests/test_library_tags.py`。
    静态 import 抓不到的**函数内 import**也扫（`ast.walk` 走全树）。
 
+   **黑盒 HTTP 测试靠 URL 挂边**：资产库那批测试是打真实接口的
+   （`client.post(f"{api}/library/tags", ...)`），它们**不 import 任何源模块**，
+   静态图看不见 —— 于是「改了 tags.py 却没跑 test_library_tags.py」。
+   所以再扫一遍测试里出现的 URL 首段：`/library/**` → `src/modules/library/`。
+   改模块里的任何文件 → 选中打这个模块路径的全部测试。
+
 2. **传递依赖**：改了 `core/registry.py` 这种底层，会影响所有 import 它的东西。
    脚本沿着反向图向上传递，直到收敛。
 
@@ -28,7 +34,7 @@
 
 4. **必须升级到全量的硬规则**（脚本自动判断，不给商量）：
    - 改了 `src/api/ports.py`（注入口目录）→ 端口守卫全查
-   - 改了 `src/modules/<mod>/spec.py`（模块装配声明）→ 装配对账
+   - 改了 `src/modules/<mod>/__init__.py`（模块装配声明 `ModuleSpec` 就在这里）→ 装配对账
    - 改了 `src/core/registry.py`、`src/core/exceptions.py` → 错误码/注册表全局口径
    - 新增/删除 `src/modules/*/` 下的目录 → 模块边界变了
    - 改了 `pyproject.toml`（依赖、pytest 配置）→ 环境变了
@@ -49,6 +55,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -88,6 +95,77 @@ FULL_TRIGGER_FILES = frozenset(
 # （model id → 供应商），跟 OpenAPI 契约无关，按文件名一刀切会误伤。
 CONTRACT_HINT = ("/router.py", "/schema.py", "/permissions.py", "/models.py")
 CONTRACT_SCOPE = ("src/modules/", "src/api/")
+
+#: URL 路径首段（`/library/tags` → `library`）。只认小写字母开头的一节，
+#: 免得把日期、版本号之类也当成路径段。
+_URL_SEGMENT_RE = re.compile(r"/([a-z][a-z0-9_-]{1,30})")
+
+
+def _url_segments(path: Path) -> set[str]:
+    """文件里出现过的 URL 路径首段。
+
+    黑盒 HTTP 测试（`client.post(f"{api}/library/tags", ...)`）不 import 任何
+    源模块，静态依赖图看不见它们 —— 资产库那批测试就是这么漏掉的。
+    这里把字符串常量（含 f-string 的常量片段）里的路径首段抠出来，
+    用来把测试挂到**它打的那个模块**上。
+    """
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except (OSError, SyntaxError):
+        return set()
+    segments: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            segments.update(_URL_SEGMENT_RE.findall(node.value))
+        elif isinstance(node, ast.JoinedStr):
+            for part in node.values:
+                if isinstance(part, ast.Constant) and isinstance(part.value, str):
+                    segments.update(_URL_SEGMENT_RE.findall(part.value))
+    return segments
+
+
+def _module_url_segments() -> dict[str, str]:
+    """URL 首段 → 模块目录名。
+
+    从各模块的 router 里读 `APIRouter(prefix=...)` 与路由路径：有前缀的用前缀
+    （`/library`），没前缀的用路由路径的首节（生图模块是 `/images`）。
+    读代码而不是写死一张表：新增模块时这张表自己就跟着对。
+    """
+    segments: dict[str, str] = {}
+    routers = sorted(SRC.glob("modules/*/router.py")) + sorted(
+        SRC.glob("modules/*/spec_router.py")
+    )
+    for router_path in routers:
+        module = router_path.parent.name
+        try:
+            tree = ast.parse(router_path.read_text(encoding="utf-8"))
+        except (OSError, SyntaxError):
+            continue
+        prefix = ""
+        route_paths: list[str] = []
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            name = func.id if isinstance(func, ast.Name) else getattr(func, "attr", "")
+            if name == "APIRouter":
+                for keyword in node.keywords:
+                    if keyword.arg == "prefix" and isinstance(keyword.value, ast.Constant):
+                        prefix = str(keyword.value.value)
+            elif name in {"get", "post", "put", "patch", "delete"}:
+                for arg in node.args:
+                    if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                        route_paths.append(arg.value)
+        heads: list[str] = []
+        if prefix:
+            heads.append(prefix)
+        else:
+            heads.extend(route_paths)
+        for head in heads:
+            first = head.strip("/").split("/")[0]
+            if first:
+                segments.setdefault(first, module)
+    return segments
 
 
 def _run_git(args: list[str]) -> str:
@@ -129,12 +207,25 @@ def _diff_hunks(diff_range: str | None) -> dict[str, list[tuple[str, str]]]:
     out = _run_git(["diff", "-U0", diff_range or "HEAD"])
     hunks: dict[str, list[tuple[str, str]]] = {}
     current: str | None = None
+    deleted_candidate: str | None = None
     for line in out.splitlines():
+        if line.startswith("--- a/"):
+            deleted_candidate = line[len("--- a/") :]
+            if deleted_candidate.startswith("api/"):
+                deleted_candidate = deleted_candidate[len("api/") :]
+            continue
         if line.startswith("+++ b/"):
             current = line[len("+++ b/") :]
             if current.startswith("api/"):
                 current = current[len("api/") :]
             hunks.setdefault(current or "", [])
+        elif line.startswith("+++ /dev/null"):
+            # 文件被删除：git 打印 `--- a/x` → `+++ /dev/null` → 若干 `-` 行。
+            # 少了这一段，`current` 还指着**上一个**文件，删除行会被算到它头上，
+            # 而被删的文件自己一条 hunk 都没有 → 判定成「纯新增」，
+            # 于是「删文件」这种最强的语义变更反而不带上游依赖者。
+            current = deleted_candidate
+            hunks.setdefault(current or "", [("-", "")])
         elif line.startswith(("+++ ", "--- ", "@@", "diff ", "index ")):
             continue
         elif current is not None and line[:1] in {"+", "-"}:
@@ -212,8 +303,14 @@ def _build_reverse_graph() -> dict[str, set[str]]:
 
     key 统一带 `src/` 前缀，与 `git diff` 的输出路径一致——两处格式不一致
     会让整个依赖图**查不中**（表现为「只跑守卫、漏掉主测试文件」）。
+
+    两种边：
+    1. **import 边**：测试 import 了某个源模块 → 该源文件 → 测试；
+    2. **URL 边**：测试打的是某个模块的 HTTP 路径 → `src/modules/<mod>/` → 测试。
+       资产库那批黑盒测试不 import 任何源模块，只有第 2 种边认得它们。
     """
     modules = _source_modules()
+    url_segments = _module_url_segments()
     graph: dict[str, set[str]] = {}
     for test_path in sorted(TESTS.glob("test_*.py")):
         deps = _imports_of(test_path)
@@ -228,6 +325,10 @@ def _build_reverse_graph() -> dict[str, set[str]]:
             package = rel.rsplit("/", 1)[0] if "/" in rel else ""
             if package:
                 touched.add(f"{package}/")
+        for segment in _url_segments(test_path):
+            module = url_segments.get(segment)
+            if module:
+                touched.add(f"src/modules/{module}/")
         for rel in touched:
             graph.setdefault(rel, set()).add(test_path.name)
     return graph
@@ -287,8 +388,13 @@ def _classify(
         return "full"
 
     # 模块装配声明改了 → 装配对账（`create_app()` 会拒启动）
+    #
+    # 装配声明就是 `src/modules/<mod>/__init__.py` 里的 `ModuleSpec(...)`。
+    # 旧判据写的是 `modules/*/spec.py` —— 那个路径只存在于 `model_driver/spec.py`
+    #（一份开发标准文档），等于这条规则**从来没生效过**：改真正的装配声明
+    # 既不升 full，也不带上 `test_assembly.py` 与 `test_permission_coverage.py`。
     for f in changed:
-        if f.startswith("src/modules/") and f.endswith("/spec.py"):
+        if f.startswith("src/modules/") and f.endswith("/__init__.py"):
             return "full"
 
     if any("migrations/" in f for f in changed):
@@ -324,6 +430,46 @@ def _classify(
     return "targeted"
 
 
+def _select_tests(
+    changed: list[str],
+    affected: set[str],
+    graph: dict[str, set[str]],
+    level: str,
+) -> set[str]:
+    """依赖图算出的测试文件集合。
+
+    单独抽出来是为了能直接测：这条判据错了不会报警，只会**静默漏跑**。
+    """
+    selected: set[str] = set()
+    for rel in affected:
+        selected |= graph.get(rel, set())
+        # 模块目录级依赖：改了 `modules/<mod>/` 里的任何文件 → 选中打这个模块
+        # 路径的黑盒测试（它们靠 URL 挂边，不靠 import）。
+        #
+        # 注意这与「import 边」的过度匹配不是一回事：import 边精确到文件，
+        # URL 边的粒度只能是模块——测试打的是 `/library/tags`，它到底依赖
+        # library 里的哪个文件，静态分析看不出来，所以按模块取。
+        if rel.startswith("src/modules/"):
+            package = rel.rsplit("/", 1)[0] + "/" if "/" in rel else rel
+            selected |= graph.get(package, set())
+        # 包本身（`__init__.py`）改了 → 整个包的 import 边测试都算
+        if rel.endswith("__init__.py"):
+            package = rel[: -len("__init__.py")]
+            for key, tests in graph.items():
+                if key.endswith("/") and key.startswith(package):
+                    selected |= tests
+
+    # 改动的测试文件**自己**必须被选中。依赖图只认「谁 import 了我」，
+    # 新写的测试文件不被任何源文件依赖 → 查不到 → 漏跑。
+    for rel in changed:
+        if rel.startswith("tests/") and rel.endswith(".py"):
+            selected.add(Path(rel).name)
+
+    if level == "full":
+        return {p.name for p in TESTS.glob("test_*.py")}
+    return selected | set(Path(p).name for p in ALWAYS_RUN)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="按改动范围算该跑哪些测试")
     parser.add_argument("--diff", help="git diff 范围，默认工作区相对 HEAD")
@@ -338,29 +484,7 @@ def main(argv: list[str] | None = None) -> int:
 
     level = "full" if args.full else _classify(changed, affected, graph, hunks)
 
-    # 依赖图算出的测试文件
-    selected: set[str] = set()
-    for rel in affected:
-        selected |= graph.get(rel, set())
-        # 目录级依赖：**只**在改了包本身（`__init__.py`）时才算。
-        # 改了目录里任何一个文件就把整个目录的测试拉进来 = 过度匹配：
-        # 改 `model_driver/registry.py` 会把 model_driver 全部测试都带上。
-        if rel.endswith("__init__.py"):
-            package = rel[: -len("__init__.py")]
-            for key, tests in graph.items():
-                if key.endswith("/") and key.startswith(package):
-                    selected |= tests
-
-    # 改动的测试文件**自己**必须被选中。依赖图只认「谁 import 了我」，
-    # 新写的测试文件不被任何源文件依赖 → 查不到 → 漏跑。
-    for rel in changed:
-        if rel.startswith("tests/") and rel.endswith(".py"):
-            selected.add(Path(rel).name)
-
-    if level == "full":
-        selected = {p.name for p in TESTS.glob("test_*.py")}
-    else:
-        selected |= set(Path(p).name for p in ALWAYS_RUN)
+    selected = _select_tests(changed, affected, graph, level)
 
     # 契约层：生成物比对必须单独跑
     commands: list[str] = []
