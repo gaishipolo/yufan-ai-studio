@@ -550,3 +550,44 @@ def test_password_policy_is_public_and_matches_the_backend(client: TestClient) -
         headers=_auth(_sign_in(client)),
     )
     assert accepted.status_code == 201, accepted.text
+
+
+def test_token_issued_in_the_same_second_as_a_password_change_is_dead(
+    client: TestClient,
+) -> None:
+    """改密与旧票签发落在同一秒：按整秒比较会放行，等于自救漏了半秒。
+
+    `iat` 是 JWT 的整秒声明，改密时间却带小数。`int(changed)` 与 `iat` 相等时
+    「`iat < changed`」为假 —— 那一秒里签发的旧票继续可用。这里把改密时间设成
+    「这张票签发时刻 + 0.4 秒」，两者落在同一秒内，只有毫秒比较才能判死它。
+
+    用例结束时把 `password_changed_at` 还原：它会被后续用例的令牌判定读到，
+    留在未来等于让同一进程里其他人刚登录的票全部失效（实际踩过）。
+    """
+    import asyncio
+    from datetime import UTC, datetime
+
+    from core.security import decode_access_token
+    from db.session import get_session_factory
+    from modules.identity.models import User
+
+    data = _sign_in(client)
+    assert client.get(f"{API}/me", headers=_auth(data)).status_code == 200
+
+    claims = decode_access_token(data["accessToken"])
+    changed_at = datetime.fromtimestamp((int(claims["iat_ms"]) + 400) / 1000, UTC)
+
+    async def set_changed_at(value: datetime | None) -> datetime | None:
+        async with get_session_factory()() as session:
+            user = await session.get(User, data["user"]["id"])
+            assert user is not None
+            original = user.password_changed_at
+            user.password_changed_at = value
+            await session.commit()
+            return original
+
+    original = asyncio.run(set_changed_at(changed_at))
+    try:
+        assert client.get(f"{API}/me", headers=_auth(data)).status_code == 401
+    finally:
+        asyncio.run(set_changed_at(original))

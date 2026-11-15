@@ -240,6 +240,9 @@ def create_access_token(
         "roles": roles or [],
         "perms": sorted(permissions or ()),
         "iat": int(now.timestamp()),
+        # 毫秒精度的签发时刻：`iat` 是整秒，而「改密让旧票失效」要比较到亚秒
+        # （改密与旧票签发落在同一秒时，整秒比较会把旧票判成更新的那张）
+        "iat_ms": int(now.timestamp() * 1000),
         "exp": int((now + timedelta(seconds=ttl)).timestamp()),
         "typ": "access",
     }
@@ -271,6 +274,7 @@ def create_refresh_token(
         "sid": session_id,
         "jti": jti,
         "iat": int(now.timestamp()),
+        "iat_ms": int(now.timestamp() * 1000),
         "exp": int((now + timedelta(seconds=ttl)).timestamp()),
         "typ": "refresh",
     }
@@ -340,5 +344,6 @@ def user_from_token(token: str) -> CurrentUser:
         roles=tuple(claims.get("roles", [])),
         permissions=frozenset(claims.get("perms", [])),
         issued_at=int(claims.get("iat") or 0),
+        issued_at_ms=int(claims.get("iat_ms") or 0),
         session_id=str(claims.get("sid") or ""),
     )

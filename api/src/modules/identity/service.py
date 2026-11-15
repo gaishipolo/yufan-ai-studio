@@ -16,7 +16,7 @@ import asyncio
 import secrets
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from datetime import UTC, timedelta
+from datetime import timedelta
 from typing import Any
 
 from sqlalchemy.exc import SQLAlchemyError
@@ -180,15 +180,6 @@ def _bearer_value(authorization: str | None) -> str:
 def _new_jti() -> str:
     """刷新令牌 id。用 `token_hex` 而不是 uuid：它只用于比对，不需要任何结构。"""
     return secrets.token_hex(16)
-
-
-def _epoch(value: Any) -> int:
-    """datetime → epoch 秒；naive 按 UTC 解释（sqlite 读回来没有时区）。"""
-    if value is None:
-        return 0
-    if value.tzinfo is None:
-        value = value.replace(tzinfo=UTC)
-    return int(value.timestamp())
 
 
 # 用户不存在时也要跑一次哈希校验，否则「响应快 = 用户名不存在」就是一个免费的账号枚举接口
@@ -553,8 +544,12 @@ class IdentityService:
         # 与 access 令牌同一套判定：改密之前签发的票一律作废。
         # 不做这一步的话，攻击者手里那张 refresh 能在「改密自救」之后继续换新令牌，
         # 前面那套 `password_changed_at` 就只防住了一半。
-        issued_at = int(claims.get("iat") or 0)
-        if issued_at and issued_at < _epoch(identity.user.password_changed_at):
+        issued_ms = int(claims.get("iat_ms") or 0) or int(claims.get("iat") or 0) * 1000
+        if (
+            issued_ms
+            and identity.user.password_changed_at is not None
+            and issued_ms < int(identity.user.password_changed_at.timestamp() * 1000)
+        ):
             raise RefreshTokenInvalid()
 
         session.refresh_jti = _new_jti()

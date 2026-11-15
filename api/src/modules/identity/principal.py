@@ -48,11 +48,14 @@ class IdentityPrincipalResolver:
             return None
 
         user = resolved.user
-        if principal.issued_at and user.password_changed_at is not None:
+        if user.password_changed_at is not None:
             changed_at = user.password_changed_at
             if changed_at.tzinfo is None:  # sqlite 读回来是 naive，按 UTC 解释
                 changed_at = changed_at.replace(tzinfo=UTC)
-            if principal.issued_at < int(changed_at.timestamp()):
+            # 毫秒比较：按整秒比会把「同一秒里改密之前签发的票」判成更新的那张，
+            # 而这条判定正是「被盗后改密自救」的唯一依据（2026-11-15 审查 2.10）。
+            issued_ms = principal.issued_at_ms or principal.issued_at * 1000
+            if issued_ms and issued_ms < int(changed_at.timestamp() * 1000):
                 return None
 
         # 会话校验：登出 / 踢下线 / 会话过期都在这里生效。
