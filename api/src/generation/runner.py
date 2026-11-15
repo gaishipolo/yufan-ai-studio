@@ -333,9 +333,18 @@ class GenerationRunner:
                         await self._queue.enqueue(
                             Job(
                                 name=job.name,
+                                payload={**job.payload, "throttle_retries": used + 1},
+                                # **必须带幂等键**。`dispatch()` 入队时用
+                                # `submit:{kind}:{record_id}`，队列靠它在途去重；
+                                # 这条无键重投会让同一记录同时存在两条提交作业：
+                                # 父作业 `ack` 把有键的那行删掉、键随之释放，巡检
+                                # 再 `dispatch()` 就会**再插一条带键的** —— 两条作业
+                                # 各调一次 `provider.submit()`，而 `handle_submit`
+                                # 唯一的防线是看记录有没有 `external_id`，并发读到的
+                                # 都是空 → 双计费。
+                                idempotency_key=job.idempotency_key,
                                 # max_attempts 与原来一致：这条新作业万一撞上
                                 # 的是另一种瞬时故障，仍然按普通重试处理
-                                payload={**job.payload, "throttle_retries": used + 1},
                                 max_attempts=job.max_attempts,
                                 timeout_sec=job.timeout_sec,
                             ),

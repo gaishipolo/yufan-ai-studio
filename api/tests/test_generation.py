@@ -292,8 +292,13 @@ def _run_submit(
     probe: _SubmitProbeStore | None = None,
     queue: MemoryJobQueue | None = None,
     payload_extra: dict[str, object] | None = None,
+    idempotency_key: str | None = None,
 ) -> _SubmitProbeStore:
-    """把 echo 的 submit 换成指定异常，跑一次 handle_submit，返回探针。"""
+    """把 echo 的 submit 换成指定异常，跑一次 handle_submit，返回探针。
+
+    `idempotency_key` 按 `dispatch()` 的真实形状传入（`submit:{kind}:{record_id}`），
+    用来钉住「限流重投必须把键带下去」。
+    """
     probe = probe or _SubmitProbeStore()
 
     async def fake_submit(self: EchoProvider, request: GenerationRequest) -> str:
@@ -328,6 +333,7 @@ def _run_submit(
                 Job(
                     name=JOB_SUBMIT,
                     payload={"kind": kind, "record_id": "r1", **(payload_extra or {})},
+                    idempotency_key=idempotency_key,
                 )
             )
         except Exception as exc:  # noqa: BLE001
@@ -393,6 +399,7 @@ def test_submit_rate_limited_waits_in_line_instead_of_failing(
         "test-submit-throttle",
         RateLimited("视频队列已满，请稍后重试（HTTP 503 video_queue_full）"),
         queue=queue,
+        idempotency_key="submit:video:r1",
     )
 
     assert probe.failed_with is None, "队列满不该把任务判死"
@@ -406,6 +413,10 @@ def test_submit_rate_limited_waits_in_line_instead_of_failing(
     assert delay == first, "第一次排队等表里的第一档，而不是 2 秒"
     assert job.payload["throttle_retries"] == 1
     assert job.max_attempts == 3, "排队作业仍按普通重试兜底别的瞬时故障"
+    # 幂等键必须跟着走：不带键的重投会让同一记录同时存在两条提交作业（父作业
+    # `ack` 释放键之后巡检再 `dispatch()` 一条带键的），两条各调一次
+    # `provider.submit()` → 双计费。
+    assert job.idempotency_key == "submit:video:r1", "限流重投丢掉了幂等键"
 
 
 def test_submit_gives_up_only_after_the_whole_throttle_schedule(
