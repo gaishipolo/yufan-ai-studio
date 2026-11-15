@@ -115,7 +115,9 @@ function TemplateCard({
             </Chip>
           ))}
         </div>
-        <div className="mt-0.5 flex items-center justify-between gap-2 border-t border-line-soft pt-1.5">
+        {/* `mt-auto`：一行里卡片的 chip 数量不同时会换行成一两行，不推到底的话
+            底栏会各自停在不同高度，一排看过去参差。 */}
+        <div className="mt-auto flex items-center justify-between gap-2 border-t border-line-soft pt-1.5">
           <span className="min-w-0 truncate text-[10.5px] text-ink-mute">
             {item.latest?.model ?? '—'}
           </span>
