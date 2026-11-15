@@ -36,6 +36,7 @@ import ipaddress
 from collections.abc import Callable
 from dataclasses import dataclass
 from functools import lru_cache
+from pathlib import Path
 from urllib.parse import urljoin, urlparse
 
 import httpx
@@ -66,6 +67,16 @@ class Fetched:
     data: bytes
     content_type: str
     final_url: str
+
+
+@dataclass(frozen=True, slots=True)
+class FetchedFile:
+    """流式下载的结果：字节已经在盘上，进程内存没被它占过。"""
+
+    path: Path
+    content_type: str
+    final_url: str
+    size: int
 
 
 class HttpSettings(DriverSettings):
@@ -246,13 +257,115 @@ async def _fetch_once(
     raise HttpError(f"重定向超过 {MAX_REDIRECTS} 次：{url}")
 
 
+async def fetch_to_file(
+    url: str,
+    target: Path,
+    *,
+    max_bytes: int,
+    timeout: float | None = None,  # noqa: ASYNC109 —— 传给 httpx 的单次超时，非总预算
+    retries: int = 0,
+    guard: Callable[[str], None] = validate_public_url,
+) -> FetchedFile:
+    """下载到**文件**，边读边写，进程内存与文件大小无关。
+
+    `fetch_bytes` 适合小文件（图片、封面）；入库那条链允许 300MB 的成片，
+    整份读进内存的峰值是「并发数 × 文件大小」——两个并发就能把进程打挂，
+    而且小文件完全测不出来。这条路径与它共用同一套纪律：逐跳校验、大小上限、
+    有限重试、手动跟重定向；区别只在写盘。
+
+    失败时把写了一半的文件删掉：留着会被下游当成「已就绪」的产物。
+    """
+    if max_bytes <= 0:
+        raise ValueError("max_bytes 必须为正数")
+
+    last_error = ""
+    for attempt in range(retries + 1):
+        try:
+            return await _fetch_once_to_file(
+                url, target, max_bytes=max_bytes, timeout=timeout, guard=guard
+            )
+        except _Retryable as exc:
+            last_error = str(exc)
+            if attempt >= retries:
+                break
+            await asyncio.sleep(min(8.0, 0.5 * (2**attempt)))
+    raise HttpError(f"下载失败（已重试 {retries} 次）：{last_error}")
+
+
+async def _fetch_once_to_file(
+    url: str,
+    target: Path,
+    *,
+    max_bytes: int,
+    timeout: float | None,  # noqa: ASYNC109 —— 同一预算透传给 httpx
+    guard: Callable[[str], None],
+) -> FetchedFile:
+    client = get_http()
+    current = url
+
+    for _hop in range(MAX_REDIRECTS + 1):
+        guard(current)
+        try:
+            async with client.stream("GET", current, timeout=timeout) as response:
+                if response.is_redirect:
+                    location = response.headers.get("location")
+                    if not location:
+                        raise HttpError(f"重定向缺少 Location：{current}")
+                    current = urljoin(current, location)
+                    continue
+
+                if response.status_code in RETRY_STATUS:
+                    raise _Retryable(f"{current} 返回 {response.status_code}")
+                if response.status_code >= 400:
+                    raise HttpError(f"{current} 返回 {response.status_code}")
+
+                declared = response.headers.get("content-length")
+                if declared is not None and declared.isdigit() and int(declared) > max_bytes:
+                    raise HttpError(
+                        f"内容超过上限：{declared} > {max_bytes} 字节（{current}）"
+                    )
+
+                handle = await asyncio.to_thread(target.open, "wb")
+                total = 0
+                try:
+                    async for chunk in response.aiter_bytes():
+                        total += len(chunk)
+                        if total > max_bytes:
+                            raise HttpError(
+                                f"内容超过上限：已读 {total} > {max_bytes} 字节"
+                            )
+                        # 写盘是阻塞的：大文件时一块 write 就能把同 worker 的
+                        # 请求一起卡住，丢线程池。
+                        await asyncio.to_thread(handle.write, chunk)
+                except BaseException:
+                    await asyncio.to_thread(handle.close)
+                    await asyncio.to_thread(target.unlink, True)
+                    raise
+                else:
+                    await asyncio.to_thread(handle.close)
+                return FetchedFile(
+                    path=target,
+                    content_type=response.headers.get("content-type", ""),
+                    final_url=str(response.url),
+                    size=total,
+                )
+        except httpx.TimeoutException as exc:
+            raise _Retryable(f"超时：{exc}") from exc
+        except httpx.TransportError as exc:
+            raise _Retryable(f"传输错误：{exc}") from exc
+
+    raise HttpError(f"重定向超过 {MAX_REDIRECTS} 次：{url}")
+
+
 __all__ = [
     "Fetched",
+    "FetchedFile",
     "HttpError",
     "HttpSettings",
     "RETRY_STATUS",
     "close_http",
     "fetch_bytes",
+    "fetch_to_file",
     "get_http",
     "get_http_settings",
     "reset_http_client",

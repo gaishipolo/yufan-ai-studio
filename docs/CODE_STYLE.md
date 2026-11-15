@@ -391,6 +391,8 @@ plugins = ["pydantic.mypy"]
   （当前默认兜底仍不解析 DNS，**这条是尚未落地的规范**，见 §6 缺口；
   `tests/test_image_policy.py::test_default_fallback_boundary_is_explicit` 把这个边界显式记了下来。）
 - 生产强制 `IMAGE_ASSET_ALLOWED_HOSTS`（`prod_required_fields`），不要靠黑名单兜底。
+  **调用方给地址、服务端去下载**的入口走同一条口径：入库的 `sourceUrl` 也要求
+  `LIBRARY_INGEST_ALLOWED_HOSTS`（2026-11-15 补），并且流式落盘——那条链允许 300MB。
 - 重定向要么禁用，要么每一跳重新校验；响应体流式读取并设大小上限；
   用魔数/内容类型确认是预期文件格式，`content-type` 不能单由对方决定。
 

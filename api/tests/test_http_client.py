@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+from typing import Any
 
 import httpx
 import pytest
@@ -171,3 +172,71 @@ def test_too_many_redirects_fails(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_zero_max_bytes_is_rejected() -> None:
     with pytest.raises(ValueError, match="max_bytes"):
         asyncio.run(fetch_bytes("https://cdn.example.com/a.png", max_bytes=0))
+
+
+# --------------------------------------------------------------------------- #
+# 流式下载（`fetch_to_file`）：入库那条链允许 300MB，不能整份进内存
+# --------------------------------------------------------------------------- #
+class _AsyncChunks(httpx.AsyncByteStream):
+    """分块响应体。`MockTransport` + `AsyncClient` 只认异步流，传 `iter(list)` 会报错。"""
+
+    def __init__(self, chunks: list[bytes]) -> None:
+        self._chunks = chunks
+
+    async def __aiter__(self):  # type: ignore[override]
+        for chunk in self._chunks:
+            yield chunk
+
+
+def _chunked(chunks: list[bytes]) -> Callable[[httpx.Request], httpx.Response]:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, stream=_AsyncChunks(chunks), headers={"content-type": "video/mp4"}
+        )
+
+    return handler
+
+
+def test_fetch_to_file_writes_the_bytes(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    from infra.http import fetch_to_file
+
+    target = tmp_path / "out.mp4"
+    _install(monkeypatch, _chunked([b"a" * 1024, b"b" * 512]))
+
+    fetched = asyncio.run(
+        fetch_to_file("https://cdn.example/v.mp4", target, max_bytes=10_000)
+    )
+
+    assert fetched.size == 1536
+    assert target.read_bytes() == b"a" * 1024 + b"b" * 512
+    assert fetched.content_type == "video/mp4"
+
+
+def test_fetch_to_file_rejects_declared_oversize(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from infra.http import HttpError, fetch_to_file
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"x" * 10, headers={"content-length": "999999"})
+
+    _install(monkeypatch, handler)
+    target = tmp_path / "big.mp4"
+
+    with pytest.raises(HttpError, match="超过上限"):
+        asyncio.run(fetch_to_file("https://cdn.example/big.mp4", target, max_bytes=1024))
+    assert not target.exists()
+
+
+def test_fetch_to_file_deletes_partial_file_when_stream_overflows(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """没有 content-length 时只能边读边数：超了要立刻中断，并删掉写了一半的文件。"""
+    from infra.http import HttpError, fetch_to_file
+
+    _install(monkeypatch, _chunked([b"x" * 600, b"y" * 600]))
+    target = tmp_path / "partial.mp4"
+
+    with pytest.raises(HttpError, match="超过上限"):
+        asyncio.run(fetch_to_file("https://cdn.example/p.mp4", target, max_bytes=1000))
+    assert not target.exists(), "半个文件留着会被下游当成已就绪的产物"

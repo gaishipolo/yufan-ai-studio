@@ -252,3 +252,97 @@ def test_snapshot_accepts_either_spelling_of_the_reference_column() -> None:
     assert (
         _snapshot_values({"reference_library_ids": ["new"]})["reference_library_ids"] == ["new"]
     )
+
+
+# --------------------------------------------------------------------------- #
+# `sourceUrl` 的出站护栏：白名单 + 流式落盘
+#
+# 旧实现把地址直接交给 `fetch_bytes`（不带白名单），而那个兜底**不解析 DNS**：
+# 域名指向内网时拦不住——持 `library:generation:ingest` 的账号就能让服务端
+# 替他访问内网。成片还允许 300MB，整份读进内存的峰值是「并发数 × 文件大小」。
+# --------------------------------------------------------------------------- #
+def test_source_url_outside_the_allowlist_is_refused(
+    client: TestClient, api: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from modules.library.ingest import get_ingest_download_settings
+
+    monkeypatch.setattr(
+        get_ingest_download_settings(), "allowed_hosts", "cdn.allowed.example"
+    )
+    admin = admin_headers(client)
+    owner, owner_h = make_user(client, admin, LIB_RW + ["library:generation:ingest"])
+
+    response = _ingest(
+        client,
+        api,
+        owner_h,
+        {
+            "sourceModule": "image",
+            "sourceTaskId": "job-evil",
+            "sourceKey": "image:job-evil:0",
+            "kind": "image",
+            "name": "偷跑.png",
+            "sourceUrl": "https://intranet.example/x.png",
+        },
+    )
+
+    assert response.status_code == 400, response.text
+    assert "白名单" in response.text
+
+
+def test_source_url_inside_the_allowlist_is_downloaded(
+    client: TestClient, api: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import httpx
+
+    from infra import http as http_module
+    from modules.library.ingest import get_ingest_download_settings
+
+    payload = png_bytes("steelblue")
+    monkeypatch.setattr(get_ingest_download_settings(), "allowed_hosts", "cdn.allowed.example")
+    monkeypatch.setattr(
+        http_module,
+        "_HTTP",
+        httpx.AsyncClient(
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(
+                    200, content=payload, headers={"content-type": "image/png"}
+                )
+            ),
+            follow_redirects=False,
+        ),
+    )
+    admin = admin_headers(client)
+    owner, owner_h = make_user(client, admin, LIB_RW + ["library:generation:ingest"])
+
+    response = _ingest(
+        client,
+        api,
+        owner_h,
+        {
+            "sourceModule": "image",
+            "sourceTaskId": "job-ok",
+            "sourceKey": "image:job-ok:0",
+            "kind": "image",
+            "name": "下载入库.png",
+            "sourceUrl": "https://cdn.allowed.example/x.png",
+        },
+    )
+
+    assert response.status_code == 201, response.text
+    created = response.json()["data"]
+    detail = client.get(
+        f"{api}/library/assets/{created['assetId']}", headers=owner_h
+    ).json()["data"]
+    assert detail["state"] == "draft"
+
+
+def test_ingest_download_requires_an_allowlist_in_prod() -> None:
+    """生产必须显式配 `LIBRARY_INGEST_ALLOWED_HOSTS`，不许靠黑名单兜底。
+
+    兜底不解析 DNS：域名指向内网时拦不住，而且日志里一句错都没有。
+    与成图落盘（`IMAGE_ASSET_ALLOWED_HOSTS`）同一条口径。
+    """
+    from modules.library.ingest import IngestDownloadSettings
+
+    assert IngestDownloadSettings.prod_required_fields == ("allowed_hosts",)

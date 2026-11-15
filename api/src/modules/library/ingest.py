@@ -45,8 +45,9 @@ import tempfile
 from collections.abc import Mapping
 from contextlib import ExitStack
 from datetime import UTC, datetime
+from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -59,13 +60,52 @@ from core.ports.library_ingest import IngestRequest, IngestResult
 from core.ports.library_lookup import LibraryAssetKind
 from infra import get_storage
 from infra.archive import get_archive_storage
-from infra.http import HttpError, fetch_bytes
+from infra.driver_config import DriverSettings, driver_config
+from infra.http import HttpError, fetch_to_file, validate_public_url
 from infra.media_probe import EXTENSIONS, MAX_BYTES, create_preview, inspect
 from infra.storage.base import ObjectStorage
 from modules.library.errors import GenerationSourceInvalid, LibraryFileTooLarge
 from modules.library.models import LibraryAsset, LibraryAssetGeneration
 from modules.library.service import blob_key, preview_key
 from modules.library.tags import set_asset_tags
+
+
+class IngestDownloadSettings(DriverSettings):
+    """入库时「服务端替你去下载」的部署参数（前缀 `LIBRARY_INGEST_`）。
+
+    `sourceUrl` 是**调用方给的地址**，服务端拿它出站取字节——不设白名单时只能
+    退回 `validate_public_url` 的黑名单兜底，而那个兜底**不解析 DNS**：域名指向
+    内网时拦不住。持 `library:generation:ingest` 的账号就能让服务端替他访问内网。
+
+    生产必须显式配域名白名单（`prod_required_fields`），与成图落盘
+    （`IMAGE_ASSET_ALLOWED_HOSTS`）同一条口径：宁可启动失败，也不要在生产里
+    靠兜底过日子，那种状态日志里一句错都没有。
+    """
+
+    model_config = driver_config("LIBRARY_INGEST")
+
+    prod_required_fields: ClassVar[tuple[str, ...]] = ("allowed_hosts",)
+
+    # 逗号分隔的域名白名单；留空时只拒绝非公网 IP 字面量与明显的内网域名
+    allowed_hosts: str = ""
+    # 这是**下载**超时，不是提交耗时，所以不声明 submit_budget_for
+    timeout_sec: float = 120.0
+
+
+@lru_cache
+def get_ingest_download_settings() -> IngestDownloadSettings:
+    return IngestDownloadSettings()
+
+
+def _allowed_hosts() -> frozenset[str]:
+    raw = get_ingest_download_settings().allowed_hosts
+    return frozenset(part.strip().lower() for part in raw.split(",") if part.strip())
+
+
+def _guard_source_url(url: str) -> None:
+    """`sourceUrl` 的出站校验：配了白名单就只认白名单，没配走黑名单兜底。"""
+    validate_public_url(url, allowed_hosts=_allowed_hosts())
+
 
 __all__ = ["GenerationIngest", "SqlLibraryIngest"]
 
@@ -198,7 +238,8 @@ class GenerationIngest:
         `storageKey` 优先：它已经在主存储里，本地驱动能零拷贝。
         `archiveKey` 走归档驱动的 `materialize()`，`stack` 负责在整段用完前
         不回收远端驱动的临时缓存。
-        `sourceUrl` 走共享的 `fetch_bytes`（逐跳 SSRF 校验 + 大小上限）。
+        `sourceUrl` 走 `fetch_to_file`：逐跳 SSRF 校验（配了白名单就只认白名单）+ 大小上限，
+        并且流式写盘——成片允许 300MB，整份读进内存会把进程撑爆。
         """
         extension = _extension_of(request)
         if request.storage_key:
@@ -217,6 +258,11 @@ class GenerationIngest:
                 raise GenerationSourceInvalid(
                     details={"storageKey": request.storage_key}
                 ) from exc
+            if len(payload) > MAX_BYTES:
+                raise LibraryFileTooLarge(details={"maxBytes": MAX_BYTES})
+            target = folder / f"source{extension}"
+            await asyncio.to_thread(target.write_bytes, payload)
+            return target, extension, EXTENSIONS[extension]
         elif request.archive_key:
             # 归档盘与主对象存储是两个驱动。materialize() 交出的本地路径在远端
             # 实现里只是缓存，必须由 stack 持有到 put_file / 预览派生结束。
@@ -234,22 +280,27 @@ class GenerationIngest:
                 raise LibraryFileTooLarge(details={"maxBytes": MAX_BYTES})
             return path, extension, EXTENSIONS[extension]
         elif request.source_url:
+            target = folder / f"source{extension}"
             try:
-                payload = (
-                    await fetch_bytes(request.source_url, max_bytes=MAX_BYTES, retries=2)
-                ).data
-            except HttpError as exc:
+                # 流式落盘：这条链允许 300MB 的成片，整份读进内存的峰值是
+                # 「并发数 × 文件大小」。白名单见 `IngestDownloadSettings`。
+                fetched = await fetch_to_file(
+                    request.source_url,
+                    target,
+                    max_bytes=MAX_BYTES,
+                    retries=2,
+                    timeout=get_ingest_download_settings().timeout_sec,
+                    guard=_guard_source_url,
+                )
+            except (HttpError, ValueError) as exc:
+                # `ValueError` 是 guard 抛的（协议不可用 / host 不在白名单）
                 raise GenerationSourceInvalid(
                     details={"sourceUrl": request.source_url, "reason": str(exc)}
                 ) from exc
-        else:
-            raise GenerationSourceInvalid()
-        if len(payload) > MAX_BYTES:
-            raise LibraryFileTooLarge(details={"maxBytes": MAX_BYTES})
-        target = folder / f"source{extension}"
-        # 300MB 写盘同样别占着事件循环
-        await asyncio.to_thread(target.write_bytes, payload)
-        return target, extension, EXTENSIONS[extension]
+            if fetched.size > MAX_BYTES:
+                raise LibraryFileTooLarge(details={"maxBytes": MAX_BYTES})
+            return target, extension, EXTENSIONS[extension]
+        raise GenerationSourceInvalid()
 
     async def _ensure_preview(self, source: Path, digest: str, kind: str) -> str:
         with tempfile.TemporaryDirectory(prefix="library-ingest-cover-") as folder:

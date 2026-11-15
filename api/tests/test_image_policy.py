@@ -97,6 +97,12 @@ def test_prod_requires_asset_allowlist(monkeypatch: pytest.MonkeyPatch) -> None:
     assert dc.ensure_prod_driver_settings("test") is None, "非 prod 允许走兜底"
 
     monkeypatch.setenv("IMAGE_ASSET_ALLOWED_HOSTS", "cdn.example.com")
+    # 入库下载（`sourceUrl`）那条链同样要求白名单：2026-11-15 补的，两个都得配
+    monkeypatch.delenv("LIBRARY_INGEST_ALLOWED_HOSTS", raising=False)
+    with pytest.raises(RuntimeError, match="LIBRARY_INGEST_ALLOWED_HOSTS|IngestDownloadSettings"):
+        dc.ensure_prod_driver_settings("prod")
+
+    monkeypatch.setenv("LIBRARY_INGEST_ALLOWED_HOSTS", "cdn.example.com")
     assert dc.ensure_prod_driver_settings("prod") is None
 
 
