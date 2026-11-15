@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  fileStamp,
   formatBytes,
   formatDateTime,
   formatDuration,
@@ -85,5 +86,18 @@ describe('formatRelative', () => {
     expect(formatRelative('2026-11-05T11:30:00Z')).toBe('30 分钟前');
     expect(formatRelative('2026-11-05T09:00:00Z')).toBe('3 小时前');
     expect(formatRelative('2026-11-03T12:00:00Z')).toBe('2 天前');
+  });
+});
+
+describe('fileStamp', () => {
+  it('按 UTC 出时间戳，与后端入库命名同一个基准', () => {
+    // 同一时刻：UTC 09:27:19 = 东八区 17:27:19。名字必须取前者，
+    // 否则同一个任务「入库叫 09-27、下载叫 17-27」（审查 3.6）。
+    expect(fileStamp('2026-11-14T09:27:19Z')).toBe('2026-11-14-09-27-19');
+  });
+
+  it('缺少或坏掉的时间退回当前时刻，不抛异常', () => {
+    expect(fileStamp(null)).toMatch(/^\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-\d{2}$/);
+    expect(fileStamp('not-a-date')).toMatch(/^\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-\d{2}$/);
   });
 });

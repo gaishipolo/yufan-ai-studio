@@ -57,18 +57,27 @@ export function formatNumber(n: number): string {
   return n.toLocaleString('zh-CN');
 }
 
-/** 文件名里的时间戳：`2026-11-14-17-27-19`（浏览器本地时区）。 */
+/**
+ * 文件名里的时间戳：`2026-11-14-09-27-19`（**UTC**）。
+ *
+ * 与后端 `core/naming.py` 同一个基准：同一个任务在入库（服务端）与下载（浏览器）
+ * 两处必须得到同一个名字。曾经这里用浏览器本地时区、后端用服务器本地时区，
+ * 用户下载到的文件名和草稿箱里的规范名差一个时区偏移（审查 3.6）。
+ *
+ * 页面上的时间该按本地时区显示（`formatDateTime`），但**文件名不承担可读性**：
+ * 它是「同一个东西的唯一标识」，换个时区就变名字等于没有标识。
+ */
 export function fileStamp(iso?: string | null): string {
   const d = iso ? new Date(iso) : new Date();
   const at = Number.isNaN(d.getTime()) ? new Date() : d;
   const pad = (n: number) => String(n).padStart(2, '0');
   return [
-    at.getFullYear(),
-    pad(at.getMonth() + 1),
-    pad(at.getDate()),
-    pad(at.getHours()),
-    pad(at.getMinutes()),
-    pad(at.getSeconds()),
+    at.getUTCFullYear(),
+    pad(at.getUTCMonth() + 1),
+    pad(at.getUTCDate()),
+    pad(at.getUTCHours()),
+    pad(at.getUTCMinutes()),
+    pad(at.getUTCSeconds()),
   ].join('-');
 }
 
