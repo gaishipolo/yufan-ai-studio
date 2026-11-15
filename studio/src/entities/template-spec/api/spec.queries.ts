@@ -48,9 +48,11 @@ export function useSpecMutations() {
   const client = useQueryClient();
   const owner = useSessionStore(s => s.subject.id);
   const refresh = () => {
+    // 一个前缀覆盖全部：`list` / `trash` / `published` 都挂在 `specKeys.all(owner)`
+    // 下面，模板库（填表）读的正是 `published` 那一份，所以这里不需要第二句。
+    // 曾经还失效过一个 `['template-library', owner]` —— 那个键**不存在**
+    // （没有任何查询用它），空转却让人以为有第二个缓存命名空间（审查 3.5）。
     void client.invalidateQueries({queryKey: specKeys.all(owner)});
-    // 发布出来的东西会进模板库/任务中心，顺带把这两处刷了。
-    void client.invalidateQueries({queryKey: ['template-library', owner]});
   };
   return {
     validate: useMutation({mutationFn: specApi.validate}),
