@@ -21,10 +21,13 @@ import asyncio
 import os
 import re
 import subprocess
+import uuid
 from pathlib import Path
 
 import imageio_ffmpeg
+import pytest
 
+from core.exceptions import NotFound
 from core.ports.library_ingest import IngestRequest, get_library_ingest, has_library_ingest
 from core.ports.library_lookup import LibraryAssetKind
 from db.session import get_session_factory
@@ -267,3 +270,66 @@ def test_attach_cover_reports_missing_task() -> None:
             )
 
     assert asyncio.run(attach()) is False
+
+
+# ---------- 成片搬进对象存储（本地执行器型供应商） ----------
+#
+# LibTV 这类供应商不给公网地址：执行器把 mp4 下载到运行工作区，驱动只能回
+# 一个指向工作区的相对地址。P3 删 `modules/template` 后那条路由没了，于是
+# 「任务成功、地址 404、草稿箱空」同时成立。`persist_output` 负责在收尾时
+# 把字节搬进对象存储，之后与其它供应商同一套口径（库里存 key、出参现签）。
+
+_MP4_BYTES = b"\x00\x00\x00\x18ftypmp42" + b"0" * 2048
+
+
+@pytest.fixture
+def local_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
+    """造一个带成片的运行工作区，返回它的 run_id。"""
+    from core.config import settings
+    from infra.archive import get_archive_storage, reset_archive_storage, runs_root, save_pointer
+    from infra.archive.local import get_archive_settings
+    from infra.archive.runs import relative_key
+
+    root = tmp_path / "archive"
+    root.mkdir()
+    monkeypatch.setattr(get_archive_settings(), "root", str(root))
+    monkeypatch.setattr(settings, "archive_driver", "local")
+    monkeypatch.setattr(settings, "replacement_runs_root", "")
+    reset_archive_storage()
+
+    run_id = uuid.uuid4().hex
+    folder = runs_root() / "2026/11/15" / f"video-{run_id}"
+    (folder / "outputs").mkdir(parents=True)
+    (folder / "run.json").write_text("{}", encoding="utf-8")
+    (folder / "outputs/generated.mp4").write_bytes(_MP4_BYTES)
+    save_pointer(get_archive_storage(), run_id, relative_key(folder))
+    yield run_id
+    reset_archive_storage()
+
+
+def test_persist_output_moves_run_video_into_storage(local_run: str) -> None:
+    url = f"/api/v1/templates/replacement-runs/{local_run}/output"
+
+    key = asyncio.run(get_pipeline(KIND_VIDEO).persist_output("t_persist", url))
+
+    assert key == "videos/t_persist.mp4"
+    assert asyncio.run(get_storage().get(key))[:8] == _MP4_BYTES[:8]
+
+
+def test_persist_output_leaves_vendor_link_alone() -> None:
+    """供应商直链长期有效，多搬一份只是浪费存储。"""
+    url = "https://cos-platform-outputs.example.com/videos/a.mp4"
+
+    assert asyncio.run(get_pipeline(KIND_VIDEO).persist_output("t_persist2", url)) == url
+
+
+def test_persist_output_reports_missing_run() -> None:
+    """工作区不存在/没有成片时抛异常。
+
+    框架（`runner._persist`）会记一条日志并退回原地址，不会把「生成成功」
+    改成失败；这里只保证**别静默返回一个空 key**——那会让入库把空串当 key。
+    """
+    url = f"/api/v1/templates/replacement-runs/{'0' * 32}/output"
+
+    with pytest.raises(NotFound):
+        asyncio.run(get_pipeline(KIND_VIDEO).persist_output("t_persist4", url))

@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -18,12 +19,21 @@ from core.ports.library_ingest import IngestRequest
 from core.ports.library_lookup import LibraryAssetKind, get_library_lookup
 from generation.pipeline import register_pipeline
 from generation.spec import STATUS_QUEUED, STATUS_RUNNING, GenerationRecord
-from infra import get_model_router
+from infra import get_model_router, get_storage
 from infra.ai.base import Capability, GenerationRequest
+from infra.archive import get_archive_storage
+from infra.archive.runs import run_dir
 from modules.task.enums import TaskStatus
 from modules.task.models import VideoTask
 
 KIND_VIDEO = "video"
+
+# 执行器把成片下载到运行工作区的这个相对路径下（`runtime/vendor/.../canvas-run.mjs`
+# 的 `downloadResult` 写死的名字）。驱动拿不到公网地址，只能回一个指向工作区的
+# 相对地址，所以「搬进对象存储」这一步必须由这里按工作区路径取字节。
+_EXECUTOR_OUTPUT = "outputs/generated.mp4"
+# 驱动对这类产物的约定形状；换执行器时改这一处。
+_RUN_OUTPUT_URL = re.compile(r"/replacement-runs/([a-f0-9]{32})/output$")
 
 # 任务表的终态用 completed/failed（前端契约），与框架默认的 succeeded 不同，
 # 因此显式声明终态集合。
@@ -194,6 +204,33 @@ class VideoGenerationPipeline:
             request_id=record.id,
         )
 
+    async def persist_output(self, record_id: str, url: str) -> str:
+        """把成片搬进对象存储，返回**对象 key**（可选钩子）。
+
+        本地执行器型供应商（LibTV）不提供公网地址：执行器把成片下载到运行工作区，
+        驱动只能回一个指向工作区的相对地址。这类地址有两种死法，都需要在这里拦住：
+
+        1. 落库后前端拿它播放/下载 —— 地址指向的路由随 P3 删除 `modules/template`
+           一起没了，返回 404；
+        2. 入库时它既不是 `http(s)` 也没有对象，被当成对象 key 去存储里找 →
+           `GenerationSourceInvalid`，于是「任务成功、草稿箱空」。
+
+        搬完之后与其它供应商同一套口径：库里存 key、出参现签、入库零拷贝。
+        给的是 `https` 直链的供应商（Agnes）原样返回——它们的地址长期有效，
+        多搬一份只是浪费存储。
+
+        取不到字节就抛：框架会记一条日志并退回原地址，不会把「成功」改成「失败」。
+        """
+        match = _RUN_OUTPUT_URL.search(url)
+        if match is None:
+            return url
+        source = run_dir(get_archive_storage(), match.group(1)) / _EXECUTOR_OUTPUT
+        if not source.is_file():
+            raise FileNotFoundError(f"归档工作区里没有成片：{source}")
+        key = f"videos/{record_id}{Path(_EXECUTOR_OUTPUT).suffix}"
+        await get_storage().put_file(key, source, "video/mp4")
+        return key
+
     async def archive_request(
         self, session: AsyncSession, record: GenerationRecord, stored: str
     ) -> IngestRequest:
@@ -203,11 +240,11 @@ class VideoGenerationPipeline:
         静默返回——用户视频生成完了，资产库里一条都没有（2026-11-11 实测：
         图片来源入库 6 条、视频 0 条，日志里「生成结果已入草稿箱」出现 0 次）。
 
-        `stored` 是 `persist_output` 的产物。视频这条链**没有实现落盘钩子**：
-        供应商给的是长期有效的 CDN 直链（`cos-platform-outputs.../xxx.mp4`，
-        不带签名参数），框架文档也写明这类能力不必落盘。所以这里拿到的就是
-        直链，交给入库方按 `sourceUrl` 现取现存——字节最终落在资产库自己的
-        存储里，供应商链接以后失效也不影响库里的那一份。
+        `stored` 是 `persist_output` 的产物，有两种形态：搬过的是对象 key
+        （本地执行器型供应商，见上面的 `persist_output`）；没搬的仍是供应商
+        直链（Agnes 的 `cos-platform-outputs.../xxx.mp4`，长期有效、不带签名）。
+        两种都交给入库方：key 走零拷贝，直链走 `sourceUrl` 现取现存——字节最终
+        落在资产库自己的存储里，供应商链接以后失效也不影响库里的那一份。
         """
         task = await session.get(VideoTask, record.id)
         # 资产库里的名字用「作者-生成时间」而不是标题：标题是一句描述，同一句话

@@ -9,6 +9,7 @@ v2 起 payload 不再带适配器目录：固定版适配器随代码入库，�
 
 from __future__ import annotations
 
+import asyncio
 import io
 import json
 import sys
@@ -136,3 +137,56 @@ def test_executor_env_drops_delete_semantics_shims(monkeypatch: pytest.MonkeyPat
     # 其余变量照旧继承：执行器要靠 PATH 找 node
     assert env["JS_REVERSE_KEEP_ME"] == "1"
     assert env.get("PATH")
+
+
+# ---------- 下载作业的 handler ----------
+#
+# P3 删 `modules/template` 时把 `libtv.download` 的 handler 一起带走了，驱动那边
+# 还在投这条作业 —— 队列只会打「未知任务类型，丢弃」，片子生成了却没人取回。
+# 这两条用例钉住「handler 存在」与「参数缺失不许当成功跳过」。
+
+
+def test_download_handler_is_registered() -> None:
+    from workers import handler_names
+
+    assert "libtv.download" in handler_names()
+
+
+def test_download_handler_rejects_missing_id() -> None:
+    from infra.queue.base import Job
+    from modules.model_driver.libtv.worker import download
+
+    with pytest.raises(ValueError, match="缺少 id"):
+        asyncio.run(download(Job(name="libtv.download", payload={})))
+
+
+def test_download_handler_raises_when_stage_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """阶段失败要抛给队列重试，不能吞掉——吞掉的话任务会停在 generated 直到超时。"""
+    from infra.queue.base import Job
+    from modules.model_driver.libtv import worker
+
+    async def fake(run_id: str, stage: str) -> ExecutorResult:
+        return ExecutorResult(
+            code="EXECUTOR_BROWSER_UNAVAILABLE", stage=stage, message="浏览器没连上"
+        )
+
+    monkeypatch.setattr(worker.executor, "execute_stage", fake)
+    with pytest.raises(RuntimeError, match="浏览器没连上"):
+        asyncio.run(worker.download(Job(name="libtv.download", payload={"id": "a" * 32})))
+
+
+def test_download_handler_runs_the_download_stage(monkeypatch: pytest.MonkeyPatch) -> None:
+    from infra.queue.base import Job
+    from modules.model_driver.libtv import worker
+
+    seen: list[tuple[str, str]] = []
+
+    async def fake(run_id: str, stage: str) -> ExecutorResult:
+        seen.append((run_id, stage))
+        return ExecutorResult(code="OK", stage=stage)
+
+    monkeypatch.setattr(worker.executor, "execute_stage", fake)
+    asyncio.run(worker.download(Job(name="libtv.download", payload={"id": "b" * 32})))
+    assert seen == [("b" * 32, "download")]
