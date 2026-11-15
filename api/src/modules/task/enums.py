@@ -1,6 +1,10 @@
-"""任务模块的枚举与状态机。
+"""任务模块的枚举。
 
-状态流转集中在 `can_transition`，避免各 service 各写一套判断。
+**没有状态机表**：流转规则由写入口自己守（`modules/task/pipeline.py` 的
+`_guard()` 只做一件事 —— 终态之后一律不再接受写入）。曾经这里有一张
+`_ALLOWED_TRANSITIONS` 和 `can_transition()`，全仓零调用点，而模块文档写着
+「状态流转集中在这里」，等于给下一个人一个永远不会被执行的承诺
+（2026-11-15 审查 P3）。真要做显式状态机，就把写入口全部改成只经它一个函数。
 画面比例属于跨模块共享词汇，统一放在 `core.enums`。
 """
 
@@ -17,7 +21,6 @@ __all__ = [
     "TaskSort",
     "TaskStatus",
     "TaskStatusFilter",
-    "can_transition",
     "is_in_flight",
 ]
 
@@ -49,19 +52,6 @@ class TaskScope(StrEnum):
     MINE = "mine"
     TEAM = "team"
     ALL = "all"
-
-
-# 合法流转：未结束的任务可以前进；失败/完成是终态（重试会重置回 queued）
-_ALLOWED_TRANSITIONS: dict[TaskStatus, set[TaskStatus]] = {
-    TaskStatus.QUEUED: {TaskStatus.RUNNING, TaskStatus.FAILED},
-    TaskStatus.RUNNING: {TaskStatus.COMPLETED, TaskStatus.FAILED},
-    TaskStatus.COMPLETED: set(),
-    TaskStatus.FAILED: set(),
-}
-
-
-def can_transition(current: TaskStatus, target: TaskStatus) -> bool:
-    return target in _ALLOWED_TRANSITIONS[current]
 
 
 def is_in_flight(status: TaskStatus | str) -> bool:
