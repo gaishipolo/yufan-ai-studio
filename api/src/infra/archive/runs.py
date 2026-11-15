@@ -40,7 +40,7 @@ _LEGACY_PREFIX = "runs/"
 
 def runs_root() -> Path:
     """工作区根目录。每次读配置，不缓存 —— 测试会改它。"""
-    raw = settings.replacement_runs_root.strip()
+    raw = settings.task_runs_root.strip()
     if raw:
         return Path(raw).resolve()
     if settings.archive_driver == "local":
@@ -121,7 +121,7 @@ def workspace_note() -> str:
     有一行字说清楚了，而不是靠读源码猜。启动日志会打出来。
     """
     root = runs_root() if _root_available() else None
-    configured = settings.replacement_runs_root.strip()
+    configured = settings.task_runs_root.strip()
     if root is None:
         return (
             "运行工作区无法确定：归档根或 REPLACEMENT_RUNS_ROOT 没有配置，"
@@ -144,7 +144,7 @@ def workspace_note() -> str:
 
 def workspace_needs_attention() -> bool:
     """当前配置是否「历史任务只在本机可见」。决定上面那句话打 info 还是 warning。"""
-    return settings.archive_driver != "local" and not settings.replacement_runs_root.strip()
+    return settings.archive_driver != "local" and not settings.task_runs_root.strip()
 
 
 def _root_available() -> bool:

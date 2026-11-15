@@ -54,7 +54,7 @@ def test_workspace_note_names_the_shared_directory_when_configured(
     from core.config import settings
 
     shared = archive_root / "shared-runs"
-    monkeypatch.setattr(settings, "replacement_runs_root", str(shared))
+    monkeypatch.setattr(settings, "task_runs_root", str(shared))
 
     note = workspace_note()
 

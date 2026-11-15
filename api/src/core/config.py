@@ -237,8 +237,14 @@ class Settings(BaseSettings):
     archive_driver: str = "local"
     # 生成运行的归档工作区（执行器要真实目录：inputs/outputs/records）。
     # 留空 = 本地驱动沿用 `<归档根>/runs`；归档切远端时落到 `api/var/runs`。
-    # 名字沿用 `replacement_` 前缀是历史原因：现在它服务的是全部生成链。
-    replacement_runs_root: str = ""
+    #
+    # 改名过：原来叫 `REPLACEMENT_RUNS_ROOT`，但它服务的是**全部**生成链
+    # （视频 / 生图 / 模型驱动都有工作区），留着旧名字只会让人以为只有替换链用它。
+    # 旧环境变量仍然认（`AliasChoices`），部署侧不用改 `.env` 就能升级。
+    task_runs_root: str = Field(
+        default="",
+        validation_alias=AliasChoices("TASK_RUNS_ROOT", "REPLACEMENT_RUNS_ROOT"),
+    )
     worker_enabled: bool = True
     worker_concurrency: int = 2
     # 周期任务调度器（模块自己 @periodic 注册）。多副本部署时每个进程都会跑一份，

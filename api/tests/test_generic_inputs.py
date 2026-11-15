@@ -43,7 +43,7 @@ def archive_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     root.mkdir()
     monkeypatch.setattr(get_archive_settings(), "root", str(root))
     monkeypatch.setattr(settings, "archive_driver", "local")
-    monkeypatch.setattr(settings, "replacement_runs_root", "")
+    monkeypatch.setattr(settings, "task_runs_root", "")
     reset_archive_storage()
     yield root
     reset_archive_storage()

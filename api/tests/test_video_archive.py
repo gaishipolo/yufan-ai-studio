@@ -294,7 +294,7 @@ def local_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
     root.mkdir()
     monkeypatch.setattr(get_archive_settings(), "root", str(root))
     monkeypatch.setattr(settings, "archive_driver", "local")
-    monkeypatch.setattr(settings, "replacement_runs_root", "")
+    monkeypatch.setattr(settings, "task_runs_root", "")
     reset_archive_storage()
 
     run_id = uuid.uuid4().hex

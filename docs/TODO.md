@@ -112,7 +112,7 @@ A/B 档解决的是「数据不会丢、空间不涨、部署可自检」；这�
 2. **预签名有 TOCTOU**：`ArchiveAssetService._serve()` 先 `exists()` HEAD 再 307，
    另一个实例的 GC 可以在这两步之间删掉字节。要消除需要「签名指向版本化 key」或
    删除改标墓碑、由后台统一回收。
-3. **运行工作区仍是共享盘**：`REPLACEMENT_RUNS_ROOT` 必须所有实例挂同一份，
+3. **运行工作区仍是共享盘**：`TASK_RUNS_ROOT`（旧名 `REPLACEMENT_RUNS_ROOT`）必须所有实例挂同一份，
    `catalog/runs` 只是指针。执行器（bridge.mjs / ffmpeg）需要真实本地文件，云化等于
    重写执行器输入层，不是换配置能解决。
 

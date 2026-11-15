@@ -41,7 +41,7 @@ def archive_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     root.mkdir()
     monkeypatch.setattr(get_archive_settings(), "root", str(root))
     monkeypatch.setattr(settings, "archive_driver", "local")
-    monkeypatch.setattr(settings, "replacement_runs_root", "")
+    monkeypatch.setattr(settings, "task_runs_root", "")
     reset_archive_storage()
     yield root
     reset_archive_storage()
@@ -85,14 +85,14 @@ def test_runs_root_defaults_to_archive_runs(archive_root: Path) -> None:
 
 def test_runs_root_follows_setting(tmp_path: Path, archive_root: Path) -> None:
     local = tmp_path / "local-runs"
-    settings.replacement_runs_root = str(local)
+    settings.task_runs_root = str(local)
 
     assert runs_root() == local.resolve()
 
 
 def test_pointer_roundtrip_outside_archive_root(tmp_path: Path, archive_root: Path) -> None:
     """工作区换到归档盘外：指针仍写在归档里，目录解析到新根。"""
-    settings.replacement_runs_root = str(tmp_path / "local-runs")
+    settings.task_runs_root = str(tmp_path / "local-runs")
     storage = get_archive_storage()
     uid = uuid.uuid4().hex
     folder = _workspace(runs_root() / "2026/11/07" / f"character-{uid}")

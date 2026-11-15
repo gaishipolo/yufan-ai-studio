@@ -374,3 +374,17 @@ def test_leader_elector_whitelist_rejects_typos() -> None:
     assert Settings(leader_elector=" BACKEND ").leader_elector == "backend"  # 容忍空格与大小写
     with pytest.raises(ValueError, match="LEADER_ELECTOR"):
         Settings(leader_elector="redis")
+
+
+def test_runs_root_accepts_the_old_env_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`REPLACEMENT_RUNS_ROOT` 仍然认：改名不该让已有部署的 `.env` 静默失效。
+
+    静默才可怕——留空时工作区会退到「本地驱动沿用归档根」，多实例部署里第二台机器
+    就会看不到工作区，而日志里一句错都没有。
+    """
+    monkeypatch.delenv("TASK_RUNS_ROOT", raising=False)
+    monkeypatch.setenv("REPLACEMENT_RUNS_ROOT", "/mnt/shared/runs")
+    assert Settings().task_runs_root == "/mnt/shared/runs"
+
+    monkeypatch.setenv("TASK_RUNS_ROOT", "/mnt/new/runs")
+    assert Settings().task_runs_root == "/mnt/new/runs"
