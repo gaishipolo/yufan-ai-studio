@@ -19,6 +19,10 @@ from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 _MIN_SECRET_BYTES = 32
 _WEAK_SECRET_PREFIXES = ("dev-only", "change-me")
 
+# 周期任务的集群协调策略。`local` = 单实例直接跑；`backend` = 用归档存储的条件写
+# 抢租约（多实例部署必须用它，否则不可逆任务会各跑一份）。
+_LEADER_ELECTORS = frozenset({"local", "backend"})
+
 # 允许的签名算法。**刻意不含 `none`**：PyJWT 支持它（= 不签名），而
 # `jwt.decode(..., algorithms=[settings.jwt_algorithm])` 会原样接受它。
 # 也就是说 `JWT_ALGORITHM=none` 这一个拼写错误，就能把整套鉴权变成
@@ -265,6 +269,25 @@ class Settings(BaseSettings):
     # 周期任务的集群协调能力：local = 单实例直接跑；backend = 用归档存储的
     # 条件写抢租约，全集群只有一个实例执行「不可逆/非幂等」的任务。
     leader_elector: str = "local"
+
+    @field_validator("leader_elector")
+    @classmethod
+    def _check_leader_elector(cls, value: str) -> str:
+        """取值只认 local / backend，且**在配置加载期**就判死。
+
+        以前这里没有校验，拼错（比如 `LEADER_ELECTOR=redis`）会在
+        `app.py` 里取选主器时才抛 RuntimeError —— 而那一步在 `worker.start()`
+        之后、`try/finally` 之外，于是启动失败时 worker 的消费协程与数据库引擎
+        一个都不会被回收：进程退不干净，端口与连接池都留在那儿，下一轮启动
+        直接撞「端口占用」。配置错误必须在读配置时就爆，不该留到半路。
+        """
+        normalized = value.strip().lower()
+        if normalized not in _LEADER_ELECTORS:
+            raise ValueError(
+                f"LEADER_ELECTOR={value!r} 不可用；可选：{', '.join(sorted(_LEADER_ELECTORS))}"
+                "（多实例部署必须用 backend，否则不可逆的周期任务会各跑一份）"
+            )
+        return normalized
 
     # ---------- 事件 outbox ----------
     # 进程内事件总线是「尽力而为」：订阅者抛异常只记日志、进程崩了就丢。

@@ -361,3 +361,16 @@ def test_trusted_proxies_accepts_concrete_networks() -> None:
     """具体网段仍要能配（校验只拒绝 /0）。"""
     settings = Settings(trusted_proxies="127.0.0.1,10.0.0.0/8")  # type: ignore[call-arg]
     assert settings.trusted_proxies == "127.0.0.1,10.0.0.0/8"
+
+
+def test_leader_elector_whitelist_rejects_typos() -> None:
+    """`LEADER_ELECTOR` 拼错必须**在配置加载期**炸掉，而不是启动到一半。
+
+    以前这里没有校验：取值在 `app.py` 里被拼成 `redis` 时，`get_leader_elector()`
+    才抛 RuntimeError —— 而那一步在 `worker.start()` 之后、`try/finally` 之外，
+    于是启动失败时 worker 的消费协程与数据库引擎都不会被回收（进程退不干净、
+    端口占着，下一轮启动直接撞端口占用）。
+    """
+    assert Settings(leader_elector=" BACKEND ").leader_elector == "backend"  # 容忍空格与大小写
+    with pytest.raises(ValueError, match="LEADER_ELECTOR"):
+        Settings(leader_elector="redis")

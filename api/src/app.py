@@ -160,6 +160,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # 在启动期先算一遍，坏配置立刻失败而不是每 5 分钟刷一条错（R13-06）。
     logger.info("提交预算预检：%s", precheck_submit_budgets() or "无驱动声明")
 
+    # 选主器在**启动恢复与 worker 之前**取好：`backend` 模式会去拿归档存储实例，
+    # 而这一步抛异常时还没起 worker、也没改写任何记录，失败是干净的。
+    # 以前它在 `worker.start()` 之后调用、又在 `try/finally` 之外 —— 那里一旦失败，
+    # worker 的消费协程与数据库引擎都不会被回收（进程退不干净、端口占着）。
+    # 配置取值本身已在 `Settings` 的校验器里判死，这里只是把副作用挪到安全位置。
+    from core.coordination import get_leader_elector
+
+    elector = get_leader_elector()
+    logger.info("周期任务选主策略：%s", elector.name)
+
     if settings.app_env != "prod":
         await _bootstrap_dev_schema()
 
@@ -206,13 +216,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # 周期任务：调度器本身不认识任何具体任务，任务由模块在 import 期注册。
     # 不可逆任务（GC）标了 leader_only，租约策略按 LEADER_ELECTOR 注入。
-    from core.coordination import get_leader_elector
-
     stop_scheduler = asyncio.Event()
     scheduler_task: asyncio.Task[None] | None = None
     if settings.scheduler_enabled and periodic_jobs():
         scheduler_task = asyncio.create_task(
-            Scheduler(elector=get_leader_elector()).serve(stop_scheduler)
+            Scheduler(elector=elector).serve(stop_scheduler)
         )
 
     if settings.anonymous_allowed:

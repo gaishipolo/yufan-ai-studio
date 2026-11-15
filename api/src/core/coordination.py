@@ -232,6 +232,9 @@ def get_leader_elector() -> LeaderElector:
         return LocalLeaderElector()
     if mode == BackendLeaderElector.name:
         return BackendLeaderElector()
+    # 正常走不到这里：`Settings` 的 `leader_elector` 校验器在配置加载期就拒掉了
+    # 其它取值。留这一句是给「绕过 Settings 直接改 settings 字段」的测试与脚本
+    # 兜底——它抛的是同一个意思，但**不该**再是生产里的第一现场。
     raise RuntimeError(
         f"LEADER_ELECTOR 只能是 local 或 backend，收到 {mode!r}；"
         "多实例部署必须用 backend，否则 GC 会各跑一份"
