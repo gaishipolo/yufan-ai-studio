@@ -5,7 +5,6 @@ FastAPI + SQLAlchemy 2.0（async）+ Pydantic v2 的分层后端。
 
 素材库与模板库已支持公共 / 个人原片、单条分享与回收站、专员封装发布及版本调用。
 角色适配与验收结果见 [素材库开发交付记录](../docs/ASSETS_INTEGRATION_PLAN.md#11-t01t07-实施与交付记录2026-11-06)。
-现有环境启用前先运行 `python scripts/migrate_asset_roles.py` 预览角色差异，再按交付说明显式应用。
 
 设计目标不是"能跑"，而是**加功能时知道该改哪个文件**。
 

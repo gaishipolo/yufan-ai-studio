@@ -9,7 +9,10 @@
 from __future__ import annotations
 
 import ast
+import os
 import re
+import subprocess
+import sys
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -23,6 +26,8 @@ from infra.ai.base import ModelProvider
 
 SRC = Path(__file__).resolve().parents[1] / "src"
 MODULES_DIR = SRC / "modules"
+API_ROOT = Path(__file__).resolve().parents[1]
+SCRIPTS_DIR = API_ROOT / "scripts"
 
 
 def _imported_modules(path: Path) -> set[str]:
@@ -99,6 +104,43 @@ def test_api_layer_does_not_import_business_modules() -> None:
 # 跑起来在顶层脚本里写一句 `from modules.xxx import ...`，CI 立刻红。
 # 真有必要加，就带着**退出条件**一起加进来（那是临时豁免，不是永久许可）。
 KNOWN_SCRIPT_MODULE_IMPORTS: dict[str, frozenset[str]] = {}
+
+
+
+def test_repo_scripts_are_importable() -> None:
+    """`api/scripts/*.py` 必须**真能导入** —— ruff 只查风格，查不出「模块已经没了」。
+
+    `migrate_asset_roles.py` 曾 import 随 v1 素材库一起删掉的
+    `modules.identity.asset_roles`：ruff 全绿、CI 全绿，真跑起来第一行
+    `ModuleNotFoundError`。这类脚本是「需要时才手动跑」的东西，坏掉可以躺很久
+    没人发现，所以用一次真导入（子进程 + `run_name='__probe__'`，不会执行
+    `__main__` 分支、也不会污染本进程的注册表）挡住。
+    """
+    scripts = sorted(SCRIPTS_DIR.glob("*.py"))
+    assert scripts, f"{SCRIPTS_DIR} 下没有脚本：扫描口径坏了，这条守卫会永远绿"
+
+    env = dict(os.environ, PYTHONPATH=str(SRC))
+    problems: list[str] = []
+    for script in scripts:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import runpy, sys; runpy.run_path(sys.argv[1], run_name='__probe__')",
+                str(script),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=180,
+            cwd=str(API_ROOT),
+            env=env,
+            check=False,
+        )
+        if completed.returncode != 0:
+            tail = (completed.stderr or "").strip().splitlines()
+            problems.append(f"{script.name}: {tail[-1] if tail else completed.returncode}")
+
+    assert not problems, "脚本导入失败（要么修好，要么删掉）：\n" + "\n".join(problems)
 
 
 def test_top_level_scripts_only_import_known_modules() -> None:

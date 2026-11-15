@@ -494,7 +494,7 @@ P3 补上 capability 判据后，迁移只需要让这份守卫继续绿，就�
 
 - **位置**：`api/scripts/`（一次性运维脚本，不是模块）。它要同时写资产库（建 `kind=pack`）
   和规格表，而业务模块之间不许互相 import —— 脚本在 `modules/` 之外，正是为此存在的
-  （先例 `scripts/migrate_asset_roles.py`）。
+  （同类先例：`scripts/tp_live_check.py`）。
 - **只产草稿**：迁出来的 spec `status=draft`，不自动发布。原模板的模型/参数组合要人来确认
   （旧数据里"用哪个模型跑替换"是运行时按渠道定的，不是模板里的一列）。
 - **幂等**：以 `spec.attributes.migratedFrom = "template_pack:<id>"` 为标记，重跑跳过；
