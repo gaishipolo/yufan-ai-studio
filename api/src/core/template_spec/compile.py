@@ -42,8 +42,14 @@ from core.template_spec.rules import validate_spec
 #: 结果就是「预检与发布都过、用户在模板库点生成才 400」。同一个形状两处两种口径，
 #: 迟早踩到（2026-11-15 审查 3.4 的同源问题）。
 _SLOT_REF = re.compile(r"\{\{\s*slot:([a-z][a-z0-9_]{0,39})(\*|\.\d{1,3})?\s*\}\}")
-#: 替换后还残留这种片段，说明引用写坏了（少括号、含空格等）。
-_LEFTOVER = "{{slot:"
+#: 替换后还残留这种片段，说明引用写坏了（少括号、key 形状不对、编号位数超限等）。
+#:
+#: **必须容空格**：上面的 `_SLOT_REF` 已经允许 `{{ slot:key }}`，那么坏掉的形态
+#: 同样带空格（`{{ slot:Key }}`、`{{ slot:key.1234 }}`）。判据要是写成字面量
+#: `"{{slot:"`，这些坏引用会同时躲过替换与残留检查 —— 原样进入供应商提示词，
+#: 用户看到的是模型吐出一坨带大括号的乱码，而日志里什么线索都没有
+#: （2026-11-15 审查 4.1）。
+_LEFTOVER = re.compile(r"\{\{\s*slot:")
 
 
 def compile_spec(
@@ -191,7 +197,7 @@ def _expander(
             return owned[0]
 
         result = _SLOT_REF.sub(repl, text)
-        if _LEFTOVER in result:
+        if _LEFTOVER.search(result):
             raise BadRequest(f"{where}里有无法解析的槽位引用（检查括号与槽位 key）")
         return result.strip()
 

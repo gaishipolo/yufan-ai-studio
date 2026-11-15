@@ -236,6 +236,11 @@ def test_two_text_slots_number_in_slot_order() -> None:
         ("{{slot:bgm}}", "附加输入"),
         ("{{slot:hero.2}}", "第 2 张不存在"),
         ("{{slot:hero", "无法解析"),
+        # 带空格的坏引用：`_SLOT_REF` 容空格，所以它必须同样被残留检查兜住，
+        # 否则原样进入供应商提示词（用户看到的是一坨带大括号的乱码）。
+        ("{{ slot:hero", "无法解析"),
+        ("{{ slot:Key }}", "无法解析"),
+        ("{{ slot:hero.1234 }}", "无法解析"),
     ],
 )
 def test_bad_references_are_rejected(editable: str, message: str) -> None:
