@@ -32,12 +32,12 @@ import type { SpecSlotIn, TemplateSpecIn, TemplateSpecOut } from '@/shared/api/s
 import { Button, Chip, EmptyState, FormField, Select, TextInput } from '@/shared/ui';
 import { cn } from '@/shared/lib/cn';
 import { AssetPicker, type PickKind, type PickedAsset } from '@/features/template-specs/AssetPicker';
+import { PromptBox } from '@/features/template-specs/PromptBox';
 import {
   SLOT_TYPE_LABELS,
   blankSlot,
   blankSpec,
   fromSpecOut,
-  insertRef,
   normalize,
   referenceChips,
   rekeySlot,
@@ -86,7 +86,6 @@ export function SpecWorkspace() {
   const [picker, setPicker] = useState<PickTarget | null>(null);
   const [uploading, setUploading] = useState(false);
   const [drag, setDrag] = useState<DragState>(null);
-  const [caret, setCaret] = useState<number | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const busy =
@@ -243,32 +242,35 @@ export function SpecWorkspace() {
     }
   };
 
-  const writeRef = (token: string) => {
-    if (!draft) return;
-    const at = caret ?? (draft.prompt ?? '').length;
-    const result = insertRef(draft.prompt ?? '', token, at);
-    setDraft({...draft, prompt: result.text});
-    setCaret(result.caret);
-    setHint('');
-  };
-
   /**
-   * 提示词只让改**描述文字**，引用一律从按钮插入。
+   * 提示词只让改**描述文字**，引用一律从按钮插入或打 `@` 选。
    *
    * 手写 `{{slot:x}}` 会在两处出错且都不报错：拼错 key → 编译期才 400；手写
    * `{{Mixed N}}` → 数字与本次填充量对不上，少填一张就整体错位。所以这里直接
-   * 拒绝新增花括号：要么删字，要么用下面的按钮。
+   * 拒绝新增花括号：要么删字，要么用按钮或 `@`。
+   *
+   * `inserted` 例外：按钮插入与 `@` 提及都是程序自己写进去的 token，本来就带
+   * 花括号 —— 那道防线是拦「手打」的，不是拦「程序插」的。
    */
-  const setPromptText = (text: string) => {
+  const applyPromptText = (text: string, options?: {inserted?: boolean}) => {
     if (!draft) return;
     const before = draft.prompt ?? '';
     const braces = (value: string) => (value.match(/[{}]/g) ?? []).length;
-    if (braces(text) > braces(before)) {
-      setHint('引用请用下方按钮插入，不要手写大括号');
+    if (!options?.inserted && braces(text) > braces(before)) {
+      setHint('引用请用 @ 或下方按钮插入，不要手写大括号');
       return;
     }
     setHint('');
     setDraft({...draft, prompt: text});
+  };
+
+  /** 程序写入的引用（按钮 / `@` 提及）：允许带花括号。 */
+  const insertPromptText = (text: string) => {
+    applyPromptText(text, {inserted: true});
+  };
+
+  const setPromptText = (text: string) => {
+    applyPromptText(text);
   };
 
   const chips = draft ? referenceChips(draft) : [];
@@ -743,9 +745,8 @@ export function SpecWorkspace() {
             <PromptBox
               value={draft.prompt ?? ''}
               chips={chips}
-              onRef={writeRef}
-              onCaret={setCaret}
               onChange={setPromptText}
+              onInsert={insertPromptText}
             />
             {hint && <p className="mt-2 text-[11px] text-warn-deep">{hint}</p>}
           </Section>
@@ -829,8 +830,11 @@ function Section({
     // 分区卡片：标题单独做成一条"带子"（浅底 + 下边线），内容区是白的。
     // 以前标题和内容同一片白，四块卡片只剩四根 1px 边框在区分——缩到 50% 看，
     // 整页就是四块一样的方块。有带子之后，眼睛能先认出「这是哪一块」，再读内容。
-    <div className="overflow-hidden rounded-2xl border border-line bg-panel shadow-[0_1px_2px_rgba(16,42,55,0.04)]">
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line-soft bg-gradient-to-r from-panel-soft to-panel px-4 py-2.5">
+    <div className="relative rounded-2xl border border-line bg-panel shadow-[0_1px_2px_rgba(16,42,55,0.04)]">
+      {/* 标题带子的圆角靠它自己那层裁（`rounded-t-2xl`），整张卡片不用
+          `overflow-hidden` —— 提示词里的 @ 候选面板要从卡片里浮出去，
+          被裁掉的话用户只看到输入框闪一下、什么也没出现。 */}
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-t-2xl border-b border-line-soft bg-gradient-to-r from-panel-soft to-panel px-4 py-2.5">
         <h3 className="flex items-center gap-2 text-[12.5px] font-semibold tracking-[.2px] text-ink">
           <span className={cn('h-3.5 w-[3px] rounded-full', bar)} />
           {title}
@@ -854,63 +858,6 @@ function Notice({ error, note }: {error: string; note: string}) {
       )}
     >
       <p className="whitespace-pre-wrap">{error || note}</p>
-    </div>
-  );
-}
-
-function PromptBox({
-  value,
-  chips,
-  onRef,
-  onCaret,
-  onChange,
-}: {
-  value: string;
-  chips: {token: string; label: string; all: boolean}[];
-  onRef: (token: string) => void;
-  onCaret: (at: number) => void;
-  onChange: (text: string) => void;
-}) {
-  const ref = useRef<HTMLTextAreaElement>(null);
-  return (
-    <div>
-      <textarea
-        ref={ref}
-        value={value}
-        rows={10}
-        placeholder="写提示词；要可变的内容加一个文本槽位，再用下方按钮插入引用"
-        onChange={event => {
-          onChange(event.target.value);
-          onCaret(event.target.selectionStart ?? 0);
-        }}
-        onSelect={event => onCaret(event.currentTarget.selectionStart ?? 0)}
-        className={cn(
-          'w-full resize-y rounded-xl border px-3 py-2.5 text-xs leading-[1.7] outline-none transition-colors',
-          'border-line-soft bg-panel-soft text-ink placeholder:text-[#a9b8bf]',
-          'hover:border-line focus:border-primary-line focus:bg-panel focus:ring-2 focus:ring-primary/10',
-        )}
-      />
-      <div className="mt-2 flex flex-wrap gap-1.5">
-        {chips.length === 0 ? (
-          <span className="text-[11px] text-ink-mute">先在左边加槽位，再引用</span>
-        ) : (
-          chips.map(chip => (
-            <button
-              key={chip.token}
-              type="button"
-              onClick={() => onRef(chip.token)}
-              className={cn(
-                'rounded-full border px-2 py-0.5 text-[11px] transition-colors',
-                chip.all
-                  ? 'border-violet/40 bg-violet/5 text-violet hover:bg-violet/10'
-                  : 'border-primary-line bg-panel text-ink-soft hover:border-primary hover:text-primary',
-              )}
-            >
-              {chip.label}
-            </button>
-          ))
-        )}
-      </div>
     </div>
   );
 }
