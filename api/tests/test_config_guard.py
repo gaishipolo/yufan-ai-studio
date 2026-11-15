@@ -155,7 +155,13 @@ def _driver_settings() -> tuple[type[BaseSettings], ...]:
     from infra.driver_config import import_all_driver_settings
 
     return import_all_driver_settings(
-        extra_modules=("modules.image.pipeline", *_driver_modules())
+        extra_modules=(
+            "modules.image.pipeline",
+            # 入库下载的白名单（`LIBRARY_INGEST_*`）：与成图落盘同一个模式，
+            # 也是业务模块自带的驱动配置，不在 infra/ 扫描范围。
+            "modules.library.ingest",
+            *_driver_modules(),
+        )
     )
 
 
