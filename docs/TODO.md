@@ -24,10 +24,10 @@
 > 早前：T34 落地（生图参考图：`referenceLibraryIds` →
 > `reference_json` → Data URI 内联，前端按模型的 `maxReferences` 出控件）。
 > 早前：T33 修复（`ModelSpec.internal` + `public_models()`）；
-> T32 落地（`bailian` 迁进 `drivers/`，替换链改走 `InputPreparer` 可选协议）；
+> T32 落地（`bailian` 迁进 `drivers/`；那个为替换链加的 `InputPreparer` 协议已于 2026-11-15 删除）；
 > T31 口径已定（素材直传公网 OSS 是有意设计，不是合规遗漏）；T30 拍板**暂不动**（保持观察期）。
 > 交接现状见 [`HANDOFF.md`](HANDOFF.md)。
-> 剩余：业务侧 T2/T8/T9/T10/T22/T23/T24，架构侧 T25/T26（只剩唤醒）/T29/T30（暂不收口），
+> 剩余：业务侧 T2/T8/T9/T22/T23/T24，架构侧 T25/T26（只剩唤醒）/T29/T30（暂不收口），
 > T35（PR#5 自报的六条遗留）
 
 ## 一眼看完
@@ -37,7 +37,6 @@
 | T2 | 前端不展示 `externalId` / `previousExternalId` | 文案让用户「凭任务号核对」，页面拿不到 | 前端 |
 | T8 | 轮询节奏全局化（C1） | 视频与生图共用一个间隔 | 后端 |
 | T9 | 重试是作业级不是任务级（C2） | 任务重试语义与用户预期不一致 | 后端 |
-| T10 | `archivePath` 绝对路径进 HTTP 契约 | 服务端盘符泄漏给浏览器 | 产品决定 |
 | T22 | 归档检索与批量写太弱（C 档） | 几十万级素材找不到、整理要靠逐条点 | 产品决定 |
 | T23 | 上传秒传/断点、视频派生预热（C 档） | 300MB 白传一遍；首个点开视频的人等转码 | 后端 |
 | T24 | `MediaFile.path` 装的是 key，字段名/描述没跟上 | 契约语义漂移，后来者会当路径拼 | 后端（小） |
@@ -76,18 +75,6 @@
 
 **验收**：任务级重试额度（`submit_attempts` 之外单独一列或 run 元数据），
 自动重投与人工重试分开计。
-
-## T10 · `archivePath` 绝对路径进 HTTP 契约（R14-04 残留）
-
-`modules/template/replacement_schema.py:45` 的 `archive_path` 直接返回
-`Z:\yufan_ai_studio\runs\...`，`features/replacement-templates/ReplacementTemplates.tsx:168/176`
-原样显示给用户。合并删掉了归档页之后，**这已经是唯一还在用绝对路径的地方**。
-
-要不要改成相对路径 / 脱敏，是产品决定：它是「归档位置」的直观展示，改掉会改变用户
-看到的东西（运维可能真的按这个路径去共享盘找文件）。
-
-**验收**：产品给结论。保留 → 在 schema 字段描述里写明「这是服务端路径，勿用作下载链接」；
-改 → 只回 `runId`，前端拼展示文案。
 
 ## T22 / T23 · 素材库的产品能力（A/B 做完后剩下的）
 
@@ -364,6 +351,10 @@ Base64 直传），届时改 `drivers/bailian.py` 的 `prepare_inputs` 一处即
 ---
 
 ## 已复核关闭（别再重做）
+
+> 2026-11-14 P3 之后，替换链（`modules/template`）与 v1 素材库（`modules/asset`）整体下线：
+> 下面提到 `ReplacementStore` / 替换工作台 / 归档页的行属于**历史记录**，它们点到的
+> 用例与文件随之删除，不再是可以照着复跑的「证据」。留着的价值只是「这件事发生过」。
 2026-11-06 合并后逐条核过，以下都已修好，留在这里防止重复劳动：
 
 | 编号 | 结论 | 证据 |

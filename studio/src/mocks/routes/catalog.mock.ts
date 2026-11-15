@@ -19,6 +19,28 @@ export const routes: MockRoute[] = [
     handler: () => ({ items: db.shots, total: db.shots.length }),
   },
   {
+    // 批量删除（与后端 `DELETE /images` 同形）：不存在或本次已删过的进 skipped。
+    // 以前 mock 里没有这条，任务中心在 mock 模式下勾了生图点删除会直接 404
+    // —— 新写的界面看着像坏的（2026-11-15 审查 P3）。
+    method: 'DELETE',
+    pattern: /^\/images$/,
+    handler: (ctx) => {
+      const ids = Array.isArray(ctx.body.ids) ? ctx.body.ids.map(String) : [];
+      const skipped: string[] = [];
+      let deleted = 0;
+      for (const id of ids) {
+        const index = db.imageJobs.findIndex((item) => item.id === id);
+        if (index < 0) {
+          skipped.push(id);
+          continue;
+        }
+        db.imageJobs.splice(index, 1);
+        deleted += 1;
+      }
+      return {deleted, skipped};
+    },
+  },
+  {
     method: 'GET',
     pattern: /^\/images$/,
     handler: (ctx) => {
