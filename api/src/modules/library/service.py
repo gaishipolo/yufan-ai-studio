@@ -36,6 +36,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 from sqlalchemy.sql.elements import ColumnElement
 
+from core.audit import record as audit
 from core.config import settings
 from core.context import CurrentUser
 from core.exceptions import AppError, BadRequest, NotFound
@@ -212,6 +213,8 @@ class LibraryService:
         origins: Sequence[str] = (),
         hide_packed_members: bool = True,
         exclude_kinds: Sequence[str] = (),
+        purpose: str | None = None,
+        exclude_purposes: Sequence[str] = (access.PURPOSE_CASE,),
     ) -> LibraryAssetPage:
         """列表 + 分面。
 
@@ -255,6 +258,13 @@ class LibraryService:
             # 「排除某几类」必须落在 SQL 里：在 Python 里滤掉 items 之后
             # `total` 还是原值，前端会算出多一页，最后一页点进去是空的。
             query = query.where(LibraryAsset.kind.not_in(list(exclude_kinds)))
+        if purpose:
+            query = query.where(LibraryAsset.purpose == purpose)
+        if exclude_purposes:
+            # 案例默认不进「全部 / 个人 / 小组 / 团队」：它们是模板的展示素材，
+            # 有自己的池子。排除同样落在 SQL 里，理由与 `exclude_kinds` 一样
+            # （`total` 与 `items` 必须同口径，否则翻页翻到空页）。
+            query = query.where(LibraryAsset.purpose.not_in(list(exclude_purposes)))
         if keyword:
             query = query.where(LibraryAsset.name.ilike(f"%{keyword}%"))
         if tag_ids:
@@ -582,6 +592,47 @@ class LibraryService:
         await self.session.commit()
         return await self.detail(asset_id, actor)
 
+    async def set_purpose(
+        self, asset_id: str, purpose: str, actor: CurrentUser, expected_version: int = 0
+    ) -> LibraryAssetOut:
+        """把一条素材移入案例池（`purpose='case'`），或移回普通素材（空串）。
+
+        「选已有素材当案例」走这里，**不复制字节**：模板引用的是同一个 id，
+        作者在资产库里换封面、改名，模板卡片立刻跟着变；也不会多出一份存储。
+
+        规则：
+
+        - 只能改自己的：别人的素材即使可见（团队库/案例池）也不能被悄悄改成案例，
+          那等于替人决定了它的用途。返回 404 而不是 403 —— 不确认 id 的存在性。
+        - 只有图片/视频能当案例：音频没有封面、文本没有画幅，卡片上显示不出来。
+        - 幂等：已经是目标用途就直接返回，不涨 `state_version`（前端确认框点两次
+          不该把版本推高两次）。
+        """
+        row = await access.load_visible(self.session, asset_id, actor)
+        if row.owner_id != actor.id and not actor.has(access.PERM_DELETE_ANY):
+            raise NotFound("资产不存在")
+        if row.state != "active":
+            raise BadRequest("只有库内的素材可以设为案例")
+        self._check_version(row, expected_version)
+        target = purpose.strip().lower()
+        if target not in {"", access.PURPOSE_CASE}:
+            raise BadRequest(f"不支持的用途：{purpose}")
+        if target == access.PURPOSE_CASE and row.kind not in {"image", "video"}:
+            raise BadRequest("案例只支持图片或视频")
+        if row.purpose == target:
+            return self._to_out(row, owner_name=None)
+        row.purpose = target
+        row.state_version += 1
+        await self.session.commit()
+        await audit(
+            "library.asset.purpose",
+            actor_id=actor.id,
+            target_type="library_asset",
+            target_id=row.id,
+            detail={"purpose": target, "ownerId": row.owner_id},
+        )
+        return self._to_out(row)
+
     async def upload(
         self,
         chunks: AsyncIterator[bytes],
@@ -591,6 +642,7 @@ class LibraryService:
         actor: CurrentUser,
         origin: str = "upload",
         source_key: str | None = None,
+        purpose: str = "",
     ) -> LibraryAssetOut:
         """流式上传。临时文件在 http 请求体内写满即落盘，300MB 不进内存。
 
@@ -630,6 +682,7 @@ class LibraryService:
                 actor=actor,
                 origin=origin,
                 source_key=scoped_key,
+                purpose=purpose,
             )
 
     # ------------------------------------------------------------------ 内部
@@ -670,6 +723,7 @@ class LibraryService:
         actor: CurrentUser,
         origin: str,
         source_key: str | None,
+        purpose: str = "",
     ) -> LibraryAssetOut:
         info = await asyncio.to_thread(inspect, path, extension)
         digest, measured = await asyncio.to_thread(_digest_and_size, path)
@@ -721,6 +775,7 @@ class LibraryService:
             owner_id=actor.id,
             visibility="personal",
             state="active",
+            purpose=purpose,
             state_version=1,
             source_key=source_key or None,
             created_at=datetime.now(UTC),
@@ -846,6 +901,10 @@ class LibraryService:
                     # 与列表同口径：成员不单列，角标也不该把它算进去，
                     # 否则「个人 4」点进去只看到 1 条。
                     access.hidden_by_pack_clause(actor, groups, tab),
+                    # 案例不算进任何入口的角标：它们在案例池里，不属于「个人 / 小组 /
+                    # 团队 / 全部」。算进来的话，作者打开侧栏会看到自己多了几十条
+                    # 素材，点进去却一条也找不到（列表默认排除案例）。
+                    LibraryAsset.purpose != access.PURPOSE_CASE,
                 )
             )
             return int(await self.session.scalar(query) or 0)
@@ -937,6 +996,7 @@ class LibraryService:
             id=row.id,
             name=row.name,
             kind=row.kind,
+            purpose=row.purpose,
             origin=row.origin,
             mime_type=row.mime_type or None,
             size_bytes=row.size_bytes,

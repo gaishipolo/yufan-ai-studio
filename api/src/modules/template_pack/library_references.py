@@ -43,7 +43,7 @@ from modules.template_pack.models import (
     TemplateSpecVersion,
 )
 
-__all__ = ["SpecFixedAssets"]
+__all__ = ["SpecDemoCases", "SpecFixedAssets"]
 
 
 class SpecFixedAssets:
@@ -81,4 +81,45 @@ class SpecFixedAssets:
             if not asset_id:  # pragma: no cover - where 已经排除 null
                 continue
             found.setdefault(asset_id, []).append(f"{name}（{key}）")
+        return found
+
+
+class SpecDemoCases:
+    """`template_specs.draft` 里的 `demoAssetId`：模板库卡片上的展示案例。
+
+    ## 为什么它也算引用
+
+    案例不是「一份可以随时换的装饰」：卡片上那张封面、悬停自动播的那段视频，
+    都是这条素材本身（`/library/assets/{id}/file`）。素材被彻底删除之后，卡片
+    不会报错，只会安静地退化成渐变块 —— 作者看不出是模板坏了还是素材没了。
+
+    ## 为什么扫全表在 Python 里判
+
+    `draft` 是 JSON 列（PG 是 jsonb、sqlite 是 text）。两种方言的路径查询写法
+    不同（`->>` vs `json_extract`），在这条「不可逆删除」的路径上引入方言分支
+    不值得：模板规格是「一个人写、整份替换」的小表，全量扫一遍的代价远低于
+    一次方言写错导致的漏检。宁可多拦一次，也不要少算一条引用。
+
+    只认未删除的模板：软删的模板（`deleted_at` 非空）恢复之后案例立刻回来，
+    所以**它们照样算引用**。这一点与 `SpecFixedAssets` 同一个口径 ——
+    按 `deleted_at` 过滤会给人「删了模板就能删素材」的错觉。
+    """
+
+    async def references(
+        self, session: AsyncSession, asset_ids: Sequence[str]
+    ) -> Mapping[str, Sequence[str]]:
+        wanted = {asset_id for asset_id in asset_ids if asset_id}
+        if not wanted:
+            return {}
+        rows = await session.execute(
+            select(TemplateSpec.name, TemplateSpec.spec_key, TemplateSpec.draft)
+        )
+        found: dict[str, list[str]] = {}
+        for name, key, draft in rows:
+            if not isinstance(draft, dict):
+                continue
+            # 草稿是 camelCase JSON（与契约同形），兼容一下早年写入的 snake_case。
+            demo_id = draft.get("demoAssetId") or draft.get("demo_asset_id")
+            if isinstance(demo_id, str) and demo_id in wanted:
+                found.setdefault(demo_id, []).append(f"{name}（{key}）的展示案例")
         return found

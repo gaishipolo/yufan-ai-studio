@@ -15,6 +15,7 @@ export function CaseCover({
   seed,
   className,
   hoverPlay,
+  active,
 }: {
   assetId: string | null | undefined;
   /** 兜底渐变的种子，传模板 key：同一张模板每次都同一个色，不会闪 */
@@ -22,6 +23,8 @@ export function CaseCover({
   className?: string;
   /** 视频卡片：鼠标移上去自动静音循环，取流只在 hover 时发生 */
   hoverPlay?: boolean;
+  /** 悬停态由卡片控制（整张卡进/出），不传则由封面自己监听 */
+  active?: boolean;
 }) {
   if (!assetId) {
     return (
@@ -41,6 +44,7 @@ export function CaseCover({
       assetId={assetId}
       className={className}
       {...(hoverPlay ? {hoverPlay: true} : {})}
+      {...(active === undefined ? {} : {active})}
     />
   );
 }

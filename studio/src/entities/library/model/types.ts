@@ -18,7 +18,7 @@ import type {
  * 也不单列。所以角标 `all` 可能小于三个入口角标之和（跨入口的封装成员会
  * 在各自的入口里出现一次），这不是漏数据。
  */
-export type LibraryView = 'all' | 'personal' | 'group' | 'team' | 'drafts' | 'trash';
+export type LibraryView = 'all' | 'personal' | 'group' | 'team' | 'cases' | 'drafts' | 'trash';
 
 export type KindFilter = 'all' | LibraryAssetKind;
 
@@ -28,8 +28,8 @@ export const VIEWS: ReadonlyArray<{
   value: LibraryView;
   label: string;
   hint: string;
-  /** 分面字段：徽章数字的来源 */
-  facet: 'all' | 'personal' | 'group' | 'team' | 'drafts' | 'trash';
+  /** 分面字段：徽章数字的来源。案例池没有角标（它的条数不是「我的资产」的一部分） */
+  facet?: 'all' | 'personal' | 'group' | 'team' | 'drafts' | 'trash';
 }> = [
   {
     value: 'all',
@@ -50,6 +50,11 @@ export const VIEWS: ReadonlyArray<{
     facet: 'group',
   },
   { value: 'team', label: '团队', hint: '全员可见，任何人不含上传者都不可直接删除', facet: 'team' },
+  {
+    value: 'cases',
+    label: '案例池',
+    hint: '模板库的展示素材：所有人能看到卡片上的它，只有持权限的人能在这里浏览',
+  },
   {
     value: 'drafts',
     label: '草稿箱',
@@ -86,9 +91,13 @@ export function viewMeta(view: LibraryView) {
 export function viewQuery(view: LibraryView): {
   state: LibraryAssetState;
   library?: LibraryTab;
+  purpose?: string;
 } {
   if (view === 'drafts') return { state: 'draft' };
   if (view === 'trash') return { state: 'trash' };
+  // 案例池是「用途」而不是可见范围：它不传 `library`，否则后端会先按
+  // 「全部可见集」收一遍再按用途筛，组/团队的分支对案例没有意义。
+  if (view === 'cases') return { state: 'active', purpose: 'case' };
   return { state: 'active', library: view };
 }
 

@@ -107,6 +107,18 @@ export const libraryApi = {
       timeout: 600_000,
     }),
 
+  /**
+   * 设置用途：`case` = 移入案例池，空串 = 移回普通素材。
+   *
+   * 独立于 `patch`：改用途会改变这条素材的可见范围（案例对所有人可读），
+   * 不该混在改名请求里顺手做掉。
+   */
+  setPurpose: (id: string, purpose: string, expectedVersion = 0) =>
+    api.post<LibraryAssetOut>(`/library/assets/${id}/purpose`, {
+      purpose,
+      expectedVersion,
+    }),
+
   patch: (id: string, body: AssetPatchIn) =>
     api.patch<LibraryAssetDetailOut>(`/library/assets/${id}`, body),
 
@@ -119,13 +131,18 @@ export const libraryApi = {
   upload: (
     file: File,
     kind: 'image' | 'audio' | 'text',
-    options?: { sourceKey?: string; onProgress?: (ratio: number) => void },
+    options?: { sourceKey?: string; onProgress?: (ratio: number) => void; purpose?: string },
   ) =>
     api.post<LibraryAssetOut>(
       `/library/assets/upload`,
       file,
       {
-        params: { filename: file.name, kind, sourceKey: options?.sourceKey },
+        params: {
+          filename: file.name,
+          kind,
+          sourceKey: options?.sourceKey,
+          ...(options?.purpose ? { purpose: options.purpose } : {}),
+        },
         headers: { 'Content-Type': 'application/octet-stream' },
         timeout: 600_000,
         onUploadProgress: (event) => {
@@ -146,12 +163,17 @@ export const libraryApi = {
   uploadSourceVideo: (file: File, options?: {
     sourceKey?: string;
     onProgress?: (ratio: number) => void;
+    purpose?: string;
   }) =>
     api.post<LibraryAssetOut>(
       `/library/source-videos`,
       file,
       {
-        params: { filename: file.name, sourceKey: options?.sourceKey },
+        params: {
+          filename: file.name,
+          sourceKey: options?.sourceKey,
+          ...(options?.purpose ? { purpose: options.purpose } : {}),
+        },
         headers: { 'Content-Type': 'application/octet-stream' },
         timeout: 600_000,
         onUploadProgress: (event) => {

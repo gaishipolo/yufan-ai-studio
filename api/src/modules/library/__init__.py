@@ -99,6 +99,12 @@ module = ModuleSpec(
         ),
         PermissionSpec("library:tag:manage", "管理标签词表（改名 / 删除）", group="资产库"),
         PermissionSpec(
+            "library:case:read", "浏览全部模板案例（案例池）", group="资产库"
+        ),
+        PermissionSpec(
+            "library:case:write", "上传案例 / 把素材移入案例池", group="资产库"
+        ),
+        PermissionSpec(
             "library:generation:ingest", "生成结果入库（草稿箱）", group="资产库"
         ),
     ),

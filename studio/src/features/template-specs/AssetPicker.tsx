@@ -8,6 +8,8 @@ export interface PickedAsset {
   id: string;
   name: string;
   coverUrl?: string;
+  /** 资产用途：`case` 表示已经在案例池里。模板案例要据此决定是否弹二次确认。 */
+  purpose?: string;
 }
 
 /** 选择器支持的素材类型。`pack` 是资产库封装（多成员、带角色与顺序）。 */
@@ -98,7 +100,12 @@ export function AssetPicker({
                 <button
                   key={item.id}
                   type="button"
-                  onClick={() => onToggle({id: item.id, name: item.name, coverUrl: item.coverUrl ?? undefined})}
+                  onClick={() => onToggle({
+                    id: item.id,
+                    name: item.name,
+                    coverUrl: item.coverUrl ?? undefined,
+                    purpose: item.purpose,
+                  })}
                   className={cn(
                     'group flex flex-col gap-1 rounded-xl border p-1.5 text-left transition-colors',
                     active

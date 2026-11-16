@@ -607,6 +607,7 @@ export interface LibraryAssetDetailOut {
   id: string;
   name: string;
   kind: LibraryAssetKind;
+  purpose?: string;
   /** upload / generated / template_source / imported / pack */
   origin: string;
   mimeType?: string | null;
@@ -654,6 +655,7 @@ export interface LibraryAssetOut {
   id: string;
   name: string;
   kind: LibraryAssetKind;
+  purpose?: string;
   /** upload / generated / template_source / imported / pack */
   origin: string;
   mimeType?: string | null;
@@ -1083,6 +1085,17 @@ export interface SessionOut {
   createdAt: string;
   /** 是否是发起本次请求的会话；前端据此标「本机」 */
   current?: boolean;
+}
+
+/** 设置资产用途：空串 = 普通素材，`case` = 模板库的展示案例。
+
+单独一个接口而不是塞进 `AssetPatchIn`：改名是日常操作，改用途会**改变这条
+素材的可见范围**（案例对所有人可读）与它出现的位置（进案例池、退出个人库），
+混在一起会让「只想改个错别字」的请求顺手把素材推出自己的库。 */
+export interface SetPurposeIn {
+  purpose?: string;
+  /** >0 时做乐观锁校验；0 表示不校验（兼容单页操作） */
+  expectedVersion?: number;
 }
 
 /** 审批 / 驳回 / 撤回申请单。`note` 会进申请单与审计。 */
@@ -1845,6 +1858,8 @@ export interface EndpointData {
   "GET /api/v1/library/assets/{asset_id}/file": unknown;
   /** 受控公共预览（视频给派生流） */
   "GET /api/v1/library/assets/{asset_id}/preview": unknown;
+  /** 设置用途：普通素材 / 模板案例 */
+  "POST /api/v1/library/assets/{asset_id}/purpose": LibraryAssetOut;
   /** 浏览器兼容视频预览（派生流，不改原片） */
   "GET /api/v1/library/assets/{asset_id}/stream": unknown;
   /** 读取文本正文与当前版本 */

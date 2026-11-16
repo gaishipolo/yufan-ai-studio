@@ -2488,7 +2488,7 @@
           "资产库"
         ],
         "summary": "资产库列表（分页 + 分面）",
-        "description": "`state=draft|trash` 时忽略 `library`：草稿与回收站不在任何可见范围内。\n\n代审 / 管理员看全量靠权限点（`library:draft:review` / `library:delete:any`），\n不靠一个 `mine=false` 参数——参数能被任何人传，权限点不能。",
+        "description": "`state=draft|trash` 时忽略 `library`：草稿与回收站不在任何可见范围内。\n\n代审 / 管理员看全量靠权限点（`library:draft:review` / `library:delete:any`），\n不靠一个 `mine=false` 参数——参数能被任何人传，权限点不能。\n\n`purpose=case` 是**案例池**入口：只有持 `library:case:read` 的人能浏览全部\n案例。默认反过来——不传就从普通列表里排除案例，否则每个人打开「全部」都会\n看到一堆模板的展示素材，还会把它们算进自己的数量。",
         "operationId": "list_assets_api_v1_library_assets_get",
         "security": [
           {
@@ -2586,6 +2586,23 @@
                 }
               ],
               "title": "Origin"
+            }
+          },
+          {
+            "name": "purpose",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 16
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Purpose"
             }
           },
           {
@@ -2867,6 +2884,23 @@
               ],
               "title": "Sourcekey"
             }
+          },
+          {
+            "name": "purpose",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 16
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Purpose"
+            }
           }
         ],
         "responses": {
@@ -2933,6 +2967,23 @@
                 }
               ],
               "title": "Sourcekey"
+            }
+          },
+          {
+            "name": "purpose",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 16
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Purpose"
             }
           }
         ],
@@ -3207,6 +3258,64 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApiResponse_LibraryAssetDetailOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/library/assets/{asset_id}/purpose": {
+      "post": {
+        "tags": [
+          "资产库"
+        ],
+        "summary": "设置用途：普通素材 / 模板案例",
+        "description": "把素材移入案例池（`purpose=case`）或移回普通素材（空串）。\n\n「选已有素材当案例」走这个接口：字节不复制，模板引用的仍是同一个 id。\n移入案例池要 `library:case:write`——它会改变这条素材的可见范围，\n不是一次普通的改名。",
+        "operationId": "set_asset_purpose_api_v1_library_assets__asset_id__purpose_post",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "asset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Asset Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetPurposeIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_LibraryAssetOut_"
                 }
               }
             }
@@ -10028,6 +10137,11 @@
           "kind": {
             "$ref": "#/components/schemas/LibraryAssetKind"
           },
+          "purpose": {
+            "type": "string",
+            "title": "Purpose",
+            "default": ""
+          },
           "origin": {
             "type": "string",
             "title": "Origin",
@@ -10379,6 +10493,11 @@
           },
           "kind": {
             "$ref": "#/components/schemas/LibraryAssetKind"
+          },
+          "purpose": {
+            "type": "string",
+            "title": "Purpose",
+            "default": ""
           },
           "origin": {
             "type": "string",
@@ -12062,6 +12181,25 @@
         ],
         "title": "SessionOut",
         "description": "一条登录会话。前端「我的登录设备」列表用它。"
+      },
+      "SetPurposeIn": {
+        "properties": {
+          "purpose": {
+            "type": "string",
+            "maxLength": 16,
+            "title": "Purpose",
+            "default": ""
+          },
+          "expectedVersion": {
+            "type": "integer",
+            "title": "Expectedversion",
+            "description": ">0 时做乐观锁校验；0 表示不校验（兼容单页操作）",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "title": "SetPurposeIn",
+        "description": "设置资产用途：空串 = 普通素材，`case` = 模板库的展示案例。\n\n单独一个接口而不是塞进 `AssetPatchIn`：改名是日常操作，改用途会**改变这条\n素材的可见范围**（案例对所有人可读）与它出现的位置（进案例池、退出个人库），\n混在一起会让「只想改个错别字」的请求顺手把素材推出自己的库。"
       },
       "ShareAction": {
         "type": "string",

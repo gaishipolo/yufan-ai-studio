@@ -78,10 +78,15 @@ function TemplateCard({
   const pending = itemSlots.length - fixed;
   // 要什么类型的素材：卡片上一眼能看出来，省得点进去才发现是视频模板。
   const kinds = [...new Set(itemSlots.map(slot => slot.type))];
+  /* 悬停态挂在**整张卡**上：封面只占卡片上半截，鼠标落在名称/chips 那一带时
+     视频区收不到 mouseenter，看起来就是「这张卡不会动」。 */
+  const [hovering, setHovering] = useState(false);
   return (
     <button
       type="button"
       onClick={onSelect}
+      onMouseEnter={() => setHovering(true)}
+      onMouseLeave={() => setHovering(false)}
       className={cn(
         // 三层深度的中间那层：卡片静止时也有一线投影（告诉眼睛"这是浮在页面上的"），
         // 悬停抬起半像素并加深，选中的用蓝色投影而不是只描一圈边 —— 只描边在
@@ -98,6 +103,7 @@ function TemplateCard({
           seed={item.key}
           className="aspect-[4/5] w-full"
           hoverPlay
+          active={hovering}
         />
         <span className="pointer-events-none absolute right-1.5 top-1.5 rounded-full bg-black/40 px-1.5 py-0.5 text-micro font-medium leading-[14px] text-white/95 backdrop-blur-sm">
           v{item.currentVersion}
