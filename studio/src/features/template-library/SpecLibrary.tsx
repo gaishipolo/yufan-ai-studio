@@ -236,6 +236,13 @@ export function SpecLibrary() {
     setError('');
   }, [focused, version?.version]);
 
+  /* 换模型要清掉上一款的用户选择：两款模型的 `userSelectable` 参数未必相同，
+     残留的 `paramOverrides` 会被后端以「模型 X 没有这些参数」拒掉，而界面上那个控件
+     已经消失了。 */
+  useEffect(() => {
+    setUserChoices({});
+  }, [chosenModel]);
+
   /* 模板只声明模型，「提交到哪个接口」由模型能力决定：视频进 /tasks、图片进
      /generations/image。判不出来（模型清单里没有）就按视频处理 —— 那是这条链路
      原本唯一支持的方向，报错信息也比「静默当图片」清楚。

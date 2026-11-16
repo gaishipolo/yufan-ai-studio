@@ -174,7 +174,15 @@ function DetailBody({
           setRenaming(false);
           toast('已保存');
         },
-        onError: (error) => toast(error.message, 'error'),
+        onError: (error, variables) => {
+          toast(error.message, 'error');
+          /* 打标被拒（标签被删 / 变成有子级的分组）时把本地态拉回服务端：
+             否则界面显示「已打上」实际没打上，下一次保存还会把这枚坏标签
+             一起提交。 */
+          if (variables.body.tagIds) {
+            setTagIds(asset.tags?.map((tag) => tag.id) ?? []);
+          }
+        },
       },
     );
   };

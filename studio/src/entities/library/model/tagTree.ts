@@ -154,8 +154,10 @@ export function ancestorAtDepth(
  * 父的范围本来就含子，两个都留着只会让筛选范围重复：用户点了「产品 / 3030」，
  * 想要的是 3030 那一档，不是整个产品线。
  *
- * 所以按「链根」分组，每组只留**最深**的那一层（同一层可以有多个，比如两个
- * 二级系列）。跨链之间不做任何合并 —— 那是并集。
+ * 收敛的判据只有一个：**有更具体的一档被选中了**。同一条链上父与子只留最具体的那一层
+ * （父的范围含子，两个都留着是重复）；而兄弟分支互不包含，两支都要留着。
+ * （早期版本按「链根」分组，同一根下的兄弟分支会被一起吞掉：勾了「产品 /
+ * T40」与「产品 / 3030 / X100」，其中一支被静默筛掉，胶囊却还在高亮。）
  *
  * 后端那边一律是 OR（展开成「自身 + 全部下级」），这条收敛只发生在界面层：
  * 它决定「我们想看哪一档」，而不是后端怎么算。
@@ -165,24 +167,22 @@ export function effectiveTagSelection(
   selected: string[],
 ): string[] {
   const byId = new Map(tags.map((item) => [item.id, item]));
-  const groups = new Map<string, { depth: number; ids: string[] }>();
-  for (const id of selected) {
+  const chosen = [...new Set(selected)].filter((id) => byId.has(id));
+  const result: string[] = [];
+  for (const id of chosen) {
     const tag = byId.get(id);
     if (!tag) continue;
-    const root = ancestorAtDepth(tags, tag, 1) ?? id;
-    const depth = tagDepth(tags, tag);
-    const group = groups.get(root);
-    if (!group) {
-      groups.set(root, { depth, ids: [id] });
-    } else if (depth > group.depth) {
-      // 更具体的一层顶掉它的祖先：父的范围被子覆盖，留着只会重复
-      group.depth = depth;
-      group.ids = [id];
-    } else if (depth === group.depth) {
-      group.ids.push(id);
-    }
+    /* 有更具体的一档被选中了就让位：同一条链上父与子只留最具体的那一层。
+       兄弟分支互不包含 —— 「产品 / T40」与「产品 / 3030 / X100」两支都要留着，
+       否则其中一整支素材会被静默筛掉，而胶囊还在高亮。 */
+    const covered = chosen.some((other) => {
+      if (other === id) return false;
+      const otherTag = byId.get(other);
+      return otherTag ? ancestorIds(tags, otherTag).includes(id) : false;
+    });
+    if (!covered) result.push(id);
   }
-  return [...groups.values()].flatMap((group) => group.ids);
+  return result;
 }
 
 

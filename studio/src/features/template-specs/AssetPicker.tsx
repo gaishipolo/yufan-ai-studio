@@ -100,7 +100,6 @@ export function AssetPicker({
       keyword,
       page: 1,
       pageSize: PAGE_SIZE,
-      view: 'all',
       tagIds: filterIds,
     }),
     // `filterIds` 是每次 render 新建的数组，用它当依赖会无限重取；用 join 后的串。

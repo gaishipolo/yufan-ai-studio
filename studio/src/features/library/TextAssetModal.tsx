@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { FileText, Save } from 'lucide-react';
 import { Button, Modal, Select, TextInput } from '@/shared/ui';
 import { toast } from '@/shared/lib/toast';
@@ -57,22 +57,40 @@ export function TextAssetModal({
   const [version, setVersion] = useState<number | null>(null);
   const [error, setError] = useState('');
 
-  /* 打开时把本地态复位；正文读回来后填进输入框（依赖只在数据变化时更新，
-     不会在用户打字过程中把内容冲掉）。 */
+  /* 打开时把本地态复位；正文读回来后填进输入框。
+     **只在正文第一次读回来、且用户还没动过的时候填**：读正文是异步的，
+     用户可能在等的时候先打了几行字，一次覆盖就把输入冲掉（详情里的改名态
+     修过同一个形态，见 LibraryDetail）。 */
+  const openedRef = useRef(false);
+  const filledRef = useRef(false);
+  const dirtyRef = useRef(false);
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      openedRef.current = false;
+      return;
+    }
+    if (openedRef.current) return;
+    openedRef.current = true;
+    filledRef.current = false;
+    dirtyRef.current = false;
     setError('');
     setNote('');
-    if (isEdit) {
-      setContent(read.data?.content ?? '');
-      setVersion(read.data?.version ?? null);
-    } else {
+    setContent('');
+    setVersion(null);
+    if (!isEdit) {
       setName('');
       setExtension('md');
-      setContent('');
-      setVersion(null);
     }
-  }, [open, isEdit, read.data?.content, read.data?.version]);
+  }, [open, isEdit]);
+
+  useEffect(() => {
+    if (!open || !isEdit) return;
+    if (filledRef.current || dirtyRef.current) return;
+    if (!read.data) return;
+    filledRef.current = true;
+    setContent(read.data.content ?? '');
+    setVersion(read.data.version ?? null);
+  }, [open, isEdit, read.data]);
 
   const busy = create.isPending || update.isPending || (isEdit && read.isPending);
 
@@ -181,7 +199,12 @@ export function TextAssetModal({
           </div>
           <textarea
             value={content}
-            onChange={(event) => setContent(event.target.value)}
+            onChange={(event) => {
+              dirtyRef.current = true;
+              setContent(event.target.value);
+            }}
+            /* 正文还没读回来时先别让人打字：内容一回来就被覆盖，用户白打 */
+            disabled={isEdit && read.isPending}
             rows={12}
             placeholder="直接写正文；不会做 Markdown → HTML 渲染"
             aria-label="文本正文"

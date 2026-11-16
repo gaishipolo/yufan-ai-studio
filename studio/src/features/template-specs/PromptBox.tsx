@@ -18,8 +18,13 @@ export interface PromptChip {
   kind?: SlotType;
 }
 
-/** 正文里的素材占位长什么样：`{{slot:key}}`（键是内部 id，作者看不懂） */
-const SLOT_TOKEN = /\{\{slot:[^{}]+\}\}/g;
+/**
+ * 正文里的素材占位长什么样：`{{slot:key}}`（键是内部 id，作者看不懂）。
+ *
+ * **两边允许空格**（`{{ slot:key }}`）：后端与 `specDraft` 都是容空格版本，
+ * 这里写成严格版就会漏掉老草稿里的带空格引用——预览里它只是一段普通文字。
+ */
+const SLOT_TOKEN = /\{\{\s*slot:([a-z][a-z0-9_]{0,39})(?:\*|\.\d+)?\s*\}\}/g;
 
 /**
  * 提示词输入框：**支持 `@` 提及槽位**。
@@ -100,7 +105,8 @@ export function PromptBox({
       const at = match.index ?? 0;
       if (at > last) parts.push(value.slice(last, at));
       const token = match[0];
-      const chip = chips.find(item => item.token === token);
+      /* 按键找 chip，不按原文找：带空格的引用写法与 chip 里的 token 不同。 */
+      const chip = chips.find(item => item.token === `{{slot:` + (match[1] ?? '') + `}}`);
       const Icon = chip?.kind ? SLOT_TYPE_ICONS[chip.kind] : undefined;
       parts.push(
         <span

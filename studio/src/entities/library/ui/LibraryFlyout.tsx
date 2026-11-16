@@ -37,7 +37,7 @@ import type {
 } from '@/shared/api/schema';
 import { useLibrarySelectionInfinite, useLibraryTags } from '../api/library.queries';
 import { KIND_OPTIONS, displayName } from '../model/types';
-import { childTags, tagLabel, topLevelTags } from '../model/tagTree';
+import { ancestorAtDepth, childTags, tagLabel, topLevelTags } from '../model/tagTree';
 import { writeLibraryDrag, type LibraryAssetDrag } from '@/shared/lib/libraryDrag';
 
 /** 默认只看图片：文本资产默认不进「挑参考图」的悬浮栏，需要时由调用方显式放开 */
@@ -184,8 +184,11 @@ export function LibraryFlyout({
   const activeParent = useMemo(() => {
     if (topTagId) return topTagId;
     if (childTagId) return byId.get(childTagId)?.parentId ?? '';
-    return grandChildTagId ? (byId.get(grandChildTagId)?.parentId ?? '') : '';
-  }, [topTagId, childTagId, grandChildTagId, byId]);
+    /* 三级要往上找**一级**祖先：只取一层拿到的是二级 id，二级行于是把三级词
+       当二级渲染，一级行反而不高亮。 */
+    const grand = grandChildTagId ? byId.get(grandChildTagId) : undefined;
+    return grand ? ancestorAtDepth(allTags, grand, 1) ?? '' : '';
+  }, [topTagId, childTagId, grandChildTagId, byId, allTags]);
   const children = useMemo(
     () => childTags(allTags, activeParent || undefined),
     [allTags, activeParent],
@@ -228,6 +231,8 @@ export function LibraryFlyout({
     if (topTagId === id) {
       setTopTagId('');
       setChildTagId('');
+      // 三级也要清：留着它，下面就按二级渲染，筛选却还停在三级上
+      setGrandChildTagId('');
       return;
     }
     setTopTagId(id);

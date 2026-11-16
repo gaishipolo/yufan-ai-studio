@@ -28,6 +28,11 @@ describe('effectiveTagSelection · 选中标签 → 真正参与筛选的标签'
     expect(effectiveTagSelection(TAGS, ['t11', 't12'])).toEqual(['t11', 't12']);
   });
 
+  it('同一个一级下的兄弟分支都要留着（互不包含，丢一支就是静默筛掉一整批素材）', () => {
+    expect(effectiveTagSelection(TAGS, ['t12', 't31'])).toEqual(['t12', 't31']);
+    expect(effectiveTagSelection(TAGS, ['t1', 't12', 't31'])).toEqual(['t12', 't31']);
+  });
+
   it('词表里没有的 id 被丢掉（URL 手改过也不该带进请求）', () => {
     expect(effectiveTagSelection(TAGS, ['t1', 'nope'])).toEqual(['t1']);
   });
