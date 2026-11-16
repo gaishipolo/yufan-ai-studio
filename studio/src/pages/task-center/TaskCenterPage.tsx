@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { FolderOpen, Plus } from 'lucide-react';
-import { Button, PageHeader, CardSkeletonGrid, EmptyState, ErrorState, Pager, Tabs, type TabItem } from '@/shared/ui';
+import { FolderOpen } from 'lucide-react';
+import { PageHeader, CardSkeletonGrid, EmptyState, ErrorState, Pager, Tabs, type TabItem } from '@/shared/ui';
 import { toast } from '@/shared/lib/toast';
 import { downloadUrl } from '@/shared/lib/download';
 import { useCan } from '@/shared/access/use-access';
@@ -15,7 +15,6 @@ import { TaskFilterBar } from '@/features/task-filter/ui/TaskFilterBar';
 import { TaskBulkBar } from '@/features/task-filter/ui/TaskBulkBar';
 import { TaskPreviewModal } from '@/features/task-preview/TaskPreviewModal';
 import { ImagePreviewModal } from '@/features/task-preview/ImagePreviewModal';
-import { CreateTaskModal } from '@/features/create-task/CreateTaskModal';
 import { generatedFileName } from '@/shared/lib/format';
 import { useSessionStore } from '@/shared/access/session';
 
@@ -42,10 +41,8 @@ export default function TaskCenterPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [preview, setPreview] = useState<TaskFeedItem | null>(null);
-  const [createOpen, setCreateOpen] = useState(false);
   const canReadImages = useCan('image:read');
   // 写操作按权限藏起来：只读角色点到只会拿到 403（2026-11-15 审查 3.1）
-  const canCreate = useCan('task:create');
   const canCollect = useCan('task:update');
   // 两个 hook 都要调用（`||` 短路会让第二个变成条件调用），再取或
   const canDeleteTask = useCan('task:delete');
@@ -231,17 +228,7 @@ export default function TaskCenterPage() {
     <>
       <PageHeader
         title="任务中心"
-        actions={
-          canCreate ? (
-            <Button
-              variant="primary"
-              icon={<Plus size={13} />}
-              onClick={() => setCreateOpen(true)}
-            >
-              创建任务
-            </Button>
-          ) : null
-        }
+        description="所有生成任务都在生成工作台或模板库发起，这里只负责查看与整理。"
       />
 
       {/* 筛选一条：来源 / 范围 / 排序 / 仅可下载 / 搜索 / 刷新 / 条数 */}
@@ -348,14 +335,6 @@ export default function TaskCenterPage() {
       <ImagePreviewModal
         item={preview?.source === 'image' ? preview : null}
         onClose={() => setPreview(null)}
-      />
-      <CreateTaskModal
-        open={createOpen}
-        onClose={() => setCreateOpen(false)}
-        onCreated={() => {
-          patchFilter({ source: 'all', status: 'all' });
-          setSelected(new Set());
-        }}
       />
     </>
   );

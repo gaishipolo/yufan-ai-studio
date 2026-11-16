@@ -55,7 +55,8 @@ function listResult(overrides: Partial<TaskFeedResult> = {}): TaskFeedResult {
 }
 
 function App({permissions = ['task:read']}: {permissions?: string[]}) {
-  /* 页面挂载即渲染 CreateTaskModal，它会读模型列表，必须给 QueryClient */
+  /* 任务中心不再挂 CreateTaskModal（任务只能从生成工作台 / 模板库发起），
+     但页面仍要读任务列表，留着 QueryClient 以防后续接入查询 */
   const client = new QueryClient({defaultOptions: {queries: {retry: false}}});
   return <QueryClientProvider client={client}>
     <MemoryRouter initialEntries={['/tasks']}>
@@ -148,10 +149,9 @@ describe('任务中心页面', () => {
 });
 
 describe('写操作按权限渲染', () => {
-  it('只读账号看不到创建、收藏与删除', () => {
+  it('只读账号看不到收藏与删除', () => {
     render(<App permissions={['task:read', 'image:read']} />);
 
-    expect(screen.queryByRole('button', {name: '创建任务'})).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', {name: '选择任务：测试任务'}));
     expect(screen.queryByRole('button', {name: '删除'})).not.toBeInTheDocument();
     expect(screen.queryByRole('button', {name: '收藏'})).not.toBeInTheDocument();
@@ -159,9 +159,14 @@ describe('写操作按权限渲染', () => {
     expect(screen.getByRole('button', {name: '下载'})).toBeVisible();
   });
 
-  it('有 task:create 才出现创建任务', () => {
+  /* 任务中心**不提供**创建入口：任务只能从生成工作台 / 模板库发起。
+     这里的列表页是「看结果」的，不是「发起」的 —— 在这里放个新建按钮，
+     等于给出第二条绕过工作台参数的创建路径（工作台的参数面是模型声明驱动的，
+     这里的表单是另一套）。 */
+  it('任务中心没有创建任务入口，哪怕账号有 task:create', () => {
     render(<App permissions={['task:read', 'task:create']} />);
 
-    expect(screen.getByRole('button', {name: '创建任务'})).toBeVisible();
+    expect(screen.queryByRole('button', {name: '创建任务'})).not.toBeInTheDocument();
+    expect(screen.queryByText('创建视频任务')).not.toBeInTheDocument();
   });
 });
