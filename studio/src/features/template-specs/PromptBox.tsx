@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { cn } from '@/shared/lib/cn';
+import { useDropPlacement } from '@/shared/hooks/useDropPlacement';
 import { insertRef, type SlotType } from './specDraft';
 import { SLOT_TYPE_ICONS } from './slotIcons';
 import {
@@ -115,12 +116,23 @@ export function PromptBox({
     }
   };
 
+  /* 候选面板的方向：**量出来**。模板封装页的提示词框在右栏最下面，
+     写死朝下展开的话整块掉到视口外 —— 用户只看到输入框闪一下，
+     什么也没出现（这正是用户报的这个问题）。空间不够就朝上弹。 */
+  const anchorRef = useRef<HTMLDivElement>(null);
+  const popupRef = useRef<HTMLDivElement>(null);
+  const mentionOpen = mention !== null && candidates.length > 0;
+  const { side, space } = useDropPlacement(anchorRef, popupRef, mentionOpen);
+  /* 面板封顶：留出的空间比 220 还少时按空间封顶，否则它自己会溢出视口那一侧。
+     下限 140：再窄就没法用了，宁可让它溢出也比压成一条缝强。 */
+  const maxHeight = Math.max(140, Math.min(220, space));
+
   return (
     <div>
       {/* 面板的定位基准只包住 textarea：包住整块的话 top-full 会落到
           chip 那一行下面，弹窗跟输入框之间隔着一截，看着不像"就地弹出"。
           `z-20` 让这层浮到 chip 行之上 —— 否则后绘制的 chip 会盖住候选条。 */}
-      <div className="relative z-20">
+      <div ref={anchorRef} className="relative z-20">
         <textarea
           ref={ref}
           value={value}
@@ -154,13 +166,16 @@ export function PromptBox({
           )}
         />
 
-        {/* 提及面板：贴着输入框浮出，跟输入框同宽，像输入法的候选条。 */}
-        {mention && candidates.length > 0 && (
+        {/* 提及面板：贴着输入框浮出，跟输入框同宽，像输入法的候选条。
+            空间不够就翻到输入框上方 —— 写死朝下会掉出视口。 */}
+        {mentionOpen && (
           <div
+            ref={popupRef}
+            data-placement={side}
+            style={{ maxHeight }}
             className={cn(
-              'absolute left-0 right-0 top-full z-30 mt-1 max-h-[220px] overflow-y-auto',
-              'scroll-thin rounded-xl border border-line bg-panel p-1 shadow-pop',
-              'animate-slideDown',
+              'absolute left-0 right-0 z-30 overflow-y-auto scroll-thin rounded-xl border border-line bg-panel p-1 shadow-pop',
+              side === 'top' ? 'bottom-[calc(100%+4px)] animate-slideUp' : 'top-[calc(100%+4px)] animate-slideDown',
             )}
           >
             <p className="px-2 py-1 text-micro text-ink-mute">

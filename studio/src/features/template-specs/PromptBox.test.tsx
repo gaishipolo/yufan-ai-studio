@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { PromptBox, type PromptChip } from './PromptBox';
 
 const CHIPS: PromptChip[] = [
@@ -105,5 +105,53 @@ describe('提示词框的 @ 提及', () => {
     await user.click(screen.getByRole('button', {name: '主图'}));
 
     expect(screen.getByTestId('value')).toHaveTextContent('{{slot:image_1}}');
+  });
+});
+
+/**
+ * 浮层方向：提示词框在模板封装页的右栏最下面，朝下展开会整块掉到视口外 ——
+ * 用户只看到输入框闪一下、什么也没出现。空间不够就得翻到上面去。
+ */
+describe('候选面板的方向', () => {
+  /** 把输入框钉在视口里的某个位置：下方还剩多少空间由 innerHeight 决定。 */
+  function placeBoxAt(bottom: number, innerHeight: number) {
+    Object.defineProperty(window, 'innerHeight', { value: innerHeight, configurable: true });
+    vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue({
+      bottom,
+      top: bottom - 60,
+      height: 100,
+      left: 0,
+      right: 400,
+      width: 400,
+      x: 0,
+      y: bottom - 60,
+      toJSON: () => ({}),
+    } as DOMRect);
+  }
+
+  const panel = () => screen.getByText('选择要引用的槽位').closest('[data-placement]');
+
+  it('下方空间不够时朝上展开（提示词框贴着视口底边的场景）', async () => {
+    const user = userEvent.setup();
+    placeBoxAt(760, 800);
+    render(<Harness />);
+    const box = screen.getByRole('textbox');
+    await user.click(box);
+    await user.type(box, '@');
+
+    expect(panel()).toHaveAttribute('data-placement', 'top');
+    // 朝上时不能还留着朝下的定位类，否则会同时挂两条定位
+    expect(panel()?.className).not.toContain('top-[calc(100%+4px)]');
+  });
+
+  it('下方够高就朝下展开', async () => {
+    const user = userEvent.setup();
+    placeBoxAt(120, 800);
+    render(<Harness />);
+    const box = screen.getByRole('textbox');
+    await user.click(box);
+    await user.type(box, '@');
+
+    expect(panel()).toHaveAttribute('data-placement', 'bottom');
   });
 });

@@ -1,6 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Check, ChevronDown } from 'lucide-react';
 import { cn } from '@/shared/lib/cn';
+import { useDropPlacement } from '@/shared/hooks/useDropPlacement';
 
 /** 浮层大致高度：列表 196 + 内边距 + 新建行。下方不够就朝上展开。 */
 const POPOVER_MIN_SPACE = 250;
@@ -68,8 +69,6 @@ export function MultiSelect({
   ariaLabel,
 }: MultiSelectProps) {
   const [open, setOpen] = useState(false);
-  /* 浮层朝上还是朝下。贴底的批量栏里朝下展开会落到视口外（只看得到一条边）。 */
-  const [dropUp, setDropUp] = useState(false);
   const [draft, setDraft] = useState('');
   const [creating, setCreating] = useState(false);
   /* 本地下沉新建出来的选项。父级重新拉列表要一个来回，这期间收起态会退化成
@@ -77,7 +76,13 @@ export function MultiSelect({
      用户就看不到那一帧闪烁。 */
   const [createdOptions, setCreatedOptions] = useState<MultiSelectOption[]>([]);
   const rootRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
   const listId = useId();
+  /* 浮层朝上还是朝下：量出来的，不是声明的。贴底的批量栏里朝下展开会落到视口外
+     （只看得到一条边）。方向逻辑在 `useDropPlacement` 里，模板封装的 @ 候选面板
+     用的是同一份 —— 两份实现漂移就是「同一个浮层两个页面表现不一样」。 */
+  const { side } = useDropPlacement(rootRef, listRef, open, POPOVER_MIN_SPACE);
+  const dropUp = side === 'top';
 
   const merged = useMemo(() => {
     if (createdOptions.length === 0) return options;
@@ -124,15 +129,7 @@ export function MultiSelect({
      同一个组件在批量栏（贴底）和详情弹窗（页面中部）要用不同方向，量比重申可靠。
      估算高度 = 列表 196 + 内边距 + 新建行，取 250。 */
   const toggleOpen = () => {
-    const next = !open;
-    if (next) {
-      const rect = rootRef.current?.getBoundingClientRect();
-      const spaceBelow = rect
-        ? window.innerHeight - rect.bottom
-        : Number.POSITIVE_INFINITY;
-      setDropUp(spaceBelow < POPOVER_MIN_SPACE);
-    }
-    setOpen(next);
+    setOpen(!open);
   };
 
   /* 新建：回车提交。必须 preventDefault —— 本组件常放在 Modal 的表单里，
@@ -189,6 +186,7 @@ export function MultiSelect({
       {open && (
         <div
           id={listId}
+          ref={listRef}
           data-placement={dropUp ? 'top' : 'bottom'}
           className={cn(
             'absolute left-0 right-0 z-30 overflow-hidden rounded-lg border border-line bg-white shadow-pop',
