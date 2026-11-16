@@ -106,7 +106,11 @@ class CreateTaskIn(CamelModel):
     两者都可以不传：不传模型取该能力的默认模型，不传时长取模型 schema 的默认档位。
     """
 
-    prompt: str = Field(min_length=1, max_length=2000, description="画面描述")
+    # 上限与 `core/template_spec/models.py::EXECUTION_PROMPT_LIMIT` 必须一致
+    # （漂移由 `test_execution_prompt_limit_matches_task_schema` 钉住）。
+    # 7000：模板封装的提示词常带多段描述 + 槽位引用，2000 太紧；百炼驱动本身
+    # 放到 20000，这里留足余量又不至于让无人值守的批量任务无限吃 token。
+    prompt: str = Field(min_length=1, max_length=7000, description="画面描述")
     title: str | None = Field(default=None, max_length=200, description="不传则截取 prompt")
     model: str | None = Field(
         default=None, max_length=64, description="模型 id 或名称，缺省取默认模型"

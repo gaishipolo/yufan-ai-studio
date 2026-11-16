@@ -8360,7 +8360,7 @@
         "properties": {
           "prompt": {
             "type": "string",
-            "maxLength": 2000,
+            "maxLength": 7000,
             "minLength": 1,
             "title": "Prompt",
             "description": "画面描述"

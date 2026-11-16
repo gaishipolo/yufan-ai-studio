@@ -41,7 +41,7 @@
 - **只写 `{{slot:key}}`**，别手写 `{{Mixed N}}` —— 编号由 `compile` 按 `position` 与实际
   填充量算，写死了少填一张就全体错位（`compile` 会直接 400）。
 - **发布即冻结**：改模板 = 新版本，`template_spec_versions` 只插入不更新。
-- **执行上限 2000 字**：`compile` 产出要交给 `POST /tasks`，超过会 422，所以在发布与
+- **执行上限 7000 字**：`compile` 产出要交给 `POST /tasks`，超过会 422，所以在发布与
   编译两处提前拦（编写上限是 20000）。
 - 素材校验一律经 `core.ports.library_lookup`，模板不取字节、不查元数据 —— 字节只由
   task 的 `generic_inputs.materialize` 落地。
