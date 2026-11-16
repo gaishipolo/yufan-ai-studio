@@ -63,6 +63,18 @@ class LibraryAsset(Base, UUIDMixin, TimestampMixin):
     owner_id: Mapped[str] = mapped_column(String(32), nullable=False)
     visibility: Mapped[str] = mapped_column(String(16), default="personal", nullable=False)
     state: Mapped[str] = mapped_column(String(16), default="active", nullable=False)
+    # 用途（不是类型）：空串 = 普通素材，`case` = 模板库的展示案例。
+    #
+    # **为什么不是再加一个 `kind`**：`kind` 在服务里是「媒体类型」的同一词——
+    # 上传按 mime 反推它（`_kind_of(mime) != kind`）、预览按它选生成器、
+    # `/stream` 按 `kind == "video"` 判分段、去重唯一索引也把它算进键里。
+    # 塞一个 `case` 进去，图/视频的区分当场丢失（案例视频会渲染成一张封面），
+    # 而「案例」本来回答的是另一个问题：这条素材**给谁用**。
+    #
+    # 可见性也不在这里表达：案例对所有人可读（模板卡片要求），但只有持
+    # `library:case:read` 的人能进案例池。一条 `purpose=case` 同时决定这两件事，
+    # 不必再往 `visibility` 里塞第四个值（那是第二步的事）。
+    purpose: Mapped[str] = mapped_column(String(16), default="", nullable=False)
 
     # 回收站：`trashed_from_state` 决定恢复去向（草稿驳回的回到草稿，不是直接入库）。
     trashed_from_state: Mapped[str | None] = mapped_column(String(16), nullable=True)
@@ -102,6 +114,8 @@ class LibraryAsset(Base, UUIDMixin, TimestampMixin):
         ),
         # 回收站 GC：`state='trash' AND trash_expires_at < now`
         Index("ix_library_assets_trash_expiry", "state", "trash_expires_at"),
+        # 案例池入口：`purpose='case' AND state='active'` 按时间倒序（只有持权限的人查）。
+        Index("ix_library_assets_purpose_state", "purpose", "state", "created_at"),
         # 秒传 / 去重：同 owner、同内容、同类型只有一条「未删除」的行。
         # 口径必须与 `LibraryService._find_duplicate` 一致：`deleted_at IS NULL`。
         Index(

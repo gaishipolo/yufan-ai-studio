@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { FileText, Inbox, PackagePlus, Upload } from 'lucide-react';
 import { Button, Chip, SearchInput, Select, Tabs } from '@/shared/ui';
+import { useCan } from '@/shared/access/use-access';
 import type { LibraryFacets } from '@/shared/api/schema';
 import {
   KIND_OPTIONS,
@@ -44,14 +45,17 @@ export interface LibraryToolbarProps {
  * 里的东西不该再被建封装——把按钮留在那儿只会让人点出一个 404。
  */
 export function LibraryToolbar(props: LibraryToolbarProps) {
+  /* 案例池只有持 `library:case:read` 的人能进：后端对 `purpose=case` 直接 403，
+     没有这个入口时不该先把标签摆出去让人点出一个错误页。 */
+  const canReadCases = useCan('library:case:read');
   const items = useMemo(
     () =>
-      VIEWS.map((item) => ({
+      VIEWS.filter((item) => item.value !== 'cases' || canReadCases).map((item) => ({
         value: item.value,
         label: item.label,
-        count: props.facets?.[item.facet],
+        count: item.facet ? props.facets?.[item.facet] : undefined,
       })),
-    [props.facets],
+    [props.facets, canReadCases],
   );
 
   return (

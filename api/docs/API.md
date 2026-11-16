@@ -2,7 +2,7 @@
 
 > 此文件由 `app export-openapi` 自动生成，请勿手工编辑。
 >
-> 版本 `0.2.0`｜共 **125** 个接口 / **11** 个模块
+> 版本 `0.2.0`｜共 **126** 个接口 / **11** 个模块
 >
 > 重新生成：`cd api && .venv/Scripts/python -m cli export-openapi`
 
@@ -132,6 +132,8 @@ Authorization: Bearer <accessToken>
 
 | 权限码 | 名称 | 说明 |
 |---|---|---|
+| `library:case:read` | 浏览全部模板案例（案例池） |  |
+| `library:case:write` | 上传案例 / 把素材移入案例池 |  |
 | `library:create` | 上传与封装资产 |  |
 | `library:delete` | 删除本人资产（移入回收站） |  |
 | `library:delete:any` | 删除 / 恢复任何人的资产 |  |
@@ -230,7 +232,7 @@ Authorization: Bearer <accessToken>
 | 镜头库 | 1 | 见下方 `4.6` |
 | 系统 | 2 | 见下方 `4.7` |
 | 导出 | 6 | 见下方 `4.8` |
-| 资产库 | 45 | 见下方 `4.9` |
+| 资产库 | 46 | 见下方 `4.9` |
 | 模型驱动 | 6 | 见下方 `4.10` |
 | 模板封装 | 11 | 见下方 `4.11` |
 
@@ -1580,7 +1582,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 
 **响应** `ApiResponse<unknown>`（前端取 `res.data`）
 
-### 4.9 资产库（45 个）
+### 4.9 资产库（46 个）
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
@@ -1593,6 +1595,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `GET` | `/api/v1/library/assets/{asset_id}` | 资产详情（含标签与生成参数） | 🔒 |
 | `GET` | `/api/v1/library/assets/{asset_id}/file` | 下载或预览原文件 | 🔒 |
 | `GET` | `/api/v1/library/assets/{asset_id}/preview` | 受控公共预览（视频给派生流） | 🔒 |
+| `POST` | `/api/v1/library/assets/{asset_id}/purpose` | 设置用途：普通素材 / 模板案例 | 🔒 |
 | `GET` | `/api/v1/library/assets/{asset_id}/stream` | 浏览器兼容视频预览（派生流，不改原片） | 🔒 |
 | `GET` | `/api/v1/library/assets/{asset_id}/text` | 读取文本正文与当前版本 | 🔒 |
 | `PUT` | `/api/v1/library/assets/{asset_id}/text` | 在线编辑文本（追加一版，可带 expectedVersion 防覆盖） | 🔒 |
@@ -1639,6 +1642,10 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 代审 / 管理员看全量靠权限点（`library:draft:review` / `library:delete:any`），
 不靠一个 `mine=false` 参数——参数能被任何人传，权限点不能。
 
+`purpose=case` 是**案例池**入口：只有持 `library:case:read` 的人能浏览全部
+案例。默认反过来——不传就从普通列表里排除案例，否则每个人打开「全部」都会
+看到一堆模板的展示素材，还会把它们算进自己的数量。
+
 | 参数 | 位置 | 类型 | 必填 | 说明 |
 |---|---|---|---|---|
 | `library` | query | `LibraryTab` | 否 |  |
@@ -1648,6 +1655,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `keyword` | query | `string` | 否 |  |
 | `sort` | query | `AssetSort` | 否 |  |
 | `origin` | query | `LibraryAssetOrigin[] | null` | 否 |  |
+| `purpose` | query | `string | null` | 否 |  |
 | `page` | query | `number` | 否 | 页码，从 1 开始 |
 | `pageSize` | query | `number` | 否 | 每页条数 |
 
@@ -1730,6 +1738,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `filename` | query | `string` | 是 |  |
 | `kind` | query | `UploadKind` | 否 |  |
 | `sourceKey` | query | `string | null` | 否 |  |
+| `purpose` | query | `string | null` | 否 |  |
 
 **响应** `ApiResponse<LibraryAssetOut>`（前端取 `res.data`）
 
@@ -1738,6 +1747,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `id` | `string` | 是 |  |
 | `name` | `string` | 是 |  |
 | `kind` | `LibraryAssetKind` | 是 |  |
+| `purpose` | `string` | 否 |  |
 | `origin` | `string` | 是 | upload / generated / template_source / imported / pack |
 | `mimeType` | `string \| null` | 否 |  |
 | `sizeBytes` | `number` | 否 |  |
@@ -1787,6 +1797,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `id` | `string` | 是 |  |
 | `name` | `string` | 是 |  |
 | `kind` | `LibraryAssetKind` | 是 |  |
+| `purpose` | `string` | 否 |  |
 | `origin` | `string` | 是 | upload / generated / template_source / imported / pack |
 | `mimeType` | `string \| null` | 否 |  |
 | `sizeBytes` | `number` | 否 |  |
@@ -1856,6 +1867,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `id` | `string` | 是 |  |
 | `name` | `string` | 是 |  |
 | `kind` | `LibraryAssetKind` | 是 |  |
+| `purpose` | `string` | 否 |  |
 | `origin` | `string` | 是 | upload / generated / template_source / imported / pack |
 | `mimeType` | `string \| null` | 否 |  |
 | `sizeBytes` | `number` | 否 |  |
@@ -1915,6 +1927,61 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `asset_id` | path | `string` | 是 |  |
 
 **响应** `ApiResponse<unknown>`（前端取 `res.data`）
+
+#### `POST /api/v1/library/assets/{asset_id}/purpose`
+
+**设置用途：普通素材 / 模板案例**
+
+把素材移入案例池（`purpose=case`）或移回普通素材（空串）。
+
+「选已有素材当案例」走这个接口：字节不复制，模板引用的仍是同一个 id。
+移入案例池要 `library:case:write`——它会改变这条素材的可见范围，
+不是一次普通的改名。
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `asset_id` | path | `string` | 是 |  |
+
+**请求体** `SetPurposeIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `purpose` | `string` | 否 |  |
+| `expectedVersion` | `number` | 否 | >0 时做乐观锁校验；0 表示不校验（兼容单页操作） |
+
+**响应** `ApiResponse<LibraryAssetOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `kind` | `LibraryAssetKind` | 是 |  |
+| `purpose` | `string` | 否 |  |
+| `origin` | `string` | 是 | upload / generated / template_source / imported / pack |
+| `mimeType` | `string \| null` | 否 |  |
+| `sizeBytes` | `number` | 否 |  |
+| `durationSec` | `number \| null` | 否 |  |
+| `hasAudio` | `boolean` | 否 |  |
+| `ownerId` | `string` | 是 |  |
+| `ownerName` | `string \| null` | 否 |  |
+| `visibility` | `LibraryVisibility` | 是 |  |
+| `state` | `LibraryAssetState` | 是 |  |
+| `stateVersion` | `number` | 否 |  |
+| `coverUrl` | `string \| null` | 否 |  |
+| `url` | `string` | 否 |  |
+| `previewUrl` | `string \| null` | 否 |  |
+| `streamUrl` | `string \| null` | 否 |  |
+| `width` | `number \| null` | 否 |  |
+| `height` | `number \| null` | 否 |  |
+| `groupIds` | `string[]` | 否 |  |
+| `tags` | `LibraryTagOut[]` | 否 |  |
+| `trashReason` | `string \| null` | 否 |  |
+| `trashExpiresAt` | `string \| null` | 否 |  |
+| `textExcerpt` | `string \| null` | 否 |  |
+| `textVersion` | `number` | 否 |  |
+| `textUrl` | `string \| null` | 否 |  |
+| `createdAt` | `string` | 是 |  |
+| `updatedAt` | `string \| null` | 否 |  |
 
 #### `GET /api/v1/library/assets/{asset_id}/stream`
 
@@ -2163,6 +2230,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `id` | `string` | 是 |  |
 | `name` | `string` | 是 |  |
 | `kind` | `LibraryAssetKind` | 是 |  |
+| `purpose` | `string` | 否 |  |
 | `origin` | `string` | 是 | upload / generated / template_source / imported / pack |
 | `mimeType` | `string \| null` | 否 |  |
 | `sizeBytes` | `number` | 否 |  |
@@ -2221,6 +2289,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `id` | `string` | 是 |  |
 | `name` | `string` | 是 |  |
 | `kind` | `LibraryAssetKind` | 是 |  |
+| `purpose` | `string` | 否 |  |
 | `origin` | `string` | 是 | upload / generated / template_source / imported / pack |
 | `mimeType` | `string \| null` | 否 |  |
 | `sizeBytes` | `number` | 否 |  |
@@ -2335,6 +2404,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `id` | `string` | 是 |  |
 | `name` | `string` | 是 |  |
 | `kind` | `LibraryAssetKind` | 是 |  |
+| `purpose` | `string` | 否 |  |
 | `origin` | `string` | 是 | upload / generated / template_source / imported / pack |
 | `mimeType` | `string \| null` | 否 |  |
 | `sizeBytes` | `number` | 否 |  |
@@ -2386,6 +2456,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `id` | `string` | 是 |  |
 | `name` | `string` | 是 |  |
 | `kind` | `LibraryAssetKind` | 是 |  |
+| `purpose` | `string` | 否 |  |
 | `origin` | `string` | 是 | upload / generated / template_source / imported / pack |
 | `mimeType` | `string \| null` | 否 |  |
 | `sizeBytes` | `number` | 否 |  |
@@ -2447,6 +2518,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `id` | `string` | 是 |  |
 | `name` | `string` | 是 |  |
 | `kind` | `LibraryAssetKind` | 是 |  |
+| `purpose` | `string` | 否 |  |
 | `origin` | `string` | 是 | upload / generated / template_source / imported / pack |
 | `mimeType` | `string \| null` | 否 |  |
 | `sizeBytes` | `number` | 否 |  |
@@ -2709,6 +2781,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 |---|---|---|---|---|
 | `filename` | query | `string` | 是 |  |
 | `sourceKey` | query | `string | null` | 否 |  |
+| `purpose` | query | `string | null` | 否 |  |
 
 **响应** `ApiResponse<LibraryAssetOut>`（前端取 `res.data`）
 
@@ -2717,6 +2790,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `id` | `string` | 是 |  |
 | `name` | `string` | 是 |  |
 | `kind` | `LibraryAssetKind` | 是 |  |
+| `purpose` | `string` | 否 |  |
 | `origin` | `string` | 是 | upload / generated / template_source / imported / pack |
 | `mimeType` | `string \| null` | 否 |  |
 | `sizeBytes` | `number` | 否 |  |
@@ -2912,6 +2986,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `id` | `string` | 是 |  |
 | `name` | `string` | 是 |  |
 | `kind` | `LibraryAssetKind` | 是 |  |
+| `purpose` | `string` | 否 |  |
 | `origin` | `string` | 是 | upload / generated / template_source / imported / pack |
 | `mimeType` | `string \| null` | 否 |  |
 | `sizeBytes` | `number` | 否 |  |
@@ -3885,6 +3960,7 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `id` | `string` | 是 |  |
 | `name` | `string` | 是 |  |
 | `kind` | `LibraryAssetKind` | 是 |  |
+| `purpose` | `string` | 否 |  |
 | `origin` | `string` | 是 | upload / generated / template_source / imported / pack |
 | `mimeType` | `string \| null` | 否 |  |
 | `sizeBytes` | `number` | 否 |  |
@@ -3942,6 +4018,7 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `id` | `string` | 是 |  |
 | `name` | `string` | 是 |  |
 | `kind` | `LibraryAssetKind` | 是 |  |
+| `purpose` | `string` | 否 |  |
 | `origin` | `string` | 是 | upload / generated / template_source / imported / pack |
 | `mimeType` | `string \| null` | 否 |  |
 | `sizeBytes` | `number` | 否 |  |
@@ -4384,6 +4461,19 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `expiresAt` | `string` | 是 | 刷新令牌到期时间（UTC） |
 | `createdAt` | `string` | 是 | 登录时间（UTC） |
 | `current` | `boolean` | 否 | 是否是发起本次请求的会话；前端据此标「本机」 |
+
+### `SetPurposeIn`
+
+设置资产用途：空串 = 普通素材，`case` = 模板库的展示案例。
+
+单独一个接口而不是塞进 `AssetPatchIn`：改名是日常操作，改用途会**改变这条
+素材的可见范围**（案例对所有人可读）与它出现的位置（进案例池、退出个人库），
+混在一起会让「只想改个错别字」的请求顺手把素材推出自己的库。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `purpose` | `string` | 否 |  |
+| `expectedVersion` | `number` | 否 | >0 时做乐观锁校验；0 表示不校验（兼容单页操作） |
 
 ### `ShareAction`（枚举）
 

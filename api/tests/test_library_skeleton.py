@@ -45,6 +45,9 @@ LIBRARY_PERMISSIONS = {
     "library:share:approve:group",
     "library:tag:manage",
     "library:generation:ingest",
+    # 案例池：浏览全部模板案例 / 上传案例或把素材移入案例池
+    "library:case:read",
+    "library:case:write",
 }
 
 

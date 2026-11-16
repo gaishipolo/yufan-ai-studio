@@ -28,15 +28,18 @@ describe('视图与查询参数的映射', () => {
       '个人',
       '小组',
       '团队',
+      '案例池',
       '草稿箱',
       '回收站',
     ]);
-    // 徽章取各自的分面字段，「全部素材」不能误用 personal 的数字
+    // 徽章取各自的分面字段，「全部素材」不能误用 personal 的数字。
+    // 案例池没有角标：它的条数不属于「我的资产」那六个数字里的任何一个。
     expect(VIEWS.map((item) => item.facet)).toEqual([
       'all',
       'personal',
       'group',
       'team',
+      undefined,
       'drafts',
       'trash',
     ]);
@@ -45,6 +48,10 @@ describe('视图与查询参数的映射', () => {
   it('草稿箱与回收站只传 state，不传可见范围', () => {
     expect(viewQuery('drafts')).toEqual({ state: 'draft' });
     expect(viewQuery('trash')).toEqual({ state: 'trash' });
+  });
+
+  it('案例池只传用途，不传可见范围', () => {
+    expect(viewQuery('cases')).toEqual({ state: 'active', purpose: 'case' });
   });
 
   it('全部 / 个人 / 小组 / 团队是 state=active + library', () => {

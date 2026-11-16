@@ -45,6 +45,9 @@ from modules.library.models import (
 from modules.library.schema import LibraryTab
 
 __all__ = [
+    "PERM_CASE_READ",
+    "PERM_CASE_WRITE",
+    "PURPOSE_CASE",
     "active_visible_clause",
     "all_groups",
     "asset_group_ids",
@@ -67,6 +70,18 @@ PERM_DRAFT_REVIEW = "library:draft:review"
 #: 回收站与团队库的兜底通道：删别人的、删团队库的、彻底删除。
 PERM_DELETE_ANY = "library:delete:any"
 
+#: 资产用途：`purpose = CASE` 表示「模板库的展示案例」。空串是普通素材。
+#: 用常量而不是散落的字符串字面量：这个值同时出现在 SQL 分支（`active_visible_clause`）、
+#: 服务层过滤（`exclude_purposes`）和迁移里，拼错一处就是「案例既不在池里也不可读」。
+PURPOSE_CASE = "case"
+
+#: 案例池的浏览权：能列全部案例（作者本人不需要——他看自己的素材本来就不受限）。
+PERM_CASE_READ = "library:case:read"
+#: 案例池的写权：上传案例、把已有素材移入案例池。
+#: 与 `read` 分开：能看全部案例的人不一定该有「把别人的素材变成案例」的能力，
+#: 反过来上传案例的人必须能看见自己传了什么。
+PERM_CASE_WRITE = "library:case:write"
+
 
 async def all_groups(session: AsyncSession, actor: CurrentUser) -> list[str]:
     """我所属的小组。走组织目录注入口，未接上时为空（小组库为空，不多看见）。"""
@@ -85,6 +100,13 @@ def active_visible_clause(
 
     `asset` 用来换别名：判断「这条封装对我可见吗」时，条件要挂在 pack 的
     `aliased(LibraryAsset)` 上，而不是外层那张表。
+
+    第四支是**案例**（`purpose='case'`）：模板卡片对所有登录用户开放，卡片上的
+    封面与悬停播放都要读得到这条素材。它不走 `visibility` —— 案例既不属于某个
+    人的个人库，也不该出现在团队库里；「谁能浏览案例池」是另一道门（见
+    `router` 的 `purpose=case` 入口，要 `library:case:read`），与「谁能读这一条」
+    是两件事。列表默认排除案例（`LibraryService.list` 的 `exclude_purposes`），
+    所以这一支不会把案例灌进「全部 / 个人 / 团队」。
     """
     group_branch = asset.id.in_(
         select(LibraryAssetGroup.asset_id).where(
@@ -98,6 +120,7 @@ def active_visible_clause(
         ),
         and_(asset.visibility == "group", group_branch),
         asset.visibility == "team",
+        asset.purpose == PURPOSE_CASE,
     )
 
 
@@ -253,6 +276,11 @@ def can_read(
         return asset.owner_id == actor.id or actor.has(PERM_DRAFT_REVIEW)
     if asset.owner_id == actor.id:
         # 共享出去之后仍是「我的」，被移出小组也不该看不见自己的东西
+        return True
+    # 案例：任何登录用户都能读（模板卡片要显示、要播）。这条**刻意放在
+    # `visibility` 之前**——案例的可见性不由它决定，它也不该因为 owner 把它
+    # 设成 personal 就对外消失。草稿与回收站已在上面两行挡掉了。
+    if asset.purpose == "case":
         return True
     if asset.visibility == "team":
         return True

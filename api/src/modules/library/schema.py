@@ -179,6 +179,9 @@ class LibraryAssetOut(CamelModel):
     id: str
     name: str
     kind: LibraryAssetKind
+    #: 用途：空串 = 普通素材，`case` = 模板库的展示案例。
+    #: 与 `kind`（媒体类型）正交 —— 案例仍然要按 image/video 渲染封面与播放。
+    purpose: str = ""
     origin: str = Field(description="upload / generated / template_source / imported / pack")
     mime_type: str | None = None
     size_bytes: int = 0
@@ -440,6 +443,20 @@ class AssetPatchIn(CamelModel):
 
     name: str | None = Field(default=None, min_length=1, max_length=200)
     tag_ids: list[str] | None = None
+    expected_version: int = Field(
+        default=0, description=">0 时做乐观锁校验；0 表示不校验（兼容单页操作）"
+    )
+
+
+class SetPurposeIn(CamelModel):
+    """设置资产用途：空串 = 普通素材，`case` = 模板库的展示案例。
+
+    单独一个接口而不是塞进 `AssetPatchIn`：改名是日常操作，改用途会**改变这条
+    素材的可见范围**（案例对所有人可读）与它出现的位置（进案例池、退出个人库），
+    混在一起会让「只想改个错别字」的请求顺手把素材推出自己的库。
+    """
+
+    purpose: str = Field(default="", max_length=16)
     expected_version: int = Field(
         default=0, description=">0 时做乐观锁校验；0 表示不校验（兼容单页操作）"
     )

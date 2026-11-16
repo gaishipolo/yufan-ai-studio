@@ -5,6 +5,7 @@ import {
   Plus,
   RotateCcw,
 } from 'lucide-react';
+import { useMutation } from '@tanstack/react-query';
 import { useModels } from '@/entities/model/api/model.queries';
 import { ParamFields } from '@/entities/model/ui/ParamFields';
 import {
@@ -23,7 +24,16 @@ import {
   useTrashedSpecs,
 } from '@/entities/template-spec/api/spec.queries';
 import type { SpecSlotIn, TemplateSpecIn, TemplateSpecOut } from '@/shared/api/schema';
-import { Button, Chip, EmptyState, FormField, PageHeader, Select, TextInput } from '@/shared/ui';
+import {
+  Button,
+  Chip,
+  EmptyState,
+  FormField,
+  Modal,
+  PageHeader,
+  Select,
+  TextInput,
+} from '@/shared/ui';
 import { cn } from '@/shared/lib/cn';
 import { AssetPicker, type PickKind, type PickedAsset } from '@/features/template-specs/AssetPicker';
 import { AddSlotMenu } from '@/features/template-specs/AddSlotMenu';
@@ -79,8 +89,25 @@ export function SpecWorkspace() {
   const [hint, setHint] = useState('');
   const [picker, setPicker] = useState<PickTarget | null>(null);
   const [uploading, setUploading] = useState(false);
+  /* 选了一条还不在案例池里的素材：先问一句再动它。
+     「设为案例」= 把这条素材**移出**个人库（普通列表默认不再显示它），
+     不是复制一份，所以要让人看见这件事再确认。 */
+  const [pendingCase, setPendingCase] = useState<PickedAsset | null>(null);
   const [drag, setDrag] = useState<DragState>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  const promoteCase = useMutation({
+    mutationFn: (asset: PickedAsset) => libraryApi.setPurpose(asset.id, 'case'),
+    onSuccess: (_row, asset) => {
+      setDraft(current => (current ? {...current, demoAssetId: asset.id} : current));
+      setPendingCase(null);
+      setNote('已移入案例池并设为展示案例');
+    },
+    onError: (reason: unknown) => {
+      setPendingCase(null);
+      fail(reason);
+    },
+  });
 
   const busy =
     validate.isPending ||
@@ -89,7 +116,8 @@ export function SpecWorkspace() {
     disable.isPending ||
     remove.isPending ||
     restore.isPending ||
-    uploading;
+    uploading ||
+    promoteCase.isPending;
   // 契约里 `slots` 是可选的（后端有默认空列表），编辑器一律按非空处理。
   const slots = draft?.slots ?? [];
   const pickerSlot = picker?.target === 'slot' ? slots[picker.index] : undefined;
@@ -213,25 +241,28 @@ export function SpecWorkspace() {
   const pick = (asset: PickedAsset) => {
     if (!draft || !picker) return;
     if (picker.target === 'demo') {
-      setDraft({...draft, demoAssetId: asset.id});
-    } else {
-      const id = picker.index;
-      const slot = slots[id];
-      patchSlot(
-        id,
-        slot.type === 'pack'
-          ? {
-              packId: asset.id,
-              assetId: null,
-              label: slot.label?.trim() ? slot.label : asset.name,
-            }
-          : {
-              assetId: asset.id,
-              packId: null,
-              label: slot.label?.trim() ? slot.label : asset.name,
-            },
-      );
+      setPicker(null);
+      // 已经在案例池里的直接引用；否则先确认 —— 这一步会改变素材的可见范围。
+      if (asset.purpose === 'case') setDraft({...draft, demoAssetId: asset.id});
+      else setPendingCase(asset);
+      return;
     }
+    const id = picker.index;
+    const slot = slots[id];
+    patchSlot(
+      id,
+      slot.type === 'pack'
+        ? {
+            packId: asset.id,
+            assetId: null,
+            label: slot.label?.trim() ? slot.label : asset.name,
+          }
+        : {
+            assetId: asset.id,
+            packId: null,
+            label: slot.label?.trim() ? slot.label : asset.name,
+          },
+    );
     setPicker(null);
   };
 
@@ -240,9 +271,11 @@ export function SpecWorkspace() {
     clear();
     setUploading(true);
     try {
+      // 案例与普通素材分开落库：`purpose=case` 让它进案例池（对所有人可读、
+      // 不进个人库列表），模板只引用一个 id，不复制字节。
       const asset = file.type.startsWith('video/')
-        ? await libraryApi.uploadSourceVideo(file)
-        : await libraryApi.upload(file, 'image');
+        ? await libraryApi.uploadSourceVideo(file, {purpose: 'case'})
+        : await libraryApi.upload(file, 'image', {purpose: 'case'});
       setDraft(current => (current ? {...current, demoAssetId: asset.id} : current));
     } catch (reason) {
       fail(reason);
@@ -646,6 +679,37 @@ export function SpecWorkspace() {
         onClose={() => setPicker(null)}
         onToggle={pick}
       />
+
+      {/* 把一条普通素材变成案例：要说清「不是复制一份」，否则作者会以为素材
+          还在自己库里的老位置，回头找不到就当成丢了。 */}
+      <Modal
+        open={pendingCase !== null}
+        onClose={() => setPendingCase(null)}
+        title="把这条素材设为案例"
+        width={460}
+      >
+        <div className="flex flex-col gap-3">
+          <p className="text-body leading-relaxed text-ink-soft">
+            「{pendingCase?.name}」会被移入
+            <span className="font-medium text-ink"> 案例池 </span>
+            ：模板库的所有人都能看到它，它也不再出现在你的个人素材列表里。
+            素材只有一份，不是复制。
+          </p>
+          <p className="text-meta text-ink-mute">
+            已经在别处用到的模板不受影响；这一步可以撤销（设为案例后可再改回普通素材）。
+          </p>
+          <div className="flex justify-end gap-2 pt-1">
+            <Button onClick={() => setPendingCase(null)}>取消</Button>
+            <Button
+              variant="primary"
+              loading={promoteCase.isPending}
+              onClick={() => pendingCase && promoteCase.mutate(pendingCase)}
+            >
+              确认设为案例
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </section>
   );
 }
@@ -770,8 +834,13 @@ function SpecCard({
 }) {
   const slotCount = item.draft?.slots?.length ?? item.latest?.slots?.length ?? 0;
   const model = item.draft?.model || item.latest?.model || '';
+  /* 悬停态挂在整张卡上（不是封面那个 button）：脚上的状态与操作也算「鼠标在这张卡上」，
+     视频不该因为鼠标压到下面几行就断掉。 */
+  const [hovering, setHovering] = useState(false);
   return (
     <div
+      onMouseEnter={() => setHovering(true)}
+      onMouseLeave={() => setHovering(false)}
       className={cn(
         // 卡片是「浮起来的一层」：静止就有一线投影，悬停再抬半像素。
         // 只描边的话，浅色封面与白底会连成一片（案例图经常是浅色），
@@ -792,6 +861,7 @@ function SpecCard({
           seed={item.key}
           className="aspect-[16/9] w-full"
           hoverPlay
+          active={hovering}
         />
         <span
           aria-hidden

@@ -20,23 +20,33 @@ export function AssetPreview({
   playable = true,
   /** 悬停自动播（列表卡片用）：静音、循环，鼠标移开回到封面。 */
   hoverPlay = false,
+  /** 悬停态交给调用方控制。卡片把 mouseenter 挂在**整张卡**上时传它：视频区域只占
+   *  卡片上半截，鼠标落在名称/chips 那几十像素上时，自己监听的事件收不到，看起来
+   *  就是「卡片不动」。不传则退回自己监听（编辑器里的独立封面用这个）。 */
+  active,
   alt = '展示案例',
 }: {
   assetId: string;
   className?: string;
   playable?: boolean;
   hoverPlay?: boolean;
+  /**
+   * 外部控制的悬停态。`undefined` = 自己监听 mouseenter/mouseleave；
+   * `true/false` = 完全听调用方的，本组件不再绑事件（否则两套状态会互相覆盖）。
+   */
+  active?: boolean;
   alt?: string;
 }) {
   const detail = useLibraryDetail(assetId);
   const isVideo = detail.data?.kind === 'video';
   const [playing, setPlaying] = useState(false);
   const [hovered, setHovered] = useState(false);
+  const hoverNow = active ?? hovered;
   /* 取流只在真的要播时才发：卡片上一排视频各拉一份 blob 是浪费，hover 一次也只发一次
      （`useLibraryMedia` 有 5 分钟缓存）。 */
   const media = useLibraryMedia(
     assetId,
-    isVideo && ((playable && playing) || (hoverPlay && hovered)),
+    isVideo && ((playable && playing) || (hoverPlay && hoverNow)),
   );
 
   if (isVideo && playable && playing) {
@@ -83,13 +93,18 @@ export function AssetPreview({
   const cover = detail.data?.coverUrl ?? undefined;
 
   if (isVideo && hoverPlay) {
-    const playingNow = hovered && !!media.url;
+    const playingNow = hoverNow && !!media.url;
+    /* 外部接管时不再绑自己那对事件：整张卡已经负责了，两套状态各自 setHovered 只会打架
+       （鼠标从封面滑到 chips 上会被判成「离开了」）。 */
+    const ownEvents =
+      active === undefined
+        ? {
+            onMouseEnter: () => setHovered(true),
+            onMouseLeave: () => setHovered(false),
+          }
+        : {};
     return (
-      <div
-        className={cn('relative overflow-hidden', className)}
-        onMouseEnter={() => setHovered(true)}
-        onMouseLeave={() => setHovered(false)}
-      >
+      <div className={cn('relative overflow-hidden', className)} {...ownEvents}>
         <CoverImage src={cover} seed={assetId} alt={alt} className="h-full w-full" />
         {/* 视频压在封面上而不是替换它：下载没完成时看到的仍是封面，不是黑块。 */}
         {playingNow && (

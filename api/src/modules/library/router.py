@@ -21,9 +21,11 @@ from fastapi.responses import Response
 
 from api.deps import PageDep, rate_limit
 from core.config import settings
+from core.exceptions import BadRequest, Forbidden
 from core.ports.library_ingest import IngestRequest
 from core.ports.library_lookup import LibraryAssetKind, LibraryAssetState
 from core.response import ApiResponse
+from modules.library import access
 from modules.library.dependencies import (
     BulkDep,
     BulkServiceDep,
@@ -68,6 +70,7 @@ from modules.library.schema import (
     LibraryTagStatOut,
     PackIn,
     PackPatchIn,
+    SetPurposeIn,
     ShareDecisionIn,
     ShareRequestIn,
     ShareRequestOut,
@@ -82,6 +85,23 @@ from modules.library.schema import (
 )
 
 router = APIRouter(prefix="/library", tags=["资产库"])
+
+
+def _case_purpose(actor: object, purpose: str | None) -> str:
+    """把 `purpose` 查询参数翻成服务层要的值，并在这里把关权限。
+
+    只认空串与 `case`：拼错一个词（`cases` / `demo`）如果被静默忽略，用户上传完
+    发现库里没有、案例池里也没有，只能靠猜。写权限与读权限分开——
+    能浏览全部案例不代表能往池子里放东西。
+    """
+    target = (purpose or "").strip().lower()
+    if not target:
+        return ""
+    if target != access.PURPOSE_CASE:
+        raise BadRequest(f"不支持的用途：{purpose}")
+    if not actor.has("library:case:write"):  # type: ignore[attr-defined]
+        raise Forbidden("没有上传案例的权限")
+    return target
 
 
 # --------------------------------------------------------------------------- #
@@ -99,12 +119,20 @@ async def list_assets(
     keyword: str = Query(default="", max_length=100),
     sort: AssetSort = AssetSort.CREATED_DESC,
     origin: Annotated[list[LibraryAssetOrigin] | None, Query()] = None,
+    purpose: Annotated[str | None, Query(max_length=16)] = None,
 ) -> ApiResponse[LibraryAssetPage]:
     """`state=draft|trash` 时忽略 `library`：草稿与回收站不在任何可见范围内。
 
     代审 / 管理员看全量靠权限点（`library:draft:review` / `library:delete:any`），
     不靠一个 `mine=false` 参数——参数能被任何人传，权限点不能。
+
+    `purpose=case` 是**案例池**入口：只有持 `library:case:read` 的人能浏览全部
+    案例。默认反过来——不传就从普通列表里排除案例，否则每个人打开「全部」都会
+    看到一堆模板的展示素材，还会把它们算进自己的数量。
     """
+    case_view = (purpose or "").lower() == access.PURPOSE_CASE
+    if case_view and not actor.has("library:case:read"):
+        raise Forbidden("没有浏览案例池的权限")
     return ApiResponse.ok(
         await service.list_assets(
             actor,
@@ -116,6 +144,9 @@ async def list_assets(
             keyword=keyword,
             sort=sort,
             origins=[item.value for item in origin] if origin else [],
+            purpose=access.PURPOSE_CASE if case_view else None,
+            # 案例池里只看案例；普通入口一律排除案例（含作者自己的）。
+            exclude_purposes=() if case_view else (access.PURPOSE_CASE,),
         )
     )
 
@@ -199,6 +230,7 @@ async def upload(
     # 120 而不是 160：服务层会给它加 `upload:<actorId>:` 前缀（40 字符）做
     # 按人隔离，列宽是 160，加起来刚好。
     source_key: Annotated[str | None, Query(alias="sourceKey", max_length=120)] = None,
+    purpose: Annotated[str | None, Query(max_length=16)] = None,
 ) -> ApiResponse[LibraryAssetOut]:
     """只收图片与音频：视频走 `/source-videos`（模板库专用）。
 
@@ -214,6 +246,7 @@ async def upload(
             actor=actor,
             origin="upload",
             source_key=source_key,
+            purpose=_case_purpose(actor, purpose),
         )
     )
 
@@ -240,6 +273,7 @@ async def upload_source_video(
     # 120 而不是 160：服务层会给它加 `upload:<actorId>:` 前缀（40 字符）做
     # 按人隔离，列宽是 160，加起来刚好。
     source_key: Annotated[str | None, Query(alias="sourceKey", max_length=120)] = None,
+    purpose: Annotated[str | None, Query(max_length=16)] = None,
 ) -> ApiResponse[LibraryAssetOut]:
     """等价于旧 `POST /assets/upload?category=source`，只是路径与来源不同。
 
@@ -251,6 +285,7 @@ async def upload_source_video(
             filename,
             kind=UploadKind.VIDEO,
             actor=actor,
+            purpose=_case_purpose(actor, purpose),
             origin="template_source",
             source_key=source_key,
         )
@@ -322,6 +357,31 @@ async def patch_asset(
     service: LibraryServiceDep,
 ) -> ApiResponse[LibraryAssetDetailOut]:
     return ApiResponse.ok(await service.patch(asset_id, payload, actor))
+
+
+@router.post(
+    "/assets/{asset_id}/purpose",
+    summary="设置用途：普通素材 / 模板案例",
+    dependencies=[Depends(rate_limit("library.asset_write", limit=60))],
+)
+async def set_asset_purpose(
+    asset_id: str,
+    payload: SetPurposeIn,
+    actor: LibraryUpdateDep,
+    service: LibraryServiceDep,
+) -> ApiResponse[LibraryAssetOut]:
+    """把素材移入案例池（`purpose=case`）或移回普通素材（空串）。
+
+    「选已有素材当案例」走这个接口：字节不复制，模板引用的仍是同一个 id。
+    移入案例池要 `library:case:write`——它会改变这条素材的可见范围，
+    不是一次普通的改名。
+    """
+    target = payload.purpose.strip().lower()
+    if target == access.PURPOSE_CASE and not actor.has("library:case:write"):
+        raise Forbidden("没有设置案例的权限")
+    return ApiResponse.ok(
+        await service.set_purpose(asset_id, target, actor, payload.expected_version)
+    )
 
 
 @router.delete(

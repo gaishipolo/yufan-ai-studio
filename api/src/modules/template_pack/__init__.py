@@ -36,7 +36,7 @@ from core.ports.library_references import (
     LibraryReferenceSource,
     bind_library_reference_sources,
 )
-from modules.template_pack.library_references import SpecFixedAssets
+from modules.template_pack.library_references import SpecDemoCases, SpecFixedAssets
 from modules.template_pack.spec_router import router as spec_router
 
 router = APIRouter()
@@ -50,6 +50,13 @@ LIBRARY_REFERENCE_SOURCES = (
         checker=SpecFixedAssets(),
         location="modules/template_pack/models.py:TemplateSpecSlot.asset_id",
         description="已发布版本里固定槽位绑定的 v2 资产；草稿不在此表，不拦",
+    ),
+    # 展示案例：卡片上的封面与悬停视频就是这条素材本身，删了卡片会静默变空白。
+    LibraryReferenceSource(
+        name="template_specs.draft.demoAssetId",
+        checker=SpecDemoCases(),
+        location="modules/template_pack/spec_service.py:publish（draft.demoAssetId）",
+        description="模板草稿里指向的展示案例；软删模板恢复后仍算引用",
     ),
 )
 bind_library_reference_sources("template_pack", LIBRARY_REFERENCE_SOURCES)
