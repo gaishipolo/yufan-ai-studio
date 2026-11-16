@@ -4,7 +4,7 @@ import json
 import httpx
 import pytest
 
-from core.exceptions import BadRequest, UpstreamError
+from core.exceptions import BadRequest, NotFound, UpstreamError
 from infra.ai.base import Capability, GenerationRequest, GenerationState
 from modules.model_driver.drivers import bailian
 
@@ -366,3 +366,61 @@ def test_submit_budget_covers_the_upload_fallback() -> None:
     没有任务号」= 结果未知、禁止重提，而上传本身并不产生费用。
     """
     assert bailian.BailianProvider.submit_timeout_sec >= 300
+
+
+async def test_generic_entry_materializes_workspace_before_locating_it(monkeypatch):
+    """通用入口（params 里没有 `archiveRunId`）必须**先建档案、再取目录**。
+
+    真实故障（2026-11-16，任务 0454d72e）：`submit` 先 `run_path` 后 `materialize`，
+    而 `run_path` 读的指针与 `run.json` 恰恰由 `materialize` 创建 —— 于是任务受理
+    0.1 秒后以 `NotFound: 调用档案不存在` 失败，一次上游请求都没发。
+    这里用调用顺序钉住它，防止再被调回去。
+    """
+    calls: list[str] = []
+
+    async def fake_materialize(request):
+        calls.append("materialize")
+
+    def fake_run_path(run_id: str):
+        calls.append("run_path")
+        # 真实现：指针/run.json 还没建时就是这样抛的
+        raise NotFound("调用档案不存在")
+
+    monkeypatch.setattr(bailian, "materialize", fake_materialize)
+    monkeypatch.setattr(bailian, "run_path", fake_run_path)
+
+    req = GenerationRequest(
+        Capability.VIDEO, bailian.MODEL_ID, "", params={}, request_id="a" * 32
+    )
+    with pytest.raises(NotFound):
+        await provider(lambda _: pytest.fail("不该打到上游")).submit(req)
+    assert calls[:2] == ["materialize", "run_path"]
+
+
+async def test_archive_run_id_skips_materialize(workspace, monkeypatch):
+    """替换链已经把档案建好（带 `archiveRunId`）：不许再物化一次。
+
+    `materialize` 虽然幂等，但真跑起来会重新下载参考素材；替换链每条任务都
+    多下一遍几百 MB 的片子，是白花的带宽与延迟。
+    """
+    materialized: list[object] = []
+
+    async def fake_materialize(request):
+        materialized.append(request)
+
+    monkeypatch.setattr(bailian, "materialize", fake_materialize)
+
+    def handle(request):
+        if "video-synthesis" in request.url.path:
+            return httpx.Response(200, json={"output": {"task_id": "task-9"}})
+        return upload_handler(request)
+
+    req = GenerationRequest(
+        Capability.VIDEO,
+        bailian.MODEL_ID,
+        "",
+        params={"archiveRunId": "run"},
+        request_id="run",
+    )
+    assert await provider(handle).submit(req) == "run:task-9"
+    assert materialized == []

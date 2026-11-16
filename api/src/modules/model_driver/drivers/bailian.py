@@ -395,7 +395,19 @@ class BailianProvider:
 
     # ------------------------------------------------------------------ 提交
     async def submit(self, request: GenerationRequest) -> str:
-        folder = await asyncio.to_thread(run_path, request.request_id)
+        run_id = self._ensure_supported(request)
+        if request.params.get("archiveRunId") != run_id:
+            # 通用入口（工作台 / 模板库）没有替换链在受理期写好的归档，**必须先补档案
+            # 再取目录**：`run_path` 读的是归档存储里的指针，还要求目录里已经有
+            # `run.json`，而创建这两样正是 `materialize()` 的活
+            # （`generic_inputs._ensure_workspace`）。
+            #
+            # 顺序反过来就是「先取目录、后建目录」：任务受理后 0.1 秒内以
+            # `NotFound: 调用档案不存在` 失败，且**一次上游请求都没发**（没计费），
+            # 用户只看到一句「提交生成失败」。LibTV 的 `submit` 本来就是先物化
+            # 再 `run_path`，这里对齐它（2026-11-16 修）。
+            await materialize(request)
+        folder = await asyncio.to_thread(run_path, run_id)
         lock = lease(folder / "records/bailian-submit.lock")
         await asyncio.to_thread(lock.__enter__)
         try:
@@ -403,16 +415,21 @@ class BailianProvider:
         finally:
             await asyncio.to_thread(lock.__exit__, None, None, None)
 
-    async def _submit(self, request: GenerationRequest) -> str:
+    @staticmethod
+    def _ensure_supported(request: GenerationRequest) -> str:
+        """提交前的硬校验：能力 / 模型 / 任务标识。
+
+        放在物化之前 —— 一个不受支持的请求不该先把参考素材下载一遍再被拒绝。
+        """
         if request.capability != Capability.VIDEO:
             raise BadRequest("百炼通道仅支持视频生成")
         _real_model(request.model)
-        run_id = request.request_id
-        if not run_id:
+        if not request.request_id:
             raise BadRequest("缺少任务标识")
-        if request.params.get("archiveRunId") != run_id:
-            # 通用生成入口：补出替换链同款档案，下面的素材上传与回执照旧。
-            await materialize(request)
+        return request.request_id
+
+    async def _submit(self, request: GenerationRequest) -> str:
+        run_id = self._ensure_supported(request)
         folder = await asyncio.to_thread(run_path, run_id)
         receipt_file = folder / "records/bailian-submission.json"
         if await asyncio.to_thread(receipt_file.exists):
