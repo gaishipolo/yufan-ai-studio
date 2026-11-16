@@ -404,3 +404,12 @@ Base64 直传），届时改 `drivers/bailian.py` 的 `prepare_inputs` 一处即
 | 框架层覆盖式审查（调度 / 备份 / 归档 / 存储） | 已修 | ① `Scheduler` 的 handler 加了执行上限（默认 `max(60, every*2)`，与 `leader_only` 的租约 TTL 同一个数）：原来顺次 `await` 且无超时，一个**回不来**的 handler（卡住的 `pg_dump`、没有读超时的第三方调用）会让进程内全部周期任务永久停摆，且日志里一条错都没有；② `db/backup.py` 的 `pg_dump` / `pg_restore` 补 `BACKUP_COMMAND_TIMEOUT_SEC`（默认 3600）——取消协程不会杀子进程，卡死一次就永久占住一个线程；`backup_loop` 改捕 `Exception`（原来只捕 `BackupError`/`OSError`，库连不上抛的是 `OperationalError`，于是清理被一起跳过）；③ S3 归档物化缓存的临时文件名从 `{sha1}.{pid}.part` 改成带 `uuid4`：取件走 `to_thread`，同进程两个线程并发下载同一份字节会互相踩（Windows `PermissionError`、POSIX `FileNotFoundError`）；`_evict` 容忍删不掉的缓存文件（Windows 上正在被读的文件不许删）；④ `LocalArchiveStorage.create()` 改成「临时文件 + `os.link`」：`open("xb")` 独占但不原子，崩在中间会留下截断 JSON，而 `create` 之后永远返回 `False`，版号成了永久黑洞；⑤ `LocalStorage.delete()` 用 `missing_ok`，去掉「先 `exists` 再 `unlink`」的竞态（违反幂等承诺 → 500）；⑥ `media_probe.inspect()` 捕 `TimeoutExpired` → `BadRequest`，探测超时不再报成 500 |
 
 `ARCHITECTURE.md` / `EXTENSIBILITY_GAPS.md` 里 A 组 13 条已修 10 条，剩余 3 条即上面的 T7/T8/T9。
+## 审查遗留（2026-11-17，审查 21:00 之后的八笔提交时发现，本轮未做）
+
+| # | 项目 | 现状 | 验收口径 |
+|---|---|---|---|
+| T45 | `library_asset_generation.pack_id / pack_version` 两列与对应契约字段仍在 | 封装下线时只删了旧表，这两列与契约一起留着；需一条迁移 + 同步 schema / ORM / 前端生成类型 | 迁移可升可降；契约里不再有 `packId` |
+| T46 | 模板封装页的「展示案例」选择器看不到案例池 | 选择器走 `/library/selection`，它默认排除案例，因此 `asset.purpose === 'case'` 那句永远不命中 | 选择器能列出案例池；已在池的能直接引用 |
+| T47 | `allowedModels` 的「接不接得住编号槽位」闸只判 `max_references == 0` | 「只收少」的模型会等到使用者提交才被 400 | 发布时按「固定槽 1 + 用户槽 max_count」与 `model.max_references` 直接比 |
+| T48 | 案例池的跨用户可读、无 `library:case:read` 时 403、案例不进普通列表与回收站 | 目前只有「标签计数与列表对账」这一条用例 | 三类用例全部通过 |
+| T49 | 模板封装页的「设为案例 / 上传案例」入口未按 `library:case:write` 收敛 | 后端会拒（403），但界面仍把入口露出来 | 无权限时入口不出现 |

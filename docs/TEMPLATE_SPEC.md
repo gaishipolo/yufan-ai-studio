@@ -22,7 +22,7 @@
 - `modules/task/service.py`：文本参考走 `freeze_text_refs` 冻结；
 - `CreateTaskIn`：`prompt + model + referenceLibraryIds + textLibraryIds + durationSec/aspectRatio`，已经是通用形态；
 - `ModelSpec.param_schema`：参数区由模型声明驱动，前端不用为每个模型写表单；
-- 资产库：`video / audio / image / pack / text` 五类，`core/ports/library_lookup` 是唯一读取入口。
+- 资产库：`video / audio / image / text` 四类（`pack` 已随素材封装下线），`core/ports/library_lookup` 是唯一读取入口。
 
 所以结论不是「给封装加字段」，而是**把模板降级为「表单元数据」，把执行让给 task**。
 
@@ -101,9 +101,12 @@
 | `label` | str(1..40) | 槽位名的展示文案（"产品主图"/"背景音乐"） |
 | `usage` | str(0..500) | 进提示词说明的用途描述（对应旧 `PACK_ROLES` 的说明与逐图 `description`） |
 | `asset_id` | str \| null | 非封装槽位且 `binding=fixed` 时必填；其余为空 |
-| `pack_id` | str \| null | `type=pack` 且 `binding=fixed` 时必填；其余为空 |
 | `tag_ids` | list[str] | **候选集范围**：一组标签 id（**任意级别**：分组 / 系列 / 具体词），空 = 不限。固定与填写都只在这几个标签（各自含下级）里挑；多个标签之间是并集；编译不看它 |
 | `position` | int | 排序，**就是编号顺序**，见 §6 |
+
+> 素材封装（`kind=pack`）下线后，槽位表里的 `pack_id` 与 `type=pack` 相关约束已从契约里删除（
+> 后端 `SpecSlotIn` 里没有这些字段，迁移 `c3d8e1f04a7b` 也删了 `template_spec_slots.pack_id`。
+> 本文其余段落里提到封装的地方是历史设计记录，不是现行契约。
 
 约束：
 
