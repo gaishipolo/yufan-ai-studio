@@ -14,7 +14,7 @@
 | 仓库 / 分支 | `https://github.com/gaishipolo/yufan-ai-studio` · `main` |
 | HEAD | 本地领先 `origin/main` **4 笔未推送**（`822a4cd` 计费模式进 paramSchema → `bfa03e1` 模板库计费模式 → `e6e2f91` 任务中心不再能创建任务 → `2ed4943` 参数全面由模型 paramSchema 驱动）；**推送前先问用户**。笔数以 `git rev-list --count origin/main..HEAD` 为准，hash 见 `git log --oneline origin/main..HEAD`。另有**未提交的前端视觉重构**（2026-11-16，见 §1）。未跟踪的只有 `var/`、临时脚本（如 `var_fix_fe.py`）、快捷方式 `.lnk`、`vite.config.ts.timestamp-*.mjs` 与用户私有的 `EXCHANGE_TOPICS_2026-11-12.md`，都不该进提交 |
 | CI | 此前连续多轮全绿（含 `bc0940e`）；本轮推送后照 §4 核对。PG 迁移仍在观察期（`continue-on-error`） |
-| 本机门禁 | **前端**（2026-11-16 视觉重构 + 资产库三件事）：`npm run verify` 全绿 —— typecheck 0 / lint 0 / **625 passed（78 文件）** / build ok。**后端**（同轮资产库改造）：`pytest -q` **1369 passed / 12 skipped** / ruff 0 / mypy 248 文件 0；契约四份已重导出 |
+| 本机门禁 | **前端**（2026-11-16 视觉重构 + 资产库三件事）：`npm run verify` 全绿 —— typecheck 0 / lint 0 / **657 passed（83 文件）** / build ok。**后端**（同轮资产库改造）：`pytest -q` **1369 passed / 12 skipped** / ruff 0 / mypy 248 文件 0；契约四份已重导出 |
 | 规模 | 11 个业务模块 · **95 条路径 / 125 个端点** · **53 个权限码** · **4 份**契约生成物（数字以 `app modules` 与 `api/docs/openapi.json` 为准，别再手抄） |
 | 后端 | `api/.venv/Scripts/app.exe serve --reload` → 8080，前缀 **`/api/v1`**（裸 `/health` 会返回 40400） |
 | 前端 | `cd studio && npm run dev` → 5173，`/api` 已代理到 8080 |
@@ -123,7 +123,7 @@ tailwind 补 `animate-slideUp`（朝上弹时动画方向要对）。
 （`docs/ROUTES.md` 已重新生成）、4 条只测宫格的用例。
 **新增模块现在只声明 `routes[].nav` 一处展示信息。**
 
-**门禁**：`npm run verify` 全绿 —— typecheck 0 / lint 0 / **625 passed（78 文件）** / build ok。
+**门禁**：`npm run verify` 全绿 —— typecheck 0 / lint 0 / **657 passed（83 文件）** / build ok。
 测试改动：`StudioPage.test.tsx` 的 `react-router-dom` mock 补 `Link`；
 `ReferenceImages` 的提示文案改短后同步断言；`PromptBox.test.tsx` 新增浮层方向
 与「英文后打 @」用例；`mention.test.ts` 新增「英文后打 @」用例
@@ -293,6 +293,39 @@ payload 里拿掉（那要动契约），改成「物化前按 key 反查资产�
 没按人隔离）没有改键的格式（会打断生成侧按前缀查与存量行），改成 owner 过滤 + 409。
 
 **没做的**：F16（每张案例封面各发一次详情请求）需要改模板契约，本轮没做。
+
+### 1.2 模板封装：模型可选 + 槽位标签任意组合 + 提示词占位显示插槽名（2026-11-17，已提交）
+
+用户提了四件事，其中三件是功能、一件是检查。
+
+**模型也可选**：作者能声明「用这个模板时允许选哪些模型」（`allowedModels`，最多 10 条，
+每款都要过参数/槽位那两道闸）。清单随**发布快照**走 —— 改完要重新发版，使用者才看到
+新的可选项（与 `model` 同样的冻结口径）。模板库的使用面板在清单非空时给一个只含清单内
+模型的下拉；挑了不在清单里的模型直接 400，**不静默换回固定模型**。迁移
+`f3a8c1d5e902` 给 `template_spec_versions` 加 `allowed_models` JSON 列。
+
+**槽位标签任意组合**：槽位从**一个** `tagId` 改成**一组** `tagIds`（任意级别，组合起来是并集）；
+资产库标签栏支持**跨链多选**（选「产品」与选「角色」可以并存），同一条链上仍只留最具体
+那一层（选了二级就别再留它的一级，否则范围重复）。模板库里的素材选择器同样三级 + 多选。
+老模板走**读时回退**而不是破坏性迁移：契约层把老草稿的 `tagId` 翻译成 `tagIds` 的第一项
+（否则 `extra=forbid` 会让老草稿一打开就 422），行级新增 `template_spec_slots.tag_ids`，
+读时为空就退回旧的 `tag_id`。迁移 `d9e4f1a83c07` 只加列不回填。
+
+**提示词占位**：textarea 里只能是原始 token（`{{slot:image_1}}` 这种内部 id，作者读不懂），
+所以输入框下面加一段**预览**：占位渲染成带类型图标的 chip（「主图」），普通文字是纯文字 ——
+一眼就知道哪几段会被素材顶掉。预览限高 110px 自己滚，不把右栏撑开。
+
+**上传代码的检查结论**：
+
+- **日期是对的**：库里存 UTC（`created_at` 就是上传那一刻），接口按 `UtcDateTime` 输出
+  带 `Z` 的 ISO（naive 值按 UTC 补齐 —— sqlite 读回没有时区，不补齐前端 `new Date()`
+  会按本地时区解析，整体偏 8 小时），前端 `formatDateTime` 再转本地。实测库里
+  `2026-11-12T01:46:08Z` → 本地 `11-12 09:46` ✓。
+- **上传时打标签的实现是合理的**：标签整批统一（不能给不同文件打不同标签）；只给**叶子**
+  可选（一级分组是打标守卫拒掉的，界面不能给）；扩展名白名单与后端同一份；体积上限与后端
+  对齐（文本 1MB、其余 300MB）；打标签是**第二段**——失败只提示「标签未打上」，不会把已经
+  上传成功的文件报成「上传失败」（那会让用户重传、库里多一条重复素材）。
+  唯一可挑的：每个文件一次 PATCH，N 个文件 N 次请求（后端本来就有批量 `addTag`）。
 
 ## 3. 没做完的（直接从这里开工）
 
