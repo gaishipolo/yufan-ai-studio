@@ -21,6 +21,7 @@ import { AssetPicker, type PickedAsset } from '@/features/template-specs/AssetPi
 import { ParamFields } from '@/entities/model/ui/ParamFields';
 import { Button, Chip, EmptyState, SearchInput, Skeleton } from '@/shared/ui';
 import { cn } from '@/shared/lib/cn';
+import { useStickyFitHeight } from '@/shared/hooks/useStickyFitHeight';
 import { toSubmitPayload, type SubmitKind } from './taskPayload';
 
 /**
@@ -187,6 +188,12 @@ export function SpecLibrary() {
   const [picker, setPicker] = useState<string | null>(null);
   const [note, setNote] = useState('');
   const [error, setError] = useState('');
+
+  /* 右栏的高度上限：不写死「视口减几」，量它自己站在哪儿。
+     页面刚打开时它还没吸住（上面顶着「模板库」标题），自然位置比吸顶位置低，
+     只按吸顶位置算上限就会把底边顶出视口 —— 用户看到的正是「滚动到顶部右栏被遮一点」。
+     右栏是数据回来才挂的，所以上限交给回调 ref：面板一挂上就量一次。 */
+  const {ref: asideRef, maxHeight: asideMaxHeight} = useStickyFitHeight();
 
   const items = useMemo(() => {
     const all = published.data?.items ?? [];
@@ -394,8 +401,16 @@ export function SpecLibrary() {
 
       {/* 右栏固定（`xl` 以上吸顶），中间那一段自己滚：槽位多的时候整块会比视口还高，
           不自己滚的话「生成」按钮就永久停在屏幕下面，填到最后还得滚页面去找它。
-          头（模板名/版本）和脚（提交按钮）留在滚动区外，滚的只有中间的素材区。 */}
-      <aside className="relative flex flex-col overflow-hidden rounded-2xl border border-line bg-panel shadow-float xl:sticky xl:top-[71px] xl:max-h-[calc(100vh-91px)]">
+          头（模板名/版本）和脚（提交按钮）留在滚动区外，滚的只有中间的素材区。
+
+          高度上限交给 `useStickyFitHeight` 量：以前写死 `100vh - 91px`，
+          那个数只对「吸住之后」成立 —— 页面刚打开时它还顶着「模板库」标题，
+          自然位置比吸顶位置低 39px，底边就被视口切掉 11px。 */}
+      <aside
+        ref={asideRef}
+        style={{maxHeight: asideMaxHeight}}
+        className="relative flex flex-col overflow-hidden rounded-2xl border border-line bg-panel shadow-float xl:sticky xl:top-[71px]"
+      >
         {/* 一条从顶到底的渐变细线：右栏是「干活的地方」，左侧网格是「挑东西的地方」，
             给干活的那一侧一条自己的脊线，视线落在整页右侧时不会跟卡片混在一起。 */}
         <span
