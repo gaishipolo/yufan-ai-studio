@@ -26,12 +26,6 @@ export default defineModule({
         groupOrder: 2,
         order: 0,
       },
-      card: {
-        subtitle: '填素材即生成',
-        gradient: 'linear-gradient(140deg,#9b8cff,#7c5cff)',
-        order: 4,
-        matchPrefixes: ['/templates', '/storyboards', '/shots'],
-      },
     },
     {
       path: 'templates/specs',

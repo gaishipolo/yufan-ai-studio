@@ -21,11 +21,10 @@ describe('资产库入口', () => {
     expect(navOf('/assets')).toBeUndefined();
   });
 
-  it('侧栏与首页宫格里都没有 /assets', () => {
+  it('侧栏里没有 /assets', () => {
     const navPaths = appRegistry.navGroups.flatMap((group) => group.items).map((item) => item.path);
     expect(navPaths).toContain('/library');
     expect(navPaths).not.toContain('/assets');
-    expect(appRegistry.cards.map((card) => card.path)).not.toContain('/assets');
   });
 
   it('没有路由挂在 /assets 上，/library 只要 library:read', () => {

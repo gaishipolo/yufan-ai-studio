@@ -25,11 +25,6 @@ export default defineModule({
         groupOrder: 3,
         order: 1,
       },
-      card: {
-        subtitle: '草稿 / 小组 / 团队',
-        gradient: 'linear-gradient(140deg,#3ddc97,#12b3a0)',
-        order: 3,
-      },
     },
   ],
 });

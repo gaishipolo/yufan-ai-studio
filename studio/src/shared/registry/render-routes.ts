@@ -26,7 +26,6 @@ export function renderRoutes(registry: AppRegistry): string {
       navLabels.set(item.path, `${group.title} / ${item.label}`);
     }
   }
-  const cardPaths = new Set(registry.cards.map((card) => card.path));
 
   const lines: string[] = [
     BANNER,
@@ -38,8 +37,8 @@ export function renderRoutes(registry: AppRegistry): string {
     '> 路由由 `src/app/registry/index.ts` 的 `import.meta.glob` 自动发现；',
     '> 新增模块只需写 `module.ts`，本文件由 `npm run gen:routes` 重新生成。',
     '',
-    '| 路径 | 模块 | 外壳 | 权限 | 侧栏 | 宫格 |',
-    '| --- | --- | --- | --- | --- | --- |',
+    '| 路径 | 模块 | 外壳 | 权限 | 侧栏 |',
+    '| --- | --- | --- | --- | --- |',
   ];
 
   for (const route of [...registry.routes].sort((a, b) => a.path.localeCompare(b.path))) {
@@ -48,7 +47,7 @@ export function renderRoutes(registry: AppRegistry): string {
       : '—';
     const nav = navLabels.get(route.path);
     lines.push(
-      `| ${code(route.path)} | ${cell(route.moduleId)} | ${route.layout} | ${permissions} | ${nav ? cell(nav) : '—'} | ${cardPaths.has(route.path) ? '✓' : '—'} |`,
+      `| ${code(route.path)} | ${cell(route.moduleId)} | ${route.layout} | ${permissions} | ${nav ? cell(nav) : '—'} |`,
     );
   }
 
@@ -60,10 +59,10 @@ export function renderRoutes(registry: AppRegistry): string {
     }
   }
 
-  lines.push('', '## 模块清单', '', '| 模块 | 路由 | 导航 | 卡片 | 插槽 |', '| --- | --- | --- | --- | --- |');
+  lines.push('', '## 模块清单', '', '| 模块 | 路由 | 导航 | 插槽 |', '| --- | --- | --- | --- |');
   for (const mod of [...registry.modules].sort((a, b) => a.id.localeCompare(b.id))) {
     lines.push(
-      `| ${cell(mod.id)} | ${mod.routes.length} | ${mod.routes.filter((r) => r.nav).length} | ${mod.routes.filter((r) => r.card).length} | ${(mod.slots ?? []).length} |`,
+      `| ${cell(mod.id)} | ${mod.routes.length} | ${mod.routes.filter((r) => r.nav).length} | ${(mod.slots ?? []).length} |`,
     );
   }
 

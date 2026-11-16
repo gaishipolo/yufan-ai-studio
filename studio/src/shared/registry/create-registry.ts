@@ -5,7 +5,6 @@ import type {
   ModuleRouteDef,
   NavGroup,
   Permission,
-  ResolvedCard,
   ResolvedNavItem,
   ResolvedRoute,
   ResolvedSlot,
@@ -38,7 +37,7 @@ function fail(message: string): never {
  * 这里是纯函数：不读全局变量、不碰 React 运行时状态，因此可以被单测直接驱动。
  * 所有校验都在注册期完成 —— 配错了会立刻在启动时抛错，而不是运行时白屏。
  *
- * 侧栏入口与宫格卡片不再是平级数组，而是挂在 `route.nav` / `route.card` 上：
+ * 侧栏入口不再是平级数组，而是挂在 `route.nav` 上：
  * path / permissions 从这里继承，模块只写展示差异。这样「改权限漏一处」
  * 从结构上就不可能发生，也就不必再靠测试去比对三处是否一致。
  */
@@ -48,7 +47,6 @@ export function createRegistry(modules: AppModule[]): AppRegistry {
   const navOwners = new Map<string, string>();
   const routes: ResolvedRoute[] = [];
   const navItems: ResolvedNavItem[] = [];
-  const cards: Array<ResolvedCard & { seq: number }> = [];
   const slots: ResolvedSlot[] = [];
   const declaredPermissions = new Set<Permission>();
   let seq = 0;
@@ -87,26 +85,6 @@ export function createRegistry(modules: AppModule[]): AppRegistry {
         navOwners.set(path, mod.id);
         navItems.push({ ...def.nav, path, permissions, moduleId: mod.id });
       }
-
-      /* 宫格卡片：同上；title / icon 缺省取 nav，再兜底到模块 title */
-      if (def.card) {
-        const icon = def.card.icon ?? def.nav?.icon;
-        if (!icon) {
-          fail(
-            `模块 ${mod.id} 的宫格卡片 ${path} 缺少 icon：请补 card.icon，或在同一路由声明 nav.icon`,
-          );
-        }
-        cards.push({
-          ...def.card,
-          title: def.card.title ?? def.nav?.label ?? mod.title ?? path,
-          icon,
-          path,
-          permissions,
-          matchPrefixes: def.card.matchPrefixes ?? [path],
-          moduleId: mod.id,
-          seq: seq++,
-        });
-      }
     }
 
     for (const slot of mod.slots ?? []) {
@@ -118,13 +96,8 @@ export function createRegistry(modules: AppModule[]): AppRegistry {
 
   const navGroups = buildNavGroups(navItems);
 
-  const sortedCards = cards
-    .slice()
-    .sort((a, b) => (a.order ?? DEFAULT_ORDER) - (b.order ?? DEFAULT_ORDER) || a.seq - b.seq)
-    .map(({ seq: _seq, ...card }) => card);
-
-  /* 注册期校验：导航 / 卡片指向真实存在的路由、且不指向裸页。
-     派生之后这两条由结构保证（path 就是 route.path，bare 页在 assertRouteDef 里禁止声明），
+  /* 注册期校验：导航指向真实存在的路由、且不指向裸页。
+     派生之后这条由结构保证（path 就是 route.path，bare 页在 assertRouteDef 里禁止声明），
      但保留成断言，防止以后有人为了"灵活"把 path 改回可写而悄悄退化。 */
   const barePaths = new Set(routes.filter((route) => route.layout === 'bare').map((route) => route.path));
   const knownPaths = new Set(routes.map((route) => route.path));
@@ -134,14 +107,6 @@ export function createRegistry(modules: AppModule[]): AppRegistry {
     }
     if (barePaths.has(nav.path)) {
       fail(`导航项「${nav.label}」指向独立页面 ${nav.path}（layout: 'bare'）。`);
-    }
-  }
-  for (const card of sortedCards) {
-    if (!knownPaths.has(card.path)) {
-      fail(`宫格卡片「${card.title}」(${card.path}) 没有对应路由。`);
-    }
-    if (barePaths.has(card.path)) {
-      fail(`宫格卡片「${card.title}」指向独立页面 ${card.path}（layout: 'bare'）。`);
     }
   }
 
@@ -156,7 +121,6 @@ export function createRegistry(modules: AppModule[]): AppRegistry {
     modules,
     routes,
     navGroups,
-    cards: sortedCards,
     slots: slotMap,
     declaredPermissions: [...declaredPermissions].sort(),
   };
@@ -184,9 +148,9 @@ function assertRouteDef(mod: AppModule, def: ModuleRouteDef) {
   if (def.layout !== undefined && def.layout !== 'shell' && def.layout !== 'bare') {
     fail(`模块 ${mod.id} 的路由 ${def.path} 的 layout 只能是 'shell' 或 'bare'`);
   }
-  if (def.layout === 'bare' && (def.nav || def.card)) {
+  if (def.layout === 'bare' && def.nav) {
     fail(
-      `模块 ${mod.id} 的独立页面 ${def.path} 不能声明 nav / card。` +
+      `模块 ${mod.id} 的独立页面 ${def.path} 不能声明 nav。` +
         `bare 页面不套外壳，放进侧栏或宫格会失去导航与登录态。`,
     );
   }

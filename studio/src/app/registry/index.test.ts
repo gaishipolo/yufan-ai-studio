@@ -20,12 +20,6 @@ describe('appRegistry · 骨架不变量', () => {
     }
   });
 
-  it('每个宫格卡片都指向已注册的路由', () => {
-    for (const card of appRegistry.cards) {
-      expect(routePaths.has(card.path), `卡片 ${card.title} → ${card.path} 没有路由`).toBe(true);
-    }
-  });
-
   it('路由组件都已生成（lazy 包装成功）', () => {
     for (const route of appRegistry.routes) {
       expect(typeof route.Component, `路由 ${route.path} 缺少组件`).toBe('object');

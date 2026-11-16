@@ -21,12 +21,6 @@ export default defineModule({
         groupOrder: 1,
         order: 1,
       },
-      card: {
-        subtitle: '描述→脚本→分镜→成片',
-        gradient: 'linear-gradient(140deg,#5b8cff,#7c5cff)',
-        order: 1,
-        matchPrefixes: ['/studio', '/image'],
-      },
     },
   ],
 });

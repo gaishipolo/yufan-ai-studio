@@ -1,4 +1,4 @@
-import { Boxes, Layers } from 'lucide-react';
+import { Boxes } from 'lucide-react';
 import { describe, expect, it } from 'vitest';
 import { createRegistry } from './create-registry';
 import { defineModule } from './define-module';
@@ -61,28 +61,10 @@ describe('createRegistry · 装配', () => {
     expect(registry.navGroups[0].items.map((i) => i.label)).toEqual(['B', 'A']);
   });
 
-  it('宫格卡片缺省 matchPrefixes 时用自身路径', () => {
-    const registry = createRegistry([
-      moduleOf({
-        id: 'a',
-        routes: [
-          {
-            path: 'a',
-            load,
-            nav: { label: 'A', icon: Boxes, group: '创作' },
-            card: { subtitle: 's', gradient: 'x' },
-          },
-        ],
-      }),
-    ]);
-
-    expect(registry.cards[0].matchPrefixes).toEqual(['/a']);
-  });
-
-  /* B2：以前 path 与 permissions 要在 route / nav / cards 里各写一遍，
+  /* B2：以前 path 与 permissions 要在 route / nav 里各写一遍，
      改权限漏一处就是「入口可见但点进去 403」。现在由注册表继承，
      这个用例把「派生」本身钉住——不是靠人记得同步。 */
-  it('route.nav / route.card 的 path 与 permissions 一律继承 route', () => {
+  it('route.nav 的 path 与 permissions 一律继承 route', () => {
     const registry = createRegistry([
       moduleOf({
         id: 'a',
@@ -93,48 +75,14 @@ describe('createRegistry · 装配', () => {
             load,
             permissions: ['user:manage'],
             nav: { label: '侧栏甲', icon: Boxes, group: '系统' },
-            card: { subtitle: 's', gradient: 'x' },
           },
         ],
       }),
     ]);
 
     const nav = registry.navGroups[0].items[0];
-    const card = registry.cards[0];
     expect(nav.path).toBe('/a');
     expect(nav.permissions).toEqual(['user:manage']);
-    expect(card.path).toBe('/a');
-    expect(card.permissions).toEqual(['user:manage']);
-    // title / icon 从 nav 继承，没写第二遍
-    expect(card.title).toBe('侧栏甲');
-    expect(card.icon).toBe(Boxes);
-  });
-
-  it('card 可以单独指定 icon / title 覆盖 nav，不写 nav 时兜底到模块 title', () => {
-    const registry = createRegistry([
-      moduleOf({
-        id: 'a',
-        title: '甲模块',
-        routes: [
-          {
-            path: 'a',
-            load,
-            nav: { label: '侧栏甲', icon: Boxes, group: '系统' },
-            card: { subtitle: 's', gradient: 'x', icon: Layers, title: '宫格甲' },
-          },
-        ],
-      }),
-      moduleOf({
-        id: 'b',
-        title: '乙模块',
-        routes: [
-          { path: 'b', load, card: { subtitle: 's', gradient: 'x', icon: Layers } },
-        ],
-      }),
-    ]);
-
-    expect(registry.cards.map((c) => c.title)).toEqual(['宫格甲', '乙模块']);
-    expect(registry.cards[0].icon).toBe(Layers);
   });
 
   it('收集所有声明过的权限，并挂到对应路由上', () => {
@@ -214,7 +162,7 @@ describe('createRegistry · 校验（宁可启动报错，不要运行时白屏�
     );
   });
 
-  it('bare 路由不能声明 nav / card（裸页放进侧栏或宫格会丢外壳）', () => {
+  it('bare 路由不能声明 nav（裸页放进侧栏会丢外壳）', () => {
     expect(() =>
       createRegistry([
         moduleOf({
@@ -224,23 +172,12 @@ describe('createRegistry · 校验（宁可启动报错，不要运行时白屏�
               path: 'login',
               layout: 'bare',
               load,
-              card: { subtitle: 's', gradient: 'x', icon: Boxes },
+              nav: { label: '登录', icon: Boxes, group: '系统' },
             },
           ],
         }),
       ]),
-    ).toThrow(/独立页面 login 不能声明 nav \/ card/);
-  });
-
-  it('card 既没 icon 也没有 nav.icon → 抛错（产物类型不允许缺图标）', () => {
-    expect(() =>
-      createRegistry([
-        moduleOf({
-          id: 'a',
-          routes: [{ path: 'a', load, card: { subtitle: 's', gradient: 'x' } }],
-        }),
-      ]),
-    ).toThrow(/缺少 icon/);
+    ).toThrow(/独立页面 login 不能声明 nav/);
   });
 
   it('route.path 为空 —— 根路由只能由 HOME_PATH 决定', () => {
