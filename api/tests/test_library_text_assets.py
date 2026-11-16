@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
 from fastapi.testclient import TestClient
 from library_support import admin_headers, png_bytes, suffix
 
@@ -284,6 +285,55 @@ def test_update_to_another_asset_content_reports_duplicate_instead_of_409(
     # 文案要指向那一条同名素材，用户才知道该删哪份
     assert first["name"] in body["message"]
     assert body["details"]["duplicateId"] == first["id"]
+
+
+def test_concurrent_text_save_returns_a_conflict_with_the_current_version(
+    client: TestClient, api: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """并发保存：后写的那份正文不能被静默丢掉，要 409 + 当前正文版本。
+
+    原来是「读 → 判 → 写」：两个会话都读到 textVersion=1、都算出新版本号 2、
+    都插一行版本 2，后一个撞唯一索引，落到全局的 IntegrityError 处理器，返回
+    「数据冲突，请检查唯一性或关联引用」——与「正文被人改过」毫无关系，而后写
+    的那份正文就这么没了。
+
+    这里让「读完行之后、正文版本被抢走」精确发生一次：读完之后把库里的
+    text_version 改成 2，而内存里的行还停在 1。
+    """
+    from sqlalchemy import update
+
+    from modules.library.models import LibraryAsset
+    from modules.library.text_assets import TextAssetService
+
+    headers = _headers(client)
+    created = _create(client, headers, "并发前的正文")
+    asset_id = created["id"]
+
+    original = TextAssetService._text_row
+
+    async def racing_text_row(self, *args: object, **kwargs: object):  # noqa: ANN202
+        row = await original(self, *args, **kwargs)  # type: ignore[arg-type]
+        # 另一个会话抢先保存了一版：库里的版本号变了，内存里的行还停在旧值
+        await self.session.execute(
+            update(LibraryAsset)
+            .where(LibraryAsset.id == row.id)
+            .values(text_version=row.text_version + 1)
+        )
+        await self.session.commit()
+        return row
+
+    monkeypatch.setattr(TextAssetService, "_text_row", racing_text_row)
+
+    response = client.put(
+        f"{api}/library/assets/{asset_id}/text",
+        json={"content": "我后写的正文", "expectedVersion": 1},
+        headers=headers,
+    )
+    assert response.status_code == 409, response.text
+    body = response.json()
+    assert body["message"] == "正文已被修改，请刷新后重试"
+    assert body["details"]["textVersion"] == 2, "要告诉前端当前正文版本"
+    assert body["details"]["expectedVersion"] == 1
 
 
 def test_text_containing_nul_is_rejected_without_leaving_orphan_bytes(

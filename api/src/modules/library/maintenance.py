@@ -42,6 +42,17 @@ from modules.library.service import preview_key
 
 logger = get_logger(__name__)
 
+#: 封面修复一轮最多处理多少条资产。
+#: **必须有上限**：CLI 的 --batch 默认 0（= 用默认值），而原来那句
+#: 「if batch: query = query.limit(batch)」让默认路径**一次把整张资产表读进
+#: 进程**——十万条资产的库上就是十万个 ORM 实体。
+PREVIEW_REPAIR_BATCH = 200
+
+#: 存量标签归层一轮最多处理多少个一级标签。词表本身是人工维护的小表（父子的
+#: 关系必须整表算，不能分片），但**工作量**要能分批：一轮改不完就说清楚还剩
+#: 多少，下一轮接着来。
+TAG_TREE_BATCH = 50
+
 __all__ = [
     "PreviewReport",
     "TAG_TREE_SEED",
@@ -197,8 +208,8 @@ async def run_preview_repair(
         )
         if owner:
             query = query.where(LibraryAsset.owner_id == owner)
-        if batch:
-            query = query.limit(batch)
+        # 始终加 LIMIT：batch 为空时用默认批大小，不再无上限地整表读进内存
+        query = query.limit(batch or PREVIEW_REPAIR_BATCH)
         rows = (await session.scalars(query)).all()
 
         for row in rows:
@@ -268,7 +279,10 @@ class TagTreeReport:
 
 
 async def run_tag_tree_init(
-    *, dry_run: bool = False, mapping: dict[str, tuple[str, ...]] | None = None
+    *,
+    dry_run: bool = False,
+    mapping: dict[str, tuple[str, ...]] | None = None,
+    batch: int | None = None,
 ) -> TagTreeReport:
     """把存量扁平词表按 `TAG_TREE_SEED` 归成两级；幂等、默认试运行。
 
@@ -298,7 +312,16 @@ async def run_tag_tree_init(
             if row.parent_id:
                 by_name.setdefault(row.name, row)
 
-        for parent_name, child_names in seed.items():
+        # 一轮只处理有限个一级标签：词表是人工维护的小表（父子关系必须整表
+        # 算，不能分片读），但**工作量**要能分批——一轮改不完就说清楚还剩
+        # 多少，下一轮接着来，而不是让一条命令无限膨胀。
+        limit = batch or TAG_TREE_BATCH
+        pending = list(seed.items())
+        if len(pending) > limit:
+            report.skipped.append(
+                f"本轮只处理 {limit} 个一级标签，其余 {len(pending) - limit} 个留到下一轮"
+            )
+        for parent_name, child_names in pending[:limit]:
             parent = top.get(parent_name)
             if parent is None:
                 report.skipped.append(f"一级「{parent_name}」不存在")

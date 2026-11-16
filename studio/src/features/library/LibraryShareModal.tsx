@@ -105,11 +105,16 @@ export function LibraryShareModal({
       {
         onSuccess: (result) => {
           setBusy(false);
+          /* 撤销与共享都可能是「当场生效」：后端在**审核人就是自己**时直接把
+             申请单标成 approved（否则会变成「自己申请、等自己批」的死锁）。
+             这时再说「审批通过后才会生效」就是骗人，用户会以为还没撤、又点一次。 */
           toast(
-            mode === 'revoke'
-              ? '撤销申请已提交，审批通过后才会生效'
-              : result.status === 'approved'
-                ? '已共享'
+            result.status === 'approved'
+              ? mode === 'revoke'
+                ? '已撤销共享'
+                : '已共享'
+              : mode === 'revoke'
+                ? '撤销申请已提交，审批通过后才会生效'
                 : '共享申请已提交，等待审核',
             'success',
           );
@@ -175,7 +180,7 @@ export function LibraryShareModal({
 
         <p className="rounded-lg bg-panel-soft px-2.5 py-1.5 text-body leading-relaxed text-ink-mute">
           {mode === 'revoke'
-            ? '撤销共享一律需要审批：同事可能正在用这条素材，审批通过后才会真正生效。'
+            ? '撤销共享要留痕：同事可能正在用这条素材，审批通过后才真正生效（你自己就是这个目标的审批人时会立即生效）。'
             : instant
               ? '你持有直接共享权限，提交后立即生效。'
               : isOwner

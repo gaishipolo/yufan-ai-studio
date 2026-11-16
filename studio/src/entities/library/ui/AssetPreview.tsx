@@ -51,7 +51,9 @@ export function AssetPreview({
 
   if (isVideo && playable && playing) {
     if (!media.url) {
-      /* 取流期间继续显示封面，不切黑块：黑块会让人以为又坏了。 */
+      /* 取流期间继续显示封面，不切黑块：黑块会让人以为又坏了。
+         **取流失败要与取流中分开**：两者共用一个分支时，失败的画面会永远停在
+         「正在读取视频…」，用户看不出是自己网络的问题还是素材坏了。 */
       return (
         <div className={cn('relative overflow-hidden bg-black', className)}>
           <CoverImage
@@ -61,7 +63,7 @@ export function AssetPreview({
             className="h-full w-full opacity-60"
           />
           <span className="absolute inset-0 flex items-center justify-center text-micro text-white/80">
-            正在读取视频…
+            {media.isPending ? '正在读取视频…' : '视频暂时读不出来'}
           </span>
         </div>
       );

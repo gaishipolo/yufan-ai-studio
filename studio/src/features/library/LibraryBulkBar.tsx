@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Download, RotateCcw, Tag, Trash2, X } from 'lucide-react';
 import { Button, MultiSelect } from '@/shared/ui';
 import type { LibraryTagStatOut } from '@/shared/api/schema';
@@ -28,7 +28,20 @@ export function LibraryBulkBar({ view, count, tags, busy, onClear, onAction }: L
   const [tagIds, setTagIds] = useState<string[]>([]);
   const createTag = useCreateTagInline();
 
+  /* 选中数归零时复位面板：`count <= 0` 只是把这个组件**藏起来**，它并没有卸载，
+     上一批留下的标签会跟着面板一起留在原地——「清空」后再勾一批，
+     旧的标签被静默打到新素材上。 */
+  useEffect(() => {
+    if (count > 0) return;
+    setTagging(false);
+    setTagIds([]);
+  }, [count]);
+
   if (count <= 0) return null;
+
+  /* 小组 / 团队入口不给删除：卡片层就是按可见范围收掉的（那两个入口里
+     素材是共享的，后端也会拒），批量条却照给按钮 → 一点就整批失败。 */
+  const canDelete = view !== 'group' && view !== 'team';
 
   const applyTags = () => {
     onAction('tag', { tagIds });
@@ -84,16 +97,18 @@ export function LibraryBulkBar({ view, count, tags, busy, onClear, onAction }: L
               >
                 打标签
               </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                className="text-danger hover:text-danger-deep"
-                icon={<Trash2 size={12} />}
-                disabled={busy}
-                onClick={() => onAction('delete')}
-              >
-                移入回收站
-              </Button>
+              {canDelete && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="text-danger hover:text-danger-deep"
+                  icon={<Trash2 size={12} />}
+                  disabled={busy}
+                  onClick={() => onAction('delete')}
+                >
+                  移入回收站
+                </Button>
+              )}
             </>
           )}
         </div>

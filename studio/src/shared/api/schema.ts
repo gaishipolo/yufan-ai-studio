@@ -353,7 +353,10 @@ export interface ExportSourceOut {
 同时给多个时取靠前的那个。
 
 `archiveKey` 只应由受信任的服务端调用方填写：它指向归档盘里的对象，
-端点本身仍由 `library:generation:ingest` 守护，普通上传权限调不动。 */
+而归档盘是另一个驱动、没有资产行可反查归属，所以 **HTTP 端点不收它**
+（只有 `library-ingest` 端口能用）。`storageKey` 则必须指向调用方自己
+名下的素材行：这两个键都是「调用方给的对象存储地址」，不校验归属就等于
+开放「读主存储里的任意对象」。 */
 export interface FromGenerationIn {
   sourceModule: string;
   sourceTaskId: string;
@@ -752,11 +755,11 @@ export interface LibrarySelectionPage {
   pageSize?: number;
 }
 
-/** 词表里的一条标签。**固定两级**，不返回嵌套树。
+/** 词表里的一条标签。**最多三级**，不返回嵌套树。
 
 为什么仍是平铺数组：标签栏、卡片、打标选择器、上传弹窗、批量栏、素材库
 悬浮栏六个消费点全都按平铺渲染；改成嵌套树要全量重写，而且「计数与排序」
-会跟着乱。`parentId` + `depth` 足够让前端自己分两行、显示 `产品 / 3030`。
+会跟着乱。`parentId` + `depth` 足够让前端自己分三行、显示 `产品 / 3030 / T35`。
 
 库里用空串表示一级（见 models.py），出参统一转成 `null`：前端按真假值判断
 层级就行，不必知道哨兵串的存在。 */
@@ -772,8 +775,8 @@ export interface LibraryTagOut {
 
 `asset_count` 是**当前入口**（`state` + `library`）下挂了这个标签的素材数，
 不是全库总量——标签栏上点一下就按这个入口筛，数字必须与结果对得上。
-一级标签的数字是「自身 + 旗下二级」按资产去重后的合计，与「点一级展开到
-子级」的筛选口径一致；否则会出现「标签旁写 8、点进去只有 3 条」。
+一个标签的数字是「自身 + 全部下级」按资产去重后的合计，与「点一级展开到
+全部下级」的筛选口径一致；否则会出现「标签旁写 8、点进去只有 3 条」。
 
 `child_count` 给前端判断「这是一级分组还是可打标的叶子」。
 `created_at` 给前端按「添加时间先后」排序用。
@@ -1240,15 +1243,15 @@ export interface SubmitIn {
 
 /** 新建 / 重命名标签。
 
-`parent_id` **只在新建时生效**：给一个一级标签的 id 就建成二级，留 null
-建成一级。改名时不改层级，走 `PATCH /tags/{id}/parent`——把改名与移动混在
+`parent_id` **只在新建时生效**：给一个父标签的 id 就建成它的下一级（最多三级），
+留 null 建成一级。改名时不改层级，走 `PATCH /tags/{id}/parent`——把改名与移动混在
 一个接口里，会让「只想改个错别字」的请求顺手改变整棵树的形状。 */
 export interface TagIn {
   name: string;
   parentId?: string | null;
 }
 
-/** 移动标签：`parentId` 指向一个一级标签，`null` 表示提升为一级。 */
+/** 移动标签：`parentId` 指向一个父标签（最多到二级），`null` 表示提升为一级。 */
 export interface TagParentIn {
   parentId?: string | null;
 }
@@ -1862,15 +1865,15 @@ export interface EndpointData {
   "POST /api/v1/library/share-requests/{request_id}/reject": ShareRequestOut;
   /** 上传模板库参考视频（只收视频） */
   "POST /api/v1/library/source-videos": LibraryAssetOut;
-  /** 标签列表（两级平铺，含当前入口的素材数，按添加时间排序） */
+  /** 标签列表（三级平铺，含当前入口的素材数，按添加时间排序） */
   "GET /api/v1/library/tags": LibraryTagStatOut[];
   /** 新建标签（同名返回已有那条） */
   "POST /api/v1/library/tags": LibraryTagOut;
-  /** 删除标签（旗下二级提升为一级，资产不受影响） */
+  /** 删除标签（旗下子级提升一级，资产不受影响） */
   "DELETE /api/v1/library/tags/{tag_id}": null;
   /** 重命名标签（不做隐式合并） */
   "PATCH /api/v1/library/tags/{tag_id}": LibraryTagOut;
-  /** 移动标签层级（parentId 为空则提升为一级） */
+  /** 移动标签层级（parentId 为空则提升为一级，最多三级） */
   "PATCH /api/v1/library/tags/{tag_id}/parent": LibraryTagOut;
   /** 站内新建文本资产（直接写正文，不传文件） */
   "POST /api/v1/library/text-assets": TextAssetOut;

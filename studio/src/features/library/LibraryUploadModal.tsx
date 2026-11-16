@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { CheckCircle2, FileUp, Loader2, Upload, XCircle } from 'lucide-react';
 import { Button, Chip, Modal, MultiSelect } from '@/shared/ui';
 import { cn } from '@/shared/lib/cn';
@@ -7,6 +7,12 @@ import { toast } from '@/shared/lib/toast';
 import type { LibraryTagStatOut } from '@/shared/api/schema';
 import { usePatchAsset, useUploadAsset } from '@/entities/library/api/library.queries';
 import { tagOptions } from '@/entities/library/model/tagTree';
+import {
+  MAX_BYTES,
+  TEXT_MAX_BYTES,
+  UPLOAD_ACCEPT,
+  uploadKindOf,
+} from '@/entities/library/model/uploadLimits';
 import { useCreateTagInline } from './use-create-tag-inline';
 
 interface UploadItem {
@@ -15,6 +21,8 @@ interface UploadItem {
   status: 'ready' | 'uploading' | 'done' | 'failed';
   ratio: number;
   error?: string;
+  /** 文件已经在库里、只是标签没打上：与「上传失败」分开说 */
+  tagError?: string;
 }
 
 export interface LibraryUploadModalProps {
@@ -22,10 +30,6 @@ export interface LibraryUploadModalProps {
   tags: LibraryTagStatOut[];
   onClose: () => void;
 }
-
-const MAX_BYTES = 200 * 1024 * 1024;
-/** 文本资产是 UTF-8 纯文本、后端上限 1 MB；前端先拦，省掉一次注定失败的请求 */
-const TEXT_MAX_BYTES = 1024 * 1024;
 
 /**
  * 上传弹窗：一次挑多个文件，逐条上传、逐条给结果。
@@ -42,8 +46,22 @@ export function LibraryUploadModal({ open, tags, onClose }: LibraryUploadModalPr
   const [items, setItems] = useState<UploadItem[]>([]);
   const [tagIds, setTagIds] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
+  /* 上传成功后的自动关闭定时器：**必须存下来**。
+     600ms 内点「关闭」再重新打开，旧定时器照样触发 → 刚选的文件无声消失、
+     弹窗自己关掉。关闭 / 卸载时都清掉。 */
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearCloseTimer = () => {
+    if (closeTimer.current === null) return;
+    clearTimeout(closeTimer.current);
+    closeTimer.current = null;
+  };
+
+  /* 卸载时清掉：否则定时器在组件没了之后还会跑一次 reset + onClose */
+  useEffect(() => clearCloseTimer, []);
 
   const reset = () => {
+    clearCloseTimer();
     setItems([]);
     setTagIds([]);
     setBusy(false);
@@ -58,24 +76,19 @@ export function LibraryUploadModal({ open, tags, onClose }: LibraryUploadModalPr
 
   const pick = (files: FileList | null) => {
     const next: UploadItem[] = Array.from(files ?? []).map((file) => {
-      /* .txt/.md 有些浏览器给的 file.type 是空串，按扩展名认最稳 */
-      const lower = file.name.toLowerCase();
-      const isText = lower.endsWith('.txt') || lower.endsWith('.md');
-      const kind = isText
-        ? 'text'
-        : file.type.startsWith('image/')
-          ? 'image'
-          : file.type.startsWith('audio/')
-            ? 'audio'
-            : null;
+      /* 按**扩展名**判类型，与后端白名单同一份：
+         `file.type` 由浏览器随意给（.md 常给空串、.webp 常给 octet-stream），
+         照它判会把服务端肯收的合法文件先拒掉，也会放过 .gif/.svg 这种服务端
+         必然拒的。 */
+      const kind = uploadKindOf(file.name);
       if (!kind) {
-        return { file, kind, status: 'failed', ratio: 0, error: '只支持图片、音频与 .txt/.md 文本；视频请走模板库原片入口' };
+        return { file, kind, status: 'failed', ratio: 0, error: '只支持 .png/.jpg/.jpeg/.webp 图片、.mp3/.wav 音频与 .txt/.md 文本；视频请走模板库原片入口' };
       }
       if (kind === 'text' && file.size > TEXT_MAX_BYTES) {
         return { file, kind, status: 'failed', ratio: 0, error: '文本文件不能超过 1 MB（UTF-8 纯文本）' };
       }
       if (kind !== 'text' && file.size > MAX_BYTES) {
-        return { file, kind, status: 'failed', ratio: 0, error: '单个文件不能超过 200 MB' };
+        return { file, kind, status: 'failed', ratio: 0, error: '单个文件不能超过 300 MB' };
       }
       return { file, kind, status: 'ready', ratio: 0 };
     });
@@ -88,12 +101,15 @@ export function LibraryUploadModal({ open, tags, onClose }: LibraryUploadModalPr
     setBusy(true);
     let done = 0;
     let failed = 0;
+    let tagFailed = 0;
 
     for (const target of targets) {
       const index = items.indexOf(target);
       setItems((previous) =>
         previous.map((item, i) => (i === index ? { ...item, status: 'uploading', ratio: 0 } : item)),
       );
+
+      let assetId: string;
       try {
         const asset = await upload.mutateAsync({
           file: target.file,
@@ -101,15 +117,7 @@ export function LibraryUploadModal({ open, tags, onClose }: LibraryUploadModalPr
           onProgress: (ratio) =>
             setItems((previous) => previous.map((item, i) => (i === index ? { ...item, ratio } : item))),
         });
-        if (tagIds.length) {
-          await patch.mutateAsync({ id: asset.id, body: { tagIds } });
-        }
-        done += 1;
-        setItems((previous) =>
-          previous.map((item, i) =>
-            i === index ? { ...item, status: 'done', ratio: 1 } : item,
-          ),
-        );
+        assetId = asset.id;
       } catch (error) {
         failed += 1;
         const message = error instanceof Error ? error.message : '上传失败';
@@ -118,15 +126,39 @@ export function LibraryUploadModal({ open, tags, onClose }: LibraryUploadModalPr
             i === index ? { ...item, status: 'failed', error: message } : item,
           ),
         );
+        continue;
       }
+
+      /* 打标签是**第二段**：文件此时已经在库里了。
+         把它并进上传的 try 里，一旦 PATCH 失败就会被整条报成「上传失败」，
+         用户重传 → 库里多一条重复素材，而标签其实一个也没打上。 */
+      let tagError = '';
+      if (tagIds.length) {
+        try {
+          await patch.mutateAsync({ id: assetId, body: { tagIds } });
+        } catch (error) {
+          tagFailed += 1;
+          tagError = error instanceof Error ? error.message : '未知原因';
+        }
+      }
+
+      done += 1;
+      setItems((previous) =>
+        previous.map((item, i) =>
+          i === index ? { ...item, status: 'done', ratio: 1, tagError } : item,
+        ),
+      );
     }
 
     setBusy(false);
     if (done) toast(`已上传 ${done} 个文件`, 'success');
     if (failed) toast(`${failed} 个文件没上传成功`, 'error');
-    if (!failed) {
+    if (tagFailed) toast(`${tagFailed} 个文件已上传，但标签没打上`, 'error');
+    if (!failed && !tagFailed) {
       /* 全部成功才自动关闭：有失败时留着让用户看清是哪一条 */
-      setTimeout(() => {
+      clearCloseTimer();
+      closeTimer.current = setTimeout(() => {
+        closeTimer.current = null;
         reset();
         onClose();
       }, 600);
@@ -140,7 +172,7 @@ export function LibraryUploadModal({ open, tags, onClose }: LibraryUploadModalPr
           ref={input}
           type="file"
           multiple
-          accept="image/*,audio/*,.txt,.md"
+          accept={UPLOAD_ACCEPT}
           className="sr-only"
           aria-label="选择上传文件"
           onChange={(event) => {
@@ -162,7 +194,7 @@ export function LibraryUploadModal({ open, tags, onClose }: LibraryUploadModalPr
           <FileUp size={22} className="text-ink-mute" />
           <span className="text-body font-medium">选择图片、音频或文本</span>
           <span className="text-body text-ink-mute">
-            可多选；图片/音频单个 ≤ 200 MB，.txt/.md 为 UTF-8 纯文本、≤ 1 MB
+            可多选；图片/音频单个 ≤ 300 MB，.txt/.md 为 UTF-8 纯文本、≤ 1 MB
           </span>
         </button>
 
@@ -204,6 +236,12 @@ export function LibraryUploadModal({ open, tags, onClose }: LibraryUploadModalPr
                 )}
                 {item.status === 'failed' && item.error && (
                   <p className="mt-1 text-body text-danger">{item.error}</p>
+                )}
+                {/* 文件已在库里，只是标签没打上：与「上传失败」分开显示 */}
+                {item.status === 'done' && item.tagError && (
+                  <p className="mt-1 text-body text-warn">
+                    标签没打上：{item.tagError}
+                  </p>
                 )}
               </li>
             ))}

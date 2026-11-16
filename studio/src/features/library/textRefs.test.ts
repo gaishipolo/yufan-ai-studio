@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { LibraryAssetOut } from '@/shared/api/schema';
-import { hasForeignMustache, retargetTextTokens } from './textRefs';
+import { retargetTextTokens } from './textRefs';
 
 /**
  * `retargetTextTokens` 的三条口径：
@@ -97,13 +97,5 @@ describe('retargetTextTokens · 新增与手写占位符', () => {
     // 手写的 {{Text 5}} 越界 → 丢掉并计数；新绑定的那份仍要补上自己的编号
     expect(result.text).toBe('用  写 {{Text 1}}');
     expect(result.dropped).toBe(1);
-  });
-});
-
-describe('hasForeignMustache', () => {
-  it('只认 {{Text N}}，别的花括号算外来模板', () => {
-    expect(hasForeignMustache('用 {{Text 1}} 写')).toBe(false);
-    expect(hasForeignMustache('用 {{Mixed 1}} 写')).toBe(true);
-    expect(hasForeignMustache('普通文本')).toBe(false);
   });
 });

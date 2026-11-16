@@ -76,7 +76,7 @@ def cmd_preview_repair(args: argparse.Namespace) -> None:
 def cmd_tag_tree_init(args: argparse.Namespace) -> None:
     from modules.library.maintenance import run_tag_tree_init
 
-    report = asyncio.run(run_tag_tree_init(dry_run=args.dry_run))
+    report = asyncio.run(run_tag_tree_init(dry_run=args.dry_run, batch=args.batch or None))
     for line in report.lines():
         print(line)
 
@@ -123,7 +123,12 @@ def register(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
         help="真的生成并写回存储；不传时只报告有几条缺失",
     )
     previews.set_defaults(func=cmd_preview_repair, dry_run=True)
-    previews.add_argument("--batch", type=int, default=0, help="最多处理多少条（0 = 全部）")
+    previews.add_argument(
+        "--batch",
+        type=int,
+        default=0,
+        help="最多处理多少条（0 = 用默认批大小，不会整表读进内存）",
+    )
     previews.add_argument("--owner", default="", help="只修指定 owner_id 的素材")
 
     tag_tree = actions.add_parser(
@@ -137,3 +142,9 @@ def register(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
         help="真的写库；不传时只报告会移动哪几个",
     )
     tag_tree.set_defaults(func=cmd_tag_tree_init, dry_run=True)
+    tag_tree.add_argument(
+        "--batch",
+        type=int,
+        default=0,
+        help="一轮最多处理多少个一级标签（0 = 用默认批大小）",
+    )

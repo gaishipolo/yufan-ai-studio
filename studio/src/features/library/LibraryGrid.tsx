@@ -16,7 +16,6 @@ export interface LibraryGridProps {
   hasFilters: boolean;
   onRetry: () => void;
   onToggle: (id: string) => void;
-  onToggleAll: (ids: string[], checked: boolean) => void;
   onAction: (action: LibraryCardAction, asset: LibraryAssetOut) => void;
   onRemoveTag: (asset: LibraryAssetOut, tagId: string) => void;
   onAddTag: (asset: LibraryAssetOut) => void;

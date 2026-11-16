@@ -41,6 +41,12 @@ export function TextRefPicker({
     const result = retargetTextTokens(prompt, value, bounded);
     onPromptChange(result.text);
     onChange(bounded);
+    /* 超出的部分不能静默扔掉：用户挑了 10 份、只绑上 8 份，
+       界面上得说清楚丢的是哪几份，否则他会以为都绑上了。 */
+    const overflow = next.length - bounded.length;
+    if (overflow > 0) {
+      toast(`最多绑定 ${max} 份文本引用，多出的 ${overflow} 份没有绑定`, 'error');
+    }
     if (result.dropped) {
       toast(`已移除 ${result.dropped} 处失效的 {{Text N}} 引用，其余引用已重新编号`);
     }

@@ -64,6 +64,46 @@ def test_bulk_delete_reports_partial_failure(client: TestClient, api: str) -> No
     assert fetch_asset(shared["id"])["state"] == "active"  # type: ignore[index]
 
 
+def test_bulk_revoke_rejects_a_stale_version(client: TestClient, api: str) -> None:
+    """批量撤销共享的 expected_version 之前没人消费。
+
+    `bulk.py` 把版本传给 `ShareService.request`，而后者只把它原样存进申请单，
+    全仓唯一的比较在 `decide()` 里、用的是审批人自己带的那份（前端固定传 0）。
+    于是基于旧页面发出的撤销申请会作用在用户没见过的资产状态上——撤销恰恰是
+    风险方向最重的一侧（别人正在用的文件突然拿不到）。
+    """
+    admin = admin_headers(client)
+    owner, owner_h = make_user(client, admin, LIB_RW + ["library:share:direct"])
+    group = make_group(client, admin, [owner["id"]])
+    asset = upload_image(client, api, owner_h, color="lightgreen")
+
+    shared = client.post(
+        f"{api}/library/share-requests",
+        json={"assetId": asset["id"], "target": "group", "groupId": group["id"]},
+        headers=owner_h,
+    )
+    assert shared.status_code == 201, shared.text
+
+    # 页面上的版本号已经过时（这里用 0 之外的任意值模拟旧页面）
+    result = _bulk(
+        client,
+        api,
+        owner_h,
+        {
+            "ids": [asset["id"]],
+            "action": "requestRevoke",
+            "payload": {"target": "group", "groupId": group["id"], "reason": "改用另一版"},
+            "expectedVersions": {asset["id"]: 999},
+        },
+    )
+    assert result.status_code == 200, result.text
+    data = result.json()["data"]
+    assert data["succeeded"] == 0, "过期的版本号不该放行撤销申请"
+    assert data["failed"] == 1
+    # 40900 = 框架的通用 Conflict（与 decide() 的版本冲突同一条口径）
+    assert data["results"][0]["errorCode"] == 40900
+
+
 def test_bulk_requires_the_action_permission(client: TestClient, api: str) -> None:
     admin = admin_headers(client)
     _, creator_h = make_user(client, admin, ["library:read", "library:create"])

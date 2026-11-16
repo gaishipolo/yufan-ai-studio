@@ -33,6 +33,11 @@ MAX_BYTES = 300 * 1024 * 1024
 MAX_TEXT_BYTES = 1024 * 1024
 #: 列表卡片上的摘要长度（字符数，不是字节）。
 TEXT_EXCERPT_LIMIT = 160
+#: 单张图片的像素上限。PIL 只在超过 2×Image.MAX_IMAGE_PIXELS（约 1.79 亿
+#: 像素）时才抛 DecompressionBombError，而一张 12000×9000 的 PNG（约 1 亿像素）
+#: 正好落在那个告警区间里：缩略图那一步会把它**完整解码**进内存（约 400MB）。
+#: 这里显式设一档，超过即拒——尺寸在文件头里就有，不必等解码。
+MAX_IMAGE_PIXELS = 40_000_000
 # 探测单次上限。超过它就不是「这个文件有点慢」，而是解析不出来。
 PROBE_TIMEOUT_SEC = 30.0
 PREVIEW_VERSION = "hd-v2"
@@ -124,6 +129,14 @@ def inspect(path: Path, extension: str) -> MediaInfo:
     if EXTENSIONS[extension].startswith("image/"):
         try:
             with Image.open(path) as image:
+                # 像素上限**先**判：下面 verify() 与生成缩略图都会把整张图读
+                # 进来，而宽高在文件头里就有。
+                if image.width * image.height > MAX_IMAGE_PIXELS:
+                    raise BadRequest(
+                        "图片像素过大"
+                        f"（上限 {MAX_IMAGE_PIXELS // 1_000_000} 百万像素），"
+                        "请压缩后再上传"
+                    )
                 image.verify()
             with Image.open(path) as image:
                 expected = {".png": "PNG", ".jpg": "JPEG", ".jpeg": "JPEG", ".webp": "WEBP"}
@@ -191,31 +204,43 @@ def create_preview(source: Path, destination: Path, kind: str) -> bool:
     if destination.exists():
         return True
     if kind == "image":
-        with Image.open(source) as image:
-            image.thumbnail((360, 240))
-            image.convert("RGB").save(destination, format="JPEG", quality=82)
+        try:
+            with Image.open(source) as image:
+                image.thumbnail((360, 240))
+                image.convert("RGB").save(destination, format="JPEG", quality=82)
+        except (OSError, subprocess.TimeoutExpired):
+            # 与 create_browser_preview 同口径：封面生成失败就是「这张素材坏了
+            # / 这条视频解不开」，不是服务端故障。抛出去会让上传 / 入库变成
+            # 500，而上传链是**先写 blob 再落库**——于是主存储里多出一份没人
+            # 引用的字节，库里却没有对应行。
+            return False
         return True
-    result = subprocess.run(
-        [
-            imageio_ffmpeg.get_ffmpeg_exe(),
-            "-y",
-            "-loglevel",
-            "error",
-            "-i",
-            str(source),
-            "-frames:v",
-            "1",
-            "-vf",
-            "scale=w='min(720,iw)':h='min(1280,ih)':force_original_aspect_ratio=decrease",
-            "-q:v",
-            "2",
-            "-update",
-            "1",
-            str(destination),
-        ],
-        capture_output=True,
-        timeout=30,
-    )
+    try:
+        result = subprocess.run(
+            [
+                imageio_ffmpeg.get_ffmpeg_exe(),
+                "-y",
+                "-loglevel",
+                "error",
+                "-i",
+                str(source),
+                "-frames:v",
+                "1",
+                "-vf",
+                "scale=w='min(720,iw)':h='min(1280,ih)':force_original_aspect_ratio=decrease",
+                "-q:v",
+                "2",
+                "-update",
+                "1",
+                str(destination),
+            ],
+            capture_output=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        # 首帧抽取超时 / ffmpeg 起不来：返回 False，让调用方记「这个文件没有
+        # 缩略图」，而不是把整条入库打成 500。
+        return False
     return result.returncode == 0
 
 

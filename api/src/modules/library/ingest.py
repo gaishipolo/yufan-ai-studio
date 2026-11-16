@@ -24,6 +24,10 @@
 第 2 种命中时不写参数快照：那一行已经有自己的来源了，把新来源覆盖上去
 会让「这张图是谁生成的」变成最后一个回调说了算。
 
+**幂等键是按人隔离的**：`uq_library_assets_source_key` 是全局唯一索引，只按
+key 查会让 B 命中 A 的行（B 的字节从未入库，返回的却是 A 的资产 id）。命中但
+owner 不一致时直接 409，见 `_by_source_key`。
+
 ## 字节必须物化
 
 三选一：`storageKey`（已在主对象存储里）、`sourceUrl`（服务端下载后再存）、
@@ -35,6 +39,22 @@
 驱动。这里统一物化后再写进资产库自己的 blob，资产因此不依赖归档盘的生命周期。
 本批只提供能力，**不接生成链路**：`ReplacementPipeline.archive_request` 何时实现、
 与 `replacement_reviews` 怎么分工，等产品口径。
+
+## 存储键的归属
+
+`storageKey` / `archiveKey` 是**调用方给的对象存储地址**。不校验归属就开放它们，
+这个入口就是一个「任意对象读取」原语：主存储里装的是所有人的私有原片，
+知道 key 就能把别人的字节读成自己名下的素材，随后 `GET /assets/{id}/file`
+就把它拿走了。
+
+所以按调用方分两种口径（`run(trusted=...)`）：
+
+- **HTTP 端点**（`trusted=False`）：`storageKey` 必须指向调用方自己名下的
+  资产行；`archiveKey` 直接不收（归档盘是另一个驱动，没有资产行可反查归属）。
+- **`library-ingest` 端口**（`trusted=True`）：调用方是服务端模块，键是它
+  自己刚写进去的，归属由它负责。
+
+两条路径的字节来源一样，差的是「这个键能不能直接读」。
 """
 
 from __future__ import annotations
@@ -49,12 +69,12 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, ClassVar
 
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.context import CurrentUser, get_current_user
-from core.exceptions import BadRequest
+from core.exceptions import BadRequest, Conflict
 from core.logging import get_logger
 from core.ports.library_ingest import IngestRequest, IngestResult
 from core.ports.library_lookup import LibraryAssetKind
@@ -64,7 +84,11 @@ from infra.driver_config import DriverSettings, driver_config
 from infra.http import HttpError, fetch_to_file, validate_public_url
 from infra.media_probe import EXTENSIONS, MAX_BYTES, create_preview, inspect
 from infra.storage.base import ObjectStorage
-from modules.library.errors import GenerationSourceInvalid, LibraryFileTooLarge
+from modules.library.errors import (
+    GenerationSourceInvalid,
+    IngestKeyNotOwned,
+    LibraryFileTooLarge,
+)
 from modules.library.models import LibraryAsset, LibraryAssetGeneration
 from modules.library.service import blob_key, preview_key
 from modules.library.tags import set_asset_tags
@@ -147,7 +171,19 @@ class GenerationIngest:
         self.session = session
         self.storage = storage
 
-    async def run(self, request: IngestRequest) -> IngestResult:
+    async def run(self, request: IngestRequest, *, trusted: bool = False) -> IngestResult:
+        """执行一次入库。
+
+        `trusted` 标的是**调用方是不是服务端内部代码**：
+
+        - `False`（HTTP 端点 `POST /assets/from-generation`）：`storageKey` /
+          `archiveKey` 由调用方给，服务端必须自己校验归属，否则这个端点就是
+          一个「任意对象读取」原语（见 `_assert_own_key`）；
+        - `True`（`library-ingest` 端口）：调用方是服务端模块，键是它自己刚写
+          进去的，归属由它自己负责。
+
+        两条路径的**字节来源**一样，口径不同的是「这个键能不能直接读」。
+        """
         if request.kind not in _ALLOWED_KINDS:
             raise GenerationSourceInvalid("生成入库只支持图片与视频")
         owner_id = request.owner_id or _context_owner()
@@ -158,14 +194,16 @@ class GenerationIngest:
         if not source_key:
             raise GenerationSourceInvalid("sourceKey 不能为空")
 
-        existing = await self._by_source_key(source_key)
+        existing = await self._by_source_key(source_key, owner_id)
         if existing is not None:
             return IngestResult(asset_id=existing.id, created=False)
 
         # `archiveKey` 走 `ArchiveStorage.materialize()`：远端驱动交出的是临时缓存，
         # 退出上下文即回收，所以「物化 → 探测 → 写 blob」整段都得留在 ExitStack 里。
         with tempfile.TemporaryDirectory(prefix="library-ingest-") as folder, ExitStack() as stack:
-            path, extension, mime = await self._materialize(request, Path(folder), stack)
+            path, extension, mime = await self._materialize(
+                request, Path(folder), stack, trusted=trusted, owner_id=owner_id
+            )
             # ffprobe / PIL 都是阻塞的：入库可能同时来好几条，别把事件循环卡住
             info = await asyncio.to_thread(inspect, path, extension)
             digest, size = await asyncio.to_thread(_digest_and_size, path)
@@ -220,7 +258,9 @@ class GenerationIngest:
             except IntegrityError:
                 # 并发回调同一个 sourceKey：唯一索引兜底，回滚后按同一口径再查一次
                 await self.session.rollback()
-                raced = await self._by_source_key(source_key) or await self._dedupe(
+                raced = await self._by_source_key(
+                    source_key, owner_id
+                ) or await self._dedupe(
                     owner_id, digest, request.kind.value
                 )
                 if raced is None:
@@ -231,7 +271,13 @@ class GenerationIngest:
     # ------------------------------------------------------------------ 内部
 
     async def _materialize(
-        self, request: IngestRequest, folder: Path, stack: ExitStack
+        self,
+        request: IngestRequest,
+        folder: Path,
+        stack: ExitStack,
+        *,
+        trusted: bool,
+        owner_id: str,
     ) -> tuple[Path, str, str]:
         """把字节物化成可读的本地文件，返回 (路径, 扩展名, mime)。
 
@@ -240,9 +286,15 @@ class GenerationIngest:
         不回收远端驱动的临时缓存。
         `sourceUrl` 走 `fetch_to_file`：逐跳 SSRF 校验（配了白名单就只认白名单）+ 大小上限，
         并且流式写盘——成片允许 300MB，整份读进内存会把进程撑爆。
+
+        HTTP 侧（非 trusted）给的 `storageKey` / `archiveKey` 先过归属校验：
+        这两个键是**调用方给的对象存储地址**，不校验就等于开放「读主存储里的
+        任意对象」。详见 `_assert_own_key`。
         """
         extension = _extension_of(request)
         if request.storage_key:
+            if not trusted:
+                await self._assert_own_key(request.storage_key, owner_id)
             local = self.storage.local_path(request.storage_key)
             if local is not None:
                 if not local.is_file():
@@ -250,20 +302,28 @@ class GenerationIngest:
                         details={"storageKey": request.storage_key}
                     )
                 return local, extension, EXTENSIONS[extension]
+            # 远端驱动：**分块**落盘。`get()` 会把整份对象（最大 300MB）读进
+            # 内存，峰值是「并发数 × 文件大小」；体积上限也必须在流的过程中累计
+            # 判定，整份读完再判，峰值已经发生了。
+            target = folder / f"source{extension}"
             try:
-                payload = await self.storage.get(request.storage_key)
+                await self._stream_to_file(request.storage_key, target)
+            except LibraryFileTooLarge:
+                raise
             except Exception as exc:  # noqa: BLE001 - 见下
                 # 取不到字节就是「调用方给的 key 不对」：生成侧要能读到这条
                 # 明确失败并重试，而不是被当成一次 502 的存储故障。
                 raise GenerationSourceInvalid(
                     details={"storageKey": request.storage_key}
                 ) from exc
-            if len(payload) > MAX_BYTES:
-                raise LibraryFileTooLarge(details={"maxBytes": MAX_BYTES})
-            target = folder / f"source{extension}"
-            await asyncio.to_thread(target.write_bytes, payload)
             return target, extension, EXTENSIONS[extension]
         elif request.archive_key:
+            if not trusted:
+                # 归档盘是另一个驱动，没有资产行可反查归属：HTTP 端点不收归档键。
+                raise IngestKeyNotOwned(
+                    "archiveKey 只对内部调用方开放，HTTP 端点不接受归档键",
+                    details={"archiveKey": request.archive_key},
+                )
             # 归档盘与主对象存储是两个驱动。materialize() 交出的本地路径在远端
             # 实现里只是缓存，必须由 stack 持有到 put_file / 预览派生结束。
             try:
@@ -313,10 +373,76 @@ class GenerationIngest:
             await self.storage.put_file(key, target, "image/jpeg")
         return key
 
-    async def _by_source_key(self, source_key: str) -> LibraryAsset | None:
-        return await self.session.scalar(
+    async def _stream_to_file(self, key: str, target: Path) -> int:
+        """分块把对象写进本地文件，返回落盘字节数。
+
+        体积上限在**流的过程中**累计判定：整份读进内存再判上限，峰值已经发生
+        了（300MB 的成片、两个并发就是 600MB 常驻进程）。
+        """
+        size = 0
+        handle = await asyncio.to_thread(target.open, "wb")
+        try:
+            async for chunk in self.storage.iter_chunks(key):
+                size += len(chunk)
+                if size > MAX_BYTES:
+                    raise LibraryFileTooLarge(details={"maxBytes": MAX_BYTES})
+                await asyncio.to_thread(handle.write, chunk)
+        finally:
+            await asyncio.to_thread(handle.close)
+        return size
+
+    async def _assert_own_key(self, key: str, owner_id: str) -> None:
+        """HTTP 入参给的存储键必须指向**调用方自己的**素材行。
+
+        不校验的话，`POST /assets/from-generation` 就是一个「任意对象读取」
+        原语：主存储里装的是**所有人**的私有原片，知道 key 就能把别人的字节
+        读成自己名下的素材，随后 `GET /assets/{id}/file` 就把它拿走了。
+
+        这里只认「自己名下的资产行」（原片键或封面键）：库里没有对应行的键
+        （别的模块的产物、生成侧的中间文件）同样不能读——那正是「猜到 key 就
+        能拿走」的另一半。
+        """
+        owned = await self.session.scalar(
+            select(LibraryAsset.id)
+            .where(
+                or_(
+                    and_(
+                        LibraryAsset.storage_key == key,
+                        LibraryAsset.owner_id == owner_id,
+                    ),
+                    and_(
+                        LibraryAsset.cover_key == key,
+                        LibraryAsset.owner_id == owner_id,
+                    ),
+                )
+            )
+            .limit(1)
+        )
+        if owned is None:
+            raise IngestKeyNotOwned(details={"storageKey": key})
+
+    async def _by_source_key(self, source_key: str, owner_id: str) -> LibraryAsset | None:
+        """幂等查找。**命中但 owner 不一致时 409**，不返回别人的行。
+
+        `uq_library_assets_source_key` 是**全局**唯一：只按 key 查的话，B 用
+        「A 的幂等键」入库会命中 A 的行——B 的字节从未入库，返回的却是 A 的
+        资产 id（还是 200 + created=false，调用方会以为已经存好了）。
+
+        宁可让调用方换一个 key，也不要把别人的行当成「已经入过库」。上传侧早就
+        踩过这个坑并修过（`service.upload` 给键加 `upload:<actorId>:` 前缀），
+        入库侧这次补上同一条口径。
+        """
+        row = await self.session.scalar(
             select(LibraryAsset).where(LibraryAsset.source_key == source_key)
         )
+        if row is None:
+            return None
+        if row.owner_id != owner_id:
+            raise Conflict(
+                "该幂等键已被其他用户占用，请换一个 sourceKey",
+                details={"sourceKey": source_key},
+            )
+        return row
 
     async def _dedupe(self, owner_id: str, digest: str, kind: str) -> LibraryAsset | None:
         return await self.session.scalar(
@@ -340,7 +466,9 @@ class SqlLibraryIngest:
     async def ingest_generated(
         self, session: AsyncSession, request: IngestRequest
     ) -> IngestResult:
-        return await GenerationIngest(session, get_storage()).run(request)
+        # 端口调用方是服务端模块（生成流水线 / 模板替换）：它给的键是它自己刚
+        # 写进去的，归属由它负责，所以这里是 trusted；HTTP 端点不是。
+        return await GenerationIngest(session, get_storage()).run(request, trusted=True)
 
 
 # --------------------------------------------------------------------------- #

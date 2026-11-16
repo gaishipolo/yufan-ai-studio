@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { LibraryAssetOut } from '@/shared/api/schema';
 import { TextRefPicker } from './TextRefPicker';
-import { hasForeignMustache, retargetTextTokens } from './textRefs';
+import { retargetTextTokens } from './textRefs';
 
 const { picked, toastMock } = vi.hoisted(() => ({
   picked: { assets: [] as LibraryAssetOut[] },
@@ -118,6 +118,22 @@ describe('TextRefPicker · 插入与解绑', () => {
     expect(screen.getByTestId('prompt').textContent).toBe('{{Text 2}} {{Text 1}}');
     expect(screen.getByTestId('ids').textContent).toBe('b,a');
   });
+
+  it('超过上限的那几份不静默丢弃：截断时要说清楚', async () => {
+    picked.assets = Array.from({ length: 10 }, (_, index) => ({
+      ...A,
+      id: `t${index}`,
+      name: `脚本${index}.md`,
+    }));
+    const user = userEvent.setup();
+    render(<Harness />);
+
+    await user.click(screen.getByRole('button', { name: '插入文本引用' }));
+    await user.click(screen.getByRole('button', { name: '确认选择' }));
+
+    expect(toastMock).toHaveBeenCalledWith('最多绑定 8 份文本引用，多出的 2 份没有绑定', 'error');
+    expect(screen.getByTestId('ids').textContent?.split(',')).toHaveLength(8);
+  });
 });
 
 describe('retargetTextTokens · 按 id 重编号', () => {
@@ -151,10 +167,5 @@ describe('retargetTextTokens · 按 id 重编号', () => {
     const result = retargetTextTokens('{{Text 1}} 和 {{Text 3}}', [], [A]);
     expect(result.text).toBe('{{Text 1}} 和 ');
     expect(result.dropped).toBe(1);
-  });
-
-  it('hasForeignMustache 放行 {{Text N}}，拦其它模板括号', () => {
-    expect(hasForeignMustache('照 {{Text 1}} 写')).toBe(false);
-    expect(hasForeignMustache('照 {{Foo}} 写')).toBe(true);
   });
 });

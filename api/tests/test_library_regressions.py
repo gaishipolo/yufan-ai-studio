@@ -19,10 +19,10 @@ from fastapi.testclient import TestClient
 from library_support import (
     LIB_RW,
     admin_headers,
-    fetch_asset,
     make_group,
     make_user,
     png_bytes,
+    set_members,
     upload_image,
 )
 
@@ -157,6 +157,65 @@ def test_selection_total_respects_include_packs(
     assert page["total"] == len(page["items"]), (
         f"total={page['total']} 但只返回 {len(page['items'])} 条"
     )
+
+
+def test_owner_keeps_seeing_a_shared_asset_after_leaving_the_group(
+    client: TestClient, api: str
+) -> None:
+    """本人被移出小组后，自己的共享素材不能从界面上彻底消失。
+
+    `can_read` 的 owner 分支无条件放行（共享出去之后仍是「我的」），而 SQL 分支
+    要求 `visibility == "personal"`：同一条规则写了两遍、漂了一支。于是素材在
+    四个入口里全部不见了，角标也不计数，只剩直链能打开——用户自己的东西，也
+    没法自救（撤销共享不再是自审）。
+
+    SQL 分支的口径必须与 `can_read` 对齐：本人可见，但只在**别处看不到**的时候
+    回个人库显示（共享给某个组、我还在那个组里 → 小组库显示，不重复）。
+    """
+    admin = admin_headers(client)
+    owner, owner_h = make_user(client, admin, SHARE_DIRECT)
+    other, other_h = make_user(client, admin, SHARE_DIRECT)
+    group = make_group(client, admin, [owner["id"], other["id"]])
+    asset = upload_image(client, api, owner_h, name="mine.png", color="navy")
+
+    shared = client.post(
+        f"{api}/library/share-requests",
+        json={
+            "assetId": asset["id"],
+            "action": "share",
+            "target": "group",
+            "groupId": group["id"],
+        },
+        headers=owner_h,
+    )
+    assert shared.status_code == 201, shared.text
+    assert shared.json()["data"]["status"] == "approved"
+
+    # 我被移出小组
+    set_members(client, admin, group["id"], [other["id"]])
+
+    # 直链能开（can_read 放行）
+    assert client.get(f"{api}/library/assets/{asset['id']}", headers=owner_h).status_code == 200
+
+    # 列表的两个入口也要能看到它
+    for tab in ("all", "personal"):
+        page = client.get(
+            f"{api}/library/assets",
+            params={"library": tab, "pageSize": 100},
+            headers=owner_h,
+        ).json()["data"]
+        assert asset["id"] in [item["id"] for item in page["items"]], (
+            f"{tab} 入口里看不到自己的素材：被移出小组后不该凭空消失"
+        )
+
+    # 角标与列表必须对得上
+    facets = client.get(f"{api}/library/facets", headers=owner_h).json()["data"]
+    personal = client.get(
+        f"{api}/library/assets",
+        params={"library": "personal", "pageSize": 100},
+        headers=owner_h,
+    ).json()["data"]
+    assert facets["personal"] == personal["total"]
 
 
 def test_upload_source_key_is_owner_scoped(client: TestClient, api: str) -> None:

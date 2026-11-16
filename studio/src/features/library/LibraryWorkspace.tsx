@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Download } from 'lucide-react';
 import { Button, Chip, PageHeader, Pager } from '@/shared/ui';
@@ -6,7 +6,7 @@ import { toast } from '@/shared/lib/toast';
 import { useDebouncedValue } from '@/shared/hooks/useDebouncedValue';
 import { useCan, useSubject } from '@/shared/access/use-access';
 import { ApiError } from '@/shared/api/types';
-import type { LibraryAssetOut } from '@/shared/api/schema';
+import type { BulkAction, LibraryAssetOut } from '@/shared/api/schema';
 import {
   deleteOffer,
   displayName,
@@ -140,9 +140,20 @@ export function LibraryWorkspace() {
   /** 卡片标签行 `+` 打开的选择器；只存 asset，词表与权限在渲染时取当前值 */
   const [tagPicker, setTagPicker] = useState<LibraryAssetOut | null>(null);
 
-  const items = list.data?.items ?? [];
+  const items = useMemo(() => list.data?.items ?? [], [list.data?.items]);
   const total = list.data?.total ?? 0;
   const hasFilters = kind !== 'all' || tagIds.length > 0 || !!debouncedKeyword;
+
+  /* 列表数据一变（换类型/关键词/标签、翻页、删掉一条）就把选中项裁到当前结果里。
+     批量条只写「已选 N 项」，不列是哪几条——留着看不见的 id，用户点批量删除时
+     删掉的是自己都看不到的素材（其中还可能有已被删掉的 id）。 */
+  useEffect(() => {
+    const visible = new Set(items.map((item) => item.id));
+    setSelected((previous) => {
+      const next = new Set([...previous].filter((id) => visible.has(id)));
+      return next.size === previous.size ? previous : next;
+    });
+  }, [items]);
 
   function update(patch: Record<string, string | null>, replace = true) {
     setParams(
@@ -433,21 +444,68 @@ export function LibraryWorkspace() {
       return;
     }
 
-    const action =
-      kindOfAction === 'delete'
-        ? 'delete'
-        : kindOfAction === 'restore'
-          ? 'restore'
-          : kindOfAction === 'approve'
-            ? 'approveDraft'
-            : 'addTag';
+    if (kindOfAction === 'delete') {
+      /* 批量删除与单条删除走**同一套确认**：不可逆的动作不留「手滑」的口子。
+         共享出去的素材（小组/团队）后端必然拒——那类素材单独剔掉，不让整批
+         陪葬；卡片层在小组/团队入口本来就不给删除按钮，这里是同一口径。 */
+      const picked = items.filter((asset) => selected.has(asset.id));
+      const deletable = picked.filter((asset) => {
+        const offer = deleteOffer(asset, viewer);
+        return offer === 'trash' || offer === 'force';
+      });
+      const skipped = picked.length - deletable.length;
+      /* 选中项与当前列表对不上（列表正在刷新）：什么都不做，等列表回来再说 */
+      if (!picked.length) return;
+      if (!deletable.length) {
+        toast('选中的素材共享给小组或团队，不能直接移入回收站', 'error');
+        return;
+      }
+      const force = deletable.some((asset) => deleteOffer(asset, viewer) === 'force');
+      setConfirm({
+        title: '批量移入回收站',
+        description: `选中的 ${deletable.length} 条素材会进入回收站，30 天内可以恢复。${
+          skipped ? `另外 ${skipped} 条共享给小组或团队，不能直接删除，已跳过。` : ''
+        }`,
+        confirmLabel: '批量移入回收站',
+        danger: true,
+        /* 管理员强制删除仍要填理由：与单条删除复用同一套理由字段 */
+        requireReason: force,
+        reasonLabel: '强制删除理由',
+        reasonPlaceholder: '例：上传错误版本，已与作者确认',
+        onConfirm: (reason) => {
+          applyBulk(
+            deletable.map((asset) => asset.id),
+            'delete',
+            { reason },
+          );
+        },
+      });
+      return;
+    }
 
+    const action =
+      kindOfAction === 'restore'
+        ? 'restore'
+        : kindOfAction === 'approve'
+          ? 'approveDraft'
+          : 'addTag';
+
+    applyBulk(ids, action, payload as Record<string, unknown> | undefined);
+  }
+
+  /** 批量写：逐条判定、逐条提交；成败混在一起时把失败明细带出来 */
+  function applyBulk(
+    writeIds: string[],
+    action: BulkAction,
+    writePayload?: Record<string, unknown>,
+  ) {
     bulk.mutate(
-      { ids, action, payload: payload as Record<string, unknown> | undefined },
+      { ids: writeIds, action, payload: writePayload },
       {
         onSuccess: (result) => {
           const failed = result.failed ?? 0;
           const first = result.results?.find((item) => !item.ok);
+          setConfirm(null);
           setSelected(new Set());
           if (failed) {
             toast(
@@ -459,6 +517,7 @@ export function LibraryWorkspace() {
           }
         },
         onError: (error) => {
+          setConfirm(null);
           setSelected(new Set());
           fail(error);
         },
@@ -540,7 +599,6 @@ export function LibraryWorkspace() {
           hasFilters={hasFilters}
           onRetry={() => void list.refetch()}
           onToggle={toggle}
-          onToggleAll={toggleAll}
           onAction={onAction}
           onRemoveTag={removeTag}
           onAddTag={(asset) => setTagPicker(asset)}

@@ -130,8 +130,15 @@ function DetailBody({
   const [name, setName] = useState(displayName(asset.name));
   const [tagIds, setTagIds] = useState<string[]>(asset.tags?.map((tag) => tag.id) ?? []);
 
-  /* 换一条资产时把本地编辑态重置，否则会把上一条的名字带到下一条 */
+  /* 换一条资产时把本地编辑态重置，否则会把上一条的名字带到下一条。
+     **只在 asset.id 变化时重置**：详情会被窗口重新聚焦、写操作后的失效重新
+     拉取，每次响应都是新的 tags 数组引用——按 name/tags 做依赖，用户刚输入
+     的名字会被一次无关的刷新冲掉，编辑态还整个关掉（用户以为还在编辑，
+     其实输入框已经没了）。 */
+  const assetIdRef = useRef(asset.id);
   useEffect(() => {
+    if (assetIdRef.current === asset.id) return;
+    assetIdRef.current = asset.id;
     setName(displayName(asset.name));
     setTagIds(asset.tags?.map((tag) => tag.id) ?? []);
     setRenaming(false);
@@ -181,8 +188,15 @@ function DetailBody({
     );
   };
 
+  /** 正文还没读出来时不能复制：复制到的是空串，提示「已复制全文」是骗人 */
+  const textReady = !text.isPending && !text.isError && !!text.data?.content;
+
   /** 复制全文：剪贴板可能被浏览器策略禁用（非 HTTPS / 无权限），失败要给人一条可执行的兜底 */
   const copyText = async () => {
+    if (!textReady) {
+      toast('正文还没读出来，稍后再试', 'error');
+      return;
+    }
     try {
       await navigator.clipboard.writeText(text.data?.content ?? '');
       toast('已复制全文');
@@ -205,6 +219,7 @@ function DetailBody({
                 size="sm"
                 variant="secondary"
                 icon={<Copy size={12} />}
+                disabled={!textReady}
                 onClick={() => void copyText()}
               >
                 复制全文

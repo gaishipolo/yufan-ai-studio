@@ -372,6 +372,188 @@ def test_cannot_share_to_a_group_i_am_not_in(client: TestClient, api: str) -> No
     assert response.json()["code"] == 40987
 
 
+def test_approving_a_share_after_the_asset_went_to_trash_is_refused(
+    client: TestClient, api: str
+) -> None:
+    """审批通过前必须复核资产状态：回收站里的条目不能被改成共享可见。
+
+    申请单是快照：申请时成立，不代表审批时还成立。原来的 `decide()` 只取行、
+    不判 state，于是「移进回收站 → 审批通过」会在回收站里留下一条
+    `state=trash ∧ visibility=team` 的行，破坏不变式 A/B（回收站里的东西继续
+    出现在小组库里，「删除」就失去了语义）。
+    """
+    admin = admin_headers(client)
+    owner, owner_h = make_user(client, admin, SHARE_PERMISSIONS)
+    group = make_group(client, admin, [owner["id"]])
+    asset = upload_image(client, api, owner_h, color="navy")
+
+    request = _share(client, api, owner_h, asset["id"], group_id=group["id"]).json()["data"]
+    assert request["status"] == "pending"
+
+    # 审批之前，资产被移进回收站
+    assert client.delete(f"{api}/library/assets/{asset['id']}", headers=owner_h).status_code == 200
+
+    approved = client.post(
+        f"{api}/library/share-requests/{request['id']}/approve", json={}, headers=admin
+    )
+    assert approved.status_code == 409, approved.text
+
+    row = fetch_asset(asset["id"])
+    assert row is not None
+    assert row["state"] == "trash"
+    assert row["visibility"] == "personal", "回收站里的条目不能被改成共享可见"
+    assert fetch_group_rows(asset["id"]) == [], "回收站里不能留下小组共享行"
+
+
+def test_rejecting_an_outdated_request_is_still_allowed(
+    client: TestClient, api: str
+) -> None:
+    """驳回一条已经过时的申请单是正当操作，不能被 409 拦住。
+
+    目标有效性复核只在「通过」时做：否则待办列表里会留下一条谁也处理不了的
+    单子（通过不行、驳回也不行）。
+    """
+    admin = admin_headers(client)
+    owner, owner_h = make_user(client, admin, SHARE_PERMISSIONS)
+    group = make_group(client, admin, [owner["id"]])
+    asset = upload_image(client, api, owner_h, color="plum")
+
+    request = _share(
+        client, api, owner_h, asset["id"], group_id=group["id"]
+    ).json()["data"]
+    assert client.delete(f"{api}/library/assets/{asset['id']}", headers=owner_h).status_code == 200
+
+    rejected = client.post(
+        f"{api}/library/share-requests/{request['id']}/reject", json={}, headers=admin
+    )
+    assert rejected.status_code == 200, rejected.text
+    assert rejected.json()["data"]["status"] == "rejected"
+
+
+def test_approving_an_old_group_request_does_not_downgrade_a_team_share(
+    client: TestClient, api: str
+) -> None:
+    """旧的组级申请不能把团队共享降级成小组共享。
+
+    团队共享会清空小组行（团队 ⊇ 小组）。这时那条还挂着的组级申请已经过时，
+    原来的 `_apply_share(GROUP)` 无条件写 `visibility="group"` 并补回组行——
+    素材从团队库整体消失，而且这次降级**没有任何撤销申请单**。
+    """
+    admin = admin_headers(client)
+    owner, owner_h = make_user(client, admin, SHARE_PERMISSIONS)
+    group = make_group(client, admin, [owner["id"]])
+    asset = upload_image(client, api, owner_h, color="teal")
+
+    group_request = _share(
+        client, api, owner_h, asset["id"], group_id=group["id"]
+    ).json()["data"]
+    team_request = _share(client, api, owner_h, asset["id"], target="team").json()["data"]
+
+    # 团队共享先通过：它会清空小组行
+    approved_team = client.post(
+        f"{api}/library/share-requests/{team_request['id']}/approve", json={}, headers=admin
+    )
+    assert approved_team.status_code == 200, approved_team.text
+    assert fetch_asset(asset["id"])["visibility"] == "team"  # type: ignore[index]
+
+    # 这时那条组级申请已经过时：通过它会把团队共享降级
+    approved_group = client.post(
+        f"{api}/library/share-requests/{group_request['id']}/approve", json={}, headers=admin
+    )
+    assert approved_group.status_code == 409, approved_group.text
+
+    row = fetch_asset(asset["id"])
+    assert row is not None and row["visibility"] == "team", "团队共享不能被旧申请降级"
+    assert fetch_group_rows(asset["id"]) == []
+
+
+def test_approving_an_old_revoke_does_not_wipe_a_team_share(
+    client: TestClient, api: str
+) -> None:
+    """旧的撤销申请不能把团队共享无声抹掉。
+
+    组行已经没了（团队共享清掉的），撤销却还能通过：`_apply_revoke(GROUP)`
+    删不到组行 → `remaining=None` → `visibility="personal"`——团队共享就此
+    消失，而且没有对应的撤销申请单。
+    """
+    admin = admin_headers(client)
+    owner, owner_h = make_user(client, admin, SHARE_PERMISSIONS)
+    group = make_group(client, admin, [owner["id"]])
+    asset = upload_image(client, api, owner_h, color="olive")
+
+    share = _share(client, api, owner_h, asset["id"], group_id=group["id"]).json()["data"]
+    client.post(f"{api}/library/share-requests/{share['id']}/approve", json={}, headers=admin)
+    assert fetch_asset(asset["id"])["visibility"] == "group"  # type: ignore[index]
+
+    revoke = _share(
+        client,
+        api,
+        owner_h,
+        asset["id"],
+        group_id=group["id"],
+        action="revoke",
+        reason="改用另一版",
+    ).json()["data"]
+    assert revoke["status"] == "pending"
+
+    # 又共享给了团队：组行被清空
+    team = _share(client, api, owner_h, asset["id"], target="team").json()["data"]
+    client.post(f"{api}/library/share-requests/{team['id']}/approve", json={}, headers=admin)
+    assert fetch_asset(asset["id"])["visibility"] == "team"  # type: ignore[index]
+
+    # 这条撤销已经过时：通过它会把团队共享抹成 personal
+    approved = client.post(
+        f"{api}/library/share-requests/{revoke['id']}/approve", json={}, headers=admin
+    )
+    assert approved.status_code == 409, approved.text
+    row = fetch_asset(asset["id"])
+    assert row is not None and row["visibility"] == "team", "团队共享不能被旧撤销抹掉"
+
+
+def test_share_request_checks_the_expected_version(
+    client: TestClient, api: str
+) -> None:
+    """发起申请时也要看版本：按旧页面发出的申请单必须 409。
+
+    这条链上原来没人消费 `expected_version`：批量撤销共享把它一路传下来，
+    只存进申请单就没人看了。基于旧页面发出的撤销申请会作用在用户没见过的
+    资产状态上——而撤销恰恰是风险方向最重的一侧。
+    """
+    admin = admin_headers(client)
+    owner, owner_h = make_user(client, admin, SHARE_PERMISSIONS)
+    group = make_group(client, admin, [owner["id"]])
+    asset = upload_image(client, api, owner_h, color="navy")
+
+    stale = client.post(
+        f"{api}/library/share-requests",
+        json={
+            "assetId": asset["id"],
+            "action": "share",
+            "target": "group",
+            "groupId": group["id"],
+            "expectedVersion": 999,
+        },
+        headers=owner_h,
+    )
+    assert stale.status_code == 409, stale.text
+    assert stale.json()["details"]["stateVersion"] == fetch_asset(asset["id"])["state_version"]  # type: ignore[index]
+
+    # 版本对得上就正常受理
+    current = fetch_asset(asset["id"])["state_version"]  # type: ignore[index]
+    ok = client.post(
+        f"{api}/library/share-requests",
+        json={
+            "assetId": asset["id"],
+            "action": "share",
+            "target": "group",
+            "groupId": group["id"],
+            "expectedVersion": current,
+        },
+        headers=owner_h,
+    )
+    assert ok.status_code == 201, ok.text
+
+
 def test_share_to_team_is_visible_to_everyone(client: TestClient, api: str) -> None:
     admin = admin_headers(client)
     owner, owner_h = make_user(client, admin, SHARE_PERMISSIONS)

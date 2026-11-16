@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { TextAssetModal } from './TextAssetModal';
@@ -41,6 +41,20 @@ describe('TextAssetModal · 站内新建', () => {
       content: '雨夜街头',
       extension: 'txt',
     });
+  });
+
+  it('正文超过 1 MB 时前端就拦下，不发请求', async () => {
+    const user = userEvent.setup();
+    render(<TextAssetModal open mode="create" onClose={vi.fn()} />);
+
+    /* 上限按 UTF-8 字节算：40 万个中文 = 1.2 MB */
+    fireEvent.change(screen.getByRole('textbox', { name: '文本正文' }), {
+      target: { value: '中'.repeat(400_000) },
+    });
+    await user.click(screen.getByRole('button', { name: '创建' }));
+
+    expect(createMock).not.toHaveBeenCalled();
+    expect(screen.getByText('正文不能超过 1 MB（UTF-8 纯文本）')).toBeInTheDocument();
   });
 
   it('默认格式是 md；没填名称不提交', async () => {

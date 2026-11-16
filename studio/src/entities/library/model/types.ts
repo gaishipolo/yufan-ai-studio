@@ -145,6 +145,14 @@ export const KIND_LABEL: Record<string, string> = {
   text: '文本',
 };
 
+/**
+ * 来源 → 中文名。
+ *
+ * 「原片」在资产库里有两种来源，**必须一起取**：
+ * `template_source`（模板库切换后新传的原片）与 `imported`（并存期从旧素材库
+ * 导入的存量）。漏掉后者等于切完只剩新传的片子；只按 `kind=video` 取又会把
+ * 已生成的成片（同为 `kind=video`）列成原片。
+ */
 export const ORIGIN_LABEL: Record<string, string> = {
   upload: '上传',
   generated: 'AI 生成',
@@ -213,14 +221,3 @@ export function trashDaysLeft(expiresAt?: string | null, now = Date.now()): numb
 export function isTrashExpired(expiresAt?: string | null, now = Date.now()): boolean {
   return trashDaysLeft(expiresAt, now) === 0;
 }
-
-/**
- * 「原片」在资产库里的两种来源，**必须一起取**：
- *
- * - `template_source`：模板库切换后新传的原片（`POST /library/source-videos`）；
- * - `imported`：并存期从旧素材库导入的存量原片。
- *
- * 漏掉后者等于切完只剩新传的片子，用户会以为原来的原片被删了；只按
- * `kind=video` 取又会把已生成的成片（同为 `kind=video`）列成原片。
- */
-export const SOURCE_VIDEO_ORIGINS: string[] = ['template_source', 'imported'];

@@ -202,6 +202,23 @@ class GenerationSourceInvalid(AppError):
     http_status = 400
 
 
+class IngestKeyNotOwned(AppError):
+    """入库给的存储键 / 归档键不属于调用方。
+
+    `POST /assets/from-generation` 的 `storageKey` / `archiveKey` 由调用方给，
+    服务端不校验归属就能把主存储里的**任意对象**读成自己名下的素材——随后
+    `GET /assets/{id}/file` 就把那份字节拿走了。主存储里装的是所有人的私有
+    原片，所以这是一个「任意对象读取」原语，不是一个普通的入参问题。
+
+    403 而不是 400：键的格式没问题，是**归属**不对。归档键（另一个驱动里的
+    对象）没有资产行可查，所以 HTTP 端点干脆不收它，只留端口内部调用。
+    """
+
+    code = errors.code(403, 3)
+    message = "该存储键不属于你，无法入库"
+    http_status = 403
+
+
 class DownloadEmpty(AppError):
     """选中的条目一个都不能下载（全是草稿 / 回收站 / 看不见的）。"""
 
@@ -249,6 +266,7 @@ __all__ = [
     "DraftNotReviewable",
     "DraftReviewForbidden",
     "GenerationSourceInvalid",
+    "IngestKeyNotOwned",
     "LibraryFileTooLarge",
     "LibraryFileTypeNotAllowed",
     "LibraryTextInvalid",

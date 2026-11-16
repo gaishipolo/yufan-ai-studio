@@ -29,15 +29,15 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import re
 import tempfile
 import zipfile
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any, cast
 
-from sqlalchemy import delete, select
+from sqlalchemy import CursorResult, delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.audit import record as audit
@@ -350,11 +350,14 @@ async def build_download(job_id: str) -> None:
         if row is None:
             logger.info("打包任务已不存在，跳过 id=%s", job_id)
             return
-        if row.status != QUEUED:
-            logger.info("打包任务已是 %s，跳过 id=%s", row.status, job_id)
+        # **抢状态**：条件更新（`WHERE status='queued'`）。
+        # 原来这里是「读行 → 判 queued → 置 running → commit」，两个 worker 同时
+        # 读到 queued 就会各自压一遍包（同一个 key 互相覆盖、CPU 与磁盘翻倍）。
+        # 队列的原子领取只保证「谁领到 job 行」，不保证旧持有者停止写业务表——
+        # 模块自己的注释就写着「db 驱动在租约丢失后会重投」。
+        if not await _claim_job(session, job_id):
+            logger.info("打包任务已被别人领走，跳过 id=%s", job_id)
             return
-        row.status = RUNNING
-        await session.commit()
 
         asset_ids = [str(asset_id) for asset_id in (row.asset_ids or [])]
         notes: list[str] = []
@@ -396,24 +399,33 @@ async def build_download(job_id: str) -> None:
                 key = f"{DOWNLOAD_PREFIX}/{row.id}.zip"
                 await storage.put_file(key, target, "application/zip")
         except Exception as exc:  # noqa: BLE001 - 失败要落到行上，不能只写日志
-            row.status = FAILED
-            row.error = (str(exc) or type(exc).__name__)[:500]
-            row.finished_at = datetime.now(UTC)
-            row.expires_at = datetime.now(UTC) + timedelta(
-                hours=settings.library_download_ttl_hours
+            # 条件更新：只覆盖**自己抢到的那一次**运行（状态仍是 running）。
+            # 原来这里无条件 `row.status = FAILED`，会把别的 worker 已经提交
+            # 成功的行一起覆盖掉——用户看到「打包失败」，而 GC 之后按 failed 把
+            # 那个其实可用的 zip 删掉。
+            await _finish_job(
+                session,
+                job_id,
+                status=FAILED,
+                error=(str(exc) or type(exc).__name__)[:500],
+                finished_at=datetime.now(UTC),
+                expires_at=datetime.now(UTC)
+                + timedelta(hours=settings.library_download_ttl_hours),
             )
-            await session.commit()
             logger.exception("打包失败 id=%s", job_id)
             return
 
         now = datetime.now(UTC)
-        row.status = SUCCEEDED
-        row.storage_key = key
-        row.size_bytes = size
-        row.error = "；".join(notes)[:500]
-        row.finished_at = now
-        row.expires_at = now + timedelta(hours=settings.library_download_ttl_hours)
-        await session.commit()
+        await _finish_job(
+            session,
+            job_id,
+            status=SUCCEEDED,
+            storage_key=key,
+            size_bytes=size,
+            error="；".join(notes)[:500],
+            finished_at=now,
+            expires_at=now + timedelta(hours=settings.library_download_ttl_hours),
+        )
         logger.info(
             "打包完成 id=%s files=%d bytes=%d skipped=%d",
             job_id,
@@ -421,6 +433,72 @@ async def build_download(job_id: str) -> None:
             size,
             len(notes),
         )
+
+
+async def _claim_job(session: AsyncSession, job_id: str) -> bool:
+    """把任务从 `queued` 抢成 `running`。抢不到返回 False（别人已经在跑了）。
+
+    「抢」用的是条件更新而不是「读 → 判 → 写」：只有一条语句能同时把
+    `status='queued'` 改成 `running`，rowcount 就是这次是不是第一个。
+    """
+    claimed = cast(
+        "CursorResult[Any]",
+        await session.execute(
+            update(LibraryDownloadJob)
+            .where(
+                LibraryDownloadJob.id == job_id,
+                LibraryDownloadJob.status == QUEUED,
+            )
+            .values(status=RUNNING)
+            .execution_options(synchronize_session=False)
+        ),
+    )
+    await session.commit()
+    return claimed.rowcount == 1
+
+
+async def _finish_job(
+    session: AsyncSession,
+    job_id: str,
+    *,
+    status: str,
+    storage_key: str | None = None,
+    size_bytes: int | None = None,
+    error: str | None = None,
+    finished_at: datetime | None = None,
+    expires_at: datetime | None = None,
+) -> bool:
+    """把任务写成终态。**条件更新**：只覆盖仍在 `running` 的那一次运行。
+
+    失败分支尤其要这样：原来它无条件把整行改成 failed，连 `storage_key` 一起
+    清空，于是「另一个 worker 已经压成功」的那一行会被覆盖成失败——用户看到
+    「打包失败」，GC 之后又按 failed 把那个其实可用的 zip 删掉。
+    """
+    values: dict[str, Any] = {"status": status}
+    if storage_key is not None:
+        values["storage_key"] = storage_key
+    if size_bytes is not None:
+        values["size_bytes"] = size_bytes
+    if error is not None:
+        values["error"] = error
+    if finished_at is not None:
+        values["finished_at"] = finished_at
+    if expires_at is not None:
+        values["expires_at"] = expires_at
+    result = cast(
+        "CursorResult[Any]",
+        await session.execute(
+            update(LibraryDownloadJob)
+            .where(
+                LibraryDownloadJob.id == job_id,
+                LibraryDownloadJob.status == RUNNING,
+            )
+            .values(**values)
+            .execution_options(synchronize_session=False)
+        ),
+    )
+    await session.commit()
+    return result.rowcount == 1
 
 
 def _unique_arcname(index: int, name: str, used: set[str]) -> str:
@@ -535,11 +613,20 @@ async def run_download_gc(
             if dry_run:
                 continue
             key = row.storage_key
+            if key:
+                # **先删字节、成功后再清 key**。
+                # 原来这里是「先 `row.storage_key = ""` 再删字节」，而删除异常
+                # 被 `contextlib.suppress` 吞掉：事务照常提交，这一行变成
+                # expired 且没有 key，而下一轮 GC 只选 succeeded/failed —— 那个
+                # 最大 2GB 的 zip 就永久留在对象存储里，没有任何记录还知道它存在。
+                try:
+                    await storage.delete(key)
+                except Exception:  # noqa: BLE001 - 删失败要重试，不能吞掉
+                    # 保留 key 与状态：这一行仍会被下一轮 GC 选中，字节还有得救。
+                    logger.warning("删除过期 zip 失败，下一轮重试 id=%s key=%s", row.id, key)
+                    continue
             row.status = EXPIRED
             row.storage_key = ""
-            if key:
-                with contextlib.suppress(Exception):
-                    await storage.delete(key)
 
         for row in ancient:
             report.purged += 1

@@ -15,6 +15,7 @@ import asyncio
 import io
 import zipfile
 
+import pytest
 from fastapi.testclient import TestClient
 from library_support import (
     LIB_RW,
@@ -169,6 +170,110 @@ def test_download_gc_expires_and_purges_rows(client: TestClient, api: str) -> No
     backdate_download(job["id"], expires_days=8)
     asyncio.run(run_download_gc())
     assert fetch_download_job(job["id"]) is None
+
+
+def test_download_gc_keeps_the_row_when_deleting_the_bytes_fails(
+    client: TestClient, api: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """删字节失败时必须**保留 key 与状态**，让下一轮 GC 重试。
+
+    原来这里是「先 `row.storage_key = ""` 再删字节」，而删除异常被
+    `contextlib.suppress` 吞掉：事务照常提交，那一行变成 expired 且没有 key，
+    而下一轮 GC 只选 succeeded/failed —— 那个最大 2GB 的 zip 就永久留在对象
+    存储里，没有任何记录还知道它存在。
+    """
+    from infra import get_storage
+    from modules.library.downloads import run_download_gc
+
+    admin = admin_headers(client)
+    owner, owner_h = make_user(client, admin, LIB_RW)
+    asset = upload_image(client, api, owner_h, color="firebrick")
+    job = _create(client, api, owner_h, [asset["id"]]).json()["data"]
+    build_download_job(job["id"])
+    key = fetch_download_job(job["id"])["storage_key"]
+    assert key
+
+    backdate_download(job["id"], expires_days=1)
+
+    async def failing_delete(key: str) -> None:
+        raise RuntimeError("对象存储暂时不可用")
+
+    monkeypatch.setattr(get_storage(), "delete", failing_delete)
+
+    asyncio.run(run_download_gc())
+
+    row = fetch_download_job(job["id"])
+    assert row is not None
+    assert row["status"] == "succeeded", "删失败不该把行改成 expired（下一轮就选不到了）"
+    assert row["storage_key"] == key, "删失败必须保留 key，下一轮才能重试"
+
+
+def test_claiming_a_download_job_is_atomic() -> None:
+    """queued → running 必须是**一条条件更新**：两个 worker 只有一个能领到。
+
+    原来这里是「读行 → 判 queued → 置 running → commit」，两个 worker 同时读到
+    queued 就会各自压一遍包（同一个 key 互相覆盖、CPU 与磁盘翻倍）。
+    """
+    from db.session import get_session_factory
+    from modules.library.downloads import _claim_job
+    from modules.library.models import LibraryDownloadJob
+
+    async def run() -> tuple[bool, bool]:
+        async with get_session_factory()() as session:
+            job = LibraryDownloadJob(owner_id="system", asset_ids=[], status="queued")
+            session.add(job)
+            await session.commit()
+            first = await _claim_job(session, job.id)
+            second = await _claim_job(session, job.id)
+            return first, second
+
+    first, second = asyncio.run(run())
+    assert first is True, "第一个 worker 要抢到"
+    assert second is False, "第二个 worker 必须抢不到（否则会双压包）"
+
+
+def test_finishing_a_download_job_does_not_overwrite_a_finished_row() -> None:
+    """终态写入也是条件更新：只覆盖仍在 running 的那一次运行。
+
+    失败分支原来无条件把整行改成 failed（连 storage_key 一起清空），于是
+    「另一个 worker 已经压成功」的那一行会被覆盖——用户看到「打包失败」，GC
+    之后又按 failed 把那个其实可用的 zip 删掉。
+    """
+    from db.session import get_session_factory
+    from modules.library.downloads import _finish_job
+    from modules.library.models import LibraryDownloadJob
+
+    async def run() -> bool:
+        async with get_session_factory()() as session:
+            job = LibraryDownloadJob(
+                owner_id="system",
+                asset_ids=[],
+                status="succeeded",
+                storage_key="library/downloads/x.zip",
+            )
+            session.add(job)
+            await session.commit()
+            return await _finish_job(session, job.id, status="failed", error="boom")
+
+    assert asyncio.run(run()) is False, "已经结束的任务不该再被改写"
+
+    async def read() -> str | None:
+        from sqlalchemy import select
+
+        from db.session import get_session_factory
+        from modules.library.models import LibraryDownloadJob
+
+        async with get_session_factory()() as session:
+            rows = (
+                await session.scalars(
+                    select(LibraryDownloadJob).where(
+                        LibraryDownloadJob.storage_key == "library/downloads/x.zip"
+                    )
+                )
+            ).all()
+            return rows[0].status if rows else None
+
+    assert asyncio.run(read()) == "succeeded"
 
 
 def test_download_gc_marks_stuck_jobs_failed(client: TestClient, api: str) -> None:

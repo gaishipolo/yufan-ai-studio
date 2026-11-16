@@ -109,6 +109,15 @@ class ShareService:
         asset = await access.load_visible(self.session, payload.asset_id, actor)
         if asset.state != "active":
             raise BadRequest("只有库内的资产可以共享或撤销共享")
+        # 乐观锁：与 `decide()` 同一口径（比的是 `state_version`）。
+        # 之前这条链上没人消费 `expected_version`：批量撤销共享把它一路传下来，
+        # 只存进申请单就没人看了——基于旧页面发出的撤销申请会作用在用户没见过的
+        # 资产状态上，而撤销恰恰是风险方向最重的一侧。
+        if payload.expected_version and asset.state_version != payload.expected_version:
+            raise Conflict(
+                "资产已被修改，请刷新后重试",
+                details={"stateVersion": asset.state_version},
+            )
         if asset.owner_id != actor.id:
             await self._check_non_owner(asset, payload, actor)
         if payload.action is ShareAction.REVOKE:
@@ -223,6 +232,19 @@ class ShareService:
             raise Conflict(
                 "资产已被修改，请刷新后重试",
                 details={"stateVersion": asset.state_version},
+            )
+        if approve:
+            # 申请单是**快照**：申请时成立，不代表审批时还成立。这里按申请的目标
+            # 重跑一次目标有效性校验，不通过就 409 让审批人重新看一眼。
+            #
+            # **只在「通过」时校验**：驳回一条已经过时的申请单是正当操作（正是
+            # 把它关掉的时候），被 409 拦住的话，待办列表里就会留下一条谁也
+            # 处理不了的单子。
+            await self._recheck_target(
+                asset,
+                ShareAction(row.action),
+                ShareTarget(row.target),
+                row.group_id or "",
             )
 
         # 抢占：只有真正的第一个请求能把 status 从 pending 改掉
@@ -430,6 +452,66 @@ class ShareService:
                 LibraryShareRequest.status == "pending",
             )
         )
+
+    async def _recheck_target(
+        self,
+        asset: LibraryAsset,
+        action: ShareAction,
+        target: ShareTarget,
+        group_id: str,
+    ) -> None:
+        """审批通过前，按申请的目标重跑一次「这个目标现在还成不成立」。
+
+        申请单是**快照**：申请时成立，不代表审批时还成立——资产被移进回收站、
+        已经共享给团队、或者那条小组共享行已经没了。这时点「通过」会把回收站里
+        的条目改成 team 可见（破坏不变式 A/B），或者让一条旧的组级申请把团队
+        共享降级 / 抹掉，而那次降级**没有任何撤销申请单**。
+
+        不满足就 409：审批人看到的是「这个目标已经变了」，而不是一条被写坏的
+        可见性。前端固定传 `expectedVersion: 0`，版本闸门在这里不生效，所以
+        这道复核是审批链上唯一的闸门。
+        """
+        if asset.state != "active":
+            raise ShareTargetInvalid(
+                "资产已不在库内，这次申请的目标不再成立",
+                details={"state": asset.state},
+            )
+        groups = (await access.asset_group_ids(self.session, [asset.id])).get(asset.id, [])
+        if action is ShareAction.SHARE:
+            if target is ShareTarget.TEAM:
+                if asset.visibility == "team":
+                    raise ShareTargetInvalid(
+                        "该资产已共享给团队，这次申请的目标不再成立",
+                        details={"visibility": asset.visibility},
+                    )
+                return
+            # 共享到小组：团队共享优先（团队 ⊇ 小组），且不能重复共享给同一个组
+            if asset.visibility == "team":
+                raise ShareTargetInvalid(
+                    "资产已共享给团队，无需再共享到小组",
+                    details={"visibility": asset.visibility},
+                )
+            if group_id and group_id in groups:
+                raise ShareTargetInvalid(
+                    "该资产已经共享给这个小组，这次申请的目标不再成立",
+                    details={"groupId": group_id},
+                )
+            return
+        # 撤销：目标必须还在，否则这次撤销没有对象——更不能顺手把「别的共享」
+        # 抹掉（组行已经不在还去撤销，_apply_revoke 会把 visibility 写成
+        # personal，团队共享就此无声消失）。
+        if target is ShareTarget.TEAM:
+            if asset.visibility != "team":
+                raise ShareTargetInvalid(
+                    "该资产不在团队库，这次撤销的目标不再成立",
+                    details={"visibility": asset.visibility},
+                )
+            return
+        if group_id not in groups:
+            raise ShareTargetInvalid(
+                "该资产没有共享给这个小组，这次撤销的目标不再成立",
+                details={"groupId": group_id},
+            )
 
     async def _apply_share(
         self, asset: LibraryAsset, target: ShareTarget, group_id: str

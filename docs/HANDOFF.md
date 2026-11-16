@@ -14,14 +14,14 @@
 | 仓库 / 分支 | `https://github.com/gaishipolo/yufan-ai-studio` · `main` |
 | HEAD | 本地领先 `origin/main` **4 笔未推送**（`822a4cd` 计费模式进 paramSchema → `bfa03e1` 模板库计费模式 → `e6e2f91` 任务中心不再能创建任务 → `2ed4943` 参数全面由模型 paramSchema 驱动）；**推送前先问用户**。笔数以 `git rev-list --count origin/main..HEAD` 为准，hash 见 `git log --oneline origin/main..HEAD`。另有**未提交的前端视觉重构**（2026-11-16，见 §1）。未跟踪的只有 `var/`、临时脚本（如 `var_fix_fe.py`）、快捷方式 `.lnk`、`vite.config.ts.timestamp-*.mjs` 与用户私有的 `EXCHANGE_TOPICS_2026-11-12.md`，都不该进提交 |
 | CI | 此前连续多轮全绿（含 `bc0940e`）；本轮推送后照 §4 核对。PG 迁移仍在观察期（`continue-on-error`） |
-| 本机门禁 | **前端**（2026-11-16 视觉重构）：`npm run verify` 全绿 —— typecheck 0 / lint 0 / **608 passed（71 文件）** / build ok；契约零变动（后端没动）。**后端**：本轮未动，上一轮 P3 迁移按 §3.1 定级 `targeted`：5 个测试文件 100 passed / ruff 0 / mypy 300 文件 0 |
+| 本机门禁 | **前端**（2026-11-16 视觉重构 + 资产库三件事）：`npm run verify` 全绿 —— typecheck 0 / lint 0 / **625 passed（78 文件）** / build ok。**后端**（同轮资产库改造）：`pytest -q` **1369 passed / 12 skipped** / ruff 0 / mypy 248 文件 0；契约四份已重导出 |
 | 规模 | 11 个业务模块 · **95 条路径 / 125 个端点** · **53 个权限码** · **4 份**契约生成物（数字以 `app modules` 与 `api/docs/openapi.json` 为准，别再手抄） |
 | 后端 | `api/.venv/Scripts/app.exe serve --reload` → 8080，前缀 **`/api/v1`**（裸 `/health` 会返回 40400） |
 | 前端 | `cd studio && npm run dev` → 5173，`/api` 已代理到 8080 |
 
 ## 1. 这一轮（11-11）做了什么
 
-### 1.0 前端视觉重构（2026-11-16，**未提交**）
+### 1.0 前端视觉重构（2026-11-16，已提交并推送）
 
 用户要求「用 frontend-design 技能优化前端视觉，避免不必要的辅助标签与说明，
 让布局本身发挥解释作用」。**只动前端，后端与契约零变动。**
@@ -123,7 +123,7 @@ tailwind 补 `animate-slideUp`（朝上弹时动画方向要对）。
 （`docs/ROUTES.md` 已重新生成）、4 条只测宫格的用例。
 **新增模块现在只声明 `routes[].nav` 一处展示信息。**
 
-**门禁**：`npm run verify` 全绿 —— typecheck 0 / lint 0 / **608 passed（71 文件）** / build ok。
+**门禁**：`npm run verify` 全绿 —— typecheck 0 / lint 0 / **625 passed（78 文件）** / build ok。
 测试改动：`StudioPage.test.tsx` 的 `react-router-dom` mock 补 `Link`；
 `ReferenceImages` 的提示文案改短后同步断言；`PromptBox.test.tsx` 新增浮层方向
 与「英文后打 @」用例；`mention.test.ts` 新增「英文后打 @」用例
@@ -245,6 +245,54 @@ role=img + 名称查、固定槽位按钮区分「更换/选择素材」；`spec
 | 生图 `succeeded` 但成图不在 → 分组 `attention`（不是 `completed`） | 前端 | 与替换档案同款口径，避免「已完成却点不出图」；卡片显示「成图待恢复」 |
 | 任务中心批量收藏改 `PATCH /tasks/{id}` 显式 `{favorited:true}` | 前端 | 不用 toggle 的 `POST /favorite`（点两次会取消收藏）；批量删除走 `DELETE /tasks` 并如实显示 `skipped`。两类操作只作用于勾选的通用视频任务 |
 | 下载走 feed 已现签的 `outputUrl`，不新增后端下载端点 | 前端 | `shared/lib/download.ts::downloadUrl` 用 `<a download>` 直连，避开对象存储 / CDN 的 CORS；跨源时浏览器忽略 `download` 但仍能打开产物 |
+
+### 1.1 资产库：取消素材封装 + 标签树三级化 + 按代码审查报告修 27 条（2026-11-16，已提交）
+
+用户一次性提了三件事：**增加三级标签**、**取消素材封装功能**、**按代码审查报告修**。
+审查报告本身在 `docs/LIBRARY_REVIEW_2026-11-16.md`（前端 18 条 + 后端 17 条，
+逐条给了触发路径与修复方向）。
+
+#### 取消素材封装（`refactor(library)`）
+
+封装(pack)是把若干素材打成一个「整体」的容器：一行 `kind=pack` 的资产行（没有自己的
+字节）+ `library_pack_items` 的有序成员。撤掉它的理由不是不好用，而是**它让「一条素材」
+不再是唯一的事实** —— 同一个成员既在个人库里、又在封装里，于是长出了三样只服务它的东西：
+列表要决定「成员不再单列」（`hidden_by_pack_clause`）、下载要把封装再展开一次、
+引用检查要多一个来源。
+
+- 后端：删 `packs.py`、`library_pack_items` 模型与表、四个 `/library/packs` 端点、
+  可见性里「封装成员可读」那一支、下载里的「封装展开成成员」、标签继承、
+  三个封装错误码、`sync-pack-tags` 命令、引用来源里的封装那一条
+- 契约：`LibraryAssetKind` / `origin` / `BulkAction` 都不再有 `pack`，详情出参不再有
+  `packItems`，四份生成物重新导出
+- 模板封装：槽位类型只剩 image / video / audio / text（「一个槽位绑一整个封装」靠的就是
+  资产库的封装）
+- 前端：封装弹窗、封装 chip、提示词里的封装缩略图、工具栏的「新建封装」、批量栏的
+  「封装」、类型筛选里的「封装」档，以及 mock 里那套封装数据
+- 迁移 `c3d8e1f04a7b`：删 `kind='pack'` 的资产行（连带标签绑定、共享申请单、下载任务里的
+  引用）、删 `library_pack_items`、删 `template_spec_slots.pack_id`，并把模板里的封装槽位
+  改成空的图片槽位（留着会直接非法，模板连编译都过不了）
+
+#### 标签树三级化（`feat(library)`）
+
+- 上限 `MAX_TAG_DEPTH=3`，且**整棵子树**一起算：挂过去后最深那层会超三层就拒
+  （挂到自己的下级下面也拦 —— 那是环）
+- 三处口径同一套：打标拒「有子标签的标签」（与层数无关）、筛选展开「自身 + 全部下级」、
+  计数 = 自身 + 全部下级（按资产 id 去重）
+- 出参两处变了：`depth` 是算出来的真实层数；`parentName` 是**父的整条链**（「产品 / 3030」）
+- 前端：标签栏两行 → 三行，打标选择器按整条链分组，词表管理能显示三层，悬浮栏补第三行
+
+#### 按审查报告修（前端 15 条 + 后端 12 条）
+
+后端最容易漏的两类：**跨状态复核缺失**（共享审批通过时不看资产当前状态与可见性 →
+回收站里的条目被改成 team 可见、或旧的组级申请单把团队共享抹掉）与**异常路径的资源清理**
+（下载 GC 先清 key 再删字节、删失败被吞 → zip 永久泄漏；入库整份读进内存 → 300MB × 并发）。
+
+后端两条**判断题**记在这里：B1（生成入库端点接受任意 `storageKey`）没有把字段从
+payload 里拿掉（那要动契约），改成「物化前按 key 反查资产行校验归属」；B5（入库幂等键
+没按人隔离）没有改键的格式（会打断生成侧按前缀查与存量行），改成 owner 过滤 + 409。
+
+**没做的**：F16（每张案例封面各发一次详情请求）需要改模板契约，本轮没做。
 
 ## 3. 没做完的（直接从这里开工）
 

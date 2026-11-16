@@ -23,8 +23,10 @@ from __future__ import annotations
 import hashlib
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any, cast
 
-from sqlalchemy import select
+from sqlalchemy import CursorResult, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.context import CurrentUser
@@ -207,6 +209,9 @@ class TextAssetService:
         打开编辑框，后保存的人必须看到「正文已被改过」而不是静默覆盖。
         """
         row = await self._text_row(asset_id, actor, writable=True)
+        # 先把 id 存下来：下面 rollback() 会让 ORM 对象过期，之后再读 row.id
+        # 会触发一次隐式的懒加载（在 async 会话里那是 MissingGreenlet）。
+        asset_id = row.id
         self._check_version(row, payload.expected_version)
         content, data = _normalize(payload.content)
         digest = hashlib.sha256(data).hexdigest()
@@ -238,16 +243,67 @@ class TextAssetService:
             note=payload.note or "在线编辑",
             created_by=actor.id,
         )
+
+        # **抢版本号**，而不是「读 → 判 → 写」。
+        # 两个会话同时打开同一份正文（都读到 textVersion=3）几乎同时保存时，
+        # 原来的写法两边都算出 number=4、都插一行 version=4，后一个撞唯一索引
+        # uq_library_text_versions_number，落到全局的 IntegrityError 处理器，
+        # 返回「数据冲突，请检查唯一性或关联引用」——与「正文被人改过」毫无关系，
+        # 而后写的那份正文就这么静默丢了。
+        #
+        # 条件更新（WHERE text_version = 读到的值）让并发只有一方成功：抢不到的
+        # 那一方拿到 409 + details.textVersion，与 expectedVersion 不匹配时是同
+        # 一条口径、同一句提示。
+        claimed = cast(
+            "CursorResult[Any]",
+            await self.session.execute(
+                update(LibraryAsset)
+                .where(
+                    LibraryAsset.id == asset_id,
+                    LibraryAsset.text_version == row.text_version,
+                )
+                .values(
+                    storage_key=key,
+                    mime_type=EXTENSIONS[extension],
+                    sha256=digest,
+                    size_bytes=len(data),
+                    text_excerpt=text_excerpt(content),
+                    text_version=number,
+                    state_version=row.state_version + 1,
+                )
+                .execution_options(synchronize_session=False)
+            ),
+        )
+        if claimed.rowcount != 1:
+            await self.session.rollback()
+            raise await self._version_conflict(asset_id, payload.expected_version)
+
         self.session.add(version)
-        row.storage_key = key
-        row.mime_type = EXTENSIONS[extension]
-        row.sha256 = digest
-        row.size_bytes = len(data)
-        row.text_excerpt = text_excerpt(content)
-        row.text_version = number
-        row.state_version += 1
-        await self.session.commit()
+        try:
+            await self.session.commit()
+        except IntegrityError as exc:
+            # 同一刻里的两次保存：版本号还是撞了。仍然按「正文已被改过」报，
+            # 而不是让全局处理器给出那句与正文无关的通用提示。
+            await self.session.rollback()
+            conflict = await self._version_conflict(asset_id, payload.expected_version)
+            raise conflict from exc
+        # 条件更新不写回内存对象（synchronize_session=False），刷新一次再出参
+        await self.session.refresh(row)
         return self._out(row, version)
+
+    async def _version_conflict(self, asset_id: str, expected: int) -> Conflict:
+        """并发保存的 409：带上**当前**正文版本，前端据此提示刷新。
+
+        单独一个方法：抢版本号失败与版本号撞唯一索引是同一件事，用户看到的
+        必须是同一句话、同一组 details。
+        """
+        current = await self.session.scalar(
+            select(LibraryAsset.text_version).where(LibraryAsset.id == asset_id)
+        )
+        return Conflict(
+            "正文已被修改，请刷新后重试",
+            details={"expectedVersion": expected, "textVersion": current},
+        )
 
     async def restore(
         self, asset_id: str, payload: TextAssetRestoreIn, actor: CurrentUser

@@ -44,11 +44,21 @@ export function TextVersionHistory({
   const [viewing, setViewing] = useState<number | null>(null);
   const detail = useTextVersion(assetId, viewing, open);
 
+  /* 当前版本没读到就**不能恢复**：expectedVersion 缺省时后端跳过乐观锁，
+     别人刚改过的正文会被这次恢复静默覆盖。正文读取比版本列表慢，先把按钮
+     锁住，等版本号到手再放行。 */
+  const currentVersion = current.data?.version;
+  const canRestore = currentVersion != null && !current.isPending && !current.isError;
+
   const restoreTo = (version: number) => {
+    if (!canRestore || currentVersion == null) {
+      toast('当前版本还没读到，请稍后再试', 'error');
+      return;
+    }
     restore.mutate(
       {
         id: assetId,
-        body: { version, expectedVersion: current.data?.version ?? undefined },
+        body: { version, expectedVersion: currentVersion },
       },
       {
         onSuccess: () => {
@@ -112,6 +122,7 @@ export function TextVersionHistory({
                     variant="secondary"
                     icon={<RotateCcw size={12} />}
                     loading={restore.isPending}
+                    disabled={!canRestore}
                     onClick={() => restoreTo(item.version)}
                   >
                     恢复到此版

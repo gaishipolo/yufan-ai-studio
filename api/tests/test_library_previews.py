@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
 from fastapi.testclient import TestClient
 from library_support import (
     LIB_RW,
@@ -61,6 +62,33 @@ def test_repreview_rebuilds_a_missing_cover(client: TestClient, api: str) -> Non
     again = asyncio.run(run_preview_repair(owner=owner["id"]))
     assert again.ok == 1
     assert again.rebuilt == 0
+
+
+def test_repreview_defaults_to_a_bounded_batch(
+    client: TestClient, api: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """默认路径必须有上限：不能一次把整张资产表读进内存。
+
+    原来那句「if batch: 才加 LIMIT」配上 CLI 的 `--batch` 默认 0，等于默认路径
+    没有任何分页——十万条资产的库上就是十万个 ORM 实体。
+    """
+    from modules.library import maintenance
+
+    admin = admin_headers(client)
+    owner, owner_h = make_user(client, admin, LIB_RW)
+    upload_image(client, api, owner_h, name="a.png", color="teal")
+    upload_image(client, api, owner_h, name="b.png", color="olive")
+
+    monkeypatch.setattr(maintenance, "PREVIEW_REPAIR_BATCH", 1)
+    report = asyncio.run(maintenance.run_preview_repair(owner=owner["id"], dry_run=True))
+    assert report.scanned == 1, "默认路径必须分批扫描，不能整表读进内存"
+
+    # 显式给 batch 时按给的来
+    monkeypatch.setattr(maintenance, "PREVIEW_REPAIR_BATCH", 1)
+    wider = asyncio.run(
+        maintenance.run_preview_repair(owner=owner["id"], batch=10, dry_run=True)
+    )
+    assert wider.scanned == 2
 
 
 def test_repreview_scans_images_and_videos_only(client: TestClient, api: str) -> None:

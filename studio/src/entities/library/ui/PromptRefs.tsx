@@ -272,6 +272,15 @@ function AssetStage({ assetId, big = false }: { assetId: string; big?: boolean }
     );
   }
   const src = detail.data?.coverUrl ?? detail.data?.url;
+  /* 详情缺失时不能渲染无 src 的 <img>：那是一张浏览器默认破图，
+     弹层里除此以外什么都没有，用户看不懂发生了什么。 */
+  if (!src) {
+    return (
+      <div className="flex h-40 items-center justify-center rounded-lg bg-panel-soft text-xs text-ink-mute">
+        素材不可用
+      </div>
+    );
+  }
   return (
     <img
       src={src}

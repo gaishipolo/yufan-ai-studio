@@ -4577,7 +4577,7 @@
         "tags": [
           "资产库"
         ],
-        "summary": "标签列表（两级平铺，含当前入口的素材数，按添加时间排序）",
+        "summary": "标签列表（三级平铺，含当前入口的素材数，按添加时间排序）",
         "description": "计数按 `state` + `library` + `kind` 与列表同口径。\n\n`state=draft|trash` 时忽略 `library`；`kind` 与列表的类别筛选同口径\n（悬浮栏按类别看库时，胶囊上的数字必须也是「这一类里有几条」）。",
         "operationId": "list_tags_api_v1_library_tags_get",
         "security": [
@@ -4649,7 +4649,7 @@
           "资产库"
         ],
         "summary": "新建标签（同名返回已有那条）",
-        "description": "`parentId` 给一级标签的 id 就建成二级；留空建成一级。",
+        "description": "`parentId` 给父标签的 id 就建成它的下一级（最多三级）；留空建成一级。",
         "operationId": "create_tag_api_v1_library_tags_post",
         "security": [
           {
@@ -4750,7 +4750,7 @@
         "tags": [
           "资产库"
         ],
-        "summary": "删除标签（旗下二级提升为一级，资产不受影响）",
+        "summary": "删除标签（旗下子级提升一级，资产不受影响）",
         "operationId": "delete_tag_api_v1_library_tags__tag_id__delete",
         "security": [
           {
@@ -4797,8 +4797,8 @@
         "tags": [
           "资产库"
         ],
-        "summary": "移动标签层级（parentId 为空则提升为一级）",
-        "description": "固定两级：父必须是一级、自己不能带子标签、不能指向自己。",
+        "summary": "移动标签层级（parentId 为空则提升为一级，最多三级）",
+        "description": "最多三级：父不能是三级标签、自己不能带子标签、不能指向自己或自己的下级。",
         "operationId": "move_tag_api_v1_library_tags__tag_id__parent_patch",
         "security": [
           {
@@ -9127,7 +9127,7 @@
           "kind"
         ],
         "title": "FromGenerationIn",
-        "description": "生成结果入库（也经 `library-ingest` 注入口供后端模块调用）。\n\n字节来源三选一，**必须能物化**：`storageKey`（主对象存储）、\n`archiveKey`（归档存储，模板库替换成片用）、`sourceUrl`（服务端下载）。\n只存外部链接的详情页与下载都会裂（链接会过期）。优先级按上面顺序，\n同时给多个时取靠前的那个。\n\n`archiveKey` 只应由受信任的服务端调用方填写：它指向归档盘里的对象，\n端点本身仍由 `library:generation:ingest` 守护，普通上传权限调不动。"
+        "description": "生成结果入库（也经 `library-ingest` 注入口供后端模块调用）。\n\n字节来源三选一，**必须能物化**：`storageKey`（主对象存储）、\n`archiveKey`（归档存储，模板库替换成片用）、`sourceUrl`（服务端下载）。\n只存外部链接的详情页与下载都会裂（链接会过期）。优先级按上面顺序，\n同时给多个时取靠前的那个。\n\n`archiveKey` 只应由受信任的服务端调用方填写：它指向归档盘里的对象，\n而归档盘是另一个驱动、没有资产行可反查归属，所以 **HTTP 端点不收它**\n（只有 `library-ingest` 端口能用）。`storageKey` 则必须指向调用方自己\n名下的素材行：这两个键都是「调用方给的对象存储地址」，不校验归属就等于\n开放「读主存储里的任意对象」。"
       },
       "GenerateImageIn": {
         "properties": {
@@ -10819,7 +10819,7 @@
           "name"
         ],
         "title": "LibraryTagOut",
-        "description": "词表里的一条标签。**固定两级**，不返回嵌套树。\n\n为什么仍是平铺数组：标签栏、卡片、打标选择器、上传弹窗、批量栏、素材库\n悬浮栏六个消费点全都按平铺渲染；改成嵌套树要全量重写，而且「计数与排序」\n会跟着乱。`parentId` + `depth` 足够让前端自己分两行、显示 `产品 / 3030`。\n\n库里用空串表示一级（见 models.py），出参统一转成 `null`：前端按真假值判断\n层级就行，不必知道哨兵串的存在。"
+        "description": "词表里的一条标签。**最多三级**，不返回嵌套树。\n\n为什么仍是平铺数组：标签栏、卡片、打标选择器、上传弹窗、批量栏、素材库\n悬浮栏六个消费点全都按平铺渲染；改成嵌套树要全量重写，而且「计数与排序」\n会跟着乱。`parentId` + `depth` 足够让前端自己分三行、显示 `产品 / 3030 / T35`。\n\n库里用空串表示一级（见 models.py），出参统一转成 `null`：前端按真假值判断\n层级就行，不必知道哨兵串的存在。"
       },
       "LibraryTagStatOut": {
         "properties": {
@@ -10880,7 +10880,7 @@
           "createdAt"
         ],
         "title": "LibraryTagStatOut",
-        "description": "标签栏的列表项：比卡片上的标签多「素材数」「直属子标签数」与「添加时间」。\n\n`asset_count` 是**当前入口**（`state` + `library`）下挂了这个标签的素材数，\n不是全库总量——标签栏上点一下就按这个入口筛，数字必须与结果对得上。\n一级标签的数字是「自身 + 旗下二级」按资产去重后的合计，与「点一级展开到\n子级」的筛选口径一致；否则会出现「标签旁写 8、点进去只有 3 条」。\n\n`child_count` 给前端判断「这是一级分组还是可打标的叶子」。\n`created_at` 给前端按「添加时间先后」排序用。\n\n单独出一个类型而不是往 `LibraryTagOut` 上加这几个字段：卡片里 24 条资产\n每条都带一遍计数与时间戳，既没用也容易被人误当成卡片上的真实数据。"
+        "description": "标签栏的列表项：比卡片上的标签多「素材数」「直属子标签数」与「添加时间」。\n\n`asset_count` 是**当前入口**（`state` + `library`）下挂了这个标签的素材数，\n不是全库总量——标签栏上点一下就按这个入口筛，数字必须与结果对得上。\n一个标签的数字是「自身 + 全部下级」按资产去重后的合计，与「点一级展开到\n全部下级」的筛选口径一致；否则会出现「标签旁写 8、点进去只有 3 条」。\n\n`child_count` 给前端判断「这是一级分组还是可打标的叶子」。\n`created_at` 给前端按「添加时间先后」排序用。\n\n单独出一个类型而不是往 `LibraryTagOut` 上加这几个字段：卡片里 24 条资产\n每条都带一遍计数与时间戳，既没用也容易被人误当成卡片上的真实数据。"
       },
       "LibraryVisibility": {
         "type": "string",
@@ -12627,7 +12627,7 @@
           "name"
         ],
         "title": "TagIn",
-        "description": "新建 / 重命名标签。\n\n`parent_id` **只在新建时生效**：给一个一级标签的 id 就建成二级，留 null\n建成一级。改名时不改层级，走 `PATCH /tags/{id}/parent`——把改名与移动混在\n一个接口里，会让「只想改个错别字」的请求顺手改变整棵树的形状。"
+        "description": "新建 / 重命名标签。\n\n`parent_id` **只在新建时生效**：给一个父标签的 id 就建成它的下一级（最多三级），\n留 null 建成一级。改名时不改层级，走 `PATCH /tags/{id}/parent`——把改名与移动混在\n一个接口里，会让「只想改个错别字」的请求顺手改变整棵树的形状。"
       },
       "TagParentIn": {
         "properties": {
@@ -12646,7 +12646,7 @@
         },
         "type": "object",
         "title": "TagParentIn",
-        "description": "移动标签：`parentId` 指向一个一级标签，`null` 表示提升为一级。"
+        "description": "移动标签：`parentId` 指向一个父标签（最多到二级），`null` 表示提升为一级。"
       },
       "TaskFeedItem": {
         "properties": {

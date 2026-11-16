@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 
-from sqlalchemy import ColumnElement, and_, or_, select
+from sqlalchemy import ColumnElement, and_, not_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.context import CurrentUser
@@ -50,6 +50,7 @@ __all__ = [
     "leader_group_ids",
     "load_asset",
     "load_visible",
+    "owner_clause",
     "owner_names",
     "readable_rows",
     "tab_clause",
@@ -78,15 +79,47 @@ async def all_groups(session: AsyncSession, actor: CurrentUser) -> list[str]:
     return await group_ids_of(session, actor.id)
 
 
+def owner_clause(
+    actor: CurrentUser, group_branch: ColumnElement[bool]
+) -> ColumnElement[bool]:
+    """owner 分支：**本人对自己的素材一律可见**（与 `can_read` 同口径）。
+
+    但「共享出去之后不在个人库重复出现」这条界面口径要保住：素材共享到某个
+    小组后，它出现在小组库里，个人库不再重复显示——否则同一张图会在两个入口
+    各出现一次，用户会以为是两份。
+
+    两条合起来的口径就是「本人可见，但只在**别处看不到**的时候回个人库」：
+
+    - 共享到小组 G、我还在 G 里 → 小组库能看到（不必在个人库重复）；
+    - 共享到小组 G、我已被移出 G → 小组库看不到（必须回个人库，否则这条素材
+      在四个入口里全部消失，只剩直链能打开）。
+
+    早先这里写的是 `visibility == 'personal'`，而同文件的 `can_read`（owner
+    分支无条件放行）不是这么判的：SQL 少给一支、Python 多给一支，于是「本人
+    被移出小组后素材在界面上彻底消失，直链却能打开」。这个文件存在的理由
+    就是「同一条规则不能写第二遍」，所以两处必须一起改。
+    """
+    return and_(
+        LibraryAsset.owner_id == actor.id,
+        or_(
+            LibraryAsset.visibility == "personal",
+            and_(
+                LibraryAsset.visibility == "group",
+                not_(group_branch),
+            ),
+        ),
+    )
+
+
 def active_visible_clause(
     actor: CurrentUser, groups: Sequence[str]
 ) -> ColumnElement[bool]:
     """`state=active` 前提下「我能看到」的 SQL 条件。
 
-    三支并集：我自己的（且未共享）、共享到我所在小组的、共享给团队的。
-    「我自己的」刻意只算 `visibility=personal`：一条素材共享出去之后，它在
-    小组库里，个人库里不再重复出现——否则同一张图会在两个入口各出现一次，
-    用户会以为是两份。
+    四支并集：我自己的、共享到我所在小组的、共享给团队的、以及案例。
+    「我自己的」的口径见 `owner_clause`：共享出去且我还在那个组里时归小组库，
+    不在个人库重复出现；我已被移出那个组时回个人库——否则自己的素材会从
+    四个入口里全部消失。
 
     第四支是**案例**（`purpose='case'`）：模板卡片对所有登录用户开放，卡片上的
     封面与悬停播放都要读得到这条素材。它不走 `visibility` —— 案例既不属于某个
@@ -101,10 +134,7 @@ def active_visible_clause(
         )
     )
     return or_(
-        and_(
-            LibraryAsset.owner_id == actor.id,
-            LibraryAsset.visibility == "personal",
-        ),
+        owner_clause(actor, group_branch),
         and_(LibraryAsset.visibility == "group", group_branch),
         LibraryAsset.visibility == "team",
         LibraryAsset.purpose == PURPOSE_CASE,
@@ -121,9 +151,15 @@ def tab_clause(
     草稿与回收站不在这里：它们是 `state`，与入口正交（设计 §0）。
     """
     if tab is LibraryTab.PERSONAL:
-        return and_(
-            LibraryAsset.owner_id == actor.id,
-            LibraryAsset.visibility == "personal",
+        # 与 `active_visible_clause` 同一支（`owner_clause`）：共享出去又
+        # 被移出小组的素材要在这里出现，否则自己的东西在界面上彻底消失。
+        return owner_clause(
+            actor,
+            LibraryAsset.id.in_(
+                select(LibraryAssetGroup.asset_id).where(
+                    LibraryAssetGroup.group_id.in_(list(groups))
+                )
+            ),
         )
     if tab is LibraryTab.TEAM:
         return LibraryAsset.visibility == "team"

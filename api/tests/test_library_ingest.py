@@ -43,6 +43,50 @@ def _storage_key(client: TestClient, api: str, headers: dict[str, str], asset_id
     return detail["archive"]["storageKey"]
 
 
+def _ingest_via_port(
+    *,
+    owner_id: str,
+    source_key: str,
+    storage_key: str = "",
+    archive_key: str = "",
+    source_url: str = "",
+    name: str = "",
+    task_id: str = "",
+    generation: dict | None = None,
+) -> dict:
+    """走 `library-ingest` 端口（受信任的服务端调用方那条路径）。
+
+    HTTP 端点的 `storageKey` 现在只认「调用方自己名下的素材行」，而生成侧的
+    产物在入库那一刻还不是素材行——那条路径由端口承担（`trusted=True`）。
+    """
+    import asyncio
+
+    from core.ports.library_ingest import IngestRequest
+    from core.ports.library_lookup import LibraryAssetKind
+    from db.session import get_session_factory
+    from modules.library.ingest import SqlLibraryIngest
+
+    request = IngestRequest(
+        source_module="image",
+        source_task_id=task_id or source_key,
+        source_key=source_key,
+        kind=LibraryAssetKind.IMAGE,
+        owner_id=owner_id,
+        name=name,
+        storage_key=storage_key,
+        archive_key=archive_key,
+        source_url=source_url,
+        generation=generation or {},
+    )
+
+    async def run():
+        async with get_session_factory()() as session:
+            return await SqlLibraryIngest().ingest_generated(session, request)
+
+    result = asyncio.run(run())
+    return {"assetId": result.asset_id, "created": result.created}
+
+
 def test_from_generation_lands_in_draft_with_snapshot(
     client: TestClient, api: str
 ) -> None:
@@ -51,32 +95,24 @@ def test_from_generation_lands_in_draft_with_snapshot(
     uploaded = upload_image(client, api, owner_h, name="ref.png", color="mediumseagreen")
     key = _fresh_blob("land.png", "seagreen")
 
-    response = _ingest(
-        client,
-        api,
-        owner_h,
-        {
-            "sourceModule": "image",
-            "sourceTaskId": "job-42",
-            "sourceKey": "image:job-42:0",
-            "kind": "image",
-            "name": "生成结果.png",
-            "storageKey": key,
-            "generation": {
-                "model": "seedream",
-                "modelId": "seedream-3",
-                "prompt": "一只戴帽子的猫，工作室白底",
-                "size": "1024x1024",
-                "count": 4,
-                "seed": "12345",
-                "referenceLibraryIds": [uploaded["id"]],
-                "configuration": {"steps": 28},
-                "credits": 3.5,
-            },
+    created = _ingest_via_port(
+        owner_id=owner["id"],
+        source_key="image:job-42:0",
+        task_id="job-42",
+        storage_key=key,
+        name="生成结果.png",
+        generation={
+            "model": "seedream",
+            "model_id": "seedream-3",
+            "prompt": "一只戴帽子的猫，工作室白底",
+            "size": "1024x1024",
+            "count": 4,
+            "seed": "12345",
+            "reference_library_ids": [uploaded["id"]],
+            "configuration": {"steps": 28},
+            "credits": 3.5,
         },
     )
-    assert response.status_code == 201, response.text
-    created = response.json()["data"]
     assert created["created"] is True
 
     detail = client.get(
@@ -109,28 +145,24 @@ def test_from_generation_is_idempotent_for_same_source_key(
     admin = admin_headers(client)
     owner, owner_h = make_user(client, admin, LIB_RW + ["library:generation:ingest"])
     key = _fresh_blob("dup.png", "darkorange")
-    body = {
-        "sourceModule": "template",
-        "sourceTaskId": "run-7",
-        "sourceKey": "template:run-7",
-        "kind": "image",
+    fields = {
+        "owner_id": owner["id"],
+        "source_key": "template:run-7",
+        "task_id": "run-7",
+        "storage_key": key,
         "name": "模板结果.png",
-        "storageKey": key,
     }
 
-    first = _ingest(client, api, owner_h, body)
-    assert first.status_code == 201
-    second = _ingest(client, api, owner_h, body)
-    assert second.status_code == 200, "命中幂等不是错误，是「已经有了」"
-    assert second.json()["data"]["created"] is False
-    assert second.json()["data"]["assetId"] == first.json()["data"]["assetId"]
+    first = _ingest_via_port(**fields)
+    assert first["created"] is True
+    second = _ingest_via_port(**fields)
+    assert second["created"] is False, "命中幂等不是错误，是「已经有了」"
+    assert second["assetId"] == first["assetId"]
 
     drafts = client.get(
         f"{api}/library/assets", params={"state": "draft"}, headers=owner_h
     ).json()["data"]
-    matches = [
-        item for item in drafts["items"] if item["id"] == first.json()["data"]["assetId"]
-    ]
+    matches = [item for item in drafts["items"] if item["id"] == first["assetId"]]
     assert len(matches) == 1, "第二次入库不能产生第二行草稿"
 
 
@@ -171,6 +203,233 @@ def test_from_generation_dedupes_identical_bytes(client: TestClient, api: str) -
     )
     assert second.status_code == 200
     assert second.json()["data"]["assetId"] == first.json()["data"]["assetId"]
+
+
+# --------------------------------------------------------------------------- #
+# 存储键的归属（B1）
+#
+# storageKey / archiveKey 是**调用方给的对象存储地址**。不校验归属，这个
+# 端点就是一个「任意对象读取」原语：主存储里装的是所有人的私有原片，知道 key
+# 就能把别人的字节读成自己名下的素材，随后 GET /assets/{id}/file 就把它拿走。
+# --------------------------------------------------------------------------- #
+
+
+def test_http_ingest_refuses_a_storage_key_belonging_to_somebody_else(
+    client: TestClient, api: str
+) -> None:
+    """别人的素材键不能拿来做自己的入库。"""
+    admin = admin_headers(client)
+    owner, owner_h = make_user(client, admin, LIB_RW + ["library:generation:ingest"])
+    intruder, intruder_h = make_user(client, admin, LIB_RW + ["library:generation:ingest"])
+
+    uploaded = upload_image(client, api, owner_h, name="private.png", color="maroon")
+    key = _storage_key(client, api, owner_h, uploaded["id"])
+
+    response = _ingest(
+        client,
+        api,
+        intruder_h,
+        {
+            "sourceModule": "image",
+            "sourceTaskId": "steal",
+            "sourceKey": "image:steal",
+            "kind": "image",
+            "storageKey": key,
+        },
+    )
+    assert response.status_code == 403, response.text
+    assert response.json()["code"] == 40383
+
+
+def test_http_ingest_refuses_a_key_that_is_not_registered_to_any_asset(
+    client: TestClient, api: str
+) -> None:
+    """库里没有对应行的键同样不能读——那正是「猜到 key 就能拿走」的另一半。
+
+    生成侧的中间产物、别的模块的对象都不在资产表里；它们在主存储里照样是
+    有效地址。
+    """
+    admin = admin_headers(client)
+    owner, owner_h = make_user(client, admin, LIB_RW + ["library:generation:ingest"])
+    key = _fresh_blob("loose.png", "teal")
+
+    response = _ingest(
+        client,
+        api,
+        owner_h,
+        {
+            "sourceModule": "image",
+            "sourceTaskId": "loose",
+            "sourceKey": "image:loose",
+            "kind": "image",
+            "storageKey": key,
+        },
+    )
+    assert response.status_code == 403, response.text
+
+
+def test_http_ingest_refuses_an_archive_key(client: TestClient, api: str) -> None:
+    """归档键只对内部调用方开放：归档盘是另一个驱动，没有资产行可反查归属。"""
+    admin = admin_headers(client)
+    owner, owner_h = make_user(client, admin, LIB_RW + ["library:generation:ingest"])
+
+    response = _ingest(
+        client,
+        api,
+        owner_h,
+        {
+            "sourceModule": "template",
+            "sourceTaskId": "run-archive",
+            "sourceKey": "template:run-archive",
+            "kind": "image",
+            "archiveKey": "runs/whatever/outputs/generated.mp4",
+        },
+    )
+    assert response.status_code == 403, response.text
+
+
+def test_http_ingest_accepts_the_callers_own_storage_key(
+    client: TestClient, api: str
+) -> None:
+    """自己名下的键照常能用（走内容去重，命中已有那条）。"""
+    admin = admin_headers(client)
+    owner, owner_h = make_user(client, admin, LIB_RW + ["library:generation:ingest"])
+    uploaded = upload_image(client, api, owner_h, name="mine.png", color="orange")
+    key = _storage_key(client, api, owner_h, uploaded["id"])
+
+    response = _ingest(
+        client,
+        api,
+        owner_h,
+        {
+            "sourceModule": "image",
+            "sourceTaskId": "mine-1",
+            "sourceKey": "image:mine-1",
+            "kind": "image",
+            "storageKey": key,
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["assetId"] == uploaded["id"]
+    assert response.json()["data"]["created"] is False
+
+
+def test_port_ingest_accepts_a_fresh_storage_key(client: TestClient) -> None:
+    """端口是受信任的服务端调用方：键是它自己刚写进去的，归属由它负责。"""
+    admin = admin_headers(client)
+    owner, _ = make_user(client, admin, LIB_RW + ["library:generation:ingest"])
+    key = _fresh_blob("port.png", "olive")
+
+    created = _ingest_via_port(
+        owner_id=owner["id"],
+        source_key="image:port-1",
+        storage_key=key,
+        name="端口入库.png",
+    )
+    assert created["created"] is True
+
+
+# --------------------------------------------------------------------------- #
+# 幂等键按人隔离（B5）
+# --------------------------------------------------------------------------- #
+
+
+def test_ingest_source_key_is_owner_scoped(client: TestClient) -> None:
+    """同一个 sourceKey 被两个用户使用时，后一个不能拿到前一个的资产 id。
+
+    uq_library_assets_source_key 是**全局**唯一索引：只按 key 查的话，B 的
+    入库会命中 A 的行——B 的字节从未入库，返回的却是 A 的资产 id（还是
+    200 + created=false，调用方会以为已经存好了）。命中但 owner 不一致时必须
+    409。
+    """
+    import pytest
+
+    from core.exceptions import Conflict
+
+    admin = admin_headers(client)
+    first, _ = make_user(client, admin, LIB_RW + ["library:generation:ingest"])
+    second, _ = make_user(client, admin, LIB_RW + ["library:generation:ingest"])
+
+    key = _fresh_blob("scoped.png", "navy")
+    created = _ingest_via_port(
+        owner_id=first["id"], source_key="image:shared-key", storage_key=key
+    )
+    assert created["created"] is True
+
+    other_key = _fresh_blob("scoped-2.png", "olive")
+    with pytest.raises(Conflict) as excinfo:
+        _ingest_via_port(
+            owner_id=second["id"],
+            source_key="image:shared-key",
+            storage_key=other_key,
+        )
+    assert excinfo.value.http_status == 409
+    assert excinfo.value.details == {"sourceKey": "image:shared-key"}
+
+
+# --------------------------------------------------------------------------- #
+# storageKey 分支必须流式落盘（B11）
+# --------------------------------------------------------------------------- #
+
+
+def test_storage_key_branch_streams_the_object_instead_of_loading_it(
+    client: TestClient,
+) -> None:
+    """远端驱动下不能把整份对象读进内存：峰值是「并发数 × 文件大小」。
+
+    成片允许 300MB，而体积上限的判断发生在整份读进内存**之后**，拦不住峰值。
+    """
+    import asyncio
+
+    from core.ports.library_ingest import IngestRequest
+    from core.ports.library_lookup import LibraryAssetKind
+    from db.session import get_session_factory
+    from modules.library.ingest import GenerationIngest
+
+    admin = admin_headers(client)
+    owner, _ = make_user(client, admin, LIB_RW + ["library:generation:ingest"])
+    payload = png_bytes("teal")
+
+    class _RemoteStorage:
+        """远端驱动的关键特征：没有本地路径，字节只能分块拿。"""
+
+        def local_path(self, key: str) -> None:
+            return None
+
+        async def get(self, key: str) -> bytes:
+            raise AssertionError("入库不该把整份对象读进内存（要用 iter_chunks）")
+
+        async def iter_chunks(self, key: str, *, chunk_size: int = 1024 * 1024):  # noqa: ANN202
+            yield payload
+
+        async def put_file(self, key: str, path, content_type: str = "") -> str:  # noqa: ANN001
+            return ""
+
+    async def run() -> str:
+        async with get_session_factory()() as session:
+            service = GenerationIngest(session, _RemoteStorage())
+            result = await service.run(
+                IngestRequest(
+                    source_module="image",
+                    source_task_id="stream-1",
+                    source_key="image:stream-1",
+                    kind=LibraryAssetKind.IMAGE,
+                    owner_id=owner["id"],
+                    name="流式入库.png",
+                    storage_key="images/stream-1.png",
+                ),
+                trusted=True,
+            )
+            return result.asset_id
+
+    asset_id = asyncio.run(run())
+    assert asset_id
+
+    from library_support import fetch_asset
+
+    row = fetch_asset(asset_id)
+    assert row is not None
+    assert (row["storage_key"] or "").startswith("library/blobs/")
 
 
 def test_from_generation_requires_its_own_permission(client: TestClient, api: str) -> None:

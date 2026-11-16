@@ -9,6 +9,7 @@ import {
   useReadText,
   useUpdateText,
 } from '@/entities/library/api/library.queries';
+import { TEXT_MAX_BYTES, textByteLength } from '@/entities/library/model/uploadLimits';
 
 export interface TextAssetModalProps {
   open: boolean;
@@ -79,6 +80,12 @@ export function TextAssetModal({
     setError('');
     if (!content.trim()) {
       setError('正文不能为空');
+      return;
+    }
+    /* 1 MB 的上限前端先拦：上传弹窗对同一个上限就是这么做的，
+       不拦的话要发到后端才被拒，错误框里还是 pydantic 的英文。 */
+    if (textByteLength(content) > TEXT_MAX_BYTES) {
+      setError('正文不能超过 1 MB（UTF-8 纯文本）');
       return;
     }
 
@@ -168,7 +175,9 @@ export function TextAssetModal({
         <div>
           <div className="mb-1 flex items-center justify-between text-body text-ink-soft">
             <span>正文（纯文本）</span>
-            <span className="text-meta text-ink-mute">{content.length} 字</span>
+            <span className="text-meta text-ink-mute">
+              {content.length} 字 · {textByteLength(content)} 字节
+            </span>
           </div>
           <textarea
             value={content}

@@ -24,9 +24,11 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+import pytest
 from fastapi.testclient import TestClient
 from library_support import LIB_RW, admin_headers, make_user, png_bytes
 
+from core.exceptions import AppError
 from core.ports.library_ingest import IngestRequest
 from core.ports.library_lookup import LibraryAssetKind
 from db.session import get_session_factory
@@ -75,17 +77,49 @@ def _row(asset_id: str) -> LibraryAsset:
     return asyncio.run(run())
 
 
+def _ingest_via_port(
+    owner_id: str,
+    *,
+    archive_key: str = "",
+    storage_key: str = "",
+    source_key: str = "",
+) -> dict[str, Any]:
+    """走 `library-ingest` 端口（受信任的服务端调用方那条路径）。
+
+    HTTP 端点不收 `archiveKey`（归档盘是另一个驱动，没有资产行可反查归属），
+    `storageKey` 也只认「调用方自己名下的素材行」——生成侧那份「刚写进存储、
+    库里还没有行」的字节走的就是这条端口路径。
+    """
+    task_id = uuid.uuid4().hex
+    request = IngestRequest(
+        source_module="template",
+        source_task_id=task_id,
+        source_key=source_key or f"template:{task_id}:v0",
+        kind=LibraryAssetKind.IMAGE,
+        owner_id=owner_id,
+        name="替换成片.png",
+        archive_key=archive_key,
+        storage_key=storage_key,
+    )
+
+    async def run() -> dict[str, Any]:
+        async with get_session_factory()() as session:
+            result = await SqlLibraryIngest().ingest_generated(session, request)
+            return {"assetId": result.asset_id, "created": result.created}
+
+    return asyncio.run(run())
+
+
 def test_archive_key_lands_in_draft_with_own_bytes(client: TestClient, api: str) -> None:
     """归档盘的字节被物化后写进资产库自己的 blob，不依赖归档盘指针。"""
     admin = admin_headers(client)
-    _, owner_h = make_user(client, admin, LIB_RW + [INGEST])
+    owner, _ = make_user(client, admin, LIB_RW + [INGEST])
     key, data = _archive_blob("mediumseagreen")
 
-    response = _ingest(client, api, owner_h, _body(key))
-    assert response.status_code == 201, response.text
-    assert response.json()["data"]["created"] is True
+    created = _ingest_via_port(owner["id"], archive_key=key)
+    assert created["created"] is True
 
-    row = _row(response.json()["data"]["assetId"])
+    row = _row(created["assetId"])
     assert (row.state, row.origin, row.visibility, row.kind) == (
         "draft",
         "generated",
@@ -103,42 +137,38 @@ def test_archive_key_lands_in_draft_with_own_bytes(client: TestClient, api: str)
 
 def test_archive_key_is_idempotent_by_source_key(client: TestClient, api: str) -> None:
     admin = admin_headers(client)
-    _, owner_h = make_user(client, admin, LIB_RW + [INGEST])
+    owner, _ = make_user(client, admin, LIB_RW + [INGEST])
     key, _ = _archive_blob("lightseagreen")
-    body = _body(key)
 
-    first = _ingest(client, api, owner_h, body)
-    assert first.status_code == 201, first.text
-    second = _ingest(client, api, owner_h, body)
-    assert second.status_code == 200, second.text
-    assert second.json()["data"] == {
-        "assetId": first.json()["data"]["assetId"],
-        "created": False,
-    }
+    first = _ingest_via_port(owner["id"], archive_key=key, source_key="template:run-7:v0")
+    assert first["created"] is True
+    second = _ingest_via_port(owner["id"], archive_key=key, source_key="template:run-7:v0")
+    assert second == {"assetId": first["assetId"], "created": False}
 
 
 def test_missing_archive_key_is_rejected(client: TestClient, api: str) -> None:
     admin = admin_headers(client)
-    _, owner_h = make_user(client, admin, LIB_RW + [INGEST])
+    owner, _ = make_user(client, admin, LIB_RW + [INGEST])
     missing = f"tests/library-ingest-archive/{uuid.uuid4().hex}/missing.png"
 
-    response = _ingest(client, api, owner_h, _body(missing))
-    assert response.status_code == 400, response.text
+    with pytest.raises(AppError) as excinfo:
+        _ingest_via_port(owner["id"], archive_key=missing)
+    assert excinfo.value.http_status == 400
 
 
 def test_storage_key_takes_priority_over_archive_key(client: TestClient, api: str) -> None:
     """同时给两种来源时走主存储，归档 key 不存在也不该让入库失败。"""
     admin = admin_headers(client)
-    _, owner_h = make_user(client, admin, LIB_RW + [INGEST])
+    owner, _ = make_user(client, admin, LIB_RW + [INGEST])
     storage_key = f"library/blobs/gen/{uuid.uuid4().hex}.png"
     asyncio.run(get_storage().put(storage_key, png_bytes("tomato"), "image/png"))
     missing = f"tests/library-ingest-archive/{uuid.uuid4().hex}/missing.png"
 
-    body = _body(missing)
-    body["storageKey"] = storage_key
-    response = _ingest(client, api, owner_h, body)
-    assert response.status_code == 201, response.text
-    row = _row(response.json()["data"]["assetId"])
+    created = _ingest_via_port(
+        owner["id"], archive_key=missing, storage_key=storage_key
+    )
+    assert created["created"] is True
+    row = _row(created["assetId"])
     assert row.storage_key != missing
 
 
