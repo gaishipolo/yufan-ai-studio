@@ -18,7 +18,12 @@ docs/MOCK_COVERAGE.md text eol=lf
 # bridge 起动时逐文件比对。检出时一旦被 `* text=auto` 转成 CRLF，校验就会判
 # 「适配器被改过」，表现为所有替换生成在起动阶段失败——而 git diff 看着是空的。
 # 所以这里必须钉死不做转换，理由与上面两个生成物相同。
-api/src/infra/ai/libtv_runtime/vendor/** -text
+# 2026-11-16：供应商整体迁到 `modules/model_driver/libtv/runtime/`（61cdf87）后，
+# 这条规则忘了跟着改，旧路径 `infra/ai/libtv_runtime/vendor/**` 已不存在 —— 结果
+# 新路径回落到 `* text=auto`，autocrlf=true 的机器检出成 CRLF，**所有 LibTV 替换
+# 任务都在 upload 阶段报 RELEASE_INVALID**（`Vendored adapter changed: ...billing.mjs`）。
+# 改了目录就改这里，否则症状只在运行时出现、git diff 却空空如也。
+api/src/modules/model_driver/libtv/runtime/vendor/** -text
 
 # 二进制，不做换行转换
 *.png binary
