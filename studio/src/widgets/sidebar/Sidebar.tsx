@@ -74,7 +74,7 @@ function SidebarGroup({
         aria-controls={panelId}
         className={cn(
           'hidden w-full items-center gap-1 rounded-[6px] px-2.5 pb-1.5 pt-3 text-left',
-          'text-[10.5px] font-bold tracking-[.08em] text-[#a4b3bb] transition-colors md:flex',
+          'text-micro font-bold tracking-[.08em] text-[#a4b3bb] transition-colors md:flex',
           'hover:text-ink-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40',
           hasActive && !collapsed && 'text-ink-soft',
         )}
@@ -142,7 +142,7 @@ export function Sidebar() {
     <aside
       className={cn(
         'flex gap-1.5 overflow-x-auto border-line pb-2.5 pt-1.5 scrollbar-none',
-        'md:sticky md:top-[62px] md:flex-col md:gap-0 md:overflow-visible md:border-0 md:pb-5',
+        'md:sticky md:top-[67px] md:flex-col md:gap-0 md:overflow-visible md:border-0 md:pb-5',
       )}
     >
       {groups.map((entry, index) => (

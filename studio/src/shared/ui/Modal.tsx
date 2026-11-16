@@ -75,7 +75,7 @@ export function Modal({ open, onClose, title, children, width = 780, className }
         )}
       >
         <div className="sticky top-0 z-10 flex items-center justify-between border-b border-line-soft bg-panel px-[18px] py-[15px]">
-          <div id={titleId} className="text-sm font-semibold text-ink">
+          <div id={titleId} className="text-lead font-semibold text-ink">
             {title}
           </div>
           <button

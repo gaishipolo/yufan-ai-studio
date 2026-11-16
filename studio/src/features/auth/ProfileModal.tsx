@@ -75,7 +75,7 @@ export function ProfileModal({ open, onClose }: { open: boolean; onClose: () => 
         <FormField
           label="昵称"
           htmlFor="profile-display-name"
-          hint="用于顶栏与操作记录展示，留空则显示用户名"
+          hint="留空则显示用户名"
         >
           <TextInput
             id="profile-display-name"
@@ -86,7 +86,7 @@ export function ProfileModal({ open, onClose }: { open: boolean; onClose: () => 
           />
         </FormField>
 
-        <FormField label="邮箱" htmlFor="profile-email" hint="留空表示不填写">
+        <FormField label="邮箱" htmlFor="profile-email" >
           <TextInput
             id="profile-email"
             type="email"
@@ -101,7 +101,7 @@ export function ProfileModal({ open, onClose }: { open: boolean; onClose: () => 
         <FormField
           label="头像地址"
           htmlFor="profile-avatar"
-          hint="留空则显示昵称首字；图片加载失败会自动退回首字"
+          hint="留空则显示昵称首字"
         >
           <div className="flex items-center gap-2">
             <UserAvatar user={{ displayName, username: me?.username, avatarUrl }} size={32} shape="square" />
@@ -118,7 +118,7 @@ export function ProfileModal({ open, onClose }: { open: boolean; onClose: () => 
 
         {formError && (
           <p
-            className="rounded-lg border border-danger/25 bg-danger/5 px-2.5 py-2 text-[11.5px] text-danger"
+            className="rounded-lg border border-danger/25 bg-danger/5 px-2.5 py-2 text-meta text-danger"
             role="alert"
           >
             {formError}

@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { LibraryAssetOut } from '@/shared/api/schema';
 import { LIBRARY_ASSET_DRAG_TYPE, type LibraryAssetDrag } from '@/shared/lib/libraryDrag';
@@ -18,7 +19,16 @@ const { modelsMock, mutateMock, toastMock, uploadMock, selectionMock, navigateMo
   }),
 );
 
-vi.mock('react-router-dom', () => ({ useNavigate: () => navigateMock }));
+/* Link 也要 mock：页头右侧「全部 →」是站内跳转，
+   mock 里给个真 anchor，用例还能顺手验 href。 */
+vi.mock('react-router-dom', () => ({
+  useNavigate: () => navigateMock,
+  Link: ({ to, children, ...rest }: { to: string; children?: ReactNode }) => (
+    <a href={to} {...rest}>
+      {children}
+    </a>
+  ),
+}));
 
 vi.mock('@/entities/task/api/task.queries', () => ({
   useCreateTask: () => ({ mutate: mutateMock, isPending: false }),

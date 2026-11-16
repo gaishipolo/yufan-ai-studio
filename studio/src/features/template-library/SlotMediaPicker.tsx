@@ -69,11 +69,11 @@ export function SlotMediaPicker({
     // 槽位是「卡片里的凹槽」：比面板暗一档、带内描边，里面的缩略图才有地方可放。
     <div className="rounded-xl border border-[rgba(211,224,229,.7)] bg-canvas/45 p-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,.9)]">
       <div className="flex items-baseline gap-1.5">
-        <span className="min-w-0 truncate text-[12px] font-medium text-ink">
+        <span className="min-w-0 truncate text-xs font-medium text-ink">
           {group ? `${group.name} · ${slot.label || slot.key}` : (slot.label || slot.key)}
         </span>
         {(slot.minCount ?? 1) > 0 && <span className="text-warn-deep">*</span>}
-        <span className="ml-auto shrink-0 text-[10px] text-ink-mute">
+        <span className="ml-auto shrink-0 text-micro text-ink-mute">
           {label} · {max > 1 ? `已选 ${selected.length}/${max}` : '选 1 个'}
           {typeof list.data?.total === 'number' && scope && ` · 共 ${list.data.total}`}
         </span>
@@ -81,7 +81,7 @@ export function SlotMediaPicker({
 
       {!tagId && (
         /* 老模板（闸门加上之前发布的）没有一级标签：仍然能挑，但要说明为什么没有分组。 */
-        <p className="mt-1 text-[10px] leading-relaxed text-warn-deep">
+        <p className="mt-1 text-micro leading-relaxed text-warn-deep">
           这个槽位还没设一级标签（去「模板封装」补一个才能按标签分组），下面是全部{label}。
         </p>
       )}
@@ -119,13 +119,13 @@ export function SlotMediaPicker({
       )}
 
       {tags.isPending ? (
-        <p className="py-4 text-center text-[11px] text-ink-mute">正在读取标签…</p>
+        <p className="py-4 text-center text-meta text-ink-mute">正在读取标签…</p>
       ) : needPick && !scope ? (
-        <p className="py-4 text-center text-[11px] text-ink-mute">点一个标签，下面是它的素材。</p>
+        <p className="py-4 text-center text-meta text-ink-mute">点一个标签，下面是它的素材。</p>
       ) : list.isLoading ? (
-        <p className="py-4 text-center text-[11px] text-ink-mute">正在读取素材…</p>
+        <p className="py-4 text-center text-meta text-ink-mute">正在读取素材…</p>
       ) : items.length === 0 ? (
-        <p className="py-4 text-center text-[11px] text-ink-mute">
+        <p className="py-4 text-center text-meta text-ink-mute">
           {tagId ? '这个标签下还没有素材，去资产库给它打上标签。' : `还没有${label}。`}
         </p>
       ) : (
@@ -159,7 +159,7 @@ export function SlotMediaPicker({
                   </span>
                 )}
                 {item.kind === 'video' && (
-                  <span className="absolute bottom-1 left-1 rounded bg-black/55 px-1 text-[10px] text-white">
+                  <span className="absolute bottom-1 left-1 rounded bg-black/55 px-1 text-micro text-white">
                     视频
                   </span>
                 )}
@@ -188,7 +188,7 @@ function ScopeChip({
       aria-pressed={active}
       onClick={onClick}
       className={cn(
-        'rounded-full border px-2 py-[2px] text-[10.5px] transition-colors',
+        'rounded-full border px-2 py-[2px] text-micro transition-colors',
         active
           ? 'border-primary-line bg-primary-soft font-medium text-primary-deep'
           : 'border-line bg-panel text-ink-soft hover:border-line-strong hover:text-ink',

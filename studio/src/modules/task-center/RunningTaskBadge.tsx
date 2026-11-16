@@ -13,7 +13,7 @@ export function RunningTaskBadge() {
   if (running <= 0) return null;
 
   return (
-    <span className="ml-auto rounded-md bg-primary-soft px-1.5 text-[10px] font-bold text-primary">
+    <span className="ml-auto rounded-md bg-primary-soft px-1.5 text-micro font-bold text-primary">
       {running}
     </span>
   );

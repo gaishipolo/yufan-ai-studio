@@ -30,17 +30,17 @@ function RoleCard({ role, onOpen }: { role: Role; onOpen: (dialog: Dialog, role:
   return (
     <section className="flex h-full flex-col rounded-card border border-line-soft bg-panel p-3.5">
       <header className="flex flex-wrap items-center gap-1.5">
-        <h3 className="text-[13px] font-semibold text-ink">{role.name}</h3>
+        <h3 className="text-lead font-semibold text-ink">{role.name}</h3>
         <Chip>{role.code}</Chip>
         {role.isSuperuser && <Chip tone="warn">超管</Chip>}
         {role.isBuiltin && !role.isSuperuser && <Chip>内置</Chip>}
       </header>
 
-      <p className="mt-1 min-h-[32px] text-[11.5px] leading-[1.6] text-ink-mute">
+      <p className="mt-1 min-h-[32px] text-meta leading-[1.6] text-ink-mute">
         {role.description || '暂无说明'}
       </p>
 
-      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-ink-soft">
+      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-meta text-ink-soft">
         <span className="inline-flex items-center gap-1">
           <Users size={11} /> {role.userCount} 名成员
         </span>
@@ -50,7 +50,7 @@ function RoleCard({ role, onOpen }: { role: Role; onOpen: (dialog: Dialog, role:
       </div>
 
       {role.orphanedPermissions.length > 0 && (
-        <p className="mt-2 flex items-start gap-1.5 rounded-lg bg-[#fff6e6] px-2 py-1.5 text-[11px] leading-[1.5] text-[#b97a10]">
+        <p className="mt-2 flex items-start gap-1.5 rounded-lg bg-[#fff6e6] px-2 py-1.5 text-meta leading-[1.5] text-[#b97a10]">
           <AlertTriangle size={11} className="mt-[2px] shrink-0" />
           有 {role.orphanedPermissions.length} 个权限码已下线，编辑权限时会自动清除
         </p>
@@ -73,7 +73,7 @@ function RoleCard({ role, onOpen }: { role: Role; onOpen: (dialog: Dialog, role:
         <span className="ml-auto" />
         {confirming ? (
           <>
-            <span className="text-[11px] text-ink-soft">确认删除？</span>
+            <span className="text-meta text-ink-soft">确认删除？</span>
             <Button
               size="sm"
               variant="danger"
@@ -132,10 +132,10 @@ export function RolesSection() {
       <TeamBasePermissionsCard onEdit={() => setDialog('team')} />
 
       <div className="flex flex-wrap items-center gap-1.5">
-        <p className="text-[11.5px] leading-[1.6] text-ink-mute">
+        <p className="text-meta leading-[1.6] text-ink-mute">
           角色是权限点的集合。给用户分配角色即授予对应权限；内置角色不可删除。
         </p>
-        <span className="ml-auto text-[11.5px] text-ink-mute">共 {roles.length} 个角色</span>
+        <span className="ml-auto text-meta text-ink-mute">共 {roles.length} 个角色</span>
         <Can permission="identity:role:manage">
           <Button
             size="sm"

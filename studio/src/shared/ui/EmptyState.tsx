@@ -10,6 +10,13 @@ export function EmptyState({
 }: {
   icon?: ReactNode;
   title: string;
+  /**
+   * 只在**动作本身说不清**时才写。
+   *
+   * 空的这一屏是一次邀请，不是一段说明：把「去哪儿做」写进按钮里
+   * （「去模板封装新建」），就别再在下面补一句「先在模板封装里定一张表
+   * 并发布，它就会出现在这里供填表使用」——那句话把按钮又说了一遍。
+   */
   description?: string;
   action?: ReactNode;
   className?: string;
@@ -17,8 +24,8 @@ export function EmptyState({
   return (
     <div className={cn('flex flex-col items-center justify-center px-5 py-16 text-center', className)}>
       {icon && <div className="mb-3 text-[#ccd9de]">{icon}</div>}
-      <p className="text-[13px] font-medium text-ink-soft">{title}</p>
-      {description && <p className="mt-1.5 max-w-sm text-xs text-ink-mute">{description}</p>}
+      <p className="text-lead font-semibold text-ink">{title}</p>
+      {description && <p className="mt-1.5 max-w-sm text-meta text-ink-mute">{description}</p>}
       {action && <div className="mt-4">{action}</div>}
     </div>
   );

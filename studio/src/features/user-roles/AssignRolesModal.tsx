@@ -57,14 +57,14 @@ export function AssignRolesModal({
   return (
     <Modal open={open} onClose={onClose} title={`分配角色 · ${user?.username ?? ''}`} width={480}>
       <form className="space-y-3 px-[18px] py-4" onSubmit={handleSubmit}>
-        <p className="text-[11.5px] leading-[1.6] text-ink-mute">
+        <p className="text-meta leading-[1.6] text-ink-mute">
           提交后整组替换当前角色，未勾选的会被移除；权限变更在用户下次请求时生效。
         </p>
 
         {isSelf && (
           <p
             role="status"
-            className="flex items-start gap-1.5 rounded-lg border border-[#fbe8c8] bg-[#fff9ee] px-2.5 py-2 text-[11.5px] leading-[1.6] text-[#8a5b00]"
+            className="flex items-start gap-1.5 rounded-lg border border-[#fbe8c8] bg-[#fff9ee] px-2.5 py-2 text-meta leading-[1.6] text-[#8a5b00]"
           >
             <TriangleAlert size={12} className="mt-[2px] shrink-0" aria-hidden />
             你正在修改自己的角色。撤销超级管理员后，需要刷新页面才会失去管理入口；
@@ -80,7 +80,7 @@ export function AssignRolesModal({
         />
 
         {formError && (
-          <p className="rounded-lg border border-[#fad7d4] bg-[#feeceb] px-2.5 py-2 text-[11.5px] text-[#d94036]" role="alert">
+          <p className="rounded-lg border border-[#fad7d4] bg-[#feeceb] px-2.5 py-2 text-meta text-[#d94036]" role="alert">
             {formError}
           </p>
         )}

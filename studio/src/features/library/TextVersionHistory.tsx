@@ -70,7 +70,7 @@ export function TextVersionHistory({
   return (
     <Modal open={open} onClose={onClose} title={`版本历史 · ${assetName ?? ''}`} width={720}>
       <div className="space-y-3 p-[18px]">
-        <p className="rounded-lg border border-line-soft bg-panel-soft px-2.5 py-1.5 text-[12.5px] leading-relaxed text-ink-soft">
+        <p className="rounded-lg border border-line-soft bg-panel-soft px-2.5 py-1.5 text-xs leading-relaxed text-ink-soft">
           恢复会把所选版本的正文<strong className="font-semibold">写成新的一版</strong>，
           不改动、也不删除任何历史版本；恢复后列表最上面会多一条最新版本。
         </p>
@@ -82,21 +82,21 @@ export function TextVersionHistory({
             ))}
           </div>
         ) : versions.isError ? (
-          <p className="text-[13px] text-danger-deep">版本历史加载失败：{versions.error.message}</p>
+          <p className="text-body text-danger-deep">版本历史加载失败：{versions.error.message}</p>
         ) : (versions.data ?? []).length ? (
           <ul className="max-h-[320px] space-y-1.5 overflow-auto pr-1">
             {(versions.data ?? []).map((item) => (
               <li key={item.version} className="rounded-lg border border-line-soft bg-panel p-2.5">
                 <div className="flex flex-wrap items-center gap-1.5">
                   <Chip tone="primary">v{item.version}</Chip>
-                  <span className="text-[12px] text-ink-mute">{formatDateTime(item.createdAt)}</span>
-                  <span className="text-[12px] text-ink-mute">{item.createdBy}</span>
-                  <code className="ml-auto text-[11.5px] text-ink-mute" title={item.sha256}>
+                  <span className="text-xs text-ink-mute">{formatDateTime(item.createdAt)}</span>
+                  <span className="text-xs text-ink-mute">{item.createdBy}</span>
+                  <code className="ml-auto text-meta text-ink-mute" title={item.sha256}>
                     {item.sha256.slice(0, 8)}
                   </code>
                 </div>
-                {item.note && <p className="mt-1 text-[12.5px] text-ink-soft">备注：{item.note}</p>}
-                <p className="mt-1 line-clamp-2 whitespace-pre-wrap break-words text-[12px] text-ink-mute">
+                {item.note && <p className="mt-1 text-xs text-ink-soft">备注：{item.note}</p>}
+                <p className="mt-1 line-clamp-2 whitespace-pre-wrap break-words text-xs text-ink-mute">
                   {item.excerpt || '（空文本）'}
                 </p>
                 <div className="mt-1.5 flex items-center gap-1.5">
@@ -118,7 +118,7 @@ export function TextVersionHistory({
                   </Button>
                 </div>
                 {viewing === item.version && (
-                  <pre className="mt-1.5 max-h-52 overflow-auto whitespace-pre-wrap rounded-lg bg-panel-soft px-2.5 py-2 text-[12px] leading-relaxed text-ink-soft">
+                  <pre className="mt-1.5 max-h-52 overflow-auto whitespace-pre-wrap rounded-lg bg-panel-soft px-2.5 py-2 text-xs leading-relaxed text-ink-soft">
                     {detail.isPending ? '正在读取正文…' : detail.data?.content || '（空文本）'}
                   </pre>
                 )}
@@ -128,12 +128,12 @@ export function TextVersionHistory({
         ) : (
           <div className="flex flex-col items-center gap-1.5 py-8 text-ink-mute">
             <History size={22} />
-            <span className="text-[12.5px]">还没有历史版本</span>
+            <span className="text-xs">还没有历史版本</span>
           </div>
         )}
 
         <div className="flex items-center gap-1.5 border-t border-line-soft pt-3">
-          <span className="min-w-0 flex-1 truncate text-[11px] text-ink-mute">
+          <span className="min-w-0 flex-1 truncate text-meta text-ink-mute">
             当前版本 v{current.data?.version ?? '—'}
           </span>
           <Button size="sm" variant="ghost" onClick={onClose}>

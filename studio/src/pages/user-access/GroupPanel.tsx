@@ -50,11 +50,11 @@ export function GroupPanel({
   return (
     <aside className="w-full shrink-0 rounded-card border border-line-soft bg-panel md:w-[212px]">
       <header className="flex items-center gap-1.5 border-b border-line-soft px-3 py-2.5">
-        <h3 className="text-[12.5px] font-semibold text-ink">分组</h3>
+        <h3 className="text-lead font-semibold text-ink">分组</h3>
         <Can permission="identity:group:create">
           <button
             type="button"
-            className="ml-auto inline-flex items-center gap-0.5 text-[11.5px] text-primary hover:underline"
+            className="ml-auto inline-flex items-center gap-0.5 text-meta text-primary hover:underline"
             onClick={onCreate}
           >
             <Plus size={12} /> 新增分组
@@ -71,7 +71,7 @@ export function GroupPanel({
       ) : groupsQuery.isError ? (
         <div className="flex flex-col items-center gap-2 px-3 py-8 text-center">
           <AlertCircle size={18} className="text-danger" />
-          <p className="text-[11px] text-ink-soft">分组加载失败：{groupsQuery.error.message}</p>
+          <p className="text-meta text-ink-soft">分组加载失败：{groupsQuery.error.message}</p>
           <Button size="sm" onClick={() => void groupsQuery.refetch()}>
             重试
           </Button>
@@ -87,13 +87,13 @@ export function GroupPanel({
             onClick={() => onSelect(null)}
           >
             <span>全部分组</span>
-            <span className="ml-auto text-[11px] tabular-nums text-ink-mute" title="小组数量">
+            <span className="ml-auto text-meta tabular-nums text-ink-mute" title="小组数量">
               ({groups.length})
             </span>
           </button>
 
           {groups.length === 0 ? (
-            <p className="px-2.5 py-4 text-[11px] leading-[1.6] text-ink-mute">
+            <p className="px-2.5 py-4 text-meta leading-[1.6] text-ink-mute">
               还没有小组。新建后可以给组分配成员与整体权限。
             </p>
           ) : (
@@ -115,13 +115,13 @@ export function GroupPanel({
                     onClick={() => onSelect(group.id)}
                   >
                     <span className="truncate">{group.name}</span>
-                    <span className="ml-1.5 text-[10.5px] tabular-nums text-ink-mute">
+                    <span className="ml-1.5 text-micro tabular-nums text-ink-mute">
                       {group.memberCount ?? group.memberIds?.length ?? 0}
                     </span>
                   </button>
 
                   {confirmId === group.id ? (
-                    <span className="flex shrink-0 items-center gap-1 text-[10.5px]">
+                    <span className="flex shrink-0 items-center gap-1 text-micro">
                       <button
                         type="button"
                         className="text-danger hover:underline"

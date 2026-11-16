@@ -44,12 +44,12 @@ export function DeactivateUserModal({
           <span className="mx-1 font-semibold text-ink">{user?.username}</span>
           吗？停用后该账号无法登录、已签发的令牌立即失效，历史任务与素材归属保留。
         </p>
-        <p className="text-[11.5px] leading-[1.6] text-ink-mute">
+        <p className="text-meta leading-[1.6] text-ink-mute">
           之后可在列表里重新启用；停用自己或停用最后一个超管会被后端拒绝。
         </p>
 
         {formError && (
-          <p className="rounded-lg border border-[#fad7d4] bg-[#feeceb] px-2.5 py-2 text-[11.5px] text-[#d94036]" role="alert">
+          <p className="rounded-lg border border-[#fad7d4] bg-[#feeceb] px-2.5 py-2 text-meta text-[#d94036]" role="alert">
             {formError}
           </p>
         )}

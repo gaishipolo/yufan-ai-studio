@@ -196,7 +196,7 @@ export function MultiSelect({
           )}
         >
           {merged.length === 0 ? (
-            <p className="px-3 py-4 text-center text-[11.5px] text-ink-mute">{emptyText}</p>
+            <p className="px-3 py-4 text-center text-meta text-ink-mute">{emptyText}</p>
           ) : (
             <ul className="max-h-[196px] space-y-0.5 overflow-auto p-1.5">
               {merged.map((option) => {
@@ -220,13 +220,13 @@ export function MultiSelect({
                         <span className="flex min-w-0 items-center gap-1.5">
                           <span className="truncate text-xs text-ink">{option.label}</span>
                           {option.badge && (
-                            <span className="shrink-0 rounded bg-primary-soft px-1 py-px text-[10px] text-primary">
+                            <span className="shrink-0 rounded bg-primary-soft px-1 py-px text-micro text-primary">
                               {option.badge}
                             </span>
                           )}
                         </span>
                         {option.description && (
-                          <span className="truncate text-[11px] text-ink-mute">
+                          <span className="truncate text-meta text-ink-mute">
                             {option.description}
                           </span>
                         )}
@@ -266,7 +266,7 @@ export function MultiSelect({
                 disabled={!draft.trim() || creating}
                 onClick={() => void submitCreate()}
                 className={cn(
-                  'h-7 shrink-0 rounded-[7px] px-2 text-[11.5px] font-medium transition-colors',
+                  'h-7 shrink-0 rounded-[7px] px-2 text-meta font-medium transition-colors',
                   'bg-primary-soft text-primary hover:bg-primary/15',
                   'disabled:cursor-not-allowed disabled:bg-panel-soft disabled:text-ink-mute',
                 )}

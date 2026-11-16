@@ -31,7 +31,7 @@ export function CaseCover({
           <span className="grid size-7 place-items-center rounded-full bg-white/15 ring-1 ring-inset ring-white/20">
             <ImageOff size={13} />
           </span>
-          <span className="text-[10px] tracking-wide">暂无案例</span>
+          <span className="text-micro tracking-wide">暂无案例</span>
         </span>
       </div>
     );

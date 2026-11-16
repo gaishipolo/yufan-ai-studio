@@ -111,12 +111,12 @@ export function ImagePreviewModal({ item, onClose }: ImagePreviewModalProps) {
             </dl>
 
             {image.errorMessage && (
-              <p className="mt-3 rounded-lg border border-[#fad7d4] bg-[#feeceb] px-3 py-2 text-[11.5px] leading-relaxed text-[#d94036]">
+              <p className="mt-3 rounded-lg border border-[#fad7d4] bg-[#feeceb] px-3 py-2 text-meta leading-relaxed text-[#d94036]">
                 {image.errorMessage}
               </p>
             )}
             {inAttention && (
-              <p className="mt-3 text-[11.5px] leading-relaxed text-ink-mute">
+              <p className="mt-3 text-meta leading-relaxed text-ink-mute">
                 这次生成已标记为成功，但成图地址不可用，无法下载。
               </p>
             )}

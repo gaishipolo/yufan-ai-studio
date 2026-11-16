@@ -67,8 +67,8 @@ export function TextRefPicker({
         >
           插入文本引用
         </Button>
-        <span className="text-[11px] leading-4 text-ink-mute">
-          提示词里写 {'{{Text 1}}'} / {'{{Text 2}}'}，编号对应下方顺序，最多 {max} 份
+        <span className="text-meta leading-4 text-ink-mute">
+          提示词里写 {'{{Text N}}'} 引用
         </span>
         <Chip tone={value.length ? 'primary' : 'default'}>{value.length}/{max}</Chip>
       </div>
@@ -78,7 +78,7 @@ export function TextRefPicker({
           {value.map((asset, index) => (
             <li
               key={asset.id}
-              className="inline-flex max-w-[240px] items-center gap-1 rounded-lg border border-line-soft bg-panel-soft px-2 py-1 text-[11px] text-ink-soft"
+              className="inline-flex max-w-[240px] items-center gap-1 rounded-lg border border-line-soft bg-panel-soft px-2 py-1 text-meta text-ink-soft"
             >
               <span className="shrink-0 text-ink-mute">{`{{Text ${index + 1}}}`}</span>
               <span className="truncate" title={asset.name}>

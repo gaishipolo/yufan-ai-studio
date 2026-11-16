@@ -22,7 +22,6 @@ export default function ShotsPage() {
     <>
       <PageHeader
         title="镜头库"
-        description="标准化运镜词条，插入提示词即可复用相同镜头语言。"
         actions={
           <SearchInput
             placeholder="搜索运镜 / 英文指令"
@@ -58,15 +57,15 @@ export default function ShotsPage() {
                     className="aspect-video w-full"
                     imgClassName="transition-transform duration-300 group-hover:scale-[1.03]"
                   />
-                  <span className="absolute right-[7px] top-[7px] rounded-[5px] bg-[rgba(10,22,28,.55)] px-1.5 py-px text-[10px] text-white backdrop-blur-[4px]">
+                  <span className="absolute right-[7px] top-[7px] rounded-[5px] bg-[rgba(10,22,28,.55)] px-1.5 py-px text-micro text-white backdrop-blur-[4px]">
                     {formatDuration(shot.durationSec)}
                   </span>
                 </div>
                 <div className="px-2.5 pb-2.5 pt-2">
-                  <p className="truncate text-[11.5px] text-ink">{shot.name}</p>
-                  <div className="mt-1 flex items-center justify-between gap-2 text-[10.5px] text-ink-mute">
+                  <p className="truncate text-meta text-ink">{shot.name}</p>
+                  <div className="mt-1 flex items-center justify-between gap-2 text-micro text-ink-mute">
                     <span className="truncate font-mono">{shot.promptFragment}</span>
-                    <span className="shrink-0">热度 {shot.popularity}</span>
+                    <span className="shrink-0 font-mono tabular-nums">热度 {shot.popularity}</span>
                   </div>
                 </div>
               </button>

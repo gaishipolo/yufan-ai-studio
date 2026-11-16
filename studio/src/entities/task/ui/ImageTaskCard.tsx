@@ -63,14 +63,14 @@ export const ImageTaskCard = memo(function ImageTaskCard({
         />
         <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(180deg,rgba(8,20,26,.2)_0%,rgba(8,20,26,0)_32%,rgba(8,20,26,.46)_100%)]" />
 
-        <span className="absolute left-2 top-2 inline-flex items-center gap-1 rounded-pill bg-[rgba(10,22,28,.5)] px-1.5 py-px text-[10px] text-white backdrop-blur-[6px]">
+        <span className="absolute left-2 top-2 inline-flex items-center gap-1 rounded-pill bg-[rgba(10,22,28,.5)] px-1.5 py-px text-micro text-white backdrop-blur-[6px]">
           <Images size={9} aria-hidden />
           生图
         </span>
         {(item.status !== 'succeeded' || item.group === 'attention') && (
           <span
             className={cn(
-              'absolute bottom-2 left-2 rounded-pill px-1.5 py-px text-[10px] font-semibold text-white backdrop-blur-[6px]',
+              'absolute bottom-2 left-2 rounded-pill px-1.5 py-px text-micro font-semibold text-white backdrop-blur-[6px]',
               STATUS_STYLE[item.status] ?? 'bg-[rgba(10,22,28,.58)]',
             )}
           >
@@ -79,7 +79,7 @@ export const ImageTaskCard = memo(function ImageTaskCard({
               : (STATUS_LABEL[item.status] ?? item.status)}
           </span>
         )}
-        <span className="absolute bottom-2 right-2 rounded-[5px] bg-[rgba(10,22,28,.5)] px-1.5 py-px text-[10px] tabular-nums text-white">
+        <span className="absolute bottom-2 right-2 rounded-[5px] bg-[rgba(10,22,28,.5)] px-1.5 py-px text-micro tabular-nums text-white">
           {/* 后端 size 是 `1024x1024`：x 换成乘号，和模板库参数区同一写法 */}
           {(item.size ?? '').replace('x', '×')} · ×{item.count ?? 1}
         </span>
@@ -115,16 +115,16 @@ export const ImageTaskCard = memo(function ImageTaskCard({
                 style={{ width: `${item.progress ?? 0}%` }}
               />
             </div>
-            <div className="mt-2 flex items-center justify-between gap-2 text-[10.5px] text-ink-mute">
+            <div className="mt-2 flex items-center justify-between gap-2 text-micro text-ink-mute">
               <Chip tone="primary" className="max-w-[70%] truncate">
                 {item.model}
               </Chip>
-              <span className="shrink-0 tabular-nums">{item.progress ?? 0}%</span>
+              <span className="shrink-0 font-mono tabular-nums">{item.progress ?? 0}%</span>
             </div>
           </>
         ) : (
           /* 与视频卡同一套节奏：模型在左、时间在右，规格已经在封面角标上 */
-          <div className="mt-2 flex items-center justify-between gap-2 text-[10.5px] text-ink-mute">
+          <div className="mt-2 flex items-center justify-between gap-2 text-micro text-ink-mute">
             <Chip tone="primary" className="max-w-[62%] truncate">
               {item.model}
             </Chip>

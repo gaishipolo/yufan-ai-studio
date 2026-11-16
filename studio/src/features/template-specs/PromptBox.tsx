@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { cn } from '@/shared/lib/cn';
-import { insertRef } from './specDraft';
+import { insertRef, type SlotType } from './specDraft';
+import { SLOT_TYPE_ICONS } from './slotIcons';
 import {
   applyMention,
   detectMention,
@@ -12,6 +13,8 @@ export interface PromptChip {
   token: string;
   label: string;
   all: boolean;
+  /** 槽位类型：画图标用 */
+  kind?: SlotType;
 }
 
 /**
@@ -160,65 +163,74 @@ export function PromptBox({
               'animate-slideDown',
             )}
           >
-            <p className="px-2 py-1 text-[10px] text-ink-mute">
+            <p className="px-2 py-1 text-micro text-ink-mute">
               {query ? `匹配「${query}」` : '选择要引用的槽位'}
             </p>
-            {candidates.map((chip, index) => (
-              <button
-                key={chip.token}
-                type="button"
-                onMouseDown={event => {
-                  // mousedown 先于 blur，click 会被输入框失焦吃掉 —— 用 mousedown 选中。
-                  event.preventDefault();
-                  choose(chip.token);
-                }}
-                onMouseEnter={() => setActive(index)}
-                className={cn(
-                  'flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left transition-colors',
-                  index === active ? 'bg-primary-soft text-primary' : 'text-ink-soft hover:bg-panel-soft',
-                )}
-              >
-                <span className="truncate text-[12px]">{chip.label}</span>
-                <span
+            {candidates.map((chip, index) => {
+              const Icon = chip.kind ? SLOT_TYPE_ICONS[chip.kind] : undefined;
+              return (
+                <button
+                  key={chip.token}
+                  type="button"
+                  onMouseDown={event => {
+                    // mousedown 先于 blur，click 会被输入框失焦吃掉 —— 用 mousedown 选中。
+                    event.preventDefault();
+                    choose(chip.token);
+                  }}
+                  onMouseEnter={() => setActive(index)}
                   className={cn(
-                    'shrink-0 rounded px-1 text-[9.5px]',
-                    chip.all ? 'bg-violet/10 text-violet' : 'bg-panel-soft text-ink-mute',
+                    'flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left transition-colors',
+                    index === active ? 'bg-primary-soft text-primary' : 'text-ink-soft hover:bg-panel-soft',
                   )}
                 >
-                  {chip.all ? '全部' : '单个'}
-                </span>
-              </button>
-            ))}
+                  <span className="flex min-w-0 items-center gap-1.5">
+                    {Icon && <Icon size={12} className="shrink-0" />}
+                    <span className="truncate text-xs">{chip.label}</span>
+                  </span>
+                  <span
+                    className={cn(
+                      'shrink-0 rounded px-1 text-micro',
+                      chip.all ? 'bg-violet/10 text-violet' : 'bg-panel-soft text-ink-mute',
+                    )}
+                  >
+                    {chip.all ? '全部' : '单个'}
+                  </span>
+                </button>
+              );
+            })}
           </div>
         )}
       </div>
 
       {/* chip 行降到 z-0：候选面板浮在上面时，它不该把面板压出一道缺口。
           有了 @ 之后它是**辅助**路径（有人不知道能打 @），所以做小做淡，
-          不跟提示词正文抢注意力。 */}
-      <div className="relative z-0 mt-2 flex flex-wrap items-center gap-1">
+          不跟提示词正文抢注意力。
+          「打 @ 引用」这行说明删掉了：输入框的占位符里已经写着
+          「打 @ 可以直接选槽位」，再说一遍就是同一句话讲两遍。 */}
+      <div className="relative z-0 mt-2 flex flex-wrap items-center gap-1.5">
         {chips.length === 0 ? (
-          <span className="text-[11px] text-ink-mute">先在左边加槽位，再打 @ 引用</span>
+          <span className="text-meta text-ink-mute">先在左边加槽位，再打 @ 引用</span>
         ) : (
-          <>
-            <span className="text-[10.5px] text-ink-mute">打 @ 引用</span>
-            {chips.map(chip => (
+          chips.map(chip => {
+            const Icon = chip.kind ? SLOT_TYPE_ICONS[chip.kind] : undefined;
+            return (
               <button
                 key={chip.token}
                 type="button"
-                title={chip.token}
+                title={`插入 ${chip.token}（点一下插到光标处）`}
                 onClick={() => insertAtCaret(chip.token)}
                 className={cn(
-                  'rounded-md px-1.5 py-[1px] text-[10.5px] transition-colors',
+                  'inline-flex items-center gap-1 rounded-lg border px-1.5 py-0.5 text-micro transition-colors',
                   chip.all
-                    ? 'text-violet/80 hover:bg-violet/10 hover:text-violet'
-                    : 'text-ink-mute hover:bg-primary-soft hover:text-primary',
+                    ? 'border-violet/25 bg-violet/10 text-violet hover:bg-violet/15'
+                    : 'border-line-soft bg-panel-soft text-ink-soft hover:border-primary-line hover:text-primary',
                 )}
               >
+                {Icon && <Icon size={11} />}
                 {chip.label}
               </button>
-            ))}
-          </>
+            );
+          })
         )}
       </div>
     </div>

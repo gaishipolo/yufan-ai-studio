@@ -78,7 +78,7 @@ export function DemoMenu({
                 setOpen(false);
                 item.run();
               }}
-              className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[12px] text-ink-soft transition-colors hover:bg-panel-soft hover:text-ink"
+              className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-ink-soft transition-colors hover:bg-panel-soft hover:text-ink"
             >
               {item.icon}
               {item.label}

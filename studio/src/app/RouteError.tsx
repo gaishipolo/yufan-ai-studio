@@ -6,7 +6,7 @@ export function RouteError() {
   return (
     <div className="grid min-h-screen place-items-center p-6 text-center">
       <div>
-        <p className="text-[15px] font-semibold text-ink">页面加载失败</p>
+        <p className="text-lead font-semibold text-ink">页面加载失败</p>
         <p className="mt-2 max-w-md text-xs text-ink-mute">{error?.message ?? '未知错误'}</p>
         <button
           type="button"

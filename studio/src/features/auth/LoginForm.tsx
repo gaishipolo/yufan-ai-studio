@@ -81,7 +81,7 @@ export function LoginForm({ onSuccess }: { onSuccess?: () => void }) {
           onChange={(event) => setUsername(event.target.value)}
           autoComplete="username"
           placeholder="请输入用户名"
-          className="h-10 text-[13px]"
+          className="h-10 text-body"
           aria-invalid={Boolean(failure)}
         />
       </FormField>
@@ -95,7 +95,7 @@ export function LoginForm({ onSuccess }: { onSuccess?: () => void }) {
           onChange={(event) => setPassword(event.target.value)}
           autoComplete="current-password"
           placeholder="请输入密码"
-          className="h-10 text-[13px]"
+          className="h-10 text-body"
           aria-invalid={Boolean(failure)}
         />
       </FormField>
@@ -105,11 +105,11 @@ export function LoginForm({ onSuccess }: { onSuccess?: () => void }) {
           role="alert"
           className="rounded-lg border border-danger/25 bg-danger/5 px-2.5 py-2 text-danger"
         >
-          <p className="flex items-center gap-1.5 text-[12px] font-semibold leading-[1.5]">
+          <p className="flex items-center gap-1.5 text-xs font-semibold leading-[1.5]">
             {locked && <Lock size={11} aria-hidden />}
             {failure.title}
           </p>
-          <p className="mt-0.5 text-[11.5px] leading-[1.6] text-danger/85">{failure.detail}</p>
+          <p className="mt-0.5 text-meta leading-[1.6] text-danger/85">{failure.detail}</p>
         </div>
       )}
 
@@ -129,7 +129,7 @@ export function LoginForm({ onSuccess }: { onSuccess?: () => void }) {
       </Button>
 
       {SHOW_DEMO_HINT && (
-        <p className="text-center text-[11px] text-ink-mute">
+        <p className="text-center text-meta text-ink-mute">
           演示账号（mock 模式）：<span className="tabular-nums">{DEMO_HINT}</span>
         </p>
       )}

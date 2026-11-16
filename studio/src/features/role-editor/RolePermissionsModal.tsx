@@ -82,12 +82,12 @@ export function RolePermissionsModal({
     <Modal open={open} onClose={onClose} title={`编辑角色权限 · ${role?.name ?? ''}`} width={600}>
       <div className="space-y-3 px-[18px] py-4">
         {isSuperuser ? (
-          <p className="rounded-lg border border-[#fbe8c8] bg-[#fff6e6] px-2.5 py-2 text-[11.5px] leading-[1.6] text-[#b97a10]">
+          <p className="rounded-lg border border-[#fbe8c8] bg-[#fff6e6] px-2.5 py-2 text-meta leading-[1.6] text-[#b97a10]">
             该角色是超级管理员，权限恒为全部（后端展开为 <code className="font-mono">*</code>），
             勾选不改变结果，因此不提供编辑。
           </p>
         ) : (
-          <div className="flex flex-wrap items-center gap-2 text-[11.5px] text-ink-mute">
+          <div className="flex flex-wrap items-center gap-2 text-meta text-ink-mute">
             <span>
               已选 <span className="font-semibold tabular-nums text-ink">{selected.length}</span> 个权限点
             </span>
@@ -95,7 +95,7 @@ export function RolePermissionsModal({
             <span>保存后整组替换</span>
             <button
               type="button"
-              className="ml-auto text-[11.5px] text-primary hover:underline disabled:opacity-50"
+              className="ml-auto text-meta text-primary hover:underline disabled:opacity-50"
               disabled={selected.length === 0}
               onClick={() => setSelected([])}
             >
@@ -106,13 +106,13 @@ export function RolePermissionsModal({
 
         {orphaned.length > 0 && (
           <div className="rounded-lg border border-[#fbe8c8] bg-[#fff6e6] px-2.5 py-2">
-            <p className="flex items-center gap-1.5 text-[11.5px] font-medium text-[#b97a10]">
+            <p className="flex items-center gap-1.5 text-meta font-medium text-[#b97a10]">
               <AlertTriangle size={12} /> 含 {orphaned.length} 个已失效的权限码
             </p>
-            <p className="mt-1 font-mono text-[11px] leading-[1.6] text-[#b97a10]">
+            <p className="mt-1 font-mono text-meta leading-[1.6] text-[#b97a10]">
               {orphaned.join('、')}
             </p>
-            <p className="mt-1 text-[11px] leading-[1.6] text-[#b97a10]">
+            <p className="mt-1 text-meta leading-[1.6] text-[#b97a10]">
               权限点已下线（模块删除或改名），保存时会自动清除，避免「看起来没有却还能访问」。
             </p>
           </div>
@@ -134,11 +134,11 @@ export function RolePermissionsModal({
               return (
                 <section key={group.group} className="rounded-lg border border-line-soft">
                   <header className="flex items-center gap-2 border-b border-line-soft bg-panel-soft px-2.5 py-1.5">
-                    <h3 className="text-[11.5px] font-semibold text-ink-soft">{group.group}</h3>
-                    <span className="text-[11px] text-ink-mute tabular-nums">{codes.length}</span>
+                    <h3 className="text-xs font-semibold text-ink-soft">{group.group}</h3>
+                    <span className="text-meta text-ink-mute tabular-nums">{codes.length}</span>
                     <button
                       type="button"
-                      className="ml-auto text-[11px] text-primary hover:underline"
+                      className="ml-auto text-meta text-primary hover:underline"
                       onClick={() => toggleGroup(codes, !allChecked)}
                     >
                       {allChecked ? '取消本组' : '全选本组'}
@@ -167,7 +167,7 @@ export function RolePermissionsModal({
                                 <Chip>{item.code}</Chip>
                               </span>
                               {item.description && (
-                                <span className="mt-0.5 block text-[11px] leading-[1.5] text-ink-mute">
+                                <span className="mt-0.5 block text-meta leading-[1.5] text-ink-mute">
                                   {item.description}
                                 </span>
                               )}
@@ -184,7 +184,7 @@ export function RolePermissionsModal({
         )}
 
         {formError && (
-          <p className="rounded-lg border border-[#fad7d4] bg-[#feeceb] px-2.5 py-2 text-[11.5px] text-[#d94036]" role="alert">
+          <p className="rounded-lg border border-[#fad7d4] bg-[#feeceb] px-2.5 py-2 text-meta text-[#d94036]" role="alert">
             {formError}
           </p>
         )}

@@ -27,7 +27,6 @@ export default function UserAccessPage() {
     <>
       <PageHeader
         title="用户与权限"
-        description="按团队、小组、个人与角色四层授予权限，取并集生效；权限以服务端为准，前端只做「少看到不该看的入口」。"
       />
 
       <div className="mt-4 border-b border-line-soft pb-2.5">

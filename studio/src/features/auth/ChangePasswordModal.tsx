@@ -111,7 +111,7 @@ export function ChangePasswordModal({ open, onClose }: { open: boolean; onClose:
 
         {formError && (
           <p
-            className="rounded-lg border border-danger/25 bg-danger/5 px-2.5 py-2 text-[11.5px] text-danger"
+            className="rounded-lg border border-danger/25 bg-danger/5 px-2.5 py-2 text-meta text-danger"
             role="alert"
           >
             {formError}

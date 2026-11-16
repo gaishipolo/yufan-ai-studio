@@ -33,19 +33,17 @@ export default function UsagePage() {
     <>
       <PageHeader
         title="用量看板"
-        description="查看生成任务的调用量、媒体产出与费用消耗，用于容量规划与成本核算。"
         actions={<Chip tone="warn">接口未接入</Chip>}
       />
 
-      {/* 明确告知读者：这里是骨架，不是「加载失败」 */}
-      <div className="mt-4 flex items-start gap-2 rounded-card border border-line-soft bg-panel-soft px-3 py-2.5">
-        <Info size={14} className="mt-0.5 shrink-0 text-ink-mute" />
-        <p className="text-[11.5px] leading-[1.65] text-ink-soft">
-          后端用量接口尚未实现，本页只保留信息层级与布局，所有数值以
-          <span className="px-0.5 text-ink-mute">—</span>
-          占位。接入时在
-          <code className="mx-1 rounded bg-panel px-1 py-px font-mono text-[11px] text-ink">entities/usage</code>
-          补 types / api / queries，再替换本页的数据绑定即可，路由与导航无需改动。
+      {/* 明确告知读者：这里是骨架，不是「加载失败」。
+          一句话说完就够 —— 标题旁已经有「接口未接入」的标记，
+          下面再写一段「在哪儿补 types / api / queries」是写给开发看的，
+          不是写给看这个页面的人看的。 */}
+      <div className="mt-4 flex items-center gap-2 rounded-card border border-line-soft bg-panel-soft px-3 py-2.5">
+        <Info size={14} className="shrink-0 text-ink-mute" />
+        <p className="text-meta text-ink-soft">
+          后端用量接口尚未实现，数值以 <span className="text-ink-mute">—</span> 占位。
         </p>
       </div>
 
@@ -62,19 +60,19 @@ export default function UsagePage() {
             {range}
           </span>
         ))}
-        <span className="ml-auto text-[11.5px] text-ink-mute">时间筛选将在接口接入后启用</span>
+        
       </div>
 
       {/* 汇总指标 */}
       <div className="mt-3 grid grid-cols-2 gap-2.5 md:grid-cols-4 md:gap-3.5">
         {METRICS.map((metric) => (
           <div key={metric.key} className="rounded-card border border-line-soft bg-panel p-3.5">
-            <div className="flex items-center gap-1.5 text-[11.5px] text-ink-mute">
+            <div className="flex items-center gap-1.5 text-meta text-ink-mute">
               <metric.icon size={13} />
               {metric.label}
             </div>
-            <div className="mt-1.5 text-[22px] font-bold leading-none tabular-nums text-ink-mute">—</div>
-            <div className="mt-1.5 text-[11px] text-ink-mute">{metric.hint}</div>
+            <div className="mt-1.5 font-mono text-display font-bold leading-none tabular-nums text-ink-mute">—</div>
+            <div className="mt-1.5 text-meta text-ink-mute">{metric.hint}</div>
           </div>
         ))}
       </div>
@@ -83,14 +81,14 @@ export default function UsagePage() {
         {/* 趋势图占位 */}
         <section className="rounded-card border border-line-soft bg-panel p-3.5">
           <header className="flex items-center justify-between gap-2">
-            <h2 className="text-xs font-semibold text-ink">调用趋势</h2>
-            <span className="text-[11px] text-ink-mute">按天</span>
+            <h2 className="text-lead font-semibold text-ink">调用趋势</h2>
+            <span className="text-meta text-ink-mute">按天</span>
           </header>
           <div className="mt-3 flex h-[176px] flex-col items-center justify-center gap-2 rounded-[10px] border border-dashed border-line-strong bg-panel-soft px-4 text-center">
             <ChartColumn size={26} strokeWidth={1.4} className="text-ink-mute" />
             <p className="text-xs text-ink-mute">图表占位</p>
-            <p className="max-w-[260px] text-[11px] leading-[1.6] text-ink-mute">
-              接口返回按天序列后，这里替换为折线 / 面积图，无需改动外层卡片
+            <p className="max-w-[260px] text-meta leading-[1.6] text-ink-mute">
+              图表占位
             </p>
           </div>
         </section>
@@ -98,13 +96,13 @@ export default function UsagePage() {
         {/* 构成占位 */}
         <section className="rounded-card border border-line-soft bg-panel p-3.5">
           <header className="flex items-center justify-between gap-2">
-            <h2 className="text-xs font-semibold text-ink">用量构成</h2>
-            <span className="text-[11px] text-ink-mute">占比</span>
+            <h2 className="text-lead font-semibold text-ink">用量构成</h2>
+            <span className="text-meta text-ink-mute">占比</span>
           </header>
           <ul className="mt-3 space-y-2.5">
             {BREAKDOWN.map((label) => (
               <li key={label}>
-                <div className="flex items-center justify-between text-[11.5px] text-ink-soft">
+                <div className="flex items-center justify-between text-meta text-ink-soft">
                   <span>{label}</span>
                   <span className="tabular-nums text-ink-mute">—</span>
                 </div>
@@ -118,16 +116,16 @@ export default function UsagePage() {
       {/* 与后端对齐用的建议契约，不是已实现接口 */}
       <section className="mt-3 rounded-card border border-line-soft bg-panel p-3.5">
         <header className="flex items-center gap-2">
-          <h2 className="text-xs font-semibold text-ink">接入清单</h2>
+          <h2 className="text-lead font-semibold text-ink">接入清单</h2>
           <Chip>建议契约 · 待后端确认</Chip>
         </header>
-        <ul className="mt-2.5 grid gap-1.5 text-[11.5px] md:grid-cols-2">
+        <ul className="mt-2.5 grid gap-1.5 text-meta md:grid-cols-2">
           {ENDPOINTS.map((endpoint) => (
             <li key={endpoint.path} className="flex items-center gap-2 text-ink-soft">
-              <span className="rounded bg-panel-soft px-1.5 py-px font-mono text-[10.5px] text-primary-deep">
+              <span className="rounded bg-panel-soft px-1.5 py-px font-mono text-micro text-primary-deep">
                 {endpoint.method}
               </span>
-              <span className="font-mono text-[11px] text-ink">{endpoint.path}</span>
+              <span className="font-mono text-meta text-ink">{endpoint.path}</span>
               <span className="text-ink-mute">{endpoint.desc}</span>
             </li>
           ))}

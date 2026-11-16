@@ -326,7 +326,7 @@ function AssetStage({ assetId, big = false }: { assetId: string; big?: boolean }
   if (isVideo) {
     if (!media.url) {
       return (
-        <div className="flex h-40 items-center justify-center rounded-lg bg-panel-soft text-[12px] text-ink-mute">
+        <div className="flex h-40 items-center justify-center rounded-lg bg-panel-soft text-xs text-ink-mute">
           {media.isPending ? '正在读取视频…' : '视频暂时读不出来'}
         </div>
       );
@@ -363,21 +363,21 @@ function PackStage({ packId }: { packId: string }) {
   });
   const items = pack.data?.packItems ?? [];
   if (pack.isPending) {
-    return <p className="py-10 text-center text-[12px] text-ink-mute">正在读取封装…</p>;
+    return <p className="py-10 text-center text-xs text-ink-mute">正在读取封装…</p>;
   }
   if (items.length === 0) {
-    return <p className="py-10 text-center text-[12px] text-ink-mute">这个封装没有成员。</p>;
+    return <p className="py-10 text-center text-xs text-ink-mute">这个封装没有成员。</p>;
   }
   return (
     <div className="max-h-[70vh] overflow-y-auto">
-      <p className="mb-2 text-[12px] text-ink-soft">{pack.data?.name}</p>
+      <p className="mb-2 text-xs text-ink-soft">{pack.data?.name}</p>
       <div className="grid grid-cols-3 gap-2">
         {items.map(item => (
           <figure key={item.assetId} className="flex flex-col gap-1">
             <div className="h-32 overflow-hidden rounded-lg">
               <AssetPreview assetId={item.assetId} className="h-full w-full" hoverPlay />
             </div>
-            <figcaption className="truncate text-[10px] text-ink-mute">
+            <figcaption className="truncate text-micro text-ink-mute">
               {item.role || item.name || item.assetId.slice(0, 8)}
             </figcaption>
           </figure>

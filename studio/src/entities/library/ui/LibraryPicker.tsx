@@ -168,7 +168,7 @@ export function LibraryPicker({
             />
           </div>
           <Chip tone={chosen.length ? 'primary' : 'default'}>已选 {chosen.length}</Chip>
-          <span className="ml-auto text-[11px] text-ink-mute">只显示在库素材</span>
+          <span className="ml-auto text-meta text-ink-mute">只显示在库素材</span>
         </div>
 
         {query.isPending ? (
@@ -197,15 +197,15 @@ export function LibraryPicker({
                   {asset.kind === 'text' ? (
                     /* 文本资产没有缩略图，用摘要画文字卡，别去请求 /thumbnail 落一张破图 */
                     <div className="flex aspect-[4/3] flex-col overflow-hidden rounded-md bg-panel-soft p-1.5">
-                      <span className="line-clamp-4 whitespace-pre-wrap break-words text-[10.5px] leading-[14px] text-ink-soft">
+                      <span className="line-clamp-4 whitespace-pre-wrap break-words text-micro leading-[14px] text-ink-soft">
                         {asset.textExcerpt?.trim() || '（空文本）'}
                       </span>
                     </div>
                   ) : (
                     <CoverImage src={asset.coverUrl ?? undefined} seed={asset.id} className="aspect-[4/3] rounded-md" />
                   )}
-                  <div className="mt-1 truncate text-[11.5px] text-ink">{displayName(asset.name)}</div>
-                  <div className="truncate text-[10.5px] text-ink-mute">{KIND_LABEL[asset.kind]}</div>
+                  <div className="mt-1 truncate text-meta text-ink">{displayName(asset.name)}</div>
+                  <div className="truncate text-micro text-ink-mute">{KIND_LABEL[asset.kind]}</div>
                   {active && (
                     <span className="absolute right-1.5 top-1.5 grid size-[18px] place-items-center rounded-full bg-primary text-white">
                       <Check size={11} />
@@ -218,7 +218,7 @@ export function LibraryPicker({
         ) : (
           <div className="flex flex-col items-center gap-1.5 rounded-lg bg-panel-soft px-3 py-10 text-ink-mute">
             <Library size={22} />
-            <span className="text-[11.5px]">{debounced ? '没有匹配的素材' : '资产库里还没有可用素材'}</span>
+            <span className="text-meta">{debounced ? '没有匹配的素材' : '资产库里还没有可用素材'}</span>
           </div>
         )}
 
@@ -227,7 +227,7 @@ export function LibraryPicker({
             <Button size="sm" variant="ghost" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
               上一页
             </Button>
-            <span className="text-[11.5px] text-ink-mute">
+            <span className="text-meta text-ink-mute">
               {page} / {totalPages}
             </span>
             <Button
@@ -242,7 +242,7 @@ export function LibraryPicker({
         )}
 
         <div className="flex items-center gap-1.5 border-t border-line-soft pt-3">
-          <span className="min-w-0 flex-1 truncate text-[11px] text-ink-mute">
+          <span className="min-w-0 flex-1 truncate text-meta text-ink-mute">
             {chosen.length ? chosen.map((item) => item.name).join('、') : '还没有选择'}
           </span>
           <Button size="sm" variant="ghost" onClick={onClose}>

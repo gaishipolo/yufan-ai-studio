@@ -107,7 +107,7 @@ export function TaskFilterBar({
           onClick={onRefresh}
           icon={<RefreshCw size={13} className={cn(isFetching && 'animate-spin')} />}
         />
-        <span className="tabular-nums text-[11.5px] text-ink-mute">
+        <span className="tabular-nums text-meta text-ink-mute">
           {total === undefined ? '共 — 条' : `共 ${total} 条`}
         </span>
       </div>

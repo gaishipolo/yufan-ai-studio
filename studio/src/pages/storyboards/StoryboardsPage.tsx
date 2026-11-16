@@ -11,7 +11,6 @@ export default function StoryboardsPage() {
     <>
       <PageHeader
         title="分镜模板库"
-        description="已编排好的镜头序列，可直接生成视频任务或拆分到工作台二次编辑。"
         actions={
           <Button size="sm" variant="primary" icon={<Plus size={13} />} onClick={() => toast('新建分镜')}>
             新建分镜
@@ -39,12 +38,12 @@ export default function StoryboardsPage() {
                   imgClassName="transition-transform duration-300 group-hover:scale-[1.03]"
                 />
                 <div className="p-2.5 pb-3">
-                  <p className="text-[13px] font-semibold text-ink">{sb.name}</p>
-                  <p className="mt-0.5 text-[11px] text-ink-mute">{sb.description}</p>
+                  <p className="text-body font-semibold text-ink">{sb.name}</p>
+                  <p className="mt-0.5 text-meta text-ink-mute">{sb.description}</p>
                   <div className="mt-2 flex items-center gap-1.5">
-                    <Chip>{sb.shotCount} 镜头</Chip>
-                    <Chip>{formatDuration(sb.durationSec)}</Chip>
-                    <Chip tone="primary" className="ml-auto">
+                    <Chip className="font-mono tabular-nums">{sb.shotCount} 镜头</Chip>
+                    <Chip className="font-mono tabular-nums">{formatDuration(sb.durationSec)}</Chip>
+                    <Chip tone="primary" className="ml-auto font-mono tabular-nums">
                       {sb.aspectRatio}
                     </Chip>
                   </div>

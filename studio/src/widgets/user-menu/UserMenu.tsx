@@ -88,7 +88,7 @@ export function UserMenu() {
             <div className="truncate text-xs font-semibold text-ink" title={subject.name}>
               {subject.name}
             </div>
-            <div className="mt-0.5 truncate text-[11px] text-ink-mute">
+            <div className="mt-0.5 truncate text-meta text-ink-mute">
               {me?.username ? `@${me.username}` : '已登录'}
               {me?.roles?.length
                 ? ` · ${me.roles.map((role) => role.name).join(' / ')}`

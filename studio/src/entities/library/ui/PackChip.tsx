@@ -24,10 +24,10 @@ export function PackChip({packId, onRemove}: {packId: string; onRemove?: () => v
         seed={packId}
         className="h-7 w-7 shrink-0 rounded"
       />
-      <span className="max-w-[180px] truncate text-[11px] text-ink-soft">
+      <span className="max-w-[180px] truncate text-meta text-ink-soft">
         {pack.data?.name ?? packId.slice(0, 8)}
       </span>
-      <span className="text-[11px] text-ink-mute">{items.length} 张</span>
+      <span className="text-meta text-ink-mute">{items.length} 张</span>
       {onRemove && (
         <button
           type="button"

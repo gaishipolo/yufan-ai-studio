@@ -48,6 +48,9 @@ export { ForbiddenState } from './ForbiddenState';
 export { PageHeader } from './PageHeader';
 export type { PageHeaderProps } from './PageHeader';
 
+export { Panel, PanelHeader } from './Panel';
+export type { PanelProps, PanelHeaderProps } from './Panel';
+
 export { BrandMark } from './BrandMark';
 
 export { Toaster } from './Toaster';

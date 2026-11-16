@@ -99,14 +99,14 @@ export function LibraryPackModal({ open, preselected, onClose, onCreated }: Libr
     <Modal open={open} onClose={onClose} title="新建封装" width={720}>
       <div className="space-y-3 p-[18px]">
         <div>
-          <div className="mb-1 text-[13.5px] text-ink-soft">
+          <div className="mb-1 text-body text-ink-soft">
             封装名称 <span className="text-danger">*</span>
           </div>
           <input
             value={name}
             onChange={(event) => setName(event.target.value)}
             placeholder="例：超市抢购·人物三视图"
-            className="h-8 w-full rounded-lg border border-line bg-panel-soft px-2.5 text-[14px] text-ink outline-none focus:border-primary-line focus:bg-white focus:shadow-ring"
+            className="h-8 w-full rounded-lg border border-line bg-panel-soft px-2.5 text-body text-ink outline-none focus:border-primary-line focus:bg-white focus:shadow-ring"
             aria-label="封装名称"
           />
         </div>
@@ -123,7 +123,7 @@ export function LibraryPackModal({ open, preselected, onClose, onCreated }: Libr
           <Chip tone={selected.length >= 100 ? 'danger' : 'default'}>
             已选 {selected.length} / 100
           </Chip>
-          <span className="text-[13px] text-ink-mute">只列出在库素材；封装不能作为成员</span>
+          <span className="text-body text-ink-mute">只列出在库素材；封装不能作为成员</span>
         </div>
 
         {query.isPending ? (
@@ -150,8 +150,8 @@ export function LibraryPackModal({ open, preselected, onClose, onCreated }: Libr
                   aria-pressed={active}
                 >
                   <CoverImage src={asset.coverUrl ?? undefined} seed={asset.id} className="aspect-[4/3] rounded-md" />
-                  <div className="mt-1 truncate text-[13.5px] text-ink">{displayName(asset.name)}</div>
-                  <div className="truncate text-[12.5px] text-ink-mute">
+                  <div className="mt-1 truncate text-body text-ink">{displayName(asset.name)}</div>
+                  <div className="truncate text-xs text-ink-mute">
                     {KIND_LABEL[asset.kind]}
                     {asset.sizeBytes != null ? ` · ${formatBytes(asset.sizeBytes)}` : ''}
                   </div>
@@ -165,22 +165,22 @@ export function LibraryPackModal({ open, preselected, onClose, onCreated }: Libr
             })}
           </div>
         ) : (
-          <p className="rounded-lg bg-panel-soft px-3 py-6 text-center text-[13.5px] text-ink-mute">
+          <p className="rounded-lg bg-panel-soft px-3 py-6 text-center text-body text-ink-mute">
             没有可选的素材。先上传几张图，或者清空搜索词。
           </p>
         )}
 
         {selected.length > 0 && (
           <section aria-label="成员顺序与用途" className="space-y-1.5 rounded-lg bg-panel-soft p-2.5">
-            <p className="text-[13px] text-ink-soft">
+            <p className="text-body text-ink-soft">
               成员顺序决定模板里 <code>{'{{Mixed 2}}'}</code> 起的编号；用途决定这张图在提示词里
               能决定什么。只用来归档时可以留空，模板库引用时必须是下面其中一项。
             </p>
             <ol className="space-y-1">
               {selected.map((assetId, index) => (
                 <li key={assetId} className="flex items-center gap-2">
-                  <span className="w-10 shrink-0 text-[12.5px] text-ink-mute">#{index + 1}</span>
-                  <span className="min-w-0 flex-1 truncate text-[13.5px] text-ink">
+                  <span className="w-10 shrink-0 text-xs text-ink-mute">#{index + 1}</span>
+                  <span className="min-w-0 flex-1 truncate text-body text-ink">
                     {/* 预选成员可能不在当前搜索结果里：宁可用中性说法，也不把 id 摊给用户看 */}
                     {byId.get(assetId)?.name
                       ? displayName(byId.get(assetId)!.name)
@@ -192,7 +192,7 @@ export function LibraryPackModal({ open, preselected, onClose, onCreated }: Libr
                       setRoles((previous) => ({ ...previous, [assetId]: event.target.value }))
                     }
                     aria-label={`第 ${index + 1} 项用途`}
-                    className="h-7 shrink-0 rounded-lg border border-line bg-white px-1.5 text-[13px] text-ink outline-none focus:border-primary-line"
+                    className="h-7 shrink-0 rounded-lg border border-line bg-white px-1.5 text-body text-ink outline-none focus:border-primary-line"
                   >
                     <option value="">不声明用途</option>
                     {PACK_ITEM_ROLES.map((role) => (

@@ -31,7 +31,7 @@ export function AssetChip({
         seed={assetId}
         className="h-7 w-7 shrink-0 rounded"
       />
-      <span className="max-w-[150px] truncate text-[11px] text-ink-soft">
+      <span className="max-w-[150px] truncate text-meta text-ink-soft">
         {detail.data?.name ?? assetId.slice(0, 8)}
       </span>
       {onRemove && (

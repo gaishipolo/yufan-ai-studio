@@ -229,7 +229,7 @@ function DetailBody({
         {asset.kind === 'text' ? (
           <div className="space-y-2 p-3">
             <div className="flex items-center justify-between gap-2">
-              <span className="flex items-center gap-1.5 text-[13px] text-ink-soft">
+              <span className="flex items-center gap-1.5 text-body text-ink-soft">
                 <FileText size={14} /> 正文（纯文本）
               </span>
               <Button
@@ -242,7 +242,7 @@ function DetailBody({
               </Button>
             </div>
             {/* 纯文本，不做 Markdown → HTML 渲染，避免把用户正文当页面执行 */}
-            <pre className="max-h-[360px] overflow-auto whitespace-pre-wrap rounded-lg border border-line-soft bg-white px-2.5 py-2 text-[13px] leading-relaxed text-ink-soft">
+            <pre className="max-h-[360px] overflow-auto whitespace-pre-wrap rounded-lg border border-line-soft bg-white px-2.5 py-2 text-body leading-relaxed text-ink-soft">
               {text.isPending
                 ? '正在读取正文…'
                 : text.isError
@@ -305,7 +305,7 @@ function DetailBody({
         </div>
 
         {asset.rejectReason && (
-          <p className="rounded-lg border border-danger-line bg-danger-soft px-2.5 py-1.5 text-[13.5px] text-danger-deep">
+          <p className="rounded-lg border border-danger-line bg-danger-soft px-2.5 py-1.5 text-body text-danger-deep">
             驳回原因：{asset.rejectReason}
           </p>
         )}
@@ -323,7 +323,7 @@ function DetailBody({
                       ref={nameInput}
                       value={name}
                       onChange={(event) => setName(event.target.value)}
-                      className="h-7 w-full rounded-lg border border-primary-line bg-white px-2 text-[14px] text-ink outline-none"
+                      className="h-7 w-full rounded-lg border border-primary-line bg-white px-2 text-body text-ink outline-none"
                       aria-label="资产名称"
                     />
                     <Button size="sm" variant="primary" onClick={() => name.trim() && save({ name: name.trim() })}>
@@ -334,7 +334,7 @@ function DetailBody({
                     </Button>
                   </span>
                   {/* 这句话必须在编辑态说：平时用户看不到后缀，改完发现还在会以为是 bug */}
-                  <span className="text-[12.5px] leading-4 text-ink-mute">
+                  <span className="text-xs leading-4 text-ink-mute">
                     只改名称主体，格式后缀由文件本身决定
                   </span>
                 </span>
@@ -410,20 +410,20 @@ function DetailBody({
           </div>
           {asset.generation.prompt && (
             <div className="rounded-lg border border-line-soft bg-panel-soft px-2.5 py-2">
-              <div className="mb-1 text-[13px] text-ink-mute">最终提示词</div>
+              <div className="mb-1 text-body text-ink-mute">最终提示词</div>
               {/* 快照里存的是注入正文之后的提示词，`{{Mixed N}}` 还在：按
                   `referenceLibraryIds` 就地换成缩略图，别让用户读到编号。 */}
               <PromptRefs
                 value={asset.generation.prompt}
                 referenceIds={asset.generation.referenceLibraryIds}
-                className="block text-[14px] leading-relaxed text-ink-soft"
+                className="block text-body leading-relaxed text-ink-soft"
               />
             </div>
           )}
           {Object.keys(asset.generation.promptSpec ?? {}).length > 0 && (
             <details className="rounded-lg border border-line-soft bg-panel-soft px-2.5 py-2">
-              <summary className="cursor-pointer text-[13.5px] text-ink-soft">查看完整参数</summary>
-              <pre className="mt-1.5 max-h-56 overflow-auto whitespace-pre-wrap text-[13px] text-ink-mute">
+              <summary className="cursor-pointer text-body text-ink-soft">查看完整参数</summary>
+              <pre className="mt-1.5 max-h-56 overflow-auto whitespace-pre-wrap text-body text-ink-mute">
                 {JSON.stringify(
                   { promptSpec: asset.generation.promptSpec, configuration: asset.generation.configuration },
                   null,
@@ -439,7 +439,7 @@ function DetailBody({
       <section className="space-y-2">
         <SectionTitle>使用与引用</SectionTitle>
         {asset.references === null ? (
-          <p className="text-[13.5px] text-ink-mute">
+          <p className="text-body text-ink-mute">
             引用检查当前不可用（注入口未接上），暂时无法判断能否彻底删除。
           </p>
         ) : asset.references?.length ? (
@@ -451,7 +451,7 @@ function DetailBody({
             ))}
           </div>
         ) : (
-          <p className="text-[13.5px] text-ink-mute">没有模板 / 任务 / 封装在用它。</p>
+          <p className="text-body text-ink-mute">没有模板 / 任务 / 封装在用它。</p>
         )}
 
         {!!asset.shareHistory?.length && (
@@ -468,8 +468,8 @@ function DetailBody({
         <section className="space-y-2">
           <SectionTitle>归档信息（仅本人与管理员可见）</SectionTitle>
           <div className="grid gap-1.5 sm:grid-cols-2">
-            <Field label="存储键" value={<code className="break-all font-mono text-[13px]">{asset.archive.storageKey}</code>} />
-            <Field label="SHA-256" value={<code className="break-all font-mono text-[13px]">{asset.archive.sha256}</code>} />
+            <Field label="存储键" value={<code className="break-all font-mono text-body">{asset.archive.storageKey}</code>} />
+            <Field label="SHA-256" value={<code className="break-all font-mono text-body">{asset.archive.sha256}</code>} />
             <Field label="幂等键" value={asset.archive.sourceKey || '—'} />
             <Field label="引用计数" value={asset.archive.referenceCount != null ? String(asset.archive.referenceCount) : '未知'} />
           </div>
@@ -620,7 +620,7 @@ function MediaFallback({ icon, loading }: { icon: ReactNode; loading: boolean })
   return (
     <div className="flex h-40 flex-col items-center justify-center gap-1.5 text-ink-mute">
       {icon}
-      <span className="text-[13.5px]">{loading ? '正在读取文件…' : '暂时取不到可预览的文件'}</span>
+      <span className="text-body">{loading ? '正在读取文件…' : '暂时取不到可预览的文件'}</span>
     </div>
   );
 }
@@ -641,7 +641,7 @@ function PackMembers({
     return (
       <div className="flex h-32 items-center justify-center gap-2 text-ink-mute">
         <Package size={20} />
-        <span className="text-[13.5px]">这个封装还没有成员</span>
+        <span className="text-body">这个封装还没有成员</span>
       </div>
     );
   }
@@ -660,7 +660,7 @@ function PackMembers({
           >
             <CoverImage src={item.coverUrl ?? undefined} seed={item.assetId} className="aspect-[4/3] rounded-md" />
             <div className="mt-1 flex items-center gap-1">
-              <span className="truncate text-[13.5px] text-ink">{item.name || item.assetId}</span>
+              <span className="truncate text-body text-ink">{item.name || item.assetId}</span>
               <ArrowUpRight size={11} className="ml-auto shrink-0 text-ink-mute" />
             </div>
           </button>
@@ -674,7 +674,7 @@ function PackMembers({
               value={item.role}
               onChange={(event) => onRoleChange(item.assetId, event.target.value)}
               aria-label={`${item.name || item.assetId} 的用途`}
-              className="mt-1 h-7 w-full rounded-md border border-line bg-white px-1 text-[12.5px] text-ink outline-none focus:border-primary-line"
+              className="mt-1 h-7 w-full rounded-md border border-line bg-white px-1 text-xs text-ink outline-none focus:border-primary-line"
             >
               <option value="">不声明用途</option>
               {PACK_ITEM_ROLES.map((role) => (
@@ -684,7 +684,7 @@ function PackMembers({
               ))}
             </select>
           ) : (
-            <div className="mt-1 truncate text-[12.5px] text-ink-mute">
+            <div className="mt-1 truncate text-xs text-ink-mute">
               {KIND_LABEL[item.kind]}
               {item.role ? ` · ${packItemRoleLabel(item.role)}` : ''}
             </div>
@@ -701,7 +701,7 @@ function ShareHistoryRow({ item }: { item: ShareHistoryItem }) {
   const status =
     item.status === 'pending' ? '待审' : item.status === 'approved' ? '已通过' : item.status === 'rejected' ? '已驳回' : item.status;
   return (
-    <li className="flex flex-wrap items-center gap-1.5 text-[13.5px] text-ink-soft">
+    <li className="flex flex-wrap items-center gap-1.5 text-body text-ink-soft">
       <Chip tone={item.action === 'share' ? 'primary' : 'warn'}>{action}</Chip>
       <span>{target}</span>
       <span className="text-ink-mute">·</span>
@@ -715,14 +715,14 @@ function ShareHistoryRow({ item }: { item: ShareHistoryItem }) {
 }
 
 function SectionTitle({ children }: { children: ReactNode }) {
-  return <h3 className="text-[14.5px] font-semibold text-ink">{children}</h3>;
+  return <h3 className="text-lead font-semibold text-ink">{children}</h3>;
 }
 
 function Field({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div className="flex min-w-0 items-start gap-2 rounded-lg bg-panel-soft px-2.5 py-1.5">
-      <span className="w-[70px] shrink-0 text-[13px] text-ink-mute">{label}</span>
-      <span className="min-w-0 flex-1 text-[13.5px] text-ink-soft">{value}</span>
+      <span className="w-[70px] shrink-0 text-body text-ink-mute">{label}</span>
+      <span className="min-w-0 flex-1 text-body text-ink-soft">{value}</span>
     </div>
   );
 }

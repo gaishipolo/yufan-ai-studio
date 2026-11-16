@@ -1,11 +1,13 @@
 import { useMemo, useState, type ReactNode } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { Wand2 } from 'lucide-react';
 import {
   Button,
   Chip,
   CoverImage,
   PageHeader,
+  Panel,
+  PanelHeader,
   ReferenceImages,
   Select,
   type ReferenceItem,
@@ -190,25 +192,16 @@ export default function StudioPage() {
 
   return (
     <>
-      <PageHeader
-        title="生成工作台"
-        description="一句话 → 脚本 → 分镜 → 成片。上传参考图并描述画面，系统自动拆解镜头序列。"
-        actions={
-          <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-ink-mute">
-            {['描述', '脚本', '分镜', '成片'].map((step, i) => (
-              <span key={step} className="flex items-center gap-1.5">
-                <b className="font-semibold text-ink-soft">{step}</b>
-                {i < 3 && <span className="text-[#c8d5db]">→</span>}
-              </span>
-            ))}
-          </div>
-        }
-      />
+      {/* 标题只说事：这一页叫什么。做什么、怎么用，页面里已经摆着输入框、
+          参考图区和参数控件了 —— 再写一段话介绍一遍，是把看得见的东西
+          重新念一遍。流程说明在顶部模块宫格里写着「描述→脚本→分镜→成片」，
+          不用在这儿再抄一遍。 */}
+      <PageHeader title="生成工作台" />
 
       <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1.55fr)_minmax(0,1fr)] 2xl:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)_minmax(0,1fr)]">
         {/* 左：创作输入 */}
-        <section className="self-start rounded-card border border-line-soft bg-panel p-3.5 lg:row-span-2 2xl:row-span-1">
-          <SectionTitle>创作输入</SectionTitle>
+        <Panel className="self-start lg:row-span-2 2xl:row-span-1">
+          <PanelHeader title="创作输入" />
 
           {maxReferences > 0 && (
             <ReferenceImages
@@ -221,7 +214,6 @@ export default function StudioPage() {
               // 没有素材库查看权限时不画那个按钮：画出来点了只会弹一句「没有权限」
               onOpenLibrary={canReadLibrary ? () => setLibraryOpen((open) => !open) : undefined}
               libraryOpen={libraryOpen && canReadLibrary}
-              emptyHint="也可以点右上角「素材库」把图拖进来"
             />
           )}
 
@@ -232,11 +224,11 @@ export default function StudioPage() {
               rows={3}
               placeholder="例：超市抢购场景，手持镜头跟拍，人群涌动，暖色顶光，电影感浅景深，15 秒"
               className={cn(
-                'w-full resize-y rounded-lg border bg-panel-soft px-2.5 py-2 text-[12.5px] leading-relaxed outline-none transition placeholder:text-[#a9b8bf] focus:border-primary-line focus:bg-white focus:shadow-ring',
+                'w-full resize-y rounded-lg border bg-panel-soft px-2.5 py-2 text-body leading-relaxed outline-none transition placeholder:text-[#a9b8bf] focus:border-primary-line focus:bg-white focus:shadow-ring',
                 error ? 'border-danger' : 'border-line',
               )}
             />
-            {error && <p className="mt-1 text-[11px] text-danger">{error}</p>}
+            {error && <p className="mt-1 text-meta text-danger">{error}</p>}
           </Field>
 
           <div className="mb-2.5">
@@ -249,7 +241,9 @@ export default function StudioPage() {
           </div>
 
           <div className="grid grid-cols-2 gap-2.5">
-            <Field label="生成模型">
+            {/* 模型是什么，写在它自己标签旁边：这一行只交代身份，
+                至于它支持哪些时长画幅，下面那些控件自己会说。 */}
+            <Field label="生成模型" hint={currentModel?.description}>
               <Select
                 block
                 options={modelOptions}
@@ -265,13 +259,6 @@ export default function StudioPage() {
               />
             </Field>
           </div>
-
-          {/* 模型能做什么写在这里：同一次提交会带上时长上限与画幅白名单，用户不用去试错 */}
-          {currentModel?.description && (
-            <p className="-mt-1 mb-2.5 text-[10.5px] leading-snug text-ink-mute">
-              {currentModel.description}
-            </p>
-          )}
 
           {/* 参数区完全由模型声明驱动：时长、画幅、计费模式……后端声明什么就渲染什么，
               没声明的不出现（省得提交时被 400）。 */}
@@ -296,32 +283,51 @@ export default function StudioPage() {
           >
             生成视频任务
           </Button>
-        </section>
+        </Panel>
 
-        {/* 右：分镜 + 最近生成（窄屏叠成一列，2xl 起并排铺满） */}
-        <section className="self-start rounded-card border border-line-soft bg-panel p-3.5">
-          <SectionTitle extra={`自动拆解 · ${storyboard.length} 个镜头`}>分镜序列</SectionTitle>
+        {/* 右：常用镜头 + 最近生成（窄屏叠成一列，2xl 起并排铺满） */}
+        <Panel className="self-start">
+          {/* 这里列的是镜头库里的运镜词条，不是「系统把你这段话拆成了 4 个镜头」——
+              以前标题写着「自动拆解」，是在替一个并不存在的机制吹牛。
+              标题改成它真正是的东西，右边给一条去镜头库的路。 */}
+          <PanelHeader
+            title="常用镜头"
+            meta={storyboard.length || undefined}
+            actions={
+              <Link
+                to="/shots"
+                className="text-meta text-ink-mute transition-colors hover:text-primary"
+              >
+                全部 →
+              </Link>
+            }
+          />
           <div className="flex flex-col gap-2">
             {storyboard.map((shot, i) => (
               <div
                 key={shot.id}
                 className="flex items-center gap-2.5 rounded-[9px] border border-line-soft bg-[#fcfefe] p-[7px]"
               >
-                <span className="grid h-5 w-5 shrink-0 place-items-center rounded-md bg-primary-soft text-[10.5px] font-bold text-[#2b6bd4]">
+                <span className="grid h-5 w-5 shrink-0 place-items-center rounded-md bg-primary-soft font-mono text-micro font-bold tabular-nums text-[#2b6bd4]">
                   {i + 1}
                 </span>
                 <CoverImage src={shot.coverUrl} seed={shot.id} className="h-[34px] w-11 shrink-0 rounded-md" />
                 <div className="min-w-0 flex-1">
-                  <b className="block truncate text-[11.5px] font-semibold text-ink">{shot.name}</b>
-                  <span className="text-[10.5px] text-ink-mute">{shot.durationSec}s · 运镜已编排</span>
+                  <b className="block truncate text-xs font-semibold text-ink">{shot.name}</b>
+                  {/* 运镜词条本身才是有用的内容 —— 以前这里写「运镜已编排」，
+                      说了等于没说，用户看不到能插进提示词的那句话。 */}
+                  <span className="block truncate text-micro text-ink-mute">{shot.promptFragment}</span>
                 </div>
+                <span className="shrink-0 font-mono text-micro tabular-nums text-ink-mute">
+                  {shot.durationSec}s
+                </span>
               </div>
             ))}
           </div>
-        </section>
+        </Panel>
 
-        <section className="self-start rounded-card border border-line-soft bg-panel p-3.5">
-          <SectionTitle>最近生成</SectionTitle>
+        <Panel className="self-start">
+          <PanelHeader title="最近生成" />
           <div className="flex flex-col gap-2">
             {(recent?.items ?? []).map((task: VideoTask) => (
               <button
@@ -332,18 +338,20 @@ export default function StudioPage() {
               >
                 <CoverImage src={task.coverUrl} seed={task.id} className="h-[34px] w-11 shrink-0 rounded-md" />
                 <div className="min-w-0 flex-1">
-                  <b className="block truncate text-[11.5px] font-semibold text-ink">{task.title}</b>
-                  <span className="text-[10.5px] text-ink-mute">
-                    {task.model} · {task.aspectRatio}
-                  </span>
+                  <b className="block truncate text-xs font-semibold text-ink">{task.title}</b>
+                  <span className="block truncate text-micro text-ink-mute">{task.model}</span>
                 </div>
-                <Chip tone={task.status === 'completed' ? 'ok' : task.status === 'failed' ? 'danger' : 'primary'}>
+                {/* 画幅是规格不是文字：等宽排，一列竖着扫就对得上 */}
+                <span className="shrink-0 font-mono text-micro tabular-nums text-ink-mute">
+                  {task.aspectRatio}
+                </span>
+                <Chip tone={task.status === 'completed' ? 'ok' : task.status === 'failed' ? 'danger' : 'brand'}>
                   {task.status === 'completed' ? '已完成' : task.status === 'failed' ? '失败' : '生成中'}
                 </Chip>
               </button>
             ))}
           </div>
-        </section>
+        </Panel>
       </div>
 
       {/* 悬浮在页面之上、不加遮罩：遮罩会挡住左侧参考图区，拖拽就落不下去了 */}
@@ -362,16 +370,6 @@ export default function StudioPage() {
   );
 }
 
-function SectionTitle({ children, extra }: { children: ReactNode; extra?: string }) {
-  return (
-    <div className="mb-2.5 flex items-center gap-1.5 text-[12.5px] font-semibold text-ink">
-      <span className="h-1.5 w-1.5 rounded-full bg-brand" />
-      {children}
-      {extra && <span className="ml-auto text-[11px] font-normal text-ink-mute">{extra}</span>}
-    </div>
-  );
-}
-
 function Field({
   label,
   hint,
@@ -385,10 +383,16 @@ function Field({
 }) {
   return (
     <div className="mb-2.5">
-      <div className="mb-1.5 flex items-center gap-1 text-[11.5px] text-ink-soft">
-        {label}
-        {required && <span className="text-danger">*</span>}
-        {hint && <span className="ml-auto text-[11px] text-ink-mute">{hint}</span>}
+      {/* 标签在左，注解推到右端 —— 一眼看得出哪段字是字段名、哪段是补充说明。
+          挤在标签后面会被读成同一个词组（"生成模型 通用短视频生成…"）。 */}
+      <div className="mb-1.5 flex items-baseline gap-x-2 text-meta text-ink-soft">
+        <span className="shrink-0 font-medium">
+          {label}
+          {required && <span className="ml-0.5 text-danger">*</span>}
+        </span>
+        {hint && (
+          <span className="ml-auto min-w-0 max-w-[72%] text-right text-micro text-ink-mute">{hint}</span>
+        )}
       </div>
       {children}
     </div>

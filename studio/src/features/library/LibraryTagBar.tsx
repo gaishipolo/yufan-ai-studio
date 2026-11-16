@@ -24,13 +24,13 @@ export interface LibraryTagBarProps {
 }
 
 const PILL =
-  'inline-flex shrink-0 items-center gap-1 rounded-full border px-2.5 py-[3px] text-[13px] leading-4 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40';
+  'inline-flex shrink-0 items-center gap-1 rounded-full border px-2.5 py-[3px] text-body leading-4 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40';
 const IDLE =
   'border-line-soft bg-panel-soft text-ink-soft hover:border-primary-line hover:bg-primary-soft/60 hover:text-primary-deep';
 const ACTIVE = 'border-primary bg-primary text-white shadow-sm';
 /* 第二行标题会显示当前一级的名字（可能比「二级」长），固定 48px + 截断，
    字号调大后不至于把这一行的 pills 挤到换行。 */
-const ROW_LABEL = 'w-12 shrink-0 truncate text-[13px] font-medium text-ink-mute';
+const ROW_LABEL = 'w-12 shrink-0 truncate text-body font-medium text-ink-mute';
 
 /**
  * 标签筛选条：**两行**，第一行一级、第二行二级，每行的排布都是
@@ -118,12 +118,12 @@ export function LibraryTagBar({
   return (
     <div className="space-y-1.5" role="group" aria-label="标签筛选">
       <div className="flex items-center gap-1.5">
-        <span className="text-[13px] font-semibold text-ink">标签筛选</span>
+        <span className="text-body font-semibold text-ink">标签筛选</span>
         {canManage && onManage && (
           <button
             type="button"
             onClick={onManage}
-            className="inline-flex items-center gap-1 rounded-md border border-line-soft bg-panel-soft px-1.5 py-[2px] text-[12.5px] text-ink-soft transition hover:border-primary-line hover:text-primary-deep"
+            className="inline-flex items-center gap-1 rounded-md border border-line-soft bg-panel-soft px-1.5 py-[2px] text-xs text-ink-soft transition hover:border-primary-line hover:text-primary-deep"
           >
             <Settings2 size={11} /> 管理标签
           </button>
@@ -132,12 +132,12 @@ export function LibraryTagBar({
           <button
             type="button"
             onClick={onClear}
-            className="inline-flex items-center gap-0.5 text-[13px] text-ink-mute hover:text-primary-deep"
+            className="inline-flex items-center gap-0.5 text-body text-ink-mute hover:text-primary-deep"
           >
             <X size={11} /> 清除筛选
           </button>
         )}
-        <span className="ml-auto shrink-0 text-[12.5px] text-ink-mute/80">
+        <span className="ml-auto shrink-0 text-xs text-ink-mute/80">
           一级为分组 · 点二级看具体系列 · 可跨组多选
         </span>
       </div>
@@ -173,12 +173,12 @@ export function LibraryTagBar({
       />
 
       {!tags.length && (
-        <p className="text-[13px] text-ink-mute">
+        <p className="text-body text-ink-mute">
           {busy ? '标签加载中…' : '还没有标签，给素材打标后会出现在这里'}
         </p>
       )}
       {!!tags.length && !children.length && (
-        <p className="text-[12.5px] text-ink-mute">
+        <p className="text-xs text-ink-mute">
           还没有二级标签，在「管理标签」里把系列挂到一级下面即可
         </p>
       )}
@@ -231,7 +231,7 @@ function TagRow({
         onChange={(event) => onQuery(event.target.value)}
         aria-label={searchLabel}
         placeholder="搜索…"
-        className="h-[26px] w-[112px] shrink-0 rounded-md border border-line-soft bg-panel-soft px-2 text-[13px] text-ink placeholder:text-ink-mute focus:border-primary-line focus:outline-none focus:ring-2 focus:ring-primary/10"
+        className="h-[26px] w-[112px] shrink-0 rounded-md border border-line-soft bg-panel-soft px-2 text-body text-ink placeholder:text-ink-mute focus:border-primary-line focus:outline-none focus:ring-2 focus:ring-primary/10"
       />
       <button
         type="button"
@@ -258,7 +258,7 @@ function TagRow({
             <span className="max-w-[150px] truncate">{text}</span>
             <span
               className={cn(
-                'min-w-[18px] rounded-full px-1 text-center text-[12px] tabular-nums',
+                'min-w-[18px] rounded-full px-1 text-center text-xs tabular-nums',
                 isActive ? 'bg-white/25 text-white' : 'bg-panel text-ink-mute',
               )}
             >

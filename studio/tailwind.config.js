@@ -18,9 +18,14 @@ export default {
           soft: '#eef3f5',
           strong: '#d3e0e5',
         },
+        // `brand`（青）是**在飞**的信号色：生成中、轮询中、进度条的头端。
+        // 它不再是装饰色 —— 以前它只当区块标题前面那颗小圆点用，
+        // 那是「假装有意义」的装饰；现在只有真在跑的东西才用它。
         brand: {
           DEFAULT: '#12c4c8',
           deep: '#0ea9ad',
+          soft: '#e4f9fa',
+          line: '#b3ecee',
         },
         primary: {
           DEFAULT: '#2b7cff',
@@ -44,9 +49,50 @@ export default {
         'danger-line': '#fad7d4',
         violet: '#7c5cff',
       },
+      /* 字阶：六级，每级差得开，**不靠尺寸区分意思**。
+         以前全仓有 18 个字号（10 / 10.5 / 11 / 11.5 / 12 / 12.5 / 13 / 13.5 /
+         14 …），其中 239 处挤在 10–11.5px 之间 —— 标题和说明肉眼分不出，
+         「让布局自己解释」就无从谈起。
+
+         现在：
+           micro 10  角标、计数、版权行
+           meta  11  时间戳、辅助信息
+           xs    12  紧凑控件与次要正文
+           body  13  正文（body 的声明值一直是 13px，之前被组件一路压下去）
+           lead  15  区块标题
+           title 19  页面标题
+         行高统一 1.5（与 body 的 line-height 同源），不再每处另写。 */
       fontSize: {
-        '2xs': ['10px', '14px'],
-        '3xs': ['9.5px', '12px'],
+        micro: ['10px', { lineHeight: '1.5' }],
+        meta: ['11px', { lineHeight: '1.5' }],
+        xs: ['12px', { lineHeight: '1.5' }],
+        body: ['13px', { lineHeight: '1.55' }],
+        lead: ['15px', { lineHeight: '1.45' }],
+        title: ['19px', { lineHeight: '1.35' }],
+        display: ['26px', { lineHeight: '1.3' }],
+      },
+      /* 等宽字：只给**数据**用 —— 时长、画幅、计数、时间码、模型代号。
+         视频这条线上的东西大多是可以竖着扫的一列数字，等宽 + tabular-nums
+         让那一列对齐，于是「哪条片子最长」不用逐行读，扫一眼就知道。 */
+      fontFamily: {
+        sans: [
+          '-apple-system',
+          'BlinkMacSystemFont',
+          '"Segoe UI"',
+          '"PingFang SC"',
+          '"Hiragino Sans GB"',
+          '"Microsoft YaHei"',
+          'sans-serif',
+        ],
+        mono: [
+          'ui-monospace',
+          'SFMono-Regular',
+          '"SF Mono"',
+          'Menlo',
+          'Consolas',
+          '"Liberation Mono"',
+          'monospace',
+        ],
       },
       borderRadius: {
         card: '12px',
@@ -78,11 +124,18 @@ export default {
           from: { opacity: '0', transform: 'translateY(-6px)' },
           to: { opacity: '1', transform: 'translateY(0)' },
         },
+        /* 朝上弹的浮层：起点在下方，往上收。
+           方向反了的话，浮层会先往下坠一下再归位 —— 像是卡了一下。 */
+        slideUp: {
+          from: { opacity: '0', transform: 'translateY(6px)' },
+          to: { opacity: '1', transform: 'translateY(0)' },
+        },
       },
       animation: {
         fadeIn: 'fadeIn .18s ease',
         popIn: 'popIn .2s cubic-bezier(.22,.61,.36,1)',
         slideDown: 'slideDown .18s ease',
+        slideUp: 'slideUp .18s ease',
       },
     },
   },

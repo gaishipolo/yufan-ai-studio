@@ -24,7 +24,7 @@ export interface LibraryTagPickerProps {
 }
 
 const PILL =
-  'inline-flex items-center gap-1 rounded-full border px-2.5 py-[3px] text-[13px] leading-4 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40';
+  'inline-flex items-center gap-1 rounded-full border px-2.5 py-[3px] text-body leading-4 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40';
 const IDLE =
   'border-line-soft bg-panel-soft text-ink-soft hover:border-primary-line hover:bg-primary-soft/60 hover:text-primary-deep';
 const ACTIVE = 'border-primary bg-primary text-white shadow-sm';
@@ -137,19 +137,19 @@ export function LibraryTagPicker({
       title={`给「${displayName(asset.name)}」添加标签`}
     >
       <div className="space-y-3 p-[18px]">
-        <p className="text-[13.5px] leading-5 text-ink-mute">
+        <p className="text-body leading-5 text-ink-mute">
           按一级分组列出可打标的标签；一级下还有二级时只作分组，不能直接打在素材上。已有标签请在卡片上点 × 移除。
         </p>
 
         <div className="flex max-h-[240px] min-h-[52px] flex-col gap-2 overflow-auto rounded-lg border border-line-soft bg-panel-soft/50 p-2">
           {groups.length === 0 ? (
-            <span className="px-1 py-2 text-[13.5px] text-ink-mute">
+            <span className="px-1 py-2 text-body text-ink-mute">
               词表里的标签都已添加，可以在下方新建一个
             </span>
           ) : (
             groups.map((group) => (
               <div key={group.key}>
-                <div className="mb-1 px-0.5 text-[12.5px] font-medium text-ink-mute">
+                <div className="mb-1 px-0.5 text-xs font-medium text-ink-mute">
                   {group.title}
                 </div>
                 <div className="flex flex-wrap gap-1.5">
@@ -182,7 +182,7 @@ export function LibraryTagPicker({
               aria-label="新标签所属一级"
               disabled={creating || busy}
               onChange={(event) => setNewParent(event.target.value)}
-              className="h-8 w-[112px] shrink-0 rounded-lg border border-line bg-white px-1.5 text-[13px] text-ink focus:border-primary-line focus:outline-none disabled:bg-panel-soft"
+              className="h-8 w-[112px] shrink-0 rounded-lg border border-line bg-white px-1.5 text-body text-ink focus:border-primary-line focus:outline-none disabled:bg-panel-soft"
             >
               <option value="">作为一级</option>
               {tops.map((tag) => (
@@ -205,7 +205,7 @@ export function LibraryTagPicker({
                 event.preventDefault();
                 void submitCreate();
               }}
-              className="h-8 min-w-0 flex-1 rounded-lg border border-line bg-white px-2.5 text-[14px] text-ink placeholder:text-ink-mute focus:border-primary-line focus:outline-none focus:ring-2 focus:ring-primary/10 disabled:bg-panel-soft"
+              className="h-8 min-w-0 flex-1 rounded-lg border border-line bg-white px-2.5 text-body text-ink placeholder:text-ink-mute focus:border-primary-line focus:outline-none focus:ring-2 focus:ring-primary/10 disabled:bg-panel-soft"
             />
             <Button
               size="sm"
@@ -220,7 +220,7 @@ export function LibraryTagPicker({
         )}
 
         <div className="flex items-center justify-between gap-2 border-t border-line-soft pt-3">
-          <span className="text-[13px] text-ink-mute">
+          <span className="text-body text-ink-mute">
             {picked.length ? `已选 ${picked.length} 个` : '还没选标签'}
           </span>
           <div className="flex gap-2">

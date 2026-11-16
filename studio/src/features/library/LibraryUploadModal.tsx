@@ -160,14 +160,14 @@ export function LibraryUploadModal({ open, tags, onClose }: LibraryUploadModalPr
           )}
         >
           <FileUp size={22} className="text-ink-mute" />
-          <span className="text-[14.5px] font-medium">选择图片、音频或文本</span>
-          <span className="text-[13px] text-ink-mute">
+          <span className="text-body font-medium">选择图片、音频或文本</span>
+          <span className="text-body text-ink-mute">
             可多选；图片/音频单个 ≤ 200 MB，.txt/.md 为 UTF-8 纯文本、≤ 1 MB
           </span>
         </button>
 
         <div>
-          <div className="mb-1 text-[13.5px] text-ink-soft">给这批文件统一打标签（可选）</div>
+          <div className="mb-1 text-body text-ink-soft">给这批文件统一打标签（可选）</div>
           <MultiSelect
             options={tagOptions(tags)}
             value={tagIds}
@@ -188,8 +188,8 @@ export function LibraryUploadModal({ open, tags, onClose }: LibraryUploadModalPr
                 className="rounded-lg border border-line-soft bg-panel p-2"
               >
                 <div className="flex items-center gap-2">
-                  <span className="min-w-0 flex-1 truncate text-[14px] text-ink">{item.file.name}</span>
-                  <span className="text-[13px] text-ink-mute">{formatBytes(item.file.size)}</span>
+                  <span className="min-w-0 flex-1 truncate text-body text-ink">{item.file.name}</span>
+                  <span className="text-body text-ink-mute">{formatBytes(item.file.size)}</span>
                   {item.status === 'uploading' && <Loader2 size={13} className="animate-spin text-primary" />}
                   {item.status === 'done' && <CheckCircle2 size={13} className="text-ok" />}
                   {item.status === 'failed' && <XCircle size={13} className="text-danger" />}
@@ -203,7 +203,7 @@ export function LibraryUploadModal({ open, tags, onClose }: LibraryUploadModalPr
                   </div>
                 )}
                 {item.status === 'failed' && item.error && (
-                  <p className="mt-1 text-[13px] text-danger">{item.error}</p>
+                  <p className="mt-1 text-body text-danger">{item.error}</p>
                 )}
               </li>
             ))}

@@ -143,7 +143,7 @@ export function GroupEditorModal({
               />
             </FormField>
             {isEdit && (
-              <p className="text-[11px] leading-[1.6] text-ink-mute">
+              <p className="text-meta leading-[1.6] text-ink-mute">
                 一人可属多组；成员与权限分别在另外两个页签里保存。
               </p>
             )}
@@ -152,7 +152,7 @@ export function GroupEditorModal({
 
         {tab === 'members' && isEdit && (
           <div className="space-y-2">
-            <div className="flex items-center gap-2 text-[11.5px] text-ink-mute">
+            <div className="flex items-center gap-2 text-meta text-ink-mute">
               <span>
                 已选 <span className="font-semibold tabular-nums text-ink">{memberIds.length}</span> 名成员
               </span>
@@ -177,8 +177,8 @@ export function GroupEditorModal({
                         onChange={() => toggleMember(user.id)}
                       />
                       <span className="text-xs text-ink">{displayNameOf(user)}</span>
-                      <span className="text-[11px] text-ink-mute">@{user.username}</span>
-                      {!user.isActive && <span className="text-[11px] text-ink-mute">（已停用）</span>}
+                      <span className="text-meta text-ink-mute">@{user.username}</span>
+                      {!user.isActive && <span className="text-meta text-ink-mute">（已停用）</span>}
                     </label>
                   </li>
                 ))}
@@ -192,7 +192,7 @@ export function GroupEditorModal({
         )}
 
         {formError && (
-          <p className="rounded-lg border border-[#fad7d4] bg-[#feeceb] px-2.5 py-2 text-[11.5px] text-[#d94036]" role="alert">
+          <p className="rounded-lg border border-[#fad7d4] bg-[#feeceb] px-2.5 py-2 text-meta text-[#d94036]" role="alert">
             {formError}
           </p>
         )}
@@ -211,7 +211,7 @@ export function GroupEditorModal({
           {tab === 'members' && isEdit && (
             <Can
               permission="identity:group:member:manage"
-              fallback={<span className="text-[11px] text-ink-mute">没有分配成员的权限</span>}
+              fallback={<span className="text-meta text-ink-mute">没有分配成员的权限</span>}
             >
               <Button variant="primary" onClick={saveMembers} loading={saving}>
                 保存成员
@@ -221,7 +221,7 @@ export function GroupEditorModal({
           {tab === 'permissions' && isEdit && (
             <Can
               permission="identity:group:permission:manage"
-              fallback={<span className="text-[11px] text-ink-mute">没有设置小组权限的权限</span>}
+              fallback={<span className="text-meta text-ink-mute">没有设置小组权限的权限</span>}
             >
               <Button variant="primary" onClick={savePermissions} loading={saving}>
                 保存权限

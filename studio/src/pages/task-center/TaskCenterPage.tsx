@@ -228,7 +228,6 @@ export default function TaskCenterPage() {
     <>
       <PageHeader
         title="任务中心"
-        description="所有生成任务都在生成工作台或模板库发起，这里只负责查看与整理。"
       />
 
       {/* 筛选一条：来源 / 范围 / 排序 / 仅可下载 / 搜索 / 刷新 / 条数 */}
@@ -253,7 +252,7 @@ export default function TaskCenterPage() {
       </div>
 
       {data?.warnings.map(warning => (
-        <p key={warning} role="alert" className="mt-3 text-[11.5px] text-danger">
+        <p key={warning} role="alert" className="mt-3 text-meta text-danger">
           {warning}
         </p>
       ))}
@@ -277,7 +276,7 @@ export default function TaskCenterPage() {
         ) : (
           <Link
             to="/templates/library"
-            className="text-[11.5px] text-ink-mute transition-colors hover:text-primary"
+            className="text-meta text-ink-mute transition-colors hover:text-primary"
           >
             从模板生成 →
           </Link>

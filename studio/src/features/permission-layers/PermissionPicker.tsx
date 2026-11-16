@@ -49,7 +49,7 @@ export function PermissionPicker({
 
   return (
     <div className="space-y-3">
-      <div className="flex flex-wrap items-center gap-2 text-[11.5px] text-ink-mute">
+      <div className="flex flex-wrap items-center gap-2 text-meta text-ink-mute">
         <span>
           已选 <span className="font-semibold tabular-nums text-ink">{selected.length}</span> 个权限点
         </span>
@@ -61,7 +61,7 @@ export function PermissionPicker({
       </div>
 
       {forbiddenHint && (
-        <p className="rounded-lg border border-[#fbe8c8] bg-[#fff6e6] px-2.5 py-2 text-[11px] leading-[1.6] text-[#b97a10]">
+        <p className="rounded-lg border border-[#fbe8c8] bg-[#fff6e6] px-2.5 py-2 text-meta leading-[1.6] text-[#b97a10]">
           {forbiddenHint}
         </p>
       )}
@@ -84,11 +84,11 @@ export function PermissionPicker({
             return (
               <section key={group.group} className="rounded-lg border border-line-soft">
                 <header className="flex items-center gap-2 border-b border-line-soft bg-panel-soft px-2.5 py-1.5">
-                  <h3 className="text-[11.5px] font-semibold text-ink-soft">{group.group}</h3>
-                  <span className="text-[11px] tabular-nums text-ink-mute">{codes.length}</span>
+                  <h3 className="text-xs font-semibold text-ink-soft">{group.group}</h3>
+                  <span className="text-meta tabular-nums text-ink-mute">{codes.length}</span>
                   <button
                     type="button"
-                    className="ml-auto text-[11px] text-primary hover:underline disabled:opacity-50"
+                    className="ml-auto text-meta text-primary hover:underline disabled:opacity-50"
                     disabled={selectable.length === 0}
                     onClick={() => toggleGroup(selectable, !allChecked)}
                   >
@@ -122,7 +122,7 @@ export function PermissionPicker({
                               <Chip>{item.code}</Chip>
                             </span>
                             {item.description && (
-                              <span className="mt-0.5 block text-[11px] leading-[1.5] text-ink-mute">
+                              <span className="mt-0.5 block text-meta leading-[1.5] text-ink-mute">
                                 {item.description}
                               </span>
                             )}

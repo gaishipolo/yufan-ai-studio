@@ -132,7 +132,7 @@ export function TextAssetModal({
     >
       <div className="space-y-3 p-[18px]">
         {isEdit ? (
-          <div className="flex items-center gap-2 text-[12.5px] text-ink-mute">
+          <div className="flex items-center gap-2 text-xs text-ink-mute">
             <FileText size={14} />
             <span>当前版本 v{version ?? '—'}</span>
             {read.isPending && <span>正在读取正文…</span>}
@@ -141,7 +141,7 @@ export function TextAssetModal({
         ) : (
           <div className="flex flex-wrap items-end gap-2.5">
             <div className="min-w-[200px] flex-1">
-              <div className="mb-1 text-[13.5px] text-ink-soft">名称</div>
+              <div className="mb-1 text-body text-ink-soft">名称</div>
               <TextInput
                 value={name}
                 onChange={(event) => setName(event.target.value)}
@@ -150,7 +150,7 @@ export function TextAssetModal({
               />
             </div>
             <div className="w-[120px]">
-              <div className="mb-1 text-[13.5px] text-ink-soft">格式</div>
+              <div className="mb-1 text-body text-ink-soft">格式</div>
               <Select
                 block
                 options={[
@@ -166,9 +166,9 @@ export function TextAssetModal({
         )}
 
         <div>
-          <div className="mb-1 flex items-center justify-between text-[13.5px] text-ink-soft">
+          <div className="mb-1 flex items-center justify-between text-body text-ink-soft">
             <span>正文（纯文本）</span>
-            <span className="text-[11px] text-ink-mute">{content.length} 字</span>
+            <span className="text-meta text-ink-mute">{content.length} 字</span>
           </div>
           <textarea
             value={content}
@@ -176,13 +176,13 @@ export function TextAssetModal({
             rows={12}
             placeholder="直接写正文；不会做 Markdown → HTML 渲染"
             aria-label="文本正文"
-            className="w-full resize-y rounded-lg border border-line bg-panel-soft px-2.5 py-2 font-mono text-[12.5px] leading-relaxed text-ink outline-none transition placeholder:text-[#a9b8bf] focus:border-primary-line focus:bg-white focus:shadow-ring"
+            className="w-full resize-y rounded-lg border border-line bg-panel-soft px-2.5 py-2 font-mono text-xs leading-relaxed text-ink outline-none transition placeholder:text-[#a9b8bf] focus:border-primary-line focus:bg-white focus:shadow-ring"
           />
         </div>
 
         {isEdit && (
           <div>
-            <div className="mb-1 text-[13.5px] text-ink-soft">版本备注（选填）</div>
+            <div className="mb-1 text-body text-ink-soft">版本备注（选填）</div>
             <TextInput
               value={note}
               onChange={(event) => setNote(event.target.value)}
@@ -193,13 +193,13 @@ export function TextAssetModal({
         )}
 
         {error && (
-          <p className="rounded-lg border border-danger-line bg-danger-soft px-2.5 py-1.5 text-[13px] text-danger-deep" role="alert">
+          <p className="rounded-lg border border-danger-line bg-danger-soft px-2.5 py-1.5 text-body text-danger-deep" role="alert">
             {error}
           </p>
         )}
 
         <div className="flex items-center gap-1.5 border-t border-line-soft pt-3">
-          <span className="min-w-0 flex-1 truncate text-[11px] text-ink-mute">
+          <span className="min-w-0 flex-1 truncate text-meta text-ink-mute">
             {isEdit ? '保存会追加一个新版本，历史版本仍可恢复' : 'UTF-8 纯文本，最多 1 MB'}
           </span>
           <Button size="sm" variant="ghost" onClick={onClose} disabled={busy}>

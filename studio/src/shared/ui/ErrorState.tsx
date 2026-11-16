@@ -68,7 +68,7 @@ export function ErrorState({ error, onRetry, title, icon, retrying = false, clas
       <div className="mb-3 text-[#f5b3ae]">
         {icon ?? <AlertTriangle size={38} strokeWidth={1.4} aria-hidden />}
       </div>
-      <p className="text-[13px] font-medium text-ink-soft">{described.title}</p>
+      <p className="text-body font-medium text-ink-soft">{described.title}</p>
       <p className="mt-1.5 max-w-sm text-xs leading-[1.6] text-ink-mute">{described.detail}</p>
       {onRetry && (
         <Button

@@ -8,6 +8,8 @@ import {
   ErrorState,
   PageHeader,
   Pager,
+  Panel,
+  PanelHeader,
   Select,
   ReferenceImages,
 } from '@/shared/ui';
@@ -165,26 +167,20 @@ export default function ImagePage() {
 
   return (
     <>
-      <PageHeader
-        title="生图"
-        description="文生图 / 图生图，产出可复用的角色、场景与产品图，直接作为视频生成参考。"
-      />
+      <PageHeader title="生图" />
 
       <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)] xl:grid-cols-[minmax(0,0.85fr)_minmax(0,1.6fr)] 2xl:grid-cols-[minmax(0,0.7fr)_minmax(0,1.9fr)]">
-        <section className="self-start rounded-card border border-line-soft bg-panel p-3.5">
-          <div className="mb-2.5 flex items-center gap-1.5 text-[12.5px] font-semibold text-ink">
-            <span className="h-1.5 w-1.5 rounded-full bg-brand" />
-            图片生成
-          </div>
+        <Panel className="self-start">
+          <PanelHeader title="图片生成" />
 
           <div className="mb-2.5">
-            <div className="mb-1.5 text-[11.5px] text-ink-soft">提示词</div>
+            <div className="mb-1.5 text-meta text-ink-soft">提示词</div>
             <textarea
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
               rows={4}
               placeholder="例：赛博朋克街头，霓虹灯牌，雨夜地面反光，电影级打光，超高细节"
-              className="w-full resize-y rounded-lg border border-line bg-panel-soft px-2.5 py-2 text-[12.5px] leading-relaxed outline-none transition placeholder:text-[#a9b8bf] focus:border-primary-line focus:bg-white focus:shadow-ring"
+              className="w-full resize-y rounded-lg border border-line bg-panel-soft px-2.5 py-2 text-body leading-relaxed outline-none transition placeholder:text-[#a9b8bf] focus:border-primary-line focus:bg-white focus:shadow-ring"
             />
           </div>
 
@@ -198,7 +194,7 @@ export default function ImagePage() {
           </div>
 
           <div className="mb-2.5">
-            <div className="mb-1.5 text-[11.5px] text-ink-soft">模型</div>
+            <div className="mb-1.5 text-meta text-ink-soft">模型</div>
             <Select
               block
               aria-label="模型"
@@ -216,7 +212,7 @@ export default function ImagePage() {
               }}
             />
             {!model && (
-              <p className="mt-1 text-[11px] text-ink-mute">
+              <p className="mt-1 text-meta text-ink-mute">
                 {modelsLoading
                   ? '模型目录加载中…'
                   : modelsError
@@ -260,16 +256,14 @@ export default function ImagePage() {
           >
             开始生成
           </Button>
-        </section>
+        </Panel>
 
-        <section className="rounded-card border border-line-soft bg-panel p-3.5">
-          <div className="mb-2.5 flex items-center gap-1.5 text-[12.5px] font-semibold text-ink">
-            <span className="h-1.5 w-1.5 rounded-full bg-brand" />
-            历史记录
-            <span className="ml-auto text-[11px] font-normal text-ink-mute">
-              {isError ? '共 — 张' : `共 ${data?.total ?? 0} 张`}
-            </span>
-          </div>
+        <Panel>
+          {/* 张数是数得出来的，写在标题右边；不另起一行解释「这些图是从哪来的」 */}
+          <PanelHeader
+            title="历史记录"
+            meta={isError ? '—' : `${data?.total ?? 0} 张`}
+          />
 
           {isLoading ? (
             <CardSkeletonGrid count={4} />
@@ -316,14 +310,15 @@ export default function ImagePage() {
                       )}
                     </div>
                     <div className="px-2 pb-2 pt-1.5">
-                      <p className="truncate text-[11.5px] text-ink">{job.name}</p>
-                      <div className="mt-0.5 flex items-center justify-between text-[10.5px] text-ink-mute">
-                        <span>{job.size}</span>
+                      <p className="truncate text-meta text-ink">{job.name}</p>
+                      <div className="mt-0.5 flex items-center justify-between text-micro text-ink-mute">
+                        {/* 尺寸是规格：等宽排，一列竖着扫就对得上 */}
+                        <span className="font-mono tabular-nums">{job.size}</span>
                         <span>{formatDateTime(job.createdAt)}</span>
                       </div>
                       {job.errorMessage && (
                         <p
-                          className="mt-1 truncate text-[10.5px] text-[#d94036]"
+                          className="mt-1 truncate text-micro text-[#d94036]"
                           title={job.errorMessage}
                         >
                           {job.errorMessage}
@@ -344,7 +339,7 @@ export default function ImagePage() {
             onChange={setPage}
             className="mt-2.5 px-0"
           />
-        </section>
+        </Panel>
       </div>
 
       {/* 悬浮在页面之上、不加遮罩：遮罩会挡住左侧参考图区，拖拽就落不下去了 */}

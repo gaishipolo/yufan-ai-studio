@@ -112,8 +112,8 @@ export function AssetPicker({
                     alt={item.name}
                     className="aspect-video w-full rounded-lg"
                   />
-                  <span className="line-clamp-1 px-0.5 text-[11px] text-ink-soft">{item.name}</span>
-                  <span className={cn('px-0.5 text-[10px]', active ? 'text-primary' : 'text-ink-mute')}>
+                  <span className="line-clamp-1 px-0.5 text-meta text-ink-soft">{item.name}</span>
+                  <span className={cn('px-0.5 text-micro', active ? 'text-primary' : 'text-ink-mute')}>
                     {active ? '已选（点击取消）' : '点击选择'}
                   </span>
                 </button>

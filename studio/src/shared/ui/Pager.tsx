@@ -44,7 +44,7 @@ export function Pager({ page, totalPages, busy, onChange, className }: PagerProp
   return (
     <div
       className={cn(
-        'flex items-center justify-between gap-2 border-t border-line-soft px-3.5 py-2 text-[11.5px] text-ink-mute',
+        'flex items-center justify-between gap-2 border-t border-line-soft px-3.5 py-2 text-meta text-ink-mute',
         className,
       )}
     >

@@ -57,7 +57,7 @@ export const TaskCard = memo(function TaskCard({
 
         <span
           className={cn(
-            'absolute left-2 top-2 rounded-pill px-1.5 py-px text-[10px] font-semibold text-white backdrop-blur-[6px]',
+            'absolute left-2 top-2 rounded-pill px-1.5 py-px text-micro font-semibold text-white backdrop-blur-[6px]',
             STATUS_STYLE[task.status],
             task.status === 'completed' && 'hidden',
           )}
@@ -66,7 +66,7 @@ export const TaskCard = memo(function TaskCard({
         </span>
 
         {task.status !== 'failed' && (
-          <span className="absolute bottom-2 left-2 inline-flex items-center gap-1 rounded-pill border border-white/20 bg-[rgba(10,22,28,.5)] px-1.5 py-px text-[10px] text-white backdrop-blur-[6px]">
+          <span className="absolute bottom-2 left-2 inline-flex items-center gap-1 rounded-pill border border-white/20 bg-[rgba(10,22,28,.5)] px-1.5 py-px text-micro text-white opacity-0 backdrop-blur-[6px] transition-opacity group-hover:opacity-100 focus-within:opacity-100">
             <Play size={9} className="fill-current" />
             预览
           </span>
@@ -75,7 +75,7 @@ export const TaskCard = memo(function TaskCard({
         {!inFlight && task.status !== 'failed' && (
           /* 画幅与时长合并成一个角标：它们都是"这条片子是什么规格"，
              分成两个 pill 会把封面右下角塞满。失败的任务没有片子，不摆这张标签。 */
-          <span className="absolute bottom-2 right-2 rounded-[5px] bg-[rgba(10,22,28,.5)] px-1.5 py-px text-[10px] tabular-nums text-white">
+          <span className="absolute bottom-2 right-2 rounded-[5px] bg-[rgba(10,22,28,.5)] px-1.5 py-px font-mono text-micro tabular-nums text-white">
             {task.aspectRatio} · {formatDuration(task.durationSec)}
           </span>
         )}
@@ -112,16 +112,16 @@ export const TaskCard = memo(function TaskCard({
                 style={{ width: `${task.progress}%` }}
               />
             </div>
-            <div className="mt-2 flex items-center justify-between gap-2 text-[10.5px] text-ink-mute">
+            <div className="mt-2 flex items-center justify-between gap-2 text-micro text-ink-mute">
               <Chip tone="primary" className="max-w-[70%] truncate">
                 {task.model}
               </Chip>
-              <span className="shrink-0 tabular-nums">{task.progress}%</span>
+              <span className="shrink-0 font-mono tabular-nums">{task.progress}%</span>
             </div>
           </>
         ) : (
           /* 规格已经搬到封面角标上，这一行只留「哪个模型」和「什么时候」 */
-          <div className="mt-2 flex items-center justify-between gap-2 text-[10.5px] text-ink-mute">
+          <div className="mt-2 flex items-center justify-between gap-2 text-micro text-ink-mute">
             <Chip tone="primary" className="max-w-[62%] truncate">
               {task.model}
             </Chip>

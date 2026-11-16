@@ -42,8 +42,6 @@ export interface ReferenceImagesProps {
   onOpenLibrary?: () => void;
   /** 悬浮栏当前是否展开，只影响按钮高亮 */
   libraryOpen?: boolean;
-  /** 空列表时的引导文案 */
-  emptyHint?: string;
 }
 
 /** 只收供应商认的三种格式：png / jpeg / webp（与后端白名单一致） */
@@ -58,7 +56,6 @@ export function ReferenceImages({
   onAddAsset,
   onOpenLibrary,
   libraryOpen = false,
-  emptyHint = '也可以从右侧素材库把图拖进来',
 }: ReferenceImagesProps) {
   const input = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
@@ -88,11 +85,14 @@ export function ReferenceImages({
 
   return (
     <div className="mb-2.5">
-      <div className="mb-1.5 flex items-center gap-1.5 text-[11.5px] text-ink-soft">
+      <div className="mb-1.5 flex items-center gap-1.5 text-meta text-ink-soft">
         {/* 标题与按钮都 shrink-0：说明文字很长，不钉住它们就会被挤成「参考」「图」两行 */}
         <span className="shrink-0 whitespace-nowrap">参考图</span>
-        <span className="min-w-0 flex-1 text-[10.5px] leading-snug text-ink-mute">
-          最多 {max} 张，已选 {items.length} · 顺序即提示词里的「第 N 张」
+        {/* 这一行只留「数得出来」和「看不见会踩坑」的信息：
+            上限是多少、顺序代表什么。空列表时那句「也可以从右侧素材库把图拖进来」
+            是把旁边的按钮又念了一遍 —— 按钮就在那儿，不用替它说话。 */}
+        <span className="min-w-0 flex-1 text-micro leading-snug text-ink-mute">
+          最多 {max} 张，已选 {items.length} · 顺序即「第 N 张」
         </span>
         {onOpenLibrary && (
           <button
@@ -100,7 +100,7 @@ export function ReferenceImages({
             onClick={onOpenLibrary}
             aria-pressed={libraryOpen}
             className={cn(
-              'inline-flex shrink-0 items-center gap-1 rounded-md border px-1.5 py-[2px] text-[10.5px] transition',
+              'inline-flex shrink-0 items-center gap-1 rounded-md border px-1.5 py-[2px] text-micro transition',
               libraryOpen
                 ? 'border-primary-line bg-primary-soft text-primary-deep'
                 : 'border-line-soft bg-panel-soft text-ink-soft hover:border-line-strong',
@@ -172,7 +172,7 @@ export function ReferenceImages({
             >
               <CoverImage src={item.url} seed={item.id} alt={item.name} className="h-full w-full" />
             </button>
-            <span className="pointer-events-none absolute bottom-0 left-0 right-0 bg-black/45 px-1 text-[10px] text-white">
+            <span className="pointer-events-none absolute bottom-0 left-0 right-0 bg-black/45 px-1 text-micro text-white">
               {index + 1}
             </span>
             <button
@@ -191,7 +191,7 @@ export function ReferenceImages({
             type="button"
             disabled={busy}
             onClick={() => input.current?.click()}
-            className="flex h-16 w-16 shrink-0 flex-col items-center justify-center gap-0.5 rounded-lg border border-dashed border-line text-[10px] text-ink-mute transition hover:border-primary-line hover:text-primary-deep disabled:opacity-60"
+            className="flex h-16 w-16 shrink-0 flex-col items-center justify-center gap-0.5 rounded-lg border border-dashed border-line text-micro text-ink-mute transition hover:border-primary-line hover:text-primary-deep disabled:opacity-60"
           >
             {busy ? <Loader2 size={14} className="animate-spin" /> : <ImagePlus size={14} />}
             {busy ? '上传中' : '添加'}
@@ -199,8 +199,10 @@ export function ReferenceImages({
         )}
 
         {!items.length && onAddAsset && (
-          <span className="min-w-0 self-center text-[10.5px] leading-snug text-ink-mute">
-            {emptyHint}
+          /* 只说「按钮上看不出来的」那一件事：从素材库拖图进来。
+             原来那句还把旁边的「素材库」按钮又念了一遍 —— 按钮就在那儿。 */
+          <span className="min-w-0 self-center text-micro leading-snug text-ink-mute">
+            可从素材库拖入
           </span>
         )}
       </div>

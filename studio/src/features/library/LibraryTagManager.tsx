@@ -89,13 +89,13 @@ export function LibraryTagManager({ tags, onClose }: LibraryTagManagerProps) {
   return (
     <Modal open onClose={onClose} width={580} title="管理标签（一级 / 二级）">
       <div className="space-y-3 p-[18px]">
-        <p className="text-[13.5px] leading-5 text-ink-mute">
+        <p className="text-body leading-5 text-ink-mute">
           一级是分组，旗下二级才是打在素材上的系列。删除一级会把它旗下的二级提升为一级，资产与已有绑定不受影响。
         </p>
 
         <div className="max-h-[360px] space-y-1 overflow-auto rounded-lg border border-line-soft bg-panel-soft/40 p-2">
           {ordered.length === 0 && (
-            <p className="px-1 py-6 text-center text-[13.5px] text-ink-mute">还没有标签</p>
+            <p className="px-1 py-6 text-center text-body text-ink-mute">还没有标签</p>
           )}
           {ordered.map((tag) => (
             <ManagerRow
@@ -116,7 +116,7 @@ export function LibraryTagManager({ tags, onClose }: LibraryTagManagerProps) {
             aria-label="新标签所属一级"
             disabled={busy}
             onChange={(event) => setNewParent(event.target.value)}
-            className="h-8 w-[128px] shrink-0 rounded-lg border border-line bg-white px-1.5 text-[13px] text-ink focus:border-primary-line focus:outline-none disabled:bg-panel-soft"
+            className="h-8 w-[128px] shrink-0 rounded-lg border border-line bg-white px-1.5 text-body text-ink focus:border-primary-line focus:outline-none disabled:bg-panel-soft"
           >
             <option value="">作为一级标签</option>
             {tops.map((tag) => (
@@ -138,7 +138,7 @@ export function LibraryTagManager({ tags, onClose }: LibraryTagManagerProps) {
               event.preventDefault();
               void submitCreate();
             }}
-            className="h-8 min-w-0 flex-1 rounded-lg border border-line bg-white px-2.5 text-[14px] text-ink placeholder:text-ink-mute focus:border-primary-line focus:outline-none disabled:bg-panel-soft"
+            className="h-8 min-w-0 flex-1 rounded-lg border border-line bg-white px-2.5 text-body text-ink placeholder:text-ink-mute focus:border-primary-line focus:outline-none disabled:bg-panel-soft"
           />
           <Button
             size="sm"
@@ -174,7 +174,7 @@ function ManagerRow({ tag, tops, busy, onRename, onMove, onDelete }: ManagerRowP
 
   return (
     <div className={`flex flex-wrap items-center gap-1.5 rounded-md bg-panel px-2 py-1.5 ${indent}`}>
-      <span className="w-9 shrink-0 text-[12.5px] text-ink-mute">
+      <span className="w-9 shrink-0 text-xs text-ink-mute">
         {tag.parentId ? '二级' : '一级'}
       </span>
       <input
@@ -184,7 +184,7 @@ function ManagerRow({ tag, tops, busy, onRename, onMove, onDelete }: ManagerRowP
         disabled={busy}
         aria-label={`${tag.name} 的名称`}
         onChange={(event) => setName(event.target.value)}
-        className="h-7 min-w-[90px] flex-1 rounded-md border border-line-soft bg-white px-2 text-[13.5px] text-ink focus:border-primary-line focus:outline-none disabled:bg-panel-soft"
+        className="h-7 min-w-[90px] flex-1 rounded-md border border-line-soft bg-white px-2 text-body text-ink focus:border-primary-line focus:outline-none disabled:bg-panel-soft"
       />
       <Button
         size="sm"
@@ -200,7 +200,7 @@ function ManagerRow({ tag, tops, busy, onRename, onMove, onDelete }: ManagerRowP
         disabled={selectDisabled}
         title={hasChildren ? '旗下已有二级，不能再挂到别的一级下' : '调整所属一级'}
         onChange={(event) => void onMove(tag.id, event.target.value || null)}
-        className="h-7 w-[124px] shrink-0 rounded-md border border-line-soft bg-white px-1.5 text-[13px] text-ink focus:border-primary-line focus:outline-none disabled:bg-panel-soft"
+        className="h-7 w-[124px] shrink-0 rounded-md border border-line-soft bg-white px-1.5 text-body text-ink focus:border-primary-line focus:outline-none disabled:bg-panel-soft"
       >
         <option value="">一级标签</option>
         {tops
@@ -211,7 +211,7 @@ function ManagerRow({ tag, tops, busy, onRename, onMove, onDelete }: ManagerRowP
             </option>
           ))}
       </select>
-      <span className="shrink-0 text-[12.5px] tabular-nums text-ink-mute">
+      <span className="shrink-0 text-xs tabular-nums text-ink-mute">
         {tag.assetCount ?? 0} 条
         {hasChildren ? ` · ${tag.childCount} 个二级` : ''}
       </span>

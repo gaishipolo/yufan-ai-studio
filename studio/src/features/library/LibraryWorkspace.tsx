@@ -502,7 +502,6 @@ export function LibraryWorkspace() {
     <>
       <PageHeader
         title="资产库"
-        description="全部素材、个人、小组、团队、草稿箱与回收站六个入口的统一资产库。可见性、共享审批与生命周期由后端判定，界面只少显示不该点的按钮。"
         actions={
           <>
             <Button
@@ -551,7 +550,7 @@ export function LibraryWorkspace() {
             canManage={canManageTags}
           />
           <div className="mt-2 flex items-center justify-between gap-2 border-t border-line-soft pt-2">
-            <span className="min-w-0 truncate text-[13.5px] text-ink-mute">
+            <span className="min-w-0 truncate text-body text-ink-mute">
               共 {total} 条
               {items.length > 0 ? ` · ${viewMeta(view).hint}` : ''}
               {canShare ? '' : ' · 共享与删除操作需要权限'}

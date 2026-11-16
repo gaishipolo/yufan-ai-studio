@@ -204,7 +204,7 @@ export function UsersSection() {
               <div className="min-w-0 md:min-w-[1120px]">
                 <div
                   className={cn(
-                    'hidden gap-3 border-b border-line-soft bg-panel-soft px-3.5 py-2 text-[11px] font-semibold text-ink-mute md:grid',
+                    'hidden gap-3 border-b border-line-soft bg-panel-soft px-3.5 py-2 text-meta font-semibold text-ink-mute md:grid',
                     GRID,
                   )}
                 >
@@ -260,7 +260,7 @@ export function UsersSection() {
                             </div>
                             <span
                               className={cn(
-                                'inline-flex items-center gap-1 text-[11px]',
+                                'inline-flex items-center gap-1 text-meta',
                                 user.isActive ? 'text-[#0f9c63]' : 'text-ink-mute',
                               )}
                             >
@@ -276,30 +276,30 @@ export function UsersSection() {
                           </div>
                         </div>
 
-                        <div className="truncate text-[11.5px] text-ink-soft" title={user.username}>
+                        <div className="truncate text-meta text-ink-soft" title={user.username}>
                           @{user.username}
                         </div>
 
-                        <div className="truncate text-[11.5px] text-ink-soft" title={user.phone ?? undefined}>
+                        <div className="truncate text-meta text-ink-soft" title={user.phone ?? undefined}>
                           {user.phone || '—'}
                         </div>
 
                         <div className="flex flex-wrap gap-1">
                           {user.roles.length === 0 ? (
-                            <span className="text-[11px] text-ink-mute">未分配</span>
+                            <span className="text-meta text-ink-mute">未分配</span>
                           ) : (
                             user.roles.map((role) => <Chip key={role.id}>{role.name}</Chip>)
                           )}
                         </div>
 
-                        <div className="truncate text-[11.5px] text-ink-soft" title={user.position ?? undefined}>
+                        <div className="truncate text-meta text-ink-soft" title={user.position ?? undefined}>
                           {user.position || '—'}
                         </div>
 
-                        <div className="text-[11px] text-ink-mute">{formatDateTime(user.createdAt)}</div>
+                        <div className="text-meta text-ink-mute">{formatDateTime(user.createdAt)}</div>
 
                         <div
-                          className="text-[11px] text-ink-mute"
+                          className="text-meta text-ink-mute"
                           title={user.lastLoginAt ? `最后登录 ${formatDateTime(user.lastLoginAt)}` : '从未登录'}
                         >
                           {user.lastLoginAt ? formatRelative(user.lastLoginAt) : '从未登录'}

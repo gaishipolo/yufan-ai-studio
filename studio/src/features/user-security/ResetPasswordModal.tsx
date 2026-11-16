@@ -60,7 +60,7 @@ export function ResetPasswordModal({
             `sessions.revoke_all(reason="password_reset")`：重置 = 强制下线所有设备。
             这句话以前写的是"会话不受影响"，正好把这次操作最有价值的安全属性
             说成了"没有"，也让管理员以为对方还能继续用。 */}
-        <p className="text-[11.5px] leading-[1.6] text-ink-mute">
+        <p className="text-meta leading-[1.6] text-ink-mute">
           重置后旧密码立即失效，<strong className="font-semibold text-ink">该账号所有已登录设备会被强制下线</strong>
           （含正在使用中的会话），本人需用新口令重新登录。
         </p>
@@ -91,7 +91,7 @@ export function ResetPasswordModal({
         </FormField>
 
         {formError && (
-          <p className="rounded-lg border border-[#fad7d4] bg-[#feeceb] px-2.5 py-2 text-[11.5px] text-[#d94036]" role="alert">
+          <p className="rounded-lg border border-[#fad7d4] bg-[#feeceb] px-2.5 py-2 text-meta text-[#d94036]" role="alert">
             {formError}
           </p>
         )}

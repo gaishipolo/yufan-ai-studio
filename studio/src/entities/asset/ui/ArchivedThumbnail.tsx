@@ -29,7 +29,7 @@ export function ArchivedThumbnail({url, type = 'image'}: ArchivedThumbnailProps)
   }, [data]);
   const icon = type === 'video' ? <Film size={26} /> : type === 'audio' ? <Music size={26} /> : <ImageIcon size={26} />;
   if (!url) return <span aria-hidden className="text-primary">{icon}</span>;
-  if (error || broken) return <span className="flex flex-col items-center gap-1 text-[11px] text-ink-mute">{icon}预览不可用</span>;
+  if (error || broken) return <span className="flex flex-col items-center gap-1 text-meta text-ink-mute">{icon}预览不可用</span>;
   if (!source) return <span className="text-xs text-ink-mute">加载预览…</span>;
   return <img src={source} alt="" loading="lazy" onError={() => setBroken(true)} className="h-full w-full rounded-lg object-cover" />;
 }

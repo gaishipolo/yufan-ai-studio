@@ -113,10 +113,10 @@ export function LibraryCard({
                `pt-7` 让开左上角 20px 的勾选框、`right-1.5 top-1.5` 的类型徽标，
                否则首行开头会被勾选框压掉、行尾会被徽标吃掉（真机截图踩过）。 */
             <div className="relative flex aspect-[4/3] flex-col overflow-hidden bg-panel-soft px-2.5 pb-2.5 pt-7">
-              <pre className="line-clamp-5 whitespace-pre-wrap break-words font-sans text-[12px] leading-[18px] text-ink-soft">
+              <pre className="line-clamp-5 whitespace-pre-wrap break-words font-sans text-xs leading-[18px] text-ink-soft">
                 {asset.textExcerpt?.trim() || '（空文本）'}
               </pre>
-              <span className="absolute right-1.5 top-1.5 rounded-[5px] border border-line-soft bg-panel px-1.5 py-px text-[10.5px] text-ink-mute">
+              <span className="absolute right-1.5 top-1.5 rounded-[5px] border border-line-soft bg-panel px-1.5 py-px text-micro text-ink-mute">
                 文本
               </span>
             </div>
@@ -141,18 +141,18 @@ export function LibraryCard({
             /* 文字卡是白底，那层深色渐变压上去只剩一条黑带、还会盖住摘要末行；
                右上角已经有「文本」徽标，其余信息不再重复。只有回收站的天数要留。 */
             view === 'trash' && days != null ? (
-              <span className="pointer-events-none absolute bottom-1.5 right-1.5 rounded bg-[rgba(12,24,30,.62)] px-1 text-[12px] text-white/90">
+              <span className="pointer-events-none absolute bottom-1.5 right-1.5 rounded bg-[rgba(12,24,30,.62)] px-1 text-xs text-white/90">
                 {expired ? '已过期' : `剩余 ${days} 天`}
               </span>
             ) : null
           ) : (
             <div className="pointer-events-none absolute inset-x-0 bottom-0 flex items-end justify-between gap-1 bg-gradient-to-t from-[rgba(12,24,30,.62)] via-[rgba(12,24,30,.28)] to-transparent px-2 pb-1.5 pt-7">
-              <span className="inline-flex items-center gap-1 text-[12.5px] font-medium text-white/95">
+              <span className="inline-flex items-center gap-1 text-xs font-medium text-white/95">
                 <Icon size={11} />
                 {KIND_LABEL[asset.kind]}
               </span>
               {view === 'trash' && days != null && (
-                <span className="rounded bg-black/40 px-1 text-[12px] text-white/90">
+                <span className="rounded bg-black/40 px-1 text-xs text-white/90">
                   {expired ? '已过期' : `剩余 ${days} 天`}
                 </span>
               )}
@@ -199,13 +199,13 @@ export function LibraryCard({
         <button
           type="button"
           onClick={() => onAction('open', asset)}
-          className="truncate text-left text-[14.5px] font-medium leading-5 text-ink hover:text-primary-deep"
+          className="truncate text-left text-body font-medium leading-5 text-ink hover:text-primary-deep"
           title={asset.name}
         >
           {title}
         </button>
-        <p className="truncate text-[13px] leading-4 text-ink-mute">{context.join(' · ')}</p>
-        <p className="min-h-4 truncate text-[12.5px] leading-4 text-ink-mute/85">
+        <p className="truncate text-body leading-4 text-ink-mute">{context.join(' · ')}</p>
+        <p className="min-h-4 truncate text-xs leading-4 text-ink-mute/85">
           {facts.join(' · ')}
         </p>
 
@@ -219,7 +219,7 @@ export function LibraryCard({
             {tags.map((tag) => (
               <span
                 key={tag.id}
-                className="inline-flex max-w-full items-center gap-0.5 rounded-[5px] border border-line-soft bg-panel-soft px-1.5 py-px text-[12px] leading-[15px] text-ink-soft"
+                className="inline-flex max-w-full items-center gap-0.5 rounded-[5px] border border-line-soft bg-panel-soft px-1.5 py-px text-xs leading-[15px] text-ink-soft"
               >
                 <span className="max-w-[110px] truncate" title={tagLabel(tag)}>
                   {tagLabel(tag)}

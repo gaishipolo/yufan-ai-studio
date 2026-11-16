@@ -179,7 +179,7 @@ export function UserFormModal({
             <FormField
               label="分组"
               htmlFor="user-group"
-              hint={groups.length ? '创建后可在小组里调整' : '暂无分组，可先在左侧新增'}
+              hint={groups.length ? undefined : '暂无分组，可先在左侧新增'}
             >
               <Select
                 id="user-group"
@@ -190,7 +190,7 @@ export function UserFormModal({
                 onChange={(event) => setGroupId(event.target.value)}
               />
             </FormField>
-            <FormField label="角色" htmlFor="user-role" hint="可多选；决定基础权限点">
+            <FormField label="角色" htmlFor="user-role">
               <MultiSelect
                 id="user-role"
                 ariaLabel="角色"
@@ -243,7 +243,7 @@ export function UserFormModal({
           </FormField>
         )}
 
-        <FormField label="昵称" htmlFor="user-display-name" hint="顶栏与任务作者展示用；留空则显示登录名">
+        <FormField label="昵称" htmlFor="user-display-name" hint="留空则显示登录名">
           <TextInput
             id="user-display-name"
             value={displayName}
@@ -263,7 +263,7 @@ export function UserFormModal({
         {/* 手机号 / 职务对齐截图的用户表格列。Q1 未定：目前只作可选展示字段，
             不做唯一性、必填或格式校验，留空提交 null 由后端清空。 */}
         <div className="grid gap-3 sm:grid-cols-2">
-          <FormField label="手机号" htmlFor="user-phone" hint="仅用于展示与检索">
+          <FormField label="手机号" htmlFor="user-phone">
             <TextInput
               id="user-phone"
               value={phone}
@@ -271,7 +271,7 @@ export function UserFormModal({
               onChange={(event) => setPhone(event.target.value)}
             />
           </FormField>
-          <FormField label="职务" htmlFor="user-position" hint="仅用于展示">
+          <FormField label="职务" htmlFor="user-position">
             <TextInput
               id="user-position"
               value={position}
@@ -285,7 +285,7 @@ export function UserFormModal({
           <FormField
             label="头像地址"
             htmlFor="user-avatar"
-            hint="留空则显示昵称首字；图片加载失败会自动退回首字"
+            hint="留空则显示昵称首字"
           >
             <div className="flex items-center gap-2">
               <UserAvatar user={{ displayName, username, avatarUrl }} size={32} shape="square" />
@@ -302,7 +302,7 @@ export function UserFormModal({
         )}
 
         {formError && (
-          <p className="rounded-lg border border-[#fad7d4] bg-[#feeceb] px-2.5 py-2 text-[11.5px] text-[#d94036]" role="alert">
+          <p className="rounded-lg border border-[#fad7d4] bg-[#feeceb] px-2.5 py-2 text-meta text-[#d94036]" role="alert">
             {formError}
           </p>
         )}

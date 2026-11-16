@@ -67,7 +67,7 @@ export function AddSlotMenu({
                 setOpen(false);
                 onAdd(item.value);
               }}
-              className="flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-left text-[12px] text-ink-soft transition-colors hover:bg-panel-soft hover:text-ink"
+              className="flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-left text-xs text-ink-soft transition-colors hover:bg-panel-soft hover:text-ink"
             >
               <Plus size={11} className="text-ink-mute" />
               {item.label}

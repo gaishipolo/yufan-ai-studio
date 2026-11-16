@@ -58,7 +58,7 @@ export function UserTableFooter({
   };
 
   return (
-    <div className="flex flex-wrap items-center gap-2 border-t border-line-soft px-3.5 py-2 text-[11.5px] text-ink-mute">
+    <div className="flex flex-wrap items-center gap-2 border-t border-line-soft px-3.5 py-2 text-meta text-ink-mute">
       <span>共 {total} 条</span>
       <Select
         options={PAGE_SIZE_OPTIONS}
@@ -82,7 +82,7 @@ export function UserTableFooter({
             aria-label={`第 ${number} 页`}
             aria-current={number === current ? 'page' : undefined}
             className={cn(
-              'grid h-7 min-w-7 place-items-center rounded-lg border px-1.5 text-[11.5px] transition-colors',
+              'grid h-7 min-w-7 place-items-center rounded-lg border px-1.5 text-meta transition-colors',
               number === current
                 ? 'border-primary bg-primary text-white'
                 : 'border-line bg-white text-ink-soft hover:border-line-strong',
@@ -107,7 +107,7 @@ export function UserTableFooter({
           max={safeTotal}
           aria-label="前往页码"
           value={jump}
-          className="h-7 w-12 rounded-lg border border-line bg-white px-1.5 text-center text-[11.5px] text-ink outline-none focus:border-primary-line"
+          className="h-7 w-12 rounded-lg border border-line bg-white px-1.5 text-center text-meta text-ink outline-none focus:border-primary-line"
           onChange={(event) => setJump(event.target.value)}
           onKeyDown={(event) => {
             if (event.key !== 'Enter') return;

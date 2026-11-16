@@ -111,7 +111,7 @@ function FlyoutTagRow({
       aria-label={ariaLabel}
       className="flex items-center gap-1 overflow-x-auto pb-0.5"
     >
-      <span className="w-7 shrink-0 truncate text-[10.5px] font-medium text-ink-mute" title={label}>
+      <span className="w-7 shrink-0 truncate text-micro font-medium text-ink-mute" title={label}>
         {label}
       </span>
       <button
@@ -120,7 +120,7 @@ function FlyoutTagRow({
         aria-label={allLabel}
         aria-pressed={allActive}
         className={cn(
-          'shrink-0 rounded-full border px-2 py-[3px] text-[10.5px] transition',
+          'shrink-0 rounded-full border px-2 py-[3px] text-micro transition',
           allActive
             ? 'border-primary-line bg-primary-soft text-primary-deep'
             : 'border-line-soft bg-panel-soft text-ink-soft hover:border-line-strong',
@@ -139,7 +139,7 @@ function FlyoutTagRow({
             aria-pressed={active}
             title={`筛选「${text}」· 当前入口 ${tag.assetCount ?? 0} 条`}
             className={cn(
-              'shrink-0 rounded-full border px-2 py-[3px] text-[10.5px] transition',
+              'shrink-0 rounded-full border px-2 py-[3px] text-micro transition',
               active
                 ? 'border-primary-line bg-primary-soft font-semibold text-primary-deep'
                 : 'border-line-soft bg-panel-soft text-ink-soft hover:border-line-strong',
@@ -150,7 +150,7 @@ function FlyoutTagRow({
           </button>
         );
       })}
-      {hint && <span className="shrink-0 pl-0.5 text-[10.5px] text-ink-mute">{hint}</span>}
+      {hint && <span className="shrink-0 pl-0.5 text-micro text-ink-mute">{hint}</span>}
     </div>
   );
 }
@@ -261,7 +261,7 @@ export function LibraryFlyout({
     >
       <div className="flex items-center gap-1.5 border-b border-line-soft px-3 py-2.5">
         <Library size={14} className="shrink-0 text-brand" />
-        <span className="text-[12.5px] font-semibold text-ink">素材库</span>
+        <span className="text-lead font-semibold text-ink">素材库</span>
         <Chip tone={full ? 'warn' : pickedIds.length ? 'primary' : 'default'}>
           {pickedIds.length}/{max}
         </Chip>
@@ -299,7 +299,7 @@ export function LibraryFlyout({
                 onClick={() => pickKind(item.value)}
                 title={allowed ? `只看${item.label}` : `${item.label}只能浏览：本次只收 ${allowedLabels}`}
                 className={cn(
-                  'shrink-0 rounded-full border px-2 py-[3px] text-[10.5px] transition',
+                  'shrink-0 rounded-full border px-2 py-[3px] text-micro transition',
                   active && 'border-primary-line bg-primary-soft font-semibold text-primary-deep',
                   !active &&
                     'border-line-soft bg-panel-soft text-ink-soft hover:border-line-strong',
@@ -314,7 +314,7 @@ export function LibraryFlyout({
         </div>
 
         {!canPickKind && (
-          <p className="rounded-md bg-panel-soft px-2 py-1 text-[10.5px] leading-snug text-ink-mute">
+          <p className="rounded-md bg-panel-soft px-2 py-1 text-micro leading-snug text-ink-mute">
             本次只收 {allowedLabels}：{kindLabel}素材可以在这里浏览，不能加入。
           </p>
         )}
@@ -350,7 +350,7 @@ export function LibraryFlyout({
             hint={children.length ? undefined : '该一级下还没有二级标签'}
           />
         ) : (
-          <p className="pl-8 text-[10.5px] leading-snug text-ink-mute">
+          <p className="pl-8 text-micro leading-snug text-ink-mute">
             还没有二级标签：在资产库「管理标签」里把系列挂到一级下面即可。
           </p>
         )}
@@ -364,7 +364,7 @@ export function LibraryFlyout({
             ))}
           </div>
         ) : query.isError ? (
-          <div className="rounded-lg bg-panel-soft px-3 py-8 text-center text-[11.5px] text-ink-mute">
+          <div className="rounded-lg bg-panel-soft px-3 py-8 text-center text-meta text-ink-mute">
             素材库加载失败
             <Button
               size="sm"
@@ -407,7 +407,7 @@ export function LibraryFlyout({
                   {asset.kind === 'text' ? (
                     /* 文本资产没有缩略图：用摘要画文字卡，避免一张 404 破图 */
                     <div className="flex aspect-[4/3] flex-col overflow-hidden rounded-md bg-panel-soft p-1.5">
-                      <span className="line-clamp-4 whitespace-pre-wrap break-words text-[10px] leading-[13px] text-ink-soft">
+                      <span className="line-clamp-4 whitespace-pre-wrap break-words text-micro leading-[13px] text-ink-soft">
                         {asset.textExcerpt?.trim() || '（空文本）'}
                       </span>
                     </div>
@@ -418,10 +418,10 @@ export function LibraryFlyout({
                       className="aspect-[4/3] rounded-md"
                     />
                   )}
-                  <div className="mt-1 truncate text-[11px] text-ink">
+                  <div className="mt-1 truncate text-meta text-ink">
                     {displayName(asset.name)}
                   </div>
-                  <div className="truncate text-[10px] text-ink-mute">
+                  <div className="truncate text-micro text-ink-mute">
                     {asset.kind === 'text'
                       ? '文本资产'
                       : asset.width && asset.height
@@ -432,7 +432,7 @@ export function LibraryFlyout({
                   {picked ? (
                     <span
                       aria-label={`已加入第 ${order + 1} 张`}
-                      className="absolute right-1.5 top-1.5 grid size-[20px] place-items-center rounded-full bg-primary text-[10px] font-semibold text-white"
+                      className="absolute right-1.5 top-1.5 grid size-[20px] place-items-center rounded-full bg-primary text-micro font-semibold text-white"
                     >
                       {order + 1}
                     </span>
@@ -462,7 +462,7 @@ export function LibraryFlyout({
         ) : (
           <div className="flex flex-col items-center gap-1.5 rounded-lg bg-panel-soft px-3 py-10 text-ink-mute">
             <Library size={20} />
-            <span className="text-[11.5px]">
+            <span className="text-meta">
               {debounced || effectiveTag
                 ? `没有匹配的${kindLabel}素材`
                 : `素材库里还没有${kindLabel}素材`}
@@ -484,7 +484,7 @@ export function LibraryFlyout({
         )}
       </div>
 
-      <div className="shrink-0 border-t border-line-soft px-3 py-2 text-[10.5px] leading-snug text-ink-mute">
+      <div className="shrink-0 border-t border-line-soft px-3 py-2 text-micro leading-snug text-ink-mute">
         {full ? (
           <span className="text-warn-deep">已达上限 {max} 张，移除一张后可继续添加</span>
         ) : !canPickKind ? (

@@ -22,7 +22,7 @@ export function RoleCheckboxList({
 }) {
   if (roles.length === 0) {
     return (
-      <p className="rounded-lg border border-dashed border-line-strong bg-panel-soft px-3 py-4 text-center text-[11.5px] text-ink-mute">
+      <p className="rounded-lg border border-dashed border-line-strong bg-panel-soft px-3 py-4 text-center text-meta text-ink-mute">
         还没有可用角色，请先在「角色与权限」页签创建
       </p>
     );
@@ -62,7 +62,7 @@ export function RoleCheckboxList({
               {role.isSuperuser && <Chip tone="warn">超管</Chip>}
               {role.isBuiltin && !role.isSuperuser && <Chip>内置</Chip>}
             </span>
-            <span className="truncate text-[11px] text-ink-mute">{role.description || role.code}</span>
+            <span className="truncate text-meta text-ink-mute">{role.description || role.code}</span>
           </label>
         );
       })}

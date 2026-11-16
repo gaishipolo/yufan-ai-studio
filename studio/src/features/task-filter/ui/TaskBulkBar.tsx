@@ -36,7 +36,7 @@ export function TaskBulkBar({
   if (count <= 0) return null;
   return (
     <div className="flex items-center gap-1.5 rounded-lg border border-primary-line bg-primary-soft/60 py-1 pl-2.5 pr-1">
-      <span className="text-[11px] font-medium tabular-nums text-primary-deep">已选 {count} 项</span>
+      <span className="text-meta font-medium tabular-nums text-primary-deep">已选 {count} 项</span>
       <span className="mx-0.5 h-3.5 w-px bg-primary-line" aria-hidden />
       <Button size="sm" variant="ghost" icon={<Download size={12} />} onClick={onDownload}>
         下载

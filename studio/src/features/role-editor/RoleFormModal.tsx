@@ -86,7 +86,7 @@ export function RoleFormModal({
           label="角色标识"
           htmlFor="role-code"
           required={!isEdit}
-          hint={isEdit ? '标识是权限判定的依据，创建后不可修改' : '小写字母开头，如 content_editor'}
+          hint={isEdit ? '创建后不可修改' : '小写字母开头，如 content_editor'}
         >
           <TextInput
             id="role-code"
@@ -105,7 +105,7 @@ export function RoleFormModal({
           />
         </FormField>
 
-        <FormField label="说明" htmlFor="role-description" hint="一句话说明这个角色能做什么，给后来人看">
+        <FormField label="说明" htmlFor="role-description">
           <TextInput
             id="role-description"
             value={description}
@@ -114,7 +114,7 @@ export function RoleFormModal({
         </FormField>
 
         {formError && (
-          <p className="rounded-lg border border-[#fad7d4] bg-[#feeceb] px-2.5 py-2 text-[11.5px] text-[#d94036]" role="alert">
+          <p className="rounded-lg border border-[#fad7d4] bg-[#feeceb] px-2.5 py-2 text-meta text-[#d94036]" role="alert">
             {formError}
           </p>
         )}

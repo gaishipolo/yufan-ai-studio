@@ -34,7 +34,7 @@ export function Tabs<T extends string = string>({ items, value, onChange, classN
             {typeof item.count === 'number' && (
               <span
                 className={cn(
-                  'text-[11.5px] tabular-nums',
+                  'text-meta tabular-nums',
                   active ? 'text-white/85' : 'text-ink-mute',
                 )}
               >

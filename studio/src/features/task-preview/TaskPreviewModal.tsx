@@ -104,7 +104,7 @@ export function TaskPreviewModal({ taskId, outputUrl, onClose }: TaskPreviewModa
             </dl>
 
             {task.errorMessage && (
-              <p className="mt-3 rounded-lg border border-[#fad7d4] bg-[#feeceb] px-3 py-2 text-[11.5px] leading-relaxed text-[#d94036]">
+              <p className="mt-3 rounded-lg border border-[#fad7d4] bg-[#feeceb] px-3 py-2 text-meta leading-relaxed text-[#d94036]">
                 {task.errorMessage}
               </p>
             )}

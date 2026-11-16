@@ -50,7 +50,7 @@ export function AssetPreview({
             alt={alt}
             className="h-full w-full opacity-60"
           />
-          <span className="absolute inset-0 flex items-center justify-center text-[10px] text-white/80">
+          <span className="absolute inset-0 flex items-center justify-center text-micro text-white/80">
             正在读取视频…
           </span>
         </div>
@@ -104,7 +104,7 @@ export function AssetPreview({
           />
         )}
         {!playingNow && (
-          <span className="absolute bottom-1.5 right-1.5 rounded bg-black/55 px-1 py-0.5 text-[10px] text-white">
+          <span className="absolute bottom-1.5 right-1.5 rounded bg-black/55 px-1 py-0.5 text-micro text-white">
             视频
           </span>
         )}
@@ -129,7 +129,7 @@ export function AssetPreview({
         </button>
       )}
       {isVideo && !playable && (
-        <span className="absolute bottom-1.5 right-1.5 rounded bg-black/55 px-1 py-0.5 text-[10px] text-white">
+        <span className="absolute bottom-1.5 right-1.5 rounded bg-black/55 px-1 py-0.5 text-micro text-white">
           视频
         </span>
       )}

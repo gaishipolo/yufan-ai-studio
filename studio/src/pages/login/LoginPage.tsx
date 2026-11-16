@@ -64,7 +64,7 @@ export default function LoginPage() {
         <div className="relative flex items-center gap-2.5">
           <BrandMark size={32} />
           <div className="flex flex-col leading-none">
-            <b className="text-[17px] font-extrabold tracking-[3px] text-white">{APP_BRAND}</b>
+            <b className="text-lead font-extrabold tracking-[3px] text-white">{APP_BRAND}</b>
             <span className="mt-1 text-[7.5px] tracking-[1.8px] text-white/45">{APP_BRAND_EN}</span>
           </div>
           <div className="h-4 w-px bg-white/25" />
@@ -72,12 +72,12 @@ export default function LoginPage() {
         </div>
 
         <div className="relative max-w-[420px]">
-          <h1 className="text-[26px] font-bold leading-[1.35] tracking-[.5px]">
+          <h1 className="text-display font-bold leading-[1.35] tracking-[.5px]">
             从一句创意
             <br />
             到可直接投放的短视频
           </h1>
-          <p className="mt-3 text-[12.5px] leading-[1.8] text-white/65">
+          <p className="mt-3 text-xs leading-[1.8] text-white/65">
             分镜、生成、素材与审核在同一条流水线上完成，
             团队按角色分工，权限精确到按钮。
           </p>
@@ -85,7 +85,7 @@ export default function LoginPage() {
           <ul className="mt-6 space-y-2.5">
             {['全链路任务追踪，失败自动重试', '模型与时长按项目统一配置', '账号、角色、权限点三件套'].map(
               (item) => (
-                <li key={item} className="flex items-center gap-2 text-[12px] text-white/75">
+                <li key={item} className="flex items-center gap-2 text-xs text-white/75">
                   <Sparkles size={12} className="shrink-0 text-[#59e2d6]" aria-hidden />
                   {item}
                 </li>
@@ -94,7 +94,7 @@ export default function LoginPage() {
           </ul>
         </div>
 
-        <p className="relative text-[11px] text-white/40">
+        <p className="relative text-meta text-white/40">
           © 2026 {APP_BRAND} {APP_BRAND_EN} · {APP_VERSION}
         </p>
       </aside>
@@ -103,21 +103,21 @@ export default function LoginPage() {
         <div className="w-full max-w-[336px]">
           <div className="mb-6 flex items-center gap-2 md:hidden">
             <BrandMark size={26} />
-            <b className="shrink-0 whitespace-nowrap text-[17px] font-extrabold tracking-[3px] text-ink">
+            <b className="shrink-0 whitespace-nowrap text-lead font-extrabold tracking-[3px] text-ink">
               {APP_BRAND}
             </b>
-            <span className="whitespace-nowrap text-sm font-semibold text-ink">{APP_NAME}</span>
+            <span className="whitespace-nowrap text-body font-semibold text-ink">{APP_NAME}</span>
           </div>
 
-          <h2 className="text-[19px] font-bold tracking-[.3px] text-ink">登录</h2>
-          <p className="mt-1.5 text-[11.5px] leading-[1.6] text-ink-mute">
+          <h2 className="text-title font-bold tracking-[.3px] text-ink">登录</h2>
+          <p className="mt-1.5 text-meta leading-[1.6] text-ink-mute">
             使用工作台账号登录；忘记密码请联系管理员重置。
           </p>
 
           {notice && (
             <p
               role="status"
-              className="mt-3 flex items-start gap-1.5 rounded-lg border border-[#fbe8c8] bg-[#fff9ee] px-2.5 py-2 text-[11.5px] leading-[1.6] text-[#8a5b00]"
+              className="mt-3 flex items-start gap-1.5 rounded-lg border border-[#fbe8c8] bg-[#fff9ee] px-2.5 py-2 text-meta leading-[1.6] text-[#8a5b00]"
             >
               <Info size={12} className="mt-[2px] shrink-0" aria-hidden />
               {notice}
@@ -130,7 +130,7 @@ export default function LoginPage() {
             <LoginForm />
           </div>
 
-          <p className="mt-4 text-center text-[10.5px] leading-[1.6] text-ink-mute">
+          <p className="mt-4 text-center text-micro leading-[1.6] text-ink-mute">
             登录即表示同意内部使用规范。
           </p>
         </div>
