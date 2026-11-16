@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { ChevronDown, GripVertical, Trash2 } from 'lucide-react';
 import { AssetChip } from '@/entities/library/ui/AssetChip';
 import type { SpecSlotIn } from '@/shared/api/schema';
-import { Button, FormField, Select, TextInput } from '@/shared/ui';
+import { Button, FormField, MultiSelect, Select, TextInput } from '@/shared/ui';
 import { cn } from '@/shared/lib/cn';
 import { SLOT_TYPE_LABELS, slotTypeOf } from './specDraft';
 import { SLOT_TYPE_ICONS } from './slotIcons';
@@ -170,16 +170,16 @@ export function SlotCard({
         </button>
       </div>
 
-      {/* 一级标签是发布闸门（用户填的图片/视频必须有它）。
+      {/* 标签是发布闸门（用户填的图片/视频必须圈至少一个）。
           设了就安静地待在展开区；没设就在主行给一枚醒目的提示 ——
           缺它会在点发布时被 400 打回，而那句话不指名是哪个槽位。 */}
-      {needsTag && !fixed && !slot.tagId && (
+      {needsTag && !fixed && !slot.tagIds?.length && (
         <button
           type="button"
           onClick={() => setOpen(true)}
           className="mt-2 inline-flex items-center gap-1 rounded-md bg-warn-soft px-1.5 py-0.5 text-micro text-warn-deep transition-colors hover:bg-warn/15"
         >
-          缺一级标签 · 发布前必须选
+          缺标签 · 发布前必须选
         </button>
       )}
 
@@ -220,17 +220,19 @@ export function SlotCard({
           </FormField>
           {needsTag && !fixed && (
             <FormField
-              label="一级标签"
+              label="候选标签"
               htmlFor="slot-tag"
-              hint="使用者按它挑素材"
+              hint="可多选；使用者按它挑素材（任意级别）"
             >
-              <Select
+              {/* 槽位的标签是「圈定候选范围」，不是「打在素材上」：
+                  所以任意级别都能圈（分组也行），多个标签之间是并集。 */}
+              <MultiSelect
                 id="slot-tag"
-                block
-                value={slot.tagId ?? TAG_ANY}
                 options={tagOptions}
-                onChange={event => onPatch({tagId: event.target.value})}
-                className={slot.tagId ? undefined : 'border-warn'}
+                value={slot.tagIds ?? []}
+                onChange={values => onPatch({tagIds: values})}
+                placeholder="不限（全部素材）"
+                emptyText="还没有标签"
               />
             </FormField>
           )}
@@ -287,5 +289,3 @@ const BINDING_TOGGLES: {value: SpecSlotIn['binding']; label: string; hint: strin
   {value: 'fixed', label: '已固定', hint: '封装时就定好素材'},
 ];
 
-/** 一级标签的「不限」哨兵：空串表示候选集不收窄。 */
-const TAG_ANY = '';

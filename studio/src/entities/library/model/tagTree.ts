@@ -146,6 +146,79 @@ export function ancestorAtDepth(
   return current && currentDepth === depth ? current.id : null;
 }
 
+/**
+ * 选中的标签 → 真正拿去筛选的标签 id。
+ *
+ * 三级标签现在可以**任意组合**：跨链多选是并集（选「产品」与选「角色」并存，
+ * 结果是两边的范围叠起来），但**同一条链上只按最具体的那一层筛选** ——
+ * 父的范围本来就含子，两个都留着只会让筛选范围重复：用户点了「产品 / 3030」，
+ * 想要的是 3030 那一档，不是整个产品线。
+ *
+ * 所以按「链根」分组，每组只留**最深**的那一层（同一层可以有多个，比如两个
+ * 二级系列）。跨链之间不做任何合并 —— 那是并集。
+ *
+ * 后端那边一律是 OR（展开成「自身 + 全部下级」），这条收敛只发生在界面层：
+ * 它决定「我们想看哪一档」，而不是后端怎么算。
+ */
+export function effectiveTagSelection(
+  tags: LibraryTagStatOut[],
+  selected: string[],
+): string[] {
+  const byId = new Map(tags.map((item) => [item.id, item]));
+  const groups = new Map<string, { depth: number; ids: string[] }>();
+  for (const id of selected) {
+    const tag = byId.get(id);
+    if (!tag) continue;
+    const root = ancestorAtDepth(tags, tag, 1) ?? id;
+    const depth = tagDepth(tags, tag);
+    const group = groups.get(root);
+    if (!group) {
+      groups.set(root, { depth, ids: [id] });
+    } else if (depth > group.depth) {
+      // 更具体的一层顶掉它的祖先：父的范围被子覆盖，留着只会重复
+      group.depth = depth;
+      group.ids = [id];
+    } else if (depth === group.depth) {
+      group.ids.push(id);
+    }
+  }
+  return [...groups.values()].flatMap((group) => group.ids);
+}
+
+
+/**
+ * 候选集范围（scope）允许挑的标签：scope 本身 + 它的全部后代。
+ *
+ * 为什么只给后代：槽位的标签是作者定的**候选集**，模板使用者只能在它里面挑。
+ * 圈到范围外面去，作者与使用者看到的就是两批素材 —— 「作者选的图用户根本挑不到」。
+ *
+ * scope 为空 = 不限，这时所有标签都能挑。
+ */
+export function scopeAllowedTags(
+  tags: LibraryTagStatOut[],
+  scope: string[],
+): LibraryTagStatOut[] {
+  if (!scope.length) return tags;
+  const allowed = new Set<string>();
+  for (const id of scope) {
+    allowed.add(id);
+    for (const child of descendantIds(tags, id)) allowed.add(child);
+  }
+  return tags.filter((tag) => allowed.has(tag.id));
+}
+
+/**
+ * 槽位候选集用的标签选项：**任意级别**（分组也能圈），显示名带整条链。
+ *
+ * 槽位的标签是「圈定候选范围」，不是「打在素材上」，所以不必限叶子 ——
+ * 圈一个分组正是它的用途。打标选择器要的才是叶子，那边用 `tagOptions`。
+ */
+export function scopeTagOptions(
+  tags: LibraryTagStatOut[],
+): { value: string; label: string }[] {
+  return sortByCreated(tags).map((tag) => ({ value: tag.id, label: tagLabel(tag) }));
+}
+
 /** 打标选择器 / 上传 / 批量栏的选项：只给叶子（任意层级的叶子）。 */
 export function selectableTags(tags: LibraryTagStatOut[]): LibraryTagStatOut[] {
   return sortByCreated(tags.filter(isSelectable));

@@ -45,12 +45,32 @@ def test_numbers_are_not_stored() -> None:
 
 def test_slot_points_at_one_asset_and_has_no_source_axis() -> None:
     columns = _columns("template_spec_slots")
-    assert {"type", "binding", "ref_mode", "asset_id", "tag_id"} <= columns
+    # `tag_ids` 是候选集标签（一组，任意级别）；`tag_id` 是老形状（单个），
+    # 留着是为了让旧发布版本还能被读出来（读侧回退，见 spec_service._slot_tag_ids）。
+    assert {"type", "binding", "ref_mode", "asset_id", "tag_ids", "tag_id"} <= columns
     # 「要什么」只有一条表达：`type`。旧的 `source` 轴不许回来
     # （两根轴并存时接口能收到自相矛盾的组合）。
     assert "source" not in columns
     # 指向「一整组素材」的那一列也没有了：槽位只指向单个素材。
     assert "pack_id" not in columns
+
+
+def test_legacy_slot_row_falls_back_to_the_old_single_tag() -> None:
+    """老发布版本的槽位行只有 `tag_id` —— 读出来仍是「一个标签的候选集」。
+
+    迁移（`d9e4f1a83c07`）只加列、不回填：回填要动数据、还要处理 JSON 列的
+    方言差异，而「读的时候退回旧的」一次就够。老模板因此继续能用。
+    """
+    from modules.template_pack.models import TemplateSpecSlot
+    from modules.template_pack.spec_service import _slot_tag_ids
+
+    legacy = TemplateSpecSlot(id="slot-1", tag_ids=None, tag_id="tag-old")
+    assert _slot_tag_ids(legacy) == ["tag-old"]
+    # 新写的行两列都在：新列说了算
+    current = TemplateSpecSlot(id="slot-2", tag_ids=["a", "b"], tag_id="a")
+    assert _slot_tag_ids(current) == ["a", "b"]
+    # 空的（新槽位没圈标签）就是不限
+    assert _slot_tag_ids(TemplateSpecSlot(id="slot-3", tag_ids=None, tag_id="")) == []
 
 
 def test_version_snapshot_is_unique_per_spec() -> None:

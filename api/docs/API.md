@@ -2963,6 +2963,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `name` | `string` | 是 |  |
 | `description` | `string` | 否 |  |
 | `model` | `string` | 是 |  |
+| `allowedModels` | `string[]` | 否 |  |
 | `params` | `Record<string, unknown>` | 否 |  |
 | `prompt` | `string` | 是 |  |
 | `slots` | `SpecSlotIn[]` | 否 |  |
@@ -3059,6 +3060,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `name` | `string` | 是 |  |
 | `description` | `string` | 否 |  |
 | `model` | `string` | 是 |  |
+| `allowedModels` | `string[]` | 否 |  |
 | `params` | `Record<string, unknown>` | 否 |  |
 | `prompt` | `string` | 是 |  |
 | `slots` | `SpecSlotIn[]` | 否 |  |
@@ -3151,6 +3153,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `version` | `number \| null` | 否 |  |
+| `model` | `string \| null` | 否 |  |
 | `slotValues` | `Record<string, string[]>` | 否 |  |
 | `paramOverrides` | `Record<string, unknown>` | 否 |  |
 
@@ -4330,6 +4333,7 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `version` | `number \| null` | 否 |  |
+| `model` | `string \| null` | 否 |  |
 | `slotValues` | `Record<string, string[]>` | 否 |  |
 | `paramOverrides` | `Record<string, unknown>` | 否 |  |
 
@@ -4371,7 +4375,7 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `label` | `string` | 否 |  |
 | `usage` | `string` | 否 |  |
 | `assetId` | `string \| null` | 否 |  |
-| `tagId` | `string` | 否 |  |
+| `tagIds` | `string[]` | 否 |  |
 | `position` | `number` | 否 |  |
 
 ### `SpecSlotOut`
@@ -4389,7 +4393,7 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `label` | `string` | 否 |  |
 | `usage` | `string` | 否 |  |
 | `assetId` | `string \| null` | 否 |  |
-| `tagId` | `string` | 否 |  |
+| `tagIds` | `string[]` | 否 |  |
 | `position` | `number` | 否 |  |
 
 ### `SpecValidateOut`
@@ -4407,6 +4411,7 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 |---|---|---|---|
 | `version` | `number` | 是 |  |
 | `model` | `string` | 是 |  |
+| `allowedModels` | `string[]` | 否 |  |
 | `params` | `Record<string, unknown>` | 是 |  |
 | `prompt` | `string` | 是 |  |
 | `slots` | `SpecSlotOut[]` | 是 |  |
@@ -4571,6 +4576,7 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `name` | `string` | 是 |  |
 | `description` | `string` | 否 |  |
 | `model` | `string` | 是 |  |
+| `allowedModels` | `string[]` | 否 |  |
 | `params` | `Record<string, unknown>` | 否 |  |
 | `prompt` | `string` | 是 |  |
 | `slots` | `SpecSlotIn[]` | 否 |  |

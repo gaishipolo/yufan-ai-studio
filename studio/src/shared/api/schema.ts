@@ -1140,6 +1140,7 @@ export interface ShotPresetOut {
 与"提示词只有一段"冲突，一并删掉。 */
 export interface SpecCompileIn {
   version?: number | null;
+  model?: string | null;
   slotValues?: Record<string, string[]>;
   paramOverrides?: Record<string, unknown>;
 }
@@ -1176,7 +1177,7 @@ export interface SpecSlotIn {
   label?: string;
   usage?: string;
   assetId?: string | null;
-  tagId?: string;
+  tagIds?: string[];
   position?: number;
 }
 
@@ -1191,7 +1192,7 @@ export interface SpecSlotOut {
   label?: string;
   usage?: string;
   assetId?: string | null;
-  tagId?: string;
+  tagIds?: string[];
   position?: number;
 }
 
@@ -1205,6 +1206,7 @@ export interface SpecValidateOut {
 export interface SpecVersionOut {
   version: number;
   model: string;
+  allowedModels?: string[];
   params: Record<string, unknown>;
   prompt: string;
   slots: SpecSlotOut[];
@@ -1363,6 +1365,7 @@ export interface TemplateSpecIn {
   name: string;
   description?: string;
   model: string;
+  allowedModels?: string[];
   params?: Record<string, unknown>;
   prompt: string;
   slots?: SpecSlotIn[];

@@ -17,12 +17,13 @@ import { useCreateTask } from '@/entities/task/api/task.queries';
 import { usePublishedSpecs, useSpecCompile } from '@/entities/template-spec/api/spec.queries';
 import type { SpecSlotOut, TemplateSpecOut } from '@/shared/api/schema';
 import { AssetPicker, type PickedAsset } from '@/features/template-specs/AssetPicker';
-import { slotTypeOf } from '@/features/template-specs/specDraft';
+import { effectiveModelIds, slotTypeOf } from '@/features/template-specs/specDraft';
 import { ParamFields } from '@/entities/model/ui/ParamFields';
-import { Button, Chip, EmptyState, SearchInput, Skeleton } from '@/shared/ui';
+import { Button, Chip, EmptyState, SearchInput, Select, Skeleton } from '@/shared/ui';
 import { cn } from '@/shared/lib/cn';
 import { useStickyFitHeight } from '@/shared/hooks/useStickyFitHeight';
-import { toSubmitPayload, type SubmitKind } from './taskPayload';
+import { toSubmitPayload } from './taskPayload';
+import { modelChoiceOptions, resolveModelChoice } from './modelChoice';
 
 /**
  * 模板库（填表）：左边选模板，右边就地填素材 → 生成。
@@ -192,6 +193,9 @@ export function SpecLibrary() {
      素材是这次填的，计费模式是这次选的 —— 换模板时两者都要重来。 */
   const [userChoices, setUserChoices] = useState<Record<string, ParamValue>>({});
   const [picker, setPicker] = useState<string | null>(null);
+  /* 使用者挑的模型。作者声明了「允许选用的模型」时才有得挑；清单为空 = 只有
+     固定模型（老模板），页面上连下拉都不出现。空串 = 还没挑（用固定模型）。 */
+  const [chosenModel, setChosenModel] = useState('');
   const [note, setNote] = useState('');
   const [error, setError] = useState('');
 
@@ -214,6 +218,12 @@ export function SpecLibrary() {
   const fillSlots = slots.filter(slot => slot.binding === 'user');
   const version = spec?.latest;
   const focused = spec?.key ?? null;
+  /* 这份模板能跑的全部模型：固定模型 + 作者声明的允许清单。
+     固定模型永远在里头 —— 它是模板自己的模型。 */
+  const allowedModels = useMemo(
+    () => effectiveModelIds(version?.model ?? '', version?.allowedModels ?? []),
+    [version?.model, version?.allowedModels],
+  );
 
   /* 换模板就清空上一次的填写：不做"记忆上次填的素材"，
      那会让用户以为新模板也用了同一张图。计费模式这类选择同理 —— 上一张
@@ -221,27 +231,28 @@ export function SpecLibrary() {
   useEffect(() => {
     setValues({});
     setUserChoices({});
+    setChosenModel('');
     setNote('');
     setError('');
   }, [focused, version?.version]);
 
   /* 模板只声明模型，「提交到哪个接口」由模型能力决定：视频进 /tasks、图片进
      /generations/image。判不出来（模型清单里没有）就按视频处理 —— 那是这条链路
-     原本唯一支持的方向，报错信息也比「静默当图片」清楚。 */
-  const imageModel = imageModels.find(item => item.id === version?.model);
-  const videoModel = videoModels.find(item => item.id === version?.model);
-  const model = imageModel ?? videoModel;
-  const kind: SubmitKind = imageModel ? 'image' : 'video';
-  const defaults =
-    kind === 'image'
-      ? {
-          size: String(imageModel?.paramSchema?.size?.default ?? '') || undefined,
-          count: Number(imageModel?.paramSchema?.count?.default ?? 0) || undefined,
-        }
-      : {
-          durationSec: Number(videoModel?.paramSchema?.durationSec?.default ?? 0) || undefined,
-          aspectRatio: (videoModel?.paramSchema?.aspectRatio?.default as string | undefined) ?? undefined,
-        };
+     原本唯一支持的方向，报错信息也比「静默当图片」清楚。
+
+     这三样（接口、参数默认值、参数控件）全都跟着**选中的那款模型**走：
+     选了另一款模型却拿固定模型的默认值提交，等于用 A 的参数去跑 B。 */
+  const choice = resolveModelChoice(
+    version?.model ?? '',
+    version?.allowedModels ?? [],
+    chosenModel,
+    imageModels,
+    videoModels,
+  );
+  const modelId = choice.id;
+  const model = choice.model;
+  const kind = choice.kind;
+  const defaults = choice.defaults;
 
   const missing = slots.filter(slot => {
     if (slot.binding !== 'user') return false;
@@ -323,6 +334,8 @@ export function SpecLibrary() {
         key: spec.key,
         payload: {
           slotValues: values,
+          // 选中的模型：清单里挑的那款。不传则用模板的固定模型。
+          model: modelId,
           // 使用者选的运行时参数（计费模式等）：随这次编译走，不落进模板版本。
           ...(Object.keys(userChoices).length ? {paramOverrides: userChoices} : {}),
         },
@@ -435,7 +448,7 @@ export function SpecLibrary() {
                     <span className="shrink-0 rounded-full bg-primary-soft px-1.5 py-[1px] text-micro font-medium text-primary-deep ring-1 ring-inset ring-primary-line/60">
                       v{version.version}
                     </span>
-                    <span className="truncate text-ink-soft">{version.model}</span>
+                    <span className="truncate text-ink-soft">{modelId}</span>
                   </div>
                 </div>
                 <Link
@@ -451,6 +464,19 @@ export function SpecLibrary() {
                 8px 的全局滚动条会把槽位块挤窄。"stable" 让有没有滚动条两种情况等宽，
                 切模板时内容不会左右跳。 */}
             <div className="scroll-thin flex min-h-0 flex-1 flex-col gap-3.5 overflow-y-auto overscroll-contain px-4 py-3.5 [scrollbar-gutter:stable]">
+              {/* 作者声明了「允许选用的模型」才出现这个下拉：使用模板的人从
+                  清单里挑一款，而不是只能用一个写死的模型。只有一款时不出
+                  现（老模板的样子）。 */}
+              {allowedModels.length > 1 && (
+                <PanelSection title="模型">
+                  <Select
+                    block
+                    value={modelId}
+                    options={modelChoiceOptions(allowedModels, imageModels, videoModels)}
+                    onChange={event => setChosenModel(event.target.value)}
+                  />
+                </PanelSection>
+              )}
               {fillSlots.length > 0 ? (
                 <PanelSection
                   title="填入素材"
@@ -630,8 +656,8 @@ export function SpecLibrary() {
       <AssetPicker
         open={picker !== null}
         kind={slotTypeOf(pickerSlot?.type ?? 'image')}
-        /* 槽位的一级标签决定候选集：这里与封装页的固定选择器看的是同一批素材。 */
-        tagIds={pickerSlot?.tagId ? [pickerSlot.tagId] : []}
+        /* 槽位的标签决定候选集：这里与封装页的固定选择器看的是同一批素材。 */
+        tagIds={pickerSlot?.tagIds ?? []}
         selected={pickerSlot ? (values[pickerSlot.key] ?? []) : []}
         onClose={() => setPicker(null)}
         onToggle={togglePick}

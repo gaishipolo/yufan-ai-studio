@@ -15,12 +15,14 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import ConfigDict, Field, field_validator
+from pydantic import ConfigDict, Field, field_validator, model_validator
 
 from core.schema import CamelModel
 from core.template_spec import (
+    MAX_ALLOWED_MODELS,
     MAX_PROMPT,
     MAX_SLOT_REFS,
+    MAX_SLOT_TAGS,
     MAX_SLOTS,
     RefMode,
     SlotBinding,
@@ -52,10 +54,38 @@ class SpecSlotIn(StrictIn):
     label: str = Field(default="", max_length=80)
     usage: str = Field(default="", max_length=500)
     asset_id: str | None = Field(default=None, max_length=32)
-    #: 一级标签 id：**候选集范围**，不是内容。空 = 不限。固定与填写都只在这个
-    #: 标签（及其下级）里挑；编译不看它。
-    tag_id: str = Field(default="", max_length=32)
+    #: 候选集的标签 id（资产库 `library_tags`，**任意级别**）：**候选集范围**，
+    #: 不是内容。空 = 不限；非空 = 只在这几个标签（各自及其下级）里挑；编译不看它。
+    #:
+    #: 标签可以是分组、系列或具体词：槽位的标签是"圈定候选范围"，不是"打在
+    #: 素材上"，所以不必限叶子。多个标签之间是并集。
+    tag_ids: list[str] = Field(default_factory=list, max_length=MAX_SLOT_TAGS)
     position: int = Field(default=0, ge=0, le=MAX_SLOTS * 10)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_legacy_tag_id(cls, data: Any) -> Any:
+        """老槽位只有 `tagId`（单个），读回来时当成 `tagIds` 的第一项。
+
+        为什么要有这条：`extra="forbid"` 会把老草稿里的 `tagId` 判成"未知键"，
+        那份草稿**一打开就 422** —— 模板还在，只是没人能再编辑它。老模板要能
+        继续用、也能继续改，所以在这里把旧键翻译成新形状，而不是逼人去改库。
+
+        新的 `tagIds` 优先：两者同时出现时以新键为准（旧键只是被丢掉，不报错，
+        免得升级途中把一份还没保存的草稿挡在门外）。
+        """
+        if not isinstance(data, dict) or "tagId" not in data:
+            return data
+        payload = dict(data)
+        legacy = payload.pop("tagId")
+        if (
+            not payload.get("tagIds")
+            and not payload.get("tag_ids")
+            and isinstance(legacy, str)
+            and legacy
+        ):
+            payload["tagIds"] = [legacy]
+        return payload
 
 
 class TemplateSpecIn(StrictIn):
@@ -65,6 +95,11 @@ class TemplateSpecIn(StrictIn):
     name: str = Field(min_length=1, max_length=160)
     description: str = Field(default="", max_length=2000)
     model: str = Field(min_length=1, max_length=80)
+    #: 使用模板时**允许选用的模型清单**。空 = 只有 `model` 那一个（老模板不受影响）。
+    #:
+    #: 作者声明「这份模板能跑在哪几款模型上」，使用者从这份清单里挑，而不是
+    #: 只能用一个写死的模型。清单里的 id 必须存在于模型目录（发布时校验）。
+    allowed_models: list[str] = Field(default_factory=list, max_length=MAX_ALLOWED_MODELS)
     params: dict[str, Any] = Field(default_factory=dict)
     #: 整段提示词。需要可变的地方用 `text` 槽位，不要指望模板库改文字。
     prompt: str = Field(min_length=1, max_length=MAX_PROMPT)
@@ -93,6 +128,8 @@ class SpecVersionOut(CamelModel):
 
     version: int
     model: str
+    #: 使用模板时允许选用的模型清单（发布时冻结）。空 = 只有 `model` 那一个。
+    allowed_models: list[str] = Field(default_factory=list)
     params: dict[str, Any]
     prompt: str
     slots: list[SpecSlotOut]
@@ -152,6 +189,12 @@ class SpecCompileIn(StrictIn):
     """
 
     version: int | None = Field(default=None, ge=1)
+    #: 使用者挑的模型。必须落在该版本允许的清单里（清单为空 = 只有固定模型）。
+    #:
+    #: 不传 = 用模板的固定模型（老调用方的默认行为）。传了而清单里没有它，
+    #: 直接 400 —— 静默改成固定模型等于「用户选的东西没生效」，而页面看起来
+    #: 一切正常。
+    model: str | None = Field(default=None, max_length=80)
     slot_values: dict[str, list[str]] = Field(default_factory=dict)
     #: 使用者在填表时对「运行时参数」的选择（如计费模式）。
     #:

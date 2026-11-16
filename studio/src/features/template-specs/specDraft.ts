@@ -106,6 +106,7 @@ export function blankSpec(): TemplateSpecIn {
     name: '',
     description: '',
     model: '',
+    allowedModels: [],
     params: {},
     prompt: '',
     slots: [blankSlot(0, 'image', [])],
@@ -122,6 +123,7 @@ export function fromSpecOut(out: TemplateSpecOut): TemplateSpecIn {
       name: out.name,
       description: out.description,
       model: out.latest.model,
+      allowedModels: out.latest.allowedModels ?? [],
       params: out.latest.params ?? {},
       prompt: out.latest.prompt ?? '',
       slots: (out.latest.slots ?? []).map((slot, index) => ({...slot, position: index})),
@@ -130,6 +132,23 @@ export function fromSpecOut(out: TemplateSpecOut): TemplateSpecIn {
     };
   }
   return {...blankSpec(), key: out.key, name: out.name, revision: out.revision};
+}
+
+/**
+ * 模板能跑的全部模型：**固定模型 + 作者声明的允许清单**（去重、保序）。
+ *
+ * 固定模型永远在可选项里：它是模板自己的模型，作者没把它写进清单也不该让
+ * 使用者无路可走。清单是「再加几款让使用者挑」的声明，所以是并集而不是替换。
+ *
+ * 与后端 `spec_service.effective_model_ids` 同一口径 —— 两处算法一旦漂移，
+ * 就会变成「界面里能选、提交时被拒」。
+ */
+export function effectiveModelIds(fixedModel: string, allowedModels: string[]): string[] {
+  const ids = fixedModel ? [fixedModel] : [];
+  for (const modelId of allowedModels) {
+    if (modelId && !ids.includes(modelId)) ids.push(modelId);
+  }
+  return ids;
 }
 
 /**
@@ -289,10 +308,10 @@ function slotRefPattern(key?: string): RegExp {
 }
 
 /**
- * 发布闸门的前端预检：哪些槽位还缺一级标签。
+ * 发布闸门的前端预检：哪些槽位还缺标签。
  *
- * 规则与后端 `_check_executable` 同一条：**要让用户填的**图片/视频槽位必须有
- * 一级标签（模板库按「标签 · 槽位名」分组让人挑素材，没有标签只能退化成
+ * 规则与后端 `_check_executable` 同一条：**要让用户填的**图片/视频槽位必须圈
+ * 至少一个标签（模板库按「标签 · 槽位名」分组让人挑素材，没有标签只能退化成
  * "全部素材"）。固定槽位、文本、音频、封装都不要求。
  *
  * 放在这里而不是组件里：保存草稿不判、预检与发布都要判，组件只管把结果讲给用户。
@@ -302,7 +321,7 @@ export function slotsMissingTag(slots: SpecSlotIn[]): string[] {
     const needsTag =
       (slot.type === 'image' || slot.type === 'video') &&
       (slot.binding ?? 'user') === 'user' &&
-      !slot.tagId;
+      !slot.tagIds?.length;
     if (!needsTag) return [];
     // 报给用户的名字用界面上的叫法（展示名，没填就用「类型 + 第几个」）——
     // 别把 `image_1` 这种内部 key 甩到错误提示里。

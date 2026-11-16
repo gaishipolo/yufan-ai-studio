@@ -9,6 +9,7 @@ import {
   blankSlot,
   blankSpec,
   dropUserSelectableParams,
+  effectiveModelIds,
   fromSpecOut,
   insertRef,
   nextSlotKey,
@@ -156,18 +157,18 @@ describe('模板规格草稿', () => {
     expect(stripSlotRefs('{{ slot:hero }} 与 {{slot:hero }}', 'hero').count).toBe(2);
   });
 
-  it('发布前预检：只有「让用户填的图片/视频」槽位缺一级标签', () => {
+  it('发布前预检：只有「让用户填的图片/视频」槽位缺标签', () => {
     const slots = [
-      {...blankSlot(0, 'image', []), key: 'image_1', tagId: ''},
-      {...blankSlot(1, 'video', []), key: 'video_1', tagId: ''},
+      {...blankSlot(0, 'image', []), key: 'image_1', tagIds: []},
+      {...blankSlot(1, 'video', []), key: 'video_1', tagIds: []},
       // 固定槽位、文本、音频都不要求标签
-      {...blankSlot(2, 'image', []), key: 'image_2', binding: 'fixed' as const, tagId: ''},
-      {...blankSlot(3, 'text', []), key: 'text_1', tagId: ''},
-      {...blankSlot(4, 'image', []), key: 'image_3', tagId: 'tag-1'},
+      {...blankSlot(2, 'image', []), key: 'image_2', binding: 'fixed' as const, tagIds: []},
+      {...blankSlot(3, 'text', []), key: 'text_1', tagIds: []},
+      {...blankSlot(4, 'image', []), key: 'image_3', tagIds: ['tag-1']},
     ];
     expect(slotsMissingTag(slots)).toEqual(['图片 1', '成片 2']);
     // 都填了就是空数组（保存草稿不判，预检与发布判）
-    expect(slotsMissingTag([{...slots[0], tagId: 'tag-1'}])).toEqual([]);
+    expect(slotsMissingTag([{...slots[0], tagIds: ['tag-1']}])).toEqual([]);
   });
 
   it('已发布但没有草稿时，用最近发布版本还原草稿', () => {
@@ -233,5 +234,50 @@ describe('dropUserSelectableParams · 作者不该写死「使用者选的」参
     const spec = blankSpec();
     spec.params = {billingMode: 'credits'};
     expect(dropUserSelectableParams(spec, ['billingMode']).params).toEqual({});
+  });
+});
+
+
+describe('允许选用的模型', () => {
+  it('新草稿的清单是空的 —— 空 = 只有固定模型（老行为）', () => {
+    expect(blankSpec().allowedModels).toEqual([]);
+  });
+
+  it('可选项 = 固定模型 + 清单：去重、保序，固定模型在前', () => {
+    // 固定模型永远在可选项里：它是模板自己的模型，作者没把它写进清单也不该
+    // 让使用者无路可走。
+    expect(effectiveModelIds('a', ['b', 'c'])).toEqual(['a', 'b', 'c']);
+    expect(effectiveModelIds('a', ['a', 'b'])).toEqual(['a', 'b']);
+    expect(effectiveModelIds('a', [])).toEqual(['a']);
+    expect(effectiveModelIds('', ['b'])).toEqual(['b']);
+  });
+
+  it('已发布但没有草稿时，用最近发布版本还原草稿（清单也要带上）', () => {
+    const out: TemplateSpecOut = {
+      id: 'm2',
+      key: 'demo',
+      name: '演示',
+      description: '',
+      ownerId: 'u1',
+      status: 'published',
+      revision: 4,
+      fingerprint: 'fp',
+      currentVersion: 3,
+      createdAt: '2026-11-17T00:00:00Z',
+      updatedAt: '2026-11-17T00:00:00Z',
+      latest: {
+        version: 3,
+        model: 'libtv-wan3-replacement',
+        allowedModels: ['bailian-wan3-replacement'],
+        params: {},
+        prompt: '固定',
+        slots: [],
+        fingerprint: 'fp3',
+        publishedBy: 'u1',
+        publishedAt: '2026-11-17T00:00:00Z',
+      },
+    };
+    const draft = fromSpecOut(out);
+    expect(draft.allowedModels).toEqual(['bailian-wan3-replacement']);
   });
 });

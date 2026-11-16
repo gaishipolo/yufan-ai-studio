@@ -91,7 +91,7 @@ def _spec_draft(video: str, *, key: str) -> dict[str, Any]:
                 # 一组多图 = 一个可多值的图片槽位：使用者挑几张就占几个号。
                 "type": "image",
                 "binding": "user",
-                "tagId": _TAG,
+                "tagIds": [_TAG],
                 "minCount": 1,
                 "maxCount": 3,
                 "position": 1,

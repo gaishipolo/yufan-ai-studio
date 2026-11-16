@@ -16,6 +16,7 @@ import {
 import { libraryApi } from '@/entities/library/api/library.api';
 import { useLibraryDetail, useLibraryTags } from '@/entities/library/api/library.queries';
 import { viewQuery } from '@/entities/library/model/types';
+import { scopeTagOptions } from '@/entities/library/model/tagTree';
 import { CaseCover } from '@/entities/library/ui/CaseCover';
 import { AssetPreview } from '@/entities/library/ui/AssetPreview';
 import {
@@ -30,6 +31,7 @@ import {
   EmptyState,
   FormField,
   Modal,
+  MultiSelect,
   PageHeader,
   Select,
   TextInput,
@@ -64,8 +66,6 @@ const TYPE_OPTIONS = SLOT_TYPES.map(type => ({
   label: SLOT_TYPE_LABELS[type],
 }));
 
-/** 一级标签的「不限」哨兵：空串表示候选集不收窄。 */
-const TAG_ANY = '';
 
 const STATUS_LABELS: Record<string, string> = {
   draft: '草稿',
@@ -87,6 +87,13 @@ export function SpecWorkspace() {
   const videoModels = useModels('video');
   const imageModels = useModels('image');
   const models = useMemo(() => [...videoModels, ...imageModels], [videoModels, imageModels]);
+  /* 「允许选用的模型」的候选来源：模型目录里的全部模型。
+     固定模型也在里面 —— 作者把它写进清单不算错（它本来就一直可用），
+     清单只是**再加几款让使用者挑**。 */
+  const modelOptions = useMemo(
+    () => models.map(item => ({value: item.id, label: item.label})),
+    [models],
+  );
 
   const [draft, setDraft] = useState<TemplateSpecIn | null>(null);
   const [view, setView] = useState<'list' | 'trash'>('list');
@@ -138,19 +145,12 @@ export function SpecWorkspace() {
       .map(([key]) => key);
   }, [models, draft?.model]);
 
-  /* 一级标签：资产库的两级词表，槽位只用**一级**（二级是同一句话的细分，
-     拿来当候选集范围反而让人选不出来）。数量按全库算，跟槽位类型无关 ——
-     这里的用途是「挑范围」，不是「看有多少条」。 */
+  /* 槽位能圈**任意级别**的标签（一级分组 / 二级系列 / 三级具体词）：槽位的标签
+     是「圈定候选范围」，不是「打在素材上」，所以不必限叶子 —— 圈一个分组正是
+     它的用途。数量按全库算，跟槽位类型无关：这里的用途是「挑范围」，不是
+     「看有多少条」。 */
   const tags = useLibraryTags(viewQuery('all'));
-  const tagOptions = useMemo(
-    () => [
-      {value: TAG_ANY, label: '不限'},
-      ...(tags.data ?? [])
-        .filter(tag => (tag.depth ?? (tag.parentId ? 2 : 1)) === 1)
-        .map(tag => ({value: tag.id, label: tag.name})),
-    ],
-    [tags.data],
-  );
+  const tagOptions = useMemo(() => scopeTagOptions(tags.data ?? []), [tags.data]);
 
   const clear = () => {
     setError('');
@@ -491,6 +491,21 @@ export function SpecWorkspace() {
                 />
               </FormField>
             </div>
+            {/* 允许选用的模型：作者声明「这份模板能跑在哪几款模型上」，使用模板的
+                人从这份清单里挑，而不是只能用一个写死的模型。
+                清单为空 = 只有固定模型（老模板的行为，一条都不变）。 */}
+            <FormField
+              className="mt-3"
+              label="允许选用的模型"
+              hint="使用模板的人可以从这几款里挑"
+            >
+              <MultiSelect
+                options={modelOptions}
+                value={draft.allowedModels ?? []}
+                onChange={values => setDraft({...draft, allowedModels: values})}
+                placeholder="只有固定模型"
+              />
+            </FormField>
             {paramControls.length > 0 && (
               <ParamFields
                 className="mt-3"
@@ -658,9 +673,9 @@ export function SpecWorkspace() {
             ? picker.kind
             : slotTypeOf(pickerSlot?.type ?? 'image')
         }
-        /* 一级标签是槽位的候选集范围：封装页挑固定素材时也要收窄，
+        /* 槽位的标签就是候选集范围：封装页挑固定素材时也要收窄，
            否则作者能选到模板使用者那边根本看不到的东西。 */
-        tagIds={picker?.target === 'slot' && pickerSlot?.tagId ? [pickerSlot.tagId] : []}
+        tagIds={picker?.target === 'slot' ? (pickerSlot?.tagIds ?? []) : []}
         selected={
           picker === null
             ? []

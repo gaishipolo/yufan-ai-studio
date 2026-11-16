@@ -30,7 +30,7 @@ from core.context import CurrentUser
 from core.exceptions import BadRequest, Conflict, NotFound
 from core.param_schema import resolve_params
 from core.ports.library_lookup import get_library_lookup
-from core.ports.model_generation import get_model_generation
+from core.ports.model_generation import ModelSummary, get_model_generation
 from core.template_spec import (
     EXECUTION_PROMPT_LIMIT,
     MAX_SLOT_REFS,
@@ -74,6 +74,7 @@ def to_core(payload: TemplateSpecIn) -> TemplateSpec:
         name=payload.name,
         description=payload.description,
         model=payload.model,
+        allowed_models=tuple(payload.allowed_models),
         params=dict(payload.params),
         prompt=payload.prompt,
         slots=tuple(
@@ -87,7 +88,7 @@ def to_core(payload: TemplateSpecIn) -> TemplateSpec:
                 label=slot.label,
                 usage=slot.usage,
                 asset_id=slot.asset_id,
-                tag_id=slot.tag_id,
+                tag_ids=tuple(slot.tag_ids),
                 position=slot.position,
             )
             for slot in payload.slots
@@ -108,6 +109,22 @@ def fingerprint_of(payload: TemplateSpecIn) -> str:
     ).hexdigest()
 
 
+def _slot_tag_ids(row: TemplateSpecSlot) -> list[str]:
+    """读一个槽位的候选集标签。
+
+    新行写在 `tag_ids`（JSON 列表）；老行只有 `tag_id`（一个）—— 读的时候退回
+    它，**老模板才能继续用**（迁移不做回填，见 `d9e4f1a83c07`）。
+
+    回退写在**读侧**而不是靠迁移回填：回填要动数据、还要处理 JSON 列的方言
+    差异；而"读的时候退回旧的"一次就够 —— 老模板照样能用，只是作者下次保存、
+    再发布之后才会写成新形状。
+    """
+    ids = [item for item in (row.tag_ids or []) if item]
+    if ids:
+        return ids
+    return [row.tag_id] if row.tag_id else []
+
+
 def _slot_out(row: TemplateSpecSlot) -> SpecSlotOut:
     return SpecSlotOut(
         key=row.slot_key,
@@ -119,7 +136,7 @@ def _slot_out(row: TemplateSpecSlot) -> SpecSlotOut:
         label=row.label,
         usage=row.usage_text,
         asset_id=row.asset_id,
-        tag_id=row.tag_id,
+        tag_ids=_slot_tag_ids(row),
         position=row.position,
     )
 
@@ -149,6 +166,7 @@ def _spec_out(
             SpecVersionOut(
                 version=latest.version,
                 model=latest.model,
+                allowed_models=list(latest.allowed_models or []),
                 params=dict(latest.params or {}),
                 prompt=latest.prompt,
                 slots=[_slot_out(slot) for slot in slots],
@@ -222,8 +240,8 @@ def _check_executable(spec: TemplateSpec) -> None:
             "（通用生成任务的 prompt 上限）"
         )
 
-    # 模板库的填表区按「一级标签 · 槽位名」分组展示候选素材，所以**要让用户填的
-    # 图片/视频槽位必须有一个一级标签**：没有标签时那一段只能退化成"全部素材"，
+    # 模板库的填表区按「标签 · 槽位名」分组展示候选素材，所以**要让用户填的
+    # 图片/视频槽位必须圈至少一个标签**：没有标签时那一段只能退化成"全部素材"，
     # 素材一多就没法挑（这正是这一轮要消灭的形态）。
     #
     # 只要求 `binding=user`：固定槽位的内容作者已经选死了，模板使用者根本不挑，
@@ -232,13 +250,28 @@ def _check_executable(spec: TemplateSpec) -> None:
     missing = [
         slot.label.strip() or slot.key
         for slot in spec.slots
-        if slot.type in ("image", "video") and slot.binding == "user" and not slot.tag_id
+        if slot.type in ("image", "video") and slot.binding == "user" and not slot.tag_ids
     ]
     if missing:
         raise BadRequest(
-            "这些槽位要给一级标签（模板库按标签分组让用户挑素材）："
+            "这些槽位要圈标签（模板库按标签分组让用户挑素材）："
             + "、".join(missing)
         )
+
+
+def effective_model_ids(
+    fixed_model: str, allowed_models: Sequence[str]
+) -> tuple[str, ...]:
+    """这份模板能跑的全部模型：**固定模型 + 作者声明的允许清单**（去重、保序）。
+
+    固定模型永远在可选项里：它是模板自己的模型，作者没把它写进清单也不该让
+    使用者无路可走。清单是「再加几款让使用者挑」的声明，所以是并集而不是替换。
+    """
+    ids = [fixed_model]
+    for model_id in allowed_models:
+        if model_id not in ids:
+            ids.append(model_id)
+    return tuple(ids)
 
 
 async def _check_model(spec: TemplateSpec) -> None:
@@ -246,16 +279,25 @@ async def _check_model(spec: TemplateSpec) -> None:
 
     不做这一步的话，发布成功、用户在模板库填完表、点提交才被 422 —— 那时候
     用户已经贴不上原因了（"前几天还好好的"）。
+
+    清单里的**每一款**都要过同一道闸：使用者挑的是清单里的某一款，挑到哪一款
+    都不该被拒 —— 否则「清单里第三款一选就报错」这种坑要等使用者自己踩到。
     """
     catalog = {item.id: item for item in get_model_generation().models()}
-    model = catalog.get(spec.model)
-    if model is None:
-        raise BadRequest(f"模型不存在或未启用：{spec.model}")
+    for model_id in effective_model_ids(spec.model, spec.allowed_models):
+        model = catalog.get(model_id)
+        if model is None:
+            raise BadRequest(f"模型不存在或未启用：{model_id}")
+        _check_model_params(spec, model)
+
+
+def _check_model_params(spec: TemplateSpec, model: ModelSummary) -> None:
+    """一款模型的参数与参考素材上限能不能承接这份模板。"""
     schema = dict(model.param_schema or {})
     unknown = sorted(set(spec.params) - set(schema))
     if unknown:
         raise BadRequest(
-            f"模型 {spec.model} 不支持参数 {'、'.join(unknown)}；"
+            f"模型 {model.id} 不支持参数 {'、'.join(unknown)}；"
             f"可用：{'、'.join(sorted(schema)) or '（无）'}"
         )
     # 标了 `userSelectable` 的参数**由使用模板的人选**，作者不许写死。
@@ -277,7 +319,7 @@ async def _check_model(spec: TemplateSpec) -> None:
         )
     mixed = [slot for slot in spec.slots if slot.ref_mode == "mixed"]
     if mixed and model.max_references == 0:
-        raise BadRequest(f"模型 {spec.model} 不接受参考素材，去掉需要编号的槽位")
+        raise BadRequest(f"模型 {model.id} 不接受参考素材，去掉需要编号的槽位")
     # 固定槽位是确定的（1 个），用户槽位按上限算 —— 超了现在就报，别等提交。
     upper = sum(
         1 if slot.binding == "fixed" else slot.max_count for slot in mixed
@@ -399,6 +441,7 @@ async def publish(session: AsyncSession, actor: CurrentUser, key: str) -> SpecPu
         spec_id=head.id,
         version=version,
         model=spec.model,
+        allowed_models=list(spec.allowed_models),
         params=dict(spec.params),
         prompt=spec.prompt,
         fingerprint=fingerprint,
@@ -419,7 +462,10 @@ async def publish(session: AsyncSession, actor: CurrentUser, key: str) -> SpecPu
                 label=slot.label,
                 usage_text=slot.usage,
                 asset_id=slot.asset_id,
-                tag_id=slot.tag_id,
+                tag_ids=list(slot.tag_ids),
+                # 老列也填上（记第一个标签）：降级回旧代码时它还能看懂这一行，
+                # 代价只是「多标签」退化成「第一个标签」。
+                tag_id=slot.tag_ids[0] if slot.tag_ids else "",
                 position=slot.position,
             )
         )
@@ -592,10 +638,21 @@ async def compile_for(
     if row is None:
         raise NotFound(f"配置 {key} 没有第 {version_no} 版")
     slots = await _slots(session, row.id)
+    allowed = tuple(row.allowed_models or ())
+    effective = effective_model_ids(row.model, allowed)
+    # 使用者挑的模型必须在清单里：静默改成固定模型等于「用户选的东西没生效」，
+    # 而页面看起来一切正常（模型名还显示着他选的那款）。
+    chosen = (payload.model or row.model).strip()
+    if chosen not in effective:
+        raise BadRequest(
+            f"模型不在该模板允许的清单里：{chosen}；"
+            f"可选：{'、'.join(effective)}"
+        )
     spec = TemplateSpec(
         key=head.spec_key,
         name=head.name,
-        model=row.model,
+        model=chosen,
+        allowed_models=allowed,
         params=dict(row.params or {}),
         prompt=row.prompt,
         slots=tuple(_slot_core(item) for item in slots),
@@ -608,7 +665,10 @@ async def compile_for(
     if payload.param_overrides:
         compiled = replace(
             compiled,
-            params={**compiled.params, **_checked_overrides(spec.model, payload.param_overrides)},
+            params={
+                **compiled.params,
+                **_checked_overrides(chosen, payload.param_overrides),
+            },
         )
     # 展开后的成品才是真正要发出去的那段：`{{slot:key*}}` 一次展开可能多出几十字。
     if len(compiled.prompt) > EXECUTION_PROMPT_LIMIT:
@@ -668,7 +728,7 @@ def _slot_core(row: TemplateSpecSlot) -> InputSlot:
         label=row.label,
         usage=row.usage_text,
         asset_id=row.asset_id,
-        tag_id=row.tag_id,
+        tag_ids=tuple(_slot_tag_ids(row)),
         position=row.position,
     )
 

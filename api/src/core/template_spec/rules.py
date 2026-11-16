@@ -11,7 +11,9 @@ import re
 
 from core.exceptions import BadRequest
 from core.template_spec.models import (
+    MAX_ALLOWED_MODELS,
     MAX_PROMPT,
+    MAX_SLOT_TAGS,
     MAX_SLOTS,
     SLOT_TYPES,
     InputSlot,
@@ -43,6 +45,7 @@ def validate_spec(spec: TemplateSpec) -> None:
         raise BadRequest("模板名称不能为空")
     if not spec.model.strip():
         raise BadRequest("必须选择模型")
+    _validate_allowed_models(spec.allowed_models)
     if len(spec.slots) > MAX_SLOTS:
         raise BadRequest(f"槽位不能超过 {MAX_SLOTS} 个")
 
@@ -81,6 +84,28 @@ def validate_spec(spec: TemplateSpec) -> None:
         raise BadRequest("提示词不能为空")
 
 
+def _validate_allowed_models(models: tuple[str, ...]) -> None:
+    """「允许选用的模型清单」的结构校验。
+
+    只管**形状**（不碰目录）：模型 id 是否真的存在由 `_check_model` 在发布前查
+    目录 —— 结构校验是纯函数，不碰 session。
+
+    重复项要挡：同一个模型写两遍不会让使用者多一个选项，只会让清单看起来像
+    「作者手滑」，而清单是要给人读的。
+    """
+    if len(models) > MAX_ALLOWED_MODELS:
+        raise BadRequest(f"允许选用的模型不能超过 {MAX_ALLOWED_MODELS} 个")
+    seen: set[str] = set()
+    for model_id in models:
+        if not model_id.strip():
+            raise BadRequest("允许选用的模型 id 不能为空")
+        if len(model_id) > 80:
+            raise BadRequest(f"允许选用的模型 id 不合法：{model_id}")
+        if model_id in seen:
+            raise BadRequest(f"允许选用的模型重复：{model_id}")
+        seen.add(model_id)
+
+
 def _validate_slot(slot: InputSlot) -> None:
     if slot.type not in SLOT_TYPES:
         raise BadRequest(f"槽位「{slot.key}」的类型无效：{slot.type}")
@@ -102,5 +127,8 @@ def _validate_slot(slot: InputSlot) -> None:
         raise BadRequest(f"音频槽位「{slot.key}」最多 3 段")
     # 标签只约束候选集，不参与编译；这里只拦"明显不是 id 的字符串"，
     # 不查库（结构校验是纯函数，不碰 session）。
-    if slot.tag_id and (len(slot.tag_id) > 32 or any(c.isspace() for c in slot.tag_id)):
-        raise BadRequest(f"槽位「{slot.key}」的一级标签 id 不合法")
+    if len(slot.tag_ids) > MAX_SLOT_TAGS:
+        raise BadRequest(f"槽位「{slot.key}」最多圈 {MAX_SLOT_TAGS} 个标签")
+    for tag_id in slot.tag_ids:
+        if not tag_id or len(tag_id) > 32 or any(c.isspace() for c in tag_id):
+            raise BadRequest(f"槽位「{slot.key}」的标签 id 不合法")

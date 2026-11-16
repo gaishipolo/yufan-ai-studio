@@ -39,7 +39,7 @@ def _media(client: TestClient, headers: dict[str, str]) -> tuple[str, str, str]:
     return str(video["id"]), str(first["id"]), str(second["id"])
 
 
-#: 用户填的图片槽位必须带一级标签（发布前校验），这些用例不关心标签本身，
+#: 用户填的图片槽位必须圈标签（发布前校验），这些用例不关心标签本身，
 #: 用同一个占位 id —— 发布只检查"有没有给"，不检查"标签还在不在"（那个失败
 #: 在填表页表现为"这个标签下没有素材"，不拦发布）。
 _TAG = "tag-spec-tests"
@@ -74,7 +74,7 @@ def _draft(
                 "key": "hero",
                 "type": "image",
                 "binding": "user",
-                "tagId": _TAG,
+                "tagIds": [_TAG],
                 "minCount": 1,
                 "maxCount": 1,
                 "position": 1,
@@ -84,7 +84,7 @@ def _draft(
                 "key": "note",
                 "type": "image",
                 "binding": "user",
-                "tagId": _TAG,
+                "tagIds": [_TAG],
                 "minCount": 0,
                 "maxCount": 2,
                 "position": 2,
@@ -357,12 +357,12 @@ def test_demo_asset_round_trips_but_never_enters_the_snapshot(
     assert updated["currentVersion"] == 1
 
 
-def test_user_filled_media_slot_must_declare_a_top_level_tag(
+def test_user_filled_media_slot_must_declare_a_tag(
     client: TestClient,
 ) -> None:
-    """要让用户填的图片/视频槽位，发布前必须给一级标签。
+    """要让用户填的图片/视频槽位，发布前必须圈至少一个标签。
 
-    模板库的填表区按「一级标签 · 槽位名」分组，二级标签当分档；没有标签时那一段
+    模板库的填表区按「标签 · 槽位名」分组，标签当分档；没有标签时那一段
     只能退化成"全部素材"，素材一多就没法挑。所以这是**发布闸门**，而不是填表时
     才提醒 —— 发布时作者还在，能立刻补；等用户填到一半才发现，他补不了。
 
@@ -372,7 +372,7 @@ def test_user_filled_media_slot_must_declare_a_top_level_tag(
     video, first, second = _media(client, headers)
     draft = _draft(video, first, second)
     for slot in draft["slots"]:
-        slot.pop("tagId", None)
+        slot.pop("tagIds", None)
 
     # 草稿能存
     _save(client, headers, draft)
@@ -380,20 +380,20 @@ def test_user_filled_media_slot_must_declare_a_top_level_tag(
     # 预检与发布都拦，并指名是哪几个槽位
     checked = client.post(f"{API}/validate", json=draft, headers=headers)
     assert checked.status_code == 400, checked.text
-    assert "一级标签" in checked.json()["message"]
+    assert "标签" in checked.json()["message"]
     assert "主图" in checked.json()["message"]
 
     blocked = client.post(f"{API}/{draft['key']}/publish", headers=headers)
     assert blocked.status_code == 400, blocked.text
-    assert "一级标签" in blocked.json()["message"]
+    assert "标签" in blocked.json()["message"]
 
     # 只给一个不够：两个都要
-    draft["slots"][1]["tagId"] = _TAG
+    draft["slots"][1]["tagIds"] = [_TAG]
     still = client.post(f"{API}/validate", json=draft, headers=headers)
     assert still.status_code == 400, still.text
     assert "细节" in still.json()["message"]
 
-    draft["slots"][2]["tagId"] = _TAG
+    draft["slots"][2]["tagIds"] = [_TAG]
     ok = client.post(f"{API}/validate", json=draft, headers=headers)
     assert ok.status_code == 200, ok.text
 
@@ -408,7 +408,7 @@ def test_fixed_slot_does_not_need_a_tag(client: TestClient) -> None:
     video, first, second = _media(client, headers)
     draft = _draft(video, first, second)
     for slot in draft["slots"]:
-        slot.pop("tagId", None)
+        slot.pop("tagIds", None)
     draft["slots"] = [draft["slots"][0]]  # 只剩那个固定的 video 槽位
     draft["prompt"] = "{{slot:source}} 里的画面"
 
@@ -435,10 +435,12 @@ def test_slot_source_field_is_gone_and_rejected(client: TestClient) -> None:
 def test_slot_tag_limits_the_candidate_set_but_not_the_compile(
     client: TestClient,
 ) -> None:
-    """一级标签只是**候选集范围**：存得住、回得来，但编译不看它。
+    """标签只是**候选集范围**：存得住、回得来，但编译不看它。
 
-    封装页用它把「封装时固定」与「模板库填写」两处选择器收窄到同一个一级标签下；
+    封装页用它把「封装时固定」与「模板库填写」两处选择器收窄到同一批标签下；
     而提示词编号、参考素材顺序与它无关 —— 标签被删、被改名，已发布的版本照旧能编译。
+
+    槽位现在圈的是**一组**标签（任意级别）：候选集是这几个标签各自子树的并集。
     """
     headers = _headers(client)
     video, first, second = _media(client, headers)
@@ -447,15 +449,20 @@ def test_slot_tag_limits_the_candidate_set_but_not_the_compile(
     )
     assert tag.status_code == 201, tag.text
     tag_id = tag.json()["data"]["id"]
+    other = client.post(
+        "/api/v1/library/tags", json={"name": f"角色-{suffix()}"}, headers=headers
+    )
+    assert other.status_code == 201, other.text
+    other_id = other.json()["data"]["id"]
 
     draft = _draft(video, first, second)
-    draft["slots"][1]["tagId"] = tag_id
+    draft["slots"][1]["tagIds"] = [tag_id, other_id]
     saved = _save(client, headers, draft)
-    assert saved["draft"]["slots"][1]["tagId"] == tag_id
+    assert saved["draft"]["slots"][1]["tagIds"] == [tag_id, other_id]
 
     client.post(f"{API}/{draft['key']}/publish", headers=headers)
     detail = client.get(f"{API}/{draft['key']}", headers=headers).json()["data"]
-    assert detail["latest"]["slots"][1]["tagId"] == tag_id
+    assert detail["latest"]["slots"][1]["tagIds"] == [tag_id, other_id]
 
     body = client.post(
         f"{API}/{draft['key']}/compile",
@@ -465,6 +472,35 @@ def test_slot_tag_limits_the_candidate_set_but_not_the_compile(
     assert body.status_code == 200, body.text
     # 编号与参考序完全不受标签影响
     assert body.json()["data"]["prompt"] == "8 秒 · 9:16 竖屏\n\n{{Mixed 2}} 与 ；原片 {{Mixed 1}}"
+
+
+def test_legacy_single_tag_slot_is_still_readable(client: TestClient) -> None:
+    """老槽位只有 `tagId`（一个）—— 读回来时当成 `tagIds` 的第一项。
+
+    为什么要有这条：契约从 `tagId` 换成了 `tagIds`，而 `extra="forbid"` 会把
+    老草稿里的 `tagId` 判成"未知键"，那份草稿**一打开就 422** —— 模板还在，
+    只是没人能再编辑它。老模板要能继续用、也能继续改。
+
+    这里走的是**契约层**的回退（草稿 JSON 里的旧键）；已发布槽位行那一侧的回退
+    在 `spec_service._slot_tag_ids`（新列 `tag_ids` 为空就退回旧的 `tag_id`），
+    由 `test_template_spec_models.py` 与迁移用例守着。
+    """
+    headers = _headers(client)
+    video, first, second = _media(client, headers)
+    draft = _draft(video, first, second)
+    for slot in draft["slots"]:
+        slot.pop("tagIds", None)
+    draft["slots"][1]["tagId"] = _TAG
+    draft["slots"][2]["tagId"] = _TAG
+
+    saved = _save(client, headers, draft)
+    assert saved["draft"]["slots"][1]["tagIds"] == [_TAG]
+
+    published = client.post(f"{API}/{draft['key']}/publish", headers=headers)
+    assert published.status_code == 200, published.text
+    detail = client.get(f"{API}/{draft['key']}", headers=headers).json()["data"]
+    assert detail["latest"]["slots"][1]["tagIds"] == [_TAG]
+    assert detail["latest"]["slots"][2]["tagIds"] == [_TAG]
 
 
 def test_compile_no_longer_accepts_prompt_override(client: TestClient) -> None:

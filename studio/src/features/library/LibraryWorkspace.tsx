@@ -17,6 +17,7 @@ import {
   type LibrarySortKey,
   type LibraryView,
 } from '@/entities/library/model/types';
+import { effectiveTagSelection } from '@/entities/library/model/tagTree';
 import {
   useBulkAction,
   useCreateDownload,
@@ -104,16 +105,26 @@ export function LibraryWorkspace() {
   );
 
   const tagScope = useMemo(() => viewQuery(view), [view]);
+  const tags = useLibraryTags(tagScope);
+  /*
+   * 发给后端的是**收敛后**的标签：跨链多选是并集，但同一条链上只按最具体的那
+   * 一层筛选（父的范围本来就含子，两个都留着范围会重复 —— 用户点「产品 /
+   * 3030」要的是 3030 那一档，不是整个产品线）。URL 里存的仍是用户点的全部，
+   * 所以标签栏的胶囊全都高亮，用户看得见自己圈了哪几档。
+   */
+  const effectiveTagIds = useMemo(
+    () => effectiveTagSelection(tags.data ?? [], tagIds),
+    [tags.data, tagIds],
+  );
   const list = useLibraryList({
     view,
     kind: kind === 'all' ? undefined : kind,
-    tagIds: tagIds.length ? tagIds : undefined,
+    tagIds: effectiveTagIds.length ? effectiveTagIds : undefined,
     keyword: debouncedKeyword || undefined,
     sort,
     page,
     pageSize: PAGE_SIZE,
   });
-  const tags = useLibraryTags(tagScope);
   const patch = usePatchAsset();
   const createTag = useCreateTagInline();
   const groups = useMyGroups();
@@ -197,8 +208,8 @@ export function LibraryWorkspace() {
 
   const fail = (error: Error) => toast(error.message, 'error');
 
-  /** 标签栏交回**完整**的选中数组：父子互斥的取舍在 Bar 里算，容器只写 URL。
-      URL 里只存最终 tag id、不另存「当前一级」，刷新或分享后两行仍然对得上。 */
+  /** 标签栏交回**完整**的选中数组（三个级别可跨链多选），容器只写 URL。
+      URL 里只存 tag id、不另存「当前一级」，刷新或分享后三行仍然对得上。 */
   function changeTags(next: string[]) {
     update({ tags: next.join(',') || null, page: null });
   }

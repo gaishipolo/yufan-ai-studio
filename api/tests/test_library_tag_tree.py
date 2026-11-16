@@ -113,6 +113,73 @@ def test_parent_count_is_deduped_union_and_filter_expands(client: TestClient, ap
     assert _filter_total(client, api, headers, [parent["id"], child["id"]]) == 4
 
 
+def test_three_level_multi_select_is_a_deduped_union(client: TestClient, api: str) -> None:
+    """三级标签任意组合：跨链多选是 OR，同一张图只算一次。
+
+    三处口径必须一致，否则「标签旁写 8、点进去只有 3 条」会立刻复现：
+
+    - 计数：一个标签 = 自身 + 全部下级，按**资产 id** 去重；
+    - 筛选：选中一级要带上它的二级与三级，选中二级要带上三级；
+    - 总数：`total` 与 `items` 同源，所以一条图挂了父子两个标签也只出现一次。
+
+    跨链多选（产品 + 角色）是并集；同一链上父子同时选中时，后端仍然是并集
+    （父的范围本来就含子），**界面**在发请求前会把同链的选择收敛成最具体的那
+    一层（见前端 `effectiveTagSelection`）—— 后端这一层只保证「不重复计数」。
+    """
+    _, headers = _setup(client, api)
+    mark = suffix()
+    product = _create(client, api, headers, f"产品-{mark}")
+    role = _create(client, api, headers, f"角色-{mark}")
+
+    a = upload_image(client, api, headers, name=f"multi-a-{mark}.png", color="tomato")
+    b = upload_image(client, api, headers, name=f"multi-b-{mark}.png", color="navy")
+    c = upload_image(client, api, headers, name=f"multi-c-{mark}.png", color="olive")
+    d = upload_image(client, api, headers, name=f"multi-d-{mark}.png", color="teal")
+    # 只能给**叶子**打标（分组标签不能直接打在素材上），所以顺序是：
+    # 先在一级上打标 → 建二级 → 在二级上打标 → 建三级 → 在三级上打标。
+    # 这样三条素材分别落在一级 / 二级 / 三级上，三个层级的「自身 + 全部下级」
+    # 才有不同的数。
+    _add_tags(client, api, headers, a["id"], [product["id"]])
+    _add_tags(client, api, headers, d["id"], [role["id"]])
+    series = _create(client, api, headers, f"3030-{mark}", product["id"])
+    _add_tags(client, api, headers, b["id"], [series["id"]])
+    leaf = _create(client, api, headers, f"T35-{mark}", series["id"])
+    _add_tags(client, api, headers, c["id"], [leaf["id"]])
+
+    listed = _tags(client, api, headers)
+    # 计数 = 自身 + 全部下级，按资产去重
+    assert listed[product["id"]]["assetCount"] == 3
+    assert listed[series["id"]]["assetCount"] == 2
+    assert listed[leaf["id"]]["assetCount"] == 1
+    assert listed[role["id"]]["assetCount"] == 1
+
+    # 筛选：选哪一级都带上它的全部下级
+    assert _filter_total(client, api, headers, [product["id"]]) == 3
+    assert _filter_total(client, api, headers, [series["id"]]) == 2
+    assert _filter_total(client, api, headers, [leaf["id"]]) == 1
+
+    # 跨链多选 = 并集
+    assert _filter_total(client, api, headers, [product["id"], role["id"]]) == 4
+    assert _filter_total(client, api, headers, [series["id"], role["id"]]) == 3
+    # 同一链上父子同时选中：父的范围含子，结果仍是父的范围（不重复计数）
+    assert _filter_total(client, api, headers, [product["id"], series["id"]]) == 3
+    assert _filter_total(client, api, headers, [series["id"], leaf["id"]]) == 2
+
+    # 三级 + 跨链一起选：并集，且一张图不会因为挂了两个标签而算两次
+    assert _filter_total(client, api, headers, [leaf["id"], role["id"]]) == 2
+
+    # 总数与列表条数同源：翻页不会出现「总数 4、这一页只有 3 条」
+    response = client.get(
+        f"{api}/library/assets",
+        params=[("tagIds", product["id"]), ("tagIds", role["id"]), ("pageSize", 2)],
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+    page = response.json()["data"]
+    assert page["total"] == 4
+    assert len(page["items"]) == 2
+
+
 def test_group_tags_cannot_be_assigned_but_leaf_tags_can(client: TestClient, api: str) -> None:
     _, headers = _setup(client, api)
     mark = suffix()

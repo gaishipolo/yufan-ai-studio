@@ -12138,6 +12138,18 @@
             ],
             "title": "Version"
           },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 80
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
           "slotValues": {
             "additionalProperties": {
               "items": {
@@ -12300,11 +12312,13 @@
             ],
             "title": "Assetid"
           },
-          "tagId": {
-            "type": "string",
-            "maxLength": 32,
-            "title": "Tagid",
-            "default": ""
+          "tagIds": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 20,
+            "title": "Tagids"
           },
           "position": {
             "type": "integer",
@@ -12395,11 +12409,13 @@
             ],
             "title": "Assetid"
           },
-          "tagId": {
-            "type": "string",
-            "maxLength": 32,
-            "title": "Tagid",
-            "default": ""
+          "tagIds": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 20,
+            "title": "Tagids"
           },
           "position": {
             "type": "integer",
@@ -12445,6 +12461,13 @@
           "model": {
             "type": "string",
             "title": "Model"
+          },
+          "allowedModels": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Allowedmodels"
           },
           "params": {
             "additionalProperties": true,
@@ -13027,6 +13050,14 @@
             "maxLength": 80,
             "minLength": 1,
             "title": "Model"
+          },
+          "allowedModels": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 10,
+            "title": "Allowedmodels"
           },
           "params": {
             "additionalProperties": true,

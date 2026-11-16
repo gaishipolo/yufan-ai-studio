@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -12,14 +13,46 @@ vi.mock('@/entities/library/ui/AssetChip', () => ({
 }));
 
 const TAG_OPTIONS = [
-  {value: '', label: '不限'},
   {value: 'tag-1', label: '产品'},
+  {value: 'tag-2', label: '产品 / 3030'},
 ];
 
 const TYPE_OPTIONS = [
   {value: 'image', label: '图片'},
   {value: 'video', label: '成片'},
 ];
+
+/** 槽位卡片是**受控**组件：值由上层持有。测试里用一个有状态的外壳，
+ *  这样「勾一个再勾一个」才是真的累加，而不是每次都从空值开始。 */
+function SlotHarness({
+  base,
+  onPatch,
+}: {
+  base: SpecSlotIn;
+  onPatch: (patch: Partial<SpecSlotIn>) => void;
+}) {
+  const [current, setCurrent] = useState<SpecSlotIn>(base);
+  const patch = (next: Partial<SpecSlotIn>) => {
+    onPatch(next);
+    setCurrent(previous => ({...previous, ...next}));
+  };
+  return (
+    <SlotCard
+      slot={current}
+      index={0}
+      dragging={false}
+      onDragStart={() => {}}
+      onDragEnd={() => {}}
+      onDragOver={() => {}}
+      onDrop={() => {}}
+      onPatch={patch}
+      onDelete={() => {}}
+      onPickAsset={() => {}}
+      tagOptions={TAG_OPTIONS}
+      typeOptions={TYPE_OPTIONS}
+    />
+  );
+}
 
 function renderSlot(slot: Partial<SpecSlotIn> = {}) {
   const onPatch = vi.fn();
@@ -40,20 +73,7 @@ function renderSlot(slot: Partial<SpecSlotIn> = {}) {
   });
   const view = render(
     <QueryClientProvider client={client}>
-      <SlotCard
-        slot={base}
-        index={0}
-        dragging={false}
-        onDragStart={() => {}}
-        onDragEnd={() => {}}
-        onDragOver={() => {}}
-        onDrop={() => {}}
-        onPatch={onPatch}
-        onDelete={() => {}}
-        onPickAsset={() => {}}
-        tagOptions={TAG_OPTIONS}
-        typeOptions={TYPE_OPTIONS}
-      />
+      <SlotHarness base={base} onPatch={onPatch} />
     </QueryClientProvider>,
   );
   return {onPatch, ...view};
@@ -103,14 +123,31 @@ describe('槽位卡片', () => {
     );
   });
 
-  it('缺一级标签时主行给出醒目提示（发布闸门）', () => {
-    renderSlot({type: 'image', binding: 'user', tagId: ''});
-    expect(screen.getByText(/缺一级标签/)).toBeInTheDocument();
+  it('缺标签时主行给出醒目提示（发布闸门）', () => {
+    renderSlot({type: 'image', binding: 'user', tagIds: []});
+    expect(screen.getByText(/缺标签/)).toBeInTheDocument();
   });
 
-  it('固定槽位不要求一级标签', () => {
-    renderSlot({type: 'image', binding: 'fixed', tagId: ''});
-    expect(screen.queryByText(/缺一级标签/)).not.toBeInTheDocument();
+  it('固定槽位不要求标签', () => {
+    renderSlot({type: 'image', binding: 'fixed', tagIds: []});
+    expect(screen.queryByText(/缺标签/)).not.toBeInTheDocument();
+  });
+
+  it('候选标签能多选：勾一个再勾一个，两个都交回去', async () => {
+    const user = userEvent.setup();
+    const {onPatch} = renderSlot({type: 'image', binding: 'user', tagIds: []});
+
+    await user.click(screen.getByRole('button', {name: '展开更多设置'}));
+    // 多选下拉的收起态：FormField 的 label 指向它，所以可访问名是「候选标签」
+    await user.click(screen.getByRole('button', {name: '候选标签'}));
+    await user.click(screen.getByRole('checkbox', {name: '产品'}));
+    expect(onPatch).toHaveBeenCalledWith(expect.objectContaining({tagIds: ['tag-1']}));
+
+    // 再勾一个 → 两个都交回去（多个标签之间是并集）
+    await user.click(screen.getByRole('checkbox', {name: '产品 / 3030'}));
+    expect(onPatch).toHaveBeenCalledWith(
+      expect.objectContaining({tagIds: ['tag-1', 'tag-2']}),
+    );
   });
 
   it('固定槽位显示已选素材与「更换」按钮', () => {

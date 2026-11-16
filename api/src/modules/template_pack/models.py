@@ -115,6 +115,12 @@ class TemplateSpecVersion(Base, UUIDMixin):
     version: Mapped[int] = mapped_column(Integer, nullable=False)
     #: 发布时该模型必须在目录里存在；参数键必须落在它的 `param_schema` 内。
     model: Mapped[str] = mapped_column(String(80), nullable=False)
+    #: 使用模板时**允许选用的模型清单**（发布时冻结）。空 = 只有 `model` 那一个。
+    #:
+    #: 为什么进发布快照而不是只存在草稿里：使用者读的是**发布版本**，清单是
+    #: 「这份模板能跑在哪几款模型上」的一部分，跟着版本走才对 —— 草稿改了清单
+    #: 但没发版，使用者看到的就还是旧清单。
+    allowed_models: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
     params: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
     #: 整段提示词。**不分固定段 / 可编辑段**（2026-11-14）：模板库不改文字，
     #: 需要可变的地方用 `text` 槽位（编译成 `{{Text N}}` 由执行层注入正文）。
@@ -133,7 +139,7 @@ class TemplateSpecSlot(Base, UUIDMixin):
     数量算出来，见 `core/template_spec/compile.py`）。
 
     **没有 `source` 列**（2026-11-14 删）：`type` 一根轴表达"要什么"，两根轴并存
-    时接口能收到自相矛盾的组合。`tag_id` 只是候选集范围。
+    时接口能收到自相矛盾的组合。`tag_ids` 只是候选集范围。
     """
 
     __tablename__ = "template_spec_slots"
@@ -155,6 +161,12 @@ class TemplateSpecSlot(Base, UUIDMixin):
     label: Mapped[str] = mapped_column(String(80), default="", nullable=False)
     usage_text: Mapped[str] = mapped_column(String(500), default="", nullable=False)
     asset_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
-    #: 一级标签 id（候选集范围）。空串 = 不限。
+    #: 候选集的标签 id（任意级别；空 = 不限）。
+    #:
+    #: `tag_id` 是**老形状**（单个标签），保留着是为了让旧发布版本还能被读出来：
+    #: 新代码读 `tag_ids`，读不到时退回 `tag_id`（见 `spec_service._slot_out`）。
+    #: 它不再单独承担语义 —— 新写入的行两列都会填（`tag_id` 记第一个标签，
+    #: 纯粹是为了降级时旧代码还能看懂）。
+    tag_ids: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     tag_id: Mapped[str] = mapped_column(String(32), default="", nullable=False)
     position: Mapped[int] = mapped_column(Integer, nullable=False)
