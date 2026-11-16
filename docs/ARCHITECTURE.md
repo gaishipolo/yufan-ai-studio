@@ -56,7 +56,7 @@
    `studio/src/shared/api/schema.ts`、`studio/src/shared/api/permissions.ts` 四份都由
    `app export-openapi` 生成（权限点那份来自模块声明，不从 OpenAPI 抽）。
    手改任何一份，`tests/test_openapi_contract.py` 会字节比对失败。
-3. **骨架不为业务开洞**：前端要往顶栏/侧栏加东西，用 `slots` / `nav` / `cards` 声明，
+3. **骨架不为业务开洞**：前端要往顶栏/侧栏加东西，用 `slots` / `nav` 声明，
    不要去改 `app/` 和 `widgets/` 里的骨架文件。
 
 ---
@@ -478,7 +478,7 @@
 | `modules/shots/module.ts` | 镜头库：路由 + 侧栏项 + 权限。 |
 | `modules/storyboards/module.ts` | 分镜模板：路由 + 侧栏项 + 权限。 |
 | `modules/image/module.ts` | 生图：路由 + 侧栏项 + 权限。 |
-| `modules/studio/module.ts` | 创作台：**模块清单示例**（路由 + 侧栏 + 顶部宫格卡片，三处一次声明）。 |
+| `modules/studio/module.ts` | 创作台：**模块清单示例**（路由 + 侧栏，两处一次声明）。 |
 | `modules/task-center/module.ts` | 任务中心：路由 + 导航 + 角标声明。 |
 | `modules/task-center/RunningTaskBadge.tsx` | 导航角标实现（模块自己取数，骨架不关心）。 |
 | `modules/usage/module.ts` | 用量看板：只声明路由与导航，页面是占位骨架。 |
@@ -577,7 +577,8 @@
 | `shared/ui/Pager.test.tsx` | 删完末页最后一条的边界。 |
 | `shared/ui/EmptyState.tsx` / `shared/ui/ErrorState.tsx` / `shared/ui/ForbiddenState.tsx` / `shared/ui/FullPageLoader.tsx` | 四种状态展示：空 / 失败可重试 / 403 / 整页加载。 |
 | `shared/ui/ErrorState.test.tsx` | 失败态与重试。 |
-| `shared/ui/PageHeader.tsx` | 页头（标题、描述、右侧动作）。 |
+| `shared/ui/PageHeader.tsx` | 页头（标题、实时状态、右侧动作）。**没有描述段** —— 页面不自己解释自己，见 CODE_STYLE §3.10。 |
+| `shared/ui/Panel.tsx` | 面板与面板标题（`Panel` / `PanelHeader`）：白板容器 + 标题行（标题、等宽计数、右侧操作）。页面上别再手写面板外壳。 |
 | `shared/ui/BrandMark.tsx` | 品牌图形标（「YF」组合字）。 |
 | `shared/ui/CoverImage.tsx` | 封面图（无图时按种子生成兜底渐变）。 |
 | `shared/ui/Chip.tsx` / `CardSkeleton*` | 标签与骨架屏。 |
@@ -597,6 +598,9 @@
 | `shared/lib/toast.ts` | `toast()` 命令式提示（写入 `Toaster` 的队列）。 |
 | `shared/hooks/useDebouncedValue.ts` | 防抖值（搜索输入）。 |
 | `shared/hooks/useDebouncedValue.test.ts` | 防抖时序。 |
+| `shared/hooks/useDropPlacement.ts` | 浮层方向：量出上下哪边放得下，朝那边弹。`MultiSelect` 与模板封装的 `@` 候选面板共用一份。 |
+| `shared/hooks/useStickyFitHeight.ts` | 吸顶面板的高度上限：按面板**自然位置**到视口底边的距离算，别写死「视口减几」。模板库右栏用它。 |
+| `shared/hooks/useStickyFitHeight.test.ts` | 上限算法与回调 ref 的时机（面板晚挂也要量到）。 |
 
 ### 4.8 `widgets/` —— 外壳
 
@@ -604,7 +608,6 @@
 |---|---|
 | `widgets/app-shell/AppShell.tsx` | 应用外壳：布局 + 插槽，不认识任何业务模块。 |
 | `widgets/top-bar/TopBar.tsx` | 顶栏：品牌标、插槽动作、账号菜单。 |
-| `widgets/module-nav/ModuleNav.tsx` | 顶部宫格导航：由模块 `cards` 声明生成。 |
 | `widgets/sidebar/Sidebar.tsx` | 侧栏：按分组渲染导航项，角标由模块提供。 |
 | `widgets/sidebar/Sidebar.test.tsx` | 角标渲染（取数层替换）。 |
 | `widgets/sidebar/use-collapsed-groups.ts` | 分组折叠状态（本地持久化）。 |

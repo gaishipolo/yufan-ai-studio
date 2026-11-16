@@ -36,7 +36,7 @@ src/app/providers.tsx          全局 Provider 组装
 src/app/router.tsx             由注册表生成路由，已无需手改
 src/app/registry/index.ts      模块自动发现
 src/app/RouteError.tsx         路由级错误兜底
-src/widgets/**                 外壳：顶栏 / 侧栏 / 宫格导航
+src/widgets/**                 外壳：顶栏 / 侧栏
 src/shared/registry/**         注册表内核（类型、校验、插槽）
 src/shared/access/**           权限内核（身份、判定、守卫）
 src/shared/api/http.ts         请求内核（拦截器、错误归一）
@@ -117,18 +117,18 @@ shared     无业务：UI 基件、工具、请求内核、注册表、权限内
 | 新增页面 | `module.ts` → `routes[]` | 无 |
 | 侧边栏入口 | `module.ts` → `routes[].nav` | 无 |
 | 侧栏一级类目（可折叠） | `routes[].nav.group` + `groupOrder` | 无 |
-| 顶部宫格卡片 | `module.ts` → `routes[].card` | 无 |
+
 | 导航角标（如进行中任务数） | `routes[].nav.badge`（组件） | 无 |
 | 顶栏动作 / 侧栏底部 / 全局浮层 | `module.ts` → `slots[]` | 无 |
 | 独立布局页面（登录页这类，不套外壳） | `routes[].layout = 'bare'` | 无 |
 | 顶栏账号菜单项 | `slots[]` → `name: 'user-menu.items'` | 无 |
-| 页面 / 导航 / 宫格的权限 | `routes[].permissions`（一处声明，另两处自动继承） | 无 |
+| 页面 / 导航的权限 | `routes[].permissions`（一处声明，另一处自动继承） | 无 |
 | 按钮级权限 | 页面里 `<Can permission="...">` | 无 |
 | 新接口 | `entities/<id>/api/*.api.ts` | 无 |
 | 接口 mock | `modules/<id>/mock.ts` | 无 |
 | 新权限点 | 后端下发 + 清单里声明 | 无 |
 
-可用插槽（`SlotName`）：`topbar.actions`、`module-nav.trailing`、`sidebar.footer`、`shell.overlay`、`user-menu.items`。
+可用插槽（`SlotName`）：`topbar.actions`、`sidebar.footer`、`shell.overlay`、`user-menu.items`。
 新增**插槽内容**不用改骨架；新增**插槽种类**属于骨架变更。
 
 ### 3.1 侧栏分组 = 一级类目（自动可折叠）
@@ -148,16 +148,16 @@ shared     无业务：UI 基件、工具、请求内核、注册表、权限内
 
 ### 3.2 页面外壳：`layout: 'shell' | 'bare'`
 
-默认 `'shell'`：套顶栏 / 侧栏 / 宫格，**并要求已登录**（骨架统一包 `<RequireAuth>`）。
+默认 `'shell'`：套顶栏 / 侧栏，**并要求已登录**（骨架统一包 `<RequireAuth>`）。
 
 `'bare'` 是给「脱离应用框架的整页」用的，目前只有登录页：
 
 | 特性 | `shell` | `bare` |
 |---|---|---|
-| 顶栏 / 侧栏 / 宫格 | 有 | 无 |
+| 顶栏 / 侧栏 | 有 | 无 |
 | 登录守卫 | 有 | 无（否则登录页会把自己重定向到自己，死循环） |
 | 权限守卫 | 有 | 有（声明了 `permissions` 才校验） |
-| 能声明 `nav` / `card` | 能 | **不能**（注册期直接报错，不是运行到一半才发现） |
+| 能声明 `nav` | 能 | **不能**（注册期直接报错，不是运行到一半才发现） |
 | 典型场景 | 业务页面 | 登录 / 注册 / 第三方回调 / 大屏 |
 
 新功能**默认不要用 `bare`**。真需要时，`app/router.tsx` 会自动把它挂到顶层，不用改路由文件。
@@ -432,27 +432,25 @@ export default defineModule({
     {
       path: 'system/user-access',           // 多级路径直接写，无需改路由表
       load: () => import('@/pages/user-access/UserAccessPage'),
-      permissions: ['identity:read'],        // ① 只写一次：路由 / 侧栏 / 宫格三处共用
+      permissions: ['identity:read'],        // ① 只写一次：路由 / 侧栏两处共用
       nav: {                                // ② 侧栏入口：path 与 permissions 从本路由继承
         label: '用户与权限',
         icon: ShieldCheck,
         group: '系统管理',
         groupOrder: 9,                      // 排在业务分组之后
       },
-      // card: { subtitle: '…', gradient: '…', order: 4 },  // ③ 需要宫格时打开
     },
   ],
 });
 ```
 
-`nav` / `card` 挂在路由上，**不写 `path` 与 `permissions`**：注册表从所属 route 派生。
-以前平级的 `nav[]` / `cards[]` 要把同一个路径和同一组权限各抄三遍，改权限漏一处就是
-「入口可见但点进去 403」；现在从结构上不可能发生。`card.title` / `card.icon` 缺省取
-`nav.label` / `nav.icon`，需要不同值时才显式覆盖。
+`nav` 挂在路由上，**不写 `path` 与 `permissions`**：注册表从所属 route 派生。
+以前平级的 `nav[]` 要把同一个路径和同一组权限各抄两遍，改权限漏一处就是
+「入口可见但点进去 403」；现在从结构上不可能发生。
 
 生效链路（全部自动，无需改骨架）：
 
-1. 侧边栏 / 宫格按派生自 route 的 `permissions` 过滤；
+1. 侧边栏按派生自 route 的 `permissions` 过滤；
 2. 直接访问 URL → `<RequirePermission>` 渲染 403（`ForbiddenState`）；
 3. 权限点来源 `Subject.permissions`，由登录模块写入 session。
 
@@ -822,7 +820,7 @@ export const routes: MockRoute[] = [
 | `http.ts` 接 401 → `signOut()` | 令牌失效全站一致 | 无需操作 |
 | 新增插槽 `user-menu.items` | 账号菜单项由模块注入 | 加菜单项写 `slots[]` |
 | 新增 `src/modules/auth/**` | 登录页 + 账号菜单 | 只读参考，别改 |
-| `nav[]` / `cards[]` 改为 `routes[].nav` / `routes[].card` | 路径与权限只写一次 | 模块清单按 §9 速查改写，产物不变 |
+| `nav[]` 改为 `routes[].nav` | 路径与权限只写一次 | 模块清单按 §9 速查改写，产物不变 |
 
 历史页面（`pages/*`）暂留在原地，通过清单注册；新页面建议同样放 `pages/<id>/`，与模块目录同名，便于对照。
 
@@ -831,20 +829,17 @@ export const routes: MockRoute[] = [
 ## 9. 附：注册表 API 速查
 
 ```ts
-// 清单：侧栏与宫格挂在路由上，不再是平级数组
+// 清单：侧栏挂在路由上，不再是平级数组
 defineModule({ id, title?, routes, slots? })
 
 // routes[]
 {
   path: string,
   load: () => Promise<{ default: ComponentType }>,
-  permissions?: string[],              // 一处声明，nav / card 自动继承
+  permissions?: string[],              // 一处声明，nav 自动继承
   layout?: 'shell' | 'bare',
   nav?: {                             // 声明即生成侧栏入口
     label, icon, group, groupOrder?, order?, badge?: ComponentType
-  },
-  card?: {                            // 声明即生成首页宫格
-    subtitle, gradient, title?, icon?, order?, matchPrefixes?
   },
 }
 

@@ -12,14 +12,133 @@
 | 项 | 值 |
 |---|---|
 | 仓库 / 分支 | `https://github.com/gaishipolo/yufan-ai-studio` · `main` |
-| HEAD | 本地领先 `origin/main`：`3aaf40f` 起多笔**未推送**（含「任务中心接生图」与「模板封装迁移阶段 A/B/C1」，推送前先问用户）；笔数以 `git rev-list --count origin/main..HEAD` 为准，hash 见 `git log --oneline origin/main..HEAD`。未跟踪的只有 `var/`、临时脚本（如 `var_fix_fe.py`）、快捷方式 `.lnk`、`vite.config.ts.timestamp-*.mjs` 与用户私有的 `EXCHANGE_TOPICS_2026-11-12.md`，都不该进提交 |
+| HEAD | 本地领先 `origin/main` **4 笔未推送**（`822a4cd` 计费模式进 paramSchema → `bfa03e1` 模板库计费模式 → `e6e2f91` 任务中心不再能创建任务 → `2ed4943` 参数全面由模型 paramSchema 驱动）；**推送前先问用户**。笔数以 `git rev-list --count origin/main..HEAD` 为准，hash 见 `git log --oneline origin/main..HEAD`。另有**未提交的前端视觉重构**（2026-11-16，见 §1）。未跟踪的只有 `var/`、临时脚本（如 `var_fix_fe.py`）、快捷方式 `.lnk`、`vite.config.ts.timestamp-*.mjs` 与用户私有的 `EXCHANGE_TOPICS_2026-11-12.md`，都不该进提交 |
 | CI | 此前连续多轮全绿（含 `bc0940e`）；本轮推送后照 §4 核对。PG 迁移仍在观察期（`continue-on-error`） |
-| 本机门禁 | 本轮（2026-11-14 P3 迁移：旧模板 → spec 草稿）只加一个运维脚本 + 一组纯函数单测，按 §3.1 定级 **`targeted`**：5 个测试文件 **100 passed / 0 failed**；`ruff check src tests scripts` 0；`mypy --platform win32` 300 文件 0；契约零变动。上一轮 P3 能力声明定级 `contract`：18 文件 356 passed |
+| 本机门禁 | **前端**（2026-11-16 视觉重构）：`npm run verify` 全绿 —— typecheck 0 / lint 0 / **608 passed（71 文件）** / build ok；契约零变动（后端没动）。**后端**：本轮未动，上一轮 P3 迁移按 §3.1 定级 `targeted`：5 个测试文件 100 passed / ruff 0 / mypy 300 文件 0 |
 | 规模 | 11 个业务模块 · **95 条路径 / 125 个端点** · **53 个权限码** · **4 份**契约生成物（数字以 `app modules` 与 `api/docs/openapi.json` 为准，别再手抄） |
 | 后端 | `api/.venv/Scripts/app.exe serve --reload` → 8080，前缀 **`/api/v1`**（裸 `/health` 会返回 40400） |
 | 前端 | `cd studio && npm run dev` → 5173，`/api` 已代理到 8080 |
 
 ## 1. 这一轮（11-11）做了什么
+
+### 1.0 前端视觉重构（2026-11-16，**未提交**）
+
+用户要求「用 frontend-design 技能优化前端视觉，避免不必要的辅助标签与说明，
+让布局本身发挥解释作用」。**只动前端，后端与契约零变动。**
+
+**三条硬规则**（写进 `docs/CODE_STYLE.md` §3.10，下次接手的人照着写）：
+
+1. **字阶六级**：以前全仓 18 个字号、239 处挤在 10–11.5px，标题和说明肉眼分不出。
+   现在 `micro 10 / meta 11 / xs 12 / body 13 / lead 15 / title 19 / display 26`，
+   语义固定：**区块标题 `text-lead`，页面标题 `text-title`，正文 `text-body`**。
+   任意值 `text-[13px]` 全仓清零（只留产品字标副行的 `text-[7px]`）。
+2. **数据用等宽字**：时长 / 画幅 / 尺寸 / 进度 / 计数 / 时间码 / 存储键一律
+   `font-mono` + `tabular-nums`，于是「哪条片子最长」一列扫过去就知道。
+3. **页面不自己解释自己**：`PageHeader` 的 `description` prop **删了**（TS 拦得住）。
+   10 个页面开头那段「这个页面是干什么的」全部删除 —— 页面里已经摆着筛选条、
+   页签、卡片了，那句话是把看得见的东西又念一遍。
+   只保留**用户猜不到又会被拒**的约束（如「名称唯一」「至少 8 位」），
+   且贴在字段标签那一行的**右端**（`FormField` / 工作台 `Field` 的 `hint`）。
+
+**结构件**：新增 `shared/ui/Panel.tsx`（`Panel` + `PanelHeader`），
+收掉各页面手写的 `<section className="rounded-card border … p-3.5">` 与
+自定义的 `SectionTitle`（那些标题前面还挂着**装饰圆点** —— 不编码任何东西，删了）。
+
+**颜色各司其职**：`brand`（青）以前只当装饰圆点用，现在只表示**在飞**
+（生成中 / 进度条头端）；`primary`（蓝）只表示交互；语义色只表示状态。
+
+**签名元素只两处**：顶栏下沿那条胶片齿孔边（`.film-edge`）、画布那层极淡的方格。
+
+**顺手修的两处真问题**：
+
+- **工作台「分镜序列 · 自动拆解 · 4 个镜头」是在吹牛**：那个面板列的是
+  `/shots` 镜头库的前 4 条运镜词条，跟用户这段话没有任何关系。改成「常用镜头 4」
+  + 一条去镜头库的路，并把「运镜已编排」换成**真正能插进提示词的那句词条**。
+- **「▶ 预览」pill 铺满 20 张卡** = 20 份重复说明。改成悬停才显形
+  （和勾选框同一套交互语言）。
+
+**顺手修的环境坑**：本机 Node v26 自带 Web Storage，没给 `--localstorage-file`
+时它的 `localStorage` 是个 undefined 的全局，正好挡住 jsdom 的实现 ——
+用到它的用例（侧栏折叠、登录 token）整片红，`window.localStorage.clear()` 直接炸。
+在 `src/test/setup.ts` 补了个内存版（只在 jsdom 真没给时才装）。
+**这不是设计改动，是为了让门禁能跑**；用 `git stash` 对照确认过是预先存在的问题。
+
+**顺手修的真缺陷（用户报的）**：模板封装编辑模板时，提示词里打 `@` 弹出的
+**候选槽位面板掉出视口** —— 面板写死朝下展开，而提示词框在右栏最下面，
+候选条整块落到屏幕外，用户只看到输入框闪一下。修法：把 `MultiSelect` 里
+已有的翻转头抽成共用 hook **`shared/hooks/useDropPlacement.ts`**
+（量浮层自己的高度 + 上下哪边放得下，滚动时重算），两处都用；
+tailwind 补 `animate-slideUp`（朝上弹时动画方向要对）。
+真机实测：输入框底边 806 / 视口 860 → 面板翻到 442–576，完整可见。
+
+**顺手修的第二个真缺陷（用户报的）**：`@` 提及在**英文后面失效** ——
+`mention.ts` 的 `detectMention` 有一条「@ 前面挨着词字符就算邮箱地址」的启发式。
+那是把冷门case（提示词正文里写邮箱）的防护开在了常用路径上：提示词里写英文
+极常见（`cinematic handheld shot@` 想引槽位），写邮箱几乎见不到。
+改成 **`looksLikeAddress()`：只看像不像地址**（`@` 后面已打出域名尾巴，
+或 `@` 前面就是域名而后面还没写），其余一律当提及。
+真机实测：`cinematic handheld shot@` 面板弹出；`a@b.com` / `site.com@` /
+`a@b` 均不弹。
+
+**模板封装编辑页按参考图改版**：右栏重排为「提示词 → 槽位速览 → 展示案例」；
+新增「槽位速览」卡片（绿点=已固定、蓝点=用户填写）；分区色条统一主色
+（颜色留给状态用）；槽位从「托盘上的卡片」改成「清单」（细线分隔）；
+类型标记从文字 chip 改成图标（映射抽到 `features/template-specs/slotIcons.ts`，
+清单与提示词 chip 共用）；「谁定」分段控件选中项改实心；展示名输入框平时
+隐形边框；固定槽位单独一行 + 左边绿条 + 缩略图 + 「更换」；页头并进吸顶栏
+（「← 模板封装 / 模板名」+ 按钮同一行，页头因此从 `SpecsPage` 挪进
+`SpecWorkspace`）；提示词卡片加「字数 N / 20000」。
+通用结论写进 `docs/CODE_STYLE.md` §3.10「控件形态：五个省力的默认」。
+**没做**：参考图里提示词正文中的 `{{slot:xxx}}` 内联 chip 渲染 —— textarea 里
+要做 overlay 精确复刻换行排版，脆且难维护。
+
+**顺手修的第三个真缺陷（用户报的）**：模板库**右栏在滚动到顶部时被视口切掉 11px**
+—— 用户原话「滚动到顶部时右侧栏会被遮住一点，页面整体向下滚动一点才能完全显示」。
+
+根因不是吸顶坏了，是**高度上限写错了对象**：右栏上限写死
+`xl:max-h-[calc(100vh-91px)]`，那个 91 是按**吸住之后**的位置算的（71 + 20）。
+可页面刚打开时它还顶在「模板库」标题下面，**自然位置在 110**（比吸顶位置低 39px），
+底边落在 110 + 760 = 871，超出 860 的视口 11px；往下滚一点它吸住了（71 + 760 = 831），
+反而完整了 —— 于是「往下滚一点才看得全」。
+
+修法与 `useDropPlacement` 同一个思路：**量，不写死**。新增共用 hook
+**`shared/hooks/useStickyFitHeight.ts`** —— 临时摘掉 `sticky` 读出面板在文档流里
+**本来的位置**，上限 = 视口高 − 自然位置 − 12。三个要点已写进
+`docs/CODE_STYLE.md` §3.10「吸顶面板的高度上限：按它自己的位置算」：
+上限恒定（面板不会在滚动中忽胖忽瘦）、普通流里不限高、**用回调 ref**——
+右栏是等数据回来才挂的，只在组件挂载时量的话量到的还是空气（这个坑踩了一次：
+第一版用 `useRef` + `useLayoutEffect`，量了个空气，上限一直是 `none`，bug 原样复现）。
+
+真机实测（`var/rail-verify.mjs`）：1440×860 下 scrollY 0/20/80/400 底边余量
+12/32/51/51，**任何滚动位置都不再被切**；1440×700、1280×800 同样余量 12；
+窄屏 390 下不是吸顶元素 → 不限高，页面照常滚。
+
+**顶栏下的模块宫格撤了**：用户要「顶栏下的快捷入口栏不要了」——那排大卡片与
+**侧栏是同一批入口的第二份画法**，一屏两套导航，注意力被摊薄，内容区还白占
+一整块高度。删 `widgets/module-nav/ModuleNav.tsx` + `AppShell` 的渲染，并**把
+`card` 这个概念整套拆了**（它只为那排宫格而存在，留着就是零调用代码）：
+`types.ts`（`routes[].card` / `ModuleCardDef` / `RouteCardDef` / `ResolvedCard` /
+`AppRegistry.cards` / 插槽 `module-nav.trailing`）、`create-registry.ts` 的装配与
+注册期校验、4 个模块清单的 `card` 块、`render-routes.ts` 的「宫格」列
+（`docs/ROUTES.md` 已重新生成）、4 条只测宫格的用例。
+**新增模块现在只声明 `routes[].nav` 一处展示信息。**
+
+**门禁**：`npm run verify` 全绿 —— typecheck 0 / lint 0 / **608 passed（71 文件）** / build ok。
+测试改动：`StudioPage.test.tsx` 的 `react-router-dom` mock 补 `Link`；
+`ReferenceImages` 的提示文案改短后同步断言；`PromptBox.test.tsx` 新增浮层方向
+与「英文后打 @」用例；`mention.test.ts` 新增「英文后打 @」用例
+（判别力自检：还原修复后正好 3 条变红）；`SlotCard.test.tsx` 类型标记改成按
+role=img + 名称查、固定槽位按钮区分「更换/选择素材」；`specDraft.test.ts` 新增
+提示词上限的契约漂移守卫；`useStickyFitHeight.test.ts` 新增上限算法与回调 ref
+时机 7 条（判别力自检：把算法还原成写死的 `100vh - 91`，正好 5 条变红）。
+（比上一轮多 7 条：右栏上限那组；比再上一轮少 4 条：撤掉模块宫格时一起没了
+4 条只测宫格的用例。）
+
+**看效果**：内置 Browser 面板只有 639px，看不到桌面版排版。用
+`var/shot-mock.mjs`（临时脚本，走 mock 模式 + puppeteer，1440 宽）逐页截图，
+产物在 `var/shots/`。**下轮再看桌面版，直接用它，别再跟 639px 较劲。**
+
+---
 
 起点是一次全面只读审查（框架 / 资产库 / 模型启动，约 20k 行），产出 **P0×2 · P1×9 · P2×11**，
 随后按「先写会失败的用例再改」逐条修完并推送：
