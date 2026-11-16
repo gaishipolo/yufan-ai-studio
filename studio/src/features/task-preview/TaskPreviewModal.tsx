@@ -4,8 +4,8 @@ import { toast } from '@/shared/lib/toast';
 import { downloadUrl } from '@/shared/lib/download';
 import { formatDateTime, formatDuration, generatedFileName } from '@/shared/lib/format';
 import { useRetryTask, useTaskDetail, useToggleFavorite } from '@/entities/task/api/task.queries';
-import { PromptRefs } from '@/entities/library/ui/PromptRefs';
 import { TASK_STATUS_LABEL } from '@/entities/task/model/types';
+import { PromptField } from './PromptField';
 
 export interface TaskPreviewModalProps {
   taskId: string | null;
@@ -92,11 +92,12 @@ export function TaskPreviewModal({ taskId, outputUrl, onClose }: TaskPreviewModa
               <dd className="text-ink">{formatDateTime(task.createdAt)}</dd>
 
               <dt className="text-ink-mute">画面描述</dt>
-              <dd className="text-ink">
+              <dd className="min-w-0 text-ink">
                 {/* 占位符换成真的东西：`{{Text N}}` → 正文、`{{Mixed N}}` → 缩略图。
-                    解析不到（历史任务缺快照）就原样留着，比如实吞掉好。 */}
-                <PromptRefs
-                  value={task.prompt ?? ''}
+                    解析不到（历史任务缺快照）就原样留着，比如实吞掉好。
+                    正文限高自己滚 —— 不然长提示词会把下面的按钮顶出视口。 */}
+                <PromptField
+                  value={task.prompt}
                   textIds={task.textLibraryIds}
                   referenceIds={task.referenceLibraryIds}
                 />

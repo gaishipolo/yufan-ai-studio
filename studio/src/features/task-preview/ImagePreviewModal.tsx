@@ -7,8 +7,8 @@ import { toast } from '@/shared/lib/toast';
 import { downloadUrl } from '@/shared/lib/download';
 import { formatDateTime, generatedFileName } from '@/shared/lib/format';
 import { imageApi } from '@/entities/image/api/image.api';
-import { PromptRefs } from '@/entities/library/ui/PromptRefs';
 import { useSessionStore } from '@/shared/access/session';
+import { PromptField } from './PromptField';
 import { taskKeys } from '@/entities/task/api/task.queries';
 import { CACHE_PREFIX } from '@/shared/api/query-keys';
 import type { TaskFeedItem } from '@/entities/task/model/feed.types';
@@ -96,17 +96,14 @@ export function ImagePreviewModal({ item, onClose }: ImagePreviewModalProps) {
               <dd className="text-ink">{formatDateTime(image.createdAt)}</dd>
 
               <dt className="text-ink-mute">画面描述</dt>
-              <dd className="break-words text-ink">
-                {/* 与任务详情同一套：文案给正文、参考图给缩略块，解析不到就留占位符 */}
-                {image.prompt ? (
-                  <PromptRefs
-                    value={image.prompt}
-                    textIds={image.textLibraryIds}
-                    referenceIds={image.referenceLibraryIds}
-                  />
-                ) : (
-                  '—'
-                )}
+              <dd className="min-w-0 text-ink">
+                {/* 与任务详情同一套：文案给正文、参考图给缩略块，解析不到就留占位符。
+                    正文限高自己滚 —— 不然长提示词会把下面的按钮顶出视口。 */}
+                <PromptField
+                  value={image.prompt}
+                  textIds={image.textLibraryIds}
+                  referenceIds={image.referenceLibraryIds}
+                />
               </dd>
             </dl>
 
