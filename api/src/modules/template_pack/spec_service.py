@@ -20,12 +20,15 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
+from typing import Any
 
 from sqlalchemy import ColumnElement, and_, false, func, select, true
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.context import CurrentUser
 from core.exceptions import BadRequest, Conflict, NotFound
+from core.param_schema import resolve_params
 from core.ports.library_lookup import get_library_lookup
 from core.ports.model_generation import get_model_generation
 from core.template_spec import (
@@ -256,6 +259,23 @@ async def _check_model(spec: TemplateSpec) -> None:
         raise BadRequest(
             f"模型 {spec.model} 不支持参数 {'、'.join(unknown)}；"
             f"可用：{'、'.join(sorted(schema)) or '（无）'}"
+        )
+    # 标了 `userSelectable` 的参数**由使用模板的人选**，作者不许写死。
+    # 写死 = 作者替每个使用者决定了要不要花积分，而积分是用的人的钱。
+    # 这类参数由模板库在填表时呈现，使用者的选择不落进 spec.params。
+    locked = sorted(
+        key
+        for key in spec.params
+        if isinstance(schema.get(key), dict) and schema[key].get("userSelectable")
+    )
+    if locked:
+        labels = "、".join(
+            str(schema[key].get("label") or key) for key in locked  # type: ignore[index]
+        )
+        raise BadRequest(
+            f"{labels} 由使用模板的人来选，封装时不用设置；"
+            "它会在模板库填表时让用户自己选",
+            details={"userSelectableParams": locked},
         )
     mixed = [slot for slot in spec.slots if slot.ref_mode == "mixed"]
     if mixed and model.max_references == 0:
@@ -595,6 +615,14 @@ async def compile_for(
     )
     fills = await _fills(session, actor, spec, payload.slot_values)
     compiled = compile_spec(spec, fills)
+    # 使用者对「运行时参数」的选择（计费模式等）：只在编译结果里生效，
+    # **不落进 spec.params** —— 那是作者的部分，模板版本不该被谁用了一次改掉。
+    # `CompiledRequest.params` 是 Mapping（不可变），所以整份重建而不是就地改。
+    if payload.param_overrides:
+        compiled = replace(
+            compiled,
+            params={**compiled.params, **_checked_overrides(spec.model, payload.param_overrides)},
+        )
     # 展开后的成品才是真正要发出去的那段：`{{slot:key*}}` 一次展开可能多出几十字。
     if len(compiled.prompt) > EXECUTION_PROMPT_LIMIT:
         raise BadRequest(
@@ -604,6 +632,44 @@ async def compile_for(
     return _compile_out(version_no, compiled, spec, fills)
 
 
+def _checked_overrides(model_id: str, overrides: Mapping[str, Any]) -> dict[str, Any]:
+    """校验使用者的运行时参数选择。
+
+    只接受模型 schema 里标了 `userSelectable` 的键：其余键要么是作者写死的
+    （模板参数），要么模型根本不认 —— 两种都不该由使用者在这里传。
+    值按 schema 收敛（枚举必须落在 options 内），非法值当场 400。
+    """
+    catalog = {item.id: item for item in get_model_generation().models()}
+    model = catalog.get(model_id)
+    if model is None:
+        raise BadRequest(f"模型不存在或未启用：{model_id}")
+    schema = dict(model.param_schema or {})
+
+    unknown = sorted(key for key in overrides if key not in schema)
+    if unknown:
+        raise BadRequest(
+            f"模型 {model_id} 没有这些参数：{'、'.join(unknown)}",
+            details={"unknownParams": unknown},
+        )
+    locked = sorted(
+        key
+        for key in overrides
+        if not (isinstance(schema.get(key), dict) and schema[key].get("userSelectable"))
+    )
+    if locked:
+        raise BadRequest(
+            f"这些参数由模板作者设置，使用时不能改：{'、'.join(locked)}",
+            details={"lockedParams": locked},
+        )
+
+    # 值的收敛交给 `core.param_schema.resolve_params` —— 与生图、任务受理
+    # 那两条链**同一份**代码。两份实现一旦漂移，症状是「同一个参数在两条
+    # 路径上接受不同的值」。
+    #
+    # 只把使用者真选了的键喂进去：schema 里那些**没选**的参数如果也传进去，
+    # `resolve_params` 会把它们的默认值补齐 —— 那等于使用者替作者做了决定。
+    subset = {key: dict(schema[key]) for key in overrides}  # type: ignore[misc]
+    return dict(resolve_params(model_id, subset, overrides))
 def _slot_core(row: TemplateSpecSlot) -> InputSlot:
     return InputSlot(
         key=row.slot_key,

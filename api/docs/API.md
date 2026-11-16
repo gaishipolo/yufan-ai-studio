@@ -1104,6 +1104,7 @@ Authorization: Bearer <accessToken>
 | `textLibraryIds` | `string[]` | 否 | 要拼进提示词的文本资产 id，按顺序对应 `{{Text 1}}` / `{{Text 2}}`…；提交时按当时版本冻结正文，之后编辑资产不影响本次生成与重试。只接受当前账号可读、在库的 text 类型资产，最多 8 份 |
 | `stylePreset` | `string \| null` | 否 | 风格预设标识，留空为不套风格。**只在模型声明了 `stylePreset` 参数时可用**，取值须在它的 options 内；未声明的模型传非空值直接 400 |
 | `billingMode` | `string \| null` | 否 | 计费模式：`free` 免费队列 / `credits` 积分加速。**只在模型声明了 `billingMode` 参数时可用**（当前只有 LibTV 两条队列），取值须在它的 options 内；未声明的模型传非空值直接 400 |
+| `params` | `Record<string, unknown>` | 否 | 模型声明的**其余**参数，键与 `GET /models` 返回的 `paramSchema` 一致（如 `quality` / `seed`）。未声明的键会被 400 拒绝 —— 打错字被静默忽略的话，用户改的那个值从来没生效过，页面看起来却一切正常。顶层那几个键（`durationSec` / `aspectRatio` / `stylePreset` / `billingMode`）走各自的字段，不进这里 |
 
 **响应** `ApiResponse<core__response__ApiResponse_TaskOut___2>`（前端取 `res.data`）
 
@@ -3275,6 +3276,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 |---|---|---|---|
 | `version` | `number \| null` | 否 |  |
 | `slotValues` | `Record<string, string[]>` | 否 |  |
+| `paramOverrides` | `Record<string, unknown>` | 否 |  |
 
 **响应** `ApiResponse<SpecCompileOut>`（前端取 `res.data`）
 
@@ -3458,6 +3460,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `textLibraryIds` | `string[]` | 否 | 要拼进提示词的文本资产 id，按顺序对应 `{{Text 1}}` / `{{Text 2}}`…；提交时按当时版本冻结正文，之后编辑资产不影响本次生成与重试。只接受当前账号可读、在库的 text 类型资产，最多 8 份 |
 | `stylePreset` | `string \| null` | 否 | 风格预设标识，留空为不套风格。**只在模型声明了 `stylePreset` 参数时可用**，取值须在它的 options 内；未声明的模型传非空值直接 400 |
 | `billingMode` | `string \| null` | 否 | 计费模式：`free` 免费队列 / `credits` 积分加速。**只在模型声明了 `billingMode` 参数时可用**（当前只有 LibTV 两条队列），取值须在它的 options 内；未声明的模型传非空值直接 400 |
+| `params` | `Record<string, unknown>` | 否 | 模型声明的**其余**参数，键与 `GET /models` 返回的 `paramSchema` 一致（如 `quality` / `seed`）。未声明的键会被 400 拒绝 —— 打错字被静默忽略的话，用户改的那个值从来没生效过，页面看起来却一切正常。顶层那几个键（`durationSec` / `aspectRatio` / `stylePreset` / `billingMode`）走各自的字段，不进这里 |
 
 ### `DeleteImagesIn`
 
@@ -4490,6 +4493,7 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 |---|---|---|---|
 | `version` | `number \| null` | 否 |  |
 | `slotValues` | `Record<string, string[]>` | 否 |  |
+| `paramOverrides` | `Record<string, unknown>` | 否 |  |
 
 ### `SpecCompileOut`
 

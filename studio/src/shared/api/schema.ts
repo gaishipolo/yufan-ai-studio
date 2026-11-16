@@ -173,6 +173,8 @@ export interface CreateTaskIn {
   stylePreset?: string | null;
   /** 计费模式：`free` 免费队列 / `credits` 积分加速。**只在模型声明了 `billingMode` 参数时可用**（当前只有 LibTV 两条队列），取值须在它的 options 内；未声明的模型传非空值直接 400 */
   billingMode?: string | null;
+  /** 模型声明的**其余**参数，键与 `GET /models` 返回的 `paramSchema` 一致（如 `quality` / `seed`）。未声明的键会被 400 拒绝 —— 打错字被静默忽略的话，用户改的那个值从来没生效过，页面看起来却一切正常。顶层那几个键（`durationSec` / `aspectRatio` / `stylePreset` / `billingMode`）走各自的字段，不进这里 */
+  params?: Record<string, unknown>;
 }
 
 /** DeleteImagesIn */
@@ -1167,6 +1169,7 @@ export interface ShotPresetOut {
 export interface SpecCompileIn {
   version?: number | null;
   slotValues?: Record<string, string[]>;
+  paramOverrides?: Record<string, unknown>;
 }
 
 /** 编译结果（模板层）。

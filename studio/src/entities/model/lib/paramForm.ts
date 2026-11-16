@@ -165,6 +165,17 @@ function defaultOf(field: ParamField, kind: ParamKind, options: ParamOption[]): 
   if (options.some((option) => option.value === declared)) {
     return kind === 'enum' ? declared : Number(declared);
   }
+  /* 档位太多时**不做下拉**（`options` 是空的，交给数字输入框）。这时不能
+     「回落到第一个选项」——没有第一个。声明的 default 仍然有效：范围是
+     2–30 秒、默认 5 秒，界面就该显示 5，而不是一个空输入框。
+     填空的输入框会被当成「没传」，于是模型用自己的默认 —— 恰好也是 5，
+     但用户看到的是空框，以为要自己填。 */
+  if (!options.length) {
+    if (declared === '') return '';
+    const number = Number(declared);
+    if (kind === 'enum') return declared;
+    return Number.isFinite(number) ? number : '';
+  }
   const first = options[0];
   if (!first) return '';
   return kind === 'enum' ? first.value : Number(first.value);
@@ -189,6 +200,32 @@ export function paramControlsFor(model: ModelSpec | undefined): ParamControl[] {
     if (typeof field.step === 'number') control.step = field.step;
     return control;
   });
+}
+
+/**
+ * 标了 `userSelectable` 的参数：**由使用模板的人选**，不该由模板作者写死。
+ *
+ * 典型是计费模式 —— 写死等于作者替每个使用者决定了要不要花积分，
+ * 而积分是用的人的钱。这两个场景的控件来源不同：
+ * - 封装页（作者）：只给「作者设的」参数，userSelectable 的一个都不给；
+ * - 模板库（使用者）：只给「使用者选的」参数，作者设的那些只读展示。
+ */
+export function isUserSelectable(field: ParamField | undefined): boolean {
+  return field?.userSelectable === true;
+}
+
+/** 作者能设的参数（封装页用）：排除 userSelectable。 */
+export function authorParamControls(model: ModelSpec | undefined): ParamControl[] {
+  return paramControlsFor(model).filter(
+    (control) => !isUserSelectable(model?.paramSchema?.[control.key]),
+  );
+}
+
+/** 使用者能选的参数（模板库用）：只要 userSelectable 的。 */
+export function userSelectableControls(model: ModelSpec | undefined): ParamControl[] {
+  return paramControlsFor(model).filter((control) =>
+    isUserSelectable(model?.paramSchema?.[control.key]),
+  );
 }
 
 /** 每个控件的初值（= schema 声明的默认值） */

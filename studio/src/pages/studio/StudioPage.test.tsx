@@ -51,7 +51,13 @@ vi.mock('@/shared/lib/toast', async (importOriginal) => ({
   toast: toastMock,
 }));
 
-/** 视频模型：paramSchema 只有时长与画幅两个键（与 agnes_video / echo 一致） */
+/**
+ * 视频模型：paramSchema 只有时长与画幅两个键（与 agnes_video / echo 一致）。
+ *
+ * **没有 `stylePreset`** —— 这是这一轮改动的要害：以前工作台写死了
+ * 「时长 / 画幅 / 风格预设」三件套，而风格预设所有模型都没声明，
+ * 于是提交必定 400（`模型 ... 没有声明风格预设（stylePreset）`）。
+ */
 function videoModel(overrides: Partial<ModelSpec> = {}): ModelSpec {
   return {
     id: 'agnes-video-2.5-flash',
@@ -77,6 +83,29 @@ const KLING = videoModel({
   paramSchema: {
     durationSec: { type: 'int', min: 5, max: 10, step: 1, default: 5 },
     aspectRatio: { type: 'enum', options: ['9:16'], default: '9:16' },
+  },
+});
+
+/** LibTV 那样声明了计费模式的模型（`drivers/libtv.py` 的真实形状）。 */
+const LIBTV = videoModel({
+  id: 'libtv-wan3-replacement',
+  label: 'LibTV · 720P 视频替换',
+  provider: 'libtv',
+  isDefault: false,
+  description: '',
+  maxReferences: 5,
+  referenceKinds: ['image', 'video', 'audio'],
+  paramSchema: {
+    durationSec: { type: 'int', min: 2, max: 30, step: 1, default: 5 },
+    aspectRatio: { type: 'enum', options: ['9:16', '16:9', '1:1'], default: '9:16' },
+    billingMode: {
+      type: 'enum',
+      options: ['free', 'credits'],
+      default: 'free',
+      label: '计费模式',
+      userSelectable: true,
+      description: '免费队列（较慢，不扣积分）/ 积分加速（更快，消耗账号积分）。',
+    },
   },
 });
 
@@ -148,6 +177,7 @@ describe('StudioPage · 参考图（与生图页同一条通道）', () => {
   it('本地上传后按顺序把素材 id 下发给任务', async () => {
     uploadMock.mockResolvedValueOnce({ id: 'a-1', name: 'a.png', previewUrl: '/p/1' });
     uploadMock.mockResolvedValueOnce({ id: 'a-2', name: 'b.png', url: '/u/2' });
+    modelsMock.mockReturnValue([videoModel({ maxReferences: 2 })]);
     render(<StudioPage />);
 
     pick([png('a.png'), png('b.png')]);
@@ -161,6 +191,7 @@ describe('StudioPage · 参考图（与生图页同一条通道）', () => {
   });
 
   it('从素材库点「＋」加入，不重复上传一份', () => {
+    modelsMock.mockReturnValue([videoModel({ maxReferences: 2 })]);
     render(<StudioPage />);
     openLibrary();
 
@@ -173,6 +204,7 @@ describe('StudioPage · 参考图（与生图页同一条通道）', () => {
   });
 
   it('拖进参考图区即加入，落下顺序就是提交顺序', () => {
+    modelsMock.mockReturnValue([videoModel({ maxReferences: 2 })]);
     render(<StudioPage />);
 
     dropOn(dropZone(), { id: 'lib-2', name: '场景参考图', url: '/cover/lib-2.png' });
@@ -185,6 +217,7 @@ describe('StudioPage · 参考图（与生图页同一条通道）', () => {
   });
 
   it('同一张拖两次只算一张，不白占名额', () => {
+    modelsMock.mockReturnValue([videoModel({ maxReferences: 2 })]);
     render(<StudioPage />);
     const asset = { id: 'lib-1', name: '角色参考图', url: '' };
 
@@ -212,16 +245,16 @@ describe('StudioPage · 参考图（与生图页同一条通道）', () => {
     expect(screen.queryByRole('button', { name: '移除参考图 3' })).toBeNull();
   });
 
-  it('模型没声明参考图档位时用工作台默认 4 格，而不是把整块藏起来', () => {
+  it('模型没声明参考素材时整块不画 —— 画了也只会让用户填完再吃一个 400', () => {
+    // 后端受理期会拒：`模型 X 不支持参考素材，请换用支持参考素材的模型`。
+    // 画一个上传框让用户选半天再报错，比不画更糟。
     render(<StudioPage />);
-    // 视频模型目前 maxReferences 一律是 0；照搬生图页「0 就不显示」会让入口消失
-    expect(screen.getByText(/最多 4 张，已选 0/)).toBeInTheDocument();
-    expect(screen.getByLabelText('上传参考图')).toBeInTheDocument();
+    expect(screen.queryByLabelText('上传参考图')).toBeNull();
   });
 
   it('换模型清空已选参考图（新模型未必支持）', async () => {
     uploadMock.mockResolvedValueOnce({ id: 'a-1', name: 'a.png', url: '/u/1' });
-    modelsMock.mockReturnValue([videoModel(), KLING]);
+    modelsMock.mockReturnValue([videoModel({ maxReferences: 2 }), KLING]);
     render(<StudioPage />);
 
     pick([png('a.png')]);
@@ -233,6 +266,7 @@ describe('StudioPage · 参考图（与生图页同一条通道）', () => {
 
   it('提交成功后清空参考图，不让下一个任务莫名沿用旧图', async () => {
     uploadMock.mockResolvedValueOnce({ id: 'a-1', name: 'a.png', url: '/u/1' });
+    modelsMock.mockReturnValue([videoModel({ maxReferences: 2 })]);
     mutateMock.mockImplementation((_payload, options?: { onSuccess?: () => void }) => {
       options?.onSuccess?.();
     });
@@ -252,6 +286,7 @@ describe('StudioPage · 参考图（与生图页同一条通道）', () => {
 
   it('点缩略图能看大图：64px 上分不清角色细节', async () => {
     uploadMock.mockResolvedValueOnce({ id: 'a-1', name: 'a.png', url: '/u/1' });
+    modelsMock.mockReturnValue([videoModel({ maxReferences: 2 })]);
     render(<StudioPage />);
 
     pick([png('a.png')]);
@@ -264,7 +299,7 @@ describe('StudioPage · 参考图（与生图页同一条通道）', () => {
   });
 });
 
-describe('StudioPage · 提交参数来自模型目录', () => {
+describe('StudioPage · 表单由模型声明驱动', () => {
   it('时长档位与画幅白名单跟着模型走', async () => {
     modelsMock.mockReturnValue([videoModel(), KLING]);
     render(<StudioPage />);
@@ -291,24 +326,43 @@ describe('StudioPage · 提交参数来自模型目录', () => {
       '9',
       '10',
     ]);
-    // 可灵只认竖屏：横屏按钮不该留在界面上
-    expect(screen.getAllByRole('button', { name: /竖版|横版|方形/ })).toHaveLength(1);
+    // 可灵只认竖屏：横屏选项不该留在界面上
+    expect(
+      (screen.getAllByRole('combobox')[2] as HTMLSelectElement).options,
+    ).toHaveLength(1);
   });
 
-  it('提交时把风格拼进提示词，并带上画风与画幅', async () => {
+  it('模型没声明的参数一个控件都不出现', () => {
+    // 以前这里写死「时长 / 画幅 / 风格预设」三件套，其中风格预设所有模型
+    // 都没声明 → 提交必定 400（`没有声明风格预设（stylePreset）`）。
+    render(<StudioPage />);
+
+    expect(screen.queryByLabelText('风格')).toBeNull();
+    expect(screen.queryByRole('button', { name: '广告质感' })).toBeNull();
+  });
+
+  it('模型声明了计费模式就有控件，没声明就没有', async () => {
+    modelsMock.mockReturnValue([LIBTV]);
+    render(<StudioPage />);
+
+    const billing = screen.getByLabelText('计费模式') as HTMLSelectElement;
+    expect(Array.from(billing.options).map((one) => one.value)).toEqual(['free', 'credits']);
+  });
+
+  it('提交时带上用户选的参数，并按模型声明摊平', async () => {
+    modelsMock.mockReturnValue([LIBTV]);
     render(<StudioPage />);
 
     fireEvent.change(prompt(), { target: { value: '雨夜街头' } });
-    fireEvent.click(screen.getByRole('button', { name: '广告质感' }));
-    fireEvent.click(screen.getByRole('button', { name: '16:9 横版' }));
+    await userEvent.setup().selectOptions(screen.getByLabelText('计费模式'), 'credits');
     fireEvent.click(screen.getByRole('button', { name: '生成视频任务' }));
 
-    expect(mutateMock.mock.calls[0][0]).toEqual({
-      prompt: '雨夜街头，广告质感风格',
-      model: 'agnes-video-2.5-flash',
+    expect(mutateMock.mock.calls[0][0]).toMatchObject({
+      prompt: '雨夜街头',
+      model: 'libtv-wan3-replacement',
       durationSec: 5,
-      aspectRatio: '16:9',
-      stylePreset: '广告质感',
+      aspectRatio: '9:16',
+      billingMode: 'credits',
     });
   });
 

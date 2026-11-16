@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import type { ModelSpec } from '../model/types';
 import {
+  authorParamControls,
   initialParamValues,
   isEmptyParamValue,
+  isUserSelectable,
   paramControlsFor,
   parseNumericInput,
   resolveParamValues,
+  userSelectableControls,
 } from './paramForm';
 
 function model(paramSchema: ModelSpec['paramSchema']): ModelSpec {
@@ -56,6 +59,19 @@ describe('paramControlsFor · 不认识的字段也能渲染', () => {
     const [seed] = paramControlsFor(model({ seed: { type: 'int', min: 0, max: 2147483647 } }));
     expect(seed?.options).toEqual([]);
     expect(seed?.defaultValue).toBe('');
+  });
+
+  it('档位太多时仍保留声明的默认值，不显示成空输入框', () => {
+    // LibTV 的时长是 2–30 秒（29 档）→ 不做下拉，交给数字输入框。
+    // 以前这里「回落到第一个选项」，而没有第一个 → 空串 → 界面显示空框，
+    // 用户以为要自己填（后端其实会用自己的默认值）。
+    const [duration] = paramControlsFor(
+      model({ durationSec: { type: 'int', min: 2, max: 30, step: 1, default: 5 } }),
+    );
+    expect(duration?.options).toEqual([]);
+    expect(duration?.defaultValue).toBe(5);
+    expect(duration?.min).toBe(2);
+    expect(duration?.max).toBe(30);
   });
 
   it('允许 0 起的参数（seed / guidance 不该被强制抬到 1）', () => {
@@ -161,5 +177,46 @@ describe('输入辅助', () => {
     expect(parseNumericInput('12')).toBe(12);
     expect(parseNumericInput('')).toBe('');
     expect(parseNumericInput('abc')).toBe('');
+  });
+});
+
+describe('authorParamControls / userSelectableControls · 谁来选这个参数', () => {
+  /** LibTV 的真实形状：时长与画幅是作者设的，计费模式由使用者选。 */
+  const libtv = model({
+    durationSec: { type: 'int', min: 2, max: 30, step: 1, default: 5 },
+    aspectRatio: { type: 'enum', options: ['9:16'], default: '9:16' },
+    billingMode: {
+      type: 'enum',
+      options: ['free', 'credits'],
+      default: 'free',
+      userSelectable: true,
+    },
+  });
+
+  it('标了 userSelectable 的参数不进作者那一组', () => {
+    // 写死 = 作者替每个使用者决定了要不要花积分，而积分是用的人的钱。
+    expect(authorParamControls(libtv).map((control) => control.key)).toEqual([
+      'durationSec',
+      'aspectRatio',
+    ]);
+  });
+
+  it('使用者那一组只装 userSelectable 的参数', () => {
+    expect(userSelectableControls(libtv).map((control) => control.key)).toEqual([
+      'billingMode',
+    ]);
+  });
+
+  it('没标 userSelectable 的模型：使用者那一组是空的', () => {
+    const plain = model({ durationSec: { type: 'int', min: 2, max: 30, default: 5 } });
+    expect(userSelectableControls(plain)).toEqual([]);
+    expect(authorParamControls(plain).map((control) => control.key)).toEqual(['durationSec']);
+  });
+
+  it('isUserSelectable 只认显式的 true', () => {
+    expect(isUserSelectable(undefined)).toBe(false);
+    expect(isUserSelectable({ type: 'enum' })).toBe(false);
+    expect(isUserSelectable({ type: 'enum', userSelectable: false })).toBe(false);
+    expect(isUserSelectable({ type: 'enum', userSelectable: true })).toBe(true);
   });
 });

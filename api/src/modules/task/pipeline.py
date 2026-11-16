@@ -24,7 +24,7 @@ from infra.ai.base import Capability, GenerationRequest
 from infra.archive import get_archive_storage
 from infra.archive.runs import run_dir
 from modules.task.enums import TaskStatus
-from modules.task.models import VideoTask
+from modules.task.models import VideoTask, parse_params_json
 
 KIND_VIDEO = "video"
 
@@ -78,6 +78,11 @@ class VideoTaskStore:
             "durationSec": task.duration_sec,
             "aspectRatio": task.aspect_ratio,
         }
+        # 模型声明的其余参数（受理期按 schema 校验后落库的那一份）。
+        # 必须带上：重试是从这一行重建生成请求的，不带就会用默认参数重新提交 ——
+        # 用户选的 quality / seed 无声丢失，而页面上什么问题都看不出来。
+        # 顶层那几个键不在这里（各自有列），避免两份真相。
+        params.update(parse_params_json(task.params_json))
         # 计费模式要一路带到归档工作区的 `run.json`：桥接层 `bridge.mjs` 靠
         # 那个字段决定走免费队列还是积分加速。历史行没有这个值（迁移前建的），
         # 按 `free` 处理 —— 保守的那一侧，不会误扣积分。

@@ -153,6 +153,16 @@ class CreateTaskIn(CamelModel):
             "取值须在它的 options 内；未声明的模型传非空值直接 400"
         ),
     )
+    params: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "模型声明的**其余**参数，键与 `GET /models` 返回的 `paramSchema` 一致"
+            "（如 `quality` / `seed`）。未声明的键会被 400 拒绝 —— 打错字被静默忽略的话，"
+            "用户改的那个值从来没生效过，页面看起来却一切正常。"
+            "顶层那几个键（`durationSec` / `aspectRatio` / `stylePreset` / `billingMode`）"
+            "走各自的字段，不进这里"
+        ),
+    )
 
 
 class UpdateTaskIn(CamelModel):

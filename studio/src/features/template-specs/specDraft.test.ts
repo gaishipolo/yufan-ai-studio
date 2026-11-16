@@ -5,6 +5,7 @@ import {
   SLOT_TYPE_LABELS,
   blankSlot,
   blankSpec,
+  dropUserSelectableParams,
   fromSpecOut,
   insertRef,
   nextSlotKey,
@@ -193,5 +194,29 @@ describe('模板规格草稿', () => {
       ['b', 0],
       ['a', 1],
     ]);
+  });
+});
+
+describe('dropUserSelectableParams · 作者不该写死「使用者选的」参数', () => {
+  it('把 userSelectable 的键从 params 里剔掉', () => {
+    // 老草稿里可能已经存了计费模式（那时还没这条规矩），换模型后残留也会
+    // 跟着走 —— 后端预检/发布会直接拒掉，报「计费模式 由使用模板的人来选」。
+    const spec = blankSpec();
+    spec.params = {durationSec: 6, billingMode: 'credits'};
+
+    const cleaned = dropUserSelectableParams(spec, ['billingMode']);
+    expect(cleaned.params).toEqual({durationSec: 6});
+  });
+
+  it('没有这类参数时原样返回，不复制一份', () => {
+    const spec = blankSpec();
+    spec.params = {durationSec: 6};
+    expect(dropUserSelectableParams(spec, [])).toBe(spec);
+  });
+
+  it('剔完不剩下任何参数时给空对象，不留 undefined', () => {
+    const spec = blankSpec();
+    spec.params = {billingMode: 'credits'};
+    expect(dropUserSelectableParams(spec, ['billingMode']).params).toEqual({});
   });
 });

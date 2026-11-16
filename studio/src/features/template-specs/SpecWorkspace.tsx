@@ -8,7 +8,7 @@ import {
 import { useModels } from '@/entities/model/api/model.queries';
 import { ParamFields } from '@/entities/model/ui/ParamFields';
 import {
-  paramControlsFor,
+  authorParamControls,
   resolveParamValues,
   type ParamValue,
 } from '@/entities/model/lib/paramForm';
@@ -34,6 +34,7 @@ import {
   SLOT_TYPE_LABELS,
   blankSlot,
   blankSpec,
+  dropUserSelectableParams,
   fromSpecOut,
   normalize,
   referenceChips,
@@ -92,6 +93,16 @@ export function SpecWorkspace() {
   const slots = draft?.slots ?? [];
   const pickerSlot = picker?.target === 'slot' ? slots[picker.index] : undefined;
 
+  /* 当前模型里「由使用者选」的参数（计费模式）。作者不设它们 —— 写死等于
+     替每个使用者决定要不要花积分。提交前会把草稿里残留的这类参数剔掉。 */
+  const userSelectableKeys = useMemo(() => {
+    const model = models.find(item => item.id === draft?.model);
+    if (!model?.paramSchema) return [];
+    return Object.entries(model.paramSchema)
+      .filter(([, field]) => field?.userSelectable === true)
+      .map(([key]) => key);
+  }, [models, draft?.model]);
+
   /* 一级标签：资产库的两级词表，槽位只用**一级**（二级是同一句话的细分，
      拿来当候选集范围反而让人选不出来）。数量按全库算，跟槽位类型无关 ——
      这里的用途是「挑范围」，不是「看有多少条」。 */
@@ -119,7 +130,12 @@ export function SpecWorkspace() {
     if (!draft) return;
     clear();
     try {
-      const payload = normalize(draft);
+      // 剔掉「使用者可选」的参数（计费模式）：它们由用模板的人在模板库选，
+      // 作者设了后端会拒。老草稿里可能残留，剔一次省得改个无关字段就被卡住。
+      const payload = dropUserSelectableParams(
+        normalize(draft),
+        userSelectableKeys,
+      );
       // 发布闸门的前端预检：后端要求「要让用户填的图片/视频槽位必须有一级标签」，
       // 而它只会说"这些槽位要给一级标签"、不指哪里。先在本地拦一次并点名，
       // 省掉「点发布 → 400 → 回头逐个槽位找」那一轮。保存草稿不判（草稿允许半成品）。
@@ -376,8 +392,11 @@ export function SpecWorkspace() {
   /* ---------- 编辑器 ---------- */
   /* 参数控件由模型声明驱动（中文标签、档位文案都在 `paramControlsFor` 里）：
      以前这里拿 `Object.entries(paramSchema)` 直接渲染，界面上印的是 `durationSec`
-     这种英文 key，枚举值也是裸的 `9:16`。 */
-  const paramControls = paramControlsFor(models.find(item => item.id === draft.model));
+     这种英文 key，枚举值也是裸的 `9:16`。
+
+     只给「作者设的」参数 —— 标了 `userSelectable` 的（计费模式）由**使用模板的人**
+     在模板库选，作者写死等于替每个使用者决定要不要花积分。 */
+  const paramControls = authorParamControls(models.find(item => item.id === draft.model));
   const paramOverrides: Record<string, ParamValue> = {};
   for (const [key, value] of Object.entries(draft.params ?? {})) {
     if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {

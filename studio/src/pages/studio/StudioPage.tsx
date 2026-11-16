@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Wand2 } from 'lucide-react';
 import {
@@ -13,28 +13,25 @@ import {
 import { cn } from '@/shared/lib/cn';
 import { toast } from '@/shared/lib/toast';
 import { useCreateTask, useTaskList } from '@/entities/task/api/task.queries';
-import { aspectOptionsFor, durationOptionsFor, useModels } from '@/entities/model/api/model.queries';
+import { useModels } from '@/entities/model/api/model.queries';
 import { useShots } from '@/entities/shot/api/shot.api';
 import { LibraryFlyout } from '@/entities/library/ui/LibraryFlyout';
 import { useUploadAsset } from '@/entities/library/api/library.queries';
 import { TextRefPicker } from '@/features/library/TextRefPicker';
-import type { LibraryAssetOut } from '@/shared/api/schema';
+import type { LibraryAssetKind, LibraryAssetOut } from '@/shared/api/schema';
 import { useCan } from '@/shared/access/use-access';
 import type { LibraryAssetDrag } from '@/shared/lib/libraryDrag';
-import type { AspectRatio } from '@/entities/task/model/types';
-
-const STYLE_PRESETS = ['电影感', '纪实手持', '广告质感', '胶片复古'];
-
-/**
- * 工作台自己的参考图档位。
- *
- * 生图页那边「模型的 `maxReferences` 是 0 就不画上传框」，因为供应商确实不收；
- * 视频侧目前所有模型都还没声明这个字段（后端 `task/pipeline.py` 尚未把
- * `reference_library_ids` 转成供应商要的 `reference_urls`，参考图只是**如实记录**
- * 在这次任务上），照搬那条规则会让整块参考图区直接消失。所以这里取「模型声明了
- * 正数才采信，否则用工作台档位」，等后端打通后再改成以模型声明为准。
- */
-const DEFAULT_REFERENCE_SLOTS = 4;
+import {
+  paramControlsFor,
+  resolveParamValues,
+  type ParamValue,
+} from '@/entities/model/lib/paramForm';
+import { ParamFields } from '@/entities/model/ui/ParamFields';
+import {
+  toTaskPayload,
+  type TaskPayloadResult,
+} from '@/features/template-library/taskPayload';
+import type { VideoTask } from '@/entities/task/model/types';
 
 export default function StudioPage() {
   const navigate = useNavigate();
@@ -42,14 +39,14 @@ export default function StudioPage() {
   const { data: shots } = useShots();
   const { data: recent } = useTaskList({ page: 1, pageSize: 3, scope: 'mine' });
 
-  // 模型、时长、比例全部来自后端 /models：新增模型不需要改这里
+  // 模型与它声明的全部参数都来自后端 /models：新增模型不需要改这里
   const models = useModels('video');
   const [prompt, setPrompt] = useState('');
   const [modelId, setModelId] = useState('');
-  const [duration, setDuration] = useState('');
-  const [ratio, setRatio] = useState<AspectRatio>('9:16');
-  const [style, setStyle] = useState(STYLE_PRESETS[0]);
   const [error, setError] = useState('');
+  /* 参数只存「用户改过的那几个」，没改的交给 schema 默认值。
+     存最终值的话，换模型后旧值会留在 state 里，而新模型未必认这些值。 */
+  const [overrides, setOverrides] = useState<Record<string, ParamValue>>({});
   /* 参考图：先落素材库拿 id，再随请求下发 id —— 与生图页同一条通道，
      提交的是 id 而不是图片字节，同一张素材可以被多个任务反复引用 */
   const [references, setReferences] = useState<ReferenceItem[]>([]);
@@ -67,53 +64,28 @@ export default function StudioPage() {
     () => models.map((item) => ({ value: item.id, label: item.label })),
     [models],
   );
-  const durationValues = useMemo(() => durationOptionsFor(currentModel), [currentModel]);
-  const durationOptions = useMemo(
-    () => durationValues.map((value) => ({ value: String(value), label: `${value} 秒` })),
-    [durationValues],
+
+  /* 参数控件完全由模型声明驱动：后端声明什么，这里就渲染什么。
+     这一条是硬纪律 —— 之前工作台写死「时长/画幅/风格预设」三件套，
+     于是：
+     - 风格预设无条件提交，而模型没声明 `stylePreset` 时后端直接 400
+       （实测：选 LibTV 提交必失败）；
+     - 模型声明了新参数（计费模式等）界面里根本没有入口。
+     现在按 schema 渲染，声明了就有，不声明就不出现。 */
+  const paramControls = paramControlsFor(currentModel);
+  const paramValues = resolveParamValues(paramControls, overrides);
+
+  /* 参考素材的数量上限与类型都由模型声明（`maxReferences` / `referenceKinds`），
+     不在界面里写死「只选图片、最多 4 张」——那会把视频替换模型的用户挡在门外。
+
+     `maxReferences = 0` 就**整块不画**：模型没声明收参考素材，后端受理期会
+     直接拒（`模型 X 不支持参考素材，请换用支持参考素材的模型`）。
+     画一个上传框让用户填完再吃一个 400，比不画更糟。 */
+  const referenceKinds = useMemo(
+    () => currentModel?.referenceKinds?.length ? currentModel.referenceKinds : ['image'],
+    [currentModel],
   );
-  const ratioOptions = useMemo(() => aspectOptionsFor(currentModel), [currentModel]);
-
-  /**
-   * 缺省值取模型自己声明的 `default`，不取「最长的那个档位」。
-   *
-   * 以前时长默认落在最后一档（12 秒），而模型声明的是 5 秒：视频按秒计费，
-   * 这等于默认给用户下了一个 2.4 倍时长的单，还看不出是自己选的。
-   * 声明的 default 不在档位里（供应商配置写歪了）才退回到最后一档。
-   */
-  const durationFallback = useMemo(() => {
-    const declared = Number(currentModel?.paramSchema?.durationSec?.default);
-    if (Number.isFinite(declared) && durationValues.includes(declared)) return String(declared);
-    return String(durationValues[durationValues.length - 1] ?? '');
-  }, [currentModel, durationValues]);
-  const ratioFallback = useMemo(() => {
-    const declared = currentModel?.paramSchema?.aspectRatio?.default;
-    if (declared && ratioOptions.some((one) => one.value === declared)) {
-      return declared as AspectRatio;
-    }
-    return ratioOptions[0]?.value;
-  }, [currentModel, ratioOptions]);
-  const maxReferences =
-    currentModel?.maxReferences && currentModel.maxReferences > 0
-      ? currentModel.maxReferences
-      : DEFAULT_REFERENCE_SLOTS;
-
-  // 换模型时把时长/比例收敛到该模型支持的范围内
-  useEffect(() => {
-    if (!durationValues.length) return;
-    setDuration((prev) =>
-      prev && durationValues.includes(Number(prev)) ? prev : durationFallback,
-    );
-  }, [durationValues, durationFallback]);
-
-  useEffect(() => {
-    if (!ratioOptions.length || !ratioFallback) return;
-    setRatio((prev) =>
-      ratioOptions.some((item) => item.value === prev) ? prev : ratioFallback,
-    );
-  }, [ratioOptions, ratioFallback]);
-
-  const storyboard = useMemo(() => (shots?.items ?? []).slice(0, 4), [shots]);
+  const maxReferences = currentModel?.maxReferences ?? 0;
 
   const addReferences = async (files: FileList | null) => {
     const picked = Array.from(files ?? []);
@@ -148,22 +120,57 @@ export default function StudioPage() {
     setReferences((prev) => [...prev, { id: asset.id, name: asset.name, url: asset.url }]);
   };
 
+  /**
+   * 提交：按 `/tasks` 的契约摊平参数。
+   *
+   * 摊平规则**只有一份**：`toTaskPayload`（模板库那条链也在用）。
+   * 它对「`/tasks` 表达不了的键」是**报错而不是丢掉** —— 丢掉的话用户会拿到
+   * 一个「参数其实没用上」的任务，界面上还显示成功。
+   */
   const submit = () => {
     if (!prompt.trim()) {
       setError('请先填写画面描述');
       return;
     }
+    if (!currentModel) {
+      setError('暂无可用模型，请稍后重试');
+      return;
+    }
     setError('');
+
+    /* 编译结果形状与 `compile` 一致：这里没有槽位与模板，直接把参数与素材摊平。
+       顶层字段由模型 schema 决定（时长/画幅…），其余声明的参数进 `params`。 */
+    const compiled = {
+      version: 0,
+      model: currentModel.id,
+      prompt: prompt.trim(),
+      params: Object.fromEntries(
+        Object.entries(paramValues).filter(([, value]) => value !== '' && value !== undefined),
+      ),
+      referenceLibraryIds: references.map((item) => item.id),
+      textLibraryIds: textRefs.map((item) => item.id),
+      slots: [],
+    };
+
+    const plan: TaskPayloadResult = toTaskPayload(
+      compiled,
+      prompt.trim().slice(0, 40),
+      {
+        durationSec: Number(currentModel.paramSchema?.durationSec?.default ?? 0) || undefined,
+        aspectRatio: (currentModel.paramSchema?.aspectRatio?.default as string | undefined) ?? undefined,
+      },
+      // 带上模型的参数声明：提交前就能判定「这个键模型没声明」，早一步报出来
+      currentModel,
+    );
+    if (!plan.ok) {
+      setError(plan.message);
+      return;
+    }
+
     create.mutate(
       {
-        prompt: `${prompt.trim()}，${style}风格`,
-        // 提交目录 id：后端会归一成「id + 可读名」，避免同一个字段混装两种形态
-        model: currentModel?.id ?? '',
-        durationSec: Number(duration),
-        aspectRatio: ratio,
-        stylePreset: style,
-        ...(references.length ? { referenceLibraryIds: references.map((item) => item.id) } : {}),
-        ...(textRefs.length ? { textLibraryIds: textRefs.map((item) => item.id) } : {}),
+        ...plan.payload,
+        prompt: plan.payload.prompt,
       },
       {
         onSuccess: () => {
@@ -178,6 +185,8 @@ export default function StudioPage() {
       },
     );
   };
+
+  const storyboard = useMemo(() => (shots?.items ?? []).slice(0, 4), [shots]);
 
   return (
     <>
@@ -201,18 +210,20 @@ export default function StudioPage() {
         <section className="self-start rounded-card border border-line-soft bg-panel p-3.5 lg:row-span-2 2xl:row-span-1">
           <SectionTitle>创作输入</SectionTitle>
 
-          <ReferenceImages
-            items={references}
-            max={maxReferences}
-            busy={upload.isPending}
-            onPick={(files) => void addReferences(files)}
-            onRemove={(id) => setReferences((prev) => prev.filter((item) => item.id !== id))}
-            onAddAsset={addLibraryAsset}
-            // 没有素材库查看权限时不画那个按钮：画出来点了只会弹一句「没有权限」
-            onOpenLibrary={canReadLibrary ? () => setLibraryOpen((open) => !open) : undefined}
-            libraryOpen={libraryOpen && canReadLibrary}
-            emptyHint="也可以点右上角「素材库」把图拖进来"
-          />
+          {maxReferences > 0 && (
+            <ReferenceImages
+              items={references}
+              max={maxReferences}
+              busy={upload.isPending}
+              onPick={(files) => void addReferences(files)}
+              onRemove={(id) => setReferences((prev) => prev.filter((item) => item.id !== id))}
+              onAddAsset={addLibraryAsset}
+              // 没有素材库查看权限时不画那个按钮：画出来点了只会弹一句「没有权限」
+              onOpenLibrary={canReadLibrary ? () => setLibraryOpen((open) => !open) : undefined}
+              libraryOpen={libraryOpen && canReadLibrary}
+              emptyHint="也可以点右上角「素材库」把图拖进来"
+            />
+          )}
 
           <Field label="画面描述" required>
             <textarea
@@ -245,14 +256,13 @@ export default function StudioPage() {
                 value={currentModel?.id ?? ''}
                 onChange={(e) => {
                   setModelId(e.target.value);
-                  // 换模型的参考图上限/支持情况可能完全不同，旧图一律清掉
+                  // 换模型的参考图上限/支持情况可能完全不同，旧图一律清掉；
+                  // 参数同理（新模型未必认这些键，留在 state 里会被后端拒）。
                   setReferences([]);
                   setLibraryOpen(false);
+                  setOverrides({});
                 }}
               />
-            </Field>
-            <Field label="时长">
-              <Select block options={durationOptions} value={duration} onChange={(e) => setDuration(e.target.value)} />
             </Field>
           </div>
 
@@ -263,25 +273,17 @@ export default function StudioPage() {
             </p>
           )}
 
-          <Field label="画面比例">
-            <div className="flex flex-wrap gap-1.5">
-              {ratioOptions.map((r) => (
-                <ChipButton key={r.value} active={ratio === r.value} onClick={() => setRatio(r.value)}>
-                  {r.label}
-                </ChipButton>
-              ))}
-            </div>
-          </Field>
-
-          <Field label="风格预设">
-            <div className="flex flex-wrap gap-1.5">
-              {STYLE_PRESETS.map((s) => (
-                <ChipButton key={s} active={style === s} onClick={() => setStyle(s)}>
-                  {s}
-                </ChipButton>
-              ))}
-            </div>
-          </Field>
+          {/* 参数区完全由模型声明驱动：时长、画幅、计费模式……后端声明什么就渲染什么，
+              没声明的不出现（省得提交时被 400）。 */}
+          {paramControls.length > 0 && (
+            <ParamFields
+              className="mb-2.5"
+              idPrefix="studio-param"
+              controls={paramControls}
+              values={paramValues}
+              onChange={(key, value) => setOverrides((prev) => ({ ...prev, [key]: value }))}
+            />
+          )}
 
           <Button
             variant="primary"
@@ -321,7 +323,7 @@ export default function StudioPage() {
         <section className="self-start rounded-card border border-line-soft bg-panel p-3.5">
           <SectionTitle>最近生成</SectionTitle>
           <div className="flex flex-col gap-2">
-            {(recent?.items ?? []).map((task) => (
+            {(recent?.items ?? []).map((task: VideoTask) => (
               <button
                 key={task.id}
                 type="button"
@@ -345,12 +347,15 @@ export default function StudioPage() {
       </div>
 
       {/* 悬浮在页面之上、不加遮罩：遮罩会挡住左侧参考图区，拖拽就落不下去了 */}
-      {libraryOpen && canReadLibrary && (
+      {libraryOpen && canReadLibrary && maxReferences > 0 && (
         <LibraryFlyout
           onClose={() => setLibraryOpen(false)}
           max={maxReferences}
           pickedIds={references.map((item) => item.id)}
           onPick={addLibraryAsset}
+          /* 素材库悬浮栏的候选类型也跟模型走：视频替换模型要「原片视频 +
+             参考图 + 音频」，只给图片的话用户根本选不到原片。 */
+          kinds={referenceKinds as LibraryAssetKind[]}
         />
       )}
     </>
@@ -387,30 +392,5 @@ function Field({
       </div>
       {children}
     </div>
-  );
-}
-
-function ChipButton({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  children: ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        'rounded-pill border px-2.5 py-1 text-[11.5px] transition-colors',
-        active
-          ? 'border-[#bcd6ff] bg-primary-soft font-semibold text-[#2b6bd4]'
-          : 'border-line bg-panel text-ink-soft hover:border-[#b9d3ff] hover:text-primary',
-      )}
-    >
-      {children}
-    </button>
   );
 }

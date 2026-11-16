@@ -62,11 +62,16 @@ _PARAM_SCHEMA = {
     # 权益标签（顶层与 params 各写一份 `disableBenefitTags`）。
     #
     # 默认 `free` 是保守的那一侧：免费队列慢一点，但不误扣积分。
+    #
+    # `userSelectable`：这个参数**由使用模板的人选**，不该由模板作者写死。
+    # 写死 = 模板作者替每个使用者决定了要不要花积分 —— 而积分是**用的人**的钱。
+    # 标记后：封装页不许设它（设了就报错），模板库填表时渲染成选择控件。
     "billingMode": {
         "type": "enum",
         "options": ["free", "credits"],
         "default": "free",
         "label": "计费模式",
+        "userSelectable": True,
         "description": (
             "免费队列（较慢，不扣积分）/ 积分加速（更快，消耗账号积分）。"
             "积分加速要求账号当前有生效的 0 积分权益标签，否则不会提交"

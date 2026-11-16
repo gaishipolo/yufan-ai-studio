@@ -1,5 +1,6 @@
 import type { GenerateImagePayload } from '@/entities/image/model/types';
 import type { CreateTaskPayload } from '@/entities/task/model/types';
+import type { ParamField } from '@/entities/model/model/types';
 import type { AspectRatio, SpecCompileOut } from '@/shared/api/schema';
 
 /**
@@ -10,15 +11,21 @@ import type { AspectRatio, SpecCompileOut } from '@/shared/api/schema';
  * 两个接口的入参形状不同（视频有时长/画幅，图片有尺寸/张数），所以这里分成两条，
  * 别指望一个 `params` 直通两边。
  *
- * 两条都守同一件事：**参数不许静默丢**。视频那边多出来的键没有落点，宁可报错；
- * 图片那边除 `size` / `count` 之外的键进 `params`，由服务端按模型 `paramSchema`
- * 校验（未声明即 400）—— 也是可见的失败，不是悄悄换成默认值。
+ * ## 三条纪律
+ *
+ * 1. **参数不许静默丢**。视频那边**有**自由 `params` 通道了（`CreateTaskIn.params`），
+ *    其余键进那里，由服务端按模型 `paramSchema` 校验 —— 未声明即 400，是可见的
+ *    失败，不是悄悄换成默认值。
+ * 2. **模型不认的键不许提交**。前端拿得到模型的 `paramSchema`，所以在提交前
+ *    就能判定「这个键模型根本没声明」。后端会拒，但那时用户已经填完了一堆
+ *    素材 —— 早一步报出来，省掉「为什么我选的东西不能提交」。
+ * 3. **顶层键与自由参数不重叠**。`durationSec` / `aspectRatio` / `stylePreset` /
+ *    `billingMode` 在接口上有各自的字段；同一个值出现在两处时语义没法确定
+ *    （首提读顶层、重试读 params，同一条任务两次用的时长可能不一样）。
  */
-/* `billingMode` 与 `stylePreset` 一样是顶层字段（不是自由 `params`）：
-   `/tasks` 只认这几个摊平键，其余键报「无法提交」而不是被静默丢掉。
-   计费模式走顶层是后端契约（`CreateTaskIn.billingMode`），不是模板层的东西。 */
+
+/* 这几个键在接口上有**各自的顶层字段**，不经过自由 `params`。 */
 const VIDEO_TOP_LEVEL = ['aspectRatio', 'durationSec', 'stylePreset', 'billingMode'] as const;
-type VideoTopLevel = (typeof VIDEO_TOP_LEVEL)[number];
 
 /** 图片接口的顶层键：其余声明的参数进 `params`。 */
 const IMAGE_TOP_LEVEL = ['size', 'count'] as const;
@@ -34,7 +41,14 @@ export interface PayloadDefaults {
   count?: number;
 }
 
-/** 提交目标：由模型能力决定，不由模板声明。 */
+/**
+ * 模型的参数声明。**没有它就没法判定「模型认不认这个键」** —— 缺省成空对象时
+ * 退化成「不预检，全部交给后端判」（后端仍会拒，但错误信息晚一步）。
+ */
+export interface PayloadSchema {
+  paramSchema?: Record<string, ParamField>;
+}
+
 export type SubmitKind = 'video' | 'image';
 
 export type TaskPayloadResult =
@@ -50,27 +64,87 @@ export type SubmitResult =
   | { ok: true; kind: 'image'; payload: GenerateImagePayload }
   | { ok: false; message: string };
 
+/** 参数值：只允许标量（后端按 schema 收敛成 string / number / bool）。 */
+type ParamScalar = string | number | boolean;
+
+function isScalar(value: unknown): value is ParamScalar {
+  return typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean';
+}
+
+/**
+ * 只把**模型声明过**的标量带出去。
+ *
+ * 两条过滤各管一件事：
+ * - 顶层键不进 `params`（纪律 3）；
+ * - 模型没声明的键**直接报错**（纪律 2）—— 静默丢掉的话，用户改的那个值
+ *   从来没生效过，页面看起来却一切正常。
+ *
+ * 没有 schema 时（调用方没给）不预检：全量透传，交给后端按模型 schema 判。
+ * 后端那道校验是权威的，前端这道只是为了早一步报出来。
+ */
+function collectParams(
+  params: Record<string, unknown>,
+  topLevel: readonly string[],
+  schema: Record<string, ParamField> | undefined,
+  modelLabel: string,
+): { ok: true; params: Record<string, ParamScalar> } | { ok: false; message: string } {
+  const extra: Record<string, ParamScalar> = {};
+  const unknown: string[] = [];
+
+  for (const [key, value] of Object.entries(params)) {
+    if (topLevel.includes(key)) continue;
+    if (!isScalar(value)) continue;
+    if (schema && !(key in schema)) {
+      unknown.push(key);
+      continue;
+    }
+    extra[key] = value;
+  }
+
+  if (unknown.length > 0) {
+    const available = schema ? Object.keys(schema).sort() : [];
+    return {
+      ok: false,
+      message:
+        `模型 ${modelLabel} 不接受参数 ${unknown.sort().join('、')}` +
+        (available.length ? `，可用：${available.join('、')}` : ''),
+    };
+  }
+  return { ok: true, params: extra };
+}
+
+/** 模型的 `paramSchema`：调用方没传就当「不知道」，不预检。 */
+function schemaOf(source: PayloadSchema | undefined): Record<string, ParamField> | undefined {
+  const declared = source?.paramSchema;
+  if (!declared || typeof declared !== 'object') return undefined;
+  return declared;
+}
+
 export function toTaskPayload(
   compiled: SpecCompileOut,
   title: string,
   defaults: PayloadDefaults = {},
+  schema?: PayloadSchema,
 ): TaskPayloadResult {
   const params = (compiled.params ?? {}) as Record<string, unknown>;
+  const declared = schemaOf(schema);
 
-  const unknown = Object.keys(params).filter(
-    key => !VIDEO_TOP_LEVEL.includes(key as VideoTopLevel),
+  /* 时长：模板声明了就用模板的，模板没声明就用模型目录里的默认档位。
+     两处都没有就**不传** —— 有些视频模型压根不声明 `durationSec`，
+     那种模型有自己的出片时长，编一个 5 秒过去反而覆盖了它。 */
+  const rawDuration = params.durationSec ?? defaults.durationSec;
+  const duration = Number(rawDuration ?? 0);
+  if (rawDuration !== undefined && (!Number.isFinite(duration) || duration <= 0)) {
+    return { ok: false, message: `时长不合法：${String(rawDuration)}` };
+  }
+
+  const collected = collectParams(
+    params,
+    VIDEO_TOP_LEVEL,
+    declared,
+    compiled.model,
   );
-  if (unknown.length > 0) {
-    return {
-      ok: false,
-      message: `这些参数无法提交给通用生成任务：${[...unknown].sort().join('、')}`,
-    };
-  }
-
-  const duration = Number(params.durationSec ?? defaults.durationSec ?? 0);
-  if (!Number.isFinite(duration) || duration <= 0) {
-    return { ok: false, message: '模板没有声明时长，模型目录里也没有默认档位' };
-  }
+  if (!collected.ok) return collected;
 
   return {
     ok: true,
@@ -79,11 +153,12 @@ export function toTaskPayload(
       prompt: compiled.prompt,
       model: compiled.model,
       aspectRatio: String(params.aspectRatio ?? defaults.aspectRatio ?? '9:16') as AspectRatio,
-      durationSec: duration,
+      ...(duration > 0 ? { durationSec: duration } : {}),
       referenceLibraryIds: compiled.referenceLibraryIds ?? [],
       textLibraryIds: compiled.textLibraryIds ?? [],
       ...(params.stylePreset ? { stylePreset: String(params.stylePreset) } : {}),
       ...(params.billingMode ? { billingMode: String(params.billingMode) } : {}),
+      ...(Object.keys(collected.params).length > 0 ? { params: collected.params } : {}),
     },
   };
 }
@@ -91,19 +166,18 @@ export function toTaskPayload(
 export function toImagePayload(
   compiled: SpecCompileOut,
   defaults: PayloadDefaults = {},
+  schema?: PayloadSchema,
 ): ImagePayloadResult {
   const params = (compiled.params ?? {}) as Record<string, unknown>;
+  const declared = schemaOf(schema);
   const size = String(params.size ?? defaults.size ?? '').trim();
   const rawCount = Number(params.count ?? defaults.count ?? 0);
   if (!Number.isFinite(rawCount) || rawCount < 0) {
     return { ok: false, message: `张数不合法：${String(params.count)}` };
   }
 
-  /* 除尺寸与张数之外声明的参数进 `params`：它们没有顶层落点，但**不能丢**——
-     丢了用户就会拿到一张「参数其实没用上」的图，界面上还显示成功。 */
-  const extra = Object.fromEntries(
-    Object.entries(params).filter(([key]) => !IMAGE_TOP_LEVEL.includes(key as 'size' | 'count')),
-  );
+  const collected = collectParams(params, IMAGE_TOP_LEVEL, declared, compiled.model);
+  if (!collected.ok) return collected;
 
   return {
     ok: true,
@@ -114,7 +188,7 @@ export function toImagePayload(
       count: Math.round(rawCount),
       referenceLibraryIds: compiled.referenceLibraryIds ?? [],
       textLibraryIds: compiled.textLibraryIds ?? [],
-      ...(Object.keys(extra).length > 0 ? { params: extra } : {}),
+      ...(Object.keys(collected.params).length > 0 ? { params: collected.params } : {}),
     },
   };
 }
@@ -125,11 +199,12 @@ export function toSubmitPayload(
   title: string,
   kind: SubmitKind,
   defaults: PayloadDefaults = {},
+  schema?: PayloadSchema,
 ): SubmitResult {
   if (kind === 'image') {
-    const image = toImagePayload(compiled, defaults);
+    const image = toImagePayload(compiled, defaults, schema);
     return image.ok ? { ok: true, kind: 'image', payload: image.payload } : image;
   }
-  const video = toTaskPayload(compiled, title, defaults);
+  const video = toTaskPayload(compiled, title, defaults, schema);
   return video.ok ? { ok: true, kind: 'video', payload: video.payload } : video;
 }

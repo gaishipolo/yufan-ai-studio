@@ -155,6 +155,13 @@ class SpecCompileIn(StrictIn):
 
     version: int | None = Field(default=None, ge=1)
     slot_values: dict[str, list[str]] = Field(default_factory=dict)
+    #: 使用者在填表时对「运行时参数」的选择（如计费模式）。
+    #:
+    #: 这些参数在模型 schema 里标了 `userSelectable`：**不该由模板作者写死**
+    #: ——写死等于作者替每个使用者决定了要不要花积分，而积分是用的人的钱。
+    #: 作者设了会在预检/发布时报错，使用者的选择则在这里传进来，
+    #: 不落进 spec.params（那是作者的部分）。
+    param_overrides: dict[str, Any] = Field(default_factory=dict)
 
 
 class CompiledSlotOut(CamelModel):

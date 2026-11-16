@@ -28,6 +28,14 @@ export interface ParamField {
   label?: string;
   /** 可选：控件下方的一行说明 */
   description?: string;
+  /**
+   * 这个参数**由使用模板的人选**，不该由模板作者写死。
+   *
+   * 典型是计费模式：写死等于模板作者替每个使用者决定了要不要花积分，
+   * 而积分是用的人的钱。标了它的参数在封装页不能设置（后端会报错），
+   * 在模板库填表时渲染成选择控件。
+   */
+  userSelectable?: boolean;
 }
 
 export interface ModelSpec {

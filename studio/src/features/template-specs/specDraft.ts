@@ -129,6 +129,27 @@ export function normalize(spec: TemplateSpecIn): TemplateSpecIn {
   };
 }
 
+/**
+ * 把「使用者可选」的参数从作者设的参数里剔掉。
+ *
+ * 标了 `userSelectable` 的参数（计费模式）由**用模板的人**在模板库选，作者不该设。
+ * 但老草稿里可能已经存了（那时还没这条规矩），换模型后残留也会跟着走 ——
+ * 后端预检/发布会直接拒掉，报「计费模式 由使用模板的人来选」。
+ *
+ * 所以提交前主动剔一次：省得用户改个无关字段就被这条历史遗留卡住。
+ */
+export function dropUserSelectableParams(
+  spec: TemplateSpecIn,
+  userSelectableKeys: string[],
+): TemplateSpecIn {
+  if (!userSelectableKeys.length) return spec;
+  const drop = new Set(userSelectableKeys);
+  const params = Object.fromEntries(
+    Object.entries(spec.params ?? {}).filter(([key]) => !drop.has(key)),
+  );
+  return {...spec, params};
+}
+
 export interface RefChip {
   /** 插入提示词的文本，如 `{{slot:hero}}`。 */
   token: string;

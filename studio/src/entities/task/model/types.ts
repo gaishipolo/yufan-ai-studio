@@ -72,7 +72,13 @@ export interface CreateTaskPayload {
   title?: string;
   prompt: string;
   model: string;
-  durationSec: number;
+  /**
+   * 视频时长（秒）。
+   *
+   * **可以不传**：有些模型压根不声明 `durationSec`（它有自己的出片时长），
+   * 传一个编出来的 5 秒过去反而覆盖了它。后端在模型声明了时才校验档位。
+   */
+  durationSec?: number;
   aspectRatio: AspectRatio;
   /** 参考图：资产库 v2 的资产 id，顺序即提交顺序（后端按顺序解析，不是所有权凭证） */
   referenceLibraryIds?: string[];
@@ -86,6 +92,15 @@ export interface CreateTaskPayload {
    * 传这个字段会被后端 400 —— 界面上也不会给这个选项。
    */
   billingMode?: string;
+  /**
+   * 模型声明的**其余**参数，键与 `GET /models` 的 `paramSchema` 一致
+   * （如 `quality` / `seed`）。
+   *
+   * 后端按模型 schema 校验：**未声明的键会 400**，不是静默忽略。
+   * 顶层那几个键（`durationSec` / `aspectRatio` / `stylePreset` /
+   * `billingMode`）走各自的字段，不进这里。
+   */
+  params?: Record<string, string | number | boolean>;
 }
 
 export const TASK_STATUS_LABEL: Record<TaskStatus, string> = {

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+from collections.abc import Mapping
 from datetime import datetime
 from typing import Any
 
@@ -44,6 +46,17 @@ class VideoTask(Base, UUIDMixin, TimestampMixin):
     # 用不同的计费口径重下单）。默认值 `free` 是保守的那一侧：没声明就
     # 排免费队列，不会误扣积分。
     billing_mode: Mapped[str] = mapped_column(String(16), default="free", nullable=False)
+    # 模型声明的**其余**参数（JSON 文本）。
+    #
+    # 为什么要这一列：时长与画幅有顶层列，计费模式与风格预设也各有一列，
+    # 但模型随时可能再声明别的参数（`quality` / `seed` / `resolution`…）。
+    # 没有这一列时前端只有两个选择：写死一套键（模型一改就 400），
+    # 或者把声明的参数全塞进提示词（供应商收到的是文字不是参数）。
+    #
+    # 与生图 `image_jobs.params_json` 同一口径：**键必须来自模型 schema**
+    # （受理期按 schema 校验，未声明的键 400），不声明的键不落库。
+    # 顶层那几个键不进这里 —— 避免两份真相（顶层改了、这里没改）。
+    params_json: Mapped[str] = mapped_column(Text, default="", nullable=False)
     reference_library_ids: Mapped[list[str]] = mapped_column(
         JSON, default=list, nullable=False
     )
@@ -124,3 +137,29 @@ class TaskFavorite(Base, UUIDMixin, TimestampMixin):
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"<TaskFavorite {self.user_id} → {self.task_id}>"
+
+
+def dumps_params(params: Mapping[str, Any]) -> str:
+    """把额外参数写成 JSON 文本；空参数写空串（不是 `{}`），便于「无参数」判空。
+
+    与生图 `modules/image/models.py::dumps_params` 同一口径：两边存的都是
+    「模型声明了、但没有独立列的那部分参数」。
+    """
+    if not params:
+        return ""
+    return json.dumps(dict(params), ensure_ascii=False)
+
+
+def parse_params_json(raw: str | None) -> dict[str, Any]:
+    """解析参数快照；脏数据（非 JSON、非对象）整条丢掉而不是抛。
+
+    读路径对脏数据必须宽容，写路径才严格 —— 一条历史脏行不该让整个
+    任务中心 500。
+    """
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+    except (TypeError, ValueError):
+        return {}
+    return dict(data) if isinstance(data, dict) else {}

@@ -29,11 +29,12 @@ from infra.ai.router import ModelRouter
 from infra.artifacts import artifact_urls
 from infra.queue.base import JobQueue
 from modules.task.enums import AspectRatio, TaskScope, TaskStatus
-from modules.task.models import TaskFavorite, VideoTask
+from modules.task.models import TaskFavorite, VideoTask, dumps_params
 from modules.task.params import (
     resolve_aspect_ratio,
     resolve_billing_mode,
     resolve_duration,
+    resolve_extra_params,
     resolve_model,
     resolve_style_preset,
 )
@@ -177,6 +178,11 @@ class TaskService:
         # 未声明这个参数的模型传非空值直接拒 —— 否则用户以为切了积分加速，
         # 实际那条代码路径根本不可达（上游只有一条队列）。
         billing_mode = resolve_billing_mode(spec, payload.billing_mode)
+        # 模型声明的**其余**参数：键必须来自模型 schema，未声明的键当场 400。
+        # 这一步之前没有 —— 前端只能传那四个写死的顶层键，于是工作台把
+        # `stylePreset` 无条件带着（模型没声明 → 400），而模型新声明的参数
+        # 压根没有入口。现在按 schema 走，与生图那条链同一份口径。
+        extra_params = resolve_extra_params(spec, payload.params)
 
         # 参考素材在受理期就过一遍资产库：存在 / 可读 / 在库 / 类型受支持。
         # 不做这一步的话，前端传一个别人的私有资产 id 也会被原样落库——
@@ -227,6 +233,9 @@ class TaskService:
             style_preset=style_preset,
             # 计费模式按任务冻结：重试必须用当初那一条，换队列等于换计费口径。
             billing_mode=billing_mode,
+            # 其余参数也按任务冻结：重试是从这一行重建生成请求的，
+            # 不落库就会用默认参数重新提交 —— 用户选的 quality / seed 无声丢失。
+            params_json=dumps_params(extra_params),
             # 存去重保序之后的 id：同一张图传两遍不会多占一个保护名额
             reference_library_ids=[ref.id for ref in references],
             text_json=dumps_text_refs(text_refs),

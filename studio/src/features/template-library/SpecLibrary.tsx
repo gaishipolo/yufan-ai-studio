@@ -8,11 +8,17 @@ import { PackChip } from '@/entities/library/ui/PackChip';
 import { SlotMediaPicker } from './SlotMediaPicker';
 import { useGenerateImage } from '@/entities/image/api/image.api';
 import { useModels } from '@/entities/model/api/model.queries';
-import { paramControlsFor, resolveParamValues, type ParamValue } from '@/entities/model/lib/paramForm';
+import {
+  isUserSelectable,
+  paramControlsFor,
+  resolveParamValues,
+  type ParamValue,
+} from '@/entities/model/lib/paramForm';
 import { useCreateTask } from '@/entities/task/api/task.queries';
 import { usePublishedSpecs, useSpecCompile } from '@/entities/template-spec/api/spec.queries';
 import type { SpecSlotOut, TemplateSpecOut } from '@/shared/api/schema';
 import { AssetPicker, type PickedAsset } from '@/features/template-specs/AssetPicker';
+import { ParamFields } from '@/entities/model/ui/ParamFields';
 import { Button, Chip, EmptyState, SearchInput, Skeleton } from '@/shared/ui';
 import { cn } from '@/shared/lib/cn';
 import { toSubmitPayload, type SubmitKind } from './taskPayload';
@@ -174,6 +180,9 @@ export function SpecLibrary() {
   const [keyword, setKeyword] = useState('');
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [values, setValues] = useState<Record<string, string[]>>({});
+  /* 使用者对「运行时参数」的选择（计费模式等）。跟素材选择分开存：
+     素材是这次填的，计费模式是这次选的 —— 换模板时两者都要重来。 */
+  const [userChoices, setUserChoices] = useState<Record<string, ParamValue>>({});
   const [picker, setPicker] = useState<string | null>(null);
   const [note, setNote] = useState('');
   const [error, setError] = useState('');
@@ -193,9 +202,11 @@ export function SpecLibrary() {
   const focused = spec?.key ?? null;
 
   /* 换模板就清空上一次的填写：不做"记忆上次填的素材"，
-     那会让用户以为新模板也用了同一张图。 */
+     那会让用户以为新模板也用了同一张图。计费模式这类选择同理 —— 上一张
+     模板的计费选择不该跟着带过来（那是上一笔生意的决定）。 */
   useEffect(() => {
     setValues({});
+    setUserChoices({});
     setNote('');
     setError('');
   }, [focused, version?.version]);
@@ -223,9 +234,19 @@ export function SpecLibrary() {
     return (values[slot.key] ?? []).length < minOf(slot);
   });
 
-  /* 参数只读展示，标签与档位文案全部来自模型的 `paramSchema`（`paramControlsFor`）：
-     模型多声明一个参数，这里就多一枚 chip，前端不写死任何一种、也不印英文 key。 */
+  /* 参数分两类：
+     - 作者设的（时长、画幅…）：只读展示，标签与档位文案全部来自模型的
+       `paramSchema`（`paramControlsFor`），前端不写死任何一种、也不印英文 key；
+     - 使用者选的（`userSelectable`，如计费模式）：**这里能改** —— 写死等于
+       模板作者替每个使用者决定了要不要花积分，而积分是用的人的钱。
+       改完随 `paramOverrides` 传给 compile，不落进模板版本。 */
   const paramControls = paramControlsFor(model);
+  const authorControls = paramControls.filter(
+    control => !isUserSelectable(model?.paramSchema?.[control.key]),
+  );
+  const userControls = paramControls.filter(control =>
+    isUserSelectable(model?.paramSchema?.[control.key]),
+  );
   const overrides: Record<string, ParamValue> = {};
   for (const [key, value] of Object.entries(version?.params ?? {})) {
     if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
@@ -233,7 +254,16 @@ export function SpecLibrary() {
     }
   }
   const paramValues = resolveParamValues(paramControls, overrides);
-  const paramChips = paramControls.map(control => {
+  /* 使用者选的值：以自己选过的为准，没选过的取 schema 默认值。 */
+  const userValues = resolveParamValues(userControls, {
+    ...Object.fromEntries(
+      Object.entries(paramValues).filter(([key]) =>
+        userControls.some(control => control.key === key),
+      ),
+    ),
+    ...userChoices,
+  });
+  const paramChips = authorControls.map(control => {
     const raw = paramValues[control.key];
     const option = control.options.find(item => item.value === String(raw));
     const text =
@@ -277,9 +307,13 @@ export function SpecLibrary() {
     try {
       const compiled = await compile.mutateAsync({
         key: spec.key,
-        payload: {slotValues: values},
+        payload: {
+          slotValues: values,
+          // 使用者选的运行时参数（计费模式等）：随这次编译走，不落进模板版本。
+          ...(Object.keys(userChoices).length ? {paramOverrides: userChoices} : {}),
+        },
       });
-      const plan = toSubmitPayload(compiled, spec.name, kind, defaults);
+      const plan = toSubmitPayload(compiled, spec.name, kind, defaults, model);
       if (!plan.ok) {
         setError(plan.message);
         return;
@@ -510,6 +544,27 @@ export function SpecLibrary() {
                         <span className="text-ink-mute">{item.label}</span>
                         <span className="ml-1 text-ink-soft">{item.text}</span>
                       </Chip>
+                    ))}
+                  </div>
+                </PanelSection>
+              )}
+
+              {/* 使用者能选的参数（计费模式）。**不写死在模板里** ——
+                  积分是用的人的钱，作者替别人决定要不要花积分不对。 */}
+              {userControls.length > 0 && (
+                <PanelSection title="生成选项">
+                  <div className="flex flex-col gap-2.5">
+                    {userControls.map(control => (
+                      <ParamFields
+                        key={control.key}
+                        className="grid-cols-1"
+                        idPrefix={`user-param-${control.key}`}
+                        controls={[control]}
+                        values={userValues}
+                        onChange={(key, value) =>
+                          setUserChoices(current => ({...current, [key]: value}))
+                        }
+                      />
                     ))}
                   </div>
                 </PanelSection>
