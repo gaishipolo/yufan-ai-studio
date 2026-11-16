@@ -164,6 +164,7 @@ export function LibraryFlyout({
   const [kind, setKind] = useState<LibraryAssetKind>(kinds[0] ?? 'image');
   const [topTagId, setTopTagId] = useState('');
   const [childTagId, setChildTagId] = useState('');
+  const [grandChildTagId, setGrandChildTagId] = useState('');
   const debounced = useDebouncedValue(keyword, 250);
 
   // 标签计数按入口变化；这里固定「全部素材」口径，与选择器的可见集一致。
@@ -182,17 +183,27 @@ export function LibraryFlyout({
   /** 当前一级：优先选中的一级，其次「选中二级的父」——与标签栏同一套派生口径 */
   const activeParent = useMemo(() => {
     if (topTagId) return topTagId;
-    return childTagId ? (byId.get(childTagId)?.parentId ?? '') : '';
-  }, [topTagId, childTagId, byId]);
+    if (childTagId) return byId.get(childTagId)?.parentId ?? '';
+    return grandChildTagId ? (byId.get(grandChildTagId)?.parentId ?? '') : '';
+  }, [topTagId, childTagId, grandChildTagId, byId]);
   const children = useMemo(
     () => childTags(allTags, activeParent || undefined),
     [allTags, activeParent],
   );
+  /** 当前二级：选中的是三级时取它的父 —— 第三行要挂在它下面 */
+  const activeChild = useMemo(() => {
+    if (childTagId) return childTagId;
+    return grandChildTagId ? (byId.get(grandChildTagId)?.parentId ?? '') : '';
+  }, [childTagId, grandChildTagId, byId]);
+  const grandChildren = useMemo(
+    () => (activeChild ? childTags(allTags, activeChild) : []),
+    [allTags, activeChild],
+  );
   /** 词表里有没有二级：一个都没有时二级行退化成一句说明，而不是假装有 */
   const hasAnyChild = useMemo(() => allTags.some((tag) => !!tag.parentId), [allTags]);
 
-  /* 二级比一级更具体：选中二级就不再带一级，否则 OR 叠加后仍是整组，看着像没筛 */
-  const effectiveTag = childTagId || topTagId;
+  /* 越具体的一级盖住上一级：选中三级就不再带二级，否则 OR 叠加后仍是整组，看着像没筛 */
+  const effectiveTag = grandChildTagId || childTagId || topTagId;
   const query = useLibrarySelectionInfinite({
     keyword: debounced || undefined,
     kind,
@@ -210,6 +221,7 @@ export function LibraryFlyout({
     // 类别换了，标签计数口径也变了；留着上一个类别的标签会筛出空列表
     setTopTagId('');
     setChildTagId('');
+    setGrandChildTagId('');
   }
 
   function pickTop(id: string) {
@@ -220,6 +232,7 @@ export function LibraryFlyout({
     }
     setTopTagId(id);
     setChildTagId('');
+    setGrandChildTagId('');
   }
 
   function pickChild(id: string) {
@@ -227,11 +240,17 @@ export function LibraryFlyout({
     // 从「全部二级」里直接点进某一组时，取消二级应该回到无筛选，
     // 而不是凭空变成「整组筛选」——那是用户没点过的条件。
     setChildTagId((current) => (current === id ? '' : id));
+    setGrandChildTagId('');
+  }
+
+  function pickGrandChild(id: string) {
+    setGrandChildTagId((current) => (current === id ? '' : id));
   }
 
   function clearTags() {
     setTopTagId('');
     setChildTagId('');
+    setGrandChildTagId('');
   }
 
   const items = useMemo(
@@ -350,6 +369,22 @@ export function LibraryFlyout({
           <p className="pl-8 text-micro leading-snug text-ink-mute">
             还没有二级标签：在资产库「管理标签」里把系列挂到一级下面即可。
           </p>
+        )}
+
+        {/* 第三行只在一级下面有二级、二级下面有三级时才出现：
+            抽屉太窄，没有层级的上下文就不摆这一行（空行是噪音）。 */}
+        {activeChild && grandChildren.length > 0 && (
+          <FlyoutTagRow
+            label={byId.get(activeChild)?.name ?? '三级'}
+            ariaLabel="三级标签"
+            allLabel="全部三级标签"
+            allActive={!grandChildTagId}
+            onAll={() => setGrandChildTagId('')}
+            items={grandChildren}
+            activeId={grandChildTagId}
+            onPick={pickGrandChild}
+            showParentName={false}
+          />
         )}
       </div>
 

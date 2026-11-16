@@ -3,7 +3,15 @@ import { Trash2 } from 'lucide-react';
 import { Button, Modal } from '@/shared/ui';
 import { toast } from '@/shared/lib/toast';
 import type { LibraryTagStatOut } from '@/shared/api/schema';
-import { sortByCreated, topLevelTags } from '@/entities/library/model/tagTree';
+import {
+  descendantIds,
+  levelLabel,
+  sortByCreated,
+  tagDepth,
+  tagLabel,
+  tagsAtDepth,
+  topLevelTags,
+} from '@/entities/library/model/tagTree';
 import {
   useCreateTag,
   useDeleteTag,
@@ -21,8 +29,11 @@ export interface LibraryTagManagerProps {
  * 标签词表管理：建、改名、移动层级、删除。
  *
  * 后端本来就有 `POST/PATCH/DELETE /library/tags`，但界面只接了「新建」。
- * 两级分类要能真正用起来，必须有地方把「3030」挂到「产品」下面，否则
+ * 分类要能真正用起来，必须有地方把「3030」挂到「产品」下面，否则
  * 只能靠运维命令改库。这个弹窗只在 `library:tag:manage` 权限下出现。
+ *
+ * 树最多三级，列表按「一级 → 二级 → 三级」原序排下来，层级字面量按真实层数
+ * 给（二级就是二级、三级就是三级），不从「有没有父」硬推。
  */
 export function LibraryTagManager({ tags, onClose }: LibraryTagManagerProps) {
   const [newName, setNewName] = useState('');
@@ -36,14 +47,34 @@ export function LibraryTagManager({ tags, onClose }: LibraryTagManagerProps) {
   const tops = useMemo(() => topLevelTags(tags), [tags]);
   const ordered = useMemo(() => {
     const result: LibraryTagStatOut[] = [];
+    const seen = new Set<string>();
+    const seconds = tagsAtDepth(tags, 2);
+    const thirds = tagsAtDepth(tags, 3);
     for (const top of tops) {
       result.push(top);
-      result.push(...sortByCreated(tags.filter((tag) => tag.parentId === top.id)));
+      seen.add(top.id);
+      for (const second of seconds.filter((tag) => tag.parentId === top.id)) {
+        result.push(second);
+        seen.add(second.id);
+        for (const third of thirds.filter((tag) => tag.parentId === second.id)) {
+          result.push(third);
+          seen.add(third.id);
+        }
+      }
     }
-    const seen = new Set(result.map((tag) => tag.id));
+    // 父标签不在词表里的孤儿单独放到最后，别让它在树里凭空消失
     result.push(...sortByCreated(tags.filter((tag) => !seen.has(tag.id))));
     return result;
   }, [tags, tops]);
+
+  /** 新建时的可选上级：一级分组与二级系列都能挂 */
+  const parents = useMemo(
+    () => [
+      ...tops.map((tag) => ({ id: tag.id, label: tag.name })),
+      ...tagsAtDepth(tags, 2).map((tag) => ({ id: tag.id, label: tagLabel(tag) })),
+    ],
+    [tags, tops],
+  );
 
   const fail = (error: unknown) => toast(error instanceof Error ? error.message : '操作失败', 'error');
 
@@ -87,10 +118,10 @@ export function LibraryTagManager({ tags, onClose }: LibraryTagManagerProps) {
   }
 
   return (
-    <Modal open onClose={onClose} width={580} title="管理标签（一级 / 二级）">
+    <Modal open onClose={onClose} width={580} title="管理标签">
       <div className="space-y-3 p-[18px]">
         <p className="text-body leading-5 text-ink-mute">
-          一级是分组，旗下二级才是打在素材上的系列。删除一级会把它旗下的二级提升为一级，资产与已有绑定不受影响。
+          一级是分组，二级是系列，三级是真正打在素材上的词；带下级的层级只做分组。删除一级会把它旗下的下级提升一级，资产与已有绑定不受影响。
         </p>
 
         <div className="max-h-[360px] space-y-1 overflow-auto rounded-lg border border-line-soft bg-panel-soft/40 p-2">
@@ -101,7 +132,7 @@ export function LibraryTagManager({ tags, onClose }: LibraryTagManagerProps) {
             <ManagerRow
               key={tag.id}
               tag={tag}
-              tops={tops}
+              tags={tags}
               busy={busy}
               onRename={doRename}
               onMove={doMove}
@@ -113,15 +144,15 @@ export function LibraryTagManager({ tags, onClose }: LibraryTagManagerProps) {
         <div className="flex items-center gap-1.5 border-t border-line-soft pt-3">
           <select
             value={newParent}
-            aria-label="新标签所属一级"
+            aria-label="新标签所属上级"
             disabled={busy}
             onChange={(event) => setNewParent(event.target.value)}
             className="h-8 w-[128px] shrink-0 rounded-lg border border-line bg-white px-1.5 text-body text-ink focus:border-primary-line focus:outline-none disabled:bg-panel-soft"
           >
             <option value="">作为一级标签</option>
-            {tops.map((tag) => (
-              <option key={tag.id} value={tag.id}>
-                {tag.name} 下
+            {parents.map((parent) => (
+              <option key={parent.id} value={parent.id}>
+                {parent.label} 下
               </option>
             ))}
           </select>
@@ -138,7 +169,7 @@ export function LibraryTagManager({ tags, onClose }: LibraryTagManagerProps) {
               event.preventDefault();
               void submitCreate();
             }}
-            className="h-8 min-w-0 flex-1 rounded-lg border border-line bg-white px-2.5 text-body text-ink placeholder:text-ink-mute focus:border-primary-line focus:outline-none disabled:bg-panel-soft"
+            className="h-8 min-w-0 flex-1 rounded-lg border border-line bg-white px-2.5 text-body text-ink placeholder:text-ink-mute focus:border-primary-line focus:outline-none focus:ring-2 focus:ring-primary/10 disabled:bg-panel-soft"
           />
           <Button
             size="sm"
@@ -156,26 +187,43 @@ export function LibraryTagManager({ tags, onClose }: LibraryTagManagerProps) {
 
 interface ManagerRowProps {
   tag: LibraryTagStatOut;
-  tops: LibraryTagStatOut[];
+  /** 整个词表：算层级与可选上级都要用 */
+  tags: LibraryTagStatOut[];
   busy: boolean;
   onRename: (id: string, name: string) => Promise<void>;
   onMove: (id: string, parentId: string | null) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
 }
 
-function ManagerRow({ tag, tops, busy, onRename, onMove, onDelete }: ManagerRowProps) {
+function ManagerRow({ tag, tags, busy, onRename, onMove, onDelete }: ManagerRowProps) {
   const [name, setName] = useState(tag.name);
   const [confirming, setConfirming] = useState(false);
   useEffect(() => setName(tag.name), [tag.name]);
 
+  const depth = tagDepth(tags, tag);
   const hasChildren = (tag.childCount ?? 0) > 0;
-  const indent = tag.parentId ? 'ml-5 border-l-2 border-primary-line pl-2' : '';
+  const indent =
+    depth === 1 ? '' : depth === 2 ? 'ml-5 border-l-2 border-primary-line pl-2' : 'ml-10 border-l-2 border-primary-line pl-2';
   const selectDisabled = busy || hasChildren;
+
+  /* 可选上级：一级分组 + 二级系列；自己的下级要排掉（挂到自己下级下面是非法的） */
+  const forbidden = useMemo(() => descendantIds(tags, tag.id), [tags, tag.id]);
+  const moveParents = useMemo(
+    () => [
+      ...topLevelTags(tags)
+        .filter((item) => item.id !== tag.id && !forbidden.has(item.id))
+        .map((item) => ({ id: item.id, label: item.name })),
+      ...tagsAtDepth(tags, 2)
+        .filter((item) => item.id !== tag.id && !forbidden.has(item.id))
+        .map((item) => ({ id: item.id, label: tagLabel(item) })),
+    ],
+    [tags, tag.id, forbidden],
+  );
 
   return (
     <div className={`flex flex-wrap items-center gap-1.5 rounded-md bg-panel px-2 py-1.5 ${indent}`}>
       <span className="w-9 shrink-0 text-xs text-ink-mute">
-        {tag.parentId ? '二级' : '一级'}
+        {levelLabel(depth)}
       </span>
       <input
         type="text"
@@ -198,22 +246,20 @@ function ManagerRow({ tag, tops, busy, onRename, onMove, onDelete }: ManagerRowP
         value={tag.parentId ?? ''}
         aria-label={`${tag.name} 的层级`}
         disabled={selectDisabled}
-        title={hasChildren ? '旗下已有二级，不能再挂到别的一级下' : '调整所属一级'}
+        title={hasChildren ? '旗下已有下级，不能再挂到别处' : '调整所属上级'}
         onChange={(event) => void onMove(tag.id, event.target.value || null)}
         className="h-7 w-[124px] shrink-0 rounded-md border border-line-soft bg-white px-1.5 text-body text-ink focus:border-primary-line focus:outline-none disabled:bg-panel-soft"
       >
         <option value="">一级标签</option>
-        {tops
-          .filter((top) => top.id !== tag.id)
-          .map((top) => (
-            <option key={top.id} value={top.id}>
-              {top.name} 下
-            </option>
-          ))}
+        {moveParents.map((parent) => (
+          <option key={parent.id} value={parent.id}>
+            {parent.label} 下
+          </option>
+        ))}
       </select>
       <span className="shrink-0 text-xs tabular-nums text-ink-mute">
         {tag.assetCount ?? 0} 条
-        {hasChildren ? ` · ${tag.childCount} 个二级` : ''}
+        {hasChildren ? ` · ${tag.childCount} 个${levelLabel(depth + 1)}` : ''}
       </span>
       {confirming ? (
         <span className="inline-flex shrink-0 items-center gap-1">

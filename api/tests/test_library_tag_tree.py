@@ -146,15 +146,31 @@ def test_group_tags_cannot_be_assigned_but_leaf_tags_can(client: TestClient, api
     }
 
 
-def test_create_rejects_a_third_level(client: TestClient, api: str) -> None:
+def test_create_allows_three_levels_and_rejects_a_fourth(
+    client: TestClient, api: str
+) -> None:
+    """三级是上限：第三级能建，第四级拒绝。
+
+    层数封在三级不是随手定的 —— 标签栏是三行选择器，再深就得改成树控件，
+    而筛选与计数的口径也要多套一层。
+    """
     _, headers = _setup(client, api)
     mark = suffix()
     parent = _create(client, api, headers, f"产品-{mark}")
     child = _create(client, api, headers, f"3030-{mark}", parent["id"])
 
+    third = client.post(
+        f"{api}/library/tags",
+        json={"name": f"T35-{mark}", "parentId": child["id"]},
+        headers=headers,
+    )
+    assert third.status_code == 201, third.text
+    assert third.json()["data"]["depth"] == 3
+    assert third.json()["data"]["parentName"] == f"产品-{mark} / 3030-{mark}"
+
     response = client.post(
         f"{api}/library/tags",
-        json={"name": f"三级-{mark}", "parentId": child["id"]},
+        json={"name": f"第四级-{mark}", "parentId": third.json()["data"]["id"]},
         headers=headers,
     )
     assert response.status_code == 400, response.text
@@ -175,8 +191,14 @@ def test_move_guards_and_promotion(client: TestClient, api: str) -> None:
         )
 
     assert move(a1["id"], a1["id"]).status_code == 400  # 不能挂自己
-    assert move(b["id"], a1["id"]).status_code == 400  # 父不能是二级
-    assert move(a["id"], b["id"]).status_code == 400  # 自己带子标签，不能降为二级
+    assert move(a["id"], a1["id"]).status_code == 400  # 不能挂到自己的下级下面
+    # 挂到二级下面是可以的（三级树的常态），但整棵子树不能超出三层：
+    # 乙下面挂甲，甲下面挂甲子 —— 三层刚好，再多一层就超了。
+    # 子树高度会让层数超限 → 拒：甲(1) 甲子(2) 甲甲甲(3)，
+    # 把甲子挂到二级「乙子」下面，整棵子树就变成 2+2=4 层了。
+    _create(client, api, headers, f"甲甲甲-{mark}", a1["id"])
+    b1 = _create(client, api, headers, f"乙子-{mark}", b["id"])
+    assert move(a1["id"], b1["id"]).status_code == 400  # 整棵子树会超过三层
 
     moved = move(a1["id"], b["id"])
     assert moved.status_code == 200, moved.text

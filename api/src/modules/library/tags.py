@@ -1,18 +1,21 @@
-"""标签：两级词表 CRUD + 资产打标。
+"""标签：三级词表 CRUD + 资产打标。
 
-## 两级口径（2026-11-11）
+## 三级口径（2026-11-16 起）
 
-`parent_id == ""` 是一级，非空是它旗下的二级，**固定两级、禁止三级**。
-一级是「分组」，二级是真正能打在素材上的词；但有子级的一级不再是叶子，
-所以打标守卫拦的是「**有子标签的标签**」而不是「所有一级」——否则存量里
+`parent_id == ""` 是一级，往下依次是二级、三级，**最多三级**。
+一级是分组、二级是系列、三级是真正能打在素材上的词；但**有子级的标签**不再是叶子，
+所以打标守卫拦的是「有子标签的标签」而不是「所有一级」——否则存量里
 「音乐」「AI生成」这些孤立的一级会一夜之间变成看得见却打不上的死词。
 
-由此带来三个必须同一套口径的地方，错一处就会出现「标签旁写 8、点进去只有 3 条」：
+层数从两级放到三级的代价是**每一处口径都要跟着改**：
 
 - **打标**：`_ensure_tags_exist(reject_groups=True)` 拒掉有子级的分组标签；
-  系统内部的合并（生成入库）不拦，见各调用点注释。
-- **筛选**：`expand_tag_ids` 把选中的一级展开成「自身 + 直属子级」，仍是 OR。
-- **计数**：一级 = 自身 + 旗下二级，按**资产 id 去重**合计。
+  系统内部的合并（生成入库）不拦，见各调用点注释。这条与层数无关。
+- **筛选**：`expand_tag_ids` 把选中的标签展开成「自身 + 全部下级」，仍是 OR。
+- **计数**：一个标签 = 自身 + 全部下级，按**资产 id 去重**合计。
+
+为什么封在三级：标签栏是「一级 → 二级 → 三级」三行选择器，再深就得变成树控件，
+而筛选与计数的口径也要多套一层 —— 三层是「一眼能看完、又不至于算错」的平衡点。
 
 ## 三个刻意的取舍
 
@@ -20,7 +23,7 @@
    两个系列都有「小红书」是合理的，同一个系列里有两个才该合并成一条。
 2. **改名撞到已有名字时报 409，不做隐式合并**。改名与合并是两个不可逆程度不同的
    动作：改名只换显示，合并会把两条标签的资产并到一起、之后拆不开。
-3. **删除一级时把子级提升为一级**，不级联删、也不删资产绑定。标签是组织手段，
+3. **删除标签时把子级提升一级**，不级联删、也不删资产绑定。标签是组织手段，
    删一个分组不该把下面的词和别人打的标一起带走。
 
 标签本身不做权限隔离（全局词表），`library:tag:manage` 管的是「谁能改词表」。
@@ -30,7 +33,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.context import CurrentUser
@@ -55,33 +58,98 @@ __all__ = [
 ]
 
 
-def to_tag_out(row: LibraryTag, parent_name: str | None = None) -> LibraryTagOut:
+#: 标签树最多三级。一级分组、二级系列、三级具体词。
+#: 再深就得把标签栏做成树控件，而筛选与计数的口径也要多套一层。
+MAX_TAG_DEPTH = 3
+
+
+def tag_tree_index(
+    rows: Sequence[LibraryTag],
+) -> tuple[dict[str, str], dict[str, int], dict[str, str]]:
+    """(父映射, 层级, 祖先路径)。
+
+    词表是全局的几十条，一次全取回来在内存里算比递归查询省事 —— 筛选与计数
+    每次都要用这个口径，来回查库反而更慢。
+
+    路径给的是**含自己**的整条链：一级 =「产品」，二级 =「产品 / 3030」，
+    三级 =「产品 / 3030 / T35」。卡片上要显示整条链，只给一层父名是不够的。
+    """
+    parent = {row.id: (row.parent_id or "") for row in rows}
+    names = {row.id: row.name for row in rows}
+    depth: dict[str, int] = {}
+    path: dict[str, str] = {}
+    for tag_id in parent:
+        chain: list[str] = []
+        current = tag_id
+        seen: set[str] = set()
+        while current in parent and current not in seen:
+            seen.add(current)
+            chain.append(current)
+            current = parent[current]
+            if len(chain) >= MAX_TAG_DEPTH:
+                break
+        depth[tag_id] = len(chain)
+        path[tag_id] = " / ".join(reversed([names.get(item, "") for item in chain]))
+    return parent, depth, path
+
+
+def _children_of(rows: Sequence[LibraryTag]) -> dict[str, list[str]]:
+    """父 id → 直接子 id 列表。"""
+    children: dict[str, list[str]] = {}
+    for row in rows:
+        if row.parent_id:
+            children.setdefault(row.parent_id, []).append(row.id)
+    return children
+
+
+def _descendants(tag_id: str, children: dict[str, list[str]]) -> list[str]:
+    """自身 + 全部下级。层级只有三档，展开就是几层循环。"""
+    out = [tag_id]
+    pending = [tag_id]
+    while pending:
+        current = pending.pop()
+        for child in children.get(current, ()):
+            out.append(child)
+            pending.append(child)
+    return out
+
+
+async def all_tags(session: AsyncSession) -> list[LibraryTag]:
+    return list(
+        await session.scalars(
+            select(LibraryTag).order_by(LibraryTag.created_at, LibraryTag.id)
+        )
+    )
+
+
+def to_tag_out(
+    row: LibraryTag, parent_name: str | None = None, depth: int = 1
+) -> LibraryTagOut:
     """库里用空串表示一级，出参统一转成 `null`（前端不用知道哨兵串）。"""
     return LibraryTagOut(
         id=row.id,
         name=row.name,
         parent_id=row.parent_id or None,
         parent_name=parent_name,
-        depth=2 if row.parent_id else 1,
+        depth=depth,
     )
 
 
 async def expand_tag_ids(session: AsyncSession, tag_ids: Sequence[str]) -> list[str]:
-    """把选中的标签展开成「自身 + 直属子级」，供列表 / 选择器筛选。
+    """把选中的标签展开成「自身 + 全部下级」，供列表 / 选择器筛选。
 
-    固定两级所以一次查询就够，不用递归 CTE。选中一级时把它旗下的二级一起
-    放进 `IN (...)`；选中二级时保持原样（二级不会再有子级）。
+    三级树里选一级要带上它的二级与三级，选二级要带上三级 —— 否则「标签旁写 8、
+    点进去只有 3 条」。层数只有三档、词表又小，一次全取回来在内存里算更省事。
     资产侧本来就是 `asset_id IN (...)`，展开后天然按资产去重，不会重复计数。
     """
     wanted = [tag_id for tag_id in dict.fromkeys(tag_ids) if tag_id]
     if not wanted:
         return []
-    children = (
-        await session.scalars(
-            select(LibraryTag.id).where(LibraryTag.parent_id.in_(wanted))
-        )
-    ).all()
-    return list(dict.fromkeys([*wanted, *children]))
+    children = _children_of(await all_tags(session))
+    expanded: set[str] = set()
+    for tag_id in wanted:
+        expanded.update(_descendants(tag_id, children))
+    return [*wanted, *[tag_id for tag_id in expanded if tag_id not in wanted]]
 
 
 async def _ensure_tags_exist(
@@ -228,25 +296,18 @@ class TagService:
         排序按 `created_at` 升序（先加的在前），`id` 收尾保证同秒创建时稳定。
         """
         groups = await access.all_groups(self.session, actor)
-        rows = (
-            await self.session.scalars(
-                select(LibraryTag).order_by(LibraryTag.created_at, LibraryTag.id)
-            )
-        ).all()
-        names = {row.id: row.name for row in rows}
-        children: dict[str, list[str]] = {}
-        for row in rows:
-            if row.parent_id:
-                children.setdefault(row.parent_id, []).append(row.id)
+        rows = await all_tags(self.session)
+        _parent, depth, path = tag_tree_index(rows)
+        children = _children_of(rows)
 
         per_tag = await self._asset_ids_by_tag(actor, groups, state, library, kind)
-        # 一级标签的数字 = 自身 + 旗下二级，按资产 id 去重。这与「点一级展开到
-        # 子级」的筛选口径完全一致；`count(distinct)` 做不到跨标签的并集去重，
+        # 一个标签的数字 = 自身 + 全部下级，按资产 id 去重。这与「点一级展开到
+        # 全部下级」的筛选口径完全一致；`count(distinct)` 做不到跨标签的并集去重，
         # 所以这里把绑定行取回来在内存里归并（当前入口的可见集本来就不大）。
         counts: dict[str, int] = {}
         for row in rows:
             asset_ids: set[str] = set()
-            for tag_id in [row.id, *children.get(row.id, [])]:
+            for tag_id in _descendants(row.id, children):
                 asset_ids.update(per_tag.get(tag_id, ()))
             counts[row.id] = len(asset_ids)
 
@@ -255,8 +316,9 @@ class TagService:
                 id=row.id,
                 name=row.name,
                 parent_id=row.parent_id or None,
-                parent_name=names.get(row.parent_id) if row.parent_id else None,
-                depth=2 if row.parent_id else 1,
+                # 父的整条链（"一级 / 二级"）：拼上自己的名字就是卡片上那行
+                parent_name=path.get(row.parent_id) if row.parent_id else None,
+                depth=depth.get(row.id, 1),
                 child_count=len(children.get(row.id, [])),
                 asset_count=counts[row.id],
                 created_at=row.created_at,
@@ -315,34 +377,38 @@ class TagService:
         name = payload.name.strip()
         parent_id = payload.parent_id or ""
         parent_name: str | None = None
+        depth: dict[str, int] = {}
         if parent_id:
             parent = await self.session.get(LibraryTag, parent_id)
             if parent is None:
                 raise BadRequest("父标签不存在")
-            if parent.parent_id:
-                # 固定两级：挂在二级下面就是三级，不引递归 CTE
-                raise BadRequest("只能建两级标签，父标签本身不能是二级")
-            parent_name = parent.name
+            _parent, depth, path = tag_tree_index(await all_tags(self.session))
+            if depth.get(parent_id, 1) >= MAX_TAG_DEPTH:
+                raise BadRequest(f"标签最多 {MAX_TAG_DEPTH} 级，不能挂在更深的标签下面")
+            parent_name = path.get(parent_id) or parent.name
         existing = await self.session.scalar(
             select(LibraryTag).where(
                 LibraryTag.name == name, LibraryTag.parent_id == parent_id
             )
         )
         if existing is not None:
-            return to_tag_out(existing, parent_name)
+            return to_tag_out(existing, parent_name, depth.get(existing.id, 1))
+        # 新行还没进树,查不到它的层数 —— 自己算:父的层数 + 1(顶级就是 1)
+        new_depth = depth.get(parent_id, 1) + 1 if parent_id else 1
         row = LibraryTag(name=name, parent_id=parent_id, created_by=actor.id)
         self.session.add(row)
         await self.session.commit()
-        return to_tag_out(row, parent_name)
+        return to_tag_out(row, parent_name, new_depth)
 
     async def rename(self, tag_id: str, payload: TagIn) -> LibraryTagOut:
         row = await self.session.get(LibraryTag, tag_id)
         if row is None:
             raise NotFound("标签不存在")
         parent_name = await self._parent_name(row)
+        _parent, depth, _path = tag_tree_index(await all_tags(self.session))
         name = payload.name.strip()
         if name == row.name:
-            return to_tag_out(row, parent_name)
+            return to_tag_out(row, parent_name, depth.get(row.id, 1))
         # 改名不动层级：撞名只在**同一个父**下判定，跨一级同名不冲突
         other = await self.session.scalar(
             select(LibraryTag).where(
@@ -355,14 +421,15 @@ class TagService:
             raise Conflict("同一分组下已有同名标签")
         row.name = name
         await self.session.commit()
-        return to_tag_out(row, parent_name)
+        return to_tag_out(row, parent_name, depth.get(row.id, 1))
 
     async def move(self, tag_id: str, payload: TagParentIn) -> LibraryTagOut:
         """改层级：`parentId=null` 提升为一级，指向一级则降为二级。
 
-        三道守卫：不能挂到自己下面；父必须是一级（禁止三级）；自己旗下还有
-        子标签时不能降为二级（否则那些子标签会变成三级）。「指向后代」在
-        「父必须是一级」这条里已经被排除，不需要再写递归查后代。
+        四道守卫：不能挂到自己下面；不能挂到自己的下级下面（会成环）；
+        挂过去之后**整棵子树**都不能超过三层；目标父下不能有同名。
+        前两条防环，后一条防「挂上去之后层级超限」——子树的高度算得出来，
+        不必等下一次报错才发现。
         """
         row = await self.session.get(LibraryTag, tag_id)
         if row is None:
@@ -371,20 +438,29 @@ class TagService:
         if parent_id == row.id:
             raise BadRequest("标签不能挂到自己下面")
         parent_name: str | None = None
+        depth: dict[str, int] = {}
         if parent_id:
             parent = await self.session.get(LibraryTag, parent_id)
             if parent is None:
                 raise BadRequest("父标签不存在")
-            if parent.parent_id:
-                raise BadRequest("只能建两级标签，不能挂在二级下面")
-            parent_name = parent.name
-            child_count = await self.session.scalar(
-                select(func.count())
-                .select_from(LibraryTag)
-                .where(LibraryTag.parent_id == row.id)
+            rows = await all_tags(self.session)
+            _parent, depth, path = tag_tree_index(rows)
+            children = _children_of(rows)
+            if parent_id in _descendants(row.id, children):
+                raise BadRequest("标签不能挂到自己的下级下面")
+            # 整棵子树挂过去后最深的那一层的层数：父的层数 + 自己的子树高度
+            own_depth = depth.get(row.id, 1)
+            subtree_max = max(
+                depth.get(item, own_depth) for item in _descendants(row.id, children)
             )
-            if child_count:
-                raise BadRequest("它旗下还有二级标签，先把子标签移走")
+            # 子树有几层：自己这层算第一层
+            height = subtree_max - own_depth + 1
+            # 挂过去之后：自己的层数 = 父的层数 + 1，整棵子树跟着平移
+            if depth.get(parent_id, 1) + height > MAX_TAG_DEPTH:
+                raise BadRequest(
+                    f"标签最多 {MAX_TAG_DEPTH} 级：挂到这个分组下面会超出层数"
+                )
+            parent_name = path.get(parent_id) or parent.name
         clash = await self.session.scalar(
             select(LibraryTag.id).where(
                 LibraryTag.name == row.name,
@@ -396,10 +472,10 @@ class TagService:
             raise Conflict("目标分组下已有同名标签，请先改名")
         row.parent_id = parent_id
         await self.session.commit()
-        return to_tag_out(row, parent_name)
+        return to_tag_out(row, parent_name, depth.get(row.id, 1))
 
     async def delete(self, tag_id: str) -> None:
-        """删标签同时清绑定；**旗下二级提升为一级**，不级联删。
+        """删标签同时清绑定；**旗下子级提升一级**，不级联删。
 
         不做「还有资产在用就拒绝」：标签是组织手段，不是资产的一部分，
         删一个词表项不该被 200 条资产卡住。资产本身完好无损。
@@ -413,24 +489,28 @@ class TagService:
             )
         ).all()
         if children:
-            top_names = set(
+            # 子级提升到「自己原来的父」那一层：删一级 → 二级升一级；
+            # 删二级 → 三级升二级。提升后撞名要按**那一层**判，不是按一级判。
+            target_parent = row.parent_id or ""
+            sibling_names = set(
                 (
                     await self.session.scalars(
                         select(LibraryTag.name).where(
-                            LibraryTag.parent_id == "", LibraryTag.id != row.id
+                            LibraryTag.parent_id == target_parent,
+                            LibraryTag.id != row.id,
                         )
                     )
                 ).all()
             )
-            clash = [child.name for child in children if child.name in top_names]
+            clash = [child.name for child in children if child.name in sibling_names]
             if clash:
                 # 提升后 `(name, parent_id)` 会撞唯一索引；与其报 500，
                 # 不如把「先给子标签改个名」这件事说清楚。
-                raise Conflict(f"子标签与已有的一级同名，请先改名：{', '.join(clash[:5])}")
+                raise Conflict(f"子标签与同层已有标签同名，请先改名：{', '.join(clash[:5])}")
             await self.session.execute(
                 update(LibraryTag)
                 .where(LibraryTag.parent_id == row.id)
-                .values(parent_id="")
+                .values(parent_id=target_parent)
             )
         await self.session.execute(
             delete(LibraryAssetTag).where(LibraryAssetTag.tag_id == tag_id)

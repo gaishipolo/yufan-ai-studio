@@ -6,6 +6,7 @@ import type { LibraryAssetOut, LibraryTagStatOut } from '@/shared/api/schema';
 import {
   selectableTags,
   tagLabel,
+  tagsAtDepth,
   topLevelTags,
 } from '@/entities/library/model/tagTree';
 import { displayName } from '@/entities/library/model/types';
@@ -33,16 +34,24 @@ interface Option {
   value: string;
   label: string;
   parentId: string;
+  /** 分组标题：父标签的整条链（「产品 / 3030」），三级词要能看出挂在哪个系列下 */
+  groupLabel: string;
+  /** 后端给的父链（父不在词表里时的兜底） */
+  parentName: string;
+  /** 排序用：父标签不在词表里时退回组内第一项的添加时间 */
+  createdAt: string;
 }
 
 /**
  * 卡片标签行末尾那个 `+` 点开的东西。
  *
- * 只列**叶子**（`childCount === 0`）：有二级的一级是分组，后端会拒掉把它
- * 直接打在素材上的请求，摆出来等于给用户一个必定失败的按钮。叶子按一级
- * 分组显示，无父的归到「未分组」。
+ * 只列**叶子**（`childCount === 0`）：有下级的层级只做分组，后端会拒掉把它
+ * 直接打在素材上的请求，摆出来等于给用户一个必定失败的按钮。一级、二级、三级
+ * 的叶子都在列表里，分组标题取父标签的整条链（「产品」「产品 / 3030」），
+ * 同名的系列才不会混在一起；无父的归到「未分组」。
  *
- * 新建时可以选「作为一级」或「挂在某个一级下面」，省掉「先建再移动」两步。
+ * 新建时可以选「作为一级」或「挂在某个上级下面」（一级或二级），省掉「先建
+ * 再移动」两步。
  */
 export function LibraryTagPicker({
   asset,
@@ -59,15 +68,23 @@ export function LibraryTagPicker({
   const [newParent, setNewParent] = useState('');
   const [creating, setCreating] = useState(false);
 
+  const byId = useMemo(() => new Map(tags.map((tag) => [tag.id, tag])), [tags]);
+
   /* 新建成功的标签本地先记一份：词表要等一次失效重拉才回流，这一帧里
      选项不能凭空消失，否则用户会以为刚建的没选上。`value` 去重兜住回流后的重复项。 */
   const options = useMemo<Option[]>(() => {
     const all: Option[] = [
-      ...selectableTags(tags).map((tag) => ({
-        value: tag.id,
-        label: tagLabel(tag),
-        parentId: tag.parentId ?? '',
-      })),
+      ...selectableTags(tags).map((tag) => {
+        const parent = tag.parentId ? byId.get(tag.parentId) : undefined;
+        return {
+          value: tag.id,
+          label: tagLabel(tag),
+          parentId: tag.parentId ?? '',
+          groupLabel: parent ? tagLabel(parent) : tag.parentName || '未分组',
+          parentName: tag.parentName ?? '',
+          createdAt: tag.createdAt,
+        };
+      }),
       ...created,
     ];
     const seen = new Set<string>();
@@ -76,24 +93,40 @@ export function LibraryTagPicker({
       seen.add(option.value);
       return true;
     });
-  }, [tags, created, currentIds]);
+  }, [tags, byId, created, currentIds]);
 
   const groups = useMemo(() => {
     const byParent = new Map<string, Option[]>();
     for (const option of options) {
       byParent.set(option.parentId, [...(byParent.get(option.parentId) ?? []), option]);
     }
-    const names = new Map(tags.map((tag) => [tag.id, tag.name]));
     return [...byParent.entries()]
-      .sort(([a], [b]) => (a ? (b ? 0 : -1) : b ? 1 : 0))
-      .map(([parentId, items]) => ({
-        key: parentId || '_none',
-        title: parentId ? names.get(parentId) ?? '二级' : '未分组',
-        items,
-      }));
-  }, [options, tags]);
+      .map(([parentId, items]) => {
+        const parent = parentId ? byId.get(parentId) : undefined;
+        return {
+          key: parentId || '_none',
+          // 分组标题用父标签的整条链：三级词挂在二级下面时要显示「产品 / 3030」
+          title: parent ? tagLabel(parent) : '未分组',
+          order: parent?.createdAt ?? items[0]?.createdAt ?? '',
+          items,
+        };
+      })
+      .sort((a, b) => {
+        // 「未分组」放最后，其余按父标签的添加时间排，跟词表顺序一致
+        if (a.key === '_none') return 1;
+        if (b.key === '_none') return -1;
+        return a.order.localeCompare(b.order) || a.key.localeCompare(b.key);
+      });
+  }, [options, byId]);
 
-  const tops = useMemo(() => topLevelTags(tags), [tags]);
+  /** 新建时的可选上级：一级分组与二级系列都能挂（后端最多三级） */
+  const parents = useMemo(
+    () => [
+      ...topLevelTags(tags).map((tag) => ({ id: tag.id, label: tag.name })),
+      ...tagsAtDepth(tags, 2).map((tag) => ({ id: tag.id, label: tagLabel(tag) })),
+    ],
+    [tags],
+  );
 
   function toggle(id: string) {
     setPicked((previous) =>
@@ -108,11 +141,15 @@ export function LibraryTagPicker({
     try {
       const id = await onCreateTag(name, newParent || undefined);
       if (!id) return;
-      const parentName = tops.find((tag) => tag.id === newParent)?.name;
+      const parent = newParent ? byId.get(newParent) : undefined;
+      const parentLabel = parent ? tagLabel(parent) : '';
       const option: Option = {
         value: id,
-        label: parentName ? `${parentName} / ${name}` : name,
+        label: parentLabel ? `${parentLabel} / ${name}` : name,
         parentId: newParent,
+        groupLabel: parentLabel || '未分组',
+        parentName: parentLabel,
+        createdAt: '',
       };
       setCreated((previous) =>
         previous.some((item) => item.value === id) ? previous : [...previous, option],
@@ -138,7 +175,7 @@ export function LibraryTagPicker({
     >
       <div className="space-y-3 p-[18px]">
         <p className="text-body leading-5 text-ink-mute">
-          按一级分组列出可打标的标签；一级下还有二级时只作分组，不能直接打在素材上。已有标签请在卡片上点 × 移除。
+          按上级分组列出可打标的标签；带下级的层级只作分组，不能直接打在素材上。已有标签请在卡片上点 × 移除。
         </p>
 
         <div className="flex max-h-[240px] min-h-[52px] flex-col gap-2 overflow-auto rounded-lg border border-line-soft bg-panel-soft/50 p-2">
@@ -179,15 +216,15 @@ export function LibraryTagPicker({
           <div className="flex items-center gap-1.5">
             <select
               value={newParent}
-              aria-label="新标签所属一级"
+              aria-label="新标签所属上级"
               disabled={creating || busy}
               onChange={(event) => setNewParent(event.target.value)}
               className="h-8 w-[112px] shrink-0 rounded-lg border border-line bg-white px-1.5 text-body text-ink focus:border-primary-line focus:outline-none disabled:bg-panel-soft"
             >
               <option value="">作为一级</option>
-              {tops.map((tag) => (
-                <option key={tag.id} value={tag.id}>
-                  {tag.name} 下
+              {parents.map((parent) => (
+                <option key={parent.id} value={parent.id}>
+                  {parent.label} 下
                 </option>
               ))}
             </select>

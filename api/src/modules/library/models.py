@@ -156,7 +156,7 @@ class LibraryAssetGroup(Base, UUIDMixin):
 
 
 class LibraryTag(Base, UUIDMixin):
-    """标签词表，**固定两级**：`parent_id == ""` 是一级，否则是它旗下的二级。
+    """标签词表，**最多三级**：`parent_id == ""` 是一级，往下依次是二级、三级。
 
     ## 为什么用空串而不是 NULL 表示「一级」
 
@@ -177,7 +177,7 @@ class LibraryTag(Base, UUIDMixin):
     __tablename__ = "library_tags"
 
     name: Mapped[str] = mapped_column(String(40), nullable=False)
-    #: 空串 = 一级；非空 = 父标签 id。固定两级，禁止三级（服务层守卫）。
+    #: 空串 = 一级；非空 = 父标签 id。最多三级（服务层守卫）。
     parent_id: Mapped[str] = mapped_column(
         String(32), default="", server_default="", nullable=False
     )

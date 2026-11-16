@@ -33,7 +33,6 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import aliased
 from sqlalchemy.sql.elements import ColumnElement
 
 from core.audit import record as audit
@@ -86,7 +85,7 @@ from modules.library.schema import (
     ShareHistoryItem,
     UploadKind,
 )
-from modules.library.tags import expand_tag_ids, set_asset_tags
+from modules.library.tags import all_tags, expand_tag_ids, set_asset_tags, tag_tree_index
 
 __all__ = ["LibraryService"]
 
@@ -892,31 +891,30 @@ class LibraryService:
         """
         if not asset_ids:
             return {}
-        # 顺手取父名：卡片要显示「产品 / 3030」，而卡片拿不到整份词表，
-        # 为了一个名字让前端再拉一次 `/library/tags` 不值当。
-        parent = aliased(LibraryTag)
+        # 父名给的是**祖先路径**（「产品 / 3030」）：三级标签要显示整条链，
+        # 只给一层父名不够。层数也是算出来的（库里只有 parent_id）。
+        # 卡片拿不到整份词表，为了一个名字让前端再拉一次 `/library/tags` 不值当。
         rows = await self.session.execute(
             select(
                 LibraryAssetTag.asset_id,
                 LibraryTag.id,
                 LibraryTag.name,
                 LibraryTag.parent_id,
-                parent.name,
             )
             .join(LibraryTag, LibraryTag.id == LibraryAssetTag.tag_id)
-            .outerjoin(parent, parent.id == LibraryTag.parent_id)
             .where(LibraryAssetTag.asset_id.in_(list(asset_ids)))
             .order_by(LibraryTag.name)
         )
+        _parent, depth, path = tag_tree_index(await all_tags(self.session))
         grouped: dict[str, list[LibraryTagOut]] = {}
-        for asset_id, tag_id, name, parent_id, parent_name in rows:
+        for asset_id, tag_id, name, parent_id in rows:
             grouped.setdefault(asset_id, []).append(
                 LibraryTagOut(
                     id=tag_id,
                     name=name,
                     parent_id=parent_id or None,
-                    parent_name=parent_name,
-                    depth=2 if parent_id else 1,
+                    parent_name=path.get(parent_id) if parent_id else None,
+                    depth=depth.get(tag_id, 1),
                 )
             )
         return grouped
