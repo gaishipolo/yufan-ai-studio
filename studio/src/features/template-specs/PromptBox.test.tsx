@@ -94,9 +94,32 @@ describe('提示词框的 @ 提及', () => {
     render(<Harness />);
     const box = screen.getByRole('textbox');
     await user.click(box);
-    await user.type(box, '联系 a@b');
+    await user.type(box, '联系 a@b.com');
 
     expect(screen.queryByText(/匹配|选择要引用/)).not.toBeInTheDocument();
+  });
+
+  it('英文后面打 @ 照样能唤起候选面板（用户报过的坑）', async () => {
+    const user = userEvent.setup();
+    render(<Harness />);
+    const box = screen.getByRole('textbox');
+    await user.click(box);
+    // **@ 前面没有空格** —— 用户报的就是这种：一串英文紧跟着打 @
+    await user.type(box, 'cinematic handheld shot@');
+
+    expect(screen.getByText('选择要引用的槽位')).toBeInTheDocument();
+    expect(candidate(/主图/)).toBeInTheDocument();
+  });
+
+  it('英文后面打 @ 再继续过滤，候选也跟着筛', async () => {
+    const user = userEvent.setup();
+    render(<Harness />);
+    const box = screen.getByRole('textbox');
+    await user.click(box);
+    await user.type(box, 'cinematic shot@主');
+
+    expect(screen.getByText('匹配「主」')).toBeInTheDocument();
+    expect(candidate(/主图/)).toBeInTheDocument();
   });
 
   it('下方的 chip 按钮照旧能插入引用（不破坏原功能）', async () => {

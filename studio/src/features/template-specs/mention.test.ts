@@ -26,8 +26,30 @@ describe('提示词 @ 提及', () => {
   });
 
   it('邮箱 / 域名里的 @ 不触发', () => {
-    expect(detectMention('联系 a@b', 7)).toBeNull();
+    // 打出域名形状了才当地址 —— 只看「@ 前面有没有词字符」会误伤
+    // 「cinematic shot @」这种正经用法（提示词里写英文太常见了）
+    expect(detectMention('联系 a@b.com', 11)).toBeNull();
     expect(detectMention('site.com@', 9)).toBeNull();
+  });
+
+  it('英文后面打 @ 仍然是一次提及（用户报过的坑）', () => {
+    // "cinematic handheld shot@" 共 24 个字符，@ 在下标 23。
+    // **@ 前面没有空格** —— 用户报的就是这种：一串英文紧跟着打 @。
+    const hit = detectMention('cinematic handheld shot@', 24);
+    expect(hit?.query).toBe('');
+    expect(hit?.start).toBe(23);
+
+    // 打完 @ 继续过滤候选，候选面板不该被收掉
+    const filtering = detectMention('cinematic handheld shot@原', 25);
+    expect(filtering?.query).toBe('原');
+    expect(filtering?.start).toBe(23);
+  });
+
+  it('英文 + @ 选出来的 token 替换的是 @ 之后那段', () => {
+    const text = 'shot @原';
+    const range = detectMention(text, 7)!;
+    const result = applyMention(text, range, '{{slot:role_1}}');
+    expect(result.text).toBe('shot {{slot:role_1}}');
   });
 
   it('连打两个 @：后一个 @ 开启新的一段查询', () => {
