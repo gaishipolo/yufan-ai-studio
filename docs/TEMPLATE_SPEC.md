@@ -162,7 +162,7 @@
 编译时按槽位顺序拆成 `{{Text N}}`，执行层再按 `textLibraryIds` 把正文注入。
 模板库因此**不改任何文字**，只选素材 —— 这也让"模板改一个字就换版本"的问题消失。
 
-字数上限沿用 `MAX_PROMPT = 20000`（编写）、`EXECUTION_PROMPT_LIMIT = 2000`（执行，
+字数上限沿用 `MAX_PROMPT = 20000`（编写）、`EXECUTION_PROMPT_LIMIT = 7000`（执行，
 按展开后的成品判）。
 
 ## 6. 编号与编译规则（唯一一处）
@@ -665,8 +665,9 @@ P3 补上 capability 判据后，迁移只需要让这份守卫继续绿，就�
 4. **`compile` 的缓存**：入参 `(version, slotValues)` 是纯输入，可加一层进程内 LRU；但先不上，等有性能证据。
 5. **提示词上限两处不一致** —— **已定（2026-11-14）**：两个数不是一个东西，别合并。
    - `MAX_PROMPT = 20000` 是**编写**上限（草稿能写多长），沿用旧 manifest 口径；
-   - `EXECUTION_PROMPT_LIMIT = 2000` 是**执行**上限，即 `CreateTaskIn.prompt` 的
-     `max_length`，放在 `core/template_spec`。
+   - `EXECUTION_PROMPT_LIMIT = 7000` 是**执行**上限，即 `CreateTaskIn.prompt` 的
+     `max_length`，放在 `core/template_spec`。（2026-11-16 从 2000 放宽到 7000：
+     多段描述 + 槽位引用的真实模板轻松过 2000，而百炼驱动本身允许 20000。）
    判据分三处：保存草稿**不判**（`validate_draft(executable=False)`，否则旧模板里
    2 万字级别的提示词连草稿都存不进来，P3 迁移会被一刀切）；预检与发布按两段原文之和
    **粗判**（运营正看着屏幕，这里说清最省事）；`compile` 按**展开后的成品**精判

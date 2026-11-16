@@ -588,7 +588,7 @@ def test_execution_prompt_limit_matches_task_schema() -> None:
 
 
 def test_draft_can_be_long_but_publish_checks_execution_limit(client: TestClient) -> None:
-    """草稿允许 20000 字（编写上限），发布要求能跑（执行上限 2000 字）。"""
+    """草稿允许 20000 字（编写上限），发布要求能跑（执行上限远小于它）。"""
     from core.template_spec import EXECUTION_PROMPT_LIMIT
 
     headers = _headers(client)
