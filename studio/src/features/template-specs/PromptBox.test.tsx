@@ -27,6 +27,33 @@ function Harness({chips = CHIPS}: {chips?: PromptChip[]}) {
   );
 }
 
+describe('提示词预览', () => {
+  it('正文里的素材占位显示成插槽名,与普通文字分开', () => {
+    render(
+      <PromptBox
+        value="先拍一张 {{slot:image_1}},再补细节 {{slot:image_2}}。"
+        chips={CHIPS}
+        onChange={() => {}}
+        onInsert={() => {}}
+      />,
+    );
+
+    const preview = screen.getByTestId('prompt-preview');
+    // 占位显示插槽名,不显示内部的 token
+    expect(preview).toHaveTextContent('主图');
+    expect(preview).toHaveTextContent('细节图');
+    expect(preview).not.toHaveTextContent('{{slot:');
+    // 普通文字原样留着
+    expect(preview).toHaveTextContent('先拍一张');
+    expect(preview).toHaveTextContent('再补细节');
+  });
+
+  it('没有提示词时给一句说明,不留空盒子', () => {
+    render(<PromptBox value="" chips={CHIPS} onChange={() => {}} onInsert={() => {}} />);
+    expect(screen.getByTestId('prompt-preview')).toHaveTextContent('还没有提示词');
+  });
+});
+
 describe('提示词框的 @ 提及', () => {
   it('打 @ 弹出候选面板', async () => {
     const user = userEvent.setup();
