@@ -1741,7 +1741,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `name` | `string` | 是 |  |
 | `kind` | `LibraryAssetKind` | 是 |  |
 | `purpose` | `string` | 否 |  |
-| `origin` | `string` | 是 | upload / generated / template_source / imported / pack |
+| `origin` | `string` | 是 | upload / generated / template_source / imported |
 | `mimeType` | `string \| null` | 否 |  |
 | `sizeBytes` | `number` | 否 |  |
 | `durationSec` | `number \| null` | 否 |  |
@@ -1791,7 +1791,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `name` | `string` | 是 |  |
 | `kind` | `LibraryAssetKind` | 是 |  |
 | `purpose` | `string` | 否 |  |
-| `origin` | `string` | 是 | upload / generated / template_source / imported / pack |
+| `origin` | `string` | 是 | upload / generated / template_source / imported |
 | `mimeType` | `string \| null` | 否 |  |
 | `sizeBytes` | `number` | 否 |  |
 | `durationSec` | `number \| null` | 否 |  |
@@ -1860,7 +1860,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `name` | `string` | 是 |  |
 | `kind` | `LibraryAssetKind` | 是 |  |
 | `purpose` | `string` | 否 |  |
-| `origin` | `string` | 是 | upload / generated / template_source / imported / pack |
+| `origin` | `string` | 是 | upload / generated / template_source / imported |
 | `mimeType` | `string \| null` | 否 |  |
 | `sizeBytes` | `number` | 否 |  |
 | `durationSec` | `number \| null` | 否 |  |
@@ -1948,7 +1948,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `name` | `string` | 是 |  |
 | `kind` | `LibraryAssetKind` | 是 |  |
 | `purpose` | `string` | 否 |  |
-| `origin` | `string` | 是 | upload / generated / template_source / imported / pack |
+| `origin` | `string` | 是 | upload / generated / template_source / imported |
 | `mimeType` | `string \| null` | 否 |  |
 | `sizeBytes` | `number` | 否 |  |
 | `durationSec` | `number \| null` | 否 |  |
@@ -2222,7 +2222,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `name` | `string` | 是 |  |
 | `kind` | `LibraryAssetKind` | 是 |  |
 | `purpose` | `string` | 否 |  |
-| `origin` | `string` | 是 | upload / generated / template_source / imported / pack |
+| `origin` | `string` | 是 | upload / generated / template_source / imported |
 | `mimeType` | `string \| null` | 否 |  |
 | `sizeBytes` | `number` | 否 |  |
 | `durationSec` | `number \| null` | 否 |  |
@@ -2280,7 +2280,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `name` | `string` | 是 |  |
 | `kind` | `LibraryAssetKind` | 是 |  |
 | `purpose` | `string` | 否 |  |
-| `origin` | `string` | 是 | upload / generated / template_source / imported / pack |
+| `origin` | `string` | 是 | upload / generated / template_source / imported |
 | `mimeType` | `string \| null` | 否 |  |
 | `sizeBytes` | `number` | 否 |  |
 | `durationSec` | `number \| null` | 否 |  |
@@ -2593,7 +2593,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `name` | `string` | 是 |  |
 | `kind` | `LibraryAssetKind` | 是 |  |
 | `purpose` | `string` | 否 |  |
-| `origin` | `string` | 是 | upload / generated / template_source / imported / pack |
+| `origin` | `string` | 是 | upload / generated / template_source / imported |
 | `mimeType` | `string \| null` | 否 |  |
 | `sizeBytes` | `number` | 否 |  |
 | `durationSec` | `number \| null` | 否 |  |
@@ -2623,16 +2623,20 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 
 **标签列表（三级平铺，含当前入口的素材数，按添加时间排序）**
 
-计数按 `state` + `library` + `kind` 与列表同口径。
+计数按 `state` + `library` + `kind` + `purpose` 与列表同口径。
 
 `state=draft|trash` 时忽略 `library`；`kind` 与列表的类别筛选同口径
 （悬浮栏按类别看库时，胶囊上的数字必须也是「这一类里有几条」）。
+
+`purpose=case` 是案例池入口：只有持 `library:case:read` 的人能看案例池，
+且计数只算案例。不传时一律排除案例——与列表同一口径。
 
 | 参数 | 位置 | 类型 | 必填 | 说明 |
 |---|---|---|---|---|
 | `library` | query | `LibraryTab` | 否 |  |
 | `state` | query | `LibraryAssetState` | 否 |  |
 | `kind` | query | `LibraryAssetKind | null` | 否 |  |
+| `purpose` | query | `string | null` | 否 |  |
 
 **响应** `ApiResponse<LibraryTagStatOut[]>`（前端取 `res.data`）
 
@@ -2789,7 +2793,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `name` | `string` | 是 |  |
 | `kind` | `LibraryAssetKind` | 是 |  |
 | `purpose` | `string` | 否 |  |
-| `origin` | `string` | 是 | upload / generated / template_source / imported / pack |
+| `origin` | `string` | 是 | upload / generated / template_source / imported |
 | `mimeType` | `string \| null` | 否 |  |
 | `sizeBytes` | `number` | 否 |  |
 | `durationSec` | `number \| null` | 否 |  |
@@ -3768,7 +3772,7 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `name` | `string` | 是 |  |
 | `kind` | `LibraryAssetKind` | 是 |  |
 | `purpose` | `string` | 否 |  |
-| `origin` | `string` | 是 | upload / generated / template_source / imported / pack |
+| `origin` | `string` | 是 | upload / generated / template_source / imported |
 | `mimeType` | `string \| null` | 否 |  |
 | `sizeBytes` | `number` | 否 |  |
 | `durationSec` | `number \| null` | 否 |  |
@@ -3825,7 +3829,7 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `name` | `string` | 是 |  |
 | `kind` | `LibraryAssetKind` | 是 |  |
 | `purpose` | `string` | 否 |  |
-| `origin` | `string` | 是 | upload / generated / template_source / imported / pack |
+| `origin` | `string` | 是 | upload / generated / template_source / imported |
 | `mimeType` | `string \| null` | 否 |  |
 | `sizeBytes` | `number` | 否 |  |
 | `durationSec` | `number \| null` | 否 |  |

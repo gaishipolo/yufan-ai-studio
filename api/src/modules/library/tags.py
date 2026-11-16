@@ -279,6 +279,7 @@ class TagService:
         state: str = "active",
         library: LibraryTab = LibraryTab.ALL,
         kind: str = "",
+        purpose: str = "",
     ) -> list[LibraryTagStatOut]:
         """标签栏的数据：全部标签 + 当前入口下各标签的素材数。
 
@@ -287,6 +288,9 @@ class TagService:
 
         - `state=active` 带上 `tab_clause`（与列表的可见集同口径）；
         - 草稿 / 回收站按权限点收窄到本人或全量，忽略 `library`。
+        - **用途与列表同口径**：不传时排除案例（案例池有自己的入口），传 `case` 时只算案例。
+          少了这一条，胶囊上的数字会比列表多——案例素材在列表里看不见，
+          却把数字撑大了。
 
         **`kind` 与列表的类别筛选同口径**：悬浮栏按类别看库时，胶囊上的数字
         必须也是「这一类里有几条」。不按类别算的话，用户在「图片」下看到
@@ -303,7 +307,7 @@ class TagService:
         _parent, depth, path = tag_tree_index(rows)
         children = _children_of(rows)
 
-        per_tag = await self._asset_ids_by_tag(actor, groups, state, library, kind)
+        per_tag = await self._asset_ids_by_tag(actor, groups, state, library, kind, purpose)
         # 一个标签的数字 = 自身 + 全部下级，按资产 id 去重。这与「点一级展开到
         # 全部下级」的筛选口径完全一致；`count(distinct)` 做不到跨标签的并集去重，
         # 所以这里把绑定行取回来在内存里归并（当前入口的可见集本来就不大）。
@@ -336,6 +340,7 @@ class TagService:
         state: str,
         library: LibraryTab,
         kind: str = "",
+        purpose: str = "",
     ) -> dict[str, set[str]]:
         """当前入口下「每个标签 → 可见资产 id 集合」，一次查询取回。
 
@@ -343,7 +348,7 @@ class TagService:
         多取一列 asset_id，是为了给一级标签做「自身 ∪ 子级」的资产级去重。
 
         `kind` 是类别筛选（image / video / audio / text），与列表的类别口径
-        一致；留空表示不按类别收窄。
+        一致；留空表示不按类别收窄。`purpose` 是用途，口径同理。
         """
         query = (
             select(LibraryAssetTag.tag_id, LibraryAssetTag.asset_id)
@@ -352,6 +357,13 @@ class TagService:
         )
         if kind:
             query = query.where(LibraryAsset.kind == kind)
+        # 用途与列表同口径：普通入口排除案例，案例池只算案例。
+        # 不对齐就会出现「标签旁写 8，点进去只有 3 条」——
+        # 案例素材在列表里看不见，却把胶囊的数字撑大了。
+        if purpose:
+            query = query.where(LibraryAsset.purpose == purpose)
+        elif state == "active":
+            query = query.where(LibraryAsset.purpose != access.PURPOSE_CASE)
         if state == "active":
             query = query.where(
                 LibraryAsset.deleted_at.is_(None),
@@ -407,8 +419,10 @@ class TagService:
         row = await self.session.get(LibraryTag, tag_id)
         if row is None:
             raise NotFound("标签不存在")
-        parent_name = await self._parent_name(row)
-        _parent, depth, _path = tag_tree_index(await all_tags(self.session))
+        _parent, depth, path = tag_tree_index(await all_tags(self.session))
+        # `parentName` 是**父的整条链**（「产品 / 3030」），与列表、创建一致：
+        # 直系父名会让同一个标签在两个接口里显示成两样。
+        parent_name = path.get(row.parent_id) if row.parent_id else None
         name = payload.name.strip()
         if name == row.name:
             return to_tag_out(row, parent_name, depth.get(row.id, 1))
@@ -475,7 +489,9 @@ class TagService:
             raise Conflict("目标分组下已有同名标签，请先改名")
         row.parent_id = parent_id
         await self.session.commit()
-        return to_tag_out(row, parent_name, depth.get(row.id, 1))
+        # 移动之后层数变了：出参要按**新**位置算，不能用移动前那张快照
+        new_depth = depth.get(parent_id, 1) + 1 if parent_id else 1
+        return to_tag_out(row, parent_name, new_depth)
 
     async def delete(self, tag_id: str) -> None:
         """删标签同时清绑定；**旗下子级提升一级**，不级联删。

@@ -8,8 +8,7 @@
 | `bulk_add_tag_checks_visibility` | 写标签和改名一样，先判「看得见且是我的」 |
 | `purge_keeps_blob_shared_with_other_trash_rows` | 「还有谁引用字节」不带 `deleted_at` |
 | `facets_match_group_list` | 角标 = 点进去的条数（同一个入口口径） |
-| `selection_total_respects_include_packs` | 排除条件必须在 SQL 里，否则 total 虚高 |
-| `trashed_pack_is_not_downloadable` | 解散 = 不可下载（封装没有 storage_key，不能只看它） |
+| `selection_total_respects_kind_filter` | 筛选条件必须在 SQL 里，否则 total 虚高 |
 | `upload_source_key_is_owner_scoped` | 客户端给的幂等键没有跨用户语义 |
 """
 
@@ -27,10 +26,6 @@ from library_support import (
 )
 
 SHARE_DIRECT = [*LIB_RW, "library:share:direct"]
-
-
-def _create_pack(client: TestClient, api: str, headers: dict, body: dict):
-    return client.post(f"{api}/library/packs", json=body, headers=headers)
 
 
 def test_bulk_add_tag_checks_visibility(client: TestClient, api: str) -> None:
@@ -120,11 +115,6 @@ def test_facets_match_group_list(client: TestClient, api: str) -> None:
     assert shared.status_code == 201, shared.text
     assert shared.json()["data"]["status"] == "approved", shared.text
 
-    # 装进**自己的个人封装**：小组库仍该看到这条素材
-    _create_pack(
-        client, api, owner_h, {"name": "我的私人封装", "assetIds": [asset["id"]]}
-    )
-
     listed = client.get(
         f"{api}/library/assets",
         params={"library": "group", "state": "active", "pageSize": 100},
@@ -138,25 +128,36 @@ def test_facets_match_group_list(client: TestClient, api: str) -> None:
     )
 
 
-def test_selection_total_respects_include_packs(
+def test_selection_total_respects_kind_filter(
     client: TestClient, api: str
 ) -> None:
-    """`includePacks=false` 时 total 也要跟着减，否则分页会少一页。"""
+    """筛选条件必须落在 SQL 里」这条不变式原来用已下线的素材封装做例子：
+    封装下线后那条用例空跑——参数早就不存在了，FastAPI 静默忽略未知参数，
+    断言恒真。改用真实存在的维度：类别。
+    """
     admin = admin_headers(client)
     owner, owner_h = make_user(client, admin, LIB_RW)
-    first = upload_image(client, api, owner_h, name="sel-a.png", color="slateblue")
-    upload_image(client, api, owner_h, name="sel-b.png", color="thistle")
-    _create_pack(client, api, owner_h, {"name": "选择器封装", "assetIds": [first["id"]]})
+    upload_image(client, api, owner_h, name="sel-a.png", color="slateblue")
+    text = client.post(
+        f"{api}/library/text-assets",
+        json={"name": "sel-b.md", "content": "正文", "extension": "md"},
+        headers=owner_h,
+    )
+    assert text.status_code == 201, text.text
 
+    every = client.get(
+        f"{api}/library/selection", params={"pageSize": 100}, headers=owner_h
+    ).json()["data"]
     page = client.get(
         f"{api}/library/selection",
-        params={"includePacks": "false", "pageSize": 100},
+        params={"kind": "text", "pageSize": 100},
         headers=owner_h,
     ).json()["data"]
-    assert all(item["kind"] != "pack" for item in page["items"])
+    assert page["total"] == 1, f"筛选后 total 应该是 1，实际 {page['total']}"
     assert page["total"] == len(page["items"]), (
         f"total={page['total']} 但只返回 {len(page['items'])} 条"
     )
+    assert page["total"] < every["total"]
 
 
 def test_owner_keeps_seeing_a_shared_asset_after_leaving_the_group(

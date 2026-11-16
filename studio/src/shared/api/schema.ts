@@ -611,7 +611,7 @@ export interface LibraryAssetDetailOut {
   name: string;
   kind: LibraryAssetKind;
   purpose?: string;
-  /** upload / generated / template_source / imported / pack */
+  /** upload / generated / template_source / imported */
   origin: string;
   mimeType?: string | null;
   sizeBytes?: number;
@@ -658,7 +658,7 @@ export interface LibraryAssetOut {
   name: string;
   kind: LibraryAssetKind;
   purpose?: string;
-  /** upload / generated / template_source / imported / pack */
+  /** upload / generated / template_source / imported */
   origin: string;
   mimeType?: string | null;
   sizeBytes?: number;

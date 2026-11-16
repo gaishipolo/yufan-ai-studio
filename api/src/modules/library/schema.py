@@ -48,6 +48,7 @@ __all__ = [
     "LibraryTab",
     "LibraryTagOut",
     "LibraryTagStatOut",
+    "SetPurposeIn",
     "ShareAction",
     "ShareDecisionIn",
     "ShareHistoryItem",
@@ -92,12 +93,6 @@ class LibraryAssetOrigin(StrEnum):
     TEMPLATE_SOURCE = "template_source"
     IMPORTED = "imported"
 
-
-#: 「能当模板原片」的来源集合。前端选择器与封装工具都按这一份判定，
-#: 只认 `template_source` 会把切换前导入的存量原片全漏掉。
-SOURCE_VIDEO_ORIGINS = frozenset(
-    {LibraryAssetOrigin.TEMPLATE_SOURCE.value, LibraryAssetOrigin.IMPORTED.value}
-)
 
 
 class AssetSort(StrEnum):
@@ -177,7 +172,7 @@ class LibraryAssetOut(CamelModel):
     #: 用途：空串 = 普通素材，`case` = 模板库的展示案例。
     #: 与 `kind`（媒体类型）正交 —— 案例仍然要按 image/video 渲染封面与播放。
     purpose: str = ""
-    origin: str = Field(description="upload / generated / template_source / imported / pack")
+    origin: str = Field(description="upload / generated / template_source / imported")
     mime_type: str | None = None
     size_bytes: int = 0
     duration_sec: float | None = None
@@ -242,9 +237,8 @@ class LibraryAssetPage(Page[LibraryAssetOut]):
 class UploadKind(StrEnum):
     """上传接口允许的文件类型。
 
-    不复用 `LibraryAssetKind`：`pack` 不是上传出来的，它是封装动作的产物；
-    让上传接口收 `pack` 只会得到一个没有字节的资产行。`TEXT` 走同一条上传链，
-    但体积上限与探测规则单独一档（见 `infra/media_probe.MAX_TEXT_BYTES`）。
+    不复用 `LibraryAssetKind`：文本资产的体积上限与探测规则单独一档，
+    `TEXT` 走同一条上传链，但上限另算（见 `infra/media_probe.MAX_TEXT_BYTES`）。
     """
 
     IMAGE = "image"

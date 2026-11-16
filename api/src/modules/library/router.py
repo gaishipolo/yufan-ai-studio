@@ -127,7 +127,11 @@ async def list_assets(
     案例。默认反过来——不传就从普通列表里排除案例，否则每个人打开「全部」都会
     看到一堆模板的展示素材，还会把它们算进自己的数量。
     """
-    case_view = (purpose or "").lower() == access.PURPOSE_CASE
+    # 写错的用途一律报错：静默忽略的词让人以为自己在案例池里，实际看的是个人库。
+    target = (purpose or "").strip().lower()
+    if target and target != access.PURPOSE_CASE:
+        raise BadRequest(f"不支持的用途：{purpose}")
+    case_view = target == access.PURPOSE_CASE
     if case_view and not actor.has("library:case:read"):
         raise Forbidden("没有浏览案例池的权限")
     return ApiResponse.ok(
@@ -739,18 +743,29 @@ async def list_tags(
     library: LibraryTab = LibraryTab.ALL,
     state: LibraryAssetState = LibraryAssetState.ACTIVE,
     kind: LibraryAssetKind | None = None,
+    purpose: Annotated[str | None, Query(max_length=16)] = None,
 ) -> ApiResponse[list[LibraryTagStatOut]]:
-    """计数按 `state` + `library` + `kind` 与列表同口径。
+    """计数按 `state` + `library` + `kind` + `purpose` 与列表同口径。
 
     `state=draft|trash` 时忽略 `library`；`kind` 与列表的类别筛选同口径
     （悬浮栏按类别看库时，胶囊上的数字必须也是「这一类里有几条」）。
+
+    `purpose=case` 是案例池入口：只有持 `library:case:read` 的人能看案例池，
+    且计数只算案例。不传时一律排除案例——与列表同一口径。
     """
+    target = (purpose or "").strip().lower()
+    if target and target != access.PURPOSE_CASE:
+        raise BadRequest(f"不支持的用途：{purpose}")
+    case_view = target == access.PURPOSE_CASE
+    if case_view and not actor.has("library:case:read"):
+        raise Forbidden("没有浏览案例池的权限")
     return ApiResponse.ok(
         await service.list_tags(
             actor,
             state=state.value,
             library=library,
             kind=kind.value if kind else "",
+            purpose=access.PURPOSE_CASE if case_view else "",
         )
     )
 

@@ -38,8 +38,6 @@ from modules.library.models import (
 from modules.library.schema import LibraryTab
 
 __all__ = [
-    "PERM_CASE_READ",
-    "PERM_CASE_WRITE",
     "PURPOSE_CASE",
     "active_visible_clause",
     "all_groups",
@@ -65,13 +63,6 @@ PERM_DELETE_ANY = "library:delete:any"
 #: 用常量而不是散落的字符串字面量：这个值同时出现在 SQL 分支（`active_visible_clause`）、
 #: 服务层过滤（`exclude_purposes`）和迁移里，拼错一处就是「案例既不在池里也不可读」。
 PURPOSE_CASE = "case"
-
-#: 案例池的浏览权：能列全部案例（作者本人不需要——他看自己的素材本来就不受限）。
-PERM_CASE_READ = "library:case:read"
-#: 案例池的写权：上传案例、把已有素材移入案例池。
-#: 与 `read` 分开：能看全部案例的人不一定该有「把别人的素材变成案例」的能力，
-#: 反过来上传案例的人必须能看见自己传了什么。
-PERM_CASE_WRITE = "library:case:write"
 
 
 async def all_groups(session: AsyncSession, actor: CurrentUser) -> list[str]:

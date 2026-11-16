@@ -84,6 +84,42 @@ def test_tag_counts_follow_the_current_scope(client: TestClient, api: str) -> No
     assert all("createdAt" in item for item in listed.values())
 
 
+def test_tag_counts_follow_purpose(client: TestClient, api: str) -> None:
+    """案例素材不进普通入口的标签计数；案例池入口只数案例。
+
+    案例是模板的展示素材，普通列表默认排除它们。计数不跟着排除的话，
+    胶囊上的数字会比列表多（「标签旁写 8，点进去只有 3 条」）；反过来，
+    案例池里也不该显示普通素材的数——那是另一个集合。
+    """
+    headers = admin_headers(client)
+    mark = suffix()
+    tag = _create_tag(client, api, headers, f"案例计数{mark}")
+
+    normal_a = upload_image(client, api, headers, name=f"普通甲{mark}.png", color="teal")
+    normal_b = upload_image(client, api, headers, name=f"普通乙{mark}.png", color="olive")
+    case = upload_image(client, api, headers, name=f"案例{mark}.png", color="navy")
+    for item in (normal_a, normal_b, case):
+        _add_tags(client, api, headers, item["id"], [tag["id"]])
+
+    moved = client.post(
+        f"{api}/library/assets/{case['id']}/purpose",
+        json={"purpose": "case"},
+        headers=headers,
+    )
+    assert moved.status_code == 200, moved.text
+
+    def _count(**params: object) -> int:
+        response = client.get(f"{api}/library/tags", params=params, headers=headers)
+        assert response.status_code == 200, response.text
+        items = {item["id"]: item for item in response.json()["data"]}
+        return int(items[tag["id"]]["assetCount"])
+
+    # 普通入口：两条普通素材；案例那条不算
+    assert _count(state="active", library="all") == 2
+    # 案例池入口：只有案例那条
+    assert _count(state="active", purpose="case") == 1
+
+
 def test_tags_are_ordered_by_creation_time(client: TestClient, api: str) -> None:
     admin = admin_headers(client)
     _, headers = make_user(client, admin, LIB_RW)

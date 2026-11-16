@@ -249,10 +249,14 @@ class LibraryService:
             query = query.where(LibraryAsset.kind.not_in(list(exclude_kinds)))
         if purpose:
             query = query.where(LibraryAsset.purpose == purpose)
-        if exclude_purposes:
+        if exclude_purposes and state == "active":
             # 案例默认不进「全部 / 个人 / 小组 / 团队」：它们是模板的展示素材，
             # 有自己的池子。排除同样落在 SQL 里，理由与 `exclude_kinds` 一样
             # （`total` 与 `items` 必须同口径，否则翻页翻到空页）。
+            #
+            # **只对 active 生效**：草稿箱与回收站是「我自己的东西」，一条被删掉的案例
+            # 必须还能在回收站里找回来。若是还排除案例，则「删了就消失」，
+            # 而角标又把它算进去了（`facets.trash` 不按用途过滤）。
             query = query.where(LibraryAsset.purpose.not_in(list(exclude_purposes)))
         if keyword:
             query = query.where(LibraryAsset.name.ilike(f"%{keyword}%"))

@@ -4578,7 +4578,7 @@
           "资产库"
         ],
         "summary": "标签列表（三级平铺，含当前入口的素材数，按添加时间排序）",
-        "description": "计数按 `state` + `library` + `kind` 与列表同口径。\n\n`state=draft|trash` 时忽略 `library`；`kind` 与列表的类别筛选同口径\n（悬浮栏按类别看库时，胶囊上的数字必须也是「这一类里有几条」）。",
+        "description": "计数按 `state` + `library` + `kind` + `purpose` 与列表同口径。\n\n`state=draft|trash` 时忽略 `library`；`kind` 与列表的类别筛选同口径\n（悬浮栏按类别看库时，胶囊上的数字必须也是「这一类里有几条」）。\n\n`purpose=case` 是案例池入口：只有持 `library:case:read` 的人能看案例池，\n且计数只算案例。不传时一律排除案例——与列表同一口径。",
         "operationId": "list_tags_api_v1_library_tags_get",
         "security": [
           {
@@ -4618,6 +4618,23 @@
                 }
               ],
               "title": "Kind"
+            }
+          },
+          {
+            "name": "purpose",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 16
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Purpose"
             }
           }
         ],
@@ -9940,7 +9957,7 @@
           "origin": {
             "type": "string",
             "title": "Origin",
-            "description": "upload / generated / template_source / imported / pack"
+            "description": "upload / generated / template_source / imported"
           },
           "mimeType": {
             "anyOf": [
@@ -10288,7 +10305,7 @@
           "origin": {
             "type": "string",
             "title": "Origin",
-            "description": "upload / generated / template_source / imported / pack"
+            "description": "upload / generated / template_source / imported"
           },
           "mimeType": {
             "anyOf": [
@@ -13555,7 +13572,7 @@
           "text"
         ],
         "title": "UploadKind",
-        "description": "上传接口允许的文件类型。\n\n不复用 `LibraryAssetKind`：`pack` 不是上传出来的，它是封装动作的产物；\n让上传接口收 `pack` 只会得到一个没有字节的资产行。`TEXT` 走同一条上传链，\n但体积上限与探测规则单独一档（见 `infra/media_probe.MAX_TEXT_BYTES`）。"
+        "description": "上传接口允许的文件类型。\n\n不复用 `LibraryAssetKind`：文本资产的体积上限与探测规则单独一档，\n`TEXT` 走同一条上传链，但上限另算（见 `infra/media_probe.MAX_TEXT_BYTES`）。"
       },
       "UserCreateIn": {
         "properties": {
