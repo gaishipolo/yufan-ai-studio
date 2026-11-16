@@ -51,7 +51,6 @@ from modules.library.models import (
     LibraryAssetGroup,
     LibraryAssetTag,
     LibraryDraftReview,
-    LibraryPackItem,
     LibraryShareRequest,
     LibraryTextVersion,
 )
@@ -337,10 +336,9 @@ class LifecycleService:
         # 上游去重（`_find_duplicate`）要的是「未删除」，这里要的是「还有人引用」，
         # 两个问题不同，条件也就不能抄。
         payload_owners = await self._other_holders(storage_key, row.id, column="storage")
-        # 封面键可能**借的是成员的原片对象**：成员没有缩略图时 `pack_cover_key()`
-        # 直接返回 `member.storage_key`（见 `packs.pack_cover_key`）。只数
-        # `cover_key` 一列会漏掉「成员还在拿它当原片」，于是删封装顺手把成员的
-        # 原始文件删掉——引用检查按 `asset_id` 拦不住，且不可逆。所以两列都要数。
+        # 封面键可能**借的是别的行的原片对象**。只数 `cover_key` 一列会漏掉
+        # 「还有人在拿它当原片」，于是删这一行顺手把别人的原始文件删掉——
+        # 引用检查按 `asset_id` 拦不住，且不可逆。所以两列都要数。
         preview_holders = 0
         if cover_key and cover_key != storage_key:
             preview_holders = await self._other_holders(
@@ -358,7 +356,7 @@ class LifecycleService:
         # **闸门必须是第一条语句，而且要看 rowcount。**
         # `WHERE state='trash'` 写在最后等于没写：子表已经删掉、commit 也照做，
         # 只有那条 DELETE 静默命中 0 行。并发 restore 把行改回 active 时，
-        # 用户看到「恢复成功」，拿回来的却是没有标签、没有封装关系、原文件 404
+        # 用户看到「恢复成功」，拿回来的却是没有标签、没有分组关系、原文件 404
         # 的空壳——不可逆。所以：删不到就整段放弃，什么都不动。
         # 先取出 id：下面的 rollback 会让 ORM 实例过期，之后再访问 `row.id`
         # 会触发一次懒加载（行已经不在了），日志里就会抛异常把整个操作带崩
@@ -381,34 +379,8 @@ class LifecycleService:
         await self.session.execute(
             delete(LibraryAssetTag).where(LibraryAssetTag.asset_id == row.id)
         )
-        # 封装的封面借用成员的 `cover_key`（拿不到封面图时还借用 `storage_key`）。
-        # 字节真被删掉时，这些封面会变成 404 的裂图——而封装本身可能只是被解散、
-        # 之后还要恢复。置空让前端回退到占位图：丢一张封面是可恢复的，裂图不是。
-        #
-        # 只清「指向即将删掉的对象」的那些：还活着的对象不能清，否则等于把
-        # 别人的封面一起清掉（`borrowed` 只可能是 doomed，封装自己的
-        # `storage_key` 为空、`sha256` 为空，所以删封装永远落不进这里）。
-        if doomed:
-            await self.session.execute(
-                update(LibraryAsset)
-                .where(
-                    LibraryAsset.kind == "pack",
-                    LibraryAsset.id != row.id,
-                    LibraryAsset.cover_key.in_(doomed),
-                )
-                .values(cover_key="")
-            )
         await self.session.execute(
             delete(LibraryAssetGroup).where(LibraryAssetGroup.asset_id == row.id)
-        )
-        await self.session.execute(
-            delete(LibraryPackItem).where(LibraryPackItem.asset_id == row.id)
-        )
-        # 被删的本身可能是一个封装：成员关系挂在 `pack_id` 而不是 `asset_id` 上。
-        # 漏了这一段，彻底删除封装会留下一批指向不存在 pack 的孤儿行，而引用检查
-        # 只按 `asset_id` 查——于是谁也不会发现。
-        await self.session.execute(
-            delete(LibraryPackItem).where(LibraryPackItem.pack_id == row.id)
         )
         await self.session.execute(
             delete(LibraryAssetGeneration).where(LibraryAssetGeneration.asset_id == row.id)
@@ -443,8 +415,8 @@ class LifecycleService:
             actor_id=actor.id if actor else None,
             target_type="library_asset",
             target_id=row.id,
-            # 只有真删了原始字节才算「释放了空间」：封装没有自己的字节，
-            # `size_bytes` 是成员之和，按它记会把没释放的量记成已释放。
+            # 只有真删了原始字节才算「释放了空间」：缩略图与原片是两个独立对象，
+            # 按 `size_bytes` 记会把没释放的量记成已释放。
             detail={
                 "ownerId": row.owner_id,
                 "bytesFreed": row.size_bytes if storage_key in doomed else 0,

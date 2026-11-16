@@ -14,16 +14,15 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-#: 槽位类型。**就是资产库的 kind**（图片 / 视频 / 音频 / 文本 / 封装），
-#: `pack` 表示"这个槽位要的是一整个封装"（多成员、带角色与顺序）。
+#: 槽位类型。**就是资产库的 kind**（图片 / 视频 / 音频 / 文本）。
 #: `text` 与其余的区别：正文注入，不占视觉编号。
-SlotType = Literal["image", "video", "audio", "text", "pack"]
+SlotType = Literal["image", "video", "audio", "text"]
 #: 谁定内容。`fixed` = 封装时定死，模板库只读；`user` = 模板库填。
 SlotBinding = Literal["fixed", "user"]
 #: `mixed` 参与 `{{Mixed N}}` 编号；`attachment` 作为附加输入、不占号。
 RefMode = Literal["mixed", "attachment"]
 
-SLOT_TYPES: tuple[SlotType, ...] = ("image", "video", "audio", "text", "pack")
+SLOT_TYPES: tuple[SlotType, ...] = ("image", "video", "audio", "text")
 
 #: `mixed` 槽位展开后的总张数上限。执行器侧的参考素材上限，超了必然 400，
 #: 不如在编译期就说清。
@@ -47,17 +46,13 @@ EXECUTION_PROMPT_LIMIT = 7000
 class InputSlot:
     """一个输入槽位。
 
-    `type` 就是**资产库的 kind**：`image` / `video` / `audio` / `text` / `pack`。
-    要一整个封装（产品三视图、人物多视身份）时把 `type` 写成 `pack` —— 这组
-    "同一对象的多个视图"的结构归资产库封装，模板只引用它的 id，不会在模板里
-    长出第二份成员清单。
+    `type` 就是**资产库的 kind**：`image` / `video` / `audio` / `text`。
 
-    `type` 与 `binding` 是**两个正交的轴**，十种组合都合法（各自的约束见 `rules.py`）：
+    `type` 与 `binding` 是**两个正交的轴**，组合都合法（各自的约束见 `rules.py`）：
 
     | | `binding=fixed`（封装时定） | `binding=user`（模板库填） |
     |---|---|---|
     | `type=image/video` | 绑定某一具体素材 | 模板库挑（`min/max` 可多值） |
-    | `type=pack` | 绑定某个资产库封装 | 模板库挑一个资产库封装 |
     | `type=text/audio` | 绑定一份文案/一段音频 | 模板库挑（附加输入，不占号） |
 
     `tag_id` 是**候选集的范围**，不是内容：非空时固定/填写都只在这个一级标签
@@ -68,26 +63,18 @@ class InputSlot:
     type: SlotType
     binding: SlotBinding = "user"
     ref_mode: RefMode = "mixed"
-    #: 只有 `source=asset` 且 `binding=user` 时才有意义；`source=pack` 的数量由成员数决定。
+    #: 只有 `binding=user` 时才有意义：固定槽位恒定一个素材。
     min_count: int = 1
     max_count: int = 1
     label: str = ""
     #: 进提示词/执行请求的用途说明（"确定同款同色外观""只补纹理与扣件"）。
     usage: str = ""
     asset_id: str | None = None
-    pack_id: str | None = None
     #: 一级标签 id（资产库 `library_tags`）。空 = 不限；非空 = 只在这个标签
     #: 及其下级里挑。**候选集范围，不是内容**：编译不看它，删了标签也不影响已发布版本。
     tag_id: str = ""
     #: 排序，**就是编号顺序**。编号本身不落库，由它算出来。
     position: int = 0
-
-    @property
-    def is_pack(self) -> bool:
-        """要不要一整个封装。**只有这一处定义**：`type == "pack"` 曾是独立的一根
-        `source` 轴，两处表达同一件事，接口就能收到 `type=image, source=pack` 这种
-        自相矛盾的组合（2026-11-14 合并掉）。"""
-        return self.type == "pack"
 
 
 @dataclass(frozen=True, slots=True)
@@ -125,15 +112,12 @@ class FilledAsset:
 class FilledSlot:
     """某个槽位这次被填成什么。
 
-    `assets` **必须已经是最终顺序**：`source=pack` 的顺序由 `expand_packs()` 按
-    资产库的 `position` 给出，编译不得重排（重排就等于模板偷偷定义了一份成员顺序）。
+    `assets` **必须已经是最终顺序**：挑选顺序就是编号顺序，编译不得重排
+    （重排就等于模板偷偷定了一份与用户所见不同的顺序）。
     """
 
     slot_key: str
     assets: tuple[FilledAsset, ...] = ()
-    #: 仅 `source=pack` 有值，用于报错时说清是哪个封装。
-    pack_id: str | None = None
-    pack_name: str = ""
 
 
 @dataclass(frozen=True, slots=True)

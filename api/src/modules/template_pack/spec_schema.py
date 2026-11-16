@@ -41,9 +41,9 @@ class StrictIn(CamelModel):
 
 class SpecSlotIn(StrictIn):
     key: str = Field(pattern=_KEY)
-    #: 槽位要什么：就是资产库的 kind（图片 / 视频 / 音频 / 文本 / **封装**）。
-    #: 曾经另有一根 `source: asset|pack` 的轴，与 `type` 表达同一件事（封装槽位
-    #: 就是 `type=pack`），两处并存时接口能收到自相矛盾的组合，已合并。
+    #: 槽位要什么：就是资产库的 kind（图片 / 视频 / 音频 / 文本）。
+    #: 曾经另有一根 `source: asset|pack` 的轴，与 `type` 表达同一件事，两处并存
+    #: 时接口能收到自相矛盾的组合，已合并。
     type: SlotType
     binding: SlotBinding = "user"
     ref_mode: RefMode = "mixed"
@@ -52,7 +52,6 @@ class SpecSlotIn(StrictIn):
     label: str = Field(default="", max_length=80)
     usage: str = Field(default="", max_length=500)
     asset_id: str | None = Field(default=None, max_length=32)
-    pack_id: str | None = Field(default=None, max_length=32)
     #: 一级标签 id：**候选集范围**，不是内容。空 = 不限。固定与填写都只在这个
     #: 标签（及其下级）里挑；编译不看它。
     tag_id: str = Field(default="", max_length=32)
@@ -144,8 +143,7 @@ class SpecPublishOut(CamelModel):
 class SpecCompileIn(StrictIn):
     """填表结果：`{slotKey: [assetId…]}`。
 
-    `source=pack` 的槽位传一个封装 id；`source=asset` 的槽位按用户挑选顺序传。
-    `version` 为空表示用当前发布版本。
+    槽位按用户挑选顺序传素材 id。`version` 为空表示用当前发布版本。
 
     **没有 `promptOverride`**（2026-11-14 起）：模板库不改文字。需要可变内容的地方
     在模板里放 `text` 槽位 —— 填表时选一份文案，`compile` 把它排在 `{{Text N}}`

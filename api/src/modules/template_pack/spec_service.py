@@ -4,8 +4,8 @@
 
 1. **发布即冻结**：`template_spec_versions` 只插入不更新；同一份草稿重复发布
    返回同一个版本号（幂等），改了草稿才会 +1。
-2. **不复制素材结构**：`type=pack` 的槽位只记包 id，编译时现场
-   `expand_packs()` 展开；成员顺序由库给，本层不得重排。
+2. **只存 id 不存结构**：槽位记的是 `library_assets.id`，素材的字节与清单都不进
+   模板，模板不替素材库描述"这个对象有哪些视图"。
 3. **不自己物化**：这里只做 id 与元数据的校验，字节由 task 的
    `generic_inputs.materialize()` 落地。所以本模块**没有**任何写文件/上传代码。
 
@@ -87,7 +87,6 @@ def to_core(payload: TemplateSpecIn) -> TemplateSpec:
                 label=slot.label,
                 usage=slot.usage,
                 asset_id=slot.asset_id,
-                pack_id=slot.pack_id,
                 tag_id=slot.tag_id,
                 position=slot.position,
             )
@@ -120,7 +119,6 @@ def _slot_out(row: TemplateSpecSlot) -> SpecSlotOut:
         label=row.label,
         usage=row.usage_text,
         asset_id=row.asset_id,
-        pack_id=row.pack_id,
         tag_id=row.tag_id,
         position=row.position,
     )
@@ -229,8 +227,8 @@ def _check_executable(spec: TemplateSpec) -> None:
     # 素材一多就没法挑（这正是这一轮要消灭的形态）。
     #
     # 只要求 `binding=user`：固定槽位的内容作者已经选死了，模板使用者根本不挑，
-    # 逼作者再填一个标签只是多一步。文本/音频/封装也不要求 —— 它们走各自的
-    # 列表 / 封装选择器，没有"按标签分组"的概念。
+    # 逼作者再填一个标签只是多一步。文本/音频也不要求 —— 它们走各自的列表
+    # 选择器，没有"按标签分组"的概念。
     missing = [
         slot.label.strip() or slot.key
         for slot in spec.slots
@@ -291,24 +289,14 @@ async def _check_model(spec: TemplateSpec) -> None:
 async def _check_fixed_refs(
     session: AsyncSession, actor: CurrentUser, spec: TemplateSpec
 ) -> None:
-    """固定槽位在发布时必须**现在就能解释**：资产可读、封装成员可读。"""
+    """固定槽位在发布时必须**现在就能解释**：资产可读。"""
     lookup = get_library_lookup()
-    asset_ids = [slot.asset_id for slot in spec.slots if slot.asset_id and not slot.is_pack]
+    asset_ids = [slot.asset_id for slot in spec.slots if slot.asset_id]
     if asset_ids:
         readable = await lookup.readable_ids(session, actor, asset_ids)
         missing = [item for item in asset_ids if item not in readable]
         if missing:
             raise BadRequest(f"固定素材不可用或无权访问：{'、'.join(missing)}")
-    pack_ids = [slot.pack_id for slot in spec.slots if slot.is_pack and slot.pack_id]
-    if pack_ids:
-        expanded = await lookup.expand_packs(session, actor, pack_ids)
-        for pack_id in pack_ids:
-            members = expanded.get(pack_id)
-            if not members:
-                raise BadRequest(f"固定封装不存在或无权访问：{pack_id}")
-            blocked = [member.name or member.id for member in members if not member.readable]
-            if blocked:
-                raise BadRequest(f"固定封装的成员不可读：{'、'.join(blocked)}")
 
 
 async def validate_draft(
@@ -431,7 +419,6 @@ async def publish(session: AsyncSession, actor: CurrentUser, key: str) -> SpecPu
                 label=slot.label,
                 usage_text=slot.usage,
                 asset_id=slot.asset_id,
-                pack_id=slot.pack_id,
                 tag_id=slot.tag_id,
                 position=slot.position,
             )
@@ -521,7 +508,7 @@ async def list_out(
     """`target` 按**模型声明**筛：`replacement` 只留能跑替换链的，`generation` 反过来。
 
     判据来自 `GET /models` 的 `replacement`（驱动声明），**不看槽位组合** ——
-    靠"有 fixed video 槽 + 有 pack 槽"猜，普通多图模板会被误判成可替换模板。
+    靠"有 fixed video 槽 + 有多图槽"猜，普通多图模板会被误判成可替换模板。
     """
     alive = SpecRow.deleted_at.is_(None) if not trashed else SpecRow.deleted_at.is_not(None)
     stmt = select(SpecRow).where(alive)
@@ -681,7 +668,6 @@ def _slot_core(row: TemplateSpecSlot) -> InputSlot:
         label=row.label,
         usage=row.usage_text,
         asset_id=row.asset_id,
-        pack_id=row.pack_id,
         tag_id=row.tag_id,
         position=row.position,
     )
@@ -695,45 +681,14 @@ async def _fills(
 ) -> dict[str, FilledSlot]:
     """把「用户填的 id」翻译成编译需要的 `FilledSlot`。
 
-    素材事实只从端口取：单资产走 `get_many` / `readable_ids`，封装走
-    `expand_packs`。这一层不查表、不猜类型，也不缓存成员。
+    素材事实只从端口取：单资产走 `get_many` / `readable_ids`。这一层不查表、
+    不猜类型。
     """
     lookup = get_library_lookup()
     fills: dict[str, FilledSlot] = {}
     for slot in spec.slots:
         chosen = [item for item in values.get(slot.key, ()) if item]
-        if slot.is_pack:
-            pack_id = slot.pack_id if slot.binding == "fixed" else (
-                chosen[0] if chosen else ""
-            )
-            if not pack_id:
-                continue
-            expanded = await lookup.expand_packs(session, actor, [pack_id])
-            members = expanded.get(pack_id)
-            if not members:
-                raise BadRequest(f"槽位「{slot.label or slot.key}」的封装不存在或无权访问")
-            blocked = [member.name or member.id for member in members if not member.readable]
-            if blocked:
-                raise BadRequest(
-                    f"槽位「{slot.label or slot.key}」的封装成员不可读："
-                    f"{'、'.join(blocked)}"
-                )
-            fills[slot.key] = FilledSlot(
-                slot_key=slot.key,
-                assets=tuple(
-                    FilledAsset(
-                        asset_id=member.id,
-                        kind=str(member.kind),
-                        role=member.role,
-                        name=member.name,
-                    )
-                    for member in members
-                ),
-                pack_id=pack_id,
-            )
-            continue
-
-        # 单个资产：固定槽位取 spec 里的 id，用户槽位按挑选顺序。
+        # 固定槽位取 spec 里的 id，用户槽位按挑选顺序。
         asset_ids = [slot.asset_id] if slot.binding == "fixed" and slot.asset_id else chosen
         if not asset_ids:
             continue

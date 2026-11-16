@@ -60,28 +60,6 @@ def test_rename_keeps_dots_that_are_part_of_the_name(client: TestClient, api: st
         assert response.json()["data"]["name"] == expected
 
 
-def test_pack_rename_gets_no_suffix(client: TestClient, api: str) -> None:
-    """封装没有字节，不该被塞一个 `.png`。"""
-    admin = admin_headers(client)
-    owner, owner_h = make_user(client, admin, LIB_RW)
-    first = upload_image(client, api, owner_h, name="a.png", color="green")
-    second = upload_image(client, api, owner_h, name="b.png", color="navy")
-
-    pack = client.post(
-        f"{api}/library/packs",
-        json={"name": "春季素材包", "assetIds": [first["id"], second["id"]]},
-        headers=owner_h,
-    )
-    assert pack.status_code == 201, pack.text
-    pack_id = pack.json()["data"]["id"]
-
-    renamed = client.patch(
-        f"{api}/library/assets/{pack_id}", json={"name": "夏季素材包"}, headers=owner_h
-    )
-    assert renamed.status_code == 200
-    assert renamed.json()["data"]["name"] == "夏季素材包"
-
-
 def test_list_items_carry_their_tags(client: TestClient, api: str) -> None:
     admin = admin_headers(client)
     owner, owner_h = make_user(client, admin, LIB_RW + ["library:tag:manage"])

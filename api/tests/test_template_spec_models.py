@@ -5,7 +5,7 @@
 
 1. 编号不落库 —— 槽位表里不该出现 `token` / `mixed_number` 这类列；
 2. 快照表不可变 —— 同一 `(spec_id, version)` 只能有一份；
-3. `source` 与 `asset_id`/`pack_id` 并存 —— 指向封装时不允许再绑单资产；
+3. 槽位表只有一根 `type` 轴 —— 旧的 `source` 轴不许回来；
 4. 草稿只在 head 上有一份 JSON，版本表里是展开后的两段正文。
 """
 
@@ -43,14 +43,14 @@ def test_numbers_are_not_stored() -> None:
     assert "position" in _columns("template_spec_slots")
 
 
-def test_slot_carries_both_pointers_but_only_one_is_used() -> None:
+def test_slot_points_at_one_asset_and_has_no_source_axis() -> None:
     columns = _columns("template_spec_slots")
-    assert {"type", "binding", "ref_mode", "asset_id", "pack_id", "tag_id"} <= columns
-    # `type=pack` 决定哪一列有值；两列都存在是刻意的（否则要建两张槽位表）。
-    assert "pack_id" in columns
-    # 「要一个封装」只有一条表达：`type=pack`。旧的 `source` 轴不许回来
-    # （两根轴并存时接口能收到 `type=image, source=pack` 这种自相矛盾的组合）。
+    assert {"type", "binding", "ref_mode", "asset_id", "tag_id"} <= columns
+    # 「要什么」只有一条表达：`type`。旧的 `source` 轴不许回来
+    # （两根轴并存时接口能收到自相矛盾的组合）。
     assert "source" not in columns
+    # 指向「一整组素材」的那一列也没有了：槽位只指向单个素材。
+    assert "pack_id" not in columns
 
 
 def test_version_snapshot_is_unique_per_spec() -> None:

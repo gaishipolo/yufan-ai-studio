@@ -1,6 +1,8 @@
 # 模板规格（Template Spec）
 
 > 状态：**设计定稿，待实施**（2026-11-14）。
+> **2026-11-16 提示**：素材封装（资产库的 `kind=pack`）已下线，本文中与「封装槽位」
+> 相关的段落是**历史设计**；现行槽位类型只有 `image / video / audio / text` 四种。
 > 目标读者：改模板封装 / 模板库 / 生成链的人。
 > 与 `TEMPLATE_LIBRARY_V2.md` 无关（那份是任务中心 v2 的旧计划，用户明确「先不用管」）。
 
@@ -92,7 +94,7 @@
 | 字段 | 类型 | 说明 |
 |---|---|---|
 | `key` | `^[a-z][a-z0-9_]{0,39}$` | 槽位标识，提示词里用它引用；版本内唯一 |
-| `type` | `image \| video \| audio \| text \| pack` | **就是资产库的 kind**：决定提哪种素材选择器、以及能进哪个字段。`pack` = 要一整个封装（多成员、带角色与顺序） |
+| `type` | `image \| video \| audio \| text` | **就是资产库的 kind**：决定提哪种素材选择器、以及能进哪个字段（`pack` 已随素材封装下线） |
 | `binding` | `fixed \| user` | `fixed`：封装时定死，模板库只读；`user`：模板库填 |
 | `ref_mode` | `mixed \| attachment` | `mixed` 参与 `{{Mixed N}}` 编号；`attachment` 作为附加输入、不占号（音频通常用这个） |
 | `min` / `max` | int | 数量范围。`min=0` 表示可选；`max` 上限受全局 10 与模型 `max_references` 双重约束 |

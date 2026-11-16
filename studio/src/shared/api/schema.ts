@@ -36,9 +36,9 @@ export const AspectRatio_VALUES = ["9:16", "16:9", "1:1"] as const;
 export type AssetSort = "-createdAt" | "createdAt" | "name" | "-sizeBytes";
 export const AssetSort_VALUES = ["-createdAt", "createdAt", "name", "-sizeBytes"] as const;
 
-/** 取值：addTag, removeTag, rename, delete, restore, approveDraft, rejectDraft, requestRevoke, pack */
-export type BulkAction = "addTag" | "removeTag" | "rename" | "delete" | "restore" | "approveDraft" | "rejectDraft" | "requestRevoke" | "pack";
-export const BulkAction_VALUES = ["addTag", "removeTag", "rename", "delete", "restore", "approveDraft", "rejectDraft", "requestRevoke", "pack"] as const;
+/** 取值：addTag, removeTag, rename, delete, restore, approveDraft, rejectDraft, requestRevoke */
+export type BulkAction = "addTag" | "removeTag" | "rename" | "delete" | "restore" | "approveDraft" | "rejectDraft" | "requestRevoke";
+export const BulkAction_VALUES = ["addTag", "removeTag", "rename", "delete", "restore", "approveDraft", "rejectDraft", "requestRevoke"] as const;
 
 /** 取值：video, image, audio */
 export type Capability = "video" | "image" | "audio";
@@ -52,13 +52,13 @@ export const ExportSource_VALUES = ["tasks", "audit_events"] as const;
 export type GenerationKind = "video" | "image";
 export const GenerationKind_VALUES = ["video", "image"] as const;
 
-/** 取值：video, audio, image, pack, text */
-export type LibraryAssetKind = "video" | "audio" | "image" | "pack" | "text";
-export const LibraryAssetKind_VALUES = ["video", "audio", "image", "pack", "text"] as const;
+/** 取值：video, audio, image, text */
+export type LibraryAssetKind = "video" | "audio" | "image" | "text";
+export const LibraryAssetKind_VALUES = ["video", "audio", "image", "text"] as const;
 
-/** 取值：upload, generated, template_source, imported, pack */
-export type LibraryAssetOrigin = "upload" | "generated" | "template_source" | "imported" | "pack";
-export const LibraryAssetOrigin_VALUES = ["upload", "generated", "template_source", "imported", "pack"] as const;
+/** 取值：upload, generated, template_source, imported */
+export type LibraryAssetOrigin = "upload" | "generated" | "template_source" | "imported";
+export const LibraryAssetOrigin_VALUES = ["upload", "generated", "template_source", "imported"] as const;
 
 /** 取值：draft, active, trash */
 export type LibraryAssetState = "draft" | "active" | "trash";
@@ -636,7 +636,6 @@ export interface LibraryAssetDetailOut {
   updatedAt?: string | null;
   groups?: LibraryGroupRef[];
   generation?: LibraryGenerationOut | null;
-  packItems?: PackItemOut[];
   references?: string[] | null;
   shareHistory?: ShareHistoryItem[];
   archive?: LibraryArchiveOut | null;
@@ -849,48 +848,6 @@ export interface MeOut {
   roles?: RoleBriefOut[];
   /** 展开后的权限码；含 `*` 表示超级管理员 */
   permissions?: string[];
-}
-
-/** 建封装。
-
-`items` 是**唯一有序来源**；`assetIds` 只是给「勾选一批直接封装」用的简写，
-会被追加到 `items` 之后（已在 items 里的不重复加）。两者都空 → 400。 */
-export interface PackIn {
-  name: string;
-  assetIds?: string[];
-  items?: PackItemIn[];
-  coverAssetId?: string;
-  tagIds?: string[];
-}
-
-/** 封装成员。`role` 预留给模板替换（产品主图 / 多视结构图…），首版可为空。 */
-export interface PackItemIn {
-  assetId: string;
-  role?: string;
-  description?: string;
-}
-
-/** 封装里的一项。成员可能是别人共享给我的素材，所以带 `state` 与 `coverUrl`。 */
-export interface PackItemOut {
-  assetId: string;
-  name?: string;
-  kind: LibraryAssetKind;
-  state: LibraryAssetState;
-  position: number;
-  role?: string;
-  description?: string;
-  sizeBytes?: number;
-  coverUrl?: string | null;
-}
-
-/** 改封装。`items` 提供即**整体替换**（不是增量追加）——增量语义要前端自己
-算差集，而算错了就是悄悄多一个成员，不如让调用方给全量。 */
-export interface PackPatchIn {
-  name?: string | null;
-  items?: PackItemIn[] | null;
-  coverAssetId?: string | null;
-  tagIds?: string[] | null;
-  expectedVersion?: number;
 }
 
 /** PasswordChangeIn */
@@ -1172,8 +1129,7 @@ export interface ShotPresetOut {
 
 /** 填表结果：`{slotKey: [assetId…]}`。
 
-`source=pack` 的槽位传一个封装 id；`source=asset` 的槽位按用户挑选顺序传。
-`version` 为空表示用当前发布版本。
+槽位按用户挑选顺序传素材 id。`version` 为空表示用当前发布版本。
 
 **没有 `promptOverride`**（2026-11-14 起）：模板库不改文字。需要可变内容的地方
 在模板里放 `text` 槽位 —— 填表时选一份文案，`compile` 把它排在 `{{Text N}}`
@@ -1209,7 +1165,7 @@ export interface SpecPublishOut {
 /** SpecSlotIn */
 export interface SpecSlotIn {
   key: string;
-  type: "image" | "video" | "audio" | "text" | "pack";
+  type: "image" | "video" | "audio" | "text";
   binding?: "fixed" | "user";
   refMode?: "mixed" | "attachment";
   minCount?: number;
@@ -1217,7 +1173,6 @@ export interface SpecSlotIn {
   label?: string;
   usage?: string;
   assetId?: string | null;
-  packId?: string | null;
   tagId?: string;
   position?: number;
 }
@@ -1225,7 +1180,7 @@ export interface SpecSlotIn {
 /** 槽位出参：与入参同形。 */
 export interface SpecSlotOut {
   key: string;
-  type: "image" | "video" | "audio" | "text" | "pack";
+  type: "image" | "video" | "audio" | "text";
   binding?: "fixed" | "user";
   refMode?: "mixed" | "attachment";
   minCount?: number;
@@ -1233,7 +1188,6 @@ export interface SpecSlotOut {
   label?: string;
   usage?: string;
   assetId?: string | null;
-  packId?: string | null;
   tagId?: string;
   position?: number;
 }
@@ -1894,14 +1848,6 @@ export interface EndpointData {
   "GET /api/v1/library/groups": LibraryGroupOut[];
   /** 设置小组负责人（整体替换） */
   "PUT /api/v1/library/groups/{group_id}/leaders": string[];
-  /** 建封装（成员必须是我看得见且在库的） */
-  "POST /api/v1/library/packs": LibraryAssetDetailOut;
-  /** 解散封装（进回收站，成员不受影响） */
-  "DELETE /api/v1/library/packs/{pack_id}": null;
-  /** 封装详情（含成员） */
-  "GET /api/v1/library/packs/{pack_id}": LibraryAssetDetailOut;
-  /** 改封装：改名 / 整体替换成员 / 换封面 / 换标签 */
-  "PATCH /api/v1/library/packs/{pack_id}": LibraryAssetDetailOut;
   /** 选择器：只返回库内资产 */
   "GET /api/v1/library/selection": LibrarySelectionPage;
   /** 申请单列表（我提交的 / 待我审核） */

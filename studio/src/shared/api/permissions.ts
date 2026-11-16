@@ -77,7 +77,7 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
     items: [
       { code: 'library:case:read', name: '浏览全部模板案例（案例池）', description: '' },
       { code: 'library:case:write', name: '上传案例 / 把素材移入案例池', description: '' },
-      { code: 'library:create', name: '上传与封装资产', description: '' },
+      { code: 'library:create', name: '上传资产', description: '' },
       { code: 'library:delete', name: '删除本人资产（移入回收站）', description: '' },
       { code: 'library:delete:any', name: '删除 / 恢复任何人的资产', description: '' },
       { code: 'library:draft:review', name: '审核他人草稿', description: '' },

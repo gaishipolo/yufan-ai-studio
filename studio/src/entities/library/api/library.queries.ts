@@ -13,7 +13,7 @@ import type {
 } from '@/shared/api/schema';
 import { ApiError } from '@/shared/api/types';
 import { saveBlob } from '@/shared/lib/download';
-import { libraryApi, type LibraryListParams, type LibraryTagScope, type PackItemInput } from './library.api';
+import { libraryApi, type LibraryListParams, type LibraryTagScope } from './library.api';
 
 /**
  * 查询键第一段固定 `library`：并存期要能一次失效整块，且不能误伤
@@ -78,7 +78,7 @@ export function useLibraryTags(scope: LibraryTagScope) {
   });
 }
 
-/** 选择器：硬过滤 `state=active`，默认不出封装（禁嵌套） */
+/** 选择器：硬过滤 `state=active` */
 export function useLibrarySelection(params: {
   keyword?: string;
   kind?: string;
@@ -89,15 +89,13 @@ export function useLibrarySelection(params: {
   library?: string;
   /** 只挑某一类来源（原片 = `template_source` + `imported`） */
   origin?: string[];
-  /** 只有「从封装导入」这类场景要挑封装本身，默认 false（封装不能嵌套） */
-  includePacks?: boolean;
-  /** 暂不需要这份候选时先不发请求（例如封装编辑器正在编辑旧素材库的包） */
+  /** 暂不需要这份候选时先不发请求 */
   enabled?: boolean;
 }) {
-  const { enabled = true, includePacks = false, ...rest } = params;
+  const { enabled = true, ...rest } = params;
   return useQuery({
-    queryKey: libraryKeys.selection({ ...rest, includePacks }),
-    queryFn: () => libraryApi.selection({ ...rest, includePacks }),
+    queryKey: libraryKeys.selection(rest),
+    queryFn: () => libraryApi.selection(rest),
     placeholderData: (previous) => previous,
     enabled,
   });
@@ -120,7 +118,7 @@ export function useLibrarySelectionInfinite(params: {
     // 那份「单页结构」的数据（两者形状不同，共用会让某一方读到 undefined）
     queryKey: libraryKeys.selection({ ...params, infinite: true }),
     queryFn: ({ pageParam }) =>
-      libraryApi.selection({ ...params, page: pageParam, includePacks: false }),
+      libraryApi.selection({ ...params, page: pageParam }),
     initialPageParam: 1,
     getNextPageParam: (last) => {
       const loaded = (last.page ?? 1) * (last.pageSize ?? 24);
@@ -234,42 +232,6 @@ export function useUploadSourceVideo() {
     }) => libraryApi.uploadSourceVideo(file, { onProgress }),
     onSuccess: invalidate,
   });
-}
-
-export function useCreatePack() {
-  const invalidate = useInvalidateLibrary();
-  return useMutation({
-    mutationFn: (body: { name: string; items: PackItemInput[]; tagIds?: string[] }) =>
-      libraryApi.createPack(body),
-    onSuccess: invalidate,
-  });
-}
-
-/**
- * 改封装成员（含成员的**用途**）。
- *
- * 服务端 `items` 是整体替换，所以调用方要给全量清单；只改用途时也必须把
- * 其余成员的 `assetId` / 顺序原样带上，否则等于把别人悄悄删了。
- */
-export function useUpdatePack() {
-  const invalidate = useInvalidateLibrary();
-  return useMutation({
-    mutationFn: ({
-      id,
-      items,
-      expectedVersion,
-    }: {
-      id: string;
-      items: PackItemInput[];
-      expectedVersion?: number;
-    }) => libraryApi.updatePack(id, { items, expectedVersion }),
-    onSuccess: invalidate,
-  });
-}
-
-export function useDeletePack() {
-  const invalidate = useInvalidateLibrary();
-  return useMutation({ mutationFn: (id: string) => libraryApi.deletePack(id), onSuccess: invalidate });
 }
 
 export function useCreateTag() {

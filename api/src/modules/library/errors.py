@@ -67,7 +67,7 @@ class AssetNotInTrash(AppError):
 
 
 class AssetNotEditable(AppError):
-    """对回收站里的条目改名 / 换标签 / 改封装成员。
+    """对回收站里的条目改名 / 换标签。
 
     删除的语义是「先冻结、再决定」：能继续改的话，purge 前的这些写入没有
     任何业务含义（字节马上就要删了），而管理员还能静默改别人回收站里的内容。
@@ -80,7 +80,7 @@ class AssetNotEditable(AppError):
 
 
 class TrashEntryReferenced(AppError):
-    """彻底删除前发现仍被封装 / 下载任务 / 跨模块引用。
+    """彻底删除前发现仍被下载任务 / 跨模块引用。
 
     `details` 里带引用方描述：只说「被引用」不说被谁引用，用户只能去猜。
     """
@@ -122,19 +122,6 @@ class ShareNotOwned(AppError):
 
     code = errors.code(403, 2)
     message = "撤销共享只能由资产所有者发起"
-    http_status = 403
-
-
-class PackMemberShareBlocked(AppError):
-    """只靠「封装成员」才读得到的素材，不能单独调整共享范围。
-
-    成员行的可见性跟着封装走。允许单条放宽，封装内部就出现「整体只给这个组看，
-    但其中一张全团队可见」的裂缝；撤销时也无从判断该收封装还是收成员。
-    所有者本人不受此限——那是他的字节。
-    """
-
-    code = errors.code(403, 3)
-    message = "封装内的素材不能单独调整共享范围"
     http_status = 403
 
 
@@ -203,42 +190,6 @@ class DownloadNotReady(AppError):
     http_status = 409
 
 
-class PackItemInvalid(AppError):
-    """封装成员不合法：看不见 / 不在库 / 是另一个封装 / 把自己装进去。
-
-    四种情形共用一个码：前端能做的都是同一件事（刷新选择器、去掉那几项）。
-    `details.items` 带具体不合法的是哪几个，别让用户猜。
-    """
-
-    code = errors.code(400, 3)
-    message = "封装里有不可用的成员"
-    http_status = 400
-
-
-class PackEmpty(AppError):
-    """封装一个成员都没有。空封装没有意义：它没有字节、下载也解不出东西。"""
-
-    code = errors.code(400, 4)
-    message = "封装至少需要一个成员"
-    http_status = 400
-
-
-class PackHasNoOriginal(AppError):
-    """封装没有自己的字节，单条取件接口不适用于它。
-
-    **报 400 而不是 404**：封装是存在的，用 404 会让前端和用户都以为是
-    「记录被删了 / 链接坏了」。真实情况是「这个接口下不了这个东西」——
-    下载封装要走 `POST /library/downloads`，它会展开成员打成一个 zip。
-
-    这条会把「封装点下载 → 404」变成一个能看懂的提示。前端已改成对封装
-    直接走打包下载，这里是给直接调 API 的调用方兜底。
-    """
-
-    code = errors.code(400, 7)
-    message = "封装没有单独的原文件，请使用「下载」打包其中素材"
-    http_status = 400
-
-
 class GenerationSourceInvalid(AppError):
     """生成入库没给能物化的来源，或来源取不到字节。
 
@@ -302,9 +253,6 @@ __all__ = [
     "LibraryFileTypeNotAllowed",
     "LibraryTextInvalid",
     "LibraryTextTooLarge",
-    "PackEmpty",
-    "PackItemInvalid",
-    "PackMemberShareBlocked",
     "RequestNotPending",
     "RevokeReasonRequired",
     "ShareNotOwned",

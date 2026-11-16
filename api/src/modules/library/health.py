@@ -90,7 +90,7 @@ async def check(report: DoctorReportLike) -> None:
                 + (
                     "（LIBRARY_TRASH_GC_ENABLED=false，属预期）"
                     if not settings.library_trash_gc_enabled
-                    else "（GC 已开但仍未清掉，多半是被封装/下载任务引用）"
+                    else "（GC 已开但仍未清掉，多半是被下载任务引用）"
                 ),
             )
 

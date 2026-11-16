@@ -1,7 +1,5 @@
 import { useState, type ReactNode } from 'react';
-import { useQuery } from '@tanstack/react-query';
 import { useReadText } from '@/entities/library/api/library.queries';
-import { libraryApi } from '@/entities/library/api/library.api';
 import { useLibraryDetail, useLibraryMedia } from '@/entities/library/api/library.queries';
 import { AssetPreview } from '@/entities/library/ui/AssetPreview';
 import { Modal } from '@/shared/ui/Modal';
@@ -18,14 +16,14 @@ import { cn } from '@/shared/lib/cn';
  * | `{{Mixed N}}` | `compile` 派生的视觉编号 | 第 N 张参考素材的缩略图 |
  * | `{{Text N}}` | `compile` 派生的文本编号 | 第 N 份文案的正文 |
  *
- * **封装页不用它**：那边要看见 `{{slot:key}}` 本身，否则作者不知道该往提示词里
+ * **模板封装页不用它**：那边要看见 `{{slot:key}}` 本身，否则作者不知道该往提示词里
  * 插哪个引用。
  *
  * 解析不到就原样显示占位符（灰底小字），不猜、不吞：历史任务里的 `{{Text 1}}`
  * 没有绑文案时，看到占位符比看到一段空白更有用。
  *
  * **缩略块可点**：这是提示词里唯一的「看一眼原图」的入口，点开是弹层大图 /
- * 可播放视频。封装（一组图）在行内给前两张 + 「N 张」，点开看全部。
+ * 可播放视频。
  */
 
 export type SlotMode = {kind: 'one'} | {kind: 'all'} | {kind: 'index'; at: number};
@@ -33,8 +31,6 @@ export type SlotMode = {kind: 'one'} | {kind: 'all'} | {kind: 'index'; at: numbe
 export type SlotResolution =
   | {kind: 'asset'; ids: string[]}
   | {kind: 'text'; ids: string[]}
-  /** 资产库封装：行内给成员缩略图，点开看整组 */
-  | {kind: 'pack'; packId: string}
   | {kind: 'empty'; label: string; onPick?: () => void};
 
 export interface PromptRefsProps {
@@ -48,7 +44,7 @@ export interface PromptRefsProps {
   className?: string;
 }
 
-type ZoomTarget = {kind: 'asset'; assetId: string} | {kind: 'pack'; packId: string};
+type ZoomTarget = {kind: 'asset'; assetId: string};
 
 const TOKEN = /\{\{\s*([^{}]+?)\s*\}\}/g;
 const SLOT = /^slot:([a-z][a-z0-9_]{0,39})(\*|\.(\d+))?$/;
@@ -57,8 +53,6 @@ const MIXED = /^Mixed\s+(\d+)$/;
 
 /** 正文太长就别整段塞进预览：这里只是「这段引用是什么」，不是阅读器。 */
 const MAX_INLINE_CHARS = 300;
-/** 封装在行内最多摊两张，再多就只是噪音。 */
-const MAX_INLINE_PACK = 2;
 
 export function PromptRefs({
   value,
@@ -138,15 +132,6 @@ function Token({
     if (!resolved) return <Raw expression={expression} />;
     if (resolved.kind === 'empty') {
       return <PickInline label={resolved.label} onPick={resolved.onPick} />;
-    }
-    if (resolved.kind === 'pack') {
-      return (
-        <InlinePack
-          packId={resolved.packId}
-          onZoomPack={() => onZoom({kind: 'pack', packId: resolved.packId})}
-          onZoomAsset={assetId => onZoom({kind: 'asset', assetId})}
-        />
-      );
     }
     if (resolved.kind === 'text') {
       return (
@@ -241,60 +226,6 @@ function InlineThumb({
 }
 
 /**
- * 封装引用：行内摊开前两张成员 + 「N 张」。
- *
- * 封装本身没有「一张图」可以代表它（成员可能是一套产品图），所以不拿首图冒充整组，
- * 也不在提示词里放一个大数字 —— 两张缩略图 + 计数既说明规模，又留了点击看全的入口。
- */
-function InlinePack({
-  packId,
-  onZoomPack,
-  onZoomAsset,
-}: {
-  packId: string;
-  /** 点「N 张」：看整组成员 */
-  onZoomPack(): void;
-  /** 点某一张：看那一张的大图（不是整组） */
-  onZoomAsset(assetId: string): void;
-}) {
-  const pack = useQuery({
-    queryKey: ['library', 'pack', packId],
-    queryFn: () => libraryApi.packDetail(packId),
-    enabled: !!packId,
-    staleTime: 30_000,
-  });
-  const items = pack.data?.packItems ?? [];
-  if (pack.isPending) {
-    return (
-      <span className="mx-0.5 inline-flex items-center rounded bg-panel-soft px-1 text-[0.92em] text-ink-mute">
-        读取封装…
-      </span>
-    );
-  }
-  if (items.length === 0) return <Raw expression={`slot:${packId}`} />;
-  return (
-    <span className="mx-0.5 inline-flex items-center align-middle">
-      {items.slice(0, MAX_INLINE_PACK).map(item => (
-        <InlineThumb
-          key={item.assetId}
-          assetId={item.assetId}
-          onZoom={() => onZoomAsset(item.assetId)}
-          size="sm"
-        />
-      ))}
-      <button
-        type="button"
-        onClick={onZoomPack}
-        className="inline-flex items-center rounded border border-line bg-panel px-1 text-[0.85em] text-ink-mute transition-colors hover:border-primary-line hover:text-primary"
-        title="查看全部成员"
-      >
-        {items.length} 张
-      </button>
-    </span>
-  );
-}
-
-/**
  * 大图弹层。图看原图，视频直接能播 —— 视频要经 `useLibraryMedia` 取 blob，
  * `/stream` 要 Bearer 头，`<video src>` 直连会 401（同 `AssetPreview` 的理由）。
  */
@@ -307,13 +238,9 @@ function AssetLightbox({
 }) {
   if (!target) return null;
   return (
-    <Modal open onClose={onClose} title={target.kind === 'pack' ? '封装成员' : '素材预览'} width={760}>
+    <Modal open onClose={onClose} title="素材预览" width={760}>
       <div className="p-[18px]">
-        {target.kind === 'asset' ? (
-          <AssetStage assetId={target.assetId} big />
-        ) : (
-          <PackStage packId={target.packId} />
-        )}
+        <AssetStage assetId={target.assetId} big />
       </div>
     </Modal>
   );
@@ -351,38 +278,5 @@ function AssetStage({ assetId, big = false }: { assetId: string; big?: boolean }
       alt={detail.data?.name ?? '素材'}
       className={cn('mx-auto rounded-lg object-contain', big ? 'max-h-[70vh]' : 'max-h-40')}
     />
-  );
-}
-
-function PackStage({ packId }: { packId: string }) {
-  const pack = useQuery({
-    queryKey: ['library', 'pack', packId],
-    queryFn: () => libraryApi.packDetail(packId),
-    enabled: !!packId,
-    staleTime: 30_000,
-  });
-  const items = pack.data?.packItems ?? [];
-  if (pack.isPending) {
-    return <p className="py-10 text-center text-xs text-ink-mute">正在读取封装…</p>;
-  }
-  if (items.length === 0) {
-    return <p className="py-10 text-center text-xs text-ink-mute">这个封装没有成员。</p>;
-  }
-  return (
-    <div className="max-h-[70vh] overflow-y-auto">
-      <p className="mb-2 text-xs text-ink-soft">{pack.data?.name}</p>
-      <div className="grid grid-cols-3 gap-2">
-        {items.map(item => (
-          <figure key={item.assetId} className="flex flex-col gap-1">
-            <div className="h-32 overflow-hidden rounded-lg">
-              <AssetPreview assetId={item.assetId} className="h-full w-full" hoverPlay />
-            </div>
-            <figcaption className="truncate text-micro text-ink-mute">
-              {item.role || item.name || item.assetId.slice(0, 8)}
-            </figcaption>
-          </figure>
-        ))}
-      </div>
-    </div>
   );
 }

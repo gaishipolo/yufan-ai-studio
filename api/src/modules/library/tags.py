@@ -10,7 +10,7 @@
 由此带来三个必须同一套口径的地方，错一处就会出现「标签旁写 8、点进去只有 3 条」：
 
 - **打标**：`_ensure_tags_exist(reject_groups=True)` 拒掉有子级的分组标签；
-  系统内部的合并（封装继承成员标签、生成入库）不拦，见各调用点注释。
+  系统内部的合并（生成入库）不拦，见各调用点注释。
 - **筛选**：`expand_tag_ids` 把选中的一级展开成「自身 + 直属子级」，仍是 OR。
 - **计数**：一级 = 自身 + 旗下二级，按**资产 id 去重**合计。
 
@@ -51,9 +51,7 @@ __all__ = [
     "expand_tag_ids",
     "remove_asset_tags",
     "set_asset_tags",
-    "sync_pack_tags",
     "tag_ids_by_asset",
-    "tag_ids_of_assets",
 ]
 
 
@@ -135,70 +133,6 @@ async def tag_ids_by_asset(
     return result
 
 
-async def tag_ids_of_assets(
-    session: AsyncSession, asset_ids: Sequence[str]
-) -> list[str]:
-    """一批资产的标签 id 并集（去重、按 id 稳定排序）。
-
-    与 `tag_ids_by_asset` 的区别是这里**不按资产分组**：封装要的是「里面所有素材
-    一共有哪些标签」，把分组结果再拍平一遍不如直接查一次 `distinct`。
-    """
-    wanted = [asset_id for asset_id in dict.fromkeys(asset_ids) if asset_id]
-    if not wanted:
-        return []
-    rows = await session.scalars(
-        select(LibraryAssetTag.tag_id)
-        .where(LibraryAssetTag.asset_id.in_(wanted))
-        .distinct()
-    )
-    return sorted({tag_id for tag_id in rows.all()})
-
-
-async def sync_pack_tags(
-    session: AsyncSession,
-    pack_id: str,
-    member_ids: Sequence[str],
-    *,
-    base: Sequence[str] | None = None,
-    dry_run: bool = False,
-) -> int:
-    """封装**自动继承成员标签**，返回新补上的标签数。
-
-    ## 口径（写时合并，不做实时联动）
-
-    **不再自动打「封装」标签**（2026-11-14）：那是「这是个封装」这件事的**状态**，
-    已经由 `library_assets.kind = "pack"` 表达，而类型筛选现在有「封装」这一档。
-    写成标签的代价很具体：标签是用户可编辑的词表，卡片上的 × 一点就没了，之后这个
-    封装在任何筛选项里都找不到（只剩「全部」）。状态不能用可编辑词表表达。
-
-    - `base` 给了就是「整体替换」的基准（建封装时用：用户手选的标签）；
-      没给就读出封装当前标签，在它上面**只增不减**。
-    - 两种情形都会再并上成员标签的并集。所以封装的标签是真数据、能像普通素材
-      一样被 × 去掉或 + 加上；不做「读的时候临时拼成员标签」那一套——那样
-      卡片上的 × 就成了摆设，按标签筛选也得另写一套 SQL。
-    - **只在封装创建 / 替换成员时合并**。成员素材后来单独打标不会回写所有包含
-      它的封装：那要反查引用关系、还会把用户刚从封装上删掉的标签又塞回来。
-      代价是「只增不减」——重新编辑一次成员会把仍属于成员的标签补回来，
-      这与「封装自动获得成员标签」的定义一致，写在这里免得下次被当成 bug。
-
-    `dry_run` 给存量回填命令用：只算差、不写库。
-    """
-    current = (
-        list(base)
-        if base is not None
-        else (await tag_ids_by_asset(session, [pack_id])).get(pack_id, [])
-    )
-    inherited = await tag_ids_of_assets(session, member_ids)
-    wanted = list(dict.fromkeys([*current, *inherited]))
-    added = len([tag_id for tag_id in inherited if tag_id not in current])
-    if not dry_run and (base is not None or added):
-        # 合并的是「成员已有的绑定」，不是用户在界面上打标。
-        # 某个成员在两级改造前挂过一级标签、之后那个一级成了分组，不能因此
-        # 让整个封装创建失败 —— 系统内部合并不做分组校验。
-        await set_asset_tags(session, pack_id, wanted, reject_groups=False)
-    return added
-
-
 async def add_asset_tags(
     session: AsyncSession, asset_id: str, tag_ids: Sequence[str]
 ) -> None:
@@ -237,8 +171,8 @@ async def set_asset_tags(
 ) -> None:
     """整体替换（PATCH 的语义）。空数组 = 清空标签。
 
-    `reject_groups=False` 只给系统内部合并用（封装继承、生成入库），见
-    `sync_pack_tags` 里的注释；界面上的打标一律走默认值。
+    `reject_groups=False` 只给系统内部合并用（生成入库），见
+    `ingest` 里的注释；界面上的打标一律走默认值。
     """
     await _ensure_tags_exist(session, tag_ids, reject_groups=reject_groups)
     kept = [tag_id for tag_id in dict.fromkeys(tag_ids) if tag_id]
@@ -280,8 +214,7 @@ class TagService:
         两个口径刻意与 `LibraryService.list_assets` 一致，否则「标签旁写 8，
         点进去只有 3 条」会让人以为数据丢了：
 
-        - `state=active` 带上 `tab_clause` 与 `hidden_by_pack_clause`（被装进
-          封装的成员在列表里不单列，计数里也不该算）；
+        - `state=active` 带上 `tab_clause`（与列表的可见集同口径）；
         - 草稿 / 回收站按权限点收窄到本人或全量，忽略 `library`。
 
         **`kind` 与列表的类别筛选同口径**：悬浮栏按类别看库时，胶囊上的数字
@@ -358,7 +291,6 @@ class TagService:
             query = query.where(
                 LibraryAsset.deleted_at.is_(None),
                 access.tab_clause(actor, groups, library),
-                access.hidden_by_pack_clause(actor, groups, library),
             )
         elif state == "draft":
             if not actor.has(access.PERM_DRAFT_REVIEW):

@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
-  ArrowUpRight,
   Copy,
   Download,
   FileAudio,
@@ -8,7 +7,6 @@ import {
   Film,
   History,
   Image as ImageIcon,
-  Package,
   Pencil,
   Share2,
   Trash2,
@@ -17,7 +15,6 @@ import {
 import {
   Button,
   Chip,
-  CoverImage,
   ErrorState,
   Modal,
   MultiSelect,
@@ -43,13 +40,11 @@ import {
 } from '@/entities/library/model/types';
 import { tagLabel, tagOptions } from '@/entities/library/model/tagTree';
 import { PromptRefs } from '@/entities/library/ui/PromptRefs';
-import { PACK_ITEM_ROLES, packItemRoleLabel } from '@/entities/library/model/packItemRoles';
 import {
   useLibraryDetail,
   useLibraryMedia,
   usePatchAsset,
   useReadText,
-  useUpdatePack,
   useSaveAssetFile,
 } from '@/entities/library/api/library.queries';
 import type { LibraryCardAction } from './LibraryCard';
@@ -64,7 +59,6 @@ export interface LibraryDetailProps {
   canUpdate: boolean;
   onClose: () => void;
   onAction: (action: LibraryCardAction, asset: LibraryAssetOut) => void;
-  onOpenAsset: (id: string) => void;
 }
 
 /**
@@ -112,16 +106,14 @@ function DetailBody({
   canUpdate,
   onClose,
   onAction,
-  onOpenAsset,
 }: LibraryDetailProps & { asset: LibraryAssetDetailOut }) {
   const patch = usePatchAsset();
-  const updatePack = useUpdatePack();
   const saveFile = useSaveAssetFile();
   const createTag = useCreateTagInline();
   const offer = deleteOffer(asset, viewer);
-  /* 改名与打标签在服务端只认 owner（或有 delete:any）。别人共享给我的素材、
-     或共享封装里的成员，我能读到但改不了——按钮挂在这里就要跟着同一个判定，
-     否则点下去是一句「资产不存在」，看起来像这条记录丢了。 */
+  /* 改名与打标签在服务端只认 owner（或有 delete:any）。别人共享给我的素材，
+     我能读到但改不了——按钮挂在这里就要跟着同一个判定，否则点下去是一句
+     「资产不存在」，看起来像这条记录丢了。 */
   const canEdit = canUpdate && (asset.ownerId === viewer.id || viewer.canDeleteAny);
   const days = trashDaysLeft(asset.trashExpiresAt);
   const hasMedia = asset.kind === 'video' || asset.kind === 'audio';
@@ -180,29 +172,6 @@ function DetailBody({
     );
   };
 
-  /**
-   * 改封装成员的用途。
-   *
-   * `PATCH /library/packs/{id}` 的 `items` 是**整体替换**，所以每次都要把完整成员
-   * 清单带上（顺序与 `position` 一致），只改目标那一项。**不带 `expectedVersion`**：
-   * 这是逐项勾选式的连续提交（和标签一样），`asset` 要等 invalidate 后才刷新，
-   * 带版本号第二项必然 409。成员列表本身来自服务端快照，不存在「本地拼错顺序」。
-   */
-  const savePackRole = (assetId: string, role: string) => {
-    const items = (asset.packItems ?? []).map((item) => ({
-      assetId: item.assetId,
-      role: item.assetId === assetId ? role : item.role,
-      description: item.description,
-    }));
-    updatePack.mutate(
-      { id: asset.id, items, expectedVersion: 0 },
-      {
-        onSuccess: () => toast('已保存用途'),
-        onError: (error) => toast(error.message, 'error'),
-      },
-    );
-  };
-
   const download = () => {
     saveFile.mutate(
       { id: asset.id, filename: asset.name },
@@ -250,13 +219,6 @@ function DetailBody({
                   : text.data?.content || '（空文本）'}
             </pre>
           </div>
-        ) : asset.kind === 'pack' ? (
-          <PackMembers
-            asset={asset}
-            editable={canEdit}
-            onRoleChange={savePackRole}
-            onOpenAsset={onOpenAsset}
-          />
         ) : asset.kind === 'image' ? (
           <MediaImage asset={asset} />
         ) : asset.kind === 'video' ? (
@@ -382,17 +344,15 @@ function DetailBody({
       </section>
 
       {/* 3. 媒体规格 */}
-      {asset.kind !== 'pack' && (
-        <section className="space-y-2">
-          <SectionTitle>媒体规格</SectionTitle>
-          <div className="grid gap-1.5 sm:grid-cols-2">
-            <Field label="格式" value={asset.mimeType || '未知'} />
-            <Field label="体积" value={asset.sizeBytes != null ? formatBytes(asset.sizeBytes) : '未知'} />
-            <Field label="时长" value={asset.durationSec ? formatDuration(asset.durationSec) : '未知'} />
-            <Field label="音轨" value={asset.hasAudio == null ? '未知' : asset.hasAudio ? '有' : '无'} />
-          </div>
-        </section>
-      )}
+      <section className="space-y-2">
+        <SectionTitle>媒体规格</SectionTitle>
+        <div className="grid gap-1.5 sm:grid-cols-2">
+          <Field label="格式" value={asset.mimeType || '未知'} />
+          <Field label="体积" value={asset.sizeBytes != null ? formatBytes(asset.sizeBytes) : '未知'} />
+          <Field label="时长" value={asset.durationSec ? formatDuration(asset.durationSec) : '未知'} />
+          <Field label="音轨" value={asset.hasAudio == null ? '未知' : asset.hasAudio ? '有' : '无'} />
+        </div>
+      </section>
 
       {/* 4. 生成参数 */}
       {asset.generation && (
@@ -451,7 +411,7 @@ function DetailBody({
             ))}
           </div>
         ) : (
-          <p className="text-body text-ink-mute">没有模板 / 任务 / 封装在用它。</p>
+          <p className="text-body text-ink-mute">没有模板 / 任务在用它。</p>
         )}
 
         {!!asset.shareHistory?.length && (
@@ -477,17 +437,15 @@ function DetailBody({
       )}
 
       <div className="flex flex-wrap items-center gap-1.5 border-t border-line-soft pt-3">
-        {/* 只在 active 出现：回收站里后端一律拒绝取件，按钮点了也是失败。
-            封装的「下载」是打包下载成员（走 Workspace 的统一分派），
-            单条取件接口对封装没有原文件可给。 */}
+        {/* 只在 active 出现：回收站里后端一律拒绝取件，按钮点了也是失败。 */}
         {asset.state === 'active' && (
           <Button
             size="sm"
             variant="secondary"
             icon={<Download size={13} />}
-            onClick={asset.kind === 'pack' ? () => onAction('download', asset) : download}
+            onClick={download}
           >
-            {asset.kind === 'pack' ? '打包下载' : '下载原件'}
+            下载原件
           </Button>
         )}
         {asset.state === 'draft' && (
@@ -621,76 +579,6 @@ function MediaFallback({ icon, loading }: { icon: ReactNode; loading: boolean })
     <div className="flex h-40 flex-col items-center justify-center gap-1.5 text-ink-mute">
       {icon}
       <span className="text-body">{loading ? '正在读取文件…' : '暂时取不到可预览的文件'}</span>
-    </div>
-  );
-}
-
-function PackMembers({
-  asset,
-  editable,
-  onRoleChange,
-  onOpenAsset,
-}: {
-  asset: LibraryAssetDetailOut;
-  /** 只有所有者（或管理员）能改用途；服务端同样按归属判，这里只是不给无效按钮 */
-  editable: boolean;
-  onRoleChange: (assetId: string, role: string) => void;
-  onOpenAsset: (id: string) => void;
-}) {
-  if (!asset.packItems?.length) {
-    return (
-      <div className="flex h-32 items-center justify-center gap-2 text-ink-mute">
-        <Package size={20} />
-        <span className="text-body">这个封装还没有成员</span>
-      </div>
-    );
-  }
-  return (
-    <div className="grid grid-cols-[repeat(auto-fill,minmax(120px,1fr))] gap-2 p-2.5">
-      {asset.packItems.map((item) => (
-        <div
-          key={`${item.assetId}-${item.position}`}
-          className="group rounded-lg border border-line-soft bg-panel p-1.5 text-left transition hover:border-primary-line"
-        >
-          <button
-            type="button"
-            onClick={() => onOpenAsset(item.assetId)}
-            className="block w-full text-left"
-            aria-label={`打开 ${item.name || item.assetId}`}
-          >
-            <CoverImage src={item.coverUrl ?? undefined} seed={item.assetId} className="aspect-[4/3] rounded-md" />
-            <div className="mt-1 flex items-center gap-1">
-              <span className="truncate text-body text-ink">{item.name || item.assetId}</span>
-              <ArrowUpRight size={11} className="ml-auto shrink-0 text-ink-mute" />
-            </div>
-          </button>
-          {/*
-            `role` 是「用途」：模板库把封装当参考图用时，`{{Mixed N}}` 按用途取位。
-            就地改而不是另开编辑弹窗——成员顺序（`position`）不动，改的是一个字段，
-            开一个大表单反而容易让人以为顺序也能拖。
-          */}
-          {editable && item.kind === 'image' ? (
-            <select
-              value={item.role}
-              onChange={(event) => onRoleChange(item.assetId, event.target.value)}
-              aria-label={`${item.name || item.assetId} 的用途`}
-              className="mt-1 h-7 w-full rounded-md border border-line bg-white px-1 text-xs text-ink outline-none focus:border-primary-line"
-            >
-              <option value="">不声明用途</option>
-              {PACK_ITEM_ROLES.map((role) => (
-                <option key={role} value={role}>
-                  {packItemRoleLabel(role)}
-                </option>
-              ))}
-            </select>
-          ) : (
-            <div className="mt-1 truncate text-xs text-ink-mute">
-              {KIND_LABEL[item.kind]}
-              {item.role ? ` · ${packItemRoleLabel(item.role)}` : ''}
-            </div>
-          )}
-        </div>
-      ))}
     </div>
   );
 }

@@ -18,20 +18,14 @@
 2. **团队 ⊇ 小组**：`visibility=team` 时 `library_asset_groups` 里不该有行。
    共享到团队会先清空小组行（见 `sharing.apply_share`），否则「撤销某个组」
    会在团队共享上留下说不清的状态。
-3. **封装是成员的读入口**：能读一个 `active` 封装，就能读它的成员
-   （`readable_via_pack`）。成员自己的 `visibility` 仍是 `personal`——共享出去
-   的是容器，不是逐个成员再走一次审批。这条只在**读**上生效：列表仍不单列成员
-   （`hidden_by_pack_clause`），写操作仍要 owner（各服务方法自己判）。
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Any
 
-from sqlalchemy import ColumnElement, and_, exists, or_, select
+from sqlalchemy import ColumnElement, and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import aliased
 
 from core.context import CurrentUser
 from core.exceptions import NotFound
@@ -40,7 +34,6 @@ from modules.library.models import (
     LibraryAsset,
     LibraryAssetGroup,
     LibraryGroupLeader,
-    LibraryPackItem,
 )
 from modules.library.schema import LibraryTab
 
@@ -53,15 +46,12 @@ __all__ = [
     "asset_group_ids",
     "can_read",
     "group_names_for",
-    "hidden_by_pack_clause",
     "is_group_leader",
     "leader_group_ids",
     "load_asset",
     "load_visible",
     "owner_names",
     "readable_rows",
-    "readable_via_pack",
-    "readable_via_pack_ids",
     "tab_clause",
 ]
 
@@ -89,7 +79,7 @@ async def all_groups(session: AsyncSession, actor: CurrentUser) -> list[str]:
 
 
 def active_visible_clause(
-    actor: CurrentUser, groups: Sequence[str], asset: Any = LibraryAsset
+    actor: CurrentUser, groups: Sequence[str]
 ) -> ColumnElement[bool]:
     """`state=active` 前提下「我能看到」的 SQL 条件。
 
@@ -98,9 +88,6 @@ def active_visible_clause(
     小组库里，个人库里不再重复出现——否则同一张图会在两个入口各出现一次，
     用户会以为是两份。
 
-    `asset` 用来换别名：判断「这条封装对我可见吗」时，条件要挂在 pack 的
-    `aliased(LibraryAsset)` 上，而不是外层那张表。
-
     第四支是**案例**（`purpose='case'`）：模板卡片对所有登录用户开放，卡片上的
     封面与悬停播放都要读得到这条素材。它不走 `visibility` —— 案例既不属于某个
     人的个人库，也不该出现在团队库里；「谁能浏览案例池」是另一道门（见
@@ -108,19 +95,19 @@ def active_visible_clause(
     是两件事。列表默认排除案例（`LibraryService.list` 的 `exclude_purposes`），
     所以这一支不会把案例灌进「全部 / 个人 / 团队」。
     """
-    group_branch = asset.id.in_(
+    group_branch = LibraryAsset.id.in_(
         select(LibraryAssetGroup.asset_id).where(
             LibraryAssetGroup.group_id.in_(list(groups))
         )
     )
     return or_(
         and_(
-            asset.owner_id == actor.id,
-            asset.visibility == "personal",
+            LibraryAsset.owner_id == actor.id,
+            LibraryAsset.visibility == "personal",
         ),
-        and_(asset.visibility == "group", group_branch),
-        asset.visibility == "team",
-        asset.purpose == PURPOSE_CASE,
+        and_(LibraryAsset.visibility == "group", group_branch),
+        LibraryAsset.visibility == "team",
+        LibraryAsset.purpose == PURPOSE_CASE,
     )
 
 
@@ -128,7 +115,6 @@ def tab_clause(
     actor: CurrentUser,
     groups: Sequence[str],
     tab: LibraryTab,
-    asset: Any = LibraryAsset,
 ) -> ColumnElement[bool]:
     """一级入口 → 可见范围。**只负责可见范围，`state` 由调用方拼。**
 
@@ -136,117 +122,21 @@ def tab_clause(
     """
     if tab is LibraryTab.PERSONAL:
         return and_(
-            asset.owner_id == actor.id,
-            asset.visibility == "personal",
+            LibraryAsset.owner_id == actor.id,
+            LibraryAsset.visibility == "personal",
         )
     if tab is LibraryTab.TEAM:
-        return asset.visibility == "team"
+        return LibraryAsset.visibility == "team"
     if tab is LibraryTab.GROUP:
         return and_(
-            asset.visibility == "group",
-            asset.id.in_(
+            LibraryAsset.visibility == "group",
+            LibraryAsset.id.in_(
                 select(LibraryAssetGroup.asset_id).where(
                     LibraryAssetGroup.group_id.in_(list(groups))
                 )
             ),
         )
-    return active_visible_clause(actor, groups, asset)
-
-
-def hidden_by_pack_clause(
-    actor: CurrentUser, groups: Sequence[str], tab: LibraryTab | None = None
-) -> ColumnElement[bool]:
-    """「已经装进某个我能看到的封装」的成员行，`state=active` 列表里不再单独出现。
-
-    不这么做的话，封装完 3 条素材会变成 4 条（1 个封装 + 3 个原素材），用户会
-    以为封装是「又复制了一份」。
-
-    **必须带上「封装对我可见」这个条件**，不能只判 `library_pack_items` 里有行：
-    封装是封装者的视角。一条素材共享到团队后被我装进自己的个人封装，团队成员
-    仍该在团队库里看到它——否则别人会以为素材被删了，而且怎么找都找不到。
-
-    用 `tab` 传入口时按入口口径判（个人库里只认个人封装），传 `None` 用全量可见集
-    （分面角标就是全量口径）。
-    """
-    pack = aliased(LibraryAsset)
-    pack_visible = (
-        tab_clause(actor, groups, tab, asset=pack)
-        if tab is not None
-        else active_visible_clause(actor, groups, asset=pack)
-    )
-    packed = exists(
-        select(1)
-        .select_from(LibraryPackItem)
-        .join(pack, pack.id == LibraryPackItem.pack_id)
-        .where(
-            LibraryPackItem.asset_id == LibraryAsset.id,
-            pack.state == "active",
-            pack.deleted_at.is_(None),
-            pack_visible,
-        )
-    )
-    return ~packed
-
-
-def readable_via_pack_clause(
-    actor: CurrentUser, groups: Sequence[str]
-) -> ColumnElement[bool]:
-    """「我是某个**对我可见的 `active` 封装**的成员」→ 读得到。
-
-    封装的成员由封装者从自己（或已经共享给他）的素材里挑，成员行自己的
-    `visibility` 往往还是 `personal`。封装一共享出去，团队成员看到的封装详情里
-    每张成员缩略图点进去都是「资产不存在」——共享了个空壳，打包下载还会因为
-    成员全被跳过而直接 400。
-
-    这里判的是**关系**，不是成员行字段，所以不进 `active_visible_clause`：
-    进了列表就会把封装里的素材再列一遍（与「一个封装占一个位置」冲突），
-    也会让「猜 id 探别人库」变成可能（必须是**我读得到的封装**里的成员）。
-    `state != active` 的成员不适用：草稿与回收站永远 personal（不变式 A），
-    封装授予的是读取，不是状态机豁免。
-    """
-    pack = aliased(LibraryAsset)
-    packed = exists(
-        select(1)
-        .select_from(LibraryPackItem)
-        .join(pack, pack.id == LibraryPackItem.pack_id)
-        .where(
-            LibraryPackItem.asset_id == LibraryAsset.id,
-            pack.state == "active",
-            pack.deleted_at.is_(None),
-            active_visible_clause(actor, groups, asset=pack),
-        )
-    )
-    return and_(LibraryAsset.state == "active", LibraryAsset.deleted_at.is_(None), packed)
-
-
-async def readable_via_pack_ids(
-    session: AsyncSession,
-    asset_ids: Sequence[str],
-    actor: CurrentUser,
-    groups: Sequence[str] | None = None,
-) -> set[str]:
-    """这一批里，哪些能靠「封装成员」这个身份读到。批量路径一次查完，不按行循环。"""
-    wanted = [asset_id for asset_id in dict.fromkeys(asset_ids) if asset_id]
-    if not wanted:
-        return set()
-    my_groups = groups if groups is not None else await all_groups(session, actor)
-    rows = await session.scalars(
-        select(LibraryAsset.id).where(
-            LibraryAsset.id.in_(wanted),
-            readable_via_pack_clause(actor, my_groups),
-        )
-    )
-    return set(rows)
-
-
-async def readable_via_pack(
-    session: AsyncSession,
-    asset_id: str,
-    actor: CurrentUser,
-    groups: Sequence[str] | None = None,
-) -> bool:
-    """单条版本。判定只有一份定义（见 `readable_via_pack_clause`）。"""
-    return bool(await readable_via_pack_ids(session, [asset_id], actor, groups))
+    return active_visible_clause(actor, groups)
 
 
 def can_read(
@@ -265,10 +155,10 @@ def can_read(
     「我在某个组里」不等于「这条资产共享到了我的组」，少了这个参数就会把
     别人组里的素材判成可见——那是本文件最危险的一种偷懒。
 
-    **这里不含「封装成员」那一支**：本函数是纯 Python 的，而「我某不某个
-    可见封装的成员」要查库。读入口统一走 `load_visible` / `readable_via_pack`，
-    写路径（`packs._validate`、批量 `_require_writable`）继续只认本函数——
-    「看得到」不等于「能改能再封装」。
+    **这里不含「读得到」的其它来源**：本函数是纯 Python 的判定，只看这一行
+    自己的字段与所在小组。读入口统一走 `load_visible` / `readable_rows`，
+    写路径（批量 `_require_writable`）继续只认本函数——
+    「看得到」不等于「能改」。
     """
     if asset.state == "trash":
         return asset.owner_id == actor.id or actor.has(PERM_DELETE_ANY)
@@ -292,14 +182,14 @@ def can_read(
 async def readable_rows(
     session: AsyncSession, asset_ids: Sequence[str], actor: CurrentUser
 ) -> dict[str, LibraryAsset]:
-    """这批 id 里，`actor` **现在**还能读的行（含「封装成员」这条读入口）。
+    """这批 id 里，`actor` **现在**还能读的行。
 
     存在的理由是异步任务：批量下载建任务时判过一次可读性，真正打包可能几分钟后，
-    中间封装可能被取消共享、人可能被移出小组。只在建任务时判，等于把当时的权限
+    人可能被移出小组、共享可能被取消。只在建任务时判，等于把当时的权限
     冻结进任务里——人已经失权，包照样生成、照样能取件（取件只校验 owner）。
 
     判据必须与 `DownloadService._collect` 同口径，所以放在这里共用：
-    `can_read` 或「靠某可见封装的成员身份读到」二选一。各自写一份必然漂移，
+    `can_read` 一家说了算。各自写一份必然漂移，
     而漂移的方向恰好是「多给权限」，不会有人报错。
     """
     wanted = [asset_id for asset_id in dict.fromkeys(asset_ids) if asset_id]
@@ -315,12 +205,10 @@ async def readable_rows(
         return {}
     my_groups = await all_groups(session, actor)
     group_map = await asset_group_ids(session, list(rows))
-    via_pack = await readable_via_pack_ids(session, list(rows), actor, my_groups)
     return {
         asset_id: row
         for asset_id, row in rows.items()
-        if asset_id in via_pack
-        or can_read(row, actor, my_groups, group_map.get(asset_id, []))
+        if can_read(row, actor, my_groups, group_map.get(asset_id, []))
     }
 
 
@@ -394,18 +282,12 @@ async def load_asset(session: AsyncSession, asset_id: str) -> LibraryAsset:
 async def load_visible(
     session: AsyncSession, asset_id: str, actor: CurrentUser
 ) -> LibraryAsset:
-    """可见即可读：看不见的 id 一律 404，不区分「不存在」与「没权限」。
-
-    两个分支合成一次判定：**行自己的可见性**（`can_read`）与**封装授予的读权限**
-    （`readable_via_pack`）。少第二个分支，共享出去的封装点进去就是「资产不存在」。
-    """
+    """可见即可读：看不见的 id 一律 404，不区分「不存在」与「没权限」。"""
     row = await session.get(LibraryAsset, asset_id)
     if row is None:
         raise NotFound("资产不存在")
     my_groups = await all_groups(session, actor)
     rows = await asset_group_ids(session, [asset_id])
     if can_read(row, actor, my_groups, rows.get(asset_id, [])):
-        return row
-    if await readable_via_pack(session, asset_id, actor, my_groups):
         return row
     raise NotFound("资产不存在")

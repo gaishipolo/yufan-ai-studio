@@ -360,40 +360,6 @@ def test_outsider_cannot_ask_to_share_an_invisible_asset(
     assert response.status_code == 404
 
 
-def test_pack_member_cannot_be_shared_on_its_own(client: TestClient, api: str) -> None:
-    """只靠「封装成员」读到的素材不能单独调共享范围。
-
-    成员的可见范围跟着封装走；允许单条放宽，封装内部就出现「整体给我看，
-    但其中一张全团队可见」的裂缝，撤销时也无从判断该收哪一层。
-    """
-    admin = admin_headers(client)
-    owner, owner_h = make_user(client, admin, SHARE_PERMISSIONS)
-    member, member_h = make_user(client, admin, LIB_RW + ["library:share"])
-    group = make_group(client, admin, [owner["id"], member["id"]])
-    asset = upload_image(client, api, owner_h, color="green")
-    created = client.post(
-        f"{api}/library/packs",
-        json={"name": "共享封装", "assetIds": [asset["id"]]},
-        headers=owner_h,
-    )
-    assert created.status_code == 201, created.text
-    pack = created.json()["data"]
-
-    shared = _share(client, api, owner_h, pack["id"], group_id=group["id"]).json()["data"]
-    client.post(
-        f"{api}/library/share-requests/{shared['id']}/approve", json={}, headers=admin
-    )
-
-    response = _share(client, api, member_h, asset["id"], target="team")
-    assert response.status_code == 403
-    assert response.json()["code"] == 40383
-
-    # 所有者自己不受这条限制：那是他的东西
-    assert (
-        _share(client, api, owner_h, asset["id"], target="team").status_code == 201
-    )
-
-
 def test_cannot_share_to_a_group_i_am_not_in(client: TestClient, api: str) -> None:
     admin = admin_headers(client)
     owner, owner_h = make_user(client, admin, SHARE_PERMISSIONS)

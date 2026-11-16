@@ -314,23 +314,26 @@ def set_visibility(asset_id: str, visibility: str) -> None:
     asyncio.run(run())
 
 
-def insert_pack_item(asset_id: str) -> str:
-    """造一条封装成员行：用来验证「被封装引用 → 彻底删除被拒」。
+def insert_download_job(asset_id: str) -> str:
+    """造一条打包下载任务：用来验证「被下载任务引用 → 彻底删除被拒」。
 
-    封装接口本身是 M3 的，但引用检查现在就必须可测——它挡的是不可逆删除。
+    引用检查的两个来源里，封装那支已随「素材封装」下线（2026-11-16），
+    剩下的是下载任务 —— 它挡的是不可逆删除，所以这条闸必须仍然可测。
     """
-    from modules.library.models import LibraryPackItem
+    from modules.library.models import LibraryDownloadJob
 
     async def run() -> str:
         from db.session import get_session_factory
 
-        pack_id = f"pack_{suffix()}"
         async with get_session_factory()() as session:
-            session.add(
-                LibraryPackItem(pack_id=pack_id, asset_id=asset_id, position=1, role="主角")
+            job = LibraryDownloadJob(
+                owner_id="system",
+                asset_ids=[asset_id],
+                status="queued",
             )
+            session.add(job)
             await session.commit()
-        return pack_id
+            return job.id
 
     return asyncio.run(run())
 
@@ -367,35 +370,6 @@ def blob_exists(key: str) -> bool:
     if not key:
         return False
     return asyncio.run(get_storage().exists(key))
-
-
-def fetch_pack_items(pack_id: str) -> list[dict[str, Any]]:
-    """读回封装成员行（断言「彻底删除封装不留孤儿行」用）。"""
-    from sqlalchemy import select
-
-    from modules.library.models import LibraryPackItem
-
-    async def run() -> list[dict[str, Any]]:
-        from db.session import get_session_factory
-
-        async with get_session_factory()() as session:
-            rows = (
-                await session.scalars(
-                    select(LibraryPackItem)
-                    .where(LibraryPackItem.pack_id == pack_id)
-                    .order_by(LibraryPackItem.position)
-                )
-            ).all()
-            return [
-                {
-                    "asset_id": row.asset_id,
-                    "position": row.position,
-                    "role": row.role,
-                }
-                for row in rows
-            ]
-
-    return asyncio.run(run())
 
 
 def build_download_job(job_id: str) -> None:

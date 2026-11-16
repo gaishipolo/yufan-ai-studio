@@ -1,8 +1,9 @@
-import { Check, Download, FileAudio, FileText, Film, Image as ImageIcon, Package, Plus, RotateCcw, Share2, Trash2, Undo2, X } from 'lucide-react';
+import { Check, Download, FileAudio, FileText, Film, Image as ImageIcon, Plus, RotateCcw, Share2, Trash2, Undo2, X } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import { Button, Chip, CoverImage, IconButton } from '@/shared/ui';
 import { cn } from '@/shared/lib/cn';
 import { formatBytes, formatDuration } from '@/shared/lib/format';
-import type { LibraryAssetOut } from '@/shared/api/schema';
+import type { LibraryAssetKind, LibraryAssetOut } from '@/shared/api/schema';
 import {
   KIND_LABEL,
   ORIGIN_LABEL,
@@ -40,13 +41,14 @@ export interface LibraryCardProps {
   onAddTag: (asset: LibraryAssetOut) => void;
 }
 
-const KIND_ICON = {
+/* 类型图标按后端 `kind` 取，取不到就退回图片图标：后端枚举里可能还有前端已下线
+   的类型（`pack`），而卡片上只需要一个能认出「这是张图」的形状。 */
+const KIND_ICON: Partial<Record<LibraryAssetKind, LucideIcon>> = {
   video: Film,
   audio: FileAudio,
   image: ImageIcon,
-  pack: Package,
   text: FileText,
-} as const;
+};
 
 /**
  * 资产卡。
@@ -328,9 +330,7 @@ export function LibraryCard({
             {view !== 'drafts' && view !== 'trash' && asset.state === 'active' && (
               <IconButton
                 icon={<Download size={13} />}
-                /* 封装没有原文件：点它下到的是成员 zip，文案要说清，
-                   否则用户以为「下载这个封装」和「下载原件」是同一件事 */
-                label={asset.kind === 'pack' ? '打包下载其中素材' : '下载原文件'}
+                label="下载原文件"
                 onClick={() => onAction('download', asset)}
               />
             )}

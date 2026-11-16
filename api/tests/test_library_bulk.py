@@ -20,7 +20,7 @@ from library_support import (
     expire_trash,
     fetch_asset,
     insert_asset,
-    insert_pack_item,
+    insert_download_job,
     make_group,
     make_user,
     upload_image,
@@ -157,14 +157,14 @@ def test_selection_never_returns_drafts_or_trash(client: TestClient, api: str) -
 
 
 def test_trash_gc_purges_expired_and_skips_referenced() -> None:
-    """GC 只删该删的：无引用 → 物理删除；被封装引用 → 跳过并计入报告。"""
+    """GC 只删该删的：无引用 → 物理删除；被下载任务引用 → 跳过并计入报告。"""
     from library_support import make_session_asset
 
     from modules.library.maintenance import run_trash_gc
 
     plain = make_session_asset()
     referenced = make_session_asset()
-    insert_pack_item(referenced)
+    insert_download_job(referenced)
     expire_trash(plain)
     expire_trash(referenced)
 

@@ -211,52 +211,6 @@ def test_compile_without_required_slot_is_rejected(client: TestClient) -> None:
     assert "至少需要" in body.json()["message"]
 
 
-def test_compile_expands_library_pack_without_reordering(client: TestClient) -> None:
-    """`type=pack` 的槽位由资产库给成员与顺序，编译只照抄。"""
-    headers = _headers(client)
-    video, first, second = _media(client, headers)
-    pack = client.post(
-        "/api/v1/library/packs",
-        json={
-            "name": f"三视图-{suffix()}",
-            "items": [
-                {"assetId": second, "role": "multiview"},
-                {"assetId": first, "role": "front"},
-            ],
-        },
-        headers=headers,
-    )
-    assert pack.status_code == 201, pack.text
-    pack_id = pack.json()["data"]["id"]
-
-    draft = _draft(video, first, second)
-    draft["prompt"] = "{{slot:detail*}} 换成 {{slot:source}}"
-    draft["slots"] = [
-        draft["slots"][0],
-        {
-            "key": "detail",
-            # 槽位类型就是资产库的 kind 之一：`pack` = 要一整个封装。
-            "type": "pack",
-            "binding": "user",
-            "position": 1,
-            "label": "细节封装",
-        },
-    ]
-    _save(client, headers, draft)
-    client.post(f"{API}/{draft['key']}/publish", headers=headers)
-
-    body = client.post(
-        f"{API}/{draft['key']}/compile",
-        json={"slotValues": {"detail": [pack_id]}},
-        headers=headers,
-    )
-    assert body.status_code == 200, body.text
-    data = body.json()["data"]
-    assert data["prompt"].endswith("{{Mixed 2}}、{{Mixed 3}} 换成 {{Mixed 1}}")
-    # 顺序 = 封装成员顺序（second → first），不是按 id 排序。
-    assert data["referenceLibraryIds"] == [video, second, first]
-
-
 def test_text_slot_goes_to_text_ids(client: TestClient) -> None:
     headers = _headers(client)
     video, first, second = _media(client, headers)
@@ -463,16 +417,15 @@ def test_fixed_slot_does_not_need_a_tag(client: TestClient) -> None:
 
 
 def test_slot_source_field_is_gone_and_rejected(client: TestClient) -> None:
-    """`source` 并进 `type` 之后，旧字段必须**当场被拒**（422）。
+    """旧的 `source` 轴必须**当场被拒**（422）。
 
-    静默忽略更糟：封装页把 `type` 当成「要什么」的唯一表达之后，还收着
-    `source=pack` 的客户端会以为自己在提交一个封装槽位，实际提交的是一个
-    `type=image` 的普通槽位 —— 直到编译才发现少了成员。
+    静默忽略更糟：客户端以为字段被收下了，实际提交的是另一个意思的槽位，
+    直到编译才发现少了东西。
     """
     headers = _headers(client)
     video, first, second = _media(client, headers)
     draft = _draft(video, first, second)
-    draft["slots"][1]["source"] = "pack"
+    draft["slots"][1]["source"] = "asset"
 
     response = client.post(f"{API}/validate", json=draft, headers=headers)
     assert response.status_code == 422, response.text

@@ -2745,16 +2745,6 @@
             }
           },
           {
-            "name": "includePacks",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "boolean",
-              "default": true,
-              "title": "Includepacks"
-            }
-          },
-          {
             "name": "origin",
             "in": "query",
             "required": false,
@@ -4036,7 +4026,7 @@
           "资产库"
         ],
         "summary": "彻底删除（不可逆，先过引用检查）",
-        "description": "被封装 / 下载任务引用时返回 409 `TRASH_ENTRY_REFERENCED` 并列出引用方。\n\n不做批量彻底删除：不可逆的动作用「勾选十条点一下」来触发太危险。",
+        "description": "被下载任务引用时返回 409 `TRASH_ENTRY_REFERENCED` 并列出引用方。\n\n不做批量彻底删除：不可逆的动作用「勾选十条点一下」来触发太危险。",
         "operationId": "purge_asset_api_v1_library_trash__asset_id__delete",
         "security": [
           {
@@ -4051,200 +4041,6 @@
             "schema": {
               "type": "string",
               "title": "Asset Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse_NoneType_"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/library/packs": {
-      "post": {
-        "tags": [
-          "资产库"
-        ],
-        "summary": "建封装（成员必须是我看得见且在库的）",
-        "description": "封装是一行 `kind=pack` 的资产行 + 有序成员，**不复制成员**。\n\n解散封装不影响任何成员；下载时封装会被展开成成员逐个进包。",
-        "operationId": "create_pack_api_v1_library_packs_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/PackIn"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse_LibraryAssetDetailOut_"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      }
-    },
-    "/api/v1/library/packs/{pack_id}": {
-      "get": {
-        "tags": [
-          "资产库"
-        ],
-        "summary": "封装详情（含成员）",
-        "operationId": "pack_detail_api_v1_library_packs__pack_id__get",
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "pack_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Pack Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse_LibraryAssetDetailOut_"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "patch": {
-        "tags": [
-          "资产库"
-        ],
-        "summary": "改封装：改名 / 整体替换成员 / 换封面 / 换标签",
-        "operationId": "patch_pack_api_v1_library_packs__pack_id__patch",
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "pack_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Pack Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/PackPatchIn"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse_LibraryAssetDetailOut_"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "delete": {
-        "tags": [
-          "资产库"
-        ],
-        "summary": "解散封装（进回收站，成员不受影响）",
-        "operationId": "delete_pack_api_v1_library_packs__pack_id__delete",
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "pack_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Pack Id"
             }
           }
         ],
@@ -8306,8 +8102,7 @@
           "restore",
           "approveDraft",
           "rejectDraft",
-          "requestRevoke",
-          "pack"
+          "requestRevoke"
         ],
         "title": "BulkAction",
         "description": "批量动作。每一条都复用单条接口的服务方法，不另写一份状态机。\n\n`purge` 刻意不在列表里：彻底删除不可逆，一批 10 条点错一次就没了。"
@@ -10360,13 +10155,6 @@
               }
             ]
           },
-          "packItems": {
-            "items": {
-              "$ref": "#/components/schemas/PackItemOut"
-            },
-            "type": "array",
-            "title": "Packitems"
-          },
           "references": {
             "anyOf": [
               {
@@ -10463,11 +10251,10 @@
           "video",
           "audio",
           "image",
-          "pack",
           "text"
         ],
         "title": "LibraryAssetKind",
-        "description": "资产类型。`pack` 是封装，成员关系在 `library_pack_items`。\n\n`text` 是第 5 种「文件型资产」：`.txt` / `.md`，正文即文件内容，\n不是另起一张文本表。它有版本历史（`library_text_versions`），\n但去重、权限、可见性、回收站与取件都和前四种走同一套。"
+        "description": "资产类型。\n\n`text` 是第 5 种「文件型资产」：`.txt` / `.md`，正文即文件内容，\n不是另起一张文本表。它有版本历史（`library_text_versions`），\n但去重、权限、可见性、回收站与取件都和前四种走同一套。"
       },
       "LibraryAssetOrigin": {
         "type": "string",
@@ -10475,8 +10262,7 @@
           "upload",
           "generated",
           "template_source",
-          "imported",
-          "pack"
+          "imported"
         ],
         "title": "LibraryAssetOrigin",
         "description": "资产来源，取值必须和 `library_assets.origin` 的落库值一致。\n\n模板库切换时靠它只取「原片视频」：`template_source` 是切换后新上传的，\n`imported` 是并存期从旧库导入的存量原片（7 条）。只认前者会把存量全漏掉，\n所以列表与选择器都支持**传多个值**。"
@@ -11303,203 +11089,6 @@
         ],
         "title": "MeOut",
         "description": "`GET /identity/me`：前端靠 `permissions` 渲染菜单与按钮。"
-      },
-      "PackIn": {
-        "properties": {
-          "name": {
-            "type": "string",
-            "maxLength": 200,
-            "minLength": 1,
-            "title": "Name"
-          },
-          "assetIds": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "maxItems": 100,
-            "title": "Assetids"
-          },
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/PackItemIn"
-            },
-            "type": "array",
-            "maxItems": 100,
-            "title": "Items"
-          },
-          "coverAssetId": {
-            "type": "string",
-            "maxLength": 32,
-            "title": "Coverassetid",
-            "default": ""
-          },
-          "tagIds": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Tagids"
-          }
-        },
-        "type": "object",
-        "required": [
-          "name"
-        ],
-        "title": "PackIn",
-        "description": "建封装。\n\n`items` 是**唯一有序来源**；`assetIds` 只是给「勾选一批直接封装」用的简写，\n会被追加到 `items` 之后（已在 items 里的不重复加）。两者都空 → 400。"
-      },
-      "PackItemIn": {
-        "properties": {
-          "assetId": {
-            "type": "string",
-            "maxLength": 32,
-            "minLength": 1,
-            "title": "Assetid"
-          },
-          "role": {
-            "type": "string",
-            "maxLength": 40,
-            "title": "Role",
-            "default": ""
-          },
-          "description": {
-            "type": "string",
-            "maxLength": 200,
-            "title": "Description",
-            "default": ""
-          }
-        },
-        "type": "object",
-        "required": [
-          "assetId"
-        ],
-        "title": "PackItemIn",
-        "description": "封装成员。`role` 预留给模板替换（产品主图 / 多视结构图…），首版可为空。"
-      },
-      "PackItemOut": {
-        "properties": {
-          "assetId": {
-            "type": "string",
-            "title": "Assetid"
-          },
-          "name": {
-            "type": "string",
-            "title": "Name",
-            "default": ""
-          },
-          "kind": {
-            "$ref": "#/components/schemas/LibraryAssetKind"
-          },
-          "state": {
-            "$ref": "#/components/schemas/LibraryAssetState"
-          },
-          "position": {
-            "type": "integer",
-            "title": "Position"
-          },
-          "role": {
-            "type": "string",
-            "title": "Role",
-            "default": ""
-          },
-          "description": {
-            "type": "string",
-            "title": "Description",
-            "default": ""
-          },
-          "sizeBytes": {
-            "type": "integer",
-            "title": "Sizebytes",
-            "default": 0
-          },
-          "coverUrl": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Coverurl"
-          }
-        },
-        "type": "object",
-        "required": [
-          "assetId",
-          "kind",
-          "state",
-          "position"
-        ],
-        "title": "PackItemOut",
-        "description": "封装里的一项。成员可能是别人共享给我的素材，所以带 `state` 与 `coverUrl`。"
-      },
-      "PackPatchIn": {
-        "properties": {
-          "name": {
-            "anyOf": [
-              {
-                "type": "string",
-                "maxLength": 200,
-                "minLength": 1
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Name"
-          },
-          "items": {
-            "anyOf": [
-              {
-                "items": {
-                  "$ref": "#/components/schemas/PackItemIn"
-                },
-                "type": "array",
-                "maxItems": 100
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Items"
-          },
-          "coverAssetId": {
-            "anyOf": [
-              {
-                "type": "string",
-                "maxLength": 32
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Coverassetid"
-          },
-          "tagIds": {
-            "anyOf": [
-              {
-                "items": {
-                  "type": "string"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Tagids"
-          },
-          "expectedVersion": {
-            "type": "integer",
-            "title": "Expectedversion",
-            "default": 0
-          }
-        },
-        "type": "object",
-        "title": "PackPatchIn",
-        "description": "改封装。`items` 提供即**整体替换**（不是增量追加）——增量语义要前端自己\n算差集，而算错了就是悄悄多一个成员，不如让调用方给全量。"
       },
       "Page_ExportOut_": {
         "properties": {
@@ -12568,7 +12157,7 @@
         "additionalProperties": false,
         "type": "object",
         "title": "SpecCompileIn",
-        "description": "填表结果：`{slotKey: [assetId…]}`。\n\n`source=pack` 的槽位传一个封装 id；`source=asset` 的槽位按用户挑选顺序传。\n`version` 为空表示用当前发布版本。\n\n**没有 `promptOverride`**（2026-11-14 起）：模板库不改文字。需要可变内容的地方\n在模板里放 `text` 槽位 —— 填表时选一份文案，`compile` 把它排在 `{{Text N}}`\n的第 N 位，执行层按 `textLibraryIds` 注入正文。这个入口曾经存在（改写\"可编辑段\"），\n与\"提示词只有一段\"冲突，一并删掉。"
+        "description": "填表结果：`{slotKey: [assetId…]}`。\n\n槽位按用户挑选顺序传素材 id。`version` 为空表示用当前发布版本。\n\n**没有 `promptOverride`**（2026-11-14 起）：模板库不改文字。需要可变内容的地方\n在模板里放 `text` 槽位 —— 填表时选一份文案，`compile` 把它排在 `{{Text N}}`\n的第 N 位，执行层按 `textLibraryIds` 注入正文。这个入口曾经存在（改写\"可编辑段\"），\n与\"提示词只有一段\"冲突，一并删掉。"
       },
       "SpecCompileOut": {
         "properties": {
@@ -12651,8 +12240,7 @@
               "image",
               "video",
               "audio",
-              "text",
-              "pack"
+              "text"
             ],
             "title": "Type"
           },
@@ -12711,18 +12299,6 @@
               }
             ],
             "title": "Assetid"
-          },
-          "packId": {
-            "anyOf": [
-              {
-                "type": "string",
-                "maxLength": 32
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Packid"
           },
           "tagId": {
             "type": "string",
@@ -12759,8 +12335,7 @@
               "image",
               "video",
               "audio",
-              "text",
-              "pack"
+              "text"
             ],
             "title": "Type"
           },
@@ -12819,18 +12394,6 @@
               }
             ],
             "title": "Assetid"
-          },
-          "packId": {
-            "anyOf": [
-              {
-                "type": "string",
-                "maxLength": 32
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Packid"
           },
           "tagId": {
             "type": "string",

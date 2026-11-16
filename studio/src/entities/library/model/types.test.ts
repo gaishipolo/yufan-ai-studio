@@ -68,7 +68,7 @@ describe('视图与查询参数的映射', () => {
     expect(viewMeta('nope' as never).label).toBe('全部素材');
   });
 
-  it('总览与个人入口能上传、能建封装，其余入口不出现按钮', () => {
+  it('总览与个人入口能上传、能新建，其余入口不出现按钮', () => {
     expect(viewAllowsCreate('all')).toBe(true);
     expect(viewAllowsCreate('personal')).toBe(true);
     expect(viewAllowsCreate('group')).toBe(false);

@@ -16,7 +16,7 @@ from modules.library.cli import register as register_cli
 from modules.library.health import check as health_check
 from modules.library.ingest import SqlLibraryIngest
 from modules.library.lookup import install as install_lookup
-from modules.library.references import DownloadJobReferences, PackMemberReferences
+from modules.library.references import DownloadJobReferences
 from modules.library.router import router
 
 # 必须 import：注册 @periodic("library.trash.gc") / @periodic("library.download.gc")
@@ -32,21 +32,15 @@ install_lookup()
 # 而不是「生成成功但库里找不到」。
 register_library_ingest(SqlLibraryIngest())
 
-# 彻底删除前的引用检查：v2 自己的封装成员与下载任务在这里聚合。
+# 彻底删除前的引用检查：v2 自己的下载任务在这里聚合。
 # fail-closed —— 没接上时 `purge` 一律 503，不把「查不到」当「没人引用」。
 #
 # **一个来源一条声明**，`location` 指向真实写入点：`tests/test_architecture.py`
 # 的 `test_library_reference_sources_are_complete_after_discovery` 拿它做完备性对账，
 # 而 `test_every_library_reference_writer_declares_a_source` 反过来扫源码里的
-# `reference_library_ids` / `library_pack_id` 一类字段——新增一处写入却忘了在这里
-# 声明，CI 直接红，不必等用户发现「删掉的图在封装里裂了」。
+# `reference_library_ids` 一类字段——新增一处写入却忘了在这里
+# 声明，CI 直接红，不必等用户发现「删掉的图裂了」。
 LIBRARY_REFERENCE_SOURCES = (
-    LibraryReferenceSource(
-        name="library_pack_items.asset_id",
-        checker=PackMemberReferences(),
-        location="modules/library/models.py:LibraryPackItem.asset_id",
-        description="v2 封装的成员；已解散（在回收站）的封装不算",
-    ),
     LibraryReferenceSource(
         name="library_download_jobs.asset_ids",
         checker=DownloadJobReferences(),
@@ -75,7 +69,7 @@ module = ModuleSpec(
     description="资产库 v2：草稿 / 个人 / 小组 / 团队 / 回收站",
     permissions=(
         PermissionSpec("library:read", "查看资产库", group="资产库"),
-        PermissionSpec("library:create", "上传与封装资产", group="资产库"),
+        PermissionSpec("library:create", "上传资产", group="资产库"),
         PermissionSpec("library:update", "修改本人资产的名称与标签", group="资产库"),
         PermissionSpec("library:delete", "删除本人资产（移入回收站）", group="资产库"),
         PermissionSpec("library:delete:any", "删除 / 恢复任何人的资产", group="资产库"),

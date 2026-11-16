@@ -713,13 +713,11 @@ def test_every_kind_has_a_user_retry_exit() -> None:
 #:
 #: 也**不含** `pack_id` / `extra_pack_ids`：那两个是模板库自己的
 #: `TemplatePackVersion` 主键（`modules/template/schema.py`），与 v2 封装无关。
-#: 真正指向 v2 封装的字段按 §23.5 的约定叫 `library_pack_id`。
+#: v2 封装（素材封装）已下线，这条轴随之消失。
 _LIBRARY_REFERENCE_FIELDS = frozenset(
     {
         "reference_library_ids",
         "referenceLibraryIds",
-        "library_pack_id",
-        "libraryPackId",
     }
 )
 

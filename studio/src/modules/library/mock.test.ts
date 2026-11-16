@@ -106,71 +106,8 @@ describe('资产库 mock · 列表与可见范围', () => {
   });
 
   it('选择器里不出现草稿与回收站', async () => {
-    const { body } = await call<LibraryAssetPage>('GET', '/library/selection', {
-      params: { includePacks: false },
-    });
-    expect(body.data.items?.every((item) => item.state === 'active' && item.kind !== 'pack')).toBe(true);
-  });
-});
-
-/**
- * 封装的口径：封完只剩一条，成员的入口是「封装」标签而不是类型筛选。
- *
- * mock 与后端必须同一套语义，否则只看 mock 开发时页面是对的、接上后端就多出
- * 三条重复素材。这里用运行时的 id 而不是写死 `a101`：种子会随用例改动而变号。
- */
-describe('资产库 mock · 封装的口径', () => {
-  const activeItems = async () => {
-    const { body } = await call<LibraryAssetPage>('GET', '/library/assets', {
-      params: { state: 'active', pageSize: 50 },
-    });
-    return body.data.items ?? [];
-  };
-
-  it('封装后成员不再单列，封装自动带上「封装」标签', async () => {
-    const members = (await activeItems()).filter((item) => item.kind !== 'pack').slice(0, 2);
-    expect(members).toHaveLength(2);
-
-    const created = await call<LibraryAssetDetailOut>('POST', '/library/packs', {
-      data: { name: '口径用例封装', assetIds: members.map((item) => item.id) },
-    });
-    expect(created.status).toBe(200);
-    expect(created.body.data.tags?.some((tag) => tag.name === '封装')).toBe(true);
-
-    const ids = (await activeItems()).map((item) => item.id);
-    expect(ids).toContain(created.body.data.id);
-    expect(ids).not.toContain(members[0].id);
-    expect(ids).not.toContain(members[1].id);
-  });
-
-  it('新建封装自动继承所有成员标签，与后端 sync_pack_tags 同口径', async () => {
-    const first = (await call<LibraryAssetDetailOut>('GET', '/library/assets/a101')).body.data;
-    const second = (await call<LibraryAssetDetailOut>('GET', '/library/assets/a102')).body.data;
-    const created = await call<LibraryAssetDetailOut>('POST', '/library/packs', {
-      data: { name: '继承标签封装', assetIds: [first.id, second.id] },
-    });
-    const names = (created.body.data.tags ?? []).map((tag) => tag.name);
-    for (const member of [first, second]) {
-      for (const tag of member.tags ?? []) expect(names).toContain(tag.name);
-    }
-    expect(names).toContain('封装');
-    expect(new Set(names).size).toBe(names.length);
-  });
-
-  it('选择器仍能挑到封装里的成员', async () => {
-    const packs = (await call<LibraryAssetPage>('GET', '/library/assets', {
-      params: { state: 'active', kind: 'pack' },
-    })).body.data.items ?? [];
-    expect(packs.length).toBeGreaterThan(0);
-
-    const detail = await call<LibraryAssetDetailOut>('GET', `/library/packs/${packs[0].id}`);
-    const memberId = detail.body.data.packItems?.[0]?.assetId;
-    expect(memberId).toBeTruthy();
-
-    const selection = await call<LibraryAssetPage>('GET', '/library/selection', {
-      params: { includePacks: false, pageSize: 50 },
-    });
-    expect((selection.body.data.items ?? []).map((item) => item.id)).toContain(memberId);
+    const { body } = await call<LibraryAssetPage>('GET', '/library/selection');
+    expect(body.data.items?.every((item) => item.state === 'active')).toBe(true);
   });
 });
 
@@ -187,15 +124,6 @@ describe('资产库 mock · 写操作的语义', () => {
     const result = await failure('DELETE', '/library/assets/a103');
     expect(result.status).toBe(409);
     expect((result.details as { canRevokeAndDelete?: boolean }).canRevokeAndDelete).toBe(true);
-  });
-
-  it('封装把成员原样带进详情', async () => {
-    const { status, body } = await call<LibraryAssetDetailOut>('POST', '/library/packs', {
-      data: { name: '用例封装', assetIds: ['a101', 'a102'] },
-    });
-    expect(status).toBe(200);
-    expect(body.data.kind).toBe('pack');
-    expect(body.data.packItems?.map((item) => item.assetId)).toEqual(['a101', 'a102']);
   });
 
   it('打包任务把草稿放进 skipped，而不是整单失败', async () => {

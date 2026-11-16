@@ -12,8 +12,6 @@
 - **共享**：读得到这条资产的人。组员看到一份该全员复用的素材、上传者又不在，
   如果只能等所有者来点，审批流就只服务「自己的东西」——那它把关的从来不是
   「范围该不该扩大」。范围由审批人把关，申请人只需要够得着这条资产。
-  「读得到」分两种：直接共享到自己（组 / 团队）的，可以申请；只因为「是某个
-  可见封装的成员」才读到的，不能——成员的可见性跟着封装走（`PackMemberShareBlocked`）。
 - **撤销**：仍然只认所有者。见 `ShareNotOwned`。
 - **直接生效**（`library:share:direct`）只对**自己的**资产成立，替别人扩大
   范围一律留 pending：审批记录是「谁把谁的私货推上了团队库」的唯一载体。
@@ -66,7 +64,6 @@ from core.exceptions import BadRequest, Conflict, Forbidden, NotFound
 from core.ports.org_directory import group_names
 from modules.library import access
 from modules.library.errors import (
-    PackMemberShareBlocked,
     RequestNotPending,
     RevokeReasonRequired,
     ShareNotOwned,
@@ -121,18 +118,13 @@ class ShareService:
     async def _check_non_owner(
         self, asset: LibraryAsset, payload: ShareRequestIn, actor: CurrentUser
     ) -> None:
-        """别人（非所有者）发起的申请：只放行「共享」，且必须是直接可见的。
+        """别人（非所有者）发起的申请：只放行「共享」。
 
         走到这里说明 `load_visible` 已经通过（看不见的 id 一律 404，别把申请
-        入口变成探库的探针），剩下的两件事是动作资格与可见性来源。
+        入口变成探库的探针），剩下的只有动作资格。
         """
         if payload.action is ShareAction.REVOKE:
             raise ShareNotOwned()
-        my_groups = await access.all_groups(self.session, actor)
-        asset_groups = await access.asset_group_ids(self.session, [asset.id])
-        if not access.can_read(asset, actor, my_groups, asset_groups.get(asset.id, [])):
-            # `can_read` 为假而 `load_visible` 为真：只能是从封装借道读到的成员
-            raise PackMemberShareBlocked()
 
     async def _request_share(
         self, asset: LibraryAsset, payload: ShareRequestIn, actor: CurrentUser

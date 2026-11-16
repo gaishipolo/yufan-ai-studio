@@ -1,12 +1,12 @@
 import { useState } from 'react';
-import { Download, PackagePlus, RotateCcw, Tag, Trash2, X } from 'lucide-react';
+import { Download, RotateCcw, Tag, Trash2, X } from 'lucide-react';
 import { Button, MultiSelect } from '@/shared/ui';
 import type { LibraryTagStatOut } from '@/shared/api/schema';
 import type { LibraryView } from '@/entities/library/model/types';
 import { tagOptions } from '@/entities/library/model/tagTree';
 import { useCreateTagInline } from './use-create-tag-inline';
 
-export type BulkKind = 'download' | 'pack' | 'delete' | 'restore' | 'approve' | 'reject' | 'tag';
+export type BulkKind = 'download' | 'delete' | 'restore' | 'approve' | 'reject' | 'tag';
 
 export interface LibraryBulkBarProps {
   view: LibraryView;
@@ -83,15 +83,6 @@ export function LibraryBulkBar({ view, count, tags, busy, onClear, onAction }: L
                 onClick={() => setTagging((value) => !value)}
               >
                 打标签
-              </Button>
-              <Button
-                size="sm"
-                variant="secondary"
-                icon={<PackagePlus size={12} />}
-                disabled={busy}
-                onClick={() => onAction('pack')}
-              >
-                封装
               </Button>
               <Button
                 size="sm"

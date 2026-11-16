@@ -12,7 +12,7 @@ export interface LibraryPickerProps {
   title?: string;
   /** 单选用于「挑一张参考图」，多选用于「参考素材列表」 */
   multiple?: boolean;
-  /** 只让某几类出现在候选里；不传 = 全部（封装除外） */
+  /** 只让某几类出现在候选里；不传 = 默认那几类 */
   kinds?: LibraryAssetKind[];
   /** 已选 id：打开时回显 */
   value?: string[];
@@ -41,7 +41,7 @@ const DEFAULT_KINDS: LibraryAssetKind[] = ['video', 'image', 'audio'];
  * 选中项按 **id → 资产** 存在本地：确认时要把名称一起带回去（调用方要显示
  * 「已选 3 项：主视觉、产品图…」），只回 id 就得再查一次。
  *
- * 类型口径：`kinds` 未传时默认只给「成片 / 图片 / 音频」，**排除 text 与 pack**。
+ * 类型口径：`kinds` 未传时默认只给「成片 / 图片 / 音频」，**排除 text**。
  * 只有调用方显式把 `'text'` 放进 `kinds`（文本引用选择器）才会显示文本资产，
  * 否则图片/视频/参考图选择器不会因为后端多返回一种类型就混进文本。
  */

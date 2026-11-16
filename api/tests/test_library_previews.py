@@ -63,24 +63,16 @@ def test_repreview_rebuilds_a_missing_cover(client: TestClient, api: str) -> Non
     assert again.rebuilt == 0
 
 
-def test_repreview_skips_audio_and_pack(client: TestClient, api: str) -> None:
-    """音频没有封面、封装的封面是**借**成员的（自己的 `sha256` 为空）。
+def test_repreview_scans_images_and_videos_only(client: TestClient, api: str) -> None:
+    """音频没有封面：给它重建会往 `previews/<空摘要>` 写图。
 
-    给它们重建会往 `previews/<空摘要>` 写图，或者把成员的图算到封装头上——
     扫描范围必须收在 `image` / `video`。
     """
     from modules.library.maintenance import run_preview_repair
 
     admin = admin_headers(client)
     owner, owner_h = make_user(client, admin, LIB_RW)
-    member = upload_image(client, api, owner_h, name="repack.png", color="teal")
-    pack = client.post(
-        f"{api}/library/packs",
-        json={"name": "不扫的封装", "assetIds": [member["id"]]},
-        headers=owner_h,
-    )
-    assert pack.status_code == 201, pack.text
+    upload_image(client, api, owner_h, name="repack.png", color="teal")
 
     report = asyncio.run(run_preview_repair(owner=owner["id"], dry_run=True))
-    # 只数到那张图片成员；封装与（没有的）音频都不在扫描范围里
     assert report.scanned == 1

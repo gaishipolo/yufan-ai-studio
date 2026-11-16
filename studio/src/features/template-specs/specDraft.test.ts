@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { TemplateSpecOut } from '@/shared/api/schema';
-import { KIND_OPTIONS } from '@/entities/library/model/types';
+import { KIND_LABEL } from '@/entities/library/model/types';
 import {
   MAX_PROMPT,
   SLOT_TYPE_LABELS,
@@ -119,31 +119,18 @@ describe('模板规格草稿', () => {
     expect(sibling.text.trim()).toBe('与 {{slot:image_10}}');
   });
 
-  it('槽位类型就是资产库的 kind：五类齐全，标签也来自库', () => {
-    // 「类型」下拉不再另写一份词表：库里加一类，槽位就多一档；库里把 video
-    // 叫「成片」，这里也叫成片（曾经写死「视频」，同一个东西两个名字）。
-    expect(Object.keys(SLOT_TYPE_LABELS).sort()).toEqual(
-      KIND_OPTIONS.filter(item => item.value !== 'all')
-        .map(item => item.value)
-        .sort(),
-    );
-    expect(SLOT_TYPE_LABELS.video).toBe('成片');
-    expect(SLOT_TYPE_LABELS.pack).toBe('封装');
-  });
-
-  it('封装槽位靠 type 表达，没有 source 字段；引用给「全部」', () => {
-    const slot = blankSlot(0, 'pack', []);
-    expect(slot.type).toBe('pack');
-    expect(slot.key).toBe('pack_1');
-    expect('source' in slot).toBe(false);
-
-    const spec = blankSpec();
-    spec.slots = [slot];
-    // 封装一定有多个成员，所以永远能引「全部」——单张引用由成员数决定。
-    expect(referenceChips(spec).map(chip => chip.token)).toEqual([
-      '{{slot:pack_1}}',
-      '{{slot:pack_1*}}',
+  it('槽位类型是四种，展示名取自资产库的 kind', () => {
+    // 类型是产品定的四种，不跟着资产库多出来：库里加一类，槽位不该自己多一档。
+    expect(Object.keys(SLOT_TYPE_LABELS).sort()).toEqual([
+      'audio',
+      'image',
+      'text',
+      'video',
     ]);
+    // 展示名仍然取自资产库：库里把 video 叫「成片」，这里也叫成片
+    // （曾经写死「视频」，同一个东西两个名字）。
+    expect(SLOT_TYPE_LABELS.video).toBe(KIND_LABEL.video);
+    expect(SLOT_TYPE_LABELS.image).toBe(KIND_LABEL.image);
   });
 
   it('改类型时改名：没被引用过才改，引用过就留着', () => {

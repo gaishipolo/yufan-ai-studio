@@ -48,10 +48,6 @@ __all__ = [
     "LibraryTab",
     "LibraryTagOut",
     "LibraryTagStatOut",
-    "PackIn",
-    "PackItemIn",
-    "PackItemOut",
-    "PackPatchIn",
     "ShareAction",
     "ShareDecisionIn",
     "ShareHistoryItem",
@@ -95,7 +91,6 @@ class LibraryAssetOrigin(StrEnum):
     GENERATED = "generated"
     TEMPLATE_SOURCE = "template_source"
     IMPORTED = "imported"
-    PACK = "pack"
 
 
 #: 「能当模板原片」的来源集合。前端选择器与封装工具都按这一份判定，
@@ -340,20 +335,6 @@ class LibraryGenerationOut(CamelModel):
     generated_at: UtcDateTime | None = None
 
 
-class PackItemOut(CamelModel):
-    """封装里的一项。成员可能是别人共享给我的素材，所以带 `state` 与 `coverUrl`。"""
-
-    asset_id: str
-    name: str = ""
-    kind: LibraryAssetKind
-    state: LibraryAssetState
-    position: int
-    role: str = ""
-    description: str = ""
-    size_bytes: int = 0
-    cover_url: str | None = None
-
-
 class ShareHistoryItem(CamelModel):
     """可见性变更的一条记录。`reason` 是撤销申请里填的理由，审核人当时看的就是它。"""
 
@@ -402,8 +383,6 @@ class LibraryAssetDetailOut(LibraryAssetOut):
     tags: list[LibraryTagOut] = Field(default_factory=list)
     groups: list[LibraryGroupRef] = Field(default_factory=list)
     generation: LibraryGenerationOut | None = None
-    #: 封装的成员（`kind=pack` 时有值，其它类型恒为空数组）。
-    pack_items: list[PackItemOut] = Field(default_factory=list)
     #: 谁在用它。`None` 表示**查不了**（`library-references` 未接上），
     #: 与空数组（查过、没人用）是两件事——后者能删，前者不能下结论。
     references: list[str] | None = None
@@ -549,8 +528,6 @@ class BulkAction(StrEnum):
     APPROVE_DRAFT = "approveDraft"
     REJECT_DRAFT = "rejectDraft"
     REQUEST_REVOKE = "requestRevoke"
-    #: 把勾选的这批直接封装起来（M3）。`payload.name` 必填，`payload.coverAssetId` 可选。
-    PACK = "pack"
 
 
 class BulkIn(CamelModel):
@@ -588,41 +565,8 @@ class GroupLeadersIn(CamelModel):
 
 
 # --------------------------------------------------------------------------- #
-# M3：封装、批量下载、生成入库
+# M3：批量下载、生成入库
 # --------------------------------------------------------------------------- #
-class PackItemIn(CamelModel):
-    """封装成员。`role` 预留给模板替换（产品主图 / 多视结构图…），首版可为空。"""
-
-    asset_id: str = Field(min_length=1, max_length=32)
-    role: str = Field(default="", max_length=40)
-    description: str = Field(default="", max_length=200)
-
-
-class PackIn(CamelModel):
-    """建封装。
-
-    `items` 是**唯一有序来源**；`assetIds` 只是给「勾选一批直接封装」用的简写，
-    会被追加到 `items` 之后（已在 items 里的不重复加）。两者都空 → 400。
-    """
-
-    name: str = Field(min_length=1, max_length=200)
-    asset_ids: list[str] = Field(default_factory=list, max_length=100)
-    items: list[PackItemIn] = Field(default_factory=list, max_length=100)
-    cover_asset_id: str = Field(default="", max_length=32)
-    tag_ids: list[str] = Field(default_factory=list)
-
-
-class PackPatchIn(CamelModel):
-    """改封装。`items` 提供即**整体替换**（不是增量追加）——增量语义要前端自己
-    算差集，而算错了就是悄悄多一个成员，不如让调用方给全量。"""
-
-    name: str | None = Field(default=None, min_length=1, max_length=200)
-    items: list[PackItemIn] | None = Field(default=None, max_length=100)
-    cover_asset_id: str | None = Field(default=None, max_length=32)
-    tag_ids: list[str] | None = None
-    expected_version: int = 0
-
-
 class DownloadIn(CamelModel):
     """发起打包。上限在服务层判：请求最多 200 个 id（封装要展开），
     **展开后**的条目数与总字节数才是真正的闸门（100 项 / 2GB）。"""

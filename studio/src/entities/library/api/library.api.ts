@@ -30,13 +30,6 @@ import { viewQuery, type LibraryView } from '../model/types';
  * axios 默认的 `tagIds[]=a` 它解析不到，会静默变成「不筛选」。 */
 const REPEATED_ARRAY = { indexes: null } as const;
 
-/** 封装成员入参。`role` 是模板替换用的用途（`front` / `multiview` …），可空。 */
-export interface PackItemInput {
-  assetId: string;
-  role?: string;
-  description?: string;
-}
-
 export interface LibraryListParams {
   view: LibraryView;
   kind?: string;
@@ -90,15 +83,12 @@ export const libraryApi = {
 
   facets: () => api.get<LibraryFacets>(`/library/facets`),
 
-  selection: (params: LibrarySelectionParams & { includePacks?: boolean }) =>
+  selection: (params: LibrarySelectionParams) =>
     api.get<LibrarySelectionPage>(`/library/selection`, params, {
       paramsSerializer: REPEATED_ARRAY,
     }),
 
   detail: (id: string) => api.get<LibraryAssetDetailOut>(`/library/assets/${id}`),
-
-  /** 封装详情（含有序成员）。封装的读入口单独一条路由，与资产详情不是同一个端点。 */
-  packDetail: (id: string) => api.get<LibraryAssetDetailOut>(`/library/packs/${id}`),
 
   /** 原文件字节。预览与下载共用同一个端点：v2 不做转码派流。 */
   file: (id: string) =>
@@ -226,29 +216,6 @@ export const libraryApi = {
   purge: (id: string) => api.delete<null>(`/library/trash/${id}`),
 
   bulk: (body: BulkIn) => api.post<BulkOut>(`/library/assets/bulk`, body),
-
-  createPack: (body: {
-    name: string;
-    /** 成员。带 `role` 才能被模板库当成参考图用（`{{Mixed N}}` 按用途取位）。 */
-    items?: PackItemInput[];
-    assetIds?: string[];
-    coverAssetId?: string;
-    tagIds?: string[];
-  }) => api.post<LibraryAssetDetailOut>(`/library/packs`, body),
-
-  updatePack: (
-    id: string,
-    body: {
-      name?: string;
-      /** 整体替换（不是增量）：服务端按这份清单重写成员与顺序。 */
-      items?: PackItemInput[];
-      assetIds?: string[];
-      coverAssetId?: string;
-      expectedVersion?: number;
-    },
-  ) => api.patch<LibraryAssetDetailOut>(`/library/packs/${id}`, body),
-
-  deletePack: (id: string) => api.delete<null>(`/library/packs/${id}`),
 
   createDownload: (body: DownloadIn) => api.post<DownloadJobOut>(`/library/downloads`, body),
 

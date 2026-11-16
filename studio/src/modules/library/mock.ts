@@ -23,35 +23,12 @@ const DAY = 86_400_000;
 const now = Date.now();
 const iso = (offsetDays = 0) => new Date(now + offsetDays * DAY).toISOString();
 
-/** 词表按添加时间排：t1 最早、t4 最后，与后端 `list_tags` 的排序一致。 */
+/** 词表按添加时间排：t1 最早、t3 最后，与后端 `list_tags` 的排序一致。 */
 const TAGS: LibraryTagStatOut[] = [
   { id: 't1', name: '人物', assetCount: 0, createdAt: iso(-8) },
   { id: 't2', name: '产品', assetCount: 0, createdAt: iso(-6) },
   { id: 't3', name: '场景', assetCount: 0, createdAt: iso(-4) },
 ];
-
-/** 封装自动带上的标签（后端 `PACK_TAG_NAME`）。类型筛选里没有「封装」这一档。 */
-const PACK_TAG: LibraryTagStatOut = { id: 't4', name: '封装', assetCount: 0, createdAt: iso(-2) };
-TAGS.push(PACK_TAG);
-
-/** 与后端 `sync_pack_tags` 同口径：封装带「封装」+ 用户手选的 + 所有成员标签，去重。 */
-function packTags(
-  members: LibraryAssetDetailOut[],
-  extra: string[] = [],
-): LibraryTagStatOut[] {
-  const ids = new Set<string>([PACK_TAG.id, ...extra]);
-  for (const item of members) {
-    for (const tag of item.tags ?? []) ids.add(tag.id);
-  }
-  return TAGS.filter((tag) => ids.has(tag.id));
-}
-
-/** 封装成员入参（`POST` / `PATCH /library/packs` 的 `items`）。 */
-type PackItemBody = { assetId: string; role?: string; description?: string };
-
-function packItemsIn(body: Record<string, unknown>): PackItemBody[] {
-  return ((body.items as PackItemBody[] | undefined) ?? []).filter((item) => !!item?.assetId);
-}
 
 /** `isLeader` 现在只服务删除窄口（§3.4.1）；审批资格按权限点与目标范围判，
  *  和这个字段无关——mock 没有当前用户的权限模型，申请单列表也就不按组长筛。 */
@@ -95,7 +72,6 @@ function asset(partial: Partial<LibraryAssetDetailOut> & { name: string; kind: L
       name: GROUPS.find((group) => group.id === gid)?.name ?? gid,
     })),
     generation: partial.generation ?? null,
-    packItems: partial.packItems ?? [],
     references: partial.references ?? [],
     shareHistory: partial.shareHistory ?? [],
     archive:
@@ -249,29 +225,6 @@ function seed() {
       createdAt: iso(-32),
     }),
   ];
-  const pack = asset({
-    name: '超市抢购 · 人物封装',
-    kind: 'pack',
-    mimeType: 'application/x-directory',
-    createdAt: iso(-2),
-    tags: [PACK_TAG],
-    references: [],
-  });
-  const seededMembers = ASSETS.slice(0, 2);
-  pack.tags = packTags(seededMembers);
-  pack.packItems = seededMembers.map((item, index) => ({
-    assetId: item.id,
-    name: item.name,
-    kind: item.kind,
-    state: item.state,
-    position: index,
-    role: index === 0 ? '主图' : '参考',
-    description: '',
-    sizeBytes: item.sizeBytes ?? 0,
-    coverUrl: item.coverUrl ?? null,
-  }));
-  ASSETS.push(pack);
-  ASSETS.find((item) => item.name.startsWith('超市抢购·主视觉'))!.references = ['封装：超市抢购 · 人物封装'];
 }
 seed();
 
@@ -384,10 +337,7 @@ function visible(row: LibraryAssetDetailOut, library: string | undefined) {
 
 /** 某个入口的可见条数。角标必须等于点进去的条数，所以按入口逐个算。 */
 function facetOf(library?: string) {
-  const hidden = packedMemberIds(library);
-  return ASSETS.filter(
-    (row) => row.state === 'active' && visible(row, library) && !hidden.has(row.id),
-  ).length;
+  return ASSETS.filter((row) => row.state === 'active' && visible(row, library)).length;
 }
 
 function facets() {
@@ -401,27 +351,7 @@ function facets() {
   };
 }
 
-/**
- * 「已装进我能看到的封装」的成员 id。
- *
- * 与后端 `access.hidden_by_pack_clause` 同口径：封装后只剩一条，而不是
- * 一个封装 + 三个原素材。选择器（`includePacks=false`）不走这里——那边要挑的
- * 就是素材本身。
- */
-function packedMemberIds(library?: string): Set<string> {
-  return new Set(
-    ASSETS.filter(
-      (row) => row.kind === 'pack' && row.state === 'active' && visible(row, library),
-    ).flatMap((row) => (row.packItems ?? []).map((item) => item.assetId)),
-  );
-}
-
-function listOf(
-  ctx: MockContext,
-  withFacets: boolean,
-  hidePacked = true,
-  excludeKinds: string[] = [],
-) {
+function listOf(ctx: MockContext, withFacets: boolean) {
   const params = ctx.params;
   const state = String(params.state ?? 'active');
   const library = params.library ? String(params.library) : undefined;
@@ -434,19 +364,12 @@ function listOf(
   let rows = ASSETS.filter((row) => row.state === state);
   if (state === 'active') {
     rows = rows.filter((row) => visible(row, library));
-    if (hidePacked) {
-      // 封装后成员不单列：与后端列表口径一致
-      const packed = packedMemberIds(library);
-      rows = rows.filter((row) => !packed.has(row.id));
-    }
   }
   if (kind) rows = rows.filter((row) => row.kind === kind);
   /* `origin` 是数组参数（`origin=a&origin=b`），axios 传进来的就是数组，
      统一按逗号拆——与 `tagIds` 同一套约定。模板工作台靠它只挑原片。 */
   const origins = String(params.origin ?? '').split(',').filter(Boolean);
   if (origins.length) rows = rows.filter((row) => origins.includes(row.origin ?? ''));
-  // 排除某几类要在 `total` 之前：滤掉 items 之后再减总数，分页就会多出一页。
-  if (excludeKinds.length) rows = rows.filter((row) => !excludeKinds.includes(row.kind ?? ''));
   if (keyword) rows = rows.filter((row) => row.name.toLowerCase().includes(keyword));
   if (tagIds.length) {
     rows = rows.filter((row) => (row.tags ?? []).some((tag) => tagIds.includes(tag.id)));
@@ -462,15 +385,13 @@ function listOf(
   return { items, total: rows.length, page, pageSize, ...(withFacets ? { facets: facets() } : {}) };
 }
 
-/** 标签栏计数：与 `listOf` 同一套入口口径（含「封装成员不单列」）。 */
+/** 标签栏计数：与 `listOf` 同一套入口口径。 */
 function tagStats(ctx: MockContext): LibraryTagStatOut[] {
   const state = String(ctx.params.state ?? 'active');
   const library = ctx.params.library ? String(ctx.params.library) : undefined;
   let rows = ASSETS.filter((row) => row.state === state);
   if (state === 'active') {
     rows = rows.filter((row) => visible(row, library));
-    const packed = packedMemberIds(library);
-    rows = rows.filter((row) => !packed.has(row.id));
   }
   const counts = new Map<string, number>();
   for (const row of rows) {
@@ -491,17 +412,8 @@ export const routes: MockRoute[] = [
   {
     method: 'GET',
     pattern: /^\/library\/selection$/,
-    handler: (ctx) => {
-      /* 选择器不隐藏封装成员：挑的正是要被使用的那条素材（后端同口径，
-         `hide_packed_members=False`）。列表隐藏是为了「封装后只剩一条」。 */
-      const includePacks = String(ctx.params.includePacks ?? 'true') !== 'false';
-      return listOf(
-        { ...ctx, params: { ...ctx.params, state: 'active' } },
-        false,
-        false,
-        includePacks ? [] : ['pack'],
-      );
-    },
+    handler: (ctx) =>
+      listOf({ ...ctx, params: { ...ctx.params, state: 'active' } }, false),
   },
 
   {
@@ -709,79 +621,6 @@ export const routes: MockRoute[] = [
         throw new HttpError(409, '资产仍被引用，不能彻底删除', { references: row.references });
       }
       ASSETS = ASSETS.filter((item) => item.id !== id);
-      return (null);
-    },
-  },
-
-  {
-    method: 'POST',
-    pattern: /^\/library\/packs$/,
-    handler: (ctx) => {
-      const items = packItemsIn(ctx.body);
-      // `assetIds` 是「勾选一批直接封装」的简写，追加在 `items` 之后（与后端同口径）
-      const assetIds = [...items.map((item) => item.assetId), ...((ctx.body.assetIds as string[]) ?? [])];
-      const members = assetIds.map((id) => find(id));
-      if (!members.length) throw new HttpError(400, '封装至少需要一个成员');
-      const row = asset({
-        name: String(ctx.body.name ?? '新封装'),
-        kind: 'pack',
-        mimeType: 'application/x-directory',
-        tags: packTags(members, (ctx.body.tagIds as string[]) ?? []),
-        createdAt: nowIso(),
-        sizeBytes: members.reduce((sum, item) => sum + (item.sizeBytes ?? 0), 0),
-      });
-      row.packItems = members.map((item, index) => ({
-        assetId: item.id,
-        name: item.name,
-        kind: item.kind,
-        state: item.state,
-        position: index,
-        // 用途跟着成员走：模板库按它决定 `{{Mixed N}}` 的取位
-        role: items.find((entry) => entry.assetId === item.id)?.role ?? '',
-        description: items.find((entry) => entry.assetId === item.id)?.description ?? '',
-        sizeBytes: item.sizeBytes ?? 0,
-        coverUrl: item.coverUrl ?? null,
-      }));
-      ASSETS.unshift(row);
-      return (row);
-    },
-  },
-  { method: 'GET', pattern: /^\/library\/packs\/([^/]+)$/, handler: (ctx) => (find(ctx.path.split('/').pop() ?? '')) },
-  {
-    method: 'PATCH',
-    pattern: /^\/library\/packs\/([^/]+)$/,
-    handler: (ctx) => {
-      const row = find(ctx.path.split('/').pop() ?? '');
-      if (ctx.body.name) row.name = String(ctx.body.name);
-      // `items` 是整体替换（不是增量）：只改用途时调用方也要给全量清单
-      if (ctx.body.items) {
-        const items = packItemsIn(ctx.body);
-        row.packItems = items.map((item, index) => {
-          const member = find(item.assetId);
-          return {
-            assetId: member.id,
-            name: member.name,
-            kind: member.kind,
-            state: member.state,
-            position: index,
-            role: item.role ?? '',
-            description: item.description ?? '',
-            sizeBytes: member.sizeBytes ?? 0,
-            coverUrl: member.coverUrl ?? null,
-          };
-        });
-      }
-      return (row);
-    },
-  },
-  {
-    method: 'DELETE',
-    pattern: /^\/library\/packs\/([^/]+)$/,
-    handler: (ctx) => {
-      const row = find(ctx.path.split('/').pop() ?? '');
-      row.state = 'trash';
-      row.trashedFromState = 'active';
-      row.trashExpiresAt = iso(30);
       return (null);
     },
   },

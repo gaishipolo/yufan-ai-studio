@@ -37,19 +37,16 @@ from infra import get_storage
 from infra.media_probe import create_preview
 from infra.storage.base import ObjectStorage, StorageError
 from modules.library.lifecycle import LifecycleService
-from modules.library.models import LibraryAsset, LibraryPackItem, LibraryTag
+from modules.library.models import LibraryAsset, LibraryTag
 from modules.library.service import preview_key
-from modules.library.tags import sync_pack_tags
 
 logger = get_logger(__name__)
 
 __all__ = [
-    "PackTagReport",
     "PreviewReport",
     "TAG_TREE_SEED",
     "TagTreeReport",
     "TrashGcReport",
-    "run_pack_tag_sync",
     "run_preview_repair",
     "run_tag_tree_init",
     "run_trash_gc",
@@ -180,8 +177,8 @@ async def run_preview_repair(
 
     `cover_key` 非空但 `exists()` 为假，或者 `cover_key` 为空（当年生成失败，
     例如视频抽帧那次 ffmpeg 超时）——两者都要重建。`kind` 只扫 `image` / `video`：
-    音频没有封面，封装的 `cover_key` 是**借**成员的（自己的 `sha256` 为空），
-    给它重建会把别人的图写到 `previews/<空摘要>` 上去。
+    音频与文本没有封面（自己的 `sha256` 为空），给它重建会把别人的图写到
+    `previews/<空摘要>` 上去。
 
     `--dry-run` 只探测不写，用来先回答「到底有几条」。
     """
@@ -240,91 +237,6 @@ async def run_preview_repair(
     return report
 
 
-@dataclass
-class PackTagReport:
-    scanned: int = 0
-    changed: list[str] = field(default_factory=list)
-    added: int = 0
-    dry_run: bool = False
-
-    @property
-    def pending(self) -> int:
-        return len(self.changed)
-
-    def lines(self) -> list[str]:
-        rows = [
-            f"试运行：扫描 {self.scanned} 个封装，{self.pending} 个缺成员标签（共 {self.added} 个）"
-            if self.dry_run
-            else f"扫描 {self.scanned} 个封装，补齐 {self.pending} 个（共 {self.added} 个标签）"
-        ]
-        if self.changed:
-            rows.append("  涉及：" + ", ".join(self.changed[:20]))
-        if self.dry_run and self.pending:
-            rows.append("加 --no-dry-run 才写库")
-        return rows
-
-
-async def run_pack_tag_sync(
-    *, batch: int = 0, dry_run: bool = False, owner: str = ""
-) -> PackTagReport:
-    """给**存量**封装补上成员标签并集。
-
-    自动继承只在建封装 / 换成员时发生，所以更早建的封装还没有继承成员的标签。
-    这条命令是可反复跑的回填：
-    `sync_pack_tags` 只增不减，跑第二次 `pending` 应为 0，也不会覆盖用户
-    后来在卡片上手动加的标签。
-
-    默认试运行；`--no-dry-run` 才逐个 commit（一个封装失败不影响其它封装）。
-    """
-    report = PackTagReport(dry_run=dry_run)
-    async with get_session_factory()() as session:
-        query = (
-            select(LibraryAsset.id)
-            .where(
-                LibraryAsset.kind == "pack",
-                LibraryAsset.deleted_at.is_(None),
-            )
-            .order_by(LibraryAsset.created_at)
-        )
-        if owner:
-            query = query.where(LibraryAsset.owner_id == owner)
-        if batch:
-            query = query.limit(batch)
-        pack_ids = list((await session.scalars(query)).all())
-        if not pack_ids:
-            return report
-
-        pairs = await session.execute(
-            select(LibraryPackItem.pack_id, LibraryPackItem.asset_id).where(
-                LibraryPackItem.pack_id.in_(pack_ids)
-            )
-        )
-        members: dict[str, list[str]] = {}
-        for pack_id, asset_id in pairs.all():
-            members.setdefault(pack_id, []).append(asset_id)
-
-        for pack_id in pack_ids:
-            report.scanned += 1
-            added = await sync_pack_tags(
-                session, pack_id, members.get(pack_id, []), dry_run=dry_run
-            )
-            if not added:
-                continue
-            report.changed.append(pack_id)
-            report.added += added
-            if not dry_run:
-                await session.commit()
-
-    if report.added and not dry_run:
-        logger.info(
-            "封装标签回填：扫描 %s，补齐 %s 个封装 / %s 个标签",
-            report.scanned,
-            report.pending,
-            report.added,
-        )
-    return report
-
-
 # --------------------------------------------------------------------------- #
 # 存量标签归层
 # --------------------------------------------------------------------------- #
@@ -361,8 +273,8 @@ async def run_tag_tree_init(
     """把存量扁平词表按 `TAG_TREE_SEED` 归成两级；幂等、默认试运行。
 
     只**提升**已有标签，不新建、不改名、不删绑定：迁移已经把全部存量标签设成
-    一级，这里只把点名的几个改成二级，其余保持一级（包括「音乐」「封装」
-    「AI生成」这些没有子标签的词——它们仍是能直接打在素材上的叶子）。
+    一级，这里只把点名的几个改成二级，其余保持一级（包括「音乐」「AI生成」
+    这些没有子标签的词——它们仍是能直接打在素材上的叶子）。
 
     跳过比"抢过来"安全：目标已挂在别的一级下、或它自己还有子标签（挂过去就
     成了三级），都记进报告让人去看，不悄悄改结构。第二次跑 `changed` 应为 0。

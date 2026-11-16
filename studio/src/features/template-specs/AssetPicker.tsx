@@ -12,8 +12,8 @@ export interface PickedAsset {
   purpose?: string;
 }
 
-/** 选择器支持的素材类型。`pack` 是资产库封装（多成员、带角色与顺序）。 */
-export type PickKind = 'image' | 'video' | 'audio' | 'text' | 'pack';
+/** 选择器支持的素材类型。 */
+export type PickKind = 'image' | 'video' | 'audio' | 'text';
 
 export interface AssetPickerProps {
   open: boolean;
@@ -38,7 +38,6 @@ const TITLES: Record<PickKind, string> = {
   video: '选择视频',
   audio: '选择音频',
   text: '选择文本',
-  pack: '选择封装',
 };
 
 const KIND_LABELS: Record<PickKind, string> = {
@@ -46,7 +45,6 @@ const KIND_LABELS: Record<PickKind, string> = {
   video: '视频',
   audio: '音频',
   text: '文本',
-  pack: '封装',
 };
 
 /**

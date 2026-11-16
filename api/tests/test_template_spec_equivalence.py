@@ -9,9 +9,10 @@
 这条用例是 P3 迁移脚本的验收依据：迁移只要让两种构造在本用例下给出同一结果，
 就不会改语义。
 
-**为什么用固定槽位而不是用户槽位做基线**：旧模板的 `media_order` 是发布时定死的，
-对应新模型里的 `binding=fixed`。用户槽位的编号会随"这次填了几张"变化，那是新模型
-**故意**不同的地方（见 `test_template_spec_compile.py`），不是等价性要覆盖的。
+**为什么三视图那一组是「用户填」**：旧模板的 `media_order` 是发布时定死的，
+对应新模型里的 `binding=fixed`。但固定槽位只指向**一个**素材，一组三视图只能
+由使用者在填表时挑（`min/max` 可多值）—— 编号仍然由 position + 实际填充量
+算出来，与旧链路的「下标 +1」等价。
 """
 
 from __future__ import annotations
@@ -25,6 +26,10 @@ from tests_template_helpers import png_bytes, upload, video_bytes
 API = "/api/v1/template-specs"
 PERMS = ["template_pack:read", "template_pack:create", "template_pack:publish", *LIB_RW]
 MODEL = "libtv-wan3-replacement"
+
+#: 用户填的图片槽位必须带一级标签（发布前校验）。这些用例不关心标签本身，
+#: 用同一个占位 id —— 发布只检查"有没有给"。
+_TAG = "tag-equiv-tests"
 
 
 def _headers(client: TestClient) -> dict[str, str]:
@@ -43,28 +48,6 @@ def _assets(client: TestClient, headers: dict[str, str]) -> tuple[str, list[str]
         for name in ("front", "multiview", "detail")
     ]
     return str(video["id"]), images
-
-
-def _pack(client: TestClient, headers: dict[str, str], images: list[str]) -> str:
-    """把三张图按 `front → multiview → detail` 建成一个资产库封装。"""
-    role_of = dict(zip(images, ("front", "multiview", "detail"), strict=True))
-    response = client.post(
-        "/api/v1/library/packs",
-        json={
-            "name": f"三视图-{suffix()}",
-            "items": [
-                {
-                    "assetId": image,
-                    "role": role_of[image],
-                    "description": f"{role_of[image]} 视图",
-                }
-                for image in images
-            ],
-        },
-        headers=headers,
-    )
-    assert response.status_code == 201, response.text
-    return str(response.json()["data"]["id"])
 
 
 def _legacy(
@@ -87,9 +70,7 @@ def _legacy(
     return ordered
 
 
-def _spec_draft(
-    video: str, pack_id: str, *, binding: str, key: str
-) -> dict[str, Any]:
+def _spec_draft(video: str, *, key: str) -> dict[str, Any]:
     return {
         "key": key,
         "name": "等价性规格",
@@ -107,10 +88,12 @@ def _spec_draft(
             },
             {
                 "key": "views",
-                # 槽位类型带 pack：这个槽位要的是「一整个封装」，不再有独立的 source 轴。
-                "type": "pack",
-                "binding": binding,
-                "packId": pack_id if binding == "fixed" else None,
+                # 一组多图 = 一个可多值的图片槽位：使用者挑几张就占几个号。
+                "type": "image",
+                "binding": "user",
+                "tagId": _TAG,
+                "minCount": 1,
+                "maxCount": 3,
                 "position": 1,
                 "label": "产品三视图",
             },
@@ -137,17 +120,16 @@ def _compile(
 
 
 def test_compile_reproduces_legacy_media_order(client: TestClient) -> None:
-    """固定槽位版本：`compile` 的编号与素材序列必须和旧 `media_order` 一致。"""
+    """`compile` 的编号与素材序列必须和旧 `media_order` 一致。"""
     headers = _headers(client)
     video, images = _assets(client, headers)
-    pack_id = _pack(client, headers, images)
     legacy = _legacy(video, images)
 
     compiled = _compile(
         client,
         headers,
-        _spec_draft(video, pack_id, binding="fixed", key=f"equiv-{suffix()}"),
-        {},
+        _spec_draft(video, key=f"equiv-{suffix()}"),
+        {"views": images},
     )
 
     # 旧：编号就是 `media_order` 的下标 +1；新：编号由 position + 填充量算。
@@ -160,28 +142,3 @@ def test_compile_reproduces_legacy_media_order(client: TestClient) -> None:
         ["{{Mixed 2}}", "{{Mixed 3}}", "{{Mixed 4}}"],
         images,
     )
-
-    # 角色也必须跟着走：编号对了但角色错了，提示词里的"三视图为准"就指向错的图。
-    detail = client.get(f"/api/v1/library/assets/{pack_id}", headers=headers).json()["data"]
-    members = sorted(detail["packItems"], key=lambda item: item["position"])
-    assert [(item["assetId"], item["role"]) for item in members] == [
-        (asset, role) for _token, asset, role in legacy if role != "source_video"
-    ]
-
-
-def test_user_binding_gives_the_same_numbers_as_fixed(client: TestClient) -> None:
-    """`binding` 只决定"谁来填"，不影响编号：迁移时可以任选一种而不改语义。"""
-    headers = _headers(client)
-    video, images = _assets(client, headers)
-    pack_id = _pack(client, headers, images)
-    legacy = _legacy(video, images)
-
-    compiled = _compile(
-        client,
-        headers,
-        _spec_draft(video, pack_id, binding="user", key=f"equiv-{suffix()}"),
-        {"views": [pack_id]},
-    )
-
-    assert compiled["referenceLibraryIds"] == [asset for _token, asset, _role in legacy]
-    assert compiled["prompt"] == "把 {{Mixed 1}} 换成 {{Mixed 2}}、{{Mixed 3}}、{{Mixed 4}}"

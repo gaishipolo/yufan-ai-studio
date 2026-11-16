@@ -14,8 +14,8 @@
 素材包（`template_packs` 四表）、视频模板（`video_templates`）、manifest 配置
 （`template_manifests` 四表）与替换调用档案（`replacement_runs` 三表）连同
 `modules/template` 整条替换执行链一起下线 —— 项目里只剩两个概念：
-**模板（本模块）与任务（task）**。多图语义由 `source=pack` 槽位指向资产库封装
-（`kind=pack`）表达，模板不复制成员清单。
+**模板（本模块）与任务（task）**。多图语义由一个可多值的图片/视频槽位表达
+（`min/max`），模板不复制素材清单。
 
 两个注入口（`template_catalog` / `template_runtime`）随旧表一起删除：
 它们存在的理由是「编写侧 manifest 与运行侧投影是两套表」，现在发布快照

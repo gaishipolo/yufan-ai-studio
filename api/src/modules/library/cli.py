@@ -9,8 +9,6 @@
 - `library repreview`：重建缺失的缩略图。原图在 `blobs/`、封面在 `previews/`，
   是两套字节一条记录；封面对象丢了原图仍然完好，但界面只剩占位与裂图。
   默认试运行，只报告有几条需要重建。
-- `library sync-pack-tags`：给改动前建的封装补齐「成员标签并集」。自动继承是
-  建封装 / 换成员时做的，存量数据要回填一次；只增不减，可反复跑。
 - `library init-tag-tree`：把存量扁平词表按内置映射归成两级（产品 → 3030/T35、
   角色 → 菜菜，其余留一级）。迁移只加列，环境之间词表不同，归层由命令按名字
   匹配；幂等，默认试运行。
@@ -75,16 +73,6 @@ def cmd_preview_repair(args: argparse.Namespace) -> None:
         raise SystemExit(1)
 
 
-def cmd_pack_tag_sync(args: argparse.Namespace) -> None:
-    from modules.library.maintenance import run_pack_tag_sync
-
-    report = asyncio.run(
-        run_pack_tag_sync(batch=args.batch or 0, dry_run=args.dry_run, owner=args.owner)
-    )
-    for line in report.lines():
-        print(line)
-
-
 def cmd_tag_tree_init(args: argparse.Namespace) -> None:
     from modules.library.maintenance import run_tag_tree_init
 
@@ -137,20 +125,6 @@ def register(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     previews.set_defaults(func=cmd_preview_repair, dry_run=True)
     previews.add_argument("--batch", type=int, default=0, help="最多处理多少条（0 = 全部）")
     previews.add_argument("--owner", default="", help="只修指定 owner_id 的素材")
-
-    pack_tags = actions.add_parser(
-        "sync-pack-tags",
-        help="给存量封装补齐成员标签并集（默认试运行）",
-    )
-    pack_tags.add_argument(
-        "--no-dry-run",
-        dest="dry_run",
-        action="store_false",
-        help="真的写库；不传时只报告有几个封装需要补",
-    )
-    pack_tags.set_defaults(func=cmd_pack_tag_sync, dry_run=True)
-    pack_tags.add_argument("--batch", type=int, default=0, help="最多处理多少个（0 = 全部）")
-    pack_tags.add_argument("--owner", default="", help="只处理指定 owner_id 的封装")
 
     tag_tree = actions.add_parser(
         "init-tag-tree",

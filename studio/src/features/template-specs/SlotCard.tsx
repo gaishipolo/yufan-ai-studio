@@ -1,11 +1,10 @@
 import { useState } from 'react';
 import { ChevronDown, GripVertical, Trash2 } from 'lucide-react';
 import { AssetChip } from '@/entities/library/ui/AssetChip';
-import { PackChip } from '@/entities/library/ui/PackChip';
 import type { SpecSlotIn } from '@/shared/api/schema';
 import { Button, FormField, Select, TextInput } from '@/shared/ui';
 import { cn } from '@/shared/lib/cn';
-import { SLOT_TYPE_LABELS } from './specDraft';
+import { SLOT_TYPE_LABELS, slotTypeOf } from './specDraft';
 import { SLOT_TYPE_ICONS } from './slotIcons';
 
 /**
@@ -47,13 +46,13 @@ export function SlotCard({
 }) {
   const [open, setOpen] = useState(false);
   const fixed = (slot.binding ?? 'user') === 'fixed';
+  const type = slotTypeOf(slot.type);
   // 一级标签只对「让用户挑的图片/视频」有意义：模板库按「标签 · 槽位名」分组
-  // 给候选素材，文本/音频/封装走各自的选择器，固定槽位作者已经选死。
-  const needsTag = slot.type === 'image' || slot.type === 'video';
-  const showCount =
-    slot.type !== 'pack' && (slot.binding ?? 'user') === 'user' && slot.type !== 'text';
-  const name = slot.label?.trim() || `${SLOT_TYPE_LABELS[slot.type]} ${index + 1}`;
-  const TypeIcon = SLOT_TYPE_ICONS[slot.type] ?? SLOT_TYPE_ICONS.image;
+  // 给候选素材，文本/音频走各自的选择器，固定槽位作者已经选死。
+  const needsTag = type === 'image' || type === 'video';
+  const showCount = (slot.binding ?? 'user') === 'user' && type !== 'text';
+  const name = slot.label?.trim() || `${SLOT_TYPE_LABELS[type]} ${index + 1}`;
+  const TypeIcon = SLOT_TYPE_ICONS[type];
 
   return (
     <div
@@ -89,8 +88,8 @@ export function SlotCard({
             图标 + 可读名称（给读屏）最省地方。 */}
         <span
           role="img"
-          aria-label={SLOT_TYPE_LABELS[slot.type]}
-          title={`类型：${SLOT_TYPE_LABELS[slot.type]}`}
+          aria-label={SLOT_TYPE_LABELS[type]}
+          title={`类型：${SLOT_TYPE_LABELS[type]}`}
           className="grid size-7 shrink-0 place-items-center rounded-lg bg-panel-soft text-ink-soft ring-1 ring-inset ring-line-soft"
         >
           <TypeIcon size={14} />
@@ -131,7 +130,7 @@ export function SlotCard({
                   onPatch({
                     binding: item.value,
                     // 固定要素材、用户填要清掉素材，两边互斥。
-                    ...(item.value === 'fixed' ? {} : {assetId: null, packId: null}),
+                    ...(item.value === 'fixed' ? {} : {assetId: null}),
                   })
                 }
                 className={cn(
@@ -189,13 +188,7 @@ export function SlotCard({
           「这几个是作者定死的，那几个留给使用者挑」。 */}
       {fixed && (
         <div className="mt-2 ml-9 flex items-center gap-2 rounded-lg border border-line-soft border-l-[3px] border-l-ok bg-panel-soft py-1.5 pl-2.5 pr-2">
-          {slot.type === 'pack' ? (
-            slot.packId ? (
-              <PackChip packId={slot.packId} />
-            ) : (
-              <span className="text-meta text-ink-mute">还没选封装</span>
-            )
-          ) : slot.assetId ? (
+          {slot.assetId ? (
             <AssetChip assetId={slot.assetId} className="border-transparent bg-panel" />
           ) : (
             <span className="text-meta text-ink-mute">还没选素材</span>
@@ -206,7 +199,7 @@ export function SlotCard({
             size="sm"
             className="ml-auto shrink-0"
           >
-            {slot.assetId || slot.packId ? '更换' : slot.type === 'pack' ? '选择封装' : '选择素材'}
+            {slot.assetId ? '更换' : '选择素材'}
           </Button>
         </div>
       )}
@@ -273,12 +266,12 @@ export function SlotCard({
               onChange={event => onPatch({usage: event.target.value})}
             />
           </FormField>
-          {slot.type === 'text' && (
+          {type === 'text' && (
             <p className="text-meta text-ink-mute sm:col-span-2">
               文本槽位：占 {`{{Text N}}`} 的第 N 位，正文由所选文案注入
             </p>
           )}
-          {slot.type === 'audio' && (
+          {type === 'audio' && (
             <p className="text-meta text-ink-mute sm:col-span-2">
               附加输入：不占编号，提示词里不引用它
             </p>

@@ -21,7 +21,6 @@ from core.ports.library_lookup import (
     LibraryAssetRef,
     LibraryAssetState,
     LibraryLookup,
-    LibraryPackMember,
     LibraryTextRef,
     LibraryVisibility,
     register_library_lookup,
@@ -30,7 +29,6 @@ from modules.library.access import readable_rows
 from modules.library.models import (
     LibraryAsset,
     LibraryAssetTag,
-    LibraryPackItem,
     LibraryTextVersion,
 )
 from modules.library.tags import expand_tag_ids
@@ -50,8 +48,8 @@ class SqlLibraryLookup(LibraryLookup):
     async def readable_ids(
         self, session: AsyncSession, actor: CurrentUser, asset_ids: Sequence[str]
     ) -> set[str]:
-        # 判据在 `access.readable_rows`（含「封装成员」这一条读入口与小组判定），
-        # 这里只转发：换个地方重写一份，第一处漂的永远是「小组共享」。
+        # 判据在 `access.readable_rows`（含小组判定），这里只转发：
+        # 换个地方重写一份，第一处漂的永远是「小组共享」。
         rows = await readable_rows(session, list(asset_ids), actor)
         return set(rows)
 
@@ -88,8 +86,8 @@ class SqlLibraryLookup(LibraryLookup):
     async def read_text_many(
         self, session: AsyncSession, actor: CurrentUser, asset_ids: Sequence[str]
     ) -> Mapping[str, LibraryTextRef]:
-        """文本正文快照。**判据只有 `readable_rows` 一份**：共享出去的、
-        靠封装成员身份读到的都算，失权的一律不返回，调用方按缺失报错而不是
+        """文本正文快照。**判据只有 `readable_rows` 一份**：共享出去的都算，
+        失权的一律不返回，调用方按缺失报错而不是
         「查不到就当没引用」把别人的私有文案跳过。
 
         正文来自 `library_text_versions` 的最新版，不读 blob：注入发生在提交期，
@@ -130,83 +128,6 @@ class SqlLibraryLookup(LibraryLookup):
             )
             for asset_id, version in latest.items()
         }
-
-    async def expand_packs(
-        self, session: AsyncSession, actor: CurrentUser, pack_ids: Sequence[str]
-    ) -> Mapping[str, Sequence[LibraryPackMember]]:
-        """v2 封装 → 有序成员。只展开可读的封装，成员全给、用 `readable` 标出来。
-
-        两次可读性判定是刻意的：
-        1. **封装本身**（`pack_ids`）：不可读的封装不出现在结果里，「拿别人的封装 id
-           去展开」直接得到空，而不是一份成员清单；
-        2. **成员逐条**（`readable`）：封装可读 ≠ 成员可读。打包时可以把别人共享给
-           你的一张图收进自己的包；之后那张图的共享被撤销，包还在、图不该再被用。
-           把不可读的成员静默丢掉会让调用方拿到「少一张」的包，槽位顺序悄悄错位。
-
-        判据仍然只有 `readable_rows` 一份（含「靠封装成员身份读到」这条入口）。
-        """
-        wanted = [pack_id for pack_id in dict.fromkeys(pack_ids) if pack_id]
-        if not wanted:
-            return {}
-        readable_packs = await readable_rows(session, wanted, actor)
-        # 只认 `kind=pack`：拿一个图片 id 进来不该被当成空封装展开。
-        pack_ids_ok = [
-            pack_id
-            for pack_id, row in readable_packs.items()
-            if row.kind == LibraryAssetKind.PACK.value
-        ]
-        if not pack_ids_ok:
-            return {}
-
-        items = (
-            await session.scalars(
-                select(LibraryPackItem)
-                .where(LibraryPackItem.pack_id.in_(pack_ids_ok))
-                .order_by(LibraryPackItem.pack_id, LibraryPackItem.position)
-            )
-        ).all()
-        if not items:
-            # 封装可读但一个成员都没有：空列表是合法答案（不是「查不到」）。
-            return {pack_id: [] for pack_id in pack_ids_ok}
-
-        member_rows = await readable_rows(
-            session, [item.asset_id for item in items], actor
-        )
-        grouped: dict[str, list[LibraryPackMember]] = {pack_id: [] for pack_id in pack_ids_ok}
-        for item in items:
-            row = member_rows.get(item.asset_id)
-            if row is None:
-                # 成员被彻底删掉了（`library_pack_items` 的孤儿行）。仍要出现：
-                # 少一条会让后面的槽位整体前移，比报错难查得多。
-                grouped[item.pack_id].append(
-                    LibraryPackMember(
-                        id=item.asset_id,
-                        name="",
-                        kind=LibraryAssetKind.IMAGE,
-                        state=LibraryAssetState.TRASH,
-                        position=item.position,
-                        role=item.role,
-                        description=item.description,
-                        readable=False,
-                    )
-                )
-                continue
-            grouped[item.pack_id].append(
-                LibraryPackMember(
-                    id=row.id,
-                    name=row.name,
-                    kind=LibraryAssetKind(row.kind),
-                    state=LibraryAssetState(row.state),
-                    position=item.position,
-                    role=item.role,
-                    description=item.description,
-                    readable=True,
-                    mime_type=row.mime_type,
-                    storage_key=row.storage_key,
-                    size_bytes=row.size_bytes,
-                )
-            )
-        return grouped
 
     async def find_ids(
         self,

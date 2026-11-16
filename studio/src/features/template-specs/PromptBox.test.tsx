@@ -7,7 +7,7 @@ import { PromptBox, type PromptChip } from './PromptBox';
 const CHIPS: PromptChip[] = [
   {token: '{{slot:image_1}}', label: '主图', all: false},
   {token: '{{slot:image_2}}', label: '细节图', all: false},
-  {token: '{{slot:pack_1*}}', label: '封装（全部）', all: true},
+  {token: '{{slot:group*}}', label: '整组（全部）', all: true},
 ];
 
 /* 候选面板里的项和下方的 chip 按钮同名（都是「主图」），用容器区分：

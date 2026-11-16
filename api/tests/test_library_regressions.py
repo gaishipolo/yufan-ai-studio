@@ -159,31 +159,6 @@ def test_selection_total_respects_include_packs(
     )
 
 
-def test_trashed_pack_is_not_downloadable(client: TestClient, api: str) -> None:
-    """解散进回收站的封装不该还能被打包。
-
-    `_collect` 对 `kind=pack` 直接 `continue` 展开成员，跳过了 `_skip_reason`
-    里「回收站内容不可下载」那一条。
-    """
-    admin = admin_headers(client)
-    owner, owner_h = make_user(client, admin, LIB_RW)
-    first = upload_image(client, api, owner_h, name="trash-pack-a.png", color="olive")
-    second = upload_image(client, api, owner_h, name="trash-pack-b.png", color="olive")
-    pack = _create_pack(
-        client, api, owner_h, {"name": "待解散", "assetIds": [first["id"], second["id"]]}
-    ).json()["data"]
-
-    assert client.delete(f"{api}/library/packs/{pack['id']}", headers=owner_h).status_code == 200
-    assert fetch_asset(pack["id"])["state"] == "trash"
-
-    job = client.post(
-        f"{api}/library/downloads", json={"ids": [pack["id"]]}, headers=owner_h
-    )
-    assert job.status_code in (400, 413), (
-        f"回收站里的封装仍能发起打包：{job.status_code} {job.text}"
-    )
-
-
 def test_upload_source_key_is_owner_scoped(client: TestClient, api: str) -> None:
     """同一个 `sourceKey` 被两个用户使用时，不该把后者的文件吞掉。
 
@@ -215,30 +190,3 @@ def test_upload_source_key_is_owner_scoped(client: TestClient, api: str) -> None
     )
 
 
-def test_dissolved_pack_does_not_block_member_purge(
-    client: TestClient, api: str
-) -> None:
-    """解散的封装不该继续「保护」成员——否则成员永远删不掉。
-
-    引用检查原先不区分封装的 state：解散后 `library_pack_items` 的行还在
-    （恢复时要原样回来），于是彻底删除成员会被挡在「封装 X 的成员」上，
-    而 X 正是用户刚解散的那个，界面上已经找不到它。
-    """
-    admin = admin_headers(client)
-    owner, owner_h = make_user(client, admin, LIB_RW)
-    member = upload_image(client, api, owner_h, name="packed-member.png", color="sienna")
-    pack = _create_pack(
-        client, api, owner_h, {"name": "引用检查", "assetIds": [member["id"]]}
-    ).json()["data"]
-
-    assert client.delete(f"{api}/library/assets/{member['id']}", headers=owner_h).status_code == 200
-
-    # 封装在库：成员仍被引用，彻底删除要被拦住
-    blocked = client.delete(f"{api}/library/trash/{member['id']}", headers=owner_h)
-    assert blocked.status_code == 409, f"在库封装的成员被直接删掉了：{blocked.text}"
-
-    # 解散封装之后再删：此时没有任何在库的东西在用它
-    assert client.delete(f"{api}/library/packs/{pack['id']}", headers=owner_h).status_code == 200
-    purged = client.delete(f"{api}/library/trash/{member['id']}", headers=owner_h)
-    assert purged.status_code == 200, f"解散封装后成员仍删不掉：{purged.text}"
-    assert fetch_asset(member["id"]) is None

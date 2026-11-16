@@ -429,9 +429,10 @@ def test_slot_source_is_folded_into_type_with_data(
         reload_settings()
         db_session.reset_state_for_tests()
 
-    # 草稿 JSON：封装槽位 type 变 pack，`source` 键整体消失（不是留个空壳）
-    assert [slot["type"] for slot in stored["slots"]] == ["video", "pack"]
+    # 草稿 JSON：`source` 键整体消失（不是留个空壳）；封装槽位随后被撤成
+    # **空的图片槽位**（`c3d8e1f04a7b`：素材封装下线，槽位类型已没有 pack）
+    assert [slot["type"] for slot in stored["slots"]] == ["video", "image"]
     assert all("source" not in slot for slot in stored["slots"]), stored["slots"]
     # 槽位行：同上，且新列有默认值
-    assert rows == [("source", "video", ""), ("views", "pack", "")]
+    assert rows == [("source", "video", ""), ("views", "image", "")]
     assert "source" not in columns

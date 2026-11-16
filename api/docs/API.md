@@ -2,7 +2,7 @@
 
 > 此文件由 `app export-openapi` 自动生成，请勿手工编辑。
 >
-> 版本 `0.2.0`｜共 **126** 个接口 / **11** 个模块
+> 版本 `0.2.0`｜共 **122** 个接口 / **11** 个模块
 >
 > 重新生成：`cd api && .venv/Scripts/python -m cli export-openapi`
 
@@ -134,7 +134,7 @@ Authorization: Bearer <accessToken>
 |---|---|---|
 | `library:case:read` | 浏览全部模板案例（案例池） |  |
 | `library:case:write` | 上传案例 / 把素材移入案例池 |  |
-| `library:create` | 上传与封装资产 |  |
+| `library:create` | 上传资产 |  |
 | `library:delete` | 删除本人资产（移入回收站） |  |
 | `library:delete:any` | 删除 / 恢复任何人的资产 |  |
 | `library:draft:review` | 审核他人草稿 |  |
@@ -167,11 +167,8 @@ Authorization: Bearer <accessToken>
 | `40023` | 400 | identity | `TeamGrantForbidden` | 团队基础权限不能包含管理类权限或通配符 |
 | `40081` | 400 | library | `RevokeReasonRequired` | 撤销共享必须填写理由 |
 | `40082` | 400 | library | `LibraryFileTypeNotAllowed` | 支持 MP4、PNG、JPG、WebP、MP3、WAV、TXT 和 MD |
-| `40083` | 400 | library | `PackItemInvalid` | 封装里有不可用的成员 |
-| `40084` | 400 | library | `PackEmpty` | 封装至少需要一个成员 |
 | `40085` | 400 | library | `GenerationSourceInvalid` | 生成结果必须提供可读取的 storageKey 或 sourceUrl |
 | `40086` | 400 | library | `DownloadEmpty` | 选中的条目都不在可下载范围内 |
-| `40087` | 400 | library | `PackHasNoOriginal` | 封装没有单独的原文件，请使用「下载」打包其中素材 |
 | `40088` | 400 | library | `AssetNotEditable` | 回收站里的素材不能修改，请先恢复 |
 | `40089` | 400 | library | `LibraryTextInvalid` | 文本资产只支持 UTF-8 纯文本（.txt / .md），且不能为空 |
 | `40100` | 401 | 框架 | `Unauthorized` | 请先登录 |
@@ -183,7 +180,6 @@ Authorization: Bearer <accessToken>
 | `40323` | 403 | identity | `PermissionEscalation` | 不能授予自己不具备的权限 |
 | `40381` | 403 | library | `DraftReviewForbidden` | 没有审核他人草稿的权限 |
 | `40382` | 403 | library | `ShareNotOwned` | 撤销共享只能由资产所有者发起 |
-| `40383` | 403 | library | `PackMemberShareBlocked` | 封装内的素材不能单独调整共享范围 |
 | `40400` | 404 | 框架 | `NotFound` | 资源不存在 |
 | `40421` | 404 | identity | `UserNotFound` | 用户不存在 |
 | `40422` | 404 | identity | `RoleNotFound` | 角色不存在 |
@@ -232,7 +228,7 @@ Authorization: Bearer <accessToken>
 | 镜头库 | 1 | 见下方 `4.6` |
 | 系统 | 2 | 见下方 `4.7` |
 | 导出 | 6 | 见下方 `4.8` |
-| 资产库 | 46 | 见下方 `4.9` |
+| 资产库 | 42 | 见下方 `4.9` |
 | 模型驱动 | 6 | 见下方 `4.10` |
 | 模板封装 | 11 | 见下方 `4.11` |
 
@@ -1582,7 +1578,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 
 **响应** `ApiResponse<unknown>`（前端取 `res.data`）
 
-### 4.9 资产库（46 个）
+### 4.9 资产库（42 个）
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
@@ -1613,10 +1609,6 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `GET` | `/api/v1/library/facets` | 资产库分面统计 | 🔒 |
 | `GET` | `/api/v1/library/groups` | 我的小组（含是否负责人） | 🔒 |
 | `PUT` | `/api/v1/library/groups/{group_id}/leaders` | 设置小组负责人（整体替换） | 🔒 |
-| `POST` | `/api/v1/library/packs` | 建封装（成员必须是我看得见且在库的） | 🔒 |
-| `GET` | `/api/v1/library/packs/{pack_id}` | 封装详情（含成员） | 🔒 |
-| `PATCH` | `/api/v1/library/packs/{pack_id}` | 改封装：改名 / 整体替换成员 / 换封面 / 换标签 | 🔒 |
-| `DELETE` | `/api/v1/library/packs/{pack_id}` | 解散封装（进回收站，成员不受影响） | 🔒 |
 | `GET` | `/api/v1/library/selection` | 选择器：只返回库内资产 | 🔒 |
 | `POST` | `/api/v1/library/share-requests` | 发起共享 / 撤销共享申请 | 🔒 |
 | `GET` | `/api/v1/library/share-requests` | 申请单列表（我提交的 / 待我审核） | 🔒 |
@@ -1825,7 +1817,6 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `updatedAt` | `string \| null` | 否 |  |
 | `groups` | `LibraryGroupRef[]` | 否 |  |
 | `generation` | `LibraryGenerationOut \| null` | 否 |  |
-| `packItems` | `PackItemOut[]` | 否 |  |
 | `references` | `string[] \| null` | 否 |  |
 | `shareHistory` | `ShareHistoryItem[]` | 否 |  |
 | `archive` | `LibraryArchiveOut \| null` | 否 |  |
@@ -1895,7 +1886,6 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `updatedAt` | `string \| null` | 否 |  |
 | `groups` | `LibraryGroupRef[]` | 否 |  |
 | `generation` | `LibraryGenerationOut \| null` | 否 |  |
-| `packItems` | `PackItemOut[]` | 否 |  |
 | `references` | `string[] \| null` | 否 |  |
 | `shareHistory` | `ShareHistoryItem[]` | 否 |  |
 | `archive` | `LibraryArchiveOut \| null` | 否 |  |
@@ -2258,7 +2248,6 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `updatedAt` | `string \| null` | 否 |  |
 | `groups` | `LibraryGroupRef[]` | 否 |  |
 | `generation` | `LibraryGenerationOut \| null` | 否 |  |
-| `packItems` | `PackItemOut[]` | 否 |  |
 | `references` | `string[] \| null` | 否 |  |
 | `shareHistory` | `ShareHistoryItem[]` | 否 |  |
 | `archive` | `LibraryArchiveOut \| null` | 否 |  |
@@ -2317,7 +2306,6 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `updatedAt` | `string \| null` | 否 |  |
 | `groups` | `LibraryGroupRef[]` | 否 |  |
 | `generation` | `LibraryGenerationOut \| null` | 否 |  |
-| `packItems` | `PackItemOut[]` | 否 |  |
 | `references` | `string[] \| null` | 否 |  |
 | `shareHistory` | `ShareHistoryItem[]` | 否 |  |
 | `archive` | `LibraryArchiveOut \| null` | 否 |  |
@@ -2379,192 +2367,6 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 
 **响应** `ApiResponse<string[]>`（前端取 `res.data`）
 
-#### `POST /api/v1/library/packs`
-
-**建封装（成员必须是我看得见且在库的）**
-
-封装是一行 `kind=pack` 的资产行 + 有序成员，**不复制成员**。
-
-解散封装不影响任何成员；下载时封装会被展开成成员逐个进包。
-
-**请求体** `PackIn`
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `name` | `string` | 是 |  |
-| `assetIds` | `string[]` | 否 |  |
-| `items` | `PackItemIn[]` | 否 |  |
-| `coverAssetId` | `string` | 否 |  |
-| `tagIds` | `string[]` | 否 |  |
-
-**响应** `ApiResponse<LibraryAssetDetailOut>`（前端取 `res.data`）
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `id` | `string` | 是 |  |
-| `name` | `string` | 是 |  |
-| `kind` | `LibraryAssetKind` | 是 |  |
-| `purpose` | `string` | 否 |  |
-| `origin` | `string` | 是 | upload / generated / template_source / imported / pack |
-| `mimeType` | `string \| null` | 否 |  |
-| `sizeBytes` | `number` | 否 |  |
-| `durationSec` | `number \| null` | 否 |  |
-| `hasAudio` | `boolean` | 否 |  |
-| `ownerId` | `string` | 是 |  |
-| `ownerName` | `string \| null` | 否 |  |
-| `visibility` | `LibraryVisibility` | 是 |  |
-| `state` | `LibraryAssetState` | 是 |  |
-| `stateVersion` | `number` | 否 |  |
-| `coverUrl` | `string \| null` | 否 |  |
-| `url` | `string` | 否 |  |
-| `previewUrl` | `string \| null` | 否 |  |
-| `streamUrl` | `string \| null` | 否 |  |
-| `width` | `number \| null` | 否 |  |
-| `height` | `number \| null` | 否 |  |
-| `groupIds` | `string[]` | 否 |  |
-| `tags` | `LibraryTagOut[]` | 否 |  |
-| `trashReason` | `string \| null` | 否 |  |
-| `trashExpiresAt` | `string \| null` | 否 |  |
-| `textExcerpt` | `string \| null` | 否 |  |
-| `textVersion` | `number` | 否 |  |
-| `textUrl` | `string \| null` | 否 |  |
-| `createdAt` | `string` | 是 |  |
-| `updatedAt` | `string \| null` | 否 |  |
-| `groups` | `LibraryGroupRef[]` | 否 |  |
-| `generation` | `LibraryGenerationOut \| null` | 否 |  |
-| `packItems` | `PackItemOut[]` | 否 |  |
-| `references` | `string[] \| null` | 否 |  |
-| `shareHistory` | `ShareHistoryItem[]` | 否 |  |
-| `archive` | `LibraryArchiveOut \| null` | 否 |  |
-| `reviewedBy` | `string \| null` | 否 |  |
-| `reviewedAt` | `string \| null` | 否 |  |
-| `rejectReason` | `string \| null` | 否 |  |
-| `trashedFromState` | `string \| null` | 否 |  |
-
-#### `GET /api/v1/library/packs/{pack_id}`
-
-**封装详情（含成员）**
-
-| 参数 | 位置 | 类型 | 必填 | 说明 |
-|---|---|---|---|---|
-| `pack_id` | path | `string` | 是 |  |
-
-**响应** `ApiResponse<LibraryAssetDetailOut>`（前端取 `res.data`）
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `id` | `string` | 是 |  |
-| `name` | `string` | 是 |  |
-| `kind` | `LibraryAssetKind` | 是 |  |
-| `purpose` | `string` | 否 |  |
-| `origin` | `string` | 是 | upload / generated / template_source / imported / pack |
-| `mimeType` | `string \| null` | 否 |  |
-| `sizeBytes` | `number` | 否 |  |
-| `durationSec` | `number \| null` | 否 |  |
-| `hasAudio` | `boolean` | 否 |  |
-| `ownerId` | `string` | 是 |  |
-| `ownerName` | `string \| null` | 否 |  |
-| `visibility` | `LibraryVisibility` | 是 |  |
-| `state` | `LibraryAssetState` | 是 |  |
-| `stateVersion` | `number` | 否 |  |
-| `coverUrl` | `string \| null` | 否 |  |
-| `url` | `string` | 否 |  |
-| `previewUrl` | `string \| null` | 否 |  |
-| `streamUrl` | `string \| null` | 否 |  |
-| `width` | `number \| null` | 否 |  |
-| `height` | `number \| null` | 否 |  |
-| `groupIds` | `string[]` | 否 |  |
-| `tags` | `LibraryTagOut[]` | 否 |  |
-| `trashReason` | `string \| null` | 否 |  |
-| `trashExpiresAt` | `string \| null` | 否 |  |
-| `textExcerpt` | `string \| null` | 否 |  |
-| `textVersion` | `number` | 否 |  |
-| `textUrl` | `string \| null` | 否 |  |
-| `createdAt` | `string` | 是 |  |
-| `updatedAt` | `string \| null` | 否 |  |
-| `groups` | `LibraryGroupRef[]` | 否 |  |
-| `generation` | `LibraryGenerationOut \| null` | 否 |  |
-| `packItems` | `PackItemOut[]` | 否 |  |
-| `references` | `string[] \| null` | 否 |  |
-| `shareHistory` | `ShareHistoryItem[]` | 否 |  |
-| `archive` | `LibraryArchiveOut \| null` | 否 |  |
-| `reviewedBy` | `string \| null` | 否 |  |
-| `reviewedAt` | `string \| null` | 否 |  |
-| `rejectReason` | `string \| null` | 否 |  |
-| `trashedFromState` | `string \| null` | 否 |  |
-
-#### `PATCH /api/v1/library/packs/{pack_id}`
-
-**改封装：改名 / 整体替换成员 / 换封面 / 换标签**
-
-| 参数 | 位置 | 类型 | 必填 | 说明 |
-|---|---|---|---|---|
-| `pack_id` | path | `string` | 是 |  |
-
-**请求体** `PackPatchIn`
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `name` | `string \| null` | 否 |  |
-| `items` | `PackItemIn[] \| null` | 否 |  |
-| `coverAssetId` | `string \| null` | 否 |  |
-| `tagIds` | `string[] \| null` | 否 |  |
-| `expectedVersion` | `number` | 否 |  |
-
-**响应** `ApiResponse<LibraryAssetDetailOut>`（前端取 `res.data`）
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `id` | `string` | 是 |  |
-| `name` | `string` | 是 |  |
-| `kind` | `LibraryAssetKind` | 是 |  |
-| `purpose` | `string` | 否 |  |
-| `origin` | `string` | 是 | upload / generated / template_source / imported / pack |
-| `mimeType` | `string \| null` | 否 |  |
-| `sizeBytes` | `number` | 否 |  |
-| `durationSec` | `number \| null` | 否 |  |
-| `hasAudio` | `boolean` | 否 |  |
-| `ownerId` | `string` | 是 |  |
-| `ownerName` | `string \| null` | 否 |  |
-| `visibility` | `LibraryVisibility` | 是 |  |
-| `state` | `LibraryAssetState` | 是 |  |
-| `stateVersion` | `number` | 否 |  |
-| `coverUrl` | `string \| null` | 否 |  |
-| `url` | `string` | 否 |  |
-| `previewUrl` | `string \| null` | 否 |  |
-| `streamUrl` | `string \| null` | 否 |  |
-| `width` | `number \| null` | 否 |  |
-| `height` | `number \| null` | 否 |  |
-| `groupIds` | `string[]` | 否 |  |
-| `tags` | `LibraryTagOut[]` | 否 |  |
-| `trashReason` | `string \| null` | 否 |  |
-| `trashExpiresAt` | `string \| null` | 否 |  |
-| `textExcerpt` | `string \| null` | 否 |  |
-| `textVersion` | `number` | 否 |  |
-| `textUrl` | `string \| null` | 否 |  |
-| `createdAt` | `string` | 是 |  |
-| `updatedAt` | `string \| null` | 否 |  |
-| `groups` | `LibraryGroupRef[]` | 否 |  |
-| `generation` | `LibraryGenerationOut \| null` | 否 |  |
-| `packItems` | `PackItemOut[]` | 否 |  |
-| `references` | `string[] \| null` | 否 |  |
-| `shareHistory` | `ShareHistoryItem[]` | 否 |  |
-| `archive` | `LibraryArchiveOut \| null` | 否 |  |
-| `reviewedBy` | `string \| null` | 否 |  |
-| `reviewedAt` | `string \| null` | 否 |  |
-| `rejectReason` | `string \| null` | 否 |  |
-| `trashedFromState` | `string \| null` | 否 |  |
-
-#### `DELETE /api/v1/library/packs/{pack_id}`
-
-**解散封装（进回收站，成员不受影响）**
-
-| 参数 | 位置 | 类型 | 必填 | 说明 |
-|---|---|---|---|---|
-| `pack_id` | path | `string` | 是 |  |
-
-**响应** `ApiResponse<null>`（前端取 `res.data`）
-
 #### `GET /api/v1/library/selection`
 
 **选择器：只返回库内资产**
@@ -2584,7 +2386,6 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `kind` | query | `LibraryAssetKind | null` | 否 |  |
 | `tagIds` | query | `string[] | null` | 否 |  |
 | `keyword` | query | `string` | 否 |  |
-| `includePacks` | query | `boolean` | 否 |  |
 | `origin` | query | `LibraryAssetOrigin[] | null` | 否 |  |
 | `library` | query | `LibraryTab` | 否 |  |
 | `page` | query | `number` | 否 | 页码，从 1 开始 |
@@ -2961,7 +2762,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 
 **彻底删除（不可逆，先过引用检查）**
 
-被封装 / 下载任务引用时返回 409 `TRASH_ENTRY_REFERENCED` 并列出引用方。
+被下载任务引用时返回 409 `TRASH_ENTRY_REFERENCED` 并列出引用方。
 
 不做批量彻底删除：不可逆的动作用「勾选十条点一下」来触发太危险。
 
@@ -3014,7 +2815,6 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `updatedAt` | `string \| null` | 否 |  |
 | `groups` | `LibraryGroupRef[]` | 否 |  |
 | `generation` | `LibraryGenerationOut \| null` | 否 |  |
-| `packItems` | `PackItemOut[]` | 否 |  |
 | `references` | `string[] \| null` | 否 |  |
 | `shareHistory` | `ShareHistoryItem[]` | 否 |  |
 | `archive` | `LibraryArchiveOut \| null` | 否 |  |
@@ -3464,7 +3264,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 
 ### `BulkAction`（枚举）
 
-取值：`addTag`、`removeTag`、`rename`、`delete`、`restore`、`approveDraft`、`rejectDraft`、`requestRevoke`、`pack`
+取值：`addTag`、`removeTag`、`rename`、`delete`、`restore`、`approveDraft`、`rejectDraft`、`requestRevoke`
 
 ### `BulkIn`
 
@@ -3988,7 +3788,6 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `updatedAt` | `string \| null` | 否 |  |
 | `groups` | `LibraryGroupRef[]` | 否 |  |
 | `generation` | `LibraryGenerationOut \| null` | 否 |  |
-| `packItems` | `PackItemOut[]` | 否 |  |
 | `references` | `string[] \| null` | 否 |  |
 | `shareHistory` | `ShareHistoryItem[]` | 否 |  |
 | `archive` | `LibraryArchiveOut \| null` | 否 |  |
@@ -3999,11 +3798,11 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 
 ### `LibraryAssetKind`（枚举）
 
-取值：`video`、`audio`、`image`、`pack`、`text`
+取值：`video`、`audio`、`image`、`text`
 
 ### `LibraryAssetOrigin`（枚举）
 
-取值：`upload`、`generated`、`template_source`、`imported`、`pack`
+取值：`upload`、`generated`、`template_source`、`imported`
 
 ### `LibraryAssetOut`
 
@@ -4235,60 +4034,6 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `createdAt` | `string` | 是 | 创建时间（UTC） |
 | `roles` | `RoleBriefOut[]` | 否 | 拥有的角色 |
 | `permissions` | `string[]` | 否 | 展开后的权限码；含 `*` 表示超级管理员 |
-
-### `PackIn`
-
-建封装。
-
-`items` 是**唯一有序来源**；`assetIds` 只是给「勾选一批直接封装」用的简写，
-会被追加到 `items` 之后（已在 items 里的不重复加）。两者都空 → 400。
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `name` | `string` | 是 |  |
-| `assetIds` | `string[]` | 否 |  |
-| `items` | `PackItemIn[]` | 否 |  |
-| `coverAssetId` | `string` | 否 |  |
-| `tagIds` | `string[]` | 否 |  |
-
-### `PackItemIn`
-
-封装成员。`role` 预留给模板替换（产品主图 / 多视结构图…），首版可为空。
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `assetId` | `string` | 是 |  |
-| `role` | `string` | 否 |  |
-| `description` | `string` | 否 |  |
-
-### `PackItemOut`
-
-封装里的一项。成员可能是别人共享给我的素材，所以带 `state` 与 `coverUrl`。
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `assetId` | `string` | 是 |  |
-| `name` | `string` | 否 |  |
-| `kind` | `LibraryAssetKind` | 是 |  |
-| `state` | `LibraryAssetState` | 是 |  |
-| `position` | `number` | 是 |  |
-| `role` | `string` | 否 |  |
-| `description` | `string` | 否 |  |
-| `sizeBytes` | `number` | 否 |  |
-| `coverUrl` | `string \| null` | 否 |  |
-
-### `PackPatchIn`
-
-改封装。`items` 提供即**整体替换**（不是增量追加）——增量语义要前端自己
-算差集，而算错了就是悄悄多一个成员，不如让调用方给全量。
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `name` | `string \| null` | 否 |  |
-| `items` | `PackItemIn[] \| null` | 否 |  |
-| `coverAssetId` | `string \| null` | 否 |  |
-| `tagIds` | `string[] \| null` | 否 |  |
-| `expectedVersion` | `number` | 否 |  |
 
 ### `PasswordChangeIn`
 
@@ -4571,8 +4316,7 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 
 填表结果：`{slotKey: [assetId…]}`。
 
-`source=pack` 的槽位传一个封装 id；`source=asset` 的槽位按用户挑选顺序传。
-`version` 为空表示用当前发布版本。
+槽位按用户挑选顺序传素材 id。`version` 为空表示用当前发布版本。
 
 **没有 `promptOverride`**（2026-11-14 起）：模板库不改文字。需要可变内容的地方
 在模板里放 `text` 槽位 —— 填表时选一份文案，`compile` 把它排在 `{{Text N}}`
@@ -4615,7 +4359,7 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `key` | `string` | 是 |  |
-| `type` | `"image" \| "video" \| "audio" \| "text" \| "pack"` | 是 |  |
+| `type` | `"image" \| "video" \| "audio" \| "text"` | 是 |  |
 | `binding` | `"fixed" \| "user"` | 否 |  |
 | `refMode` | `"mixed" \| "attachment"` | 否 |  |
 | `minCount` | `number` | 否 |  |
@@ -4623,7 +4367,6 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `label` | `string` | 否 |  |
 | `usage` | `string` | 否 |  |
 | `assetId` | `string \| null` | 否 |  |
-| `packId` | `string \| null` | 否 |  |
 | `tagId` | `string` | 否 |  |
 | `position` | `number` | 否 |  |
 
@@ -4634,7 +4377,7 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `key` | `string` | 是 |  |
-| `type` | `"image" \| "video" \| "audio" \| "text" \| "pack"` | 是 |  |
+| `type` | `"image" \| "video" \| "audio" \| "text"` | 是 |  |
 | `binding` | `"fixed" \| "user"` | 否 |  |
 | `refMode` | `"mixed" \| "attachment"` | 否 |  |
 | `minCount` | `number` | 否 |  |
@@ -4642,7 +4385,6 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `label` | `string` | 否 |  |
 | `usage` | `string` | 否 |  |
 | `assetId` | `string \| null` | 否 |  |
-| `packId` | `string \| null` | 否 |  |
 | `tagId` | `string` | 否 |  |
 | `position` | `number` | 否 |  |
 

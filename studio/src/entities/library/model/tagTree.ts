@@ -21,7 +21,7 @@ export function isTopLevel(tag: AnyTag): boolean {
 /**
  * 能直接打在素材上的是**叶子**：有子标签的一级只做分组。
  *
- * 刻意不写成「一级都不能打」：存量里「音乐」「AI生成」「封装」这些孤立一级
+ * 刻意不写成「一级都不能打」：存量里「音乐」「AI生成」这些孤立一级
  * 没有子标签，拦掉它们会让几个正在用的词一夜之间变成看得见却选不了的死词。
  */
 export function isSelectable(tag: LibraryTagStatOut): boolean {

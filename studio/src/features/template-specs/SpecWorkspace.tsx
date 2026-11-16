@@ -15,7 +15,7 @@ import {
 } from '@/entities/model/lib/paramForm';
 import { libraryApi } from '@/entities/library/api/library.api';
 import { useLibraryDetail, useLibraryTags } from '@/entities/library/api/library.queries';
-import { KIND_OPTIONS, viewQuery } from '@/entities/library/model/types';
+import { viewQuery } from '@/entities/library/model/types';
 import { CaseCover } from '@/entities/library/ui/CaseCover';
 import { AssetPreview } from '@/entities/library/ui/AssetPreview';
 import {
@@ -43,6 +43,7 @@ import { SlotCard } from '@/features/template-specs/SlotCard';
 import {
   MAX_PROMPT,
   SLOT_TYPE_LABELS,
+  SLOT_TYPES,
   blankSlot,
   blankSpec,
   dropUserSelectableParams,
@@ -50,13 +51,18 @@ import {
   normalize,
   referenceChips,
   rekeySlot,
+  slotTypeOf,
   slotsMissingTag,
   stripSlotRefs,
+  type SlotType,
 } from './specDraft';
 
-/* 类型 = **资产库的 kind**：槽位要什么，就是库里有的那几类（图片 / 成片 / 音频 /
-   文本 / 封装）。不另写一份本地词表 —— 库里多一类，这里就多一档。 */
-const TYPE_OPTIONS = KIND_OPTIONS.filter(item => item.value !== 'all');
+/* 槽位类型 = 产品定的四种（图片 / 成片 / 音频 / 文本）。取值不跟着资产库走 ——
+   库里多一类，槽位不该自己多出一档；展示名仍取自资产库的 kind 词表。 */
+const TYPE_OPTIONS = SLOT_TYPES.map(type => ({
+  value: type,
+  label: SLOT_TYPE_LABELS[type],
+}));
 
 /** 一级标签的「不限」哨兵：空串表示候选集不收窄。 */
 const TAG_ANY = '';
@@ -203,22 +209,14 @@ export function SpecWorkspace() {
     const next = {...nextSlots[index], ...patch};
     // 音频/文本一律是附加输入：类型一改就同步，别让用户先撞一次 400 再回来改。
     if (next.type === 'audio' || next.type === 'text') next.refMode = 'attachment';
-    if (next.type === 'image' || next.type === 'video' || next.type === 'pack') {
+    if (next.type === 'image' || next.type === 'video') {
       next.refMode = 'mixed';
-    }
-    // 封装槽位：成员与顺序由资产库决定，所以数量恒为 1/1、不能绑单个素材。
-    if (next.type === 'pack') {
-      next.assetId = null;
-      next.minCount = 1;
-      next.maxCount = 1;
-    } else {
-      next.packId = null;
     }
     nextSlots[index] = next;
     // 改类型时跟着改名（只在提示词没引用过时；引用过就留着，别让引用静默失效）。
     const rekeyed =
       patch.type !== undefined
-        ? rekeySlot(nextSlots, index, next.type, draft.prompt ?? '')
+        ? rekeySlot(nextSlots, index, slotTypeOf(next.type), draft.prompt ?? '')
         : nextSlots;
     setDraft({...draft, slots: rekeyed});
   };
@@ -231,7 +229,7 @@ export function SpecWorkspace() {
     setDraft({...draft, slots: next.map((slot, index) => ({...slot, position: index}))});
   };
 
-  const addSlot = (type: SpecSlotIn['type'] = 'image') => {
+  const addSlot = (type: SlotType = 'image') => {
     if (!draft) return;
     const slot = blankSlot(slots.length, type, slots);
     setDraft({...draft, slots: [...slots, slot]});
@@ -249,20 +247,10 @@ export function SpecWorkspace() {
     }
     const id = picker.index;
     const slot = slots[id];
-    patchSlot(
-      id,
-      slot.type === 'pack'
-        ? {
-            packId: asset.id,
-            assetId: null,
-            label: slot.label?.trim() ? slot.label : asset.name,
-          }
-        : {
-            assetId: asset.id,
-            packId: null,
-            label: slot.label?.trim() ? slot.label : asset.name,
-          },
-    );
+    patchSlot(id, {
+      assetId: asset.id,
+      label: slot.label?.trim() ? slot.label : asset.name,
+    });
     setPicker(null);
   };
 
@@ -523,7 +511,7 @@ export function SpecWorkspace() {
                  和槽位卡片里的「类型」下拉同源（曾经这里写死四个按钮）。 */
               <AddSlotMenu
                 options={TYPE_OPTIONS}
-                onAdd={type => addSlot(type as SpecSlotIn['type'])}
+                onAdd={type => addSlot(slotTypeOf(type))}
               />
             }
           >
@@ -557,7 +545,7 @@ export function SpecWorkspace() {
                   }}
                   onPatch={patch => patchSlot(index, patch)}
                   onDelete={() => {
-                    const name = slot.label?.trim() || SLOT_TYPE_LABELS[slot.type];
+                    const name = slot.label?.trim() || SLOT_TYPE_LABELS[slotTypeOf(slot.type)];
                     // 引用留着的下场是「点生成才报引用了不存在的槽位」，
                     // 那句话看不出是刚才删槽位删出来的，所以一并清掉并告知条数。
                     const stripped = stripSlotRefs(draft.prompt ?? '', slot.key);
@@ -619,7 +607,7 @@ export function SpecWorkspace() {
                     <span
                       className={cn('size-1.5 shrink-0 rounded-full', fixed ? 'bg-ok' : 'bg-primary')}
                     />
-                    {slot.label?.trim() || `${SLOT_TYPE_LABELS[slot.type]} ${index + 1}`}
+                    {slot.label?.trim() || `${SLOT_TYPE_LABELS[slotTypeOf(slot.type)]} ${index + 1}`}
                     <span className="text-micro text-ink-mute">
                       {fixed ? '已固定' : '用户填写'}
                     </span>
@@ -665,7 +653,11 @@ export function SpecWorkspace() {
 
       <AssetPicker
         open={picker !== null}
-        kind={picker?.target === 'demo' ? picker.kind : pickerSlot?.type ?? 'image'}
+        kind={
+          picker?.target === 'demo'
+            ? picker.kind
+            : slotTypeOf(pickerSlot?.type ?? 'image')
+        }
         /* 一级标签是槽位的候选集范围：封装页挑固定素材时也要收窄，
            否则作者能选到模板使用者那边根本看不到的东西。 */
         tagIds={picker?.target === 'slot' && pickerSlot?.tagId ? [pickerSlot.tagId] : []}

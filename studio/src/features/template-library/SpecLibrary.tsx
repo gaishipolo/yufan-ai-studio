@@ -4,7 +4,6 @@ import { ArrowRight, Play, Plus } from 'lucide-react';
 import { KIND_LABEL } from '@/entities/library/model/types';
 import { AssetChip } from '@/entities/library/ui/AssetChip';
 import { CaseCover } from '@/entities/library/ui/CaseCover';
-import { PackChip } from '@/entities/library/ui/PackChip';
 import { SlotMediaPicker } from './SlotMediaPicker';
 import { useGenerateImage } from '@/entities/image/api/image.api';
 import { useModels } from '@/entities/model/api/model.queries';
@@ -18,6 +17,7 @@ import { useCreateTask } from '@/entities/task/api/task.queries';
 import { usePublishedSpecs, useSpecCompile } from '@/entities/template-spec/api/spec.queries';
 import type { SpecSlotOut, TemplateSpecOut } from '@/shared/api/schema';
 import { AssetPicker, type PickedAsset } from '@/features/template-specs/AssetPicker';
+import { slotTypeOf } from '@/features/template-specs/specDraft';
 import { ParamFields } from '@/entities/model/ui/ParamFields';
 import { Button, Chip, EmptyState, SearchInput, Skeleton } from '@/shared/ui';
 import { cn } from '@/shared/lib/cn';
@@ -36,20 +36,20 @@ import { toSubmitPayload, type SubmitKind } from './taskPayload';
  */
 
 /* 类型名与卡片上的类型标签同源：都是资产库的 kind。别再写一份本地表 ——
-   漏掉 `pack` 时页面上会直接印出英文 `pack`（真机截到过）。 */
+   漏掉一项时页面上会直接印出英文（真机截到过）。 */
 const TYPE_LABEL: Record<string, string> = KIND_LABEL;
 
 function slotsOf(spec: TemplateSpecOut | undefined): SpecSlotOut[] {
   return spec?.latest?.slots ?? [];
 }
 
-/** 封装槽位的条数由成员数决定（1/1 是占位），所以上下限一律按 1 算。 */
+/** 槽位要几张：作者写死的上下限，没写就按 1 张。 */
 function minOf(slot: SpecSlotOut): number {
-  return slot.type === 'pack' ? 1 : (slot.minCount ?? 1);
+  return slot.minCount ?? 1;
 }
 
 function maxOf(slot: SpecSlotOut): number {
-  return slot.type === 'pack' ? 1 : (slot.maxCount ?? 1);
+  return slot.maxCount ?? 1;
 }
 
 /**
@@ -505,27 +505,20 @@ export function SpecLibrary() {
                           </div>
 
                           <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
-                            {slot.type === 'pack' && filled[0] && (
-                              <PackChip
-                                packId={filled[0]}
-                                onRemove={() => setValues(current => ({...current, [slot.key]: []}))}
+                            {filled.map(assetId => (
+                              <AssetChip
+                                key={assetId}
+                                assetId={assetId}
+                                onRemove={() =>
+                                  setValues(current => ({
+                                    ...current,
+                                    [slot.key]: (current[slot.key] ?? []).filter(
+                                      id => id !== assetId,
+                                    ),
+                                  }))
+                                }
                               />
-                            )}
-                            {slot.type !== 'pack' &&
-                              filled.map(assetId => (
-                                <AssetChip
-                                  key={assetId}
-                                  assetId={assetId}
-                                  onRemove={() =>
-                                    setValues(current => ({
-                                      ...current,
-                                      [slot.key]: (current[slot.key] ?? []).filter(
-                                        id => id !== assetId,
-                                      ),
-                                    }))
-                                  }
-                                />
-                              ))}
+                            ))}
                             <button
                               type="button"
                               onClick={() => setPicker(slot.key)}
@@ -534,7 +527,7 @@ export function SpecLibrary() {
                               <Plus size={11} />
                               {filled.length > 0
                                 ? '再选'
-                                : `选择${slot.type === 'pack' ? '封装' : (TYPE_LABEL[slot.type] ?? '素材')}`}
+                                : `选择${TYPE_LABEL[slot.type] ?? '素材'}`}
                             </button>
                           </div>
                         </div>
@@ -636,7 +629,7 @@ export function SpecLibrary() {
 
       <AssetPicker
         open={picker !== null}
-        kind={pickerSlot?.type ?? 'image'}
+        kind={slotTypeOf(pickerSlot?.type ?? 'image')}
         /* 槽位的一级标签决定候选集：这里与封装页的固定选择器看的是同一批素材。 */
         tagIds={pickerSlot?.tagId ? [pickerSlot.tagId] : []}
         selected={pickerSlot ? (values[pickerSlot.key] ?? []) : []}

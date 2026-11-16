@@ -14,9 +14,8 @@ import type {
  * 页面里不许自己拼 `state`，否则「草稿箱里出现小组资产」这类错会散落各处。
  *
  * `all` 不是「三份列表拼起来」，而是后端的全量可见集：本人未共享的 +
- * 共享到我所在小组的 + 团队的，同一个素材只出现一次；装进可见封装的成员
- * 也不单列。所以角标 `all` 可能小于三个入口角标之和（跨入口的封装成员会
- * 在各自的入口里出现一次），这不是漏数据。
+ * 共享到我所在小组的 + 团队的，同一个素材只出现一次。所以角标 `all` 可能
+ * 小于三个入口角标之和（跨入口的素材会在各自的入口里出现一次），这不是漏数据。
  */
 export type LibraryView = 'all' | 'personal' | 'group' | 'team' | 'cases' | 'drafts' | 'trash';
 
@@ -102,31 +101,20 @@ export function viewQuery(view: LibraryView): {
 }
 
 /**
- * 这个视图里能不能出现「上传 / 封装」主按钮。
+ * 这个视图里能不能出现「上传 / 新建文本」主按钮。
  *
- * 上传写的是**个人库**、封装选择器的可见集一直是全量，两者都与「当前在看哪
- * 个入口」无关；默认 landing 在「全部素材」，按钮藏起来只会让人以为不能上传。
- * 草稿箱来自生成入库、回收站里的东西不该再被建封装，这两个仍不显示。
+ * 上传写的是**个人库**，与「当前在看哪个入口」无关；默认 landing 在「全部素材」，
+ * 按钮藏起来只会让人以为不能上传。草稿箱来自生成入库、回收站里的东西不该再
+ * 新建成素材，这两个仍不显示。
  */
 export function viewAllowsCreate(view: LibraryView): boolean {
   return view === 'all' || view === 'personal';
 }
 
 /**
- * 二级类型筛选。
+ * 二级类型筛选：与后端 `kind` 逐项对齐。
  *
- * **刻意不含「封装」**：封装是容器，不是第四种素材。把它摆在这一排，会让人
- * 以为它是和「成片 / 图片 / 音频」并列的类型；而且封装创建后自动带上「封装」
- * 标签，按标签筛已经能找全，多一个入口只会两处口径。
- */
-/**
- * 类型筛选。**封装也是这一档里的一项**（2026-11-14）。
- *
- * 它曾被排除在外，改由创建时自动打的「封装」标签代替（理由：「封装是个容器，
- * 和成片并列看起来像第四种素材」）。代价是那个标签可被用户×掉 —— × 完这个
- * 封装在图片/视频/音频/文本里全都筛不到，只剩「全部」能翻到，而它正是那些
- * 素材唯一的容器。**状态不能写在可编辑的词表里**：`kind` 是行的事实，标签是
- * 用户的词。现在这五档相加正好等于「全部」。
+ * 枚举是封闭的：多一档前端点得到、后端不认；少一档用户想筛却没有入口。
  */
 export const KIND_OPTIONS: ReadonlyArray<{ value: KindFilter; label: string }> = [
   { value: 'all', label: '全部' },
@@ -134,7 +122,6 @@ export const KIND_OPTIONS: ReadonlyArray<{ value: KindFilter; label: string }> =
   { value: 'image', label: '图片' },
   { value: 'audio', label: '音频' },
   { value: 'text', label: '文本' },
-  { value: 'pack', label: '封装' },
 ];
 
 export const SORT_OPTIONS: ReadonlyArray<{ value: LibrarySortKey; label: string }> = [
@@ -144,11 +131,17 @@ export const SORT_OPTIONS: ReadonlyArray<{ value: LibrarySortKey; label: string 
   { value: '-sizeBytes', label: '体积从大到小' },
 ];
 
-export const KIND_LABEL: Record<LibraryAssetKind, string> = {
+/**
+ * 类型 → 中文名。
+ *
+ * 后端的 `kind` 枚举里暂时还留着已下线的 `pack`，所以这里按字符串索引而不是
+ * 收窄成枚举：词表里没有的类型（今天只剩历史的 `pack`）查出来是空串，渲染上
+ * 自然等于「不显示」，不必再为它单开一个字形。
+ */
+export const KIND_LABEL: Record<string, string> = {
   video: '成片',
   audio: '音频',
   image: '图片',
-  pack: '封装',
   text: '文本',
 };
 
@@ -157,7 +150,6 @@ export const ORIGIN_LABEL: Record<string, string> = {
   generated: 'AI 生成',
   template_source: '模板原片',
   imported: '导入',
-  pack: '封装',
 };
 
 export const STATE_LABEL: Record<LibraryAssetState, string> = {

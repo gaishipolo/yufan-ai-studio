@@ -116,69 +116,6 @@ def test_short_fill_shifts_later_numbers() -> None:
     assert out.prompt == "{{Mixed 2}}  {{Mixed 3}}"
 
 
-def test_pack_slot_keeps_library_order_and_never_reorders() -> None:
-    """封装成员顺序由资产库的 position 给定，编译不得重排。"""
-    spec = _spec(
-        _source(),
-        InputSlot(
-            key="detail",
-            # 「要一整个封装」就是 type=pack，不再是单独的 source 轴。
-            type="pack",
-            binding="user",
-            position=1,
-            label="细节封装",
-        ),
-        editable="{{slot:detail*}}",
-    )
-    # 故意给一个"倒序 id"：若编译按 id 排序就会失败。
-    fills = {
-        "source": FilledSlot("source", (VIDEO,)),
-        "detail": FilledSlot(
-            "detail",
-            (FilledAsset("z-third", "image"), FilledAsset("a-first", "image")),
-            pack_id="pack-1",
-            pack_name="6036 三视图",
-        ),
-    }
-    out = compile_spec(spec, fills)
-    assert out.prompt == "{{Mixed 2}}、{{Mixed 3}}"
-    assert out.reference_ids == ("v-src", "z-third", "a-first")
-
-
-def test_fixed_pack_cannot_be_swapped() -> None:
-    spec = _spec(
-        InputSlot(
-            key="detail", type="pack", binding="fixed",
-            pack_id="pack-1", position=0, label="细节封装",
-        ),
-        editable="{{slot:detail*}}",
-    )
-    with pytest.raises(BadRequest, match="已固定为封装"):
-        compile_spec(spec, {"detail": FilledSlot("detail", (DETAIL_1,), pack_id="pack-2")})
-
-
-def test_pack_slot_must_take_part_in_numbering() -> None:
-    """封装槽位必须 `refMode=mixed`：成员要占 `{{Mixed N}}`。
-
-    标成 attachment 的话，这一组既被算进 `reference_ids` 又拿不到编号 ——
-    提示词里引不到它，用户会以为模板把封装吞了。
-    """
-    with pytest.raises(BadRequest, match="必须参与编号"):
-        validate_spec(
-            _spec(
-                InputSlot(
-                    key="views",
-                    type="pack",
-                    binding="user",
-                    ref_mode="attachment",
-                    position=0,
-                    label="三视图",
-                ),
-                editable="{{slot:views*}}",
-            )
-        )
-
-
 def test_text_slot_gets_its_own_number_space() -> None:
     """文本槽位**不占 Mixed 编号**，但有独立的 `{{Text N}}` 编号。
 

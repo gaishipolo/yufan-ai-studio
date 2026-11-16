@@ -1,4 +1,4 @@
-import { FileText, Film, Image as ImageIcon, Music, Package } from 'lucide-react';
+import { FileText, Film, Image as ImageIcon, Music } from 'lucide-react';
 import type { SlotType } from './specDraft';
 
 /**
@@ -16,7 +16,6 @@ export const SLOT_TYPE_ICONS = {
   image: ImageIcon,
   audio: Music,
   text: FileText,
-  pack: Package,
 } as const;
 
 export type SlotTypeIcon = (typeof SLOT_TYPE_ICONS)[SlotType];

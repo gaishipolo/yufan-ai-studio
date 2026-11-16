@@ -9,7 +9,7 @@
 只有真的发一次请求才会发现。
 
 M2 交付：三层可见集、共享与撤销审批、删除矩阵（含 §3.4.1 窄口）、草稿与回收站、
-标签、批量写、选择器。封装与批量下载在 M3。
+标签、批量写、选择器、批量下载。
 """
 
 from __future__ import annotations
@@ -42,7 +42,6 @@ from modules.library.dependencies import (
     LibraryTagManageDep,
     LibraryUpdateDep,
     LifecycleServiceDep,
-    PackServiceDep,
     ShareServiceDep,
     TagServiceDep,
     TextServiceDep,
@@ -68,8 +67,6 @@ from modules.library.schema import (
     LibraryTab,
     LibraryTagOut,
     LibraryTagStatOut,
-    PackIn,
-    PackPatchIn,
     SetPurposeIn,
     ShareDecisionIn,
     ShareRequestIn,
@@ -165,7 +162,6 @@ async def selection(
     kind: LibraryAssetKind | None = None,
     tag_ids: Annotated[list[str] | None, Query(alias="tagIds")] = None,
     keyword: str = Query(default="", max_length=100),
-    include_packs: Annotated[bool, Query(alias="includePacks")] = True,
     origin: Annotated[list[LibraryAssetOrigin] | None, Query()] = None,
     library: LibraryTab = LibraryTab.ALL,
 ) -> ApiResponse[LibrarySelectionPage]:
@@ -190,12 +186,6 @@ async def selection(
         # 模板库切换后靠 `origin` 只挑原片视频；与列表用同一组枚举值，
         # 免得两处各写一份字符串字面量、改一处漏一处。
         origins=[item.value for item in origin] if origin else [],
-        # 选择器要能挑到封装里的原素材：封装的成员在这里不隐藏（列表里隐藏是
-        # 为了「封装后只剩一条」，选择器恰恰相反，挑的是要用的那条素材）。
-        hide_packed_members=False,
-        # 排除封装要落在 SQL 里：这里再 `items = [x for x ...]` 滤一遍的话，
-        # `total` 仍是含封装的数，前端算出多一页。
-        exclude_kinds=() if include_packs else ("pack",),
     )
     return ApiResponse.ok(
         LibrarySelectionPage(
@@ -591,63 +581,11 @@ async def restore_asset(
 async def purge_asset(
     asset_id: str, actor: LibraryDeleteDep, service: LifecycleServiceDep
 ) -> ApiResponse[None]:
-    """被封装 / 下载任务引用时返回 409 `TRASH_ENTRY_REFERENCED` 并列出引用方。
+    """被下载任务引用时返回 409 `TRASH_ENTRY_REFERENCED` 并列出引用方。
 
     不做批量彻底删除：不可逆的动作用「勾选十条点一下」来触发太危险。
     """
     await service.purge(asset_id, actor)
-    return ApiResponse.ok(None)
-
-
-# --------------------------------------------------------------------------- #
-# 封装
-# --------------------------------------------------------------------------- #
-@router.post(
-    "/packs",
-    status_code=status.HTTP_201_CREATED,
-    summary="建封装（成员必须是我看得见且在库的）",
-    dependencies=[Depends(rate_limit("library.pack", limit=30))],
-)
-async def create_pack(
-    payload: PackIn, actor: LibraryCreateDep, service: PackServiceDep
-) -> ApiResponse[LibraryAssetDetailOut]:
-    """封装是一行 `kind=pack` 的资产行 + 有序成员，**不复制成员**。
-
-    解散封装不影响任何成员；下载时封装会被展开成成员逐个进包。
-    """
-    return ApiResponse.ok(await service.create(payload, actor))
-
-
-@router.get("/packs/{pack_id}", summary="封装详情（含成员）")
-async def pack_detail(
-    pack_id: str, actor: LibraryReadDep, service: LibraryServiceDep
-) -> ApiResponse[LibraryAssetDetailOut]:
-    return ApiResponse.ok(await service.detail(pack_id, actor))
-
-
-@router.patch(
-    "/packs/{pack_id}",
-    summary="改封装：改名 / 整体替换成员 / 换封面 / 换标签",
-    dependencies=[Depends(rate_limit("library.pack", limit=30))],
-)
-async def patch_pack(
-    pack_id: str,
-    payload: PackPatchIn,
-    actor: LibraryUpdateDep,
-    service: PackServiceDep,
-) -> ApiResponse[LibraryAssetDetailOut]:
-    return ApiResponse.ok(await service.update(pack_id, payload, actor))
-
-
-@router.delete(
-    "/packs/{pack_id}",
-    summary="解散封装（进回收站，成员不受影响）",
-    dependencies=[Depends(rate_limit("library.pack", limit=30))],
-)
-async def delete_pack(
-    pack_id: str, actor: LibraryDeleteDep, service: PackServiceDep
-) -> ApiResponse[None]:
-    await service.delete(pack_id, actor)
     return ApiResponse.ok(None)
 
 

@@ -36,7 +36,6 @@ import { LibraryConfirmModal } from './LibraryConfirmModal';
 import { LibraryDetail } from './LibraryDetail';
 import { LibraryDownloadsModal } from './LibraryDownloadsModal';
 import { LibraryGrid, LibrarySelectAll } from './LibraryGrid';
-import { LibraryPackModal } from './LibraryPackModal';
 import { LibraryShareModal } from './LibraryShareModal';
 import { LibraryTagBar } from './LibraryTagBar';
 import { LibraryTagManager } from './LibraryTagManager';
@@ -52,7 +51,7 @@ const PAGE_SIZE = 24;
 /* URL 里的 `kind` 白名单。**必须与 `KIND_OPTIONS` 逐项对齐**：漏一项，点它就
    把 `?kind=…` 写进 URL 又被判回 `all`，筛选看似点了却没生效。
    历史上漏过两次（`text`、`pack`），所以这里的注释比代码长。 */
-const KINDS = new Set(['all', 'video', 'image', 'audio', 'text', 'pack']);
+const KINDS = new Set(['all', 'video', 'image', 'audio', 'text']);
 const SORTS = new Set(['-createdAt', 'createdAt', 'name', '-sizeBytes']);
 
 interface ConfirmState {
@@ -131,10 +130,6 @@ export function LibraryWorkspace() {
   const [detailId, setDetailId] = useState<string | null>(null);
   const [uploadOpen, setUploadOpen] = useState(false);
   const [textModalOpen, setTextModalOpen] = useState(false);
-  const [pack, setPack] = useState<{ open: boolean; preselected: string[] }>({
-    open: false,
-    preselected: [],
-  });
   const [share, setShare] = useState<{ asset: LibraryAssetOut; mode: 'share' | 'revoke' } | null>(
     null,
   );
@@ -164,7 +159,7 @@ export function LibraryWorkspace() {
   }
 
   function changeView(next: LibraryView) {
-    /* 切入口时清掉筛选与选择：留着 kind=pack 进草稿箱只会看到空列表 */
+    /* 切入口时清掉筛选与选择：留着 kind 进草稿箱只会看到空列表 */
     setSelected(new Set());
     update({ view: next, kind: null, tags: null, q: null, page: null });
   }
@@ -231,7 +226,7 @@ export function LibraryWorkspace() {
       title: force ? '强制移入回收站' : '移入回收站',
       description: force
         ? `「${displayName(asset.name)}」属于 ${asset.ownerName || asset.ownerId}。强制删除会同时补一张自审的撤销共享单，理由会进审计。`
-        : `「${displayName(asset.name)}」会进入回收站，30 天内可以恢复；被封装或任务引用时不能彻底删除。`,
+        : `「${displayName(asset.name)}」会进入回收站，30 天内可以恢复；被任务引用时不能彻底删除。`,
       confirmLabel: '移入回收站',
       danger: true,
       requireReason: force,
@@ -291,7 +286,7 @@ export function LibraryWorkspace() {
   function askPurge(asset: LibraryAssetOut) {
     setConfirm({
       title: '彻底删除',
-      description: `「${displayName(asset.name)}」的字节会被永久删除，**不可恢复**。被模板 / 任务 / 封装引用时后端会拒绝并列出引用方。`,
+      description: `「${displayName(asset.name)}」的字节会被永久删除，**不可恢复**。被模板 / 任务引用时后端会拒绝并列出引用方。`,
       confirmLabel: '彻底删除',
       danger: true,
       onConfirm: () => {
@@ -376,27 +371,6 @@ export function LibraryWorkspace() {
         });
         return;
       case 'download':
-        /* 封装没有自己的字节，单条取件接口只会回 404（后端现在改报 400 并
-           说明理由）。用户点「下载封装」想要的是里面那些素材，所以走打包：
-           服务端展开成员、压成一个 zip，和批量下载是同一条通路。 */
-        if (asset.kind === 'pack') {
-          createDownload.mutate(
-            { ids: [asset.id] },
-            {
-              onSuccess: (job) => {
-                const skipped = job.skipped?.length ?? 0;
-                setDownloadsOpen(true);
-                toast(
-                  skipped
-                    ? `已创建打包任务，${skipped} 项被跳过`
-                    : '已创建打包任务，完成后在「下载」里取件',
-                );
-              },
-              onError: fail,
-            },
-          );
-          return;
-        }
         saveFile.mutate(
           { id: asset.id, filename: asset.name },
           { onSuccess: () => toast('已开始下载'), onError: fail },
@@ -430,10 +404,6 @@ export function LibraryWorkspace() {
           onError,
         },
       );
-      return;
-    }
-    if (kindOfAction === 'pack') {
-      setPack({ open: true, preselected: ids });
       return;
     }
     if (kindOfAction === 'reject') {
@@ -533,7 +503,6 @@ export function LibraryWorkspace() {
           onSort={(next) => update({ sort: next, page: null })}
           onUpload={() => setUploadOpen(true)}
           onNewText={() => setTextModalOpen(true)}
-          onPack={() => setPack({ open: true, preselected: [...selected] })}
           onRequests={() => setRequestsOpen(true)}
         />
 
@@ -608,7 +577,6 @@ export function LibraryWorkspace() {
           if (action === 'open') setDetailId(asset.id);
           else onAction(action, asset);
         }}
-        onOpenAsset={setDetailId}
       />
 
       <LibraryUploadModal open={uploadOpen} tags={tags.data ?? []} onClose={() => setUploadOpen(false)} />
@@ -635,16 +603,6 @@ export function LibraryWorkspace() {
           onClose={() => setTagManagerOpen(false)}
         />
       )}
-
-      <LibraryPackModal
-        open={pack.open}
-        preselected={pack.preselected}
-        onClose={() => setPack({ open: false, preselected: [] })}
-        onCreated={(id) => {
-          setSelected(new Set());
-          setDetailId(id);
-        }}
-      />
 
       <LibraryShareModal
         asset={share?.asset ?? null}

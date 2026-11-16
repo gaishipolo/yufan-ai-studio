@@ -90,27 +90,6 @@ def _validate_slot(slot: InputSlot) -> None:
     if slot.type == "text" and slot.ref_mode != "attachment":
         raise BadRequest(f"文本槽位「{slot.key}」必须是附加输入（refMode=attachment）")
 
-    if slot.is_pack:
-        # 封装槽位：成员与顺序都由资产库决定，所以数量恒为 1/1、不能预置单个资产。
-        # `ref_mode` 必须是 mixed —— 成员会展开成 `{{Mixed N}}`，标成 attachment
-        # 会让整组成员既占位又不参与编号。
-        if slot.ref_mode != "mixed":
-            raise BadRequest(
-                f"封装槽位「{slot.key}」必须参与编号（refMode=mixed）：成员要占 {{Mixed N}}"
-            )
-        if slot.asset_id:
-            raise BadRequest(f"槽位「{slot.key}」指向封装时不能再绑定单个资产")
-        if slot.binding == "fixed" and not slot.pack_id:
-            raise BadRequest(f"槽位「{slot.key}」固定封装时必须提供 packId")
-        if slot.binding == "user" and slot.pack_id:
-            raise BadRequest(f"槽位「{slot.key}」由用户选封装时不能预置 packId")
-        # 数量由成员数决定；留着 min/max 会让人以为可以限制，实际又不生效。
-        if (slot.min_count, slot.max_count) != (1, 1):
-            raise BadRequest(f"封装槽位「{slot.key}」的数量由成员决定，不要设置 min/max")
-        return
-
-    if slot.pack_id:
-        raise BadRequest(f"槽位「{slot.key}」不是封装槽位，不能提供 packId")
     if slot.binding == "fixed" and not slot.asset_id:
         raise BadRequest(f"槽位「{slot.key}」固定素材时必须提供 assetId")
     if slot.binding == "user" and slot.asset_id:

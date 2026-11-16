@@ -1,4 +1,4 @@
-"""资产库 v2 ORM 实体（11 张 `library_*` 表）。
+"""资产库 v2 ORM 实体（10 张 `library_*` 表）。
 
 **与现役 `assets` 表完全独立**：不共享主键、不共享字节前缀、不共享权限。
 并存期两套库同时对在线，任何「顺手复用一下旧表」的改动都会让切换与回滚失效。
@@ -201,23 +201,6 @@ class LibraryAssetTag(Base, UUIDMixin):
     __table_args__ = (
         Index("uq_library_asset_tags", "asset_id", "tag_id", unique=True),
         Index("ix_library_asset_tags_tag", "tag_id"),
-    )
-
-
-class LibraryPackItem(Base, UUIDMixin):
-    """封装成员。`kind=pack` 的资产行只是壳，成员在这里。"""
-
-    __tablename__ = "library_pack_items"
-
-    pack_id: Mapped[str] = mapped_column(String(32), nullable=False)
-    asset_id: Mapped[str] = mapped_column(String(32), nullable=False)
-    position: Mapped[int] = mapped_column(Integer, nullable=False)
-    role: Mapped[str] = mapped_column(String(40), default="", nullable=False)
-    description: Mapped[str] = mapped_column(String(200), default="", nullable=False)
-
-    __table_args__ = (
-        Index("uq_library_pack_items_position", "pack_id", "position", unique=True),
-        Index("ix_library_pack_items_asset", "asset_id"),
     )
 
 

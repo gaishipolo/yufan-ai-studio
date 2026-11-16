@@ -62,13 +62,11 @@ from modules.library.errors import (
     LibraryFileTooLarge,
     LibraryFileTypeNotAllowed,
     LibraryTextTooLarge,
-    PackHasNoOriginal,
 )
 from modules.library.models import (
     LibraryAsset,
     LibraryAssetGeneration,
     LibraryAssetTag,
-    LibraryPackItem,
     LibraryShareRequest,
     LibraryTag,
     LibraryTextVersion,
@@ -85,7 +83,6 @@ from modules.library.schema import (
     LibraryGroupRef,
     LibraryTab,
     LibraryTagOut,
-    PackItemOut,
     ShareHistoryItem,
     UploadKind,
 )
@@ -153,7 +150,7 @@ def keep_extension(original: str, storage_key: str | None, requested: str) -> st
     详情页的类型徽标还是「图片」，下载下来的文件却叫 `.mp4`，播放器一打开就是坏的。
 
     后缀先看 `name`，再退到 `storage_key`（导入的历史数据 name 可能被清过）。
-    两者都没有（封装、人工建的行）就不加——别给「春季素材包」硬塞一个 `.png`。
+    两者都没有（人工建的行）就不加——别给「春季素材包」硬塞一个 `.png`。
     """
     cleaned = requested.strip()
     suffix = Path(cleaned).suffix
@@ -211,7 +208,6 @@ class LibraryService:
         keyword: str = "",
         sort: AssetSort = AssetSort.CREATED_DESC,
         origins: Sequence[str] = (),
-        hide_packed_members: bool = True,
         exclude_kinds: Sequence[str] = (),
         purpose: str | None = None,
         exclude_purposes: Sequence[str] = (access.PURPOSE_CASE,),
@@ -221,10 +217,6 @@ class LibraryService:
         可见集按 `library` 与 `state` 两组条件拼：`state=draft/trash` 时**忽略**
         `library`（它们不在任何一个可见范围内，只属于本人），避免出现
         「草稿箱 + 团队」这种拼起来的空集让人以为权限出了问题。
-
-        `hide_packed_members`：active 列表里不单列「已装进封装」的成员（见
-        `access.hidden_by_pack_clause`）。选择器传 `False`——封装的成员本来就要
-        能被挑去生成，按列表口径把成员藏起来，会让那 3 个原素材在选择器里消失。
         """
         if state not in _STATES:
             state = "active"
@@ -236,8 +228,6 @@ class LibraryService:
                 LibraryAsset.deleted_at.is_(None),
                 access.tab_clause(actor, groups, library),
             )
-            if hide_packed_members:
-                query = query.where(access.hidden_by_pack_clause(actor, groups, library))
         elif state == "draft":
             # 代审范围：持 draft:review 的人能看到所有人的草稿；否则只看自己的
             if not actor.has(access.PERM_DRAFT_REVIEW):
@@ -346,7 +336,6 @@ class LibraryService:
                 for group_id in group_ids.get(row.id, [])
             ],
             generation=snapshot_out(generation) if generation else None,
-            pack_items=await self._pack_items(row) if row.kind == "pack" else [],
             references=references,
             share_history=await self._share_history(row),
             archive=self._archive(row, actor, references),
@@ -355,49 +344,6 @@ class LibraryService:
             reject_reason=row.reject_reason,
             trashed_from_state=row.trashed_from_state,
         )
-
-    async def _pack_items(self, pack: LibraryAsset) -> list[PackItemOut]:
-        """封装的成员。**成员行可能已经被物理删除**——建封装时它们是引用关系，
-        删除一方要过 `library-references`，理论上到不了这里；但历史数据/人工
-        SQL 都可能留下断链，取不到就跳过，别让详情页整体 500。"""
-        items = (
-            await self.session.scalars(
-                select(LibraryPackItem)
-                .where(LibraryPackItem.pack_id == pack.id)
-                .order_by(LibraryPackItem.position)
-            )
-        ).all()
-        if not items:
-            return []
-        rows = {
-            row.id: row
-            for row in (
-                await self.session.scalars(
-                    select(LibraryAsset).where(
-                        LibraryAsset.id.in_([item.asset_id for item in items])
-                    )
-                )
-            ).all()
-        }
-        result: list[PackItemOut] = []
-        for item in items:
-            row = rows.get(item.asset_id)
-            if row is None:
-                continue
-            result.append(
-                PackItemOut(
-                    asset_id=row.id,
-                    name=row.name,
-                    kind=row.kind,
-                    state=row.state,
-                    position=item.position,
-                    role=item.role,
-                    description=item.description,
-                    size_bytes=row.size_bytes,
-                    cover_url=self.storage.url_for(row.cover_key) if row.cover_key else None,
-                )
-            )
-        return result
 
     async def _references(self, row: LibraryAsset) -> list[str] | None:
         """谁在用它。`None` 表示**不可判定**（来源不齐），不是「没人用」。
@@ -482,11 +428,6 @@ class LibraryService:
             # 别让前端对每张文字卡发一次注定 404 的 `/thumbnail`。
             raise NotFound("文本资产没有缩略图")
         key = row.cover_key if preview else row.storage_key
-        if not preview and row.kind == "pack":
-            # 封装只有从成员借来的封面，没有自己的原文件。用 404 会让用户
-            # 以为记录被删了；这里明确说「换个入口」。前端已改成对封装
-            # 直接走打包下载，这条是给直接调 API 的人兜底。
-            raise PackHasNoOriginal()
         if not key:
             # 两种取件共用一个函数，提示必须分开：以前无论是下载原文件还是
             # 取缩略图，都报「没有缩略图」，把排查方向带偏了。
@@ -510,7 +451,7 @@ class LibraryService:
         """受控公共预览：视频给派生流，图片 / 音频给原文件。
 
         与旧 `/assets/{id}/preview` 同口径。能不能看只由 `load_visible` 一家
-        说了算（共享到小组 / 团队、封装成员都算可见），这里不再写第二份
+        说了算（共享到小组 / 团队都算可见），这里不再写第二份
         「有没有 shared」的判断——两处判定迟早漂移，漂移的方向一定是越权。
         """
         row = await access.load_visible(self.session, asset_id, actor)
@@ -874,11 +815,10 @@ class LibraryService:
     ) -> LibraryFacets:
         """六个角标。
 
-        四个可见范围**各自按自己的入口口径算**，与列表用的是同一对条件
-        （`tab_clause` + `hidden_by_pack_clause(tab)`）。不能图省事用一次
-        「全量可见集」的 group by 分发四个数字：我把一条共享到小组的素材装进
-        **自己的个人封装**时，小组列表不该隐藏它（个人封装在小组入口不可见），
-        而全量口径会隐藏——角标于是显示 0，点进去却有 1 条。
+        四个可见范围**各自按自己的入口口径算**，与列表用的是同一条
+        `tab_clause`。不能图省事用一次「全量可见集」的 group by 分发四个数字：
+        我把一条共享到小组的素材放进**自己的个人库**时，小组列表不该因此少算它，
+        而全量口径会算——角标于是显示 0，点进去却有 1 条。
 
         管理员（`draft:review` / `delete:any`）看到的草稿与回收站角标是全量的，
         否则「待我审核」的入口显示 0，而实际有一堆在等。
@@ -898,9 +838,6 @@ class LibraryService:
                     LibraryAsset.state == "active",
                     LibraryAsset.deleted_at.is_(None),
                     scope,
-                    # 与列表同口径：成员不单列，角标也不该把它算进去，
-                    # 否则「个人 4」点进去只看到 1 条。
-                    access.hidden_by_pack_clause(actor, groups, tab),
                     # 案例不算进任何入口的角标：它们在案例池里，不属于「个人 / 小组 /
                     # 团队 / 全部」。算进来的话，作者打开侧栏会看到自己多了几十条
                     # 素材，点进去却一条也找不到（列表默认排除案例）。

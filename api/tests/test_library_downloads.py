@@ -125,66 +125,6 @@ def test_download_enforces_item_and_byte_limits(
     assert too_big.json()["details"]["unit"] == "bytes"
 
 
-def test_download_expands_packs_to_members(client: TestClient, api: str) -> None:
-    admin = admin_headers(client)
-    owner, owner_h = make_user(client, admin, LIB_RW)
-    first = upload_image(client, api, owner_h, name="m1.png", color="coral")
-    second = upload_image(client, api, owner_h, name="m2.png", color="cyan")
-    pack = client.post(
-        f"{api}/library/packs",
-        json={"name": "整包下", "assetIds": [first["id"], second["id"]]},
-        headers=owner_h,
-    ).json()["data"]
-
-    created = _create(client, api, owner_h, [pack["id"]])
-    assert created.status_code == 202, created.text
-    job = created.json()["data"]
-    assert job["assetCount"] == 2, "封装要展开成成员，不是把 pack 行本身打包"
-
-    build_download_job(job["id"])
-    with zipfile.ZipFile(
-        io.BytesIO(
-            client.get(f"{api}/library/downloads/{job['id']}/file", headers=owner_h).content
-        )
-    ) as archive:
-        assert len(archive.namelist()) == 2
-
-
-def test_shared_pack_downloads_its_members_for_a_teammate(
-    client: TestClient, api: str
-) -> None:
-    """别人下载我共享出去的封装，包里得真有文件。
-
-    成员展开时若按「成员自己的 visibility」判可读，别人的个人素材一律判不可读，
-    结果是**空 zip + 一堆「封装成员已不可访问」**——比直接报错更难解释。
-    """
-    admin = admin_headers(client)
-    owner, owner_h = make_user(client, admin, LIB_RW)
-    _, viewer_h = make_user(client, admin, LIB_RW)
-    first = upload_image(client, api, owner_h, name="s1.png", color="coral")
-    second = upload_image(client, api, owner_h, name="s2.png", color="cyan")
-    pack = client.post(
-        f"{api}/library/packs",
-        json={"name": "共享整包", "assetIds": [first["id"], second["id"]]},
-        headers=owner_h,
-    ).json()["data"]
-    set_visibility(pack["id"], "team")
-
-    created = _create(client, api, viewer_h, [pack["id"]])
-    assert created.status_code == 202, created.text
-    job = created.json()["data"]
-    assert job["assetCount"] == 2
-    assert job["skipped"] == []
-
-    build_download_job(job["id"])
-    with zipfile.ZipFile(
-        io.BytesIO(
-            client.get(f"{api}/library/downloads/{job['id']}/file", headers=viewer_h).content
-        )
-    ) as archive:
-        assert len(archive.namelist()) == 2
-
-
 def test_download_is_owner_only_and_not_ready_until_built(
     client: TestClient, api: str
 ) -> None:
@@ -337,18 +277,13 @@ def test_download_rechecks_read_access_before_packing(
     owner, owner_h = make_user(client, admin, LIB_RW)
     _, viewer_h = make_user(client, admin, LIB_RW)
     image = upload_image(client, api, owner_h, name="shared.png", color="khaki")
-    pack = client.post(
-        f"{api}/library/packs",
-        json={"name": "临时共享", "assetIds": [image["id"]]},
-        headers=owner_h,
-    ).json()["data"]
-    set_visibility(pack["id"], "team")
+    set_visibility(image["id"], "team")
 
-    created = _create(client, api, viewer_h, [pack["id"]])
+    created = _create(client, api, viewer_h, [image["id"]])
     assert created.status_code == 202, created.text
     job = created.json()["data"]
 
-    set_visibility(pack["id"], "personal")  # 打包之前撤销共享
+    set_visibility(image["id"], "personal")  # 打包之前撤销共享
 
     build_download_job(job["id"])
     stored = fetch_download_job(job["id"])

@@ -97,9 +97,9 @@ describe('槽位卡片', () => {
     const {onPatch} = renderSlot({binding: 'fixed', assetId: 'asset-1'});
 
     await user.click(screen.getByRole('button', {name: '用户填'}));
-    // 用户填的槽位不能带 assetId / packId，后端会 400
+    // 用户填的槽位不能预置 assetId，后端会 400
     expect(onPatch).toHaveBeenCalledWith(
-      expect.objectContaining({binding: 'user', assetId: null, packId: null}),
+      expect.objectContaining({binding: 'user', assetId: null}),
     );
   });
 
@@ -121,15 +121,6 @@ describe('槽位卡片', () => {
   it('固定槽位还没选素材时按钮是「选择素材」（没东西可换）', () => {
     renderSlot({type: 'image', binding: 'fixed', assetId: ''});
     expect(screen.getByRole('button', {name: '选择素材'})).toBeInTheDocument();
-  });
-
-  it('封装槽位不显示「最少/最多」（成员数由资产库决定）', async () => {
-    const user = userEvent.setup();
-    renderSlot({type: 'pack', binding: 'user'});
-    await user.click(screen.getByRole('button', {name: '展开更多设置'}));
-
-    expect(screen.queryByText('最少')).not.toBeInTheDocument();
-    expect(screen.queryByText('最多')).not.toBeInTheDocument();
   });
 
   it('展示名是可编辑输入框', async () => {

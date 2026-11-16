@@ -10,8 +10,8 @@
 
 1. **只打包 `state=active` 的条目**：草稿与回收站在语义上「还没有 / 已经不属于」
    库内内容，把它们打进包会让「删除」变成只删了个标签。逐条给原因，不整单失败。
-2. **闸门在展开之后**：请求里最多 200 个 id（封装要展开），但真正限制的是
-   **展开后的条目数（100）与解压后总量（2GB）**。按资产行登记的 `size_bytes` 求和，
+2. **闸门在选完之后**：请求里最多 200 个 id，但真正限制的是
+   **实际进包的条目数（100）与解压后总量（2GB）**。按资产行登记的 `size_bytes` 求和，
    不按 zip 实际大小——媒体压缩率不可预测，用 zip 大小会让上限形同虚设。
 3. **`ZIP_STORED` 而不是 `ZIP_DEFLATED`**：图片 / 视频 / 音频本身已经压过，
    deflate 只能再省几个百分点，却要在 2GB 上白烧一遍 CPU。
@@ -56,7 +56,6 @@ from modules.library.errors import DownloadEmpty, DownloadNotReady, DownloadTooL
 from modules.library.models import (
     LibraryAsset,
     LibraryDownloadJob,
-    LibraryPackItem,
 )
 from modules.library.schema import DownloadIn, DownloadJobOut, DownloadSkip
 from workers import register_handler
@@ -199,7 +198,7 @@ class DownloadService:
     async def _collect(
         self, ids: list[str], actor: CurrentUser
     ) -> tuple[list[LibraryAsset], list[DownloadSkip]]:
-        """逐个判定「能不能进包」，封装在这里展开。返回 (可打包, 跳过明细)。"""
+        """逐个判定「能不能进包」。返回 (可打包, 跳过明细)。"""
         wanted = list(dict.fromkeys(ids))
         rows = {
             row.id: row
@@ -211,35 +210,16 @@ class DownloadService:
         }
         my_groups = await access.all_groups(self.session, actor)
         group_map = await access.asset_group_ids(self.session, wanted)
-        # 「封装成员」这条读入口要查库，一次问完这一批，别在循环里按 id 打点
-        via_pack = await access.readable_via_pack_ids(
-            self.session, wanted, actor, my_groups
-        )
 
         selected: list[LibraryAsset] = []
         skipped: list[DownloadSkip] = []
-        pack_ids: list[str] = []
         for asset_id in wanted:
             row = rows.get(asset_id)
-            if row is None or not (
-                access.can_read(row, actor, my_groups, group_map.get(asset_id, []))
-                or asset_id in via_pack
+            if row is None or not access.can_read(
+                row, actor, my_groups, group_map.get(asset_id, [])
             ):
                 # 预览能看、单条能下，批量却跳过，用户只会觉得「打包坏了」
                 skipped.append(DownloadSkip(id=asset_id, reason="不存在或无权访问"))
-                continue
-            if row.kind == "pack":
-                # 封装没有自己的字节，`_skip_reason` 最后那条「没有可下载的原文件」
-                # 对它是常态，所以这里只判状态。少了这一步，**回收站里的封装仍能
-                # 打包**：它的 `can_read` 对 owner 是 true，成员于是照常展开——
-                # 「解散」也就等于没解散。
-                state_reason = _state_skip_reason(row)
-                if state_reason:
-                    skipped.append(
-                        DownloadSkip(id=row.id, name=row.name, reason=state_reason)
-                    )
-                    continue
-                pack_ids.append(row.id)
                 continue
             reason = _skip_reason(row)
             if reason:
@@ -247,68 +227,7 @@ class DownloadService:
                 continue
             selected.append(row)
 
-        if pack_ids:
-            selected.extend(await self._expand_packs(pack_ids, actor, skipped, my_groups))
         return _dedupe(selected), skipped
-
-    async def _expand_packs(
-        self,
-        pack_ids: list[str],
-        actor: CurrentUser,
-        skipped: list[DownloadSkip],
-        my_groups: list[str],
-    ) -> list[LibraryAsset]:
-        """封装展开成成员。成员可能已经被删 / 被取消共享 —— 逐条跳过并说明。
-
-        不递归：建封装时已经禁止嵌套（`PackService._validate`），这里再判断一次
-        是防「历史数据里有一条嵌套」把下载变成潜在的死循环。
-
-        成员的可读性用**同一个读入口**判（`can_read` 或「封装成员」）：调用方
-        能走到这里，说明封装本身已通过读判定，而封装对成员的授权是
-        `access.readable_via_pack_clause` 定义的。只按成员行自己的 `visibility`
-        判，别人下载我共享出去的封装会拿到**空 zip**——比报错更难解释。
-        """
-        member_ids = list(
-            await self.session.scalars(
-                select(LibraryPackItem.asset_id)
-                .where(LibraryPackItem.pack_id.in_(pack_ids))
-                .order_by(LibraryPackItem.pack_id, LibraryPackItem.position)
-            )
-        )
-        if not member_ids:
-            for pack_id in pack_ids:
-                skipped.append(DownloadSkip(id=pack_id, reason="封装里没有成员"))
-            return []
-        rows = {
-            row.id: row
-            for row in (
-                await self.session.scalars(
-                    select(LibraryAsset).where(LibraryAsset.id.in_(member_ids))
-                )
-            ).all()
-        }
-        group_map = await access.asset_group_ids(self.session, member_ids)
-        via_pack = await access.readable_via_pack_ids(
-            self.session, member_ids, actor, my_groups
-        )
-        expanded: list[LibraryAsset] = []
-        for member_id in member_ids:
-            row = rows.get(member_id)
-            if row is None or not (
-                access.can_read(row, actor, my_groups, group_map.get(member_id, []))
-                or member_id in via_pack
-            ):
-                skipped.append(DownloadSkip(id=member_id, reason="封装成员已不可访问"))
-                continue
-            reason = _skip_reason(row)
-            if reason:
-                skipped.append(DownloadSkip(id=row.id, name=row.name, reason=reason))
-                continue
-            if row.kind == "pack":
-                skipped.append(DownloadSkip(id=row.id, name=row.name, reason="不支持嵌套封装"))
-                continue
-            expanded.append(row)
-        return expanded
 
     def _to_out(
         self, row: LibraryDownloadJob, *, skipped: list[DownloadSkip] | None = None
@@ -332,23 +251,12 @@ class DownloadService:
         )
 
 
-def _state_skip_reason(row: LibraryAsset) -> str:
-    """只看状态的原因。空串 = 状态上可以进包。
-
-    与 `_skip_reason` 拆开是因为封装要单独判：它天生没有 `storage_key`。
-    """
+def _skip_reason(row: LibraryAsset) -> str:
+    """不能进包的原因。空串 = 可以打包。"""
     if row.state == "draft":
         return "草稿未入库"
     if row.state == "trash":
         return "回收站内容不可下载"
-    return ""
-
-
-def _skip_reason(row: LibraryAsset) -> str:
-    """不能进包的原因。空串 = 可以打包。"""
-    reason = _state_skip_reason(row)
-    if reason:
-        return reason
     if not row.storage_key:
         return "没有可下载的原文件"
     return ""
@@ -455,7 +363,7 @@ async def build_download(job_id: str) -> None:
         file_count = 0
         try:
             # 打包时**重新**判一遍可读性：建任务到真正压包之间可能隔几分钟，
-            # 中间封装被取消共享、人被移出小组，都不该还能把字节打进包。
+            # 中间共享被取消、人被移出小组，都不该还能把字节打进包。
             # 判据用 `access.readable_rows`（与建任务时的 `_collect` 同一套），
             # 这里自己写一份必然漂移，而漂移方向只会是多给。
             by_id = await access.readable_rows(
