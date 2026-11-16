@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
@@ -23,7 +24,7 @@ from core.logging import get_logger
 from core.ports.library_lookup import LibraryAssetKind
 from core.response import PageParams
 from generation.runner import get_runner
-from infra.ai.base import Capability
+from infra.ai.base import Capability, ModelSpec
 from infra.ai.router import ModelRouter
 from infra.artifacts import artifact_urls
 from infra.queue.base import JobQueue
@@ -31,6 +32,7 @@ from modules.task.enums import AspectRatio, TaskScope, TaskStatus
 from modules.task.models import TaskFavorite, VideoTask
 from modules.task.params import (
     resolve_aspect_ratio,
+    resolve_billing_mode,
     resolve_duration,
     resolve_model,
     resolve_style_preset,
@@ -50,6 +52,55 @@ from modules.task.schema import (
 logger = get_logger(__name__)
 
 DEFAULT_TITLE = "未命名任务"
+
+#: 视频 / 音频参考素材的时长门禁。单段 1–15 秒，同类型总时长不超过 15 秒。
+#:
+#: 这条以前只是 `generic_inputs.py` 里的一句注释，代码只记时长不校验。后果是
+#: 用户能拿一个 3 秒片段当「原片」提交 —— 上游拿到的就是一个 3 秒参考片段，
+#: 而替换链的语义是「完整待编辑原片」，两者不是一回事，生成出来的片子会
+#: 静默地不对，却没有任何报错。
+#:
+#: 在受理期就查，是因为资产库里已经存了探测出来的时长（`library_assets.duration`
+#: → `LibraryAssetRef.duration_ms`），不必下载字节就能判。物化期还有一道
+#: 兜底校验（`generic_inputs.py`），防止绕过受理期直接调驱动的路径。
+_MIN_REFERENCE_SECONDS = 1.0
+_MAX_REFERENCE_SECONDS = 15.0
+
+
+def _check_reference_durations(spec: ModelSpec, references: Sequence[Any]) -> None:
+    """校验视频 / 音频参考素材的时长。
+
+    **静默跳过没有时长信息的那几条**：资产库里的 `duration` 可能是 0（历史
+    行、未探测完），这时拿不到可信的时长，判「超长」会误伤合法素材。物化期
+    会重新探测真实字节，那时才判得准。
+    """
+    totals = {"video": 0.0, "audio": 0.0}
+    for ref in references:
+        kind = ref.kind.value
+        if kind not in totals:
+            continue
+        millis = ref.duration_ms
+        if not millis:
+            continue
+        seconds = millis / 1000
+        label = ref.name or ref.id
+        if seconds < _MIN_REFERENCE_SECONDS:
+            raise BadRequest(
+                f"{'视频' if kind == 'video' else '音频'}参考素材「{label}」时长不足"
+                f" {_MIN_REFERENCE_SECONDS:g} 秒（实测 {seconds:g} 秒），请换一段更长的素材"
+            )
+        if seconds > _MAX_REFERENCE_SECONDS:
+            raise BadRequest(
+                f"{'视频' if kind == 'video' else '音频'}参考素材「{label}」时长超过"
+                f" {_MAX_REFERENCE_SECONDS:g} 秒（实测 {seconds:g} 秒），请裁短后再提交"
+            )
+        totals[kind] += seconds
+        if totals[kind] > _MAX_REFERENCE_SECONDS + 1e-6:
+            raise BadRequest(
+                f"{'视频' if kind == 'video' else '音频'}参考素材总时长不能超过"
+                f" {_MAX_REFERENCE_SECONDS:g} 秒（本次合计 {totals[kind]:g} 秒），"
+                "请减少素材数量"
+            )
 
 
 class TaskService:
@@ -122,6 +173,10 @@ class TaskService:
         # 风格预设也走模型 schema：模型没声明这个参数就明确拒绝，别把自造的键
         # 原样发给供应商（上游要么忽略、要么 400，两种都不可控）。
         style_preset = resolve_style_preset(spec, payload.style_preset)
+        # 计费模式同样走模型 schema：当前只有 LibTV 有免费/积分两条队列。
+        # 未声明这个参数的模型传非空值直接拒 —— 否则用户以为切了积分加速，
+        # 实际那条代码路径根本不可达（上游只有一条队列）。
+        billing_mode = resolve_billing_mode(spec, payload.billing_mode)
 
         # 参考素材在受理期就过一遍资产库：存在 / 可读 / 在库 / 类型受支持。
         # 不做这一步的话，前端传一个别人的私有资产 id 也会被原样落库——
@@ -146,6 +201,7 @@ class TaskService:
                 LibraryAssetKind.AUDIO,
             ),
         )
+        _check_reference_durations(spec, references)
 
         # 文本快照在受理期冻结，与生图同一口径：提交 / 重试只读这份，
         # 资产改稿不会让同一条任务的两跳用上不同的提示词。
@@ -169,6 +225,8 @@ class TaskService:
             aspect_ratio=aspect_ratio,
             progress=0,
             style_preset=style_preset,
+            # 计费模式按任务冻结：重试必须用当初那一条，换队列等于换计费口径。
+            billing_mode=billing_mode,
             # 存去重保序之后的 id：同一张图传两遍不会多占一个保护名额
             reference_library_ids=[ref.id for ref in references],
             text_json=dumps_text_refs(text_refs),

@@ -33,6 +33,7 @@ class CatalogService:
                 param_schema=dict(spec.param_schema),
                 max_references=spec.max_references,
                 replacement=spec.replacement,
+                reference_kinds=list(spec.reference_kinds),
                 is_default=spec.id == self.router.default_model_or_none(spec.capability),
             )
             for spec in self.router.public_models(capability)

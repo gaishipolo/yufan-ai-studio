@@ -36,6 +36,14 @@ class VideoTask(Base, UUIDMixin, TimestampMixin):
     # 前端先传进资产库拿到 id 再下发的。名字里带 `library` 是为了让架构守卫与
     # 删除保护都按 v2 口径认它（见 `modules/task/library_references.py`）。
     style_preset: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # 计费模式：`free` 免费队列 / `credits` 积分加速。
+    #
+    # 只有 LibTV 两条队列都走，其余模型恒为 `free`。**按任务落库**而不是
+    # 每次提交现读：这条值决定上游走哪条队列，一旦提交出去就可能计费，
+    # 重试时必须用**当初那一条**，不能因为账号权益变了就换队列（换了等于
+    # 用不同的计费口径重下单）。默认值 `free` 是保守的那一侧：没声明就
+    # 排免费队列，不会误扣积分。
+    billing_mode: Mapped[str] = mapped_column(String(16), default="free", nullable=False)
     reference_library_ids: Mapped[list[str]] = mapped_column(
         JSON, default=list, nullable=False
     )

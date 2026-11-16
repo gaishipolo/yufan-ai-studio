@@ -78,6 +78,11 @@ class VideoTaskStore:
             "durationSec": task.duration_sec,
             "aspectRatio": task.aspect_ratio,
         }
+        # 计费模式要一路带到归档工作区的 `run.json`：桥接层 `bridge.mjs` 靠
+        # 那个字段决定走免费队列还是积分加速。历史行没有这个值（迁移前建的），
+        # 按 `free` 处理 —— 保守的那一侧，不会误扣积分。
+        billing_mode = (task.billing_mode or "free").strip() or "free"
+        params["billingMode"] = billing_mode
         if task.style_preset:
             params["stylePreset"] = task.style_preset
         # 把受理期校验过的资产库 id 换成驱动能直接取字节的存储键。物化器

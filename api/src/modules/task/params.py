@@ -133,8 +133,46 @@ def resolve_style_preset(spec: ModelSpec, style_preset: str | None) -> str | Non
     return value
 
 
+def resolve_billing_mode(spec: ModelSpec, billing_mode: str | None) -> str:
+    """按 `billingMode` schema 校验计费模式。
+
+    与风格预设同一条纪律：**模型没声明就明确拒绝**，而不是默默带过去。
+    未声明的模型只有一条上游队列，传一个它不认识的计费模式过去，要么被
+    上游忽略（用户以为切了积分、实际还在免费队列），要么被上游 400。
+
+    没传时用 schema 的默认值；schema 也没声明默认就按 `free`——保守的那
+    一侧：排慢的免费队列不会误扣积分。
+    """
+    schema = _param(spec, "billingMode")
+    if not schema:
+        if billing_mode and billing_mode.strip():
+            raise BadRequest(
+                f"模型 {spec.label} 没有声明计费模式（billingMode），不能指定计费方式",
+                details={"field": "billingMode"},
+            )
+        return "free"
+
+    value = (billing_mode or "").strip()
+    if not value:
+        default = str(schema.get("default") or "free")
+        options = schema.get("options")
+        allowed = [str(item) for item in options] if isinstance(options, (list, tuple)) else []
+        return default if default in allowed else (allowed[0] if allowed else default)
+
+    options = schema.get("options")
+    if isinstance(options, (list, tuple)) and options:
+        allowed = [str(item) for item in options]
+        if value not in allowed:
+            raise BadRequest(
+                f"计费模式 {value!r} 不被模型 {spec.label} 支持，可选: {', '.join(allowed)}",
+                details={"field": "billingMode", "options": allowed},
+            )
+    return value
+
+
 __all__ = [
     "resolve_aspect_ratio",
+    "resolve_billing_mode",
     "resolve_duration",
     "resolve_model",
     "resolve_style_preset",

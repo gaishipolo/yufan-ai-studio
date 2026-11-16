@@ -4,11 +4,18 @@ import { Button, Chip, Modal, Select } from '@/shared/ui';
 import { LibraryPicker } from '@/entities/library/ui/LibraryPicker';
 import { TextRefPicker } from '@/features/library/TextRefPicker';
 import { useCan } from '@/shared/access/use-access';
-import type { LibraryAssetOut } from '@/shared/api/schema';
+import type { LibraryAssetKind, LibraryAssetOut } from '@/shared/api/schema';
 import { cn } from '@/shared/lib/cn';
 import { toast } from '@/shared/lib/toast';
 import { useCreateTask } from '@/entities/task/api/task.queries';
-import { aspectOptionsFor, durationOptionsFor, useModels } from '@/entities/model/api/model.queries';
+import {
+  aspectOptionsFor,
+  billingModeOptionsFor,
+  durationOptionsFor,
+  referenceKindsFor,
+  referenceLimitFor,
+  useModels,
+} from '@/entities/model/api/model.queries';
 import type { AspectRatio, VideoTask } from '@/entities/task/model/types';
 
 export interface CreateTaskModalProps {
@@ -25,6 +32,7 @@ export function CreateTaskModal({ open, onClose, onCreated }: CreateTaskModalPro
   const [modelId, setModelId] = useState('');
   const [duration, setDuration] = useState('');
   const [ratio, setRatio] = useState<AspectRatio>('9:16');
+  const [billingMode, setBillingMode] = useState('');
   const [error, setError] = useState('');
   const [references, setReferences] = useState<LibraryAssetOut[]>([]);
   const [textRefs, setTextRefs] = useState<LibraryAssetOut[]>([]);
@@ -47,6 +55,13 @@ export function CreateTaskModal({ open, onClose, onCreated }: CreateTaskModalPro
     [durationValues],
   );
   const ratioOptions = useMemo(() => aspectOptionsFor(currentModel), [currentModel]);
+  // 只有声明了 `billingMode` 的模型才有计费模式可选（当前是 LibTV）。
+  // 没声明的模型不显示这一档，也不上传 —— 后端会拒绝非空值。
+  const billingOptions = useMemo(() => billingModeOptionsFor(currentModel), [currentModel]);
+  // 参考素材的类型与数量上限都由模型声明（`referenceKinds` / `maxReferences`），
+  // 不在界面里写死「只选图片、最多 4 张」——那会把视频替换模型的用户挡在门外。
+  const referenceKinds = useMemo(() => referenceKindsFor(currentModel), [currentModel]);
+  const referenceLimit = useMemo(() => referenceLimitFor(currentModel), [currentModel]);
 
   // 模型变化时把时长收敛到该模型支持的范围内
   useEffect(() => {
@@ -65,6 +80,20 @@ export function CreateTaskModal({ open, onClose, onCreated }: CreateTaskModalPro
       ratioOptions.some((item) => item.value === prev) ? prev : ratioOptions[0].value,
     );
   }, [ratioOptions]);
+
+  // 计费模式同理：换到没有这个参数的模型时要清空，否则会把一个非法值
+  // 带进提交（后端直接 400）。有选项时收敛到该模型的默认值。
+  useEffect(() => {
+    if (!billingOptions.length) {
+      setBillingMode('');
+      return;
+    }
+    const declared = currentModel?.paramSchema?.billingMode?.default;
+    const fallback = declared != null ? String(declared) : billingOptions[0].value;
+    setBillingMode((prev) =>
+      prev && billingOptions.some((item) => item.value === prev) ? prev : fallback,
+    );
+  }, [billingOptions, currentModel]);
 
   useEffect(() => {
     if (!open) {
@@ -87,6 +116,7 @@ export function CreateTaskModal({ open, onClose, onCreated }: CreateTaskModalPro
         model: currentModel?.id ?? '',
         durationSec: Number(duration),
         aspectRatio: ratio,
+        ...(billingMode ? { billingMode } : {}),
         ...(references.length ? { referenceLibraryIds: references.map((item) => item.id) } : {}),
         ...(textRefs.length ? { textLibraryIds: textRefs.map((item) => item.id) } : {}),
       },
@@ -177,10 +207,35 @@ export function CreateTaskModal({ open, onClose, onCreated }: CreateTaskModalPro
           </div>
         </div>
 
+        {billingOptions.length > 0 && (
+          <div>
+            <div className="mb-1.5 text-[11.5px] text-ink-soft">计费模式</div>
+            <div className="flex flex-wrap gap-1.5">
+              {billingOptions.map((item) => (
+                <button
+                  key={item.value}
+                  type="button"
+                  onClick={() => setBillingMode(item.value)}
+                  className={cn(
+                    'rounded-pill border px-2.5 py-1 text-[11.5px] transition-colors',
+                    billingMode === item.value
+                      ? 'border-[#bcd6ff] bg-primary-soft font-semibold text-[#2b6bd4]'
+                      : 'border-line bg-panel text-ink-soft hover:border-[#b9d3ff] hover:text-primary',
+                  )}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
         <div>
           <div className="mb-1.5 flex items-center gap-1.5 text-[11.5px] text-ink-soft">
             参考素材
-            <span className="text-[10.5px] text-ink-mute">从资产库选，最多 4 张</span>
+            <span className="text-[10.5px] text-ink-mute">
+              从资产库选，最多 {referenceLimit} 个
+            </span>
           </div>
           <div className="flex flex-wrap items-center gap-1.5">
             {references.map((item) => (
@@ -203,7 +258,7 @@ export function CreateTaskModal({ open, onClose, onCreated }: CreateTaskModalPro
               size="sm"
               variant="secondary"
               icon={<Library size={12} />}
-              disabled={!canReadLibrary || references.length >= 4}
+              disabled={!canReadLibrary || references.length >= referenceLimit}
               onClick={() => setPickerOpen(true)}
             >
               {references.length ? '继续选择' : '选择参考素材'}
@@ -230,15 +285,15 @@ export function CreateTaskModal({ open, onClose, onCreated }: CreateTaskModalPro
         </div>
       </div>
 
-      <LibraryPicker
-        open={pickerOpen}
-        title="选择参考素材"
-        value={references.map((item) => item.id)}
-        valueItems={references}
-        kinds={['image']}
-        onClose={() => setPickerOpen(false)}
-        onConfirm={(assets) => setReferences(assets.slice(0, 4))}
-      />
+    <LibraryPicker
+      open={pickerOpen}
+      title="选择参考素材"
+      value={references.map((item) => item.id)}
+      valueItems={references}
+      kinds={referenceKinds as LibraryAssetKind[]}
+      onClose={() => setPickerOpen(false)}
+      onConfirm={(assets) => setReferences(assets.slice(0, referenceLimit))}
+    />
     </Modal>
   );
 }

@@ -45,6 +45,14 @@ export interface ModelSpec {
    * 用户传了不会被用上，图照样出、只是完全不像参考图。
    */
   maxReferences?: number;
+  /**
+   * 这个模型能收哪几类参考素材（`image` / `video` / `audio`），空数组 = 纯文生。
+   *
+   * 与 `maxReferences` 同源：都由**模型**声明。前端据此渲染参考素材的类型
+   * 筛选与数量上限，不在界面里写死「只选图片、最多 4 张」——那会把视频
+   * 替换模型（要「原片视频 + 参考图 + 音频」）的用户挡在门外。
+   */
+  referenceKinds?: string[];
   isDefault: boolean;
 }
 

@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { FALLBACK_MODELS, aspectOptionsFor, durationOptionsFor } from './model.queries';
+import {
+  FALLBACK_MODELS,
+  aspectOptionsFor,
+  billingModeOptionsFor,
+  durationOptionsFor,
+  referenceKindsFor,
+  referenceLimitFor,
+} from './model.queries';
 import type { ModelSpec } from '../model/types';
 
 function spec(overrides: Partial<ModelSpec> = {}): ModelSpec {
@@ -58,6 +65,50 @@ describe('aspectOptionsFor', () => {
 
   it('模型未声明比例时回落到三种常用比例', () => {
     expect(aspectOptionsFor(undefined).map((item) => item.value)).toEqual(['9:16', '16:9', '1:1']);
+  });
+});
+
+describe('billingModeOptionsFor', () => {
+  it('只给出模型声明的计费模式，并带可读标签', () => {
+    const model = spec({
+      paramSchema: {
+        durationSec: { type: 'int', min: 2, max: 30, default: 5 },
+        billingMode: { type: 'enum', options: ['free', 'credits'], default: 'free' },
+      },
+    });
+    expect(billingModeOptionsFor(model)).toEqual([
+      { value: 'free', label: '免费队列（较慢，不扣积分）' },
+      { value: 'credits', label: '积分加速（更快，消耗积分）' },
+    ]);
+  });
+
+  it('模型未声明计费模式时不给出选项', () => {
+    // 未声明的模型只有一条上游队列：后端会拒绝非空的 billingMode，
+    // 界面也不该给这个档位。
+    expect(billingModeOptionsFor(spec())).toEqual([]);
+    expect(billingModeOptionsFor(undefined)).toEqual([]);
+  });
+});
+
+describe('referenceKindsFor / referenceLimitFor', () => {
+  it('按模型声明给出参考素材的类型与数量上限', () => {
+    const model = spec({ referenceKinds: ['image', 'video', 'audio'], maxReferences: 5 });
+    expect(referenceKindsFor(model)).toEqual(['image', 'video', 'audio']);
+    expect(referenceLimitFor(model)).toBe(5);
+  });
+
+  it('生图模型只收图片，上限用自己的声明', () => {
+    const model = spec({ referenceKinds: ['image'], maxReferences: 4 });
+    expect(referenceKindsFor(model)).toEqual(['image']);
+    expect(referenceLimitFor(model)).toBe(4);
+  });
+
+  it('模型没声明时回落到最保守的一档', () => {
+    // 纯文生模型不该画出一个必然被后端拒的参考素材入口
+    expect(referenceKindsFor(spec())).toEqual(['image']);
+    expect(referenceLimitFor(spec())).toBe(1);
+    expect(referenceKindsFor(undefined)).toEqual(['image']);
+    expect(referenceLimitFor(undefined)).toBe(1);
   });
 });
 

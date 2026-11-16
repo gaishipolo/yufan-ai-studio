@@ -144,6 +144,15 @@ class CreateTaskIn(CamelModel):
             "取值须在它的 options 内；未声明的模型传非空值直接 400"
         ),
     )
+    billing_mode: str | None = Field(
+        default=None,
+        max_length=16,
+        description=(
+            "计费模式：`free` 免费队列 / `credits` 积分加速。"
+            "**只在模型声明了 `billingMode` 参数时可用**（当前只有 LibTV 两条队列），"
+            "取值须在它的 options 内；未声明的模型传非空值直接 400"
+        ),
+    )
 
 
 class UpdateTaskIn(CamelModel):

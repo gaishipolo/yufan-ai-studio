@@ -1103,6 +1103,7 @@ Authorization: Bearer <accessToken>
 | `referenceLibraryIds` | `string[]` | 否 | 参考素材的资产库 v2 资产 id，最多 20 个，**顺序即提交顺序**。受理时校验：必须存在、当前账号能读、不在回收站 / 草稿里，且是 `image` / `video` / `audio` 之一（能否收图、收几张由模型的 `maxReferences` 决定）。传 id 而不是 URL：取件链接是私签的，供应商取不到 |
 | `textLibraryIds` | `string[]` | 否 | 要拼进提示词的文本资产 id，按顺序对应 `{{Text 1}}` / `{{Text 2}}`…；提交时按当时版本冻结正文，之后编辑资产不影响本次生成与重试。只接受当前账号可读、在库的 text 类型资产，最多 8 份 |
 | `stylePreset` | `string \| null` | 否 | 风格预设标识，留空为不套风格。**只在模型声明了 `stylePreset` 参数时可用**，取值须在它的 options 内；未声明的模型传非空值直接 400 |
+| `billingMode` | `string \| null` | 否 | 计费模式：`free` 免费队列 / `credits` 积分加速。**只在模型声明了 `billingMode` 参数时可用**（当前只有 LibTV 两条队列），取值须在它的 options 内；未声明的模型传非空值直接 400 |
 
 **响应** `ApiResponse<core__response__ApiResponse_TaskOut___2>`（前端取 `res.data`）
 
@@ -3456,6 +3457,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `referenceLibraryIds` | `string[]` | 否 | 参考素材的资产库 v2 资产 id，最多 20 个，**顺序即提交顺序**。受理时校验：必须存在、当前账号能读、不在回收站 / 草稿里，且是 `image` / `video` / `audio` 之一（能否收图、收几张由模型的 `maxReferences` 决定）。传 id 而不是 URL：取件链接是私签的，供应商取不到 |
 | `textLibraryIds` | `string[]` | 否 | 要拼进提示词的文本资产 id，按顺序对应 `{{Text 1}}` / `{{Text 2}}`…；提交时按当时版本冻结正文，之后编辑资产不影响本次生成与重试。只接受当前账号可读、在库的 text 类型资产，最多 8 份 |
 | `stylePreset` | `string \| null` | 否 | 风格预设标识，留空为不套风格。**只在模型声明了 `stylePreset` 参数时可用**，取值须在它的 options 内；未声明的模型传非空值直接 400 |
+| `billingMode` | `string \| null` | 否 | 计费模式：`free` 免费队列 / `credits` 积分加速。**只在模型声明了 `billingMode` 参数时可用**（当前只有 LibTV 两条队列），取值须在它的 options 内；未声明的模型传非空值直接 400 |
 
 ### `DeleteImagesIn`
 
@@ -4961,6 +4963,7 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `paramSchema` | `Record<string, unknown>` | 否 |  |
 | `maxReferences` | `number` | 否 | 这个模型最多接受几张参考图（图生图 / 多图合成），`0` 表示纯文生图。参考图不是 `paramSchema` 里的参数：它的值是「一批图片」，提交时走 `referenceLibraryIds` 这条独立入参 |
 | `replacement` | `boolean` | 否 | 这个模型能不能跑替换链（按「原片 + 素材包」替换）。由驱动声明，模板目录按它筛；调用方不得从槽位组合推断 |
+| `referenceKinds` | `string[]` | 否 | 这个模型能收哪几类参考素材（`image` / `video` / `audio`），空数组 = 纯文生图。前端据此渲染参考素材的类型筛选与数量上限，不在界面里写死 |
 | `isDefault` | `boolean` | 否 |  |
 
 ### `modules__model_driver__schema__ModelListOut`

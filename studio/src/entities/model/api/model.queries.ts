@@ -101,6 +101,55 @@ export function aspectOptionsFor(
   return values.map((value) => ({ value: value as AspectRatio, label: RATIO_LABEL[value] ?? value }));
 }
 
+/**
+ * 按模型声明的 `billingMode.options` 生成计费模式选项。
+ *
+ * 只有声明了这个参数的模型才有两条队列（当前是 LibTV）。没声明的模型
+ * 不给这个选项 —— 后端会拒绝非空的 `billingMode`，界面也不该让用户去选。
+ */
+export function billingModeOptionsFor(
+  model: ModelSpec | undefined,
+): Array<{ value: string; label: string }> {
+  const options = model?.paramSchema?.billingMode?.options;
+  if (!Array.isArray(options) || !options.length) return [];
+  return options.map(String).map((value) => ({
+    value,
+    label: BILLING_MODE_LABEL[value] ?? value,
+  }));
+}
+
+const BILLING_MODE_LABEL: Record<string, string> = {
+  free: '免费队列（较慢，不扣积分）',
+  credits: '积分加速（更快，消耗积分）',
+};
+
+/**
+ * 这个模型能收哪几类参考素材。
+ *
+ * 由模型声明（`referenceKinds`）。前端此前把选择器写死成「只选图片」，
+ * 于是视频替换模型（要「原片视频 + 参考图 + 音频」）的用户在界面上根本
+ * 选不到视频与音频 —— 后端那条链明明支持，类型筛选却把人挡在门外。
+ *
+ * 没声明时回落成 `['image']`：这是最保守的一档，至少不会给纯文生模型
+ * 画出一个必然被后端拒的参考素材入口。
+ */
+export function referenceKindsFor(model: ModelSpec | undefined): string[] {
+  const declared = model?.referenceKinds;
+  return Array.isArray(declared) && declared.length ? declared.map(String) : ['image'];
+}
+
+/**
+ * 参考素材的数量上限。
+ *
+ * 由模型声明（`maxReferences`）。`0` = 纯文生，没有参考入口；这里按「至少
+ * 允许一个」兜底，避免上限算成 0 之后选择按钮永远点不开。
+ */
+export function referenceLimitFor(model: ModelSpec | undefined): number {
+  const declared = model?.maxReferences ?? 0;
+  if (declared > 0) return declared;
+  return referenceKindsFor(model).length;
+}
+
 /* ---------------- 生图模型目录 ---------------- */
 
 /**

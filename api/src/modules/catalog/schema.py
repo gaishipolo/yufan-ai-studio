@@ -37,6 +37,14 @@ class ModelOut(CamelModel):
             "模板目录按它筛；调用方不得从槽位组合推断"
         ),
     )
+    reference_kinds: list[str] = Field(
+        default_factory=list,
+        description=(
+            "这个模型能收哪几类参考素材（`image` / `video` / `audio`），"
+            "空数组 = 纯文生图。前端据此渲染参考素材的类型筛选与数量上限，"
+            "不在界面里写死"
+        ),
+    )
     is_default: bool = False
 
 

@@ -66,6 +66,22 @@ _SUFFIXES = {
 _DEFAULT_SUFFIX = {"image": ".png", "video": ".mp4", "audio": ".wav"}
 _RATIOS = frozenset({"adaptive", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"})
 
+#: 参考素材里**视频 / 音频**的时长门禁。单段 1–15 秒，且同类型总时长不超过 15 秒。
+#:
+#: 这条以前只是一句注释（2026-11-15 补的），代码只把时长记下来不校验，
+#: 于是用户能拿一个 3 秒的片段当「原片」提交 —— 上游拿到的就是一个 3 秒的
+#: 参考片段，而替换链的语义是「完整待编辑原片」，两者根本不是一回事，
+#: 生成出来的片子会静默地不对，却没有任何报错。百炼那条链有同样的门禁
+#: （`drivers/bailian.py::_validated_inputs`），两条链的契约应当一致。
+_MIN_REFERENCE_SECONDS = 1.0
+_MAX_REFERENCE_SECONDS = 15.0
+
+#: 计费模式。只有 LibTV 有两条队列（免费 / 积分加速），其余模型恒 `free`。
+#: 桥接层 `bridge.mjs` 读 `run.json` 的这个字段决定走哪一条 —— 写死 `free`
+#: 的话，积分加速那条代码路径在通用链路上根本不可达。
+_BILLING_MODES = frozenset({"free", "credits"})
+_DEFAULT_BILLING_MODE = "free"
+
 
 def _suffix(ref: Mapping[str, Any]) -> str:
     """后缀按 kind 收窄：文件名叫 `clip.webp` 的视频不能当图片去 probe。"""
@@ -124,6 +140,9 @@ def _write_inputs(
 ) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
     entries: list[dict[str, Any]] = []
     metadata: dict[str, dict[str, Any]] = {}
+    # 同类型素材的总时长。视频与音频各算一份（不是混在一起）：两条队列
+    # 对「原片」与「音轨」的时长约束是分开的。
+    totals = {"video": 0.0, "audio": 0.0}
     for ref, data, item in zip(refs, blobs, references, strict=True):
         relative = item["file"]
         target = folder / relative
@@ -133,6 +152,9 @@ def _write_inputs(
         duration = (
             round(float(probe["duration"]), 3) if item["type"] in {"video", "audio"} else 0.0
         )
+        if item["type"] in totals:
+            _check_reference_duration(item, duration, totals[item["type"]])
+            totals[item["type"]] += duration
         # `fps` 故意不给值：百炼的 `_validated_inputs` 在缺 fps 时会自己跑一次
         # ffprobe。写死 24 等于替用户伪造一份「帧率合规」的证据。
         meta = {
@@ -157,6 +179,57 @@ def _write_inputs(
     return entries, metadata
 
 
+def _check_reference_duration(
+    item: Mapping[str, str], duration: float, accumulated: float
+) -> None:
+    """视频 / 音频参考素材的时长门禁。
+
+    两道检查，缺一不可：
+
+    1. 单段 1–15 秒。短于 1 秒的片段给上游当参考没有意义（它连一个动作
+       都放不下）；超过 15 秒就超出了这条链能吃的长度。
+    2. 同类型总时长不超过 15 秒。两段各 9 秒的素材单看都合法，凑起来
+       18 秒就超了 —— 逐段检查查不出来。
+
+    这里**必须**报错而不是截断：用户提交的是「原片」，被悄悄截成前 15 秒
+    之后，成片里后一半的动作就没了，而用户从头到尾没收到任何提示。
+    """
+    label = item.get("name") or item.get("id") or item.get("file") or "参考素材"
+    kind = "视频" if item.get("type") == "video" else "音频"
+    if duration < _MIN_REFERENCE_SECONDS:
+        raise BadRequest(
+            f"{kind}参考素材「{label}」时长不足 {_MIN_REFERENCE_SECONDS:g} 秒"
+            f"（实测 {duration:g} 秒），请换一段更长的素材"
+        )
+    if duration > _MAX_REFERENCE_SECONDS:
+        raise BadRequest(
+            f"{kind}参考素材「{label}」时长超过 {_MAX_REFERENCE_SECONDS:g} 秒"
+            f"（实测 {duration:g} 秒），请裁短后再提交"
+        )
+    total = accumulated + duration
+    if total > _MAX_REFERENCE_SECONDS + 1e-6:
+        raise BadRequest(
+            f"{kind}参考素材总时长不能超过 {_MAX_REFERENCE_SECONDS:g} 秒"
+            f"（本次合计 {total:g} 秒），请减少素材数量"
+        )
+
+
+def _billing_mode(request: GenerationRequest) -> str:
+    """从生成请求里取计费模式，非法值退回免费队列。
+
+    受理期已经按模型 schema 校验过（`modules/task/params.py::resolve_billing_mode`），
+    这里只做**兜底**：这个物化器也可能被别的调用方直接使用（模板库那条链
+    自己带 `archiveRunId`，不走这里，但历史数据可能缺这个键）。
+
+    退回 `free` 而不是抛错：计费模式定错的后果是「以为在加速、实际排回
+    免费队列」（慢但不扣钱），比报错更糟 —— 报错会让整条任务失败，
+    而用户想要的是能跑出来的片子。
+    """
+    raw = request.params.get("billingMode")
+    value = str(raw or "").strip()
+    return value if value in _BILLING_MODES else _DEFAULT_BILLING_MODE
+
+
 def _write_everything(
     folder: Path,
     run_id: str,
@@ -167,6 +240,7 @@ def _write_everything(
     references: list[dict[str, str]],
 ) -> None:
     prompt = request.prompt.strip()
+    billing_mode = _billing_mode(request)
     # 走 `encode_text`：它是所有文本落盘的唯一出口，NUL 在这里被拦掉，
     # 不会留下一份「写了一半」的工作区再去撞 PG 的 text 列。
     prompt_bytes = encode_text(prompt)
@@ -195,7 +269,7 @@ def _write_everything(
             "preparation_ready": True,
             "state_version": 1,
             "framework_status": "queued",
-            "billing_mode": "free",
+            "billing_mode": billing_mode,
             "model": request.model,
             "resolution": "720P",
             "duration": spec["duration"],

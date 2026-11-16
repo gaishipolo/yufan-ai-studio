@@ -127,6 +127,8 @@ MODELS: tuple[ModelSpec, ...] = (
         param_schema=_PARAM_SCHEMA,
         description="文生图 / 图生图 / 多图合成，同步返回图片地址",
         max_references=_MAX_REFERENCES,
+        # 参考图是以 base64 内联进请求体的，只收图片。
+        reference_kinds=("image",),
     ),
     ModelSpec(
         id=_MODEL_21,
@@ -136,6 +138,7 @@ MODELS: tuple[ModelSpec, ...] = (
         param_schema=_PARAM_SCHEMA,
         description="文生图 / 图生图 / 多图合成，与 2.5 同价",
         max_references=_MAX_REFERENCES,
+        reference_kinds=("image",),
     ),
 )
 

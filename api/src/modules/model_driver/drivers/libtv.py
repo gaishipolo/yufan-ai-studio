@@ -57,6 +57,21 @@ _PARAM_SCHEMA = {
         "options": ["9:16", "16:9", "1:1"],
         "default": "9:16",
     },
+    # 计费模式。免费队列（free）走 `params.infiniteSwitch = 0`；积分加速
+    # （credits）走 `infiniteSwitch = 1` 并在请求体里关掉账号当前的 0 积分
+    # 权益标签（顶层与 params 各写一份 `disableBenefitTags`）。
+    #
+    # 默认 `free` 是保守的那一侧：免费队列慢一点，但不误扣积分。
+    "billingMode": {
+        "type": "enum",
+        "options": ["free", "credits"],
+        "default": "free",
+        "label": "计费模式",
+        "description": (
+            "免费队列（较慢，不扣积分）/ 积分加速（更快，消耗账号积分）。"
+            "积分加速要求账号当前有生效的 0 积分权益标签，否则不会提交"
+        ),
+    },
 }
 
 MODELS: tuple[ModelSpec, ...] = (
@@ -68,6 +83,9 @@ MODELS: tuple[ModelSpec, ...] = (
         description="720P 视频替换；支持 0 积分畅用队列与积分加速队列",
         param_schema=_PARAM_SCHEMA,
         max_references=5,
+        # LibTV 的混合输入通道吃图片、视频与音频：图片是身份 / 商品 / 场景，
+        # 视频是原片或动作参考，音频是音轨 / 口型。三类共用同一条 `mixedList`。
+        reference_kinds=("image", "video", "audio"),
         # 替换链的模型：有原片 + 素材包的档案工作区，能按模板做替换。
         replacement=True,
     ),

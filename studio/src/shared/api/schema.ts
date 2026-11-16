@@ -171,6 +171,8 @@ export interface CreateTaskIn {
   textLibraryIds?: string[];
   /** 风格预设标识，留空为不套风格。**只在模型声明了 `stylePreset` 参数时可用**，取值须在它的 options 内；未声明的模型传非空值直接 400 */
   stylePreset?: string | null;
+  /** 计费模式：`free` 免费队列 / `credits` 积分加速。**只在模型声明了 `billingMode` 参数时可用**（当前只有 LibTV 两条队列），取值须在它的 options 内；未声明的模型传非空值直接 400 */
+  billingMode?: string | null;
 }
 
 /** DeleteImagesIn */
@@ -1625,6 +1627,8 @@ export interface modules__catalog__schema__ModelOut {
   maxReferences?: number;
   /** 这个模型能不能跑替换链（按「原片 + 素材包」替换）。由驱动声明，模板目录按它筛；调用方不得从槽位组合推断 */
   replacement?: boolean;
+  /** 这个模型能收哪几类参考素材（`image` / `video` / `audio`），空数组 = 纯文生图。前端据此渲染参考素材的类型筛选与数量上限，不在界面里写死 */
+  referenceKinds?: string[];
   isDefault?: boolean;
 }
 

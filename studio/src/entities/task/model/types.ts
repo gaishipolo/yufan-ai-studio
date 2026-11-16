@@ -79,6 +79,13 @@ export interface CreateTaskPayload {
   /** 提示词 {{Text N}} 对应的文本资产 id，顺序即编号顺序；与参考素材互不混用 */
   textLibraryIds?: string[];
   stylePreset?: string;
+  /**
+   * 计费模式：`free` 免费队列 / `credits` 积分加速。
+   *
+   * 只在模型声明了 `billingMode` 参数时可传（当前是 LibTV）；未声明的模型
+   * 传这个字段会被后端 400 —— 界面上也不会给这个选项。
+   */
+  billingMode?: string;
 }
 
 export const TASK_STATUS_LABEL: Record<TaskStatus, string> = {
