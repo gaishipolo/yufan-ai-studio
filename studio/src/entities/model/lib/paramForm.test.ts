@@ -104,6 +104,15 @@ describe('paramControlsFor · 不认识的字段也能渲染', () => {
   it('没有模型时给空列表：页面据此不渲染参数区', () => {
     expect(paramControlsFor(undefined)).toEqual([]);
   });
+
+  it('计费模式显示成中文标签，不印裸的 free / credits', () => {
+    // 技术词直接印在界面上等于让用户自己翻译；schema 存的是机器值。
+    const [control] = paramControlsFor(
+      model({ billingMode: { type: 'enum', options: ['free', 'credits'], default: 'free' } }),
+    );
+    expect(control?.options.map((item) => item.label)).toEqual(['免费队列', '积分加速']);
+    expect(control?.options.map((item) => item.value)).toEqual(['free', 'credits']);
+  });
 });
 
 describe('resolveParamValues · 换模型后旧值不能带过去', () => {

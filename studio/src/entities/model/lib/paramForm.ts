@@ -67,6 +67,10 @@ const VALUE_LABELS: Record<string, string> = {
   low: '低',
   medium: '中',
   high: '高',
+  // 计费模式：模型 schema 里存的是 `free` / `credits` 两个技术词，
+  // 直接印在界面上等于让用户自己翻译。短标签，完整解释在 schema 的 description。
+  free: '免费队列',
+  credits: '积分加速',
 };
 
 const KIND_ALIASES: Record<string, ParamKind> = {

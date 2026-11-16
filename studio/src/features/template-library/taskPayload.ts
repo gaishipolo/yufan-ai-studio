@@ -14,7 +14,10 @@ import type { AspectRatio, SpecCompileOut } from '@/shared/api/schema';
  * 图片那边除 `size` / `count` 之外的键进 `params`，由服务端按模型 `paramSchema`
  * 校验（未声明即 400）—— 也是可见的失败，不是悄悄换成默认值。
  */
-const VIDEO_TOP_LEVEL = ['aspectRatio', 'durationSec', 'stylePreset'] as const;
+/* `billingMode` 与 `stylePreset` 一样是顶层字段（不是自由 `params`）：
+   `/tasks` 只认这几个摊平键，其余键报「无法提交」而不是被静默丢掉。
+   计费模式走顶层是后端契约（`CreateTaskIn.billingMode`），不是模板层的东西。 */
+const VIDEO_TOP_LEVEL = ['aspectRatio', 'durationSec', 'stylePreset', 'billingMode'] as const;
 type VideoTopLevel = (typeof VIDEO_TOP_LEVEL)[number];
 
 /** 图片接口的顶层键：其余声明的参数进 `params`。 */
@@ -80,6 +83,7 @@ export function toTaskPayload(
       referenceLibraryIds: compiled.referenceLibraryIds ?? [],
       textLibraryIds: compiled.textLibraryIds ?? [],
       ...(params.stylePreset ? { stylePreset: String(params.stylePreset) } : {}),
+      ...(params.billingMode ? { billingMode: String(params.billingMode) } : {}),
     },
   };
 }

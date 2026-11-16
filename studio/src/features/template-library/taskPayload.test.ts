@@ -82,6 +82,25 @@ describe('toTaskPayload', () => {
     expect(result.payload.referenceLibraryIds).toEqual(['c', 'a', 'b']);
     expect(result.payload.textLibraryIds).toEqual(['doc']);
   });
+
+  it('billingMode 摊到顶层，不被当成「无法提交」的参数', () => {
+    // 计费模式是 /tasks 的顶层字段（CreateTaskIn.billingMode），不是自由 params。
+    // 漏掉它 → 模板库提交时被判「这些参数无法提交」，用户填的积分加速到不了后端。
+    const result = toTaskPayload(
+      compiled({params: {durationSec: 6, aspectRatio: '9:16', billingMode: 'credits'}}),
+      't',
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.payload.billingMode).toBe('credits');
+  });
+
+  it('模板没声明计费模式时就不占这个字段', () => {
+    const result = toTaskPayload(compiled(), 't');
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect('billingMode' in result.payload).toBe(false);
+  });
 });
 
 describe('toImagePayload', () => {
