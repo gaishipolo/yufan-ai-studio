@@ -23,7 +23,7 @@ import {
   useTrashedSpecs,
 } from '@/entities/template-spec/api/spec.queries';
 import type { SpecSlotIn, TemplateSpecIn, TemplateSpecOut } from '@/shared/api/schema';
-import { Button, Chip, EmptyState, FormField, Select, TextInput } from '@/shared/ui';
+import { Button, Chip, EmptyState, FormField, PageHeader, Select, TextInput } from '@/shared/ui';
 import { cn } from '@/shared/lib/cn';
 import { AssetPicker, type PickKind, type PickedAsset } from '@/features/template-specs/AssetPicker';
 import { AddSlotMenu } from '@/features/template-specs/AddSlotMenu';
@@ -31,6 +31,7 @@ import { DemoMenu } from '@/features/template-specs/DemoMenu';
 import { PromptBox } from '@/features/template-specs/PromptBox';
 import { SlotCard } from '@/features/template-specs/SlotCard';
 import {
+  MAX_PROMPT,
   SLOT_TYPE_LABELS,
   blankSlot,
   blankSpec,
@@ -296,6 +297,9 @@ export function SpecWorkspace() {
     const loading = trashed ? trash.isLoading : list.isLoading;
     return (
       <section className="flex flex-col gap-4">
+        {/* 列表态是普通页头；编辑态的标题在编辑器自己的吸顶栏里（跟面包屑、
+            动作按钮排在一行），所以页头由这里出，不在外层页面。 */}
+        <PageHeader title="模板封装" />
         <div className="flex flex-wrap items-center justify-between gap-2">
           {/* 分段控件：外圈是一层凹槽（软底 + 内描边），选中项是"浮起来的白片"。
               以前是两颗胶囊共享一个圆角边框，选中只换字色 —— 在一排白卡上面几乎看不出
@@ -315,7 +319,7 @@ export function SpecWorkspace() {
                   clear();
                 }}
                 className={cn(
-                  'rounded-[10px] px-3 py-[5px] text-[11px] transition-all duration-150',
+                  'rounded-[10px] px-3 py-[5px] text-meta transition-all duration-150',
                   view === value
                     ? 'bg-panel font-medium text-ink shadow-[0_1px_3px_rgba(21,50,61,.12)]'
                     : 'text-ink-mute hover:text-ink-soft',
@@ -340,14 +344,8 @@ export function SpecWorkspace() {
         {loading ? (
           <p className="py-10 text-center text-xs text-ink-mute">正在读取…</p>
         ) : rows.length === 0 ? (
-          <EmptyState
-            title={trashed ? '回收站是空的' : '还没有模板'}
-            description={
-              trashed
-                ? '删除的模板会先放这里，随时可以恢复。'
-                : '新建一份模板：选模型、摆槽位、写提示词。'
-            }
-          />
+          /* 「新建模板」按钮就在上方，不用来一段话再说一遍怎么新建 */
+          <EmptyState title={trashed ? '回收站是空的' : '还没有模板'} />
         ) : (
           /* 卡片而不是表格行：一张模板的"长相"是它的案例封面，列表里也该看得见。
              操作放在卡片脚上，扫一眼就知道哪张能发布、哪张已停用。 */
@@ -407,21 +405,26 @@ export function SpecWorkspace() {
   return (
     <section className="flex flex-col gap-4">
       {/* 操作栏吸顶：槽位一多就要滚很久，保存/发布不该被滚出屏幕。
-          `top-[54px]` 让开顶栏那条同为 sticky 的 header，否则会被它盖住。 */}
-      <div className="sticky top-[54px] z-20 -mx-1 flex flex-col gap-1.5 border-b border-line-soft bg-panel px-1 py-2">
+          `top-[59px]` 让开顶栏那条同为 sticky 的 header，否则会被它盖住。 */}
+      <div className="sticky top-[59px] z-20 -mx-1 flex flex-col gap-1.5 border-b border-line-soft bg-panel px-1 py-2">
         <div className="flex flex-wrap items-center justify-between gap-3">
+          {/* 标题、面包屑、动作按钮排在一行：眼睛扫过一行就知道
+              「我在哪、我编辑的是哪个、下一步按哪个」。 */}
           <div className="flex min-w-0 items-center gap-2">
             <button
               type="button"
-              className="flex shrink-0 items-center gap-1 rounded-lg border border-line-soft bg-panel px-2 py-1 text-[11px] text-ink-soft transition-colors hover:border-line hover:text-ink"
+              aria-label="返回模板列表"
+              className="flex shrink-0 items-center gap-1 text-lead font-semibold tracking-[.2px] text-ink transition-colors hover:text-primary"
               onClick={() => {
                 setDraft(null);
                 clear();
               }}
             >
-              <ChevronLeft size={12} /> 列表
+              <ChevronLeft size={16} />
+              模板封装
             </button>
-            <span className="min-w-0 truncate text-[13.5px] font-medium text-ink">
+            <span className="shrink-0 text-body text-ink-mute">/</span>
+            <span className="min-w-0 truncate text-body text-ink-soft">
               {draft.name || '未命名模板'}
             </span>
           </div>
@@ -446,7 +449,7 @@ export function SpecWorkspace() {
 
       <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)]">
         <div className="flex flex-col gap-4">
-          <Section tone="primary" title="基本信息">
+          <Section title="基本信息">
             <div className="grid gap-3 sm:grid-cols-[1.4fr_1fr]">
               <FormField label="名称" required>
                 <TextInput
@@ -481,7 +484,6 @@ export function SpecWorkspace() {
           </Section>
 
           <Section
-            tone="violet"
             title="槽位"
             extra={
               /* 「加槽位」也按资产库的 kind 生成：库里多一类，这里就多一个入口，
@@ -492,12 +494,16 @@ export function SpecWorkspace() {
               />
             }
           >
-            {/* 槽位们坐在一块浅底托盘上（跟模板库的卡片语言一致）：
-                卡片是白片、托盘是凹陷的一层，一眼能数出有几个槽位、
-                也能看出拖拽时哪张被拎起来了。 */}
-            <div className="flex flex-col gap-2.5 rounded-xl bg-canvas/30 p-2">
+            {/* 三个动作（拖动排序 / 改名称 / 切绑定）都是「看」不出来的，
+                只做一行轻提示条，不占位也不抢标题的注意力。 */}
+            <p className="mb-1 rounded-lg bg-panel-soft px-3 py-1.5 text-micro text-ink-mute">
+              拖动排序 · 直接改名称 · 右侧开关切换固定或用户填写
+            </p>
+            {/* 槽位是一列清单，用细线分隔而不是一张张卡片：
+                一排小方块缩到 50% 看会糊成一片，分隔线才看得出「几行、每行谁」。 */}
+            <div className="divide-y divide-line-soft">
               {slots.length === 0 && (
-                <p className="rounded-lg border border-dashed border-line-strong bg-panel px-3 py-4 text-[11px] text-ink-mute">
+                <p className="rounded-lg border border-dashed border-line-strong bg-panel-soft px-3 py-4 text-meta text-ink-mute">
                   没有槽位。纯提示词的模板不需要素材，从上面的按钮加一个就行。
                 </p>
               )}
@@ -543,22 +549,72 @@ export function SpecWorkspace() {
         </div>
 
         <div className="flex flex-col gap-4 lg:sticky lg:top-[112px]">
+          {/* 提示词放到最上面：它是作者这一页真正在写的东西。
+              槽位速览是它的索引，展示案例是它的产出预览 —— 顺序按「写 → 查 → 验」。 */}
           <Section
-            tone="ok"
-            title="展示案例"
+            title="提示词"
             extra={
+              <Button variant="ghost" size="sm" onClick={() => addSlot('text')}>
+                <Plus size={12} /> 文本素材
+              </Button>
+            }
+            meta={`字数 ${(draft.prompt ?? '').length} / ${MAX_PROMPT}`}
+          >
+            <PromptBox
+              value={draft.prompt ?? ''}
+              chips={chips}
+              onChange={setPromptText}
+              onInsert={insertPromptText}
+            />
+            {hint && <p className="mt-2 text-meta text-warn-deep">{hint}</p>}
+          </Section>
+
+          {/* 槽位速览：一眼看清「有几个槽位、分别是谁定的」。
+              点名不如看颜色快 —— 绿点=作者定死，蓝点=使用者挑。 */}
+          <Section title="槽位速览">
+            <div className="flex flex-wrap gap-1.5">
+              {slots.length === 0 && (
+                <span className="text-meta text-ink-mute">还没有槽位</span>
+              )}
+              {slots.map((slot, index) => {
+                const fixed = (slot.binding ?? 'user') === 'fixed';
+                return (
+                  <span
+                    key={slot.key}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-line-soft bg-panel-soft px-2 py-1 text-meta text-ink-soft"
+                  >
+                    <span
+                      className={cn('size-1.5 shrink-0 rounded-full', fixed ? 'bg-ok' : 'bg-primary')}
+                    />
+                    {slot.label?.trim() || `${SLOT_TYPE_LABELS[slot.type]} ${index + 1}`}
+                    <span className="text-micro text-ink-mute">
+                      {fixed ? '已固定' : '用户填写'}
+                    </span>
+                  </span>
+                );
+              })}
+            </div>
+          </Section>
+
+          <Section
+            title="展示案例"
+          >
+            <div className="flex items-start gap-3">
+              <div className="min-w-0 flex-1">
+                <DemoCase
+                  assetId={draft.demoAssetId ?? null}
+                  onClear={() => setDraft({...draft, demoAssetId: null})}
+                />
+              </div>
+              {/* 动作放在它作用的东西旁边：案例在左边，「设置案例」在右边，
+                  不用把眼睛从卡片内容挪到标题栏去找按钮。 */}
               <DemoMenu
                 disabled={busy}
                 onUpload={() => fileRef.current?.click()}
                 onPickImage={() => setPicker({target: 'demo', kind: 'image'})}
                 onPickVideo={() => setPicker({target: 'demo', kind: 'video'})}
               />
-            }
-          >
-            <DemoCase
-              assetId={draft.demoAssetId ?? null}
-              onClear={() => setDraft({...draft, demoAssetId: null})}
-            />
+            </div>
             <input
               ref={fileRef}
               type="file"
@@ -570,24 +626,6 @@ export function SpecWorkspace() {
                 if (file) void uploadDemo(file);
               }}
             />
-          </Section>
-
-          <Section
-            tone="primary"
-            title="提示词"
-            extra={
-              <Button variant="ghost" size="sm" onClick={() => addSlot('text')}>
-                <Plus size={12} /> 文本素材
-              </Button>
-            }
-          >
-            <PromptBox
-              value={draft.prompt ?? ''}
-              chips={chips}
-              onChange={setPromptText}
-              onInsert={insertPromptText}
-            />
-            {hint && <p className="mt-2 text-[11px] text-warn-deep">{hint}</p>}
           </Section>
         </div>
       </div>
@@ -621,7 +659,7 @@ function DemoCase({assetId, onClear}: {assetId: string | null; onClear: () => vo
         <span className="grid size-9 place-items-center rounded-full bg-panel text-ink-mute ring-1 ring-inset ring-line-soft">
           <ImageOff size={15} />
         </span>
-        <span className="text-[11px] text-ink-mute">暂无案例</span>
+        <span className="text-meta text-ink-mute">暂无案例</span>
       </div>
     );
   }
@@ -630,13 +668,13 @@ function DemoCase({assetId, onClear}: {assetId: string | null; onClear: () => vo
       {/* 视频只给封面 + 播放按钮，点开才取流；封面一直有，不会出现黑块。 */}
       <AssetPreview assetId={assetId} className="h-44 w-full rounded-lg" />
       <div className="mt-2 flex items-center justify-between gap-2 px-1">
-        <p className="truncate text-[11px] text-ink-soft">
+        <p className="truncate text-meta text-ink-soft">
           {detail.data?.name ?? assetId.slice(0, 8)}
         </p>
         <button
           type="button"
           onClick={onClear}
-          className="shrink-0 text-[11px] text-ink-mute transition-colors hover:text-danger"
+          className="shrink-0 text-meta text-ink-mute transition-colors hover:text-danger"
         >
           移除案例
         </button>
@@ -645,26 +683,23 @@ function DemoCase({assetId, onClear}: {assetId: string | null; onClear: () => vo
   );
 }
 
-/** 分区卡片：左侧色条 + 标题，靠色彩分区而不是靠说明文字。 */
+/** 分区卡片：左侧色条 + 标题。色条统一用主色 —— 颜色留给**状态**用
+ *  （固定的槽位是绿的、用户填的是蓝的），不再拿颜色给区块编号，
+ *  否则一屏里五根不同颜色的条，抢的是「状态」的注意力。 */
 function Section({
-  tone,
   title,
   hint,
   extra,
+  meta,
   children,
 }: {
-  tone: 'primary' | 'violet' | 'warn' | 'ok';
   title: string;
   hint?: string;
   extra?: ReactNode;
+  /** 标题右边的状态位（字数、计数）：右对齐，排在操作下面 */
+  meta?: ReactNode;
   children: ReactNode;
 }) {
-  const bar = {
-    primary: 'bg-primary',
-    violet: 'bg-violet',
-    warn: 'bg-warn',
-    ok: 'bg-ok',
-  }[tone];
   return (
     // 分区卡片：标题单独做成一条"带子"（浅底 + 下边线），内容区是白的。
     // 以前标题和内容同一片白，四块卡片只剩四根 1px 边框在区分——缩到 50% 看，
@@ -674,12 +709,19 @@ function Section({
           `overflow-hidden` —— 提示词里的 @ 候选面板要从卡片里浮出去，
           被裁掉的话用户只看到输入框闪一下、什么也没出现。 */}
       <div className="flex flex-wrap items-center justify-between gap-2 rounded-t-2xl border-b border-line-soft bg-gradient-to-r from-panel-soft to-panel px-4 py-2.5">
-        <h3 className="flex items-center gap-2 text-[12.5px] font-semibold tracking-[.2px] text-ink">
-          <span className={cn('h-3.5 w-[3px] rounded-full', bar)} />
+        <h3 className="flex items-center gap-2 text-lead font-semibold tracking-[.2px] text-ink">
+          <span className="h-3.5 w-[3px] rounded-full bg-primary" />
           {title}
           {hint && <span className="font-normal text-ink-mute">· {hint}</span>}
         </h3>
-        {extra && <div className="flex flex-wrap items-center gap-1">{extra}</div>}
+        {(extra || meta) && (
+          <div className="flex flex-col items-end gap-1">
+            {extra && <div className="flex flex-wrap items-center gap-1">{extra}</div>}
+            {meta && (
+              <div className="font-mono text-micro tabular-nums text-ink-mute">{meta}</div>
+            )}
+          </div>
+        )}
       </div>
       <div className="p-4">{children}</div>
     </div>
@@ -690,7 +732,7 @@ function Notice({ error, note }: {error: string; note: string}) {
   return (
     <div
       className={cn(
-        'rounded-xl border px-3 py-2 text-[11px] leading-relaxed',
+        'rounded-xl border px-3 py-2 text-meta leading-relaxed',
         error
           ? 'border-danger-line bg-danger-soft text-danger'
           : 'border-ok-line bg-ok-soft text-ok-deep',
@@ -770,7 +812,7 @@ function SpecCard({
           )}
         </span>
         {!trashed && item.currentVersion > 0 && (
-          <span className="absolute right-2 top-2 rounded-full bg-black/40 px-1.5 py-0.5 text-[10px] font-medium leading-[14px] text-white/95 backdrop-blur-sm">
+          <span className="absolute right-2 top-2 rounded-full bg-black/40 px-1.5 py-0.5 text-micro font-medium leading-[14px] text-white/95 backdrop-blur-sm">
             v{item.currentVersion}
           </span>
         )}
@@ -781,11 +823,11 @@ function SpecCard({
           type="button"
           onClick={onEdit}
           disabled={trashed}
-          className="truncate text-left text-[13px] font-medium text-ink transition-colors hover:text-primary disabled:cursor-default disabled:hover:text-ink"
+          className="truncate text-left text-body font-medium text-ink transition-colors hover:text-primary disabled:cursor-default disabled:hover:text-ink"
         >
           {item.name}
         </button>
-        <p className="flex items-center gap-1.5 truncate text-[11px] text-ink-mute">
+        <p className="flex items-center gap-1.5 truncate text-meta text-ink-mute">
           {trashed ? (
             `删除于 ${item.deletedAt ? new Date(item.deletedAt).toLocaleString() : '—'}`
           ) : (
@@ -802,7 +844,7 @@ function SpecCard({
         </p>
       </div>
 
-      <div className="mt-2 flex items-center gap-1 border-t border-line-soft px-2 py-1.5 text-[11px]">
+      <div className="mt-2 flex items-center gap-1 border-t border-line-soft px-2 py-1.5 text-meta">
         {trashed ? (
           <button
             type="button"

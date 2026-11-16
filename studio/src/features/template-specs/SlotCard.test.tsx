@@ -62,8 +62,8 @@ function renderSlot(slot: Partial<SpecSlotIn> = {}) {
 describe('槽位卡片', () => {
   it('默认只露出高频项：类型、最少/最多、用途说明都收着', () => {
     renderSlot();
-    // 类型标记可见（一眼知道要什么）
-    expect(screen.getByText('图片')).toBeInTheDocument();
+    // 类型标记可见（一眼知道要什么）—— 现在是图标，名称留给读屏
+    expect(screen.getByRole('img', {name: '图片'})).toBeInTheDocument();
     // 低频项默认不渲染
     expect(screen.queryByLabelText('类型')).not.toBeInTheDocument();
     expect(screen.queryByText('最少')).not.toBeInTheDocument();
@@ -113,8 +113,13 @@ describe('槽位卡片', () => {
     expect(screen.queryByText(/缺一级标签/)).not.toBeInTheDocument();
   });
 
-  it('固定槽位显示已选素材与「选择素材」按钮', () => {
+  it('固定槽位显示已选素材与「更换」按钮', () => {
     renderSlot({type: 'image', binding: 'fixed', assetId: 'asset-1'});
+    expect(screen.getByRole('button', {name: '更换'})).toBeInTheDocument();
+  });
+
+  it('固定槽位还没选素材时按钮是「选择素材」（没东西可换）', () => {
+    renderSlot({type: 'image', binding: 'fixed', assetId: ''});
     expect(screen.getByRole('button', {name: '选择素材'})).toBeInTheDocument();
   });
 

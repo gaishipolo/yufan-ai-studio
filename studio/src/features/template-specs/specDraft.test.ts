@@ -1,7 +1,10 @@
+import { existsSync, readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { TemplateSpecOut } from '@/shared/api/schema';
 import { KIND_OPTIONS } from '@/entities/library/model/types';
 import {
+  MAX_PROMPT,
   SLOT_TYPE_LABELS,
   blankSlot,
   blankSpec,
@@ -15,6 +18,31 @@ import {
   slotsMissingTag,
   stripSlotRefs,
 } from './specDraft';
+
+describe('提示词上限', () => {
+  /**
+   * 漂移守卫：前端这个数只用来显示「字数 N / 上限」，但它必须跟后端一致 ——
+   * 后端超了会 400，界面上却显示还有余量，是最坏的一种不一致。
+   *
+   * 真值在契约里（`TemplateSpecIn.prompt.maxLength`），所以直接对着
+   * `api/docs/openapi.json` 读，而不是把数字再抄一遍。
+   */
+  it('跟契约里 TemplateSpecIn.prompt.maxLength 一致', () => {
+    // jsdom 环境下 import.meta.url 不是 file://，用 cwd 找仓库根
+    const candidates = [
+      resolve(process.cwd(), '../api/docs/openapi.json'),
+      resolve(process.cwd(), 'api/docs/openapi.json'),
+    ];
+    const file = candidates.find(path => existsSync(path));
+    expect(file, '找不到 api/docs/openapi.json').toBeTruthy();
+    const openapi = JSON.parse(readFileSync(file!, 'utf8')) as {
+      components: {schemas: {TemplateSpecIn: {properties: {prompt: {maxLength: number}}}}};
+    };
+    expect(openapi.components.schemas.TemplateSpecIn.properties.prompt.maxLength).toBe(
+      MAX_PROMPT,
+    );
+  });
+});
 
 describe('模板规格草稿', () => {
   it('新草稿自带一个图片槽位，位置从 0 开始', () => {

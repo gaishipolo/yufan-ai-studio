@@ -6,6 +6,7 @@ import type { SpecSlotIn } from '@/shared/api/schema';
 import { Button, FormField, Select, TextInput } from '@/shared/ui';
 import { cn } from '@/shared/lib/cn';
 import { SLOT_TYPE_LABELS } from './specDraft';
+import { SLOT_TYPE_ICONS } from './slotIcons';
 
 /**
  * 一个槽位卡片。
@@ -52,19 +53,20 @@ export function SlotCard({
   const showCount =
     slot.type !== 'pack' && (slot.binding ?? 'user') === 'user' && slot.type !== 'text';
   const name = slot.label?.trim() || `${SLOT_TYPE_LABELS[slot.type]} ${index + 1}`;
+  const TypeIcon = SLOT_TYPE_ICONS[slot.type] ?? SLOT_TYPE_ICONS.image;
 
   return (
     <div
       onDragOver={onDragOver}
       onDrop={onDrop}
       className={cn(
-        // 槽位是「托盘上的一张白片」：比托盘亮一档 + 一线投影，所以有前后层次。
-        // 固定的槽位只把左边描一道绿边（而不是整卡铺绿底）：绿底会让"少数固定槽位"
-        // 比"多数用户填槽位"更抢眼，扫一眼反而分不清主次。
-        'rounded-xl border border-line-soft bg-panel p-3 transition-all',
-        'shadow-[0_1px_2px_rgba(16,42,55,.05)] hover:border-line hover:shadow-card',
-        fixed && 'border-l-[3px] border-l-ok',
-        dragging && 'border-primary-line bg-primary-soft/60 shadow-card ring-1 ring-primary/15',
+        // 槽位是一行，不是一张卡：一排槽位用细线分隔就够了，
+        // 每行都画一圈边框会让这一栏变成「一堆小方块」——缩到 50% 看，
+        // 四块一样的方块根本分不出谁是谁。
+        // 固定的槽位只把左边描一道绿边（而不是整行铺绿底）：绿底会让
+        // 「少数固定槽位」比「多数用户填槽位」更抢眼，扫一眼反而分不清主次。
+        'relative flex flex-col px-1 py-2 transition-colors',
+        dragging && 'rounded-lg bg-primary-soft/70 ring-1 ring-primary/20',
       )}
     >
       <div className="flex items-center gap-2">
@@ -72,45 +74,53 @@ export function SlotCard({
           draggable
           onDragStart={onDragStart}
           onDragEnd={onDragEnd}
-          className="flex shrink-0 cursor-grab items-center gap-1.5 text-[11px] text-ink-mute active:cursor-grabbing"
+          className="flex shrink-0 cursor-grab items-center gap-1.5 text-meta text-ink-mute active:cursor-grabbing"
           title="拖动调整顺序（顺序即编号）"
         >
           <GripVertical size={13} />
-          <span className="flex h-[18px] w-[18px] items-center justify-center rounded-full bg-primary text-[10px] font-semibold text-white shadow-[0_1px_3px_rgba(43,124,255,.35)]">
+          <span className="flex h-[18px] w-[18px] items-center justify-center rounded-full bg-primary text-micro font-semibold text-white shadow-[0_1px_3px_rgba(43,124,255,.35)]">
             {index + 1}
           </span>
         </span>
 
         {/* 类型标记：以前类型藏在下拉框里，要点开才知道这个槽位要图片还是成片。
-            现在一眼可见，也提醒「改类型」这个动作存在（展开区里）。 */}
-        <span className="shrink-0 rounded-md bg-panel-soft px-1.5 py-[2px] text-[10.5px] text-ink-mute ring-1 ring-inset ring-line-soft">
-          {SLOT_TYPE_LABELS[slot.type]}
+            现在一眼可见，也提醒「改类型」这个动作存在（展开区里）。
+            改成图标是因为文字chip（"成片"/"图片"）在 14px 的行里跟展示名挤成一团，
+            图标 + 可读名称（给读屏）最省地方。 */}
+        <span
+          role="img"
+          aria-label={SLOT_TYPE_LABELS[slot.type]}
+          title={`类型：${SLOT_TYPE_LABELS[slot.type]}`}
+          className="grid size-7 shrink-0 place-items-center rounded-lg bg-panel-soft text-ink-soft ring-1 ring-inset ring-line-soft"
+        >
+          <TypeIcon size={14} />
         </span>
 
         {/* 展示名直接就是标题：以前它躺在一堆下拉框中间，要先找才知道这个槽位叫什么。
             空着时显示占位提示，一眼知道还没起名。
             `min-w-0` 是关键：没有它，这个 input 会按内容宽度撑开父级
-            （素材名当展示名时尤其明显），把后面的按钮全挤出可视区。 */}
+            （素材名当展示名时尤其明显），把后面的按钮全挤出可视区。
+            边框平时是隐形的：它长得像一行标题而不是一个输入框，
+            鼠标移上去或点进去才显出边框 —— 「看着像文本、点进去能改」。 */}
         <input
           value={slot.label ?? ''}
           placeholder={name}
           aria-label="展示名"
           onChange={event => onPatch({label: event.target.value})}
           className={cn(
-            'min-w-0 flex-1 rounded-md border bg-panel px-2 py-1 text-[12.5px] outline-none transition-colors',
-            'placeholder:text-ink-mute focus:border-primary-line focus:ring-2 focus:ring-primary/10',
-            slot.label?.trim() ? 'border-line-soft text-ink' : 'border-dashed border-line-strong',
+            'min-w-0 flex-1 rounded-md border border-transparent bg-transparent px-1.5 py-1 text-body outline-none transition-colors',
+            'hover:border-line-soft focus:border-primary-line focus:bg-panel focus:ring-2 focus:ring-primary/10',
+            slot.label?.trim() ? 'text-ink' : 'placeholder:text-ink-mute',
           )}
         />
 
-        {/* 谁定：两个选项的东西，没有下拉值得占一格 —— 直接两个小按钮，
-            状态一目了然，也省掉「点开才知道当前是哪档」。
-            「用户填」是绝大多数槽位的默认档，所以没选中时只留一个极淡的字，
-            不跟标题抢注意力。 */}
-        <div className="flex shrink-0 items-center gap-0.5 rounded-lg border border-line-soft bg-panel p-0.5">
+        {/* 谁定：两个选项的东西，没有下拉值得占一格 —— 直接一个分段控件。
+            选中项是**实心**的：这是这一行里唯一需要被一眼看出来的状态，
+            「这一格在说什么」比「这一格是什么颜色」更重要。
+            「用户填」是绝大多数槽位的默认档，所以它默认就是实心的。 */}
+        <div className="flex shrink-0 items-center gap-0.5 rounded-lg border border-line-soft bg-panel-soft p-0.5">
           {BINDING_TOGGLES.map(item => {
             const active = (slot.binding ?? 'user') === item.value;
-            const isDefault = item.value === 'user';
             return (
               <button
                 key={item.value}
@@ -125,12 +135,10 @@ export function SlotCard({
                   })
                 }
                 className={cn(
-                  'rounded-[7px] px-1.5 py-[3px] text-[10.5px] transition-all',
+                  'rounded-[7px] px-2 py-[3px] text-micro transition-all',
                   active
-                    ? isDefault
-                      ? 'font-medium text-ink-soft'
-                      : 'font-medium text-ok-deep'
-                    : 'text-ink-mute/70 hover:text-ink-soft',
+                    ? 'bg-ink font-medium text-white shadow-[0_1px_2px_rgba(21,50,61,.28)]'
+                    : 'text-ink-mute hover:text-ink-soft',
                 )}
               >
                 {item.label}
@@ -170,28 +178,35 @@ export function SlotCard({
         <button
           type="button"
           onClick={() => setOpen(true)}
-          className="mt-2 inline-flex items-center gap-1 rounded-md bg-warn-soft px-1.5 py-0.5 text-[10.5px] text-warn-deep transition-colors hover:bg-warn/15"
+          className="mt-2 inline-flex items-center gap-1 rounded-md bg-warn-soft px-1.5 py-0.5 text-micro text-warn-deep transition-colors hover:bg-warn/15"
         >
           缺一级标签 · 发布前必须选
         </button>
       )}
 
-      {/* 固定槽位选好了东西：显示它是什么，而不是一串 id。 */}
+      {/* 固定槽位选好了东西：显示它是什么，而不是一串 id。
+          单独一行、缩进对齐到槽位名，左边一道绿 —— 扫一眼就知道
+          「这几个是作者定死的，那几个留给使用者挑」。 */}
       {fixed && (
-        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+        <div className="mt-2 ml-9 flex items-center gap-2 rounded-lg border border-line-soft border-l-[3px] border-l-ok bg-panel-soft py-1.5 pl-2.5 pr-2">
           {slot.type === 'pack' ? (
             slot.packId ? (
               <PackChip packId={slot.packId} />
             ) : (
-              <span className="text-[11px] text-ink-mute">还没选封装</span>
+              <span className="text-meta text-ink-mute">还没选封装</span>
             )
           ) : slot.assetId ? (
-            <AssetChip assetId={slot.assetId} />
+            <AssetChip assetId={slot.assetId} className="border-transparent bg-panel" />
           ) : (
-            <span className="text-[11px] text-ink-mute">还没选素材</span>
+            <span className="text-meta text-ink-mute">还没选素材</span>
           )}
-          <Button onClick={onPickAsset} variant="secondary" size="sm">
-            {slot.type === 'pack' ? '选择封装' : '选择素材'}
+          <Button
+            onClick={onPickAsset}
+            variant="secondary"
+            size="sm"
+            className="ml-auto shrink-0"
+          >
+            {slot.assetId || slot.packId ? '更换' : slot.type === 'pack' ? '选择封装' : '选择素材'}
           </Button>
         </div>
       )}
@@ -214,7 +229,7 @@ export function SlotCard({
             <FormField
               label="一级标签"
               htmlFor="slot-tag"
-              hint="模板库按这个标签给使用者挑素材"
+              hint="使用者按它挑素材"
             >
               <Select
                 id="slot-tag"
@@ -259,12 +274,12 @@ export function SlotCard({
             />
           </FormField>
           {slot.type === 'text' && (
-            <p className="text-[11px] text-ink-mute sm:col-span-2">
+            <p className="text-meta text-ink-mute sm:col-span-2">
               文本槽位：占 {`{{Text N}}`} 的第 N 位，正文由所选文案注入
             </p>
           )}
           {slot.type === 'audio' && (
-            <p className="text-[11px] text-ink-mute sm:col-span-2">
+            <p className="text-meta text-ink-mute sm:col-span-2">
               附加输入：不占编号，提示词里不引用它
             </p>
           )}

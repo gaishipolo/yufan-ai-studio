@@ -17,6 +17,18 @@ export type SlotType = SpecSlotIn['type'];
 export type SlotBinding = NonNullable<SpecSlotIn['binding']>;
 
 /**
+ * 提示词的**编写**上限（不是执行上限）。
+ *
+ * 真值在后端 `api/src/modules/template_pack/models.py::MAX_PROMPT`，
+ * 也就是契约里 `TemplateSpecIn.prompt.maxLength`。
+ * 界面上用它显示「字数 N / 上限」，别把它跟 `EXECUTION_PROMPT_LIMIT`（2000，
+ * 执行期的硬闸）混成一个数 —— 编写上限远大于它，就是为了能存长草稿。
+ *
+ * 漂移守卫在 `specDraft.test.ts`：对着 `api/docs/openapi.json` 读一遍 maxLength。
+ */
+export const MAX_PROMPT = 20000;
+
+/**
  * 槽位类型的展示名 = **资产库的 kind 标签**（图片 / 成片 / 音频 / 文本 / 封装）。
  *
  * 槽位的 `type` 就是资产库的 kind，所以不另写一份词表：库里给 `video` 改名，
@@ -156,6 +168,8 @@ export interface RefChip {
   label: string;
   /** 整组引用：多张时一次写出全部编号。 */
   all: boolean;
+  /** 槽位类型：提示词框里画图标用（图标比「成片/图片」这类文字省地方） */
+  kind: SlotType;
 }
 
 /**
@@ -175,11 +189,18 @@ export function referenceChips(spec: TemplateSpecIn): RefChip[] {
       ordinal += 1;
       // key 是自动生成且界面上不显示，所以回退名用「图片 1」这种位置可读名。
       const name = slot.label?.trim() || `${SLOT_TYPE_LABELS[slot.type]} ${ordinal}`;
-      const chips: RefChip[] = [{token: `{{slot:${slot.key}}}`, label: name, all: false}];
+      const chips: RefChip[] = [
+        {token: `{{slot:${slot.key}}}`, label: name, all: false, kind: slot.type},
+      ];
       // 封装槽位一定有多张（成员数由库决定），所以永远给一个「全部」引用。
       const max = slot.type === 'pack' ? 2 : (slot.maxCount ?? 1);
       if (max > 1 || slot.type === 'pack') {
-        chips.push({token: `{{slot:${slot.key}*}}`, label: `${name}（全部）`, all: true});
+        chips.push({
+          token: `{{slot:${slot.key}*}}`,
+          label: `${name}（全部）`,
+          all: true,
+          kind: slot.type,
+        });
       }
       return chips;
     });
