@@ -3,8 +3,8 @@
 # Mock 覆盖率（只记录，不作门禁）
 
 后端端点 122 条（来自 `schema.ts` 的 `EndpointData`），
-已注册 mock 路由 77 条（来自 `mockRouteTable()`），
-按「同方法 + 正则能匹配」判定疑似覆盖 79 条。
+已注册 mock 路由 78 条（来自 `mockRouteTable()`），
+按「同方法 + 正则能匹配」判定疑似覆盖 80 条。
 
 > **这是记录，不是门禁**：CI 不检查覆盖率是否达标，也不要求新增端点必须带 mock。
 > 一条 handler 可以覆盖多个端点（例如 `/tasks/([\w-]+)` 同时命中详情与删除），
@@ -52,7 +52,6 @@
 | GET | `/api/v1/identity/users/{}/logins` |
 | POST | `/api/v1/identity/users/{}/revoke-sessions` |
 | GET | `/api/v1/library/assets/{}/preview` |
-| POST | `/api/v1/library/assets/{}/purpose` |
 | GET | `/api/v1/library/assets/{}/stream` |
 | GET | `/api/v1/library/assets/{}/text` |
 | PUT | `/api/v1/library/assets/{}/text` |
@@ -80,4 +79,4 @@
 | GET | `/api/v1/template-specs/trash` |
 | POST | `/api/v1/template-specs/validate` |
 
-（未命中 43 条；已命中 79 条不在本表重复列出。）
+（未命中 42 条；已命中 80 条不在本表重复列出。）

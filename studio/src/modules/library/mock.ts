@@ -24,10 +24,18 @@ const now = Date.now();
 const iso = (offsetDays = 0) => new Date(now + offsetDays * DAY).toISOString();
 
 /** 词表按添加时间排：t1 最早、t3 最后，与后端 `list_tags` 的排序一致。 */
+/**
+ * 词表：三级（一级分组 → 二级系列 → 三级具体词），与后端同一套层级口径。
+ * 演示环境要是只有平级的一级词，标签栏的第二、三行永远是空的，
+ * 三级能力一行都看不到。
+ */
 const TAGS: LibraryTagStatOut[] = [
   { id: 't1', name: '人物', assetCount: 0, createdAt: iso(-8) },
   { id: 't2', name: '产品', assetCount: 0, createdAt: iso(-6) },
   { id: 't3', name: '场景', assetCount: 0, createdAt: iso(-4) },
+  { id: 't4', name: '3030', parentId: 't2', assetCount: 0, createdAt: iso(-5) },
+  { id: 't5', name: 'T40', parentId: 't2', assetCount: 0, createdAt: iso(-3) },
+  { id: 't6', name: 'X100', parentId: 't4', assetCount: 0, createdAt: iso(-2) },
 ];
 
 /** `isLeader` 现在只服务删除窄口（§3.4.1）；审批资格按权限点与目标范围判，
@@ -50,6 +58,7 @@ function asset(partial: Partial<LibraryAssetDetailOut> & { name: string; kind: L
     id,
     name: partial.name,
     kind: partial.kind,
+    purpose: partial.purpose ?? '',
     origin: partial.origin ?? 'upload',
     mimeType: partial.mimeType ?? 'image/png',
     sizeBytes: partial.sizeBytes ?? 1_240_000,
@@ -299,6 +308,7 @@ function toOut(row: LibraryAssetDetailOut): LibraryAssetOut {
     id: row.id,
     name: row.name,
     kind: row.kind,
+    purpose: row.purpose ?? '',
     origin: row.origin,
     mimeType: row.mimeType ?? null,
     sizeBytes: row.sizeBytes ?? 0,
@@ -356,6 +366,7 @@ function listOf(ctx: MockContext, withFacets: boolean) {
   const state = String(params.state ?? 'active');
   const library = params.library ? String(params.library) : undefined;
   const kind = params.kind ? String(params.kind) : undefined;
+  const purpose = params.purpose ? String(params.purpose) : '';
   const keyword = String(params.keyword ?? '').toLowerCase();
   const tagIds = String(params.tagIds ?? '')
     .split(',')
@@ -365,6 +376,10 @@ function listOf(ctx: MockContext, withFacets: boolean) {
   if (state === 'active') {
     rows = rows.filter((row) => visible(row, library));
   }
+  /* 用途与后端同口径：普通入口排除案例，案例池只留案例。 */
+  rows = purpose
+    ? rows.filter((row) => row.purpose === purpose)
+    : rows.filter((row) => row.purpose !== 'case');
   if (kind) rows = rows.filter((row) => row.kind === kind);
   /* `origin` 是数组参数（`origin=a&origin=b`），axios 传进来的就是数组，
      统一按逗号拆——与 `tagIds` 同一套约定。模板工作台靠它只挑原片。 */
@@ -372,7 +387,13 @@ function listOf(ctx: MockContext, withFacets: boolean) {
   if (origins.length) rows = rows.filter((row) => origins.includes(row.origin ?? ''));
   if (keyword) rows = rows.filter((row) => row.name.toLowerCase().includes(keyword));
   if (tagIds.length) {
-    rows = rows.filter((row) => (row.tags ?? []).some((tag) => tagIds.includes(tag.id)));
+    /* 选一级 = 展开到「自身 + 全部下级」，与后端 `expand_tag_ids` 同口径 */
+    const expanded = new Set<string>();
+    for (const id of tagIds) {
+      expanded.add(id);
+      for (const descendant of tagDescendantIds(id)) expanded.add(descendant);
+    }
+    rows = rows.filter((row) => (row.tags ?? []).some((tag) => expanded.has(tag.id)));
   }
   if (params.sort === 'name') rows = rows.sort((a, b) => a.name.localeCompare(b.name));
   else if (params.sort === '-sizeBytes') rows = rows.sort((a, b) => (b.sizeBytes ?? 0) - (a.sizeBytes ?? 0));
@@ -385,6 +406,54 @@ function listOf(ctx: MockContext, withFacets: boolean) {
   return { items, total: rows.length, page, pageSize, ...(withFacets ? { facets: facets() } : {}) };
 }
 
+/**
+ * 后代 id（不含自身）：筛选时「选一级 = 展开到全部下级」，与后端
+ * `expand_tag_ids` 同一口径。
+ */
+function tagDescendantIds(id: string): string[] {
+  const result: string[] = [];
+  const walk = (parentId: string) => {
+    for (const child of TAGS.filter((item) => item.parentId === parentId)) {
+      result.push(child.id);
+      walk(child.id);
+    }
+  };
+  walk(id);
+  return result;
+}
+
+/** 祖先 id（不含自身，从近到远）：计数时一条挂了三级词的素材也要算进它的
+ *  一级与二级祖先。 */
+function tagAncestorIds(id: string): string[] {
+  const result: string[] = [];
+  let parentId = TAGS.find((item) => item.id === id)?.parentId ?? undefined;
+  while (parentId) {
+    result.push(parentId);
+    const next = TAGS.find((item) => item.id === parentId)?.parentId ?? undefined;
+    parentId = next;
+  }
+  return result;
+}
+
+/** 词表的派生字段：层级、整条父链、直属子级数（后端 `list_tags` 给的就是这些）。 */
+function tagStatOf(tag: LibraryTagStatOut): LibraryTagStatOut {
+  const chain: string[] = [];
+  let parentId = tag.parentId ?? undefined;
+  while (parentId) {
+    const parent = TAGS.find((item) => item.id === parentId);
+    if (!parent) break;
+    chain.unshift(parent.name);
+    parentId = parent.parentId ?? undefined;
+  }
+  return {
+    ...tag,
+    parentId: tag.parentId ?? null,
+    parentName: chain.length ? chain.join(' / ') : null,
+    depth: chain.length + 1,
+    childCount: TAGS.filter((item) => item.parentId === tag.id).length,
+  };
+}
+
 /** 标签栏计数：与 `listOf` 同一套入口口径。 */
 function tagStats(ctx: MockContext): LibraryTagStatOut[] {
   const state = String(ctx.params.state ?? 'active');
@@ -393,13 +462,25 @@ function tagStats(ctx: MockContext): LibraryTagStatOut[] {
   if (state === 'active') {
     rows = rows.filter((row) => visible(row, library));
   }
+  const purpose = ctx.params.purpose ? String(ctx.params.purpose) : '';
+  rows = purpose
+    ? rows.filter((row) => row.purpose === purpose)
+    : rows.filter((row) => row.purpose !== 'case');
+  /* 计数口径与后端一致：一个标签 = 自身 + 全部下级，按资产 id 去重。
+     所以一条挂了三级词的素材，同时算进它的一级与二级祖先。 */
   const counts = new Map<string, number>();
   for (const row of rows) {
-    for (const tag of row.tags ?? []) counts.set(tag.id, (counts.get(tag.id) ?? 0) + 1);
+    const ids = new Set<string>();
+    for (const tag of row.tags ?? []) {
+      ids.add(tag.id);
+      for (const ancestor of tagAncestorIds(tag.id)) ids.add(ancestor);
+    }
+    for (const id of ids) counts.set(id, (counts.get(id) ?? 0) + 1);
   }
-  return TAGS.map((tag) => ({ ...tag, assetCount: counts.get(tag.id) ?? 0 })).sort(
-    (a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id),
-  );
+  return TAGS.map((tag) => ({
+    ...tagStatOf(tag),
+    assetCount: counts.get(tag.id) ?? 0,
+  })).sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
 }
 
 const nowIso = () => new Date().toISOString();
@@ -421,10 +502,23 @@ export const routes: MockRoute[] = [
     pattern: /^\/library\/assets\/upload$/,
     handler: (ctx) => {
       const filename = String(ctx.params.filename ?? '未命名');
-      const kind = String(ctx.params.kind ?? 'image') === 'audio' ? 'audio' : 'image';
+      const rawKind = String(ctx.params.kind ?? 'image');
+      /* 三种类别都要认：演示环境把 .txt 落成图片，文本资产在「文本」筛选里
+         就找不到，等于骗人。 */
+      const kind: LibraryAssetDetailOut['kind'] =
+        rawKind === 'audio' || rawKind === 'text' || rawKind === 'video' ? rawKind : 'image';
+      const mimeType =
+        kind === 'text'
+          ? 'text/plain'
+          : kind === 'audio'
+            ? 'audio/mpeg'
+            : kind === 'video'
+              ? 'video/mp4'
+              : 'image/png';
       const row = asset({
         name: filename,
         kind,
+        mimeType,
         state: 'active',
         tags: [],
         sizeBytes: 900_000 + (assetSeq % 5) * 120_000,
@@ -681,25 +775,17 @@ export const routes: MockRoute[] = [
         target: (body.target as 'group' | 'team') ?? 'team',
         groupId: body.groupId ? String(body.groupId) : undefined,
         groupName: body.groupId ? GROUPS.find((group) => group.id === body.groupId)?.name : null,
-        status: 'approved',
-        reviewerId: ME,
+        /* 真实后端只有持 `library:share:direct` 才当场通过，否则是待审批：
+           界面文案按 status 走，演示环境永远 approved 就看不到「申请已提交，
+           等待审核」那条路。下面的 approve/reject 分支正好处理 pending。 */
+        status: 'pending',
+        reviewerId: undefined,
         note: '',
         reason: String(body.reason ?? ''),
-        decidedAt: nowIso(),
+        decidedAt: undefined,
         createdAt: nowIso(),
       };
       if (request.action === 'revoke' && !request.reason) throw new HttpError(400, '撤销共享必须填写理由');
-      if (request.action === 'share') {
-        row.visibility = request.target === 'team' ? 'team' : 'group';
-        row.groupIds = request.target === 'team' ? [] : [String(body.groupId ?? 'g1')];
-        row.groups = row.groupIds.map((gid) => ({ id: gid, name: GROUPS.find((group) => group.id === gid)?.name ?? gid }));
-      } else if (request.target === 'team') {
-        row.visibility = 'personal';
-      } else {
-        row.groupIds = (row.groupIds ?? []).filter((gid) => gid !== request.groupId);
-        if (!row.groupIds.length) row.visibility = 'personal';
-        row.groups = row.groupIds.map((gid) => ({ id: gid, name: GROUPS.find((group) => group.id === gid)?.name ?? gid }));
-      }
       requests = [request, ...requests];
       return (request);
     },
@@ -744,6 +830,18 @@ export const routes: MockRoute[] = [
     },
   },
 
+  {
+    method: 'POST',
+    pattern: /^\/library\/assets\/([^/]+)\/purpose$/,
+    handler: (ctx) => {
+      const id = ctx.path.split('/')[3] ?? '';
+      const row = ASSETS.find((item) => item.id === id);
+      if (!row) throw new HttpError(404, '资产不存在或不可见');
+      row.purpose = String(ctx.body.purpose ?? '');
+      return (toOut(row));
+    },
+  },
+
   { method: 'GET', pattern: /^\/library\/groups$/, handler: () => (GROUPS) },
   { method: 'PUT', pattern: /^\/library\/groups\/([^/]+)\/leaders$/, handler: () => ([]) },
 
@@ -753,16 +851,21 @@ export const routes: MockRoute[] = [
     pattern: /^\/library\/tags$/,
     handler: (ctx) => {
       const name = String(ctx.body.name ?? '').trim();
-      const existing = TAGS.find((tag) => tag.name === name);
-      if (existing) return (existing);
+      const parentId = ctx.body.parentId ? String(ctx.body.parentId) : undefined;
+      /* 同名幂等的口径是「同一父下同名」：两个系列各自有「小红书」是合法的 */
+      const existing = TAGS.find(
+        (tag) => tag.name === name && (tag.parentId ?? undefined) === parentId,
+      );
+      if (existing) return (tagStatOf(existing));
       const tag: LibraryTagStatOut = {
         id: `t${TAGS.length + 1}`,
         name,
+        parentId: parentId ?? null,
         assetCount: 0,
         createdAt: nowIso(),
       };
       TAGS.push(tag);
-      return (tag);
+      return (tagStatOf(tag));
     },
   },
   {

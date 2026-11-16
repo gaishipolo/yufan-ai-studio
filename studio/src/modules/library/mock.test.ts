@@ -138,11 +138,21 @@ describe('资产库 mock · 写操作的语义', () => {
     expect(body.data.skipped?.map((item) => item.id)).toContain(draftId);
   });
 
-  it('共享申请审批通过后，资产真的换到目标库', async () => {
+  it('共享申请先落待审批，审批通过后资产才真的换到目标库', async () => {
     const created = await call<ShareRequestOut>('POST', '/library/share-requests', {
       data: { assetId: 'a101', action: 'share', target: 'group', groupId: 'g2', reason: '同款活动' },
     });
-    expect(created.body.data.status).toBe('approved');
+    /* 与真实后端同口径：没有直共享权限时先落「待审批」，不立刻生效 */
+    expect(created.body.data.status).toBe('pending');
+    const before = await call<LibraryAssetDetailOut>('GET', '/library/assets/a101');
+    expect(before.body.data.visibility).not.toBe('group');
+
+    const approved = await call<ShareRequestOut>(
+      'POST',
+      `/library/share-requests/` + created.body.data.id + '/approve',
+      { data: {} },
+    );
+    expect(approved.body.data.status).toBe('approved');
     const detail = await call<LibraryAssetDetailOut>('GET', '/library/assets/a101');
     expect(detail.body.data.visibility).toBe('group');
     expect(detail.body.data.groupIds).toContain('g2');
