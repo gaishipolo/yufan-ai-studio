@@ -468,6 +468,8 @@
 | `features/task-preview/TaskPreviewModal.tsx` | 视频任务结果预览弹窗：下载成片走 feed 已现签的 `outputUrl`。 |
 | `features/task-preview/ImagePreviewModal.tsx` | 生图详情弹窗：直接用 feed 的 `image` 投影，不再发详情请求；下载成图、失败重试（可能已扣费时二次确认）、跳生图历史。 |
 | `features/create-task/CreateTaskModal.tsx` | 创建生成任务（模型、时长、比例全部来自 `/models`）。 |
+| `features/template-library/SpecLibrary.tsx` | 模板库填表页：左边挑已发布模板、右边填素材 → 生成。**生成前有二次确认**（`shared/ui/ConfirmDialog`），确认框里摊开这次会提交什么。 |
+| `features/template-library/generateConfirm.ts` | 二次确认的内容组装（纯函数）：模板 / 模型 / 素材数 / 生效参数 / 计费方式，以及「会消耗积分」的提醒。 |
 
 ### 4.5 `modules/` —— 模块清单（**加功能先加这里**）
 
@@ -571,6 +573,8 @@
 | `shared/ui/Button.tsx` / `shared/ui/IconButton.tsx` | 按钮与图标按钮（variant / size / loading）。 |
 | `shared/ui/Modal.tsx` | 弹窗：焦点陷阱、滚动引用计数、关闭后焦点归还。 |
 | `shared/ui/Modal.test.tsx` | 焦点归还用例。 |
+| `shared/ui/ConfirmDialog.tsx` | 通用二次确认框：标题 + 说明 + **事实清单** + 提醒条 + 取消/确认。事实清单是它与 `window.confirm` 的分界 —— 确认前把「这次会发生什么」摊开写出来，别让用户盲按。 |
+| `shared/ui/ConfirmDialog.test.tsx` | 事实清单渲染、两个回调各走各的、busy 时禁用。 |
 | `shared/ui/Toaster.tsx` | 全局 toast 渲染器。 |
 | `shared/ui/Tabs.tsx` / `shared/ui/Switch.tsx` / `shared/ui/Select.tsx` / `shared/ui/SearchInput.tsx` / `shared/ui/FormField.tsx` | 表单与筛选基元。 |
 | `shared/ui/Pager.tsx` | 分页器（总数未知时不回退页码）。 |
