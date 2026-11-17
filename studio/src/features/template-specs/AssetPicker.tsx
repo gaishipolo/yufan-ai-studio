@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { libraryApi } from '@/entities/library/api/library.api';
 import { useLibraryTags } from '@/entities/library/api/library.queries';
-import { effectiveTagSelection } from '@/entities/library/model/tagTree';
+import { scopeFilterIds } from '@/entities/library/model/tagTree';
 import { viewQuery } from '@/entities/library/model/types';
 import { TagFilter } from '@/entities/library/ui/TagFilter';
 import { CoverImage, Modal, SearchInput } from '@/shared/ui';
@@ -77,7 +77,15 @@ export function AssetPicker({
      useMemo 的依赖，每次 render 新建一个数组会让那个 memo 每次都重算。 */
   const scope = useMemo(() => tagIds ?? [], [tagIds]);
   const scopeKey = scope.join(',');
-  const tags = useLibraryTags(viewQuery('all'));
+  /*
+   * 标签词表按**候选范围**收窄：只统计符合候选集的那批素材。
+   * 界面上能点什么，取决于这批素材身上实际有什么 —— 按全库拿会列出一堆
+   * 这批素材一个都没挂的标签，用户点了只得到空列表。
+   */
+  const tags = useLibraryTags({
+    ...viewQuery('all'),
+    ...(scope.length ? { tagIds: scope } : {}),
+  });
 
   /* 换了一个槽位 = 换了候选集，之前挑的标签可能已经在范围外：清掉重来。 */
   useEffect(() => {
@@ -85,13 +93,16 @@ export function AssetPicker({
   }, [scopeKey]);
 
   /*
-   * 实际发给后端的标签：用户挑了就用用户挑的（同一条链上取最具体的一层），
-   * 没挑就用作者的候选集。两者都是「若干标签的并集」。
+   * 实际发给后端的标签：**候选集 + 使用者的挑选**，按维度替换。
+   *
+   * 使用者的点击是「在候选集里再筛」，不是「再限一层」——
+   * 候选集圈了「产品 + 三视图」，使用者挑「产品 / 6036」，
+   * 筛的是「既是 6036 又是三视图」，而不是要求素材同时挂三样。
    */
-  const filterIds = useMemo(() => {
-    const chosen = effectiveTagSelection(tags.data ?? [], picked);
-    return chosen.length ? chosen : scope;
-  }, [tags.data, picked, scope]);
+  const filterIds = useMemo(
+    () => scopeFilterIds(tags.data ?? [], scope, picked),
+    [tags.data, picked, scope],
+  );
   const filterKey = filterIds.join(',');
 
   const params = useMemo(
@@ -118,7 +129,7 @@ export function AssetPicker({
       <div className="flex flex-col gap-3">
         <TagFilter
           tags={tags.data ?? []}
-          scope={scope}
+          onlyWithAssets
           value={picked}
           onChange={setPicked}
         />

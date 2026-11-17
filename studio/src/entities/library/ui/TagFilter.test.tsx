@@ -32,13 +32,22 @@ describe('TagFilter · 两级标签筛选', () => {
     );
   });
 
-  it('范围之外的标签不出现：作者与使用者看到的必须是同一批素材', () => {
-    render(<TagFilter tags={TAGS} scope={['t1']} value={[]} onChange={vi.fn()} />);
-    const top = within(screen.getByRole('group', {name: '一级标签'}));
-    expect(top.queryByRole('button', {name: '角色'})).not.toBeInTheDocument();
+  it('只列这批素材身上实际有的标签（计数为 0 的不出现）', () => {
+    /* 词表里「菜菜」没有素材（assetCount=0）→ 不该出现；
+       用户点它只会得到空列表。 */
+    const scoped = TAGS.map((tag) =>
+      tag.id === 't21' ? { ...tag, assetCount: 0 } : tag,
+    );
+    render(<TagFilter tags={scoped} onlyWithAssets value={[]} onChange={vi.fn()} />);
     const second = within(screen.getByRole('group', {name: '二级标签'}));
     expect(second.queryByRole('button', {name: '菜菜'})).not.toBeInTheDocument();
     expect(second.getByRole('button', {name: '3030'})).toBeInTheDocument();
+  });
+
+  it('不收窄时按全词表列（资产库标签栏那样）', () => {
+    render(<TagFilter tags={TAGS} value={[]} onChange={vi.fn()} />);
+    const second = within(screen.getByRole('group', {name: '二级标签'}));
+    expect(second.getByRole('button', {name: '菜菜'})).toBeInTheDocument();
   });
 
   it('点一下选中、再点一下取消（多选语义）', async () => {

@@ -744,6 +744,7 @@ async def list_tags(
     state: LibraryAssetState = LibraryAssetState.ACTIVE,
     kind: LibraryAssetKind | None = None,
     purpose: Annotated[str | None, Query(max_length=16)] = None,
+    tag_ids: Annotated[list[str] | None, Query(alias="tagIds")] = None,
 ) -> ApiResponse[list[LibraryTagStatOut]]:
     """计数按 `state` + `library` + `kind` + `purpose` 与列表同口径。
 
@@ -752,6 +753,10 @@ async def list_tags(
 
     `purpose=case` 是案例池入口：只有持 `library:case:read` 的人能看案例池，
     且计数只算案例。不传时一律排除案例——与列表同一口径。
+
+    `tagIds` 是**候选范围**（模板库用）：只统计符合这组标签的素材。
+    模板作者圈了候选集之后，模板库要显示的是「这批素材身上实际有的二级标签」
+    —— 按全库算会列出一堆这批素材一个都没挂的标签，用户点了只得到空列表。
     """
     target = (purpose or "").strip().lower()
     if target and target != access.PURPOSE_CASE:
@@ -766,6 +771,7 @@ async def list_tags(
             library=library,
             kind=kind.value if kind else "",
             purpose=access.PURPOSE_CASE if case_view else "",
+            tag_ids=list(tag_ids or []),
         )
     )
 

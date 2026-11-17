@@ -3,7 +3,6 @@ import { X } from 'lucide-react';
 import type { LibraryTagStatOut } from '@/shared/api/schema';
 import { cn } from '@/shared/lib/cn';
 import {
-  scopeAllowedTags,
   secondLevelForSelection,
   tagLabel,
   tagsAtDepth,
@@ -13,12 +12,13 @@ export interface TagFilterProps {
   /** 词表（任意级别：一级维度 / 二级取值） */
   tags: LibraryTagStatOut[];
   /**
-   * 允许挑的范围：**作者的候选集**（槽位的标签）。空 = 不限。
+   * 只列**这批素材身上实际有**的标签（`assetCount > 0`）。
    *
-   * 范围之外的标签不出现：模板使用者只能在作者圈好的范围里挑，两边看到的
-   * 必须是同一批素材。
+   * 模板库用：作者圈了候选集之后，要显示的是「这批素材实际有的二级标签」。
+   * 列出一堆这批素材一个都没挂的标签，用户点了只得到空列表 ——
+   * 那是词表的全貌，不是这批素材的。
    */
-  scope?: string[];
+  onlyWithAssets?: boolean;
   /** 已挑的标签 id（可空） */
   value: string[];
   onChange: (ids: string[]) => void;
@@ -35,20 +35,23 @@ const ACTIVE = 'border-primary bg-primary text-white shadow-sm';
 /**
  * 标签筛选条（选择器用）：**两行**，一级维度 / 二级取值。
  *
- * 与资产库标签栏的差别只有一处：这里多一个 `scope` —— 作者圈好的候选集，
- * 范围之外的标签不出现。除此之外口径一样：**同维度多选是或、跨维度是且**。
+ * 口径与资产库标签栏一致：**同维度多选是或、跨维度是且**。
  *
  * 组件只管「挑了哪些」；同一维度里「维度与取值只留取值」这件事由调用方
  * 用 `effectiveTagSelection` 收敛（这里保留用户点的全部，让胶囊都高亮）。
  */
 export function TagFilter({
   tags,
-  scope = [],
+  onlyWithAssets = false,
   value,
   onChange,
   title = '按标签筛选',
 }: TagFilterProps) {
-  const allowed = useMemo(() => scopeAllowedTags(tags, scope), [tags, scope]);
+  /* 只留有素材的标签：词表是全的，而这批素材只挂了其中几个。 */
+  const allowed = useMemo(
+    () => (onlyWithAssets ? tags.filter((tag) => (tag.assetCount ?? 0) > 0) : tags),
+    [tags, onlyWithAssets],
+  );
   const rows = useMemo(
     () => [
       { label: '一级', items: tagsAtDepth(allowed, 1) },

@@ -69,7 +69,13 @@ export function useLibraryDetail(id: string | null) {
   });
 }
 
-/** 标签计数按入口变化，所以 scope 进 queryKey；不保留上一屏，避免个人/小组数字串味。 */
+/**
+ * 标签计数按入口变化，所以 scope 进 queryKey；不保留上一屏，避免个人/小组数字串味。
+ *
+ * `scope.tagIds` 是**候选范围**：只统计符合这组标签的素材。
+ * 模板库用它显示「这批素材身上实际有的二级标签」——
+ * 按全库算会列出一堆这批素材一个都没挂的标签，用户点了只得到空列表。
+ */
 export function useLibraryTags(scope: LibraryTagScope) {
   return useQuery({
     queryKey: libraryKeys.tagList(scope),

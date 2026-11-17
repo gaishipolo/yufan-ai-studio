@@ -250,24 +250,52 @@ export function effectiveTagSelection(
 
 
 /**
- * 候选集范围（scope）允许挑的标签：scope 本身 + 它的全部后代。
+ * 真正拿去筛素材的标签：**候选集 + 使用者的挑选**，按维度做「替换」。
  *
- * 为什么只给后代：槽位的标签是作者定的**候选集**，模板使用者只能在它里面挑。
- * 圈到范围外面去，作者与使用者看到的就是两批素材 —— 「作者选的图用户根本挑不到」。
+ * 这是模板库的核心口径 —— 作者圈了候选集（那是**素材范围**），
+ * 使用者在界面上的点击是**在这个范围里再筛**。所以同一维度上，
+ * 使用者挑的那一档**替换**掉候选集里这一维度的标签，而不是叠加：
  *
- * scope 为空 = 不限，这时所有标签都能挑。
+ * - 候选集 =「产品 + 三视图」，使用者挑「产品 / 6036」
+ *   → 结果 =「6036 + 三视图」（既是 6036 又是三视图）。
+ *   叠加会变成三个维度、要求素材同时挂三样 —— 那不是「再筛」，是「再限」。
+ * - 候选集 =「产品」，使用者挑「角色 / 菜菜」
+ *   → 结果 =「产品 + 菜菜」：菜菜那条轴候选集没管过，由使用者说了算。
+ * - 候选集 = 空，使用者挑「产品 / 6036」→ 就是「6036」。
+ *
+ * 与后端一致：跨维度是 AND，同维度是 OR（`tags.tag_filter_clause`）。
  */
-export function scopeAllowedTags(
+export function scopeFilterIds(
   tags: LibraryTagStatOut[],
   scope: string[],
-): LibraryTagStatOut[] {
-  if (!scope.length) return tags;
-  const allowed = new Set<string>();
+  picked: string[],
+): string[] {
+  const byId = new Map(tags.map((item) => [item.id, item]));
+  /* 维度 → 该维度要用的标签 id。先填候选集，再用使用者的挑选逐维度替换。 */
+  const byDimension = new Map<string, string[]>();
   for (const id of scope) {
-    allowed.add(id);
-    for (const child of descendantIds(tags, id)) allowed.add(child);
+    const tag = byId.get(id);
+    if (!tag) continue;
+    const dimension = dimensionOf(tags, tag);
+    if (!dimension) continue;
+    byDimension.set(dimension, [...(byDimension.get(dimension) ?? []), id]);
   }
-  return tags.filter((tag) => allowed.has(tag.id));
+  for (const id of picked) {
+    const tag = byId.get(id);
+    if (!tag) continue;
+    const dimension = dimensionOf(tags, tag);
+    if (!dimension) continue;
+    /* 这一维度由使用者说了算：候选集在这一维度的标签让位。 */
+    byDimension.set(dimension, [id]);
+  }
+
+  const result: string[] = [];
+  for (const ids of byDimension.values()) {
+    for (const id of ids) {
+      if (!result.includes(id)) result.push(id);
+    }
+  }
+  return result;
 }
 
 /**

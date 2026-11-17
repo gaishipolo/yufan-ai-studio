@@ -237,10 +237,18 @@ def tag_filter_clause(
             expanded.update(_descendants(tag_id, children))
         clauses.append(
             exists(
-                select(1).select_from(LibraryAssetTag).where(
+                select(1)
+                .select_from(LibraryAssetTag)
+                .where(
                     LibraryAssetTag.asset_id == LibraryAsset.id,
                     LibraryAssetTag.tag_id.in_(list(expanded)),
                 )
+                # 只关联 `LibraryAsset`，**不**关联 `LibraryAssetTag`：
+                # 调用方的外层查询可能也带 `LibraryAssetTag`（标签计数那张表
+                # 就是「绑定行 JOIN 资产」），自动关联会把外层的同名列拉进子句，
+                # 于是子句查的是「这行绑定行的 tag_id 在集合里」而不是
+                # 「外层那批资产里有没有挂这个标签」—— 条件恒假，计数全 0。
+                .correlate_except(LibraryAssetTag)
             )
         )
     # 维度之间取交集：AND
@@ -387,6 +395,7 @@ class TagService:
         library: LibraryTab = LibraryTab.ALL,
         kind: str = "",
         purpose: str = "",
+        tag_ids: Sequence[str] = (),
     ) -> list[LibraryTagStatOut]:
         """标签栏的数据：全部标签 + 当前入口下各标签的素材数。
 
@@ -403,6 +412,14 @@ class TagService:
         必须也是「这一类里有几条」。不按类别算的话，用户在「图片」下看到
         胶囊写 9、点进去只有 4 条——数字说的是全库，筛的是本类。
 
+        **`tag_ids` 是候选范围**（模板库用）：只统计**符合这组标签**的素材。
+        模板作者圈了「产品 + 三视图」当候选集，模板库要显示的是
+        「这批素材身上实际有的二级标签」——按全库算会列出一堆这批素材
+        一个都没挂的标签，用户点了只得到空列表。
+
+        范围的筛选口径与列表完全一致（`tag_filter_clause`：组内 OR、组间 AND），
+        否则「标签栏说这条有 3 条，点进去只有 1 条」。
+
         **不受当前标签筛选影响**：计数是「这个入口里有多少素材属于该标签」，
         不是「再叠上已选标签后还剩多少」；否则每点一次筛选，其余标签的数字
         都会跳一遍，反而没法读。关键词筛选同理不计入。
@@ -414,7 +431,9 @@ class TagService:
         _parent, depth, path = tag_tree_index(rows)
         children = _children_of(rows)
 
-        per_tag = await self._asset_ids_by_tag(actor, groups, state, library, kind, purpose)
+        per_tag = await self._asset_ids_by_tag(
+            actor, groups, state, library, kind, purpose, tag_ids
+        )
         # 一个标签的数字 = 自身 + 全部下级，按资产 id 去重。这与「点一级展开到
         # 全部下级」的筛选口径完全一致；`count(distinct)` 做不到跨标签的并集去重，
         # 所以这里把绑定行取回来在内存里归并（当前入口的可见集本来就不大）。
@@ -448,6 +467,7 @@ class TagService:
         library: LibraryTab,
         kind: str = "",
         purpose: str = "",
+        tag_ids: Sequence[str] = (),
     ) -> dict[str, set[str]]:
         """当前入口下「每个标签 → 可见资产 id 集合」，一次查询取回。
 
@@ -456,6 +476,9 @@ class TagService:
 
         `kind` 是类别筛选（image / video / audio / text），与列表的类别口径
         一致；留空表示不按类别收窄。`purpose` 是用途，口径同理。
+
+        `tag_ids` 是候选范围：只统计符合这组标签的素材（口径与列表的
+        `tag_filter_clause` 一致 —— 组内 OR、组间 AND）。留空 = 不按标签收窄。
         """
         query = (
             select(LibraryAssetTag.tag_id, LibraryAssetTag.asset_id)
@@ -481,6 +504,14 @@ class TagService:
                 query = query.where(LibraryAsset.owner_id == actor.id)
         elif not actor.has(access.PERM_DELETE_ANY):
             query = query.where(LibraryAsset.owner_id == actor.id)
+
+        # 候选范围：与列表同一个 `tag_filter_clause`（组内 OR、组间 AND）。
+        # 这里筛的是**素材**，上面那段查的是「素材 × 标签」的绑定行 ——
+        # 范围条件落在素材上，绑定行上的标签才是「这批素材身上的标签」。
+        if tag_ids:
+            clause = tag_filter_clause(await all_tags(self.session), tag_ids)
+            if clause is not None:
+                query = query.where(clause)
 
         result = await self.session.execute(query)
         grouped: dict[str, set[str]] = {}

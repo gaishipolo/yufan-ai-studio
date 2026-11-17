@@ -4,7 +4,7 @@ import {
   useLibrarySelection,
   useLibraryTags,
 } from '@/entities/library/api/library.queries';
-import { effectiveTagSelection } from '@/entities/library/model/tagTree';
+import { scopeFilterIds } from '@/entities/library/model/tagTree';
 import { KIND_LABEL, viewQuery } from '@/entities/library/model/types';
 import type { SpecSlotOut } from '@/shared/api/schema';
 import { CoverImage } from '@/shared/ui';
@@ -31,8 +31,19 @@ export function SlotMediaPicker({
   const scope = useMemo(() => slot.tagIds ?? [], [slot.tagIds]);
   const scopeKey = scope.join(',');
 
-  const tags = useLibraryTags({ ...viewQuery('all'), kind });
-  /* 用户在这个槽位里又挑的标签（可空）：三级多选，跨链是并集。 */
+  /*
+   * 标签词表按**候选范围**收窄：只统计符合候选集的那批素材。
+   *
+   * 这一步决定了界面上能点什么：模板库要显示的是「这批素材身上实际有的
+   * 二级标签」，不是整个词表。按全库拿会列出一堆这批素材一个都没挂的标签，
+   * 用户点了只得到空列表。
+   */
+  const tags = useLibraryTags({
+    ...viewQuery('all'),
+    kind,
+    ...(scope.length ? { tagIds: scope } : {}),
+  });
+  /* 用户在这个槽位里又挑的标签（可空）：同维度是或、跨维度是且。 */
   const [picked, setPicked] = useState<string[]>([]);
   /* 换槽位 = 换候选集，之前挑的标签可能已经在范围外：清掉重来。 */
   useEffect(() => {
@@ -40,13 +51,16 @@ export function SlotMediaPicker({
   }, [scopeKey, slot.key]);
 
   /*
-   * 实际发给后端的标签：用户挑了就用用户挑的（同一条链上取最具体的一层），
-   * 没挑就用槽位的候选集。两者都是「若干标签的并集」。
+   * 实际发给后端的标签：**候选集 + 使用者的挑选**，按维度替换。
+   *
+   * 使用者的点击是「在候选集里再筛」，不是「再限一层」——
+   * 候选集圈了「产品 + 三视图」，使用者挑「产品 / 6036」，
+   * 筛的是「既是 6036 又是三视图」，而不是要求素材同时挂三样。
    */
-  const filterIds = useMemo(() => {
-    const chosen = effectiveTagSelection(tags.data ?? [], picked);
-    return chosen.length ? chosen : scope;
-  }, [tags.data, picked, scope]);
+  const filterIds = useMemo(
+    () => scopeFilterIds(tags.data ?? [], scope, picked),
+    [tags.data, picked, scope],
+  );
 
   const list = useLibrarySelection({
     kind,
@@ -102,11 +116,12 @@ export function SlotMediaPicker({
         </div>
       )}
 
-      {/* 三级标签多选：范围是槽位的候选集，用户能在里面再挑更细的一档。 */}
+      {/* 标签多选：列的是**这批候选素材身上实际有**的标签，
+          用户点了就在候选集里再筛一层。 */}
       <div className="mt-2">
         <TagFilter
           tags={tags.data ?? []}
-          scope={scope}
+          onlyWithAssets
           value={picked}
           onChange={setPicked}
         />

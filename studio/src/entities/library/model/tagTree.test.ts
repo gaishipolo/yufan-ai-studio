@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { LibraryTagStatOut } from '@/shared/api/schema';
 import {
   effectiveTagSelection,
-  scopeAllowedTags,
+  scopeFilterIds,
   secondLevelForSelection,
 } from './tagTree';
 
@@ -81,22 +81,34 @@ describe('secondLevelForSelection · 二级行该列哪些取值', () => {
   });
 });
 
-describe('scopeAllowedTags · 候选集范围里能挑的标签', () => {  it('范围为空 = 不限，所有标签都能挑', () => {
-    expect(scopeAllowedTags(TAGS, []).map((tag) => tag.id)).toEqual([
-      't1',
-      't2',
-      't11',
-      't12',
-      't21',
-    ]);
+describe('scopeFilterIds · 候选集 + 使用者的挑选', () => {
+  it('都没挑时就是候选集本身', () => {
+    expect(scopeFilterIds(TAGS, ['t1', 't21'], [])).toEqual(['t1', 't21']);
   });
 
-  it('范围给了就只给它的子树（作者与使用者看到的必须是同一批素材）', () => {
-    expect(scopeAllowedTags(TAGS, ['t1']).map((tag) => tag.id)).toEqual([
-      't1',
-      't11',
-      't12',
-    ]);
-    expect(scopeAllowedTags(TAGS, ['t11']).map((tag) => tag.id)).toEqual(['t11']);
+  it('候选集为空就只有使用者的挑', () => {
+    expect(scopeFilterIds(TAGS, [], ['t11'])).toEqual(['t11']);
+  });
+
+  it('同一维度：使用者的挑**替换**候选集里那一维的标签（不是叠加）', () => {
+    // 候选集「产品」，使用者挑「产品 / 3030」→ 只剩 3030。
+    // 叠加成两个会变成「整个产品线 ∩ 3030」，而那正是产品线。
+    expect(scopeFilterIds(TAGS, ['t1'], ['t11'])).toEqual(['t11']);
+  });
+
+  it('跨维度：使用者的挑加进来，候选集那一维原样保留', () => {
+    // 候选集「产品」，使用者挑「角色 / 菜菜」→ 产品 ∩ 菜菜
+    expect(scopeFilterIds(TAGS, ['t1'], ['t21'])).toEqual(['t1', 't21']);
+  });
+
+  it('候选集两个维度，使用者挑其中一个 → 那一个被替换，另一个保留', () => {
+    // 候选集「产品 + 角色」，使用者挑「产品 / 3030」
+    // → 3036 ∩ 角色，而不是「3030 ∩ 角色 ∩ 整个产品线」
+    expect(scopeFilterIds(TAGS, ['t1', 't2'], ['t11'])).toEqual(['t11', 't2']);
+  });
+
+  it('词表里没有的 id 被丢掉', () => {
+    expect(scopeFilterIds(TAGS, ['nope'], [])).toEqual([]);
+    expect(scopeFilterIds(TAGS, [], ['nope'])).toEqual([]);
   });
 });

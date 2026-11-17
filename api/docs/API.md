@@ -2631,12 +2631,17 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 `purpose=case` 是案例池入口：只有持 `library:case:read` 的人能看案例池，
 且计数只算案例。不传时一律排除案例——与列表同一口径。
 
+`tagIds` 是**候选范围**（模板库用）：只统计符合这组标签的素材。
+模板作者圈了候选集之后，模板库要显示的是「这批素材身上实际有的二级标签」
+—— 按全库算会列出一堆这批素材一个都没挂的标签，用户点了只得到空列表。
+
 | 参数 | 位置 | 类型 | 必填 | 说明 |
 |---|---|---|---|---|
 | `library` | query | `LibraryTab` | 否 |  |
 | `state` | query | `LibraryAssetState` | 否 |  |
 | `kind` | query | `LibraryAssetKind | null` | 否 |  |
 | `purpose` | query | `string | null` | 否 |  |
+| `tagIds` | query | `string[] | null` | 否 |  |
 
 **响应** `ApiResponse<LibraryTagStatOut[]>`（前端取 `res.data`）
 

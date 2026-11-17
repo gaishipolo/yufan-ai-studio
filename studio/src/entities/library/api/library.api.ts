@@ -70,9 +70,14 @@ export function toRequestParams(params: LibraryListParams): Record<string, unkno
  * `kind` 是可选的**类别**收窄：悬浮栏按「图片 / 成片 / 音频 / 文本」分类
  * 浏览时，胶囊上的数字必须也是这一类里的条数。不传就是全类计数
  * （资产库页的标签栏就是全类，它不按类别切）。
+ *
+ * `tagIds` 是可选的**候选范围**：只统计符合这组标签的素材。
+ * 模板作者圈了候选集之后，模板库要显示的是「这批素材身上实际有的二级标签」
+ * —— 按全库算会列出一堆这批素材一个都没挂的标签，用户点了只得到空列表。
  */
 export type LibraryTagScope = ReturnType<typeof viewQuery> & {
   kind?: LibraryAssetKind;
+  tagIds?: string[];
 };
 
 export const libraryApi = {
@@ -248,7 +253,9 @@ export const libraryApi = {
 
   /** 标签词表 + 当前入口下每个标签的素材数（按添加时间排序由后端保证）。 */
   tags: (scope: LibraryTagScope) =>
-    api.get<LibraryTagStatOut[]>(`/library/tags`, scope),
+    api.get<LibraryTagStatOut[]>(`/library/tags`, scope, {
+      paramsSerializer: REPEATED_ARRAY,
+    }),
 
   /** `parentId` 给一级的 id 就建成二级；留空建成一级。 */
   createTag: (name: string, parentId?: string) =>

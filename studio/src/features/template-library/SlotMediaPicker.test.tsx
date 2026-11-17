@@ -7,9 +7,9 @@ import { SlotMediaPicker } from './SlotMediaPicker';
 /**
  * 模板库填表页的槽位选择器：
  *
- * - 候选集是**槽位的标签**（作者圈的），范围之外的标签不出现；
- * - 使用者可以在范围里再挑更细的一档（两个级别都能挑），挑了就按挑的筛；
- * - 没挑时按作者的候选集筛。
+ * - 候选集是**槽位的标签**（作者圈的）—— 那圈定了素材范围；
+ * - 界面上只列**这批素材身上实际有**的标签，用户点了就在范围里再筛；
+ * - 使用者的挑按维度**替换**候选集里那一维，不是叠加。
  *
  * 断言落在「发给后端的 tagIds」上 —— 那才是筛选语义真正发生的地方。
  */
@@ -31,11 +31,12 @@ vi.mock('@/entities/library/api/library.queries', () => ({
   },
 }));
 
-/** 两级：一级是维度（产品 / 角色），二级是取值（3030）。 */
+/** 两级：一级是维度（产品 / 角色），二级是取值（3030 / 菜菜）。 */
 const TAGS: LibraryTagStatOut[] = [
   { id: 't1', name: '产品', assetCount: 7, childCount: 2, createdAt: '2026-11-09T10:01:00Z' },
   { id: 't2', name: '角色', assetCount: 3, childCount: 1, createdAt: '2026-11-09T10:02:00Z' },
   { id: 't11', name: '3030', parentId: 't1', parentName: '产品', depth: 2, assetCount: 5, childCount: 0, createdAt: '2026-11-09T10:04:00Z' },
+  { id: 't21', name: '菜菜', parentId: 't2', parentName: '角色', depth: 2, assetCount: 3, childCount: 0, createdAt: '2026-11-09T10:06:00Z' },
 ];
 
 function slotOf(extra: Partial<SpecSlotOut> = {}): SpecSlotOut {
@@ -58,7 +59,7 @@ beforeEach(() => {
   tagsData.current = TAGS;
 });
 
-describe('SlotMediaPicker · 两级标签筛选', () => {
+describe('SlotMediaPicker · 候选集里再筛', () => {
   it('没挑标签时按槽位的候选集筛', () => {
     render(
       <SlotMediaPicker slot={slotOf({tagIds: ['t1']})} selected={[]} onChange={vi.fn()} />,
@@ -66,7 +67,10 @@ describe('SlotMediaPicker · 两级标签筛选', () => {
     expect(selectionCalls.at(-1)?.tagIds).toEqual(['t1']);
   });
 
-  it('范围之外的标签不出现（作者与使用者看到的必须是同一批素材）', () => {
+  it('只列这批素材身上实际有的标签（计数为 0 的不出现）', () => {
+    tagsData.current = TAGS.map((tag) =>
+      tag.id === 't2' ? { ...tag, assetCount: 0 } : tag,
+    );
     render(
       <SlotMediaPicker slot={slotOf({tagIds: ['t1']})} selected={[]} onChange={vi.fn()} />,
     );
@@ -75,7 +79,7 @@ describe('SlotMediaPicker · 两级标签筛选', () => {
     expect(top.getByRole('button', {name: '产品'})).toBeInTheDocument();
   });
 
-  it('在范围里挑更细的一档（取值），就按挑的筛', async () => {
+  it('同一维度：使用者的挑替换候选集里那一维', async () => {
     const user = userEvent.setup();
     render(
       <SlotMediaPicker slot={slotOf({tagIds: ['t1']})} selected={[]} onChange={vi.fn()} />,
@@ -85,17 +89,14 @@ describe('SlotMediaPicker · 两级标签筛选', () => {
     expect(selectionCalls.at(-1)?.tagIds).toEqual(['t11']);
   });
 
-  it('同一维度里选了维度又选了取值 → 只留取值那一档', async () => {
+  it('跨维度：候选集那一维保留，使用者挑的加进来', async () => {
     const user = userEvent.setup();
     render(
       <SlotMediaPicker slot={slotOf({tagIds: ['t1']})} selected={[]} onChange={vi.fn()} />,
     );
-    const top = within(screen.getByRole('group', {name: '一级标签'}));
     const second = within(screen.getByRole('group', {name: '二级标签'}));
-    await user.click(top.getByRole('button', {name: '产品'}));
-    await user.click(second.getByRole('button', {name: '3030'}));
-    // 维度的范围本来就含取值，两个都留着等于「整个产品线」
-    expect(selectionCalls.at(-1)?.tagIds).toEqual(['t11']);
+    await user.click(second.getByRole('button', {name: '菜菜'}));
+    expect(selectionCalls.at(-1)?.tagIds).toEqual(['t1', 't21']);
   });
 
   it('老模板（没圈标签）照样能挑，只是没有分组', () => {

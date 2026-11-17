@@ -340,3 +340,83 @@ def test_delete_refuses_promotion_that_would_clash(client: TestClient, api: str)
     assert "同名" in response.json()["message"]
     # 冲突时不能先把子级改了再删：整轮应该原样保留
     assert parent["id"] in _tags(client, api, headers)
+
+
+def test_tag_counts_can_be_narrowed_to_a_candidate_scope(
+    client: TestClient, api: str
+) -> None:
+    """`GET /library/tags?tagIds=…` 只统计符合候选范围的那批素材。
+
+    模板库要显示的是「这批素材身上实际有的二级标签」——按全库算会列出一堆
+    这批素材一个都没挂的标签，用户点了只得到空列表。
+    """
+    _, headers = _setup(client, api)
+    mark = suffix()
+    product = _create(client, api, headers, f"产品-{mark}")
+    view = _create(client, api, headers, f"画面类型-{mark}")
+    model_6036 = _create(client, api, headers, f"6036-{mark}", product["id"])
+    model_t40 = _create(client, api, headers, f"T40-{mark}", product["id"])
+    front = _create(client, api, headers, f"正面图-{mark}", view["id"])
+
+    inside = upload_image(client, api, headers, name=f"in-{mark}.png", color="salmon")
+    _add_tags(client, api, headers, inside["id"], [model_6036["id"], front["id"]])
+    outside = upload_image(client, api, headers, name=f"out-{mark}.png", color="teal")
+    _add_tags(client, api, headers, outside["id"], [model_t40["id"]])
+
+    # 不收窄：两个产品取值都有素材
+    full = _tags(client, api, headers)
+    assert full[model_6036["id"]]["assetCount"] >= 1
+    assert full[model_t40["id"]]["assetCount"] >= 1
+
+    # 收窄到「6036」：T40 那条素材不在范围里，它的计数归零
+    scoped = client.get(
+        f"{api}/library/tags",
+        params=[("tagIds", model_6036["id"])],
+        headers=headers,
+    )
+    assert scoped.status_code == 200, scoped.text
+    counts = {item["id"]: item["assetCount"] for item in scoped.json()["data"]}
+    assert counts[model_6036["id"]] == 1
+    assert counts[model_t40["id"]] == 0
+    # 范围内素材身上的另一个标签仍然算数
+    assert counts[front["id"]] == 1
+
+    # 跨维度收窄（组内 OR、组间 AND）：范围是「6036 且 正面图」
+    both = client.get(
+        f"{api}/library/tags",
+        params=[("tagIds", model_6036["id"]), ("tagIds", front["id"])],
+        headers=headers,
+    )
+    assert both.status_code == 200, both.text
+    counts = {item["id"]: item["assetCount"] for item in both.json()["data"]}
+    assert counts[model_6036["id"]] == 1
+    assert counts[front["id"]] == 1
+
+
+def test_scoped_tag_counts_match_the_asset_list(
+    client: TestClient, api: str
+) -> None:
+    """收窄后的计数必须与「按同一组标签筛素材」的结果对得上。
+
+    对不上就是「标签旁写 8、点进去只有 3 条」——那是标签栏最招人烦的一种错。
+    """
+    _, headers = _setup(client, api)
+    mark = suffix()
+    product = _create(client, api, headers, f"产品-{mark}")
+    model_a = _create(client, api, headers, f"A-{mark}", product["id"])
+    model_b = _create(client, api, headers, f"B-{mark}", product["id"])
+
+    first = upload_image(client, api, headers, name=f"a1-{mark}.png", color="salmon")
+    _add_tags(client, api, headers, first["id"], [model_a["id"]])
+    second = upload_image(client, api, headers, name=f"a2-{mark}.png", color="teal")
+    _add_tags(client, api, headers, second["id"], [model_b["id"]])
+
+    scoped = client.get(
+        f"{api}/library/tags",
+        params=[("tagIds", model_a["id"])],
+        headers=headers,
+    )
+    assert scoped.status_code == 200, scoped.text
+    counts = {item["id"]: item["assetCount"] for item in scoped.json()["data"]}
+    listed = _filter_total(client, api, headers, [model_a["id"]])
+    assert counts[model_a["id"]] == listed
