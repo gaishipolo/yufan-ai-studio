@@ -1,23 +1,16 @@
 import { useMemo, useState } from 'react';
-import { Check, Plus } from 'lucide-react';
+import { Check } from 'lucide-react';
 import { Button, Modal } from '@/shared/ui';
 import { cn } from '@/shared/lib/cn';
 import type { LibraryAssetOut, LibraryTagStatOut } from '@/shared/api/schema';
-import {
-  selectableTags,
-  tagLabel,
-  topLevelTags,
-} from '@/entities/library/model/tagTree';
+import { selectableTags, tagLabel } from '@/entities/library/model/tagTree';
 import { displayName } from '@/entities/library/model/types';
-import type { CreateTagInline } from './use-create-tag-inline';
 
 export interface LibraryTagPickerProps {
   asset: LibraryAssetOut;
   /** 整个词表（含 0 条的），来自当前入口的 `GET /library/tags` */
   tags: LibraryTagStatOut[];
   busy?: boolean;
-  /** 没有 `library:create` 时不传：不摆一个必定失败的输入框 */
-  onCreateTag?: CreateTagInline;
   /** 交回**完整**的 tagIds，上层一次 PATCH 写回，避免「新增」变成新接口 */
   onSubmit: (asset: LibraryAssetOut, tagIds: string[]) => void;
   onClose: () => void;
@@ -49,50 +42,41 @@ interface Option {
  * 的叶子都在列表里，分组标题取父标签的整条链（「产品」「产品 / 3030」），
  * 同名的系列才不会混在一起；无父的归到「未分组」。
  *
- * 新建时可以选「作为一级」或「挂在某个上级下面」（一级或二级），省掉「先建
- * 再移动」两步。
+ * **这里不提供新建**：标签词表是全局结构，由「标签管理」统一维护。
+ * 就地新建只能建一级（挂不上维度），建出来的词落在错误的层级上，
+ * 还得再去标签管理里挪一次 —— 与其给一条走不通的路，不如只留一个去处。
  */
 export function LibraryTagPicker({
   asset,
   tags,
   busy,
-  onCreateTag,
   onSubmit,
   onClose,
 }: LibraryTagPickerProps) {
   const currentIds = useMemo(() => (asset.tags ?? []).map((tag) => tag.id), [asset.tags]);
   const [picked, setPicked] = useState<string[]>([]);
-  const [created, setCreated] = useState<Option[]>([]);
-  const [draft, setDraft] = useState('');
-  const [newParent, setNewParent] = useState('');
-  const [creating, setCreating] = useState(false);
 
   const byId = useMemo(() => new Map(tags.map((tag) => [tag.id, tag])), [tags]);
 
-  /* 新建成功的标签本地先记一份：词表要等一次失效重拉才回流，这一帧里
-     选项不能凭空消失，否则用户会以为刚建的没选上。`value` 去重兜住回流后的重复项。 */
   const options = useMemo<Option[]>(() => {
-    const all: Option[] = [
-      ...selectableTags(tags).map((tag) => {
-        const parent = tag.parentId ? byId.get(tag.parentId) : undefined;
-        return {
-          value: tag.id,
-          label: tagLabel(tag),
-          parentId: tag.parentId ?? '',
-          groupLabel: parent ? tagLabel(parent) : tag.parentName || '未分组',
-          parentName: tag.parentName ?? '',
-          createdAt: tag.createdAt,
-        };
-      }),
-      ...created,
-    ];
+    const all: Option[] = selectableTags(tags).map((tag) => {
+      const parent = tag.parentId ? byId.get(tag.parentId) : undefined;
+      return {
+        value: tag.id,
+        label: tagLabel(tag),
+        parentId: tag.parentId ?? '',
+        groupLabel: parent ? tagLabel(parent) : tag.parentName || '未分组',
+        parentName: tag.parentName ?? '',
+        createdAt: tag.createdAt,
+      };
+    });
     const seen = new Set<string>();
     return all.filter((option) => {
       if (seen.has(option.value) || currentIds.includes(option.value)) return false;
       seen.add(option.value);
       return true;
     });
-  }, [tags, byId, created, currentIds]);
+  }, [tags, byId, currentIds]);
 
   const groups = useMemo(() => {
     const byParent = new Map<string, Option[]>();
@@ -118,43 +102,10 @@ export function LibraryTagPicker({
       });
   }, [options, byId]);
 
-  /** 新建时的可选上级：只有一级维度（取值只能挂在维度下面） */
-  const parents = useMemo(
-    () => topLevelTags(tags).map((tag) => ({ id: tag.id, label: tag.name })),
-    [tags],
-  );
-
   function toggle(id: string) {
     setPicked((previous) =>
       previous.includes(id) ? previous.filter((item) => item !== id) : [...previous, id],
     );
-  }
-
-  async function submitCreate() {
-    const name = draft.trim();
-    if (!onCreateTag || !name || creating) return;
-    setCreating(true);
-    try {
-      const id = await onCreateTag(name, newParent || undefined);
-      if (!id) return;
-      const parent = newParent ? byId.get(newParent) : undefined;
-      const parentLabel = parent ? tagLabel(parent) : '';
-      const option: Option = {
-        value: id,
-        label: parentLabel ? `${parentLabel} / ${name}` : name,
-        parentId: newParent,
-        groupLabel: parentLabel || '未分组',
-        parentName: parentLabel,
-        createdAt: '',
-      };
-      setCreated((previous) =>
-        previous.some((item) => item.value === id) ? previous : [...previous, option],
-      );
-      setPicked((previous) => (previous.includes(id) ? previous : [...previous, id]));
-      setDraft('');
-    } finally {
-      setCreating(false);
-    }
   }
 
   function submit() {
@@ -177,7 +128,7 @@ export function LibraryTagPicker({
         <div className="flex max-h-[240px] min-h-[52px] flex-col gap-2 overflow-auto rounded-lg border border-line-soft bg-panel-soft/50 p-2">
           {groups.length === 0 ? (
             <span className="px-1 py-2 text-body text-ink-mute">
-              词表里的标签都已添加，可以在下方新建一个
+              词表里的标签都已添加
             </span>
           ) : (
             groups.map((group) => (
@@ -207,50 +158,6 @@ export function LibraryTagPicker({
             ))
           )}
         </div>
-
-        {onCreateTag && (
-          <div className="flex items-center gap-1.5">
-            <select
-              value={newParent}
-              aria-label="新标签所属上级"
-              disabled={creating || busy}
-              onChange={(event) => setNewParent(event.target.value)}
-              className="h-8 w-[112px] shrink-0 rounded-lg border border-line bg-white px-1.5 text-body text-ink focus:border-primary-line focus:outline-none disabled:bg-panel-soft"
-            >
-              <option value="">作为一级</option>
-              {parents.map((parent) => (
-                <option key={parent.id} value={parent.id}>
-                  {parent.label} 下
-                </option>
-              ))}
-            </select>
-            <input
-              type="text"
-              value={draft}
-              maxLength={24}
-              disabled={creating || busy}
-              placeholder="新建标签"
-              aria-label="新建标签名称"
-              autoComplete="off"
-              onChange={(event) => setDraft(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key !== 'Enter') return;
-                event.preventDefault();
-                void submitCreate();
-              }}
-              className="h-8 min-w-0 flex-1 rounded-lg border border-line bg-white px-2.5 text-body text-ink placeholder:text-ink-mute focus:border-primary-line focus:outline-none focus:ring-2 focus:ring-primary/10 disabled:bg-panel-soft"
-            />
-            <Button
-              size="sm"
-              variant="secondary"
-              disabled={!draft.trim() || creating || busy}
-              icon={<Plus size={12} />}
-              onClick={() => void submitCreate()}
-            >
-              {creating ? '新建中' : '新建'}
-            </Button>
-          </div>
-        )}
 
         <div className="flex items-center justify-between gap-2 border-t border-line-soft pt-3">
           <span className="text-body text-ink-mute">

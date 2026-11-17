@@ -10,13 +10,7 @@ const OPTIONS: MultiSelectOption[] = [
 ];
 
 /** 受控组件的真实用法：选中结果要由父级保存下来，否则下一次渲染就丢了。 */
-function Harness({
-  onCreate,
-  options = OPTIONS,
-}: {
-  onCreate?: (name: string) => Promise<string | null>;
-  options?: MultiSelectOption[];
-}) {
+function Harness({ options = OPTIONS }: { options?: MultiSelectOption[] }) {
   const [value, setValue] = useState<string[]>([]);
   return (
     <>
@@ -26,7 +20,6 @@ function Harness({
         onChange={setValue}
         ariaLabel="标签"
         emptyText="还没有标签"
-        onCreate={onCreate}
       />
       <output data-testid="picked">{value.join(',')}</output>
     </>
@@ -37,7 +30,9 @@ describe('MultiSelect', () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
-  it('不传 onCreate 就不出现新建行：没权限的人不该看到注定失败的输入框', async () => {
+  it('**没有就地新建入口**：标签词表统一在「标签管理」里建', async () => {
+    /* 守卫：就地新建只能建一级（挂不上维度），建出来还得再挪一次层级。
+       取消这个能力后，任何调用点都不该再把新建入口摆出来。 */
     const user = userEvent.setup();
     render(<Harness />);
 
@@ -45,71 +40,18 @@ describe('MultiSelect', () => {
 
     expect(screen.getByRole('checkbox', { name: '音乐' })).toBeInTheDocument();
     expect(screen.queryByPlaceholderText('新建并选中')).not.toBeInTheDocument();
+    expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '新建' })).not.toBeInTheDocument();
   });
 
-  it('就地新建：回车提交，建成后自动选中并清空输入', async () => {
+  it('一个选项都没有时只出现空态（没有新建行陪着）', async () => {
     const user = userEvent.setup();
-    const onCreate = vi.fn(async () => 't9');
-    render(<Harness onCreate={onCreate} />);
-
-    await user.click(screen.getByRole('button', { name: '标签' }));
-    const input = screen.getByPlaceholderText('新建并选中');
-    await user.type(input, '场景{Enter}');
-
-    expect(onCreate).toHaveBeenCalledWith('场景');
-    expect(screen.getByTestId('picked')).toHaveTextContent('t9');
-    // 建成后输入框清空，收起态直接显示标签名（选项还没回流也能读出来）
-    expect(input).toHaveValue('');
-    expect(screen.getByRole('button', { name: '标签' })).toHaveTextContent('场景');
-  });
-
-  it('没建成（返回 null）时不清空输入、不选中：改一个字就能重试', async () => {
-    const user = userEvent.setup();
-    const onCreate = vi.fn(async () => null);
-    render(<Harness onCreate={onCreate} />);
-
-    await user.click(screen.getByRole('button', { name: '标签' }));
-    const input = screen.getByPlaceholderText('新建并选中');
-    await user.type(input, '重名{Enter}');
-
-    expect(input).toHaveValue('重名');
-    expect(screen.getByTestId('picked')).toBeEmptyDOMElement();
-  });
-
-  it('空白输入不提交：只按回车不该发请求', async () => {
-    const user = userEvent.setup();
-    const onCreate = vi.fn(async () => 't9');
-    render(<Harness onCreate={onCreate} />);
-
-    await user.click(screen.getByRole('button', { name: '标签' }));
-    await user.type(screen.getByPlaceholderText('新建并选中'), '   {Enter}');
-
-    expect(onCreate).not.toHaveBeenCalled();
-  });
-
-  it('不抛错：onCreate 抛异常时保持输入，界面不炸', async () => {
-    const user = userEvent.setup();
-    const onCreate = vi.fn(async () => {
-      throw new Error('网络断了');
-    });
-    render(<Harness onCreate={onCreate} />);
-
-    await user.click(screen.getByRole('button', { name: '标签' }));
-    const input = screen.getByPlaceholderText('新建并选中');
-    await user.type(input, '室内{Enter}');
-
-    expect(input).toHaveValue('室内');
-    expect(screen.getByTestId('picked')).toBeEmptyDOMElement();
-  });
-
-  it('一个选项都没有时，空态与新建行同时出现', async () => {
-    const user = userEvent.setup();
-    render(<Harness onCreate={async () => 't9'} options={[]} />);
+    render(<Harness options={[]} />);
 
     await user.click(screen.getByRole('button', { name: '标签' }));
 
     expect(screen.getByText('还没有标签')).toBeInTheDocument();
-    expect(screen.getByPlaceholderText('新建并选中')).toBeInTheDocument();
+    expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
   });
 
   /* 浮层方向：批量栏贴在视口底部，朝下展开会整块落到屏幕外（用户只看到一条边）。 */

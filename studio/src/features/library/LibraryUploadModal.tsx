@@ -13,7 +13,6 @@ import {
   UPLOAD_ACCEPT,
   uploadKindOf,
 } from '@/entities/library/model/uploadLimits';
-import { useCreateTagInline } from './use-create-tag-inline';
 
 interface UploadItem {
   file: File;
@@ -42,7 +41,6 @@ export function LibraryUploadModal({ open, tags, onClose }: LibraryUploadModalPr
   const input = useRef<HTMLInputElement>(null);
   const upload = useUploadAsset();
   const patch = usePatchAsset();
-  const createTag = useCreateTagInline();
   const [items, setItems] = useState<UploadItem[]>([]);
   const [tagIds, setTagIds] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
@@ -205,10 +203,9 @@ export function LibraryUploadModal({ open, tags, onClose }: LibraryUploadModalPr
             value={tagIds}
             onChange={setTagIds}
             placeholder="未选择标签"
-            emptyText="还没有标签"
+            emptyText="还没有标签，去「标签管理」新建"
             disabled={busy}
             ariaLabel="上传标签"
-            onCreate={createTag}
           />
         </div>
 

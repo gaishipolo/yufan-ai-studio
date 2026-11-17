@@ -50,7 +50,6 @@ import {
 import type { LibraryCardAction } from './LibraryCard';
 import { TextAssetModal } from './TextAssetModal';
 import { TextVersionHistory } from './TextVersionHistory';
-import { useCreateTagInline } from './use-create-tag-inline';
 
 export interface LibraryDetailProps {
   assetId: string | null;
@@ -109,7 +108,6 @@ function DetailBody({
 }: LibraryDetailProps & { asset: LibraryAssetDetailOut }) {
   const patch = usePatchAsset();
   const saveFile = useSaveAssetFile();
-  const createTag = useCreateTagInline();
   const offer = deleteOffer(asset, viewer);
   /* 改名与打标签在服务端只认 owner（或有 delete:any）。别人共享给我的素材，
      我能读到但改不了——按钮挂在这里就要跟着同一个判定，否则点下去是一句
@@ -354,9 +352,8 @@ function DetailBody({
                     save({ tagIds: values }, { versioned: false });
                   }}
                   placeholder="未打标签"
-                  emptyText="还没有标签"
+                  emptyText="还没有标签，去「标签管理」新建"
                   ariaLabel="编辑标签"
-                  onCreate={createTag}
                 />
               ) : (
                 asset.tags?.map(tagLabel).join('、') || '未打标签'

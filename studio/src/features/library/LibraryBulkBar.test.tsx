@@ -3,9 +3,6 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { LibraryBulkBar, type BulkKind } from './LibraryBulkBar';
 
-/** 就地新建标签要权限，这里不需要：不给它 onCreate，MultiSelect 就不渲染新建行 */
-vi.mock('./use-create-tag-inline', () => ({ useCreateTagInline: () => undefined }));
-
 const TAGS = [
   { id: 't1', name: '产品', depth: 1, childCount: 0, createdAt: '2026-11-01T00:00:00Z' },
 ];

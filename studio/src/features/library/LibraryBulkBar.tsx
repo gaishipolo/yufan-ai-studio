@@ -4,7 +4,6 @@ import { Button, MultiSelect } from '@/shared/ui';
 import type { LibraryTagStatOut } from '@/shared/api/schema';
 import type { LibraryView } from '@/entities/library/model/types';
 import { tagOptions } from '@/entities/library/model/tagTree';
-import { useCreateTagInline } from './use-create-tag-inline';
 
 export type BulkKind = 'download' | 'delete' | 'restore' | 'approve' | 'reject' | 'tag';
 
@@ -22,11 +21,12 @@ export interface LibraryBulkBarProps {
  *
  * 动作随入口变化（设计 §8），且**没有批量彻底删除**：后端批量写里刻意不含
  * `purge`，不可逆的动作只能逐条确认。回收站入口因此只给「恢复」。
+ *
+ * **不提供就地新建标签** —— 词表是全局结构，统一在「标签管理」里维护。
  */
 export function LibraryBulkBar({ view, count, tags, busy, onClear, onAction }: LibraryBulkBarProps) {
   const [tagging, setTagging] = useState(false);
   const [tagIds, setTagIds] = useState<string[]>([]);
-  const createTag = useCreateTagInline();
 
   /* 选中数归零时复位面板：`count <= 0` 只是把这个组件**藏起来**，它并没有卸载，
      上一批留下的标签会跟着面板一起留在原地——「清空」后再勾一批，
@@ -122,9 +122,8 @@ export function LibraryBulkBar({ view, count, tags, busy, onClear, onAction }: L
               value={tagIds}
               onChange={setTagIds}
               placeholder="选择要添加的标签"
-              emptyText="还没有标签"
+              emptyText="还没有标签，去「标签管理」新建"
               ariaLabel="批量添加标签"
-              onCreate={createTag}
             />
           </div>
           <Button size="sm" variant="primary" disabled={!tagIds.length || busy} onClick={applyTags}>

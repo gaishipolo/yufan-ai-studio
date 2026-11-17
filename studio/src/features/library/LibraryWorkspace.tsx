@@ -45,7 +45,6 @@ import { LibraryToolbar } from './LibraryToolbar';
 import { LibraryUploadModal } from './LibraryUploadModal';
 import { TextAssetModal } from './TextAssetModal';
 import { ShareRequestsModal } from './ShareRequestsModal';
-import { useCreateTagInline } from './use-create-tag-inline';
 import type { LibraryCardAction } from './LibraryCard';
 
 const PAGE_SIZE = 24;
@@ -126,7 +125,6 @@ export function LibraryWorkspace() {
     pageSize: PAGE_SIZE,
   });
   const patch = usePatchAsset();
-  const createTag = useCreateTagInline();
   const groups = useMyGroups();
   const pending = useShareRequests('pending');
   const del = useDeleteAsset();
@@ -660,7 +658,6 @@ export function LibraryWorkspace() {
           asset={tagPicker}
           tags={tags.data ?? []}
           busy={patch.isPending}
-          onCreateTag={createTag}
           onSubmit={addTags}
           onClose={() => setTagPicker(null)}
         />

@@ -81,44 +81,19 @@ describe('LibraryTagPicker · 卡片上的 +', () => {
     expect(onSubmit).toHaveBeenCalledWith(ASSET, ['t11', 't2', 't12']);
   });
 
-  it('就地新建一级标签自动选中，提交时带上新 id', async () => {
-    const user = userEvent.setup();
-    const onCreateTag = vi.fn().mockResolvedValue('t9');
-    const { onSubmit } = renderPicker({ onCreateTag });
-
-    await user.type(screen.getByRole('textbox', { name: '新建标签名称' }), '秋冬{enter}');
-    expect(onCreateTag).toHaveBeenCalledWith('秋冬', undefined);
-    await user.click(screen.getByRole('button', { name: '添加' }));
-    expect(onSubmit).toHaveBeenCalledWith(ASSET, ['t11', 't9']);
-  });
-
-  it('新建时选了上级，就带着 parentId 建在它下面', async () => {
-    const user = userEvent.setup();
-    const onCreateTag = vi.fn().mockResolvedValue('t9');
-    renderPicker({ onCreateTag });
-
-    await user.selectOptions(
-      screen.getByRole('combobox', { name: '新标签所属上级' }),
-      't1',
-    );
-    await user.type(screen.getByRole('textbox', { name: '新建标签名称' }), 'T40{enter}');
-    expect(onCreateTag).toHaveBeenCalledWith('T40', 't1');
-    expect(screen.getByRole('button', { name: '产品 / T40' })).toBeInTheDocument();
-  });
-
-  it('新标签只能挂在维度下面：下拉里没有二级取值', () => {
-    renderPicker({ onCreateTag: vi.fn().mockResolvedValue('t9') });
-    const select = screen.getByRole('combobox', { name: '新标签所属上级' });
-    // 「3030」是取值，不能当上级 —— 那会造出第三层
-    expect(
-      select.querySelector('option[value="t11"]'),
-    ).not.toBeInTheDocument();
-    expect(select.querySelector('option[value="t1"]')).not.toBeNull();
-  });
-
-  it('没有 library:create 时不摆一个必定失败的新建输入框', () => {
+  it('**没有就地新建入口**：标签词表统一在「标签管理」里建', () => {
+    /* 守卫：就地新建只能建一级（挂不上维度），建出来还得再去标签管理里挪一次。
+       取消这个能力后，这个弹窗里不该再有新建输入框与上级下拉。 */
     renderPicker();
     expect(screen.queryByRole('textbox', { name: '新建标签名称' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('combobox', { name: '新标签所属上级' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '新建' })).not.toBeInTheDocument();
+  });
+
+  it('词表里的标签都已添加时，只给一句说明（不再引导去下方新建）', () => {
+    renderPicker({ tags: [tag('t11', '3030', { parentId: 't1', parentName: '产品', depth: 2 })] });
+    expect(screen.getByText('词表里的标签都已添加')).toBeInTheDocument();
+    expect(screen.queryByText(/新建一个/)).not.toBeInTheDocument();
   });
 
   it('提交中禁用按钮，避免连点发出互相覆盖的 PATCH', () => {
