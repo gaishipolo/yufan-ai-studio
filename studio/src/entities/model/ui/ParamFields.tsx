@@ -8,6 +8,7 @@
 import { FormField, Select, Switch, TextInput } from '@/shared/ui';
 import { cn } from '@/shared/lib/cn';
 import { parseNumericInput, type ParamControl, type ParamValue } from '../lib/paramForm';
+import { NumberField } from './NumberField';
 
 export interface ParamFieldsProps {
   controls: ParamControl[];
@@ -88,15 +89,14 @@ export function ParamFields({
         // 但仍要允许清空（空 = 不提交，让后端用默认值）
         return (
           <FormField key={control.key} {...common}>
-            <TextInput
+            <NumberField
               id={id}
-              type="number"
-              aria-label={control.label}
-              {...(control.min !== undefined ? { min: control.min } : {})}
-              {...(control.max !== undefined ? { max: control.max } : {})}
-              {...(control.step !== undefined ? { step: control.step } : {})}
-              value={String(value)}
-              onChange={(event) => onChange(control.key, parseNumericInput(event.target.value))}
+              label={control.label}
+              value={typeof value === 'number' ? value : ''}
+              {...(control.min !== undefined ? {min: control.min} : {})}
+              {...(control.max !== undefined ? {max: control.max} : {})}
+              {...(control.step !== undefined ? {step: control.step} : {})}
+              onChange={next => onChange(control.key, next)}
             />
           </FormField>
         );
