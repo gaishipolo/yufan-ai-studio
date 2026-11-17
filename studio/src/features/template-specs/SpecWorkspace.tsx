@@ -31,15 +31,14 @@ import {
   EmptyState,
   FormField,
   Modal,
-  MultiSelect,
   PageHeader,
-  Select,
   TextInput,
 } from '@/shared/ui';
 import { cn } from '@/shared/lib/cn';
 import { AssetPicker, type PickKind, type PickedAsset } from '@/features/template-specs/AssetPicker';
 import { AddSlotMenu } from '@/features/template-specs/AddSlotMenu';
 import { DemoMenu } from '@/features/template-specs/DemoMenu';
+import { ModelPicker } from '@/features/template-specs/ModelPicker';
 import { PromptBox } from '@/features/template-specs/PromptBox';
 import { SlotCard } from '@/features/template-specs/SlotCard';
 import {
@@ -50,11 +49,13 @@ import {
   blankSpec,
   dropUserSelectableParams,
   fromSpecOut,
+  joinModelSelection,
   normalize,
   referenceChips,
   rekeySlot,
   slotTypeOf,
   slotsMissingTag,
+  splitModelSelection,
   stripSlotRefs,
   type SlotType,
 } from './specDraft';
@@ -87,13 +88,6 @@ export function SpecWorkspace() {
   const videoModels = useModels('video');
   const imageModels = useModels('image');
   const models = useMemo(() => [...videoModels, ...imageModels], [videoModels, imageModels]);
-  /* 「允许选用的模型」的候选来源：模型目录里的全部模型。
-     固定模型也在里面 —— 作者把它写进清单不算错（它本来就一直可用），
-     清单只是**再加几款让使用者挑**。 */
-  const modelOptions = useMemo(
-    () => models.map(item => ({value: item.id, label: item.label})),
-    [models],
-  );
 
   const [draft, setDraft] = useState<TemplateSpecIn | null>(null);
   const [view, setView] = useState<'list' | 'trash'>('list');
@@ -479,31 +473,31 @@ export function SpecWorkspace() {
                   onChange={event => setDraft({...draft, name: event.target.value})}
                 />
               </FormField>
-              <FormField label="模型" required>
-                <Select
-                  block
-                  value={draft.model}
-                  options={[
-                    {value: '', label: '选择一个模型'},
-                    ...models.map(item => ({value: item.id, label: item.label})),
-                  ]}
-                  onChange={event => setDraft({...draft, model: event.target.value, params: {}})}
-                />
-              </FormField>
             </div>
-            {/* 允许选用的模型：作者声明「这份模板能跑在哪几款模型上」，使用模板的
-                人从这份清单里挑，而不是只能用一个写死的模型。
-                清单为空 = 只有固定模型（老模板的行为，一条都不变）。 */}
+            {/* 模型：**一个**多选控件，不是「单选 + 多选」两个。
+                这份模板能用哪几款模型、以及先拿哪款，本来就是一件事；拆成两个控件
+                会让用户在同一块信息里找两遍，还得出「模型和允许选用的模型不一样」
+                这种没法自洽的心智模型。
+
+                **勾选顺序第一个是默认模型**（契约里的 `model`），其余是
+                「使用者也可以挑的」那几款（`allowedModels`）。契约里 `model` 必填，
+                所以提交时拆成两半 —— 见 `splitModelSelection`。
+
+                顺序即默认序这件事要让人看见：展开列表里已勾的排在最前，
+                第一个标「默认」。用户改顺序就改默认，不另设一个下拉。 */}
             <FormField
               className="mt-3"
-              label="允许选用的模型"
-              hint="使用模板的人可以从这几款里挑"
+              label="模型"
+              required
+              hint="勾选顺序第一个为默认，使用者可换用其它已选模型"
             >
-              <MultiSelect
-                options={modelOptions}
-                value={draft.allowedModels ?? []}
-                onChange={values => setDraft({...draft, allowedModels: values})}
-                placeholder="只有固定模型"
+              <ModelPicker
+                models={models}
+                value={joinModelSelection(draft.model, draft.allowedModels ?? [])}
+                onChange={selection => {
+                  const {model, allowedModels} = splitModelSelection(selection);
+                  setDraft({...draft, model, allowedModels, params: {}});
+                }}
               />
             </FormField>
             {paramControls.length > 0 && (

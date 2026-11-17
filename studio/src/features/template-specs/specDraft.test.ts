@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import type { TemplateSpecOut } from '@/shared/api/schema';
 import { KIND_LABEL } from '@/entities/library/model/types';
 import {
+  MAX_ALLOWED_MODELS,
   MAX_PROMPT,
   SLOT_TYPE_LABELS,
   blankSlot,
@@ -12,16 +13,17 @@ import {
   effectiveModelIds,
   fromSpecOut,
   insertRef,
+  joinModelSelection,
   nextSlotKey,
   normalize,
   rekeySlot,
   referenceChips,
   slotsMissingTag,
+  splitModelSelection,
   stripSlotRefs,
 } from './specDraft';
 
-describe('提示词上限', () => {
-  /**
+describe('提示词上限', () => {  /**
    * 漂移守卫：前端这个数只用来显示「字数 N / 上限」，但它必须跟后端一致 ——
    * 后端超了会 400，界面上却显示还有余量，是最坏的一种不一致。
    *
@@ -279,5 +281,88 @@ describe('允许选用的模型', () => {
     };
     const draft = fromSpecOut(out);
     expect(draft.allowedModels).toEqual(['bailian-wan3-replacement']);
+  });
+});
+
+describe('模型选择：勾选顺序即默认序', () => {
+  it('第一个勾选的模型是默认模型（契约里的 model），其余进 allowedModels', () => {
+    const {model, allowedModels} = splitModelSelection(['a', 'b', 'c']);
+    expect(model).toBe('a');
+    expect(allowedModels).toEqual(['b', 'c']);
+  });
+
+  it('只勾一款时：model 是它，allowedModels 为空', () => {
+    const {model, allowedModels} = splitModelSelection(['a']);
+    expect(model).toBe('a');
+    expect(allowedModels).toEqual([]);
+  });
+
+  it('一个都没勾时：model 为空串（后端会拒「模型必填」）', () => {
+    const {model, allowedModels} = splitModelSelection([]);
+    expect(model).toBe('');
+    expect(allowedModels).toEqual([]);
+  });
+
+  it('重复的只留第一次出现的位置', () => {
+    const {model, allowedModels} = splitModelSelection(['b', 'a', 'b']);
+    expect(model).toBe('b');
+    expect(allowedModels).toEqual(['a']);
+  });
+
+  it('空串不算一项', () => {
+    const {model, allowedModels} = splitModelSelection(['', 'a']);
+    expect(model).toBe('a');
+    expect(allowedModels).toEqual([]);
+  });
+
+  it('还原：契约两段 → 勾选清单，固定模型排第一', () => {
+    // 老草稿是「单选 + 多选」两段式的，还原时固定模型（=默认）排第一。
+    expect(joinModelSelection('a', ['b', 'c'])).toEqual(['a', 'b', 'c']);
+    expect(joinModelSelection('a', [])).toEqual(['a']);
+    expect(joinModelSelection('', ['b'])).toEqual(['b']);
+  });
+
+  it('split 与 join 互为逆运算', () => {
+    const selection = ['a', 'b', 'c'];
+    const {model, allowedModels} = splitModelSelection(selection);
+    expect(joinModelSelection(model, allowedModels)).toEqual(selection);
+  });
+
+  it('还原出来的清单喂给 effectiveModelIds，与 split 的结果一致', () => {
+    // 模板库一侧用 effectiveModelIds 算「这份模板能跑哪些模型」。
+    // 作者侧用 split 算 —— 两处口径必须一致，否则会「界面里能选、提交时被拒」。
+    const selection = ['a', 'b'];
+    const {model, allowedModels} = splitModelSelection(selection);
+    expect(effectiveModelIds(model, allowedModels)).toEqual(selection);
+  });
+});
+
+describe('模型数量上限', () => {
+  /**
+   * 漂移守卫：前端用这个数拦住超限勾选，后端用它 422 拒。
+   * 两处不一致 = 用户能勾到超限、提交时才被拒（界面上看不出问题）。
+   *
+   * 真值在契约里（`TemplateSpecIn.allowedModels.maxItems`），直接对着
+   * `api/docs/openapi.json` 读，而不是把数字再抄一遍。
+   */
+  it('跟契约里 TemplateSpecIn.allowedModels.maxItems 一致', () => {
+    const candidates = [
+      resolve(process.cwd(), '../api/docs/openapi.json'),
+      resolve(process.cwd(), 'api/docs/openapi.json'),
+    ];
+    const file = candidates.find(path => existsSync(path));
+    expect(file, '找不到 api/docs/openapi.json').toBeTruthy();
+    const openapi = JSON.parse(readFileSync(file!, 'utf8')) as {
+      components: {
+        schemas: {
+          TemplateSpecIn: {
+            properties: {allowedModels: {maxItems?: number}};
+          };
+        };
+      };
+    };
+    expect(openapi.components.schemas.TemplateSpecIn.properties.allowedModels.maxItems).toBe(
+      MAX_ALLOWED_MODELS,
+    );
   });
 });

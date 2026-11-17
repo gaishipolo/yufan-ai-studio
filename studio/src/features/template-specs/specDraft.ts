@@ -51,6 +51,17 @@ export function slotTypeOf(type: string): SlotType {
 export const MAX_PROMPT = 20000;
 
 /**
+ * 能勾选的模型数量上限。
+ *
+ * 真值在后端 `api/src/core/template_spec/models.py::MAX_ALLOWED_MODELS`
+ * （也就是契约里 `TemplateSpecIn.allowedModels.maxLength`）。
+ *
+ * 后端超了会 422，界面上却看不出问题 —— 所以这里写死同一个数，
+ * 并由 `specDraft.test.ts` 对着契约做漂移守卫。
+ */
+export const MAX_ALLOWED_MODELS = 10;
+
+/**
  * 槽位类型的展示名 = **资产库的 kind 标签**（图片 / 成片 / 音频 / 文本）。
  *
  * 槽位的 `type` 就是资产库的 kind，所以不另写一份词表：库里给 `video` 改名，
@@ -149,6 +160,41 @@ export function effectiveModelIds(fixedModel: string, allowedModels: string[]): 
     if (modelId && !ids.includes(modelId)) ids.push(modelId);
   }
   return ids;
+}
+
+/**
+ * 勾选的模型清单 → 契约里的 `model` + `allowedModels`。
+ *
+ * **第一个勾选的模型就是默认模型**（用户在多选里排的序 = 使用者看到的默认序），
+ * 其余进 `allowedModels`。契约里 `model` 是必填的（后端要拿它当模板自己的模型），
+ * 所以这里不是「存两个字段」，而是**一个列表拆成两半**。
+ *
+ * 为什么不让用户管「哪个是默认」：那要两个控件（单选 + 多选），而两个控件会
+ * 表达出「模型」和「允许选用的模型」是两件事 —— 其实是一件事（这份模板能用哪
+ * 几款模型，以及先拿哪款）。合成一个控件后，用户勾完就完事，顺序即默认序。
+ *
+ * 与后端的对应关系：`model` = `model`，`allowedModels` = 其余。**列表为空时
+ * `model` 为空串**（后端会拒「模型必填」，所以前端要拦，见 `missingDefaultModel`）。
+ */
+export function splitModelSelection(selection: string[]): {
+  model: string;
+  allowedModels: string[];
+} {
+  const ids: string[] = [];
+  for (const modelId of selection) {
+    if (modelId && !ids.includes(modelId)) ids.push(modelId);
+  }
+  return {model: ids[0] ?? '', allowedModels: ids.slice(1)};
+}
+
+/**
+ * 契约里的 `model` + `allowedModels` → 勾选清单（第一个是默认模型）。
+ *
+ * `splitModelSelection` 的逆运算。已存的老草稿是「单选 + 多选」两段式的，
+ * 还原成列表时**固定模型排第一**（它就是默认），清单项追加在后。
+ */
+export function joinModelSelection(model: string, allowedModels: string[]): string[] {
+  return effectiveModelIds(model, allowedModels);
 }
 
 /**
