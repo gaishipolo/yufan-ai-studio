@@ -44,11 +44,13 @@ from core.response import PageParams
 from core.serving import Served
 from infra.media_probe import (
     EXTENSIONS,
+    LARGE_PREVIEW_VERSION,
     MAX_BYTES,
     MAX_TEXT_BYTES,
     PREVIEW_VERSION,
     TEXT_EXTENSIONS,
     create_browser_preview,
+    create_large_preview,
     create_preview,
     decode_text,
     inspect,
@@ -128,6 +130,17 @@ def blob_key(digest: str, extension: str) -> str:
 
 def preview_key(digest: str) -> str:
     return f"{PREVIEW_PREFIX}/{digest[:2]}/{digest}.jpg"
+
+
+def large_preview_key(digest: str) -> str:
+    """悬浮大图的存放位置：与封面同前缀、文件名带尺寸档。
+
+    带 `LARGE_PREVIEW_VERSION` 是为了将来调尺寸时旧缓存自动失效 ——
+    与 `clip_key` 同一个道理：参数一变，所有缓存必须一起换代。
+    """
+    return (
+        f"{PREVIEW_PREFIX}/{digest[:2]}/{digest}.large-{LARGE_PREVIEW_VERSION}.jpg"
+    )
 
 
 def clip_key(digest: str) -> str:
@@ -445,6 +458,68 @@ class LibraryService:
             size=None if preview else row.size_bytes,
             headers={"X-Content-Type-Options": "nosniff"} if is_text else None,
         )
+
+    async def large(self, asset_id: str, actor: CurrentUser) -> Served:
+        """悬浮大图：长边 1280 的派生 JPEG，**按摘要缓存**。
+
+        为什么要有这一档：封面只有 360×240，网格里是几十像素的方块，
+        产品图的走线、缝线、logo 全看不清。用户得「先看清再选」，
+        所以另备一档大图 —— 悬浮时才取，点一下仍然是选中。
+
+        **为什么不是直接给原图**：原图平均 2.6MB、最大 9.5MB，
+        在网格里来回悬停就是上百 MB。缩到 1280 长边是几百 KB，
+        够看清细节又不至于拖垮页面。
+
+        **派生是惰性的、且按内容摘要缓存**：第一次悬浮才生成，
+        同一份原图（摘要相同）永远复用同一个 key —— 换一条资产记录指向
+        同一份字节时，第二次直接命中缓存。
+
+        派生失败不抛 500：原图可能真的坏了，那属于「这张素材没有预览」，
+        明确回 404，前端退回显示缩略图。
+        """
+        row = await access.load_visible(self.session, asset_id, actor)
+        if row.state == "trash":
+            raise NotFound("回收站内的资产不提供预览与下载")
+        if row.kind == "text":
+            raise NotFound("文本资产没有大图预览")
+        if row.kind == "audio":
+            raise NotFound("音频资产没有大图预览")
+
+        digest = row.sha256 or ""
+        if not re.fullmatch(r"[0-9a-f]{64}", digest):
+            # 没有摘要就派生不了（key 是内容寻址的）。这种情况极少 ——
+            # 正常入库都会算摘要 —— 但回退到封面比报错好。
+            if not row.cover_key:
+                raise NotFound("此资产没有大图预览")
+            return await self._serve(row.cover_key, "image/jpeg")
+
+        derived = large_preview_key(digest)
+        if not await self.storage.exists(derived):
+            await self._derive_large_preview(row, derived)
+        if not await self.storage.exists(derived):
+            raise NotFound("此资产没有大图预览")
+        # 大图由前端 XHR 取 blob（`<img>` 直链要跨域的话会被桶的 CORS 拦），
+        # 所以走同源转发，不依赖任何桶配置。
+        return await self._serve(derived, "image/jpeg", proxy=True)
+
+    async def _derive_large_preview(self, row: LibraryAsset, derived: str) -> bool:
+        """从原图派生大图并写回存储。全程不把原图整块读进内存。"""
+        if not row.storage_key:
+            return False
+        with tempfile.TemporaryDirectory(prefix="library-large-") as folder:
+            source = Path(folder) / f"source{Path(row.storage_key).suffix or '.png'}"
+            try:
+                with source.open("wb") as handle:
+                    async for chunk in self.storage.iter_chunks(row.storage_key):
+                        handle.write(chunk)
+            except StorageError:
+                logger.warning("原图字节读取失败，跳过大图派生：%s", row.id)
+                return False
+            target = Path(folder) / "large.jpg"
+            if not await asyncio.to_thread(create_large_preview, source, target):
+                return False
+            await self.storage.put_file(derived, target, "image/jpeg")
+            return True
 
     async def preview(self, asset_id: str, actor: CurrentUser) -> Served:
         """受控公共预览：视频给派生流，图片 / 音频给原文件。

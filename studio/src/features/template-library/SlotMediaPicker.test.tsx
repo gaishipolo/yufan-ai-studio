@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { LibraryTagStatOut, SpecSlotOut } from '@/shared/api/schema';
@@ -15,9 +15,10 @@ import { SlotMediaPicker } from './SlotMediaPicker';
  * 断言落在「发给后端的 tagIds」上 —— 那才是筛选语义真正发生的地方。
  */
 
-const { selectionCalls, tagsData } = vi.hoisted(() => ({
+const { selectionCalls, tagsData, itemsData } = vi.hoisted(() => ({
   selectionCalls: [] as { kind?: string; tagIds?: string[] }[],
   tagsData: { current: [] as LibraryTagStatOut[] },
+  itemsData: { current: [] as { id: string; name: string; kind: string; coverUrl?: string }[] },
 }));
 
 vi.mock('@/entities/library/api/library.queries', () => ({
@@ -25,11 +26,16 @@ vi.mock('@/entities/library/api/library.queries', () => ({
   useLibrarySelection: (params: { kind?: string; tagIds?: string[] }) => {
     selectionCalls.push(params);
     return {
-      data: { items: [], total: 0 },
+      data: { items: itemsData.current, total: itemsData.current.length },
       isSuccess: true,
       isLoading: false,
     };
   },
+  /* 悬浮大图：这里只关心「有没有被调用」，字节由组件自己的用例验。 */
+  useLibraryLargePreview: (assetId: string | null, enabled: boolean) => ({
+    url: enabled && assetId ? `blob:${assetId}` : undefined,
+    isPending: false,
+  }),
 }));
 
 /** 两级：一级是维度（产品 / 角色），二级是取值（3030 / 菜菜）。 */
@@ -58,6 +64,7 @@ function slotOf(extra: Partial<SpecSlotOut> = {}): SpecSlotOut {
 beforeEach(() => {
   selectionCalls.length = 0;
   tagsData.current = TAGS;
+  itemsData.current = [];
 });
 
 describe('SlotMediaPicker · 候选集里再筛', () => {
@@ -148,5 +155,71 @@ describe('SlotMediaPicker · 候选集里再筛', () => {
     // 没有范围时所有取值都能挑
     const second = within(screen.getByRole('group', {name: '取值标签'}));
     expect(second.getByRole('button', {name: '菜菜'})).toBeInTheDocument();
+  });
+});
+
+/**
+ * 悬浮大图：网格里的缩略图只有 360×240 的封面，看不清产品细节。
+ * 悬停时另浮一张大图，**点一下仍然是选中**。
+ */
+describe('SlotMediaPicker · 悬浮大图', () => {
+  const ITEMS = [
+    { id: 'a1', name: 'T35黑色三视图', kind: 'image', coverUrl: 'https://x/1.jpg' },
+    { id: 'a2', name: 'T35正面图', kind: 'image', coverUrl: 'https://x/2.jpg' },
+  ];
+
+  beforeEach(() => {
+    itemsData.current = ITEMS;
+  });
+
+  it('悬停缩略图会浮出大图', async () => {
+    vi.useFakeTimers();
+    try {
+      render(
+        <SlotMediaPicker slot={slotOf({tagIds: []})} selected={[]} onChange={vi.fn()} />,
+      );
+      const thumb = screen.getByTitle('T35黑色三视图');
+      fireEvent.mouseEnter(thumb, { clientX: 200, clientY: 200 });
+      await vi.advanceTimersByTimeAsync(300);
+      expect(screen.getByAltText('T35黑色三视图')).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('点缩略图仍然是选中（浮层不接管点击）', async () => {
+    vi.useFakeTimers();
+    try {
+      const onChange = vi.fn();
+      render(
+        <SlotMediaPicker slot={slotOf({tagIds: []})} selected={[]} onChange={onChange} />,
+      );
+      const thumb = screen.getByTitle('T35黑色三视图');
+      fireEvent.mouseEnter(thumb, { clientX: 200, clientY: 200 });
+      await vi.advanceTimersByTimeAsync(300);
+      /* 浮层确实出现了 —— 下面这一步才是「点了还能选中」的对照 */
+      expect(screen.getByAltText('T35黑色三视图')).toBeInTheDocument();
+      fireEvent.click(thumb);
+      expect(onChange).toHaveBeenCalledWith(['a1']);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('鼠标移开就撤掉大图', async () => {
+    vi.useFakeTimers();
+    try {
+      render(
+        <SlotMediaPicker slot={slotOf({tagIds: []})} selected={[]} onChange={vi.fn()} />,
+      );
+      const thumb = screen.getByTitle('T35黑色三视图');
+      fireEvent.mouseEnter(thumb, { clientX: 200, clientY: 200 });
+      await vi.advanceTimersByTimeAsync(300);
+      expect(screen.getByAltText('T35黑色三视图')).toBeInTheDocument();
+      fireEvent.mouseLeave(thumb);
+      expect(screen.queryByAltText('T35黑色三视图')).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

@@ -41,6 +41,14 @@ MAX_IMAGE_PIXELS = 40_000_000
 # 探测单次上限。超过它就不是「这个文件有点慢」，而是解析不出来。
 PROBE_TIMEOUT_SEC = 30.0
 PREVIEW_VERSION = "hd-v2"
+#: 悬浮大图的长边像素。封面只有 360×240，网格里看不清产品细节；
+#: 1280 足够看清三视图的走线与缝线，又能把 9MB 的 PNG 压到几百 KB。
+LARGE_PREVIEW_MAX_EDGE = 1280
+#: 悬浮大图的 JPEG 质量。比封面（82）高一点：大图要经得起放大看细节。
+LARGE_PREVIEW_QUALITY = 88
+#: 悬浮大图的缓存档位号。改尺寸 / 改质量时必须一起改，
+#: 否则旧缓存还在，界面上看到的还是老尺寸。
+LARGE_PREVIEW_VERSION = "1280"
 # AAC 每帧 1024 采样（48kHz 下 21.3ms），音轨尾部填充会让容器时长比画面多几十毫秒。
 # 15 秒原片因此常报 15.02 / 15.07 秒，被 1–15 秒门禁误判为超长素材。
 TAIL_PADDING = 0.1
@@ -240,6 +248,66 @@ def create_preview(source: Path, destination: Path, kind: str) -> bool:
     except (OSError, subprocess.TimeoutExpired):
         # 首帧抽取超时 / ffmpeg 起不来：返回 False，让调用方记「这个文件没有
         # 缩略图」，而不是把整条入库打成 500。
+        return False
+    return result.returncode == 0
+
+
+def create_large_preview(source: Path, destination: Path) -> bool:
+    """派生**悬浮大图**：长边缩到 `LARGE_PREVIEW_MAX_EDGE` 的 JPEG。
+
+    与封面的差别只在一处：尺寸。封面是 360×240，网格里只有几十像素，
+    产品图的走线、缝线、logo 全看不清 —— 用户得「先看清再选」，
+    所以另备一档大图，悬浮时才取。
+
+    **原图不动**：只读原图、另写一份派生。原图是 9MB 的 PNG，
+    直接给前端就是「悬停一次拉 9MB」；缩到 1280 长边后是几百 KB。
+
+    视频走 ffmpeg 抽帧（第一帧），与封面同口径；音频 / 文本没有画面，
+    返回 False 让调用方明确说「这张没有预览」。
+    """
+    if destination.exists():
+        return True
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if source.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}:
+        try:
+            with Image.open(source) as image:
+                image.thumbnail((LARGE_PREVIEW_MAX_EDGE, LARGE_PREVIEW_MAX_EDGE))
+                # 原图可能是 RGBA / P 模式：直接存 JPEG 会抛「cannot write mode RGBA」。
+                image.convert("RGB").save(
+                    destination, format="JPEG", quality=LARGE_PREVIEW_QUALITY
+                )
+        except (OSError, Image.DecompressionBombError):
+            # 与 `create_preview` 同口径：派生失败是「这张素材坏了」，
+            # 不是服务端故障。抛出去会让取件端点变成 500。
+            return False
+        return True
+    try:
+        result = subprocess.run(
+            [
+                imageio_ffmpeg.get_ffmpeg_exe(),
+                "-y",
+                "-loglevel",
+                "error",
+                "-i",
+                str(source),
+                "-frames:v",
+                "1",
+                "-vf",
+                (
+                    f"scale=w='min({LARGE_PREVIEW_MAX_EDGE},iw)'"
+                    f":h='min({LARGE_PREVIEW_MAX_EDGE},ih)'"
+                    ":force_original_aspect_ratio=decrease"
+                ),
+                "-q:v",
+                "3",
+                "-update",
+                "1",
+                str(destination),
+            ],
+            capture_output=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired):
         return False
     return result.returncode == 0
 

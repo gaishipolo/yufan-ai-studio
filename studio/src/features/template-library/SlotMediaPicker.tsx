@@ -10,6 +10,7 @@ import type { SpecSlotOut } from '@/shared/api/schema';
 import { CoverImage } from '@/shared/ui';
 import { cn } from '@/shared/lib/cn';
 import { AssetChip } from '@/entities/library/ui/AssetChip';
+import { AssetHoverPreview } from '@/entities/library/ui/AssetHoverPreview';
 import { TagFilter } from '@/entities/library/ui/TagFilter';
 import { pickWithin } from './slotPick';
 
@@ -72,6 +73,15 @@ export function SlotMediaPicker({
   /* 已选但不在当前这档标签下的素材（换标签之后才会出现），见下面的渲染注释。 */
   const shown = new Set(items.map(item => item.id));
   const hiddenPicked = selected.filter(id => !shown.has(id));
+
+  /*
+   * 悬浮大图：缩略图太小看不清产品细节，悬停时另浮一张大图。
+   *
+   * **点击仍然是选中** —— 浮层是 `pointer-events-none`，不接管点击。
+   */
+  const [hoveredId, setHoveredId] = useState<string | null>(null);
+  const [pointer, setPointer] = useState<{ x: number; y: number } | null>(null);
+  const hovered = items.find(item => item.id === hoveredId);
 
   const toggle = (assetId: string) => {
     const next = pickWithin(selected, assetId, max);
@@ -156,6 +166,19 @@ export function SlotMediaPicker({
                 title={item.name}
                 disabled={blocked}
                 onClick={() => toggle(item.id)}
+                /* 鼠标事件挂在**按钮**上（不是里面的图）：缩略图只占按钮的一部分，
+                   挂在内层会让鼠标滑到边框时浮层闪一下。 */
+                onMouseEnter={(event) => {
+                  setHoveredId(item.id);
+                  setPointer({ x: event.clientX, y: event.clientY });
+                }}
+                onMouseMove={(event) =>
+                  setPointer({ x: event.clientX, y: event.clientY })
+                }
+                onMouseLeave={() => {
+                  setHoveredId(null);
+                  setPointer(null);
+                }}
                 className={cn(
                   'group relative aspect-square overflow-hidden rounded-lg border transition',
                   isPicked
@@ -184,6 +207,17 @@ export function SlotMediaPicker({
           })}
         </div>
       )}
+
+      {/* 悬浮大图：点一下仍然是选中（浮层不接管点击）。
+          宽高要一起传：竖图（三视图）与横图该占的高度差好几倍，
+          不给比例就只能一刀切限高，竖图会被裁掉一半。 */}
+      <AssetHoverPreview
+        assetId={hoveredId}
+        name={hovered?.name}
+        width={hovered?.width}
+        height={hovered?.height}
+        pointer={pointer}
+      />
     </div>
   );
 }

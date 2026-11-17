@@ -103,6 +103,18 @@ export const libraryApi = {
     }),
 
   /**
+   * 悬浮大图（长边 1280 的派生 JPEG）。
+   *
+   * 不用 `/file`：原图平均 2.6MB、最大 9.5MB，在网格里来回悬停
+   * 就是上百 MB。不用 `/thumbnail`：那只有 360×240，几十像素看不清细节。
+   */
+  large: (id: string) =>
+    api.get<Blob>(`/library/assets/${id}/large`, undefined, {
+      responseType: 'blob',
+      timeout: 600_000,
+    }),
+
+  /**
    * 设置用途：`case` = 移入案例池，空串 = 移回普通素材。
    *
    * 独立于 `patch`：改用途会改变这条素材的可见范围（案例对所有人可读），

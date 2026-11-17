@@ -27,6 +27,8 @@ export const libraryKeys = {
   details: () => [...libraryKeys.all, 'detail'] as const,
   detail: (id: string) => [...libraryKeys.details(), id] as const,
   media: (id: string) => [...libraryKeys.all, 'media', id] as const,
+  /** 悬浮大图：与 media 分开缓存，各自的字节来源不同 */
+  large: (id: string) => [...libraryKeys.all, 'large', id] as const,
   /** 前缀：切入口只是换了计数范围，任一次写操作都要把所有范围的缓存失效 */
   tags: () => [...libraryKeys.all, 'tags'] as const,
   tagList: (scope: LibraryTagScope) => [...libraryKeys.tags(), scope] as const,
@@ -414,6 +416,35 @@ export function useLibraryMedia(assetId: string | null, enabled: boolean) {
     enabled: !!assetId && enabled,
     staleTime: 5 * 60_000,
     queryFn: async () => libraryApi.file(assetId ?? ''),
+  });
+
+  const [url, setUrl] = useState<string | undefined>();
+
+  useEffect(() => {
+    if (!(query.data instanceof Blob)) {
+      setUrl(undefined);
+      return undefined;
+    }
+    const objectUrl = URL.createObjectURL(query.data);
+    setUrl(objectUrl);
+    return () => URL.revokeObjectURL(objectUrl);
+  }, [query.data]);
+
+  return { url, ...query };
+}
+
+/**
+ * 取悬浮大图并转成 object URL。
+ *
+ * **只在真的要显示时才发请求**：网格里几十张缩略图，悬停一张才拉那一张。
+ * 缓存 5 分钟 —— 同一份字节在这次会话里不会变，来回悬停不该重复拉。
+ */
+export function useLibraryLargePreview(assetId: string | null, enabled: boolean) {
+  const query = useQuery({
+    queryKey: libraryKeys.large(assetId ?? ''),
+    enabled: !!assetId && enabled,
+    staleTime: 5 * 60_000,
+    queryFn: async () => libraryApi.large(assetId ?? ''),
   });
 
   const [url, setUrl] = useState<string | undefined>();

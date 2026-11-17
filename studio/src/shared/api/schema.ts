@@ -1816,6 +1816,8 @@ export interface EndpointData {
   "PATCH /api/v1/library/assets/{asset_id}": LibraryAssetDetailOut;
   /** 下载或预览原文件 */
   "GET /api/v1/library/assets/{asset_id}/file": unknown;
+  /** 读取悬浮大图（长边 1280 的派生图） */
+  "GET /api/v1/library/assets/{asset_id}/large": unknown;
   /** 受控公共预览（视频给派生流） */
   "GET /api/v1/library/assets/{asset_id}/preview": unknown;
   /** 设置用途：普通素材 / 模板案例 */

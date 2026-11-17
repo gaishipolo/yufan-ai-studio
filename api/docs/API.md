@@ -2,7 +2,7 @@
 
 > 此文件由 `app export-openapi` 自动生成，请勿手工编辑。
 >
-> 版本 `0.2.0`｜共 **122** 个接口 / **11** 个模块
+> 版本 `0.2.0`｜共 **123** 个接口 / **11** 个模块
 >
 > 重新生成：`cd api && .venv/Scripts/python -m cli export-openapi`
 
@@ -229,7 +229,7 @@ Authorization: Bearer <accessToken>
 | 镜头库 | 1 | 见下方 `4.6` |
 | 系统 | 2 | 见下方 `4.7` |
 | 导出 | 6 | 见下方 `4.8` |
-| 资产库 | 42 | 见下方 `4.9` |
+| 资产库 | 43 | 见下方 `4.9` |
 | 模型驱动 | 6 | 见下方 `4.10` |
 | 模板封装 | 11 | 见下方 `4.11` |
 
@@ -1579,7 +1579,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 
 **响应** `ApiResponse<unknown>`（前端取 `res.data`）
 
-### 4.9 资产库（42 个）
+### 4.9 资产库（43 个）
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
@@ -1591,6 +1591,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `DELETE` | `/api/v1/library/assets/{asset_id}` | 移入回收站（软删，可恢复） | 🔒 |
 | `GET` | `/api/v1/library/assets/{asset_id}` | 资产详情（含标签与生成参数） | 🔒 |
 | `GET` | `/api/v1/library/assets/{asset_id}/file` | 下载或预览原文件 | 🔒 |
+| `GET` | `/api/v1/library/assets/{asset_id}/large` | 读取悬浮大图（长边 1280 的派生图） | 🔒 |
 | `GET` | `/api/v1/library/assets/{asset_id}/preview` | 受控公共预览（视频给派生流） | 🔒 |
 | `POST` | `/api/v1/library/assets/{asset_id}/purpose` | 设置用途：普通素材 / 模板案例 | 🔒 |
 | `GET` | `/api/v1/library/assets/{asset_id}/stream` | 浏览器兼容视频预览（派生流，不改原片） | 🔒 |
@@ -1898,6 +1899,22 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 #### `GET /api/v1/library/assets/{asset_id}/file`
 
 **下载或预览原文件**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `asset_id` | path | `string` | 是 |  |
+
+**响应** `ApiResponse<unknown>`（前端取 `res.data`）
+
+#### `GET /api/v1/library/assets/{asset_id}/large`
+
+**读取悬浮大图（长边 1280 的派生图）**
+
+网格里悬停时看细节用的那一张。
+
+封面（`/thumbnail`）只有 360×240，几十像素的方块看不清产品图；
+原图（`/file`）平均 2.6MB、悬停一次拉一次。这一档是折中：
+长边 1280 的派生 JPEG，几百 KB，按内容摘要缓存 —— 同一份原图只生成一次。
 
 | 参数 | 位置 | 类型 | 必填 | 说明 |
 |---|---|---|---|---|

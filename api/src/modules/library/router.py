@@ -432,6 +432,19 @@ async def asset_thumbnail(
     return (await service.file(asset_id, actor, preview=True)).response()
 
 
+@router.get("/assets/{asset_id}/large", summary="读取悬浮大图（长边 1280 的派生图）")
+async def asset_large(
+    asset_id: str, actor: LibraryReadDep, service: LibraryServiceDep
+) -> Response:
+    """网格里悬停时看细节用的那一张。
+
+    封面（`/thumbnail`）只有 360×240，几十像素的方块看不清产品图；
+    原图（`/file`）平均 2.6MB、悬停一次拉一次。这一档是折中：
+    长边 1280 的派生 JPEG，几百 KB，按内容摘要缓存 —— 同一份原图只生成一次。
+    """
+    return (await service.large(asset_id, actor)).response()
+
+
 @router.get("/assets/{asset_id}/stream", summary="浏览器兼容视频预览（派生流，不改原片）")
 async def asset_stream(
     asset_id: str, actor: LibraryReadDep, service: LibraryServiceDep

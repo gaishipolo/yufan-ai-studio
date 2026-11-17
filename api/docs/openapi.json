@@ -3413,6 +3413,52 @@
         }
       }
     },
+    "/api/v1/library/assets/{asset_id}/large": {
+      "get": {
+        "tags": [
+          "资产库"
+        ],
+        "summary": "读取悬浮大图（长边 1280 的派生图）",
+        "description": "网格里悬停时看细节用的那一张。\n\n封面（`/thumbnail`）只有 360×240，几十像素的方块看不清产品图；\n原图（`/file`）平均 2.6MB、悬停一次拉一次。这一档是折中：\n长边 1280 的派生 JPEG，几百 KB，按内容摘要缓存 —— 同一份原图只生成一次。",
+        "operationId": "asset_large_api_v1_library_assets__asset_id__large_get",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "asset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Asset Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/library/assets/{asset_id}/stream": {
       "get": {
         "tags": [
