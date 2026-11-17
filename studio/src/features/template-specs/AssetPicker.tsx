@@ -132,6 +132,7 @@ export function AssetPicker({
           onlyWithAssets
           hideTopLevel
           excludeIds={scope}
+          single
           value={picked}
           onChange={setPicked}
         />

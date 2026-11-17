@@ -4,6 +4,7 @@ import type { LibraryTagStatOut } from '@/shared/api/schema';
 import { cn } from '@/shared/lib/cn';
 import {
   leafTagsForSelection,
+  selectableTags,
   tagLabel,
   tagsAtDepth,
 } from '../model/tagTree';
@@ -34,6 +35,17 @@ export interface TagFilterProps {
    * 已经是三视图了，再把它列成一个可点的筛选项，点了等于没筛。
    */
   excludeIds?: string[];
+  /**
+   * 单选：整个组件至多一个选中项。
+   *
+   * 模板库/封装那侧用这个 —— 候选集已经把范围圈死了，用户在范围内
+   * 只想「挑一档看看」，多选没有意义（多选的组合口径要靠提示语解释，
+   * 而单选不需要解释）。
+   *
+   * 单选下**取值行不做维度收窄**：一级行隐藏时收窄会把用户困死在一个
+   * 维度里（选了「产品/6036」之后就看不到别的取值了，换都换不了）。
+   */
+  single?: boolean;
   /** 已挑的标签 id（可空） */
   value: string[];
   onChange: (ids: string[]) => void;
@@ -54,12 +66,15 @@ const ACTIVE = 'border-primary bg-primary text-white shadow-sm';
  *
  * 组件只管「挑了哪些」；同一维度里「维度与取值只留取值」这件事由调用方
  * 用 `effectiveTagSelection` 收敛（这里保留用户点的全部，让胶囊都高亮）。
+ *
+ * `single` 打开时变成**单选**：至多一个选中项，点已选项取消、点别的替换。
  */
 export function TagFilter({
   tags,
   onlyWithAssets = false,
   hideTopLevel = false,
   excludeIds = [],
+  single = false,
   value,
   onChange,
   title = '按标签筛选',
@@ -90,13 +105,26 @@ export function TagFilter({
 
          列的是**叶子**（能打在素材上的词），不是硬编码「二级」——
          孤立的一级词（「音乐」）也是叶子、也真能打，按层级取会漏掉；
-         有子标签的一级（产品）不是叶子，自然不出现。 */
-      { label: '取值', items: visible(leafTagsForSelection(allowed, value)) },
+         有子标签的一级（产品）不是叶子，自然不出现。
+
+         **单选时不收窄**：一级行隐藏时收窄会把用户困死在一个维度里 ——
+         选了「产品/6036」之后别的取值就都不见了，连换个取值都做不到。 */
+      {
+        label: '取值',
+        items: visible(
+          single ? selectableTags(allowed) : leafTagsForSelection(allowed, value),
+        ),
+      },
     ];
-  }, [allowed, value, hideTopLevel, excluded]);
+  }, [allowed, value, hideTopLevel, excluded, single]);
   const active = useMemo(() => new Set(value), [value]);
 
   function toggle(id: string) {
+    if (single) {
+      /* 单选：点已选项取消、点别的替换它（至多一个选中项）。 */
+      onChange(active.has(id) ? [] : [id]);
+      return;
+    }
     onChange(active.has(id) ? value.filter((item) => item !== id) : [...value, id]);
   }
 
@@ -117,7 +145,7 @@ export function TagFilter({
           </button>
         )}
         <span className="ml-auto text-micro text-ink-mute/80">
-          同一维度多选是或 · 跨维度是且
+          {single ? '选一个标签筛选' : '同一维度多选是或 · 跨维度是且'}
         </span>
       </div>
       {rows.map((row) =>

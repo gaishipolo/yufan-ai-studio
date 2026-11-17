@@ -154,3 +154,57 @@ describe('TagFilter · 模板库那一侧（hideTopLevel + excludeIds）', () =>
     expect(second.getByRole('button', {name: 'T40'})).toBeInTheDocument();
   });
 });
+
+describe('TagFilter · 单选（single）', () => {
+  it('点一个选中它，再点另一个替换掉它（至多一个选中项）', async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<TagFilter tags={TAGS} single value={[]} onChange={onChange} />);
+    const second = within(screen.getByRole('group', {name: '取值标签'}));
+    await user.click(second.getByRole('button', {name: '3030'}));
+    expect(onChange).toHaveBeenCalledWith(['t11']);
+  });
+
+  it('点已选中的那个 = 取消（清空）', async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<TagFilter tags={TAGS} single value={['t11']} onChange={onChange} />);
+    const second = within(screen.getByRole('group', {name: '取值标签'}));
+    await user.click(second.getByRole('button', {name: '3030'}));
+    expect(onChange).toHaveBeenCalledWith([]);
+  });
+
+  it('点另一个取值 = 替换（不是追加）', async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<TagFilter tags={TAGS} single value={['t11']} onChange={onChange} />);
+    const second = within(screen.getByRole('group', {name: '取值标签'}));
+    await user.click(second.getByRole('button', {name: 'T40'}));
+    expect(onChange).toHaveBeenCalledWith(['t12']);
+  });
+
+  it('取值行**不按选中项收窄**（一级行隐藏时，收窄会把用户困死在一个维度）', () => {
+    /* 选了「产品 / 3030」之后，别的维度（角色/菜菜）也得看得见 ——
+       否则用户换个取值都做不到。 */
+    render(
+      <TagFilter tags={TAGS} single hideTopLevel value={['t11']} onChange={vi.fn()} />,
+    );
+    const second = within(screen.getByRole('group', {name: '取值标签'}));
+    expect(second.getAllByRole('button').map((b) => b.textContent)).toEqual([
+      '3030',
+      'T40',
+      '菜菜',
+    ]);
+  });
+
+  it('提示语换掉多选那套（单选没有「或/且」可言）', () => {
+    render(<TagFilter tags={TAGS} single value={[]} onChange={vi.fn()} />);
+    expect(screen.queryByText(/同一维度多选是或/)).not.toBeInTheDocument();
+    expect(screen.getByText('选一个标签筛选')).toBeInTheDocument();
+  });
+
+  it('多选模式保留原来的「或/且」提示语', () => {
+    render(<TagFilter tags={TAGS} value={[]} onChange={vi.fn()} />);
+    expect(screen.getByText(/同一维度多选是或/)).toBeInTheDocument();
+  });
+});

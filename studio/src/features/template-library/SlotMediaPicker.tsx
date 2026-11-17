@@ -116,8 +116,11 @@ export function SlotMediaPicker({
         </div>
       )}
 
-      {/* 标签多选：列的是**这批候选素材身上实际有**的标签，
+      {/* 标签筛选：列的是**这批候选素材身上实际有**的标签，
           用户点了就在候选集里再筛一层。
+
+          **单选** —— 候选集已经把范围圈死了，用户在范围内只想挑一档看看，
+          多选没有意义。
 
           一级维度行不显示（那只是分组头，范围已经由候选集定死）；
           候选集里的标签本身也不列 —— 它就是范围，列出来点了等于没筛。 */}
@@ -127,6 +130,7 @@ export function SlotMediaPicker({
           onlyWithAssets
           hideTopLevel
           excludeIds={scope}
+          single
           value={picked}
           onChange={setPicked}
         />

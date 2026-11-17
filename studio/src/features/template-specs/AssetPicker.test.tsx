@@ -107,8 +107,9 @@ describe('AssetPicker · 候选集里再筛', () => {
     expect(selectionCalls.at(-1)?.tagIds).toEqual(['t1', 't21']);
   });
 
-  it('同一维度挑多个取值：发给后端的标签全都带上（组内是或）', async () => {
-    /* 回归：逐个覆盖会让多个胶囊全高亮、却只筛出最后一档。 */
+  it('单选：再点另一个取值就是**替换**，不是追加', async () => {
+    /* 回归：多选时逐个覆盖会让多个胶囊全高亮、却只筛出最后一档。
+       单选下只剩后点的那一个（候选集那一维被替换掉）。 */
     const user = userEvent.setup();
     tagsData.current = [
       ...TAGS,
@@ -118,7 +119,7 @@ describe('AssetPicker · 候选集里再筛', () => {
     const second = within(screen.getByRole('group', {name: '取值标签'}));
     await user.click(second.getByRole('button', {name: '3030'}));
     await user.click(second.getByRole('button', {name: 'T40'}));
-    expect(selectionCalls.at(-1)?.tagIds).toEqual(['t11', 't12']);
+    expect(selectionCalls.at(-1)?.tagIds).toEqual(['t12']);
   });
 
   it('没圈标签的槽位也能按任意取值筛', async () => {
