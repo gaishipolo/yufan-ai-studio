@@ -24,6 +24,9 @@ export type { TabItem, TabsProps } from './Tabs';
 export { Modal } from './Modal';
 export type { ModalProps } from './Modal';
 
+export { ConfirmDialog } from './ConfirmDialog';
+export type { ConfirmDialogDetail, ConfirmDialogProps } from './ConfirmDialog';
+
 export { Chip } from './Chip';
 export type { ChipTone } from './Chip';
 
