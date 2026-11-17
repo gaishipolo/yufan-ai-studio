@@ -590,6 +590,184 @@ curl -sS --noproxy '*' -H "Authorization: Bearer $TOKEN" \
 - **POST 路由一律挂 `rate_limit`**：`test_route_policy.py` 按 HTTP 方法扫，
   连「只预检不落库」的 `/validate` 也算写路由，不挂就得进豁免表。
 
+### 5.1 模板封装（只剩 template_specs，2026-11-17 现状）
+
+- P3 已删 `modules/template` 替换链、`video_templates`、`template_packs*`、`template_manifests*`、
+  `replacement_runs*`、`core.template_rules` 与四个跨模块契约。**别从 git 历史捞回**。
+  素材包语义归资产库 `kind=pack`；入口只剩 `/templates/library`（填表）、`/templates/specs`（封装）。
+- **生成是 `modules/task` 的消费行为**，不在封装模块实现；模块间**不许互相 import**
+  （复用靠注入口或上移 `core/`）。
+- spec：`{{slot:key}}`；`{{Mixed N}}` 只在 `compile_spec()` 派生、不落库。槽位 `type`
+  （**就是资产库 kind，含 `pack`**）× `binding(fixed|user)` × `refMode`
+  （音频只 attachment、文本不许 mixed、封装必须 mixed）。
+  **没有 `source` 轴**（`is_pack` 唯一判据，再传 422）。`tag_id` 是候选范围，`compile` 不看。
+  封装只存 id。
+- `prompt` **只有一段**（旧 `locked|editable` 已并，`promptOverride` 删）；可变内容加 `text` 槽位
+  （`{{Text N}}` 与 `textLibraryIds` 顺序对应）。
+- 两个上限**别合并**：`MAX_PROMPT=20000` 编写 / `EXECUTION_PROMPT_LIMIT=2000` 执行；
+  草稿不判、预检与发布粗判、`compile` 精判。
+- `compile` 出参是**模板层**不是请求体：`/tasks` 的时长/画幅在顶层，摊平由 TS `toTaskPayload` 做，
+  **别加 Python `to_task_payload`**；表达不了的键报错不丢。
+- 槽位 key 自动生成、界面不显示；改类型只在**未被提示词引用**时 `rekeySlot`。
+  删槽位 `stripSlotRefs()` 清引用；引用不存在的槽位 `validate_spec` 就 400。
+- **槽位引用的形状只许有一处定义**（已栽 3 次）：后端 `rules._SLOT_REF` / `compile._SLOT_REF` /
+  前端 `specDraft.slotRefPattern` 三处都要**同时**容空格 `{{ slot:key }}`；
+  `compile._LEFTOVER` 是**正则**（`re.compile(r"\{\{\s*slot:")`）不是字面量 ——
+  写成 `"{{slot:"` 会让带空格的坏引用躲过检查、原样进供应商提示词。
+  改任一处必须同步其余，且守卫要能变红。
+- 提交接口**按模型能力选**：`GET /models` 命中 image 清单 → `POST /generations/image`，
+  否则 `POST /tasks`；参数按 `paramSchema` 渲染，别写死画幅/时长。
+- 替换 = 普通任务 + `ModelSpec.replacement`；`?target=replacement|generation` 按它筛，
+  **别从槽位组合推断**。
+- 模板是**软删**（`deleted_at`）→ `/trash` → `restore`；回收站里的模板**仍算资产引用**。
+- `demoAssetId` 只存草稿、不进快照；空封面用 `CaseCover` 兜底渐变，**别用虚线框**。
+- 视频走 `AssetPreview hoverPlay`（压在封面之上，不是替换封面）；
+  **卡片外层是 `<button>` 时必须 hoverPlay**（视频分支自带播放按钮 → 嵌套警告）。
+  **别把 `previewUrl` 塞 `<video>`**（是 thumbnail JPEG；`/stream` 要 Bearer 头）
+  → 只能 `useLibraryMedia()` 取 blob。
+- 填表槽位按一级标签分组（`SlotMediaPicker`）；胶囊**不带计数**，条数只放「共 N」；
+  **已选不单列 chip**（只留不在当前档的，否则换标签后删不掉）；
+  发布闸门：user 的图片/视频槽位必须有 `tagId`。
+- 模板库右栏只有「填入素材」「参数」；拆 head / 滚动区 / footer，
+  `xl:max-h-[calc(100vh-86px)]`，细滚动条 `.scroll-thin`（只写 `width` 不写 thumb 会画成透明）。
+- 占位符只在封装页露出；其余走 `entities/library/ui/PromptRefs`，
+  解析不到**保留原文**别静默吞。
+- 封装提示词框打 `@` 可选槽位（`features/template-specs/mention.ts` + `PromptBox.tsx`）；
+  与下方 chip 按钮写进同一个 `{{slot:key}}` token。
+  **光标由 PromptBox 自己管**（受控 textarea 改 value 后光标会跑到末尾）；
+  `Section` 卡片别用 `overflow-hidden`（浮层会被裁掉）。
+- 产物命名 `用户名-年-月-日-时-分-秒`（`core/naming.py`）；入库快照的 prompt 存**注入之后**的文本。
+- 权限码 `template_pack:read/create/publish`；`template:*`、`template:pack:*` 已删，别加回来。
+  前端槽位类型只用 `KIND_OPTIONS`/`KIND_LABEL`，别写本地词表。
+- 封装槽位卡片在 `features/template-specs/SlotCard.tsx`：**主行只留高频项**
+  （序号/类型/展示名/谁定），低频项收进「更多设置」。
+  展示名 input 必须 `min-w-0`（否则按内容宽度撑开父级）。
+  固定槽位只描左边绿边、不铺绿底。`FormField` 要写 `htmlFor` 才关联得上控件。
+- 封装编辑器：一级标签下拉只给 image/video；发布与预检前跑 `slotsMissingTag()`。
+
+### 5.2 模型驱动（唯一路径）
+
+- 接供应商 = `modules/model_driver/drivers/` 放一个 py（`META`+`MODELS`+`Driver`），
+  不改 `.env`/import。`AI_PROVIDERS` 白名单已删。
+  `_` 前缀不自动载入；示例驱动用完 `unregister_example_drivers()`（单例会污染用例）。
+- 默认模型由 `preferred_for` 声明，**必须公开且真实**；给人挑 `public_models()`，
+  按 id 找 `models()`。
+- 业务模块只认 `ModelSpec` + `ModelRouter`；**解析供应商只有 `runner._provider_for()`**
+  （别写 `pipeline.resolve_provider`）。**模型下线当场判失败**（40001 + `fail_on_model_gone`），
+  不退避到超时。
+- 排队：`RateLimited` 走 `GENERATION_THROTTLE_DELAYS`（10→240 秒）重投、任务保持 `queued`，
+  **别交回 worker 的 2s/4s 退避**；轮询节奏由驱动 `poll_interval_sec`
+  （agnes 视频 10 秒，2 秒被 429）。
+- 通用链：`referenceLibraryIds` 在 `load()` 冻结成 `params["referenceKeys"]`，
+  `materialize()` 补工作区。
+- **批量输入的「几张 + 什么类型」都由模型声明**：`ModelSpec.max_references` /
+  `.reference_kinds` → `GET /models` 出参 `maxReferences` / `referenceKinds` → 前端渲染。
+  **前端别写死**（曾写死「只选图片、最多 4 张」，把 LibTV/百炼的「原片视频 + 音频」挡在门外）。
+- **参数型能力走 `param_schema`**（如 `billingMode`）；模型没声明就**明确拒绝**
+  （仿 `resolve_style_preset`），默默透传 = 用户以为切了、实际那条路径不存在。
+- **LibTV 只有 `mixed2video` 一条通道**：文生/图生/视频参考全靠 `mixedList` 里放什么素材表达
+  （`type` 来自资产 kind）；`modeType` 在主链路是硬编码，
+  vendor 那个 `text2video` 分支是独立 CLI 老路径。
+- 计费模式**按任务落库**（`video_tasks.billing_mode`），不现读账号设置：
+  队列选择与扣费绑定，重试必须用当初那一条（权益可能变了，换队列 = 换计费口径重下单）。
+- **注释里写了约束 ≠ 有约束**：参考素材 1–15 秒门禁曾只有一句注释，代码只记不校验 ——
+  补门禁前先 grep 同类链路（百炼有）。补在受理期（用资产库 `duration_ms`，不下载字节）
+  + 物化期（重探真实字节）两处；**单段与同类型总数都要查**（逐段查不出「两段各 9 秒」）。
+
+### 5.3 资产库 / 生图（v2）
+
+- **v1 素材库已彻底下线**（`assets` 表、`modules/asset`、`core/media.py`、`asset:*`、
+  前端 `/assets`），守卫 `test_v1_asset_library_is_gone.py`；**别从 git 历史捞回来**。
+- 封装是 `kind=pack` 的资产行（无自己字节，成员 `hidden_by_pack_clause` 不单列）
+  → **类型筛选必须有「封装」档**；`sync_pack_tags` 只增不减，不再自动打「封装」标签；
+  工具栏叫「新建封装」。
+- 审批三码按申请单目标范围拆，`ShareService._can_approve_target()` 唯一判据，
+  新码不进 `BUILTIN_ROLES`。
+- 生图参数 schema 驱动：`GET /models` 的 `paramSchema` 渲染；
+  键名是契约（`size`/`count` 顶层、其余进 `params`），未声明键 400；
+  额外参数必须落 `image_jobs.params_json`。
+  **参考图不是参数**（`max_references` 只管入口，提交走 `referenceLibraryIds`，
+  别改名回 `referenceAssetIds`）。
+- 生图可删（11-14）：`DELETE /images`（`deleted` + `skipped`，越权进 skipped 不整批 403）
+  + `image:delete`（editor 靠 `image:*` 通配）。删了即放弃重试 —— 用户拍板的取舍；
+  产物字节不跟着删。
+- 上传打标只给**叶子**（一级分组是打标守卫拒掉的，界面不能给）；
+  打标是**第二段**，失败只提示「标签未打上」，
+  不把已上传成功的文件报成「上传失败」（那会让用户重传、库里多一条重复素材）。
+
+### 5.4 标签两级维度模型（2026-11-17 当前主线）
+
+- **一级 = 维度**（产品 / 画面类型 / 角色 / 场景），**二级 = 取值**（6036 / 正面图 / 菜菜）。
+  `MAX_TAG_DEPTH = 2`（后端 `tags.py` + 前端 `tagTree.ts` 两处都要改）。
+- **筛选语义：组内 OR、组间 AND**。后端 `tags.tag_filter_clause` =
+  每维度一个 `EXISTS` 子句、AND 起来；前端 `effectiveTagSelection` 收敛
+  「同维度只留最具体的一档」。**别退回全 OR**（那是三级下的语义）。
+- **打标守卫拦「有子标签的一级」**，不是「所有一级」：删维度后取值会被提升为一级，
+  若一级一律不可打，这些取值就成了看得见却打不上的死词（存量「音乐」同理）。
+- 迁移 `c2b7d4e91a06`：三级词有同名二级副本 → **合并，保留被引用多的 id**
+  （模板槽位引用优先，那是对外契约）；无副本 → 提到祖父下，tag_id 不变。
+  **打在维度上的存量绑定不删**（选一级 = 该轴全部取值，仍会命中）。
+  迁移的 downgrade **不还原**结构变更（合并掉的词无法重建回原父）—— 有意的。
+- 标签栏 / 选择器**两行**，文案「同维度多选是或 · 跨维度是且」。
+  前端 `tagTree.ts` 是六个消费点的唯一口径来源，
+  别在别处另写 `filter(t => !t.parentId)`。
+- **二级行随选中项联动**：点「产品」二级只剩产品的取值；点「产品」+「角色」是两条轴之和。
+  口径在 `tagTree.secondLevelForSelection`，标签栏与 `TagFilter` 共用。
+  **收窄到「维度」而非「选中项」** —— 点了「产品/3030」之后还得能看见兄弟取值「T40」。
+- **二级胶囊只显示短名**（「正面图」），tooltip 保持完整路径（「产品图类型 / 正面图」）。
+  显示与 tooltip 是两个变量，别共用一个 `text`。
+- mock（`modules/library/mock.ts`）要跟后端同一口径：筛选「组内或、跨组且」，词表两级，
+  素材挂在**二级取值**上（挂一级维度演示不出交集）。
+- **迁移脚本的坑**：迁移不能 import 应用模型（模型定义会变）→ 用 `sa.table()` 声明；
+  `INSERT ... SELECT :row_id` 撞主键、`WHERE name IN :names` 的 tuple 绑定不成立
+  → 改 Python 侧逐行操作；`lastrowid` 在 PG 不可靠 → 一律 Python 侧 uuid + 回查。
+- **动手前必须先查库**：2026-11-17 摘要里记的是 14 个标签，库里实际 18 个 ——
+  按摘要写的迁移会跑偏。
+
+### 5.5 任务中心 / 前后端口径
+
+- `GET /tasks/feed` = 视频 + 生图（`source` 只有 `all|video|image`）；
+  生图经 `core.ports.generation_feed` 注入口，**任务中心不许 import `modules.image`**；
+  未注册返回空页是合法状态。
+- `succeeded` 但产物不在 → `attention` 不是 `completed`。
+- 批量收藏 `PATCH /tasks/{id}` 显式 `{favorited:true}`；批量删除**按来源分流**
+  （`/tasks` 与 `/images`），如实回 `skipped`；收藏只对视频。
+- **收藏按账号**（`task_favorites`，迁移 `c4e9a1b7d230`）：
+  `to_out(task, favorited=...)` 必须由调用方按 actor 传；
+  `present(task, actor)` / `present_many(tasks, actor)` 一次 `IN` 查；
+  删任务 `purge_favorites`（无外键）。
+  seed **不种收藏**（seed 契约是「只 add 不读」，`test_module_hooks` 用探针会话）。
+- 页面级 `sticky` 必须 `top-[54px]`（顶栏 `sticky top-0 z-30 h-[54px]`）。
+- **产物文件名时间戳按 UTC**（`core/naming.py` 默认 `tz=UTC`、前端 `fileStamp` 用 `getUTC*`）：
+  同一任务入库与下载必须同一个名字，别改回本地时区。页面显示时间才用本地时区。
+- 可选能力**用协议 + isinstance，别 `getattr` 探测**：`PollCapable` / `PollPacing` /
+  `SubmitBudget`（`infra/ai/base.py`）、`CoverAttachable`（`generation/pipeline.py`）。
+- **跨用户可见性拆三个开关**（`model_driver:read:all` 看详情 / `:cancel:any` 停别人在跑的 /
+  `:retry:any` 花别人额度）—— `read:all` **不解锁** cancel/retry。同口径 `task`/`image` 也一样。
+- `stylePreset` 只在模型 `param_schema` 声明了才收（未声明直接 400）；
+  目录里目前没有模型声明它，所以这个字段暂时不可用 ——
+  「字段在、能力没有」是诚实状态，别再往请求体里塞自造的键。
+- 运行工作区配置叫 `TASK_RUNS_ROOT`（旧名 `REPLACEMENT_RUNS_ROOT` 仍认，AliasChoices）。
+
+### 5.6 一次性改动的结论（2026-11-16）
+
+- **浮层不要写死「往下弹」**（页面底部没空间时整块掉出视口）：一律走
+  **`shared/hooks/useDropPlacement.ts`**（量自己的高度 + 上下哪边放得下，滚动时重算）。
+  `MultiSelect` 与 `@` 候选面板共用这一份，**别再写第二份**。tailwind 加了 `animate-slideUp`。
+- **别用「@ 前面挨着词字符就算邮箱」判地址** —— 那是把冷门 case 的防护开在常用路径上。
+  判据是 `mention.ts` 的 `looksLikeAddress()`：**只看像不像地址**。
+  代价（已知、接受）：`a@b` 这种半截地址不再被拦。
+  判别力自检的坑：用例里 `@` 前面留空格 → 旧规则照样放行 → 假绿。
+  **必须用不带空格的写法**（`shot@`）。
+- 模板封装编辑页按用户参考图重排（右栏：提示词 → 槽位速览 → 展示案例）：
+  槽位改「清单」、类型标记改图标、「谁定」选中项改实心、页头并进吸顶栏、
+  提示词卡片带「字数 N / 20000」（上限对着 `api/docs/openapi.json` 有漂移守卫）。
+  **没做的**：提示词正文里的 `{{slot:xxx}}` 内联 chip —— textarea 要 overlay 复刻换行排版，
+  脆且难维护。
+- 顶栏下的「模块宫格」已撤（`widgets/module-nav/ModuleNav.tsx` 已删）：那排大卡片与侧栏是
+  同一批入口的第二份画法。顺带把 `card` 这个概念整套拆了（4 个模块的 `card` 块删掉后，
+  侧栏入口不受影响 —— 每条路由都另有 `nav`）。新增模块现在只声明 `routes[].nav` 一处。
+
 ## 6. 本机环境坑（Windows 开发机）
 
 | 现象 | 真相 |
