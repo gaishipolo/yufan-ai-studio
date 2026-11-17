@@ -47,6 +47,13 @@ down_revision: Union[str, Sequence[str], None] = "d4a9f1c73b20"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
+#: 本迁移不可逆（见模块 docstring 的「能不能回滚」一节）。
+#:
+#: 这个常量是**机器可读的**判据：CI 的降级往返测试要算出「能回退到哪一道」，
+#: 靠的就是扫描各迁移模块里的这个标记（`scripts/downgrade_anchor.py`）。
+#: 新增不可逆迁移时**必须**把它带上，否则 CI 会在降级时撞上 `RuntimeError`。
+irreversible = True
+
 #: 先删子表再删主表：项目里没有真外键，但顺序仍按依赖排，避免将来加了外键
 #: 之后这条迁移变成「只在旧库上能跑的那一条」。
 _DROP_ORDER: tuple[str, ...] = (

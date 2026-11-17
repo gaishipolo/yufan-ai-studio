@@ -721,6 +721,12 @@ curl -sS --noproxy '*' -H "Authorization: Bearer $TOKEN" \
 - **迁移脚本的坑**：迁移不能 import 应用模型（模型定义会变）→ 用 `sa.table()` 声明；
   `INSERT ... SELECT :row_id` 撞主键、`WHERE name IN :names` 的 tuple 绑定不成立
   → 改 Python 侧逐行操作；`lastrowid` 在 PG 不可靠 → 一律 Python 侧 uuid + 回查。
+- **不可逆迁移必须带 `irreversible = True`**（模块级常量）：CI「迁移 · PostgreSQL
+  （观察期）」的降级往返锚点靠它算（`api/scripts/downgrade_anchor.py` = 离 head
+  最近的那道不可逆迁移）。**锚点别手写进 `ci.yml`** —— 2026-11-15 手写过一次，
+  2026-11-17 新增更靠后的不可逆迁移就腐烂了（降级撞 `NotImplementedError`，CI 红）。
+  判据**不能**是「`downgrade()` 里有 raise」：`d41c7a9e5f28` 的 raise 是业务前置
+  检查，按 raise 探测会把它误标成不可逆。
 - **动手前必须先查库**：2026-11-17 摘要里记的是 14 个标签，库里实际 18 个 ——
   按摘要写的迁移会跑偏。
 

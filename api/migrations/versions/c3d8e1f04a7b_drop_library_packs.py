@@ -47,6 +47,13 @@ down_revision = "b7c1e4a92f30"
 branch_labels = None
 depends_on = None
 
+#: 本迁移不可逆（见模块 docstring 的「降级」一节）。
+#:
+#: 这个常量是**机器可读的**判据：CI 的降级往返测试要算出「能回退到哪一道」，
+#: 靠的就是扫描各迁移模块里的这个标记（`scripts/downgrade_anchor.py`）。
+#: 新增不可逆迁移时**必须**把它带上，否则 CI 会在降级时撞上 `NotImplementedError`。
+irreversible = True
+
 
 def _pack_asset_ids(connection: sa.Connection) -> list[str]:
     rows = connection.execute(
