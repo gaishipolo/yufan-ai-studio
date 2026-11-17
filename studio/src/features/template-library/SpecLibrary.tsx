@@ -21,6 +21,7 @@ import { effectiveModelIds, slotTypeOf } from '@/features/template-specs/specDra
 import { ParamFields } from '@/entities/model/ui/ParamFields';
 import { Button, Chip, EmptyState, SearchInput, Select, Skeleton } from '@/shared/ui';
 import { cn } from '@/shared/lib/cn';
+import { toast } from '@/shared/lib/toast';
 import { useStickyFitHeight } from '@/shared/hooks/useStickyFitHeight';
 import { toSubmitPayload } from './taskPayload';
 import { modelChoiceOptions, resolveModelChoice } from './modelChoice';
@@ -356,12 +357,19 @@ export function SpecLibrary() {
         const job = await generateImage.mutateAsync(plan.payload);
         // 生图的 `name` 是从提示词派生的，会显示成 `{{Text 1}}`；用模板名更好认
         setNote(`已提交生图：${spec.name}（${job.id}）`);
+        // 右栏那条提示是「这一刻的状态」，滚下去就看不见了；提交这种一次性动作
+        // 还要一条会自己消失的反馈，用户才知道「点到了、东西进去了」。
+        toast('已提交生图，稍后到资产库查看', 'success');
       } else {
         const task = await createTask.mutateAsync(plan.payload);
         setNote(`已提交：${task.title || task.id}`);
+        toast('任务已提交，可在任务中心查看进度', 'success');
       }
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : String(reason));
+      const message = reason instanceof Error ? reason.message : String(reason);
+      setError(message);
+      // 失败同样要弹：错误条在右栏底部，正填着表的人未必看得到。
+      toast(message, 'error');
     }
   };
 

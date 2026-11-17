@@ -18,6 +18,7 @@ import {
   ErrorState,
   Modal,
   MultiSelect,
+  Notice,
   Skeleton,
 } from '@/shared/ui';
 import { formatBytes, formatDateTime, formatDuration } from '@/shared/lib/format';
@@ -289,9 +290,7 @@ function DetailBody({
         </div>
 
         {asset.rejectReason && (
-          <p className="rounded-lg border border-danger-line bg-danger-soft px-2.5 py-1.5 text-body text-danger-deep">
-            驳回原因：{asset.rejectReason}
-          </p>
+          <Notice tone="error">驳回原因：{asset.rejectReason}</Notice>
         )}
 
         <div className="grid gap-1.5 sm:grid-cols-2">
