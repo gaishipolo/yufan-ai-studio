@@ -11,7 +11,7 @@ import {
 export interface LibraryTagBarProps {
   /** 后端已按添加时间排好序；这里再排一次只是防 mock / 旧缓存混进乱序数据 */
   tags: LibraryTagStatOut[];
-  /** URL 里选中的 tag id（一级 / 二级 / 三级都算，可以跨链多选） */
+  /** URL 里选中的 tag id（一级维度 / 二级取值都算，可以跨维度多选） */
   selected: string[];
   busy?: boolean;
   /** 交回**完整**的选中数组：容器只负责写 URL，取舍在组件里算 */
@@ -27,29 +27,28 @@ const PILL =
 const IDLE =
   'border-line-soft bg-panel-soft text-ink-soft hover:border-primary-line hover:bg-primary-soft/60 hover:text-primary-deep';
 const ACTIVE = 'border-primary bg-primary text-white shadow-sm';
-/* 行标题固定 48px + 截断：三个行标题都是「一级 / 二级 / 三级」，宽一点会让
-   第二、三行的 pills 挤到换行。 */
+/* 行标题固定 48px + 截断：两个行标题都是「一级 / 二级」，宽一点会让
+   第二行的 pills 挤到换行。 */
 const ROW_LABEL = 'w-12 shrink-0 truncate text-body font-medium text-ink-mute';
 
 /**
- * 标签筛选条：**三行**，第一行一级（分组）、第二行二级（系列）、第三行三级
- * （具体词）。每行的排布都是「行标题 → 搜索框 → 全部 → 标签胶囊」。
+ * 标签筛选条：**两行**，第一行是**维度**（产品 / 画面类型 / 角色），
+ * 第二行是**取值**（6036 / 正面图 / 菜菜）。每行的排布都是
+ * 「行标题 → 搜索框 → 全部 → 标签胶囊」。
  *
- * 三级标签现在可以**任意组合**：
+ * 两级维度模型的组合规则：
  *
- * 1. **跨链多选 = 并集**。选「产品」与选「角色」可以并存（两个一级分组），
- *    选「产品 / 3030」与选「角色 / 菜菜」也可以并存 —— 结果是两边范围的并集。
- *    后端一直是 OR（选中标签展开成「自身 + 全部下级」），这里只是把「只能选
- *    一条链」的界面限制拆掉。
- * 2. **同一条链上只按最具体的那一层筛选**。父的范围本来就含子：既选「产品」
- *    又选「产品 / 3030」，用户要的是 3030 那一档，不是整个产品线。收敛发生在
- *    发请求之前（`effectiveTagSelection`），后端那边仍是一律 OR。
- * 3. **选中状态不再互相踢掉**。以前点二级会把父一级从选中里移除，现在点了
- *    就都留着 —— 选中的胶囊全部高亮，用户看得见自己圈了哪几档；哪一档真正
- *    参与筛选由上一条决定。
+ * 1. **同维度多选 = 或**。选「6036」与选「T35」可以并存 —— 两个产品都要看。
+ * 2. **跨维度多选 = 且**。选「正面图」与选「6036」并存 = 既是 6036 又是正面图。
+ *    这跟旧的三级全并集不同：并集会把「6036 的三视图」也带出来。
+ * 3. **同维度里选了维度又选了它下面的取值 → 只留取值**。维度的范围本来就
+ *    含它的取值，两个都留着等于「整个产品线」，而用户点「6036」要的是
+ *    6036 那一档。收敛发生在发请求之前（`effectiveTagSelection`）。
+ * 4. **选中状态不再互相踢掉**。点了就都留着 —— 选中的胶囊全部高亮，
+ *    用户看得见自己圈了哪几档；哪一档真正参与筛选由上一条决定。
  *
- * 三行**始终列全部标签**（不按选中项收拢）：词表只有几十条，收起来反而让
- * 「另一条链上的词」点不到。每行有自己的搜索框，词多了就搜。
+ * 两行**始终列全部标签**（不按选中项收拢）：词表只有几十条，收起来反而让
+ * 「另一条轴上的词」点不到。每行有自己的搜索框，词多了就搜。
  *
  * 计数来自 `GET /library/tags`，后端给的是「自身 + 全部下级」去重后的合计，
  * 与点进去看到的条数一致。
@@ -65,15 +64,13 @@ export function LibraryTagBar({
 }: LibraryTagBarProps) {
   const [topQuery, setTopQuery] = useState('');
   const [secondQuery, setSecondQuery] = useState('');
-  const [thirdQuery, setThirdQuery] = useState('');
 
   const top = useMemo(() => topLevelTags(tags), [tags]);
   const second = useMemo(() => tagsAtDepth(tags, 2), [tags]);
-  const third = useMemo(() => tagsAtDepth(tags, 3), [tags]);
 
   const active = useMemo(() => new Set(selected), [selected]);
 
-  /** 选/不选：点了就加进来，再点一次拿掉。不动同链的其它标签。 */
+  /** 选/不选：点了就加进来，再点一次拿掉。不动同维度的其它标签。 */
   function toggle(tag: LibraryTagStatOut) {
     onChange(
       active.has(tag.id)
@@ -85,9 +82,6 @@ export function LibraryTagBar({
   const visibleTop = top.filter((tag) => tag.name.includes(topQuery.trim()));
   const visibleSecond = second.filter((tag) =>
     tagLabel(tag).includes(secondQuery.trim()),
-  );
-  const visibleThird = third.filter((tag) =>
-    tagLabel(tag).includes(thirdQuery.trim()),
   );
 
   return (
@@ -113,7 +107,7 @@ export function LibraryTagBar({
           </button>
         )}
         <span className="ml-auto shrink-0 text-xs text-ink-mute/80">
-          三个级别可任意组合 · 跨组多选是并集
+          同一维度多选是或 · 跨维度是且
         </span>
       </div>
 
@@ -147,29 +141,14 @@ export function LibraryTagBar({
         showParentName
       />
 
-      <TagRow
-        label="三级"
-        ariaLabel="三级标签"
-        allLabel="全部标签（三级行）"
-        query={thirdQuery}
-        onQuery={setThirdQuery}
-        searchLabel="搜索三级标签"
-        allActive={selected.length === 0}
-        onAll={onClear}
-        items={visibleThird}
-        active={active}
-        onToggle={toggle}
-        showParentName
-      />
-
       {!tags.length && (
         <p className="text-body text-ink-mute">
           {busy ? '标签加载中…' : '还没有标签，给素材打标后会出现在这里'}
         </p>
       )}
-      {!!tags.length && !second.length && !third.length && (
+      {!!tags.length && !second.length && (
         <p className="text-xs text-ink-mute">
-          还没有下级标签，在「管理标签」里把系列挂到一级下面即可
+          还没有下级标签，在「管理标签」里把取值挂到维度下面即可
         </p>
       )}
     </div>

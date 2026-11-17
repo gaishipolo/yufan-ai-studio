@@ -9,7 +9,7 @@ import {
 } from '../model/tagTree';
 
 export interface TagFilterProps {
-  /** 词表（任意级别：一级分组 / 二级系列 / 三级具体词） */
+  /** 词表（任意级别：一级维度 / 二级取值） */
   tags: LibraryTagStatOut[];
   /**
    * 允许挑的范围：**作者的候选集**（槽位的标签）。空 = 不限。
@@ -32,13 +32,12 @@ const IDLE =
 const ACTIVE = 'border-primary bg-primary text-white shadow-sm';
 
 /**
- * 标签筛选条（选择器用）：**三行**，一级分组 / 二级系列 / 三级具体词。
+ * 标签筛选条（选择器用）：**两行**，一级维度 / 二级取值。
  *
  * 与资产库标签栏的差别只有一处：这里多一个 `scope` —— 作者圈好的候选集，
- * 范围之外的标签不出现。除此之外口径一样：**三个级别可任意组合**，跨链多选
- * 是并集（选「产品」与选「角色」并存）。
+ * 范围之外的标签不出现。除此之外口径一样：**同维度多选是或、跨维度是且**。
  *
- * 组件只管「挑了哪些」；同一条链上只按最具体的一层参与筛选这件事由调用方
+ * 组件只管「挑了哪些」；同一维度里「维度与取值只留取值」这件事由调用方
  * 用 `effectiveTagSelection` 收敛（这里保留用户点的全部，让胶囊都高亮）。
  */
 export function TagFilter({
@@ -53,7 +52,6 @@ export function TagFilter({
     () => [
       { label: '一级', items: tagsAtDepth(allowed, 1) },
       { label: '二级', items: tagsAtDepth(allowed, 2) },
-      { label: '三级', items: tagsAtDepth(allowed, 3) },
     ],
     [allowed],
   );
@@ -80,7 +78,7 @@ export function TagFilter({
           </button>
         )}
         <span className="ml-auto text-micro text-ink-mute/80">
-          可跨级多选 · 同时选中是并集
+          同一维度多选是或 · 跨维度是且
         </span>
       </div>
       {rows.map((row) =>

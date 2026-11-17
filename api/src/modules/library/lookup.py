@@ -28,10 +28,9 @@ from core.ports.library_lookup import (
 from modules.library.access import readable_rows
 from modules.library.models import (
     LibraryAsset,
-    LibraryAssetTag,
     LibraryTextVersion,
 )
-from modules.library.tags import expand_tag_ids
+from modules.library.tags import all_tags, tag_filter_clause
 
 __all__ = ["SqlLibraryLookup", "lookup", "install"]
 
@@ -139,7 +138,7 @@ class SqlLibraryLookup(LibraryLookup):
         owner_id: str | None = None,
         limit: int = 50,
     ) -> list[str]:
-        """按条件列 id。`state=active` 是硬过滤，`tag_ids` 按 OR 展开到二级。
+        """按条件列 id。`state=active` 是硬过滤，`tag_ids` 按维度筛选。
 
         判据与 `GET /library/selection` 同口径（同一张表、同一套标签展开、
         同一条 `readable_rows`），差别只是这里只回 id：调用方（演示数据、导入器）
@@ -154,22 +153,18 @@ class SqlLibraryLookup(LibraryLookup):
         picked: list[str] = []
         offset = 0
         page_size = max(limit * _CANDIDATE_FACTOR, _MIN_PAGE)
-        # 标签展开只做一次：它在循环里每轮都要查一次标签表，而结果与 offset 无关。
-        expanded = await expand_tag_ids(session, tag_ids) if tag_ids else []
+        # 标签条件只算一次：它在循环里每轮都要查一次标签表，而结果与 offset 无关。
+        tag_clause = (
+            tag_filter_clause(await all_tags(session), tag_ids) if tag_ids else None
+        )
         while len(picked) < limit and offset < _MAX_CANDIDATES:
             query = select(LibraryAsset.id).where(LibraryAsset.state == "active")
             if kind is not None:
                 query = query.where(LibraryAsset.kind == kind.value)
             if owner_id:
                 query = query.where(LibraryAsset.owner_id == owner_id)
-            if expanded:
-                query = query.where(
-                    LibraryAsset.id.in_(
-                        select(LibraryAssetTag.asset_id).where(
-                            LibraryAssetTag.tag_id.in_(expanded)
-                        )
-                    )
-                )
+            if tag_clause is not None:
+                query = query.where(tag_clause)
             page = list(
                 (
                     await session.scalars(

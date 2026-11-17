@@ -85,7 +85,7 @@ from modules.library.schema import (
     ShareHistoryItem,
     UploadKind,
 )
-from modules.library.tags import all_tags, expand_tag_ids, set_asset_tags, tag_tree_index
+from modules.library.tags import all_tags, set_asset_tags, tag_filter_clause, tag_tree_index
 
 __all__ = ["LibraryService"]
 
@@ -261,17 +261,13 @@ class LibraryService:
         if keyword:
             query = query.where(LibraryAsset.name.ilike(f"%{keyword}%"))
         if tag_ids:
-            # 选中一级 = 展开成「自身 + 旗下二级」，与标签栏的计数口径一致。
-            # 仍是 OR：`asset_id IN (...)` 天然按资产去重，一张图同时挂了父子
-            # 两个标签也只会出现一次。
-            expanded = await expand_tag_ids(self.session, tag_ids)
-            query = query.where(
-                LibraryAsset.id.in_(
-                    select(LibraryAssetTag.asset_id).where(
-                        LibraryAssetTag.tag_id.in_(expanded)
-                    )
-                )
-            )
+            # 标签筛选：**组内 OR、组间 AND**（两级维度模型）。
+            # 选中一级 = 它的全部取值；选二级 = 该取值本身。
+            # 跨维度取交集：选「画面类型/正面图」+「产品/6036」= 既是 6036
+            # 又是正面图，不是两者的并集。
+            clause = tag_filter_clause(await all_tags(self.session), tag_ids)
+            if clause is not None:
+                query = query.where(clause)
 
         total = await self.session.scalar(select(func.count()).select_from(query.subquery()))
         order = self._order(sort)

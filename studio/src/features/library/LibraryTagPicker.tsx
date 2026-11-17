@@ -6,7 +6,6 @@ import type { LibraryAssetOut, LibraryTagStatOut } from '@/shared/api/schema';
 import {
   selectableTags,
   tagLabel,
-  tagsAtDepth,
   topLevelTags,
 } from '@/entities/library/model/tagTree';
 import { displayName } from '@/entities/library/model/types';
@@ -119,12 +118,9 @@ export function LibraryTagPicker({
       });
   }, [options, byId]);
 
-  /** 新建时的可选上级：一级分组与二级系列都能挂（后端最多三级） */
+  /** 新建时的可选上级：只有一级维度（取值只能挂在维度下面） */
   const parents = useMemo(
-    () => [
-      ...topLevelTags(tags).map((tag) => ({ id: tag.id, label: tag.name })),
-      ...tagsAtDepth(tags, 2).map((tag) => ({ id: tag.id, label: tagLabel(tag) })),
-    ],
+    () => topLevelTags(tags).map((tag) => ({ id: tag.id, label: tag.name })),
     [tags],
   );
 

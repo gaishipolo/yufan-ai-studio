@@ -8,7 +8,6 @@ import {
   levelLabel,
   sortByCreated,
   tagDepth,
-  tagLabel,
   tagsAtDepth,
   topLevelTags,
 } from '@/entities/library/model/tagTree';
@@ -29,11 +28,11 @@ export interface LibraryTagManagerProps {
  * 标签词表管理：建、改名、移动层级、删除。
  *
  * 后端本来就有 `POST/PATCH/DELETE /library/tags`，但界面只接了「新建」。
- * 分类要能真正用起来，必须有地方把「3030」挂到「产品」下面，否则
+ * 分类要能真正用起来，必须有地方把「6036」挂到「产品」下面，否则
  * 只能靠运维命令改库。这个弹窗只在 `library:tag:manage` 权限下出现。
  *
- * 树最多三级，列表按「一级 → 二级 → 三级」原序排下来，层级字面量按真实层数
- * 给（二级就是二级、三级就是三级），不从「有没有父」硬推。
+ * 树最多**两级**，列表按「一级维度 → 二级取值」原序排下来，层级字面量按
+ * 真实层数给，不从「有没有父」硬推。
  */
 export function LibraryTagManager({ tags, onClose }: LibraryTagManagerProps) {
   const [newName, setNewName] = useState('');
@@ -49,17 +48,12 @@ export function LibraryTagManager({ tags, onClose }: LibraryTagManagerProps) {
     const result: LibraryTagStatOut[] = [];
     const seen = new Set<string>();
     const seconds = tagsAtDepth(tags, 2);
-    const thirds = tagsAtDepth(tags, 3);
     for (const top of tops) {
       result.push(top);
       seen.add(top.id);
       for (const second of seconds.filter((tag) => tag.parentId === top.id)) {
         result.push(second);
         seen.add(second.id);
-        for (const third of thirds.filter((tag) => tag.parentId === second.id)) {
-          result.push(third);
-          seen.add(third.id);
-        }
       }
     }
     // 父标签不在词表里的孤儿单独放到最后，别让它在树里凭空消失
@@ -67,13 +61,10 @@ export function LibraryTagManager({ tags, onClose }: LibraryTagManagerProps) {
     return result;
   }, [tags, tops]);
 
-  /** 新建时的可选上级：一级分组与二级系列都能挂 */
+  /** 新建时的可选上级：**只有一级维度**（取值只能挂在维度下面） */
   const parents = useMemo(
-    () => [
-      ...tops.map((tag) => ({ id: tag.id, label: tag.name })),
-      ...tagsAtDepth(tags, 2).map((tag) => ({ id: tag.id, label: tagLabel(tag) })),
-    ],
-    [tags, tops],
+    () => tops.map((tag) => ({ id: tag.id, label: tag.name })),
+    [tops],
   );
 
   const fail = (error: unknown) => toast(error instanceof Error ? error.message : '操作失败', 'error');
@@ -121,7 +112,7 @@ export function LibraryTagManager({ tags, onClose }: LibraryTagManagerProps) {
     <Modal open onClose={onClose} width={580} title="管理标签">
       <div className="space-y-3 p-[18px]">
         <p className="text-body leading-5 text-ink-mute">
-          一级是分组，二级是系列，三级是真正打在素材上的词；带下级的层级只做分组。删除一级会把它旗下的下级提升一级，资产与已有绑定不受影响。
+          一级是维度，二级是取值；带下级的维度只做分组。删除一级会把它旗下的取值提升一级，资产与已有绑定不受影响。
         </p>
 
         <div className="max-h-[360px] space-y-1 overflow-auto rounded-lg border border-line-soft bg-panel-soft/40 p-2">
@@ -203,20 +194,16 @@ function ManagerRow({ tag, tags, busy, onRename, onMove, onDelete }: ManagerRowP
   const depth = tagDepth(tags, tag);
   const hasChildren = (tag.childCount ?? 0) > 0;
   const indent =
-    depth === 1 ? '' : depth === 2 ? 'ml-5 border-l-2 border-primary-line pl-2' : 'ml-10 border-l-2 border-primary-line pl-2';
+    depth === 1 ? '' : 'ml-5 border-l-2 border-primary-line pl-2';
   const selectDisabled = busy || hasChildren;
 
-  /* 可选上级：一级分组 + 二级系列；自己的下级要排掉（挂到自己下级下面是非法的） */
+  /* 可选上级：只有一级维度；自己的下级要排掉（挂到自己下级下面是非法的） */
   const forbidden = useMemo(() => descendantIds(tags, tag.id), [tags, tag.id]);
   const moveParents = useMemo(
-    () => [
-      ...topLevelTags(tags)
+    () =>
+      topLevelTags(tags)
         .filter((item) => item.id !== tag.id && !forbidden.has(item.id))
         .map((item) => ({ id: item.id, label: item.name })),
-      ...tagsAtDepth(tags, 2)
-        .filter((item) => item.id !== tag.id && !forbidden.has(item.id))
-        .map((item) => ({ id: item.id, label: tagLabel(item) })),
-    ],
     [tags, tag.id, forbidden],
   );
 

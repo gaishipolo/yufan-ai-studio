@@ -37,7 +37,7 @@ import type {
 } from '@/shared/api/schema';
 import { useLibrarySelectionInfinite, useLibraryTags } from '../api/library.queries';
 import { KIND_OPTIONS, displayName } from '../model/types';
-import { ancestorAtDepth, childTags, tagLabel, topLevelTags } from '../model/tagTree';
+import { childTags, tagLabel, topLevelTags } from '../model/tagTree';
 import { writeLibraryDrag, type LibraryAssetDrag } from '@/shared/lib/libraryDrag';
 
 /** 默认只看图片：文本资产默认不进「挑参考图」的悬浮栏，需要时由调用方显式放开 */
@@ -164,7 +164,6 @@ export function LibraryFlyout({
   const [kind, setKind] = useState<LibraryAssetKind>(kinds[0] ?? 'image');
   const [topTagId, setTopTagId] = useState('');
   const [childTagId, setChildTagId] = useState('');
-  const [grandChildTagId, setGrandChildTagId] = useState('');
   const debounced = useDebouncedValue(keyword, 250);
 
   // 标签计数按入口变化；这里固定「全部素材」口径，与选择器的可见集一致。
@@ -184,29 +183,18 @@ export function LibraryFlyout({
   const activeParent = useMemo(() => {
     if (topTagId) return topTagId;
     if (childTagId) return byId.get(childTagId)?.parentId ?? '';
-    /* 三级要往上找**一级**祖先：只取一层拿到的是二级 id，二级行于是把三级词
-       当二级渲染，一级行反而不高亮。 */
-    const grand = grandChildTagId ? byId.get(grandChildTagId) : undefined;
-    return grand ? ancestorAtDepth(allTags, grand, 1) ?? '' : '';
-  }, [topTagId, childTagId, grandChildTagId, byId, allTags]);
+    return '';
+  }, [topTagId, childTagId, byId]);
   const children = useMemo(
     () => childTags(allTags, activeParent || undefined),
     [allTags, activeParent],
   );
-  /** 当前二级：选中的是三级时取它的父 —— 第三行要挂在它下面 */
-  const activeChild = useMemo(() => {
-    if (childTagId) return childTagId;
-    return grandChildTagId ? (byId.get(grandChildTagId)?.parentId ?? '') : '';
-  }, [childTagId, grandChildTagId, byId]);
-  const grandChildren = useMemo(
-    () => (activeChild ? childTags(allTags, activeChild) : []),
-    [allTags, activeChild],
-  );
   /** 词表里有没有二级：一个都没有时二级行退化成一句说明，而不是假装有 */
   const hasAnyChild = useMemo(() => allTags.some((tag) => !!tag.parentId), [allTags]);
 
-  /* 越具体的一级盖住上一级：选中三级就不再带二级，否则 OR 叠加后仍是整组，看着像没筛 */
-  const effectiveTag = grandChildTagId || childTagId || topTagId;
+  /* 越具体的一级盖住上一级：选中二级就不再带一级，否则筛选停在维度上，
+     看到的是整个产品线而不是用户点的那一档 */
+  const effectiveTag = childTagId || topTagId;
   const query = useLibrarySelectionInfinite({
     keyword: debounced || undefined,
     kind,
@@ -224,20 +212,16 @@ export function LibraryFlyout({
     // 类别换了，标签计数口径也变了；留着上一个类别的标签会筛出空列表
     setTopTagId('');
     setChildTagId('');
-    setGrandChildTagId('');
   }
 
   function pickTop(id: string) {
     if (topTagId === id) {
       setTopTagId('');
       setChildTagId('');
-      // 三级也要清：留着它，下面就按二级渲染，筛选却还停在三级上
-      setGrandChildTagId('');
       return;
     }
     setTopTagId(id);
     setChildTagId('');
-    setGrandChildTagId('');
   }
 
   function pickChild(id: string) {
@@ -245,17 +229,11 @@ export function LibraryFlyout({
     // 从「全部二级」里直接点进某一组时，取消二级应该回到无筛选，
     // 而不是凭空变成「整组筛选」——那是用户没点过的条件。
     setChildTagId((current) => (current === id ? '' : id));
-    setGrandChildTagId('');
-  }
-
-  function pickGrandChild(id: string) {
-    setGrandChildTagId((current) => (current === id ? '' : id));
   }
 
   function clearTags() {
     setTopTagId('');
     setChildTagId('');
-    setGrandChildTagId('');
   }
 
   const items = useMemo(
@@ -353,7 +331,7 @@ export function LibraryFlyout({
         />
 
         {/*
-          二级行**不随数据消失**：点了一个还没挂系列的一级就整行收起，
+          二级行**不随数据消失**：点了一个还没挂取值的一级就整行收起，
           看起来又变回「只有一级」，还让下面一整块内容往上跳。
           词表里一个二级都没有时才退化成一句说明。
         */}
@@ -372,24 +350,8 @@ export function LibraryFlyout({
           />
         ) : (
           <p className="pl-8 text-micro leading-snug text-ink-mute">
-            还没有二级标签：在资产库「管理标签」里把系列挂到一级下面即可。
+            还没有二级标签：在资产库「管理标签」里把取值挂到一级下面即可。
           </p>
-        )}
-
-        {/* 第三行只在一级下面有二级、二级下面有三级时才出现：
-            抽屉太窄，没有层级的上下文就不摆这一行（空行是噪音）。 */}
-        {activeChild && grandChildren.length > 0 && (
-          <FlyoutTagRow
-            label={byId.get(activeChild)?.name ?? '三级'}
-            ariaLabel="三级标签"
-            allLabel="全部三级标签"
-            allActive={!grandChildTagId}
-            onAll={() => setGrandChildTagId('')}
-            items={grandChildren}
-            activeId={grandChildTagId}
-            onPick={pickGrandChild}
-            showParentName={false}
-          />
         )}
       </div>
 

@@ -1,24 +1,39 @@
-"""标签：三级词表 CRUD + 资产打标。
+"""标签：**两级**词表（维度 / 取值）+ 资产打标。
 
-## 三级口径（2026-11-16 起）
+## 两级口径（2026-11-17 起）
 
-`parent_id == ""` 是一级，往下依次是二级、三级，**最多三级**。
-一级是分组、二级是系列、三级是真正能打在素材上的词；但**有子级的标签**不再是叶子，
-所以打标守卫拦的是「有子标签的标签」而不是「所有一级」——否则存量里
-「音乐」「AI生成」这些孤立的一级会一夜之间变成看得见却打不上的死词。
+`parent_id == ""` 是一级，往下是二级，**最多两级**。
 
-层数从两级放到三级的代价是**每一处口径都要跟着改**：
+- **一级 = 维度**（产品 / 画面类型 / 角色 / 场景）：是分组，**不可打标**。
+- **二级 = 取值**（6036 / T35 / 正面图 / 菜菜）：是真正能打在素材上的词。
+
+这是「两个正交维度」的最小表达。之前是三级（维度 / 系列 / 具体词），一级恒为
+分组、二级恒为系列、三级才是词 —— 结果「三视图 / 正面图 / 细节图」这种
+**跨产品复用**的词只能挂在某个具体产品下面，每上一个新产品就要把整套词复制一遍
+（3N 个标签）。两级之后「正面图」只存在于「画面类型」维度下，所有产品共用。
+
+## 筛选语义：组内 OR，组间 AND
+
+这是两级带来的**唯一一处语义重定义**，也是整个改动的核心：
+
+- 选中的标签按**一级维度**分组；
+- **同一维度内多选是 OR**（选 6036 与 T35 = 两个产品都要看）；
+- **不同维度之间是 AND**（选「正面图」+「6036」= 既是 6036 又是正面图）。
+
+之前是全 OR（所有选中标签展开成「自身 + 全部下级」再 `IN` 一次）。在三级下这
+说得通（那是三条并列的分类轴）；两级之后它是错的 ——「正面图」与「6036」是两条
+**互相独立**的轴，并集会把「6036 的三视图」也带出来，而用户要的是交集。
+
+一个素材可以同时属于多个维度（`产品/6036` + `画面类型/正面图`），这正是
+AND 语义成立的前提 —— 一个素材在每个维度里只取一个值。
+
+## 其余三处口径
 
 - **打标**：`_ensure_tags_exist(reject_groups=True)` 拒掉有子级的分组标签；
   系统内部的合并（生成入库）不拦，见各调用点注释。这条与层数无关。
-- **筛选**：`expand_tag_ids` 把选中的标签展开成「自身 + 全部下级」，仍是 OR。
-  同一条链上父子同时选中时，**界面**会先收敛成最具体的那一层（前端
-  `effectiveTagSelection`），后端这一层只负责「不重复计数」：跨链多选是并集，
-  一张图挂了父子两个标签也只出现一次。
+- **筛选**：`expand_tag_ids` 展开成「自身 + 全部下级」，再由
+  `tag_filter_clause` 按维度组装成「组内 OR、组间 AND」。
 - **计数**：一个标签 = 自身 + 全部下级，按**资产 id 去重**合计。
-
-为什么封在三级：标签栏是「一级 → 二级 → 三级」三行选择器，再深就得变成树控件，
-而筛选与计数的口径也要多套一层 —— 三层是「一眼能看完、又不至于算错」的平衡点。
 
 ## 三个刻意的取舍
 
@@ -34,10 +49,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import and_, delete, exists, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.elements import ColumnElement
 
 from core.context import CurrentUser
 from core.exceptions import BadRequest, Conflict, NotFound
@@ -55,15 +71,21 @@ __all__ = [
     "TagService",
     "add_asset_tags",
     "expand_tag_ids",
+    "group_tag_ids_by_dimension",
     "remove_asset_tags",
     "set_asset_tags",
+    "tag_filter_clause",
     "tag_ids_by_asset",
 ]
 
 
-#: 标签树最多三级。一级分组、二级系列、三级具体词。
-#: 再深就得把标签栏做成树控件，而筛选与计数的口径也要多套一层。
-MAX_TAG_DEPTH = 3
+#: 标签树最多两级。一级是维度（分组，不可打标），二级是取值（可打标）。
+#:
+#: 两级不是「偷懒砍一层」，而是**维度模型**的最小表达：素材的多个属性维度
+#: （产品、画面类型、角色…）彼此正交，每条轴自己是一棵两级小树。
+#: 三级会把「跨轴复用的词」（正面图/三视图/细节图）塞进某个具体轴的深处，
+#: 于是每新增一个实例（产品）就要把一整套词复制一遍。
+MAX_TAG_DEPTH = 2
 
 
 def tag_tree_index(
@@ -74,8 +96,8 @@ def tag_tree_index(
     词表是全局的几十条，一次全取回来在内存里算比递归查询省事 —— 筛选与计数
     每次都要用这个口径，来回查库反而更慢。
 
-    路径给的是**含自己**的整条链：一级 =「产品」，二级 =「产品 / 3030」，
-    三级 =「产品 / 3030 / T35」。卡片上要显示整条链，只给一层父名是不够的。
+    路径给的是**含自己**的整条链：一级 =「产品」，二级 =「产品 / 6030」。
+    卡片上要显示整条链，只给一层父名是不够的。
     """
     parent = {row.id: (row.parent_id or "") for row in rows}
     names = {row.id: row.name for row in rows}
@@ -139,11 +161,10 @@ def to_tag_out(
 
 
 async def expand_tag_ids(session: AsyncSession, tag_ids: Sequence[str]) -> list[str]:
-    """把选中的标签展开成「自身 + 全部下级」，供列表 / 选择器筛选。
+    """把选中的标签展开成「自身 + 全部下级」。
 
-    三级树里选一级要带上它的二级与三级，选二级要带上三级 —— 否则「标签旁写 8、
-    点进去只有 3 条」。层数只有三档、词表又小，一次全取回来在内存里算更省事。
-    资产侧本来就是 `asset_id IN (...)`，展开后天然按资产去重，不会重复计数。
+    两级树里下级只有一层，所以展开最多多一个 id。展开**不决定组合方式** ——
+    组内 OR、组间 AND 由 `tag_filter_clause` 组装（见那里的说明）。
     """
     wanted = [tag_id for tag_id in dict.fromkeys(tag_ids) if tag_id]
     if not wanted:
@@ -153,6 +174,77 @@ async def expand_tag_ids(session: AsyncSession, tag_ids: Sequence[str]) -> list[
     for tag_id in wanted:
         expanded.update(_descendants(tag_id, children))
     return [*wanted, *[tag_id for tag_id in expanded if tag_id not in wanted]]
+
+
+def group_tag_ids_by_dimension(
+    tag_ids: Sequence[str], parent_of: Mapping[str, str]
+) -> list[list[str]]:
+    """把选中的标签按**一级维度**分组。
+
+    一级标签本身归到它自己那组（选中「产品」= 想看产品维度下的全部取值）。
+    没有 parent 记录的（脏数据 / 已被删的父）单独归一组，不与别的混 ——
+    混进哪组都会算错交集。
+
+    返回的每组是「该维度内要看的标签 id」。
+    """
+    groups: dict[str, list[str]] = {}
+    for tag_id in dict.fromkeys(tag_ids):
+        if not tag_id:
+            continue
+        parent = parent_of.get(tag_id, "")
+        # 选中的就是一级 → 它自己那组；否则按它的一级祖先归组。
+        key = tag_id if parent == "" else parent
+        groups.setdefault(key, []).append(tag_id)
+    return list(groups.values())
+
+
+def tag_filter_clause(
+    tag_rows: Sequence[LibraryTag], tag_ids: Sequence[str]
+) -> ColumnElement[bool] | None:
+    """标签筛选的 SQL 条件：**组内 OR，组间 AND**。
+
+    两级维度模型下，选中的标签分属不同的一级维度（产品、画面类型、角色…），
+    每条轴独立：
+
+    - 同一维度内多选 = OR（选 6036 与 T35 = 两个产品都要看）；
+    - 不同维度之间 = AND（选「正面图」+「6036」= 既是 6036 又是正面图）。
+
+    **不能沿用以前的全 OR**：那是三级下的语义（几条并列的分类轴）。
+    两级之后它是错的 ——「正面图」与「6036」互相独立，并集会把
+    「6036 的三视图」也带出来，而用户要的是交集。
+
+    实现上就是「每个维度一个 `EXISTS` 子句，AND 起来」：一个资产必须**同时**
+    命中每个维度的条件。维度内多个取值时用 `IN`（等价于 OR）。
+
+    词表由调用方传入（`all_tags` 的结果）：词表很小，而调用方往往已经
+    查过一遍（列表页要算计数、悬浮栏要算分组），不必再查一次。
+
+    返回 `None` 表示没有筛选条件（调用方不必拼 where）。
+    """
+    wanted = [tag_id for tag_id in dict.fromkeys(tag_ids) if tag_id]
+    if not wanted:
+        return None
+    parent_of = {row.id: (row.parent_id or "") for row in tag_rows}
+    children = _children_of(tag_rows)
+    groups = group_tag_ids_by_dimension(wanted, parent_of)
+    if not groups:
+        return None
+    clauses: list[ColumnElement[bool]] = []
+    for group in groups:
+        # 组内每个选中的标签展开成「自身 + 全部下级」（选一级 = 它的全部取值）
+        expanded: set[str] = set()
+        for tag_id in group:
+            expanded.update(_descendants(tag_id, children))
+        clauses.append(
+            exists(
+                select(1).select_from(LibraryAssetTag).where(
+                    LibraryAssetTag.asset_id == LibraryAsset.id,
+                    LibraryAssetTag.tag_id.in_(list(expanded)),
+                )
+            )
+        )
+    # 维度之间取交集：AND
+    return and_(*clauses)
 
 
 async def _ensure_tags_exist(
@@ -170,9 +262,23 @@ async def _ensure_tags_exist(
         # 404 会让人以为「整个打标失败了」，而实际只是其中几个不合法。
         raise BadRequest(f"标签不存在：{', '.join(missing[:5])}")
     if reject_groups:
-        # 「有子标签」= 它的 id 出现在别人的 parent_id 里。两级模型下这就够了，
-        # 也顺带拦住「万一有人手工塞了一条三级」的脏数据。
-        group_ids = set(
+        # **不可打标 = 有子标签的一级**（它是维度，是分组）。
+        #
+        # 为什么不是「所有一级」：删掉一个维度时，它的取值会被提升为一级
+        # （见 `delete`），若一级一律不可打标，这些取值就成了「看得见却打不上」
+        # 的死词 —— 用户删掉「产品」维度后，原本的产品名再也标不上。
+        # 同样，存量里「音乐」「AI生成」这些孤立的一级本来就是能直接打的词。
+        #
+        # 两级模型下这已经覆盖了「维度」：正常结构里一级都带子标签（= 维度），
+        # 取值都在二级。
+        rows = (
+            await session.execute(
+                select(LibraryTag.id, LibraryTag.parent_id).where(
+                    LibraryTag.id.in_(wanted)
+                )
+            )
+        ).all()
+        has_children = set(
             (
                 await session.scalars(
                     select(LibraryTag.parent_id)
@@ -181,10 +287,11 @@ async def _ensure_tags_exist(
                 )
             ).all()
         )
-        blocked = [tag_id for tag_id in wanted if tag_id in group_ids]
+        blocked = [
+            tag_id for tag_id, parent_id in rows if not parent_id and tag_id in has_children
+        ]
         if blocked:
-            raise BadRequest("一级标签只做分组，请选择它下面的二级标签")
-
+            raise BadRequest("一级标签是分组（维度），请选择它下面的二级标签")
 
 
 async def tag_ids_by_asset(
@@ -388,7 +495,11 @@ class TagService:
         return parent.name if parent is not None else None
 
     async def create(self, payload: TagIn, actor: CurrentUser) -> LibraryTagOut:
-        """同名幂等的口径收窄到「同一父下」：两个系列各自有「小红书」是合法的。"""
+        """同名幂等的口径收窄到「同一父下」：两个维度各自有「小红书」是合法的。
+
+        两级模型：`parentId` 只能指向**一级**（维度）。指向二级会被拒 ——
+        那是「三级」，维度模型里不存在。
+        """
         name = payload.name.strip()
         parent_id = payload.parent_id or ""
         parent_name: str | None = None
@@ -399,7 +510,10 @@ class TagService:
                 raise BadRequest("父标签不存在")
             _parent, depth, path = tag_tree_index(await all_tags(self.session))
             if depth.get(parent_id, 1) >= MAX_TAG_DEPTH:
-                raise BadRequest(f"标签最多 {MAX_TAG_DEPTH} 级，不能挂在更深的标签下面")
+                raise BadRequest(
+                    f"标签最多 {MAX_TAG_DEPTH} 级：一级是维度（分组），"
+                    "取值只能挂在维度下面"
+                )
             parent_name = path.get(parent_id) or parent.name
         existing = await self.session.scalar(
             select(LibraryTag).where(
@@ -441,10 +555,10 @@ class TagService:
         return to_tag_out(row, parent_name, depth.get(row.id, 1))
 
     async def move(self, tag_id: str, payload: TagParentIn) -> LibraryTagOut:
-        """改层级：`parentId=null` 提升为一级，指向一级则降为二级。
+        """改层级：`parentId=null` 提升为一级（变成维度），指向一级则降为二级（取值）。
 
         四道守卫：不能挂到自己下面；不能挂到自己的下级下面（会成环）；
-        挂过去之后**整棵子树**都不能超过三层；目标父下不能有同名。
+        挂过去之后**整棵子树**都不能超过两层；目标父下不能有同名。
         前两条防环，后一条防「挂上去之后层级超限」——子树的高度算得出来，
         不必等下一次报错才发现。
         """
@@ -475,7 +589,7 @@ class TagService:
             # 挂过去之后：自己的层数 = 父的层数 + 1，整棵子树跟着平移
             if depth.get(parent_id, 1) + height > MAX_TAG_DEPTH:
                 raise BadRequest(
-                    f"标签最多 {MAX_TAG_DEPTH} 级：挂到这个分组下面会超出层数"
+                    f"标签最多 {MAX_TAG_DEPTH} 级：一级是维度，取值只能挂在维度下面"
                 )
             parent_name = path.get(parent_id) or parent.name
         clash = await self.session.scalar(
@@ -508,8 +622,10 @@ class TagService:
             )
         ).all()
         if children:
-            # 子级提升到「自己原来的父」那一层：删一级 → 二级升一级；
-            # 删二级 → 三级升二级。提升后撞名要按**那一层**判，不是按一级判。
+            # 子级提升到「自己原来的父」那一层：删一级（维度）→ 二级升一级。
+            # 提升后它们成了孤立的一级 —— 打标守卫认的是「有子标签的一级」
+            # 才不可打标，所以提升上来的取值仍然能正常打在素材上。
+            # 提升后撞名要按**那一层**判，不是按一级判。
             target_parent = row.parent_id or ""
             sibling_names = set(
                 (

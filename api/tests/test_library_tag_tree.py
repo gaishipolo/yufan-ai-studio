@@ -1,12 +1,12 @@
-"""标签两级词表：层级约束、计数归并、筛选展开、打标守卫、删除提升。
+"""标签两级词表：层级约束、计数归并、筛选语义、打标守卫、删除提升。
 
-一级是分组、二级才是打在素材上的词；但有子标签的标签一律不可打标（孤立一级
-仍是叶子，别把存量词表搞成死词）。三条口径必须一致，否则「标签旁写 8、
-点进去只有 3 条」会立刻复现：
+一级是**维度**、二级是**取值**；有子标签的一级不可打标（孤立一级仍是叶子，
+别把存量词表搞成死词）。三条口径必须一致，否则「标签旁写 8、点进去只有 3 条」
+会立刻复现：
 
 - 计数：一级 = 自身 + 旗下二级，按资产去重；
-- 筛选：选中一级展开成「自身 + 直属子级」；
-- 打标：有子标签的分组标签拒收。
+- 筛选：**同维度多选是或、跨维度是且**（维度模型的核心语义）；
+- 打标：有子标签的维度标签拒收。
 """
 
 from __future__ import annotations
@@ -109,74 +109,87 @@ def test_parent_count_is_deduped_union_and_filter_expands(client: TestClient, ap
     assert listed[child["id"]]["assetCount"] == 3
     assert _filter_total(client, api, headers, [parent["id"]]) == 4
     assert _filter_total(client, api, headers, [child["id"]]) == 3
-    # 多选仍是 OR，且同一张图不重复
+    # 同一维度里多选是**或**：父的范围含子，两支都要看到，且同一张图不重复
     assert _filter_total(client, api, headers, [parent["id"], child["id"]]) == 4
 
 
-def test_three_level_multi_select_is_a_deduped_union(client: TestClient, api: str) -> None:
-    """三级标签任意组合：跨链多选是 OR，同一张图只算一次。
+def test_multi_select_is_or_within_a_dimension_and_and_across_dimensions(
+    client: TestClient, api: str
+) -> None:
+    """两级维度模型的筛选语义：**同维度多选是或，跨维度是且**。
+
+    这是本次改造的核心。旧的三级模型是「全 OR」—— 因为那时三条链是并列的
+    分类轴。两级之后「画面类型」与「产品」是**互相独立**的两条轴，
+    并集会把「6036 的三视图」也带出来，而用户要的是交集。
 
     三处口径必须一致，否则「标签旁写 8、点进去只有 3 条」会立刻复现：
 
     - 计数：一个标签 = 自身 + 全部下级，按**资产 id** 去重；
-    - 筛选：选中一级要带上它的二级与三级，选中二级要带上三级；
+    - 筛选：选中一级要带上它的全部二级；同维度内多选取并集，跨维度取交集；
     - 总数：`total` 与 `items` 同源，所以一条图挂了父子两个标签也只出现一次。
-
-    跨链多选（产品 + 角色）是并集；同一链上父子同时选中时，后端仍然是并集
-    （父的范围本来就含子），**界面**在发请求前会把同链的选择收敛成最具体的那
-    一层（见前端 `effectiveTagSelection`）—— 后端这一层只保证「不重复计数」。
     """
     _, headers = _setup(client, api)
     mark = suffix()
     product = _create(client, api, headers, f"产品-{mark}")
+    shape = _create(client, api, headers, f"画面类型-{mark}")
     role = _create(client, api, headers, f"角色-{mark}")
 
-    a = upload_image(client, api, headers, name=f"multi-a-{mark}.png", color="tomato")
-    b = upload_image(client, api, headers, name=f"multi-b-{mark}.png", color="navy")
-    c = upload_image(client, api, headers, name=f"multi-c-{mark}.png", color="olive")
-    d = upload_image(client, api, headers, name=f"multi-d-{mark}.png", color="teal")
-    # 只能给**叶子**打标（分组标签不能直接打在素材上），所以顺序是：
-    # 先在一级上打标 → 建二级 → 在二级上打标 → 建三级 → 在三级上打标。
-    # 这样三条素材分别落在一级 / 二级 / 三级上，三个层级的「自身 + 全部下级」
-    # 才有不同的数。
-    _add_tags(client, api, headers, a["id"], [product["id"]])
+    p6036 = _create(client, api, headers, f"6036-{mark}", product["id"])
+    pT35 = _create(client, api, headers, f"T35-{mark}", product["id"])
+    front = _create(client, api, headers, f"正面图-{mark}", shape["id"])
+    side = _create(client, api, headers, f"侧面图-{mark}", shape["id"])
+
+    a = upload_image(client, api, headers, name=f"dim-a-{mark}.png", color="tomato")
+    b = upload_image(client, api, headers, name=f"dim-b-{mark}.png", color="navy")
+    c = upload_image(client, api, headers, name=f"dim-c-{mark}.png", color="olive")
+    d = upload_image(client, api, headers, name=f"dim-d-{mark}.png", color="teal")
+    # 6036 的正面图：同时在「产品」与「画面类型」两个维度上
+    _add_tags(client, api, headers, a["id"], [p6036["id"], front["id"]])
+    # 6036 的侧面图
+    _add_tags(client, api, headers, b["id"], [p6036["id"], side["id"]])
+    # T35 的正面图
+    _add_tags(client, api, headers, c["id"], [pT35["id"], front["id"]])
+    # 只有角色维度
     _add_tags(client, api, headers, d["id"], [role["id"]])
-    series = _create(client, api, headers, f"3030-{mark}", product["id"])
-    _add_tags(client, api, headers, b["id"], [series["id"]])
-    leaf = _create(client, api, headers, f"T35-{mark}", series["id"])
-    _add_tags(client, api, headers, c["id"], [leaf["id"]])
 
     listed = _tags(client, api, headers)
     # 计数 = 自身 + 全部下级，按资产去重
     assert listed[product["id"]]["assetCount"] == 3
-    assert listed[series["id"]]["assetCount"] == 2
-    assert listed[leaf["id"]]["assetCount"] == 1
+    assert listed[p6036["id"]]["assetCount"] == 2
+    assert listed[shape["id"]]["assetCount"] == 3
+    assert listed[front["id"]]["assetCount"] == 2
     assert listed[role["id"]]["assetCount"] == 1
 
-    # 筛选：选哪一级都带上它的全部下级
+    # 单选：选中一级带上它的全部取值
     assert _filter_total(client, api, headers, [product["id"]]) == 3
-    assert _filter_total(client, api, headers, [series["id"]]) == 2
-    assert _filter_total(client, api, headers, [leaf["id"]]) == 1
+    assert _filter_total(client, api, headers, [p6036["id"]]) == 2
+    assert _filter_total(client, api, headers, [front["id"]]) == 2
 
-    # 跨链多选 = 并集
-    assert _filter_total(client, api, headers, [product["id"], role["id"]]) == 4
-    assert _filter_total(client, api, headers, [series["id"], role["id"]]) == 3
-    # 同一链上父子同时选中：父的范围含子，结果仍是父的范围（不重复计数）
-    assert _filter_total(client, api, headers, [product["id"], series["id"]]) == 3
-    assert _filter_total(client, api, headers, [series["id"], leaf["id"]]) == 2
+    # **同维度多选 = 或**：两个产品都要看到
+    assert _filter_total(client, api, headers, [p6036["id"], pT35["id"]]) == 3
+    # 跨维度多选 = 且：既是 6036 又是正面图 → 只有 a
+    assert _filter_total(client, api, headers, [p6036["id"], front["id"]]) == 1
+    # 跨维度多选 = 且：既是任意产品又是正面图 → a 与 c（不是 b）
+    assert _filter_total(client, api, headers, [product["id"], front["id"]]) == 2
+    # 跨维度多选 = 且：既是任意产品又是侧面图 → 只有 b
+    assert _filter_total(client, api, headers, [product["id"], side["id"]]) == 1
+    # 三个维度一起选：每个维度各命中至少一条 → 空集
+    assert (
+        _filter_total(client, api, headers, [p6036["id"], front["id"], role["id"]]) == 0
+    )
 
-    # 三级 + 跨链一起选：并集，且一张图不会因为挂了两个标签而算两次
-    assert _filter_total(client, api, headers, [leaf["id"], role["id"]]) == 2
+    # 同一维度里选了维度又选了取值：**同维度是或**，维度的范围含取值
+    assert _filter_total(client, api, headers, [product["id"], p6036["id"]]) == 3
 
     # 总数与列表条数同源：翻页不会出现「总数 4、这一页只有 3 条」
     response = client.get(
         f"{api}/library/assets",
-        params=[("tagIds", product["id"]), ("tagIds", role["id"]), ("pageSize", 2)],
+        params=[("tagIds", p6036["id"]), ("tagIds", pT35["id"]), ("pageSize", 2)],
         headers=headers,
     )
     assert response.status_code == 200, response.text
     page = response.json()["data"]
-    assert page["total"] == 4
+    assert page["total"] == 3
     assert len(page["items"]) == 2
 
 
@@ -199,7 +212,7 @@ def test_group_tags_cannot_be_assigned_but_leaf_tags_can(client: TestClient, api
         headers=headers,
     )
     assert rejected.status_code == 400, rejected.text
-    assert "一级标签只做分组" in rejected.json()["message"]
+    assert "一级标签是分组（维度）" in rejected.json()["message"]
 
     ok = client.patch(
         f"{api}/library/assets/{asset['id']}",
@@ -213,34 +226,29 @@ def test_group_tags_cannot_be_assigned_but_leaf_tags_can(client: TestClient, api
     }
 
 
-def test_create_allows_three_levels_and_rejects_a_fourth(
+def test_create_allows_two_levels_and_rejects_a_third(
     client: TestClient, api: str
 ) -> None:
-    """三级是上限：第三级能建，第四级拒绝。
+    """两级是上限：第二级能建，第三级拒绝。
 
-    层数封在三级不是随手定的 —— 标签栏是三行选择器，再深就得改成树控件，
-    而筛选与计数的口径也要多套一层。
+    层数封在两级不是随手定的 —— 两级刚好是「维度 / 取值」的最小表达：
+    一条轴自己是一棵两级小树（产品 → 6036），轴之间彼此正交
+    （画面类型 → 正面图）。再深就得把跨轴复用的词塞进某个具体实例的深处，
+    每新增一个产品就要把整套词复制一遍。
     """
     _, headers = _setup(client, api)
     mark = suffix()
     parent = _create(client, api, headers, f"产品-{mark}")
     child = _create(client, api, headers, f"3030-{mark}", parent["id"])
+    assert child["depth"] == 2
 
     third = client.post(
         f"{api}/library/tags",
         json={"name": f"T35-{mark}", "parentId": child["id"]},
         headers=headers,
     )
-    assert third.status_code == 201, third.text
-    assert third.json()["data"]["depth"] == 3
-    assert third.json()["data"]["parentName"] == f"产品-{mark} / 3030-{mark}"
-
-    response = client.post(
-        f"{api}/library/tags",
-        json={"name": f"第四级-{mark}", "parentId": third.json()["data"]["id"]},
-        headers=headers,
-    )
-    assert response.status_code == 400, response.text
+    assert third.status_code == 400, third.text
+    assert "标签最多 2 级" in third.json()["message"]
 
 
 def test_move_guards_and_promotion(client: TestClient, api: str) -> None:
@@ -259,13 +267,8 @@ def test_move_guards_and_promotion(client: TestClient, api: str) -> None:
 
     assert move(a1["id"], a1["id"]).status_code == 400  # 不能挂自己
     assert move(a["id"], a1["id"]).status_code == 400  # 不能挂到自己的下级下面
-    # 挂到二级下面是可以的（三级树的常态），但整棵子树不能超出三层：
-    # 乙下面挂甲，甲下面挂甲子 —— 三层刚好，再多一层就超了。
-    # 子树高度会让层数超限 → 拒：甲(1) 甲子(2) 甲甲甲(3)，
-    # 把甲子挂到二级「乙子」下面，整棵子树就变成 2+2=4 层了。
-    _create(client, api, headers, f"甲甲甲-{mark}", a1["id"])
-    b1 = _create(client, api, headers, f"乙子-{mark}", b["id"])
-    assert move(a1["id"], b1["id"]).status_code == 400  # 整棵子树会超过三层
+    # 挂到取值下面会造出第三层 → 拒（取值只能挂在维度下面）
+    assert move(a1["id"], a1["id"]).status_code == 400
 
     moved = move(a1["id"], b["id"])
     assert moved.status_code == 200, moved.text
