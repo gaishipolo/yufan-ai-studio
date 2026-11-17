@@ -711,7 +711,10 @@ export const routes: MockRoute[] = [
   { method: 'GET', pattern: /^\/library\/assets\/([^/]+)$/, handler: (ctx) => (find(ctx.path.split('/').pop() ?? '')) },
   {
     method: 'GET',
-    pattern: /^\/library\/assets\/([^/]+)\/(file|thumbnail)$/,
+    /* `large` = 悬浮大图（长边 1280 的派生图）。别漏了它：漏了的话 mock 模式下
+       详情页的大图请求会 404，前端就会退回显示缩略图 —— 而真环境是好的，
+       于是「mock 里看着不对」与「真环境其实没问题」分不清。 */
+    pattern: /^\/library\/assets\/([^/]+)\/(file|thumbnail|large)$/,
     handler: () => ('mock://binary'),
   },
 

@@ -42,6 +42,7 @@ import { tagLabel, tagOptions } from '@/entities/library/model/tagTree';
 import { PromptRefs } from '@/entities/library/ui/PromptRefs';
 import {
   useLibraryDetail,
+  useLibraryLargePreview,
   useLibraryMedia,
   usePatchAsset,
   useReadText,
@@ -560,23 +561,48 @@ function DetailBody({
 }
 
 function MediaImage({ asset }: { asset: LibraryAssetDetailOut }) {
-  /* 封面走对象存储的直链，原图走同源流式端点：**两套字节一条记录**。
-     封面对象丢了（`previews/*.jpg` 被清、换桶、MinIO 重建）时原图往往还在，
-     一个裂图标会让人以为整条素材没了。失败就退回原图，取不到才说「暂时取不到」。
-     换素材时必须复位，否则上一张的失败态会带到下一张。 */
-  const [fallback, setFallback] = useState(false);
-  useEffect(() => setFallback(false), [asset.id, asset.coverUrl]);
+  /* 详情页给的是**大图**（长边 1280），不是封面。
+     封面只有 360×240 —— 放在 880px 宽的详情弹窗里是几百像素的一方糊块，
+     产品图的走线、缝线、logo 全看不清。用户点进来就是为了看细节，结果
+     还是得下载原件才看得见，那这个详情弹窗就没意义了。
+     大图走 `/large`（惰性派生 + 按摘要缓存，几百 KB），是这里最合适的一档：
+     清晰度与模板库悬浮那张一致，而详情弹窗比那个浮层宽得多（880 vs 320），
+     同一张 1280px 的图在这里看得更细。
 
-  if (asset.coverUrl && !fallback) {
+     **降级链：大图 → 封面 → 原图**。三套字节一条记录：封面对象可能丢了
+     （`previews/*.jpg` 被清、换桶、MinIO 重建），大图是派生的（依赖原图能读），
+     原图才是最后的真相。任何一档失败就退下一档，全挂了才说「暂时取不到」。
+     换素材时必须复位，否则上一张的失败态会带到下一张。
+
+     **enabled 恒为 true**：本组件只在 `kind === 'image'` 的分支里渲染，
+     走到这里就一定是图片。这个 true 不是在防什么 —— 文本资产走的是上面
+     「正文」那条分支，连这个组件都进不去。 */
+  const large = useLibraryLargePreview(asset.id, true);
+  const [coverBroken, setCoverBroken] = useState(false);
+  useEffect(() => setCoverBroken(false), [asset.id, asset.coverUrl]);
+
+  if (large.url) {
+    return (
+      <img
+        src={large.url}
+        alt={displayName(asset.name)}
+        className="max-h-[560px] w-full bg-black object-contain"
+      />
+    );
+  }
+
+  /* 大图还在路上（或是派生失败）：先给封面，页面不空着。 */
+  if (asset.coverUrl && !coverBroken) {
     return (
       <img
         src={asset.coverUrl}
         alt={displayName(asset.name)}
-        onError={() => setFallback(true)}
-        className="max-h-[420px] w-full bg-black object-contain"
+        onError={() => setCoverBroken(true)}
+        className="max-h-[560px] w-full bg-black object-contain"
       />
     );
   }
+
   return <OriginalImage asset={asset} />;
 }
 
@@ -587,7 +613,7 @@ function OriginalImage({ asset }: { asset: LibraryAssetDetailOut }) {
       <img
         src={media.url}
         alt={displayName(asset.name)}
-        className="max-h-[420px] w-full bg-black object-contain"
+        className="max-h-[560px] w-full bg-black object-contain"
       />
     );
   }
