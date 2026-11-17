@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import type { ModelSpec } from '../model/types';
+import type { ParamControl } from './paramForm';
 import {
   authorParamControls,
   initialParamValues,
   isEmptyParamValue,
   isUserSelectable,
   paramControlsFor,
+  paramDisplayText,
   parseNumericInput,
   resolveParamValues,
   userSelectableControls,
@@ -218,5 +220,42 @@ describe('authorParamControls / userSelectableControls · 谁来选这个参数'
     expect(isUserSelectable({ type: 'enum' })).toBe(false);
     expect(isUserSelectable({ type: 'enum', userSelectable: false })).toBe(false);
     expect(isUserSelectable({ type: 'enum', userSelectable: true })).toBe(true);
+  });
+});
+
+describe('paramDisplayText · 参数值的显示文案', () => {
+  /** 档位就取档位标签（那是用户在下拉里看到的那句话）。 */
+  it('有档位时用档位标签，不显示原始值', () => {
+    const control: ParamControl = {
+      key: 'aspectRatio',
+      label: '比例',
+      kind: 'enum',
+      options: [{value: '9:16', label: '9:16 竖版'}],
+      defaultValue: '9:16',
+    };
+    expect(paramDisplayText(control, '9:16')).toBe('9:16 竖版');
+  });
+
+  it('没有档位时显示原值，尺寸里的 x 换成乘号', () => {
+    const control: ParamControl = {
+      key: 'size',
+      label: '尺寸',
+      kind: 'string',
+      options: [],
+      defaultValue: '',
+    };
+    expect(paramDisplayText(control, '1024x1024')).toBe('1024×1024');
+  });
+
+  it('空值显示「默认」', () => {
+    const control: ParamControl = {
+      key: 'count',
+      label: '数量',
+      kind: 'int',
+      options: [],
+      defaultValue: 1,
+    };
+    expect(paramDisplayText(control, '')).toBe('默认');
+    expect(paramDisplayText(control, undefined)).toBe('默认');
   });
 });

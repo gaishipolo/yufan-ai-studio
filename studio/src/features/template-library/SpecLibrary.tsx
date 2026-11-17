@@ -10,6 +10,7 @@ import { useModels } from '@/entities/model/api/model.queries';
 import {
   isUserSelectable,
   paramControlsFor,
+  paramDisplayText,
   resolveParamValues,
   type ParamValue,
 } from '@/entities/model/lib/paramForm';
@@ -19,11 +20,20 @@ import type { SpecSlotOut, TemplateSpecOut } from '@/shared/api/schema';
 import { AssetPicker, type PickedAsset } from '@/features/template-specs/AssetPicker';
 import { effectiveModelIds, slotTypeOf } from '@/features/template-specs/specDraft';
 import { ParamFields } from '@/entities/model/ui/ParamFields';
-import { Button, Chip, EmptyState, SearchInput, Select, Skeleton } from '@/shared/ui';
+import {
+  Button,
+  Chip,
+  ConfirmDialog,
+  EmptyState,
+  SearchInput,
+  Select,
+  Skeleton,
+} from '@/shared/ui';
 import { cn } from '@/shared/lib/cn';
 import { useStickyFitHeight } from '@/shared/hooks/useStickyFitHeight';
 import { toSubmitPayload } from './taskPayload';
 import { modelChoiceOptions, resolveModelChoice } from './modelChoice';
+import { buildGenerateConfirm } from './generateConfirm';
 
 /**
  * 模板库（填表）：左边选模板，右边就地填素材 → 生成。
@@ -198,6 +208,9 @@ export function SpecLibrary() {
   const [chosenModel, setChosenModel] = useState('');
   const [note, setNote] = useState('');
   const [error, setError] = useState('');
+  /* 二次确认：生成是要花钱的动作（积分加速更甚），按下之前先把这次会发生
+     什么摊开写清楚 —— 「确定吗？」等于让人盲按。 */
+  const [confirming, setConfirming] = useState(false);
 
   /* 右栏的高度上限：不写死「视口减几」，量它自己站在哪儿。
      页面刚打开时它还没吸住（上面顶着「模板库」标题），自然位置比吸顶位置低，
@@ -297,11 +310,7 @@ export function SpecLibrary() {
   });
   const paramChips = authorControls.map(control => {
     const raw = paramValues[control.key];
-    const option = control.options.find(item => item.value === String(raw));
-    const text =
-      option?.label ??
-      (raw === '' || raw === undefined ? '默认' : String(raw).replace(/(\d)x(\d)/, '$1×$2'));
-    return {key: control.key, label: control.label, text};
+    return {key: control.key, label: control.label, text: paramDisplayText(control, raw)};
   });
 
   /* 填了几项：只看要用户填的那几个槽位。进度条用它，省得只在按钮上写一句
@@ -310,6 +319,45 @@ export function SpecLibrary() {
   const progress = fillSlots.length > 0 ? Math.round((filledCount / fillSlots.length) * 100) : 0;
 
   const busy = compile.isPending || createTask.isPending || generateImage.isPending;
+
+  /* 二次确认框的内容。**在按下之前**把这次提交会带出去的东西摊开：
+     模板、模型、素材、生效参数、计费方式。
+
+     素材那行算的是**真正会进这次请求的**数量 —— 使用者填的槽位，加上作者
+     已经固定好的那些（固定槽位的素材也会被编译进提示词，漏算就成了「界面
+     说 2 项，实际发出去 4 张」）。
+
+     计费方式取**当前生效的值**（使用者选了就用选的，没选就用模型声明的
+     默认），而不是「有没有这个参数」—— 两者不是一回事。 */
+  const fixedSlots = slots.filter(slot => slot.binding === 'fixed' && slot.assetId);
+  const confirmSlots = [
+    ...fillSlots.map(slot => ({
+      label: slot.label || slot.key,
+      count: (values[slot.key] ?? []).length,
+    })),
+    ...fixedSlots.map(slot => ({label: slot.label || slot.key, count: 1})),
+  ];
+  const confirmParams = [
+    ...paramChips,
+    /* 使用者改的运行时参数（计费模式除外，它单独一行）。 */
+    ...userControls
+      .filter(control => control.key !== 'billingMode')
+      .map(control => ({
+        key: control.key,
+        label: control.label,
+        text: paramDisplayText(control, userValues[control.key]),
+      })),
+  ];
+  const billingMode =
+    typeof userValues.billingMode === 'string' ? userValues.billingMode : undefined;
+  const confirm = buildGenerateConfirm({
+    templateName: spec?.name ?? '',
+    version: version?.version ?? 0,
+    modelLabel: model?.label ?? modelId,
+    slots: confirmSlots,
+    params: confirmParams,
+    ...(billingMode ? {billingMode} : {}),
+  });
 
   const pickerSlot = slots.find(slot => slot.key === picker);
 
@@ -350,6 +398,7 @@ export function SpecLibrary() {
       const plan = toSubmitPayload(compiled, spec.name, kind, defaults, model);
       if (!plan.ok) {
         setError(plan.message);
+        setConfirming(false);
         return;
       }
       if (plan.kind === 'image') {
@@ -360,8 +409,12 @@ export function SpecLibrary() {
         const task = await createTask.mutateAsync(plan.payload);
         setNote(`已提交：${task.title || task.id}`);
       }
+      setConfirming(false);
     } catch (reason) {
+      /* 失败时也关掉确认框：错误显示在右栏底部，弹窗盖着就看不见 ——
+         留着框等于把错误藏起来。 */
       setError(reason instanceof Error ? reason.message : String(reason));
+      setConfirming(false);
     }
   };
 
@@ -642,7 +695,7 @@ export function SpecLibrary() {
                 size="lg"
                 variant={missing.length > 0 ? 'secondary' : 'primary'}
                 disabled={busy || missing.length > 0}
-                onClick={() => void submit()}
+                onClick={() => setConfirming(true)}
               >
                 <Play size={13} />
                 {busy
@@ -668,6 +721,22 @@ export function SpecLibrary() {
         selected={pickerSlot ? (values[pickerSlot.key] ?? []) : []}
         onClose={() => setPicker(null)}
         onToggle={togglePick}
+      />
+
+      {/* 二次确认：生成会提交一条真实的任务（可能扣积分），按下之前把这次
+          会发生什么摊开。素材还缺时按钮本来就是灰的，所以这个框只在
+          「确实要提交」的时候出现。 */}
+      <ConfirmDialog
+        open={confirming}
+        title={kind === 'image' ? '确认生成图片？' : '确认生成视频？'}
+        description="提交后会排队生成，可在任务中心查看进度。"
+        details={confirm.rows.map(row => ({label: row.label, value: row.value}))}
+        {...(confirm.notice ? {notice: confirm.notice} : {})}
+        noticeTone={confirm.noticeTone}
+        confirmLabel={kind === 'image' ? '生成图片' : '生成视频'}
+        busy={busy}
+        onCancel={() => setConfirming(false)}
+        onConfirm={() => void submit()}
       />
     </div>
   );

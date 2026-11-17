@@ -276,6 +276,23 @@ export function isEmptyParamValue(value: ParamValue | undefined): boolean {
   return value === undefined || value === '';
 }
 
+/**
+ * 参数值的**显示文案**：档位就取档位标签，没有档位就取原值。
+ *
+ * 抽出来是因为同一个值要在两处显示成同一句话：模板库右栏的参数 chip，
+ * 以及生成前的二次确认清单。两处各写一遍，改了标签词典就会只跟上一处 ——
+ * 用户在确认框里看到的和右栏里看到的对不上，那确认框反而在添乱。
+ */
+export function paramDisplayText(
+  control: ParamControl,
+  raw: ParamValue | undefined,
+): string {
+  const option = control.options.find(item => item.value === String(raw));
+  if (option) return option.label;
+  if (raw === '' || raw === undefined) return '默认';
+  return String(raw).replace(/(\d)x(\d)/, '$1×$2');
+}
+
 /** 数字输入框的回填：非数字保持空串，交给「空值不提交」处理 */
 export function parseNumericInput(raw: string): number | '' {
   if (raw.trim() === '') return '';
