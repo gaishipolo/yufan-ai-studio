@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { FileText, Save } from 'lucide-react';
-import { Button, Modal, Select, TextInput } from '@/shared/ui';
+import { Button, Modal, Notice, Select, TextInput } from '@/shared/ui';
 import { toast } from '@/shared/lib/toast';
 import { errorHttpStatus } from '@/shared/api/types';
 import type { TextAssetIn, TextAssetUpdateIn } from '@/shared/api/schema';
@@ -225,9 +225,7 @@ export function TextAssetModal({
         )}
 
         {error && (
-          <p className="rounded-lg border border-danger-line bg-danger-soft px-2.5 py-1.5 text-body text-danger-deep" role="alert">
-            {error}
-          </p>
+          <Notice tone="error">{error}</Notice>
         )}
 
         <div className="flex items-center gap-1.5 border-t border-line-soft pt-3">

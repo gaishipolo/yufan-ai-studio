@@ -43,6 +43,9 @@ export { EmptyState, Skeleton, CardSkeletonGrid } from './EmptyState';
 export { ErrorState } from './ErrorState';
 export type { ErrorStateProps } from './ErrorState';
 
+export { Notice } from './Notice';
+export type { NoticeProps, NoticeTone } from './Notice';
+
 export { Pager } from './Pager';
 export type { PagerProps } from './Pager';
 

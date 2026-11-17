@@ -31,6 +31,7 @@ import {
   EmptyState,
   FormField,
   Modal,
+  Notice,
   PageHeader,
   TextInput,
 } from '@/shared/ui';
@@ -355,7 +356,11 @@ export function SpecWorkspace() {
           )}
         </div>
 
-        {(note || error) && <Notice error={error} note={note} />}
+        {error ? (
+          <Notice tone="error">{error}</Notice>
+        ) : note ? (
+          <Notice tone="success">{note}</Notice>
+        ) : null}
         {loading ? (
           <p className="py-10 text-center text-xs text-ink-mute">正在读取…</p>
         ) : rows.length === 0 ? (
@@ -459,7 +464,11 @@ export function SpecWorkspace() {
         </div>
         {/* 提示放进吸顶区：槽位多的时候用户是在页面底部点「保存并发布」的，
             提示留在页首等于没提示（预检失败/发布被拦正是最需要看见的时候）。 */}
-        {(note || error) && <Notice error={error} note={note} />}
+        {error ? (
+          <Notice tone="error">{error}</Notice>
+        ) : note ? (
+          <Notice tone="success">{note}</Notice>
+        ) : null}
       </div>
 
       <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)]">
@@ -789,21 +798,6 @@ function Section({
         )}
       </div>
       <div className="p-4">{children}</div>
-    </div>
-  );
-}
-
-function Notice({ error, note }: {error: string; note: string}) {
-  return (
-    <div
-      className={cn(
-        'rounded-xl border px-3 py-2 text-meta leading-relaxed',
-        error
-          ? 'border-danger-line bg-danger-soft text-danger'
-          : 'border-ok-line bg-ok-soft text-ok-deep',
-      )}
-    >
-      <p className="whitespace-pre-wrap">{error || note}</p>
     </div>
   );
 }

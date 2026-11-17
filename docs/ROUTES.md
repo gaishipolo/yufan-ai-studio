@@ -48,7 +48,7 @@
 | shots | 1 | 1 | 0 |
 | storyboards | 1 | 1 | 0 |
 | studio | 1 | 1 | 0 |
-| task-center | 1 | 1 | 0 |
+| task-center | 1 | 1 | 1 |
 | templates | 2 | 2 | 0 |
 | usage | 1 | 1 | 0 |
 | user-access | 1 | 1 | 0 |
