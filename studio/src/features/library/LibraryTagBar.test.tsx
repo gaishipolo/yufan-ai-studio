@@ -37,21 +37,51 @@ describe('LibraryTagBar · 两级标签任意组合', () => {
       '角色3',
       '音乐2',
     ]);
-    // 二级带父名：分得出同一个名字挂在哪条轴上
+    // 二级只显示短名，完整路径在 title 里（用户 2026-11-17 拍板）
     expect(second.getAllByRole('button').map((b) => b.textContent)).toEqual([
       '全部',
-      '产品 / 30305',
-      '产品 / T402',
-      '角色 / 菜菜3',
+      '30305',
+      'T402',
+      '菜菜3',
+    ]);
+    expect(second.getByRole('button', {name: /^3030/})).toHaveAttribute(
+      'title',
+      expect.stringContaining('产品 / 3030'),
+    );
+  });
+
+  it('二级行随选中的一级收窄：点了「产品」就只剩产品的取值', () => {
+    renderBar(['t1']);
+    const { second } = rows();
+    expect(second.getAllByRole('button').map((b) => b.textContent)).toEqual([
+      '全部',
+      '30305',
+      'T402',
     ]);
   });
 
-  it('两行始终列全部标签：选了别的维度也要点得到另一条轴的词', () => {
+  it('二级行随多个维度叠加：点了「产品」+「角色」就是两条轴的取值之和', () => {
+    renderBar(['t1', 't2']);
+    const { second } = rows();
+    expect(second.getAllByRole('button').map((b) => b.textContent)).toEqual([
+      '全部',
+      '30305',
+      'T402',
+      '菜菜3',
+    ]);
+  });
+
+  it('选了一个二级取值，二级行仍列它所属维度的全部取值（才能同维度多选）', () => {
     renderBar(['t11']);
     const { top, second } = rows();
-    // 选了一个取值也不收拢 —— 收起来就点不到「角色 / 菜菜」了
+    // 一级行始终列全部维度：用户要换方向得能点到别的轴
     expect(top.getByRole('button', {name: /^角色/})).toBeInTheDocument();
-    expect(second.getByRole('button', {name: /菜菜/})).toBeInTheDocument();
+    // 二级行收窄到「产品」这一条轴，但兄弟取值「T40」还得留着
+    expect(second.getAllByRole('button').map((b) => b.textContent)).toEqual([
+      '全部',
+      '30305',
+      'T402',
+    ]);
   });
 
   it('点一级只选中它（URL 里存的是维度 id）', async () => {

@@ -109,6 +109,26 @@ describe('资产库 mock · 列表与可见范围', () => {
     const { body } = await call<LibraryAssetPage>('GET', '/library/selection');
     expect(body.data.items?.every((item) => item.state === 'active')).toBe(true);
   });
+
+  it('标签筛选是「组内或、跨组且」：跨维度多选取交集，不是并集', async () => {
+    /* 与真实后端 `tag_filter_clause` 同一口径：一条素材必须**同时**命中
+       每个维度。演示词表里 t4=产品/3030、t6=画面类型/正面图，
+       两者同挂在「超市抢购·主视觉 01」上 —— 交集应当只留它一条。 */
+    const cross = await call<LibraryAssetPage>('GET', '/library/assets', {
+      params: { state: 'active', tagIds: ['t4', 't6'], pageSize: 100 },
+    });
+    const crossNames = (cross.body.data.items ?? []).map((item) => item.name);
+    expect(crossNames).toEqual(['超市抢购·主视觉 01']);
+
+    /* 同维度多选是并集：t4 与 t5 都是「产品」下的取值 */
+    const same = await call<LibraryAssetPage>('GET', '/library/assets', {
+      params: { state: 'active', tagIds: ['t4', 't5'], pageSize: 100 },
+    });
+    const sameNames = (same.body.data.items ?? []).map((item) => item.name);
+    expect(sameNames).toContain('超市抢购·主视觉 01');
+    expect(sameNames).toContain('人物三视图 · v3');
+    expect(sameNames.length).toBeGreaterThan(crossNames.length);
+  });
 });
 
 describe('资产库 mock · 写操作的语义', () => {
@@ -174,8 +194,10 @@ describe('资产库 mock · 标签栏计数', () => {
   it('用 PATCH 去掉一个标签后，计数同步减少', async () => {
     const scope = { state: 'active', library: 'personal' };
     const before = (await call<LibraryTagStatOut[]>('GET', '/library/tags', { params: scope })).body.data;
-    const tag = before.find((item) => (item.assetCount ?? 0) > 0);
-    if (!tag) throw new Error('演示数据里应该有一个非空标签');
+    /* 必须挑**叶子**（childCount=0）：一级是维度（分组），素材不会挂在它上面，
+       去掉它也不会改变任何素材的实际标签。 */
+    const tag = before.find((item) => (item.assetCount ?? 0) > 0 && (item.childCount ?? 0) === 0);
+    if (!tag) throw new Error('演示数据里应该有一个非空的叶子标签');
 
     const listed = await call<LibraryAssetPage>('GET', '/library/assets', {
       params: { ...scope, tagIds: [tag.id], pageSize: 100 },

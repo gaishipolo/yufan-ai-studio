@@ -3,8 +3,8 @@ import { Settings2, X } from 'lucide-react';
 import { cn } from '@/shared/lib/cn';
 import type { LibraryTagStatOut } from '@/shared/api/schema';
 import {
+  secondLevelForSelection,
   tagLabel,
-  tagsAtDepth,
   topLevelTags,
 } from '@/entities/library/model/tagTree';
 
@@ -47,8 +47,10 @@ const ROW_LABEL = 'w-12 shrink-0 truncate text-body font-medium text-ink-mute';
  * 4. **选中状态不再互相踢掉**。点了就都留着 —— 选中的胶囊全部高亮，
  *    用户看得见自己圈了哪几档；哪一档真正参与筛选由上一条决定。
  *
- * 两行**始终列全部标签**（不按选中项收拢）：词表只有几十条，收起来反而让
- * 「另一条轴上的词」点不到。每行有自己的搜索框，词多了就搜。
+ * 两行的**二级行随选中项收窄**：点了「产品」，二级行只剩产品的取值；
+ * 点了「产品」+「角色」，二级行就是这两条轴的取值之和（口径见
+ * `secondLevelForSelection`）。一级行始终列全部维度 —— 维度才是用户想换
+ * 方向的地方，收起来就换不了轴了。每行有自己的搜索框，词多了就搜。
  *
  * 计数来自 `GET /library/tags`，后端给的是「自身 + 全部下级」去重后的合计，
  * 与点进去看到的条数一致。
@@ -66,7 +68,12 @@ export function LibraryTagBar({
   const [secondQuery, setSecondQuery] = useState('');
 
   const top = useMemo(() => topLevelTags(tags), [tags]);
-  const second = useMemo(() => tagsAtDepth(tags, 2), [tags]);
+  /* 二级行只列「当前选中项涉及的维度」下的取值：点了「产品」就只剩产品的
+     取值，点了「产品」+「角色」就是两条轴的取值之和。没选任何东西时列全部。 */
+  const second = useMemo(
+    () => secondLevelForSelection(tags, selected),
+    [tags, selected],
+  );
 
   const active = useMemo(() => new Set(selected), [selected]);
 
@@ -215,14 +222,18 @@ function TagRow({
       {items.map((tag) => {
         const count = tag.assetCount ?? 0;
         const isActive = active.has(tag.id);
-        const text = showParentName ? tagLabel(tag) : tag.name;
+        /* 显示用短名，悬停说明用完整路径（用户 2026-11-17 拍板）：
+           胶囊上写「正面图 / 正面图 / 正面图」这种前缀太丑，
+           但鼠标移上去仍要看得见它挂在哪条轴上。 */
+        const text = tag.name;
+        const full = showParentName ? tagLabel(tag) : tag.name;
         return (
           <button
             key={tag.id}
             type="button"
             onClick={() => onToggle(tag)}
             aria-pressed={isActive}
-            title={`筛选「${text}」· 当前入口 ${count} 条`}
+            title={`筛选「${full}」· 当前入口 ${count} 条`}
             className={cn(PILL, isActive ? ACTIVE : IDLE, count === 0 && !isActive && 'opacity-60')}
           >
             <span className="max-w-[150px] truncate">{text}</span>

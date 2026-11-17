@@ -25,17 +25,20 @@ const iso = (offsetDays = 0) => new Date(now + offsetDays * DAY).toISOString();
 
 /** 词表按添加时间排：t1 最早、t3 最后，与后端 `list_tags` 的排序一致。 */
 /**
- * 词表：三级（一级分组 → 二级系列 → 三级具体词），与后端同一套层级口径。
- * 演示环境要是只有平级的一级词，标签栏的第二、三行永远是空的，
- * 三级能力一行都看不到。
+ * 词表：**两级**（一级维度 → 二级取值），与真实后端同一套层级口径。
+ *
+ * 一级是维度（产品 / 画面类型 / 角色 / 场景），二级是取值（3030 / 正面图 /
+ * 菜菜）。演示环境要是只有平级的一级词，标签栏的第二行永远是空的，
+ * 两级能力一行都看不到。
  */
 const TAGS: LibraryTagStatOut[] = [
-  { id: 't1', name: '人物', assetCount: 0, createdAt: iso(-8) },
-  { id: 't2', name: '产品', assetCount: 0, createdAt: iso(-6) },
-  { id: 't3', name: '场景', assetCount: 0, createdAt: iso(-4) },
-  { id: 't4', name: '3030', parentId: 't2', assetCount: 0, createdAt: iso(-5) },
-  { id: 't5', name: 'T40', parentId: 't2', assetCount: 0, createdAt: iso(-3) },
-  { id: 't6', name: 'X100', parentId: 't4', assetCount: 0, createdAt: iso(-2) },
+  { id: 't1', name: '产品', assetCount: 0, createdAt: iso(-8) },
+  { id: 't2', name: '画面类型', assetCount: 0, createdAt: iso(-6) },
+  { id: 't3', name: '角色', assetCount: 0, createdAt: iso(-4) },
+  { id: 't4', name: '3030', parentId: 't1', assetCount: 0, createdAt: iso(-5) },
+  { id: 't5', name: 'T40', parentId: 't1', assetCount: 0, createdAt: iso(-3) },
+  { id: 't6', name: '正面图', parentId: 't2', assetCount: 0, createdAt: iso(-2) },
+  { id: 't7', name: '菜菜', parentId: 't3', assetCount: 0, createdAt: iso(-1) },
 ];
 
 /** `isLeader` 现在只服务删除窄口（§3.4.1）；审批资格按权限点与目标范围判，
@@ -75,7 +78,8 @@ function asset(partial: Partial<LibraryAssetDetailOut> & { name: string; kind: L
     trashExpiresAt: partial.trashExpiresAt ?? null,
     createdAt: partial.createdAt ?? iso(-3),
     updatedAt: null,
-    tags: partial.tags ?? [TAGS[0]],
+    /* 默认挂一个**二级取值**：一级是维度（分组），不是能打在素材上的词。 */
+    tags: partial.tags ?? [TAGS[3]],
     groups: (partial.groupIds ?? []).map((gid) => ({
       id: gid,
       name: GROUPS.find((group) => group.id === gid)?.name ?? gid,
@@ -103,13 +107,15 @@ function seed() {
     asset({
       name: '超市抢购·主视觉 01',
       kind: 'image',
-      tags: [TAGS[0], TAGS[2]],
+      /* 素材挂在**二级取值**上（产品/3030 + 画面类型/正面图）——
+         一级是维度，只是分组；演示「跨维度取交集」要靠同一条挂两个维度的取值。 */
+      tags: [TAGS[3], TAGS[5]],
       createdAt: iso(-1),
     }),
     asset({
       name: '产品开箱特写 · 白底',
       kind: 'image',
-      tags: [TAGS[1]],
+      tags: [TAGS[5]],
       createdAt: iso(-2),
     }),
     asset({
@@ -117,7 +123,7 @@ function seed() {
       kind: 'image',
       visibility: 'group',
       groupIds: ['g1'],
-      tags: [TAGS[0]],
+      tags: [TAGS[4]],
       createdAt: iso(-4),
       shareHistory: [
         {
@@ -147,7 +153,7 @@ function seed() {
       durationSec: 12,
       hasAudio: true,
       sizeBytes: 84_000_000,
-      tags: [TAGS[2]],
+      tags: [TAGS[3]],
       ownerId: 'u_002',
       ownerName: '林设计',
       createdAt: iso(-6),
@@ -171,7 +177,7 @@ function seed() {
       mimeType: 'audio/mpeg',
       durationSec: 32,
       sizeBytes: 780_000,
-      tags: [TAGS[2]],
+      tags: [TAGS[6]],
       createdAt: iso(-8),
     }),
     asset({
@@ -387,13 +393,21 @@ function listOf(ctx: MockContext, withFacets: boolean) {
   if (origins.length) rows = rows.filter((row) => origins.includes(row.origin ?? ''));
   if (keyword) rows = rows.filter((row) => row.name.toLowerCase().includes(keyword));
   if (tagIds.length) {
-    /* 选一级 = 展开到「自身 + 全部下级」，与后端 `expand_tag_ids` 同口径 */
-    const expanded = new Set<string>();
-    for (const id of tagIds) {
-      expanded.add(id);
-      for (const descendant of tagDescendantIds(id)) expanded.add(descendant);
-    }
-    rows = rows.filter((row) => (row.tags ?? []).some((tag) => expanded.has(tag.id)));
+    /* 标签筛选：**组内 OR、组间 AND**（两级维度模型），与后端
+       `tag_filter_clause` 同口径。
+       选中的一级维度各成一组，组内的取值互相或，组与组之间且。 */
+    const groups = tagGroupsByDimension(tagIds);
+    rows = rows.filter((row) => {
+      const owned = new Set((row.tags ?? []).map((tag) => tag.id));
+      return groups.every((group) => {
+        const expanded = new Set<string>();
+        for (const id of group) {
+          expanded.add(id);
+          for (const descendant of tagDescendantIds(id)) expanded.add(descendant);
+        }
+        return [...owned].some((id) => expanded.has(id));
+      });
+    });
   }
   if (params.sort === 'name') rows = rows.sort((a, b) => a.name.localeCompare(b.name));
   else if (params.sort === '-sizeBytes') rows = rows.sort((a, b) => (b.sizeBytes ?? 0) - (a.sizeBytes ?? 0));
@@ -404,6 +418,21 @@ function listOf(ctx: MockContext, withFacets: boolean) {
   const pageSize = Math.max(1, Number(params.pageSize ?? 24) || 24);
   const items = rows.slice((page - 1) * pageSize, page * pageSize).map(toOut);
   return { items, total: rows.length, page, pageSize, ...(withFacets ? { facets: facets() } : {}) };
+}
+
+/**
+ * 选中的标签按**一级维度**分组：选中的一级自己成一组，
+ * 二级取值归到它的一级祖先那组。组内 OR、组间 AND（与后端同口径）。
+ */
+function tagGroupsByDimension(tagIds: string[]): string[][] {
+  const groups = new Map<string, string[]>();
+  for (const id of tagIds) {
+    const tag = TAGS.find((item) => item.id === id);
+    if (!tag) continue;
+    const key = tag.parentId ?? tag.id;
+    groups.set(key, [...(groups.get(key) ?? []), id]);
+  }
+  return [...groups.values()];
 }
 
 /**

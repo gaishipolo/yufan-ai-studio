@@ -4,6 +4,7 @@ import type { LibraryTagStatOut } from '@/shared/api/schema';
 import { cn } from '@/shared/lib/cn';
 import {
   scopeAllowedTags,
+  secondLevelForSelection,
   tagLabel,
   tagsAtDepth,
 } from '../model/tagTree';
@@ -51,9 +52,11 @@ export function TagFilter({
   const rows = useMemo(
     () => [
       { label: '一级', items: tagsAtDepth(allowed, 1) },
-      { label: '二级', items: tagsAtDepth(allowed, 2) },
+      /* 二级行随选中项收窄：点了「产品」就只剩产品的取值，
+         点了「产品」+「角色」就是两条轴的取值之和。 */
+      { label: '二级', items: secondLevelForSelection(allowed, value) },
     ],
-    [allowed],
+    [allowed, value],
   );
   const active = useMemo(() => new Set(value), [value]);
 
@@ -92,16 +95,19 @@ export function TagFilter({
             <span className="w-8 shrink-0 text-micro text-ink-mute">{row.label}</span>
             {row.items.map((tag) => {
               const isActive = active.has(tag.id);
+              /* 显示短名，悬停说明给完整路径 —— 与标签栏同一口径。 */
+              const short = tag.name;
+              const full = tagLabel(tag);
               return (
                 <button
                   key={tag.id}
                   type="button"
                   onClick={() => toggle(tag.id)}
                   aria-pressed={isActive}
-                  title={tagLabel(tag)}
+                  title={full}
                   className={cn(PILL, isActive ? ACTIVE : IDLE)}
                 >
-                  <span className="max-w-[140px] truncate">{tagLabel(tag)}</span>
+                  <span className="max-w-[140px] truncate">{short}</span>
                 </button>
               );
             })}

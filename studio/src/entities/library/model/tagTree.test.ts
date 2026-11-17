@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { LibraryTagStatOut } from '@/shared/api/schema';
-import { effectiveTagSelection, scopeAllowedTags } from './tagTree';
+import {
+  effectiveTagSelection,
+  scopeAllowedTags,
+  secondLevelForSelection,
+} from './tagTree';
 
 /**
  * 树是两级的：一级是**维度**（产品 / 角色），二级是**取值**（3030 / T40 / 菜菜）。
@@ -41,8 +45,43 @@ describe('effectiveTagSelection · 选中标签 → 真正参与筛选的标签'
   });
 });
 
-describe('scopeAllowedTags · 候选集范围里能挑的标签', () => {
-  it('范围为空 = 不限，所有标签都能挑', () => {
+describe('secondLevelForSelection · 二级行该列哪些取值', () => {
+  it('没选任何东西时列全部取值', () => {
+    expect(secondLevelForSelection(TAGS, []).map((tag) => tag.id)).toEqual([
+      't11',
+      't12',
+      't21',
+    ]);
+  });
+
+  it('选了一级维度 → 只列那个维度下的取值', () => {
+    expect(secondLevelForSelection(TAGS, ['t1']).map((tag) => tag.id)).toEqual([
+      't11',
+      't12',
+    ]);
+  });
+
+  it('选了多个维度 → 列这几条轴的取值之和', () => {
+    expect(
+      secondLevelForSelection(TAGS, ['t1', 't2']).map((tag) => tag.id),
+    ).toEqual(['t11', 't12', 't21']);
+  });
+
+  it('选了一个二级取值 → 仍列它所属维度的**全部**取值（才能同维度多选）', () => {
+    expect(secondLevelForSelection(TAGS, ['t11']).map((tag) => tag.id)).toEqual([
+      't11',
+      't12',
+    ]);
+  });
+
+  it('选了取值又选了别的维度 → 两条轴都列', () => {
+    expect(
+      secondLevelForSelection(TAGS, ['t11', 't2']).map((tag) => tag.id),
+    ).toEqual(['t11', 't12', 't21']);
+  });
+});
+
+describe('scopeAllowedTags · 候选集范围里能挑的标签', () => {  it('范围为空 = 不限，所有标签都能挑', () => {
     expect(scopeAllowedTags(TAGS, []).map((tag) => tag.id)).toEqual([
       't1',
       't2',

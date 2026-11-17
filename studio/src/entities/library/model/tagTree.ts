@@ -95,6 +95,64 @@ export function tagsAtDepth(
 }
 
 /**
+ * 某个标签所在的**维度** id —— 它自己是一级时就是自己，否则是它的一级祖先。
+ *
+ * 两级模型里「一级祖先」就是唯一的维度：二级取值只有一个父。
+ */
+export function dimensionOf(
+  tags: LibraryTagStatOut[],
+  tag: AnyTag,
+): string | null {
+  const depth = tagDepth(tags, tag);
+  if (depth <= 1) return tag.id;
+  const ancestor = ancestorAtDepth(tags, tag, 1);
+  return ancestor ?? tag.id;
+}
+
+/**
+ * 二级行该列哪些取值：**只列当前选中项涉及的维度下的取值**。
+ *
+ * 这是用户 2026-11-17 提的第一条：点了「产品」，二级行就该只剩产品的取值；
+ * 点了「产品」+「角色」，二级行就该是这两条轴的取值之和。
+ *
+ * 规则（两级模型下唯一自洽的一套）：
+ *
+ * - 选中里有**一级维度** → 列该维度下的全部取值；
+ * - 选中里有**二级取值** → 列它所属维度的**全部**取值（用户能顺手续选
+ *   同一维度的兄弟取值，那才是「同维度多选是或」）；
+ * - 选中里没有任何标签 → 列**全部**取值（没圈范围时词表几十条，搜得到就行）。
+ *
+ * 只按「选中项涉及哪些维度」过滤，不按「选中项自身」过滤：用户点了
+ * 「产品 / 3030」之后还得能看见「产品 / T40」，否则同维度多选根本没法做。
+ *
+ * 返回的是**该维度下的全部取值**（不止选中的那个），所以这是「收窄候选」
+ * 而不是「按选择筛结果」。
+ */
+export function secondLevelForSelection(
+  tags: LibraryTagStatOut[],
+  selected: string[],
+): LibraryTagStatOut[] {
+  const byId = new Map(tags.map((item) => [item.id, item]));
+  const chosen = [...new Set(selected)].filter((id) => byId.has(id));
+  if (!chosen.length) return tagsAtDepth(tags, 2);
+
+  /* 选中项涉及的维度：每个选中项归到它自己那个维度 */
+  const dimensions = new Set<string>();
+  for (const id of chosen) {
+    const tag = byId.get(id);
+    if (!tag) continue;
+    const dimension = dimensionOf(tags, tag);
+    if (dimension) dimensions.add(dimension);
+  }
+  if (!dimensions.size) return tagsAtDepth(tags, 2);
+
+  return tagsAtDepth(tags, 2).filter((tag) => {
+    const dimension = dimensionOf(tags, tag);
+    return dimension ? dimensions.has(dimension) : false;
+  });
+}
+
+/**
  * 某标签及其**全部**后代的 id —— 选父清子时用。 */
 export function descendantIds(
   tags: LibraryTagStatOut[],

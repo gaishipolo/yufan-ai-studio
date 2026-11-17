@@ -78,7 +78,7 @@ describe('AssetPicker · 按任意级别标签筛选', () => {
     const user = userEvent.setup();
     renderPicker(['t1']);
     const second = within(screen.getByRole('group', {name: '二级标签'}));
-    await user.click(second.getByRole('button', {name: '产品 / 3030'}));
+    await user.click(second.getByRole('button', {name: '3030'}));
     expect(selectionCalls.at(-1)?.tagIds).toEqual(['t11']);
   });
 

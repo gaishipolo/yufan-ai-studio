@@ -81,7 +81,7 @@ describe('SlotMediaPicker · 两级标签筛选', () => {
       <SlotMediaPicker slot={slotOf({tagIds: ['t1']})} selected={[]} onChange={vi.fn()} />,
     );
     const second = within(screen.getByRole('group', {name: '二级标签'}));
-    await user.click(second.getByRole('button', {name: '产品 / 3030'}));
+    await user.click(second.getByRole('button', {name: '3030'}));
     expect(selectionCalls.at(-1)?.tagIds).toEqual(['t11']);
   });
 
@@ -93,7 +93,7 @@ describe('SlotMediaPicker · 两级标签筛选', () => {
     const top = within(screen.getByRole('group', {name: '一级标签'}));
     const second = within(screen.getByRole('group', {name: '二级标签'}));
     await user.click(top.getByRole('button', {name: '产品'}));
-    await user.click(second.getByRole('button', {name: '产品 / 3030'}));
+    await user.click(second.getByRole('button', {name: '3030'}));
     // 维度的范围本来就含取值，两个都留着等于「整个产品线」
     expect(selectionCalls.at(-1)?.tagIds).toEqual(['t11']);
   });
