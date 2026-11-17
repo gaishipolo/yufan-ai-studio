@@ -117,11 +117,16 @@ export function SlotMediaPicker({
       )}
 
       {/* 标签多选：列的是**这批候选素材身上实际有**的标签，
-          用户点了就在候选集里再筛一层。 */}
+          用户点了就在候选集里再筛一层。
+
+          一级维度行不显示（那只是分组头，范围已经由候选集定死）；
+          候选集里的标签本身也不列 —— 它就是范围，列出来点了等于没筛。 */}
       <div className="mt-2">
         <TagFilter
           tags={tags.data ?? []}
           onlyWithAssets
+          hideTopLevel
+          excludeIds={scope}
           value={picked}
           onChange={setPicked}
         />

@@ -191,6 +191,38 @@ describe('资产库 mock · 标签栏计数', () => {
     expect(created).toEqual([...created].sort());
   });
 
+  it('候选范围（tagIds）只统计符合范围的素材：范围外的标签计数掉到 0', async () => {
+    /* 模板库的用法：作者圈了候选集之后，标签栏要显示的是
+       「这批素材身上实际有的标签」——按全库算会列出一堆这批素材
+       一个都没挂的标签，用户点了只得到空列表。 */
+    const scope = { state: 'active', tagIds: ['t2', 't6'] };
+    const scoped = (await call<LibraryTagStatOut[]>('GET', '/library/tags', { params: scope })).body.data;
+    const listed = (await call<LibraryAssetPage>('GET', '/library/assets', {
+      params: { ...scope, pageSize: 100 },
+    })).body.data;
+
+    /* 「正面图」是范围标签 → 范围内素材都挂它，计数 = 素材总数 */
+    expect(scoped.find((tag) => tag.id === 't6')?.assetCount).toBe(listed.total);
+    /* 候选集里的一级维度（画面类型）也计数 —— 一个标签 = 自身 + 全部下级，
+       范围内素材挂了它的下级，所以祖先照样计入（与后端同一口径）。 */
+    expect(scoped.find((tag) => tag.id === 't2')?.assetCount).toBe(listed.total);
+
+    /* 全库口径下有素材、但范围内一条都没挂的标签 → 计数必须掉到 0。
+       （否则模板库会列出点了得到空列表的标签。） */
+    const all = (await call<LibraryTagStatOut[]>('GET', '/library/tags', {
+      params: { state: 'active' },
+    })).body.data;
+    const dropped = all.filter((tag) => (tag.assetCount ?? 0) > 0);
+    expect(dropped.length).toBeGreaterThan(0);
+    for (const tag of dropped) {
+      const after = scoped.find((item) => item.id === tag.id);
+      expect((after?.assetCount ?? 0) <= (tag.assetCount ?? 0)).toBe(true);
+    }
+    /* 「角色 / 菜菜」在全库有素材，范围内一条都没有 → 归零 */
+    expect(scoped.find((tag) => tag.id === 't7')?.assetCount).toBe(0);
+    expect(scoped.find((tag) => tag.id === 't3')?.assetCount).toBe(0);
+  });
+
   it('用 PATCH 去掉一个标签后，计数同步减少', async () => {
     const scope = { state: 'active', library: 'personal' };
     const before = (await call<LibraryTagStatOut[]>('GET', '/library/tags', { params: scope })).body.data;

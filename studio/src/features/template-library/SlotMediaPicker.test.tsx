@@ -8,7 +8,8 @@ import { SlotMediaPicker } from './SlotMediaPicker';
  * 模板库填表页的槽位选择器：
  *
  * - 候选集是**槽位的标签**（作者圈的）—— 那圈定了素材范围；
- * - 界面上只列**这批素材身上实际有**的标签，用户点了就在范围里再筛；
+ * - 界面上只列**这批素材身上实际有**的取值，一级维度行不显示；
+ * - 候选集里的标签本身也不列 —— 它就是范围，点了等于没筛；
  * - 使用者的挑按维度**替换**候选集里那一维，不是叠加。
  *
  * 断言落在「发给后端的 tagIds」上 —— 那才是筛选语义真正发生的地方。
@@ -67,16 +68,38 @@ describe('SlotMediaPicker · 候选集里再筛', () => {
     expect(selectionCalls.at(-1)?.tagIds).toEqual(['t1']);
   });
 
-  it('只列这批素材身上实际有的标签（计数为 0 的不出现）', () => {
+  it('一级维度行不显示（那只是分组头，范围已由候选集定死）', () => {
+    render(
+      <SlotMediaPicker slot={slotOf({tagIds: ['t1']})} selected={[]} onChange={vi.fn()} />,
+    );
+    expect(screen.queryByRole('group', {name: '一级标签'})).not.toBeInTheDocument();
+  });
+
+  it('只列这批素材身上实际有的取值（计数为 0 的不出现）', () => {
     tagsData.current = TAGS.map((tag) =>
-      tag.id === 't2' ? { ...tag, assetCount: 0 } : tag,
+      tag.id === 't21' ? { ...tag, assetCount: 0 } : tag,
     );
     render(
       <SlotMediaPicker slot={slotOf({tagIds: ['t1']})} selected={[]} onChange={vi.fn()} />,
     );
-    const top = within(screen.getByRole('group', {name: '一级标签'}));
-    expect(top.queryByRole('button', {name: '角色'})).not.toBeInTheDocument();
-    expect(top.getByRole('button', {name: '产品'})).toBeInTheDocument();
+    const second = within(screen.getByRole('group', {name: '取值标签'}));
+    expect(second.queryByRole('button', {name: '菜菜'})).not.toBeInTheDocument();
+    expect(second.getByRole('button', {name: '3030'})).toBeInTheDocument();
+  });
+
+  it('候选集里的标签不列出来（它就是范围，点了等于没筛）', () => {
+    /* 候选集圈了「产品 / 3030」→ 素材已经是 3030；
+       「3030」不该再是一个可点项，但同维度的兄弟值还得能挑。 */
+    tagsData.current = [
+      ...TAGS,
+      { id: 't12', name: 'T40', parentId: 't1', parentName: '产品', depth: 2, assetCount: 2, childCount: 0, createdAt: '2026-11-09T10:05:00Z' },
+    ];
+    render(
+      <SlotMediaPicker slot={slotOf({tagIds: ['t11']})} selected={[]} onChange={vi.fn()} />,
+    );
+    const second = within(screen.getByRole('group', {name: '取值标签'}));
+    expect(second.queryByRole('button', {name: '3030'})).not.toBeInTheDocument();
+    expect(second.getByRole('button', {name: 'T40'})).toBeInTheDocument();
   });
 
   it('同一维度：使用者的挑替换候选集里那一维', async () => {
@@ -84,7 +107,7 @@ describe('SlotMediaPicker · 候选集里再筛', () => {
     render(
       <SlotMediaPicker slot={slotOf({tagIds: ['t1']})} selected={[]} onChange={vi.fn()} />,
     );
-    const second = within(screen.getByRole('group', {name: '二级标签'}));
+    const second = within(screen.getByRole('group', {name: '取值标签'}));
     await user.click(second.getByRole('button', {name: '3030'}));
     expect(selectionCalls.at(-1)?.tagIds).toEqual(['t11']);
   });
@@ -94,7 +117,7 @@ describe('SlotMediaPicker · 候选集里再筛', () => {
     render(
       <SlotMediaPicker slot={slotOf({tagIds: ['t1']})} selected={[]} onChange={vi.fn()} />,
     );
-    const second = within(screen.getByRole('group', {name: '二级标签'}));
+    const second = within(screen.getByRole('group', {name: '取值标签'}));
     await user.click(second.getByRole('button', {name: '菜菜'}));
     expect(selectionCalls.at(-1)?.tagIds).toEqual(['t1', 't21']);
   });
@@ -105,8 +128,8 @@ describe('SlotMediaPicker · 候选集里再筛', () => {
     );
     expect(screen.getByText(/还没圈标签/)).toBeInTheDocument();
     expect(selectionCalls.at(-1)?.tagIds).toBeUndefined();
-    // 没有范围时所有标签都能挑
-    const top = within(screen.getByRole('group', {name: '一级标签'}));
-    expect(top.getByRole('button', {name: '角色'})).toBeInTheDocument();
+    // 没有范围时所有取值都能挑
+    const second = within(screen.getByRole('group', {name: '取值标签'}));
+    expect(second.getByRole('button', {name: '菜菜'})).toBeInTheDocument();
   });
 });

@@ -153,6 +153,41 @@ export function secondLevelForSelection(
 }
 
 /**
+ * 取值行该列哪些标签：**能打在素材上的叶子**，按选中项涉及的维度收窄。
+ *
+ * 与 `secondLevelForSelection` 的区别是「按叶子取」而不是「按层级取」：
+ * 两级模型下叶子基本就是二级取值，但**孤立的一级**（「音乐」这种没子标签的词）
+ * 也是叶子、也真的能打在素材上 —— 按层级取会把它们漏掉，按叶子取就不会。
+ *
+ * 反过来，有子标签的一级（产品 / 产品图类型）**不是叶子**，自然不出现 ——
+ * 它们只是分组头，不是能挑的取值。
+ */
+export function leafTagsForSelection(
+  tags: LibraryTagStatOut[],
+  selected: string[],
+): LibraryTagStatOut[] {
+  const byId = new Map(tags.map((item) => [item.id, item]));
+  const leaves = sortByCreated(tags.filter(isSelectable));
+  const chosen = [...new Set(selected)].filter((id) => byId.has(id));
+  if (!chosen.length) return leaves;
+
+  /* 选中项涉及的维度：每个选中项归到它自己那个维度 */
+  const dimensions = new Set<string>();
+  for (const id of chosen) {
+    const tag = byId.get(id);
+    if (!tag) continue;
+    const dimension = dimensionOf(tags, tag);
+    if (dimension) dimensions.add(dimension);
+  }
+  if (!dimensions.size) return leaves;
+
+  return leaves.filter((tag) => {
+    const dimension = dimensionOf(tags, tag);
+    return dimension ? dimensions.has(dimension) : false;
+  });
+}
+
+/**
  * 某标签及其**全部**后代的 id —— 选父清子时用。 */
 export function descendantIds(
   tags: LibraryTagStatOut[],

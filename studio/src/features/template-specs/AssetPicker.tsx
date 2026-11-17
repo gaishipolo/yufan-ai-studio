@@ -130,6 +130,8 @@ export function AssetPicker({
         <TagFilter
           tags={tags.data ?? []}
           onlyWithAssets
+          hideTopLevel
+          excludeIds={scope}
           value={picked}
           onChange={setPicked}
         />

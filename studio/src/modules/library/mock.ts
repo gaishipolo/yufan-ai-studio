@@ -495,6 +495,27 @@ function tagStats(ctx: MockContext): LibraryTagStatOut[] {
   rows = purpose
     ? rows.filter((row) => row.purpose === purpose)
     : rows.filter((row) => row.purpose !== 'case');
+  /* 候选范围（模板库用）：只统计符合这组标签的素材。
+     与后端 `GET /library/tags?tagIds=` 同口径 —— 组内 OR、组间 AND。
+     模板作者圈了候选集之后，标签栏要显示的是「这批素材身上实际有的标签」，
+     按全库算会列出一堆这批素材一个都没挂的标签。 */
+  const scopeIds = String(ctx.params.tagIds ?? '')
+    .split(',')
+    .filter(Boolean);
+  if (scopeIds.length) {
+    const groups = tagGroupsByDimension(scopeIds);
+    rows = rows.filter((row) => {
+      const owned = new Set((row.tags ?? []).map((tag) => tag.id));
+      return groups.every((group) => {
+        const expanded = new Set<string>();
+        for (const id of group) {
+          expanded.add(id);
+          for (const descendant of tagDescendantIds(id)) expanded.add(descendant);
+        }
+        return [...owned].some((id) => expanded.has(id));
+      });
+    });
+  }
   /* 计数口径与后端一致：一个标签 = 自身 + 全部下级，按资产 id 去重。
      所以一条挂了三级词的素材，同时算进它的一级与二级祖先。 */
   const counts = new Map<string, number>();

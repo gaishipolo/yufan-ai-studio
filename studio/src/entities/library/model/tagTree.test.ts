@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { LibraryTagStatOut } from '@/shared/api/schema';
 import {
   effectiveTagSelection,
+  leafTagsForSelection,
   scopeFilterIds,
   secondLevelForSelection,
 } from './tagTree';
@@ -78,6 +79,58 @@ describe('secondLevelForSelection · 二级行该列哪些取值', () => {
     expect(
       secondLevelForSelection(TAGS, ['t11', 't2']).map((tag) => tag.id),
     ).toEqual(['t11', 't12', 't21']);
+  });
+});
+
+describe('leafTagsForSelection · 取值行列哪些能打的词', () => {
+  it('没选任何东西时列全部叶子（有子标签的维度不出现）', () => {
+    expect(leafTagsForSelection(TAGS, []).map((tag) => tag.id)).toEqual([
+      't11',
+      't12',
+      't21',
+    ]);
+  });
+
+  it('选了维度 → 只列那个维度下的叶子', () => {
+    expect(leafTagsForSelection(TAGS, ['t1']).map((tag) => tag.id)).toEqual([
+      't11',
+      't12',
+    ]);
+  });
+
+  it('选了取值 → 仍列它所属维度的全部叶子（才能同维度多选）', () => {
+    expect(leafTagsForSelection(TAGS, ['t11']).map((tag) => tag.id)).toEqual([
+      't11',
+      't12',
+    ]);
+  });
+
+  it('孤立的一级词也是叶子，也该列出来（按层级取会漏掉它）', () => {
+    /* 「音乐」没有子标签 —— 它自己就能打在素材上，
+       所以它属于「取值」而不是「一级维度」。
+       顺序按添加时间：「音乐」建得最早，排最前。 */
+    const withOrphan = [
+      ...TAGS,
+      {
+        id: 't3',
+        name: '音乐',
+        assetCount: 2,
+        childCount: 0,
+        createdAt: '2026-11-09T10:03:00Z',
+      },
+    ];
+    expect(leafTagsForSelection(withOrphan, []).map((tag) => tag.id)).toEqual([
+      't3',
+      't11',
+      't12',
+      't21',
+    ]);
+  });
+
+  it('有子标签的一级维度不出现在取值行', () => {
+    const ids = leafTagsForSelection(TAGS, []).map((tag) => tag.id);
+    expect(ids).not.toContain('t1');
+    expect(ids).not.toContain('t2');
   });
 });
 

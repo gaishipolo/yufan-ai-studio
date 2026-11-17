@@ -68,21 +68,33 @@ describe('AssetPicker · 候选集里再筛', () => {
     expect(selectionCalls.at(-1)?.tagIds).toEqual(['t1']);
   });
 
-  it('只列这批素材身上实际有的标签（计数为 0 的不出现）', async () => {
-    /* 词表里「角色」没有素材 → 不该出现，用户点了只会得到空列表。 */
+  it('一级维度行不显示（那只是分组头，范围已由候选集定死）', async () => {
+    renderPicker(['t1']);
+    expect(screen.queryByRole('group', {name: '一级标签'})).not.toBeInTheDocument();
+  });
+
+  it('只列这批素材身上实际有的取值（计数为 0 的不出现）', async () => {
+    /* 词表里「菜菜」没有素材 → 不该出现，用户点了只会得到空列表。 */
     tagsData.current = TAGS.map((tag) =>
-      tag.id === 't2' ? { ...tag, assetCount: 0 } : tag,
+      tag.id === 't21' ? { ...tag, assetCount: 0 } : tag,
     );
     renderPicker(['t1']);
-    const top = within(screen.getByRole('group', {name: '一级标签'}));
-    expect(top.queryByRole('button', {name: '角色'})).not.toBeInTheDocument();
-    expect(top.getByRole('button', {name: '产品'})).toBeInTheDocument();
+    const second = within(screen.getByRole('group', {name: '取值标签'}));
+    expect(second.queryByRole('button', {name: '菜菜'})).not.toBeInTheDocument();
+    expect(second.getByRole('button', {name: '3030'})).toBeInTheDocument();
+  });
+
+  it('候选集里的标签不列出来（它就是范围，点了等于没筛）', async () => {
+    renderPicker(['t11']);
+    const second = within(screen.getByRole('group', {name: '取值标签'}));
+    expect(second.queryByRole('button', {name: '3030'})).not.toBeInTheDocument();
+    expect(second.getByRole('button', {name: '菜菜'})).toBeInTheDocument();
   });
 
   it('同一维度：使用者的挑替换候选集里那一维', async () => {
     const user = userEvent.setup();
     renderPicker(['t1']);
-    const second = within(screen.getByRole('group', {name: '二级标签'}));
+    const second = within(screen.getByRole('group', {name: '取值标签'}));
     await user.click(second.getByRole('button', {name: '3030'}));
     expect(selectionCalls.at(-1)?.tagIds).toEqual(['t11']);
   });
@@ -90,16 +102,16 @@ describe('AssetPicker · 候选集里再筛', () => {
   it('跨维度：候选集那一维保留，使用者挑的加进来', async () => {
     const user = userEvent.setup();
     renderPicker(['t1']);
-    const second = within(screen.getByRole('group', {name: '二级标签'}));
+    const second = within(screen.getByRole('group', {name: '取值标签'}));
     await user.click(second.getByRole('button', {name: '菜菜'}));
     expect(selectionCalls.at(-1)?.tagIds).toEqual(['t1', 't21']);
   });
 
-  it('没圈标签的槽位也能按任意标签筛', async () => {
+  it('没圈标签的槽位也能按任意取值筛', async () => {
     const user = userEvent.setup();
     renderPicker([]);
-    const top = within(screen.getByRole('group', {name: '一级标签'}));
-    await user.click(top.getByRole('button', {name: '角色'}));
-    expect(selectionCalls.at(-1)?.tagIds).toEqual(['t2']);
+    const second = within(screen.getByRole('group', {name: '取值标签'}));
+    await user.click(second.getByRole('button', {name: '菜菜'}));
+    expect(selectionCalls.at(-1)?.tagIds).toEqual(['t21']);
   });
 });
