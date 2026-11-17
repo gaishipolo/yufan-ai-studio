@@ -87,6 +87,34 @@ class SpecSlotIn(StrictIn):
             payload["tagIds"] = [legacy]
         return payload
 
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_legacy_pack_fields(cls, data: Any) -> Any:
+        """老草稿的槽位里还带着 `packId`（素材封装下线前的字段），读回来时丢掉。
+
+        为什么要有这条：素材封装下线后槽位契约里没有 `packId` 了，而
+        `extra="forbid"` 会把老草稿里的这个键判成「未知键」——那份草稿**一打开就
+        422**，整页模板列表跟着 500（模板都还在，只是没人能读它）。与老 `tagId` →
+        `tagIds` 是同一个形状：老模板要能继续用、也能继续改，所以在契约层把旧键丢掉，
+        而不是逼人去改库。
+
+        封装槽位本身在迁移 `c3d8e1f04a7b` 里已经改成空图片槽位了，这里丢的只是一个
+        指向已下线功能的残留引用，丢不丢都不影响图片槽位。
+        """
+        if not isinstance(data, dict):
+            return data
+        legacy = [
+            key
+            for key in ("packId", "packVersion", "pack_id", "pack_version")
+            if key in data
+        ]
+        if not legacy:
+            return data
+        payload = dict(data)
+        for key in legacy:
+            payload.pop(key, None)
+        return payload
+
 
 class TemplateSpecIn(StrictIn):
     """一份规格（草稿的整份内容）。`key` 是幂等边界，发布后不可改名。"""
