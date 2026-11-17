@@ -122,6 +122,22 @@ describe('SlotMediaPicker · 候选集里再筛', () => {
     expect(selectionCalls.at(-1)?.tagIds).toEqual(['t1', 't21']);
   });
 
+  it('同一维度挑多个取值：发给后端的标签全都带上（组内是或）', async () => {
+    /* 回归：逐个覆盖会让三个胶囊全高亮、却只筛出最后一档。 */
+    const user = userEvent.setup();
+    tagsData.current = [
+      ...TAGS,
+      { id: 't12', name: 'T40', parentId: 't1', parentName: '产品', depth: 2, assetCount: 2, childCount: 0, createdAt: '2026-11-09T10:05:00Z' },
+    ];
+    render(
+      <SlotMediaPicker slot={slotOf({tagIds: ['t1']})} selected={[]} onChange={vi.fn()} />,
+    );
+    const second = within(screen.getByRole('group', {name: '取值标签'}));
+    await user.click(second.getByRole('button', {name: '3030'}));
+    await user.click(second.getByRole('button', {name: 'T40'}));
+    expect(selectionCalls.at(-1)?.tagIds).toEqual(['t11', 't12']);
+  });
+
   it('老模板（没圈标签）照样能挑，只是没有分组', () => {
     render(
       <SlotMediaPicker slot={slotOf({tagIds: []})} selected={[]} onChange={vi.fn()} />,

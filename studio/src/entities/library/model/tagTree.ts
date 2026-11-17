@@ -289,7 +289,7 @@ export function effectiveTagSelection(
  *
  * 这是模板库的核心口径 —— 作者圈了候选集（那是**素材范围**），
  * 使用者在界面上的点击是**在这个范围里再筛**。所以同一维度上，
- * 使用者挑的那一档**替换**掉候选集里这一维度的标签，而不是叠加：
+ * 使用者挑的那几档**替换**掉候选集里这一维度的标签，而不是叠加：
  *
  * - 候选集 =「产品 + 三视图」，使用者挑「产品 / 6036」
  *   → 结果 =「6036 + 三视图」（既是 6036 又是三视图）。
@@ -297,6 +297,10 @@ export function effectiveTagSelection(
  * - 候选集 =「产品」，使用者挑「角色 / 菜菜」
  *   → 结果 =「产品 + 菜菜」：菜菜那条轴候选集没管过，由使用者说了算。
  * - 候选集 = 空，使用者挑「产品 / 6036」→ 就是「6036」。
+ *
+ * **替换是按维度整组替换，不是逐个覆盖** —— 同一维度挑多个取值时，
+ * 那几档要**全都留着**（后端组内是 OR：挑 6036 与 T35 = 两个产品都要看）。
+ * 逐个覆盖会只剩最后一个：界面上三个胶囊都高亮，却只筛出最后一档。
  *
  * 与后端一致：跨维度是 AND，同维度是 OR（`tags.tag_filter_clause`）。
  */
@@ -315,13 +319,21 @@ export function scopeFilterIds(
     if (!dimension) continue;
     byDimension.set(dimension, [...(byDimension.get(dimension) ?? []), id]);
   }
+  /* 使用者的挑选按维度**整组**接管：先把这一维度已有的候选集标签清掉，
+     再把这一维度挑中的全部取值放进去。
+     逐个 `set(dimension, [id])` 会把同维度的前一个挑覆盖掉 ——
+     组内本该是「或」（两个产品都要看），覆盖成「只剩最后一个」，
+     界面上却表现为多个胶囊全高亮、结果只有一档。 */
+  const pickedByDimension = new Map<string, string[]>();
   for (const id of picked) {
     const tag = byId.get(id);
     if (!tag) continue;
     const dimension = dimensionOf(tags, tag);
     if (!dimension) continue;
-    /* 这一维度由使用者说了算：候选集在这一维度的标签让位。 */
-    byDimension.set(dimension, [id]);
+    pickedByDimension.set(dimension, [...(pickedByDimension.get(dimension) ?? []), id]);
+  }
+  for (const [dimension, ids] of pickedByDimension) {
+    byDimension.set(dimension, ids);
   }
 
   const result: string[] = [];

@@ -160,6 +160,22 @@ describe('scopeFilterIds · 候选集 + 使用者的挑选', () => {
     expect(scopeFilterIds(TAGS, ['t1', 't2'], ['t11'])).toEqual(['t11', 't2']);
   });
 
+  it('同一维度挑了多个取值 → **全都留着**（后端组内是或）', () => {
+    // 挑「3030 + T40」= 两个产品都要看。
+    // 逐个覆盖会只剩最后一个 → 界面上三个胶囊都高亮，却只筛出最后一档。
+    expect(scopeFilterIds(TAGS, ['t1'], ['t11', 't12'])).toEqual(['t11', 't12']);
+  });
+
+  it('同维度多个取值替换候选集那一维时，也是**整组替换**', () => {
+    // 候选集「产品」，使用者挑「3030 + T40」→ 两个取值都替掉整个产品维度，
+    // 但不能把另一个维度的候选集标签也吃掉。
+    expect(scopeFilterIds(TAGS, ['t1', 't2'], ['t11', 't12'])).toEqual([
+      't11',
+      't12',
+      't2',
+    ]);
+  });
+
   it('词表里没有的 id 被丢掉', () => {
     expect(scopeFilterIds(TAGS, ['nope'], [])).toEqual([]);
     expect(scopeFilterIds(TAGS, [], ['nope'])).toEqual([]);
