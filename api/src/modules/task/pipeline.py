@@ -139,6 +139,13 @@ class VideoTaskStore:
             cover_url=task.cover_url or None,
             error=task.error_message,
             created_at=task.created_at,
+            # 墙钟预算的起点必须传**本轮**开始时间，不能让它回落到 `created_at`。
+            # `started_at` 由 `mark_submitted` 每轮写成本轮时间，而 `created_at`
+            # 永远不会变：一个已经跑满 30 分钟被判超时的任务，重试后
+            # `now - created_at` 立刻又大于预算，第一跳轮询当场再判一次超时 ——
+            # 用户看到的就是「点重试，瞬间还是同一句生成超时」。
+            # 与 `model_driver/store.py` 同口径（那边传的是 `job.started_at`）。
+            timeout_started_at=task.started_at,
             submit_attempts=task.submit_attempts,
             terminal_statuses=_TERMINAL,
         )

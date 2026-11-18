@@ -481,6 +481,63 @@ def test_retry_after_real_failure_resubmits(client: TestClient, api: str) -> Non
     assert any(job["key"] == f"poll:video:{after.id}" for job in jobs)
 
 
+def test_retry_restarts_the_wall_clock_budget(client: TestClient, api: str) -> None:
+    """重试要能拿到**完整**的墙钟预算，不能沿用建单时间。
+
+    现场（LibTV 免费队列）：任务跑满 1800 秒被判「生成超时，请重试」，
+    用户点重试，第一跳轮询又立刻是同一句 —— 因为 `VideoTaskStore` 构造
+    `GenerationRecord` 时没传 `timeout_started_at`，框架回落到 `created_at`，
+    而它永远不会变。`mark_submitted` 明明把 `started_at` 写成了本轮时间，
+    却没被任何人读到，重试按钮等于摆设。
+    """
+    import asyncio
+    from datetime import UTC, datetime, timedelta
+
+    from db.session import get_session_factory
+    from generation.runner import JOB_SUBMIT, GenerationRunner
+    from infra.queue.base import Job
+    from infra.queue.memory import MemoryJobQueue
+    from modules.task.enums import TaskStatus
+    from modules.task.models import VideoTask
+    from modules.task.pipeline import VideoTaskStore
+
+    async def scenario() -> tuple[str, bool, object]:
+        factory = get_session_factory()
+        async with factory() as session:
+            task = VideoTask(
+                title="跑满预算被判超时",
+                prompt="机场跑道",
+                status=TaskStatus.FAILED.value,
+                model="Seedance 2.5",
+                model_id="seedance-2.5",
+                error_message="生成超时，请重试",
+                author_id="u_001",
+                author_name="老大",
+                # 三小时前建的单：回落到 created_at 就必然「已超时」
+                created_at=datetime.now(tz=UTC) - timedelta(hours=3),
+            )
+            session.add(task)
+            await session.commit()
+            task_id = task.id
+
+        assert client.post(f"{api}/tasks/{task_id}/retry").status_code == 200
+
+        queue = MemoryJobQueue()
+        await GenerationRunner(queue).handle_submit(
+            Job(name=JOB_SUBMIT, payload={"kind": "video", "record_id": task_id})
+        )
+
+        async with factory() as session:
+            record = await VideoTaskStore(session).load(task_id)
+        assert record is not None
+        return task_id, GenerationRunner._timed_out(record), record.timeout_started_at
+
+    _, timed_out, started_at = asyncio.run(scenario())
+
+    assert started_at is not None, "重试后必须带本轮起点，否则框架只能回落到 created_at"
+    assert timed_out is False, "重试后仍是「已超时」，第一跳轮询就会再判一次失败"
+
+
 # --------------------------------------------------------------------------- #
 # canReadAll 透传 + stats 口径（R3-03）
 # --------------------------------------------------------------------------- #

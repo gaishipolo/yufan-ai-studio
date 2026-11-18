@@ -193,7 +193,7 @@
 | `modules/model_driver/drivers/bailian.py` | 百炼 Wan3 视频**驱动**（自动载入）：异步任务；参考素材由驱动自己的 `prepare_inputs()` 先直传百炼 OSS 再拼 `oss://` 直链（Wan 只认公网 URL）。付费提交只允许一次、回执落盘（`bailian-submission.json`），拒绝/未知分别收敛。 |
 | `infra/ai/router.py` | 模型路由：`model` 字符串 → 具体供应商。 |
 | `modules/model_driver/drivers/libtv.py` | LibTV 视频**驱动**（自动载入）：模型 `libtv-wan3-replacement`，只接收归档工作区引用；提交 / 轮询 / 取消交给 `generation.runner`，通用入口缺 `inputs/request.json` 时它先补跑 `upload`。 |
-| `modules/model_driver/libtv/executor.py` | 执行器监督层：拉子进程跑 `-m modules.model_driver.libtv.process`，把阶段失败翻成可读码（浏览器没连上 / 浏览器没登录 / 遗留锁 / 安全守卫拦截分开报）。 |
+| `modules/model_driver/libtv/executor.py` | 执行器监督层：拉子进程跑 `-m modules.model_driver.libtv.process`，把阶段失败翻成可读码（浏览器没连上 / 浏览器没登录 / 遗留锁 / 安全守卫拦截分开报）；按计费模式挑浏览器账号（积分队列走 `LIBTV_CREDITS_BROWSER_URL`、免费队列走账号池），并把账号绑定进 `run.json::browser_url`。 |
 | `modules/model_driver/libtv/process.py` | 独立监督进程：持 OS 租约直到 Node 真正退出，API 重启不释放活任务的锁；阶段预算 1500/100/45/240 秒。 |
 | `modules/model_driver/libtv/worker.py` | `libtv.download` 后台作业：成片下载是 240 秒量级的非计费工作，不占轮询那一跳的预算。 |
 | `modules/model_driver/libtv/state.py` | 适配器的持久化状态（`run.json` 的 schema）与启动方 ⇄ 监督进程的参数协议版本。 |

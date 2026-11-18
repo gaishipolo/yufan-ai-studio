@@ -32,6 +32,13 @@ class LibTVState(BaseModel):
     last_error: str | None = None
     error_code: str | None = None
     preparation_ready: bool = False
+    # 计费模式（`free` / `credits`）。物化器在 `run.json` 里写它，桥接层据此
+    # 决定走免费队列还是积分队列；执行器用它挑**哪个浏览器账号**：
+    # 积分只在一个账号上有，免费队列不花积分，可以落在额度快用完的那个账号。
+    billing_mode: str | None = None
+    # 账号绑定：桥接层在第一个阶段把当时用的 CDP 地址写进来，之后就只读它。
+    # 上传素材与上游 `task_id` 都属于那个账号，中途换号 = 查不到自己的任务。
+    browser_url: str | None = None
 
     @field_validator("progress_percent", mode="before")
     @classmethod

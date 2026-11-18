@@ -5207,6 +5207,179 @@
         }
       }
     },
+    "/api/v1/model-driver/libtv/account": {
+      "get": {
+        "tags": [
+          "模型驱动"
+        ],
+        "summary": "LibTV 账号额度、免费权益与队列名额",
+        "operationId": "libtv_account_api_v1_model_driver_libtv_account_get",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "account",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "CDP 地址，留空按计费模式挑（积分→9412，免费→第一个在线）",
+              "default": "",
+              "title": "Account"
+            },
+            "description": "CDP 地址，留空按计费模式挑（积分→9412，免费→第一个在线）"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_LibTvAccountOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/model-driver/libtv/progress": {
+      "post": {
+        "tags": [
+          "模型驱动"
+        ],
+        "summary": "批量查上游进度与排队位次（只读，不触发下载）",
+        "operationId": "libtv_progress_api_v1_model_driver_libtv_progress_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LibTvProgressIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_LibTvProgressOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/model-driver/libtv/consumption": {
+      "get": {
+        "tags": [
+          "模型驱动"
+        ],
+        "summary": "积分消耗明细（含上游 task_id，对账用）",
+        "operationId": "libtv_consumption_api_v1_model_driver_libtv_consumption_get",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "页码，从 1 开始",
+              "default": 1,
+              "title": "Page"
+            },
+            "description": "页码，从 1 开始"
+          },
+          {
+            "name": "pageSize",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "description": "每页条数",
+              "default": 20,
+              "title": "Pagesize"
+            },
+            "description": "每页条数"
+          },
+          {
+            "name": "account",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "CDP 地址，留空按规则挑",
+              "default": "",
+              "title": "Account"
+            },
+            "description": "CDP 地址，留空按规则挑"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_LibTvConsumptionOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/shots": {
       "get": {
         "tags": [
@@ -6886,6 +7059,87 @@
         },
         "type": "object",
         "title": "ApiResponse[IngestOut]"
+      },
+      "ApiResponse_LibTvAccountOut_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LibTvAccountOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[LibTvAccountOut]"
+      },
+      "ApiResponse_LibTvConsumptionOut_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LibTvConsumptionOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[LibTvConsumptionOut]"
+      },
+      "ApiResponse_LibTvProgressOut_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LibTvProgressOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[LibTvProgressOut]"
       },
       "ApiResponse_LibraryAssetDetailOut_": {
         "properties": {
@@ -9968,6 +10222,325 @@
         ],
         "title": "IngestOut",
         "description": "生成入库结果。`created=False` = 命中幂等（sourceKey 重复或内容相同）。\n\n不返回整条资产：调用方（生成侧）需要的是「拿到 id 去关联任务」，\n而它可能并不持有 `library:read` 之外的权限去读详情。"
+      },
+      "LibTvAccountOut": {
+        "properties": {
+          "account": {
+            "type": "string",
+            "title": "Account",
+            "description": "查询用的 CDP 地址（9411 免费队列 / 9412 积分队列）",
+            "default": ""
+          },
+          "asset": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LibTvAssetOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "freePower": {
+            "type": "number",
+            "title": "Freepower",
+            "default": 0
+          },
+          "freePowerExpireAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Freepowerexpireat"
+          },
+          "zeroPowerBenefits": {
+            "items": {
+              "$ref": "#/components/schemas/LibTvBenefitOut"
+            },
+            "type": "array",
+            "title": "Zeropowerbenefits"
+          }
+        },
+        "type": "object",
+        "title": "LibTvAccountOut"
+      },
+      "LibTvAssetOut": {
+        "properties": {
+          "usablePower": {
+            "type": "integer",
+            "title": "Usablepower",
+            "description": "可用积分（含赠送与套餐）",
+            "default": 0
+          },
+          "freeUsablePower": {
+            "type": "integer",
+            "title": "Freeusablepower",
+            "description": "其中赠送积分部分",
+            "default": 0
+          },
+          "usedPower": {
+            "type": "integer",
+            "title": "Usedpower",
+            "description": "历史累计已用",
+            "default": 0
+          },
+          "totalPower": {
+            "type": "integer",
+            "title": "Totalpower",
+            "description": "累计获得",
+            "default": 0
+          },
+          "taskCanSubmit": {
+            "type": "integer",
+            "title": "Taskcansubmit",
+            "description": "账号当下还能提交几个任务",
+            "default": 0
+          },
+          "concurrent": {
+            "type": "integer",
+            "title": "Concurrent",
+            "description": "-1 表示不限制并发",
+            "default": 0
+          },
+          "memberLevel": {
+            "type": "string",
+            "title": "Memberlevel",
+            "default": ""
+          },
+          "expireDate": {
+            "type": "string",
+            "title": "Expiredate",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "title": "LibTvAssetOut"
+      },
+      "LibTvBenefitOut": {
+        "properties": {
+          "modelVersionId": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Modelversionid"
+          },
+          "targetName": {
+            "type": "string",
+            "title": "Targetname",
+            "default": ""
+          },
+          "activityName": {
+            "type": "string",
+            "title": "Activityname",
+            "default": ""
+          },
+          "endTime": {
+            "type": "string",
+            "title": "Endtime",
+            "description": "权益到期时间；到期后同一批任务会开始扣积分",
+            "default": ""
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Tags"
+          }
+        },
+        "type": "object",
+        "title": "LibTvBenefitOut"
+      },
+      "LibTvConsumptionItemOut": {
+        "properties": {
+          "amount": {
+            "type": "integer",
+            "title": "Amount",
+            "default": 0
+          },
+          "seconds": {
+            "type": "integer",
+            "title": "Seconds",
+            "description": "扣费时间（Unix 秒）",
+            "default": 0
+          },
+          "sourceName": {
+            "type": "string",
+            "title": "Sourcename",
+            "default": ""
+          },
+          "taskId": {
+            "type": "string",
+            "title": "Taskid",
+            "description": "上游 task_id（originalBizNo）：对账用",
+            "default": ""
+          },
+          "projectName": {
+            "type": "string",
+            "title": "Projectname",
+            "default": ""
+          },
+          "modelName": {
+            "type": "string",
+            "title": "Modelname",
+            "default": ""
+          },
+          "summary": {
+            "type": "string",
+            "title": "Summary",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "title": "LibTvConsumptionItemOut"
+      },
+      "LibTvConsumptionOut": {
+        "properties": {
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "default": 0
+          },
+          "page": {
+            "type": "integer",
+            "title": "Page",
+            "default": 1
+          },
+          "pageSize": {
+            "type": "integer",
+            "title": "Pagesize",
+            "default": 20
+          },
+          "totalCount": {
+            "type": "integer",
+            "title": "Totalcount",
+            "default": 0
+          },
+          "totalAmount": {
+            "type": "integer",
+            "title": "Totalamount",
+            "default": 0
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/LibTvConsumptionItemOut"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "type": "object",
+        "title": "LibTvConsumptionOut"
+      },
+      "LibTvProgressIn": {
+        "properties": {
+          "taskIds": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Taskids",
+            "description": "上游 task_id 列表"
+          },
+          "account": {
+            "type": "string",
+            "title": "Account",
+            "description": "留空按配置挑：积分看 9412，免费队列看第一个在线的",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "title": "LibTvProgressIn"
+      },
+      "LibTvProgressOut": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/LibTvQueueItemOut"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "type": "object",
+        "title": "LibTvProgressOut"
+      },
+      "LibTvQueueItemOut": {
+        "properties": {
+          "taskId": {
+            "type": "string",
+            "title": "Taskid"
+          },
+          "status": {
+            "type": "integer",
+            "title": "Status",
+            "description": "0 排队/生成中 · 1 生成中 · 2 成功 · 3 失败",
+            "default": 0
+          },
+          "percent": {
+            "type": "integer",
+            "title": "Percent",
+            "default": 0
+          },
+          "queueReason": {
+            "type": "string",
+            "title": "Queuereason",
+            "description": "UNLIMITED_SERIAL = 0 积分队列排队；RATE_LIMIT = 被上游限流推迟",
+            "default": ""
+          },
+          "queuePosition": {
+            "type": "integer",
+            "title": "Queueposition",
+            "description": "这台机器在该队列里的位次",
+            "default": 0
+          },
+          "queueTotal": {
+            "type": "integer",
+            "title": "Queuetotal",
+            "default": 0
+          },
+          "queueLimit": {
+            "type": "integer",
+            "title": "Queuelimit",
+            "description": "画布 0 积分队列的名额，默认 10",
+            "default": 10
+          },
+          "power": {
+            "type": "integer",
+            "title": "Power",
+            "default": 0
+          },
+          "benefitTag": {
+            "type": "string",
+            "title": "Benefittag",
+            "default": ""
+          },
+          "remainSeconds": {
+            "type": "integer",
+            "title": "Remainseconds",
+            "default": 0
+          },
+          "describe": {
+            "type": "string",
+            "title": "Describe",
+            "description": "给人看的一句话，省得前端自己拼",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "taskId"
+        ],
+        "title": "LibTvQueueItemOut"
       },
       "LibraryArchiveOut": {
         "properties": {
@@ -14500,6 +15073,18 @@
             ],
             "title": "Startedat",
             "description": "开始生成时间，未开始为 null"
+          },
+          "externalId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Externalid",
+            "description": "上游任务标识，形如 `<归档工作区>:<上游 task_id>`。**给排队查询用**：LibTV 的队列位次只能按上游 task_id 查，前端拿它拆出 task_id 去`POST /model-driver/libtv/progress`，不必由后端再存一份排队快照"
           }
         },
         "type": "object",

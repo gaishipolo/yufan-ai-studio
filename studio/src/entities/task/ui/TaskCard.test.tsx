@@ -23,7 +23,11 @@ const task: VideoTask = {
   updatedAt: '2026-11-05T03:32:21.375Z',
 };
 
-function setup(overrides: Partial<VideoTask> = {}, selected = false) {
+function setup(
+  overrides: Partial<VideoTask> = {},
+  selected = false,
+  queueHint?: string | null,
+) {
   const onToggleSelect = vi.fn();
   const onOpen = vi.fn();
   const view = render(
@@ -32,6 +36,7 @@ function setup(overrides: Partial<VideoTask> = {}, selected = false) {
       selected={selected}
       onToggleSelect={onToggleSelect}
       onOpen={onOpen}
+      queueHint={queueHint}
     />,
   );
   return { ...view, onToggleSelect, onOpen };
@@ -80,5 +85,21 @@ describe('TaskCard', () => {
     expect(screen.getByText('生成中')).toBeInTheDocument();
     expect(screen.getByText('42%')).toBeInTheDocument();
     expect(screen.queryByText('11-05 03:32')).not.toBeInTheDocument();
+  });
+});
+
+describe('TaskCard · 上游排队', () => {
+  it('排队时在进度条下面多一行说明', () => {
+    // 「48% 卡了半小时」和「排队第 3 位」看起来一模一样，差别只有这一行
+    setup({ status: 'running', progress: 12 }, false, '0 积分队列 3/10');
+
+    expect(screen.getByText('0 积分队列 3/10')).toBeInTheDocument();
+  });
+
+  it('没有排队信息时不占位（真在生成时百分比已经够说明了）', () => {
+    setup({ status: 'running', progress: 48 });
+
+    expect(screen.queryByText(/积分队列/)).not.toBeInTheDocument();
+    expect(screen.getByText('48%')).toBeInTheDocument();
   });
 });

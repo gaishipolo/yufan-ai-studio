@@ -104,7 +104,9 @@ def test_reference_kinds_are_declared_by_the_model() -> None:
 
     libtv = next(item for item in LIBTV_MODELS if item.id == LIBTV)
     assert libtv.reference_kinds == ("image", "video", "audio")
-    assert libtv.max_references == 5
+    # 10 与封装页的 `MAX_SLOT_REFS` 同一口径，且不超过上游分类型上限（图 10）。
+    # 这里写 5 时，配了 6 张参考图的模板会在填表页提交时才被受理期挡掉。
+    assert libtv.max_references == 10
 
     bailian = next(item for item in BAILIAN_MODELS if item.replacement)
     assert bailian.reference_kinds == ("image", "video", "audio")
