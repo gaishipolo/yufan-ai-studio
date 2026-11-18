@@ -184,7 +184,14 @@ class LibTVProvider:
         # upload 阶段可能停在「等免费」或「适配器报错」：这时不许再调 submit，
         # 否则桥接层只会抛 "Refusing duplicate or uncertain submission"。
         if generic and previous.status == "waiting_free":
-            raise BadRequest("当前报价非零，等待免费；未提交生成")
+            # 默认队列就是免费队列，撞上这条的人最多。原文案只说了「报价非零」，
+            # 既不说多少钱，也不说还能怎么办 —— 用户唯一能想到的动作是再点一次。
+            cost = previous.estimated_credits
+            price = f"{cost:g} 积分" if isinstance(cost, (int, float)) else "非零"
+            raise BadRequest(
+                f"当前没有 0 积分畅用权益，免费队列报价 {price}，未提交；"
+                "改用积分队列（billingMode=credits）或等权益恢复后再提交"
+            )
         if generic and previous.status == "service_error" and previous.last_error:
             raise BadRequest(f"{previous.last_error}；未提交生成")
         if previous.status != "uploaded":
@@ -196,7 +203,12 @@ class LibTVProvider:
         if latest.status in ("submitting", "submission_unknown"):
             raise Conflict(_uncertain_hint(value, account))
         if latest.status == "waiting_free":
-            raise BadRequest("当前报价非零，等待免费；未提交生成")
+            cost = latest.estimated_credits
+            price = f"{cost:g} 积分" if isinstance(cost, (int, float)) else "非零"
+            raise BadRequest(
+                f"当前没有 0 积分畅用权益，免费队列报价 {price}，未提交；"
+                "改用积分队列（billingMode=credits）或等权益恢复后再提交"
+            )
         if latest.status == "service_error" and latest.last_error:
             # 适配器给了具体原因（积分队列仍报 0、估价不可用等），原样透出。
             raise BadRequest(f"{latest.last_error}；未提交生成")
@@ -248,6 +260,9 @@ class LibTVProvider:
         return GenerationProgress(
             external_id=external_id,
             state=status,
+            # 桥接层把上游 status=0 记成 `queued`（免费队列按名额串行、限流按上游节拍）。
+            # 框架据此顺延墙钟：排队不该算进「生成超时」。
+            queued=meta.status == "queued",
             progress=100 if status == GenerationState.SUCCEEDED else min(99, meta.progress_percent),
             output_url=f"/api/v1/templates/replacement-runs/{run_id}/output"
             if status == GenerationState.SUCCEEDED

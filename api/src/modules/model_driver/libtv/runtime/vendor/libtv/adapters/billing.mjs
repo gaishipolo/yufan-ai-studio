@@ -65,9 +65,10 @@ export async function accountCreditTags(api) {
   if (!response.ok) throw Error(`Benefit query HTTP ${response.status}`);
   const result = await response.json();
   if (result?.code !== 0) throw Error(`Benefit query code ${result?.code}`);
-  const tags = activeZeroPowerTags(result.data?.list);
-  if (!tags.length) throw Error('No active zero-power benefit tag; credit queue needs manual review');
-  return tags;
+  // 活动到期后（本次是 2026-11-30）账号就没有可关的标签了，这不是错误：
+  // 以前这里抛错，等于「权益到期当天积分队列全线不可用」——只是没标签要关而已，
+  // infiniteSwitch=1 依然成立，交给上游按正常积分队列处理。
+  return activeZeroPowerTags(result.data?.list);
 }
 
 /** Build the per-task credit-queue request. Pure: never mutates `request`. */
@@ -75,20 +76,25 @@ export function applyBilling(request, mode, tags) {
   if (mode !== 'credits') return request;
   const list = Array.isArray(tags) ? tags : [];
   const valid = list.filter(isZeroPowerBenefitTag);
-  if (!valid.length) throw Error('Credit queue requires active zero-power benefit tags');
+  // 无有效标签 = 没有权益可关，按普通积分队列提交（见 accountCreditTags 的说明）。
+  const withTags = valid.length > 0;
   const merge = (existing) => {
     const merged = Array.isArray(existing) ? [...existing] : [];
     for (const tag of valid) if (!merged.includes(tag)) merged.push(tag);
     return merged;
   };
-  return {
+  const next = {
     ...request,
     requestId: randomUUID().replaceAll('-', ''),
-    disableBenefitTags: merge(request.disableBenefitTags),
-    params: {
-      ...request.params,
-      infiniteSwitch: 1,
-      disableBenefitTags: merge(request.params?.disableBenefitTags),
-    },
+    params: {...request.params, infiniteSwitch: 1},
   };
+  if (withTags) {
+    next.disableBenefitTags = merge(request.disableBenefitTags);
+    next.params.disableBenefitTags = merge(request.params?.disableBenefitTags);
+  } else {
+    // 上一轮遗留的旧标签必须删掉：活动已结束，带着过期标签提交只会被上游拒。
+    delete next.disableBenefitTags;
+    delete next.params.disableBenefitTags;
+  }
+  return next;
 }

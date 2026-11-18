@@ -56,6 +56,21 @@ class CoverAttachable(Protocol):
     ) -> bool: ...
 
 
+@runtime_checkable
+class DeadlineExtendable(Protocol):
+    """可选能力：把墙钟预算的起点挪到「现在」。
+
+    为什么单独一个协议：排队状态只对**异步长任务**有意义（同步供应商一次调用就出结果），
+    强行塞进 `GenerationStore` 会逼着每个实现都写一个空方法，而空方法最容易
+    写着写着就「看起来支持了」。用协议 + `isinstance` 探测，不支持就是真不支持
+    （口径见 `docs/HANDOFF.md` §5.5：可选能力别用 getattr 探测）。
+    """
+
+    async def extend_deadline(self, record_id: str) -> bool:
+        """顺延成功返回 True；记录不存在/已终态返回 False。"""
+        ...
+
+
 def strict_model(pipeline: GenerationPipeline) -> bool:
     """该流水线是否**禁止**「只有一个供应商就兜底」。未声明 = 允许。
 

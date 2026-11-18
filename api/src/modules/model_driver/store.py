@@ -139,6 +139,14 @@ class DriverJobStore:
         job.status = STATUS_RUNNING
         return True
 
+    async def extend_deadline(self, record_id: str) -> bool:
+        """上游还在排队：顺延墙钟起点（与 `modules/task/pipeline.py` 同口径）。"""
+        job = await _guard(self.session, record_id)
+        if job is None:
+            return False
+        job.started_at = datetime.now(tz=UTC)
+        return True
+
     async def mark_succeeded(
         self,
         record_id: str,

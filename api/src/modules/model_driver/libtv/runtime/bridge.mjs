@@ -71,7 +71,11 @@ async function currentCanvasProjectId() {
 /** 把 request.json 的 project_id 对齐到当前画布；没有画布可读时保持原样。 */
 async function alignCanvasProject(run, save) {
   const projectId = await currentCanvasProjectId();
-  if (!projectId) return null;
+  if (!projectId) {
+    /* 退回写死的旧 project_id 只会换来一句「30001 账号状态已切换」，
+       而真正要做的是让人把画布打开。说清楚，别让人去猜。 */
+    throw Error('读不到当前画布：请在该账号的浏览器里打开一个画布页（liblib.tv/canvas）后重试');
+  }
   const file = path.join(run, 'inputs/request.json');
   const request = JSON.parse(await readFile(file, 'utf8'));
   if (request.metadata?.project_id === projectId) return projectId;
@@ -110,8 +114,9 @@ export async function main() {
     if (compiled.prompt !== p.prompt || p.resolution !== '720P' || p.model !== 'wanx3.0'
       || p.modeType !== 'mixed2video' || p.count !== 1 || p.infiniteSwitch !== 1)
       throw Error('Unexpected credit request');
-    if (!Array.isArray(request.disableBenefitTags) || !request.disableBenefitTags.length)
-      throw Error('Credit request is missing the account zero-benefit tags');
+    /* `disableBenefitTags` 只在「账号当前有 0 积分权益」时才存在。活动到期后没有
+       标签可关，此时按普通积分队列提交是正确行为 —— 以前这里硬校验，等于权益
+       到期当天积分队列全线不可用（见 billing.mjs 的 accountCreditTags）。 */
     const estimate = await api.request('/api/task/generation/power/calculator', request);
     await save(path.join(run, 'records/estimate.json'), estimate);
     const cost = estimate.data?.power;

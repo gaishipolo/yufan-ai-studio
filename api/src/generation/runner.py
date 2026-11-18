@@ -46,6 +46,7 @@ from generation.events import (
 )
 from generation.pipeline import (
     CoverAttachable,
+    DeadlineExtendable,
     GenerationPipeline,
     fail_on_model_gone,
     get_pipeline,
@@ -630,6 +631,11 @@ class GenerationRunner:
                                 )
                                 return
                         else:
+                            # 「排队」不等于「在生成」：免费队列按名额串行、限流队列按上游
+                            # 节拍，把这段等待算进墙钟就等于「排得越久越容易被判超时」
+                            # （2026-11-17 任务 29dc66ae 因此在 48% 被判超时，上游其实正常）。
+                            if result.queued and isinstance(store, DeadlineExtendable):
+                                await self._extend_deadline(store, record, kind, record_id)
                             # 进度只增不减，且轮询期不报 100——供应商偶发回一个更小的值
                             # 会让用户看到进度条倒退；99 留给「已提交、还在等终态」。
                             progress = max(record.progress, min(99, result.progress))
@@ -1002,6 +1008,34 @@ class GenerationRunner:
         if isinstance(exc, AppError):
             return exc.retryable
         return True
+
+    async def _extend_deadline(
+        self,
+        store: DeadlineExtendable,
+        record: GenerationRecord,
+        kind: str,
+        record_id: str,
+    ) -> None:
+        """上游还在排队：把墙钟起点挪到现在，但不超过硬上限。
+
+        上限按**建单时间**算，不是按挪过的起点算——否则一路顺延下去，
+        一个永远排不上的任务会既不失败也不出片，把列表和队列一起占死。
+        """
+        created = record.created_at
+        if created is not None:
+            if created.tzinfo is None:  # sqlite 读回来是 naive，按 UTC 解释
+                created = created.replace(tzinfo=UTC)
+            elapsed = (datetime.now(tz=UTC) - created).total_seconds()
+            if elapsed > settings.generation_max_wall_clock_sec:
+                logger.warning(
+                    "排队已超过硬上限 %d 秒，不再顺延 kind=%s id=%s",
+                    settings.generation_max_wall_clock_sec,
+                    kind,
+                    record_id,
+                )
+                return
+        if await store.extend_deadline(record_id):
+            logger.info("上游仍在排队，顺延墙钟预算 kind=%s id=%s", kind, record_id)
 
     @staticmethod
     def _poll_interval(provider: ModelProvider) -> float:

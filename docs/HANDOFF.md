@@ -772,6 +772,10 @@ curl -sS --noproxy '*' -H "Authorization: Bearer $TOKEN" \
   目录里目前没有模型声明它，所以这个字段暂时不可用 ——
   「字段在、能力没有」是诚实状态，别再往请求体里塞自造的键。
 - 运行工作区配置叫 `TASK_RUNS_ROOT`（旧名 `REPLACEMENT_RUNS_ROOT` 仍认，AliasChoices）。
+- **排队不计入生成预算**（2026-11-18）：poll 发现归档 `queued`（上游 status=0）时，
+  `DeadlineExtendable.extend_deadline` 会把墙钟起点挪到现在；硬上限
+  `GENERATION_MAX_WALL_CLOCK_SEC`（默认 3 小时）按**建单时间**算，防止「永远排队」变成
+  「永远不失败」。别用 `getattr` 探测这个能力，走协议（同 §5.5 的约定）。
 - **排队位次不在我们的库里**（2026-11-17）：任务卡的「排队 3/10」「限流 144s」是前端拿
   `task.externalId` 的后半段（上游 task_id）批量问 `POST /model-driver/libtv/progress` 得来的，
   一条请求问完一页，5 秒一轮、隐藏标签页不轮询。只在 `modelId=libtv-wan3-replacement` 上问
