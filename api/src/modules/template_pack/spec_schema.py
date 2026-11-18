@@ -52,8 +52,21 @@ class SpecSlotIn(StrictIn):
     min_count: int = Field(default=1, ge=0, le=MAX_SLOT_REFS)
     max_count: int = Field(default=1, ge=1, le=MAX_SLOT_REFS)
     label: str = Field(default="", max_length=80)
-    usage: str = Field(default="", max_length=500)
     asset_id: str | None = Field(default=None, max_length=32)
+    #: **选中时文案**：使用者填了素材时，提示词里这一段怎么说。
+    #:
+    #: 提示词正文里 `{{slot:key}}` 是**唯一插入点**，这一段的措辞跟着槽位走 ——
+    #: 写在正文里就得让作者把同一句话维护两遍（正文一遍、槽位一遍），
+    #: 两处措辞一漂移，编译时就对不上。
+    #:
+    #: 为空 = 直接插入 `{{Mixed N}}`（旧行为，现有模板一字不改也能继续用）。
+    #: 可含 `{{slot:key}}` **自引用**（派生成编号），例如「人物参考 {{slot:hero}}」。
+    filled_text: str = Field(default="", max_length=2000)
+    #: **未选时文案**：使用者**没填**素材时，提示词里这一段怎么说。
+    #:
+    #: 只对**可选槽位**（`minCount == 0`）有意义。纯提示词，**不许含槽位引用**
+    #: （没素材就没有编号可指）。为空 = 编译期报错（提示词悄悄缺一段比报错更糟）。
+    empty_text: str = Field(default="", max_length=2000)
     #: 候选集的标签 id（资产库 `library_tags`，**任意级别**）：**候选集范围**，
     #: 不是内容。空 = 不限；非空 = 只在这几个标签（各自及其下级）里挑；编译不看它。
     #:
@@ -85,6 +98,29 @@ class SpecSlotIn(StrictIn):
             and legacy
         ):
             payload["tagIds"] = [legacy]
+        return payload
+
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_legacy_usage(cls, data: Any) -> Any:
+        """老草稿的槽位里还带着 `usage`（「进提示词的用途说明」），读回来时丢掉。
+
+        为什么要有这条：`usage` **从来没有进过提示词** —— 编译器完全不看它，
+        它只在前端显示一行字。作者填了它，模板库的使用者会看到一句
+        「确定同款同色外观」，而提示词里根本没有这句话 —— 说了等于没说，
+        还会让人以为那句描述真的管用。
+
+        所以这个字段已经删掉（迁移 `d7f2a91c48b3` 删列）。但 `extra="forbid"`
+        会把老草稿里的 `usage` 判成「未知键」—— 那份草稿**一打开就 422**，
+        模板还在，只是没人能再编辑它。老模板要能继续用、也能继续改，
+        所以在契约层把旧键丢掉，而不是逼人去改库。
+
+        与老 `tagId` → `tagIds`、`packId` 丢弃是同一个形状的处理。
+        """
+        if not isinstance(data, dict) or "usage" not in data:
+            return data
+        payload = dict(data)
+        payload.pop("usage", None)
         return payload
 
     @model_validator(mode="before")

@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import type { TemplateSpecOut } from '@/shared/api/schema';
+import type { SpecSlotIn, TemplateSpecOut } from '@/shared/api/schema';
 import { KIND_LABEL } from '@/entities/library/model/types';
 import {
   MAX_ALLOWED_MODELS,
@@ -12,12 +12,19 @@ import {
   dropUserSelectableParams,
   effectiveModelIds,
   fromSpecOut,
+  hasSingleSlotRef,
   insertRef,
+  isOptionalSlot,
   joinModelSelection,
   nextSlotKey,
   normalize,
   rekeySlot,
   referenceChips,
+  rewriteSlotRef,
+  selfRefChips,
+  setSlotOptional,
+  slotRefModes,
+  textsToClearForRequired,
   slotsMissingTag,
   splitModelSelection,
   stripSlotRefs,
@@ -157,6 +164,80 @@ describe('模板规格草稿', () => {
     }
     // 删槽位同理：带空格的那几处也要一起清掉
     expect(stripSlotRefs('{{ slot:hero }} 与 {{slot:hero }}', 'hero').count).toBe(2);
+  });
+
+  /* 改名时「选中时文案」里的自引用必须跟着改。
+     漏了这一步的话：改名后文案里的 token 还指着旧 key，而后端
+     `_validate_slot_texts` 规定「选中时文案只能引用自己」—— 引用旧 key
+     会被判成「引用了别的槽位」，作者保存时被 400 打回，界面看不出原因。 */
+  it('改名时「选中时文案」里的自引用跟着改', () => {
+    const slots = [
+      {
+        ...blankSlot(0),
+        key: 'image_1',
+        type: 'image' as const,
+        filledText: '人物参考 {{slot:image_1}}',
+      },
+    ];
+    const renamed = rekeySlot(slots, 0, 'video', '把 {{slot:other}} 换掉');
+    expect(renamed[0].key).toBe('video_1');
+    expect(renamed[0].filledText).toBe('人物参考 {{slot:video_1}}');
+  });
+
+  it('正文引用过时**不**改名（改了会让正文引用静默失效）', () => {
+    const slots = [
+      {
+        ...blankSlot(0),
+        key: 'image_1',
+        type: 'image' as const,
+        filledText: '人物参考 {{slot:image_1}}',
+      },
+    ];
+    const kept = rekeySlot(slots, 0, 'video', '把 {{slot:image_1}} 换掉');
+    expect(kept[0].key).toBe('image_1');
+    expect(kept[0].filledText).toBe('人物参考 {{slot:image_1}}');
+  });
+
+  it('rewriteSlotRef 只改指定槽位的引用', () => {
+    expect(rewriteSlotRef('用 {{slot:image_1}} 换掉', 'image_1', 'video_1')).toBe(
+      '用 {{slot:video_1}} 换掉',
+    );
+    // 别的槽位不动
+    expect(rewriteSlotRef('用 {{slot:image_2}} 换掉', 'image_1', 'video_1')).toBe(
+      '用 {{slot:image_2}} 换掉',
+    );
+  });
+
+  /* 修饰符必须**原样保留**：`{{slot:x*}}` 改成 `{{slot:y}}` 是把
+     「列出这组」变成了「第一张」—— 语义变了。 */
+  it('rewriteSlotRef 保留修饰符（整组 / 第 N 张不能变成单张）', () => {
+    expect(rewriteSlotRef('用 {{slot:image_1*}} 换掉', 'image_1', 'video_1')).toBe(
+      '用 {{slot:video_1*}} 换掉',
+    );
+    expect(rewriteSlotRef('用 {{slot:image_1.2}} 换掉', 'image_1', 'video_1')).toBe(
+      '用 {{slot:video_1.2}} 换掉',
+    );
+  });
+
+  /* 三种引用的形态要分得开：单张引用才有「一段文案」可言。 */
+  it('slotRefModes 分得清单张 / 整组 / 第 N 张', () => {
+    const modes = slotRefModes(
+      '用 {{slot:a}} 和 {{slot:b*}} 以及 {{slot:c.2}}，还有 {{slot:a}} 重复',
+    );
+    expect(modes.a).toEqual(new Set(['']));
+    expect(modes.b).toEqual(new Set(['*']));
+    expect(modes.c).toEqual(new Set(['.2']));
+  });
+
+  it('hasSingleSlotRef 只认单张引用', () => {
+    expect(hasSingleSlotRef('用 {{slot:a}}', 'a')).toBe(true);
+    expect(hasSingleSlotRef('用 {{slot:a*}}', 'a')).toBe(false);
+    expect(hasSingleSlotRef('用 {{slot:a.2}}', 'a')).toBe(false);
+    expect(hasSingleSlotRef('用别的', 'a')).toBe(false);
+  });
+
+  it('hasSingleSlotRef 容空格（与后端同一口径）', () => {
+    expect(hasSingleSlotRef('用 {{ slot:a }}', 'a')).toBe(true);
   });
 
   it('发布前预检：只有「让用户填的图片/视频」槽位缺标签', () => {
@@ -364,5 +445,155 @@ describe('模型数量上限', () => {
     expect(openapi.components.schemas.TemplateSpecIn.properties.allowedModels.maxItems).toBe(
       MAX_ALLOWED_MODELS,
     );
+  });
+});
+
+describe('必填 / 可选', () => {
+  /**
+   * 判据只有 `minCount === 0` —— **不另存一个 `required` 字段**。
+   *
+   * 两个事实源不同步时，界面显示「必填」而编译器放行（或反过来），
+   * 用户看到的与实际生效的不一致，而这类错只在生成结果里显形。
+   */
+  it('可选 = 最少数 0', () => {
+    expect(isOptionalSlot({minCount: 0} as SpecSlotIn)).toBe(true);
+    expect(isOptionalSlot({minCount: 1} as SpecSlotIn)).toBe(false);
+    // 老草稿没写 minCount → 按必填（1 张）
+    expect(isOptionalSlot({} as SpecSlotIn)).toBe(false);
+  });
+
+  it('切成可选时最少数变 0、最多数至少留 1', () => {
+    const patch = setSlotOptional({minCount: 1, maxCount: 1} as SpecSlotIn, true);
+    expect(patch).toEqual({minCount: 0, maxCount: 1});
+  });
+
+  it('切回必填时最少数至少是 1', () => {
+    const patch = setSlotOptional({minCount: 0, maxCount: 3} as SpecSlotIn, false);
+    expect(patch).toEqual({minCount: 1, maxCount: 3});
+  });
+
+  it('最多数是 0 的怪状态也会被拉回 1（不然没法选任何东西）', () => {
+    const patch = setSlotOptional({minCount: 0, maxCount: 0} as SpecSlotIn, false);
+    expect(patch).toEqual({minCount: 1, maxCount: 1});
+  });
+
+  it('固定槽位不能切成可选：素材早就定死了，不存在「选不选」', () => {
+    expect(setSlotOptional({binding: 'fixed', minCount: 1, maxCount: 1} as SpecSlotIn, true)).toEqual({});
+  });
+});
+
+describe('「选中时文案」的自身候选', () => {
+  /**
+   * 候选**只列自己**：后端规定「选中时文案只能引用自己」（跨槽位引用会让
+   * 编号依赖别的槽位的填充量，同一段文案在不同填充下编译出不同结果）。
+   *
+   * 候选是**算出来**的 —— 用户不该手敲 `{{slot:key}}`（拼错要到编译期才
+   * 报错，槽位改名后手敲的引用会静默失效）。
+   */
+  it('单值槽位只有「单张」一种写法', () => {
+    const chips = selfRefChips({key: 'image_1', type: 'image', maxCount: 1} as SpecSlotIn);
+    expect(chips.map(chip => chip.token)).toEqual(['{{slot:image_1}}']);
+  });
+
+  it('多值槽位有「单张 / 全部 / 第 N 张」三种写法', () => {
+    const chips = selfRefChips({key: 'image_1', type: 'image', maxCount: 3} as SpecSlotIn);
+    expect(chips.map(chip => chip.token)).toEqual([
+      '{{slot:image_1}}',
+      '{{slot:image_1*}}',
+      '{{slot:image_1.2}}',
+      '{{slot:image_1.3}}',
+    ]);
+  });
+
+  it('「第 1 张」不单独列：它就是「单张」，重复列会让人以为有两个意思', () => {
+    const chips = selfRefChips({key: 'image_1', type: 'image', maxCount: 3} as SpecSlotIn);
+    expect(chips.map(chip => chip.token)).not.toContain('{{slot:image_1.1}}');
+  });
+
+  it('候选里只有这个槽位自己的 key（不列别的槽位）', () => {
+    const chips = selfRefChips({key: 'hero', type: 'image', maxCount: 2} as SpecSlotIn);
+    expect(chips.every(chip => chip.token.includes('hero'))).toBe(true);
+  });
+
+  it('用展示名，不用内部 key（作者看不懂 key）', () => {
+    const chips = selfRefChips({
+      key: 'image_1',
+      type: 'image',
+      maxCount: 1,
+      label: '主图',
+    } as SpecSlotIn);
+    expect(chips[0].label).toContain('主图');
+    expect(chips[0].label).not.toContain('image_1');
+  });
+
+  it('没起名时回退到「类型 + 第几个」（位置可读名）', () => {
+    const chips = selfRefChips({
+      key: 'image_1',
+      type: 'image',
+      maxCount: 1,
+      position: 0,
+    } as SpecSlotIn);
+    expect(chips[0].label).toContain(KIND_LABEL.image);
+  });
+});
+
+describe('必填槽位清掉两段文案', () => {
+  /**
+   * **必填 = 素材一定在 = 直接插编号**。两段文案（「填了怎么说 / 没填怎么说」）
+   * 对必填槽位没有意义 —— 没有「没填」这个状态。
+   *
+   * 清掉而不是留着：留着的话后端会 400（必填槽位带文案直接拒），而界面
+   * 看不出是哪一条规则 —— 作者明明写了文案，点保存却被拒。
+   */
+  it('切成必填时两段文案被清空', () => {
+    const patch = setSlotOptional(
+      {
+        minCount: 0,
+        maxCount: 1,
+        filledText: '人物参考 {{slot:hero}}',
+        emptyText: '主角是穿红裙的年轻女性',
+      } as SpecSlotIn,
+      false,
+    );
+    expect(patch).toEqual({
+      minCount: 1,
+      maxCount: 1,
+      filledText: '',
+      emptyText: '',
+    });
+  });
+
+  it('本来就没文案时不动它（不塞空串进去）', () => {
+    const patch = setSlotOptional({minCount: 0, maxCount: 1} as SpecSlotIn, false);
+    expect(patch).toEqual({minCount: 1, maxCount: 1});
+    expect(patch).not.toHaveProperty('filledText');
+  });
+
+  it('切成可选不清文案（那是作者写的，回切回来还要在）', () => {
+    const patch = setSlotOptional(
+      {minCount: 1, maxCount: 1, filledText: '人物参考'} as SpecSlotIn,
+      true,
+    );
+    expect(patch).toEqual({minCount: 0, maxCount: 1});
+  });
+
+  it('判断函数：只管「有没有文案要清」，目标状态由调用方判断', () => {
+    expect(
+      textsToClearForRequired({minCount: 1, filledText: 'x'} as SpecSlotIn),
+    ).toEqual({filledText: '', emptyText: ''});
+    // 槽位现在还是可选（minCount=0）也照样返回「要清什么」——
+    // 「切完之后是不是必填」是调用方才知道的事。
+    expect(
+      textsToClearForRequired({minCount: 0, filledText: 'x'} as SpecSlotIn),
+    ).toEqual({filledText: '', emptyText: ''});
+    expect(
+      textsToClearForRequired({minCount: 1} as SpecSlotIn),
+    ).toBeNull();
+  });
+
+  it('只有空白的文案不算「有文案」（不必清）', () => {
+    expect(
+      textsToClearForRequired({minCount: 1, filledText: '   '} as SpecSlotIn),
+    ).toBeNull();
   });
 });

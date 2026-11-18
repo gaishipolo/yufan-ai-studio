@@ -4545,8 +4545,9 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `minCount` | `number` | 否 |  |
 | `maxCount` | `number` | 否 |  |
 | `label` | `string` | 否 |  |
-| `usage` | `string` | 否 |  |
 | `assetId` | `string \| null` | 否 |  |
+| `filledText` | `string` | 否 |  |
+| `emptyText` | `string` | 否 |  |
 | `tagIds` | `string[]` | 否 |  |
 | `position` | `number` | 否 |  |
 
@@ -4563,8 +4564,9 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `minCount` | `number` | 否 |  |
 | `maxCount` | `number` | 否 |  |
 | `label` | `string` | 否 |  |
-| `usage` | `string` | 否 |  |
 | `assetId` | `string \| null` | 否 |  |
+| `filledText` | `string` | 否 |  |
+| `emptyText` | `string` | 否 |  |
 | `tagIds` | `string[]` | 否 |  |
 | `position` | `number` | 否 |  |
 

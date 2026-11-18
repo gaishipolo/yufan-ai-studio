@@ -68,4 +68,48 @@ describe('生成二次确认的内容', () => {
     expect(confirm.rows.map(row => row.label)).not.toContain('计费');
     expect(confirm.notice).toBeUndefined();
   });
+
+  /* 可选槽位没填 → 提示词里用「未选时文案」。这条必须摆出来：
+     使用者看到的素材数量与提示词实际用的内容对不上时，他没法判断
+     这次生成长什么样，「提交了才发现用的不是我以为的那段话」。 */
+  it('可选槽位没填时，逐条列出它的兜底文案', () => {
+    const confirm = buildGenerateConfirm({
+      ...BASE,
+      slots: [
+        {label: '主图', count: 0, fallback: '主角是穿红裙的年轻女性'},
+        {label: '商品图', count: 1},
+      ],
+    });
+    const row = confirm.rows.find(item => item.label === '主图（未填）');
+    expect(row?.value).toBe('主角是穿红裙的年轻女性');
+  });
+
+  it('填了的可选槽位不带兜底行', () => {
+    const confirm = buildGenerateConfirm({
+      ...BASE,
+      slots: [{label: '主图', count: 1, fallback: '主角是穿红裙的年轻女性'}],
+    });
+    expect(confirm.rows.map(row => row.label)).not.toContain('主图（未填）');
+  });
+
+  it('没填兜底文案的可选槽位不产生空行', () => {
+    const confirm = buildGenerateConfirm({
+      ...BASE,
+      slots: [{label: '主图', count: 0}],
+    });
+    expect(confirm.rows.map(row => row.label)).not.toContain('主图（未填）');
+  });
+
+  it('多个可选槽位没填时各占一行（不合并）', () => {
+    const confirm = buildGenerateConfirm({
+      ...BASE,
+      slots: [
+        {label: '主图', count: 0, fallback: 'A'},
+        {label: '背景', count: 0, fallback: 'B'},
+      ],
+    });
+    const labels = confirm.rows.map(row => row.label);
+    expect(labels).toContain('主图（未填）');
+    expect(labels).toContain('背景（未填）');
+  });
 });

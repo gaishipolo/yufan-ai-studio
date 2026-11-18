@@ -65,6 +65,17 @@ function maxOf(slot: SpecSlotOut): number {
 }
 
 /**
+ * 槽位是不是**可选**的（使用者可以不填）。
+ *
+ * 判据只有 `minCount === 0` —— 与封装页的开关、后端的编译规则同一口径。
+ * 别在别处再写一遍 `slot.minCount === 0`：三处不同步时，界面显示「可选」
+ * 而编译器按必填处理（或反过来），而这种错只在生成结果里显形。
+ */
+function isOptional(slot: SpecSlotOut): boolean {
+  return minOf(slot) === 0;
+}
+
+/**
  * 展示案例：作者上传/选的样例图或视频。
  *
  * 没设就明写「暂无案例」，不摆渐变块冒充缩略图 —— 那会让人以为模板带图。
@@ -332,10 +343,18 @@ export function SpecLibrary() {
      默认），而不是「有没有这个参数」—— 两者不是一回事。 */
   const fixedSlots = slots.filter(slot => slot.binding === 'fixed' && slot.assetId);
   const confirmSlots = [
-    ...fillSlots.map(slot => ({
-      label: slot.label || slot.key,
-      count: (values[slot.key] ?? []).length,
-    })),
+    ...fillSlots.map(slot => {
+      const count = (values[slot.key] ?? []).length;
+      /* 可选槽位**没填** → 提示词里会用「未选时文案」。摆出来，使用者
+         才知道这次生成会用什么内容。 */
+      const fallback =
+        isOptional(slot) && count === 0 ? slot.emptyText?.trim() : '';
+      return {
+        label: slot.label || slot.key,
+        count,
+        ...(fallback ? {fallback} : {}),
+      };
+    }),
     ...fixedSlots.map(slot => ({label: slot.label || slot.key, count: 1})),
   ];
   const confirmParams = [
@@ -623,23 +642,21 @@ export function SpecLibrary() {
                                 ? '再选'
                                 : `选择${TYPE_LABEL[slot.type] ?? '素材'}`}
                             </button>
+                            {/* 可选槽位：把「不填会怎样」摆出来。使用者面对一个
+                                没有星号的槽位，第一反应是「不填是不是不行」——
+                                与其让人猜，不如直接告诉他不填时提示词里会用什么。 */}
+                            {isOptional(slot) && filled.length === 0 && (
+                              <span className="w-full text-micro leading-relaxed text-ink-mute">
+                                {slot.emptyText?.trim()
+                                  ? `不填则用：${slot.emptyText.trim()}`
+                                  : '可选：不填也能生成'}
+                              </span>
+                            )}
                           </div>
                         </div>
                       );
                     })}
                   </div>
-                  {/* 用途说明只在该槽位还没填时出现：填完它就是噪音。 */}
-                  {fillSlots.some(slot => slot.usage && (values[slot.key] ?? []).length === 0) && (
-                    <ul className="mt-1 flex flex-col gap-0.5 border-t border-line-soft pt-2 text-micro leading-relaxed text-ink-mute">
-                      {fillSlots
-                        .filter(slot => slot.usage && (values[slot.key] ?? []).length === 0)
-                        .map(slot => (
-                          <li key={slot.key} className="truncate">
-                            {slot.label || slot.key}：{slot.usage}
-                          </li>
-                        ))}
-                    </ul>
-                  )}
                 </PanelSection>
               ) : (
                 /* 没有要填的槽位（纯提示词，或者素材全被作者固定）：这一栏不必空着占位，

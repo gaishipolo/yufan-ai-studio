@@ -1271,8 +1271,9 @@ export interface SpecSlotIn {
   minCount?: number;
   maxCount?: number;
   label?: string;
-  usage?: string;
   assetId?: string | null;
+  filledText?: string;
+  emptyText?: string;
   tagIds?: string[];
   position?: number;
 }
@@ -1286,8 +1287,9 @@ export interface SpecSlotOut {
   minCount?: number;
   maxCount?: number;
   label?: string;
-  usage?: string;
   assetId?: string | null;
+  filledText?: string;
+  emptyText?: string;
   tagIds?: string[];
   position?: number;
 }

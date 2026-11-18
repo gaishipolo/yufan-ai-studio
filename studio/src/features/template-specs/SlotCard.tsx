@@ -4,7 +4,15 @@ import { AssetChip } from '@/entities/library/ui/AssetChip';
 import type { SpecSlotIn } from '@/shared/api/schema';
 import { Button, FormField, MultiSelect, Select, TextInput } from '@/shared/ui';
 import { cn } from '@/shared/lib/cn';
-import { SLOT_TYPE_LABELS, slotTypeOf } from './specDraft';
+import {
+  SLOT_TYPE_LABELS,
+  hasSingleSlotRef,
+  isOptionalSlot,
+  selfRefChips,
+  setSlotOptional,
+  slotTypeOf,
+} from './specDraft';
+import { MentionTextarea } from './MentionTextarea';
 import { SLOT_TYPE_ICONS } from './slotIcons';
 
 /**
@@ -30,6 +38,7 @@ export function SlotCard({
   onPickAsset,
   tagOptions,
   typeOptions,
+  prompt,
 }: {
   slot: SpecSlotIn;
   index: number;
@@ -43,6 +52,8 @@ export function SlotCard({
   onPickAsset: () => void;
   tagOptions: {value: string; label: string}[];
   typeOptions: {value: string; label: string}[];
+  /** 整段提示词：用来判断这个槽位有没有**插入点**（见下面 `hasInsertPoint`）。 */
+  prompt: string;
 }) {
   const [open, setOpen] = useState(false);
   const fixed = (slot.binding ?? 'user') === 'fixed';
@@ -53,6 +64,26 @@ export function SlotCard({
   const showCount = (slot.binding ?? 'user') === 'user' && type !== 'text';
   const name = slot.label?.trim() || `${SLOT_TYPE_LABELS[type]} ${index + 1}`;
   const TypeIcon = SLOT_TYPE_ICONS[type];
+  /* 可选 = `minCount === 0`。**不加独立的 `required` 字段**：两个事实源
+     不同步时，界面显示「必填」而编译器放行（或反过来），用户看到的与
+     实际生效的不一致 —— 这类错只在生成结果里显形。 */
+  const optional = isOptionalSlot(slot);
+
+  /* 两段文案的**存在前提**是两条，缺一不可：
+     1. 这个槽位在提示词里有一个**插入点**（单张引用 `{{slot:key}}`）——
+        整组引用 `{{slot:key*}}` 是「列出这组」、第 N 张是「某个编号」，
+        都没有「一段文案」可言；
+     2. 这个槽位是**可选**的 —— **必填 = 素材一定在 = 直接插编号**，
+        没有「填了 / 没填」两种状态，两段文案对它没有意义。
+
+     条件不满足时**不渲染**（而不是禁用）：填了也不生效的框摆在那里，
+     只会让人以为填了有用。 */
+  const hasInsertPoint = hasSingleSlotRef(prompt, slot.key);
+  const showTexts = hasInsertPoint && optional;
+  /* 占位符里的 token：**当前槽位自己的**引用。
+     写死 `{{slot:image_1}}` 的话，第二个槽位显示的就是第一个槽位的 token ——
+     作者照着抄进提示词，引用到的还是那个槽位自己（编号会错位）。 */
+  const token = `{{slot:${slot.key}}}`;
 
   return (
     <div
@@ -145,6 +176,37 @@ export function SlotCard({
             );
           })}
         </div>
+
+        {/* 必填 / 可选：只在「用户填」的槽位上出现（固定槽位的素材早就定死了，
+            不存在「选不选」）。
+
+            这是**作者在封装时的一次性决定**：使用者要不要挑这张图。挑了 →
+            用挑的那张；没挑 → 用「未选时文案」兜底。做成两个小字而不是下拉，
+            因为它只有两档，且是高频决定。 */}
+        {!fixed && (
+          <div className="flex shrink-0 items-center gap-0.5 rounded-lg border border-line-soft bg-panel-soft p-0.5">
+            {REQUIRED_TOGGLES.map(item => {
+              const active = optional === item.optional;
+              return (
+                <button
+                  key={item.label}
+                  type="button"
+                  aria-pressed={active}
+                  title={item.hint}
+                  onClick={() => onPatch(setSlotOptional(slot, item.optional))}
+                  className={cn(
+                    'rounded-[7px] px-2 py-[3px] text-micro transition-all',
+                    active
+                      ? 'bg-ink font-medium text-white shadow-[0_1px_2px_rgba(21,50,61,.28)]'
+                      : 'text-ink-mute hover:text-ink-soft',
+                  )}
+                >
+                  {item.label}
+                </button>
+              );
+            })}
+          </div>
+        )}
 
         <button
           type="button"
@@ -256,18 +318,6 @@ export function SlotCard({
               </FormField>
             </>
           )}
-          <FormField
-            label="进提示词的用途说明"
-            htmlFor="slot-usage"
-            className="sm:col-span-2"
-          >
-            <TextInput
-              id="slot-usage"
-              value={slot.usage ?? ''}
-              placeholder="例如：确定同款同色外观；只补纹理与扣件"
-              onChange={event => onPatch({usage: event.target.value})}
-            />
-          </FormField>
           {type === 'text' && (
             <p className="text-meta text-ink-mute sm:col-span-2">
               文本槽位：占 {`{{Text N}}`} 的第 N 位，正文由所选文案注入
@@ -276,6 +326,74 @@ export function SlotCard({
           {type === 'audio' && (
             <p className="text-meta text-ink-mute sm:col-span-2">
               附加输入：不占编号，提示词里不引用它
+            </p>
+          )}
+
+          {/* 两段文案：**这个槽位在提示词里怎么说**。
+
+              为什么放在槽位里而不是提示词正文：正文里 `{{slot:key}}` 是
+              **唯一插入点**，而「有素材时这么说 / 没素材时那么说」是同一个
+              槽位的两种说法。写在正文里就得让作者把同一句话维护两遍
+              （正文一遍、槽位一遍），两处措辞一漂移，编译时就对不上。
+
+              只对**「用户填 + 可选」**的槽位有意义：
+              - 固定槽位的素材早就定死了，不存在「没素材」这一说；
+              - 必填槽位一定有素材（**直接插编号**），也不存在「没素材」。
+
+              「选中时文案」里要引用编号时**打 `@` 选**（候选只有这个槽位
+              自己的几种写法），不要手敲 `{{slot:key}}` —— 手敲拼错了要到
+              编译期才报错，而槽位改名后手敲的引用会静默失效。 */}
+          {!fixed && showTexts && (
+            <>
+              <FormField
+                label="选中时文案"
+                htmlFor="slot-filled-text"
+                hint="使用者填了素材时，提示词里这一段怎么说；打 @ 插入编号"
+                className="sm:col-span-2"
+              >
+                <MentionTextarea
+                  id="slot-filled-text"
+                  aria-label="选中时文案"
+                  value={slot.filledText ?? ''}
+                  candidates={selfRefChips(slot)}
+                  rows={2}
+                  placeholder={`例如：人物参考（打 @ 插入编号，留空则直接插入素材编号）`}
+                  panelHint="选择要插入的编号"
+                  onChange={text => onPatch({filledText: text})}
+                  onInsert={text => onPatch({filledText: text})}
+                />
+              </FormField>
+              <FormField
+                label="未选时文案"
+                htmlFor="slot-empty-text"
+                hint="使用者不填素材时用这段；留空则发布会被拦"
+                className="sm:col-span-2"
+              >
+                <textarea
+                  id="slot-empty-text"
+                  aria-label="未选时文案"
+                  value={slot.emptyText ?? ''}
+                  rows={2}
+                  placeholder="例如：主角是穿红裙的年轻女性"
+                  onChange={event => onPatch({emptyText: event.target.value})}
+                  className="w-full resize-y rounded-lg border border-line bg-white px-2.5 py-2 text-xs leading-[1.7] text-ink outline-none transition-colors placeholder:text-[#a9b8bf] hover:border-line-strong focus:border-primary-line focus:ring-2 focus:ring-primary/10"
+                />
+              </FormField>
+            </>
+          )}
+          {/* 没有插入点时说一句为什么没有这两个框 —— 否则作者会以为
+              功能不见了，或者去别处找。 */}
+          {!fixed && !hasInsertPoint && (
+            <p className="text-meta text-ink-mute sm:col-span-2">
+              在提示词里写下 {token} 引用这个槽位，才能为它写「有素材 / 没素材」两段话
+            </p>
+          )}
+          {/* 有插入点但槽位是必填的：说一句**为什么**不给写文案 ——
+              「必填 = 素材一定在 = 直接插编号」，这是作者自己定的规则，
+              不解释的话他会以为功能坏了。 */}
+          {!fixed && hasInsertPoint && !optional && (
+            <p className="text-meta text-ink-mute sm:col-span-2">
+              必填槽位一定有素材，提示词里直接插入素材编号；改成「可选」才能写两段话
             </p>
           )}
         </div>
@@ -287,5 +405,16 @@ export function SlotCard({
 const BINDING_TOGGLES: {value: SpecSlotIn['binding']; label: string; hint: string}[] = [
   {value: 'user', label: '用户填', hint: '使用者填表时挑素材'},
   {value: 'fixed', label: '已固定', hint: '封装时就定好素材'},
+];
+
+/**
+ * 必填 / 可选。
+ *
+ * `optional` 是「这一档代表可选」，判据是 `minCount === 0`（见
+ * `specDraft.isOptionalSlot`）。这里**不另存一个 `required` 字段**。
+ */
+const REQUIRED_TOGGLES: {optional: boolean; label: string; hint: string}[] = [
+  {optional: false, label: '必填', hint: '使用者必须挑素材，不挑不能生成'},
+  {optional: true, label: '可选', hint: '不挑也能生成，用「未选时文案」兜底'},
 ];
 

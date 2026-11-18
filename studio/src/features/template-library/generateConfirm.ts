@@ -15,6 +15,14 @@
 export interface ConfirmSlotLine {
   label: string;
   count: number;
+  /**
+   * 可选槽位**没填**时：用「未选时文案」兜底。
+   *
+   * 这条必须摆出来：使用者在确认框里看到的素材数量，与提示词里实际用的
+   * 内容对不上时，他没法判断这次生成会是什么样子。不说的后果是
+   * 「提交了才发现它用的是我以为没生效的那段话」。
+   */
+  fallback?: string;
 }
 
 export interface ConfirmParamLine {
@@ -62,6 +70,21 @@ export function buildGenerateConfirm(input: GenerateConfirmInput): GenerateConfi
   if (input.slots.length > 0) {
     const total = input.slots.reduce((sum, slot) => sum + slot.count, 0);
     rows.push({label: '素材', value: `${total} 项`});
+  }
+
+  /* 可选槽位没填 → 用「未选时文案」。逐条摆出来，不合并成一行 ——
+     合并成「未填则用：A、B」就看不出哪个槽位对哪段话了，而确认框的
+     职责正是「按下之前看清这次会发生什么」。
+
+     `count === 0` 是硬条件：光看 `fallback` 有值的话，调用方在填了素材
+     却顺手带上 fallback 时就会多出一行「（未填）」—— 而那行下面写着
+     兜底文案，使用者会以为这次生成用的就是那段话。 */
+  const fallbacks = input.slots.filter(slot => slot.count === 0 && slot.fallback);
+  for (const slot of fallbacks) {
+    rows.push({
+      label: `${slot.label}（未填）`,
+      value: slot.fallback as string,
+    });
   }
 
   if (input.params.length > 0) {

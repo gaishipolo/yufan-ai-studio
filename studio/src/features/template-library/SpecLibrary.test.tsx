@@ -6,15 +6,20 @@ import {beforeEach, describe, expect, it, vi} from 'vitest';
 import type {TemplateSpecOut} from '@/shared/api/schema';
 import {SpecLibrary} from './SpecLibrary';
 
-const {compileMock, createTaskMock, generateImageMock, modelsMock} = vi.hoisted(() => ({
+const {compileMock, createTaskMock, generateImageMock, modelsMock, specState} = vi.hoisted(() => ({
   compileMock: vi.fn(),
   createTaskMock: vi.fn(),
   generateImageMock: vi.fn(),
   modelsMock: vi.fn(),
+  /* 当前发布的规格。用例可以换掉它来测另一种槽位配置。 */
+  specState: {current: null as unknown},
 }));
 
 vi.mock('@/entities/template-spec/api/spec.queries', () => ({
-  usePublishedSpecs: () => ({data: {items: [SPEC], total: 1}, isLoading: false}),
+  usePublishedSpecs: () => ({
+    data: {items: [specState.current], total: 1},
+    isLoading: false,
+  }),
   useSpecCompile: () => ({mutateAsync: compileMock, isPending: false}),
 }));
 
@@ -111,6 +116,7 @@ const LIBTV = {
 };
 
 beforeEach(() => {
+  specState.current = SPEC;
   modelsMock.mockImplementation((capability: string) =>
     capability === 'video' ? [LIBTV] : [],
   );
@@ -235,5 +241,78 @@ describe('模板库：生成前的二次确认', () => {
     await user.click(button);
 
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * 可选槽位（`minCount === 0`）：不填也能生成，提示词里用「未选时文案」兜底。
+ *
+ * 这一整条链路上有三处必须一致：按钮不再显示「还缺」、
+ * 确认框里摆出兜底文案、提交时这段话真的进了提示词。
+ */
+describe('模板库：可选槽位不填也能生成', () => {
+  const OPTIONAL_SPEC: TemplateSpecOut = {
+    ...SPEC,
+    latest: {
+      ...SPEC.latest!,
+      prompt: '把原片里的人换成 {{slot:person}}',
+      slots: [
+        {
+          key: 'person',
+          type: 'image',
+          binding: 'user',
+          minCount: 0,
+          maxCount: 1,
+          label: '人物参考',
+          tagIds: [],
+          emptyText: '主角是穿红裙的年轻女性',
+        },
+        SPEC.latest!.slots[1],
+      ],
+    },
+  };
+
+  function renderOptionalLibrary() {
+    specState.current = OPTIONAL_SPEC;
+    const client = new QueryClient({
+      defaultOptions: {queries: {retry: false}, mutations: {retry: false}},
+    });
+    return render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={['/templates/library']}>
+          <SpecLibrary />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+  }
+
+  it('不填素材也不显示「还缺」，按钮可点', async () => {
+    renderOptionalLibrary();
+
+    const button = await screen.findByRole('button', {name: /生成视频/});
+    expect(button).toBeEnabled();
+    expect(screen.queryByText(/还缺/)).not.toBeInTheDocument();
+  });
+
+  it('确认框里摆出这条槽位的兜底文案', async () => {
+    const user = userEvent.setup();
+    renderOptionalLibrary();
+
+    await user.click(await screen.findByRole('button', {name: /生成视频/}));
+
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog).toHaveTextContent('人物参考（未填）');
+    expect(dialog).toHaveTextContent('主角是穿红裙的年轻女性');
+  });
+
+  it('填了素材就不再摆兜底行', async () => {
+    const user = userEvent.setup();
+    renderOptionalLibrary();
+
+    await user.click(await screen.findByTitle('商品图.png'));
+    await user.click(screen.getByRole('button', {name: /生成视频/}));
+
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog).not.toHaveTextContent('人物参考（未填）');
   });
 });

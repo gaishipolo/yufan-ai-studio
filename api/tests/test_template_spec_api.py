@@ -503,6 +503,51 @@ def test_legacy_single_tag_slot_is_still_readable(client: TestClient) -> None:
     assert detail["latest"]["slots"][2]["tagIds"] == [_TAG]
 
 
+def test_legacy_slot_usage_is_dropped_instead_of_rejected(client: TestClient) -> None:
+    """老槽位里还带着 `usage`（「进提示词的用途说明」）—— 读回来时丢掉，不要 422。
+
+    为什么要有这条：`usage` **从来没有进过提示词**（编译器完全不看它），
+    所以它被删掉了（迁移 `d7f2a91c48b3` 删列）。但 `extra="forbid"` 会把
+    老草稿里的 `usage` 判成「未知键」—— 那份草稿**一打开就 422**，
+    模板还在，只是没人能再编辑它。老模板要能继续用、也能继续改。
+
+    与老 `tagId` → `tagIds`、`packId` 丢弃是同一套处理：旧键在契约层
+    被翻译掉，而不是逼人去改库。
+    """
+    headers = _headers(client)
+    video, first, second = _media(client, headers)
+    draft = _draft(video, first, second)
+    for slot in draft["slots"]:
+        slot["usage"] = "确定同款同色外观"
+
+    saved = _save(client, headers, draft)
+    # 存得进去（没被 422 打回），且读回来时这个键已经不在了
+    assert "usage" not in saved["draft"]["slots"][0]
+
+    published = client.post(f"{API}/{draft['key']}/publish", headers=headers)
+    assert published.status_code == 200, published.text
+    detail = client.get(f"{API}/{draft['key']}", headers=headers).json()["data"]
+    assert "usage" not in detail["latest"]["slots"][0]
+
+
+def test_slot_contract_no_longer_exposes_usage(client: TestClient) -> None:
+    """`usage` 从契约里彻底消失：出参里也没有它。
+
+    判据不能只盯入参（`extra="forbid"` 会拒），出参里还留着它的话，
+    前端就会继续读那个字段、继续把它显示出来 —— 删了等于没删。
+    """
+    headers = _headers(client)
+    video, first, second = _media(client, headers)
+    draft = _draft(video, first, second)
+    _save(client, headers, draft)
+
+    published = client.post(f"{API}/{draft['key']}/publish", headers=headers)
+    assert published.status_code == 200, published.text
+    detail = client.get(f"{API}/{draft['key']}", headers=headers).json()["data"]
+    assert "usage" not in detail["draft"]["slots"][0]
+    assert "usage" not in detail["latest"]["slots"][0]
+
+
 def test_compile_no_longer_accepts_prompt_override(client: TestClient) -> None:
     """提示词不再分固定段 / 可编辑段，`promptOverride` 这个入口一并取消。
 
@@ -732,3 +777,196 @@ def test_other_users_cannot_read_a_draft_spec(client: TestClient) -> None:
     assert public.status_code == 200, public.text
     published = client.get(f"{API}/published", headers=stranger).json()["data"]
     assert any(item["key"] == draft["key"] for item in published["items"])
+
+
+# --------------------------------------------------------------------------- #
+# 可选槽位：选中时文案 / 未选时文案
+# --------------------------------------------------------------------------- #
+def _optional_draft(
+    video: str,
+    first: str,
+    *,
+    key: str | None = None,
+    prompt: str = "把 {{slot:source}} 里的内衣替换为 {{slot:hero}} 的同款产品",
+    **slot_over: Any,
+) -> dict[str, Any]:
+    """一个**可选**素材槽位（`minCount=0`）的草稿。
+
+    默认提示词用**单张引用** `{{slot:hero}}` —— 那种写法在没填素材时需要
+    兜底文案，所以它是发布闸门要拦的那一种。
+    """
+    draft = _draft(video, first, first, key=key, editable=prompt)
+    draft["slots"] = [
+        {
+            "key": "source",
+            "type": "video",
+            "binding": "fixed",
+            "assetId": video,
+            "position": 0,
+            "label": "原片",
+        },
+        {
+            "key": "hero",
+            "type": "image",
+            "binding": "user",
+            "tagIds": [_TAG],
+            "minCount": 0,
+            "maxCount": 1,
+            "position": 1,
+            "label": "主图",
+            **slot_over,
+        },
+    ]
+    return draft
+
+
+def test_optional_slot_publish_requires_the_fallback_text(client: TestClient) -> None:
+    """可选槽位被**单张引用**却没有「未选时文案」→ 发布被拦。
+
+    发布 = 别人会拿去用。不写兜底文案的话，使用者在模板库不填素材就会
+    在点生成时被 400 打回，而那句话与「我刚才没选素材」看不出关系。
+    """
+    headers = _headers(client)
+    video, first, _ = _media(client, headers)
+    draft = _optional_draft(video, first)
+    _save(client, headers, draft)
+
+    body = client.post(f"{API}/{draft['key']}/publish", headers=headers)
+    assert body.status_code == 400, body.text
+    assert "未选时文案" in body.json()["message"]
+
+
+def test_optional_slot_publish_is_allowed_with_the_fallback_text(
+    client: TestClient,
+) -> None:
+    """写了「未选时文案」→ 发布通过。"""
+    headers = _headers(client)
+    video, first, _ = _media(client, headers)
+    draft = _optional_draft(video, first, emptyText="主角是穿红裙的年轻女性")
+    _save(client, headers, draft)
+
+    body = client.post(f"{API}/{draft['key']}/publish", headers=headers)
+    assert body.status_code == 200, body.text
+
+
+def test_group_reference_does_not_require_the_fallback_text(client: TestClient) -> None:
+    """整组引用（`{{slot:x*}}`）没填时降级为空 → **不要求**兜底文案。
+
+    把整组引用也算进去，会把一堆本来好用的模板拦在发布外 ——
+    而它们的使用者不填素材时根本不会报错（降级成空而已）。
+    """
+    headers = _headers(client)
+    video, first, _ = _media(client, headers)
+    draft = _optional_draft(
+        video,
+        first,
+        prompt="把 {{slot:source}} 里的内衣替换为 {{slot:hero*}} 的同款产品",
+    )
+    _save(client, headers, draft)
+
+    body = client.post(f"{API}/{draft['key']}/publish", headers=headers)
+    assert body.status_code == 200, body.text
+
+
+def test_required_slot_with_slot_texts_is_rejected(client: TestClient) -> None:
+    """**必填**槽位带「选中时文案 / 未选时文案」→ 400。
+
+    **必填 = 素材一定在 = 直接插编号** —— 没有「没填」这个状态，两段文案
+    对它没有意义。留着的话作者会以为那句文案管用，而界面上根本没这个框。
+    """
+    headers = _headers(client)
+    video, first, second = _media(client, headers)
+    draft = _draft(video, first, second)
+    # hero 是必填（minCount=1）
+    draft["slots"][1]["filledText"] = "人物参考 {{slot:hero}}"
+
+    body = client.post(API, json=draft, headers=headers)
+    assert body.status_code == 400, body.text
+    message = body.json()["message"]
+    assert "必填" in message
+    # 报错要说清要做什么：改成「可选」才能用这两段文案
+    assert "可选" in message
+
+
+def test_required_slot_with_empty_text_is_rejected(client: TestClient) -> None:
+    """必填槽位带「未选时文案」同样被拒（它永远用不上）。"""
+    headers = _headers(client)
+    video, first, second = _media(client, headers)
+    draft = _draft(video, first, second)
+    draft["slots"][1]["emptyText"] = "主角是穿红裙的年轻女性"
+
+    body = client.post(API, json=draft, headers=headers)
+    assert body.status_code == 400, body.text
+    assert "必填" in body.json()["message"]
+
+
+def test_compile_uses_the_fallback_text_when_the_optional_slot_is_empty(
+    client: TestClient,
+) -> None:
+    """使用者没填素材 → 提示词里用「未选时文案」，且不占编号。"""
+    headers = _headers(client)
+    video, first, _ = _media(client, headers)
+    draft = _optional_draft(video, first, emptyText="主角是穿红裙的年轻女性")
+    _save(client, headers, draft)
+    client.post(f"{API}/{draft['key']}/publish", headers=headers)
+
+    body = client.post(
+        f"{API}/{draft['key']}/compile", json={"slotValues": {}}, headers=headers
+    )
+    assert body.status_code == 200, body.text
+    data = body.json()["data"]
+    assert "主角是穿红裙的年轻女性" in data["prompt"]
+    # 没填 → 不进参考素材列表
+    assert data["referenceLibraryIds"] == [video]
+
+
+def test_compile_uses_the_filled_text_when_the_optional_slot_is_filled(
+    client: TestClient,
+) -> None:
+    """使用者填了素材 → 用「选中时文案」，其中的自引用派生成编号。"""
+    headers = _headers(client)
+    video, first, _ = _media(client, headers)
+    draft = _optional_draft(
+        video,
+        first,
+        filledText="人物参考 {{slot:hero}}",
+        emptyText="主角是穿红裙的年轻女性",
+    )
+    _save(client, headers, draft)
+    client.post(f"{API}/{draft['key']}/publish", headers=headers)
+
+    body = client.post(
+        f"{API}/{draft['key']}/compile",
+        json={"slotValues": {"hero": [first]}},
+        headers=headers,
+    )
+    assert body.status_code == 200, body.text
+    data = body.json()["data"]
+    assert "人物参考 {{Mixed 2}}" in data["prompt"]
+    assert data["referenceLibraryIds"] == [video, first]
+
+
+def test_slot_texts_round_trip_through_the_contract(client: TestClient) -> None:
+    """两个文案要能存进草稿、读回来（契约与持久化两侧都要通）。
+
+    存的时候字段名是 camelCase（`filledText` / `emptyText`），读回来的
+    快照里也是 —— 中间任何一侧漏了，作者写的东西就静默丢了。
+    """
+    headers = _headers(client)
+    video, first, _ = _media(client, headers)
+    draft = _optional_draft(
+        video, first, filledText="人物参考 {{slot:hero}}", emptyText="红裙女性"
+    )
+    saved = _save(client, headers, draft)
+
+    slot = next(item for item in saved["draft"]["slots"] if item["key"] == "hero")
+    assert slot["filledText"] == "人物参考 {{slot:hero}}"
+    assert slot["emptyText"] == "红裙女性"
+
+    client.post(f"{API}/{draft['key']}/publish", headers=headers)
+    detail = client.get(f"{API}/{draft['key']}", headers=headers).json()["data"]
+    published = next(
+        item for item in detail["latest"]["slots"] if item["key"] == "hero"
+    )
+    assert published["filledText"] == "人物参考 {{slot:hero}}"
+    assert published["emptyText"] == "红裙女性"

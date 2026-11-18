@@ -159,7 +159,6 @@ class TemplateSpecSlot(Base, UUIDMixin):
     min_count: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     max_count: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     label: Mapped[str] = mapped_column(String(80), default="", nullable=False)
-    usage_text: Mapped[str] = mapped_column(String(500), default="", nullable=False)
     asset_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     #: 候选集的标签 id（任意级别；空 = 不限）。
     #:
@@ -169,4 +168,10 @@ class TemplateSpecSlot(Base, UUIDMixin):
     #: 纯粹是为了降级时旧代码还能看懂）。
     tag_ids: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     tag_id: Mapped[str] = mapped_column(String(32), default="", nullable=False)
+    #: **选中时文案**：使用者填了素材时，提示词里这一段怎么说（可含自引用）。
+    #: 空 = 直接插 `{{Mixed N}}`（旧行为）。
+    filled_text: Mapped[str] = mapped_column(String(2000), default="", nullable=False)
+    #: **未选时文案**：使用者没填素材时这一段怎么说（纯提示词，不含槽位引用）。
+    #: 空 = 编译期报错（可选槽位且被引用时，发布闸门就会拦）。
+    empty_text: Mapped[str] = mapped_column(String(2000), default="", nullable=False)
     position: Mapped[int] = mapped_column(Integer, nullable=False)
