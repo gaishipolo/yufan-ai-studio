@@ -21,6 +21,9 @@ export type { SwitchProps } from './Switch';
 export { Tabs } from './Tabs';
 export type { TabItem, TabsProps } from './Tabs';
 
+export { Segmented } from './Segmented';
+export type { SegmentedOption, SegmentedProps } from './Segmented';
+
 export { Modal } from './Modal';
 export type { ModalProps } from './Modal';
 

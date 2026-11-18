@@ -20,16 +20,19 @@ export function SlotMediaPicker({
   slot,
   selected,
   onChange,
+  requiredCount,
 }: {
   slot: SpecSlotOut;
   selected: string[];
   onChange: (ids: string[]) => void;
+  /** 这个槽位实际最少要几张（作者写的 `minCount`，或提示词「第 N 张」推出的下限）。 */
+  requiredCount?: number;
 }) {
   const kind = slot.type as 'image' | 'video';
   const label = KIND_LABEL[kind];
   const max = Math.max(1, slot.maxCount ?? 1);
-  /** 可选 = 最少 0 张。与封装页的开关、后端的编译规则同一口径。 */
-  const optional = (slot.minCount ?? 1) === 0;
+  /** 实际下限。缺省时就是作者写的 `minCount`。 */
+  const need = requiredCount ?? (slot.minCount ?? 1);
   /** 槽位的候选集（一组标签，任意级别）。空 = 不限。 */
   const scope = useMemo(() => slot.tagIds ?? [], [slot.tagIds]);
   const scopeKey = scope.join(',');
@@ -99,27 +102,20 @@ export function SlotMediaPicker({
         <span className="min-w-0 truncate text-xs font-medium text-ink">
           {slot.label || slot.key}
         </span>
-        {(slot.minCount ?? 1) > 0 && <span className="text-warn-deep">*</span>}
+        {need > 0 && <span className="text-warn-deep">*</span>}
         <span className="ml-auto shrink-0 text-micro text-ink-mute">
           {label} · {max > 1 ? `已选 ${selected.length}/${max}` : '选 1 个'}
+          {/* 提示词里的「第 N 张」推出的下限可能**超过上限**（作者配置错了）。
+              那时候写「选 1 个」是骗人的 —— 照实说，别让使用者以为挑一张就够。 */}
+          {need > max && ` · 至少 ${need} 张`}
           {typeof list.data?.total === 'number' && filterIds.length > 0 && ` · 共 ${list.data.total}`}
         </span>
       </div>
 
-      {/* 可选槽位：把「不填会怎样」摆出来。使用者面对一个没有星号的槽位，
-          第一反应是「不填是不是不行」—— 与其让人猜，不如直接告诉他
-          不填时提示词里会用什么。 */}
-      {optional && (
-        <p className="mt-1 text-micro leading-relaxed text-ink-mute">
-          {slot.emptyText?.trim() ? (
-            <>
-              不填则用：<span className="text-ink-soft">{slot.emptyText.trim()}</span>
-            </>
-          ) : (
-            '可选：不填也能生成'
-          )}
-        </p>
-      )}
+      {/* 可选槽位**不摆**「不填会怎样」的说明：这栏由「随机性」三档控制，
+          可选槽位要么不出现（均衡档），要么出现但由系统/使用者挑（随机/自定义）。
+          「不填则用：…」是**填表页**的旧形态 —— 同一件事说两遍，
+          而且它描述的状态（不填）在新形态下已经不成立了。 */}
 
       {!scope.length && (
         /* 老模板（闸门加上之前发布的）没有标签：仍然能挑，但要说明为什么没有分组。 */

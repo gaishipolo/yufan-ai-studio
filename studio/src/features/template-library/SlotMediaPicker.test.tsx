@@ -55,7 +55,6 @@ function slotOf(extra: Partial<SpecSlotOut> = {}): SpecSlotOut {
     minCount: 1,
     maxCount: 1,
     label: '主图',
-    usage: '',
     position: 1,
     ...extra,
   };
@@ -159,18 +158,15 @@ describe('SlotMediaPicker · 候选集里再筛', () => {
 });
 
 /**
- * 可选槽位：使用者面对一个没有星号的槽位，第一反应是「不填是不是不行」。
- * 与其让人猜，不如把「不填会怎样」摆出来。
+ * 可选槽位：**不摆**「不填会怎样」的说明。
+ *
+ * 模板库右栏现在有「随机性」三档：可选槽位要么不出现（均衡档），
+ * 要么出现但由系统/使用者挑（随机/自定义）。「不填则用：…」是
+ * **填表页的旧形态** —— 同一件事说两遍，而且它描述的状态（不填）
+ * 在新形态下已经不成立了。
  */
 describe('SlotMediaPicker · 可选槽位', () => {
-  it('必填槽位不显示兜底说明', () => {
-    render(
-      <SlotMediaPicker slot={slotOf({minCount: 1})} selected={[]} onChange={vi.fn()} />,
-    );
-    expect(screen.queryByText(/不填/)).not.toBeInTheDocument();
-  });
-
-  it('可选槽位显示「不填则用：兜底文案」', () => {
+  it('可选槽位不摆「不填则用」的说明', () => {
     render(
       <SlotMediaPicker
         slot={slotOf({minCount: 0, emptyText: '主角是穿红裙的年轻女性'})}
@@ -178,15 +174,8 @@ describe('SlotMediaPicker · 可选槽位', () => {
         onChange={vi.fn()}
       />,
     );
-    expect(screen.getByText(/不填则用：/)).toBeInTheDocument();
-    expect(screen.getByText('主角是穿红裙的年轻女性')).toBeInTheDocument();
-  });
-
-  it('可选槽位没写兜底文案时只说「不填也能生成」', () => {
-    render(
-      <SlotMediaPicker slot={slotOf({minCount: 0})} selected={[]} onChange={vi.fn()} />,
-    );
-    expect(screen.getByText('可选：不填也能生成')).toBeInTheDocument();
+    expect(screen.queryByText(/不填/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/可选：/)).not.toBeInTheDocument();
   });
 
   it('必填槽位标星，可选槽位不标星', () => {

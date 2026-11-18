@@ -36,12 +36,32 @@ vi.mock('@/entities/model/api/model.queries', () => ({
   useModels: modelsMock,
 }));
 
-/* 素材网格：给一张图，好让「填满必填槽位」这一步有东西可点。 */
+/* 素材网格：给一张图，好让「填满必填槽位」这一步有东西可点。
+   **按候选集（tagIds）分开返回**：可选槽位圈了 `tag-person`，
+   它的候选网格与必填槽位的不一样 —— 否则按名字找素材会命中多个元素。 */
 vi.mock('@/entities/library/api/library.queries', () => ({
-  useLibraryDetail: () => ({data: {name: '商品图.png'}}),
-  useLibraryTags: () => ({data: [], isPending: false}),
-  useLibrarySelection: () => ({
-    data: {items: [{id: 'a1', name: '商品图.png', kind: 'image'}], total: 1},
+  useLibraryDetail: (id: string) => ({
+    data: {name: id === 'p1' ? '人物图.png' : '商品图.png'},
+  }),
+  useLibraryTags: () => ({
+    data: [
+      {
+        id: 'tag-person',
+        name: '人物',
+        assetCount: 1,
+        childCount: 0,
+        createdAt: '2026-11-09T10:00:00Z',
+      },
+    ],
+    isPending: false,
+  }),
+  useLibrarySelection: (params: {tagIds?: string[]}) => ({
+    data: {
+      items: params.tagIds?.includes('tag-person')
+        ? [{id: 'p1', name: '人物图.png', kind: 'image'}]
+        : [{id: 'a1', name: '商品图.png', kind: 'image'}],
+      total: 1,
+    },
     isLoading: false,
     isSuccess: true,
   }),
@@ -249,6 +269,10 @@ describe('模板库：生成前的二次确认', () => {
  *
  * 这一整条链路上有三处必须一致：按钮不再显示「还缺」、
  * 确认框里摆出兜底文案、提交时这段话真的进了提示词。
+ *
+ * **默认是「均衡」档**：可选槽位整个不出现（也不传素材）。
+ * 兜底文案那条链路要在**「自定义」档**下才看得见 ——
+ * 均衡档下那个槽位压根不在这一页上。
  */
 describe('模板库：可选槽位不填也能生成', () => {
   const OPTIONAL_SPEC: TemplateSpecOut = {
@@ -264,7 +288,7 @@ describe('模板库：可选槽位不填也能生成', () => {
           minCount: 0,
           maxCount: 1,
           label: '人物参考',
-          tagIds: [],
+          tagIds: ['tag-person'],
           emptyText: '主角是穿红裙的年轻女性',
         },
         SPEC.latest!.slots[1],
@@ -294,22 +318,34 @@ describe('模板库：可选槽位不填也能生成', () => {
     expect(screen.queryByText(/还缺/)).not.toBeInTheDocument();
   });
 
-  it('确认框里摆出这条槽位的兜底文案', async () => {
+  it('均衡档：可选槽位整个不出现', async () => {
+    renderOptionalLibrary();
+
+    await screen.findByRole('button', {name: /生成视频/});
+    expect(screen.queryByText('人物参考')).not.toBeInTheDocument();
+  });
+
+  it('自定义档：确认框里摆出这条槽位的兜底文案', async () => {
     const user = userEvent.setup();
     renderOptionalLibrary();
 
-    await user.click(await screen.findByRole('button', {name: /生成视频/}));
+    /* 切到自定义：可选槽位出现，且可以「不填」。 */
+    await user.click(await screen.findByRole('radio', {name: '自定义'}));
+    expect(await screen.findByText('人物参考')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', {name: /生成视频/}));
 
     const dialog = await screen.findByRole('dialog');
     expect(dialog).toHaveTextContent('人物参考（未填）');
     expect(dialog).toHaveTextContent('主角是穿红裙的年轻女性');
   });
 
-  it('填了素材就不再摆兜底行', async () => {
+  it('自定义档：填了素材就不再摆兜底行', async () => {
     const user = userEvent.setup();
     renderOptionalLibrary();
 
-    await user.click(await screen.findByTitle('商品图.png'));
+    await user.click(await screen.findByRole('radio', {name: '自定义'}));
+    await user.click(await screen.findByTitle('人物图.png'));
     await user.click(screen.getByRole('button', {name: /生成视频/}));
 
     const dialog = await screen.findByRole('dialog');

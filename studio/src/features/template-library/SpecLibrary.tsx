@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { ArrowRight, Play, Plus } from 'lucide-react';
+import { ArrowRight, Play, Plus, RefreshCw } from 'lucide-react';
 import { KIND_LABEL } from '@/entities/library/model/types';
 import { AssetChip } from '@/entities/library/ui/AssetChip';
 import { CaseCover } from '@/entities/library/ui/CaseCover';
@@ -26,6 +26,7 @@ import {
   ConfirmDialog,
   EmptyState,
   SearchInput,
+  Segmented,
   Select,
   Skeleton,
 } from '@/shared/ui';
@@ -35,6 +36,23 @@ import { useStickyFitHeight } from '@/shared/hooks/useStickyFitHeight';
 import { toSubmitPayload } from './taskPayload';
 import { modelChoiceOptions, resolveModelChoice } from './modelChoice';
 import { buildGenerateConfirm } from './generateConfirm';
+import { useRandomPools } from './useRandomPools';
+import {
+  DEFAULT_RANDOMNESS,
+  RANDOMNESS_LABEL,
+  adoptAutoValues,
+  autoFilledSlots,
+  displaySlotValues,
+  isOptionalSlot,
+  mergeSlotValues,
+  releaseCarriedValues,
+  suppressedSlotKeys,
+  visibleSlots,
+  type ManualSlotValues,
+  type RandomnessMode,
+} from './randomness';
+import { randomPick, seededRandom } from './randomPick';
+import { requiredSlotCount } from './slotIndexRefs';
 
 /**
  * 模板库（填表）：左边选模板，右边就地填素材 → 生成。
@@ -55,24 +73,8 @@ function slotsOf(spec: TemplateSpecOut | undefined): SpecSlotOut[] {
   return spec?.latest?.slots ?? [];
 }
 
-/** 槽位要几张：作者写死的上下限，没写就按 1 张。 */
-function minOf(slot: SpecSlotOut): number {
-  return slot.minCount ?? 1;
-}
-
 function maxOf(slot: SpecSlotOut): number {
   return slot.maxCount ?? 1;
-}
-
-/**
- * 槽位是不是**可选**的（使用者可以不填）。
- *
- * 判据只有 `minCount === 0` —— 与封装页的开关、后端的编译规则同一口径。
- * 别在别处再写一遍 `slot.minCount === 0`：三处不同步时，界面显示「可选」
- * 而编译器按必填处理（或反过来），而这种错只在生成结果里显形。
- */
-function isOptional(slot: SpecSlotOut): boolean {
-  return minOf(slot) === 0;
 }
 
 /**
@@ -210,7 +212,11 @@ export function SpecLibrary() {
 
   const [keyword, setKeyword] = useState('');
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
-  const [values, setValues] = useState<Record<string, string[]>>({});
+  /* 使用者手动挑的素材。**值的 `undefined` 有含义**：「没动过这个槽位」。
+     随机档下系统会替使用者填可选槽位，如果用 `[]` 当「没动过」，
+     那「我不要系统挑的这张」就永远删不掉 —— 手动挑过的（哪怕挑空）
+     必须能盖掉系统填的。 */
+  const [values, setValues] = useState<ManualSlotValues>({});
   /* 使用者对「运行时参数」的选择（计费模式等）。跟素材选择分开存：
      素材是这次填的，计费模式是这次选的 —— 换模板时两者都要重来。 */
   const [userChoices, setUserChoices] = useState<Record<string, ParamValue>>({});
@@ -220,6 +226,21 @@ export function SpecLibrary() {
   const [chosenModel, setChosenModel] = useState('');
   const [note, setNote] = useState('');
   const [error, setError] = useState('');
+  /* 随机性三档：随机（系统替使用者挑可选素材）/ 均衡（只填必填，可选让给模型）/
+     自定义（使用者全权挑）。默认均衡 —— 这是「我只给关键素材」的常见用法，
+     而且均衡档下右栏最干净（不摆一堆填不了的槽位）。 */
+  const [randomness, setRandomness] = useState<RandomnessMode>(DEFAULT_RANDOMNESS);
+  /* 随机档的候选池：每个可选槽位一批候选素材 id。
+     **只有进过随机档才发请求**：均衡档（默认）根本不需要候选池，
+     每次进页面就为一堆用不上的素材打请求是白花流量。 */
+  const [randomTried, setRandomTried] = useState(false);
+  /* 随机用的随机源。**每次重新随机换一颗种子** —— 用 `Math.random` 直接
+     写在计算式里的话，每次渲染都会重挑一遍，界面上的素材会不停变。 */
+  const [randomSeed, setRandomSeed] = useState(() => Math.random());
+  /* 哪些槽位当前的素材是**从随机档继承来的**（不是使用者亲手挑的）。
+     回到随机档时，这几格要让新的随机接管 —— 否则「随机 → 自定义 → 随机」
+     绕一圈回来还是原来那几张，「随机」就成了摆设。 */
+  const [carried, setCarried] = useState<Record<string, boolean>>({});
   /* 二次确认：生成是要花钱的动作（积分加速更甚），按下之前先把这次会发生
      什么摊开写清楚 —— 「确定吗？」等于让人盲按。 */
   const [confirming, setConfirming] = useState(false);
@@ -238,11 +259,27 @@ export function SpecLibrary() {
 
   const spec = items.find(item => item.key === selectedKey) ?? items[0];
   const slots = slotsOf(spec);
-  /* 只列「使用时填」的槽位：固定槽位是作者在封装页选死的，填表的人既不能换也用不着
-     知道它长什么样 —— 一排只读的 chip 只会让人以为这里还能点。 */
-  const fillSlots = slots.filter(slot => slot.binding === 'user');
   const version = spec?.latest;
   const focused = spec?.key ?? null;
+  /* 这一档下右栏显示哪些槽位：**必填的三档都显示**，可选的按档位处理
+     （均衡 = 整个让给模型，不出现）。固定槽位在三种档位下都不出现 ——
+     那是作者在封装页选死的，填表的人既不能换也用不着知道它长什么样
+     （一排只读的 chip 只会让人以为这里还能点）。
+
+     **提示词要一起传进去**：均衡档下有些可选槽位不能被让给模型
+     （提示词里按「第 N 张」引用了它，省掉就会 400）。见 `slotIndexRefs`。 */
+  const fillSlots = visibleSlots(slots, randomness, version?.prompt ?? '');
+  /* 这个模板有没有可选槽位：没有的话三档没有差别，整条控件不出现。 */
+  const hasOptionalSlots = slots.some(isOptionalSlot);
+  /* 随机档的候选池：只有进过随机档才发请求。 */
+  const randomPools = useRandomPools(slots, randomTried);
+  /* 这一档下**不该传素材**的槽位：均衡档把可选槽位整个让给模型，
+     所以它们既不出现在右栏，也不进 `slotValues`。 */
+  const suppressed = useMemo(
+    () => suppressedSlotKeys(slots, randomness, version?.prompt ?? ''),
+    [slots, randomness, version?.prompt],
+  );
+
   /* 这份模板能跑的全部模型：固定模型 + 作者声明的允许清单。
      固定模型永远在里头 —— 它是模板自己的模型。 */
   const allowedModels = useMemo(
@@ -259,6 +296,8 @@ export function SpecLibrary() {
     setChosenModel('');
     setNote('');
     setError('');
+    /* 「继承来的那几张」也是上一张模板的，不跟着带过来。 */
+    setCarried({});
   }, [focused, version?.version]);
 
   /* 换模型要清掉上一款的用户选择：两款模型的 `userSelectable` 参数未必相同，
@@ -286,10 +325,109 @@ export function SpecLibrary() {
   const kind = choice.kind;
   const defaults = choice.defaults;
 
+  /* 随机档：系统替使用者把可选槽位填上。
+     候选池还没回来时先不填（`autoFilled` 为空），等池子到了再补 ——
+     宁可晚一点，也不要拿空池子去填出一个「随机但其实没随机」的结果。
+
+     **它不看当前档位**，只看「随机挑过没有」：`randomSeed` 一变就重挑，
+     而档位切换时（见 `changeRandomness`）挑出来的结果会**落进使用者手挑的
+     那一份**里，所以切档不会把刚才看到的素材弄丢。 */
+  const autoFilled = useMemo(
+    () =>
+      autoFilledSlots(slots, randomPools, (pool, count) =>
+        randomPick(pool, count, seededRandom(randomSeed)),
+      ),
+    [slots, randomPools, randomSeed],
+  );
+  /* 只有随机档才把系统挑的算进**提交**。另外两档 = 使用者说了算。
+     包一层 `useMemo` 是为了**引用稳定** —— 不包的话每次渲染都是新对象，
+     下游的 `useMemo` 依赖它时会跟着重算（react-hooks/exhaustive-deps 会报）。 */
+  const activeAuto = useMemo(
+    () => (randomness === 'random' ? autoFilled : {}),
+    [randomness, autoFilled],
+  );
+
+  /* **真正提交给后端的素材**。三份数据合起来：
+     1. 随机档系统挑的；
+     2. 使用者手动挑的（**盖过**系统挑的 —— 包括「挑空了」）；
+     3. 这一档不该传的（均衡档的可选槽位）**从结果里剔除**。 */
+  const submitValues = useMemo(
+    () => mergeSlotValues(values, activeAuto, suppressed),
+    [values, activeAuto, suppressed],
+  );
+
+  /* 每个槽位**实际**最少要几张。
+     提示词里写了「第 2 张」的槽位实际至少要 2 张（后端取 `owned[index - 1]`，
+     越界就 400）。只看 `minCount` 的话，界面显示「不缺料」，用户一点生成
+     就收到一句「第 2 张不存在」—— 那不像界面问题，像模板坏了。 */
+  const requiredCounts = useMemo(() => {
+    const map: Record<string, number> = {};
+    for (const slot of slots) {
+      map[slot.key] = requiredSlotCount(slot, version?.prompt ?? '');
+    }
+    return map;
+  }, [slots, version?.prompt]);
+
+  /* 缺料判定看的是**真正会提交的**那份：均衡档下可选槽位已经被剔除了，
+     不该再拿它们去算「还缺几项」。
+
+     **下限不是 `minCount` 而是 `requiredCounts`**：见上。 */
   const missing = slots.filter(slot => {
     if (slot.binding !== 'user') return false;
-    return (values[slot.key] ?? []).length < minOf(slot);
+    if (suppressed.includes(slot.key)) return false;
+    return (submitValues[slot.key] ?? []).length < (requiredCounts[slot.key] ?? 0);
   });
+
+  /* 切档位。三条规则：
+     1. **离开随机档**时，把系统随机填的那几张**接管**成手挑的 ——
+        不接管的话，「随机 → 自定义」一切换，那些素材就从界面上消失了，
+        使用者明明刚看到它们填在那里。
+     2. **回到随机档**时，把「接管来的」那几格**交还给系统**重新随机 ——
+        否则「随机 → 自定义 → 随机」绕一圈回来还是原来那几张，
+        「随机」就成了摆设。
+     3. **使用者亲手挑过的那几格永远不受影响** —— 那是他的决定，
+        系统随机不该覆盖。所以要分清「接管来的」与「亲手挑的」，
+        用 `carried` 记着。
+
+     两条规则都落在纯函数里（`adoptAutoValues` / `releaseCarriedValues`）——
+     组件级的断言抓不住它们（两次随机可能挑到同一张，撞上了就看不出差别）。 */
+  const changeRandomness = (next: RandomnessMode) => {
+    if (next === randomness) return;
+    if (randomness === 'random') {
+      /* 接管：只接管「使用者没动过」的槽位。 */
+      setValues(current => {
+        const adopted = adoptAutoValues(current, autoFilled);
+        if (adopted.carried.length) {
+          setCarried(marks => ({...marks, ...Object.fromEntries(adopted.carried.map(k => [k, true]))}));
+        }
+        return adopted.values;
+      });
+    } else if (next === 'random') {
+      /* 交还：把接管来的清掉，让新的随机接管。 */
+      setValues(current => releaseCarriedValues(current, Object.keys(carried)));
+      setCarried({});
+      /* 进随机档：开始取候选池 + 换一颗种子重挑。 */
+      setRandomTried(true);
+      setRandomSeed(Math.random());
+    }
+    setRandomness(next);
+  };
+
+  /** 换一批：随机档下重新挑一次。种子换一颗，池子不变。 */
+  const reroll = () => {
+    setRandomSeed(Math.random());
+  };
+
+  /** 使用者动了某个槽位：它从此是「亲手挑的」，系统随机不再覆盖。 */
+  const setSlotValues = (key: string, ids: string[]) => {
+    setValues(current => ({...current, [key]: ids}));
+    setCarried(current => {
+      if (!current[key]) return current;
+      const next = {...current};
+      delete next[key];
+      return next;
+    });
+  };
 
   /* 参数分两类：
      - 作者设的（时长、画幅…）：只读展示，标签与档位文案全部来自模型的
@@ -344,11 +482,14 @@ export function SpecLibrary() {
   const fixedSlots = slots.filter(slot => slot.binding === 'fixed' && slot.assetId);
   const confirmSlots = [
     ...fillSlots.map(slot => {
-      const count = (values[slot.key] ?? []).length;
+      const count = (submitValues[slot.key] ?? []).length;
       /* 可选槽位**没填** → 提示词里会用「未选时文案」。摆出来，使用者
-         才知道这次生成会用什么内容。 */
+         才知道这次生成会用什么内容。
+
+         均衡档下可选槽位被整个剔除了，不进 `fillSlots` —— 它不传素材，
+         也就没有「未填则用」这回事（提示词里那段根本没被引用）。 */
       const fallback =
-        isOptional(slot) && count === 0 ? slot.emptyText?.trim() : '';
+        isOptionalSlot(slot) && count === 0 ? slot.emptyText?.trim() : '';
       return {
         label: slot.label || slot.key,
         count,
@@ -382,19 +523,18 @@ export function SpecLibrary() {
   const pickerSlot = slots.find(slot => slot.key === picker);
 
   /* 选择器的语义是 `onToggle`（点已选的等于取消），多选槽位不关弹层：
-     一次挑三张比反复开关三次省事；单选槽位选一张就替换掉原来的。 */
+     一次挑三张比反复开关三次省事；单选槽位选一张就替换掉原来的。
+     「已选」的基准是**界面上显示的那份**（手动优先、随机档取系统的），
+     不是只取手动那份 —— 否则随机档下使用者点一下就会把系统挑的丢掉。 */
   const togglePick = (asset: PickedAsset) => {
     if (!pickerSlot) return;
     const key = pickerSlot.key;
     const limit = maxOf(pickerSlot);
-    setValues(current => {
-      const existing = current[key] ?? [];
-      if (existing.includes(asset.id)) {
-        return {...current, [key]: existing.filter(id => id !== asset.id)};
-      }
-      const next = limit > 1 ? [...existing, asset.id] : [asset.id];
-      return {...current, [key]: next.slice(0, limit)};
-    });
+    const base = displaySlotValues(key, values, activeAuto);
+    const next = base.includes(asset.id)
+      ? base.filter(id => id !== asset.id)
+      : (limit > 1 ? [...base, asset.id] : [asset.id]).slice(0, limit);
+    setSlotValues(key, next);
     /* 单选（含封装）选完就关：留着一个已经选好的弹层，用户只能再去点右上角，
        而这时提示词里的缩略图早就该出来了。多选槽位仍然不关，一次挑三张。 */
     if (limit <= 1) setPicker(null);
@@ -408,7 +548,8 @@ export function SpecLibrary() {
       const compiled = await compile.mutateAsync({
         key: spec.key,
         payload: {
-          slotValues: values,
+          /* 真正会提交的那份：随机档含系统挑的，均衡档已剔除可选槽位。 */
+          slotValues: submitValues,
           // 选中的模型：清单里挑的那款。不传则用模板的固定模型。
           model: modelId,
           // 使用者选的运行时参数（计费模式等）：随这次编译走，不落进模板版本。
@@ -551,6 +692,43 @@ export function SpecLibrary() {
                 8px 的全局滚动条会把槽位块挤窄。"stable" 让有没有滚动条两种情况等宽，
                 切模板时内容不会左右跳。 */}
             <div className="scroll-thin flex min-h-0 flex-1 flex-col gap-3.5 overflow-y-auto overscroll-contain px-4 py-3.5 [scrollbar-gutter:stable]">
+              {/* 随机性三档：**决定可选槽位的素材由谁给**。
+                  放在素材区之前，因为它是这一栏的**前提** —— 先定「谁说了算」，
+                  再看下面要填哪几格。
+                  没有可选槽位时整条不出现（没有可随机的对象，档位也就没有差别）。 */}
+              {hasOptionalSlots && (
+                <div className="flex items-center gap-2">
+                  <Segmented
+                    aria-label="随机性"
+                    value={randomness}
+                    onChange={changeRandomness}
+                    options={[
+                      {value: 'random', label: RANDOMNESS_LABEL.random},
+                      {value: 'balanced', label: RANDOMNESS_LABEL.balanced},
+                      {value: 'custom', label: RANDOMNESS_LABEL.custom},
+                    ]}
+                    hints={{
+                      random: '系统随机帮你挑可选素材',
+                      balanced: '只填必填素材，可选的让给模型',
+                      custom: '每张素材都由你指定',
+                    }}
+                    className="flex-1"
+                  />
+                  {/* 「换一批」只在随机档出现：随机挑出来的素材总该有个
+                      再来一次的机会，否则「随机」就只是「一次性」。 */}
+                  {randomness === 'random' && (
+                    <button
+                      type="button"
+                      onClick={reroll}
+                      title="换一批"
+                      aria-label="换一批"
+                      className="flex shrink-0 items-center gap-1 rounded-lg border border-line-soft bg-panel-soft px-2 py-1 text-xs text-ink-soft transition-colors hover:border-primary-line hover:text-primary"
+                    >
+                      <RefreshCw size={12} />
+                    </button>
+                  )}
+                </div>
+              )}
               {/* 作者声明了「允许选用的模型」才出现这个下拉：使用模板的人从
                   清单里挑一款，而不是只能用一个写死的模型。只有一款时不出
                   现（老模板的样子）。 */}
@@ -588,7 +766,9 @@ export function SpecLibrary() {
                 >
                   <div className="flex flex-col gap-2">
                     {fillSlots.map((slot, index) => {
-                      const filled = values[slot.key] ?? [];
+                      /* 界面上显示的素材：手动挑过的优先（哪怕挑空了），
+                         没动过的在随机档下显示系统挑的那几张。 */
+                      const filled = displaySlotValues(slot.key, values, activeAuto);
                       /* 图片/视频：按「一级标签 · 槽位名」分组、点二级标签看素材。
                          其余（文本/音频/封装）保留行式写法。 */
                       if (slot.type === 'image' || slot.type === 'video') {
@@ -597,9 +777,8 @@ export function SpecLibrary() {
                             key={slot.key}
                             slot={slot}
                             selected={filled}
-                            onChange={ids =>
-                              setValues(current => ({...current, [slot.key]: ids}))
-                            }
+                            onChange={ids => setSlotValues(slot.key, ids)}
+                            requiredCount={requiredCounts[slot.key]}
                           />
                         );
                       }
@@ -609,7 +788,9 @@ export function SpecLibrary() {
                             <span className="flex items-baseline gap-1 text-xs leading-tight text-ink">
                               <span className="shrink-0 text-ink-mute">{index + 1}.</span>
                               <span className="line-clamp-2">{slot.label || slot.key}</span>
-                              {minOf(slot) > 0 && <span className="text-warn-deep">*</span>}
+                              {(requiredCounts[slot.key] ?? 0) > 0 && (
+                                <span className="text-warn-deep">*</span>
+                              )}
                             </span>
                             <span className="text-micro text-ink-mute">
                               {TYPE_LABEL[slot.type] ?? slot.type}
@@ -623,12 +804,10 @@ export function SpecLibrary() {
                                 key={assetId}
                                 assetId={assetId}
                                 onRemove={() =>
-                                  setValues(current => ({
-                                    ...current,
-                                    [slot.key]: (current[slot.key] ?? []).filter(
-                                      id => id !== assetId,
-                                    ),
-                                  }))
+                                  setSlotValues(
+                                    slot.key,
+                                    filled.filter(id => id !== assetId),
+                                  )
                                 }
                               />
                             ))}
@@ -642,16 +821,6 @@ export function SpecLibrary() {
                                 ? '再选'
                                 : `选择${TYPE_LABEL[slot.type] ?? '素材'}`}
                             </button>
-                            {/* 可选槽位：把「不填会怎样」摆出来。使用者面对一个
-                                没有星号的槽位，第一反应是「不填是不是不行」——
-                                与其让人猜，不如直接告诉他不填时提示词里会用什么。 */}
-                            {isOptional(slot) && filled.length === 0 && (
-                              <span className="w-full text-micro leading-relaxed text-ink-mute">
-                                {slot.emptyText?.trim()
-                                  ? `不填则用：${slot.emptyText.trim()}`
-                                  : '可选：不填也能生成'}
-                              </span>
-                            )}
                           </div>
                         </div>
                       );
@@ -659,12 +828,20 @@ export function SpecLibrary() {
                   </div>
                 </PanelSection>
               ) : (
-                /* 没有要填的槽位（纯提示词，或者素材全被作者固定）：这一栏不必空着占位，
-                    说一句能直接生成就够。两种情况的说法分开，别让人以为漏了槽位。 */
+                /* 没有要填的槽位。这一栏不必空着占位，说一句能直接生成就够。
+                   **三种说法要分开** ——
+                   - 纯提示词：模板本来就没有槽位；
+                   - 均衡档：可选槽位**让给了模型**（不是作者固定的！），
+                     说成「作者固定了」会让使用者以为那些素材还在起作用；
+                   - 素材全被作者固定：那是作者选死的。
+                   说错的后果不是文案瑕疵 —— 使用者会以为某张图参与了生成，
+                   而它其实没有。 */
                 <p className="text-meta text-ink-mute">
                   {slots.length === 0
                     ? '这个模板是纯提示词，直接生成即可。'
-                    : '素材都由作者固定了，直接生成即可。'}
+                    : hasOptionalSlots
+                      ? '均衡模式：可选素材交给模型，直接生成即可。'
+                      : '素材都由作者固定了，直接生成即可。'}
                 </p>
               )}
 
@@ -743,7 +920,7 @@ export function SpecLibrary() {
         kind={slotTypeOf(pickerSlot?.type ?? 'image')}
         /* 槽位的标签决定候选集：这里与封装页的固定选择器看的是同一批素材。 */
         tagIds={pickerSlot?.tagIds ?? []}
-        selected={pickerSlot ? (values[pickerSlot.key] ?? []) : []}
+        selected={pickerSlot ? displaySlotValues(pickerSlot.key, values, activeAuto) : []}
         onClose={() => setPicker(null)}
         onToggle={togglePick}
       />
