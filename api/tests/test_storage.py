@@ -82,7 +82,9 @@ def test_delete_is_idempotent_even_if_the_file_vanishes_midway(
     asyncio.run(storage.delete("assets/gone.bin"))  # 真的不存在也不该抛
 
 
-def test_put_file_keeps_bytes_when_source_is_the_target(storage: LocalStorage, tmp_path: Path) -> None:
+def test_put_file_keeps_bytes_when_source_is_the_target(
+    storage: LocalStorage, tmp_path: Path
+) -> None:
     """源和目标同一个文件时不能拷（拷＝先截断目标再读源，读到 0 字节）。
 
     入库把 `storageKey` 当 source 传回来时正是这种情形：本地驱动直接返回
@@ -145,64 +147,3 @@ def test_concurrent_put_file_to_the_same_key_never_interleaves(
     assert data in {b"a" * 4096, b"b" * 8192}
 
 
-def test_put_file_keeps_bytes_when_source_is_the_target(storage: LocalStorage, tmp_path: Path) -> None:
-    """源和目标同一个文件时不能拷（拷＝先截断目标再读源，读到 0 字节）。
-
-    入库把 `storageKey` 当 source 传回来时正是这种情形：本地驱动直接返回
-    `local_path(key)`，而 key 已经是内容寻址地址。修这条之前实测 1000 → 0。
-    """
-    payload = b"x" * 1000
-    asyncio.run(storage.put("blobs/aa/hash.mp4", payload))
-    target = storage._resolve("blobs/aa/hash.mp4")
-
-    digest = asyncio.run(storage.put_file("blobs/aa/hash.mp4", target))
-
-    assert target.read_bytes() == payload
-    assert len(digest) == 64
-
-
-def test_put_file_leaves_no_part_files(storage: LocalStorage, tmp_path: Path) -> None:
-    """临时文件必须落成正式对象 —— 残留的 `*.part` 会随 GC 一起漂在盘上。"""
-    source = tmp_path / "src.bin"
-    source.write_bytes(b"y" * 512)
-
-    asyncio.run(storage.put_file("blobs/bb/other.mp4", source))
-
-    root = storage._resolve("blobs/bb")
-    assert sorted(item.name for item in root.iterdir()) == ["other.mp4"]
-
-
-def test_put_replaces_existing_object_without_leaving_partials(
-    storage: LocalStorage, tmp_path: Path
-) -> None:
-    asyncio.run(storage.put("blobs/cc/obj.bin", b"old"))
-    asyncio.run(storage.put("blobs/cc/obj.bin", b"new-content"))
-
-    target = storage._resolve("blobs/cc/obj.bin")
-    assert target.read_bytes() == b"new-content"
-    assert [item.name for item in target.parent.iterdir()] == ["obj.bin"]
-
-
-def test_concurrent_put_file_to_the_same_key_never_interleaves(
-    storage: LocalStorage, tmp_path: Path
-) -> None:
-    """两个协程同时写同一个 key：结果必须是**完整的其中一份**，不能互相截断。
-
-    以前的实现对目标 `open("wb")`，两个写者各自截断对方，长度会是两份的任意
-    混合；现在各写各的 uuid4 临时文件，最后 `replace`，谁后到谁赢。
-    """
-    first = tmp_path / "a.bin"
-    second = tmp_path / "b.bin"
-    first.write_bytes(b"a" * 4096)
-    second.write_bytes(b"b" * 8192)
-
-    async def race() -> None:
-        await asyncio.gather(
-            storage.put_file("blobs/dd/race.bin", first),
-            storage.put_file("blobs/dd/race.bin", second),
-        )
-
-    asyncio.run(race())
-
-    data = storage._resolve("blobs/dd/race.bin").read_bytes()
-    assert data in {b"a" * 4096, b"b" * 8192}

@@ -276,7 +276,6 @@ def test_reclaim_marks_expired_and_keeps_row(
     _run(_patch(export_id, expires_at=utcnow() - timedelta(hours=1)))
 
     from db.repository import BaseRepository
-    from db.repository import BaseRepository
     from modules.export.service import ExportService
 
     async def reclaim() -> dict[str, int]:

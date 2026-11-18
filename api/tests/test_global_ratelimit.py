@@ -153,9 +153,9 @@ def test_proxied_clients_do_not_share_one_bucket(monkeypatch: pytest.MonkeyPatch
     （认 `TRUSTED_PROXIES`、按 X-Forwarded-For 从右往左找第一个不可信段），
     限流键必须走它。
     """
-    from core import net as net_mod
-
     import ipaddress
+
+    from core import net as net_mod
 
     monkeypatch.setattr(
         net_mod,
@@ -163,7 +163,6 @@ def test_proxied_clients_do_not_share_one_bucket(monkeypatch: pytest.MonkeyPatch
         lambda: (ipaddress.ip_network("10.0.0.1/32"),),
     )
 
-    limiter = RateLimiter(counter=CacheCounter(MemoryCache()))
     mw = GlobalRateLimitMiddleware(_StubApp(), limit_per_min=2)
 
     async def scenario() -> list[int]:
