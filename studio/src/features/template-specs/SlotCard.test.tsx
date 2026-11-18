@@ -307,14 +307,26 @@ describe('槽位卡片', () => {
     expect(screen.getByLabelText('未选时文案')).toBeInTheDocument();
   });
 
-  it('提示词里没引用时，照实说这两段话还用不上', async () => {
+  it('提示词里没引用时，照实说这两段话还用不上（写在占位提示里，不占版面）', async () => {
     const user = userEvent.setup();
     renderSlot({binding: 'user', minCount: 0}, '把别的图放进画面');
     await user.click(screen.getByRole('button', {name: '展开更多设置'}));
 
-    expect(
-      screen.getByText(/写下 \{\{slot:image_1\}\} 引用这个槽位，这两段话才会被用上/),
-    ).toBeInTheDocument();
+    /* 说明放在框内的**占位提示**里，不是常驻小字 ——
+       提示跟着框走、填了内容就自动消失、不占额外版面。 */
+    const filled = screen.getByLabelText('选中时文案');
+    const empty = screen.getByLabelText('未选时文案');
+    expect(filled).toHaveAttribute(
+      'placeholder',
+      expect.stringContaining('写下 {{slot:image_1}} 引用这个槽位，这段话才会被用上'),
+    );
+    expect(empty).toHaveAttribute(
+      'placeholder',
+      expect.stringContaining('写下 {{slot:image_1}} 引用这个槽位，这段话才会被用上'),
+    );
+    /* 两个框的占位提示必须能分开 —— 文字一样的话使用者分不清
+       哪个框是「有素材」、哪个是「没素材」。 */
+    expect(filled.getAttribute('placeholder')).not.toBe(empty.getAttribute('placeholder'));
   });
 
   it('整组引用 {{slot:x*}} 同样显示两段文案（可选就显示）', async () => {
@@ -333,14 +345,17 @@ describe('槽位卡片', () => {
     expect(screen.getByLabelText('选中时文案')).toBeInTheDocument();
   });
 
-  it('必填槽位（有插入点）说明为什么不给写两段话', async () => {
+  it('必填槽位：不渲染这两个框，也不摆说明小字', async () => {
+    /* 必填 = 素材一定在 = 直接插编号，没有「没填」这个状态。
+       **不摆说明小字** —— 「没有这两格」本身就是解释，
+       再加一句「改成可选才能写」就是占版面。 */
     const user = userEvent.setup();
     renderSlot({binding: 'user', minCount: 1});
     await user.click(screen.getByRole('button', {name: '展开更多设置'}));
 
-    expect(
-      screen.getByText(/必填槽位一定有素材.*直接插入素材编号/),
-    ).toBeInTheDocument();
+    expect(screen.queryByLabelText('选中时文案')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('未选时文案')).not.toBeInTheDocument();
+    expect(screen.queryByText(/必填槽位一定有素材/)).not.toBeInTheDocument();
   });
 
   it('可选槽位（有插入点）两段话都在', async () => {

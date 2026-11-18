@@ -86,6 +86,18 @@ export function SlotCard({
      作者照着抄进提示词，引用到的还是那个槽位自己（编号会错位）。 */
   const token = `{{slot:${slot.key}}}`;
 
+  /* 两段文案的**占位提示**（不是常驻小字）。
+     说明放在框内占位符里：提示跟着框走、不占额外版面、填了内容就自动消失。
+
+     没有插入点时必须说清「填了用不上」—— 提示词里没有插这个槽位的地方，
+     编译时没有位置放这两段话，不说的话就是让人白填一场（还不自知）。 */
+  const filledPlaceholder = hasInsertPoint
+    ? '使用者填了素材时，提示词里这一段怎么说（打 @ 插入编号）'
+    : `使用者填了素材时用这段；提示词里写下 ${token} 引用这个槽位，这段话才会被用上`;
+  const emptyPlaceholder = hasInsertPoint
+    ? '使用者不填素材时用这段（留空则发布会被拦）'
+    : `使用者没填素材时用这段；提示词里写下 ${token} 引用这个槽位，这段话才会被用上`;
+
   return (
     <div
       onDragOver={onDragOver}
@@ -282,11 +294,7 @@ export function SlotCard({
             />
           </FormField>
           {needsTag && !fixed && (
-            <FormField
-              label="候选标签"
-              htmlFor="slot-tag"
-              hint="可多选；使用者按它挑素材（任意级别）"
-            >
+            <FormField label="候选标签" htmlFor="slot-tag">
               {/* 槽位的标签是「圈定候选范围」，不是「打在素材上」：
                   所以任意级别都能圈（分组也行），多个标签之间是并集。 */}
               <MultiSelect
@@ -319,16 +327,10 @@ export function SlotCard({
               </FormField>
             </>
           )}
-          {type === 'text' && (
-            <p className="text-meta text-ink-mute sm:col-span-2">
-              文本槽位：占 {`{{Text N}}`} 的第 N 位，正文由所选文案注入
-            </p>
-          )}
-          {type === 'audio' && (
-            <p className="text-meta text-ink-mute sm:col-span-2">
-              附加输入：不占编号，提示词里不引用它
-            </p>
-          )}
+          {/* 文本槽位「占 {{Text N}}」、音频槽位「不占编号」这类**类型属性**
+              已经写进类型下拉的选项名里（见 SpecWorkspace 的 TYPE_OPTIONS），
+              不在这里再摆一行常驻小字 —— 同一件事说两遍，且那行还占版面。 */}
+
 
           {/* 两段文案：**这个槽位在提示词里怎么说**。
 
@@ -349,7 +351,6 @@ export function SlotCard({
               <FormField
                 label="选中时文案"
                 htmlFor="slot-filled-text"
-                hint="使用者填了素材时，提示词里这一段怎么说；打 @ 插入编号"
                 className="sm:col-span-2"
               >
                 <MentionTextarea
@@ -358,7 +359,7 @@ export function SlotCard({
                   value={slot.filledText ?? ''}
                   candidates={selfRefChips(slot)}
                   rows={2}
-                  placeholder={`例如：人物参考（打 @ 插入编号，留空则直接插入素材编号）`}
+                  placeholder={filledPlaceholder}
                   panelHint="选择要插入的编号"
                   onChange={text => onPatch({filledText: text})}
                   onInsert={text => onPatch({filledText: text})}
@@ -367,7 +368,6 @@ export function SlotCard({
               <FormField
                 label="未选时文案"
                 htmlFor="slot-empty-text"
-                hint="使用者不填素材时用这段；留空则发布会被拦"
                 className="sm:col-span-2"
               >
                 <textarea
@@ -375,28 +375,12 @@ export function SlotCard({
                   aria-label="未选时文案"
                   value={slot.emptyText ?? ''}
                   rows={2}
-                  placeholder="例如：主角是穿红裙的年轻女性"
+                  placeholder={emptyPlaceholder}
                   onChange={event => onPatch({emptyText: event.target.value})}
                   className="w-full resize-y rounded-lg border border-line bg-white px-2.5 py-2 text-xs leading-[1.7] text-ink outline-none transition-colors placeholder:text-[#a9b8bf] hover:border-line-strong focus:border-primary-line focus:ring-2 focus:ring-primary/10"
                 />
               </FormField>
             </>
-          )}
-          {/* 没有插入点时照实说一句：这两个框现在能填，但**填了用不上** ——
-              提示词里没有插这个槽位的地方，编译时没有位置放这两段话。
-              不说的话就是让人白填一场（还不自知）。 */}
-          {!fixed && !hasInsertPoint && (
-            <p className="text-meta text-ink-mute sm:col-span-2">
-              提示词里写下 {token} 引用这个槽位，这两段话才会被用上
-            </p>
-          )}
-          {/* 有插入点但槽位是必填的：说一句**为什么**不给写文案 ——
-              「必填 = 素材一定在 = 直接插编号」，这是作者自己定的规则，
-              不解释的话他会以为功能坏了。 */}
-          {!fixed && hasInsertPoint && !optional && (
-            <p className="text-meta text-ink-mute sm:col-span-2">
-              必填槽位一定有素材，提示词里直接插入素材编号；改成「可选」才能写两段话
-            </p>
           )}
         </div>
       )}

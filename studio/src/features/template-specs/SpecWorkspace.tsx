@@ -63,10 +63,19 @@ import {
 } from './specDraft';
 
 /* 槽位类型 = 产品定的四种（图片 / 成片 / 音频 / 文本）。取值不跟着资产库走 ——
-   库里多一类，槽位不该自己多出一档；展示名仍取自资产库的 kind 词表。 */
+   库里多一类，槽位不该自己多出一档；展示名仍取自资产库的 kind 词表。
+
+   **文本与音频的选项名带上「占不占编号」** —— 那是选类型时就要知道的
+   差别（`{{Text N}}` 独立编号空间 / 附加输入完全不编号）。原来把它写成
+   槽位下面一行常驻小字，既占版面又与下拉里的选项名对不上。 */
 const TYPE_OPTIONS = SLOT_TYPES.map(type => ({
   value: type,
-  label: SLOT_TYPE_LABELS[type],
+  label:
+    type === 'text'
+      ? `${SLOT_TYPE_LABELS[type]}（占 {{Text N}}）`
+      : type === 'audio'
+        ? `${SLOT_TYPE_LABELS[type]}（附加输入，不占编号）`
+        : SLOT_TYPE_LABELS[type],
 }));
 
 
@@ -515,12 +524,7 @@ export function SpecWorkspace() {
 
                 顺序即默认序这件事要让人看见：展开列表里已勾的排在最前，
                 第一个标「默认」。用户改顺序就改默认，不另设一个下拉。 */}
-            <FormField
-              className="mt-3"
-              label="模型"
-              required
-              hint="勾选顺序第一个为默认，使用者可换用其它已选模型"
-            >
+            <FormField className="mt-3" label="模型" required>
               <ModelPicker
                 models={models}
                 value={joinModelSelection(draft.model, draft.allowedModels ?? [])}
@@ -554,11 +558,11 @@ export function SpecWorkspace() {
               />
             }
           >
-            {/* 三个动作（拖动排序 / 改名称 / 切绑定）都是「看」不出来的，
-                只做一行轻提示条，不占位也不抢标题的注意力。 */}
-            <p className="mb-1 rounded-lg bg-panel-soft px-3 py-1.5 text-micro text-ink-mute">
-              拖动排序 · 直接改名称 · 右侧开关切换固定或用户填写
-            </p>
+            {/* 三个动作（拖动排序 / 改名称 / 切绑定）**不需要教** ——
+                拖动手柄是可见的图标（`title` 里写着「顺序即编号」）、
+                展示名是个长得像标题的输入框、切绑定是右侧那个写着
+                「用户填 / 已固定」的分段控件。三个都自带解释，
+                再摆一行教学条就是同一件事说两遍，还占一行版面。 */}
             {/* 槽位是一列清单，用细线分隔而不是一张张卡片：
                 一排小方块缩到 50% 看会糊成一片，分隔线才看得出「几行、每行谁」。 */}
             <div className="divide-y divide-line-soft">
