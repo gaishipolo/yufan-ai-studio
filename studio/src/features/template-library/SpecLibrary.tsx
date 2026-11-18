@@ -269,7 +269,8 @@ export function SpecLibrary() {
      **提示词要一起传进去**：均衡档下有些可选槽位不能被让给模型
      （提示词里按「第 N 张」引用了它，省掉就会 400）。见 `slotIndexRefs`。 */
   const fillSlots = visibleSlots(slots, randomness, version?.prompt ?? '');
-  /* 这个模板有没有可选槽位：没有的话三档没有差别，整条控件不出现。 */
+  /* 这个模板有没有可选槽位：只影响「换一批」按钮要不要出现
+     （没东西可随机的模板给个点不动的按钮是骗人）。 */
   const hasOptionalSlots = slots.some(isOptionalSlot);
   /* 随机档的候选池：只有进过随机档才发请求。 */
   const randomPools = useRandomPools(slots, randomTried);
@@ -695,40 +696,41 @@ export function SpecLibrary() {
               {/* 随机性三档：**决定可选槽位的素材由谁给**。
                   放在素材区之前，因为它是这一栏的**前提** —— 先定「谁说了算」，
                   再看下面要填哪几格。
-                  没有可选槽位时整条不出现（没有可随机的对象，档位也就没有差别）。 */}
-              {hasOptionalSlots && (
-                <div className="flex items-center gap-2">
-                  <Segmented
-                    aria-label="随机性"
-                    value={randomness}
-                    onChange={changeRandomness}
-                    options={[
-                      {value: 'random', label: RANDOMNESS_LABEL.random},
-                      {value: 'balanced', label: RANDOMNESS_LABEL.balanced},
-                      {value: 'custom', label: RANDOMNESS_LABEL.custom},
-                    ]}
-                    hints={{
-                      random: '系统随机帮你挑可选素材',
-                      balanced: '只填必填素材，可选的让给模型',
-                      custom: '每张素材都由你指定',
-                    }}
-                    className="flex-1"
-                  />
-                  {/* 「换一批」只在随机档出现：随机挑出来的素材总该有个
-                      再来一次的机会，否则「随机」就只是「一次性」。 */}
-                  {randomness === 'random' && (
-                    <button
-                      type="button"
-                      onClick={reroll}
-                      title="换一批"
-                      aria-label="换一批"
-                      className="flex shrink-0 items-center gap-1 rounded-lg border border-line-soft bg-panel-soft px-2 py-1 text-xs text-ink-soft transition-colors hover:border-primary-line hover:text-primary"
-                    >
-                      <RefreshCw size={12} />
-                    </button>
-                  )}
-                </div>
-              )}
+                  **无条件出现**（2026-11-18 用户拍板：「全是必填也显示」）——
+                  三档是这一栏的前提，全是必填的模板也该让人看见这个选择。 */}
+              <div className="flex items-center gap-2">
+                <Segmented
+                  aria-label="随机性"
+                  value={randomness}
+                  onChange={changeRandomness}
+                  options={[
+                    {value: 'random', label: RANDOMNESS_LABEL.random},
+                    {value: 'balanced', label: RANDOMNESS_LABEL.balanced},
+                    {value: 'custom', label: RANDOMNESS_LABEL.custom},
+                  ]}
+                  hints={{
+                    random: '系统随机帮你挑可选素材',
+                    balanced: '只填必填素材，可选的让给模型',
+                    custom: '每张素材都由你指定',
+                  }}
+                  className="flex-1"
+                />
+                {/* 「换一批」只在随机档出现：随机挑出来的素材总该有个
+                    再来一次的机会，否则「随机」就只是「一次性」。
+                    **没有可选槽位时不出现** —— 没东西可随机，
+                    给个点不动的按钮是骗人。 */}
+                {randomness === 'random' && hasOptionalSlots && (
+                  <button
+                    type="button"
+                    onClick={reroll}
+                    title="换一批"
+                    aria-label="换一批"
+                    className="flex shrink-0 items-center gap-1 rounded-lg border border-line-soft bg-panel-soft px-2 py-1 text-xs text-ink-soft transition-colors hover:border-primary-line hover:text-primary"
+                  >
+                    <RefreshCw size={12} />
+                  </button>
+                )}
+              </div>
               {/* 作者声明了「允许选用的模型」才出现这个下拉：使用模板的人从
                   清单里挑一款，而不是只能用一个写死的模型。只有一款时不出
                   现（老模板的样子）。 */}

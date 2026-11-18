@@ -218,6 +218,13 @@ async function submit(user: ReturnType<typeof userEvent.setup>) {
  * 三档的差别**只在可选槽位**；必填槽位三档都显示、都要使用者自己填。
  */
 describe('模板库 · 随机性三档', () => {
+  it('三档控件在有可选槽位时出现', async () => {
+    renderLibrary();
+
+    await waitFor(() => expect(screen.getByText('商品图')).toBeInTheDocument());
+    expect(screen.getByRole('radiogroup', {name: '随机性'})).toBeInTheDocument();
+  });
+
   it('默认是均衡：可选槽位整个不出现', async () => {
     renderLibrary();
 
@@ -411,8 +418,8 @@ describe('模板库 · 随机性三档', () => {
   });
 });
 
-describe('模板库 · 没有可选槽位时不出现三档控件', () => {
-  it('模板全是必填槽位，控件不出现', async () => {
+describe('模板库 · 全是必填槽位时', () => {
+  it('三档控件仍然出现（用户拍板：全是必填也显示）', async () => {
     specState.current = {
       ...SPEC,
       latest: {...SPEC.latest!, slots: [SPEC.latest!.slots[0]]},
@@ -420,7 +427,23 @@ describe('模板库 · 没有可选槽位时不出现三档控件', () => {
     renderLibrary();
 
     await waitFor(() => expect(screen.getByText('商品图')).toBeInTheDocument());
-    expect(screen.queryByRole('radiogroup', {name: '随机性'})).not.toBeInTheDocument();
+    /* 三档是这一栏的**前提**，无条件出现 —— 全是必填的模板也让人看见这个选择。 */
+    expect(screen.getByRole('radiogroup', {name: '随机性'})).toBeInTheDocument();
+  });
+
+  it('没有可随机的对象时，「换一批」不出现（点不动的按钮是骗人）', async () => {
+    specState.current = {
+      ...SPEC,
+      latest: {...SPEC.latest!, slots: [SPEC.latest!.slots[0]]},
+    };
+    renderLibrary();
+
+    await userEvent.setup().click(
+      await screen.findByRole('radio', {name: '随机'}),
+    );
+
+    /* 切到随机档了，但没有可选槽位 → 没有东西可随机 → 不给「换一批」。 */
+    expect(screen.queryByRole('button', {name: '换一批'})).not.toBeInTheDocument();
   });
 });
 
