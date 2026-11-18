@@ -77,7 +77,7 @@ const GROUPS: Group[] = [
 
 const renderModal = (
   user?: User | null,
-  options: { roles?: Role[]; groups?: Group[] } = {},
+  options: { roles?: Role[]; groups?: Group[]; onCreateRole?: () => void; onCreateGroup?: () => void } = {},
 ) =>
   render(
     <UserFormModal
@@ -85,6 +85,8 @@ const renderModal = (
       user={user}
       roles={options.roles ?? []}
       groups={options.groups ?? []}
+      onCreateRole={options.onCreateRole}
+      onCreateGroup={options.onCreateGroup}
       onClose={vi.fn()}
     />,
   );
@@ -232,6 +234,62 @@ describe('UserFormModal', () => {
       await user.type(screen.getByLabelText(/初始密码/), 'alice12345');
       await submit(user);
       expect(mutations.create).toHaveBeenCalledTimes(1);
+    });
+
+    /* 空态必须是个**有出口**的空态：只有「还没有可用角色」这一句话，
+       等于把用户支去别的页签自己找路 —— 叫用户走两步还得记得回来，
+       那是死胡同。入口直接摆在空态里。 */
+    describe('空态里的创建入口', () => {
+      it('一个角色都没有时，空态里直接有「新建角色」按钮', async () => {
+        const user = userEvent.setup();
+        renderModal(null, { groups: GROUPS, onCreateRole: vi.fn() });
+
+        await user.click(screen.getByRole('button', { name: '角色' }));
+
+        expect(screen.getByText('还没有可用角色')).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: '新建角色' })).toBeInTheDocument();
+      });
+
+      it('一个小组都没有时，空态里直接有「新增分组」按钮', async () => {
+        const user = userEvent.setup();
+        renderModal(null, { roles: ROLES, onCreateGroup: vi.fn() });
+
+        await user.click(screen.getByRole('button', { name: '分组' }));
+
+        expect(screen.getByText('还没有可用分组')).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: '新增分组' })).toBeInTheDocument();
+      });
+
+      it('点了入口会回调创建动作', async () => {
+        const user = userEvent.setup();
+        const onCreateRole = vi.fn();
+        renderModal(null, { groups: GROUPS, onCreateRole });
+
+        await user.click(screen.getByRole('button', { name: '角色' }));
+        await user.click(screen.getByRole('button', { name: '新建角色' }));
+
+        expect(onCreateRole).toHaveBeenCalledTimes(1);
+      });
+
+      it('调用方没给入口时，空态只剩一句话（不摆死按钮）', async () => {
+        const user = userEvent.setup();
+        renderModal(null, { groups: GROUPS });
+
+        await user.click(screen.getByRole('button', { name: '角色' }));
+
+        expect(screen.getByText('还没有可用角色')).toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: '新建角色' })).not.toBeInTheDocument();
+      });
+
+      it('有角色时不出这个入口（入口只在真的没东西可选时出现）', async () => {
+        const user = userEvent.setup();
+        renderModal(null, { roles: ROLES, groups: GROUPS });
+
+        await user.click(screen.getByRole('button', { name: '角色' }));
+
+        expect(screen.queryByRole('button', { name: '新建角色' })).not.toBeInTheDocument();
+        expect(screen.getByRole('checkbox', { name: /内容编辑/ })).toBeInTheDocument();
+      });
     });
   });
 

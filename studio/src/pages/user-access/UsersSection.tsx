@@ -18,6 +18,7 @@ import { AssignRolesModal } from '@/features/user-roles/AssignRolesModal';
 import { ResetPasswordModal } from '@/features/user-security/ResetPasswordModal';
 import { DeactivateUserModal } from '@/features/user-security/DeactivateUserModal';
 import { GroupEditorModal } from '@/features/group-editor/GroupEditorModal';
+import { RoleFormModal } from '@/features/role-editor/RoleFormModal';
 import { EffectivePermissionsModal } from '@/features/permission-layers/EffectivePermissionsModal';
 import {
   LayerPermissionsModal,
@@ -92,6 +93,10 @@ export function UsersSection() {
   const [dialog, setDialog] = useState<Dialog>(null);
   const [active, setActive] = useState<User | null>(null);
   const [activeGroup, setActiveGroup] = useState<Group | null>(null);
+  /* 建号弹窗里「一个角色都没有 / 一个小组都没有」时的就地创建入口。
+     这两个弹窗**叠在**建号弹窗之上，所以状态要分开：复用 `dialog` 会把
+     建号弹窗一起关掉，用户填了一半的登录名就没了。 */
+  const [nested, setNested] = useState<'role' | 'group' | null>(null);
 
   const open = (next: Dialog, user: User | null = null) => {
     setActive(user);
@@ -398,8 +403,14 @@ export function UsersSection() {
         user={dialog === 'edit' ? active : null}
         roles={rolesQuery.data ?? []}
         groups={groupsQuery.data ?? []}
+        onCreateRole={() => setNested('role')}
+        onCreateGroup={() => setNested('group')}
         onClose={close}
       />
+      {/* 叠层：建号弹窗里的空态入口直接开这两个，不关建号弹窗。
+          `Modal` 的栈顶 Escape 隔离保证按一次 Esc 只关这一层。 */}
+      <RoleFormModal open={nested === 'role'} onClose={() => setNested(null)} />
+      <GroupEditorModal open={nested === 'group'} group={null} onClose={() => setNested(null)} />
       <AssignRolesModal
         open={dialog === 'roles'}
         user={active}

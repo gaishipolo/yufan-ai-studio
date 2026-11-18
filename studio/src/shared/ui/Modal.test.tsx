@@ -73,4 +73,71 @@ describe('Modal', () => {
     );
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
+
+  /* 叠层：建号弹窗里开「新建角色」，两层叠着。
+     以前每个弹窗各自监听 window 的 Escape，两层一起关 ——
+     用户填了一半的登录名就没了。栈顶隔离是这层交互的前提。 */
+  describe('叠层', () => {
+    function Stacked() {
+      const [outer, setOuter] = useState(false);
+      const [inner, setInner] = useState(false);
+      return (
+        <>
+          <button type="button" onClick={() => setOuter(true)}>
+            打开建号
+          </button>
+          <Modal open={outer} onClose={() => setOuter(false)} title="新建用户">
+            <button type="button" onClick={() => setInner(true)}>
+              打开新建角色
+            </button>
+          </Modal>
+          <Modal open={inner} onClose={() => setInner(false)} title="新建角色">
+            <p>角色表单</p>
+          </Modal>
+        </>
+      );
+    }
+
+    it('按一次 Esc 只关栈顶那层，下层还在', async () => {
+      const user = userEvent.setup();
+      render(<Stacked />);
+
+      await user.click(screen.getByRole('button', { name: '打开建号' }));
+      await user.click(screen.getByRole('button', { name: '打开新建角色' }));
+      expect(screen.getByRole('dialog', { name: '新建角色' })).toBeInTheDocument();
+
+      await user.keyboard('{Escape}');
+
+      expect(screen.queryByRole('dialog', { name: '新建角色' })).not.toBeInTheDocument();
+      expect(screen.getByRole('dialog', { name: '新建用户' })).toBeInTheDocument();
+    });
+
+    it('栈顶那层的 z-index 比下层高（后开的在上面）', async () => {
+      const user = userEvent.setup();
+      render(<Stacked />);
+
+      await user.click(screen.getByRole('button', { name: '打开建号' }));
+      await user.click(screen.getByRole('button', { name: '打开新建角色' }));
+
+      const zOf = (name: string) => {
+        const dialog = screen.getByRole('dialog', { name });
+        const overlay = dialog.parentElement;
+        return Number(overlay?.style.zIndex ?? '0');
+      };
+      expect(zOf('新建角色')).toBeGreaterThan(zOf('新建用户'));
+    });
+
+    it('两层都关掉后滚动恢复', async () => {
+      const user = userEvent.setup();
+      render(<Stacked />);
+
+      await user.click(screen.getByRole('button', { name: '打开建号' }));
+      await user.click(screen.getByRole('button', { name: '打开新建角色' }));
+      await user.keyboard('{Escape}');
+      await user.keyboard('{Escape}');
+
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      expect(document.body.style.overflow).toBe('');
+    });
+  });
 });

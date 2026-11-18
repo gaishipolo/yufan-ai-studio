@@ -54,6 +54,55 @@ describe('MultiSelect', () => {
     expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
   });
 
+  /* 空态里的入口：点了要真的触发动作，而且浮层要收起。
+     浮层开着会抢走 Escape（用户以为关的是刚开的弹窗，结果只是收起了下拉），
+     也会盖在新建弹窗下面看着像没反应。 */
+  describe('空态动作', () => {
+    it('点了会触发动作，并且收起浮层', async () => {
+      const user = userEvent.setup();
+      const onAction = vi.fn();
+      render(
+        <MultiSelect
+          options={[]}
+          value={[]}
+          onChange={vi.fn()}
+          ariaLabel="角色"
+          emptyText="还没有可用角色"
+          emptyAction={<button type="button" onClick={onAction}>新建角色</button>}
+        />,
+      );
+
+      await user.click(screen.getByRole('button', { name: '角色' }));
+      expect(screen.getByText('还没有可用角色')).toBeInTheDocument();
+
+      await user.click(screen.getByRole('button', { name: '新建角色' }));
+
+      expect(onAction).toHaveBeenCalledTimes(1);
+      // 浮层已收起：空态文案不再出现在版面上
+      expect(screen.queryByText('还没有可用角色')).not.toBeInTheDocument();
+    });
+
+    it('调用方自己的 onClick 不会被收起逻辑顶掉', async () => {
+      const user = userEvent.setup();
+      const onAction = vi.fn();
+      render(
+        <MultiSelect
+          options={[]}
+          value={[]}
+          onChange={vi.fn()}
+          ariaLabel="角色"
+          emptyText="还没有可用角色"
+          emptyAction={<button type="button" onClick={onAction}>新建角色</button>}
+        />,
+      );
+
+      await user.click(screen.getByRole('button', { name: '角色' }));
+      await user.click(screen.getByRole('button', { name: '新建角色' }));
+
+      expect(onAction).toHaveBeenCalledTimes(1);
+    });
+  });
+
   /* 浮层方向：批量栏贴在视口底部，朝下展开会整块落到屏幕外（用户只看到一条边）。 */
   describe('浮层方向', () => {
     /** 把触发器的位置钉在视口里：`bottom` 之后剩多少空间由 innerHeight 决定。 */

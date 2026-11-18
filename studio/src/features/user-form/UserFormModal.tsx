@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react';
+import { Plus } from 'lucide-react';
 import {
   Button,
   FormField,
@@ -38,6 +39,8 @@ export function UserFormModal({
   user,
   roles,
   groups,
+  onCreateRole,
+  onCreateGroup,
   onClose,
 }: {
   open: boolean;
@@ -45,6 +48,17 @@ export function UserFormModal({
   user?: User | null;
   roles: Role[];
   groups: Group[];
+  /**
+   * 一个角色都没有时，空态里直接给「新建角色」的入口。
+   *
+   * 「还没有可用角色」如果只配一句「请先到角色页签创建」，那是把用户支去
+   * 别的界面自己找路 —— 叫用户走两步还得记得回来，属于死胡同。
+   * 入口摆在这里，创建弹窗**叠在**本弹窗之上：表单里已经填的登录名、邮箱
+   * 不能因为开了个创建弹窗就没了。
+   */
+  onCreateRole?: () => void;
+  /** 同上：一个小组都没有时的「新增分组」入口 */
+  onCreateGroup?: () => void;
   onClose: () => void;
 }) {
   const isEdit = Boolean(user);
@@ -186,6 +200,13 @@ export function UserFormModal({
                 onChange={setGroupIds}
                 placeholder="不加入分组"
                 emptyText="还没有可用分组"
+                emptyAction={
+                  onCreateGroup ? (
+                    <Button size="sm" icon={<Plus size={12} />} onClick={onCreateGroup}>
+                      新增分组
+                    </Button>
+                  ) : undefined
+                }
                 disabled={pending}
               />
             </FormField>
@@ -198,6 +219,13 @@ export function UserFormModal({
                 onChange={setRoleIds}
                 placeholder="不分配角色"
                 emptyText="还没有可用角色"
+                emptyAction={
+                  onCreateRole ? (
+                    <Button size="sm" icon={<Plus size={12} />} onClick={onCreateRole}>
+                      新建角色
+                    </Button>
+                  ) : undefined
+                }
                 disabled={pending}
               />
             </FormField>

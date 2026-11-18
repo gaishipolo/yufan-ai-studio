@@ -1,14 +1,18 @@
-import { useEffect, useId, useRef, type ReactNode } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import { cn } from '@/shared/lib/cn';
 
-/* 引用计数：多层弹窗叠加时，只有最后一个关闭才恢复滚动。
-   另外 onClose 用 ref 持有——父组件传内联箭头函数时引用每次渲染都变，
-   如果把 onClose 放进 deps，effect 会反复 cleanup + 重跑，
-   从而把「已经被自己锁住的 overflow:hidden」当成原值记下来，最后永久锁死滚动。 */
-let openModals = 0;
+/* 弹窗栈：多层弹窗叠加时，只有**最上面**那个能响应 Escape，也只有它决定 z-index。
+   以前这里只有个引用计数，Escape 是每个弹窗各自监听 window —— 两层叠着时按一次
+   Escape 会把两层一起关掉，用户填了一半的表单就没了。
+   叠层本身不是新需求：「建号弹窗里开「新建角色」」这种场景已经存在，
+   只是以前没人把入口摆在弹窗里。 */
+const modalStack: symbol[] = [];
 let savedOverflow = '';
+
+/** 栈顶弹窗的 z-index 基准；每层往上加 10，保证叠放顺序与 DOM 顺序无关 */
+const Z_BASE = 100;
 
 export interface ModalProps {
   open: boolean;
@@ -25,16 +29,40 @@ export function Modal({ open, onClose, title, children, width = 780, className }
 
   const dialogRef = useRef<HTMLDivElement>(null);
   const titleId = useId();
+  /* 栈里的身份：同一个弹窗的多次开关要认得出是「同一个」，否则栈会脏。 */
+  const selfId = useRef(Symbol('modal'));
+  /* 栈位要进 state：z-index 在 render 期就得算出来，不能等 effect 跑完。 */
+  const [stackIndex, setStackIndex] = useState(0);
+
+  /* 用 layout effect 而不是 useEffect：栈位必须在**绘制前**算好，
+     否则叠层的第一帧会用底层那个的 z-index 画出来，闪一下。 */
+  useLayoutEffect(() => {
+    if (!open) return undefined;
+
+    /* 局部副本：cleanup 里要用的是「入栈时那个」的身份，
+       直接读 `selfId.current` 会被 lint 判成「ref 可能已变」。 */
+    const id = selfId.current;
+    if (modalStack.length === 0) savedOverflow = document.body.style.overflow;
+    modalStack.push(id);
+    setStackIndex(modalStack.length - 1);
+    document.body.style.overflow = 'hidden';
+
+    return () => {
+      const at = modalStack.indexOf(id);
+      if (at >= 0) modalStack.splice(at, 1);
+      if (modalStack.length === 0) document.body.style.overflow = savedOverflow;
+    };
+  }, [open]);
 
   useEffect(() => {
     if (!open) return undefined;
 
-    if (openModals === 0) savedOverflow = document.body.style.overflow;
-    openModals += 1;
-    document.body.style.overflow = 'hidden';
-
+    const id = selfId.current;
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') closeRef.current();
+      if (e.key !== 'Escape') return;
+      /* 只有栈顶响应：下面那层是「背景」，用户按 Esc 想关的是眼前这层 */
+      if (modalStack[modalStack.length - 1] !== id) return;
+      closeRef.current();
     };
     window.addEventListener('keydown', onKeyDown);
 
@@ -45,18 +73,20 @@ export function Modal({ open, onClose, title, children, width = 780, className }
     return () => {
       window.removeEventListener('keydown', onKeyDown);
       window.clearTimeout(focusTimer);
-      openModals = Math.max(0, openModals - 1);
-      if (openModals === 0) document.body.style.overflow = savedOverflow;
       previouslyFocused?.focus?.();
     };
   }, [open]);
 
   if (!open) return null;
 
+  /* z-index 按栈位算：叠层时后开的那个一定在上面，跟它在 DOM 里的位置无关。 */
+  const zIndex = Z_BASE + stackIndex * 10;
+
   return createPortal(
     <div
       role="presentation"
-      className="fixed inset-0 z-[100] grid place-items-center overflow-auto bg-[rgba(12,24,30,.55)] p-6 backdrop-blur-[3px] animate-fadeIn"
+      style={{ zIndex }}
+      className="fixed inset-0 grid place-items-center overflow-auto bg-[rgba(12,24,30,.55)] p-6 backdrop-blur-[3px] animate-fadeIn"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) closeRef.current();
       }}

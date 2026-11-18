@@ -1,4 +1,14 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import {
+  cloneElement,
+  isValidElement,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type ReactElement,
+  type ReactNode,
+} from 'react';
 import { Check, ChevronDown } from 'lucide-react';
 import { cn } from '@/shared/lib/cn';
 import { useDropPlacement } from '@/shared/hooks/useDropPlacement';
@@ -28,6 +38,12 @@ export interface MultiSelectProps {
    *
    * 空态文案本身是个**死角**：告诉用户「还没有角色，请先去另一个页签创建」，
    * 却不给路。`emptyAction` 把那个入口直接摆出来 —— 死胡同里必须留个门。
+   *
+   * 点完这个入口，浮层会**自动收起**（见 `closeOnEmptyAction` 的处理）：
+   * 浮层开着的时候它会抢走 Escape 键（用户以为关的是刚开的弹窗，
+   * 结果只是收起了下拉），而且它盖在新建弹窗下面，看着像没反应。
+   * 收起动作注入在 `onClick` 里 —— 不能提前到 `pointerdown`，
+   * 那一刻按钮还没收到 click，浮层一关按钮就被卸载，click 永远不触发。
    */
   emptyAction?: ReactNode;
   disabled?: boolean;
@@ -106,6 +122,22 @@ export function MultiSelect({
     onChange(value.includes(item) ? value.filter((v) => v !== item) : [...value, item]);
   };
 
+  /* 空态动作点完要收起浮层。收起逻辑注入到子元素的 `onClick` 里：
+     不能靠 `pointerdown`（那时 click 还没发生，按钮会随浮层一起被卸载），
+     也不能靠外层 div 的冒泡（a11y 规则不允许 div 带 click 处理器）。
+     调用方给的 `onClick` 保留 —— 收起是**追加**行为，不是替换。 */
+  const emptyActionNode = useMemo(() => {
+    if (!emptyAction || !isValidElement(emptyAction)) return emptyAction;
+    const element = emptyAction as ReactElement<{ onClick?: (event: React.MouseEvent) => void }>;
+    const original = element.props.onClick;
+    return cloneElement(element, {
+      onClick: (event: React.MouseEvent) => {
+        original?.(event);
+        setOpen(false);
+      },
+    });
+  }, [emptyAction]);
+
   /* 打开时量一次可用空间再决定方向，而不是靠调用方传 placement：
      同一个组件在批量栏（贴底）和详情弹窗（页面中部）要用不同方向，量比重申可靠。
      估算高度 = 列表 196 + 内边距 + 新建行，取 250。 */
@@ -153,7 +185,9 @@ export function MultiSelect({
           {options.length === 0 ? (
             <div className="px-3 py-4 text-center">
               <p className="text-meta text-ink-mute">{emptyText}</p>
-              {emptyAction && <div className="mt-2 flex justify-center">{emptyAction}</div>}
+              {emptyActionNode && (
+                <div className="mt-2 flex justify-center">{emptyActionNode}</div>
+              )}
             </div>
           ) : (
             <ul className="max-h-[196px] space-y-0.5 overflow-auto p-1.5">

@@ -1,4 +1,5 @@
 import { render, screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { AccessProvider } from '@/shared/access/AccessProvider';
 import type { Subject } from '@/shared/access/types';
@@ -212,5 +213,38 @@ describe('UsersSection', () => {
 
     mocks.pending = false;
     mocks.variables = undefined;
+  });
+
+  /* 空态里的创建入口要真的能开出叠层弹窗：组件级测试只验「按钮在」，
+     这里验「点下去真的开了新建角色弹窗，而且建号弹窗还在」——
+     建号弹窗被一起关掉的话，用户填了一半的登录名就没了。 */
+  describe('建号弹窗里的就地创建', () => {
+    /* 用户表格每行也有一个「角色」按钮，定位必须限定在建号弹窗内。 */
+    const userDialog = () => screen.getByRole('dialog', { name: '新建用户' });
+
+    it('一个角色都没有时，空态入口能开出「新建角色」弹窗，建号弹窗不消失', async () => {
+      const user = userEvent.setup();
+      renderSection();
+
+      await user.click(screen.getByRole('button', { name: /新建用户/ }));
+      await user.click(within(userDialog()).getByRole('button', { name: '角色' }));
+      await user.click(screen.getByRole('button', { name: '新建角色' }));
+
+      expect(screen.getByRole('dialog', { name: '新建角色' })).toBeInTheDocument();
+      expect(screen.getByRole('dialog', { name: '新建用户' })).toBeInTheDocument();
+    });
+
+    it('按一次 Esc 只关「新建角色」，建号弹窗还在', async () => {
+      const user = userEvent.setup();
+      renderSection();
+
+      await user.click(screen.getByRole('button', { name: /新建用户/ }));
+      await user.click(within(userDialog()).getByRole('button', { name: '角色' }));
+      await user.click(screen.getByRole('button', { name: '新建角色' }));
+      await user.keyboard('{Escape}');
+
+      expect(screen.queryByRole('dialog', { name: '新建角色' })).not.toBeInTheDocument();
+      expect(screen.getByRole('dialog', { name: '新建用户' })).toBeInTheDocument();
+    });
   });
 });
