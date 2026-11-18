@@ -330,7 +330,7 @@ describe('模板库：可选槽位不填也能生成', () => {
     renderOptionalLibrary();
 
     /* 切到自定义：可选槽位出现，且可以「不填」。 */
-    await user.click(await screen.findByRole('radio', {name: '我自己挑'}));
+    await user.click(await screen.findByRole('radio', {name: '自定义'}));
     expect(await screen.findByText('人物参考')).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', {name: /生成视频/}));
@@ -344,7 +344,7 @@ describe('模板库：可选槽位不填也能生成', () => {
     const user = userEvent.setup();
     renderOptionalLibrary();
 
-    await user.click(await screen.findByRole('radio', {name: '我自己挑'}));
+    await user.click(await screen.findByRole('radio', {name: '自定义'}));
     await user.click(await screen.findByTitle('人物图.png'));
     await user.click(screen.getByRole('button', {name: /生成视频/}));
 
@@ -365,7 +365,7 @@ describe('模板库：可选槽位不填也能生成', () => {
       },
     });
 
-    await user.click(await screen.findByRole('radio', {name: '我自己挑'}));
+    await user.click(await screen.findByRole('radio', {name: '自定义'}));
     expect(await screen.findByText('人物参考')).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', {name: /生成视频/}));
