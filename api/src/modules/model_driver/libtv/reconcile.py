@@ -20,10 +20,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+from dataclasses import dataclass, field
+
 from core.exceptions import BadRequest
 from modules.model_driver.libtv.state import LibTVState
 
-__all__ = ["RECONCILABLE", "reconcile"]
+__all__ = ["RECONCILABLE", "AutoVerdict", "auto_verdict", "reconcile"]
 
 #: 需要人工核对的起点。`success` 不必解封（已经出片）；上游自己判的 `failed`
 #: 也不放行 —— 那种情况重新提交会再花一次钱，该由人决定是不是新建任务。
@@ -85,3 +88,65 @@ def reconcile(
             "error_code": None,
         }
     )
+
+
+# --------------------------------------------------------------------------- #
+# 自动对账：「回执未知」不必每次都由人二选一
+#
+# 消费明细里的 `originalBizNo` 就是上游 task_id，`transDesc` 是这段提示词。
+# 拿「提示词前缀 + 提交时刻之后」去对，就能替人做那个判断：
+#   - 命中一条  → 上游确实建了任务，接回它（--adopt-task）
+#   - 一条没有  → 上游什么都没建，解封重提（--not-submitted）
+#   - 命中多条  → 说不清是哪一条，交回给人，别猜
+# --------------------------------------------------------------------------- #
+#: 前缀取多长。太短会把同一批素材的不同任务混在一起，太长则受上游截断影响。
+PROMPT_PREFIX = 24
+
+
+@dataclass(frozen=True)
+class AutoVerdict:
+    """自动对账的结论。`action`: adopt / release / ambiguous / unknown。"""
+
+    action: str
+    task_id: str = ""
+    candidates: list[str] = field(default_factory=list)
+    since: int = 0
+
+    def describe(self) -> str:
+        if self.action == "adopt":
+            return f"上游已建任务 {self.task_id}（消费明细命中）"
+        if self.action == "release":
+            return "上游没有这笔任务的消费记录，可安全解封重提"
+        if self.action == "ambiguous":
+            return f"命中 {len(self.candidates)} 条，无法判断是哪一条：{self.candidates}"
+        return "消费明细里没有能与本任务匹配的记录（可能是提示词被截断）"
+
+
+def _prefix(prompt: str) -> str:
+    """取提示词前缀用于匹配：去掉空白与换行，避免排版差异导致匹配不上。"""
+    return "".join(prompt.split())[:PROMPT_PREFIX]
+
+
+def auto_verdict(
+    items: Sequence[object], *, prompt: str, since: int
+) -> AutoVerdict:
+    """按消费明细判断「这笔到底有没有提交成功」。
+
+    `items` 是 `account.ConsumptionItem` 列表（只用到 `seconds` / `task_id` / `summary`）。
+    只认 `seconds >= since` 的记录：更早的同款提示词是另一次任务，不能算进来。
+    """
+    prefix = _prefix(prompt)
+    if not prefix:
+        return AutoVerdict(action="unknown", since=since)
+    matched = {
+        str(getattr(item, "task_id", "") or "")
+        for item in items
+        if int(getattr(item, "seconds", 0) or 0) >= since
+        and str(getattr(item, "summary", "") or "").replace(" ", "").startswith(prefix)
+        and str(getattr(item, "task_id", "") or "")
+    }
+    if len(matched) == 1:
+        return AutoVerdict(action="adopt", task_id=matched.pop(), since=since)
+    if not matched:
+        return AutoVerdict(action="release", since=since)
+    return AutoVerdict(action="ambiguous", candidates=sorted(matched), since=since)

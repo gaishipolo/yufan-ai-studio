@@ -134,3 +134,74 @@ def test_refuses_while_the_executor_is_still_running() -> None:
         reconcile(_state("submission_unknown"), not_submitted=True, executor_busy=True)
 
     assert "执行器" in exc.value.message
+
+
+# --------------------------------------------------------------------------- #
+# 自动对账：用消费明细替人做「去 LibTV 看一眼」
+# --------------------------------------------------------------------------- #
+from modules.model_driver.libtv.account import ConsumptionItem  # noqa: E402
+from modules.model_driver.libtv.reconcile import auto_verdict  # noqa: E402
+
+PROMPT = "真人实拍电商口播。9:16 竖屏，正面平视固定中景，一镜到底。全程无字幕、无水印。"
+SINCE = 1_794_900_000
+
+
+def _spend(task_id: str, seconds: int, summary: str) -> ConsumptionItem:
+    return ConsumptionItem(
+        amount=80,
+        seconds=seconds,
+        source_name="LibTV生视频",
+        task_id=task_id,
+        project_name="批量生成1",
+        model_name="Wan 3.0",
+        summary=summary,
+    )
+
+
+def test_auto_adopts_when_the_charge_exists() -> None:
+    """消费明细里有这条 → 上游真建了任务，接回它，不要重提。"""
+    verdict = auto_verdict(
+        [_spend("20261118101503751524489", SINCE + 120, PROMPT[:60])], prompt=PROMPT, since=SINCE
+    )
+
+    assert verdict.action == "adopt"
+    assert verdict.task_id == "20261118101503751524489"
+
+
+def test_auto_releases_when_there_is_no_charge() -> None:
+    verdict = auto_verdict([], prompt=PROMPT, since=SINCE)
+
+    assert verdict.action == "release"
+
+
+def test_auto_ignores_charges_from_before_this_submission() -> None:
+    """更早的同款提示词属于另一次任务，算进来就会接错。"""
+    verdict = auto_verdict(
+        [_spend("20261117153703957194489", SINCE - 7200, PROMPT[:60])], prompt=PROMPT, since=SINCE
+    )
+
+    assert verdict.action == "release"
+
+
+def test_auto_ignores_records_with_a_different_prompt() -> None:
+    verdict = auto_verdict(
+        [_spend("20261118100000000000001", SINCE + 60, "【目标与产品】生成12秒、9:16、720P")],
+        prompt=PROMPT,
+        since=SINCE,
+    )
+
+    assert verdict.action == "release"
+
+
+def test_auto_refuses_to_guess_between_two_candidates() -> None:
+    verdict = auto_verdict(
+        [
+            _spend("20261118101503751524489", SINCE + 60, PROMPT[:60]),
+            _spend("20261118101603751524490", SINCE + 90, PROMPT[:60]),
+        ],
+        prompt=PROMPT,
+        since=SINCE,
+    )
+
+    assert verdict.action == "ambiguous"
+    assert verdict.candidates == ["20261118101503751524489", "20261118101603751524490"]

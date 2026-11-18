@@ -50,6 +50,36 @@ async function creditsAdapterAvailable(vendor) {
   catch { return false; }
 }
 
+/* 画布上下文会变：captured 的 project_id 一旦落后于浏览器当前项目，
+   `create` 就以 `30001 账号状态已切换` 拒绝（2026-11-18 连挂两次就是这个）。
+   提交前按浏览器里**当前打开的画布**刷新一次，避免拿一个已被切走的项目下任务。 */
+async function currentCanvasProjectId() {
+  const endpoint = process.env.JS_REVERSE_BROWSER_URL;
+  if (!endpoint) return null;
+  try {
+    const response = await fetch(new URL('/json/list', endpoint), {signal: AbortSignal.timeout(4000)});
+    for (const tab of await response.json()) {
+      const match = /liblib\.tv\/canvas\?[^#]*projectId=([0-9a-f]{32})/i.exec(tab.url ?? '');
+      if (match) return match[1];
+    }
+  } catch {
+    // 浏览器没连上就别拦：create 自己会报一条更准确的错
+  }
+  return null;
+}
+
+/** 把 request.json 的 project_id 对齐到当前画布；没有画布可读时保持原样。 */
+async function alignCanvasProject(run, save) {
+  const projectId = await currentCanvasProjectId();
+  if (!projectId) return null;
+  const file = path.join(run, 'inputs/request.json');
+  const request = JSON.parse(await readFile(file, 'utf8'));
+  if (request.metadata?.project_id === projectId) return projectId;
+  request.metadata = {...(request.metadata ?? {}), project_id: projectId};
+  await save(file, request);
+  return projectId;
+}
+
 let stage = 'verify';
 
 export async function main() {
@@ -97,9 +127,13 @@ export async function main() {
     try {
       result = await api.request('/api/task/generation/create', {...request, riskControl: {requestToken: token}});
       await save(path.join(run, 'records/submission.json'), result);
-    } catch {
-      await update(run, {status: 'submission_unknown', last_error: 'CreateTask result unconfirmed; reconcile before retry'});
-      throw Error('Submission unknown; never automatically resubmit');
+    } catch (error) {
+      /* 真实原因必须落盘：以前这里 `catch {}` 把上游的 4xx 与业务码全吞了，
+         档案只剩一句「unknown」，人只能靠猜。原因会一路带到任务详情的 errorMessage。 */
+      const reason = String(error?.message ?? error).slice(0, 300);
+      await update(run, {status: 'submission_unknown',
+        last_error: `CreateTask unconfirmed: ${reason}`});
+      throw Error(`Submission unknown: ${reason}; never automatically resubmit`);
     }
     const id = result.data?.taskId ?? result.data?.task_id;
     if (!id) {
@@ -162,6 +196,7 @@ export async function main() {
       if (meta.task_id) return;
       if (meta.status !== 'uploaded') throw Error('Refusing duplicate or uncertain submission');
       stage = 'submit';
+      await alignCanvasProject(run, save);
       if (meta.billing_mode === 'credits') {await submitCredits(api, run, meta); return;}
       const result = await submit(api,run,meta.id,async () => true);
       if (result.state === 'waiting_free') await update(run,{status:'waiting_free'});
@@ -197,7 +232,8 @@ export async function main() {
       ratio:spec.aspect_ratio, resolution:'720P', duration:spec.duration, enableSound:'on', extendPrompt:0,
       infiniteSwitch:0, textList:[], imageList:[], imageLabelList:[], videoList:[], audioList:[],
       imageListV2:media.image, videoListV2:media.video, audioListV2:media.audio, mixedList:mixed},
-      metadata:{node_id:'v-6SIVysJx8O', project_id:'52c9de0f1ad24432927236bd9e3413c9'},
+      metadata:{node_id:'v-6SIVysJx8O',
+        project_id: (await currentCanvasProjectId()) ?? '52c9de0f1ad24432927236bd9e3413c9'},
       provider:'Wan', model:'wanx3.0', taskType:'video', requestId:randomUUID().replaceAll('-','')};
     const credits = meta.billing_mode === 'credits';
     if (credits) {

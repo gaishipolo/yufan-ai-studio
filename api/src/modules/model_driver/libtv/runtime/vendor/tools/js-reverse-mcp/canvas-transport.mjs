@@ -76,9 +76,14 @@ export class CanvasApi {
       body:body === undefined ? undefined : JSON.stringify(body),
       redirect:'error', signal:AbortSignal.timeout(45000),
     });
-    if (!response.ok) throw new Error(`LibTV HTTP ${response.status}`);
+    /* 失败必须带上原因：只回一个状态码，「提交回执未知」就会变成无解的谜。
+       响应体截断到 300 字符——够看到 msg 字段，又不至于把整个响应写进任务详情。 */
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      throw new Error(`LibTV HTTP ${response.status}: ${text.slice(0, 300)}`);
+    }
     const result = await response.json();
-    if (result.code !== 0) throw new Error(`LibTV business code ${result.code}; no retry`);
+    if (result.code !== 0) throw new Error(`LibTV business code ${result.code} (${result.msg ?? ''}); no retry`);
     return result;
   }
 }

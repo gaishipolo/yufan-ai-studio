@@ -122,7 +122,8 @@ def _uncertain_hint(run_id: str, account: str) -> str:
         f"上游提交回执未知（账号 {account}）：请求已发出但没拿到 task_id，"
         "可能已经扣费，所以不会自动重提。请到该账号的 LibTV 记录核对后再二选一："
         f"没有这笔任务 → app libtv-reconcile {run_id} --not-submitted 解封后重试；"
-        f"已有任务在跑 → app libtv-reconcile {run_id} --adopt-task <上游 task_id> 接回查询"
+        f"已有任务在跑 → app libtv-reconcile {run_id} --adopt-task <上游 task_id> 接回查询；"
+        f"不想自己核对 → app libtv-reconcile {run_id} --auto（按消费明细自动判断）"
     )
 
 
