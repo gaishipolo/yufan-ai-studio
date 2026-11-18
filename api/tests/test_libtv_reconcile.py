@@ -13,6 +13,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from core.exceptions import BadRequest, RateLimited
@@ -169,9 +171,18 @@ def test_auto_adopts_when_the_charge_exists() -> None:
 
 
 def test_auto_releases_when_there_is_no_charge() -> None:
-    verdict = auto_verdict([], prompt=PROMPT, since=SINCE)
+    """要能说「没扣费」，得先证明**翻到了提交时刻之前**（否则只是没看到）。"""
+    older = _spend("20261117153703957194489", SINCE - 3600, "别的任务")
+    verdict = auto_verdict([older], prompt=PROMPT, since=SINCE)
 
     assert verdict.action == "release"
+
+
+def test_auto_refuses_to_release_without_covering_the_window() -> None:
+    """只翻了最近几条、没覆盖到提交时刻 → 不敢断言「没扣费」，交回给人。"""
+    assert auto_verdict([], prompt=PROMPT, since=SINCE).action == "unknown"
+    only_newer = [_spend("20261118101503751524489", SINCE + 60, "别的任务")]
+    assert auto_verdict(only_newer, prompt=PROMPT, since=SINCE).action == "unknown"
 
 
 def test_auto_ignores_charges_from_before_this_submission() -> None:
@@ -185,7 +196,10 @@ def test_auto_ignores_charges_from_before_this_submission() -> None:
 
 def test_auto_ignores_records_with_a_different_prompt() -> None:
     verdict = auto_verdict(
-        [_spend("20261118100000000000001", SINCE + 60, "【目标与产品】生成12秒、9:16、720P")],
+        [
+            _spend("20261118100000000000001", SINCE + 60, "【目标与产品】生成12秒、9:16、720P"),
+            _spend("20261117153703957194489", SINCE - 60, "更早的一条，用来证明窗口被覆盖"),
+        ],
         prompt=PROMPT,
         since=SINCE,
     )
@@ -205,3 +219,52 @@ def test_auto_refuses_to_guess_between_two_candidates() -> None:
 
     assert verdict.action == "ambiguous"
     assert verdict.candidates == ["20261118101503751524489", "20261118101603751524490"]
+
+
+def test_auto_ignores_task_ids_already_claimed_by_other_tasks() -> None:
+    """同一提示词批量跑多单：另一单已认领的 task_id 绝不能被当前单误接回。"""
+    verdict = auto_verdict(
+        [
+            _spend("20261118101503751524489", SINCE + 60, PROMPT[:60]),
+            _spend("20261117153703957194489", SINCE - 60, "更早的记录"),
+        ],
+        prompt=PROMPT,
+        since=SINCE,
+        claimed_task_ids={"20261118101503751524489"},
+    )
+
+    assert verdict.action == "release"
+
+
+def test_auto_normalizes_newlines_and_tabs_in_summary() -> None:
+    multiline_prompt = "真人实拍\n电商口播。\t9:16 竖屏，正面平视固定中景。"
+    verdict = auto_verdict(
+        [
+            _spend(
+                "20261118101503751524489",
+                SINCE + 60,
+                "真人实拍电商口播。\n\t9:16 竖屏，正面平视固定中景。",
+            )
+        ],
+        prompt=multiline_prompt,
+        since=SINCE,
+    )
+
+    assert verdict.action == "adopt"
+    assert verdict.task_id == "20261118101503751524489"
+
+
+def test_cli_auto_verdict_refuses_when_created_at_is_missing(tmp_path: Path) -> None:
+    import asyncio
+
+    from modules.model_driver.cli import _auto_verdict
+
+    (tmp_path / "inputs").mkdir()
+    (tmp_path / "inputs/prompt.txt").write_text(PROMPT, encoding="utf-8")
+    before = LibTVState.model_validate(
+        {"id": RUN, "status": "submission_unknown", "browser_url": ACCOUNT}
+    )
+    assert before.created_at is None
+
+    verdict = asyncio.run(_auto_verdict(tmp_path, before))
+    assert verdict.action == "unknown"

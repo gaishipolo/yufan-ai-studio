@@ -73,3 +73,74 @@ def test_store_without_the_capability_is_never_called() -> None:
     store = _PlainStore()
 
     assert not isinstance(store, DeadlineExtendable)
+
+
+def test_queued_poll_does_not_burn_max_polls_budget() -> None:
+    """排队等待不应消耗 `generation_max_polls`，否则等 15+ 分钟后会误判超时。"""
+    from dataclasses import replace
+    from types import SimpleNamespace
+
+    from infra.ai.base import GenerationProgress, GenerationState
+    from infra.queue.base import Job
+
+    runner = GenerationRunner(MemoryJobQueue())
+    scheduled: list[tuple[str, str, int, float]] = []
+
+    async def fake_schedule(kind: str, record_id: str, *, polls: int, delay: float) -> None:
+        scheduled.append((kind, record_id, polls, delay))
+
+    class _FakeSession:
+        async def __aenter__(self):  # noqa: ANN204
+            return self
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+        async def commit(self) -> None:
+            return None
+
+    class _FakeStore:
+        async def load(self, record_id: str) -> GenerationRecord:
+            return replace(_record(created_minutes_ago=5), external_id=f"{record_id}:upstream")
+
+        async def extend_deadline(self, record_id: str) -> bool:
+            return True
+
+        async def mark_progress(self, record_id: str, progress: int) -> bool:
+            return True
+
+    class _FakeProvider:
+        poll_interval_sec = 5.0
+
+        async def poll(self, external_id: str, *, model: str = "") -> GenerationProgress:
+            return GenerationProgress(
+                external_id=external_id,
+                state=GenerationState.RUNNING,
+                queued=True,
+                progress=9,
+            )
+
+    import generation.runner as runner_mod
+
+    orig_factory = runner_mod.get_session_factory
+    orig_pipeline = runner_mod.get_pipeline
+    orig_provider_for = runner_mod._provider_for
+    runner_mod.get_session_factory = lambda: lambda: _FakeSession()  # type: ignore[assignment]
+    runner_mod.get_pipeline = lambda kind: SimpleNamespace(store=lambda s: _FakeStore())  # type: ignore[assignment]
+    runner_mod._provider_for = lambda pipeline, model: _FakeProvider()  # type: ignore[assignment]
+    runner._schedule_poll = fake_schedule  # type: ignore[method-assign]
+    try:
+        asyncio.run(
+            runner.handle_poll(
+                Job(
+                    name="generation.poll",
+                    payload={"kind": "video", "record_id": "a" * 32, "polls": 7},
+                )
+            )
+        )
+    finally:
+        runner_mod.get_session_factory = orig_factory
+        runner_mod.get_pipeline = orig_pipeline
+        runner_mod._provider_for = orig_provider_for
+
+    assert scheduled == [("video", "a" * 32, 7, 15.0)]

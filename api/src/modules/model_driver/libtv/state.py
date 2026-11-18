@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, field_validator
 
 # 单个任务内的执行器锁文件名。后缀必须是 .lock：桥接层的 update() 会遍历
 # inputs/outputs/records/review/code 给每个文件算 sha256，只跳过
@@ -25,12 +25,15 @@ class LibTVState(BaseModel):
     task_id: str | None = None
     submit_attempts: int = 0
     framework_status: str | None = None
-    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    # 缺失时必须保持 None（绝不能用 now() 兜底）：自动对账以它作为「提交起点」，
+    # 伪造成当前时刻会让更早的账单全部落到窗口之外，把已扣费任务误判为未提交。
+    created_at: datetime | None = None
     progress_percent: int = 0
     estimated_credits: float | None = None
     credits: float | None = None
     last_error: str | None = None
     error_code: str | None = None
+    failed_reason: str | None = None
     preparation_ready: bool = False
     # 计费模式（`free` / `credits`）。物化器在 `run.json` 里写它，桥接层据此
     # 决定走免费队列还是积分队列；执行器用它挑**哪个浏览器账号**：

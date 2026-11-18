@@ -58,7 +58,8 @@ export function useLibtvQueue(taskIds: string[], enabled = true) {
     placeholderData: keepPreviousData,
     retry: false,
     throwOnError: false,
-    refetchInterval: query =>
-      pageHidden() || (query.state.data?.items.length ?? 0) === 0 ? false : QUEUE_POLL_INTERVAL,
+    // 只要当前页还有在跑的 LibTV 任务且页面可见就持续 5 秒轮询；
+    // 不能在首次返回空数组时永久停表，否则刚提交的任务永远接不上实时进度。
+    refetchInterval: () => (pageHidden() ? false : QUEUE_POLL_INTERVAL),
   });
 }

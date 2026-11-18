@@ -16,6 +16,7 @@ import asyncio
 from pathlib import Path
 
 from core.exceptions import BadRequest, Conflict, RateLimited, UpstreamError
+from core.logging import get_logger
 from infra import get_queue
 from infra.ai.base import (
     Capability,
@@ -26,7 +27,9 @@ from infra.ai.base import (
 )
 from infra.queue.base import Job
 from modules.model_driver.generic_inputs import materialize
-from modules.model_driver.libtv import executor
+from modules.model_driver.libtv import executor, process
+from modules.model_driver.libtv.reconcile import reconcile as reconcile_state
+from modules.model_driver.libtv.state import LibTVState
 from modules.model_driver.spec import DriverMeta
 
 META = DriverMeta(
@@ -37,6 +40,8 @@ META = DriverMeta(
 )
 
 MODEL_ID = "libtv-wan3-replacement"
+
+logger = get_logger(__name__)
 
 # 这些故障需要修复执行环境，再由「继续」恢复已有 task_id 的查询。
 EXECUTOR_BLOCKED = frozenset(
@@ -127,6 +132,62 @@ def _uncertain_hint(run_id: str, account: str) -> str:
     )
 
 
+async def _resolve_unknown(
+    path: Path, previous: object, account: str
+) -> tuple[str, str]:
+    """「回执未知」时先自证清白：消费明细命中就接回，确认没扣费就解封。
+
+    只在**用户已经点过重试**的这条路径上跑，不会自己发起提交 —— 所以不存在
+    「框架偷偷花钱」：最坏情况是当场再提交一次，而那正是用户点重试想做的事。
+
+    返回 `("adopt", task_id)` / `("release", "")` / `("unknown", "")`。
+    拿不准（含缺创建时刻或账单查询失败）时一律回 `unknown`，交回给人——宁可多问一句，也不要重复扣费。
+    """
+    from modules.model_driver.libtv import account as libtv_account
+
+    created = getattr(previous, "created_at", None)
+    try:
+        verdict = await libtv_account.auto_reconcile_verdict(path, created, account)
+    except UpstreamError as exc:
+        logger.warning("回执未知，自动查询消费明细失败：%s", exc)
+        return ("unknown", "")
+    if verdict.action == "adopt":
+        logger.info("回执未知，但消费明细命中上游任务 id=%s", verdict.task_id)
+        return ("adopt", verdict.task_id)
+    if verdict.action == "release":
+        logger.info("回执未知，消费明细确认未扣费，解封后重新提交")
+        return ("release", "")
+    logger.warning("回执未知且无法自动判断（%s）", verdict.describe())
+    return ("unknown", "")
+
+
+def _waiting_free_error(state: LibTVState) -> BadRequest:
+    """默认免费队列拿不到 0 积分报价时，给足价钱与「改用积分队列」出口。"""
+    cost = state.estimated_credits
+    price = f"{cost:g} 积分" if isinstance(cost, (int, float)) else "非零"
+    return BadRequest(
+        f"当前没有 0 积分畅用权益，免费队列报价 {price}，未提交；"
+        "改用积分队列（billingMode=credits）或等权益恢复后再提交"
+    )
+
+
+def _failed_message(meta: LibTVState, live_reason: str = "") -> str:
+    """把上游失败原因原样透出到工作台，不再只回一句「请查看调用档案」。"""
+    reason = (meta.failed_reason or meta.last_error or live_reason).strip()
+    return f"LibTV 生成失败：{reason}" if reason else "LibTV 生成失败，请查看调用档案"
+
+
+async def _poll_live(task_id: str, account: str):  # noqa: ANN202 - 轻量 HTTP 轮询
+    """进行中走纯 Python HTTP 查进度，避免每次轮询起 Node 子进程并全盘算 SHA256。"""
+    from modules.model_driver.libtv import account as libtv_account
+
+    try:
+        items = await libtv_account.progress([task_id], account)
+    except UpstreamError:
+        return None
+    return next((item for item in items if item.task_id == task_id), None)
+
+
 def _stage_failure(result: executor.ExecutorResult, run_id: str, account: str) -> Exception:
     """把执行器回执翻译成「下一步该做什么」，而不是一句笼统的失败。
 
@@ -148,6 +209,8 @@ class LibTVProvider:
     capabilities = frozenset({Capability.VIDEO})
     # 返回任务 ID、由框架续轮询；恢复器按缺省 False 处理，必须显式声明
     supports_poll = True
+    # 轻量 HTTP 轮询的基准节奏：5 秒一跳；排队中由 runner 自动退避到 15 秒。
+    poll_interval_sec = 5.0
     models = MODELS
     # 通用入口要在本跳里先跑 `upload` 再跑 `submit`（模板库那条链把 upload
     # 排成独立的 prepare job，这里没有）。监督进程给的两个阶段预算是
@@ -177,21 +240,38 @@ class LibTVProvider:
         previous = await asyncio.to_thread(executor.state, path)
         if previous.task_id:
             return f"{value}:{previous.task_id}"
-        if previous.status == "submission_unknown":
-            # 归档已经记下「回执未知」：桥接层会拒绝任何重提（这是对的，可能已扣费）。
-            # 所以这里给的不是「重试」，而是**人工核对后二选一**的解封命令。
-            raise Conflict(_uncertain_hint(value, account))
+        if previous.status in ("submission_unknown", "submitting"):
+            busy = await asyncio.to_thread(process.executor_busy, path)
+            if busy:
+                raise RateLimited(
+                    f"任务 {value} 的上一轮执行器仍在运行，已转入排队，稍后自动重试"
+                )
+            # 归档记着「回执未知 / 正在提交」：桥接层会拒绝任何重提（可能已扣费）。
+            # 先用消费明细自证清白——命中未认领单就接回、确认没扣费就解封，
+            # 实在判断不了才把二选一交给用户。
+            action, task_id = await _resolve_unknown(path, previous, account)
+            if action == "adopt":
+                # 必须把接回的 task_id 与状态写回 run.json，否则后续 poll 阶段
+                # 桥接层读 run.json 看不到 task_id 会直接抛 No task ID。
+                await asyncio.to_thread(
+                    executor.save_state,
+                    path,
+                    reconcile_state(previous, adopt_task=task_id, executor_busy=busy),
+                )
+                return f"{value}:{task_id}"
+            if action == "release":
+                await asyncio.to_thread(
+                    executor.save_state,
+                    path,
+                    reconcile_state(previous, not_submitted=True, executor_busy=busy),
+                )
+                previous = await asyncio.to_thread(executor.state, path)
+            else:
+                raise Conflict(_uncertain_hint(value, account))
         # upload 阶段可能停在「等免费」或「适配器报错」：这时不许再调 submit，
         # 否则桥接层只会抛 "Refusing duplicate or uncertain submission"。
         if generic and previous.status == "waiting_free":
-            # 默认队列就是免费队列，撞上这条的人最多。原文案只说了「报价非零」，
-            # 既不说多少钱，也不说还能怎么办 —— 用户唯一能想到的动作是再点一次。
-            cost = previous.estimated_credits
-            price = f"{cost:g} 积分" if isinstance(cost, (int, float)) else "非零"
-            raise BadRequest(
-                f"当前没有 0 积分畅用权益，免费队列报价 {price}，未提交；"
-                "改用积分队列（billingMode=credits）或等权益恢复后再提交"
-            )
+            raise _waiting_free_error(previous)
         if generic and previous.status == "service_error" and previous.last_error:
             raise BadRequest(f"{previous.last_error}；未提交生成")
         if previous.status != "uploaded":
@@ -203,12 +283,7 @@ class LibTVProvider:
         if latest.status in ("submitting", "submission_unknown"):
             raise Conflict(_uncertain_hint(value, account))
         if latest.status == "waiting_free":
-            cost = latest.estimated_credits
-            price = f"{cost:g} 积分" if isinstance(cost, (int, float)) else "非零"
-            raise BadRequest(
-                f"当前没有 0 积分畅用权益，免费队列报价 {price}，未提交；"
-                "改用积分队列（billingMode=credits）或等权益恢复后再提交"
-            )
+            raise _waiting_free_error(latest)
         if latest.status == "service_error" and latest.last_error:
             # 适配器给了具体原因（积分队列仍报 0、估价不可用等），原样透出。
             raise BadRequest(f"{latest.last_error}；未提交生成")
@@ -224,7 +299,18 @@ class LibTVProvider:
             raise BadRequest("LibTV 上游任务标识无效")
         path = await asyncio.to_thread(executor.run_path, run_id)
         meta = await asyncio.to_thread(executor.state, path)
-        if meta.status != "success":
+        live = None
+        if meta.status not in ("success", "failed", "timeout", "generated"):
+            account = await asyncio.to_thread(executor.browser_for, path)
+            live = await _poll_live(task_id, account)
+            if live is not None and live.status in (0, 1):
+                return GenerationProgress(
+                    external_id=external_id,
+                    state=GenerationState.RUNNING,
+                    queued=live.queued,
+                    progress=min(99, live.percent),
+                )
+            # 只有终态（成功待下载 / 失败 / 超时）或轻量查询拿不到时才启一次 Node 落盘回执。
             result = await executor.execute_stage(run_id, "poll")
             if result.code != "OK":
                 if result.code in EXECUTOR_BLOCKED:
@@ -257,6 +343,7 @@ class LibTVProvider:
             if meta.status in ("failed", "timeout")
             else GenerationState.RUNNING
         )
+        live_reason = getattr(live, "failed_reason", "") if live is not None else ""
         return GenerationProgress(
             external_id=external_id,
             state=status,
@@ -267,7 +354,7 @@ class LibTVProvider:
             output_url=f"/api/v1/templates/replacement-runs/{run_id}/output"
             if status == GenerationState.SUCCEEDED
             else None,
-            error="LibTV 生成失败，请查看调用档案" if status == GenerationState.FAILED else None,
+            error=_failed_message(meta, live_reason) if status == GenerationState.FAILED else None,
         )
 
     async def cancel(self, external_id: str) -> None:

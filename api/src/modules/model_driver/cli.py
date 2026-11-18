@@ -47,17 +47,10 @@ def cmd_check(args: argparse.Namespace) -> None:
 async def _auto_verdict(path, before):  # noqa: ANN001, ANN202 - 只在命令里用
     """拉最近几页消费明细，交给 `auto_verdict` 判断该接回还是解封。"""
     from modules.model_driver.libtv import account as libtv_account
-    from modules.model_driver.libtv.reconcile import auto_verdict
 
-    since = int(before.created_at.timestamp())
-    prompt = (path / "inputs/prompt.txt").read_text(encoding="utf-8")
-    spends = []
-    for page in range(1, 4):
-        data = await libtv_account.consumption(page, 20, before.browser_url or "")
-        spends.extend(data.items)
-        if data.items and min(item.seconds for item in data.items) < since:
-            break
-    return auto_verdict(spends, prompt=prompt, since=since)
+    return await libtv_account.auto_reconcile_verdict(
+        path, getattr(before, "created_at", None), before.browser_url or ""
+    )
 
 
 def cmd_libtv_reconcile(args: argparse.Namespace) -> None:
@@ -65,7 +58,6 @@ def cmd_libtv_reconcile(args: argparse.Namespace) -> None:
     import uuid
 
     from core.exceptions import AppError
-    from infra.archive import get_archive_storage
     from modules.model_driver.libtv import executor, process
     from modules.model_driver.libtv.reconcile import reconcile
 
@@ -99,8 +91,7 @@ def cmd_libtv_reconcile(args: argparse.Namespace) -> None:
             # 执行器还在跑时不许改账：桥接层随后写回 task_id 会和这里改过的状态打架
             executor_busy=busy,
         )
-        storage = get_archive_storage()
-        storage.write(path / "run.json", after.model_dump(mode="json"))
+        executor.save_state(path, after)
     except AppError as exc:
         print(f"未改动档案：{exc}", file=sys.stderr)
         raise SystemExit(1) from exc

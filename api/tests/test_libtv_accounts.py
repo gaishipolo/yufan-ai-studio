@@ -226,3 +226,75 @@ def test_browser_outage_names_the_offending_account() -> None:
     )
     assert "9412" in explained.message
     assert "9411" not in explained.message
+
+
+async def test_account_request_ignores_socks_proxy_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """宿主环境带 ALL_PROXY=socks5:// 时，未装 socksio 也不该在建 client 时直接炸掉。"""
+    import httpx
+
+    from modules.model_driver.libtv import account
+
+    monkeypatch.setenv("ALL_PROXY", "socks5://127.0.0.1:7897")
+
+    async def fake_headers(_account: str) -> dict[str, str]:
+        return {"token": "tok"}
+
+    async def fake_request(
+        self: httpx.AsyncClient, method: str, url: str, **kwargs: Any
+    ) -> httpx.Response:
+        return httpx.Response(200, json={"code": 0, "data": {}})
+
+    monkeypatch.setattr(account, "_headers", fake_headers)
+    monkeypatch.setattr(httpx.AsyncClient, "request", fake_request)
+
+    payload = await account._request(
+        "GET", f"{account.API_ART}/api/www/member/account", account=CREDITS
+    )
+    assert payload == {"code": 0, "data": {}}
+
+
+async def test_progress_merges_multi_account_responses(
+    monkeypatch: pytest.MonkeyPatch, two_accounts: None
+) -> None:
+    """9411 查 9412 的任务会回 status=3/percent=0；多账号下要择优取归属账号的真实进度。"""
+    from modules.model_driver.libtv import account
+
+    async def fake_request(
+        method: str, url: str, *, account: str, body: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        if account == FREE:
+            return {
+                "code": 0,
+                "data": {
+                    "progresses": [
+                        {
+                            "taskId": "t-free",
+                            "status": 0,
+                            "progressPercent": 18,
+                            "queueReason": "UNLIMITED_SERIAL",
+                            "unlimitedQueueNum": 2,
+                            "unlimitedQueueTotal": 4,
+                            "unlimitedQueueLimit": 10,
+                        },
+                        {"taskId": "t-credits", "status": 3, "progressPercent": 0},
+                    ]
+                },
+            }
+        return {
+            "code": 0,
+            "data": {
+                "progresses": [
+                    {"taskId": "t-free", "status": 3, "progressPercent": 0},
+                    {"taskId": "t-credits", "status": 1, "progressPercent": 66},
+                ]
+            },
+        }
+
+    monkeypatch.setattr(account, "_request", fake_request)
+    items = await account.progress(["t-free", "t-credits"])
+
+    by_id = {item.task_id: item for item in items}
+    assert by_id["t-free"].status == 0 and by_id["t-free"].percent == 18
+    assert by_id["t-credits"].status == 1 and by_id["t-credits"].percent == 66

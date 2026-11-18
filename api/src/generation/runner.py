@@ -73,6 +73,9 @@ JOB_POLL = "generation.poll"
 
 _MAX_ERROR_LEN = 500
 _MAX_BACKOFF_SEC = 30.0
+# 免费队列排队动辄十几分钟，排队期间放宽轮询间隔（不浪费上游配额与本地线程），
+# 且不消耗 `generation_max_polls` 次数（仍受 3 小时墙钟硬上限兜底）。
+_QUEUED_POLL_INTERVAL_SEC = 15.0
 
 
 def _provider_for(pipeline: GenerationPipeline, model: str) -> ModelProvider:
@@ -472,6 +475,7 @@ class GenerationRunner:
         pipeline = get_pipeline(kind)
         factory = get_session_factory()
         next_delay: float | None = None
+        queued_wait = False
 
         try:
             budget = (job.timeout_sec or 120.0) * 0.8
@@ -634,7 +638,8 @@ class GenerationRunner:
                             # 「排队」不等于「在生成」：免费队列按名额串行、限流队列按上游
                             # 节拍，把这段等待算进墙钟就等于「排得越久越容易被判超时」
                             # （2026-11-17 任务 29dc66ae 因此在 48% 被判超时，上游其实正常）。
-                            if result.queued and isinstance(store, DeadlineExtendable):
+                            queued_wait = bool(result.queued)
+                            if queued_wait and isinstance(store, DeadlineExtendable):
                                 await self._extend_deadline(store, record, kind, record_id)
                             # 进度只增不减，且轮询期不报 100——供应商偶发回一个更小的值
                             # 会让用户看到进度条倒退；99 留给「已提交、还在等终态」。
@@ -650,7 +655,11 @@ class GenerationRunner:
                                     owner_id=record.owner_id,
                                     progress=progress,
                                 )
-                            next_delay = interval
+                            next_delay = (
+                                max(interval, _QUEUED_POLL_INTERVAL_SEC)
+                                if queued_wait
+                                else interval
+                            )
 
                 if pending is not None:
                     # 已经终态并提交，收尾失败只能留痕：这里再抛出去会被下面的
@@ -671,7 +680,8 @@ class GenerationRunner:
                 next_delay = self._backoff(polls)
 
         if next_delay is not None:
-            await self._schedule_poll(kind, record_id, polls=polls + 1, delay=next_delay)
+            next_polls = polls if queued_wait else polls + 1
+            await self._schedule_poll(kind, record_id, polls=next_polls, delay=next_delay)
 
     # ------------------------------------------------------------------ 内部
     async def _persist(self, kind: str, record_id: str, url: str | None) -> str | None:

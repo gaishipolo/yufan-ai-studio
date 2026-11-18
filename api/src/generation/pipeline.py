@@ -71,6 +71,27 @@ class DeadlineExtendable(Protocol):
         ...
 
 
+@runtime_checkable
+class ClaimedExternalIdQueryable(Protocol):
+    """可选能力：列举本流水线已被认领的供应商外部标识。
+
+    用于自动对账防串号：同一提示词可能对应多笔任务，必须先排除已被其它记录
+    认领走的外部任务号，防止未提交的那一单误接回另一单的成片。
+    """
+
+    async def list_claimed_external_ids(self) -> set[str]: ...
+
+
+async def list_claimed_external_ids(session: AsyncSession) -> set[str]:
+    """聚合所有已注册流水线当前认领的外部任务标识。"""
+    claimed: set[str] = set()
+    for kind in pipeline_kinds():
+        store = get_pipeline(kind).store(session)
+        if isinstance(store, ClaimedExternalIdQueryable):
+            claimed.update(await store.list_claimed_external_ids())
+    return claimed
+
+
 def strict_model(pipeline: GenerationPipeline) -> bool:
     """该流水线是否**禁止**「只有一个供应商就兜底」。未声明 = 允许。
 

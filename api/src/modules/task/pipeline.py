@@ -10,6 +10,7 @@ import re
 from datetime import UTC, datetime
 from pathlib import Path
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.exceptions import BadRequest
@@ -197,6 +198,14 @@ class VideoTaskStore:
             return False
         task.started_at = datetime.now(tz=UTC)
         return True
+
+    async def list_claimed_external_ids(self) -> set[str]:
+        rows = (
+            await self.session.scalars(
+                select(VideoTask.external_id).where(VideoTask.external_id.is_not(None))
+            )
+        ).all()
+        return {ext for ext in rows if ext}
 
     async def mark_succeeded(
         self,

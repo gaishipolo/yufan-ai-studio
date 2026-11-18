@@ -10,7 +10,7 @@
 |---|---|
 | 主链是否完整 | **完整**：状态机、幂等键、账号绑定、失败分类都对得上，两条队列今天都跑通过 |
 | 阻塞级问题 | **P1 ×0**（两条已在 2026-11-18 修掉，见 §5） |
-| 次要问题 | P2 ×1（自动对账闭环，待产品确认） · P3 ×3 |
+| 次要问题 | P2 ×0 · P3 ×3 |
 | 今天已修 | `project_id` 写死导致 30001（见 §4） |
 
 严重度：**P0** 阻断上线 · **P1** 正确性 / 钱 / 数据一致性 · **P2** 健壮性 · **P3** 清理与文档。
@@ -108,7 +108,7 @@ mark_succeeded（封面、入库、downloadable）
 
 - **P2-1 ✅ 已修 · 免费队列失败文案没有出口**：`waiting_free` 直接判失败，不给「改用积分队列」的指引，
   也不带估价。默认队列就是它，踩中概率最高。
-- **P2-2 提交失败后不复盘**：现在有 `app libtv-reconcile --auto`，但**要人手动跑**。
+- **P2-2 ✅ 已修 · 提交失败后不复盘**：现在有 `app libtv-reconcile --auto`，但**要人手动跑**。
   建议在驱动里做成一步：提交失败 → 自动对账（消费明细命中就接回，没有就解封）→ 最多自动重排一次。
   注意这会在失败时自动花钱，需要产品确认。
 - **P2-3 ✅ 已修 · 当前画布取不到时会退回旧项目**：`alignCanvasProject()` 在浏览器里没有画布标签页时
@@ -142,7 +142,13 @@ mark_succeeded（封面、入库、downloadable）
 | P1-2 | `GenerationProgress.queued` + `DeadlineExtendable` 协议：poll 看到归档 `queued` 就顺延墙钟起点；硬上限 `GENERATION_MAX_WALL_CLOCK_SEC`（默认 3 小时，按建单时间算）。两个 store 各实现一个 `extend_deadline`。 |
 | P2-3 | `alignCanvasProject()` 读不到画布时**明确失败**（提示打开 liblib.tv/canvas），不再退回写死的旧 `project_id`。 |
 | P2-1 | 见 P1-1 的文案部分：`waiting_free` 现在带估价 + 「改用积分队列」的下一步。 |
-| P2-2 | **未做**：需要产品确认「失败时自动花钱重排一次」。 |
+| P2-2 | **已修（范围收窄）**：只在用户点重试的那一刻自动对账——命中就接回（不花钱），确认没扣费就当场解封继续提交，判断不了才回落到命令。不做「框架自己重排」，所以不存在无人值守的自动扣费。 |
 
 新增测试：`tests/test_libtv_billing_fallback.py`（node 真跑 `applyBilling`）、
-`tests/test_generation_deadline.py`（顺延 + 硬上限 + 协议探测）。
+`tests/test_generation_deadline.py`（顺延 + 硬上限 + 协议探测）、
+`tests/test_libtv_auto_recover.py`（接回 / 解封 / 窗口没覆盖时不猜）。
+
+**P2-2 的口径**：自动对账接在 `submit()` 的「归档已是 submission_unknown」分支上，
+只有用户**主动点重试**才会走到；不会由 ticker/恢复器触发。判定还用一条额外的保险：
+消费明细必须翻到提交时刻**之前**（`auto_verdict` 的 `unknown` 分支），
+否则「没命中」只说明没看到，不足以断言没扣费。

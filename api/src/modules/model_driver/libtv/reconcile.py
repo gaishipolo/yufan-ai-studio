@@ -20,7 +20,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass, field
 
 from core.exceptions import BadRequest
@@ -122,31 +122,49 @@ class AutoVerdict:
         return "消费明细里没有能与本任务匹配的记录（可能是提示词被截断）"
 
 
+def _normalize(text: str) -> str:
+    """去掉所有空白与换行，避免提示词与账单摘要因排版/换行差异匹配不上。"""
+    return "".join(text.split())
+
+
 def _prefix(prompt: str) -> str:
-    """取提示词前缀用于匹配：去掉空白与换行，避免排版差异导致匹配不上。"""
-    return "".join(prompt.split())[:PROMPT_PREFIX]
+    """取提示词前缀用于匹配。"""
+    return _normalize(prompt)[:PROMPT_PREFIX]
 
 
 def auto_verdict(
-    items: Sequence[object], *, prompt: str, since: int
+    items: Sequence[object],
+    *,
+    prompt: str,
+    since: int,
+    claimed_task_ids: Collection[str] = (),
 ) -> AutoVerdict:
     """按消费明细判断「这笔到底有没有提交成功」。
 
     `items` 是 `account.ConsumptionItem` 列表（只用到 `seconds` / `task_id` / `summary`）。
     只认 `seconds >= since` 的记录：更早的同款提示词是另一次任务，不能算进来。
+    `claimed_task_ids` 是已被本系统其它任务认领的上游 `task_id`：同一提示词批量跑
+    多单时，绝不能把另一单的成品接回给当前单。
     """
     prefix = _prefix(prompt)
     if not prefix:
         return AutoVerdict(action="unknown", since=since)
+    claimed = {str(task_id).strip() for task_id in claimed_task_ids if str(task_id).strip()}
+    stamps = [int(getattr(item, "seconds", 0) or 0) for item in items]
     matched = {
         str(getattr(item, "task_id", "") or "")
         for item in items
         if int(getattr(item, "seconds", 0) or 0) >= since
-        and str(getattr(item, "summary", "") or "").replace(" ", "").startswith(prefix)
+        and _normalize(str(getattr(item, "summary", "") or "")).startswith(prefix)
         and str(getattr(item, "task_id", "") or "")
+        and str(getattr(item, "task_id", "") or "") not in claimed
     }
     if len(matched) == 1:
         return AutoVerdict(action="adopt", task_id=matched.pop(), since=since)
-    if not matched:
-        return AutoVerdict(action="release", since=since)
-    return AutoVerdict(action="ambiguous", candidates=sorted(matched), since=since)
+    if matched:
+        return AutoVerdict(action="ambiguous", candidates=sorted(matched), since=since)
+    # 「没命中」不等于「没扣费」：只翻了最近几条时，提交时刻更早的记录根本没看到。
+    # 必须确认翻到了 `since` 之前，才敢给出「可以安全解封」的结论。
+    if not stamps or min(stamps) >= since:
+        return AutoVerdict(action="unknown", since=since)
+    return AutoVerdict(action="release", since=since)

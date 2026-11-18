@@ -8,16 +8,25 @@ import type { ModelSpec } from '@/entities/model/model/types';
 import StudioPage from './StudioPage';
 
 /* restoreMocks: true 会把 vi.fn 的实现也清掉，所以每个 beforeEach 都要重设 */
-const { modelsMock, mutateMock, toastMock, uploadMock, selectionMock, navigateMock } = vi.hoisted(
-  () => ({
-    modelsMock: vi.fn(),
-    mutateMock: vi.fn(),
-    toastMock: vi.fn(),
-    uploadMock: vi.fn(),
-    selectionMock: vi.fn(),
-    navigateMock: vi.fn(),
-  }),
-);
+const {
+  modelsMock,
+  mutateMock,
+  toastMock,
+  uploadMock,
+  selectionMock,
+  navigateMock,
+  recentTasksMock,
+  libtvQueueMock,
+} = vi.hoisted(() => ({
+  modelsMock: vi.fn(),
+  mutateMock: vi.fn(),
+  toastMock: vi.fn(),
+  uploadMock: vi.fn(),
+  selectionMock: vi.fn(),
+  navigateMock: vi.fn(),
+  recentTasksMock: vi.fn(),
+  libtvQueueMock: vi.fn(),
+}));
 
 /* Link 也要 mock：页头右侧「全部 →」是站内跳转，
    mock 里给个真 anchor，用例还能顺手验 href。 */
@@ -32,7 +41,11 @@ vi.mock('react-router-dom', () => ({
 
 vi.mock('@/entities/task/api/task.queries', () => ({
   useCreateTask: () => ({ mutate: mutateMock, isPending: false }),
-  useTaskList: () => ({ data: { items: [], total: 0 } }),
+  useTaskList: recentTasksMock,
+}));
+
+vi.mock('@/entities/libtv/api/libtv.queries', () => ({
+  useLibtvQueue: libtvQueueMock,
 }));
 
 // 目录里的时长/比例选项用真实派生函数：要验的正是「选项来自模型 schema」
@@ -179,7 +192,11 @@ beforeEach(() => {
   uploadMock.mockReset();
   selectionMock.mockReset();
   navigateMock.mockReset();
+  recentTasksMock.mockReset();
+  libtvQueueMock.mockReset();
   modelsMock.mockReturnValue([videoModel()]);
+  recentTasksMock.mockReturnValue({ data: { items: [], total: 0 } });
+  libtvQueueMock.mockReturnValue({ data: { items: [] } });
   setSelection();
 });
 
@@ -382,5 +399,80 @@ describe('StudioPage · 表单由模型声明驱动', () => {
 
     expect(mutateMock).not.toHaveBeenCalled();
     expect(screen.getByText('请先填写画面描述')).toBeInTheDocument();
+  });
+
+  it('最近生成里同步显示 LibTV 排队位次、实时百分比与真实失败原因', () => {
+    recentTasksMock.mockReturnValue({
+      data: {
+        items: [
+          {
+            id: 't-run',
+            title: '免费队列测试',
+            model: 'LibTV · 720P 视频替换',
+            modelId: 'libtv-wan3-replacement',
+            aspectRatio: '9:16',
+            durationSec: 10,
+            status: 'running',
+            progress: 10,
+            coverUrl: '',
+            prompt: 'p',
+            authorId: 'u_001',
+            authorName: 'test',
+            favorited: false,
+            downloadable: false,
+            createdAt: '2026-11-18T03:30:00Z',
+            updatedAt: '2026-11-18T03:31:00Z',
+            externalId: 'run1:20261118113003683067197',
+          },
+          {
+            id: 't-fail',
+            title: '失败原因透出',
+            model: 'LibTV · 720P 视频替换',
+            modelId: 'libtv-wan3-replacement',
+            aspectRatio: '9:16',
+            durationSec: 10,
+            status: 'failed',
+            progress: 70,
+            coverUrl: '',
+            prompt: 'p',
+            authorId: 'u_001',
+            authorName: 'test',
+            favorited: false,
+            downloadable: false,
+            errorMessage: 'LibTV 生成失败：视频生成失败，积分将会在2小时内返还，请稍后重试',
+            createdAt: '2026-11-18T03:30:00Z',
+            updatedAt: '2026-11-18T03:44:00Z',
+          },
+        ],
+        total: 2,
+      },
+    });
+    libtvQueueMock.mockReturnValue({
+      data: {
+        items: [
+          {
+            taskId: '20261118113003683067197',
+            status: 0,
+            percent: 42,
+            queueReason: 'UNLIMITED_SERIAL',
+            queuePosition: 3,
+            queueTotal: 5,
+            queueLimit: 10,
+            power: 0,
+            benefitTag: '',
+            remainSeconds: 0,
+            describe: '0 积分队列排队中：本机 5/10（这台排第 3）· 42%',
+          },
+        ],
+      },
+    });
+
+    render(<StudioPage />);
+
+    expect(screen.getByText('生成中 · 42%')).toBeInTheDocument();
+    expect(screen.getByText('0 积分队列 3/10')).toBeInTheDocument();
+    expect(
+      screen.getByText('LibTV 生成失败：视频生成失败，积分将会在2小时内返还，请稍后重试'),
+    ).toBeInTheDocument();
   });
 });

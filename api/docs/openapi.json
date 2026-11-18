@@ -10529,6 +10529,12 @@
             "title": "Remainseconds",
             "default": 0
           },
+          "failedReason": {
+            "type": "string",
+            "title": "Failedreason",
+            "description": "上游失败原因（status=3 时返回）",
+            "default": ""
+          },
           "describe": {
             "type": "string",
             "title": "Describe",

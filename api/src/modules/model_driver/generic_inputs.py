@@ -40,6 +40,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 from collections.abc import Mapping, Sequence
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -275,6 +276,7 @@ def _write_everything(
             "duration": spec["duration"],
             "file_checksums": {item["file"]: item["sha256"] for item in entries},
             "prompt_sha256": hashlib.sha256(prompt_bytes).hexdigest(),
+            "created_at": datetime.now(UTC).isoformat(),
         },
     )
 

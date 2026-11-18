@@ -266,6 +266,15 @@ def state(path: Path) -> LibTVState:
     return LibTVState.model_validate(get_archive_storage().read(path / "run.json"))
 
 
+def save_state(path: Path, meta: LibTVState) -> None:
+    """把状态写回 `run.json`（人工解封 / 自动对账后继续提交都用它）。
+
+    `mode="json"` 是必须的：`created_at` 是 datetime，直接写会变成 Python repr，
+    桥接层 `load()` 读到就炸。
+    """
+    get_archive_storage().write(path / "run.json", meta.model_dump(mode="json"))
+
+
 def read_result(path: Path) -> tuple[ExecutorResult, AdapterError | None]:
     storage = get_archive_storage()
     result = ExecutorResult.model_validate(storage.read(path))
