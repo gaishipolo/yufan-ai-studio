@@ -15,9 +15,10 @@ import { AssetPicker } from './AssetPicker';
  * 断言落在「发给后端的 tagIds」上 —— 筛选语义真正发生的地方。
  */
 
-const { selectionCalls, tagsData } = vi.hoisted(() => ({
+const { selectionCalls, tagsData, selectionItems } = vi.hoisted(() => ({
   selectionCalls: [] as { kind?: string; tagIds?: string[] }[],
   tagsData: { current: [] as LibraryTagStatOut[] },
+  selectionItems: { current: [] as unknown[] },
 }));
 
 vi.mock('@/entities/library/api/library.queries', () => ({
@@ -28,7 +29,12 @@ vi.mock('@/entities/library/api/library.api', () => ({
   libraryApi: {
     selection: (params: { kind?: string; tagIds?: string[] }) => {
       selectionCalls.push(params);
-      return Promise.resolve({ items: [], total: 0, page: 1, pageSize: 24 });
+      return Promise.resolve({
+        items: selectionItems.current,
+        total: selectionItems.current.length,
+        page: 1,
+        pageSize: 24,
+      });
     },
   },
 }));
@@ -44,15 +50,16 @@ const TAGS: LibraryTagStatOut[] = [
 beforeEach(() => {
   selectionCalls.length = 0;
   tagsData.current = TAGS;
+  selectionItems.current = [];
 });
 
-function renderPicker(tagIds: string[]) {
+function renderPicker(tagIds: string[], kind: 'image' | 'video' | 'audio' | 'text' = 'image') {
   const client = new QueryClient({defaultOptions: {queries: {retry: false}}});
   return render(
     <QueryClientProvider client={client}>
       <AssetPicker
         open
-        kind="image"
+        kind={kind}
         tagIds={tagIds}
         selected={[]}
         onClose={vi.fn()}
@@ -128,5 +135,62 @@ describe('AssetPicker · 候选集里再筛', () => {
     const second = within(screen.getByRole('group', {name: '取值标签'}));
     await user.click(second.getByRole('button', {name: '菜菜'}));
     expect(selectionCalls.at(-1)?.tagIds).toEqual(['t21']);
+  });
+});
+
+/**
+ * 文本素材没有缩略图。
+ *
+ * 后端对 `kind=text` 的 `/thumbnail` 直接 404（「文本资产没有缩略图」）。
+ * 素材库里另外三处（`LibraryCard` / `LibraryFlyout` / `LibraryPicker`）
+ * 都用 `textExcerpt` 画文字卡 —— 这里原本是四份渲染里唯一漏掉的一处：
+ * 所有类型一律画 `CoverImage`，于是选文本时满屏渐变占位，
+ * 看不出选的是哪段文字。
+ */
+describe('AssetPicker · 文本素材', () => {
+  const TEXT_ASSET = {
+    id: 'txt-1',
+    name: '雨夜开场文案.txt',
+    kind: 'text',
+    origin: 'upload',
+    ownerId: 'u-1',
+    visibility: 'personal',
+    state: 'active',
+    createdAt: '2026-11-01T00:00:00Z',
+    coverUrl: null,
+    textExcerpt: '第一段：雨夜街头，霓虹灯牌。\n第二段：镜头缓缓推近。',
+  };
+
+  it('用摘要画文字卡，不画缩略图', async () => {
+    selectionItems.current = [TEXT_ASSET];
+    renderPicker([], 'text');
+
+    expect(await screen.findByText(/雨夜街头/)).toBeInTheDocument();
+    // 不该去请求注定 404 的缩略图
+    expect(document.querySelector('img[src*="thumbnail"]')).toBeNull();
+  });
+
+  it('摘要为空时有个占位说法，不留一块空白', async () => {
+    selectionItems.current = [{ ...TEXT_ASSET, textExcerpt: null }];
+    renderPicker([], 'text');
+
+    expect(await screen.findByText('（空文本）')).toBeInTheDocument();
+  });
+
+  it('图片素材照旧画缩略图（别把两种渲染混起来）', async () => {
+    selectionItems.current = [
+      {
+        ...TEXT_ASSET,
+        id: 'img-1',
+        kind: 'image',
+        coverUrl: '/cover/img-1.png',
+        textExcerpt: null,
+      },
+    ];
+    renderPicker([], 'image');
+
+    await screen.findByText('雨夜开场文案.txt');
+    expect(screen.queryByText('（空文本）')).not.toBeInTheDocument();
+    expect(document.querySelector('img[src="/cover/img-1.png"]')).not.toBeNull();
   });
 });

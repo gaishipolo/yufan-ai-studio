@@ -169,12 +169,28 @@ export function AssetPicker({
                       : 'border-line hover:border-line-strong',
                   )}
                 >
-                  <CoverImage
-                    src={item.coverUrl ?? undefined}
-                    seed={item.id}
-                    alt={item.name}
-                    className="aspect-video w-full rounded-lg"
-                  />
+                  {/* 文本资产没有缩略图：后端对 `kind=text` 的 `/thumbnail`
+                      直接 404（「文本资产没有缩略图」）。用摘要画一张文字卡，
+                      别让每个文本格子都发一次注定失败的请求。
+
+                      素材库里另外三处（`LibraryCard` / `LibraryFlyout` /
+                      `LibraryPicker`）早就这么画了 —— 这里原本是四份渲染
+                      里唯一漏掉的一处：所有类型一律画 `CoverImage`，
+                      于是选文本时满屏都是渐变占位，看不出选的是哪段文字。 */}
+                  {item.kind === 'text' ? (
+                    <div className="flex aspect-video w-full flex-col overflow-hidden rounded-lg bg-panel-soft p-2">
+                      <span className="line-clamp-4 whitespace-pre-wrap break-words text-micro leading-[13px] text-ink-soft">
+                        {item.textExcerpt?.trim() || '（空文本）'}
+                      </span>
+                    </div>
+                  ) : (
+                    <CoverImage
+                      src={item.coverUrl ?? undefined}
+                      seed={item.id}
+                      alt={item.name}
+                      className="aspect-video w-full rounded-lg"
+                    />
+                  )}
                   <span className="line-clamp-1 px-0.5 text-meta text-ink-soft">{item.name}</span>
                   {/* 选中态用**勾号图标**，不写「已选（点击取消）」/「点击选择」。
                       原来每个格子都念一遍同一句操作提示（24 格 = 24 遍），
