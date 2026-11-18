@@ -156,6 +156,8 @@ class ImageJobStore:
             cover_url=job.cover_url or None,
             error=job.error_message,
             created_at=job.created_at,
+            # 与 task 同口径：本轮起点由 `started_at` 决定，不由创建时间决定
+            timeout_started_at=job.started_at,
             submit_attempts=job.submit_attempts,
             submit_mode=job.submit_mode,
         )

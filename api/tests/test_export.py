@@ -311,3 +311,63 @@ def test_csv_renders_none_bool_datetime() -> None:
         ("a", "b", "c"), [[None, True, datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC)]]
     )
     assert payload.decode("utf-8-sig").splitlines()[1] == ",true,2026-01-02T03:04:05+00:00"
+
+
+def test_fail_stale_judges_a_running_export_by_when_it_started() -> None:
+    """巡检判「卡死」要按**开始时间**，不是创建时间。
+
+    一小时前创建、**刚刚**被 worker 接手的导出不是卡死的 —— 它正在好好地跑。
+    原来两种状态都看创建时间，于是这种导出会被巡检置成 failed，worker 干完
+    又写 succeeded：用户先看到「失败」再看到「成功」，而产物其实早就好了。
+    """
+    from db.repository import BaseRepository
+    from modules.export.service import ExportService
+
+    async def make() -> tuple[str, str]:
+        factory = get_session_factory()
+        async with factory() as session:
+            old = Export(
+                data_source="tasks",
+                params={},
+                status=ExportStatus.RUNNING.value,
+                requested_by="u_001",
+            )
+            # 创建于很久以前
+            old.created_at = utcnow() - timedelta(hours=5)
+            fresh = Export(
+                data_source="tasks",
+                params={},
+                status=ExportStatus.RUNNING.value,
+                requested_by="u_001",
+            )
+            fresh.created_at = utcnow() - timedelta(hours=5)
+            # 但这一条**刚开始跑**
+            fresh.started_at = utcnow()
+            session.add_all([old, fresh])
+            await session.commit()
+            return old.id, fresh.id
+
+    old_id, fresh_id = asyncio.run(make())
+
+    async def sweep() -> int:
+        factory = get_session_factory()
+        async with factory() as session:
+            return await ExportService(session, BaseRepository(session, Export)).fail_stale(
+                older_than_sec=3600
+            )
+
+    asyncio.run(sweep())
+
+    async def statuses() -> dict[str, str]:
+        factory = get_session_factory()
+        async with factory() as session:
+            rows = (
+                await session.execute(
+                    select(Export).where(Export.id.in_([old_id, fresh_id]))
+                )
+            ).scalars().all()
+            return {row.id: row.status for row in rows}
+
+    result = asyncio.run(statuses())
+    assert result[old_id] == ExportStatus.FAILED.value
+    assert result[fresh_id] == ExportStatus.RUNNING.value

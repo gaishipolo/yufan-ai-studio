@@ -30,6 +30,7 @@ from typing import Any
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.audit import record as audit
 from core.config import settings
 from core.events import get_event_bus
 from core.exceptions import AppError, RateLimited
@@ -432,14 +433,25 @@ class GenerationRunner:
                     resolved_id = delivered
 
                 if not await store.mark_submitted(record_id, resolved_id):
-                    # 提交期间被取消：供应商那边可能已经受理（钱照花），
-                    # 但不能再发「已提交」事件、也不能继续轮询把结果写回来
-                    logger.info(
-                        "记录已终态，丢弃提交结果 kind=%s id=%s external=%s",
+                    # 提交期间被取消：供应商那边**可能已经受理**（钱照花），而记录
+                    # 已是终态，既不能继续轮询写回结果，也不会被启动恢复捞到。
+                    # 所以不能只记一条日志：任务号要留痕（审计），并尽力取消，
+                    # 否则这笔钱只会在账单上现形、且无从对账。
+                    logger.warning(
+                        "记录已终态，提交结果无处安放 kind=%s id=%s external=%s",
                         kind,
                         record_id,
                         resolved_id,
                     )
+                    await audit(
+                        "generation.submit.discarded",
+                        actor_id=record.owner_id,
+                        target_type="generation",
+                        target_id=record_id,
+                        detail={"kind": kind, "externalId": resolved_id, "reason": "terminal"},
+                    )
+                    with contextlib.suppress(Exception):
+                        await provider.cancel(resolved_id)
                     return
                 await session.commit()
                 await self._emit(
@@ -688,6 +700,17 @@ class GenerationRunner:
         """把供应商产物落到自己的存储上（可选钩子 `pipeline.persist_output`）。
 
         没有这个钩子时原样返回 —— 视频那类「供应商直链长期有效」的能力不必落盘。
+
+        ## 落盘有**自己的预算**
+
+        `_persist` 是在轮询那一跳的预算里跑的，而那一跳的预算（`job.timeout_sec`
+        的 80%）是给「问一次供应商」留的。几百 MB 的成片下载塞进去就把它耗光 ——
+        预算耗尽会把这一跳判成「没拿到结果」，下一跳重新拉一遍，而它照样超时，
+        于是**无限重跳**，产物永远进不了库。
+
+        所以落盘单独计时（`GENERATION_PERSIST_TIMEOUT_SEC`）。超时走下面的兜底：
+        退回供应商直链。代价是产物没存进自己的存储，但任务能落终态 —— 这比
+        无限重跳好得多。
         """
         if not url:
             return url
@@ -695,7 +718,8 @@ class GenerationRunner:
         if persist is None:
             return url
         try:
-            return await persist(record_id, url)
+            async with asyncio.timeout(settings.generation_persist_timeout_sec):
+                return await persist(record_id, url)
         except Exception:  # noqa: BLE001 - 落盘失败不该把成功改成失败
             logger.exception("产物落盘失败，退回供应商 URL kind=%s id=%s", kind, record_id)
             return url

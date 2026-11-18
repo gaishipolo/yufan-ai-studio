@@ -4,15 +4,77 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import os
 import re
 from collections.abc import AsyncIterator
 from pathlib import Path
+from uuid import uuid4
 
 from core.config import settings
 from infra.storage.base import StorageError
 
 # 对象 key 的合法字符集：路径分隔符只允许 `/`，天然挡掉 `C:\`、`..\` 之类
 _KEY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]*$")
+
+
+def _temporary_name(target: Path) -> Path:
+    """写入用的临时文件名：**同目录** + uuid4。
+
+    - 必须同目录：跨目录 `replace` 在 Windows 上直接失败、POSIX 上退化成
+      「先删再拷」，两步之间目标是不存在的，原子性反而丢了。
+    - 必须 uuid4：pid 只区分**进程**，同一进程的两个协程经 `to_thread` 是两条
+      线程，撞在同一个 pid 上就会互相覆盖（POSIX 上表现为「先完成的 rename 把
+      文件搬走，后一个找不到自己的临时文件」）。
+    """
+    return target.with_name(f"{target.name}.{uuid4().hex}.part")
+
+
+def _write_bytes_atomic(target: Path, data: bytes) -> None:
+    temporary = _temporary_name(target)
+    try:
+        temporary.write_bytes(data)
+        os.replace(temporary, target)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _copy_or_digest(source: Path, target: Path) -> str:
+    """搬字节；源和目标已经是同一个文件时**只算摘要**。
+
+    `_copy_with_digest` 先把目标截断成 0 再读源，source == target 时读到空文件
+    （入库把 `storageKey` 当 source 传回来正是这种情形，实测 1000 字节变 0）。
+    """
+    if source.resolve() == target:
+        return _digest_of(source)
+    return _copy_with_digest(source, target)
+
+
+def _copy_with_digest(source: Path, target: Path) -> str:
+    """边写边算摘要，避免同一份文件读两遍。
+
+    写临时文件再 `replace`：`put_file` 搬的是 300MB 成片，直接在目标上 `wb`
+    的话，进程被杀会留下半份、两个协程并发会互相截断，而超时被取消的
+    `to_thread` 拷贝**停不下来**，下一跳还会再写同一路径。
+    """
+    temporary = _temporary_name(target)
+    digest = hashlib.sha256()
+    try:
+        with source.open("rb") as src, temporary.open("wb") as dst:
+            for chunk in iter(lambda: src.read(1024 * 1024), b""):
+                digest.update(chunk)
+                dst.write(chunk)
+        os.replace(temporary, target)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return digest.hexdigest()
+
+
+def _digest_of(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 class LocalStorage:
@@ -45,7 +107,10 @@ class LocalStorage:
     ) -> str:
         path = self._resolve(key)
         path.parent.mkdir(parents=True, exist_ok=True)
-        await asyncio.to_thread(path.write_bytes, data)
+        # 不直接写目标：`write_bytes` 先截断再写，中途失败/被杀留下的半份文件
+        # 会被 `exists()` 当成"在"，随后被 `/static`、`get()`、`FileResponse`
+        # 原样发出去，且没有任何校验会报错。
+        await asyncio.to_thread(_write_bytes_atomic, path, data)
         return self.url_for(key)
 
     async def get(self, key: str) -> bytes:
@@ -86,7 +151,9 @@ class LocalStorage:
     ) -> str:
         target = self._resolve(key)
         target.parent.mkdir(parents=True, exist_ok=True)
-        return await asyncio.to_thread(self._copy_with_digest, path, target)
+        # 「source 与 target 是同一个文件」的判断放在线程里做：`resolve()` 是
+        # 阻塞调用，而这里已经在协程里了（ASYNC240）。
+        return await asyncio.to_thread(_copy_or_digest, path, target)
 
     async def presigned_download_url(self, key: str, *, expires_in: int = 900) -> str:
         """本地没有签名语义：`/static` 是公开前缀，鉴权只能由路由层做。"""
@@ -120,15 +187,7 @@ class LocalStorage:
             # 不关句柄就会一直占着文件锁（Windows 上重命名 / 删除会失败）
             await asyncio.to_thread(handle.close)
 
-    @staticmethod
-    def _copy_with_digest(source: Path, target: Path) -> str:
-        """边写边算摘要，避免同一份文件读两遍。"""
-        digest = hashlib.sha256()
-        with source.open("rb") as src, target.open("wb") as dst:
-            for chunk in iter(lambda: src.read(1024 * 1024), b""):
-                digest.update(chunk)
-                dst.write(chunk)
-        return digest.hexdigest()
+
 
 
 # 驱动解析约定：infra.loader 通过这个名字拿到实现

@@ -1,7 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { FolderOpen } from 'lucide-react';
-import { PageHeader, CardSkeletonGrid, EmptyState, ErrorState, Pager, Tabs, type TabItem } from '@/shared/ui';
+import {
+  CardSkeletonGrid,
+  ConfirmDialog,
+  EmptyState,
+  ErrorState,
+  PageHeader,
+  Pager,
+  Tabs,
+  type TabItem,
+} from '@/shared/ui';
 import { toast } from '@/shared/lib/toast';
 import { downloadUrl } from '@/shared/lib/download';
 import { useCan } from '@/shared/access/use-access';
@@ -49,6 +58,9 @@ function artifactName(item: TaskFeedItem, me: string): string {
 export default function TaskCenterPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  /* 批量删除是**硬删**（后端 `session.delete`），没有回收站可退。确认框不是
+     客套：这一排按钮挨着「全选 / 收藏」，误点的成本是不可恢复的。 */
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const [preview, setPreview] = useState<TaskFeedItem | null>(null);
   const canReadImages = useCan('image:read');
   // 写操作按权限藏起来：只读角色点到只会拿到 403（2026-11-15 审查 3.1）
@@ -227,6 +239,11 @@ export default function TaskCenterPage() {
     }
   };
 
+  const requestDelete = () => {
+    if (!selected.size) return toast('请先勾选要删除的任务', 'error');
+    setConfirmDelete(true);
+  };
+
   const handleDelete = async () => {
     if (!selected.size) return toast('请先勾选要删除的任务', 'error');
     const ids = [...selected];
@@ -316,7 +333,7 @@ export default function TaskCenterPage() {
             onClear={() => setSelected(new Set())}
             onDownload={handleDownload}
             onCollect={handleCollect}
-            onDelete={handleDelete}
+            onDelete={requestDelete}
             canCollect={canCollect}
             canDelete={canDelete}
           />
@@ -382,6 +399,32 @@ export default function TaskCenterPage() {
         busy={isFetching}
         onChange={(next) => {setSelected(new Set()); patchParams({ page: next === 1 ? undefined : String(next) });}}
         className="mt-3 rounded-card border border-line-soft bg-panel"
+      />
+
+      <ConfirmDialog
+        open={confirmDelete}
+        title="删除选中的任务？"
+        description="删除后任务记录与其产出链接都会消失，无法恢复。"
+        details={[
+          {label: '总计', value: `${selected.size} 个`},
+          {
+            label: '视频',
+            value: `${[...selected].filter(id => sourceOf.get(id) === 'video').length} 个`,
+          },
+          {
+            label: '生图',
+            value: `${[...selected].filter(id => sourceOf.get(id) === 'image').length} 个`,
+          },
+        ]}
+        notice="任务一旦删除不可恢复；已归档的成片字节不会被回收。"
+        noticeTone="danger"
+        confirmLabel="确认删除"
+        busy={deleteTasks.isPending || deleteImages.isPending}
+        onCancel={() => setConfirmDelete(false)}
+        onConfirm={() => {
+          setConfirmDelete(false);
+          void handleDelete();
+        }}
       />
 
       <TaskPreviewModal

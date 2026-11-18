@@ -85,6 +85,13 @@ class HttpSettings(DriverSettings):
     model_config = driver_config("HTTP")
 
     timeout_sec: float = 30.0
+    #: 单次下载的**总预算**（秒），覆盖重定向链与整个读取过程。
+    #:
+    #: `timeout_sec` 是「每次操作」的上限 —— 对端每 29 秒吐 1 字节就永远不触发
+    #: 读超时。一个 300MB 的入库下载能这样挂住一个 worker 槽位好几天：队列不
+    #: 再消费、请求不再完成，而日志里一条超时都没有。总预算给的是「整件事
+    #: 最多花多久」，与单次超时是两个维度，两个都要有。
+    total_timeout_sec: float = 300.0
     # 连接池上限。超过后请求会排队而不是报错，所以这个值应该 ≥ worker 并发 × 2。
     max_connections: int = 100
     user_agent: str = "yufan-ai-studio"
@@ -211,6 +218,26 @@ async def _fetch_once(
     timeout: float | None,  # noqa: ASYNC109 —— 同一预算透传给 httpx
     guard: Callable[[str], None],
 ) -> Fetched:
+    """一次下载尝试。外层套**总预算**，内层是逐跳下载。"""
+    budget = get_http_settings().total_timeout_sec
+    try:
+        async with asyncio.timeout(budget):
+            return await _download_bytes(
+                url, max_bytes=max_bytes, timeout=timeout, guard=guard
+            )
+    except TimeoutError as exc:
+        # `asyncio.timeout` 抛的是内置 TimeoutError，与 httpx 的读超时不同类，
+        # 所以这里不会吞掉内层已经转成 `_Retryable` 的那次超时。
+        raise _Retryable(f"下载超过总预算（{budget:.0f} 秒）") from exc
+
+
+async def _download_bytes(
+    url: str,
+    *,
+    max_bytes: int,
+    timeout: float | None,  # noqa: ASYNC109 —— 同一预算透传给 httpx
+    guard: Callable[[str], None],
+) -> Fetched:
     client = get_http()
     current = url
 
@@ -293,6 +320,25 @@ async def fetch_to_file(
 
 
 async def _fetch_once_to_file(
+    url: str,
+    target: Path,
+    *,
+    max_bytes: int,
+    timeout: float | None,  # noqa: ASYNC109 —— 同一预算透传给 httpx
+    guard: Callable[[str], None],
+) -> FetchedFile:
+    """一次落盘下载尝试。外层套**总预算**，内层是逐跳下载。"""
+    budget = get_http_settings().total_timeout_sec
+    try:
+        async with asyncio.timeout(budget):
+            return await _download_to_file(
+                url, target, max_bytes=max_bytes, timeout=timeout, guard=guard
+            )
+    except TimeoutError as exc:
+        raise _Retryable(f"下载超过总预算（{budget:.0f} 秒）") from exc
+
+
+async def _download_to_file(
     url: str,
     target: Path,
     *,

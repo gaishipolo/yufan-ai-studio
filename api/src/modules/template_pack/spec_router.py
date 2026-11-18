@@ -87,6 +87,7 @@ async def list_specs(
     return ApiResponse.ok(
         await list_out(
             session,
+            actor,
             status=status_filter,
             keyword=keyword,
             page=page,
@@ -110,6 +111,7 @@ async def list_published_specs(
     return ApiResponse.ok(
         await list_out(
             session,
+            actor,
             published_only=True,
             keyword=keyword,
             target=target,
@@ -130,7 +132,12 @@ async def list_trashed_specs(
     """必须声明在 `/{key}` 之前，否则 `trash` 会被当成一个 key。"""
     return ApiResponse.ok(
         await list_out(
-            session, keyword=keyword, trashed=True, page=page, page_size=page_size
+            session,
+            actor,
+            keyword=keyword,
+            trashed=True,
+            page=page,
+            page_size=page_size,
         )
     )
 
@@ -139,7 +146,7 @@ async def list_trashed_specs(
 async def get_spec(
     key: str, session: SessionDep, actor: TemplatePackReadDep
 ) -> ApiResponse[TemplateSpecOut]:
-    return ApiResponse.ok(await get_out(session, key))
+    return ApiResponse.ok(await get_out(session, actor, key))
 
 
 @router.post(

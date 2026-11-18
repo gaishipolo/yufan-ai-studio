@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from datetime import UTC, datetime
 from pathlib import PurePosixPath
 
 from sqlalchemy import select
@@ -335,7 +336,9 @@ class ImageService:
         job.output_url = None
         job.cover_url = ""
         job.submit_mode = None  # 重新提交时由 mark_submitted 重写快照
-        job.started_at = None
+        # 新一轮从现在起算：清成 None 会让框架回落到 `created_at`，
+        # 重试一条刚超时的任务就会立刻再超时。
+        job.started_at = datetime.now(tz=UTC)
         job.finished_at = None
         await self.session.commit()
 

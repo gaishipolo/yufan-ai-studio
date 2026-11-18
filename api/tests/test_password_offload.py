@@ -5,13 +5,18 @@
 不是「登录变慢」，而是同一进程内的所有协程（健康检查、静态接口、别人的轮询）
 一起停摆——10 个并发匿名登录就能把 API 按住 1.5 秒。
 
-所以这里断言的不是「请求耗时」，而是**心跳协程的最大间隔**：
-只要它超过 100ms，就说明事件循环被某段同步代码卡住了。
+所以这里断言的不是「请求耗时」，而是**心跳协程的累计停顿**：
+偶发一拍慢是 CPU 调度抖动，持续累积停顿才是事件循环被同步代码占住了。
 
 **工作量由观察窗口决定，不按轮数定额**：同一份代码在 CI runner 上单次 scrypt
 比本机快一个量级，固定「8 个并发登录」只花 35ms，心跳只跳得动 7 拍，
 `assert beats >= 10` 直接红——红的不是阻塞，是「窗口太短、根本没测到东西」
 （run #63 就是这么红的）。按秒数跑，窗口在任何机器上都够长。
+
+**单次尖峰或累计总量单独都不作数**：run #86 一拍 177ms 把 `max < 100ms` 顶红，
+而全量测试机器负载高时每拍 9~43ms、累计 713ms 又会把「只看累计」顶红。
+判据改成峰值与累计的双维度组合，见 `STALL_SPIKE_SEC` 等常量；判别力自检用
+真实阻塞（把哈希换回同步调用）与两类抖动数据验过：抖动绿、真阻塞红。
 """
 
 from __future__ import annotations
@@ -29,8 +34,6 @@ from modules.identity.errors import CredentialInvalid
 
 # 心跳：每 5ms 醒一次，记录「实际等了多久 - 预期 5ms」的偏差。
 HEARTBEAT_SEC = 0.005
-MAX_LAG_SEC = 0.1
-
 # 观察窗口按墙钟时间收口，心跳只要证明「确实在跳」即可。
 #
 # 这个下限**不能定高**：它原本是 10，等于假设心跳每拍都准时。而在 2 核 CI
@@ -40,6 +43,17 @@ MAX_LAG_SEC = 0.1
 # `test_verify_password_runs_off_the_event_loop_thread` 负责机制本身。
 MIN_BEATS = 3
 MIN_WINDOW_SEC = 0.2
+
+# 判定「事件循环被卡住」要两个维度合起来看，只看最大值或只看累计都会误判：
+# - run #86：CI 上偶发一拍 177ms，累计 179ms——单个尖峰是调度抖动；
+# - 全量测试机器负载高时：每拍 9~43ms，累计 713ms——一堆中等尖峰也是抖动；
+# - 真同步阻塞：8 并发 scrypt 串行，实测单拍 421ms / 累计 1212ms（重度），
+#   或每次只占一个 scrypt 时单拍 150ms 但累计 1350ms（中度持续）。
+# 所以判据是「单拍 >=300ms」或「单拍 >=120ms 且累计 >=600ms」。
+# 结构性用例另外负责「确实 offload 了」这条不变式。
+STALL_SPIKE_SEC = 0.3       # 重度：一次被占住几百 ms（多个 scrypt 串行）
+STALL_SUSTAINED_SEC = 0.12  # 中度：至少一次 scrypt 的量级
+STALL_TOTAL_SEC = 0.6       # 且持续累积远超观察窗口
 
 
 @pytest.fixture
@@ -56,6 +70,16 @@ def full_cost(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def _max_lag(ticks: list[float]) -> float:
     return max(ticks) if ticks else 0.0
+
+
+def _stalled(ticks: list[float]) -> bool:
+    """重度单拍，或中度单拍且持续累积，才算真阻塞；零星/中等抖动都放行。"""
+    if not ticks:
+        return False
+    peak = max(ticks)
+    if peak >= STALL_SPIKE_SEC:
+        return True
+    return peak >= STALL_SUSTAINED_SEC and sum(ticks) >= STALL_TOTAL_SEC
 
 
 async def _drive(round_work) -> list[float]:  # noqa: ANN001
@@ -99,8 +123,9 @@ def test_verify_password_does_not_block_the_event_loop(full_cost: None) -> None:
     ticks = asyncio.run(_drive(one_round))
 
     assert len(ticks) >= MIN_BEATS, "心跳一次都没跑起来，测试本身失效"
-    assert _max_lag(ticks) < MAX_LAG_SEC, (
-        f"事件循环被阻塞 {_max_lag(ticks) * 1000:.0f}ms：验密大概又回到同步调用了"
+    assert not _stalled(ticks), (
+        f"事件循环被持续阻塞：峰值 {_max_lag(ticks)*1000:.0f}ms，"
+        f"累计 {sum(ticks)*1000:.0f}ms；验密大概又回到同步调用了"
     )
 
 
@@ -134,8 +159,9 @@ def test_concurrent_logins_do_not_stall_the_event_loop(client, full_cost: None) 
     ticks = asyncio.run(_drive(one_round))
 
     assert len(ticks) >= MIN_BEATS, "心跳一次都没跑起来，测试本身失效"
-    assert _max_lag(ticks) < MAX_LAG_SEC, (
-        f"并发登录把事件循环卡住 {_max_lag(ticks) * 1000:.0f}ms"
+    assert not _stalled(ticks), (
+        f"并发登录把事件循环持续卡住：峰值 {_max_lag(ticks)*1000:.0f}ms，"
+        f"累计 {sum(ticks)*1000:.0f}ms"
     )
 
 

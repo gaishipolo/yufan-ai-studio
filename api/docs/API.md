@@ -1243,6 +1243,7 @@ Authorization: Bearer <accessToken>
 | 参数 | 位置 | 类型 | 必填 | 说明 |
 |---|---|---|---|---|
 | `task_id` | path | `string` | 是 | 任务 ID |
+| `confirmCharged` | query | `boolean` | 否 | 任务带供应商任务号时（可能已计费）必须显式确认才重新生成 |
 
 **响应** `ApiResponse<TaskRetryOut>`（前端取 `res.data`）
 

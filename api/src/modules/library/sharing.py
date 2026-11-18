@@ -56,6 +56,7 @@ from datetime import UTC, datetime
 from typing import Any, cast
 
 from sqlalchemy import CursorResult, and_, delete, or_, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.audit import record as audit
@@ -162,7 +163,19 @@ class ShareService:
         if direct:
             await self._apply_share(asset, target, group_id)
             asset.state_version += 1
-        await self.session.commit()
+        try:
+            await self.session.commit()
+        except IntegrityError:
+            # 并发提交同一张申请单：`uq_library_share_requests_pending` 兜底。
+            # 直接冒出去会变成一条泛泛的 409（「冲突」），用户不知道是「已经
+            # 提过了」还是「真出错了」。回滚后按**同一口径**再查一次，把那张
+            # 已经存在的单子返回去 —— 与 `pending is not None` 那条早退路径
+            # 落在同一个结果上。
+            await self.session.rollback()
+            raced = await self._pending(asset.id, ShareAction.SHARE, target, group_id)
+            if raced is None:
+                raise
+            return await self._to_out(raced)
         await audit(
             "library.share.direct" if direct else "library.share.request",
             actor_id=actor.id,
@@ -271,6 +284,10 @@ class ShareService:
         action = ShareAction(row.action)
         target = ShareTarget(row.target)
         if approve:
+            # 锁住资产行：批准要写组行 + 写 visibility，两步之间不能被另一个
+            # 审批插进来（否则会留下「visibility=group 但组行已空」的资产，
+            # 既删不掉也撤销不了）。详见 `access.load_asset_for_update`。
+            asset = await access.load_asset_for_update(self.session, row.asset_id)
             if action is ShareAction.SHARE:
                 await self._apply_share(asset, target, row.group_id)
             else:
@@ -306,9 +323,25 @@ class ShareService:
             raise NotFound("申请不存在")
         if row.status != "pending":
             raise RequestNotPending()
-        row.status = "cancelled"
-        row.decided_at = datetime.now(UTC)
+        # 抢占：与 `decide` 同一条路。**读改写会输给并发审批** —— 审批已经把
+        # 单子批了、而且共享**已经生效**（组行写进去了），撤回再把状态改成
+        # cancelled，结果是「单子显示已撤回，共享却还在」，用户以为收回去了。
+        claimed = cast(
+            "CursorResult[Any]",
+            await self.session.execute(
+                update(LibraryShareRequest)
+                .where(
+                    LibraryShareRequest.id == request_id,
+                    LibraryShareRequest.status == "pending",
+                )
+                .values(status="cancelled", decided_at=datetime.now(UTC))
+                .execution_options(synchronize_session=False)
+            ),
+        )
+        if claimed.rowcount != 1:
+            raise RequestNotPending()
         await self.session.commit()
+        await self.session.refresh(row)
         await audit(
             "library.share.cancel",
             actor_id=actor.id,
