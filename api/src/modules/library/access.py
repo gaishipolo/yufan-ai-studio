@@ -306,6 +306,32 @@ async def load_asset(session: AsyncSession, asset_id: str) -> LibraryAsset:
     return row
 
 
+async def load_asset_for_update(session: AsyncSession, asset_id: str) -> LibraryAsset:
+    """按 id 取行，并**锁住这一行**（`SELECT ... FOR UPDATE`）。
+
+    ## 为什么需要锁
+
+    审批的「撤销某组共享」是三步：删组行 → 数剩余组行 → 写 `visibility`。
+    两个审批并发时，各自看到的快照可能都停留在对方删除之前，最后落库的是
+    `visibility=group` 而组行已经空了 —— 那条资产从此**既删不掉**
+    （`visibility=group` 走共享分支，要先撤销共享）**也撤销不了**（组行没了，
+    没组可撤）。这个状态没有任何代码路径能走出来，只能手工改库。
+
+    锁把「同一资产上的审批」串行化：第二个审批要等第一个提交后才能拿到行，
+    那时它数到的组行就是最新的。锁的是**资产行**而不是申请单 —— 申请单各自
+    不同，锁它挡不住两个不同申请的审批撞在一起。
+
+    SQLite 没有行锁，但那个方言本来就单写者串行，SQLAlchemy 会静默忽略这个
+    子句（不是报错）。真正需要它的是 PG。
+    """
+    row = await session.scalar(
+        select(LibraryAsset).where(LibraryAsset.id == asset_id).with_for_update()
+    )
+    if row is None:
+        raise NotFound("资产不存在")
+    return row
+
+
 async def load_visible(
     session: AsyncSession, asset_id: str, actor: CurrentUser
 ) -> LibraryAsset:

@@ -75,6 +75,11 @@ class VideoTask(Base, UUIDMixin, TimestampMixin):
     error_message: Mapped[str | None] = mapped_column(String(512), nullable=True)
     # 供应商侧任务标识，用于轮询外部进度
     external_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    # 「上一次可能已扣费」的任务号。重试要清 `external_id` 才能重新提交，
+    # 但那个号是唯一对账凭证 —— 只留一个槽位会被第二次确认覆盖，所以同时
+    # 追加进 `external_id_history`（与 `image_jobs` 同一口径，见 R13-02）。
+    previous_external_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    external_id_history: Mapped[str | None] = mapped_column(Text, nullable=True)
     output_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
 
     # 「已尝试提交」次数：>0 且没有 external_id 说明进程在「供应商已受理、尚未落库」
@@ -163,3 +168,29 @@ def parse_params_json(raw: str | None) -> dict[str, Any]:
     except (TypeError, ValueError):
         return {}
     return dict(data) if isinstance(data, dict) else {}
+
+
+def parse_external_id_history(raw: str | None) -> list[str]:
+    """把 `external_id_history` 的 JSON 文本解析成列表，脏数据不抛。"""
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+    except (TypeError, ValueError):
+        return []
+    if not isinstance(data, list):
+        return []
+    return [str(item) for item in data if str(item).strip()]
+
+
+def remember_previous_external_id(task: VideoTask, external_id: str) -> list[str]:
+    """把即将被清掉的供应商任务号追加进历史，返回追加后的全量列表。
+
+    重试是**花钱**的动作：旧任务号既要在记录上留一份（页面/DB 可查），也要在
+    历史里留全量。只靠审计不够 —— `audit.record` 按设计吞异常。
+    """
+    history = parse_external_id_history(task.external_id_history)
+    history.append(external_id)
+    task.external_id_history = json.dumps(history, ensure_ascii=False)
+    task.previous_external_id = external_id
+    return history

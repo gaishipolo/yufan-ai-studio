@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 
@@ -35,6 +36,7 @@ async def _call(
     *,
     path: str = "/api/v1/tasks",
     ip: str = "1.2.3.4",
+    headers: list[tuple[bytes, bytes]] | None = None,
 ) -> list[dict[str, Any]]:
     sent: list[dict[str, Any]] = []
 
@@ -48,7 +50,7 @@ async def _call(
         "type": "http",
         "method": "GET",
         "path": path,
-        "headers": [],
+        "headers": headers or [],
         "client": (ip, 12345),
     }
     await mw(scope, receive, send)
@@ -141,3 +143,41 @@ async def test_fails_open_when_counter_broken(monkeypatch: pytest.MonkeyPatch) -
 
     assert _status(await _call(mw)) == 200
     assert _status(await _call(mw)) == 200
+
+
+def test_proxied_clients_do_not_share_one_bucket(monkeypatch: pytest.MonkeyPatch) -> None:
+    """反代后面：限流键必须是**真实客户端**，不能是反代自己。
+
+    原来取 `scope["client"]` —— 那永远是反代的地址，全站共用一个桶：一个
+    用户刷爆就把所有人一起限流。`core.net.client_ip` 是全项目唯一的口径
+    （认 `TRUSTED_PROXIES`、按 X-Forwarded-For 从右往左找第一个不可信段），
+    限流键必须走它。
+    """
+    import ipaddress
+
+    from core import net as net_mod
+
+    monkeypatch.setattr(
+        net_mod,
+        "trusted_networks",
+        lambda: (ipaddress.ip_network("10.0.0.1/32"),),
+    )
+
+    mw = GlobalRateLimitMiddleware(_StubApp(), limit_per_min=2)
+
+    async def scenario() -> list[int]:
+        first = await _call(
+            mw,
+            ip="10.0.0.1",
+            headers=[(b"x-forwarded-for", b"203.0.113.7")],
+        )
+        second = await _call(
+            mw,
+            ip="10.0.0.1",
+            headers=[(b"x-forwarded-for", b"203.0.113.8")],
+        )
+        return [_status(first), _status(second)]
+
+    statuses = asyncio.run(scenario())
+    # 两个不同的真实客户端，各自有桶：额度 2 时都不该被限
+    assert statuses == [200, 200], statuses

@@ -32,6 +32,7 @@ import asyncio
 import re
 import tempfile
 import zipfile
+from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -416,7 +417,7 @@ async def build_download(job_id: str) -> None:
             return
 
         now = datetime.now(UTC)
-        await _finish_job(
+        landed = await _finish_job(
             session,
             job_id,
             status=SUCCEEDED,
@@ -426,6 +427,20 @@ async def build_download(job_id: str) -> None:
             finished_at=now,
             expires_at=now + timedelta(hours=settings.library_download_ttl_hours),
         )
+        if not landed:
+            # 行已经不在 `running`（GC 判了失败、或被别的 worker 处理了），
+            # 这次运行的结果**没有落库** —— 刚上传的 zip 就没有任何人认领。
+            # GC 按数据库记录清理，孤儿不在其中，它会一直躺在桶里（最多 2GB）。
+            # 删掉它，宁可让用户重新打包。
+            with suppress(Exception):
+                await storage.delete(key)
+            logger.warning(
+                "打包结果未能落库，已清理孤儿 zip id=%s key=%s bytes=%d",
+                job_id,
+                key,
+                size,
+            )
+            return
         logger.info(
             "打包完成 id=%s files=%d bytes=%d skipped=%d",
             job_id,

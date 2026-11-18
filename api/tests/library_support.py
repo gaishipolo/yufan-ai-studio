@@ -166,6 +166,7 @@ def insert_asset(**fields: Any) -> str:
                 state=fields.get("state", "draft"),
                 state_version=fields.get("state_version", 1),
                 source_key=fields.get("source_key"),
+                purpose=fields.get("purpose", ""),
             )
             session.add(row)
             await session.commit()
@@ -203,6 +204,7 @@ def fetch_asset(asset_id: str) -> dict[str, Any] | None:
                 "sha256": row.sha256,
                 "storage_key": row.storage_key,
                 "cover_key": row.cover_key,
+                "purpose": row.purpose,
             }
 
     return asyncio.run(run())

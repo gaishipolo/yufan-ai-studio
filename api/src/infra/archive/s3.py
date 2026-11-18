@@ -41,6 +41,7 @@ from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
 from typing import ClassVar
+from uuid import uuid4
 
 import boto3
 from botocore.exceptions import BotoCoreError, ClientError
@@ -483,9 +484,15 @@ class S3ArchiveStorage:
 
 
 def _copy_file(source: Path, target: Path, expected: str) -> str:
-    """写工作区文件：先写临时文件再替换，避免执行器读到半份输入。"""
+    """写工作区文件：先写临时文件再替换，避免执行器读到半份输入。
+
+    临时名用 **uuid4** 而不是 pid：pid 只区分**进程**，同一进程里的两个协程
+    经 `to_thread` 是两个线程，pid 相同 —— 两份拷贝会写进同一个临时文件，
+    谁先 `replace` 谁把对方的搬走（POSIX 上表现为「后一个找不到自己的临时
+    文件」）。uuid4 把这个碰撞彻底去掉。
+    """
     target.parent.mkdir(parents=True, exist_ok=True)
-    temporary = target.with_name(target.name + f".{os.getpid()}.tmp")
+    temporary = target.with_name(target.name + f".{uuid4().hex}.tmp")
     shutil.copyfile(source, temporary)
     if checksum(temporary) != expected:
         temporary.unlink(missing_ok=True)

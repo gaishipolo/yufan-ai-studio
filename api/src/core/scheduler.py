@@ -28,15 +28,18 @@ async def reconcile() -> None:
    （不可逆删除等）标 `leader_only=True`，调度器会向 `LeaderElector` 抢租约；
    租约策略由 `LEADER_ELECTOR` 选，默认 `local`（单实例）；
 4. `every` 是**最小间隔**，不是精确定时：单个 handler 跑得久会推后别人的下一轮；
-5. **handler 有上限**（默认 `max(60, every * 2)`，与租约 TTL 同一个数）。跑到上限
-   就被取消并记一条 error，调度器接着跑下一个。
+5. **handler 有上限**（默认 `max(60, every * 2)`）。跑到上限就被取消并记一条 error，
+   调度器接着跑下一个。
 
 第 5 条不是洁癖：`run_once` 是顺序 await 的，一个**回不来**的 handler（卡住的
 `pg_dump`、没有读超时的第三方调用、等待一个永远不会来的锁）会让这个进程里的
 所有周期任务永久停摆——outbox 不再投递、生图补偿不再重投、素材 GC 不再跑，
 而日志里一条错误都没有，因为「抛出来的」被捕获了，「回不来的」从来没人管。
-上限取 `every * 2` 是为了和租约对齐：租约到期别人可以接管，我们必须在那个
-时刻之前停手，否则同一件不可逆的事会被两个进程各做一遍。
+
+上限与租约 TTL 的关系是「**租约比上限长**」（`lease_ttl`）：租约到期别人可以
+接管，我们必须在那个时刻之前停手 —— 而「取消」不等于「停止」，卡在
+`to_thread` 里的 handler 在取消之后还会再跑一会儿。留出余量，活着但卡住的
+实例才不会和接管者同时动手做同一件不可逆的事。
 
 删除/新增一个周期任务只改模块文件，`app.py` 不认识任何具体任务——这是它存在的意义。
 """
@@ -70,15 +73,33 @@ class PeriodicJob:
 
 
 def handler_timeout(job: PeriodicJob) -> float:
-    """单次执行上限，同时也是它的租约 TTL。
-
-    **两个数必须是同一个**：租约到期后别的实例就能接管这个任务，而此时老 handler
-    如果还在跑，同一件「不可逆」的事就被做了两遍。把它们写成两个各自可调的参数，
-    迟早会有人只改其中一个。
-    """
+    """单次执行上限。"""
     if job.timeout is not None and job.timeout > 0:
         return float(job.timeout)
     return max(60.0, job.every * 2)
+
+
+def lease_ttl(job: PeriodicJob) -> float:
+    """租约 TTL：**必须比执行上限长**，长出的部分是「取消生效」的余量。
+
+    ## 为什么不是同一个数
+
+    两者对齐的意思是「租约到期，别人可以接管；我们必须在那之前停手」。但
+    对齐得太精确反而更危险：`asyncio.wait_for` 超时会**取消** handler，可
+    取消不等于停止 —— 卡在 `to_thread` 里的阻塞调用、已经交给外部系统的写
+    操作，都会在取消之后继续跑一会儿。而租约恰好在这一刻到期，别的实例
+    立刻接管，`leader_only` 的不可逆任务（回收站 GC）就被两个进程各做一遍。
+
+    所以：**执行上限 < 租约 TTL**。老 handler 超时后还有一段租约在手，别人
+    不会来抢；真正需要别人接管的场景是「这个实例死了」，那本来就该等租约
+    自然过期 —— 多等这一段余量，换来的是「活着但卡住的实例」不会和别人
+    同时动手。
+
+    余量取 `max(60, 预算 * 0.25)`：至少一分钟（够一次正常的收尾），预算大
+    的时候按比例放大。
+    """
+    budget = handler_timeout(job)
+    return budget + max(60.0, budget * 0.25)
 
 
 _registry: dict[str, PeriodicJob] = {}
@@ -216,7 +237,9 @@ class Scheduler:
             timeout = handler_timeout(job)
             acquired = False
             if job.leader_only:
-                acquired = await self._acquire(job.name, timeout)
+                # 租约 TTL 比执行上限长（见 `lease_ttl`）：老 handler 超时后
+                # 还在收尾时，租约仍在我手上，别人不会同时接管这件不可逆的事。
+                acquired = await self._acquire(job.name, lease_ttl(job))
                 if not acquired:
                     logger.debug("周期任务 %s 未抢到集群租约，跳过本轮", job.name)
                     continue

@@ -103,7 +103,11 @@ async def _check_database(session: AsyncSession) -> RuntimeCheck:
     except Exception as exc:  # noqa: BLE001 - 探针不抛
         with suppress(Exception):
             await session.rollback()
-        return RuntimeCheck("database", False, f"{type(exc).__name__}: {exc}")
+        # `/health/ready` 是**公开**端点（没有权限要求）：原始异常里带着主机、
+        # 端口、库名、用户名，原样回给匿名调用方等于送出一张内部地图。
+        # 细节进日志，响应里只留异常类型 —— 排查靠日志，不靠探针回显。
+        logger.warning("数据库就绪检查失败：%s", exc)
+        return RuntimeCheck("database", False, f"数据库不可用（{type(exc).__name__}）")
     return RuntimeCheck("database", True, "SELECT 1 成功")
 
 
@@ -122,7 +126,9 @@ async def _check_queue() -> tuple[int, RuntimeCheck]:
         return size, RuntimeCheck("queue", True, f"在途 {size}")
     except Exception as exc:  # noqa: BLE001
         # 队列不可用 = 任务永远不执行，对用户来说和「服务挂了」等价
-        return -1, RuntimeCheck("queue", False, f"{type(exc).__name__}: {exc}")
+        # 公开端点不外泄原始异常（见 `_check_database` 的说明）
+        logger.warning("队列就绪检查失败：%s", exc)
+        return -1, RuntimeCheck("queue", False, f"队列不可用（{type(exc).__name__}）")
 
 
 async def _check_outbox(session: AsyncSession) -> list[RuntimeCheck]:
@@ -193,7 +199,11 @@ async def _check_cache() -> RuntimeCheck:
             await cache.delete(_CACHE_PROBE_KEY)
     except Exception as exc:  # noqa: BLE001
         # 缓存挂了不影响正确性（限流降级放行、热点回源），但吞吐会掉，属于 degraded
-        return RuntimeCheck("cache", False, f"{type(exc).__name__}: {exc}", required=False)
+        # 公开端点不外泄原始异常（见 `_check_database` 的说明）
+        logger.warning("缓存就绪检查失败：%s", exc)
+        return RuntimeCheck(
+            "cache", False, f"缓存不可用（{type(exc).__name__}）", required=False
+        )
     if value != b"1":
         return RuntimeCheck("cache", False, "写入后读不回来（驱动实现有问题）", required=False)
     return RuntimeCheck("cache", True, "读写往返正常", required=False)

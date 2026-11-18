@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+from core.audit import record as audit
 from core.context import CurrentUser
 from core.exceptions import BadRequest, Conflict, Forbidden, InvalidState, NotFound
 from core.param_schema import resolve_params
@@ -171,6 +172,14 @@ class ModelGenerationFacade:
                 raise Forbidden("无权取消他人的生成任务")
             if job.status in TERMINAL_STATUSES:
                 raise Conflict(f"任务已结束（{job.status}），不能取消")
+            # 「提交已经发出、任务号还没回来」的窗口里取消是**做不到**的：
+            # 供应商可能已受理并计费，而我们手上没有号可以取消、也不能继续轮询。
+            # 与其静默把本地置成已取消（远端还在跑），不如让调用方等一下再来。
+            if not job.external_id and job.submit_attempts > 0:
+                raise Conflict(
+                    "任务正在提交中（已发出请求、尚未拿到供应商任务号），"
+                    "此刻取消可能造成供应商侧继续计费却无法停止；请稍后重试"
+                )
 
             # 已经提交到供应商的要真的调驱动的 cancel；没提交的只需改本地状态。
             if job.external_id:
@@ -213,6 +222,10 @@ class ModelGenerationFacade:
                     "请先用任务号核对；确认要重新生成时带 confirmCharged=true"
                 )
 
+            # 清号之前先留凭证：记录上留一份，审计里留一份（审计会吞异常，
+            # 不能只靠它）。
+            previous_external_id = job.external_id
+            job.previous_external_id = previous_external_id
             job.external_id = None
             job.submit_attempts = 0
             job.submit_mode = None
@@ -223,6 +236,16 @@ class ModelGenerationFacade:
             ticket = self._ticket(job)
             await session.commit()
 
+        await audit(
+            "model_driver.retry",
+            actor_id=actor.id,
+            target_type="model_driver_job",
+            target_id=ticket.task_id,
+            detail={
+                "previousExternalId": previous_external_id,
+                "confirmedCharged": confirm_charged,
+            },
+        )
         await get_runner().dispatch(KIND_MODEL_DRIVER, ticket.task_id)
         return ticket
 

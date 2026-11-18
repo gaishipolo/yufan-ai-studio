@@ -47,6 +47,9 @@ class DriverJob(Base, TimestampMixin, UUIDMixin):
 
     owner_id: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     external_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    # 重试会清掉 `external_id` 才能重新提交，而那个号是「上一次可能已扣费」的
+    # 唯一凭证 —— 清之前先搬到这里（与 image / task 同一口径）。
+    previous_external_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     submit_attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     submit_mode: Mapped[str | None] = mapped_column(String(8), nullable=True)
 

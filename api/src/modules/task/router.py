@@ -145,13 +145,20 @@ async def retry_task(
     task_id: TaskId,
     # 重试 = 重新提交供应商，和建任务一样会真花钱，额度对齐同一档
     _: None = Depends(rate_limit("task.retry", limit=settings.rate_limit_default_per_min)),
+    confirm_charged: Annotated[
+        bool,
+        Query(
+            alias="confirmCharged",
+            description="任务带供应商任务号时（可能已计费）必须显式确认才重新生成",
+        ),
+    ] = False,
 ) -> ApiResponse[TaskRetryOut]:
     """重试的结果只回 `id` / `status` / `updatedAt`。
 
     不返回整份任务详情：`task:retry:any` 允许「帮别人重跑」，但没允许
     「读别人的 prompt」——那是 `task:read:all` 的事（R6-05）。
     """
-    task = await service.retry_task(task_id, actor)
+    task = await service.retry_task(task_id, actor, confirm_charged=confirm_charged)
     return ApiResponse.ok(service.to_retry_out(task), message="已重新排队")
 
 

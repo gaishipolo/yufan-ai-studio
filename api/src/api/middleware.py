@@ -12,12 +12,14 @@ import time
 import uuid
 
 from starlette.datastructures import MutableHeaders
+from starlette.requests import Request
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from api.instrumentation import IN_FLIGHT, observe_request, route_template
 from core.context import reset_request_context, set_request_id
 from core.exceptions import ErrorCode, RateLimited
 from core.logging import get_logger
+from core.net import client_ip
 from core.ratelimit import get_rate_limiter, retry_after_seconds
 
 logger = get_logger("app.access")
@@ -137,8 +139,12 @@ class GlobalRateLimitMiddleware:
             await self.app(scope, receive, send)
             return
 
-        client = scope.get("client")
-        subject = str(client[0]) if client else "unknown"
+        # 限流键必须是**真实客户端**，不是直连对端。反代后面
+        # `scope["client"]` 永远是反代自己的地址 —— 全站共用一个桶，一个用户
+        # 刷爆就把所有人一起限流。`core.net.client_ip` 是全项目唯一的口径
+        # （认 `TRUSTED_PROXIES`、按 X-Forwarded-For 从右往左找第一个不可信
+        # 段），限流键必须走它，不能在这里另写一份。
+        subject = client_ip(Request(scope, receive))
         decision = await get_rate_limiter().hit(
             subject, scope="global", limit=self.limit, window=60.0
         )

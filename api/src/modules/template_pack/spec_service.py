@@ -341,6 +341,28 @@ async def _check_fixed_refs(
             raise BadRequest(f"固定素材不可用或无权访问：{'、'.join(missing)}")
 
 
+async def _check_demo_ref(
+    session: AsyncSession, actor: CurrentUser, spec: TemplateSpec
+) -> None:
+    """展示案例必须**现在就能读**。
+
+    为什么这一条不能省：`demoAssetId` 是删除保护的依据（见
+    `SpecDemoCases`）。零校验时，写一个**别人的私有 id** 进去就能让那条
+    资产从此永远 purge 不掉（409 说「仍被引用」），而作者根本不知道自己
+    占了别人的东西；那个 id 甚至可能是随手编的，引用检查永远查无此人。
+
+    读不到就拒绝保存（fail-closed）：宁可保存不进去，也不能留一条查不出来的
+    引用 —— 后者会让 owner 在回收站里卡死，且没有任何线索能定位到是谁占的。
+    """
+    asset_id = spec.demo_asset_id
+    if not asset_id:
+        return
+    lookup = get_library_lookup()
+    readable = await lookup.readable_ids(session, actor, [asset_id])
+    if asset_id not in readable:
+        raise BadRequest("展示案例不可用或无权访问")
+
+
 async def validate_draft(
     session: AsyncSession,
     actor: CurrentUser,
@@ -359,6 +381,7 @@ async def validate_draft(
         _check_executable(spec)
     await _check_model(spec)
     await _check_fixed_refs(session, actor, spec)
+    await _check_demo_ref(session, actor, spec)
     return SpecValidateOut(valid=True, fingerprint=fingerprint_of(payload))
 
 
@@ -533,15 +556,29 @@ async def restore(session: AsyncSession, actor: CurrentUser, key: str) -> Templa
 # --------------------------------------------------------------------------- #
 # 读
 # --------------------------------------------------------------------------- #
-async def get_out(session: AsyncSession, key: str) -> TemplateSpecOut:
+async def get_out(
+    session: AsyncSession, actor: CurrentUser, key: str
+) -> TemplateSpecOut:
+    """规格详情。
+
+    **已发布的是公开的**（模板库要给所有人用），**草稿与停用是作者私有的**：
+    草稿里存的是提示词原文与固定素材 id，不是给外人看的。越权读到别人的草稿
+    等于把人家的创作过程与素材清单公开了。
+
+    越权时回 404 而不是 403 —— 403 会确认「这个 key 存在」，等于给 id 空间
+    开了个枚举口。
+    """
     head = await _find(session, key)
     if head is None:
+        raise NotFound(f"配置不存在：{key}")
+    if head.status != "published" and head.owner_id != actor.id:
         raise NotFound(f"配置不存在：{key}")
     return await _spec_out_of(session, head)
 
 
 async def list_out(
     session: AsyncSession,
+    actor: CurrentUser,
     *,
     status: str = "",
     keyword: str = "",
@@ -555,10 +592,22 @@ async def list_out(
 
     判据来自 `GET /models` 的 `replacement`（驱动声明），**不看槽位组合** ——
     靠"有 fixed video 槽 + 有多图槽"猜，普通多图模板会被误判成可替换模板。
+
+    ## 可见范围
+
+    - `published_only=True`（模板库）：**公开**。已发布是给人用的。
+    - 其余（本人列表 / 回收站）：**只有作者**。草稿里是提示词原文与固定素材
+      id，回收站里是作者自己删掉的东西 —— 都不是给别人看的。
+
+    过滤落在 SQL 里：`total` 与 `items` 必须是同一个口径，分开算就会翻出
+    「共 12 条、第 2 页空的」这种页。
     """
     alive = SpecRow.deleted_at.is_(None) if not trashed else SpecRow.deleted_at.is_not(None)
     stmt = select(SpecRow).where(alive)
     count_stmt = select(func.count()).select_from(SpecRow).where(alive)
+    if not published_only:
+        stmt = stmt.where(SpecRow.owner_id == actor.id)
+        count_stmt = count_stmt.where(SpecRow.owner_id == actor.id)
     if trashed:
         # 回收站只按删除时间排，不认 status / target：已经删掉的东西再筛状态没有意义。
         pass
