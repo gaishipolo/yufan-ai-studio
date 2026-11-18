@@ -32,8 +32,10 @@ def test_main_parses_payload_and_reports_result(
 ) -> None:
     seen: dict[str, Any] = {}
 
-    def fake_supervise(stage: str, run: Any, node: str) -> ExecutorResult:
-        seen.update(stage=stage, run=run, node=node)
+    def fake_supervise(
+        stage: str, run: Any, node: str, browser: str = ""
+    ) -> ExecutorResult:
+        seen.update(stage=stage, run=run, node=node, browser=browser)
         return ExecutorResult(code="OK", stage=stage)
 
     monkeypatch.setattr(libtv_process, "supervise", fake_supervise)
@@ -45,6 +47,7 @@ def test_main_parses_payload_and_reports_result(
             "run": str(tmp_path / "run"),
             "node": "node",
             "result": str(tmp_path / "out.json"),
+            "browser": "http://127.0.0.1:9412",
         },
     )
 
@@ -53,6 +56,8 @@ def test_main_parses_payload_and_reports_result(
     assert seen["stage"] == "submit"
     assert seen["run"] == tmp_path / "run"
     assert seen["node"] == "node"
+    # 账号随参数包下来：监督进程要靠它挑账号级串行锁，只给环境变量会丢掉这一层。
+    assert seen["browser"] == "http://127.0.0.1:9412"
     written = json.loads((tmp_path / "out.json").read_text(encoding="utf-8"))
     assert written["code"] == "OK"
 
@@ -63,7 +68,8 @@ def test_node_has_a_default(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> N
     monkeypatch.setattr(
         libtv_process,
         "supervise",
-        lambda stage, run, node: seen.update(node=node) or ExecutorResult(stage=stage),
+        lambda stage, run, node, browser="": seen.update(node=node, browser=browser)
+        or ExecutorResult(stage=stage),
     )
     monkeypatch.setattr(
         libtv_process, "get_archive_storage", lambda: SimpleNamespace(write=lambda *a: None)
@@ -81,6 +87,8 @@ def test_node_has_a_default(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> N
     libtv_process.main()
 
     assert seen["node"] == "node"
+    # 不带账号的老调用方：退回默认账号，不报错。
+    assert seen["browser"] == ""
 
 
 def test_v1_payload_is_rejected(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:

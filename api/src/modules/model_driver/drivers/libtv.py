@@ -15,7 +15,7 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-from core.exceptions import BadRequest, UpstreamError
+from core.exceptions import BadRequest, Conflict, RateLimited, UpstreamError
 from infra import get_queue
 from infra.ai.base import (
     Capability,
@@ -46,6 +46,9 @@ EXECUTOR_BLOCKED = frozenset(
         "EXECUTOR_IO_FAILED",
         "EXECUTOR_CRASHED",
         "EXECUTOR_ENVIRONMENT_BLOCKED",
+        # 发布物与清单不一致：这是「这台机器上的执行器不是这一版代码」，
+        # 修法是刷新清单或停掉那个多余的 checkout，不是重试。
+        "EXECUTOR_RELEASE_MISMATCH",
     }
 )
 
@@ -87,7 +90,13 @@ MODELS: tuple[ModelSpec, ...] = (
         capability=Capability.VIDEO,
         description="720P 视频替换；支持 0 积分畅用队列与积分加速队列",
         param_schema=_PARAM_SCHEMA,
-        max_references=5,
+        # 上限按**上游自己的编译器**给，不按记忆里的数字：`runtime/vendor/
+        # libtv/prompt-compiler.mjs` 里分类型判 `image ≤ 10 / video ≤ 5 /
+        # audio ≤ 5`，总数还卡在 1–15。此前写 5 是把它当成了「图片也最多 5 张」，
+        # 于是模板封装的第 6 张参考图在填表页提交时才被受理期挡掉——封装页
+        # 明明允许配到 `MAX_SLOT_REFS = 10`，两边口径对不上。取 10 是各类型
+        # 里最小那个能共用的值：混合输入也不越界（10 ≤ 15）。
+        max_references=10,
         # LibTV 的混合输入通道吃图片、视频与音频：图片是身份 / 商品 / 场景，
         # 视频是原片或动作参考，音频是音轨 / 口型。三类共用同一条 `mixedList`。
         reference_kinds=("image", "video", "audio"),
@@ -100,6 +109,37 @@ MODELS: tuple[ModelSpec, ...] = (
 def _request_ready(path: Path) -> bool:
     """`inputs/request.json` 是 upload 阶段的产物，submit 阶段必须读它。"""
     return (path / "inputs/request.json").is_file()
+
+
+def _uncertain_hint(run_id: str, account: str) -> str:
+    """「回执未知」时用户真正能做的事 —— 不是再点一次重试。
+
+    文案要同时给全三样：为什么不能自动重试（可能已扣费）、去哪核对（哪个账号）、
+    核对完的两个出口（解封 / 接回）。此前这里只有一句「请核对后手动重试」，
+    而重试必然再撞上同一道闸门 —— 用户点十次也是同一句。
+    """
+    return (
+        f"上游提交回执未知（账号 {account}）：请求已发出但没拿到 task_id，"
+        "可能已经扣费，所以不会自动重提。请到该账号的 LibTV 记录核对后再二选一："
+        f"没有这笔任务 → app libtv-reconcile {run_id} --not-submitted 解封后重试；"
+        f"已有任务在跑 → app libtv-reconcile {run_id} --adopt-task <上游 task_id> 接回查询"
+    )
+
+
+def _stage_failure(result: executor.ExecutorResult, run_id: str, account: str) -> Exception:
+    """把执行器回执翻译成「下一步该做什么」，而不是一句笼统的失败。
+
+    `EXECUTOR_BUSY` 是**排队**信号：同一个账号同一时刻只允许一个任务上传/提交，
+    而上传素材本身可能占几分钟。抛 `RateLimited` 让框架按
+    `GENERATION_THROTTLE_DELAYS` 把它重新排队（任务保持 queued），
+    而不是判死 —— 否则用户连点三个任务，第二个就得到「提交生成失败」。
+
+    `STALE_LOCK` 是上一轮留下的锁，要人核对档案，不能自动重来；
+    发布物不一致（`EXECUTOR_RELEASE_MISMATCH`）同理，重试只会重复同一条错。
+    """
+    if result.code == "EXECUTOR_BUSY":
+        return RateLimited(f"账号 {account} 正在执行其他任务，已转入排队，稍后自动重试")
+    return BadRequest(f"{result.message or result.code}；未提交生成")
 
 
 class LibTVProvider:
@@ -125,18 +165,21 @@ class LibTVProvider:
             await materialize(request)
             value = request.request_id
         path = await asyncio.to_thread(executor.run_path, value)
+        account = await asyncio.to_thread(executor.browser_for, path)
         if generic and not await asyncio.to_thread(_request_ready, path):
             # `upload` 只做「传素材 + 估价」，不向上游下单；`submit` 才是花钱
             # 的那一步。缺了它，桥接层会读不到 `inputs/request.json`，报一个
             # 和用户输入完全无关的 ENOENT。
             upload = await executor.execute_stage(value, "upload")
             if upload.code != "OK":
-                raise BadRequest(f"素材上传准备未完成：{upload.message or upload.code}")
+                raise _stage_failure(upload, value, account)
         previous = await asyncio.to_thread(executor.state, path)
         if previous.task_id:
             return f"{value}:{previous.task_id}"
         if previous.status == "submission_unknown":
-            raise UpstreamError("提交回执未知，禁止重提，请先核对上游记录")
+            # 归档已经记下「回执未知」：桥接层会拒绝任何重提（这是对的，可能已扣费）。
+            # 所以这里给的不是「重试」，而是**人工核对后二选一**的解封命令。
+            raise Conflict(_uncertain_hint(value, account))
         # upload 阶段可能停在「等免费」或「适配器报错」：这时不许再调 submit，
         # 否则桥接层只会抛 "Refusing duplicate or uncertain submission"。
         if generic and previous.status == "waiting_free":
@@ -150,7 +193,7 @@ class LibTVProvider:
         if latest.task_id:
             return f"{value}:{latest.task_id}"
         if latest.status in ("submitting", "submission_unknown"):
-            raise UpstreamError("提交回执未知，禁止自动重提")
+            raise Conflict(_uncertain_hint(value, account))
         if latest.status == "waiting_free":
             raise BadRequest("当前报价非零，等待免费；未提交生成")
         if latest.status == "service_error" and latest.last_error:
@@ -159,7 +202,7 @@ class LibTVProvider:
         if result.code in ("EXECUTOR_BUSY", "STALE_LOCK"):
             # 两种「没提上去」的原因要分开：账号被别的任务占着是等一等，
             # 遗留锁是要人去核对档案，混成一句话会把人引向错误的动作。
-            raise BadRequest(f"{result.message}；未提交生成")
+            raise _stage_failure(result, value, account)
         raise BadRequest(f"提交前检查未完成：{result.message or result.code}；未提交生成")
 
     async def poll(self, external_id: str, *, model: str = "") -> GenerationProgress:

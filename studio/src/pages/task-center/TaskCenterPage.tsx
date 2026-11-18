@@ -8,6 +8,9 @@ import { useCan } from '@/shared/access/use-access';
 import { useDebouncedValue } from '@/shared/hooks/useDebouncedValue';
 import { TaskCard } from '@/entities/task/ui/TaskCard';
 import { ImageTaskCard } from '@/entities/task/ui/ImageTaskCard';
+import { LibTvAccountStrip } from '@/entities/libtv/ui/LibTvAccountStrip';
+import { useLibtvAccount, useLibtvQueue } from '@/entities/libtv/api/libtv.queries';
+import { isQueued, queueLabel, upstreamTaskId } from '@/entities/libtv/model/types';
 import { useDeleteImages, useDeleteTasks, useTaskFeed, useUpdateTask } from '@/entities/task/api/task.queries';
 import type { TaskScope, TaskSort } from '@/entities/task/model/types';
 import type { TaskFeedItem, TaskFeedParams, TaskFeedSource, TaskFeedStatus } from '@/entities/task/model/feed.types';
@@ -19,6 +22,9 @@ import { generatedFileName } from '@/shared/lib/format';
 import { useSessionStore } from '@/shared/access/session';
 
 type StatusFilter = TaskFeedStatus;
+
+/** 队列位次只对这一个模型有意义（上游是 LibTV 的画布队列） */
+const LIBTV_MODEL_ID = 'libtv-wan3-replacement';
 
 /**
  * 成片文件名：`作者-年-月-日-时-分-秒` + 真实后缀（见 `generatedFileName`）。
@@ -122,6 +128,37 @@ export default function TaskCenterPage() {
   );
   const stats = data?.stats;
   const canReadAll = data?.canReadAll ?? false;
+
+  /* ---------- LibTV 队列：把「卡在 48%」和「排队第 3 位」分开 ----------
+     只有跑着的视频任务才需要问上游；一条批量请求问完这一页，别让 48 张卡各发一次。
+     `externalId` 形如 `<归档工作区>:<上游 task_id>`，排队接口只认后面那半段。 */
+  const canReadQueue = useCan('task:read');
+  const canReadLibtvAccount = useCan('model_driver:read');
+  const upstreamIds = useMemo(
+    () =>
+      items.flatMap(item => {
+        if (item.source !== 'video' || item.group !== 'running') return [];
+        // 只有 LibTV 的任务号能在那个接口上查：百炼的 externalId 是自己家的 UUID，
+        // 拿去问 LibTV 只会得到空结果，白打一次上游。
+        if (item.video?.modelId !== LIBTV_MODEL_ID) return [];
+        const id = upstreamTaskId(item.video?.externalId);
+        return id ? [id] : [];
+      }),
+    [items],
+  );
+  // 没权限就别发请求：排队位次要 `task:read`，额度条要 `model_driver:read`。
+  // 以前不论有没有都发，普通角色每分钟收一个 403，还被 throwOnError 吞掉。
+  const { data: queueData } = useLibtvQueue(upstreamIds, canReadQueue);
+  const queueByTask = useMemo(
+    () => new Map((queueData?.items ?? []).map(item => [item.taskId, item])),
+    [queueData?.items],
+  );
+  const queuedCount = useMemo(
+    () => (queueData?.items ?? []).filter(isQueued).length,
+    [queueData?.items],
+  );
+  const { data: libtvAccount } = useLibtvAccount(canReadLibtvAccount);
+
   // 0 = 还不知道总数（加载中 / 失败）。越界回收统一由 Pager 做，这里只负责把"不知道"如实传下去
   const totalPages = data ? Math.max(1, Math.ceil(data.total / (data.pageSize ?? pageSize))) : 0;
 
@@ -257,6 +294,13 @@ export default function TaskCenterPage() {
         </p>
       ))}
 
+      {libtvAccount ? (
+        <LibTvAccountStrip
+          account={libtvAccount}
+          queue={{ queued: queuedCount, limit: queueData?.items[0]?.queueLimit ?? 10 }}
+        />
+      ) : null}
+
       {/* 页签与批量条同一行：没勾选时右边是"从模板生成"的入口，勾选后就地换成批量操作，
           不再让四个不可用按钮常驻页头 */}
       <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
@@ -303,6 +347,7 @@ export default function TaskCenterPage() {
                 selected={selected.has(item.id)}
                 onToggleSelect={toggleSelect}
                 onOpen={openPreview}
+                queueHint={queueLabel(queueByTask.get(upstreamTaskId(item.video.externalId) ?? '') ?? null)}
               />
             ) : item.image ? (
               <ImageTaskCard

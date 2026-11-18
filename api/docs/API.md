@@ -2,7 +2,7 @@
 
 > 此文件由 `app export-openapi` 自动生成，请勿手工编辑。
 >
-> 版本 `0.2.0`｜共 **123** 个接口 / **11** 个模块
+> 版本 `0.2.0`｜共 **126** 个接口 / **11** 个模块
 >
 > 重新生成：`cd api && .venv/Scripts/python -m cli export-openapi`
 
@@ -230,7 +230,7 @@ Authorization: Bearer <accessToken>
 | 系统 | 2 | 见下方 `4.7` |
 | 导出 | 6 | 见下方 `4.8` |
 | 资产库 | 43 | 见下方 `4.9` |
-| 模型驱动 | 6 | 见下方 `4.10` |
+| 模型驱动 | 9 | 见下方 `4.10` |
 | 模板封装 | 11 | 见下方 `4.11` |
 
 ### 4.1 身份（39 个）
@@ -2850,11 +2850,14 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `rejectReason` | `string \| null` | 否 |  |
 | `trashedFromState` | `string \| null` | 否 |  |
 
-### 4.10 模型驱动（6 个）
+### 4.10 模型驱动（9 个）
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
 | `GET` | `/api/v1/model-driver/drivers` | 已自动载入的模型驱动清单 | 🔒 |
+| `GET` | `/api/v1/model-driver/libtv/account` | LibTV 账号额度、免费权益与队列名额 | 🔒 |
+| `GET` | `/api/v1/model-driver/libtv/consumption` | 积分消耗明细（含上游 task_id，对账用） | 🔒 |
+| `POST` | `/api/v1/model-driver/libtv/progress` | 批量查上游进度与排队位次（只读，不触发下载） | 🔒 |
 | `GET` | `/api/v1/model-driver/models` | 统一生成接口可用的模型目录 | 🔒 |
 | `POST` | `/api/v1/model-driver/tasks` | 提交一次统一生成任务 | 🔒 |
 | `GET` | `/api/v1/model-driver/tasks/{task_id}` | 查询统一生成任务 | 🔒 |
@@ -2872,6 +2875,62 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `items` | `DriverOut[]` | 否 |  |
 | `total` | `number` | 否 |  |
 | `errors` | `string[]` | 否 |  |
+
+#### `GET /api/v1/model-driver/libtv/account`
+
+**LibTV 账号额度、免费权益与队列名额**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `account` | query | `string` | 否 | CDP 地址，留空按计费模式挑（积分→9412，免费→第一个在线） |
+
+**响应** `ApiResponse<LibTvAccountOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `account` | `string` | 否 | 查询用的 CDP 地址（9411 免费队列 / 9412 积分队列） |
+| `asset` | `LibTvAssetOut \| null` | 否 |  |
+| `freePower` | `number` | 否 |  |
+| `freePowerExpireAt` | `string \| null` | 否 |  |
+| `zeroPowerBenefits` | `LibTvBenefitOut[]` | 否 |  |
+
+#### `GET /api/v1/model-driver/libtv/consumption`
+
+**积分消耗明细（含上游 task_id，对账用）**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `page` | query | `number` | 否 | 页码，从 1 开始 |
+| `pageSize` | query | `number` | 否 | 每页条数 |
+| `account` | query | `string` | 否 | CDP 地址，留空按规则挑 |
+
+**响应** `ApiResponse<LibTvConsumptionOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `total` | `number` | 否 |  |
+| `page` | `number` | 否 |  |
+| `pageSize` | `number` | 否 |  |
+| `totalCount` | `number` | 否 |  |
+| `totalAmount` | `number` | 否 |  |
+| `items` | `LibTvConsumptionItemOut[]` | 否 |  |
+
+#### `POST /api/v1/model-driver/libtv/progress`
+
+**批量查上游进度与排队位次（只读，不触发下载）**
+
+**请求体** `LibTvProgressIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `taskIds` | `string[]` | 否 | 上游 task_id 列表 |
+| `account` | `string` | 否 | 留空按配置挑：积分看 9412，免费队列看第一个在线的 |
+
+**响应** `ApiResponse<LibTvProgressOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `items` | `LibTvQueueItemOut[]` | 否 |  |
 
 #### `GET /api/v1/model-driver/models`
 
@@ -3759,6 +3818,91 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 |---|---|---|---|
 | `assetId` | `string` | 是 |  |
 | `created` | `boolean` | 是 |  |
+
+### `LibTvAccountOut`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `account` | `string` | 否 | 查询用的 CDP 地址（9411 免费队列 / 9412 积分队列） |
+| `asset` | `LibTvAssetOut \| null` | 否 |  |
+| `freePower` | `number` | 否 |  |
+| `freePowerExpireAt` | `string \| null` | 否 |  |
+| `zeroPowerBenefits` | `LibTvBenefitOut[]` | 否 |  |
+
+### `LibTvAssetOut`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `usablePower` | `number` | 否 | 可用积分（含赠送与套餐） |
+| `freeUsablePower` | `number` | 否 | 其中赠送积分部分 |
+| `usedPower` | `number` | 否 | 历史累计已用 |
+| `totalPower` | `number` | 否 | 累计获得 |
+| `taskCanSubmit` | `number` | 否 | 账号当下还能提交几个任务 |
+| `concurrent` | `number` | 否 | -1 表示不限制并发 |
+| `memberLevel` | `string` | 否 |  |
+| `expireDate` | `string` | 否 |  |
+
+### `LibTvBenefitOut`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `modelVersionId` | `number \| null` | 否 |  |
+| `targetName` | `string` | 否 |  |
+| `activityName` | `string` | 否 |  |
+| `endTime` | `string` | 否 | 权益到期时间；到期后同一批任务会开始扣积分 |
+| `tags` | `string[]` | 否 |  |
+
+### `LibTvConsumptionItemOut`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `amount` | `number` | 否 |  |
+| `seconds` | `number` | 否 | 扣费时间（Unix 秒） |
+| `sourceName` | `string` | 否 |  |
+| `taskId` | `string` | 否 | 上游 task_id（originalBizNo）：对账用 |
+| `projectName` | `string` | 否 |  |
+| `modelName` | `string` | 否 |  |
+| `summary` | `string` | 否 |  |
+
+### `LibTvConsumptionOut`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `total` | `number` | 否 |  |
+| `page` | `number` | 否 |  |
+| `pageSize` | `number` | 否 |  |
+| `totalCount` | `number` | 否 |  |
+| `totalAmount` | `number` | 否 |  |
+| `items` | `LibTvConsumptionItemOut[]` | 否 |  |
+
+### `LibTvProgressIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `taskIds` | `string[]` | 否 | 上游 task_id 列表 |
+| `account` | `string` | 否 | 留空按配置挑：积分看 9412，免费队列看第一个在线的 |
+
+### `LibTvProgressOut`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `items` | `LibTvQueueItemOut[]` | 否 |  |
+
+### `LibTvQueueItemOut`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `taskId` | `string` | 是 |  |
+| `status` | `number` | 否 | 0 排队/生成中 · 1 生成中 · 2 成功 · 3 失败 |
+| `percent` | `number` | 否 |  |
+| `queueReason` | `string` | 否 | UNLIMITED_SERIAL = 0 积分队列排队；RATE_LIMIT = 被上游限流推迟 |
+| `queuePosition` | `number` | 否 | 这台机器在该队列里的位次 |
+| `queueTotal` | `number` | 否 |  |
+| `queueLimit` | `number` | 否 | 画布 0 积分队列的名额，默认 10 |
+| `power` | `number` | 否 |  |
+| `benefitTag` | `string` | 否 |  |
+| `remainSeconds` | `number` | 否 |  |
+| `describe` | `string` | 否 | 给人看的一句话，省得前端自己拼 |
 
 ### `LibraryArchiveOut`
 
@@ -4905,3 +5049,4 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `createdAt` | `string` | 是 | 创建时间（UTC） |
 | `updatedAt` | `string` | 是 | 更新时间（UTC） |
 | `startedAt` | `string \| null` | 否 | 开始生成时间，未开始为 null |
+| `externalId` | `string \| null` | 否 | 上游任务标识，形如 `<归档工作区>:<上游 task_id>`。**给排队查询用**：LibTV 的队列位次只能按上游 task_id 查，前端拿它拆出 task_id 去`POST /model-driver/libtv/progress`，不必由后端再存一份排队快照 |

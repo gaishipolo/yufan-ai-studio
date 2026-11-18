@@ -772,6 +772,13 @@ curl -sS --noproxy '*' -H "Authorization: Bearer $TOKEN" \
   目录里目前没有模型声明它，所以这个字段暂时不可用 ——
   「字段在、能力没有」是诚实状态，别再往请求体里塞自造的键。
 - 运行工作区配置叫 `TASK_RUNS_ROOT`（旧名 `REPLACEMENT_RUNS_ROOT` 仍认，AliasChoices）。
+- **排队位次不在我们的库里**（2026-11-17）：任务卡的「排队 3/10」「限流 144s」是前端拿
+  `task.externalId` 的后半段（上游 task_id）批量问 `POST /model-driver/libtv/progress` 得来的，
+  一条请求问完一页，5 秒一轮、隐藏标签页不轮询。只在 `modelId=libtv-wan3-replacement` 上问
+  （百炼的 externalId 是自己家的 UUID，问 LibTV 只会得到空）。**别为此加数据库列**：
+  排队是上游的瞬时状态，存下来只会和上游越走越远。
+- 账号额度与 0 积分权益到期在任务中心顶部一条（`LibTvAccountStrip`），数据来自
+  `GET /model-driver/libtv/account`，60 秒一次；拿不到就整条不显示，不污染任务列表的错误态。
 
 ### 5.6 一次性改动的结论（2026-11-16）
 
@@ -807,6 +814,10 @@ curl -sS --noproxy '*' -H "Authorization: Bearer $TOKEN" \
 | `git-credential-manager.exe store` 报 no such file | 已知噪音，退出码 0，认证仍成功 |
 | 仓库部分 `.md` 是 CRLF | 判断换行先 `splitlines()`，别直接比对字符串 |
 | LibTV 任务 5 秒内失败，`errorMessage` = `素材上传准备未完成：RELEASE_INVALID` | 桥接层的字节校验没过：`run/records/executor-error.json` 会写清是哪个文件（`Vendored adapter changed: ...`）。**先怀疑 CRLF**：vendor 快照必须与 `manifest.json` 的 sha256 逐字节一致，`.gitattributes` 里 `.../libtv/runtime/vendor/** -text` 一旦漏掉（例如目录搬家后规则没跟），`core.autocrlf=true` 就会把快照检出成 CRLF，于是**所有** LibTV 任务都挂在 upload 阶段、而 `git status` 是空的。修法：补规则 → `rm -rf` 该 vendor 目录 → `git checkout --` 重新检出。守卫：`tests/test_libtv_vendor_manifest.py` |
+| 同一批 LibTV 任务**时而成功、时而** `RELEASE_INVALID`，而主仓库自己跑 `test_libtv_vendor_manifest.py` 是通过的 | **有第二个 checkout 在抢同一个队列**。`queued_jobs`（Postgres）与运行工作区都是共享的，job 被谁抢到就谁执行。2026-11-17 的现场：一个 11-10 的老工作树（`C:\Users\EDY\.codex\worktrees\...`，结构还是 `infra/ai/libtv_runtime/`）接走了任务 —— 它的 vendor 与清单不是同一版，而且**没有 `api/.env`**，所以同一时段那条百炼任务报「请先配置北京地域的 BAILIAN_API_KEY」。认领凶手：`runs/<id>/code/runtime-v2/bridge.mjs` 与哪个 checkout 的 `runtime/bridge.mjs` 字节相同，就是它跑的。现在监督进程启动 Node 前会跑同一份自检（`process.py::vendor_problem`），不一致直接回 `EXECUTOR_RELEASE_MISMATCH`，写清文件 + 期望/实际哈希 + 下一动作。修法：停掉多余实例，或者给它单独一套库/运行目录 |
+| 点「重新生成」永远得到同一句「提交结果未知…请核对后手动重试」，点几次都一样 | 归档已进入 `submission_unknown`：请求发出去过、回执没回来，桥接层**拒绝任何重提**（再发可能就是第二份账单）。旧文案让你「重试」，而那条路根本走不通。现在驱动改抛 409，报错里直接给命令：先到该账号的 LibTV 记录核对 —— 确认没提交 → `app libtv-reconcile <run_id> --not-submitted`（解封，可重提）；确认已在跑 → `... --adopt-task <上游 task_id>`（接回，重试只查询下载、不重新下单） |
+| 连点两个 LibTV 任务，第二个当场「提交生成失败：账号执行器正在执行其他任务」 | 账号级串行锁：一个账号同一时刻只跑一个上传/提交，而上传素材本身可能占几分钟。现在这条走 `RateLimited`，按 `GENERATION_THROTTLE_DELAYS`（10/20/30/60/90/120/180/240 秒）重新排队，任务保持 queued，不再判死 |
+| 积分任务报「积分队列报价仍为 0」/ 提交被上游拒绝，但 9412 明明有额度 | 先看这一单落在哪个账号：`run.json::browser_url`。选号规则是**按计费模式**定的 —— `billingMode=credits` → `LIBTV_CREDITS_BROWSER_URL`（9412）；`free` → `LIBTV_BROWSER_URLS` 里第一个在线的（9411 优先）。账号在任务开始时**绑定**进档案，之后不再改：`task_id` 与上传素材都属于那个账号，换号只会「查不到任务」。改 `.env` 后必须重启后端（`LibTvSettings` 有 `lru_cache`） |
 
 ## 7. 文档地图（哪份是活的）
 
@@ -815,6 +826,7 @@ curl -sS --noproxy '*' -H "Authorization: Bearer $TOKEN" \
 | `ARCHITECTURE.md` / `EXTENDING.md` / `CODE_STYLE.md` / `REVIEW_CHECKLIST.md` | **活文档**，改结构/约定时同步 |
 | `TODO.md` | **活文档**，唯一待办清单 |
 | `MODEL_DRIVER_STANDARD.md` | **活文档**，含 §11 老路径豁免登记 |
+| `api/docs/LIBTV_API.md` | **活文档**（2026-11-17 新写）：LibTV 上游接口逆向实抓 —— 鉴权是 `token` 头、排队看 `queueReason/unlimitedQueueNum`、消费明细的 `originalBizNo` 就是 task_id。平台侧封装在 `libtv/account.py`，接口在 `/model-driver/libtv/*` |
 | `OPS.md` | **活文档**，部署与告警 |
 | `ROUTES.md` / `MOCK_COVERAGE.md` | 生成物，`--check` 校验，别手改 |
 | `TEMPLATE_LIBRARY_V2.md` | **活文档**，模板库 v2 的五向 I/O 契约与待拍板项（2026-11-13 新写） |

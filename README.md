@@ -72,6 +72,7 @@ Windows 防火墙需允许工作台的 TCP 5173 入站；将远端范围限制�
 | [api/README.md](api/README.md) | 后端目录、命令表、接口约定、演示数据 |
 | [api/docs/EXTENDING.md](api/docs/EXTENDING.md) | 加模块 / 加供应商 / 加生成能力的标准做法，以及「什么绝对不能碰」 |
 | [api/docs/API.md](api/docs/API.md) | 接口清单与字段表（前端对接主入口） |
+| [api/docs/LIBTV_API.md](api/docs/LIBTV_API.md) | LibTV 上游接口（逆向实抓）：账号额度、排队位次、消费明细、批量估价 |
 | [api/docs/PARALLEL_WORK.md](api/docs/PARALLEL_WORK.md) | 多人并行时怎么切分、怎么避免迁移冲突 |
 | [docs/FRONTEND_EXTENSION.md](docs/FRONTEND_EXTENSION.md) | 前端目录职责、模块注册、新增页面 |
 | [docs/CODE_STYLE.md](docs/CODE_STYLE.md) | 命名、分层、异常与日志约定 |

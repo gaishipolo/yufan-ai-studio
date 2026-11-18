@@ -64,6 +64,14 @@ class TaskOut(CamelModel):
     created_at: UtcDateTime = Field(description="创建时间（UTC）")
     updated_at: UtcDateTime = Field(description="更新时间（UTC）")
     started_at: UtcDateTime | None = Field(default=None, description="开始生成时间，未开始为 null")
+    external_id: str | None = Field(
+        default=None,
+        description=(
+            "上游任务标识，形如 `<归档工作区>:<上游 task_id>`。**给排队查询用**："
+            "LibTV 的队列位次只能按上游 task_id 查，前端拿它拆出 task_id 去"
+            "`POST /model-driver/libtv/progress`，不必由后端再存一份排队快照"
+        ),
+    )
 
 
 class TaskStats(CamelModel):

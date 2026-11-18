@@ -112,6 +112,13 @@ export async function main() {
   };
   await withRunLock(run, async () => {
     let meta = await load(run);
+    /* 账号绑定。一次任务从上传到下载必须回同一个浏览器账号：上传素材、估价、
+       上游 task_id 都属于那个账号，中途换号只会查到「任务不存在」。
+       执行器按计费模式挑好账号再传下来（积分队列走专用账号、免费队列走账号池），
+       这里只负责把**实际用的**那个记进 run.json；已有绑定的任务不再改写。 */
+    if (!meta.browser_url && process.env.JS_REVERSE_BROWSER_URL) {
+      meta = await update(run, {browser_url: process.env.JS_REVERSE_BROWSER_URL});
+    }
     if (meta.billing_mode === 'credits' && !meta.task_id
         && ['upload','submit'].includes(command) && !await creditsAdapterAvailable(vendor)) {
       // 已提交的任务（有 task_id）照常查询，不受影响；未提交的停在明确提示上，不产生请求体。

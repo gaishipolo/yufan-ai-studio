@@ -10,6 +10,13 @@ export interface TaskCardProps {
   selected: boolean;
   onToggleSelect: (id: string) => void;
   onOpen: (id: string) => void;
+  /**
+   * 上游排队情况的一句话（如「0 积分队列 3/10」），由任务中心按上游 task_id 查好后传进来。
+   *
+   * 卡片本身**不去查**：一页 48 张卡各发一次请求，等于把一个批量接口用成 48 个；
+   * 而且「排队第几」属于生成链路的细节，卡片只负责显示。
+   */
+  queueHint?: string | null;
 }
 
 const STATUS_STYLE: Record<VideoTask['status'], string> = {
@@ -24,6 +31,7 @@ export const TaskCard = memo(function TaskCard({
   selected,
   onToggleSelect,
   onOpen,
+  queueHint,
 }: TaskCardProps) {
   const inFlight = task.status === 'running' || task.status === 'queued';
 
@@ -118,6 +126,13 @@ export const TaskCard = memo(function TaskCard({
               </Chip>
               <span className="shrink-0 font-mono tabular-nums">{task.progress}%</span>
             </div>
+            {/* 「48% 卡了半小时」和「排第 3 位」看起来完全一样，差别只有上游知道。
+                有排队信息时就补一行，没有就不占位。 */}
+            {queueHint ? (
+              <p className="mt-1 truncate text-micro text-warn-deep" title={queueHint}>
+                {queueHint}
+              </p>
+            ) : null}
           </>
         ) : (
           /* 规格已经搬到封面角标上，这一行只留「哪个模型」和「什么时候」 */

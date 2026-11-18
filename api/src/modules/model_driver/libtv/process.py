@@ -25,6 +25,7 @@ import subprocess
 import sys
 import uuid
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
@@ -33,6 +34,7 @@ from core.logging import get_logger
 from infra.archive import ArchiveStorage, get_archive_storage, lease
 from infra.archive.runs import lock_path
 from modules.model_driver.libtv.executor import get_libtv_settings
+from modules.model_driver.libtv.release import describe_mismatches, verify_vendor
 from modules.model_driver.libtv.state import (
     LIBTV_PROCESS_PROTOCOL,
     RUN_LOCK,
@@ -55,6 +57,28 @@ VENDOR = RUNTIME.parent / "vendor"
 ACCOUNT_LOCK_NAME = "account-executor"
 # 查询与下载是只读的：不进账号锁，否则同一个人开两个任务轮询就会互相判忙。
 ACCOUNT_STAGES = frozenset({"upload", "submit"})
+#: 发布物自检的缓存：`路径 -> (签名, 结论)`。签名没变就不重算哈希。
+_vendor_checks: dict[str, tuple[tuple[tuple[str, int, int], ...], str]] = {}
+
+
+def account_lock_name(browser: str = "") -> str:
+    """账号级串行锁的名字：**一个账号一把锁**。
+
+    以前是全局一把 `account-executor`。多账号部署下这把锁会把两件事绑死：
+    9411 上的免费任务一提交，9412 上的积分任务就得排队 —— 两个账号的额度
+    永远没法同时用，加第二个账号也就只多了一个备份。
+
+    锁名带 `host-port`：9411 与 9412 各串行、互不阻塞；**同一个账号仍然
+    一次只跑一个**（上游按账号限流，并发提交只会撞风控）。
+
+    没传账号时保持旧的锁名：老调用方（以及没有账号概念的历史任务）
+    行为不变，不会凭空多出一把没人抢的锁。
+    """
+    if not browser:
+        return ACCOUNT_LOCK_NAME
+    parsed = urlsplit(browser)
+    slot = f"{parsed.hostname or 'local'}-{parsed.port or 0}"
+    return f"{ACCOUNT_LOCK_NAME}-{slot}"
 
 
 class ExecutorBusy(Conflict):
@@ -100,7 +124,7 @@ def clear_finished_lock(run: Path, storage: ArchiveStorage) -> None:
 
 
 def run_node(
-    stage: str, run: Path, vendor: Path, node: str, storage: ArchiveStorage
+    stage: str, run: Path, vendor: Path, node: str, storage: ArchiveStorage, browser: str = ""
 ) -> ExecutorResult:
     """在已持锁的前提下启动 Node 适配器，返回这一阶段的回执。"""
     result = ExecutorResult(stage=stage)
@@ -125,7 +149,10 @@ def run_node(
     logs = run / "logs"
     logs.mkdir(parents=True, exist_ok=True)
     errors = logs / "executor-stderr.log"
-    env = {**os.environ, "JS_REVERSE_BROWSER_URL": get_libtv_settings().browser_url}
+    # 账号随参数包下来：桥接层据此连 CDP，并把地址写进 run.json 完成账号绑定。
+    # 没有（老调用方）时退回默认账号。
+    account = browser or get_libtv_settings().browser_url
+    env = {**os.environ, "JS_REVERSE_BROWSER_URL": account}
     with (
         errors.open("wb") as stream,
         subprocess.Popen(
@@ -165,9 +192,83 @@ def run_node(
         return result
 
 
-def supervise(stage: str, run: Path, node: str) -> ExecutorResult:
+def executor_busy(run: Path) -> bool:
+    """这个运行工作区还有执行器在跑吗？
+
+    `reconcile`（人工解封 / 接回）要拿它当闸门：档案里的 `submitting` 正是
+    「桥接层正在提交」的那一瞬间。此刻把状态改回 `uploaded`，桥接层随后写回
+    `task_id` 就会和档案矛盾 —— 而钱可能已经花了。
+
+    判据与 `clear_finished_lock` 同源：`worker.lock` 还在、或回执说
+    `starting/running`、或回执里的 node 进程还活着，都算「在跑」。
+    回执读不出来时按**在跑**处理：宁可让人等一下，也不要在不确定时改账。
+    """
+    storage = get_archive_storage()
+    if (run / "records/worker.lock").exists():
+        return True
+    result = run / "records/executor-result.json"
+    if not result.exists():
+        return False
+    try:
+        previous = ExecutorResult.model_validate(storage.read(result))
+    except Exception:  # noqa: BLE001 - 回执损坏时保守处理
+        logger.warning("执行器回执不可读，按「仍在运行」处理 run=%s", run.name)
+        return True
+    if previous.phase in ("starting", "running"):
+        return True
+    return bool(previous.node_pid and pid_alive(previous.node_pid))
+
+
+def vendor_problem(vendor: Path) -> str:
+    """发布一致性自检：空串 = 可以启动 Node。
+
+    桥接层自己也会查同一个清单，但它只能抛一个码（`RELEASE_INVALID`），
+    经 `executor` 落到用户眼前就是「素材上传准备未完成：RELEASE_INVALID」——
+    没有文件名、没有期望/实际哈希、也没有下一动作。2026-11-17 那次
+    「同一批任务时而成功时而 RELEASE_INVALID」正是因为有个**老 checkout**
+    （结构还是 `infra/ai/libtv_runtime/`）在同一个队列上抢活，它那边的 vendor
+    与清单不属于同一版本。在这里先查一遍，把话一次说清。
+    """
+    # 每个阶段都会查一次（poll 每 2 秒一跳、在跑几个任务就乘几）。文件只有十个、
+    # 几 KB，但 sha256 是白算的：用 (mtime, size) 做签名，没变就直接命中。
+    signature = _vendor_signature(vendor)
+    cached = _vendor_checks.get(str(vendor))
+    if cached and cached[0] == signature:
+        return cached[1]
+    try:
+        mismatches = verify_vendor(vendor)
+    except (OSError, ValueError) as exc:
+        problem = f"执行器发布物不可用（{vendor}）：{exc}"
+    else:
+        problem = describe_mismatches(mismatches, vendor)
+    _vendor_checks[str(vendor)] = (signature, problem)
+    return problem
+
+
+def _vendor_signature(vendor: Path) -> tuple[tuple[str, int, int], ...]:
+    """发布物的「身份」：任一文件被改（mtime/size 变）签名就变，缓存随即失效。"""
+    parts: list[tuple[str, int, int]] = []
+    for path in sorted(vendor.rglob("*")):
+        if not path.is_file():
+            continue
+        stat = path.stat()
+        parts.append((str(path.relative_to(vendor)), stat.st_mtime_ns, stat.st_size))
+    return tuple(parts)
+
+
+def supervise(stage: str, run: Path, node: str, browser: str = "") -> ExecutorResult:
     if stage not in STAGES:
         raise ValueError("未知执行阶段")
+    # 先自检再做任何事：不一致时连锁都不该碰，否则留下一把没人用的锁，
+    # 下一次执行还会被判 STALE_LOCK，排查方向直接跑偏。
+    problem = vendor_problem(VENDOR)
+    if problem:
+        logger.error("LibTV 发布物自检未通过 run=%s stage=%s %s", run.name, stage, problem)
+        return ExecutorResult(
+            stage=stage,
+            code="EXECUTOR_RELEASE_MISMATCH",
+            message=problem,
+        )
     try:
         storage = get_archive_storage()
         with lease(
@@ -177,13 +278,13 @@ def supervise(stage: str, run: Path, node: str) -> ExecutorResult:
         ):
             clear_finished_lock(run, storage)
             if stage not in ACCOUNT_STAGES:
-                return run_node(stage, run, VENDOR, node, storage)
+                return run_node(stage, run, VENDOR, node, storage, browser)
             with lease(
-                lock_path(ACCOUNT_LOCK_NAME),
+                lock_path(account_lock_name(browser)),
                 message="账号执行器正在执行其他任务，请稍后继续",
                 error=ExecutorBusy,
             ):
-                return run_node(stage, run, VENDOR, node, storage)
+                return run_node(stage, run, VENDOR, node, storage, browser)
     except StaleExecutorLock as exc:
         # 不能覆盖另一活进程的 executor-result，也不能删除它的锁。
         logger.warning("执行器遗留锁需人工核对 run=%s stage=%s", run.name, stage)
@@ -223,6 +324,9 @@ class Payload(BaseModel):
     run: str
     node: str = "node"
     result: str
+    # 这次执行用哪个 CDP 账号（http://127.0.0.1:9411 / :9412）。
+    # 空串 = 老调用方，退回 `LIBTV_BROWSER_URL`，行为与单账号时一致。
+    browser: str = ""
 
 
 def main() -> None:
@@ -248,7 +352,7 @@ def main() -> None:
         message=(f"监督进程异常中断；请检查 logs/supervisor-{Path(payload.result).stem}.log"),
     )
     try:
-        result = supervise(payload.stage, Path(payload.run), payload.node)
+        result = supervise(payload.stage, Path(payload.run), payload.node, payload.browser)
     finally:
         # SystemExit 等终止信号继续传播，但尽可能保留本次操作的独立失败回执。
         write_json(Path(payload.result), result.model_dump())

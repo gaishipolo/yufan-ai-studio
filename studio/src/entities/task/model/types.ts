@@ -37,6 +37,13 @@ export interface VideoTask {
   updatedAt: string;
   /** 开始生成时间：进度按「已耗时 / 预计耗时」推算 */
   startedAt?: string;
+  /**
+   * 上游任务标识 `<归档工作区>:<上游 task_id>`。
+   *
+   * 只在查「排队第几」「限流多久」时用：那些状态只存在上游，我们的库里没有，
+   * 硬存一份快照只会让它和上游越走越远。
+   */
+  externalId?: string | null;
 }
 
 export type TaskSort = 'createdAt_desc' | 'createdAt_asc' | 'title_asc';

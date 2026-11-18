@@ -584,6 +584,100 @@ export interface IngestOut {
   created: boolean;
 }
 
+/** LibTvAccountOut */
+export interface LibTvAccountOut {
+  /** 查询用的 CDP 地址（9411 免费队列 / 9412 积分队列） */
+  account?: string;
+  asset?: LibTvAssetOut | null;
+  freePower?: number;
+  freePowerExpireAt?: string | null;
+  zeroPowerBenefits?: LibTvBenefitOut[];
+}
+
+/** LibTvAssetOut */
+export interface LibTvAssetOut {
+  /** 可用积分（含赠送与套餐） */
+  usablePower?: number;
+  /** 其中赠送积分部分 */
+  freeUsablePower?: number;
+  /** 历史累计已用 */
+  usedPower?: number;
+  /** 累计获得 */
+  totalPower?: number;
+  /** 账号当下还能提交几个任务 */
+  taskCanSubmit?: number;
+  /** -1 表示不限制并发 */
+  concurrent?: number;
+  memberLevel?: string;
+  expireDate?: string;
+}
+
+/** LibTvBenefitOut */
+export interface LibTvBenefitOut {
+  modelVersionId?: number | null;
+  targetName?: string;
+  activityName?: string;
+  /** 权益到期时间；到期后同一批任务会开始扣积分 */
+  endTime?: string;
+  tags?: string[];
+}
+
+/** LibTvConsumptionItemOut */
+export interface LibTvConsumptionItemOut {
+  amount?: number;
+  /** 扣费时间（Unix 秒） */
+  seconds?: number;
+  sourceName?: string;
+  /** 上游 task_id（originalBizNo）：对账用 */
+  taskId?: string;
+  projectName?: string;
+  modelName?: string;
+  summary?: string;
+}
+
+/** LibTvConsumptionOut */
+export interface LibTvConsumptionOut {
+  total?: number;
+  page?: number;
+  pageSize?: number;
+  totalCount?: number;
+  totalAmount?: number;
+  items?: LibTvConsumptionItemOut[];
+}
+
+/** LibTvProgressIn */
+export interface LibTvProgressIn {
+  /** 上游 task_id 列表 */
+  taskIds?: string[];
+  /** 留空按配置挑：积分看 9412，免费队列看第一个在线的 */
+  account?: string;
+}
+
+/** LibTvProgressOut */
+export interface LibTvProgressOut {
+  items?: LibTvQueueItemOut[];
+}
+
+/** LibTvQueueItemOut */
+export interface LibTvQueueItemOut {
+  taskId: string;
+  /** 0 排队/生成中 · 1 生成中 · 2 成功 · 3 失败 */
+  status?: number;
+  percent?: number;
+  /** UNLIMITED_SERIAL = 0 积分队列排队；RATE_LIMIT = 被上游限流推迟 */
+  queueReason?: string;
+  /** 这台机器在该队列里的位次 */
+  queuePosition?: number;
+  queueTotal?: number;
+  /** 画布 0 积分队列的名额，默认 10 */
+  queueLimit?: number;
+  power?: number;
+  benefitTag?: string;
+  remainSeconds?: number;
+  /** 给人看的一句话，省得前端自己拼 */
+  describe?: string;
+}
+
 /** 归档信息。只给所有者与管理员：存储键与幂等键对外没有意义，只会泄露内部结构。 */
 export interface LibraryArchiveOut {
   storageKey?: string;
@@ -1692,6 +1786,8 @@ export interface modules__task__schema__TaskOut {
   updatedAt: string;
   /** 开始生成时间，未开始为 null */
   startedAt?: string | null;
+  /** 上游任务标识，形如 `<归档工作区>:<上游 task_id>`。**给排队查询用**：LibTV 的队列位次只能按上游 task_id 查，前端拿它拆出 task_id 去`POST /model-driver/libtv/progress`，不必由后端再存一份排队快照 */
+  externalId?: string | null;
 }
 
 /* --------------------- 接口 → data 类型（已解包封套） --------------------- */
@@ -1888,6 +1984,12 @@ export interface EndpointData {
   "POST /api/v1/library/trash/{asset_id}/restore": LibraryAssetDetailOut;
   /** 已自动载入的模型驱动清单 */
   "GET /api/v1/model-driver/drivers": DriverListOut;
+  /** LibTV 账号额度、免费权益与队列名额 */
+  "GET /api/v1/model-driver/libtv/account": LibTvAccountOut;
+  /** 积分消耗明细（含上游 task_id，对账用） */
+  "GET /api/v1/model-driver/libtv/consumption": LibTvConsumptionOut;
+  /** 批量查上游进度与排队位次（只读，不触发下载） */
+  "POST /api/v1/model-driver/libtv/progress": LibTvProgressOut;
   /** 统一生成接口可用的模型目录 */
   "GET /api/v1/model-driver/models": core__response__ApiResponse_ModelListOut___2;
   /** 提交一次统一生成任务 */
