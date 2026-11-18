@@ -651,15 +651,23 @@ class GenerationRunner:
                             # 节拍，把这段等待算进墙钟就等于「排得越久越容易被判超时」
                             # （2026-11-17 任务 29dc66ae 因此在 48% 被判超时，上游其实正常）。
                             queued_wait = bool(result.queued)
-                            if queued_wait and isinstance(store, DeadlineExtendable):
+                            extended = (
                                 await self._extend_deadline(store, record, kind, record_id)
+                                if queued_wait and isinstance(store, DeadlineExtendable)
+                                else False
+                            )
                             # 进度只增不减，且轮询期不报 100——供应商偶发回一个更小的值
                             # 会让用户看到进度条倒退；99 留给「已提交、还在等终态」。
                             progress = max(record.progress, min(99, result.progress))
-                            if progress != record.progress and await store.mark_progress(
-                                record_id, progress
-                            ):
+                            progress_updated = (
+                                progress != record.progress
+                                and await store.mark_progress(record_id, progress)
+                            )
+                            # 排队期间进度常常停在同一个百分比：必须独立提交 extend_deadline
+                            # 写入的 started_at，否则 session 退出即回滚、墙钟顺延会悄然失效。
+                            if progress_updated or extended:
                                 await session.commit()
+                            if progress_updated:
                                 await self._emit(
                                     EVT_GENERATION_PROGRESS,
                                     kind=kind,
@@ -1049,7 +1057,7 @@ class GenerationRunner:
         record: GenerationRecord,
         kind: str,
         record_id: str,
-    ) -> None:
+    ) -> bool:
         """上游还在排队：把墙钟起点挪到现在，但不超过硬上限。
 
         上限按**建单时间**算，不是按挪过的起点算——否则一路顺延下去，
@@ -1067,9 +1075,11 @@ class GenerationRunner:
                     kind,
                     record_id,
                 )
-                return
+                return False
         if await store.extend_deadline(record_id):
             logger.info("上游仍在排队，顺延墙钟预算 kind=%s id=%s", kind, record_id)
+            return True
+        return False
 
     @staticmethod
     def _poll_interval(provider: ModelProvider) -> float:

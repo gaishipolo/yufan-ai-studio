@@ -144,3 +144,170 @@ def test_queued_poll_does_not_burn_max_polls_budget() -> None:
         runner_mod._provider_for = orig_provider_for
 
     assert scheduled == [("video", "a" * 32, 7, 15.0)]
+
+
+def test_queued_poll_commits_deadline_extension_even_when_progress_unchanged() -> None:
+    """排队期间进度常停在同一百分比，必须独立提交 started_at 顺延，
+    不能靠 mark_progress 顺带提交。"""
+    from dataclasses import replace
+    from types import SimpleNamespace
+
+    from infra.ai.base import GenerationProgress, GenerationState
+    from infra.queue.base import Job
+
+    runner = GenerationRunner(MemoryJobQueue())
+    commits = 0
+    extended = 0
+
+    async def fake_schedule(kind: str, record_id: str, *, polls: int, delay: float) -> None:
+        return None
+
+    class _FakeSession:
+        async def __aenter__(self):  # noqa: ANN204
+            return self
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+        async def commit(self) -> None:
+            nonlocal commits
+            commits += 1
+
+    class _FakeStore:
+        async def load(self, record_id: str) -> GenerationRecord:
+            return replace(
+                _record(created_minutes_ago=5),
+                progress=48,
+                external_id=f"{record_id}:upstream",
+            )
+
+        async def extend_deadline(self, record_id: str) -> bool:
+            nonlocal extended
+            extended += 1
+            return True
+
+        async def mark_progress(self, record_id: str, progress: int) -> bool:
+            raise AssertionError("进度未变化时不该调用 mark_progress")
+
+    class _FakeProvider:
+        poll_interval_sec = 5.0
+
+        async def poll(self, external_id: str, *, model: str = "") -> GenerationProgress:
+            return GenerationProgress(
+                external_id=external_id,
+                state=GenerationState.RUNNING,
+                queued=True,
+                progress=48,
+            )
+
+    import generation.runner as runner_mod
+
+    orig_factory = runner_mod.get_session_factory
+    orig_pipeline = runner_mod.get_pipeline
+    orig_provider_for = runner_mod._provider_for
+    runner_mod.get_session_factory = lambda: lambda: _FakeSession()  # type: ignore[assignment]
+    runner_mod.get_pipeline = lambda kind: SimpleNamespace(store=lambda s: _FakeStore())  # type: ignore[assignment]
+    runner_mod._provider_for = lambda pipeline, model: _FakeProvider()  # type: ignore[assignment]
+    runner._schedule_poll = fake_schedule  # type: ignore[method-assign]
+    try:
+        asyncio.run(
+            runner.handle_poll(
+                Job(
+                    name="generation.poll",
+                    payload={"kind": "video", "record_id": "a" * 32, "polls": 3},
+                )
+            )
+        )
+    finally:
+        runner_mod.get_session_factory = orig_factory
+        runner_mod.get_pipeline = orig_pipeline
+        runner_mod._provider_for = orig_provider_for
+
+    assert extended == 1
+    assert commits == 1
+
+
+def test_queued_poll_persists_started_at_with_real_db_store() -> None:
+    """使用真实 AsyncSession + VideoTaskStore，验证进度不变的排队轮询确实推进了
+    库里的 started_at。"""
+    import uuid
+
+    import generation.runner as runner_mod
+    from db.session import get_session_factory
+    from infra.ai.base import GenerationProgress, GenerationState
+    from infra.queue.base import Job
+    from modules.task.models import VideoTask
+
+    task_id = uuid.uuid4().hex
+    # 只比 `generation_timeout_sec`（默认 1800s）小一点点，别贴着边界：这条用例要的是
+    # 「起点被改写了」，不该因为有人调小默认超时而开始走超时分支。
+    old_started = datetime.now(tz=UTC) - timedelta(minutes=2)
+
+    async def seed() -> None:
+        async with get_session_factory()() as session:
+            session.add(
+                VideoTask(
+                    id=task_id,
+                    title="queued-deadline-persist",
+                    prompt="p",
+                    model="libtv-wan3-replacement",
+                    model_id="libtv-wan3-replacement",
+                    status="running",
+                    progress=48,
+                    author_id="test-user",
+                    external_id=f"{task_id}:upstream",
+                    started_at=old_started,
+                )
+            )
+            await session.commit()
+
+    async def fetch_started() -> datetime | None:
+        async with get_session_factory()() as session:
+            row = await session.get(VideoTask, task_id)
+            return row.started_at if row is not None else None
+
+    async def cleanup() -> None:
+        async with get_session_factory()() as session:
+            row = await session.get(VideoTask, task_id)
+            if row is not None:
+                await session.delete(row)
+                await session.commit()
+
+    class _FakeProvider:
+        poll_interval_sec = 5.0
+
+        async def poll(self, external_id: str, *, model: str = "") -> GenerationProgress:
+            return GenerationProgress(
+                external_id=external_id,
+                state=GenerationState.RUNNING,
+                queued=True,
+                progress=48,
+            )
+
+    runner = GenerationRunner(MemoryJobQueue())
+
+    async def fake_schedule(kind: str, record_id: str, *, polls: int, delay: float) -> None:
+        return None
+
+    orig_provider_for = runner_mod._provider_for
+    runner_mod._provider_for = lambda pipeline, model: _FakeProvider()  # type: ignore[assignment]
+    runner._schedule_poll = fake_schedule  # type: ignore[method-assign]
+    asyncio.run(seed())
+    try:
+        asyncio.run(
+            runner.handle_poll(
+                Job(
+                    name="generation.poll",
+                    payload={"kind": "video", "record_id": task_id, "polls": 1},
+                )
+            )
+        )
+        updated = asyncio.run(fetch_started())
+    finally:
+        runner_mod._provider_for = orig_provider_for
+        asyncio.run(cleanup())
+
+    assert updated is not None
+    if updated.tzinfo is None:
+        updated = updated.replace(tzinfo=UTC)
+    assert updated > old_started
