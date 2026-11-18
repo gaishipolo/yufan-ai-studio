@@ -264,7 +264,7 @@ export function joinModelSelection(model: string, allowedModels: string[]): stri
  * `{{slot:y}}` —— 那是「列出这组」变成「第一张」，语义变了。
  */
 export function rewriteSlotRef(text: string, oldKey: string, newKey: string): string {
-  return text.replace(slotRefPattern(oldKey), (raw, _key, modifier) =>
+  return text.replace(slotRefPattern(oldKey), (_raw, _key, modifier) =>
     `{{slot:${newKey}${modifier ?? ''}}}`,
   );
 }

@@ -55,7 +55,6 @@ function slotOf(extra: Partial<SpecSlotOut> = {}): SpecSlotOut {
     minCount: 1,
     maxCount: 1,
     label: '主图',
-    usage: '',
     position: 1,
     ...extra,
   };
