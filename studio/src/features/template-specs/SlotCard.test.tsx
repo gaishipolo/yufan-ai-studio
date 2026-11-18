@@ -289,40 +289,48 @@ describe('槽位卡片', () => {
     expect(screen.queryByLabelText('未选时文案')).not.toBeInTheDocument();
   });
 
-  /* 两段文案是「替换 `{{slot:key}}` 插入点」的文案。提示词里没有这个
-     插入点时，写出来**永远不会进提示词**（死数据）—— 显示一个填了
-     也不生效的框，比不显示更坏：作者会以为它管用。 */
-  it('提示词里没引用这个槽位时，不显示两段文案', async () => {
+  /* 两段文案的门槛只有一条：**槽位是可选的**（2026-11-18 用户拍板：
+     「不需要引用这个槽位，只要是可选就显示两个输入框」）。
+
+     之前还有一条「提示词里必须有单张引用」—— 那是在拿**写作顺序**
+     当门槛：作者得先跳到正文插一个 token，再回来写话。写作顺序不该
+     由界面的门槛决定。
+
+     没有插入点时这两段话**编译期用不上**，所以界面照实说一句
+     （见下一条用例），而不是让人白填一场还不自知。 */
+  it('提示词里没引用这个槽位时，可选槽位仍然显示两段文案', async () => {
     const user = userEvent.setup();
     renderSlot({binding: 'user', minCount: 0}, '把别的图放进画面');
     await user.click(screen.getByRole('button', {name: '展开更多设置'}));
 
-    expect(screen.queryByLabelText('选中时文案')).not.toBeInTheDocument();
-    expect(screen.queryByLabelText('未选时文案')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('选中时文案')).toBeInTheDocument();
+    expect(screen.getByLabelText('未选时文案')).toBeInTheDocument();
   });
 
-  it('提示词里没引用时，说一句为什么没有这两个框', async () => {
+  it('提示词里没引用时，照实说这两段话还用不上', async () => {
     const user = userEvent.setup();
     renderSlot({binding: 'user', minCount: 0}, '把别的图放进画面');
     await user.click(screen.getByRole('button', {name: '展开更多设置'}));
 
-    expect(screen.getByText(/写下 \{\{slot:image_1\}\} 引用这个槽位/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/写下 \{\{slot:image_1\}\} 引用这个槽位，这两段话才会被用上/),
+    ).toBeInTheDocument();
   });
 
-  it('整组引用 {{slot:x*}} 不算插入点（那是「列出这组」，没有「一段文案」）', async () => {
+  it('整组引用 {{slot:x*}} 同样显示两段文案（可选就显示）', async () => {
     const user = userEvent.setup();
     renderSlot({binding: 'user', minCount: 0}, '把 {{slot:image_1*}} 都放进去');
     await user.click(screen.getByRole('button', {name: '展开更多设置'}));
 
-    expect(screen.queryByLabelText('选中时文案')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('选中时文案')).toBeInTheDocument();
   });
 
-  it('第 N 张引用 {{slot:x.2}} 也不算插入点', async () => {
+  it('第 N 张引用 {{slot:x.2}} 同样显示两段文案', async () => {
     const user = userEvent.setup();
     renderSlot({binding: 'user', minCount: 0}, '把 {{slot:image_1.2}} 放进去');
     await user.click(screen.getByRole('button', {name: '展开更多设置'}));
 
-    expect(screen.queryByLabelText('选中时文案')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('选中时文案')).toBeInTheDocument();
   });
 
   it('必填槽位（有插入点）说明为什么不给写两段话', async () => {

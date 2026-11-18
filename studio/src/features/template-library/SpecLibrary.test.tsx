@@ -296,8 +296,8 @@ describe('模板库：可选槽位不填也能生成', () => {
     },
   };
 
-  function renderOptionalLibrary() {
-    specState.current = OPTIONAL_SPEC;
+  function renderOptionalLibrary(spec: TemplateSpecOut = OPTIONAL_SPEC) {
+    specState.current = spec;
     const client = new QueryClient({
       defaultOptions: {queries: {retry: false}, mutations: {retry: false}},
     });
@@ -350,5 +350,28 @@ describe('模板库：可选槽位不填也能生成', () => {
 
     const dialog = await screen.findByRole('dialog');
     expect(dialog).not.toHaveTextContent('人物参考（未填）');
+  });
+
+  /* 槽位**没被提示词引用**时，它的「未选时文案」是死数据 ——
+     后端只在单张引用时用它（`compile.py::_fallback_or_raise`）。
+     摆出来会让使用者以为这段话会进提示词。 */
+  it('自定义档：槽位没被引用时不摆兜底行', async () => {
+    const user = userEvent.setup();
+    renderOptionalLibrary({
+      ...OPTIONAL_SPEC,
+      latest: {
+        ...OPTIONAL_SPEC.latest!,
+        prompt: '把原片里的人换成 {{Mixed 1}}',
+      },
+    });
+
+    await user.click(await screen.findByRole('radio', {name: '自定义'}));
+    expect(await screen.findByText('人物参考')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', {name: /生成视频/}));
+
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog).not.toHaveTextContent('人物参考（未填）');
+    expect(dialog).not.toHaveTextContent('主角是穿红裙的年轻女性');
   });
 });

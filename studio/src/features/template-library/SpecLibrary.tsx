@@ -18,7 +18,11 @@ import { useCreateTask } from '@/entities/task/api/task.queries';
 import { usePublishedSpecs, useSpecCompile } from '@/entities/template-spec/api/spec.queries';
 import type { SpecSlotOut, TemplateSpecOut } from '@/shared/api/schema';
 import { AssetPicker, type PickedAsset } from '@/features/template-specs/AssetPicker';
-import { effectiveModelIds, slotTypeOf } from '@/features/template-specs/specDraft';
+import {
+  effectiveModelIds,
+  hasSingleSlotRef,
+  slotTypeOf,
+} from '@/features/template-specs/specDraft';
 import { ParamFields } from '@/entities/model/ui/ParamFields';
 import {
   Button,
@@ -488,9 +492,15 @@ export function SpecLibrary() {
          才知道这次生成会用什么内容。
 
          均衡档下可选槽位被整个剔除了，不进 `fillSlots` —— 它不传素材，
-         也就没有「未填则用」这回事（提示词里那段根本没被引用）。 */
+         也就没有「未填则用」这回事（提示词里那段根本没被引用）。
+
+         **还要它真的被引用**：后端只在**单张引用**时用「未选时文案」
+         （`compile.py::_fallback_or_raise`）。没被引用的槽位，它的兜底文案
+         是死数据 —— 摆出来会让使用者以为这段话会进提示词。 */
       const fallback =
-        isOptionalSlot(slot) && count === 0 ? slot.emptyText?.trim() : '';
+        isOptionalSlot(slot) && count === 0 && hasSingleSlotRef(version?.prompt ?? '', slot.key)
+          ? slot.emptyText?.trim() ?? ''
+          : '';
       return {
         label: slot.label || slot.key,
         count,
