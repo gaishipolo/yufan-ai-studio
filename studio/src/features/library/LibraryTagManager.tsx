@@ -111,9 +111,9 @@ export function LibraryTagManager({ tags, onClose }: LibraryTagManagerProps) {
   return (
     <Modal open onClose={onClose} width={580} title="管理标签">
       <div className="space-y-3 p-[18px]">
-        <p className="text-body leading-5 text-ink-mute">
-          一级是维度，二级是取值；带下级的维度只做分组。删除一级会把它旗下的取值提升一级，资产与已有绑定不受影响。
-        </p>
+        {/* 原来三句：前两句是**字段含义**（列表每行左侧的层级标签已经表达了），
+            第三句是**危险操作的后果** —— 该留，但它离删除按钮很远。
+            后果挪到删除确认处（见 ManagerRow 的删除确认）。 */}
 
         <div className="max-h-[360px] space-y-1 overflow-auto rounded-lg border border-line-soft bg-panel-soft/40 p-2">
           {ordered.length === 0 && (
@@ -250,6 +250,11 @@ function ManagerRow({ tag, tags, busy, onRename, onMove, onDelete }: ManagerRowP
       </span>
       {confirming ? (
         <span className="inline-flex shrink-0 items-center gap-1">
+          {/* 删除的后果（会连带提升下级）只在这一刻说 ——
+              原来那句话挂在弹窗顶部，离删除按钮很远，用户点到这里时已经忘了。 */}
+          <span className="text-xs text-danger-deep">
+            {hasChildren ? `删除后 ${tag.childCount} 个下级会提升一级` : '删除后不可恢复'}
+          </span>
           <Button
             size="sm"
             variant="ghost"

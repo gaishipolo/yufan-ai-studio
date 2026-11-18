@@ -191,19 +191,24 @@ export function LibraryUploadModal({ open, tags, onClose }: LibraryUploadModalPr
         >
           <FileUp size={22} className="text-ink-mute" />
           <span className="text-body font-medium">选择图片、音频或文本</span>
+          {/* 「可多选」删掉 —— `input multiple` 说的是同一件事，
+              而**大小与格式上限**是猜不到的约束，要留。 */}
           <span className="text-body text-ink-mute">
-            可多选；图片/音频单个 ≤ 300 MB，.txt/.md 为 UTF-8 纯文本、≤ 1 MB
+            图片/音频单个 ≤ 300 MB，.txt/.md 为 UTF-8 纯文本、≤ 1 MB
           </span>
         </button>
 
         <div>
+          {/* 「给这批文件统一打标签」= 这批文件**共用**这组标签。
+              「统一」两个字是这里唯一的语义 —— 单条打标在卡片上的 ＋ 里，
+              两个入口长得一样，得靠这几个字区分开。 */}
           <div className="mb-1 text-body text-ink-soft">给这批文件统一打标签（可选）</div>
           <MultiSelect
             options={tagOptions(tags)}
             value={tagIds}
             onChange={setTagIds}
             placeholder="未选择标签"
-            emptyText="还没有标签，去「标签管理」新建"
+            emptyText="还没有可用标签"
             disabled={busy}
             ariaLabel="上传标签"
           />

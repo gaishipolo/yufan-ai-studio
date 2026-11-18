@@ -96,10 +96,27 @@ export function TagFilter({
   const rows = useMemo(() => {
     const visible = (items: LibraryTagStatOut[]) =>
       items.filter((tag) => !excluded.has(tag.id));
+    /* 行标题带 `title` 说明这一行的**组合语义**（与 `LibraryTagBar` 同一口径：
+       同维度是或、跨维度是且）。原来那是一行常驻小字，挂在顶上与它约束的
+       两行隔着一段距离 —— 现在规则贴在它约束的那一行上。
+
+       **单选时不给组合语义**：单选至多一个选中项，没有「多选是或」可言。 */
+    const hints: Record<string, string | undefined> = single
+      ? {}
+      : {
+          维度: '同一维度内多选是「或」：两个都圈上，两个都要看',
+          取值: '与维度行是「且」：圈了取值就只留同时满足这些取值的素材',
+        };
     return [
       ...(hideTopLevel
         ? []
-        : [{ label: '一级', items: visible(tagsAtDepth(allowed, 1)) }]),
+        : [
+            {
+              label: '维度',
+              hint: hints.维度,
+              items: visible(tagsAtDepth(allowed, 1)),
+            },
+          ]),
       /* 取值行随选中项收窄：点了「产品」就只剩产品的取值，
          点了「产品」+「角色」就是两条轴的取值之和。
 
@@ -111,6 +128,7 @@ export function TagFilter({
          选了「产品/6036」之后别的取值就都不见了，连换个取值都做不到。 */
       {
         label: '取值',
+        hint: hints.取值,
         items: visible(
           single ? selectableTags(allowed) : leafTagsForSelection(allowed, value),
         ),
@@ -144,9 +162,12 @@ export function TagFilter({
             <X size={10} /> 清除
           </button>
         )}
-        <span className="ml-auto text-micro text-ink-mute/80">
-          {single ? '选一个标签筛选' : '同一维度多选是或 · 跨维度是且'}
-        </span>
+        {/* 「同一维度多选是或 · 跨维度是且」原来是一行常驻小字。
+            它约束的是**下面这两行**，挂在顶上隔着一段距离。
+            现在并进**行标题的 `title`**（悬浮才看）—— 规则贴在它约束的那一行上。
+
+            单选时那句「选一个标签筛选」也删：单选胶囊（至多一个高亮）
+            本身就说得出这件事。 */}
       </div>
       {rows.map((row) =>
         row.items.length ? (
@@ -156,10 +177,18 @@ export function TagFilter({
             aria-label={`${row.label}标签`}
             className="flex flex-wrap items-center gap-1"
           >
-            {/* 只剩一行时不写「二级」前缀：标签本身说得出自己是什么，
-                再加个层级标签只是噪音（用户约定：避免不必要的辅助标签）。 */}
+            {/* 只剩一行时不写层级前缀：标签本身说得出自己是什么，
+                再加个层级标签只是噪音（用户约定：避免不必要的辅助标签）。
+
+                有两行时，行标题带 `title` 说明这一行的组合语义
+                （与 `LibraryTagBar` 同一口径：同维度是或、跨维度是且）。 */}
             {rows.length > 1 && (
-              <span className="w-8 shrink-0 text-micro text-ink-mute">{row.label}</span>
+              <span
+                className="w-8 shrink-0 text-micro text-ink-mute"
+                title={row.hint}
+              >
+                {row.label}
+              </span>
             )}
             {row.items.map((tag) => {
               const isActive = active.has(tag.id);

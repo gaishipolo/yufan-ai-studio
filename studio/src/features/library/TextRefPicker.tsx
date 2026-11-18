@@ -73,9 +73,10 @@ export function TextRefPicker({
         >
           插入文本引用
         </Button>
-        <span className="text-meta leading-4 text-ink-mute">
-          提示词里写 {'{{Text N}}'} 引用
-        </span>
+        {/* 原来这里写着「提示词里写 {{Text N}} 引用」—— 可那正是**自动发生**的事：
+            `retargetTextTokens` 在绑定成功时就把编号 token 追加进提示词了。
+            让用户手写一套语法，而系统本来就会替他写好，是纯多余的指导。
+            真要提示，只在下面那行 chip 上标出编号就够了。 */}
         <Chip tone={value.length ? 'primary' : 'default'}>{value.length}/{max}</Chip>
       </div>
 

@@ -178,15 +178,20 @@ export function LibraryShareModal({
           />
         </div>
 
-        <p className="rounded-lg bg-panel-soft px-2.5 py-1.5 text-body leading-relaxed text-ink-mute">
-          {mode === 'revoke'
-            ? '撤销共享要留痕：同事可能正在用这条素材，审批通过后才真正生效（你自己就是这个目标的审批人时会立即生效）。'
-            : instant
-              ? '你持有直接共享权限，提交后立即生效。'
-              : isOwner
-                ? '共享需要小组负责人或管理员审批，提交后可在「待我审核」里查看进度。'
-                : '这是别人上传的素材。提交后由小组负责人或管理员审批，通过后才会扩大可见范围。'}
-        </p>
+        {/* 共享模式的三个分支都在**复述下面那个 Chip**（「立即生效」/「需审批」）：
+            - 「你持有直接共享权限，提交后立即生效」= Chip「立即生效」；
+            - 「共享需要小组负责人或管理员审批」= Chip「需审批」；
+            - 「这是别人上传的素材。提交后由…审批」= 同上 + 一个状态。
+            全删。
+
+            **撤销**的那句要留：它说的是「撤销要留痕、审批后才生效」——
+            Chip 只说共享模式，不覆盖撤销，而后果（同事可能正在用这条素材）
+            从界面上完全看不出来。 */}
+        {mode === 'revoke' && (
+          <p className="rounded-lg bg-panel-soft px-2.5 py-1.5 text-body leading-relaxed text-ink-mute">
+            撤销共享要留痕：同事可能正在用这条素材，审批通过后才真正生效（你自己就是这个目标的审批人时会立即生效）。
+          </p>
+        )}
 
         <div className="flex items-center gap-1.5 border-t border-line-soft pt-3">
           {mode === 'share' && <Chip tone={instant ? 'ok' : 'warn'}>{instant ? '立即生效' : '需审批'}</Chip>}

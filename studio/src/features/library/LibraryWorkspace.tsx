@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Download } from 'lucide-react';
-import { Button, Chip, PageHeader, Pager } from '@/shared/ui';
+import { Button, PageHeader, Pager } from '@/shared/ui';
 import { toast } from '@/shared/lib/toast';
 import { useDebouncedValue } from '@/shared/hooks/useDebouncedValue';
 import { useCan, useSubject } from '@/shared/access/use-access';
@@ -11,7 +11,6 @@ import {
   deleteOffer,
   displayName,
   parseView,
-  viewMeta,
   viewQuery,
   type KindFilter,
   type LibrarySortKey,
@@ -541,17 +540,14 @@ export function LibraryWorkspace() {
       <PageHeader
         title="资产库"
         actions={
-          <>
-            <Button
-              size="sm"
-              variant="ghost"
-              icon={<Download size={13} />}
-              onClick={() => setDownloadsOpen(true)}
-            >
-              打包任务
-            </Button>
-            <Chip tone="ok">v2 · M5 观察期</Chip>
-          </>
+          <Button
+            size="sm"
+            variant="ghost"
+            icon={<Download size={13} />}
+            onClick={() => setDownloadsOpen(true)}
+          >
+            打包下载
+          </Button>
         }
       />
 
@@ -589,8 +585,6 @@ export function LibraryWorkspace() {
           <div className="mt-2 flex items-center justify-between gap-2 border-t border-line-soft pt-2">
             <span className="min-w-0 truncate text-body text-ink-mute">
               共 {total} 条
-              {items.length > 0 ? ` · ${viewMeta(view).hint}` : ''}
-              {canShare ? '' : ' · 共享与删除操作需要权限'}
             </span>
             <LibrarySelectAll items={items} selected={selected} onToggleAll={toggleAll} />
           </div>
@@ -602,6 +596,7 @@ export function LibraryWorkspace() {
           selected={selected}
           viewer={viewer}
           canUpdate={canUpdate}
+          canShare={canShare}
           tagBusy={patch.isPending}
           isPending={list.isPending}
           error={(list.error as Error | null) ?? null}

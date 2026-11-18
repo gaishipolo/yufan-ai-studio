@@ -113,18 +113,24 @@ export function LibraryTagBar({
             <X size={11} /> 清除筛选
           </button>
         )}
-        <span className="ml-auto shrink-0 text-xs text-ink-mute/80">
-          同一维度多选是或 · 跨维度是且
-        </span>
       </div>
 
+      {/* 行标题用**用户视角的概念**（「维度」/「取值」），不用「一级」「二级」——
+          「一级」「二级」是存储结构的说法：看标签词（「产品」「6036」「正面图」）
+          的人分不出哪行是分类、哪行是内容。
+
+          组合规则（同维度是或、跨维度是且）原来是一行常驻小字，
+          挂在标签栏顶上，与它约束的那两行隔着一段距离。
+          现在并进**行标题的 `title`**（悬浮才看）：规则贴在它约束的那一行上，
+          常驻版面干净了，信息还在。 */}
       <TagRow
-        label="一级"
-        ariaLabel="一级标签"
+        label="维度"
+        labelHint="同一维度内多选是「或」：两个都圈上，两个都要看"
+        ariaLabel="维度标签"
         allLabel="全部标签"
         query={topQuery}
         onQuery={setTopQuery}
-        searchLabel="搜索一级标签"
+        searchLabel="搜索维度标签"
         allActive={selected.length === 0}
         onAll={onClear}
         items={visibleTop}
@@ -134,12 +140,13 @@ export function LibraryTagBar({
       />
 
       <TagRow
-        label="二级"
-        ariaLabel="二级标签"
-        allLabel="全部标签（二级行）"
+        label="取值"
+        labelHint="与维度行是「且」：圈了取值就只留同时满足这些取值的素材"
+        ariaLabel="取值标签"
+        allLabel="全部标签（取值行）"
         query={secondQuery}
         onQuery={setSecondQuery}
-        searchLabel="搜索二级标签"
+        searchLabel="搜索取值标签"
         allActive={selected.length === 0}
         onAll={onClear}
         items={visibleSecond}
@@ -154,9 +161,7 @@ export function LibraryTagBar({
         </p>
       )}
       {!!tags.length && !second.length && (
-        <p className="text-xs text-ink-mute">
-          还没有下级标签，在「管理标签」里把取值挂到维度下面即可
-        </p>
+        <p className="text-xs text-ink-mute">还没有取值标签</p>
       )}
     </div>
   );
@@ -164,6 +169,8 @@ export function LibraryTagBar({
 
 interface TagRowProps {
   label: string;
+  /** 这一行的**组合语义**（并进 `title`，悬浮才看 —— 它约束的是这一行）。 */
+  labelHint?: string;
   /** 稳定的分组名（第二、三行标题会随当前上级变化，不能拿它当 aria-label） */
   ariaLabel: string;
   allLabel: string;
@@ -180,6 +187,7 @@ interface TagRowProps {
 
 function TagRow({
   label,
+  labelHint,
   ariaLabel,
   allLabel,
   query,
@@ -198,7 +206,7 @@ function TagRow({
       aria-label={ariaLabel}
       className="flex min-h-[30px] flex-wrap items-center gap-1.5"
     >
-      <span className={ROW_LABEL} title={label}>
+      <span className={ROW_LABEL} title={labelHint ?? label}>
         {label}
       </span>
       <input

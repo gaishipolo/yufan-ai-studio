@@ -36,7 +36,7 @@ import type {
   LibraryTagStatOut,
 } from '@/shared/api/schema';
 import { useLibrarySelectionInfinite, useLibraryTags } from '../api/library.queries';
-import { KIND_OPTIONS, displayName } from '../model/types';
+import { KIND_LABEL, KIND_OPTIONS, displayName } from '../model/types';
 import { childTags, tagLabel, topLevelTags } from '../model/tagTree';
 import { writeLibraryDrag, type LibraryAssetDrag } from '@/shared/lib/libraryDrag';
 
@@ -313,15 +313,18 @@ export function LibraryFlyout({
         </div>
 
         {!canPickKind && (
-          <p className="rounded-md bg-panel-soft px-2 py-1 text-micro leading-snug text-ink-mute">
-            本次只收 {allowedLabels}：{kindLabel}素材可以在这里浏览，不能加入。
-          </p>
+          /* 这一句说了三遍同一件事（顶部 title、这里、底部）。
+             只留最完整的一处（底部）。 */
+          <p className="sr-only">本次只收 {allowedLabels}：{kindLabel}素材可以在这里浏览，不能加入。</p>
         )}
 
-        {/* 两级标签都做成单选横滑：抽屉太窄，多选标签栏会挤成三行、把素材全顶出视野 */}
+        {/* 两级标签都做成单选横滑：抽屉太窄，多选标签栏会挤成三行、把素材全顶出视野。
+
+            行标题用**用户视角的概念**（「维度」/「取值」），不用「一级」「二级」——
+            与 `LibraryTagBar` 同一口径。 */}
         <FlyoutTagRow
-          label="一级"
-          ariaLabel="一级标签"
+          label="维度"
+          ariaLabel="维度标签"
           allLabel="全部标签"
           allActive={!effectiveTag}
           onAll={clearTags}
@@ -334,24 +337,25 @@ export function LibraryFlyout({
           二级行**不随数据消失**：点了一个还没挂取值的一级就整行收起，
           看起来又变回「只有一级」，还让下面一整块内容往上跳。
           词表里一个二级都没有时才退化成一句说明。
+
+          行标题**固定**为「取值」：原来选中「产品」后行首的「二级」会变成
+          「产品」—— 行标题变成了内容的一部分，语义自相矛盾。
         */}
         {hasAnyChild ? (
           <FlyoutTagRow
-            label={activeParent ? (byId.get(activeParent)?.name ?? '二级') : '二级'}
-            ariaLabel="二级标签"
-            allLabel="全部二级标签"
+            label="取值"
+            ariaLabel="取值标签"
+            allLabel="全部取值标签"
             allActive={!childTagId}
             onAll={() => setChildTagId('')}
             items={children}
             activeId={childTagId}
             onPick={pickChild}
             showParentName={!activeParent}
-            hint={children.length ? undefined : '该一级下还没有二级标签'}
+            hint={children.length ? undefined : '该维度下还没有取值标签'}
           />
         ) : (
-          <p className="pl-8 text-micro leading-snug text-ink-mute">
-            还没有二级标签：在资产库「管理标签」里把取值挂到一级下面即可。
-          </p>
+          <p className="pl-8 text-micro leading-snug text-ink-mute">还没有取值标签</p>
         )}
       </div>
 
@@ -425,7 +429,10 @@ export function LibraryFlyout({
                       ? '文本资产'
                       : asset.width && asset.height
                         ? `${asset.width}×${asset.height}`
-                        : '图片'}
+                        : /* 原来这里兜底写死「图片」—— 但 `kind` 可能是 video，
+                             没返回宽高时副标题会说「图片」，**类型标签说错了**。
+                             用目录里的类型名（与 `LibraryCard` 同一口径）。 */
+                          KIND_LABEL[asset.kind] ?? ''}
                   </div>
 
                   {picked ? (
@@ -436,13 +443,21 @@ export function LibraryFlyout({
                       {order + 1}
                     </span>
                   ) : full || !pickable ? null : (
+                    /* 「＋ 加入」按钮**常显**，不靠悬停。
+
+                       原来它是 `opacity-0 group-hover:opacity-100` —— 触屏没有
+                       hover，这个按钮**永远不出现**，唯一的入口是拖拽；
+                       而拖拽也没有落点提示。所以抽屉底部不得不写一句
+                       「点卡片右上角 ＋ 加入」替一个看不见的控件发声。
+
+                       让控件露出来，文字就不用替它说话了。 */
                     <button
                       type="button"
                       aria-label={`加入参考图：${displayName(asset.name)}`}
                       onClick={() => onPick(payload)}
                       className={cn(
                         'absolute right-1 top-1 grid size-[20px] place-items-center rounded-full',
-                        'bg-black/45 text-white opacity-0 transition group-hover:opacity-100',
+                        'bg-black/55 text-white transition hover:bg-primary',
                         'focus-visible:opacity-100',
                       )}
                     >
@@ -488,10 +503,14 @@ export function LibraryFlyout({
           <span className="text-warn-deep">已达上限 {max} 张，移除一张后可继续添加</span>
         ) : !canPickKind ? (
           `只能浏览${kindLabel}素材：本次只收 ${allowedLabels}，切到那些类别才能加入。`
-        ) : kinds.includes('text') ? (
-          '拖文本卡到左侧，或点卡片右上角 ＋ 加入。只显示所选类型，顺序即提交顺序。'
         ) : (
-          `拖缩略图到左侧参考图框，或点卡片右上角 ＋ 加入。只显示${kindLabel}素材，顺序即提交顺序。`
+          /* 只留**猜不到的那半句**：「顺序即提交顺序」。
+             「拖缩略图到左侧，或点卡片右上角 ＋ 加入」是操作指引 ——
+             「＋」按钮现在**常显**了（原来靠悬停，触屏根本看不到），
+             拖拽在界面上也是能拖的（cursor-grab），用不着文字教。
+
+             「只显示X素材」= 上面的类型切换条自己写着。 */
+          '顺序即提交顺序'
         )}
       </div>
     </aside>

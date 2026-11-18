@@ -85,8 +85,8 @@ const renderFlyout = (kinds?: ('image' | 'video' | 'audio' | 'text')[]) =>
 const lastCall = () => selectionCalls[selectionCalls.length - 1];
 
 /** 两行标签各自的胶囊文案会撞（「产品」既是一级也在二级的父名前缀里），按行取 */
-const topRow = () => screen.getByRole('group', { name: '一级标签' });
-const childRow = () => screen.getByRole('group', { name: '二级标签' });
+const topRow = () => screen.getByRole('group', { name: '维度标签' });
+const childRow = () => screen.getByRole('group', { name: '取值标签' });
 
 describe('LibraryFlyout · 四个类别', () => {
   beforeEach(() => {
@@ -144,23 +144,23 @@ describe('LibraryFlyout · 四个类别', () => {
   });
 });
 
-describe('LibraryFlyout · 一级 / 二级标签', () => {
+describe('LibraryFlyout · 维度 / 取值标签', () => {
   beforeEach(() => {
     selectionCalls.length = 0;
     itemsData.current = [];
     tagsData.current = TAGS;
   });
 
-  it('默认两行都在：一级列一级，二级列全部子标签并带父名', () => {
+  it('默认两行都在：维度列维度，取值列全部子标签并带父名', () => {
     renderFlyout();
-    expect(screen.getByRole('group', { name: '一级标签' })).toBeInTheDocument();
-    const second = screen.getByRole('group', { name: '二级标签' });
+    expect(screen.getByRole('group', { name: '维度标签' })).toBeInTheDocument();
+    const second = screen.getByRole('group', { name: '取值标签' });
     // 没选一级时两组混排，必须带父名才能分辨
     expect(second).toHaveTextContent('产品 / 3030');
     expect(second).toHaveTextContent('产品 / 3020');
   });
 
-  it('点一级把一级 id 发下去，二级行收窄到该组', async () => {
+  it('点维度把维度 id 发下去，取值行收窄到该组', async () => {
     const user = userEvent.setup();
     renderFlyout();
 
@@ -173,7 +173,7 @@ describe('LibraryFlyout · 一级 / 二级标签', () => {
     expect(second).not.toHaveTextContent('产品 / 3030');
   });
 
-  it('点二级换成二级 id（不再带父），一级行仍高亮该组', async () => {
+  it('点取值换成取值 id（不再带父），维度行仍高亮该组', async () => {
     const user = userEvent.setup();
     renderFlyout();
 
@@ -187,7 +187,7 @@ describe('LibraryFlyout · 一级 / 二级标签', () => {
     );
   });
 
-  it('没先选一级，直接从「全部二级」点进去再取消：回到无筛选', async () => {
+  it('没先选维度，直接从「全部取值」点进去再取消：回到无筛选', async () => {
     const user = userEvent.setup();
     renderFlyout();
 
@@ -199,7 +199,7 @@ describe('LibraryFlyout · 一级 / 二级标签', () => {
     expect(lastCall().tagIds).toBeUndefined();
   });
 
-  it('先选一级再点二级，取消二级回到整组而不是全库', async () => {
+  it('先选维度再点取值，取消取值回到整组而不是全库', async () => {
     const user = userEvent.setup();
     renderFlyout();
 
@@ -209,23 +209,23 @@ describe('LibraryFlyout · 一级 / 二级标签', () => {
     expect(lastCall().tagIds).toEqual(['p1']);
   });
 
-  it('词表里一个二级都没有：二级行退化成一句说明，而不是假装有', () => {
+  it('词表里一个取值都没有：取值行退化成一句说明，而不是假装有', () => {
     tagsData.current = [tag('p2', '场景', { assetCount: 3, childCount: 0 })];
     renderFlyout();
-    expect(screen.getByRole('group', { name: '一级标签' })).toBeInTheDocument();
-    expect(screen.queryByRole('group', { name: '二级标签' })).toBeNull();
-    expect(screen.getByText(/还没有二级标签：在资产库「管理标签」里/)).toBeInTheDocument();
+    expect(screen.getByRole('group', { name: '维度标签' })).toBeInTheDocument();
+    expect(screen.queryByRole('group', { name: '取值标签' })).toBeNull();
+    expect(screen.getByText('还没有取值标签')).toBeInTheDocument();
   });
 
-  it('选到还没挂系列的一级：二级行留着并说明「该一级下还没有二级标签」', async () => {
+  it('选到还没挂取值的一级：取值行留着并说明「该维度下还没有取值标签」', async () => {
     const user = userEvent.setup();
     tagsData.current = [...TAGS, tag('p3', '空组', { assetCount: 0, childCount: 0 })];
     renderFlyout();
 
     await user.click(within(topRow()).getByRole('button', { name: /^空组/ }));
-    // 整行消失会让人以为「又只有一级」，还会让下面内容往上跳
+    // 整行消失会让人以为「又只有维度行」，还会让下面内容往上跳
     const second = childRow();
-    expect(second).toHaveTextContent('该一级下还没有二级标签');
+    expect(second).toHaveTextContent('该维度下还没有取值标签');
   });
 });
 

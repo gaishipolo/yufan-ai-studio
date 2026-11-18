@@ -10,6 +10,8 @@ export interface LibraryGridProps {
   selected: Set<string>;
   viewer: { id: string; canDeleteAny: boolean };
   canUpdate: boolean;
+  /** 能不能共享（没有就不渲染共享按钮，而不是摆一句「需要权限」）。 */
+  canShare?: boolean;
   tagBusy?: boolean;
   isPending: boolean;
   error: Error | null;
@@ -63,6 +65,7 @@ export function LibraryGrid(props: LibraryGridProps) {
           selected={selected.has(asset.id)}
           viewer={props.viewer}
           canUpdate={props.canUpdate}
+          canShare={props.canShare}
           tagBusy={props.tagBusy}
           onToggle={props.onToggle}
           onAction={props.onAction}

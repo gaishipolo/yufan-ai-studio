@@ -308,6 +308,11 @@ function DetailBody({
                       onChange={(event) => setName(event.target.value)}
                       className="h-7 w-full rounded-lg border border-primary-line bg-white px-2 text-body text-ink outline-none"
                       aria-label="资产名称"
+                      /* 这条约束（改完后缀还在）只在**编辑态**说，平时看不到后缀。
+                         原来是一行常驻小字，占着编辑区一行 ——
+                         改成输入框的 `title`（悬浮才看）与 `placeholder`。 */
+                      title="只改名称主体，格式后缀由文件本身决定"
+                      placeholder="只改主体，后缀保留"
                     />
                     <Button size="sm" variant="primary" onClick={() => name.trim() && save({ name: name.trim() })}>
                       保存
@@ -315,10 +320,6 @@ function DetailBody({
                     <Button size="sm" variant="ghost" onClick={() => setRenaming(false)}>
                       取消
                     </Button>
-                  </span>
-                  {/* 这句话必须在编辑态说：平时用户看不到后缀，改完发现还在会以为是 bug */}
-                  <span className="text-xs leading-4 text-ink-mute">
-                    只改名称主体，格式后缀由文件本身决定
                   </span>
                 </span>
               ) : (
@@ -352,7 +353,7 @@ function DetailBody({
                     save({ tagIds: values }, { versioned: false });
                   }}
                   placeholder="未打标签"
-                  emptyText="还没有标签，去「标签管理」新建"
+                  emptyText="还没有可用标签"
                   ariaLabel="编辑标签"
                 />
               ) : (
@@ -446,7 +447,7 @@ function DetailBody({
       {/* 6. 归档信息 */}
       {asset.archive && (
         <section className="space-y-2">
-          <SectionTitle>归档信息（仅本人与管理员可见）</SectionTitle>
+          <SectionTitle>归档信息</SectionTitle>
           <div className="grid gap-1.5 sm:grid-cols-2">
             <Field label="存储键" value={<code className="break-all font-mono text-body">{asset.archive.storageKey}</code>} />
             <Field label="SHA-256" value={<code className="break-all font-mono text-body">{asset.archive.sha256}</code>} />

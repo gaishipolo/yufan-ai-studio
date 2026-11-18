@@ -33,6 +33,10 @@ export interface LibraryCardProps {
   viewer: { id: string; canDeleteAny: boolean };
   /** 后端 PATCH 要 `library:update`，且只认本人 / `delete:any`；界面先少显示 × */
   canUpdate: boolean;
+  /** 能不能发起/撤销共享（后端要 `library:share`）。
+   *  没有这个权限时**共享按钮不出现** —— 摆一个点了就 403 的按钮，
+   *  再在旁边挂一句「共享需要权限」，那是拿小字替一个不该出现的控件发声。 */
+  canShare?: boolean;
   /** 正在提交去标签时禁用所有 ×，避免连点发出几次互相覆盖的 PATCH */
   tagBusy?: boolean;
   onToggle: (id: string) => void;
@@ -63,6 +67,7 @@ export function LibraryCard({
   selected,
   viewer,
   canUpdate,
+  canShare = true,
   tagBusy,
   onToggle,
   onAction,
@@ -293,15 +298,19 @@ export function LibraryCard({
           ) : null}
 
           <div className="ml-auto flex items-center gap-0.5">
-            {view !== 'drafts' && view !== 'trash' && offer === 'revoke' && (
+            {/* 共享 / 撤销共享：没有 `library:share` 就不出现。
+                原来摆着按钮、旁边挂一句「共享与删除操作需要权限」——
+                那句小字在替一个**点了必然 403 的按钮**发声。
+                按权限藏按钮（与 `Can` 组件的约定一致）比说明更干净。 */}
+            {canShare && view !== 'drafts' && view !== 'trash' && offer === 'revoke' && (
               <IconButton
                 icon={<Undo2 size={13} />}
-                label="取消共享（需审批通过后才能删除）"
+                label="取消共享"
                 onClick={() => onAction('revoke', asset)}
               />
             )}
 
-            {view !== 'drafts' && view !== 'trash' && offer !== 'revoke' && (
+            {canShare && view !== 'drafts' && view !== 'trash' && offer !== 'revoke' && (
               <IconButton
                 icon={<Share2 size={13} />}
                 label={asset.visibility === 'personal' ? '共享到…' : '改共享'}
@@ -321,7 +330,7 @@ export function LibraryCard({
             {view !== 'drafts' && view !== 'trash' && offer === 'force' && (
               <IconButton
                 icon={<Trash2 size={13} />}
-                label="强制移入回收站（需填理由）"
+                label="强制移入回收站"
                 className="text-danger/80 hover:bg-danger-soft hover:text-danger-deep"
                 onClick={() => onAction('delete', asset)}
               />

@@ -23,9 +23,9 @@ const TAGS: LibraryTagStatOut[] = [
 ];
 
 describe('TagFilter · 标签筛选条', () => {
-  it('默认两行：一级维度 / 取值，取值只显示短名', () => {
+  it('默认两行：维度 / 取值，取值只显示短名', () => {
     render(<TagFilter tags={TAGS} value={[]} onChange={vi.fn()} />);
-    const top = within(screen.getByRole('group', {name: '一级标签'}));
+    const top = within(screen.getByRole('group', {name: '维度标签'}));
     const second = within(screen.getByRole('group', {name: '取值标签'}));
     expect(top.getAllByRole('button').map((b) => b.textContent)).toEqual([
       '产品',
@@ -67,7 +67,7 @@ describe('TagFilter · 标签筛选条', () => {
     const { rerender } = render(
       <TagFilter tags={TAGS} value={[]} onChange={onChange} />,
     );
-    const top = within(screen.getByRole('group', {name: '一级标签'}));
+    const top = within(screen.getByRole('group', {name: '维度标签'}));
     await user.click(top.getByRole('button', {name: '产品'}));
     expect(onChange).toHaveBeenCalledWith(['t1']);
 
@@ -108,7 +108,7 @@ describe('TagFilter · 模板库那一侧（hideTopLevel + excludeIds）', () =>
     render(
       <TagFilter tags={TAGS} hideTopLevel excludeIds={['t2']} value={[]} onChange={vi.fn()} />,
     );
-    expect(screen.queryByRole('group', {name: '一级标签'})).not.toBeInTheDocument();
+    expect(screen.queryByRole('group', {name: '维度标签'})).not.toBeInTheDocument();
   });
 
   it('候选集里的标签不作为选项出现（它就是范围，点了等于没筛）', () => {
@@ -197,14 +197,25 @@ describe('TagFilter · 单选（single）', () => {
     ]);
   });
 
-  it('提示语换掉多选那套（单选没有「或/且」可言）', () => {
+  it('单选不给组合语义：至多一个选中项，没有「或/且」可言', () => {
     render(<TagFilter tags={TAGS} single value={[]} onChange={vi.fn()} />);
-    expect(screen.queryByText(/同一维度多选是或/)).not.toBeInTheDocument();
-    expect(screen.getByText('选一个标签筛选')).toBeInTheDocument();
+    // 行标题仍然在，但不带「或/且」的组合说明（那是多选才有的规则）
+    const label = screen.getByText('维度');
+    expect(label).not.toHaveAttribute('title');
+    expect(screen.queryByText(/或/)).not.toBeInTheDocument();
   });
 
-  it('多选模式保留原来的「或/且」提示语', () => {
+  it('多选模式：组合语义并进行标题的 title（不再是常驻小字）', () => {
     render(<TagFilter tags={TAGS} value={[]} onChange={vi.fn()} />);
-    expect(screen.getByText(/同一维度多选是或/)).toBeInTheDocument();
+    expect(screen.getByText('维度')).toHaveAttribute(
+      'title',
+      '同一维度内多选是「或」：两个都圈上，两个都要看',
+    );
+    expect(screen.getByText('取值')).toHaveAttribute(
+      'title',
+      '与维度行是「且」：圈了取值就只留同时满足这些取值的素材',
+    );
+    // 常驻小字已经不在版面上
+    expect(screen.queryByText(/同一维度多选是或/)).not.toBeInTheDocument();
   });
 });

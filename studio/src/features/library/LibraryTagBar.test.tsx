@@ -16,8 +16,8 @@ const TAGS: LibraryTagStatOut[] = [
 ];
 
 const rows = () => ({
-  top: within(screen.getByRole('group', {name: '一级标签'})),
-  second: within(screen.getByRole('group', {name: '二级标签'})),
+  top: within(screen.getByRole('group', {name: '维度标签'})),
+  second: within(screen.getByRole('group', {name: '取值标签'})),
 });
 
 function renderBar(selected: string[], onChange = vi.fn(), onClear = vi.fn()) {
@@ -28,7 +28,7 @@ function renderBar(selected: string[], onChange = vi.fn(), onClear = vi.fn()) {
 }
 
 describe('LibraryTagBar · 两级标签任意组合', () => {
-  it('两行分别是一级 / 二级，各自按添加时间排序并带素材数', () => {
+  it('两行分别是维度 / 取值，各自按添加时间排序并带素材数', () => {
     renderBar([]);
     const { top, second } = rows();
     expect(top.getAllByRole('button').map((b) => b.textContent)).toEqual([
@@ -50,7 +50,7 @@ describe('LibraryTagBar · 两级标签任意组合', () => {
     );
   });
 
-  it('二级行随选中的一级收窄：点了「产品」就只剩产品的取值', () => {
+  it('取值行随选中的维度收窄：点了「产品」就只剩产品的取值', () => {
     renderBar(['t1']);
     const { second } = rows();
     expect(second.getAllByRole('button').map((b) => b.textContent)).toEqual([
@@ -60,7 +60,7 @@ describe('LibraryTagBar · 两级标签任意组合', () => {
     ]);
   });
 
-  it('二级行随多个维度叠加：点了「产品」+「角色」就是两条轴的取值之和', () => {
+  it('取值行随多个维度叠加：点了「产品」+「角色」就是两条轴的取值之和', () => {
     renderBar(['t1', 't2']);
     const { second } = rows();
     expect(second.getAllByRole('button').map((b) => b.textContent)).toEqual([
@@ -71,12 +71,12 @@ describe('LibraryTagBar · 两级标签任意组合', () => {
     ]);
   });
 
-  it('选了一个二级取值，二级行仍列它所属维度的全部取值（才能同维度多选）', () => {
+  it('选了一个取值，取值行仍列它所属维度的全部取值（才能同维度多选）', () => {
     renderBar(['t11']);
     const { top, second } = rows();
-    // 一级行始终列全部维度：用户要换方向得能点到别的轴
+    // 维度行始终列全部维度：用户要换方向得能点到别的轴
     expect(top.getByRole('button', {name: /^角色/})).toBeInTheDocument();
-    // 二级行收窄到「产品」这一条轴，但兄弟取值「T40」还得留着
+    // 取值行收窄到「产品」这一条轴，但兄弟取值「T40」还得留着
     expect(second.getAllByRole('button').map((b) => b.textContent)).toEqual([
       '全部',
       '30305',
@@ -84,14 +84,14 @@ describe('LibraryTagBar · 两级标签任意组合', () => {
     ]);
   });
 
-  it('点一级只选中它（URL 里存的是维度 id）', async () => {
+  it('点维度只选中它（URL 里存的是维度 id）', async () => {
     const user = userEvent.setup();
     const { onChange } = renderBar([]);
     await user.click(rows().top.getByRole('button', {name: /^产品/}));
     expect(onChange).toHaveBeenCalledWith(['t1']);
   });
 
-  it('点二级不再把父一级踢掉：两级可以任意组合', async () => {
+  it('点取值不再把父维度踢掉：两级可以任意组合', async () => {
     const user = userEvent.setup();
     const { onChange } = renderBar(['t1']);
     await user.click(rows().second.getByRole('button', {name: /3030/}));
@@ -115,8 +115,8 @@ describe('LibraryTagBar · 两级标签任意组合', () => {
   it('两行都是「行标题 → 搜索框 → 全部」，输入框上下对齐', () => {
     renderBar([]);
     for (const [rowName, searchName] of [
-      ['一级标签', '搜索一级标签'],
-      ['二级标签', '搜索二级标签'],
+      ['维度标签', '搜索维度标签'],
+      ['取值标签', '搜索取值标签'],
     ] as const) {
       const row = within(screen.getByRole('group', {name: rowName}));
       const input = row.getByRole('searchbox', {name: searchName});
@@ -130,7 +130,7 @@ describe('LibraryTagBar · 两级标签任意组合', () => {
     const user = userEvent.setup();
     renderBar([]);
     const { top, second } = rows();
-    await user.type(top.getByRole('searchbox', {name: '搜索一级标签'}), '音');
+    await user.type(top.getByRole('searchbox', {name: '搜索维度标签'}), '音');
     expect(top.queryByRole('button', {name: /^产品/})).not.toBeInTheDocument();
     expect(top.getByRole('button', {name: /^音乐/})).toBeInTheDocument();
     expect(second.getByRole('button', {name: /3030/})).toBeInTheDocument();
@@ -141,7 +141,7 @@ describe('LibraryTagBar · 两级标签任意组合', () => {
     const { onClear } = renderBar(['t1', 't11']);
     const { top, second } = rows();
     await user.click(top.getByRole('button', {name: '全部标签'}));
-    await user.click(second.getByRole('button', {name: '全部标签（二级行）'}));
+    await user.click(second.getByRole('button', {name: '全部标签（取值行）'}));
     expect(onClear).toHaveBeenCalledTimes(2);
   });
 

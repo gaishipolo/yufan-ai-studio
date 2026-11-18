@@ -121,9 +121,13 @@ export function LibraryTagPicker({
       title={`给「${displayName(asset.name)}」添加标签`}
     >
       <div className="space-y-3 p-[18px]">
-        <p className="text-body leading-5 text-ink-mute">
-          按上级分组列出可打标的标签；带下级的层级只作分组，不能直接打在素材上。已有标签请在卡片上点 × 移除。
-        </p>
+        {/* 原来这三句都在说**界面上已经看得见的事**：
+            - 「按上级分组列出」→ 分组标题就在每组上方；
+            - 「带下级的层级只作分组，不能直接打在素材上」→
+              带下级的词**根本不出现在列表里**（列的是叶子）；
+            - 「已有标签请在卡片上点 × 移除」→ 这个弹窗就是从卡片上的 ＋
+              打开的，× 就在卡片上，属跨界面重复指引。
+            全删。 */}
 
         <div className="flex max-h-[240px] min-h-[52px] flex-col gap-2 overflow-auto rounded-lg border border-line-soft bg-panel-soft/50 p-2">
           {groups.length === 0 ? (

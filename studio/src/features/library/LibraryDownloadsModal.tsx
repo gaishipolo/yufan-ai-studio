@@ -29,11 +29,14 @@ export function LibraryDownloadsModal({ open, onClose }: LibraryDownloadsModalPr
   const jobs = query.data ?? [];
 
   return (
-    <Modal open={open} onClose={onClose} title="打包任务" width={560}>
+    <Modal open={open} onClose={onClose} title="打包下载" width={560}>
       <div className="space-y-2 p-[18px]">
         {!jobs.length ? (
+          /* 空态只说「还没有打包任务」——「在列表里勾选若干资产后点『打包下载』」
+             是**跨界面指引**（这个弹窗是从页头按钮打开的，勾选在另一屏），
+             而且按钮名就在批量条上，用不着在这里教一遍。 */
           <p className="rounded-lg bg-panel-soft px-3 py-8 text-center text-body text-ink-mute">
-            还没有打包任务。在列表里勾选若干资产后点「打包下载」。
+            还没有打包任务
           </p>
         ) : (
           <ul className="max-h-[420px] space-y-2 overflow-auto pr-1">

@@ -122,7 +122,7 @@ export function LibraryBulkBar({ view, count, tags, busy, onClear, onAction }: L
               value={tagIds}
               onChange={setTagIds}
               placeholder="选择要添加的标签"
-              emptyText="还没有标签，去「标签管理」新建"
+              emptyText="还没有可用标签"
               ariaLabel="批量添加标签"
             />
           </div>
