@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { Lock } from 'lucide-react';
 import { useLogin } from '@/entities/session/api/session.queries';
-import { Button, FormField, TextInput } from '@/shared/ui';
+import { Button, FormField, Notice, TextInput } from '@/shared/ui';
 import { describeLoginFailure, formatCooldown, type LoginFailure } from './login-feedback';
 
 /** mock 模式下登录页给出可用账号，省掉「去 seed.py 里翻密码」这一步 */
@@ -101,16 +101,17 @@ export function LoginForm({ onSuccess }: { onSuccess?: () => void }) {
       </FormField>
 
       {failure && (
-        <div
-          role="alert"
-          className="rounded-lg border border-danger/25 bg-danger/5 px-2.5 py-2 text-danger"
+        <Notice
+          tone="error"
+          title={
+            <span className="flex items-center gap-1.5">
+              {locked && <Lock size={11} aria-hidden />}
+              {failure.title}
+            </span>
+          }
         >
-          <p className="flex items-center gap-1.5 text-xs font-semibold leading-[1.5]">
-            {locked && <Lock size={11} aria-hidden />}
-            {failure.title}
-          </p>
-          <p className="mt-0.5 text-meta leading-[1.6] text-danger/85">{failure.detail}</p>
-        </div>
+          {failure.detail}
+        </Notice>
       )}
 
       {/* 文案说「最多」是有意的：后端是滑动窗口，解锁时刻由**第一次**失败决定，

@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { Button, FormField, Modal, TextInput } from '@/shared/ui';
+import { Button, FormField, Modal, Notice, TextInput } from '@/shared/ui';
 import { toast } from '@/shared/lib/toast';
 import { useCreateRole, useUpdateRole } from '@/entities/role/api/role.queries';
 import type { Role } from '@/entities/role/model/types';
@@ -119,9 +119,7 @@ export function RoleFormModal({
         </FormField>
 
         {formError && (
-          <p className="rounded-lg border border-[#fad7d4] bg-[#feeceb] px-2.5 py-2 text-meta text-[#d94036]" role="alert">
-            {formError}
-          </p>
+          <Notice tone="error">{formError}</Notice>
         )}
 
         <div className="flex items-center justify-end gap-1.5 pt-1">

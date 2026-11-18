@@ -1,5 +1,5 @@
 import { Bookmark, Download, RotateCcw } from 'lucide-react';
-import { Button, Chip, CoverImage, Modal, Skeleton } from '@/shared/ui';
+import { Button, Chip, CoverImage, Modal, Notice, Skeleton } from '@/shared/ui';
 import { toast } from '@/shared/lib/toast';
 import { downloadUrl } from '@/shared/lib/download';
 import { formatDateTime, formatDuration, generatedFileName } from '@/shared/lib/format';
@@ -105,9 +105,9 @@ export function TaskPreviewModal({ taskId, outputUrl, onClose }: TaskPreviewModa
             </dl>
 
             {task.errorMessage && (
-              <p className="mt-3 rounded-lg border border-[#fad7d4] bg-[#feeceb] px-3 py-2 text-meta leading-relaxed text-[#d94036]">
+              <Notice tone="error" className="mt-3">
                 {task.errorMessage}
-              </p>
+              </Notice>
             )}
 
             <div className="mt-4 flex flex-wrap gap-2">

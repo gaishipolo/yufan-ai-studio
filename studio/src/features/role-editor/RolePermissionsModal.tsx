@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, Loader2 } from 'lucide-react';
-import { Button, Chip, Modal } from '@/shared/ui';
+import { Button, Chip, Modal, Notice } from '@/shared/ui';
 import { cn } from '@/shared/lib/cn';
 import { toast } from '@/shared/lib/toast';
 import { usePermissionCatalog, useSetRolePermissions } from '@/entities/role/api/role.queries';
@@ -88,9 +88,7 @@ export function RolePermissionsModal({
     >
       <div className="space-y-3 px-[18px] py-4">
         {isSuperuser ? (
-          <p className="rounded-lg border border-[#fbe8c8] bg-[#fff6e6] px-2.5 py-2 text-meta leading-[1.6] text-[#b97a10]">
-            该角色是超级管理员，权限恒为全部，不提供编辑。
-          </p>
+          <Notice tone="warning">该角色是超级管理员，权限恒为全部，不提供编辑。</Notice>
         ) : (
           <PermissionSummaryBar
             count={selected.length}
@@ -100,17 +98,19 @@ export function RolePermissionsModal({
         )}
 
         {orphaned.length > 0 && (
-          <div className="rounded-lg border border-[#fbe8c8] bg-[#fff6e6] px-2.5 py-2">
-            <p className="flex items-center gap-1.5 text-meta font-medium text-[#b97a10]">
-              <AlertTriangle size={12} /> 含 {orphaned.length} 个已失效的权限码
-            </p>
-            <p className="mt-1 font-mono text-meta leading-[1.6] text-[#b97a10]">
-              {orphaned.join('、')}
-            </p>
-            <p className="mt-1 text-meta leading-[1.6] text-[#b97a10]">
+          <Notice
+            tone="warning"
+            title={
+              <span className="flex items-center gap-1.5">
+                <AlertTriangle size={12} /> 含 {orphaned.length} 个已失效的权限码
+              </span>
+            }
+          >
+            <span className="block font-mono">{orphaned.join('、')}</span>
+            <span className="mt-1 block">
               权限点已下线（模块删除或改名），保存时会自动清除，避免「看起来没有却还能访问」。
-            </p>
-          </div>
+            </span>
+          </Notice>
         )}
 
         {isSuperuser ? null : catalogQuery.isLoading ? (
@@ -179,9 +179,7 @@ export function RolePermissionsModal({
         )}
 
         {formError && (
-          <p className="rounded-lg border border-[#fad7d4] bg-[#feeceb] px-2.5 py-2 text-meta text-[#d94036]" role="alert">
-            {formError}
-          </p>
+          <Notice tone="error">{formError}</Notice>
         )}
 
         <div className="flex items-center justify-end gap-1.5 pt-1">

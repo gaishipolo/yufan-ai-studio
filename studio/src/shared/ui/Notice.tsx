@@ -22,8 +22,8 @@ const TONE_CLASS: Record<NoticeTone, string> = {
 
 export interface NoticeProps {
   tone?: NoticeTone;
-  /** 可选的一行小标题，正文长的时候用它先给结论 */
-  title?: string;
+  /** 可选的一行小标题，正文长的时候用它先给结论。可带图标（如「账户已锁定」）。 */
+  title?: ReactNode;
   /** 传了才出现右上角的关闭按钮 */
   onClose?: () => void;
   className?: string;

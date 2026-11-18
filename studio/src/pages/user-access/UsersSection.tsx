@@ -345,7 +345,7 @@ export function UsersSection() {
                                   size="sm"
                                   variant="ghost"
                                   disabled={user.id === subject.id}
-                                  className="text-danger hover:bg-[#feeceb] hover:text-danger"
+                                  className="text-danger hover:bg-danger-soft hover:text-danger"
                                   onClick={() => open('deactivate', user)}
                                 >
                                   停用

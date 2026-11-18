@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Button, Modal } from '@/shared/ui';
+import { Button, Modal, Notice } from '@/shared/ui';
 import { toast } from '@/shared/lib/toast';
 import { usePermissionCatalog } from '@/entities/role/api/role.queries';
 import {
@@ -97,9 +97,7 @@ function LayerForm({
           />
         )}
         {formError && (
-          <p className="rounded-lg border border-[#fad7d4] bg-[#feeceb] px-2.5 py-2 text-meta text-[#d94036]" role="alert">
-            {formError}
-          </p>
+          <Notice tone="error">{formError}</Notice>
         )}
         <div className="flex items-center justify-end gap-1.5 pt-1">
           <Button onClick={onClose} disabled={saving}>

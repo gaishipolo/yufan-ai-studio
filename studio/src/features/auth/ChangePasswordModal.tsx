@@ -114,14 +114,7 @@ export function ChangePasswordModal({ open, onClose }: { open: boolean; onClose:
           />
         </FormField>
 
-        {formError && (
-          <p
-            className="rounded-lg border border-danger/25 bg-danger/5 px-2.5 py-2 text-meta text-danger"
-            role="alert"
-          >
-            {formError}
-          </p>
-        )}
+        {formError && <Notice tone="error">{formError}</Notice>}
 
         <div className="flex items-center justify-end gap-1.5 pt-1">
           <Button onClick={onClose} disabled={changePassword.isPending}>

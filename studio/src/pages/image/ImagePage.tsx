@@ -318,7 +318,7 @@ export default function ImagePage() {
                       </div>
                       {job.errorMessage && (
                         <p
-                          className="mt-1 truncate text-micro text-[#d94036]"
+                          className="mt-1 truncate text-micro text-danger-deep"
                           title={job.errorMessage}
                         >
                           {job.errorMessage}

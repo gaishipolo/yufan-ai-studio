@@ -13,7 +13,7 @@ import {
   LOGIN_PATH,
 } from '@/shared/config/app';
 import { FullPageLoader } from '@/shared/ui/FullPageLoader';
-import { BrandMark, Toaster } from '@/shared/ui';
+import { BrandMark, Notice, Toaster } from '@/shared/ui';
 
 /**
  * 会话结束的说明文案。
@@ -118,13 +118,12 @@ export default function LoginPage() {
           </p>
 
           {notice && (
-            <p
-              role="status"
-              className="mt-3 flex items-start gap-1.5 rounded-lg border border-[#fbe8c8] bg-[#fff9ee] px-2.5 py-2 text-meta leading-[1.6] text-[#8a5b00]"
-            >
-              <Info size={12} className="mt-[2px] shrink-0" aria-hidden />
-              {notice}
-            </p>
+            <Notice tone="warning" className="mt-3">
+              <span className="flex items-start gap-1.5">
+                <Info size={12} className="mt-[2px] shrink-0" aria-hidden />
+                {notice}
+              </span>
+            </Notice>
           )}
 
           <div className="mt-4 rounded-panel border border-line-soft bg-panel p-4 shadow-card">

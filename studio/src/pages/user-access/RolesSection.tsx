@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { AlertCircle, AlertTriangle, Plus, RefreshCw, ShieldAlert, Users } from 'lucide-react';
-import { Button, Chip, ConfirmDialog, EmptyState, Skeleton } from '@/shared/ui';
+import { Button, Chip, ConfirmDialog, EmptyState, Notice, Skeleton } from '@/shared/ui';
 import { Can } from '@/shared/access/Can';
 import { useCan } from '@/shared/access/use-access';
 import { toast } from '@/shared/lib/toast';
@@ -50,10 +50,12 @@ function RoleCard({ role, onOpen }: { role: Role; onOpen: (dialog: Dialog, role:
       </div>
 
       {role.orphanedPermissions.length > 0 && (
-        <p className="mt-2 flex items-start gap-1.5 rounded-lg bg-[#fff6e6] px-2 py-1.5 text-meta leading-[1.5] text-[#b97a10]">
-          <AlertTriangle size={11} className="mt-[2px] shrink-0" />
-          有 {role.orphanedPermissions.length} 个权限码已下线，编辑权限时会自动清除
-        </p>
+        <Notice tone="warning" className="mt-2">
+          <span className="flex items-start gap-1.5">
+            <AlertTriangle size={11} className="mt-[2px] shrink-0" />
+            有 {role.orphanedPermissions.length} 个权限码已下线，编辑权限时会自动清除
+          </span>
+        </Notice>
       )}
 
       {/* mt-auto：卡片被同行拉高时，操作区始终贴底，视觉上四张卡对齐 */}
@@ -77,7 +79,7 @@ function RoleCard({ role, onOpen }: { role: Role; onOpen: (dialog: Dialog, role:
         <Button
           size="sm"
           variant="ghost"
-          className="text-danger hover:bg-[#feeceb] hover:text-danger"
+          className="text-danger hover:bg-danger-soft hover:text-danger"
           disabled={!canManage || Boolean(blockedReason)}
           title={blockedReason ?? undefined}
           onClick={() => setConfirming(true)}

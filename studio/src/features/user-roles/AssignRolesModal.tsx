@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { TriangleAlert } from 'lucide-react';
-import { Button, Modal } from '@/shared/ui';
+import { Button, Modal, Notice } from '@/shared/ui';
 import { toast } from '@/shared/lib/toast';
 import { useSubject } from '@/shared/access/use-access';
 import { RoleCheckboxList } from '@/entities/role/ui/RoleCheckboxList';
@@ -64,14 +64,15 @@ export function AssignRolesModal({
         </p>
 
         {isSelf && (
-          <p
-            role="status"
-            className="flex items-start gap-1.5 rounded-lg border border-[#fbe8c8] bg-[#fff9ee] px-2.5 py-2 text-meta leading-[1.6] text-[#8a5b00]"
-          >
-            <TriangleAlert size={12} className="mt-[2px] shrink-0" aria-hidden />
-            你正在修改自己的角色。撤销超级管理员后，需要刷新页面才会失去管理入口；
-            如果系统里只剩你一个超管，后端会直接拒绝这次修改。
-          </p>
+          <Notice tone="warning">
+            <span className="flex items-start gap-1.5">
+              <TriangleAlert size={12} className="mt-[2px] shrink-0" aria-hidden />
+              <span>
+                你正在修改自己的角色。撤销超级管理员后，需要刷新页面才会失去管理入口；
+                如果系统里只剩你一个超管，后端会直接拒绝这次修改。
+              </span>
+            </span>
+          </Notice>
         )}
 
         <RoleCheckboxList
@@ -82,9 +83,7 @@ export function AssignRolesModal({
         />
 
         {formError && (
-          <p className="rounded-lg border border-[#fad7d4] bg-[#feeceb] px-2.5 py-2 text-meta text-[#d94036]" role="alert">
-            {formError}
-          </p>
+          <Notice tone="error">{formError}</Notice>
         )}
 
         <div className="flex items-center justify-end gap-1.5 pt-1">

@@ -5,6 +5,7 @@ import {
   FormField,
   Modal,
   MultiSelect,
+  Notice,
   TextInput,
   type MultiSelectOption,
 } from '@/shared/ui';
@@ -329,9 +330,7 @@ export function UserFormModal({
         )}
 
         {formError && (
-          <p className="rounded-lg border border-[#fad7d4] bg-[#feeceb] px-2.5 py-2 text-meta text-[#d94036]" role="alert">
-            {formError}
-          </p>
+          <Notice tone="error">{formError}</Notice>
         )}
 
         <div className="flex items-center justify-end gap-1.5 pt-1">

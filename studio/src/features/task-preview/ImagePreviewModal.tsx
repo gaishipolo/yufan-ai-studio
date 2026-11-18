@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Download, RotateCcw } from 'lucide-react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Button, Chip, CoverImage, Modal } from '@/shared/ui';
+import { Button, Chip, CoverImage, Modal, Notice } from '@/shared/ui';
 import { toast } from '@/shared/lib/toast';
 import { downloadUrl } from '@/shared/lib/download';
 import { formatDateTime, generatedFileName } from '@/shared/lib/format';
@@ -108,9 +108,9 @@ export function ImagePreviewModal({ item, onClose }: ImagePreviewModalProps) {
             </dl>
 
             {image.errorMessage && (
-              <p className="mt-3 rounded-lg border border-[#fad7d4] bg-[#feeceb] px-3 py-2 text-meta leading-relaxed text-[#d94036]">
+              <Notice tone="error" className="mt-3">
                 {image.errorMessage}
-              </p>
+              </Notice>
             )}
             {inAttention && (
               <p className="mt-3 text-meta leading-relaxed text-ink-mute">

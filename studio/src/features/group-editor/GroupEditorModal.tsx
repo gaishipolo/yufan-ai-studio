@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Button, FormField, Modal, Tabs, TextInput, type TabItem } from '@/shared/ui';
+import { Button, FormField, Modal, Notice, Tabs, TextInput, type TabItem } from '@/shared/ui';
 import { Can } from '@/shared/access/Can';
 import { toast } from '@/shared/lib/toast';
 import {
@@ -186,9 +186,7 @@ export function GroupEditorModal({
         )}
 
         {formError && (
-          <p className="rounded-lg border border-[#fad7d4] bg-[#feeceb] px-2.5 py-2 text-meta text-[#d94036]" role="alert">
-            {formError}
-          </p>
+          <Notice tone="error">{formError}</Notice>
         )}
 
         <div className="flex items-center justify-end gap-1.5 border-t border-line-soft pt-3">

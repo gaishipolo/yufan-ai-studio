@@ -3,7 +3,7 @@ import { useMe, useUpdateProfile } from '@/entities/session/api/session.queries'
 import { UserAvatar } from '@/entities/user/ui/UserAvatar';
 import { checkAvatarUrl, checkEmail } from '@/entities/user/model/validation';
 import { toast } from '@/shared/lib/toast';
-import { Button, FormField, Modal, TextInput } from '@/shared/ui';
+import { Button, FormField, Modal, Notice, TextInput } from '@/shared/ui';
 
 /**
  * 个人资料：只能改展示信息（昵称 / 邮箱 / 头像）。
@@ -120,14 +120,7 @@ export function ProfileModal({ open, onClose }: { open: boolean; onClose: () => 
           </div>
         </FormField>
 
-        {formError && (
-          <p
-            className="rounded-lg border border-danger/25 bg-danger/5 px-2.5 py-2 text-meta text-danger"
-            role="alert"
-          >
-            {formError}
-          </p>
-        )}
+        {formError && <Notice tone="error">{formError}</Notice>}
 
         <div className="flex items-center justify-end gap-1.5 pt-1">
           <Button onClick={onClose} disabled={updateProfile.isPending}>
