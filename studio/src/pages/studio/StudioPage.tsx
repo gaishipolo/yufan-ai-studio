@@ -4,6 +4,7 @@ import { Wand2 } from 'lucide-react';
 import {
   Button,
   Chip,
+  ConfirmDialog,
   CoverImage,
   PageHeader,
   Panel,
@@ -57,6 +58,12 @@ export default function StudioPage() {
   const [libraryOpen, setLibraryOpen] = useState(false);
   const canReadLibrary = useCan('library:read');
   const upload = useUploadAsset();
+
+  /* 换模型会作废已选参考图（参考图上限与支持类型都由模型声明）。
+     以前是**静默清空**：用户挑了半天图，换个模型，图无声无息没了 ——
+     下拉框换了值，图没了，界面不说发生了什么。丢东西该问一声。
+     参考图为空时不问，直接换。 */
+  const [pendingModelId, setPendingModelId] = useState<string | null>(null);
 
   const currentModel = useMemo(
     () => models.find((item) => item.id === modelId) ?? models.find((m) => m.isDefault) ?? models[0],
@@ -120,6 +127,19 @@ export default function StudioPage() {
       return;
     }
     setReferences((prev) => [...prev, { id: asset.id, name: asset.name, url: asset.url }]);
+  };
+
+  /**
+   * 真正切换模型：清掉与旧模型绑定的状态。
+   *
+   * 参考图上限与支持类型都由模型声明，所以旧图在新模型下不一定还能用；
+   * 参数同理（新模型未必认这些键，留在 state 里会被后端拒）。
+   */
+  const applyModel = (nextId: string) => {
+    setModelId(nextId);
+    setReferences([]);
+    setLibraryOpen(false);
+    setOverrides({});
   };
 
   /**
@@ -249,12 +269,17 @@ export default function StudioPage() {
                 options={modelOptions}
                 value={currentModel?.id ?? ''}
                 onChange={(e) => {
-                  setModelId(e.target.value);
-                  // 换模型的参考图上限/支持情况可能完全不同，旧图一律清掉；
-                  // 参数同理（新模型未必认这些键，留在 state 里会被后端拒）。
-                  setReferences([]);
-                  setLibraryOpen(false);
-                  setOverrides({});
+                  const nextId = e.target.value;
+                  if (nextId === currentModel?.id) return;
+                  /* 有参考图就问一声再丢：静默清空等于替用户做决定。
+                     参数（overrides）也一起重置 —— 新模型未必认这些键，
+                     留在 state 里会被后端拒。那个不需要问：参数本来就是
+                     「按模型 schema 走」，换模型重置是预期行为，不是丢失。 */
+                  if (references.length > 0) {
+                    setPendingModelId(nextId);
+                    return;
+                  }
+                  applyModel(nextId);
                 }}
               />
             </Field>
@@ -366,6 +391,29 @@ export default function StudioPage() {
           kinds={referenceKinds as LibraryAssetKind[]}
         />
       )}
+
+      {/* 换模型要丢参考图，先问一声。
+          静默清空是替用户做决定 —— 挑了半天图，换个模型，图没了，
+          而界面只换了下拉框的值，没说发生了什么。 */}
+      <ConfirmDialog
+        open={pendingModelId !== null}
+        title="更换模型"
+        description="参考图与已调参数属于当前模型，换模型后会一并清空。"
+        details={[
+          { label: '参考图', value: `${references.length} 张` },
+          {
+            label: '新模型',
+            value: models.find((item) => item.id === pendingModelId)?.label ?? pendingModelId ?? '',
+          },
+        ]}
+        notice="素材本身还在素材库里，重新添加即可。"
+        confirmLabel="清空并更换"
+        onCancel={() => setPendingModelId(null)}
+        onConfirm={() => {
+          if (pendingModelId) applyModel(pendingModelId);
+          setPendingModelId(null);
+        }}
+      />
     </>
   );
 }

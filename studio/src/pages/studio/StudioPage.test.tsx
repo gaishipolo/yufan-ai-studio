@@ -271,7 +271,77 @@ describe('StudioPage · 参考图（与生图页同一条通道）', () => {
     await screen.findByRole('button', { name: '移除参考图 1' });
 
     await userEvent.setup().selectOptions(screen.getAllByRole('combobox')[0], 'kling-2.1');
+    // 有参考图时先问一声：静默清空等于替用户做决定
+    expect(screen.getByRole('dialog', { name: '更换模型' })).toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole('button', { name: '清空并更换' }));
     expect(screen.queryByRole('button', { name: '移除参考图 1' })).toBeNull();
+  });
+
+  /* 换模型会丢参考图 —— 丢东西该问一声，而不是静默清空。
+     静默清空时用户看到的是「下拉框换了值，图没了」，
+     界面完全没说发生了什么。 */
+  describe('换模型前的确认', () => {
+    it('有参考图时换模型会先弹确认，不静默清空', async () => {
+      uploadMock.mockResolvedValueOnce({ id: 'a-1', name: 'a.png', url: '/u/1' });
+      modelsMock.mockReturnValue([videoModel({ maxReferences: 2 }), KLING]);
+      render(<StudioPage />);
+
+      pick([png('a.png')]);
+      await screen.findByRole('button', { name: '移除参考图 1' });
+
+      await userEvent.setup().selectOptions(screen.getAllByRole('combobox')[0], 'kling-2.1');
+
+      expect(screen.getByRole('dialog', { name: '更换模型' })).toBeInTheDocument();
+      // 确认之前图还在，模型也还没换
+      expect(screen.getByRole('button', { name: '移除参考图 1' })).toBeInTheDocument();
+    });
+
+    it('取消就什么都不发生：图还在，模型没换', async () => {
+      uploadMock.mockResolvedValueOnce({ id: 'a-1', name: 'a.png', url: '/u/1' });
+      modelsMock.mockReturnValue([videoModel({ maxReferences: 2 }), KLING]);
+      render(<StudioPage />);
+
+      pick([png('a.png')]);
+      await screen.findByRole('button', { name: '移除参考图 1' });
+
+      const user = userEvent.setup();
+      await user.selectOptions(screen.getAllByRole('combobox')[0], 'kling-2.1');
+      await user.click(screen.getByRole('button', { name: '取消' }));
+
+      expect(screen.queryByRole('dialog', { name: '更换模型' })).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: '移除参考图 1' })).toBeInTheDocument();
+      // 模型还是原来那个
+      expect((screen.getAllByRole('combobox')[0] as HTMLSelectElement).value).toBe(
+        'agnes-video-2.5-flash',
+      );
+    });
+
+    it('确认后才换模型并清空参考图', async () => {
+      uploadMock.mockResolvedValueOnce({ id: 'a-1', name: 'a.png', url: '/u/1' });
+      modelsMock.mockReturnValue([videoModel({ maxReferences: 2 }), KLING]);
+      render(<StudioPage />);
+
+      pick([png('a.png')]);
+      await screen.findByRole('button', { name: '移除参考图 1' });
+
+      const user = userEvent.setup();
+      await user.selectOptions(screen.getAllByRole('combobox')[0], 'kling-2.1');
+      await user.click(screen.getByRole('button', { name: '清空并更换' }));
+
+      expect(screen.queryByRole('dialog', { name: '更换模型' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: '移除参考图 1' })).toBeNull();
+      expect((screen.getAllByRole('combobox')[0] as HTMLSelectElement).value).toBe('kling-2.1');
+    });
+
+    it('没有参考图时不问，直接换', async () => {
+      modelsMock.mockReturnValue([videoModel({ maxReferences: 2 }), KLING]);
+      render(<StudioPage />);
+
+      await userEvent.setup().selectOptions(screen.getAllByRole('combobox')[0], 'kling-2.1');
+
+      expect(screen.queryByRole('dialog', { name: '更换模型' })).not.toBeInTheDocument();
+      expect((screen.getAllByRole('combobox')[0] as HTMLSelectElement).value).toBe('kling-2.1');
+    });
   });
 
   it('提交成功后清空参考图，不让下一个任务莫名沿用旧图', async () => {
