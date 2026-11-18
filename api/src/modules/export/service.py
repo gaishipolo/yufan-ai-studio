@@ -31,7 +31,7 @@ from __future__ import annotations
 from datetime import timedelta
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core import audit
@@ -247,11 +247,27 @@ class ExportService:
 
         进程内队列重启即丢，`queued` / `running` 会永远挂在列表上转圈。
         这条兜底让用户至少能看到一个明确的失败，而不是无限等待。
+
+        ## 判据按状态分两支
+
+        - `queued` 看**创建时间**：排太久了没人接手；
+        - `running` 看**开始时间**（`started_at`，worker 接手时写的）：跑太久了
+          没结束。
+
+        原来两种状态都看创建时间，于是「一小时前创建、刚被 worker 接手的导出」
+        会被当成卡死置成 failed，随后 worker 干完又写 succeeded —— 用户先看到
+        「失败」、再看到「成功」，而产物其实早就好了。worker 的 `started_at` 在
+        `running` 缺失时（刚接手还没写）回落到创建时间，不给那种行留缺口。
         """
         cutoff = utcnow() - timedelta(seconds=older_than_sec)
         stmt = select(Export).where(
-            Export.status.in_(ACTIVE_STATUSES),
-            Export.created_at < cutoff,
+            or_(
+                and_(Export.status == ExportStatus.QUEUED.value, Export.created_at < cutoff),
+                and_(
+                    Export.status == ExportStatus.RUNNING.value,
+                    func.coalesce(Export.started_at, Export.created_at) < cutoff,
+                ),
+            )
         )
         rows = (await self.session.execute(stmt)).scalars().all()
         for row in rows:

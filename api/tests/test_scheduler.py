@@ -16,6 +16,7 @@ from core.scheduler import (
     PeriodicJob,
     Scheduler,
     handler_timeout,
+    lease_ttl,
     periodic,
     periodic_jobs,
     reset_periodic_jobs,
@@ -264,12 +265,15 @@ async def test_leader_only_lease_call_does_not_block_the_event_loop() -> None:
     )
 
 
-def test_handler_timeout_defaults_to_the_lease_ttl() -> None:
-    """默认超时必须等于租约 TTL，这两个数不能各说各的。
+def test_lease_ttl_must_outlive_the_execution_budget() -> None:
+    """租约 TTL 必须**长于**执行预算，不能与它相等。
 
-    租约 TTL 决定「别的实例什么时候可以接手」，handler 超时决定「我们什么时候
-    停手」。如果 TTL 更短，一个新实例已经接管了，老 handler 还在写——同一件
-    不可逆的事（删素材）被做了第二遍。让它们由同一个函数算，是唯一不会漂移的写法。
+    相等意味着：handler 超时被取消的那一刻，租约也恰好到期，别的实例立刻
+    接管。而「取消」不等于「停止」——卡在 `to_thread` 里的 handler 在取消
+    之后还会再跑一会儿，于是同一件不可逆的事（回收站 GC）被两个进程各做
+    一遍。留出余量，活着但卡住的实例才不会和接管者同时动手。
+
+    执行预算本身的默认值不变（`max(60, every * 2)`）。
     """
 
     async def handler() -> None:  # pragma: no cover - 只取字段
@@ -277,7 +281,12 @@ def test_handler_timeout_defaults_to_the_lease_ttl() -> None:
 
     for every in (1.0, 300.0, 3600.0):
         job = PeriodicJob("image.reconcile", every, handler)
-        assert handler_timeout(job) == max(60.0, every * 2)
+        budget = handler_timeout(job)
+        assert budget == max(60.0, every * 2)
+        assert lease_ttl(job) > budget
+        # 余量至少一分钟：够一次正常的收尾
+        assert lease_ttl(job) - budget >= 60.0
 
     explicit = PeriodicJob("image.reconcile", 3600.0, handler, timeout=120.0)
     assert handler_timeout(explicit) == 120.0
+    assert lease_ttl(explicit) > 120.0

@@ -5821,6 +5821,18 @@
               "title": "Task Id"
             },
             "description": "任务 ID"
+          },
+          {
+            "name": "confirmCharged",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "任务带供应商任务号时（可能已计费）必须显式确认才重新生成",
+              "default": false,
+              "title": "Confirmcharged"
+            },
+            "description": "任务带供应商任务号时（可能已计费）必须显式确认才重新生成"
           }
         ],
         "responses": {

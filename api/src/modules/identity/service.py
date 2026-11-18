@@ -17,8 +17,10 @@ import secrets
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Any
+from typing import Any, cast
 
+from sqlalchemy import update
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -552,17 +554,39 @@ class IdentityService:
         ):
             raise RefreshTokenInvalid()
 
-        session.refresh_jti = _new_jti()
-        session.last_seen_at = utcnow()
-        # 滑动延长：活跃用户不该在第 7 天被强制下线；长期不用的会话则按时过期
-        session.expires_at = utcnow() + timedelta(
-            seconds=settings.refresh_token_ttl_seconds
-        )
+        # 轮换是**抢占**，不是「读-比较-写」：条件更新要求 `refresh_jti` 仍然
+        # 等于我带来的这一张。两个并发请求拿着同一张 refresh 令牌时，「读-比较-
+        # 写」会让两个都通过检查、各写各的新 jti —— 同一张票换来两对有效令牌，
+        # 而重放检测正是在这条路上失效。条件更新只有一个能换掉 jti。
+        now = utcnow()
+        values: dict[str, Any] = {
+            "refresh_jti": _new_jti(),
+            "last_seen_at": now,
+            # 滑动延长：活跃用户不该在第 7 天被强制下线；长期不用的会话则按时过期
+            "expires_at": now + timedelta(seconds=settings.refresh_token_ttl_seconds),
+        }
         if user_agent:
-            session.user_agent = _clip(user_agent, 256)
+            values["user_agent"] = _clip(user_agent, 256)
         if ip:
-            session.ip = _clip(ip, 64)
+            values["ip"] = _clip(ip, 64)
+        claimed = cast(
+            "CursorResult[Any]",
+            await self.session.execute(
+                update(UserSession)
+                .where(
+                    UserSession.id == session_id,
+                    UserSession.refresh_jti == jti,
+                )
+                .values(**values)
+                .execution_options(synchronize_session=False)
+            ),
+        )
+        if claimed.rowcount != 1:
+            # 已经被另一个并发请求换掉了：这张票已经用过了
+            await self.session.rollback()
+            raise RefreshTokenInvalid()
         await self.session.commit()
+        await self.session.refresh(session)
         return self._issue(identity, session)
 
     async def logout_by_token(self, authorization: str | None) -> None:

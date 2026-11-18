@@ -201,6 +201,12 @@ def snapshot_out(row: LibraryAssetGeneration) -> LibraryGenerationOut:
     )
 
 
+#: 能当「模板库展示案例」的媒体类型。音频没有封面、文本没有画幅，卡片上
+#: 显示不出来 —— 两条入口（`upload` 带 purpose、`set_purpose` 改用途）都必须
+#: 过这道闸，否则就能造出一个「全员可读但谁也看不到东西」的案例。
+CASE_KINDS = frozenset({"image", "video"})
+
+
 class LibraryService:
     def __init__(self, session: AsyncSession, storage: ObjectStorage) -> None:
         self.session = session
@@ -632,7 +638,7 @@ class LibraryService:
         target = purpose.strip().lower()
         if target not in {"", access.PURPOSE_CASE}:
             raise BadRequest(f"不支持的用途：{purpose}")
-        if target == access.PURPOSE_CASE and row.kind not in {"image", "video"}:
+        if target == access.PURPOSE_CASE and row.kind not in CASE_KINDS:
             raise BadRequest("案例只支持图片或视频")
         if row.purpose == target:
             return self._to_out(row, owner_name=None)
@@ -672,6 +678,10 @@ class LibraryService:
         mime = EXTENSIONS.get(extension)
         if mime is None or _kind_of(mime) != kind.value:
             raise LibraryFileTypeNotAllowed()
+        # 直接以「案例」上传时也要卡媒体类型：`purpose=case` 对**所有登录用户**
+        # 放行，一个音频/文本案例就是一条人人可读却没有任何呈现形式的东西。
+        if purpose.strip().lower() == access.PURPOSE_CASE and kind.value not in CASE_KINDS:
+            raise BadRequest("案例只支持图片或视频")
         # 文本走独立的一档上限：正文会被整份读进内存做注入，300MB 的
         # 「提示词」既没意义也会把 worker 打爆。这里先卡请求体，探测里再卡一次
         # 规范化后的字节（BOM 剥离不改变上限，但两道都要有）。

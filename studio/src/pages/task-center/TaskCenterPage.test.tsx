@@ -121,13 +121,29 @@ describe('任务中心页面', () => {
     expect(mock.params.source).toBe('image');
   });
 
-  it('批量删除走真实接口，不再弹空回收站', async () => {
+  it('批量删除走真实接口，且必须先过二次确认', async () => {
     mock.deleted = {deleted: 1, skipped: ['task-missing']};
     render(<App permissions={['task:read', 'task:delete']} />);
     expect(screen.queryByRole('button', {name: '回收站'})).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', {name: '选择任务：测试任务'}));
     fireEvent.click(screen.getByRole('button', {name: '删除'}));
+
+    // 硬删不可恢复：第一下只弹确认，不能直接把请求发出去
+    expect(await screen.findByRole('dialog')).toHaveTextContent('删除选中的任务');
+    expect(mock.deleteCalls).toEqual([]);
+
+    fireEvent.click(screen.getByRole('button', {name: '确认删除'}));
     await waitFor(() => expect(mock.deleteCalls).toEqual([['task1']]));
+  });
+
+  it('取消确认则一条都不删', async () => {
+    render(<App permissions={['task:read', 'task:delete']} />);
+    fireEvent.click(screen.getByRole('button', {name: '选择任务：测试任务'}));
+    fireEvent.click(screen.getByRole('button', {name: '删除'}));
+    fireEvent.click(await screen.findByRole('button', {name: '取消'}));
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(mock.deleteCalls).toEqual([]);
   });
 
   it('批量收藏用显式置位而不是切换', async () => {
@@ -142,6 +158,7 @@ describe('任务中心页面', () => {
     render(<App permissions={['task:read', 'image:read', 'image:delete']} />);
     fireEvent.click(screen.getByRole('button', {name: '选择生图：一只猫'}));
     fireEvent.click(screen.getByRole('button', {name: '删除'}));
+    fireEvent.click(await screen.findByRole('button', {name: '确认删除'}));
     await waitFor(() => expect(mock.deleteImageCalls).toEqual([['img1']]));
     // 视频那条没被选中，不该跟着发出去：两套表两个端点，混批会有一半被 skipped
     expect(mock.deleteCalls).toEqual([]);

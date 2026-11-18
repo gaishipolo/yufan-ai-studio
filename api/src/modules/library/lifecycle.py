@@ -99,6 +99,13 @@ class LifecycleService:
             await self._to_trash(row, actor, reason="deleted", commit=True)
             return
 
+        # 案例（`purpose=case`）是**对所有登录用户可见**的内容：撤下它影响的
+        # 不只是作者自己，所有人的模板卡片都会当场少一张封面。所以无论删除者
+        # 是 owner 还是管理员，都得留理由 —— 这条要在下面的分支之前判，否则
+        # 「管理员恰好就是 owner」时会从最宽松那条路走过去。
+        if row.purpose == access.PURPOSE_CASE and not reason.strip():
+            raise RevokeReasonRequired()
+
         group_ids = (await access.asset_group_ids(self.session, [row.id])).get(row.id, [])
         pending = await self._pending_revoke(row.id)
 
@@ -118,6 +125,10 @@ class LifecycleService:
                 raise SharedAssetNotDeletable(
                     details={"canRevokeAndDelete": eligible, "groupIds": group_ids}
                 )
+            # 案例（`purpose=case`）是**对所有登录用户可见**的内容：撤下它
+            # 影响的不只是作者自己，所有人的模板卡片都会当场少一张封面。走
+            # 「个人资产」那条最宽松的分支（一键进回收站、无理由、无凭据）
+            # 会让这件事没有任何痕迹 —— 所以案例要像共享资产一样留理由。
             await self._to_trash(row, actor, reason="deleted", commit=True)
             return
 
@@ -248,6 +259,11 @@ class LifecycleService:
 
         row.state = row.trashed_from_state or "active"
         row.visibility = "personal"  # 绝不恢复共享：要重新走一次申请
+        # 案例同理：恢复不恢复「对全员可见」的身份，要重新走一次 `set_purpose`
+        # （那边有二次确认、有审计）。否则恢复即等于重新对所有登录用户开放，
+        # 而这条素材可能已经被别的模板引用着。
+        previous_purpose = row.purpose
+        row.purpose = ""
         row.trashed_from_state = None
         row.trash_reason = None
         row.trash_expires_at = None
@@ -260,7 +276,7 @@ class LifecycleService:
             actor_id=actor.id,
             target_type="library_asset",
             target_id=row.id,
-            detail={"state": row.state},
+            detail={"state": row.state, "previousPurpose": previous_purpose},
         )
         from modules.library.service import LibraryService
 

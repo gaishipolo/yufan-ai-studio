@@ -389,6 +389,13 @@ class Settings(BaseSettings):
     # 900 × 2.0 = 1800 = timeout，配置不一致会在启动期提示。
     generation_max_polls: int = 900
     generation_timeout_sec: int = 1800
+    # 产物**落盘**自己的预算（秒）。几百 MB 的成片下载不该占满「轮询这一跳」
+    # 的预算：预算耗尽会把这一跳判成「没拿到结果」，下一跳重新拉一遍，而它
+    # 照样会超时 —— 于是无限重跳，产物永远进不了库。
+    #
+    # 落盘超时的兜底是「退回供应商直链」（见 `generation/runner.py` 的
+    # `_persist`）：任务能落终态，代价是产物没存进自己的存储。
+    generation_persist_timeout_sec: int = 300
     # 上游「限流 / 队列满」时的排队重投间隔（秒，逗号分隔；留空 = 不排队，直接失败）。
     #
     # 为什么要单独一张表：worker 的 2s/4s 指数退避是给「瞬时抖动」用的，而上游视频

@@ -670,3 +670,65 @@ def test_published_filters_by_model_replacement(client: TestClient) -> None:
     assert plain["key"] not in keys("replacement")
     assert plain["key"] in keys("generation")
     assert replace_spec["key"] not in keys("generation")
+
+
+def test_demo_asset_must_be_readable_by_the_author(client: TestClient) -> None:
+    """`demoAssetId` 不能指向自己读不到的资产。
+
+    它是**删除保护**的依据（`SpecDemoCases`）：写一个别人的私有 id 进去，
+    那条资产从此永远 purge 不掉（409 说「仍被引用」），而作者根本不知道自己
+    占了别人的东西；写个随手编的 id 更糟 —— 引用检查永远查无此人，卡在
+    回收站里没有任何线索能定位。
+
+    所以这里 fail-closed：读不到就拒绝保存。
+    """
+    headers = _headers(client)
+    video, first, second = _media(client, headers)
+    draft = _draft(video, first, second)
+
+    # 别人的私有素材：作者自己读不到
+    from library_support import insert_asset
+
+    someone_elses = insert_asset(
+        owner_id="u_001",
+        name="别人的私有封面.png",
+        kind="image",
+        state="active",
+        visibility="personal",
+    )
+    denied = client.post(API, json=dict(draft, demoAssetId=someone_elses), headers=headers)
+    assert denied.status_code == 400, denied.text
+    assert "展示案例" in denied.json()["message"]
+
+    # 不存在的 id：同样要挡住
+    missing = client.post(API, json=dict(draft, demoAssetId="0" * 32), headers=headers)
+    assert missing.status_code == 400, missing.text
+    assert "展示案例" in missing.json()["message"]
+
+
+def test_other_users_cannot_read_a_draft_spec(client: TestClient) -> None:
+    """草稿是作者私有的：提示词原文与固定素材 id 不是给别人看的。
+
+    已发布是公开的（模板库要给所有人用），但**未发布**的只有作者能读 ——
+    路由摘要写的就是「本人可见的规格列表」，实现漏了这层过滤。
+    """
+    author = _headers(client)
+    stranger = _headers(client)
+    video, first, second = _media(client, author)
+    draft = _draft(video, first, second)
+    _save(client, author, draft)
+
+    # 别人的草稿详情：404 而不是 403（403 会确认「这个 key 存在」）
+    detail = client.get(f"{API}/{draft['key']}", headers=stranger)
+    assert detail.status_code == 404, detail.text
+
+    # 别人的列表里也不该出现
+    listed = client.get(API, headers=stranger).json()["data"]
+    assert all(item["key"] != draft["key"] for item in listed["items"])
+
+    # 发布之后就是公开的
+    assert client.post(f"{API}/{draft['key']}/publish", headers=author).status_code == 200
+    public = client.get(f"{API}/{draft['key']}", headers=stranger)
+    assert public.status_code == 200, public.text
+    published = client.get(f"{API}/published", headers=stranger).json()["data"]
+    assert any(item["key"] == draft["key"] for item in published["items"])

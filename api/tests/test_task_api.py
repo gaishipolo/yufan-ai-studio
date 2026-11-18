@@ -457,8 +457,8 @@ def test_retry_after_real_failure_resubmits(client: TestClient, api: str) -> Non
             await session.commit()
             task_id = task.id
 
-        # 用户点「重试」
-        resp = client.post(f"{api}/tasks/{task_id}/retry")
+        # 用户点「重试」。这条任务带供应商任务号（可能已计费），必须先确认
+        resp = client.post(f"{api}/tasks/{task_id}/retry?confirmCharged=true")
         assert resp.status_code == 200
         assert resp.json()["data"]["status"] == "queued"
 
@@ -479,6 +479,70 @@ def test_retry_after_real_failure_resubmits(client: TestClient, api: str) -> Non
     assert after.external_id
     assert after.error_message is None
     assert any(job["key"] == f"poll:video:{after.id}" for job in jobs)
+
+
+def test_retry_with_supplier_task_id_requires_confirmation(client: TestClient, api: str) -> None:
+    """带任务号的失败默认不许重试：那是「可能已经扣过费」的唯一凭证。
+
+    没有这道闸门时，重试会直接清号再提交一次 —— 供应商扣第二次费，而我们连
+    上一次的任务号都查不到（审计里有、但记录上已经没了）。
+    """
+    import asyncio
+
+    from db.session import get_session_factory
+    from modules.task.models import VideoTask
+
+    async def make() -> str:
+        factory = get_session_factory()
+        async with factory() as session:
+            task = VideoTask(
+                title="已提交后失败",
+                prompt="雨夜霓虹",
+                status="failed",
+                model="Seedance 2.5",
+                model_id="seedance-2.5",
+                external_id="echo-video-keepme-1700000000",
+                submit_attempts=1,
+                author_id="u_001",
+                author_name="老大",
+            )
+            session.add(task)
+            await session.commit()
+            return task.id
+
+    task_id = asyncio.run(make())
+
+    denied = client.post(f"{api}/tasks/{task_id}/retry")
+    assert denied.status_code == 409, denied.text
+    assert "confirmCharged" in denied.text
+
+    async def after_denied() -> VideoTask:
+        factory = get_session_factory()
+        async with factory() as session:
+            row = await session.get(VideoTask, task_id)
+            assert row is not None
+            return row
+
+    untouched = asyncio.run(after_denied())
+    assert untouched.external_id == "echo-video-keepme-1700000000"
+    assert untouched.status == "failed"
+
+    confirmed = client.post(f"{api}/tasks/{task_id}/retry?confirmCharged=true")
+    assert confirmed.status_code == 200
+
+    async def after_confirm() -> VideoTask:
+        factory = get_session_factory()
+        async with factory() as session:
+            row = await session.get(VideoTask, task_id)
+            assert row is not None
+            return row
+
+    moved = asyncio.run(after_confirm())
+    assert moved.previous_external_id == "echo-video-keepme-1700000000"
+    assert "echo-video-keepme-1700000000" in (moved.external_id_history or "")
+    # 新一轮从现在起算，否则重试一条刚超时的任务会立刻再超时
+    assert moved.started_at is not None
+    assert moved.started_at >= moved.created_at
 
 
 # --------------------------------------------------------------------------- #

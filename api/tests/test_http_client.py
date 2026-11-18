@@ -240,3 +240,63 @@ def test_fetch_to_file_deletes_partial_file_when_stream_overflows(
     with pytest.raises(HttpError, match="超过上限"):
         asyncio.run(fetch_to_file("https://cdn.example/p.mp4", target, max_bytes=1000))
     assert not target.exists(), "半个文件留着会被下游当成已就绪的产物"
+
+
+def test_a_slow_drip_download_hits_the_total_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    """慢速滴流的响应必须被**总预算**打断。
+
+    httpx 的 `timeout` 是「每次操作」的上限：对端每 29 秒吐 1 字节，就永远
+    不触发读超时。一个 300MB 的入库下载能这样挂住一个 worker 槽位好几天 ——
+    队列不再消费、请求不再完成，而日志里一条超时都没有。
+
+    「每次读有超时」防不住这种对端；「整件事有预算」才防得住。
+    """
+
+    async def _drip() -> Any:
+        # 每 50 毫秒 1 字节：远小于任何单次读超时，但总量可以无限拖下去
+        for _ in range(1000):
+            await asyncio.sleep(0.05)
+            yield b"x"
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=_drip())
+
+    _install(monkeypatch, handler)
+    monkeypatch.setattr(
+        http_module,
+        "get_http_settings",
+        lambda: http_module.HttpSettings(total_timeout_sec=0.3),
+    )
+
+    with pytest.raises(HttpError, match="总预算"):
+        asyncio.run(fetch_bytes("http://example.com/slow", max_bytes=10**6))
+
+
+def test_a_slow_drip_download_hits_the_total_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    """慢速滴流的响应必须被**总预算**打断。
+
+    httpx 的 `timeout` 是「每次操作」的上限：对端每 29 秒吐 1 字节，就永远
+    不触发读超时。一个 300MB 的入库下载能这样挂住一个 worker 槽位好几天 ——
+    队列不再消费、请求不再完成，而日志里一条超时都没有。
+
+    「每次读有超时」防不住这种对端；「整件事有预算」才防得住。
+    """
+
+    async def _drip() -> Any:
+        # 每 50 毫秒 1 字节：远小于任何单次读超时，但总量可以无限拖下去
+        for _ in range(1000):
+            await asyncio.sleep(0.05)
+            yield b"x"
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=_drip())
+
+    _install(monkeypatch, handler)
+    monkeypatch.setattr(
+        http_module,
+        "get_http_settings",
+        lambda: http_module.HttpSettings(total_timeout_sec=0.3),
+    )
+
+    with pytest.raises(HttpError, match="总预算"):
+        asyncio.run(fetch_bytes("http://example.com/slow", max_bytes=10**6))

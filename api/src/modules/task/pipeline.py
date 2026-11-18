@@ -139,6 +139,9 @@ class VideoTaskStore:
             cover_url=task.cover_url or None,
             error=task.error_message,
             created_at=task.created_at,
+            # 本轮起点：重试会把它重置成「刚刚」，超时预算才不会带着上一次的
+            # 创建时间进来（否则重试一条刚超时的任务，第一跳就再判超时）。
+            timeout_started_at=task.started_at,
             submit_attempts=task.submit_attempts,
             terminal_statuses=_TERMINAL,
         )

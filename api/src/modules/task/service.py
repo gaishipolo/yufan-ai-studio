@@ -16,6 +16,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.audit import record as audit
 from core.context import CurrentUser
 from core.exceptions import BadRequest, Forbidden, InvalidState, UpstreamError
 from core.library_refs import resolve_reference_images
@@ -29,7 +30,12 @@ from infra.ai.router import ModelRouter
 from infra.artifacts import artifact_urls
 from infra.queue.base import JobQueue
 from modules.task.enums import AspectRatio, TaskScope, TaskStatus
-from modules.task.models import TaskFavorite, VideoTask, dumps_params
+from modules.task.models import (
+    TaskFavorite,
+    VideoTask,
+    dumps_params,
+    remember_previous_external_id,
+)
 from modules.task.params import (
     resolve_aspect_ratio,
     resolve_billing_mode,
@@ -255,7 +261,9 @@ class TaskService:
         logger.info("任务已创建并入队 id=%s author=%s model=%s", task.id, actor.id, spec.id)
         return task
 
-    async def retry_task(self, task_id: str, actor: CurrentUser) -> VideoTask:
+    async def retry_task(
+        self, task_id: str, actor: CurrentUser, *, confirm_charged: bool = False
+    ) -> VideoTask:
         # 这里刻意**不走** `get_task(task_id, actor)`：`read:all` 与 `retry:any`
         # 是两个独立开关，谁都不蕴含谁。先过可见性会让「只有 retry:any 的客服」永远
         # 403（权限点勾了没反应），而只有 `read:all` 的运营也不该顺带获得「替人花钱」
@@ -265,6 +273,19 @@ class TaskService:
             raise Forbidden("无权重试他人的任务")
         if TaskStatus(task.status) is not TaskStatus.FAILED:
             raise InvalidState("仅失败的任务可以重试")
+
+        # 带任务号的失败 = **供应商那边可能已经受理并计费**。默认拒绝，
+        # 必须显式确认；确认前把旧号搬进记录与历史（只有一个槽位，
+        # 第二次确认会覆盖第一次）。
+        previous_external_id = task.external_id
+        if previous_external_id and not confirm_charged:
+            raise InvalidState(
+                f"该次生成已提交到供应商（任务号 {previous_external_id}），可能已产生费用："
+                "请先用任务号核对或找回结果；确认要重新生成时带 confirmCharged=true 重试"
+            )
+        history: list[str] = []
+        if previous_external_id:
+            history = remember_previous_external_id(task, previous_external_id)
 
         task.status = TaskStatus.QUEUED.value
         task.progress = 0
@@ -280,9 +301,24 @@ class TaskService:
         # 首帧，用户以为「点了重试没反应」。新片入库后由 `attach_cover` 再写回来。
         task.cover_url = ""
         task.finished_at = None
+        # 这一轮从现在起算：`GenerationRecord.timeout_started_at` 取的就是它，
+        # 不清的话重试「刚因超时失败」的任务会带着上一次的创建时间进轮询，
+        # 第一跳就被判超时，形成「重试 → 立刻超时」的死循环。
+        task.started_at = datetime.now(tz=UTC)
         task.updated_at = datetime.now(tz=UTC)
         await self.session.commit()
 
+        await audit(
+            "task.retry",
+            actor_id=actor.id,
+            target_type="video_task",
+            target_id=task.id,
+            detail={
+                "previousExternalId": previous_external_id,
+                "previousExternalIds": history,
+                "confirmedCharged": confirm_charged,
+            },
+        )
         await self._dispatch(task)
         return task
 
