@@ -82,17 +82,22 @@ export function RoleFormModal({
   return (
     <Modal open={open} onClose={onClose} title={isEdit ? `编辑角色 · ${role?.name ?? ''}` : '新建角色'} width={460}>
       <form className="space-y-3 px-[18px] py-4" onSubmit={handleSubmit}>
+        {/* 编辑态：输入框禁用（原因进 `title`）。
+            新建态：例子进 `placeholder`，`hint` 只留规则本身 ——
+            「如 content_editor」不是约束，是示范，放在输入框里更顺手。 */}
         <FormField
           label="角色标识"
           htmlFor="role-code"
           required={!isEdit}
-          hint={isEdit ? '创建后不可修改' : '小写字母开头，如 content_editor'}
+          hint={isEdit ? undefined : '小写字母开头'}
         >
           <TextInput
             id="role-code"
             value={code}
             disabled={isEdit}
             readOnly={isEdit}
+            title={isEdit ? '创建后不可修改' : undefined}
+            placeholder={isEdit ? undefined : 'content_editor'}
             onChange={(event) => setCode(event.target.value)}
           />
         </FormField>

@@ -12,6 +12,7 @@ import {
 import type { Group } from '@/entities/group/model/types';
 import { displayNameOf } from '@/entities/user/model/types';
 import { PermissionPicker } from '@/features/permission-layers/PermissionPicker';
+import { PermissionSummaryBar } from '@/features/permission-layers/PermissionSummaryBar';
 
 type Tab = 'basic' | 'members' | 'permissions';
 
@@ -142,23 +143,16 @@ export function GroupEditorModal({
                 onChange={(event) => setDescription(event.target.value)}
               />
             </FormField>
-            {isEdit && (
-              <p className="text-meta leading-[1.6] text-ink-mute">
-                一人可属多组；成员与权限分别在另外两个页签里保存。
-              </p>
-            )}
           </div>
         )}
 
         {tab === 'members' && isEdit && (
           <div className="space-y-2">
-            <div className="flex items-center gap-2 text-meta text-ink-mute">
-              <span>
-                已选 <span className="font-semibold tabular-nums text-ink">{memberIds.length}</span> 名成员
-              </span>
-              <span className="text-line-strong">·</span>
-              <span>保存后整组替换</span>
-            </div>
+            <PermissionSummaryBar
+              count={memberIds.length}
+              unit="名成员"
+              onClear={() => setMemberIds([])}
+            />
             {candidatesQuery.isLoading ? (
               <p className="py-8 text-center text-xs text-ink-mute">正在加载账号…</p>
             ) : candidatesQuery.isError ? (

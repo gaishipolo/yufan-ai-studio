@@ -116,7 +116,14 @@ function LayerForm({
 
 /** 团队层禁 `*`（全员超管）与 `identity:` 前缀（给全站发组织管理权） */
 const teamForbidden = (code: string) => code === '*' || code.startsWith('identity:');
-const TEAM_HINT = '团队层面向所有启用账号，禁止授予组织管理类权限（identity:*）与通配 *；这些权限请用小组或个人层授予。';
+/**
+ * 禁用项 `title` 里的**短**理由。
+ *
+ * 完整版（哪一层能授什么）写在弹窗的 `description` 里说一次；
+ * 每个禁用项的 `title` 只说「这里不能给」，不重复整段规则 ——
+ * 同一句话出现 N+1 次就是噪音。
+ */
+const TEAM_ITEM_HINT = '团队层不能授予该权限';
 
 function TeamLayer({ onClose }: { onClose: () => void }) {
   const query = useTeamPermissions();
@@ -126,10 +133,13 @@ function TeamLayer({ onClose }: { onClose: () => void }) {
   return (
     <LayerForm
       title="团队基础权限"
-      description="团队 = 所有启用账号。这里授予的权限人人都有；取消勾选只移除团队这一层的授予，不会削掉小组、个人或角色已给的权限。"
+      /* 两句都是**约束**，不是解释：
+         1. 团队层覆盖所有启用账号（范围）；
+         2. 组织管理类权限（identity:*）与通配 * 不能在这一层授（去哪授）。 */
+      description="团队 = 所有启用账号。这里授予的权限人人都有；取消勾选只移除团队这一层的授予，不会削掉小组、个人或角色已给的权限。组织管理类权限（identity:*）与通配 * 不能在团队层授予，请用小组或个人层。"
       currentCodes={codes}
       forbidden={teamForbidden}
-      forbiddenHint={TEAM_HINT}
+      forbiddenHint={TEAM_ITEM_HINT}
       loading={query.isLoading}
       onClose={onClose}
       save={async (permissions) => {
@@ -149,7 +159,9 @@ function UserLayer({ id, name, onClose }: { id: string; name: string; onClose: (
   return (
     <LayerForm
       title={`个人权限 · ${name}`}
-      description="单独授予的权限与团队、小组、角色取并集，只增不减：在这里取消勾选不会移除其它层已授予的权限。"
+      /* 只留「取消勾选只清本层」这半句 —— 并集模型在「有效权限」弹窗里
+         已经摊开说过了，这里再说一遍就是同一件事说两遍。 */
+      description="在这里取消勾选只移除个人这一层的授予，不会削掉团队、小组或角色已给的权限。"
       currentCodes={codes}
       loading={query.isLoading}
       onClose={onClose}

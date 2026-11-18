@@ -110,8 +110,11 @@ export default function LoginPage() {
           </div>
 
           <h2 className="text-title font-bold tracking-[.3px] text-ink">登录</h2>
+          {/* 「使用工作台账号登录」是废话（这里只有一种登录方式）；
+              「登录即表示同意内部使用规范」全站找不到那个规范页面 ——
+              指着一个不存在的地方不算解释。真正有用的只有「忘记密码找谁」。 */}
           <p className="mt-1.5 text-meta leading-[1.6] text-ink-mute">
-            使用工作台账号登录；忘记密码请联系管理员重置。
+            忘记密码请联系管理员重置。
           </p>
 
           {notice && (
@@ -129,10 +132,6 @@ export default function LoginPage() {
                 在表单里再 navigate 一次只会多一条历史记录 */}
             <LoginForm />
           </div>
-
-          <p className="mt-4 text-center text-micro leading-[1.6] text-ink-mute">
-            登录即表示同意内部使用规范。
-          </p>
         </div>
       </main>
 

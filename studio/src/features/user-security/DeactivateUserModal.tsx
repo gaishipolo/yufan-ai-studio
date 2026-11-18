@@ -44,8 +44,10 @@ export function DeactivateUserModal({
           <span className="mx-1 font-semibold text-ink">{user?.username}</span>
           吗？停用后该账号无法登录、已签发的令牌立即失效，历史任务与素材归属保留。
         </p>
+        {/* 「之后可在列表里重新启用」是「停用」这个词自带的语义；
+            留「会被后端拒绝」那半句 —— 那是猜不到的边界。 */}
         <p className="text-meta leading-[1.6] text-ink-mute">
-          之后可在列表里重新启用；停用自己或停用最后一个超管会被后端拒绝。
+          停用自己或停用最后一个超管会被后端拒绝。
         </p>
 
         {formError && (

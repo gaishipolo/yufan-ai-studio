@@ -68,15 +68,21 @@ export function ProfileModal({ open, onClose }: { open: boolean; onClose: () => 
   return (
     <Modal open={open} onClose={onClose} title="个人资料" width={440}>
       <form className="space-y-3 px-[18px] py-4" onSubmit={handleSubmit}>
-        <FormField label="用户名" htmlFor="profile-username" hint="登录名不可修改">
-          <TextInput id="profile-username" value={me?.username ?? ''} disabled readOnly />
+        {/* 「登录名不可修改」挪进 `title`：输入框已经是禁用态，
+            看得见；「不可修改」是原因，悬浮才需要看。 */}
+        <FormField label="用户名" htmlFor="profile-username">
+          <TextInput
+            id="profile-username"
+            value={me?.username ?? ''}
+            disabled
+            readOnly
+            title="登录名不可修改"
+          />
         </FormField>
 
-        <FormField
-          label="昵称"
-          htmlFor="profile-display-name"
-          hint="留空则显示用户名"
-        >
+        <FormField label="昵称" htmlFor="profile-display-name">
+          {/* 「留空则显示用户名」由 placeholder 表达 —— 输入框里能直接看见
+              留空之后会显示成什么，比一行小字更准。 */}
           <TextInput
             id="profile-display-name"
             value={displayName}
@@ -98,11 +104,9 @@ export function ProfileModal({ open, onClose }: { open: boolean; onClose: () => 
           />
         </FormField>
 
-        <FormField
-          label="头像地址"
-          htmlFor="profile-avatar"
-          hint="留空则显示昵称首字"
-        >
+        {/* 头像旁边就有一张实时预览图：留空时预览画的就是昵称首字，
+            不用文字再说一遍。 */}
+        <FormField label="头像地址" htmlFor="profile-avatar">
           <div className="flex items-center gap-2">
             <UserAvatar user={{ displayName, username: me?.username, avatarUrl }} size={32} shape="square" />
             <TextInput

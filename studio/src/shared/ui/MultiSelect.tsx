@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { Check, ChevronDown } from 'lucide-react';
 import { cn } from '@/shared/lib/cn';
 import { useDropPlacement } from '@/shared/hooks/useDropPlacement';
@@ -23,6 +23,13 @@ export interface MultiSelectProps {
   placeholder?: string;
   /** 一个选项都没有时的空态文案 */
   emptyText?: string;
+  /**
+   * 空态里的行动入口。
+   *
+   * 空态文案本身是个**死角**：告诉用户「还没有角色，请先去另一个页签创建」，
+   * 却不给路。`emptyAction` 把那个入口直接摆出来 —— 死胡同里必须留个门。
+   */
+  emptyAction?: ReactNode;
   disabled?: boolean;
   /** 关联 FormField 的 label（label 点击会聚焦这个按钮） */
   id?: string;
@@ -49,6 +56,7 @@ export function MultiSelect({
   onChange,
   placeholder = '请选择',
   emptyText = '暂无可选项',
+  emptyAction,
   disabled = false,
   id,
   ariaLabel,
@@ -143,7 +151,10 @@ export function MultiSelect({
           )}
         >
           {options.length === 0 ? (
-            <p className="px-3 py-4 text-center text-meta text-ink-mute">{emptyText}</p>
+            <div className="px-3 py-4 text-center">
+              <p className="text-meta text-ink-mute">{emptyText}</p>
+              {emptyAction && <div className="mt-2 flex justify-center">{emptyAction}</div>}
+            </div>
           ) : (
             <ul className="max-h-[196px] space-y-0.5 overflow-auto p-1.5">
               {options.map((option) => {

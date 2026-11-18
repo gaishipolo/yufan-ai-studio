@@ -51,6 +51,20 @@ export const PASSWORD_MIN_LENGTH = 10;
 /** 与后端 `PASSWORD_MIN_UNIQUE_CHARS` 一致：重复字符凑长度的口令要拒 */
 export const PASSWORD_MIN_UNIQUE_CHARS = 4;
 
+/**
+ * 口令约束的一句话版本 —— 给三个写入口的 `FormField.hint` 用。
+ *
+ * 以前每个弹窗自己拼一句（`至少 ${PASSWORD_MIN_LENGTH} 位，不能是纯数字`），
+ * 结果**漏了一条**：后端 `check_password_strength` 还要求「≥4 个不同字符」，
+ * 而三个弹窗的提示里都没有它 —— 用户按提示写了个 `aaaaaaaaa1`，前端放行、
+ * 后端 422。用户只看到「密码不合法」，不知道差在哪。
+ *
+ * 所以这里导出**唯一**的一句，三处直接引用，不再各拼各的。
+ * 「不能与当前密码相同」只有改密弹窗管得到（那里能拿到旧密码），
+ * 由 `ChangePasswordModal` 自己追加，不塞进这句共用文案里。
+ */
+export const PASSWORD_HINT = `至少 ${PASSWORD_MIN_LENGTH} 位，含 ${PASSWORD_MIN_UNIQUE_CHARS} 个不同字符，不能是纯数字`;
+
 /** 合法的头像地址：http(s) 绝对地址，或站内以 `/` 开头的相对路径 */
 const AVATAR_URL_PATTERN = /^(https?:\/\/|\/)/i;
 

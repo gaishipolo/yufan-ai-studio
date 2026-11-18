@@ -22,12 +22,10 @@ function CodeList({ codes, labelOf }: { codes: string[]; labelOf: (code: string)
 
 function Section({
   title,
-  hint,
   codes,
   labelOf,
 }: {
   title: string;
-  hint: string;
   codes: string[];
   labelOf: (code: string) => string;
 }) {
@@ -36,7 +34,6 @@ function Section({
       <header className="flex items-center gap-2 border-b border-line-soft bg-panel-soft px-2.5 py-1.5">
         <h3 className="text-xs font-semibold text-ink-soft">{title}</h3>
         <span className="text-meta tabular-nums text-ink-mute">{codes.length}</span>
-        <span className="ml-auto text-meta text-ink-mute">{hint}</span>
       </header>
       <div className="px-2.5 py-2">
         <CodeList codes={codes} labelOf={labelOf} />
@@ -79,6 +76,9 @@ export function EffectivePermissionsModal({
   return (
     <Modal open={open} onClose={onClose} title={`有效权限 · ${user ? displayNameOf(user) : ''}`} width={640}>
       <div className="space-y-3 px-[18px] py-4">
+        {/* 这一句是**模型**不是解释：四层取并集、没有否决规则，
+            决定了「个人权限只会更多，不会更少」。删了它管理员会以为
+            个人层能收回小组给的权限。 */}
         <p className="rounded-lg bg-panel-soft px-2.5 py-2 text-meta leading-[1.6] text-ink-soft">
           有效权限 = 团队 ∪ 所有小组 ∪ 个人 ∪ 角色。四层取并集、没有否决规则，
           所以个人权限只会比小组或团队更多，不会更少。
@@ -105,24 +105,20 @@ export function EffectivePermissionsModal({
                   有效权限 {effective.length} 项
                   {effective.includes('*') && <span className="ml-1.5 text-primary">（超级管理员：全量）</span>}
                 </p>
-                <p className="mt-0.5 text-meta leading-[1.5] text-ink-mute">
-                  这是 require() 的唯一判据；下面四段只是它的来源明细。
-                </p>
               </div>
             </div>
 
-            <Section title="团队" hint="全体启用账号" codes={data?.team ?? []} labelOf={labelOf} />
+            <Section title="团队" codes={data?.team ?? []} labelOf={labelOf} />
             {(data?.groups ?? []).map((group) => (
               <Section
                 key={group.id}
                 title={`小组 · ${group.name}`}
-                hint="所属小组"
                 codes={group.permissions ?? []}
                 labelOf={labelOf}
               />
             ))}
-            <Section title="个人" hint="单独授予" codes={data?.personal ?? []} labelOf={labelOf} />
-            <Section title="角色" hint="现有角色体系" codes={data?.roles ?? []} labelOf={labelOf} />
+            <Section title="个人" codes={data?.personal ?? []} labelOf={labelOf} />
+            <Section title="角色" codes={data?.roles ?? []} labelOf={labelOf} />
           </>
         )}
 

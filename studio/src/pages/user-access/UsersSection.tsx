@@ -187,14 +187,16 @@ export function UsersSection() {
               }}
             />
             <Can permission="identity:create">
+              {/* 原来写「添加成员」，可它开的是**新建用户**弹窗 ——
+                  按钮名与它做的事对不上。加成员是「编辑小组 → 成员页签 → 勾选账号」，
+                  那个入口在左边，不在这里。名字改对，行为不用改。 */}
               <Button
                 size="sm"
                 variant="primary"
                 icon={<Plus size={13} />}
-                title="新建一个账号；随后可在左侧小组的「成员」页签把他加进当前分组"
                 onClick={() => open('create')}
               >
-                添加成员
+                新建用户
               </Button>
             </Can>
           </div>

@@ -1,7 +1,8 @@
 import { Loader2 } from 'lucide-react';
-import { Button, Chip } from '@/shared/ui';
+import { Chip } from '@/shared/ui';
 import { usePermissionCatalog } from '@/entities/role/api/role.queries';
 import { cn } from '@/shared/lib/cn';
+import { PermissionSummaryBar } from './PermissionSummaryBar';
 
 export interface PermissionPickerProps {
   selected: string[];
@@ -11,6 +12,12 @@ export interface PermissionPickerProps {
    * 后端同样会拒绝，前端提前禁用是为了不让人白点一次「保存」才知道。
    */
   forbidden?: (code: string) => boolean;
+  /**
+   * 被禁用的原因。
+   *
+   * **不再单独摆一行警告框**：每个禁用项的 `title` 里已经写着同一句，
+   * 一条警告 + N 个禁用项 = 同一句话说 N+1 次。现在只留 `title` 那一处。
+   */
   forbiddenHint?: string;
 }
 
@@ -49,22 +56,11 @@ export function PermissionPicker({
 
   return (
     <div className="space-y-3">
-      <div className="flex flex-wrap items-center gap-2 text-meta text-ink-mute">
-        <span>
-          已选 <span className="font-semibold tabular-nums text-ink">{selected.length}</span> 个权限点
-        </span>
-        <span className="text-line-strong">·</span>
-        <span>保存后整组替换</span>
-        <Button size="sm" variant="ghost" className="ml-auto" disabled={selected.length === 0} onClick={() => onChange([])}>
-          全部清空
-        </Button>
-      </div>
-
-      {forbiddenHint && (
-        <p className="rounded-lg border border-[#fbe8c8] bg-[#fff6e6] px-2.5 py-2 text-meta leading-[1.6] text-[#b97a10]">
-          {forbiddenHint}
-        </p>
-      )}
+      <PermissionSummaryBar
+        count={selected.length}
+        unit="个权限点"
+        onClear={() => onChange([])}
+      />
 
       {catalogQuery.isLoading ? (
         <div className="flex items-center justify-center gap-2 py-10 text-xs text-ink-mute">

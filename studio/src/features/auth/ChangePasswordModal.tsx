@@ -1,8 +1,8 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { useChangePassword } from '@/entities/session/api/session.queries';
-import { PASSWORD_MIN_LENGTH, checkPassword } from '@/entities/user/model/validation';
+import { PASSWORD_HINT, checkPassword } from '@/entities/user/model/validation';
 import { endSession } from '@/shared/access/end-session';
-import { Button, FormField, Modal, TextInput } from '@/shared/ui';
+import { Button, FormField, Modal, Notice, TextInput } from '@/shared/ui';
 
 /**
  * 修改自己的密码。
@@ -74,6 +74,11 @@ export function ChangePasswordModal({ open, onClose }: { open: boolean; onClose:
   return (
     <Modal open={open} onClose={onClose} title="修改密码" width={440}>
       <form className="space-y-3 px-[18px] py-4" onSubmit={handleSubmit}>
+        {/* 这条以前一个字都没提：后端改密后会 `revoke_all(reason="password_change")`，
+            也就是说**改完就得重新登录**。用户不知道这一点，提交后要么被弹回登录页
+            一脸茫然，要么以为自己被踢了。后果必须提前讲。 */}
+        <Notice tone="warning">修改成功后将退出所有设备的登录，需用新密码重新登录。</Notice>
+
         <FormField label="当前密码" htmlFor="change-old-password" required>
           <TextInput
             id="change-old-password"
@@ -88,7 +93,7 @@ export function ChangePasswordModal({ open, onClose }: { open: boolean; onClose:
           label="新密码"
           htmlFor="change-new-password"
           required
-          hint={`至少 ${PASSWORD_MIN_LENGTH} 位，不能是纯数字，且不能与当前密码相同`}
+          hint={`${PASSWORD_HINT}，且不能与当前密码相同`}
         >
           <TextInput
             id="change-new-password"

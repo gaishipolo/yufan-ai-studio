@@ -5,6 +5,7 @@ import { cn } from '@/shared/lib/cn';
 import { toast } from '@/shared/lib/toast';
 import { usePermissionCatalog, useSetRolePermissions } from '@/entities/role/api/role.queries';
 import type { Role } from '@/entities/role/model/types';
+import { PermissionSummaryBar } from '@/features/permission-layers/PermissionSummaryBar';
 
 /**
  * 勾选角色权限（`PUT /roles/{id}/permissions`，整组替换）。
@@ -79,29 +80,23 @@ export function RolePermissionsModal({
   };
 
   return (
-    <Modal open={open} onClose={onClose} title={`编辑角色权限 · ${role?.name ?? ''}`} width={600}>
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={isSuperuser ? `角色权限 · ${role?.name ?? ''}` : `编辑角色权限 · ${role?.name ?? ''}`}
+      width={600}
+    >
       <div className="space-y-3 px-[18px] py-4">
         {isSuperuser ? (
           <p className="rounded-lg border border-[#fbe8c8] bg-[#fff6e6] px-2.5 py-2 text-meta leading-[1.6] text-[#b97a10]">
-            该角色是超级管理员，权限恒为全部（后端展开为 <code className="font-mono">*</code>），
-            勾选不改变结果，因此不提供编辑。
+            该角色是超级管理员，权限恒为全部，不提供编辑。
           </p>
         ) : (
-          <div className="flex flex-wrap items-center gap-2 text-meta text-ink-mute">
-            <span>
-              已选 <span className="font-semibold tabular-nums text-ink">{selected.length}</span> 个权限点
-            </span>
-            <span className="text-line-strong">·</span>
-            <span>保存后整组替换</span>
-            <button
-              type="button"
-              className="ml-auto text-meta text-primary hover:underline disabled:opacity-50"
-              disabled={selected.length === 0}
-              onClick={() => setSelected([])}
-            >
-              全部清空
-            </button>
-          </div>
+          <PermissionSummaryBar
+            count={selected.length}
+            unit="个权限点"
+            onClear={() => setSelected([])}
+          />
         )}
 
         {orphaned.length > 0 && (

@@ -4,10 +4,8 @@ import {
   FormField,
   Modal,
   MultiSelect,
-  Select,
   TextInput,
   type MultiSelectOption,
-  type SelectOption,
 } from '@/shared/ui';
 import { toast } from '@/shared/lib/toast';
 import type { Role } from '@/entities/role/model/types';
@@ -15,7 +13,7 @@ import type { Group } from '@/entities/group/model/types';
 import { useCreateUser, useUpdateUser } from '@/entities/user/api/user.queries';
 import { UserAvatar } from '@/entities/user/ui/UserAvatar';
 import {
-  PASSWORD_MIN_LENGTH,
+  PASSWORD_HINT,
   USERNAME_PATTERN,
   checkAvatarUrl,
   checkEmail,
@@ -29,12 +27,11 @@ import type { User } from '@/entities/user/model/types';
  * `isEdit` 分支表达。编辑时改角色属于提权动作，走「分配角色」并单独受
  * `identity:role:manage` 约束；这里不碰。
  *
- * 身份归属放在表单**第一行**：分组是单选原生 `<select>`，角色是可多选的
- * `MultiSelect`。角色浮层是 absolute 向下展开的，放在顶部才有空间——放在底部会被
+ * 身份归属放在表单**第一行**：分组与角色都是可多选的 `MultiSelect`。
+ * 浮层是 absolute 向下展开的，放在顶部才有空间——放在底部会被
  * `Modal` 的 `overflow-auto` 裁切、还盖住「取消 / 创建」按钮（见 M3.2）。
  *
- * 接口入参仍是数组（一人可属多组 / 多角色）。这里分组只提交 0 或 1 项，
- * 角色可以提交多项；不动后端契约，「分配角色」弹窗也仍可多选。
+ * 接口入参是数组（一人可属多组 / 多角色），与控件的多选语义一一对应。
  */
 export function UserFormModal({
   open,
@@ -62,7 +59,7 @@ export function UserFormModal({
   const [position, setPosition] = useState('');
   const [avatarUrl, setAvatarUrl] = useState('');
   const [roleIds, setRoleIds] = useState<string[]>([]);
-  const [groupId, setGroupId] = useState('');
+  const [groupIds, setGroupIds] = useState<string[]>([]);
   const [formError, setFormError] = useState<string | null>(null);
 
   // 每次打开都从传入值重置，避免上一次的残留（尤其是密码）
@@ -76,7 +73,7 @@ export function UserFormModal({
     setPosition(user?.position ?? '');
     setAvatarUrl(user?.avatarUrl ?? '');
     setRoleIds(user?.roles.map((role) => role.id) ?? []);
-    setGroupId('');
+    setGroupIds([]);
     setFormError(null);
   }, [open, user]);
 
@@ -88,11 +85,15 @@ export function UserFormModal({
     description: role.description || role.code,
     badge: role.isSuperuser ? '超管' : role.isBuiltin ? '内置' : undefined,
   }));
-  // 分组是单选原生下拉：首项用空串占位表示「不选」，提交时映射回空数组。
-  const groupOptions: SelectOption[] = [
-    { value: '', label: groups.length ? '不加入分组' : '暂无可选分组' },
-    ...groups.map((group) => ({ value: group.id, label: group.name })),
-  ];
+  /* 分组用**多选**：接口入参 `groupIds` 本来就是数组，而且「一人可属多组」
+     是这个系统的既定规则（小组编辑页就写着）。原来这里用单选下拉，
+     等于用控件限制住了后端允许的事 —— 旁边那句「一人可属多组」的小字
+     就是在替这个控件打补丁。控件改了，补丁就不用留了。 */
+  const groupOptions: MultiSelectOption[] = groups.map((group) => ({
+    value: group.id,
+    label: group.name,
+    description: group.description,
+  }));
 
   const handleSubmit = (event: FormEvent) => {
     event.preventDefault();
@@ -152,7 +153,7 @@ export function UserFormModal({
         phone: phone.trim() || null,
         position: position.trim() || null,
         roleIds,
-        groupIds: groupId ? [groupId] : [],
+        groupIds,
       },
       {
         onSuccess: () => {
@@ -176,18 +177,16 @@ export function UserFormModal({
             不会像放在底部那样被 Modal 的滚动容器裁切、也盖不到「取消 / 创建」按钮。 */}
         {!isEdit && (
           <div className="grid gap-3 sm:grid-cols-2">
-            <FormField
-              label="分组"
-              htmlFor="user-group"
-              hint={groups.length ? undefined : '暂无分组，可先在左侧新增'}
-            >
-              <Select
+            <FormField label="分组" htmlFor="user-group">
+              <MultiSelect
                 id="user-group"
-                block
+                ariaLabel="分组"
                 options={groupOptions}
-                value={groupId}
+                value={groupIds}
+                onChange={setGroupIds}
+                placeholder="不加入分组"
+                emptyText="还没有可用分组"
                 disabled={pending}
-                onChange={(event) => setGroupId(event.target.value)}
               />
             </FormField>
             <FormField label="角色" htmlFor="user-role">
@@ -198,7 +197,7 @@ export function UserFormModal({
                 value={roleIds}
                 onChange={setRoleIds}
                 placeholder="不分配角色"
-                emptyText="还没有可用角色，请先在「角色与权限」页签创建"
+                emptyText="还没有可用角色"
                 disabled={pending}
               />
             </FormField>
@@ -231,7 +230,7 @@ export function UserFormModal({
             label="初始密码"
             htmlFor="user-password"
             required
-            hint={`至少 ${PASSWORD_MIN_LENGTH} 位，不能是纯数字`}
+            hint={PASSWORD_HINT}
           >
             <TextInput
               id="user-password"
@@ -243,10 +242,13 @@ export function UserFormModal({
           </FormField>
         )}
 
-        <FormField label="昵称" htmlFor="user-display-name" hint="留空则显示登录名">
+        {/* 「留空则显示登录名」由 placeholder 表达：输入框里看得见
+            留空之后会显示成什么，比一行小字更准。 */}
+        <FormField label="昵称" htmlFor="user-display-name">
           <TextInput
             id="user-display-name"
             value={displayName}
+            placeholder={username.trim() || '留空则显示登录名'}
             onChange={(event) => setDisplayName(event.target.value)}
           />
         </FormField>
@@ -280,13 +282,10 @@ export function UserFormModal({
           </FormField>
         </div>
 
-        {/* 建号接口（CreateUserIn）不接收 avatarUrl，只在编辑时可设 */}
+        {/* 建号接口（CreateUserIn）不接收 avatarUrl，只在编辑时可设。
+            头像旁边就有实时预览：留空时预览画的就是昵称首字。 */}
         {isEdit && (
-          <FormField
-            label="头像地址"
-            htmlFor="user-avatar"
-            hint="留空则显示昵称首字"
-          >
+          <FormField label="头像地址" htmlFor="user-avatar">
             <div className="flex items-center gap-2">
               <UserAvatar user={{ displayName, username, avatarUrl }} size={32} shape="square" />
               <TextInput

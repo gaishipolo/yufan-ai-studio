@@ -1,22 +1,28 @@
-import { Plus } from 'lucide-react';
-import { Button, CardSkeletonGrid, Chip, CoverImage, ErrorState, PageHeader } from '@/shared/ui';
-import { toast } from '@/shared/lib/toast';
+import { CardSkeletonGrid, Chip, CoverImage, ErrorState, PageHeader } from '@/shared/ui';
 import { formatDuration } from '@/shared/lib/format';
 import { useStoryboards } from '@/entities/storyboard/api/storyboard.api';
 
+/**
+ * 分镜模板库。
+ *
+ * 这页**只有列表**：后端 `GET /api/v1/storyboards` 是这个模块唯一的接口，
+ * 没有创建、没有编辑、没有删除。
+ *
+ * 所以以前这里挂着的两个「假交互」都摘掉了：
+ * - 「新建分镜」按钮点了只弹一个 toast（`toast('新建分镜')`）—— 点了什么也没发生，
+ *   却给了一个「这里能新建」的错觉；
+ * - 卡片带 `cursor-pointer` 和 hover 上浮，却**没有 onClick** ——
+ *   鼠标移上去像是能点，点下去毫无反应。
+ *
+ * 假交互比没有交互更糟：用户会以为是自己找错了地方。
+ * 等后端真的有了创建接口，再把入口挂回来 —— 那时候它会是真的。
+ */
 export default function StoryboardsPage() {
   const { data, isLoading, isError, error, refetch } = useStoryboards();
 
   return (
     <>
-      <PageHeader
-        title="分镜模板库"
-        actions={
-          <Button size="sm" variant="primary" icon={<Plus size={13} />} onClick={() => toast('新建分镜')}>
-            新建分镜
-          </Button>
-        }
-      />
+      <PageHeader title="分镜模板库" />
 
       <div className="mt-4">
         {isLoading ? (
@@ -28,7 +34,7 @@ export default function StoryboardsPage() {
             {(data?.items ?? []).map((sb) => (
               <article
                 key={sb.id}
-                className="group cursor-pointer overflow-hidden rounded-card border border-line-soft bg-panel transition-all hover:-translate-y-0.5 hover:border-line-strong hover:shadow-card"
+                className="group overflow-hidden rounded-card border border-line-soft bg-panel transition-colors hover:border-line-strong"
               >
                 <CoverImage
                   src={sb.coverUrl}

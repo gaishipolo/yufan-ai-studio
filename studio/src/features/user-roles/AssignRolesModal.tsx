@@ -57,8 +57,10 @@ export function AssignRolesModal({
   return (
     <Modal open={open} onClose={onClose} title={`分配角色 · ${user?.username ?? ''}`} width={480}>
       <form className="space-y-3 px-[18px] py-4" onSubmit={handleSubmit}>
+        {/* 「提交后整组替换，未勾选的会被移除」在别的弹窗里也写着（权限勾选器），
+            这里只留**只有这一处能说清**的半句：什么时候生效。 */}
         <p className="text-meta leading-[1.6] text-ink-mute">
-          提交后整组替换当前角色，未勾选的会被移除；权限变更在用户下次请求时生效。
+          权限变更在用户下次请求时生效。
         </p>
 
         {isSelf && (

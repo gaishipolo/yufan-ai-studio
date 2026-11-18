@@ -2,7 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { Button, FormField, Modal, TextInput } from '@/shared/ui';
 import { toast } from '@/shared/lib/toast';
 import { useResetPassword } from '@/entities/user/api/user.queries';
-import { PASSWORD_MIN_LENGTH, checkPassword } from '@/entities/user/model/validation';
+import { PASSWORD_HINT, checkPassword } from '@/entities/user/model/validation';
 import type { User } from '@/entities/user/model/types';
 
 /** 管理员重置密码：设置一个新的临时口令，由管理员线下告知本人 */
@@ -61,15 +61,15 @@ export function ResetPasswordModal({
             这句话以前写的是"会话不受影响"，正好把这次操作最有价值的安全属性
             说成了"没有"，也让管理员以为对方还能继续用。 */}
         <p className="text-meta leading-[1.6] text-ink-mute">
-          重置后旧密码立即失效，<strong className="font-semibold text-ink">该账号所有已登录设备会被强制下线</strong>
-          （含正在使用中的会话），本人需用新口令重新登录。
+          重置后旧密码立即失效，<strong className="font-semibold text-ink">该账号所有已登录设备会被强制下线</strong>，
+          本人需用新口令重新登录。
         </p>
 
         <FormField
           label="新密码"
           htmlFor="reset-password"
           required
-          hint={`至少 ${PASSWORD_MIN_LENGTH} 位，不能是纯数字`}
+          hint={PASSWORD_HINT}
         >
           <TextInput
             id="reset-password"

@@ -38,10 +38,6 @@ export function TeamBasePermissionsCard({ onEdit }: { onEdit: () => void }) {
         </Can>
       </header>
 
-      <p className="mt-1 text-meta leading-[1.6] text-ink-mute">
-        这一层只放只读等基础能力；组织管理类权限请用小组或个人层授予，避免给全站发管理权。
-      </p>
-
       <div className="mt-2.5 flex flex-wrap gap-1">
         {query.isLoading ? (
           <Skeleton className="h-5 w-40" />

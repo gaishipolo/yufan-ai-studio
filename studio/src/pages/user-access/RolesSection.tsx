@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { AlertCircle, AlertTriangle, Plus, RefreshCw, ShieldAlert, Users } from 'lucide-react';
-import { Button, Chip, EmptyState, Skeleton } from '@/shared/ui';
+import { Button, Chip, ConfirmDialog, EmptyState, Skeleton } from '@/shared/ui';
 import { Can } from '@/shared/access/Can';
 import { useCan } from '@/shared/access/use-access';
 import { toast } from '@/shared/lib/toast';
@@ -71,45 +71,51 @@ function RoleCard({ role, onOpen }: { role: Role; onOpen: (dialog: Dialog, role:
         </Button>
 
         <span className="ml-auto" />
-        {confirming ? (
-          <>
-            <span className="text-meta text-ink-soft">确认删除？</span>
-            <Button
-              size="sm"
-              variant="danger"
-              loading={deleteRole.isPending}
-              onClick={() =>
-                deleteRole.mutate(role.id, {
-                  onSuccess: () => {
-                    toast('角色已删除', 'success');
-                    setConfirming(false);
-                  },
-                  onError: (error) => {
-                    toast(error.message, 'error');
-                    setConfirming(false);
-                  },
-                })
-              }
-            >
-              删除
-            </Button>
-            <Button size="sm" variant="ghost" onClick={() => setConfirming(false)}>
-              取消
-            </Button>
-          </>
-        ) : (
-          <Button
-            size="sm"
-            variant="ghost"
-            className="text-danger hover:bg-[#feeceb] hover:text-danger"
-            disabled={!canManage || Boolean(blockedReason)}
-            title={blockedReason ?? undefined}
-            onClick={() => setConfirming(true)}
-          >
-            删除
-          </Button>
-        )}
+        {/* 删除走统一确认框：原来卡片里摆一行「确认删除？」加两个按钮，
+            四张卡并排时那个 inline 确认区会把卡片撑高、还会跟别的卡的按钮错位。
+            二次确认本来就该是弹层 —— `ConfirmDialog` 里还能把「这次会发生什么」摊开写。 */}
+        <Button
+          size="sm"
+          variant="ghost"
+          className="text-danger hover:bg-[#feeceb] hover:text-danger"
+          disabled={!canManage || Boolean(blockedReason)}
+          title={blockedReason ?? undefined}
+          onClick={() => setConfirming(true)}
+        >
+          删除
+        </Button>
       </div>
+
+      <ConfirmDialog
+        open={confirming}
+        title="删除角色"
+        description={
+          <>
+            确定删除角色 <span className="font-semibold text-ink">{role.name}</span> 吗？
+          </>
+        }
+        details={[
+          { label: '角色标识', value: role.code },
+          { label: '成员数', value: `${role.userCount} 名` },
+          { label: '权限点', value: permissionCountLabel(role) },
+        ]}
+        notice="删除后无法恢复。"
+        confirmLabel="删除"
+        busy={deleteRole.isPending}
+        onCancel={() => setConfirming(false)}
+        onConfirm={() =>
+          deleteRole.mutate(role.id, {
+            onSuccess: () => {
+              toast('角色已删除', 'success');
+              setConfirming(false);
+            },
+            onError: (error) => {
+              toast(error.message, 'error');
+              setConfirming(false);
+            },
+          })
+        }
+      />
     </section>
   );
 }
@@ -132,9 +138,9 @@ export function RolesSection() {
       <TeamBasePermissionsCard onEdit={() => setDialog('team')} />
 
       <div className="flex flex-wrap items-center gap-1.5">
-        <p className="text-meta leading-[1.6] text-ink-mute">
-          角色是权限点的集合。给用户分配角色即授予对应权限；内置角色不可删除。
-        </p>
+        {/* 原来这里有一句「角色是权限点的集合。给用户分配角色即授予对应权限；
+            内置角色不可删除。」——「分配角色」按钮就在用户页签里、「内置」标签
+            就在卡片上，这句话把两处都看得见的事又说了一遍。 */}
         <span className="ml-auto text-meta text-ink-mute">共 {roles.length} 个角色</span>
         <Can permission="identity:role:manage">
           <Button

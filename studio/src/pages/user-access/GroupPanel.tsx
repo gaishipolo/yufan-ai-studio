@@ -87,14 +87,16 @@ export function GroupPanel({
             onClick={() => onSelect(null)}
           >
             <span>全部分组</span>
-            <span className="ml-auto text-meta tabular-nums text-ink-mute" title="小组数量">
+            <span className="ml-auto text-meta tabular-nums text-ink-mute">
               ({groups.length})
             </span>
           </button>
 
           {groups.length === 0 ? (
+            /* 「新建后可以给组分配成员与整体权限」是跨界面指引：
+               左边「新增分组」、右边用户表的「分组」筛选已经把这事摆出来了。 */
             <p className="px-2.5 py-4 text-meta leading-[1.6] text-ink-mute">
-              还没有小组。新建后可以给组分配成员与整体权限。
+              还没有小组
             </p>
           ) : (
             <ul className="mt-0.5 space-y-0.5">

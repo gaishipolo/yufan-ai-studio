@@ -154,18 +154,18 @@ describe('UsersSection', () => {
     expect(within(rowOf('只读同学')).getByRole('button', { name: '停用' })).toBeEnabled();
   });
 
-  it('只有 identity:read 时不渲染添加成员、停用，也不渲染分组侧栏', () => {
+  it('只有 identity:read 时不渲染新建用户、停用，也不渲染分组侧栏', () => {
     renderSection(READER);
 
-    expect(screen.queryByRole('button', { name: /添加成员/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /新建用户/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '停用' })).not.toBeInTheDocument();
     expect(screen.queryByText('分组')).not.toBeInTheDocument();
   });
 
-  it('有 identity:create 时出现添加成员入口', () => {
+  it('有 identity:create 时出现新建用户入口', () => {
     renderSection();
 
-    expect(screen.getByRole('button', { name: /添加成员/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /新建用户/ })).toBeInTheDocument();
   });
 
   it('截图布局：左栏分组 + 三路搜索 + 手机号与职务列', () => {
