@@ -159,6 +159,51 @@ describe('SlotMediaPicker · 候选集里再筛', () => {
 });
 
 /**
+ * 可选槽位：使用者面对一个没有星号的槽位，第一反应是「不填是不是不行」。
+ * 与其让人猜，不如把「不填会怎样」摆出来。
+ */
+describe('SlotMediaPicker · 可选槽位', () => {
+  it('必填槽位不显示兜底说明', () => {
+    render(
+      <SlotMediaPicker slot={slotOf({minCount: 1})} selected={[]} onChange={vi.fn()} />,
+    );
+    expect(screen.queryByText(/不填/)).not.toBeInTheDocument();
+  });
+
+  it('可选槽位显示「不填则用：兜底文案」', () => {
+    render(
+      <SlotMediaPicker
+        slot={slotOf({minCount: 0, emptyText: '主角是穿红裙的年轻女性'})}
+        selected={[]}
+        onChange={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(/不填则用：/)).toBeInTheDocument();
+    expect(screen.getByText('主角是穿红裙的年轻女性')).toBeInTheDocument();
+  });
+
+  it('可选槽位没写兜底文案时只说「不填也能生成」', () => {
+    render(
+      <SlotMediaPicker slot={slotOf({minCount: 0})} selected={[]} onChange={vi.fn()} />,
+    );
+    expect(screen.getByText('可选：不填也能生成')).toBeInTheDocument();
+  });
+
+  it('必填槽位标星，可选槽位不标星', () => {
+    const {unmount} = render(
+      <SlotMediaPicker slot={slotOf({minCount: 1})} selected={[]} onChange={vi.fn()} />,
+    );
+    expect(screen.getByText('*')).toBeInTheDocument();
+    unmount();
+
+    render(
+      <SlotMediaPicker slot={slotOf({minCount: 0})} selected={[]} onChange={vi.fn()} />,
+    );
+    expect(screen.queryByText('*')).not.toBeInTheDocument();
+  });
+});
+
+/**
  * 悬浮大图：网格里的缩略图只有 360×240 的封面，看不清产品细节。
  * 悬停时另浮一张大图，**点一下仍然是选中**。
  */

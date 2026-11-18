@@ -58,6 +58,7 @@ import {
   slotsMissingTag,
   splitModelSelection,
   stripSlotRefs,
+  textsToClearForRequired,
   type SlotType,
 } from './specDraft';
 
@@ -206,6 +207,26 @@ export function SpecWorkspace() {
     if (next.type === 'audio' || next.type === 'text') next.refMode = 'attachment';
     if (next.type === 'image' || next.type === 'video') {
       next.refMode = 'mixed';
+    }
+    // 切成**必填**时清掉两段文案：必填 = 素材一定在 = 直接插编号，
+    // 这两段文案对它没有意义（后端也会拦：必填槽位带文案直接 400）。
+    //
+    // 判断用 `next`（**已经含新 minCount**）而不是切换前的槽位：按切换前
+    // 判断的话，切到必填那一刻 minCount 还是旧的（0），于是清不掉 ——
+    // 后端照样 400，作者看不出原因。
+    //
+    // **清掉并告知**，不静默丢：作者刚写的「人物参考 {{slot:hero}}」
+    // 悄悄消失，他会以为是自己记错了。切回「可选」时文案不会自动回来
+    // —— 那是作者的决定，不该由系统替他猜。
+    if ((next.minCount ?? 1) >= 1) {
+      const cleared = textsToClearForRequired(next);
+      if (cleared) {
+        Object.assign(next, cleared);
+        setNote(
+          `「${next.label?.trim() || SLOT_TYPE_LABELS[slotTypeOf(next.type)]}」改成必填了，` +
+            '两段文案已清空（必填槽位一定是直接插入素材编号）',
+        );
+      }
     }
     nextSlots[index] = next;
     // 改类型时跟着改名（只在提示词没引用过时；引用过就留着，别让引用静默失效）。
@@ -581,6 +602,7 @@ export function SpecWorkspace() {
                   onPickAsset={() => setPicker({target: 'slot', index})}
                   tagOptions={tagOptions}
                   typeOptions={TYPE_OPTIONS}
+                  prompt={draft.prompt ?? ''}
                 />
               ))}
             </div>

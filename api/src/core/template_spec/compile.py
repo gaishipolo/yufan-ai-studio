@@ -32,7 +32,7 @@ from core.template_spec.models import (
     InputSlot,
     TemplateSpec,
 )
-from core.template_spec.rules import validate_spec
+from core.template_spec.rules import _LEFTOVER, validate_spec
 
 #: `{{slot:key}}` / `{{slot:key*}}` / `{{slot:key.2}}`，**两边允许空格**。
 #: 只匹配合法的 key 形状，写错的部分留在原地，由下面的"残留引用"检查兜住。
@@ -40,15 +40,11 @@ from core.template_spec.rules import validate_spec
 #: 空格这一条必须与 `rules._SLOT_REF`（结构校验）一致：那边容空格、这边不容，
 #: 结果就是「预检与发布都过、用户在模板库点生成才 400」。同一个形状两处两种口径，
 #: 迟早踩到（2026-11-15 审查 3.4 的同源问题）。
-_SLOT_REF = re.compile(r"\{\{\s*slot:([a-z][a-z0-9_]{0,39})(\*|\.\d{1,3})?\s*\}\}")
-#: 替换后还残留这种片段，说明引用写坏了（少括号、key 形状不对、编号位数超限等）。
 #:
-#: **必须容空格**：上面的 `_SLOT_REF` 已经允许 `{{ slot:key }}`，那么坏掉的形态
-#: 同样带空格（`{{ slot:Key }}`、`{{ slot:key.1234 }}`）。判据要是写成字面量
-#: `"{{slot:"`，这些坏引用会同时躲过替换与残留检查 —— 原样进入供应商提示词，
-#: 用户看到的是模型吐出一坨带大括号的乱码，而日志里什么线索都没有
-#: （2026-11-15 审查 4.1）。
-_LEFTOVER = re.compile(r"\{\{\s*slot:")
+#: 与 `rules._SLOT_REF` 的差别是**这里要抓修饰符**（`*` / `.N`），所以形状
+#: 不能直接共用一份 —— 但残留检查（`_LEFTOVER`）是同一件事，只在 `rules`
+#: 定义一次，两边导入，别各抄一份（这个形状已经漂移过三次）。
+_SLOT_REF = re.compile(r"\{\{\s*slot:([a-z][a-z0-9_]{0,39})(\*|\.\d{1,3})?\s*\}\}")
 
 
 def compile_spec(
@@ -155,6 +151,36 @@ def _expander(
 
     用 `re.sub` 单遍替换而不是逐个 `str.replace`：替换结果里含 `{{Mixed N}}`，
     多遍替换会把新生成的东西再扫一遍。
+
+    ## 三种引用，三种语义
+
+    | 写法 | 填了素材 | 没填素材（可选槽位） |
+    |---|---|---|
+    | `{{slot:x}}` | **段落**：插入「选中时文案」，空则插编号 | 插入「未选时文案」，空则报错 |
+    | `{{slot:x*}}` | 这组的编号列表（`、{{Mixed 2}}、{{Mixed 3}}`） | 降级为空（既有语义） |
+    | `{{slot:x.N}}` | 第 N 张的编号 | 报错 |
+
+    **必填槽位（`min_count >= 1`）只有「填了素材」这一种情况**：
+    它的素材一定在（不填在编译期就报错），所以单张引用**直接插编号** ——
+    两段文案对它没有意义，结构校验也不允许写（见 `rules._validate_slot_texts`）。
+    「选中时 / 未选时」两种说法是**可选槽位**才有的两种状态。
+
+    三种写法**语义不同**，所以兜底规则也不同：
+
+    - 只有**单张引用**走「段落」：`{{slot:x*}}` 的语义是"这组的编号"，
+      套一层段落反而会让人以为整组都进去了（作者写「人物参考 {{slot:x}}」
+      而正文用 `{{slot:x*}}` 时，段落里只会有第一张 —— 另一张悄悄消失）。
+      要在段落里表达整组，就在**段落内部**写 `{{slot:x*}}`。
+    - 整组引用没填时**降级为空**（不报错）：它的语义是「列出这组」，
+      没有就列出空。这是既有行为，`test_short_fill_shifts_later_numbers` 钉着。
+    - 「第 N 张」没填时**报错**：没有「第 N 张」这回事，兜底文案是整段话、
+      不是某个编号，套不上去。
+
+    ## 为什么「没填」要有兜底而不是静默留空
+
+    静默留空的后果是：提示词里**少了一整段**，模型照跑、结果不对，
+    而日志里什么线索都没有（用户只会觉得"这模板效果不好"）。
+    所以单张引用没填且没有兜底文案 = 报错，并说清要写什么。
     """
 
     def expand(text: str, where: str) -> str:
@@ -170,13 +196,16 @@ def _expander(
                 )
             owned = tokens.get(key, ())
             if modifier == "*":
-                # 整组引用：没填就当这组不存在（可选槽位的自然语义）。
-                # 单张引用不能这样处理 —— `{{slot:x}}` 的语义是"这一张"，
-                # 悄悄变空会让提示词缺一个必需引用而没人发现。
-                return "、".join(owned)
-            if not owned:
-                raise BadRequest(f"{where}引用了未填素材的槽位「{_label(slot)}」")
+                # **整组引用** = 这组的编号列表（`、{{Mixed 2}}、{{Mixed 3}}`）。
+                # 没填时**降级为空**：它的语义是「列出这组」，没有就列出空 ——
+                # 这是既有行为（`test_short_fill_shifts_later_numbers` 钉着）。
+                # 作者写了「未选时文案」就用它接管这一块。
+                if owned:
+                    return "、".join(owned)
+                return slot.empty_text.strip()
             if modifier.startswith("."):
+                # **第 N 张**：没有「第 N 张」这回事，兜底文案也不适用
+                # （兜底是整段话，不是某个编号）。所以只有一句实话：不存在。
                 index = int(modifier[1:])
                 if index < 1 or index > len(owned):
                     raise BadRequest(
@@ -184,7 +213,20 @@ def _expander(
                         f"（这次填了 {len(owned)} 张）"
                     )
                 return owned[index - 1]
-            return owned[0]
+            # **单张引用** = 段落插入点：
+            # - 填了：作者写了「选中时文案」就用它（内部可再引用自己/整组），
+            #   没写就插编号（= 旧行为，现有模板一字不改也能继续用）。
+            # - 没填：作者写了「未选时文案」就用它；没写就报错
+            #   （静默留空会让提示词缺一整段，模型照跑、结果不对且不留痕迹）。
+            #
+            # **必填槽位（`min_count >= 1`）走不到这里**：它一定有素材，
+            # 「选中时文案」对它没有意义（结构校验已经拦掉）—— 必填就是
+            # **直接插编号**，只有可选槽位才有「填了 / 没填」两种说法。
+            if owned:
+                if slot.filled_text.strip():
+                    return _expand_filled(slot, owned, where)
+                return owned[0]
+            return _fallback_or_raise(slot, where)
 
         result = _SLOT_REF.sub(repl, text)
         if _LEFTOVER.search(result):
@@ -192,6 +234,60 @@ def _expander(
         return result.strip()
 
     return expand
+
+
+def _fallback_or_raise(slot: InputSlot, where: str) -> str:
+    """没填素材时的兜底：作者写了「未选时文案」就用它，没写就报错。
+
+    **报错而不是静默留空**：留空的后果是提示词里少了一整段，模型照跑、
+    结果不对，而日志里什么线索都没有 —— 用户只会觉得"这模板效果不好"。
+    报错时要说清**要做什么**，不然作者不知道该去哪儿改。
+    """
+    fallback = slot.empty_text.strip()
+    if fallback:
+        return fallback
+    raise BadRequest(
+        f"{where}引用了未填素材的槽位「{_label(slot)}」"
+        + (
+            "：它是可选槽位，请在模板封装里写「未选时文案」"
+            "（没素材时这一段怎么说），或者把它改成必填"
+            if slot.min_count == 0
+            else ""
+        )
+    )
+
+
+def _expand_filled(
+    slot: InputSlot, owned: tuple[str, ...], where: str
+) -> str:
+    """展开「选中时文案」里的自引用。
+
+    段落里可以写 `{{slot:key}}`（第一张）、`{{slot:key*}}`（整组）、
+    `{{slot:key.N}}`（第 N 张）—— 三种写法在这里各自展开成对应编号。
+    段落里**只能引用自己**（结构校验已拦），所以编号的来源没有歧义。
+    """
+    label = _label(slot)
+
+    def repl(match: re.Match[str]) -> str:
+        key, modifier = match.group(1), match.group(2) or ""
+        if key != slot.key:  # pragma: no cover - 结构校验已拦
+            raise BadRequest(f"{where}的「{label}」文案引用了别的槽位：{key}")
+        if modifier == "*":
+            return "、".join(owned)
+        if modifier.startswith("."):
+            index = int(modifier[1:])
+            if index < 1 or index > len(owned):
+                raise BadRequest(
+                    f"{where}的「{label}」文案引用了第 {index} 张，"
+                    f"但这次只填了 {len(owned)} 张"
+                )
+            return owned[index - 1]
+        return owned[0]
+
+    result = _SLOT_REF.sub(repl, slot.filled_text)
+    if _LEFTOVER.search(result):
+        raise BadRequest(f"{where}的「{label}」选中时文案里有无法解析的槽位引用")
+    return result
 
 
 def _label(slot: InputSlot) -> str:

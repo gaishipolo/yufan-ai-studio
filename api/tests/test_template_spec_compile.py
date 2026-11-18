@@ -292,3 +292,231 @@ def test_reference_with_spaces_compiles_like_the_tight_form() -> None:
 
     assert out.prompt == "原片 {{Mixed 1}}\n\n主图 {{Mixed 2}} 与 {{Mixed 2}}"
     assert out.slot_tokens["hero"] == ("{{Mixed 2}}",)
+
+
+# --------------------------------------------------------------------------- #
+# 可选槽位：选中时文案 / 未选时文案
+# --------------------------------------------------------------------------- #
+def _optional(key: str, position: int, **over: object) -> InputSlot:
+    """一个**可选**的素材槽位（`min_count=0`）：不填素材也能编译。"""
+    base: dict[str, object] = {
+        "key": key,
+        "type": "image",
+        "binding": "user",
+        "min_count": 0,
+        "max_count": 1,
+        "position": position,
+        "label": key,
+    }
+    base.update(over)
+    return InputSlot(**base)  # type: ignore[arg-type]
+
+
+def test_optional_slot_uses_filled_text_when_asset_is_chosen() -> None:
+    """填了素材 → 提示词里插入「选中时文案」，其中的自引用派生成编号。
+
+    这是需求的核心：作者写「人物参考 {{slot:hero}}」，使用者选了图，
+    提示词里就是「人物参考 {{Mixed 2}}」。
+    """
+    spec = _spec(
+        _source(),
+        _optional("hero", 1, filled_text="人物参考 {{slot:hero}}"),
+        editable="{{slot:hero}}",
+    )
+    out = compile_spec(spec, _fills(source=(VIDEO,), hero=(HERO,)))
+    assert out.prompt == "人物参考 {{Mixed 2}}"
+    # 编号照旧参与参考素材顺序
+    assert out.reference_ids == ("v-src", "i-hero")
+
+
+def test_optional_slot_uses_empty_text_when_asset_is_not_chosen() -> None:
+    """没填素材 → 插入「未选时文案」，不占编号、不进参考素材。"""
+    spec = _spec(
+        _source(),
+        _optional("hero", 1, empty_text="主角是穿红裙的年轻女性"),
+        editable="{{slot:hero}}",
+    )
+    out = compile_spec(spec, _fills(source=(VIDEO,)))
+    assert out.prompt == "主角是穿红裙的年轻女性"
+    # 没素材 → 不占编号，也不进参考素材列表
+    assert out.reference_ids == ("v-src",)
+    assert "hero" not in out.slot_tokens
+
+
+def test_optional_slot_without_empty_text_is_rejected_with_actionable_message() -> None:
+    """没填素材又没写兜底文案 → 报错，并说清**要做什么**。
+
+    静默留空会让提示词里少一整段，模型照跑、结果不对且不留痕迹 ——
+    比报错难查得多。
+    """
+    spec = _spec(
+        _source(),
+        _optional("hero", 1),
+        editable="{{slot:hero}}",
+    )
+    with pytest.raises(BadRequest, match="未选时文案"):
+        compile_spec(spec, _fills(source=(VIDEO,)))
+
+
+def test_filled_text_is_optional_and_keeps_the_old_behaviour() -> None:
+    """没写「选中时文案」→ 插编号（旧行为）。
+
+    现有模板一字不改也要能继续用 —— 这是这条能力**向后兼容**的前提。
+    """
+    spec = _spec(_source(), _optional("hero", 1), editable="{{slot:hero}}")
+    out = compile_spec(spec, _fills(source=(VIDEO,), hero=(HERO,)))
+    assert out.prompt == "{{Mixed 2}}"
+
+
+def test_filled_text_may_reference_the_whole_group() -> None:
+    """段落里可以写 `{{slot:x*}}`：多选槽位要把整组都写进去。"""
+    spec = _spec(
+        _source(),
+        _optional(
+            "hero", 1, max_count=2, filled_text="人物参考 {{slot:hero*}}"
+        ),
+        editable="{{slot:hero}}",
+    )
+    out = compile_spec(
+        spec, _fills(source=(VIDEO,), hero=(HERO, DETAIL_1))
+    )
+    assert out.prompt == "人物参考 {{Mixed 2}}、{{Mixed 3}}"
+
+
+def test_filled_text_may_reference_one_of_several() -> None:
+    """段落里可以写 `{{slot:x.2}}`：只要其中一张。"""
+    spec = _spec(
+        _source(),
+        _optional(
+            "hero", 1, max_count=3, filled_text="以 {{slot:hero.2}} 为主"
+        ),
+        editable="{{slot:hero}}",
+    )
+    out = compile_spec(
+        spec, _fills(source=(VIDEO,), hero=(HERO, DETAIL_1, DETAIL_2))
+    )
+    assert out.prompt == "以 {{Mixed 3}} 为主"
+
+
+def test_filled_text_cannot_reference_another_slot() -> None:
+    """「选中时文案」只能引用自己。
+
+    跨槽位引用会让编号依赖别的槽位的填充量，而编号是按槽位顺序算的 ——
+    同一段文案在不同填充下编译出不同结果，没人能推理得清。
+    """
+    spec = _spec(
+        _source(),
+        _optional("hero", 1, filled_text="参考 {{slot:source}}"),
+        _user("detail", 2),
+        editable="{{slot:hero}}",
+    )
+    with pytest.raises(BadRequest, match="只能引用自己"):
+        compile_spec(spec, _fills(source=(VIDEO,), hero=(HERO,), detail=(DETAIL_1,)))
+
+
+def test_empty_text_cannot_reference_any_slot() -> None:
+    """「未选时文案」不许含槽位引用：没素材就没有编号可指。"""
+    spec = _spec(
+        _source(),
+        _optional("hero", 1, empty_text="参考 {{slot:source}}"),
+        editable="{{slot:hero}}",
+    )
+    with pytest.raises(BadRequest, match="不能引用槽位"):
+        compile_spec(spec, _fills(source=(VIDEO,)))
+
+
+# --------------------------------------------------------------------------- #
+# 必填槽位：没有两段文案（直接插编号）
+# --------------------------------------------------------------------------- #
+def test_required_slot_rejects_filled_text() -> None:
+    """**必填**槽位不许写「选中时文案」。
+
+    必填 = 素材一定在 = 提示词里直接插编号。给必填槽位加自定义措辞，
+    等于多出一条「哪些槽位能写文案」的记忆负担，还跟界面上说的
+    「必填 = 直接插编号」对不上。
+    """
+    spec = _spec(
+        _source(),
+        _user("hero", 1, filled_text="人物参考 {{slot:hero}}"),
+        editable="{{slot:hero}}",
+    )
+    with pytest.raises(BadRequest, match="必填"):
+        compile_spec(spec, _fills(source=(VIDEO,), hero=(HERO,)))
+
+
+def test_required_slot_rejects_empty_text() -> None:
+    """必填槽位也不许写「未选时文案」：它永远用不上。"""
+    spec = _spec(
+        _source(),
+        _user("hero", 1, empty_text="主角是穿红裙的年轻女性"),
+        editable="{{slot:hero}}",
+    )
+    with pytest.raises(BadRequest, match="必填"):
+        compile_spec(spec, _fills(source=(VIDEO,), hero=(HERO,)))
+
+
+def test_required_slot_without_texts_still_inserts_the_number() -> None:
+    """必填槽位（没写文案）照旧插编号 —— 旧模板一字不改继续用。"""
+    spec = _spec(_source(), _user("hero", 1), editable="{{slot:hero}}")
+    out = compile_spec(spec, _fills(source=(VIDEO,), hero=(HERO,)))
+    assert out.prompt == "{{Mixed 2}}"
+
+
+def test_required_slot_error_says_how_to_make_it_optional() -> None:
+    """报错要说清**要做什么**：改成「可选」才能用这两段文案。
+
+    只说「不能写」的话，作者不知道该去哪里改。
+    """
+    spec = _spec(
+        _source(),
+        _user("hero", 1, filled_text="人物参考 {{slot:hero}}"),
+        editable="{{slot:hero}}",
+    )
+    with pytest.raises(BadRequest, match="可选"):
+        compile_spec(spec, _fills(source=(VIDEO,), hero=(HERO,)))
+
+
+def test_optional_slot_shifts_later_numbers_when_unfilled() -> None:
+    """可选槽位不填 → 后面槽位的编号前移（编号不落库的设计照旧）。"""
+    spec = _spec(
+        _source(),
+        _optional("hero", 1, empty_text="主角是穿红裙的年轻女性"),
+        _user("detail", 2),
+        editable="{{slot:hero}} {{slot:detail}}",
+    )
+    out = compile_spec(
+        spec, _fills(source=(VIDEO,), detail=(DETAIL_1,))
+    )
+    assert out.prompt == "主角是穿红裙的年轻女性 {{Mixed 2}}"
+    assert out.reference_ids == ("v-src", "i-d1")
+
+
+def test_group_reference_degrades_to_empty_when_unfilled_and_no_fallback() -> None:
+    """整组引用（`{{slot:x*}}`）没填、也没写兜底文案 → **降级为空**，不报错。
+
+    它的语义是「列出这组」，没有就列出空 —— 这是既有行为
+    （`test_short_fill_shifts_later_numbers` 钉着），不能被新能力改掉。
+    """
+    spec = _spec(
+        _source(),
+        _optional("hero", 1, max_count=2),
+        editable="看 {{slot:hero*}}",
+    )
+    out = compile_spec(spec, _fills(source=(VIDEO,)))
+    assert out.prompt == "看"
+
+
+def test_group_reference_uses_empty_text_when_written() -> None:
+    """整组引用写了兜底文案 → 用它（比降级成空更符合作者意图）。
+
+    降级成空会在句子里留一个空洞：「参考 {{slot:hero*}} 的产品」变成
+    「参考  的产品」—— 句子缺一块，模型照跑、结果不对。作者既然写了
+    兜底文案，就该用上。
+    """
+    spec = _spec(
+        _source(),
+        _optional("hero", 1, max_count=2, empty_text="主角是穿红裙的年轻女性"),
+        editable="看 {{slot:hero*}}",
+    )
+    out = compile_spec(spec, _fills(source=(VIDEO,)))
+    assert out.prompt == "看 主角是穿红裙的年轻女性"

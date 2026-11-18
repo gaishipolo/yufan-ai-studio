@@ -12961,12 +12961,6 @@
             "title": "Label",
             "default": ""
           },
-          "usage": {
-            "type": "string",
-            "maxLength": 500,
-            "title": "Usage",
-            "default": ""
-          },
           "assetId": {
             "anyOf": [
               {
@@ -12978,6 +12972,18 @@
               }
             ],
             "title": "Assetid"
+          },
+          "filledText": {
+            "type": "string",
+            "maxLength": 2000,
+            "title": "Filledtext",
+            "default": ""
+          },
+          "emptyText": {
+            "type": "string",
+            "maxLength": 2000,
+            "title": "Emptytext",
+            "default": ""
           },
           "tagIds": {
             "items": {
@@ -13058,12 +13064,6 @@
             "title": "Label",
             "default": ""
           },
-          "usage": {
-            "type": "string",
-            "maxLength": 500,
-            "title": "Usage",
-            "default": ""
-          },
           "assetId": {
             "anyOf": [
               {
@@ -13075,6 +13075,18 @@
               }
             ],
             "title": "Assetid"
+          },
+          "filledText": {
+            "type": "string",
+            "maxLength": 2000,
+            "title": "Filledtext",
+            "default": ""
+          },
+          "emptyText": {
+            "type": "string",
+            "maxLength": 2000,
+            "title": "Emptytext",
+            "default": ""
           },
           "tagIds": {
             "items": {

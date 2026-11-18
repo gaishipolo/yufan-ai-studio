@@ -40,6 +40,7 @@ from core.template_spec import (
     InputSlot,
     TemplateSpec,
     compile_spec,
+    slot_ref_modes,
     validate_spec,
 )
 from db.base import utcnow
@@ -86,9 +87,10 @@ def to_core(payload: TemplateSpecIn) -> TemplateSpec:
                 min_count=slot.min_count,
                 max_count=slot.max_count,
                 label=slot.label,
-                usage=slot.usage,
                 asset_id=slot.asset_id,
                 tag_ids=tuple(slot.tag_ids),
+                filled_text=slot.filled_text,
+                empty_text=slot.empty_text,
                 position=slot.position,
             )
             for slot in payload.slots
@@ -134,9 +136,10 @@ def _slot_out(row: TemplateSpecSlot) -> SpecSlotOut:
         min_count=row.min_count,
         max_count=row.max_count,
         label=row.label,
-        usage=row.usage_text,
         asset_id=row.asset_id,
         tag_ids=_slot_tag_ids(row),
+        filled_text=row.filled_text or "",
+        empty_text=row.empty_text or "",
         position=row.position,
     )
 
@@ -255,6 +258,48 @@ def _check_executable(spec: TemplateSpec) -> None:
     if missing:
         raise BadRequest(
             "这些槽位要圈标签（模板库按标签分组让用户挑素材）："
+            + "、".join(missing)
+        )
+
+    _check_optional_slots_have_fallback(spec)
+
+
+def _check_optional_slots_have_fallback(spec: TemplateSpec) -> None:
+    """**可选**槽位（`min_count == 0`）被**单张引用**时，必须有「未选时文案」。
+
+    可选槽位不填素材也能编译 —— 那时提示词里这一段由「未选时文案」接管。
+    没有它的话，使用者在模板库不填素材就会在点生成时被 400 打回，而那句话
+    与「我刚才没选素材」看不出关系。
+
+    只看**单张引用**（`{{slot:x}}`）：三种写法的「没填」语义不同（见
+    `core/template_spec/compile.py`）—— 整组引用（`{{slot:x*}}`）没填时降级
+    为空（既有语义，不报错），第 N 张（`{{slot:x.N}}`）没填时必然报错
+    （没有「第 N 张」这回事，兜底文案套不上去）。所以**只有单张引用**
+    才需要兜底文案 —— 把整组引用也算进来，会把一堆本来好用的模板拦在发布外。
+
+    放在**发布**这一道闸（而不是编译）：作者在封装页把槽位改成可选、还没写
+    兜底文案时，草稿能存（`validate_spec` 也被保存草稿调用，拦了会逼作者
+    先想清楚才能存草稿），但**发布出去之前**必须写好 —— 发布意味着「别人会
+    拿去用」，别人不该替作者填这个坑。
+
+    只看**被引用**的可选槽位：没被引用的槽位填不填都不影响提示词，
+    要求它写兜底文案是白加一步。
+    """
+    modes = slot_ref_modes(spec.prompt)
+    missing = [
+        slot.label.strip() or slot.key
+        for slot in spec.slots
+        if slot.key in modes
+        # 只有「单张引用」需要兜底：整组引用降级为空，第 N 张必然报错。
+        and "" in modes[slot.key]
+        and slot.min_count == 0
+        and slot.binding == "user"
+        and not slot.empty_text.strip()
+    ]
+    if missing:
+        raise BadRequest(
+            "这些可选槽位被提示词引用了，要写「未选时文案」"
+            "（使用者不填素材时这一段怎么说）："
             + "、".join(missing)
         )
 
@@ -483,12 +528,13 @@ async def publish(session: AsyncSession, actor: CurrentUser, key: str) -> SpecPu
                 min_count=slot.min_count,
                 max_count=slot.max_count,
                 label=slot.label,
-                usage_text=slot.usage,
                 asset_id=slot.asset_id,
                 tag_ids=list(slot.tag_ids),
                 # 老列也填上（记第一个标签）：降级回旧代码时它还能看懂这一行，
                 # 代价只是「多标签」退化成「第一个标签」。
                 tag_id=slot.tag_ids[0] if slot.tag_ids else "",
+                filled_text=slot.filled_text,
+                empty_text=slot.empty_text,
                 position=slot.position,
             )
         )
@@ -775,9 +821,10 @@ def _slot_core(row: TemplateSpecSlot) -> InputSlot:
         min_count=row.min_count,
         max_count=row.max_count,
         label=row.label,
-        usage=row.usage_text,
         asset_id=row.asset_id,
         tag_ids=tuple(_slot_tag_ids(row)),
+        filled_text=row.filled_text or "",
+        empty_text=row.empty_text or "",
         position=row.position,
     )
 

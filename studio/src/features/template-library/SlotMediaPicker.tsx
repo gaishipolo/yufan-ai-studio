@@ -28,6 +28,8 @@ export function SlotMediaPicker({
   const kind = slot.type as 'image' | 'video';
   const label = KIND_LABEL[kind];
   const max = Math.max(1, slot.maxCount ?? 1);
+  /** 可选 = 最少 0 张。与封装页的开关、后端的编译规则同一口径。 */
+  const optional = (slot.minCount ?? 1) === 0;
   /** 槽位的候选集（一组标签，任意级别）。空 = 不限。 */
   const scope = useMemo(() => slot.tagIds ?? [], [slot.tagIds]);
   const scopeKey = scope.join(',');
@@ -103,6 +105,21 @@ export function SlotMediaPicker({
           {typeof list.data?.total === 'number' && filterIds.length > 0 && ` · 共 ${list.data.total}`}
         </span>
       </div>
+
+      {/* 可选槽位：把「不填会怎样」摆出来。使用者面对一个没有星号的槽位，
+          第一反应是「不填是不是不行」—— 与其让人猜，不如直接告诉他
+          不填时提示词里会用什么。 */}
+      {optional && (
+        <p className="mt-1 text-micro leading-relaxed text-ink-mute">
+          {slot.emptyText?.trim() ? (
+            <>
+              不填则用：<span className="text-ink-soft">{slot.emptyText.trim()}</span>
+            </>
+          ) : (
+            '可选：不填也能生成'
+          )}
+        </p>
+      )}
 
       {!scope.length && (
         /* 老模板（闸门加上之前发布的）没有标签：仍然能挑，但要说明为什么没有分组。 */

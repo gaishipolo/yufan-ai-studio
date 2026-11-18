@@ -27,9 +27,11 @@ const TYPE_OPTIONS = [
 function SlotHarness({
   base,
   onPatch,
+  prompt,
 }: {
   base: SpecSlotIn;
   onPatch: (patch: Partial<SpecSlotIn>) => void;
+  prompt: string;
 }) {
   const [current, setCurrent] = useState<SpecSlotIn>(base);
   const patch = (next: Partial<SpecSlotIn>) => {
@@ -50,11 +52,20 @@ function SlotHarness({
       onPickAsset={() => {}}
       tagOptions={TAG_OPTIONS}
       typeOptions={TYPE_OPTIONS}
+      prompt={prompt}
     />
   );
 }
 
-function renderSlot(slot: Partial<SpecSlotIn> = {}) {
+/**
+ * 默认提示词：**引用了当前槽位**。
+ *
+ * 两段文案（选中时 / 未选时）是「替换 `{{slot:key}}` 插入点」的文案 ——
+ * 没有插入点就不显示（填了也不进提示词，是死数据）。
+ */
+const DEFAULT_PROMPT = '把 {{slot:image_1}} 放进画面';
+
+function renderSlot(slot: Partial<SpecSlotIn> = {}, prompt = DEFAULT_PROMPT) {
   const onPatch = vi.fn();
   const base: SpecSlotIn = {
     key: 'image_1',
@@ -64,7 +75,6 @@ function renderSlot(slot: Partial<SpecSlotIn> = {}) {
     minCount: 1,
     maxCount: 1,
     label: '',
-    usage: '',
     position: 0,
     ...slot,
   };
@@ -73,21 +83,20 @@ function renderSlot(slot: Partial<SpecSlotIn> = {}) {
   });
   const view = render(
     <QueryClientProvider client={client}>
-      <SlotHarness base={base} onPatch={onPatch} />
+      <SlotHarness base={base} onPatch={onPatch} prompt={prompt} />
     </QueryClientProvider>,
   );
   return {onPatch, ...view};
 }
 
 describe('槽位卡片', () => {
-  it('默认只露出高频项：类型、最少/最多、用途说明都收着', () => {
+  it('默认只露出高频项：类型、最少/最多都收着', () => {
     renderSlot();
     // 类型标记可见（一眼知道要什么）—— 现在是图标，名称留给读屏
     expect(screen.getByRole('img', {name: '图片'})).toBeInTheDocument();
     // 低频项默认不渲染
     expect(screen.queryByLabelText('类型')).not.toBeInTheDocument();
     expect(screen.queryByText('最少')).not.toBeInTheDocument();
-    expect(screen.queryByText('进提示词的用途说明')).not.toBeInTheDocument();
   });
 
   it('点「更多设置」才展开低频项', async () => {
@@ -98,9 +107,16 @@ describe('槽位卡片', () => {
     expect(screen.getByLabelText('类型')).toBeInTheDocument();
     expect(screen.getByText('最少')).toBeInTheDocument();
     expect(screen.getByText('最多')).toBeInTheDocument();
-    expect(screen.getByText('进提示词的用途说明')).toBeInTheDocument();
     // 展开后按钮变成「收起」
     expect(screen.getByRole('button', {name: '收起更多设置'})).toBeInTheDocument();
+  });
+
+  it('「进提示词的用途说明」没了（它从来没进过提示词）', async () => {
+    const user = userEvent.setup();
+    renderSlot();
+    await user.click(screen.getByRole('button', {name: '展开更多设置'}));
+
+    expect(screen.queryByText('进提示词的用途说明')).not.toBeInTheDocument();
   });
 
   it('「谁定」用两个按钮切换，不用下拉', async () => {
@@ -168,5 +184,201 @@ describe('槽位卡片', () => {
 
     await user.type(input, 'X');
     expect(onPatch).toHaveBeenCalledWith(expect.objectContaining({label: '产品图X'}));
+  });
+
+  it('「必填 / 可选」只在用户填的槽位上出现', () => {
+    const {unmount} = renderSlot({binding: 'user'});
+    expect(screen.getByRole('button', {name: '必填'})).toBeInTheDocument();
+    expect(screen.getByRole('button', {name: '可选'})).toBeInTheDocument();
+    unmount();
+
+    renderSlot({binding: 'fixed'});
+    expect(screen.queryByRole('button', {name: '可选'})).not.toBeInTheDocument();
+  });
+
+  it('默认（minCount=1）是「必填」档', () => {
+    renderSlot({binding: 'user', minCount: 1});
+    expect(screen.getByRole('button', {name: '必填'})).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', {name: '可选'})).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('切到「可选」把 minCount 归零（可选 = minCount 0，不另存 required）', async () => {
+    const user = userEvent.setup();
+    const {onPatch} = renderSlot({binding: 'user', minCount: 1, maxCount: 1});
+
+    await user.click(screen.getByRole('button', {name: '可选'}));
+    expect(onPatch).toHaveBeenCalledWith(
+      expect.objectContaining({minCount: 0, maxCount: 1}),
+    );
+    // 不能顺手引入第二个事实源
+    expect(onPatch.mock.calls[0][0]).not.toHaveProperty('required');
+  });
+
+  it('切回「必填」把 minCount 拉回至少 1', async () => {
+    const user = userEvent.setup();
+    const {onPatch} = renderSlot({binding: 'user', minCount: 0, maxCount: 2});
+
+    await user.click(screen.getByRole('button', {name: '必填'}));
+    expect(onPatch).toHaveBeenCalledWith(
+      expect.objectContaining({minCount: 1, maxCount: 2}),
+    );
+  });
+
+  /* 「选中时文案」只对**可选**槽位有意义：必填 = 素材一定在 = 直接插编号，
+     没有「填了 / 没填」两种状态。 */
+  it('「选中时文案」只在可选槽位上出现（必填槽位直接不渲染）', async () => {
+    const user = userEvent.setup();
+    const {unmount} = renderSlot({binding: 'user', minCount: 0});
+    await user.click(screen.getByRole('button', {name: '展开更多设置'}));
+    expect(screen.getByLabelText('选中时文案')).toBeInTheDocument();
+    unmount();
+
+    renderSlot({binding: 'user', minCount: 1});
+    await user.click(screen.getByRole('button', {name: '展开更多设置'}));
+    expect(screen.queryByLabelText('选中时文案')).not.toBeInTheDocument();
+  });
+
+  it('「选中时文案」输入能回传 filledText', async () => {
+    const user = userEvent.setup();
+    const {onPatch} = renderSlot({binding: 'user', minCount: 0});
+
+    await user.click(screen.getByRole('button', {name: '展开更多设置'}));
+    const area = screen.getByLabelText('选中时文案');
+    await user.type(area, '人物参考');
+    expect(onPatch).toHaveBeenCalledWith(
+      expect.objectContaining({filledText: '人物参考'}),
+    );
+  });
+
+  /* 「未选时文案」只在**可选**槽位上出现（必填槽位不填素材会直接报错，
+     用不上这段文案）。以前是「显示但禁用」—— 一个永远不能用的框，
+     摆在那里只会让人以为填了有用。 */
+  it('「未选时文案」只在可选槽位上出现（必填槽位直接不渲染）', async () => {
+    const user = userEvent.setup();
+    const {unmount} = renderSlot({binding: 'user', minCount: 0});
+    await user.click(screen.getByRole('button', {name: '展开更多设置'}));
+    expect(screen.getByLabelText('未选时文案')).toBeInTheDocument();
+    unmount();
+
+    renderSlot({binding: 'user', minCount: 1});
+    await user.click(screen.getByRole('button', {name: '展开更多设置'}));
+    expect(screen.queryByLabelText('未选时文案')).not.toBeInTheDocument();
+  });
+
+  it('「未选时文案」输入能回传 emptyText', async () => {
+    const user = userEvent.setup();
+    const {onPatch} = renderSlot({binding: 'user', minCount: 0});
+    await user.click(screen.getByRole('button', {name: '展开更多设置'}));
+
+    await user.type(screen.getByLabelText('未选时文案'), '红裙');
+    expect(onPatch).toHaveBeenCalledWith(expect.objectContaining({emptyText: '红裙'}));
+  });
+
+  it('两段文案默认收在「更多设置」里', () => {
+    renderSlot({binding: 'user'});
+    expect(screen.queryByLabelText('选中时文案')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('未选时文案')).not.toBeInTheDocument();
+  });
+
+  it('固定槽位没有两段文案（素材早定死，不存在「没素材」）', async () => {
+    const user = userEvent.setup();
+    renderSlot({binding: 'fixed'});
+
+    await user.click(screen.getByRole('button', {name: '展开更多设置'}));
+    expect(screen.queryByLabelText('选中时文案')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('未选时文案')).not.toBeInTheDocument();
+  });
+
+  /* 两段文案是「替换 `{{slot:key}}` 插入点」的文案。提示词里没有这个
+     插入点时，写出来**永远不会进提示词**（死数据）—— 显示一个填了
+     也不生效的框，比不显示更坏：作者会以为它管用。 */
+  it('提示词里没引用这个槽位时，不显示两段文案', async () => {
+    const user = userEvent.setup();
+    renderSlot({binding: 'user', minCount: 0}, '把别的图放进画面');
+    await user.click(screen.getByRole('button', {name: '展开更多设置'}));
+
+    expect(screen.queryByLabelText('选中时文案')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('未选时文案')).not.toBeInTheDocument();
+  });
+
+  it('提示词里没引用时，说一句为什么没有这两个框', async () => {
+    const user = userEvent.setup();
+    renderSlot({binding: 'user', minCount: 0}, '把别的图放进画面');
+    await user.click(screen.getByRole('button', {name: '展开更多设置'}));
+
+    expect(screen.getByText(/写下 \{\{slot:image_1\}\} 引用这个槽位/)).toBeInTheDocument();
+  });
+
+  it('整组引用 {{slot:x*}} 不算插入点（那是「列出这组」，没有「一段文案」）', async () => {
+    const user = userEvent.setup();
+    renderSlot({binding: 'user', minCount: 0}, '把 {{slot:image_1*}} 都放进去');
+    await user.click(screen.getByRole('button', {name: '展开更多设置'}));
+
+    expect(screen.queryByLabelText('选中时文案')).not.toBeInTheDocument();
+  });
+
+  it('第 N 张引用 {{slot:x.2}} 也不算插入点', async () => {
+    const user = userEvent.setup();
+    renderSlot({binding: 'user', minCount: 0}, '把 {{slot:image_1.2}} 放进去');
+    await user.click(screen.getByRole('button', {name: '展开更多设置'}));
+
+    expect(screen.queryByLabelText('选中时文案')).not.toBeInTheDocument();
+  });
+
+  it('必填槽位（有插入点）说明为什么不给写两段话', async () => {
+    const user = userEvent.setup();
+    renderSlot({binding: 'user', minCount: 1});
+    await user.click(screen.getByRole('button', {name: '展开更多设置'}));
+
+    expect(
+      screen.getByText(/必填槽位一定有素材.*直接插入素材编号/),
+    ).toBeInTheDocument();
+  });
+
+  it('可选槽位（有插入点）两段话都在', async () => {
+    const user = userEvent.setup();
+    renderSlot({binding: 'user', minCount: 0});
+    await user.click(screen.getByRole('button', {name: '展开更多设置'}));
+
+    expect(screen.getByLabelText('选中时文案')).toBeInTheDocument();
+    expect(screen.getByLabelText('未选时文案')).toBeInTheDocument();
+  });
+
+  /* 占位符不再写死 token —— 改成打 `@` 选，候选里是**当前槽位自己的**引用。
+     写死 `{{slot:image_1}}` 的话，第二个槽位给的就是第一个槽位的 token ——
+     作者照着抄进提示词，引用到的还是那个槽位自己，编号会错位。
+
+     候选上显示的是**展示名**（「图片 1」），不是内部 key —— key 是给编译器看的，
+     作者看不懂。token 才是真的（下面那条用例验它）。 */
+  it('「选中时文案」打 @ 的候选是当前槽位自己的', async () => {
+    const user = userEvent.setup();
+    renderSlot(
+      {key: 'image_7', binding: 'user', minCount: 0, label: '主图'},
+      '把 {{slot:image_7}} 放进去',
+    );
+    await user.click(screen.getByRole('button', {name: '展开更多设置'}));
+
+    const area = screen.getByLabelText('选中时文案');
+    await user.click(area);
+    await user.type(area, '@');
+
+    // 候选按展示名显示，不暴露内部 key
+    expect(screen.getByRole('button', {name: /主图（单张）/})).toBeInTheDocument();
+    expect(screen.queryByRole('button', {name: /image_7/})).not.toBeInTheDocument();
+  });
+
+  it('「选中时文案」打 @ 选候选，插入的是自己 token', async () => {
+    const user = userEvent.setup();
+    const {onPatch} = renderSlot({key: 'image_7', binding: 'user', minCount: 0}, '把 {{slot:image_7}} 放进去');
+    await user.click(screen.getByRole('button', {name: '展开更多设置'}));
+
+    const area = screen.getByLabelText('选中时文案');
+    await user.click(area);
+    await user.type(area, '人物参考 @');
+    await user.click(screen.getByRole('button', {name: /单张/}));
+
+    expect(onPatch).toHaveBeenCalledWith(
+      expect.objectContaining({filledText: '人物参考 {{slot:image_7}}'}),
+    );
   });
 });
