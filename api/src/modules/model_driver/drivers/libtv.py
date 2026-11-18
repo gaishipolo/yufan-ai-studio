@@ -128,20 +128,17 @@ def _uncertain_hint(run_id: str, account: str) -> str:
         "可能已经扣费，所以不会自动重提。请到该账号的 LibTV 记录核对后再二选一："
         f"没有这笔任务 → app libtv-reconcile {run_id} --not-submitted 解封后重试；"
         f"已有任务在跑 → app libtv-reconcile {run_id} --adopt-task <上游 task_id> 接回查询；"
-        f"不想自己核对 → app libtv-reconcile {run_id} --auto（按消费明细自动判断）"
+        f"查结算账单自动接回 → app libtv-reconcile {run_id} --auto"
     )
 
 
 async def _resolve_unknown(
     path: Path, previous: object, account: str
 ) -> tuple[str, str]:
-    """「回执未知」时先自证清白：消费明细命中就接回，确认没扣费就解封。
+    """「回执未知」时查一次消费明细：若已结算命中，直接接回查询，不再重提。
 
-    只在**用户已经点过重试**的这条路径上跑，不会自己发起提交 —— 所以不存在
-    「框架偷偷花钱」：最坏情况是当场再提交一次，而那正是用户点重试想做的事。
-
-    返回 `("adopt", task_id)` / `("release", "")` / `("unknown", "")`。
-    拿不准（含缺创建时刻或账单查询失败）时一律回 `unknown`，交回给人——宁可多问一句，也不要重复扣费。
+    消费流水只在成片结算后入账，排队/生成中的在途任务不会出现——因此未命中时
+    一律回 `("unknown", "")` 交回人工核对，绝不自动解封重提（避免重复排队/扣费）。
     """
     from modules.model_driver.libtv import account as libtv_account
 
@@ -154,9 +151,6 @@ async def _resolve_unknown(
     if verdict.action == "adopt":
         logger.info("回执未知，但消费明细命中上游任务 id=%s", verdict.task_id)
         return ("adopt", verdict.task_id)
-    if verdict.action == "release":
-        logger.info("回执未知，消费明细确认未扣费，解封后重新提交")
-        return ("release", "")
     logger.warning("回执未知且无法自动判断（%s）", verdict.describe())
     return ("unknown", "")
 
@@ -247,8 +241,7 @@ class LibTVProvider:
                     f"任务 {value} 的上一轮执行器仍在运行，已转入排队，稍后自动重试"
                 )
             # 归档记着「回执未知 / 正在提交」：桥接层会拒绝任何重提（可能已扣费）。
-            # 先用消费明细自证清白——命中未认领单就接回、确认没扣费就解封，
-            # 实在判断不了才把二选一交给用户。
+            # 若消费明细已能确认命中未认领单就直接接回；未命中则交回人工核对。
             action, task_id = await _resolve_unknown(path, previous, account)
             if action == "adopt":
                 # 必须把接回的 task_id 与状态写回 run.json，否则后续 poll 阶段
@@ -259,15 +252,7 @@ class LibTVProvider:
                     reconcile_state(previous, adopt_task=task_id, executor_busy=busy),
                 )
                 return f"{value}:{task_id}"
-            if action == "release":
-                await asyncio.to_thread(
-                    executor.save_state,
-                    path,
-                    reconcile_state(previous, not_submitted=True, executor_busy=busy),
-                )
-                previous = await asyncio.to_thread(executor.state, path)
-            else:
-                raise Conflict(_uncertain_hint(value, account))
+            raise Conflict(_uncertain_hint(value, account))
         # upload 阶段可能停在「等免费」或「适配器报错」：这时不许再调 submit，
         # 否则桥接层只会抛 "Refusing duplicate or uncertain submission"。
         if generic and previous.status == "waiting_free":
@@ -347,8 +332,8 @@ class LibTVProvider:
         return GenerationProgress(
             external_id=external_id,
             state=status,
-            # 桥接层把上游 status=0 记成 `queued`（免费队列按名额串行、限流按上游节拍）。
-            # 框架据此顺延墙钟：排队不该算进「生成超时」。
+            # 桥接层按 `queueReason` 判定排队：status=0 且没有 reason 说明已经在生成，
+            # 与 `QueueItem.queued` 是同一条规则。框架据此顺延墙钟：排队不该算进「生成超时」。
             queued=meta.status == "queued",
             progress=100 if status == GenerationState.SUCCEEDED else min(99, meta.progress_percent),
             output_url=f"/api/v1/templates/replacement-runs/{run_id}/output"

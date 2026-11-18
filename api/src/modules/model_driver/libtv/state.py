@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
@@ -42,6 +42,15 @@ class LibTVState(BaseModel):
     # 账号绑定：桥接层在第一个阶段把当时用的 CDP 地址写进来，之后就只读它。
     # 上传素材与上游 `task_id` 都属于那个账号，中途换号 = 查不到自己的任务。
     browser_url: str | None = None
+
+    @field_validator("created_at")
+    @classmethod
+    def normalize_created_at(cls, value: datetime | None) -> datetime | None:
+        # 桥接层写的是 `toISOString()`（带 Z），naive 只可能来自旧档案或直接构造。
+        # 一律按 UTC 解释：按本地时区算会让 `since` 提前 8 小时，把更早的旧单扫进来。
+        if value is not None and value.tzinfo is None:
+            return value.replace(tzinfo=UTC)
+        return value
 
     @field_validator("progress_percent", mode="before")
     @classmethod

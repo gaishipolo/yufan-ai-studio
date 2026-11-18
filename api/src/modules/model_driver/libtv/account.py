@@ -42,7 +42,7 @@ import json
 import time
 from collections.abc import Collection
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -348,6 +348,16 @@ def _item_rank(item: QueueItem) -> tuple[int, int, int]:
     return (non_terminal, has_detail, item.percent)
 
 
+def _is_reasonless_failure(item: QueueItem) -> bool:
+    """终态却没有任何细节：非归属账号被问到时，上游就回这种「假失败」空壳。"""
+    return (
+        item.status not in (0, 1, 2)  # 3=失败 / 4=超时 / 其它未识别
+        and not item.queue_reason
+        and not item.failed_reason
+        and item.percent == 0
+    )
+
+
 async def progress(task_ids: list[str], account: str = "") -> list[QueueItem]:
     """批量查进度：一条请求看完全部任务，顺带拿到排队位次。
 
@@ -403,6 +413,21 @@ async def progress(task_ids: list[str], account: str = "") -> list[QueueItem]:
             prev = best.get(item.task_id)
             if prev is None or _item_rank(item) > _item_rank(prev):
                 best[item.task_id] = item
+    if errors:
+        # 另一个账号本次查询异常时，健康账号会对不属于它的任务回一个空壳终态
+        # （status=3、percent=0，既没有 queueReason 也没有 failedReason）。这类条目
+        # 不能覆盖真实归属状态，也不能当真失败：丢掉，但 task_id 必须留痕 —— 否则
+        # 「归属账号真失败、上游却没给原因」会静默消失，页面一直停在生成中。
+        dropped = [task_id for task_id, item in best.items() if _is_reasonless_failure(item)]
+        for task_id in dropped:
+            best.pop(task_id)
+        logger.warning(
+            "多账号进度并发查询有 %d 个账号失败，丢弃 %d 条无详情终态回执（%s），首个错误：%s",
+            len(errors),
+            len(dropped),
+            ", ".join(dropped[:5]) or "-",
+            errors[0],
+        )
     if not best and errors:
         raise errors[0]
     return [best[task_id] for task_id in ids if task_id in best]
@@ -495,7 +520,11 @@ async def _claimed_upstream_task_ids() -> set[str]:
     claimed: set[str] = set()
     for raw in raw_ids:
         _, sep, tail = raw.partition(":")
-        claimed.add(tail if sep else raw)
+        # 只有 `run_id:task_id` 形状才是本系统记下的**上游**任务号。别的驱动会把
+        # 裸 id（甚至有占位串）写进 external_id，它们和 LibTV 的 `originalBizNo`
+        # 不是一个命名空间 —— 混进认领集合只会把真正该接回的那一单挡掉。
+        if sep and tail:
+            claimed.add(tail)
     return claimed
 
 
@@ -522,6 +551,10 @@ async def auto_reconcile_verdict(
         except (SQLAlchemyError, OSError):
             logger.warning("查询已认领任务号失败，放弃自动对账 path=%s", path, exc_info=True)
             return AutoVerdict(action="unknown")
+    # `LibTVState` 的 validator 是第一道；这里防的是绕过模型、直接传 naive 进来的调用方
+    # （naive 一律按 UTC 解释，否则东八区会把窗口往前推 8 小时，扫进旧单）。
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=UTC)
     since = int(created_at.timestamp())
     spends: list[ConsumptionItem] = []
     for page in range(1, 4):

@@ -170,16 +170,15 @@ def test_auto_adopts_when_the_charge_exists() -> None:
     assert verdict.task_id == "20261118101503751524489"
 
 
-def test_auto_releases_when_there_is_no_charge() -> None:
-    """要能说「没扣费」，得先证明**翻到了提交时刻之前**（否则只是没看到）。"""
+def test_auto_refuses_to_release_solely_from_absent_settlement_logs() -> None:
+    """消费流水只在结算后入账，未命中（即使翻到更早记录）也不能自动解封重提。"""
     older = _spend("20261117153703957194489", SINCE - 3600, "别的任务")
     verdict = auto_verdict([older], prompt=PROMPT, since=SINCE)
 
-    assert verdict.action == "release"
+    assert verdict.action == "unknown"
 
 
 def test_auto_refuses_to_release_without_covering_the_window() -> None:
-    """只翻了最近几条、没覆盖到提交时刻 → 不敢断言「没扣费」，交回给人。"""
     assert auto_verdict([], prompt=PROMPT, since=SINCE).action == "unknown"
     only_newer = [_spend("20261118101503751524489", SINCE + 60, "别的任务")]
     assert auto_verdict(only_newer, prompt=PROMPT, since=SINCE).action == "unknown"
@@ -191,20 +190,20 @@ def test_auto_ignores_charges_from_before_this_submission() -> None:
         [_spend("20261117153703957194489", SINCE - 7200, PROMPT[:60])], prompt=PROMPT, since=SINCE
     )
 
-    assert verdict.action == "release"
+    assert verdict.action == "unknown"
 
 
 def test_auto_ignores_records_with_a_different_prompt() -> None:
     verdict = auto_verdict(
         [
             _spend("20261118100000000000001", SINCE + 60, "【目标与产品】生成12秒、9:16、720P"),
-            _spend("20261117153703957194489", SINCE - 60, "更早的一条，用来证明窗口被覆盖"),
+            _spend("20261117153703957194489", SINCE - 60, "更早的一条"),
         ],
         prompt=PROMPT,
         since=SINCE,
     )
 
-    assert verdict.action == "release"
+    assert verdict.action == "unknown"
 
 
 def test_auto_refuses_to_guess_between_two_candidates() -> None:
@@ -233,7 +232,7 @@ def test_auto_ignores_task_ids_already_claimed_by_other_tasks() -> None:
         claimed_task_ids={"20261118101503751524489"},
     )
 
-    assert verdict.action == "release"
+    assert verdict.action == "unknown"
 
 
 def test_auto_normalizes_newlines_and_tabs_in_summary() -> None:

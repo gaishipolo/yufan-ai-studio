@@ -91,13 +91,14 @@ def reconcile(
 
 
 # --------------------------------------------------------------------------- #
-# 自动对账：「回执未知」不必每次都由人二选一
+# 自动对账：「回执未知」只做正向接回，绝不靠消费流水反推「没下单」
 #
-# 消费明细里的 `originalBizNo` 就是上游 task_id，`transDesc` 是这段提示词。
-# 拿「提示词前缀 + 提交时刻之后」去对，就能替人做那个判断：
-#   - 命中一条  → 上游确实建了任务，接回它（--adopt-task）
-#   - 一条没有  → 上游什么都没建，解封重提（--not-submitted）
+# 消费明细里的 `originalBizNo` 就是上游 task_id，`transDesc` 是这段提示词，
+# 但 `transTime` 是**成片结算时刻**（免费队列常滞后数十分钟甚至两小时，积分队列
+# 也滞后数分钟）。排队或生成中的任务尚未出现在消费明细里，因此：
+#   - 命中一条  → 上游已建单且结算，安全接回（--adopt-task）
 #   - 命中多条  → 说不清是哪一条，交回给人，别猜
+#   - 一条没有  → 返回 unknown，交回人工核对后再 --not-submitted（宁可多看一眼，绝不重复扣费）
 # --------------------------------------------------------------------------- #
 #: 前缀取多长。太短会把同一批素材的不同任务混在一起，太长则受上游截断影响。
 PROMPT_PREFIX = 24
@@ -105,7 +106,7 @@ PROMPT_PREFIX = 24
 
 @dataclass(frozen=True)
 class AutoVerdict:
-    """自动对账的结论。`action`: adopt / release / ambiguous / unknown。"""
+    """自动对账的结论。`action`: adopt / ambiguous / unknown。"""
 
     action: str
     task_id: str = ""
@@ -115,11 +116,13 @@ class AutoVerdict:
     def describe(self) -> str:
         if self.action == "adopt":
             return f"上游已建任务 {self.task_id}（消费明细命中）"
-        if self.action == "release":
-            return "上游没有这笔任务的消费记录，可安全解封重提"
         if self.action == "ambiguous":
             return f"命中 {len(self.candidates)} 条，无法判断是哪一条：{self.candidates}"
-        return "消费明细里没有能与本任务匹配的记录（可能是提示词被截断）"
+        return (
+            "消费明细仅在任务结算后入账（排队/生成中不会出现），"
+            "未命中不能证明上游未下单（提示词被上游截断也会导致不命中）；"
+            "请到对应账号核对后再决定 --not-submitted 或 --adopt-task"
+        )
 
 
 def _normalize(text: str) -> str:
@@ -139,18 +142,20 @@ def auto_verdict(
     since: int,
     claimed_task_ids: Collection[str] = (),
 ) -> AutoVerdict:
-    """按消费明细判断「这笔到底有没有提交成功」。
+    """按消费明细判断是否能自动接回「回执未知」任务。
 
     `items` 是 `account.ConsumptionItem` 列表（只用到 `seconds` / `task_id` / `summary`）。
-    只认 `seconds >= since` 的记录：更早的同款提示词是另一次任务，不能算进来。
+    只认 `seconds >= since` 的记录：更早的记录是另一次任务，不能算进来。
     `claimed_task_ids` 是已被本系统其它任务认领的上游 `task_id`：同一提示词批量跑
     多单时，绝不能把另一单的成品接回给当前单。
+
+    由于 `translogs` 仅记录已结算任务（排队/生成中的在途任务尚未入账），未命中时
+    一律返回 `unknown`，绝不自动返回 `release` 解封重提。
     """
     prefix = _prefix(prompt)
     if not prefix:
         return AutoVerdict(action="unknown", since=since)
     claimed = {str(task_id).strip() for task_id in claimed_task_ids if str(task_id).strip()}
-    stamps = [int(getattr(item, "seconds", 0) or 0) for item in items]
     matched = {
         str(getattr(item, "task_id", "") or "")
         for item in items
@@ -163,8 +168,4 @@ def auto_verdict(
         return AutoVerdict(action="adopt", task_id=matched.pop(), since=since)
     if matched:
         return AutoVerdict(action="ambiguous", candidates=sorted(matched), since=since)
-    # 「没命中」不等于「没扣费」：只翻了最近几条时，提交时刻更早的记录根本没看到。
-    # 必须确认翻到了 `since` 之前，才敢给出「可以安全解封」的结论。
-    if not stamps or min(stamps) >= since:
-        return AutoVerdict(action="unknown", since=since)
-    return AutoVerdict(action="release", since=since)
+    return AutoVerdict(action="unknown", since=since)

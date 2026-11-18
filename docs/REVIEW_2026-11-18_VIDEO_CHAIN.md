@@ -108,9 +108,10 @@ mark_succeeded（封面、入库、downloadable）
 
 - **P2-1 ✅ 已修 · 免费队列失败文案没有出口**：`waiting_free` 直接判失败，不给「改用积分队列」的指引，
   也不带估价。默认队列就是它，踩中概率最高。
-- **P2-2 ✅ 已修 · 提交失败后不复盘**：现在有 `app libtv-reconcile --auto`，但**要人手动跑**。
-  建议在驱动里做成一步：提交失败 → 自动对账（消费明细命中就接回，没有就解封）→ 最多自动重排一次。
-  注意这会在失败时自动花钱，需要产品确认。
+- **P2-2 ✅ 已修（口径已再收窄）· 提交失败后不复盘**：现在有 `app libtv-reconcile --auto`，但**要人手动跑**。
+  驱动侧只在用户点重试时自动对账，且**只做正向接回**：消费明细命中就接回（不花钱）；
+  未命中不能反推「没下单」（流水只在结算后入账），一律交回人工核对。**不做自动解封/重排** ——
+  那会在失败时自动花钱。
 - **P2-3 ✅ 已修 · 当前画布取不到时会退回旧项目**：`alignCanvasProject()` 在浏览器里没有画布标签页时
   返回 null，upload 阶段会回退到写死的旧 `project_id` → 又变成 30001。
   建议：取不到就**明确失败**并提示「请在该账号浏览器里打开画布」，别用旧值蒙。
@@ -129,7 +130,7 @@ mark_succeeded（封面、入库、downloadable）
 
 1. **P1-1**（到期即坏，且影响付费通道）—— 改 `billing.mjs` 的空标签回退 + 免费队列文案。
 2. **P1-2**（已有真实误判案例）—— 排队顺延 + 硬上限，需要 `store` 加一个 `extend_deadline`。
-3. P2-3 → P2-1 → P2-2（自动闭环，需产品点头）。
+3. P2-3 → P2-1 → P2-2（现在只做「命中原样接回」；自动解封/重排已否）。
 
 前两条都要改 vendor/框架，各自需要一轮回归（vendor 有 manifest 哈希校验，按流程刷新）。
 
@@ -142,13 +143,15 @@ mark_succeeded（封面、入库、downloadable）
 | P1-2 | `GenerationProgress.queued` + `DeadlineExtendable` 协议：poll 看到归档 `queued` 就顺延墙钟起点；硬上限 `GENERATION_MAX_WALL_CLOCK_SEC`（默认 3 小时，按建单时间算）。两个 store 各实现一个 `extend_deadline`。 |
 | P2-3 | `alignCanvasProject()` 读不到画布时**明确失败**（提示打开 liblib.tv/canvas），不再退回写死的旧 `project_id`。 |
 | P2-1 | 见 P1-1 的文案部分：`waiting_free` 现在带估价 + 「改用积分队列」的下一步。 |
-| P2-2 | **已修（范围收窄）**：只在用户点重试的那一刻自动对账——命中就接回（不花钱），确认没扣费就当场解封继续提交，判断不了才回落到命令。不做「框架自己重排」，所以不存在无人值守的自动扣费。 |
+| P2-2 | **已修（范围两次收窄）**：只在用户点重试的那一刻自动对账，且**只做正向接回**（命中账单 → `--adopt-task`，不花钱）。「未命中就解封」已在 2026-11-18 复评中删除：`transTime` 是**结算时刻**，排队/生成中的任务根本不在流水里，用「没命中」反推「没下单」会重复下单。不做「框架自己重排」，所以不存在无人值守的自动扣费。 |
 
 新增测试：`tests/test_libtv_billing_fallback.py`（node 真跑 `applyBilling`）、
 `tests/test_generation_deadline.py`（顺延 + 硬上限 + 协议探测）、
-`tests/test_libtv_auto_recover.py`（接回 / 解封 / 窗口没覆盖时不猜）。
+`tests/test_libtv_auto_recover.py`（接回 / 未命中一律 `unknown` / 时区归一）、
+`tests/test_libtv_status_mapping.py`（node 真跑 `resolveStatus`：`queueReason` 决定排队）。
 
 **P2-2 的口径**：自动对账接在 `submit()` 的「归档已是 submission_unknown」分支上，
-只有用户**主动点重试**才会走到；不会由 ticker/恢复器触发。判定还用一条额外的保险：
-消费明细必须翻到提交时刻**之前**（`auto_verdict` 的 `unknown` 分支），
-否则「没命中」只说明没看到，不足以断言没扣费。
+只有用户**主动点重试**才会走到；不会由 ticker/恢复器触发。判定只有三个出口：
+命中一条账单 → `adopt` 接回；命中多条 → `ambiguous`；一条都没命中 → `unknown` 交回人工。
+**没有 `release` 出口**：消费流水只在成片结算后入账（免费队列常滞后数十分钟甚至
+两小时），排队中的在途任务本来就不会出现，所以「没命中」永远不能当成「没扣费」。

@@ -12,6 +12,14 @@ export function canSubmit(meta) {
   return !meta.task_id && ['queued', 'uploading', 'uploaded', 'waiting_free', 'waiting_executor', 'needs_login', 'service_error'].includes(meta.status);
 }
 
+/* 上游 `status=0` 同时覆盖「排队」与「已开始生成」：只有带 `queueReason` 才是真排队。
+   这条规则与 Python 侧 `account.QueueItem.queued` 是同一个判断（框架据此顺延墙钟，
+   把排队算进生成超时就会误判超时）。两处必须一起改 —— 别只改一边。 */
+export function resolveStatus(progress) {
+  if (progress?.status === 0 && !progress?.queueReason) return 'running';
+  return {0:'queued',1:'running',2:'generated',3:'failed',4:'timeout'}[progress?.status];
+}
+
 /* SMB 共享盘上 `writeFile(tmp) + rename` 偶发 EPERM/EBUSY：那是瞬时文件锁，
    不是任务失败。只重放「可重放的写状态」动作；其它异常原样抛出，绝不把写失败
    伪装成成功。3 次仍失败就按原来的 ADAPTER_FAILED 处理。 */
@@ -179,7 +187,7 @@ export async function main() {
       const response = await api.request('/api/task/generation/progress', {taskIds:[meta.task_id]});
       await save(path.join(run,'records/status.json'), response);
       const progress = response.data?.progresses?.find(item => String(item.taskId) === meta.task_id);
-      const status = {0:'queued',1:'running',2:'generated',3:'failed',4:'timeout'}[progress?.status];
+      const status = resolveStatus(progress);
       if (!status) throw Error('Unrecognized task status');
       /* 上游 progress.power 在排队/生成阶段恒为 0，结算后才回填。无条件覆盖会把
          提交时记下的真实扣费改写成 0，档案从此「看起来没花钱」。只在拿到正数时更新；

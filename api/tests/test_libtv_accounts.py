@@ -298,3 +298,25 @@ async def test_progress_merges_multi_account_responses(
     by_id = {item.task_id: item for item in items}
     assert by_id["t-free"].status == 0 and by_id["t-free"].percent == 18
     assert by_id["t-credits"].status == 1 and by_id["t-credits"].percent == 66
+
+
+async def test_progress_does_not_mask_account_error_with_fake_status_3(
+    monkeypatch: pytest.MonkeyPatch, two_accounts: None
+) -> None:
+    """一个账号查询报错时，另一账号对不属于它的任务回的假 status=3/percent=0 不能吞掉错误。"""
+    from core.exceptions import UpstreamError
+    from modules.model_driver.libtv import account
+
+    async def fake_request(
+        method: str, url: str, *, account: str, body: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        if account == FREE:
+            raise UpstreamError("9411 cookie expired")
+        return {
+            "code": 0,
+            "data": {"progresses": [{"taskId": "t-free", "status": 3, "progressPercent": 0}]},
+        }
+
+    monkeypatch.setattr(account, "_request", fake_request)
+    with pytest.raises(UpstreamError, match="9411 cookie expired"):
+        await account.progress(["t-free"])

@@ -45,7 +45,7 @@ def cmd_check(args: argparse.Namespace) -> None:
 
 
 async def _auto_verdict(path, before):  # noqa: ANN001, ANN202 - 只在命令里用
-    """拉最近几页消费明细，交给 `auto_verdict` 判断该接回还是解封。"""
+    """拉最近几页消费明细，交给 `auto_verdict` 检查是否已有已结算的上游任务可接回。"""
     from modules.model_driver.libtv import account as libtv_account
 
     return await libtv_account.auto_reconcile_verdict(
@@ -70,16 +70,14 @@ def cmd_libtv_reconcile(args: argparse.Namespace) -> None:
         not_submitted = args.not_submitted
         adopt_task = args.adopt_task or None
         if args.auto:
-            # 用消费明细替人做那次「去 LibTV 看一眼」：命中原样接回，没命中就解封。
+            # 消费流水只在成片结算后入账：仅能安全接回（adopt），未命中必须由人核对后解封。
             verdict = asyncio.run(_auto_verdict(path, before))
             print(f"自动对账：{verdict.describe()}")
             if verdict.action == "adopt":
                 adopt_task = verdict.task_id
-            elif verdict.action == "release":
-                not_submitted = True
             else:
                 print(
-                    "无法自动判断，请人工核对后用 --not-submitted / --adopt-task",
+                    "无法自动接回，请人工核对后用 --not-submitted / --adopt-task",
                     file=sys.stderr,
                 )
                 raise SystemExit(1)
@@ -190,7 +188,7 @@ def register(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     kind.add_argument(
         "--auto",
         action="store_true",
-        help="不用人工核对：用消费明细（含上游 task_id 与提示词）自动判断该接回还是解封",
+        help="查消费明细自动尝试接回（仅命中时接回；在途未结算任务需人工核对后 --not-submitted）",
     )
     rescue.set_defaults(func=cmd_libtv_reconcile)
 
