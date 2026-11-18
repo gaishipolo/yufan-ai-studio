@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { ArrowRight, Play, Plus, RefreshCw } from 'lucide-react';
 import { KIND_LABEL } from '@/entities/library/model/types';
@@ -97,10 +97,13 @@ function TemplateCard({
   item,
   selected,
   onSelect,
+  modelLabel,
 }: {
   item: TemplateSpecOut;
   selected: boolean;
   onSelect: () => void;
+  /** 模型的**友好名**（目录里的中文名）。拿不到就退回 id。 */
+  modelLabel?: string;
 }) {
   const itemSlots = slotsOf(item);
   const fixed = itemSlots.filter(slot => slot.binding === 'fixed').length;
@@ -161,7 +164,9 @@ function TemplateCard({
             底栏会各自停在不同高度，一排看过去参差。 */}
         <div className="mt-auto flex items-center justify-between gap-2 border-t border-line-soft pt-1.5">
           <span className="min-w-0 truncate text-micro text-ink-mute">
-            {item.latest?.model ?? '—'}
+            {/* 模型显示**友好名**而不是裸 id（`libtv-wan3-replacement` 这种
+                id 是给编译器看的，使用者看不懂）。拿不到目录条目时退回 id。 */}
+            {modelLabel ?? item.latest?.model ?? '—'}
           </span>
           <span
             className={cn(
@@ -329,6 +334,15 @@ export function SpecLibrary() {
   const model = choice.model;
   const kind = choice.kind;
   const defaults = choice.defaults;
+
+  /** 模型 id → 目录里的友好名。卡片上显示的是这个，不是裸 id。 */
+  const modelLabelOf = useCallback(
+    (id: string): string | undefined =>
+      id
+        ? [...videoModels, ...imageModels].find(item => item.id === id)?.label
+        : undefined,
+    [videoModels, imageModels],
+  );
 
   /* 随机档：系统替使用者把可选槽位填上。
      候选池还没回来时先不填（`autoFilled` 为空），等池子到了再补 ——
@@ -647,10 +661,11 @@ export function SpecLibrary() {
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {items.map(item => (
               <TemplateCard
-              key={item.key}
-              item={item}
+                key={item.key}
+                item={item}
                 selected={item.key === spec?.key}
                 onSelect={() => setSelectedKey(item.key)}
+                modelLabel={modelLabelOf(item.latest?.model ?? '')}
               />
             ))}
           </div>
@@ -687,7 +702,7 @@ export function SpecLibrary() {
                     <span className="shrink-0 rounded-full bg-primary-soft px-1.5 py-[1px] text-micro font-medium text-primary-deep ring-1 ring-inset ring-primary-line/60">
                       v{version.version}
                     </span>
-                    <span className="truncate text-ink-soft">{modelId}</span>
+                    <span className="truncate text-ink-soft">{model?.label ?? modelId}</span>
                   </div>
                 </div>
                 <Link
@@ -719,9 +734,9 @@ export function SpecLibrary() {
                     {value: 'custom', label: RANDOMNESS_LABEL.custom},
                   ]}
                   hints={{
-                    random: '系统随机帮你挑可选素材',
-                    balanced: '只填必填素材，可选的让给模型',
-                    custom: '每张素材都由你指定',
+                    random: '系统从素材库随机挑几张填进去',
+                    balanced: '可选的那张不传素材，交给模型生成',
+                    custom: '每张素材都由你亲自挑',
                   }}
                   className="flex-1"
                 />
@@ -791,6 +806,10 @@ export function SpecLibrary() {
                             selected={filled}
                             onChange={ids => setSlotValues(slot.key, ids)}
                             requiredCount={requiredCounts[slot.key]}
+                            /* 系统随机填的那几张标出来：使用者分不清
+                               「这是系统挑的」和「这是我自己挑的」，
+                               就不敢动那些格子。 */
+                            autoIds={activeAuto[slot.key]}
                           />
                         );
                       }
@@ -800,7 +819,11 @@ export function SpecLibrary() {
                             <span className="flex items-baseline gap-1 text-xs leading-tight text-ink">
                               <span className="shrink-0 text-ink-mute">{index + 1}.</span>
                               <span className="line-clamp-2">{slot.label || slot.key}</span>
-                              {(requiredCounts[slot.key] ?? 0) > 0 && (
+                              {/* 星号标的是「**还没填够**」，不是「有下限」。
+                                  之前标的是「有下限」—— 结果一个已经填好的必填槽位
+                                  和一个空着的必填槽位长得一模一样，用户只能自己
+                                  逐格核对，或点了提交再吃一个错误。 */}
+                              {(requiredCounts[slot.key] ?? 0) > filled.length && (
                                 <span className="text-warn-deep">*</span>
                               )}
                             </span>
@@ -840,21 +863,22 @@ export function SpecLibrary() {
                   </div>
                 </PanelSection>
               ) : (
-                /* 没有要填的槽位。这一栏不必空着占位，说一句能直接生成就够。
-                   **三种说法要分开** ——
-                   - 纯提示词：模板本来就没有槽位；
-                   - 均衡档：可选槽位**让给了模型**（不是作者固定的！），
-                     说成「作者固定了」会让使用者以为那些素材还在起作用；
-                   - 素材全被作者固定：那是作者选死的。
-                   说错的后果不是文案瑕疵 —— 使用者会以为某张图参与了生成，
-                   而它其实没有。 */
-                <p className="text-meta text-ink-mute">
-                  {slots.length === 0
-                    ? '这个模板是纯提示词，直接生成即可。'
-                    : hasOptionalSlots
-                      ? '均衡模式：可选素材交给模型，直接生成即可。'
-                      : '素材都由作者固定了，直接生成即可。'}
-                </p>
+                /* 没有要填的槽位 → **什么都不说**。
+
+                   原来这里有三句散文（纯提示词 / 均衡模式 / 素材已固定，
+                   每句后面都跟着「直接生成即可」）。三处都在替**已经看得见
+                   的东西**说话：
+
+                   - 「直接生成即可」= 下面那个可点的主按钮；
+                   - 「纯提示词」/「素材已固定」= 左侧卡片上的 chip；
+                   - 「均衡模式：可选素材交给模型」= 上方那个分段控件
+                     （选项名已经写成「交给模型」）。
+
+                   曾经担心的是「说错会让使用者以为某张图参与了生成」——
+                   但那种误读的前提是**右栏没给出正确信号**。现在信号在控件上：
+                   切到「交给模型」时可选槽位整个不出现，这本身就是解释。
+                   留一段散文反而是在替控件说话（且说的是旧词「均衡模式」）。 */
+                null
               )}
 
               {paramChips.length > 0 && (

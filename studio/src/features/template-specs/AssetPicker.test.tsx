@@ -68,9 +68,9 @@ describe('AssetPicker · 候选集里再筛', () => {
     expect(selectionCalls.at(-1)?.tagIds).toEqual(['t1']);
   });
 
-  it('一级维度行不显示（那只是分组头，范围已由候选集定死）', async () => {
+  it('维度行不显示（那只是分组头，范围已由候选集定死）', async () => {
     renderPicker(['t1']);
-    expect(screen.queryByRole('group', {name: '一级标签'})).not.toBeInTheDocument();
+    expect(screen.queryByRole('group', {name: '维度标签'})).not.toBeInTheDocument();
   });
 
   it('只列这批素材身上实际有的取值（计数为 0 的不出现）', async () => {

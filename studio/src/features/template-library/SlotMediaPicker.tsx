@@ -21,12 +21,22 @@ export function SlotMediaPicker({
   selected,
   onChange,
   requiredCount,
+  autoIds,
 }: {
   slot: SpecSlotOut;
   selected: string[];
   onChange: (ids: string[]) => void;
   /** 这个槽位实际最少要几张（作者写的 `minCount`，或提示词「第 N 张」推出的下限）。 */
   requiredCount?: number;
+  /**
+   * 这些素材是**系统随机填的**，不是使用者亲手挑的。
+   *
+   * 原来两者在界面上长得一模一样：使用者看到一格填好的素材，
+   * 分不清是自己之前挑的还是系统替他挑的 —— 于是不敢动（「这会不会是
+   * 我自己选的那张？」）。给了标记，格子右上角挂一个「系统」角标，
+   * 使用者就知道哪几格是系统的、可以放心换。
+   */
+  autoIds?: string[];
 }) {
   const kind = slot.type as 'image' | 'video';
   const label = KIND_LABEL[kind];
@@ -94,6 +104,8 @@ export function SlotMediaPicker({
   };
 
   const full = selected.length >= max;
+  /** 系统填的（仍在显示列表里的那几张） */
+  const autoSet = useMemo(() => new Set(autoIds ?? []), [autoIds]);
 
   return (
     // 槽位是「卡片里的凹槽」：比面板暗一档、带内描边，里面的缩略图才有地方可放。
@@ -102,11 +114,23 @@ export function SlotMediaPicker({
         <span className="min-w-0 truncate text-xs font-medium text-ink">
           {slot.label || slot.key}
         </span>
-        {need > 0 && <span className="text-warn-deep">*</span>}
+        {/* 星号标的是「**还没填够**」，不是「有下限」。
+            之前标的是「有下限」—— 一个填好的必填槽位和一个空着的长得一样，
+            用户只能自己逐格核对，或点了提交再吃一个错误。
+
+            `aria-label` 让读屏能念出它的意思（光标一个星号读不出来），
+            也给测试一个稳定的定位点。 */}
+        {need > selected.length && (
+          <span className="text-warn-deep" aria-label={`${slot.label || slot.key} 还没填够`}>
+            *
+          </span>
+        )}
         <span className="ml-auto shrink-0 text-micro text-ink-mute">
-          {label} · {max > 1 ? `已选 ${selected.length}/${max}` : '选 1 个'}
+          {/* 单选也用同一套计数回读（`已选 0/1`），而不是另写一句「选 1 个」——
+              两套写法让同一件事长得不一样，而且「选 1 个」在多选时没有对应说法。 */}
+          {label} · 已选 {selected.length}/{max}
           {/* 提示词里的「第 N 张」推出的下限可能**超过上限**（作者配置错了）。
-              那时候写「选 1 个」是骗人的 —— 照实说，别让使用者以为挑一张就够。 */}
+              那时候写「已选 0/1」是骗人的 —— 照实说，别让使用者以为挑一张就够。 */}
           {need > max && ` · 至少 ${need} 张`}
           {typeof list.data?.total === 'number' && filterIds.length > 0 && ` · 共 ${list.data.total}`}
         </span>
@@ -208,6 +232,16 @@ export function SlotMediaPicker({
                 {isPicked && (
                   <span className="absolute right-1 top-1 grid size-4 place-items-center rounded-full bg-primary text-white">
                     <Check size={10} strokeWidth={3} />
+                  </span>
+                )}
+                {/* 「系统挑的」角标：放在左上角，与勾号（右上）、视频标签（左下）
+                    各占一角，互不遮挡。 */}
+                {isPicked && autoSet.has(item.id) && (
+                  <span
+                    className="absolute left-1 top-1 rounded bg-black/60 px-1 text-micro leading-4 text-white"
+                    aria-label="系统随机填的素材"
+                  >
+                    系统
                   </span>
                 )}
                 {item.kind === 'video' && (

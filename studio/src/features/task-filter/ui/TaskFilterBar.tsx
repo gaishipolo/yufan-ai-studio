@@ -43,6 +43,10 @@ export interface TaskFilterBarProps {
   isFetching: boolean;
   /** 未知（请求失败）时传 undefined：显示"共 0 条"会让人以为数据被清空了 */
   total?: number;
+  /** 当前**有没有筛选生效**。用于决定要不要摆「重置筛选」。 */
+  filtered: boolean;
+  /** 一键清空所有筛选条件。 */
+  onReset: () => void;
 }
 
 export function TaskFilterBar({
@@ -61,6 +65,8 @@ export function TaskFilterBar({
   onRefresh,
   isFetching,
   total,
+  filtered,
+  onReset,
 }: TaskFilterBarProps) {
   return (
     <div className="flex flex-wrap items-center gap-2">
@@ -77,7 +83,11 @@ export function TaskFilterBar({
         onChange={event => onSourceChange(event.target.value as TaskFeedSource)}
         options={[
           {value: 'all', label: '全部来源'},
-          {value: 'video', label: '通用视频'},
+          /* 「通用视频」是**后端模块名**（feed_schema 里那一路叫通用视频任务），
+             摆在下拉里使用者会以为它是某一种特定的产品，而不是「所有视频任务」。
+             两个选项不在同一语义轴上 —— 「生图」是模态，「通用视频」是内部实现。
+             改成平行命名：**视频** / **生图**。 */
+          {value: 'video', label: '视频'},
           ...(canReadImages ? [{value: 'image', label: '生图'}] : []),
         ]}
       />
@@ -95,11 +105,29 @@ export function TaskFilterBar({
         onChange={event => onSortChange(event.target.value as TaskSort)}
         options={SORT_OPTIONS}
       />
+      {/* 「仅可下载」是在说**权限**，而 `only_authorized` 实际过滤的是
+          `downloadable`（后端定义：已成功且有产物）—— 是**状态**。
+          一个产品里同时有「能不能下载」和「有没有成片」两件事，
+          名字说成前者会把用户引到错误的方向（以为是权限不够）。
+          改成按实际语义命名。 */}
       <Switch checked={onlyAuthorized} onChange={onAuthorizedChange}>
-        仅可下载
+        只看有成片
       </Switch>
 
       <div className="ml-auto flex items-center gap-1.5">
+        {/* 「重置筛选」只在**有筛选生效时**出现。
+            之前空态写着「换个筛选条件或清空搜索关键字再试试」，
+            但这一行有 5 个控件、**没有一键清空**的入口 ——
+            说明文字在承诺一个不存在的功能。给一个真的按钮，比改文案准。 */}
+        {filtered && (
+          <button
+            type="button"
+            onClick={onReset}
+            className="rounded-md px-1.5 py-1 text-xs text-ink-mute transition-colors hover:bg-panel-soft hover:text-ink"
+          >
+            重置筛选
+          </button>
+        )}
         {/* 图标按钮而不是「刷新」两个字：这一行有 5 个控件，多两个字的宽度就被挤到下一行 */}
         <IconButton
           tone="soft"

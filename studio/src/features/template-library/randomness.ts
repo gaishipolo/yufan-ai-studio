@@ -43,10 +43,20 @@ export type RandomnessMode = 'random' | 'balanced' | 'custom';
 /** 三档的默认档位：均衡。 */
 export const DEFAULT_RANDOMNESS: RandomnessMode = 'balanced';
 
+/**
+ * 三档的**选项名**。
+ *
+ * 名字本身就是解释 —— 原来写「随机 / 均衡 / 自定义」：前两个看不出差别
+ * （「均衡」在字面上不像是「让给模型」），后两个也看不出差别（都是"自己挑"，
+ * 但一个由系统挑、一个由使用者挑）。
+ *
+ * 这一栏真正在问的是「**可选的那张素材从哪来**」，所以三个名字都按
+ * **来源**写：素材库 / 模型 / 我。同一条轴上，才谈得上「三选一」。
+ */
 export const RANDOMNESS_LABEL: Record<RandomnessMode, string> = {
-  random: '随机',
-  balanced: '均衡',
-  custom: '自定义',
+  random: '从素材库随机',
+  balanced: '交给模型',
+  custom: '我自己挑',
 };
 
 /**

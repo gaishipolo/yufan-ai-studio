@@ -74,11 +74,11 @@ describe('SlotMediaPicker · 候选集里再筛', () => {
     expect(selectionCalls.at(-1)?.tagIds).toEqual(['t1']);
   });
 
-  it('一级维度行不显示（那只是分组头，范围已由候选集定死）', () => {
+  it('维度行不显示（那只是分组头，范围已由候选集定死）', () => {
     render(
       <SlotMediaPicker slot={slotOf({tagIds: ['t1']})} selected={[]} onChange={vi.fn()} />,
     );
-    expect(screen.queryByRole('group', {name: '一级标签'})).not.toBeInTheDocument();
+    expect(screen.queryByRole('group', {name: '维度标签'})).not.toBeInTheDocument();
   });
 
   it('只列这批素材身上实际有的取值（计数为 0 的不出现）', () => {
@@ -255,5 +255,44 @@ describe('SlotMediaPicker · 悬浮大图', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe('SlotMediaPicker · 系统随机填的素材要标出来', () => {
+  beforeEach(() => {
+    selectionCalls.length = 0;
+    tagsData.current = TAGS;
+    itemsData.current = [
+      { id: 'a1', name: 'T35黑色三视图', kind: 'image' },
+      { id: 'a2', name: 'T40正面图', kind: 'image' },
+    ];
+  });
+
+  it('系统挑的那张挂「系统」角标，使用者能一眼分出哪些不是自己挑的', () => {
+    render(
+      <SlotMediaPicker
+        slot={slotOf({maxCount: 2})}
+        selected={['a1', 'a2']}
+        onChange={vi.fn()}
+        autoIds={['a1']}
+      />,
+    );
+
+    // a1 是系统填的 → 有角标
+    expect(screen.getByLabelText('系统随机填的素材')).toBeInTheDocument();
+    // 角标只出现一次（a2 是使用者自己挑的，不标）
+    expect(screen.getAllByLabelText('系统随机填的素材')).toHaveLength(1);
+  });
+
+  it('没有系统填的素材时不出角标', () => {
+    render(
+      <SlotMediaPicker
+        slot={slotOf({maxCount: 2})}
+        selected={['a1', 'a2']}
+        onChange={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByLabelText('系统随机填的素材')).not.toBeInTheDocument();
   });
 });

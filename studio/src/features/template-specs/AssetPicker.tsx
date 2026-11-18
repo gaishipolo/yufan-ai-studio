@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { Check } from 'lucide-react';
 import { libraryApi } from '@/entities/library/api/library.api';
 import { useLibraryTags } from '@/entities/library/api/library.queries';
 import { scopeFilterIds } from '@/entities/library/model/tagTree';
@@ -162,7 +163,7 @@ export function AssetPicker({
                     purpose: item.purpose,
                   })}
                   className={cn(
-                    'group flex flex-col gap-1 rounded-xl border p-1.5 text-left transition-colors',
+                    'group relative flex flex-col gap-1 rounded-xl border p-1.5 text-left transition-colors',
                     active
                       ? 'border-primary-line bg-primary/5'
                       : 'border-line hover:border-line-strong',
@@ -175,8 +176,17 @@ export function AssetPicker({
                     className="aspect-video w-full rounded-lg"
                   />
                   <span className="line-clamp-1 px-0.5 text-meta text-ink-soft">{item.name}</span>
-                  <span className={cn('px-0.5 text-micro', active ? 'text-primary' : 'text-ink-mute')}>
-                    {active ? '已选（点击取消）' : '点击选择'}
+                  {/* 选中态用**勾号图标**，不写「已选（点击取消）」/「点击选择」。
+                      原来每个格子都念一遍同一句操作提示（24 格 = 24 遍），
+                      而整个网格就是可点的 —— 勾号是同一个意思、更省地方，
+                      与 `SlotMediaPicker` 的网格也统一了。 */}
+                  <span
+                    className={cn(
+                      'absolute right-1 top-1 grid size-4 place-items-center rounded-full',
+                      active ? 'bg-primary text-white' : 'bg-black/45 text-transparent',
+                    )}
+                  >
+                    <Check size={10} strokeWidth={3} />
                   </span>
                 </button>
               );

@@ -225,12 +225,49 @@ describe('模板库 · 随机性三档', () => {
     expect(screen.getByRole('radiogroup', {name: '随机性'})).toBeInTheDocument();
   });
 
+  it('三档的**选项名本身**就说清了「可选素材从哪来」', async () => {
+    /* 这一栏真正在问的是「可选的那张从哪来」：素材库 / 模型 / 我。
+       原来的「随机 / 均衡 / 自定义」两两之间看不出差别 ——
+       「均衡」在字面上不像是「让给模型」，「随机」和「自定义」都是"自己挑"。
+
+       判别力在于：**三个名字必须落在同一条轴上（来源）**，
+       且不能有任何两个名字意思重叠。 */
+    renderLibrary();
+
+    await waitFor(() => expect(screen.getByText('商品图')).toBeInTheDocument());
+    const names = ['从素材库随机', '交给模型', '我自己挑'];
+    for (const name of names) {
+      expect(screen.getByRole('radio', {name})).toBeInTheDocument();
+    }
+    /* 三个名字互不相同（防止有人改回「随机 / 均衡 / 自定义」那种两两重叠的写法）。 */
+    expect(new Set(names).size).toBe(3);
+  });
+
   it('默认是均衡：可选槽位整个不出现', async () => {
     renderLibrary();
 
     /* 均衡档下可选槽位「参考图」不在右栏里。 */
     await waitFor(() => expect(screen.getByText('商品图')).toBeInTheDocument());
     expect(screen.queryByText('参考图')).not.toBeInTheDocument();
+  });
+
+  it('星号标的是「还没填够」，不是「有下限」', async () => {
+    const user = userEvent.setup();
+    renderLibrary();
+
+    await waitFor(() => expect(screen.getByText('商品图')).toBeInTheDocument());
+
+    /* 必填槽位空着 → 有星号。 */
+    expect(screen.getByLabelText('商品图 还没填够')).toBeInTheDocument();
+
+    /* 填上之后 → 星号消失。
+       之前星号标的是「有下限」，所以**填满了也还亮着** ——
+       一个填好的必填槽位和一个空着的长得一模一样，
+       用户只能自己逐格核对，或点了提交再吃一个错误。 */
+    await user.click(await screen.findByTitle('商品图.png'));
+    await waitFor(() =>
+      expect(screen.queryByLabelText('商品图 还没填够')).not.toBeInTheDocument(),
+    );
   });
 
   it('均衡档下可选槽位既不显示也不传素材', async () => {
@@ -252,9 +289,9 @@ describe('模板库 · 随机性三档', () => {
     const user = userEvent.setup();
     renderLibrary();
 
-    await switchTo(user, '随机');
+    await switchTo(user, '从素材库随机');
     await pickedThumb();
-    await switchTo(user, '均衡');
+    await switchTo(user, '交给模型');
 
     await user.click(await screen.findByTitle('商品图.png'));
     const slotValues = await submit(user);
@@ -263,11 +300,27 @@ describe('模板库 · 随机性三档', () => {
     expect('copy' in (slotValues ?? {})).toBe(false);
   });
 
+  it('随机档：系统挑的那张挂「系统」角标，使用者分得出哪些不是自己挑的', async () => {
+    /* 原来系统填的与手挑的长得一模一样 —— 使用者看到一格填好的素材，
+       分不清是自己挑的还是系统挑的，于是不敢动。
+       这条守卫钉的是**链路**：SpecLibrary 真的把系统填的那几张
+       传到了 SlotMediaPicker（不是只测组件本身）。 */
+    const user = userEvent.setup();
+    renderLibrary();
+
+    await switchTo(user, '从素材库随机');
+    await pickedThumb();
+
+    await waitFor(() =>
+      expect(screen.getByLabelText('系统随机填的素材')).toBeInTheDocument(),
+    );
+  });
+
   it('切到自定义：可选槽位出现', async () => {
     const user = userEvent.setup();
     renderLibrary();
 
-    await switchTo(user, '自定义');
+    await switchTo(user, '我自己挑');
 
     expect(await screen.findByText('参考图')).toBeInTheDocument();
   });
@@ -276,7 +329,7 @@ describe('模板库 · 随机性三档', () => {
     const user = userEvent.setup();
     renderLibrary();
 
-    await switchTo(user, '随机');
+    await switchTo(user, '从素材库随机');
 
     /* 候选池回来后系统自动填上 —— 候选网格里有且只有一张被勾上。 */
     await pickedThumb();
@@ -286,7 +339,7 @@ describe('模板库 · 随机性三档', () => {
     const user = userEvent.setup();
     renderLibrary();
 
-    await switchTo(user, '随机');
+    await switchTo(user, '从素材库随机');
     await waitFor(() => expect(selectionMock).toHaveBeenCalled());
 
     await user.click(await screen.findByTitle('商品图.png'));
@@ -300,7 +353,7 @@ describe('模板库 · 随机性三档', () => {
     const user = userEvent.setup();
     renderLibrary();
 
-    await switchTo(user, '随机');
+    await switchTo(user, '从素材库随机');
     const thumb = await pickedThumb();
 
     /* 点已选的 = 取消选择。 */
@@ -315,10 +368,10 @@ describe('模板库 · 随机性三档', () => {
     const user = userEvent.setup();
     renderLibrary();
 
-    await switchTo(user, '随机');
+    await switchTo(user, '从素材库随机');
     const thumb = await pickedThumb();
 
-    await switchTo(user, '自定义');
+    await switchTo(user, '我自己挑');
 
     /* 切档后那张图还选着 —— 使用者明明刚看到它填在那儿。 */
     await waitFor(() => {
@@ -334,9 +387,9 @@ describe('模板库 · 随机性三档', () => {
     const user = userEvent.setup();
     renderLibrary();
 
-    await switchTo(user, '随机');
-    await switchTo(user, '自定义');
-    await switchTo(user, '均衡');
+    await switchTo(user, '从素材库随机');
+    await switchTo(user, '我自己挑');
+    await switchTo(user, '交给模型');
 
     expect(await screen.findByText('商品图')).toBeInTheDocument();
   });
@@ -345,7 +398,7 @@ describe('模板库 · 随机性三档', () => {
     const user = userEvent.setup();
     renderLibrary();
 
-    await switchTo(user, '随机');
+    await switchTo(user, '从素材库随机');
     const first = await pickedThumb();
     const firstTitle = first.getAttribute('title');
 
@@ -367,11 +420,11 @@ describe('模板库 · 随机性三档', () => {
     const user = userEvent.setup();
     renderLibrary();
 
-    await switchTo(user, '随机');
+    await switchTo(user, '从素材库随机');
     const before = (await pickedThumb()).getAttribute('title');
 
-    await switchTo(user, '自定义');
-    await switchTo(user, '随机');
+    await switchTo(user, '我自己挑');
+    await switchTo(user, '从素材库随机');
 
     /* 池子只有两张，两次随机撞上同一张的概率不低 —— 所以这条用例
        断的是「继承」这条路径：切走时继承的那几张在切回来时被清掉，
@@ -394,7 +447,7 @@ describe('模板库 · 随机性三档', () => {
     const user = userEvent.setup();
     renderLibrary();
 
-    await switchTo(user, '自定义');
+    await switchTo(user, '我自己挑');
     /* 自定义档的候选网格里挑一张（与随机档的网格不是同一批）。 */
     const manual = screen.getAllByTitle(/随机[一二]\.png/)[0];
     await user.click(manual);
@@ -405,7 +458,7 @@ describe('模板库 · 随机性三档', () => {
       expect(picked.length).toBe(1);
     });
 
-    await switchTo(user, '随机');
+    await switchTo(user, '从素材库随机');
 
     /* 切回随机档后，那张手动挑的**还在**（没被系统随机换掉）。 */
     await waitFor(() => {
@@ -439,7 +492,7 @@ describe('模板库 · 全是必填槽位时', () => {
     renderLibrary();
 
     await userEvent.setup().click(
-      await screen.findByRole('radio', {name: '随机'}),
+      await screen.findByRole('radio', {name: '从素材库随机'}),
     );
 
     /* 切到随机档了，但没有可选槽位 → 没有东西可随机 → 不给「换一批」。 */

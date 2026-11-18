@@ -107,6 +107,28 @@ export default function TaskCenterPage() {
     [patchParams],
   );
 
+  /** 有没有筛选生效（不算状态页签 —— 那是浏览位置的切换，不是筛选）。 */
+  const hasFilter =
+    keyword.trim() !== '' ||
+    source !== 'all' ||
+    scope !== 'mine' ||
+    sort !== 'createdAt_desc' ||
+    onlyAuthorized;
+
+  /** 一键清空筛选：搜索框是本地 state，要一起清。 */
+  const resetFilter = useCallback(() => {
+    setKeywordInput('');
+    setSelected(new Set());
+    patchParams({
+      keyword: undefined,
+      source: undefined,
+      scope: undefined,
+      sort: undefined,
+      auth: undefined,
+      page: undefined,
+    });
+  }, [patchParams]);
+
   useEffect(() => {
     if (debouncedKeyword !== keyword) patchFilter({ keyword: debouncedKeyword });
   }, [debouncedKeyword, keyword, patchFilter]);
@@ -302,6 +324,8 @@ export default function TaskCenterPage() {
           onRefresh={() => void refetch()}
           isFetching={isFetching}
           total={isError ? undefined : data?.total}
+          filtered={hasFilter}
+          onReset={resetFilter}
         />
       </div>
 
@@ -353,7 +377,9 @@ export default function TaskCenterPage() {
           <EmptyState
             icon={<FolderOpen size={40} strokeWidth={1.4} />}
             title="没有匹配的任务"
-            description="换个筛选条件或清空搜索关键字再试试"
+            /* 空态不承诺不存在的能力：这里**有**「重置筛选」按钮了
+               （有筛选生效时才出现），所以指引就是那个按钮本身。 */
+            description={hasFilter ? '当前筛选条件下没有任务' : '还没有任务'}
           />
         ) : (
           <div className="grid grid-cols-[repeat(auto-fill,minmax(148px,1fr))] gap-2.5 md:grid-cols-[repeat(auto-fill,minmax(196px,1fr))] md:gap-3.5">
@@ -403,7 +429,7 @@ export default function TaskCenterPage() {
             value: `${[...selected].filter(id => sourceOf.get(id) === 'image').length} 个`,
           },
         ]}
-        notice="任务一旦删除不可恢复；已归档的成片字节不会被回收。"
+        notice="已归档的成片字节不会被回收。"
         noticeTone="danger"
         confirmLabel="确认删除"
         busy={deleteTasks.isPending || deleteImages.isPending}
