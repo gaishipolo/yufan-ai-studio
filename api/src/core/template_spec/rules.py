@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import replace
 
 from core.exceptions import BadRequest
 from core.template_spec.models import (
@@ -24,10 +25,21 @@ from core.template_spec.models import (
 _KEY = re.compile(r"^[a-z][a-z0-9_]{0,39}$")
 #: 规格 key：URL 段 + 运营可读，允许连字符（`product-swap-6036`）。
 _SPEC_KEY = re.compile(r"^[a-z][a-z0-9_-]{0,39}$")
-#: 规格里**不许**出现编号。编号是编译产物（见 `compile.py` 的说明）。
-#: `{{Text N}}` 同理：文本槽位在第几份由槽位顺序决定，写死会在少选一份时错位。
-_MIXED_LITERAL = re.compile(r"\{\{\s*Mixed\s+\d+\s*\}\}")
+#: 规格里**不许**出现 `{{Text N}}`：文本槽位在第几份由槽位顺序决定，
+#: 写死会在少选一份时错位。（`{{Mixed N}}` 不一样 —— 它现在是**作者的引用写法**，
+#: 见 `_MIXED_REF`。）
 _TEXT_LITERAL = re.compile(r"\{\{\s*Text\s+\d+\s*\}\}")
+#: 作者写的视觉槽位引用：`{{Mixed N}}`，N = 图片/成片槽位在**槽位顺序**里的序号。
+#:
+#: 这是 2026-11-19 改的：以前作者写 `{{slot:image_1}}`（内部 key），
+#: 编号只在编译产物里出现。两者说的是同一件事，作者却要记两套写法 ——
+#: 统一成 `{{Mixed N}}` 之后，作者写的和模型看到的是同一种东西。
+#:
+#: 编号按**槽位顺序**数（只数 `ref_mode == "mixed"` 的槽位）。注意它与编译产物
+#: 里的编号**可能不同**：编译时若某个槽位填了 2 张，它占 1、2 两个号，后面的
+#: 槽位整体后移。作者写的 `{{Mixed N}}` 指的是「第 N 个槽位」，展开成该槽位
+#: 实际拿到的编号（可能是一串）。
+_MIXED_REF = re.compile(r"\{\{\s*Mixed\s+(\d+)(\*|\.\d+)?\s*\}\}")
 #: 提示词里的槽位引用：`{{slot:key}}` / `{{slot:key*}}` / `{{slot:key.N}}`。
 #: 抓 key 是为了核对它有没有对应槽位 —— 引用一个已删掉的槽位，`compile` 才会报
 #: 「引用了不存在的槽位」，而预检那一步会放行（它只管结构）。槽位可以删到 0，
@@ -54,9 +66,76 @@ _SLOT_REF = re.compile(r"\{\{\s*slot:([a-z0-9_]+)(\*|\.\d+)?\s*\}\}")
 _LEFTOVER = re.compile(r"\{\{\s*slot:")
 
 
+def ordered_slots(spec: TemplateSpec) -> tuple[InputSlot, ...]:
+    """按 `position` 排好的槽位。编号与展开都按这个顺序算 —— 只在这里排。"""
+    # 与 `compile.py` 的排序键一致（`position` 相同时按 key）——
+    # 两处顺序一旦不同，作者写的 Mixed 3 与编译算出的编号就会指向不同槽位。
+    return tuple(sorted(spec.slots, key=lambda slot: (slot.position, slot.key)))
+
+
+def visual_slot_keys(spec: TemplateSpec) -> list[str]:
+    """参与 `{{Mixed N}}` 编号的槽位 key（图片 / 成片），按槽位顺序。
+
+    判据是 `ref_mode == "mixed"`：文本与音频是附加输入（`attachment`），
+    不占视觉编号。这与 `compile.py` 里 `counter` 只在非 attachment 分支累加
+    是**同一个判据** —— 两处漂移的表现是「作者写的 Mixed 3 指向了另一个槽位」。
+    """
+    return [slot.key for slot in ordered_slots(spec) if slot.ref_mode == "mixed"]
+
+
+def normalize_refs(spec: TemplateSpec) -> TemplateSpec:
+    """把作者写的 `{{Mixed N}}` 换算成内部的 `{{slot:key}}`（幂等）。
+
+    校验、编译、`slot_ref_modes` 全都只认 `{{slot:key}}`。与其在每处各写一份
+    解析，不如在**入口换算一次**：`validate_spec` / `compile_spec` /
+    `_check_executable` 三个入口各调一次，后面的逻辑一个字都不用改。
+
+    越界的 N 直接报错。作者写了 `{{Mixed 5}}` 而这里只有 3 个图片/成片槽位，
+    等编译期才发现的话，错误会出现在**别人点生成**的时候 —— 那时他既不知道
+    这份模板是谁写的，也看不出该怎么改。
+    """
+    keys = visual_slot_keys(spec)
+
+    def fix(text: str, where: str) -> str:
+        if not text or "Mixed" not in text:
+            return text
+
+        def repl(match: re.Match[str]) -> str:
+            index = int(match.group(1))
+            if not 1 <= index <= len(keys):
+                raise BadRequest(
+                    f"{where}里的 {{{{Mixed {index}}}}} 找不到对应槽位："
+                    f"图片/成片槽位只有 {len(keys)} 个"
+                )
+            return f"{{{{slot:{keys[index - 1]}{match.group(2) or ''}}}}}"
+
+        return _MIXED_REF.sub(repl, text)
+
+    def name_of(slot: InputSlot) -> str:
+        return slot.label.strip() or slot.key
+
+    return replace(
+        spec,
+        prompt=fix(spec.prompt, "提示词"),
+        slots=tuple(
+            replace(
+                slot,
+                filled_text=fix(slot.filled_text, f"槽位「{name_of(slot)}」的选中时文案"),
+                empty_text=fix(slot.empty_text, f"槽位「{name_of(slot)}」的未选时文案"),
+            )
+            for slot in spec.slots
+        ),
+    )
+
+
 
 def validate_spec(spec: TemplateSpec) -> None:
-    """校验槽位声明与提示词形状。任一不合法就抛 `BadRequest`（带可读原因）。"""
+    """校验槽位声明与提示词形状。任一不合法就抛 `BadRequest`（带可读原因）。
+
+    入口先把作者写的 `{{Mixed N}}` 换算成 key（`normalize_refs`）：
+    后面全部逻辑只认一种写法，不必到处兼容两套语法。
+    """
+    spec = normalize_refs(spec)
     if not _SPEC_KEY.match(spec.key):
         raise BadRequest(
             "模板 key 只能是小写字母开头、含小写字母/数字/下划线/连字符的 1~40 字"
@@ -90,11 +169,6 @@ def validate_spec(spec: TemplateSpec) -> None:
 
     _validate_slot_texts(spec)
 
-    if _MIXED_LITERAL.search(spec.prompt):
-        raise BadRequest(
-            "提示词不要直接写 {{Mixed N}}：编号由槽位顺序与填充数量派生，"
-            "写死会在少填一张时全部错位"
-        )
     if _TEXT_LITERAL.search(spec.prompt):
         raise BadRequest(
             "提示词不要直接写 {{Text N}}：文本槽位排第几由槽位顺序决定，"

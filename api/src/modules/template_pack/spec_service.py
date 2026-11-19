@@ -40,6 +40,7 @@ from core.template_spec import (
     InputSlot,
     TemplateSpec,
     compile_spec,
+    normalize_refs,
     slot_ref_modes,
     validate_spec,
 )
@@ -236,6 +237,9 @@ def _check_executable(spec: TemplateSpec) -> None:
     `compile_for()` 里按展开后的成品长度算。两处同一个常量，改上限只改
     `EXECUTION_PROMPT_LIMIT`。
     """
+    # 只认一种写法：作者写的 `{{Mixed N}}` 先换算成 key，
+    # 不然后面按 prompt 判「哪些可选槽位被单张引用」会一个都判不到。
+    spec = normalize_refs(spec)
     total = len(spec.prompt)
     if total > EXECUTION_PROMPT_LIMIT:
         raise BadRequest(

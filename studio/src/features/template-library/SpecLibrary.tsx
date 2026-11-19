@@ -382,7 +382,7 @@ export function SpecLibrary() {
   const requiredCounts = useMemo(() => {
     const map: Record<string, number> = {};
     for (const slot of slots) {
-      map[slot.key] = requiredSlotCount(slot, version?.prompt ?? '');
+      map[slot.key] = requiredSlotCount(slot, version?.prompt ?? '', slots);
     }
     return map;
   }, [slots, version?.prompt]);
@@ -512,7 +512,9 @@ export function SpecLibrary() {
          （`compile.py::_fallback_or_raise`）。没被引用的槽位，它的兜底文案
          是死数据 —— 摆出来会让使用者以为这段话会进提示词。 */
       const fallback =
-        isOptionalSlot(slot) && count === 0 && hasSingleSlotRef(version?.prompt ?? '', slot.key)
+        isOptionalSlot(slot) &&
+        count === 0 &&
+        hasSingleSlotRef(version?.prompt ?? '', slot.key, slots)
           ? slot.emptyText?.trim() ?? ''
           : '';
       return {

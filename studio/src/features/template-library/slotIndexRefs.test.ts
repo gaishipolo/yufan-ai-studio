@@ -45,6 +45,29 @@ describe('slotRefModes · 提示词里怎么引用槽位', () => {
   it('没被引用的槽位不出现', () => {
     expect(slotRefModes('没有引用').x).toBeUndefined();
   });
+
+  /* 作者写的是 `{{Mixed N}}`（第 N 个图片/成片槽位）。这里必须换算回 key，
+     否则「均衡档能不能省掉这个槽位」整条判据都会失效 —— 界面以为没被引用，
+     用户点生成时后端却按单张引用报「引用了未填素材的槽位」。 */
+  it('`{{Mixed N}}` 按槽位顺序解析到 key', () => {
+    const slots = [
+      slotOf({key: 'source', type: 'video', binding: 'fixed', maxCount: 1}),
+      slotOf({key: 'hero'}),
+      slotOf({key: 'copy', type: 'text', refMode: 'attachment'}),
+    ];
+    const modes = slotRefModes('原片 {{Mixed 1}}，人物 {{Mixed 2}}', slots);
+
+    expect(modes.source).toEqual(new Set(['']));
+    expect(modes.hero).toEqual(new Set(['']));
+    // 文本槽位不占 Mixed 编号：`Mixed 3` 不存在，`copy` 也不该被算进来
+    expect(modes.copy).toBeUndefined();
+  });
+
+  it('`{{Mixed 2.3}}` 说明第 2 个视觉槽位至少要 3 张', () => {
+    const slots = [slotOf({key: 'hero'}), slotOf({key: 'detail'})];
+    expect(indexedRefCounts('{{Mixed 2.3}}', slots)).toEqual({detail: 3});
+    expect(requiredSlotCount(slots[1], '{{Mixed 2.3}}', slots)).toBe(3);
+  });
 });
 
 describe('balancedPinnedKeys · 均衡档下必须传的槽位', () => {

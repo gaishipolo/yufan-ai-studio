@@ -32,7 +32,7 @@ from core.template_spec.models import (
     InputSlot,
     TemplateSpec,
 )
-from core.template_spec.rules import _LEFTOVER, validate_spec
+from core.template_spec.rules import _LEFTOVER, normalize_refs, validate_spec
 
 #: `{{slot:key}}` / `{{slot:key*}}` / `{{slot:key.2}}`，**两边允许空格**。
 #: 只匹配合法的 key 形状，写错的部分留在原地，由下面的"残留引用"检查兜住。
@@ -51,6 +51,11 @@ def compile_spec(
     spec: TemplateSpec, fills: Mapping[str, FilledSlot]
 ) -> CompiledRequest:
     """编译成执行请求。任何不合法都抛 `BadRequest`，消息里点明是哪个槽位。"""
+    # 作者写的 `{{Mixed N}}` → `{{slot:key}}`：后面只处理一种写法。
+    # 这里必须**自己**归一化，不能只靠 `validate_spec` —— 它内部的副本不外传，
+    # `spec` 仍是 Mixed 形态，`_SLOT_REF` 会一个都匹配不到（提示词里的引用
+    # 就会原样进供应商请求）。
+    spec = normalize_refs(spec)
     validate_spec(spec)
     ordered = sorted(spec.slots, key=lambda slot: (slot.position, slot.key))
     by_key = {slot.key: slot for slot in ordered}

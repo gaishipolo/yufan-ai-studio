@@ -112,13 +112,32 @@ def test_validate_returns_fingerprint(client: TestClient) -> None:
     assert len(data["fingerprint"]) == 64
 
 
-def test_validate_rejects_hardcoded_numbers(client: TestClient) -> None:
+def test_mixed_refs_are_the_author_facing_syntax(client: TestClient) -> None:
+    """`{{Mixed N}}` 现在是**作者写的**写法：N = 第 N 个图片/成片槽位。
+
+    以前它被当成「写死编号」拒掉（编号看起来该由编译器派生）。统一之后
+    作者写的与模型看到的是同一种东西，编译器负责展开成**本次实际**的编号。
+    """
     headers = _headers(client)
     video, first, second = _media(client, headers)
-    draft = _draft(video, first, second, editable="{{Mixed 2}} 替换成 {{slot:hero}}")
+
+    draft = _draft(video, first, second, editable="{{Mixed 2}} 替换成 {{Mixed 1}}")
+    body = client.post(f"{API}/validate", json=draft, headers=headers)
+    assert body.status_code == 200, body.text
+
+    # 存下来的就是作者写的形态，不偷偷换成内部 key
+    saved = _save(client, headers, draft)
+    assert saved["draft"]["prompt"].endswith("{{Mixed 2}} 替换成 {{Mixed 1}}")
+
+
+def test_mixed_ref_out_of_range_is_rejected(client: TestClient) -> None:
+    """写 `{{Mixed 9}}` 而只有 3 个视觉槽位：当场拒，且说清有几个。"""
+    headers = _headers(client)
+    video, first, second = _media(client, headers)
+    draft = _draft(video, first, second, editable="{{Mixed 9}}")
     body = client.post(f"{API}/validate", json=draft, headers=headers)
     assert body.status_code == 400
-    assert "不要直接写" in body.json()["message"]
+    assert "找不到对应槽位" in body.json()["message"]
 
 
 def test_validate_rejects_unknown_model_param(client: TestClient) -> None:

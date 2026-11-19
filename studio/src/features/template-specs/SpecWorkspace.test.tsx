@@ -21,7 +21,10 @@ const { specs, trashedSpecs, mutations } = vi.hoisted(() => ({
   specs: { current: [] as TemplateSpecOut[] },
   trashedSpecs: { current: [] as TemplateSpecOut[] },
   mutations: {
-    save: vi.fn(() => Promise.resolve({ key: 'spec-1', revision: 2 })),
+    /* 带参数：有用例要断言「提交上去的提示词是什么」。 */
+    save: vi.fn((_payload: { prompt: string }) =>
+      Promise.resolve({ key: 'spec-1', revision: 2 }),
+    ),
     publish: vi.fn(() => Promise.resolve({ version: 3, spec: {} })),
     disable: vi.fn(() => Promise.resolve({})),
     restore: vi.fn(() => Promise.resolve({})),
@@ -277,6 +280,41 @@ describe('模板封装 · 编辑器里的提示词', () => {
     expect(capsule).toHaveTextContent('图片 1');
     expect(box.textContent).not.toContain('{{slot:');
     expect(screen.queryByText(/不要手写大括号/)).not.toBeInTheDocument();
+  });
+
+  /* 结构变了就要重编号：把第 1 个图片槽位改成文本，它退出视觉编号，
+     第 2 个槽位从 `{{Mixed 2}}` 前移到 `{{Mixed 1}}` —— 不动的话，正文里
+     那个引用会静默指向**另一个槽位**，作者完全看不出来。 */
+  it('把第一个槽位改成文本后，后面的编号前移，且不留悬空引用', async () => {
+    const user = userEvent.setup();
+    renderWorkspace([
+      specOf({
+        status: 'draft',
+        draft: {
+          key: 'spec-1',
+          name: '商品图模板',
+          model: 'libtv-wan3-replacement',
+          prompt: 'A {{Mixed 1}} B {{Mixed 2}}',
+          slots: [
+            {key: 'image_1', type: 'image', position: 0, label: '主图', minCount: 1, maxCount: 1},
+            {key: 'image_2', type: 'image', position: 1, label: '细节', minCount: 1, maxCount: 1},
+          ],
+        },
+      }),
+    ]);
+    await user.click(cardOf('商品图模板').getByRole('button', { name: '编辑' }));
+
+    await user.click(screen.getAllByRole('button', { name: '展开更多设置' })[0]);
+    await user.selectOptions(screen.getAllByRole('combobox', { name: '类型' })[0], 'text');
+
+    mutations.save.mockClear();
+    await user.click(screen.getByRole('button', { name: '保存草稿' }));
+
+    const sent = mutations.save.mock.calls[0][0];
+    // 第 1 个槽位不再是视觉槽位 → 它那处引用变成 key 形态；第 2 个前移到 1 号
+    expect(sent.prompt).toBe('A {{slot:image_1}} B {{Mixed 1}}');
+    // 一条悬空引用都不许有（key 都还在）
+    expect(sent.prompt).not.toMatch(/\{\{slot:(?!image_1)/);
   });
 
   /* 反过来：粘一个**不存在**的 key，必须拒，并且说清是哪个 key。

@@ -186,9 +186,12 @@ export function blankSpec(): TemplateSpecIn {
 
 /** 已保存/已发布的规格 → 可编辑草稿。优先用草稿（可能比发布版更新）。 */
 export function fromSpecOut(out: TemplateSpecOut): TemplateSpecIn {
-  if (out.draft) return {...out.draft, revision: out.revision};
+  /* 打开就统一成作者写法（`{{Mixed N}}`）：老草稿里存的是 `{{slot:image_1}}`，
+     那是内部 key。在这里换一次，作者不会看到两套写法 —— 而且换完才记基线，
+     所以「打开就被判成有改动」不会发生。 */
+  if (out.draft) return toAuthoredForm({...out.draft, revision: out.revision});
   if (out.latest) {
-    return {
+    return toAuthoredForm({
       key: out.key,
       name: out.name,
       description: out.description,
@@ -199,9 +202,42 @@ export function fromSpecOut(out: TemplateSpecOut): TemplateSpecIn {
       slots: (out.latest.slots ?? []).map((slot, index) => ({...slot, position: index})),
       attributes: {},
       revision: out.revision,
-    };
+    });
   }
   return {...blankSpec(), key: out.key, name: out.name, revision: out.revision};
+}
+
+/**
+ * 把一份草稿里的引用统一成**作者写法**（视觉槽位 `{{Mixed N}}`）。
+ *
+ * 只在「打开 / 结构变了」的时候调，不参与每次输入 —— 见 `renumberRefs`。
+ */
+function toAuthoredForm(spec: TemplateSpecIn): TemplateSpecIn {
+  return renumberRefs({...spec, slots: spec.slots ?? []}, spec.slots ?? []);
+}
+
+/**
+ * 槽位结构变了（增删 / 移动 / 改类型）之后，把正文与两段文案里的引用**重新编号**。
+ *
+ * 编号是按位置来的，所以「在第 1 个槽位前面插一个」会让后面所有编号加 1。
+ * 做法是把引用先换算回 key（key 不随位置变），再用新槽位换算回编号 ——
+ * 两步都是纯文本替换，没有任何"猜它原来指谁"的推断。
+ */
+export function renumberRefs(
+  spec: TemplateSpecIn,
+  nextSlots: SpecSlotIn[],
+): TemplateSpecIn {
+  const prev = spec.slots ?? [];
+  const fix = (text: string) => toMixedTokens(toSlotTokens(text, prev), nextSlots);
+  return {
+    ...spec,
+    prompt: fix(spec.prompt ?? ''),
+    slots: nextSlots.map(slot => ({
+      ...slot,
+      filledText: fix(slot.filledText ?? ''),
+      emptyText: fix(slot.emptyText ?? ''),
+    })),
+  };
 }
 
 /**
@@ -438,6 +474,81 @@ export interface RefChip {
 }
 
 /**
+ * 图片 / 成片槽位（参与 `{{Mixed N}}` 编号），按 `position` 排好。
+ *
+ * 判据是 `refMode === 'mixed'`：文本与音频是附加输入（`attachment`），
+ * 不占视觉编号。这条与后端 `compile.py` 里 `counter` 只在非 attachment 分支
+ * 累加、以及 `rules.visual_slot_keys` 是**同一个判据** —— 三处一旦漂移，
+ * 作者写的 `{{Mixed 3}}` 就会指向另一个槽位。
+ */
+function visualSlots(slots: SpecSlotIn[] = []): SpecSlotIn[] {
+  return slots
+    .filter(slot => (slot.refMode ?? 'mixed') === 'mixed')
+    .slice()
+    .sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
+}
+
+/** 这个槽位是第几个图片/成片槽位（1 起）；不是视觉槽位返回 0。 */
+export function mixedIndexOf(slots: SpecSlotIn[] | undefined, key: string): number {
+  const at = visualSlots(slots).findIndex(slot => slot.key === key);
+  return at < 0 ? 0 : at + 1;
+}
+
+/** 正文里的 `{{Mixed N}}`（+ 修饰符）。 */
+const MIXED_REF = /\{\{\s*Mixed\s+(\d+)(\*|\.\d+)?\s*\}\}/g;
+
+/**
+ * 正文里的 `{{Mixed N}}` → `{{slot:key}}`（**只给解析用，不回写**）。
+ *
+ * 作者写的是编号（`{{Mixed 2}}`），内部一切按 key 处理 —— 编号会随槽位增删
+ * 而变，key 不会。所有解析函数（`referencedKeys` / `slotRefModes` /
+ * `stripSlotRefs` / `hasSingleSlotRef`）都先过这一道，它们自己只认一种写法。
+ *
+ * 越界的编号**原样留着**：让校验去报错（后端 / `promptRefError`），
+ * 在这里悄悄吞掉会让「引用写错了」变成「引用消失了」。
+ */
+export function toSlotTokens(text: string, slots: SpecSlotIn[] = []): string {
+  if (!text.includes('Mixed')) return text;
+  const visual = visualSlots(slots);
+  return text.replace(MIXED_REF, (raw, index: string, modifier?: string) => {
+    const slot = visual[Number(index) - 1];
+    return slot ? `{{slot:${slot.key}${modifier ?? ''}}}` : raw;
+  });
+}
+
+/**
+ * 正文里的 `{{slot:key}}` → `{{Mixed N}}`（视觉槽位）。
+ *
+ * 文本槽位保持 `{{slot:key}}`：它有独立编号空间（`{{Text N}}`），
+ * 不参与 Mixed 计数。
+ */
+export function toMixedTokens(text: string, slots: SpecSlotIn[] = []): string {
+  if (!text.includes('slot:')) return text;
+  const visual = visualSlots(slots);
+  return text.replace(slotRefPattern(), (raw, key: string, modifier?: string) => {
+    const at = visual.findIndex(slot => slot.key === key);
+    return at < 0 ? raw : `{{Mixed ${at + 1}${modifier ?? ''}}}`;
+  });
+}
+
+/**
+ * 槽位在正文里的引用写法：视觉槽位 `{{Mixed N}}`，文本槽位 `{{slot:key}}`。
+ *
+ * `modifier` 是三种写法共用的后缀（`""` / `"*"` / `".2"`），拼进来省得调用方
+ * 各自切字符串。
+ */
+export function slotRefToken(
+  slots: SpecSlotIn[] | undefined,
+  slot: SpecSlotIn,
+  modifier = '',
+): string {
+  const index = mixedIndexOf(slots, slot.key);
+  return index > 0
+    ? `{{Mixed ${index}${modifier}}}`
+    : `{{slot:${slot.key}${modifier}}}`;
+}
+
+/**
  * 可被提示词引用的槽位。
  *
  * `text` 槽位虽然是附加输入（不占 Mixed 编号），但有自己的一套编号：编译时
@@ -446,23 +557,28 @@ export interface RefChip {
  * `audio` 没有编号空间，引用必然 400 —— 这里直接不显示。
  */
 export function referenceChips(spec: TemplateSpecIn): RefChip[] {
+  const slots = spec.slots ?? [];
   let ordinal = 0;
-  return (spec.slots ?? [])
+  return slots
     .filter(slot => (slot.refMode ?? 'mixed') === 'mixed' || slot.type === 'text')
+    .slice()
     .sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
     .flatMap(slot => {
       ordinal += 1;
-      // key 是自动生成且界面上不显示，所以回退名用「图片 1」这种位置可读名。
-      const name = slot.label?.trim() || `${SLOT_TYPE_LABELS[slotTypeOf(slot.type)]} ${ordinal}`;
+      const mixed = mixedIndexOf(slots, slot.key);
+      /* 视觉槽位的回退名用**它自己的编号**（与 token 同一个数）：
+         否则胶囊上写「图片 2」、插进去的却是 `{{Mixed 1}}`，两个数对不上。 */
+      const name =
+        slot.label?.trim() ||
+        `${SLOT_TYPE_LABELS[slotTypeOf(slot.type)]} ${mixed || ordinal}`;
       const fixed = (slot.binding ?? 'user') === 'fixed';
-      const chips: RefChip[] = [
-        {token: `{{slot:${slot.key}}}`, label: name, all: false, kind: slotTypeOf(slot.type), fixed},
-      ];
+      const token = slotRefToken(slots, slot);
+      const chips: RefChip[] = [{token, label: name, all: false, kind: slotTypeOf(slot.type), fixed}];
       // 多值槽位额外给一个「全部」引用。
       const max = slot.maxCount ?? 1;
       if (max > 1) {
         chips.push({
-          token: `{{slot:${slot.key}*}}`,
+          token: slotRefToken(slots, slot, '*'),
           label: `${name}（全部）`,
           all: true,
           kind: slotTypeOf(slot.type),
@@ -499,7 +615,10 @@ export function insertRef(
 export function stripSlotRefs(
   text: string,
   key: string,
+  slots: SpecSlotIn[] = [],
 ): {text: string; count: number} {
+  // 作者写的是 `{{Mixed N}}`，先换成 key 形态再按 key 匹配。
+  text = toSlotTokens(text, slots);
   const pattern = slotRefPattern(key);
   const count = (text.match(pattern) ?? []).length;
   if (count === 0) return {text, count};
@@ -508,8 +627,8 @@ export function stripSlotRefs(
 }
 
 /** 提示词里引用了哪些槽位 —— 给编辑器提示"这条引用指向谁"。 */
-export function referencedKeys(text: string): string[] {
-  const hits = text.matchAll(slotRefPattern());
+export function referencedKeys(text: string, slots: SpecSlotIn[] = []): string[] {
+  const hits = toSlotTokens(text, slots).matchAll(slotRefPattern());
   return [...new Set([...hits].map(match => match[1]))];
 }
 
@@ -529,9 +648,12 @@ export function referencedKeys(text: string): string[] {
  *
  * 与后端 `core.template_spec.rules.slot_ref_modes` 同一口径。
  */
-export function slotRefModes(text: string): Record<string, Set<string>> {
+export function slotRefModes(
+  text: string,
+  slots: SpecSlotIn[] = [],
+): Record<string, Set<string>> {
   const modes: Record<string, Set<string>> = {};
-  for (const match of text.matchAll(slotRefPattern())) {
+  for (const match of toSlotTokens(text, slots).matchAll(slotRefPattern())) {
     const key = match[1];
     const modifier = match[2] ?? '';
     if (!modes[key]) modes[key] = new Set();
@@ -546,8 +668,12 @@ export function slotRefModes(text: string): Record<string, Set<string>> {
  * 「选中时文案」是**替换这个插入点**的文案 —— 没有单张引用就没有插入点，
  * 那段文案写出来也不会进提示词（它是死数据）。
  */
-export function hasSingleSlotRef(text: string, key: string): boolean {
-  return slotRefModes(text)[key]?.has('') ?? false;
+export function hasSingleSlotRef(
+  text: string,
+  key: string,
+  slots: SpecSlotIn[] = [],
+): boolean {
+  return slotRefModes(text, slots)[key]?.has('') ?? false;
 }
 
 /**
@@ -569,26 +695,25 @@ export function hasSingleSlotRef(text: string, key: string): boolean {
  * 候选**算出来**而不是让用户手敲 `{{slot:key}}`：手敲有两个错且都不报错 ——
  * key 拼错要到编译期才 400；槽位改名后引用静默失效。
  */
-export function selfRefChips(slot: SpecSlotIn): RefChip[] {
-  const name = slot.label?.trim() || `${SLOT_TYPE_LABELS[slotTypeOf(slot.type)]} ${
-    (slot.position ?? 0) + 1
-  }`;
+export function selfRefChips(slot: SpecSlotIn, mixedIndex = 0): RefChip[] {
+  const name =
+    slot.label?.trim() ||
+    `${SLOT_TYPE_LABELS[slotTypeOf(slot.type)]} ${mixedIndex || (slot.position ?? 0) + 1}`;
   const kind = slotTypeOf(slot.type);
-  const chips: RefChip[] = [
-    {token: `{{slot:${slot.key}}}`, label: `${name}（单张）`, all: false, kind},
-  ];
+  /* 与提示词正文用同一套写法：视觉槽位按编号（`{{Mixed N}}`），
+     文本槽位按 key（`{{slot:text_1}}`）。两处写法不同的话，
+     作者在正文里复制一段文案里的引用就会写错。 */
+  const token = (modifier = '') =>
+    mixedIndex > 0 ? `{{Mixed ${mixedIndex}${modifier}}}` : `{{slot:${slot.key}${modifier}}}`;
+
+  const chips: RefChip[] = [{token: token(), label: `${name}（单张）`, all: false, kind}];
   const max = slot.maxCount ?? 1;
   if (max > 1) {
-    chips.push({
-      token: `{{slot:${slot.key}*}}`,
-      label: `${name}（全部）`,
-      all: true,
-      kind,
-    });
+    chips.push({token: token('*'), label: `${name}（全部）`, all: true, kind});
     // 「第 N 张」从 2 起：第 1 张就是「单张」，重复列一份只会让人以为有两个意思。
     for (let index = 2; index <= max; index += 1) {
       chips.push({
-        token: `{{slot:${slot.key}.${index}}}`,
+        token: token(`.${index}`),
         label: `${name}（第 ${index} 张）`,
         all: false,
         kind,
@@ -637,20 +762,32 @@ function slotRefPattern(key?: string): RegExp {
  * 合法的槽位引用（带不带空格、`*` / `.N` 修饰符）一律放行 —— 它与按钮
  * 插入的是同一个 token，没有理由因为「是手打的」就拒。
  */
-export function promptRefError(prompt: string, slotKeys: string[]): string | null {
-  const known = new Set(slotKeys);
+export function promptRefError(prompt: string, slots: SpecSlotIn[]): string | null {
+  const known = new Set(slots.map(slot => slot.key));
+  const visualCount = visualSlots(slots).length;
   /* 先看所有成对的 `{{...}}`：逐个判，给的原因才具体 */
   let rest = prompt;
   for (const match of prompt.matchAll(/\{\{[\s\S]*?\}\}/g)) {
     const raw = match[0];
+    /* 视觉槽位的引用写法：`{{Mixed N}}`，N 是第几个图片/成片槽位。 */
+    const mixed = /^\{\{\s*Mixed\s+(\d+)(?:\*|\.\d+)?\s*\}\}$/.exec(raw);
+    if (mixed) {
+      const index = Number(mixed[1]);
+      if (index < 1 || index > visualCount) {
+        return `没有第 ${index} 个图片/成片槽位（现在 ${visualCount} 个）`;
+      }
+      rest = rest.replace(raw, '');
+      continue;
+    }
     const ref = /^\{\{\s*slot:([a-z][a-z0-9_]{0,39})(?:\*|\.\d+)?\s*\}\}$/.exec(raw);
     if (ref) {
       if (!known.has(ref[1])) return `没有叫「${ref[1]}」的槽位，检查一下这个引用`;
       rest = rest.replace(raw, '');
       continue;
     }
-    if (/^\{\{\s*(?:Mixed|Text)\s*\d*\s*\}\}$/i.test(raw)) {
-      return '编号（Mixed / Text）由填充顺序决定，不要手写';
+    /* `{{Text N}}` 仍是派生编号（文本槽位排第几由槽位顺序决定），手写就错位。 */
+    if (/^\{\{\s*Text\s*\d*\s*\}\}$/i.test(raw)) {
+      return '文本编号（Text N）由填充顺序决定，不要手写';
     }
     return '这段引用认不出来，请用 @ 或下方按钮插入';
   }

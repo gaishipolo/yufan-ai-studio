@@ -52,6 +52,7 @@ function SlotHarness({
       onPickAsset={() => {}}
       tagOptions={TAG_OPTIONS}
       typeOptions={TYPE_OPTIONS}
+      slots={[current]}
       prompt={prompt}
     />
   );
@@ -63,7 +64,7 @@ function SlotHarness({
  * 两段文案（选中时 / 未选时）是「替换 `{{slot:key}}` 插入点」的文案 ——
  * 没有插入点就不显示（填了也不进提示词，是死数据）。
  */
-const DEFAULT_PROMPT = '把 {{slot:image_1}} 放进画面';
+const DEFAULT_PROMPT = '把 {{Mixed 1}} 放进画面';
 
 function renderSlot(slot: Partial<SpecSlotIn> = {}, prompt = DEFAULT_PROMPT) {
   const onPatch = vi.fn();
@@ -318,11 +319,11 @@ describe('槽位卡片', () => {
     const empty = screen.getByLabelText('未选时文案');
     expect(filled).toHaveAttribute(
       'placeholder',
-      expect.stringContaining('写下 {{slot:image_1}} 引用这个槽位，这段话才会被用上'),
+      expect.stringContaining('写下 {{Mixed 1}} 引用这个槽位，这段话才会被用上'),
     );
     expect(empty).toHaveAttribute(
       'placeholder',
-      expect.stringContaining('写下 {{slot:image_1}} 引用这个槽位，这段话才会被用上'),
+      expect.stringContaining('写下 {{Mixed 1}} 引用这个槽位，这段话才会被用上'),
     );
     /* 两个框的占位提示必须能分开 —— 文字一样的话使用者分不清
        哪个框是「有素材」、哪个是「没素材」。 */
@@ -331,7 +332,7 @@ describe('槽位卡片', () => {
 
   it('整组引用 {{slot:x*}} 同样显示两段文案（可选就显示）', async () => {
     const user = userEvent.setup();
-    renderSlot({binding: 'user', minCount: 0}, '把 {{slot:image_1*}} 都放进去');
+    renderSlot({binding: 'user', minCount: 0}, '把 {{Mixed 1*}} 都放进去');
     await user.click(screen.getByRole('button', {name: '展开更多设置'}));
 
     expect(screen.getByLabelText('选中时文案')).toBeInTheDocument();
@@ -339,7 +340,7 @@ describe('槽位卡片', () => {
 
   it('第 N 张引用 {{slot:x.2}} 同样显示两段文案', async () => {
     const user = userEvent.setup();
-    renderSlot({binding: 'user', minCount: 0}, '把 {{slot:image_1.2}} 放进去');
+    renderSlot({binding: 'user', minCount: 0}, '把 {{Mixed 1.2}} 放进去');
     await user.click(screen.getByRole('button', {name: '展开更多设置'}));
 
     expect(screen.getByLabelText('选中时文案')).toBeInTheDocument();
@@ -401,7 +402,7 @@ describe('槽位卡片', () => {
     await user.click(screen.getByRole('button', {name: /单张/}));
 
     expect(onPatch).toHaveBeenCalledWith(
-      expect.objectContaining({filledText: '人物参考 {{slot:image_7}}'}),
+      expect.objectContaining({filledText: '人物参考 {{Mixed 1}}'}),
     );
   });
 });

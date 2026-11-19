@@ -22,7 +22,8 @@ import type { MentionCandidate, MentionTextareaHandle } from './MentionTextarea'
  * 正文里的素材占位。**两边允许空格**（`{{ slot:key }}`）：后端与 `specDraft`
  * 都是容空格版本，这里写成严格版就会漏掉老草稿里的带空格引用。
  */
-const TOKEN_RE = /\{\{\s*slot:[a-z][a-z0-9_]{0,39}(?:\*|\.\d+)?\s*\}\}/g;
+const TOKEN_RE =
+  /\{\{\s*(?:slot:[a-z][a-z0-9_]{0,39}|Mixed\s+\d+)(?:\*|\.\d+)?\s*\}\}/g;
 
 /** 去掉空白后的 token：正文里的写法可能带空格，候选里的是规范形式。 */
 const normalizeToken = (raw: string) => raw.replace(/\s+/g, '');

@@ -361,7 +361,9 @@ describe('模板库：可选槽位不填也能生成', () => {
       ...OPTIONAL_SPEC,
       latest: {
         ...OPTIONAL_SPEC.latest!,
-        prompt: '把原片里的人换成 {{Mixed 1}}',
+        // 一个槽位都没引用：`{{Mixed 1}}` 现在**是**引用（第 1 个视觉槽位），
+        // 拿它当「没引用」的例子会站不住。
+        prompt: '把原片里的人换掉',
       },
     });
 

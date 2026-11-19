@@ -21,6 +21,9 @@ import {
   normalize,
   promptRefError,
   rekeySlot,
+  renumberRefs,
+  slotRefToken,
+  toSlotTokens,
   referenceChips,
   rewriteSlotRef,
   selfRefChips,
@@ -102,10 +105,12 @@ describe('模板规格草稿', () => {
       {...blankSlot(3), key: 'bgm', type: 'audio', refMode: 'attachment'},
     ];
     const chips = referenceChips(spec);
+    /* 视觉槽位按**编号**引用（`{{Mixed N}}`），文本槽位按 key —— 文本有
+       独立的 `{{Text N}}` 编号空间，不参与 Mixed 计数。 */
     expect(chips.map(chip => chip.token)).toEqual([
-      '{{slot:hero}}',
-      '{{slot:detail}}',
-      '{{slot:detail*}}',
+      '{{Mixed 1}}',
+      '{{Mixed 2}}',
+      '{{Mixed 2*}}',
       '{{slot:brief}}',
     ]);
     // 音频没有编号空间，给入口就等于让用户写出一条必然 400 的引用。
@@ -740,39 +745,141 @@ describe('authoredFingerprint：判有没有改动', () => {
  * 引用校验：**只拦错的，不拦花括号**。
  *
  * 旧判据是「花括号变多就拒」。它拦不住真正的问题（拼错的 key 也只是两个
- * 花括号），却把正确写法一起拦了 —— 粘一段 `{{slot:image_1}}` 进来，
+ * 花括号），却把正确写法一起拦了 —— 粘一段 `{{Mixed 1}}` 进来，
  * 明明是对的，界面却报「不要手写大括号」。
  */
 describe('promptRefError：提示词里的引用', () => {
-  const KEYS = ['image_1', 'image_2', 'group'];
+  const SLOTS: SpecSlotIn[] = [
+    {key: 'image_1', type: 'image', position: 0},
+    {key: 'image_2', type: 'image', position: 1},
+    {key: 'group', type: 'video', position: 2},
+    {key: 'copy', type: 'text', refMode: 'attachment', position: 3},
+  ];
 
   it('纯文字没问题', () => {
-    expect(promptRefError('一张图，暖色调', KEYS)).toBeNull();
+    expect(promptRefError('一张图，暖色调', SLOTS)).toBeNull();
   });
 
   it('合法引用一律放行（含空格、`*`、`.N` 三种修饰符）', () => {
-    expect(promptRefError('{{slot:image_1}}', KEYS)).toBeNull();
-    expect(promptRefError('{{ slot:image_2 }}', KEYS)).toBeNull();
-    expect(promptRefError('整组 {{slot:group*}}', KEYS)).toBeNull();
-    expect(promptRefError('第二张 {{slot:group.2}}', KEYS)).toBeNull();
+    expect(promptRefError('{{Mixed 1}}', SLOTS)).toBeNull();
+    expect(promptRefError('{{ Mixed 2 }}', SLOTS)).toBeNull();
+    expect(promptRefError('整组 {{Mixed 3*}}', SLOTS)).toBeNull();
+    expect(promptRefError('第二张 {{Mixed 3.2}}', SLOTS)).toBeNull();
+    // 文本槽位仍有自己的写法（独立编号空间），照旧按 key 引用
+    expect(promptRefError('{{slot:copy}}', SLOTS)).toBeNull();
+  });
+
+  /* 编号是「第几个图片/成片槽位」：3 个视觉槽位时 `Mixed 4` 指向不存在。 */
+  it('编号超出视觉槽位数 → 拒，并说清现在有几个', () => {
+    const message = promptRefError('{{Mixed 4}}', SLOTS);
+    expect(message).toContain('第 4 个');
+    expect(message).toContain('现在 3 个');
   });
 
   it('key 不存在 → 指名道姓地说出来', () => {
-    expect(promptRefError('{{slot:image_9}}', KEYS)).toContain('image_9');
+    expect(promptRefError('{{slot:image_9}}', SLOTS)).toContain('image_9');
   });
 
-  /* 手写编号会与本次填充量错位：少填一张，后面全部错位。 */
-  it('手写 Mixed / Text 编号 → 拒', () => {
-    expect(promptRefError('参考 {{Mixed 2}}', KEYS)).toContain('不要手写');
-    expect(promptRefError('{{Text 1}}', KEYS)).toContain('不要手写');
+  /* `{{Text N}}` 仍是派生编号：文本槽位排第几由槽位顺序决定。 */
+  it('手写 Text 编号 → 拒', () => {
+    expect(promptRefError('{{Text 1}}', SLOTS)).toContain('不要手写');
   });
 
   it('花括号没闭合 → 拒', () => {
-    expect(promptRefError('{{slot:image_1', KEYS)).toContain('没闭合');
-    expect(promptRefError('{{ image_1 }}', KEYS)).toContain('认不出来');
+    expect(promptRefError('{{Mixed 1', SLOTS)).toContain('没闭合');
+    expect(promptRefError('{{ image_1 }}', SLOTS)).toContain('认不出来');
   });
 
   it('删字删到一半（合法引用少一个括号）也要拒', () => {
-    expect(promptRefError('{{slot:image_1} }}', KEYS)).not.toBeNull();
+    expect(promptRefError('{{Mixed 1} }}', SLOTS)).not.toBeNull();
+  });
+});
+
+/**
+ * 引用写法：**作者写 `{{Mixed N}}`**，N = 第几个图片/成片槽位。
+ *
+ * 以前作者写 `{{slot:image_1}}`（内部 key），模型看到 `{{Mixed 1}}` ——
+ * 同一件事两套写法。统一之后作者不必再记 key。
+ */
+describe('引用写法', () => {
+  const SLOTS: SpecSlotIn[] = [
+    {key: 'image_1', type: 'image', position: 0},
+    {key: 'group', type: 'video', position: 1, maxCount: 2},
+    {key: 'copy', type: 'text', refMode: 'attachment', position: 2},
+  ];
+
+  it('视觉槽位用 Mixed 编号，文本槽位仍用 key', () => {
+    expect(slotRefToken(SLOTS, SLOTS[0])).toBe('{{Mixed 1}}');
+    expect(slotRefToken(SLOTS, SLOTS[1], '*')).toBe('{{Mixed 2*}}');
+    expect(slotRefToken(SLOTS, SLOTS[2])).toBe('{{slot:copy}}');
+  });
+
+  it('chip 行与正文是同一套写法', () => {
+    const chips = referenceChips({...blankSpec(), slots: SLOTS});
+    expect(chips.map(chip => chip.token)).toEqual([
+      '{{Mixed 1}}',
+      '{{Mixed 2}}',
+      '{{Mixed 2*}}',
+      '{{slot:copy}}',
+    ]);
+    // 回退名用同一个编号：胶囊上写「图片 1」、token 却是 Mixed 2 会让人对不上
+    expect(chips[0].label).toBe('图片 1');
+    expect(chips[1].label).toBe('成片 2');
+  });
+
+  it('解析前把 Mixed 换回 key（越界的原样留着）', () => {
+    expect(toSlotTokens('{{Mixed 2}} 与 {{Mixed 1*}}', SLOTS)).toBe(
+      '{{slot:group}} 与 {{slot:image_1*}}',
+    );
+    expect(toSlotTokens('{{Mixed 9}}', SLOTS)).toBe('{{Mixed 9}}');
+  });
+
+  it('打开一份老草稿时统一成 Mixed 写法', () => {
+    const out = {
+      id: 'spec-1',
+      key: 'spec-1',
+      name: '商品图',
+      description: '',
+      ownerId: 'u-1',
+      status: 'draft',
+      revision: 1,
+      fingerprint: 'fp',
+      currentVersion: 0,
+      createdAt: '2026-11-01T00:00:00Z',
+      updatedAt: '2026-11-01T00:00:00Z',
+      draft: {
+        key: 'spec-1',
+        name: '商品图',
+        model: 'm',
+        prompt: '{{slot:image_1}} 和 {{slot:copy}}',
+        slots: SLOTS,
+      },
+    } as TemplateSpecOut;
+
+    expect(fromSpecOut(out).prompt).toBe('{{Mixed 1}} 和 {{slot:copy}}');
+  });
+
+  /* 编号按位置算：在前面插一个，后面全部加 1。 */
+  it('插槽位后重编号', () => {
+    const before = {...blankSpec(), prompt: '{{Mixed 1}} 和 {{Mixed 2}}', slots: SLOTS};
+    const inserted = [
+      {key: 'image_9', type: 'image' as const, position: 0},
+      ...SLOTS.map((slot, index) => ({...slot, position: index + 1})),
+    ];
+
+    expect(renumberRefs(before, inserted).prompt).toBe('{{Mixed 2}} 和 {{Mixed 3}}');
+  });
+
+  /* 图片改成文本：它退出视觉编号，后面的槽位整体前移。 */
+  it('把视觉槽位改成文本后，后面的编号前移', () => {
+    const before = {...blankSpec(), prompt: '{{Mixed 1}} 和 {{Mixed 2}}', slots: SLOTS};
+    const next = SLOTS.map((slot, index) =>
+      index === 0
+        ? {...slot, type: 'text' as const, refMode: 'attachment' as const}
+        : slot,
+    );
+
+    // 原来指 group 的 {{Mixed 2}} 变成 {{Mixed 1}}；原来的 image_1 变成 key 写法
+    expect(renumberRefs(before, next).prompt).toBe('{{slot:image_1}} 和 {{Mixed 1}}');
   });
 });

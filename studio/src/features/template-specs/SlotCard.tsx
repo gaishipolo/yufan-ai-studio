@@ -8,8 +8,10 @@ import {
   SLOT_TYPE_LABELS,
   hasSingleSlotRef,
   isOptionalSlot,
+  mixedIndexOf,
   selfRefChips,
   setSlotOptional,
+  slotRefToken,
   slotTypeOf,
 } from './specDraft';
 import { MentionTextarea } from './MentionTextarea';
@@ -38,6 +40,7 @@ export function SlotCard({
   onPickAsset,
   tagOptions,
   typeOptions,
+  slots,
   prompt,
 }: {
   slot: SpecSlotIn;
@@ -52,6 +55,8 @@ export function SlotCard({
   onPickAsset: () => void;
   tagOptions: {value: string; label: string}[];
   typeOptions: {value: string; label: string}[];
+  /** 全部槽位：算「自己是第几个图片/成片槽位」（引用写法 `{{Mixed N}}` 要用）。 */
+  slots: SpecSlotIn[];
   /** 整段提示词：用来判断这个槽位有没有**插入点**（见下面 `hasInsertPoint`）。 */
   prompt: string;
 }) {
@@ -79,12 +84,12 @@ export function SlotCard({
 
      没有插入点时这两段文案**编译期用不上**（没有位置可插），所以
      下面会照实说一句，而不是静默接受一个填了不生效的东西。 */
-  const hasInsertPoint = hasSingleSlotRef(prompt, slot.key);
+  const hasInsertPoint = hasSingleSlotRef(prompt, slot.key, slots);
   const showTexts = optional;
   /* 占位符里的 token：**当前槽位自己的**引用。
      写死 `{{slot:image_1}}` 的话，第二个槽位显示的就是第一个槽位的 token ——
      作者照着抄进提示词，引用到的还是那个槽位自己（编号会错位）。 */
-  const token = `{{slot:${slot.key}}}`;
+  const token = slotRefToken(slots, slot);
 
   /* 两段文案的**占位提示**（不是常驻小字）。
      说明放在框内占位符里：提示跟着框走、不占额外版面、填了内容就自动消失。
@@ -357,7 +362,7 @@ export function SlotCard({
                   id="slot-filled-text"
                   aria-label="选中时文案"
                   value={slot.filledText ?? ''}
-                  candidates={selfRefChips(slot)}
+                  candidates={selfRefChips(slot, mixedIndexOf(slots, slot.key))}
                   rows={2}
                   placeholder={filledPlaceholder}
                   panelHint="选择要插入的编号"

@@ -30,7 +30,12 @@ from core.template_spec.models import (
     SlotType,
     TemplateSpec,
 )
-from core.template_spec.rules import slot_ref_modes, slot_refs, validate_spec
+from core.template_spec.rules import (
+    normalize_refs,
+    slot_ref_modes,
+    slot_refs,
+    validate_spec,
+)
 
 __all__ = [
     "EXECUTION_PROMPT_LIMIT",
@@ -48,6 +53,7 @@ __all__ = [
     "SlotType",
     "TemplateSpec",
     "compile_spec",
+    "normalize_refs",
     "slot_ref_modes",
     "slot_refs",
     "validate_spec",

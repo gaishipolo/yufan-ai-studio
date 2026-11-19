@@ -56,12 +56,14 @@ import {
   normalize,
   promptRefError,
   referenceChips,
+  renumberRefs,
   rekeySlot,
   slotTypeOf,
   slotsMissingTag,
   splitModelSelection,
   stripSlotRefs,
   textsToClearForRequired,
+  toMixedTokens,
   type SlotType,
 } from './specDraft';
 
@@ -339,12 +341,21 @@ export function SpecWorkspace() {
       }
     }
     nextSlots[index] = next;
-    // 改类型时跟着改名（只在提示词没引用过时；引用过就留着，别让引用静默失效）。
+    /* **顺序不能反**：
+       1. 先重编号（此时 key 还没变，`{{Mixed N}}` 能换算回它自己的 key）；
+       2. 再决定改不改名 —— `rekeySlot` 靠「正文里有没有 `{{slot:key}}`」判断
+          能不能改名，而重编号正好把引用变成了 key 形态，这个判断才准。
+       反过来先改名，重编号时按旧 key 就查不到这个槽位，正文里会留下一条
+       指向不存在槽位的引用（保存时才 400，用户看不出是刚改的类型）。
+
+       为什么必须重编号：把图片槽位改成文本，它就从视觉编号里退出去了，
+       后面的槽位整体前移 —— 不动的话 `{{Mixed 3}}` 会静默指向另一个槽位。 */
+    const renumbered = renumberRefs(draft, nextSlots);
     const rekeyed =
       patch.type !== undefined
-        ? rekeySlot(nextSlots, index, slotTypeOf(next.type), draft.prompt ?? '')
-        : nextSlots;
-    setDraft({...draft, slots: rekeyed});
+        ? rekeySlot(renumbered.slots ?? [], index, slotTypeOf(next.type), renumbered.prompt ?? '')
+        : renumbered.slots;
+    setDraft({...renumbered, slots: rekeyed});
   };
 
   const moveSlot = (from: number, to: number) => {
@@ -352,13 +363,14 @@ export function SpecWorkspace() {
     const next = slots.slice();
     const [item] = next.splice(from, 1);
     next.splice(to, 0, item);
-    setDraft({...draft, slots: next.map((slot, index) => ({...slot, position: index}))});
+    // 位置就是编号：拖一下，后面所有 `{{Mixed N}}` 都要跟着变。
+    setDraft(renumberRefs(draft, next.map((slot, index) => ({...slot, position: index}))));
   };
 
   const addSlot = (type: SlotType = 'image') => {
     if (!draft) return;
     const slot = blankSlot(slots.length, type, slots);
-    setDraft({...draft, slots: [...slots, slot]});
+    setDraft(renumberRefs(draft, [...slots, slot]));
     if (type === 'text') setPicker({target: 'slot', index: slots.length});
   };
 
@@ -414,16 +426,15 @@ export function SpecWorkspace() {
    */
   const applyPromptText = (text: string): boolean => {
     if (!draft) return false;
-    const error = promptRefError(
-      text,
-      (draft.slots ?? []).map(slot => slot.key),
-    );
+    const error = promptRefError(text, draft.slots ?? []);
     if (error) {
       setHint(error);
       return false;
     }
     setHint('');
-    setDraft({...draft, prompt: text});
+    /* 存进去的永远是**作者写法**：手打或粘进来的 `{{slot:image_1}}`（内部 key）
+       当场换成 `{{Mixed 1}}`。这样正文里只有一种写法，胶囊也能对上标签。 */
+    setDraft({...draft, prompt: toMixedTokens(text, draft.slots ?? [])});
     return true;
   };
 
@@ -700,12 +711,13 @@ export function SpecWorkspace() {
                     const name = slot.label?.trim() || SLOT_TYPE_LABELS[slotTypeOf(slot.type)];
                     // 引用留着的下场是「点生成才报引用了不存在的槽位」，
                     // 那句话看不出是刚才删槽位删出来的，所以一并清掉并告知条数。
-                    const stripped = stripSlotRefs(draft.prompt ?? '', slot.key);
-                    setDraft({
-                      ...draft,
-                      slots: slots.filter(item => item.key !== slot.key),
-                      prompt: stripped.text,
-                    });
+                    /* 顺序很重要：**先**按新结构重编号（删掉第 1 个，后面的
+                       编号整体前移），**再**清掉被删槽位的引用 —— 反过来的话，
+                       清理时用的还是旧编号，会漏掉几条（它们已经变号了）。 */
+                    const remaining = slots.filter(item => item.key !== slot.key);
+                    const renumbered = renumberRefs(draft, remaining);
+                    const stripped = stripSlotRefs(renumbered.prompt ?? '', slot.key, remaining);
+                    setDraft({...renumbered, prompt: stripped.text});
                     setNote(
                       stripped.count > 0
                         ? `已删除槽位「${name}」，提示词里的 ${stripped.count} 处引用一并清掉`
@@ -715,6 +727,7 @@ export function SpecWorkspace() {
                   onPickAsset={() => setPicker({target: 'slot', index})}
                   tagOptions={tagOptions}
                   typeOptions={TYPE_OPTIONS}
+                  slots={slots}
                   prompt={draft.prompt ?? ''}
                 />
               ))}

@@ -1,4 +1,5 @@
 import type {SpecSlotOut} from '@/shared/api/schema';
+import {toSlotTokens} from '@/features/template-specs/specDraft';
 
 /**
  * 「均衡」档下哪些槽位**不能**被让给模型。
@@ -37,9 +38,14 @@ const SLOT_REF = /\{\{\s*slot:([a-z][a-z0-9_]{0,39})(\*|\.\d{1,3})?\s*\}\}/g;
  * 返回 `{槽位key: Set<写法>}`，写法为 `""`（单张）、`"*"`（整组）、
  * `".2"`（第 N 张）。
  */
-export function slotRefModes(prompt: string): Record<string, Set<string>> {
+export function slotRefModes(
+  prompt: string,
+  slots: SpecSlotOut[] = [],
+): Record<string, Set<string>> {
   const modes: Record<string, Set<string>> = {};
-  for (const match of prompt.matchAll(SLOT_REF)) {
+  /* 作者写的是 `{{Mixed N}}`（按槽位顺序编号），这里按 key 解析 ——
+     编号会随槽位增删而变，key 不会。 */
+  for (const match of toSlotTokens(prompt, slots).matchAll(SLOT_REF)) {
     const key = match[1];
     const modifier = match[2] ?? '';
     if (!modes[key]) modes[key] = new Set<string>();
@@ -57,9 +63,12 @@ export function slotRefModes(prompt: string): Record<string, Set<string>> {
  * 这个下限**与档位无关**：随机 / 均衡 / 自定义，只要提示词里写了
  * 「第 3 张」，这个槽位就至少得 3 张素材。
  */
-export function indexedRefCounts(prompt: string): Record<string, number> {
+export function indexedRefCounts(
+  prompt: string,
+  slots: SpecSlotOut[] = [],
+): Record<string, number> {
   const counts: Record<string, number> = {};
-  for (const [key, used] of Object.entries(slotRefModes(prompt))) {
+  for (const [key, used] of Object.entries(slotRefModes(prompt, slots))) {
     for (const mode of used) {
       if (!mode.startsWith('.')) continue;
       const index = Number(mode.slice(1));
@@ -96,13 +105,14 @@ export function indexedRefCounts(prompt: string): Record<string, number> {
 export function requiredSlotCount(
   slot: SpecSlotOut,
   prompt: string,
+  slots: SpecSlotOut[] = [],
 ): number {
   const base = slot.minCount ?? 1;
-  const used = slotRefModes(prompt)[slot.key];
+  const used = slotRefModes(prompt, slots)[slot.key];
   if (!used) return base;
 
   /* 「第 N 张」：实际要 N 张。 */
-  const indexed = indexedRefCounts(prompt)[slot.key] ?? 0;
+  const indexed = indexedRefCounts(prompt, slots)[slot.key] ?? 0;
   if (indexed > 0) return Math.max(base, indexed);
 
   /* 单张引用且没有兜底文案：不填就报错 → 至少 1 张。
@@ -123,7 +133,7 @@ export function balancedPinnedKeys(
   prompt: string,
   slots: SpecSlotOut[],
 ): string[] {
-  const modes = slotRefModes(prompt);
+  const modes = slotRefModes(prompt, slots);
   const pinned: string[] = [];
   for (const slot of slots) {
     const used = modes[slot.key];

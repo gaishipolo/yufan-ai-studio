@@ -218,10 +218,47 @@ def test_too_many_numbered_refs_is_rejected() -> None:
         compile_spec(spec, _fills(source=(VIDEO,), hero=many))
 
 
-def test_spec_must_not_hardcode_mixed_numbers() -> None:
-    """写死 `{{Mixed N}}` 会在少填时错位，预检当场拒。"""
-    spec = _spec(_source(), _user("hero", 1), editable="{{Mixed 2}}")
-    with pytest.raises(BadRequest, match="不要直接写"):
+def test_mixed_ref_points_at_the_nth_visual_slot() -> None:
+    """作者写的 `{{Mixed N}}` = 第 N 个图片/成片槽位（文本/音频不占号）。
+
+    2026-11-19 起这是**作者唯一要记的写法**：以前作者写 `{{slot:image_1}}`、
+    模型看到 `{{Mixed 1}}`，同一件事两套写法。
+    """
+    spec = _spec(
+        _source(),
+        _user("hero", 1),
+        editable="原片 {{Mixed 1}}，人物参考 {{Mixed 2}}",
+    )
+    out = compile_spec(spec, _fills(source=(VIDEO,), hero=(HERO,)))
+
+    assert out.prompt == "原片 {{Mixed 1}}，人物参考 {{Mixed 2}}"
+    assert out.slot_tokens == {"source": ("{{Mixed 1}}",), "hero": ("{{Mixed 2}}",)}
+
+
+def test_mixed_ref_expands_to_the_number_this_fill_produces() -> None:
+    """作者写的编号 ≠ 编译出的编号时，必须真的展开。
+
+    第 1 个槽位填了 2 张，它占 1、2 两个号，所以第 2 个槽位拿到的是 3 号 ——
+    作者写 `{{Mixed 2}}`（第 2 个槽位），编译出来是 `{{Mixed 3}}`。
+
+    这条用例专门用来区分「展开了」和「原样留着」：每个槽位各一张时两者输出
+    一模一样，只有张数不同才分得出来。
+    """
+    spec = _spec(
+        _user("hero", 1, min_count=1, max_count=2),
+        _user("detail", 2),
+        editable="细节 {{Mixed 2}}",
+    )
+    out = compile_spec(spec, _fills(hero=(HERO, DETAIL_1), detail=(DETAIL_2,)))
+
+    assert out.prompt == "细节 {{Mixed 3}}"
+    assert out.slot_tokens["detail"] == ("{{Mixed 3}}",)
+
+
+def test_mixed_ref_that_points_nowhere_is_rejected() -> None:
+    """只有 2 个视觉槽位，写 `{{Mixed 3}}` 当场拒 —— 别拖到别人点生成。"""
+    spec = _spec(_source(), _user("hero", 1), editable="{{Mixed 3}}")
+    with pytest.raises(BadRequest, match="找不到对应槽位"):
         validate_spec(spec)
 
 
