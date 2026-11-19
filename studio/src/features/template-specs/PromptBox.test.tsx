@@ -313,6 +313,73 @@ describe('粘贴', () => {
 });
 
 /**
+ * 撤销。
+ *
+ * 浏览器的原生撤销在这个框里是不工作的：胶囊靠重建 DOM 实现，一重建就把元素的
+ * undo 记录清掉；粘贴又被 `preventDefault` 接管，浏览器根本没记下那一步。
+ * 所以编辑器自己维护一份文本栈（见 `RichPromptEditor` 里的 `history`）。
+ */
+describe('撤销 / 重做', () => {
+  it('粘贴后 Ctrl+Z 退回粘贴前，胶囊也一起消失', async () => {
+    const user = userEvent.setup();
+    render(<Harness />);
+    const box = screen.getByRole('textbox');
+    await user.click(box);
+
+    await user.paste('参考 {{slot:image_1}}');
+    expect(screen.getByTestId('value')).toHaveTextContent('参考 {{slot:image_1}}');
+
+    await user.keyboard('{Control>}z{/Control}');
+
+    expect(screen.getByTestId('value').textContent).toBe('');
+    expect(box.querySelector('[data-token]')).toBeNull();
+  });
+
+  it('Ctrl+Shift+Z 重做回来', async () => {
+    const user = userEvent.setup();
+    render(<Harness />);
+    const box = screen.getByRole('textbox');
+    await user.click(box);
+
+    await user.paste('参考 {{slot:image_1}}');
+    await user.keyboard('{Control>}z{/Control}');
+    await user.keyboard('{Control>}{Shift>}Z{/Shift}{/Control}');
+
+    expect(screen.getByTestId('value')).toHaveTextContent('参考 {{slot:image_1}}');
+    // 重做之后胶囊也回来了（DOM 是按 value 重画的）
+    expect(box.querySelector('[data-token]')).toHaveTextContent('主图');
+  });
+
+  /* 一个词一次 `Ctrl+Z` 就够 —— 逐字退会让长提示词退到天荒地老。 */
+  it('连续打出来的字合并成一步', async () => {
+    const user = userEvent.setup();
+    render(<Harness />);
+    const box = screen.getByRole('textbox');
+    await user.click(box);
+    await user.type(box, 'abc');
+    expect(screen.getByTestId('value').textContent).toBe('abc');
+
+    await user.keyboard('{Control>}z{/Control}');
+
+    expect(screen.getByTestId('value').textContent).toBe('');
+  });
+
+  /* 退到底就停住，不能把框弄成空白之外的东西，也不能崩。 */
+  it('没有可退的时候按 Ctrl+Z 什么也不发生', async () => {
+    const user = userEvent.setup();
+    render(<Harness />);
+    const box = screen.getByRole('textbox');
+    await user.click(box);
+    await user.type(box, 'a');
+    await user.keyboard('{Control>}z{/Control}');
+    await user.keyboard('{Control>}z{/Control}');
+
+    expect(screen.getByTestId('value').textContent).toBe('');
+    expect(box.textContent).toBe('');
+  });
+});
+
+/**
  * 浮层方向：提示词框在模板封装页的右栏最下面，朝下展开会整块掉到视口外 ——
  * 用户只看到输入框闪一下、什么也没出现。空间不够就得翻到上面去。
  */

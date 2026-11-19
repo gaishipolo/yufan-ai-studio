@@ -224,6 +224,23 @@ export const RichPromptEditor = forwardRef<MentionTextareaHandle, RichPromptEdit
     const pendingCaret = useRef<number | null>(null);
     /** 外部「插入 token」要插到光标处，父组件拿不到，这里记着 */
     const caretRef = useRef(0);
+    /*
+     * **自己的撤销栈**。
+     *
+     * 浏览器的原生撤销在这里是不工作的：胶囊靠 `paint()` 重建 DOM，
+     * 一重建就把元素的 undo 记录清了；粘贴又被我们 `preventDefault` + 改
+     * `value` 接管，浏览器根本没记下那一步。于是 `Ctrl+Z` 什么也不做
+     * （更糟的情况是把 DOM 改成和 `value` 不一致的样子）。
+     *
+     * 所以自己记：每接受一次改动就压一份 `{文本, 光标}`，`Ctrl+Z` 退一份、
+     * `Ctrl+Shift+Z` / `Ctrl+Y` 进一份。**栈里只存文本**，不存 DOM ——
+     * 文本才是真相，DOM 是按它重画出来的。
+     */
+    const history = useRef<{text: string; caret: number}[]>([{text: value, caret: 0}]);
+    const historyAt = useRef(0);
+    /** 这次改动是「打一个字」还是「一次整体动作」（粘贴 / 插 token / 撤销） */
+    const origin = useRef<'type' | 'other'>('other');
+    const lastPushAt = useRef(0);
 
     const matches = useMemo(
       () => (mention ? filterMentionChips(candidates, mention.query) : []),
@@ -267,6 +284,35 @@ export const RichPromptEditor = forwardRef<MentionTextareaHandle, RichPromptEdit
       return span;
     };
 
+    /* 记录撤销点：`value` 变了就压一份。**按文本去重** —— 撤销时把指针退回去，
+       `value` 恰好等于栈里那一份，这里就什么都不做（不必再区分「是不是撤销引起的」）。 */
+    useEffect(() => {
+      const current = history.current[historyAt.current];
+      if (current && current.text === value) return;
+
+      const at = Date.now();
+      /* 连续打字合并成一步：一个词一次 `Ctrl+Z` 就够，不用一个字一个字退。
+         判据里带上「指针在末尾」—— 撤销之后接着打，不能把新内容并进历史。 */
+      const typingBurst =
+        origin.current === 'type' &&
+        at - lastPushAt.current < 800 &&
+        historyAt.current === history.current.length - 1 &&
+        historyAt.current > 0;
+      lastPushAt.current = at;
+
+      if (typingBurst) {
+        history.current[historyAt.current] = {text: value, caret: caretRef.current};
+        return;
+      }
+
+      const entries = history.current.slice(0, historyAt.current + 1);
+      entries.push({text: value, caret: caretRef.current});
+      // 上限：长提示词里逐字改会攒出几千份，留最近 100 份足够。
+      if (entries.length > 100) entries.shift();
+      history.current = entries;
+      historyAt.current = entries.length - 1;
+    }, [value]);
+
     /* 同步：值变了、或者 DOM 里还有没胶囊化的 token（用户手打出来的）才重建。 */
     useEffect(() => {
       const root = rootRef.current;
@@ -295,6 +341,7 @@ export const RichPromptEditor = forwardRef<MentionTextareaHandle, RichPromptEdit
      *   「不要手写大括号」。真踩过。
      */
     const insert = (text: string, caret: number) => {
+      origin.current = 'other';
       pendingCaret.current = caret;
       caretRef.current = caret;
       // 被拒就当没发生：不清掉待用的光标位，下一次重建会用错位置
@@ -329,6 +376,7 @@ export const RichPromptEditor = forwardRef<MentionTextareaHandle, RichPromptEdit
       const at = caretOffset(root);
       caretRef.current = at;
       const text = serialize(root);
+      origin.current = 'type';
       if (onChange(text) === false) {
         /* 写入被拒（父组件的引用校验）：DOM 里那些字必须撤掉。
            不撤的话「看见的」和「会保存的」不是一回事 —— 更糟的是 `value`
@@ -347,7 +395,41 @@ export const RichPromptEditor = forwardRef<MentionTextareaHandle, RichPromptEdit
       setMention(detectMention(text, at));
     };
 
+    /** 退（-1）/ 进（+1）一份历史。返回 false = 没得退/进，或父组件拒了。 */
+    const stepHistory = (delta: number): boolean => {
+      const next = historyAt.current + delta;
+      const target = history.current[next];
+      if (!target) return false;
+
+      origin.current = 'other';
+      historyAt.current = next;
+      const caret = Math.min(target.caret, target.text.length);
+      pendingCaret.current = caret;
+      caretRef.current = caret;
+      if (onChange(target.text) === false) {
+        /* 历史里的每一份都是被接受过的文本，正常走不到这儿；
+           真被拒了就把指针退回去，别让栈和界面对不上。 */
+        historyAt.current -= delta;
+        pendingCaret.current = null;
+        return false;
+      }
+      return true;
+    };
+
     const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+      /* 撤销 / 重做要在最前面：它跟候选面板无关，面板关着也得能用。 */
+      const mod = event.metaKey || event.ctrlKey;
+      if (mod && (event.key === 'z' || event.key === 'Z')) {
+        event.preventDefault();
+        stepHistory(event.shiftKey ? 1 : -1);
+        return;
+      }
+      if (mod && (event.key === 'y' || event.key === 'Y')) {
+        event.preventDefault();
+        stepHistory(1);
+        return;
+      }
+
       if (!open) return;
       if (event.key === 'ArrowDown') {
         event.preventDefault();
