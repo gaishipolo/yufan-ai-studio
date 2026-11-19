@@ -103,13 +103,16 @@ export function SlotMediaPicker({
    *
    * 过滤条件与素材完全相同（`filterIds`）：后端只返回「成员标签与它交集非空」
    * 的包，所以出现在「正面图」这一格里的包，一定至少含一张正面图。
-   * 槽位没配标签时（老模板）不传，退回全部包。
    *
    * 只有上层给了 `onPickPack` 才取：文本 / 音频槽位用不上，不必白打一次请求。
+   *
+   * **槽位没圈候选标签时也不取**（老模板）：分发靠「成员标签 ∩ 槽位候选标签」，
+   * 没有候选标签就没有判据，点包一格都填不上 —— 列出来只是一个死按钮，
+   * 比不列更糟。那一格上面的「去模板封装补一个标签」才是它该看到的。
    */
   const packList = useLibraryPacks(
     {tagIds: filterIds.length ? filterIds : undefined},
-    !!onPickPack,
+    !!onPickPack && scope.length > 0,
   );
   const packs = packList.data ?? [];
 

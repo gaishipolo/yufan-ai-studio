@@ -367,6 +367,22 @@ describe('SlotMediaPicker · 封装包', () => {
     expect(onPickPack).toHaveBeenCalledWith('p1');
   });
 
+  it('槽位没圈候选标签时不列包（没有判据，点它一格也填不上）', () => {
+    /* 回归：老模板的槽位没有 tagIds，包照样被列在网格里 —— 而分发是按
+       「成员标签 ∩ 槽位候选标签」算的，没有候选标签就一格都填不上。
+       那是一个死按钮，而且它长得和能用的包一模一样。 */
+    packsData.current = [{ id: 'p1', name: '6036 黑', memberCount: 3 }];
+    render(
+      <SlotMediaPicker
+        slot={slotOf({ tagIds: [] })}
+        selected={[]}
+        onChange={vi.fn()}
+        onPickPack={vi.fn()}
+      />,
+    );
+    expect(screen.queryByTitle('6036 黑（封装 · 3 张）')).not.toBeInTheDocument();
+  });
+
   it('包按槽位的候选标签过滤（与素材同一套条件）', () => {
     render(
       <SlotMediaPicker
