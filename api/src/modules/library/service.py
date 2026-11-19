@@ -1026,7 +1026,13 @@ class LibraryService:
         result: list[PackSummaryOut] = []
         for row in rows:
             group = members.get(row.id, [])
-            union = self._union_tags(group, tags)
+            # 判据是「这个包能不能填那一格」，而**已进回收站的成员不参与分发**
+            # （前端分发时跳过 `deleted`）。所以这里也必须只看还在库里的成员：
+            # 否则包里唯一那张「细节图」删了之后，这个包仍然出现在「细节图」
+            # 那一格的网格里，点下去一格都填不上。
+            # 卡片上的「N 张」仍按成员总数算（详情里会把已删的那张照列并标出来）。
+            active = [member for member in group if member.state == "active"]
+            union = self._union_tags(active, tags)
             if wanted and not wanted & set(union):
                 continue
             result.append(

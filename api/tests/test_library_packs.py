@@ -166,6 +166,40 @@ def test_pack_list_filters_by_slot_candidate_tags(client: TestClient) -> None:
     assert {item["name"] for item in everything} == {"产品包", "服装包"}
 
 
+def test_trashed_member_stops_pulling_the_pack_into_a_slot(client: TestClient) -> None:
+    """成员进了回收站，包就不该再出现在**那一格**的候选里。
+
+    列表的判据与分发是同一条：「这个包能不能填这一格」。分发跳过了已删成员，
+    列表却把它的标签算进并集的话，包会出现在一个一格都填不上的网格里 ——
+    用户点下去只会得到「没有能对上这些槽位的素材」。
+    """
+    headers = _headers(client)
+    detail_tag = _tag(client, headers, "细节图")
+
+    front = upload_image(client, API, headers, name="f.png", color="orange")
+    detail = upload_image(client, API, headers, name="d.png", color="white")
+    shared_tag = _shared(client, headers, [front["id"], detail["id"]], name="6036")
+    _tag_asset(client, headers, detail["id"], [detail_tag["id"], shared_tag])
+
+    body = _pack(client, headers, "6036 一套", [front["id"], detail["id"]])
+    assert body.status_code == 201, body.text
+
+    def listed(tag_id: str) -> list[str]:
+        rows = client.get(
+            f"{API}/library/packs", params={"tagIds": [tag_id]}, headers=headers
+        ).json()["data"]
+        return [item["name"] for item in rows]
+
+    assert listed(detail_tag["id"]) == ["6036 一套"]
+
+    removed = client.delete(f"{API}/library/assets/{detail['id']}", headers=headers)
+    assert removed.status_code in (200, 204), removed.text
+
+    # 那一格填不上了，包就不再出现在那里；但「6036」这一维仍然看得到它。
+    assert listed(detail_tag["id"]) == []
+    assert listed(shared_tag) == ["6036 一套"]
+
+
 def test_pack_detail_marks_deleted_member(client: TestClient) -> None:
     """成员进了回收站仍然列出并标记 —— 包静默少一张，取图时才炸更糟。"""
     headers = _headers(client)
