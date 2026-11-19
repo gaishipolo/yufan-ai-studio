@@ -174,4 +174,10 @@ class TemplateSpecSlot(Base, UUIDMixin):
     #: **未选时文案**：使用者没填素材时这一段怎么说（纯提示词，不含槽位引用）。
     #: 空 = 编译期报错（可选槽位且被引用时，发布闸门就会拦）。
     empty_text: Mapped[str] = mapped_column(String(2000), default="", nullable=False)
+    #: **随机文案**：可选槽位在「随机」档下的候选提示词（多条，至少一条）。
+    #: 使用者模板库选随机档时不传素材，由前端从这批文案里抽一条注入提示词 ——
+    #: 同一模板每次生成的场景描述不同，视频不至于千篇一律。纯提示词，
+    #: 与 `empty_text` 一样不许含槽位引用（没素材就没有编号可指）。
+    #: 只对可选槽位有意义；JSON 列存 list，与 `tag_ids` 同一种形状。
+    random_texts: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     position: Mapped[int] = mapped_column(Integer, nullable=False)

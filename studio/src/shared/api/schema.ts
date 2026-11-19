@@ -1238,6 +1238,7 @@ export interface SpecCompileIn {
   version?: number | null;
   model?: string | null;
   slotValues?: Record<string, string[]>;
+  randomTextChoices?: Record<string, number>;
   paramOverrides?: Record<string, unknown>;
 }
 
@@ -1293,6 +1294,7 @@ export interface SpecSlotIn {
   assetId?: string | null;
   filledText?: string;
   emptyText?: string;
+  randomTexts?: string[];
   tagIds?: string[];
   position?: number;
 }
@@ -1309,6 +1311,7 @@ export interface SpecSlotOut {
   assetId?: string | null;
   filledText?: string;
   emptyText?: string;
+  randomTexts?: string[];
   tagIds?: string[];
   position?: number;
 }

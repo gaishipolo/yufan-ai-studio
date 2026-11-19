@@ -96,6 +96,7 @@ export function blankSlot(position = 0, type: SlotType = 'image', slots: SpecSlo
     label: '',
     filledText: '',
     emptyText: '',
+    randomTexts: [],
     position,
   };
 }
@@ -130,9 +131,12 @@ export function isOptionalSlot(slot: SpecSlotIn): boolean {
 export function textsToClearForRequired(slot: SpecSlotIn): {
   filledText: string;
   emptyText: string;
+  randomTexts: string[];
 } | null {
-  if (!slot.filledText?.trim() && !slot.emptyText?.trim()) return null;
-  return {filledText: '', emptyText: ''};
+  if (!slot.filledText?.trim() && !slot.emptyText?.trim() && !slot.randomTexts?.length) {
+    return null;
+  }
+  return {filledText: '', emptyText: '', randomTexts: []};
 }
 
 /**
@@ -365,6 +369,9 @@ function slotFingerprint(slot: SpecSlotIn, index: number) {
     assetId: slot.assetId || null,
     filledText: slot.filledText ?? '',
     emptyText: slot.emptyText ?? '',
+    // 随机文案是**列表**：顺序是作者给的候选顺序，但空行/缺失都是「没写」，
+    // 铺平成过滤后的数组再比，避免 `[ '', 'a' ]` 与 `['a']` 假性不同。
+    randomTexts: (slot.randomTexts ?? []).filter(text => text.trim() !== ''),
     // 候选标签是**集合**：顺序不携带信息
     tagIds: [...new Set(slot.tagIds ?? [])].sort(),
     // 位置就是数组下标，别让两者各自漂移

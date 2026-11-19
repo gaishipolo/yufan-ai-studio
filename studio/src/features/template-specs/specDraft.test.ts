@@ -542,6 +542,7 @@ describe('必填槽位清掉两段文案', () => {
       maxCount: 1,
       filledText: '',
       emptyText: '',
+      randomTexts: [],
     });
   });
 
@@ -562,12 +563,12 @@ describe('必填槽位清掉两段文案', () => {
   it('判断函数：只管「有没有文案要清」，目标状态由调用方判断', () => {
     expect(
       textsToClearForRequired({minCount: 1, filledText: 'x'} as SpecSlotIn),
-    ).toEqual({filledText: '', emptyText: ''});
+    ).toEqual({filledText: '', emptyText: '', randomTexts: []});
     // 槽位现在还是可选（minCount=0）也照样返回「要清什么」——
     // 「切完之后是不是必填」是调用方才知道的事。
     expect(
       textsToClearForRequired({minCount: 0, filledText: 'x'} as SpecSlotIn),
-    ).toEqual({filledText: '', emptyText: ''});
+    ).toEqual({filledText: '', emptyText: '', randomTexts: []});
     expect(
       textsToClearForRequired({minCount: 1} as SpecSlotIn),
     ).toBeNull();
@@ -577,6 +578,12 @@ describe('必填槽位清掉两段文案', () => {
     expect(
       textsToClearForRequired({minCount: 1, filledText: '   '} as SpecSlotIn),
     ).toBeNull();
+  });
+
+  it('切必填时随机文案也要清掉（后端不许必填槽位带文案）', () => {
+    expect(
+      textsToClearForRequired({minCount: 0, randomTexts: ['白天', '夜晚']} as SpecSlotIn),
+    ).toEqual({filledText: '', emptyText: '', randomTexts: []});
   });
 });
 
@@ -615,6 +622,22 @@ describe('authoredFingerprint：判有没有改动', () => {
 
   it('内容一样 → 指纹一样', () => {
     expect(authoredFingerprint(base())).toBe(authoredFingerprint(base()));
+  });
+
+  it('随机文案变了 → 指纹变（否则改文案不提示未保存）', () => {
+    const firstSlot = base().slots?.[0];
+    if (!firstSlot) throw new Error('测试基座要有一个槽位');
+    const withTexts = (texts: string[]): TemplateSpecIn => ({
+      ...base(),
+      slots: [{...firstSlot, minCount: 0, randomTexts: texts, position: 0}],
+    });
+    expect(authoredFingerprint(withTexts(['白天']))).not.toBe(
+      authoredFingerprint(withTexts(['夜晚'])),
+    );
+    // 空行不算内容：['', '白天'] 与 ['白天'] 是同一份
+    expect(authoredFingerprint(withTexts(['', '白天']))).toBe(
+      authoredFingerprint(withTexts(['白天'])),
+    );
   });
 
   /* 这条是这次改动的起因：`SlotCard` 切回「用户填」时写 `assetId: null`，

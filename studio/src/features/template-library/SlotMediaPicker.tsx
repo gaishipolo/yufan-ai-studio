@@ -21,22 +21,12 @@ export function SlotMediaPicker({
   selected,
   onChange,
   requiredCount,
-  autoIds,
 }: {
   slot: SpecSlotOut;
   selected: string[];
   onChange: (ids: string[]) => void;
   /** 这个槽位实际最少要几张（作者写的 `minCount`，或提示词「第 N 张」推出的下限）。 */
   requiredCount?: number;
-  /**
-   * 这些素材是**系统随机填的**，不是使用者亲手挑的。
-   *
-   * 原来两者在界面上长得一模一样：使用者看到一格填好的素材，
-   * 分不清是自己之前挑的还是系统替他挑的 —— 于是不敢动（「这会不会是
-   * 我自己选的那张？」）。给了标记，格子右上角挂一个「系统」角标，
-   * 使用者就知道哪几格是系统的、可以放心换。
-   */
-  autoIds?: string[];
 }) {
   const kind = slot.type as 'image' | 'video';
   const label = KIND_LABEL[kind];
@@ -104,8 +94,6 @@ export function SlotMediaPicker({
   };
 
   const full = selected.length >= max;
-  /** 系统填的（仍在显示列表里的那几张） */
-  const autoSet = useMemo(() => new Set(autoIds ?? []), [autoIds]);
 
   return (
     // 槽位是「卡片里的凹槽」：比面板暗一档、带内描边，里面的缩略图才有地方可放。
@@ -137,7 +125,7 @@ export function SlotMediaPicker({
       </div>
 
       {/* 可选槽位**不摆**「不填会怎样」的说明：这栏由「随机性」三档控制，
-          可选槽位要么不出现（均衡档），要么出现但由系统/使用者挑（随机/自定义）。
+          可选槽位要么不出现（随机/均衡档，走文案），要么出现由使用者挑（自定义）。
           「不填则用：…」是**填表页**的旧形态 —— 同一件事说两遍，
           而且它描述的状态（不填）在新形态下已经不成立了。 */}
 
@@ -232,16 +220,6 @@ export function SlotMediaPicker({
                 {isPicked && (
                   <span className="absolute right-1 top-1 grid size-4 place-items-center rounded-full bg-primary text-white">
                     <Check size={10} strokeWidth={3} />
-                  </span>
-                )}
-                {/* 「系统挑的」角标：放在左上角，与勾号（右上）、视频标签（左下）
-                    各占一角，互不遮挡。 */}
-                {isPicked && autoSet.has(item.id) && (
-                  <span
-                    className="absolute left-1 top-1 rounded bg-black/60 px-1 text-micro leading-4 text-white"
-                    aria-label="系统随机填的素材"
-                  >
-                    系统
                   </span>
                 )}
                 {item.kind === 'video' && (

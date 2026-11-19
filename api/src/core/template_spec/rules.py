@@ -281,10 +281,12 @@ def _validate_slot_texts(spec: TemplateSpec) -> None:
     """
     for slot in spec.slots:
         label = slot.label.strip() or slot.key
-        if slot.min_count >= 1 and (slot.filled_text.strip() or slot.empty_text.strip()):
+        if slot.min_count >= 1 and (
+            slot.filled_text.strip() or slot.empty_text.strip() or slot.random_texts
+        ):
             raise BadRequest(
                 f"槽位「{label}」是必填的（最少数 {slot.min_count}），"
-                "不能写「选中时文案 / 未选时文案」："
+                "不能写「选中时文案 / 未选时文案 / 随机文案」："
                 "必填槽位一定有素材，提示词里直接插入素材编号。"
                 "要让素材可以被省略，请把它改成「可选」。"
             )
@@ -310,6 +312,20 @@ def _validate_slot_texts(spec: TemplateSpec) -> None:
             if has_bad_slot_ref(slot.empty_text):
                 raise BadRequest(
                     f"槽位「{label}」的未选时文案里有无法解析的槽位引用"
+                    "（检查括号与槽位 key）"
+                )
+        # 随机文案与「未选时文案」同为「没填素材时怎么说」，约束一致：
+        # 不许引用槽位（没素材就没有编号可指）、括号要闭合。
+        for index, text in enumerate(slot.random_texts, 1):
+            refs = slot_refs(text)
+            if refs:
+                raise BadRequest(
+                    f"槽位「{label}」的第 {index} 条随机文案不能引用槽位"
+                    f"（{'、'.join(refs)}）：没有素材就没有编号可指"
+                )
+            if has_bad_slot_ref(text):
+                raise BadRequest(
+                    f"槽位「{label}」的第 {index} 条随机文案里有无法解析的槽位引用"
                     "（检查括号与槽位 key）"
                 )
 
