@@ -182,6 +182,10 @@ export function AssetPicker({
             ))}
           </div>
         )}
+        {/* 案例池里不摆标签行：标签计数是**整个库**的口径（标签接口没有
+            `purpose`），摆出来会列一堆池子里一张都没有的标签，点下去只得到
+            空列表。案例池本来就只有几十条，按名字搜更快。 */}
+        {pool === 'mine' && (
         <TagFilter
           tags={tags.data ?? []}
           onlyWithAssets
@@ -191,6 +195,7 @@ export function AssetPicker({
           value={picked}
           onChange={setPicked}
         />
+        )}
         <SearchInput
           value={keyword}
           onChange={event => setKeyword(event.target.value)}
