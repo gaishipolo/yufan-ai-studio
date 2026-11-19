@@ -26,7 +26,7 @@ jobs:
       run:
         working-directory: api
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # 对象存储冒烟用。`minio/minio` 已从 Docker Hub 下架（pull 会 403），
       # 这里用重新打包官方二进制的 elestio 镜像，与本地开发保持一致。
@@ -43,7 +43,7 @@ jobs:
             -e MINIO_ROOT_PASSWORD=minioadmin123 \
             elestio/minio:latest server /data --console-address ":9001"
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.11'
           cache: pip
@@ -51,7 +51,7 @@ jobs:
 
       # 替换模板的部分测试会真实执行 `settings.node_binary` 指向的 Node 运行时脚本
       # （编译链的 golden test 就在其中，缺 node 时它们 skip，等于白绿）。
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '20'
 
@@ -141,9 +141,9 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.11'
           cache: pip
@@ -185,9 +185,9 @@ jobs:
       run:
         working-directory: studio
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '20'
           cache: npm
