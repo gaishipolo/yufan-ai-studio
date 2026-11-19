@@ -3,6 +3,7 @@ import { Button, Modal, Notice } from '@/shared/ui';
 import { toast } from '@/shared/lib/toast';
 import { usePermissionCatalog } from '@/entities/role/api/role.queries';
 import {
+  useEffectivePermissions,
   useSetTeamPermissions,
   useSetUserPermissions,
   useTeamPermissions,
@@ -28,6 +29,8 @@ interface LayerFormProps {
   description: string;
   /** 引用必须稳定（来自 query.data 或 useMemo），否则 effect 会每次渲染重置勾选 */
   currentCodes: string[];
+  /** 别的层已经授予的权限：`权限码 → 来源标签`；本层之外的东西也要看得见 */
+  inherited?: Record<string, string[]>;
   forbidden?: (code: string) => boolean;
   forbiddenHint?: string;
   loading?: boolean;
@@ -41,6 +44,7 @@ function LayerForm({
   title,
   description,
   currentCodes,
+  inherited,
   forbidden,
   forbiddenHint,
   loading,
@@ -92,6 +96,7 @@ function LayerForm({
           <PermissionPicker
             selected={selected}
             onChange={setSelected}
+            inherited={inherited}
             forbidden={forbidden}
             forbiddenHint={forbiddenHint}
           />
@@ -159,16 +164,45 @@ function TeamLayer({ onClose }: { onClose: () => void }) {
 function UserLayer({ id, name, onClose }: { id: string; name: string; onClose: () => void }) {
   const query = useUserPermissions(id);
   const setPermissions = useSetUserPermissions();
+  const effectiveQuery = useEffectivePermissions(id);
   const codes = useMemo(() => query.data ?? EMPTY_CODES, [query.data]);
+
+  /**
+   * 别的层（团队 / 小组 / 角色）已经授予的权限。
+   *
+   * 为什么必须有它：这一层是「个人授权」，而多数人的权限其实来自角色 ——
+   * 只显示本层的话，打开弹窗就是一片空白，管理员会读成「这个人什么权限都没有」。
+   * 显示出来并标明来源，既回答了「他已有的权限是什么」，也说清了
+   * 「本层取消勾选不会收回它」（个人层只是并集里的一层）。
+   */
+  const inherited = useMemo(() => {
+    const data = effectiveQuery.data;
+    if (!data) return undefined;
+    const personal = new Set(codes);
+    const map: Record<string, string[]> = {};
+    const add = (code: string, source: string) => {
+      if (code === '*' || personal.has(code)) return;
+      const list = map[code] ?? [];
+      if (!list.includes(source)) list.push(source);
+      map[code] = list;
+    };
+    for (const code of data.team ?? []) add(code, '团队');
+    for (const group of data.groups ?? []) {
+      for (const code of group.permissions ?? []) add(code, `小组·${group.name}`);
+    }
+    for (const code of data.roles ?? []) add(code, '角色');
+    return map;
+  }, [effectiveQuery.data, codes]);
 
   return (
     <LayerForm
       title={`个人权限 · ${name}`}
       /* 只留「取消勾选只清本层」这半句 —— 并集模型在「有效权限」弹窗里
          已经摊开说过了，这里再说一遍就是同一件事说两遍。 */
-      description="在这里取消勾选只移除个人这一层的授予，不会削掉团队、小组或角色已给的权限。"
+      description="在这里取消勾选只移除个人这一层的授予，不会削掉团队、小组或角色已给的权限。标着「已有」的那些来自别的层，同样不受这里的操作影响。"
       currentCodes={codes}
-      loading={query.isLoading}
+      inherited={inherited}
+      loading={query.isLoading || effectiveQuery.isLoading}
       onClose={onClose}
       save={async (permissions) => {
         await setPermissions.mutateAsync({ id, permissions });

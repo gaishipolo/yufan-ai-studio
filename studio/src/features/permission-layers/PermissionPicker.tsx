@@ -9,6 +9,15 @@ export interface PermissionPickerProps {
   selected: string[];
   onChange: (codes: string[]) => void;
   /**
+   * 别的层已经授予的权限：`权限码 → 来源标签`（如 `{'task:read': ['角色']}`）。
+   *
+   * 为什么要有它：这一层是「个人授权」，多数人的权限其实来自角色/团队 ——
+   * 只显示本层，打开弹窗就是一片空白，管理员会以为「这个人什么权限都没有」。
+   * 把别层的授予标出来（「已有 · 角色」），既回答了「他已有的权限是什么」，
+   * 又说清了「本层取消勾选不会收回它」。
+   */
+  inherited?: Record<string, string[]>;
+  /**
    * 这一层不允许授予的码。团队基础权限禁 `identity:*` 与 `page:*`：
    * 后端同样会拒绝，前端提前禁用是为了不让人白点一次「保存」才知道。
    */
@@ -42,6 +51,7 @@ export interface PermissionPickerProps {
 export function PermissionPicker({
   selected,
   onChange,
+  inherited,
   forbidden,
   forbiddenHint,
 }: PermissionPickerProps) {
@@ -185,6 +195,14 @@ export function PermissionPicker({
                     <span className="min-w-0 flex-1 truncate text-xs font-medium text-ink">
                       {page.name}
                     </span>
+                    {inherited?.[page.code] ? (
+                      <span
+                        className="shrink-0 text-meta text-ink-mute"
+                        title="别的层已经授予这一页；本层取消勾选不会收回它"
+                      >
+                        已有 · {inherited[page.code].join('、')}
+                      </span>
+                    ) : null}
                     <Chip className="shrink-0">{page.code}</Chip>
                     {page.route ? (
                       <span className="shrink-0 text-meta text-ink-mute">{page.route}</span>
@@ -270,6 +288,14 @@ export function PermissionPicker({
                           <span className="min-w-0">
                             <span className="flex flex-wrap items-center gap-1.5">
                               <span className="text-xs text-ink">{item.name}</span>
+                              {inherited?.[item.code] ? (
+                                <span
+                                  className="text-meta text-ink-mute"
+                                  title="别的层已经授予它；本层取消勾选不会收回它"
+                                >
+                                  已有 · {inherited[item.code].join('、')}
+                                </span>
+                              ) : null}
                               <Chip>{item.code}</Chip>
                             </span>
                             {item.description ? (
@@ -278,7 +304,11 @@ export function PermissionPicker({
                               </span>
                             ) : null}
                             <span className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-meta">
-                              {owners.length === 0 ? (
+                              {inherited?.[item.code] ? (
+                                <span className="text-ink-mute">
+                                  由 {inherited[item.code].join('、')} 授予，本层没有授予
+                                </span>
+                              ) : owners.length === 0 ? (
                                 <span className="text-ink-mute">不受页面开关影响</span>
                               ) : (
                                 <>
