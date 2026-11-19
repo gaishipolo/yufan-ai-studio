@@ -1,4 +1,5 @@
-import { useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useBlocker } from 'react-router-dom';
 import {
   ChevronLeft,
   ImageOff,
@@ -101,10 +102,22 @@ export function SpecWorkspace() {
   const models = useMemo(() => [...videoModels, ...imageModels], [videoModels, imageModels]);
 
   const [draft, setDraft] = useState<TemplateSpecIn | null>(null);
-  const [view, setView] = useState<'list' | 'trash'>('list');
-  const [note, setNote] = useState('');
-  const [error, setError] = useState('');
-  const [hint, setHint] = useState('');
+  /*
+   * 进编辑时记一份基线，之后每次变化都跟它比。
+   *
+   * 保存 / 发布成功后基线跟着换（`submit` 里）—— 否则刚存完还挂着
+   * 「有未保存修改」，用户会以为自己白存了。
+   */
+  const [baseline, setBaseline] = useState('');
+  /** 有未保存改动：只有这时才拦离开。 */
+  const dirty = draft !== null && JSON.stringify(draft) !== baseline;
+
+  /** 进入编辑：设草稿并把当前内容记成基线。 */
+  const openDraft = (next: TemplateSpecIn) => {
+    setDraft(next);
+    setBaseline(JSON.stringify(next));
+  };
+
   const [picker, setPicker] = useState<PickTarget | null>(null);
   const [uploading, setUploading] = useState(false);
   /* 选了一条还不在案例池里的素材：先问一句再动它。
@@ -166,8 +179,9 @@ export function SpecWorkspace() {
   const fail = (reason: unknown) =>
     setError(reason instanceof Error ? reason.message : String(reason));
 
-  const submit = async (action: 'validate' | 'save' | 'publish') => {
-    if (!draft) return;
+  /** 返回是否**成功**：离开保护要靠它判断「存住了没有、能不能走」。 */
+  const submit = async (action: 'validate' | 'save' | 'publish'): Promise<boolean> => {
+    if (!draft) return false;
     clear();
     try {
       // 剔掉「使用者可选」的参数（计费模式）：它们由用模板的人在模板库选，
@@ -186,28 +200,108 @@ export function SpecWorkspace() {
             `这些槽位还缺一级标签：${missing.join('、')}。` +
               '模板库按「标签 · 槽位名」分组让人挑素材，没有标签就只能退化成全部素材。',
           );
-          return;
+          return false;
         }
       }
       if (action === 'validate') {
         const result = await validate.mutateAsync(payload);
         setNote(`预检通过 · 指纹 ${result.fingerprint.slice(0, 12)}`);
-        return;
+        return true;
       }
       const saved = await save.mutateAsync(payload);
-      setDraft(fromSpecOut(saved));
+      openDraft(fromSpecOut(saved));
       if (action === 'save') {
         setNote(`已保存（第 ${saved.revision} 次修订）`);
-        return;
+        return true;
       }
       const receipt = await publish.mutateAsync(saved.key);
-      setDraft(fromSpecOut(receipt.spec));
+      openDraft(fromSpecOut(receipt.spec));
       setNote(`已发布 v${receipt.version}`);
+      return true;
     } catch (reason) {
       fail(reason);
+      return false;
     }
   };
 
+  /*
+   * 离开保护：改过的内容只在当前这一屏，离开就没了。
+   *
+   * 三个出口都要挡 —— 只挡一个等于没挡（用户从另一个出口走掉，同样白改）：
+   * 1. 站内切页面（`useBlocker`，项目用的是 data router，能拦）；
+   * 2. 关闭 / 刷新标签页（`beforeunload`，浏览器自己的原生提示）；
+   * 3. 左上角「返回模板列表」（自己实现的按钮，跟 1 走同一套确认）。
+   */
+  const [leaveOpen, setLeaveOpen] = useState(false);
+  /** 确认后要执行的那个「离开动作」（返回列表时用；路由切换走 blocker） */
+  const leaveAction = useRef<(() => void) | null>(null);
+
+  const blocker = useBlocker(
+    ({ currentLocation, nextLocation }) =>
+      dirty && currentLocation.pathname !== nextLocation.pathname,
+  );
+
+  /* 浏览器关标签 / 刷新：只能给原生提示（浏览器不允许自定义文案）。 */
+  useEffect(() => {
+    if (!dirty) return undefined;
+    const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      // 老浏览器靠 returnValue 才弹
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, [dirty]);
+
+  /* 对话框的来源有两种：路由拦截、点返回按钮。统一成一个入口。 */
+  const askLeave = (proceed: () => void) => {
+    if (!dirty) {
+      proceed();
+      return;
+    }
+    leaveAction.current = proceed;
+    setLeaveOpen(true);
+  };
+
+  const closeLeave = () => {
+    setLeaveOpen(false);
+    leaveAction.current = null;
+    if (blocker.state === 'blocked') blocker.reset();
+  };
+
+  /**
+   * 对话框里选了「先存再走」：存完、基线刷新（dirty 变 false），
+   * 再把当初被拦下的那次离开放行。
+   */
+  const saveThenLeave = async (mode: 'save' | 'publish') => {
+    const proceed = leaveAction.current;
+    setLeaveOpen(false);
+    /* 用 `submit` 的返回值判断，**不能**在这之后比 `draft` 与 `baseline`：
+       那两个是本次渲染的闭包里捕获的旧值，`submit` 里 setState 不会改它们，
+       比出来永远是「还不一样」。 */
+    const ok = await submit(mode);
+    // 存失败就别走了：内容还在，错误已经贴在吸顶栏上
+    if (!ok) {
+      leaveAction.current = null;
+      if (blocker.state === 'blocked') blocker.reset();
+      return;
+    }
+    leaveAction.current = null;
+    if (proceed) proceed();
+    else if (blocker.state === 'blocked') blocker.proceed();
+  };
+
+  const leaveNow = () => {
+    const proceed = leaveAction.current;
+    leaveAction.current = null;
+    setLeaveOpen(false);
+    if (proceed) proceed();
+    else if (blocker.state === 'blocked') blocker.proceed();
+  };
+  const [view, setView] = useState<'list' | 'trash'>('list');
+  const [note, setNote] = useState('');
+  const [error, setError] = useState('');
+  const [hint, setHint] = useState('');
   const patchSlot = (index: number, patch: Partial<SpecSlotIn>) => {
     if (!draft) return;
     const nextSlots = slots.slice();
@@ -380,7 +474,7 @@ export function SpecWorkspace() {
           </div>
           {/* 列表页只有这一个动作，给它实心：整页就一个焦点，不用读字也知道从哪开始。 */}
           {!trashed && (
-            <Button variant="primary" onClick={() => setDraft(blankSpec())}>
+            <Button variant="primary" onClick={() => openDraft(blankSpec())}>
               <Plus size={14} /> 新建模板
             </Button>
           )}
@@ -407,7 +501,7 @@ export function SpecWorkspace() {
                 busy={busy}
                 trashed={trashed}
                 onEdit={() => {
-                  setDraft(fromSpecOut(item));
+                  openDraft(fromSpecOut(item));
                   clear();
                 }}
                 onPublish={() =>
@@ -473,10 +567,12 @@ export function SpecWorkspace() {
               type="button"
               aria-label="返回模板列表"
               className="flex shrink-0 items-center gap-1 text-lead font-semibold tracking-[.2px] text-ink transition-colors hover:text-primary"
-              onClick={() => {
-                setDraft(null);
-                clear();
-              }}
+              onClick={() =>
+                askLeave(() => {
+                  setDraft(null);
+                  clear();
+                })
+              }
             >
               <ChevronLeft size={16} />
               模板封装
@@ -728,6 +824,40 @@ export function SpecWorkspace() {
               onClick={() => pendingCase && promoteCase.mutate(pendingCase)}
             >
               确认设为案例
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* 离开前的三选一。**一个出口一套**，别只挡返回按钮 ——
+          从浏览器后退、点侧边栏切页面走的是另一条路，那条不挡等于白做。 */}
+      <Modal
+        open={leaveOpen || blocker.state === 'blocked'}
+        onClose={closeLeave}
+        title="还有未保存的修改"
+        width={440}
+      >
+        <div className="flex flex-col gap-3 p-[18px]">
+          <p className="text-body leading-relaxed text-ink-soft">
+            这些修改只存在当前页面，离开就没了。
+          </p>
+          <div className="flex flex-col gap-1.5">
+            <Button variant="primary" disabled={busy} onClick={() => void saveThenLeave('publish')}>
+              保存并发布
+            </Button>
+            <Button disabled={busy} onClick={() => void saveThenLeave('save')}>
+              保存草稿后离开
+            </Button>
+            <Button
+              variant="ghost"
+              className="text-danger hover:bg-danger-soft hover:text-danger"
+              disabled={busy}
+              onClick={leaveNow}
+            >
+              不保存，直接离开
+            </Button>
+            <Button variant="ghost" disabled={busy} onClick={closeLeave}>
+              留在这一页
             </Button>
           </div>
         </div>

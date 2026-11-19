@@ -1,6 +1,7 @@
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { RouterProvider, createMemoryRouter } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
 import type { TemplateSpecOut } from '@/shared/api/schema';
 import { SpecWorkspace } from './SpecWorkspace';
@@ -20,6 +21,7 @@ const { specs, trashedSpecs, mutations } = vi.hoisted(() => ({
   specs: { current: [] as TemplateSpecOut[] },
   trashedSpecs: { current: [] as TemplateSpecOut[] },
   mutations: {
+    save: vi.fn(() => Promise.resolve({ key: 'spec-1', revision: 2 })),
     publish: vi.fn(() => Promise.resolve({ version: 3, spec: {} })),
     disable: vi.fn(() => Promise.resolve({})),
     restore: vi.fn(() => Promise.resolve({})),
@@ -47,7 +49,7 @@ vi.mock('@/entities/template-spec/api/spec.queries', () => ({
   }),
   useSpecMutations: () => ({
     validate: { mutateAsync: vi.fn(), isPending: false },
-    save: { mutateAsync: vi.fn(), isPending: false },
+    save: { mutateAsync: mutations.save, isPending: false },
     publish: { mutateAsync: mutations.publish, isPending: false },
     disable: { mutateAsync: mutations.disable, isPending: false },
     remove: { mutateAsync: mutations.remove, isPending: false },
@@ -100,11 +102,22 @@ function renderWorkspace(rows: TemplateSpecOut[]) {
   specs.current = rows;
   /* 页面里有一个裸 `useMutation`（把素材移进案例池），它要 QueryClient。 */
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(
-    <QueryClientProvider client={client}>
-      <SpecWorkspace />
-    </QueryClientProvider>,
-  );
+  /* 「离开前问一声」用的是 `useBlocker`，它要求 **data router** 上下文
+     （项目里是 `createBrowserRouter`）。`MemoryRouter` 不行，必须是
+     `createMemoryRouter` + `RouterProvider`。 */
+  const router = createMemoryRouter([
+    { path: '/', element: <SpecWorkspace /> },
+    { path: '/elsewhere', element: <p>别的页面</p> },
+  ]);
+  return {
+    ...render(
+      <QueryClientProvider client={client}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>,
+    ),
+    /* 路由切换那一条要主动导航，所以把 router 交出去 */
+    router,
+  };
 }
 
 /** 取到某张模板的卡片（页面上还有其他 listitem 之类，按名字定位）。 */
@@ -245,5 +258,158 @@ describe('模板封装 · 编辑器里的提示词', () => {
     await enterEditor();
 
     expect(screen.queryByRole('heading', { name: '槽位速览' })).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * 离开编辑页时的未保存保护。
+ *
+ * 三个出口都要挡：站内切页面（路由）、关标签（beforeunload）、
+ * 点左上角「返回模板列表」。只挡一个等于没挡 —— 用户从另一个出口走掉，
+ * 改的东西一样白费。
+ */
+describe('模板封装 · 未保存就离开', () => {
+  const enterEditor = async (rows = [specOf({ status: 'draft' })]) => {
+    const user = userEvent.setup();
+    renderWorkspace(rows);
+    await user.click(cardOf('商品图模板').getByRole('button', { name: '编辑' }));
+    return user;
+  };
+
+  it('没改过就直接走，不弹确认', async () => {
+    const user = await enterEditor();
+
+    await user.click(screen.getByRole('button', { name: '返回模板列表' }));
+
+    expect(screen.queryByRole('dialog', { name: '还有未保存的修改' })).not.toBeInTheDocument();
+    // 回到列表了
+    expect(screen.getByRole('button', { name: '新建模板' })).toBeInTheDocument();
+  });
+
+  it('改过名字再点返回：先问一声，不直接丢掉', async () => {
+    const user = await enterEditor();
+
+    const name = screen.getByDisplayValue('商品图模板');
+    await user.clear(name);
+    await user.type(name, '改过的名字');
+    await user.click(screen.getByRole('button', { name: '返回模板列表' }));
+
+    expect(screen.getByRole('dialog', { name: '还有未保存的修改' })).toBeInTheDocument();
+    // 还留在编辑页 —— 确认之前一个字都不该丢
+    expect(screen.getByDisplayValue('改过的名字')).toBeInTheDocument();
+  });
+
+  it('三个出口都给了：保存并发布 / 保存草稿 / 直接离开', async () => {
+    const user = await enterEditor();
+
+    const name = screen.getByDisplayValue('商品图模板');
+    await user.clear(name);
+    await user.type(name, '改过的名字');
+    await user.click(screen.getByRole('button', { name: '返回模板列表' }));
+
+    const dialog = screen.getByRole('dialog', { name: '还有未保存的修改' });
+    expect(within(dialog).getByRole('button', { name: '保存并发布' })).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: '保存草稿后离开' })).toBeInTheDocument();
+    expect(
+      within(dialog).getByRole('button', { name: '不保存，直接离开' }),
+    ).toBeInTheDocument();
+  });
+
+  it('选「留在这页」就真的留下，改动还在', async () => {
+    const user = await enterEditor();
+
+    const name = screen.getByDisplayValue('商品图模板');
+    await user.clear(name);
+    await user.type(name, '改过的名字');
+    await user.click(screen.getByRole('button', { name: '返回模板列表' }));
+    await user.click(screen.getByRole('button', { name: '留在这一页' }));
+
+    expect(screen.queryByRole('dialog', { name: '还有未保存的修改' })).not.toBeInTheDocument();
+    expect(screen.getByDisplayValue('改过的名字')).toBeInTheDocument();
+  });
+
+  it('选「不保存，直接离开」才回列表', async () => {
+    const user = await enterEditor();
+
+    const name = screen.getByDisplayValue('商品图模板');
+    await user.clear(name);
+    await user.type(name, '改过的名字');
+    await user.click(screen.getByRole('button', { name: '返回模板列表' }));
+    await user.click(screen.getByRole('button', { name: '不保存，直接离开' }));
+
+    expect(screen.getByRole('button', { name: '新建模板' })).toBeInTheDocument();
+  });
+
+  it('「保存草稿后离开」会真的发保存请求，然后才走', async () => {
+    const user = await enterEditor();
+
+    const name = screen.getByDisplayValue('商品图模板');
+    await user.clear(name);
+    await user.type(name, '改过的名字');
+    await user.click(screen.getByRole('button', { name: '返回模板列表' }));
+
+    mutations.save.mockClear();
+    await user.click(screen.getByRole('button', { name: '保存草稿后离开' }));
+
+    expect(mutations.save).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(screen.getByRole('button', { name: '新建模板' })).toBeInTheDocument());
+  });
+
+  it('保存失败就**不走**：内容还在，错误贴在吸顶栏', async () => {
+    const user = await enterEditor();
+
+    const name = screen.getByDisplayValue('商品图模板');
+    await user.clear(name);
+    await user.type(name, '改过的名字');
+    await user.click(screen.getByRole('button', { name: '返回模板列表' }));
+
+    mutations.save.mockRejectedValueOnce(new Error('后端拒了'));
+    await user.click(screen.getByRole('button', { name: '保存草稿后离开' }));
+
+    expect(await screen.findByText('后端拒了')).toBeInTheDocument();
+    // 还在编辑页，改的名字还在
+    expect(screen.getByDisplayValue('改过的名字')).toBeInTheDocument();
+  });
+
+  /* 用户报的正是这条：「切换其他页面」时也没提示。
+     走的是另一条路（react-router 的 `useBlocker`），只挡返回按钮挡不住它。 */
+  it('改过内容后切到别的页面：拦下来并问一声', async () => {
+    const user = userEvent.setup();
+    const { router } = renderWorkspace([specOf({ status: 'draft' })]);
+
+    await user.click(cardOf('商品图模板').getByRole('button', { name: '编辑' }));
+    const name = screen.getByDisplayValue('商品图模板');
+    await user.clear(name);
+    await user.type(name, '改过的名字');
+
+    void router.navigate('/elsewhere');
+
+    await waitFor(() => {
+      expect(screen.getByRole('dialog', { name: '还有未保存的修改' })).toBeInTheDocument();
+    });
+    // 没跳走
+    expect(screen.queryByText('别的页面')).not.toBeInTheDocument();
+  });
+
+  /* 关标签 / 刷新只能给浏览器原生提示（文案不可自定义），
+     但必须真的挂上监听 —— 否则「切页面有提示、关标签没有」，
+     用户会以为已经安全了。 */
+  it('有未保存改动时挂上 beforeunload，没改动时不挂', async () => {
+    const user = await enterEditor();
+
+    const beforeUnload = () => new Event('beforeunload', { cancelable: true });
+
+    // 刚进编辑页、什么都没改：不该拦
+    let event = beforeUnload();
+    window.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(false);
+
+    const name = screen.getByDisplayValue('商品图模板');
+    await user.clear(name);
+    await user.type(name, '改过的名字');
+
+    event = beforeUnload();
+    window.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(true);
   });
 });
