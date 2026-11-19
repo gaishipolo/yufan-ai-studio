@@ -139,21 +139,35 @@ describe('PermissionPicker 的两层结构', () => {
     expect(onChange.mock.calls[0][0]).toEqual(['page:task-center']);
   });
 
-  it('禁用的码点不动（团队层禁页面码）', async () => {
+  it('禁用的码点不动（这一层不能授的码）', async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
     render(
       <PermissionPicker
         selected={[]}
         onChange={onChange}
+        forbidden={(code) => code === 'page:library'}
+        forbiddenHint="团队层不能授予该权限"
+      />,
+    );
+
+    const checkbox = screen.getByRole('checkbox', { name: '资产库 页面权限' });
+    expect(checkbox).toBeDisabled();
+    await user.click(checkbox);
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('页面一个都不能授时，左栏整列不显示（全是禁用项的那一列没有信息量）', () => {
+    render(
+      <PermissionPicker
+        selected={[]}
+        onChange={vi.fn()}
         forbidden={(code) => code.startsWith('page:')}
         forbiddenHint="团队层不能授予该权限"
       />,
     );
 
-    const checkbox = screen.getByRole('checkbox', { name: '任务中心 页面权限' });
-    expect(checkbox).toBeDisabled();
-    await user.click(checkbox);
-    expect(onChange).not.toHaveBeenCalled();
+    expect(screen.queryByText(/页面权限 · 决定能看见哪一页/)).not.toBeInTheDocument();
+    expect(screen.getByText(/接口权限 · 决定能做什么/)).toBeInTheDocument();
   });
 });

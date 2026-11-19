@@ -101,6 +101,10 @@ export function PermissionPicker({
     onChange([...next]);
   };
 
+  // 一页都不可授（团队层）时，整栏不显示：全是禁用项的那一列没有信息量。
+  const showPages =
+    pages.length > 0 && !pages.every((page) => forbidden?.(page.code));
+
   const selectedPages = selected.filter((code) => code.startsWith('page:')).length;
   const selectedApis = selected.length - selectedPages;
 
@@ -132,9 +136,22 @@ export function PermissionPicker({
         onClear={() => onChange([])}
       />
 
-      {/* ---------------- 上层：页面 ---------------- */}
-      {pages.length > 0 ? (
-        <section className="rounded-lg border border-line-soft">
+      {/* 页面在左、接口在右：两层的因果关系本来就是「左右」的 ——
+          左边选页面，右边立刻看得见它管着哪些接口。上下排的话，
+          视线要来回跑，层级关系反而被拉断了。
+
+          团队层不显示左栏：那里的页面码全部禁用（团队层没有 deny，
+          页面放进来就永远关不掉），一整列灰卡片只会让人以为能配。
+          页面一律不可授时，右栏独占整行。 */}
+      <div
+        className={cn(
+          'grid gap-3',
+          showPages && 'md:grid-cols-[minmax(260px,0.85fr)_minmax(0,1.65fr)]',
+        )}
+      >
+      {/* ---------------- 左栏：页面 ---------------- */}
+      {showPages ? (
+        <section className="flex min-w-0 flex-col rounded-lg border border-line-soft">
           <header className="flex items-center gap-2 border-b border-line-soft bg-panel-soft px-2.5 py-1.5">
             <Layers3 size={13} className="text-primary" />
             <h3 className="text-xs font-semibold text-ink-soft">页面权限 · 决定能看见哪一页</h3>
@@ -154,9 +171,9 @@ export function PermissionPicker({
             </button>
           </header>
           <p className="px-2.5 pt-1.5 text-meta text-ink-mute">
-            关掉一个页面，下面与它关联的接口就一并失效。
+            关掉一个页面，与它关联的接口就一并失效。
           </p>
-          <ul className="grid gap-1 p-2.5 md:grid-cols-2">
+          <ul className="grid max-h-[56vh] gap-1 overflow-auto p-2.5 md:grid-cols-1">
             {pages.map((page) => {
               const blocked = Boolean(forbidden?.(page.code));
               const checked = selected.includes(page.code);
@@ -226,13 +243,13 @@ export function PermissionPicker({
         </section>
       ) : null}
 
-      {/* ---------------- 下层：接口 ---------------- */}
-      <section className="rounded-lg border border-line-soft">
+      {/* ---------------- 右栏：接口 ---------------- */}
+      <section className="flex min-w-0 flex-col rounded-lg border border-line-soft">
         <header className="flex items-center gap-2 border-b border-line-soft bg-panel-soft px-2.5 py-1.5">
           <Plug size={13} className="text-primary" />
           <h3 className="text-xs font-semibold text-ink-soft">接口权限 · 决定能做什么</h3>
         </header>
-        <div className="max-h-[42vh] space-y-3 overflow-auto p-2.5">
+        <div className="max-h-[56vh] space-y-3 overflow-auto p-2.5">
           {apiGroups.map((group) => {
             const codes = group.items.map((item) => item.code);
             const selectable = codes.filter((code) => !forbidden?.(code));
@@ -336,6 +353,7 @@ export function PermissionPicker({
           })}
         </div>
       </section>
+      </div>
     </div>
   );
 }
