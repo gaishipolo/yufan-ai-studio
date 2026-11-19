@@ -1256,6 +1256,25 @@ export interface SpecCompileOut {
   slots?: CompiledSlotOut[];
 }
 
+/** 编辑页要显示的**上限**。
+
+这些数是后端的常量（`core/template_spec/models.py`），前端以前各抄一份
+常量 + 一条「对着 openapi 读一遍」的漂移守卫。改成从接口取之后，
+只有一处真值 —— 调上限只改后端。
+
+两个数说的是不同的事，别混：
+
+- `promptMax`：**存草稿**的上限（20000）。草稿允许很长，写一半也能存。
+- `promptExecutionLimit`：**能不能发布**的上限（7000），按**原文字数**比。
+
+编辑页显示的是后者：它是真正会拦住作者的那个数。注意它只是**下限保证** ——
+提示词展开（`{{Mixed 1*}}` 一次列出整组）之后还可能更长，那一步的判据在
+编译期（`compile` 按展开后的成品长度再比一次）。 */
+export interface SpecLimitsOut {
+  promptMax?: number;
+  promptExecutionLimit?: number;
+}
+
 /** SpecPublishOut */
 export interface SpecPublishOut {
   version: number;
@@ -2032,6 +2051,8 @@ export interface EndpointData {
   "GET /api/v1/template-specs": TemplateSpecListOut;
   /** 保存草稿（同内容幂等，revision 冲突 409） */
   "POST /api/v1/template-specs": TemplateSpecOut;
+  /** 编辑页要显示的上限（存草稿 / 可发布） */
+  "GET /api/v1/template-specs/limits": SpecLimitsOut;
   /** 模板库：已发布的规格卡片 */
   "GET /api/v1/template-specs/published": TemplateSpecListOut;
   /** 回收站：已软删的规格 */

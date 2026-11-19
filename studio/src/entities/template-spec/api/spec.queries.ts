@@ -27,6 +27,21 @@ export function useTrashedSpecs() {
   });
 }
 
+/**
+ * 编辑页要显示的**上限**。
+ *
+ * 后端常量（`core/template_spec/models.py`），以前前端各抄一份 +
+ * 一条「对着 openapi 读一遍」的漂移守卫。现在只有一处真值 —— 调上限只改后端。
+ * 上限不会在会话中途变，所以缓存久一点（10 分钟）就够了。
+ */
+export function useSpecLimits() {
+  return useQuery({
+    queryKey: ['template-specs', 'limits'],
+    queryFn: specApi.limits,
+    staleTime: 10 * 60 * 1000,
+  });
+}
+
 /** 模板库（填表）读的是**已发布**的规格，与「我的草稿」不是一个集合。 */
 export function usePublishedSpecs() {
   const owner = useSessionStore(s => s.subject.id);

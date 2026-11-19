@@ -28,6 +28,7 @@ from modules.template_pack.dependencies import (
 from modules.template_pack.spec_schema import (
     SpecCompileIn,
     SpecCompileOut,
+    SpecLimitsOut,
     SpecPublishOut,
     SpecValidateOut,
     TemplateSpecIn,
@@ -140,6 +141,15 @@ async def list_trashed_specs(
             page_size=page_size,
         )
     )
+
+
+@router.get("/limits", summary="编辑页要显示的上限（存草稿 / 可发布）")
+async def get_spec_limits(actor: TemplatePackReadDep) -> ApiResponse[SpecLimitsOut]:
+    """上限只在这里给一次，前端不再抄一份数字。
+
+    必须声明在 `/{key}` 之前，否则 `limits` 会被当成一个规格 key。
+    """
+    return ApiResponse.ok(SpecLimitsOut())
 
 
 @router.get("/{key}", summary="规格详情（含草稿与最近发布）")

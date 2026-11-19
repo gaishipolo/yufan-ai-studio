@@ -2,7 +2,7 @@
 
 > 此文件由 `app export-openapi` 自动生成，请勿手工编辑。
 >
-> 版本 `0.2.0`｜共 **126** 个接口 / **11** 个模块
+> 版本 `0.2.0`｜共 **127** 个接口 / **11** 个模块
 >
 > 重新生成：`cd api && .venv/Scripts/python -m cli export-openapi`
 
@@ -231,7 +231,7 @@ Authorization: Bearer <accessToken>
 | 导出 | 6 | 见下方 `4.8` |
 | 资产库 | 43 | 见下方 `4.9` |
 | 模型驱动 | 9 | 见下方 `4.10` |
-| 模板封装 | 11 | 见下方 `4.11` |
+| 模板封装 | 12 | 见下方 `4.11` |
 
 ### 4.1 身份（39 个）
 
@@ -3021,12 +3021,13 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `message` | `string` | 否 |  |
 | `data` | `modules__model_driver__schema__TaskOut \| null` | 否 |  |
 
-### 4.11 模板封装（11 个）
+### 4.11 模板封装（12 个）
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
 | `POST` | `/api/v1/template-specs` | 保存草稿（同内容幂等，revision 冲突 409） | 🔒 |
 | `GET` | `/api/v1/template-specs` | 本人可见的规格列表 | 🔒 |
+| `GET` | `/api/v1/template-specs/limits` | 编辑页要显示的上限（存草稿 / 可发布） | 🔒 |
 | `GET` | `/api/v1/template-specs/published` | 模板库：已发布的规格卡片 | 🔒 |
 | `GET` | `/api/v1/template-specs/trash` | 回收站：已软删的规格 | 🔒 |
 | `POST` | `/api/v1/template-specs/validate` | 预检模板规格（不落库） | 🔒 |
@@ -3096,6 +3097,21 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 |---|---|---|---|
 | `items` | `TemplateSpecOut[]` | 否 |  |
 | `total` | `number` | 否 |  |
+
+#### `GET /api/v1/template-specs/limits`
+
+**编辑页要显示的上限（存草稿 / 可发布）**
+
+上限只在这里给一次，前端不再抄一份数字。
+
+必须声明在 `/{key}` 之前，否则 `limits` 会被当成一个规格 key。
+
+**响应** `ApiResponse<SpecLimitsOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `promptMax` | `number` | 否 |  |
+| `promptExecutionLimit` | `number` | 否 |  |
 
 #### `GET /api/v1/template-specs/published`
 
@@ -4526,6 +4542,28 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `referenceLibraryIds` | `string[]` | 否 |  |
 | `textLibraryIds` | `string[]` | 否 |  |
 | `slots` | `CompiledSlotOut[]` | 否 |  |
+
+### `SpecLimitsOut`
+
+编辑页要显示的**上限**。
+
+这些数是后端的常量（`core/template_spec/models.py`），前端以前各抄一份
+常量 + 一条「对着 openapi 读一遍」的漂移守卫。改成从接口取之后，
+只有一处真值 —— 调上限只改后端。
+
+两个数说的是不同的事，别混：
+
+- `promptMax`：**存草稿**的上限（20000）。草稿允许很长，写一半也能存。
+- `promptExecutionLimit`：**能不能发布**的上限（7000），按**原文字数**比。
+
+编辑页显示的是后者：它是真正会拦住作者的那个数。注意它只是**下限保证** ——
+提示词展开（`{{Mixed 1*}}` 一次列出整组）之后还可能更长，那一步的判据在
+编译期（`compile` 按展开后的成品长度再比一次）。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `promptMax` | `number` | 否 |  |
+| `promptExecutionLimit` | `number` | 否 |  |
 
 ### `SpecPublishOut`
 

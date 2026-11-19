@@ -41,10 +41,10 @@ import { AssetPicker, type PickKind, type PickedAsset } from '@/features/templat
 import { AddSlotMenu } from '@/features/template-specs/AddSlotMenu';
 import { DemoMenu } from '@/features/template-specs/DemoMenu';
 import { ModelPicker } from '@/features/template-specs/ModelPicker';
+import { useSpecLimits } from '@/entities/template-spec/api/spec.queries';
 import { PromptBox } from '@/features/template-specs/PromptBox';
 import { SlotCard } from '@/features/template-specs/SlotCard';
 import {
-  MAX_PROMPT,
   SLOT_TYPE_LABELS,
   SLOT_TYPES,
   authoredFingerprint,
@@ -104,6 +104,9 @@ export function SpecWorkspace() {
   const videoModels = useModels('video');
   const imageModels = useModels('image');
   const models = useMemo(() => [...videoModels, ...imageModels], [videoModels, imageModels]);
+
+  /* 上限来自后端（编辑页要显示的那个数），不在前端写死。 */
+  const limits = useSpecLimits();
 
   const [draft, setDraft] = useState<TemplateSpecIn | null>(null);
   /*
@@ -440,6 +443,11 @@ export function SpecWorkspace() {
 
   const chips = draft ? referenceChips(draft) : [];
 
+  /* 提示词上限：**能不能发布**的那个数（执行层，按原文字数比）。
+     没取到时显示 `—`，不猜一个数字 —— 猜错了比不显示更糟。 */
+  const promptLimit = limits.data?.promptExecutionLimit;
+  const promptOver = promptLimit != null && (draft?.prompt ?? '').length > promptLimit;
+
   const moveToTrash = (item: TemplateSpecOut) => {
     if (!window.confirm(`把「${item.name}」移进回收站？可以再恢复。`)) return;
     clear();
@@ -736,15 +744,13 @@ export function SpecWorkspace() {
         </div>
 
         <div className="flex flex-col gap-4 lg:sticky lg:top-[112px]">
-          {/* 提示词**不套板块外壳**：它是这一页真正在写的东西，和下面
-              「槽位速览」「展示案例」不是同级信息 —— 给它一条标题带子
-              （「提示词」三个字）只是把输入框自己已经说明的事再说一遍。
-              卡片视觉还在（同款圆角 + 边框），只是没有标题条。
-
+          {/* 提示词这一块只留**一个标题**，不套整条板块外壳。
+              它是这一页真正在写的东西，和下面「展示案例」不是同级信息。
               「+ 文本素材」也去掉了：左栏「槽位」板块的加号菜单已经能加
               任意类型（含文本），同一个动作摆两个入口，用户还得判断
               哪个才是"正确"的。 */}
           <div className="rounded-2xl border border-line bg-panel p-4 shadow-[0_1px_2px_rgba(16,42,55,0.04)]">
+            <p className="mb-2 text-meta font-medium text-ink">提示词</p>
             <PromptBox
               value={draft.prompt ?? ''}
               chips={chips}
@@ -755,10 +761,17 @@ export function SpecWorkspace() {
             />
             <div className="mt-2 flex flex-wrap items-center gap-2">
               {hint && <p className="text-meta text-warn-deep">{hint}</p>}
-              {/* 字数是一门**约束**（超了保存不了），不是解释，必须留着。
-                  放到输入框下方右端：和它约束的那个框同处一块。 */}
-              <span className="ml-auto font-mono text-micro tabular-nums text-ink-mute">
-                {(draft.prompt ?? '').length} / {MAX_PROMPT}
+              {/* 字数是一门**约束**（超了发不出去），不是解释，必须留着。
+                  显示的是**能不能发布**的上限（执行层，按原文字数比），
+                  不是存草稿的上限 —— 后者是 20000，照着它写等于白写。
+                  数字从后端取（`/template-specs/limits`），前端不再抄一份。 */}
+              <span
+                className={cn(
+                  'ml-auto font-mono text-micro tabular-nums',
+                  promptOver ? 'text-danger-deep' : 'text-ink-mute',
+                )}
+              >
+                {(draft.prompt ?? '').length} / {promptLimit ?? '—'}
               </span>
             </div>
           </div>

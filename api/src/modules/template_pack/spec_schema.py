@@ -18,6 +18,7 @@ from pydantic import ConfigDict, Field, field_validator, model_validator
 
 from core.schema import CamelModel, UtcDateTime
 from core.template_spec import (
+    EXECUTION_PROMPT_LIMIT,
     MAX_ALLOWED_MODELS,
     MAX_PROMPT,
     MAX_SLOT_REFS,
@@ -291,3 +292,24 @@ class SpecCompileOut(CamelModel):
     reference_library_ids: list[str] = Field(default_factory=list)
     text_library_ids: list[str] = Field(default_factory=list)
     slots: list[CompiledSlotOut] = Field(default_factory=list)
+
+
+class SpecLimitsOut(CamelModel):
+    """编辑页要显示的**上限**。
+
+    这些数是后端的常量（`core/template_spec/models.py`），前端以前各抄一份
+    常量 + 一条「对着 openapi 读一遍」的漂移守卫。改成从接口取之后，
+    只有一处真值 —— 调上限只改后端。
+
+    两个数说的是不同的事，别混：
+
+    - `promptMax`：**存草稿**的上限（20000）。草稿允许很长，写一半也能存。
+    - `promptExecutionLimit`：**能不能发布**的上限（7000），按**原文字数**比。
+
+    编辑页显示的是后者：它是真正会拦住作者的那个数。注意它只是**下限保证** ——
+    提示词展开（`{{Mixed 1*}}` 一次列出整组）之后还可能更长，那一步的判据在
+    编译期（`compile` 按展开后的成品长度再比一次）。
+    """
+
+    prompt_max: int = MAX_PROMPT
+    prompt_execution_limit: int = EXECUTION_PROMPT_LIMIT

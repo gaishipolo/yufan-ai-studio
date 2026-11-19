@@ -12,6 +12,8 @@ from fastapi.testclient import TestClient
 from library_support import LIB_RW, admin_headers, make_user, suffix
 from tests_template_helpers import png_bytes, upload, video_bytes
 
+from core.template_spec import EXECUTION_PROMPT_LIMIT, MAX_PROMPT
+
 API = "/api/v1/template-specs"
 PERMS = [
     "template_pack:read",
@@ -100,6 +102,24 @@ def _save(client: TestClient, headers: dict[str, str], draft: dict[str, Any]) ->
     response = client.post(API, json=draft, headers=headers)
     assert response.status_code == 200, response.text
     return response.json()["data"]
+
+
+def test_limits_are_served_from_the_backend(client: TestClient) -> None:
+    """编辑页显示的上限**从后端取**，前端不再各抄一份常量。
+
+    两个数说的是不同的事：`promptMax` 是存草稿的上限（草稿允许很长），
+    `promptExecutionLimit` 是**能不能发布**的上限（按原文字数比）。
+
+    顺带钉住路由顺序：这条能通说明 `/limits` 没被 `/{key}` 当成一个规格 key
+    （被吞掉的话这里是 404「配置不存在：limits」）。
+    """
+    headers = _headers(client)
+    body = client.get(f"{API}/limits", headers=headers)
+
+    assert body.status_code == 200, body.text
+    data = body.json()["data"]
+    assert data["promptMax"] == MAX_PROMPT
+    assert data["promptExecutionLimit"] == EXECUTION_PROMPT_LIMIT
 
 
 def test_validate_returns_fingerprint(client: TestClient) -> None:

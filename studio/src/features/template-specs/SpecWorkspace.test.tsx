@@ -33,6 +33,8 @@ const { specs, trashedSpecs, mutations } = vi.hoisted(() => ({
 }));
 
 vi.mock('@/entities/template-spec/api/spec.queries', () => ({
+  /* 上限来自后端：两个数说的是不同的事（存草稿 / 能不能发布）。 */
+  useSpecLimits: () => ({data: {promptMax: 20000, promptExecutionLimit: 7000}}),
   useSpecs: () => ({
     data: { items: specs.current, total: specs.current.length, page: 1, pageSize: 100 },
     isLoading: false,
@@ -230,9 +232,12 @@ describe('模板封装 · 编辑器里的提示词', () => {
     return user;
   };
 
-  it('没有「提示词」这条板块标题', async () => {
+  /* 标题加回来了（2026-11-19 用户要求），但**只是**一行字 ——
+     不再套「板块外壳」那条带渐变底 + 竖条的标题带。 */
+  it('有「提示词」这行标题，但不是一整个板块外壳', async () => {
     await enterEditor();
 
+    expect(screen.getByText('提示词')).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: '提示词' })).not.toBeInTheDocument();
   });
 
@@ -242,17 +247,38 @@ describe('模板封装 · 编辑器里的提示词', () => {
     expect(screen.getByRole('textbox', { name: '提示词' })).toBeInTheDocument();
   });
 
+  /* 超了就是发不出去 —— 数字本身说明不了这件事，得让它变红。 */
+  it('超过可发布上限时，字数计数变红', async () => {
+    const user = userEvent.setup();
+    renderWorkspace([
+      specOf({
+        status: 'draft',
+        draft: {
+          key: 'spec-1',
+          name: '商品图模板',
+          model: 'libtv-wan3-replacement',
+          prompt: 'x'.repeat(7001),
+          slots: [{key: 'image_1', type: 'image', position: 0, label: '主图'}],
+        },
+      }),
+    ]);
+    await user.click(cardOf('商品图模板').getByRole('button', { name: '编辑' }));
+
+    expect(screen.getByText(new RegExp(`/\\s*7000`))).toHaveClass('text-danger-deep');
+  });
+
   it('不再有「+ 文本素材」这个重复入口（左栏加号菜单已覆盖）', async () => {
     await enterEditor();
 
     expect(screen.queryByRole('button', { name: /文本素材/ })).not.toBeInTheDocument();
   });
 
-  /* 字数是一门**约束**（超了保存不了），取消板块时不能连带删掉。 */
-  it('字数上限还在，而且写法是 N / 上限', async () => {
+  /* 字数是一门**约束**（超了发不出去），取消板块时不能连带删掉。 */
+  it('字数上限显示的是**能不能发布**的那个数（7000），不是存草稿的 20000', async () => {
     await enterEditor();
 
-    expect(screen.getByText(new RegExp(`/\\s*20000`))).toBeInTheDocument();
+    expect(screen.getByText(new RegExp(`/\\s*7000`))).toBeInTheDocument();
+    expect(screen.queryByText(new RegExp(`/\\s*20000`))).not.toBeInTheDocument();
   });
 
   /* 「槽位速览」整块取消：它的信息（已固定 / 用户填写）搬到了提示词框

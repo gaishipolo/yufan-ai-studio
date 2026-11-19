@@ -6421,6 +6421,34 @@
         }
       }
     },
+    "/api/v1/template-specs/limits": {
+      "get": {
+        "tags": [
+          "模板封装",
+          "模板规格"
+        ],
+        "summary": "编辑页要显示的上限（存草稿 / 可发布）",
+        "description": "上限只在这里给一次，前端不再抄一份数字。\n\n必须声明在 `/{key}` 之前，否则 `limits` 会被当成一个规格 key。",
+        "operationId": "get_spec_limits_api_v1_template_specs_limits_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_SpecLimitsOut_"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/api/v1/template-specs/{key}": {
       "get": {
         "tags": [
@@ -7686,6 +7714,33 @@
         },
         "type": "object",
         "title": "ApiResponse[SpecCompileOut]"
+      },
+      "ApiResponse_SpecLimitsOut_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SpecLimitsOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[SpecLimitsOut]"
       },
       "ApiResponse_SpecPublishOut_": {
         "properties": {
@@ -12928,6 +12983,23 @@
         ],
         "title": "SpecCompileOut",
         "description": "编译结果（模板层）。\n\n**不是**任何端点的请求体：`/tasks` 的时长与画幅是顶层字段、不接受自由\n`params`。摊平由提交方按目标端点做（模板库页面对照生成的 `CreateTaskIn` 类型），\n这里刻意不假设端点，否则换端点就要改编译规则。"
+      },
+      "SpecLimitsOut": {
+        "properties": {
+          "promptMax": {
+            "type": "integer",
+            "title": "Promptmax",
+            "default": 20000
+          },
+          "promptExecutionLimit": {
+            "type": "integer",
+            "title": "Promptexecutionlimit",
+            "default": 7000
+          }
+        },
+        "type": "object",
+        "title": "SpecLimitsOut",
+        "description": "编辑页要显示的**上限**。\n\n这些数是后端的常量（`core/template_spec/models.py`），前端以前各抄一份\n常量 + 一条「对着 openapi 读一遍」的漂移守卫。改成从接口取之后，\n只有一处真值 —— 调上限只改后端。\n\n两个数说的是不同的事，别混：\n\n- `promptMax`：**存草稿**的上限（20000）。草稿允许很长，写一半也能存。\n- `promptExecutionLimit`：**能不能发布**的上限（7000），按**原文字数**比。\n\n编辑页显示的是后者：它是真正会拦住作者的那个数。注意它只是**下限保证** ——\n提示词展开（`{{Mixed 1*}}` 一次列出整组）之后还可能更长，那一步的判据在\n编译期（`compile` 按展开后的成品长度再比一次）。"
       },
       "SpecPublishOut": {
         "properties": {

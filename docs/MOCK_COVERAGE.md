@@ -2,7 +2,7 @@
 
 # Mock 覆盖率（只记录，不作门禁）
 
-后端端点 126 条（来自 `schema.ts` 的 `EndpointData`），
+后端端点 127 条（来自 `schema.ts` 的 `EndpointData`），
 已注册 mock 路由 78 条（来自 `mockRouteTable()`），
 按「同方法 + 正则能匹配」判定疑似覆盖 81 条。
 
@@ -78,8 +78,9 @@
 | POST | `/api/v1/template-specs/{}/disable` |
 | POST | `/api/v1/template-specs/{}/publish` |
 | POST | `/api/v1/template-specs/{}/restore` |
+| GET | `/api/v1/template-specs/limits` |
 | GET | `/api/v1/template-specs/published` |
 | GET | `/api/v1/template-specs/trash` |
 | POST | `/api/v1/template-specs/validate` |
 
-（未命中 45 条；已命中 81 条不在本表重复列出。）
+（未命中 46 条；已命中 81 条不在本表重复列出。）

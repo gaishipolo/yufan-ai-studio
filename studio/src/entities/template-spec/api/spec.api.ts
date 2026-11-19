@@ -2,6 +2,7 @@ import { api } from '@/shared/api/http';
 import type {
   SpecCompileIn,
   SpecCompileOut,
+  SpecLimitsOut,
   SpecPublishOut,
   SpecValidateOut,
   TemplateSpecIn,
@@ -22,6 +23,8 @@ export const specApi = {
   published: (params: {keyword?: string; page?: number; pageSize?: number}) =>
     api.get<TemplateSpecListOut>('/template-specs/published', params),
   detail: (key: string) => api.get<TemplateSpecOut>(`/template-specs/${key}`),
+  /** 编辑页要显示的上限（存草稿 / 可发布）。真值在后端常量，前端不抄数字。 */
+  limits: () => api.get<SpecLimitsOut>('/template-specs/limits'),
   validate: (payload: TemplateSpecIn) =>
     api.post<SpecValidateOut>('/template-specs/validate', payload),
   save: (payload: TemplateSpecIn) => api.post<TemplateSpecOut>('/template-specs', payload),

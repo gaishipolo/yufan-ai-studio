@@ -39,18 +39,6 @@ export function slotTypeOf(type: string): SlotType {
 }
 
 /**
- * 提示词的**编写**上限（不是执行上限）。
- *
- * 真值在后端 `api/src/modules/template_pack/models.py::MAX_PROMPT`，
- * 也就是契约里 `TemplateSpecIn.prompt.maxLength`。
- * 界面上用它显示「字数 N / 上限」，别把它跟 `EXECUTION_PROMPT_LIMIT`（7000，
- * 执行期的硬闸）混成一个数 —— 编写上限远大于它，就是为了能存长草稿。
- *
- * 漂移守卫在 `specDraft.test.ts`：对着 `api/docs/openapi.json` 读一遍 maxLength。
- */
-export const MAX_PROMPT = 20000;
-
-/**
  * 能勾选的模型数量上限。
  *
  * 真值在后端 `api/src/core/template_spec/models.py::MAX_ALLOWED_MODELS`
