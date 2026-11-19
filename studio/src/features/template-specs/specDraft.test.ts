@@ -1,12 +1,13 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import type { SpecSlotIn, TemplateSpecOut } from '@/shared/api/schema';
+import type { SpecSlotIn, TemplateSpecIn, TemplateSpecOut } from '@/shared/api/schema';
 import { KIND_LABEL } from '@/entities/library/model/types';
 import {
   MAX_ALLOWED_MODELS,
   MAX_PROMPT,
   SLOT_TYPE_LABELS,
+  authoredFingerprint,
   blankSlot,
   blankSpec,
   dropUserSelectableParams,
@@ -595,5 +596,141 @@ describe('必填槽位清掉两段文案', () => {
     expect(
       textsToClearForRequired({minCount: 1, filledText: '   '} as SpecSlotIn),
     ).toBeNull();
+  });
+});
+
+/**
+ * 「有没有未保存改动」的判据。
+ *
+ * 比的是**内容**，不是 JSON 形状 —— 形状差异会让「只点了几下、什么都没改」
+ * 的模板反复弹「有未保存的修改」，而用户改回原样后又被判成有改动。
+ */
+describe('authoredFingerprint：判有没有改动', () => {
+  /** 一份内容固定的规格，只用来对比「同内容不同写法」。 */
+  const base = (): TemplateSpecIn => ({
+    key: 'spec-1',
+    name: '商品图',
+    description: '',
+    model: 'doubao-seedream',
+    allowedModels: ['doubao-seedream'],
+    params: {size: '1024x1024'},
+    prompt: '一张 {{slot:hero}}',
+    slots: [
+      {
+        key: 'hero',
+        type: 'image',
+        binding: 'user',
+        refMode: 'mixed',
+        minCount: 1,
+        maxCount: 1,
+        label: '正面图',
+        filledText: '',
+        emptyText: '',
+        position: 0,
+      },
+    ],
+    attributes: {},
+  });
+
+  it('内容一样 → 指纹一样', () => {
+    expect(authoredFingerprint(base())).toBe(authoredFingerprint(base()));
+  });
+
+  /* 这条是这次改动的起因：`SlotCard` 切回「用户填」时写 `assetId: null`，
+     而 `blankSlot()` 根本不带这个键 —— 切一圈内容没变，JSON 却不等。 */
+  it('`assetId: null` 与压根没有 `assetId` 是同一件事', () => {
+    const withNull = base();
+    withNull.slots = [{...withNull.slots![0], assetId: null}];
+
+    expect(authoredFingerprint(withNull)).toBe(authoredFingerprint(base()));
+  });
+
+  it('候选标签是集合：空数组、缺失、顺序不同都不算改动', () => {
+    const missing = base();
+    const empty = base();
+    empty.slots = [{...empty.slots![0], tagIds: []}];
+    const shuffled = base();
+    const reordered = base();
+    shuffled.slots = [{...shuffled.slots![0], tagIds: ['t2', 't1']}];
+    reordered.slots = [{...reordered.slots![0], tagIds: ['t1', 't2']}];
+
+    const canonical = authoredFingerprint(missing);
+    expect(authoredFingerprint(empty)).toBe(canonical);
+    expect(authoredFingerprint(shuffled)).toBe(authoredFingerprint(reordered));
+  });
+
+  it('缺省字段与显式默认值是同一件事', () => {
+    const sparse = base();
+    sparse.slots = [{key: 'hero', type: 'image', position: 0} as SpecSlotIn];
+
+    const explicit = base();
+    explicit.slots = [
+      {
+        key: 'hero',
+        type: 'image',
+        binding: 'user',
+        refMode: 'mixed',
+        minCount: 1,
+        maxCount: 1,
+        position: 0,
+      } as SpecSlotIn,
+    ];
+
+    // label 在 sparse 里缺失、explicit 里也没有 → 两边都归一成 ''
+    expect(authoredFingerprint(sparse)).toBe(authoredFingerprint(explicit));
+  });
+
+  it('对象键的顺序不影响结果', () => {
+    const a = base();
+    const b = base();
+    a.params = {size: '1024x1024', seed: 1};
+    b.params = {seed: 1, size: '1024x1024'};
+
+    expect(authoredFingerprint(a)).toBe(authoredFingerprint(b));
+  });
+
+  /* `revision` 是服务端给下一次提交的并发令牌，不是作者写的东西。 */
+  it('`revision` 变了不算改动', () => {
+    const bumped = {...base(), revision: 7};
+    expect(authoredFingerprint(bumped)).toBe(authoredFingerprint(base()));
+  });
+
+  it('真改了内容就算改动', () => {
+    const canonical = authoredFingerprint(base());
+    const cases: TemplateSpecIn[] = [
+      {...base(), name: '商品图 2'},
+      {...base(), prompt: '两张改 {{slot:hero}}'},
+      {...base(), model: 'kling-2.1'},
+      {...base(), description: '一段说明'},
+    ];
+    for (const spec of cases) {
+      expect(authoredFingerprint(spec)).not.toBe(canonical);
+    }
+
+    // 槽位本身：标签、绑定、必填档位、素材
+    const slotPatches: Partial<SpecSlotIn>[] = [
+      {label: '背面图'},
+      {binding: 'fixed'},
+      {minCount: 0},
+      {assetId: 'asset-9'},
+      {filledText: '用这张'},
+      {tagIds: ['t1']},
+    ];
+    for (const patch of slotPatches) {
+      const next = base();
+      next.slots = [{...next.slots![0], ...patch}];
+      expect(authoredFingerprint(next)).not.toBe(canonical);
+    }
+  });
+
+  it('槽位的顺序是内容：拖拽重排算改动', () => {
+    const two = base();
+    two.slots = [
+      {...two.slots![0]},
+      {...two.slots![0], key: 'back', label: '背面图', position: 1},
+    ];
+    const swapped = {...two, slots: [two.slots![1], two.slots![0]]};
+
+    expect(authoredFingerprint(swapped)).not.toBe(authoredFingerprint(two));
   });
 });

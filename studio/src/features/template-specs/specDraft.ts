@@ -324,6 +324,77 @@ export function normalize(spec: TemplateSpecIn): TemplateSpecIn {
   };
 }
 
+/** 后端的槽位默认值（`SpecSlotIn`）：缺省与写出来是同一件事。 */
+const SLOT_DEFAULTS = { binding: 'user', refMode: 'mixed', minCount: 1, maxCount: 1 } as const;
+
+/** 一个槽位「作者实际写了什么」。可选字段一律铺平到唯一写法。 */
+function slotFingerprint(slot: SpecSlotIn, index: number) {
+  return {
+    key: slot.key,
+    type: slot.type,
+    binding: slot.binding ?? SLOT_DEFAULTS.binding,
+    refMode: slot.refMode ?? SLOT_DEFAULTS.refMode,
+    minCount: slot.minCount ?? SLOT_DEFAULTS.minCount,
+    maxCount: slot.maxCount ?? SLOT_DEFAULTS.maxCount,
+    label: slot.label ?? '',
+    // `null` / `''` / 缺失都是「没选素材」
+    assetId: slot.assetId || null,
+    filledText: slot.filledText ?? '',
+    emptyText: slot.emptyText ?? '',
+    // 候选标签是**集合**：顺序不携带信息
+    tagIds: [...new Set(slot.tagIds ?? [])].sort(),
+    // 位置就是数组下标，别让两者各自漂移
+    position: index,
+  };
+}
+
+/** 键名排序后的 JSON：只关心内容，不关心键的插入顺序。 */
+function stableStringify(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null';
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
+  const entries = Object.entries(value as Record<string, unknown>)
+    .filter(([, item]) => item !== undefined)
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  return `{${entries
+    .map(([key, item]) => `${JSON.stringify(key)}:${stableStringify(item)}`)
+    .join(',')}}`;
+}
+
+/**
+ * 「作者实际写了什么」的指纹 —— **判有没有未保存改动用它，别直接比 JSON**。
+ *
+ * `JSON.stringify` 比的是**形状**，不是**内容**。同一个意思有很多种写法：
+ *
+ * - `assetId: null` 与根本没有 `assetId`：`SlotCard` 切回「用户填」时会写
+ *   `assetId: null`，而 `blankSlot()` 不带这个键 —— 于是「固定」→「用户填」
+ *   切一圈，内容一字未改，却永远算「有改动」；
+ * - `tagIds: []` 与没有这个键、`['b','a']` 与 `['a','b']`（集合不是序列）；
+ * - 缺省字段与显式默认值（`binding` / `refMode` / `minCount` / `maxCount`）；
+ * - 对象键的顺序（`{...slot, ...patch}` 会把新键追加到末尾）；
+ * - `revision`：那是服务端给下一次提交的并发令牌，不是作者写的东西。
+ *
+ * 任何一条都会让「只点了几下、什么都没改」的模板反复弹「有未保存的修改」。
+ * 所以这里按后端 `SpecSlotIn` 的口径把所有值铺平成唯一写法，再按键序排序比较。
+ */
+export function authoredFingerprint(spec: TemplateSpecIn): string {
+  return stableStringify({
+    key: spec.key,
+    name: spec.name,
+    description: spec.description ?? '',
+    model: spec.model,
+    // 顺序有意义（第一个就是默认模型），所以只去重、不排序
+    allowedModels: [...new Set(spec.allowedModels ?? [])],
+    params: spec.params ?? {},
+    prompt: spec.prompt ?? '',
+    // 空值的属性 = 没写过这个属性
+    attributes: Object.fromEntries(
+      Object.entries(spec.attributes ?? {}).filter(([, value]) => value !== ''),
+    ),
+    demoAssetId: spec.demoAssetId || null,
+    slots: (spec.slots ?? []).map(slotFingerprint),
+  });
+}
+
 /**
  * 把「使用者可选」的参数从作者设的参数里剔掉。
  *

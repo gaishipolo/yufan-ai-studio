@@ -47,6 +47,7 @@ import {
   MAX_PROMPT,
   SLOT_TYPE_LABELS,
   SLOT_TYPES,
+  authoredFingerprint,
   blankSlot,
   blankSpec,
   dropUserSelectableParams,
@@ -105,17 +106,22 @@ export function SpecWorkspace() {
   /*
    * 进编辑时记一份基线，之后每次变化都跟它比。
    *
-   * 保存 / 发布成功后基线跟着换（`submit` 里）—— 否则刚存完还挂着
+   * 比的是 `authoredFingerprint`（语义指纹）而不是 `JSON.stringify`：形状差异
+   * 不是内容差异 —— `assetId: null` 与没有 `assetId`、`tagIds: []` 与没有它、
+   * 缺省字段与显式默认值、键的插入顺序、`revision` 令牌，任何一条都会让
+   * 「只点了几下、什么都没改」的模板反复弹「有未保存的修改」。
+   *
+   * 保存 / 发布成功后基线跟着换（`openDraft` 里）—— 否则刚存完还挂着
    * 「有未保存修改」，用户会以为自己白存了。
    */
   const [baseline, setBaseline] = useState('');
   /** 有未保存改动：只有这时才拦离开。 */
-  const dirty = draft !== null && JSON.stringify(draft) !== baseline;
+  const dirty = draft !== null && authoredFingerprint(draft) !== baseline;
 
   /** 进入编辑：设草稿并把当前内容记成基线。 */
   const openDraft = (next: TemplateSpecIn) => {
     setDraft(next);
-    setBaseline(JSON.stringify(next));
+    setBaseline(authoredFingerprint(next));
   };
 
   const [picker, setPicker] = useState<PickTarget | null>(null);

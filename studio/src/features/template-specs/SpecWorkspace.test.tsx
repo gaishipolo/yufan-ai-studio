@@ -412,4 +412,18 @@ describe('模板封装 · 未保存就离开', () => {
     window.dispatchEvent(event);
     expect(event.defaultPrevented).toBe(true);
   });
+
+  /* 「点着玩、什么都没改」的典型路径：把绑定切到「已固定」再切回来。
+     `SlotCard` 切回「用户填」时会写 `assetId: null`，而 `blankSlot()` 不带
+     这个键 —— 比 JSON 形状就会永远判成「有改动」，明明一个字都没改。 */
+  it('切到「已固定」再切回「用户填」：内容没变，不该弹确认', async () => {
+    const user = await enterEditor();
+
+    await user.click(screen.getByRole('button', { name: '已固定' }));
+    await user.click(screen.getByRole('button', { name: '用户填' }));
+    await user.click(screen.getByRole('button', { name: '返回模板列表' }));
+
+    expect(screen.queryByRole('dialog', { name: '还有未保存的修改' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '新建模板' })).toBeInTheDocument();
+  });
 });
