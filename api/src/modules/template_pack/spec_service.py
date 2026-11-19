@@ -174,6 +174,9 @@ def _spec_out(
                 allowed_models=list(latest.allowed_models or []),
                 params=dict(latest.params or {}),
                 prompt=latest.prompt,
+                # 前端判「随机档可不可选」只看这一个字段（`hasRandomPrompt`）。
+                # 漏映射时它的表现是**永远空**，于是模板明明配了，档位却置灰。
+                random_prompt=latest.random_prompt or "",
                 slots=[_slot_out(slot) for slot in slots],
                 fingerprint=latest.fingerprint,
                 published_by=latest.published_by,

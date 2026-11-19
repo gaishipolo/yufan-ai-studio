@@ -15,6 +15,30 @@ def _publish(client: TestClient, headers: dict[str, str], draft: dict) -> None:
     assert response.status_code == 200, response.text
 
 
+def test_random_prompt_is_exposed_in_the_out(client: TestClient) -> None:
+    """前端判「随机档可不可选」只看接口里的 `latest.randomPrompt`。
+
+    这条钉的是「**存了要能读出来**」：出参构造里漏映射时，库里和草稿里都有值，
+    接口却永远返回空串 —— 模板明明配了、发布了，档位还是灰的，而且看不出为什么。
+    只测 compile 抓不到这个（compile 直接读 ORM 行，不经过出参）。
+    """
+    headers = _headers(client)
+    video, first, second = _media(client, headers)
+    draft = _draft(video, first, second, randomPrompt="夜景版：换成 {{slot:hero}}")
+    _save(client, headers, draft)
+    _publish(client, headers, draft)
+
+    body = client.get(f"{API}/{draft['key']}", headers=headers)
+    assert body.status_code == 200, body.text
+    latest = body.json()["data"]["latest"]
+    assert latest["randomPrompt"] == "夜景版：换成 {{slot:hero}}"
+
+    # 列表接口走同一个 `_spec_out`，也顺带确认一遍（前端用的是列表）
+    listed = client.get(API, params={"limit": 50}, headers=headers).json()["data"]["items"]
+    mine = next(item for item in listed if item["key"] == draft["key"])
+    assert mine["latest"]["randomPrompt"] == "夜景版：换成 {{slot:hero}}"
+
+
 def test_random_prompt_replaces_the_whole_prompt(client: TestClient) -> None:
     """随机档是**整段替换**，不是追加：主提示词的段落一个字都不该留下。"""
     headers = _headers(client)
