@@ -30,7 +30,7 @@ const h = vi.hoisted(() => ({
       {
         group: '内容生产',
         items: [
-          { code: 'task:read', name: '查看任务', description: '' },
+          { code: 'task:read', name: '查看任务', description: '查看任务列表与任务详情' },
           { code: 'task:create', name: '创建任务', description: '' },
           { code: 'library:read', name: '查看资产库', description: '' },
           { code: 'export:read', name: '查看导出', description: '' },
@@ -169,5 +169,56 @@ describe('PermissionPicker 的两层结构', () => {
 
     expect(screen.queryByText(/页面权限 · 决定能看见哪一页/)).not.toBeInTheDocument();
     expect(screen.getByText(/接口权限 · 决定能做什么/)).toBeInTheDocument();
+  });
+
+  it('页面名完整显示，不被截断（曾经「模板封装」被截成「模…」）', () => {
+    renderPicker([]);
+
+    const name = screen.getByRole('checkbox', { name: '任务中心 页面权限' })
+      .closest('li')
+      ?.querySelector('span.font-medium');
+
+    expect(name?.textContent).toContain('任务中心');
+    // 截断是 CSS 层面的（truncate → text-overflow + ellipsis），
+    // 断言类名比断言像素更可靠：像素要布局引擎，类名是意图。
+    expect(name?.className).not.toMatch(/truncate/);
+  });
+
+  it('页面名与权限码分行：码和路由不再挤占名称的宽度', () => {
+    renderPicker([]);
+
+    const item = screen.getByRole('checkbox', { name: '任务中心 页面权限' }).closest('li');
+    // 权限码与路由在名称之外的一行里
+    expect(within(item as HTMLElement).getByText('page:task-center')).toBeInTheDocument();
+    expect(within(item as HTMLElement).getByText('/tasks')).toBeInTheDocument();
+  });
+
+  it('接口说明最多两行，完整说明留在 title 里（行高参差会让人找不到下一项）', () => {
+    renderPicker([]);
+
+    const desc = screen.getByText('查看任务列表与任务详情');
+    expect(desc.className).toMatch(/line-clamp-2/);
+    expect(desc.getAttribute('title')).toBe('查看任务列表与任务详情');
+  });
+
+  it('搜索框能按接口名或权限码过滤', async () => {
+    const user = userEvent.setup();
+    renderPicker([]);
+
+    await user.type(screen.getByLabelText('搜索接口权限'), '导出');
+
+    // 命中的还在
+    expect(screen.getByRole('checkbox', { name: '查看导出 接口权限' })).toBeInTheDocument();
+    // 不相关的被过滤掉
+    expect(screen.queryByRole('checkbox', { name: '查看任务 接口权限' })).not.toBeInTheDocument();
+  });
+
+  it('搜不到时给出明确提示', async () => {
+    const user = userEvent.setup();
+    renderPicker([]);
+
+    await user.type(screen.getByLabelText('搜索接口权限'), 'zzz不存在');
+
+    expect(screen.getByText('没有匹配的接口权限')).toBeInTheDocument();
   });
 });

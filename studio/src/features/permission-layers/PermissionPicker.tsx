@@ -1,5 +1,5 @@
-import { useMemo } from 'react';
-import { Layers3, Loader2, Plug } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { Layers3, Loader2, Plug, Search } from 'lucide-react';
 import { Chip } from '@/shared/ui';
 import { usePermissionCatalog } from '@/entities/role/api/role.queries';
 import { cn } from '@/shared/lib/cn';
@@ -90,6 +90,9 @@ export function PermissionPicker({
     if (forbidden?.(code)) return;
     onChange(selected.includes(code) ? selected.filter((item) => item !== code) : [...selected, code]);
   };
+
+  // 右栏的搜索词。权限点有几十个，靠滚列表找某一个太费劲。
+  const [keyword, setKeyword] = useState('');
 
   const toggleMany = (codes: string[], on: boolean) => {
     const next = new Set(selected);
@@ -195,13 +198,13 @@ export function PermissionPicker({
                   <label
                     title={blocked ? forbiddenHint : undefined}
                     className={cn(
-                      'flex items-center gap-2',
+                      'flex items-start gap-2',
                       blocked ? 'cursor-not-allowed' : 'cursor-pointer',
                     )}
                   >
                     <input
                       type="checkbox"
-                      className="h-3 w-3 shrink-0 accent-primary"
+                      className="mt-[3px] h-3 w-3 shrink-0 accent-primary"
                       checked={checked}
                       disabled={blocked}
                       onChange={() => toggle(page.code)}
@@ -209,32 +212,38 @@ export function PermissionPicker({
                          又出现在接口的归属提示里），只靠可见文字取元素会撞车 */
                       aria-label={`${page.name} 页面权限`}
                     />
-                    <span className="min-w-0 flex-1 truncate text-xs font-medium text-ink">
+                    {/* 名称独占一行。曾经把「名称 + 已有来源 + 权限码 + 路由」挤在
+                        一行里，结果「模板封装」「用户与权限」被 truncate 截成
+                        「模…」「用…」——权限码和路由本来就是次要信息，
+                        让位给名称才是对的。 */}
+                    <span className="min-w-0 flex-1 text-xs font-medium text-ink">
                       {page.name}
+                      {inherited?.[page.code] ? (
+                        <span
+                          className="ml-1.5 text-meta font-normal text-ink-mute"
+                          title="别的层已经授予这一页；本层取消勾选不会收回它"
+                        >
+                          已有 · {inherited[page.code].join('、')}
+                        </span>
+                      ) : null}
                     </span>
-                    {inherited?.[page.code] ? (
-                      <span
-                        className="shrink-0 text-meta text-ink-mute"
-                        title="别的层已经授予这一页；本层取消勾选不会收回它"
-                      >
-                        已有 · {inherited[page.code].join('、')}
-                      </span>
-                    ) : null}
-                    <Chip className="shrink-0">{page.code}</Chip>
-                    {page.route ? (
-                      <span className="shrink-0 text-meta text-ink-mute">{page.route}</span>
-                    ) : null}
                   </label>
+                  <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 pl-5">
+                    <Chip>{page.code}</Chip>
+                    {page.route ? (
+                      <span className="text-meta text-ink-mute">{page.route}</span>
+                    ) : null}
+                  </div>
                   {requires.length > 0 ? (
                     <p
-                      className="mt-1 truncate pl-5 text-meta text-ink-mute"
+                      className="mt-0.5 pl-5 text-meta text-ink-mute"
                       title={requires.map((code) => nameOf.get(code) ?? code).join('、')}
                     >
                       关联 {requires.length} 个接口：{shown.join('、')}
                       {hidden > 0 ? ` 等 ${requires.length} 个` : ''}
                     </p>
                   ) : (
-                    <p className="mt-1 pl-5 text-meta text-ink-mute">无关联接口</p>
+                    <p className="mt-0.5 pl-5 text-meta text-ink-mute">无关联接口</p>
                   )}
                 </li>
               );
@@ -245,13 +254,32 @@ export function PermissionPicker({
 
       {/* ---------------- 右栏：接口 ---------------- */}
       <section className="flex min-w-0 flex-col rounded-lg border border-line-soft">
-        <header className="flex items-center gap-2 border-b border-line-soft bg-panel-soft px-2.5 py-1.5">
+        <header className="flex flex-wrap items-center gap-2 border-b border-line-soft bg-panel-soft px-2.5 py-1.5">
           <Plug size={13} className="text-primary" />
           <h3 className="text-xs font-semibold text-ink-soft">接口权限 · 决定能做什么</h3>
+          <div className="ml-auto flex items-center gap-1.5">
+            <Search size={12} className="text-ink-mute" />
+            <input
+              type="search"
+              value={keyword}
+              onChange={(event) => setKeyword(event.target.value)}
+              placeholder="搜接口名或权限码"
+              aria-label="搜索接口权限"
+              className="w-40 rounded border border-line-soft bg-panel px-1.5 py-0.5 text-meta text-ink outline-none placeholder:text-ink-mute focus:border-primary-soft"
+            />
+          </div>
         </header>
         <div className="max-h-[56vh] space-y-3 overflow-auto p-2.5">
           {apiGroups.map((group) => {
-            const codes = group.items.map((item) => item.code);
+            const items = group.items.filter((item) => {
+              if (!keyword.trim()) return true;
+              const kw = keyword.trim().toLowerCase();
+              return (
+                item.name.toLowerCase().includes(kw) || item.code.toLowerCase().includes(kw)
+              );
+            });
+            if (items.length === 0) return null;
+            const codes = items.map((item) => item.code);
             const selectable = codes.filter((code) => !forbidden?.(code));
             const allChecked =
               selectable.length > 0 && selectable.every((code) => selected.includes(code));
@@ -270,7 +298,7 @@ export function PermissionPicker({
                   </button>
                 </div>
                 <ul className="grid gap-1 md:grid-cols-2">
-                  {group.items.map((item) => {
+                  {items.map((item) => {
                     const checked = selected.includes(item.code);
                     const blocked = Boolean(forbidden?.(item.code));
                     const owners = pagesByApi.get(item.code) ?? [];
@@ -316,7 +344,12 @@ export function PermissionPicker({
                               <Chip>{item.code}</Chip>
                             </span>
                             {item.description ? (
-                              <span className="mt-0.5 block text-meta leading-[1.5] text-ink-mute">
+                              /* 两行封顶：有的说明写了三行，整列行高就参差不齐，
+                                 扫读时找不到下一项在哪。完整说明留在 title 里。 */
+                              <span
+                                className="mt-0.5 block text-meta leading-[1.5] text-ink-mute line-clamp-2"
+                                title={item.description}
+                              >
                                 {item.description}
                               </span>
                             ) : null}
@@ -336,7 +369,10 @@ export function PermissionPicker({
                                       .join('、')}{' '}
                                     管
                                   </span>
-                                  <span className={gated ? 'text-danger' : 'text-primary'}>
+                                  {/* 「已生效」是常态，不该用主色刷屏 ——
+                                      真正需要看见的是「当前未生效」那个例外。
+                                      所以常态走中性色，例外才用危险色。 */}
+                                  <span className={gated ? 'text-danger' : 'text-ink-mute'}>
                                     {gated ? '· 当前未生效' : '· 已生效'}
                                   </span>
                                 </>
@@ -351,6 +387,19 @@ export function PermissionPicker({
               </div>
             );
           })}
+          {keyword.trim() &&
+          apiGroups.every(
+            (group) =>
+              group.items.filter(
+                (item) =>
+                  item.name.toLowerCase().includes(keyword.trim().toLowerCase()) ||
+                  item.code.toLowerCase().includes(keyword.trim().toLowerCase()),
+              ).length === 0,
+          ) ? (
+            <p className="py-6 text-center text-xs text-ink-mute">
+              没有匹配的接口权限
+            </p>
+          ) : null}
         </div>
       </section>
       </div>
