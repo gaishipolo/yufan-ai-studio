@@ -11,6 +11,13 @@ export interface SegmentedProps<T extends string = string> {
   onChange: (value: T) => void;
   /** 每个选项的语义说明，作为 `title` 挂在按钮上（悬浮才看得到）。 */
   hints?: Partial<Record<T, string>>;
+  /**
+   * 不可选的项。**仍然显示**（用户要知道有这个档），但点不动。
+   *
+   * 与「干脆不渲染这一项」的区别：不渲染等于这个能力不存在，用户不会去问
+   * 「为什么别人有我没有」；显示但禁用才需要一句原因，否则就是一个死按钮。
+   */
+  disabledValues?: readonly T[];
   className?: string;
   /** 无障碍标签 */
   'aria-label'?: string;
@@ -32,6 +39,7 @@ export function Segmented<T extends string = string>({
   value,
   onChange,
   hints,
+  disabledValues,
   className,
   'aria-label': ariaLabel,
 }: SegmentedProps<T>) {
@@ -47,12 +55,15 @@ export function Segmented<T extends string = string>({
       {options.map(option => {
         const active = option.value === value;
         const hint = hints?.[option.value];
+        const disabled = disabledValues?.includes(option.value) ?? false;
         return (
           <button
             key={option.value}
             type="button"
             role="radio"
             aria-checked={active}
+            aria-disabled={disabled || undefined}
+            disabled={disabled}
             title={hint}
             onClick={() => onChange(option.value)}
             className={cn(
@@ -60,6 +71,7 @@ export function Segmented<T extends string = string>({
               active
                 ? 'bg-panel font-semibold text-ink shadow-[0_1px_3px_rgba(16,42,55,.12)]'
                 : 'text-ink-mute hover:text-ink-soft',
+              disabled && 'cursor-not-allowed opacity-45 hover:text-ink-mute',
             )}
           >
             {option.label}

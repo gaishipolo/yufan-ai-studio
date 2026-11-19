@@ -33,6 +33,8 @@ export function PromptBox({
   chips,
   onChange,
   onInsert,
+  placeholder = '写提示词；打 @ 可以直接选槽位',
+  ariaLabel = '提示词',
 }: {
   value: string;
   chips: PromptChip[];
@@ -40,6 +42,9 @@ export function PromptBox({
   onChange: (text: string) => void | boolean;
   /** 程序写入引用后的回调（chip 按钮 / `@` 提及 / 粘贴共用）。 */
   onInsert: (text: string) => void | boolean;
+  /** 占位符：同一组件在两处用时，只有它该说清「这一格是干什么的」。 */
+  placeholder?: string;
+  ariaLabel?: string;
 }) {
   /* 下方 chip 按钮插入引用：插到当前光标处（`@` 提及是另一条路，两者等价）。
      光标位置由输入框自己记着（父组件拿不到），所以走它的 imperative handle。 */
@@ -64,8 +69,8 @@ export function PromptBox({
         ref={boxRef}
         value={value}
         candidates={candidates}
-        aria-label="提示词"
-        placeholder="写提示词；打 @ 可以直接选槽位"
+        aria-label={ariaLabel}
+        placeholder={placeholder}
         className="rounded-xl px-3 py-2.5"
         onChange={onChange}
         onInsert={onInsert}

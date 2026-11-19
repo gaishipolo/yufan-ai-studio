@@ -90,7 +90,7 @@ const LIBTV = {
   },
 };
 
-/** 带「必填 + 可选」的模板；可选槽位配了两条随机文案。 */
+/** 带「必填 + 可选」的模板；作者另写了一段随机档提示词。 */
 const SPEC: TemplateSpecOut = {
   id: 's1',
   key: 'product-replace',
@@ -109,6 +109,7 @@ const SPEC: TemplateSpecOut = {
     allowedModels: [],
     params: {durationSec: 5},
     prompt: '把原片里的商品换成 {{Mixed 1}}',
+    randomPrompt: '夜景版：把原片里的商品换成 {{Mixed 1}}，霓虹灯打亮',
     slots: [
       {
         key: 'hero',
@@ -128,7 +129,6 @@ const SPEC: TemplateSpecOut = {
         label: '参考图',
         tagIds: ['tag-copy'],
         emptyText: '详细的场景描述',
-        randomTexts: ['白天的庭院', '夜晚的街道'],
       },
     ],
   },
@@ -194,7 +194,7 @@ describe('模板库 · 随机性三档', () => {
     expect(screen.queryByText('参考图')).not.toBeInTheDocument();
   });
 
-  it('随机档：可选槽位同样不出现（不传素材，改用随机文案）', async () => {
+  it('随机档：可选槽位同样不出现（不传素材，整段用随机档提示词）', async () => {
     const user = userEvent.setup();
     renderLibrary();
     await waitFor(() => expect(screen.getByText('商品图')).toBeInTheDocument());
@@ -210,7 +210,7 @@ describe('模板库 · 随机性三档', () => {
     expect(screen.getByText('参考图')).toBeInTheDocument();
   });
 
-  it('随机档提交：不传可选槽位素材，但传抽中的文案下标', async () => {
+  it('随机档提交：不传可选槽位素材，但要后端换成随机档提示词', async () => {
     const user = userEvent.setup();
     renderLibrary();
     await waitFor(() => expect(screen.getByText('商品图')).toBeInTheDocument());
@@ -223,20 +223,19 @@ describe('模板库 · 随机性三档', () => {
     const payload = await submitPayload(user);
     expect(payload.slotValues.hero).toContain('a1');
     expect(payload.slotValues.copy).toBeUndefined();
-    expect(payload.randomTextChoices.copy).toBeGreaterThanOrEqual(0);
-    expect(payload.randomTextChoices.copy).toBeLessThan(2);
+    expect(payload.useRandomPrompt).toBe(true);
   });
 
-  it('均衡档提交：不传文案下标，走固定文案', async () => {
+  it('均衡档提交：不换提示词，走主提示词', async () => {
     const user = userEvent.setup();
     renderLibrary();
     await waitFor(() => expect(screen.getByText('商品图')).toBeInTheDocument());
     await user.click(await screen.findByTitle('商品图.png'));
     const payload = await submitPayload(user);
-    expect(payload.randomTextChoices).toEqual({});
+    expect(payload.useRandomPrompt).toBe(false);
   });
 
-  it('自定义档提交：传使用者挑的可选素材，不传文案下标', async () => {
+  it('自定义档提交：传使用者挑的可选素材，不换提示词', async () => {
     const user = userEvent.setup();
     renderLibrary();
     await waitFor(() => expect(screen.getByText('商品图')).toBeInTheDocument());
@@ -245,7 +244,7 @@ describe('模板库 · 随机性三档', () => {
     // 可选槽位也挑一张（参考图一，与 hero 的候选分开）
     await user.click(await screen.findByTitle('参考图一.png'));
     const payload = await submitPayload(user);
-    expect(payload.randomTextChoices).toEqual({});
+    expect(payload.useRandomPrompt).toBe(false);
     expect(payload.slotValues.copy).toContain('r1');
   });
 
@@ -282,18 +281,21 @@ describe('模板库 · 全是必填槽位时', () => {
     expect(screen.getByRole('radiogroup', {name: '随机性'})).toBeInTheDocument();
   });
 
-  it('没有可选槽位时，随机档提交的文案下标是空的', async () => {
-    const user = userEvent.setup();
+  it('模板没配随机档提示词时，随机档置灰并写出原因', async () => {
     specState.current = {
       ...SPEC,
-      latest: {...SPEC.latest!, slots: [SPEC.latest!.slots[0]]},
+      latest: {...SPEC.latest!, randomPrompt: ''},
     };
     renderLibrary();
     await waitFor(() => expect(screen.getByText('商品图')).toBeInTheDocument());
-    await switchTo(user, '随机');
-    await user.click(await screen.findByTitle('商品图.png'));
-    const payload = await submitPayload(user);
-    expect(payload.randomTextChoices).toEqual({});
+
+    const random = within(screen.getByRole('radiogroup', {name: '随机性'})).getByRole(
+      'radio',
+      {name: '随机'},
+    );
+    expect(random).toBeDisabled();
+    // 死按钮必须给原因：只说"不可用"等于让用户去猜是不是坏了
+    expect(screen.getByText(/未配置随机档提示词/)).toBeInTheDocument();
   });
 });
 
@@ -309,6 +311,9 @@ describe('模板库 · 被索引引用的例外槽位', () => {
       latest: {
         ...SPEC.latest!,
         prompt: '把 {{slot:copy.1}} 里的东西换成 {{Mixed 1}}',
+        /* 随机档用的是**另一段**提示词，所以「钉住」要在那一段里也有 ——
+           只看主提示词会误以为随机档可以省掉它。 */
+        randomPrompt: '夜景：把 {{slot:copy.1}} 里的东西换成 {{Mixed 1}}',
         slots: SPEC.latest!.slots,
       },
     };
@@ -334,5 +339,27 @@ describe('模板库 · 被索引引用的例外槽位', () => {
     await waitFor(() => expect(screen.getByText('商品图')).toBeInTheDocument());
     await switchTo(userEvent.setup(), '随机');
     expect(screen.queryByText('参考图')).not.toBeInTheDocument();
+  });
+
+  /* 判别点：两段提示词的「钉住」是**各算各的**。主提示词没引用、随机档那段
+     引用了 → 随机档下这张必须显示（不显示就会在编译期 400）。
+     拿主提示词统一判断的写法，会在这里把槽位误藏。 */
+  it('只有随机档那段钉住时，切到随机档要显示该槽位', async () => {
+    const user = userEvent.setup();
+    specState.current = {
+      ...SPEC,
+      latest: {
+        ...SPEC.latest!,
+        prompt: '把原片里的商品换成 {{Mixed 1}}',
+        randomPrompt: '夜景：把 {{slot:copy.1}} 里的东西换掉',
+        slots: SPEC.latest!.slots,
+      },
+    };
+    renderLibrary();
+    await waitFor(() => expect(screen.getByText('商品图')).toBeInTheDocument());
+    expect(screen.queryByText('参考图')).not.toBeInTheDocument();
+
+    await switchTo(user, '随机');
+    expect(screen.getByText('参考图')).toBeInTheDocument();
   });
 });

@@ -1,32 +1,33 @@
 /**
  * 模板库右栏的「随机性」三档。
  *
- * | 档 | 可选槽位 | 提示词里这一段怎么说 |
+ * | 档 | 可选槽位 | 提示词用哪一段 |
  * |---|---|---|
- * | **随机** | 不显示、不传素材 | 作者在封装页给可选槽位配的**多条随机文案**，前端抽一条注入 |
- * | **均衡**（默认） | **不显示** | 可选槽位用「未选时文案」（让给模型） |
- * | **自定义** | 显示 | 使用者挑素材，或用「未选时文案」 |
+ * | **随机** | 不显示、不传素材 | 作者在封装页另写的**随机档提示词**（整段替换） |
+ * | **均衡**（默认） | **不显示** | 主提示词，可选槽位用「未选时文案」（让给模型） |
+ * | **自定义** | 显示 | 主提示词，使用者自己挑素材 |
  *
  * **必填槽位在三档下都显示、都要使用者自己填** —— 必填意味着「不给素材
  * 就生成不了」，任何一档把它藏起来都等于让人卡死在界面上。三档的差别
  * **只在可选槽位**。
  *
- * ## 「随机」与「均衡」的差别只在文案来源
+ * ## 「随机」与「均衡」的差别只在用哪段提示词
  *
  * 两档的可选槽位都**不显示、不传素材**（使用者没有可挑的）—— 差别是：
- * 均衡用作者写的那一段「未选时文案」（每次都一样），随机从作者配的
- * **多条随机文案**里抽一段（每次可能不同，场景描述不固定，视频才不千篇一律）。
+ * 均衡用主提示词，随机整段换成作者写的随机档提示词（场景描述完全不同，
+ * 视频才不千篇一律）。
  *
- * 随机由**前端**抽：compile 是纯函数（同一入参同一输出），所以前端把抽中的
- * 文案下标作为入参传给后端，后端只按选择展开，不自己掷骰子。
+ * 切换发生在后端：前端只传 `useRandomPrompt`。**选哪一段**是使用者的决定，
+ * 但两段都是**确定的文字**，所以 `compile` 仍然是纯函数（同一入参同一输出）。
+ *
+ * 模板没配随机档提示词时这一档不可选 —— 判据见 `hasRandomPrompt`。
  *
  * ## 判据只有一处：`minCount === 0` 就是可选
  *
  * 与封装页的开关、后端 `compile.py` 的 `slot.min_count == 0` 同一口径。
  */
-import type {SpecSlotOut} from '@/shared/api/schema';
+import type {SpecSlotOut, SpecVersionOut} from '@/shared/api/schema';
 import {balancedPinnedKeys} from './slotIndexRefs';
-import {seededRandom} from './randomPick';
 
 export type RandomnessMode = 'random' | 'balanced' | 'custom';
 
@@ -89,36 +90,37 @@ export function suppressedSlotKeys(
     .map(slot => slot.key);
 }
 
-/**
- * 「随机」档：为每个**有随机文案的可选槽位**抽一段，返回 `{槽位key: 文案下标}`。
- *
- * - 只有随机档才调用；其它档不传 `randomTextChoices`，后端走既有逻辑。
- * - 被提示词「第 N 张」钉住的槽位不抽（它要传素材，不走文案）；与
- *   `suppressedSlotKeys` 同一判据，两边必须一致，否则一个抽了文案一个传了素材。
- * - 用 `seed` 造可复现随机源：渲染路径上不能有裸 `Math.random`，否则每次
- *   重渲染都重新抽，用户看到文案跳变。种子不变结果不变，种子变才是「再抽一次」。
- * - 只有一段文案的槽位也返回 `0`：后端会取那唯一一段，语义就是「用它」。
- */
-export function pickRandomTextChoices(
-  slots: SpecSlotOut[],
-  prompt: string,
-  seed: number,
-): Record<string, number> {
-  const rand = seededRandom(seed);
-  const pinned = balancedPinnedKeys(prompt, slots);
-  const choices: Record<string, number> = {};
-  for (const slot of slots) {
-    if (!isOptionalSlot(slot) || pinned.includes(slot.key)) continue;
-    const texts = (slot.randomTexts ?? []).filter(text => text.trim() !== '');
-    if (texts.length === 0) continue;
-    // 用同一个 rand 顺序取，保证种子固定时整组结果可复现。
-    choices[slot.key] = Math.min(texts.length - 1, Math.floor(rand() * texts.length));
-  }
-  return choices;
-}
-
 /** 手动挑的素材：`undefined` = 使用者没动过（随机/均衡档下由系统决定）。 */
 export type ManualSlotValues = Record<string, string[] | undefined>;
+
+/**
+ * 这个模板能不能选「随机」档。
+ *
+ * 只看**已发布版本**有没有那一段：草稿里写了但没发版，使用者拿到的仍是旧
+ * 版本，选随机档会被后端 400。前端据此把档位置灰并说明原因 —— 让用户点得到
+ * 一个必然失败的档，比不给这个档更糟。
+ */
+export function hasRandomPrompt(
+  version: Pick<SpecVersionOut, 'randomPrompt'> | null | undefined,
+): boolean {
+  return Boolean(version?.randomPrompt?.trim());
+}
+
+/**
+ * 使用者选的档位 → **实际生效**的档位。
+ *
+ * 唯一的分支：选了随机档、但这个模板没配那一段 → 按默认档走。
+ *
+ * 为什么用派生而不是在 effect 里改 state：换模板时 state 可能还停在 `random`，
+ * 而新模板没配。effect 同步中间有一个渲染窗口，那期间界面显示「随机」、
+ * 提交也会带上那个标记，后端 400；派生让两者永远一致。
+ */
+export function resolveRandomness(
+  chosen: RandomnessMode,
+  version: Pick<SpecVersionOut, 'randomPrompt'> | null | undefined,
+): RandomnessMode {
+  return chosen === 'random' && !hasRandomPrompt(version) ? DEFAULT_RANDOMNESS : chosen;
+}
 
 /**
  * 真正提交给后端的素材 = 手动挑的，剔除这一档不该传的。

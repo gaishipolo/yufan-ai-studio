@@ -79,6 +79,7 @@ def to_core(payload: TemplateSpecIn) -> TemplateSpec:
         allowed_models=tuple(payload.allowed_models),
         params=dict(payload.params),
         prompt=payload.prompt,
+        random_prompt=payload.random_prompt,
         slots=tuple(
             InputSlot(
                 key=slot.key,
@@ -92,7 +93,6 @@ def to_core(payload: TemplateSpecIn) -> TemplateSpec:
                 tag_ids=tuple(slot.tag_ids),
                 filled_text=slot.filled_text,
                 empty_text=slot.empty_text,
-                random_texts=tuple(slot.random_texts),
                 position=slot.position,
             )
             for slot in payload.slots
@@ -142,7 +142,6 @@ def _slot_out(row: TemplateSpecSlot) -> SpecSlotOut:
         tag_ids=_slot_tag_ids(row),
         filled_text=row.filled_text or "",
         empty_text=row.empty_text or "",
-        random_texts=list(row.random_texts or []),
         position=row.position,
     )
 
@@ -290,8 +289,15 @@ def _check_optional_slots_have_fallback(spec: TemplateSpec) -> None:
 
     只看**被引用**的可选槽位：没被引用的槽位填不填都不影响提示词，
     要求它写兜底文案是白加一步。
+
+    **两段提示词一起看**：随机档用 `random_prompt` 整段替换主提示词，而随机档
+    同样不传可选素材 —— 只在主提示词上查，会放行「随机档引用了可选槽位却没写
+    兜底」的模板，使用者只在切到随机档那一次被 400 打回。
     """
     modes = slot_ref_modes(spec.prompt)
+    if spec.random_prompt.strip():
+        for key, ref_modes in slot_ref_modes(spec.random_prompt).items():
+            modes.setdefault(key, set()).update(ref_modes)
     missing = [
         slot.label.strip() or slot.key
         for slot in spec.slots
@@ -530,6 +536,7 @@ async def publish(session: AsyncSession, actor: CurrentUser, key: str) -> SpecPu
         allowed_models=list(spec.allowed_models),
         params=dict(spec.params),
         prompt=spec.prompt,
+        random_prompt=spec.random_prompt,
         fingerprint=fingerprint,
         published_by=actor.id,
     )
@@ -553,7 +560,6 @@ async def publish(session: AsyncSession, actor: CurrentUser, key: str) -> SpecPu
                 tag_id=slot.tag_ids[0] if slot.tag_ids else "",
                 filled_text=slot.filled_text,
                 empty_text=slot.empty_text,
-                random_texts=list(slot.random_texts),
                 position=slot.position,
             )
         )
@@ -769,12 +775,20 @@ async def compile_for(
         allowed_models=allowed,
         params=dict(row.params or {}),
         prompt=row.prompt,
+        random_prompt=row.random_prompt or "",
         slots=tuple(_slot_core(item) for item in slots),
     )
-    # 「随机」档：前端已抽好每个可选槽位用哪段文案，这里只按选择展开。
-    # 放在 compile_spec **之前**改 spec（而不是改 compile），编译核心因此保持
-    # 纯函数：同一 (spec, fills) 必得同一结果，随机性被隔离在 service 层。
-    spec = _apply_random_texts(spec, payload.random_text_choices)
+    # 「随机」档：整段替换成作者写的随机档提示词。放在 compile_spec **之前**
+    # 改 spec（而不是改 compile），编译核心因此保持纯函数：同一 (spec, fills)
+    # 必得同一结果。
+    #
+    # 没配就**拒绝**，不静默回退主提示词 —— 回退的样子是「随机档和均衡档出来
+    # 一模一样」，使用者会以为随机坏了却查不出原因。前端也会把这一档置灰，
+    # 这里是最后一道。
+    if payload.use_random_prompt:
+        if not spec.random_prompt.strip():
+            raise BadRequest("该模板未配置随机档提示词，不能用随机档生成")
+        spec = replace(spec, prompt=spec.random_prompt)
     fills = await _fills(session, actor, spec, payload.slot_values)
     compiled = compile_spec(spec, fills)
     # 使用者对「运行时参数」的选择（计费模式等）：只在编译结果里生效，
@@ -848,52 +862,8 @@ def _slot_core(row: TemplateSpecSlot) -> InputSlot:
         tag_ids=tuple(_slot_tag_ids(row)),
         filled_text=row.filled_text or "",
         empty_text=row.empty_text or "",
-        random_texts=tuple(row.random_texts or []),
         position=row.position,
     )
-
-
-def _apply_random_texts(
-    spec: TemplateSpec, choices: Mapping[str, int]
-) -> TemplateSpec:
-    """把「随机」档抽中的文案替换进槽位的 `empty_text`，再交给纯函数编译。
-
-    `choices` 是 `{slotKey: 选中的文案下标}`，由前端抽好后传入。随机性因此不在
-    编译核心里：`compile_spec` 看到的始终是一个**确定**的 spec。
-
-    三处硬校验，都不静默降级 —— 静默退回 `empty_text` 会让用户以为随机生效了，
-    其实每次都是同一段「未选时文案」，而这类错在生成结果里才显形：
-
-    1. key 必须是可选槽位（`min_count == 0`）且确实配了随机文案；
-    2. 下标必须是合法非负整数且在文案列表范围内；
-    3. 文案非空（空行不该被抽中）。
-    """
-    if not choices:
-        return spec
-    slots: list[InputSlot] = []
-    for slot in spec.slots:
-        if slot.key not in choices:
-            slots.append(slot)
-            continue
-        index = choices[slot.key]
-        texts = slot.random_texts
-        if slot.min_count != 0 or not texts:
-            raise BadRequest(
-                f"槽位「{slot.label.strip() or slot.key}」没有可用的随机文案"
-            )
-        if isinstance(index, bool) or not isinstance(index, int) or not 0 <= index < len(texts):
-            raise BadRequest(
-                f"槽位「{slot.label.strip() or slot.key}」的随机文案下标越界：{index}"
-            )
-        chosen = texts[index].strip()
-        if not chosen:
-            raise BadRequest(
-                f"槽位「{slot.label.strip() or slot.key}」抽中的随机文案是空的"
-            )
-        # 随机文案走 `empty_text` 的通道展开：随机档不传素材，正是「没填素材」
-        # 这个状态。复用同一套展开逻辑（含"不许引用槽位"的校验已覆盖 random_texts）。
-        slots.append(replace(slot, empty_text=chosen))
-    return replace(spec, slots=tuple(slots))
 
 
 async def _fills(

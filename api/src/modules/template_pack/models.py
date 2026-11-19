@@ -125,6 +125,11 @@ class TemplateSpecVersion(Base, UUIDMixin):
     #: 整段提示词。**不分固定段 / 可编辑段**（2026-11-14）：模板库不改文字，
     #: 需要可变的地方用 `text` 槽位（编译成 `{{Text N}}` 由执行层注入正文）。
     prompt: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    #: 「随机」档用的整段提示词。空 = 该模板不支持随机档（前端把档位置灰）。
+    #:
+    #: 为什么进发布快照：它和使用者的「随机档」选择直接相关，跟着版本走才对 ——
+    #: 草稿改了随机档提示词但没发版，使用者拿到的应该还是已发布版本的那一段。
+    random_prompt: Mapped[str] = mapped_column(Text, default="", nullable=False)
     fingerprint: Mapped[str] = mapped_column(String(64), default="", nullable=False)
     published_by: Mapped[str] = mapped_column(String(32), default="", nullable=False)
     published_at: Mapped[datetime] = mapped_column(
@@ -174,10 +179,4 @@ class TemplateSpecSlot(Base, UUIDMixin):
     #: **未选时文案**：使用者没填素材时这一段怎么说（纯提示词，不含槽位引用）。
     #: 空 = 编译期报错（可选槽位且被引用时，发布闸门就会拦）。
     empty_text: Mapped[str] = mapped_column(String(2000), default="", nullable=False)
-    #: **随机文案**：可选槽位在「随机」档下的候选提示词（多条，至少一条）。
-    #: 使用者模板库选随机档时不传素材，由前端从这批文案里抽一条注入提示词 ——
-    #: 同一模板每次生成的场景描述不同，视频不至于千篇一律。纯提示词，
-    #: 与 `empty_text` 一样不许含槽位引用（没素材就没有编号可指）。
-    #: 只对可选槽位有意义；JSON 列存 list，与 `tag_ids` 同一种形状。
-    random_texts: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     position: Mapped[int] = mapped_column(Integer, nullable=False)

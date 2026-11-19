@@ -3,9 +3,10 @@ import type {SpecSlotOut} from '@/shared/api/schema';
 import {
   DEFAULT_RANDOMNESS,
   displaySlotValues,
+  hasRandomPrompt,
   isOptionalSlot,
   mergeSlotValues,
-  pickRandomTextChoices,
+  resolveRandomness,
   suppressedSlotKeys,
   visibleSlots,
 } from './randomness';
@@ -14,7 +15,7 @@ import {
  * 「随机性」三档的纯函数层。
  *
  * 这层的语义是整页唯一口径：右栏显示哪些槽位、真正提交什么素材、随机档
- * 抽哪段文案，全从这里出。任何别处再写一遍 `minCount === 0` 都会让界面
+ * 能不能选，全从这里出。任何别处再写一遍 `minCount === 0` 都会让界面
  * 与提交内容对不上（而那种错只在生成结果里显形）。
  */
 
@@ -31,10 +32,10 @@ function slotOf(extra: Partial<SpecSlotOut> = {}): SpecSlotOut {
   };
 }
 
-/** 典型模板：1 必填 + 1 可选（配了随机文案）+ 1 固定。 */
+/** 典型模板：1 必填 + 1 可选 + 1 固定。 */
 const SLOTS: SpecSlotOut[] = [
   slotOf({key: 'hero', minCount: 1}),
-  slotOf({key: 'copy', minCount: 0, randomTexts: ['详细场景描述', '简单场景描述']}),
+  slotOf({key: 'copy', minCount: 0, emptyText: '详细场景描述'}),
   slotOf({key: 'source', binding: 'fixed', assetId: 'a9'}),
 ];
 
@@ -81,34 +82,34 @@ describe('randomness · 抑制传素材的槽位', () => {
   });
 });
 
-describe('randomness · 随机档抽文案', () => {
-  it('只抽有随机文案的可选槽位', () => {
-    const choices = pickRandomTextChoices(SLOTS, '', 1);
-    expect(Object.keys(choices)).toEqual(['copy']);
+describe('randomness · 随机档是否可选', () => {
+  it('已发布版本配了随机档提示词 → 可选', () => {
+    expect(hasRandomPrompt({randomPrompt: '夜景版提示词'})).toBe(true);
   });
 
-  it('下标落在文案范围内', () => {
-    for (const seed of [1, 2, 3, 99]) {
-      const choices = pickRandomTextChoices(SLOTS, '', seed);
-      expect(choices.copy).toBeGreaterThanOrEqual(0);
-      expect(choices.copy).toBeLessThan(2);
-    }
+  it('没配 / 只有空白 → 不可选（空白等于没写，后端也不认）', () => {
+    expect(hasRandomPrompt({randomPrompt: ''})).toBe(false);
+    expect(hasRandomPrompt({randomPrompt: '   \n '})).toBe(false);
+    expect(hasRandomPrompt({})).toBe(false);
+    expect(hasRandomPrompt(null)).toBe(false);
+    expect(hasRandomPrompt(undefined)).toBe(false);
+  });
+});
+
+describe('randomness · 档位回落到实际生效的那一档', () => {
+  /* 换模板后 state 可能还停在 `random`，而新模板没配那一段。派生写法让
+     「选中的档」与「提交标记」永远一致 —— 用 effect 同步会漏一个渲染窗口，
+     那期间提交会被后端 400。 */
+  it('选了随机、但模板没配 → 按默认档（均衡）走', () => {
+    expect(resolveRandomness('random', {randomPrompt: ''})).toBe('balanced');
+    expect(resolveRandomness('random', {})).toBe('balanced');
+    expect(resolveRandomness('random', null)).toBe('balanced');
   });
 
-  it('同一颗种子 → 同一份选择（渲染不跳变）', () => {
-    expect(pickRandomTextChoices(SLOTS, '', 42)).toEqual(
-      pickRandomTextChoices(SLOTS, '', 42),
-    );
-  });
-
-  it('没配随机文案的槽位不抽', () => {
-    const slots = [slotOf({key: 'copy', minCount: 0, randomTexts: []})];
-    expect(pickRandomTextChoices(slots, '', 1)).toEqual({});
-  });
-
-  it('只有一段文案时抽 0（后端取那唯一一段）', () => {
-    const slots = [slotOf({key: 'copy', minCount: 0, randomTexts: ['唯一一段']})];
-    expect(pickRandomTextChoices(slots, '', 7)).toEqual({copy: 0});
+  it('配了就是随机；另外两档不受影响', () => {
+    expect(resolveRandomness('random', {randomPrompt: '夜景版'})).toBe('random');
+    expect(resolveRandomness('balanced', {randomPrompt: ''})).toBe('balanced');
+    expect(resolveRandomness('custom', {randomPrompt: ''})).toBe('custom');
   });
 });
 

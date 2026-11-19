@@ -187,6 +187,7 @@ export function SpecWorkspace() {
   const clear = () => {
     setError('');
     setHint('');
+    setRandomHint('');
   };
 
   const fail = (reason: unknown) =>
@@ -314,6 +315,9 @@ export function SpecWorkspace() {
   const [view, setView] = useState<'list' | 'trash'>('list');
   const [error, setError] = useState('');
   const [hint, setHint] = useState('');
+  /* 两个提示词框各自一条提示：共用一个的话，在随机档那段里写错引用，
+     错误会显示在主提示词下面，作者会去改错的那一段。 */
+  const [randomHint, setRandomHint] = useState('');
   const patchSlot = (index: number, patch: Partial<SpecSlotIn>) => {
     if (!draft) return;
     const nextSlots = slots.slice();
@@ -444,10 +448,27 @@ export function SpecWorkspace() {
 
   const chips = draft ? referenceChips(draft) : [];
 
+  /* 随机档提示词：与主提示词**同一套**引用规则（都引用同一批槽位），
+     只是写进另一个字段。校验也要各管各的提示，见 `randomHint` 的注释。 */
+  const applyRandomPromptText = (text: string): boolean => {
+    if (!draft) return false;
+    const error = promptRefError(text, draft.slots ?? []);
+    if (error) {
+      setRandomHint(error);
+      return false;
+    }
+    setRandomHint('');
+    setDraft({...draft, randomPrompt: toMixedTokens(text, draft.slots ?? [])});
+    return true;
+  };
+
   /* 提示词上限：**能不能发布**的那个数（执行层，按原文字数比）。
-     没取到时显示 `—`，不猜一个数字 —— 猜错了比不显示更糟。 */
+     没取到时显示 `—`，不猜一个数字 —— 猜错了比不显示更糟。
+     两段各自比：随机档那段是整段替换，不是追加，所以不合并算。 */
   const promptLimit = limits.data?.promptExecutionLimit;
   const promptOver = promptLimit != null && (draft?.prompt ?? '').length > promptLimit;
+  const randomPromptOver =
+    promptLimit != null && (draft?.randomPrompt ?? '').length > promptLimit;
 
   const moveToTrash = (item: TemplateSpecOut) => {
     if (!window.confirm(`把「${item.name}」移进回收站？可以再恢复。`)) return;
@@ -778,6 +799,32 @@ export function SpecWorkspace() {
               >
                 {(draft.prompt ?? '').length} / {promptLimit ?? '—'}
               </span>
+            </div>
+
+            {/* 随机档提示词：和上面那框长得一样（同样能 @ 槽位），因为它俩是
+                **同一件事的两份**——随机档时整段替换，不是追加。标题必须留：
+                两个一样的框并排放，没有标题就分不清哪个是默认。 */}
+            <div className="mt-4 border-t border-line-soft pt-3">
+              <p className="mb-2 text-meta font-medium text-ink">随机档提示词</p>
+              <PromptBox
+                value={draft.randomPrompt ?? ''}
+                chips={chips}
+                onChange={applyRandomPromptText}
+                onInsert={applyRandomPromptText}
+                placeholder="模板库选「随机」时整段替换上面那段；留空则这一档不可用"
+                ariaLabel="随机档提示词"
+              />
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                {randomHint && <p className="text-meta text-warn-deep">{randomHint}</p>}
+                <span
+                  className={cn(
+                    'ml-auto font-mono text-micro tabular-nums',
+                    randomPromptOver ? 'text-danger-deep' : 'text-ink-mute',
+                  )}
+                >
+                  {(draft.randomPrompt ?? '').length} / {promptLimit ?? '—'}
+                </span>
+              </div>
             </div>
           </div>
 

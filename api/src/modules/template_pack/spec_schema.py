@@ -69,11 +69,6 @@ class SpecSlotIn(StrictIn):
     #: 只对**可选槽位**（`minCount == 0`）有意义。纯提示词，**不许含槽位引用**
     #: （没素材就没有编号可指）。为空 = 编译期报错（提示词悄悄缺一段比报错更糟）。
     empty_text: str = Field(default="", max_length=2000)
-    #: **随机文案**：可选槽位在「随机」档的候选提示词，多条，至少一条。
-    #: 纯提示词，**不许含槽位引用**（同 `empty_text`：没素材就没有编号可指）。
-    #: 只对可选槽位（`minCount == 0`）有意义，必填槽位带了会被发布闸口拒。
-    #: 随机档下不传素材，由前端从这批文案里抽一条传给 compile。
-    random_texts: list[str] = Field(default_factory=list, max_length=50)
     #: 候选集的标签 id（资产库 `library_tags`，**任意级别**）：**候选集范围**，
     #: 不是内容。空 = 不限；非空 = 只在这几个标签（各自及其下级）里挑；编译不看它。
     #:
@@ -174,6 +169,12 @@ class TemplateSpecIn(StrictIn):
     params: dict[str, Any] = Field(default_factory=dict)
     #: 整段提示词。需要可变的地方用 `text` 槽位，不要指望模板库改文字。
     prompt: str = Field(min_length=1, max_length=MAX_PROMPT)
+    #: **随机档提示词**：作者给「随机」档另写的一整段提示词，随机档时整段替换
+    #: `prompt`。空 = 该模板不支持随机档（模板库把这一档置灰并说明原因）。
+    #:
+    #: 引用规则与 `prompt` 相同；因为随机档不传可选素材，它引用可选槽位时
+    #: 同样要求该槽位写了「未选时文案」（发布闸口会拦）。
+    random_prompt: str = Field(default="", max_length=MAX_PROMPT)
     slots: list[SpecSlotIn] = Field(default_factory=list, max_length=MAX_SLOTS)
     attributes: dict[str, str] = Field(default_factory=dict)
     #: 展示案例（图片/视频资产 id）。纯展示：不进发布快照，改图不用发新版。
@@ -203,6 +204,8 @@ class SpecVersionOut(CamelModel):
     allowed_models: list[str] = Field(default_factory=list)
     params: dict[str, Any]
     prompt: str
+    #: 「随机」档用的整段提示词（发布时冻结）。空 = 该版本不支持随机档。
+    random_prompt: str = ""
     slots: list[SpecSlotOut]
     fingerprint: str = ""
     published_by: str = ""
@@ -267,14 +270,13 @@ class SpecCompileIn(StrictIn):
     #: 一切正常。
     model: str | None = Field(default=None, max_length=80)
     slot_values: dict[str, list[str]] = Field(default_factory=dict)
-    #: 「随机」档下，前端为每个可选槽位抽中的随机文案下标（key → 下标）。
+    #: 「随机」档：整段改用该模板的 `randomPrompt` 编译。
     #:
-    #: 随机由**前端**定、后端只按选择展开 —— 这样 `compile_spec` 保持纯函数
-    #: （同一入参同一输出），同一份 compile 请求可复现。后端拿下标去该槽位的
-    #: `random_texts` 里取文案，替代 `empty_text` 展开；越界/指向无随机文案的
-    #: 槽位一律 400，不静默退回 `empty_text`（否则用户以为随机生效了，其实没有）。
-    #: 不传 = 没有随机档槽位，走既有逻辑（老调用方零影响）。
-    random_text_choices: dict[str, int] = Field(default_factory=dict)
+    #: 由**使用者**在模板库选档时决定，不是作者——作者只决定「有没有这一段」。
+    #: 模板没配 `randomPrompt` 时传 `true` 会 400（前端也会把该档置灰），
+    #: 不静默回退主提示词 —— 回退的样子是「随机档和均衡档产出一模一样」。
+    #: 不传 = 均衡 / 自定义档，走 `prompt`（老调用方零影响）。
+    use_random_prompt: bool = False
     #: 使用者在填表时对「运行时参数」的选择（如计费模式）。
     #:
     #: 这些参数在模型 schema 里标了 `userSelectable`：**不该由模板作者写死**

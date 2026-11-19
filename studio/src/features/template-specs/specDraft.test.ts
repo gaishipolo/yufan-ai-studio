@@ -542,7 +542,6 @@ describe('必填槽位清掉两段文案', () => {
       maxCount: 1,
       filledText: '',
       emptyText: '',
-      randomTexts: [],
     });
   });
 
@@ -563,12 +562,12 @@ describe('必填槽位清掉两段文案', () => {
   it('判断函数：只管「有没有文案要清」，目标状态由调用方判断', () => {
     expect(
       textsToClearForRequired({minCount: 1, filledText: 'x'} as SpecSlotIn),
-    ).toEqual({filledText: '', emptyText: '', randomTexts: []});
+    ).toEqual({filledText: '', emptyText: ''});
     // 槽位现在还是可选（minCount=0）也照样返回「要清什么」——
     // 「切完之后是不是必填」是调用方才知道的事。
     expect(
       textsToClearForRequired({minCount: 0, filledText: 'x'} as SpecSlotIn),
-    ).toEqual({filledText: '', emptyText: '', randomTexts: []});
+    ).toEqual({filledText: '', emptyText: ''});
     expect(
       textsToClearForRequired({minCount: 1} as SpecSlotIn),
     ).toBeNull();
@@ -578,12 +577,6 @@ describe('必填槽位清掉两段文案', () => {
     expect(
       textsToClearForRequired({minCount: 1, filledText: '   '} as SpecSlotIn),
     ).toBeNull();
-  });
-
-  it('切必填时随机文案也要清掉（后端不许必填槽位带文案）', () => {
-    expect(
-      textsToClearForRequired({minCount: 0, randomTexts: ['白天', '夜晚']} as SpecSlotIn),
-    ).toEqual({filledText: '', emptyText: '', randomTexts: []});
   });
 });
 
@@ -624,20 +617,13 @@ describe('authoredFingerprint：判有没有改动', () => {
     expect(authoredFingerprint(base())).toBe(authoredFingerprint(base()));
   });
 
-  it('随机文案变了 → 指纹变（否则改文案不提示未保存）', () => {
-    const firstSlot = base().slots?.[0];
-    if (!firstSlot) throw new Error('测试基座要有一个槽位');
-    const withTexts = (texts: string[]): TemplateSpecIn => ({
-      ...base(),
-      slots: [{...firstSlot, minCount: 0, randomTexts: texts, position: 0}],
-    });
-    expect(authoredFingerprint(withTexts(['白天']))).not.toBe(
-      authoredFingerprint(withTexts(['夜晚'])),
+  it('随机档提示词变了 → 指纹变（否则改那一段不提示未保存）', () => {
+    const withRandom = (text: string): TemplateSpecIn => ({...base(), randomPrompt: text});
+    expect(authoredFingerprint(withRandom('白天的庭院'))).not.toBe(
+      authoredFingerprint(withRandom('夜晚的街道')),
     );
-    // 空行不算内容：['', '白天'] 与 ['白天'] 是同一份
-    expect(authoredFingerprint(withTexts(['', '白天']))).toBe(
-      authoredFingerprint(withTexts(['白天'])),
-    );
+    // 没写与写了空串是同一份：清空那一段不该被判成「有改动」
+    expect(authoredFingerprint(withRandom(''))).toBe(authoredFingerprint(base()));
   });
 
   /* 这条是这次改动的起因：`SlotCard` 切回「用户填」时写 `assetId: null`，
@@ -866,6 +852,27 @@ describe('引用写法', () => {
     ];
 
     expect(renumberRefs(before, inserted).prompt).toBe('{{Mixed 2}} 和 {{Mixed 3}}');
+  });
+
+  /* 两段提示词引用同一批槽位，编号也跟着同一套位置算。漏掉随机档那一段，
+     删/插一个槽位后它的引用会指向别的槽位，而界面看不出任何异常。 */
+  it('随机档提示词也跟着重编号', () => {
+    const slots: SpecSlotIn[] = [
+      {key: 'a', type: 'image', position: 0},
+      {key: 'b', type: 'image', position: 1},
+    ];
+    const before = {
+      ...blankSpec(),
+      prompt: '{{Mixed 1}}',
+      randomPrompt: '随机 {{Mixed 2}}',
+      slots,
+    };
+    const inserted = [
+      {key: 'z', type: 'image' as const, position: 0},
+      ...slots.map((slot, index) => ({...slot, position: index + 1})),
+    ];
+
+    expect(renumberRefs(before, inserted).randomPrompt).toBe('随机 {{Mixed 3}}');
   });
 
   /* 图片改成文本：它退出视觉编号，后面的槽位整体前移。 */

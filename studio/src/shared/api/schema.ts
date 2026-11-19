@@ -1238,7 +1238,7 @@ export interface SpecCompileIn {
   version?: number | null;
   model?: string | null;
   slotValues?: Record<string, string[]>;
-  randomTextChoices?: Record<string, number>;
+  useRandomPrompt?: boolean;
   paramOverrides?: Record<string, unknown>;
 }
 
@@ -1294,7 +1294,6 @@ export interface SpecSlotIn {
   assetId?: string | null;
   filledText?: string;
   emptyText?: string;
-  randomTexts?: string[];
   tagIds?: string[];
   position?: number;
 }
@@ -1311,7 +1310,6 @@ export interface SpecSlotOut {
   assetId?: string | null;
   filledText?: string;
   emptyText?: string;
-  randomTexts?: string[];
   tagIds?: string[];
   position?: number;
 }
@@ -1329,6 +1327,7 @@ export interface SpecVersionOut {
   allowedModels?: string[];
   params: Record<string, unknown>;
   prompt: string;
+  randomPrompt?: string;
   slots: SpecSlotOut[];
   fingerprint?: string;
   publishedBy?: string;
@@ -1488,6 +1487,7 @@ export interface TemplateSpecIn {
   allowedModels?: string[];
   params?: Record<string, unknown>;
   prompt: string;
+  randomPrompt?: string;
   slots?: SpecSlotIn[];
   attributes?: Record<string, string>;
   demoAssetId?: string | null;

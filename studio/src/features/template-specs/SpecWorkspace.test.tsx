@@ -277,7 +277,9 @@ describe('模板封装 · 编辑器里的提示词', () => {
     ]);
     await user.click(cardOf('商品图模板').getByRole('button', { name: '编辑' }));
 
-    expect(screen.getByText(new RegExp(`/\\s*7000`))).toHaveClass('text-danger-deep');
+    /* 两段提示词各有一个计数器（主 / 随机档），超限的是主提示词那一个。 */
+    const counters = screen.getAllByText(new RegExp(`/\\s*7000`));
+    expect(counters.some(node => node.className.includes('text-danger-deep'))).toBe(true);
   });
 
   it('不再有「+ 文本素材」这个重复入口（左栏加号菜单已覆盖）', async () => {
@@ -290,7 +292,8 @@ describe('模板封装 · 编辑器里的提示词', () => {
   it('字数上限显示的是**能不能发布**的那个数（7000），不是存草稿的 20000', async () => {
     await enterEditor();
 
-    expect(screen.getByText(new RegExp(`/\\s*7000`))).toBeInTheDocument();
+    // 两段提示词（主 / 随机档）都用同一个可发布上限
+    expect(screen.getAllByText(new RegExp(`/\\s*7000`)).length).toBeGreaterThan(0);
     expect(screen.queryByText(new RegExp(`/\\s*20000`))).not.toBeInTheDocument();
   });
 

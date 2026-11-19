@@ -117,6 +117,7 @@ def normalize_refs(spec: TemplateSpec) -> TemplateSpec:
     return replace(
         spec,
         prompt=fix(spec.prompt, "提示词"),
+        random_prompt=fix(spec.random_prompt, "随机档提示词"),
         slots=tuple(
             replace(
                 slot,
@@ -161,23 +162,36 @@ def validate_spec(spec: TemplateSpec) -> None:
         positions.add(slot.position)
         _validate_slot(slot)
 
-    for ref in sorted(slot_refs(spec.prompt)):
-        if ref not in keys:
-            raise BadRequest(
-                f"提示词引用了不存在的槽位「{ref}」：删槽位时要把它的引用一并删掉"
-            )
+    _validate_prompt_text(spec.prompt, keys, "提示词")
+    if spec.random_prompt.strip():
+        _validate_prompt_text(spec.random_prompt, keys, "随机档提示词")
 
     _validate_slot_texts(spec)
 
-    if _TEXT_LITERAL.search(spec.prompt):
+
+def _validate_prompt_text(text: str, keys: set[str], name: str) -> None:
+    """一段提示词的形状校验：引用都存在、不裸写 `{{Text N}}`、长度与空值。
+
+    `prompt` 与 `random_prompt` 走**同一套**规则 —— 两者都是「整段发出去的话」，
+    区别只在用在哪一档。分两套规则的话，作者会撞上「主提示词能写、随机档不行」
+    这种说不通的差别。
+
+    随机档提示词允许为空（表示该模板不支持随机档）；非空时按主提示词的全套规则管。
+    """
+    for ref in sorted(slot_refs(text)):
+        if ref not in keys:
+            raise BadRequest(
+                f"{name}引用了不存在的槽位「{ref}」：删槽位时要把它的引用一并删掉"
+            )
+    if _TEXT_LITERAL.search(text):
         raise BadRequest(
-            "提示词不要直接写 {{Text N}}：文本槽位排第几由槽位顺序决定，"
+            f"{name}不要直接写 {{{{Text N}}}}：文本槽位排第几由槽位顺序决定，"
             "写死会在少选一份时错位"
         )
-    if len(spec.prompt) > MAX_PROMPT:
-        raise BadRequest(f"提示词不能超过 {MAX_PROMPT} 字（现在 {len(spec.prompt)}）")
-    if not spec.prompt.strip():
-        raise BadRequest("提示词不能为空")
+    if len(text) > MAX_PROMPT:
+        raise BadRequest(f"{name}不能超过 {MAX_PROMPT} 字（现在 {len(text)}）")
+    if not text.strip():
+        raise BadRequest(f"{name}不能为空")
 
 
 def _validate_allowed_models(models: tuple[str, ...]) -> None:
@@ -281,12 +295,10 @@ def _validate_slot_texts(spec: TemplateSpec) -> None:
     """
     for slot in spec.slots:
         label = slot.label.strip() or slot.key
-        if slot.min_count >= 1 and (
-            slot.filled_text.strip() or slot.empty_text.strip() or slot.random_texts
-        ):
+        if slot.min_count >= 1 and (slot.filled_text.strip() or slot.empty_text.strip()):
             raise BadRequest(
                 f"槽位「{label}」是必填的（最少数 {slot.min_count}），"
-                "不能写「选中时文案 / 未选时文案 / 随机文案」："
+                "不能写「选中时文案 / 未选时文案」："
                 "必填槽位一定有素材，提示词里直接插入素材编号。"
                 "要让素材可以被省略，请把它改成「可选」。"
             )
@@ -312,20 +324,6 @@ def _validate_slot_texts(spec: TemplateSpec) -> None:
             if has_bad_slot_ref(slot.empty_text):
                 raise BadRequest(
                     f"槽位「{label}」的未选时文案里有无法解析的槽位引用"
-                    "（检查括号与槽位 key）"
-                )
-        # 随机文案与「未选时文案」同为「没填素材时怎么说」，约束一致：
-        # 不许引用槽位（没素材就没有编号可指）、括号要闭合。
-        for index, text in enumerate(slot.random_texts, 1):
-            refs = slot_refs(text)
-            if refs:
-                raise BadRequest(
-                    f"槽位「{label}」的第 {index} 条随机文案不能引用槽位"
-                    f"（{'、'.join(refs)}）：没有素材就没有编号可指"
-                )
-            if has_bad_slot_ref(text):
-                raise BadRequest(
-                    f"槽位「{label}」的第 {index} 条随机文案里有无法解析的槽位引用"
                     "（检查括号与槽位 key）"
                 )
 

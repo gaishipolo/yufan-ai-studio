@@ -96,7 +96,6 @@ export function blankSlot(position = 0, type: SlotType = 'image', slots: SpecSlo
     label: '',
     filledText: '',
     emptyText: '',
-    randomTexts: [],
     position,
   };
 }
@@ -131,12 +130,11 @@ export function isOptionalSlot(slot: SpecSlotIn): boolean {
 export function textsToClearForRequired(slot: SpecSlotIn): {
   filledText: string;
   emptyText: string;
-  randomTexts: string[];
 } | null {
-  if (!slot.filledText?.trim() && !slot.emptyText?.trim() && !slot.randomTexts?.length) {
+  if (!slot.filledText?.trim() && !slot.emptyText?.trim()) {
     return null;
   }
-  return {filledText: '', emptyText: '', randomTexts: []};
+  return {filledText: '', emptyText: ''};
 }
 
 /**
@@ -171,6 +169,7 @@ export function blankSpec(): TemplateSpecIn {
     allowedModels: [],
     params: {},
     prompt: '',
+    randomPrompt: '',
     slots: [blankSlot(0, 'image', [])],
     attributes: {},
   };
@@ -191,6 +190,7 @@ export function fromSpecOut(out: TemplateSpecOut): TemplateSpecIn {
       allowedModels: out.latest.allowedModels ?? [],
       params: out.latest.params ?? {},
       prompt: out.latest.prompt ?? '',
+      randomPrompt: out.latest.randomPrompt ?? '',
       slots: (out.latest.slots ?? []).map((slot, index) => ({...slot, position: index})),
       attributes: {},
       revision: out.revision,
@@ -224,6 +224,7 @@ export function renumberRefs(
   return {
     ...spec,
     prompt: fix(spec.prompt ?? ''),
+    randomPrompt: fix(spec.randomPrompt ?? ''),
     slots: nextSlots.map(slot => ({
       ...slot,
       filledText: fix(slot.filledText ?? ''),
@@ -369,9 +370,6 @@ function slotFingerprint(slot: SpecSlotIn, index: number) {
     assetId: slot.assetId || null,
     filledText: slot.filledText ?? '',
     emptyText: slot.emptyText ?? '',
-    // 随机文案是**列表**：顺序是作者给的候选顺序，但空行/缺失都是「没写」，
-    // 铺平成过滤后的数组再比，避免 `[ '', 'a' ]` 与 `['a']` 假性不同。
-    randomTexts: (slot.randomTexts ?? []).filter(text => text.trim() !== ''),
     // 候选标签是**集合**：顺序不携带信息
     tagIds: [...new Set(slot.tagIds ?? [])].sort(),
     // 位置就是数组下标，别让两者各自漂移
@@ -417,6 +415,9 @@ export function authoredFingerprint(spec: TemplateSpecIn): string {
     allowedModels: [...new Set(spec.allowedModels ?? [])],
     params: spec.params ?? {},
     prompt: spec.prompt ?? '',
+    // 两段提示词都要进指纹：改了随机档那段却没提示「未保存」，
+    // 作者会以为已经存上了。
+    randomPrompt: spec.randomPrompt ?? '',
     // 空值的属性 = 没写过这个属性
     attributes: Object.fromEntries(
       Object.entries(spec.attributes ?? {}).filter(([, value]) => value !== ''),

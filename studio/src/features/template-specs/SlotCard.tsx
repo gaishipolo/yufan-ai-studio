@@ -15,7 +15,6 @@ import {
   slotTypeOf,
 } from './specDraft';
 import { MentionTextarea } from './MentionTextarea';
-import { RandomTextsEditor } from './RandomTextsEditor';
 import { SLOT_TYPE_ICONS } from './slotIcons';
 
 /**
@@ -363,14 +362,6 @@ export function SlotCard({
                   placeholder={emptyPlaceholder}
                   onChange={event => onPatch({emptyText: event.target.value})}
                   className="w-full resize-y rounded-lg border border-line bg-white px-2.5 py-2 text-xs leading-[1.7] text-ink outline-none transition-colors placeholder:text-[#a9b8bf] hover:border-line-strong focus:border-primary-line focus:ring-2 focus:ring-primary/10"
-                />
-              </FormField>
-              <FormField label="随机文案" className="sm:col-span-2">
-                {/* 随机档下使用者不传素材，从这批文案里抽一段注入 —— 同一模板
-                    每次生成的场景描述不同。至少一条；内容与未选时文案一样是纯文本。 */}
-                <RandomTextsEditor
-                  texts={slot.randomTexts ?? []}
-                  onChange={texts => onPatch({randomTexts: texts})}
                 />
               </FormField>
             </>

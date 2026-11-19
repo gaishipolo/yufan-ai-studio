@@ -12922,12 +12922,10 @@
             "type": "object",
             "title": "Slotvalues"
           },
-          "randomTextChoices": {
-            "additionalProperties": {
-              "type": "integer"
-            },
-            "type": "object",
-            "title": "Randomtextchoices"
+          "useRandomPrompt": {
+            "type": "boolean",
+            "title": "Userandomprompt",
+            "default": false
           },
           "paramOverrides": {
             "additionalProperties": true,
@@ -13104,14 +13102,6 @@
             "title": "Emptytext",
             "default": ""
           },
-          "randomTexts": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "maxItems": 50,
-            "title": "Randomtexts"
-          },
           "tagIds": {
             "items": {
               "type": "string"
@@ -13215,14 +13205,6 @@
             "title": "Emptytext",
             "default": ""
           },
-          "randomTexts": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "maxItems": 50,
-            "title": "Randomtexts"
-          },
           "tagIds": {
             "items": {
               "type": "string"
@@ -13291,6 +13273,11 @@
           "prompt": {
             "type": "string",
             "title": "Prompt"
+          },
+          "randomPrompt": {
+            "type": "string",
+            "title": "Randomprompt",
+            "default": ""
           },
           "slots": {
             "items": {
@@ -13886,6 +13873,12 @@
             "maxLength": 20000,
             "minLength": 1,
             "title": "Prompt"
+          },
+          "randomPrompt": {
+            "type": "string",
+            "maxLength": 20000,
+            "title": "Randomprompt",
+            "default": ""
           },
           "slots": {
             "items": {
