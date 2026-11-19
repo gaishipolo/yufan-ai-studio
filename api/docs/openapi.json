@@ -2690,7 +2690,7 @@
           "资产库"
         ],
         "summary": "选择器：只返回库内资产",
-        "description": "生成页 / 工作台挑素材用。\n\n**硬过滤 `state=active`**：草稿与回收站永远不出现在选择器里。这不是一个\n可选的筛选参数——调用方忘了传就会把用户删掉的东西塞进生成任务。\n\n`library` 与列表同一个枚举、同一份判定（`access.tab_clause`）：模板工作台\n的「我的原片 / 公共原片」就是 `personal` / `team`。**不新造一个\n`scope=mine|public` 参数**——那等于给可见性写第二套定义，两套一漂移就是\n「列表里没有、选择器里有」。默认 `all` 与切换前的行为完全一致。",
+        "description": "生成页 / 工作台挑素材用。\n\n**硬过滤 `state=active`**：草稿与回收站永远不出现在选择器里。这不是一个\n可选的筛选参数——调用方忘了传就会把用户删掉的东西塞进生成任务。\n\n`library` 与列表同一个枚举、同一份判定（`access.tab_clause`）：模板工作台\n的「我的原片 / 公共原片」就是 `personal` / `team`。**不新造一个\n`scope=mine|public` 参数**——那等于给可见性写第二套定义，两套一漂移就是\n「列表里没有、选择器里有」。默认 `all` 与切换前的行为完全一致。\n\n`purpose=case` 是**展示案例**入口（模板封装页的「从资产库选图片/视频」）：\n与列表那边**同一条规则** —— 要 `library:case:read`，这时只看案例；不传则\n一律排除案例。少了这一档，作者上传过的案例在第二次使用时根本挑不到 ——\n案例不进普通列表，选择器又把它排掉，等于只能用一次。",
         "operationId": "selection_api_v1_library_selection_get",
         "security": [
           {
@@ -2770,6 +2770,23 @@
             "schema": {
               "$ref": "#/components/schemas/LibraryTab",
               "default": "all"
+            }
+          },
+          {
+            "name": "purpose",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 16
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Purpose"
             }
           },
           {

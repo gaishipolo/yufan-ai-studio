@@ -378,14 +378,22 @@ def _check_model_params(spec: TemplateSpec, model: ModelSummary) -> None:
             details={"userSelectableParams": locked},
         )
     mixed = [slot for slot in spec.slots if slot.ref_mode == "mixed"]
-    if mixed and model.max_references == 0:
-        raise BadRequest(f"模型 {model.id} 不接受参考素材，去掉需要编号的槽位")
     # 固定槽位是确定的（1 个），用户槽位按上限算 —— 超了现在就报，别等提交。
     upper = sum(
         1 if slot.binding == "fixed" else slot.max_count for slot in mixed
     )
     if upper > MAX_SLOT_REFS:
         raise BadRequest(f"参与编号的素材上限 {upper} 个，超过 {MAX_SLOT_REFS}")
+    # 与模型的承接能力比：**不能只判 `max_references == 0`**。只判 0 的话，
+    # 「最多接 4 张」的模型配了 5 个槽位照样发布成功，使用者填满才在提交时
+    # 被 400 打回 —— 那时作者已经把模板发出去了。
+    if upper > model.max_references:
+        if model.max_references == 0:
+            raise BadRequest(f"模型 {model.id} 不接受参考素材，去掉需要编号的槽位")
+        raise BadRequest(
+            f"模型 {model.id} 最多接 {model.max_references} 张参考素材，"
+            f"这份模板按上限算要 {upper} 张（固定槽位 1 张 + 用户槽位的张数）"
+        )
 
 
 async def _check_fixed_refs(

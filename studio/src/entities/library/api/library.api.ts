@@ -58,6 +58,13 @@ export type LibrarySelectionParams = {
   pageSize?: number;
   library?: string;
   origin?: string[];
+  /**
+   * `case` = 只看案例池（模板封装页设置展示案例时用）。
+   *
+   * 不传就是普通素材（案例被排除）。两个口径与资产库列表完全相同，
+   * 服务端也要 `library:case:read` —— 案例是全员可见的内容。
+   */
+  purpose?: string;
 };
 
 /** 视图在 API 层就翻译成 `state` / `library`，不让调用方各拼一遍 */

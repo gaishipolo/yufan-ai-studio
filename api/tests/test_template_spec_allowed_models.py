@@ -182,6 +182,33 @@ def test_allowed_model_must_accept_reference_slots(client: TestClient) -> None:
     assert "不接受参考素材" in response.json()["message"]
 
 
+def test_model_with_too_few_reference_slots_is_rejected(client: TestClient) -> None:
+    """「最多接 4 张」的模型配 5 个槽位：发布时就要拦下来。
+
+    以前只判 `max_references == 0`，这类「接得下、但接不全」的组合照发不误 ——
+    作者以为发出去了，使用者在模板库填满 5 张才被 400 打回，那是两头都解释不通
+    的时刻。
+    """
+    headers = _headers(client)
+    draft = _draft(model=IMAGE_MODEL, params={})
+    draft["slots"] = [
+        {
+            "key": f"image_{index}",
+            "type": "image",
+            "binding": "user",
+            "tagId": _TAG,
+            "minCount": 1,
+            "maxCount": 1,
+            "position": index,
+            "label": f"图 {index}",
+        }
+        for index in range(5)
+    ]
+    response = client.post(f"{API}/validate", json=draft, headers=headers)
+    assert response.status_code == 400, response.text
+    assert "最多接 4 张" in response.json()["message"]
+
+
 def test_allowed_list_is_part_of_the_version_fingerprint(client: TestClient) -> None:
     """改了清单 = 改了模板 = 新版本（旧版本保持发布那一刻的样子）。"""
     headers = _headers(client)

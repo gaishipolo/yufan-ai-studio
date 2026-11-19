@@ -39,6 +39,7 @@ import {
 } from '@/shared/ui';
 import { cn } from '@/shared/lib/cn';
 import { toast } from '@/shared/lib/toast';
+import { useCan } from '@/shared/access/use-access';
 import { AssetPicker, type PickKind, type PickedAsset } from '@/features/template-specs/AssetPicker';
 import { AddSlotMenu } from '@/features/template-specs/AddSlotMenu';
 import { DemoMenu } from '@/features/template-specs/DemoMenu';
@@ -109,6 +110,10 @@ export function SpecWorkspace() {
 
   /* 上限来自后端（编辑页要显示的那个数），不在前端写死。 */
   const limits = useSpecLimits();
+
+  /* 案例池是全员的共享内容：上传 / 把素材转成案例都要 `library:case:write`。
+     没有它就不摆「设置案例」—— 后端一定 403，露出来只是让人点一次错。 */
+  const canCaseWrite = useCan('library:case:write');
 
   const [draft, setDraft] = useState<TemplateSpecIn | null>(null);
   /*
@@ -204,15 +209,15 @@ export function SpecWorkspace() {
         normalize(draft),
         userSelectableKeys,
       );
-      // 发布闸门的前端预检：后端要求「要让用户填的图片/视频槽位必须有一级标签」，
-      // 而它只会说"这些槽位要给一级标签"、不指哪里。先在本地拦一次并点名，
+      // 发布闸门的前端预检：后端要求「要让用户填的图片/视频槽位必须圈候选标签」，
+      // 而它只会说"这些槽位要圈标签"、不指哪里。先在本地拦一次并点名，
       // 省掉「点发布 → 400 → 回头逐个槽位找」那一轮。保存草稿不判（草稿允许半成品）。
       if (action !== 'save') {
         const missing = slotsMissingTag(payload.slots ?? []);
         if (missing.length > 0) {
           setError(
-            `这些槽位还缺一级标签：${missing.join('、')}。` +
-              '模板库按「标签 · 槽位名」分组让人挑素材，没有标签就只能退化成全部素材。',
+            `这些槽位还没圈候选标签：${missing.join('、')}。` +
+              '没圈的话那一格会列出全部素材，素材一多就挑不动了。',
           );
           return false;
         }
@@ -541,6 +546,10 @@ export function SpecWorkspace() {
               <SpecCard
                 key={item.id}
                 item={item}
+                modelLabel={
+                  models.find(entry => entry.id === (item.draft?.model || item.latest?.model))
+                    ?.label
+                }
                 busy={busy}
                 trashed={trashed}
                 onEdit={() => {
@@ -839,13 +848,19 @@ export function SpecWorkspace() {
                 />
               </div>
               {/* 动作放在它作用的东西旁边：案例在左边，「设置案例」在右边，
-                  不用把眼睛从卡片内容挪到标题栏去找按钮。 */}
-              <DemoMenu
-                disabled={busy}
-                onUpload={() => fileRef.current?.click()}
-                onPickImage={() => setPicker({target: 'demo', kind: 'image'})}
-                onPickVideo={() => setPicker({target: 'demo', kind: 'video'})}
-              />
+                  不用把眼睛从卡片内容挪到标题栏去找按钮。
+
+                  没有 `library:case:write` 就不出现：三个入口（上传 / 选图 / 选视频）
+                  都会改案例池，后端一律 403 —— 露出来只是让人点一次错。
+                  已有案例照样能看（卡片在左边），只是不能换。 */}
+              {canCaseWrite && (
+                <DemoMenu
+                  disabled={busy}
+                  onUpload={() => fileRef.current?.click()}
+                  onPickImage={() => setPicker({target: 'demo', kind: 'image'})}
+                  onPickVideo={() => setPicker({target: 'demo', kind: 'video'})}
+                />
+              )}
             </div>
             <input
               ref={fileRef}
@@ -869,6 +884,10 @@ export function SpecWorkspace() {
             ? picker.kind
             : slotTypeOf(pickerSlot?.type ?? 'image')
         }
+        /* 选展示案例时才出「我的素材 / 案例池」两档：
+           案例不进普通列表，没有这一档的话作者传过的案例第二次就挑不到了。 */
+        casePool={picker?.target === 'demo'}
+        title={picker?.target === 'demo' ? '选择展示案例' : undefined}
         /* 槽位的标签就是候选集范围：封装页挑固定素材时也要收窄，
            否则作者能选到模板使用者那边根本看不到的东西。 */
         tagIds={picker?.target === 'slot' ? (pickerSlot?.tagIds ?? []) : []}
@@ -1081,6 +1100,7 @@ function Section({
  */
 function SpecCard({
   item,
+  modelLabel,
   busy,
   trashed,
   onEdit,
@@ -1090,6 +1110,9 @@ function SpecCard({
   onRestore,
 }: {
   item: TemplateSpecOut;
+  /** 模型的友好名（目录里的 label）。**卡片上不印 id** —— 模板库那边显示的是
+      这个名字，同一个模型在两个页面叫法不同只会让人以为不是同一个。 */
+  modelLabel?: string;
   busy: boolean;
   trashed: boolean;
   onEdit: () => void;
@@ -1099,8 +1122,7 @@ function SpecCard({
   onRestore: () => void;
 }) {
   const slotCount = item.draft?.slots?.length ?? item.latest?.slots?.length ?? 0;
-  const model = item.draft?.model || item.latest?.model || '';
-  /* 悬停态挂在整张卡上（不是封面那个 button）：脚上的状态与操作也算「鼠标在这张卡上」，
+  const model = item.draft?.model || item.latest?.model || '';  /* 悬停态挂在整张卡上（不是封面那个 button）：脚上的状态与操作也算「鼠标在这张卡上」，
      视频不该因为鼠标压到下面几行就断掉。 */
   const [hovering, setHovering] = useState(false);
   return (
@@ -1174,7 +1196,11 @@ function SpecCard({
               {model && (
                 <>
                   <span className="shrink-0 text-line-strong">·</span>
-                  <span className="truncate text-ink-soft">{model}</span>
+                  {/* 目录里还认得出这个模型时显示友好名，认不出（已下线 / 目录没拉到）
+                      就照实显示 id —— 那时 id 是唯一能定位问题的线索。 */}
+                  <span className="truncate text-ink-soft" title={model}>
+                    {modelLabel || model}
+                  </span>
                 </>
               )}
             </>

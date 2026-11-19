@@ -172,6 +172,7 @@ async def selection(
     keyword: str = Query(default="", max_length=100),
     origin: Annotated[list[LibraryAssetOrigin] | None, Query()] = None,
     library: LibraryTab = LibraryTab.ALL,
+    purpose: Annotated[str | None, Query(max_length=16)] = None,
 ) -> ApiResponse[LibrarySelectionPage]:
     """生成页 / 工作台挑素材用。
 
@@ -182,7 +183,19 @@ async def selection(
     的「我的原片 / 公共原片」就是 `personal` / `team`。**不新造一个
     `scope=mine|public` 参数**——那等于给可见性写第二套定义，两套一漂移就是
     「列表里没有、选择器里有」。默认 `all` 与切换前的行为完全一致。
+
+    `purpose=case` 是**展示案例**入口（模板封装页的「从资产库选图片/视频」）：
+    与列表那边**同一条规则** —— 要 `library:case:read`，这时只看案例；不传则
+    一律排除案例。少了这一档，作者上传过的案例在第二次使用时根本挑不到 ——
+    案例不进普通列表，选择器又把它排掉，等于只能用一次。
     """
+    # 写错的用途一律报错：静默忽略的词让人以为自己在挑案例，实际看的是个人库。
+    target = (purpose or "").strip().lower()
+    if target and target != access.PURPOSE_CASE:
+        raise BadRequest(f"不支持的用途：{purpose}")
+    case_view = target == access.PURPOSE_CASE
+    if case_view and not actor.has("library:case:read"):
+        raise Forbidden("没有浏览案例池的权限")
     result = await service.list_assets(
         actor,
         page,
@@ -194,6 +207,9 @@ async def selection(
         # 模板库切换后靠 `origin` 只挑原片视频；与列表用同一组枚举值，
         # 免得两处各写一份字符串字面量、改一处漏一处。
         origins=[item.value for item in origin] if origin else [],
+        # 案例池里只看案例；普通入口一律排除案例（含作者自己的）。
+        purpose=access.PURPOSE_CASE if case_view else None,
+        exclude_purposes=() if case_view else (access.PURPOSE_CASE,),
         # **不像列表那样藏起封装成员**：这里是「挑素材去用」，藏掉就等于
         # 那几张图选不到了（槽位默认还是按素材挑）。列表藏是为了别重复，
         # 选择器藏是让人找不到东西 —— 同一件事在两个场景里结论相反。

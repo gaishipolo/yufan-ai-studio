@@ -63,8 +63,8 @@ export function SlotCard({
   const [open, setOpen] = useState(false);
   const fixed = (slot.binding ?? 'user') === 'fixed';
   const type = slotTypeOf(slot.type);
-  // 一级标签只对「让用户挑的图片/视频」有意义：模板库按「标签 · 槽位名」分组
-  // 给候选素材，文本/音频走各自的选择器，固定槽位作者已经选死。
+  // 候选标签只对「让用户挑的图片/视频」有意义：模板库那一格靠它圈定候选范围
+  // （和封装包的成员标签取交集），文本/音频走各自的选择器，固定槽位作者已经选死。
   const needsTag = type === 'image' || type === 'video';
   const name = slot.label?.trim() || `${SLOT_TYPE_LABELS[type]} ${index + 1}`;
   const TypeIcon = SLOT_TYPE_ICONS[type];
@@ -286,7 +286,7 @@ export function SlotCard({
       {/* 更多设置：低频项收在这里。默认收起，主行只剩真正天天改的东西。 */}
       {open && (
         <div className="mt-3 grid gap-2 border-t border-line-soft pt-3 sm:grid-cols-2">
-          {/* 固定槽位没有「一级标签/最少/最多」，只剩「类型」一个字段 ——
+          {/* 固定槽位没有「候选标签/最少/最多」，只剩「类型」一个字段 ——
               不让它占满整行，右边留一块空白反而像漏了东西。 */}
           <FormField label="类型" htmlFor="slot-type" className={fixed ? 'sm:col-span-2' : undefined}>
             <Select

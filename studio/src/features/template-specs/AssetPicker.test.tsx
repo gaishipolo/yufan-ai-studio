@@ -15,10 +15,16 @@ import { AssetPicker } from './AssetPicker';
  * 断言落在「发给后端的 tagIds」上 —— 筛选语义真正发生的地方。
  */
 
-const { selectionCalls, tagsData, selectionItems } = vi.hoisted(() => ({
-  selectionCalls: [] as { kind?: string; tagIds?: string[] }[],
+const { selectionCalls, tagsData, selectionItems, canState } = vi.hoisted(() => ({
+  selectionCalls: [] as { kind?: string; tagIds?: string[]; purpose?: string }[],
   tagsData: { current: [] as LibraryTagStatOut[] },
   selectionItems: { current: [] as unknown[] },
+  canState: { current: true },
+}));
+
+/* 权限也是输入条件：「案例池」那一档只在有 `library:case:read` 时出现。 */
+vi.mock('@/shared/access/use-access', () => ({
+  useCan: () => canState.current,
 }));
 
 vi.mock('@/entities/library/api/library.queries', () => ({
@@ -27,7 +33,7 @@ vi.mock('@/entities/library/api/library.queries', () => ({
 
 vi.mock('@/entities/library/api/library.api', () => ({
   libraryApi: {
-    selection: (params: { kind?: string; tagIds?: string[] }) => {
+    selection: (params: { kind?: string; tagIds?: string[]; purpose?: string }) => {
       selectionCalls.push(params);
       return Promise.resolve({
         items: selectionItems.current,
@@ -51,9 +57,14 @@ beforeEach(() => {
   selectionCalls.length = 0;
   tagsData.current = TAGS;
   selectionItems.current = [];
+  canState.current = true;
 });
 
-function renderPicker(tagIds: string[], kind: 'image' | 'video' | 'audio' | 'text' = 'image') {
+function renderPicker(
+  tagIds: string[],
+  kind: 'image' | 'video' | 'audio' | 'text' = 'image',
+  extra: {casePool?: boolean; title?: string} = {},
+) {
   const client = new QueryClient({defaultOptions: {queries: {retry: false}}});
   return render(
     <QueryClientProvider client={client}>
@@ -64,6 +75,7 @@ function renderPicker(tagIds: string[], kind: 'image' | 'video' | 'audio' | 'tex
         selected={[]}
         onClose={vi.fn()}
         onToggle={vi.fn()}
+        {...extra}
       />
     </QueryClientProvider>,
   );
@@ -192,5 +204,48 @@ describe('AssetPicker · 文本素材', () => {
     await screen.findByText('雨夜开场文案.txt');
     expect(screen.queryByText('（空文本）')).not.toBeInTheDocument();
     expect(document.querySelector('img[src="/cover/img-1.png"]')).not.toBeNull();
+  });
+});
+
+/**
+ * 案例池：设置展示案例时的第二档。
+ *
+ * 案例不进普通列表、选择器默认也把它排掉 —— 少了这一档，作者传过的案例
+ * 第二次就挑不到了（只能用一次）。所以这里守三件事：默认不发 `purpose`、
+ * 切到案例池才发、没开这一档时压根没有这个开关。
+ */
+describe('AssetPicker · 案例池', () => {
+  it('默认按普通素材口径取（不传 purpose）', () => {
+    renderPicker([]);
+    expect(selectionCalls.at(-1)?.purpose).toBeUndefined();
+    expect(screen.queryByRole('button', {name: '案例池'})).not.toBeInTheDocument();
+  });
+
+  it('切到案例池才带 purpose=case，切回来就去掉', async () => {
+    const user = userEvent.setup();
+    renderPicker([], 'image', {casePool: true});
+    await user.click(screen.getByRole('button', {name: '案例池'}));
+    expect(selectionCalls.at(-1)?.purpose).toBe('case');
+    await user.click(screen.getByRole('button', {name: '我的素材'}));
+    expect(selectionCalls.at(-1)?.purpose).toBeUndefined();
+  });
+
+  it('标题可以按场景换（设置展示案例时不能还写「选择参考图」）', () => {
+    renderPicker([], 'image', {casePool: true, title: '选择展示案例'});
+    expect(screen.getByText('选择展示案例')).toBeInTheDocument();
+    expect(screen.queryByText('选择参考图')).not.toBeInTheDocument();
+  });
+
+  it('没有 library:case:read 就不摆这一档（后端会 403）', () => {
+    canState.current = false;
+    renderPicker([], 'image', {casePool: true});
+    expect(screen.queryByRole('button', {name: '案例池'})).not.toBeInTheDocument();
+  });
+
+  it('案例池空时的说明指向「转成案例」，不是「去素材库上传」', async () => {
+    const user = userEvent.setup();
+    renderPicker([], 'image', {casePool: true});
+    await user.click(screen.getByRole('button', {name: '案例池'}));
+    expect(await screen.findByText(/挑一条转成案例/)).toBeInTheDocument();
   });
 });

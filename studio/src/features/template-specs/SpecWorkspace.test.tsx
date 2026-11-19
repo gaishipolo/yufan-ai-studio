@@ -19,7 +19,8 @@ import { SpecWorkspace } from './SpecWorkspace';
  * **没有任何入口** —— 死胡同。
  */
 
-const { specs, trashedSpecs, mutations } = vi.hoisted(() => ({
+const { specs, trashedSpecs, mutations, canState } = vi.hoisted(() => ({
+  canState: {caseWrite: true},
   specs: { current: [] as TemplateSpecOut[] },
   trashedSpecs: { current: [] as TemplateSpecOut[] },
   mutations: {
@@ -32,6 +33,12 @@ const { specs, trashedSpecs, mutations } = vi.hoisted(() => ({
     restore: vi.fn(() => Promise.resolve({})),
     remove: vi.fn(() => Promise.resolve({})),
   },
+}));
+
+/* 权限是输入条件之一：「设置案例」只在有 `library:case:write` 时出现。 */
+vi.mock('@/shared/access/use-access', () => ({
+  useCan: (permission: string) =>
+    permission === 'library:case:write' ? canState.caseWrite : true,
 }));
 
 vi.mock('@/entities/template-spec/api/spec.queries', () => ({
@@ -107,6 +114,7 @@ function specOf(overrides: Partial<TemplateSpecOut> = {}): TemplateSpecOut {
 
 /* toast store 是模块级单例：成功提示现在走 toast，每个用例必须从空开始 */
 beforeEach(() => {
+  canState.caseWrite = true;
   for (const item of useToastStore.getState().items) {
     useToastStore.getState().dismiss(item.id);
   }
@@ -538,5 +546,33 @@ describe('模板封装 · 未保存就离开', () => {
 
     expect(screen.queryByRole('dialog', { name: '还有未保存的修改' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: '新建模板' })).toBeInTheDocument();
+  });
+});
+
+/**
+ * 案例入口按权限收敛。
+ *
+ * 上传 / 选图 / 选视频三个入口都会改案例池，后端一律要 `library:case:write`。
+ * 界面不收敛的话，没权限的人点一次吃一次 403 —— 「有这个按钮但按了必失败」
+ * 比没有按钮更糟。
+ */
+describe('模板封装 · 案例入口按权限收敛', () => {
+  const enterEditor = async () => {
+    const user = userEvent.setup();
+    renderWorkspace([specOf({ status: 'draft' })]);
+    await user.click(cardOf('商品图模板').getByRole('button', { name: '编辑' }));
+    return user;
+  };
+
+  it('有 library:case:write 才摆「设置案例」', async () => {
+    canState.caseWrite = true;
+    await enterEditor();
+    expect(screen.getByRole('button', { name: /设置案例/ })).toBeInTheDocument();
+  });
+
+  it('没有 library:case:write 就不出现', async () => {
+    canState.caseWrite = false;
+    await enterEditor();
+    expect(screen.queryByRole('button', { name: /设置案例/ })).not.toBeInTheDocument();
   });
 });

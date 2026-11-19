@@ -149,3 +149,73 @@ def test_a_case_stays_visible_to_other_accounts(client: TestClient, api: str) ->
 
     visible = client.get(f"{api}/library/assets/{asset_id}", headers=headers)
     assert visible.status_code == 200, visible.text
+
+
+def test_selection_can_look_at_the_case_pool(client: TestClient, api: str) -> None:
+    """模板封装页的「从资产库选图片/视频」要能挑到已上传的案例。
+
+    案例不进普通列表、选择器默认也把它排掉 —— 少了这一档，作者传过的案例
+    第二次就用不上了（只能用一次），而它本来就是给模板卡片复用的。
+    """
+    admin = admin_headers(client)
+    case_id = insert_asset(
+        owner_id="u_001",
+        name="案例封面.png",
+        kind="image",
+        state="active",
+        visibility="personal",
+        purpose="case",
+    )
+    plain_id = insert_asset(
+        owner_id="u_001",
+        name="普通图.png",
+        kind="image",
+        state="active",
+        visibility="personal",
+        purpose="",
+    )
+
+    def ids(**params: str) -> list[str]:
+        response = client.get(
+            f"{api}/library/selection", params={"kind": "image", **params}, headers=admin
+        )
+        assert response.status_code == 200, response.text
+        return [item["id"] for item in response.json()["data"]["items"]]
+
+    # 默认口径不变：普通素材在，案例不在（与资产库列表同一条规则）
+    assert plain_id in ids()
+    assert case_id not in ids()
+    # 案例池：只看得到案例（同库里可能还有别的用例留下的案例，不按「只有一条」断）
+    pool = ids(purpose="case")
+    assert case_id in pool
+    assert plain_id not in pool
+
+
+def test_selection_rejects_an_unknown_purpose(client: TestClient, api: str) -> None:
+    """写错的用途要当场报错 —— 静默忽略会让人以为自己在挑案例。"""
+    admin = admin_headers(client)
+    response = client.get(
+        f"{api}/library/selection", params={"purpose": "demo"}, headers=admin
+    )
+    assert response.status_code == 400, response.text
+    assert "不支持的用途" in response.text
+
+
+def test_selection_needs_case_read_for_the_case_pool(client: TestClient, api: str) -> None:
+    """看案例池要 `library:case:read`：那是全员可见的内容，不是「谁都能翻」。"""
+    admin = admin_headers(client)
+    _user, headers = make_user(client, admin, LIB_RW)
+    denied = client.get(
+        f"{api}/library/selection", params={"purpose": "case"}, headers=headers
+    )
+    assert denied.status_code == 403, denied.text
+
+
+def test_case_pool_list_needs_case_read(client: TestClient, api: str) -> None:
+    """资产库列表的案例池入口同样要 `library:case:read`（与选择器同一道闸）。"""
+    admin = admin_headers(client)
+    _user, headers = make_user(client, admin, LIB_RW)
+    denied = client.get(
+        f"{api}/library/assets", params={"purpose": "case"}, headers=headers
+    )
+    assert denied.status_code == 403, denied.text

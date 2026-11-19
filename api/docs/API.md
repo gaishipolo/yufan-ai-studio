@@ -2528,6 +2528,11 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 `scope=mine|public` 参数**——那等于给可见性写第二套定义，两套一漂移就是
 「列表里没有、选择器里有」。默认 `all` 与切换前的行为完全一致。
 
+`purpose=case` 是**展示案例**入口（模板封装页的「从资产库选图片/视频」）：
+与列表那边**同一条规则** —— 要 `library:case:read`，这时只看案例；不传则
+一律排除案例。少了这一档，作者上传过的案例在第二次使用时根本挑不到 ——
+案例不进普通列表，选择器又把它排掉，等于只能用一次。
+
 | 参数 | 位置 | 类型 | 必填 | 说明 |
 |---|---|---|---|---|
 | `kind` | query | `LibraryAssetKind | null` | 否 |  |
@@ -2535,6 +2540,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `keyword` | query | `string` | 否 |  |
 | `origin` | query | `LibraryAssetOrigin[] | null` | 否 |  |
 | `library` | query | `LibraryTab` | 否 |  |
+| `purpose` | query | `string | null` | 否 |  |
 | `page` | query | `number` | 否 | 页码，从 1 开始 |
 | `pageSize` | query | `number` | 否 | 每页条数 |
 

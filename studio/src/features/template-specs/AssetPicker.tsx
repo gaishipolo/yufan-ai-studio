@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Check } from 'lucide-react';
+import { useCan } from '@/shared/access/use-access';
 import { libraryApi } from '@/entities/library/api/library.api';
 import { useLibraryTags } from '@/entities/library/api/library.queries';
 import { scopeFilterIds } from '@/entities/library/model/tagTree';
@@ -34,6 +35,16 @@ export interface AssetPickerProps {
   tagIds?: string[];
   /** 已选的 id：再次点击就是取消选择（多选语义）。 */
   selected: string[];
+  /**
+   * 允许在「我的素材」与「案例池」之间切。
+   *
+   * 只有设置**展示案例**时要开：案例不进普通列表，选择器默认也把它排掉，
+   * 所以作者传过的案例第二次根本挑不到（只能用一次）。切到案例池的那一档
+   * 只列 `purpose=case` 的素材（服务端要 `library:case:read`）。
+   */
+  casePool?: boolean;
+  /** 标题。默认按类型给（「选择参考图」）；设置展示案例时要换成「选择展示案例」。 */
+  title?: string;
   onClose: () => void;
   onToggle: (asset: PickedAsset) => void;
 }
@@ -68,12 +79,19 @@ export function AssetPicker({
   kind,
   tagIds,
   selected,
+  casePool,
+  title,
   onClose,
   onToggle,
 }: AssetPickerProps) {
   const [keyword, setKeyword] = useState('');
   /** 用户在候选集里又挑的标签（可空）。 */
   const [picked, setPicked] = useState<string[]>([]);
+  /** 看「我的素材」还是「案例池」。只有 `casePool` 打开时才出这个开关。 */
+  const [pool, setPool] = useState<'mine' | 'case'>('mine');
+  /* 案例池要么看得到（`library:case:read`），要么这一档根本不出现 ——
+     后端对 `purpose=case` 直接 403，摆出来就是让人点一次错。 */
+  const canReadCases = useCan('library:case:read');
   /* 候选集（作者的槽位标签）：**引用要稳定** —— 它是下面 filterIds 这条
      useMemo 的依赖，每次 render 新建一个数组会让那个 memo 每次都重算。 */
   const scope = useMemo(() => tagIds ?? [], [tagIds]);
@@ -113,21 +131,57 @@ export function AssetPicker({
       page: 1,
       pageSize: PAGE_SIZE,
       tagIds: filterIds,
+      /* 案例池是**另一个口径**，不是「再加一个筛选」：不传就排除案例。 */
+      ...(pool === 'case' ? {purpose: 'case'} : {}),
     }),
     // `filterIds` 是每次 render 新建的数组，用它当依赖会无限重取；用 join 后的串。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [kind, keyword, filterKey],
+    [kind, keyword, filterKey, pool],
   );
   const query = useQuery({
-    queryKey: ['library-selection', kind, keyword, filterKey],
+    queryKey: ['library-selection', kind, keyword, filterKey, pool],
     queryFn: () => libraryApi.selection(params),
     enabled: open,
   });
   const items = query.data?.items ?? [];
 
+  /* 每次打开都从「我的素材」开始：上一次停在案例池，下一次挑槽位参考图时
+     会一进来就是空的（案例池里没有参考图），看起来像库里没东西。 */
+  useEffect(() => {
+    if (open) setPool('mine');
+  }, [open]);
+
   return (
-    <Modal open={open} onClose={onClose} title={TITLES[kind]} width={880}>
+    <Modal open={open} onClose={onClose} title={title ?? TITLES[kind]} width={880}>
       <div className="flex flex-col gap-3">
+        {/* 「我的素材 / 案例池」两档。只在设置展示案例时出现：其他入口
+            （槽位挑参考图）没有案例池这回事，摆一个永远灰的档只会让人问
+            「案例为什么不在这里」。 */}
+        {casePool && canReadCases && (
+          <div className="inline-flex w-fit items-center gap-0.5 rounded-xl bg-canvas/90 p-0.5 ring-1 ring-inset ring-[rgba(203,218,224,.8)]">
+            {(
+              [
+                ['mine', '我的素材'],
+                ['case', '案例池'],
+              ] as const
+            ).map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                aria-pressed={pool === value}
+                onClick={() => setPool(value)}
+                className={cn(
+                  'rounded-[10px] px-3 py-[5px] text-meta transition-all duration-150',
+                  pool === value
+                    ? 'bg-panel font-medium text-ink shadow-[0_1px_3px_rgba(21,50,61,.12)]'
+                    : 'text-ink-mute hover:text-ink-soft',
+                )}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
         <TagFilter
           tags={tags.data ?? []}
           onlyWithAssets
@@ -146,7 +200,9 @@ export function AssetPicker({
           <p className="py-10 text-center text-xs text-ink-mute">正在读取素材…</p>
         ) : items.length === 0 ? (
           <p className="py-10 text-center text-xs text-ink-mute">
-            没有可用的{KIND_LABELS[kind]}。先到素材库上传。
+            {pool === 'case'
+              ? `案例池里还没有${KIND_LABELS[kind]}，换个「我的素材」挑一条转成案例。`
+              : `没有可用的${KIND_LABELS[kind]}。先到素材库上传。`}
           </p>
         ) : (
           <div className="grid max-h-[420px] grid-cols-3 gap-3 overflow-y-auto pr-1 sm:grid-cols-4">
