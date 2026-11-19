@@ -514,8 +514,8 @@ export function SpecWorkspace() {
         ) : (
           /* 卡片而不是表格行：一张模板的"长相"是它的案例封面，列表里也该看得见。
              操作放在卡片脚上，扫一眼就知道哪张能发布、哪张已停用。
-             一行 4 个（`lg` 档 3 列过渡）：封面是 9:16，列数再少每张卡就太高。 */
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+             一行 5 个（`lg` 档 3 列过渡）：封面是 9:16，列数再少每张卡就太高。 */
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
             {rows.map(item => (
               <SpecCard
                 key={item.id}
