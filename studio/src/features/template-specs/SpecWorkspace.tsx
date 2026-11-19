@@ -38,6 +38,7 @@ import {
   TextInput,
 } from '@/shared/ui';
 import { cn } from '@/shared/lib/cn';
+import { toast } from '@/shared/lib/toast';
 import { AssetPicker, type PickKind, type PickedAsset } from '@/features/template-specs/AssetPicker';
 import { AddSlotMenu } from '@/features/template-specs/AddSlotMenu';
 import { DemoMenu } from '@/features/template-specs/DemoMenu';
@@ -145,7 +146,7 @@ export function SpecWorkspace() {
     onSuccess: (_row, asset) => {
       setDraft(current => (current ? {...current, demoAssetId: asset.id} : current));
       setPendingCase(null);
-      setNote('已移入案例池并设为展示案例');
+      toast('已移入案例池并设为展示案例', 'success');
     },
     onError: (reason: unknown) => {
       setPendingCase(null);
@@ -185,7 +186,6 @@ export function SpecWorkspace() {
 
   const clear = () => {
     setError('');
-    setNote('');
     setHint('');
   };
 
@@ -218,18 +218,18 @@ export function SpecWorkspace() {
       }
       if (action === 'validate') {
         const result = await validate.mutateAsync(payload);
-        setNote(`预检通过 · 指纹 ${result.fingerprint.slice(0, 12)}`);
+        toast(`预检通过 · 指纹 ${result.fingerprint.slice(0, 12)}`, 'success');
         return true;
       }
       const saved = await save.mutateAsync(payload);
       openDraft(fromSpecOut(saved));
       if (action === 'save') {
-        setNote(`已保存（第 ${saved.revision} 次修订）`);
+        toast(`已保存（第 ${saved.revision} 次修订）`, 'success');
         return true;
       }
       const receipt = await publish.mutateAsync(saved.key);
       openDraft(fromSpecOut(receipt.spec));
-      setNote(`已发布 v${receipt.version}`);
+      toast(`已发布 v${receipt.version}`, 'success');
       return true;
     } catch (reason) {
       fail(reason);
@@ -312,7 +312,6 @@ export function SpecWorkspace() {
     else if (blocker.state === 'blocked') blocker.proceed();
   };
   const [view, setView] = useState<'list' | 'trash'>('list');
-  const [note, setNote] = useState('');
   const [error, setError] = useState('');
   const [hint, setHint] = useState('');
   const patchSlot = (index: number, patch: Partial<SpecSlotIn>) => {
@@ -338,9 +337,10 @@ export function SpecWorkspace() {
       const cleared = textsToClearForRequired(next);
       if (cleared) {
         Object.assign(next, cleared);
-        setNote(
+        toast(
           `「${next.label?.trim() || SLOT_TYPE_LABELS[slotTypeOf(next.type)]}」改成必填了，` +
             '两段文案已清空（必填槽位一定是直接插入素材编号）',
+          'success',
         );
       }
     }
@@ -452,7 +452,7 @@ export function SpecWorkspace() {
   const moveToTrash = (item: TemplateSpecOut) => {
     if (!window.confirm(`把「${item.name}」移进回收站？可以再恢复。`)) return;
     clear();
-    remove.mutateAsync(item.key).then(() => setNote(`已移进回收站：${item.name}`), fail);
+    remove.mutateAsync(item.key).then(() => toast(`已移进回收站：${item.name}`, 'success'), fail);
   };
 
   /* ---------- 列表 / 回收站 ---------- */
@@ -505,11 +505,7 @@ export function SpecWorkspace() {
           )}
         </div>
 
-        {error ? (
-          <Notice tone="error">{error}</Notice>
-        ) : note ? (
-          <Notice tone="success">{note}</Notice>
-        ) : null}
+        {error && <Notice tone="error">{error}</Notice>}
         {loading ? (
           <p className="py-10 text-center text-xs text-ink-mute">正在读取…</p>
         ) : rows.length === 0 ? (
@@ -533,12 +529,13 @@ export function SpecWorkspace() {
                   publish
                     .mutateAsync(item.key)
                     .then(result =>
-                      setNote(
+                      toast(
                         /* 停用态走的是同一个接口，但版本号不变（幂等分支）——
                            这时候说「已发布 v1」会让人以为又发了一版。 */
                         item.status === 'disabled'
                           ? `已启用 ${item.name}`
                           : `已发布 ${item.name} v${result.version}`,
+                        'success',
                       ),
                     )
                     .catch(fail)
@@ -546,14 +543,14 @@ export function SpecWorkspace() {
                 onDisable={() =>
                   disable
                     .mutateAsync(item.key)
-                    .then(() => setNote(`已停用 ${item.name}`))
+                    .then(() => toast(`已停用 ${item.name}`, 'success'))
                     .catch(fail)
                 }
                 onRemove={() => moveToTrash(item)}
                 onRestore={() =>
                   restore
                     .mutateAsync(item.key)
-                    .then(() => setNote(`已恢复 ${item.name}`))
+                    .then(() => toast(`已恢复 ${item.name}`, 'success'))
                     .catch(fail)
                 }
               />
@@ -629,13 +626,10 @@ export function SpecWorkspace() {
             </Button>
           </div>
         </div>
-        {/* 提示放进吸顶区：槽位多的时候用户是在页面底部点「保存并发布」的，
-            提示留在页首等于没提示（预检失败/发布被拦正是最需要看见的时候）。 */}
-        {error ? (
-          <Notice tone="error">{error}</Notice>
-        ) : note ? (
-          <Notice tone="success">{note}</Notice>
-        ) : null}
+        {/* 错误留在吸顶区：槽位多的时候用户是在页面底部点「保存并发布」的，
+            错误留在页首等于没提示（预检失败/发布被拦正是最需要看见的时候）。
+            成功提示走浮层 toast（不占文档流）—— 内联横幅出现/消失会顶动下面的表单。 */}
+        {error && <Notice tone="error">{error}</Notice>}
       </div>
 
       <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)]">
@@ -735,10 +729,11 @@ export function SpecWorkspace() {
                     const renumbered = renumberRefs(draft, remaining);
                     const stripped = stripSlotRefs(renumbered.prompt ?? '', slot.key, remaining);
                     setDraft({...renumbered, prompt: stripped.text});
-                    setNote(
+                    toast(
                       stripped.count > 0
                         ? `已删除槽位「${name}」，提示词里的 ${stripped.count} 处引用一并清掉`
                         : `已删除槽位「${name}」`,
+                      'success',
                     );
                   }}
                   onPickAsset={() => setPicker({target: 'slot', index})}

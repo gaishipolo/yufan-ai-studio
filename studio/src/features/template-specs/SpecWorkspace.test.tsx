@@ -2,8 +2,10 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { RouterProvider, createMemoryRouter } from 'react-router-dom';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TemplateSpecOut } from '@/shared/api/schema';
+import { useToastStore } from '@/shared/lib/toast';
+import { Toaster } from '@/shared/ui/Toaster';
 import { SpecWorkspace } from './SpecWorkspace';
 
 /**
@@ -103,6 +105,13 @@ function specOf(overrides: Partial<TemplateSpecOut> = {}): TemplateSpecOut {
   } as TemplateSpecOut;
 }
 
+/* toast store 是模块级单例：成功提示现在走 toast，每个用例必须从空开始 */
+beforeEach(() => {
+  for (const item of useToastStore.getState().items) {
+    useToastStore.getState().dismiss(item.id);
+  }
+});
+
 function renderWorkspace(rows: TemplateSpecOut[]) {
   specs.current = rows;
   /* 页面里有一个裸 `useMutation`（把素材移进案例池），它要 QueryClient。 */
@@ -118,6 +127,7 @@ function renderWorkspace(rows: TemplateSpecOut[]) {
     ...render(
       <QueryClientProvider client={client}>
         <RouterProvider router={router} />
+        <Toaster />
       </QueryClientProvider>,
     ),
     /* 路由切换那一条要主动导航，所以把 router 交出去 */
@@ -174,13 +184,16 @@ describe('模板封装 · 列表卡片的操作集合', () => {
   });
 
   /* 停用态走幂等分支，版本号不变。这时候说「已发布 v2」会让人以为又发了一版。 */
-  it('启用成功的提示说「已启用」，不说「已发布 vN」', async () => {
+  it('启用成功：提示说「已启用」，且走浮层 toast 不占文档流', async () => {
     const user = userEvent.setup();
     renderWorkspace([specOf({ status: 'disabled', currentVersion: 2 })]);
 
     await user.click(cardOf('商品图模板').getByRole('button', { name: '启用' }));
 
-    expect(await screen.findByText('已启用 商品图模板')).toBeInTheDocument();
+    const notice = await screen.findByText('已启用 商品图模板');
+    /* 内联横幅出现/消失会顶动下面的卡片，这就是页面抖动的来源。
+       断言它待在 toast 的 `role="status"` 容器里 —— 改回内联 Notice 会变红。 */
+    expect(notice.closest('[role="status"]')).not.toBeNull();
     expect(screen.queryByText(/已发布 商品图模板 v/)).not.toBeInTheDocument();
   });
 
