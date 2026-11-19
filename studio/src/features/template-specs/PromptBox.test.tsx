@@ -27,38 +27,76 @@ function Harness({chips = CHIPS}: {chips?: PromptChip[]}) {
   );
 }
 
-/* 「预览」块已取消：输入框下面那排 chip 本来就把可用槽位全列了一遍，
-   还都能点（插到光标处）。再并排画一份「同样的胶囊、只是不能点」，
-   等于同一件事说两遍。
+/**
+ * 输入框里 `{{slot:key}}` **内联渲染成胶囊**。
+ *
+ * 这是这个组件最容易退化的地方：一旦有人把实现换回 `<textarea>`
+ * （比如为了省事），作者又会看到 `{{slot:image_1}}` 这种内部 id。
+ * 原来的兜底是输入框下面另开一块「预览」，那块已经取消 ——
+ * 胶囊现在只在输入框里，做不出来就等于没有。
+ */
+describe('输入框内联胶囊', () => {
+  it('token 显示成插槽名，不显示内部 id', () => {
+    render(
+      <PromptBox
+        value="先拍 {{slot:image_1}}，再补 {{slot:image_2}}。"
+        chips={CHIPS}
+        onChange={() => {}}
+        onInsert={() => {}}
+      />,
+    );
 
-   这里守住取消之后仍然成立的两件事：chip 行还在、点它能插到光标处，
-   以及那套视觉语言（类型图标 + 蓝/紫胶囊）没有随着预览块一起丢掉。 */
-describe('槽位 chip 行', () => {
-  it('没有预览块了（取消的是这块，不是 chip 行）', () => {
-    render(<PromptBox value="先拍一张 {{slot:image_1}}" chips={CHIPS} onChange={() => {}} onInsert={() => {}} />);
+    const box = screen.getByRole('textbox', { name: '提示词' });
+    const capsules = box.querySelectorAll('[data-token]');
+    expect(capsules).toHaveLength(2);
+    expect(capsules[0]).toHaveTextContent('主图');
+    expect(capsules[1]).toHaveTextContent('细节图');
+
+    // 界面上一个字都不该露出 token
+    expect(box.textContent).not.toContain('{{slot:');
+    // 但 token 留在 data 属性上：序列化要拿它还原成提交用的正文
+    expect(capsules[0]).toHaveAttribute('data-token', '{{slot:image_1}}');
+  });
+
+  it('胶囊不可编辑（光标不进去，退格一次整个删掉）', () => {
+    render(<PromptBox value="拍 {{slot:image_1}}" chips={CHIPS} onChange={() => {}} onInsert={() => {}} />);
+
+    const capsule = screen.getByRole('textbox', { name: '提示词' }).querySelector('[data-token]');
+    expect(capsule).toHaveAttribute('contenteditable', 'false');
+  });
+
+  it('普通文字照旧是普通文字，不被胶囊吞掉', () => {
+    render(
+      <PromptBox value="先拍一张" chips={CHIPS} onChange={() => {}} onInsert={() => {}} />,
+    );
+
+    const box = screen.getByRole('textbox', { name: '提示词' });
+    expect(box.textContent).toBe('先拍一张');
+    expect(box.querySelector('[data-token]')).toBeNull();
+  });
+
+  it('没有预览块了（胶囊取代了它，别再摆一块讲同一件事）', () => {
+    render(<PromptBox value="拍 {{slot:image_1}}" chips={CHIPS} onChange={() => {}} onInsert={() => {}} />);
 
     expect(screen.queryByTestId('prompt-preview')).not.toBeInTheDocument();
-    // 预览那行说明也一起没了
     expect(screen.queryByText(/素材占位显示插槽名/)).not.toBeInTheDocument();
   });
 
-  it('每个槽位一枚可点的 chip，点它插到光标处', async () => {
-    const user = userEvent.setup();
-    render(<Harness />);
+  /* 带空格的写法（`{{ slot:key }}`）在老草稿里存在。它也得认出来并画成胶囊，
+     否则作者会看到一段裸露的大括号。 */
+  it('带空格的 token 也认', () => {
+    render(
+      <PromptBox value="拍 {{ slot:image_1 }}" chips={CHIPS} onChange={() => {}} onInsert={() => {}} />,
+    );
 
-    await user.click(screen.getByRole('textbox'));
-    await user.click(screen.getByRole('button', { name: '主图' }));
-
-    expect(screen.getByTestId('value')).toHaveTextContent('{{slot:image_1}}');
+    const capsule = screen.getByRole('textbox', { name: '提示词' }).querySelector('[data-token]');
+    expect(capsule).toHaveTextContent('主图');
   });
+});
 
-  it('多值槽位的「全部」chip 也留着（它是另一条插入路径）', () => {
-    render(<Harness />);
-
-    expect(screen.getByRole('button', { name: '整组（全部）' })).toBeInTheDocument();
-  });
-
-  it('还没有槽位时给一句话，不留空行', () => {
+/* 还没有槽位时给一句话，别留一个空框让人猜。 */
+describe('空态', () => {
+  it('没有槽位时 chip 行给一句提示', () => {
     render(<PromptBox value="" chips={[]} onChange={() => {}} onInsert={() => {}} />);
 
     expect(screen.getByText('先在左边加槽位，再打 @ 引用')).toBeInTheDocument();
@@ -163,7 +201,9 @@ describe('提示词框的 @ 提及', () => {
   it('下方的 chip 按钮照旧能插入引用（不破坏原功能）', async () => {
     const user = userEvent.setup();
     render(<Harness />);
-    await user.click(screen.getByRole('button', {name: '主图'}));
+    /* chip 现在是一枚带状态的小胶囊（圆点 + 名字 + 「用户填写」），
+       可访问名里带上了状态文字，所以用包含匹配。 */
+    await user.click(screen.getByRole('button', {name: /主图/}));
 
     expect(screen.getByTestId('value')).toHaveTextContent('{{slot:image_1}}');
   });

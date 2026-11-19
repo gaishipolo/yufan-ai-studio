@@ -353,6 +353,17 @@ export interface RefChip {
   all: boolean;
   /** 槽位类型：提示词框里画图标用（图标比「成片/图片」这类文字省地方） */
   kind: SlotType;
+  /**
+   * 作者把素材**定死**了（`binding === 'fixed'`）。
+   *
+   * chip 上要标出来：「已固定」与「用户填写」对写提示词的人是两件事 ——
+   * 前者不可能变，后者每张成片都不一样，提示词里该不该写死细节取决于它。
+   * 这个状态原本只在「槽位速览」里显示，那块取消后搬到了 chip 上。
+   *
+   * 可选：`selfRefChips`（槽位卡片里「选中时文案」的自身候选）也复用这个类型，
+   * 那个场景下作者正在编辑这个槽位本身，状态就写在旁边的控件上，不必再标一遍。
+   */
+  fixed?: boolean;
 }
 
 /**
@@ -372,8 +383,9 @@ export function referenceChips(spec: TemplateSpecIn): RefChip[] {
       ordinal += 1;
       // key 是自动生成且界面上不显示，所以回退名用「图片 1」这种位置可读名。
       const name = slot.label?.trim() || `${SLOT_TYPE_LABELS[slotTypeOf(slot.type)]} ${ordinal}`;
+      const fixed = (slot.binding ?? 'user') === 'fixed';
       const chips: RefChip[] = [
-        {token: `{{slot:${slot.key}}}`, label: name, all: false, kind: slotTypeOf(slot.type)},
+        {token: `{{slot:${slot.key}}}`, label: name, all: false, kind: slotTypeOf(slot.type), fixed},
       ];
       // 多值槽位额外给一个「全部」引用。
       const max = slot.maxCount ?? 1;
@@ -383,6 +395,7 @@ export function referenceChips(spec: TemplateSpecIn): RefChip[] {
           label: `${name}（全部）`,
           all: true,
           kind: slotTypeOf(slot.type),
+          fixed,
         });
       }
       return chips;

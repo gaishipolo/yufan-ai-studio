@@ -223,9 +223,7 @@ describe('模板封装 · 编辑器里的提示词', () => {
   it('提示词输入框本身还在（取消的是外壳，不是框）', async () => {
     await enterEditor();
 
-    expect(
-      screen.getByPlaceholderText('写提示词；打 @ 可以直接选槽位'),
-    ).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: '提示词' })).toBeInTheDocument();
   });
 
   it('不再有「+ 文本素材」这个重复入口（左栏加号菜单已覆盖）', async () => {
@@ -241,9 +239,11 @@ describe('模板封装 · 编辑器里的提示词', () => {
     expect(screen.getByText(new RegExp(`/\\s*20000`))).toBeInTheDocument();
   });
 
-  it('预览块没了', async () => {
+  /* 「槽位速览」整块取消：它的信息（已固定 / 用户填写）搬到了提示词框
+     下面那排 chip 上，所以这里要确认板块真的不在了。 */
+  it('没有「槽位速览」板块', async () => {
     await enterEditor();
 
-    expect(screen.queryByTestId('prompt-preview')).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: '槽位速览' })).not.toBeInTheDocument();
   });
 });

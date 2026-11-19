@@ -3,10 +3,10 @@ import {cn} from '@/shared/lib/cn';
 import {type SlotType} from './specDraft';
 import {SLOT_TYPE_ICONS} from './slotIcons';
 import {
-  MentionTextarea,
   type MentionCandidate,
   type MentionTextareaHandle,
 } from './MentionTextarea';
+import {RichPromptEditor} from './RichPromptEditor';
 
 export interface PromptChip {
   token: string;
@@ -14,6 +14,8 @@ export interface PromptChip {
   all: boolean;
   /** 槽位类型：画图标用 */
   kind?: SlotType;
+  /** 作者定死的素材（`binding === 'fixed'`）：chip 上标「已固定」而不是「用户填写」 */
+  fixed?: boolean;
 }
 
 /**
@@ -24,13 +26,7 @@ export interface PromptChip {
  * - 点下方 chip → 插到当前光标处。
  *
  * 输入框本体是共享的 `MentionTextarea`（槽位的「选中时文案」框也用它，
- * 两处的候选面板行为才不会漂移）。
- *
- * **没有「预览」块**：原来输入框下面另有一块，把正文里的 `{{slot:key}}`
- * 渲染成插槽名，好让作者看见「哪几段会被素材顶掉」。那块被取消了 ——
- * 它下面那排 chip 本来就把可用槽位全列了一遍（还是可点的），
- * 再并排画一份「同样的胶囊、只是不能点」等于同一件事说两遍。
- * 视觉语言沿用预览块那套：类型图标 + 蓝底胶囊（多值槽位是紫的）。
+ * 两处的候选面板行为才不会漂移）。这里多出来的是：预览 + 下方 chip 行。
  */
 export function PromptBox({
   value,
@@ -60,11 +56,14 @@ export function PromptBox({
 
   return (
     <div>
-      <MentionTextarea
+      {/* 富文本输入框：正文里的 `{{slot:key}}` 直接渲染成胶囊，
+          作者看到的就是「这里会被一张正面图顶掉」，而不是内部 id。
+          原先下面另有一块「预览」干这件事，取消 —— 输入框本身已经是预览了。 */}
+      <RichPromptEditor
         ref={boxRef}
         value={value}
         candidates={candidates}
-        rows={10}
+        aria-label="提示词"
         placeholder="写提示词；打 @ 可以直接选槽位"
         className="rounded-xl px-3 py-2.5"
         onChange={text => {
@@ -91,14 +90,26 @@ export function PromptBox({
                 title={`插入 ${chip.token}（点一下插到光标处）`}
                 onClick={() => insertAtCaret(chip.token)}
                 className={cn(
-                  'inline-flex items-center gap-1 rounded-[5px] border px-1.5 py-px text-micro font-medium transition-colors',
-                  chip.all
-                    ? 'border-violet/30 bg-violet/10 text-violet hover:bg-violet/15'
-                    : 'border-primary-line bg-primary-soft text-primary-deep hover:bg-primary/15',
+                  'inline-flex items-center gap-1.5 rounded-lg border px-2 py-1 text-meta transition-colors',
+                  'border-line-soft bg-panel-soft text-ink-soft',
+                  'hover:border-primary-line hover:text-primary',
                 )}
               >
-                {Icon && <Icon size={11} className="shrink-0" />}
-                {chip.label}
+                {/* 视觉沿用原「槽位速览」那一枚：绿点 = 作者定死、蓝点 = 使用者挑。
+                    那块板块取消后，这个区分只剩这里能看见 —— 而它对写提示词的人
+                    是有用的（固定素材不可能变，用户填的每张成片都不一样，
+                    提示词里该不该写死细节取决于它）。 */}
+                <span
+                  className={cn(
+                    'size-1.5 shrink-0 rounded-full',
+                    chip.fixed ? 'bg-ok' : 'bg-primary',
+                  )}
+                />
+                {Icon && <Icon size={11} className="shrink-0 text-ink-mute" />}
+                <span className="truncate">{chip.label}</span>
+                <span className="text-micro text-ink-mute">
+                  {chip.fixed ? '已固定' : '用户填写'}
+                </span>
               </button>
             );
           })

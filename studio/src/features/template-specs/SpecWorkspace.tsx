@@ -647,33 +647,6 @@ export function SpecWorkspace() {
             </div>
           </div>
 
-          {/* 槽位速览：一眼看清「有几个槽位、分别是谁定的」。
-              点名不如看颜色快 —— 绿点=作者定死，蓝点=使用者挑。 */}
-          <Section title="槽位速览">
-            <div className="flex flex-wrap gap-1.5">
-              {slots.length === 0 && (
-                <span className="text-meta text-ink-mute">还没有槽位</span>
-              )}
-              {slots.map((slot, index) => {
-                const fixed = (slot.binding ?? 'user') === 'fixed';
-                return (
-                  <span
-                    key={slot.key}
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-line-soft bg-panel-soft px-2 py-1 text-meta text-ink-soft"
-                  >
-                    <span
-                      className={cn('size-1.5 shrink-0 rounded-full', fixed ? 'bg-ok' : 'bg-primary')}
-                    />
-                    {slot.label?.trim() || `${SLOT_TYPE_LABELS[slotTypeOf(slot.type)]} ${index + 1}`}
-                    <span className="text-micro text-ink-mute">
-                      {fixed ? '已固定' : '用户填写'}
-                    </span>
-                  </span>
-                );
-              })}
-            </div>
-          </Section>
-
           <Section
             title="展示案例"
           >
