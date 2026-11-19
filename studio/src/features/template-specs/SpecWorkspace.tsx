@@ -622,25 +622,30 @@ export function SpecWorkspace() {
         </div>
 
         <div className="flex flex-col gap-4 lg:sticky lg:top-[112px]">
-          {/* 提示词放到最上面：它是作者这一页真正在写的东西。
-              槽位速览是它的索引，展示案例是它的产出预览 —— 顺序按「写 → 查 → 验」。 */}
-          <Section
-            title="提示词"
-            extra={
-              <Button variant="ghost" size="sm" onClick={() => addSlot('text')}>
-                <Plus size={12} /> 文本素材
-              </Button>
-            }
-            meta={`字数 ${(draft.prompt ?? '').length} / ${MAX_PROMPT}`}
-          >
+          {/* 提示词**不套板块外壳**：它是这一页真正在写的东西，和下面
+              「槽位速览」「展示案例」不是同级信息 —— 给它一条标题带子
+              （「提示词」三个字）只是把输入框自己已经说明的事再说一遍。
+              卡片视觉还在（同款圆角 + 边框），只是没有标题条。
+
+              「+ 文本素材」也去掉了：左栏「槽位」板块的加号菜单已经能加
+              任意类型（含文本），同一个动作摆两个入口，用户还得判断
+              哪个才是"正确"的。 */}
+          <div className="rounded-2xl border border-line bg-panel p-4 shadow-[0_1px_2px_rgba(16,42,55,0.04)]">
             <PromptBox
               value={draft.prompt ?? ''}
               chips={chips}
               onChange={setPromptText}
               onInsert={insertPromptText}
             />
-            {hint && <p className="mt-2 text-meta text-warn-deep">{hint}</p>}
-          </Section>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              {hint && <p className="text-meta text-warn-deep">{hint}</p>}
+              {/* 字数是一门**约束**（超了保存不了），不是解释，必须留着。
+                  放到输入框下方右端：和它约束的那个框同处一块。 */}
+              <span className="ml-auto font-mono text-micro tabular-nums text-ink-mute">
+                {(draft.prompt ?? '').length} / {MAX_PROMPT}
+              </span>
+            </div>
+          </div>
 
           {/* 槽位速览：一眼看清「有几个槽位、分别是谁定的」。
               点名不如看颜色快 —— 绿点=作者定死，蓝点=使用者挑。 */}

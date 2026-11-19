@@ -195,3 +195,55 @@ describe('模板封装 · 列表卡片的操作集合', () => {
     expect(card.queryByRole('button', { name: '删除' })).not.toBeInTheDocument();
   });
 });
+
+/**
+ * 编辑器里「提示词」的形态。
+ *
+ * 它**不套板块外壳**：这一页真正在写的就是提示词，和下面「槽位速览」
+ * 「展示案例」不是同级信息。给它一条「提示词」标题带子，只是把输入框
+ * 自己已经说明的事再说一遍。
+ *
+ * 「+ 文本素材」也去掉了：左栏「槽位」板块的加号菜单本来就能加任意类型。
+ */
+describe('模板封装 · 编辑器里的提示词', () => {
+  const enterEditor = async () => {
+    const user = userEvent.setup();
+    renderWorkspace([specOf({ status: 'draft' })]);
+
+    await user.click(cardOf('商品图模板').getByRole('button', { name: '编辑' }));
+    return user;
+  };
+
+  it('没有「提示词」这条板块标题', async () => {
+    await enterEditor();
+
+    expect(screen.queryByRole('heading', { name: '提示词' })).not.toBeInTheDocument();
+  });
+
+  it('提示词输入框本身还在（取消的是外壳，不是框）', async () => {
+    await enterEditor();
+
+    expect(
+      screen.getByPlaceholderText('写提示词；打 @ 可以直接选槽位'),
+    ).toBeInTheDocument();
+  });
+
+  it('不再有「+ 文本素材」这个重复入口（左栏加号菜单已覆盖）', async () => {
+    await enterEditor();
+
+    expect(screen.queryByRole('button', { name: /文本素材/ })).not.toBeInTheDocument();
+  });
+
+  /* 字数是一门**约束**（超了保存不了），取消板块时不能连带删掉。 */
+  it('字数上限还在，而且写法是 N / 上限', async () => {
+    await enterEditor();
+
+    expect(screen.getByText(new RegExp(`/\\s*20000`))).toBeInTheDocument();
+  });
+
+  it('预览块没了', async () => {
+    await enterEditor();
+
+    expect(screen.queryByTestId('prompt-preview')).not.toBeInTheDocument();
+  });
+});

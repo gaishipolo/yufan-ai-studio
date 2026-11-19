@@ -27,30 +27,41 @@ function Harness({chips = CHIPS}: {chips?: PromptChip[]}) {
   );
 }
 
-describe('提示词预览', () => {
-  it('正文里的素材占位显示成插槽名,与普通文字分开', () => {
-    render(
-      <PromptBox
-        value="先拍一张 {{slot:image_1}},再补细节 {{slot:image_2}}。"
-        chips={CHIPS}
-        onChange={() => {}}
-        onInsert={() => {}}
-      />,
-    );
+/* 「预览」块已取消：输入框下面那排 chip 本来就把可用槽位全列了一遍，
+   还都能点（插到光标处）。再并排画一份「同样的胶囊、只是不能点」，
+   等于同一件事说两遍。
 
-    const preview = screen.getByTestId('prompt-preview');
-    // 占位显示插槽名,不显示内部的 token
-    expect(preview).toHaveTextContent('主图');
-    expect(preview).toHaveTextContent('细节图');
-    expect(preview).not.toHaveTextContent('{{slot:');
-    // 普通文字原样留着
-    expect(preview).toHaveTextContent('先拍一张');
-    expect(preview).toHaveTextContent('再补细节');
+   这里守住取消之后仍然成立的两件事：chip 行还在、点它能插到光标处，
+   以及那套视觉语言（类型图标 + 蓝/紫胶囊）没有随着预览块一起丢掉。 */
+describe('槽位 chip 行', () => {
+  it('没有预览块了（取消的是这块，不是 chip 行）', () => {
+    render(<PromptBox value="先拍一张 {{slot:image_1}}" chips={CHIPS} onChange={() => {}} onInsert={() => {}} />);
+
+    expect(screen.queryByTestId('prompt-preview')).not.toBeInTheDocument();
+    // 预览那行说明也一起没了
+    expect(screen.queryByText(/素材占位显示插槽名/)).not.toBeInTheDocument();
   });
 
-  it('没有提示词时给一句说明,不留空盒子', () => {
-    render(<PromptBox value="" chips={CHIPS} onChange={() => {}} onInsert={() => {}} />);
-    expect(screen.getByTestId('prompt-preview')).toHaveTextContent('还没有提示词');
+  it('每个槽位一枚可点的 chip，点它插到光标处', async () => {
+    const user = userEvent.setup();
+    render(<Harness />);
+
+    await user.click(screen.getByRole('textbox'));
+    await user.click(screen.getByRole('button', { name: '主图' }));
+
+    expect(screen.getByTestId('value')).toHaveTextContent('{{slot:image_1}}');
+  });
+
+  it('多值槽位的「全部」chip 也留着（它是另一条插入路径）', () => {
+    render(<Harness />);
+
+    expect(screen.getByRole('button', { name: '整组（全部）' })).toBeInTheDocument();
+  });
+
+  it('还没有槽位时给一句话，不留空行', () => {
+    render(<PromptBox value="" chips={[]} onChange={() => {}} onInsert={() => {}} />);
+
+    expect(screen.getByText('先在左边加槽位，再打 @ 引用')).toBeInTheDocument();
   });
 });
 
