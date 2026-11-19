@@ -12,9 +12,19 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
+from core.exceptions import UpstreamError
 
-class StorageError(Exception):
-    """存储层异常，由中间件转换为 502。"""
+
+class StorageError(UpstreamError):
+    """存储层异常：由全局错误处理器转成 **502**。
+
+    继承 `UpstreamError` 而不是裸 `Exception` —— 这个类代表「上游（磁盘 / 对象
+    存储）出问题」，不是「我们代码写错了」。落 `Exception` 兜底会变成 500 +
+    「服务器内部错误」，把告警分流指向错误的排查方向；而 `api/errors.py` 专门
+    写过 500 与 503 的分流意义，存储故障正是最该走 502 的那一类。
+
+    归档层（`infra/archive/`）早就是 `UpstreamError`，两套存储的语义现在一致。
+    """
 
 
 @runtime_checkable

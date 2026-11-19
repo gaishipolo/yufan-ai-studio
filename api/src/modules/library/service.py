@@ -42,6 +42,7 @@ from core.exceptions import AppError, BadRequest, NotFound
 from core.ports.library_references import ask_library_references, library_references_ready
 from core.response import PageParams
 from core.serving import Served
+from infra.archive.blobs import normalize_suffix
 from infra.media_probe import (
     EXTENSIONS,
     LARGE_PREVIEW_VERSION,
@@ -125,7 +126,15 @@ def _kind_of(mime: str) -> str:
 
 
 def blob_key(digest: str, extension: str) -> str:
-    return f"{BLOB_PREFIX}/{digest[:2]}/{digest}{extension}"
+    """`library/blobs/ab/abcdef…{ext}`：前两位分桶，避免单目录几十万文件。
+
+    扩展名过 `normalize_suffix`（与归档层**同一个函数**）：这个字符串会被拼进
+    对象 key，而 key 有可能落成文件路径。上游现在确实用白名单挡住了（`upload`
+    先 `Path(filename).suffix` 再查 `EXTENSIONS`），但「函数本身挡住」和「调用方
+    恰好挡住」是两件事 —— 后者换一个调用点就失效，而失效的样子是路径穿越
+    或两条内容相同的素材落到两个不同的 key 上（`.PNG` vs `.png`）。
+    """
+    return f"{BLOB_PREFIX}/{digest[:2]}/{digest}{normalize_suffix(extension)}"
 
 
 def preview_key(digest: str) -> str:

@@ -12,6 +12,7 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
+from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -76,7 +77,13 @@ def get_engine() -> AsyncEngine:
     if _engine is None:
         settings = get_settings()
         _engine = create_async_engine(settings.db_url, **_engine_kwargs())
-        logger.info("数据库引擎已创建: %s", settings.db_url.split("///")[0])
+        # 用 SQLAlchemy 自己的渲染，而不是 `split("///")[0]`：后者只对 sqlite
+        # （`scheme:///path`）有效，PG 的 `scheme://user:pass@host` 没有三个斜杠，
+        # split 找不到分隔符就返回原串 —— 启动日志里就是含密码的完整 DSN。
+        logger.info(
+            "数据库引擎已创建: %s",
+            make_url(settings.db_url).render_as_string(hide_password=True),
+        )
     return _engine
 
 

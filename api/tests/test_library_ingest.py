@@ -605,3 +605,22 @@ def test_ingest_download_requires_an_allowlist_in_prod() -> None:
     from modules.library.ingest import IngestDownloadSettings
 
     assert IngestDownloadSettings.prod_required_fields == ("allowed_hosts",)
+
+
+def test_blob_key_normalizes_the_extension() -> None:
+    """key 里的扩展名必须消毒 —— 与归档层同一个 `normalize_suffix`。
+
+    上游现在用白名单挡住了（`upload` 先 `Path(filename).suffix` 再查
+    `EXTENSIONS`），但「函数本身挡住」和「调用方恰好挡住」是两件事：后者换个
+    调用点就失效，而失效的样子是路径穿越，或者同一份内容因为 `.PNG` / `.png`
+    落到两个 key 上（去重按 sha256 合并了行，字节却存了两份）。
+    """
+    from modules.library.service import blob_key
+
+    digest = "a" * 64
+    assert blob_key(digest, ".png").endswith(f"{digest}.png")
+    # 大小写归一
+    assert blob_key(digest, ".PNG").endswith(f"{digest}.png")
+    # 非法后缀被消成空
+    assert blob_key(digest, "../../../etc/passwd").endswith(digest)
+    assert blob_key(digest, "").endswith(digest)

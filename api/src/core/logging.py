@@ -9,15 +9,74 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import sys
 from datetime import UTC, datetime
 
 from core.context import get_request_id
 
+#: 敏感参数的**名字**。值一律替换成 `<redacted>`。
+#:
+#: 这条清单只覆盖「会出现在 URL / 日志文本里的凭证形态」。它不追求穷尽 ——
+#: 目标是「别让预签名地址、供应商回调地址、DSN 这类东西原样进日志」，
+#: 而不是做一个正则防火墙。
+_SECRET_NAMES = (
+    r"password|passwd|pwd|secret|token|access_token|refresh_token|"
+    r"apikey|api_key|api-key|signature|credential|authorization"
+)
+
+_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    # key=value：query string 与日志里的 `k=v` 都覆盖。
+    # 保留键名，只抹值 —— 排查时「哪个参数被抹了」仍要能看见。
+    (
+        # 排除 `<` 与 `>`：值被抹成 `<redacted>` 之后，再跑一次不能再匹配
+        # （否则 `token=<redacted>` 会被替换成 `token=<redacted>>>`，
+        #  `redact()` 就不是幂等的了 —— 而 formatter 会对同一段文本再抹一遍）
+        re.compile(rf"(?i)\b({_SECRET_NAMES})=([^&\s,;\"'<}}>]+)"),
+        r"\1=<redacted>",
+    ),
+    # DSN：scheme://user:pass@host —— 这是 `db/session.py` 那行的形态，
+    # `key=value` 规则兜不住（密码前面是冒号不是等号）。
+    (
+        re.compile(r"(?i)\b([a-z][a-z0-9+.\-]*://[^:/\s@]+):([^@/\s]+)@"),
+        r"\1:***@",
+    ),
+    # Authorization: Bearer xxx
+    (re.compile(r"(?i)(bearer\s+)[A-Za-z0-9._\-]{12,}"), r"\1<redacted>"),
+)
+
+
+def redact(text: str) -> str:
+    """抹掉文本里的凭证。幂等：对已经抹过的文本再跑一次结果不变。"""
+    for pattern, replacement in _PATTERNS:
+        text = pattern.sub(replacement, text)
+    return text
+
 
 class RequestIdFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         record.request_id = get_request_id()
+        return True
+
+
+class RedactingFilter(logging.Filter):
+    """把已格式化的消息脱敏后再交给 Formatter。
+
+    为什么做在 Filter 而不是每个调用点：调用点有几万处，漏一处就漏一条；
+    而 Filter 在 `getMessage()` 之后、Formatter 之前，是唯一「所有日志都要
+    经过」的位置。
+
+    代价：这里会提前把 `msg % args` 展开一次。对 `logger.info("%s", obj)` 而言
+    等于提前调用了 `str(obj)` —— 项目里没有把重对象直接丢进日志的写法，
+    为此换来「不会误打凭证」是值的。
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        message = record.getMessage()
+        redacted = redact(message)
+        if redacted != message:
+            record.msg = redacted
+            record.args = ()
         return True
 
 
@@ -34,7 +93,9 @@ class JsonFormatter(logging.Formatter):
             payload["exc_info"] = self.formatException(record.exc_info)
         for key, value in getattr(record, "extra_fields", {}).items():
             payload[key] = value
-        return json.dumps(payload, ensure_ascii=False)
+        # 堆栈里也可能带着 DSN / URL（例如 SQLAlchemy 的连接异常），
+        # 所以对最终字符串再抹一遍；`redact()` 是幂等的，重复调用无副作用
+        return redact(json.dumps(payload, ensure_ascii=False))
 
 
 class DevFormatter(logging.Formatter):
@@ -62,7 +123,7 @@ class DevFormatter(logging.Formatter):
         # JsonFormatter 有这一段，dev 用的这个反而没有，属于两边没对齐。
         if record.exc_info:
             text += "\n" + self.formatException(record.exc_info)
-        return text
+        return redact(text)
 
 
 # 项目自己的命名空间。`DEBUG=true` 只放开这些，第三方库仍由下面那份降噪名单管。
@@ -85,6 +146,7 @@ PROJECT_NAMESPACES = (
 def setup_logging(env: str = "dev", debug: bool = False) -> None:
     handler = logging.StreamHandler(sys.stdout)
     handler.addFilter(RequestIdFilter())
+    handler.addFilter(RedactingFilter())
     handler.setFormatter(DevFormatter() if env == "dev" else JsonFormatter())
 
     root = logging.getLogger()

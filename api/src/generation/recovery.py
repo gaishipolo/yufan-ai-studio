@@ -102,15 +102,29 @@ def _supports_poll(record: GenerationRecord) -> bool:
     return isinstance(provider, PollCapable) and bool(provider.supports_poll)
 
 
-async def _fail_unrecoverable(kind: str, record: GenerationRecord) -> None:
-    """同步供应商留下的 running 孤儿：无法续查，显式置失败并补发事件。"""
+async def _fail_unrecoverable(kind: str, record: GenerationRecord) -> bool:
+    """同步供应商留下的 running 孤儿：无法续查，显式置失败并补发事件。
+
+    返回**是否真的写了终态**（`mark_failed` 的条件更新没命中就是 False）。
+
+    `GenerationStore` 的协议写着「所有写方法必须返回 bool…终态保护只有在调用方
+    看返回值时才真正成立」。不看返回值的后果：用户刚点了取消（记录已 cancelled），
+    启动恢复照样 `commit` + 发 `EVT_GENERATION_FAILED` —— 用户先收到「已取消」，
+    再收到「生成失败」，两个矛盾通知。
+    """
     message = SYNC_PROVIDER_ORPHAN_MESSAGE
     async with get_session_factory()() as session:
         store = get_pipeline(kind).store(session)
         current = await store.load(record.id)
         if current is None or current.terminal:
-            return
-        await store.mark_failed(record.id, message)
+            return False
+        if not await store.mark_failed(record.id, message):
+            # `load` 与 `mark_failed` 之间被别人落了终态（取消 / 另一个实例的恢复）：
+            # 这不是错误，是这一条已经有人处理了。跳过，别补发矛盾事件。
+            logger.info(
+                "记录已终态，跳过失败收尾 kind=%s id=%s", kind, record.id
+            )
+            return False
         await session.commit()
     await get_event_bus().publish(
         EVT_GENERATION_FAILED,
@@ -119,6 +133,7 @@ async def _fail_unrecoverable(kind: str, record: GenerationRecord) -> None:
         owner_id=record.owner_id,
         error=message,
     )
+    return True
 
 
 async def recover_kind(
@@ -149,8 +164,10 @@ async def recover_kind(
                     await active.resume(kind, record.id)
                     counts["resume_poll"] += 1
                 else:
-                    await _fail_unrecoverable(kind, record)
-                    counts["sync_orphan"] += 1
+                    # 只有真的写了终态才计数：`mark_failed` 落败说明这一条
+                    # 已经被别人处理（取消 / 另一实例），不该算进 sync_orphan
+                    if await _fail_unrecoverable(kind, record):
+                        counts["sync_orphan"] += 1
             else:
                 # submit_attempts>0 的记录也会被 dispatch，但 runner 的
                 # 「提交结果未知」分支会把它置为 failed 等人核对，不会二次提交。

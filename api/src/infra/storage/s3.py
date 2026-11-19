@@ -196,25 +196,35 @@ class S3Storage:
         self, key: str, *, content_type: str = "application/octet-stream", expires_in: int = 900
     ) -> str:
         key = self._key(key)
-        return await asyncio.to_thread(
-            self._client.generate_presigned_url,
-            "put_object",
-            Params={
-                "Bucket": self.settings.bucket,
-                "Key": key,
-                "ContentType": content_type,
-            },
-            ExpiresIn=expires_in,
-        )
+        # 与其余五个方法一致：botocore 的异常必须转成 `StorageError`。
+        # 不转的话它会穿透到 `infra/artifacts.py` 的 `except StorageError` 之外，
+        # 让「这一张图没地址」变成「整个历史列表 500」—— 而那个文件的设计意图
+        # 恰恰是「一张图的地址算不出来，不该让整个列表挂掉」。
+        try:
+            return await asyncio.to_thread(
+                self._client.generate_presigned_url,
+                "put_object",
+                Params={
+                    "Bucket": self.settings.bucket,
+                    "Key": key,
+                    "ContentType": content_type,
+                },
+                ExpiresIn=expires_in,
+            )
+        except (ClientError, BotoCoreError) as exc:
+            raise StorageError(f"S3 上传签名失败（{key}）：{exc}") from exc
 
     async def presigned_download_url(self, key: str, *, expires_in: int = 900) -> str:
         key = self._key(key)
-        return await asyncio.to_thread(
-            self._client.generate_presigned_url,
-            "get_object",
-            Params={"Bucket": self.settings.bucket, "Key": key},
-            ExpiresIn=expires_in,
-        )
+        try:
+            return await asyncio.to_thread(
+                self._client.generate_presigned_url,
+                "get_object",
+                Params={"Bucket": self.settings.bucket, "Key": key},
+                ExpiresIn=expires_in,
+            )
+        except (ClientError, BotoCoreError) as exc:
+            raise StorageError(f"S3 下载签名失败（{key}）：{exc}") from exc
 
     def local_path(self, key: str) -> Path | None:
         """对象在桶里，没有本地路径：调用方应改用 `presigned_download_url` 重定向。

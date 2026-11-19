@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
 from datetime import UTC, datetime
 from pathlib import Path
@@ -262,8 +263,20 @@ class VideoGenerationPipeline:
         match = _RUN_OUTPUT_URL.search(url)
         if match is None:
             return url
-        source = run_dir(get_archive_storage(), match.group(1)) / _EXECUTOR_OUTPUT
-        if not source.is_file():
+
+        # `run_dir` 内部要读指针 JSON（`storage.exists` / `storage.read`），
+        # 之后还要 `is_file()` —— 而 `ArchiveStorage` 的**全部方法都是同步的**
+        # （S3 归档下是 boto3，SMB 下是一次网络往返，重试退避里还有 `time.sleep`）。
+        # 直接在协程里调，会把整个事件循环按住那么久：这段时间里所有 HTTP 请求、
+        # 队列消费、其它周期任务一起停摆，而日志里一条异常都没有。
+        #
+        # 一次 `to_thread` 把「定位 + 存在性判断」都做完，省一次跨线程往返。
+        def _locate() -> tuple[Path, bool]:
+            path = run_dir(get_archive_storage(), match.group(1)) / _EXECUTOR_OUTPUT
+            return path, path.is_file()
+
+        source, exists = await asyncio.to_thread(_locate)
+        if not exists:
             raise FileNotFoundError(f"归档工作区里没有成片：{source}")
         key = f"videos/{record_id}{Path(_EXECUTOR_OUTPUT).suffix}"
         await get_storage().put_file(key, source, "video/mp4")

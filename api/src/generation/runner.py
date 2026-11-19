@@ -485,6 +485,12 @@ class GenerationRunner:
         next_delay: float | None = None
 
         try:
+            # 这一跳的预算只覆盖「问一次供应商」。
+            #
+            # `* 0.8`：留 20% 给「拿到结果之后的收尾判断」（`mark_failed` 的
+            # 条件更新、事件发布、下一次排程），那些也在同一跳里但要落库。
+            # 落盘**不在**这个预算里 —— 它有自己的 `GENERATION_PERSIST_TIMEOUT_SEC`，
+            # 见下方 `succeeded` 分支的注释。
             budget = (job.timeout_sec or 120.0) * 0.8
             # 会话开在超时块**外面**：成功了还要用它做入库，而入库属于
             # 「落库之后的收尾」，绝不能算进轮询预算（见下方 pending 的注释）。
@@ -495,6 +501,8 @@ class GenerationRunner:
                 # 用户界面上就是「已完成」——再被超时打断，草稿箱空、订阅方收不到
                 # 事件，且下一跳看到终态直接 return，没有任何补偿路径。
                 pending: tuple[Any, str | None, str | None] | None = None
+                #: 预算内只记「供应商说成功了」，落盘与提交都留到预算外做
+                succeeded: tuple[Any, Any] | None = None
                 # 轮询也有硬上限：单次 poll 卡住（供应商不回、连接半开）会一直占着协程，
                 # 队列 timeout 到点直接丢弃 job，整条轮询链就断了。超时按普通异常兜住，
                 # 由下面的 except 排下一跳。
@@ -598,27 +606,15 @@ class GenerationRunner:
                         state = result.state
 
                         if state == GenerationState.SUCCEEDED:
-                            output_url = await self._persist(kind, record_id, result.output_url)
-                            cover_url = self._persisted_cover(result, output_url)
-                            # 终态保护必须接返回值：轮询期间用户点了取消时，
-                            # `mark_succeeded` 会拒绝写入（记录已是 cancelled）。
-                            # 此时继续 commit + 归档 + 发事件，用户就会先看到
-                            # 「已取消」再收到「生成成功」，草稿箱还多一条脏数据。
-                            if not await store.mark_succeeded(
-                                record_id,
-                                output_url=output_url,
-                                cover_url=cover_url,
-                                progress=result.progress or 100,
-                            ):
-                                logger.info(
-                                    "记录已终态，丢弃轮询结果 kind=%s id=%s", kind, record_id
-                                )
-                                return
-                            await session.commit()
-                            # 生成成功是既成事实，先落库再往资产库送：入库失败不该
-                            # 把用户已经看到的结果改回失败（见 `_archive`）。
-                            # 收尾动作留给超时块外的 `_finish_success`。
-                            pending = (record, output_url, cover_url)
+                            # 落盘（可能几百 MB）**不能**在轮询预算里跑。
+                            # 预算（`job.timeout_sec * 0.8` = 48 秒）是给「问一次
+                            # 供应商」留的：一套 300MB 的成片下载塞进去就把它耗光，
+                            # 这一跳被判「没拿到结果」，下一跳重新拉一遍，而它照样
+                            # 超时 —— 无限重跳，产物永远进不了库。
+                            #
+                            # 所以这里只记「拿到结果」，落盘与提交都放到预算之外
+                            # （见下方 `succeeded` 分支）。
+                            succeeded = (record, result)
                         elif state == GenerationState.FAILED:
                             if result.retryable and polls + 1 < settings.generation_max_polls:
                                 next_delay = self._backoff(polls, base=interval)
@@ -657,6 +653,36 @@ class GenerationRunner:
                                     progress=progress,
                                 )
                             next_delay = interval
+
+                # ---- 预算之外：落盘 + 落库 ----
+                #
+                # 这一段刻意不在 `asyncio.timeout(budget)` 里（原来它在里面，
+                # 于是 `_persist` 自己的 300 秒预算被外层 48 秒完全压制，
+                # 配置项一次都不生效）。落盘慢是可以接受的，把这一跳判成
+                # 「没拿到结果」才不可接受。
+                if succeeded is not None:
+                    record, result = succeeded
+                    output_url = await self._persist(kind, record_id, result.output_url)
+                    cover_url = self._persisted_cover(result, output_url)
+                    # 终态保护必须接返回值：轮询期间用户点了取消时，
+                    # `mark_succeeded` 会拒绝写入（记录已是 cancelled）。
+                    # 此时继续 commit + 归档 + 发事件，用户就会先看到
+                    # 「已取消」再收到「生成成功」，草稿箱还多一条脏数据。
+                    if not await store.mark_succeeded(
+                        record_id,
+                        output_url=output_url,
+                        cover_url=cover_url,
+                        progress=result.progress or 100,
+                    ):
+                        logger.info(
+                            "记录已终态，丢弃轮询结果 kind=%s id=%s", kind, record_id
+                        )
+                        return
+                    await session.commit()
+                    # 生成成功是既成事实，先落库再往资产库送：入库失败不该
+                    # 把用户已经看到的结果改回失败（见 `_archive`）。
+                    # 收尾动作留给超时块外的 `_finish_success`。
+                    pending = (record, output_url, cover_url)
 
                 if pending is not None:
                     # 已经终态并提交，收尾失败只能留痕：这里再抛出去会被下面的
@@ -704,6 +730,12 @@ class GenerationRunner:
         try:
             async with asyncio.timeout(settings.generation_persist_timeout_sec):
                 return await persist(record_id, url)
+        except asyncio.CancelledError:
+            # 取消**不能吞**：外层（队列 job timeout、进程关闭）正是靠这个异常
+            # 停手；吞掉会让 worker 以为这一跳正常结束，接着去做 `mark_succeeded`。
+            # 这里只留痕 —— 落盘被取消时「产物没进去」这件事要能查到。
+            logger.warning("产物落盘期间被取消 kind=%s id=%s", kind, record_id)
+            raise
         except Exception:  # noqa: BLE001 - 落盘失败不该把成功改成失败
             logger.exception("产物落盘失败，退回供应商 URL kind=%s id=%s", kind, record_id)
             return url

@@ -1,0 +1,52 @@
+# 依赖更新：让漏洞「可见」，而不是等出事才发现。
+#
+# 为什么不给运行时依赖开自动合并：本仓库的生产行为直接受版本影响
+# （`pyproject.toml:31-33` 记着真实事故 —— ruff 0.17.3 与 0.17.4 对 I001 的
+# 判定不同，出现过「本地全绿、CI 红」）。自动合并会把这类差异直接推上主干。
+version: 2
+updates:
+  # ---- GitHub Actions ----
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: "chore(ci)"
+
+  # ---- 后端（Python）----
+  # 只做「发现新版本 + 开 PR」，不自动合并：依赖版本会改变类型检查结果与
+  # 生成行为，得有人在本地跑一遍 `pytest` + `app doctor`。
+  - package-ecosystem: pip
+    directory: /api
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      # 工具链（ruff/mypy/pytest）单独一组：它们的版本会影响门禁本身，
+      # 混在一堆运行时依赖里看不出「是谁把 CI 弄红的」。
+      tooling:
+        patterns: ["ruff", "mypy", "pytest*", "types-*"]
+      runtime:
+        patterns: ["*"]
+
+  # ---- 前端（npm）----
+  - package-ecosystem: npm
+    directory: /studio
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      dev-dependencies:
+        dependency-type: development
+      production-dependencies:
+        dependency-type: production

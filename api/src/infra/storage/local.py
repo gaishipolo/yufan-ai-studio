@@ -7,7 +7,10 @@ import hashlib
 import os
 import re
 from collections.abc import AsyncIterator
+from contextlib import suppress
+from functools import lru_cache
 from pathlib import Path
+from typing import BinaryIO
 from uuid import uuid4
 
 from core.config import settings
@@ -29,10 +32,54 @@ def _temporary_name(target: Path) -> Path:
     return target.with_name(f"{target.name}.{uuid4().hex}.part")
 
 
+@lru_cache(maxsize=1)
+def _default_file_mode() -> int:
+    """当前进程 umask 决定的「普通文件」权限（通常是 0o644）。
+
+    只算一次：`os.umask()` 是**进程全局**的读改写，每次调用都有微小窗口会
+    影响别的线程创建文件。探测一次、缓存住，窗口只出现一次。
+    """
+    current = os.umask(0o022)
+    os.umask(current)  # 立刻复原
+    return 0o666 & ~current
+
+
+def _open_temporary(path: Path) -> BinaryIO:
+    """以 **0600** 创建临时文件，返回可写句柄。
+
+    ## 为什么先紧后松
+
+    默认 umask 会给出 0o644 —— 也就是说，文件从「刚创建」到「写完」这段时间里
+    别的用户就能读到**半份内容**。对素材/成片这类东西，半份也是内容。
+    先用 0600 创建（窗口内只有自己可读），写完再 `chmod` 到 umask 决定的
+    目标权限，窗口就消失了。
+
+    ## Windows 分支
+
+    `os.open` 的 mode 参数在 Windows 上基本无效，`os.fchmod` 也只影响只读位。
+    那条路径上写平台语义不同的代码只会让人以为「这里做了防护」——
+    所以直接退回普通打开，并在注释里说清楚。
+    """
+    if os.name != "posix":
+        return path.open("wb")
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    return os.fdopen(descriptor, "wb")
+
+
+def _relax_permissions(path: Path) -> None:
+    """把临时文件从 0600 放宽到 umask 决定的权限；POSIX 之外什么都不做。"""
+    if os.name != "posix":
+        return
+    with suppress(OSError):
+        os.chmod(path, _default_file_mode())
+
+
 def _write_bytes_atomic(target: Path, data: bytes) -> None:
     temporary = _temporary_name(target)
     try:
-        temporary.write_bytes(data)
+        with _open_temporary(temporary) as handle:
+            handle.write(data)
+        _relax_permissions(temporary)
         os.replace(temporary, target)
     finally:
         temporary.unlink(missing_ok=True)
@@ -59,10 +106,11 @@ def _copy_with_digest(source: Path, target: Path) -> str:
     temporary = _temporary_name(target)
     digest = hashlib.sha256()
     try:
-        with source.open("rb") as src, temporary.open("wb") as dst:
+        with source.open("rb") as src, _open_temporary(temporary) as dst:
             for chunk in iter(lambda: src.read(1024 * 1024), b""):
                 digest.update(chunk)
                 dst.write(chunk)
+        _relax_permissions(temporary)
         os.replace(temporary, target)
     finally:
         temporary.unlink(missing_ok=True)

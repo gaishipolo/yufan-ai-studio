@@ -10,6 +10,7 @@ import asyncio
 import pytest
 
 from infra.cache.base import cache_get_json, cache_key, cache_set_json
+from infra.cache.counter import CacheCounter
 from infra.cache.memory import CacheSettings, MemoryCache
 
 
@@ -159,3 +160,27 @@ def test_driver_symbol_is_loadable() -> None:
 
     instance = Driver()
     assert isinstance(instance, MemoryCache)
+
+
+def test_counter_resets_a_polluted_key_instead_of_letting_it_fail_open() -> None:
+    """脏键必须「按 0 重来」，不能把异常抛给限流器。
+
+    `CacheCounter.read()` 早就是「不可解析返回 0」，但 `incr()` 原样透传
+    `ValueError` —— 而 `RateLimiter` 捕到异常就**降级放行**。于是一个被污染的
+    键让「这个主体 × 这个 scope」的限流永久失效（脏值不会自己变好，要等 2×window
+    的 TTL），与 `counter.py` 文件头写的「只让这一个键归零」正好相反。
+    """
+
+    async def scenario() -> tuple[int, int]:
+        cache = MemoryCache()
+        counter = CacheCounter(cache)
+        await cache.set("rl:demo:u1:3600", b"polluted", ttl=3600)
+        assert await counter.read("rl:demo:u1:3600") == 0
+        # 关键：不能抛，而且要真的从 0 开始计数
+        first = await counter.incr("rl:demo:u1:3600")
+        second = await counter.incr("rl:demo:u1:3600")
+        return first, second
+
+    first, second = asyncio.run(scenario())
+    assert first == 1
+    assert second == 2

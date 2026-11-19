@@ -388,3 +388,27 @@ def test_runs_root_accepts_the_old_env_name(monkeypatch: pytest.MonkeyPatch) -> 
 
     monkeypatch.setenv("TASK_RUNS_ROOT", "/mnt/new/runs")
     assert Settings().task_runs_root == "/mnt/new/runs"
+
+
+def test_reload_settings_invalidates_parsed_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`parsed_overrides()` 是**从配置值派生的纯函数**，必须跟着 reload 刷新。
+
+    它是 `@lru_cache` 的，而 `reload_settings()` 的 docstring 原本只承诺
+    「配置值刷新」、不重建派生单例 —— 那条规则对「对象持有旧配置」成立
+    （storage 实例指着旧目录），但对纯函数不成立：
+
+    改完 `RATE_LIMIT_OVERRIDES` 再 reload，`settings.rate_limit_overrides` 是新值，
+    而限流仍按旧覆盖跑（`resolve_budget` 每次读这个缓存）。
+    """
+    import json
+
+    from core.config import reload_settings
+    from core.ratelimit import parsed_overrides
+
+    monkeypatch.setenv("RATE_LIMIT_OVERRIDES", json.dumps({"task.create": 111}))
+    reload_settings()
+    assert dict(parsed_overrides())["task.create"] == 111
+
+    monkeypatch.setenv("RATE_LIMIT_OVERRIDES", json.dumps({"task.create": 222}))
+    reload_settings()
+    assert dict(parsed_overrides())["task.create"] == 222, "reload 之后覆盖值仍是旧的"

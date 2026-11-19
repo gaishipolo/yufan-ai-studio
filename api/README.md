@@ -350,7 +350,7 @@ app new-module comment --label 评论 --perm comment --slot 9
 - 用户权限管理的完整落地步骤（用户表 / 角色 / 权限展开 / 登录签发）
 - 接入新模型供应商
 - 新增一种生成能力（音乐 / 配音 / 3D）
-- 加完功能要同步更新的三份契约文件（`openapi.json` / `API.md` / `schema.ts`）
+- 加完功能要同步更新的四份契约文件（`openapi.json` / `API.md` / `schema.ts` / `permissions.ts`）
 - 错误码号段分配表
 - 提交前检查清单
 

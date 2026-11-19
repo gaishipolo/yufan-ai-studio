@@ -224,7 +224,7 @@ def _cmd_models(_: argparse.Namespace) -> None:
 
 
 def _cmd_export_openapi(args: argparse.Namespace) -> None:
-    """把 OpenAPI 固化成给前端用的三份文件（json / md / ts）。"""
+    """把 OpenAPI 固化成给前端用的四份文件（json / md / ts / permissions）。"""
     from openapi_export import DEFAULT_JSON, DEFAULT_MD, DEFAULT_PERMS, DEFAULT_TS, export
 
     targets = {

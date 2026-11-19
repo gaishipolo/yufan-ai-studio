@@ -34,7 +34,25 @@ class CacheCounter:
         self._cache = cache
 
     async def incr(self, key: str, delta: int = 1, *, ttl: float | None = None) -> int:
-        return await self._cache.incr(key, delta, ttl=ttl)
+        """自增；**值不可解析时按 0 重来**，不抛。
+
+        与 `read()` 同一个错误条件，必须同一个处置 —— `MemoryCache.incr` 遇到
+        非整数值会抛 `ValueError`，而 `RateLimiter` 捕到异常就**降级放行**。
+        于是一个被污染的键会让「这个主体 × 这个 scope」的限流**永久失效**
+        （脏值不会自己变好，要等 2×window 的 TTL 才过期），与这个文件头写的
+        「只让这一个键上的历史用量归零」正好相反。
+
+        处置方式：删掉脏值再自增（从 0 起算）。这样既没有放行，也没有把异常
+        抛给上层。
+        """
+        try:
+            return await self._cache.incr(key, delta, ttl=ttl)
+        except ValueError:
+            # 脏值：删掉，按 0 重新开始。删也可能失败（缓存不可用），
+            # 那就让异常继续冒到限流器的降级分支 —— 那时是「整个缓存挂了」，
+            # 放行是既定的降级策略，与「单个键被污染」不是一回事。
+            await self._cache.delete(key)
+            return await self._cache.incr(key, delta, ttl=ttl)
 
     async def read(self, key: str) -> int:
         """读当前计数；键不存在、已过期、内容不可解析都返回 0。"""

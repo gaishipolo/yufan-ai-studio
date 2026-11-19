@@ -114,3 +114,28 @@ def asyncio_run(coroutine: Any) -> Any:
     import asyncio
 
     return asyncio.run(coroutine)
+
+
+def test_presigned_failures_are_wrapped_as_storage_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """签名失败必须包成 `StorageError`，不能把 botocore 异常放出去。
+
+    `infra/artifacts.py` 的兜底只捕 `StorageError` —— 它要保证「一张图的地址
+    算不出来，不该让整个历史列表 500」。botocore 异常穿透过去，这个保证就没了。
+    """
+    from botocore.exceptions import NoCredentialsError
+
+    storage, fake = _build(monkeypatch)
+
+    def explode(*_args: Any, **_kwargs: Any) -> str:
+        raise NoCredentialsError()
+
+    monkeypatch.setattr(fake, "generate_presigned_url", explode)
+
+    import asyncio
+
+    for call in (
+        lambda: asyncio.run(storage.presigned_upload_url("a.png")),
+        lambda: asyncio.run(storage.presigned_download_url("a.png")),
+    ):
+        with pytest.raises(StorageError):
+            call()

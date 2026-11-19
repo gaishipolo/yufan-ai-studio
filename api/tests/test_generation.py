@@ -1196,3 +1196,80 @@ def test_optional_capabilities_are_detected_by_protocol() -> None:
 
     assert isinstance(Cover(), CoverAttachable)
     assert not isinstance(Both(), CoverAttachable), "没实现钩子就不该被当成能补封面"
+
+
+def test_persist_runs_outside_the_poll_budget() -> None:
+    """落盘必须**在轮询预算之外**。
+
+    这条用 AST 守，因为它的失败方式是「静默无效」：`_persist` 内部确实有
+    `GENERATION_PERSIST_TIMEOUT_SEC` 的 `asyncio.timeout`，但只要它被外层
+    `asyncio.timeout(budget)` 包着，那个 300 秒就永远等不到 —— 外层 48 秒先炸。
+    2026-11-18 就发生过一次「加了配置项、加了内层 timeout，但位置错了」，
+    表面全绿，实际一次都不生效。
+
+    所以这里断的不是行为，是**结构**：`_persist` 的调用点不能在 `handle_poll`
+    的任何一个 `asyncio.timeout` 块里。
+    """
+
+    import ast
+    import pathlib
+
+    source = pathlib.Path("src/generation/runner.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+
+    handle_poll = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "handle_poll"
+    )
+    timeout_ranges = [
+        (node.lineno, node.end_lineno or node.lineno)
+        for node in ast.walk(handle_poll)
+        if isinstance(node, ast.AsyncWith)
+        for item in node.items
+        if "asyncio.timeout" in (ast.get_source_segment(source, item.context_expr) or "")
+    ]
+    assert timeout_ranges, "handle_poll 里应当有一个轮询预算块"
+
+    persist_lines = [
+        node.lineno
+        for node in ast.walk(handle_poll)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "_persist"
+    ]
+    assert persist_lines, "handle_poll 里应当调用 _persist"
+
+    for line in persist_lines:
+        for start, end in timeout_ranges:
+            assert not (start <= line <= end), (
+                f"_persist 在 {line} 行，落在 {start}-{end} 的轮询预算块内 —— "
+                "GENERATION_PERSIST_TIMEOUT_SEC 会因此永远不生效"
+            )
+
+
+def test_persist_falls_back_to_supplier_url_on_timeout(monkeypatch) -> None:
+    """落盘超时退回供应商直链，而不是把整跳判失败。
+
+    退回直链的代价是「产物没进自己的存储」，但任务能落终态；不退回的话这一跳
+    被判「没拿到结果」，下一跳重新拉一遍、照样超时 —— 无限重跳。
+    """
+
+    async def slow_persist(_record_id: str, url: str) -> str:
+        await asyncio.sleep(5)
+        return "https://internal/never"
+
+    monkeypatch.setattr("generation.runner.get_pipeline", lambda _kind: _StubPipeline(slow_persist))
+    monkeypatch.setattr(
+        "generation.runner.settings.generation_persist_timeout_sec", 0.1, raising=False
+    )
+
+    runner = GenerationRunner(MemoryJobQueue())
+    result = asyncio.run(runner._persist("video", "r1", "https://supplier/a.mp4"))
+
+    assert result == "https://supplier/a.mp4", "超时后必须退回供应商直链"
+
+
+class _StubPipeline:
+    def __init__(self, persist) -> None:
+        self.persist_output = persist

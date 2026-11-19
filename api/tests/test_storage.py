@@ -8,6 +8,8 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import stat
 from pathlib import Path
 
 import pytest
@@ -147,3 +149,35 @@ def test_concurrent_put_file_to_the_same_key_never_interleaves(
     assert data in {b"a" * 4096, b"b" * 8192}
 
 
+
+
+@pytest.mark.skipif(os.name != "posix", reason="权限位只在 POSIX 上有意义")
+def test_written_files_end_up_with_the_umask_mode(storage: LocalStorage, tmp_path: Path) -> None:
+    """写完的文件权限 = umask 决定的值（不是 0600、也不是 0o777）。
+
+    临时文件以 0600 创建（写入窗口内别人读不到半份内容），写完后放宽到
+    `0o666 & ~umask`。只验结果：窗口内的状态在单线程测试里看不到。
+    """
+
+    from infra.storage.local import _default_file_mode
+
+    asyncio.run(storage.put("blobs/ee/mode.bin", b"x" * 16))
+    target = storage._resolve("blobs/ee/mode.bin")
+
+    mode = stat.S_IMODE(target.stat().st_mode)
+    assert mode == _default_file_mode(), f"实际 {oct(mode)}，期望 {oct(_default_file_mode())}"
+
+
+@pytest.mark.skipif(os.name != "posix", reason="权限位只在 POSIX 上有意义")
+def test_temporary_file_is_created_private(storage: LocalStorage, tmp_path: Path) -> None:
+    """临时文件必须是 0600 —— 这是「写入窗口」内唯一的保护。"""
+
+    from infra.storage.local import _open_temporary, _temporary_name
+
+    target = tmp_path / "probe.bin"
+    temporary = _temporary_name(target)
+    with _open_temporary(temporary) as handle:
+        handle.write(b"secret")
+        # 还在窗口内（没 chmod 过）
+        mode = stat.S_IMODE(temporary.stat().st_mode)
+        assert mode == 0o600, f"窗口内权限应当 0600，实际 {oct(mode)}"
