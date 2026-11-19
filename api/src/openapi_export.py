@@ -1,4 +1,4 @@
-"""接口契约导出：把运行时的 OpenAPI 固化成三份给前端用的一致性文件。
+"""接口契约导出：把运行时的 OpenAPI 固化成四份给前端用的一致性文件。
 
     app export-openapi            # 写入 docs/ + studio/
     app export-openapi --check    # 只比对，不写（CI / 测试用）
@@ -10,8 +10,9 @@
 | `docs/openapi.json` | 机器 | Apifox / Postman / IDE 插件直接导入 |
 | `docs/API.md` | 前后端人 | 约定、错误码、权限点、接口清单、模型字段表 |
 | `studio/src/shared/api/schema.ts` | TypeScript | 前端 import 复用，不再手写重复类型 |
+| `studio/src/shared/api/permissions.ts` | TypeScript | 权限点常量，与后端 `PermissionSpec` 同源 |
 
-三份文件都不是手写的，所以不会腐坏：改完代码重跑一次即可。
+四份文件都不是手写的，所以不会腐坏：改完代码重跑一次即可。
 `tests/test_openapi_contract.py` 会拦住「改了接口忘了重跑」的情况。
 """
 

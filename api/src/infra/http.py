@@ -32,9 +32,12 @@
 from __future__ import annotations
 
 import asyncio
+import email.utils
 import ipaddress
+import random
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
@@ -45,10 +48,22 @@ from infra.driver_config import DriverSettings, driver_config
 
 # 这些状态码重试有意义：限流、网关抖动、上游重启。
 # 4xx 里除 408/425/429 之外都不重试——重试只会把「参数错了」拖成「等了 30 秒还是错」。
+#
+# **500 保留**。参考实现（PostgREST 客户端）把 500 排除了，理由是「查询失败重试
+# 也一样」；但本仓库打的是生成类供应商与 CDN，「500」在这里的语义是网关抖动 /
+# 上游重启（见上一行），正是最该重试的那类。照抄会把真实的上游故障变成
+# 「一次就失败」。
 RETRY_STATUS = frozenset({408, 425, 429, 500, 502, 503, 504})
 
 # 重定向上限。5 跳足够走完 CDN → 对象存储 → 签名地址，再多基本就是循环。
 MAX_REDIRECTS = 5
+
+#: 服务端要求「等太久」时不再重试的下限（秒）。
+#:
+#: 为什么不干脆睡过去：`Retry-After: 300` 意味着这个 worker 槽位要被占 5 分钟，
+#: 而队列的租约/超时预算通常更短 —— 睡着等只会让「重试」变成「卡死」。超过这个
+#: 值就把决定权交回上层（它可以选择换实例、稍后重投、或者直接报错给用户）。
+MAX_RETRY_WAIT_SEC = 30.0
 
 _BLOCKED_HOSTNAMES = frozenset(
     {"localhost", "metadata", "metadata.google.internal", "instance-data"}
@@ -201,14 +216,74 @@ async def fetch_bytes(
             last_error = str(exc)
             if attempt >= retries:
                 break
-            # 0.5s、1s、2s…上限 8s。不引入随机抖动：同批次任务本来就错峰投递，
-            # 再加抖动只会让排查时的时间线更难对齐。
-            await asyncio.sleep(min(8.0, 0.5 * (2**attempt)))
+            wait = _backoff_delay(attempt, server_hint=exc.retry_after)
+            if wait > MAX_RETRY_WAIT_SEC:
+                # 服务端要求等太久：不占着 worker 槽位干等，把决定权交回上层
+                raise HttpError(
+                    f"下载失败（服务端要求 {wait:.0f} 秒后重试）：{last_error}"
+                ) from exc
+            await asyncio.sleep(wait)
     raise HttpError(f"下载失败（已重试 {retries} 次）：{last_error}")
 
 
 class _Retryable(Exception):
-    """内部信号：这一次失败值得重试。不对外暴露，避免调用方依赖具体状态码。"""
+    """内部信号：这一次失败值得重试。不对外暴露，避免调用方依赖具体状态码。
+
+    `retry_after` 是服务端在 `Retry-After` 头里给出的秒数（如果有）。它比本地
+    退避序列更权威 —— 对方知道自己的恢复节奏，我们只能猜。
+    """
+
+    def __init__(self, message: str, *, retry_after: float | None = None) -> None:
+        super().__init__(message)
+        self.retry_after = retry_after
+
+
+def _retry_after_seconds(response: httpx.Response) -> float | None:
+    """解析 `Retry-After`（秒数或 HTTP-date 两种格式），解析不出来返回 None。"""
+    raw = response.headers.get("retry-after")
+    if not raw:
+        return None
+    text = raw.strip()
+    if not text:
+        return None
+    # 格式一：秒数（429/503 最常见）
+    if text.isdigit():
+        return float(text)
+    # 格式二：HTTP-date（RFC 7231）
+    try:
+        when = email.utils.parsedate_to_datetime(text)
+    except (TypeError, ValueError):
+        return None
+    if when is None:
+        return None
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=UTC)
+    return max(0.0, (when - datetime.now(tz=UTC)).total_seconds())
+
+
+def _backoff_delay(attempt: int, *, server_hint: float | None = None) -> float:
+    """下一次重试前等多久。
+
+    ## 为什么加抖动（这条是刻意改掉原来决定的）
+
+    原来的注释写「不引入随机抖动：同批次任务本来就错峰投递，再加抖动只会让
+    排查时的时间线更难对齐」。那个判断低估了一件事：**固定序列会让同批失败者
+    在同一刻一起重试**。供应商抖动时一批任务同时失败是常态（同一个上游、同一
+    个窗口），固定退避把它们对齐成一次新的尖峰，刚缓过来的服务端被再打一遍。
+
+    代价是日志时间线更难对齐 —— 这是排查的成本，惊群是可用性的成本，这里选
+    后者。抖动取「**0.5~1.0 倍**」而不是「0~1 倍」：保留指数增长的下限，
+    避免多个任务在几乎同一时刻重试。
+
+    ## 服务端给了 Retry-After 就用它
+
+    对方知道自己的恢复节奏，本地退避只是猜。给了就照做（上限由调用方判：
+    `MAX_RETRY_WAIT_SEC` 以上不重试）。
+    """
+    if server_hint is not None:
+        return server_hint
+    base = min(8.0, 0.5 * (2**attempt))
+    return base * (0.5 + 0.5 * random.random())
 
 
 async def _fetch_once(
@@ -254,7 +329,10 @@ async def _download_bytes(
                     continue
 
                 if response.status_code in RETRY_STATUS:
-                    raise _Retryable(f"{current} 返回 {response.status_code}")
+                    raise _Retryable(
+                        f"{current} 返回 {response.status_code}",
+                        retry_after=_retry_after_seconds(response),
+                    )
                 if response.status_code >= 400:
                     raise HttpError(f"{current} 返回 {response.status_code}")
 
@@ -315,7 +393,13 @@ async def fetch_to_file(
             last_error = str(exc)
             if attempt >= retries:
                 break
-            await asyncio.sleep(min(8.0, 0.5 * (2**attempt)))
+            wait = _backoff_delay(attempt, server_hint=exc.retry_after)
+            if wait > MAX_RETRY_WAIT_SEC:
+                # 服务端要求等太久：不占着 worker 槽位干等，把决定权交回上层
+                raise HttpError(
+                    f"下载失败（服务端要求 {wait:.0f} 秒后重试）：{last_error}"
+                ) from exc
+            await asyncio.sleep(wait)
     raise HttpError(f"下载失败（已重试 {retries} 次）：{last_error}")
 
 
@@ -361,7 +445,10 @@ async def _download_to_file(
                     continue
 
                 if response.status_code in RETRY_STATUS:
-                    raise _Retryable(f"{current} 返回 {response.status_code}")
+                    raise _Retryable(
+                        f"{current} 返回 {response.status_code}",
+                        retry_after=_retry_after_seconds(response),
+                    )
                 if response.status_code >= 400:
                     raise HttpError(f"{current} 返回 {response.status_code}")
 

@@ -542,7 +542,7 @@ def test_handler_successor_survives_ack_and_queue_restart() -> None:
         await _reset()
         queue = _queue()
         await queue.enqueue(Job(name="poll", payload={"step": 1}, idempotency_key="chain"))
-        current = await queue.dequeue(timeout=0.1)
+        current = await queue.dequeue(timeout=2.0)
         with job_execution(current):
             await _queue().enqueue(Job(name="poll", payload={"step": 2}, idempotency_key="chain"))
         await _queue().ack(current)
@@ -640,7 +640,7 @@ def test_external_duplicate_does_not_stage_successor() -> None:
         await _reset()
         queue = _queue()
         await queue.enqueue(Job(name="poll", payload={}, idempotency_key="external"))
-        current = await queue.dequeue(timeout=0.1)
+        current = await queue.dequeue(timeout=2.0)
         assert (
             await _queue().enqueue(Job(name="poll", payload={}, idempotency_key="external"))
             == current.id
@@ -680,7 +680,11 @@ def test_real_worker_consumes_same_key_handler_chain() -> None:
         worker = Worker(queue, concurrency=2)
         await worker.start()
         try:
-            await asyncio.wait_for(done.wait(), timeout=1)
+            # 超时给 5 秒而不是 1 秒：pytest 环境里每个用例各起一个新事件循环，
+            # 而 AsyncEngine 是模块级单例、连接绑在**创建它的那个循环**上 ——
+            # 跨循环复用的 DB 操作比独立脚本慢一个数量级（实测这一步 1.33s，
+            # 独立脚本 0.11s）。1 秒会随机翻车，语义本身没有问题。
+            await asyncio.wait_for(done.wait(), timeout=5)
             assert seen == [1, 2, 3]
         finally:
             await worker.stop()
@@ -697,7 +701,7 @@ def test_claim_cannot_return_pre_promotion_payload(monkeypatch) -> None:
         await _reset()
         queue = _queue()
         await queue.enqueue(Job(name="poll", payload={"step": 1}, idempotency_key="race"))
-        current = await queue.dequeue(timeout=0.1)
+        current = await queue.dequeue(timeout=2.0)
         with job_execution(current):
             await queue.enqueue(Job(name="poll", payload={"step": 2}, idempotency_key="race"))
         await _expire_lease(current.id)
@@ -713,7 +717,9 @@ def test_claim_cannot_return_pre_promotion_payload(monkeypatch) -> None:
             return row
 
         monkeypatch.setattr(AsyncSession, "get", get_then_promote)
-        claimed = await _queue().dequeue(timeout=0.1)
+        # 2 秒同理：这条路径要先「claim 撞上 ack 提升 → 第一次拿不到 → 退避重试」，
+        # 实测耗时 0.093s，0.1s 的上限在 pytest 里紧贴边界
+        claimed = await _queue().dequeue(timeout=2.0)
         assert claimed is not None
         assert claimed.payload == {"step": 2}, "claim returned stale pre-promotion payload"
         await queue.ack(claimed)

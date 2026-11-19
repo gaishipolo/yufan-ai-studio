@@ -112,3 +112,38 @@ def test_success_envelope_uses_code_zero(client: TestClient, api: str) -> None:
     assert "data" in body
     assert isinstance(body["data"], dict)
     assert "code" not in body["data"]
+
+
+def test_storage_error_is_reported_as_502_not_500() -> None:
+    """存储故障是「上游出问题」，不是「我们代码写错了」。
+
+    `StorageError` 的 docstring 一直承诺「由中间件转换为 502」，但它继承的是裸
+    `Exception` —— 落 `Exception` 兜底后变成 500 +「服务器内部错误」。生产告警
+    分流会按 500 归到「代码 bug」，而 `api/errors.py` 专门写过 500 与 503 的
+    分流意义：这个分流在存储故障时被绕过了。
+
+    这里用一个最小 app 而不是走业务路由：任何模块的存储故障都该是这个结果，
+    与具体端点无关。
+    """
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient as RawClient
+
+    from api.errors import register_exception_handlers
+    from infra.storage.base import StorageError
+
+    app = FastAPI()
+    register_exception_handlers(app)
+
+    @app.get("/boom")
+    async def boom() -> None:
+        raise StorageError("S3 读取失败（library/blobs/aa/x.bin）：连接超时")
+
+    with RawClient(app, raise_server_exceptions=False) as client:
+        response = client.get("/boom")
+
+    assert response.status_code == 502, response.text
+    body = response.json()
+    assert body["code"] // 100 == 502
+    assert "S3 读取失败" in body["message"]
+    assert isinstance(body["data"], (dict, type(None)))

@@ -18,6 +18,10 @@ jobs:
   backend:
     name: 后端 · pytest / ruff / mypy
     runs-on: ubuntu-latest
+    # 全量 pytest 实测约 30 分钟（见 docs/REVIEW_2026-11-17.md §7）。
+    # 没有上限时，一个卡住的用例会占满 6 小时默认值 —— 而它只是「慢」，
+    # 不是「还在跑」，早失败早重跑更有用。
+    timeout-minutes: 45
     defaults:
       run:
         working-directory: api
@@ -83,7 +87,9 @@ jobs:
       - name: ruff
         # scripts/ 只在部分开发分支存在，不存在时跳过，避免 main 上误报。
         run: |
-          ruff check src tests
+          # migrations 也查：`pyproject.toml` 的 per-file-ignores 是为它写的，
+          # 不纳入范围的话那条规则永远不会生效（改了也看不出来）。
+          ruff check src tests migrations
           if [ -d scripts ]; then ruff check scripts; fi
 
       # 迁移漂移的第二道闸（第一道是 tests/test_migrations.py）。
@@ -116,6 +122,7 @@ jobs:
   postgres-migrations:
     name: 迁移 · PostgreSQL（观察期）
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     continue-on-error: true
     defaults:
       run:
@@ -173,6 +180,7 @@ jobs:
   frontend:
     name: 前端 · typecheck / lint / test / build
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: studio
@@ -190,3 +198,14 @@ jobs:
 
       - name: 质量门禁
         run: npm run verify
+
+      - name: 产物不含演示口令
+        # mock 适配器是**动态 import**（`shared/api/http.ts` 特意为此优化），
+        # 但那是设计意图，不是门禁：一旦有人改成静态 import，演示口令就进了
+        # 生产 JS。这条只花一秒，守住的是「不可能发生」这类事故。
+        run: |
+          if grep -rqE "admin@12345|editor@12345|viewer@12345" dist/; then
+            echo "::error::构建产物里出现演示口令 —— mock 适配器被静态引入了"
+            grep -rn "12345" dist/ | head -5
+            exit 1
+          fi

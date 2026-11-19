@@ -6,7 +6,9 @@
 from __future__ import annotations
 
 import asyncio
+import email.utils
 from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -272,3 +274,97 @@ def test_a_slow_drip_download_hits_the_total_budget(monkeypatch: pytest.MonkeyPa
         asyncio.run(fetch_bytes("http://example.com/slow", max_bytes=10**6))
 
 
+
+
+# --------------------------------------------------------------------------- #
+# 重试策略：抖动与 Retry-After
+# --------------------------------------------------------------------------- #
+def test_backoff_has_jitter() -> None:
+    """同一 attempt 多次取值不能全等 —— 固定序列会让同批失败者同时重试。
+
+    供应商抖动时一批任务同时失败是常态，固定退避把它们对齐成一次新的尖峰。
+    代价是日志时间线更难对齐（原来正是为此不加抖动），但惊群是可用性成本。
+    """
+    from infra.http import _backoff_delay
+
+    samples = {round(_backoff_delay(3), 6) for _ in range(8)}
+    assert len(samples) > 1, "退避完全没有抖动"
+    # 抖动范围是 0.5~1.0 倍，且不超过上限 8 秒
+    assert all(0.5 * 4.0 <= value <= 8.0 for value in samples)
+
+
+def test_backoff_prefers_the_server_hint() -> None:
+    from infra.http import _backoff_delay
+
+    assert _backoff_delay(0, server_hint=7.5) == 7.5
+    assert _backoff_delay(9, server_hint=0.0) == 0.0
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("3", 3.0),
+        ("0", 0.0),
+        ("", None),
+        ("not-a-date", None),
+    ],
+)
+def test_retry_after_parsing(raw: str, expected: float | None) -> None:
+    from infra.http import _retry_after_seconds
+
+    response = httpx.Response(429, headers={"retry-after": raw} if raw else {})
+    assert _retry_after_seconds(response) == expected
+
+
+def test_retry_after_http_date_is_converted_to_seconds() -> None:
+    from infra.http import _retry_after_seconds
+
+    future = email.utils.format_datetime(
+        datetime.now(tz=UTC) + timedelta(seconds=5), usegmt=True
+    )
+    response = httpx.Response(503, headers={"retry-after": future})
+    seconds = _retry_after_seconds(response)
+    assert seconds is not None and 3.0 <= seconds <= 6.0
+
+
+def test_server_asking_to_wait_too_long_is_not_retried(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`Retry-After` 超过上限时不睡过去，直接交给上层。
+
+    睡着等 5 分钟会把 worker 槽位占死（队列租约通常更短），「重试」变成「卡死」。
+    """
+    calls = {"n": 0}
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        return httpx.Response(429, headers={"retry-after": "600"})
+
+    _install(monkeypatch, handler)
+
+    with pytest.raises(HttpError, match="服务端要求"):
+        asyncio.run(fetch_bytes("http://example.com/x", max_bytes=1024, retries=3))
+    assert calls["n"] == 1, "要求等太久时不该再发第二次"
+
+
+def test_retry_after_is_used_as_the_wait(monkeypatch: pytest.MonkeyPatch) -> None:
+    """服务端给了 Retry-After 就按它等，不走本地退避序列。"""
+    sleeps: list[float] = []
+    calls = {"n": 0}
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return httpx.Response(503, headers={"retry-after": "2"})
+        return httpx.Response(200, content=b"ok")
+
+    _install(monkeypatch, handler)
+
+    async def fake_sleep(value: float) -> None:
+        sleeps.append(value)
+
+    monkeypatch.setattr(http_module.asyncio, "sleep", fake_sleep)
+
+    result = asyncio.run(fetch_bytes("http://example.com/x", max_bytes=1024, retries=1))
+    assert result.data == b"ok"
+    assert sleeps == [2.0], f"应当按 Retry-After 等 2 秒，实际 {sleeps}"

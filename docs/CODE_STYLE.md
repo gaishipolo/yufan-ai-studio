@@ -829,7 +829,7 @@ docs(readme): 补充生产部署清单
 | 检查 | 命令 / 落点 | 阻断条件 |
 |---|---|---|
 | 后端测试 | `cd api && pytest -q` | 任一失败（含契约字节比对、架构矩阵、状态机表） |
-| 后端静态 | `ruff check .` | 任一 error |
+| 后端静态 | `ruff check src tests scripts migrations`（与 CI 同范围） | 任一 error |
 | 后端类型 | `mypy src`（CI 用 `mypy --platform win32 src`） | 任一错误 |
 | 契约生成物 | `app export-openapi --check` | 四份中任一与代码不一致 |
 | 前端类型 | `npm run typecheck`（`tsc -b`） | 任一 error |
@@ -839,7 +839,7 @@ docs(readme): 补充生产部署清单
 | CI | `.github/workflows/ci.yml`：`backend` job（pytest/ruff/mypy）+ `frontend` job（`npm run verify`） | 任一 job 红 |
 
 前端四条用 `npm run verify` 一次跑完；后端四条 CI 会跑，本机建议至少
-`pytest -q && ruff check . && mypy src && python -m src.cli export-openapi --check`。
+`pytest -q && ruff check src tests scripts migrations && mypy src && python -m src.cli export-openapi --check`。
 
 **ESLint 分层 zone 的已知边界**：只拦 `@/xxx` 别名，相对路径 `../../features/...`
 仍能绕过——评审时看到跨层相对路径要按违规处理。
@@ -856,7 +856,7 @@ app models                          # 模型目录
 app sync-roles                      # 内置角色补齐缺失权限（只加不减）
 app prune-sessions --days 30
 app new-module <name>               # 新模块脚手架
-pytest -q / ruff check . / mypy src
+pytest -q / ruff check src tests scripts migrations / mypy src
 
 # 前端（cd studio）
 npm run verify                      # typecheck + lint + test + build
@@ -865,20 +865,22 @@ npm run gen:routes
 npm run test:coverage
 ```
 
-### 当前基线快照（2026-11-06 11:15 实测）
+### 当前基线快照（2026-11-18 实测）
 
 | 检查项 | 现状 |
 |---|---|
-| `pytest -q` | ✅ **346 passed**（346 collected，1 warning） |
-| `ruff check .` | ✅ All checks passed |
-| `mypy src` | ✅ 144 source files clean |
+| `pytest -q` | ✅ **1507 passed / 14 skipped**（1521 collected） |
+| `ruff check src tests scripts migrations` | ✅ All checks passed |
+| `mypy --platform win32 src` | ✅ 251 source files clean |
 | `export-openapi --check` | ✅ 四份生成物全部「无变化」 |
-| CI | ✅ 已接入，两个 job |
+| CI | ✅ 三个 job：`backend` / `postgres-migrations`（观察期，允许失败）/ `frontend` |
 | 前端 `tsc -b` / ESLint | ✅ 静默 / 零告警 |
-| 前端 Vitest | ✅ **314 passed / 45 files** |
-| `vite build` | ✅ 入口 `index` 80.09 kB（gzip 27.48 kB），产物无演示口令 |
+| 前端 Vitest | ✅ **975 passed / 101 files** |
+| `vite build` | ✅ 入口 `index` 83.55 kB（gzip 29.00 kB），产物无演示口令 |
 
-> 这张表是「评估这次改动有没有让仓库变差」的起点，每轮评审刷新一次；
+> 这张表是「评估这次改动有没有让仓库变差」的起点，每轮评审刷新一次。
+> 取数方式：`pytest -q`（末尾的汇总行；若被临时目录清理打断，看 `.pytest_cache/v/cache/lastfailed` 是否为空）、
+> `npm run verify` 一次跑完前端四条、`mypy --platform win32 src`（与 CI 同口径）；
 > 历史值见 `REVIEW_CHECKLIST.md` 附录 A（历次评审报告已于 2026-11-13 清理，需要时从 git 历史取回）。
 
 ### 仍然靠人守的缺口

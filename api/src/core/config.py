@@ -540,6 +540,10 @@ def reload_settings() -> Settings:
     这些对象在第一次取用时就把 `settings` 里的值读走了：改了 `ARCHIVE_ROOT`
     再 reload，`settings.archive_root` 是新值，但归档盘实例还指着旧目录。
 
+    例外是「**从配置值派生的纯函数**」（`parsed_overrides()`）：那里没有「对象
+    持有旧配置」，只有一份可以由新配置重算的缓存，所以它跟着一起清。判据是
+    「清掉之后下一次调用会按新配置重新算吗」—— 会，就该清。
+
     这不是「忘了清缓存」，而是分层决定的：`core` 不能反向 import `infra` 去调
     `cache_clear()`。所以它只承诺「配置值刷新」，不承诺「派生对象重建」——
     需要换驱动/换目录的场景请重启进程（运维脚本 `app migrate-storage` 也是这么做的）。
@@ -551,6 +555,16 @@ def reload_settings() -> Settings:
     fresh = Settings()
     for name in type(fresh).model_fields:
         setattr(_settings, name, getattr(fresh, name))
+    # 有一类 lru_cache **必须**跟着清：它不是「对象持有了旧配置」，而是
+    # 「从配置值派生的纯函数」。`parsed_overrides()` 就是这种 —— 不清的话，
+    # `RATE_LIMIT_OVERRIDES` 改了、`settings.rate_limit_overrides` 是新值，
+    # 而限流仍按旧覆盖执行（`resolve_budget` 每次都读这个缓存）。
+    #
+    # 函数级 import：`core.ratelimit` 在模块级 import 了 `core.config`，
+    # 顶层互相 import 会成环。
+    from core import ratelimit as _ratelimit
+
+    _ratelimit.parsed_overrides.cache_clear()
     return _settings
 
 
