@@ -381,7 +381,12 @@ export const RichPromptEditor = forwardRef<MentionTextareaHandle, RichPromptEdit
             className={cn(
               'w-full overflow-y-auto whitespace-pre-wrap break-words rounded-lg border border-line bg-white px-2.5 py-2 text-xs leading-[1.7] text-ink outline-none transition-colors',
               'hover:border-line-strong focus:border-primary-line focus:ring-2 focus:ring-primary/10',
-              'min-h-[104px] resize-y',
+              /* **固定高度**，内容多了在框里滚。
+                 之前只写了 `min-h` + `overflow-y-auto`：没有高度上限时
+                 overflow 不生效，写长的提示词会把整页往下顶，
+                 下面的 chip 行、字数、展示案例全被挤走。
+                 `resize-y` 留着：想临时看全文可以自己拖大。 */
+              'h-[240px] resize-y',
               open && 'border-primary-line bg-panel',
               className,
             )}
