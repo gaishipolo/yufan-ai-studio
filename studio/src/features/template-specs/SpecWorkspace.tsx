@@ -607,10 +607,18 @@ export function SpecWorkspace() {
               {draft.name || '未命名模板'}
             </span>
           </div>
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-2">
             {/* 三个动作的权重必须分开：一页只留一个实心按钮（保存并发布），
-                否则三颗长得一样的白按钮并排，用户每次都要读字才知道该点哪个。 */}
-            <Button variant="ghost" disabled={busy} onClick={() => void submit('validate')}>
+                否则三颗长得一样的白按钮并排，用户每次都要读字才知道该点哪个。
+
+                三档靠**有没有填充**分，不靠「有没有边框」——
+                以前「预检」是无边框的 ghost，夹在两个有边框的按钮中间，
+                看着像贴着的一段说明文字。三颗现在都是按钮，只有
+                「保存并发布」是实心的。
+
+                别把它做成「淡灰色的描边按钮」：那读起来像**禁用**。
+                预检只是不改数据，不是不可点。 */}
+            <Button variant="secondary" disabled={busy} onClick={() => void submit('validate')}>
               预检
             </Button>
             <Button variant="secondary" disabled={busy} onClick={() => void submit('save')}>
@@ -1129,25 +1137,30 @@ function SpecCard({
         </p>
       </div>
 
-      <div className="mt-2 flex items-center gap-1 border-t border-line-soft px-2 py-1.5 text-meta">
+      {/* 脚上四个动作：都是**按钮**，不是一行文字链接。
+          以前是 11px 无边框的裸文字（`px-1.5 py-1`），既没有可点面积的暗示，
+          四个又同样弱 ——「编辑」是蓝字、「删除」是灰字，剩下的分不出轻重。
+          现在统一成 `size="sm"` 的小按钮（与全局 Button 同一种形状），
+          差别只靠字色与 hover 的底色表达。 */}
+      <div className="mt-2 flex items-center gap-1.5 border-t border-line-soft px-2 py-2">
         {trashed ? (
-          <button
-            type="button"
+          <Button
+            size="sm"
+            icon={<RotateCcw size={11} />}
             disabled={busy}
             onClick={onRestore}
-            className="flex items-center gap-1 rounded-md px-1.5 py-1 text-ink-soft transition-colors hover:bg-primary-soft hover:text-primary disabled:opacity-50"
           >
-            <RotateCcw size={11} /> 恢复
-          </button>
+            恢复
+          </Button>
         ) : (
           <>
-            <button
-              type="button"
+            <Button
+              size="sm"
+              className="text-primary hover:border-primary-line hover:bg-primary-soft hover:text-primary-deep"
               onClick={onEdit}
-              className="rounded-md px-1.5 py-1 font-medium text-primary transition-colors hover:bg-primary-soft hover:text-primary-deep"
             >
               编辑
-            </button>
+            </Button>
             {/* 「发布」与「启用」是同一个动作（`POST /publish`），但说的不是一回事：
                 发布 = 把当前草稿冻结成新版本；启用 = 把下架的模板放回去。
                 停用后再点「发布」会让人以为又要发一版。
@@ -1155,32 +1168,27 @@ function SpecCard({
                 以前停用态**整个按钮都不画**（`status !== 'disabled'` 才显示），
                 于是下架的模板只剩「编辑」和「删除」—— 想放回去没有任何入口，
                 是条死胡同。 */}
-            <button
-              type="button"
-              disabled={busy}
-              onClick={onPublish}
-              className="rounded-md px-1.5 py-1 text-ink-soft transition-colors hover:bg-panel-soft hover:text-primary disabled:opacity-50"
-            >
+            <Button size="sm" disabled={busy} onClick={onPublish}>
               {item.status === 'disabled' ? '启用' : '发布'}
-            </button>
+            </Button>
             {item.status === 'published' && (
-              <button
-                type="button"
+              <Button
+                size="sm"
+                className="hover:border-warn-line hover:bg-warn-soft hover:text-warn-deep"
                 disabled={busy}
                 onClick={onDisable}
-                className="rounded-md px-1.5 py-1 text-ink-soft transition-colors hover:bg-warn-soft hover:text-warn-deep disabled:opacity-50"
               >
                 停用
-              </button>
+              </Button>
             )}
-            <button
-              type="button"
+            <Button
+              size="sm"
+              className="ml-auto hover:border-danger-line hover:bg-danger-soft hover:text-danger"
               disabled={busy}
               onClick={onRemove}
-              className="ml-auto rounded-md px-1.5 py-1 text-ink-mute transition-colors hover:bg-danger-soft hover:text-danger disabled:opacity-50"
             >
               删除
-            </button>
+            </Button>
           </>
         )}
       </div>
