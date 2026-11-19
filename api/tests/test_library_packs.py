@@ -157,3 +157,75 @@ def test_pack_detail_marks_deleted_member(client: TestClient) -> None:
     assert by_name["drop.png"]["deleted"] is True
     assert by_name["keep.png"]["deleted"] is False
     assert detail["memberCount"] == 2
+
+
+def test_pack_member_count_and_items_are_exposed(client: TestClient) -> None:
+    """「装了几张」要能从列表读出来，「装的是哪几张」要能从详情读出来。
+
+    这条守的是**出参映射**：字段在 schema 里定义了、序列化不报错，漏映射的
+    表现是永远输出默认值（0 / 空数组）—— 2026-11-19 的 `randomPrompt` 就是
+    这么漏的：库里对、接口返回空，前端据此判成「没配」。
+    """
+    headers = _headers(client)
+    # 颜色必须不同：同色会被「按内容秒传」去重成同一条资产，包就只剩一个成员
+    first = upload_image(client, API, headers, name="6036-黑-正面平铺.png", color="red")["id"]
+    second = upload_image(client, API, headers, name="6036-黑-立体图.png", color="blue")["id"]
+    response = client.post(
+        f"{API}/library/packs",
+        json={"name": "6036 黑", "assetIds": [first, second]},
+        headers=headers,
+    )
+    assert response.status_code == 201, response.text
+    pack_id = response.json()["data"]["id"]
+
+    # 列表：这张卡就是「成员不再单列」之后唯一能看到那几张图的地方，
+    # 只给封面不给张数，等于让人点进去才知道装了什么。
+    listing = client.get(f"{API}/library/assets?kind=pack&view=all", headers=headers)
+    assert listing.status_code == 200, listing.text
+    cards = {item["id"]: item for item in listing.json()["data"]["items"]}
+    assert cards[pack_id]["memberCount"] == 2
+    assert cards[pack_id]["kind"] == "pack"
+
+    # 详情：包没有自己的字节，媒体区只能靠成员列表
+    detail = client.get(f"{API}/library/assets/{pack_id}", headers=headers)
+    assert detail.status_code == 200, detail.text
+    data = detail.json()["data"]
+    assert data["memberCount"] == 2
+    assert [item["name"] for item in data["packItems"]] == [
+        "6036-黑-正面平铺.png",
+        "6036-黑-立体图.png",
+    ]
+    # 成员顺序 = 建包时的选择顺序，不是按 id 或名字排的
+    assert all(item["coverUrl"] for item in data["packItems"])
+
+
+def test_pack_members_are_hidden_from_the_list_but_not_the_picker(
+    client: TestClient,
+) -> None:
+    """「成员不单列」只作用于资产库列表，**不作用于选择器**。
+
+    两个场景的结论相反：
+    - 列表是「看我的库」：同一张图既在包里又单列，等于出现两次；
+    - 选择器是「挑素材去用」：藏掉就等于那几张图选不到了。模板里现有的
+      槽位默认还是按素材挑（`pickMode=asset`），藏了会立刻表现为
+      「我上传的图不见了」—— 那是比「看到两次」严重得多的问题。
+    """
+    headers = _headers(client)
+    first = upload_image(client, API, headers, name="6036-黑-正面.png", color="silver")
+    pack = client.post(
+        f"{API}/library/packs",
+        json={"name": "6036 黑", "assetIds": [first["id"]]},
+        headers=headers,
+    )
+    assert pack.status_code == 201, pack.text
+
+    listing = client.get(f"{API}/library/assets?view=all&pageSize=100", headers=headers)
+    listed = {item["id"] for item in listing.json()["data"]["items"]}
+    assert first["id"] not in listed, "进了包的成员不该再单列"
+    assert any(
+        item["id"] == pack.json()["data"]["id"] for item in listing.json()["data"]["items"]
+    ), "包本身要在列表里"
+
+    selection = client.get(f"{API}/library/selection?pageSize=100", headers=headers)
+    picked = {item["id"] for item in selection.json()["data"]["items"]}
+    assert first["id"] in picked, "选择器要能选到成员，否则模板里挑不到这张图"

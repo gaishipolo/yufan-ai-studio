@@ -142,3 +142,26 @@ describe('LibraryWorkspace · 选中项随列表裁剪', () => {
     expect(screen.queryByText('已选 1 项')).not.toBeInTheDocument();
   });
 });
+
+describe('LibraryWorkspace · URL 里的类型筛选', () => {
+  /* 白名单与 `KIND_OPTIONS` 手抄过三次，每次的表现都一样：`?kind=…` 写进 URL
+     又被判回 `all`，用户看到「点了筛选没反应」。现在的判据是「白名单从筛选
+     选项派生」—— 新加一档忘了同步这件事不该再靠人记。 */
+  it('?kind=pack 能落到查询条件上，不被判回「全部」', () => {
+    render(
+      <MemoryRouter initialEntries={['/library?view=all&kind=pack']}>
+        <LibraryWorkspace />
+      </MemoryRouter>,
+    );
+    expect(listMock).toHaveBeenCalledWith(expect.objectContaining({ kind: 'pack' }));
+  });
+
+  it('不认识的 kind 仍退回「全部」（白名单没被放开成任意字符串）', () => {
+    render(
+      <MemoryRouter initialEntries={['/library?view=all&kind=不存在']}>
+        <LibraryWorkspace />
+      </MemoryRouter>,
+    );
+    expect(listMock).toHaveBeenCalledWith(expect.objectContaining({ kind: undefined }));
+  });
+});

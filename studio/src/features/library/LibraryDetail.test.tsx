@@ -210,3 +210,71 @@ describe('LibraryDetail · 图片显示大图', () => {
     expect(document.querySelector('img')).toBeNull();
   });
 });
+
+/** 封装：成员在 `packItems`，自己没有字节。 */
+const PACK = {
+  ...IMAGE,
+  id: 'p1',
+  name: '6036 黑',
+  kind: 'pack',
+  sizeBytes: 0,
+  memberCount: 2,
+  coverUrl: 'https://cdn.test/pack-cover.jpg',
+  packItems: [
+    {
+      id: 'm1',
+      name: '6036-黑-正面平铺.png',
+      kind: 'image',
+      coverUrl: 'https://cdn.test/m1.jpg',
+      tagIds: ['正面图'],
+      deleted: false,
+    },
+    {
+      id: 'm2',
+      name: '6036-黑-45度立体.png',
+      kind: 'image',
+      coverUrl: 'https://cdn.test/m2.jpg',
+      tagIds: ['立体图'],
+      deleted: true,
+    },
+  ],
+};
+
+describe('LibraryDetail · 封装', () => {
+  it('媒体区列成员，而不是渲染一个打不开的播放器', () => {
+    const { container } = renderDetail(PACK);
+    expect(screen.getByText('包含 2 张素材')).toBeInTheDocument();
+    expect(screen.getByText('6036-黑-正面平铺')).toBeInTheDocument();
+    // 包没有字节，`url`（/file）指向的是不存在的文件 —— 播放器/大图都不该出现
+    expect(container.querySelector('audio')).toBeNull();
+    expect(container.querySelector('video')).toBeNull();
+  });
+
+  it('回收站里的成员照列出来并标记「已删除」，不是静默少一张', () => {
+    renderDetail(PACK);
+    expect(screen.getByText('6036-黑-45度立体')).toBeInTheDocument();
+    expect(screen.getByText('已删除')).toBeInTheDocument();
+  });
+
+  it('不渲染「媒体规格」：格式/体积/音轨对封装没有意义', () => {
+    renderDetail(PACK);
+    expect(screen.queryByText('媒体规格')).not.toBeInTheDocument();
+    expect(screen.queryByText('0 B')).not.toBeInTheDocument();
+  });
+
+  it('不给「下载原件」：包没有原文件', () => {
+    renderDetail(PACK);
+    expect(screen.queryByRole('button', { name: /下载原件/ })).not.toBeInTheDocument();
+  });
+
+  it('普通图片仍有「媒体规格」与「下载原件」（上面两条不是因为整体没渲染）', () => {
+    renderDetail(IMAGE);
+    expect(screen.getByText('媒体规格')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /下载原件/ })).toBeInTheDocument();
+  });
+
+  it('成员被彻底删空时说明是「已经没有了」，不是加载失败', () => {
+    renderDetail({ ...PACK, memberCount: 0, packItems: [] });
+    expect(screen.getByText('这个封装里已经没有素材了')).toBeInTheDocument();
+  });
+});

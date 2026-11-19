@@ -158,6 +158,22 @@ class LibraryTagStatOut(LibraryTagOut):
     created_at: UtcDateTime
 
 
+#: 封装成员。定义在 `LibraryAssetOut` 之前：详情出参要用它列成员，
+#: 而 Python 的类体在定义时求值，写在前面的类型必须已经存在。
+class PackMemberOut(CamelModel):
+    """包成员：模板库只读它来判断「这个包能填哪几格」。"""
+
+    id: str
+    name: str
+    kind: str
+    cover_url: str | None = None
+    #: 成员自己的标签（正面图 / 三视图 / 6036 …）。取图靠它匹配槽位的候选标签。
+    tag_ids: list[str] = Field(default_factory=list)
+    #: 成员被软删（在回收站里）时仍然列出并标记：包静默少一张，比露出来更糟 ——
+    #: 使用者会以为「这个包本来就只有两张」，而取图会当场报缺。
+    deleted: bool = False
+
+
 class LibraryAssetOut(CamelModel):
     """列表项。字段对齐 `library_assets` 表，M1 建表后不再**改**形状。
 
@@ -206,6 +222,11 @@ class LibraryAssetOut(CamelModel):
     #: 正文的纯文本取件地址（`text/plain; charset=utf-8` + nosniff）。
     #: 非文本为 null，前端据此决定「详情显示 <pre> 还是播放器」。
     text_url: str | None = None
+    #: 仅 `kind=pack` 非零：包里有几张图。
+    #:
+    #: 要随列表返回，因为「成员不再单列」之后这张卡是使用者**唯一**能看到
+    #: 那几张图的地方 —— 只给封面不给张数，等于让人点进去才知道装了什么。
+    member_count: int = 0
     created_at: UtcDateTime
     updated_at: UtcDateTime | None = None
 
@@ -376,6 +397,9 @@ class LibraryAssetDetailOut(LibraryAssetOut):
 
     tags: list[LibraryTagOut] = Field(default_factory=list)
     groups: list[LibraryGroupRef] = Field(default_factory=list)
+    #: 仅封装非空：成员按包内顺序。设计 §7.2 的「媒体区」就是靠它 ——
+    #: 包没有自己的字节，`url` 指向的是一份不存在的文件，不能当媒体预览。
+    pack_items: list[PackMemberOut] = Field(default_factory=list)
     generation: LibraryGenerationOut | None = None
     #: 谁在用它。`None` 表示**查不了**（`library-references` 未接上），
     #: 与空数组（查过、没人用）是两件事——后者能删，前者不能下结论。
@@ -676,20 +700,6 @@ class PackIn(CamelModel):
     #: 成员的**选择顺序**就是 `position`：包详情预览按它显示。
     #: 上限 200：一个包是一套图，几十张已经是极端；再多更可能是误操作。
     asset_ids: list[str] = Field(min_length=1, max_length=200)
-
-
-class PackMemberOut(CamelModel):
-    """包成员：模板库只读它来判断「这个包能填哪几格」。"""
-
-    id: str
-    name: str
-    kind: str
-    cover_url: str | None = None
-    #: 成员自己的标签（正面图 / 三视图 / 6036 …）。取图靠它匹配槽位的候选标签。
-    tag_ids: list[str] = Field(default_factory=list)
-    #: 成员被软删（在回收站里）时仍然列出并标记：包静默少一张，比露出来更糟 ——
-    #: 使用者会以为「这个包本来就只有两张」，而取图会当场报缺。
-    deleted: bool = False
 
 
 class PackSummaryOut(CamelModel):

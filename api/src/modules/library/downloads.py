@@ -57,6 +57,7 @@ from modules.library.errors import DownloadEmpty, DownloadNotReady, DownloadTooL
 from modules.library.models import (
     LibraryAsset,
     LibraryDownloadJob,
+    LibraryPackItem,
 )
 from modules.library.schema import DownloadIn, DownloadJobOut, DownloadSkip
 from workers import register_handler
@@ -212,6 +213,16 @@ class DownloadService:
         my_groups = await access.all_groups(self.session, actor)
         group_map = await access.asset_group_ids(self.session, wanted)
 
+        # 封装要**展开成成员**再打包：它自己没有字节，直接按行处理会得到一条
+        # 「没有可下载的原文件」，而用户勾的是「这一套图」。成员不再单列之后，
+        # 这个入口也是那几张图唯一的批量下载途径。
+        pack_ids = [row.id for row in rows.values() if row.kind == "pack"]
+        members_by_pack = await self._pack_members(pack_ids)
+        member_rows = [member for group in members_by_pack.values() for member in group]
+        member_groups = await access.asset_group_ids(
+            self.session, [member.id for member in member_rows]
+        )
+
         selected: list[LibraryAsset] = []
         skipped: list[DownloadSkip] = []
         for asset_id in wanted:
@@ -222,6 +233,36 @@ class DownloadService:
                 # 预览能看、单条能下，批量却跳过，用户只会觉得「打包坏了」
                 skipped.append(DownloadSkip(id=asset_id, reason="不存在或无权访问"))
                 continue
+
+            if row.kind == "pack":
+                members = members_by_pack.get(row.id, [])
+                if not members:
+                    skipped.append(
+                        DownloadSkip(id=row.id, name=row.name, reason="封装里没有可用素材")
+                    )
+                    continue
+                for member in members:
+                    # 成员逐条判「能不能进包」，但原因要带上是哪个包 ——
+                    # 只说「回收站内容不可下载」而卡片上明明是个封装，对不上。
+                    reason = _skip_reason(member) or (
+                        ""
+                        if access.can_read(
+                            member, actor, my_groups, member_groups.get(member.id, [])
+                        )
+                        else "不存在或无权访问"
+                    )
+                    if reason:
+                        skipped.append(
+                            DownloadSkip(
+                                id=member.id,
+                                name=member.name,
+                                reason=f"来自封装「{row.name}」：{reason}",
+                            )
+                        )
+                        continue
+                    selected.append(member)
+                continue
+
             reason = _skip_reason(row)
             if reason:
                 skipped.append(DownloadSkip(id=row.id, name=row.name, reason=reason))
@@ -229,6 +270,27 @@ class DownloadService:
             selected.append(row)
 
         return _dedupe(selected), skipped
+
+    async def _pack_members(
+        self, pack_ids: list[str]
+    ) -> dict[str, list[LibraryAsset]]:
+        """一批包各自的成员，按包内顺序。**不过滤已删的** —— 由 `_skip_reason`
+        逐条判并给出原因，比在这里静默丢掉更容易解释。"""
+        wanted = [item for item in dict.fromkeys(pack_ids) if item]
+        if not wanted:
+            return {}
+        rows = (
+            await self.session.execute(
+                select(LibraryPackItem, LibraryAsset)
+                .join(LibraryAsset, LibraryAsset.id == LibraryPackItem.asset_id)
+                .where(LibraryPackItem.pack_id.in_(wanted))
+                .order_by(LibraryPackItem.pack_id, LibraryPackItem.position)
+            )
+        ).all()
+        result: dict[str, list[LibraryAsset]] = {}
+        for item, asset in rows:
+            result.setdefault(item.pack_id, []).append(asset)
+        return result
 
     def _to_out(
         self, row: LibraryDownloadJob, *, skipped: list[DownloadSkip] | None = None

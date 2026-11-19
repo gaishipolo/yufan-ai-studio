@@ -1,4 +1,4 @@
-import { Check, Download, FileAudio, FileText, Film, Image as ImageIcon, Plus, RotateCcw, Share2, Trash2, Undo2, X } from 'lucide-react';
+import { Check, Download, FileAudio, FileText, Film, Image as ImageIcon, Layers, Plus, RotateCcw, Share2, Trash2, Undo2, X } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { Button, Chip, CoverImage, IconButton } from '@/shared/ui';
 import { cn } from '@/shared/lib/cn';
@@ -46,8 +46,10 @@ export interface LibraryCardProps {
 }
 
 /* 类型图标按后端 `kind` 取，取不到就退回图片图标：后端枚举里可能还有前端已下线
-   的类型（`pack`），而卡片上只需要一个能认出「这是张图」的形状。 */
+   的类型，而卡片上只需要一个能认出「这是什么」的形状。 */
 const KIND_ICON: Partial<Record<LibraryAssetKind, LucideIcon>> = {
+  // 封装用「叠起来的层」：它本身就是几张图叠成的一组，也比箱子更像「往里装东西」。
+  pack: Layers,
   video: Film,
   audio: FileAudio,
   image: ImageIcon,
@@ -92,8 +94,15 @@ export function LibraryCard({
   const context = [ORIGIN_LABEL[asset.origin] ?? asset.origin, asset.ownerName || null].filter(
     Boolean,
   );
+  /* 封装没有自己的字节（`sizeBytes` 是 0，落盘的是成员的），它的「有多大」
+     就是「装了几张」——显示 `0 B` 只会让人以为这个包是空的。
+     `sizeBytes` 用真值判断：0 字节的文本同样不该显示成 `0 B`。 */
   const facts = [
-    asset.sizeBytes != null ? formatBytes(asset.sizeBytes) : null,
+    asset.kind === 'pack' && asset.memberCount
+      ? `${asset.memberCount} 张素材`
+      : asset.sizeBytes
+        ? formatBytes(asset.sizeBytes)
+        : null,
     asset.durationSec ? formatDuration(asset.durationSec) : null,
   ].filter(Boolean);
 
@@ -336,7 +345,10 @@ export function LibraryCard({
               />
             )}
 
-            {view !== 'drafts' && view !== 'trash' && asset.state === 'active' && (
+            {/* 封装没有自己的原文件（`/file` 会明确报「此资产没有原文件」），
+                摆一个点了必然失败的下载按钮，比不摆更糟。要拿成员的图，
+                进详情逐个下 —— 那也是唯一能看清「包里是哪几张」的地方。 */}
+            {view !== 'drafts' && view !== 'trash' && asset.state === 'active' && asset.kind !== 'pack' && (
               <IconButton
                 icon={<Download size={13} />}
                 label="下载原文件"

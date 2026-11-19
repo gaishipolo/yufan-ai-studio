@@ -731,9 +731,11 @@ export interface LibraryAssetDetailOut {
   textExcerpt?: string | null;
   textVersion?: number;
   textUrl?: string | null;
+  memberCount?: number;
   createdAt: string;
   updatedAt?: string | null;
   groups?: LibraryGroupRef[];
+  packItems?: PackMemberOut[];
   generation?: LibraryGenerationOut | null;
   references?: string[] | null;
   shareHistory?: ShareHistoryItem[];
@@ -778,6 +780,7 @@ export interface LibraryAssetOut {
   textExcerpt?: string | null;
   textVersion?: number;
   textUrl?: string | null;
+  memberCount?: number;
   createdAt: string;
   updatedAt?: string | null;
 }

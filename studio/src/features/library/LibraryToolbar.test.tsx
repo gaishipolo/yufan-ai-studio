@@ -70,9 +70,16 @@ describe('LibraryToolbar · 一级入口', () => {
     expect(screen.queryByRole('button', { name: '新建文本' })).not.toBeInTheDocument();
   });
 
-  it('类型筛选里没有「封装」这一档', () => {
+  it('类型筛选里有「封装」这一档，且排在最前', () => {
     renderToolbar();
-    expect(screen.queryByRole('button', { name: '封装' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '封装' })).toBeInTheDocument();
+    // 「全部」之后就是封装：包和普通素材是两种东西，用户扫一眼就要能分开
+    const labels = screen
+      .getAllByRole('button')
+      .map((button) => button.textContent)
+      .filter((text): text is string => Boolean(text));
+    const all = labels.indexOf('全部');
+    expect(labels[all + 1]).toBe('封装');
   });
 
   it('「新建文本」与上传同显隐，点击回传一次', async () => {

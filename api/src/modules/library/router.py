@@ -193,6 +193,10 @@ async def selection(
         # 模板库切换后靠 `origin` 只挑原片视频；与列表用同一组枚举值，
         # 免得两处各写一份字符串字面量、改一处漏一处。
         origins=[item.value for item in origin] if origin else [],
+        # **不像列表那样藏起封装成员**：这里是「挑素材去用」，藏掉就等于
+        # 那几张图选不到了（槽位默认还是按素材挑）。列表藏是为了别重复，
+        # 选择器藏是让人找不到东西 —— 同一件事在两个场景里结论相反。
+        exclude_packed_members=False,
     )
     return ApiResponse.ok(
         LibrarySelectionPage(

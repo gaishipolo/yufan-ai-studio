@@ -1770,6 +1770,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `textExcerpt` | `string \| null` | 否 |  |
 | `textVersion` | `number` | 否 |  |
 | `textUrl` | `string \| null` | 否 |  |
+| `memberCount` | `number` | 否 |  |
 | `createdAt` | `string` | 是 |  |
 | `updatedAt` | `string \| null` | 否 |  |
 
@@ -1820,9 +1821,11 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `textExcerpt` | `string \| null` | 否 |  |
 | `textVersion` | `number` | 否 |  |
 | `textUrl` | `string \| null` | 否 |  |
+| `memberCount` | `number` | 否 |  |
 | `createdAt` | `string` | 是 |  |
 | `updatedAt` | `string \| null` | 否 |  |
 | `groups` | `LibraryGroupRef[]` | 否 |  |
+| `packItems` | `PackMemberOut[]` | 否 |  |
 | `generation` | `LibraryGenerationOut \| null` | 否 |  |
 | `references` | `string[] \| null` | 否 |  |
 | `shareHistory` | `ShareHistoryItem[]` | 否 |  |
@@ -1889,9 +1892,11 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `textExcerpt` | `string \| null` | 否 |  |
 | `textVersion` | `number` | 否 |  |
 | `textUrl` | `string \| null` | 否 |  |
+| `memberCount` | `number` | 否 |  |
 | `createdAt` | `string` | 是 |  |
 | `updatedAt` | `string \| null` | 否 |  |
 | `groups` | `LibraryGroupRef[]` | 否 |  |
+| `packItems` | `PackMemberOut[]` | 否 |  |
 | `generation` | `LibraryGenerationOut \| null` | 否 |  |
 | `references` | `string[] \| null` | 否 |  |
 | `shareHistory` | `ShareHistoryItem[]` | 否 |  |
@@ -1993,6 +1998,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `textExcerpt` | `string \| null` | 否 |  |
 | `textVersion` | `number` | 否 |  |
 | `textUrl` | `string \| null` | 否 |  |
+| `memberCount` | `number` | 否 |  |
 | `createdAt` | `string` | 是 |  |
 | `updatedAt` | `string \| null` | 否 |  |
 
@@ -2267,9 +2273,11 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `textExcerpt` | `string \| null` | 否 |  |
 | `textVersion` | `number` | 否 |  |
 | `textUrl` | `string \| null` | 否 |  |
+| `memberCount` | `number` | 否 |  |
 | `createdAt` | `string` | 是 |  |
 | `updatedAt` | `string \| null` | 否 |  |
 | `groups` | `LibraryGroupRef[]` | 否 |  |
+| `packItems` | `PackMemberOut[]` | 否 |  |
 | `generation` | `LibraryGenerationOut \| null` | 否 |  |
 | `references` | `string[] \| null` | 否 |  |
 | `shareHistory` | `ShareHistoryItem[]` | 否 |  |
@@ -2325,9 +2333,11 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `textExcerpt` | `string \| null` | 否 |  |
 | `textVersion` | `number` | 否 |  |
 | `textUrl` | `string \| null` | 否 |  |
+| `memberCount` | `number` | 否 |  |
 | `createdAt` | `string` | 是 |  |
 | `updatedAt` | `string \| null` | 否 |  |
 | `groups` | `LibraryGroupRef[]` | 否 |  |
+| `packItems` | `PackMemberOut[]` | 否 |  |
 | `generation` | `LibraryGenerationOut \| null` | 否 |  |
 | `references` | `string[] \| null` | 否 |  |
 | `shareHistory` | `ShareHistoryItem[]` | 否 |  |
@@ -2708,6 +2718,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `textExcerpt` | `string \| null` | 否 |  |
 | `textVersion` | `number` | 否 |  |
 | `textUrl` | `string \| null` | 否 |  |
+| `memberCount` | `number` | 否 |  |
 | `createdAt` | `string` | 是 |  |
 | `updatedAt` | `string \| null` | 否 |  |
 
@@ -2913,9 +2924,11 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `textExcerpt` | `string \| null` | 否 |  |
 | `textVersion` | `number` | 否 |  |
 | `textUrl` | `string \| null` | 否 |  |
+| `memberCount` | `number` | 否 |  |
 | `createdAt` | `string` | 是 |  |
 | `updatedAt` | `string \| null` | 否 |  |
 | `groups` | `LibraryGroupRef[]` | 否 |  |
+| `packItems` | `PackMemberOut[]` | 否 |  |
 | `generation` | `LibraryGenerationOut \| null` | 否 |  |
 | `references` | `string[] \| null` | 否 |  |
 | `shareHistory` | `ShareHistoryItem[]` | 否 |  |
@@ -4056,9 +4069,11 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `textExcerpt` | `string \| null` | 否 |  |
 | `textVersion` | `number` | 否 |  |
 | `textUrl` | `string \| null` | 否 |  |
+| `memberCount` | `number` | 否 |  |
 | `createdAt` | `string` | 是 |  |
 | `updatedAt` | `string \| null` | 否 |  |
 | `groups` | `LibraryGroupRef[]` | 否 |  |
+| `packItems` | `PackMemberOut[]` | 否 |  |
 | `generation` | `LibraryGenerationOut \| null` | 否 |  |
 | `references` | `string[] \| null` | 否 |  |
 | `shareHistory` | `ShareHistoryItem[]` | 否 |  |
@@ -4113,6 +4128,7 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `textExcerpt` | `string \| null` | 否 |  |
 | `textVersion` | `number` | 否 |  |
 | `textUrl` | `string \| null` | 否 |  |
+| `memberCount` | `number` | 否 |  |
 | `createdAt` | `string` | 是 |  |
 | `updatedAt` | `string \| null` | 否 |  |
 

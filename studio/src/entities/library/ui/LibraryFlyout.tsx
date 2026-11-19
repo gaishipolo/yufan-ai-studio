@@ -45,9 +45,14 @@ const DEFAULT_FLYOUT_KINDS: LibraryAssetKind[] = ['image'];
 
 /** 四个素材类别：与资产库页的类别口径同一份来源，别在这里另抄一套文案 */
 /* 抽屉里的类别只列**文件型**素材：它挑的东西会进 `referenceLibraryIds` /
-   `textLibraryIds`，所以「全部」这一档要排除掉。 */
+   `textLibraryIds`，后端按 id 取字节喂给模型。所以两档要排除：
+   - 「全部」不是类型；
+   - 「封装」没有自己的字节（`storage_key` 为空），取不到文件 —— 按包选素材
+     是模板库槽位的能力（`pickMode=pack`），不是这个通用选择器的。 */
+const NON_FILE_KINDS: ReadonlySet<string> = new Set(['all', 'pack']);
 const CATEGORIES = KIND_OPTIONS.filter(
-  (item): item is { value: LibraryAssetKind; label: string } => item.value !== 'all',
+  (item): item is { value: LibraryAssetKind; label: string } =>
+    !NON_FILE_KINDS.has(item.value),
 );
 
 export interface LibraryFlyoutProps {

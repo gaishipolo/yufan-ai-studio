@@ -118,3 +118,44 @@ describe('LibraryCard · 文本资产', () => {
     expect(container.querySelector('img')).toBeNull();
   });
 });
+
+/** 封装：没有自己的字节，只有成员。 */
+const PACK_ASSET: LibraryAssetOut = {
+  id: 'p1',
+  name: '6036 黑',
+  kind: 'pack',
+  origin: 'upload',
+  ownerId: 'u1',
+  visibility: 'personal',
+  state: 'active',
+  sizeBytes: 0,
+  memberCount: 3,
+  createdAt: '2026-11-19T02:00:00Z',
+  tags: [{ id: 't9', name: '6036' }],
+};
+
+describe('LibraryCard · 封装', () => {
+  it('「多大」显示成几张素材，而不是 0 B', () => {
+    renderCard({ asset: PACK_ASSET });
+    expect(screen.getByText('3 张素材')).toBeInTheDocument();
+    // 0 字节是「它自己没有东西」，不是「这个包是空的」—— 显示 0 B 会读成后者
+    expect(screen.queryByText('0 B')).not.toBeInTheDocument();
+  });
+
+  it('底部类型条写「封装」', () => {
+    renderCard({ asset: PACK_ASSET });
+    expect(screen.getByText('封装')).toBeInTheDocument();
+  });
+
+  it('不给下载按钮：包没有原文件，点了必然失败', () => {
+    renderCard({ asset: PACK_ASSET });
+    expect(screen.queryByRole('button', { name: '下载原文件' })).not.toBeInTheDocument();
+    // 同一行里别的按钮还在（共享、删除），不是整行没渲染
+    expect(screen.getByRole('button', { name: '共享到…' })).toBeInTheDocument();
+  });
+
+  it('普通素材仍有下载按钮（上面那条不是因为整行被藏掉）', () => {
+    renderCard();
+    expect(screen.getByRole('button', { name: '下载原文件' })).toBeInTheDocument();
+  });
+});

@@ -8,6 +8,7 @@ import { useCan, useSubject } from '@/shared/access/use-access';
 import { ApiError } from '@/shared/api/types';
 import type { BulkAction, LibraryAssetOut } from '@/shared/api/schema';
 import {
+  KIND_OPTIONS,
   deleteOffer,
   displayName,
   parseView,
@@ -47,10 +48,12 @@ import { ShareRequestsModal } from './ShareRequestsModal';
 import type { LibraryCardAction } from './LibraryCard';
 
 const PAGE_SIZE = 24;
-/* URL 里的 `kind` 白名单。**必须与 `KIND_OPTIONS` 逐项对齐**：漏一项，点它就
-   把 `?kind=…` 写进 URL 又被判回 `all`，筛选看似点了却没生效。
-   历史上漏过两次（`text`、`pack`），所以这里的注释比代码长。 */
-const KINDS = new Set(['all', 'video', 'image', 'audio', 'text']);
+/* URL 里的 `kind` 白名单。**从 `KIND_OPTIONS` 派生，不手抄**。
+   手抄漏过三次（`text`、`pack`、再是 `pack` 回来那次），表现每次都一样：
+   `?kind=…` 写进 URL 又被判回 `all`，用户看到的是「点了筛选没反应」。
+   派生之后「加一档忘了同步这里」不可能再发生 —— 这条白名单本来就没有
+   独立于筛选控件的语义。 */
+const KINDS = new Set<string>(KIND_OPTIONS.map((item) => item.value));
 const SORTS = new Set(['-createdAt', 'createdAt', 'name', '-sizeBytes']);
 
 interface ConfirmState {

@@ -264,6 +264,13 @@ class LibraryService:
         sort: AssetSort = AssetSort.CREATED_DESC,
         origins: Sequence[str] = (),
         exclude_kinds: Sequence[str] = (),
+        #: 资产库列表要藏起「已被封装收录」的成员（成员不单列）；选择器**不藏**。
+        #:
+        #: 两者不能共用一个口径：列表是「看我的库」，成员挤在这里只会让同一张图
+        #: 出现两次；选择器是「挑素材去用」，藏掉就等于那几张图选不到了 ——
+        #: 模板库现有的槽位全都还是按素材挑（`pickMode=asset`），藏了会立刻
+        #: 表现为「我上传的图不见了」。
+        exclude_packed_members: bool = True,
         purpose: str | None = None,
         exclude_purposes: Sequence[str] = (access.PURPOSE_CASE,),
     ) -> LibraryAssetPage:
@@ -314,7 +321,7 @@ class LibraryService:
             # 必须还能在回收站里找回来。若是还排除案例，则「删了就消失」，
             # 而角标又把它算进去了（`facets.trash` 不按用途过滤）。
             query = query.where(LibraryAsset.purpose.not_in(list(exclude_purposes)))
-        if state == "active":
+        if state == "active" and exclude_packed_members:
             # 成员不单列：进了包的素材只在包里出现。
             query = query.where(~_packed_member_clause())
         if keyword:
@@ -342,6 +349,9 @@ class LibraryService:
             self.session, [row.owner_id for row in rows]
         )
         tag_map = await self._tags_of(page_ids)
+        count_map = await self._pack_member_counts(
+            [row.id for row in rows if row.kind == "pack"]
+        )
         return LibraryAssetPage(
             items=[
                 self._to_out(
@@ -349,6 +359,7 @@ class LibraryService:
                     owner_name=owner_map.get(row.owner_id),
                     group_ids=group_map.get(row.id, []),
                     tags=tag_map.get(row.id, []),
+                    member_count=count_map.get(row.id, 0),
                 )
                 for row in rows
             ],
@@ -382,12 +393,21 @@ class LibraryService:
         owner_map = await access.owner_names(self.session, [row.owner_id])
         generation = await self.session.get(LibraryAssetGeneration, row.id)
         references = await self._references(row)
+        # 包没有自己的字节：`url` 指向的是一份不存在的文件，不能当媒体预览，
+        # 详情页的「媒体区」只能靠成员列表。
+        members = (
+            (await self._pack_members([row.id])).get(row.id, [])
+            if row.kind == "pack"
+            else []
+        )
+        member_tags = await tag_ids_by_asset(self.session, [m.id for m in members])
         return LibraryAssetDetailOut(
             **self._to_out(
                 row,
                 owner_name=owner_map.get(row.owner_id),
                 group_ids=group_ids.get(row.id, []),
                 tags=tags,
+                member_count=len(members),
             ).model_dump(by_alias=False),
             groups=[
                 LibraryGroupRef(id=group_id, name=names.get(group_id, ""))
@@ -401,6 +421,19 @@ class LibraryService:
             reviewed_at=row.reviewed_at,
             reject_reason=row.reject_reason,
             trashed_from_state=row.trashed_from_state,
+            pack_items=[
+                PackMemberOut(
+                    id=member.id,
+                    name=member.name,
+                    kind=member.kind,
+                    cover_url=(
+                        self.storage.url_for(member.cover_key) if member.cover_key else None
+                    ),
+                    tag_ids=list(member_tags.get(member.id, ())),
+                    deleted=member.deleted_at is not None,
+                )
+                for member in members
+            ],
         )
 
     async def _references(self, row: LibraryAsset) -> list[str] | None:
@@ -878,6 +911,21 @@ class LibraryService:
             )
         return result
 
+    async def _pack_member_counts(self, pack_ids: Sequence[str]) -> dict[str, int]:
+        """一批包的成员数（列表卡片要显示「N 张」）。**不 join 资产行**：
+        只数行数，一条 `group by` 就够。"""
+        wanted = [item for item in dict.fromkeys(pack_ids) if item]
+        if not wanted:
+            return {}
+        rows = (
+            await self.session.execute(
+                select(LibraryPackItem.pack_id, func.count())
+                .where(LibraryPackItem.pack_id.in_(wanted))
+                .group_by(LibraryPackItem.pack_id)
+            )
+        ).all()
+        return {pack_id: int(count) for pack_id, count in rows}
+
     async def _pack_members(
         self, pack_ids: Sequence[str]
     ) -> dict[str, list[LibraryAsset]]:
@@ -1246,6 +1294,7 @@ class LibraryService:
         owner_name: str | None = None,
         group_ids: Sequence[str] = (),
         tags: Sequence[LibraryTagOut] = (),
+        member_count: int = 0,
     ) -> LibraryAssetOut:
         return LibraryAssetOut(
             id=row.id,
@@ -1278,6 +1327,7 @@ class LibraryService:
             height=row.height or None,
             group_ids=list(group_ids),
             tags=list(tags),
+            member_count=member_count,
             trash_reason=row.trash_reason,
             trash_expires_at=row.trash_expires_at,
             text_excerpt=(row.text_excerpt or None) if row.kind == "text" else None,

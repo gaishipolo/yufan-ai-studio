@@ -438,3 +438,74 @@ def test_staging_drops_a_half_written_file(tmp_path) -> None:  # noqa: ANN001
     storage = _RemoteStorage([b"partial", b"rest"], fail_after=1)
     assert asyncio.run(_stage(storage, "k", tmp_path, 7)) is None  # type: ignore[arg-type]
     assert list(tmp_path.iterdir()) == []
+
+
+def test_download_expands_a_pack_into_its_members(client: TestClient, api: str) -> None:
+    """勾一个封装 = 下它里面那几张图。
+
+    封装自己没有字节，按行处理只会得到「没有可下载的原文件」——而用户勾的
+    就是「这一套图」。成员不再单列之后，这个入口也是它们唯一的批量下载途径，
+    在这里跳过等于那几张图没有批量下载。
+
+    成员逐条判（已进回收站的跳过并说明来自哪个包），**包本身不算一条**。
+    """
+    admin = admin_headers(client)
+    owner, headers = make_user(client, admin, LIB_RW)
+    first = upload_image(client, api, headers, name="6036-黑-正面.png", color="teal")
+    second = upload_image(client, api, headers, name="6036-黑-立体.png", color="olive")
+
+    pack = client.post(
+        f"{api}/library/packs",
+        json={"name": "6036 黑", "assetIds": [first["id"], second["id"]]},
+        headers=headers,
+    )
+    assert pack.status_code == 201, pack.text
+    pack_id = pack.json()["data"]["id"]
+
+    created = _create(client, api, headers, [pack_id])
+    assert created.status_code == 202, created.text
+    job = created.json()["data"]
+    # 展开后是 2 条，不是 1 条（1 条会是一条空包）
+    assert job["assetCount"] == 2
+    assert job["skipped"] == []
+
+    build_download_job(job["id"])
+    served = client.get(f"{api}/library/downloads/{job['id']}/file", headers=headers)
+    assert served.status_code == 200, served.text
+    with zipfile.ZipFile(io.BytesIO(served.content)) as archive:
+        names = archive.namelist()
+    assert len(names) == 2
+    assert "正面" in names[0] and "立体" in names[1]
+
+
+def test_download_reports_why_a_pack_member_was_skipped(
+    client: TestClient, api: str
+) -> None:
+    """成员进了回收站：跳过它、但说清「来自封装「X」」。
+
+    只说「回收站内容不可下载」而卡片上明明是个封装，用户对不上号；
+    而整个包静默消失更糟 —— 他会以为打包漏了。
+    """
+    admin = admin_headers(client)
+    owner, headers = make_user(client, admin, LIB_RW)
+    alive = upload_image(client, api, headers, name="在的.png", color="navy")
+    doomed = upload_image(client, api, headers, name="删掉的.png", color="maroon")
+
+    pack = client.post(
+        f"{api}/library/packs",
+        json={"name": "6036 白", "assetIds": [alive["id"], doomed["id"]]},
+        headers=headers,
+    )
+    pack_id = pack.json()["data"]["id"]
+
+    trashed = client.delete(
+        f"{api}/library/assets/{doomed['id']}", params={"reason": ""}, headers=headers
+    )
+    assert trashed.status_code == 200, trashed.text
+
+    created = _create(client, api, headers, [pack_id])
+    job = created.json()["data"]
+    assert job["assetCount"] == 1
+    assert len(job["skipped"]) == 1
+    assert job["skipped"][0]["name"] == "删掉的.png"
+    assert "封装「6036 白」" in job["skipped"][0]["reason"]

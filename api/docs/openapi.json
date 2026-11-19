@@ -11085,6 +11085,11 @@
             ],
             "title": "Texturl"
           },
+          "memberCount": {
+            "type": "integer",
+            "title": "Membercount",
+            "default": 0
+          },
           "createdAt": {
             "type": "string",
             "format": "date-time",
@@ -11108,6 +11113,13 @@
             },
             "type": "array",
             "title": "Groups"
+          },
+          "packItems": {
+            "items": {
+              "$ref": "#/components/schemas/PackMemberOut"
+            },
+            "type": "array",
+            "title": "Packitems"
           },
           "generation": {
             "anyOf": [
@@ -11437,6 +11449,11 @@
               }
             ],
             "title": "Texturl"
+          },
+          "memberCount": {
+            "type": "integer",
+            "title": "Membercount",
+            "default": 0
           },
           "createdAt": {
             "type": "string",

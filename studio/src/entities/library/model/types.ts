@@ -118,6 +118,7 @@ export function viewAllowsCreate(view: LibraryView): boolean {
  */
 export const KIND_OPTIONS: ReadonlyArray<{ value: KindFilter; label: string }> = [
   { value: 'all', label: '全部' },
+  { value: 'pack', label: '封装' },
   { value: 'video', label: '成片' },
   { value: 'image', label: '图片' },
   { value: 'audio', label: '音频' },
@@ -134,11 +135,12 @@ export const SORT_OPTIONS: ReadonlyArray<{ value: LibrarySortKey; label: string 
 /**
  * 类型 → 中文名。
  *
- * 后端的 `kind` 枚举里暂时还留着已下线的 `pack`，所以这里按字符串索引而不是
- * 收窄成枚举：词表里没有的类型（今天只剩历史的 `pack`）查出来是空串，渲染上
- * 自然等于「不显示」，不必再为它单开一个字形。
+ * 按字符串索引而不是收窄成枚举：查不到时得到空串，渲染上自然等于「不显示」，
+ * 不必为一个新类型先在这里开一个字形。但**该有的类型必须写全** ——
+ * 缺一个的表现是「卡片底部那行字消失」，而不是报错。
  */
 export const KIND_LABEL: Record<string, string> = {
+  pack: '封装',
   video: '成片',
   audio: '音频',
   image: '图片',

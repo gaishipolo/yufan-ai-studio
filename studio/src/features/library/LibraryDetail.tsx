@@ -7,6 +7,7 @@ import {
   Film,
   History,
   Image as ImageIcon,
+  Layers,
   Pencil,
   Share2,
   Trash2,
@@ -15,12 +16,14 @@ import {
 import {
   Button,
   Chip,
+  CoverImage,
   ErrorState,
   Modal,
   MultiSelect,
   Notice,
   Skeleton,
 } from '@/shared/ui';
+import { cn } from '@/shared/lib/cn';
 import { formatBytes, formatDateTime, formatDuration } from '@/shared/lib/format';
 import { toast } from '@/shared/lib/toast';
 import type {
@@ -242,6 +245,8 @@ function DetailBody({
                   : text.data?.content || '（空文本）'}
             </pre>
           </div>
+        ) : asset.kind === 'pack' ? (
+          <PackMedia asset={asset} />
         ) : asset.kind === 'image' ? (
           <MediaImage asset={asset} />
         ) : asset.kind === 'video' ? (
@@ -364,7 +369,11 @@ function DetailBody({
         </div>
       </section>
 
-      {/* 3. 媒体规格 */}
+      {/* 3. 媒体规格
+          封装整块跳过：它没有自己的字节，也没有格式、时长、音轨 ——
+          把这些显示成「未知 / 0 B / 无」，读起来像是这条记录坏了一半，
+          而实际信息是「它装了几张图」，那句在媒体区已经说了。 */}
+      {asset.kind !== 'pack' && (
       <section className="space-y-2">
         <SectionTitle>媒体规格</SectionTitle>
         <div className="grid gap-1.5 sm:grid-cols-2">
@@ -374,6 +383,7 @@ function DetailBody({
           <Field label="音轨" value={asset.hasAudio == null ? '未知' : asset.hasAudio ? '有' : '无'} />
         </div>
       </section>
+      )}
 
       {/* 4. 生成参数 */}
       {asset.generation && (
@@ -458,8 +468,9 @@ function DetailBody({
       )}
 
       <div className="flex flex-wrap items-center gap-1.5 border-t border-line-soft pt-3">
-        {/* 只在 active 出现：回收站里后端一律拒绝取件，按钮点了也是失败。 */}
-        {asset.state === 'active' && (
+        {/* 只在 active 出现：回收站里后端一律拒绝取件，按钮点了也是失败。
+            封装另说：它没有原文件（`/file` 会明确报「此资产没有原文件」）。 */}
+        {asset.state === 'active' && asset.kind !== 'pack' && (
           <Button
             size="sm"
             variant="secondary"
@@ -556,6 +567,68 @@ function DetailBody({
           onClose={() => setHistoryOpen(false)}
         />
       )}
+    </div>
+  );
+}
+
+/**
+ * 封装的「媒体区」= 成员网格。
+ *
+ * 包本身没有字节（`storage_key` 为空，`url` 指向一个不存在的文件），所以它
+ * **不能**走播放器/大图那条分支 —— 否则详情页会出现一个 src 指向 404 的
+ * `<audio>`，看起来像资产坏了。
+ *
+ * 成员不再单列（进了包的素材从个人库消失），这里就是使用者**唯一**能看清
+ * 「包里是哪几张」的地方，所以每张都要有缩略图和名字，而不是只报个数。
+ */
+function PackMedia({ asset }: { asset: LibraryAssetDetailOut }) {
+  const members = asset.packItems ?? [];
+
+  if (members.length === 0) {
+    /* 空包在建包接口里就被拦掉了，走到这里说明成员被逐个彻底删除过。
+       说清是「空」而不是「加载失败」：两者在界面上长得一样，处理方式完全不同。 */
+    return (
+      <div className="flex flex-col items-center gap-2 p-8 text-center text-body text-ink-mute">
+        <Layers size={22} />
+        这个封装里已经没有素材了
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-2 p-3">
+      <span className="flex items-center gap-1.5 text-body text-ink-soft">
+        <Layers size={14} /> 包含 {members.length} 张素材
+      </span>
+      <ul className="grid max-h-[420px] grid-cols-2 gap-2 overflow-auto sm:grid-cols-3">
+        {members.map((member) => (
+          <li
+            key={member.id}
+            className={cn(
+              'overflow-hidden rounded-lg border border-line-soft bg-panel',
+              /* 回收站里的成员仍然列出来、只是变灰：静默少一张会让人以为
+                 「这个包本来就这样」，而真去用的时候取图会当场报缺。 */
+              member.deleted && 'opacity-55',
+            )}
+          >
+            <CoverImage
+              src={member.coverUrl ?? undefined}
+              seed={member.id}
+              className="aspect-[4/3]"
+            />
+            <div className="flex items-center gap-1 px-1.5 py-1">
+              <span className="min-w-0 flex-1 truncate text-xs text-ink-soft" title={member.name}>
+                {displayName(member.name)}
+              </span>
+              {member.deleted && (
+                <span className="shrink-0 rounded bg-danger-soft px-1 text-micro leading-4 text-danger-deep">
+                  已删除
+                </span>
+              )}
+            </div>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
