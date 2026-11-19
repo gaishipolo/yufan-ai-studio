@@ -229,11 +229,11 @@ def test_one_time_migration_gives_old_roles_their_pages(client: TestClient) -> N
     assert created.status_code == 201, created.text
 
     async def run(reset_marker: bool = False) -> dict[str, list[str]]:
-        from db.session import get_session_factory
-        from db.app_meta import AppMeta
-        from modules.identity.service import IdentityService
-        from modules.identity.service import PAGES_MIGRATION_KEY
         from sqlalchemy import delete
+
+        from db.app_meta import AppMeta
+        from db.session import get_session_factory
+        from modules.identity.service import PAGES_MIGRATION_KEY, IdentityService
 
         async with get_session_factory()() as session:
             if reset_marker:
@@ -266,5 +266,108 @@ def test_one_time_migration_gives_old_roles_their_pages(client: TestClient) -> N
     )
     assert client.get(f"{API}/tasks", headers=headers).status_code == 200
 
-    # 幂等：迁移只跑一次（标记在 app_meta），管理员后来关掉的页面不会被重开
+    # 幂等：没有新增受门控的码时不动任何授权
     assert asyncio.run(run()) == {}
+
+
+def test_new_page_declaration_backfills_existing_roles(client: TestClient) -> None:
+    """这一版新声明的页面关系，必须补到已存在的授权上。
+
+    场景：某模块这一版才把 `model_driver:read` 关联到「任务中心」页。
+    老库里持有这个码的角色**升级前能用、升级后 403** —— 而配置界面完全正常，
+    没人知道该改哪里。
+
+    这就是「一次性迁移」的漏洞：它只在第一次跑，之后新增的页面关系没人管。
+    """
+    import asyncio
+
+    admin = _admin(client)
+    code = f"legacy2_{uuid.uuid4().hex[:6]}"
+    created = client.post(
+        f"{IDENTITY}/roles",
+        json={"code": code, "name": code, "permissions": ["model_driver:read"]},
+        headers=admin,
+    )
+    assert created.status_code == 201, created.text
+
+    async def run(reset: bool = False) -> dict[str, list[str]]:
+        from sqlalchemy import delete
+
+        from db.app_meta import AppMeta
+        from db.session import get_session_factory
+        from modules.identity.service import PAGES_MIGRATION_KEY, IdentityService
+
+        async with get_session_factory()() as session:
+            if reset:
+                await session.execute(
+                    delete(AppMeta).where(AppMeta.key == PAGES_MIGRATION_KEY)
+                )
+                await session.commit()
+            return await IdentityService(session).migrate_roles_to_pages()
+
+    # 首次运行（无存档）→ 全部受门控的码都算新增，这个角色该被补上页面码
+    added = asyncio.run(run(reset=True))
+    assert code in added, f"老角色没有补上页面码：{added}"
+    assert "page:task-center" in added[code], (
+        f"model_driver:read 归任务中心页，补的应该是它：{added[code]}"
+    )
+
+    # 补完之后这个人真的能用那个接口
+    user = client.post(
+        f"{IDENTITY}/users",
+        json={
+            "username": f"legacy2_u_{uuid.uuid4().hex[:6]}",
+            "password": "pass-12345",
+            "displayName": "老角色用户2",
+            "roleIds": [created.json()["data"]["id"]],
+        },
+        headers=admin,
+    )
+    assert user.status_code == 201, user.text
+    headers = _login(client, user.json()["data"]["username"], "pass-12345")
+    assert client.get(f"{API}/tasks", headers=headers).status_code == 200
+
+
+def test_migration_does_not_reopen_pages_admin_closed(client: TestClient) -> None:
+    """管理员后来特意关掉的页面，不该被增量迁移重新打开。
+
+    增量迁移只补「这一版才开始受门控的码」。已经门控过的码不在差集里，
+    所以管理员的决定被保留。
+    """
+    import asyncio
+
+    admin = _admin(client)
+
+    async def run() -> dict[str, list[str]]:
+        from db.session import get_session_factory
+        from modules.identity.service import IdentityService
+
+        async with get_session_factory()() as session:
+            return await IdentityService(session).migrate_roles_to_pages()
+
+    # 跑一次把当前映射存档下来
+    asyncio.run(run())
+
+    # 造一个「有接口码、但没有对应页面码」的授权，模拟管理员手工关掉页面
+    code = f"closed_{uuid.uuid4().hex[:6]}"
+    created = client.post(
+        f"{IDENTITY}/roles",
+        json={"code": code, "name": code, "permissions": ["task:read"]},
+        headers=admin,
+    )
+    assert created.status_code == 201, created.text
+    role_id = created.json()["data"]["id"]
+
+    # 手动把它改成「有接口码、没有页面码」——这正是管理员关掉页面后的状态
+    resp = client.put(
+        f"{IDENTITY}/roles/{role_id}/permissions",
+        json={"permissions": ["task:read"]},
+        headers=admin,
+    )
+    assert resp.status_code == 200, resp.text
+
+    # 再跑一次迁移：这个码早就受门控了，不该被补回来
+    added = asyncio.run(run())
+    assert code not in added, (
+        f"增量迁移把管理员关掉的页面重新打开了：{added}"
+    )

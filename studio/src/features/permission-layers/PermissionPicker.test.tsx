@@ -108,7 +108,7 @@ describe('PermissionPicker 的两层结构', () => {
     expect(api?.textContent).toContain('1');
   });
 
-  it('别的层已授予的权限标成「已有 · 来源」，并说明它不在本层', () => {
+  it('别的层已授予的权限：勾上但灰色不可改', () => {
     render(
       <PermissionPicker
         selected={[]}
@@ -117,16 +117,56 @@ describe('PermissionPicker 的两层结构', () => {
       />,
     );
 
-    // 页面条目
-    const page = screen.getByRole('checkbox', { name: '任务中心 页面权限' }).closest('li');
-    expect(within(page as HTMLElement).getByText('已有 · 角色')).toBeInTheDocument();
+    // 页面条目：勾上、禁用，并标明来源
+    const pageCheckbox = screen.getByRole('checkbox', { name: '任务中心 页面权限' });
+    expect(pageCheckbox).toBeChecked();
+    expect(pageCheckbox).toBeDisabled();
+    const page = pageCheckbox.closest('li');
+    expect(within(page as HTMLElement).getByText('来自 角色')).toBeInTheDocument();
 
-    // 接口条目：来源写清楚「本层没有授予」
-    const item = screen.getByRole('checkbox', { name: '查看任务 接口权限' }).closest('li');
-    expect(within(item as HTMLElement).getByText('已有 · 角色')).toBeInTheDocument();
+    // 接口条目：同样勾上 + 禁用
+    const itemCheckbox = screen.getByRole('checkbox', { name: '查看任务 接口权限' });
+    expect(itemCheckbox).toBeChecked();
+    expect(itemCheckbox).toBeDisabled();
+    const item = itemCheckbox.closest('li');
+    expect(within(item as HTMLElement).getByText('来自 角色')).toBeInTheDocument();
     expect(
-      within(item as HTMLElement).getByText(/由 角色 授予，本层没有授予/),
+      within(item as HTMLElement).getByText(/由 角色 授予，这一层改不了/),
     ).toBeInTheDocument();
+  });
+
+  it('锁定的码点不动（点它不产生任何变更）', async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(
+      <PermissionPicker
+        selected={[]}
+        onChange={onChange}
+        inherited={{ 'task:read': ['角色'] }}
+      />,
+    );
+
+    await user.click(screen.getByRole('checkbox', { name: '查看任务 接口权限' }));
+
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('摘要条把「其他层已授」单列，不混进本层的计数', () => {
+    render(
+      <PermissionPicker
+        selected={['task:create']}
+        onChange={vi.fn()}
+        inherited={{ 'task:read': ['角色'] }}
+      />,
+    );
+
+    // 本层只授了 1 个接口
+    const api = screen.getByText('接口').parentElement;
+    expect(api?.textContent).toContain('1');
+
+    // 锁定的那个单列，不计入本层
+    const locked = screen.getByText('其他层已授').parentElement;
+    expect(locked?.textContent).toContain('1');
   });
 
   it('勾选页面不会连带勾上接口（页面是可见性，接口是能力）', async () => {

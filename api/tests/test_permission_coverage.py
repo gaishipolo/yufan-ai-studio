@@ -321,3 +321,94 @@ def test_builtin_role_permissions_are_declared() -> None:
             if code not in declared:
                 problems.append(f"{role.code}: {code} 没有任何模块声明")
     assert not problems, "内置角色的权限码对不上权限目录 -> " + str(problems)
+
+
+#: 允许「有判定点、但没有任何页面声明」的权限码 —— 即**纯后台能力**。
+#:
+#: 页面门控的规则是「接口权限只有在至少一个声明它的页面被授予时才有效」。
+#: 于是每个接口码都必须能回答一个问题：「它归哪个页面？」
+#:
+#: 两种答不出来的情况：
+#:
+#: 1. **该答但没人答**（真缺口）：前端页面在用这个接口，模块却没声明它。
+#:    后果是「关掉那一页 ⇒ 它的接口自动禁用」这条规则对它不生效 ——
+#:    页面没了，接口还能打。这是守卫要抓的主要目标。
+#: 2. **本来就没有前端页面**（如 CLI / 运维脚本用的接口）：这类码**应该**
+#:    不受页面门控，列在这里就是明确承认这一点。
+#:
+#: 写法上分两类：`*_BY_DESIGN` 是「本来就没有前端页面」，
+#: `*_MISSING_PAGE` 是「有前端页面但漏声明了」—— 后者是待修的缺口，
+#: 不该长期留着，所以它们的条目必须写清该归哪个页面。
+#:
+#: 加条目的代价：将来有人给这个码配了页面，这张表就该删掉它
+#: （`test_page_exemptions_have_no_stale_entries` 会抓）。
+BACKGROUND_ONLY_PERMISSIONS: dict[str, str] = {
+    # export 模块：异步 CSV 导出。前端没有任何入口（产物走后台 + 对象存储），
+    # 所以没有页面可以声明它 —— 它本来就不该被页面开关影响。
+    "export:read": "export 模块无前端页面（CLI/运维用）",
+    "export:create": "export 模块无前端页面（CLI/运维用）",
+    "export:delete": "export 模块无前端页面（CLI/运维用）",
+    "export:read:audit": "export 模块无前端页面（CLI/运维用）",
+    # model_driver 的「统一生成接口」：前端走的是 task/image 模块的提交接口，
+    # 这些 HTTP 端点是给程序化调用方（CLI、外部集成）用的。
+    "model_driver:create": "统一生成接口，前端走 task/image 提交",
+    "model_driver:cancel": "统一生成接口，前端走 task/image 提交",
+    "model_driver:read:all": "model_driver:read 的附加开关，随主码走",
+    "model_driver:retry:any": "model_driver:read 的附加开关，随主码走",
+    "model_driver:cancel:any": "model_driver:read 的附加开关，随主码走",
+}
+
+
+def test_every_enforced_code_belongs_to_a_page_or_is_background_only(
+    enforcement: dict[str, set[str]],
+) -> None:
+    """每个被判定点用到的权限码，要么有页面声明它，要么显式列为后台能力。
+
+    这是「禁用页面 ⇒ 该页接口自动禁用」这条规则的**完整性**守卫：
+
+    - 漏声明的码（前端在用、但模块没说它归哪页）→ 关掉那一页时它仍然有效，
+      规则对它不生效；
+    - 没列入豁免表的码 → 没人回答过「它归哪个页面」，多半就是漏声明。
+
+    豁免表里必须写清理由：只有「本来就没有前端页面」才该豁免。
+    """
+    from core.pages import page_catalog
+
+    declared_by_pages: set[str] = set()
+    for page in page_catalog.all():
+        declared_by_pages.update(page.requires)
+
+    orphans = sorted(
+        code
+        for code in enforcement
+        if code not in declared_by_pages
+        and code not in BACKGROUND_ONLY_PERMISSIONS
+        and not code.endswith("*")
+        and code != "*"
+    )
+    assert not orphans, (
+        "这些权限码有判定点，却既没有页面声明、也没列入后台能力豁免表 -> "
+        + "\n".join(f"{code}  <- {sorted(enforcement[code])[:3]}" for code in orphans)
+        + "\n要么给使用它的页面补上 requires，要么明确它是后台能力（写进豁免表并说明理由）。"
+    )
+
+
+def test_page_exemptions_have_no_stale_entries() -> None:
+    """豁免表里的码一旦被某个页面声明了，就该删掉。
+
+    棘轮：留着过期豁免，下一个人会照着它判断「这里已经有人想过了」。
+    """
+    from core.pages import page_catalog
+
+    now_covered: set[str] = set()
+    for page in page_catalog.all():
+        now_covered.update(page.requires)
+
+    stale = sorted(
+        code
+        for code in BACKGROUND_ONLY_PERMISSIONS
+        if code in now_covered
+    )
+    assert not stale, (
+        f"这些权限码现在已经有页面声明了，请从豁免表删掉 -> {stale}"
+    )

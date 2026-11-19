@@ -197,9 +197,11 @@ function UserLayer({ id, name, onClose }: { id: string; name: string; onClose: (
   return (
     <LayerForm
       title={`个人权限 · ${name}`}
-      /* 只留「取消勾选只清本层」这半句 —— 并集模型在「有效权限」弹窗里
-         已经摊开说过了，这里再说一遍就是同一件事说两遍。 */
-      description="在这里取消勾选只移除个人这一层的授予，不会削掉团队、小组或角色已给的权限。标着「已有」的那些来自别的层，同样不受这里的操作影响。"
+      /* 两句都是**约束**，不是解释：
+         1. 勾选框里灰色的是「别的层已授」—— 生效中，但不由这一层决定，
+            在这里点不动；要撤它，去改那个层（角色 / 团队 / 小组）。
+         2. 这里能改的只有个人层，取消勾选只移除这一层的授予。 */
+      description="灰色的勾选框是团队、小组或角色已经授予的权限 —— 已经生效，但在这一层改不了，要撤销请到对应的层去改。取消勾选只移除个人这一层的授予。"
       currentCodes={codes}
       inherited={inherited}
       loading={query.isLoading || effectiveQuery.isLoading}

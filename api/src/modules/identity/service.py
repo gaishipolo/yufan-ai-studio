@@ -41,7 +41,7 @@ from core.security import (
     password_slot,
     verify_password_async,
 )
-from db.app_meta import WRITE_RETRIES, read_entry, set_json
+from db.app_meta import WRITE_RETRIES, Entry, read_entry, set_json
 from db.base import utcnow
 from db.session import get_session_factory
 from modules.identity import policy, throttle
@@ -1915,29 +1915,96 @@ class IdentityService:
         return {"layers": layer_codes, "roles": role_codes}
 
     async def migrate_roles_to_pages(self) -> dict[str, list[str]]:
-        """一次性迁移：给「有接口码、却一个页面码都没有」的授权补上对应页面。
+        """给「有接口码、却没有对应页面码」的授权补上页面码。
 
-        为什么需要：页面门控让「接口权限」依赖「页面被授予」，而页面码是新引入的。
+        为什么需要：页面门控让「接口权限」依赖「页面被授予」。
         老库里的自定义角色 / 小组授权 / 个人授权只有接口码 → 升级之后这些授权
         **全部失效**（人打开页面一片 403），而配置界面看上去完全正常 ——
         这是最坏的一种升级事故：功能坏了，但没人知道该改哪里。
 
         迁移按「这些接口码属于哪些页面」补齐，等价于**保持升级前的可用性**。
-        之后页面授予由管理员自己管：迁移只跑一次（`app_meta` 有标记），
-        所以管理员后来特意关掉的页面**不会**被重新打开。
+
+        ## 为什么是增量的，而不是「一次性」
+
+        一次性迁移有个漏洞：**这一版新声明的页面关系不会被补到**。
+        比如某模块这一版才把 `model_driver:read` 关联到「任务中心」页，
+        老库里持有这个码的角色就会突然失效 —— 升级前它能用，升级后 403，
+        而配置界面看上去完全正常。
+
+        所以判据不是「这个库迁移过没有」，而是「**哪些接口码是这一版才开始
+        受门控的**」：拿当前的「接口码 → 声明它的页面」映射与上一版存档的
+        映射求差，只对新增的那些码做补齐。
+
+        这样有两层保障：
+
+        - 管理员后来特意关掉的页面**不会**被重新打开 —— 那些码不是新增的，
+          不在差集里；
+        - 之后每加一个页面声明，都会有一次对应的补齐，不会攒到下个版本。
 
         补不全的接口（没有任何页面声明它）本来就不受门控，不用管。
         """
         entry = await read_entry(self.session, PAGES_MIGRATION_KEY)
+        previous: dict[str, list[str]] | None = None
         if entry is not None:
+            raw = entry.value
+            if isinstance(raw, dict):
+                previous = {
+                    str(code): [str(page) for page in pages]
+                    for code, pages in raw.items()
+                }
+            # 旧格式（迁移跑过时存的是「补过的授权键」列表）→ 视为没有映射存档。
+            # 那正是「从一次性迁移时代的老库升级过来」的场景：全部受门控的码
+            # 都当作新增，重新补一遍 —— 与旧的一次性迁移行为一致。
+
+        # 当前的「接口码 → 声明它的页面」映射
+        current: dict[str, list[str]] = {}
+        for page in page_catalog.all():
+            for code in page.requires:
+                current.setdefault(code, []).append(page.code)
+        current = {code: sorted(pages) for code, pages in current.items()}
+
+        # 本次要补的 = 这一版才开始受门控的码。
+        # 首次运行（没有存档）时，全部受门控的码都算「新增」——
+        # 那正是「从没有页面权限的老库升级过来」的场景。
+        if previous is None:
+            newly_gated = set(current)
+        else:
+            newly_gated = {
+                code
+                for code, pages in current.items()
+                if code not in previous or set(previous[code]) != set(pages)
+            }
+
+        if not newly_gated:
+            # 没有新增受门控的码：把当前映射存档下来即可，不动任何授权。
+            await self._save_pages_migration(entry, current)
             return {}
 
         added: dict[str, list[str]] = {}
 
-        def pages_for(codes: Iterable[str]) -> list[str]:
+        def missing_pages(codes: Iterable[str], covered: set[str]) -> list[str]:
+            """这些码里，哪些需要补页面码；补哪些。
+
+            判据是「**这个码一个可用页面都没有**」：
+            门控规则是「至少一个声明它的页面被授予」，所以只要已有一个声明它的
+            页面在手上，这个码就仍然有效 —— 不需要再补。
+
+            这个判据同时避免**过度授权**：一个码常被多个页面声明
+            （`library:read` ← 资产库 + 模板封装）。若无条件把声明它的页面
+            全补上，一个只配了「资产库」的角色会顺带拿到「模板封装」——
+            那是凭空多给一页的可见性，不是「保持升级前的可用性」。
+
+            只补一个可用页面都没有的码，正是**保持升级前的可用性**：
+            升级前这个角色能用这个接口，升级后也还能用。
+            """
             pages: set[str] = set()
             for code in codes:
-                pages.update(page_catalog.pages_for(code))
+                if code not in newly_gated:
+                    continue  # 不是这一版新增受门控的：管理员配过了，别动
+                owners = page_catalog.pages_for(code)
+                if not owners or (set(owners) & covered):
+                    continue  # 已有可用页面 → 仍然有效
+                pages.update(owners)
             return sorted(pages)
 
         # ① 角色权限
@@ -1945,12 +2012,14 @@ class IdentityService:
         role_perms = await self.roles.permissions_for([role.id for role in roles])
         for role in roles:
             codes = list(role_perms.get(role.id, ()))
-            if not codes or any(code.startswith(PAGE_PREFIX) for code in codes):
-                continue  # 没有接口码，或者已经配过页面 → 不动
-            pages = pages_for(codes)
+            if not codes:
+                continue
+            covered = {code for code in codes if code.startswith(PAGE_PREFIX)}
+            pages = missing_pages(codes, covered)
             if not pages:
                 continue
-            await self.roles.set_permissions(role.id, sorted(codes + pages))
+            merged = sorted(set(codes) | set(pages))
+            await self.roles.set_permissions(role.id, merged)
             added[role.code] = pages
 
         # ② 三层授权（小组 / 个人）
@@ -1964,27 +2033,46 @@ class IdentityService:
                 continue
             by_scope.setdefault((scope, scope_id), []).append(permission)
         for (scope, scope_id), codes in by_scope.items():
-            if any(code.startswith(PAGE_PREFIX) for code in codes):
-                continue
-            pages = pages_for(codes)
+            covered = {code for code in codes if code.startswith(PAGE_PREFIX)}
+            pages = missing_pages(codes, covered)
             if not pages:
                 continue
-            await self.layers.set_grants(scope, scope_id, sorted(codes + pages))
+            merged = sorted(set(codes) | set(pages))
+            await self.layers.set_grants(scope, scope_id, merged)
             added[f"{scope}:{scope_id}"] = pages
 
+        await self._save_pages_migration(entry, current, added)
+        return added
+
+    async def _save_pages_migration(
+        self,
+        entry: Entry | None,
+        current: dict[str, list[str]],
+        added: dict[str, list[str]] | None = None,
+    ) -> bool:
+        """把当前的「接口码 → 页面」映射存档，并写一条人能看懂的审计。
+
+        存的是**映射本身**而不是「迁移过没有」：下一版要靠它求差，
+        才知道哪些码是这一版才开始受门控的。
+        """
+        detail = (
+            f"页面门控映射更新：{len(current)} 个接口码受门控，"
+            f"{len(added or {})} 处授权补了页面码"
+        )
         written = await set_json(
             self.session,
             PAGES_MIGRATION_KEY,
-            sorted(added),
+            current,
             expected_version=0 if entry is None else entry.version,
-            detail=f"页面权限迁移：{len(added)} 处授权补了页面码",
+            detail=detail,
         )
         if written:
             await self.session.commit()
-            logger.info("页面权限迁移：%d 处授权补上了页面码 %s", len(added), added)
+            if added:
+                logger.info("页面权限迁移：%d 处授权补上了页面码 %s", len(added), added)
         else:  # pragma: no cover - 别的实例抢先写了标记
             self.session.expire_all()
-        return added
+        return written
 
     async def ensure_superuser(
         self, username: str, password: str, display_name: str = ""

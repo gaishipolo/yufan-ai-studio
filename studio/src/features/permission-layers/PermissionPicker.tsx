@@ -13,8 +13,10 @@ export interface PermissionPickerProps {
    *
    * 为什么要有它：这一层是「个人授权」，多数人的权限其实来自角色/团队 ——
    * 只显示本层，打开弹窗就是一片空白，管理员会以为「这个人什么权限都没有」。
-   * 把别层的授予标出来（「已有 · 角色」），既回答了「他已有的权限是什么」，
-   * 又说清了「本层取消勾选不会收回它」。
+   *
+   * 呈现方式：**勾上但灰色不可改**。勾选框的状态要回答「这个人现在能不能用
+   * 这项能力」——答案是能（别的层给了），所以得勾上；而它不属于这一层，
+   * 所以不能点。这里的灰色不是「禁用」，是「已生效但不由这里决定」。
    */
   inherited?: Record<string, string[]>;
   /**
@@ -86,8 +88,20 @@ export function PermissionPicker({
     };
   }, [catalogQuery.data]);
 
+  /**
+   * 「已勾上但不由这一层决定」的码。
+   *
+   * 判定用「不在本层 but 在别层」：如果一个码**同时**在本层和别层，
+   * 它就是本层可以撤的（撤掉本层那份，别的层那份还在），
+   * 那时它不该被锁死 —— 锁死反而让人以为「这个没法撤」。
+   */
+  const isLocked = (code: string) =>
+    Boolean(inherited?.[code]) && !selected.includes(code);
+
   const toggle = (code: string) => {
     if (forbidden?.(code)) return;
+    // 锁定项：勾选框显示为「已勾上」，但点它不该有任何反应。
+    if (isLocked(code)) return;
     onChange(selected.includes(code) ? selected.filter((item) => item !== code) : [...selected, code]);
   };
 
@@ -98,6 +112,9 @@ export function PermissionPicker({
     const next = new Set(selected);
     for (const code of codes) {
       if (forbidden?.(code)) continue;
+      // 只跳过「锁定」的码：来自别的层、且本层没有的。
+      // 如果它同时在本层（可撤），批量操作仍要能撤掉它本层那份。
+      if (isLocked(code)) continue;
       if (on) next.add(code);
       else next.delete(code);
     }
@@ -110,6 +127,9 @@ export function PermissionPicker({
 
   const selectedPages = selected.filter((code) => code.startsWith('page:')).length;
   const selectedApis = selected.length - selectedPages;
+  // 来自别的层、勾上但不可改的码。它们**不在**本层的保存集合里，
+  // 但界面上是勾着的 —— 摘要必须把这两者分开，否则计数对不上眼睛看到的。
+  const lockedCodes = Object.keys(inherited ?? {}).filter((code) => !selected.includes(code));
 
   if (catalogQuery.isLoading) {
     return (
@@ -135,6 +155,9 @@ export function PermissionPicker({
         breakdown={[
           { label: '页面', count: selectedPages },
           { label: '接口', count: selectedApis },
+          ...(lockedCodes.length > 0
+            ? [{ label: '其他层已授', count: lockedCodes.length }]
+            : []),
         ]}
         onClear={() => onChange([])}
       />
@@ -166,11 +189,19 @@ export function PermissionPicker({
               onClick={() =>
                 toggleMany(
                   pages.map((page) => page.code),
-                  !pages.every((page) => selected.includes(page.code)),
+                  // 「已全部勾上」的判定要把「别的层已授」算进去 ——
+                  // 它们在界面上就是勾着的，不算进去的话按钮永远显示「全选页面」。
+                  !pages.every(
+                    (page) => selected.includes(page.code) || isLocked(page.code),
+                  ),
                 )
               }
             >
-              {pages.every((page) => selected.includes(page.code)) ? '取消全部页面' : '全选页面'}
+              {pages.every(
+                (page) => selected.includes(page.code) || isLocked(page.code),
+              )
+                ? '取消全部页面'
+                : '全选页面'}
             </button>
           </header>
           <p className="px-2.5 pt-1.5 text-meta text-ink-mute">
@@ -179,7 +210,9 @@ export function PermissionPicker({
           <ul className="grid max-h-[56vh] gap-1 overflow-auto p-2.5 md:grid-cols-1">
             {pages.map((page) => {
               const blocked = Boolean(forbidden?.(page.code));
-              const checked = selected.includes(page.code);
+              // 来自别的层：勾上、灰掉、点不动。
+              const locked = isLocked(page.code);
+              const checked = selected.includes(page.code) || locked;
               const requires = page.requires ?? [];
               // 只列前 3 个接口名，其余折成「等 N 个」：
               // 资产库挂着 14 个接口，全列出来就是一堵墙，卡片高低也不齐。
@@ -191,22 +224,32 @@ export function PermissionPicker({
                   key={page.code}
                   className={cn(
                     'rounded-md border px-2 py-1.5',
-                    checked ? 'border-primary-soft bg-primary-soft/40' : 'border-line-soft',
+                    checked && !locked && 'border-primary-soft bg-primary-soft/40',
+                    locked && 'border-line-soft bg-panel-soft',
+                    !checked && !locked && 'border-line-soft',
                     blocked && 'opacity-45',
                   )}
                 >
                   <label
-                    title={blocked ? forbiddenHint : undefined}
+                    title={
+                      blocked
+                        ? forbiddenHint
+                        : locked
+                          ? `来自${inherited?.[page.code]?.join('、')}，不在这一层授予`
+                          : undefined
+                    }
                     className={cn(
                       'flex items-start gap-2',
-                      blocked ? 'cursor-not-allowed' : 'cursor-pointer',
+                      blocked || locked ? 'cursor-not-allowed' : 'cursor-pointer',
                     )}
                   >
                     <input
                       type="checkbox"
-                      className="mt-[3px] h-3 w-3 shrink-0 accent-primary"
+                      /* disabled 的勾选框在 accent-color 下仍然是蓝的，
+                         不加这层灰度就看不出「不可改」 */
+                      className="mt-[3px] h-3 w-3 shrink-0 accent-primary disabled:opacity-40"
                       checked={checked}
-                      disabled={blocked}
+                      disabled={blocked || locked}
                       onChange={() => toggle(page.code)}
                       /* aria-label：页面名与接口名会重名（「任务中心」既是页面名
                          又出现在接口的归属提示里），只靠可见文字取元素会撞车 */
@@ -216,14 +259,19 @@ export function PermissionPicker({
                         一行里，结果「模板封装」「用户与权限」被 truncate 截成
                         「模…」「用…」——权限码和路由本来就是次要信息，
                         让位给名称才是对的。 */}
-                    <span className="min-w-0 flex-1 text-xs font-medium text-ink">
+                    <span
+                      className={cn(
+                        'min-w-0 flex-1 text-xs font-medium',
+                        locked ? 'text-ink-mute' : 'text-ink',
+                      )}
+                    >
                       {page.name}
-                      {inherited?.[page.code] ? (
+                      {locked ? (
                         <span
                           className="ml-1.5 text-meta font-normal text-ink-mute"
                           title="别的层已经授予这一页；本层取消勾选不会收回它"
                         >
-                          已有 · {inherited[page.code].join('、')}
+                          来自 {inherited?.[page.code]?.join('、')}
                         </span>
                       ) : null}
                     </span>
@@ -281,8 +329,13 @@ export function PermissionPicker({
             if (items.length === 0) return null;
             const codes = items.map((item) => item.code);
             const selectable = codes.filter((code) => !forbidden?.(code));
+            // 「本组是否已全勾」要把锁定项算进去 —— 它们在界面上就是勾着的，
+            // 不算进去的话按钮永远显示「全选本组」。
             const allChecked =
-              selectable.length > 0 && selectable.every((code) => selected.includes(code));
+              selectable.length > 0 &&
+              selectable.every(
+                (code) => selected.includes(code) || isLocked(code),
+              );
             return (
               <div key={group.group}>
                 <div className="flex items-center gap-2 pb-1">
@@ -299,7 +352,8 @@ export function PermissionPicker({
                 </div>
                 <ul className="grid gap-1 md:grid-cols-2">
                   {items.map((item) => {
-                    const checked = selected.includes(item.code);
+                    const locked = isLocked(item.code);
+                    const checked = selected.includes(item.code) || locked;
                     const blocked = Boolean(forbidden?.(item.code));
                     const owners = pagesByApi.get(item.code) ?? [];
                     const openOwners = owners.filter((code) => selected.includes(code));
@@ -311,34 +365,49 @@ export function PermissionPicker({
                         key={item.code}
                         className={cn(
                           'flex items-start gap-2 rounded-md px-2 py-1.5',
-                          checked && !blocked ? 'bg-primary-soft/40' : 'bg-transparent',
+                          checked && !locked && !blocked && 'bg-primary-soft/40',
+                          locked && 'bg-panel-soft',
                           blocked && 'opacity-45',
                         )}
                       >
                         <label
-                          title={blocked ? forbiddenHint : undefined}
+                          title={
+                            blocked
+                              ? forbiddenHint
+                              : locked
+                                ? `来自${inherited?.[item.code]?.join('、')}，不在这一层授予`
+                                : undefined
+                          }
                           className={cn(
                             'flex min-w-0 flex-1 items-start gap-2',
-                            blocked ? 'cursor-not-allowed' : 'cursor-pointer',
+                            blocked || locked ? 'cursor-not-allowed' : 'cursor-pointer',
                           )}
                         >
                           <input
                             type="checkbox"
-                            className="mt-[3px] h-3 w-3 shrink-0 accent-primary"
+                            /* 同上：锁定项的勾选框要真的灰掉 */
+                            className="mt-[3px] h-3 w-3 shrink-0 accent-primary disabled:opacity-40"
                             checked={checked}
-                            disabled={blocked}
+                            disabled={blocked || locked}
                             onChange={() => toggle(item.code)}
                             aria-label={`${item.name} 接口权限`}
                           />
                           <span className="min-w-0">
                             <span className="flex flex-wrap items-center gap-1.5">
-                              <span className="text-xs text-ink">{item.name}</span>
-                              {inherited?.[item.code] ? (
+                              <span
+                                className={cn(
+                                  'text-xs',
+                                  locked ? 'text-ink-mute' : 'text-ink',
+                                )}
+                              >
+                                {item.name}
+                              </span>
+                              {locked ? (
                                 <span
                                   className="text-meta text-ink-mute"
                                   title="别的层已经授予它；本层取消勾选不会收回它"
                                 >
-                                  已有 · {inherited[item.code].join('、')}
+                                  来自 {inherited?.[item.code]?.join('、')}
                                 </span>
                               ) : null}
                               <Chip>{item.code}</Chip>
@@ -354,9 +423,9 @@ export function PermissionPicker({
                               </span>
                             ) : null}
                             <span className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-meta">
-                              {inherited?.[item.code] ? (
+                              {locked ? (
                                 <span className="text-ink-mute">
-                                  由 {inherited[item.code].join('、')} 授予，本层没有授予
+                                  由 {inherited?.[item.code]?.join('、')} 授予，这一层改不了
                                 </span>
                               ) : owners.length === 0 ? (
                                 <span className="text-ink-mute">不受页面开关影响</span>

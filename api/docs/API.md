@@ -157,7 +157,7 @@ Authorization: Bearer <accessToken>
 | `page:shots` | 镜头库 | 关联接口：shot:read |
 | `page:storyboards` | 分镜模板库 | 关联接口：storyboard:read |
 | `page:studio` | 生成工作台 | 关联接口：catalog:read, task:create, image:create |
-| `page:task-center` | 任务中心 | 关联接口：task:read, task:create, task:update, task:delete, task:read:all, task:retry:any, image:read |
+| `page:task-center` | 任务中心 | 关联接口：task:read, task:create, task:update, task:delete, task:read:all, task:retry:any, image:read, model_driver:read |
 | `page:template-specs` | 模板封装 | 关联接口：template_pack:read, template_pack:create, template_pack:publish, library:read, library:case:read, library:case:write |
 | `page:templates` | 模板库 | 关联接口：template_pack:read |
 | `page:user-access` | 用户与权限 | 关联接口：identity:read, identity:create, identity:update, identity:delete, identity:role:manage, identity:team:manage, identity:group:read, identity:group:create, identity:group:update, identity:group:delete, identity:group:member:manage, identity:group:permission:manage, identity:user:permission:manage |

@@ -25,7 +25,11 @@ module = ModuleSpec(
             code="page:studio",
             name="生成工作台",
             route="/studio",
-            requires=("catalog:read", "task:create", "image:create"),
+            requires=(
+                "catalog:read",
+                "task:create",
+                "image:create",
+            ),
         ),
     ),
 )

@@ -15,9 +15,8 @@ import uuid
 from typing import Any
 
 from fastapi.testclient import TestClient
-from PIL import Image
-
 from identity_support import with_pages
+from PIL import Image
 
 IDENTITY = "/api/v1/identity"
 ADMIN = ("admin", "admin@12345")
