@@ -315,6 +315,10 @@ submit() ─▶ driver_jobs(queued) ─▶ generation.submit ─▶ provider.sub
 任务完全同一套，不需要在驱动里重复实现。未注册时端口 fail-closed 抛 503，
 不会静默返回空模型列表。
 
+上面画的是 `model_driver` 端口这条**旁路**。业务页面（生成工作台 / 生图 / 模板库）
+走的是另外两条提交端点，最后同样汇进 `generation.runner` —— 三条链路从按钮到
+结果的逐节点输入输出见 **§12**。
+
 ## 7. REST 管理面与权限
 
 | 方法 | 路径 | 权限 | 用途 |
@@ -383,3 +387,103 @@ run 工作区、归档租约、计费回执」。真正搬的时候并不需要�
 模型 id 归属：三个 `*-replacement` 现在**同时**服务替换模板链与通用生成入口
 （见 §2.5.1）；其余模型仍按各自声明的能力走。`bailian` / `libtv` 都不声明
 `preferred_for`，默认视频模型一直是 `agnes-video-2.5-flash`。
+
+## 12. 三条生成链路全景：从前端按钮到结果回显（2026-11-19）
+
+§6 画的是 `model_driver` 端口这条旁路。业务页面走的不是它，而是下面两条提交端点。
+这一节记录三条链路的完整调用链与**每个节点的输入输出**，供后续优化（统一编排、
+减少重复校验、缩短回显路径）时对照现状。行号是记录当时的锚点，改代码后以代码为准。
+
+### 12.1 总体：三个入口、两条端点、一个编排层
+
+```
+生成工作台 ────────────────▶ POST /tasks ──────────┐
+模板库(视频) ─先 compile─▶ POST /tasks ────────────┤
+生图 ─────────────────────▶ POST /generations/image ├─▶ generation.runner
+模板库(图片) ─先 compile─▶ POST /generations/image ─┘        │
+                                                            ▼
+                              submit job → provider.submit → (poll job) → provider.poll
+                                                            ▼
+                                   落库 → 前端条件轮询列表 → 拿 outputUrl → 预览/下载
+```
+
+- **没有 SSE**。三条链路都是 POST 返回一条 `queued` 记录，前端靠列表 query 的
+  `refetchInterval` 等结果回填；mutation 的 `onSuccess` 里 `invalidateQueries`
+  只是立刻重拉一次，那时异步结果通常还没出来。
+- 视频的两条入口**共用** `POST /tasks` 和同一套轮询；图片的两条**共用**
+  `POST /generations/image`。模板库独有一步 compile。
+- 三条链路最终都进 `generation.runner`，共用 `ModelRouter`、幂等键、退避、
+  `submit_unknown` 判定和墙钟超时；差异只在 pipeline 的 `build_request` 形状
+  和落库表。
+
+### 12.2 链路一：生成工作台 → `POST /tasks`（视频）
+
+| # | 节点 | 输入 | 输出 |
+|---|---|---|---|
+| 1 | `StudioPage.submit`<br>`StudioPage.tsx:170` | 提示词、参数控件值、参考图 id | 手拼一个 `SpecCompileOut` 形状对象（`version=0`、`slots=[]`），不调 compile |
+| 2 | `toTaskPayload`<br>`taskPayload.ts:123` | 上一步 + 模型 `paramSchema` 默认值 | `CreateTaskIn`：`title/prompt/model/durationSec/aspectRatio/referenceLibraryIds/textLibraryIds/params` |
+| 3 | `POST /tasks`<br>`task/router.py:118` | `CreateTaskIn` | `201 ApiResponse[TaskOut]`；`TaskOut` 刻意**不含 outputUrl** |
+| 4 | `TaskService.create_task`<br>`service.py:171` | 上一步 + actor | 校验模型/参数、冻结素材引用 → `video_tasks` 一行：`status=queued`、`reference_library_ids`、`text_json`、空 `output_url` |
+| 5 | `_dispatch`<br>`service.py:467` | VideoTask | 入队 `generation.submit`（幂等键 `submit:video:{id}`） |
+| 6 | `VideoTaskStore.load`<br>`task/pipeline.py:75` | DB 行 | `GenerationRecord`；`params.referenceKeys` = 资产 id → 存储 key（驱动可直接取字节） |
+| 7 | `build_request`<br>`task/pipeline.py:257` | GenerationRecord | `GenerationRequest(capability=VIDEO, model, prompt, params, request_id)`，**不填 reference_urls** |
+| 8 | `provider.submit`<br>`runner.py:332` | GenerationRequest | `str` 任务号（异步）或终态 `GenerationProgress`（同步）→ `status=running`、`external_id` |
+| 9 | `provider.poll`<br>`runner.py:600` | external_id | `GenerationProgress(state/progress/output_url/queued/retryable)` → `mark_progress` |
+| 10 | `mark_succeeded`<br>`task/pipeline.py:211` | 终态结果 | `status=completed`、`progress=100`、`output_url`、`downloadable=True`；成片经 `_persist` 落到对象存储 |
+
+### 12.3 链路二：生图 → `POST /generations/image`
+
+| # | 节点 | 输入 | 输出 |
+|---|---|---|---|
+| 1 | `ImagePage.submit`<br>`ImagePage.tsx:123` | prompt、size/count、参考图 id | `GenerateImageIn`（默认模型时 `model` 留空交后端） |
+| 2 | `POST /generations/image`<br>`image/router.py:41` | `GenerateImageIn` | `201 ApiResponse[ImageJobOut]` |
+| 3 | `ImageService.generate`<br>`image/service.py:169` | 上一步 + actor | 校验、参考图快照、**文本冻结** → `image_jobs` 一行 `status=queued`，然后 `dispatch(KIND_IMAGE, id)` |
+| 4 | `ImageJobStore._to_record`<br>`image/pipeline.py:136` | DB 行 | `GenerationRecord`；`prompt` 已展开 `{{Text N}}`、`reference_urls` 是对象 key |
+| 5 | `build_request`<br>`image/pipeline.py:400` | GenerationRecord | `GenerationRequest`；`reference_urls` = 逐张读字节转 `data:mime;base64,...`（供应商访问不到私签链接） |
+| 6 | `agnes.submit`<br>`drivers/agnes.py:199` | GenerationRequest | **同步**：直接返回终态 `GenerationProgress(SUCCEEDED, output_url=图片直链)` |
+| 7 | `_settle`<br>`runner.py:915` | 同步终态 | 跳过 poll job，`persist_output` 落盘 → `mark_succeeded`，`status=succeeded` |
+
+差异点：Agnes 是同步驱动（`supports_poll=False`），所以这条链路**没有 poll job 这一跳**。
+异步生图驱动（如 echo 占位）才会走 poll。注意「同步」是驱动的属性，不是 `ImageService`
+自己同步跑——受理永远只是建记录 + dispatch，生成都在 worker 里。
+
+### 12.4 链路三：模板库 → compile + 二选一提交
+
+| # | 节点 | 输入 | 输出 |
+|---|---|---|---|
+| 1 | 填表页点「生成图片/视频」→ 二次确认 | `slotValues`、模型、运行时参数 | `SpecCompileIn` |
+| 2 | `POST /template-specs/{key}/compile`<br>`spec_router.py:198` | `SpecCompileIn` | `SpecCompileOut`：`version/model/prompt/referenceLibraryIds/textLibraryIds/slots` |
+| 3 | `compile_for`<br>`spec_service.py:731` | 上一步 | 读已发布版本 + 槽位 → `_fills` 查库校验素材 → `compile_spec` 纯函数算编号 → 成品 ≤7000 字闸门。**全程只读，不建任务** |
+| 4 | `toSubmitPayload`<br>`taskPayload.ts:197` | `SpecCompileOut` + 模型能力 | 图片→`GenerateImageIn`，视频→`CreateTaskIn` |
+| 5 | 提交 | 上一步 | 图片接链路二第 2 步起，视频接链路一第 3 步起 |
+
+compile 不落库的原因见 `spec_service.py` 模块 docstring 与 `core/template_spec/compile.py`：
+编号是派生物、编译是纯函数（无 session / 资产库 / 网络），业务模块之间不许互相 import，
+所以「把结果转发给 `/tasks`」这一步交给前端做——那一步没有业务判断。
+
+### 12.5 结果回显
+
+三条链路提交成功后，mutation 只失效列表 query，不在原地等结果：
+
+- 视频：`useTaskList` 每 2.5s（`task.queries.ts:28`）、feed 每 5s；
+  `queued/running` 继续，终态 `completed/failed` 停。
+- 生图：`useImages` 每 3s（`image/model/status.ts:8`）；`queued/running` 继续，
+  `succeeded/failed` 停；老记录无 `status` 按 `succeeded` 处理，避免轮询不停。
+- 模板库自身不轮询，靠「去任务中心」跳转；完成提醒由 `TaskCompletionWatcher`
+  基于 feed 差集弹 toast（用 feed 是为了让生图也有完成提醒）。
+
+`output_url` 在库里存的是**对象 key**，出参时用 `artifact_urls()` 现签成 24 小时
+有效的 URL（`infra/artifacts.py:52`）。列表 `TaskOut` 只给 `downloadable` 布尔，
+feed item 才带签好名的 `output_url`——这是前端唯一拿到成片地址的地方。
+下载走 `shared/lib/download.ts` 的 `fetch` → `blob:` URL，失败回退打开新标签。
+
+### 12.6 记录现状时特别核对过的两点
+
+1. **`POST /tasks` 走的是 `KIND_VIDEO → VideoGenerationPipeline`，不是
+   `KIND_MODEL_DRIVER`**。后者是 `POST /model-driver/tasks` 的旁路（§6）。两者在
+   `generation.runner` 汇合，共用编排与 `ModelRouter`，差异只在 `build_request`
+   形状（视频把 `referenceKeys` 塞 `params`；旁路用 `reference_urls` 独立通道）
+   和落库表（`video_tasks` vs `driver_jobs`）。
+2. **计费纪律集中在 runner**：提交前先写 `submit_attempts` 落「提交意图」；一旦
+   「有意图但无 external_id」= `submit_unknown`，绝不自动重提，避免二次扣费。
+   限流重投必须复用原 `idempotency_key`，否则父子作业并发提交会双计费。
