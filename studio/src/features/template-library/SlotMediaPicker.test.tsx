@@ -45,6 +45,8 @@ vi.mock('@/entities/library/api/library.queries', () => ({
     };
   },
   /* 悬浮大图：这里只关心「有没有被调用」，字节由组件自己的用例验。 */
+  /* 已选 chip（包槽位里选中的那张素材不在网格里，用 chip 显示）要读名字 */
+  useLibraryDetail: (id: string) => ({data: {name: `素材-${id}`}}),
   useLibraryLargePreview: (assetId: string | null, enabled: boolean) => ({
     url: enabled && assetId ? `blob:${assetId}` : undefined,
     isPending: false,
@@ -299,9 +301,26 @@ describe('SlotMediaPicker · 悬浮大图', () => {
 });
 
 describe('SlotMediaPicker · 封装包', () => {
-  /* 包就是一种素材：占同一张网格里的一个格子，不是另一种界面模式。
-     区别只在「点它的效果」——一次填好几格（由上层的 onPickPack 做）。 */
-  it('包和素材同一个网格，带「N 张」角标', () => {
+  /* 来源二选一：`pack` 槽位只列包，`asset` 槽位只列素材。包占一个格子、带
+     「N 张」角标，点它的效果是「一次填好几格」（由上层的 onPickPack 做）。 */
+  it('包槽位只列包（素材一个都不出现）', () => {
+    packsData.current = [{ id: 'p1', name: '6036 黑', memberCount: 3 }];
+    itemsData.current = [{ id: 'a1', name: '散图.png', kind: 'image' }];
+    render(
+      <SlotMediaPicker
+        slot={slotOf({ tagIds: ['t1'], pickMode: 'pack' })}
+        selected={[]}
+        onChange={vi.fn()}
+        onPickPack={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByTitle('6036 黑（封装 · 3 张）')).toBeInTheDocument();
+    expect(screen.getByText('3 张')).toBeInTheDocument();
+    expect(screen.queryByTitle('散图.png')).not.toBeInTheDocument();
+  });
+
+  it('素材槽位只列素材（声明了来源=素材，就不该被包顺带改掉）', () => {
     packsData.current = [{ id: 'p1', name: '6036 黑', memberCount: 3 }];
     itemsData.current = [{ id: 'a1', name: '散图.png', kind: 'image' }];
     render(
@@ -313,9 +332,8 @@ describe('SlotMediaPicker · 封装包', () => {
       />,
     );
 
-    expect(screen.getByTitle('6036 黑（封装 · 3 张）')).toBeInTheDocument();
     expect(screen.getByTitle('散图.png')).toBeInTheDocument();
-    expect(screen.getByText('3 张')).toBeInTheDocument();
+    expect(screen.queryByTitle('6036 黑（封装 · 3 张）')).not.toBeInTheDocument();
   });
 
   it('点包把 id 交给上层（分发是它的事，这里不自己填）', async () => {
@@ -325,7 +343,7 @@ describe('SlotMediaPicker · 封装包', () => {
     packsData.current = [{ id: 'p1', name: '6036 黑', memberCount: 3 }];
     render(
       <SlotMediaPicker
-        slot={slotOf({ tagIds: ['t1'] })}
+        slot={slotOf({ tagIds: ['t1'], pickMode: 'pack' })}
         selected={[]}
         onChange={onChange}
         onPickPack={onPickPack}
@@ -341,7 +359,13 @@ describe('SlotMediaPicker · 封装包', () => {
   it('没给 onPickPack 就不显示包（文本 / 音频槽位走不到这里）', () => {
     packsData.current = [{ id: 'p1', name: '6036 黑', memberCount: 3 }];
     itemsData.current = [{ id: 'a1', name: '散图.png', kind: 'image' }];
-    render(<SlotMediaPicker slot={slotOf({ tagIds: ['t1'] })} selected={[]} onChange={vi.fn()} />);
+    render(
+      <SlotMediaPicker
+        slot={slotOf({ tagIds: ['t1'], pickMode: 'pack' })}
+        selected={[]}
+        onChange={vi.fn()}
+      />,
+    );
     expect(screen.queryByTitle('6036 黑（封装 · 3 张）')).not.toBeInTheDocument();
   });
 
@@ -355,7 +379,7 @@ describe('SlotMediaPicker · 封装包', () => {
     const onPickPack = vi.fn();
     render(
       <SlotMediaPicker
-        slot={slotOf({ tagIds: ['t1'] })}
+        slot={slotOf({ tagIds: ['t1'], pickMode: 'pack' })}
         selected={['a1']}
         onChange={vi.fn()}
         onPickPack={onPickPack}
@@ -395,12 +419,12 @@ describe('SlotMediaPicker · 封装包', () => {
     expect(packCalls.at(-1)?.tagIds).toEqual(['t1']);
   });
 
-  it('只有包没有素材时不算空态', () => {
+  it('包槽位只有包、没有素材，也不算空态', () => {
     packsData.current = [{ id: 'p1', name: '6036 黑', memberCount: 2 }];
     itemsData.current = [];
     render(
       <SlotMediaPicker
-        slot={slotOf({ tagIds: ['t1'] })}
+        slot={slotOf({ tagIds: ['t1'], pickMode: 'pack' })}
         selected={[]}
         onChange={vi.fn()}
         onPickPack={vi.fn()}

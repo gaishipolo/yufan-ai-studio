@@ -143,8 +143,11 @@ class TemplateSpecSlot(Base, UUIDMixin):
     `position` 就是 `{{Mixed N}}` 的顺序；**这里不存编号**（编号由编译按实际填充
     数量算出来，见 `core/template_spec/compile.py`）。
 
-    **没有 `source` 列**（2026-11-14 删）：`type` 一根轴表达"要什么"，两根轴并存
-    时接口能收到自相矛盾的组合。`tag_ids` 只是候选集范围。
+    **`type` 回答"要什么"，`pick_mode` 回答"从哪儿挑"**，两者正交：
+    `type=image, pick_mode=pack` = 「要一张图片，只能从封装包来」。
+    2026-11-14 删过一根叫 `source` 的轴，那根与 `type` 表达同一件事（槽位类型里
+    有个 `pack`），组合起来能收到自相矛盾的写法；现在的 `pick_mode` 不碰 `type`，
+    一格仍是一张。`tag_ids` 只是候选集范围。
     """
 
     __tablename__ = "template_spec_slots"
@@ -161,6 +164,9 @@ class TemplateSpecSlot(Base, UUIDMixin):
     binding: Mapped[str] = mapped_column(String(16), default="user", nullable=False)
     #: `mixed` | `attachment`
     ref_mode: Mapped[str] = mapped_column(String(16), default="mixed", nullable=False)
+    #: `asset`（默认，从素材里挑）| `pack`（只从封装包里取）。
+    #: 加列前发布的版本读到空值时按 `asset` 解释（见 `spec_service._slot_out`）。
+    pick_mode: Mapped[str] = mapped_column(String(8), default="asset", nullable=False)
     min_count: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     max_count: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     label: Mapped[str] = mapped_column(String(80), default="", nullable=False)

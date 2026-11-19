@@ -86,6 +86,7 @@ def to_core(payload: TemplateSpecIn) -> TemplateSpec:
                 type=slot.type,
                 binding=slot.binding,
                 ref_mode=slot.ref_mode,
+                pick_mode=slot.pick_mode,
                 min_count=slot.min_count,
                 max_count=slot.max_count,
                 label=slot.label,
@@ -135,6 +136,8 @@ def _slot_out(row: TemplateSpecSlot) -> SpecSlotOut:
         type=row.type,  # type: ignore[arg-type]
         binding=row.binding,  # type: ignore[arg-type]
         ref_mode=row.ref_mode,  # type: ignore[arg-type]
+        # 老行没有这一列的值（加列前发布的版本）：默认成「素材」，与当时的行为一致。
+        pick_mode=(row.pick_mode or "asset"),  # type: ignore[arg-type]
         min_count=row.min_count,
         max_count=row.max_count,
         label=row.label,
@@ -265,8 +268,8 @@ def _check_executable(spec: TemplateSpec) -> None:
     ]
     if missing:
         raise BadRequest(
-            "这些槽位要圈标签（模板库按标签分组让用户挑素材）："
-            + "、".join(missing)
+            "这些槽位要圈候选标签（模板库靠它列候选；来源=封装包的槽位还靠它判断"
+            "包里哪一张进这一格）：" + "、".join(missing)
         )
 
     _check_optional_slots_have_fallback(spec)
@@ -561,6 +564,7 @@ async def publish(session: AsyncSession, actor: CurrentUser, key: str) -> SpecPu
                 type=slot.type,
                 binding=slot.binding,
                 ref_mode=slot.ref_mode,
+                pick_mode=slot.pick_mode,
                 min_count=slot.min_count,
                 max_count=slot.max_count,
                 label=slot.label,

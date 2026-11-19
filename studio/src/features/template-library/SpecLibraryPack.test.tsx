@@ -9,9 +9,10 @@ import {SpecLibrary} from './SpecLibrary';
 /**
  * 模板库 · 在槽位网格里点一个封装包。
  *
- * 包是「一种特殊的素材」：它和普通素材在同一个网格里，但点下去的效果是
- * **一次填好几格** —— 包里带「正面图」的那张进正面图槽位，带「三视图」的
- * 进三视图槽位。判据只有一条：成员的标签 ∩ 槽位的候选标签。
+ * 槽位声明 `pickMode=pack` 时只从封装包里取，点一次包就是**一次填好几格** ——
+ * 包里带「正面图」的那张进正面图槽位，带「三视图」的进三视图槽位。
+ * 判据：这一格声明了「从包取」 + 成员的标签 ∩ 槽位的候选标签。
+ * 没声明来源（=素材）的槽位不该被包顺带改掉。
  *
  * 三种情况分开守：
  * 1. 恰好一张 → 填；
@@ -113,6 +114,7 @@ const SPEC: TemplateSpecOut = {
         key: 'front',
         type: 'image',
         binding: 'user',
+        pickMode: 'pack',
         minCount: 1,
         maxCount: 1,
         label: '正面图',
@@ -122,6 +124,7 @@ const SPEC: TemplateSpecOut = {
         key: 'views',
         type: 'image',
         binding: 'user',
+        pickMode: 'pack',
         minCount: 1,
         maxCount: 1,
         label: '三视图',
@@ -190,6 +193,28 @@ describe('模板库 · 点封装包填多格', () => {
        所以会以 chip 形式出现在槽位下方。 */
     expect(await screen.findByText(/素材-m-front/)).toBeInTheDocument();
     expect(await screen.findByText(/素材-m-views/)).toBeInTheDocument();
+  });
+
+  it('声明了来源=素材的槽位，不会被包顺带改掉', async () => {
+    /* 来源二选一：作者说「这一格从素材里挑」，使用者点包就不该动它。
+       以前包和素材混在一个网格里，点包会把所有标签对得上的格子全改掉。 */
+    specState.current = {
+      ...SPEC,
+      latest: {
+        ...SPEC.latest!,
+        slots: (SPEC.latest!.slots ?? []).map(slot =>
+          slot.key === 'views' ? {...slot, pickMode: 'asset' as const} : slot,
+        ),
+      },
+    };
+    const user = userEvent.setup();
+    renderLibrary();
+    await screen.findAllByTitle('6036 黑（封装 · 2 张）');
+
+    await pickPack(user);
+
+    expect(await screen.findByText(/素材-m-front/)).toBeInTheDocument();
+    expect(screen.queryByText(/素材-m-views/)).not.toBeInTheDocument();
   });
 
   it('包里缺某个视角：那一格不动，别的照填', async () => {

@@ -217,7 +217,7 @@ export function SpecWorkspace() {
         if (missing.length > 0) {
           setError(
             `这些槽位还没圈候选标签：${missing.join('、')}。` +
-              '没圈的话那一格会列出全部素材，素材一多就挑不动了。',
+              '没圈的话列不出可用的候选：素材槽位退化成全部素材，包槽位干脆列不出包。',
           );
           return false;
         }

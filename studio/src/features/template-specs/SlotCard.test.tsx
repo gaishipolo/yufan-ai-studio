@@ -406,3 +406,44 @@ describe('槽位卡片', () => {
     );
   });
 });
+
+/**
+ * 「来源」：素材 / 封装包两档。
+ *
+ * 它改的不是界面样式，而是**模板库那一格能挑什么**：声明为包的槽位只列包，
+ * 素材槽位不列包。所以它得在封装页看得见、改得动，且不能留下后端会拒的组合
+ * （固定槽位 + 从包取、文本/音频 + 从包取）。
+ */
+describe('槽位卡片 · 来源', () => {
+  it('展开后能选「封装包」，主行随即出现「来自包」角标', async () => {
+    const user = userEvent.setup();
+    renderSlot();
+    await user.click(screen.getByRole('button', {name: '展开更多设置'}));
+
+    const source = screen.getByLabelText('来源') as HTMLSelectElement;
+    expect(source.value).toBe('asset');
+    await user.selectOptions(source, 'pack');
+
+    expect(source.value).toBe('pack');
+    expect(screen.getByText('来自包')).toBeInTheDocument();
+  });
+
+  it('切到固定槽位时来源退回素材（固定钉的是一张具体素材）', async () => {
+    const user = userEvent.setup();
+    const {onPatch} = renderSlot({pickMode: 'pack'});
+    await user.click(screen.getByRole('button', {name: /已固定/}));
+
+    expect(onPatch).toHaveBeenCalledWith(
+      expect.objectContaining({binding: 'fixed', pickMode: 'asset'}),
+    );
+  });
+
+  it('文本槽位没有「来源」这一项（不参与编号分发）', async () => {
+    const user = userEvent.setup();
+    renderSlot({type: 'text', refMode: 'attachment'});
+    await user.click(screen.getByRole('button', {name: '展开更多设置'}));
+
+    expect(screen.getByLabelText('类型')).toBeInTheDocument();
+    expect(screen.queryByLabelText('来源')).not.toBeInTheDocument();
+  });
+});

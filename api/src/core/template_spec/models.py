@@ -21,8 +21,17 @@ SlotType = Literal["image", "video", "audio", "text"]
 SlotBinding = Literal["fixed", "user"]
 #: `mixed` 参与 `{{Mixed N}}` 编号；`attachment` 作为附加输入、不占号。
 RefMode = Literal["mixed", "attachment"]
+#: 这一格的素材**从哪来**。`asset` = 从素材里挑（默认）；`pack` = 只从封装包里取。
+#:
+#: 它不是第三根「要什么」的轴（`type` 才是），而是**候选来源**：`type=image,
+#: pick_mode=pack` 读作「要一张图片，这张图只能从封装包里来」。
+#: 一格仍然只放一张 —— 包的价值是「一次挑好几格」，不是把多张塞进一格。
+PickMode = Literal["asset", "pack"]
 
 SLOT_TYPES: tuple[SlotType, ...] = ("image", "video", "audio", "text")
+#: 能「从包取」的类型：只有图片/视频参与 `{{Mixed N}}` 分发，文本与音频
+#: 各有各的选择器，包对它们没有意义。
+PACK_PICK_TYPES: tuple[SlotType, ...] = ("image", "video")
 
 #: `mixed` 槽位展开后的总张数上限。执行器侧的参考素材上限，超了必然 400，
 #: 不如在编译期就说清。
@@ -62,6 +71,10 @@ class InputSlot:
     | `type=image/video` | 绑定某一具体素材 | 模板库挑（`min/max` 可多值） |
     | `type=text/audio` | 绑定一份文案/一段音频 | 模板库挑（附加输入，不占号） |
 
+    `pick_mode` 是**另一根轴**，回答的是「从哪儿挑」，不是「要什么」：
+    `type=image, pick_mode=pack` 读作「要一张图片，只能从封装包里来」。
+    它不改变「一格一张」—— 包的价值是一次挑好几格，不是把多张塞进一格。
+
     `tag_ids` 是**候选集的范围**，不是内容：非空时固定/填写都只在这几个标签
     （各自及其下级）里挑。它只约束"能选什么"，编译期不看它。
 
@@ -74,6 +87,11 @@ class InputSlot:
     type: SlotType
     binding: SlotBinding = "user"
     ref_mode: RefMode = "mixed"
+    #: 素材从哪来：`asset`（默认，从候选素材里挑）/ `pack`（只从封装包里取）。
+    #:
+    #: **只对 `binding=user` 的图片/视频有意义**（`rules._validate_slot` 会拦）：
+    #: 固定槽位是作者钉死的一张，没有「从哪挑」这回事；文本/音频不参与编号分发。
+    pick_mode: PickMode = "asset"
     #: 只有 `binding=user` 时才有意义：固定槽位恒定一个素材。
     #: **`min_count=0` 就是「可选」** —— 不填素材也能编译（不占编号、不进参考素材）。
     min_count: int = 1

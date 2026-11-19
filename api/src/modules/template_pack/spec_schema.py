@@ -23,6 +23,7 @@ from core.template_spec import (
     MAX_PROMPT,
     MAX_SLOT_TAGS,
     MAX_SLOTS,
+    PickMode,
     RefMode,
     SlotBinding,
     SlotType,
@@ -43,11 +44,16 @@ class StrictIn(CamelModel):
 class SpecSlotIn(StrictIn):
     key: str = Field(pattern=_KEY)
     #: 槽位要什么：就是资产库的 kind（图片 / 视频 / 音频 / 文本）。
-    #: 曾经另有一根 `source: asset|pack` 的轴，与 `type` 表达同一件事，两处并存
-    #: 时接口能收到自相矛盾的组合，已合并。
     type: SlotType
     binding: SlotBinding = "user"
     ref_mode: RefMode = "mixed"
+    #: 素材**从哪来**：`asset`（默认，从候选素材里挑）/ `pack`（只从封装包里取）。
+    #:
+    #: 与 `type` 不冲突：`type=image, pickMode=pack` = 「要一张图片，且只能从封装包来」。
+    #: 一格仍是一张 —— 包解决的是「一次挑好几格」，不是把多张塞进一格。
+    #: 作者声明来源，**用哪个包由模板库的使用者选**；多个来源为 `pack` 的槽位
+    #: 由同一次选包一起填。
+    pick_mode: PickMode = "asset"
     #: 一槽一张：`min` 只有 0（可选）/ 1（必填），`max` 恒为 1。
     #: 硬约束而非读入时钳制 —— 库里已无多值槽位（迁移 `4e06879f9f75` 清掉了
     #: 最后两个多值 e2e 模板），传 >1 就是真错，应当 422 让人看见。

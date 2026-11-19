@@ -47,6 +47,10 @@ export function SlotMediaPicker({
 }) {
   const kind = slot.type as 'image' | 'video';
   const label = KIND_LABEL[kind];
+  /* 作者给这一格声明的来源：`pack` = 只从封装包里取，`asset` = 只挑素材。
+     **两档互斥**（2026-11-20 定的口径）：「插槽只有两种情况，一是来自素材，
+     一是来自包」。所以这里不是「包也列在素材旁边」，而是二选一。 */
+  const packMode = (slot.pickMode ?? 'asset') === 'pack';
   const max = Math.max(1, slot.maxCount ?? 1);
   /** 实际下限。缺省时就是作者写的 `minCount`。 */
   const need = requiredCount ?? (slot.minCount ?? 1);
@@ -93,6 +97,8 @@ export function SlotMediaPicker({
     kind,
     tagIds: filterIds.length ? filterIds : undefined,
     pageSize: limit,
+    // 包槽位不列素材：它只认包，多打一次请求还会让「共 N 张」这类数字有歧义。
+    enabled: !packMode,
   });
   const items = list.data?.items ?? [];
   /* 这一档标签下还有多少张没列出来（标题里的「共 N」是总数）。 */
@@ -112,13 +118,16 @@ export function SlotMediaPicker({
    */
   const packList = useLibraryPacks(
     {tagIds: filterIds.length ? filterIds : undefined},
-    !!onPickPack && scope.length > 0,
+    !!onPickPack && packMode && scope.length > 0,
   );
   const packs = packList.data ?? [];
 
-  /* 已选但不在当前这档标签下的素材（换标签之后才会出现），见下面的渲染注释。 */
+  /* 已选但不在当前这档标签下的素材（换标签之后才会出现），见下面的渲染注释。
+     包槽位没有「素材网格」，选中的那张哪儿都不出现 —— 那就一律用 chip 摆出来，
+     否则使用者只看到「已选 1/1」，既不知道选了哪张，也没法撤销。 */
   const shown = new Set(items.map(item => item.id));
   const hiddenPicked = selected.filter(id => !shown.has(id));
+  const chipIds = packMode ? selected : hiddenPicked;
 
   /*
    * 悬浮大图：缩略图太小看不清产品细节，悬停时另浮一张大图。
@@ -164,7 +173,11 @@ export function SlotMediaPicker({
           {/* 提示词里的「第 N 张」推出的下限可能**超过上限**（作者配置错了）。
               那时候写「已选 0/1」是骗人的 —— 照实说，别让使用者以为挑一张就够。 */}
           {need > max && ` · 至少 ${need} 张`}
-          {typeof list.data?.total === 'number' && filterIds.length > 0 && ` · 共 ${list.data.total}`}
+          {packMode
+            ? packs.length > 0 && ` · 共 ${packs.length} 个包`
+            : typeof list.data?.total === 'number' &&
+              filterIds.length > 0 &&
+              ` · 共 ${list.data.total}`}
         </span>
       </div>
 
@@ -176,16 +189,18 @@ export function SlotMediaPicker({
       {!scope.length && (
         /* 老模板（闸门加上之前发布的）没有标签：仍然能挑，但要说明为什么没有分组。 */
         <p className="mt-1 text-micro leading-relaxed text-warn-deep">
-          这个槽位还没圈候选标签（去「模板封装」补一个，这一格才能只列那批素材），下面是全部{label}。
+          {packMode
+            ? '这个槽位还没圈候选标签（去「模板封装」补一个）—— 包里哪一张进这一格靠它判断，没圈就列不出可用的包。'
+            : `这个槽位还没圈候选标签（去「模板封装」补一个，这一格才能只列那批素材），下面是全部${label}。`}
         </p>
       )}
 
       {/* 已选的素材不再单独列一排 chip：网格里打了勾、右上角还写着「已选 2/3」，
           再列一遍只是重复。只留"选了但不在当前这档标签里"的那些 —— 它们在网格中
           看不见，不留 chip 就只能靠切回原标签才删得掉（满额时还会卡死：全部置灰）。 */}
-      {list.isSuccess && hiddenPicked.length > 0 && (
+      {chipIds.length > 0 && (
         <div className="mt-1.5 flex flex-wrap gap-1.5">
-          {hiddenPicked.map(assetId => (
+          {chipIds.map(assetId => (
             <AssetChip
               key={assetId}
               assetId={assetId}
@@ -217,23 +232,28 @@ export function SlotMediaPicker({
 
       {tags.isPending ? (
         <p className="py-4 text-center text-meta text-ink-mute">正在读取标签…</p>
-      ) : list.isLoading ? (
+      ) : packMode && packs.length === 0 ? (
+        <p className="py-4 text-center text-meta text-ink-mute">
+          {scope.length
+            ? '这批标签下还没有封装包。去资产库把要一起用的几张打成一个封装。'
+            : '这个槽位还没圈候选标签，列不出可用的封装包。'}
+        </p>
+      ) : !packMode && list.isLoading ? (
         <p className="py-4 text-center text-meta text-ink-mute">正在读取素材…</p>
-      ) : items.length === 0 && packs.length === 0 ? (
+      ) : !packMode && items.length === 0 ? (
         <p className="py-4 text-center text-meta text-ink-mute">
           {scope.length ? '这个标签下还没有素材，去资产库给它打上标签。' : `还没有${label}。`}
         </p>
       ) : (
         <div className="mt-2 grid max-h-[188px] grid-cols-4 gap-1.5 overflow-y-auto pr-0.5">
-          {/* 包排在素材前面：它是「一次选好一整套」，比逐张挑快得多。
-              带角标和小图标区分，但仍然占一个格子 —— 包就是一种素材。
+          {/* 来源二选一，网格里只出现其中一种：包槽位只列包，素材槽位只列素材。
 
               **本格已填满也不置灰**：包改的是「这一批格子」，点它是幂等的
               （有素材的格覆盖、没对上的一格不动）。置灰的话，把包填好的
               某一格手动换掉之后，就再也没法「整套重新套一遍」——
               而且灰掉的样子看起来像「这个包坏了」。 */}
-          {packs.map(pack => {
-            return (
+          {packMode &&
+            packs.map(pack => (
               <button
                 key={`pack-${pack.id}`}
                 type="button"
@@ -263,57 +283,55 @@ export function SlotMediaPicker({
                   {pack.memberCount ?? 0} 张
                 </span>
               </button>
-            );
-          })}
-          {items.map(item => {
-            const isPicked = selected.includes(item.id);
-            const blocked = full && !isPicked && max > 1;
-            return (
-              <button
-                key={item.id}
-                type="button"
-                title={item.name}
-                disabled={blocked}
-                onClick={() => toggle(item.id)}
-                /* 鼠标事件挂在**按钮**上（不是里面的图）：缩略图只占按钮的一部分，
-                   挂在内层会让鼠标滑到边框时浮层闪一下。 */
-                onMouseEnter={(event) => {
-                  setHoveredId(item.id);
-                  setPointer({ x: event.clientX, y: event.clientY });
-                }}
-                onMouseMove={(event) =>
-                  setPointer({ x: event.clientX, y: event.clientY })
-                }
-                onMouseLeave={() => {
-                  setHoveredId(null);
-                  setPointer(null);
-                }}
-                className={cn(
-                  'group relative aspect-square overflow-hidden rounded-lg border transition',
-                  isPicked
-                    ? 'border-primary-line ring-2 ring-primary/25'
-                    : 'border-line-soft hover:border-line-strong',
-                  blocked && 'cursor-not-allowed opacity-40',
-                )}
-              >
-                <CoverImage
-                  src={item.coverUrl ?? undefined}
-                  seed={item.id}
-                  className="h-full w-full"
-                />
-                {isPicked && (
-                  <span className="absolute right-1 top-1 grid size-4 place-items-center rounded-full bg-primary text-white">
-                    <Check size={10} strokeWidth={3} />
-                  </span>
-                )}
-                {item.kind === 'video' && (
-                  <span className="absolute bottom-1 left-1 rounded bg-black/55 px-1 text-micro text-white">
-                    视频
-                  </span>
-                )}
-              </button>
-            );
-          })}
+            ))}
+          {!packMode &&
+            items.map(item => {
+              const isPicked = selected.includes(item.id);
+              const blocked = full && !isPicked && max > 1;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  title={item.name}
+                  disabled={blocked}
+                  onClick={() => toggle(item.id)}
+                  /* 鼠标事件挂在**按钮**上（不是里面的图）：缩略图只占按钮的一部分，
+                     挂在内层会让鼠标滑到边框时浮层闪一下。 */
+                  onMouseEnter={event => {
+                    setHoveredId(item.id);
+                    setPointer({ x: event.clientX, y: event.clientY });
+                  }}
+                  onMouseMove={event => setPointer({ x: event.clientX, y: event.clientY })}
+                  onMouseLeave={() => {
+                    setHoveredId(null);
+                    setPointer(null);
+                  }}
+                  className={cn(
+                    'group relative aspect-square overflow-hidden rounded-lg border transition',
+                    isPicked
+                      ? 'border-primary-line ring-2 ring-primary/25'
+                      : 'border-line-soft hover:border-line-strong',
+                    blocked && 'cursor-not-allowed opacity-40',
+                  )}
+                >
+                  <CoverImage
+                    src={item.coverUrl ?? undefined}
+                    seed={item.id}
+                    className="h-full w-full"
+                  />
+                  {isPicked && (
+                    <span className="absolute right-1 top-1 grid size-4 place-items-center rounded-full bg-primary text-white">
+                      <Check size={10} strokeWidth={3} />
+                    </span>
+                  )}
+                  {item.kind === 'video' && (
+                    <span className="absolute bottom-1 left-1 rounded bg-black/55 px-1 text-micro text-white">
+                      视频
+                    </span>
+                  )}
+                </button>
+              );
+            })}
         </div>
       )}
 

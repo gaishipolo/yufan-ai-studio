@@ -16,10 +16,15 @@ from core.template_spec.models import (
     MAX_PROMPT,
     MAX_SLOT_TAGS,
     MAX_SLOTS,
+    PACK_PICK_TYPES,
     SLOT_TYPES,
     InputSlot,
     TemplateSpec,
 )
+
+#: 来源只有两档。写成元组而不是 `Literal` 的值抄一遍：契约层用 `PickMode`
+#: 已经挡住非法值，这里只是给「直接构造 dataclass」的调用方（测试、脚本）兜底。
+PICK_MODES: tuple[str, ...] = ("asset", "pack")
 
 #: 槽位 key：会出现在 `{{slot:key}}` 里，只允许下划线（连字符会让引用语法更难读）。
 _KEY = re.compile(r"^[a-z][a-z0-9_]{0,39}$")
@@ -336,6 +341,23 @@ def _validate_slot(slot: InputSlot) -> None:
         raise BadRequest(f"音频槽位「{slot.key}」必须是附加输入（refMode=attachment）")
     if slot.type == "text" and slot.ref_mode != "attachment":
         raise BadRequest(f"文本槽位「{slot.key}」必须是附加输入（refMode=attachment）")
+
+    # 「从包取」只对**用户填的图片/视频**成立：
+    # - 固定槽位是作者钉死的一张，没有「从哪挑」这回事（要钉就钉那张素材）；
+    # - 文本/音频各有各的选择器，不参与 `{{Mixed N}}` 分发，包对它们没有意义。
+    if slot.pick_mode not in PICK_MODES:
+        raise BadRequest(f"槽位「{slot.key}」的来源无效：{slot.pick_mode}")
+    if slot.pick_mode == "pack":
+        if slot.binding != "user":
+            raise BadRequest(
+                f"槽位「{slot.key}」是固定槽位，不能标成「从封装包取」："
+                "固定槽位钉的是一张具体素材，直接选那张图即可"
+            )
+        if slot.type not in PACK_PICK_TYPES:
+            raise BadRequest(
+                f"槽位「{slot.key}」是{slot.type}，不能从封装包取："
+                "只有图片/视频参与编号分发，包对文本/音频没有意义"
+            )
 
     if slot.binding == "fixed" and not slot.asset_id:
         raise BadRequest(f"槽位「{slot.key}」固定素材时必须提供 assetId")

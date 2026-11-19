@@ -13609,6 +13609,15 @@
             "title": "Refmode",
             "default": "mixed"
           },
+          "pickMode": {
+            "type": "string",
+            "enum": [
+              "asset",
+              "pack"
+            ],
+            "title": "Pickmode",
+            "default": "asset"
+          },
           "minCount": {
             "type": "integer",
             "maximum": 1.0,
@@ -13711,6 +13720,15 @@
             ],
             "title": "Refmode",
             "default": "mixed"
+          },
+          "pickMode": {
+            "type": "string",
+            "enum": [
+              "asset",
+              "pack"
+            ],
+            "title": "Pickmode",
+            "default": "asset"
           },
           "minCount": {
             "type": "integer",

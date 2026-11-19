@@ -419,9 +419,14 @@ export function SpecLibrary() {
   /**
    * 把一个包分发到各槽位。
    *
-   * 判据只有一条：**成员的标签 ∩ 这个槽位的候选标签**。它同时也是「这个包
-   * 能不能填这一格」——列表那边用的是同一个判据（后端按 `tagIds` 过滤），
-   * 所以这里匹配不到只可能是成员后来被删了。
+   * 两道判据：
+   * 1. **这一格声明了「从包取」**（`pickMode === 'pack'`）。来源二选一，素材槽位
+   *    不参与 —— 作者说「这几格从素材里挑」，点包就不该动它；
+   * 2. **成员的标签 ∩ 这个槽位的候选标签**。它同时也是「这个包能不能填这一格」，
+   *    列表那边用的是同一个判据（后端按 `tagIds` 过滤），所以这里匹配不到
+   *    只可能是成员后来被删了。
+   *
+   * 多个声明为包的槽位由**同一次点包**一起填，这就是「几个插槽的素材来自同一个包」。
    *
    * 三种情况分开处理，**不静默取第一张**：
    * - 恰好 1 张 → 填；
@@ -434,6 +439,9 @@ export function SpecLibrary() {
 
     for (const slot of fillSlots) {
       if (slot.type !== 'image' && slot.type !== 'video') continue;
+      /* **只填声明了「从包取」的槽位**：来源二选一（素材 / 包）。素材槽位不该被
+         包顺带改掉 —— 作者说「这几格从素材里挑」时，使用者点包不该动它。 */
+      if ((slot.pickMode ?? 'asset') !== 'pack') continue;
       const wanted = new Set(slot.tagIds ?? []);
       if (!wanted.size) continue; // 没候选标签就不知道该取哪张
       const matched = members.filter(

@@ -354,7 +354,13 @@ export function normalize(spec: TemplateSpecIn): TemplateSpecIn {
 }
 
 /** 后端的槽位默认值（`SpecSlotIn`）：缺省与写出来是同一件事。 */
-const SLOT_DEFAULTS = { binding: 'user', refMode: 'mixed', minCount: 1, maxCount: 1 } as const;
+const SLOT_DEFAULTS = {
+  binding: 'user',
+  refMode: 'mixed',
+  pickMode: 'asset',
+  minCount: 1,
+  maxCount: 1,
+} as const;
 
 /** 一个槽位「作者实际写了什么」。可选字段一律铺平到唯一写法。 */
 function slotFingerprint(slot: SpecSlotIn, index: number) {
@@ -363,6 +369,8 @@ function slotFingerprint(slot: SpecSlotIn, index: number) {
     type: slot.type,
     binding: slot.binding ?? SLOT_DEFAULTS.binding,
     refMode: slot.refMode ?? SLOT_DEFAULTS.refMode,
+    // 缺失 = 素材：这样「保存前没写、保存后后端补上 asset」不会被判成改动
+    pickMode: slot.pickMode ?? SLOT_DEFAULTS.pickMode,
     minCount: slot.minCount ?? SLOT_DEFAULTS.minCount,
     maxCount: slot.maxCount ?? SLOT_DEFAULTS.maxCount,
     label: slot.label ?? '',

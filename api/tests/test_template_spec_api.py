@@ -1107,3 +1107,63 @@ def test_all_timestamps_come_back_with_the_same_shape(client: TestClient) -> Non
         for field in ("createdAt", "updatedAt", "publishedAt"):
             assert payload[field].endswith("Z"), f"{field}={payload[field]}"
     assert detail["latest"]["publishedAt"].endswith("Z")
+
+
+def test_slot_pick_mode_round_trips_through_publish(client: TestClient) -> None:
+    """「来源=包」要能存进去、读回来，并且**进发布快照**。
+
+    它是作者对「这一格能从哪里取」的声明：模板库据此只列包、不列散图，
+    并且把几个这样的槽位当成**同一套**（选一次包一起填）。存在草稿里没用的，
+    使用者读的是版本。
+    """
+    headers = _headers(client)
+    video, first, second = _media(client, headers)
+    draft = _draft(video, first, second)
+    draft["slots"][1]["pickMode"] = "pack"  # hero：只能从封装包里取
+
+    saved = _save(client, headers, draft)
+    assert saved["draft"]["slots"][1]["pickMode"] == "pack"
+    # 没声明的槽位按「素材」走（老模板不受影响）
+    assert saved["draft"]["slots"][2]["pickMode"] == "asset"
+
+    published = client.post(f"{API}/{draft['key']}/publish", headers=headers)
+    assert published.status_code == 200, published.text
+
+    detail = client.get(f"{API}/{draft['key']}", headers=headers).json()["data"]
+    assert detail["latest"]["slots"][1]["pickMode"] == "pack"
+
+
+def test_pick_mode_pack_rejects_a_fixed_slot(client: TestClient) -> None:
+    """固定槽位钉的是一张具体素材，没有「从哪挑」这回事。"""
+    headers = _headers(client)
+    video, first, second = _media(client, headers)
+    draft = _draft(video, first, second)
+    draft["slots"][0]["pickMode"] = "pack"  # source：fixed
+
+    response = client.post(f"{API}/validate", json=draft, headers=headers)
+    assert response.status_code == 400, response.text
+    assert "固定槽位" in response.json()["message"]
+
+
+def test_pick_mode_pack_rejects_text_and_audio_slots(client: TestClient) -> None:
+    """文本/音频不参与编号分发，包对它们没有意义 —— 当场说清，别等填表才发现。"""
+    headers = _headers(client)
+    video, first, second = _media(client, headers)
+    draft = _draft(video, first, second)
+    draft["slots"].append(
+        {
+            "key": "voice",
+            "type": "audio",
+            "binding": "user",
+            "refMode": "attachment",
+            "minCount": 0,
+            "maxCount": 1,
+            "position": 3,
+            "label": "人声",
+            "pickMode": "pack",
+        }
+    )
+
+    response = client.post(f"{API}/validate", json=draft, headers=headers)
+    assert response.status_code == 400, response.text
+    assert "不能从封装包取" in response.json()["message"]
