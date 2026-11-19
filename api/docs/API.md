@@ -178,6 +178,7 @@ Authorization: Bearer <accessToken>
 | `40321` | 403 | identity | `AccountDisabled` | 账号已停用，请联系管理员 |
 | `40322` | 403 | identity | `SuperuserRequired` | 该操作需要超级管理员权限 |
 | `40323` | 403 | identity | `PermissionEscalation` | 不能授予自己不具备的权限 |
+| `40324` | 403 | identity | `AccessSwitchForbidden` | 停用或启用账号需要「停用用户」权限 |
 | `40381` | 403 | library | `DraftReviewForbidden` | 没有审核他人草稿的权限 |
 | `40382` | 403 | library | `ShareNotOwned` | 撤销共享只能由资产所有者发起 |
 | `40383` | 403 | library | `IngestKeyNotOwned` | 该存储键不属于你，无法入库 |

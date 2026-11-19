@@ -60,6 +60,25 @@ class PermissionEscalation(AppError):
     http_status = 403
 
 
+class AccessSwitchForbidden(AppError):
+    """开关账号访问权（启用 / 停用）需要 `identity:delete`。
+
+    停用与启用是同一个能力的两端，而 `PATCH /users/{id}` 本来只需要
+    `identity:update` —— 于是「可以编辑资料、但不能停用」这种角色根本表达不出来，
+    两个权限点承诺同一件事。这条判定把两端都收回到 `identity:delete` 名下
+    （`DELETE /users/{id}` 与 `PATCH {"isActive": ...}` 同口径）。
+
+    与 `PermissionEscalation` 分开：那个是「授出了自己没有的东西」，
+    这个只是「少一个权限点」，前端提示的动作不同（前者改授权，后者找管理员）。
+    """
+
+    code = errors.code(403, 4)
+    # 面向管理员的中文，别把权限码原样甩到界面上：这条错误只会出现在
+    # 「用户与权限」页，读它的人需要知道该去要哪个开关，而不是记一个 code。
+    message = "停用或启用账号需要「停用用户」权限"
+    http_status = 403
+
+
 class UserNotFound(AppError):
     code = errors.code(404, 1)
     message = "用户不存在"
@@ -157,6 +176,7 @@ class UnknownPermission(AppError):
 
 
 __all__ = [
+    "AccessSwitchForbidden",
     "AccountDisabled",
     "BuiltinRoleLocked",
     "CannotTargetSelf",

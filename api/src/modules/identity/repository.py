@@ -10,10 +10,13 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any, cast
 
 from sqlalchemy import and_, delete, func, or_, select
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.context import SUPER_PERMISSION
 from core.response import PageParams
 from db.base import utcnow
 from db.repository import BaseRepository
@@ -138,18 +141,78 @@ class UserRepository(BaseRepository[User]):
             self.session.add(UserRole(user_id=user_id, role_id=role_id))
         await self.session.flush()
 
-    async def count_active_superusers(self, *, exclude_user_id: str | None = None) -> int:
-        """启用的超级管理员人数（用于「不能锁死自己」的红线）。"""
-        stmt = (
-            select(func.count(func.distinct(User.id)))
-            .select_from(User)
+    async def active_superuser_ids(self) -> set[str]:
+        """启用账号里「超管等价」的用户 id。
+
+        判定必须与 `IdentityService.resolve_identity` **同源**：持有 `is_superuser`
+        角色，或者在任意层（角色权限 / 个人授权 / 小组授权）拿到 `*`。
+
+        为什么不能只数角色：`resolve_identity` 的注释写得很清楚——「任一层出现 `*`
+        都等价于超管：只认角色上的 `is_superuser` 会让『给某人单独授 `*`』这条合法
+        操作失效」。同一个系统里若两处口径不同，「最后一个超管」就会数出 0 ——
+        管理面所有写操作都开始报 `LastSuperuser`，而真正的原因是判定标准选错了。
+
+        三次查询而不是一次巨型 join：`permission_grants` 的 group 层要经过
+        `group_members` 才能落到用户，硬拼成一条 SQL 会得到三层嵌套 join 加 OR，
+        可读性换不来性能 —— 这个方法只在改权限时调用，不在请求主路径上。
+        """
+        active = User.is_active.is_(True)
+        ids: set[str] = set()
+
+        # ① is_superuser 角色，或角色权限里直接写了 `*`（两者等价）
+        role_rows = await self.session.scalars(
+            select(User.id)
+            .distinct()
             .join(UserRole, UserRole.user_id == User.id)
             .join(Role, Role.id == UserRole.role_id)
-            .where(Role.is_superuser.is_(True), User.is_active.is_(True))
+            .outerjoin(RolePermission, RolePermission.role_id == Role.id)
+            .where(
+                active,
+                or_(
+                    Role.is_superuser.is_(True),
+                    RolePermission.permission == SUPER_PERMISSION,
+                ),
+            )
         )
+        ids.update(role_rows)
+
+        # ② 个人授权 `*`
+        personal = await self.session.scalars(
+            select(PermissionGrant.scope_id)
+            .join(User, User.id == PermissionGrant.scope_id)
+            .where(
+                active,
+                PermissionGrant.scope == SCOPE_USER,
+                PermissionGrant.permission == SUPER_PERMISSION,
+            )
+        )
+        ids.update(personal)
+
+        # ③ 所属小组的授权 `*`（团队层不许放 `*`，写接口已经拦了，这里不必查）
+        grouped = await self.session.scalars(
+            select(GroupMember.user_id)
+            .join(User, User.id == GroupMember.user_id)
+            .join(
+                PermissionGrant,
+                and_(
+                    PermissionGrant.scope == SCOPE_GROUP,
+                    PermissionGrant.scope_id == GroupMember.group_id,
+                ),
+            )
+            .where(active, PermissionGrant.permission == SUPER_PERMISSION)
+        )
+        ids.update(grouped)
+        return set(ids)
+
+    async def count_active_superusers(self, *, exclude_user_id: str | None = None) -> int:
+        """启用的超级管理员人数（用于「不能锁死自己」的红线）。
+
+        「超管」的定义与鉴权侧同源，见 `active_superuser_ids`。
+        """
+        ids = await self.active_superuser_ids()
         if exclude_user_id:
-            stmt = stmt.where(User.id != exclude_user_id)
-        return int(await self.session.scalar(stmt) or 0)
+            ids.discard(exclude_user_id)
+        return len(ids)
 
 
 class RoleRepository(BaseRepository[Role]):
@@ -197,6 +260,27 @@ class RoleRepository(BaseRepository[Role]):
         for role_id, permission in rows.all():
             result.setdefault(role_id, []).append(permission)
         return result
+
+    async def permission_codes(self) -> set[str]:
+        """全表出现过的权限码（启动时清理下线码用）。"""
+        return set(
+            await self.session.scalars(select(RolePermission.permission).distinct())
+        )
+
+    async def drop_permission_codes(self, codes: Sequence[str]) -> int:
+        """删掉这些码的全部分绑定，返回删掉的行数。"""
+        if not codes:
+            return 0
+        result = cast(
+            "CursorResult[Any]",
+            await self.session.execute(
+                delete(RolePermission).where(
+                    RolePermission.permission.in_(list(codes))
+                )
+            ),
+        )
+        await self.session.flush()
+        return int(result.rowcount or 0)
 
     async def set_permissions(self, role_id: str, codes: Sequence[str]) -> None:
         await self.session.execute(
@@ -437,6 +521,25 @@ class PermissionLayerRepository:
                 select(PermissionGrant.permission).distinct()
             )
         )
+
+    async def drop_codes(self, codes: Sequence[str]) -> int:
+        """删掉这些码在**任意层**的授权行，返回行数。
+
+        三层一起删而不是逐层传参：调用方（启动引导）拿到的就是「目录里没有的码」，
+        它落在哪一层都该清掉 —— 逐层判断只会多三个调用点、多三种漏法。
+        """
+        if not codes:
+            return 0
+        result = cast(
+            "CursorResult[Any]",
+            await self.session.execute(
+                delete(PermissionGrant).where(
+                    PermissionGrant.permission.in_(list(codes))
+                )
+            ),
+        )
+        await self.session.flush()
+        return int(result.rowcount or 0)
 
     async def orphan_grants(self, valid_group_ids: set[str]) -> list[str]:
         """doctor 对账：指向已删除小组的 grant。"""

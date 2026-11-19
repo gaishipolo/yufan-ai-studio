@@ -13,7 +13,11 @@ from __future__ import annotations
 from pydantic import Field, field_validator, model_validator
 
 from core.schema import CamelModel, CamelORMModel, UtcDateTime
-from modules.identity.policy import PASSWORD_MIN_LENGTH, check_password_strength
+from modules.identity.policy import (
+    PASSWORD_MIN_LENGTH,
+    check_avatar_url,
+    check_password_strength,
+)
 
 # 用户名只允许字母数字与 . _ -：避免大小写、空格、emoji 带来的「看起来一样但登录不上」
 USERNAME_PATTERN = r"^[a-zA-Z0-9_.-]{3,64}$"
@@ -116,6 +120,11 @@ class UserCreateIn(CamelModel):
     def _strength(cls, v: str) -> str:
         return check_password_strength(v)
 
+    @field_validator("avatar_url")
+    @classmethod
+    def _avatar(cls, v: str | None) -> str | None:
+        return check_avatar_url(v)
+
 
 class UserUpdateIn(CamelModel):
     display_name: str | None = Field(default=None, max_length=64, description="昵称")
@@ -151,6 +160,11 @@ class UserUpdateIn(CamelModel):
             raise ValueError("isActive 不能为 null：停用请传 false，保持不动请不要传该字段")
         return v
 
+    @field_validator("avatar_url")
+    @classmethod
+    def _avatar(cls, v: str | None) -> str | None:
+        return check_avatar_url(v)
+
 
 class ProfileUpdateIn(CamelModel):
     """`PATCH /identity/me` 的自助可写字段。
@@ -172,6 +186,11 @@ class ProfileUpdateIn(CamelModel):
     position: str | None = Field(
         default=None, max_length=64, description="职务；传 null 清空"
     )
+
+    @field_validator("avatar_url")
+    @classmethod
+    def _avatar(cls, v: str | None) -> str | None:
+        return check_avatar_url(v)
 
 
 class UserRolesIn(CamelModel):

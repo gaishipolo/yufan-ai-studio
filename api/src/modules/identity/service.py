@@ -24,6 +24,7 @@ from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core import audit
 from core.config import settings
 from core.context import SUPER_PERMISSION, CurrentUser
 from core.exceptions import Unauthorized
@@ -44,6 +45,7 @@ from db.base import utcnow
 from db.session import get_session_factory
 from modules.identity import policy, throttle
 from modules.identity.errors import (
+    AccessSwitchForbidden,
     AccountDisabled,
     BuiltinRoleLocked,
     CannotTargetSelf,
@@ -67,11 +69,13 @@ from modules.identity.errors import (
 from modules.identity.models import Group, LoginEvent, Role, User, UserSession
 from modules.identity.permissions import (
     BUILTIN_ROLES,
+    PERM_DELETE,
     SCOPE_GROUP,
     SCOPE_TEAM,
     SCOPE_USER,
     SUPERUSER_ROLE,
     TEAM_BASE_PERMISSIONS,
+    TEAM_FLOOR_CODES,
     TEAM_FORBIDDEN_PREFIXES,
     TEAM_SCOPE_ID,
 )
@@ -154,6 +158,23 @@ def _snapshot_detail(previous: list[str], target: list[str]) -> str:
     if dropped:
         parts.append(f"移除 {dropped[:5]}{'…' if len(dropped) > 5 else ''}")
     return "；".join(parts)
+
+
+def _grant_diff(previous: Sequence[str], target: Sequence[str]) -> dict[str, Any]:
+    """权限码前后差集，给审计的 `detail` 用。
+
+    与 `_snapshot_detail` 分开：那个给人读（写进 `app_meta_history.detail`），
+    这个是给机器读的（审计表里按 `detail` 聚合「谁在批量加权限」）。
+    审计的用途是追责与告警，`{"added": ["task:create"]}` 比一句中文更好用；
+    而 `app_meta` 那条是运维翻历史时看的，中文更直接。两处都保留。
+    """
+    before, after = set(previous), set(target)
+    return {
+        "added": sorted(after - before),
+        "removed": sorted(before - after),
+        "countFrom": len(before),
+        "countTo": len(after),
+    }
 
 
 def _clip(value: str, limit: int) -> str:
@@ -428,6 +449,37 @@ class IdentityService:
             logger.exception("写登录审计失败：%s", username)
             await self.session.rollback()
 
+    async def _audit_change(
+        self,
+        action: str,
+        actor_id: str,
+        *,
+        target_type: str,
+        target_id: str,
+        detail: dict[str, Any] | None = None,
+    ) -> None:
+        """记一条「授权面」的操作留痕。
+
+        为什么身份模块必须有它：`reset_password` 是**最强提权面**（不需要对方配合，
+        重置完直接以对方身份登录），`set_user_permissions` 是「谁能看见什么」的
+        唯一开关。这两件事原先只写 `logger.info`，日志一滚动就无从追责 ——
+        而 `audit_events` 表、`app audit` 查询命令、导出源早就都有了
+        （见 `core/audit.py` 文件头），缺的只是这里没接线。
+
+        调用顺序：**业务 commit 之后**。审计走独立会话（`db/audit_sink.py`），
+        所以业务回滚了也照样留得下「他尝试过」；而 `record()` 自己吞掉异常，
+        审计故障不会把一次成功的授权变成 500。
+
+        `detail` 里不许出现口令、令牌、密码哈希 —— 审计表长期保留，写进去收不回来。
+        """
+        await audit.record(
+            action,
+            actor_id=actor_id,
+            target_type=target_type,
+            target_id=target_id,
+            detail=detail or {},
+        )
+
     async def resolve_identity(self, user_id: str) -> ResolvedIdentity | None:
         """用户 id → 权威身份（角色 + 权限）。账号不存在返回 None。
 
@@ -538,6 +590,24 @@ class IdentityService:
 
         session = await self.sessions.active_by_id(session_id, user_id)
         if session is None or session.refresh_jti != jti:
+            if session is not None:
+                # 会话还在、jti 却是旧的：这张票已经被轮换过了。
+                #
+                # 两种来源在请求本身里**无法区分**：两个标签页抢跑（常见，正常），
+                # 或者票被复制出去、两边各换一次（严重）。所以处置保持原样——
+                # 只拒绝、不吊销会话，否则开两个标签页的用户会被迫重新登录；
+                # 但必须留下痕迹：真被盗时，这里是唯一能看出「同一条会话被两处
+                # 轮换」的地方。`app audit --action session.refresh_reuse` 一查即知。
+                await audit.record(
+                    "session.refresh_reuse",
+                    actor_id=user_id,
+                    target_type="session",
+                    target_id=session_id,
+                    detail={
+                        "ip": _clip(ip, 64),
+                        "userAgent": _clip(user_agent, 256),
+                    },
+                )
             raise RefreshTokenInvalid()
 
         identity = await self.resolve_identity(user_id)
@@ -790,6 +860,17 @@ class IdentityService:
             # 所以改密后的确定状态是「全部下线、回登录页」，前端不必猜。
             await self.sessions.revoke_all(user.id, reason="password_change")
             await self.session.commit()
+            # 留痕必须在**闸门内、commit 之后**：commit 已经把本请求的连接还回池，
+            # 审计再借一条，每个名额的峰值仍然是 1 条。放到闸门外就变成
+            # 「40 个并发一起借连接」，正是 R8-01 要挡的那个形状
+            # （`test_login_gate` 会把它抓成连接峰值超标）。
+            await self._audit_change(
+                "identity.user.password_change",
+                user_id,
+                target_type="user",
+                target_id=user_id,
+                detail={"source": "self"},
+            )
 
     # ------------------------------------------------------------------ #
     # 用户管理
@@ -879,7 +960,18 @@ class IdentityService:
             await self.users.set_roles(user.id, [role.id for role in roles])
             await self.layers.add_to_groups(user.id, group_ids)
             await self.session.commit()
-
+            # 与 `change_password` 同一条理由：闸门内、commit 之后（连接已归还）
+            await self._audit_change(
+                "identity.user.create",
+                actor.id,
+                target_type="user",
+                target_id=user.id,
+                detail={
+                    "username": user.username,
+                    "roles": sorted(role.code for role in roles),
+                    "groups": sorted(group_ids),
+                },
+            )
         logger.info("创建用户 %s（%s），加入 %d 个小组", user.username, user.id, len(group_ids))
         return UserOut(**_user_fields(user, roles))
 
@@ -907,11 +999,20 @@ class IdentityService:
             elif writing_display:
                 await self._guard_display_target(user, actor)
 
+        # 停用 / 启用是**同一个能力的两端**，而这条路由只需要 `identity:update`。
+        # 少了这道闸，「可以编辑资料、但不能停用」这种角色根本表达不出来 ——
+        # 两个权限点（update / delete）承诺的是同一件事，最小组件原则失效。
+        # 放在「目标不高于自己」之后：越级时要先报越级（40323），
+        # 而不是先报「你少了 identity:delete」，那会让人去改错的开关。
+        if writing_active and not actor.has(PERM_DELETE):
+            raise AccessSwitchForbidden()
+
         # `is_active` 的三种取值必须分开：**没传**（不动）/ true / false。
         # 用 `in fields` 会让「传了 null」走进 bool(None) = False（R6-03），
         # schema 已经挡了一次 422，这里再挡一次是为了内部调用（脚本、CLI）绕不过去。
         # 停用与恢复**两个方向**都要过守卫（R6-04）：安全事件后「先停用、再启用」，
         # 如果启用不需要超管，一个中级管理员就能把刚被停用的内鬼账号放回来。
+        revoked = 0
         if writing_active:
             active = bool(fields["is_active"])
             if active is False and user.id == actor.id:
@@ -921,7 +1022,7 @@ class IdentityService:
             else:
                 # 停用**只能**走 `_cut_access`：置 `is_active` 与吊销会话是同一件事，
                 # 两条停用路径（DELETE / PATCH）各写一半，就又回到 R10-02。
-                await self._cut_access(user, reason="deactivate")
+                revoked = await self._cut_access(user, reason="deactivate")
 
         for field in _PROFILE_FIELDS:
             if field in fields:
@@ -931,6 +1032,16 @@ class IdentityService:
         if fields.get("is_active") is False:
             await self._guard_has_superuser()
         await self.session.commit()
+        if writing_active:
+            await self._audit_change(
+                "identity.user.activate"
+                if fields["is_active"]
+                else "identity.user.deactivate",
+                actor.id,
+                target_type="user",
+                target_id=user.id,
+                detail={"revokedSessions": revoked, "via": "patch"},
+            )
         return await self.get_user(user.id)
 
     async def set_user_roles(
@@ -958,6 +1069,16 @@ class IdentityService:
         await self._guard_has_superuser()
         await self.session.commit()
 
+        await self._audit_change(
+            "identity.user.roles",
+            actor.id,
+            target_type="user",
+            target_id=user.id,
+            detail={
+                "from": sorted(role.code for role in current),
+                "to": sorted(role.code for role in roles),
+            },
+        )
         logger.info("调整用户角色 %s -> %s", user.username, [role.code for role in roles])
         return UserOut(**_user_fields(user, roles))
 
@@ -984,6 +1105,14 @@ class IdentityService:
             # 以为没踢干净；而这张表存在的意义就是「谁的会话还在」要看得见。
             await self.sessions.revoke_all(user.id, reason="password_reset")
             await self.session.commit()
+            # 闸门内、commit 之后：连接已归还，审计再借一条不抬高峰值
+            await self._audit_change(
+                "identity.user.password_reset",
+                actor.id,
+                target_type="user",
+                target_id=user.id,
+                detail={"username": user.username},
+            )
         logger.info("管理员 %s 重置了 %s 的密码", actor.id, user.username)
 
     async def deactivate_user(self, user_id: str, actor: CurrentUser) -> None:
@@ -1002,6 +1131,13 @@ class IdentityService:
         revoked = await self._cut_access(user, reason="deactivate")
         await self._guard_has_superuser()
         await self.session.commit()
+        await self._audit_change(
+            "identity.user.deactivate",
+            actor.id,
+            target_type="user",
+            target_id=user.id,
+            detail={"username": user.username, "revokedSessions": revoked, "via": "delete"},
+        )
         logger.info("停用用户 %s，吊销 %d 个会话", user.username, revoked)
 
     # ------------------------------------------------------------------ #
@@ -1068,6 +1204,17 @@ class IdentityService:
         await self.session.flush()
         await self.roles.set_permissions(role.id, payload.permissions)
         await self.session.commit()
+        await self._audit_change(
+            "identity.role.create",
+            actor.id,
+            target_type="role",
+            target_id=role.id,
+            detail={
+                "code": code,
+                "isSuperuser": payload.is_superuser,
+                "permissions": sorted(payload.permissions),
+            },
+        )
         return await self.get_role(role.id)
 
     async def update_role(
@@ -1075,6 +1222,11 @@ class IdentityService:
     ) -> RoleOut:
         role = await self._require_role(role_id)
         fields = payload.model_dump(exclude_unset=True)
+        before = {
+            "name": role.name,
+            "description": role.description,
+            "isSuperuser": role.is_superuser,
+        }
 
         if "is_superuser" in fields and fields["is_superuser"] != role.is_superuser:
             # 改角色的超管标记 = 一次性给/撤该角色下所有人的最高权限
@@ -1089,6 +1241,20 @@ class IdentityService:
         await self.session.flush()
         await self._guard_has_superuser()
         await self.session.commit()
+        await self._audit_change(
+            "identity.role.update",
+            actor.id,
+            target_type="role",
+            target_id=role.id,
+            detail={
+                "from": before,
+                "to": {
+                    "name": role.name,
+                    "description": role.description,
+                    "isSuperuser": role.is_superuser,
+                },
+            },
+        )
         return await self.get_role(role.id)
 
     async def set_role_permissions(
@@ -1100,8 +1266,16 @@ class IdentityService:
         # 那和把人降级是一回事，只是换了个入口（R5-03 的同族）。
         await self._guard_role_not_above(role, actor)
         self._guard_permission_grant(permissions, actor, what=f"角色 {role.code}")
+        previous = list((await self.roles.permissions_for([role.id])).get(role.id, ()))
         await self.roles.set_permissions(role.id, permissions)
         await self.session.commit()
+        await self._audit_change(
+            "identity.role.permissions",
+            actor.id,
+            target_type="role",
+            target_id=role.id,
+            detail={"code": role.code, **_grant_diff(previous, permissions)},
+        )
         return await self.get_role(role.id)
 
     async def delete_role(self, role_id: str, actor: CurrentUser) -> None:
@@ -1114,11 +1288,21 @@ class IdentityService:
         if (await self.roles.user_counts([role.id])).get(role.id, 0) > 0:
             raise RoleInUse()
 
+        # 删完再读一次就会 `ObjectDeletedError`（行没了），所以先记下来
+        code = role.code
+        previous = list((await self.roles.permissions_for([role.id])).get(role.id, ()))
         await self.roles.drop_bindings(role.id)
         await self.session.delete(role)
         await self.session.flush()
         await self._guard_has_superuser()
         await self.session.commit()
+        await self._audit_change(
+            "identity.role.delete",
+            actor.id,
+            target_type="role",
+            target_id=role_id,
+            detail={"code": code, "permissions": previous},
+        )
 
     # ------------------------------------------------------------------ #
     # 三层授权：团队 / 小组 / 个人
@@ -1184,6 +1368,13 @@ class IdentityService:
             raise GroupNameTaken()
         group = await self.layers.create_group(name, payload.description)
         await self.session.commit()
+        await self._audit_change(
+            "identity.group.create",
+            actor.id,
+            target_type="group",
+            target_id=group.id,
+            detail={"name": name},
+        )
         logger.info("管理员 %s 新建小组 %s（%s）", actor.id, name, group.id)
         return await self._group_out(group)
 
@@ -1212,6 +1403,13 @@ class IdentityService:
         # 成员与 grant 由 repository 在同一个事务里清掉；没有外键级联可依赖
         await self.layers.delete_group(group.id)
         await self.session.commit()
+        await self._audit_change(
+            "identity.group.delete",
+            actor.id,
+            target_type="group",
+            target_id=group_id,
+            detail={"name": group.name, "permissions": current},
+        )
         logger.info("管理员 %s 删除小组 %s", actor.id, group.name)
 
     async def group_members(self, group_id: str) -> list[UserOut]:
@@ -1242,8 +1440,21 @@ class IdentityService:
         found = await self.users.get_many(wanted)
         if len(found) != len(wanted):
             raise UserNotFound(details={"unknown": sorted(set(wanted) - {u.id for u in found})})
+        # 入组/退组 = 授权/撤权（见上面的守卫），所以差集要留痕
+        before = set((await self.layers.members_for([group.id])).get(group.id, []))
         await self.layers.set_members(group.id, wanted)
         await self.session.commit()
+        await self._audit_change(
+            "identity.group.members",
+            actor.id,
+            target_type="group",
+            target_id=group.id,
+            detail={
+                "added": sorted(set(wanted) - before),
+                "removed": sorted(before - set(wanted)),
+                "countTo": len(wanted),
+            },
+        )
         logger.info("管理员 %s 设置小组 %s 成员 %d 人", actor.id, group.name, len(wanted))
         return await self._group_out(group)
 
@@ -1257,6 +1468,13 @@ class IdentityService:
         self._guard_permission_grant(permissions, actor, what=f"小组 {group.name}")
         await self.layers.set_grants(SCOPE_GROUP, group.id, permissions)
         await self.session.commit()
+        await self._audit_change(
+            "identity.group.permissions",
+            actor.id,
+            target_type="group",
+            target_id=group.id,
+            detail={"name": group.name, **_grant_diff(current, permissions)},
+        )
         return await self._group_out(group)
 
     async def team_permissions(self) -> list[str]:
@@ -1267,10 +1485,32 @@ class IdentityService:
     ) -> list[str]:
         self._validate_team_grants(permissions)
         current = await self.layers.grants(SCOPE_TEAM, TEAM_SCOPE_ID)
+        # 团队层的地板（`permissions.TEAM_FLOOR_CODES`）。
+        #
+        # 为什么不能只靠 `_guard_layer_not_above`：那道守卫判的是「当前团队授权
+        # ⊆ 操作者」，而每个人的有效权限**本来就把团队层并进去了**
+        # （`resolve_identity` 无条件合并），所以它在团队层上结构性地恒真 ——
+        # 一个只有 `identity:team:manage` 的委派管理员因此能把基础权限整组清空，
+        # 全站非超管当场连 `task:read` 都没有。
+        # 上层的增删仍然可以委派，只有「动地板」收回到超管。
+        lost = sorted(
+            code
+            for code in TEAM_FLOOR_CODES
+            if code in current and code not in permissions
+        )
+        if lost:
+            self._require_superuser(actor, f"移除团队基础权限的地板项 {lost}")
         self._guard_layer_not_above(current, actor, what="团队基础权限")
         self._guard_permission_grant(permissions, actor, what="团队基础权限")
         await self.layers.set_grants(SCOPE_TEAM, TEAM_SCOPE_ID, permissions)
         await self.session.commit()
+        await self._audit_change(
+            "identity.team.permissions",
+            actor.id,
+            target_type="team",
+            target_id=TEAM_SCOPE_ID,
+            detail=_grant_diff(current, permissions),
+        )
         logger.info("管理员 %s 更新团队基础权限：%d 条", actor.id, len(permissions))
         return await self.team_permissions()
 
@@ -1290,6 +1530,13 @@ class IdentityService:
         self._guard_permission_grant(permissions, actor, what=f"用户 {user.username}")
         await self.layers.set_grants(SCOPE_USER, user.id, permissions)
         await self.session.commit()
+        await self._audit_change(
+            "identity.user.permissions",
+            actor.id,
+            target_type="user",
+            target_id=user.id,
+            detail={"username": user.username, **_grant_diff(current, permissions)},
+        )
         return await self.user_permissions(user.id)
 
     async def effective_permissions(self, user_id: str) -> EffectivePermissionsOut:
@@ -1540,6 +1787,67 @@ class IdentityService:
             WRITE_RETRIES,
         )
         return added
+
+    async def prune_stale_permissions(self) -> dict[str, list[str]]:
+        """删掉「权限目录里已经不存在」的码，返回删了什么。
+
+        为什么必须有这个「只减」的搭档（真实库实测逼出来的）：
+
+        `set_grants` / `set_role_permissions` 都是**整组替换**，而写入口会先用
+        `_validate_permissions` 挡未知码。于是库里只要还躺着一个已下线的码
+        （v1 素材库下线留下的 `asset:read`、改名前留下的 `template:read` 都是），
+        那一层就**永远保存不了**：前端把现有码原样提交 → 400「存在无法识别的
+        权限点」→ 而 doctor 的提示恰恰是「可在『用户与权限』页重新保存清理」，
+        这句话在数据脏的时候做不到，形成死锁。
+
+        清理是安全的，因为「未知码」在本仓库里可证明是惰性的：
+        `test_architecture` 保证 `require(...)` 用到的码必须有人声明，
+        没声明的码不可能被任何路由判定；它唯一的作用是把配置界面卡住。
+
+        与 `sync_new_permissions`（只加）配对，一加一减都放在启动引导里；
+        两者都幂等，多实例同时跑只会有一个删到行。删除动作本身进审计，
+        因为「谁的权限悄悄变了」必须能回答。
+        """
+        known = catalog.codes()
+        resources = {code.split(":", 1)[0] for code in known}
+
+        def stale(codes: Iterable[str]) -> list[str]:
+            return sorted(
+                code
+                for code in set(codes)
+                if not _known_permission(code, known, resources)
+            )
+
+        layer_codes = stale(await self.layers.all_grant_codes())
+        role_codes = stale(await self.roles.permission_codes())
+        if not layer_codes and not role_codes:
+            return {"layers": [], "roles": []}
+
+        dropped_layers = await self.layers.drop_codes(layer_codes) if layer_codes else 0
+        dropped_roles = (
+            await self.roles.drop_permission_codes(role_codes) if role_codes else 0
+        )
+        await self.session.commit()
+        logger.warning(
+            "已清理下线权限码：三层授权 %d 行 %s；角色权限 %d 行 %s",
+            dropped_layers,
+            layer_codes,
+            dropped_roles,
+            role_codes,
+        )
+        await audit.record(
+            "identity.permissions.prune",
+            actor_id=None,
+            target_type="permission_catalog",
+            target_id="",
+            detail={
+                "layers": layer_codes,
+                "roles": role_codes,
+                "droppedLayerRows": dropped_layers,
+                "droppedRoleRows": dropped_roles,
+            },
+        )
+        return {"layers": layer_codes, "roles": role_codes}
 
     async def ensure_superuser(
         self, username: str, password: str, display_name: str = ""
@@ -1809,6 +2117,9 @@ async def bootstrap() -> None:
             # 非超管点按钮 403，而超管自测全绿」。现在只在启动时补**新增**的
             # 权限点，管理员手工调过的配置不受影响（见 sync_new_permissions）。
             await service.sync_new_permissions()
+            # 与「只加」配对的「只减」：把已下线模块留下的权限码从三层授权与
+            # 角色权限里清掉。不清理的话，那些层会永远保存不了（见方法注释）。
+            await service.prune_stale_permissions()
         except SQLAlchemyError as exc:
             raise RuntimeError(
                 "内置角色初始化失败：身份相关数据表可能尚未创建。"

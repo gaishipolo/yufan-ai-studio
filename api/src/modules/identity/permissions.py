@@ -200,6 +200,17 @@ TEAM_BASE_PERMISSIONS: Final[tuple[str, ...]] = tuple(
 TEAM_FORBIDDEN_CODES: Final = ("*", "identity:*")
 TEAM_FORBIDDEN_PREFIXES: Final = ("identity:",)
 
+# 团队层的**地板**：这是「登录之后还看得见东西」的最低要求。
+#
+# 为什么需要它：`_guard_layer_not_above` 在团队层上是结构性的空转 ——
+# 每个人的有效权限本来就把团队层并进去了（`resolve_identity`），所以
+# 「当前授权 ⊆ 操作者」恒真。于是一个只有 `identity:team:manage` 的委派管理员
+# 就能把基础权限整组清空，全站非超管立刻连 `task:read` 都没有；而且这个动作
+# 既没有二次确认，也不进审计（在补审计之前）。
+#
+# 结论：**动地板是超管动作**。上层的增删仍然可以委派。
+TEAM_FLOOR_CODES: Final = ("catalog:read", "task:read", "library:read")
+
 # 口令策略（长度 / 纯数字 / 重复字符）不在本文件：它不属于「权限点声明」，
 # 而且 CLI 与 API 要共用同一份规则，统一放在 `policy.py`。
 
@@ -226,6 +237,7 @@ __all__ = [
     "SPECS",
     "SUPERUSER_ROLE",
     "TEAM_BASE_PERMISSIONS",
+    "TEAM_FLOOR_CODES",
     "TEAM_FORBIDDEN_CODES",
     "TEAM_FORBIDDEN_PREFIXES",
     "TEAM_SCOPE_ID",
