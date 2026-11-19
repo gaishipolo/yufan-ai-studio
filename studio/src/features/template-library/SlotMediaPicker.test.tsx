@@ -16,7 +16,7 @@ import { SlotMediaPicker } from './SlotMediaPicker';
  */
 
 const { selectionCalls, tagsData, itemsData, packsData, packCalls } = vi.hoisted(() => ({
-  selectionCalls: [] as { kind?: string; tagIds?: string[] }[],
+  selectionCalls: [] as { kind?: string; tagIds?: string[]; pageSize?: number }[],
   tagsData: { current: [] as LibraryTagStatOut[] },
   itemsData: { current: [] as { id: string; name: string; kind: string; coverUrl?: string }[] },
   packsData: { current: [] as { id: string; name: string; coverUrl?: string; memberCount?: number }[] },
@@ -33,10 +33,13 @@ vi.mock('@/entities/library/api/library.queries', () => ({
     packCalls.push(params);
     return { data: enabled ? packsData.current : undefined };
   },
-  useLibrarySelection: (params: { kind?: string; tagIds?: string[] }) => {
+  useLibrarySelection: (params: { kind?: string; tagIds?: string[]; pageSize?: number }) => {
     selectionCalls.push(params);
+    /* 按 `pageSize` **真的截断**：不截断的话「还有 N 张」那条永远不出现，
+       守卫会变成一句空话。`total` 是这一档标签下的总数。 */
+    const size = params.pageSize ?? 24;
     return {
-      data: { items: itemsData.current, total: itemsData.current.length },
+      data: { items: itemsData.current.slice(0, size), total: itemsData.current.length },
       isSuccess: true,
       isLoading: false,
     };
@@ -157,15 +160,40 @@ describe('SlotMediaPicker · 候选集里再筛', () => {
     expect(selectionCalls.at(-1)?.tagIds).toEqual(['t12']);
   });
 
-  it('老模板（没圈标签）照样能挑，只是没有分组', () => {
+  it('老模板（没圈标签）照样能挑，只是不能按标签收窄', () => {
     render(
       <SlotMediaPicker slot={slotOf({tagIds: []})} selected={[]} onChange={vi.fn()} />,
     );
-    expect(screen.getByText(/还没圈标签/)).toBeInTheDocument();
+    expect(screen.getByText(/还没圈候选标签/)).toBeInTheDocument();
     expect(selectionCalls.at(-1)?.tagIds).toBeUndefined();
     // 没有范围时所有取值都能挑
     const second = within(screen.getByRole('group', {name: '取值标签'}));
     expect(second.getByRole('button', {name: '菜菜'})).toBeInTheDocument();
+  });
+});
+
+describe('SlotMediaPicker · 一屏放不下时', () => {
+  const many = (count: number) =>
+    Array.from({ length: count }, (_, index) => ({
+      id: `a${index}`,
+      name: `图${index}.png`,
+      kind: 'image',
+    }));
+
+  it('先取一屏，说清还有多少张，点一下取回来', async () => {
+    /* 回归：之前只取前 24 张、没有下一页，标题却写着「共 30」——
+       第 25 张以后在界面上根本不存在。 */
+    const user = userEvent.setup();
+    itemsData.current = many(30);
+    render(
+      <SlotMediaPicker slot={slotOf({tagIds: ['t11']})} selected={[]} onChange={vi.fn()} />,
+    );
+    expect(screen.getAllByTitle(/^图\d+\.png$/)).toHaveLength(24);
+
+    await user.click(screen.getByRole('button', {name: /还有 6 张/}));
+    expect(screen.getAllByTitle(/^图\d+\.png$/)).toHaveLength(30);
+    expect(selectionCalls.at(-1)?.pageSize).toBe(30);
+    expect(screen.queryByRole('button', {name: /还有/})).not.toBeInTheDocument();
   });
 });
 
@@ -317,18 +345,26 @@ describe('SlotMediaPicker · 封装包', () => {
     expect(screen.queryByTitle('6036 黑（封装 · 3 张）')).not.toBeInTheDocument();
   });
 
-  it('这一格已经选满时，包也不能点（一槽一张）', () => {
+  it('这一格已经填满，包也还能点（再套一次是幂等的）', async () => {
+    /* 包是**动作**不是选中项：它改的是「这一批格子」。按本格满了就置灰，
+       等于「正面图先手挑了一张」之后，这一行里的包再也点不动 —— 而它本来
+       正好能把三视图那一格一起填上。灰掉的样子还像「这个包坏了」。 */
+    const user = userEvent.setup();
     packsData.current = [{ id: 'p1', name: '6036 黑', memberCount: 3 }];
     itemsData.current = [{ id: 'a1', name: '散图.png', kind: 'image' }];
+    const onPickPack = vi.fn();
     render(
       <SlotMediaPicker
         slot={slotOf({ tagIds: ['t1'] })}
         selected={['a1']}
         onChange={vi.fn()}
-        onPickPack={vi.fn()}
+        onPickPack={onPickPack}
       />,
     );
-    expect(screen.getByTitle('6036 黑（封装 · 3 张）')).toBeDisabled();
+    const packButton = screen.getByTitle('6036 黑（封装 · 3 张）');
+    expect(packButton).not.toBeDisabled();
+    await user.click(packButton);
+    expect(onPickPack).toHaveBeenCalledWith('p1');
   });
 
   it('包按槽位的候选标签过滤（与素材同一套条件）', () => {

@@ -16,7 +16,15 @@ import { PackHoverPreview } from '@/entities/library/ui/PackHoverPreview';
 import { TagFilter } from '@/entities/library/ui/TagFilter';
 import { pickWithin } from './slotPick';
 
+/* 首屏取多少张，以及「显示全部」最多到多少。
+ *
+ * 首屏不一次拉满：一个槽位的候选可能有几十张，拉满会让右栏一挂
+ * 就是几十个缩略图请求。**但也不能只有首屏** —— 之前只取 24 张、
+ * 没有下一页，47 张候选里第 25 张以后根本点不到（标题还写着「共 47」），
+ * 用户只会以为那张图不在库里。上限 200 与服务端 `pageSize` 的 `le` 同一个数。
+ */
 const PAGE_SIZE = 24;
+const PAGE_SIZE_MAX = 200;
 
 export function SlotMediaPicker({
   slot,
@@ -60,9 +68,13 @@ export function SlotMediaPicker({
   });
   /* 用户在这个槽位里又挑的标签（可空）：同维度是或、跨维度是且。 */
   const [picked, setPicked] = useState<string[]>([]);
+  /* 一次取多少张。换槽位 / 换候选集时回到首屏 —— 上一格的「显示全部」
+     不该让下一格一上来就拉满。 */
+  const [limit, setLimit] = useState(PAGE_SIZE);
   /* 换槽位 = 换候选集，之前挑的标签可能已经在范围外：清掉重来。 */
   useEffect(() => {
     setPicked([]);
+    setLimit(PAGE_SIZE);
   }, [scopeKey, slot.key]);
 
   /*
@@ -80,9 +92,11 @@ export function SlotMediaPicker({
   const list = useLibrarySelection({
     kind,
     tagIds: filterIds.length ? filterIds : undefined,
-    pageSize: PAGE_SIZE,
+    pageSize: limit,
   });
   const items = list.data?.items ?? [];
+  /* 这一档标签下还有多少张没列出来（标题里的「共 N」是总数）。 */
+  const hiddenCount = Math.max(0, (list.data?.total ?? 0) - items.length);
 
   /*
    * 封装包也在同一个网格里 —— **包就是一种素材**，不是另一种界面模式。
@@ -159,7 +173,7 @@ export function SlotMediaPicker({
       {!scope.length && (
         /* 老模板（闸门加上之前发布的）没有标签：仍然能挑，但要说明为什么没有分组。 */
         <p className="mt-1 text-micro leading-relaxed text-warn-deep">
-          这个槽位还没圈标签（去「模板封装」补一个才能按标签分组），下面是全部{label}。
+          这个槽位还没圈候选标签（去「模板封装」补一个，这一格才能只列那批素材），下面是全部{label}。
         </p>
       )}
 
@@ -209,15 +223,18 @@ export function SlotMediaPicker({
       ) : (
         <div className="mt-2 grid max-h-[188px] grid-cols-4 gap-1.5 overflow-y-auto pr-0.5">
           {/* 包排在素材前面：它是「一次选好一整套」，比逐张挑快得多。
-              带角标和小图标区分，但仍然占一个格子 —— 包就是一种素材。 */}
+              带角标和小图标区分，但仍然占一个格子 —— 包就是一种素材。
+
+              **本格已填满也不置灰**：包改的是「这一批格子」，点它是幂等的
+              （有素材的格覆盖、没对上的一格不动）。置灰的话，把包填好的
+              某一格手动换掉之后，就再也没法「整套重新套一遍」——
+              而且灰掉的样子看起来像「这个包坏了」。 */}
           {packs.map(pack => {
-            const blocked = full;
             return (
               <button
                 key={`pack-${pack.id}`}
                 type="button"
                 title={`${pack.name}（封装 · ${pack.memberCount ?? 0} 张）`}
-                disabled={blocked}
                 onClick={() => onPickPack?.(pack.id)}
                 onMouseEnter={event => {
                   setHoveredPackId(pack.id);
@@ -231,7 +248,6 @@ export function SlotMediaPicker({
                 className={cn(
                   'group relative aspect-square overflow-hidden rounded-lg border transition',
                   'border-line-soft hover:border-primary-line',
-                  blocked && 'cursor-not-allowed opacity-40',
                 )}
               >
                 <CoverImage
@@ -296,6 +312,24 @@ export function SlotMediaPicker({
             );
           })}
         </div>
+      )}
+
+      {/* 「共 N 张」里的那 N 张必须真的都能点到。首屏只取 24 张是为了不一次性
+          发几十个缩略图请求，但之前没有这一行 —— 第 25 张以后在界面上不存在，
+          标题却写着总数，用户只会以为那张图不在库里。 */}
+      {hiddenCount > 0 && (
+        <button
+          type="button"
+          onClick={() => setLimit(Math.min(PAGE_SIZE_MAX, (list.data?.total ?? 0)))}
+          className="mt-1.5 w-full rounded-md py-1 text-micro text-primary transition-colors hover:bg-primary-soft"
+        >
+          还有 {hiddenCount} 张 · 显示全部
+        </button>
+      )}
+      {hiddenCount > 0 && limit >= PAGE_SIZE_MAX && (
+        <p className="mt-1 text-center text-micro text-ink-mute">
+          一次最多列 {PAGE_SIZE_MAX} 张，按上面的标签收窄一下更快找到
+        </p>
       )}
 
       {/* 悬浮大图：点一下仍然是选中（浮层不接管点击）。

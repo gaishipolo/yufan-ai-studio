@@ -378,11 +378,6 @@ export function SpecLibrary() {
     setRandomness(next);
   };
 
-  /** 使用者动了某个槽位：写入手动值（随机档的可选槽位不显示，碰不到这里）。 */
-  const setSlotValues = (key: string, ids: string[]) => {
-    setValues(current => ({...current, [key]: ids}));
-  };
-
   /* ------------------------------------------------------------------
      封装包：在网格里点一个包 = 一次填好几格
      ------------------------------------------------------------------ */
@@ -391,6 +386,29 @@ export function SpecLibrary() {
   const [pendingPack, setPendingPack] = useState<string | null>(null);
   /** 记住这一批格子是哪个包填的：包没了要能精确清回它们，别连手挑的一起清。 */
   const [packFill, setPackFill] = useState<{packId: string; keys: string[]} | null>(null);
+
+  /** 使用者动了某个槽位：写入手动值（随机档的可选槽位不显示，碰不到这里）。 */
+  const setSlotValues = (key: string, ids: string[]) => {
+    setValues(current => ({...current, [key]: ids}));
+    /* 手动改过的格子就不再是「这个包填的」：留着这条记账，包被删时会把
+       用户刚手挑的那张一起清掉。其余格子照旧订阅。 */
+    setPackFill(current => {
+      if (!current || !current.keys.includes(key)) return current;
+      const keys = current.keys.filter(item => item !== key);
+      return keys.length ? {...current, keys} : null;
+    });
+  };
+
+  /* 换模板要清掉「这几格是这个包填的」这条记账：槽位 key 是自动生成的
+     （`image_1`、`image_2`…），两个模板**重名是常态** —— 留着的话，上一个
+     模板用的包在别处被删，会把这个模板里手挑的素材一起清掉。
+
+     `pendingPack` 同样要清：点了包、详情还在路上时换了模板，回来那一笔
+     会把上一个模板的包分发进新模板的槽位里。 */
+  useEffect(() => {
+    setPackFill(null);
+    setPendingPack(null);
+  }, [focused, version?.version]);
 
   /* 分发之后仍然订阅这个包的详情：`packFill` 在，就说明「这几格是它填的」，
      包被别处删掉时要能被发现（否则用户看到的是一份再也取不到图的配置）。
@@ -816,8 +834,8 @@ export function SpecLibrary() {
                       /* 界面上显示的素材：只有使用者亲手挑的（随机/均衡档的
                          可选槽位不出现在这里，由文案接管）。 */
                       const filled = displaySlotValues(slot.key, values);
-                      /* 图片/视频：按「一级标签 · 槽位名」分组、点二级标签看素材。
-                         其余（文本/音频/封装）保留行式写法。 */
+                      /* 图片/视频：一格一个选择器，里面是「素材 + 封装包」同一个网格，
+                         上面一行标签用来在候选范围里再筛。其余（文本/音频）保留行式写法。 */
                       if (slot.type === 'image' || slot.type === 'video') {
                         return (
                           <SlotMediaPicker
