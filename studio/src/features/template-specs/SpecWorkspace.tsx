@@ -923,12 +923,15 @@ export function SpecWorkspace() {
               右边是放弃（危险）。四个按钮平铺成一个菜单时，用户得
               从头读到尾才知道哪个是退路。 */}
           <div className="mt-1 flex items-center justify-between border-t border-line-soft pt-3">
-            <Button variant="ghost" disabled={busy} onClick={closeLeave}>
+            {/* 两个都用**带描边**的样子：它们各自是一个动作，不是一段文字。
+                用 ghost（`border-transparent`）会被读成可点的文字链接，
+                危险的那个还会因为只剩红色而显得比「留在这一页」更像主按钮。 */}
+            <Button variant="secondary" disabled={busy} onClick={closeLeave}>
               留在这一页
             </Button>
             <Button
-              variant="ghost"
-              className="text-danger hover:bg-danger-soft hover:text-danger"
+              variant="secondary"
+              className="border-danger-line text-danger hover:border-danger hover:bg-danger-soft hover:text-danger"
               disabled={busy}
               onClick={leaveNow}
             >
