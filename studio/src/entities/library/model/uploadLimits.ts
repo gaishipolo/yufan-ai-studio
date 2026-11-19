@@ -10,7 +10,7 @@
  */
 
 /** 可上传的类型：与后端 `EXTENSIONS` 的可上传子集一一对应 */
-export type UploadKind = 'image' | 'audio' | 'text';
+export type UploadKind = 'image' | 'audio' | 'video' | 'text';
 
 /**
  * 扩展名 → 类型。
@@ -19,14 +19,17 @@ export type UploadKind = 'image' | 'audio' | 'text';
  * 随意填写），而浏览器对 .md/.txt 常常给出空串或 `text/plain`，对 .webp 又可能
  * 给 `application/octet-stream`。
  *
- * 不含 `.mp4`：视频走模板库原片入口（`/library/source-videos`），来源由服务端
- * 写死，前端这条上传接口不给它开口子。
+ * 视频只收 `.mp4`：后端 `EXTENSIONS` 里视频只有这一种容器，且 `inspect` 会对
+ * MP4 查 `ftyp` 头。**模板库原片**仍走 `/library/source-videos`（来源写死
+ * `template_source`）；这里的 `.mp4` 落 `origin=upload`，是使用者自己挑的素材，
+ * 不是给模板封装当原片用的。
  */
 export const UPLOAD_KIND_BY_EXTENSION: Readonly<Record<string, UploadKind>> = {
   '.png': 'image',
   '.jpg': 'image',
   '.jpeg': 'image',
   '.webp': 'image',
+  '.mp4': 'video',
   '.mp3': 'audio',
   '.wav': 'audio',
   '.txt': 'text',

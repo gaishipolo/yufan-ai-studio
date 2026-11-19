@@ -12,24 +12,26 @@ import {
  * `EXTENSIONS` 一改，这里就必须跟着改，否则前端又会把服务端拒的文件放进来。
  */
 describe('uploadLimits · 后端白名单同源', () => {
-  it('只认后端白名单里的扩展名，.gif/.svg/.mp4 一律不放行', () => {
+  it('只认后端白名单里的扩展名，.gif/.svg 一律不放行', () => {
     expect(uploadKindOf('a.png')).toBe('image');
     expect(uploadKindOf('a.JPG')).toBe('image');
     expect(uploadKindOf('a.jpeg')).toBe('image');
     expect(uploadKindOf('a.webp')).toBe('image');
+    expect(uploadKindOf('a.mp4')).toBe('video');
+    expect(uploadKindOf('a.MP4')).toBe('video');
     expect(uploadKindOf('a.mp3')).toBe('audio');
     expect(uploadKindOf('a.wav')).toBe('audio');
     expect(uploadKindOf('a.txt')).toBe('text');
     expect(uploadKindOf('a.md')).toBe('text');
-    // 后端不收的：gif / svg（会被当标记语言执行）、mp4（走原片入口）
+    // 后端不收的：gif / svg（会被当标记语言执行）、mov（容器不在白名单）
     expect(uploadKindOf('a.gif')).toBeNull();
     expect(uploadKindOf('a.svg')).toBeNull();
-    expect(uploadKindOf('a.mp4')).toBeNull();
+    expect(uploadKindOf('a.mov')).toBeNull();
     expect(uploadKindOf('没有扩展名')).toBeNull();
   });
 
   it('accept 与白名单同源，不再用 image/* 这类会放行 .gif 的宽泛写法', () => {
-    expect(UPLOAD_ACCEPT).toBe('.png,.jpg,.jpeg,.webp,.mp3,.wav,.txt,.md');
+    expect(UPLOAD_ACCEPT).toBe('.png,.jpg,.jpeg,.webp,.mp4,.mp3,.wav,.txt,.md');
   });
 
   it('体积上限与后端一致：文本 1 MB、其它 300 MB', () => {

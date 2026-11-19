@@ -63,6 +63,22 @@ describe('LibraryUploadModal · 类型判定按后端扩展名白名单', () => 
     expect(screen.getByText('产品图.jpg')).toBeInTheDocument();
     expect(screen.getByText('1 个待上传')).toBeInTheDocument();
   });
+
+  /* 视频与图片走**同一条**上传接口（`origin=upload`），只是 kind 不同。
+     断言到 kind 这一层：只测「进了待上传」的话，kind 传错成 image 也能过，
+     而后端会以 415 拒掉——前端看不出真因。 */
+  it('.mp4 照收，并按 video 类型提交', async () => {
+    const user = userEvent.setup();
+    render(<LibraryUploadModal open tags={[]} onClose={vi.fn()} />);
+
+    pick(file('参考片段.mp4', 'video/mp4'));
+    expect(screen.getByText('1 个待上传')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '开始上传' }));
+
+    await waitFor(() => expect(uploadMock).toHaveBeenCalledTimes(1));
+    expect(uploadMock.mock.calls[0][0]).toMatchObject({ kind: 'video' });
+  });
 });
 
 describe('LibraryUploadModal · 打标签失败不是上传失败', () => {

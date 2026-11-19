@@ -220,7 +220,7 @@ export function useUploadAsset() {
       onProgress,
     }: {
       file: File;
-      kind: 'image' | 'audio' | 'text';
+      kind: 'image' | 'audio' | 'video' | 'text';
       onProgress?: (ratio: number) => void;
     }) => libraryApi.upload(file, kind, { onProgress }),
     onSuccess: invalidate,

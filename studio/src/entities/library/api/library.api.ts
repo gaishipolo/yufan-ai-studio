@@ -137,7 +137,7 @@ export const libraryApi = {
   /** 上传：文件字节直接做 body，文件名与类型走 query（与旧素材库同一套约定） */
   upload: (
     file: File,
-    kind: 'image' | 'audio' | 'text',
+    kind: 'image' | 'audio' | 'video' | 'text',
     options?: { sourceKey?: string; onProgress?: (ratio: number) => void; purpose?: string },
   ) =>
     api.post<LibraryAssetOut>(

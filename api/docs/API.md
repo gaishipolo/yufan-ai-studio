@@ -1587,7 +1587,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `GET` | `/api/v1/library/assets` | 资产库列表（分页 + 分面） | 🔒 |
 | `POST` | `/api/v1/library/assets/bulk` | 批量写：逐条判定，部分失败返回明细 | 🔒 |
 | `POST` | `/api/v1/library/assets/from-generation` | 生成结果入库（落草稿箱，按 sourceKey 幂等） | 🔒 |
-| `POST` | `/api/v1/library/assets/upload` | 上传图片 / 音频 / 文本（流式，按内容秒传） | 🔒 |
+| `POST` | `/api/v1/library/assets/upload` | 上传图片 / 视频 / 音频 / 文本（流式，按内容秒传） | 🔒 |
 | `PATCH` | `/api/v1/library/assets/{asset_id}` | 改名 / 换标签（不含可见性） | 🔒 |
 | `DELETE` | `/api/v1/library/assets/{asset_id}` | 移入回收站（软删，可恢复） | 🔒 |
 | `GET` | `/api/v1/library/assets/{asset_id}` | 资产详情（含标签与生成参数） | 🔒 |
@@ -1720,13 +1720,14 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 
 #### `POST /api/v1/library/assets/upload`
 
-**上传图片 / 音频 / 文本（流式，按内容秒传）**
+**上传图片 / 视频 / 音频 / 文本（流式，按内容秒传）**
 
-只收图片与音频：视频走 `/source-videos`（模板库专用）。
+使用者自己挑文件上传：图片 / 视频（.mp4）/ 音频 / 文本，一律 `origin=upload`。
 
-分开的理由不是「类型不同」，而是**来源语义不同**：这个接口是用户自己挑文件，
-视频上传属于模板库的参考素材流程，它需要 `origin=template_source` 才能在
-切换后继续喂给模板封装。混成一个接口会让来源变成前端传参，写错了没人发现。
+视频为什么**还**有一个 `/source-videos`：分开的理由不是「类型不同」，而是
+**来源语义不同**。模板库的参考原片需要 `origin=template_source` 才能在切换后
+继续被模板封装挑中；而这里的视频是普通素材，来源由本接口写死为 `upload`，
+不会混进「原片」那一档。两条路径都写死来源，前端没有传 origin 的入口。
 
 | 参数 | 位置 | 类型 | 必填 | 说明 |
 |---|---|---|---|---|

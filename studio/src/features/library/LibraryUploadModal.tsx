@@ -16,7 +16,7 @@ import {
 
 interface UploadItem {
   file: File;
-  kind: 'image' | 'audio' | 'text' | null;
+  kind: 'image' | 'audio' | 'video' | 'text' | null;
   status: 'ready' | 'uploading' | 'done' | 'failed';
   ratio: number;
   error?: string;
@@ -80,7 +80,7 @@ export function LibraryUploadModal({ open, tags, onClose }: LibraryUploadModalPr
          必然拒的。 */
       const kind = uploadKindOf(file.name);
       if (!kind) {
-        return { file, kind, status: 'failed', ratio: 0, error: '只支持 .png/.jpg/.jpeg/.webp 图片、.mp3/.wav 音频与 .txt/.md 文本；视频请走模板库原片入口' };
+        return { file, kind, status: 'failed', ratio: 0, error: '只支持 .png/.jpg/.jpeg/.webp 图片、.mp4 视频、.mp3/.wav 音频与 .txt/.md 文本' };
       }
       if (kind === 'text' && file.size > TEXT_MAX_BYTES) {
         return { file, kind, status: 'failed', ratio: 0, error: '文本文件不能超过 1 MB（UTF-8 纯文本）' };
@@ -111,7 +111,7 @@ export function LibraryUploadModal({ open, tags, onClose }: LibraryUploadModalPr
       try {
         const asset = await upload.mutateAsync({
           file: target.file,
-          kind: target.kind as 'image' | 'audio' | 'text',
+          kind: target.kind as 'image' | 'audio' | 'video' | 'text',
           onProgress: (ratio) =>
             setItems((previous) => previous.map((item, i) => (i === index ? { ...item, ratio } : item))),
         });
@@ -190,11 +190,11 @@ export function LibraryUploadModal({ open, tags, onClose }: LibraryUploadModalPr
           )}
         >
           <FileUp size={22} className="text-ink-mute" />
-          <span className="text-body font-medium">选择图片、音频或文本</span>
+          <span className="text-body font-medium">选择图片、视频、音频或文本</span>
           {/* 「可多选」删掉 —— `input multiple` 说的是同一件事，
               而**大小与格式上限**是猜不到的约束，要留。 */}
           <span className="text-body text-ink-mute">
-            图片/音频单个 ≤ 300 MB，.txt/.md 为 UTF-8 纯文本、≤ 1 MB
+            图片/视频/音频单个 ≤ 300 MB，.txt/.md 为 UTF-8 纯文本、≤ 1 MB
           </span>
         </button>
 

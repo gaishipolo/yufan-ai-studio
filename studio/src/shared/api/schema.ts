@@ -1928,7 +1928,7 @@ export interface EndpointData {
   "POST /api/v1/library/assets/bulk": BulkOut;
   /** 生成结果入库（落草稿箱，按 sourceKey 幂等） */
   "POST /api/v1/library/assets/from-generation": IngestOut;
-  /** 上传图片 / 音频 / 文本（流式，按内容秒传） */
+  /** 上传图片 / 视频 / 音频 / 文本（流式，按内容秒传） */
   "POST /api/v1/library/assets/upload": LibraryAssetOut;
   /** 移入回收站（软删，可恢复） */
   "DELETE /api/v1/library/assets/{asset_id}": null;
