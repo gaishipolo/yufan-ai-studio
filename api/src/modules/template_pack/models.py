@@ -179,11 +179,4 @@ class TemplateSpecSlot(Base, UUIDMixin):
     #: **未选时文案**：使用者没填素材时这一段怎么说（纯提示词，不含槽位引用）。
     #: 空 = 编译期报错（可选槽位且被引用时，发布闸门就会拦）。
     empty_text: Mapped[str] = mapped_column(String(2000), default="", nullable=False)
-    #: 这一格**怎么选**：`asset`（默认，从候选素材里挑一张）/ `pack`（从封装包里选）。
-    #:
-    #: `pack` 模式下模板库只列包、不列单张素材 —— 作者用它保证「一套图来自同一个包」，
-    #: 而不是让使用者把不同产品的图拼在一起。选包会连带填满同组其它 pack 槽位。
-    pick_mode: Mapped[str] = mapped_column(
-        String(8), default="asset", server_default="asset", nullable=False
-    )
     position: Mapped[int] = mapped_column(Integer, nullable=False)

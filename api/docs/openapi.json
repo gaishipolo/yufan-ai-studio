@@ -13546,15 +13546,6 @@
             "title": "Emptytext",
             "default": ""
           },
-          "pickMode": {
-            "type": "string",
-            "enum": [
-              "asset",
-              "pack"
-            ],
-            "title": "Pickmode",
-            "default": "asset"
-          },
           "tagIds": {
             "items": {
               "type": "string"
@@ -13657,15 +13648,6 @@
             "maxLength": 2000,
             "title": "Emptytext",
             "default": ""
-          },
-          "pickMode": {
-            "type": "string",
-            "enum": [
-              "asset",
-              "pack"
-            ],
-            "title": "Pickmode",
-            "default": "asset"
           },
           "tagIds": {
             "items": {

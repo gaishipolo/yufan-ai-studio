@@ -1336,7 +1336,6 @@ export interface SpecSlotIn {
   assetId?: string | null;
   filledText?: string;
   emptyText?: string;
-  pickMode?: "asset" | "pack";
   tagIds?: string[];
   position?: number;
 }
@@ -1353,7 +1352,6 @@ export interface SpecSlotOut {
   assetId?: string | null;
   filledText?: string;
   emptyText?: string;
-  pickMode?: "asset" | "pack";
   tagIds?: string[];
   position?: number;
 }

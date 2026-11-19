@@ -16,7 +16,6 @@ from core.template_spec.models import (
     MAX_PROMPT,
     MAX_SLOT_TAGS,
     MAX_SLOTS,
-    PICK_MODES,
     SLOT_TYPES,
     InputSlot,
     TemplateSpec,
@@ -332,17 +331,6 @@ def _validate_slot_texts(spec: TemplateSpec) -> None:
 def _validate_slot(slot: InputSlot) -> None:
     if slot.type not in SLOT_TYPES:
         raise BadRequest(f"槽位「{slot.key}」的类型无效：{slot.type}")
-    if slot.pick_mode not in PICK_MODES:
-        raise BadRequest(
-            f"槽位「{slot.key}」的选择方式无效：{slot.pick_mode}"
-            f"（只能是 {' / '.join(PICK_MODES)}）"
-        )
-    if slot.pick_mode == "pack" and slot.binding == "fixed":
-        # 固定槽位由作者钉死素材，使用者在模板库碰不到它，再要求「从包里选」
-        # 是一句谁都不会执行的话 —— 报错而不是静默忽略。
-        raise BadRequest(
-            f"槽位「{slot.key}」是固定的（作者已选好素材），不能再要求从封装包里选"
-        )
     # 音频与文本都不该占视觉编号：执行器按位置取图/视频，塞进去会让编号整体偏移。
     if slot.type == "audio" and slot.ref_mode != "attachment":
         raise BadRequest(f"音频槽位「{slot.key}」必须是附加输入（refMode=attachment）")

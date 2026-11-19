@@ -70,10 +70,6 @@ class SpecSlotIn(StrictIn):
     #: （没素材就没有编号可指）。为空 = 编译期报错（提示词悄悄缺一段比报错更糟）。
     empty_text: str = Field(default="", max_length=2000)
     #: 这一格**怎么选**：`asset`（默认，从候选素材里挑）/ `pack`（只从封装包里选）。
-    #:
-    #: 只影响模板库的选择器，不影响编译 —— 两种模式填进来的都是素材 id。
-    #: 固定槽位（`binding=fixed`）由作者钉死素材，选不了，这个字段对它无意义。
-    pick_mode: Literal["asset", "pack"] = "asset"
     #: 候选集的标签 id（资产库 `library_tags`，**任意级别**）：**候选集范围**，
     #: 不是内容。空 = 不限；非空 = 只在这几个标签（各自及其下级）里挑；编译不看它。
     #:

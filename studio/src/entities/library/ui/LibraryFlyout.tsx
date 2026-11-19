@@ -48,7 +48,8 @@ const DEFAULT_FLYOUT_KINDS: LibraryAssetKind[] = ['image'];
    `textLibraryIds`，后端按 id 取字节喂给模型。所以两档要排除：
    - 「全部」不是类型；
    - 「封装」没有自己的字节（`storage_key` 为空），取不到文件 —— 按包选素材
-     是模板库槽位的能力（`pickMode=pack`），不是这个通用选择器的。 */
+     是模板库填表页的能力（包与素材并排在同一个网格里，点它按标签填多格），
+     不是这个通用选择器的。 */
 const NON_FILE_KINDS: ReadonlySet<string> = new Set(['all', 'pack']);
 const CATEGORIES = KIND_OPTIONS.filter(
   (item): item is { value: LibraryAssetKind; label: string } =>

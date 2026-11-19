@@ -93,7 +93,6 @@ def to_core(payload: TemplateSpecIn) -> TemplateSpec:
                 tag_ids=tuple(slot.tag_ids),
                 filled_text=slot.filled_text,
                 empty_text=slot.empty_text,
-                pick_mode=slot.pick_mode,
                 position=slot.position,
             )
             for slot in payload.slots
@@ -143,7 +142,6 @@ def _slot_out(row: TemplateSpecSlot) -> SpecSlotOut:
         tag_ids=_slot_tag_ids(row),
         filled_text=row.filled_text or "",
         empty_text=row.empty_text or "",
-        pick_mode=row.pick_mode or "asset",
         position=row.position,
     )
 
@@ -565,7 +563,6 @@ async def publish(session: AsyncSession, actor: CurrentUser, key: str) -> SpecPu
                 tag_id=slot.tag_ids[0] if slot.tag_ids else "",
                 filled_text=slot.filled_text,
                 empty_text=slot.empty_text,
-                pick_mode=slot.pick_mode,
                 position=slot.position,
             )
         )
@@ -868,7 +865,6 @@ def _slot_core(row: TemplateSpecSlot) -> InputSlot:
         tag_ids=tuple(_slot_tag_ids(row)),
         filled_text=row.filled_text or "",
         empty_text=row.empty_text or "",
-        pick_mode=row.pick_mode or "asset",
         position=row.position,
     )
 
