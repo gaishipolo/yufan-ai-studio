@@ -138,14 +138,16 @@ export function TaskPreviewModal({ taskId, outputUrl, onClose }: TaskPreviewModa
                 variant="primary"
                 icon={<Download size={13} />}
                 disabled={!task.downloadable || !outputUrl}
-                onClick={() =>
-                  outputUrl
-                    ? downloadUrl(
-                        outputUrl,
-                        generatedFileName(task.authorName ?? '', task.createdAt, '.mp4'),
-                      )
-                    : toast('成片地址暂不可用，请稍后刷新', 'error')
-                }
+                onClick={() => {
+                  if (!outputUrl) {
+                    toast('成片地址暂不可用，请稍后刷新', 'error');
+                    return;
+                  }
+                  void downloadUrl(
+                    outputUrl,
+                    generatedFileName(task.authorName ?? '', task.createdAt, '.mp4'),
+                  );
+                }}
               >
                 下载成片
               </Button>

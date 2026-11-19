@@ -124,13 +124,13 @@ export function ImagePreviewModal({ item, onClose }: ImagePreviewModalProps) {
                 variant="primary"
                 icon={<Download size={13} />}
                 disabled={!outputUrl}
-                onClick={() =>
-                  outputUrl &&
-                  downloadUrl(
+                onClick={() => {
+                  if (!outputUrl) return;
+                  void downloadUrl(
                     outputUrl,
                     generatedFileName(me, image.createdAt, suffixOf(outputUrl)),
-                  )
-                }
+                  );
+                }}
               >
                 下载成图
               </Button>

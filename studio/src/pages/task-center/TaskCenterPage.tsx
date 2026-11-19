@@ -235,9 +235,14 @@ export default function TaskCenterPage() {
     if (!selected.size) return toast('请先勾选需要下载的任务', 'error');
     const ready = items.filter(item => selected.has(item.id) && item.outputUrl);
     if (!ready.length) return toast('勾选的任务还没有成片', 'error');
-    ready.forEach(item => item.outputUrl && downloadUrl(item.outputUrl, artifactName(item, me)));
+    /* 每个都独立发起：`downloadUrl` 会先把字节取下来再存盘（跨源直链
+       直接 `<a download>` 会被浏览器忽略、变成打开新标签）。
+       不 `await` 整批：一个个等会让最后那个文件等前面全部下载完才动。 */
+    for (const item of ready) {
+      if (item.outputUrl) void downloadUrl(item.outputUrl, artifactName(item, me));
+    }
     toast(
-      `已打开 ${ready.length} 个产物${ready.length < selected.size ? `，${selected.size - ready.length} 个暂无产物` : ''}`,
+      `开始下载 ${ready.length} 个产物${ready.length < selected.size ? `，${selected.size - ready.length} 个暂无产物` : ''}`,
       'success',
     );
   };
