@@ -1074,10 +1074,12 @@ function SpecCard({
         disabled={trashed}
         className="relative block w-full disabled:cursor-default"
       >
+        {/* 9:16：库里案例视频全是竖版（720×1280 / 1080×1920），16:9 的
+            封面上下一裁就只剩中间一条。 */}
         <CaseCover
           assetId={item.demoAssetId}
           seed={item.key}
-          className="aspect-[16/9] w-full"
+          className="aspect-[9/16] w-full"
           hoverPlay
           active={hovering}
         />
