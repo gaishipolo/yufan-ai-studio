@@ -229,3 +229,71 @@ def test_pack_members_are_hidden_from_the_list_but_not_the_picker(
     selection = client.get(f"{API}/library/selection?pageSize=100", headers=headers)
     picked = {item["id"] for item in selection.json()["data"]["items"]}
     assert first["id"] in picked, "选择器要能选到成员，否则模板里挑不到这张图"
+
+
+def test_asset_belongs_to_at_most_one_pack(client: TestClient) -> None:
+    """一张素材只能进一个封装。
+
+    不拦的话，「6036 黑」和「6 月新品」都含同一张正面图，改一个包的成员会
+    连带影响另一个包的取图 —— 而使用者以为两个包互不相干。
+
+    选择器会把已进包的标灰（`packId` / `packName`），这里是最后一道闸：
+    界面没拦住时接口也不能默默放行。
+    """
+    headers = _headers(client)
+    first = upload_image(client, API, headers, name="6036-黑-正面.png", color="coral")
+    second = upload_image(client, API, headers, name="6036-黑-立体.png", color="khaki")
+
+    created = client.post(
+        f"{API}/library/packs",
+        json={"name": "6036 黑", "assetIds": [first["id"], second["id"]]},
+        headers=headers,
+    )
+    assert created.status_code == 201, created.text
+
+    # 同一张图再进另一个包：拒，并说清已经在哪个包里
+    again = client.post(
+        f"{API}/library/packs",
+        json={"name": "6 月新品", "assetIds": [first["id"]]},
+        headers=headers,
+    )
+    assert again.status_code == 409, again.text
+    assert "6036 黑" in again.json()["message"]
+
+
+def test_selection_tells_which_pack_an_asset_is_in(client: TestClient) -> None:
+    """选择器要能显示「已在封装「X」里」，否则建包时只能选完才被拒。"""
+    headers = _headers(client)
+    member = upload_image(client, API, headers, name="6036-白-正面.png", color="plum")
+    loose = upload_image(client, API, headers, name="散图.png", color="lime")
+    pack = client.post(
+        f"{API}/library/packs",
+        json={"name": "6036 白", "assetIds": [member["id"]]},
+        headers=headers,
+    )
+    pack_id = pack.json()["data"]["id"]
+
+    selection = client.get(f"{API}/library/selection?pageSize=100", headers=headers)
+    picked = {item["id"]: item for item in selection.json()["data"]["items"]}
+    assert picked[member["id"]]["packId"] == pack_id
+    assert picked[member["id"]]["packName"] == "6036 白"
+    # 没进包的素材这两个字段是空 —— 前端据此决定要不要标灰
+    assert picked[loose["id"]]["packId"] is None
+    assert picked[loose["id"]]["packName"] is None
+
+
+def test_pack_allows_an_empty_name_and_falls_back(client: TestClient) -> None:
+    """名字不是必填：留空记成「未命名封装」。
+
+    界面上逼人现起名字的结果是「新建封装 (1) (2) (3)」—— 比一个统一的
+    「未命名封装」更没信息量，而且用户还得先想个名字才能建。
+    """
+    headers = _headers(client)
+    member = upload_image(client, API, headers, name="6036-黑-正面.png", color="peru")
+    created = client.post(
+        f"{API}/library/packs",
+        json={"name": "   ", "assetIds": [member["id"]]},
+        headers=headers,
+    )
+    assert created.status_code == 201, created.text
+    assert created.json()["data"]["name"] == "未命名封装"

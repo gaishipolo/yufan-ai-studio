@@ -36,6 +36,9 @@ vi.mock('@/shared/lib/toast', () => ({ toast: toastMock }));
 /* 弹窗型重组件与本文件要验的两件事无关，替掉省掉一层查询 */
 vi.mock('./LibraryDetail', () => ({ LibraryDetail: () => null }));
 vi.mock('./LibraryUploadModal', () => ({ LibraryUploadModal: () => null }));
+/* 建封装弹窗内部有选择器与 mutation，本文件不关心；它自己的行为在
+   PackCreateModal.test.tsx 里验。 */
+vi.mock('./PackCreateModal', () => ({ PackCreateModal: () => null }));
 vi.mock('./LibraryShareModal', () => ({ LibraryShareModal: () => null }));
 vi.mock('./LibraryDownloadsModal', () => ({ LibraryDownloadsModal: () => null }));
 vi.mock('./ShareRequestsModal', () => ({ ShareRequestsModal: () => null }));

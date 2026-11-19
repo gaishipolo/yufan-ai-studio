@@ -15,6 +15,7 @@ import type {
   LibrarySelectionPage,
   LibraryTagOut,
   LibraryTagStatOut,
+  PackOut,
   ShareDecisionIn,
   ShareRequestIn,
   ShareRequestOut,
@@ -270,6 +271,10 @@ export const libraryApi = {
     }),
 
   /** `parentId` 给一级的 id 就建成二级；留空建成一级。 */
+  /** 建封装：把一组素材打成一个包（成员顺序就是包内顺序） */
+  createPack: (body: {name: string; assetIds: string[]}) =>
+    api.post<PackOut>(`/library/packs`, {name: body.name, assetIds: body.assetIds}),
+
   createTag: (name: string, parentId?: string) =>
     api.post<LibraryTagOut>(`/library/tags`, { name, parentId: parentId ?? null }),
 

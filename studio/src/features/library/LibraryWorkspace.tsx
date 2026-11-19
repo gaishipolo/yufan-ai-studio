@@ -43,6 +43,7 @@ import { LibraryTagManager } from './LibraryTagManager';
 import { LibraryTagPicker } from './LibraryTagPicker';
 import { LibraryToolbar } from './LibraryToolbar';
 import { LibraryUploadModal } from './LibraryUploadModal';
+import { PackCreateModal } from './PackCreateModal';
 import { TextAssetModal } from './TextAssetModal';
 import { ShareRequestsModal } from './ShareRequestsModal';
 import type { LibraryCardAction } from './LibraryCard';
@@ -138,6 +139,9 @@ export function LibraryWorkspace() {
   const saveFile = useSaveAssetFile();
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  /* 建封装弹窗。`preset` 不单独存：选中项已经被裁到当前页（见上面的 effect），
+     所以 `items` 里一定拿得到它们的完整对象，用派生值比再存一份同步状态稳。 */
+  const [packOpen, setPackOpen] = useState(false);
   const [detailId, setDetailId] = useState<string | null>(null);
   const [uploadOpen, setUploadOpen] = useState(false);
   const [textModalOpen, setTextModalOpen] = useState(false);
@@ -154,6 +158,13 @@ export function LibraryWorkspace() {
   const items = useMemo(() => list.data?.items ?? [], [list.data?.items]);
   const total = list.data?.total ?? 0;
   const hasFilters = kind !== 'all' || tagIds.length > 0 || !!debouncedKeyword;
+  /* 建封装的初始成员 = 当前选中的素材。从批量条进来时这就是「刚勾的那几条」；
+     从工具栏进来时也带上（勾完再点新建封装，期望显然是包含它们）—— 想减掉
+     哪张，在弹窗里删就是了。 */
+  const packPreset = useMemo(
+    () => items.filter((item) => selected.has(item.id)),
+    [items, selected],
+  );
 
   /* 列表数据一变（换类型/关键词/标签、翻页、删掉一条）就把选中项裁到当前结果里。
      批量条只写「已选 N 项」，不列是哪几条——留着看不见的 id，用户点批量删除时
@@ -428,6 +439,12 @@ export function LibraryWorkspace() {
       );
       return;
     }
+    if (kindOfAction === 'pack') {
+      /* 不在这儿调接口：建封装要先让用户确认成员和起个名字。选中项不急着清，
+         弹窗取消时用户还能继续对这批素材做别的操作。 */
+      setPackOpen(true);
+      return;
+    }
     if (kindOfAction === 'reject') {
       setConfirm({
         title: '批量驳回草稿',
@@ -570,6 +587,7 @@ export function LibraryWorkspace() {
           onSort={(next) => update({ sort: next, page: null })}
           onUpload={() => setUploadOpen(true)}
           onNewText={() => setTextModalOpen(true)}
+          onNewPack={() => setPackOpen(true)}
           onRequests={() => setRequestsOpen(true)}
         />
 
@@ -642,6 +660,13 @@ export function LibraryWorkspace() {
           if (action === 'open') setDetailId(asset.id);
           else onAction(action, asset);
         }}
+      />
+
+      <PackCreateModal
+        open={packOpen}
+        preset={packPreset}
+        onClose={() => setPackOpen(false)}
+        onCreated={() => setSelected(new Set())}
       />
 
       <LibraryUploadModal open={uploadOpen} tags={tags.data ?? []} onClose={() => setUploadOpen(false)} />

@@ -732,6 +732,8 @@ export interface LibraryAssetDetailOut {
   textVersion?: number;
   textUrl?: string | null;
   memberCount?: number;
+  packId?: string | null;
+  packName?: string | null;
   createdAt: string;
   updatedAt?: string | null;
   groups?: LibraryGroupRef[];
@@ -781,6 +783,8 @@ export interface LibraryAssetOut {
   textVersion?: number;
   textUrl?: string | null;
   memberCount?: number;
+  packId?: string | null;
+  packName?: string | null;
   createdAt: string;
   updatedAt?: string | null;
 }
@@ -954,7 +958,7 @@ export interface MeOut {
 
 /** 建封装：一次挑一组素材（同产品同颜色的多个视角）。 */
 export interface PackIn {
-  name: string;
+  name?: string;
   assetIds: string[];
 }
 

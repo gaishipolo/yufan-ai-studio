@@ -28,6 +28,7 @@ function renderToolbar(overrides: Partial<LibraryToolbarProps> = {}) {
     onSort: vi.fn(),
     onUpload: vi.fn(),
     onNewText: vi.fn(),
+    onNewPack: vi.fn(),
     onRequests: vi.fn(),
   };
   const view = render(<LibraryToolbar {...props} {...overrides} />);
@@ -59,15 +60,24 @@ describe('LibraryToolbar · 一级入口', () => {
     expect(props.onView).toHaveBeenCalledWith('drafts');
   });
 
-  it('默认落地页「全部素材」也有上传与新建文本，草稿箱与回收站没有', () => {
+  it('默认落地页「全部素材」也有上传 / 新建文本 / 新建封装，草稿箱与回收站没有', () => {
     const { unmount } = renderToolbar();
     expect(screen.getByRole('button', { name: '上传' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '新建文本' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '新建封装' })).toBeInTheDocument();
     unmount();
 
     renderToolbar({ view: 'trash' });
-    expect(screen.queryByRole('button', { name: '上传' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: '新建文本' })).not.toBeInTheDocument();
+    for (const name of ['上传', '新建文本', '新建封装']) {
+      expect(screen.queryByRole('button', { name })).not.toBeInTheDocument();
+    }
+  });
+
+  it('「新建封装」点击回传一次', async () => {
+    const user = userEvent.setup();
+    const { props } = renderToolbar();
+    await user.click(screen.getByRole('button', { name: '新建封装' }));
+    expect(props.onNewPack).toHaveBeenCalledTimes(1);
   });
 
   it('类型筛选里有「封装」这一档，且排在最前', () => {

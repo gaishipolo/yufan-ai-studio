@@ -242,6 +242,25 @@ export function useUploadSourceVideo() {
   });
 }
 
+/**
+ * 建封装。
+ *
+ * **失效范围要大**：建完之后成员从资产库列表消失（成员不单列），包的卡片
+ * 出现在列表里，选择器要开始给它们标「已在封装里」。三处缓存任一没刷，
+ * 用户看到的就是「我建了个包，但库里什么都没变 / 那几张图还在」。
+ */
+export function useCreatePack() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (body: {name: string; assetIds: string[]}) => libraryApi.createPack(body),
+    /* 一刀切失效整个 `library` 前缀：建完之后变的东西太多 —— 列表多了包、
+       成员从列表消失、侧栏角标变了、选择器要标「已在封装里」。逐个点名
+       迟早漏一个，而漏掉的表现是「建了包但库里什么都没变」。建包是低频
+       操作，多刷几次查询不心疼。 */
+    onSuccess: () => client.invalidateQueries({ queryKey: libraryKeys.all }),
+  });
+}
+
 export function useCreateTag() {
   const client = useQueryClient();
   return useMutation({

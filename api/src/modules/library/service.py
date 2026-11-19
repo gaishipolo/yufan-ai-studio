@@ -38,7 +38,7 @@ from sqlalchemy.sql.elements import ColumnElement
 from core.audit import record as audit
 from core.config import settings
 from core.context import CurrentUser
-from core.exceptions import AppError, BadRequest, NotFound
+from core.exceptions import AppError, BadRequest, Conflict, NotFound
 from core.ports.library_references import ask_library_references, library_references_ready
 from core.response import PageParams
 from core.serving import Served
@@ -352,6 +352,9 @@ class LibraryService:
         count_map = await self._pack_member_counts(
             [row.id for row in rows if row.kind == "pack"]
         )
+        # 「这张图在哪个包里」：列表把成员藏起来了，只有选择器看得到它们，
+        # 所以只在**不藏成员**的那条路径上查一次，别给资产库列表白加一次 join。
+        pack_of = await self._pack_of(page_ids) if not exclude_packed_members else {}
         return LibraryAssetPage(
             items=[
                 self._to_out(
@@ -360,6 +363,7 @@ class LibraryService:
                     group_ids=group_map.get(row.id, []),
                     tags=tag_map.get(row.id, []),
                     member_count=count_map.get(row.id, 0),
+                    pack_of=pack_of,
                 )
                 for row in rows
             ],
@@ -808,6 +812,14 @@ class LibraryService:
         if any(row.kind == "pack" for row in readable.values()):
             raise BadRequest("封装不能嵌套：成员只能是素材，不能再是封装")
 
+        # 一张图只能属于一个包。不拦的话，「6036 黑」和「6 月新品」都含同一张
+        # 正面图，改一个包的成员会连带影响另一个包的取图 —— 而使用者以为
+        # 两个包互不相干。选择器会把这些素材标灰，这里是最后一道闸。
+        taken = await self._pack_of(ids)
+        if taken:
+            labels = "、".join(f"「{name}」" for _, name in list(taken.values())[:3])
+            raise Conflict(f"这些素材已经属于封装{labels}，一张素材只能进一个封装")
+
         label = name.strip()[:200] or "未命名封装"
         cover = next(
             (
@@ -925,6 +937,21 @@ class LibraryService:
             )
         ).all()
         return {pack_id: int(count) for pack_id, count in rows}
+
+    async def _pack_of(self, asset_ids: Sequence[str]) -> dict[str, tuple[str, str]]:
+        """素材 id → (所属封装 id, 封装名)。**一张图只属于一个包**，
+        所以这里可以放心用 1:1 的字典。"""
+        wanted = [item for item in dict.fromkeys(asset_ids) if item]
+        if not wanted:
+            return {}
+        rows = (
+            await self.session.execute(
+                select(LibraryPackItem.asset_id, LibraryAsset.id, LibraryAsset.name)
+                .join(LibraryAsset, LibraryAsset.id == LibraryPackItem.pack_id)
+                .where(LibraryPackItem.asset_id.in_(wanted))
+            )
+        ).all()
+        return {asset_id: (pack_id, pack_name) for asset_id, pack_id, pack_name in rows}
 
     async def _pack_members(
         self, pack_ids: Sequence[str]
@@ -1243,8 +1270,6 @@ class LibraryService:
     def _check_version(self, row: LibraryAsset, expected: int) -> None:
         """乐观锁。`expected=0` 表示不校验——单页操作没必要为了一个数字失败一次。"""
         if expected and row.state_version != expected:
-            from core.exceptions import Conflict
-
             raise Conflict(
                 "资产已被修改，请刷新后重试",
                 details={"expectedVersion": expected, "stateVersion": row.state_version},
@@ -1295,6 +1320,7 @@ class LibraryService:
         group_ids: Sequence[str] = (),
         tags: Sequence[LibraryTagOut] = (),
         member_count: int = 0,
+        pack_of: Mapping[str, tuple[str, str]] | None = None,
     ) -> LibraryAssetOut:
         return LibraryAssetOut(
             id=row.id,
@@ -1328,6 +1354,9 @@ class LibraryService:
             group_ids=list(group_ids),
             tags=list(tags),
             member_count=member_count,
+            # 这条素材被哪个封装收录（只在选择器里看得见 —— 列表里成员已被藏掉）
+            pack_id=(pack_of or {}).get(row.id, (None, ""))[0],
+            pack_name=(pack_of or {}).get(row.id, (None, ""))[1] or None,
             trash_reason=row.trash_reason,
             trash_expires_at=row.trash_expires_at,
             text_excerpt=(row.text_excerpt or None) if row.kind == "text" else None,

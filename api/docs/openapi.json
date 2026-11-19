@@ -11090,6 +11090,28 @@
             "title": "Membercount",
             "default": 0
           },
+          "packId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Packid"
+          },
+          "packName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Packname"
+          },
           "createdAt": {
             "type": "string",
             "format": "date-time",
@@ -11454,6 +11476,28 @@
             "type": "integer",
             "title": "Membercount",
             "default": 0
+          },
+          "packId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Packid"
+          },
+          "packName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Packname"
           },
           "createdAt": {
             "type": "string",
@@ -12086,8 +12130,8 @@
           "name": {
             "type": "string",
             "maxLength": 200,
-            "minLength": 1,
-            "title": "Name"
+            "title": "Name",
+            "default": ""
           },
           "assetIds": {
             "items": {
@@ -12101,7 +12145,6 @@
         },
         "type": "object",
         "required": [
-          "name",
           "assetIds"
         ],
         "title": "PackIn",

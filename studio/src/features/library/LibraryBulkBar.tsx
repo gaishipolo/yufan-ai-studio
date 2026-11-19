@@ -1,11 +1,19 @@
 import { useEffect, useState } from 'react';
-import { Download, RotateCcw, Tag, Trash2, X } from 'lucide-react';
+import { Download, Layers, RotateCcw, Tag, Trash2, X } from 'lucide-react';
 import { Button, MultiSelect } from '@/shared/ui';
 import type { LibraryTagStatOut } from '@/shared/api/schema';
 import type { LibraryView } from '@/entities/library/model/types';
 import { tagOptions } from '@/entities/library/model/tagTree';
 
-export type BulkKind = 'download' | 'delete' | 'restore' | 'approve' | 'reject' | 'tag';
+export type BulkKind =
+  | 'download'
+  | 'delete'
+  | 'restore'
+  | 'approve'
+  | 'reject'
+  | 'tag'
+  /** 把选中的素材打成一个封装。不是批量写（不逐条改资产），而是新建一条资产 */
+  | 'pack';
 
 export interface LibraryBulkBarProps {
   view: LibraryView;
@@ -87,6 +95,15 @@ export function LibraryBulkBar({ view, count, tags, busy, onClear, onAction }: L
                 onClick={() => onAction('download')}
               >
                 打包下载
+              </Button>
+              <Button
+                size="sm"
+                variant="secondary"
+                icon={<Layers size={12} />}
+                disabled={busy}
+                onClick={() => onAction('pack')}
+              >
+                组建封装
               </Button>
               <Button
                 size="sm"

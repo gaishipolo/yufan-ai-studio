@@ -111,3 +111,57 @@ describe('LibraryPicker · 确认结果', () => {
     expect(onConfirm).toHaveBeenCalledWith([B]);
   });
 });
+
+describe('LibraryPicker · 不可选的项', () => {
+  /* 调用方知道「为什么不能选」（已经属于别的封装），组件只负责把它说出来。
+     只传一组禁用 id 的话，卡片上只能写「不可用」—— 用户看不出下一步该干什么。 */
+  it('显示原因、点不动，且不会被选进去', async () => {
+    const user = userEvent.setup();
+    selection.items = [
+      { ...A, id: 'taken', name: '已被收走的.png', kind: 'image', packName: '6036 黑' },
+      { ...A, id: 'free', name: '还能选的.png', kind: 'image' },
+    ];
+    selection.total = 2;
+    const onConfirm = vi.fn();
+    render(
+      <LibraryPicker
+        open
+        multiple
+        kinds={['image']}
+        unavailableReason={(asset) =>
+          asset.packName ? `已在封装「${asset.packName}」里` : null
+        }
+        onClose={vi.fn()}
+        onConfirm={onConfirm}
+      />,
+    );
+
+    const blocked = screen.getByRole('button', { name: /已被收走的/ });
+    expect(blocked).toBeDisabled();
+    // 原因就地显示在「它是什么类型」那一行：这时类型不重要，原因才是下一步
+    expect(screen.getByText('已在封装「6036 黑」里')).toBeInTheDocument();
+
+    await user.click(blocked);
+    expect(onConfirm).not.toHaveBeenCalledWith(
+      expect.arrayContaining([expect.objectContaining({ id: 'taken' })]),
+    );
+
+    await user.click(screen.getByRole('button', { name: /还能选的/ }));
+    await user.click(screen.getByRole('button', { name: /确认/ }));
+    const confirmed = onConfirm.mock.calls[0]?.[0] as LibraryAssetOut[];
+    expect(confirmed.map((item) => item.id)).toEqual(['free']);
+  });
+
+  it('不传原因函数时一切照旧（可选）', async () => {
+    const user = userEvent.setup();
+    selection.items = [{ ...A, id: 'taken', name: '普通图.png', kind: 'image' }];
+    selection.total = 1;
+    const onConfirm = vi.fn();
+    render(
+      <LibraryPicker open multiple kinds={['image']} onClose={vi.fn()} onConfirm={onConfirm} />,
+    );
+    await user.click(screen.getByRole('button', { name: /普通图/ }));
+    await user.click(screen.getByRole('button', { name: /确认/ }));
+    expect((onConfirm.mock.calls[0]?.[0] as LibraryAssetOut[]).map((i) => i.id)).toEqual(['taken']);
+  });
+});

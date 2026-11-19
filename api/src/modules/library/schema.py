@@ -227,6 +227,14 @@ class LibraryAssetOut(CamelModel):
     #: 要随列表返回，因为「成员不再单列」之后这张卡是使用者**唯一**能看到
     #: 那几张图的地方 —— 只给封面不给张数，等于让人点进去才知道装了什么。
     member_count: int = 0
+    #: **这条素材已被哪个封装收录**（`pack_id` / `pack_name`）。
+    #:
+    #: 一张图只能属于一个包（2026-11-19 用户拍板）：包是「一套图」，同一张图
+    #: 属于两套时改一个会连带影响另一个，说不清。建封装时据此把已进包的素材
+    #: 标灰并写出原因 —— 让人选到最后才被 400 打回，是这次要避免的。
+    #: 列表里看不到成员（被藏了），所以这个字段实际服务的是**选择器**。
+    pack_id: str | None = None
+    pack_name: str | None = None
     created_at: UtcDateTime
     updated_at: UtcDateTime | None = None
 
@@ -696,7 +704,10 @@ class FromGenerationIn(CamelModel):
 class PackIn(CamelModel):
     """建封装：一次挑一组素材（同产品同颜色的多个视角）。"""
 
-    name: str = Field(min_length=1, max_length=200)
+    #: 允许空串：界面上的名字不是必填（「留空则叫未命名封装」）。服务层
+    #: 用 `name.strip() or "未命名封装"` 兜底，所以这里不必逼人现起一个名字 ——
+    #: 逼出来的结果是「新建封装 (1) (2) (3)」这种更没信息量的名字。
+    name: str = Field(default="", max_length=200)
     #: 成员的**选择顺序**就是 `position`：包详情预览按它显示。
     #: 上限 200：一个包是一套图，几十张已经是极端；再多更可能是误操作。
     asset_ids: list[str] = Field(min_length=1, max_length=200)

@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { FileText, Inbox, Upload } from 'lucide-react';
+import { FileText, Inbox, Layers, Upload } from 'lucide-react';
 import { Button, Chip, SearchInput, Select, Tabs } from '@/shared/ui';
 import { useCan } from '@/shared/access/use-access';
 import type { LibraryFacets } from '@/shared/api/schema';
@@ -29,6 +29,8 @@ export interface LibraryToolbarProps {
   onUpload: () => void;
   /** 站内新建文本资产，显隐与上传一致 */
   onNewText: () => void;
+  /** 建封装：把一组素材打成一个包（显隐同上） */
+  onNewPack: () => void;
   onRequests: () => void;
 }
 
@@ -113,6 +115,17 @@ export function LibraryToolbar(props: LibraryToolbarProps) {
                   onClick={props.onNewText}
                 >
                   新建文本
+                </Button>
+                {/* 放在「上传」左边：上传是「往库里加东西」，封装是「把库里已有的
+                    东西归成一组」，两者都是新建，但都不如「上传」常用。 */}
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  icon={<Layers size={13} />}
+                  disabled={props.busy}
+                  onClick={props.onNewPack}
+                >
+                  新建封装
                 </Button>
                 <Button
                   size="sm"

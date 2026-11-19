@@ -25,6 +25,14 @@ export interface LibraryPickerProps {
    * 传了它就按 `value` 的顺序原样带回。
    */
   valueItems?: LibraryAssetOut[];
+  /**
+   * 返回非空字符串 = 这一项**不可选**，字符串就是原因（就地显示）。
+   *
+   * 为什么不是「传一组禁用 id」：原因只有调用方知道。只给 id 的话组件只能
+   * 写一句「不可用」，用户看不出为什么不给选 —— 而这里的原因正是他需要的
+   * 下一步（「已在封装「6036 黑」里」）。
+   */
+  unavailableReason?: (asset: LibraryAssetOut) => string | null;
   onClose: () => void;
   onConfirm: (assets: LibraryAssetOut[]) => void;
 }
@@ -52,6 +60,7 @@ export function LibraryPicker({
   kinds,
   value,
   valueItems,
+  unavailableReason,
   onClose,
   onConfirm,
 }: LibraryPickerProps) {
@@ -181,17 +190,22 @@ export function LibraryPicker({
           <div className="grid max-h-[340px] grid-cols-[repeat(auto-fill,minmax(120px,1fr))] gap-2 overflow-auto pr-1">
             {items.map((asset) => {
               const active = !!picked[asset.id];
+              const blocked = unavailableReason?.(asset) ?? null;
               return (
                 <button
                   key={asset.id}
                   type="button"
+                  disabled={!!blocked}
                   onClick={() => toggle(asset)}
                   aria-pressed={active}
+                  title={blocked ?? undefined}
                   className={cn(
                     'relative rounded-lg border p-1.5 text-left transition',
-                    active
-                      ? 'border-primary bg-primary-soft/40 ring-2 ring-primary/15'
-                      : 'border-line-soft bg-panel hover:border-line-strong',
+                    blocked
+                      ? 'cursor-not-allowed border-line-soft bg-panel opacity-55'
+                      : active
+                        ? 'border-primary bg-primary-soft/40 ring-2 ring-primary/15'
+                        : 'border-line-soft bg-panel hover:border-line-strong',
                   )}
                 >
                   {asset.kind === 'text' ? (
@@ -205,8 +219,12 @@ export function LibraryPicker({
                     <CoverImage src={asset.coverUrl ?? undefined} seed={asset.id} className="aspect-[4/3] rounded-md" />
                   )}
                   <div className="mt-1 truncate text-meta text-ink">{displayName(asset.name)}</div>
-                  <div className="truncate text-micro text-ink-mute">{KIND_LABEL[asset.kind]}</div>
-                  {active && (
+                  {/* 不可选时说原因，不说类型：这时「它是什么」不重要，
+                      「为什么不能选」才是用户要的下一句。 */}
+                  <div className={cn('truncate text-micro', blocked ? 'text-warn-deep' : 'text-ink-mute')}>
+                    {blocked ?? KIND_LABEL[asset.kind]}
+                  </div>
+                  {active && !blocked && (
                     <span className="absolute right-1.5 top-1.5 grid size-[18px] place-items-center rounded-full bg-primary text-white">
                       <Check size={11} />
                     </span>

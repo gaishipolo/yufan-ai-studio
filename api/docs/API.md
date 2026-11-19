@@ -1771,6 +1771,8 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `textVersion` | `number` | 否 |  |
 | `textUrl` | `string \| null` | 否 |  |
 | `memberCount` | `number` | 否 |  |
+| `packId` | `string \| null` | 否 |  |
+| `packName` | `string \| null` | 否 |  |
 | `createdAt` | `string` | 是 |  |
 | `updatedAt` | `string \| null` | 否 |  |
 
@@ -1822,6 +1824,8 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `textVersion` | `number` | 否 |  |
 | `textUrl` | `string \| null` | 否 |  |
 | `memberCount` | `number` | 否 |  |
+| `packId` | `string \| null` | 否 |  |
+| `packName` | `string \| null` | 否 |  |
 | `createdAt` | `string` | 是 |  |
 | `updatedAt` | `string \| null` | 否 |  |
 | `groups` | `LibraryGroupRef[]` | 否 |  |
@@ -1893,6 +1897,8 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `textVersion` | `number` | 否 |  |
 | `textUrl` | `string \| null` | 否 |  |
 | `memberCount` | `number` | 否 |  |
+| `packId` | `string \| null` | 否 |  |
+| `packName` | `string \| null` | 否 |  |
 | `createdAt` | `string` | 是 |  |
 | `updatedAt` | `string \| null` | 否 |  |
 | `groups` | `LibraryGroupRef[]` | 否 |  |
@@ -1999,6 +2005,8 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `textVersion` | `number` | 否 |  |
 | `textUrl` | `string \| null` | 否 |  |
 | `memberCount` | `number` | 否 |  |
+| `packId` | `string \| null` | 否 |  |
+| `packName` | `string \| null` | 否 |  |
 | `createdAt` | `string` | 是 |  |
 | `updatedAt` | `string \| null` | 否 |  |
 
@@ -2274,6 +2282,8 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `textVersion` | `number` | 否 |  |
 | `textUrl` | `string \| null` | 否 |  |
 | `memberCount` | `number` | 否 |  |
+| `packId` | `string \| null` | 否 |  |
+| `packName` | `string \| null` | 否 |  |
 | `createdAt` | `string` | 是 |  |
 | `updatedAt` | `string \| null` | 否 |  |
 | `groups` | `LibraryGroupRef[]` | 否 |  |
@@ -2334,6 +2344,8 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `textVersion` | `number` | 否 |  |
 | `textUrl` | `string \| null` | 否 |  |
 | `memberCount` | `number` | 否 |  |
+| `packId` | `string \| null` | 否 |  |
+| `packName` | `string \| null` | 否 |  |
 | `createdAt` | `string` | 是 |  |
 | `updatedAt` | `string \| null` | 否 |  |
 | `groups` | `LibraryGroupRef[]` | 否 |  |
@@ -2413,7 +2425,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `name` | `string` | 是 |  |
+| `name` | `string` | 否 |  |
 | `assetIds` | `string[]` | 是 |  |
 
 **响应** `ApiResponse<PackOut>`（前端取 `res.data`）
@@ -2719,6 +2731,8 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `textVersion` | `number` | 否 |  |
 | `textUrl` | `string \| null` | 否 |  |
 | `memberCount` | `number` | 否 |  |
+| `packId` | `string \| null` | 否 |  |
+| `packName` | `string \| null` | 否 |  |
 | `createdAt` | `string` | 是 |  |
 | `updatedAt` | `string \| null` | 否 |  |
 
@@ -2925,6 +2939,8 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `textVersion` | `number` | 否 |  |
 | `textUrl` | `string \| null` | 否 |  |
 | `memberCount` | `number` | 否 |  |
+| `packId` | `string \| null` | 否 |  |
+| `packName` | `string \| null` | 否 |  |
 | `createdAt` | `string` | 是 |  |
 | `updatedAt` | `string \| null` | 否 |  |
 | `groups` | `LibraryGroupRef[]` | 否 |  |
@@ -4070,6 +4086,8 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `textVersion` | `number` | 否 |  |
 | `textUrl` | `string \| null` | 否 |  |
 | `memberCount` | `number` | 否 |  |
+| `packId` | `string \| null` | 否 |  |
+| `packName` | `string \| null` | 否 |  |
 | `createdAt` | `string` | 是 |  |
 | `updatedAt` | `string \| null` | 否 |  |
 | `groups` | `LibraryGroupRef[]` | 否 |  |
@@ -4129,6 +4147,8 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `textVersion` | `number` | 否 |  |
 | `textUrl` | `string \| null` | 否 |  |
 | `memberCount` | `number` | 否 |  |
+| `packId` | `string \| null` | 否 |  |
+| `packName` | `string \| null` | 否 |  |
 | `createdAt` | `string` | 是 |  |
 | `updatedAt` | `string \| null` | 否 |  |
 
@@ -4329,7 +4349,7 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `name` | `string` | 是 |  |
+| `name` | `string` | 否 |  |
 | `assetIds` | `string[]` | 是 |  |
 
 ### `PackMemberOut`

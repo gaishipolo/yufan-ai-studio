@@ -67,3 +67,19 @@ describe('LibraryBulkBar · 清空后不留上一批的标签', () => {
     expect(screen.getByRole('button', { name: '应用到 3 项' })).toBeDisabled();
   });
 });
+
+describe('LibraryBulkBar · 组建封装', () => {
+  it('个人 / 全部入口给「组建封装」，点了把动作交回上层（不直接发请求）', async () => {
+    const user = userEvent.setup();
+    const { onAction } = renderBar();
+    await user.click(screen.getByRole('button', { name: '组建封装' }));
+    expect(onAction).toHaveBeenCalledWith('pack');
+  });
+
+  it('草稿箱 / 回收站没有「组建封装」：那里的东西还不是库内容', () => {
+    renderBar({ view: 'drafts' });
+    expect(screen.queryByRole('button', { name: '组建封装' })).not.toBeInTheDocument();
+    renderBar({ view: 'trash' });
+    expect(screen.queryByRole('button', { name: '组建封装' })).not.toBeInTheDocument();
+  });
+});
