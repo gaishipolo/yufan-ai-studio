@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, field_validator
 
 # 单个任务内的执行器锁文件名。后缀必须是 .lock：桥接层的 update() 会遍历
 # inputs/outputs/records/review/code 给每个文件算 sha256，只跳过
@@ -25,12 +25,15 @@ class LibTVState(BaseModel):
     task_id: str | None = None
     submit_attempts: int = 0
     framework_status: str | None = None
-    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    # 缺失时必须保持 None（绝不能用 now() 兜底）：自动对账以它作为「提交起点」，
+    # 伪造成当前时刻会让更早的账单全部落到窗口之外，把已扣费任务误判为未提交。
+    created_at: datetime | None = None
     progress_percent: int = 0
     estimated_credits: float | None = None
     credits: float | None = None
     last_error: str | None = None
     error_code: str | None = None
+    failed_reason: str | None = None
     preparation_ready: bool = False
     # 计费模式（`free` / `credits`）。物化器在 `run.json` 里写它，桥接层据此
     # 决定走免费队列还是积分队列；执行器用它挑**哪个浏览器账号**：
@@ -39,6 +42,15 @@ class LibTVState(BaseModel):
     # 账号绑定：桥接层在第一个阶段把当时用的 CDP 地址写进来，之后就只读它。
     # 上传素材与上游 `task_id` 都属于那个账号，中途换号 = 查不到自己的任务。
     browser_url: str | None = None
+
+    @field_validator("created_at")
+    @classmethod
+    def normalize_created_at(cls, value: datetime | None) -> datetime | None:
+        # 桥接层写的是 `toISOString()`（带 Z），naive 只可能来自旧档案或直接构造。
+        # 一律按 UTC 解释：按本地时区算会让 `since` 提前 8 小时，把更早的旧单扫进来。
+        if value is not None and value.tzinfo is None:
+            return value.replace(tzinfo=UTC)
+        return value
 
     @field_validator("progress_percent", mode="before")
     @classmethod

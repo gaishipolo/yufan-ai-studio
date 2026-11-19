@@ -674,6 +674,8 @@ export interface LibTvQueueItemOut {
   power?: number;
   benefitTag?: string;
   remainSeconds?: number;
+  /** 上游失败原因（status=3 时返回） */
+  failedReason?: string;
   /** 给人看的一句话，省得前端自己拼 */
   describe?: string;
 }

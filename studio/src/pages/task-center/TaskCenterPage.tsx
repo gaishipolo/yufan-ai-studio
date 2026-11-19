@@ -19,7 +19,13 @@ import { TaskCard } from '@/entities/task/ui/TaskCard';
 import { ImageTaskCard } from '@/entities/task/ui/ImageTaskCard';
 import { LibTvAccountStrip } from '@/entities/libtv/ui/LibTvAccountStrip';
 import { useLibtvAccount, useLibtvQueue } from '@/entities/libtv/api/libtv.queries';
-import { isQueued, queueLabel, upstreamTaskId } from '@/entities/libtv/model/types';
+import {
+  LIBTV_MODEL_ID,
+  isQueued,
+  liveTaskProgress,
+  queueLabel,
+  upstreamTaskId,
+} from '@/entities/libtv/model/types';
 import { useDeleteImages, useDeleteTasks, useTaskFeed, useUpdateTask } from '@/entities/task/api/task.queries';
 import type { TaskScope, TaskSort } from '@/entities/task/model/types';
 import type { TaskFeedItem, TaskFeedParams, TaskFeedSource, TaskFeedStatus } from '@/entities/task/model/feed.types';
@@ -31,9 +37,6 @@ import { generatedFileName } from '@/shared/lib/format';
 import { useSessionStore } from '@/shared/access/session';
 
 type StatusFilter = TaskFeedStatus;
-
-/** 队列位次只对这一个模型有意义（上游是 LibTV 的画布队列） */
-const LIBTV_MODEL_ID = 'libtv-wan3-replacement';
 
 /**
  * 成片文件名：`作者-年-月-日-时-分-秒` + 真实后缀（见 `generatedFileName`）。
@@ -383,24 +386,34 @@ export default function TaskCenterPage() {
           />
         ) : (
           <div className="grid grid-cols-[repeat(auto-fill,minmax(148px,1fr))] gap-2.5 md:grid-cols-[repeat(auto-fill,minmax(196px,1fr))] md:gap-3.5">
-            {items.map((item) => item.video ? (
-              <TaskCard
-                key={item.key}
-                task={item.video}
-                selected={selected.has(item.id)}
-                onToggleSelect={toggleSelect}
-                onOpen={openPreview}
-                queueHint={queueLabel(queueByTask.get(upstreamTaskId(item.video.externalId) ?? '') ?? null)}
-              />
-            ) : item.image ? (
-              <ImageTaskCard
-                key={item.key}
-                item={item.image}
-                selected={selected.has(item.id)}
-                onToggleSelect={toggleSelect}
-                onOpen={openPreview}
-              />
-            ) : null)}
+            {items.map((item) => {
+              if (item.video) {
+                const queueItem = queueByTask.get(upstreamTaskId(item.video.externalId) ?? '') ?? null;
+                return (
+                  <TaskCard
+                    key={item.key}
+                    task={item.video}
+                    selected={selected.has(item.id)}
+                    onToggleSelect={toggleSelect}
+                    onOpen={openPreview}
+                    queueHint={queueLabel(queueItem)}
+                    liveProgress={liveTaskProgress(item.video.progress, queueItem)}
+                  />
+                );
+              }
+              if (item.image) {
+                return (
+                  <ImageTaskCard
+                    key={item.key}
+                    item={item.image}
+                    selected={selected.has(item.id)}
+                    onToggleSelect={toggleSelect}
+                    onOpen={openPreview}
+                  />
+                );
+              }
+              return null;
+            })}
           </div>
         )}
       </div>

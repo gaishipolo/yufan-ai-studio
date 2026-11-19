@@ -146,6 +146,7 @@ class LibTvQueueItemOut(CamelModel):
     power: int = 0
     benefit_tag: str = ""
     remain_seconds: int = 0
+    failed_reason: str = Field(default="", description="上游失败原因（status=3 时返回）")
     describe: str = Field(default="", description="给人看的一句话，省得前端自己拼")
 
 

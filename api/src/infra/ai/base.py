@@ -59,6 +59,9 @@ class GenerationProgress:
     error: str | None = None
     # 供应商明确告知「可重试」（限流、临时故障）时为 True，触达重试策略
     retryable: bool = False
+    # 上游还没开始生成，只是在排队（免费队列名额/限流推迟）。框架据此**顺延墙钟预算**：
+    # 排队不是我们的错，不该算进「生成超时」——否则排得越久越容易被判失败。
+    queued: bool = False
 
     def __post_init__(self) -> None:
         """在 provider 边界把状态归一成枚举。

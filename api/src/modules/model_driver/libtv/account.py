@@ -40,7 +40,9 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from collections.abc import Collection
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -50,6 +52,7 @@ from core.config import get_settings
 from core.exceptions import UpstreamError
 from core.logging import get_logger
 from modules.model_driver.libtv import executor
+from modules.model_driver.libtv.reconcile import AutoVerdict, auto_verdict
 
 logger = get_logger(__name__)
 
@@ -106,6 +109,7 @@ class QueueItem:
     power: int
     benefit_tag: str
     remain_seconds: int = 0
+    failed_reason: str = ""
 
     @property
     def queued(self) -> bool:
@@ -121,6 +125,8 @@ class QueueItem:
             return f"被上游限流推迟，约 {self.remain_seconds} 秒后重试"
         if self.status == 1:
             return f"生成中 {self.percent}%"
+        if self.status == 3 and self.failed_reason:
+            return f"失败：{self.failed_reason}"
         return f"状态 {self.status} · {self.percent}%"
 
 
@@ -226,7 +232,9 @@ async def _request(
     body: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     host = API_TV if url.startswith(API_TV) else API_ART
-    async with httpx.AsyncClient(timeout=_TIMEOUT_SEC) as client:
+    # 忽略系统代理环境变量（如 ALL_PROXY=socks5://...）：未装 socksio 时 httpx
+    # 会在建客户端时直接 ImportError，而 LibTV 上游与本机 CDP 均直连可达。
+    async with httpx.AsyncClient(timeout=_TIMEOUT_SEC, trust_env=False) as client:
         response = await client.request(
             method,
             url,
@@ -311,22 +319,7 @@ async def zero_power_benefits(account: str = "") -> list[dict[str, Any]]:
     ]
 
 
-async def progress(task_ids: list[str], account: str = "") -> list[QueueItem]:
-    """批量查进度：一条请求看完全部任务，顺带拿到排队位次。
-
-    与桥接层 `poll` 的区别：那条是为了拿成片（要下载、要落库），这条只是
-    **看状态**，不触发任何写操作，适合给页面轮询用。
-    """
-    ids = [str(item).strip() for item in task_ids if str(item).strip()]
-    if not ids:
-        return []
-    account = account or _default_account("free")
-    payload = await _request(
-        "POST",
-        f"{API_TV}/api/task/generation/progress",
-        account=account,
-        body={"taskIds": ids},
-    )
+def _parse_progress(payload: dict[str, Any]) -> list[QueueItem]:
     out: list[QueueItem] = []
     for item in ((payload.get("data") or {}).get("progresses")) or []:
         delay = item.get("delayInfo") or {}
@@ -342,9 +335,102 @@ async def progress(task_ids: list[str], account: str = "") -> list[QueueItem]:
                 power=int(item.get("power") or 0),
                 benefit_tag=str(item.get("benefitTag") or ""),
                 remain_seconds=int(delay.get("remainSeconds") or 0),
+                failed_reason=str(item.get("failedReason") or ""),
             )
         )
     return out
+
+
+def _item_rank(item: QueueItem) -> tuple[int, int, int]:
+    """区分「归属该账号的真实进度」与「非归属账号返回的 status=3 / percent=0 假失败」。"""
+    non_terminal = 1 if item.status in (0, 1, 2) else 0
+    has_detail = 1 if (item.queue_reason or item.failed_reason or item.percent > 0) else 0
+    return (non_terminal, has_detail, item.percent)
+
+
+def _is_reasonless_failure(item: QueueItem) -> bool:
+    """终态却没有任何细节：非归属账号被问到时，上游就回这种「假失败」空壳。"""
+    return (
+        item.status not in (0, 1, 2)  # 3=失败 / 4=超时 / 其它未识别
+        and not item.queue_reason
+        and not item.failed_reason
+        and item.percent == 0
+    )
+
+
+async def progress(task_ids: list[str], account: str = "") -> list[QueueItem]:
+    """批量查进度：一条请求看完全部任务，顺带拿到排队位次。
+
+    与桥接层 `poll` 的区别：那条是为了拿成片（要下载、要落库），这条只是
+    **看状态**，不触发任何写操作，适合给页面轮询与轻量进度同步用。
+    """
+    ids = [str(item).strip() for item in task_ids if str(item).strip()]
+    if not ids:
+        return []
+    if account:
+        payload = await _request(
+            "POST",
+            f"{API_TV}/api/task/generation/progress",
+            account=account,
+            body={"taskIds": ids},
+        )
+        return _parse_progress(payload)
+
+    credit = executor.credit_account_url()
+    accounts = list(dict.fromkeys([*executor.account_urls(), *([credit] if credit else [])]))
+    if len(accounts) <= 1:
+        target = accounts[0] if accounts else _default_account("free")
+        payload = await _request(
+            "POST",
+            f"{API_TV}/api/task/generation/progress",
+            account=target,
+            body={"taskIds": ids},
+        )
+        return _parse_progress(payload)
+
+    # 多账号部署下（9411 免费 + 9412 积分），按非归属账号去查上游会得到
+    # status=3/percent=0；并发查所有已配置账号，按 task_id 择优合并。
+    results = await asyncio.gather(
+        *(
+            _request(
+                "POST",
+                f"{API_TV}/api/task/generation/progress",
+                account=acc,
+                body={"taskIds": ids},
+            )
+            for acc in accounts
+        ),
+        return_exceptions=True,
+    )
+    best: dict[str, QueueItem] = {}
+    errors: list[Exception] = []
+    for res in results:
+        if isinstance(res, BaseException):
+            if isinstance(res, Exception):
+                errors.append(res)
+            continue
+        for item in _parse_progress(res):
+            prev = best.get(item.task_id)
+            if prev is None or _item_rank(item) > _item_rank(prev):
+                best[item.task_id] = item
+    if errors:
+        # 另一个账号本次查询异常时，健康账号会对不属于它的任务回一个空壳终态
+        # （status=3、percent=0，既没有 queueReason 也没有 failedReason）。这类条目
+        # 不能覆盖真实归属状态，也不能当真失败：丢掉，但 task_id 必须留痕 —— 否则
+        # 「归属账号真失败、上游却没给原因」会静默消失，页面一直停在生成中。
+        dropped = [task_id for task_id, item in best.items() if _is_reasonless_failure(item)]
+        for task_id in dropped:
+            best.pop(task_id)
+        logger.warning(
+            "多账号进度并发查询有 %d 个账号失败，丢弃 %d 条无详情终态回执（%s），首个错误：%s",
+            len(errors),
+            len(dropped),
+            ", ".join(dropped[:5]) or "-",
+            errors[0],
+        )
+    if not best and errors:
+        raise errors[0]
+    return [best[task_id] for task_id in ids if task_id in best]
 
 
 async def quote(task_ids: list[str], *, credits: bool = True, account: str = "") -> dict[str, int]:
@@ -421,6 +507,67 @@ async def consumption(page: int = 1, page_size: int = 20, account: str = "") -> 
         page=int(data.get("page") or page),
         page_size=int(data.get("pageSize") or page_size),
         items=items,
+    )
+
+
+async def _claimed_upstream_task_ids() -> set[str]:
+    """查询本系统已认领的所有上游 task_id（从 `run_id:task_id` 剥出后半段）。"""
+    from db.session import get_session_factory
+    from generation.pipeline import list_claimed_external_ids
+
+    async with get_session_factory()() as session:
+        raw_ids = await list_claimed_external_ids(session)
+    claimed: set[str] = set()
+    for raw in raw_ids:
+        _, sep, tail = raw.partition(":")
+        # 只有 `run_id:task_id` 形状才是本系统记下的**上游**任务号。别的驱动会把
+        # 裸 id（甚至有占位串）写进 external_id，它们和 LibTV 的 `originalBizNo`
+        # 不是一个命名空间 —— 混进认领集合只会把真正该接回的那一单挡掉。
+        if sep and tail:
+            claimed.add(tail)
+    return claimed
+
+
+async def auto_reconcile_verdict(
+    path: Path,
+    created_at: datetime | None,
+    account: str = "",
+    *,
+    claimed_task_ids: Collection[str] | None = None,
+) -> AutoVerdict:
+    """按消费明细与提示词快照自动判断「提交回执未知」任务的下一步。
+
+    缺少 `prompt.txt` 或 `created_at`，或无法查询已认领任务号时一律返回 `unknown`，
+    不猜、不捏造窗口起点，也不在不知情时跨单接回。
+    """
+    from sqlalchemy.exc import SQLAlchemyError
+
+    prompt_file = path / "inputs/prompt.txt"
+    if not prompt_file.is_file() or created_at is None:
+        return AutoVerdict(action="unknown")
+    if claimed_task_ids is None:
+        try:
+            claimed_task_ids = await _claimed_upstream_task_ids()
+        except (SQLAlchemyError, OSError):
+            logger.warning("查询已认领任务号失败，放弃自动对账 path=%s", path, exc_info=True)
+            return AutoVerdict(action="unknown")
+    # `LibTVState` 的 validator 是第一道；这里防的是绕过模型、直接传 naive 进来的调用方
+    # （naive 一律按 UTC 解释，否则东八区会把窗口往前推 8 小时，扫进旧单）。
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=UTC)
+    since = int(created_at.timestamp())
+    spends: list[ConsumptionItem] = []
+    for page in range(1, 4):
+        data = await consumption(page, 20, account)
+        spends.extend(data.items)
+        # 空页或翻到提交时刻之前就够判断「有没有扣费」了，不必翻完整个账单
+        if not data.items or min(item.seconds for item in data.items) < since:
+            break
+    return auto_verdict(
+        spends,
+        prompt=prompt_file.read_text(encoding="utf-8"),
+        since=since,
+        claimed_task_ids=claimed_task_ids,
     )
 
 

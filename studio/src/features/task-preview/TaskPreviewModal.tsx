@@ -3,8 +3,16 @@ import { Button, Chip, CoverImage, Modal, Notice, Skeleton } from '@/shared/ui';
 import { toast } from '@/shared/lib/toast';
 import { downloadUrl } from '@/shared/lib/download';
 import { formatDateTime, formatDuration, generatedFileName } from '@/shared/lib/format';
+import { useCan } from '@/shared/access/use-access';
+import { useLibtvQueue } from '@/entities/libtv/api/libtv.queries';
+import {
+  LIBTV_MODEL_ID,
+  isQueued,
+  liveTaskProgress,
+  upstreamTaskId,
+} from '@/entities/libtv/model/types';
 import { useRetryTask, useTaskDetail, useToggleFavorite } from '@/entities/task/api/task.queries';
-import { TASK_STATUS_LABEL } from '@/entities/task/model/types';
+import { TASK_STATUS_LABEL, isTaskInFlight } from '@/entities/task/model/types';
 import { PromptField } from './PromptField';
 
 export interface TaskPreviewModalProps {
@@ -25,6 +33,17 @@ export function TaskPreviewModal({ taskId, outputUrl, onClose }: TaskPreviewModa
   const { data: task, isLoading } = useTaskDetail(taskId);
   const retry = useRetryTask();
   const favorite = useToggleFavorite();
+  const canReadQueue = useCan('task:read');
+  const upstreamId =
+    task && isTaskInFlight(task) && task.modelId === LIBTV_MODEL_ID
+      ? upstreamTaskId(task.externalId)
+      : null;
+  const { data: queueData } = useLibtvQueue(
+    upstreamId ? [upstreamId] : [],
+    Boolean(upstreamId) && canReadQueue,
+  );
+  const liveItem = queueData?.items.find((item) => item.taskId === upstreamId) ?? null;
+  const shownProgress = task ? liveTaskProgress(task.progress, liveItem) : 0;
 
   return (
     <Modal open={Boolean(taskId)} onClose={onClose} title={task?.title ?? '任务详情'} width={780}>
@@ -72,11 +91,14 @@ export function TaskPreviewModal({ taskId, outputUrl, onClose }: TaskPreviewModa
               <dd className="break-all text-ink">{task.id}</dd>
 
               <dt className="text-ink-mute">状态</dt>
-              <dd>
+              <dd className="flex flex-wrap items-center gap-2">
                 <Chip tone={STATUS_TONE[task.status]}>
                   {TASK_STATUS_LABEL[task.status]}
-                  {task.status === 'running' ? ` · ${task.progress}%` : ''}
+                  {isTaskInFlight(task) ? ` · ${shownProgress}%` : ''}
                 </Chip>
+                {liveItem && isQueued(liveItem) ? (
+                  <span className="text-micro text-warn-deep">{liveItem.describe}</span>
+                ) : null}
               </dd>
 
               <dt className="text-ink-mute">生成模型</dt>

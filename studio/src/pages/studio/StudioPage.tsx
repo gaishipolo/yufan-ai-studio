@@ -34,7 +34,14 @@ import {
   toTaskPayload,
   type TaskPayloadResult,
 } from '@/features/template-library/taskPayload';
-import type { VideoTask } from '@/entities/task/model/types';
+import { useLibtvQueue } from '@/entities/libtv/api/libtv.queries';
+import {
+  inFlightLibtvIds,
+  liveTaskProgress,
+  queueLabel,
+  upstreamTaskId,
+} from '@/entities/libtv/model/types';
+import { isTaskInFlight, type VideoTask } from '@/entities/task/model/types';
 
 export default function StudioPage() {
   const navigate = useNavigate();
@@ -57,6 +64,7 @@ export default function StudioPage() {
   const [textRefs, setTextRefs] = useState<LibraryAssetOut[]>([]);
   const [libraryOpen, setLibraryOpen] = useState(false);
   const canReadLibrary = useCan('library:read');
+  const canReadQueue = useCan('task:read');
   const upload = useUploadAsset();
 
   /* 换模型会作废已选参考图（参考图上限与支持类型都由模型声明）。
@@ -64,6 +72,16 @@ export default function StudioPage() {
      下拉框换了值，图没了，界面不说发生了什么。丢东西该问一声。
      参考图为空时不问，直接换。 */
   const [pendingModelId, setPendingModelId] = useState<string | null>(null);
+
+  const recentLibtvIds = useMemo(
+    () => inFlightLibtvIds(recent?.items ?? []),
+    [recent?.items],
+  );
+  const { data: queueData } = useLibtvQueue(recentLibtvIds, canReadQueue);
+  const queueByTask = useMemo(
+    () => new Map((queueData?.items ?? []).map((item) => [item.taskId, item])),
+    [queueData?.items],
+  );
 
   const currentModel = useMemo(
     () => models.find((item) => item.id === modelId) ?? models.find((m) => m.isDefault) ?? models[0],
@@ -354,27 +372,49 @@ export default function StudioPage() {
         <Panel className="self-start">
           <PanelHeader title="最近生成" />
           <div className="flex flex-col gap-2">
-            {(recent?.items ?? []).map((task: VideoTask) => (
-              <button
-                key={task.id}
-                type="button"
-                onClick={() => navigate('/tasks')}
-                className="flex items-center gap-2.5 rounded-[9px] border border-line-soft bg-[#fcfefe] p-[7px] text-left transition-colors hover:border-line-strong"
-              >
-                <CoverImage src={task.coverUrl} seed={task.id} className="h-[34px] w-11 shrink-0 rounded-md" />
-                <div className="min-w-0 flex-1">
-                  <b className="block truncate text-xs font-semibold text-ink">{task.title}</b>
-                  <span className="block truncate text-micro text-ink-mute">{task.model}</span>
-                </div>
-                {/* 画幅是规格不是文字：等宽排，一列竖着扫就对得上 */}
-                <span className="shrink-0 font-mono text-micro tabular-nums text-ink-mute">
-                  {task.aspectRatio}
-                </span>
-                <Chip tone={task.status === 'completed' ? 'ok' : task.status === 'failed' ? 'danger' : 'brand'}>
-                  {task.status === 'completed' ? '已完成' : task.status === 'failed' ? '失败' : '生成中'}
-                </Chip>
-              </button>
-            ))}
+            {(recent?.items ?? []).map((task: VideoTask) => {
+              const queueItem = queueByTask.get(upstreamTaskId(task.externalId) ?? '') ?? null;
+              const hint = queueLabel(queueItem);
+              const shownProgress = liveTaskProgress(task.progress, queueItem);
+              const inFlight = isTaskInFlight(task);
+              return (
+                <button
+                  key={task.id}
+                  type="button"
+                  onClick={() => navigate('/tasks')}
+                  className="flex items-center gap-2.5 rounded-[9px] border border-line-soft bg-[#fcfefe] p-[7px] text-left transition-colors hover:border-line-strong"
+                >
+                  <CoverImage src={task.coverUrl} seed={task.id} className="h-[34px] w-11 shrink-0 rounded-md" />
+                  <div className="min-w-0 flex-1">
+                    <b className="block truncate text-xs font-semibold text-ink">{task.title}</b>
+                    <span className="block truncate text-micro text-ink-mute">{task.model}</span>
+                    {inFlight && hint ? (
+                      <span className="block truncate text-micro text-warn-deep" title={hint}>
+                        {hint}
+                      </span>
+                    ) : task.status === 'failed' && task.errorMessage ? (
+                      <span
+                        className="block truncate text-micro text-danger"
+                        title={task.errorMessage}
+                      >
+                        {task.errorMessage}
+                      </span>
+                    ) : null}
+                  </div>
+                  {/* 画幅是规格不是文字：等宽排，一列竖着扫就对得上 */}
+                  <span className="shrink-0 font-mono text-micro tabular-nums text-ink-mute">
+                    {task.aspectRatio}
+                  </span>
+                  <Chip tone={task.status === 'completed' ? 'ok' : task.status === 'failed' ? 'danger' : 'brand'}>
+                    {task.status === 'completed'
+                      ? '已完成'
+                      : task.status === 'failed'
+                        ? '失败'
+                        : `生成中 · ${shownProgress}%`}
+                  </Chip>
+                </button>
+              );
+            })}
           </div>
         </Panel>
       </div>

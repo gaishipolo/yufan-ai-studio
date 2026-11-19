@@ -10,6 +10,7 @@ import re
 from datetime import UTC, datetime
 from pathlib import Path
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.exceptions import BadRequest
@@ -186,6 +187,25 @@ class VideoTaskStore:
         task.progress = min(99, max(task.progress, progress))
         task.status = TaskStatus.RUNNING.value
         return True
+
+    async def extend_deadline(self, record_id: str) -> bool:
+        """上游还在排队：把墙钟起点挪到现在（`started_at` 就是 `_timed_out` 的锚点）。
+
+        只动起点，不动 `created_at`：真正的硬上限按建单时间算，挪起点不能绕过它。
+        """
+        task = await _guard(self.session, record_id)
+        if task is None:
+            return False
+        task.started_at = datetime.now(tz=UTC)
+        return True
+
+    async def list_claimed_external_ids(self) -> set[str]:
+        rows = (
+            await self.session.scalars(
+                select(VideoTask.external_id).where(VideoTask.external_id.is_not(None))
+            )
+        ).all()
+        return {ext for ext in rows if ext}
 
     async def mark_succeeded(
         self,

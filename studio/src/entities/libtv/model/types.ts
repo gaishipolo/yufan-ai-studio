@@ -21,9 +21,13 @@ export interface LibTvQueueItem {
   power: number;
   benefitTag: string;
   remainSeconds: number;
+  failedReason?: string;
   /** 后端拼好的一句话，前端别自己再拼一遍 */
   describe: string;
 }
+
+/** 队列位次只对这一个模型有意义（上游是 LibTV 的画布队列） */
+export const LIBTV_MODEL_ID = 'libtv-wan3-replacement';
 
 export interface LibTvAsset {
   usablePower: number;
@@ -90,4 +94,26 @@ export function queueLabel(item: LibTvQueueItem | null | undefined): string {
     return item.remainSeconds > 0 ? `上游限流 · 约 ${item.remainSeconds}s` : '上游限流中';
   }
   return '';
+}
+
+/** 从进行中的 LibTV 任务集合里抽出可批量查询的上游 taskId 列表。 */
+export function inFlightLibtvIds(
+  tasks: Array<{ status?: string; modelId?: string | null; externalId?: string | null }>,
+): string[] {
+  return tasks.flatMap(task => {
+    if ((task.status !== 'running' && task.status !== 'queued') || task.modelId !== LIBTV_MODEL_ID) {
+      return [];
+    }
+    const id = upstreamTaskId(task.externalId);
+    return id ? [id] : [];
+  });
+}
+
+/** 合并库内进度与上游实时进度（进行中只增不减且封顶 99，避免闪回）。 */
+export function liveTaskProgress(
+  taskProgress: number,
+  item: LibTvQueueItem | null | undefined,
+): number {
+  if (!item || item.status > 1) return taskProgress;
+  return Math.max(taskProgress, Math.min(99, item.percent));
 }

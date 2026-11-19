@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import sys
 
 
@@ -43,12 +44,20 @@ def cmd_check(args: argparse.Namespace) -> None:
     print("PASS")
 
 
+async def _auto_verdict(path, before):  # noqa: ANN001, ANN202 - 只在命令里用
+    """拉最近几页消费明细，交给 `auto_verdict` 检查是否已有已结算的上游任务可接回。"""
+    from modules.model_driver.libtv import account as libtv_account
+
+    return await libtv_account.auto_reconcile_verdict(
+        path, getattr(before, "created_at", None), before.browser_url or ""
+    )
+
+
 def cmd_libtv_reconcile(args: argparse.Namespace) -> None:
     """人工核对上游之后，把「提交回执未知」的 LibTV 档案解封或接回。"""
     import uuid
 
     from core.exceptions import AppError
-    from infra.archive import get_archive_storage
     from modules.model_driver.libtv import executor, process
     from modules.model_driver.libtv.reconcile import reconcile
 
@@ -57,15 +66,30 @@ def cmd_libtv_reconcile(args: argparse.Namespace) -> None:
         before = executor.state(path)
         # 非法组合由 reconcile 抛 BadRequest：原样报给用户、不打 traceback ——
         # 这条命令是核对完之后用的，报错要能直接照着做。
+        busy = process.executor_busy(path)
+        not_submitted = args.not_submitted
+        adopt_task = args.adopt_task or None
+        if args.auto:
+            # 消费流水只在成片结算后入账：仅能安全接回（adopt），未命中必须由人核对后解封。
+            verdict = asyncio.run(_auto_verdict(path, before))
+            print(f"自动对账：{verdict.describe()}")
+            if verdict.action == "adopt":
+                adopt_task = verdict.task_id
+            else:
+                print(
+                    "无法自动接回，请人工核对后用 --not-submitted / --adopt-task",
+                    file=sys.stderr,
+                )
+                raise SystemExit(1)
+
         after = reconcile(
             before,
-            not_submitted=args.not_submitted,
-            adopt_task=args.adopt_task or None,
+            not_submitted=not_submitted,
+            adopt_task=adopt_task,
             # 执行器还在跑时不许改账：桥接层随后写回 task_id 会和这里改过的状态打架
-            executor_busy=process.executor_busy(path),
+            executor_busy=busy,
         )
-        storage = get_archive_storage()
-        storage.write(path / "run.json", after.model_dump(mode="json"))
+        executor.save_state(path, after)
     except AppError as exc:
         print(f"未改动档案：{exc}", file=sys.stderr)
         raise SystemExit(1) from exc
@@ -78,7 +102,7 @@ def cmd_libtv_reconcile(args: argparse.Namespace) -> None:
     print(f"档案 {args.run_id}：{before.status} → {after.status}")
     if after.task_id:
         print(f"上游 task_id：{after.task_id}（账号 {after.browser_url or '默认'}）")
-    if args.adopt_task:
+    if after.task_id:
         print("下一步：任务页点「重新生成」——复用同一个上游任务继续查询，不会重新下单")
     else:
         print("下一步：任务页点「重新生成」——会重新上传素材并提交")
@@ -160,6 +184,11 @@ def register(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
         "--adopt-task",
         default="",
         help="核对后确认上游已在跑：填它的 task_id，之后重试只查询下载、不重新下单",
+    )
+    kind.add_argument(
+        "--auto",
+        action="store_true",
+        help="查消费明细自动尝试接回（仅命中时接回；在途未结算任务需人工核对后 --not-submitted）",
     )
     rescue.set_defaults(func=cmd_libtv_reconcile)
 

@@ -246,6 +246,7 @@ async def libtv_progress(
                     power=item.power,
                     benefit_tag=item.benefit_tag,
                     remain_seconds=item.remain_seconds,
+                    failed_reason=item.failed_reason,
                     describe=item.describe(),
                 )
                 for item in items

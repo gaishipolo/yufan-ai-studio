@@ -47,6 +47,7 @@ from generation.events import (
 )
 from generation.pipeline import (
     CoverAttachable,
+    DeadlineExtendable,
     GenerationPipeline,
     fail_on_model_gone,
     get_pipeline,
@@ -73,6 +74,9 @@ JOB_POLL = "generation.poll"
 
 _MAX_ERROR_LEN = 500
 _MAX_BACKOFF_SEC = 30.0
+# 免费队列排队动辄十几分钟，排队期间放宽轮询间隔（不浪费上游配额与本地线程），
+# 且不消耗 `generation_max_polls` 次数（仍受 3 小时墙钟硬上限兜底）。
+_QUEUED_POLL_INTERVAL_SEC = 15.0
 
 
 def _provider_for(pipeline: GenerationPipeline, model: str) -> ModelProvider:
@@ -483,6 +487,7 @@ class GenerationRunner:
         pipeline = get_pipeline(kind)
         factory = get_session_factory()
         next_delay: float | None = None
+        queued_wait = False
 
         try:
             budget = (job.timeout_sec or 120.0) * 0.8
@@ -642,13 +647,27 @@ class GenerationRunner:
                                 )
                                 return
                         else:
+                            # 「排队」不等于「在生成」：免费队列按名额串行、限流队列按上游
+                            # 节拍，把这段等待算进墙钟就等于「排得越久越容易被判超时」
+                            # （2026-11-17 任务 29dc66ae 因此在 48% 被判超时，上游其实正常）。
+                            queued_wait = bool(result.queued)
+                            extended = (
+                                await self._extend_deadline(store, record, kind, record_id)
+                                if queued_wait and isinstance(store, DeadlineExtendable)
+                                else False
+                            )
                             # 进度只增不减，且轮询期不报 100——供应商偶发回一个更小的值
                             # 会让用户看到进度条倒退；99 留给「已提交、还在等终态」。
                             progress = max(record.progress, min(99, result.progress))
-                            if progress != record.progress and await store.mark_progress(
-                                record_id, progress
-                            ):
+                            progress_updated = (
+                                progress != record.progress
+                                and await store.mark_progress(record_id, progress)
+                            )
+                            # 排队期间进度常常停在同一个百分比：必须独立提交 extend_deadline
+                            # 写入的 started_at，否则 session 退出即回滚、墙钟顺延会悄然失效。
+                            if progress_updated or extended:
                                 await session.commit()
+                            if progress_updated:
                                 await self._emit(
                                     EVT_GENERATION_PROGRESS,
                                     kind=kind,
@@ -656,7 +675,11 @@ class GenerationRunner:
                                     owner_id=record.owner_id,
                                     progress=progress,
                                 )
-                            next_delay = interval
+                            next_delay = (
+                                max(interval, _QUEUED_POLL_INTERVAL_SEC)
+                                if queued_wait
+                                else interval
+                            )
 
                 if pending is not None:
                     # 已经终态并提交，收尾失败只能留痕：这里再抛出去会被下面的
@@ -677,7 +700,8 @@ class GenerationRunner:
                 next_delay = self._backoff(polls)
 
         if next_delay is not None:
-            await self._schedule_poll(kind, record_id, polls=polls + 1, delay=next_delay)
+            next_polls = polls if queued_wait else polls + 1
+            await self._schedule_poll(kind, record_id, polls=next_polls, delay=next_delay)
 
     # ------------------------------------------------------------------ 内部
     async def _persist(self, kind: str, record_id: str, url: str | None) -> str | None:
@@ -1026,6 +1050,36 @@ class GenerationRunner:
         if isinstance(exc, AppError):
             return exc.retryable
         return True
+
+    async def _extend_deadline(
+        self,
+        store: DeadlineExtendable,
+        record: GenerationRecord,
+        kind: str,
+        record_id: str,
+    ) -> bool:
+        """上游还在排队：把墙钟起点挪到现在，但不超过硬上限。
+
+        上限按**建单时间**算，不是按挪过的起点算——否则一路顺延下去，
+        一个永远排不上的任务会既不失败也不出片，把列表和队列一起占死。
+        """
+        created = record.created_at
+        if created is not None:
+            if created.tzinfo is None:  # sqlite 读回来是 naive，按 UTC 解释
+                created = created.replace(tzinfo=UTC)
+            elapsed = (datetime.now(tz=UTC) - created).total_seconds()
+            if elapsed > settings.generation_max_wall_clock_sec:
+                logger.warning(
+                    "排队已超过硬上限 %d 秒，不再顺延 kind=%s id=%s",
+                    settings.generation_max_wall_clock_sec,
+                    kind,
+                    record_id,
+                )
+                return False
+        if await store.extend_deadline(record_id):
+            logger.info("上游仍在排队，顺延墙钟预算 kind=%s id=%s", kind, record_id)
+            return True
+        return False
 
     @staticmethod
     def _poll_interval(provider: ModelProvider) -> float:

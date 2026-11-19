@@ -56,6 +56,42 @@ class CoverAttachable(Protocol):
     ) -> bool: ...
 
 
+@runtime_checkable
+class DeadlineExtendable(Protocol):
+    """可选能力：把墙钟预算的起点挪到「现在」。
+
+    为什么单独一个协议：排队状态只对**异步长任务**有意义（同步供应商一次调用就出结果），
+    强行塞进 `GenerationStore` 会逼着每个实现都写一个空方法，而空方法最容易
+    写着写着就「看起来支持了」。用协议 + `isinstance` 探测，不支持就是真不支持
+    （口径见 `docs/HANDOFF.md` §5.5：可选能力别用 getattr 探测）。
+    """
+
+    async def extend_deadline(self, record_id: str) -> bool:
+        """顺延成功返回 True；记录不存在/已终态返回 False。"""
+        ...
+
+
+@runtime_checkable
+class ClaimedExternalIdQueryable(Protocol):
+    """可选能力：列举本流水线已被认领的供应商外部标识。
+
+    用于自动对账防串号：同一提示词可能对应多笔任务，必须先排除已被其它记录
+    认领走的外部任务号，防止未提交的那一单误接回另一单的成片。
+    """
+
+    async def list_claimed_external_ids(self) -> set[str]: ...
+
+
+async def list_claimed_external_ids(session: AsyncSession) -> set[str]:
+    """聚合所有已注册流水线当前认领的外部任务标识。"""
+    claimed: set[str] = set()
+    for kind in pipeline_kinds():
+        store = get_pipeline(kind).store(session)
+        if isinstance(store, ClaimedExternalIdQueryable):
+            claimed.update(await store.list_claimed_external_ids())
+    return claimed
+
+
 def strict_model(pipeline: GenerationPipeline) -> bool:
     """该流水线是否**禁止**「只有一个供应商就兜底」。未声明 = 允许。
 

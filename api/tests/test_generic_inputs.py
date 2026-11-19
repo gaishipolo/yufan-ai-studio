@@ -105,10 +105,12 @@ def test_materialize_writes_the_shape_both_drivers_read(archive_root: Path) -> N
 
     run = _read(folder, "run.json")
     assert run["status"] == "uploaded"
+    assert run["created_at"]
     assert run["file_checksums"]["inputs/0.png"] == entries[0]["sha256"]
     state = LibTVState.model_validate(run)
     assert state.preparation_ready is True
     assert state.framework_status == "queued"
+    assert state.created_at is not None
 
 
 def test_materialize_is_idempotent_and_keeps_upstream_receipt(archive_root: Path) -> None:

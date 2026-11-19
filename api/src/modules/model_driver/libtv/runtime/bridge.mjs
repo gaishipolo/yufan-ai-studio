@@ -12,6 +12,14 @@ export function canSubmit(meta) {
   return !meta.task_id && ['queued', 'uploading', 'uploaded', 'waiting_free', 'waiting_executor', 'needs_login', 'service_error'].includes(meta.status);
 }
 
+/* 上游 `status=0` 同时覆盖「排队」与「已开始生成」：只有带 `queueReason` 才是真排队。
+   这条规则与 Python 侧 `account.QueueItem.queued` 是同一个判断（框架据此顺延墙钟，
+   把排队算进生成超时就会误判超时）。两处必须一起改 —— 别只改一边。 */
+export function resolveStatus(progress) {
+  if (progress?.status === 0 && !progress?.queueReason) return 'running';
+  return {0:'queued',1:'running',2:'generated',3:'failed',4:'timeout'}[progress?.status];
+}
+
 /* SMB 共享盘上 `writeFile(tmp) + rename` 偶发 EPERM/EBUSY：那是瞬时文件锁，
    不是任务失败。只重放「可重放的写状态」动作；其它异常原样抛出，绝不把写失败
    伪装成成功。3 次仍失败就按原来的 ADAPTER_FAILED 处理。 */
@@ -50,6 +58,40 @@ async function creditsAdapterAvailable(vendor) {
   catch { return false; }
 }
 
+/* 画布上下文会变：captured 的 project_id 一旦落后于浏览器当前项目，
+   `create` 就以 `30001 账号状态已切换` 拒绝（2026-11-18 连挂两次就是这个）。
+   提交前按浏览器里**当前打开的画布**刷新一次，避免拿一个已被切走的项目下任务。 */
+async function currentCanvasProjectId() {
+  const endpoint = process.env.JS_REVERSE_BROWSER_URL;
+  if (!endpoint) return null;
+  try {
+    const response = await fetch(new URL('/json/list', endpoint), {signal: AbortSignal.timeout(4000)});
+    for (const tab of await response.json()) {
+      const match = /liblib\.tv\/canvas\?[^#]*projectId=([0-9a-f]{32})/i.exec(tab.url ?? '');
+      if (match) return match[1];
+    }
+  } catch {
+    // 浏览器没连上就别拦：create 自己会报一条更准确的错
+  }
+  return null;
+}
+
+/** 把 request.json 的 project_id 对齐到当前画布；没有画布可读时保持原样。 */
+async function alignCanvasProject(run, save) {
+  const projectId = await currentCanvasProjectId();
+  if (!projectId) {
+    /* 退回写死的旧 project_id 只会换来一句「30001 账号状态已切换」，
+       而真正要做的是让人把画布打开。说清楚，别让人去猜。 */
+    throw Error('读不到当前画布：请在该账号的浏览器里打开一个画布页（liblib.tv/canvas）后重试');
+  }
+  const file = path.join(run, 'inputs/request.json');
+  const request = JSON.parse(await readFile(file, 'utf8'));
+  if (request.metadata?.project_id === projectId) return projectId;
+  request.metadata = {...(request.metadata ?? {}), project_id: projectId};
+  await save(file, request);
+  return projectId;
+}
+
 let stage = 'verify';
 
 export async function main() {
@@ -80,8 +122,9 @@ export async function main() {
     if (compiled.prompt !== p.prompt || p.resolution !== '720P' || p.model !== 'wanx3.0'
       || p.modeType !== 'mixed2video' || p.count !== 1 || p.infiniteSwitch !== 1)
       throw Error('Unexpected credit request');
-    if (!Array.isArray(request.disableBenefitTags) || !request.disableBenefitTags.length)
-      throw Error('Credit request is missing the account zero-benefit tags');
+    /* `disableBenefitTags` 只在「账号当前有 0 积分权益」时才存在。活动到期后没有
+       标签可关，此时按普通积分队列提交是正确行为 —— 以前这里硬校验，等于权益
+       到期当天积分队列全线不可用（见 billing.mjs 的 accountCreditTags）。 */
     const estimate = await api.request('/api/task/generation/power/calculator', request);
     await save(path.join(run, 'records/estimate.json'), estimate);
     const cost = estimate.data?.power;
@@ -97,9 +140,13 @@ export async function main() {
     try {
       result = await api.request('/api/task/generation/create', {...request, riskControl: {requestToken: token}});
       await save(path.join(run, 'records/submission.json'), result);
-    } catch {
-      await update(run, {status: 'submission_unknown', last_error: 'CreateTask result unconfirmed; reconcile before retry'});
-      throw Error('Submission unknown; never automatically resubmit');
+    } catch (error) {
+      /* 真实原因必须落盘：以前这里 `catch {}` 把上游的 4xx 与业务码全吞了，
+         档案只剩一句「unknown」，人只能靠猜。原因会一路带到任务详情的 errorMessage。 */
+      const reason = String(error?.message ?? error).slice(0, 300);
+      await update(run, {status: 'submission_unknown',
+        last_error: `CreateTask unconfirmed: ${reason}`});
+      throw Error(`Submission unknown: ${reason}; never automatically resubmit`);
     }
     const id = result.data?.taskId ?? result.data?.task_id;
     if (!id) {
@@ -140,7 +187,7 @@ export async function main() {
       const response = await api.request('/api/task/generation/progress', {taskIds:[meta.task_id]});
       await save(path.join(run,'records/status.json'), response);
       const progress = response.data?.progresses?.find(item => String(item.taskId) === meta.task_id);
-      const status = {0:'queued',1:'running',2:'generated',3:'failed',4:'timeout'}[progress?.status];
+      const status = resolveStatus(progress);
       if (!status) throw Error('Unrecognized task status');
       /* 上游 progress.power 在排队/生成阶段恒为 0，结算后才回填。无条件覆盖会把
          提交时记下的真实扣费改写成 0，档案从此「看起来没花钱」。只在拿到正数时更新；
@@ -162,6 +209,7 @@ export async function main() {
       if (meta.task_id) return;
       if (meta.status !== 'uploaded') throw Error('Refusing duplicate or uncertain submission');
       stage = 'submit';
+      await alignCanvasProject(run, save);
       if (meta.billing_mode === 'credits') {await submitCredits(api, run, meta); return;}
       const result = await submit(api,run,meta.id,async () => true);
       if (result.state === 'waiting_free') await update(run,{status:'waiting_free'});
@@ -197,7 +245,8 @@ export async function main() {
       ratio:spec.aspect_ratio, resolution:'720P', duration:spec.duration, enableSound:'on', extendPrompt:0,
       infiniteSwitch:0, textList:[], imageList:[], imageLabelList:[], videoList:[], audioList:[],
       imageListV2:media.image, videoListV2:media.video, audioListV2:media.audio, mixedList:mixed},
-      metadata:{node_id:'v-6SIVysJx8O', project_id:'52c9de0f1ad24432927236bd9e3413c9'},
+      metadata:{node_id:'v-6SIVysJx8O',
+        project_id: (await currentCanvasProjectId()) ?? '52c9de0f1ad24432927236bd9e3413c9'},
       provider:'Wan', model:'wanx3.0', taskType:'video', requestId:randomUUID().replaceAll('-','')};
     const credits = meta.billing_mode === 'credits';
     if (credits) {

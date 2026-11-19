@@ -3903,6 +3903,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `power` | `number` | 否 |  |
 | `benefitTag` | `string` | 否 |  |
 | `remainSeconds` | `number` | 否 |  |
+| `failedReason` | `string` | 否 | 上游失败原因（status=3 时返回） |
 | `describe` | `string` | 否 | 给人看的一句话，省得前端自己拼 |
 
 ### `LibraryArchiveOut`

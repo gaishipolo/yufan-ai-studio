@@ -372,3 +372,84 @@ def test_other_adapter_errors_are_left_untouched(stage):
     assert explained is original
     assert explained.code == "ADAPTER_FAILED"
     assert libtv.explain_login_failure(original, None) is original
+
+
+async def test_poll_uses_lightweight_http_while_in_flight_and_surfaces_failed_reason(
+    monkeypatch, tmp_path
+):
+    from modules.model_driver.libtv import account as libtv_account
+
+    monkeypatch.setattr(libtv, "run_path", lambda _: tmp_path)
+    monkeypatch.setattr(libtv, "browser_for", lambda _: "http://127.0.0.1:9411")
+    monkeypatch.setattr(
+        libtv,
+        "state",
+        lambda _: LibTVState(id="a" * 32, task_id="upstream", status="queued"),
+    )
+
+    async def fail_if_spawned(*args):
+        raise AssertionError("进行中轮询不该启动 Node 子进程")
+
+    async def fake_progress(task_ids, account):
+        return [
+            libtv_account.QueueItem(
+                task_id="upstream",
+                status=0,
+                percent=35,
+                queue_reason="UNLIMITED_SERIAL",
+                queue_position=2,
+                queue_total=4,
+                queue_limit=10,
+                power=0,
+                benefit_tag="",
+            )
+        ]
+
+    monkeypatch.setattr(libtv, "execute_stage", fail_if_spawned)
+    monkeypatch.setattr(libtv_account, "progress", fake_progress)
+
+    in_flight = await LibTVProvider().poll("a" * 32 + ":upstream")
+    assert in_flight.state == GenerationState.RUNNING
+    assert in_flight.queued is True
+    assert in_flight.progress == 35
+
+    # 上游返回终态失败时走一次 execute_stage 落盘，并把 failedReason 原样透出到工作台。
+    states = iter(
+        [
+            LibTVState(id="a" * 32, task_id="upstream", status="queued"),
+            LibTVState(
+                id="a" * 32,
+                task_id="upstream",
+                status="failed",
+                progress_percent=100,
+                failed_reason="视频生成失败，积分将会在2小时内返还，请稍后重试",
+            ),
+        ]
+    )
+    monkeypatch.setattr(libtv, "state", lambda _: next(states))
+
+    async def terminal_progress(task_ids, account):
+        return [
+            libtv_account.QueueItem(
+                task_id="upstream",
+                status=3,
+                percent=100,
+                queue_reason="",
+                queue_position=0,
+                queue_total=0,
+                queue_limit=10,
+                power=0,
+                benefit_tag="",
+                failed_reason="视频生成失败，积分将会在2小时内返还，请稍后重试",
+            )
+        ]
+
+    async def fake_exec(*args):
+        return ExecutorResult(code="OK", stage="poll")
+
+    monkeypatch.setattr(libtv_account, "progress", terminal_progress)
+    monkeypatch.setattr(libtv, "execute_stage", fake_exec)
+
+    failed = await LibTVProvider().poll("a" * 32 + ":upstream")
+    assert failed.state == GenerationState.FAILED
+    assert failed.error == "LibTV 生成失败：视频生成失败，积分将会在2小时内返还，请稍后重试"

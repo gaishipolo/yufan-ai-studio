@@ -17,6 +17,8 @@ export interface TaskCardProps {
    * 而且「排队第几」属于生成链路的细节，卡片只负责显示。
    */
   queueHint?: string | null;
+  /** 上游实时进度覆盖值（进行中优先显示来自 LibTV 的最新百分比）。 */
+  liveProgress?: number;
 }
 
 const STATUS_STYLE: Record<VideoTask['status'], string> = {
@@ -32,8 +34,10 @@ export const TaskCard = memo(function TaskCard({
   onToggleSelect,
   onOpen,
   queueHint,
+  liveProgress,
 }: TaskCardProps) {
   const inFlight = task.status === 'running' || task.status === 'queued';
+  const shownProgress = liveProgress ?? task.progress;
 
   return (
     <article
@@ -117,14 +121,14 @@ export const TaskCard = memo(function TaskCard({
             <div className="mt-2 h-[3px] overflow-hidden rounded-full bg-line-soft">
               <i
                 className="block h-full rounded-full bg-[linear-gradient(90deg,#4f9dff,#12c4c8)] transition-[width] duration-500"
-                style={{ width: `${task.progress}%` }}
+                style={{ width: `${shownProgress}%` }}
               />
             </div>
             <div className="mt-2 flex items-center justify-between gap-2 text-micro text-ink-mute">
               <Chip tone="primary" className="max-w-[70%] truncate">
                 {task.model}
               </Chip>
-              <span className="shrink-0 font-mono tabular-nums">{task.progress}%</span>
+              <span className="shrink-0 font-mono tabular-nums">{shownProgress}%</span>
             </div>
             {/* 「48% 卡了半小时」和「排第 3 位」看起来完全一样，差别只有上游知道。
                 有排队信息时就补一行，没有就不占位。 */}
