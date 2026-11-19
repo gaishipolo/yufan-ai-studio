@@ -9,7 +9,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Protocol, runtime_checkable
@@ -189,6 +189,28 @@ class SubmitBudget(Protocol):
     """提交这一步的预算（秒）。没声明按框架默认值。"""
 
     submit_timeout_sec: float
+
+
+@runtime_checkable
+class PromptTranslation(Protocol):
+    """可选能力：把素材占位符翻成供应商看得懂的指代。
+
+    `Mixed N` 是本项目的模板语法，供应商不认识它。能翻译的驱动实现这个方法，
+    在提交前调用；`entries` 是按编号顺序排好的素材清单，每项至少带 `type`
+    （image / video / audio），因为上游常按类型分别编号。
+
+    这是**可选**能力：没有这个方法的驱动（纯文生、echo、Local 执行器）直接用
+    原样提示词。签名统一在这里，是为让"怎么写"只有一个答案 —— 各驱动文件里
+    的同名方法照它实现，别各写一套参数顺序。
+
+    返回 `None` 的语义由调用方的兜底决定（见 `prompt_refs.translate_or_original`）：
+    没有可用素材、或驱动判断无需翻译时，保留原样。
+    """
+
+    def translate_prompt(
+        self, prompt: str, entries: Sequence[Mapping[str, Any]]
+    ) -> str | None:
+        ...
 
 
 @runtime_checkable

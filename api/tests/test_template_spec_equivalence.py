@@ -9,50 +9,19 @@
 这条用例是 P3 迁移脚本的验收依据：迁移只要让两种构造在本用例下给出同一结果，
 就不会改语义。
 
-**为什么三视图那一组是「用户填」**：旧模板的 `media_order` 是发布时定死的，
-对应新模型里的 `binding=fixed`。但固定槽位只指向**一个**素材，一组三视图只能
-由使用者在填表时挑（`min/max` 可多值）—— 编号仍然由 position + 实际填充量
-算出来，与旧链路的「下标 +1」等价。
+**为什么三个视觉槽各自一张**：旧模板的 `media_order` 把一组三视图记成三个下标，
+一槽一张后对应的就是三个各填一张的槽位。编号仍由 position 算出，与旧链路的
+"下标 +1" 逐项相等。这里直接构造 core 对象调 `compile_spec` 验证，不依赖写入 API。
 """
 
 from __future__ import annotations
 
-from typing import Any
+from core.template_spec import FilledAsset, FilledSlot, InputSlot, TemplateSpec, compile_spec
 
-from fastapi.testclient import TestClient
-from library_support import LIB_RW, admin_headers, make_user, suffix
-from tests_template_helpers import png_bytes, upload, video_bytes
-
-API = "/api/v1/template-specs"
-PERMS = ["template_pack:read", "template_pack:create", "template_pack:publish", *LIB_RW]
 MODEL = "libtv-wan3-replacement"
 
-#: 用户填的图片槽位必须带一级标签（发布前校验）。这些用例不关心标签本身，
-#: 用同一个占位 id —— 发布只检查"有没有给"。
-_TAG = "tag-equiv-tests"
 
-
-def _headers(client: TestClient) -> dict[str, str]:
-    admin = admin_headers(client)
-    _, headers = make_user(client, admin, PERMS)
-    return headers
-
-
-def _assets(client: TestClient, headers: dict[str, str]) -> tuple[str, list[str]]:
-    """一支原片 + 三张图，返回 `(video_id, [front, multiview, detail])`。"""
-    video = upload(
-        client, f"clip-{suffix()}.mp4", "source", video_bytes(2, audio=True), headers=headers
-    )
-    images = [
-        str(upload(client, f"{name}-{suffix()}.png", "image", png_bytes(), headers=headers)["id"])
-        for name in ("front", "multiview", "detail")
-    ]
-    return str(video["id"]), images
-
-
-def _legacy(
-    video: str, images: list[str]
-) -> list[tuple[str, str | None, str]]:
+def _legacy(video: str, images: list[str]) -> list[tuple[str, str | None, str]]:
     """旧模板 `media_order` 的**冻结快照**：`[(token, asset_id, role)]`。
 
     这批常量来自 `cb9122d` 之前的 `video_templates.media_order`（旧链路已下线，
@@ -70,75 +39,54 @@ def _legacy(
     return ordered
 
 
-def _spec_draft(video: str, *, key: str) -> dict[str, Any]:
-    return {
-        "key": key,
-        "name": "等价性规格",
-        "model": MODEL,
-        "params": {},
-        "prompt": "把 {{slot:source}} 换成 {{slot:views*}}",
-        "slots": [
-            {
-                "key": "source",
-                "type": "video",
-                "binding": "fixed",
-                "assetId": video,
-                "position": 0,
-                "label": "原片",
-            },
-            {
-                "key": "views",
-                # 一组多图 = 一个可多值的图片槽位：使用者挑几张就占几个号。
-                "type": "image",
-                "binding": "user",
-                "tagIds": [_TAG],
-                "minCount": 1,
-                "maxCount": 3,
-                "position": 1,
-                "label": "产品三视图",
-            },
-        ],
-    }
+def test_compile_reproduces_legacy_media_order() -> None:
+    """`compile` 的编号与素材序列必须和旧 `media_order` 一致。
 
-
-def _compile(
-    client: TestClient,
-    headers: dict[str, str],
-    draft: dict[str, Any],
-    slot_values: dict[str, list[str]],
-) -> dict[str, Any]:
-    assert client.post(API, json=draft, headers=headers).status_code == 200
-    published = client.post(f"{API}/{draft['key']}/publish", headers=headers)
-    assert published.status_code == 200, published.text
-    body = client.post(
-        f"{API}/{draft['key']}/compile",
-        json={"slotValues": slot_values},
-        headers=headers,
-    )
-    assert body.status_code == 200, body.text
-    return body.json()["data"]
-
-
-def test_compile_reproduces_legacy_media_order(client: TestClient) -> None:
-    """`compile` 的编号与素材序列必须和旧 `media_order` 一致。"""
-    headers = _headers(client)
-    video, images = _assets(client, headers)
+    一槽一张后，旧模板里"一个多值槽放三张"改成"三个各一张的槽位"，编号
+    1/2/3/4 仍与旧 `media_order` 逐项相等 —— 这正是迁移要保证的东西。
+    """
+    video = "v-source"
+    images = ["i-front", "i-multiview", "i-detail"]
     legacy = _legacy(video, images)
 
-    compiled = _compile(
-        client,
-        headers,
-        _spec_draft(video, key=f"equiv-{suffix()}"),
-        {"views": images},
+    spec = TemplateSpec(
+        key="equiv",
+        name="等价性规格",
+        model=MODEL,
+        slots=(
+            InputSlot(
+                key="source", type="video", binding="fixed", asset_id=video, position=0,
+                label="原片",
+            ),
+            InputSlot(
+                key="front", type="image", binding="user", position=1, label="正面",
+            ),
+            InputSlot(
+                key="multiview", type="image", binding="user", position=2, label="三视图",
+            ),
+            InputSlot(
+                key="detail", type="image", binding="user", position=3, label="细节",
+            ),
+        ),
+        prompt=(
+            "把 {{slot:source}} 换成 {{slot:front}}、"
+            "{{slot:multiview}}、{{slot:detail}}"
+        ),
     )
+    fills = {
+        "source": FilledSlot(slot_key="source", assets=(FilledAsset(video, "video"),)),
+        "front": FilledSlot(slot_key="front", assets=(FilledAsset(images[0], "image"),)),
+        "multiview": FilledSlot(
+            slot_key="multiview", assets=(FilledAsset(images[1], "image"),)
+        ),
+        "detail": FilledSlot(slot_key="detail", assets=(FilledAsset(images[2], "image"),)),
+    }
+    compiled = compile_spec(spec, fills)
 
-    # 旧：编号就是 `media_order` 的下标 +1；新：编号由 position + 填充量算。
-    assert compiled["referenceLibraryIds"] == [asset for _token, asset, _role in legacy]
-    assert compiled["prompt"] == "把 {{Mixed 1}} 换成 {{Mixed 2}}、{{Mixed 3}}、{{Mixed 4}}"
-
-    per_slot = {item["key"]: (item["tokens"], item["assetIds"]) for item in compiled["slots"]}
-    assert per_slot["source"] == (["{{Mixed 1}}"], [video])
-    assert per_slot["views"] == (
-        ["{{Mixed 2}}", "{{Mixed 3}}", "{{Mixed 4}}"],
-        images,
-    )
+    # 旧：编号就是 `media_order` 的下标 +1；新：编号由 position + 每槽一张算。
+    assert list(compiled.reference_ids) == [asset for _token, asset, _role in legacy]
+    assert compiled.prompt == "把 {{Mixed 1}} 换成 {{Mixed 2}}、{{Mixed 3}}、{{Mixed 4}}"
+    assert compiled.slot_tokens["source"] == ("{{Mixed 1}}",)
+    assert [compiled.slot_tokens[key] for key in ("front", "multiview", "detail")] == [
+        ("{{Mixed 2}}",), ("{{Mixed 3}}",), ("{{Mixed 4}}",)
+    ]

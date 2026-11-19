@@ -66,7 +66,12 @@ from urllib.parse import urlsplit
 import httpx
 
 from core.exceptions import BadRequest, UpstreamError
-from core.prompt_refs import REFERENCE_LABELS, REFERENCE_TYPES, translate_prompt
+from core.prompt_refs import (
+    REFERENCE_LABELS,
+    REFERENCE_TYPES,
+    translate_or_original,
+    translate_prompt,
+)
 from infra.ai.base import (
     Capability,
     GenerationProgress,
@@ -265,7 +270,11 @@ def _validated_inputs(folder: Path, model: str) -> tuple[dict, list[Path], list[
     if duration + totals["video"] > 30:
         raise BadRequest("百炼输入视频与输出视频总时长不能超过30秒")
 
-    prompt = translate_prompt(prompt, entries)
+    # 本驱动暴露的标准翻译方法就是模块级 `translate_prompt`（与替换链共享同一
+    # 实现，见 test_prompt_translation_is_shared_with_the_replacement_chain）。
+    # 走 `translate_or_original` 是统一调用约定：将来若某个渠道没有可翻译的
+    # 素材类型，传入 None 就能安全退回原样提示词。
+    prompt = translate_or_original(prompt, entries, translate_prompt)
     if not prompt.strip() and not files:
         raise BadRequest("百炼提示词和素材不能同时为空")
     payload = {

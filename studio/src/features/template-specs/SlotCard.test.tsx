@@ -97,7 +97,6 @@ describe('槽位卡片', () => {
     expect(screen.getByRole('img', {name: '图片'})).toBeInTheDocument();
     // 低频项默认不渲染
     expect(screen.queryByLabelText('类型')).not.toBeInTheDocument();
-    expect(screen.queryByText('最少')).not.toBeInTheDocument();
   });
 
   it('点「更多设置」才展开低频项', async () => {
@@ -106,8 +105,9 @@ describe('槽位卡片', () => {
     await user.click(screen.getByRole('button', {name: '展开更多设置'}));
 
     expect(screen.getByLabelText('类型')).toBeInTheDocument();
-    expect(screen.getByText('最少')).toBeInTheDocument();
-    expect(screen.getByText('最多')).toBeInTheDocument();
+    // 数量框已移除：一槽固定一张，必填/可选由主行的开关表达，不再有「最少/最多」。
+    expect(screen.queryByText('最少')).not.toBeInTheDocument();
+    expect(screen.queryByText('最多')).not.toBeInTheDocument();
     // 展开后按钮变成「收起」
     expect(screen.getByRole('button', {name: '收起更多设置'})).toBeInTheDocument();
   });
@@ -221,7 +221,7 @@ describe('槽位卡片', () => {
 
     await user.click(screen.getByRole('button', {name: '必填'}));
     expect(onPatch).toHaveBeenCalledWith(
-      expect.objectContaining({minCount: 1, maxCount: 2}),
+      expect.objectContaining({minCount: 1, maxCount: 1}),
     );
   });
 

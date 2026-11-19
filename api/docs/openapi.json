@@ -13055,14 +13055,14 @@
           },
           "minCount": {
             "type": "integer",
-            "maximum": 10.0,
+            "maximum": 1.0,
             "minimum": 0.0,
             "title": "Mincount",
             "default": 1
           },
           "maxCount": {
             "type": "integer",
-            "maximum": 10.0,
+            "maximum": 1.0,
             "minimum": 1.0,
             "title": "Maxcount",
             "default": 1
@@ -13158,14 +13158,14 @@
           },
           "minCount": {
             "type": "integer",
-            "maximum": 10.0,
+            "maximum": 1.0,
             "minimum": 0.0,
             "title": "Mincount",
             "default": 1
           },
           "maxCount": {
             "type": "integer",
-            "maximum": 10.0,
+            "maximum": 1.0,
             "minimum": 1.0,
             "title": "Maxcount",
             "default": 1

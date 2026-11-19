@@ -331,6 +331,10 @@ def _validate_slot(slot: InputSlot) -> None:
         raise BadRequest(f"槽位「{slot.key}」的数量范围无效")
     if slot.min_count > slot.max_count:
         raise BadRequest(f"槽位「{slot.key}」的最小数量不能大于最大数量")
+    # 一槽一张在**写入契约**收紧（spec_schema 的 le=1），这里不重复拒：
+    # 编译算法仍支持多值（test_template_spec_compile.py 守卫它的正确性），
+    # 那些用例就是靠直接构造 InputSlot 绕过契约层来测的。真实用户写不进
+    # 多值 spec，所以入口已经封死，不需要在这里再挡一道。
     if slot.type == "audio" and slot.binding == "user" and slot.max_count > 3:
         raise BadRequest(f"音频槽位「{slot.key}」最多 3 段")
     # 标签只约束候选集，不参与编译；这里只拦"明显不是 id 的字符串"，

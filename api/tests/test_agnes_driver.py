@@ -107,6 +107,29 @@ async def test_image_to_image_sends_references_in_extra_body(
     ]
 
 
+async def test_mixed_placeholders_are_translated_before_submit(
+    captured: dict[str, Any],
+) -> None:
+    """图生图时 `{{Mixed N}}` 要翻成「图N」再发，否则模型收到字面量看不懂。"""
+    await AgnesDriver().submit(
+        _request(
+            prompt="参照 {{Mixed 1}} 的配色，保留 {{Mixed 2}} 的轮廓",
+            reference_urls=("https://example.com/a.png", "https://example.com/b.png"),
+        )
+    )
+    assert captured["payload"]["prompt"] == "参照 图1 的配色，保留 图2 的轮廓"
+
+
+async def test_prompt_without_mixed_is_sent_unchanged(
+    captured: dict[str, Any],
+) -> None:
+    """没有占位符的普通提示词原样发（翻译是无操作的兜底）。"""
+    await AgnesDriver().submit(
+        _request(prompt="a white cup", reference_urls=("https://example.com/a.png",))
+    )
+    assert captured["payload"]["prompt"] == "a white cup"
+
+
 async def test_reference_order_is_preserved_and_deduped(
     captured: dict[str, Any],
 ) -> None:

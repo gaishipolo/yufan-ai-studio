@@ -27,6 +27,7 @@
 
 from __future__ import annotations
 
+from core.prompt_refs import translate_prompt
 from infra.ai.base import (
     Capability,
     GenerationProgress,
@@ -69,6 +70,21 @@ class TemplateDriver:
     capabilities = frozenset({Capability.IMAGE})
     models = MODELS
     supports_poll = True
+
+    def translate_prompt(self, prompt: str, entries: list[dict]) -> str | None:
+        """可选：把 `{{Mixed N}}` 翻成供应商看得懂的「图1 / 视频2」。
+
+        本模板直接复用共享实现（与百炼、替换链同一份），签名见
+        `infra.ai.base.PromptTranslation`。没有参考素材的驱动可以整个删掉本方法，
+        调用方会退回原样提示词。在 submit 里这样用：
+
+            prompt = translate_or_original(
+                request.prompt, entries, self.translate_prompt
+            )
+
+        `entries` 按编号顺序、每项带 `type`（image / video / audio）。
+        """
+        return translate_prompt(prompt, entries)
 
     # 可选：单次提交最多等多久（秒）。同步出图的驱动**必须**声明，且不小于
     # 上游最长耗时——框架默认 120 秒先到点会取消提交，任务重投时「有提交意图、

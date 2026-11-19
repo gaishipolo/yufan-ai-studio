@@ -88,7 +88,7 @@ def _draft(
                 "binding": "user",
                 "tagIds": [_TAG],
                 "minCount": 0,
-                "maxCount": 2,
+                "maxCount": 1,
                 "position": 2,
                 "label": "细节",
             },

@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { ChevronDown, GripVertical, Trash2 } from 'lucide-react';
 import { AssetChip } from '@/entities/library/ui/AssetChip';
 import type { SpecSlotIn } from '@/shared/api/schema';
-import { Button, FormField, MultiSelect, Select, TextInput } from '@/shared/ui';
+import { Button, FormField, MultiSelect, Select } from '@/shared/ui';
 import { cn } from '@/shared/lib/cn';
 import {
   SLOT_TYPE_LABELS,
@@ -66,7 +66,6 @@ export function SlotCard({
   // 一级标签只对「让用户挑的图片/视频」有意义：模板库按「标签 · 槽位名」分组
   // 给候选素材，文本/音频走各自的选择器，固定槽位作者已经选死。
   const needsTag = type === 'image' || type === 'video';
-  const showCount = (slot.binding ?? 'user') === 'user' && type !== 'text';
   const name = slot.label?.trim() || `${SLOT_TYPE_LABELS[type]} ${index + 1}`;
   const TypeIcon = SLOT_TYPE_ICONS[type];
   /* 可选 = `minCount === 0`。**不加独立的 `required` 字段**：两个事实源
@@ -311,26 +310,6 @@ export function SlotCard({
                 emptyText="还没有标签"
               />
             </FormField>
-          )}
-          {showCount && (
-            <>
-              <FormField label="最少" htmlFor="slot-min">
-                <TextInput
-                  id="slot-min"
-                  value={String(slot.minCount ?? 1)}
-                  onChange={event => onPatch({minCount: Number(event.target.value || 0)})}
-                  className="text-center"
-                />
-              </FormField>
-              <FormField label="最多" htmlFor="slot-max">
-                <TextInput
-                  id="slot-max"
-                  value={String(slot.maxCount ?? 1)}
-                  onChange={event => onPatch({maxCount: Number(event.target.value || 1)})}
-                  className="text-center"
-                />
-              </FormField>
-            </>
           )}
           {/* 文本槽位「占 {{Text N}}」、音频槽位「不占编号」这类**类型属性**
               已经写进类型下拉的选项名里（见 SpecWorkspace 的 TYPE_OPTIONS），

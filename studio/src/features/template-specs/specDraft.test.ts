@@ -449,9 +449,9 @@ describe('必填 / 可选', () => {
     expect(patch).toEqual({minCount: 0, maxCount: 1});
   });
 
-  it('切回必填时最少数至少是 1', () => {
+  it('切回必填把最少数拉回 1，最多数恒为 1（一槽一张）', () => {
     const patch = setSlotOptional({minCount: 0, maxCount: 3} as SpecSlotIn, false);
-    expect(patch).toEqual({minCount: 1, maxCount: 3});
+    expect(patch).toEqual({minCount: 1, maxCount: 1});
   });
 
   it('最多数是 0 的怪状态也会被拉回 1（不然没法选任何东西）', () => {

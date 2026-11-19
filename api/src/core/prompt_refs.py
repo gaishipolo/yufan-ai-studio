@@ -12,7 +12,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 from core.exceptions import BadRequest
@@ -25,12 +25,32 @@ REFERENCE_TYPES = {
 }
 REFERENCE_LABELS = {"video": "视频", "image": "图", "audio": "音频"}
 
-# 两种写法都认：`{{Mixed 1}}` 是模板语法，裸 `Mixed 1` 是人写的提示词。
-# 前后不能紧贴字母数字，否则 `Mixed 10` 会被 `Mixed 1` 半截匹配，也会误伤
-# 正常单词里出现的 `Mixed`。
-_REFERENCE = re.compile(
-    r"\{\{\s*Mixed\s+(\d+)\s*\}\}|(?<![A-Za-z0-9_])Mixed\s+(\d+)(?!\d)"
-)
+# 只认模板语法 `{{Mixed N}}`。裸 `Mixed 1` 是**普通文本**，不翻译也不报错 ——
+# 它可能是作者写在提示词里的自然语言（"参考 Mixed 1 这个型号"），此前把它
+# 当引用会在"恰好有对应编号"时被悄悄改写、在"编号越界"时突然 400，同一个
+# 提示词两种坏结局，且都跟用户的输入毫无关系。
+_REFERENCE = re.compile(r"\{\{\s*Mixed\s+(\d+)\s*\}\}")
+
+
+def translate_or_original(
+    prompt: str,
+    entries: Sequence[Mapping[str, Any]],
+    translate: Callable[[str, Sequence[Mapping[str, Any]]], str | None] | None,
+) -> str:
+    """按驱动提供的翻译方法转换占位符；没有或没返回就用原样提示词。
+
+    这是"每个驱动决定自己怎么翻译"的**统一调用约定**：驱动把自己的
+    `translate_prompt`（可能没有）传进来，这里负责兜底 —— 缺方法、或方法判断
+    无需翻译而返回 `None`，都保留 `prompt` 原文。这样新接一个纯文生驱动时，
+    它什么都不做就是正确行为，不必为了接口补一个空实现。
+
+    注意 `translate` 抛出的错误原样透出（例如引用了不存在的编号）：那是真实
+    的配置错，吞掉会变成"提示词悄悄不对"。
+    """
+    if translate is None:
+        return prompt
+    converted = translate(prompt, entries)
+    return prompt if converted is None else converted
 
 
 def translate_prompt(prompt: str, entries: Sequence[Mapping[str, Any]]) -> str:
@@ -40,8 +60,9 @@ def translate_prompt(prompt: str, entries: Sequence[Mapping[str, Any]]) -> str:
     提示词里说「图2」指的是图片数组的第 2 个，不是素材列表的第 2 个。
     所以 `entries` 的顺序必须与上传顺序一致，否则指代整体错位。
 
-    幂等：翻译后的文本里不再有 `Mixed N`，再调一次原样返回——档案里已经是
-    编译后的文本，驱动不该因为「又翻了一遍」而报「引用了不存在的素材」。
+    幂等：翻译后的文本里不再有 `{{Mixed N}}`，再调一次原样返回——档案里已经
+    是编译后的文本，驱动不该因为「又翻了一遍」而报「引用了不存在的素材」。
+    裸写的 `Mixed N` 不参与翻译（当普通文本），越界也不报错。
     """
     counts: dict[str, int] = dict.fromkeys(REFERENCE_TYPES, 0)
     references: dict[str, str] = {}
@@ -53,7 +74,7 @@ def translate_prompt(prompt: str, entries: Sequence[Mapping[str, Any]]) -> str:
         references[f"Mixed {index}"] = f"{REFERENCE_LABELS[str(kind)]}{counts[str(kind)]}"
 
     def replace(match: re.Match[str]) -> str:
-        token = f"Mixed {int(match[1] or match[2])}"
+        token = f"Mixed {int(match[1])}"
         if token not in references:
             raise BadRequest("提示词引用了不存在的 Mixed 素材")
         return references[token]

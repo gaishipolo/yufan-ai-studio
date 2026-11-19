@@ -66,6 +66,7 @@ from core.exceptions import (
     UpstreamError,
 )
 from core.logging import get_logger
+from core.prompt_refs import translate_or_original, translate_prompt
 from infra.ai.base import (
     Capability,
     GenerationProgress,
@@ -205,6 +206,14 @@ class AgnesDriver:
         model = request.model or config.model
         _require_single_image(request.params.get("count", 1))
         references = _reference_images(request.reference_urls)
+        # 本驱动暴露的标准翻译方法就是模块级 `translate_prompt`（与百炼、替换链
+        # 共享同一实现）。把 `{{Mixed N}}` 翻成「图1、图2」再发给图像模型 ——
+        # 否则模型收到的是字面量 `{{Mixed 1}}`，完全看不懂。Agnes 只收图片，
+        # 所以 entries 全是 image；走 helper 是统一调用约定（没素材时原样）。
+        entries = [{"type": "image"} for _ in references]
+        prompt = translate_or_original(
+            request.prompt, entries, translate_prompt if references else None
+        )
 
         # response_format 必须嵌在 extra_body 里；放顶层会被上游拒绝。
         extra: dict[str, Any] = {"response_format": "url"}
@@ -215,7 +224,7 @@ class AgnesDriver:
 
         payload: dict[str, Any] = {
             "model": model,
-            "prompt": request.prompt,
+            "prompt": prompt,
             "size": str(request.params.get("size") or "1024x1024"),
             "extra_body": extra,
         }

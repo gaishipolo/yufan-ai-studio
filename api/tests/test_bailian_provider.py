@@ -14,7 +14,7 @@ def workspace(tmp_path, monkeypatch):
     (tmp_path / "inputs").mkdir()
     (tmp_path / "records").mkdir()
     (tmp_path / "inputs/prompt.txt").write_text(
-        "将{{Mixed 1}}的人替换为Mixed 2，参考Mixed 3", encoding="utf-8"
+        "将{{Mixed 1}}的人替换为{{Mixed 2}}，参考{{Mixed 3}}", encoding="utf-8"
     )
     (tmp_path / "inputs/prompt-spec.json").write_text(
         json.dumps({"duration": 5, "aspect_ratio": "9:16"}), encoding="utf-8"
@@ -258,11 +258,29 @@ async def test_poll_bounded_download_removes_partial_file_and_keeps_task(workspa
 
 def test_translate_prompt_is_idempotent_and_rejects_unknown_references():
     entries = [{"type": "image"}, {"type": "video"}, {"type": "audio"}, {"type": "image"}]
-    actual = bailian.translate_prompt("{{Mixed 2}}参照Mixed 1和Mixed 4，声音Mixed 3", entries)
+    actual = bailian.translate_prompt(
+        "{{Mixed 2}}参照{{Mixed 1}}和{{Mixed 4}}，声音{{Mixed 3}}", entries
+    )
     assert actual == "视频1参照图1和图2，声音音频1"
     assert bailian.translate_prompt(actual, entries) == actual
     with pytest.raises(BadRequest, match="不存在"):
-        bailian.translate_prompt("Mixed 5", entries)
+        bailian.translate_prompt("{{Mixed 5}}", entries)
+
+
+def test_bare_mixed_is_plain_text_not_a_reference():
+    """裸 `Mixed N` 是普通文本：不翻译、越界也不报错。
+
+    同一个裸写提示词，以前"恰好有编号时被改写、越界时突然 400"两种坏结局，
+    都跟用户输入无关。现在一律原样透传。
+    """
+    entries = [{"type": "image"}, {"type": "video"}]
+    assert bailian.translate_prompt("这个是 Mixed 1 型号，参照 Mixed 9", entries) == (
+        "这个是 Mixed 1 型号，参照 Mixed 9"
+    )
+    # 正式写法在同一段里照常翻译，两者互不影响。
+    assert bailian.translate_prompt("参照 {{Mixed 2}} 与 Mixed 9", entries) == (
+        "参照 视频1 与 Mixed 9"
+    )
 
 
 @pytest.mark.parametrize("kind,meta,message", [

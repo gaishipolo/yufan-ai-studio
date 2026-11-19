@@ -146,14 +146,14 @@ export function textsToClearForRequired(slot: SpecSlotIn): {
  */
 export function setSlotOptional(slot: SpecSlotIn, optional: boolean): Partial<SpecSlotIn> {
   if ((slot.binding ?? 'user') === 'fixed') return {};
+  // 一个槽位固定一张：切必填/可选只动 minCount（1 / 0），maxCount 恒为 1。
+  // 不再沿用旧值 —— 老草稿里可能还留着 maxCount=2，切一次就该收敛成一张。
   if (optional) {
-    // 可选 = 最少 0 张。从「必填」切过来时，最少数改成 0；
-    // 最多数不能是 0（那就没法选任何东西了），所以至少留 1。
-    return {minCount: 0, maxCount: Math.max(1, slot.maxCount ?? 1)};
+    return {minCount: 0, maxCount: 1};
   }
   return {
-    minCount: Math.max(1, slot.minCount ?? 0),
-    maxCount: Math.max(1, slot.maxCount ?? 1),
+    minCount: 1,
+    maxCount: 1,
     ...(textsToClearForRequired(slot) ?? {}),
   };
 }

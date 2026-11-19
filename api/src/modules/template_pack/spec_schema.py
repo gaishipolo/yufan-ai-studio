@@ -21,7 +21,6 @@ from core.template_spec import (
     EXECUTION_PROMPT_LIMIT,
     MAX_ALLOWED_MODELS,
     MAX_PROMPT,
-    MAX_SLOT_REFS,
     MAX_SLOT_TAGS,
     MAX_SLOTS,
     RefMode,
@@ -49,8 +48,11 @@ class SpecSlotIn(StrictIn):
     type: SlotType
     binding: SlotBinding = "user"
     ref_mode: RefMode = "mixed"
-    min_count: int = Field(default=1, ge=0, le=MAX_SLOT_REFS)
-    max_count: int = Field(default=1, ge=1, le=MAX_SLOT_REFS)
+    #: 一槽一张：`min` 只有 0（可选）/ 1（必填），`max` 恒为 1。
+    #: 硬约束而非读入时钳制 —— 库里已无多值槽位（迁移 `4e06879f9f75` 清掉了
+    #: 最后两个多值 e2e 模板），传 >1 就是真错，应当 422 让人看见。
+    min_count: int = Field(default=1, ge=0, le=1)
+    max_count: int = Field(default=1, ge=1, le=1)
     label: str = Field(default="", max_length=80)
     asset_id: str | None = Field(default=None, max_length=32)
     #: **选中时文案**：使用者填了素材时，提示词里这一段怎么说。
