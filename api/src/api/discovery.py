@@ -23,6 +23,7 @@ from types import ModuleType
 from api.module import ModuleSpec
 from core.exceptions import AppError
 from core.logging import get_logger
+from core.pages import page_catalog
 from core.permissions import catalog
 from core.ports.library_references import declare_expected_library_reference_sources
 
@@ -104,6 +105,16 @@ def discover_modules(package_name: str = MODULES_PACKAGE) -> tuple[ModuleSpec, .
         if spec.permissions:
             catalog.declare(*spec.permissions)
 
+    # 页面目录：先收页面，再把页面权限点并进同一个权限目录。
+    # 两件事必须一起做 —— 只收页面而不进目录，管理员在角色界面根本勾不到它；
+    # 只进目录而不收页面，门控就没有「接口码 → 页面」的反查索引。
+    # 顺序（模块权限点在前）是为了让「模块与页面撞码」报在 declare 的冲突分支里，
+    # 而不是被页面覆盖成一条看不出归属的记录。
+    pages = [page for spec in specs for page in spec.pages]
+    if pages:
+        page_catalog.declare(*pages)
+        catalog.declare(*[page.permission for page in pages])
+
     # 引用来源是「必须接上」的声明：在这里并入期望集合，删除接口才能做完备性对账。
     # 模块 import 期注册的是实现，两者缺一都会让删除 fail-closed（503）。
     declare_expected_library_reference_sources(specs)
@@ -125,6 +136,7 @@ def reset_discovery_cache() -> None:
     """仅测试使用：允许新增/删除模块后重新扫描。"""
     discover_modules.cache_clear()
     catalog.clear()
+    page_catalog.clear()
 
 
 def describe() -> list[dict[str, object]]:
@@ -137,6 +149,7 @@ def describe() -> list[dict[str, object]]:
             "enabled": spec.enabled,
             "routes": len(spec.router.routes),
             "permissions": sorted(spec.permission_codes()),
+            "pages": sorted(spec.page_codes()),
         }
         for spec in discover_modules()
     ]

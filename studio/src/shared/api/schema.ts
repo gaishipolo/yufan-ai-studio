@@ -276,7 +276,11 @@ export interface EffectivePermissionsOut {
   personal?: string[];
   /** 现有角色授予的权限 */
   roles?: string[];
-  /** 四层并集；`*` 表示超级管理员。require() 唯一判据 */
+  /** 授予的页面权限（page:*）；决定侧栏与路由能进哪一页 */
+  pages?: string[];
+  /** 被页面门控关掉的接口权限：四层并集里有、但它所属的页面一页都没授予。界面拿它解释「为什么我有 task:read 却仍然 403」 */
+  gatedOff?: string[];
+  /** 四层并集过完页面门控的结果；`*` 表示超级管理员。require() 唯一判据 */
   effective?: string[];
 }
 

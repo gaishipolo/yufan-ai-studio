@@ -17,6 +17,7 @@ from typing import Literal, Protocol
 from fastapi import APIRouter
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.pages import PageSpec
 from core.permissions import PermissionSpec
 from core.ports.library_references import LibraryReferenceSource
 
@@ -112,6 +113,18 @@ class ModuleSpec:
     order: int = 100
     description: str = ""
     permissions: tuple[PermissionSpec, ...] = ()
+    # 本模块负责的前端页面，以及每个页面依赖的接口权限点（`core.pages`）。
+    #
+    # 页面声明放在**后端**而不是只写在前端路由表里，原因有二：
+    # 1. 「禁用页面 ⇒ 它的接口自动失效」这条规则必须由服务端判定，
+    #    否则拿着令牌直接打接口就绕过了；
+    # 2. 页面权限本身是一个普通权限点（走角色 / 小组 / 团队 / 个人四层授予），
+    #    而授权体系只认这里声明的东西。
+    #
+    # 页面归哪个模块：按它**主要读的那份数据**归属（任务中心 → task，
+    # 资产库 → library）。跨模块的 requires 是正常的，门控按「至少一个声明
+    # 它的页面被授予」判定，所以共享接口不会被某一页关掉就连坐。
+    pages: tuple[PageSpec, ...] = ()
     startup: StartupHook | None = None
     # 装配型启动钩子：任何实例（含 `WORKER_ENABLED=false`）都会执行，必须幂等。
     # 与 `startup` 的差别见类文档：这边不许改写「正在进行的业务状态」。
@@ -161,3 +174,6 @@ class ModuleSpec:
 
     def permission_codes(self) -> frozenset[str]:
         return frozenset(spec.code for spec in self.permissions)
+
+    def page_codes(self) -> frozenset[str]:
+        return frozenset(spec.code for spec in self.pages)

@@ -5,10 +5,27 @@
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from contextvars import ContextVar
 from dataclasses import dataclass
 
 SUPER_PERMISSION = "*"
+
+
+def permission_holds(codes: Collection[str], code: str) -> bool:
+    """一组权限码是否覆盖 `code`（含 `*` 与 `资源:*` 两种通配）。
+
+    抽成函数而不是只留在 `CurrentUser.has` 里，是因为页面门控
+    （`core.pages.PageCatalog.gate`）拿到的是**一个码集合**、没有 `CurrentUser`，
+    而它必须和鉴权主路径用同一套通配规则 —— 否则会出现
+    「`page:*` 的账号在鉴权侧有权限、在门控侧被判成没有页面」这种自相矛盾。
+    """
+    if SUPER_PERMISSION in codes:
+        return True
+    if code in codes:
+        return True
+    resource, _, _ = code.partition(":")
+    return f"{resource}:*" in codes
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,12 +54,7 @@ class CurrentUser:
 
     def has(self, code: str) -> bool:
         """是否拥有某权限码。"""
-        if SUPER_PERMISSION in self.permissions:
-            return True
-        if code in self.permissions:
-            return True
-        resource, _, _ = code.partition(":")
-        return f"{resource}:*" in self.permissions
+        return permission_holds(self.permissions, code)
 
     def has_all(self, codes: tuple[str, ...] | list[str]) -> bool:
         return all(self.has(code) for code in codes)

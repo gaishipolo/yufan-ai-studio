@@ -1,0 +1,148 @@
+# 页面权限与接口权限（两层模型）
+
+> 起因：在此之前「能不能看见某一页」和「能不能调某个接口」是**同一个权限码**。
+> 于是两件本该独立的事被绑死——想让某人「能查任务、但先别进任务中心」做不到；
+> 想下线一个页面，只能删前端路由，而后端接口照旧全开。
+>
+> 现在分成两层：**页面权限**（`page:*`）管可见性，**接口权限**（`资源:动作`）
+> 管能力，页面声明它依赖哪些接口；关掉页面，这些接口自动失效。
+
+## 1. 两层各管什么
+
+| 层 | 码 | 判据在哪 | 失败表现 |
+|---|---|---|---|
+| 页面 | `page:task-center` | 前端路由守卫 / 侧栏过滤（`RequirePermission` / `nav`） | 菜单不出现，直接输 URL 显示「没有访问权限」 |
+| 接口 | `task:read`、`task:delete` | 后端 `require(...)`（每个路由） | 403，`message` 里写着缺哪个码 |
+
+两层都是**普通权限点**，走同一套授权（角色 / 小组 / 个人 / 团队），在同一个
+「角色与权限」界面里勾选。页面权限点在目录里归到 `页面` 分组，描述里写着它
+关联的接口码 —— 管理员不必翻代码就能知道「关掉这一页会连带关掉什么」。
+
+## 2. 门控规则（只有一条）
+
+> **某个接口权限，只有在「至少一个声明它的页面被授予」时才有效。**
+> 不被任何页面声明的接口，不参与门控。
+
+由此推出的三个行为，都是刻意的：
+
+| 场景 | 结果 | 为什么 |
+|---|---|---|
+| 只授 `task:read`，不给 `page:task-center` | `GET /tasks` → 403 | 页面关了，接口跟着关 —— 这就是这个功能本身 |
+| `catalog:read` 被「生成工作台」和「生图」同时声明，只开了其中一页 | `GET /models` 仍然 200 | 共享接口不能被某一页连坐，否则报错会出现在一个看起来无关的接口上 |
+| `export:read` 没有任何页面声明 | 照常可用 | 门控是「页面 → 接口」的从属关系，不是全站总开关 |
+
+另外两条边界：
+
+- **超管旁路**：`*` 在门控之前就短路，所有页面与接口都放行。新页面还没配给
+  任何角色时，超管必须进得去把它配好。
+- **通配**：`page:*` 等价于所有页面都开；`task:*` 等价于持有该资源所有动作。
+  页面门控与鉴权主路径共用 `core.context.permission_holds`，两边不会打架。
+
+## 3. 为什么门控在服务端
+
+前端路由守卫只能挡住「在界面上点进来」，挡不住「拿着令牌直接打接口」。
+所以门控落在 `IdentityService.resolve_identity()`：权限并集算完之后过一遍
+`page_catalog.gate()`，**令牌、`/identity/me`、`effective-permissions`、
+每个 `require()` 看到的都是同一份结果**。前端拿到的 `permissions` 里已经
+包含页面码，菜单与路由据此工作，不需要再算一遍。
+
+## 4. 页面在哪声明
+
+后端模块的 `ModuleSpec.pages`（`core/pages.py::PageSpec`）——不是只写在前端
+路由表里。原因：门控要由服务端判定，而且页面权限得进权限目录才有人能勾。
+
+页面归**它主要读的那份数据**所在的模块（任务中心 → `task`，资产库 → `library`）；
+`requires` 跨模块是正常的。
+
+```python
+# modules/task/__init__.py
+pages=(
+    PageSpec(
+        code="page:task-center",
+        name="任务中心",
+        route="/tasks",
+        requires=("task:read", "task:retry:any", "image:read"),
+    ),
+),
+```
+
+前端对应的那一条只写页面码：
+
+```ts
+// src/modules/task-center/module.ts
+routes: [{ path: 'tasks', permissions: ['page:task-center'], ... }]
+```
+
+### 新增一页要改三处
+
+1. 后端 `ModuleSpec.pages` 加 `PageSpec`（`requires` 写这一页真正会调的接口码）；
+2. 前端 `modules/<id>/module.ts` 的 `permissions: ['page:<slug>']`；
+3. 跑 `cd api && app export-openapi`（把新页面码写进前端生成物）与
+   `cd studio && npm run gen:routes`（路由清单）。
+
+漏第 1 步：前端路由守卫会因为「目录里没有这个码」而**永远拦住**（`router.test`
+有守卫）。漏第 2 步：页面能进，但接口被门控关掉。
+
+## 5. 当前已声明的页面
+
+| 页面码 | 路由 | 关联接口（数量） | 归属模块 |
+|---|---|---|---|
+| `page:studio` | `/studio` | 3 | catalog |
+| `page:image` | `/image` | 6 | image |
+| `page:library` | `/library` | 14 | library |
+| `page:shots` | `/shots` | 1 | shot |
+| `page:storyboards` | `/storyboards` | 1 | storyboard |
+| `page:task-center` | `/tasks` | 7 | task |
+| `page:templates` | `/templates/library` | 1 | template_pack |
+| `page:template-specs` | `/templates/specs` | 6 | template_pack |
+| `page:user-access` | `/system/user-access` | 13 | identity |
+
+未纳入的：登录页（`bare`，必须匿名可达）、用量看板（占位页，还没有后端接口；
+等它有接口时随模块一起声明）。
+
+## 6. 团队层为什么不能放页面码
+
+团队层的语义是「所有启用账号」，而且这一层**没有 deny**。把 `page:*` 放进团队层，
+等于「这一页对任何人在任何情况下都关不掉」——直接废掉页面权限本身。
+所以 `TEAM_FORBIDDEN_PREFIXES = ("identity:", "page:")`，写接口直接 400。
+
+页面只能挂在可以按人调整的层上：角色 / 小组 / 个人。
+
+## 7. 迁移与兼容
+
+- **内置角色**（editor / viewer / asset_specialist）的模板里已经带了页面码。
+  老库在启动时由 `sync_new_permissions()` 把「这一版新增的权限点」补进这些角色，
+  所以升级后不需要手工配置。
+- **自定义角色 / 小组授权 / 个人授权**：升级时由 `migrate_roles_to_pages()`
+  **一次性**补齐——按「这些接口码属于哪些页面」把页面码加上去，等价于保持升级前的
+  可用性。迁移只跑一次（标记在 `app_meta` 的 `permissions.pages_migrated`），
+  所以管理员之后特意关掉的页面**不会**被重新打开。
+  迁移之后仍然可以按需调整：把页面码从角色里去掉，那一页就随之关闭。
+- **团队层**不需要动：它本来就不含页面码（页面由角色/小组/个人负责）。
+- 「只挂团队层、没有任何角色」的账号：团队层给了 `task:read` 但没有任何页面，
+  接口会被门控关掉。这是刻意的——「能看见哪一页」不由团队层决定。
+- **迁移之后的排障入口**：`GET /identity/users/{id}/effective-permissions` 的
+  `gatedOff` 字段列出「有接口码但被门控关掉」的那些码。
+
+## 8. 排障：403 但权限看起来是对的
+
+`GET /identity/users/{id}/effective-permissions` 现在多两个字段：
+
+```jsonc
+{
+  "pages": ["page:task-center"],          // 能进哪几页
+  "gatedOff": ["catalog:read"],           // 有接口码、但所属页面一页都没给 → 失效
+  "effective": ["task:read", "..."]       // require() 唯一判据
+}
+```
+
+看到 `gatedOff` 里有某个码，就是「页面没开」而不是「权限没授」。
+
+## 9. 不该做的事
+
+- **不要在前端路由上写接口码**：那样等于回到两层合一，门控会把这个页面的接口
+  全关掉，而菜单又显示不出来——一个页面直接消失。
+- **不要把 `page:` 码写进 `require(...)`**：页面码回答的是「能不能看见」，
+  不是「能不能调用」；用它守接口会让「关掉页面」和「停用接口」两件事再次纠缠。
+- **不要在 `requires` 里写 `*`**：那等于把整站接口绑到一页上（`PageSpec` 会在
+  启动期直接拒绝）。

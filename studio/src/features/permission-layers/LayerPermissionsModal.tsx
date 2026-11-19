@@ -112,8 +112,15 @@ function LayerForm({
   );
 }
 
-/** 团队层禁 `*`（全员超管）与 `identity:` 前缀（给全站发组织管理权） */
-const teamForbidden = (code: string) => code === '*' || code.startsWith('identity:');
+/**
+ * 团队层禁三类：
+ * - `*`：等于把全站变成超管；
+ * - `identity:` 前缀：等于给所有人发「管理组织」的票；
+ * - `page:` 前缀：团队层没有 deny，页面放进来就再也拿不掉，
+ *   而「关掉某个人进某一页」正是页面权限存在的意义（详见 docs/PERMISSION_PAGES.md）。
+ */
+const teamForbidden = (code: string) =>
+  code === '*' || code.startsWith('identity:') || code.startsWith('page:');
 /**
  * 禁用项 `title` 里的**短**理由。
  *
@@ -134,7 +141,7 @@ function TeamLayer({ onClose }: { onClose: () => void }) {
       /* 两句都是**约束**，不是解释：
          1. 团队层覆盖所有启用账号（范围）；
          2. 组织管理类权限（identity:*）与通配 * 不能在这一层授（去哪授）。 */
-      description="团队 = 所有启用账号。这里授予的权限人人都有；取消勾选只移除团队这一层的授予，不会削掉小组、个人或角色已给的权限。组织管理类权限（identity:*）与通配 * 不能在团队层授予，请用小组或个人层。"
+      description="团队 = 所有启用账号。这里授予的权限人人都有；取消勾选只移除团队这一层的授予，不会削掉小组、个人或角色已给的权限。组织管理类权限（identity:*）、页面权限（page:*）与通配 * 不能在团队层授予，请用小组或个人层。"
       currentCodes={codes}
       forbidden={teamForbidden}
       forbiddenHint={TEAM_ITEM_HINT}

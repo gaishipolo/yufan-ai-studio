@@ -77,6 +77,35 @@ modules/voice/
 └── router.py         # 2 个接口（列表 / 创建）
 ```
 
+### 1.0.0 有前端页面的模块要声明 `pages`
+
+权限分两层：`page:*` 决定「能不能看见这一页」，`资源:动作` 决定「能不能调这个接口」。
+页面声明在**后端** `ModuleSpec.pages`（判据在服务端，前端路由只读页面码）：
+
+```python
+from core.pages import PageSpec
+
+module = ModuleSpec(
+    name="voice",
+    router=router,
+    permissions=(...),
+    pages=(
+        PageSpec(
+            code="page:voice",
+            name="配音",
+            route="/voice",
+            requires=("voice:read", "voice:create"),   # 这一页真正会调的接口
+        ),
+    ),
+)
+```
+
+门控规则：**接口权限只有在「至少一个声明它的页面被授予」时才有效**。
+所以漏了 `pages` 而前端又用页面码做守卫，结果是「菜单进不去」或「进去了全 403」。
+纯后台能力（没有前端页面）不声明 `pages` 即可，它的接口不受门控。
+
+细节与排障见 [`docs/PERMISSION_PAGES.md`](../../docs/PERMISSION_PAGES.md)。
+
 ### 1.0 脚手架给的是骨架，几处必须按业务改掉
 
 2026-11-08 用「删掉 `modules/image` 再照本节长回来」走过一遍（见

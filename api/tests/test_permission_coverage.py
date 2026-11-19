@@ -194,6 +194,19 @@ def _declared() -> set[str]:
     return declared
 
 
+def _page_codes() -> set[str]:
+    """页面权限码（`page:*`）。
+
+    它们不在 `require(...)` 里出现，而是由 `PageCatalog.gate()` 在
+    `resolve_identity()` 里**一次性**判定：门控按「接口码 → 声明它的页面」反查，
+    逐个页面去找调用点既找不到也没有意义。所以「是否被使用」对页面码要换判据：
+    见 `test_every_page_code_can_be_switched_off`（关掉这一页，它的接口真的会失效）。
+    """
+    from core.pages import page_catalog
+
+    return set(page_catalog.codes())
+
+
 def test_scan_is_not_vacuous(enforcement: dict[str, set[str]]) -> None:
     """扫描本身要有产出，否则下面两条会变成「永远通过的空检查」。
 
@@ -201,7 +214,7 @@ def test_scan_is_not_vacuous(enforcement: dict[str, set[str]]) -> None:
     里漏了 `has`），僵尸清单会暴涨，但「引用侧没有非法码」那条依然全绿——
     那种「一半守卫静默失效」的状态必须由数字暴露出来。
     """
-    declared = _declared()
+    declared = _declared() - _page_codes()
     assert len(declared) >= 30, f"权限点声明只有 {len(declared)} 个，扫描口径可能坏了"
     assert len(enforcement) >= len(declared), (
         f"扫描只认出 {len(enforcement)} 个码，少于声明的 {len(declared)} 个；"
@@ -219,7 +232,11 @@ ALLOWED_UNENFORCED: dict[str, str] = {}
 
 def test_every_declared_permission_is_enforced(enforcement: dict[str, set[str]]) -> None:
     """声明的每个权限码，都必须在某个执行位置被判断过。"""
-    zombies = sorted(code for code in _declared() if code not in enforcement)
+    zombies = sorted(
+        code
+        for code in _declared() - _page_codes()
+        if code not in enforcement
+    )
     zombies = [code for code in zombies if code not in ALLOWED_UNENFORCED]
 
     assert not zombies, (
@@ -255,6 +272,28 @@ def test_enforced_codes_are_all_declared(enforcement: dict[str, set[str]]) -> No
     assert not unknown, (
         "这些权限码被用来做判断，但没有任何模块声明过（普通用户会永远 403）-> "
         + "\n".join(f"{code}  <- {sorted(enforcement[code])[:3]}" for code in unknown)
+    )
+
+
+def test_every_page_code_can_be_switched_off() -> None:
+    """页面码必须真的能关掉东西，而不是一个装饰用的开关。
+
+    这是 `test_every_declared_permission_is_enforced` 对页面码的对应物：
+    判据是「把这个页面码从授予里去掉，它声明的接口权限真的会失效」。
+    """
+    from core.pages import page_catalog
+
+    decorative: list[str] = []
+    for page in page_catalog.all():
+        # 只授接口、不授页面：这一页声明的接口必须全部失效，否则这个页面码
+        # 就没在管任何东西（requires 写空 / 写成了不受门控的基础设施码）
+        gated = page_catalog.gate(set(page.requires))
+        dropped = [code for code in page.requires if code not in gated]
+        if page.requires and not dropped:
+            decorative.append(page.code)
+    assert not decorative, (
+        f"这些页面码关掉之后什么接口都没失效 -> {decorative}；"
+        "检查 requires 是不是写空了，或者它声明的接口全被别的页面覆盖"
     )
 
 

@@ -352,9 +352,20 @@ class EffectivePermissionsOut(CamelModel):
     )
     personal: list[str] = Field(default_factory=list, description="单独授予的权限")
     roles: list[str] = Field(default_factory=list, description="现有角色授予的权限")
+    pages: list[str] = Field(
+        default_factory=list,
+        description="授予的页面权限（page:*）；决定侧栏与路由能进哪一页",
+    )
+    gated_off: list[str] = Field(
+        default_factory=list,
+        description=(
+            "被页面门控关掉的接口权限：四层并集里有、但它所属的页面一页都没授予。"
+            "界面拿它解释「为什么我有 task:read 却仍然 403」"
+        ),
+    )
     effective: list[str] = Field(
         default_factory=list,
-        description="四层并集；`*` 表示超级管理员。require() 唯一判据",
+        description="四层并集过完页面门控的结果；`*` 表示超级管理员。require() 唯一判据",
     )
 
 

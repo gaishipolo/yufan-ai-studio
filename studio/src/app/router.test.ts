@@ -5,6 +5,7 @@ import { router } from './router';
 import { RequireAuth } from '@/shared/access/RequireAuth';
 import { RequirePermission } from '@/shared/access/RequirePermission';
 import { isResolvablePermission } from '@/entities/role/model/permission-catalog';
+import { PERMISSION_CODES } from '@/shared/api/permissions';
 import { HOME_PATH, LOGIN_PATH } from '@/shared/config/app';
 
 /**
@@ -88,6 +89,20 @@ describe('router 装配', () => {
         route.permissions.length,
         `路由 ${route.path} 没有声明 permissions —— 任何登录用户都能直接访问`,
       ).toBeGreaterThan(0);
+    }
+  });
+
+  it('外壳页面的入口权限是页面码，且都在后端目录里', () => {
+    // 页面可见性与接口权限分两层：路由入口只写页面码（`page:*`），
+    // 按钮级的接口码留在 `Can` 里。写混了会出现两种怪事：
+    // 入口写接口码 → 关掉页面时接口还开着；入口写页面码但目录里没有 →
+    // 路由守卫永远拦住（fail-closed 且静默）。
+    for (const route of shellPageRoutes) {
+      if (NO_PERMISSION_PATHS.has(route.path)) continue;
+      for (const code of route.permissions ?? []) {
+        expect(code, `路由 ${route.path} 的入口权限必须是页面码`).toMatch(/^page:/);
+        expect(PERMISSION_CODES, `路由 ${route.path} 的页面码不在后端目录里`).toContain(code);
+      }
     }
   });
 

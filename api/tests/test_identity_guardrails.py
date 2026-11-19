@@ -39,6 +39,13 @@ def _suffix() -> str:
 
 
 def _make_role(client: TestClient, admin: dict[str, str], perms: list[str]) -> dict:
+    # 页面门控（core.pages）：identity 的接口只有在「用户与权限」这一页被授予时
+    # 才有效。测试里造的是「只授接口、不授页面」的账号，直接加权限会被门控关掉，
+    # 于是所有断言都会变成「一上来就 403」——那不是这些用例要测的东西。
+    # 门控本身由 tests/test_pages.py 专门测。
+    perms = list(perms)
+    if "*" not in perms and any(code.startswith("identity:") for code in perms):
+        perms.append("page:user-access")
     code = f"guard_role_{_suffix()}"
     resp = client.post(
         f"{API}/roles", json={"code": code, "name": code, "permissions": perms}, headers=admin

@@ -116,10 +116,15 @@ def test_group_crud_members_and_permissions(client: TestClient) -> None:
 
     perms = client.put(
         f"{API}/groups/{gid}/permissions",
-        json={"permissions": ["template_pack:create"]},
+        json={"permissions": ["template_pack:create", "page:template-specs"]},
         headers=admin,
     )
-    assert perms.json()["data"]["permissions"] == ["template_pack:create"]
+    # 页面码也在里面：接口权限只有被某一页声明才有效，组里只给接口码的话
+    # 上面那条 /me 断言会变成「授权成功但看不到权限」
+    assert set(perms.json()["data"]["permissions"]) == {
+        "page:template-specs",
+        "template_pack:create",
+    }
 
     # 同一张已登录令牌：小组授权立即生效，不需要重新登录
     login = client.post(
@@ -281,7 +286,7 @@ def test_create_user_can_join_groups_and_inherits_group_permissions(
     group = _create_group(client, admin, "建号入组-" + _suffix())
     granted = client.put(
         f"{API}/groups/{group['id']}/permissions",
-        json={"permissions": ["template_pack:create"]},
+        json={"permissions": ["template_pack:create", "page:template-specs"]},
         headers=admin,
     )
     assert granted.status_code == 200, granted.text

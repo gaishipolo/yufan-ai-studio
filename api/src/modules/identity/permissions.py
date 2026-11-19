@@ -21,6 +21,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Final
 
+from core.pages import PAGE_PREFIX
 from core.permissions import PermissionSpec
 
 # ---------- 权限码 ----------
@@ -139,6 +140,19 @@ BUILTIN_ROLES: tuple[BuiltinRole, ...] = (
             "library:case:write",
             "storyboard:read",
             "shot:read",
+            # 页面权限（`core.pages`）：能进哪几页。
+            # 为什么内置角色必须带它们：接口权限只有在「至少一个声明它的页面
+            # 被授予」时才有效，所以漏了页面码 = 这个角色的人虽然持有
+            # `task:read`，任务中心的接口照样 403 —— 症状是「权限都对，就是不
+            # 好使」，只能靠这里补齐。
+            "page:studio",
+            "page:image",
+            "page:library",
+            "page:shots",
+            "page:storyboards",
+            "page:task-center",
+            "page:templates",
+            "page:template-specs",
         ),
     ),
     BuiltinRole(
@@ -154,6 +168,15 @@ BUILTIN_ROLES: tuple[BuiltinRole, ...] = (
             "template_pack:read",
             "storyboard:read",
             "shot:read",
+            # 与 editor 同一组页面：只读人员进得去，只是页面里的写按钮不可用
+            "page:studio",
+            "page:image",
+            "page:library",
+            "page:shots",
+            "page:storyboards",
+            "page:task-center",
+            "page:templates",
+            "page:template-specs",
         ),
     ),
     BuiltinRole(
@@ -174,6 +197,11 @@ BUILTIN_ROLES: tuple[BuiltinRole, ...] = (
             # 不加这两个码的话，封装页的「设为案例」对他只会报 403。
             "library:case:read",
             "library:case:write",
+            # 页面：资产库 + 模板库 + 封装页。勾了接口码却不给页面，
+            # 那些接口会被门控关掉（见 editor 那段注释）。
+            "page:library",
+            "page:templates",
+            "page:template-specs",
         ),
     ),
 )
@@ -191,14 +219,23 @@ SCOPES: Final = (SCOPE_TEAM, SCOPE_GROUP, SCOPE_USER)
 # 两边各写一遍，迟早会出现「只读成员能看的东西，团队基础权限却没给」。
 # 只在首次启动时播种（见 `IdentityService.ensure_team_permissions`），
 # 之后管理员在界面上改过的配置不会被重启覆盖。
+#
+# **页面码除外**：团队层 = 所有启用账号，而且这一层没有 deny ——
+# 把 `page:*` 放进去，等于「这一页对所有人在任何情况下都关不掉」，
+# 直接废掉页面权限这个功能。页面由角色 / 小组 / 个人授予（见 TEAM_FORBIDDEN_PREFIXES）。
 TEAM_BASE_PERMISSIONS: Final[tuple[str, ...]] = tuple(
-    next(role for role in BUILTIN_ROLES if role.code == "viewer").permissions
+    code
+    for code in next(role for role in BUILTIN_ROLES if role.code == "viewer").permissions
+    if not code.startswith(PAGE_PREFIX)
 )
 
 # 团队层是「所有人」：放进管理类权限等于给全站发管理权，放进 `*` 等于
 # 把所有人都变成超管。写接口要挡，常量单独列出来是为了让守卫与文档同源。
 TEAM_FORBIDDEN_CODES: Final = ("*", "identity:*")
-TEAM_FORBIDDEN_PREFIXES: Final = ("identity:",)
+# `page:` 与 `identity:` 同一类：团队层没有 deny，放进去就再也拿不掉。
+# 页面必须挂在「可以按人调整」的层上（角色 / 小组 / 个人），否则
+# 「关掉某个人的某一页」这个诉求永远实现不了。
+TEAM_FORBIDDEN_PREFIXES: Final = ("identity:", PAGE_PREFIX)
 
 # 团队层的**地板**：这是「登录之后还看得见东西」的最低要求。
 #

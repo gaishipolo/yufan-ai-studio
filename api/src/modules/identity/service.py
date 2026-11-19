@@ -26,9 +26,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core import audit
 from core.config import settings
-from core.context import SUPER_PERMISSION, CurrentUser
+from core.context import SUPER_PERMISSION, CurrentUser, permission_holds
 from core.exceptions import Unauthorized
 from core.logging import get_logger
+from core.pages import PAGE_PREFIX, page_catalog
 from core.permissions import catalog
 from core.response import Page, PageParams
 from core.security import (
@@ -141,6 +142,10 @@ PERMISSION_SNAPSHOT_KEY = "permissions.catalog"
 # 那个每次启动都要算差集（新声明的权限点要补进内置角色），这个只在首次
 # 启动时把模板写进去，之后管理员在界面上删掉的基础权限**不该被重启加回来**。
 TEAM_SNAPSHOT_KEY = "permissions.team_base"
+
+# 页面权限一次性迁移的标记。放在 `app_meta` 里而不是「看有没有页面码」：
+# 迁移只该跑一次，否则管理员后来特意关掉的页面会被每次启动重新打开。
+PAGES_MIGRATION_KEY = "permissions.pages_migrated"
 
 
 def _snapshot_detail(previous: list[str], target: list[str]) -> str:
@@ -480,13 +485,20 @@ class IdentityService:
             detail=detail or {},
         )
 
-    async def resolve_identity(self, user_id: str) -> ResolvedIdentity | None:
+    async def resolve_identity(
+        self, user_id: str, *, apply_page_gate: bool = True
+    ) -> ResolvedIdentity | None:
         """用户 id → 权威身份（角色 + 权限）。账号不存在返回 None。
 
         权限是**四层并集**：团队基础 ∪ 所属小组 ∪ 个人 ∪ 角色。
         没有 deny，所以「个人权限永远 ≥ 小组/团队」是集合运算的必然结果，
         不需要额外写一条「个人不能被降权」的特判——那类特判一旦和通配、
         超管短路叠在一起就会互相打架。
+
+        并集之后还要过一遍**页面门控**（`core.pages`）：接口权限只有在
+        「至少一个声明它的页面被授予」时才有效，于是「关掉页面 ⇒ 该页接口失效」
+        在服务端成立，而不是只靠前端藏菜单。超管（`*`）在门控之前就短路了，
+        这样新页面还没配给任何角色时，超管仍能进去把它配好。
 
         任一层出现 `*` 都等价于超管：只认角色上的 `is_superuser` 会让
         「给某人单独授 `*`」这条合法操作失效。
@@ -509,7 +521,9 @@ class IdentityService:
         codes.update(layers.all_codes())
         if SUPER_PERMISSION in codes:
             return ResolvedIdentity(user, roles, frozenset({SUPER_PERMISSION}))
-        return ResolvedIdentity(user, roles, frozenset(codes))
+        if not apply_page_gate:
+            return ResolvedIdentity(user, roles, frozenset(codes))
+        return ResolvedIdentity(user, roles, frozenset(page_catalog.gate(codes)))
 
     # ------------------------------------------------------------------ #
     # 会话与令牌
@@ -724,7 +738,7 @@ class IdentityService:
         守卫与重置口令同级：踢下线是**拿走对方的访问权**，目标不能高于自己。
         """
         user = await self._require_user(user_id)
-        await self._guard_target_not_above(user, actor)
+        await self._guard_target_not_above(user, await self._actor_codes(actor), actor)
         count = await self.sessions.revoke_all(user.id, reason="admin_revoke")
         await self.session.commit()
         logger.info("管理员 %s 吊销了 %s 的 %d 个会话", actor.id, user.username, count)
@@ -923,7 +937,7 @@ class IdentityService:
             roles = await self._roles_by_ids(payload.role_ids)
             # 建号时直接挂超管角色 = 造一个自己登进去就是超管的账号，
             # 必须和 set_user_roles 走同一道闸（R4-11 路径 C）
-            await self._guard_role_grant(roles, actor)
+            await self._guard_role_grant(roles, await self._actor_codes(actor), actor)
 
             # 建号顺带入组：一个请求一个事务，不搞「先建号再调 set_members」——
             # 那会在第二步失败时留下一个没进组的半成品账号。
@@ -939,7 +953,7 @@ class IdentityService:
             for group in groups.values():
                 self._guard_permission_grant(
                     await self.layers.grants(SCOPE_GROUP, group.id),
-                    actor,
+                    await self._actor_codes(actor),
                     what=f"小组 {group.name}",
                 )
 
@@ -995,7 +1009,9 @@ class IdentityService:
         writing_active = fields.get("is_active") is not None
         if user.id != actor.id:
             if writing_recovery or writing_active:
-                await self._guard_target_not_above(user, actor)
+                await self._guard_target_not_above(
+                    user, await self._actor_codes(actor), actor
+                )
             elif writing_display:
                 await self._guard_display_target(user, actor)
 
@@ -1052,7 +1068,7 @@ class IdentityService:
         # 而「不能操作权限高于自己的账号」这条红线在改密 / 停用上已经写了，
         # 这里漏掉就出现「给不了、但能撤」——role:manage 一个人能把 editor 清空（R5-03）。
         # 放在授予检查之前：目标高于自己时先报「越级」，而不是先报「子集不满足」。
-        await self._guard_target_not_above(user, actor)
+        await self._guard_target_not_above(user, await self._actor_codes(actor), actor)
         roles = await self._roles_by_ids(role_ids)
 
         current = (await self.users.roles_for([user.id])).get(user.id, [])
@@ -1063,7 +1079,7 @@ class IdentityService:
         if touches_superuser and not actor.has(SUPER_PERMISSION):
             raise SuperuserRequired()
         # 非超管角色同样要挡：给自己挂一个含 `task:*` 的角色，等于绕过「只读」授权
-        await self._guard_role_grant(roles, actor)
+        await self._guard_role_grant(roles, await self._actor_codes(actor), actor)
 
         await self.users.set_roles(user.id, [role.id for role in roles])
         await self._guard_has_superuser()
@@ -1098,7 +1114,9 @@ class IdentityService:
         """
         async with password_slot():
             user = await self._require_user(user_id)
-            await self._guard_target_not_above(user, actor)
+            await self._guard_target_not_above(
+                user, await self._actor_codes(actor), actor
+            )
             await self.set_password(user, new_password)
             # 顺手吊销目标的所有会话：改密本身已经让旧 access 失效
             # （`password_changed_at`），但「会话列表里还挂着几台设备」会让管理员
@@ -1127,7 +1145,7 @@ class IdentityService:
         user = await self._require_user(user_id)
         if user.id == actor.id:
             raise CannotTargetSelf()
-        await self._guard_target_not_above(user, actor)
+        await self._guard_target_not_above(user, await self._actor_codes(actor), actor)
         revoked = await self._cut_access(user, reason="deactivate")
         await self._guard_has_superuser()
         await self.session.commit()
@@ -1191,7 +1209,9 @@ class IdentityService:
 
         self._validate_permissions(payload.permissions)
         # `*` 与 is_superuser 完全等价：只挡字段、不挡字符串，等于没挡（R4-11 路径 A）
-        self._guard_permission_grant(payload.permissions, actor, what=f"角色 {code}")
+        self._guard_permission_grant(
+            payload.permissions, await self._actor_codes(actor), what=f"角色 {code}"
+        )
         role = Role(
             code=code,
             name=payload.name,
@@ -1264,8 +1284,11 @@ class IdentityService:
         self._validate_permissions(permissions)
         # 与 set_user_roles 同一条红线：比自己强的角色不能被"顺手改成只读"，
         # 那和把人降级是一回事，只是换了个入口（R5-03 的同族）。
-        await self._guard_role_not_above(role, actor)
-        self._guard_permission_grant(permissions, actor, what=f"角色 {role.code}")
+        actor_codes = await self._actor_codes(actor)
+        await self._guard_role_not_above(role, actor_codes, actor)
+        self._guard_permission_grant(
+            permissions, actor_codes, what=f"角色 {role.code}"
+        )
         previous = list((await self.roles.permissions_for([role.id])).get(role.id, ()))
         await self.roles.set_permissions(role.id, permissions)
         await self.session.commit()
@@ -1284,7 +1307,7 @@ class IdentityService:
             raise BuiltinRoleLocked()
         # 删掉一个比自己强的角色 = 让所有持有它的人瞬间掉权限，
         # 而角色本身没有 owner 字段可以判断"归谁管"（R5-06）
-        await self._guard_role_not_above(role, actor)
+        await self._guard_role_not_above(role, await self._actor_codes(actor), actor)
         if (await self.roles.user_counts([role.id])).get(role.id, 0) > 0:
             raise RoleInUse()
 
@@ -1326,11 +1349,14 @@ class IdentityService:
         )
 
     def _validate_team_grants(self, codes: Sequence[str]) -> None:
-        """团队层 = 所有人：管理类权限和 `*` 一律不许放进来。
+        """团队层 = 所有人：管理类权限、页面权限和 `*` 一律不许放进来。
 
         `*` 会把全站变成超管；`identity:*` / `identity:group:*` 等于给所有人
         发「管理组织」的票。校验放在服务层而不是只靠前端隐藏选项：
         直接打接口也要挡得住。
+
+        `page:*` 与 `identity:*` 同一类，但理由不同：团队层没有 deny，
+        页面放进来就再也拿不掉，而「关掉某个人进某一页」正是页面权限存在的意义。
         """
         self._validate_permissions(codes)
         forbidden = sorted(
@@ -1345,10 +1371,10 @@ class IdentityService:
             raise TeamGrantForbidden(details={"forbidden": forbidden})
 
     def _guard_layer_not_above(
-        self, codes: Sequence[str], actor: CurrentUser, *, what: str
+        self, codes: Sequence[str], actor_codes: set[str], *, what: str
     ) -> None:
         """撤权方向也要挡：清空一层比自己高的权限，和「把人降级」是同一件事。"""
-        missing = self._missing_grants(actor, codes)
+        missing = self._missing_grants(actor_codes, codes)
         if missing:
             raise PermissionEscalation(
                 f"不能改动权限高于自己的{what}", details={"missing": missing}
@@ -1399,7 +1425,7 @@ class IdentityService:
     async def delete_group(self, group_id: str, actor: CurrentUser) -> None:
         group = await self._require_group(group_id)
         current = await self.layers.grants(SCOPE_GROUP, group.id)
-        self._guard_layer_not_above(current, actor, what="小组")
+        self._guard_layer_not_above(current, await self._actor_codes(actor), what="小组")
         # 成员与 grant 由 repository 在同一个事务里清掉；没有外键级联可依赖
         await self.layers.delete_group(group.id)
         await self.session.commit()
@@ -1434,7 +1460,9 @@ class IdentityService:
         # `identity:group:permission:manage`。与 `create_user` 的入组守卫、
         # `delete_group` / `set_group_permissions` 同口径。
         self._guard_layer_not_above(
-            await self.layers.grants(SCOPE_GROUP, group.id), actor, what="小组"
+            await self.layers.grants(SCOPE_GROUP, group.id),
+            await self._actor_codes(actor),
+            what="小组",
         )
         wanted = list(dict.fromkeys(user_ids))
         found = await self.users.get_many(wanted)
@@ -1464,8 +1492,11 @@ class IdentityService:
         group = await self._require_group(group_id)
         self._validate_permissions(permissions)
         current = await self.layers.grants(SCOPE_GROUP, group.id)
-        self._guard_layer_not_above(current, actor, what="小组")
-        self._guard_permission_grant(permissions, actor, what=f"小组 {group.name}")
+        actor_codes = await self._actor_codes(actor)
+        self._guard_layer_not_above(current, actor_codes, what="小组")
+        self._guard_permission_grant(
+            permissions, actor_codes, what=f"小组 {group.name}"
+        )
         await self.layers.set_grants(SCOPE_GROUP, group.id, permissions)
         await self.session.commit()
         await self._audit_change(
@@ -1500,8 +1531,11 @@ class IdentityService:
         )
         if lost:
             self._require_superuser(actor, f"移除团队基础权限的地板项 {lost}")
-        self._guard_layer_not_above(current, actor, what="团队基础权限")
-        self._guard_permission_grant(permissions, actor, what="团队基础权限")
+        actor_codes = await self._actor_codes(actor)
+        self._guard_layer_not_above(current, actor_codes, what="团队基础权限")
+        self._guard_permission_grant(
+            permissions, actor_codes, what="团队基础权限"
+        )
         await self.layers.set_grants(SCOPE_TEAM, TEAM_SCOPE_ID, permissions)
         await self.session.commit()
         await self._audit_change(
@@ -1523,11 +1557,14 @@ class IdentityService:
     ) -> list[str]:
         user = await self._require_user(user_id)
         # 改别人的权限 = 授出/拿走访问权，和「改角色」走同一条红线
-        await self._guard_target_not_above(user, actor)
+        actor_codes = await self._actor_codes(actor)
+        await self._guard_target_not_above(user, actor_codes, actor)
         self._validate_permissions(permissions)
         current = await self.layers.grants(SCOPE_USER, user.id)
-        self._guard_layer_not_above(current, actor, what="个人权限")
-        self._guard_permission_grant(permissions, actor, what=f"用户 {user.username}")
+        self._guard_layer_not_above(current, actor_codes, what="个人权限")
+        self._guard_permission_grant(
+            permissions, actor_codes, what=f"用户 {user.username}"
+        )
         await self.layers.set_grants(SCOPE_USER, user.id, permissions)
         await self.session.commit()
         await self._audit_change(
@@ -1544,6 +1581,10 @@ class IdentityService:
 
         **判定永远只看 `effective`**：前端不要拿 `personal` 去算「有没有权限」，
         那会把团队/小组/角色的授予全部漏掉。
+
+        页面门控的结果也要摊开：`pages` 是「能进哪几页」，`gatedOff` 是
+        「四层并集里有、但页面一页都没授予因而失效」的那些码。没有 `gatedOff`，
+        管理员看到「任务中心给了 task:read、接口却 403」时只能猜。
         """
         user = await self._require_user(user_id)
         layers = await self.layers.layer_codes(user.id)
@@ -1556,8 +1597,13 @@ class IdentityService:
         codes = set(role_codes) | layers.all_codes()
         if any(role.is_superuser for role in roles) or SUPER_PERMISSION in codes:
             effective = [SUPER_PERMISSION]
+            pages = sorted(page_catalog.codes())
+            gated_off: list[str] = []
         else:
-            effective = sorted(codes)
+            effective_codes = page_catalog.gate(codes)
+            effective = sorted(effective_codes)
+            pages = sorted(page_catalog.codes() & effective_codes)
+            gated_off = sorted(codes - effective_codes)
         return EffectivePermissionsOut(
             team=list(layers.team),
             groups=[
@@ -1570,6 +1616,8 @@ class IdentityService:
             ],
             personal=list(layers.personal),
             roles=role_codes,
+            pages=pages,
+            gatedOff=gated_off,
             effective=effective,
         )
 
@@ -1849,6 +1897,78 @@ class IdentityService:
         )
         return {"layers": layer_codes, "roles": role_codes}
 
+    async def migrate_roles_to_pages(self) -> dict[str, list[str]]:
+        """一次性迁移：给「有接口码、却一个页面码都没有」的授权补上对应页面。
+
+        为什么需要：页面门控让「接口权限」依赖「页面被授予」，而页面码是新引入的。
+        老库里的自定义角色 / 小组授权 / 个人授权只有接口码 → 升级之后这些授权
+        **全部失效**（人打开页面一片 403），而配置界面看上去完全正常 ——
+        这是最坏的一种升级事故：功能坏了，但没人知道该改哪里。
+
+        迁移按「这些接口码属于哪些页面」补齐，等价于**保持升级前的可用性**。
+        之后页面授予由管理员自己管：迁移只跑一次（`app_meta` 有标记），
+        所以管理员后来特意关掉的页面**不会**被重新打开。
+
+        补不全的接口（没有任何页面声明它）本来就不受门控，不用管。
+        """
+        entry = await read_entry(self.session, PAGES_MIGRATION_KEY)
+        if entry is not None:
+            return {}
+
+        added: dict[str, list[str]] = {}
+
+        def pages_for(codes: Iterable[str]) -> list[str]:
+            pages: set[str] = set()
+            for code in codes:
+                pages.update(page_catalog.pages_for(code))
+            return sorted(pages)
+
+        # ① 角色权限
+        roles = list(await self.roles.list_all())
+        role_perms = await self.roles.permissions_for([role.id for role in roles])
+        for role in roles:
+            codes = list(role_perms.get(role.id, ()))
+            if not codes or any(code.startswith(PAGE_PREFIX) for code in codes):
+                continue  # 没有接口码，或者已经配过页面 → 不动
+            pages = pages_for(codes)
+            if not pages:
+                continue
+            await self.roles.set_permissions(role.id, sorted(codes + pages))
+            added[role.code] = pages
+
+        # ② 三层授权（小组 / 个人）
+        #
+        # **团队层跳过**：团队 = 所有启用账号，而且这一层没有 deny ——
+        # 把页面码放进团队层等于「这一页对所有人永远关不掉」，
+        # 正好废掉页面权限本身（写接口也是这么挡的，见 TEAM_FORBIDDEN_PREFIXES）。
+        by_scope: dict[tuple[str, str], list[str]] = {}
+        for scope, scope_id, permission in await self.layers.all_grants():
+            if scope == SCOPE_TEAM:
+                continue
+            by_scope.setdefault((scope, scope_id), []).append(permission)
+        for (scope, scope_id), codes in by_scope.items():
+            if any(code.startswith(PAGE_PREFIX) for code in codes):
+                continue
+            pages = pages_for(codes)
+            if not pages:
+                continue
+            await self.layers.set_grants(scope, scope_id, sorted(codes + pages))
+            added[f"{scope}:{scope_id}"] = pages
+
+        written = await set_json(
+            self.session,
+            PAGES_MIGRATION_KEY,
+            sorted(added),
+            expected_version=0 if entry is None else entry.version,
+            detail=f"页面权限迁移：{len(added)} 处授权补了页面码",
+        )
+        if written:
+            await self.session.commit()
+            logger.info("页面权限迁移：%d 处授权补上了页面码 %s", len(added), added)
+        else:  # pragma: no cover - 别的实例抢先写了标记
+            self.session.expire_all()
+        return added
+
     async def ensure_superuser(
         self, username: str, password: str, display_name: str = ""
     ) -> tuple[User, bool]:
@@ -1963,18 +2083,36 @@ class IdentityService:
             raise SuperuserRequired(f"{reason}：只有超级管理员可以操作")
 
     @staticmethod
-    def _missing_grants(actor: CurrentUser, codes: Iterable[str]) -> list[str]:
+    def _missing_grants(actor_codes: set[str], codes: Iterable[str]) -> list[str]:
         """`codes` 里调用者自己没有的那些。
 
-        `CurrentUser.has` 已经处理 `*` 与 `资源:*` 两种通配，这里直接复用——
-        另写一套通配匹配，迟早会和鉴权主路径对不上。
+        用 `permission_holds` 而不是 `CurrentUser.has`：这里比的是**授权层级**，
+        而 `CurrentUser.has` 已经被页面门控过滤过（见 `_actor_codes`）。
+        通配规则本身是同一份，所以两处不会对不上。
         """
-        return sorted({code for code in codes if not actor.has(code)})
+        return sorted({code for code in codes if not permission_holds(actor_codes, code)})
+
+    async def _actor_codes(self, actor: CurrentUser) -> set[str]:
+        """操作者的**原始**授权集合（没过页面门控）。
+
+        为什么授权判据必须用原始集合：页面门控是「可见性」层的过滤，
+        不是「授权层级」的改变。一个只有 `identity:team:manage` 的委派管理员，
+        团队层那些因为「没有对应页面」而被门控掉的码，仍然是他**拥有**的授权；
+        拿被门控后的集合去比「能不能动比自己高的东西」，会得出
+        「他连团队基础权限一条都动不了」的怪结论（实测即如此）。
+
+        所以：**能不能用**看门控后的集合（`CurrentUser.permissions`），
+        **能不能授权**看原始集合（这里）。两层各管一件事，别混。
+        """
+        if actor.has(SUPER_PERMISSION):
+            return {SUPER_PERMISSION}
+        identity = await self.resolve_identity(actor.id, apply_page_gate=False)
+        return set(identity.permissions) if identity else set(actor.permissions)
 
     def _guard_permission_grant(
-        self, codes: Sequence[str], actor: CurrentUser, *, what: str
+        self, codes: Sequence[str], actor_codes: set[str], *, what: str
     ) -> None:
-        missing = self._missing_grants(actor, codes)
+        missing = self._missing_grants(actor_codes, codes)
         if missing:
             raise PermissionEscalation(
                 f"不能给{what}授予自己不具备的权限",
@@ -1982,7 +2120,7 @@ class IdentityService:
             )
 
     async def _guard_role_grant(
-        self, roles: Sequence[Role], actor: CurrentUser
+        self, roles: Sequence[Role], actor_codes: set[str], actor: CurrentUser
     ) -> None:
         """分配角色前的统一闸口：超管角色要超管，其余角色的权限必须是自己的子集。
 
@@ -1997,10 +2135,12 @@ class IdentityService:
                 self._require_superuser(actor, f"分配超级管理员角色 {role.code}")
                 continue
             self._guard_permission_grant(
-                perms.get(role.id, ()), actor, what=f"角色 {role.code}"
+                perms.get(role.id, ()), actor_codes, what=f"角色 {role.code}"
             )
 
-    async def _guard_target_not_above(self, target: User, actor: CurrentUser) -> None:
+    async def _guard_target_not_above(
+        self, target: User, actor_codes: set[str], actor: CurrentUser
+    ) -> None:
         """不能对「权限高于自己」的账号做写操作（重置口令 / 停用 / 改角色 / 改邮箱）。
 
         否则 `identity:update` 与 `identity:delete` 就成了接管超管的两条捷径。
@@ -2011,13 +2151,13 @@ class IdentityService:
         `_guard_display_target`，读别人的登录审计用 `_guard_audit_target`。
         把这条套上去会让委派角色连昵称都改不了、连普通操作员的审计都读不了（R9-02 / R10-05）。
         """
-        identity = await self.resolve_identity(target.id)
+        identity = await self.resolve_identity(target.id, apply_page_gate=False)
         if identity is None:  # pragma: no cover - 调用前已确认用户存在
             return
         if identity.is_superuser:
             self._require_superuser(actor, f"操作超级管理员账号 {target.username}")
             return
-        missing = self._missing_grants(actor, identity.permissions)
+        missing = self._missing_grants(actor_codes, identity.permissions)
         if missing:
             raise PermissionEscalation(
                 f"不能操作权限高于自己的账号 {target.username}",
@@ -2072,7 +2212,9 @@ class IdentityService:
         """
         await self._guard_visible_target(target, actor, action="查看")
 
-    async def _guard_role_not_above(self, role: Role, actor: CurrentUser) -> None:
+    async def _guard_role_not_above(
+        self, role: Role, actor_codes: set[str], actor: CurrentUser
+    ) -> None:
         """不能动「权限高于自己」的角色（删角色 / 改角色权限）。
 
         与 `_guard_target_not_above` 是同一条红线，只是对象从「账号」换成「角色」：
@@ -2083,7 +2225,7 @@ class IdentityService:
             self._require_superuser(actor, f"操作超级管理员角色 {role.code}")
             return
         perms = (await self.roles.permissions_for([role.id])).get(role.id, ())
-        missing = self._missing_grants(actor, perms)
+        missing = self._missing_grants(actor_codes, perms)
         if missing:
             raise PermissionEscalation(
                 f"不能操作权限高于自己的角色 {role.code}",
@@ -2119,6 +2261,8 @@ async def bootstrap() -> None:
             await service.sync_new_permissions()
             # 与「只加」配对的「只减」：把已下线模块留下的权限码从三层授权与
             # 角色权限里清掉。不清理的话，那些层会永远保存不了（见方法注释）。
+            # 页面权限的一次性迁移：老库的自定义角色只有接口码，升级后会全部失效
+            await service.migrate_roles_to_pages()
             await service.prune_stale_permissions()
         except SQLAlchemyError as exc:
             raise RuntimeError(

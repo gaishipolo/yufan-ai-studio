@@ -38,13 +38,35 @@ def admin_headers(client: TestClient) -> dict[str, str]:
     return login(client, *ADMIN)
 
 
+def _with_pages(permissions: list[str]) -> list[str]:
+    """接口码自动补上它所属的页面码。
+
+    为什么：页面门控之后，「只授接口码、不授页面」的角色全线 403。
+    夹具的意图是「这个账号能做 X」，所以把 X 对应的页面一并给上 ——
+    与生产环境那次一次性迁移（`migrate_roles_to_pages`）是同一个语义：
+    保持升级前的可用性，页面可见性由专门测门控的用例去管。
+    """
+    from api.discovery import discover_modules
+    from core.pages import page_catalog
+
+    if not page_catalog.codes():  # pragma: no cover - 装配早于夹具使用时才会走到
+        discover_modules()
+    codes = list(permissions)
+    if "*" in codes:
+        return codes
+    pages: set[str] = set()
+    for code in codes:
+        pages.update(page_catalog.pages_for(code))
+    return sorted(set(codes) | pages)
+
+
 def make_role(
     client: TestClient, admin: dict[str, str], permissions: list[str]
 ) -> dict[str, Any]:
     code = f"lib_{suffix()}"
     response = client.post(
         f"{IDENTITY}/roles",
-        json={"code": code, "name": code, "permissions": permissions},
+        json={"code": code, "name": code, "permissions": _with_pages(permissions)},
         headers=admin,
     )
     assert response.status_code == 201, response.text

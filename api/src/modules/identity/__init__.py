@@ -10,6 +10,7 @@
 
 from api.authn import register_principal_resolver
 from api.module import ModuleSpec
+from core.pages import PageSpec
 from core.ports.accounts import register_account_status_checker
 from core.ports.org_directory import register_org_directory
 from modules.identity.account_status import IdentityAccountStatus
@@ -47,6 +48,31 @@ module = ModuleSpec(
     tags=["身份"],
     description="用户与角色：登录、账号管理、权限点目录",
     permissions=SPECS,
+    # 「用户与权限」是一整页的管理能力：关掉这一页 = 这组接口全部失效。
+    # 注意 `/identity/me`、`/me/sessions` 不挂权限点，不受这一页影响 ——
+    # 「谁能进后台」和「我能不能看自己」是两件事。
+    pages=(
+        PageSpec(
+            code="page:user-access",
+            name="用户与权限",
+            route="/system/user-access",
+            requires=(
+                "identity:read",
+                "identity:create",
+                "identity:update",
+                "identity:delete",
+                "identity:role:manage",
+                "identity:team:manage",
+                "identity:group:read",
+                "identity:group:create",
+                "identity:group:update",
+                "identity:group:delete",
+                "identity:group:member:manage",
+                "identity:group:permission:manage",
+                "identity:user:permission:manage",
+            ),
+        ),
+    ),
     bootstrap=_bootstrap,
     doctor=health_check,
     seed=seed_demo,

@@ -522,6 +522,21 @@ class PermissionLayerRepository:
             )
         )
 
+    async def all_grants(self) -> list[tuple[str, str, str]]:
+        """三层表里的全部授权行：`(scope, scope_id, permission)`。
+
+        给「一次性迁移」用：按 scope/scope_id 分组，才能判断某一层
+        「有接口码、但一个页面码都没有」。
+        """
+        rows = await self.session.execute(
+            select(
+                PermissionGrant.scope,
+                PermissionGrant.scope_id,
+                PermissionGrant.permission,
+            )
+        )
+        return [(row[0], row[1], row[2]) for row in rows.all()]
+
     async def drop_codes(self, codes: Sequence[str]) -> int:
         """删掉这些码在**任意层**的授权行，返回行数。
 

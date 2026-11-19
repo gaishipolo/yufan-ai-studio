@@ -116,14 +116,14 @@ class GroupNameTaken(AppError):
 
 
 class TeamGrantForbidden(AppError):
-    """团队层 = 所有人：管理类权限与 `*` 不能放进来。
+    """团队层 = 所有人：管理类权限、页面权限与 `*` 不能放进来。
 
     这不是「权限码写错了」，所以不与 `UnknownPermission` 合并——
     前者是配置约束，后者是目录里根本没有这个码，前端提示的动作不同。
     """
 
     code = errors.code(400, 3)
-    message = "团队基础权限不能包含管理类权限或通配符"
+    message = "团队基础权限不能包含管理类权限、页面权限或通配符"
     http_status = 400
 
 

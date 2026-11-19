@@ -5,6 +5,7 @@
 """
 
 from api.module import ModuleSpec
+from core.pages import PageSpec
 from core.ports.generation_feed import register_generation_feed
 from core.ports.library_references import LibraryReferenceSource, bind_library_reference_sources
 from modules.image import (
@@ -41,6 +42,22 @@ module = ModuleSpec(
     tags=["生图"],
     description="生图",
     permissions=SPECS,
+    # 生图页：提交、看历史、删记录、替别人重跑都发生在这里。
+    pages=(
+        PageSpec(
+            code="page:image",
+            name="生图",
+            route="/image",
+            requires=(
+                "image:read",
+                "image:create",
+                "image:read:all",
+                "image:retry:any",
+                "image:delete",
+                "catalog:read",
+            ),
+        ),
+    ),
     # 演示数据由模块自带：`app seed` 会遍历所有模块的 seed 钩子
     seed=seed,
     seed_order=70,

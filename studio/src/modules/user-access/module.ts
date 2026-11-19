@@ -15,7 +15,7 @@ export default defineModule({
     {
       path: 'system/user-access',
       load: () => import('@/pages/user-access/UserAccessPage'),
-      permissions: ['identity:read'],
+      permissions: ['page:user-access'],
       nav: {
         label: '用户与权限',
         icon: ShieldCheck,

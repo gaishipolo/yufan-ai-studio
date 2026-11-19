@@ -284,6 +284,9 @@ def test_permissions_are_declared_by_owners() -> None:
     declared: set[str] = set()
     for spec in discover_modules():
         declared |= set(spec.permission_codes())
+        # 页面权限同样进目录（管理员要在角色界面勾它），但它在 `pages` 里声明，
+        # 不在 `permissions` 里 —— 两边都收才不会把 9 个页面码判成「无人声明」。
+        declared |= set(spec.page_codes())
 
     assert declared == set(catalog.codes())
     for code in declared:

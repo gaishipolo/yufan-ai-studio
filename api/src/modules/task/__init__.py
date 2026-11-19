@@ -7,6 +7,7 @@
 """
 
 from api.module import ModuleSpec
+from core.pages import PageSpec
 from core.ports.export_sources import register_export_source
 from core.ports.library_references import (
     LibraryReferenceSource,
@@ -55,6 +56,24 @@ module = ModuleSpec(
     tags=["任务"],
     description="视频生成任务：创建、查询、重试、收藏、删除",
     permissions=SPECS,
+    # 任务中心：视频任务的读 / 重试 / 删除都在这一页，另外它还要读生图历史
+    # （`image:read`）才能把两类记录排在同一条时间线上。
+    pages=(
+        PageSpec(
+            code="page:task-center",
+            name="任务中心",
+            route="/tasks",
+            requires=(
+                "task:read",
+                "task:create",
+                "task:update",
+                "task:delete",
+                "task:read:all",
+                "task:retry:any",
+                "image:read",
+            ),
+        ),
+    ),
     startup=_startup,
     # 已有自己的恢复器（worker.resume_unfinished_tasks），框架恢复器会跳过，
     # 但声明负责的 kind 让架构守卫能画出完整的「模块 × 插槽」矩阵。

@@ -1,6 +1,7 @@
 """镜头库模块：可复用的运镜指令词条。"""
 
 from api.module import ModuleSpec
+from core.pages import PageSpec
 from core.permissions import PermissionSpec
 from modules.shot.router import router
 from modules.shot.seed import seed as seed_demo
@@ -11,6 +12,9 @@ module = ModuleSpec(
     tags=["镜头库"],
     permissions=(
         PermissionSpec("shot:read", "查看镜头库", group="内容生产"),
+    ),
+    pages=(
+        PageSpec(code="page:shots", name="镜头库", route="/shots", requires=("shot:read",)),
     ),
     seed=seed_demo,
     seed_order=50,

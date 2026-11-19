@@ -148,6 +148,20 @@ Authorization: Bearer <accessToken>
 | `library:tag:manage` | 管理标签词表（改名 / 删除） |  |
 | `library:update` | 修改本人资产的名称与标签 |  |
 
+**页面**
+
+| 权限码 | 名称 | 说明 |
+|---|---|---|
+| `page:image` | 生图 | 关联接口：image:read, image:create, image:read:all, image:retry:any, image:delete, catalog:read |
+| `page:library` | 资产库 | 关联接口：library:read, library:create, library:update, library:delete, library:delete:any, library:draft:review, library:share, library:share:direct, library:share:approve, library:share:approve:team, library:share:approve:group, library:tag:manage, library:case:read, library:generation:ingest |
+| `page:shots` | 镜头库 | 关联接口：shot:read |
+| `page:storyboards` | 分镜模板库 | 关联接口：storyboard:read |
+| `page:studio` | 生成工作台 | 关联接口：catalog:read, task:create, image:create |
+| `page:task-center` | 任务中心 | 关联接口：task:read, task:create, task:update, task:delete, task:read:all, task:retry:any, image:read |
+| `page:template-specs` | 模板封装 | 关联接口：template_pack:read, template_pack:create, template_pack:publish, library:read, library:case:read, library:case:write |
+| `page:templates` | 模板库 | 关联接口：template_pack:read |
+| `page:user-access` | 用户与权限 | 关联接口：identity:read, identity:create, identity:update, identity:delete, identity:role:manage, identity:team:manage, identity:group:read, identity:group:create, identity:group:update, identity:group:delete, identity:group:member:manage, identity:group:permission:manage, identity:user:permission:manage |
+
 > 判定规则：`*` 恒真；`task:*` 这类通配可覆盖 `task:read`；否则按字符串精确匹配。
 
 ---
@@ -164,7 +178,7 @@ Authorization: Bearer <accessToken>
 | `40001` | 400 | 框架 | `ModelUnavailable` | 模型已下线 |
 | `40021` | 400 | identity | `OldPasswordMismatch` | 原密码不正确 |
 | `40022` | 400 | identity | `UnknownPermission` | 存在无法识别的权限点 |
-| `40023` | 400 | identity | `TeamGrantForbidden` | 团队基础权限不能包含管理类权限或通配符 |
+| `40023` | 400 | identity | `TeamGrantForbidden` | 团队基础权限不能包含管理类权限、页面权限或通配符 |
 | `40081` | 400 | library | `RevokeReasonRequired` | 撤销共享必须填写理由 |
 | `40082` | 400 | library | `LibraryFileTypeNotAllowed` | 支持 MP4、PNG、JPG、WebP、MP3、WAV、TXT 和 MD |
 | `40085` | 400 | library | `GenerationSourceInvalid` | 生成结果必须提供可读取的 storageKey 或 sourceUrl |
@@ -945,7 +959,9 @@ Authorization: Bearer <accessToken>
 | `groups` | `GroupLayerOut[]` | 否 | 各所属小组授予的权限 |
 | `personal` | `string[]` | 否 | 单独授予的权限 |
 | `roles` | `string[]` | 否 | 现有角色授予的权限 |
-| `effective` | `string[]` | 否 | 四层并集；`*` 表示超级管理员。require() 唯一判据 |
+| `pages` | `string[]` | 否 | 授予的页面权限（page:*）；决定侧栏与路由能进哪一页 |
+| `gatedOff` | `string[]` | 否 | 被页面门控关掉的接口权限：四层并集里有、但它所属的页面一页都没授予。界面拿它解释「为什么我有 task:read 却仍然 403」 |
+| `effective` | `string[]` | 否 | 四层并集过完页面门控的结果；`*` 表示超级管理员。require() 唯一判据 |
 
 #### `GET /api/v1/identity/users/{user_id}/logins`
 
@@ -3703,7 +3719,9 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `groups` | `GroupLayerOut[]` | 否 | 各所属小组授予的权限 |
 | `personal` | `string[]` | 否 | 单独授予的权限 |
 | `roles` | `string[]` | 否 | 现有角色授予的权限 |
-| `effective` | `string[]` | 否 | 四层并集；`*` 表示超级管理员。require() 唯一判据 |
+| `pages` | `string[]` | 否 | 授予的页面权限（page:*）；决定侧栏与路由能进哪一页 |
+| `gatedOff` | `string[]` | 否 | 被页面门控关掉的接口权限：四层并集里有、但它所属的页面一页都没授予。界面拿它解释「为什么我有 task:read 却仍然 403」 |
+| `effective` | `string[]` | 否 | 四层并集过完页面门控的结果；`*` 表示超级管理员。require() 唯一判据 |
 
 ### `ExportDetailOut`
 

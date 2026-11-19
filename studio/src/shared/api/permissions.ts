@@ -92,6 +92,20 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
       { code: 'library:update', name: '修改本人资产的名称与标签', description: '' },
     ],
   },
+  {
+    group: '页面',
+    items: [
+      { code: 'page:image', name: '生图', description: '关联接口：image:read, image:create, image:read:all, image:retry:any, image:delete, catalog:read' },
+      { code: 'page:library', name: '资产库', description: '关联接口：library:read, library:create, library:update, library:delete, library:delete:any, library:draft:review, library:share, library:share:direct, library:share:approve, library:share:approve:team, library:share:approve:group, library:tag:manage, library:case:read, library:generation:ingest' },
+      { code: 'page:shots', name: '镜头库', description: '关联接口：shot:read' },
+      { code: 'page:storyboards', name: '分镜模板库', description: '关联接口：storyboard:read' },
+      { code: 'page:studio', name: '生成工作台', description: '关联接口：catalog:read, task:create, image:create' },
+      { code: 'page:task-center', name: '任务中心', description: '关联接口：task:read, task:create, task:update, task:delete, task:read:all, task:retry:any, image:read' },
+      { code: 'page:template-specs', name: '模板封装', description: '关联接口：template_pack:read, template_pack:create, template_pack:publish, library:read, library:case:read, library:case:write' },
+      { code: 'page:templates', name: '模板库', description: '关联接口：template_pack:read' },
+      { code: 'page:user-access', name: '用户与权限', description: '关联接口：identity:read, identity:create, identity:update, identity:delete, identity:role:manage, identity:team:manage, identity:group:read, identity:group:create, identity:group:update, identity:group:delete, identity:group:member:manage, identity:group:permission:manage, identity:user:permission:manage' },
+    ],
+  },
 ];
 
 export const PERMISSION_CODES = [
@@ -139,6 +153,15 @@ export const PERMISSION_CODES = [
   'model_driver:read',
   'model_driver:read:all',
   'model_driver:retry:any',
+  'page:image',
+  'page:library',
+  'page:shots',
+  'page:storyboards',
+  'page:studio',
+  'page:task-center',
+  'page:template-specs',
+  'page:templates',
+  'page:user-access',
   'shot:read',
   'storyboard:read',
   'task:create',

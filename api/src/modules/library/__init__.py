@@ -6,6 +6,7 @@
 """
 
 from api.module import ModuleSpec
+from core.pages import PageSpec
 from core.permissions import PermissionSpec
 from core.ports.library_ingest import register_library_ingest
 from core.ports.library_references import (
@@ -100,6 +101,32 @@ module = ModuleSpec(
         ),
         PermissionSpec(
             "library:generation:ingest", "生成结果入库（草稿箱）", group="资产库"
+        ),
+    ),
+    # 资产库页：上传、改名、删除、共享、审批、案例池筛选都在这一页。
+    # `library:case:write` 不在这里 —— 它只被「模板封装」页使用（把素材移入案例池），
+    # 绑到资产库页会让「关掉封装页」无法阻止写入。
+    pages=(
+        PageSpec(
+            code="page:library",
+            name="资产库",
+            route="/library",
+            requires=(
+                "library:read",
+                "library:create",
+                "library:update",
+                "library:delete",
+                "library:delete:any",
+                "library:draft:review",
+                "library:share",
+                "library:share:direct",
+                "library:share:approve",
+                "library:share:approve:team",
+                "library:share:approve:group",
+                "library:tag:manage",
+                "library:case:read",
+                "library:generation:ingest",
+            ),
         ),
     ),
     # 声明了就必须注册，`create_app()` 会核对：上面三条 import 就是注册动作。
