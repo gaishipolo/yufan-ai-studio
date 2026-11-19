@@ -119,10 +119,12 @@ describe('RolePermissionsModal', () => {
     renderModal(baseRole());
 
     /* 弹窗是 portal 到 body 的，render 返回的 container 里并没有它的 DOM；
-       两个分组各有一个「全选本组」，必须限定在第一组里操作 */
-    const firstGroup = document.body.querySelector('section');
-    if (!firstGroup) throw new Error('权限分组未渲染');
-    await user.click(within(firstGroup).getByRole('button', { name: '全选本组' }));
+       权限勾选器现在是「页面段 + 接口段」两段，接口段里每个资源分组各有
+       一个「全选本组」——必须限定到具体那个分组，否则会点到两个同名按钮 */
+    const groupHeading = screen.getByRole('heading', { name: '内容生产' });
+    const group = groupHeading.closest('div');
+    if (!group) throw new Error('权限分组未渲染');
+    await user.click(within(group).getByRole('button', { name: '全选本组' }));
 
     expect(screen.getAllByRole('button', { name: '取消本组' })).toHaveLength(1);
   });

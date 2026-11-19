@@ -4503,6 +4503,8 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `code` | `string` | 是 | 权限码，如 `task:create` |
 | `name` | `string` | 是 | 权限名称 |
 | `description` | `string` | 否 | 权限说明 |
+| `requires` | `string[]` | 否 | 页面权限关联的接口权限码（只有页面项有）。前端用它把「页面 → 接口」的层级画出来，而不是让人从描述文字里读 |
+| `route` | `string` | 否 | 页面路由（如 `/tasks`）；只有页面项有 |
 
 ### `PermissionsIn`
 

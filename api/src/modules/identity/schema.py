@@ -271,6 +271,17 @@ class PermissionOut(CamelModel):
     code: str = Field(description="权限码，如 `task:create`")
     name: str = Field(description="权限名称")
     description: str = Field(default="", description="权限说明")
+    requires: list[str] = Field(
+        default_factory=list,
+        description=(
+            "页面权限关联的接口权限码（只有页面项有）。"
+            "前端用它把「页面 → 接口」的层级画出来，而不是让人从描述文字里读"
+        ),
+    )
+    route: str = Field(
+        default="",
+        description="页面路由（如 `/tasks`）；只有页面项有",
+    )
 
 
 class PermissionGroupOut(CamelModel):

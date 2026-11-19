@@ -30,7 +30,7 @@ from core.context import SUPER_PERMISSION, CurrentUser, permission_holds
 from core.exceptions import Unauthorized
 from core.logging import get_logger
 from core.pages import PAGE_PREFIX, page_catalog
-from core.permissions import catalog
+from core.permissions import PermissionSpec, catalog
 from core.response import Page, PageParams
 from core.security import (
     create_access_token,
@@ -246,6 +246,23 @@ class ResolvedIdentity:
 def _brief(role: Role) -> RoleBriefOut:
     return RoleBriefOut(
         id=role.id, code=role.code, name=role.name, is_superuser=role.is_superuser
+    )
+
+
+def _permission_out(spec: PermissionSpec) -> PermissionOut:
+    """权限目录的一项。页面项额外带上 `requires` 与 `route`。
+
+    这两个字段是前端画「页面 → 接口」层级的唯一依据：目录里只有一句
+    「关联接口：a, b, c」的话，界面就得靠字符串解析或者让人自己拼 ——
+    两者都会让「层级关系」看不出来。
+    """
+    page = page_catalog.get(spec.code)
+    return PermissionOut(
+        code=spec.code,
+        name=spec.name,
+        description=spec.description,
+        requires=list(page.requires) if page else [],
+        route=page.route if page else "",
     )
 
 
@@ -1625,14 +1642,14 @@ class IdentityService:
     # 权限目录
     # ------------------------------------------------------------------ #
     def permission_catalog(self) -> PermissionCatalogOut:
+        """权限目录（含页面 → 接口的关联）。
+
+        页面项额外带 `requires`（它关联的接口码）与 `route`（它的路由），
+        前端据此把两层关系画出来 —— 只靠描述文字（「关联接口：a, b, c」）
+        让人自己拼是不行的，那正是「看不出层级」的根源。
+        """
         groups = [
-            PermissionGroupOut(
-                group=group,
-                items=[
-                    PermissionOut(code=s.code, name=s.name, description=s.description)
-                    for s in items
-                ],
-            )
+            PermissionGroupOut(group=group, items=[_permission_out(s) for s in items])
             for group, items in catalog.grouped().items()
         ]
         return PermissionCatalogOut(groups=groups, total=len(catalog))

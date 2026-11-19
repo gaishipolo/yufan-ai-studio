@@ -13,15 +13,22 @@ import { Button } from '@/shared/ui';
  *
  * `unit` 换的是**对象**（权限点 / 成员），不是文案风格：
  * 「已选 5 个权限点」与「已选 3 名成员」说的是两件事，不能用一个复数硬套。
+ *
+ * `breakdown` 是**分层计数**（页面 / 接口各几个）。权限点分成两层之后，
+ * 只报一个总数会让人看不出「3 个页面 + 2 个接口」和「5 个接口」的差别 ——
+ * 而这两者后果完全不同（前者决定看得见哪一页，后者决定能做什么）。
  */
 export function PermissionSummaryBar({
   count,
   unit,
+  breakdown,
   onClear,
 }: {
   count: number;
   /** 计数的单位，如「个权限点」「名成员」 */
   unit: string;
+  /** 分层计数，如「页面 3」「接口 12」 */
+  breakdown?: { label: string; count: number }[];
   onClear: () => void;
 }) {
   return (
@@ -29,6 +36,13 @@ export function PermissionSummaryBar({
       <span>
         已选 <span className="font-semibold tabular-nums text-ink">{count}</span> {unit}
       </span>
+      {breakdown?.map((part) => (
+        <span key={part.label} className="flex items-center gap-1">
+          <span className="text-line-strong">·</span>
+          {part.label}{' '}
+          <span className="font-semibold tabular-nums text-ink">{part.count}</span>
+        </span>
+      ))}
       <span className="text-line-strong">·</span>
       <span>保存后整组替换</span>
       <Button

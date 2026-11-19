@@ -82,6 +82,7 @@ export function EffectivePermissionsModal({
         <p className="rounded-lg bg-panel-soft px-2.5 py-2 text-meta leading-[1.6] text-ink-soft">
           有效权限 = 团队 ∪ 所有小组 ∪ 个人 ∪ 角色。四层取并集、没有否决规则，
           所以个人权限只会比小组或团队更多，不会更少。
+          页面层单独算：接口权限还要看它所属的页面开没开。
         </p>
 
         {query.isLoading ? (
@@ -119,6 +120,31 @@ export function EffectivePermissionsModal({
             ))}
             <Section title="个人" codes={data?.personal ?? []} labelOf={labelOf} />
             <Section title="角色" codes={data?.roles ?? []} labelOf={labelOf} />
+
+            {/* 页面层：它决定「看得见哪一页」，也决定下面那些接口还算不算数 */}
+            <Section title="页面（决定能看见哪一页）" codes={data?.pages ?? []} labelOf={labelOf} />
+
+            {/* 门控掉的接口码：这一段是整个界面里最该被看见的 ——
+                「权限列表里明明有 task:read，接口却 403」的答案就在这里。
+                没有它，管理员只能靠猜（或者去翻日志）。 */}
+            {(data?.gatedOff ?? []).length > 0 ? (
+              <section className="rounded-lg border border-danger-line bg-danger-soft px-2.5 py-2">
+                <header className="flex items-center gap-2">
+                  <AlertCircle size={13} className="shrink-0 text-danger" />
+                  <h3 className="text-xs font-semibold text-ink">被页面门控关掉的接口</h3>
+                  <span className="text-meta tabular-nums text-ink-mute">
+                    {data?.gatedOff?.length}
+                  </span>
+                </header>
+                <p className="mt-1 text-meta leading-[1.6] text-ink-soft">
+                  下面这些接口权限已经授予，但它们所属的页面一个都没开，所以现在不生效。
+                  开对应页面即可恢复；页面权限在「角色 / 小组 / 个人」里配置。
+                </p>
+                <div className="mt-1.5">
+                  <CodeList codes={data?.gatedOff ?? []} labelOf={labelOf} />
+                </div>
+              </section>
+            ) : null}
           </>
         )}
 

@@ -1,4 +1,5 @@
-import { Loader2 } from 'lucide-react';
+import { useMemo } from 'react';
+import { Layers3, Loader2, Plug } from 'lucide-react';
 import { Chip } from '@/shared/ui';
 import { usePermissionCatalog } from '@/entities/role/api/role.queries';
 import { cn } from '@/shared/lib/cn';
@@ -8,7 +9,7 @@ export interface PermissionPickerProps {
   selected: string[];
   onChange: (codes: string[]) => void;
   /**
-   * 这一层不允许授予的码。团队基础权限禁 `identity:*` 与 `*`：
+   * 这一层不允许授予的码。团队基础权限禁 `identity:*` 与 `page:*`：
    * 后端同样会拒绝，前端提前禁用是为了不让人白点一次「保存」才知道。
    */
   forbidden?: (code: string) => boolean;
@@ -22,12 +23,21 @@ export interface PermissionPickerProps {
 }
 
 /**
- * 三层授权共用的权限勾选器。
+ * 权限勾选器：**页面在上、接口在下**，两层关系画在同一屏里。
  *
- * 没有把 `RolePermissionsModal` 改成复用它：那个弹窗背着两件角色专属的事
- * （`orphanedPermissions` 失效码清理、超管角色恒为 `*` 的说明与禁保存），
- * 抽成一个「通用」组件就得让团队/小组/个人也带上这两组分支，
- * 反而把不属于它们的概念塞进来了。这里只做最纯粹的一件事：按目录勾选、整组替换。
+ * 为什么不是一列平铺：权限点分成两层之后（页面决定「看得见哪一页」，
+ * 接口决定「能做什么」），平铺的清单会让人看不出
+ * 「关掉任务中心这一页，任务相关的接口就一起失效」这层因果 ——
+ * 而这正是这个功能最容易配错的地方。
+ *
+ * 界面承担三件事：
+ * 1. 页面卡片直接列出它关联的接口（哪些接口会被这一页关掉）；
+ * 2. 每个接口标出它被哪些页面管，以及这些页面**当前是否开着** ——
+ *    「勾了也没用」必须在勾之前就看得见；
+ * 3. 摘要条分开报「页面 N 个 / 接口 N 个」，免得把两种东西当成一种。
+ *
+ * 勾页面**不会**自动勾接口：页面是可见性，接口是能力，
+ * 自动勾会把「只想让人看得见这一页、不让他动」这种诉求抹掉。
  */
 export function PermissionPicker({
   selected,
@@ -37,12 +47,41 @@ export function PermissionPicker({
 }: PermissionPickerProps) {
   const catalogQuery = usePermissionCatalog();
 
+  const { pages, apiGroups, nameOf, pagesByApi } = useMemo(() => {
+    const groups = catalogQuery.data?.groups ?? [];
+    const pageItems: typeof groups[number]['items'] = [];
+    const rest: typeof groups = [];
+    const names = new Map<string, string>();
+    for (const group of groups) {
+      const isPageGroup = group.items.some((item) => item.code.startsWith('page:'));
+      for (const item of group.items) {
+        names.set(item.code, item.name);
+        if (item.code.startsWith('page:')) pageItems.push(item);
+      }
+      if (!isPageGroup) rest.push(group);
+    }
+    // 反向索引：接口码 → 声明它的页面码。页面项的 `requires` 是后端给的
+    // （`GET /identity/permissions` 与生成物同源），不在前端猜。
+    const owners = new Map<string, string[]>();
+    for (const page of pageItems) {
+      for (const code of page.requires ?? []) {
+        owners.set(code, [...(owners.get(code) ?? []), page.code]);
+      }
+    }
+    return {
+      pages: pageItems,
+      apiGroups: rest,
+      nameOf: names,
+      pagesByApi: owners,
+    };
+  }, [catalogQuery.data]);
+
   const toggle = (code: string) => {
     if (forbidden?.(code)) return;
     onChange(selected.includes(code) ? selected.filter((item) => item !== code) : [...selected, code]);
   };
 
-  const toggleGroup = (codes: string[], on: boolean) => {
+  const toggleMany = (codes: string[], on: boolean) => {
     const next = new Set(selected);
     for (const code of codes) {
       if (forbidden?.(code)) continue;
@@ -52,57 +91,177 @@ export function PermissionPicker({
     onChange([...next]);
   };
 
-  const groups = catalogQuery.data?.groups ?? [];
+  const selectedPages = selected.filter((code) => code.startsWith('page:')).length;
+  const selectedApis = selected.length - selectedPages;
+
+  if (catalogQuery.isLoading) {
+    return (
+      <div className="flex items-center justify-center gap-2 py-10 text-xs text-ink-mute">
+        <Loader2 size={14} className="animate-spin" /> 正在加载权限点…
+      </div>
+    );
+  }
+
+  if (catalogQuery.isError) {
+    return (
+      <p className="py-8 text-center text-xs text-danger">
+        权限点加载失败：{catalogQuery.error.message}
+      </p>
+    );
+  }
 
   return (
     <div className="space-y-3">
       <PermissionSummaryBar
         count={selected.length}
         unit="个权限点"
+        breakdown={[
+          { label: '页面', count: selectedPages },
+          { label: '接口', count: selectedApis },
+        ]}
         onClear={() => onChange([])}
       />
 
-      {catalogQuery.isLoading ? (
-        <div className="flex items-center justify-center gap-2 py-10 text-xs text-ink-mute">
-          <Loader2 size={14} className="animate-spin" /> 正在加载权限点…
-        </div>
-      ) : catalogQuery.isError ? (
-        <p className="py-8 text-center text-xs text-danger">
-          权限点加载失败：{catalogQuery.error.message}
-        </p>
-      ) : (
-        <div className="max-h-[46vh] space-y-3 overflow-auto pr-1">
-          {groups.map((group) => {
+      {/* ---------------- 上层：页面 ---------------- */}
+      {pages.length > 0 ? (
+        <section className="rounded-lg border border-line-soft">
+          <header className="flex items-center gap-2 border-b border-line-soft bg-panel-soft px-2.5 py-1.5">
+            <Layers3 size={13} className="text-primary" />
+            <h3 className="text-xs font-semibold text-ink-soft">页面权限 · 决定能看见哪一页</h3>
+            <span className="text-meta tabular-nums text-ink-mute">{pages.length}</span>
+            <button
+              type="button"
+              className="ml-auto text-meta text-primary hover:underline disabled:opacity-50"
+              disabled={pages.every((page) => forbidden?.(page.code))}
+              onClick={() =>
+                toggleMany(
+                  pages.map((page) => page.code),
+                  !pages.every((page) => selected.includes(page.code)),
+                )
+              }
+            >
+              {pages.every((page) => selected.includes(page.code)) ? '取消全部页面' : '全选页面'}
+            </button>
+          </header>
+          <p className="px-2.5 pt-1.5 text-meta text-ink-mute">
+            关掉一个页面，下面与它关联的接口就一并失效。
+          </p>
+          <ul className="grid gap-1 p-2.5 md:grid-cols-2">
+            {pages.map((page) => {
+              const blocked = Boolean(forbidden?.(page.code));
+              const checked = selected.includes(page.code);
+              return (
+                <li
+                  key={page.code}
+                  className={cn(
+                    'rounded-md border px-2 py-1.5',
+                    checked ? 'border-primary-soft bg-primary-soft/40' : 'border-line-soft',
+                    blocked && 'opacity-45',
+                  )}
+                >
+                  <label
+                    title={blocked ? forbiddenHint : undefined}
+                    className={cn(
+                      'flex items-start gap-2',
+                      blocked ? 'cursor-not-allowed' : 'cursor-pointer',
+                    )}
+                  >
+                    <input
+                      type="checkbox"
+                      className="mt-[3px] h-3 w-3 shrink-0 accent-primary"
+                      checked={checked}
+                      disabled={blocked}
+                      onChange={() => toggle(page.code)}
+                      /* aria-label：页面名与接口名会重名（「任务中心」既是页面名
+                         又出现在接口的归属提示里），只靠可见文字取元素会撞车 */
+                      aria-label={`${page.name} 页面权限`}
+                    />
+                    <span className="min-w-0">
+                      <span className="flex flex-wrap items-center gap-1.5">
+                        <span className="text-xs font-medium text-ink">{page.name}</span>
+                        <Chip>{page.code}</Chip>
+                        {page.route ? (
+                          <span className="text-meta text-ink-mute">{page.route}</span>
+                        ) : null}
+                      </span>
+                      <span className="mt-1 flex flex-wrap items-center gap-1">
+                        <span className="text-meta text-ink-mute">关联接口</span>
+                        {(page.requires ?? []).map((code) => (
+                          <span
+                            key={code}
+                            className={cn(
+                              'rounded px-1 py-px text-[10px]',
+                              selected.includes(code)
+                                ? 'bg-primary-soft text-primary'
+                                : 'bg-panel-soft text-ink-mute',
+                            )}
+                            title={nameOf.get(code) ?? code}
+                          >
+                            {nameOf.get(code) ?? code}
+                          </span>
+                        ))}
+                        {(page.requires ?? []).length === 0 ? (
+                          <span className="text-meta text-ink-mute">无</span>
+                        ) : null}
+                      </span>
+                    </span>
+                  </label>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      ) : null}
+
+      {/* ---------------- 下层：接口 ---------------- */}
+      <section className="rounded-lg border border-line-soft">
+        <header className="flex items-center gap-2 border-b border-line-soft bg-panel-soft px-2.5 py-1.5">
+          <Plug size={13} className="text-primary" />
+          <h3 className="text-xs font-semibold text-ink-soft">接口权限 · 决定能做什么</h3>
+        </header>
+        <div className="max-h-[42vh] space-y-3 overflow-auto p-2.5">
+          {apiGroups.map((group) => {
             const codes = group.items.map((item) => item.code);
             const selectable = codes.filter((code) => !forbidden?.(code));
             const allChecked =
               selectable.length > 0 && selectable.every((code) => selected.includes(code));
             return (
-              <section key={group.group} className="rounded-lg border border-line-soft">
-                <header className="flex items-center gap-2 border-b border-line-soft bg-panel-soft px-2.5 py-1.5">
-                  <h3 className="text-xs font-semibold text-ink-soft">{group.group}</h3>
+              <div key={group.group}>
+                <div className="flex items-center gap-2 pb-1">
+                  <h4 className="text-xs font-semibold text-ink-soft">{group.group}</h4>
                   <span className="text-meta tabular-nums text-ink-mute">{codes.length}</span>
                   <button
                     type="button"
                     className="ml-auto text-meta text-primary hover:underline disabled:opacity-50"
                     disabled={selectable.length === 0}
-                    onClick={() => toggleGroup(selectable, !allChecked)}
+                    onClick={() => toggleMany(selectable, !allChecked)}
                   >
                     {allChecked ? '取消本组' : '全选本组'}
                   </button>
-                </header>
-                <ul className="grid gap-1 p-1.5 md:grid-cols-2">
+                </div>
+                <ul className="grid gap-1 md:grid-cols-2">
                   {group.items.map((item) => {
                     const checked = selected.includes(item.code);
                     const blocked = Boolean(forbidden?.(item.code));
+                    const owners = pagesByApi.get(item.code) ?? [];
+                    const openOwners = owners.filter((code) => selected.includes(code));
+                    // 有页面管着、但这些页面当前一个都没开 → 勾了也不生效。
+                    // 必须在勾之前就看见，否则会得到「权限明明勾了却 403」。
+                    const gated = owners.length > 0 && openOwners.length === 0;
                     return (
-                      <li key={item.code}>
+                      <li
+                        key={item.code}
+                        className={cn(
+                          'flex items-start gap-2 rounded-md px-2 py-1.5',
+                          checked && !blocked ? 'bg-primary-soft/40' : 'bg-transparent',
+                          blocked && 'opacity-45',
+                        )}
+                      >
                         <label
                           title={blocked ? forbiddenHint : undefined}
                           className={cn(
-                            'flex items-start gap-2 rounded-[7px] px-2 py-1.5 transition-colors',
-                            blocked ? 'cursor-not-allowed opacity-45' : 'cursor-pointer',
-                            checked && !blocked ? 'bg-primary-soft' : !blocked && 'hover:bg-panel-soft',
+                            'flex min-w-0 flex-1 items-start gap-2',
+                            blocked ? 'cursor-not-allowed' : 'cursor-pointer',
                           )}
                         >
                           <input
@@ -111,28 +270,45 @@ export function PermissionPicker({
                             checked={checked}
                             disabled={blocked}
                             onChange={() => toggle(item.code)}
+                            aria-label={`${item.name} 接口权限`}
                           />
                           <span className="min-w-0">
-                            <span className="flex items-center gap-1.5">
+                            <span className="flex flex-wrap items-center gap-1.5">
                               <span className="text-xs text-ink">{item.name}</span>
                               <Chip>{item.code}</Chip>
                             </span>
-                            {item.description && (
+                            {item.description ? (
                               <span className="mt-0.5 block text-meta leading-[1.5] text-ink-mute">
                                 {item.description}
                               </span>
-                            )}
+                            ) : null}
+                            <span
+                              className={cn(
+                                'mt-0.5 block text-meta',
+                                gated ? 'text-danger' : 'text-ink-mute',
+                              )}
+                            >
+                              {owners.length === 0
+                                ? '不受页面开关影响'
+                                : gated
+                                  ? `页面未开启时不生效（${owners
+                                      .map((code) => nameOf.get(code) ?? code)
+                                      .join('、')}）`
+                                  : `随 ${openOwners
+                                      .map((code) => nameOf.get(code) ?? code)
+                                      .join('、')} 生效`}
+                            </span>
                           </span>
                         </label>
                       </li>
                     );
                   })}
                 </ul>
-              </section>
+              </div>
             );
           })}
         </div>
-      )}
+      </section>
     </div>
   );
 }

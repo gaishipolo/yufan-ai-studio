@@ -1050,6 +1050,10 @@ export interface PermissionOut {
   name: string;
   /** 权限说明 */
   description?: string;
+  /** 页面权限关联的接口权限码（只有页面项有）。前端用它把「页面 → 接口」的层级画出来，而不是让人从描述文字里读 */
+  requires?: string[];
+  /** 页面路由（如 `/tasks`）；只有页面项有 */
+  route?: string;
 }
 
 /** 团队 / 小组 / 个人三层共用的「整组替换」入参。
