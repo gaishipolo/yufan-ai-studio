@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -17,7 +17,10 @@ vi.mock('@/entities/library/api/library.queries', () => ({
   useBulkAction: () => ({ mutate: bulkMock, isPending: false }),
   useCreateDownload: () => ({ mutate: vi.fn(), isPending: false }),
   useCreateTag: () => ({ mutateAsync: vi.fn() }),
-  useDeleteAsset: () => ({ mutate: vi.fn(), isPending: false }),
+  useDeleteAsset: () => ({
+    mutate: (_vars: unknown, options?: {onSuccess?: () => void}) => options?.onSuccess?.(),
+    isPending: false,
+  }),
   useDraftDecision: () => ({ mutate: vi.fn(), isPending: false }),
   useMyGroups: () => ({ data: [], isPending: false }),
   usePatchAsset: () => ({ mutate: vi.fn(), isPending: false }),
@@ -166,5 +169,56 @@ describe('LibraryWorkspace · URL 里的类型筛选', () => {
       </MemoryRouter>,
     );
     expect(listMock).toHaveBeenCalledWith(expect.objectContaining({ kind: undefined }));
+  });
+});
+
+/** 封装：没有自己的字节，删它只解除归属。 */
+const PACK: LibraryAssetOut = {
+  ...ASSET,
+  id: 'p1',
+  name: '6036 黑',
+  kind: 'pack',
+  sizeBytes: 0,
+  memberCount: 3,
+};
+
+describe('LibraryWorkspace · 删封装', () => {
+  /* 删包只是解除归属：成员仍是自己的资产行，会回到个人库。
+     不说的话，用户点完会看到资产库突然多出几张图 —— 界面上没有任何地方
+     提过这件事，读起来像「回收站把包拆开了」。反过来，以为图跟着没了的人
+     会去回收站里找，也找不到。 */
+  it('移入回收站前说明：素材不会被删，会回到资产库', async () => {
+    const user = userEvent.setup();
+    listMock.mockReturnValue(listOf([PACK]));
+    renderWorkspace();
+
+    await user.click(screen.getByRole('button', { name: '移入回收站' }));
+
+    expect(screen.getByText(/3 张素材不会被删除/)).toBeInTheDocument();
+    expect(screen.getByText(/回到资产库单独显示/)).toBeInTheDocument();
+  });
+
+  it('删完的提示也带上成员去哪了', async () => {
+    const user = userEvent.setup();
+    listMock.mockReturnValue(listOf([PACK]));
+    renderWorkspace();
+
+    // 卡片上的删除 → 弹窗里确认
+    await user.click(screen.getByRole('button', { name: '移入回收站' }));
+    const dialog = await screen.findByRole('dialog');
+    await user.click(within(dialog).getByRole('button', { name: '移入回收站' }));
+
+    expect(toastMock).toHaveBeenCalledWith(
+      expect.stringContaining('3 张素材已回到资产库'),
+    );
+  });
+
+  it('普通素材的删除文案不带这句（免得每张图都啰嗦一遍）', async () => {
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    await user.click(screen.getByRole('button', { name: '移入回收站' }));
+
+    expect(screen.queryByText(/回到资产库单独显示/)).not.toBeInTheDocument();
   });
 });

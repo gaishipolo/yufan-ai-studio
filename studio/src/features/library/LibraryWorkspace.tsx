@@ -55,6 +55,23 @@ const PAGE_SIZE = 24;
    派生之后「加一档忘了同步这里」不可能再发生 —— 这条白名单本来就没有
    独立于筛选控件的语义。 */
 const KINDS = new Set<string>(KIND_OPTIONS.map((item) => item.value));
+
+/**
+ * 删封装时要说清「成员不会被删，会回到资产库」。
+ *
+ * 删包做的事只是解除归属：成员仍是自己的资产行。不说的话，用户点完「移入
+ * 回收站」会看到资产库突然多出几张图 —— 而界面上没有任何地方提过这件事，
+ * 读起来更像「回收站把包拆开吐了一地」。反过来，以为图跟着没了的人会去
+ * 回收站里找，也找不到。
+ */
+function packMemberNote(assets: LibraryAssetOut[]): string {
+  const packs = assets.filter((asset) => asset.kind === 'pack');
+  if (!packs.length) return '';
+  const total = packs.reduce((sum, asset) => sum + (asset.memberCount ?? 0), 0);
+  return packs.length === 1
+    ? `里面的 ${total} 张素材不会被删除，会回到资产库单独显示。`
+    : `这 ${packs.length} 个封装里的 ${total} 张素材不会被删除，会回到资产库单独显示。`;
+}
 const SORTS = new Set(['-createdAt', 'createdAt', 'name', '-sizeBytes']);
 
 interface ConfirmState {
@@ -259,7 +276,9 @@ export function LibraryWorkspace() {
       title: force ? '强制移入回收站' : '移入回收站',
       description: force
         ? `「${displayName(asset.name)}」属于 ${asset.ownerName || asset.ownerId}。强制删除会同时补一张自审的撤销共享单，理由会进审计。`
-        : `「${displayName(asset.name)}」会进入回收站，30 天内可以恢复；被任务引用时不能彻底删除。`,
+        : asset.kind === 'pack'
+          ? `「${displayName(asset.name)}」会进入回收站，30 天内可以恢复。${packMemberNote([asset])}`
+          : `「${displayName(asset.name)}」会进入回收站，30 天内可以恢复；被任务引用时不能彻底删除。`,
       confirmLabel: '移入回收站',
       danger: true,
       requireReason: force,
@@ -271,7 +290,14 @@ export function LibraryWorkspace() {
           {
             onSuccess: () => {
               setConfirm(null);
-              toast('已移入回收站');
+              /* 从详情里删的：顺手把详情关掉。留着它会去拉一条刚被删的资产，
+                 弹窗停在那显示「资产不存在」—— 看起来像删除失败了。 */
+              setDetailId(null);
+              toast(
+                asset.kind === 'pack'
+                  ? `已把「${displayName(asset.name)}」移入回收站，${asset.memberCount ?? 0} 张素材已回到资产库`
+                  : '已移入回收站',
+              );
             },
             onError: (error) => {
               setConfirm(null);
@@ -319,14 +345,22 @@ export function LibraryWorkspace() {
   function askPurge(asset: LibraryAssetOut) {
     setConfirm({
       title: '彻底删除',
-      description: `「${displayName(asset.name)}」的字节会被永久删除，**不可恢复**。被模板 / 任务引用时后端会拒绝并列出引用方。`,
+      description:
+        asset.kind === 'pack'
+          ? `「${displayName(asset.name)}」会被永久删除，不可恢复。${packMemberNote([asset])}`
+          : `「${displayName(asset.name)}」的字节会被永久删除，**不可恢复**。被模板 / 任务引用时后端会拒绝并列出引用方。`,
       confirmLabel: '彻底删除',
       danger: true,
       onConfirm: () => {
         purge.mutate(asset.id, {
           onSuccess: () => {
             setConfirm(null);
-            toast('已彻底删除');
+            setDetailId(null);
+            toast(
+              asset.kind === 'pack'
+                ? `已删除「${displayName(asset.name)}」，${asset.memberCount ?? 0} 张素材已回到资产库`
+                : '已彻底删除',
+            );
           },
           onError: (error) => {
             setConfirm(null);
@@ -493,7 +527,7 @@ export function LibraryWorkspace() {
         title: '批量移入回收站',
         description: `选中的 ${deletable.length} 条素材会进入回收站，30 天内可以恢复。${
           skipped ? `另外 ${skipped} 条共享给小组或团队，不能直接删除，已跳过。` : ''
-        }`,
+        }${packMemberNote(deletable)}`,
         confirmLabel: '批量移入回收站',
         danger: true,
         /* 管理员强制删除仍要填理由：与单条删除复用同一套理由字段 */
