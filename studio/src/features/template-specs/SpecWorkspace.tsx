@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useBlocker } from 'react-router-dom';
 import {
   ChevronLeft,
+  FolderInput,
   ImageOff,
   Plus,
   RotateCcw,
@@ -839,16 +840,43 @@ export function SpecWorkspace() {
         title="把这条素材设为案例"
         width={460}
       >
-        <div className="flex flex-col gap-3">
-          <p className="text-body leading-relaxed text-ink-soft">
-            「{pendingCase?.name}」会被移入
-            <span className="font-medium text-ink"> 案例池 </span>
-            ：模板库的所有人都能看到它，它也不再出现在你的个人素材列表里。
-            素材只有一份，不是复制。
+        <div className="flex flex-col gap-3 p-[18px]">
+          {/* 先把它要动的是哪一条摆出来：文件名一长，混在正文里就看不见了。
+              平时素材列表里也是这么一条一行，形状认得出来。 */}
+          <div className="flex items-center gap-2 rounded-lg border border-line-soft bg-panel-soft px-2.5 py-2">
+            <FolderInput size={14} className="shrink-0 text-ink-mute" aria-hidden />
+            <span className="min-w-0 flex-1 truncate text-body text-ink" title={pendingCase?.name}>
+              {pendingCase?.name}
+            </span>
+          </div>
+
+          {/* 后果逐条列。原来是一整段：读到第三句，第一句已经忘了。 */}
+          <ul className="flex flex-col gap-1.5 text-body leading-relaxed text-ink-soft">
+            <li className="flex gap-2">
+              <span className="mt-[8px] size-[5px] shrink-0 rounded-full bg-ink-mute/45" />
+              <span className="min-w-0">
+                移入<span className="font-medium text-ink">案例池</span>
+                ：模板库的所有人都能看到它
+              </span>
+            </li>
+            <li className="flex gap-2">
+              <span className="mt-[8px] size-[5px] shrink-0 rounded-full bg-ink-mute/45" />
+              <span className="min-w-0">不再出现在你的个人素材列表里</span>
+            </li>
+            <li className="flex gap-2">
+              <span className="mt-[8px] size-[5px] shrink-0 rounded-full bg-ink-mute/45" />
+              <span className="min-w-0">素材只有一份，不是复制一份</span>
+            </li>
+          </ul>
+
+          {/* 这是**读者猜不到**的两件事（既有模板受不受影响、能不能反悔），
+              不是复述上面的话 —— 收成一条注脚。
+              用「分隔线 + 弱化文字」而不是 `Notice`：Notice 的底色和描边跟输入框
+              是同一套语言，摆在弹窗里会被读成「这里能填」。 */}
+          <p className="border-t border-line-soft pt-3 text-meta leading-relaxed text-ink-mute">
+            已经在别处用到的模板不受影响；之后也可以改回普通素材。
           </p>
-          <p className="text-meta text-ink-mute">
-            已经在别处用到的模板不受影响；这一步可以撤销（设为案例后可再改回普通素材）。
-          </p>
+
           <div className="flex justify-end gap-2 pt-1">
             <Button onClick={() => setPendingCase(null)}>取消</Button>
             <Button
@@ -874,12 +902,29 @@ export function SpecWorkspace() {
           <p className="text-body leading-relaxed text-ink-soft">
             这些修改只存在当前页面，离开就没了。
           </p>
-          <div className="flex flex-col gap-1.5">
-            <Button variant="primary" disabled={busy} onClick={() => void saveThenLeave('publish')}>
+
+          {/* 两条「先存再走」是推荐路径：并排摆在一起、占满整行 ——
+              它们回答的是同一个问题（存下来），只是存成哪一种。 */}
+          <div className="flex flex-col gap-2">
+            <Button
+              variant="primary"
+              block
+              disabled={busy}
+              onClick={() => void saveThenLeave('publish')}
+            >
               保存并发布
             </Button>
-            <Button disabled={busy} onClick={() => void saveThenLeave('save')}>
+            <Button block disabled={busy} onClick={() => void saveThenLeave('save')}>
               保存草稿后离开
+            </Button>
+          </div>
+
+          {/* 「不保存」那一侧的决定收到底部一行：左边是留下（退路），
+              右边是放弃（危险）。四个按钮平铺成一个菜单时，用户得
+              从头读到尾才知道哪个是退路。 */}
+          <div className="mt-1 flex items-center justify-between border-t border-line-soft pt-3">
+            <Button variant="ghost" disabled={busy} onClick={closeLeave}>
+              留在这一页
             </Button>
             <Button
               variant="ghost"
@@ -888,9 +933,6 @@ export function SpecWorkspace() {
               onClick={leaveNow}
             >
               不保存，直接离开
-            </Button>
-            <Button variant="ghost" disabled={busy} onClick={closeLeave}>
-              留在这一页
             </Button>
           </div>
         </div>
