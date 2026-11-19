@@ -257,6 +257,69 @@ def test_disabled_spec_cannot_compile(client: TestClient) -> None:
     assert "已停用" in body.json()["message"]
 
 
+def test_publish_after_disable_brings_the_spec_back(client: TestClient) -> None:
+    """停用后重新发布 = 重新上线。
+
+    回归：草稿一个字都没改就重新发布，会命中原有的**幂等分支**
+    （同一份草稿重发 → 版本号不动、不新增快照行）。那个分支以前只 return、
+    不动 status，于是接口给 200 而记录仍是 disabled —— 界面拿到成功、
+    模板却还挂在下架状态。
+
+    这条用例的判别力全在「草稿没改」上：先发布一次，停用，再原样发布。
+    """
+    headers = _headers(client)
+    video, first, second = _media(client, headers)
+    draft = _draft(video, first, second)
+    _save(client, headers, draft)
+
+    first_publish = client.post(f"{API}/{draft['key']}/publish", headers=headers)
+    assert first_publish.status_code == 200, first_publish.text
+    version = first_publish.json()["data"]["version"]
+    published_at = first_publish.json()["data"]["spec"]["publishedAt"]
+
+    off = client.post(f"{API}/{draft['key']}/disable", headers=headers)
+    assert off.json()["data"]["status"] == "disabled"
+    assert off.json()["data"]["disabledAt"] is not None
+
+    back = client.post(f"{API}/{draft['key']}/publish", headers=headers)
+    assert back.status_code == 200, back.text
+    spec = back.json()["data"]["spec"]
+    assert spec["status"] == "published"
+    assert spec["disabledAt"] is None
+    # 没有新版本：幂等分支不该凭空造一个版本号
+    assert back.json()["data"]["version"] == version
+    # 也没有新发布：publishedAt 说的是「这个版本首次发布的时间」。
+    # 比较时去掉 `Z`：同一时刻在这条链上有两种形状 —— 内存里刚赋的值带时区，
+    # 从库重读的不带（SQLite 不存 tz，而出参用的是裸 `datetime` 而非
+    # `UtcDateTime`）。这是**既有**的契约不一致，与本条用例要守的行为无关。
+    assert spec["publishedAt"].rstrip("Z") == published_at.rstrip("Z")
+
+    # 真的能用了 —— 状态恢复不是只写在出参里
+    body = client.post(f"{API}/{draft['key']}/compile", json={"slotValues": {}}, headers=headers)
+    assert body.status_code == 400  # 缺必填素材，但不再是 409「已停用」
+
+
+def test_disabled_spec_can_be_republished_with_a_changed_draft(client: TestClient) -> None:
+    """改过草稿再发布走的是另一条分支（新增版本），状态同样要恢复。"""
+    headers = _headers(client)
+    video, first, second = _media(client, headers)
+    draft = _draft(video, first, second)
+    _save(client, headers, draft)
+    first_publish = client.post(f"{API}/{draft['key']}/publish", headers=headers)
+    version = first_publish.json()["data"]["version"]
+
+    client.post(f"{API}/{draft['key']}/disable", headers=headers)
+
+    draft["prompt"] = f"{draft['prompt']}\n停用后改过的句子。"
+    _save(client, headers, draft)
+    back = client.post(f"{API}/{draft['key']}/publish", headers=headers)
+
+    assert back.status_code == 200, back.text
+    assert back.json()["data"]["version"] == version + 1
+    assert back.json()["data"]["spec"]["status"] == "published"
+    assert back.json()["data"]["spec"]["disabledAt"] is None
+
+
 def test_published_list_only_shows_published(client: TestClient) -> None:
     headers = _headers(client)
     video, first, second = _media(client, headers)

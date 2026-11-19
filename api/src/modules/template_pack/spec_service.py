@@ -500,6 +500,18 @@ async def publish(session: AsyncSession, actor: CurrentUser, key: str) -> SpecPu
     fingerprint = fingerprint_of(payload)
     if latest is not None and latest.fingerprint == fingerprint:
         # 同一份草稿重发：版本号不动，也不新增快照行（回执要能重复调）。
+        #
+        # **但状态要恢复**：停用之后重新发布，语义就是「重新上线」。
+        # 这里若只 return 不动 status，接口会给 200 而记录仍是 disabled ——
+        # 界面拿到成功、模板却还在下架状态，用户以为启用过了。
+        # （真撞过：草稿一个字都没改就想把停用的模板放回去，走了这条幂等分支。）
+        #
+        # `published_at` 不动：它记的是**这个版本首次发布**的时间，
+        # 这次没有新版本，改它会让「发布于何时」说谎。
+        if head.status != "published":
+            head.status = "published"
+            head.disabled_at = None
+            await session.flush()
         out = await _spec_out_of(session, head)
         await session.commit()
         return SpecPublishOut(version=latest.version, spec=out)

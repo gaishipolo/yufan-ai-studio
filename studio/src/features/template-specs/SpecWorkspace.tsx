@@ -413,7 +413,15 @@ export function SpecWorkspace() {
                 onPublish={() =>
                   publish
                     .mutateAsync(item.key)
-                    .then(result => setNote(`已发布 ${item.name} v${result.version}`))
+                    .then(result =>
+                      setNote(
+                        /* 停用态走的是同一个接口，但版本号不变（幂等分支）——
+                           这时候说「已发布 v1」会让人以为又发了一版。 */
+                        item.status === 'disabled'
+                          ? `已启用 ${item.name}`
+                          : `已发布 ${item.name} v${result.version}`,
+                      ),
+                    )
                     .catch(fail)
                 }
                 onDisable={() =>
@@ -954,16 +962,21 @@ function SpecCard({
             >
               编辑
             </button>
-            {item.status !== 'disabled' && (
-              <button
-                type="button"
-                disabled={busy}
-                onClick={onPublish}
-                className="rounded-md px-1.5 py-1 text-ink-soft transition-colors hover:bg-panel-soft hover:text-primary disabled:opacity-50"
-              >
-                发布
-              </button>
-            )}
+            {/* 「发布」与「启用」是同一个动作（`POST /publish`），但说的不是一回事：
+                发布 = 把当前草稿冻结成新版本；启用 = 把下架的模板放回去。
+                停用后再点「发布」会让人以为又要发一版。
+
+                以前停用态**整个按钮都不画**（`status !== 'disabled'` 才显示），
+                于是下架的模板只剩「编辑」和「删除」—— 想放回去没有任何入口，
+                是条死胡同。 */}
+            <button
+              type="button"
+              disabled={busy}
+              onClick={onPublish}
+              className="rounded-md px-1.5 py-1 text-ink-soft transition-colors hover:bg-panel-soft hover:text-primary disabled:opacity-50"
+            >
+              {item.status === 'disabled' ? '启用' : '发布'}
+            </button>
             {item.status === 'published' && (
               <button
                 type="button"
