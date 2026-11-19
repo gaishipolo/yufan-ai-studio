@@ -33,6 +33,18 @@ def _create(client: TestClient, api: str, headers: dict[str, str], ids: list[str
     return client.post(f"{api}/library/downloads", json={"ids": ids}, headers=headers)
 
 
+def _shared(client: TestClient, api: str, headers: dict[str, str], ids: list[str]) -> None:
+    """给这组素材打上同一个标签 —— 建封装的前提（成员至少共有一个标签）。"""
+    tag = client.post(f"{api}/library/tags", json={"name": "6036"}, headers=headers)
+    assert tag.status_code in (200, 201), tag.text
+    tag_id = tag.json()["data"]["id"]
+    for asset_id in ids:
+        response = client.patch(
+            f"{api}/library/assets/{asset_id}", json={"tagIds": [tag_id]}, headers=headers
+        )
+        assert response.status_code == 200, response.text
+
+
 def test_download_builds_a_zip_with_every_file(client: TestClient, api: str) -> None:
     admin = admin_headers(client)
     owner, owner_h = make_user(client, admin, LIB_RW)
@@ -454,6 +466,7 @@ def test_download_expands_a_pack_into_its_members(client: TestClient, api: str) 
     first = upload_image(client, api, headers, name="6036-黑-正面.png", color="teal")
     second = upload_image(client, api, headers, name="6036-黑-立体.png", color="olive")
 
+    _shared(client, api, headers, [first["id"], second["id"]])
     pack = client.post(
         f"{api}/library/packs",
         json={"name": "6036 黑", "assetIds": [first["id"], second["id"]]},
@@ -491,6 +504,7 @@ def test_download_reports_why_a_pack_member_was_skipped(
     alive = upload_image(client, api, headers, name="在的.png", color="navy")
     doomed = upload_image(client, api, headers, name="删掉的.png", color="maroon")
 
+    _shared(client, api, headers, [alive["id"], doomed["id"]])
     pack = client.post(
         f"{api}/library/packs",
         json={"name": "6036 白", "assetIds": [alive["id"], doomed["id"]]},

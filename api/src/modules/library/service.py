@@ -817,8 +817,26 @@ class LibraryService:
         # 两个包互不相干。选择器会把这些素材标灰，这里是最后一道闸。
         taken = await self._pack_of(ids)
         if taken:
-            labels = "、".join(f"「{name}」" for _, name in list(taken.values())[:3])
+            labels = "、".join(f"「{pack_name}」" for _, pack_name in list(taken.values())[:3])
             raise Conflict(f"这些素材已经属于封装{labels}，一张素材只能进一个封装")
+
+        # 成员必须**至少共有一个标签**：封装的意思是「同一件东西的几个视角」
+        # （同一产品、同一颜色），而这件事在系统里唯一能判的信号就是标签 ——
+        # `6036` 这类产品编号是成员共同带的，`正面图 / 三视图` 是各自独有的。
+        # 一组没有任何共同标签的图，要么根本不是一回事，要么还没打标；
+        # 两种都不该打包：打出来的包在模板库选择器里也没有依据归到任何槽位
+        # （那里正是靠「成员标签 ∩ 槽位候选标签」判断这个包能不能填）。
+        #
+        # 放在建行**之前**：先落一行包再报错，会留下一条没有成员关系的空壳。
+        tags = await tag_ids_by_asset(self.session, ids)
+        common = set(tags.get(ids[0], []))
+        for asset_id in ids[1:]:
+            common &= set(tags.get(asset_id, []))
+        if not common:
+            raise BadRequest(
+                "这些素材没有共同的标签，打不成一个封装："
+                "先给它们打上同一个标签（比如产品编号）再来"
+            )
 
         label = name.strip()[:200] or "未命名封装"
         cover = next(
@@ -852,12 +870,7 @@ class LibraryService:
                 LibraryPackItem(pack_id=pack.id, asset_id=asset_id, position=position)
             )
 
-        tags = await tag_ids_by_asset(self.session, ids)
-        common = set(tags.get(ids[0], []))
-        for asset_id in ids[1:]:
-            common &= set(tags.get(asset_id, []))
-        if common:
-            await add_asset_tags(self.session, pack.id, sorted(common))
+        await add_asset_tags(self.session, pack.id, sorted(common))
 
         await self.session.commit()
         return await self.get_pack(actor, pack.id)

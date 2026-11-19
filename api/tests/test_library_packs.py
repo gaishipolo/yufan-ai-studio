@@ -46,6 +46,30 @@ def _pack(client: TestClient, headers: dict[str, str], name: str, ids: list[str]
     )
 
 
+def _shared(
+    client: TestClient, headers: dict[str, str], ids: list[str], name: str = "共同产品"
+) -> str:
+    """给这组素材打上同一个标签 —— 建封装的前提（成员至少共有一个标签）。
+
+    **合并而不是覆盖**已有标签：用例自己打的「正面图 / 三视图」不能丢，
+    那正是「只继承共同标签」那条用例的观察对象。
+
+    专门验证「没有共同标签被拒」的用例**不要**用它，直接 post。
+    """
+    tag = _tag(client, headers, name)
+    for asset_id in ids:
+        detail = client.get(f"{API}/library/assets/{asset_id}", headers=headers).json()["data"]
+        existing = [item["id"] for item in (detail.get("tags") or [])]
+        if tag["id"] in existing:
+            continue
+        client.patch(
+            f"{API}/library/assets/{asset_id}",
+            json={"tagIds": [*existing, tag["id"]]},
+            headers=headers,
+        )
+    return tag["id"]
+
+
 def _asset_names(client: TestClient, headers: dict[str, str]) -> list[str]:
     body = client.get(f"{API}/library/assets", params={"pageSize": 100}, headers=headers)
     assert body.status_code == 200, body.text
@@ -79,6 +103,7 @@ def test_pack_inherits_only_common_tags(client: TestClient) -> None:
 def test_pack_rejects_unknown_or_nested_members(client: TestClient) -> None:
     headers = _headers(client)
     image = upload_image(client, API, headers, name="a.png", color="green")
+    _shared(client, headers, [image["id"]])
 
     missing = _pack(client, headers, "空包", ["nonexistent-id"])
     assert missing.status_code == 400
@@ -100,6 +125,7 @@ def test_pack_members_stop_listing_separately(client: TestClient) -> None:
     headers = _headers(client)
     first = upload_image(client, API, headers, name="6036-黑-正面.png", color="yellow")
     second = upload_image(client, API, headers, name="6036-黑-三视图.png", color="cyan")
+    _shared(client, headers, [first["id"], second["id"]])
 
     before = _asset_names(client, headers)
     assert "6036-黑-正面.png" in before and "6036-黑-三视图.png" in before
@@ -145,6 +171,7 @@ def test_pack_detail_marks_deleted_member(client: TestClient) -> None:
     headers = _headers(client)
     keep = upload_image(client, API, headers, name="keep.png", color="purple")
     drop = upload_image(client, API, headers, name="drop.png", color="black")
+    _shared(client, headers, [keep["id"], drop["id"]])
     body = _pack(client, headers, "6036 黑", [keep["id"], drop["id"]])
     assert body.status_code == 201, body.text
     pack_id = body.json()["data"]["id"]
@@ -170,6 +197,7 @@ def test_pack_member_count_and_items_are_exposed(client: TestClient) -> None:
     # 颜色必须不同：同色会被「按内容秒传」去重成同一条资产，包就只剩一个成员
     first = upload_image(client, API, headers, name="6036-黑-正面平铺.png", color="red")["id"]
     second = upload_image(client, API, headers, name="6036-黑-立体图.png", color="blue")["id"]
+    _shared(client, headers, [first, second])
     response = client.post(
         f"{API}/library/packs",
         json={"name": "6036 黑", "assetIds": [first, second]},
@@ -212,6 +240,7 @@ def test_pack_members_are_hidden_from_the_list_but_not_the_picker(
     """
     headers = _headers(client)
     first = upload_image(client, API, headers, name="6036-黑-正面.png", color="silver")
+    _shared(client, headers, [first["id"]])
     pack = client.post(
         f"{API}/library/packs",
         json={"name": "6036 黑", "assetIds": [first["id"]]},
@@ -243,6 +272,7 @@ def test_asset_belongs_to_at_most_one_pack(client: TestClient) -> None:
     headers = _headers(client)
     first = upload_image(client, API, headers, name="6036-黑-正面.png", color="coral")
     second = upload_image(client, API, headers, name="6036-黑-立体.png", color="khaki")
+    _shared(client, headers, [first["id"], second["id"]])
 
     created = client.post(
         f"{API}/library/packs",
@@ -265,6 +295,7 @@ def test_selection_tells_which_pack_an_asset_is_in(client: TestClient) -> None:
     """选择器要能显示「已在封装「X」里」，否则建包时只能选完才被拒。"""
     headers = _headers(client)
     member = upload_image(client, API, headers, name="6036-白-正面.png", color="plum")
+    _shared(client, headers, [member["id"]])
     loose = upload_image(client, API, headers, name="散图.png", color="lime")
     pack = client.post(
         f"{API}/library/packs",
@@ -290,6 +321,7 @@ def test_pack_allows_an_empty_name_and_falls_back(client: TestClient) -> None:
     """
     headers = _headers(client)
     member = upload_image(client, API, headers, name="6036-黑-正面.png", color="peru")
+    _shared(client, headers, [member["id"]])
     created = client.post(
         f"{API}/library/packs",
         json={"name": "   ", "assetIds": [member["id"]]},
@@ -297,3 +329,54 @@ def test_pack_allows_an_empty_name_and_falls_back(client: TestClient) -> None:
     )
     assert created.status_code == 201, created.text
     assert created.json()["data"]["name"] == "未命名封装"
+
+
+def test_pack_requires_at_least_one_shared_tag(client: TestClient) -> None:
+    """成员必须有至少一个共同标签，否则不成「一套」。
+
+    封装的意思是「同一件东西的几个视角」，而这件事在系统里唯一能判的信号就是
+    标签：`6036` 这类产品编号是成员共同带的，`正面图 / 三视图` 是各自独有的。
+    一组没有共同标签的图，要么根本不是一回事，要么还没打标 —— 打出来的包在
+    模板库选择器里也没有依据归到任何槽位（那里靠「成员标签 ∩ 槽位候选标签」判）。
+
+    而且要在**建行之前**拦：先落一行包再报错，会留下一条没有成员的空壳。
+    """
+    headers = _headers(client)
+    front = _tag(client, headers, "正面图")
+    views = _tag(client, headers, "三视图")
+
+    first = upload_image(client, API, headers, name="a-正面.png", color="aqua")
+    second = upload_image(client, API, headers, name="b-三视图.png", color="beige")
+    _tag_asset(client, headers, first["id"], [front["id"]])
+    _tag_asset(client, headers, second["id"], [views["id"]])
+
+    before = client.get(f"{API}/library/assets?kind=pack&view=all", headers=headers)
+    assert before.json()["data"]["total"] == 0
+
+    response = _pack(client, headers, "混在一起的", [first["id"], second["id"]])
+    assert response.status_code == 400, response.text
+    assert "共同的标签" in response.json()["message"]
+
+    # 没有留下空壳
+    after = client.get(f"{API}/library/assets?kind=pack&view=all", headers=headers)
+    assert after.json()["data"]["total"] == 0
+
+
+def test_pack_accepts_members_sharing_just_one_tag(client: TestClient) -> None:
+    """只共有一个标签也算「一套」——判据是「有没有」，不是「有几个」。"""
+    headers = _headers(client)
+    product = _tag(client, headers, "6036")
+    front = _tag(client, headers, "正面图")
+
+    first = upload_image(client, API, headers, name="c-正面.png", color="cyan")
+    second = upload_image(client, API, headers, name="d-黑白.png", color="brown")
+    _tag_asset(client, headers, first["id"], [product["id"], front["id"]])
+    _tag_asset(client, headers, second["id"], [product["id"]])
+
+    response = _pack(client, headers, "只共有一个标签", [first["id"], second["id"]])
+    assert response.status_code == 201, response.text
+    # `PackOut` 给的是 tagIds（成员标签的并集），不是 tags —— 包身上只有共同标签
+    detail = client.get(
+        f"{API}/library/assets/{response.json()['data']['id']}", headers=headers
+    ).json()["data"]
+    assert {item["name"] for item in detail["tags"]} == {"6036"}

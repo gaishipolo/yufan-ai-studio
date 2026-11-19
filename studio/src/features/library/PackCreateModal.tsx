@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { AlertCircle, Layers, Plus, X } from 'lucide-react';
 import { Button, CoverImage, Modal } from '@/shared/ui';
 import { cn } from '@/shared/lib/cn';
@@ -58,6 +58,22 @@ export function PackCreateModal({
     setError('');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
+
+  /**
+   * 成员共有的标签。
+   *
+   * **一个都没有就打不成封装**：封装的意思是「同一件东西的几个视角」，而这件事
+   * 在系统里唯一能判的信号就是标签（`6036` 这类产品编号）。后端也会 400，
+   * 但让人选完、填完名字、点了按钮才被拒，比一开始就说清差得多。
+   */
+  const commonTags = useMemo(() => {
+    const [first, ...rest] = assets;
+    if (!first) return [];
+    const sets = rest.map((item) => new Set((item.tags ?? []).map((tag) => tag.id)));
+    return (first.tags ?? []).filter((tag) => sets.every((set) => set.has(tag.id)));
+  }, [assets]);
+
+  const noCommonTag = assets.length > 0 && commonTags.length === 0;
 
   const remove = (id: string) => {
     setAssets((current) => current.filter((item) => item.id !== id));
@@ -156,6 +172,13 @@ export function PackCreateModal({
             )}
           </div>
 
+          {noCommonTag && (
+            <p className="flex items-start gap-1.5 rounded-lg bg-warn-soft px-2.5 py-2 text-meta text-warn-deep">
+              <AlertCircle size={13} className="mt-0.5 shrink-0" />
+              这些素材没有共同的标签，打不成一个封装。先给它们打上同一个标签（比如产品编号）再来。
+            </p>
+          )}
+
           {error && (
             <p className="flex items-start gap-1.5 rounded-lg bg-danger-soft px-2.5 py-2 text-meta text-danger-deep">
               <AlertCircle size={13} className="mt-0.5 shrink-0" />
@@ -170,7 +193,7 @@ export function PackCreateModal({
             <Button
               size="sm"
               variant="primary"
-              disabled={!assets.length || create.isPending}
+              disabled={!assets.length || noCommonTag || create.isPending}
               onClick={() => void submit()}
             >
               {create.isPending ? '创建中…' : '创建封装'}

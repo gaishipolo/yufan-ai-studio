@@ -34,6 +34,8 @@ vi.mock('@/entities/library/ui/LibraryPicker', () => ({
   },
 }));
 
+const PRODUCT_TAG = {id: 'tag-6036', name: '6036'};
+
 function assetOf(id: string, name: string, extra: Partial<LibraryAssetOut> = {}): LibraryAssetOut {
   return {
     id,
@@ -46,6 +48,8 @@ function assetOf(id: string, name: string, extra: Partial<LibraryAssetOut> = {})
     sizeBytes: 1024,
     createdAt: '2026-11-19T02:00:00Z',
     coverUrl: `https://cdn.test/${id}.jpg`,
+    /* 共同标签是建封装的前提：没有它的用例在别处单独测 */
+    tags: [PRODUCT_TAG],
     ...extra,
   };
 }
@@ -163,5 +167,53 @@ describe('PackCreateModal · 选择器里已进包的素材', () => {
     expect(reason(assetOf('y', '散图.png'))).toBeNull();
     // 已经是这一批的成员 → 不能说「已在封装里」（那会让人以为选不了自己选的）
     expect(reason(assetOf('m1', '6036-黑-正面.png', { packId: 'p9', packName: '旧包' }))).toBeNull();
+  });
+});
+
+describe('PackCreateModal · 共同标签', () => {
+  /* 封装的意思是「同一件东西的几个视角」，而这件事在系统里唯一能判的信号就是
+     标签。没有共同标签的一组图，要么不是一回事，要么还没打标 —— 后端 400，
+     但让人填完名字、点了按钮才被拒，比一开始就说清差得多。 */
+  it('成员没有共同标签时：按钮不可点，并说清该怎么办', () => {
+    renderModal({
+      preset: [
+        assetOf('m1', '正面.png', { tags: [{ id: 'tag-front', name: '正面图' }] }),
+        assetOf('m2', '三视图.png', { tags: [{ id: 'tag-views', name: '三视图' }] }),
+      ],
+    });
+
+    expect(screen.getByRole('button', { name: '创建封装' })).toBeDisabled();
+    expect(screen.getByText(/没有共同的标签/)).toBeInTheDocument();
+    // 死按钮必须给下一步，而不是只说「不行」
+    expect(screen.getByText(/打上同一个标签（比如产品编号）/)).toBeInTheDocument();
+  });
+
+  it('只共有一个标签就够了（判据是「有没有」，不是「有几个」）', async () => {
+    const user = userEvent.setup();
+    renderModal({
+      preset: [
+        assetOf('m1', '正面.png', {
+          tags: [PRODUCT_TAG, { id: 'tag-front', name: '正面图' }],
+        }),
+        assetOf('m2', '散图.png', { tags: [PRODUCT_TAG] }),
+      ],
+    });
+
+    expect(screen.queryByText(/没有共同的标签/)).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '创建封装' }));
+    expect(createMock).toHaveBeenCalledWith({ name: '', assetIds: ['m1', 'm2'] });
+  });
+
+  it('共同标签只有两个成员都有时才算（不是看第一个成员的）', () => {
+    renderModal({
+      preset: [
+        assetOf('m1', 'a.png', {
+          tags: [PRODUCT_TAG, { id: 'tag-front', name: '正面图' }],
+        }),
+        assetOf('m2', 'b.png', { tags: [{ id: 'tag-other', name: '别的' }] }),
+      ],
+    });
+    // m1 有 6036，m2 没有 → 不是共同标签
+    expect(screen.getByRole('button', { name: '创建封装' })).toBeDisabled();
   });
 });
