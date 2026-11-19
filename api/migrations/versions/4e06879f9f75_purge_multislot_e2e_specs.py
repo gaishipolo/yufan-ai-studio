@@ -17,10 +17,16 @@ Create Date: 2026-11-19 15:05:00.000000
 
 删后全库不再有 `max_count>1` 的槽位，编译层也随之收紧为真·一槽一张。
 
-## 不可逆
+## 为什么**不**标 `irreversible`
 
-物理删除 head / versions / slots 三层数据，降级无法还原（`downgrade` 明确
-不做事）。因此标 `irreversible = True`，CI 降级往返会停在更早的锚点。
+这个标记的语义是「`downgrade()` 会抛异常」（见 `scripts/downgrade_anchor.py`），
+CI 据此把降级往返的锚点定在它身上。本迁移只删**数据行**、不动任何表结构，
+`downgrade()` 空实现是**正确**的：schema 往返不受影响，降级能顺利穿过它。
+
+反过来标了才是问题：锚点会被推到链头，CI 的降级往返只剩一两道迁移可走，
+等于把整条链的下行路径从测试里拿掉（`tests/test_downgrade_anchor.py` 会
+当场抓住「标了却不抛」）。被删的两个模板是已软删的废弃 e2e 数据，
+重建只会造出内容与原来不同的假模板，所以选择不重建、也不声称不可逆。
 """
 
 from __future__ import annotations
@@ -34,9 +40,6 @@ revision: str = "4e06879f9f75"
 down_revision: Union[str, None] = "d7f2a91c48b3"
 branch_labels: Union[str, None] = None
 depends_on: Union[str, None] = None
-
-#: 物理删除不可还原。
-irreversible = True
 
 _SPEC_KEYS = ("e2e-combo-multi", "e2e-combo-video")
 
@@ -69,5 +72,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # 物理删除的 e2e 测试数据无法还原；明确不做事，而不是重建空壳。
+    # 只删数据、不改结构，所以这里**不需要**做事：schema 往返照旧成立。
+    # 被删的两个模板是已软删的废弃 e2e 数据，不重建 —— 重建只会造出
+    # 内容与原来不同的假模板。也正因如此，本迁移**不标** `irreversible`。
     pass
