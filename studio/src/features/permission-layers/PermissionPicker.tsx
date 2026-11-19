@@ -150,6 +150,12 @@ export function PermissionPicker({
             {pages.map((page) => {
               const blocked = Boolean(forbidden?.(page.code));
               const checked = selected.includes(page.code);
+              const requires = page.requires ?? [];
+              // 只列前 3 个接口名，其余折成「等 N 个」：
+              // 资产库挂着 14 个接口，全列出来就是一堵墙，卡片高低也不齐。
+              // 全部名字放在 title 里，鼠标悬停可见。
+              const shown = requires.slice(0, 3).map((code) => nameOf.get(code) ?? code);
+              const hidden = requires.length - shown.length;
               return (
                 <li
                   key={page.code}
@@ -162,13 +168,13 @@ export function PermissionPicker({
                   <label
                     title={blocked ? forbiddenHint : undefined}
                     className={cn(
-                      'flex items-start gap-2',
+                      'flex items-center gap-2',
                       blocked ? 'cursor-not-allowed' : 'cursor-pointer',
                     )}
                   >
                     <input
                       type="checkbox"
-                      className="mt-[3px] h-3 w-3 shrink-0 accent-primary"
+                      className="h-3 w-3 shrink-0 accent-primary"
                       checked={checked}
                       disabled={blocked}
                       onChange={() => toggle(page.code)}
@@ -176,36 +182,25 @@ export function PermissionPicker({
                          又出现在接口的归属提示里），只靠可见文字取元素会撞车 */
                       aria-label={`${page.name} 页面权限`}
                     />
-                    <span className="min-w-0">
-                      <span className="flex flex-wrap items-center gap-1.5">
-                        <span className="text-xs font-medium text-ink">{page.name}</span>
-                        <Chip>{page.code}</Chip>
-                        {page.route ? (
-                          <span className="text-meta text-ink-mute">{page.route}</span>
-                        ) : null}
-                      </span>
-                      <span className="mt-1 flex flex-wrap items-center gap-1">
-                        <span className="text-meta text-ink-mute">关联接口</span>
-                        {(page.requires ?? []).map((code) => (
-                          <span
-                            key={code}
-                            className={cn(
-                              'rounded px-1 py-px text-[10px]',
-                              selected.includes(code)
-                                ? 'bg-primary-soft text-primary'
-                                : 'bg-panel-soft text-ink-mute',
-                            )}
-                            title={nameOf.get(code) ?? code}
-                          >
-                            {nameOf.get(code) ?? code}
-                          </span>
-                        ))}
-                        {(page.requires ?? []).length === 0 ? (
-                          <span className="text-meta text-ink-mute">无</span>
-                        ) : null}
-                      </span>
+                    <span className="min-w-0 flex-1 truncate text-xs font-medium text-ink">
+                      {page.name}
                     </span>
+                    <Chip className="shrink-0">{page.code}</Chip>
+                    {page.route ? (
+                      <span className="shrink-0 text-meta text-ink-mute">{page.route}</span>
+                    ) : null}
                   </label>
+                  {requires.length > 0 ? (
+                    <p
+                      className="mt-1 truncate pl-5 text-meta text-ink-mute"
+                      title={requires.map((code) => nameOf.get(code) ?? code).join('、')}
+                    >
+                      关联 {requires.length} 个接口：{shown.join('、')}
+                      {hidden > 0 ? ` 等 ${requires.length} 个` : ''}
+                    </p>
+                  ) : (
+                    <p className="mt-1 pl-5 text-meta text-ink-mute">无关联接口</p>
+                  )}
                 </li>
               );
             })}
@@ -282,21 +277,23 @@ export function PermissionPicker({
                                 {item.description}
                               </span>
                             ) : null}
-                            <span
-                              className={cn(
-                                'mt-0.5 block text-meta',
-                                gated ? 'text-danger' : 'text-ink-mute',
+                            <span className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-meta">
+                              {owners.length === 0 ? (
+                                <span className="text-ink-mute">不受页面开关影响</span>
+                              ) : (
+                                <>
+                                  <span className="text-ink-mute">
+                                    归{' '}
+                                    {owners
+                                      .map((code) => nameOf.get(code) ?? code)
+                                      .join('、')}{' '}
+                                    管
+                                  </span>
+                                  <span className={gated ? 'text-danger' : 'text-primary'}>
+                                    {gated ? '· 当前未生效' : '· 已生效'}
+                                  </span>
+                                </>
                               )}
-                            >
-                              {owners.length === 0
-                                ? '不受页面开关影响'
-                                : gated
-                                  ? `页面未开启时不生效（${owners
-                                      .map((code) => nameOf.get(code) ?? code)
-                                      .join('、')}）`
-                                  : `随 ${openOwners
-                                      .map((code) => nameOf.get(code) ?? code)
-                                      .join('、')} 生效`}
                             </span>
                           </span>
                         </label>

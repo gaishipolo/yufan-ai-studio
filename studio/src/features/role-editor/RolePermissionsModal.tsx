@@ -68,7 +68,7 @@ export function RolePermissionsModal({
       open={open}
       onClose={onClose}
       title={isSuperuser ? `角色权限 · ${role?.name ?? ''}` : `编辑角色权限 · ${role?.name ?? ''}`}
-      width={600}
+      width={720}
     >
       <div className="space-y-3 px-[18px] py-4">
         {isSuperuser ? (

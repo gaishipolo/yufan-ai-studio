@@ -7,6 +7,7 @@ import asyncio
 import pytest
 from fastapi.testclient import TestClient
 from library_support import LIB_RW, admin_headers, make_user, upload_image
+from identity_support import with_pages
 
 TEST_PASSWORD = "test-pass-123"
 
@@ -37,7 +38,7 @@ def _provision(sub: str, name: str, permissions: tuple[str, ...]) -> None:
                 role = Role(code=code, name=code, is_builtin=False, sort_order=999)
                 session.add(role)
                 await session.flush()
-            await service.roles.set_permissions(role.id, list(permissions))
+            await service.roles.set_permissions(role.id, with_pages(permissions))
 
             user = await service.users.get(sub)
             if user is None:

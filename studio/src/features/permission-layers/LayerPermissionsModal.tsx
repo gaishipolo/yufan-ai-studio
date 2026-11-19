@@ -81,7 +81,7 @@ function LayerForm({
   };
 
   return (
-    <Modal open onClose={onClose} title={title} width={640}>
+    <Modal open onClose={onClose} title={title} width={720}>
       <div className="space-y-3 px-[18px] py-4">
         <p className="rounded-lg bg-panel-soft px-2.5 py-2 text-meta leading-[1.6] text-ink-soft">
           {description}

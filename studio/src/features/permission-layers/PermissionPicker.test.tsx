@@ -66,11 +66,10 @@ describe('PermissionPicker 的两层结构', () => {
     expect(screen.getByText(/页面权限 · 决定能看见哪一页/)).toBeInTheDocument();
     expect(screen.getByText(/接口权限 · 决定能做什么/)).toBeInTheDocument();
 
-    // 页面卡片上直接写着关联接口，不用去别处找
+    // 页面条目上直接写着关联接口，不用去别处找
     const card = screen.getByRole('checkbox', { name: '任务中心 页面权限' }).closest('li');
     expect(card).not.toBeNull();
-    expect(within(card as HTMLElement).getByTitle('查看任务')).toBeInTheDocument();
-    expect(within(card as HTMLElement).getByTitle('创建任务')).toBeInTheDocument();
+    expect(within(card as HTMLElement).getByText(/关联 2 个接口：查看任务、创建任务/)).toBeInTheDocument();
   });
 
   it('接口标出它被哪些页面管着', () => {
@@ -78,7 +77,8 @@ describe('PermissionPicker 的两层结构', () => {
 
     const item = screen.getByRole('checkbox', { name: '查看任务 接口权限' }).closest('li');
     expect(item).not.toBeNull();
-    expect(within(item as HTMLElement).getByText(/随 任务中心 生效/)).toBeInTheDocument();
+    expect(within(item as HTMLElement).getByText(/归 任务中心 管/)).toBeInTheDocument();
+    expect(within(item as HTMLElement).getByText(/已生效/)).toBeInTheDocument();
   });
 
   it('页面没开的时候，接口标成「不生效」——勾之前就能看见', () => {
@@ -86,9 +86,8 @@ describe('PermissionPicker 的两层结构', () => {
 
     const item = screen.getByRole('checkbox', { name: '查看任务 接口权限' }).closest('li');
     expect(item).not.toBeNull();
-    expect(
-      within(item as HTMLElement).getByText(/页面未开启时不生效（任务中心）/),
-    ).toBeInTheDocument();
+    expect(within(item as HTMLElement).getByText(/归 任务中心 管/)).toBeInTheDocument();
+    expect(within(item as HTMLElement).getByText(/当前未生效/)).toBeInTheDocument();
   });
 
   it('没有任何页面声明的接口标成「不受页面开关影响」', () => {
