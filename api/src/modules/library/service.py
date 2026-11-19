@@ -25,7 +25,7 @@ import hashlib
 import logging
 import re
 import tempfile
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -69,6 +69,7 @@ from modules.library.models import (
     LibraryAsset,
     LibraryAssetGeneration,
     LibraryAssetTag,
+    LibraryPackItem,
     LibraryShareRequest,
     LibraryTag,
     LibraryTextVersion,
@@ -85,10 +86,20 @@ from modules.library.schema import (
     LibraryGroupRef,
     LibraryTab,
     LibraryTagOut,
+    PackMemberOut,
+    PackOut,
+    PackSummaryOut,
     ShareHistoryItem,
     UploadKind,
 )
-from modules.library.tags import all_tags, set_asset_tags, tag_filter_clause, tag_tree_index
+from modules.library.tags import (
+    add_asset_tags,
+    all_tags,
+    set_asset_tags,
+    tag_filter_clause,
+    tag_ids_by_asset,
+    tag_tree_index,
+)
 
 __all__ = ["LibraryService"]
 
@@ -98,6 +109,23 @@ logger = logging.getLogger(__name__)
 #: 反过来旧库的 `prune-blobs` 也扫不到这里。
 BLOB_PREFIX = "library/blobs"
 PREVIEW_PREFIX = "library/previews"
+
+def _packed_member_clause() -> ColumnElement[bool]:
+    """「这条素材已被某个封装收录」。
+
+    成员不再单列（2026-11-19 用户拍板）：一条图进了包，就只在包里出现，
+    个人库里不再单列 —— 否则同一张图既要挑「包」又要挑「图」，包的意义减半。
+
+    落在 **SQL** 里而不是滤 `items`：`total` 与 `items` 必须同口径，
+    否则最后一页点进去是空的、侧栏角标与列表也对不上（与 `exclude_kinds` 同理）。
+    回收站与草稿**不排除**：那是「我自己的东西」，进了包的素材被删后还得能找回。
+    """
+    return (
+        select(LibraryPackItem.id)
+        .where(LibraryPackItem.asset_id == LibraryAsset.id)
+        .exists()
+    )
+
 
 _STATES = {"draft", "active", "trash"}
 
@@ -286,6 +314,9 @@ class LibraryService:
             # 必须还能在回收站里找回来。若是还排除案例，则「删了就消失」，
             # 而角标又把它算进去了（`facets.trash` 不按用途过滤）。
             query = query.where(LibraryAsset.purpose.not_in(list(exclude_purposes)))
+        if state == "active":
+            # 成员不单列：进了包的素材只在包里出现。
+            query = query.where(~_packed_member_clause())
         if keyword:
             query = query.where(LibraryAsset.name.ilike(f"%{keyword}%"))
         if tag_ids:
@@ -719,6 +750,199 @@ class LibraryService:
                 purpose=purpose,
             )
 
+    # ------------------------------------------------------------------ 封装
+    async def create_pack(
+        self, actor: CurrentUser, *, name: str, asset_ids: Sequence[str]
+    ) -> PackOut:
+        """把一组素材打成一个封装（一行 `kind=pack` 的资产）。
+
+        **成员仍然是自己的资产行**：这里只记归属，不复制字节、不改成员的
+        标签/可见性/回收站状态。所以「删包不删成员」，成员也不能同时属于两个包
+        之外的任何容器概念。
+
+        包自动继承成员的**共同标签**：一份封装的成员都是同一件产品，`6036`
+        这种标签对整包都有意义；而 `正面图 / 三视图` 是成员各自独有的，**不继承**
+        —— 那正是取图时区分成员的依据，打进包里反而会让整包看起来「有所有角色」。
+        """
+        ids = [item for item in dict.fromkeys(asset_ids) if item]
+        if not ids:
+            raise BadRequest("封装至少要含一张素材")
+
+        readable = await access.readable_rows(self.session, ids, actor)
+        missing = [item for item in ids if item not in readable]
+        if missing:
+            raise BadRequest(f"这些素材不存在或无权访问：{'、'.join(missing[:5])}")
+        if any(row.kind == "pack" for row in readable.values()):
+            raise BadRequest("封装不能嵌套：成员只能是素材，不能再是封装")
+
+        label = name.strip()[:200] or "未命名封装"
+        cover = next(
+            (
+                readable[item].cover_key
+                for item in ids
+                if readable[item].cover_key and readable[item].kind in {"image", "video"}
+            ),
+            "",
+        )
+        pack = LibraryAsset(
+            name=label,
+            kind="pack",
+            origin="upload",
+            mime_type="",
+            size_bytes=0,
+            storage_key="",
+            cover_key=cover,
+            owner_id=actor.id,
+            visibility="personal",
+            state="active",
+            purpose="",
+            state_version=1,
+            created_at=datetime.now(UTC),
+        )
+        self.session.add(pack)
+        await self.session.flush()  # 主键在 flush 之后才有
+
+        for position, asset_id in enumerate(ids):
+            self.session.add(
+                LibraryPackItem(pack_id=pack.id, asset_id=asset_id, position=position)
+            )
+
+        tags = await tag_ids_by_asset(self.session, ids)
+        common = set(tags.get(ids[0], []))
+        for asset_id in ids[1:]:
+            common &= set(tags.get(asset_id, []))
+        if common:
+            await add_asset_tags(self.session, pack.id, sorted(common))
+
+        await self.session.commit()
+        return await self.get_pack(actor, pack.id)
+
+    async def get_pack(self, actor: CurrentUser, pack_id: str) -> PackOut:
+        row = await self.session.scalar(
+            select(LibraryAsset).where(
+                LibraryAsset.id == pack_id, LibraryAsset.kind == "pack"
+            )
+        )
+        if row is None or row.deleted_at is not None or row.state != "active":
+            raise NotFound("封装不存在")
+        members = (await self._pack_members([row.id])).get(row.id, [])
+        tags = await tag_ids_by_asset(self.session, [member.id for member in members])
+        return self._pack_out(row, members, tags)
+
+    async def list_packs(
+        self,
+        actor: CurrentUser,
+        *,
+        tag_ids: Sequence[str] | None = None,
+        keyword: str = "",
+    ) -> list[PackSummaryOut]:
+        """选择器用的包列表。
+
+        `tag_ids` 是**槽位的候选标签**：与包内成员标签有交集才返回 ——
+        这正是「这个包能不能填那一格」的判据，不需要另建「包属于什么类型」的字段。
+        """
+        groups = await access.all_groups(self.session, actor)
+        query = select(LibraryAsset).where(
+            LibraryAsset.kind == "pack",
+            LibraryAsset.state == "active",
+            LibraryAsset.deleted_at.is_(None),
+            access.tab_clause(actor, groups, LibraryTab.ALL),
+        )
+        if keyword:
+            query = query.where(LibraryAsset.name.ilike(f"%{keyword}%"))
+        rows = list(
+            (await self.session.scalars(query.order_by(LibraryAsset.created_at.desc()))).all()
+        )
+        if not rows:
+            return []
+
+        members = await self._pack_members([row.id for row in rows])
+        tags = await tag_ids_by_asset(
+            self.session, [member.id for group in members.values() for member in group]
+        )
+        wanted = set(tag_ids or ())
+        result: list[PackSummaryOut] = []
+        for row in rows:
+            group = members.get(row.id, [])
+            union = self._union_tags(group, tags)
+            if wanted and not wanted & set(union):
+                continue
+            result.append(
+                PackSummaryOut(
+                    id=row.id,
+                    name=row.name,
+                    cover_url=self.storage.url_for(row.cover_key) if row.cover_key else None,
+                    member_count=len(group),
+                    tag_ids=union,
+                )
+            )
+        return result
+
+    async def _pack_members(
+        self, pack_ids: Sequence[str]
+    ) -> dict[str, list[LibraryAsset]]:
+        """一批包各自的成员，按 `position` 排好。
+
+        **不过滤被删的成员**：包静默少一张比露出来更糟 —— 使用者会以为
+        「这个包本来就这样」，而取图时会当场报缺，两处对不上。
+        """
+        wanted = [item for item in dict.fromkeys(pack_ids) if item]
+        if not wanted:
+            return {}
+        rows = (
+            await self.session.execute(
+                select(LibraryPackItem, LibraryAsset)
+                .join(LibraryAsset, LibraryAsset.id == LibraryPackItem.asset_id)
+                .where(LibraryPackItem.pack_id.in_(wanted))
+                .order_by(LibraryPackItem.pack_id, LibraryPackItem.position)
+            )
+        ).all()
+        result: dict[str, list[LibraryAsset]] = {}
+        for item, asset in rows:
+            result.setdefault(item.pack_id, []).append(asset)
+        return result
+
+    @staticmethod
+    def _union_tags(
+        members: Sequence[LibraryAsset], tags: Mapping[str, Sequence[str]]
+    ) -> list[str]:
+        """成员标签的并集，**保序去重**（先出现先保留）。"""
+        union: list[str] = []
+        seen: set[str] = set()
+        for member in members:
+            for tag_id in tags.get(member.id, ()):
+                if tag_id and tag_id not in seen:
+                    seen.add(tag_id)
+                    union.append(tag_id)
+        return union
+
+    def _pack_out(
+        self,
+        row: LibraryAsset,
+        members: Sequence[LibraryAsset],
+        tags: Mapping[str, Sequence[str]],
+    ) -> PackOut:
+        return PackOut(
+            id=row.id,
+            name=row.name,
+            cover_url=self.storage.url_for(row.cover_key) if row.cover_key else None,
+            member_count=len(members),
+            tag_ids=self._union_tags(members, tags),
+            members=[
+                PackMemberOut(
+                    id=member.id,
+                    name=member.name,
+                    kind=member.kind,
+                    cover_url=(
+                        self.storage.url_for(member.cover_key) if member.cover_key else None
+                    ),
+                    tag_ids=list(tags.get(member.id, ())),
+                    deleted=member.deleted_at is not None,
+                )
+                for member in members
+            ],
+        )
+
     # ------------------------------------------------------------------ 内部
 
     async def _receive(
@@ -935,6 +1159,8 @@ class LibraryService:
                     # 团队 / 全部」。算进来的话，作者打开侧栏会看到自己多了几十条
                     # 素材，点进去却一条也找不到（列表默认排除案例）。
                     LibraryAsset.purpose != access.PURPOSE_CASE,
+                    # 角标与列表同口径：进了包的成员不单列，也不单独计数。
+                    ~_packed_member_clause(),
                 )
             )
             return int(await self.session.scalar(query) or 0)

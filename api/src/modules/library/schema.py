@@ -664,3 +664,48 @@ class FromGenerationIn(CamelModel):
     size_bytes: int = Field(default=0, ge=0)
     tag_ids: list[str] = Field(default_factory=list)
     generation: GenerationSnapshotIn = Field(default_factory=GenerationSnapshotIn)
+
+
+# --------------------------------------------------------------------------- #
+# 封装（pack）
+# --------------------------------------------------------------------------- #
+class PackIn(CamelModel):
+    """建封装：一次挑一组素材（同产品同颜色的多个视角）。"""
+
+    name: str = Field(min_length=1, max_length=200)
+    #: 成员的**选择顺序**就是 `position`：包详情预览按它显示。
+    #: 上限 200：一个包是一套图，几十张已经是极端；再多更可能是误操作。
+    asset_ids: list[str] = Field(min_length=1, max_length=200)
+
+
+class PackMemberOut(CamelModel):
+    """包成员：模板库只读它来判断「这个包能填哪几格」。"""
+
+    id: str
+    name: str
+    kind: str
+    cover_url: str | None = None
+    #: 成员自己的标签（正面图 / 三视图 / 6036 …）。取图靠它匹配槽位的候选标签。
+    tag_ids: list[str] = Field(default_factory=list)
+    #: 成员被软删（在回收站里）时仍然列出并标记：包静默少一张，比露出来更糟 ——
+    #: 使用者会以为「这个包本来就只有两张」，而取图会当场报缺。
+    deleted: bool = False
+
+
+class PackSummaryOut(CamelModel):
+    """列表用的摘要：不含成员明细，省流量。"""
+
+    id: str
+    name: str
+    cover_url: str | None = None
+    member_count: int = 0
+    #: 全部成员标签的并集 —— 与某个槽位的候选标签有交集，这个包就能填它。
+    #: 用并集而不是「按角色分组」：模板库要做的是「包里有正面图吗？」，
+    #: 一个交集判断就够了，不必提前把角色结构化（角色是标签，不是新概念）。
+    tag_ids: list[str] = Field(default_factory=list)
+
+
+class PackOut(PackSummaryOut):
+    """详情：带成员明细，供预览与取图。"""
+
+    members: list[PackMemberOut] = Field(default_factory=list)

@@ -2,7 +2,7 @@
 
 > 此文件由 `app export-openapi` 自动生成，请勿手工编辑。
 >
-> 版本 `0.2.0`｜共 **127** 个接口 / **11** 个模块
+> 版本 `0.2.0`｜共 **130** 个接口 / **11** 个模块
 >
 > 重新生成：`cd api && .venv/Scripts/python -m cli export-openapi`
 
@@ -229,7 +229,7 @@ Authorization: Bearer <accessToken>
 | 镜头库 | 1 | 见下方 `4.6` |
 | 系统 | 2 | 见下方 `4.7` |
 | 导出 | 6 | 见下方 `4.8` |
-| 资产库 | 43 | 见下方 `4.9` |
+| 资产库 | 46 | 见下方 `4.9` |
 | 模型驱动 | 9 | 见下方 `4.10` |
 | 模板封装 | 12 | 见下方 `4.11` |
 
@@ -1580,7 +1580,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 
 **响应** `ApiResponse<unknown>`（前端取 `res.data`）
 
-### 4.9 资产库（43 个）
+### 4.9 资产库（46 个）
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
@@ -1612,6 +1612,9 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `GET` | `/api/v1/library/facets` | 资产库分面统计 | 🔒 |
 | `GET` | `/api/v1/library/groups` | 我的小组（含是否负责人） | 🔒 |
 | `PUT` | `/api/v1/library/groups/{group_id}/leaders` | 设置小组负责人（整体替换） | 🔒 |
+| `POST` | `/api/v1/library/packs` | 建封装：把一组素材打成一个包 | 🔒 |
+| `GET` | `/api/v1/library/packs` | 封装列表（模板库选择器用） | 🔒 |
+| `GET` | `/api/v1/library/packs/{pack_id}` | 封装详情（成员与预览） | 🔒 |
 | `GET` | `/api/v1/library/selection` | 选择器：只返回库内资产 | 🔒 |
 | `POST` | `/api/v1/library/share-requests` | 发起共享 / 撤销共享申请 | 🔒 |
 | `GET` | `/api/v1/library/share-requests` | 申请单列表（我提交的 / 待我审核） | 🔒 |
@@ -2386,6 +2389,76 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `userIds` | `string[]` | 否 |  |
 
 **响应** `ApiResponse<string[]>`（前端取 `res.data`）
+
+#### `POST /api/v1/library/packs`
+
+**建封装：把一组素材打成一个包**
+
+成员的选择顺序就是包内顺序；包自动继承成员的**共同标签**。
+
+包本身是一行 `kind=pack` 的资产（没有自己的字节），所以列表/标签/删除
+都走既有路径，不为它单开分支。
+
+**请求体** `PackIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `name` | `string` | 是 |  |
+| `assetIds` | `string[]` | 是 |  |
+
+**响应** `ApiResponse<PackOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `coverUrl` | `string \| null` | 否 |  |
+| `memberCount` | `number` | 否 |  |
+| `tagIds` | `string[]` | 否 |  |
+| `members` | `PackMemberOut[]` | 否 |  |
+
+#### `GET /api/v1/library/packs`
+
+**封装列表（模板库选择器用）**
+
+`tagIds` 传**槽位的候选标签**：与包内成员标签有交集才返回。
+
+这条判据就是「这个包能不能填那一格」，所以不需要给包再加一个「类型」字段 ——
+产品包 / 服装包 / 人物包各自的标签不同，天然就被过滤到对应的槽位里。
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `tagIds` | query | `string[] | null` | 否 |  |
+| `keyword` | query | `string` | 否 |  |
+
+**响应** `ApiResponse<PackSummaryOut[]>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `[].id` | `string` | 是 |  |
+| `[].name` | `string` | 是 |  |
+| `[].coverUrl` | `string \| null` | 否 |  |
+| `[].memberCount` | `number` | 否 |  |
+| `[].tagIds` | `string[]` | 否 |  |
+
+#### `GET /api/v1/library/packs/{pack_id}`
+
+**封装详情（成员与预览）**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `pack_id` | path | `string` | 是 |  |
+
+**响应** `ApiResponse<PackOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `coverUrl` | `string \| null` | 否 |  |
+| `memberCount` | `number` | 否 |  |
+| `tagIds` | `string[]` | 否 |  |
+| `members` | `PackMemberOut[]` | 否 |  |
 
 #### `GET /api/v1/library/selection`
 
@@ -3997,7 +4070,7 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 
 ### `LibraryAssetKind`（枚举）
 
-取值：`video`、`audio`、`image`、`text`
+取值：`video`、`audio`、`image`、`text`、`pack`
 
 ### `LibraryAssetOrigin`（枚举）
 
@@ -4233,6 +4306,53 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `createdAt` | `string` | 是 | 创建时间（UTC） |
 | `roles` | `RoleBriefOut[]` | 否 | 拥有的角色 |
 | `permissions` | `string[]` | 否 | 展开后的权限码；含 `*` 表示超级管理员 |
+
+### `PackIn`
+
+建封装：一次挑一组素材（同产品同颜色的多个视角）。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `name` | `string` | 是 |  |
+| `assetIds` | `string[]` | 是 |  |
+
+### `PackMemberOut`
+
+包成员：模板库只读它来判断「这个包能填哪几格」。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `kind` | `string` | 是 |  |
+| `coverUrl` | `string \| null` | 否 |  |
+| `tagIds` | `string[]` | 否 |  |
+| `deleted` | `boolean` | 否 |  |
+
+### `PackOut`
+
+详情：带成员明细，供预览与取图。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `coverUrl` | `string \| null` | 否 |  |
+| `memberCount` | `number` | 否 |  |
+| `tagIds` | `string[]` | 否 |  |
+| `members` | `PackMemberOut[]` | 否 |  |
+
+### `PackSummaryOut`
+
+列表用的摘要：不含成员明细，省流量。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `coverUrl` | `string \| null` | 否 |  |
+| `memberCount` | `number` | 否 |  |
+| `tagIds` | `string[]` | 否 |  |
 
 ### `PasswordChangeIn`
 
@@ -4591,6 +4711,7 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `assetId` | `string \| null` | 否 |  |
 | `filledText` | `string` | 否 |  |
 | `emptyText` | `string` | 否 |  |
+| `pickMode` | `"asset" \| "pack"` | 否 |  |
 | `tagIds` | `string[]` | 否 |  |
 | `position` | `number` | 否 |  |
 
@@ -4610,6 +4731,7 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `assetId` | `string \| null` | 否 |  |
 | `filledText` | `string` | 否 |  |
 | `emptyText` | `string` | 否 |  |
+| `pickMode` | `"asset" \| "pack"` | 否 |  |
 | `tagIds` | `string[]` | 否 |  |
 | `position` | `number` | 否 |  |
 

@@ -56,6 +56,13 @@ class LibraryAssetKind(StrEnum):
     AUDIO = "audio"
     IMAGE = "image"
     TEXT = "text"
+    #: 封装：一行**没有自己字节**的资产，成员在 `library_pack_items` 里。
+    #:
+    #: 2026-11-16 下线过一次，2026-11-19 重新引入（模板里「同一产品多个视角」
+    #: 要一次选完）。它进这个枚举而不是另成一个概念，是因为列表、标签、回收站、
+    #: 权限都要按「它是一条资产」来处理；但它**不是**槽位类型 ——
+    #: `SLOT_TYPES` 里没有 pack，取件路径也不为它开口子（没有 storage_key）。
+    PACK = "pack"
 
 
 class LibraryAssetState(StrEnum):

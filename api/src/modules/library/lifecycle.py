@@ -51,6 +51,7 @@ from modules.library.models import (
     LibraryAssetGroup,
     LibraryAssetTag,
     LibraryDraftReview,
+    LibraryPackItem,
     LibraryShareRequest,
     LibraryTextVersion,
 )
@@ -417,6 +418,15 @@ class LifecycleService:
                 LibraryShareRequest.status == "pending",
             )
             .values(status="cancelled", reviewer_id=None, decided_at=datetime.now(tz=UTC))
+        )
+        # 封装的成员关系两个方向都要清：这条素材本身可能是别人的成员，
+        # 也可能它自己就是一个包。留着的话，`list_packs` 会 join 出一个
+        # 已经不存在的 asset，包详情当场 500。
+        await self.session.execute(
+            delete(LibraryPackItem).where(LibraryPackItem.asset_id == row.id)
+        )
+        await self.session.execute(
+            delete(LibraryPackItem).where(LibraryPackItem.pack_id == row.id)
         )
         await self.session.commit()
 

@@ -52,9 +52,9 @@ export const ExportSource_VALUES = ["tasks", "audit_events"] as const;
 export type GenerationKind = "video" | "image";
 export const GenerationKind_VALUES = ["video", "image"] as const;
 
-/** 取值：video, audio, image, text */
-export type LibraryAssetKind = "video" | "audio" | "image" | "text";
-export const LibraryAssetKind_VALUES = ["video", "audio", "image", "text"] as const;
+/** 取值：video, audio, image, text, pack */
+export type LibraryAssetKind = "video" | "audio" | "image" | "text" | "pack";
+export const LibraryAssetKind_VALUES = ["video", "audio", "image", "text", "pack"] as const;
 
 /** 取值：upload, generated, template_source, imported */
 export type LibraryAssetOrigin = "upload" | "generated" | "template_source" | "imported";
@@ -949,6 +949,41 @@ export interface MeOut {
   permissions?: string[];
 }
 
+/** 建封装：一次挑一组素材（同产品同颜色的多个视角）。 */
+export interface PackIn {
+  name: string;
+  assetIds: string[];
+}
+
+/** 包成员：模板库只读它来判断「这个包能填哪几格」。 */
+export interface PackMemberOut {
+  id: string;
+  name: string;
+  kind: string;
+  coverUrl?: string | null;
+  tagIds?: string[];
+  deleted?: boolean;
+}
+
+/** 详情：带成员明细，供预览与取图。 */
+export interface PackOut {
+  id: string;
+  name: string;
+  coverUrl?: string | null;
+  memberCount?: number;
+  tagIds?: string[];
+  members?: PackMemberOut[];
+}
+
+/** 列表用的摘要：不含成员明细，省流量。 */
+export interface PackSummaryOut {
+  id: string;
+  name: string;
+  coverUrl?: string | null;
+  memberCount?: number;
+  tagIds?: string[];
+}
+
 /** PasswordChangeIn */
 export interface PasswordChangeIn {
   /** 当前密码 */
@@ -1294,6 +1329,7 @@ export interface SpecSlotIn {
   assetId?: string | null;
   filledText?: string;
   emptyText?: string;
+  pickMode?: "asset" | "pack";
   tagIds?: string[];
   position?: number;
 }
@@ -1310,6 +1346,7 @@ export interface SpecSlotOut {
   assetId?: string | null;
   filledText?: string;
   emptyText?: string;
+  pickMode?: "asset" | "pack";
   tagIds?: string[];
   position?: number;
 }
@@ -1978,6 +2015,12 @@ export interface EndpointData {
   "GET /api/v1/library/groups": LibraryGroupOut[];
   /** 设置小组负责人（整体替换） */
   "PUT /api/v1/library/groups/{group_id}/leaders": string[];
+  /** 封装列表（模板库选择器用） */
+  "GET /api/v1/library/packs": PackSummaryOut[];
+  /** 建封装：把一组素材打成一个包 */
+  "POST /api/v1/library/packs": PackOut;
+  /** 封装详情（成员与预览） */
+  "GET /api/v1/library/packs/{pack_id}": PackOut;
   /** 选择器：只返回库内资产 */
   "GET /api/v1/library/selection": LibrarySelectionPage;
   /** 申请单列表（我提交的 / 待我审核） */

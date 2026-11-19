@@ -3001,6 +3001,167 @@
         }
       }
     },
+    "/api/v1/library/packs": {
+      "post": {
+        "tags": [
+          "资产库"
+        ],
+        "summary": "建封装：把一组素材打成一个包",
+        "description": "成员的选择顺序就是包内顺序；包自动继承成员的**共同标签**。\n\n包本身是一行 `kind=pack` 的资产（没有自己的字节），所以列表/标签/删除\n都走既有路径，不为它单开分支。",
+        "operationId": "create_pack_api_v1_library_packs_post",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PackIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_PackOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "资产库"
+        ],
+        "summary": "封装列表（模板库选择器用）",
+        "description": "`tagIds` 传**槽位的候选标签**：与包内成员标签有交集才返回。\n\n这条判据就是「这个包能不能填那一格」，所以不需要给包再加一个「类型」字段 ——\n产品包 / 服装包 / 人物包各自的标签不同，天然就被过滤到对应的槽位里。",
+        "operationId": "list_packs_api_v1_library_packs_get",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "tagIds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Tagids"
+            }
+          },
+          {
+            "name": "keyword",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 100,
+              "default": "",
+              "title": "Keyword"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_list_PackSummaryOut__"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/library/packs/{pack_id}": {
+      "get": {
+        "tags": [
+          "资产库"
+        ],
+        "summary": "封装详情（成员与预览）",
+        "operationId": "get_pack_api_v1_library_packs__pack_id__get",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "pack_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pack Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_PackOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/library/assets/bulk": {
       "post": {
         "tags": [
@@ -7418,6 +7579,33 @@
         "type": "object",
         "title": "ApiResponse[NoneType]"
       },
+      "ApiResponse_PackOut_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PackOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[PackOut]"
+      },
       "ApiResponse_Page_ExportOut__": {
         "properties": {
           "code": {
@@ -8247,6 +8435,37 @@
         },
         "type": "object",
         "title": "ApiResponse[list[LibraryTagStatOut]]"
+      },
+      "ApiResponse_list_PackSummaryOut__": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/PackSummaryOut"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Data"
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[list[PackSummaryOut]]"
       },
       "ApiResponse_list_RoleOut__": {
         "properties": {
@@ -10997,7 +11216,8 @@
           "video",
           "audio",
           "image",
-          "text"
+          "text",
+          "pack"
         ],
         "title": "LibraryAssetKind",
         "description": "资产类型。\n\n`text` 是第 5 种「文件型资产」：`.txt` / `.md`，正文即文件内容，\n不是另起一张文本表。它有版本历史（`library_text_versions`），\n但去重、权限、可见性、回收站与取件都和前四种走同一套。"
@@ -11843,6 +12063,170 @@
         ],
         "title": "MeOut",
         "description": "`GET /identity/me`：前端靠 `permissions` 渲染菜单与按钮。"
+      },
+      "PackIn": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "assetIds": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 200,
+            "minItems": 1,
+            "title": "Assetids"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "assetIds"
+        ],
+        "title": "PackIn",
+        "description": "建封装：一次挑一组素材（同产品同颜色的多个视角）。"
+      },
+      "PackMemberOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "coverUrl": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Coverurl"
+          },
+          "tagIds": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Tagids"
+          },
+          "deleted": {
+            "type": "boolean",
+            "title": "Deleted",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "kind"
+        ],
+        "title": "PackMemberOut",
+        "description": "包成员：模板库只读它来判断「这个包能填哪几格」。"
+      },
+      "PackOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "coverUrl": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Coverurl"
+          },
+          "memberCount": {
+            "type": "integer",
+            "title": "Membercount",
+            "default": 0
+          },
+          "tagIds": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Tagids"
+          },
+          "members": {
+            "items": {
+              "$ref": "#/components/schemas/PackMemberOut"
+            },
+            "type": "array",
+            "title": "Members"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "title": "PackOut",
+        "description": "详情：带成员明细，供预览与取图。"
+      },
+      "PackSummaryOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "coverUrl": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Coverurl"
+          },
+          "memberCount": {
+            "type": "integer",
+            "title": "Membercount",
+            "default": 0
+          },
+          "tagIds": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Tagids"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "title": "PackSummaryOut",
+        "description": "列表用的摘要：不含成员明细，省流量。"
       },
       "Page_ExportOut_": {
         "properties": {
@@ -13102,6 +13486,15 @@
             "title": "Emptytext",
             "default": ""
           },
+          "pickMode": {
+            "type": "string",
+            "enum": [
+              "asset",
+              "pack"
+            ],
+            "title": "Pickmode",
+            "default": "asset"
+          },
           "tagIds": {
             "items": {
               "type": "string"
@@ -13204,6 +13597,15 @@
             "maxLength": 2000,
             "title": "Emptytext",
             "default": ""
+          },
+          "pickMode": {
+            "type": "string",
+            "enum": [
+              "asset",
+              "pack"
+            ],
+            "title": "Pickmode",
+            "default": "asset"
           },
           "tagIds": {
             "items": {

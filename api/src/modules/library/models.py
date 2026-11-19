@@ -204,6 +204,31 @@ class LibraryAssetTag(Base, UUIDMixin):
     )
 
 
+class LibraryPackItem(Base, UUIDMixin, TimestampMixin):
+    """封装（`kind=pack` 的资产）的成员：一个包 → 一组**有序**素材。
+
+    `position` 是成员顺序（包详情预览按它显示）；编译取图不依赖它，
+    取的是「成员的标签」——见 `template_pack` 的取图规则。
+
+    **成员仍然是自己的资产行**（有自己的字节、标签、可见性），这里只记归属。
+    所以「删包」不该删成员，「删成员」应该把这一行一起清掉（见 service）。
+    """
+
+    __tablename__ = "library_pack_items"
+
+    pack_id: Mapped[str] = mapped_column(String(32), nullable=False)
+    asset_id: Mapped[str] = mapped_column(String(32), nullable=False)
+    position: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    __table_args__ = (
+        # 同一张图不能在一个包里出现两次
+        Index("uq_library_pack_items", "pack_id", "asset_id", unique=True),
+        # 「这张图属于哪些包」：列表过滤「成员不单列」要用
+        Index("ix_library_pack_items_asset", "asset_id"),
+        Index("ix_library_pack_items_pack", "pack_id", "position"),
+    )
+
+
 class LibraryShareRequest(Base, UUIDMixin):
     """共享 / 撤销共享申请单。撤销也走这里，`action=revoke`。"""
 

@@ -1107,3 +1107,31 @@ def test_all_timestamps_come_back_with_the_same_shape(client: TestClient) -> Non
         for field in ("createdAt", "updatedAt", "publishedAt"):
             assert payload[field].endswith("Z"), f"{field}={payload[field]}"
     assert detail["latest"]["publishedAt"].endswith("Z")
+
+
+def test_pick_mode_round_trips(client: TestClient) -> None:
+    """槽位的选择方式要能存能读：它只影响模板库的选择器，但读者是前端。"""
+    headers = _headers(client)
+    video, first, second = _media(client, headers)
+    draft = _draft(video, first, second)
+    draft["slots"][1]["pickMode"] = "pack"  # hero 是用户填的图片槽位
+    _save(client, headers, draft)
+
+    detail = client.get(f"{API}/{draft['key']}", headers=headers).json()["data"]
+    assert detail["draft"]["slots"][1]["pickMode"] == "pack"
+    # 没显式写的槽位按默认走 —— 存量模板不用动
+    assert detail["draft"]["slots"][2]["pickMode"] == "asset"
+
+
+def test_pick_mode_rejects_fixed_slot(client: TestClient) -> None:
+    """固定槽位由作者钉死素材，再要求「从封装包里选」是一句没人会执行的话。
+
+    报错而不是静默忽略：作者会以为自己配好了，使用者却永远看不到包列表。
+    """
+    headers = _headers(client)
+    video, first, second = _media(client, headers)
+    draft = _draft(video, first, second)
+    draft["slots"][0]["pickMode"] = "pack"  # source 是 fixed
+    response = client.post(API, json=draft, headers=headers)
+    assert response.status_code == 400
+    assert "固定的" in response.json()["message"]

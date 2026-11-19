@@ -67,6 +67,9 @@ from modules.library.schema import (
     LibraryTab,
     LibraryTagOut,
     LibraryTagStatOut,
+    PackIn,
+    PackOut,
+    PackSummaryOut,
     SetPurposeIn,
     ShareDecisionIn,
     ShareRequestIn,
@@ -285,6 +288,55 @@ async def upload_source_video(
             source_key=source_key,
         )
     )
+
+
+# --------------------------------------------------------------------------- #
+# 封装（pack）
+# --------------------------------------------------------------------------- #
+@router.post(
+    "/packs",
+    status_code=status.HTTP_201_CREATED,
+    summary="建封装：把一组素材打成一个包",
+    dependencies=[
+        # 与上传同档：都是重写操作，但只写元数据，按上传的一半计。
+        Depends(rate_limit("library.pack", limit=settings.rate_limit_default_per_min, cost=2))
+    ],
+)
+async def create_pack(
+    payload: PackIn, actor: LibraryCreateDep, service: LibraryServiceDep
+) -> ApiResponse[PackOut]:
+    """成员的选择顺序就是包内顺序；包自动继承成员的**共同标签**。
+
+    包本身是一行 `kind=pack` 的资产（没有自己的字节），所以列表/标签/删除
+    都走既有路径，不为它单开分支。
+    """
+    return ApiResponse.ok(
+        await service.create_pack(actor, name=payload.name, asset_ids=payload.asset_ids)
+    )
+
+
+@router.get("/packs", summary="封装列表（模板库选择器用）")
+async def list_packs(
+    actor: LibraryReadDep,
+    service: LibraryServiceDep,
+    tag_ids: Annotated[list[str] | None, Query(alias="tagIds")] = None,
+    keyword: str = Query(default="", max_length=100),
+) -> ApiResponse[list[PackSummaryOut]]:
+    """`tagIds` 传**槽位的候选标签**：与包内成员标签有交集才返回。
+
+    这条判据就是「这个包能不能填那一格」，所以不需要给包再加一个「类型」字段 ——
+    产品包 / 服装包 / 人物包各自的标签不同，天然就被过滤到对应的槽位里。
+    """
+    return ApiResponse.ok(
+        await service.list_packs(actor, tag_ids=tag_ids, keyword=keyword)
+    )
+
+
+@router.get("/packs/{pack_id}", summary="封装详情（成员与预览）")
+async def get_pack(
+    pack_id: str, actor: LibraryReadDep, service: LibraryServiceDep
+) -> ApiResponse[PackOut]:
+    return ApiResponse.ok(await service.get_pack(actor, pack_id))
 
 
 # --------------------------------------------------------------------------- #
