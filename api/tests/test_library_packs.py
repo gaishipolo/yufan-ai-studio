@@ -380,3 +380,48 @@ def test_pack_accepts_members_sharing_just_one_tag(client: TestClient) -> None:
         f"{API}/library/assets/{response.json()['data']['id']}", headers=headers
     ).json()["data"]
     assert {item["name"] for item in detail["tags"]} == {"6036"}
+
+
+def test_members_come_back_when_their_pack_goes_to_trash(client: TestClient) -> None:
+    """包进了回收站，成员要回到个人库。
+
+    不这么做的话：包自己只在回收站里，成员又被「不单列」排除在个人库之外 ——
+    那几张图会凭空消失，用户得进回收站翻才找得到。
+    """
+    headers = _headers(client)
+    first = upload_image(client, API, headers, name="6036-黑-正面.png", color="orchid")
+    second = upload_image(client, API, headers, name="6036-黑-三视图.png", color="salmon")
+    _shared(client, headers, [first["id"], second["id"]])
+    pack = _pack(client, headers, "6036 黑", [first["id"], second["id"]]).json()["data"]
+
+    names = _asset_names(client, headers)
+    assert "6036-黑-正面.png" not in names
+
+    removed = client.delete(f"{API}/library/assets/{pack['id']}", headers=headers)
+    assert removed.status_code in (200, 204), removed.text
+
+    # 包在回收站里
+    trashed = client.get(f"{API}/library/assets?state=trash&pageSize=100", headers=headers)
+    assert any(item["id"] == pack["id"] for item in trashed.json()["data"]["items"])
+    # 成员回到个人库
+    names = _asset_names(client, headers)
+    assert "6036-黑-正面.png" in names
+    assert "6036-黑-三视图.png" in names
+
+
+def test_asset_in_a_trashed_pack_is_still_taken(client: TestClient) -> None:
+    """回收站里的包**仍然占着**成员，且报错要说清这一点。
+
+    那些包还能恢复，恢复之后同一张图就属于两个包了。只说「已经属于封装「X」」
+    而那个包在回收站里，用户翻遍资产库也找不到它。
+    """
+    headers = _headers(client)
+    alive = upload_image(client, API, headers, name="6036-白-正面.png", color="tan")
+    _shared(client, headers, [alive["id"]])
+    pack = _pack(client, headers, "6036 白", [alive["id"]]).json()["data"]
+
+    client.delete(f"{API}/library/assets/{pack['id']}", headers=headers)
+
+    again = _pack(client, headers, "另一个包", [alive["id"]])
+    assert again.status_code == 409, again.text
+    assert "回收站" in again.json()["message"]

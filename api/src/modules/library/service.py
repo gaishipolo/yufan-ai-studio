@@ -33,6 +33,7 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 from sqlalchemy.sql.elements import ColumnElement
 
 from core.audit import record as audit
@@ -111,18 +112,28 @@ BLOB_PREFIX = "library/blobs"
 PREVIEW_PREFIX = "library/previews"
 
 def _packed_member_clause() -> ColumnElement[bool]:
-    """「这条素材已被某个封装收录」。
+    """「这条素材被某个**还在库里的**封装收录」。
 
     成员不再单列（2026-11-19 用户拍板）：一条图进了包，就只在包里出现，
     个人库里不再单列 —— 否则同一张图既要挑「包」又要挑「图」，包的意义减半。
 
     落在 **SQL** 里而不是滤 `items`：`total` 与 `items` 必须同口径，
     否则最后一页点进去是空的、侧栏角标与列表也对不上（与 `exclude_kinds` 同理）。
-    回收站与草稿**不排除**：那是「我自己的东西」，进了包的素材被删后还得能找回。
+
+    **要判包本身的状态**：包被移入回收站之后，它自己只在回收站里，而成员又被
+    这一条排除在个人库之外 —— 那几张图会「凭空消失」，用户得进回收站才找得到。
+    包不在库（回收站 / 已彻底删）时，成员就该回到个人库。
     """
+    pack = aliased(LibraryAsset)
     return (
         select(LibraryPackItem.id)
-        .where(LibraryPackItem.asset_id == LibraryAsset.id)
+        .join(pack, pack.id == LibraryPackItem.pack_id)
+        .where(
+            LibraryPackItem.asset_id == LibraryAsset.id,
+            # 只看 state：`deleted_at` 是「移入回收站的时间」，不是「彻底删除」——
+            # 拿它当「还在不在」用，会把回收站里的包也一起排掉。
+            pack.state == "active",
+        )
         .exists()
     )
 
@@ -815,9 +826,14 @@ class LibraryService:
         # 一张图只能属于一个包。不拦的话，「6036 黑」和「6 月新品」都含同一张
         # 正面图，改一个包的成员会连带影响另一个包的取图 —— 而使用者以为
         # 两个包互不相干。选择器会把这些素材标灰，这里是最后一道闸。
-        taken = await self._pack_of(ids)
+        # 连**回收站里的包**一起看：那些包还能恢复，恢复之后同一张图就属于两个包了。
+        # 报错必须说清它在回收站，否则用户翻遍资产库也找不到那个包。
+        taken = await self._pack_of(ids, include_trashed=True)
         if taken:
-            labels = "、".join(f"「{pack_name}」" for _, pack_name in list(taken.values())[:3])
+            labels = "、".join(
+                f"「{pack_name}」" + ("（在回收站里）" if state == "trash" else "")
+                for _, pack_name, state in list(taken.values())[:3]
+            )
             raise Conflict(f"这些素材已经属于封装{labels}，一张素材只能进一个封装")
 
         # 成员必须**至少共有一个标签**：封装的意思是「同一件东西的几个视角」
@@ -951,20 +967,40 @@ class LibraryService:
         ).all()
         return {pack_id: int(count) for pack_id, count in rows}
 
-    async def _pack_of(self, asset_ids: Sequence[str]) -> dict[str, tuple[str, str]]:
-        """素材 id → (所属封装 id, 封装名)。**一张图只属于一个包**，
-        所以这里可以放心用 1:1 的字典。"""
+    async def _pack_of(
+        self, asset_ids: Sequence[str], *, include_trashed: bool = False
+    ) -> dict[str, tuple[str, str, str]]:
+        """素材 id → (所属封装 id, 封装名, 封装状态)。**一张图只属于一个包**，
+        所以这里可以放心用 1:1 的字典。
+
+        `include_trashed` 的两处用途**结论相反**，不能共用一个口径：
+
+        - 界面标「已在封装「X」里」只该看**在库**的包（`False`）—— 包进了回收站，
+          这几张图在个人库里已经能正常挑了，还标一句「已在封装里」会让人以为选不了；
+        - 建包的唯一性校验要连**回收站里的包**一起看（`True`）：那些包还能恢复，
+          恢复之后同一张图就属于两个包了。这时报错要说清它在回收站里，
+          否则用户翻遍资产库也找不到那个包。
+        """
         wanted = [item for item in dict.fromkeys(asset_ids) if item]
         if not wanted:
             return {}
-        rows = (
-            await self.session.execute(
-                select(LibraryPackItem.asset_id, LibraryAsset.id, LibraryAsset.name)
-                .join(LibraryAsset, LibraryAsset.id == LibraryPackItem.pack_id)
-                .where(LibraryPackItem.asset_id.in_(wanted))
+        query = (
+            select(
+                LibraryPackItem.asset_id,
+                LibraryAsset.id,
+                LibraryAsset.name,
+                LibraryAsset.state,
             )
-        ).all()
-        return {asset_id: (pack_id, pack_name) for asset_id, pack_id, pack_name in rows}
+            .join(LibraryAsset, LibraryAsset.id == LibraryPackItem.pack_id)
+            .where(LibraryPackItem.asset_id.in_(wanted))
+        )
+        if not include_trashed:
+            query = query.where(LibraryAsset.state == "active")
+        rows = (await self.session.execute(query)).all()
+        return {
+            asset_id: (pack_id, pack_name, state)
+            for asset_id, pack_id, pack_name, state in rows
+        }
 
     async def _pack_members(
         self, pack_ids: Sequence[str]
@@ -1333,7 +1369,7 @@ class LibraryService:
         group_ids: Sequence[str] = (),
         tags: Sequence[LibraryTagOut] = (),
         member_count: int = 0,
-        pack_of: Mapping[str, tuple[str, str]] | None = None,
+        pack_of: Mapping[str, tuple[str, str, str]] | None = None,
     ) -> LibraryAssetOut:
         return LibraryAssetOut(
             id=row.id,
@@ -1368,8 +1404,8 @@ class LibraryService:
             tags=list(tags),
             member_count=member_count,
             # 这条素材被哪个封装收录（只在选择器里看得见 —— 列表里成员已被藏掉）
-            pack_id=(pack_of or {}).get(row.id, (None, ""))[0],
-            pack_name=(pack_of or {}).get(row.id, (None, ""))[1] or None,
+            pack_id=(pack_of or {}).get(row.id, (None, "", ""))[0],
+            pack_name=(pack_of or {}).get(row.id, (None, "", ""))[1] or None,
             trash_reason=row.trash_reason,
             trash_expires_at=row.trash_expires_at,
             text_excerpt=(row.text_excerpt or None) if row.kind == "text" else None,
