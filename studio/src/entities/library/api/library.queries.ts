@@ -243,6 +243,32 @@ export function useUploadSourceVideo() {
 }
 
 /**
+ * 封装列表（模板库槽位选择器用）。
+ *
+ * `tagIds` 传**槽位的候选标签**：后端只返回「成员标签与之有交集」的包 ——
+ * 这就是「这个包能不能填这一格」的判据，所以前端不需要自己筛成员。
+ */
+export function useLibraryPacks(params: {tagIds?: string[]; keyword?: string}, enabled = true) {
+  /* 依赖用**排序后拼串**：候选标签是一个集合，顺序不同不该触发重新请求，
+    而数组作为 queryKey 的片段每次渲染都是新引用。 */
+  const key = [...(params.tagIds ?? [])].sort().join(',');
+  return useQuery({
+    queryKey: [...libraryKeys.all, 'packs', key, params.keyword ?? ''],
+    queryFn: () => libraryApi.packs(params),
+    enabled,
+  });
+}
+
+/** 单个封装详情（成员明细）：选包后按成员的标签分发到各槽位 */
+export function useLibraryPack(id: string | null) {
+  return useQuery({
+    queryKey: [...libraryKeys.all, 'pack', id ?? ''],
+    queryFn: () => libraryApi.pack(id as string),
+    enabled: !!id,
+  });
+}
+
+/**
  * 建封装。
  *
  * **失效范围要大**：建完之后成员从资产库列表消失（成员不单列），包的卡片

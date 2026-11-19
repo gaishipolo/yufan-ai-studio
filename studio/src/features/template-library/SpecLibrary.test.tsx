@@ -55,6 +55,10 @@ vi.mock('@/entities/library/api/library.queries', () => ({
     ],
     isPending: false,
   }),
+  /* 槽位网格里还会列封装包；这些用例不关心，给空列表 */
+  /* 包预览浮层用的详情查询（悬停才 enabled，这里不关心内容） */
+  useLibraryPack: () => ({data: undefined, isError: false, error: null}),
+  useLibraryPacks: () => ({data: []}),
   useLibrarySelection: (params: {tagIds?: string[]}) => ({
     data: {
       items: params.tagIds?.includes('tag-person')

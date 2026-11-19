@@ -15,14 +15,24 @@ import { SlotMediaPicker } from './SlotMediaPicker';
  * 断言落在「发给后端的 tagIds」上 —— 那才是筛选语义真正发生的地方。
  */
 
-const { selectionCalls, tagsData, itemsData } = vi.hoisted(() => ({
+const { selectionCalls, tagsData, itemsData, packsData, packCalls } = vi.hoisted(() => ({
   selectionCalls: [] as { kind?: string; tagIds?: string[] }[],
   tagsData: { current: [] as LibraryTagStatOut[] },
   itemsData: { current: [] as { id: string; name: string; kind: string; coverUrl?: string }[] },
+  packsData: { current: [] as { id: string; name: string; coverUrl?: string; memberCount?: number }[] },
+  packCalls: [] as { tagIds?: string[] }[],
 }));
 
 vi.mock('@/entities/library/api/library.queries', () => ({
   useLibraryTags: () => ({ data: tagsData.current, isPending: false }),
+  /* 槽位网格里还会列封装包；这些用例不关心，给空列表 */
+  /* 包预览浮层用的详情查询（悬停才 enabled，这里不关心内容） */
+  useLibraryPack: () => ({data: undefined, isError: false, error: null}),
+  /* `enabled` 要照着实现来：没给 onPickPack 时组件不发这次请求（`data` 为 undefined） */
+  useLibraryPacks: (params: { tagIds?: string[] }, enabled = true) => {
+    packCalls.push(params);
+    return { data: enabled ? packsData.current : undefined };
+  },
   useLibrarySelection: (params: { kind?: string; tagIds?: string[] }) => {
     selectionCalls.push(params);
     return {
@@ -62,8 +72,10 @@ function slotOf(extra: Partial<SpecSlotOut> = {}): SpecSlotOut {
 
 beforeEach(() => {
   selectionCalls.length = 0;
+  packCalls.length = 0;
   tagsData.current = TAGS;
   itemsData.current = [];
+  packsData.current = [];
 });
 
 describe('SlotMediaPicker · 候选集里再筛', () => {
@@ -255,5 +267,94 @@ describe('SlotMediaPicker · 悬浮大图', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe('SlotMediaPicker · 封装包', () => {
+  /* 包就是一种素材：占同一张网格里的一个格子，不是另一种界面模式。
+     区别只在「点它的效果」——一次填好几格（由上层的 onPickPack 做）。 */
+  it('包和素材同一个网格，带「N 张」角标', () => {
+    packsData.current = [{ id: 'p1', name: '6036 黑', memberCount: 3 }];
+    itemsData.current = [{ id: 'a1', name: '散图.png', kind: 'image' }];
+    render(
+      <SlotMediaPicker
+        slot={slotOf({ tagIds: ['t1'] })}
+        selected={[]}
+        onChange={vi.fn()}
+        onPickPack={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByTitle('6036 黑（封装 · 3 张）')).toBeInTheDocument();
+    expect(screen.getByTitle('散图.png')).toBeInTheDocument();
+    expect(screen.getByText('3 张')).toBeInTheDocument();
+  });
+
+  it('点包把 id 交给上层（分发是它的事，这里不自己填）', async () => {
+    const user = userEvent.setup();
+    const onPickPack = vi.fn();
+    const onChange = vi.fn();
+    packsData.current = [{ id: 'p1', name: '6036 黑', memberCount: 3 }];
+    render(
+      <SlotMediaPicker
+        slot={slotOf({ tagIds: ['t1'] })}
+        selected={[]}
+        onChange={onChange}
+        onPickPack={onPickPack}
+      />,
+    );
+
+    await user.click(screen.getByTitle('6036 黑（封装 · 3 张）'));
+    expect(onPickPack).toHaveBeenCalledWith('p1');
+    // 点包不等于选中某个素材 id —— 包不是素材行
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('没给 onPickPack 就不显示包（文本 / 音频槽位走不到这里）', () => {
+    packsData.current = [{ id: 'p1', name: '6036 黑', memberCount: 3 }];
+    itemsData.current = [{ id: 'a1', name: '散图.png', kind: 'image' }];
+    render(<SlotMediaPicker slot={slotOf({ tagIds: ['t1'] })} selected={[]} onChange={vi.fn()} />);
+    expect(screen.queryByTitle('6036 黑（封装 · 3 张）')).not.toBeInTheDocument();
+  });
+
+  it('这一格已经选满时，包也不能点（一槽一张）', () => {
+    packsData.current = [{ id: 'p1', name: '6036 黑', memberCount: 3 }];
+    itemsData.current = [{ id: 'a1', name: '散图.png', kind: 'image' }];
+    render(
+      <SlotMediaPicker
+        slot={slotOf({ tagIds: ['t1'] })}
+        selected={['a1']}
+        onChange={vi.fn()}
+        onPickPack={vi.fn()}
+      />,
+    );
+    expect(screen.getByTitle('6036 黑（封装 · 3 张）')).toBeDisabled();
+  });
+
+  it('包按槽位的候选标签过滤（与素材同一套条件）', () => {
+    render(
+      <SlotMediaPicker
+        slot={slotOf({ tagIds: ['t1'] })}
+        selected={[]}
+        onChange={vi.fn()}
+        onPickPack={vi.fn()}
+      />,
+    );
+    expect(packCalls.at(-1)?.tagIds).toEqual(['t1']);
+  });
+
+  it('只有包没有素材时不算空态', () => {
+    packsData.current = [{ id: 'p1', name: '6036 黑', memberCount: 2 }];
+    itemsData.current = [];
+    render(
+      <SlotMediaPicker
+        slot={slotOf({ tagIds: ['t1'] })}
+        selected={[]}
+        onChange={vi.fn()}
+        onPickPack={vi.fn()}
+      />,
+    );
+    expect(screen.queryByText(/还没有图片/)).not.toBeInTheDocument();
+    expect(screen.getByTitle('6036 黑（封装 · 2 张）')).toBeInTheDocument();
   });
 });

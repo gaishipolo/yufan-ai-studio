@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react
 import { Link, useNavigate } from 'react-router-dom';
 import { ArrowRight, Play, Plus } from 'lucide-react';
 import { KIND_LABEL } from '@/entities/library/model/types';
+import { useLibraryPack } from '@/entities/library/api/library.queries';
 import { AssetChip } from '@/entities/library/ui/AssetChip';
 import { CaseCover } from '@/entities/library/ui/CaseCover';
 import { SlotMediaPicker } from './SlotMediaPicker';
@@ -382,6 +383,90 @@ export function SpecLibrary() {
     setValues(current => ({...current, [key]: ids}));
   };
 
+  /* ------------------------------------------------------------------
+     封装包：在网格里点一个包 = 一次填好几格
+     ------------------------------------------------------------------ */
+
+  /** 待拉详情的包 id。点了包就设它，详情回来后分发并清空。 */
+  const [pendingPack, setPendingPack] = useState<string | null>(null);
+  /** 记住这一批格子是哪个包填的：包没了要能精确清回它们，别连手挑的一起清。 */
+  const [packFill, setPackFill] = useState<{packId: string; keys: string[]} | null>(null);
+
+  /* 分发之后仍然订阅这个包的详情：`packFill` 在，就说明「这几格是它填的」，
+     包被别处删掉时要能被发现（否则用户看到的是一份再也取不到图的配置）。
+     分发那一刻 `pendingPack` 有值、之后 `packFill.packId` 接手，同一个 query 复用。 */
+  const activePackId = pendingPack ?? packFill?.packId ?? null;
+  const packQuery = useLibraryPack(activePackId);
+
+  /**
+   * 把一个包分发到各槽位。
+   *
+   * 判据只有一条：**成员的标签 ∩ 这个槽位的候选标签**。它同时也是「这个包
+   * 能不能填这一格」——列表那边用的是同一个判据（后端按 `tagIds` 过滤），
+   * 所以这里匹配不到只可能是成员后来被删了。
+   *
+   * 三种情况分开处理，**不静默取第一张**：
+   * - 恰好 1 张 → 填；
+   * - 0 张 → 不动（必填槽位会自己亮起缺料星号）；
+   * - 多张 → 也不动，并说出来是哪几格 —— 猜一张进去，生成的图错了也没人知道。
+   */
+  const distributePack = (packId: string, members: {id: string; tagIds?: string[]; deleted?: boolean}[], packName: string) => {
+    const patch: Record<string, string[]> = {};
+    const ambiguous: string[] = [];
+
+    for (const slot of fillSlots) {
+      if (slot.type !== 'image' && slot.type !== 'video') continue;
+      const wanted = new Set(slot.tagIds ?? []);
+      if (!wanted.size) continue; // 没候选标签就不知道该取哪张
+      const matched = members.filter(
+        member => !member.deleted && (member.tagIds ?? []).some(tagId => wanted.has(tagId)),
+      );
+      if (matched.length === 1) patch[slot.key] = [matched[0].id];
+      else if (matched.length > 1) {
+        ambiguous.push(`${slot.label || slot.key}（${matched.length} 张）`);
+      }
+    }
+
+    const keys = Object.keys(patch);
+    if (keys.length) {
+      setValues(current => ({...current, ...patch}));
+      setPackFill({packId, keys});
+    }
+    if (ambiguous.length) {
+      toast(`「${packName}」里这几格有多张可选，请自己挑：${ambiguous.join('、')}`, 'error');
+    } else if (keys.length) {
+      toast(`已从「${packName}」填入 ${keys.length} 格`);
+    } else {
+      toast(`「${packName}」里没有能对上这些槽位的素材`, 'error');
+    }
+  };
+
+  /* 详情回来就分发，并把待办清掉。 */
+  useEffect(() => {
+    if (!pendingPack || !packQuery.data) return;
+    distributePack(pendingPack, packQuery.data.members ?? [], packQuery.data.name);
+    setPendingPack(null);
+    // distributePack 依赖 fillSlots，但它只在这次回调里用一次，不必进依赖
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingPack, packQuery.data]);
+
+  /* 包被删掉（明确的 404）时，把由它填的那几格清回去。
+     **只认 404**：网络抖动或服务重启也会让请求失败，那种时候清空等于
+     在用户没操作的情况下丢掉已配好的素材。 */
+  useEffect(() => {
+    if (!packFill || !packQuery.isError) return;
+    const status = (packQuery.error as {status?: number} | null)?.status;
+    if (status !== 404) return;
+    const keys = packFill.keys;
+    setValues(current => {
+      const next = {...current};
+      for (const key of keys) delete next[key];
+      return next;
+    });
+    setPackFill(null);
+    toast('这个封装包已经不在了，相关素材已清空，请重新选', 'error');
+  }, [packFill, packQuery.isError, packQuery.error]);
+
   /* 参数分两类：
      - 作者设的（时长、画幅…）：只读展示，标签与档位文案全部来自模型的
        `paramSchema`（`paramControlsFor`），前端不写死任何一种、也不印英文 key；
@@ -740,6 +825,9 @@ export function SpecLibrary() {
                             slot={slot}
                             selected={filled}
                             onChange={ids => setSlotValues(slot.key, ids)}
+                            /* 点包 = 拉详情后分发到所有能对上的槽位：
+                               包里有什么视角，就填哪几格。 */
+                            onPickPack={setPendingPack}
                             requiredCount={requiredCounts[slot.key]}
                           />
                         );

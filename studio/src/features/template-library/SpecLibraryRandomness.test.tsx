@@ -57,6 +57,10 @@ vi.mock('@/entities/library/api/library.queries', () => ({
   }),
   /* hero 槽无标签 → 商品图/人物图；copy 槽有 tag-copy → 参考图一/二。
      两个槽位候选不同，按标题找素材才不会命中多个。 */
+  /* 槽位网格里还会列封装包；这些用例不关心，给空列表 */
+  /* 包预览浮层用的详情查询（悬停才 enabled，这里不关心内容） */
+  useLibraryPack: () => ({data: undefined, isError: false, error: null}),
+  useLibraryPacks: () => ({data: []}),
   useLibrarySelection: (params: {tagIds?: string[]}) => ({
     data: {
       items: params.tagIds?.includes('tag-copy')

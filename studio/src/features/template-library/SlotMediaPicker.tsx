@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Check } from 'lucide-react';
+import { Check, Layers } from 'lucide-react';
 import {
+  useLibraryPacks,
   useLibrarySelection,
   useLibraryTags,
 } from '@/entities/library/api/library.queries';
@@ -11,6 +12,7 @@ import { CoverImage } from '@/shared/ui';
 import { cn } from '@/shared/lib/cn';
 import { AssetChip } from '@/entities/library/ui/AssetChip';
 import { AssetHoverPreview } from '@/entities/library/ui/AssetHoverPreview';
+import { PackHoverPreview } from '@/entities/library/ui/PackHoverPreview';
 import { TagFilter } from '@/entities/library/ui/TagFilter';
 import { pickWithin } from './slotPick';
 
@@ -20,11 +22,18 @@ export function SlotMediaPicker({
   slot,
   selected,
   onChange,
+  onPickPack,
   requiredCount,
 }: {
   slot: SpecSlotOut;
   selected: string[];
   onChange: (ids: string[]) => void;
+  /**
+   * 用户点了一个封装包：按包内成员分发到各槽位（由上层做，因为它要改别的槽位）。
+   *
+   * 不传就只显示素材、不显示包 —— 文本 / 音频槽位走不到这里，不影响。
+   */
+  onPickPack?: (packId: string) => void;
   /** 这个槽位实际最少要几张（作者写的 `minCount`，或提示词「第 N 张」推出的下限）。 */
   requiredCount?: number;
 }) {
@@ -75,6 +84,21 @@ export function SlotMediaPicker({
   });
   const items = list.data?.items ?? [];
 
+  /*
+   * 封装包也在同一个网格里 —— **包就是一种素材**，不是另一种界面模式。
+   *
+   * 过滤条件与素材完全相同（`filterIds`）：后端只返回「成员标签与它交集非空」
+   * 的包，所以出现在「正面图」这一格里的包，一定至少含一张正面图。
+   * 槽位没配标签时（老模板）不传，退回全部包。
+   *
+   * 只有上层给了 `onPickPack` 才取：文本 / 音频槽位用不上，不必白打一次请求。
+   */
+  const packList = useLibraryPacks(
+    {tagIds: filterIds.length ? filterIds : undefined},
+    !!onPickPack,
+  );
+  const packs = packList.data ?? [];
+
   /* 已选但不在当前这档标签下的素材（换标签之后才会出现），见下面的渲染注释。 */
   const shown = new Set(items.map(item => item.id));
   const hiddenPicked = selected.filter(id => !shown.has(id));
@@ -87,6 +111,9 @@ export function SlotMediaPicker({
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [pointer, setPointer] = useState<{ x: number; y: number } | null>(null);
   const hovered = items.find(item => item.id === hoveredId);
+  /* 悬停中的包另走一个浮层：素材预览是「放大这一张」，
+     包预览是「摊开里面有哪些」—— 两件事不能用同一个组件表达。 */
+  const [hoveredPackId, setHoveredPackId] = useState<string | null>(null);
 
   const toggle = (assetId: string) => {
     const next = pickWithin(selected, assetId, max);
@@ -175,12 +202,50 @@ export function SlotMediaPicker({
         <p className="py-4 text-center text-meta text-ink-mute">正在读取标签…</p>
       ) : list.isLoading ? (
         <p className="py-4 text-center text-meta text-ink-mute">正在读取素材…</p>
-      ) : items.length === 0 ? (
+      ) : items.length === 0 && packs.length === 0 ? (
         <p className="py-4 text-center text-meta text-ink-mute">
           {scope.length ? '这个标签下还没有素材，去资产库给它打上标签。' : `还没有${label}。`}
         </p>
       ) : (
         <div className="mt-2 grid max-h-[188px] grid-cols-4 gap-1.5 overflow-y-auto pr-0.5">
+          {/* 包排在素材前面：它是「一次选好一整套」，比逐张挑快得多。
+              带角标和小图标区分，但仍然占一个格子 —— 包就是一种素材。 */}
+          {packs.map(pack => {
+            const blocked = full;
+            return (
+              <button
+                key={`pack-${pack.id}`}
+                type="button"
+                title={`${pack.name}（封装 · ${pack.memberCount ?? 0} 张）`}
+                disabled={blocked}
+                onClick={() => onPickPack?.(pack.id)}
+                onMouseEnter={event => {
+                  setHoveredPackId(pack.id);
+                  setPointer({ x: event.clientX, y: event.clientY });
+                }}
+                onMouseMove={event => setPointer({ x: event.clientX, y: event.clientY })}
+                onMouseLeave={() => {
+                  setHoveredPackId(null);
+                  setPointer(null);
+                }}
+                className={cn(
+                  'group relative aspect-square overflow-hidden rounded-lg border transition',
+                  'border-line-soft hover:border-primary-line',
+                  blocked && 'cursor-not-allowed opacity-40',
+                )}
+              >
+                <CoverImage
+                  src={pack.coverUrl ?? undefined}
+                  seed={pack.id}
+                  className="h-full w-full"
+                />
+                <span className="absolute inset-x-0 bottom-0 flex items-center justify-center gap-0.5 bg-[rgba(12,24,30,.62)] py-px text-[9px] leading-[11px] text-white">
+                  <Layers size={8} />
+                  {pack.memberCount ?? 0} 张
+                </span>
+              </button>
+            );
+          })}
           {items.map(item => {
             const isPicked = selected.includes(item.id);
             const blocked = full && !isPicked && max > 1;
@@ -243,6 +308,7 @@ export function SlotMediaPicker({
         height={hovered?.height}
         pointer={pointer}
       />
+      <PackHoverPreview packId={hoveredPackId} pointer={pointer} />
     </div>
   );
 }
