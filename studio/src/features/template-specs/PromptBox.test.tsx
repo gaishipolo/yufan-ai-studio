@@ -207,6 +207,26 @@ describe('提示词框的 @ 提及', () => {
 
     expect(screen.getByTestId('value')).toHaveTextContent('{{slot:image_1}}');
   });
+
+  /* chip 插入必须走 `onInsert`（程序插入），不能走 `onChange`（用户手打）。
+   *
+   * 回归：父组件对 `onChange` 有「不许手写花括号」的校验（手写 key 拼错要
+   * 到编译期才 400）。这两条路径一旦并成一条，点一下 chip 就会弹红字
+   * 「引用请用 @ 或下方按钮插入，不要手写大括号」—— 而用户点的正是那个按钮。
+   *
+   * 上面那条用例把 onChange 与 onInsert 传成同一个函数，所以看不出区别；
+   * 这里必须分开传。 */
+  it('点 chip 走 onInsert，不走 onChange', async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    const onInsert = vi.fn();
+    render(<PromptBox value="" chips={CHIPS} onChange={onChange} onInsert={onInsert} />);
+
+    await user.click(screen.getByRole('button', {name: /主图/}));
+
+    expect(onInsert).toHaveBeenCalledWith('{{slot:image_1}}');
+    expect(onChange).not.toHaveBeenCalled();
+  });
 });
 
 /**

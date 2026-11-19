@@ -256,11 +256,20 @@ export const RichPromptEditor = forwardRef<MentionTextareaHandle, RichPromptEdit
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [value, candidates]);
 
-    const commit = (text: string, caret?: number) => {
-      const root = rootRef.current;
-      if (root) caretRef.current = caret ?? caretOffset(root);
-      if (caret !== undefined) pendingCaret.current = caret;
-      onChange(text);
+    /*
+     * 两条写入路径**必须分开**，不能都走 `onChange`：
+     *
+     * - `onChange` = 用户手打。父组件对它有校验（手写 `{{...}}` 会被拦下
+     *   并给红字提示：手写的 key 拼错要等到编译期才 400，手写 `{{Mixed N}}`
+     *   还会和填充量错位）。
+     * - `onInsert` = 程序插入（点 chip / 选 @ 候选）。token 本来就带花括号，
+     *   走校验会被当成「手打」拦掉 —— 表现就是点一下 chip 弹一句
+     *   「不要手写大括号」。真踩过。
+     */
+    const insert = (text: string, caret: number) => {
+      pendingCaret.current = caret;
+      caretRef.current = caret;
+      onInsert(text);
     };
 
     useImperativeHandle(
@@ -269,7 +278,7 @@ export const RichPromptEditor = forwardRef<MentionTextareaHandle, RichPromptEdit
         insertToken: (token: string) => {
           const at = caretRef.current ?? value.length;
           const result = insertRef(value, token, at);
-          commit(result.text, result.caret);
+          insert(result.text, result.caret);
         },
       }),
       // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -281,8 +290,7 @@ export const RichPromptEditor = forwardRef<MentionTextareaHandle, RichPromptEdit
     const choose = (token: string) => {
       if (!mention) return;
       const result = applyMention(value, mention, token);
-      commit(result.text, result.caret);
-      onInsert(result.text);
+      insert(result.text, result.caret);
       close();
     };
 
