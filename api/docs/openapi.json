@@ -3116,6 +3116,62 @@
       }
     },
     "/api/v1/library/packs/{pack_id}": {
+      "patch": {
+        "tags": [
+          "资产库"
+        ],
+        "summary": "改封装（名字 / 成员）",
+        "description": "换成员后，包身上的标签会**重算成新成员的共同标签**。\n\n那是派生值：模板库靠它判断「这个包能不能填那一格」，增量维护会留下一堆\n已经不再共同的旧标签，选择器就会把包放进填不上的槽位里。",
+        "operationId": "update_pack_api_v1_library_packs__pack_id__patch",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "pack_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pack Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PackPatchIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_PackOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
       "get": {
         "tags": [
           "资产库"
@@ -12245,6 +12301,40 @@
         ],
         "title": "PackOut",
         "description": "详情：带成员明细，供预览与取图。"
+      },
+      "PackPatchIn": {
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "assetIds": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array",
+                "maxItems": 200
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assetids"
+          }
+        },
+        "type": "object",
+        "title": "PackPatchIn",
+        "description": "改封装。两个字段都可选，**传哪个改哪个**（`None` = 不动）。\n\n分成两个独立字段而不是「整包覆盖」：改名和换成员是两件事，\n强制调用方每次都把成员列表原样回传，会在并发编辑时把别人的改动冲掉。"
       },
       "PackSummaryOut": {
         "properties": {

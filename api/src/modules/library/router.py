@@ -69,6 +69,7 @@ from modules.library.schema import (
     LibraryTagStatOut,
     PackIn,
     PackOut,
+    PackPatchIn,
     PackSummaryOut,
     SetPurposeIn,
     ShareDecisionIn,
@@ -333,6 +334,31 @@ async def list_packs(
     """
     return ApiResponse.ok(
         await service.list_packs(actor, tag_ids=tag_ids, keyword=keyword)
+    )
+
+
+@router.patch(
+    "/packs/{pack_id}",
+    summary="改封装（名字 / 成员）",
+    dependencies=[
+        Depends(rate_limit("library.pack", limit=settings.rate_limit_default_per_min, cost=2))
+    ],
+)
+async def update_pack(
+    pack_id: str,
+    payload: PackPatchIn,
+    actor: LibraryCreateDep,
+    service: LibraryServiceDep,
+) -> ApiResponse[PackOut]:
+    """换成员后，包身上的标签会**重算成新成员的共同标签**。
+
+    那是派生值：模板库靠它判断「这个包能不能填那一格」，增量维护会留下一堆
+    已经不再共同的旧标签，选择器就会把包放进填不上的槽位里。
+    """
+    return ApiResponse.ok(
+        await service.update_pack(
+            actor, pack_id, name=payload.name, asset_ids=payload.asset_ids
+        )
     )
 
 

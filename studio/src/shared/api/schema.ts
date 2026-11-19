@@ -982,6 +982,15 @@ export interface PackOut {
   members?: PackMemberOut[];
 }
 
+/** 改封装。两个字段都可选，**传哪个改哪个**（`None` = 不动）。
+
+分成两个独立字段而不是「整包覆盖」：改名和换成员是两件事，
+强制调用方每次都把成员列表原样回传，会在并发编辑时把别人的改动冲掉。 */
+export interface PackPatchIn {
+  name?: string | null;
+  assetIds?: string[] | null;
+}
+
 /** 列表用的摘要：不含成员明细，省流量。 */
 export interface PackSummaryOut {
   id: string;
@@ -2026,6 +2035,8 @@ export interface EndpointData {
   "POST /api/v1/library/packs": PackOut;
   /** 封装详情（成员与预览） */
   "GET /api/v1/library/packs/{pack_id}": PackOut;
+  /** 改封装（名字 / 成员） */
+  "PATCH /api/v1/library/packs/{pack_id}": PackOut;
   /** 选择器：只返回库内资产 */
   "GET /api/v1/library/selection": LibrarySelectionPage;
   /** 申请单列表（我提交的 / 待我审核） */

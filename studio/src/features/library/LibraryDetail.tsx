@@ -53,6 +53,7 @@ import {
   useSaveAssetFile,
 } from '@/entities/library/api/library.queries';
 import type { LibraryCardAction } from './LibraryCard';
+import { PackCreateModal, type EditingPack } from './PackCreateModal';
 import { TextAssetModal } from './TextAssetModal';
 import { TextVersionHistory } from './TextVersionHistory';
 
@@ -124,6 +125,8 @@ function DetailBody({
   const [renaming, setRenaming] = useState(false);
   const [editorOpen, setEditorOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  /* 编辑封装的弹窗叠在详情之上：两者都有关闭按钮，Modal 有栈管理 Escape 顺序。 */
+  const [editingPack, setEditingPack] = useState<EditingPack | null>(null);
   const nameInput = useRef<HTMLInputElement>(null);
   /* 文本资产没有可预览的媒体字节：正文走 /text 单独取，纯文本展示 */
   const isText = asset.kind === 'text';
@@ -480,6 +483,23 @@ function DetailBody({
             下载原件
           </Button>
         )}
+        {/* 封装的编辑入口。成员与名字都可改 —— 建完只能删了重建太笨。 */}
+        {asset.kind === 'pack' && asset.state === 'active' && canEdit && (
+          <Button
+            size="sm"
+            variant="secondary"
+            icon={<Layers size={13} />}
+            onClick={() =>
+              setEditingPack({
+                id: asset.id,
+                name: asset.name,
+                members: asset.packItems ?? [],
+              })
+            }
+          >
+            编辑封装
+          </Button>
+        )}
         {asset.state === 'draft' && (
           <>
             <Button size="sm" variant="primary" onClick={() => onAction('approve', asset)}>
@@ -557,6 +577,13 @@ function DetailBody({
           assetId={asset.id}
           assetName={displayName(asset.name)}
           onClose={() => setEditorOpen(false)}
+        />
+      )}
+      {editingPack && (
+        <PackCreateModal
+          open
+          pack={editingPack}
+          onClose={() => setEditingPack(null)}
         />
       )}
       {historyOpen && (

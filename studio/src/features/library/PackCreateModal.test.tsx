@@ -4,14 +4,16 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { LibraryAssetOut } from '@/shared/api/schema';
 import { PackCreateModal } from './PackCreateModal';
 
-const { createMock, toastMock, pickerProps } = vi.hoisted(() => ({
+const { createMock, updateMock, toastMock, pickerProps } = vi.hoisted(() => ({
   createMock: vi.fn(),
+  updateMock: vi.fn(),
   toastMock: vi.fn(),
   pickerProps: { current: {} as Record<string, unknown> },
 }));
 
 vi.mock('@/entities/library/api/library.queries', () => ({
   useCreatePack: () => ({ mutateAsync: createMock, isPending: false }),
+  useUpdatePack: () => ({ mutateAsync: updateMock, isPending: false }),
 }));
 vi.mock('@/shared/lib/toast', () => ({ toast: toastMock }));
 
@@ -73,9 +75,11 @@ function renderModal(overrides: Partial<Parameters<typeof PackCreateModal>[0]> =
 
 beforeEach(() => {
   createMock.mockReset();
+  updateMock.mockReset();
   toastMock.mockReset();
   pickerProps.current = {};
   createMock.mockResolvedValue({ id: 'p1', name: '6036 黑', memberCount: 2 });
+  updateMock.mockResolvedValue({ id: 'p1', name: '6036 黑', memberCount: 2 });
 });
 
 describe('PackCreateModal · 成员', () => {
@@ -215,5 +219,69 @@ describe('PackCreateModal · 共同标签', () => {
     });
     // m1 有 6036，m2 没有 → 不是共同标签
     expect(screen.getByRole('button', { name: '创建封装' })).toBeDisabled();
+  });
+});
+
+describe('PackCreateModal · 编辑已有封装', () => {
+  const EDITING = {
+    id: 'p1',
+    name: '6036 黑',
+    members: [
+      {id: 'm1', name: '6036-黑-正面.png', kind: 'image', coverUrl: null, tagIds: ['tag-6036'], deleted: false},
+      {id: 'm2', name: '6036-黑-立体.png', kind: 'image', coverUrl: null, tagIds: ['tag-6036'], deleted: false},
+    ],
+  };
+
+  it('名字与成员预填，按钮是「保存」而不是「创建封装」', () => {
+    renderModal({ pack: EDITING, preset: [] });
+    expect(screen.getByLabelText('封装名称')).toHaveValue('6036 黑');
+    expect(screen.getByText('已选 2 张')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '保存' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '创建封装' })).not.toBeInTheDocument();
+  });
+
+  it('提交走 PATCH（改），不是新建', async () => {
+    const user = userEvent.setup();
+    const { onClose, onCreated } = renderModal({ pack: EDITING, preset: [] });
+
+    await user.type(screen.getByLabelText('封装名称'), '（改）');
+    await user.click(screen.getByRole('button', { name: '保存' }));
+
+    expect(updateMock).toHaveBeenCalledWith({
+      id: 'p1',
+      name: '6036 黑（改）',
+      assetIds: ['m1', 'm2'],
+    });
+    expect(createMock).not.toHaveBeenCalled();
+    expect(onCreated).not.toHaveBeenCalled();
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it('移掉一张再保存，提交的是新的成员列表', async () => {
+    const user = userEvent.setup();
+    renderModal({ pack: EDITING, preset: [] });
+
+    await user.click(screen.getByRole('button', { name: '移除 6036-黑-立体' }));
+    await user.click(screen.getByRole('button', { name: '保存' }));
+
+    expect(updateMock).toHaveBeenCalledWith({
+      id: 'p1',
+      name: '6036 黑',
+      assetIds: ['m1'],
+    });
+  });
+
+  it('属于这个包自己的素材不该被标成「已在封装里」', () => {
+    renderModal({ pack: EDITING, preset: [] });
+    const reason = pickerProps.current.unavailableReason as (
+      asset: LibraryAssetOut,
+    ) => string | null;
+
+    // 本包的成员：能再选回来
+    expect(reason(assetOf('x', '本包的.png', { packId: 'p1', packName: '6036 黑' }))).toBeNull();
+    // 别的包：拦
+    expect(reason(assetOf('y', '别家的.png', { packId: 'p2', packName: '6036 白' }))).toBe(
+      '已在封装「6036 白」里',
+    );
   });
 });

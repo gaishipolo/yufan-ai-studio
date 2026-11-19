@@ -269,6 +269,21 @@ export function useLibraryPack(id: string | null) {
 }
 
 /**
+ * 改封装（名字 / 成员）。
+ *
+ * 失效范围与建包一致：换成员会让包身上的标签重算、成员从列表消失/回来，
+ * 选择器也要跟着改「已在封装里」的标注。
+ */
+export function useUpdatePack() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: ({id, ...body}: {id: string; name?: string; assetIds?: string[]}) =>
+      libraryApi.updatePack(id, body),
+    onSuccess: () => client.invalidateQueries({ queryKey: libraryKeys.all }),
+  });
+}
+
+/**
  * 建封装。
  *
  * **失效范围要大**：建完之后成员从资产库列表消失（成员不单列），包的卡片

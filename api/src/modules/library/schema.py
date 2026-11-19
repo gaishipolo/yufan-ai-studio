@@ -160,6 +160,19 @@ class LibraryTagStatOut(LibraryTagOut):
 
 #: 封装成员。定义在 `LibraryAssetOut` 之前：详情出参要用它列成员，
 #: 而 Python 的类体在定义时求值，写在前面的类型必须已经存在。
+class PackPatchIn(CamelModel):
+    """改封装。两个字段都可选，**传哪个改哪个**（`None` = 不动）。
+
+    分成两个独立字段而不是「整包覆盖」：改名和换成员是两件事，
+    强制调用方每次都把成员列表原样回传，会在并发编辑时把别人的改动冲掉。
+    """
+
+    name: str | None = Field(default=None, max_length=200)
+    #: 整体替换（顺序 = 包内顺序）。空数组由服务层拒 —— 「一个包没有成员」
+    #: 这种状态在界面和取图里都无法解释。
+    asset_ids: list[str] | None = Field(default=None, max_length=200)
+
+
 class PackMemberOut(CamelModel):
     """包成员：模板库只读它来判断「这个包能填哪几格」。"""
 

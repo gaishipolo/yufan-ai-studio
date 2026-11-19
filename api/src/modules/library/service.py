@@ -30,7 +30,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
@@ -813,64 +813,17 @@ class LibraryService:
         —— 那正是取图时区分成员的依据，打进包里反而会让整包看起来「有所有角色」。
         """
         ids = [item for item in dict.fromkeys(asset_ids) if item]
-        if not ids:
-            raise BadRequest("封装至少要含一张素材")
+        readable = await self._validate_pack_members(ids, actor)
+        common = await self._common_tags(ids)
 
-        readable = await access.readable_rows(self.session, ids, actor)
-        missing = [item for item in ids if item not in readable]
-        if missing:
-            raise BadRequest(f"这些素材不存在或无权访问：{'、'.join(missing[:5])}")
-        if any(row.kind == "pack" for row in readable.values()):
-            raise BadRequest("封装不能嵌套：成员只能是素材，不能再是封装")
-
-        # 一张图只能属于一个包。不拦的话，「6036 黑」和「6 月新品」都含同一张
-        # 正面图，改一个包的成员会连带影响另一个包的取图 —— 而使用者以为
-        # 两个包互不相干。选择器会把这些素材标灰，这里是最后一道闸。
-        # 连**回收站里的包**一起看：那些包还能恢复，恢复之后同一张图就属于两个包了。
-        # 报错必须说清它在回收站，否则用户翻遍资产库也找不到那个包。
-        taken = await self._pack_of(ids, include_trashed=True)
-        if taken:
-            labels = "、".join(
-                f"「{pack_name}」" + ("（在回收站里）" if state == "trash" else "")
-                for _, pack_name, state in list(taken.values())[:3]
-            )
-            raise Conflict(f"这些素材已经属于封装{labels}，一张素材只能进一个封装")
-
-        # 成员必须**至少共有一个标签**：封装的意思是「同一件东西的几个视角」
-        # （同一产品、同一颜色），而这件事在系统里唯一能判的信号就是标签 ——
-        # `6036` 这类产品编号是成员共同带的，`正面图 / 三视图` 是各自独有的。
-        # 一组没有任何共同标签的图，要么根本不是一回事，要么还没打标；
-        # 两种都不该打包：打出来的包在模板库选择器里也没有依据归到任何槽位
-        # （那里正是靠「成员标签 ∩ 槽位候选标签」判断这个包能不能填）。
-        #
-        # 放在建行**之前**：先落一行包再报错，会留下一条没有成员关系的空壳。
-        tags = await tag_ids_by_asset(self.session, ids)
-        common = set(tags.get(ids[0], []))
-        for asset_id in ids[1:]:
-            common &= set(tags.get(asset_id, []))
-        if not common:
-            raise BadRequest(
-                "这些素材没有共同的标签，打不成一个封装："
-                "先给它们打上同一个标签（比如产品编号）再来"
-            )
-
-        label = name.strip()[:200] or "未命名封装"
-        cover = next(
-            (
-                readable[item].cover_key
-                for item in ids
-                if readable[item].cover_key and readable[item].kind in {"image", "video"}
-            ),
-            "",
-        )
         pack = LibraryAsset(
-            name=label,
+            name=name.strip()[:200] or "未命名封装",
             kind="pack",
             origin="upload",
             mime_type="",
             size_bytes=0,
             storage_key="",
-            cover_key=cover,
+            cover_key=self._pack_cover(ids, readable),
             owner_id=actor.id,
             visibility="personal",
             state="active",
@@ -890,6 +843,141 @@ class LibraryService:
 
         await self.session.commit()
         return await self.get_pack(actor, pack.id)
+
+    async def update_pack(
+        self,
+        actor: CurrentUser,
+        pack_id: str,
+        *,
+        name: str | None = None,
+        asset_ids: Sequence[str] | None = None,
+    ) -> PackOut:
+        """改封装：名字、成员。
+
+        **只传要改的那个**（`None` = 不动），两个操作因此可以独立发生，
+        不必让调用方把另一份也原样回传一遍。
+
+        换成员之后包身上的标签**重算成新成员的共同标签**（完全替换）：包上的
+        标签是「成员共同标签的投影」，不是一份独立维护的数据。增量维护会留下
+        一堆「上一次的共同标签」，而它们已经不再共同了 —— 模板库正是靠这个
+        投影判断「这个包能不能填那一格」。
+        """
+        row = await self.session.scalar(
+            select(LibraryAsset).where(
+                LibraryAsset.id == pack_id, LibraryAsset.kind == "pack"
+            )
+        )
+        # 别人的包一律 404：既不说「存在但没权限」，也不泄露别人的库结构。
+        if (
+            row is None
+            or row.state != "active"
+            or (row.owner_id != actor.id and not actor.has(access.PERM_DELETE_ANY))
+        ):
+            raise NotFound("封装不存在")
+
+        if name is not None:
+            row.name = name.strip()[:200] or "未命名封装"
+
+        if asset_ids is not None:
+            ids = [item for item in dict.fromkeys(asset_ids) if item]
+            readable = await self._validate_pack_members(
+                ids, actor, exclude_pack_id=row.id
+            )
+            common = await self._common_tags(ids)
+
+            # 整体替换：先清旧成员再写新的，顺序也一起换掉。
+            await self.session.execute(
+                delete(LibraryPackItem).where(LibraryPackItem.pack_id == row.id)
+            )
+            for position, asset_id in enumerate(ids):
+                self.session.add(
+                    LibraryPackItem(pack_id=row.id, asset_id=asset_id, position=position)
+                )
+            row.cover_key = self._pack_cover(ids, readable)
+            # 标签**完全替换**（不是追加）：不再共同的必须掉下去
+            await set_asset_tags(self.session, row.id, sorted(common))
+
+        row.state_version = (row.state_version or 1) + 1
+        await self.session.commit()
+        return await self.get_pack(actor, row.id)
+
+    async def _validate_pack_members(
+        self,
+        ids: Sequence[str],
+        actor: CurrentUser,
+        *,
+        exclude_pack_id: str | None = None,
+    ) -> dict[str, LibraryAsset]:
+        """建包 / 改成员共用的一份校验。返回可读的成员行。
+
+        `exclude_pack_id` 是「别把自己算成冲突」：改成员时，本来就在这个包里
+        的那些素材当然还属于它，不该被唯一性检查拦下来。
+        """
+        if not ids:
+            raise BadRequest("封装至少要含一张素材")
+
+        readable = await access.readable_rows(self.session, ids, actor)
+        missing = [item for item in ids if item not in readable]
+        if missing:
+            raise BadRequest(f"这些素材不存在或无权访问：{'、'.join(missing[:5])}")
+        if any(row.kind == "pack" for row in readable.values()):
+            raise BadRequest("封装不能嵌套：成员只能是素材，不能再是封装")
+
+        # 一张图只能属于一个包。不拦的话，「6036 黑」和「6 月新品」都含同一张
+        # 正面图，改一个包的成员会连带影响另一个包的取图 —— 而使用者以为
+        # 两个包互不相干。选择器会把这些素材标灰，这里是最后一道闸。
+        # 连**回收站里的包**一起看：那些包还能恢复，恢复之后同一张图就属于两个包了。
+        # 报错必须说清它在回收站，否则用户翻遍资产库也找不到那个包。
+        taken = await self._pack_of(ids, include_trashed=True)
+        if exclude_pack_id:
+            taken = {
+                key: value for key, value in taken.items() if value[0] != exclude_pack_id
+            }
+        if taken:
+            labels = "、".join(
+                f"「{pack_name}」" + ("（在回收站里）" if state == "trash" else "")
+                for _, pack_name, state in list(taken.values())[:3]
+            )
+            raise Conflict(f"这些素材已经属于封装{labels}，一张素材只能进一个封装")
+        return readable
+
+    async def _common_tags(self, ids: Sequence[str]) -> set[str]:
+        """成员**共有**的标签。空集 = 打不成一个封装（这里直接报错）。
+
+        成员必须至少共有一个标签：封装的意思是「同一件东西的几个视角」
+        （同一产品、同一颜色），而这件事在系统里唯一能判的信号就是标签 ——
+        `6036` 这类产品编号是成员共同带的，`正面图 / 三视图` 是各自独有的。
+        一组没有共同标签的图，打出来的包在模板库选择器里也没有依据归到任何
+        槽位（那里正是靠「成员标签 ∩ 槽位候选标签」判断能不能填）。
+
+        放在建行**之前**：先落一行包再报错，会留下一条没有成员关系的空壳。
+        """
+        tags = await tag_ids_by_asset(self.session, ids)
+        common = set(tags.get(ids[0], []))
+        for asset_id in ids[1:]:
+            common &= set(tags.get(asset_id, []))
+        if not common:
+            raise BadRequest(
+                "这些素材没有共同的标签，打不成一个封装："
+                "先给它们打上同一个标签（比如产品编号）再来"
+            )
+        return common
+
+    @staticmethod
+    def _pack_cover(ids: Sequence[str], readable: dict[str, LibraryAsset]) -> str:
+        """封面取第一个**有封面**的图片/视频成员的封面。
+
+        包没有自己的字节，卡片上那张图就是成员的封面 —— 取不到就留空，
+        前端会退回类型图标，不会画一个破图。
+        """
+        return next(
+            (
+                readable[item].cover_key
+                for item in ids
+                if readable[item].cover_key and readable[item].kind in {"image", "video"}
+            ),
+            "",
+        )
 
     async def get_pack(self, actor: CurrentUser, pack_id: str) -> PackOut:
         row = await self.session.scalar(

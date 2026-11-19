@@ -280,6 +280,10 @@ export const libraryApi = {
 
   pack: (id: string) => api.get<PackOut>(`/library/packs/${id}`),
 
+  /** 改封装：只传要改的那个字段（`undefined` = 不动） */
+  updatePack: (id: string, body: {name?: string; assetIds?: string[]}) =>
+    api.patch<PackOut>(`/library/packs/${id}`, body),
+
   /** 建封装：把一组素材打成一个包（成员顺序就是包内顺序） */
   createPack: (body: {name: string; assetIds: string[]}) =>
     api.post<PackOut>(`/library/packs`, {name: body.name, assetIds: body.assetIds}),

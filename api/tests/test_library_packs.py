@@ -425,3 +425,134 @@ def test_asset_in_a_trashed_pack_is_still_taken(client: TestClient) -> None:
     again = _pack(client, headers, "另一个包", [alive["id"]])
     assert again.status_code == 409, again.text
     assert "回收站" in again.json()["message"]
+
+
+def test_pack_can_be_renamed_and_remembers_members(client: TestClient) -> None:
+    """改名不动成员。两个字段独立，传哪个改哪个。"""
+    headers = _headers(client)
+    first = upload_image(client, API, headers, name="6036-黑-正面.png", color="violet")
+    second = upload_image(client, API, headers, name="6036-黑-三视图.png", color="wheat")
+    _shared(client, headers, [first["id"], second["id"]])
+    pack = _pack(client, headers, "临时名", [first["id"], second["id"]]).json()["data"]
+
+    renamed = client.patch(
+        f"{API}/library/packs/{pack['id']}", json={"name": "6036 黑"}, headers=headers
+    )
+    assert renamed.status_code == 200, renamed.text
+    body = renamed.json()["data"]
+    assert body["name"] == "6036 黑"
+    # 成员没被顺手清掉
+    assert [member["id"] for member in body["members"]] == [first["id"], second["id"]]
+
+
+def test_editing_members_keeps_existing_ones_and_recomputes_tags(
+    client: TestClient,
+) -> None:
+    """换成员：留下来的不该被唯一性检查拦住，标签也要重算。
+
+    `exclude_pack_id` 就是为这条存在的 —— 不排除自己，改一次成员就会被
+    「这些素材已经属于封装「自己」」拦住。
+    """
+    headers = _headers(client)
+    product = _tag(client, headers, "6036")
+    front = _tag(client, headers, "正面图")
+    views = _tag(client, headers, "三视图")
+    detail = _tag(client, headers, "细节图")
+
+    first = upload_image(client, API, headers, name="a.png", color="snow")
+    second = upload_image(client, API, headers, name="b.png", color="azure")
+    third = upload_image(client, API, headers, name="c.png", color="beige")
+    _tag_asset(client, headers, first["id"], [product["id"], front["id"]])
+    _tag_asset(client, headers, second["id"], [product["id"], views["id"]])
+    _tag_asset(client, headers, third["id"], [product["id"], detail["id"]])
+
+    pack = _pack(client, headers, "6036", [first["id"], second["id"]]).json()["data"]
+    # `PackOut.tagIds` 是**成员标签的并集**（选择器靠它判断能不能填）；
+    # 包**身上**的标签要走资产详情 —— 那里只有共同标签。
+    def pack_own_tags() -> set[str]:
+        row = client.get(f"{API}/library/assets/{pack['id']}", headers=headers).json()["data"]
+        return {item["name"] for item in row["tags"]}
+
+    assert pack_own_tags() == {"6036"}
+
+    # 保留 first，用 third 换掉 second：first 属于自己，不该触发冲突
+    updated = client.patch(
+        f"{API}/library/packs/{pack['id']}",
+        json={"assetIds": [first["id"], third["id"]]},
+        headers=headers,
+    )
+    assert updated.status_code == 200, updated.text
+    body = updated.json()["data"]
+    assert [member["id"] for member in body["members"]] == [first["id"], third["id"]]
+    # 共同标签仍是 6036（三视图走了、细节图来了，两个都不是共同的）
+    assert pack_own_tags() == {"6036"}
+
+
+def test_editing_members_rejects_empty_and_foreign_assets(client: TestClient) -> None:
+    headers = _headers(client)
+    mine = upload_image(client, API, headers, name="我的.png", color="olive")
+    other = upload_image(client, API, headers, name="别人的.png", color="navy")
+    _shared(client, headers, [mine["id"], other["id"]])
+    pack = _pack(client, headers, "6036", [mine["id"]]).json()["data"]
+
+    empty = client.patch(
+        f"{API}/library/packs/{pack['id']}", json={"assetIds": []}, headers=headers
+    )
+    assert empty.status_code in (400, 422), empty.text
+
+    # 另一张已经在别的包里 → 409；跨包复用会连带影响两边的取图
+    other_pack = _pack(client, headers, "另一个", [other["id"]]).json()["data"]
+    assert other_pack["memberCount"] == 1
+    stolen = client.patch(
+        f"{API}/library/packs/{pack['id']}",
+        json={"assetIds": [mine["id"], other["id"]]},
+        headers=headers,
+    )
+    assert stolen.status_code == 409, stolen.text
+
+
+def test_only_owner_can_edit_a_pack(client: TestClient) -> None:
+    """别人的包一律 404：既不说「存在但没权限」，也不泄露别人的库结构。"""
+    admin = admin_headers(client)
+    _, owner = make_user(client, admin, LIB_RW)
+    _, stranger = make_user(client, admin, LIB_RW)
+
+    member = upload_image(client, API, owner, name="某人的.png", color="crimson")
+    _shared(client, owner, [member["id"]])
+    pack = _pack(client, owner, "某人的包", [member["id"]]).json()["data"]
+
+    response = client.patch(
+        f"{API}/library/packs/{pack['id']}", json={"name": "改个名"}, headers=stranger
+    )
+    assert response.status_code == 404, response.text
+
+
+def test_replacing_every_member_swaps_the_inherited_tag(client: TestClient) -> None:
+    """整批换成员时，旧标签必须**掉下去**。
+
+    包身上的标签是「成员共同标签的投影」，是派生值。增量维护（只加不减）会留下
+    「上一次的共同标签」，而它已经不共同了 —— 模板库正是靠这个投影判断
+    「这个包能不能填那一格」，留着的旧标签会把包放进填不上的槽位里。
+    """
+    headers = _headers(client)
+    old_a = upload_image(client, API, headers, name="6036-a.png", color="gold")
+    old_b = upload_image(client, API, headers, name="6036-b.png", color="honeydew")
+    new_a = upload_image(client, API, headers, name="9999-a.png", color="indigo")
+    new_b = upload_image(client, API, headers, name="9999-b.png", color="ivory")
+    _shared(client, headers, [old_a["id"], old_b["id"]], name="6036")
+    _shared(client, headers, [new_a["id"], new_b["id"]], name="9999")
+
+    pack = _pack(client, headers, "先叫 6036", [old_a["id"], old_b["id"]]).json()["data"]
+    row = client.get(f"{API}/library/assets/{pack['id']}", headers=headers).json()["data"]
+    assert {item["name"] for item in row["tags"]} == {"6036"}
+
+    updated = client.patch(
+        f"{API}/library/packs/{pack['id']}",
+        json={"assetIds": [new_a["id"], new_b["id"]]},
+        headers=headers,
+    )
+    assert updated.status_code == 200, updated.text
+
+    row = client.get(f"{API}/library/assets/{pack['id']}", headers=headers).json()["data"]
+    # 6036 必须走了，9999 必须在了
+    assert {item["name"] for item in row["tags"]} == {"9999"}

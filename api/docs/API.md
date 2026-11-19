@@ -2,7 +2,7 @@
 
 > 此文件由 `app export-openapi` 自动生成，请勿手工编辑。
 >
-> 版本 `0.2.0`｜共 **130** 个接口 / **11** 个模块
+> 版本 `0.2.0`｜共 **131** 个接口 / **11** 个模块
 >
 > 重新生成：`cd api && .venv/Scripts/python -m cli export-openapi`
 
@@ -229,7 +229,7 @@ Authorization: Bearer <accessToken>
 | 镜头库 | 1 | 见下方 `4.6` |
 | 系统 | 2 | 见下方 `4.7` |
 | 导出 | 6 | 见下方 `4.8` |
-| 资产库 | 46 | 见下方 `4.9` |
+| 资产库 | 47 | 见下方 `4.9` |
 | 模型驱动 | 9 | 见下方 `4.10` |
 | 模板封装 | 12 | 见下方 `4.11` |
 
@@ -1580,7 +1580,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 
 **响应** `ApiResponse<unknown>`（前端取 `res.data`）
 
-### 4.9 资产库（46 个）
+### 4.9 资产库（47 个）
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
@@ -1614,6 +1614,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `PUT` | `/api/v1/library/groups/{group_id}/leaders` | 设置小组负责人（整体替换） | 🔒 |
 | `POST` | `/api/v1/library/packs` | 建封装：把一组素材打成一个包 | 🔒 |
 | `GET` | `/api/v1/library/packs` | 封装列表（模板库选择器用） | 🔒 |
+| `PATCH` | `/api/v1/library/packs/{pack_id}` | 改封装（名字 / 成员） | 🔒 |
 | `GET` | `/api/v1/library/packs/{pack_id}` | 封装详情（成员与预览） | 🔒 |
 | `GET` | `/api/v1/library/selection` | 选择器：只返回库内资产 | 🔒 |
 | `POST` | `/api/v1/library/share-requests` | 发起共享 / 撤销共享申请 | 🔒 |
@@ -2462,6 +2463,37 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `[].coverUrl` | `string \| null` | 否 |  |
 | `[].memberCount` | `number` | 否 |  |
 | `[].tagIds` | `string[]` | 否 |  |
+
+#### `PATCH /api/v1/library/packs/{pack_id}`
+
+**改封装（名字 / 成员）**
+
+换成员后，包身上的标签会**重算成新成员的共同标签**。
+
+那是派生值：模板库靠它判断「这个包能不能填那一格」，增量维护会留下一堆
+已经不再共同的旧标签，选择器就会把包放进填不上的槽位里。
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `pack_id` | path | `string` | 是 |  |
+
+**请求体** `PackPatchIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `name` | `string \| null` | 否 |  |
+| `assetIds` | `string[] \| null` | 否 |  |
+
+**响应** `ApiResponse<PackOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `coverUrl` | `string \| null` | 否 |  |
+| `memberCount` | `number` | 否 |  |
+| `tagIds` | `string[]` | 否 |  |
+| `members` | `PackMemberOut[]` | 否 |  |
 
 #### `GET /api/v1/library/packs/{pack_id}`
 
@@ -4377,6 +4409,18 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `memberCount` | `number` | 否 |  |
 | `tagIds` | `string[]` | 否 |  |
 | `members` | `PackMemberOut[]` | 否 |  |
+
+### `PackPatchIn`
+
+改封装。两个字段都可选，**传哪个改哪个**（`None` = 不动）。
+
+分成两个独立字段而不是「整包覆盖」：改名和换成员是两件事，
+强制调用方每次都把成员列表原样回传，会在并发编辑时把别人的改动冲掉。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `name` | `string \| null` | 否 |  |
+| `assetIds` | `string[] \| null` | 否 |  |
 
 ### `PackSummaryOut`
 

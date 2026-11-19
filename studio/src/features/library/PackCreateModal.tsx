@@ -3,13 +3,45 @@ import { AlertCircle, Layers, Plus, X } from 'lucide-react';
 import { Button, CoverImage, Modal } from '@/shared/ui';
 import { cn } from '@/shared/lib/cn';
 import { toast } from '@/shared/lib/toast';
-import type { LibraryAssetOut } from '@/shared/api/schema';
-import { useCreatePack } from '@/entities/library/api/library.queries';
+import type { LibraryAssetOut, PackMemberOut } from '@/shared/api/schema';
+import { useCreatePack, useUpdatePack } from '@/entities/library/api/library.queries';
 import { LibraryPicker } from '@/entities/library/ui/LibraryPicker';
 import { displayName } from '@/entities/library/model/types';
 
+/**
+ * 编辑模式下要改的那个包。没有它就是「新建」。
+ *
+ * 成员用 `PackMemberOut`（详情里给的就是这个形状）—— 这里只用到 id / 名字 /
+ * 封面 / 标签 id，不为了复用而把整条 `LibraryAssetOut` 造出来。
+ */
+export interface EditingPack {
+  id: string;
+  name: string;
+  members: PackMemberOut[];
+}
+
+/** 把包成员转成选择器认的形状：只补它真正读的几个字段。 */
+function memberToAsset(member: PackMemberOut): LibraryAssetOut {
+  return {
+    id: member.id,
+    name: member.name,
+    kind: (member.kind as LibraryAssetOut['kind']) ?? 'image',
+    origin: 'upload',
+    ownerId: '',
+    visibility: 'personal',
+    state: 'active',
+    sizeBytes: 0,
+    createdAt: '',
+    coverUrl: member.coverUrl ?? null,
+    /* 只用来算「共同标签」，`name` 不参与判断 */
+    tags: (member.tagIds ?? []).map((id) => ({id, name: ''})),
+  };
+}
+
 export interface PackCreateModalProps {
   open: boolean;
+  /** 传入 = 编辑已有封装（名字与成员预填，提交走 PATCH） */
+  pack?: EditingPack;
   /**
    * 已选好的素材（从批量条进来时就是用户刚勾的那几条）。
    *
@@ -20,6 +52,8 @@ export interface PackCreateModalProps {
   onClose: () => void;
   /** 建完之后回调（外面据此清空批量选择） */
   onCreated?: () => void;
+  /** 改完之后回调（外面据此关闭详情或重新拉取） */
+  onUpdated?: () => void;
 }
 
 /**
@@ -38,11 +72,15 @@ export interface PackCreateModalProps {
  */
 export function PackCreateModal({
   open,
+  pack,
   preset = [],
   onClose,
   onCreated,
+  onUpdated,
 }: PackCreateModalProps) {
   const create = useCreatePack();
+  const update = useUpdatePack();
+  const editing = !!pack;
   const [name, setName] = useState('');
   const [assets, setAssets] = useState<LibraryAssetOut[]>([]);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -53,8 +91,8 @@ export function PackCreateModal({
      调用方每次渲染新建一个数组把用户刚删掉的项又塞回来。 */
   useEffect(() => {
     if (!open) return;
-    setName('');
-    setAssets(preset);
+    setName(pack?.name ?? '');
+    setAssets(pack ? pack.members.map(memberToAsset) : preset);
     setError('');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
@@ -84,12 +122,22 @@ export function PackCreateModal({
     if (!assets.length) return;
     setError('');
     try {
-      const pack = await create.mutateAsync({
-        name: name.trim(),
-        assetIds: assets.map((item) => item.id),
-      });
-      toast(`已创建封装「${pack.name}」，${pack.memberCount} 张素材收进去了`);
-      onCreated?.();
+      if (pack) {
+        const saved = await update.mutateAsync({
+          id: pack.id,
+          name: name.trim(),
+          assetIds: assets.map((item) => item.id),
+        });
+        toast(`已更新封装「${saved.name}」，${saved.memberCount} 张素材`);
+        onUpdated?.();
+      } else {
+        const created = await create.mutateAsync({
+          name: name.trim(),
+          assetIds: assets.map((item) => item.id),
+        });
+        toast(`已创建封装「${created.name}」，${created.memberCount} 张素材收进去了`);
+        onCreated?.();
+      }
       onClose();
     } catch (failure) {
       /* 就地显示而不是 toast：这条错误要让人对着弹窗里的素材逐条核对
@@ -100,7 +148,7 @@ export function PackCreateModal({
 
   return (
     <>
-      <Modal open={open} onClose={onClose} title="新建封装" width={560}>
+      <Modal open={open} onClose={onClose} title={editing ? '编辑封装' : '新建封装'} width={560}>
         <div className="space-y-3 p-[18px]">
           <label className="block space-y-1">
             <span className="text-meta text-ink-soft">封装名称</span>
@@ -193,10 +241,18 @@ export function PackCreateModal({
             <Button
               size="sm"
               variant="primary"
-              disabled={!assets.length || noCommonTag || create.isPending}
+              disabled={
+                !assets.length || noCommonTag || create.isPending || update.isPending
+              }
               onClick={() => void submit()}
             >
-              {create.isPending ? '创建中…' : '创建封装'}
+              {editing
+                ? update.isPending
+                  ? '保存中…'
+                  : '保存'
+                : create.isPending
+                  ? '创建中…'
+                  : '创建封装'}
             </Button>
           </div>
         </div>
@@ -211,11 +267,13 @@ export function PackCreateModal({
         kinds={['image', 'video']}
         value={assets.map((item) => item.id)}
         valueItems={assets}
-        unavailableReason={(asset) =>
-          asset.packName && !assets.some((item) => item.id === asset.id)
-            ? `已在封装「${asset.packName}」里`
-            : null
-        }
+        unavailableReason={(asset) => {
+          /* 编辑时，本来就在**这个包**里的成员当然可以再选回来 ——
+             按 `packId` 判而不是名字（重名的包是存在的）。 */
+          if (pack && asset.packId === pack.id) return null;
+          if (!asset.packName || assets.some((item) => item.id === asset.id)) return null;
+          return `已在封装「${asset.packName}」里`;
+        }}
         onClose={() => setPickerOpen(false)}
         onConfirm={(picked) => {
           setAssets(picked);
