@@ -12,12 +12,11 @@
 
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import ConfigDict, Field, field_validator, model_validator
 
-from core.schema import CamelModel
+from core.schema import CamelModel, UtcDateTime
 from core.template_spec import (
     MAX_ALLOWED_MODELS,
     MAX_PROMPT,
@@ -199,7 +198,7 @@ class SpecVersionOut(CamelModel):
     slots: list[SpecSlotOut]
     fingerprint: str = ""
     published_by: str = ""
-    published_at: datetime | None = None
+    published_at: UtcDateTime | None = None
 
 
 class TemplateSpecOut(CamelModel):
@@ -212,12 +211,12 @@ class TemplateSpecOut(CamelModel):
     revision: int
     fingerprint: str
     current_version: int
-    published_at: datetime | None = None
-    disabled_at: datetime | None = None
+    published_at: UtcDateTime | None = None
+    disabled_at: UtcDateTime | None = None
     #: 软删时间。非空 = 在回收站里，列表与模板库都看不到它。
-    deleted_at: datetime | None = None
-    created_at: datetime
-    updated_at: datetime
+    deleted_at: UtcDateTime | None = None
+    created_at: UtcDateTime
+    updated_at: UtcDateTime
     #: 正在编辑的整份内容；为空表示还没保存过。
     draft: TemplateSpecIn | None = None
     #: 展示案例（图片/视频资产 id）。存在草稿里，不进发布快照 —— 改案例不用发新版。

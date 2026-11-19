@@ -8861,7 +8861,8 @@
           "expiresAt": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "format": "date-time"
               },
               {
                 "type": "null"
@@ -8871,12 +8872,14 @@
           },
           "createdAt": {
             "type": "string",
+            "format": "date-time",
             "title": "Createdat"
           },
           "finishedAt": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "format": "date-time"
               },
               {
                 "type": "null"
@@ -9121,7 +9124,8 @@
           "createdAt": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "format": "date-time"
               },
               {
                 "type": "null"
@@ -9132,7 +9136,8 @@
           "startedAt": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "format": "date-time"
               },
               {
                 "type": "null"
@@ -9143,7 +9148,8 @@
           "finishedAt": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "format": "date-time"
               },
               {
                 "type": "null"
@@ -9154,7 +9160,8 @@
           "expiresAt": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "format": "date-time"
               },
               {
                 "type": "null"
@@ -9230,7 +9237,8 @@
           "createdAt": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "format": "date-time"
               },
               {
                 "type": "null"
@@ -9241,7 +9249,8 @@
           "startedAt": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "format": "date-time"
               },
               {
                 "type": "null"
@@ -9252,7 +9261,8 @@
           "finishedAt": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "format": "date-time"
               },
               {
                 "type": "null"
@@ -9263,7 +9273,8 @@
           "expiresAt": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "format": "date-time"
               },
               {
                 "type": "null"
@@ -9761,6 +9772,7 @@
           },
           "createdAt": {
             "type": "string",
+            "format": "date-time",
             "title": "Createdat",
             "description": "创建时间（UTC）"
           },
@@ -9901,6 +9913,7 @@
           },
           "createdAt": {
             "type": "string",
+            "format": "date-time",
             "title": "Createdat",
             "description": "创建时间（UTC）"
           },
@@ -10181,6 +10194,7 @@
           },
           "createdAt": {
             "type": "string",
+            "format": "date-time",
             "title": "Createdat",
             "description": "创建时间（UTC）"
           }
@@ -10761,7 +10775,8 @@
           "trashExpiresAt": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "format": "date-time"
               },
               {
                 "type": "null"
@@ -10798,12 +10813,14 @@
           },
           "createdAt": {
             "type": "string",
+            "format": "date-time",
             "title": "Createdat"
           },
           "updatedAt": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "format": "date-time"
               },
               {
                 "type": "null"
@@ -10873,7 +10890,8 @@
           "reviewedAt": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "format": "date-time"
               },
               {
                 "type": "null"
@@ -11109,7 +11127,8 @@
           "trashExpiresAt": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "format": "date-time"
               },
               {
                 "type": "null"
@@ -11146,12 +11165,14 @@
           },
           "createdAt": {
             "type": "string",
+            "format": "date-time",
             "title": "Createdat"
           },
           "updatedAt": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "format": "date-time"
               },
               {
                 "type": "null"
@@ -11348,7 +11369,8 @@
           "generatedAt": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "format": "date-time"
               },
               {
                 "type": "null"
@@ -11543,6 +11565,7 @@
           },
           "createdAt": {
             "type": "string",
+            "format": "date-time",
             "title": "Createdat"
           }
         },
@@ -11583,6 +11606,7 @@
         "properties": {
           "at": {
             "type": "string",
+            "format": "date-time",
             "title": "At",
             "description": "发生时间（UTC）"
           },
@@ -11723,7 +11747,8 @@
           "lastLoginAt": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "format": "date-time"
               },
               {
                 "type": "null"
@@ -11734,6 +11759,7 @@
           },
           "createdAt": {
             "type": "string",
+            "format": "date-time",
             "title": "Createdat",
             "description": "创建时间（UTC）"
           },
@@ -12265,6 +12291,7 @@
           },
           "createdAt": {
             "type": "string",
+            "format": "date-time",
             "title": "Createdat",
             "description": "创建时间（UTC）"
           },
@@ -12409,7 +12436,8 @@
           "lastSeenAt": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "format": "date-time"
               },
               {
                 "type": "null"
@@ -12420,11 +12448,13 @@
           },
           "expiresAt": {
             "type": "string",
+            "format": "date-time",
             "title": "Expiresat",
             "description": "刷新令牌到期时间（UTC）"
           },
           "createdAt": {
             "type": "string",
+            "format": "date-time",
             "title": "Createdat",
             "description": "登录时间（UTC）"
           },
@@ -12565,7 +12595,8 @@
           "decidedAt": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "format": "date-time"
               },
               {
                 "type": "null"
@@ -12575,6 +12606,7 @@
           },
           "createdAt": {
             "type": "string",
+            "format": "date-time",
             "title": "Createdat"
           }
         },
@@ -12708,7 +12740,8 @@
           "decidedAt": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "format": "date-time"
               },
               {
                 "type": "null"
@@ -12718,6 +12751,7 @@
           },
           "createdAt": {
             "type": "string",
+            "format": "date-time",
             "title": "Createdat"
           }
         },
@@ -13253,6 +13287,7 @@
           },
           "createdAt": {
             "type": "string",
+            "format": "date-time",
             "title": "Createdat"
           }
         },
@@ -13402,6 +13437,7 @@
           },
           "createdAt": {
             "type": "string",
+            "format": "date-time",
             "title": "Createdat",
             "description": "创建时间"
           },
@@ -13621,6 +13657,7 @@
           },
           "updatedAt": {
             "type": "string",
+            "format": "date-time",
             "title": "Updatedat",
             "description": "状态变更时间（UTC），即重新排队的时间"
           }
@@ -14030,7 +14067,8 @@
           "updatedAt": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "format": "date-time"
               },
               {
                 "type": "null"
@@ -14130,6 +14168,7 @@
           },
           "createdAt": {
             "type": "string",
+            "format": "date-time",
             "title": "Createdat"
           },
           "content": {
@@ -14416,7 +14455,8 @@
           "lastLoginAt": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "format": "date-time"
               },
               {
                 "type": "null"
@@ -14427,6 +14467,7 @@
           },
           "createdAt": {
             "type": "string",
+            "format": "date-time",
             "title": "Createdat",
             "description": "创建时间（UTC）"
           },
@@ -15084,18 +15125,21 @@
           },
           "createdAt": {
             "type": "string",
+            "format": "date-time",
             "title": "Createdat",
             "description": "创建时间（UTC）"
           },
           "updatedAt": {
             "type": "string",
+            "format": "date-time",
             "title": "Updatedat",
             "description": "更新时间（UTC）"
           },
           "startedAt": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "format": "date-time"
               },
               {
                 "type": "null"

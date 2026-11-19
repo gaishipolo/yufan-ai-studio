@@ -6,7 +6,7 @@ import re
 from datetime import UTC, datetime
 from typing import Annotated, Any, TypeVar
 
-from pydantic import BaseModel, ConfigDict, PlainSerializer, StringConstraints
+from pydantic import BaseModel, ConfigDict, PlainSerializer, StringConstraints, WithJsonSchema
 
 _CAMEL_RE = re.compile(r"_([a-z0-9])")
 
@@ -25,7 +25,17 @@ def _iso_utc(value: datetime) -> str:
 
 
 # 时间字段统一使用该类型，保证出入参格式一致
-UtcDateTime = Annotated[datetime, PlainSerializer(_iso_utc, return_type=str)]
+#
+# `WithJsonSchema` 是给**契约**补的：`PlainSerializer(..., return_type=str)`
+# 会让 pydantic 认为这个字段就是纯字符串，生成的 openapi 里因此**丢掉**
+# `format: date-time`。实际值仍然是 ISO8601，但契约上少了一句「这是时间」，
+# 自动生成的客户端会把它当普通字符串。两件事各管各的：序列化负责值，
+# 这里负责描述。
+UtcDateTime = Annotated[
+    datetime,
+    PlainSerializer(_iso_utc, return_type=str),
+    WithJsonSchema({"type": "string", "format": "date-time"}, mode="serialization"),
+]
 
 # 经用户测试的提示词必须逐字保存，不能继承 CamelModel 的首尾去空白行为。
 VerbatimText = Annotated[str, StringConstraints(strip_whitespace=False)]

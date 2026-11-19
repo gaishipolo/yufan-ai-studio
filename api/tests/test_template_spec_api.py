@@ -289,10 +289,7 @@ def test_publish_after_disable_brings_the_spec_back(client: TestClient) -> None:
     # 没有新版本：幂等分支不该凭空造一个版本号
     assert back.json()["data"]["version"] == version
     # 也没有新发布：publishedAt 说的是「这个版本首次发布的时间」。
-    # 比较时去掉 `Z`：同一时刻在这条链上有两种形状 —— 内存里刚赋的值带时区，
-    # 从库重读的不带（SQLite 不存 tz，而出参用的是裸 `datetime` 而非
-    # `UtcDateTime`）。这是**既有**的契约不一致，与本条用例要守的行为无关。
-    assert spec["publishedAt"].rstrip("Z") == published_at.rstrip("Z")
+    assert spec["publishedAt"] == published_at
 
     # 真的能用了 —— 状态恢复不是只写在出参里
     body = client.post(f"{API}/{draft['key']}/compile", json={"slotValues": {}}, headers=headers)
@@ -1033,3 +1030,41 @@ def test_slot_texts_round_trip_through_the_contract(client: TestClient) -> None:
     )
     assert published["filledText"] == "人物参考 {{slot:hero}}"
     assert published["emptyText"] == "红裙女性"
+
+
+def test_all_timestamps_come_back_with_the_same_shape(client: TestClient) -> None:
+    """时间字段统一带 `Z`，不管这个值是从内存里来的还是从库重读的。
+
+    **这条只在测试环境能复现** —— 用例跑的是 SQLite（不存时区）：同一条记录，
+    刚 `utcnow()` 赋值时是 tz-aware、从库读回时是 naive，而出参若用裸
+    `datetime`，pydantic 会按各自的样子序列化 —— 同一个字段在「创建」
+    「再查详情」两个响应里长得不一样（`2026-11-19T01:00:00Z` vs
+    `2026-11-19T01:00:00`）。
+
+    生产用的是 PostgreSQL 的 `timestamp with time zone`，读回本来就是
+    tz-aware，所以线上没出过这个症状。但「出参形状取决于当前挂的是哪种库」
+    这件事本身就是隐患（换驱动、换库、换环境都会翻出来），
+    `UtcDateTime` 把两条路的输出钉死成一种形状。
+
+    前端 `new Date()` 两种写法都认，所以它不会崩；严格解析的客户端会偏 8 小时。
+    """
+    headers = _headers(client)
+    video, first, second = _media(client, headers)
+    draft = _draft(video, first, second)
+    saved = _save(client, headers, draft)
+
+    # 刚保存、还没发布：这时候只有 createdAt / updatedAt 有值
+    for field in ("createdAt", "updatedAt"):
+        assert saved[field].endswith("Z"), f"{field}={saved[field]}"
+    assert saved["publishedAt"] is None
+
+    client.post(f"{API}/{draft['key']}/publish", headers=headers)
+
+    listed = client.get(API, headers=headers).json()["data"]["items"]
+    row = next(item for item in listed if item["key"] == draft["key"])
+    detail = client.get(f"{API}/{draft['key']}", headers=headers).json()["data"]
+
+    for payload in (row, detail):
+        for field in ("createdAt", "updatedAt", "publishedAt"):
+            assert payload[field].endswith("Z"), f"{field}={payload[field]}"
+    assert detail["latest"]["publishedAt"].endswith("Z")
