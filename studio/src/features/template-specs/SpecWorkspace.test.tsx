@@ -259,6 +259,39 @@ describe('模板封装 · 编辑器里的提示词', () => {
 
     expect(screen.queryByRole('heading', { name: '槽位速览' })).not.toBeInTheDocument();
   });
+
+  /* 用户报的那条：粘贴一个**正确**的引用，界面说「不要手写大括号」，
+     而且那段字留在框里 —— 因为它既没进 `value`、也没人收拾 DOM。 */
+  it('粘贴正确的槽位引用 → 直接变胶囊，不出红字', async () => {
+    const user = await enterEditor();
+    const box = screen.getByRole('textbox', { name: '提示词' });
+
+    await user.click(box);
+    await user.paste('参考 {{slot:image_1}}');
+
+    const capsule = await waitFor(() => {
+      const found = box.querySelector('[data-token]');
+      expect(found).not.toBeNull();
+      return found as HTMLElement;
+    });
+    expect(capsule).toHaveTextContent('图片 1');
+    expect(box.textContent).not.toContain('{{slot:');
+    expect(screen.queryByText(/不要手写大括号/)).not.toBeInTheDocument();
+  });
+
+  /* 反过来：粘一个**不存在**的 key，必须拒，并且说清是哪个 key。
+     前面那条改动要是把校验一起放松了（「只要是花括号就放」），这条会红。 */
+  it('粘贴不存在的槽位引用 → 拒掉，并指名是哪个 key', async () => {
+    const user = await enterEditor();
+    const box = screen.getByRole('textbox', { name: '提示词' });
+
+    await user.click(box);
+    await user.paste('{{slot:image_9}}');
+
+    expect(await screen.findByText(/没有叫「image_9」的槽位/)).toBeInTheDocument();
+    // 没写进去：框里还是空的
+    expect(box.textContent).toBe('');
+  });
 });
 
 /**

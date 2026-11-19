@@ -36,9 +36,10 @@ export function PromptBox({
 }: {
   value: string;
   chips: PromptChip[];
-  onChange: (text: string) => void;
-  /** 程序写入引用后的回调（chip 按钮 / `@` 提及共用）。 */
-  onInsert: (text: string) => void;
+  /** 用户改动。返回 `false` 表示**被拒**（父组件校验引用），输入框会把界面回退。 */
+  onChange: (text: string) => void | boolean;
+  /** 程序写入引用后的回调（chip 按钮 / `@` 提及 / 粘贴共用）。 */
+  onInsert: (text: string) => void | boolean;
 }) {
   /* 下方 chip 按钮插入引用：插到当前光标处（`@` 提及是另一条路，两者等价）。
      光标位置由输入框自己记着（父组件拿不到），所以走它的 imperative handle。 */
@@ -66,9 +67,7 @@ export function PromptBox({
         aria-label="提示词"
         placeholder="写提示词；打 @ 可以直接选槽位"
         className="rounded-xl px-3 py-2.5"
-        onChange={text => {
-          onChange(text);
-        }}
+        onChange={onChange}
         onInsert={onInsert}
       />
 

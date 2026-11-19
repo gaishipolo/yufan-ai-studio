@@ -619,6 +619,47 @@ function slotRefPattern(key?: string): RegExp {
 }
 
 /**
+ * 检查提示词里的引用：**只拦错的，不拦花括号**。返回 `null` = 没问题。
+ *
+ * 原来的判据是「花括号数量变多就拒」。它拦不住真正的问题 —— 拼错的 key
+ * 同样只是一对花括号 —— 却把**正确**的写法一起拦了：从别处粘一段
+ * `{{slot:image_1}}` 进来，内容完全正确，界面报「不要手写大括号」，
+ * 而且因为写入被拒、`value` 没变，界面连重渲染都不触发，粘进去的字
+ * 就这么以「半截文本」的样子留在框里。
+ *
+ * 真正会出事的只有三类，逐条给具体原因，而不是一句笼统的禁令：
+ *
+ * - **key 不存在**（拼错、从别的模板粘来）→ 编译期才 400；
+ * - **手写编号**（`{{Mixed N}}` / `{{Text N}}`）→ 编号由本次填充量决定，
+ *   写死会整体错位；
+ * - **花括号没闭合**。
+ *
+ * 合法的槽位引用（带不带空格、`*` / `.N` 修饰符）一律放行 —— 它与按钮
+ * 插入的是同一个 token，没有理由因为「是手打的」就拒。
+ */
+export function promptRefError(prompt: string, slotKeys: string[]): string | null {
+  const known = new Set(slotKeys);
+  /* 先看所有成对的 `{{...}}`：逐个判，给的原因才具体 */
+  let rest = prompt;
+  for (const match of prompt.matchAll(/\{\{[\s\S]*?\}\}/g)) {
+    const raw = match[0];
+    const ref = /^\{\{\s*slot:([a-z][a-z0-9_]{0,39})(?:\*|\.\d+)?\s*\}\}$/.exec(raw);
+    if (ref) {
+      if (!known.has(ref[1])) return `没有叫「${ref[1]}」的槽位，检查一下这个引用`;
+      rest = rest.replace(raw, '');
+      continue;
+    }
+    if (/^\{\{\s*(?:Mixed|Text)\s*\d*\s*\}\}$/i.test(raw)) {
+      return '编号（Mixed / Text）由填充顺序决定，不要手写';
+    }
+    return '这段引用认不出来，请用 @ 或下方按钮插入';
+  }
+  /* 剩下还带花括号 = 没闭合（`{{slot:x` 这种） */
+  if (/[{}]/.test(rest)) return '花括号没闭合，引用请用 @ 或下方按钮插入';
+  return null;
+}
+
+/**
  * 发布闸门的前端预检：哪些槽位还缺标签。
  *
  * 规则与后端 `_check_executable` 同一条：**要让用户填的**图片/视频槽位必须圈

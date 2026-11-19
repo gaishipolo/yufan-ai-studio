@@ -78,25 +78,21 @@ function lengthOf(node: Node): number {
   return 0;
 }
 
-/** 当前光标在**文本偏移**上的位置。 */
-function caretOffset(root: HTMLElement): number {
-  const selection = window.getSelection();
-  if (!selection || selection.rangeCount === 0) return 0;
-  const range = selection.getRangeAt(0);
-  if (!root.contains(range.endContainer)) return 0;
+/** 某个 DOM 点在**文本偏移**上落在哪；不在 `root` 里返回 `null`。 */
+function pointOffset(root: HTMLElement, container: Node, offset: number): number | null {
+  if (!root.contains(container)) return null;
 
   let acc = 0;
   let found = -1;
   const visit = (node: Node): boolean => {
-    if (node === range.endContainer) {
+    if (node === container) {
       if (node.nodeType === Node.TEXT_NODE) {
-        acc += range.endOffset;
-        found = acc;
-        return true;
-      }
-      for (let i = 0; i < range.endOffset; i += 1) {
-        const child = node.childNodes[i];
-        if (child) acc += lengthOf(child);
+        acc += Math.min(offset, (node.textContent ?? '').length);
+      } else {
+        for (let i = 0; i < offset; i += 1) {
+          const child = node.childNodes[i];
+          if (child) acc += lengthOf(child);
+        }
       }
       found = acc;
       return true;
@@ -113,7 +109,34 @@ function caretOffset(root: HTMLElement): number {
   for (const child of Array.from(root.childNodes)) {
     if (visit(child)) break;
   }
-  return found >= 0 ? found : acc;
+  return found >= 0 ? found : null;
+}
+
+/**
+ * 整条选区在**文本偏移**上的起止。
+ *
+ * 粘贴要知道「从哪到哪」：光标处插入是 `start === end`，选中一段再粘是替换。
+ */
+function selectionOffsets(root: HTMLElement): { start: number; end: number } | null {
+  const selection = window.getSelection();
+  if (!selection || selection.rangeCount === 0) return null;
+  const range = selection.getRangeAt(0);
+  const start = pointOffset(root, range.startContainer, range.startOffset);
+  const end = pointOffset(root, range.endContainer, range.endOffset);
+  if (start === null || end === null) return null;
+  return { start, end };
+}
+
+/** 当前光标在**文本偏移**上的位置。 */
+function caretOffset(root: HTMLElement): number {
+  return selectionOffsets(root)?.end ?? 0;
+}
+
+/** 两段文字从头开始有多长是一样的 —— 也就是「这次改动从哪儿起头」。 */
+function commonPrefix(a: string, b: string): number {
+  let index = 0;
+  while (index < a.length && index < b.length && a[index] === b[index]) index += 1;
+  return index;
 }
 
 /** 把光标放到「文本偏移」处。落在胶囊内部时放到它后面。 */
@@ -172,9 +195,13 @@ function setCaret(root: HTMLElement, offset: number): void {
 export interface RichPromptEditorProps {
   value: string;
   candidates: MentionCandidate[];
-  onChange: (text: string) => void;
-  /** 程序写入 token 后的回调（@ 候选选中时走这条）。 */
-  onInsert: (text: string) => void;
+  /**
+   * 用户改动。返回 `false` = 这次写入**被拒**（父组件对引用有校验），
+   * 编辑器会把 DOM 对齐回 `value`（见 `syncFromDom`）。
+   */
+  onChange: (text: string) => void | boolean;
+  /** 程序写入（`@` 候选选中 / 粘贴）后的回调；返回值同上。 */
+  onInsert: (text: string) => void | boolean;
   placeholder?: string;
   className?: string;
   id?: string;
@@ -269,7 +296,8 @@ export const RichPromptEditor = forwardRef<MentionTextareaHandle, RichPromptEdit
     const insert = (text: string, caret: number) => {
       pendingCaret.current = caret;
       caretRef.current = caret;
-      onInsert(text);
+      // 被拒就当没发生：不清掉待用的光标位，下一次重建会用错位置
+      if (onInsert(text) === false) pendingCaret.current = null;
     };
 
     useImperativeHandle(
@@ -300,7 +328,20 @@ export const RichPromptEditor = forwardRef<MentionTextareaHandle, RichPromptEdit
       const at = caretOffset(root);
       caretRef.current = at;
       const text = serialize(root);
-      onChange(text);
+      if (onChange(text) === false) {
+        /* 写入被拒（父组件的引用校验）：DOM 里那些字必须撤掉。
+           不撤的话「看见的」和「会保存的」不是一回事 —— 更糟的是 `value`
+           没变，下面那个重建 effect 不会触发，脏 DOM 就一直挂在那儿。
+
+           光标放在**两段文字的公共前缀末尾** = 这次改动开始的位置：
+           打了半个 token 被拒时，光标不会莫名跳到文末。 */
+        const back = commonPrefix(text, value);
+        paint(root, value);
+        caretRef.current = back;
+        setCaret(root, back);
+        setMention(detectMention(value, back));
+        return;
+      }
       // 提及面板由光标位置推导：删掉 `@` 它就自己收起
       setMention(detectMention(text, at));
     };
@@ -328,23 +369,25 @@ export const RichPromptEditor = forwardRef<MentionTextareaHandle, RichPromptEdit
       }
     };
 
-    /* 粘贴只收纯文本：默认粘贴会把外部 HTML（字体、颜色、div）一起带进来，
-       与「一行行提示词」的排版冲突，还会把胶囊的 DOM 结构搅乱。 */
+    /* 粘贴只收纯文本，而且**走 `value` 而不是往 DOM 里塞节点**。
+       两条理由：
+       - 默认粘贴会把外部 HTML（字体、颜色、div）一起带进来，与「一行行提示词」
+         的排版冲突，还会搅乱胶囊的 DOM 结构；
+       - 往 DOM 塞文本节点后，序列化结果和粘贴内容一样，所以「值变了没有」看
+         不出来 —— **胶囊化要等 `value` 变化触发重建**。走 `value` 这条路，
+         整段文字和它的胶囊是同一次渲染出来的，没有「半截原文」的中间态：
+         要么整段进去（`{{slot:key}}` 直接成胶囊），要么一点不动。
+         以前粘一段正确的 `{{slot:image_1}}` 不变胶囊，就是这个中间态。 */
     const onPaste = (event: React.ClipboardEvent<HTMLDivElement>) => {
       event.preventDefault();
-      const text = event.clipboardData.getData('text/plain');
-      if (!text) return;
-      const selection = window.getSelection();
-      if (!selection || selection.rangeCount === 0) return;
-      const range = selection.getRangeAt(0);
-      range.deleteContents();
-      const node = document.createTextNode(text);
-      range.insertNode(node);
-      range.setStartAfter(node);
-      range.collapse(true);
-      selection.removeAllRanges();
-      selection.addRange(range);
-      syncFromDom();
+      const pasted = event.clipboardData.getData('text/plain');
+      if (!pasted) return;
+      const root = rootRef.current;
+      if (!root) return;
+      // 选中一段再粘 = 替换；光标处粘 = 插入
+      const range = selectionOffsets(root) ?? { start: value.length, end: value.length };
+      const caret = range.start + pasted.length;
+      insert(value.slice(0, range.start) + pasted + value.slice(range.end), caret);
     };
 
     /* 候选面板方向：**量出来**。写死朝下会掉出视口。 */

@@ -19,6 +19,7 @@ import {
   joinModelSelection,
   nextSlotKey,
   normalize,
+  promptRefError,
   rekeySlot,
   referenceChips,
   rewriteSlotRef,
@@ -732,5 +733,46 @@ describe('authoredFingerprint：判有没有改动', () => {
     const swapped = {...two, slots: [two.slots![1], two.slots![0]]};
 
     expect(authoredFingerprint(swapped)).not.toBe(authoredFingerprint(two));
+  });
+});
+
+/**
+ * 引用校验：**只拦错的，不拦花括号**。
+ *
+ * 旧判据是「花括号变多就拒」。它拦不住真正的问题（拼错的 key 也只是两个
+ * 花括号），却把正确写法一起拦了 —— 粘一段 `{{slot:image_1}}` 进来，
+ * 明明是对的，界面却报「不要手写大括号」。
+ */
+describe('promptRefError：提示词里的引用', () => {
+  const KEYS = ['image_1', 'image_2', 'group'];
+
+  it('纯文字没问题', () => {
+    expect(promptRefError('一张图，暖色调', KEYS)).toBeNull();
+  });
+
+  it('合法引用一律放行（含空格、`*`、`.N` 三种修饰符）', () => {
+    expect(promptRefError('{{slot:image_1}}', KEYS)).toBeNull();
+    expect(promptRefError('{{ slot:image_2 }}', KEYS)).toBeNull();
+    expect(promptRefError('整组 {{slot:group*}}', KEYS)).toBeNull();
+    expect(promptRefError('第二张 {{slot:group.2}}', KEYS)).toBeNull();
+  });
+
+  it('key 不存在 → 指名道姓地说出来', () => {
+    expect(promptRefError('{{slot:image_9}}', KEYS)).toContain('image_9');
+  });
+
+  /* 手写编号会与本次填充量错位：少填一张，后面全部错位。 */
+  it('手写 Mixed / Text 编号 → 拒', () => {
+    expect(promptRefError('参考 {{Mixed 2}}', KEYS)).toContain('不要手写');
+    expect(promptRefError('{{Text 1}}', KEYS)).toContain('不要手写');
+  });
+
+  it('花括号没闭合 → 拒', () => {
+    expect(promptRefError('{{slot:image_1', KEYS)).toContain('没闭合');
+    expect(promptRefError('{{ image_1 }}', KEYS)).toContain('认不出来');
+  });
+
+  it('删字删到一半（合法引用少一个括号）也要拒', () => {
+    expect(promptRefError('{{slot:image_1} }}', KEYS)).not.toBeNull();
   });
 });

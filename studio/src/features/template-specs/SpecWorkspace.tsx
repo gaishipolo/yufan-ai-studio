@@ -54,6 +54,7 @@ import {
   fromSpecOut,
   joinModelSelection,
   normalize,
+  promptRefError,
   referenceChips,
   rekeySlot,
   slotTypeOf,
@@ -398,34 +399,32 @@ export function SpecWorkspace() {
   };
 
   /**
-   * 提示词只让改**描述文字**，引用一律从按钮插入或打 `@` 选。
+   * 提示词里的引用只认**对的东西**，不按「有没有花括号」一刀切。
    *
-   * 手写 `{{slot:x}}` 会在两处出错且都不报错：拼错 key → 编译期才 400；手写
-   * `{{Mixed N}}` → 数字与本次填充量对不上，少填一张就整体错位。所以这里直接
-   * 拒绝新增花括号：要么删字，要么用按钮或 `@`。
+   * 原来的判据是「花括号变多就拒」：它拦不住真正的问题（拼错的 key 同样只是
+   * 一对花括号），却把正确的写法一起拦了 —— 从别处粘一段 `{{slot:image_1}}`
+   * 进来，内容完全正确，界面却报「不要手写大括号」，而且写入被拒、`value` 没变，
+   * 连重渲染都不触发，粘进去的字以「半截文本」的样子留在框里（看见的和会存的
+   * 不是一回事）。
    *
-   * `inserted` 例外：按钮插入与 `@` 提及都是程序自己写进去的 token，本来就带
-   * 花括号 —— 那道防线是拦「手打」的，不是拦「程序插」的。
+   * 现在按 `promptRefError` 判：key 存在与否、编号有没有手写、花括号闭没闭合。
+   * 合法的引用一律收 —— 它与按钮插入的是同一个 token。
+   *
+   * 返回 `false` 表示**没写进去**，编辑器据此把 DOM 对齐回 `value`。
    */
-  const applyPromptText = (text: string, options?: {inserted?: boolean}) => {
-    if (!draft) return;
-    const before = draft.prompt ?? '';
-    const braces = (value: string) => (value.match(/[{}]/g) ?? []).length;
-    if (!options?.inserted && braces(text) > braces(before)) {
-      setHint('引用请用 @ 或下方按钮插入，不要手写大括号');
-      return;
+  const applyPromptText = (text: string): boolean => {
+    if (!draft) return false;
+    const error = promptRefError(
+      text,
+      (draft.slots ?? []).map(slot => slot.key),
+    );
+    if (error) {
+      setHint(error);
+      return false;
     }
     setHint('');
     setDraft({...draft, prompt: text});
-  };
-
-  /** 程序写入的引用（按钮 / `@` 提及）：允许带花括号。 */
-  const insertPromptText = (text: string) => {
-    applyPromptText(text, {inserted: true});
-  };
-
-  const setPromptText = (text: string) => {
-    applyPromptText(text);
+    return true;
   };
 
   const chips = draft ? referenceChips(draft) : [];
@@ -736,8 +735,10 @@ export function SpecWorkspace() {
             <PromptBox
               value={draft.prompt ?? ''}
               chips={chips}
-              onChange={setPromptText}
-              onInsert={insertPromptText}
+              /* 两条写入路径（手打 / 按钮与 @）走**同一个**校验：
+                 合法的引用与按钮插入的是同一个 token，没有理由区别对待。 */
+              onChange={applyPromptText}
+              onInsert={applyPromptText}
             />
             <div className="mt-2 flex flex-wrap items-center gap-2">
               {hint && <p className="text-meta text-warn-deep">{hint}</p>}

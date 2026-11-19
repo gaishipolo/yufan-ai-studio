@@ -230,6 +230,89 @@ describe('提示词框的 @ 提及', () => {
 });
 
 /**
+ * 粘贴。
+ *
+ * 用户报的原话：「我直接粘贴正确的插槽 `{{slot:image_1}}` 不会变成胶囊」。
+ *
+ * 根因不在渲染，在**中间态**：以前粘贴是往 DOM 里塞一个文本节点再同步 ——
+ * 序列化结果和粘的内容一模一样，所以「值变了没有」看不出来；而胶囊化要等
+ * `value` 变化触发重建。写入被父组件拒掉时 `value` 根本不变，于是那段字就
+ * 以「半截文本」的样子留在框里（看见的和会存的不是一回事）。
+ *
+ * 现在粘贴走 `value`：整段文字与它的胶囊是同一次渲染出来的。
+ */
+describe('粘贴', () => {
+  it('粘一段合法的槽位引用 → 直接变胶囊', async () => {
+    const user = userEvent.setup();
+    render(<Harness />);
+    const box = screen.getByRole('textbox');
+    await user.click(box);
+    await user.paste('先拍 {{slot:image_1}}');
+
+    const capsule = box.querySelector('[data-token]');
+    expect(capsule).toHaveTextContent('主图');
+    // 界面上不该再露 token
+    expect(box.textContent).not.toContain('{{slot:');
+    expect(screen.getByTestId('value')).toHaveTextContent('先拍 {{slot:image_1}}');
+  });
+
+  it('粘多段引用：各自成胶囊', async () => {
+    const user = userEvent.setup();
+    render(<Harness />);
+    const box = screen.getByRole('textbox');
+    await user.click(box);
+    await user.paste('{{slot:image_1}} 和 {{slot:group*}}');
+
+    const capsules = box.querySelectorAll('[data-token]');
+    expect(capsules).toHaveLength(2);
+    expect(capsules[1]).toHaveTextContent('整组（全部）');
+  });
+
+  /* 被拒时界面必须回退：不能出现「框里有字、值里没有」。 */
+  it('写入被拒（父组件返回 false）时，框里不留半截文本', async () => {
+    const user = userEvent.setup();
+    render(<PromptBox value="" chips={CHIPS} onChange={() => false} onInsert={() => false} />);
+    const box = screen.getByRole('textbox');
+    await user.click(box);
+    await user.paste('{{slot:image_9}}');
+
+    expect(box.textContent).toBe('');
+    expect(box.querySelector('[data-token]')).toBeNull();
+  });
+
+  /* 手打花括号被拒时也一样：浏览器已经把字插进 DOM 了，`value` 却没变 —
+     不主动对齐就会留下「看得见、存不进去」的字。 */
+  it('手打花括号被拒时，那个字符不会留在框里', async () => {
+    const user = userEvent.setup();
+
+    function Strict() {
+      const [text, setText] = useState('');
+      const accept = (next: string) => {
+        if (/[{}]/.test(next)) return false;
+        setText(next);
+        return true;
+      };
+      return (
+        <>
+          <PromptBox value={text} chips={CHIPS} onChange={accept} onInsert={accept} />
+          <output data-testid="value">{text}</output>
+        </>
+      );
+    }
+
+    render(<Strict />);
+    const box = screen.getByRole('textbox');
+    await user.click(box);
+    // userEvent 的键盘语法里 `{` 是特殊字符：`{{` 才是字面量
+    await user.type(box, 'a{{b');
+
+    // `{` 被拒、被撤掉；前后的普通字留着
+    expect(screen.getByTestId('value')).toHaveTextContent('ab');
+    expect(box.textContent).toBe('ab');
+  });
+});
+
+/**
  * 浮层方向：提示词框在模板封装页的右栏最下面，朝下展开会整块掉到视口外 ——
  * 用户只看到输入框闪一下、什么也没出现。空间不够就得翻到上面去。
  */
