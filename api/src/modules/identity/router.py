@@ -44,6 +44,7 @@ from modules.identity.schema import (
     PasswordChangeIn,
     PasswordPolicyOut,
     PermissionCatalogOut,
+    PermissionExceptionsIn,
     PermissionsIn,
     ProfileUpdateIn,
     RefreshIn,
@@ -406,6 +407,31 @@ async def set_user_permissions(
 ) -> ApiResponse[list[str]]:
     return ApiResponse.ok(
         await service.set_user_permissions(user_id, payload.permissions, actor)
+    )
+
+
+@router.get(
+    "/users/{user_id}/permission-exceptions",
+    summary="用户的个人例外（只对他关掉的权限码）",
+)
+async def user_permission_exceptions(
+    user_id: str, service: IdentityServiceDep, actor: IdentityReadDep
+) -> ApiResponse[list[str]]:
+    return ApiResponse.ok(await service.user_permission_exceptions(user_id))
+
+
+@router.put(
+    "/users/{user_id}/permission-exceptions",
+    summary="设置个人例外（整组替换；不动他的授予）",
+)
+async def set_permission_exceptions(
+    user_id: str,
+    payload: PermissionExceptionsIn,
+    service: IdentityServiceDep,
+    actor: IdentityUserPermissionManageDep,
+) -> ApiResponse[list[str]]:
+    return ApiResponse.ok(
+        await service.set_permission_exceptions(user_id, payload.exceptions, actor)
     )
 
 

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import secrets
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any, cast
@@ -25,8 +25,9 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core import audit
+from core.authz import evaluate
 from core.config import settings
-from core.context import SUPER_PERMISSION, CurrentUser, permission_holds
+from core.context import SUPER_PERMISSION, CurrentUser
 from core.exceptions import Unauthorized
 from core.logging import get_logger
 from core.pages import PAGE_PREFIX, page_catalog
@@ -51,6 +52,8 @@ from modules.identity.errors import (
     BuiltinRoleLocked,
     CannotTargetSelf,
     CredentialInvalid,
+    ExceptionLockedPermission,
+    ExceptionWildcardForbidden,
     GroupNameTaken,
     GroupNotFound,
     LastSuperuser,
@@ -71,6 +74,7 @@ from modules.identity.errors import (
 from modules.identity.models import Group, LoginEvent, Role, User, UserSession
 from modules.identity.permissions import (
     BUILTIN_ROLES,
+    EFFECT_DENY,
     PERM_DELETE,
     SCOPE_GROUP,
     SCOPE_TEAM,
@@ -82,6 +86,7 @@ from modules.identity.permissions import (
     TEAM_SCOPE_ID,
 )
 from modules.identity.repository import (
+    LayerCodes,
     LoginEventRepository,
     PermissionLayerRepository,
     RoleRepository,
@@ -101,10 +106,13 @@ from modules.identity.schema import (
     PasswordPolicyOut,
     PermissionCatalogOut,
     PermissionGroupOut,
+    PermissionOriginOut,
     PermissionOut,
+    PermissionSourceOut,
     ProfileUpdateIn,
     RoleBriefOut,
     RoleCreateIn,
+    RoleLayerOut,
     RoleOut,
     RoleUpdateIn,
     SessionOut,
@@ -508,21 +516,20 @@ class IdentityService:
     ) -> ResolvedIdentity | None:
         """用户 id → 权威身份（角色 + 权限）。账号不存在返回 None。
 
-        权限是**四层并集**：团队基础 ∪ 所属小组 ∪ 个人 ∪ 角色。
-        没有 deny，所以「个人权限永远 ≥ 小组/团队」是集合运算的必然结果，
-        不需要额外写一条「个人不能被降权」的特判——那类特判一旦和通配、
-        超管短路叠在一起就会互相打架。
+        权限来自**四层**：团队基础 ∪ 所属小组 ∪ 个人 ∪ 角色，再过两道减法 ——
+        本人例外（`deny`）与页面门控。整条链只有一个实现：`core.authz.evaluate`，
+        这里不再自己拼集合，否则「接口 403 但总览说他有权」这种自相矛盾迟早出现。
 
-        并集之后还要过一遍**页面门控**（`core.pages`）：接口权限只有在
-        「至少一个声明它的页面被授予」时才有效，于是「关掉页面 ⇒ 该页接口失效」
-        在服务端成立，而不是只靠前端藏菜单。超管（`*`）在门控之前就短路了，
-        这样新页面还没配给任何角色时，超管仍能进去把它配好。
+        两道减法的顺序有讲究（见 `core.authz` 的模块文档）：
+        摊开通配 → 减个人例外 → 页面门控。
 
-        门控之前先把 `资源:*` 摊成具体码（`expand_grants`）：门控是按具体码
-        反查页面的，通配自己反查不到，不摊就会被当成基础设施码放行。
+        `apply_page_gate=False` 只跳过**门控**，**不跳过例外**：
+        这个分支回答的是「他拥有什么、能不能授给别人」（`_actor_codes`）。
+        被自己否决掉的码不该算拥有 —— 否则他能把已经放弃的权限授出去。
 
         任一层出现 `*` 都等价于超管：只认角色上的 `is_superuser` 会让
-        「给某人单独授 `*`」这条合法操作失效。
+        「给某人单独授 `*`」这条合法操作失效。例外对这种账号不生效，
+        所以写入口直接拒（见 `set_permission_exceptions`）。
         """
         user = await self.users.get(user_id)
         if user is None:
@@ -540,13 +547,16 @@ class IdentityService:
             codes.update(perms.get(role.id, ()))
         layers = await self.layers.layer_codes(user.id)
         codes.update(layers.all_codes())
-        if SUPER_PERMISSION in codes:
-            return ResolvedIdentity(user, roles, frozenset({SUPER_PERMISSION}))
         if not apply_page_gate:
-            return ResolvedIdentity(user, roles, frozenset(codes))
-        # 通配必须先摊成具体码再过门控：门控是按具体码反查页面的，
-        # `task:*` 反查不到页面就会被当成「基础设施码」放行（见 expand_grants）。
-        return ResolvedIdentity(user, roles, frozenset(page_catalog.gate(expand_grants(codes))))
+            # 「能不能授权」看原始集合（不门控），但仍要摊开通配再减例外 ——
+            # 不摊的话，角色里的 `task:*` 会把你刚否决的 `task:delete` 盖回来，
+            # 于是「被否决的码还能授给别人」= 提权绕过。
+            return ResolvedIdentity(
+                user,
+                roles,
+                frozenset(expand_grants(codes) - set(layers.denies)),
+            )
+        return ResolvedIdentity(user, roles, evaluate(codes, layers.denies).effective)
 
     # ------------------------------------------------------------------ #
     # 会话与令牌
@@ -1608,15 +1618,77 @@ class IdentityService:
         )
         return await self.user_permissions(user.id)
 
+    async def set_permission_exceptions(
+        self, user_id: str, exceptions: Sequence[str], actor: CurrentUser
+    ) -> list[str]:
+        """把「只对这个人关掉」的权限码整组替换掉。
+
+        为什么不复用 `set_user_permissions`：那是**授予**方向，替换的是
+        「他额外有什么」；这里是另一个方向。合成一个接口，调用方会以为
+        传空数组等于清空他的权限，而它清的是**例外** —— 一次误读就是撤权。
+
+        写了例外之后，同码的允许项会一起被清掉：库里同时留着「允许」和
+        「否决」是两种表示，迟早有一处只认其中一种（本仓踩过三次）。
+        清掉之后语义也干净：**恢复 = 删掉否决**，不需要记住原来给过什么。
+        """
+        user = await self._require_user(user_id)
+        # 改别人的权限 = 授出/拿走访问权，和「改角色」走同一条红线
+        actor_codes = await self._actor_codes(actor)
+        await self._guard_target_not_above(user, actor_codes, actor)
+
+        codes = list(dict.fromkeys(exceptions))
+        self._validate_exceptions(codes)
+
+        # 全量账号（超管角色，或直接被授了 `*`）：例外不会生效 —— 求值在
+        # `*` 处短路。不能让它写进去变成一个「点了没反应」的开关。
+        # 放在提权守卫之后：非超管碰超管该吃 403（「你动不了」），
+        # 超管自己才该看到「没有意义」。
+        identity = await self.resolve_identity(user.id, apply_page_gate=False)
+        if identity is not None and SUPER_PERMISSION in identity.permissions:
+            raise SuperuserGrantForbidden(details={"username": user.username})
+
+        self._guard_permission_grant(
+            codes, actor_codes, what=f"用户 {user.username} 的例外"
+        )
+
+        current = await self.layers.grants(SCOPE_USER, user.id, effect=EFFECT_DENY)
+        await self.layers.set_grants(SCOPE_USER, user.id, codes, effect=EFFECT_DENY)
+
+        allowed = await self.layers.grants(SCOPE_USER, user.id)
+        kept = [code for code in allowed if code not in set(codes)]
+        if kept != allowed:
+            await self.layers.set_grants(SCOPE_USER, user.id, kept)
+
+        await self.session.commit()
+        await self._audit_change(
+            "identity.user.permission_exceptions",
+            actor.id,
+            target_type="user",
+            target_id=user.id,
+            detail={"username": user.username, **_grant_diff(current, codes)},
+        )
+        return sorted(codes)
+
+    async def user_permission_exceptions(self, user_id: str) -> list[str]:
+        """这个账号的例外清单（供编辑入口直接读，不必拉整份总览）。"""
+        user = await self._require_user(user_id)
+        return await self.layers.grants(SCOPE_USER, user.id, effect=EFFECT_DENY)
+
     async def effective_permissions(self, user_id: str) -> EffectivePermissionsOut:
-        """把四层来源摊开给界面看。
+        """把四层来源摊开给界面看：每一行权限、它的来源、以及不生效的原因。
 
         **判定永远只看 `effective`**：前端不要拿 `personal` 去算「有没有权限」，
         那会把团队/小组/角色的授予全部漏掉。
 
-        页面门控的结果也要摊开：`pages` 是「能进哪几页」，`gatedOff` 是
-        「四层并集里有、但页面一页都没授予因而失效」的那些码。没有 `gatedOff`，
-        管理员看到「任务中心给了 task:read、接口却 403」时只能猜。
+        三组「不生效」的码分开报，因为界面对它们的动作不同：
+
+        - `denied`：本人例外。**包含当前不生效的那些** —— 角色撤了但那条例外
+          还在，它必须仍然可见、可撤销，否则就是一个谁也看不见的隐藏状态；
+        - `deniedOff`：授予了、但因为本人例外而不生效（点「恢复」就好）；
+        - `gatedOff`：授予了、但它所属的页面一页都没开（要去开页面）。
+
+        后两者互斥，由 `core.authz.evaluate` 一次算出来 —— 一个码不生效只有
+        这两种原因，混在一起管理员就只能猜。
         """
         user = await self._require_user(user_id)
         layers = await self.layers.layer_codes(user.id)
@@ -1627,26 +1699,17 @@ class IdentityService:
             {code for role in roles for code in role_perms.get(role.id, ())}
         )
         codes = set(role_codes) | layers.all_codes()
-        if any(role.is_superuser for role in roles) or SUPER_PERMISSION in codes:
-            effective = [SUPER_PERMISSION]
-            pages = sorted(page_catalog.codes())
-            gated_off: list[str] = []
-        else:
-            # 与 `resolve_identity` 同一条链：先摊开通配，再门控。
-            # `gated_off` 用**摊开之后**的集合算，否则持有 `task:*` 的人会看到
-            # 一条「`task:*` 被门控关掉了」，而实际被关掉的是它下面那几条 ——
-            # 那句话既解释不了 403，也会让人以为通配整个失效了。
-            expanded = expand_grants(codes)
-            effective_codes = page_catalog.gate(expanded)
-            effective = sorted(effective_codes)
-            # 页面用 `permission_holds` 数：授了 `page:*` 时 `effective` 里只有
-            # 通配本身，直接求交集会得到空列表（界面据此画不出侧栏）。
-            pages = sorted(
-                spec.code
-                for spec in page_catalog.all()
-                if permission_holds(effective_codes, spec.code)
-            )
-            gated_off = sorted(expanded - effective_codes)
+
+        evaluation = evaluate(
+            codes,
+            layers.denies,
+            is_superuser=any(role.is_superuser for role in roles),
+        )
+
+        # 影响面：改共享单元之前必须知道会连累多少人（这个数字猜不出来）。
+        role_counts = await self.roles.user_counts([role.id for role in roles])
+        group_counts = await self.layers.member_counts(list(layers.group_ids))
+
         return EffectivePermissionsOut(
             team=list(layers.team),
             groups=[
@@ -1654,15 +1717,77 @@ class IdentityService:
                     id=gid,
                     name=groups[gid].name if gid in groups else gid,
                     permissions=list((layers.groups or {}).get(gid, ())),
+                    # 除去本人：界面写的是「另有 N 人」
+                    memberCount=max(0, group_counts.get(gid, 0) - 1),
                 )
                 for gid in layers.group_ids
             ],
             personal=list(layers.personal),
             roles=role_codes,
-            pages=pages,
-            gatedOff=gated_off,
-            effective=effective,
+            pages=list(evaluation.pages),
+            gatedOff=list(evaluation.gated_off),
+            deniedOff=list(evaluation.denied_off),
+            denied=list(layers.denies),
+            effective=sorted(evaluation.effective),
+            roleDetails=[
+                RoleLayerOut(
+                    id=role.id,
+                    code=role.code,
+                    name=role.name,
+                    permissions=sorted(role_perms.get(role.id, ())),
+                    userCount=max(0, role_counts.get(role.id, 0) - 1),
+                )
+                for role in roles
+            ],
+            sources=self._permission_sources(
+                layers=layers, groups=groups, roles=roles, role_perms=role_perms
+            ),
         )
+
+    @staticmethod
+    def _permission_sources(
+        *,
+        layers: LayerCodes,
+        groups: dict[str, Group],
+        roles: tuple[Role, ...],
+        role_perms: Mapping[str, Sequence[str]],
+    ) -> list[PermissionSourceOut]:
+        """每个权限码由哪几层给到 —— 界面每一行的来源 chip 就是它。
+
+        每一层都先**摊开通配**：角色给的是 `task:*`，而界面上的行是具体码，
+        不摊就永远是「来源不明」。键取摊开后的码，与 `effective` / `gatedOff`
+        里的码同一套写法，前端可以直接对齐。
+
+        `kind` 用 scope 常量（team / group / user）加 `role`，不另造一套词：
+        前后端对「层」的叫法必须一致，否则又要维护一张对照表。
+        """
+        index: dict[str, list[PermissionOriginOut]] = {}
+
+        def add(codes: Iterable[str], origin: PermissionOriginOut) -> None:
+            for code in expand_grants(codes):
+                index.setdefault(code, []).append(origin)
+
+        add(layers.team, PermissionOriginOut(kind=SCOPE_TEAM, name="团队"))
+        for gid, group_codes in (layers.groups or {}).items():
+            add(
+                group_codes,
+                PermissionOriginOut(
+                    kind=SCOPE_GROUP,
+                    id=gid,
+                    name=groups[gid].name if gid in groups else gid,
+                ),
+            )
+        for role in roles:
+            add(
+                role_perms.get(role.id, ()),
+                PermissionOriginOut(kind="role", id=role.id, name=role.name),
+            )
+        add(layers.personal, PermissionOriginOut(kind=SCOPE_USER, name="个人"))
+
+        return [
+            PermissionSourceOut(code=code, layers=origins)
+            for code, origins in sorted(index.items())
+        ]
 
     # ------------------------------------------------------------------ #
     # 权限目录
@@ -2206,6 +2331,23 @@ class IdentityService:
                 details={"invalid": sorted(set(invalid))},
             )
 
+    def _validate_exceptions(self, codes: Sequence[str]) -> None:
+        """例外只能作用于「具体的、可管理的」权限码。
+
+        三条拒绝理由各不相同，所以分开报：
+
+        - 目录里没有这个码 → `UnknownPermission`（拼错，或模块已下线）；
+        - 通配（`task:*` / `*`）→ 没有唯一解释，见 `ExceptionWildcardForbidden`；
+        - `identity:*` → 会把自己锁在门外，见 `ExceptionLockedPermission`。
+        """
+        self._validate_permissions(codes)
+        wildcard = [code for code in codes if code == "*" or code.endswith(":*")]
+        if wildcard:
+            raise ExceptionWildcardForbidden(details={"codes": sorted(wildcard)})
+        locked = [code for code in codes if code.startswith("identity:")]
+        if locked:
+            raise ExceptionLockedPermission(details={"codes": sorted(locked)})
+
     # ---------- 提权面（四个入口共用，别再各写一遍） ---------- #
     @staticmethod
     def _require_superuser(actor: CurrentUser, reason: str) -> None:
@@ -2216,14 +2358,21 @@ class IdentityService:
     def _missing_grants(actor_codes: set[str], codes: Iterable[str]) -> list[str]:
         """`codes` 里调用者自己没有的那些。
 
-        用 `permission_holds` 而不是 `CurrentUser.has`：这里比的是**授权层级**，
-        而 `CurrentUser.has` 已经被页面门控过滤过（见 `_actor_codes`）。
-        通配规则本身是同一份，所以两处不会对不上。
+        `actor_codes` 是**摊开过通配、减过例外**的原始集合（见 `_actor_codes`）。
+        请求里可能是通配（`task:*`），所以两边都摊成具体码再比：
+        「能授出 `task:*`」= 它下面每一个动作我都具备。
+
+        以前这里用 `permission_holds(actor_codes, code)`：那时 `actor_codes` 里
+        还留着 `task:*` 这种通配，比得动；摊开之后留着通配反而会让
+        「授出 `task:*`」被判成缺权限，所以关系改成正向包含。
         """
-        return sorted({code for code in codes if not permission_holds(actor_codes, code)})
+        if SUPER_PERMISSION in actor_codes:
+            return []
+        missing = [code for code in codes if not expand_grants({code}) <= actor_codes]
+        return sorted(set(missing))
 
     async def _actor_codes(self, actor: CurrentUser) -> set[str]:
-        """操作者的**原始**授权集合（没过页面门控）。
+        """操作者的**原始**授权集合（没过页面门控，但摊开了通配、减了例外）。
 
         为什么授权判据必须用原始集合：页面门控是「可见性」层的过滤，
         不是「授权层级」的改变。一个只有 `identity:team:manage` 的委派管理员，

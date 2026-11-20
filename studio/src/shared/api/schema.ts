@@ -282,6 +282,14 @@ export interface EffectivePermissionsOut {
   gatedOff?: string[];
   /** 四层并集过完页面门控的结果；`*` 表示超级管理员。require() 唯一判据 */
   effective?: string[];
+  /** 按角色拆开的授予明细（`roles` 是合并后的） */
+  roleDetails?: RoleLayerOut[];
+  /** 每个权限码的来源层。界面据此在每一行上标「来自 角色·内容编辑」。键是**摊开通配之后**的码，所以 `task:*` 也逐条列出具体动作 */
+  sources?: PermissionSourceOut[];
+  /** 个人例外：对这个账号单独关闭的码。**包含当前不生效的那些** ——角色撤了但那条例外还在，它必须仍然可见、可撤销，否则就是一个谁也看不见的隐藏状态 */
+  denied?: string[];
+  /** 因为本人例外而不生效的码（授予了、但被关掉）。与 `gatedOff` 互斥：一个码不生效只有「你自己关的」和「页面没开」两种原因，界面按它分流 */
+  deniedOff?: string[];
 }
 
 /** 详情多一个 `downloadable`：让前端不必重复实现「能不能下」的判断。
@@ -431,6 +439,8 @@ export interface GroupLayerOut {
   name: string;
   /** 该组授予的权限码 */
   permissions?: string[];
+  /** 组内成员数（不含本人）。界面拿它写清「关掉这条会影响多少人」——改共享单元前必须知道影响面，而这个数字猜不出来 */
+  memberCount?: number;
 }
 
 /** 整体替换某组的负责人列表（只服务删除窄口）。空数组 = 清空。
@@ -1034,12 +1044,31 @@ export interface PermissionCatalogOut {
   total?: number;
 }
 
+/** 个人例外（`effect='deny'`）的整组替换入参。
+
+与 `PermissionsIn` 分开命名：同一张表、两个方向，混用一个类会让调用方
+以为「传空数组 = 清空他的权限」，而它清的是**例外**。 */
+export interface PermissionExceptionsIn {
+  /** 对这个账号单独关闭的权限码（整组替换）。只接受目录里的具体码：不接受通配（`task:*` 的「关掉」没有唯一解释），也不接受 `identity:*` */
+  exceptions?: string[];
+}
+
 /** PermissionGroupOut */
 export interface PermissionGroupOut {
   /** 分组名，如「任务」「身份」 */
   group: string;
   /** 该组下的权限点 */
   items?: PermissionOut[];
+}
+
+/** 一个权限码的一个来源层。`kind` 是开放枚举：加层不用改这个形状。 */
+export interface PermissionOriginOut {
+  /** 来源类型：team / group / user（个人层）/ role */
+  kind: string;
+  /** 来源实体 id（team 为空） */
+  id?: string;
+  /** 来源实体名称（team 固定为「团队」） */
+  name?: string;
 }
 
 /** PermissionOut */
@@ -1054,6 +1083,14 @@ export interface PermissionOut {
   requires?: string[];
   /** 页面路由（如 `/tasks`）；只有页面项有 */
   route?: string;
+}
+
+/** 某个权限码由哪几层给到。空 `layers` = 目录外（只可能出现在例外里）。 */
+export interface PermissionSourceOut {
+  /** 权限码 */
+  code: string;
+  /** 给出这个码的全部来源 */
+  layers?: PermissionOriginOut[];
 }
 
 /** 团队 / 小组 / 个人三层共用的「整组替换」入参。
@@ -1132,6 +1169,23 @@ export interface RoleCreateIn {
   permissions?: string[];
   /** 仅超级管理员可设置 */
   isSuperuser?: boolean;
+}
+
+/** 分层权限明细里的一段：这条权限来自哪个角色。
+
+`roles` 那份合并集合说不清「是哪个角色给的」，而「去哪撤」正需要这个 ——
+所以额外给一份按角色拆开的明细。 */
+export interface RoleLayerOut {
+  /** 角色 ID */
+  id: string;
+  /** 角色标识 */
+  code: string;
+  /** 角色名称 */
+  name: string;
+  /** 该角色授予的权限码 */
+  permissions?: string[];
+  /** 除本人外还挂着这个角色的人数（影响面） */
+  userCount?: number;
 }
 
 /** RoleOut */
@@ -1967,6 +2021,10 @@ export interface EndpointData {
   "GET /api/v1/identity/users/{user_id}/effective-permissions": EffectivePermissionsOut;
   /** 某账号的登录记录 */
   "GET /api/v1/identity/users/{user_id}/logins": LoginEventListOut;
+  /** 用户的个人例外（只对他关掉的权限码） */
+  "GET /api/v1/identity/users/{user_id}/permission-exceptions": string[];
+  /** 设置个人例外（整组替换；不动他的授予） */
+  "PUT /api/v1/identity/users/{user_id}/permission-exceptions": string[];
   /** 用户单独授予的权限 */
   "GET /api/v1/identity/users/{user_id}/permissions": string[];
   /** 设置个人权限（整组替换） */

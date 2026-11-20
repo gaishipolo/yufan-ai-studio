@@ -2,7 +2,7 @@
 
 > 此文件由 `app export-openapi` 自动生成，请勿手工编辑。
 >
-> 版本 `0.2.0`｜共 **131** 个接口 / **11** 个模块
+> 版本 `0.2.0`｜共 **133** 个接口 / **11** 个模块
 >
 > 重新生成：`cd api && .venv/Scripts/python -m cli export-openapi`
 
@@ -179,6 +179,8 @@ Authorization: Bearer <accessToken>
 | `40021` | 400 | identity | `OldPasswordMismatch` | 原密码不正确 |
 | `40022` | 400 | identity | `UnknownPermission` | 存在无法识别的权限点 |
 | `40023` | 400 | identity | `TeamGrantForbidden` | 团队基础权限不能包含管理类权限、页面权限或通配符 |
+| `40024` | 400 | identity | `ExceptionWildcardForbidden` | 例外只能是具体的权限码，不能写通配 |
+| `40025` | 400 | identity | `ExceptionLockedPermission` | 例外不能作用于组织管理类权限（identity:*），否则会把管理员锁在门外 |
 | `40081` | 400 | library | `RevokeReasonRequired` | 撤销共享必须填写理由 |
 | `40082` | 400 | library | `LibraryFileTypeNotAllowed` | 支持 MP4、PNG、JPG、WebP、MP3、WAV、TXT 和 MD |
 | `40085` | 400 | library | `GenerationSourceInvalid` | 生成结果必须提供可读取的 storageKey 或 sourceUrl |
@@ -237,7 +239,7 @@ Authorization: Bearer <accessToken>
 
 | 模块 | 接口数 | 说明 |
 |---|---|---|
-| 身份 | 39 | 见下方 `4.1` |
+| 身份 | 41 | 见下方 `4.1` |
 | 任务 | 9 | 见下方 `4.2` |
 | 模型 | 1 | 见下方 `4.3` |
 | 生图 | 4 | 见下方 `4.4` |
@@ -249,7 +251,7 @@ Authorization: Bearer <accessToken>
 | 模型驱动 | 9 | 见下方 `4.10` |
 | 模板封装 | 12 | 见下方 `4.11` |
 
-### 4.1 身份（39 个）
+### 4.1 身份（41 个）
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
@@ -287,6 +289,8 @@ Authorization: Bearer <accessToken>
 | `DELETE` | `/api/v1/identity/users/{user_id}` | 停用用户（保留历史归属） | 🔒 |
 | `GET` | `/api/v1/identity/users/{user_id}/effective-permissions` | 用户有效权限与四层来源 | 🔒 |
 | `GET` | `/api/v1/identity/users/{user_id}/logins` | 某账号的登录记录 | 🔒 |
+| `GET` | `/api/v1/identity/users/{user_id}/permission-exceptions` | 用户的个人例外（只对他关掉的权限码） | 🔒 |
+| `PUT` | `/api/v1/identity/users/{user_id}/permission-exceptions` | 设置个人例外（整组替换；不动他的授予） | 🔒 |
 | `GET` | `/api/v1/identity/users/{user_id}/permissions` | 用户单独授予的权限 | 🔒 |
 | `PUT` | `/api/v1/identity/users/{user_id}/permissions` | 设置个人权限（整组替换） | 🔒 |
 | `POST` | `/api/v1/identity/users/{user_id}/reset-password` | 管理员重置密码 | 🔒 |
@@ -963,6 +967,10 @@ Authorization: Bearer <accessToken>
 | `pages` | `string[]` | 否 | 授予的页面权限（page:*）；决定侧栏与路由能进哪一页 |
 | `gatedOff` | `string[]` | 否 | 被页面门控关掉的接口权限：四层并集里有、但它所属的页面一页都没授予。`资源:*` 会先摊成具体码再判定，所以这里列的是被关掉的**具体码**。界面拿它解释「为什么我有 task:read 却仍然 403」 |
 | `effective` | `string[]` | 否 | 四层并集过完页面门控的结果；`*` 表示超级管理员。require() 唯一判据 |
+| `roleDetails` | `RoleLayerOut[]` | 否 | 按角色拆开的授予明细（`roles` 是合并后的） |
+| `sources` | `PermissionSourceOut[]` | 否 | 每个权限码的来源层。界面据此在每一行上标「来自 角色·内容编辑」。键是**摊开通配之后**的码，所以 `task:*` 也逐条列出具体动作 |
+| `denied` | `string[]` | 否 | 个人例外：对这个账号单独关闭的码。**包含当前不生效的那些** ——角色撤了但那条例外还在，它必须仍然可见、可撤销，否则就是一个谁也看不见的隐藏状态 |
+| `deniedOff` | `string[]` | 否 | 因为本人例外而不生效的码（授予了、但被关掉）。与 `gatedOff` 互斥：一个码不生效只有「你自己关的」和「页面没开」两种原因，界面按它分流 |
 
 #### `GET /api/v1/identity/users/{user_id}/logins`
 
@@ -978,6 +986,32 @@ Authorization: Bearer <accessToken>
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `items` | `LoginEventOut[]` | 否 | 按时间倒序 |
+
+#### `GET /api/v1/identity/users/{user_id}/permission-exceptions`
+
+**用户的个人例外（只对他关掉的权限码）**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `user_id` | path | `string` | 是 |  |
+
+**响应** `ApiResponse<string[]>`（前端取 `res.data`）
+
+#### `PUT /api/v1/identity/users/{user_id}/permission-exceptions`
+
+**设置个人例外（整组替换；不动他的授予）**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `user_id` | path | `string` | 是 |  |
+
+**请求体** `PermissionExceptionsIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `exceptions` | `string[]` | 否 | 对这个账号单独关闭的权限码（整组替换）。只接受目录里的具体码：不接受通配（`task:*` 的「关掉」没有唯一解释），也不接受 `identity:*` |
+
+**响应** `ApiResponse<string[]>`（前端取 `res.data`）
 
 #### `GET /api/v1/identity/users/{user_id}/permissions`
 
@@ -3723,6 +3757,10 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `pages` | `string[]` | 否 | 授予的页面权限（page:*）；决定侧栏与路由能进哪一页 |
 | `gatedOff` | `string[]` | 否 | 被页面门控关掉的接口权限：四层并集里有、但它所属的页面一页都没授予。`资源:*` 会先摊成具体码再判定，所以这里列的是被关掉的**具体码**。界面拿它解释「为什么我有 task:read 却仍然 403」 |
 | `effective` | `string[]` | 否 | 四层并集过完页面门控的结果；`*` 表示超级管理员。require() 唯一判据 |
+| `roleDetails` | `RoleLayerOut[]` | 否 | 按角色拆开的授予明细（`roles` 是合并后的） |
+| `sources` | `PermissionSourceOut[]` | 否 | 每个权限码的来源层。界面据此在每一行上标「来自 角色·内容编辑」。键是**摊开通配之后**的码，所以 `task:*` 也逐条列出具体动作 |
+| `denied` | `string[]` | 否 | 个人例外：对这个账号单独关闭的码。**包含当前不生效的那些** ——角色撤了但那条例外还在，它必须仍然可见、可撤销，否则就是一个谁也看不见的隐藏状态 |
+| `deniedOff` | `string[]` | 否 | 因为本人例外而不生效的码（授予了、但被关掉）。与 `gatedOff` 互斥：一个码不生效只有「你自己关的」和「页面没开」两种原因，界面按它分流 |
 
 ### `ExportDetailOut`
 
@@ -3880,6 +3918,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `id` | `string` | 是 | 小组 ID |
 | `name` | `string` | 是 | 小组名称 |
 | `permissions` | `string[]` | 否 | 该组授予的权限码 |
+| `memberCount` | `number` | 否 | 组内成员数（不含本人）。界面拿它写清「关掉这条会影响多少人」——改共享单元前必须知道影响面，而这个数字猜不出来 |
 
 ### `GroupLeadersIn`
 
@@ -4490,12 +4529,33 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `groups` | `PermissionGroupOut[]` | 否 | 按分组组织的全部权限点，角色编辑界面直接渲染 |
 | `total` | `number` | 否 | 权限点总数 |
 
+### `PermissionExceptionsIn`
+
+个人例外（`effect='deny'`）的整组替换入参。
+
+与 `PermissionsIn` 分开命名：同一张表、两个方向，混用一个类会让调用方
+以为「传空数组 = 清空他的权限」，而它清的是**例外**。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `exceptions` | `string[]` | 否 | 对这个账号单独关闭的权限码（整组替换）。只接受目录里的具体码：不接受通配（`task:*` 的「关掉」没有唯一解释），也不接受 `identity:*` |
+
 ### `PermissionGroupOut`
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `group` | `string` | 是 | 分组名，如「任务」「身份」 |
 | `items` | `PermissionOut[]` | 否 | 该组下的权限点 |
+
+### `PermissionOriginOut`
+
+一个权限码的一个来源层。`kind` 是开放枚举：加层不用改这个形状。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `kind` | `string` | 是 | 来源类型：team / group / user（个人层）/ role |
+| `id` | `string` | 否 | 来源实体 id（team 为空） |
+| `name` | `string` | 否 | 来源实体名称（team 固定为「团队」） |
 
 ### `PermissionOut`
 
@@ -4506,6 +4566,15 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `description` | `string` | 否 | 权限说明 |
 | `requires` | `string[]` | 否 | 页面权限关联的接口权限码（只有页面项有）。前端用它把「页面 → 接口」的层级画出来，而不是让人从描述文字里读 |
 | `route` | `string` | 否 | 页面路由（如 `/tasks`）；只有页面项有 |
+
+### `PermissionSourceOut`
+
+某个权限码由哪几层给到。空 `layers` = 目录外（只可能出现在例外里）。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `code` | `string` | 是 | 权限码 |
+| `layers` | `PermissionOriginOut[]` | 否 | 给出这个码的全部来源 |
 
 ### `PermissionsIn`
 
@@ -4584,6 +4653,21 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `description` | `string` | 否 | 角色说明 |
 | `permissions` | `string[]` | 否 | 权限码列表 |
 | `isSuperuser` | `boolean` | 否 | 仅超级管理员可设置 |
+
+### `RoleLayerOut`
+
+分层权限明细里的一段：这条权限来自哪个角色。
+
+`roles` 那份合并集合说不清「是哪个角色给的」，而「去哪撤」正需要这个 ——
+所以额外给一份按角色拆开的明细。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 | 角色 ID |
+| `code` | `string` | 是 | 角色标识 |
+| `name` | `string` | 是 | 角色名称 |
+| `permissions` | `string[]` | 否 | 该角色授予的权限码 |
+| `userCount` | `number` | 否 | 除本人外还挂着这个角色的人数（影响面） |
 
 ### `RoleOut`
 

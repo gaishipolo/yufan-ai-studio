@@ -231,6 +231,14 @@ SCOPE_USER: Final = "user"
 TEAM_SCOPE_ID: Final = "__all__"
 SCOPES: Final = (SCOPE_TEAM, SCOPE_GROUP, SCOPE_USER)
 
+# ---------- 授予的两种效果（`permission_grants.effect`） ----------
+# `deny` 是**例外**：只对这个人关掉这一项。它只允许出现在 `SCOPE_USER` ——
+# 这是刻意的：只有最具体的一层能否决，加新层（部门 / 外协）时才不用重新
+# 回答「谁压谁」。规则一句话，不随层数增长。
+EFFECT_ALLOW: Final = "allow"
+EFFECT_DENY: Final = "deny"
+EFFECTS: Final = (EFFECT_ALLOW, EFFECT_DENY)
+
 # 团队基础权限的初始模板。**直接取 viewer 的默认权限**，不另抄一份：
 # 两边各写一遍，迟早会出现「只读成员能看的东西，团队基础权限却没给」。
 # 只在首次启动时播种（见 `IdentityService.ensure_team_permissions`），
@@ -283,6 +291,9 @@ __all__ = [
     "PERM_TEAM_MANAGE",
     "PERM_UPDATE",
     "PERM_USER_PERMISSION_MANAGE",
+    "EFFECTS",
+    "EFFECT_ALLOW",
+    "EFFECT_DENY",
     "SCOPES",
     "SCOPE_GROUP",
     "SCOPE_TEAM",

@@ -32,6 +32,8 @@ from modules.identity.models import (
     UserSession,
 )
 from modules.identity.permissions import (
+    EFFECT_ALLOW,
+    EFFECT_DENY,
     SCOPE_GROUP,
     SCOPE_TEAM,
     SCOPE_USER,
@@ -321,6 +323,9 @@ class LayerCodes:
     team: tuple[str, ...] = ()
     groups: dict[str, tuple[str, ...]] | None = None
     personal: tuple[str, ...] = ()
+    #: 个人层的**例外**（`effect='deny'`）。`all_codes()` 刻意不含它 ——
+    #: 那个方法是「他拥有什么」，否决是「他额外不要什么」，两个方向不能混。
+    denies: tuple[str, ...] = ()
     group_ids: tuple[str, ...] = ()
 
     def all_codes(self) -> set[str]:
@@ -446,30 +451,62 @@ class PermissionLayerRepository:
         return counts
 
     # ---------- 授权 ----------
-    async def grants(self, scope: str, scope_id: str) -> list[str]:
+    async def grants(
+        self, scope: str, scope_id: str, *, effect: str = EFFECT_ALLOW
+    ) -> list[str]:
+        """某一层授予（或否决）的权限码。
+
+        `effect` 默认只看 `allow`：调用方问「他现在被给了什么」时，
+        混进否决项会让它以为有这项权限。要拿否决请显式传 `EFFECT_DENY`。
+        """
         return list(
             await self.session.scalars(
                 select(PermissionGrant.permission)
                 .where(
                     PermissionGrant.scope == scope,
                     PermissionGrant.scope_id == scope_id,
+                    PermissionGrant.effect == effect,
                 )
                 .order_by(PermissionGrant.permission)
             )
         )
 
     async def set_grants(
-        self, scope: str, scope_id: str, codes: Sequence[str]
+        self,
+        scope: str,
+        scope_id: str,
+        codes: Sequence[str],
+        *,
+        effect: str = EFFECT_ALLOW,
     ) -> None:
+        """整组替换某一层的授予 / 否决。
+
+        **`delete` 必须带 `effect` 条件**：不带的话，改一次允许项就会把这个人
+        的例外一起删掉 —— 界面上只表现为「权限多了一项」，没人会怀疑是保存
+        动作弄丢的（这类静默丢失本仓已经踩过两次）。
+        """
+        # 结构性的不对称：例外只可能出现在个人层。写在这里而不是靠调用方自觉 ——
+        # 「只有最具体的一层能否决」是加新层时不重新决定优先级的**前提**，
+        # 让它变成一条运行时断言，比写在文档里可靠。
+        if effect == EFFECT_DENY and scope != SCOPE_USER:
+            raise ValueError(
+                f"例外（deny）只能出现在个人层，收到 scope={scope!r}"
+            )
         await self.session.execute(
             delete(PermissionGrant).where(
                 PermissionGrant.scope == scope,
                 PermissionGrant.scope_id == scope_id,
+                PermissionGrant.effect == effect,
             )
         )
         for code in dict.fromkeys(codes):
             self.session.add(
-                PermissionGrant(scope=scope, scope_id=scope_id, permission=code)
+                PermissionGrant(
+                    scope=scope,
+                    scope_id=scope_id,
+                    permission=code,
+                    effect=effect,
+                )
             )
         await self.session.flush()
 
@@ -480,6 +517,7 @@ class PermissionLayerRepository:
                 PermissionGrant.scope,
                 PermissionGrant.scope_id,
                 PermissionGrant.permission,
+                PermissionGrant.effect,
             ).where(
                 or_(
                     and_(
@@ -500,7 +538,13 @@ class PermissionLayerRepository:
         team: list[str] = []
         groups: dict[str, list[str]] = {gid: [] for gid in group_ids}
         personal: list[str] = []
-        for scope, scope_id, code in rows.all():
+        denies: list[str] = []
+        for scope, scope_id, code, effect in rows.all():
+            # 否决只可能出现在个人层（写入口保证），但仍然按 effect 分流，
+            # 不靠「scope 一定是 user」这个隐含前提。
+            if effect == EFFECT_DENY:
+                denies.append(code)
+                continue
             if scope == SCOPE_TEAM:
                 team.append(code)
             elif scope == SCOPE_USER:
@@ -511,6 +555,7 @@ class PermissionLayerRepository:
             team=tuple(sorted(team)),
             groups={gid: tuple(sorted(codes)) for gid, codes in groups.items()},
             personal=tuple(sorted(personal)),
+            denies=tuple(sorted(denies)),
             group_ids=group_ids,
         )
 
@@ -523,17 +568,21 @@ class PermissionLayerRepository:
         )
 
     async def all_grants(self) -> list[tuple[str, str, str]]:
-        """三层表里的全部授权行：`(scope, scope_id, permission)`。
+        """三层表里的全部**授予**行：`(scope, scope_id, permission)`。
 
         给「一次性迁移」用：按 scope/scope_id 分组，才能判断某一层
         「有接口码、但一个页面码都没有」。
+
+        **只看 `allow`**：否决行不代表这一层「拥有」这个码，把它算进来会让
+        迁移以为「这个账号有接口没页面」，于是给他补一个页面权限 ——
+        而那条权限本来是被他自己关掉的。
         """
         rows = await self.session.execute(
             select(
                 PermissionGrant.scope,
                 PermissionGrant.scope_id,
                 PermissionGrant.permission,
-            )
+            ).where(PermissionGrant.effect == EFFECT_ALLOW)
         )
         return [(row[0], row[1], row[2]) for row in rows.all()]
 

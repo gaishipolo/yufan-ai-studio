@@ -140,11 +140,10 @@ def test_page_wildcard_opens_every_page(client: TestClient) -> None:
 
     assert client.get(f"{API}/tasks", headers=headers).status_code == 200
 
-    # `/me` 原样下发 `page:*`，由前端的 `grantMatches` 展开（与后端同一条通配规则）。
-    # 这里断言的是「通配确实留在权限集里且未被门控误删」，展开逻辑由
-    # `shared/access/evaluate.test.ts` 覆盖。
+    # `page:*` 在求值前就摊成了具体页面码（2026-11-20 起）：不摊的话，
+    # 「否决某一个页面」对它无声失效 —— 而悄悄不生效比不支持更坏。
     me = client.get(f"{IDENTITY}/me", headers=headers).json()["data"]
-    assert "page:*" in me["permissions"]
+    assert set(page_catalog.codes()) <= set(me["permissions"])
 
 
 # --------------------------------------------------------------------------- #
@@ -434,15 +433,17 @@ def test_wildcard_is_expanded_before_reporting_effective_permissions(
     )
 
 
-def test_expand_grants_leaves_page_wildcard_alone(client: TestClient) -> None:
-    """`page:*` 不摊开、`*` 不摊开、查不到成员的资源直接丢掉。
+def test_expand_grants_expands_page_wildcard_too(client: TestClient) -> None:
+    """`page:*` 也摊；`*` 不摊；查不到成员的资源直接丢掉。
 
-    `page:*` 的判定本来就靠 `permission_holds`（它认通配），摊成 9 个码只会
-    让出参变长；而查不到成员的资源留着，等于让一个谁也解释不清的码继续生效。
+    `page:*` 一度被放过（「摊了只是让出参变长」），但摊开是**例外能作用到
+    每一个码**的前提：不摊，持有 `page:*` 的人否决某一个页面时
+    `permission_holds(granted, page)` 仍然为真，否决静默失效。
     """
     from core.permissions import expand_grants
 
-    assert expand_grants({"page:*"}) == {"page:*"}
+    pages = expand_grants({"page:*"})
+    assert pages and pages == set(page_catalog.codes())
     assert expand_grants({"*"}) == {"*"}
     assert expand_grants({"no-such-resource:*"}) == set()
     expanded = expand_grants({"task:*"})

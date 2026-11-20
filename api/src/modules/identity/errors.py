@@ -141,6 +141,32 @@ class TeamGrantForbidden(AppError):
     http_status = 400
 
 
+class ExceptionWildcardForbidden(AppError):
+    """例外只能是目录里的具体码。
+
+    为什么拒绝通配：`task:*` 的「关掉」没有唯一解释 —— 是关掉现在这几个动作，
+    还是连以后新加的也关？两种都能自圆其说，而库里存的那一条说不清。
+    界面上每个例外都对应一行具体权限，也不需要通配。
+    """
+
+    code = errors.code(400, 4)
+    message = "例外只能是具体的权限码，不能写通配"
+    http_status = 400
+
+
+class ExceptionLockedPermission(AppError):
+    """组织管理类权限（`identity:*`）不能被例外关掉。
+
+    与「团队层禁 `identity:*`」同一条理由：**不可逆**。管理员把自己
+    `identity:user:permission:manage` 关掉之后，这个页面就打不开了，
+    只能改库才能恢复 —— 一个能被自己锁死的开关不该存在。
+    """
+
+    code = errors.code(400, 5)
+    message = "例外不能作用于组织管理类权限（identity:*），否则会把管理员锁在门外"
+    http_status = 400
+
+
 class UsernameTaken(AppError):
     code = errors.code(409, 1)
     message = "用户名已被占用"
@@ -195,6 +221,8 @@ __all__ = [
     "BuiltinRoleLocked",
     "CannotTargetSelf",
     "CredentialInvalid",
+    "ExceptionLockedPermission",
+    "ExceptionWildcardForbidden",
     "GroupNameTaken",
     "GroupNotFound",
     "LastSuperuser",

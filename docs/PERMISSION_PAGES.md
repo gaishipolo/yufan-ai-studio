@@ -31,6 +31,7 @@
 | `catalog:read` 被「生成工作台」和「生图」同时声明，只开了其中一页 | `GET /models` 仍然 200 | 共享接口不能被某一页连坐，否则报错会出现在一个看起来无关的接口上 |
 | `export:read` 没有任何页面声明 | 照常可用 | 门控是「页面 → 接口」的从属关系，不是全站总开关 |
 | 持有 `task:*`，不给 `page:task-center` | `GET /tasks` → 403（`缺少权限: task:read`） | 通配不是门控的逃逸口：它先摊成具体码再判 |
+| 持有 `task:read`，但本人例外关掉了它 | `GET /tasks` → 403，且 `deniedOff` 里能看到 | 例外是并集之上的第二道减法，只对个人生效（见 EXCEPTIONS.md） |
 
 另外两条边界：
 
@@ -53,7 +54,8 @@
 ## 3. 为什么门控在服务端
 
 前端路由守卫只能挡住「在界面上点进来」，挡不住「拿着令牌直接打接口」。
-所以门控落在 `IdentityService.resolve_identity()`：权限并集算完之后过一遍
+所以门控落在 `core.authz.evaluate()`（`IdentityService.resolve_identity()` 调它）：
+权限并集与个人例外算完之后过一遍
 `page_catalog.gate()`，**令牌、`/identity/me`、`effective-permissions`、
 每个 `require()` 看到的都是同一份结果**。前端拿到的 `permissions` 里已经
 包含页面码，菜单与路由据此工作，不需要再算一遍。
@@ -142,7 +144,8 @@ PermissionSpec("catalog:read", "查看模型目录", group="内容生产",
 
 ## 6. 团队层为什么不能放页面码
 
-团队层的语义是「所有启用账号」，而且这一层**没有 deny**。把 `page:*` 放进团队层，
+团队层的语义是「所有启用账号」，而且这一层**没有 deny**（例外只存在于个人层，
+见 [EXCEPTIONS.md](./EXCEPTIONS.md)）。把 `page:*` 放进团队层，
 等于「这一页对任何人在任何情况下都关不掉」——直接废掉页面权限本身。
 所以 `TEAM_FORBIDDEN_PREFIXES = ("identity:", "page:")`，写接口直接 400。
 

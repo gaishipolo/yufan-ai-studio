@@ -21,11 +21,6 @@ from core.registry import RegistryError
 
 logger = get_logger(__name__)
 
-#: 页面权限码的资源名。这里写字面量而不是 import `core.pages.PAGE_PREFIX`：
-#: `core.pages` 反过来要用本模块的 `PermissionSpec`，import 会成环。
-_PAGE_RESOURCE = "page"
-
-
 @dataclass(frozen=True, slots=True)
 class PermissionSpec:
     """一个权限点的元信息，同时用于鉴权判定和「角色配置界面」的数据源。
@@ -122,12 +117,14 @@ def expand_grants(codes: Iterable[str]) -> set[str]:
     摊开之后 `require("task:read")` 判的是摊出来的具体码：页面没授予，
     它就不在集合里，403 如期出现。
 
-    ## 两种通配不摊
+    ## 只有 `*` 不摊
 
-    - `*`：超管旁路，调用方（`resolve_identity`）在门控之前就短路了，
-      摊开也没有意义；
-    - `page:*`：页面码的判定本来就是 `permission_holds`（它会认 `page:*`），
-      摊成 9 个页面码只会让 `/me` 的出参变长，语义不变。
+    `*` 是超管旁路，求值在它之前就短路了，摊开没有意义。
+
+    `page:*` **要摊**。它一度被当成「摊了只是让出参变长」而放过，但摊开是
+    「例外能作用到每一个码」的前提：不摊，持有 `page:*` 的人被否决某一个页面时，
+    `permission_holds(granted, page)` 仍然为真 —— 否决静默失效。而「悄悄不生效」
+    比「不支持」坏得多。
 
     ## 查不到成员的资源
 
@@ -147,9 +144,6 @@ def expand_grants(codes: Iterable[str]) -> set[str]:
             expanded.add(code)
             continue
         resource = code[: -len(":*")]
-        if resource == _PAGE_RESOURCE:
-            expanded.add(code)
-            continue
         members = by_resource.get(resource)
         if members:
             expanded |= members

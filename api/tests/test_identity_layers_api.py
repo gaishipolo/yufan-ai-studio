@@ -191,9 +191,22 @@ def test_personal_permissions_and_effective_sources(client: TestClient) -> None:
     ).json()["data"]
     assert set(detail["team"]) == set(TEAM_BASE_PERMISSIONS)
     assert detail["groups"] == [
-        {"id": group["id"], "name": group["name"], "permissions": ["template_pack:create"]}
+        {
+            "id": group["id"],
+            "name": group["name"],
+            "permissions": ["template_pack:create"],
+            # 影响面：除本人外还有几个人。界面的确认文案要用它，
+            # 而这个数字猜不出来，所以钉在契约里。
+            "memberCount": 0,
+        }
     ]
     assert detail["personal"] == ["template_pack:publish"]
+    # 来源索引：每一行的 chip 都来自这里，键与 effective 同一套写法
+    sources = {row["code"]: [layer["kind"] for layer in row["layers"]] for row in detail["sources"]}
+    assert sources["template_pack:create"] == ["group"]
+    assert sources["template_pack:publish"] == ["user"]
+    assert "team" in sources["library:read"]
+
     assert detail["roles"]
     assert "template_pack:create" in detail["effective"]
     assert "template_pack:publish" in detail["effective"]
