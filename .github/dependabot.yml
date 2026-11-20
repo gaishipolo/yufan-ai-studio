@@ -3,6 +3,18 @@
 # 为什么不给运行时依赖开自动合并：本仓库的生产行为直接受版本影响
 # （`pyproject.toml:31-33` 记着真实事故 —— ruff 0.17.3 与 0.17.4 对 I001 的
 # 判定不同，出现过「本地全绿、CI 红」）。自动合并会把这类差异直接推上主干。
+#
+# 为什么 npm / pip 只接 minor 与 patch（2026-11-20）：
+# 分组按「开发 / 生产依赖」分，不按版本跨度分，于是 major 被一起塞进同一个 PR。
+# #18 里是 react 18→19 + react-router 6→7 + tailwind-merge 2→3 加另外两个 minor，
+# #17 更极端：vite 5→8 + vitest 2→5 + typescript 5.7→7 + tailwindcss 3.4→4，
+# 一次把前端工具链全换一遍。**这种 PR 里只有 package.json 和 lock、源码一行不改，
+# 所以永远不可能绿** —— 每周来一个，只能一直关。major 想升就单独开分支手动做，
+# 一次一两个，跑完全量再合。
+#
+# GitHub Actions 不忽略 major：它的 breaking 通常是「某个 input 改名」这类，
+# 风险由 CI 直接暴露（#15 的 checkout 4→7 就是绿的），而且长期不升反而会用到
+# 被弃用的 Node 运行时。
 version: 2
 updates:
   # ---- GitHub Actions ----
@@ -28,6 +40,10 @@ updates:
     open-pull-requests-limit: 5
     commit-message:
       prefix: "chore(deps)"
+    # 只接 minor / patch；major 单独开分支手动升。
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
     groups:
       # 工具链（ruff/mypy/pytest）单独一组：它们的版本会影响门禁本身，
       # 混在一堆运行时依赖里看不出「是谁把 CI 弄红的」。
@@ -45,6 +61,11 @@ updates:
     open-pull-requests-limit: 5
     commit-message:
       prefix: "chore(deps)"
+    # 只接 minor / patch。这条是本文件里最值钱的一行 —— 少了它，每周都会收到
+    # 一个「17 个包 5 个 major」的 PR，而它天生不可能绿。
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
     groups:
       dev-dependencies:
         dependency-type: development
