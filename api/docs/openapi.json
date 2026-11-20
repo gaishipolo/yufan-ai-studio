@@ -1861,6 +1861,32 @@
         }
       }
     },
+    "/api/v1/identity/permission-tree": {
+      "get": {
+        "tags": [
+          "身份"
+        ],
+        "summary": "「分组 → 用户」的完整树（权限总览的左栏）",
+        "operationId": "permission_tree_api_v1_identity_permission_tree_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_PermissionTreeOut_"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/api/v1/identity/users/{user_id}/permissions": {
       "get": {
         "tags": [
@@ -7930,6 +7956,33 @@
         "type": "object",
         "title": "ApiResponse[PermissionCatalogOut]"
       },
+      "ApiResponse_PermissionTreeOut_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PermissionTreeOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[PermissionTreeOut]"
+      },
       "ApiResponse_ReadyOut_": {
         "properties": {
           "code": {
@@ -12858,6 +12911,90 @@
         ],
         "title": "PermissionSourceOut",
         "description": "某个权限码由哪几层给到。空 `layers` = 目录外（只可能出现在例外里）。"
+      },
+      "PermissionTreeGroupOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "小组 ID"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "小组名称"
+          },
+          "members": {
+            "items": {
+              "$ref": "#/components/schemas/PermissionTreeUserOut"
+            },
+            "type": "array",
+            "title": "Members",
+            "description": "组内成员"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "title": "PermissionTreeGroupOut",
+        "description": "一个分组，以及它的成员（成员顺序按账号排序，前端不再排）。"
+      },
+      "PermissionTreeOut": {
+        "properties": {
+          "groups": {
+            "items": {
+              "$ref": "#/components/schemas/PermissionTreeGroupOut"
+            },
+            "type": "array",
+            "title": "Groups"
+          },
+          "ungrouped": {
+            "items": {
+              "$ref": "#/components/schemas/PermissionTreeUserOut"
+            },
+            "type": "array",
+            "title": "Ungrouped",
+            "description": "不属于任何分组的账号"
+          }
+        },
+        "type": "object",
+        "title": "PermissionTreeOut",
+        "description": "「分组 → 用户」的完整树。\n\n为什么单独一个接口，而不是让前端用「小组列表 + 用户列表」拼：\n用户列表是分页的，拼出来的树在人多时会**静默少人**，而看的人以为\n那就是全部。这里一次给全，没有分页参数。"
+      },
+      "PermissionTreeUserOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "用户 ID"
+          },
+          "username": {
+            "type": "string",
+            "title": "Username",
+            "description": "账号"
+          },
+          "displayName": {
+            "type": "string",
+            "title": "Displayname",
+            "description": "昵称",
+            "default": ""
+          },
+          "isActive": {
+            "type": "boolean",
+            "title": "Isactive",
+            "description": "是否启用（停用的排后面并置灰）",
+            "default": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "username"
+        ],
+        "title": "PermissionTreeUserOut",
+        "description": "树上的一个账号：只够画一行，不含权限。"
       },
       "PermissionsIn": {
         "properties": {

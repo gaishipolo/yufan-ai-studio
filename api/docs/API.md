@@ -2,7 +2,7 @@
 
 > 此文件由 `app export-openapi` 自动生成，请勿手工编辑。
 >
-> 版本 `0.2.0`｜共 **133** 个接口 / **11** 个模块
+> 版本 `0.2.0`｜共 **134** 个接口 / **11** 个模块
 >
 > 重新生成：`cd api && .venv/Scripts/python -m cli export-openapi`
 
@@ -239,7 +239,7 @@ Authorization: Bearer <accessToken>
 
 | 模块 | 接口数 | 说明 |
 |---|---|---|
-| 身份 | 41 | 见下方 `4.1` |
+| 身份 | 42 | 见下方 `4.1` |
 | 任务 | 9 | 见下方 `4.2` |
 | 模型 | 1 | 见下方 `4.3` |
 | 生图 | 4 | 见下方 `4.4` |
@@ -251,7 +251,7 @@ Authorization: Bearer <accessToken>
 | 模型驱动 | 9 | 见下方 `4.10` |
 | 模板封装 | 12 | 见下方 `4.11` |
 
-### 4.1 身份（41 个）
+### 4.1 身份（42 个）
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
@@ -273,6 +273,7 @@ Authorization: Bearer <accessToken>
 | `DELETE` | `/api/v1/identity/me/sessions` | 退出所有其他设备（保留当前） | 🔒 |
 | `DELETE` | `/api/v1/identity/me/sessions/{session_id}` | 踢掉我的一条会话 | 🔒 |
 | `GET` | `/api/v1/identity/password-policy` | 口令策略（匿名） | 公开 |
+| `GET` | `/api/v1/identity/permission-tree` | 「分组 → 用户」的完整树（权限总览的左栏） | 🔒 |
 | `GET` | `/api/v1/identity/permissions` | 全部权限点（按分组，供角色编辑界面） | 🔒 |
 | `POST` | `/api/v1/identity/refresh` | 用刷新令牌换取新令牌 | 公开 |
 | `GET` | `/api/v1/identity/roles` | 角色列表（含权限与人数） | 🔒 |
@@ -633,6 +634,17 @@ Authorization: Bearer <accessToken>
 | `forbidAllNumeric` | `boolean` | 是 | 是否禁止纯数字 |
 | `forbidSameAsUsername` | `boolean` | 是 | 是否禁止与用户名相同；当前未启用，前端按 false 处理 |
 | `message` | `string` | 是 | 可直接展示的一句话，前端不要自己拼 |
+
+#### `GET /api/v1/identity/permission-tree`
+
+**「分组 → 用户」的完整树（权限总览的左栏）**
+
+**响应** `ApiResponse<PermissionTreeOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `groups` | `PermissionTreeGroupOut[]` | 否 |  |
+| `ungrouped` | `PermissionTreeUserOut[]` | 否 | 不属于任何分组的账号 |
 
 #### `GET /api/v1/identity/permissions`
 
@@ -4575,6 +4587,40 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 |---|---|---|---|
 | `code` | `string` | 是 | 权限码 |
 | `layers` | `PermissionOriginOut[]` | 否 | 给出这个码的全部来源 |
+
+### `PermissionTreeGroupOut`
+
+一个分组，以及它的成员（成员顺序按账号排序，前端不再排）。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 | 小组 ID |
+| `name` | `string` | 是 | 小组名称 |
+| `members` | `PermissionTreeUserOut[]` | 否 | 组内成员 |
+
+### `PermissionTreeOut`
+
+「分组 → 用户」的完整树。
+
+为什么单独一个接口，而不是让前端用「小组列表 + 用户列表」拼：
+用户列表是分页的，拼出来的树在人多时会**静默少人**，而看的人以为
+那就是全部。这里一次给全，没有分页参数。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `groups` | `PermissionTreeGroupOut[]` | 否 |  |
+| `ungrouped` | `PermissionTreeUserOut[]` | 否 | 不属于任何分组的账号 |
+
+### `PermissionTreeUserOut`
+
+树上的一个账号：只够画一行，不含权限。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 | 用户 ID |
+| `username` | `string` | 是 | 账号 |
+| `displayName` | `string` | 否 | 昵称 |
+| `isActive` | `boolean` | 否 | 是否启用（停用的排后面并置灰） |
 
 ### `PermissionsIn`
 

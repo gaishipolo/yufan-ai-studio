@@ -46,6 +46,7 @@ from modules.identity.schema import (
     PermissionCatalogOut,
     PermissionExceptionsIn,
     PermissionsIn,
+    PermissionTreeOut,
     ProfileUpdateIn,
     RefreshIn,
     ResetPasswordIn,
@@ -389,6 +390,16 @@ async def set_group_permissions(
     return ApiResponse.ok(
         await service.set_group_permissions(group_id, payload.permissions, actor)
     )
+
+
+@router.get(
+    "/permission-tree",
+    summary="「分组 → 用户」的完整树（权限总览的左栏）",
+)
+async def permission_tree(
+    service: IdentityServiceDep, actor: IdentityReadDep
+) -> ApiResponse[PermissionTreeOut]:
+    return ApiResponse.ok(await service.permission_tree())
 
 
 @router.get("/users/{user_id}/permissions", summary="用户单独授予的权限")

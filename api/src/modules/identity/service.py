@@ -109,6 +109,9 @@ from modules.identity.schema import (
     PermissionOriginOut,
     PermissionOut,
     PermissionSourceOut,
+    PermissionTreeGroupOut,
+    PermissionTreeOut,
+    PermissionTreeUserOut,
     ProfileUpdateIn,
     RoleBriefOut,
     RoleCreateIn,
@@ -1416,6 +1419,43 @@ class IdentityService:
             raise PermissionEscalation(
                 f"不能改动权限高于自己的{what}", details={"missing": missing}
             )
+
+    async def permission_tree(self) -> PermissionTreeOut:
+        """「分组 → 用户」的完整树（给权限总览页的左栏）。
+
+        一次给全、不分页：左栏是**导航**，少一行等于少一个能配权限的人，
+        而看的人没有任何提示。用户列表那种分页视图不适合做导航数据源。
+
+        停用账号仍然列出（置灰）：他可能还挂着角色/小组的授权，
+        「这个人已经不是员工但权限还在」正是需要被看见的那种情况。
+        """
+        groups = await self.layers.list_groups()
+        members = await self.layers.members_for([group.id for group in groups])
+        briefs = {
+            uid: PermissionTreeUserOut(
+                id=uid, username=name, displayName=display, isActive=active
+            )
+            for uid, name, display, active in await self.users.briefs()
+        }
+
+        seen: set[str] = set()
+        tree_groups: list[PermissionTreeGroupOut] = []
+        for group in groups:
+            ids = sorted(
+                members.get(group.id, []),
+                key=lambda uid: briefs[uid].username if uid in briefs else uid,
+            )
+            seen.update(ids)
+            tree_groups.append(
+                PermissionTreeGroupOut(
+                    id=group.id,
+                    name=group.name,
+                    members=[briefs[uid] for uid in ids if uid in briefs],
+                )
+            )
+
+        ungrouped = [item for uid, item in sorted(briefs.items()) if uid not in seen]
+        return PermissionTreeOut(groups=tree_groups, ungrouped=ungrouped)
 
     async def list_groups(self) -> list[GroupOut]:
         return [await self._group_out(group) for group in await self.layers.list_groups()]

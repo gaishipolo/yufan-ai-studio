@@ -342,6 +342,39 @@ class GroupMembersIn(CamelModel):
     )
 
 
+class PermissionTreeUserOut(CamelModel):
+    """树上的一个账号：只够画一行，不含权限。"""
+
+    id: str = Field(description="用户 ID")
+    username: str = Field(description="账号")
+    display_name: str = Field(default="", description="昵称")
+    is_active: bool = Field(default=True, description="是否启用（停用的排后面并置灰）")
+
+
+class PermissionTreeGroupOut(CamelModel):
+    """一个分组，以及它的成员（成员顺序按账号排序，前端不再排）。"""
+
+    id: str = Field(description="小组 ID")
+    name: str = Field(description="小组名称")
+    members: list[PermissionTreeUserOut] = Field(
+        default_factory=list, description="组内成员"
+    )
+
+
+class PermissionTreeOut(CamelModel):
+    """「分组 → 用户」的完整树。
+
+    为什么单独一个接口，而不是让前端用「小组列表 + 用户列表」拼：
+    用户列表是分页的，拼出来的树在人多时会**静默少人**，而看的人以为
+    那就是全部。这里一次给全，没有分页参数。
+    """
+
+    groups: list[PermissionTreeGroupOut] = Field(default_factory=list)
+    ungrouped: list[PermissionTreeUserOut] = Field(
+        default_factory=list, description="不属于任何分组的账号"
+    )
+
+
 class GroupLayerOut(CamelModel):
     """分层权限明细里的一段：这条权限来自哪个小组。"""
 

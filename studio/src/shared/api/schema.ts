@@ -1093,6 +1093,39 @@ export interface PermissionSourceOut {
   layers?: PermissionOriginOut[];
 }
 
+/** 一个分组，以及它的成员（成员顺序按账号排序，前端不再排）。 */
+export interface PermissionTreeGroupOut {
+  /** 小组 ID */
+  id: string;
+  /** 小组名称 */
+  name: string;
+  /** 组内成员 */
+  members?: PermissionTreeUserOut[];
+}
+
+/** 「分组 → 用户」的完整树。
+
+为什么单独一个接口，而不是让前端用「小组列表 + 用户列表」拼：
+用户列表是分页的，拼出来的树在人多时会**静默少人**，而看的人以为
+那就是全部。这里一次给全，没有分页参数。 */
+export interface PermissionTreeOut {
+  groups?: PermissionTreeGroupOut[];
+  /** 不属于任何分组的账号 */
+  ungrouped?: PermissionTreeUserOut[];
+}
+
+/** 树上的一个账号：只够画一行，不含权限。 */
+export interface PermissionTreeUserOut {
+  /** 用户 ID */
+  id: string;
+  /** 账号 */
+  username: string;
+  /** 昵称 */
+  displayName?: string;
+  /** 是否启用（停用的排后面并置灰） */
+  isActive?: boolean;
+}
+
 /** 团队 / 小组 / 个人三层共用的「整组替换」入参。
 
 三层共用一份形状不是偷懒：写接口的守卫、权限码合法性校验、以及前端的
@@ -1989,6 +2022,8 @@ export interface EndpointData {
   "DELETE /api/v1/identity/me/sessions/{session_id}": null;
   /** 口令策略（匿名） */
   "GET /api/v1/identity/password-policy": PasswordPolicyOut;
+  /** 「分组 → 用户」的完整树（权限总览的左栏） */
+  "GET /api/v1/identity/permission-tree": PermissionTreeOut;
   /** 全部权限点（按分组，供角色编辑界面） */
   "GET /api/v1/identity/permissions": PermissionCatalogOut;
   /** 用刷新令牌换取新令牌 */

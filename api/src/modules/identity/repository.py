@@ -103,6 +103,20 @@ class UserRepository(BaseRepository[User]):
         stmt = stmt.order_by(User.created_at.desc(), User.id)
         return await self.paginate(stmt, params)
 
+    async def briefs(self) -> list[tuple[str, str, str, bool]]:
+        """全部账号的简要信息：`(id, username, display_name, is_active)`。
+
+        给「分组 → 用户」这棵树用：树必须一次画全，所以**不能走分页** ——
+        分页少一页时，树会静默少几个人，而看的人以为那就是全部。
+        只取四列，不实例化 ORM 行。
+        """
+        rows = await self.session.execute(
+            select(User.id, User.username, User.display_name, User.is_active).order_by(
+                User.username
+            )
+        )
+        return [(row[0], row[1], row[2], row[3]) for row in rows.all()]
+
     async def roles_for(self, user_ids: Sequence[str]) -> dict[str, list[Role]]:
         """一次查出多个用户的角色，返回 `{user_id: [Role, ...]}`。"""
         if not user_ids:
