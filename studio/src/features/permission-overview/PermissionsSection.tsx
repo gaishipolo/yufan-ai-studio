@@ -163,17 +163,17 @@ export function PermissionsSection() {
                     </span>
                   </button>
                   {ungroupedOpen ? (
-                  <ul className="space-y-0.5">
-                    {ungrouped.map((user) => (
-                      <li key={user.id}>
-                        <UserNode
-                          user={user}
-                          selected={selected?.id === user.id}
-                          onSelect={() => setSelected(user)}
-                        />
-                      </li>
-                    ))}
-                  </ul>
+                    <ul className="space-y-0.5">
+                      {ungrouped.map((user) => (
+                        <li key={user.id}>
+                          <UserNode
+                            user={user}
+                            selected={selected?.id === user.id}
+                            onSelect={() => setSelected(user)}
+                          />
+                        </li>
+                      ))}
+                    </ul>
                   ) : null}
                 </div>
               ) : null}
