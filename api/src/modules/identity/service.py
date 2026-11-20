@@ -61,6 +61,7 @@ from modules.identity.errors import (
     RoleInUse,
     RoleNotFound,
     SessionNotFound,
+    SuperuserGrantForbidden,
     SuperuserRequired,
     TeamGrantForbidden,
     UnknownPermission,
@@ -1308,6 +1309,10 @@ class IdentityService:
         # 那和把人降级是一回事，只是换了个入口（R5-03 的同族）。
         actor_codes = await self._actor_codes(actor)
         await self._guard_role_not_above(role, actor_codes, actor)
+        # 超管角色的权限恒为 `*`：写进去也不会被判定读到（`resolve_identity` 短路），
+        # 只会留在库里让界面显示一份假的配置。
+        if role.is_superuser:
+            raise SuperuserGrantForbidden(details={"role": role.code})
         self._guard_permission_grant(
             permissions, actor_codes, what=f"角色 {role.code}"
         )
@@ -1581,6 +1586,11 @@ class IdentityService:
         # 改别人的权限 = 授出/拿走访问权，和「改角色」走同一条红线
         actor_codes = await self._actor_codes(actor)
         await self._guard_target_not_above(user, actor_codes, actor)
+        # 超管账号的权限恒为 `*`：个人层写进去也不生效。放在提权守卫之后 ——
+        # 非超管碰超管该吃 403（说「你动不了」），超管自己才该看到「没有意义」。
+        target_roles = (await self.users.roles_for([user.id])).get(user.id, ())
+        if any(role.is_superuser for role in target_roles):
+            raise SuperuserGrantForbidden(details={"username": user.username})
         self._validate_permissions(permissions)
         current = await self.layers.grants(SCOPE_USER, user.id)
         self._guard_layer_not_above(current, actor_codes, what="个人权限")

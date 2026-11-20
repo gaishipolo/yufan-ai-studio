@@ -272,3 +272,46 @@ def test_stale_permission_codes_block_saving_until_pruned(client: TestClient) ->
         assert asyncio.run(prune()) == {"layers": [], "roles": []}  # 幂等
     finally:
         client.put(f"{API}/team/permissions", json={"permissions": base}, headers=admin)
+
+
+def test_superuser_grants_are_rejected_on_both_ends(client: TestClient) -> None:
+    """超管的权限恒为 `*`：给超管角色 / 超管账号配权限一律拒绝（409）。
+
+    以前两边都收：角色页把「编辑权限」按钮禁了，用户页的「编辑个人权限」却还能
+    改 —— 而 `resolve_identity` 见到 `*` 就短路，写进去不会生效，界面却显示一份
+    看起来已经配好的权限。无效的写不该被接受，也不该只在某一侧拦。
+    """
+    admin = _admin(client)
+    me = client.get(f"{API}/me", headers=admin).json()["data"]
+    roles = client.get(f"{API}/roles", headers=admin).json()["data"]
+    items = roles["items"] if isinstance(roles, dict) else roles
+    su_role = next(role for role in items if role["isSuperuser"])
+
+    on_role = client.put(
+        f"{API}/roles/{su_role['id']}/permissions",
+        json={"permissions": ["task:read"]},
+        headers=admin,
+    )
+    assert on_role.status_code == 409, on_role.text
+    assert on_role.json()["code"] == 40928
+    assert "超级管理员" in on_role.json()["message"]
+
+    on_user = client.put(
+        f"{API}/users/{me['id']}/permissions",
+        json={"permissions": ["task:read"]},
+        headers=admin,
+    )
+    assert on_user.status_code == 409, on_user.text
+    assert on_user.json()["code"] == 40928
+
+    # 真没写进去：个人层仍是空的，有效权限仍只有 `*`
+    assert (
+        client.get(f"{API}/users/{me['id']}/permissions", headers=admin).json()["data"]
+        == []
+    )
+    assert (
+        client.get(
+            f"{API}/users/{me['id']}/effective-permissions", headers=admin
+        ).json()["data"]["effective"]
+        == ["*"]
+    )

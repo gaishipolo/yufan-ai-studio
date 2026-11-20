@@ -5,7 +5,7 @@ import { Can } from '@/shared/access/Can';
 import { AlertCircle, Loader2 } from 'lucide-react';
 import { usePermissionCatalog } from '@/entities/role/api/role.queries';
 import { useEffectivePermissions } from '@/entities/group/api/group.queries';
-import { displayNameOf, type User } from '@/entities/user/model/types';
+import { displayNameOf, isSuperuser, type User } from '@/entities/user/model/types';
 
 function CodeList({ codes, labelOf }: { codes: string[]; labelOf: (code: string) => string }) {
   if (codes.length === 0) return <p className="text-meta text-ink-mute">未授予</p>;
@@ -72,6 +72,10 @@ export function EffectivePermissionsModal({
 
   const data = query.data;
   const effective = data?.effective ?? [];
+  /* 超管的权限恒为 `*`（后端 `resolve_identity` 短路），个人层怎么写都不会生效，
+     写接口现在也会 409 拒绝。所以这里和角色卡片用同一条判据：禁掉，并说明原因 ——
+     否则管理员会以为「角色不能编辑、个人还能补一点」。 */
+  const targetIsSuperuser = user ? isSuperuser(user) : false;
 
   return (
     <Modal open={open} onClose={onClose} title={`有效权限 · ${user ? displayNameOf(user) : ''}`} width={640}>
@@ -151,7 +155,14 @@ export function EffectivePermissionsModal({
         <div className="flex items-center justify-end gap-1.5 pt-1">
           <Button onClick={onClose}>关闭</Button>
           <Can permission="identity:user:permission:manage">
-            <Button variant="primary" disabled={!user} onClick={onEditPersonal}>
+            <Button
+              variant="primary"
+              disabled={!user || targetIsSuperuser}
+              title={
+                targetIsSuperuser ? '超管权限恒为全部，个人授权不会生效' : undefined
+              }
+              onClick={onEditPersonal}
+            >
               编辑个人权限
             </Button>
           </Can>

@@ -210,6 +210,7 @@ Authorization: Bearer <accessToken>
 | `40925` | 409 | identity | `CannotTargetSelf` | 不能停用或删除自己的账号 |
 | `40926` | 409 | identity | `LastSuperuser` | 系统必须保留至少一个启用的超级管理员 |
 | `40927` | 409 | identity | `GroupNameTaken` | 小组名称已被占用 |
+| `40928` | 409 | identity | `SuperuserGrantForbidden` | 超级管理员的权限恒为全部，不能在角色或个人层配置 |
 | `40981` | 409 | library | `SharedAssetNotDeletable` | 该资产仍处于共享状态，请先撤销共享后再删除 |
 | `40982` | 409 | library | `TeamDeleteForbidden` | 团队库资产不能直接删除，请先撤销团队共享 |
 | `40983` | 409 | library | `ShareRevokePending` | 撤销共享正在审批中，通过后再删除 |

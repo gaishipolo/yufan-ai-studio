@@ -115,6 +115,20 @@ class GroupNameTaken(AppError):
     http_status = 409
 
 
+class SuperuserGrantForbidden(AppError):
+    """超管的权限恒为 `*`，任何层的授权都到不了判定里。
+
+    为什么要在写入口拒：`resolve_identity` 见到 `*` 就短路，所以给超管配
+    角色权限 / 个人权限**不会生效**，但会留在库里、显示在界面上 ——
+    于是管理员以为自己配了什么（2026-11-20 就是这么发现的：角色页禁了编辑，
+    用户页的个人权限却还能改）。无效的写操作不该被接受，也不该只在某一侧拦。
+    """
+
+    code = errors.code(409, 8)
+    message = "超级管理员的权限恒为全部，不能在角色或个人层配置"
+    http_status = 409
+
+
 class TeamGrantForbidden(AppError):
     """团队层 = 所有人：管理类权限、页面权限与 `*` 不能放进来。
 
