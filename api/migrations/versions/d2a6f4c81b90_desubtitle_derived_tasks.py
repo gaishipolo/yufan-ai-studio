@@ -32,7 +32,7 @@ def upgrade() -> None:
         "video_tasks", sa.Column("library_asset_id", sa.String(length=32), nullable=True)
     )
     op.create_index(
-        "ix_video_tasks_derived_from", "video_tasks", ["derived_from_task_id"], unique=False
+        "ix_video_tasks_derived_from_task_id", "video_tasks", ["derived_from_task_id"], unique=False
     )
     op.create_index(
         "ux_video_tasks_derived_variant",
@@ -46,7 +46,7 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_index("ux_video_tasks_derived_variant", table_name="video_tasks")
-    op.drop_index("ix_video_tasks_derived_from", table_name="video_tasks")
+    op.drop_index("ix_video_tasks_derived_from_task_id", table_name="video_tasks")
     op.drop_column("video_tasks", "library_asset_id")
     op.drop_column("video_tasks", "variant")
     op.drop_column("video_tasks", "derived_from_task_id")

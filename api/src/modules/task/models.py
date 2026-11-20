@@ -7,7 +7,17 @@ from collections.abc import Mapping
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import JSON, Boolean, DateTime, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    DateTime,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from core.library_text import parse_text_refs, text_ref_bindings
@@ -17,7 +27,6 @@ from modules.task.enums import AspectRatio, TaskStatus
 
 class VideoTask(Base, UUIDMixin, TimestampMixin):
     __tablename__ = "video_tasks"
-
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     prompt: Mapped[str] = mapped_column(Text, nullable=False)
 
@@ -111,6 +120,16 @@ class VideoTask(Base, UUIDMixin, TimestampMixin):
         # 列表默认按「作者 + 创建时间倒序」翻页，走联合索引
         Index("ix_video_tasks_author_created", "author_id", "created_at"),
         Index("ix_video_tasks_status_created", "status", "created_at"),
+        # 同一父任务只允许一条同类型派生任务：这是「点两次不会下两单」的硬保证。
+        # 在这里显式声明，否则 `alembic check` 会把它当成「库里多出来的索引」要求删除。
+        Index(
+            "ux_video_tasks_derived_variant",
+            "derived_from_task_id",
+            "variant",
+            unique=True,
+            postgresql_where=text("derived_from_task_id IS NOT NULL"),
+            sqlite_where=text("derived_from_task_id IS NOT NULL"),
+        ),
     )
 
     @property
