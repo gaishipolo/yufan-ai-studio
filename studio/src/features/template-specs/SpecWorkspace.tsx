@@ -159,6 +159,12 @@ export function SpecWorkspace() {
      不是复制一份，所以要让人看见这件事再确认。 */
   const [pendingCase, setPendingCase] = useState<PickedAsset | null>(null);
   const [drag, setDrag] = useState<DragState>(null);
+  /* 拖动时的落点，存成字符串 id（`row:<key>:before` / `box:<group>` / `tail`）：
+     每条 dragover 都会重算一次，用字符串才比得动 —— 对象字面量每次都是新引用，
+     `setState` 会一路重渲染整列。
+     **它只负责高亮**；真正插到哪儿由 drop 那一刻的鼠标位置现算，
+     免得「看到的高亮位置」和「实际落点」因为一次没来得及的重渲染而对不上。 */
+  const [over, setOver] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const promoteCase = useMutation({
@@ -386,13 +392,57 @@ export function SpecWorkspace() {
     setDraft({...renumbered, slots: rekeyed});
   };
 
-  const moveSlot = (from: number, to: number) => {
-    if (!draft || from === to) return;
-    const next = slots.slice();
-    const [item] = next.splice(from, 1);
-    next.splice(to, 0, item);
+  /**
+   * 把槽位拖到「第 `at` 个位置之前」，并归入 `group`（空 = 顶层）。
+   *
+   * `at` 用**移动前**的数组坐标（`at === slots.length` = 放到最后）。
+   * 跨组时会改写归属：
+   * - **进容器**：`group` 换成容器的、来源换成封装包、绑定换成用户填。
+   *   固定的槽位进不来（它钉着一张具体素材，改过来等于把那句话删掉而没人知道），
+   *   文本/音频也进不来（不参与编号分发，包里没有它们的位置）。
+   * - **出容器**：`group` 清空，**来源保留**。拖出来表示「这一格不再跟那套绑定」，
+   *   不表示「不再从包里取」—— 独立槽位的来源在更多设置里可以自己改。
+   */
+  const moveSlotTo = (key: string, at: number, group: string) => {
+    if (!draft) return;
+    const from = slots.findIndex(item => item.key === key);
+    if (from < 0) return;
+    const moving = slots[from];
+    const src = (moving.group ?? '').trim();
+    const dst = group.trim();
+    // 移出源之后，目标下标要往前挪一位（否则落到自己后面那一格）
+    const localAt = from < at ? at - 1 : at;
+    if (src === dst && localAt === from) return;
+
+    if (dst && dst !== src) {
+      if (moving.binding === 'fixed') {
+        toast('固定槽位钉着一张具体素材，先改成「用户填」再拖进封装', 'error');
+        return;
+      }
+      if (moving.type !== 'image' && moving.type !== 'video') {
+        toast('封装里只能放图片或视频槽位', 'error');
+        return;
+      }
+    }
+
+    const rest = slots.filter((_, index) => index !== from);
+    const patched =
+      src === dst
+        ? moving
+        : dst
+          ? {
+              ...moving,
+              group: dst,
+              pickMode: 'pack' as const,
+              binding: 'user' as const,
+              assetId: null,
+            }
+          : {...moving, group: ''};
+    const next = [...rest.slice(0, localAt), patched, ...rest.slice(localAt)].map(
+      (slot, index) => ({...slot, position: index}),
+    );
     // 位置就是编号：拖一下，后面所有 `{{Mixed N}}` 都要跟着变。
-    setDraft(renumberRefs(draft, next.map((slot, index) => ({...slot, position: index}))));
+    setDraft(renumberRefs(draft, next));
   };
 
   const addSlot = (type: SlotType = 'image', group = '') => {
@@ -462,40 +512,87 @@ export function SpecWorkspace() {
   };
 
   /**
-   * 一张槽位卡片。独立槽位与容器成员共用这一份渲染：
-   * 容器里只少两项（「来源」下拉、「来自包」角标）—— 来源由容器决定。
+   * 一行槽位（含拖动落点）。
+   *
+   * **整行都是放置区**，落点按半区算：鼠标在行上半 → 插到它前面，下半 → 后面。
+   * 高亮画在**将要插入的那个位置**（行上方 / 下方那条线），是「松手会插到这里」
+   * 的预览，不是「这一行可以放」—— 后者整列都在发光，等于没信息。
+   *
+   * 目标行的 `group` 决定插进哪儿：容器成员的前后 = 进那个容器，独立槽位的前后
+   * = 留在顶层。所以「拖进封装」和「拖出封装」是同一个动作的两侧，不用两个手势。
    */
-  const slotCardOf = (slot: SpecSlotIn, index: number, inGroup: boolean) => (
-    <SlotCard
-      key={slot.key}
-      slot={slot}
-      index={index}
-      inGroup={inGroup}
-      dragging={drag?.key === slot.key}
-      onDragStart={() => setDrag({key: slot.key})}
-      onDragEnd={() => setDrag(null)}
-      onDragOver={event => drag && event.preventDefault()}
-      onDrop={() => {
-        if (!drag) return;
-        const from = slots.findIndex(item => item.key === drag.key);
-        setDrag(null);
-        if (from < 0) return;
-        /* 容器是一段**连续**的区域：只允许在同一个容器内换序。
-           跨容器拖动会破掉「成员相邻」这条不变量（后端发布时会拒），
-           所以这里直接不动 —— 拖到别的框里松手，看起来什么都没发生，
-           比拽过去再被 400 打回好。 */
-        if ((slots[from].group ?? '') !== (slot.group ?? '')) return;
-        moveSlot(from, index);
-      }}
-      onPatch={patch => patchSlot(index, patch)}
-      onDelete={() => removeSlots([slot.key])}
-      onPickAsset={() => setPicker({target: 'slot', index})}
-      tagOptions={tagOptions}
-      typeOptions={inGroup ? PACK_CHILD_OPTIONS : TYPE_OPTIONS}
-      slots={slots}
-      prompt={draft?.prompt ?? ''}
-    />
-  );
+  const slotRowOf = (slot: SpecSlotIn, index: number, inGroup: boolean) => {
+    const group = (slot.group ?? '').trim();
+    const edge =
+      over === `row:${slot.key}:before`
+        ? 'before'
+        : over === `row:${slot.key}:after`
+          ? 'after'
+          : null;
+    return (
+      <div
+        key={slot.key}
+        data-slot-key={slot.key}
+        className="relative"
+        onDragOver={event => {
+          if (!drag) return;
+          /* 拖到自己身上也要 preventDefault：不然事件冒泡到容器上，
+             会被当成「丢进这个封装」，整块框亮起来。松手 = 不动，只是不画线。 */
+          event.preventDefault();
+          event.stopPropagation();
+          const next =
+            drag.key === slot.key
+              ? null
+              : `row:${slot.key}:${
+                  event.clientY - event.currentTarget.getBoundingClientRect().top <
+                  event.currentTarget.getBoundingClientRect().height / 2
+                    ? 'before'
+                    : 'after'
+                }`;
+          setOver(current => (current === next ? current : next));
+        }}
+        onDrop={event => {
+          if (!drag) return;
+          event.preventDefault();
+          event.stopPropagation();
+          /* 落点按**松手这一刻**的鼠标位置现算，不用 render 时的 `edge`：
+             高亮最多晚一帧，插入位置不能晚一帧。 */
+          const rect = event.currentTarget.getBoundingClientRect();
+          const at = event.clientY - rect.top < rect.height / 2 ? index : index + 1;
+          const key = drag.key;
+          setOver(null);
+          setDrag(null);
+          moveSlotTo(key, at, group);
+        }}
+      >
+        {edge === 'before' && <DropLine at="before" />}
+        <SlotCard
+          slot={slot}
+          index={index}
+          inGroup={inGroup}
+          dragging={drag?.key === slot.key}
+          onDragStart={() => setDrag({key: slot.key})}
+          onDragEnd={() => {
+            setDrag(null);
+            setOver(null);
+          }}
+          onPatch={patch => patchSlot(index, patch)}
+          onDelete={() => removeSlots([slot.key])}
+          onPickAsset={() => setPicker({target: 'slot', index})}
+          tagOptions={tagOptions}
+          typeOptions={inGroup ? PACK_CHILD_OPTIONS : TYPE_OPTIONS}
+          slots={slots}
+          prompt={draft?.prompt ?? ''}
+        />
+        {edge === 'after' && <DropLine at="after" />}
+      </div>
+    );
+  };
+
+  /** 拖动源所在的容器（空 = 顶层）。只有它非空时才需要「移出封装」那个落点。 */
+  const draggingGroup = drag
+    ? (slots.find(item => item.key === drag.key)?.group ?? '').trim()
+    : '';
 
   const pick = (asset: PickedAsset) => {
     if (!draft || !picker) return;
@@ -847,11 +944,34 @@ export function SpecWorkspace() {
                   因为它们在模板库那边只有**一个**选包入口。 */}
               {groupRuns(slots).map(run =>
                 run.group === '' ? (
-                  slotCardOf(run.members[0].slot, run.members[0].index, false)
+                  slotRowOf(run.members[0].slot, run.members[0].index, false)
                 ) : (
                   <div
                     key={run.group}
-                    className="rounded-xl border border-primary-line/50 bg-primary-soft/20 px-2 pb-2 pt-1"
+                    data-slot-group={run.group}
+                    className={cn(
+                      'rounded-xl border border-primary-line/50 bg-primary-soft/20 px-2 pb-2 pt-1 transition-shadow',
+                      // 拖到框上（不是某一行）= 追加到这个容器的末尾，整块亮一下
+                      over === `box:${run.group}` && 'ring-2 ring-primary/35',
+                    )}
+                    onDragOver={event => {
+                      if (!drag) return;
+                      /* 行自己会 `stopPropagation`，所以能走到这里就说明指针在框的
+                         空白处（标题栏 / 底部按钮那一圈）：那是「丢进这个封装」，
+                         落到最后一个成员后面。 */
+                      event.preventDefault();
+                      const next = `box:${run.group}`;
+                      setOver(current => (current === next ? current : next));
+                    }}
+                    onDrop={event => {
+                      if (!drag) return;
+                      event.preventDefault();
+                      const last = run.members[run.members.length - 1];
+                      const key = drag.key;
+                      setOver(null);
+                      setDrag(null);
+                      moveSlotTo(key, last.index + 1, run.group);
+                    }}
                   >
                     <div className="flex items-center gap-1.5 px-1 py-1">
                       <Layers size={13} className="text-primary" aria-hidden />
@@ -869,7 +989,7 @@ export function SpecWorkspace() {
                       </button>
                     </div>
                     <div className="divide-y divide-line-soft border-t border-primary-line/30">
-                      {run.members.map(({slot, index}) => slotCardOf(slot, index, true))}
+                      {run.members.map(({slot, index}) => slotRowOf(slot, index, true))}
                     </div>
                     <div className="mt-1 flex justify-end">
                       <AddSlotMenu
@@ -879,6 +999,34 @@ export function SpecWorkspace() {
                     </div>
                   </div>
                 ),
+              )}
+              {/* 拖的是容器里的槽位时，末尾单给一个「放到封装外面」的位置。
+                  没有它，「容器是最后一段」就拖不出去 —— 后面没有行可以当落点，
+                  而这一格在视觉上又确实在框里。 */}
+              {draggingGroup !== '' && (
+                <div
+                  data-drop-tail="1"
+                  onDragOver={event => {
+                    event.preventDefault();
+                    setOver(current => (current === 'tail' ? current : 'tail'));
+                  }}
+                  onDrop={event => {
+                    if (!drag) return;
+                    event.preventDefault();
+                    const key = drag.key;
+                    setOver(null);
+                    setDrag(null);
+                    moveSlotTo(key, slots.length, '');
+                  }}
+                  className={cn(
+                    'rounded-lg border border-dashed px-3 py-2 text-center text-micro transition-colors',
+                    over === 'tail'
+                      ? 'border-primary bg-primary-soft text-primary-deep'
+                      : 'border-line-strong text-ink-mute',
+                  )}
+                >
+                  拖到这里移出封装（放在最后）
+                </div>
               )}
             </div>
           </Section>
@@ -1117,6 +1265,27 @@ export function SpecWorkspace() {
         </div>
       </Modal>
     </section>
+  );
+}
+
+/**
+ * 插入位置的提示线：拖动时画在「松手会插到这里」的那条缝上。
+ *
+ * 用绝对定位跨在行的上/下边缘，不占版面 —— 占位的话整列会在拖动时抖一下，
+ * 而抖动的代价是用户以为拖错了。`pointer-events-none` 是必须的：这条线正好
+ * 压在行的命中区边缘，能收事件的话会让另一半区的判定闪断。
+ */
+function DropLine({at}: {at: 'before' | 'after'}) {
+  return (
+    <span
+      aria-hidden
+      data-drop-line={at}
+      className={cn(
+        'pointer-events-none absolute inset-x-0 z-10 h-[3px] rounded-full bg-primary',
+        'shadow-[0_0_0_3px_rgba(43,124,255,.16)]',
+        at === 'before' ? '-top-[5px]' : '-bottom-[5px]',
+      )}
+    />
   );
 }
 

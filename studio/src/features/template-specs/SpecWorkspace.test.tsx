@@ -1,9 +1,9 @@
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { RouterProvider, createMemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { TemplateSpecOut } from '@/shared/api/schema';
+import type { TemplateSpecIn, TemplateSpecOut } from '@/shared/api/schema';
 import { useToastStore } from '@/shared/lib/toast';
 import { Toaster } from '@/shared/ui/Toaster';
 import { SpecWorkspace } from './SpecWorkspace';
@@ -599,5 +599,225 @@ describe('模板封装 · 加封装容器', () => {
     expect(
       within(box as HTMLElement).getAllByRole('button', { name: '展开更多设置' }),
     ).toHaveLength(2);
+  });
+});
+
+/**
+ * 拖动可以穿过封装的边界。
+ *
+ * 以前跨容器拖动是**直接 return** 的（怕破坏「成员必须相邻」这条不变量）。
+ * 代价是「把外层这一格放进封装」和「把封装里这一格拿出来」都没有手势 ——
+ * 只能删掉重建，而删掉会连带清掉提示词里对它的引用。
+ *
+ * 相邻性其实由落点规则自己保证：**插到谁旁边，就归谁的组**。所以两个方向
+ * 是同一个动作的两侧，不需要两套手势。
+ */
+describe('模板封装 · 拖动槽位进出封装', () => {
+  const imageSlot = (key: string, label: string, extra: Record<string, unknown> = {}) => ({
+    key,
+    type: 'image' as const,
+    binding: 'user' as const,
+    pickMode: 'asset' as const,
+    minCount: 1,
+    maxCount: 1,
+    label,
+    ...extra,
+  });
+
+  const baseDraft = (): TemplateSpecIn => ({
+    key: 'spec-1',
+    name: '商品图模板',
+    model: 'bailian-wan3-prime-replacement',
+    prompt: '把{{Mixed 1}}和{{Mixed 2}}左右拼接为一张图',
+    slots: [
+      imageSlot('left', '左图', {group: 'g1', pickMode: 'pack', position: 0}),
+      imageSlot('right', '右图', {group: 'g1', pickMode: 'pack', position: 1}),
+      imageSlot('loose', '补充图', {position: 2}),
+      imageSlot('extra', '第五张', {position: 3}),
+    ],
+  });
+
+  /**
+   * jsdom 里所有元素的 `getBoundingClientRect()` 都是 0 —— 半区判定会永远落到
+   * 「后面」，`before` 那条路根本走不到。给目标行造一个 40px 高、从 0 开始的
+   * 真实框，拖动才有上半 / 下半之分。
+   */
+  function rowOf(key: string) {
+    const row = document.querySelector(`[data-slot-key="${key}"]`);
+    if (!row) throw new Error(`找不到槽位 ${key} 的行`);
+    vi.spyOn(row, 'getBoundingClientRect').mockReturnValue({
+      top: 0,
+      bottom: 40,
+      height: 40,
+      left: 0,
+      right: 100,
+      width: 100,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    } as DOMRect);
+    return row;
+  }
+
+  function handleOf(key: string) {
+    const handle = document.querySelector(
+      `[data-slot-key="${key}"] [draggable="true"]`,
+    );
+    if (!handle) throw new Error(`找不到槽位 ${key} 的拖动手柄`);
+    return handle;
+  }
+
+  /**
+   * jsdom 里**没有 `DragEvent`**，`fireEvent.dragOver(el, {clientY})` 会退化成
+   * 一个普通 `Event`，`clientY` 是 undefined —— 半区判定于是永远落到「后面」，
+   * 上半区那条路根本走不到（第一版用例就是这么假绿的）。自己造 `MouseEvent`，
+   * 坐标才带得进去。
+   */
+  function fireDrag(el: Element, type: 'dragover' | 'drop', clientY: number) {
+    fireEvent(el, new MouseEvent(type, {bubbles: true, cancelable: true, clientY}));
+  }
+
+  /** 拖 `from` 到 `to` 这一行的上半 / 下半区然后松手。 */
+  function drag(from: string, to: string, edge: 'before' | 'after') {
+    const clientY = edge === 'before' ? 5 : 35;
+    fireEvent.dragStart(handleOf(from));
+    const row = rowOf(to);
+    fireDrag(row, 'dragover', clientY);
+    fireDrag(row, 'drop', clientY);
+  }
+
+  async function enter(draft: TemplateSpecIn = baseDraft()) {
+    const user = userEvent.setup();
+    renderWorkspace([specOf({status: 'draft', draft})]);
+    await user.click(cardOf('商品图模板').getByRole('button', {name: '编辑'}));
+    mutations.save.mockClear();
+    return user;
+  }
+
+  async function saveDraft(user: ReturnType<typeof userEvent.setup>) {
+    await user.click(screen.getByRole('button', {name: '保存草稿'}));
+    return mutations.save.mock.calls[0][0] as TemplateSpecIn;
+  }
+
+  it('把外层槽位拖进封装：归到那个组、来源改成封装包', async () => {
+    const user = await enter();
+
+    // 「第五张」拖到「右图」上半区 → 插到右图前面，成为容器成员
+    drag('extra', 'right', 'before');
+    const sent = await saveDraft(user);
+
+    expect(sent.slots!.map(slot => slot.key)).toEqual(['left', 'extra', 'right', 'loose']);
+    const moved = sent.slots!.find(slot => slot.key === 'extra')!;
+    expect(moved.group).toBe('g1');
+    // 进了封装就只能从包取：来源跟着变，否则这一格在模板库里还会列散图
+    expect(moved.pickMode).toBe('pack');
+  });
+
+  it('把封装里的槽位拖出来：组清空，来源保留', async () => {
+    const user = await enter();
+
+    // 「左图」拖到「补充图」上半区 → 落在容器外面
+    drag('left', 'loose', 'before');
+    const sent = await saveDraft(user);
+
+    expect(sent.slots!.map(slot => slot.key)).toEqual(['right', 'left', 'loose', 'extra']);
+    const moved = sent.slots!.find(slot => slot.key === 'left')!;
+    expect(moved.group ?? '').toBe('');
+    /* 拖出来表示「这一格不再跟那套绑定」，不表示「不再从包里取」——
+       作者的来源声明不该被一次拖动静默改掉（独立槽位能自己改回来）。 */
+    expect(moved.pickMode).toBe('pack');
+  });
+
+  it('容器内换序不动归属：还是那个组、还是从包取', async () => {
+    const user = await enter();
+
+    // 「左图」拖到「右图」下半区 —— 同一个容器里换个位置
+    drag('left', 'right', 'after');
+    const sent = await saveDraft(user);
+
+    expect(sent.slots!.map(slot => slot.key)).toEqual(['right', 'left', 'loose', 'extra']);
+    const moved = sent.slots!.find(slot => slot.key === 'left')!;
+    expect(moved.group).toBe('g1');
+    expect(moved.pickMode).toBe('pack');
+  });
+
+  it('拖到封装框的空白处（标题栏 / 底部）＝ 追加到容器末尾', async () => {
+    const user = await enter();
+
+    /* 行自己会 `stopPropagation`，所以能落到框上的只有「框的空白处」。
+       那一圈没有精确位置可言，语义只能是「丢进这个封装」。 */
+    const box = document.querySelector('[data-slot-group="g1"]') as HTMLElement;
+    fireEvent.dragStart(handleOf('extra'));
+    fireEvent(box, new MouseEvent('dragover', {bubbles: true, cancelable: true, clientY: 8}));
+    expect(box.className).toContain('ring-2');
+    fireEvent(box, new MouseEvent('drop', {bubbles: true, cancelable: true, clientY: 8}));
+
+    const sent = await saveDraft(user);
+    expect(sent.slots!.map(slot => slot.key)).toEqual(['left', 'right', 'extra', 'loose']);
+    expect(sent.slots!.find(slot => slot.key === 'extra')!.group).toBe('g1');
+  });
+
+  it('固定槽位拖不进封装（会把钉住的那张静默丢掉）', async () => {
+    const draft = baseDraft();
+    draft.slots!.push(
+      imageSlot('pinned', '固定图', {binding: 'fixed', assetId: 'a-pinned', position: 4}),
+    );
+    const user = await enter(draft);
+
+    drag('pinned', 'right', 'after');
+    // 拦下来并说清出路，而不是拖完再被后端 400
+    expect(
+      useToastStore.getState().items.some(item => item.message.includes('先改成「用户填」')),
+    ).toBe(true);
+
+    // 结构一点没动
+    expect(document.querySelector('[data-slot-key="pinned"]')).not.toBeNull();
+    expect(document.querySelector('[data-slot-group="g1"]')?.textContent).not.toContain('固定图');
+    void user;
+  });
+
+  it('文本槽位拖不进封装（不参与编号分发）', async () => {
+    const draft = baseDraft();
+    draft.slots!.push({
+      key: 'copy',
+      type: 'text',
+      binding: 'user',
+      refMode: 'attachment',
+      minCount: 0,
+      maxCount: 1,
+      label: '文案',
+      position: 4,
+    });
+    await enter(draft);
+
+    drag('copy', 'right', 'after');
+
+    expect(
+      useToastStore.getState().items.some(item => item.message.includes('只能放图片或视频')),
+    ).toBe(true);
+    expect(document.querySelector('[data-slot-group="g1"]')?.textContent).not.toContain('文案');
+  });
+
+  it('拖动时把「将要插到的位置」画出来（上半 = 前面，下半 = 后面）', async () => {
+    await enter();
+
+    fireEvent.dragStart(handleOf('extra'));
+    const row = rowOf('right');
+
+    fireDrag(row, 'dragover', 5);
+    expect(document.querySelector('[data-drop-line="before"]')).not.toBeNull();
+    expect(document.querySelector('[data-drop-line="after"]')).toBeNull();
+    // 行自己 stopPropagation：落在一行上不该让整块封装都亮起来
+    expect(
+      (document.querySelector('[data-slot-group="g1"]') as HTMLElement).className,
+    ).not.toContain('ring-2');
+
+    fireDrag(row, 'dragover', 35);
+    expect(document.querySelector('[data-drop-line="after"]')).not.toBeNull();
+    expect(document.querySelector('[data-drop-line="before"]')).toBeNull();
+
+    // 拖到自己身上不画线：那里没有「插到自己前面」这回事
+    fireDrag(rowOf('extra'), 'dragover', 5);
+    expect(document.querySelector('[data-drop-line]')).toBeNull();
   });
 });

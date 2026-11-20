@@ -48,8 +48,6 @@ function SlotHarness({
       dragging={false}
       onDragStart={() => {}}
       onDragEnd={() => {}}
-      onDragOver={() => {}}
-      onDrop={() => {}}
       onPatch={patch}
       onDelete={() => {}}
       onPickAsset={() => {}}

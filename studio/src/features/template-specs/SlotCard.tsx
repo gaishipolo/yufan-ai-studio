@@ -33,8 +33,6 @@ export function SlotCard({
   dragging,
   onDragStart,
   onDragEnd,
-  onDragOver,
-  onDrop,
   onPatch,
   onDelete,
   onPickAsset,
@@ -49,8 +47,6 @@ export function SlotCard({
   dragging: boolean;
   onDragStart: () => void;
   onDragEnd: () => void;
-  onDragOver: (event: React.DragEvent) => void;
-  onDrop: () => void;
   onPatch: (patch: Partial<SpecSlotIn>) => void;
   onDelete: () => void;
   onPickAsset: () => void;
@@ -111,8 +107,6 @@ export function SlotCard({
 
   return (
     <div
-      onDragOver={onDragOver}
-      onDrop={onDrop}
       className={cn(
         // 槽位是一行，不是一张卡：一排槽位用细线分隔就够了，
         // 每行都画一圈边框会让这一栏变成「一堆小方块」——缩到 50% 看，
