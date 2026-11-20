@@ -30,7 +30,7 @@ from core.context import SUPER_PERMISSION, CurrentUser, permission_holds
 from core.exceptions import Unauthorized
 from core.logging import get_logger
 from core.pages import PAGE_PREFIX, page_catalog
-from core.permissions import PermissionSpec, catalog
+from core.permissions import PermissionSpec, catalog, expand_grants
 from core.response import Page, PageParams
 from core.security import (
     create_access_token,
@@ -517,6 +517,9 @@ class IdentityService:
         在服务端成立，而不是只靠前端藏菜单。超管（`*`）在门控之前就短路了，
         这样新页面还没配给任何角色时，超管仍能进去把它配好。
 
+        门控之前先把 `资源:*` 摊成具体码（`expand_grants`）：门控是按具体码
+        反查页面的，通配自己反查不到，不摊就会被当成基础设施码放行。
+
         任一层出现 `*` 都等价于超管：只认角色上的 `is_superuser` 会让
         「给某人单独授 `*`」这条合法操作失效。
         """
@@ -540,7 +543,9 @@ class IdentityService:
             return ResolvedIdentity(user, roles, frozenset({SUPER_PERMISSION}))
         if not apply_page_gate:
             return ResolvedIdentity(user, roles, frozenset(codes))
-        return ResolvedIdentity(user, roles, frozenset(page_catalog.gate(codes)))
+        # 通配必须先摊成具体码再过门控：门控是按具体码反查页面的，
+        # `task:*` 反查不到页面就会被当成「基础设施码」放行（见 expand_grants）。
+        return ResolvedIdentity(user, roles, frozenset(page_catalog.gate(expand_grants(codes))))
 
     # ------------------------------------------------------------------ #
     # 会话与令牌
@@ -1617,10 +1622,21 @@ class IdentityService:
             pages = sorted(page_catalog.codes())
             gated_off: list[str] = []
         else:
-            effective_codes = page_catalog.gate(codes)
+            # 与 `resolve_identity` 同一条链：先摊开通配，再门控。
+            # `gated_off` 用**摊开之后**的集合算，否则持有 `task:*` 的人会看到
+            # 一条「`task:*` 被门控关掉了」，而实际被关掉的是它下面那几条 ——
+            # 那句话既解释不了 403，也会让人以为通配整个失效了。
+            expanded = expand_grants(codes)
+            effective_codes = page_catalog.gate(expanded)
             effective = sorted(effective_codes)
-            pages = sorted(page_catalog.codes() & effective_codes)
-            gated_off = sorted(codes - effective_codes)
+            # 页面用 `permission_holds` 数：授了 `page:*` 时 `effective` 里只有
+            # 通配本身，直接求交集会得到空列表（界面据此画不出侧栏）。
+            pages = sorted(
+                spec.code
+                for spec in page_catalog.all()
+                if permission_holds(effective_codes, spec.code)
+            )
+            gated_off = sorted(expanded - effective_codes)
         return EffectivePermissionsOut(
             team=list(layers.team),
             groups=[

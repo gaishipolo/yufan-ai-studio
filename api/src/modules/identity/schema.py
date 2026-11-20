@@ -371,6 +371,7 @@ class EffectivePermissionsOut(CamelModel):
         default_factory=list,
         description=(
             "被页面门控关掉的接口权限：四层并集里有、但它所属的页面一页都没授予。"
+            "`资源:*` 会先摊成具体码再判定，所以这里列的是被关掉的**具体码**。"
             "界面拿它解释「为什么我有 task:read 却仍然 403」"
         ),
     )

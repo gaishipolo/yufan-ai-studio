@@ -960,7 +960,7 @@ Authorization: Bearer <accessToken>
 | `personal` | `string[]` | 否 | 单独授予的权限 |
 | `roles` | `string[]` | 否 | 现有角色授予的权限 |
 | `pages` | `string[]` | 否 | 授予的页面权限（page:*）；决定侧栏与路由能进哪一页 |
-| `gatedOff` | `string[]` | 否 | 被页面门控关掉的接口权限：四层并集里有、但它所属的页面一页都没授予。界面拿它解释「为什么我有 task:read 却仍然 403」 |
+| `gatedOff` | `string[]` | 否 | 被页面门控关掉的接口权限：四层并集里有、但它所属的页面一页都没授予。`资源:*` 会先摊成具体码再判定，所以这里列的是被关掉的**具体码**。界面拿它解释「为什么我有 task:read 却仍然 403」 |
 | `effective` | `string[]` | 否 | 四层并集过完页面门控的结果；`*` 表示超级管理员。require() 唯一判据 |
 
 #### `GET /api/v1/identity/users/{user_id}/logins`
@@ -3720,7 +3720,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `personal` | `string[]` | 否 | 单独授予的权限 |
 | `roles` | `string[]` | 否 | 现有角色授予的权限 |
 | `pages` | `string[]` | 否 | 授予的页面权限（page:*）；决定侧栏与路由能进哪一页 |
-| `gatedOff` | `string[]` | 否 | 被页面门控关掉的接口权限：四层并集里有、但它所属的页面一页都没授予。界面拿它解释「为什么我有 task:read 却仍然 403」 |
+| `gatedOff` | `string[]` | 否 | 被页面门控关掉的接口权限：四层并集里有、但它所属的页面一页都没授予。`资源:*` 会先摊成具体码再判定，所以这里列的是被关掉的**具体码**。界面拿它解释「为什么我有 task:read 却仍然 403」 |
 | `effective` | `string[]` | 否 | 四层并集过完页面门控的结果；`*` 表示超级管理员。require() 唯一判据 |
 
 ### `ExportDetailOut`

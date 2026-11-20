@@ -371,3 +371,76 @@ def test_migration_does_not_reopen_pages_admin_closed(client: TestClient) -> Non
     assert code not in added, (
         f"增量迁移把管理员关掉的页面重新打开了：{added}"
     )
+
+
+# --------------------------------------------------------------------------- #
+# 6. 资源通配（`task:*`）不能绕过门控
+#
+# 回归：门控是按**具体码**反查页面的（`pages_for("task:read")`）。`task:*`
+# 自己反查不到任何页面，于是被当成「没有页面声明的基础设施码」原样放行 ——
+# 关掉任务中心、撤掉页面码之后，持有 `task:*` 的角色照样能调 `GET /tasks`。
+# 内置角色 `editor` 就写着 `task:*` / `image:*`，所以这不是理论问题。
+# --------------------------------------------------------------------------- #
+def test_resource_wildcard_cannot_escape_the_page_gate(client: TestClient) -> None:
+    admin = _admin(client)
+    _, headers, role = _provision(client, admin, ["task:*"])
+
+    denied = client.get(f"{API}/tasks", headers=headers)
+    assert denied.status_code == 403, (
+        f"只有 task:*、没有 page:task-center 的角色居然能调 /tasks：{denied.status_code}"
+    )
+    # 报出来的必须是摊开后的具体码，否则用户照着「task:*」去查权限界面什么也查不到
+    assert "task:read" in denied.json()["message"], denied.json()["message"]
+
+    # 补上页面之后立刻通：说明被砍掉的是「页面没开」，不是「通配无效」
+    _set_role_perms(client, admin, role["id"], ["task:*", "page:task-center"])
+    allowed = client.get(f"{API}/tasks", headers=headers)
+    assert allowed.status_code == 200, allowed.text
+
+
+def test_wildcard_is_expanded_before_reporting_effective_permissions(
+    client: TestClient,
+) -> None:
+    admin = _admin(client)
+    user, headers, role = _provision(client, admin, ["task:*"])
+    _set_role_perms(client, admin, role["id"], ["task:*", "page:task-center"])
+
+    body = client.get(
+        f"{IDENTITY}/users/{user['id']}/effective-permissions", headers=admin
+    )
+    assert body.status_code == 200, body.text
+    data = body.json()["data"]
+
+    # 生效集合里是具体码：`require()` 判的就是它们，通配本身不该留在里面
+    assert "task:read" in data["effective"], data["effective"]
+    assert "task:*" not in data["effective"], (
+        "通配没被摊开：`require()` 会继续认它，门控就白做了"
+    )
+    assert "page:task-center" in data["pages"], data["pages"]
+
+    # 撤掉页面之后，被关掉的是**具体码**，界面才能解释「你缺的是哪一条」
+    _set_role_perms(client, admin, role["id"], ["task:*"])
+    body = client.get(
+        f"{IDENTITY}/users/{user['id']}/effective-permissions", headers=admin
+    )
+    data = body.json()["data"]
+    assert "task:read" in data["gatedOff"], data["gatedOff"]
+    assert "task:*" not in data["gatedOff"], (
+        f"gatedOff 里留着通配：这句话解释不了 403，也像是通配整个失效了。{data['gatedOff']}"
+    )
+
+
+def test_expand_grants_leaves_page_wildcard_alone(client: TestClient) -> None:
+    """`page:*` 不摊开、`*` 不摊开、查不到成员的资源直接丢掉。
+
+    `page:*` 的判定本来就靠 `permission_holds`（它认通配），摊成 9 个码只会
+    让出参变长；而查不到成员的资源留着，等于让一个谁也解释不清的码继续生效。
+    """
+    from core.permissions import expand_grants
+
+    assert expand_grants({"page:*"}) == {"page:*"}
+    assert expand_grants({"*"}) == {"*"}
+    assert expand_grants({"no-such-resource:*"}) == set()
+    expanded = expand_grants({"task:*"})
+    assert "task:read" in expanded and "task:delete" in expanded
+    assert "task:*" not in expanded
