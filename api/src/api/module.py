@@ -122,8 +122,11 @@ class ModuleSpec:
     #    而授权体系只认这里声明的东西。
     #
     # 页面归哪个模块：按它**主要读的那份数据**归属（任务中心 → task，
-    # 资产库 → library）。跨模块的 requires 是正常的，门控按「至少一个声明
-    # 它的页面被授予」判定，所以共享接口不会被某一页关掉就连坐。
+    # 资产库 → library）。
+    #
+    # **这里不写「这一页用到哪些接口」**：那份关系在接口侧（`PermissionSpec.pages`），
+    # 门控按「至少一个声明它的页面被授予」判定，所以共享接口不会被某一页关掉就连坐。
+    # 方向为什么在接口那边，见 `core.pages` 的模块文档。
     pages: tuple[PageSpec, ...] = ()
     startup: StartupHook | None = None
     # 装配型启动钩子：任何实例（含 `WORKER_ENABLED=false`）都会执行，必须幂等。

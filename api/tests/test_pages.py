@@ -184,7 +184,11 @@ def test_effective_permissions_reports_pages_and_gated_off(
 # 3. 目录本身的完整性（不依赖接口，纯声明层）
 # --------------------------------------------------------------------------- #
 def test_page_catalog_is_coherent() -> None:
-    """页面码前缀、路由绝对路径与唯一性、requires 必须是已声明的接口码。"""
+    """页面码前缀、路由绝对路径与唯一性；反查出的接口码必须真的在目录里。
+
+    「接口归哪页」现在写在 `PermissionSpec.pages` 上（见 `core.pages` 的模块文档），
+    这里校验的是反查结果 —— 写错一个页面 slug `bind()` 就会在启动期报错。
+    """
     from core.permissions import catalog
 
     known = catalog.codes()
@@ -201,9 +205,9 @@ def test_page_catalog_is_coherent() -> None:
         if page.route in routes:
             problems.append(f"{page.route}: 被 {routes[page.route]} 与 {page.code} 重复占用")
         routes[page.route] = page.code
-        for code in page.requires:
+        for code in page_catalog.requires_of(page.code):
             if code not in known:
-                problems.append(f"{page.code}: requires 里的 {code} 没有任何模块声明")
+                problems.append(f"{page.code}: 反查出的 {code} 没有任何模块声明")
 
     assert not problems, "页面声明不自洽 -> " + "；".join(problems)
 
@@ -444,3 +448,27 @@ def test_expand_grants_leaves_page_wildcard_alone(client: TestClient) -> None:
     expanded = expand_grants({"task:*"})
     assert "task:read" in expanded and "task:delete" in expanded
     assert "task:*" not in expanded
+
+
+def test_bind_rejects_unknown_page_code() -> None:
+    """接口声明了不存在的页面码 = 启动期报错，而不是静默少门控一条接口。
+
+    写错 slug 有两条坏结局，都不该等到用户点了才发现：那条接口要么永远不受门控
+    （页面关了它还能打），要么永远失效（页面开了也用不了）。所以 `bind()` 在装配期
+    就对整份声明做一次存在性校验。
+    """
+    from core.pages import PageCatalog, PageSpec
+    from core.permissions import PermissionSpec
+    from core.registry import RegistryError
+
+    catalog = PageCatalog()
+    catalog.declare(PageSpec(code="page:known", name="已知页", route="/known"))
+
+    catalog.bind([PermissionSpec("voice:read", "查看配音", pages=("page:known",))])
+
+    try:
+        catalog.bind([PermissionSpec("voice:read", "查看配音", pages=("page:typo",))])
+    except RegistryError as exc:
+        assert "page:typo" in str(exc)
+    else:  # pragma: no cover - 没抛就是坏的
+        raise AssertionError("未知页面码没有在装配期报错")

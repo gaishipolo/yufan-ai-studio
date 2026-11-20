@@ -68,9 +68,24 @@ module = ModuleSpec(
     tags=["模板封装"],
     description="模板封装：模板规格（槽位 / 提示词 / 模型），发布后供模板库填表",
     permissions=(
-        PermissionSpec("template_pack:read", "查看模板封装", group="内容生产"),
-        PermissionSpec("template_pack:create", "创建或保存模板封装草稿", group="内容生产"),
-        PermissionSpec("template_pack:publish", "发布或停用模板封装", group="内容生产"),
+        PermissionSpec(
+            "template_pack:read",
+            "查看模板封装",
+            group="内容生产",
+            pages=("page:template-specs", "page:templates"),
+        ),
+        PermissionSpec(
+            "template_pack:create",
+            "创建或保存模板封装草稿",
+            group="内容生产",
+            pages=("page:template-specs",),
+        ),
+        PermissionSpec(
+            "template_pack:publish",
+            "发布或停用模板封装",
+            group="内容生产",
+            pages=("page:template-specs",),
+        ),
     ),
     # 两页共用 `template_pack:read`：模板库是「看 + 填表」，封装页是「做模板」。
     # 分开声明是为了「先只让人用模板、不让人改模板」这种最常见的授权诉求，
@@ -80,20 +95,11 @@ module = ModuleSpec(
             code="page:templates",
             name="模板库",
             route="/templates/library",
-            requires=("template_pack:read",),
         ),
         PageSpec(
             code="page:template-specs",
             name="模板封装",
             route="/templates/specs",
-            requires=(
-                "template_pack:read",
-                "template_pack:create",
-                "template_pack:publish",
-                "library:read",
-                "library:case:read",
-                "library:case:write",
-            ),
         ),
     ),
     library_reference_sources=LIBRARY_REFERENCE_SOURCES,

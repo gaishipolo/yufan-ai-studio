@@ -285,15 +285,16 @@ def test_every_page_code_can_be_switched_off() -> None:
 
     decorative: list[str] = []
     for page in page_catalog.all():
-        # 只授接口、不授页面：这一页声明的接口必须全部失效，否则这个页面码
-        # 就没在管任何东西（requires 写空 / 写成了不受门控的基础设施码）
-        gated = page_catalog.gate(set(page.requires))
-        dropped = [code for code in page.requires if code not in gated]
-        if page.requires and not dropped:
+        apis = page_catalog.requires_of(page.code)
+        # 只授接口、不授页面：这一页管辖的接口必须全部失效，否则这个页面码
+        # 就没在管任何东西（没有任何接口的 pages 指向它 / 那些接口全被别的页覆盖）
+        gated = page_catalog.gate(set(apis))
+        dropped = [code for code in apis if code not in gated]
+        if apis and not dropped:
             decorative.append(page.code)
     assert not decorative, (
         f"这些页面码关掉之后什么接口都没失效 -> {decorative}；"
-        "检查 requires 是不是写空了，或者它声明的接口全被别的页面覆盖"
+        "检查有没有接口的 pages= 指向它，或者它的接口全被别的页面覆盖"
     )
 
 
@@ -372,11 +373,9 @@ def test_every_enforced_code_belongs_to_a_page_or_is_background_only(
 
     豁免表里必须写清理由：只有「本来就没有前端页面」才该豁免。
     """
-    from core.pages import page_catalog
 
-    declared_by_pages: set[str] = set()
-    for page in page_catalog.all():
-        declared_by_pages.update(page.requires)
+    # 归属关系的权威就是接口侧的 `pages=`：不是从页面反推，直接读声明。
+    declared_by_pages = {spec.code for spec in catalog.all() if spec.pages}
 
     orphans = sorted(
         code
@@ -398,11 +397,8 @@ def test_page_exemptions_have_no_stale_entries() -> None:
 
     棘轮：留着过期豁免，下一个人会照着它判断「这里已经有人想过了」。
     """
-    from core.pages import page_catalog
 
-    now_covered: set[str] = set()
-    for page in page_catalog.all():
-        now_covered.update(page.requires)
+    now_covered = {spec.code for spec in catalog.all() if spec.pages}
 
     stale = sorted(
         code

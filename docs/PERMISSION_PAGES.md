@@ -60,61 +60,68 @@
 
 ## 4. 页面在哪声明
 
-后端模块的 `ModuleSpec.pages`（`core/pages.py::PageSpec`）——不是只写在前端
-路由表里。原因：门控要由服务端判定，而且页面权限得进权限目录才有人能勾。
-
-页面归**它主要读的那份数据**所在的模块（任务中心 → `task`，资产库 → `library`）；
-`requires` 跨模块是正常的。
+后端模块的 `ModuleSpec.pages`（`core/pages.py::PageSpec`）—— 不是只写在前端
+路由表里：门控要由服务端判定，而且页面权限得进权限目录才有人能勾。
+`PageSpec` 只回答两件事：我是谁、我在哪条路由。
 
 ```python
 # modules/task/__init__.py
 pages=(
-    PageSpec(
-        code="page:task-center",
-        name="任务中心",
-        route="/tasks",
-        requires=("task:read", "task:retry:any", "image:read"),
-    ),
+    PageSpec(code="page:task-center", name="任务中心", route="/tasks"),
 ),
 ```
 
-前端对应的那一条只写页面码：
+### 「这一页管哪些接口」写在**接口**上
 
-```ts
-// src/modules/task-center/module.ts
-routes: [{ path: 'tasks', permissions: ['page:task-center'], ... }]
+归属关系写在 `PermissionSpec.pages`，不写在页面上：
+
+```python
+# modules/task/permissions.py
+PermissionSpec(PERM_READ, "查看任务", group="内容生产", pages=("page:task-center",)),
+
+# 共享接口：两个页面码，任一页被授予它就有效
+PermissionSpec("catalog:read", "查看模型目录", group="内容生产",
+               pages=("page:image", "page:studio")),
 ```
 
-### 新增一页要改三处
+方向为什么是「接口写页面」：新增接口的人正在写那个 `PermissionSpec`，顺手就把
+归属写了；反过来（页面列 `requires`）要求他记得回到另一个文件、另一段元组里补
+一条，漏了只能靠守卫事后抓。共享接口也因此只写一处 —— 它是接口的属性，不是
+某一份页面清单里的一条。跨模块引用页面码是正常的（`task:create` 归「生成工作台」，
+那个页面声明在 catalog 模块）。
 
-1. 后端 `ModuleSpec.pages` 加 `PageSpec`（`requires` 写这一页真正会调的接口码）；
+前端契约没变：`GET /identity/permissions` 里页面项的 `requires` 由
+`PageCatalog.requires_of()` 反推（顺序按码排序），界面照旧按它画「页面 → 接口」。
+
+### 新增一页要改两处
+
+1. 后端 `ModuleSpec.pages` 加 `PageSpec`（只写 code/name/route）；
 2. 前端 `modules/<id>/module.ts` 的 `permissions: ['page:<slug>']`；
-3. 跑 `cd api && app export-openapi`（把新页面码写进前端生成物）与
+3. 跑 `cd api && app export-openapi`（新页面码写进前端生成物）与
    `cd studio && npm run gen:routes`（路由清单）。
 
 漏第 1 步：前端路由守卫会因为「目录里没有这个码」而**永远拦住**（`router.test`
 有守卫）。漏第 2 步：页面能进，但接口被门控关掉。
 
-### 但光有页面还不够：接口码必须**有页面声明它**
+### 新增一个接口要改**一处**
 
-这是最容易漏的一环，而且症状很隐蔽：**某模块的接口码没有任何页面声明它**，
-于是「关掉那一页 ⇒ 它的接口自动禁用」这条规则对它**不生效**——
-页面没了，接口照样能打。
+在它的 `PermissionSpec` 上写 `pages=(...)`。写错页面 slug 会在**启动期**报错
+（`PageCatalog.bind()` 校验页面码存在）—— 不然那条接口要么永远不生效、要么
+永远生效，两种都要等用户点了才发现。
 
-两个守卫盯着这件事：
+漏写的两种情况都有守卫盯着：
 
-- 后端 `tests/test_permission_coverage.py`：
-  「有判定点、却既没页面声明、也没列入后台能力豁免表」的码 → 报错。
-  豁免表 `BACKGROUND_ONLY_PERMISSIONS` 是**显式声明**的：
-  确实没有前端页面的接口（如 `export:*`、CLI 用的统一生成接口）写进去并说明理由。
-- 前端 `src/app/router.test.ts`：
-  「每个页面码都带 `requires`」——没有关联接口的页面码等于一个装饰开关。
+- 后端 `tests/test_permission_coverage.py`：「有判定点、却既没 `pages`、
+  也没列入后台能力豁免表」的码 → 报错。豁免表 `BACKGROUND_ONLY_PERMISSIONS`
+  是**显式声明**的：确实没有前端页面的接口（如 `export:*`、CLI 用的统一生成
+  接口）写进去并说明理由。
+- 前端 `src/app/router.test.ts`：「每个页面码都要有关联接口」——没有任何接口的
+  `pages` 指向它的页面码，等于一个装饰开关。
 
-**给已有页面补一个新接口码时**（比如某模块这版才把 `model_driver:read`
-关联到「任务中心」页），除了改 `requires`，还要知道：
-老库里持有那个码的授权会突然失效。增量迁移会补上（见 §7），
-但**补的是「一个可用页面都没有」的码**——已有可用页面的授权不动，
-因为那个页面是管理员自己配的，不该被覆盖。
+**给已有页面补一个新接口码时**（比如某模块这版才把 `model_driver:read` 关联到
+「任务中心」页），除了写法改到接口那一侧，还要知道：老库里持有那个码的授权会
+突然失效。增量迁移会补上（见 §7），但**补的是「一个可用页面都没有」的码**——
+已有可用页面的授权不动，因为那个页面是管理员自己配的，不该被覆盖。
 
 ## 5. 当前已声明的页面
 
@@ -210,5 +217,8 @@ routes: [{ path: 'tasks', permissions: ['page:task-center'], ... }]
   全关掉，而菜单又显示不出来——一个页面直接消失。
 - **不要把 `page:` 码写进 `require(...)`**：页面码回答的是「能不能看见」，
   不是「能不能调用」；用它守接口会让「关掉页面」和「停用接口」两件事再次纠缠。
-- **不要在 `requires` 里写 `*`**：那等于把整站接口绑到一页上（`PageSpec` 会在
-  启动期直接拒绝）。
+- **`pages` 里只写真实存在的页面码**：写 `page:*` 或拼错 slug 会在启动期报错
+  （`PageCatalog.bind()`）。想「让所有页面都管这条接口」本身就不用表达 ——
+  门控是「任一页被授予就有效」，写两个具体页面码就够了。
+- **不要用「目录里有没有」判断某个权限码能不能提交**：`task:*` 这类通配不在目录里，
+  但后端接受。判据是 `isResolvablePermission`（见 §2 末尾那段）。

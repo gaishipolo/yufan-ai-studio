@@ -28,16 +28,42 @@ _PAGE_RESOURCE = "page"
 
 @dataclass(frozen=True, slots=True)
 class PermissionSpec:
-    """一个权限点的元信息，同时用于鉴权判定和「角色配置界面」的数据源。"""
+    """一个权限点的元信息，同时用于鉴权判定和「角色配置界面」的数据源。
+
+    `pages` 是**这个接口归哪几页管**（`core.pages` 的门控依据）。空元组 =
+    不受任何页面管（`/identity/me` 这类基础设施接口、以及还没有页面的后台动作）。
+
+    ## 为什么归页面的关系写在接口上，而不是写在页面上
+
+    两个方向都能表达同一件事，但**只有这个方向不会漏**：新增接口时，人正在写
+    这个 `PermissionSpec`，顺手写它属于哪一页；反过来（页面列 `requires`）就要求
+    他记得回到另一个文件、另一段元组里补一条，漏了只能靠守卫事后抓。
+
+    共享接口（`catalog:read` 同时属于「生成工作台」和「生图」）也因此只写一处：
+    它是接口的属性，不是某一份页面清单里的一条。
+
+    代价：页面不再自带「我会用到哪些接口」，那份清单由 `PageCatalog` 反推
+    （`requires_of`），出参形状不变。
+    """
 
     code: str
     name: str
     group: str = "通用"
     description: str = ""
+    #: 归属的页面码（`page:<slug>`）。多页 = 共享接口，任一一页被授予它都有效。
+    pages: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if ":" not in self.code:
             raise ValueError(f"权限码必须形如 '资源:动作'，收到 {self.code!r}")
+        for page in self.pages:
+            # 写字面量而不是 import `core.pages.PAGE_PREFIX`：pages 反过来要用本模块
+            if not page.startswith("page:"):
+                raise ValueError(
+                    f"权限点 {self.code} 的 pages 里必须写页面码（page:<slug>），收到 {page!r}"
+                )
+        if len(set(self.pages)) != len(self.pages):
+            raise ValueError(f"权限点 {self.code} 的 pages 有重复项：{self.pages!r}")
 
 
 class PermissionCatalog:

@@ -152,15 +152,15 @@ Authorization: Bearer <accessToken>
 
 | 权限码 | 名称 | 说明 |
 |---|---|---|
-| `page:image` | 生图 | 关联接口：image:read, image:create, image:read:all, image:retry:any, image:delete, catalog:read |
-| `page:library` | 资产库 | 关联接口：library:read, library:create, library:update, library:delete, library:delete:any, library:draft:review, library:share, library:share:direct, library:share:approve, library:share:approve:team, library:share:approve:group, library:tag:manage, library:case:read, library:generation:ingest |
+| `page:image` | 生图 | 关联接口：catalog:read, image:create, image:delete, image:read, image:read:all, image:retry:any |
+| `page:library` | 资产库 | 关联接口：library:case:read, library:create, library:delete, library:delete:any, library:draft:review, library:generation:ingest, library:read, library:share, library:share:approve, library:share:approve:group, library:share:approve:team, library:share:direct, library:tag:manage, library:update |
 | `page:shots` | 镜头库 | 关联接口：shot:read |
 | `page:storyboards` | 分镜模板库 | 关联接口：storyboard:read |
-| `page:studio` | 生成工作台 | 关联接口：catalog:read, task:create, image:create |
-| `page:task-center` | 任务中心 | 关联接口：task:read, task:create, task:update, task:delete, task:read:all, task:retry:any, image:read, model_driver:read |
-| `page:template-specs` | 模板封装 | 关联接口：template_pack:read, template_pack:create, template_pack:publish, library:read, library:case:read, library:case:write |
+| `page:studio` | 生成工作台 | 关联接口：catalog:read, image:create, task:create |
+| `page:task-center` | 任务中心 | 关联接口：image:read, model_driver:read, task:create, task:delete, task:read, task:read:all, task:retry:any, task:update |
+| `page:template-specs` | 模板封装 | 关联接口：library:case:read, library:case:write, library:read, template_pack:create, template_pack:publish, template_pack:read |
 | `page:templates` | 模板库 | 关联接口：template_pack:read |
-| `page:user-access` | 用户与权限 | 关联接口：identity:read, identity:create, identity:update, identity:delete, identity:role:manage, identity:team:manage, identity:group:read, identity:group:create, identity:group:update, identity:group:delete, identity:group:member:manage, identity:group:permission:manage, identity:user:permission:manage |
+| `page:user-access` | 用户与权限 | 关联接口：identity:create, identity:delete, identity:group:create, identity:group:delete, identity:group:member:manage, identity:group:permission:manage, identity:group:read, identity:group:update, identity:read, identity:role:manage, identity:team:manage, identity:update, identity:user:permission:manage |
 
 > 判定规则：`*` 恒真；`task:*` 这类通配可覆盖 `task:read`；否则按字符串精确匹配。
 

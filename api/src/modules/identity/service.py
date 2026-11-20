@@ -261,7 +261,7 @@ def _permission_out(spec: PermissionSpec) -> PermissionOut:
         code=spec.code,
         name=spec.name,
         description=spec.description,
-        requires=list(page.requires) if page else [],
+        requires=list(page_catalog.requires_of(spec.code)) if page else [],
         route=page.route if page else "",
     )
 
@@ -1973,11 +1973,10 @@ class IdentityService:
             # 都当作新增，重新补一遍 —— 与旧的一次性迁移行为一致。
 
         # 当前的「接口码 → 声明它的页面」映射
-        current: dict[str, list[str]] = {}
-        for page in page_catalog.all():
-            for code in page.requires:
-                current.setdefault(code, []).append(page.code)
-        current = {code: sorted(pages) for code, pages in current.items()}
+        # 映射由接口侧声明生成（`PermissionSpec.pages`），见 `core.pages` 的模块文档。
+        current: dict[str, list[str]] = {
+            code: list(pages) for code, pages in page_catalog.gated().items()
+        }
 
         # 本次要补的 = 这一版才开始受门控的码。
         # 首次运行（没有存档）时，全部受门控的码都算「新增」——

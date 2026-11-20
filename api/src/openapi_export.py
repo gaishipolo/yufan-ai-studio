@@ -704,10 +704,8 @@ def render_permissions() -> str:
             if page is not None:
                 # 页面项带上「关联哪些接口」与路由：前端要把两层关系画出来，
                 # 靠解析 description 里的中文（「关联接口：a, b」）不可靠。
-                extra = (
-                    f", requires: [{', '.join(repr(code) for code in page.requires)}]"
-                    f", route: '{esc(page.route)}'"
-                )
+                apis = ", ".join(repr(code) for code in page_catalog.requires_of(spec.code))
+                extra = f", requires: [{apis}], route: '{esc(page.route)}'"
             lines.append(
                 f"      {{ code: '{esc(spec.code)}', name: '{esc(spec.name)}', "
                 f"description: '{esc(spec.description)}'{extra} }},"

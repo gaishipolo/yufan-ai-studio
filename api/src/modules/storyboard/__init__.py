@@ -11,14 +11,18 @@ module = ModuleSpec(
     router=router,
     tags=["分镜模板"],
     permissions=(
-        PermissionSpec("storyboard:read", "查看分镜模板", group="内容生产"),
+        PermissionSpec(
+            "storyboard:read",
+            "查看分镜模板",
+            group="内容生产",
+            pages=("page:storyboards",),
+        ),
     ),
     pages=(
         PageSpec(
             code="page:storyboards",
             name="分镜模板库",
             route="/storyboards",
-            requires=("storyboard:read",),
         ),
     ),
     seed=seed_demo,

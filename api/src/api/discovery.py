@@ -113,7 +113,12 @@ def discover_modules(package_name: str = MODULES_PACKAGE) -> tuple[ModuleSpec, .
     pages = [page for spec in specs for page in spec.pages]
     if pages:
         page_catalog.declare(*pages)
-        catalog.declare(*[page.permission for page in pages])
+        # 反向索引来自**接口侧**的 `pages=`（见 `core.pages` 的模块文档）。
+        # 必须整份 bind：页面可能被别的模块的接口引用（`task:create` 归「生成工作台」，
+        # 那个页面声明在 catalog 模块），逐模块增量维护会在这一步漏掉。
+        page_catalog.bind(catalog.all())
+        # 页面权限点进目录放在 bind 之后：描述里的「关联接口」正是索引算出来的。
+        catalog.declare(*page_catalog.permission_specs())
 
     # 引用来源是「必须接上」的声明：在这里并入期望集合，删除接口才能做完备性对账。
     # 模块 import 期注册的是实现，两者缺一都会让删除 fail-closed（503）。

@@ -63,19 +63,6 @@ module = ModuleSpec(
             code="page:task-center",
             name="任务中心",
             route="/tasks",
-            requires=(
-                "task:read",
-                "task:create",
-                "task:update",
-                "task:delete",
-                "task:read:all",
-                "task:retry:any",
-                "image:read",
-                # 顶部的 LibTV 额度条要读 `/model-driver/libtv/account`，
-                # 它由 `model_driver:read` 把关。不声明的话这一页就管不到它 ——
-                # 关掉任务中心，额度条的数据接口仍然可用。
-                "model_driver:read",
-            ),
         ),
     ),
     startup=_startup,

@@ -11,10 +11,10 @@ module = ModuleSpec(
     router=router,
     tags=["镜头库"],
     permissions=(
-        PermissionSpec("shot:read", "查看镜头库", group="内容生产"),
+        PermissionSpec("shot:read", "查看镜头库", group="内容生产", pages=("page:shots",)),
     ),
     pages=(
-        PageSpec(code="page:shots", name="镜头库", route="/shots", requires=("shot:read",)),
+        PageSpec(code="page:shots", name="镜头库", route="/shots"),
     ),
     seed=seed_demo,
     seed_order=50,

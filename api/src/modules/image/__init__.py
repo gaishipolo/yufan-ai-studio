@@ -48,14 +48,6 @@ module = ModuleSpec(
             code="page:image",
             name="生图",
             route="/image",
-            requires=(
-                "image:read",
-                "image:create",
-                "image:read:all",
-                "image:retry:any",
-                "image:delete",
-                "catalog:read",
-            ),
         ),
     ),
     # 演示数据由模块自带：`app seed` 会遍历所有模块的 seed 钩子

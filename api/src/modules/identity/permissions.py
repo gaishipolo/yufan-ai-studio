@@ -43,8 +43,8 @@ PERM_GROUP_PERMISSION_MANAGE: Final = "identity:group:permission:manage"
 PERM_USER_PERMISSION_MANAGE: Final = "identity:user:permission:manage"
 
 SPECS: tuple[PermissionSpec, ...] = (
-    PermissionSpec(PERM_READ, "查看用户与角色", group="组织管理"),
-    PermissionSpec(PERM_CREATE, "创建用户", group="组织管理"),
+    PermissionSpec(PERM_READ, "查看用户与角色", group="组织管理", pages=("page:user-access",)),
+    PermissionSpec(PERM_CREATE, "创建用户", group="组织管理", pages=("page:user-access",)),
     PermissionSpec(
         PERM_UPDATE,
         "编辑用户（含停用、重置密码）",
@@ -53,41 +53,57 @@ SPECS: tuple[PermissionSpec, ...] = (
             "不含分配角色。改他人昵称/头像：目标不能是超管；"
             "重置密码、改他人邮箱、启停账号：目标权限不得高于自己（超管仍需超管）"
         ),
+            pages=("page:user-access",),
     ),
-    PermissionSpec(PERM_DELETE, "停用用户", group="组织管理"),
+    PermissionSpec(PERM_DELETE, "停用用户", group="组织管理", pages=("page:user-access",)),
     PermissionSpec(
         PERM_ROLE_MANAGE,
         "管理角色与权限点",
         group="组织管理",
         description="新建/删除角色、调整角色权限、给用户分配角色",
+        pages=("page:user-access",),
     ),
     PermissionSpec(
         PERM_TEAM_MANAGE,
         "设置团队基础权限",
         group="组织管理",
         description="团队 = 所有启用账号；禁止把 identity:* 或 * 放进这一层",
+        pages=("page:user-access",),
     ),
-    PermissionSpec(PERM_GROUP_READ, "查看小组与成员", group="组织管理"),
-    PermissionSpec(PERM_GROUP_CREATE, "新建小组", group="组织管理"),
-    PermissionSpec(PERM_GROUP_UPDATE, "编辑小组资料", group="组织管理"),
-    PermissionSpec(PERM_GROUP_DELETE, "删除小组", group="组织管理"),
+    PermissionSpec(
+        PERM_GROUP_READ,
+        "查看小组与成员",
+        group="组织管理",
+        pages=("page:user-access",),
+    ),
+    PermissionSpec(PERM_GROUP_CREATE, "新建小组", group="组织管理", pages=("page:user-access",)),
+    PermissionSpec(
+        PERM_GROUP_UPDATE,
+        "编辑小组资料",
+        group="组织管理",
+        pages=("page:user-access",),
+    ),
+    PermissionSpec(PERM_GROUP_DELETE, "删除小组", group="组织管理", pages=("page:user-access",)),
     PermissionSpec(
         PERM_GROUP_MEMBER_MANAGE,
         "分配小组成员",
         group="组织管理",
         description="整组替换成员；一人可属多组",
+        pages=("page:user-access",),
     ),
     PermissionSpec(
         PERM_GROUP_PERMISSION_MANAGE,
         "设置小组整体权限",
         group="组织管理",
         description="该组所有成员自动获得；个人权限只增不减",
+        pages=("page:user-access",),
     ),
     PermissionSpec(
         PERM_USER_PERMISSION_MANAGE,
         "设置个人权限",
         group="组织管理",
         description="单独授予，与团队/小组/角色取并集；不能授出自己没有的权限",
+        pages=("page:user-access",),
     ),
 )
 
