@@ -1,4 +1,5 @@
 import { api } from '@/shared/api/http';
+import type { PermissionTreeOut } from '@/shared/api/schema';
 import { createRestResource } from '@/shared/api/rest';
 import type {
   CreateUserPayload,
@@ -38,6 +39,14 @@ export const userApi = {
 
   /** 停用（保留历史归属）：后端用 DELETE 表达，返回停用后的用户 */
   deactivate: (id: string) => api.delete<User>(`${base}/${id}`),
+
+  /**
+   * 「分组 → 用户」的完整树。
+   *
+   * 不用「小组列表 + 用户列表」在前端拼：用户列表每页最多 100 条，
+   * 拼出来的树在人多时会**静默少人**，而树是导航 —— 少一行等于少一个能配权限的人。
+   */
+  permissionTree: () => api.get<PermissionTreeOut>('/identity/permission-tree'),
 };
 
 /* 这里曾经还有一个 `identityApi`（me / updateProfile / changePassword），

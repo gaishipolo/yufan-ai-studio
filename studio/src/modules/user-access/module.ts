@@ -23,13 +23,5 @@ export default defineModule({
         groupOrder: 9,
       },
     },
-    {
-      /* 某人的权限总览。**故意没有 `nav`**：它是「用户与权限」的下钻页，
-         不是新的目的地 —— 侧栏入口由 `route.nav` 派生，不写就不出现在侧栏。
-         权限沿用父页：能进这一页的人才该看到某人的权限明细。 */
-      path: 'system/user-access/users/:userId/permissions',
-      load: () => import('@/pages/user-access/UserPermissionsPage'),
-      permissions: ['page:user-access'],
-    },
   ],
 });

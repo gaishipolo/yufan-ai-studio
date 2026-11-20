@@ -30,6 +30,14 @@ export function useUserDetail(id: string | null) {
   });
 }
 
+export function usePermissionTree() {
+  return useQuery({
+    queryKey: [...userKeys.all, 'permission-tree'] as const,
+    queryFn: () => userApi.permissionTree(),
+    staleTime: 10_000,
+  });
+}
+
 export function useCreateUser() {
   const qc = useQueryClient();
   return useMutation({
