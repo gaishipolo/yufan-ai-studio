@@ -83,6 +83,19 @@ export function useEffectivePermissions(userId: string | null) {
   });
 }
 
+/**
+ * 写个人例外。**整组替换**：传的是「关掉哪几项」的完整清单，
+ * 所以调用方要从当前清单里增删，而不是只传变化的那一项。
+ */
+export function useSetPermissionExceptions() {
+  const invalidate = useInvalidateLayers();
+  return useMutation({
+    mutationFn: ({ userId, exceptions }: { userId: string; exceptions: string[] }) =>
+      groupApi.setPermissionExceptions(userId, exceptions),
+    onSuccess: invalidate,
+  });
+}
+
 export function useCreateGroup() {
   const invalidate = useInvalidateLayers();
   return useMutation({

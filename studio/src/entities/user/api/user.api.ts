@@ -24,6 +24,7 @@ const resource = createRestResource<User, UserListResult, UserListParams>(base);
 
 export const userApi = {
   list: resource.list,
+  detail: resource.detail,
 
   create: (payload: CreateUserPayload) => api.post<User>(base, payload),
   update: (id: string, payload: UpdateUserPayload) => api.patch<User>(`${base}/${id}`, payload),

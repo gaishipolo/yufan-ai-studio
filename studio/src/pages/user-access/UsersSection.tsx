@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { AlertCircle, Plus, RefreshCw, ShieldCheck, UserRound } from 'lucide-react';
 import { Button, Chip, EmptyState, SearchInput, Select, Skeleton } from '@/shared/ui';
 import { Can } from '@/shared/access/Can';
@@ -19,11 +20,6 @@ import { ResetPasswordModal } from '@/features/user-security/ResetPasswordModal'
 import { DeactivateUserModal } from '@/features/user-security/DeactivateUserModal';
 import { GroupEditorModal } from '@/features/group-editor/GroupEditorModal';
 import { RoleFormModal } from '@/features/role-editor/RoleFormModal';
-import { EffectivePermissionsModal } from '@/features/permission-layers/EffectivePermissionsModal';
-import {
-  LayerPermissionsModal,
-  type LayerTarget,
-} from '@/features/permission-layers/LayerPermissionsModal';
 import { GroupPanel } from './GroupPanel';
 import { UserTableFooter } from './UserTableFooter';
 
@@ -33,8 +29,6 @@ type Dialog =
   | 'roles'
   | 'password'
   | 'deactivate'
-  | 'effective'
-  | 'personal'
   | 'group'
   | null;
 
@@ -58,6 +52,7 @@ const GRID =
  * 不进 `Subject`、不参与 `can()`。合并规则只在后端有一份。
  */
 export function UsersSection() {
+  const navigate = useNavigate();
   const subject = useSubject();
   const [name, setName] = useState('');
   const [username, setUsername] = useState('');
@@ -111,11 +106,6 @@ export function UsersSection() {
   const total = data?.total ?? 0;
   const totalPages = data ? Math.max(1, Math.ceil(total / pageSize)) : 0;
   const items = data?.items ?? [];
-
-  const layerTarget: LayerTarget | null =
-    dialog === 'personal' && active
-      ? { kind: 'user', id: active.id, name: displayNameOf(active) }
-      : null;
 
   return (
     <>
@@ -313,7 +303,11 @@ export function UsersSection() {
                         </div>
 
                         <div className="flex flex-wrap items-center justify-start gap-0.5 md:justify-end">
-                          <Button size="sm" variant="ghost" onClick={() => open('effective', user)}>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => navigate(`/system/user-access/users/${user.id}/permissions`)}
+                          >
                             权限
                           </Button>
                           <Can permission="identity:update">
@@ -420,13 +414,6 @@ export function UsersSection() {
       <ResetPasswordModal open={dialog === 'password'} user={active} onClose={close} />
       <DeactivateUserModal open={dialog === 'deactivate'} user={active} onClose={close} />
       <GroupEditorModal open={dialog === 'group'} group={activeGroup} onClose={close} />
-      <EffectivePermissionsModal
-        open={dialog === 'effective'}
-        user={active}
-        onClose={close}
-        onEditPersonal={() => setDialog('personal')}
-      />
-      <LayerPermissionsModal open={Boolean(layerTarget)} target={layerTarget} onClose={close} />
     </>
   );
 }

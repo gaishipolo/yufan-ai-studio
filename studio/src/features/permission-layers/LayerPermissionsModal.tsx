@@ -125,8 +125,9 @@ function LayerForm({
  * 团队层禁三类：
  * - `*`：等于把全站变成超管；
  * - `identity:` 前缀：等于给所有人发「管理组织」的票；
- * - `page:` 前缀：团队层没有 deny，页面放进来就再也拿不掉，
- *   而「关掉某个人进某一页」正是页面权限存在的意义（详见 docs/PERMISSION_PAGES.md）。
+ * - `page:` 前缀：**团队层没有 deny**（例外只存在于个人层，见 docs/EXCEPTIONS.md），
+ *   页面放进来就对所有人任何情况下都关不掉，而「关掉某个人进某一页」
+ *   正是页面权限存在的意义（详见 docs/PERMISSION_PAGES.md）。
  */
 const teamForbidden = (code: string) =>
   code === '*' || code.startsWith('identity:') || code.startsWith('page:');
@@ -199,14 +200,26 @@ function UserLayer({ id, name, onClose }: { id: string; name: string; onClose: (
     return map;
   }, [effectiveQuery.data, codes]);
 
+  /*
+   * 例外**不在这一层编辑**（它是另一个方向：这里是「给他什么」，例外是「关掉什么」）。
+   * 但不说的话，打开这个弹窗看到一片勾选，会以为「他什么都被关着」或反之 ——
+   * 状态看不见又猜不到，所以留一句只讲事实的话。
+   */
+  const deniedCount = effectiveQuery.data?.denied?.length ?? 0;
+
   return (
     <LayerForm
       title={`个人权限 · ${name}`}
-      /* 两句都是**约束**，不是解释：
-         1. 勾选框里灰色的是「别的层已授」—— 生效中，但不由这一层决定，
-            在这里点不动；要撤它，去改那个层（角色 / 团队 / 小组）。
-         2. 这里能改的只有个人层，取消勾选只移除这一层的授予。 */
-      description="灰色的勾选框是团队、小组或角色已经授予的权限 —— 已经生效，但在这一层改不了，要撤销请到对应的层去改。取消勾选只移除个人这一层的授予。"
+      /* 三句都是**约束**，不是解释：
+         1. 灰色勾选框是「别的层已授」—— 生效中，但不由这一层决定，在这里点不动；
+         2. 取消勾选只移除个人这一层的授予；
+         3. 例外不在这里编辑（它在「权限总览」里，方向相反）。 */
+      description={
+        (deniedCount > 0
+          ? `已对这个账号单独关闭 ${deniedCount} 项，它们不在这个列表里，要恢复请到权限总览。`
+          : '') +
+        '灰色的勾选框是团队、小组或角色已经授予的权限 —— 已经生效，但在这一层改不了，要撤销请到对应的层去改。取消勾选只移除个人这一层的授予。'
+      }
       currentCodes={codes}
       inherited={inherited}
       loading={query.isLoading || effectiveQuery.isLoading}
