@@ -42,10 +42,14 @@ class MemoryJobQueue:
         self._by_key: dict[str, str] = {}
         #: 已领走、尚未 ack/nack 的 job id。用于「不能删掉别人正在跑的那一行」。
         self._running: set[str] = set()
-        #: 父 job id → 续接的下一跳。与 db 驱动的 `next_job` 列**同一语义**：
-        #: handler 用同一个幂等键排下一跳时（生成轮询的典型形状），不新建条目，
-        #: 挂在父任务上，等 ack 时原地转成 pending。
-        self._next: dict[str, Job] = {}
+        #: 父 job id → (续接的下一跳, 它的**到期时刻**)。与 db 驱动的 `next_job` 列
+        #: 同一语义：handler 用同一个幂等键排下一跳时（生成轮询的典型形状），
+        #: 不新建条目，挂在父任务上，等 ack 时原地转成 pending。
+        #:
+        #: 记绝对到期时刻而不是 `delay`：`delay` 是从**入队那一刻**起算的，而 ack
+        #: 发生在 handler 结束之后 —— 存 delay 会在 ack 时重新起算，把已经等过的
+        #: 那段时间再加一遍。db 驱动存的是 `run_at` 的绝对时间，这里对齐它。
+        self._next: dict[str, tuple[Job, float]] = {}
         #: 死信：与 db 驱动的 `status='dead'` 行对应，进程内只留最近若干条。
         self._dead: list[dict[str, Any]] = []
         self._cv = asyncio.Condition()
@@ -63,7 +67,15 @@ class MemoryJobQueue:
                 # 续接：handler 在**自己的执行期**里排下一跳（生成轮询的典型形状）。
                 # 不新建条目、也不撞幂等键，挂到父任务上，等 ack 原地转 pending ——
                 # 与 db 驱动把下一跳写进 `next_job` 列完全同构。
-                self._next[parent.id] = job
+                #
+                # **延迟必须一起带过去**：轮询节奏（`GENERATION_POLL_INTERVAL_SEC`
+                # / 驱动的 `poll_interval_sec`）全靠这个 `delay` 落地。以前这里只存
+                # job、ack 时按 `delay=0` 入堆，于是在默认配置（`QUEUE_DRIVER=memory`）
+                # 下每一跳都被立刻重排，轮询退化成忙循环：实测单跳约 0.38 秒，
+                # `GENERATION_MAX_POLLS=900` 在 ~5.7 分钟内就烧完 —— 一个正常要
+                # 6-8 分钟的视频必然被判「生成超时，请重试」，而上游其实还在正常生成。
+                loop = asyncio.get_running_loop()
+                self._next[parent.id] = (job, loop.time() + max(0.0, delay))
                 return parent.id
             if key and key in self._by_key:
                 # 同键只留一条：pending 与 running 都算占用（与 db 驱动一致）
@@ -127,8 +139,11 @@ class MemoryJobQueue:
             self._running.discard(job.id)
             successor = self._next.pop(job.id, None)
             if successor is not None:
-                # 原地转 pending：幂等键继续占着（这条链还没有结束），不新建条目
-                self._push(successor, delay=0)
+                # 原地转 pending：幂等键继续占着（这条链还没有结束），不新建条目。
+                # 延迟按**到期时刻**折算：入队时就已经过了的点立刻可跑，与 db 驱动
+                # ack 时读 `next_job.run_at` 同口径。
+                staged, run_at = successor
+                self._push(staged, delay=max(0.0, run_at - asyncio.get_running_loop().time()))
                 self._cv.notify()
                 return
             key = job.idempotency_key

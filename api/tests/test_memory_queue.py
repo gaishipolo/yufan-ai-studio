@@ -133,6 +133,38 @@ def test_continuation_on_the_same_key_does_not_create_a_second_entry() -> None:
     assert size_after_ack == 1, "ack 之后下一跳应当已经就位（父任务那条转成了 pending）"
 
 
+def test_continuation_keeps_the_delay() -> None:
+    """续接的下一跳必须等满 `delay` 才可领取。
+
+    轮询节奏（`GENERATION_POLL_INTERVAL_SEC` / 驱动的 `poll_interval_sec`）全靠
+    这个延迟落地。曾经 `ack` 里按 `delay=0` 原地重排，默认配置
+    （`QUEUE_DRIVER=memory`）下轮询退化成忙循环：实测单跳约 0.38 秒，
+    `GENERATION_MAX_POLLS=900` 在 ~5.7 分钟内烧完 —— 一个正常要 6-8 分钟的视频
+    必然被判「生成超时，请重试」，而上游其实还在正常生成。
+    """
+
+    async def scenario() -> tuple[Job | None, Job | None, float]:
+        queue = MemoryJobQueue()
+        await queue.enqueue(_job(key="poll:t1"))
+        claimed = await queue.dequeue(timeout=1.0)
+        assert claimed is not None
+
+        with job_execution(claimed):
+            await queue.enqueue(_job(key="poll:t1"), delay=0.3)
+
+        await queue.ack(claimed)
+        started = asyncio.get_running_loop().time()
+        too_early = await queue.dequeue(timeout=0.1)
+        waited = asyncio.get_running_loop().time() - started
+        # 等过 delay 之后必须能取到：只证明「没立刻返回」还不够，那也可能是排丢了
+        on_time = await queue.dequeue(timeout=1.0)
+        return too_early, on_time, waited
+
+    too_early, on_time, waited = asyncio.run(scenario())
+    assert too_early is None, f"续接的下一跳应当等满 delay，却在 {waited:.3f}s 就被领走"
+    assert on_time is not None, "delay 到期后下一跳必须可领取"
+
+
 def test_nack_drops_the_staged_continuation() -> None:
     """这一跳失败，它的下一跳也作废（db 在 nack 里同样清 `next_job`）。"""
 
