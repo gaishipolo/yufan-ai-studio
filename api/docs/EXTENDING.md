@@ -689,7 +689,7 @@ await get_runner(self.queue).dispatch("music", record.id)
 | 重试分类 | **确定没送达**（4xx 拒绝、根本连不上）→ 清标记按 2s、4s 退避重试（共 3 次尝试）；**可能已送达**（读/写超时、连接中途断开）→ 保留标记直接置为「结果未知」，不赌、不重提 |
 | 轮询健壮性 | 单次轮询里的 DB 异常只算「这一跳失败」，链路继续，不会永久 running |
 | 不占线程 | 轮询用**延迟投递**，handler 内没有 `sleep` |
-| 超时 | 超过 `GENERATION_MAX_POLLS` 自动置为失败 |
+| 超时 | 墙钟（`GENERATION_TIMEOUT_SEC`）与次数（`GENERATION_MAX_POLLS`）双上限，两者先到先算；失败文案会带上判据 |
 | 事件 | 发出 `generation.succeeded` 等事件，供通知/计费订阅 |
 
 两个口径说明，免得接手的人以为是 bug：
@@ -697,6 +697,30 @@ await get_runner(self.queue).dispatch("music", record.id)
 - **轮询预算按进程计**：`GENERATION_MAX_POLLS` 是「本次进程生命周期」内的计数，
   重启归零。反复重启的极端情况下单条任务可能超过 `generation_timeout_sec`
   仍在轮询；要按墙钟算就得持久化计数（当前取舍：重启是异常事件，供应商侧有自己的超时兜底）。
+- **两个上限通常一个用不到**：`GENERATION_MAX_POLLS × 轮询间隔`（默认 900×5=4500 秒）
+  远大于墙钟 1800 秒，所以真正生效的几乎总是墙钟。看到「生成超时」时，
+  先看文案里写的是哪条判据，别默认是次数用尽。
+
+### 超时预算有三个层次，别混用
+
+轮询这一跳有三笔时间要花，各自有独立的预算，改任何一笔都要对齐另外两笔：
+
+| 预算 | 位置 | 说明 |
+|---|---|---|
+| 查一次供应商 | `runner._POLL_QUERY_BUDGET_SEC`（48 秒） | `provider.poll()` 的时间上限 |
+| 落盘 | `GENERATION_PERSIST_TIMEOUT_SEC`（300 秒） | `pipeline.persist_output()` 的上限 |
+| 收尾 | `runner._POLL_FINISH_MARGIN_SEC`（120 秒） | 入库、写封面、发事件 |
+
+job 的硬超时（`runner._poll_job_timeout()`）必须 **≥ 三者之和**，
+否则最后两段会被 worker 的 `wait_for` 腰斩 —— 症状是 poll job 进死信、
+任务永久停在 running（2026-11-19 的 P1-2 就是这么来的：硬超时固定 60 秒，
+300 秒的落盘预算一次都没生效）。
+
+`persist_output` 还有一个约定：**失败时能不能退回原地址，取决于地址形态**。
+公网 `http(s)` 直链可以退回（片子还在，签名过期前能播）；本地执行器型供应商
+回的是相对路径，那种地址没有路由、也不能当对象 key 用，必须抛
+`OutputNotPersisted` 让框架判失败，不能假装成功——否则就是「已完成 + 播放 404 +
+草稿箱空」三件事同时成立。
 - **「结果未知」不是死路**：任务置为该失败后，用户点重试即可重新提交——
   `retry_task` 与 `mark_submitted` 都会把 `submit_attempts` 复位。
   所以 `mark_submitted` 的实现**必须**复位这个标记（见参考实现），
