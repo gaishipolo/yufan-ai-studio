@@ -1,6 +1,5 @@
 import { useMemo, useState } from 'react';
 import { Loader2, Search } from 'lucide-react';
-import { Chip } from '@/shared/ui';
 import { usePermissionCatalog } from '@/entities/role/api/role.queries';
 import { cn } from '@/shared/lib/cn';
 import { PermissionSummaryBar } from './PermissionSummaryBar';
@@ -227,7 +226,7 @@ export function PermissionPicker({
           <span className="min-w-0">
             <span className="flex flex-wrap items-center gap-1.5">
               {item.name ? (
-                <span className={cn('text-xs', locked ? 'text-ink-mute' : 'text-ink')}>
+                <span className={cn('text-xs', locked ? 'text-ink-mute' : 'text-ink-soft')}>
                   {item.name}
                 </span>
               ) : null}
@@ -239,7 +238,7 @@ export function PermissionPicker({
                   来自 {inherited?.[item.code]?.join('、')}
                 </span>
               ) : null}
-              <Chip>{item.code}</Chip>
+              <span className="font-mono text-micro text-ink-mute">{item.code}</span>
             </span>
             {item.description ? (
               /* 两行封顶：有的说明写了三行，整列行高就参差不齐，
@@ -322,11 +321,11 @@ export function PermissionPicker({
                 key={page.code}
                 className="mb-2 flex min-w-0 break-inside-avoid flex-col rounded-lg border border-line-soft"
               >
-                <header className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-line-soft bg-panel-soft px-2.5 py-1.5">
+                <header className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-line-strong bg-line px-2.5 py-2">
                   {blocked ? null : (
                     <input
                       type="checkbox"
-                      className="h-3 w-3 shrink-0 accent-primary disabled:opacity-40"
+                      className="h-3.5 w-3.5 shrink-0 accent-primary disabled:opacity-40"
                       checked={checked}
                       disabled={locked}
                       onChange={() => toggle(page.code)}
@@ -334,17 +333,20 @@ export function PermissionPicker({
                       aria-label={`${page.name} 页面权限`}
                     />
                   )}
+                  {/* 页面名比接口名**大一档、颜色更深**：一屏九张卡，先认出「有哪几页」，
+                      再看页里有什么。字号不是用来表达意思的（那靠位置与勾选），
+                      这里只用它来分两级。 */}
                   <span
                     className={cn(
-                      'min-w-0 text-xs font-semibold',
-                      locked ? 'text-ink-mute' : 'text-ink-soft',
+                      'min-w-0 text-body font-semibold',
+                      locked ? 'text-ink-mute' : 'text-ink',
                     )}
                     title={locked ? '别的层已经授予这一页' : undefined}
                   >
                     {page.name}
                   </span>
                   {page.route ? (
-                    <span className="text-meta text-ink-mute">{page.route}</span>
+                    <span className="text-micro text-ink-mute">{page.route}</span>
                   ) : null}
                   {locked ? (
                     <span
@@ -369,7 +371,7 @@ export function PermissionPicker({
                 {all.length > 0 ? (
                   <ul
                     className={cn(
-                      'grid gap-0.5 p-1.5 transition-opacity',
+                      'ml-2.5 grid gap-0.5 border-l border-line-soft py-1 pl-2 pr-1.5 transition-opacity',
                       dimmed && 'opacity-55',
                     )}
                   >
@@ -384,7 +386,7 @@ export function PermissionPicker({
 
           {freeShown.length > 0 ? (
             <section className="mb-2 flex min-w-0 break-inside-avoid flex-col rounded-lg border border-line-soft">
-              <header className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-line-soft bg-panel-soft px-2.5 py-1.5">
+              <header className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-line-strong bg-line px-2.5 py-2">
                 <span className="text-xs font-semibold text-ink-soft">后台能力</span>
                 <span className="ml-auto text-meta tabular-nums text-ink-mute">
                   {model.free.length}
@@ -398,7 +400,7 @@ export function PermissionPicker({
 
           {offCatalog.length > 0 ? (
             <section className="mb-2 flex min-w-0 break-inside-avoid flex-col rounded-lg border border-line-soft">
-              <header className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-line-soft bg-panel-soft px-2.5 py-1.5">
+              <header className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-line-strong bg-line px-2.5 py-2">
                 <span className="text-xs font-semibold text-ink-soft">目录外</span>
                 <span className="ml-auto text-meta tabular-nums text-ink-mute">
                   {offCatalog.length}
