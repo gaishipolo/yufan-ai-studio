@@ -1010,12 +1010,15 @@ export function SpecWorkspace() {
                       moveGroupTo(group, at);
                     }}
                   >
-                    {over === `run:${run.group}:before` && <DropLine at="before" scope="group" />}
+                    {(over === `run:${run.group}:before` ||
+                      over === `before-group:${run.group}`) && (
+                      <DropLine at="before" scope="group" />
+                    )}
                     <div
                       data-slot-group={run.group}
                       className={cn(
                         'rounded-xl border border-primary-line/50 bg-primary-soft/20 px-2 pb-2 pt-1 transition-shadow',
-                        // 拖到框上（不是某一行）= 追加到这个容器的末尾，整块亮一下
+                        // 拖到框的**下半**（底部按钮那一圈）= 追加到这个容器的末尾
                         over === `box:${run.group}` && 'ring-2 ring-primary/35',
                         // 拖的就是这个封装：淡一档，表示「它正在被搬走」
                         drag?.kind === 'group' && drag.group === run.group && 'opacity-50',
@@ -1023,19 +1026,35 @@ export function SpecWorkspace() {
                       onDragOver={event => {
                         if (drag?.kind !== 'slot') return;
                         /* 行自己会 `stopPropagation`，所以能走到这里就说明指针在框的
-                           空白处（标题栏 / 底部按钮那一圈）：那是「丢进这个封装」，
-                           落到最后一个成员后面。 */
+                           **空白处** —— 只有两头：标题栏和底部按钮那一圈。
+                           上半是标题栏：那是「插到这个封装**前面**」（另起一格，顶层）；
+                           下半是底部：那是「丢进这个封装」（追加到末尾）。
+
+                           以前整块框都算「追加到末尾」，于是「把外面的槽位插到封装
+                           前面」在容器排第一时**完全没有落点** —— 它上面没有行可以让
+                           你拖到「某一行的下半区」。 */
                         event.preventDefault();
-                        const next = `box:${run.group}`;
+                        const rect = event.currentTarget.getBoundingClientRect();
+                        const next =
+                          event.clientY - rect.top < rect.height / 2
+                            ? `before-group:${run.group}`
+                            : `box:${run.group}`;
                         setOver(current => (current === next ? current : next));
                       }}
                       onDrop={event => {
                         if (drag?.kind !== 'slot') return;
                         event.preventDefault();
-                        const last = run.members[run.members.length - 1];
+                        const rect = event.currentTarget.getBoundingClientRect();
+                        const before = event.clientY - rect.top < rect.height / 2;
                         const key = drag.key;
                         setOver(null);
                         setDrag(null);
+                        if (before) {
+                          // 插到容器的第一个成员**之前**，但归**顶层**（group 空）
+                          moveSlotTo(key, run.members[0].index, '');
+                          return;
+                        }
+                        const last = run.members[run.members.length - 1];
                         moveSlotTo(key, last.index + 1, run.group);
                       }}
                     >

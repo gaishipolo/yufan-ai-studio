@@ -676,6 +676,26 @@ describe('模板封装 · 拖动槽位进出封装', () => {
     fireEvent(el, new MouseEvent(type, {bubbles: true, cancelable: true, clientY}));
   }
 
+  /** 给封装框造一个 200px 高的真实框（jsdom 里全是 0，上下半判定会失效）。 */
+  function boxOf(group: string) {
+    const box = document.querySelector(`[data-slot-group="${group}"]`);
+    if (!box) throw new Error(`找不到封装 ${group}`);
+    vi.spyOn(box, 'getBoundingClientRect').mockReturnValue({
+      top: 0, bottom: 200, height: 200, left: 0, right: 300, width: 300, x: 0, y: 0,
+      toJSON: () => ({}),
+    } as DOMRect);
+    return box;
+  }
+
+  /** 拖 `from` 到封装框的**空白处**：`top` = 标题栏，`bottom` = 底部按钮那一圈。 */
+  function dragToBox(from: string, group: string, half: 'top' | 'bottom') {
+    fireEvent.dragStart(handleOf(from));
+    const box = boxOf(group);
+    const clientY = half === 'top' ? 20 : 180;
+    fireDrag(box, 'dragover', clientY);
+    fireDrag(box, 'drop', clientY);
+  }
+
   /** 拖 `from` 到 `to` 这一行的上半 / 下半区然后松手。 */
   function drag(from: string, to: string, edge: 'before' | 'after') {
     const clientY = edge === 'before' ? 5 : 35;
@@ -737,20 +757,51 @@ describe('模板封装 · 拖动槽位进出封装', () => {
     expect(moved.group).toBe('g1');
   });
 
-  it('拖到封装框的空白处（标题栏 / 底部）＝ 追加到容器末尾', async () => {
+  it('拖到封装框的底部按钮那一圈 ＝ 追加到容器末尾', async () => {
     const user = await enter();
 
-    /* 行自己会 `stopPropagation`，所以能落到框上的只有「框的空白处」。
-       那一圈没有精确位置可言，语义只能是「丢进这个封装」。 */
-    const box = document.querySelector('[data-slot-group="g1"]') as HTMLElement;
+    /* 行自己会 `stopPropagation`，所以能落到框上的只有「框的空白处」——
+       两头：标题栏和底部。底部这一带没有精确位置可言，语义就是「丢进这个
+       封装」（落最后一个成员后面）。 */
     fireEvent.dragStart(handleOf('extra'));
-    fireEvent(box, new MouseEvent('dragover', {bubbles: true, cancelable: true, clientY: 8}));
+    const box = boxOf('g1');
+    fireDrag(box, 'dragover', 180);
     expect(box.className).toContain('ring-2');
-    fireEvent(box, new MouseEvent('drop', {bubbles: true, cancelable: true, clientY: 8}));
+    fireDrag(box, 'drop', 180);
 
     const sent = await saveDraft(user);
     expect(sent.slots!.map(slot => slot.key)).toEqual(['left', 'right', 'extra', 'loose']);
     expect(sent.slots!.find(slot => slot.key === 'extra')!.group).toBe('g1');
+  });
+
+  it('拖到封装框的标题栏 ＝ 插到这个封装**前面**（顶层，不进容器）', async () => {
+    /* 回归：以前整块框都算「追加到末尾」，容器排第一时「插到它前面」没有任何
+       落点 —— 它上面没有行可以让你拖到「某一行的下半区」。 */
+    const user = await enter();
+
+    fireEvent.dragStart(handleOf('extra'));
+    const box = boxOf('g1');
+    fireDrag(box, 'dragover', 20);
+    // 拖的过程中画的是**框上方那条线**，不是整框高亮 —— 后者会被读成「放进这个封装」
+    expect(document.querySelector('[data-drop-line="before"]')).not.toBeNull();
+    expect(box.className).not.toContain('ring-2');
+    fireDrag(box, 'drop', 20);
+
+    const sent = await saveDraft(user);
+
+    expect(sent.slots!.map(slot => slot.key)).toEqual(['extra', 'left', 'right', 'loose']);
+    // 插在容器前面 ≠ 加入容器
+    expect(sent.slots!.find(slot => slot.key === 'extra')!.group ?? '').toBe('');
+  });
+
+  it('把容器里的成员拖到标题栏 ＝ 移出到容器前面', async () => {
+    const user = await enter();
+
+    dragToBox('left', 'g1', 'top');
+    const sent = await saveDraft(user);
+
+    expect(sent.slots!.map(slot => slot.key)).toEqual(['left', 'right', 'loose', 'extra']);
+    expect(sent.slots!.find(slot => slot.key === 'left')!.group ?? '').toBe('');
   });
 
   it('固定槽位拖不进封装（会把钉住的那张静默丢掉）', async () => {
