@@ -617,7 +617,6 @@ describe('模板封装 · 拖动槽位进出封装', () => {
     key,
     type: 'image' as const,
     binding: 'user' as const,
-    pickMode: 'asset' as const,
     minCount: 1,
     maxCount: 1,
     label,
@@ -630,8 +629,8 @@ describe('模板封装 · 拖动槽位进出封装', () => {
     model: 'bailian-wan3-prime-replacement',
     prompt: '把{{Mixed 1}}和{{Mixed 2}}左右拼接为一张图',
     slots: [
-      imageSlot('left', '左图', {group: 'g1', pickMode: 'pack', position: 0}),
-      imageSlot('right', '右图', {group: 'g1', pickMode: 'pack', position: 1}),
+      imageSlot('left', '左图', {group: 'g1', position: 0}),
+      imageSlot('right', '右图', {group: 'g1', position: 1}),
       imageSlot('loose', '补充图', {position: 2}),
       imageSlot('extra', '第五张', {position: 3}),
     ],
@@ -708,9 +707,8 @@ describe('模板封装 · 拖动槽位进出封装', () => {
 
     expect(sent.slots!.map(slot => slot.key)).toEqual(['left', 'extra', 'right', 'loose']);
     const moved = sent.slots!.find(slot => slot.key === 'extra')!;
+    // 归属改成容器 = 模板库那一格从「列散图」变成「列包」，不需要另一个字段
     expect(moved.group).toBe('g1');
-    // 进了封装就只能从包取：来源跟着变，否则这一格在模板库里还会列散图
-    expect(moved.pickMode).toBe('pack');
   });
 
   it('把封装里的槽位拖出来：组清空，来源保留', async () => {
@@ -723,12 +721,11 @@ describe('模板封装 · 拖动槽位进出封装', () => {
     expect(sent.slots!.map(slot => slot.key)).toEqual(['right', 'left', 'loose', 'extra']);
     const moved = sent.slots!.find(slot => slot.key === 'left')!;
     expect(moved.group ?? '').toBe('');
-    /* 拖出来表示「这一格不再跟那套绑定」，不表示「不再从包里取」——
-       作者的来源声明不该被一次拖动静默改掉（独立槽位能自己改回来）。 */
-    expect(moved.pickMode).toBe('pack');
+    // 出容器 = 回到「从候选素材里挑」，这也是判据本身，没有第二个字段要跟着改
+    expect(moved.key).toBe('left');
   });
 
-  it('容器内换序不动归属：还是那个组、还是从包取', async () => {
+  it('容器内换序不动归属：还是那个组（也就是还从包取）', async () => {
     const user = await enter();
 
     // 「左图」拖到「右图」下半区 —— 同一个容器里换个位置
@@ -738,7 +735,6 @@ describe('模板封装 · 拖动槽位进出封装', () => {
     expect(sent.slots!.map(slot => slot.key)).toEqual(['right', 'left', 'loose', 'extra']);
     const moved = sent.slots!.find(slot => slot.key === 'left')!;
     expect(moved.group).toBe('g1');
-    expect(moved.pickMode).toBe('pack');
   });
 
   it('拖到封装框的空白处（标题栏 / 底部）＝ 追加到容器末尾', async () => {
@@ -819,5 +815,115 @@ describe('模板封装 · 拖动槽位进出封装', () => {
     // 拖到自己身上不画线：那里没有「插到自己前面」这回事
     fireDrag(rowOf('extra'), 'dragover', 5);
     expect(document.querySelector('[data-drop-line]')).toBeNull();
+  });
+});
+
+/**
+ * 整个封装也能拖。
+ *
+ * 不止一个封装时，「谁在前」是作者要表达的（模板库按槽位顺序编号，
+ * 封装的先后影响 `{{Mixed N}}`）。整块搬而不是逐格拖：成员必须相邻，
+ * 一格一格搬中间会出现「容器断成两截」的瞬时状态。
+ */
+describe('模板封装 · 拖动整个封装', () => {
+  const imageSlot = (key: string, label: string, extra: Record<string, unknown> = {}) => ({
+    key,
+    type: 'image' as const,
+    binding: 'user' as const,
+    minCount: 1,
+    maxCount: 1,
+    label,
+    ...extra,
+  });
+
+  const draft = (): TemplateSpecIn => ({
+    key: 'spec-1',
+    name: '商品图模板',
+    model: 'bailian-wan3-prime-replacement',
+    prompt: '把{{Mixed 1}}和{{Mixed 2}}左右拼接为一张图',
+    slots: [
+      imageSlot('left', '左图', {group: 'g1', position: 0}),
+      imageSlot('right', '右图', {group: 'g1', position: 1}),
+      imageSlot('loose', '补充图', {position: 2}),
+      imageSlot('extra', '第五张', {position: 3}),
+    ],
+  });
+
+  function rowOf(key: string) {
+    const row = document.querySelector(`[data-slot-key="${key}"]`);
+    if (!row) throw new Error(`找不到槽位 ${key} 的行`);
+    vi.spyOn(row, 'getBoundingClientRect').mockReturnValue({
+      top: 0, bottom: 40, height: 40, left: 0, right: 100, width: 100, x: 0, y: 0,
+      toJSON: () => ({}),
+    } as DOMRect);
+    return row;
+  }
+
+  function fireDrag(el: Element, type: 'dragover' | 'drop', clientY: number) {
+    fireEvent(el, new MouseEvent(type, {bubbles: true, cancelable: true, clientY}));
+  }
+
+  /** 拖整个封装：抓框头那个柄。 */
+  function dragGroup(group: string, toKey: string, edge: 'before' | 'after') {
+    const handle = document.querySelector(`[data-group-handle="${group}"]`)!;
+    fireEvent.dragStart(handle);
+    const row = rowOf(toKey);
+    const clientY = edge === 'before' ? 5 : 35;
+    fireDrag(row, 'dragover', clientY);
+    fireDrag(row, 'drop', clientY);
+  }
+
+  async function enter() {
+    const user = userEvent.setup();
+    renderWorkspace([specOf({status: 'draft', draft: draft()})]);
+    await user.click(cardOf('商品图模板').getByRole('button', {name: '编辑'}));
+    mutations.save.mockClear();
+    return user;
+  }
+
+  async function saveDraft(user: ReturnType<typeof userEvent.setup>) {
+    await user.click(screen.getByRole('button', {name: '保存草稿'}));
+    return mutations.save.mock.calls[0][0] as TemplateSpecIn;
+  }
+
+  it('整段挪到某个槽位后面：成员顺序与归属都不变', async () => {
+    const user = await enter();
+
+    // 容器（左图/右图）拖到「补充图」下半区 → 落到它后面
+    dragGroup('g1', 'loose', 'after');
+    const sent = await saveDraft(user);
+
+    expect(sent.slots!.map(slot => slot.key)).toEqual(['loose', 'left', 'right', 'extra']);
+    expect(sent.slots!.filter(slot => slot.group === 'g1').map(slot => slot.key)).toEqual([
+      'left',
+      'right',
+    ]);
+  });
+
+  it('拖到自己的成员行上：画的是「段」的边界，不是行内那条缝', async () => {
+    /* 容器里的行不接「整个封装」这个落点 —— 它会往外冒泡，由「这一段」处理。
+       否则把容器拖到自己某个成员上，高亮会画在成员之间（看起来像要插进去），
+       而实际上它本来就在里面。 */
+    await enter();
+
+    const handle = document.querySelector('[data-group-handle="g1"]')!;
+    fireEvent.dragStart(handle);
+    const row = rowOf('right');
+
+    fireDrag(row, 'dragover', 5);
+    expect(document.querySelector('[data-drop-scope="group"]')).not.toBeNull();
+    expect(document.querySelector('[data-drop-scope="row"]')).toBeNull();
+  });
+
+  it('拖动时画的是「段与段之间」那条缝，不是行内位置', async () => {
+    await enter();
+
+    const handle = document.querySelector('[data-group-handle="g1"]')!;
+    fireEvent.dragStart(handle);
+    const row = rowOf('loose');
+
+    fireDrag(row, 'dragover', 5);
+    expect(document.querySelector('[data-drop-line="before"]')).not.toBeNull();
+    expect(document.querySelector('[data-drop-line="after"]')).toBeNull();
   });
 });
