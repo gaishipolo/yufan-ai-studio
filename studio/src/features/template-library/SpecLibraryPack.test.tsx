@@ -9,10 +9,10 @@ import {SpecLibrary} from './SpecLibrary';
 /**
  * 模板库 · 在槽位网格里点一个封装包。
  *
- * 槽位声明 `pickMode=pack` 时只从封装包里取，点一次包就是**一次填好几格** ——
+ * 槽位在同一个容器（`group`）里时只从封装包里取，点一次包就是**一次填好几格** ——
  * 包里带「正面图」的那张进正面图槽位，带「三视图」的进三视图槽位。
- * 判据：这一格声明了「从包取」 + 成员的标签 ∩ 槽位的候选标签。
- * 没声明来源（=素材）的槽位不该被包顺带改掉。
+ * 判据：这一格在**这个容器**里 + 成员的标签 ∩ 槽位的候选标签。
+ * 独立槽位（`group` 为空）不该被包顺带改掉。
  *
  * 三种情况分开守：
  * 1. 恰好一张 → 填；
@@ -111,7 +111,7 @@ const SPEC: TemplateSpecOut = {
         key: 'front',
         type: 'image',
         binding: 'user',
-        pickMode: 'pack',
+        group: 'g1',
         minCount: 1,
         maxCount: 1,
         label: '正面图',
@@ -121,7 +121,7 @@ const SPEC: TemplateSpecOut = {
         key: 'views',
         type: 'image',
         binding: 'user',
-        pickMode: 'pack',
+        group: 'g1',
         minCount: 1,
         maxCount: 1,
         label: '三视图',
@@ -197,15 +197,15 @@ describe('模板库 · 点封装包填多格', () => {
     expect(await screen.findByText(/素材-m-views/)).toBeInTheDocument();
   });
 
-  it('声明了来源=素材的槽位，不会被包顺带改掉', async () => {
-    /* 来源二选一：作者说「这一格从素材里挑」，使用者点包就不该动它。
+  it('不在这个容器里的槽位，不会被包顺带改掉', async () => {
+    /* 独立槽位（`group` 为空）只从候选素材里挑：它不在容器里，点包就不该动它。
        以前包和素材混在一个网格里，点包会把所有标签对得上的格子全改掉。 */
     specState.current = {
       ...SPEC,
       latest: {
         ...SPEC.latest!,
         slots: (SPEC.latest!.slots ?? []).map(slot =>
-          slot.key === 'views' ? {...slot, pickMode: 'asset' as const} : slot,
+          slot.key === 'views' ? {...slot, group: ''} : slot,
         ),
       },
     };

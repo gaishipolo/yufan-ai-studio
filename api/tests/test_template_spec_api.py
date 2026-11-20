@@ -1109,44 +1109,37 @@ def test_all_timestamps_come_back_with_the_same_shape(client: TestClient) -> Non
     assert detail["latest"]["publishedAt"].endswith("Z")
 
 
-def test_slot_pick_mode_round_trips_through_publish(client: TestClient) -> None:
-    """「来源=包」要能存进去、读回来，并且**进发布快照**。
+def test_pick_mode_is_gone_from_the_contract(client: TestClient) -> None:
+    """「来源」已经不是槽位的字段：带上它要当场 422。
 
-    它是作者对「这一格能从哪里取」的声明：模板库据此只列包、不列散图，
-    并且把几个这样的槽位当成**同一套**（选一次包一起填）。存在草稿里没用的，
-    使用者读的是版本。
+    来源由 `group` 决定（在容器里 = 只能从包取，否则 = 从素材挑）。**静默忽略
+    更糟**：老的调用方（脚本、旧前端）以为自己设了「只从包取」，实际那一格仍然
+    列散图，而界面上没有任何地方能看出这件事。
     """
     headers = _headers(client)
     video, first, second = _media(client, headers)
     draft = _draft(video, first, second)
-    draft["slots"][1]["pickMode"] = "pack"  # hero：只能从封装包里取
+    draft["slots"][1]["pickMode"] = "pack"
 
-    saved = _save(client, headers, draft)
-    assert saved["draft"]["slots"][1]["pickMode"] == "pack"
-    # 没声明的槽位按「素材」走（老模板不受影响）
-    assert saved["draft"]["slots"][2]["pickMode"] == "asset"
-
-    published = client.post(f"{API}/{draft['key']}/publish", headers=headers)
-    assert published.status_code == 200, published.text
-
-    detail = client.get(f"{API}/{draft['key']}", headers=headers).json()["data"]
-    assert detail["latest"]["slots"][1]["pickMode"] == "pack"
+    response = client.post(f"{API}/validate", json=draft, headers=headers)
+    assert response.status_code == 422, response.text
+    assert "pickMode" in response.text
 
 
-def test_pick_mode_pack_rejects_a_fixed_slot(client: TestClient) -> None:
-    """固定槽位钉的是一张具体素材，没有「从哪挑」这回事。"""
+def test_pack_group_rejects_a_fixed_slot(client: TestClient) -> None:
+    """固定槽位钉的是一张具体素材，放进容器等于把那句话静默删掉。"""
     headers = _headers(client)
     video, first, second = _media(client, headers)
     draft = _draft(video, first, second)
-    draft["slots"][0]["pickMode"] = "pack"  # source：fixed
+    draft["slots"][0]["group"] = "g1"  # source：binding=fixed
 
     response = client.post(f"{API}/validate", json=draft, headers=headers)
     assert response.status_code == 400, response.text
-    assert "固定槽位" in response.json()["message"]
+    assert "只能是「用户填」" in response.json()["message"]
 
 
-def test_pick_mode_pack_rejects_text_and_audio_slots(client: TestClient) -> None:
-    """文本/音频不参与编号分发，包对它们没有意义 —— 当场说清，别等填表才发现。"""
+def test_pack_group_rejects_text_and_audio_slots(client: TestClient) -> None:
+    """文本/音频不参与编号分发，包里没有它们的位置 —— 当场说清。"""
     headers = _headers(client)
     video, first, second = _media(client, headers)
     draft = _draft(video, first, second)
@@ -1160,13 +1153,13 @@ def test_pick_mode_pack_rejects_text_and_audio_slots(client: TestClient) -> None
             "maxCount": 1,
             "position": 3,
             "label": "人声",
-            "pickMode": "pack",
+            "group": "g1",
         }
     )
 
     response = client.post(f"{API}/validate", json=draft, headers=headers)
     assert response.status_code == 400, response.text
-    assert "不能从封装包取" in response.json()["message"]
+    assert "不能放进封装容器" in response.json()["message"]
 
 
 def test_pack_group_round_trips_and_keeps_members_adjacent(client: TestClient) -> None:
@@ -1179,7 +1172,6 @@ def test_pack_group_round_trips_and_keeps_members_adjacent(client: TestClient) -
     video, first, second = _media(client, headers)
     draft = _draft(video, first, second)
     for slot in draft["slots"][1:]:
-        slot["pickMode"] = "pack"
         slot["group"] = "g1"
 
     saved = _save(client, headers, draft)
@@ -1192,25 +1184,13 @@ def test_pack_group_round_trips_and_keeps_members_adjacent(client: TestClient) -
     assert [slot.get("group") for slot in detail["latest"]["slots"]] == ["", "g1", "g1"]
 
 
-def test_pack_group_rejects_a_slot_from_assets(client: TestClient) -> None:
-    """容器里的槽位只能来自包：混一个「从素材挑」的进去，一次选包就填不全。"""
-    headers = _headers(client)
-    video, first, second = _media(client, headers)
-    draft = _draft(video, first, second)
-    draft["slots"][1]["group"] = "g1"  # hero 仍是 pickMode=asset
-
-    response = client.post(f"{API}/validate", json=draft, headers=headers)
-    assert response.status_code == 400, response.text
-    assert "只能来自封装包" in response.json()["message"]
-
-
 def test_pack_group_members_must_be_adjacent(client: TestClient) -> None:
     """中间隔着别的槽位就不行：容器在界面上会断开，而编号仍连着。"""
     headers = _headers(client)
     video, first, second = _media(client, headers)
     draft = _draft(video, first, second)
-    draft["slots"][1].update({"pickMode": "pack", "group": "g1"})
-    draft["slots"][2].update({"pickMode": "pack", "group": "g1"})
+    draft["slots"][1]["group"] = "g1"
+    draft["slots"][2]["group"] = "g1"
     # 在两者之间插一个独立槽位
     draft["slots"].insert(
         2,

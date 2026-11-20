@@ -13623,15 +13623,6 @@
             "title": "Refmode",
             "default": "mixed"
           },
-          "pickMode": {
-            "type": "string",
-            "enum": [
-              "asset",
-              "pack"
-            ],
-            "title": "Pickmode",
-            "default": "asset"
-          },
           "group": {
             "type": "string",
             "pattern": "^(|[a-z][a-z0-9_]{0,39})$",
@@ -13740,15 +13731,6 @@
             ],
             "title": "Refmode",
             "default": "mixed"
-          },
-          "pickMode": {
-            "type": "string",
-            "enum": [
-              "asset",
-              "pack"
-            ],
-            "title": "Pickmode",
-            "default": "asset"
           },
           "group": {
             "type": "string",

@@ -279,8 +279,8 @@ class LibraryService:
         #:
         #: 两者不能共用一个口径：列表是「看我的库」，成员挤在这里只会让同一张图
         #: 出现两次；选择器是「挑素材去用」，藏掉就等于那几张图选不到了 ——
-        #: 模板库现有的槽位全都还是按素材挑（`pickMode=asset`），藏了会立刻
-        #: 表现为「我上传的图不见了」。
+        #: 模板库里**没进封装**的槽位都是按素材挑的，藏了会立刻表现为
+        #: 「我上传的图不见了」。
         exclude_packed_members: bool = True,
         purpose: str | None = None,
         exclude_purposes: Sequence[str] = (access.PURPOSE_CASE,),

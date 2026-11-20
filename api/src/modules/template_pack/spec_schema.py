@@ -23,7 +23,6 @@ from core.template_spec import (
     MAX_PROMPT,
     MAX_SLOT_TAGS,
     MAX_SLOTS,
-    PickMode,
     RefMode,
     SlotBinding,
     SlotType,
@@ -50,17 +49,15 @@ class SpecSlotIn(StrictIn):
     type: SlotType
     binding: SlotBinding = "user"
     ref_mode: RefMode = "mixed"
-    #: 素材**从哪来**：`asset`（默认，从候选素材里挑）/ `pack`（只从封装包里取）。
-    #:
-    #: 与 `type` 不冲突：`type=image, pickMode=pack` = 「要一张图片，且只能从封装包来」。
-    #: 一格仍是一张 —— 包解决的是「一次挑好几格」，不是把多张塞进一格。
-    #: 作者声明来源，**用哪个包由模板库的使用者选**；多个来源为 `pack` 的槽位
-    #: 由同一次选包一起填。
-    pick_mode: PickMode = "asset"
     #: 所属的**封装容器** key（空 = 独立槽位）。
     #:
+    #: **它同时决定素材从哪来**：空 → 从候选素材里挑；非空 → 这一组共用一次
+    #: 「选包」，只能从封装包取。所以没有单独的「来源」字段（`pick_mode` 已于
+    #: 2026-11-20 删除 —— 它和这一列表达同一件事，两处并存时会出现「在容器里、
+    #: 却声明从素材取」这种没法解释的组合）。
+    #:
     #: 同一容器的槽位共用一次选包：模板库只出一个「选包」网格，点一次按标签
-    #: 把成员分到各槽位。容器内槽位必然是 `pickMode=pack`（否则 400），
+    #: 把成员分到各槽位。容器内只能是用户填的图片/视频（否则 400），
     #: 且顺序上必须相邻。
     group: str = Field(default="", pattern=_GROUP)
     #: 一槽一张：`min` 只有 0（可选）/ 1（必填），`max` 恒为 1。

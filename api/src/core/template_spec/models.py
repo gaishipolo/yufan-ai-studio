@@ -21,17 +21,11 @@ SlotType = Literal["image", "video", "audio", "text"]
 SlotBinding = Literal["fixed", "user"]
 #: `mixed` 参与 `{{Mixed N}}` 编号；`attachment` 作为附加输入、不占号。
 RefMode = Literal["mixed", "attachment"]
-#: 这一格的素材**从哪来**。`asset` = 从素材里挑（默认）；`pack` = 只从封装包里取。
-#:
-#: 它不是第三根「要什么」的轴（`type` 才是），而是**候选来源**：`type=image,
-#: pick_mode=pack` 读作「要一张图片，这张图只能从封装包里来」。
-#: 一格仍然只放一张 —— 包的价值是「一次挑好几格」，不是把多张塞进一格。
-PickMode = Literal["asset", "pack"]
 
 SLOT_TYPES: tuple[SlotType, ...] = ("image", "video", "audio", "text")
-#: 能「从包取」的类型：只有图片/视频参与 `{{Mixed N}}` 分发，文本与音频
-#: 各有各的选择器，包对它们没有意义。
-PACK_PICK_TYPES: tuple[SlotType, ...] = ("image", "video")
+#: 封装容器里能放的类型：只有图片/视频参与 `{{Mixed N}}` 分发，文本与音频
+#: 各有各的选择器，包里没有它们的位置。
+PACK_GROUP_TYPES: tuple[SlotType, ...] = ("image", "video")
 
 #: `mixed` 槽位展开后的总张数上限。执行器侧的参考素材上限，超了必然 400，
 #: 不如在编译期就说清。
@@ -71,9 +65,14 @@ class InputSlot:
     | `type=image/video` | 绑定某一具体素材 | 模板库挑（`min/max` 可多值） |
     | `type=text/audio` | 绑定一份文案/一段音频 | 模板库挑（附加输入，不占号） |
 
-    `pick_mode` 是**另一根轴**，回答的是「从哪儿挑」，不是「要什么」：
-    `type=image, pick_mode=pack` 读作「要一张图片，只能从封装包里来」。
-    它不改变「一格一张」—— 包的价值是一次挑好几格，不是把多张塞进一格。
+    `group` 是**素材从哪来**这根轴，而它只有一种表达方式：
+
+    - `group` 为空（独立槽位）→ 从候选**素材**里挑；
+    - `group` 相同（封装容器）→ 这一组共用一次「选包」，只能从**封装包**取。
+
+    所以没有「来源」这个字段：来源是位置的结果，不是作者要单独声明的东西。
+    （2026-11-20 删掉了 `pick_mode` —— 它和 `group` 表达同一件事，两处并存时
+    会出现「在容器里、却声明从素材取」这种没法解释的组合。）
 
     `tag_ids` 是**候选集的范围**，不是内容：非空时固定/填写都只在这几个标签
     （各自及其下级）里挑。它只约束"能选什么"，编译期不看它。
@@ -87,16 +86,11 @@ class InputSlot:
     type: SlotType
     binding: SlotBinding = "user"
     ref_mode: RefMode = "mixed"
-    #: 素材从哪来：`asset`（默认，从候选素材里挑）/ `pack`（只从封装包里取）。
-    #:
-    #: **只对 `binding=user` 的图片/视频有意义**（`rules._validate_slot` 会拦）：
-    #: 固定槽位是作者钉死的一张，没有「从哪挑」这回事；文本/音频不参与编号分发。
-    pick_mode: PickMode = "asset"
     #: 所属的**封装容器**（key；空 = 独立槽位）。
     #:
     #: 同一容器的几个槽位共用一个「选包」入口：使用者点一次包，按标签把成员
     #: 分到各槽位 —— 「几个插槽的素材来自同一个包」就是它。容器里的槽位
-    #: 必然是 `pick_mode="pack"`，且顺序上必须**相邻**（见 `rules._validate_groups`）。
+    #: 只能是**用户填的图片/视频**，且顺序上必须**相邻**（见 `rules._validate_groups`）。
     group: str = ""
     #: 只有 `binding=user` 时才有意义：固定槽位恒定一个素材。
     #: **`min_count=0` 就是「可选」** —— 不填素材也能编译（不占编号、不进参考素材）。

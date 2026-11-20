@@ -423,13 +423,13 @@ export function SpecLibrary() {
    * 把一个包分发到各槽位。
    *
    * 两道判据：
-   * 1. **这一格声明了「从包取」**（`pickMode === 'pack'`）。来源二选一，素材槽位
-   *    不参与 —— 作者说「这几格从素材里挑」，点包就不该动它；
+   * 1. **这一格在同一个容器里**（`group` 相同）。独立槽位不参与 —— 它只从候选
+   *    素材里挑，点包不该动它；
    * 2. **成员的标签 ∩ 这个槽位的候选标签**。它同时也是「这个包能不能填这一格」，
    *    列表那边用的是同一个判据（后端按 `tagIds` 过滤），所以这里匹配不到
    *    只可能是成员后来被删了。
    *
-   * 多个声明为包的槽位由**同一次点包**一起填，这就是「几个插槽的素材来自同一个包」。
+   * 容器里的几格由**同一次点包**一起填，这就是「几个插槽的素材来自同一个包」。
    *
    * 三种情况分开处理，**不静默取第一张**：
    * - 恰好 1 张 → 填；
@@ -447,11 +447,9 @@ export function SpecLibrary() {
 
     for (const slot of fillSlots) {
       if (slot.type !== 'image' && slot.type !== 'video') continue;
-      /* **只填声明了「从包取」的槽位**：来源二选一（素材 / 包）。素材槽位不该被
-         包顺带改掉 —— 作者说「这几格从素材里挑」时，使用者点包不该动它。 */
-      if ((slot.pickMode ?? 'asset') !== 'pack') continue;
       /* 容器只填**自己**那几格：同一个包在两个容器里各出现一次，点哪个就填哪个，
-         否则「点一次」会把手伸到另一个容器里去。 */
+         否则「点一次」会把手伸到另一个容器里去。独立槽位（`group` 为空）
+         自然被排除 —— 它只从候选素材里挑。 */
       if ((slot.group ?? '') !== group) continue;
       const wanted = new Set(slot.tagIds ?? []);
       if (!wanted.size) continue; // 没候选标签就不知道该取哪张
@@ -886,9 +884,6 @@ export function SpecLibrary() {
                             slot={slot}
                             selected={filled}
                             onChange={ids => setSlotValues(slot.key, ids)}
-                            /* 点包 = 拉详情后分发到**这个容器**里能对上的槽位：
-                               包里有什么视角，就填哪几格。 */
-                            onPickPack={packId => setPendingPack({packId, group: ''})}
                             requiredCount={requiredCounts[slot.key]}
                           />
                         );

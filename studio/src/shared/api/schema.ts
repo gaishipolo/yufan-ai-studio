@@ -1339,7 +1339,6 @@ export interface SpecSlotIn {
   type: "image" | "video" | "audio" | "text";
   binding?: "fixed" | "user";
   refMode?: "mixed" | "attachment";
-  pickMode?: "asset" | "pack";
   group?: string;
   minCount?: number;
   maxCount?: number;
@@ -1357,7 +1356,6 @@ export interface SpecSlotOut {
   type: "image" | "video" | "audio" | "text";
   binding?: "fixed" | "user";
   refMode?: "mixed" | "attachment";
-  pickMode?: "asset" | "pack";
   group?: string;
   minCount?: number;
   maxCount?: number;

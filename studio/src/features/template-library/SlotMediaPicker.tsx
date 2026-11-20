@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Check, Layers } from 'lucide-react';
+import { Check } from 'lucide-react';
 import {
-  useLibraryPacks,
   useLibrarySelection,
   useLibraryTags,
 } from '@/entities/library/api/library.queries';
@@ -12,7 +11,6 @@ import { CoverImage } from '@/shared/ui';
 import { cn } from '@/shared/lib/cn';
 import { AssetChip } from '@/entities/library/ui/AssetChip';
 import { AssetHoverPreview } from '@/entities/library/ui/AssetHoverPreview';
-import { PackHoverPreview } from '@/entities/library/ui/PackHoverPreview';
 import { TagFilter } from '@/entities/library/ui/TagFilter';
 import { pickWithin } from './slotPick';
 
@@ -30,27 +28,19 @@ export function SlotMediaPicker({
   slot,
   selected,
   onChange,
-  onPickPack,
   requiredCount,
 }: {
   slot: SpecSlotOut;
   selected: string[];
   onChange: (ids: string[]) => void;
-  /**
-   * 用户点了一个封装包：按包内成员分发到各槽位（由上层做，因为它要改别的槽位）。
-   *
-   * 不传就只显示素材、不显示包 —— 文本 / 音频槽位走不到这里，不影响。
-   */
-  onPickPack?: (packId: string) => void;
   /** 这个槽位实际最少要几张（作者写的 `minCount`，或提示词「第 N 张」推出的下限）。 */
   requiredCount?: number;
 }) {
   const kind = slot.type as 'image' | 'video';
   const label = KIND_LABEL[kind];
-  /* 作者给这一格声明的来源：`pack` = 只从封装包里取，`asset` = 只挑素材。
-     **两档互斥**（2026-11-20 定的口径）：「插槽只有两种情况，一是来自素材，
-     一是来自包」。所以这里不是「包也列在素材旁边」，而是二选一。 */
-  const packMode = (slot.pickMode ?? 'asset') === 'pack';
+  /* 这个选择器**只列素材**：进封装的槽位在模板库里由 `PackGroupPicker` 画
+     （一个选包入口），走不到这里。「来源」不再是槽位的字段 —— 用哪条链路
+     由 `group` 决定（见 `docs/TEMPLATE_SPEC.md` §10.5）。 */
   const max = Math.max(1, slot.maxCount ?? 1);
   /** 实际下限。缺省时就是作者写的 `minCount`。 */
   const need = requiredCount ?? (slot.minCount ?? 1);
@@ -97,37 +87,15 @@ export function SlotMediaPicker({
     kind,
     tagIds: filterIds.length ? filterIds : undefined,
     pageSize: limit,
-    // 包槽位不列素材：它只认包，多打一次请求还会让「共 N 张」这类数字有歧义。
-    enabled: !packMode,
   });
   const items = list.data?.items ?? [];
   /* 这一档标签下还有多少张没列出来（标题里的「共 N」是总数）。 */
   const hiddenCount = Math.max(0, (list.data?.total ?? 0) - items.length);
 
-  /*
-   * 封装包也在同一个网格里 —— **包就是一种素材**，不是另一种界面模式。
-   *
-   * 过滤条件与素材完全相同（`filterIds`）：后端只返回「成员标签与它交集非空」
-   * 的包，所以出现在「正面图」这一格里的包，一定至少含一张正面图。
-   *
-   * 只有上层给了 `onPickPack` 才取：文本 / 音频槽位用不上，不必白打一次请求。
-   *
-   * **槽位没圈候选标签时也不取**（老模板）：分发靠「成员标签 ∩ 槽位候选标签」，
-   * 没有候选标签就没有判据，点包一格都填不上 —— 列出来只是一个死按钮，
-   * 比不列更糟。那一格上面的「去模板封装补一个标签」才是它该看到的。
-   */
-  const packList = useLibraryPacks(
-    {tagIds: filterIds.length ? filterIds : undefined},
-    !!onPickPack && packMode && scope.length > 0,
-  );
-  const packs = packList.data ?? [];
 
-  /* 已选但不在当前这档标签下的素材（换标签之后才会出现），见下面的渲染注释。
-     包槽位没有「素材网格」，选中的那张哪儿都不出现 —— 那就一律用 chip 摆出来，
-     否则使用者只看到「已选 1/1」，既不知道选了哪张，也没法撤销。 */
+  /* 已选但不在当前这档标签下的素材（换标签之后才会出现），见下面的渲染注释。 */
   const shown = new Set(items.map(item => item.id));
   const hiddenPicked = selected.filter(id => !shown.has(id));
-  const chipIds = packMode ? selected : hiddenPicked;
 
   /*
    * 悬浮大图：缩略图太小看不清产品细节，悬停时另浮一张大图。
@@ -137,10 +105,6 @@ export function SlotMediaPicker({
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [pointer, setPointer] = useState<{ x: number; y: number } | null>(null);
   const hovered = items.find(item => item.id === hoveredId);
-  /* 悬停中的包另走一个浮层：素材预览是「放大这一张」，
-     包预览是「摊开里面有哪些」—— 两件事不能用同一个组件表达。 */
-  const [hoveredPackId, setHoveredPackId] = useState<string | null>(null);
-
   const toggle = (assetId: string) => {
     const next = pickWithin(selected, assetId, max);
     if (next !== selected) onChange(next);
@@ -173,11 +137,9 @@ export function SlotMediaPicker({
           {/* 提示词里的「第 N 张」推出的下限可能**超过上限**（作者配置错了）。
               那时候写「已选 0/1」是骗人的 —— 照实说，别让使用者以为挑一张就够。 */}
           {need > max && ` · 至少 ${need} 张`}
-          {packMode
-            ? packs.length > 0 && ` · 共 ${packs.length} 个包`
-            : typeof list.data?.total === 'number' &&
-              filterIds.length > 0 &&
-              ` · 共 ${list.data.total}`}
+          {typeof list.data?.total === 'number' &&
+            filterIds.length > 0 &&
+            ` · 共 ${list.data.total}`}
         </span>
       </div>
 
@@ -189,18 +151,17 @@ export function SlotMediaPicker({
       {!scope.length && (
         /* 老模板（闸门加上之前发布的）没有标签：仍然能挑，但要说明为什么没有分组。 */
         <p className="mt-1 text-micro leading-relaxed text-warn-deep">
-          {packMode
-            ? '这个槽位还没圈候选标签（去「模板封装」补一个）—— 包里哪一张进这一格靠它判断，没圈就列不出可用的包。'
-            : `这个槽位还没圈候选标签（去「模板封装」补一个，这一格才能只列那批素材），下面是全部${label}。`}
+          这个槽位还没圈候选标签（去「模板封装」补一个，这一格才能只列那批素材），
+          下面是全部{label}。
         </p>
       )}
 
       {/* 已选的素材不再单独列一排 chip：网格里打了勾、右上角还写着「已选 2/3」，
           再列一遍只是重复。只留"选了但不在当前这档标签里"的那些 —— 它们在网格中
           看不见，不留 chip 就只能靠切回原标签才删得掉（满额时还会卡死：全部置灰）。 */}
-      {chipIds.length > 0 && (
+      {hiddenPicked.length > 0 && (
         <div className="mt-1.5 flex flex-wrap gap-1.5">
-          {chipIds.map(assetId => (
+          {hiddenPicked.map(assetId => (
             <AssetChip
               key={assetId}
               assetId={assetId}
@@ -232,60 +193,15 @@ export function SlotMediaPicker({
 
       {tags.isPending ? (
         <p className="py-4 text-center text-meta text-ink-mute">正在读取标签…</p>
-      ) : packMode && packs.length === 0 ? (
-        <p className="py-4 text-center text-meta text-ink-mute">
-          {scope.length
-            ? '这批标签下还没有封装包。去资产库把要一起用的几张打成一个封装。'
-            : '这个槽位还没圈候选标签，列不出可用的封装包。'}
-        </p>
-      ) : !packMode && list.isLoading ? (
+      ) : list.isLoading ? (
         <p className="py-4 text-center text-meta text-ink-mute">正在读取素材…</p>
-      ) : !packMode && items.length === 0 ? (
+      ) : items.length === 0 ? (
         <p className="py-4 text-center text-meta text-ink-mute">
           {scope.length ? '这个标签下还没有素材，去资产库给它打上标签。' : `还没有${label}。`}
         </p>
       ) : (
         <div className="mt-2 grid max-h-[188px] grid-cols-4 gap-1.5 overflow-y-auto pr-0.5">
-          {/* 来源二选一，网格里只出现其中一种：包槽位只列包，素材槽位只列素材。
-
-              **本格已填满也不置灰**：包改的是「这一批格子」，点它是幂等的
-              （有素材的格覆盖、没对上的一格不动）。置灰的话，把包填好的
-              某一格手动换掉之后，就再也没法「整套重新套一遍」——
-              而且灰掉的样子看起来像「这个包坏了」。 */}
-          {packMode &&
-            packs.map(pack => (
-              <button
-                key={`pack-${pack.id}`}
-                type="button"
-                title={`${pack.name}（封装 · ${pack.memberCount ?? 0} 张）`}
-                onClick={() => onPickPack?.(pack.id)}
-                onMouseEnter={event => {
-                  setHoveredPackId(pack.id);
-                  setPointer({ x: event.clientX, y: event.clientY });
-                }}
-                onMouseMove={event => setPointer({ x: event.clientX, y: event.clientY })}
-                onMouseLeave={() => {
-                  setHoveredPackId(null);
-                  setPointer(null);
-                }}
-                className={cn(
-                  'group relative aspect-square overflow-hidden rounded-lg border transition',
-                  'border-line-soft hover:border-primary-line',
-                )}
-              >
-                <CoverImage
-                  src={pack.coverUrl ?? undefined}
-                  seed={pack.id}
-                  className="h-full w-full"
-                />
-                <span className="absolute inset-x-0 bottom-0 flex items-center justify-center gap-0.5 bg-[rgba(12,24,30,.62)] py-px text-[9px] leading-[11px] text-white">
-                  <Layers size={8} />
-                  {pack.memberCount ?? 0} 张
-                </span>
-              </button>
-            ))}
-          {!packMode &&
-            items.map(item => {
+          {items.map(item => {
               const isPicked = selected.includes(item.id);
               const blocked = full && !isPicked && max > 1;
               return (
@@ -363,7 +279,6 @@ export function SlotMediaPicker({
         height={hovered?.height}
         pointer={pointer}
       />
-      <PackHoverPreview packId={hoveredPackId} pointer={pointer} />
     </div>
   );
 }

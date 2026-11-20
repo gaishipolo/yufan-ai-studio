@@ -419,55 +419,39 @@ describe('槽位卡片', () => {
  * 素材槽位不列包。所以它得在封装页看得见、改得动，且不能留下后端会拒的组合
  * （固定槽位 + 从包取、文本/音频 + 从包取）。
  */
-describe('槽位卡片 · 来源', () => {
-  it('展开后能选「封装包」，主行随即出现「来自包」角标', async () => {
+/**
+ * 槽位卡片里**没有「来源」这一项**。
+ *
+ * 2026-11-20 定死：封装容器里必然来自封装包，容器外必然来自素材 —— 来源是
+ * `group` 的结果，不是作者要声明的东西。这一列在任何槽位上都该消失；
+ * 留着就是一个「作者看不见、却还在影响模板库列什么」的隐藏状态。
+ */
+describe('槽位卡片 · 没有「来源」这一项', () => {
+  it('独立槽位：展开后找不到', async () => {
     const user = userEvent.setup();
     renderSlot();
     await user.click(screen.getByRole('button', {name: '展开更多设置'}));
 
-    const source = screen.getByLabelText('来源') as HTMLSelectElement;
-    expect(source.value).toBe('asset');
-    await user.selectOptions(source, 'pack');
-
-    expect(source.value).toBe('pack');
-    expect(screen.getByText('来自包')).toBeInTheDocument();
-  });
-
-  it('切到固定槽位时来源退回素材（固定钉的是一张具体素材）', async () => {
-    const user = userEvent.setup();
-    const {onPatch} = renderSlot({pickMode: 'pack'});
-    await user.click(screen.getByRole('button', {name: /已固定/}));
-
-    expect(onPatch).toHaveBeenCalledWith(
-      expect.objectContaining({binding: 'fixed', pickMode: 'asset'}),
-    );
-  });
-
-  it('文本槽位没有「来源」这一项（不参与编号分发）', async () => {
-    const user = userEvent.setup();
-    renderSlot({type: 'text', refMode: 'attachment'});
-    await user.click(screen.getByRole('button', {name: '展开更多设置'}));
-
     expect(screen.getByLabelText('类型')).toBeInTheDocument();
     expect(screen.queryByLabelText('来源')).not.toBeInTheDocument();
   });
 
-  it('也不给「用户填 / 已固定」：容器里的槽位只能由使用者填', () => {
-    renderSlot({pickMode: 'pack', group: 'g1'}, DEFAULT_PROMPT, {inGroup: true});
+  it('容器里的槽位：同样找不到', async () => {
+    const user = userEvent.setup();
+    renderSlot({group: 'g1'}, DEFAULT_PROMPT, {inGroup: true});
+    await user.click(screen.getByRole('button', {name: '展开更多设置'}));
 
-    expect(screen.queryByRole('button', {name: /已固定/})).not.toBeInTheDocument();
-    // 必填/可选还在（它决定使用者能不能跳过这一格）
-    expect(screen.getByRole('button', {name: /必填/})).toBeInTheDocument();
+    expect(screen.getByLabelText('类型')).toBeInTheDocument();
+    expect(screen.queryByLabelText('来源')).not.toBeInTheDocument();
   });
 });
 
 describe('槽位卡片 · 在封装容器里', () => {
-  it('不给「来源」这一项：来源由容器决定，摆出来等于让人改一个改不了的东西', async () => {
-    const user = userEvent.setup();
-    renderSlot({pickMode: 'pack', group: 'g1'}, DEFAULT_PROMPT, {inGroup: true});
-    await user.click(screen.getByRole('button', {name: '展开更多设置'}));
+  it('不给「用户填 / 已固定」：容器里的槽位只能由使用者填', () => {
+    renderSlot({group: 'g1'}, DEFAULT_PROMPT, {inGroup: true});
 
-    expect(screen.getByLabelText('类型')).toBeInTheDocument();
-    expect(screen.queryByLabelText('来源')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', {name: /已固定/})).not.toBeInTheDocument();
+    // 必填/可选还在（它决定使用者能不能跳过这一格）
+    expect(screen.getByRole('button', {name: /必填/})).toBeInTheDocument();
   });
 });

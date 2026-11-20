@@ -96,8 +96,8 @@ export function blankSlot(
     type,
     binding: 'user',
     refMode: 'mixed',
-    // 容器里的槽位只能来自包：来源不是作者在这里再选一次的，是容器给的
-    ...(group ? {pickMode: 'pack' as const, group} : {}),
+    // 容器决定「从包取」，所以只写 group —— 没有单独的来源字段
+    ...(group ? {group} : {}),
     minCount: 1,
     maxCount: 1,
     label: '',
@@ -377,7 +377,6 @@ export function normalize(spec: TemplateSpecIn): TemplateSpecIn {
 const SLOT_DEFAULTS = {
   binding: 'user',
   refMode: 'mixed',
-  pickMode: 'asset',
   minCount: 1,
   maxCount: 1,
 } as const;
@@ -389,8 +388,6 @@ function slotFingerprint(slot: SpecSlotIn, index: number) {
     type: slot.type,
     binding: slot.binding ?? SLOT_DEFAULTS.binding,
     refMode: slot.refMode ?? SLOT_DEFAULTS.refMode,
-    // 缺失 = 素材：这样「保存前没写、保存后后端补上 asset」不会被判成改动
-    pickMode: slot.pickMode ?? SLOT_DEFAULTS.pickMode,
     group: slot.group ?? '',
     minCount: slot.minCount ?? SLOT_DEFAULTS.minCount,
     maxCount: slot.maxCount ?? SLOT_DEFAULTS.maxCount,

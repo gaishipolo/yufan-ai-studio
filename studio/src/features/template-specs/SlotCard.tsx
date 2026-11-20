@@ -56,7 +56,7 @@ export function SlotCard({
   slots: SpecSlotIn[];
   /** 整段提示词：用来判断这个槽位有没有**插入点**（见下面 `hasInsertPoint`）。 */
   prompt: string;
-  /** 在封装容器里：来源由容器决定（只能来自包），这里不再给「来源」这一项。 */
+  /** 在封装容器里：只能由使用者填（包由使用者选），所以不给「用户填 / 已固定」。 */
   inGroup?: boolean;
 }) {
   const [open, setOpen] = useState(false);
@@ -71,10 +71,6 @@ export function SlotCard({
      不同步时，界面显示「必填」而编译器放行（或反过来），用户看到的与
      实际生效的不一致 —— 这类错只在生成结果里显形。 */
   const optional = isOptionalSlot(slot);
-  /* 素材从哪来：`pack` = 只从封装包里取。与「谁定」正交 —— 只有用户填的
-     图片/视频才有这一说（固定槽位钉的是一张具体素材）。 */
-  const packMode = (slot.pickMode ?? 'asset') === 'pack';
-  const canPickFromPack = needsTag && !fixed;
 
   /* 两段文案的**存在前提**只剩一条：这个槽位是**可选**的。
      **必填 = 素材一定在 = 直接插编号**，没有「填了 / 没填」两种状态，
@@ -162,18 +158,6 @@ export function SlotCard({
           )}
         />
 
-        {packMode && !inGroup && (
-          /* 只在「从包取」时出现一枚角标：默认是素材，不必给每一行都加个标签；
-             但来源改了之后，模板库那一格的网格里连散图都不列了 —— 这件事必须
-             在封装页就能看见。 */
-          <span
-            title="这一格的素材只能从封装包里取"
-            className="shrink-0 rounded-md bg-primary-soft px-1.5 py-0.5 text-micro font-medium text-primary-deep"
-          >
-            来自包
-          </span>
-        )}
-
         {/* 谁定：两个选项的东西，没有下拉值得占一格 —— 直接一个分段控件。
             选中项是**实心**的：这是这一行里唯一需要被一眼看出来的状态，
             「这一格在说什么」比「这一格是什么颜色」更重要。
@@ -196,9 +180,6 @@ export function SlotCard({
                     binding: item.value,
                     // 固定要素材、用户填要清掉素材，两边互斥。
                     ...(item.value === 'fixed' ? {} : {assetId: null}),
-                    // 固定槽位钉的是一张具体素材，没有「从哪挑」这回事：
-                    // 带着 pickMode=pack 切过去会被后端判非法，当场退回来。
-                    ...(item.value === 'fixed' ? {pickMode: 'asset' as const} : {}),
                   })
                 }
                 className={cn(
@@ -315,35 +296,11 @@ export function SlotCard({
               block
               value={slot.type}
               options={typeOptions}
-              onChange={event => {
-                const next = event.target.value as SpecSlotIn['type'];
-                onPatch({
-                  type: next,
-                  // 文本/音频不参与编号分发，「从包取」对它们没有意义 ——
-                  // 切过去时把来源退回素材，别留一个后端会拒的组合。
-                  ...(['image', 'video'].includes(next)
-                    ? {}
-                    : {pickMode: 'asset' as const}),
-                });
-              }}
+              onChange={event =>
+                onPatch({type: event.target.value as SpecSlotIn['type']})
+              }
             />
           </FormField>
-          {canPickFromPack && !inGroup && (
-            <FormField label="来源" htmlFor="slot-source">
-              {/* 两档互斥：`素材` 在模板库里只列候选素材，`封装包` 只列包
-                  （选一次包，把几个同样声明为包的槽位一起填好）。
-                  这正是「插槽只有两种情况」那条口径。 */}
-              <Select
-                id="slot-source"
-                block
-                value={slot.pickMode ?? 'asset'}
-                options={SOURCE_OPTIONS}
-                onChange={event =>
-                  onPatch({pickMode: event.target.value as 'asset' | 'pack'})
-                }
-              />
-            </FormField>
-          )}
           {needsTag && !fixed && (
             <FormField label="候选标签" htmlFor="slot-tag">
               {/* 槽位的标签是「圈定候选范围」，不是「打在素材上」：
@@ -422,17 +379,6 @@ export function SlotCard({
 const BINDING_TOGGLES: {value: SpecSlotIn['binding']; label: string; hint: string}[] = [
   {value: 'user', label: '用户填', hint: '使用者填表时挑素材'},
   {value: 'fixed', label: '已固定', hint: '封装时就定好素材'},
-];
-
-/**
- * 槽位的素材来源：**两档互斥**，没有第三档。
- *
- * `素材` 在模板库里只列候选素材；`封装包` 只列包，选一次包会把几个同样声明
- * 为「包」的槽位一起填好（「几个插槽的素材来自同一个包」就是这么表达的）。
- */
-const SOURCE_OPTIONS = [
-  {value: 'asset', label: '素材'},
-  {value: 'pack', label: '封装包'},
 ];
 
 /**

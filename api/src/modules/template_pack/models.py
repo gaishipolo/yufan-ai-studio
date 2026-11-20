@@ -143,11 +143,12 @@ class TemplateSpecSlot(Base, UUIDMixin):
     `position` 就是 `{{Mixed N}}` 的顺序；**这里不存编号**（编号由编译按实际填充
     数量算出来，见 `core/template_spec/compile.py`）。
 
-    **`type` 回答"要什么"，`pick_mode` 回答"从哪儿挑"**，两者正交：
-    `type=image, pick_mode=pack` = 「要一张图片，只能从封装包来」。
-    2026-11-14 删过一根叫 `source` 的轴，那根与 `type` 表达同一件事（槽位类型里
-    有个 `pack`），组合起来能收到自相矛盾的写法；现在的 `pick_mode` 不碰 `type`，
-    一格仍是一张。`tag_ids` 只是候选集范围。
+    **`group_key` 同时决定素材从哪来**：空 → 从候选素材里挑；非空 → 这一组
+    共用一次「选包」，只能从封装包取。所以没有单独的来源列 ——
+    2026-11-20 删掉了 `pick_mode`：它与 `group_key` 表达同一件事，两处并存时
+    会出现「在容器里、却声明从素材取」这种没法解释的组合。（更早的 2026-11-14
+    还删过一根 `source`，那根与 `type` 抢同一件事。）
+    `tag_ids` 只是候选集范围。
     """
 
     __tablename__ = "template_spec_slots"
@@ -164,9 +165,6 @@ class TemplateSpecSlot(Base, UUIDMixin):
     binding: Mapped[str] = mapped_column(String(16), default="user", nullable=False)
     #: `mixed` | `attachment`
     ref_mode: Mapped[str] = mapped_column(String(16), default="mixed", nullable=False)
-    #: `asset`（默认，从素材里挑）| `pack`（只从封装包里取）。
-    #: 加列前发布的版本读到空值时按 `asset` 解释（见 `spec_service._slot_out`）。
-    pick_mode: Mapped[str] = mapped_column(String(8), default="asset", nullable=False)
     #: 所属封装容器（key；空 = 独立槽位）。**列名带 `_key`**：`group` 在 SQL 里是
     #: 保留字，裸用会在某些方言上要加引号。
     group_key: Mapped[str] = mapped_column(String(40), default="", nullable=False)

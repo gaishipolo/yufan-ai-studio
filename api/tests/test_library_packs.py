@@ -268,9 +268,9 @@ def test_pack_members_are_hidden_from_the_list_but_not_the_picker(
 
     两个场景的结论相反：
     - 列表是「看我的库」：同一张图既在包里又单列，等于出现两次；
-    - 选择器是「挑素材去用」：藏掉就等于那几张图选不到了。模板里现有的
-      槽位默认还是按素材挑（`pickMode=asset`），藏了会立刻表现为
-      「我上传的图不见了」—— 那是比「看到两次」严重得多的问题。
+    - 选择器是「挑素材去用」：藏掉就等于那几张图选不到了。模板里**没进封装**
+      的槽位都是按素材挑的，藏了会立刻表现为「我上传的图不见了」——
+      那是比「看到两次」严重得多的问题。
     """
     headers = _headers(client)
     first = upload_image(client, API, headers, name="6036-黑-正面.png", color="silver")
