@@ -24,6 +24,16 @@ from modules.task.enums import (
 )
 
 
+class TaskVariantOut(CamelModel):
+    """一条派生任务（目前只有「去字幕版」）。"""
+
+    id: str = Field(description="派生任务 ID")
+    status: TaskStatus = Field(description="状态：queued / running / completed / failed")
+    progress: int = Field(default=0, description="生成进度 0-100")
+    output_url: str | None = Field(default=None, description="去字幕成片地址；未完成时为 null")
+    error_message: str | None = Field(default=None, description="失败原因，成功时为 null")
+
+
 class TaskOut(CamelModel):
     """任务出参：字段名与前端 `VideoTask` 完全一致。"""
 
@@ -64,6 +74,10 @@ class TaskOut(CamelModel):
     created_at: UtcDateTime = Field(description="创建时间（UTC）")
     updated_at: UtcDateTime = Field(description="更新时间（UTC）")
     started_at: UtcDateTime | None = Field(default=None, description="开始生成时间，未开始为 null")
+    subtitle_erase: TaskVariantOut | None = Field(
+        default=None,
+        description="去字幕版；没有派生过时为 null。前端据此显示进度与「原片/去字幕」切换",
+    )
     external_id: str | None = Field(
         default=None,
         description=(

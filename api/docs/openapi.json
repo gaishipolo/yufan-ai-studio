@@ -6280,6 +6280,55 @@
         }
       }
     },
+    "/api/v1/tasks/{task_id}/desubtitle": {
+      "post": {
+        "tags": [
+          "任务"
+        ],
+        "summary": "给成片派生去字幕版",
+        "operationId": "create_desubtitle_api_v1_tasks__task_id__desubtitle_post",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "任务 ID",
+              "title": "Task Id"
+            },
+            "description": "任务 ID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/core__response__ApiResponse_TaskOut___2"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/tasks/{task_id}/favorite": {
       "post": {
         "tags": [
@@ -14407,6 +14456,56 @@
         "title": "TaskStatusFilter",
         "description": "列表筛选值：`all` 与具体状态并列，避免路由层出现联合类型。"
       },
+      "TaskVariantOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "派生任务 ID"
+          },
+          "status": {
+            "$ref": "#/components/schemas/TaskStatus",
+            "description": "状态：queued / running / completed / failed"
+          },
+          "progress": {
+            "type": "integer",
+            "title": "Progress",
+            "description": "生成进度 0-100",
+            "default": 0
+          },
+          "outputUrl": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outputurl",
+            "description": "去字幕成片地址；未完成时为 null"
+          },
+          "errorMessage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Errormessage",
+            "description": "失败原因，成功时为 null"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "status"
+        ],
+        "title": "TaskVariantOut",
+        "description": "一条派生任务（目前只有「去字幕版」）。"
+      },
       "TemplateSpecIn": {
         "properties": {
           "key": {
@@ -15812,6 +15911,17 @@
             ],
             "title": "Startedat",
             "description": "开始生成时间，未开始为 null"
+          },
+          "subtitleErase": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TaskVariantOut"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "去字幕版；没有派生过时为 null。前端据此显示进度与「原片/去字幕」切换"
           },
           "externalId": {
             "anyOf": [

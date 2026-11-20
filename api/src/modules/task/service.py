@@ -54,9 +54,28 @@ from modules.task.schema import (
     TaskOut,
     TaskRetryOut,
     TaskStats,
+    TaskVariantOut,
 )
 
 logger = get_logger(__name__)
+
+#: 去字幕模型的 id（驱动里同名常量；这里只用它写库与解析规格）
+DESUBTITLE_MODEL_ID = "libtv-subtitle-eraser"
+
+
+def _desubtitle_size(aspect_ratio: str) -> tuple[int, int]:
+    """画幅 → 上游要的 `videoListV2` 宽高。
+
+    取 720P 那一档：去字幕是**擦除**，不放大分辨率，给原片尺寸即可；
+    给错也不影响出片，只影响上游的排队与切片估算。
+    """
+    if aspect_ratio == "16:9":
+        return 1280, 720
+    if aspect_ratio == "1:1":
+        return 720, 720
+    return 720, 1280
+
+
 
 DEFAULT_TITLE = "未命名任务"
 
@@ -261,6 +280,77 @@ class TaskService:
         logger.info("任务已创建并入队 id=%s author=%s model=%s", task.id, actor.id, spec.id)
         return task
 
+    async def create_desubtitle(self, task_id: str, actor: CurrentUser) -> VideoTask:
+        """给一条已完成的视频派生「去字幕版」。
+
+        **幂等**：同一父任务只允许一条 `subtitle_erased`（数据库上有部分唯一索引），
+        已存在就直接返回它 —— 用户连点两次不会下两单，也不会重复扣费。
+
+        源视频直接记父任务的 `output_url`：成片在对象存储里是 key，
+        驱动提交前会把它物化成临时文件再传上游（见 `_submit_desubtitle`）。
+        """
+        parent = await self.get_task(task_id, actor)
+        if TaskStatus(parent.status) is not TaskStatus.COMPLETED:
+            raise InvalidState("只有已完成的视频可以去字幕")
+        if not parent.output_url:
+            raise InvalidState("这条任务还没有成片，无法去字幕")
+
+        existing = await self.session.scalar(
+            select(VideoTask).where(
+                VideoTask.derived_from_task_id == parent.id,
+                VideoTask.variant == "subtitle_erased",
+            )
+        )
+        if existing is not None:
+            return existing
+
+        width, height = _desubtitle_size(parent.aspect_ratio)
+        task = VideoTask(
+            title=f"{parent.title}（去字幕）",
+            prompt=parent.prompt,
+            status=TaskStatus.QUEUED.value,
+            model="LibTV · 智能去字幕",
+            model_id=DESUBTITLE_MODEL_ID,
+            duration_sec=parent.duration_sec,
+            aspect_ratio=parent.aspect_ratio,
+            billing_mode="free",
+            # 源视频、宽高时长都按父任务冻结：重试时不能因为父任务被改过就换输入
+            params_json=dumps_params(
+                {
+                    "sourceUrl": parent.output_url,
+                    "width": width,
+                    "height": height,
+                    "duration": float(parent.duration_sec or 4),
+                }
+            ),
+            reference_library_ids=[],
+            text_json="[]",
+            cover_url="",
+            author_id=actor.id,
+            author_name=actor.name,
+            derived_from_task_id=parent.id,
+            variant="subtitle_erased",
+        )
+        await self.repo.add(task)
+        try:
+            await self.session.commit()
+        except IntegrityError:
+            # 并发点到第二次：唯一索引兜底，回读已存在的那条
+            await self.session.rollback()
+            raced = await self.session.scalar(
+                select(VideoTask).where(
+                    VideoTask.derived_from_task_id == parent.id,
+                    VideoTask.variant == "subtitle_erased",
+                )
+            )
+            if raced is None:
+                raise
+            return raced
+
+        await self._dispatch(task)
+        logger.info("去字幕任务已创建 id=%s parent=%s", task.id, parent.id)
+        return task
+
     async def retry_task(
         self, task_id: str, actor: CurrentUser, *, confirm_charged: bool = False
     ) -> VideoTask:
@@ -427,12 +517,34 @@ class TaskService:
         """
         favorited = bool(await self.repo.favorite_task_ids(actor.id, [task.id]))
         out = self.to_out(task, favorited=favorited)
+        out.subtitle_erase = await self._subtitle_variant(task)
         if out.cover_url:
             try:
                 out.cover_url = (await artifact_urls([out.cover_url]))[0] or out.cover_url
             except Exception:  # noqa: BLE001 - 地址算不出来不该让详情接口 500
                 logger.exception("任务封面地址转换失败 id=%s", task.id)
         return out
+
+    async def _subtitle_variant(self, task: VideoTask) -> TaskVariantOut | None:
+        """这条任务的去字幕版（没有就 None），成片地址现签。"""
+        variant = await self.session.scalar(
+            select(VideoTask).where(
+                VideoTask.derived_from_task_id == task.id,
+                VideoTask.variant == "subtitle_erased",
+            )
+        )
+        if variant is None:
+            return None
+        url = variant.output_url
+        if url:
+            url = (await artifact_urls([url]))[0] or url
+        return TaskVariantOut(
+            id=variant.id,
+            status=TaskStatus(variant.status),
+            progress=variant.progress,
+            output_url=url,
+            error_message=variant.error_message,
+        )
 
     async def present_many(
         self, tasks: Sequence[VideoTask], actor: CurrentUser

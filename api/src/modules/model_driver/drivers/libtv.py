@@ -13,11 +13,12 @@
 from __future__ import annotations
 
 import asyncio
+import tempfile
 from pathlib import Path
 
 from core.exceptions import BadRequest, Conflict, RateLimited, UpstreamError
 from core.logging import get_logger
-from infra import get_queue
+from infra import get_queue, get_storage
 from infra.ai.base import (
     Capability,
     GenerationProgress,
@@ -27,6 +28,7 @@ from infra.ai.base import (
 )
 from infra.queue.base import Job
 from modules.model_driver.generic_inputs import materialize
+from modules.model_driver.libtv import account as libtv_account
 from modules.model_driver.libtv import executor, process
 from modules.model_driver.libtv.reconcile import reconcile as reconcile_state
 from modules.model_driver.libtv.state import LibTVState
@@ -42,6 +44,9 @@ META = DriverMeta(
 MODEL_ID = "libtv-wan3-replacement"
 
 logger = get_logger(__name__)
+
+#: 去字幕模型（上游 `volcano-subtitle-eraser`）：源视频来自父任务，不新建档案
+DESUBTITLE_MODEL = "libtv-subtitle-eraser"
 
 # 这些故障需要修复执行环境，再由「继续」恢复已有 task_id 的查询。
 EXECUTOR_BLOCKED = frozenset(
@@ -107,6 +112,19 @@ MODELS: tuple[ModelSpec, ...] = (
         reference_kinds=("image", "video", "audio"),
         # 替换链的模型：有原片 + 素材包的档案工作区，能按模板做替换。
         replacement=True,
+    ),
+    ModelSpec(
+        id=DESUBTITLE_MODEL,
+        label="LibTV · 智能去字幕",
+        provider="libtv",
+        capability=Capability.VIDEO,
+        description="AI 一键去除视频里的字幕（仅中英文），输入是另一条任务的成片",
+        # 不给用户任何参数：源视频、宽高、时长都由父任务决定。
+        # 暴露出来只会让人以为可以随便传一个 URL 进来。
+        param_schema={},
+        # 不进货架：它只能由「任务卡 → 智能去字幕」调用（源视频必须是某条任务的成片），
+        # 出现在创建页下拉里必然缺参。
+        internal=True,
     ),
 )
 
@@ -213,6 +231,8 @@ class LibTVProvider:
     submit_timeout_sec = 1650.0
 
     async def submit(self, request: GenerationRequest) -> str:
+        if request.model == DESUBTITLE_MODEL:
+            return await self._submit_desubtitle(request)
         # 归档工作区 id 只能是字符串：模板库那条链把它放在 `archiveRunId`，
         # 通用链没有这个键（None → ""），于是用任务 id 当工作区 id。
         value = str(request.params.get("archiveRunId") or "")
@@ -278,7 +298,85 @@ class LibTVProvider:
             raise _stage_failure(result, value, account)
         raise BadRequest(f"提交前检查未完成：{result.message or result.code}；未提交生成")
 
+    async def _submit_desubtitle(self, request: GenerationRequest) -> str:
+        """去字幕：一条普通生成任务，只是换了模型，**不建运行档案**。
+
+        为什么不走 `upload/submit` 两个阶段：那条路会传素材、编译提示词、写
+        `request.json`，而去字幕的输入只有「一个已经存在的 mp4」。没有素材要传，
+        再造一套档案只会多一份要对账的状态。
+
+        源视频两种形态：
+        - `http(s)` 直链：直接给上游；
+        - 对象存储的 key（我们自己的成片）：先取字节落到临时文件，
+          由 `desubtitle.mjs` 用 `MediaUploader` 传到上游素材库（含视频审核），
+          因为 `create` 只接受上游取得到的 URL。
+        """
+        source = str(request.params.get("sourceUrl") or "")
+        if not source:
+            raise BadRequest("去字幕缺少源视频地址（父任务的成片）")
+
+        account = await asyncio.to_thread(executor.select_browser, "free", has_task=False)
+        local = source
+        temporary: Path | None = None
+        if not source.startswith(("http://", "https://")):
+            # 成片在对象存储里是 key（`videos/xxx.mp4`），上游取不到，必须先物化。
+            data = await get_storage().get(source.lstrip("/"))
+            temporary = Path(tempfile.gettempdir()) / f"desub-{request.request_id}.mp4"
+            temporary.write_bytes(data)
+            local = str(temporary)
+
+        try:
+            result = await executor.submit_desubtitle(
+                account=account,
+                source=local,
+                width=int(request.params.get("width") or 720),
+                height=int(request.params.get("height") or 1280),
+                duration=float(request.params.get("duration") or 4),
+            )
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
+
+        task_id = str(result.get("taskId") or "")
+        if not task_id:
+            raise UpstreamError("去字幕没有返回 task_id")
+        logger.info(
+            "去字幕已提交 task=%s account=%s power=%s", task_id, account, result.get("power")
+        )
+        return f"desub|{account}|{task_id}"
+
+    async def _poll_desubtitle(self, external_id: str) -> GenerationProgress:
+        _, account, task_id = external_id.split("|", 2)
+        items = await libtv_account.progress([task_id], account)
+        if not items:
+            # 刚提交时上游列表里可能还没有它：按「排队中」处理，下一跳再问。
+            return GenerationProgress(
+                external_id=external_id, state=GenerationState.RUNNING, queued=True
+            )
+        item = items[0]
+        if item.status == 2:
+            return GenerationProgress(
+                external_id=external_id,
+                state=GenerationState.SUCCEEDED,
+                progress=100,
+                output_url=item.result_url or None,
+            )
+        if item.status == 3:
+            return GenerationProgress(
+                external_id=external_id,
+                state=GenerationState.FAILED,
+                error=item.failed_reason or "上游去字幕失败",
+            )
+        return GenerationProgress(
+            external_id=external_id,
+            state=GenerationState.RUNNING,
+            queued=item.queued,
+            progress=min(99, item.percent),
+        )
+
     async def poll(self, external_id: str, *, model: str = "") -> GenerationProgress:
+        if external_id.startswith("desub|"):
+            return await self._poll_desubtitle(external_id)
         run_id, _, task_id = external_id.partition(":")
         if not task_id:
             raise BadRequest("LibTV 上游任务标识无效")

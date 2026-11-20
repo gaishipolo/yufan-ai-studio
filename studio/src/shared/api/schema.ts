@@ -1531,6 +1531,20 @@ export interface TaskStats {
   failed?: number;
 }
 
+/** 一条派生任务（目前只有「去字幕版」）。 */
+export interface TaskVariantOut {
+  /** 派生任务 ID */
+  id: string;
+  /** 状态：queued / running / completed / failed */
+  status: TaskStatus;
+  /** 生成进度 0-100 */
+  progress?: number;
+  /** 去字幕成片地址；未完成时为 null */
+  outputUrl?: string | null;
+  /** 失败原因，成功时为 null */
+  errorMessage?: string | null;
+}
+
 /** 一份规格（草稿的整份内容）。`key` 是幂等边界，发布后不可改名。 */
 export interface TemplateSpecIn {
   key: string;
@@ -1865,6 +1879,8 @@ export interface modules__task__schema__TaskOut {
   updatedAt: string;
   /** 开始生成时间，未开始为 null */
   startedAt?: string | null;
+  /** 去字幕版；没有派生过时为 null。前端据此显示进度与「原片/去字幕」切换 */
+  subtitleErase?: TaskVariantOut | null;
   /** 上游任务标识，形如 `<归档工作区>:<上游 task_id>`。**给排队查询用**：LibTV 的队列位次只能按上游 task_id 查，前端拿它拆出 task_id 去`POST /model-driver/libtv/progress`，不必由后端再存一份排队快照 */
   externalId?: string | null;
 }
@@ -2107,6 +2123,8 @@ export interface EndpointData {
   "GET /api/v1/tasks/{task_id}": core__response__ApiResponse_TaskOut___2;
   /** 更新任务（标题 / 收藏） */
   "PATCH /api/v1/tasks/{task_id}": core__response__ApiResponse_TaskOut___2;
+  /** 给成片派生去字幕版 */
+  "POST /api/v1/tasks/{task_id}/desubtitle": core__response__ApiResponse_TaskOut___2;
   /** 收藏 / 取消收藏 */
   "POST /api/v1/tasks/{task_id}/favorite": core__response__ApiResponse_TaskOut___2;
   /** 重试任务 */
