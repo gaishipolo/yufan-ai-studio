@@ -107,19 +107,24 @@ function Row({
       </div>
 
       <div className="flex justify-end pt-[1px]">
-        {action === 'none' ? (
-          <span className="text-micro text-ink-mute" title="这一页没开，先开页面">
+        {/* 没有操作权时**不摆灰按钮**：灰按钮会让人以为「差点就能点」，
+            而真正的原因（缺权限）在按钮上是看不出来的 */}
+        {action === 'none' || readOnly ? (
+          <span
+            className="text-micro text-ink-mute"
+            title={action === 'none' ? '这一页没开，先开页面' : undefined}
+          >
             —
           </span>
         ) : (
           <button
             type="button"
-            disabled={readOnly || pending}
+            disabled={pending}
             onClick={trigger}
             className={cn(
               'rounded-md border border-transparent px-1.5 py-[2px] text-micro text-ink-soft',
               'hover:border-line hover:bg-panel-soft hover:text-ink',
-              (readOnly || pending) && 'cursor-not-allowed opacity-40 hover:bg-transparent',
+              pending && 'cursor-not-allowed opacity-40 hover:bg-transparent',
             )}
           >
             {pending ? '处理中…' : ACTION_LABEL[action]}

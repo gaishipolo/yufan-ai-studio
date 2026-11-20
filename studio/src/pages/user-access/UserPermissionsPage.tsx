@@ -10,6 +10,7 @@ import {
   useSetUserPermissions,
 } from '@/entities/group/api/group.queries';
 import { usePermissionCatalog } from '@/entities/role/api/role.queries';
+import { useCan } from '@/shared/access/use-access';
 import { PermissionOverview } from '@/features/permission-overview/PermissionOverview';
 import { useOverview, type PermissionRow } from '@/features/permission-overview/use-overview';
 import { LayerPermissionsModal, type LayerTarget } from '@/features/permission-layers/LayerPermissionsModal';
@@ -33,6 +34,9 @@ export default function UserPermissionsPage() {
   const setExceptions = useSetPermissionExceptions();
   const setPersonal = useSetUserPermissions();
   const [pendingCode, setPendingCode] = useState<string | null>(null);
+  // 能不能改由权限码决定，与后端 `identity:user:permission:manage` 同源 ——
+  // 只读账号能看到这一页，但行上不该出现点了会 403 的按钮
+  const canManage = useCan('identity:user:permission:manage');
   const [editing, setEditing] = useState(false);
 
   const denied = useMemo(() => detail.data?.denied ?? [], [detail.data]);
@@ -131,18 +135,21 @@ export default function UserPermissionsPage() {
         </p>
       ) : null}
 
-      <div className="mt-3 grid grid-cols-3 gap-2">
-        {[
-          { label: '生效', value: cards.counts.effective },
-          { label: '仅对他关闭', value: cards.counts.denied },
-          { label: '被页面关掉', value: cards.counts.gated },
-        ].map((item) => (
-          <div key={item.label} className="rounded-lg bg-panel-soft px-3 py-2">
-            <div className="text-micro text-ink-soft">{item.label}</div>
-            <div className="text-body font-semibold tabular-nums text-ink">{item.value}</div>
-          </div>
-        ))}
-      </div>
+      {/* 超管没有「清单」可看：任何清单都是假的（他的权限是全集，不是若干条） */}
+      {fullPrivilege ? null : (
+        <div className="mt-3 grid grid-cols-3 gap-2">
+          {[
+            { label: '生效', value: cards.counts.effective },
+            { label: '仅对他关闭', value: cards.counts.denied },
+            { label: '被页面关掉', value: cards.counts.gated },
+          ].map((item) => (
+            <div key={item.label} className="rounded-lg bg-panel-soft px-3 py-2">
+              <div className="text-micro text-ink-soft">{item.label}</div>
+              <div className="text-body font-semibold tabular-nums text-ink">{item.value}</div>
+            </div>
+          ))}
+        </div>
+      )}
 
       <div className="mt-3">
         {detail.isError ? (
@@ -153,11 +160,15 @@ export default function UserPermissionsPage() {
           />
         ) : loading ? (
           <div className="py-16 text-center text-xs text-ink-mute">正在读取权限来源…</div>
+        ) : fullPrivilege ? (
+          <p className="rounded-lg border border-line-soft bg-panel-soft px-3 py-6 text-center text-meta text-ink-soft">
+            全部权限 · 不需要逐条列出
+          </p>
         ) : (
           <PermissionOverview
             overview={cards}
             pendingCode={pendingCode}
-            readOnly={fullPrivilege}
+            readOnly={!canManage}
             onDeny={deny}
             onAllow={remove}
             onRestore={restore}
