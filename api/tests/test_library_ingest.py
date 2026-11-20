@@ -22,6 +22,7 @@ from library_support import (
     make_user,
     png_bytes,
     put_blob,
+    suffix,
     upload_image,
 )
 
@@ -33,9 +34,13 @@ def _ingest(client: TestClient, api: str, headers: dict[str, str], body: dict):
     return client.post(f"{api}/library/assets/from-generation", json=body, headers=headers)
 
 
-def _fresh_blob(name: str, color: str) -> str:
-    """一份「还没被谁登记过」的字节。入库的新建路径只能用它测。"""
-    return put_blob(f"library/blobs/gen/{name}", png_bytes(color))
+def _fresh_blob(name: str, color: str, size: tuple[int, int] = (32, 32)) -> str:
+    """一份「还没被谁登记过」的字节。入库的新建路径只能用它测。
+
+    `size` 可改：整组测试共用一个库，纯色 PNG 只按颜色就有 sha256 撞车风险，
+    撞了会命中「同 owner 秒传」而让新建路径的用例拿到 `created=False`。
+    """
+    return put_blob(f"library/blobs/gen/{name}", png_bytes(color, size))
 
 
 def _storage_key(client: TestClient, api: str, headers: dict[str, str], asset_id: str) -> str:
@@ -53,6 +58,7 @@ def _ingest_via_port(
     name: str = "",
     task_id: str = "",
     generation: dict | None = None,
+    tag_ids: list[str] | None = None,
 ) -> dict:
     """走 `library-ingest` 端口（受信任的服务端调用方那条路径）。
 
@@ -77,6 +83,7 @@ def _ingest_via_port(
         archive_key=archive_key,
         source_url=source_url,
         generation=generation or {},
+        tag_ids=tag_ids or [],
     )
 
     async def run():
@@ -624,3 +631,111 @@ def test_blob_key_normalizes_the_extension() -> None:
     # 非法后缀被消成空
     assert blob_key(digest, "../../../etc/passwd").endswith(digest)
     assert blob_key(digest, "").endswith(digest)
+
+
+# --------------------------------------------------------------------------- #
+# 生成产物继承参考素材的标签
+# --------------------------------------------------------------------------- #
+def _tag(
+    client: TestClient, api: str, headers: dict[str, str], name: str, parent: str | None = None
+) -> dict:
+    body = {"name": name}
+    if parent:
+        body["parentId"] = parent
+    resp = client.post(f"{api}/library/tags", json=body, headers=headers)
+    assert resp.status_code == 201, resp.text
+    return resp.json()["data"]
+
+
+def _tag_asset_direct(asset_id: str, tag_ids: list[str]) -> None:
+    """绕过界面守卫打标：要造「参考素材身上有维度标签」这个存量状态。"""
+    import asyncio
+
+    from db.session import get_session_factory
+    from modules.library.tags import set_asset_tags
+
+    async def run() -> None:
+        async with get_session_factory()() as session:
+            await set_asset_tags(session, asset_id, tag_ids, reject_groups=False)
+            await session.commit()
+
+    asyncio.run(run())
+
+
+def _detail_tags(client: TestClient, api: str, headers: dict[str, str], asset_id: str) -> set[str]:
+    resp = client.get(f"{api}/library/assets/{asset_id}", headers=headers)
+    assert resp.status_code == 200, resp.text
+    return {item["id"] for item in resp.json()["data"]["tags"]}
+
+
+def test_generated_asset_inherits_reference_tags_union(client: TestClient, api: str) -> None:
+    """多张参考图取并集；维度标签不继承，孤立一级照常继承。"""
+    admin = admin_headers(client)
+    owner, h = make_user(
+        client, admin, LIB_RW + ["library:tag:manage", "library:generation:ingest"]
+    )
+    mark = suffix()
+    dim = _tag(client, api, h, f"产品-{mark}")
+    a6036 = _tag(client, api, h, f"6036-{mark}", dim["id"])
+    t35 = _tag(client, api, h, f"T35-{mark}", dim["id"])
+    standalone = _tag(client, api, h, f"孤立词-{mark}")
+
+    ref1 = upload_image(client, api, h, name=f"r1-{mark}.png", color="red")
+    ref2 = upload_image(client, api, h, name=f"r2-{mark}.png", color="blue")
+    _tag_asset_direct(ref1["id"], [dim["id"], a6036["id"]])
+    _tag_asset_direct(ref2["id"], [t35["id"], standalone["id"]])
+
+    created = _ingest_via_port(
+        owner_id=owner["id"],
+        source_key=f"task:tag-union-{mark}",
+        storage_key=_fresh_blob(f"union-{mark}.png", "green", (41, 41)),
+        # 任务侧用的是列名快照键
+        generation={"reference_library_ids": [ref1["id"], ref2["id"]]},
+    )
+    assert created["created"] is True
+    ids = _detail_tags(client, api, h, created["assetId"])
+    assert {a6036["id"], t35["id"], standalone["id"]} <= ids
+    assert dim["id"] not in ids, "维度只用于分组，继承它等于给一个筛不出来的假标签"
+
+
+def test_generated_image_keeps_configured_tags_and_inherits_reference(
+    client: TestClient, api: str
+) -> None:
+    """生图侧用契约名快照键；显式配置的标签与继承的标签并存。"""
+    admin = admin_headers(client)
+    owner, h = make_user(
+        client, admin, LIB_RW + ["library:tag:manage", "library:generation:ingest"]
+    )
+    mark = suffix()
+    configured = _tag(client, api, h, f"显式-{mark}")
+    from_ref = _tag(client, api, h, f"继承-{mark}")
+    ref = upload_image(client, api, h, name=f"ref-{mark}.png", color="orange")
+    _tag_asset_direct(ref["id"], [from_ref["id"]])
+
+    created = _ingest_via_port(
+        owner_id=owner["id"],
+        source_key=f"image:tag-inherit-{mark}",
+        storage_key=_fresh_blob(f"inherit-{mark}.png", "yellow", (42, 42)),
+        generation={"referenceLibraryIds": [ref["id"]]},
+        tag_ids=[configured["id"]],
+    )
+    assert created["created"] is True
+    ids = _detail_tags(client, api, h, created["assetId"])
+    assert {configured["id"], from_ref["id"]} <= ids
+
+
+def test_generated_asset_without_reference_has_no_inherited_tags(
+    client: TestClient, api: str
+) -> None:
+    """没有参考素材就没有继承来源 —— 不能凭空给产物打标。"""
+    admin = admin_headers(client)
+    owner, h = make_user(client, admin, LIB_RW + ["library:generation:ingest"])
+    mark = suffix()
+    created = _ingest_via_port(
+        owner_id=owner["id"],
+        source_key=f"image:no-ref-{mark}",
+        storage_key=_fresh_blob(f"noref-{mark}.png", "purple", (43, 43)),
+        generation={"prompt": "没有参考图"},
+    )
+    assert created["created"] is True
+    assert _detail_tags(client, api, h, created["assetId"]) == set()

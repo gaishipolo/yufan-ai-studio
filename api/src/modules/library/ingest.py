@@ -91,7 +91,11 @@ from modules.library.errors import (
 )
 from modules.library.models import LibraryAsset, LibraryAssetGeneration
 from modules.library.service import blob_key, preview_key
-from modules.library.tags import set_asset_tags
+from modules.library.tags import (
+    assignable_tag_ids,
+    set_asset_tags,
+    tag_ids_by_asset,
+)
 
 
 class IngestDownloadSettings(DriverSettings):
@@ -162,6 +166,36 @@ _SNAPSHOT_FIELDS: tuple[tuple[str, str], ...] = (
     ("credits", "credits"),
     ("generated_at", "generated_at"),
 )
+
+
+async def _inherited_tag_ids(
+    session: AsyncSession, generation: Mapping[str, object]
+) -> tuple[str, ...]:
+    """从生成快照里的参考素材继承标签（**并集**）。
+
+    快照是冻结的：读的是「提交这次生成时用了哪些素材」，不会因后来有人改了任务
+    或删了素材而漂移。两个键名都要认 —— 生图侧照抄契约的 `referenceLibraryIds`，
+    任务侧用列名，与 `_SNAPSHOT_FIELDS` 同源。
+
+    只继承**可打标**的词：维度标签（有子级的一级）显示成一个标签却筛不中，
+    继承它等于给用户一个假标签。判据走 `assignable_tag_ids`，与界面打标同一口径。
+    """
+    refs = generation.get("reference_library_ids") or generation.get(
+        "referenceLibraryIds"
+    )
+    if isinstance(refs, str):
+        refs = [refs]
+    if not isinstance(refs, (list, tuple)):
+        return ()
+    asset_ids = [item for item in refs if isinstance(item, str) and item]
+    if not asset_ids:
+        return ()
+
+    by_asset = await tag_ids_by_asset(session, asset_ids)
+    collected = {tag_id for tags in by_asset.values() for tag_id in tags}
+    if not collected:
+        return ()
+    return tuple(sorted(await assignable_tag_ids(session, collected)))
 
 
 class GenerationIngest:
@@ -247,11 +281,13 @@ class GenerationIngest:
                     **_snapshot_values(request.generation),
                 )
             )
-            if request.tag_ids:
-                # tagIds 来自生成侧的配置，不是用户在界面上打标；不让「某个
-                # 一级后来成了分组」把生成结果入库整条链路卡住。
+            inherited = await _inherited_tag_ids(self.session, request.generation)
+            tag_ids = list(dict.fromkeys([*request.tag_ids, *inherited]))
+            if tag_ids:
+                # 配置里的 tagIds + 参考素材继承来的词都不是用户在界面上打标；
+                # 不让「某个一级后来成了分组」把生成结果入库整条链路卡住。
                 await set_asset_tags(
-                    self.session, row.id, request.tag_ids, reject_groups=False
+                    self.session, row.id, tag_ids, reject_groups=False
                 )
             try:
                 await self.session.commit()
