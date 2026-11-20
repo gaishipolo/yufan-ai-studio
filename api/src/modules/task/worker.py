@@ -11,7 +11,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 
@@ -28,17 +28,36 @@ from modules.task.pipeline import KIND_VIDEO
 logger = get_logger(__name__)
 
 
-async def resume_unfinished_tasks(queue: JobQueue) -> int:
+async def resume_unfinished_tasks(
+    queue: JobQueue,
+    *,
+    stale_after_sec: int | None = None,
+    limit: int | None = None,
+) -> int:
+    """把未终态的任务接回队列。
+
+    两种调用点：
+    - **启动恢复**（`stale_after_sec=None`）：全部 queued/running 都处理；
+    - **周期巡检**（传阈值）：只处理「超过 N 秒没有任何写入」的记录。
+      巡检不能捞全部：正在正常推进的任务每跳都会写进度，捞进来只会多排一条
+      poll job —— 幂等键虽然挡得住重复，但新 job 的 `polls=0` 会把次数计数
+      打回原点，把「次数上限」这条判据悄悄废掉。
+
+    `limit` 只给巡检用，避免一轮把所有历史残留一次性排进队列。
+    """
     factory = get_session_factory()
 
     async with factory() as session:
-        rows = (
-            await session.scalars(
-                select(VideoTask).where(
-                    VideoTask.status.in_([TaskStatus.QUEUED.value, TaskStatus.RUNNING.value])
-                )
-            )
-        ).all()
+        stmt = select(VideoTask).where(
+            VideoTask.status.in_([TaskStatus.QUEUED.value, TaskStatus.RUNNING.value])
+        )
+        if stale_after_sec is not None:
+            cutoff = datetime.now(tz=UTC) - timedelta(seconds=max(0, stale_after_sec))
+            stmt = stmt.where(VideoTask.updated_at < cutoff)
+        stmt = stmt.order_by(VideoTask.updated_at)
+        if limit is not None:
+            stmt = stmt.limit(limit)
+        rows = (await session.scalars(stmt)).all()
         if not rows:
             return 0
 

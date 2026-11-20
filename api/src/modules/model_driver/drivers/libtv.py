@@ -312,12 +312,16 @@ class LibTVProvider:
             meta = await asyncio.to_thread(executor.state, path)
         if meta.status == "generated":
             # 下载是独立非计费工作，不占框架每次查询的 60 秒预算。
+            #
+            # `max_attempts=3`：handler 的注释写着「交给队列重试」，而 1 次就死信
+            # 与那句话相反 —— 失败后要等下一跳 poll 重新投递才复活，等于每 5 秒
+            # 重试一次。给 3 次（2s/4s 退避）能把浏览器/网络的瞬时抖动挡掉。
             await get_queue().enqueue(
                 Job(
                     name="libtv.download",
                     payload={"id": run_id},
                     idempotency_key=f"libtv:download:{run_id}",
-                    max_attempts=1,
+                    max_attempts=3,
                     timeout_sec=300,
                 )
             )

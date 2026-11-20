@@ -105,3 +105,51 @@ def test_resume_does_not_resubmit_when_submit_result_unknown() -> None:
     assert f"poll:video:{task.id}" not in keys
     assert task.status == TaskStatus.FAILED.value
     assert "提交结果未知" in (task.error_message or "")
+
+
+def test_reconcile_only_picks_tasks_that_stopped_moving() -> None:
+    """周期巡检只捞「很久没有写入」的任务。
+
+    捞全部会让正在正常推进的任务也重排一条 poll job —— 新 job 的 `polls=0`
+    会把次数计数打回原点，「轮询次数上限」这条判据就被悄悄废掉了
+    （2026-11-19 排查时正是被这条判据误导过）。
+    """
+
+    from datetime import UTC, datetime, timedelta
+
+    async def scenario() -> tuple[list[dict], str, str]:
+        factory = get_session_factory()
+        stale_at = datetime.now(tz=UTC) - timedelta(minutes=20)
+        async with factory() as session:
+            stalled = VideoTask(
+                title="链路断了的",
+                prompt="旧任务",
+                status=TaskStatus.RUNNING.value,
+                model="LibTV · 720P 视频替换",
+                external_id="echo-video-stalled",
+                author_id="u_001",
+                author_name="老大",
+                updated_at=stale_at,
+            )
+            moving = VideoTask(
+                title="还在推进的",
+                prompt="新任务",
+                status=TaskStatus.RUNNING.value,
+                model="LibTV · 720P 视频替换",
+                external_id="echo-video-moving",
+                author_id="u_001",
+                author_name="老大",
+            )
+            session.add_all([stalled, moving])
+            await session.commit()
+            stalled_id, moving_id = stalled.id, moving.id
+
+        queue = MemoryJobQueue()
+        await resume_unfinished_tasks(queue, stale_after_sec=900)
+        return queue.snapshot(), stalled_id, moving_id
+
+    jobs, stalled_id, moving_id = asyncio.run(scenario())
+    keys = {job["key"] for job in jobs}
+
+    assert f"poll:video:{stalled_id}" in keys, "20 分钟没写入的任务必须被接回轮询"
+    assert f"poll:video:{moving_id}" not in keys, "刚刚还在推进的任务不该被重排"

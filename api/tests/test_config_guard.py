@@ -412,3 +412,22 @@ def test_reload_settings_invalidates_parsed_overrides(monkeypatch: pytest.Monkey
     monkeypatch.setenv("RATE_LIMIT_OVERRIDES", json.dumps({"task.create": 222}))
     reload_settings()
     assert dict(parsed_overrides())["task.create"] == 222, "reload 之后覆盖值仍是旧的"
+
+
+def test_prod_rejects_the_in_memory_queue() -> None:
+    """生产不许用进程内队列。
+
+    `QUEUE_DRIVER` 的默认值就是 `memory`，而它在共享部署里三个性质全是错的：
+    重启即丢、只在创建它的进程里执行、与共享数据库/运行目录冲突（别的实例的
+    启动恢复会把 running 记录当成自己的活，失败后写库把真任务判死）。
+    2026-11-19 的「反反复复超时」就查在这个组合上，所以在启动期炸掉。
+    """
+
+    from infra.driver_config import ensure_prod_queue_driver
+
+    with pytest.raises(RuntimeError):
+        ensure_prod_queue_driver("prod", "memory")
+
+    # dev 不炸（本地单实例很常见）；显式配 db 永远合法
+    ensure_prod_queue_driver("dev", "memory")
+    ensure_prod_queue_driver("prod", "db")

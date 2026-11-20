@@ -247,6 +247,22 @@ class Settings(BaseSettings):
     )
     worker_enabled: bool = True
     worker_concurrency: int = 2
+
+    # ---------- 视频任务巡检 ----------
+    # video 的链路比生图长（上传 → 提交 → 轮询 → 下载 → 落盘 → 入库），
+    # 任何一环的 job 进死信都会让记录停在 running；而 `image` 有
+    # `image.reconcile`、video 原来只有「进程启动时恢复一次」。用户不会为了
+    # 一个卡住的任务去重启服务，所以必须有周期巡检兜住。
+    #
+    # 判据是「超过 N 秒没有任何写入」，不是「状态是 running」——后者会把
+    # 正在正常推进的任务也捞进来，每轮都多排一条 poll job（幂等键会挡住，
+    # 但会把 polls 计数打回 0，掩盖真实的次数上限）。
+    # 默认 900 秒：正常视频 5-8 分钟出片，15 分钟没有任何写入只可能是链路断了。
+    task_reconcile_enabled: bool = True
+    task_reconcile_stale_sec: int = 900
+    task_reconcile_interval_sec: float = 300.0
+    task_reconcile_batch: int = 100
+
     # 周期任务调度器（模块自己 @periodic 注册）。多副本部署时每个进程都会跑一份，
     # 所以 handler 必须幂等；需要「全集群只跑一次」要先换掉 queue_driver。
     scheduler_enabled: bool = True

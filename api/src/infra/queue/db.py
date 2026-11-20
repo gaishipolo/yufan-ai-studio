@@ -513,6 +513,35 @@ class DbJobQueue:
                     job.name,
                 )
 
+    async def release(self, job: Job) -> None:
+        """把行原样放回 pending：**不** `with_attempt()`。
+
+        停机 / 上层取消不是「这次执行失败」。走 `nack` 会把它记成一次失败，
+        `max_attempts=1` 的 job（生成轮询）在每次优雅停机时都会进死信，
+        记录停在 running 且没有下一跳（2026-11-20 重启时实测到两条）。
+
+        不清 `idempotency_key`：这条链还没结束，同一个键仍应只允许一条在途。
+        下一跳（`next_job`）属于「执行成功之后」，中断了就作废，与 nack 同口径。
+        """
+        async with self._session() as session:
+            result = await session.execute(
+                update(QueuedJob)
+                .where(*self._fence(job))
+                .values(
+                    status=JOB_PENDING,
+                    lease_token=None,
+                    lease_expires_at=None,
+                    next_job=None,
+                    updated_at=utcnow(),
+                )
+            )
+            await session.commit()
+        if getattr(result, "rowcount", 0) != 1:
+            # 不归本 worker 了（被接手 / 已 ack）：交给接手者，别抢回来
+            logger.warning(
+                "放回被忽略：这条 job 已不归本 worker id=%s name=%s", job.id, job.name
+            )
+
     async def nack(self, job: Job, *, requeue: bool = True) -> None:
         job.with_attempt()
         now = utcnow()

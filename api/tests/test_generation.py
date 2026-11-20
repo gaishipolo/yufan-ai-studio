@@ -14,7 +14,7 @@ from core.exceptions import BadRequest, Forbidden, UpstreamError
 from core.registry import NamedRegistry, RegistryError
 from generation.events import EVT_GENERATION_SUCCEEDED
 from generation.pipeline import pipelines, register_pipeline
-from generation.runner import JOB_POLL, JOB_SUBMIT, GenerationRunner
+from generation.runner import JOB_POLL, JOB_SUBMIT, GenerationRunner, OutputNotPersisted
 from infra.ai.base import Capability, GenerationProgress, GenerationState
 from infra.queue.base import Job
 from infra.queue.memory import MemoryJobQueue
@@ -662,7 +662,10 @@ def test_poll_times_out_by_wall_clock(monkeypatch: pytest.MonkeyPatch) -> None:
 
     jobs = asyncio.run(scenario())
 
-    assert failed.get("error") == "生成超时，请重试"
+    assert failed.get("error", "").startswith("生成超时，请重试")
+    # 文案要带判决依据：同一句话同时覆盖「墙钟到」与「次数到」，不写清楚
+    # 排障时只能靠 metrics 反推（2026-11-19 确实这么查了半小时）。
+    assert "墙钟判据" in failed["error"], failed["error"]
     assert jobs == [], "已判超时就不该继续排轮询"
 
 
@@ -1268,6 +1271,47 @@ def test_persist_falls_back_to_supplier_url_on_timeout(monkeypatch) -> None:
     result = asyncio.run(runner._persist("video", "r1", "https://supplier/a.mp4"))
 
     assert result == "https://supplier/a.mp4", "超时后必须退回供应商直链"
+
+
+def test_persist_rejects_relative_url_that_cannot_be_stored(monkeypatch) -> None:
+    """相对地址落盘失败必须**判失败**，不能把那个地址当兜底。
+
+    LibTV 回的是 `/api/v1/templates/replacement-runs/<run>/output` —— 这个路由
+    全仓没有注册。退回去等于「任务已完成、播放 404、草稿箱空」三件事同时成立，
+    用户无法自救；判失败至少能让他凭任务号去核对。
+    """
+
+    async def broken_persist(_record_id: str, _url: str) -> str:
+        raise OSError("共享盘读不到成片")
+
+    monkeypatch.setattr(
+        "generation.runner.get_pipeline", lambda _kind: _StubPipeline(broken_persist)
+    )
+    # 重试退避归零：这里验的是「失败后抛什么」，不是等几秒
+    monkeypatch.setattr("generation.runner._PERSIST_RETRY_BACKOFF_SEC", 0.0)
+
+    runner = GenerationRunner(MemoryJobQueue())
+    dead_url = "/api/v1/templates/replacement-runs/" + "a" * 32 + "/output"
+
+    with pytest.raises(OutputNotPersisted):
+        asyncio.run(runner._persist("video", "r1", dead_url))
+
+
+def test_poll_job_timeout_covers_persist_and_finish() -> None:
+    """poll job 的硬超时必须容得下「查供应商 + 落盘 + 收尾」。
+
+    固定 60 秒时，`GENERATION_PERSIST_TIMEOUT_SEC`（300 秒）永远等不到：
+    `_persist` 被外层 `wait_for` 取消 → nack → poll job 进死信 → 任务停在 running。
+    """
+
+    from generation import runner as runner_mod
+
+    timeout = runner_mod.GenerationRunner._poll_job_timeout()
+    query_and_persist = runner_mod._POLL_QUERY_BUDGET_SEC + 300.0
+    assert timeout > query_and_persist, (
+        f"poll job 硬超时 {timeout:.0f}s 不足以覆盖查询 {runner_mod._POLL_QUERY_BUDGET_SEC:.0f}s "
+        f"+ 落盘 300s"
+    )
 
 
 class _StubPipeline:

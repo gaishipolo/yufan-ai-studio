@@ -149,13 +149,27 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # `finally` 根本进不去——worker 后台任务与 engine 都不会被回收。
     # 运维补上配置重启后，上一轮「失败的启动」留下的状态改写不会回滚。
     from core.audit import ensure_audit_sink
-    from infra.driver_config import ensure_prod_driver_settings, precheck_submit_budgets
+    from infra.driver_config import (
+        ensure_prod_driver_settings,
+        ensure_prod_queue_driver,
+        precheck_submit_budgets,
+    )
 
     # 审计写入端是唯一「没接上会静默丢数据」的注入口：record() 按设计吞掉一切，
     # 不抛异常也不打日志。生产环境必须在启动期炸掉，不能等到对账时才发现全是空的。
     ensure_audit_sink(settings.app_env)
     # 成图下载校验没配白名单时会静默回落到黑名单兜底（挡不住 DNS 解析到内网）
     ensure_prod_driver_settings(settings.app_env)
+    # 进程内队列在生产里等于「重启丢任务 + 多实例各跑各的」，且与共享库/盘冲突
+    ensure_prod_queue_driver(settings.app_env, settings.queue_driver)
+    if settings.queue_driver == "memory" and settings.app_env != "prod":
+        # dev 不炸（本地单实例很常见），但要把代价说清楚：这条日志是排查
+        # 「任务莫名失败」时第一个该看的地方。
+        logger.warning(
+            "队列驱动是 memory（进程内）：重启即丢，且任务只在创建它的进程里执行。"
+            "多实例共用同一数据库 / 运行目录时，别的实例的启动恢复会把这些记录"
+            "当成自己的活（还会用本机 CDP 端口），失败后写库把真任务判死。"
+        )
     # 阈值声明坏了会让周期巡检永久停摆（`Scheduler.run_once` 吞异常后 continue），
     # 在启动期先算一遍，坏配置立刻失败而不是每 5 分钟刷一条错（R13-06）。
     logger.info("提交预算预检：%s", precheck_submit_budgets() or "无驱动声明")

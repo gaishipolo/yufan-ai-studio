@@ -22,6 +22,8 @@ from modules.task.seed import seed as seed_demo
 from modules.task import pipeline  # noqa: E402,F401  isort: skip
 from modules.task.worker import resume_unfinished_tasks  # noqa: E402
 
+from modules.task import maintenance  # noqa: E402,F401  isort: skip  注册周期任务 task.reconcile
+
 # 导出功能要读 video_tasks：注册成导出源，而不是让 modules/export import 本模块。
 # 见 core/ports/export_sources.py 的说明。
 register_export_source(TASK_EXPORT_SOURCE)
@@ -57,6 +59,9 @@ module = ModuleSpec(
     # 已有自己的恢复器（worker.resume_unfinished_tasks），框架恢复器会跳过，
     # 但声明负责的 kind 让架构守卫能画出完整的「模块 × 插槽」矩阵。
     recovery_kinds=(pipeline.KIND_VIDEO,),
+    # 启动恢复只跑一次；视频链路断了之后没有第二个人来接手，所以补一条周期巡检
+    # （见 modules/task/maintenance.py）。
+    periodic=("task.reconcile",),
     library_reference_sources=LIBRARY_REFERENCE_SOURCES,
     seed=seed_demo,
     seed_order=60,
