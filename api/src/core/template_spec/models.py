@@ -92,6 +92,12 @@ class InputSlot:
     #: **只对 `binding=user` 的图片/视频有意义**（`rules._validate_slot` 会拦）：
     #: 固定槽位是作者钉死的一张，没有「从哪挑」这回事；文本/音频不参与编号分发。
     pick_mode: PickMode = "asset"
+    #: 所属的**封装容器**（key；空 = 独立槽位）。
+    #:
+    #: 同一容器的几个槽位共用一个「选包」入口：使用者点一次包，按标签把成员
+    #: 分到各槽位 —— 「几个插槽的素材来自同一个包」就是它。容器里的槽位
+    #: 必然是 `pick_mode="pack"`，且顺序上必须**相邻**（见 `rules._validate_groups`）。
+    group: str = ""
     #: 只有 `binding=user` 时才有意义：固定槽位恒定一个素材。
     #: **`min_count=0` 就是「可选」** —— 不填素材也能编译（不占编号、不进参考素材）。
     min_count: int = 1

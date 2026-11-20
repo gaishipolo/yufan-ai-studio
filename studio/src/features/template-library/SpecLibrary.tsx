@@ -5,6 +5,7 @@ import { KIND_LABEL } from '@/entities/library/model/types';
 import { useLibraryPack } from '@/entities/library/api/library.queries';
 import { AssetChip } from '@/entities/library/ui/AssetChip';
 import { CaseCover } from '@/entities/library/ui/CaseCover';
+import { PackGroupPicker } from './PackGroupPicker';
 import { SlotMediaPicker } from './SlotMediaPicker';
 import { useGenerateImage } from '@/entities/image/api/image.api';
 import { useModels } from '@/entities/model/api/model.queries';
@@ -382,8 +383,10 @@ export function SpecLibrary() {
      封装包：在网格里点一个包 = 一次填好几格
      ------------------------------------------------------------------ */
 
-  /** 待拉详情的包 id。点了包就设它，详情回来后分发并清空。 */
-  const [pendingPack, setPendingPack] = useState<string | null>(null);
+  /** 待拉详情的包 + 它属于哪个容器。点了包就设它，详情回来后分发并清空。 */
+  const [pendingPack, setPendingPack] = useState<{packId: string; group: string} | null>(
+    null,
+  );
   /** 记住这一批格子是哪个包填的：包没了要能精确清回它们，别连手挑的一起清。 */
   const [packFill, setPackFill] = useState<{packId: string; keys: string[]} | null>(null);
 
@@ -413,7 +416,7 @@ export function SpecLibrary() {
   /* 分发之后仍然订阅这个包的详情：`packFill` 在，就说明「这几格是它填的」，
      包被别处删掉时要能被发现（否则用户看到的是一份再也取不到图的配置）。
      分发那一刻 `pendingPack` 有值、之后 `packFill.packId` 接手，同一个 query 复用。 */
-  const activePackId = pendingPack ?? packFill?.packId ?? null;
+  const activePackId = pendingPack?.packId ?? packFill?.packId ?? null;
   const packQuery = useLibraryPack(activePackId);
 
   /**
@@ -433,7 +436,12 @@ export function SpecLibrary() {
    * - 0 张 → 不动（必填槽位会自己亮起缺料星号）；
    * - 多张 → 也不动，并说出来是哪几格 —— 猜一张进去，生成的图错了也没人知道。
    */
-  const distributePack = (packId: string, members: {id: string; tagIds?: string[]; deleted?: boolean}[], packName: string) => {
+  const distributePack = (
+    packId: string,
+    group: string,
+    members: {id: string; tagIds?: string[]; deleted?: boolean}[],
+    packName: string,
+  ) => {
     const patch: Record<string, string[]> = {};
     const ambiguous: string[] = [];
 
@@ -442,6 +450,9 @@ export function SpecLibrary() {
       /* **只填声明了「从包取」的槽位**：来源二选一（素材 / 包）。素材槽位不该被
          包顺带改掉 —— 作者说「这几格从素材里挑」时，使用者点包不该动它。 */
       if ((slot.pickMode ?? 'asset') !== 'pack') continue;
+      /* 容器只填**自己**那几格：同一个包在两个容器里各出现一次，点哪个就填哪个，
+         否则「点一次」会把手伸到另一个容器里去。 */
+      if ((slot.group ?? '') !== group) continue;
       const wanted = new Set(slot.tagIds ?? []);
       if (!wanted.size) continue; // 没候选标签就不知道该取哪张
       const matched = members.filter(
@@ -470,7 +481,12 @@ export function SpecLibrary() {
   /* 详情回来就分发，并把待办清掉。 */
   useEffect(() => {
     if (!pendingPack || !packQuery.data) return;
-    distributePack(pendingPack, packQuery.data.members ?? [], packQuery.data.name);
+    distributePack(
+      pendingPack.packId,
+      pendingPack.group,
+      packQuery.data.members ?? [],
+      packQuery.data.name,
+    );
     setPendingPack(null);
     // distributePack 依赖 fillSlots，但它只在这次回调里用一次，不必进依赖
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -842,6 +858,25 @@ export function SpecLibrary() {
                       /* 界面上显示的素材：只有使用者亲手挑的（随机/均衡档的
                          可选槽位不出现在这里，由文案接管）。 */
                       const filled = displaySlotValues(slot.key, values);
+
+                      /* 封装容器整段由**第一个成员**画出来（一个选包入口），
+                         其余成员跳过 —— 各画一次就回到「点了只一次、显示还是两个」。 */
+                      const group = (slot.group ?? '').trim();
+                      if (group) {
+                        const members = fillSlots.filter(
+                          item => (item.group ?? '').trim() === group,
+                        );
+                        if (members[0].key !== slot.key) return null;
+                        return (
+                          <PackGroupPicker
+                            key={group}
+                            members={members}
+                            values={values}
+                            onPickPack={packId => setPendingPack({packId, group})}
+                            onClear={key => setSlotValues(key, [])}
+                          />
+                        );
+                      }
                       /* 图片/视频：一格一个选择器，里面是「素材 + 封装包」同一个网格，
                          上面一行标签用来在候选范围里再筛。其余（文本/音频）保留行式写法。 */
                       if (slot.type === 'image' || slot.type === 'video') {
@@ -851,9 +886,9 @@ export function SpecLibrary() {
                             slot={slot}
                             selected={filled}
                             onChange={ids => setSlotValues(slot.key, ids)}
-                            /* 点包 = 拉详情后分发到所有能对上的槽位：
+                            /* 点包 = 拉详情后分发到**这个容器**里能对上的槽位：
                                包里有什么视角，就填哪几格。 */
-                            onPickPack={setPendingPack}
+                            onPickPack={packId => setPendingPack({packId, group: ''})}
                             requiredCount={requiredCounts[slot.key]}
                           />
                         );

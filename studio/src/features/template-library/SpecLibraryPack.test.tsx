@@ -217,6 +217,29 @@ describe('模板库 · 点封装包填多格', () => {
     expect(screen.queryByText(/素材-m-views/)).not.toBeInTheDocument();
   });
 
+  it('同一个容器只出一个选包入口（不是每格各列一遍）', async () => {
+    /* 用户报的就是这个：「点一次就填好了，但显示还是两个」。容器里的槽位
+       共用一个选包入口，网格只出现一次。 */
+    specState.current = {
+      ...SPEC,
+      latest: {
+        ...SPEC.latest!,
+        slots: (SPEC.latest!.slots ?? []).map(slot => ({...slot, group: 'g1'})),
+      },
+    };
+    const user = userEvent.setup();
+    renderLibrary();
+
+    const cards = await screen.findAllByTitle('6036 黑（封装 · 2 张）');
+    expect(cards).toHaveLength(1);
+    expect(screen.getByText('封装槽位')).toBeInTheDocument();
+
+    await user.click(cards[0]);
+    // 一次点击仍然把容器里的两格填满
+    expect(await screen.findByText(/素材-m-front/)).toBeInTheDocument();
+    expect(await screen.findByText(/素材-m-views/)).toBeInTheDocument();
+  });
+
   it('包里缺某个视角：那一格不动，别的照填', async () => {
     packState.current = {
       ...PACK,

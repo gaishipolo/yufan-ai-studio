@@ -4,8 +4,10 @@ import {
   ChevronLeft,
   FolderInput,
   ImageOff,
+  Layers,
   Plus,
   RotateCcw,
+  Trash2,
 } from 'lucide-react';
 import { useMutation } from '@tanstack/react-query';
 import { useModels } from '@/entities/model/api/model.queries';
@@ -46,6 +48,7 @@ import { DemoMenu } from '@/features/template-specs/DemoMenu';
 import { ModelPicker } from '@/features/template-specs/ModelPicker';
 import { useSpecLimits } from '@/entities/template-spec/api/spec.queries';
 import { PromptBox } from '@/features/template-specs/PromptBox';
+import { groupRuns } from '@/entities/template-spec/model/slotGroups';
 import { SlotCard } from '@/features/template-specs/SlotCard';
 import {
   SLOT_TYPE_LABELS,
@@ -56,6 +59,7 @@ import {
   dropUserSelectableParams,
   fromSpecOut,
   joinModelSelection,
+  nextGroupKey,
   normalize,
   promptRefError,
   referenceChips,
@@ -85,6 +89,17 @@ const TYPE_OPTIONS = SLOT_TYPES.map(type => ({
         ? `${SLOT_TYPE_LABELS[type]}（附加输入，不占编号）`
         : SLOT_TYPE_LABELS[type],
 }));
+
+/** 容器里能放什么：只有图片/视频（文本/音频不参与编号分发，也不来自包）。 */
+const PACK_CHILD_OPTIONS = TYPE_OPTIONS.filter(
+  item => item.value === 'image' || item.value === 'video',
+);
+
+/** 顶层「加槽位」菜单：四类槽位 + 一个封装容器。 */
+const ADD_SLOT_OPTIONS = [
+  ...TYPE_OPTIONS,
+  {value: '__pack__', label: '封装（一次选包填多格）'},
+];
 
 
 const STATUS_LABELS: Record<string, string> = {
@@ -380,12 +395,107 @@ export function SpecWorkspace() {
     setDraft(renumberRefs(draft, next.map((slot, index) => ({...slot, position: index}))));
   };
 
-  const addSlot = (type: SlotType = 'image') => {
+  const addSlot = (type: SlotType = 'image', group = '') => {
     if (!draft) return;
-    const slot = blankSlot(slots.length, type, slots);
-    setDraft(renumberRefs(draft, [...slots, slot]));
-    if (type === 'text') setPicker({target: 'slot', index: slots.length});
+    /* 容器成员必须**挨着**（后端 `_validate_groups` 会拦）：所以往容器里加槽位时
+       插在它最后一个成员的后面，而不是一路 append 到末尾。 */
+    const at = group
+      ? slots.reduce(
+          (last, item, index) => ((item.group ?? '') === group ? index + 1 : last),
+          0,
+        )
+      : slots.length;
+    const slot = blankSlot(at, type, slots, group);
+    const next = [...slots.slice(0, at), slot, ...slots.slice(at)].map((item, index) => ({
+      ...item,
+      position: index,
+    }));
+    setDraft(renumberRefs(draft, next));
+    if (type === 'text') {
+      setPicker({target: 'slot', index: next.findIndex(item => item.key === slot.key)});
+    }
   };
+
+  /**
+   * 加一个封装容器：默认两个图片槽位。
+   *
+   * 「封装也是一种槽位，里面可以放别的槽位」—— 使用者只会看到**一个**选包入口，
+   * 点一次包按标签把成员分到这几个槽位。默认给两个，是因为「正面 + 三视图」
+   * 这类一对是最常见的用法；只要一个也能删掉另一个。
+   */
+  const addPackGroup = () => {
+    if (!draft) return;
+    const group = nextGroupKey(slots);
+    const first = blankSlot(slots.length, 'image', slots, group);
+    const second = blankSlot(slots.length + 1, 'image', [...slots, first], group);
+    setDraft(renumberRefs(draft, [...slots, first, second]));
+  };
+
+  /**
+   * 删掉一组槽位（单个槽位 / 整个封装容器）。
+   *
+   * 顺序很重要：**先**按新结构重编号（删掉第 1 个，后面的编号整体前移），
+   * **再**逐个清掉被删槽位的引用 —— 反过来的话，清理时用的还是旧编号，
+   * 会漏掉几条（它们已经变号了）。
+   */
+  const removeSlots = (keys: string[]) => {
+    if (!draft || keys.length === 0) return;
+    const names = slots
+      .filter(item => keys.includes(item.key))
+      .map(item => item.label?.trim() || SLOT_TYPE_LABELS[slotTypeOf(item.type)]);
+    const remaining = slots.filter(item => !keys.includes(item.key));
+    let next = renumberRefs(draft, remaining);
+    let stripped = 0;
+    for (const key of keys) {
+      const result = stripSlotRefs(next.prompt ?? '', key, remaining);
+      next = {...next, prompt: result.text};
+      stripped += result.count;
+    }
+    setDraft(next);
+    const label = keys.length > 1 ? `封装里的 ${keys.length} 个槽位` : `槽位「${names[0]}」`;
+    toast(
+      stripped > 0
+        ? `已删除${label}，提示词里的 ${stripped} 处引用一并清掉`
+        : `已删除${label}`,
+      'success',
+    );
+  };
+
+  /**
+   * 一张槽位卡片。独立槽位与容器成员共用这一份渲染：
+   * 容器里只少两项（「来源」下拉、「来自包」角标）—— 来源由容器决定。
+   */
+  const slotCardOf = (slot: SpecSlotIn, index: number, inGroup: boolean) => (
+    <SlotCard
+      key={slot.key}
+      slot={slot}
+      index={index}
+      inGroup={inGroup}
+      dragging={drag?.key === slot.key}
+      onDragStart={() => setDrag({key: slot.key})}
+      onDragEnd={() => setDrag(null)}
+      onDragOver={event => drag && event.preventDefault()}
+      onDrop={() => {
+        if (!drag) return;
+        const from = slots.findIndex(item => item.key === drag.key);
+        setDrag(null);
+        if (from < 0) return;
+        /* 容器是一段**连续**的区域：只允许在同一个容器内换序。
+           跨容器拖动会破掉「成员相邻」这条不变量（后端发布时会拒），
+           所以这里直接不动 —— 拖到别的框里松手，看起来什么都没发生，
+           比拽过去再被 400 打回好。 */
+        if ((slots[from].group ?? '') !== (slot.group ?? '')) return;
+        moveSlot(from, index);
+      }}
+      onPatch={patch => patchSlot(index, patch)}
+      onDelete={() => removeSlots([slot.key])}
+      onPickAsset={() => setPicker({target: 'slot', index})}
+      tagOptions={tagOptions}
+      typeOptions={inGroup ? PACK_CHILD_OPTIONS : TYPE_OPTIONS}
+      slots={slots}
+      prompt={draft?.prompt ?? ''}
+    />
+  );
 
   const pick = (asset: PickedAsset) => {
     if (!draft || !picker) return;
@@ -715,8 +825,8 @@ export function SpecWorkspace() {
               /* 「加槽位」也按资产库的 kind 生成：库里多一类，这里就多一个入口，
                  和槽位卡片里的「类型」下拉同源（曾经这里写死四个按钮）。 */
               <AddSlotMenu
-                options={TYPE_OPTIONS}
-                onAdd={type => addSlot(slotTypeOf(type))}
+                options={ADD_SLOT_OPTIONS}
+                onAdd={type => (type === '__pack__' ? addPackGroup() : addSlot(slotTypeOf(type)))}
               />
             }
           >
@@ -727,53 +837,49 @@ export function SpecWorkspace() {
                 再摆一行教学条就是同一件事说两遍，还占一行版面。 */}
             {/* 槽位是一列清单，用细线分隔而不是一张张卡片：
                 一排小方块缩到 50% 看会糊成一片，分隔线才看得出「几行、每行谁」。 */}
-            <div className="divide-y divide-line-soft">
+            <div className="flex flex-col gap-2">
               {slots.length === 0 && (
                 <p className="rounded-lg border border-dashed border-line-strong bg-panel-soft px-3 py-4 text-meta text-ink-mute">
                   没有槽位。纯提示词的模板不需要素材，从上面的按钮加一个就行。
                 </p>
               )}
-              {slots.map((slot, index) => (
-                <SlotCard
-                  key={slot.key}
-                  slot={slot}
-                  index={index}
-                  dragging={drag?.key === slot.key}
-                  onDragStart={() => setDrag({key: slot.key})}
-                  onDragEnd={() => setDrag(null)}
-                  onDragOver={event => drag && event.preventDefault()}
-                  onDrop={() => {
-                    if (!drag) return;
-                    const from = slots.findIndex(item => item.key === drag.key);
-                    setDrag(null);
-                    if (from >= 0) moveSlot(from, index);
-                  }}
-                  onPatch={patch => patchSlot(index, patch)}
-                  onDelete={() => {
-                    const name = slot.label?.trim() || SLOT_TYPE_LABELS[slotTypeOf(slot.type)];
-                    // 引用留着的下场是「点生成才报引用了不存在的槽位」，
-                    // 那句话看不出是刚才删槽位删出来的，所以一并清掉并告知条数。
-                    /* 顺序很重要：**先**按新结构重编号（删掉第 1 个，后面的
-                       编号整体前移），**再**清掉被删槽位的引用 —— 反过来的话，
-                       清理时用的还是旧编号，会漏掉几条（它们已经变号了）。 */
-                    const remaining = slots.filter(item => item.key !== slot.key);
-                    const renumbered = renumberRefs(draft, remaining);
-                    const stripped = stripSlotRefs(renumbered.prompt ?? '', slot.key, remaining);
-                    setDraft({...renumbered, prompt: stripped.text});
-                    toast(
-                      stripped.count > 0
-                        ? `已删除槽位「${name}」，提示词里的 ${stripped.count} 处引用一并清掉`
-                        : `已删除槽位「${name}」`,
-                      'success',
-                    );
-                  }}
-                  onPickAsset={() => setPicker({target: 'slot', index})}
-                  tagOptions={tagOptions}
-                  typeOptions={TYPE_OPTIONS}
-                  slots={slots}
-                  prompt={draft.prompt ?? ''}
-                />
-              ))}
+              {/* 按「独立槽位 / 封装容器」切分渲染：容器里的几格画在一个框里，
+                  因为它们在模板库那边只有**一个**选包入口。 */}
+              {groupRuns(slots).map(run =>
+                run.group === '' ? (
+                  slotCardOf(run.members[0].slot, run.members[0].index, false)
+                ) : (
+                  <div
+                    key={run.group}
+                    className="rounded-xl border border-primary-line/50 bg-primary-soft/20 px-2 pb-2 pt-1"
+                  >
+                    <div className="flex items-center gap-1.5 px-1 py-1">
+                      <Layers size={13} className="text-primary" aria-hidden />
+                      <span className="text-meta font-medium text-ink">封装槽位</span>
+                      <span className="text-micro text-ink-mute">
+                        {run.members.length} 个槽位 · 使用者选一次包，一起填好
+                      </span>
+                      <button
+                        type="button"
+                        title="删除整个封装槽位（连同里面的槽位）"
+                        onClick={() => removeSlots(run.members.map(item => item.slot.key))}
+                        className="ml-auto rounded-md p-1 text-ink-mute transition-colors hover:bg-danger-soft hover:text-danger"
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    </div>
+                    <div className="divide-y divide-line-soft border-t border-primary-line/30">
+                      {run.members.map(({slot, index}) => slotCardOf(slot, index, true))}
+                    </div>
+                    <div className="mt-1 flex justify-end">
+                      <AddSlotMenu
+                        options={PACK_CHILD_OPTIONS}
+                        onAdd={type => addSlot(slotTypeOf(type), run.group)}
+                      />
+                    </div>
+                  </div>
+                ),
+              )}
             </div>
           </Section>
         </div>

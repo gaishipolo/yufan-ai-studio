@@ -1167,3 +1167,67 @@ def test_pick_mode_pack_rejects_text_and_audio_slots(client: TestClient) -> None
     response = client.post(f"{API}/validate", json=draft, headers=headers)
     assert response.status_code == 400, response.text
     assert "不能从封装包取" in response.json()["message"]
+
+
+def test_pack_group_round_trips_and_keeps_members_adjacent(client: TestClient) -> None:
+    """封装容器：几个槽位一个 group，进发布快照。
+
+    使用者在模板库里只会看到一个「选包」入口 —— 点一次包，按标签把这些槽位
+    一起填好。容器不是一条独立记录，就是槽位上的一列 `group`。
+    """
+    headers = _headers(client)
+    video, first, second = _media(client, headers)
+    draft = _draft(video, first, second)
+    for slot in draft["slots"][1:]:
+        slot["pickMode"] = "pack"
+        slot["group"] = "g1"
+
+    saved = _save(client, headers, draft)
+    assert [slot.get("group") for slot in saved["draft"]["slots"]] == ["", "g1", "g1"]
+
+    published = client.post(f"{API}/{draft['key']}/publish", headers=headers)
+    assert published.status_code == 200, published.text
+
+    detail = client.get(f"{API}/{draft['key']}", headers=headers).json()["data"]
+    assert [slot.get("group") for slot in detail["latest"]["slots"]] == ["", "g1", "g1"]
+
+
+def test_pack_group_rejects_a_slot_from_assets(client: TestClient) -> None:
+    """容器里的槽位只能来自包：混一个「从素材挑」的进去，一次选包就填不全。"""
+    headers = _headers(client)
+    video, first, second = _media(client, headers)
+    draft = _draft(video, first, second)
+    draft["slots"][1]["group"] = "g1"  # hero 仍是 pickMode=asset
+
+    response = client.post(f"{API}/validate", json=draft, headers=headers)
+    assert response.status_code == 400, response.text
+    assert "只能来自封装包" in response.json()["message"]
+
+
+def test_pack_group_members_must_be_adjacent(client: TestClient) -> None:
+    """中间隔着别的槽位就不行：容器在界面上会断开，而编号仍连着。"""
+    headers = _headers(client)
+    video, first, second = _media(client, headers)
+    draft = _draft(video, first, second)
+    draft["slots"][1].update({"pickMode": "pack", "group": "g1"})
+    draft["slots"][2].update({"pickMode": "pack", "group": "g1"})
+    # 在两者之间插一个独立槽位
+    draft["slots"].insert(
+        2,
+        {
+            "key": "loose",
+            "type": "image",
+            "binding": "user",
+            "tagIds": [_TAG],
+            "minCount": 0,
+            "maxCount": 1,
+            "position": 2,
+            "label": "夹在中间",
+        },
+    )
+    for index, slot in enumerate(draft["slots"]):
+        slot["position"] = index
+
+    response = client.post(f"{API}/validate", json=draft, headers=headers)
+    assert response.status_code == 400, response.text
+    assert "必须挨在一起" in response.json()["message"]

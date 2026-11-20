@@ -42,6 +42,7 @@ export function SlotCard({
   typeOptions,
   slots,
   prompt,
+  inGroup = false,
 }: {
   slot: SpecSlotIn;
   index: number;
@@ -59,6 +60,8 @@ export function SlotCard({
   slots: SpecSlotIn[];
   /** 整段提示词：用来判断这个槽位有没有**插入点**（见下面 `hasInsertPoint`）。 */
   prompt: string;
+  /** 在封装容器里：来源由容器决定（只能来自包），这里不再给「来源」这一项。 */
+  inGroup?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const fixed = (slot.binding ?? 'user') === 'fixed';
@@ -165,7 +168,7 @@ export function SlotCard({
           )}
         />
 
-        {packMode && (
+        {packMode && !inGroup && (
           /* 只在「从包取」时出现一枚角标：默认是素材，不必给每一行都加个标签；
              但来源改了之后，模板库那一格的网格里连散图都不列了 —— 这件事必须
              在封装页就能看见。 */
@@ -180,7 +183,11 @@ export function SlotCard({
         {/* 谁定：两个选项的东西，没有下拉值得占一格 —— 直接一个分段控件。
             选中项是**实心**的：这是这一行里唯一需要被一眼看出来的状态，
             「这一格在说什么」比「这一格是什么颜色」更重要。
-            「用户填」是绝大多数槽位的默认档，所以它默认就是实心的。 */}
+            「用户填」是绝大多数槽位的默认档，所以它默认就是实心的。
+
+            **容器里的槽位不给这个开关**：它只能是「用户填」（包由使用者选），
+            切成固定会被后端拒（固定槽位钉的是一张具体素材）。 */}
+        {!inGroup && (
         <div className="flex shrink-0 items-center gap-0.5 rounded-lg border border-line-soft bg-panel-soft p-0.5">
           {BINDING_TOGGLES.map(item => {
             const active = (slot.binding ?? 'user') === item.value;
@@ -212,6 +219,7 @@ export function SlotCard({
             );
           })}
         </div>
+        )}
 
         {/* 必填 / 可选：只在「用户填」的槽位上出现（固定槽位的素材早就定死了，
             不存在「选不选」）。
@@ -326,7 +334,7 @@ export function SlotCard({
               }}
             />
           </FormField>
-          {canPickFromPack && (
+          {canPickFromPack && !inGroup && (
             <FormField label="来源" htmlFor="slot-source">
               {/* 两档互斥：`素材` 在模板库里只列候选素材，`封装包` 只列包
                   （选一次包，把几个同样声明为包的槽位一起填好）。

@@ -576,3 +576,28 @@ describe('模板封装 · 案例入口按权限收敛', () => {
     expect(screen.queryByRole('button', { name: /设置案例/ })).not.toBeInTheDocument();
   });
 });
+
+/**
+ * 封装容器：一次选包、多格一起填。
+ *
+ * 作者的口径是「封装也是一种槽位，可以在它内部放别的槽位」。界面上要能看到
+ * 一个框 + 里面几行；而模板库那边只有**一个**选包入口（这条在模板库的用例里守）。
+ */
+describe('模板封装 · 加封装容器', () => {
+  it('加封装 → 一个容器 + 两个图片子槽位', async () => {
+    const user = userEvent.setup();
+    renderWorkspace([specOf({ status: 'draft' })]);
+    await user.click(cardOf('商品图模板').getByRole('button', { name: '编辑' }));
+
+    await user.click(screen.getByRole('button', { name: /加槽位/ }));
+    await user.click(screen.getByRole('menuitem', { name: /封装/ }));
+
+    const header = screen.getByText('封装槽位');
+    const box = header.closest('div.rounded-xl');
+    expect(box).not.toBeNull();
+    // 默认两个子槽位（左图/右图这类一对是最常见的用法）
+    expect(
+      within(box as HTMLElement).getAllByRole('button', { name: '展开更多设置' }),
+    ).toHaveLength(2);
+  });
+});

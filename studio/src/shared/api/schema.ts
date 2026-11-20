@@ -1340,6 +1340,7 @@ export interface SpecSlotIn {
   binding?: "fixed" | "user";
   refMode?: "mixed" | "attachment";
   pickMode?: "asset" | "pack";
+  group?: string;
   minCount?: number;
   maxCount?: number;
   label?: string;
@@ -1357,6 +1358,7 @@ export interface SpecSlotOut {
   binding?: "fixed" | "user";
   refMode?: "mixed" | "attachment";
   pickMode?: "asset" | "pack";
+  group?: string;
   minCount?: number;
   maxCount?: number;
   label?: string;

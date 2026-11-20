@@ -85,12 +85,19 @@ export function nextSlotKey(slots: SpecSlotIn[], type: SlotType): string {
   return `${prefix}_${Math.random().toString(36).slice(2, 6)}`;
 }
 
-export function blankSlot(position = 0, type: SlotType = 'image', slots: SpecSlotIn[] = []): SpecSlotIn {
+export function blankSlot(
+  position = 0,
+  type: SlotType = 'image',
+  slots: SpecSlotIn[] = [],
+  group = '',
+): SpecSlotIn {
   return {
     key: nextSlotKey(slots, type),
     type,
     binding: 'user',
     refMode: 'mixed',
+    // 容器里的槽位只能来自包：来源不是作者在这里再选一次的，是容器给的
+    ...(group ? {pickMode: 'pack' as const, group} : {}),
     minCount: 1,
     maxCount: 1,
     label: '',
@@ -98,6 +105,19 @@ export function blankSlot(position = 0, type: SlotType = 'image', slots: SpecSlo
     emptyText: '',
     position,
   };
+}
+
+/**
+ * 下一个封装容器的 key（`g1`、`g2`…）。
+ *
+ * 只用现有槽位推出，不另存一个计数器：容器删掉再建同名 key 是安全的
+ * （它只表示「这几个槽位是一伙的」）。
+ */
+export function nextGroupKey(slots: SpecSlotIn[]): string {
+  const used = new Set((slots ?? []).map(slot => (slot.group ?? '').trim()));
+  let index = 1;
+  while (used.has(`g${index}`)) index += 1;
+  return `g${index}`;
 }
 
 /**
@@ -371,6 +391,7 @@ function slotFingerprint(slot: SpecSlotIn, index: number) {
     refMode: slot.refMode ?? SLOT_DEFAULTS.refMode,
     // 缺失 = 素材：这样「保存前没写、保存后后端补上 asset」不会被判成改动
     pickMode: slot.pickMode ?? SLOT_DEFAULTS.pickMode,
+    group: slot.group ?? '',
     minCount: slot.minCount ?? SLOT_DEFAULTS.minCount,
     maxCount: slot.maxCount ?? SLOT_DEFAULTS.maxCount,
     label: slot.label ?? '',

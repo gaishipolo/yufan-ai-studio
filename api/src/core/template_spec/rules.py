@@ -167,6 +167,8 @@ def validate_spec(spec: TemplateSpec) -> None:
         positions.add(slot.position)
         _validate_slot(slot)
 
+    _validate_groups(spec)
+
     _validate_prompt_text(spec.prompt, keys, "提示词")
     if spec.random_prompt.strip():
         _validate_prompt_text(spec.random_prompt, keys, "随机档提示词")
@@ -333,6 +335,34 @@ def _validate_slot_texts(spec: TemplateSpec) -> None:
                 )
 
 
+def _validate_groups(spec: TemplateSpec) -> None:
+    """封装容器的两条结构约束。
+
+    1. **容器 key 形状**：与槽位 key 同一套（会出现在前端的状态与 DOM 里）。
+    2. **成员必须相邻**：容器的顺序由「第一个成员的位置」决定，中间的成员被
+       拖出去之后，容器在界面上会断开成两截 —— 而 `{{Mixed N}}` 仍按 `position`
+       排，作者看到的顺序与实际编号不一致。所以宁可当场拒，也不让界面出现
+       「看起来是两段、编号却连着」的结构。
+
+    其它约束（成员必须来自包、只能是图片/视频）在 `_validate_slot` 里逐条判。
+    """
+    ordered = sorted(spec.slots, key=lambda item: (item.position, item.key))
+    runs: dict[str, list[int]] = {}
+    for index, slot in enumerate(ordered):
+        if not slot.group:
+            continue
+        if not _KEY.match(slot.group):
+            raise BadRequest(f"封装容器的 key 不合法：{slot.group}")
+        runs.setdefault(slot.group, []).append(index)
+    for group_key, indexes in runs.items():
+        if indexes != list(range(indexes[0], indexes[-1] + 1)):
+            names = "、".join(ordered[index].key for index in indexes)
+            raise BadRequest(
+                f"封装容器「{group_key}」里的槽位必须挨在一起（现在被别的槽位隔开了）："
+                f"{names}"
+            )
+
+
 def _validate_slot(slot: InputSlot) -> None:
     if slot.type not in SLOT_TYPES:
         raise BadRequest(f"槽位「{slot.key}」的类型无效：{slot.type}")
@@ -347,6 +377,10 @@ def _validate_slot(slot: InputSlot) -> None:
     # - 文本/音频各有各的选择器，不参与 `{{Mixed N}}` 分发，包对它们没有意义。
     if slot.pick_mode not in PICK_MODES:
         raise BadRequest(f"槽位「{slot.key}」的来源无效：{slot.pick_mode}")
+    if slot.group and slot.pick_mode != "pack":
+        raise BadRequest(
+            f"槽位「{slot.key}」在封装容器里，只能来自封装包（pickMode=pack）"
+        )
     if slot.pick_mode == "pack":
         if slot.binding != "user":
             raise BadRequest(

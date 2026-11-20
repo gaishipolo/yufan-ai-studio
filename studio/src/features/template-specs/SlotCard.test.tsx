@@ -28,10 +28,12 @@ function SlotHarness({
   base,
   onPatch,
   prompt,
+  inGroup,
 }: {
   base: SpecSlotIn;
   onPatch: (patch: Partial<SpecSlotIn>) => void;
   prompt: string;
+  inGroup?: boolean;
 }) {
   const [current, setCurrent] = useState<SpecSlotIn>(base);
   const patch = (next: Partial<SpecSlotIn>) => {
@@ -42,6 +44,7 @@ function SlotHarness({
     <SlotCard
       slot={current}
       index={0}
+      inGroup={inGroup}
       dragging={false}
       onDragStart={() => {}}
       onDragEnd={() => {}}
@@ -66,7 +69,11 @@ function SlotHarness({
  */
 const DEFAULT_PROMPT = '把 {{Mixed 1}} 放进画面';
 
-function renderSlot(slot: Partial<SpecSlotIn> = {}, prompt = DEFAULT_PROMPT) {
+function renderSlot(
+  slot: Partial<SpecSlotIn> = {},
+  prompt = DEFAULT_PROMPT,
+  extra: {inGroup?: boolean} = {},
+) {
   const onPatch = vi.fn();
   const base: SpecSlotIn = {
     key: 'image_1',
@@ -84,7 +91,7 @@ function renderSlot(slot: Partial<SpecSlotIn> = {}, prompt = DEFAULT_PROMPT) {
   });
   const view = render(
     <QueryClientProvider client={client}>
-      <SlotHarness base={base} onPatch={onPatch} prompt={prompt} />
+      <SlotHarness base={base} onPatch={onPatch} prompt={prompt} {...extra} />
     </QueryClientProvider>,
   );
   return {onPatch, ...view};
@@ -441,6 +448,25 @@ describe('槽位卡片 · 来源', () => {
   it('文本槽位没有「来源」这一项（不参与编号分发）', async () => {
     const user = userEvent.setup();
     renderSlot({type: 'text', refMode: 'attachment'});
+    await user.click(screen.getByRole('button', {name: '展开更多设置'}));
+
+    expect(screen.getByLabelText('类型')).toBeInTheDocument();
+    expect(screen.queryByLabelText('来源')).not.toBeInTheDocument();
+  });
+
+  it('也不给「用户填 / 已固定」：容器里的槽位只能由使用者填', () => {
+    renderSlot({pickMode: 'pack', group: 'g1'}, DEFAULT_PROMPT, {inGroup: true});
+
+    expect(screen.queryByRole('button', {name: /已固定/})).not.toBeInTheDocument();
+    // 必填/可选还在（它决定使用者能不能跳过这一格）
+    expect(screen.getByRole('button', {name: /必填/})).toBeInTheDocument();
+  });
+});
+
+describe('槽位卡片 · 在封装容器里', () => {
+  it('不给「来源」这一项：来源由容器决定，摆出来等于让人改一个改不了的东西', async () => {
+    const user = userEvent.setup();
+    renderSlot({pickMode: 'pack', group: 'g1'}, DEFAULT_PROMPT, {inGroup: true});
     await user.click(screen.getByRole('button', {name: '展开更多设置'}));
 
     expect(screen.getByLabelText('类型')).toBeInTheDocument();

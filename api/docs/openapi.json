@@ -13618,6 +13618,12 @@
             "title": "Pickmode",
             "default": "asset"
           },
+          "group": {
+            "type": "string",
+            "pattern": "^(|[a-z][a-z0-9_]{0,39})$",
+            "title": "Group",
+            "default": ""
+          },
           "minCount": {
             "type": "integer",
             "maximum": 1.0,
@@ -13729,6 +13735,12 @@
             ],
             "title": "Pickmode",
             "default": "asset"
+          },
+          "group": {
+            "type": "string",
+            "pattern": "^(|[a-z][a-z0-9_]{0,39})$",
+            "title": "Group",
+            "default": ""
           },
           "minCount": {
             "type": "integer",

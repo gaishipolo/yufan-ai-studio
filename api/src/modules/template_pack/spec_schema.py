@@ -33,6 +33,9 @@ from core.template_spec import (
 _KEY = r"^[a-z][a-z0-9_]{0,39}$"
 #: 规格 key（URL 段，允许连字符）
 _SPEC_KEY = r"^[a-z][a-z0-9_-]{0,39}$"
+#: 封装容器 key（空串 = 不属于任何容器）
+_GROUP = r"^(|[a-z][a-z0-9_]{0,39})$"
+
 
 
 class StrictIn(CamelModel):
@@ -54,6 +57,12 @@ class SpecSlotIn(StrictIn):
     #: 作者声明来源，**用哪个包由模板库的使用者选**；多个来源为 `pack` 的槽位
     #: 由同一次选包一起填。
     pick_mode: PickMode = "asset"
+    #: 所属的**封装容器** key（空 = 独立槽位）。
+    #:
+    #: 同一容器的槽位共用一次选包：模板库只出一个「选包」网格，点一次按标签
+    #: 把成员分到各槽位。容器内槽位必然是 `pickMode=pack`（否则 400），
+    #: 且顺序上必须相邻。
+    group: str = Field(default="", pattern=_GROUP)
     #: 一槽一张：`min` 只有 0（可选）/ 1（必填），`max` 恒为 1。
     #: 硬约束而非读入时钳制 —— 库里已无多值槽位（迁移 `4e06879f9f75` 清掉了
     #: 最后两个多值 e2e 模板），传 >1 就是真错，应当 422 让人看见。

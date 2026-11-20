@@ -4792,6 +4792,7 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `binding` | `"fixed" \| "user"` | 否 |  |
 | `refMode` | `"mixed" \| "attachment"` | 否 |  |
 | `pickMode` | `"asset" \| "pack"` | 否 |  |
+| `group` | `string` | 否 |  |
 | `minCount` | `number` | 否 |  |
 | `maxCount` | `number` | 否 |  |
 | `label` | `string` | 否 |  |
@@ -4812,6 +4813,7 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `binding` | `"fixed" \| "user"` | 否 |  |
 | `refMode` | `"mixed" \| "attachment"` | 否 |  |
 | `pickMode` | `"asset" \| "pack"` | 否 |  |
+| `group` | `string` | 否 |  |
 | `minCount` | `number` | 否 |  |
 | `maxCount` | `number` | 否 |  |
 | `label` | `string` | 否 |  |

@@ -87,6 +87,7 @@ def to_core(payload: TemplateSpecIn) -> TemplateSpec:
                 binding=slot.binding,
                 ref_mode=slot.ref_mode,
                 pick_mode=slot.pick_mode,
+                group=slot.group,
                 min_count=slot.min_count,
                 max_count=slot.max_count,
                 label=slot.label,
@@ -138,6 +139,7 @@ def _slot_out(row: TemplateSpecSlot) -> SpecSlotOut:
         ref_mode=row.ref_mode,  # type: ignore[arg-type]
         # 老行没有这一列的值（加列前发布的版本）：默认成「素材」，与当时的行为一致。
         pick_mode=(row.pick_mode or "asset"),  # type: ignore[arg-type]
+        group=row.group_key or "",
         min_count=row.min_count,
         max_count=row.max_count,
         label=row.label,
@@ -565,6 +567,7 @@ async def publish(session: AsyncSession, actor: CurrentUser, key: str) -> SpecPu
                 binding=slot.binding,
                 ref_mode=slot.ref_mode,
                 pick_mode=slot.pick_mode,
+                group_key=slot.group,
                 min_count=slot.min_count,
                 max_count=slot.max_count,
                 label=slot.label,

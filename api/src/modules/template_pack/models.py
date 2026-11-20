@@ -167,6 +167,9 @@ class TemplateSpecSlot(Base, UUIDMixin):
     #: `asset`（默认，从素材里挑）| `pack`（只从封装包里取）。
     #: 加列前发布的版本读到空值时按 `asset` 解释（见 `spec_service._slot_out`）。
     pick_mode: Mapped[str] = mapped_column(String(8), default="asset", nullable=False)
+    #: 所属封装容器（key；空 = 独立槽位）。**列名带 `_key`**：`group` 在 SQL 里是
+    #: 保留字，裸用会在某些方言上要加引号。
+    group_key: Mapped[str] = mapped_column(String(40), default="", nullable=False)
     min_count: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     max_count: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     label: Mapped[str] = mapped_column(String(80), default="", nullable=False)
