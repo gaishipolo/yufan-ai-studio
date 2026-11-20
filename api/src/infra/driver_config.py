@@ -239,6 +239,29 @@ def ensure_prod_driver_settings(app_env: str) -> None:
         )
 
 
+def ensure_prod_queue_driver(app_env: str, queue_driver: str) -> None:
+    """生产环境不许用进程内队列（`QUEUE_DRIVER=memory`）。
+
+    `memory` 是默认值，但它有三个性质在任何共享部署里都是错的：
+
+    1. **重启即丢**：提交后进程一重启，job 消失，记录永远停在 `queued`；
+    2. **只在创建它的进程里执行**：多实例部署时别的实例看不到这条 job；
+    3. **与共享数据库 / 共享运行目录冲突**：另一个实例的启动恢复会把 `running`
+       记录当成自己的活去轮询（还会用**本机** CDP 端口），失败后写库把真任务判死。
+
+    三条都不会报错，只表现为「任务莫名失败 / 一直转圈」。2026-11-19 的
+    「反反复复超时」就是在这个组合上查出来的，所以在启动期炸掉比事后排查划算。
+    """
+    if app_env != "prod":
+        return
+    if str(queue_driver).strip().lower() == "memory":
+        raise RuntimeError(
+            "生产环境不允许 QUEUE_DRIVER=memory：进程内队列重启即丢，"
+            "多实例部署时任务只在创建它的实例里执行，与共享数据库 / 运行目录不一致。"
+            "请设 QUEUE_DRIVER=db。"
+        )
+
+
 def precheck_submit_budgets() -> dict[str, list[float]]:
     """启动预检：把每个被声明的「提交预算」在启动期算一遍。
 
