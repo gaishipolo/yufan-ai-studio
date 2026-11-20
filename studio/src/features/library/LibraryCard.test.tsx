@@ -147,15 +147,50 @@ describe('LibraryCard · 封装', () => {
     expect(screen.getByText('封装')).toBeInTheDocument();
   });
 
-  it('不给下载按钮：包没有原文件，点了必然失败', () => {
+  /* 包没有自己的字节，但**能进打包任务**（后端展开成员再压 zip）。
+     所以按钮不该消失，而是换成「打包」这条链路 —— 用户勾的是「这一套图」。 */
+  it('下载走打包那条链路，标题带上成员数', () => {
     renderCard({ asset: PACK_ASSET });
     expect(screen.queryByRole('button', { name: '下载原文件' })).not.toBeInTheDocument();
-    // 同一行里别的按钮还在（共享、删除），不是整行没渲染
-    expect(screen.getByRole('button', { name: '共享到…' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '打包下载（成员共 3 张）' })).toBeInTheDocument();
   });
 
-  it('普通素材仍有下载按钮（上面那条不是因为整行被藏掉）', () => {
+  it('点打包下载，动作还是 download（由上层分流到打包任务）', async () => {
+    const user = userEvent.setup();
+    const onAction = vi.fn();
+    renderCard({ asset: PACK_ASSET, onAction });
+
+    await user.click(screen.getByRole('button', { name: '打包下载（成员共 3 张）' }));
+    expect(onAction).toHaveBeenCalledWith('download', PACK_ASSET);
+  });
+
+  it('普通素材仍是「下载原文件」（上面那条不是因为整行被藏掉）', () => {
     renderCard();
     expect(screen.getByRole('button', { name: '下载原文件' })).toBeInTheDocument();
+  });
+});
+
+describe('LibraryCard · 编辑封装', () => {
+  it('有权限且是自己的包：按钮出现，点了把 asset 交给上层', async () => {
+    const user = userEvent.setup();
+    const onAction = vi.fn();
+    renderCard({ asset: PACK_ASSET, canEditPack: true, onAction });
+
+    await user.click(screen.getByRole('button', { name: '编辑封装' }));
+    expect(onAction).toHaveBeenCalledWith('editPack', PACK_ASSET);
+  });
+
+  it('没有 library:create 就不出现（后端 PATCH 会 403）', () => {
+    renderCard({ asset: PACK_ASSET, canEditPack: false });
+    expect(screen.queryByRole('button', { name: '编辑封装' })).not.toBeInTheDocument();
+  });
+
+  it('别人的包不出现（与「共享 / 删除」同一套归属口径）', () => {
+    renderCard({
+      asset: {...PACK_ASSET, ownerId: 'u2'},
+      canEditPack: true,
+      viewer: {id: 'u1', canDeleteAny: false},
+    });
+    expect(screen.queryByRole('button', { name: '编辑封装' })).not.toBeInTheDocument();
   });
 });

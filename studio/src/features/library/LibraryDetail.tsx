@@ -23,6 +23,7 @@ import {
   Notice,
   Skeleton,
 } from '@/shared/ui';
+import { useCan } from '@/shared/access/use-access';
 import { cn } from '@/shared/lib/cn';
 import { formatBytes, formatDateTime, formatDuration } from '@/shared/lib/format';
 import { toast } from '@/shared/lib/toast';
@@ -114,11 +115,17 @@ function DetailBody({
 }: LibraryDetailProps & { asset: LibraryAssetDetailOut }) {
   const patch = usePatchAsset();
   const saveFile = useSaveAssetFile();
+  const canCreate = useCan('library:create');
   const offer = deleteOffer(asset, viewer);
   /* 改名与打标签在服务端只认 owner（或有 delete:any）。别人共享给我的素材，
      我能读到但改不了——按钮挂在这里就要跟着同一个判定，否则点下去是一句
      「资产不存在」，看起来像这条记录丢了。 */
   const canEdit = canUpdate && (asset.ownerId === viewer.id || viewer.canDeleteAny);
+  /* 封装的编辑走 `PATCH /library/packs`，它要的是 `library:create`（建包那条链），
+     不是 `library:update`。以前这里借用了 `canEdit`，于是「有 update、没有 create」
+     的角色会看到按钮然后吃 403 —— 判据跟着接口走。 */
+  const canEditPack =
+    canCreate && (asset.ownerId === viewer.id || viewer.canDeleteAny);
   const days = trashDaysLeft(asset.trashExpiresAt);
   const hasMedia = asset.kind === 'video' || asset.kind === 'audio';
   const media = useLibraryMedia(asset.id, hasMedia);
@@ -472,19 +479,20 @@ function DetailBody({
 
       <div className="flex flex-wrap items-center gap-1.5 border-t border-line-soft pt-3">
         {/* 只在 active 出现：回收站里后端一律拒绝取件，按钮点了也是失败。
-            封装另说：它没有原文件（`/file` 会明确报「此资产没有原文件」）。 */}
-        {asset.state === 'active' && asset.kind !== 'pack' && (
+            封装没有原文件，但它能进打包任务（后端展开成员再压 zip）——
+            同一个按钮两条链路，用户看到的都是「下了」。 */}
+        {asset.state === 'active' && (
           <Button
             size="sm"
             variant="secondary"
             icon={<Download size={13} />}
-            onClick={download}
+            onClick={() => (asset.kind === 'pack' ? onAction('download', asset) : download())}
           >
-            下载原件
+            {asset.kind === 'pack' ? '打包下载' : '下载原件'}
           </Button>
         )}
         {/* 封装的编辑入口。成员与名字都可改 —— 建完只能删了重建太笨。 */}
-        {asset.kind === 'pack' && asset.state === 'active' && canEdit && (
+        {asset.kind === 'pack' && asset.state === 'active' && canEditPack && (
           <Button
             size="sm"
             variant="secondary"

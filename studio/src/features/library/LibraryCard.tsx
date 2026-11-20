@@ -1,4 +1,4 @@
-import { Check, Download, FileAudio, FileText, Film, Image as ImageIcon, Layers, Plus, RotateCcw, Share2, Trash2, Undo2, X } from 'lucide-react';
+import { Check, Download, FileAudio, FileText, Film, Image as ImageIcon, Layers, Pencil, Plus, RotateCcw, Share2, Trash2, Undo2, X } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { Button, Chip, CoverImage, IconButton } from '@/shared/ui';
 import { cn } from '@/shared/lib/cn';
@@ -24,7 +24,8 @@ export type LibraryCardAction =
   | 'purge'
   | 'approve'
   | 'reject'
-  | 'download';
+  | 'download'
+  | 'editPack';
 
 export interface LibraryCardProps {
   asset: LibraryAssetOut;
@@ -33,6 +34,12 @@ export interface LibraryCardProps {
   viewer: { id: string; canDeleteAny: boolean };
   /** 后端 PATCH 要 `library:update`，且只认本人 / `delete:any`；界面先少显示 × */
   canUpdate: boolean;
+  /**
+   * 能不能改这个封装（名字 / 成员）。后端 `PATCH /library/packs/{id}` 要的是
+   * `library:create`（建包那条链），不是 `library:update` —— 判据跟着接口走，
+   * 否则会出现「按钮在、点了 403」。
+   */
+  canEditPack?: boolean;
   /** 能不能发起/撤销共享（后端要 `library:share`）。
    *  没有这个权限时**共享按钮不出现** —— 摆一个点了就 403 的按钮，
    *  再在旁边挂一句「共享需要权限」，那是拿小字替一个不该出现的控件发声。 */
@@ -70,6 +77,7 @@ export function LibraryCard({
   viewer,
   canUpdate,
   canShare = true,
+  canEditPack = false,
   tagBusy,
   onToggle,
   onAction,
@@ -79,6 +87,10 @@ export function LibraryCard({
   const Icon = KIND_ICON[asset.kind] ?? ImageIcon;
   const canRemoveTags =
     canUpdate && (asset.ownerId === viewer.id || viewer.canDeleteAny);
+  /* 编辑封装与「共享 / 删除」同一套归属口径：别人的包，就算有 `library:create`
+     也不该在列表里改（后端认，界面先少摆一个按钮）。 */
+  const canEditThisPack =
+    canEditPack && (asset.ownerId === viewer.id || viewer.canDeleteAny);
   const offer = deleteOffer(asset, viewer);
   const days = view === 'trash' ? trashDaysLeft(asset.trashExpiresAt) : null;
   const expired = view === 'trash' && isTrashExpired(asset.trashExpiresAt);
@@ -345,13 +357,32 @@ export function LibraryCard({
               />
             )}
 
-            {/* 封装没有自己的原文件（`/file` 会明确报「此资产没有原文件」），
-                摆一个点了必然失败的下载按钮，比不摆更糟。要拿成员的图，
-                进详情逐个下 —— 那也是唯一能看清「包里是哪几张」的地方。 */}
-            {view !== 'drafts' && view !== 'trash' && asset.state === 'active' && asset.kind !== 'pack' && (
+            {/* 封装的编辑入口。名字与成员都可改 —— 建完只能删了重建太笨，
+                而「点进详情再点一次」是两步去做一件一眼就能做的事。 */}
+            {view !== 'drafts' &&
+              view !== 'trash' &&
+              asset.state === 'active' &&
+              asset.kind === 'pack' &&
+              canEditThisPack && (
+                <IconButton
+                  icon={<Pencil size={13} />}
+                  label="编辑封装"
+                  onClick={() => onAction('editPack', asset)}
+                />
+              )}
+
+            {/* 封装自己**没有字节**（`/file` 会明确报「此资产没有原文件」），
+                但它能进打包任务：后端把封装展开成成员再压 zip（`_collect`）。
+                所以这里不是一个必然失败的按钮，而是「把这一套图打包下来」——
+                也是成员不再单列之后，那几张图唯一的下载途径。 */}
+            {view !== 'drafts' && view !== 'trash' && asset.state === 'active' && (
               <IconButton
                 icon={<Download size={13} />}
-                label="下载原文件"
+                label={
+                  asset.kind === 'pack'
+                    ? `打包下载（成员共 ${asset.memberCount ?? 0} 张）`
+                    : '下载原文件'
+                }
                 onClick={() => onAction('download', asset)}
               />
             )}

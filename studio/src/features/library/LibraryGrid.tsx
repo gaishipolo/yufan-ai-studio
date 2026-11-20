@@ -12,6 +12,8 @@ export interface LibraryGridProps {
   canUpdate: boolean;
   /** 能不能共享（没有就不渲染共享按钮，而不是摆一句「需要权限」）。 */
   canShare?: boolean;
+  /** 能不能改封装（后端 PATCH /library/packs 要 `library:create`）。 */
+  canEditPack?: boolean;
   tagBusy?: boolean;
   isPending: boolean;
   error: Error | null;
@@ -66,6 +68,7 @@ export function LibraryGrid(props: LibraryGridProps) {
           viewer={props.viewer}
           canUpdate={props.canUpdate}
           canShare={props.canShare}
+          canEditPack={props.canEditPack}
           tagBusy={props.tagBusy}
           onToggle={props.onToggle}
           onAction={props.onAction}

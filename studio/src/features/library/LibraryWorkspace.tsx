@@ -5,6 +5,7 @@ import { Button, PageHeader, Pager } from '@/shared/ui';
 import { toast } from '@/shared/lib/toast';
 import { useDebouncedValue } from '@/shared/hooks/useDebouncedValue';
 import { useCan, useSubject } from '@/shared/access/use-access';
+import { libraryApi } from '@/entities/library/api/library.api';
 import { ApiError } from '@/shared/api/types';
 import type { BulkAction, LibraryAssetOut } from '@/shared/api/schema';
 import {
@@ -43,7 +44,7 @@ import { LibraryTagManager } from './LibraryTagManager';
 import { LibraryTagPicker } from './LibraryTagPicker';
 import { LibraryToolbar } from './LibraryToolbar';
 import { LibraryUploadModal } from './LibraryUploadModal';
-import { PackCreateModal } from './PackCreateModal';
+import { PackCreateModal, type EditingPack } from './PackCreateModal';
 import { TextAssetModal } from './TextAssetModal';
 import { ShareRequestsModal } from './ShareRequestsModal';
 import type { LibraryCardAction } from './LibraryCard';
@@ -159,6 +160,9 @@ export function LibraryWorkspace() {
   /* 建封装弹窗。`preset` 不单独存：选中项已经被裁到当前页（见上面的 effect），
      所以 `items` 里一定拿得到它们的完整对象，用派生值比再存一份同步状态稳。 */
   const [packOpen, setPackOpen] = useState(false);
+  /* 编辑哪一个封装（空 = 新建）。`PackCreateModal` 用 `pack` 是否存在区分两种模式，
+     所以和「新建」共用一个实例：同一张表单，两套入口。 */
+  const [editingPack, setEditingPack] = useState<EditingPack | null>(null);
   const [detailId, setDetailId] = useState<string | null>(null);
   const [uploadOpen, setUploadOpen] = useState(false);
   const [textModalOpen, setTextModalOpen] = useState(false);
@@ -438,10 +442,43 @@ export function LibraryWorkspace() {
         });
         return;
       case 'download':
+        /* 封装没有自己的字节，但它能进**打包任务**：后端把成员展开再压 zip。
+           走单文件那条会得到「此资产没有原文件」——同一个按钮两套链路，
+           而用户看到的结果差别是「下了」和「报错」。 */
+        if (asset.kind === 'pack') {
+          createDownload.mutate(
+            { ids: [asset.id] },
+            {
+              onSuccess: () => {
+                setDownloadsOpen(true);
+                toast('已创建打包任务');
+              },
+              onError: fail,
+            },
+          );
+          return;
+        }
         saveFile.mutate(
           { id: asset.id, filename: asset.name },
           { onSuccess: () => toast('已开始下载'), onError: fail },
         );
+        return;
+      case 'editPack':
+        /* 卡片上只有 `memberCount`，编辑器要 **成员行**（名字、kind、标签）。
+           先拉详情再开弹窗：那一次请求省不掉，但用户不该为此先跳进详情页。
+           直接返回 promise 而不是走 mutation —— 这次请求的「结果」只是打开一个
+           弹窗，没有需要留在缓存里的东西，也没有要表达的重试语义。 */
+        libraryApi
+          .detail(asset.id)
+          .then((row) => {
+            setEditingPack({
+              id: row.id,
+              name: row.name,
+              members: row.packItems ?? [],
+            });
+            setPackOpen(true);
+          })
+          .catch(fail);
         return;
     }
   }
@@ -652,6 +689,7 @@ export function LibraryWorkspace() {
           viewer={viewer}
           canUpdate={canUpdate}
           canShare={canShare}
+          canEditPack={canCreate}
           tagBusy={patch.isPending}
           isPending={list.isPending}
           error={(list.error as Error | null) ?? null}
@@ -698,9 +736,19 @@ export function LibraryWorkspace() {
 
       <PackCreateModal
         open={packOpen}
+        pack={editingPack ?? undefined}
         preset={packPreset}
-        onClose={() => setPackOpen(false)}
+        onClose={() => {
+          setPackOpen(false);
+          setEditingPack(null);
+        }}
         onCreated={() => setSelected(new Set())}
+        /* 改完要重拉列表：名字、成员数、共同标签都会变（标签是后端按新成员重算的）。 */
+        onUpdated={() => {
+          setPackOpen(false);
+          setEditingPack(null);
+          void list.refetch();
+        }}
       />
 
       <LibraryUploadModal open={uploadOpen} tags={tags.data ?? []} onClose={() => setUploadOpen(false)} />

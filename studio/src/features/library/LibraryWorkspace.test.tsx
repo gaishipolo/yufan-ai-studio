@@ -5,17 +5,24 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { LibraryAssetOut } from '@/shared/api/schema';
 import { LibraryWorkspace } from './LibraryWorkspace';
 
-const { listMock, bulkMock, toastMock } = vi.hoisted(() => ({
+const { listMock, bulkMock, toastMock, createDownloadMock, detailMock } = vi.hoisted(() => ({
   listMock: vi.fn(),
   bulkMock: vi.fn(),
   toastMock: vi.fn(),
+  createDownloadMock: vi.fn(),
+  detailMock: vi.fn(),
+}));
+
+/* 「编辑封装」要先拉一次详情（卡片上只有 memberCount，编辑器要成员行）。 */
+vi.mock('@/entities/library/api/library.api', () => ({
+  libraryApi: { detail: detailMock },
 }));
 
 vi.mock('@/entities/library/api/library.queries', () => ({
   useLibraryList: listMock,
   useLibraryTags: () => ({ data: [], isPending: false }),
   useBulkAction: () => ({ mutate: bulkMock, isPending: false }),
-  useCreateDownload: () => ({ mutate: vi.fn(), isPending: false }),
+  useCreateDownload: () => ({ mutate: createDownloadMock, isPending: false }),
   useCreateTag: () => ({ mutateAsync: vi.fn() }),
   useDeleteAsset: () => ({
     mutate: (_vars: unknown, options?: {onSuccess?: () => void}) => options?.onSuccess?.(),
@@ -41,7 +48,10 @@ vi.mock('./LibraryDetail', () => ({ LibraryDetail: () => null }));
 vi.mock('./LibraryUploadModal', () => ({ LibraryUploadModal: () => null }));
 /* 建封装弹窗内部有选择器与 mutation，本文件不关心；它自己的行为在
    PackCreateModal.test.tsx 里验。 */
-vi.mock('./PackCreateModal', () => ({ PackCreateModal: () => null }));
+vi.mock('./PackCreateModal', () => ({
+  PackCreateModal: ({ open, pack }: { open: boolean; pack?: { id: string } }) =>
+    open && pack ? <div>正在编辑 {pack.id}</div> : null,
+}));
 vi.mock('./LibraryShareModal', () => ({ LibraryShareModal: () => null }));
 vi.mock('./LibraryDownloadsModal', () => ({ LibraryDownloadsModal: () => null }));
 vi.mock('./ShareRequestsModal', () => ({ ShareRequestsModal: () => null }));
@@ -87,6 +97,8 @@ beforeEach(() => {
   listMock.mockReset();
   bulkMock.mockReset();
   toastMock.mockReset();
+  createDownloadMock.mockReset();
+  detailMock.mockReset();
   listMock.mockReturnValue(listOf([ASSET]));
 });
 
@@ -220,5 +232,59 @@ describe('LibraryWorkspace · 删封装', () => {
     await user.click(screen.getByRole('button', { name: '移入回收站' }));
 
     expect(screen.queryByText(/回到资产库单独显示/)).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * 封装卡片上的两个动作：打包下载 / 编辑封装。
+ *
+ * 两者都不能走素材那条链路：包没有自己的字节（单文件下载会得到「此资产没有
+ * 原文件」），卡片上也拿不到成员行（编辑器要的是成员，不是 `memberCount`）。
+ */
+describe('LibraryWorkspace · 封装的两个动作', () => {
+  const PACK: LibraryAssetOut = {
+    id: 'p1',
+    name: '6036 黑',
+    kind: 'pack',
+    origin: 'upload',
+    ownerId: 'u1',
+    visibility: 'personal',
+    state: 'active',
+    sizeBytes: 0,
+    memberCount: 2,
+    createdAt: '2026-11-19T02:00:00Z',
+    tags: [],
+  };
+
+  beforeEach(() => {
+    listMock.mockReturnValue(listOf([PACK]));
+  });
+
+  it('打包下载：建的是打包任务，不是单文件下载', async () => {
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    await user.click(await screen.findByRole('button', { name: '打包下载（成员共 2 张）' }));
+
+    expect(createDownloadMock).toHaveBeenCalledWith(
+      { ids: ['p1'] },
+      expect.objectContaining({ onSuccess: expect.any(Function) }),
+    );
+  });
+
+  it('编辑封装：先拉详情，再拿成员开弹窗', async () => {
+    const user = userEvent.setup();
+    detailMock.mockResolvedValue({
+      id: 'p1',
+      name: '6036 黑',
+      packItems: [{ id: 'm1', name: '正面.png', kind: 'image' }],
+    });
+    renderWorkspace();
+
+    await user.click(await screen.findByRole('button', { name: '编辑封装' }));
+    expect(detailMock).toHaveBeenCalledWith('p1');
+
+    // 弹窗拿到的是这个包（不是又开了一个「新建封装」）
+    expect(await screen.findByText('正在编辑 p1')).toBeInTheDocument();
   });
 });
