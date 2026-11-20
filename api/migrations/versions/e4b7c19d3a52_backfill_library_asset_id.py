@@ -14,18 +14,27 @@ depends_on = None
 
 
 def upgrade() -> None:
+    # 用相关子查询而不是 `UPDATE ... FROM (SELECT DISTINCT ON ...)`：
+    # `DISTINCT ON` 是 PostgreSQL 方言，迁移要在 sqlite 上也能跑（CI 的
+    # `test_migrations_apply_to_empty_database` 就是拿 sqlite 验的）。
     op.execute(
         """
-        UPDATE video_tasks AS t
-        SET library_asset_id = g.asset_id
-        FROM (
-            SELECT DISTINCT ON (source_task_id) source_task_id, asset_id
-            FROM library_asset_generation
-            WHERE source_module = 'video'
-            ORDER BY source_task_id, asset_id
-        ) AS g
-        WHERE t.id = g.source_task_id
-          AND t.library_asset_id IS NULL
+        UPDATE video_tasks
+        SET library_asset_id = (
+            SELECT g.asset_id
+            FROM library_asset_generation AS g
+            WHERE g.source_task_id = video_tasks.id
+              AND g.source_module = 'video'
+            ORDER BY g.asset_id
+            LIMIT 1
+        )
+        WHERE video_tasks.library_asset_id IS NULL
+          AND EXISTS (
+            SELECT 1
+            FROM library_asset_generation AS g
+            WHERE g.source_task_id = video_tasks.id
+              AND g.source_module = 'video'
+          )
         """
     )
 
