@@ -11,6 +11,18 @@ const h = vi.hoisted(() => ({
   CATALOG: {
     groups: [
       {
+        group: '页面',
+        items: [
+          {
+            code: 'page:task-center',
+            name: '任务中心',
+            description: '',
+            requires: ['task:read', 'task:create'],
+            route: '/tasks',
+          },
+        ],
+      },
+      {
         group: '内容生产',
         items: [
           { code: 'task:read', name: '查看任务', description: '' },
@@ -114,16 +126,58 @@ describe('RolePermissionsModal', () => {
     expect(checkedCount()).toBe(0);
   });
 
-  it('整组全选只在未全选时出现', async () => {
+  it('页面卡片上的「全选」全给之后变成「取消」', async () => {
     const user = userEvent.setup();
     renderModal(baseRole());
 
-    /* 弹窗是 portal 到 body 的，render 返回的 container 里并没有它的 DOM；
-       两个分组各有一个「全选本组」，必须限定在第一组里操作 */
-    const firstGroup = document.body.querySelector('section');
-    if (!firstGroup) throw new Error('权限分组未渲染');
-    await user.click(within(firstGroup).getByRole('button', { name: '全选本组' }));
+    /* 弹窗是 portal 到 body 的，render 返回的 container 里没有它的 DOM。
+       权限勾选器现在是「一个页面一张卡片」，全选在每张卡片的页头 ——
+       限定到那张卡片，否则会点到别的卡片上的同名按钮 */
+    const card = screen
+      .getByRole('checkbox', { name: '任务中心 页面权限' })
+      .closest('section') as HTMLElement;
+    await user.click(within(card).getByRole('button', { name: '全选' }));
 
-    expect(screen.getAllByRole('button', { name: '取消本组' })).toHaveLength(1);
+    expect(within(card).getByRole('button', { name: '取消' })).toBeInTheDocument();
+  });
+});
+
+/* 回归：`task:*` / `image:*` 不在权限目录里（目录只有具体码），但后端明确接受。
+   以前这里用「目录里有」当判据，于是打开内置「内容编辑」再点保存，就把这两条
+   通配静默删掉了 —— 它们覆盖十几个接口，界面上的表现只是「已选少了几项」。 */
+describe('RolePermissionsModal · 整类授权（通配）', () => {
+  beforeEach(() => {
+    h.save.mockReset();
+  });
+
+  it('通配留在选中集合里，保存时原样提交', async () => {
+    const user = userEvent.setup();
+    renderModal(
+      baseRole({ permissions: ['task:read', 'task:*'], orphanedPermissions: [] }),
+    );
+
+    // 通配不计入「目录里没有」的失效项，所以不该出现「保存后自动清除」那句
+    expect(screen.queryByText(/已下线/)).not.toBeInTheDocument();
+    // 它现在有一行可点（PermissionPicker 的「目录外」段）
+    expect(await screen.findByRole('checkbox', { name: 'task:* 接口权限' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '保存' }));
+    await waitFor(() => expect(h.save).toHaveBeenCalled());
+    const sent = h.save.mock.calls[0][0] as { permissions: string[] };
+    expect(sent.permissions).toContain('task:*');
+    expect(sent.permissions).toContain('task:read');
+  });
+
+  it('真正失效的码（后端也不认）仍然被排除，还是那句「保存后自动清除」', async () => {
+    const user = userEvent.setup();
+    renderModal(
+      baseRole({ permissions: ['task:read', 'asset:read'], orphanedPermissions: ['asset:read'] }),
+    );
+
+    expect(screen.getByText(/已下线/)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '保存' }));
+    await waitFor(() => expect(h.save).toHaveBeenCalled());
+    const sent = h.save.mock.calls[0][0] as { permissions: string[] };
+    expect(sent.permissions).toEqual(['task:read']);
   });
 });

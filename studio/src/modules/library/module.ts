@@ -17,7 +17,7 @@ export default defineModule({
     {
       path: 'library',
       load: () => import('@/pages/library/LibraryPage'),
-      permissions: ['library:read'],
+      permissions: ['page:library'],
       nav: {
         label: '资产库',
         icon: Library,

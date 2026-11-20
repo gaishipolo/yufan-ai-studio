@@ -665,6 +665,7 @@ def render_permissions() -> str:
     这份文件把「手抄」改成「生成」：新模块声明 `ModuleSpec.permissions` 之后，
     跑一次 `app export-openapi` 就同步到前端，`--check` 会在 CI 里拦住忘记跑的情况。
     """
+    from core.pages import page_catalog
     from core.permissions import catalog
 
     def esc(text: str) -> str:
@@ -682,6 +683,10 @@ def render_permissions() -> str:
         "  code: string;",
         "  name: string;",
         "  description: string;",
+        "  /** 页面权限关联的接口权限码；只有页面项有 */",
+        "  requires?: readonly string[];",
+        "  /** 页面路由；只有页面项有 */",
+        "  route?: string;",
         "}",
         "",
         "export interface PermissionGroup {",
@@ -694,9 +699,16 @@ def render_permissions() -> str:
     for group, specs in catalog.grouped().items():
         lines += ["  {", f"    group: '{esc(group)}',", "    items: ["]
         for spec in specs:
+            page = page_catalog.get(spec.code)
+            extra = ""
+            if page is not None:
+                # 页面项带上「关联哪些接口」与路由：前端要把两层关系画出来，
+                # 靠解析 description 里的中文（「关联接口：a, b」）不可靠。
+                apis = ", ".join(repr(code) for code in page_catalog.requires_of(spec.code))
+                extra = f", requires: [{apis}], route: '{esc(page.route)}'"
             lines.append(
                 f"      {{ code: '{esc(spec.code)}', name: '{esc(spec.name)}', "
-                f"description: '{esc(spec.description)}' }},"
+                f"description: '{esc(spec.description)}'{extra} }},"
             )
         lines += ["    ],", "  },"]
     lines += ["];", ""]

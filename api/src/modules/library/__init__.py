@@ -6,6 +6,7 @@
 """
 
 from api.module import ModuleSpec
+from core.pages import PageSpec
 from core.permissions import PermissionSpec
 from core.ports.library_ingest import register_library_ingest
 from core.ports.library_references import (
@@ -68,38 +69,101 @@ module = ModuleSpec(
     tags=["资产库"],
     description="资产库 v2：草稿 / 个人 / 小组 / 团队 / 回收站",
     permissions=(
-        PermissionSpec("library:read", "查看资产库", group="资产库"),
-        PermissionSpec("library:create", "上传资产", group="资产库"),
-        PermissionSpec("library:update", "修改本人资产的名称与标签", group="资产库"),
-        PermissionSpec("library:delete", "删除本人资产（移入回收站）", group="资产库"),
-        PermissionSpec("library:delete:any", "删除 / 恢复任何人的资产", group="资产库"),
-        PermissionSpec("library:draft:review", "审核他人草稿", group="资产库"),
-        PermissionSpec("library:share", "发起共享与撤销共享申请", group="资产库"),
-        PermissionSpec("library:share:direct", "共享无需审批（撤销仍需审批）", group="资产库"),
+        PermissionSpec(
+            "library:read",
+            "查看资产库",
+            group="资产库",
+            pages=("page:library", "page:template-specs"),
+        ),
+        PermissionSpec("library:create", "上传资产", group="资产库", pages=("page:library",)),
+        PermissionSpec(
+            "library:update",
+            "修改本人资产的名称与标签",
+            group="资产库",
+            pages=("page:library",),
+        ),
+        PermissionSpec(
+            "library:delete",
+            "删除本人资产（移入回收站）",
+            group="资产库",
+            pages=("page:library",),
+        ),
+        PermissionSpec(
+            "library:delete:any",
+            "删除 / 恢复任何人的资产",
+            group="资产库",
+            pages=("page:library",),
+        ),
+        PermissionSpec(
+            "library:draft:review",
+            "审核他人草稿",
+            group="资产库",
+            pages=("page:library",),
+        ),
+        PermissionSpec(
+            "library:share",
+            "发起共享与撤销共享申请",
+            group="资产库",
+            pages=("page:library",),
+        ),
+        PermissionSpec(
+            "library:share:direct",
+            "共享无需审批（撤销仍需审批）",
+            group="资产库",
+            pages=("page:library",),
+        ),
         PermissionSpec(
             "library:share:approve",
             "全站审批共享与撤销申请（兼容码，等同同时勾选下面两项）",
             group="资产库",
+            pages=("page:library",),
         ),
         PermissionSpec(
             "library:share:approve:team",
             "审批团队级共享与撤销申请",
             group="资产库",
+            pages=("page:library",),
         ),
         PermissionSpec(
             "library:share:approve:group",
             "审批所在小组的共享与撤销申请",
             group="资产库",
-        ),
-        PermissionSpec("library:tag:manage", "管理标签词表（改名 / 删除）", group="资产库"),
-        PermissionSpec(
-            "library:case:read", "浏览全部模板案例（案例池）", group="资产库"
+            pages=("page:library",),
         ),
         PermissionSpec(
-            "library:case:write", "上传案例 / 把素材移入案例池", group="资产库"
+            "library:tag:manage",
+            "管理标签词表（改名 / 删除）",
+            group="资产库",
+            pages=("page:library",),
         ),
         PermissionSpec(
-            "library:generation:ingest", "生成结果入库（草稿箱）", group="资产库"
+            "library:case:read",
+            "浏览全部模板案例（案例池）",
+            group="资产库",
+            # 案例池同时给「资产库」和「模板封装」两页用：那边挑案例是它的一部分
+            pages=("page:library", "page:template-specs"),
+        ),
+        PermissionSpec(
+            "library:case:write",
+            "上传案例 / 把素材移入案例池",
+            group="资产库",
+            pages=("page:template-specs",),
+        ),
+        PermissionSpec(
+            "library:generation:ingest",
+            "生成结果入库（草稿箱）",
+            group="资产库",
+            pages=("page:library",),
+        ),
+    ),
+    # 资产库页：上传、改名、删除、共享、审批、案例池筛选都在这一页。
+    # `library:case:write` 不在这里 —— 它只被「模板封装」页使用（把素材移入案例池），
+    # 绑到资产库页会让「关掉封装页」无法阻止写入。
+    pages=(
+        PageSpec(
+            code="page:library",
+            name="资产库",
+            route="/library",
         ),
     ),
     # 声明了就必须注册，`create_app()` 会核对：上面三条 import 就是注册动作。

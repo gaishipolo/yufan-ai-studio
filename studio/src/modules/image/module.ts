@@ -8,7 +8,7 @@ export default defineModule({
     {
       path: 'image',
       load: () => import('@/pages/image/ImagePage'),
-      permissions: ['image:read'],
+      permissions: ['page:image'],
       nav: {
         label: '生图',
         icon: ImageIcon,

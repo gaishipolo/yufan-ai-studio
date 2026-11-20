@@ -181,6 +181,8 @@ cd studio && npm ci && npm run build
 |---|---|
 | [docs/HANDOFF.md](docs/HANDOFF.md) | **接手先读这个**：当前状态、这一轮改了什么、还差什么、本机坑与不变量 |
 | [docs/REVIEW_2026-11-15.md](docs/REVIEW_2026-11-15.md) | 2026-11-15 代码审查报告：P1×3 · P2×15 · P3×15（修完一条删一条） |
+| [docs/REVIEW_2026-11-19_USER_PERMISSIONS.md](docs/REVIEW_2026-11-19_USER_PERMISSIONS.md) | 2026-11-19 用户与权限专项审查：P1×1 · P2×5 · P3×4，含「权限变更无审计」「超管两套判定口径」等 |
+| [docs/PERMISSION_PAGES.md](docs/PERMISSION_PAGES.md) | 页面权限（`page:*`）与接口权限为什么分两层、门控规则、新增一页要改哪三处、403 排障 |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 全局形状、逐文件职责、请求/登录/生成三条主线、常见坑 |
 | [docs/TEMPLATE_LIBRARY_V2.md](docs/TEMPLATE_LIBRARY_V2.md) | 模板库 v2：五向 I/O 契约、复用/删除清单、待拍板项 |
 | [docs/AI_TEMPLATE_PACKAGER_V2.md](docs/AI_TEMPLATE_PACKAGER_V2.md) | AI 会话封装视频卡片：复用工作台素材包、按用途绑定编号、完整上传辅助参考图 |

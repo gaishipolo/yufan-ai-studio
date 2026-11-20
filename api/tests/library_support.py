@@ -15,6 +15,7 @@ import uuid
 from typing import Any
 
 from fastapi.testclient import TestClient
+from identity_support import with_pages
 from PIL import Image
 
 IDENTITY = "/api/v1/identity"
@@ -44,7 +45,7 @@ def make_role(
     code = f"lib_{suffix()}"
     response = client.post(
         f"{IDENTITY}/roles",
-        json={"code": code, "name": code, "permissions": permissions},
+        json={"code": code, "name": code, "permissions": with_pages(permissions)},
         headers=admin,
     )
     assert response.status_code == 201, response.text

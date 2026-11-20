@@ -194,6 +194,19 @@ def _declared() -> set[str]:
     return declared
 
 
+def _page_codes() -> set[str]:
+    """页面权限码（`page:*`）。
+
+    它们不在 `require(...)` 里出现，而是由 `PageCatalog.gate()` 在
+    `resolve_identity()` 里**一次性**判定：门控按「接口码 → 声明它的页面」反查，
+    逐个页面去找调用点既找不到也没有意义。所以「是否被使用」对页面码要换判据：
+    见 `test_every_page_code_can_be_switched_off`（关掉这一页，它的接口真的会失效）。
+    """
+    from core.pages import page_catalog
+
+    return set(page_catalog.codes())
+
+
 def test_scan_is_not_vacuous(enforcement: dict[str, set[str]]) -> None:
     """扫描本身要有产出，否则下面两条会变成「永远通过的空检查」。
 
@@ -201,7 +214,7 @@ def test_scan_is_not_vacuous(enforcement: dict[str, set[str]]) -> None:
     里漏了 `has`），僵尸清单会暴涨，但「引用侧没有非法码」那条依然全绿——
     那种「一半守卫静默失效」的状态必须由数字暴露出来。
     """
-    declared = _declared()
+    declared = _declared() - _page_codes()
     assert len(declared) >= 30, f"权限点声明只有 {len(declared)} 个，扫描口径可能坏了"
     assert len(enforcement) >= len(declared), (
         f"扫描只认出 {len(enforcement)} 个码，少于声明的 {len(declared)} 个；"
@@ -219,7 +232,11 @@ ALLOWED_UNENFORCED: dict[str, str] = {}
 
 def test_every_declared_permission_is_enforced(enforcement: dict[str, set[str]]) -> None:
     """声明的每个权限码，都必须在某个执行位置被判断过。"""
-    zombies = sorted(code for code in _declared() if code not in enforcement)
+    zombies = sorted(
+        code
+        for code in _declared() - _page_codes()
+        if code not in enforcement
+    )
     zombies = [code for code in zombies if code not in ALLOWED_UNENFORCED]
 
     assert not zombies, (
@@ -258,6 +275,29 @@ def test_enforced_codes_are_all_declared(enforcement: dict[str, set[str]]) -> No
     )
 
 
+def test_every_page_code_can_be_switched_off() -> None:
+    """页面码必须真的能关掉东西，而不是一个装饰用的开关。
+
+    这是 `test_every_declared_permission_is_enforced` 对页面码的对应物：
+    判据是「把这个页面码从授予里去掉，它声明的接口权限真的会失效」。
+    """
+    from core.pages import page_catalog
+
+    decorative: list[str] = []
+    for page in page_catalog.all():
+        apis = page_catalog.requires_of(page.code)
+        # 只授接口、不授页面：这一页管辖的接口必须全部失效，否则这个页面码
+        # 就没在管任何东西（没有任何接口的 pages 指向它 / 那些接口全被别的页覆盖）
+        gated = page_catalog.gate(set(apis))
+        dropped = [code for code in apis if code not in gated]
+        if apis and not dropped:
+            decorative.append(page.code)
+    assert not decorative, (
+        f"这些页面码关掉之后什么接口都没失效 -> {decorative}；"
+        "检查有没有接口的 pages= 指向它，或者它的接口全被别的页面覆盖"
+    )
+
+
 def test_builtin_role_permissions_are_declared() -> None:
     """内置角色模板里的权限码必须真的存在。
 
@@ -282,3 +322,89 @@ def test_builtin_role_permissions_are_declared() -> None:
             if code not in declared:
                 problems.append(f"{role.code}: {code} 没有任何模块声明")
     assert not problems, "内置角色的权限码对不上权限目录 -> " + str(problems)
+
+
+#: 允许「有判定点、但没有任何页面声明」的权限码 —— 即**纯后台能力**。
+#:
+#: 页面门控的规则是「接口权限只有在至少一个声明它的页面被授予时才有效」。
+#: 于是每个接口码都必须能回答一个问题：「它归哪个页面？」
+#:
+#: 两种答不出来的情况：
+#:
+#: 1. **该答但没人答**（真缺口）：前端页面在用这个接口，模块却没声明它。
+#:    后果是「关掉那一页 ⇒ 它的接口自动禁用」这条规则对它不生效 ——
+#:    页面没了，接口还能打。这是守卫要抓的主要目标。
+#: 2. **本来就没有前端页面**（如 CLI / 运维脚本用的接口）：这类码**应该**
+#:    不受页面门控，列在这里就是明确承认这一点。
+#:
+#: 写法上分两类：`*_BY_DESIGN` 是「本来就没有前端页面」，
+#: `*_MISSING_PAGE` 是「有前端页面但漏声明了」—— 后者是待修的缺口，
+#: 不该长期留着，所以它们的条目必须写清该归哪个页面。
+#:
+#: 加条目的代价：将来有人给这个码配了页面，这张表就该删掉它
+#: （`test_page_exemptions_have_no_stale_entries` 会抓）。
+BACKGROUND_ONLY_PERMISSIONS: dict[str, str] = {
+    # export 模块：异步 CSV 导出。前端没有任何入口（产物走后台 + 对象存储），
+    # 所以没有页面可以声明它 —— 它本来就不该被页面开关影响。
+    "export:read": "export 模块无前端页面（CLI/运维用）",
+    "export:create": "export 模块无前端页面（CLI/运维用）",
+    "export:delete": "export 模块无前端页面（CLI/运维用）",
+    "export:read:audit": "export 模块无前端页面（CLI/运维用）",
+    # model_driver 的「统一生成接口」：前端走的是 task/image 模块的提交接口，
+    # 这些 HTTP 端点是给程序化调用方（CLI、外部集成）用的。
+    "model_driver:create": "统一生成接口，前端走 task/image 提交",
+    "model_driver:cancel": "统一生成接口，前端走 task/image 提交",
+    "model_driver:read:all": "model_driver:read 的附加开关，随主码走",
+    "model_driver:retry:any": "model_driver:read 的附加开关，随主码走",
+    "model_driver:cancel:any": "model_driver:read 的附加开关，随主码走",
+}
+
+
+def test_every_enforced_code_belongs_to_a_page_or_is_background_only(
+    enforcement: dict[str, set[str]],
+) -> None:
+    """每个被判定点用到的权限码，要么有页面声明它，要么显式列为后台能力。
+
+    这是「禁用页面 ⇒ 该页接口自动禁用」这条规则的**完整性**守卫：
+
+    - 漏声明的码（前端在用、但模块没说它归哪页）→ 关掉那一页时它仍然有效，
+      规则对它不生效；
+    - 没列入豁免表的码 → 没人回答过「它归哪个页面」，多半就是漏声明。
+
+    豁免表里必须写清理由：只有「本来就没有前端页面」才该豁免。
+    """
+
+    # 归属关系的权威就是接口侧的 `pages=`：不是从页面反推，直接读声明。
+    declared_by_pages = {spec.code for spec in catalog.all() if spec.pages}
+
+    orphans = sorted(
+        code
+        for code in enforcement
+        if code not in declared_by_pages
+        and code not in BACKGROUND_ONLY_PERMISSIONS
+        and not code.endswith("*")
+        and code != "*"
+    )
+    assert not orphans, (
+        "这些权限码有判定点，却既没有页面声明、也没列入后台能力豁免表 -> "
+        + "\n".join(f"{code}  <- {sorted(enforcement[code])[:3]}" for code in orphans)
+        + "\n要么给使用它的页面补上 requires，要么明确它是后台能力（写进豁免表并说明理由）。"
+    )
+
+
+def test_page_exemptions_have_no_stale_entries() -> None:
+    """豁免表里的码一旦被某个页面声明了，就该删掉。
+
+    棘轮：留着过期豁免，下一个人会照着它判断「这里已经有人想过了」。
+    """
+
+    now_covered = {spec.code for spec in catalog.all() if spec.pages}
+
+    stale = sorted(
+        code
+        for code in BACKGROUND_ONLY_PERMISSIONS
+        if code in now_covered
+    )
+    assert not stale, (
+        f"这些权限码现在已经有页面声明了，请从豁免表删掉 -> {stale}"
+    )

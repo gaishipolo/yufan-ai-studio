@@ -21,21 +21,33 @@ PERM_READ_ALL = "task:read:all"
 PERM_RETRY_ANY = "task:retry:any"
 
 SPECS: tuple[PermissionSpec, ...] = (
-    PermissionSpec(PERM_READ, "查看任务", group="内容生产"),
-    PermissionSpec(PERM_CREATE, "创建生成任务", group="内容生产"),
-    PermissionSpec(PERM_UPDATE, "编辑/重试自己的任务", group="内容生产"),
-    PermissionSpec(PERM_DELETE, "删除任务", group="内容生产"),
+    PermissionSpec(PERM_READ, "查看任务", group="内容生产", pages=("page:task-center",)),
+    PermissionSpec(
+        PERM_CREATE,
+        "创建生成任务",
+        group="内容生产",
+        pages=("page:studio", "page:task-center"),
+    ),
+    PermissionSpec(
+        PERM_UPDATE,
+        "编辑/重试自己的任务",
+        group="内容生产",
+        pages=("page:task-center",),
+    ),
+    PermissionSpec(PERM_DELETE, "删除任务", group="内容生产", pages=("page:task-center",)),
     PermissionSpec(
         PERM_READ_ALL,
         "查看并管理他人任务",
         group="内容生产",
         description="列表 scope=all / 详情 / 删除的跨用户判定依据；不含重试",
+        pages=("page:task-center",),
     ),
     PermissionSpec(
         PERM_RETRY_ANY,
         "重试他人任务",
         group="内容生产",
         description="会消耗额度：重试他人任务前额外校验此权限",
+        pages=("page:task-center",),
     ),
 )
 

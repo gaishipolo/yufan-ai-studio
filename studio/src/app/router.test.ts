@@ -5,6 +5,7 @@ import { router } from './router';
 import { RequireAuth } from '@/shared/access/RequireAuth';
 import { RequirePermission } from '@/shared/access/RequirePermission';
 import { isResolvablePermission } from '@/entities/role/model/permission-catalog';
+import { PERMISSION_CODES, PERMISSION_GROUPS } from '@/shared/api/permissions';
 import { HOME_PATH, LOGIN_PATH } from '@/shared/config/app';
 
 /**
@@ -89,6 +90,39 @@ describe('router 装配', () => {
         `路由 ${route.path} 没有声明 permissions —— 任何登录用户都能直接访问`,
       ).toBeGreaterThan(0);
     }
+  });
+
+  it('外壳页面的入口权限是页面码，且都在后端目录里', () => {
+    // 页面可见性与接口权限分两层：路由入口只写页面码（`page:*`），
+    // 按钮级的接口码留在 `Can` 里。写混了会出现两种怪事：
+    // 入口写接口码 → 关掉页面时接口还开着；入口写页面码但目录里没有 →
+    // 路由守卫永远拦住（fail-closed 且静默）。
+    for (const route of shellPageRoutes) {
+      if (NO_PERMISSION_PATHS.has(route.path)) continue;
+      for (const code of route.permissions ?? []) {
+        expect(code, `路由 ${route.path} 的入口权限必须是页面码`).toMatch(/^page:/);
+        expect(PERMISSION_CODES, `路由 ${route.path} 的页面码不在后端目录里`).toContain(code);
+      }
+    }
+  });
+
+  it('每个页面码都带「关联接口」——没有它，关掉页面时它的接口不会失效', () => {
+    // 这是「禁用页面 ⇒ 该页接口自动禁用」这条规则的**前半段**：
+    // 服务端门控靠「接口码 → 声明它的页面」反查，页面码没有 requires
+    // 就等于没声明任何接口 → 关掉那一页，它的接口仍然可用。
+    //
+    // 后端有守卫盯着「有判定点却没页面声明」的码（test_permission_coverage），
+    // 但那守卫看的是后端；前端这边保证「每个页面都真的关联了接口」，
+    // 两边合起来才是完整的。
+    const pages = PERMISSION_GROUPS.flatMap((group) => group.items).filter((item) =>
+      item.code.startsWith('page:'),
+    );
+    expect(pages.length).toBeGreaterThan(0);
+
+    const orphans = pages
+      .filter((item) => !item.requires || item.requires.length === 0)
+      .map((item) => item.code);
+    expect(orphans, '这些页面码没有关联任何接口，关掉它什么都不会失效').toEqual([]);
   });
 
   it('外壳被 RequireAuth 包裹，登录页不被包裹', () => {

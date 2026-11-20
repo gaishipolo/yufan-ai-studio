@@ -46,4 +46,15 @@ export const groupApi = {
     api.put<string[]>(`${users}/${userId}/permissions`, { permissions }),
   effectivePermissions: (userId: string) =>
     api.get<EffectivePermissions>(`${users}/${userId}/effective-permissions`),
+
+  /**
+   * 个人例外：**只对这个人关掉**的码。
+   *
+   * 与 `setUserPermissions` 是两个方向，故意分成两个端点：混成一个，
+   * 调用方会以为「传空数组 = 清空他的权限」，而它清的是例外 —— 一次误读就是撤权。
+   */
+  permissionExceptions: (userId: string) =>
+    api.get<string[]>(`${users}/${userId}/permission-exceptions`),
+  setPermissionExceptions: (userId: string, exceptions: string[]) =>
+    api.put<string[]>(`${users}/${userId}/permission-exceptions`, { exceptions }),
 };

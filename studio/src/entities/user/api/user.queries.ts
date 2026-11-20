@@ -21,6 +21,23 @@ export function useUserList(params: UserListParams) {
   });
 }
 
+export function useUserDetail(id: string | null) {
+  return useQuery({
+    queryKey: userKeys.detail(id ?? ''),
+    queryFn: () => userApi.detail(id as string),
+    enabled: Boolean(id),
+    staleTime: 10_000,
+  });
+}
+
+export function usePermissionTree() {
+  return useQuery({
+    queryKey: [...userKeys.all, 'permission-tree'] as const,
+    queryFn: () => userApi.permissionTree(),
+    staleTime: 10_000,
+  });
+}
+
 export function useCreateUser() {
   const qc = useQueryClient();
   return useMutation({

@@ -10,7 +10,7 @@ export default defineModule({
     {
       path: 'tasks',
       load: () => import('@/pages/task-center/TaskCenterPage'),
-      permissions: ['task:read'],
+      permissions: ['page:task-center'],
       nav: {
         label: '任务中心',
         icon: ListChecks,
@@ -31,7 +31,7 @@ export default defineModule({
     {
       name: 'shell.overlay',
       component: TaskCompletionWatcher,
-      permissions: ['task:read'],
+      permissions: ['page:task-center'],
     },
   ],
 });

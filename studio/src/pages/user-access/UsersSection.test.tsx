@@ -1,3 +1,4 @@
+import { MemoryRouter } from 'react-router-dom';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
@@ -126,10 +127,13 @@ const READER: Subject = {
 
 function renderSection(subject: Subject = ADMIN) {
   mocks.users = [SELF, OTHER];
+  // 「权限」按钮是跳到权限总览页的（下钻，不是弹窗），所以要一个 Router 上下文
   return render(
-    <AccessProvider subject={subject}>
-      <UsersSection />
-    </AccessProvider>,
+    <MemoryRouter>
+      <AccessProvider subject={subject}>
+        <UsersSection />
+      </AccessProvider>
+    </MemoryRouter>,
   );
 }
 
@@ -203,9 +207,11 @@ describe('UsersSection', () => {
     ];
 
     render(
-      <AccessProvider subject={ADMIN}>
-        <UsersSection />
-      </AccessProvider>,
+      <MemoryRouter>
+        <AccessProvider subject={ADMIN}>
+          <UsersSection />
+        </AccessProvider>
+      </MemoryRouter>,
     );
 
     expect(within(rowOf('只读同学')).getByRole('button', { name: '启用' })).toBeDisabled();

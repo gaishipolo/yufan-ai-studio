@@ -27,9 +27,19 @@ module = ModuleSpec(
     permissions=(
         PermissionSpec("${perm}:read", "查看${label}", group="${group}"),
         PermissionSpec("${perm}:create", "创建${label}", group="${group}"),
-        PermissionSpec("${perm}:update", "编辑${label}", group="${group}"),
-        PermissionSpec("${perm}:delete", "删除${label}", group="${group}"),
+        # `pages=` 是「这个接口归哪一页管」；没有前端页面的模块不写（不受门控）。
+        PermissionSpec("${perm}:update", "编辑${label}", group="${group}",
+                       pages=("page:${perm}",)),
+        PermissionSpec("${perm}:delete", "删除${label}", group="${group}",
+                       pages=("page:${perm}",)),
     ),
+    # 前端页面：有页面时把下面这段填上，并把 `studio/src/modules/<id>/module.ts`
+    # 的 `permissions` 改成这个页面码（见 docs/PERMISSION_PAGES.md）。
+    # 不填 = 这个模块的接口不受页面门控约束（适合纯后台能力）。
+    #
+    # pages=(
+    #     PageSpec(code="page:${perm}", name="${label}", route="/${perm}"),
+    # ),
 )
 '''
 )

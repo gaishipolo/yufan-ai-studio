@@ -167,10 +167,26 @@ class PermissionGrant(Base, UUIDMixin, TimestampMixin):
     scope: Mapped[str] = mapped_column(String(16), nullable=False)
     scope_id: Mapped[str] = mapped_column(String(32), nullable=False)
     permission: Mapped[str] = mapped_column(String(64), nullable=False)
+    #: `allow` = 授予，`deny` = **例外**（只对这个人关掉这一项）。
+    #:
+    #: 为什么允许 deny 落在同一张表：判定每请求要一次读出「给的和不给的」，
+    #: 分两张表就是两次往返；而「整组替换」「码是否合法」「删组清绑定」
+    #: 这些规则对两者完全一样，写一份比复制两份可靠。
+    #:
+    #: 为什么 deny **只允许** `scope='user'`：只有最具体的一层能否决，
+    #: 加新层时才不用重新回答「谁压谁」。这条规则由 `service` 的唯一入口守，
+    #: 不写成 DB CHECK —— 测试库是 sqlite，只在一半环境生效的约束等于没测。
+    effect: Mapped[str] = mapped_column(
+        String(8), nullable=False, default="allow", server_default="allow"
+    )
 
     __table_args__ = (
         UniqueConstraint(
-            "scope", "scope_id", "permission", name="uq_permission_grants_scope_code"
+            "scope",
+            "scope_id",
+            "permission",
+            "effect",
+            name="uq_permission_grants_scope_code",
         ),
         Index("ix_permission_grants_scope", "scope", "scope_id"),
     )

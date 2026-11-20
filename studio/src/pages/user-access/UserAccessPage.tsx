@@ -2,12 +2,14 @@ import { useState } from 'react';
 import { PageHeader, Tabs, type TabItem } from '@/shared/ui';
 import { UsersSection } from './UsersSection';
 import { RolesSection } from './RolesSection';
+import { PermissionsSection } from '@/features/permission-overview/PermissionsSection';
 
-type Tab = 'users' | 'roles';
+type Tab = 'users' | 'roles' | 'permissions';
 
 const TABS: TabItem<Tab>[] = [
   { value: 'users', label: '用户' },
   { value: 'roles', label: '角色与权限' },
+  { value: 'permissions', label: '权限总览' },
 ];
 
 /**
@@ -33,7 +35,11 @@ export default function UserAccessPage() {
         <Tabs items={TABS} value={tab} onChange={setTab} />
       </div>
 
-      <div className="mt-3.5">{tab === 'users' ? <UsersSection /> : <RolesSection />}</div>
+      <div className="mt-3.5">
+        {tab === 'users' ? <UsersSection /> : null}
+        {tab === 'roles' ? <RolesSection /> : null}
+        {tab === 'permissions' ? <PermissionsSection /> : null}
+      </div>
     </>
   );
 }

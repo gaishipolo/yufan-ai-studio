@@ -1861,6 +1861,32 @@
         }
       }
     },
+    "/api/v1/identity/permission-tree": {
+      "get": {
+        "tags": [
+          "身份"
+        ],
+        "summary": "「分组 → 用户」的完整树（权限总览的左栏）",
+        "operationId": "permission_tree_api_v1_identity_permission_tree_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_PermissionTreeOut_"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/api/v1/identity/users/{user_id}/permissions": {
       "get": {
         "tags": [
@@ -1935,6 +1961,108 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/PermissionsIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_list_str__"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/identity/users/{user_id}/permission-exceptions": {
+      "get": {
+        "tags": [
+          "身份"
+        ],
+        "summary": "用户的个人例外（只对他关掉的权限码）",
+        "operationId": "user_permission_exceptions_api_v1_identity_users__user_id__permission_exceptions_get",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "User Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_list_str__"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "身份"
+        ],
+        "summary": "设置个人例外（整组替换；不动他的授予）",
+        "operationId": "set_permission_exceptions_api_v1_identity_users__user_id__permission_exceptions_put",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "User Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PermissionExceptionsIn"
               }
             }
           }
@@ -7828,6 +7956,33 @@
         "type": "object",
         "title": "ApiResponse[PermissionCatalogOut]"
       },
+      "ApiResponse_PermissionTreeOut_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PermissionTreeOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[PermissionTreeOut]"
+      },
       "ApiResponse_ReadyOut_": {
         "properties": {
           "code": {
@@ -9420,13 +9575,61 @@
             "title": "Roles",
             "description": "现有角色授予的权限"
           },
+          "pages": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Pages",
+            "description": "授予的页面权限（page:*）；决定侧栏与路由能进哪一页"
+          },
+          "gatedOff": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Gatedoff",
+            "description": "被页面门控关掉的接口权限：四层并集里有、但它所属的页面一页都没授予。`资源:*` 会先摊成具体码再判定，所以这里列的是被关掉的**具体码**。界面拿它解释「为什么我有 task:read 却仍然 403」"
+          },
           "effective": {
             "items": {
               "type": "string"
             },
             "type": "array",
             "title": "Effective",
-            "description": "四层并集；`*` 表示超级管理员。require() 唯一判据"
+            "description": "四层并集过完页面门控的结果；`*` 表示超级管理员。require() 唯一判据"
+          },
+          "roleDetails": {
+            "items": {
+              "$ref": "#/components/schemas/RoleLayerOut"
+            },
+            "type": "array",
+            "title": "Roledetails",
+            "description": "按角色拆开的授予明细（`roles` 是合并后的）"
+          },
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/PermissionSourceOut"
+            },
+            "type": "array",
+            "title": "Sources",
+            "description": "每个权限码的来源层。界面据此在每一行上标「来自 角色·内容编辑」。键是**摊开通配之后**的码，所以 `task:*` 也逐条列出具体动作"
+          },
+          "denied": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Denied",
+            "description": "个人例外：对这个账号单独关闭的码。**包含当前不生效的那些** ——角色撤了但那条例外还在，它必须仍然可见、可撤销，否则就是一个谁也看不见的隐藏状态"
+          },
+          "deniedOff": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Deniedoff",
+            "description": "因为本人例外而不生效的码（授予了、但被关掉）。与 `gatedOff` 互斥：一个码不生效只有「你自己关的」和「页面没开」两种原因，界面按它分流"
           }
         },
         "type": "object",
@@ -10075,6 +10278,12 @@
             "type": "array",
             "title": "Permissions",
             "description": "该组授予的权限码"
+          },
+          "memberCount": {
+            "type": "integer",
+            "title": "Membercount",
+            "description": "组内成员数（不含本人）。界面拿它写清「关掉这条会影响多少人」——改共享单元前必须知道影响面，而这个数字猜不出来",
+            "default": 0
           }
         },
         "type": "object",
@@ -12576,6 +12785,21 @@
         "type": "object",
         "title": "PermissionCatalogOut"
       },
+      "PermissionExceptionsIn": {
+        "properties": {
+          "exceptions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Exceptions",
+            "description": "对这个账号单独关闭的权限码（整组替换）。只接受目录里的具体码：不接受通配（`task:*` 的「关掉」没有唯一解释），也不接受 `identity:*`"
+          }
+        },
+        "type": "object",
+        "title": "PermissionExceptionsIn",
+        "description": "个人例外（`effect='deny'`）的整组替换入参。\n\n与 `PermissionsIn` 分开命名：同一张表、两个方向，混用一个类会让调用方\n以为「传空数组 = 清空他的权限」，而它清的是**例外**。"
+      },
       "PermissionGroupOut": {
         "properties": {
           "group": {
@@ -12598,6 +12822,33 @@
         ],
         "title": "PermissionGroupOut"
       },
+      "PermissionOriginOut": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "title": "Kind",
+            "description": "来源类型：team / group / user（个人层）/ role"
+          },
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "来源实体 id（team 为空）",
+            "default": ""
+          },
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "来源实体名称（team 固定为「团队」）",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind"
+        ],
+        "title": "PermissionOriginOut",
+        "description": "一个权限码的一个来源层。`kind` 是开放枚举：加层不用改这个形状。"
+      },
       "PermissionOut": {
         "properties": {
           "code": {
@@ -12615,6 +12866,20 @@
             "title": "Description",
             "description": "权限说明",
             "default": ""
+          },
+          "requires": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Requires",
+            "description": "页面权限关联的接口权限码（只有页面项有）。前端用它把「页面 → 接口」的层级画出来，而不是让人从描述文字里读"
+          },
+          "route": {
+            "type": "string",
+            "title": "Route",
+            "description": "页面路由（如 `/tasks`）；只有页面项有",
+            "default": ""
           }
         },
         "type": "object",
@@ -12623,6 +12888,113 @@
           "name"
         ],
         "title": "PermissionOut"
+      },
+      "PermissionSourceOut": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "title": "Code",
+            "description": "权限码"
+          },
+          "layers": {
+            "items": {
+              "$ref": "#/components/schemas/PermissionOriginOut"
+            },
+            "type": "array",
+            "title": "Layers",
+            "description": "给出这个码的全部来源"
+          }
+        },
+        "type": "object",
+        "required": [
+          "code"
+        ],
+        "title": "PermissionSourceOut",
+        "description": "某个权限码由哪几层给到。空 `layers` = 目录外（只可能出现在例外里）。"
+      },
+      "PermissionTreeGroupOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "小组 ID"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "小组名称"
+          },
+          "members": {
+            "items": {
+              "$ref": "#/components/schemas/PermissionTreeUserOut"
+            },
+            "type": "array",
+            "title": "Members",
+            "description": "组内成员"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "title": "PermissionTreeGroupOut",
+        "description": "一个分组，以及它的成员（成员顺序按账号排序，前端不再排）。"
+      },
+      "PermissionTreeOut": {
+        "properties": {
+          "groups": {
+            "items": {
+              "$ref": "#/components/schemas/PermissionTreeGroupOut"
+            },
+            "type": "array",
+            "title": "Groups"
+          },
+          "ungrouped": {
+            "items": {
+              "$ref": "#/components/schemas/PermissionTreeUserOut"
+            },
+            "type": "array",
+            "title": "Ungrouped",
+            "description": "不属于任何分组的账号"
+          }
+        },
+        "type": "object",
+        "title": "PermissionTreeOut",
+        "description": "「分组 → 用户」的完整树。\n\n为什么单独一个接口，而不是让前端用「小组列表 + 用户列表」拼：\n用户列表是分页的，拼出来的树在人多时会**静默少人**，而看的人以为\n那就是全部。这里一次给全，没有分页参数。"
+      },
+      "PermissionTreeUserOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "用户 ID"
+          },
+          "username": {
+            "type": "string",
+            "title": "Username",
+            "description": "账号"
+          },
+          "displayName": {
+            "type": "string",
+            "title": "Displayname",
+            "description": "昵称",
+            "default": ""
+          },
+          "isActive": {
+            "type": "boolean",
+            "title": "Isactive",
+            "description": "是否启用（停用的排后面并置灰）",
+            "default": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "username"
+        ],
+        "title": "PermissionTreeUserOut",
+        "description": "树上的一个账号：只够画一行，不含权限。"
       },
       "PermissionsIn": {
         "properties": {
@@ -12867,6 +13239,47 @@
           "name"
         ],
         "title": "RoleCreateIn"
+      },
+      "RoleLayerOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "角色 ID"
+          },
+          "code": {
+            "type": "string",
+            "title": "Code",
+            "description": "角色标识"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "角色名称"
+          },
+          "permissions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Permissions",
+            "description": "该角色授予的权限码"
+          },
+          "userCount": {
+            "type": "integer",
+            "title": "Usercount",
+            "description": "除本人外还挂着这个角色的人数（影响面）",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "code",
+          "name"
+        ],
+        "title": "RoleLayerOut",
+        "description": "分层权限明细里的一段：这条权限来自哪个角色。\n\n`roles` 那份合并集合说不清「是哪个角色给的」，而「去哪撤」正需要这个 ——\n所以额外给一份按角色拆开的明细。"
       },
       "RoleOut": {
         "properties": {

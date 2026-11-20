@@ -8,7 +8,7 @@ export default defineModule({
     {
       path: 'storyboards',
       load: () => import('@/pages/storyboards/StoryboardsPage'),
-      permissions: ['storyboard:read'],
+      permissions: ['page:storyboards'],
       nav: {
         label: '分镜模板库',
         icon: Clapperboard,

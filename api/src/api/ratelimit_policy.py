@@ -243,6 +243,13 @@ EXEMPT_WRITE_ROUTES: Mapping[str, Exemption] = {
         why="设置个人权限：需要 `identity:user:permission:manage`，低频的整组替换",
         review_by=NEAR_TERM,
     ),
+    "PUT /identity/users/{user_id}/permission-exceptions": Exemption(
+        why=(
+            "设置个人例外：需要 `identity:user:permission:manage`，低频的整组替换；"
+            "`modules/identity/service.py` 还会挡住通配、`identity:*` 与全量账号"
+        ),
+        review_by=NEAR_TERM,
+    ),
     # ---- 任务 ----
     "PATCH /tasks/{task_id}": Exemption(
         why="改标题/收藏标记，单行更新，无外部调用",

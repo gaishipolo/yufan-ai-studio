@@ -13,7 +13,7 @@ export default defineModule({
       path: 'studio',
       load: () => import('@/pages/studio/StudioPage'),
       // 工作台要先读模型目录（GET /catalog/models）才能选模型与时长
-      permissions: ['catalog:read'],
+      permissions: ['page:studio'],
       nav: {
         label: '生成工作台',
         icon: Sparkles,
