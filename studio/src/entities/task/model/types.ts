@@ -5,6 +5,16 @@ export type TaskStatus = 'queued' | 'running' | 'completed' | 'failed';
 
 export type AspectRatio = '9:16' | '16:9' | '1:1';
 
+/** 派生任务：目前只有「去字幕版」 */
+export interface SubtitleErase {
+  id: string;
+  status: TaskStatus;
+  progress: number;
+  /** 去字幕成片地址；未完成时为 null */
+  outputUrl?: string | null;
+  errorMessage?: string | null;
+}
+
 /** 视频生成任务（后端 /tasks 资源） */
 export interface VideoTask {
   id: string;
@@ -44,6 +54,8 @@ export interface VideoTask {
    * 硬存一份快照只会让它和上游越走越远。
    */
   externalId?: string | null;
+  /** 去字幕版：没有派生过时为 null；卡片与弹窗据此显示进度和「原片/去字幕」切换 */
+  subtitleErase?: SubtitleErase | null;
 }
 
 export type TaskSort = 'createdAt_desc' | 'createdAt_asc' | 'title_asc';

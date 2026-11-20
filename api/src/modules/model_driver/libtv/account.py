@@ -110,6 +110,8 @@ class QueueItem:
     benefit_tag: str
     remain_seconds: int = 0
     failed_reason: str = ""
+    #: 成功时的产物地址（`taskResult.videos[0].previewPath`）；其余状态为空串
+    result_url: str = ""
 
     @property
     def queued(self) -> bool:
@@ -336,6 +338,7 @@ def _parse_progress(payload: dict[str, Any]) -> list[QueueItem]:
                 benefit_tag=str(item.get("benefitTag") or ""),
                 remain_seconds=int(delay.get("remainSeconds") or 0),
                 failed_reason=str(item.get("failedReason") or ""),
+                result_url=_first_video_url(item.get("taskResult")),
             )
         )
     return out
@@ -602,3 +605,22 @@ async def snapshot(account: str = "") -> dict[str, Any]:
             "note": "画布 0 积分队列最多同时排 10 个；位次看任务级 progress 接口",
         },
     }
+
+
+def _first_video_url(raw: object) -> str:
+    """`taskResult` 是个 JSON 字符串，取第一段视频的地址；形状不对就当没有。"""
+    if not raw:
+        return ""
+    try:
+        payload: object = json.loads(raw) if isinstance(raw, str) else raw
+    except ValueError:
+        return ""
+    if not isinstance(payload, dict):
+        return ""
+    videos = payload.get("videos") or []
+    first = videos[0] if isinstance(videos, list) and videos else {}
+    if not isinstance(first, dict):
+        return ""
+    return str(first.get("previewPath") or "")
+
+

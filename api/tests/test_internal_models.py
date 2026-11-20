@@ -112,10 +112,18 @@ def test_public_default_is_still_marked() -> None:
 
 
 def _replacement_specs() -> tuple[ModelSpec, ...]:
+    """「替换链」公开货架上的模型。
+
+    `internal=True` 的不算：它们只在专属业务链路里按 id 调用（如去字幕，
+    源视频必须是某条任务的成片），永远不进通用页，也就没有
+    「声明参考素材 / 参数区」的义务。数量仍是 3。
+    """
     from modules.model_driver.drivers import bailian
     from modules.model_driver.drivers.libtv import MODELS as LIBTV_MODELS
 
-    return (*bailian.MODELS, *LIBTV_MODELS)
+    return tuple(
+        spec for spec in (*bailian.MODELS, *LIBTV_MODELS) if not spec.internal
+    )
 
 
 def test_replacement_channel_models_are_public_and_declare_inputs() -> None:

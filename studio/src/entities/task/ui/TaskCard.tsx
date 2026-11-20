@@ -37,6 +37,8 @@ export const TaskCard = memo(function TaskCard({
   liveProgress,
 }: TaskCardProps) {
   const inFlight = task.status === 'running' || task.status === 'queued';
+  const erase = task.subtitleErase ?? null;
+  const eraseRunning = erase?.status === 'queued' || erase?.status === 'running';
   const shownProgress = liveProgress ?? task.progress;
 
   return (
@@ -137,14 +139,26 @@ export const TaskCard = memo(function TaskCard({
                 {queueHint}
               </p>
             ) : null}
+            {/* 派生任务也挂在这张卡上：它在跑的时候，卡片要能看见进度，
+                否则用户点完「去字幕」关掉弹窗就再也找不到它去了哪 */}
+            {eraseRunning ? (
+              <p className="mt-1 truncate text-micro text-brand-deep">
+                去字幕 {erase?.progress ?? 0}%
+              </p>
+            ) : null}
           </>
         ) : (
           /* 规格已经搬到封面角标上，这一行只留「哪个模型」和「什么时候」 */
           <div className="mt-2 flex items-center justify-between gap-2 text-micro text-ink-mute">
-            <Chip tone="primary" className="max-w-[62%] truncate">
+            <Chip tone="primary" className="max-w-[52%] truncate">
               {task.model}
             </Chip>
-            <span className="shrink-0 truncate">{formatDateTime(task.createdAt)}</span>
+            {erase?.status === 'completed' ? (
+              <Chip tone="brand" className="shrink-0">
+                去字幕
+              </Chip>
+            ) : null}
+            <span className="ml-auto shrink-0 truncate">{formatDateTime(task.createdAt)}</span>
           </div>
         )}
       </div>

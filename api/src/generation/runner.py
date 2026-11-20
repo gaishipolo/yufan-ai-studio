@@ -46,6 +46,7 @@ from generation.events import (
     EVT_GENERATION_SUCCEEDED,
 )
 from generation.pipeline import (
+    AssetLinkable,
     CoverAttachable,
     DeadlineExtendable,
     GenerationPipeline,
@@ -930,6 +931,10 @@ class GenerationRunner:
             result.asset_id,
             result.created,
         )
+        if isinstance(pipeline, AssetLinkable):
+            with contextlib.suppress(Exception):
+                if await pipeline.attach_asset(session, record_id, result.asset_id):
+                    await session.commit()
         await self._attach_cover(
             pipeline=pipeline, session=session, record_id=record_id, asset_id=result.asset_id
         )

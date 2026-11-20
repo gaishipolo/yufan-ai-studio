@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from datetime import UTC
 
+from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 
 from core.context import CurrentUser
@@ -27,7 +28,7 @@ from core.ports.generation_feed import (
 )
 from core.response import PageParams
 from infra.artifacts import artifact_urls
-from modules.task.enums import TaskSort
+from modules.task.enums import TaskSort, TaskStatus
 from modules.task.feed_schema import (
     FeedSource,
     FeedStatus,
@@ -35,7 +36,8 @@ from modules.task.feed_schema import (
     TaskFeedOut,
     TaskFeedStats,
 )
-from modules.task.schema import TaskListQuery
+from modules.task.models import VideoTask
+from modules.task.schema import TaskListQuery, TaskVariantOut
 from modules.task.service import TaskService
 
 logger = get_logger(__name__)
@@ -144,8 +146,30 @@ async def list_feed(
         favorites = await service.repo.favorite_task_ids(
             actor.id, [row.id for row in rows]
         )
+        # 一页一次把派生任务查出来（去字幕版的进度要显示在卡片上），
+        # 别在卡片里逐个请求：48 张卡就是 48 次数据库往返。
+        variants = {
+            item.derived_from_task_id: item
+            for item in (
+                await service.session.scalars(
+                    select(VideoTask).where(
+                        VideoTask.derived_from_task_id.in_([row.id for row in rows]),
+                        VideoTask.variant == "subtitle_erased",
+                    )
+                )
+            ).all()
+        }
         for index, row in enumerate(rows):
             video = service.to_out(row, favorited=row.id in favorites)
+            derived = variants.get(row.id)
+            if derived is not None:
+                video.subtitle_erase = TaskVariantOut(
+                    id=derived.id,
+                    status=TaskStatus(derived.status),
+                    progress=derived.progress,
+                    output_url=None,
+                    error_message=derived.error_message,
+                )
             # 封面是 `TaskOut` 的字段，需要现签；成片地址**不在** `TaskOut` 里
             # （详情接口刻意不返回它，成片只走外层 `TaskFeedItem.outputUrl`），
             # 所以这里不要去设 `video.output_url` —— 那是个不存在的字段，

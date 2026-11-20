@@ -99,6 +99,22 @@ export function useRetryTask() {
   });
 }
 
+/**
+ * 派生一条去字幕版。
+ *
+ * 后端幂等（同一父任务只有一条），所以这里不需要额外防抖：
+ * 重复点击最多拿到同一条任务，不会多下一条上游任务。
+ */
+export function useDesubtitle() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => taskApi.desubtitle(id),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: taskKeys.all });
+    },
+  });
+}
+
 export function useToggleFavorite() {
   const qc = useQueryClient();
   return useMutation({

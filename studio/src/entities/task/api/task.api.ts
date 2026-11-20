@@ -21,6 +21,9 @@ export const taskApi = {
      写成 VideoTask 会让「读 data.title」编译通过、运行时 undefined。 */
   retry: (id: string) => api.post<TaskRetryResult>(`/tasks/${id}/retry`),
 
+  /* 去字幕是一条派生任务：同一父任务只会有一条，重复调用后端直接返回它（幂等） */
+  desubtitle: (id: string) => api.post<VideoTask>(`/tasks/${id}/desubtitle`),
+
   toggleFavorite: (id: string) => api.post<VideoTask>(`/tasks/${id}/favorite`),
 
   /** 批量收藏走 PATCH 而不是 favorite：后者是「切换」，点两次会把已收藏的取消掉 */

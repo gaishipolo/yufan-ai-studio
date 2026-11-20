@@ -325,9 +325,22 @@ class VideoGenerationPipeline:
             task.finished_at or task.created_at if task is not None else None,
         )
         is_url = stored.startswith(("http://", "https://"))
+        # 去字幕版：把**原片那条资产**原地换成新内容，资产库只留一版。
+        # 原片在任务里仍可回看（`video_tasks.output_url` 是任务自己的产物，
+        # 与资产库里的那一行是两回事）。
+        replaces = ""
+        if task is not None and task.variant == "subtitle_erased" and task.derived_from_task_id:
+            parent = await session.get(VideoTask, task.derived_from_task_id)
+            replaces = (parent.library_asset_id or "") if parent is not None else ""
+            # `generated_file_name` 不带扩展名（后缀由 `_with_suffix` 补），
+            # 所以不能按 `.mp4` 判断，否则标记永远加不上。
+            stem = Path(name).stem if Path(name).suffix else name
+            name = f"{stem}-去字幕"
+
         return IngestRequest(
             source_module=KIND_VIDEO,
             source_task_id=record.id,
+            replaces_asset_id=replaces,
             # 幂等键必须带**供应商任务号**：`POST /tasks/{id}/retry` 会清空
             # `external_id` 重投（见 `service.retry_task`），只用 `video:{id}`
             # 的话重试后新出的片子会被幂等判成「已入过库」，草稿箱里永远停在
@@ -341,6 +354,14 @@ class VideoGenerationPipeline:
             generation=_snapshot(task, record),
         )
 
+
+    async def attach_asset(self, session: AsyncSession, record_id: str, asset_id: str) -> bool:
+        """把入库得到的资产 id 记在任务上（派生任务靠它找到「原片资产」去替换）。"""
+        task = await session.get(VideoTask, record_id)
+        if task is None:
+            return False
+        task.library_asset_id = asset_id
+        return True
 
     async def attach_cover(
         self, session: AsyncSession, record_id: str, cover_key: str
