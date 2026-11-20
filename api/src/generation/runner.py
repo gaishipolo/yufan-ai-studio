@@ -77,6 +77,20 @@ _MAX_BACKOFF_SEC = 30.0
 # 免费队列排队动辄十几分钟，排队期间放宽轮询间隔（不浪费上游配额与本地线程），
 # 且不消耗 `generation_max_polls` 次数（仍受 3 小时墙钟硬上限兜底）。
 _QUEUED_POLL_INTERVAL_SEC = 15.0
+#: 单跳轮询「问一次供应商 + 落库」的预算。
+#:
+#: **不要**再从 job 的硬超时里折算（原来是 `timeout_sec × 0.8`）：job 的硬超时
+#: 还要覆盖落盘与收尾，两者共用一个数就会互相压制 —— 固定 60 秒时
+#: `GENERATION_PERSIST_TIMEOUT_SEC`（300 秒）一次都等不到，慢盘上翻一个大视频
+#: 会把整跳砍掉，poll job 进死信、任务永久停在 running（2026-11-19 的 P1-2）。
+_POLL_QUERY_BUDGET_SEC = 48.0
+#: 落盘之后还要做的事：资产库入库（含 ffmpeg 抽帧）、写封面、发事件。
+#: 留一段固定余量，免得「落盘刚好在预算内完成、收尾却被腰斩」——
+#: 那种情况比慢一拍更糟：`mark_succeeded` 已提交，草稿箱却是空的。
+_POLL_FINISH_MARGIN_SEC = 120.0
+#: 落盘重试的退避基数（秒）。只对「没有直链兜底」的地址生效（相对路径），
+#: 用来挡对象存储的瞬时抖动；公网直链一次不成就退回直链，不重试。
+_PERSIST_RETRY_BACKOFF_SEC = 1.0
 
 
 def _provider_for(pipeline: GenerationPipeline, model: str) -> ModelProvider:
@@ -95,6 +109,24 @@ SUBMIT_UNKNOWN_MESSAGE = (
 )
 
 OWNER_DISABLED_MESSAGE = "发起人账号已停用，任务未提交（避免继续产生费用）"
+
+
+class OutputNotPersisted(RuntimeError):
+    """产物没能落进自己的存储，而供应商给的地址又不可长期访问。
+
+    单独一个异常类型：它必须能把「判失败」和「这一跳偶发失败、下跳重试」区分开。
+    前者是终态（用户要凭任务号去核对），后者只是慢一拍。
+    """
+
+
+def _is_public_url(url: str) -> bool:
+    """地址是不是「长期可访问」的公网直链。
+
+    只认 `http(s)`：本地执行器型供应商回的是相对路径
+    （`/api/v1/templates/replacement-runs/<run>/output`），它既不能直接播放，
+    也不能当对象 key 用 —— 拿它当兜底等于给用户一个 404 的「已完成」。
+    """
+    return url.startswith(("http://", "https://"))
 
 
 def _throttle_delays() -> tuple[float, ...]:
@@ -492,11 +524,11 @@ class GenerationRunner:
         try:
             # 这一跳的预算只覆盖「问一次供应商」。
             #
-            # `* 0.8`：留 20% 给「拿到结果之后的收尾判断」（`mark_failed` 的
-            # 条件更新、事件发布、下一次排程），那些也在同一跳里但要落库。
-            # 落盘**不在**这个预算里 —— 它有自己的 `GENERATION_PERSIST_TIMEOUT_SEC`，
-            # 见下方 `succeeded` 分支的注释。
-            budget = (job.timeout_sec or 120.0) * 0.8
+            # 它与 job 的硬超时是**两个数**：硬超时还要容下落盘（自己的
+            # `GENERATION_PERSIST_TIMEOUT_SEC`）与收尾（入库、发事件）。
+            # 曾经两者共用一个 `timeout_sec × 0.8`，结果 300 秒的落盘预算
+            # 被 60 秒的硬超时裁掉，慢盘上必然腰斩（见 `_POLL_QUERY_BUDGET_SEC`）。
+            budget = _POLL_QUERY_BUDGET_SEC
             # 会话开在超时块**外面**：成功了还要用它做入库，而入库属于
             # 「落库之后的收尾」，绝不能算进轮询预算（见下方 pending 的注释）。
             async with factory() as session:
@@ -523,7 +555,16 @@ class GenerationRunner:
                     if self._timed_out(record):
                         # 墙钟预算优先于轮询次数：max_polls 是「本次进程内」的计数，
                         # 重启会归零（见 resume 的注释），反复重启时它永远到不了上限
-                        message = "生成超时，请重试"
+                        message = self._timeout_message(record, polls, reason="墙钟")
+                        logger.warning(
+                            "墙钟超时 kind=%s id=%s polls=%d elapsed=%.0fs budget=%ds progress=%d",
+                            kind,
+                            record_id,
+                            polls,
+                            self._elapsed_seconds(record),
+                            settings.generation_timeout_sec,
+                            record.progress,
+                        )
                         if await store.mark_failed(record_id, message):
                             await session.commit()
                             await self._emit(
@@ -538,7 +579,16 @@ class GenerationRunner:
                     if polls >= settings.generation_max_polls:
                         # 事件里的 error 与落库文案必须一致：接上通知渠道后，
                         # 用户收到的说法不能和任务详情页不一样（R4-10）
-                        message = "生成超时，请重试"
+                        message = self._timeout_message(record, polls, reason="轮询次数")
+                        logger.warning(
+                            "轮询次数用尽 kind=%s id=%s polls=%d max=%d elapsed=%.0fs progress=%d",
+                            kind,
+                            record_id,
+                            polls,
+                            settings.generation_max_polls,
+                            self._elapsed_seconds(record),
+                            record.progress,
+                        )
                         if await store.mark_failed(record_id, message):
                             await session.commit()
                             await self._emit(
@@ -685,7 +735,29 @@ class GenerationRunner:
                 # 「没拿到结果」才不可接受。
                 if succeeded is not None:
                     record, result = succeeded
-                    output_url = await self._persist(kind, record_id, result.output_url)
+                    try:
+                        output_url = await self._persist(kind, record_id, result.output_url)
+                    except OutputNotPersisted as exc:
+                        # 落盘失败且没有可用的直链兜底：**不能**标成功。
+                        # 标成成功就是「已完成 + 播放 404 + 草稿箱空」三件事同时成立，
+                        # 用户无法自救，值班的人也只能从存储日志里猜。
+                        message = str(exc)[:_MAX_ERROR_LEN]
+                        logger.error(
+                            "产物未落库，判失败 kind=%s id=%s ext=%s",
+                            kind,
+                            record_id,
+                            record.external_id,
+                        )
+                        if await store.mark_failed(record_id, message):
+                            await session.commit()
+                            await self._emit(
+                                EVT_GENERATION_FAILED,
+                                kind=kind,
+                                record_id=record_id,
+                                owner_id=record.owner_id,
+                                error=message,
+                            )
+                        return
                     cover_url = self._persisted_cover(result, output_url)
                     # 终态保护必须接返回值：轮询期间用户点了取消时，
                     # `mark_succeeded` 会拒绝写入（记录已是 cancelled）。
@@ -737,32 +809,71 @@ class GenerationRunner:
 
         ## 落盘有**自己的预算**
 
-        `_persist` 是在轮询那一跳的预算里跑的，而那一跳的预算（`job.timeout_sec`
-        的 80%）是给「问一次供应商」留的。几百 MB 的成片下载塞进去就把它耗光 ——
-        预算耗尽会把这一跳判成「没拿到结果」，下一跳重新拉一遍，而它照样超时，
-        于是**无限重跳**，产物永远进不了库。
+        `_persist` 是在轮询那一跳的预算里跑的，而那一跳的预算是给「问一次供应商」
+        留的。几百 MB 的成片下载塞进去就把它耗光 —— 预算耗尽会把这一跳判成
+        「没拿到结果」，下一跳重新拉一遍，而它照样超时，于是**无限重跳**，
+        产物永远进不了库。所以落盘单独计时（`GENERATION_PERSIST_TIMEOUT_SEC`），
+        并在 job 的硬超时里为它留位置（见 `_poll_job_timeout`）。
 
-        所以落盘单独计时（`GENERATION_PERSIST_TIMEOUT_SEC`）。超时走下面的兜底：
-        退回供应商直链。代价是产物没存进自己的存储，但任务能落终态 —— 这比
-        无限重跳好得多。
+        ## 兜底分两种地址，不能一律「退回原地址」
+
+        原地址是公网 `https` 直链时，落盘失败退回它是**可用结果**：片子还在，
+        签名过期前能播。但本地执行器型供应商回的是相对路径
+        （`/api/v1/templates/replacement-runs/<run>/output`），这类地址**没有路由**
+        —— 退回去等于给用户一个 404 的「已完成」，同时入库拿它当对象 key 去存储里
+        找，必然 `GenerationSourceInvalid`，草稿箱空。所以相对地址落盘失败必须
+        **判失败**，让人凭任务号去核对，而不是假装成功。
         """
         if not url:
             return url
         persist = getattr(get_pipeline(kind), "persist_output", None)
         if persist is None:
             return url
+
+        durable = _is_public_url(url)
+        # 相对地址没有兜底，所以多试两次把对象存储的瞬时抖动挡掉；
+        # 公网直链一次就够（失败时退回直链本身就是可用结果）。
+        tries = 1 if durable else 3
+        last: BaseException | None = None
         try:
             async with asyncio.timeout(settings.generation_persist_timeout_sec):
-                return await persist(record_id, url)
+                for attempt in range(1, tries + 1):
+                    try:
+                        return await persist(record_id, url)
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as exc:  # noqa: BLE001 - 见下面的分流
+                        last = exc
+                        if attempt >= tries:
+                            raise
+                        logger.warning(
+                            "产物落盘失败，%.0fs 后重试（%d/%d）kind=%s id=%s err=%s",
+                            _PERSIST_RETRY_BACKOFF_SEC * attempt,
+                            attempt,
+                            tries,
+                            kind,
+                            record_id,
+                            exc,
+                        )
+                        await asyncio.sleep(_PERSIST_RETRY_BACKOFF_SEC * attempt)
         except asyncio.CancelledError:
             # 取消**不能吞**：外层（队列 job timeout、进程关闭）正是靠这个异常
             # 停手；吞掉会让 worker 以为这一跳正常结束，接着去做 `mark_succeeded`。
             # 这里只留痕 —— 落盘被取消时「产物没进去」这件事要能查到。
             logger.warning("产物落盘期间被取消 kind=%s id=%s", kind, record_id)
             raise
-        except Exception:  # noqa: BLE001 - 落盘失败不该把成功改成失败
-            logger.exception("产物落盘失败，退回供应商 URL kind=%s id=%s", kind, record_id)
+        except Exception as exc:  # noqa: BLE001 - 失败分类见 docstring
+            last = exc
+        if durable:
+            logger.error(
+                "产物落盘失败，退回供应商直链 kind=%s id=%s err=%s", kind, record_id, last
+            )
             return url
+        logger.error("产物落盘失败且无可用直链 kind=%s id=%s err=%s", kind, record_id, last)
+        raise OutputNotPersisted(
+            "产物未落库：成片没能从运行工作区搬进对象存储，而原地址不是可长期访问的直链。"
+            f"上游任务号 {record_id} 的结果可能仍在运行归档里，请核对后再决定是否重试"
+        ) from last
 
     async def _archive(
         self, kind: str, session: AsyncSession, record_id: str, stored: str | None
@@ -985,20 +1096,55 @@ class GenerationRunner:
         )
 
     @staticmethod
-    def _timed_out(record: GenerationRecord) -> bool:
+    def _elapsed_seconds(record: GenerationRecord) -> float:
+        """本轮已耗时（墙钟）。未指定起点的业务沿用创建时间。"""
+        started = record.timeout_started_at or record.created_at
+        if started is None:
+            return 0.0
+        if started.tzinfo is None:  # sqlite 读回来是 naive，按 UTC 解释
+            started = started.replace(tzinfo=UTC)
+        return (datetime.now(tz=UTC) - started).total_seconds()
+
+    @classmethod
+    def _timed_out(cls, record: GenerationRecord) -> bool:
         """按本轮执行起点判定墙钟超时；未指定起点的业务沿用创建时间。
 
         `generation_timeout_sec` 之前没有任何代码读取：真实预算等于
         `max_polls × poll_interval`（默认 150×2 = 300 秒），与配置里写的
         1800 秒差了 6 倍 —— 一个 5 分钟的视频会在第 5 分钟被判「生成超时」。
         """
-        started = record.timeout_started_at or record.created_at
-        if started is None:
+        if record.timeout_started_at is None and record.created_at is None:
             return False
-        created = started
-        if created.tzinfo is None:  # sqlite 读回来是 naive，按 UTC 解释
-            created = created.replace(tzinfo=UTC)
-        return (datetime.now(tz=UTC) - created).total_seconds() > settings.generation_timeout_sec
+        return cls._elapsed_seconds(record) > settings.generation_timeout_sec
+
+    @classmethod
+    def _timeout_message(cls, record: GenerationRecord, polls: int, *, reason: str) -> str:
+        """超时文案必须带判据。
+
+        「生成超时，请重试」这一句同时覆盖「墙钟到」与「次数到」，而两者的处置
+        完全不同：前者是上游太慢（该等 / 该换队列），后者是本地轮询节奏失控
+        （2026-11-19 的 900 次预算在 5.7 分钟内烧完就属于后者）。不带数字时，
+        排障只能靠 `/metrics` 反推 —— 那次花了半小时才确认是次数先到，不是墙钟。
+        """
+        return (
+            f"生成超时，请重试（{reason}判据；已轮询 {polls} 次、"
+            f"耗时 {cls._elapsed_seconds(record) / 60:.0f} 分钟、"
+            f"最后进度 {record.progress}%）"
+        )[:_MAX_ERROR_LEN]
+
+    @staticmethod
+    def _poll_job_timeout() -> float:
+        """轮询这一跳的硬超时 = 查供应商 + 落盘 + 收尾。
+
+        三段各有自己的预算，硬超时必须容得下它们之和。写成常数（原来是 60 秒）
+        会让最后两段永远跑不完 —— 落盘被砍时 `_persist` 抛 `CancelledError`，
+        `wait_for` 把它当超时，poll job 直接进死信，任务停在 running 没有任何人接手。
+        """
+        return (
+            _POLL_QUERY_BUDGET_SEC
+            + float(settings.generation_persist_timeout_sec)
+            + _POLL_FINISH_MARGIN_SEC
+        )
 
     async def _schedule_poll(self, kind: str, record_id: str, *, polls: int, delay: float) -> None:
         job = Job(
@@ -1007,7 +1153,7 @@ class GenerationRunner:
             # 幂等：同一记录在队列中最多一个待执行的轮询
             idempotency_key=f"poll:{kind}:{record_id}",
             max_attempts=1,
-            timeout_sec=60.0,
+            timeout_sec=self._poll_job_timeout(),
         )
         try:
             await self._queue.enqueue(job, delay=delay)
