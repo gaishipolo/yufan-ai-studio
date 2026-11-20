@@ -15,7 +15,7 @@ from typing import Any
 from sqlalchemy import delete, select, update
 
 from db.base import utcnow
-from db.jobs import JOB_DEAD, JOB_RUNNING, QueuedJob
+from db.jobs import JOB_DEAD, JOB_PENDING, JOB_RUNNING, QueuedJob
 from db.session import get_session_factory
 from infra.queue.base import Job
 from infra.queue.db import DbJobQueue
@@ -725,3 +725,69 @@ def test_claim_cannot_return_pre_promotion_payload(monkeypatch) -> None:
         await queue.ack(claimed)
 
     asyncio.run(run())
+
+
+def test_release_requeues_without_burning_an_attempt() -> None:
+    """`release` = 这一跳**没有结论**（停机 / 上层取消），不算一次失败。
+
+    走 `nack(requeue=True)` 会 `with_attempt()`，而 `max_attempts=1` 的 job
+    （生成轮询）一次就 exhausted，直接进死信 —— 重启一次就把在途轮询链判死，
+    记录停在 running 且没有下一跳。
+    """
+    asyncio.run(_reset())
+    queue = _queue()
+    job = Job(
+        name="generation.poll",
+        payload={"kind": "video"},
+        max_attempts=1,
+        idempotency_key="poll:video:t1",
+    )
+    asyncio.run(queue.enqueue(job))
+    claimed = asyncio.run(queue.dequeue(timeout=1.0))
+    assert claimed is not None
+
+    asyncio.run(queue.release(claimed))
+
+    row = asyncio.run(_row(job.id))
+    assert row is not None
+    assert row.status == JOB_PENDING, "放回之后必须回到 pending"
+    assert row.attempts == 0, "停机不是失败，不该消耗尝试次数"
+    assert row.idempotency_key is not None, "链还没结束，幂等键要保留"
+
+    again = asyncio.run(queue.dequeue(timeout=1.0))
+    assert again is not None
+    assert again.id == job.id, "放回的那条要能被再领到"
+
+
+def test_worker_stop_releases_the_job_without_burning_an_attempt() -> None:
+    """优雅停机时在途的 job 必须**原样放回**，不能算一次失败。
+
+    `max_attempts=1` 的生成轮询走 `nack` 会直接进死信 —— 一次重启就把在途的
+    轮询链判死，记录停在 running 且没有下一跳（2026-11-20 重启时实测到两条：
+    进程在 bind 端口失败后停机，两条 poll job 被 nack 成 dead）。
+    """
+    asyncio.run(_reset())
+    _SLOW.update(runs=0, cancelled=False)
+    queue = _queue()
+
+    async def scenario() -> str:
+        job = Job(
+            name="test.lease.slow",
+            payload={"sleep": 30},
+            max_attempts=1,
+            idempotency_key="poll:video:stop-test",
+        )
+        await queue.enqueue(job)
+        worker = Worker(queue, concurrency=1)
+        await worker.start()
+        # 等它领到并进入 handler（dequeue 是异步的，0.4s 足够）
+        await asyncio.sleep(0.4)
+        await worker.stop()
+        return job.id
+
+    job_id = asyncio.run(scenario())
+    row = asyncio.run(_row(job_id))
+
+    assert row is not None
+    assert row.status == JOB_PENDING, f"停机后必须回到 pending，实际 {row.status}"
+    assert row.attempts == 0, "停机不是失败，不该消耗尝试次数"

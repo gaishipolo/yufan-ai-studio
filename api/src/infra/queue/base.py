@@ -15,9 +15,9 @@
 2. **幂等键**：同一个 key 重复入队只保留一条。
    生成任务的提交/轮询都是「至少一次」语义，幂等键避免重复扣费。
 
-## 协议只承诺这 7 个方法能表达的事
+## 协议只承诺这 8 个方法能表达的事
 
-不是「随便什么队列都能接进来」，而是**这 7 个方法必须能映射到目标系统**。
+不是「随便什么队列都能接进来」，而是**这 8 个方法必须能映射到目标系统**。
 写新的驱动前先对照下表，映射不上的实现会在某个角落撒谎：
 
 | 协议方法 | Redis 对应 | 必须保证的语义 |
@@ -27,6 +27,7 @@
 | `renew(job)` | 重新 `ZADD` 自己的条目 | **只延长自己的持有**（凭据对得上）；False = 已被接手 |
 | `ack(job)` | `LREM` / `ZREM` pending | 幂等：重复 ack 不报错；**不能删掉别人正在跑的那一行** |
 | `nack(job, requeue)` | 重新 `ZADD` 或进死信 | 重投要退避；次数用尽别无限重投；过期持有者不能抢回 |
+| `release(job)` | 重新 `ZADD` 并**不改 attempts** | 停机/取消用；回 pending、次数不变、幂等键仍占 |
 | `size()` | `ZCARD` / `LLEN` | 只数在途（含正在跑的），不是历史总数 |
 | `close()` | 关连接池 | 不许清空队列数据 |
 
@@ -145,6 +146,26 @@ class JobQueue(Protocol):
     async def ack(self, job: Job) -> None: ...
 
     async def nack(self, job: Job, *, requeue: bool = True) -> None: ...
+
+    async def release(self, job: Job) -> None:
+        """把这条 job 原样放回待执行，**不算一次失败**。
+
+        与 `nack(requeue=True)` 的区别是语义，不是实现细节：
+
+        - `nack` = 「这一跳真的失败了」，要计入 `attempts`；`max_attempts=1`
+          的 job（生成轮询、模板作业）因此会直接进死信；
+        - `release` = 「这一跳**没有结论**」——进程停机、上层取消了 handler。
+          记一次失败会把「停机」当成「执行失败」，`max_attempts=1` 的 job 在
+          每次优雅停机时都被判死信，链路就此断掉。
+
+        实测：2026-11-20 重启时，两条 `generation.poll` 因为在 bind 端口失败后
+        被停机取消，`nack(requeue=True)` 把 attempts 记到 1，直接进了死信；
+        任务停在 running，只能靠巡检或再重启一次才接得回来。
+
+        `attempts` 保持不变，幂等键继续占用（这条链还没结束），
+        这一跳已经 stage 的下一跳作废（与 nack 一致）。
+        """
+        ...
 
     async def size(self) -> int: ...
 

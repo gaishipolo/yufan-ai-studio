@@ -972,7 +972,7 @@ CI 里的红灯。豁免表里失效的条目（路由改名/删除）同样会�
 | 大规模 | 新增 `infra/queue/redis.py` | 高吞吐、跨实例即时唤醒 | 多一个中间件、多一个故障域 |
 
 从 db 到 redis **只需要一个文件**：`infra/queue/redis.py` 里 `Driver = RedisJobQueue`，
-实现 `JobQueue` 的 7 个方法（映射表见 `infra/queue/base.py` 的模块文档），
+实现 `JobQueue` 的 8 个方法（映射表见 `infra/queue/base.py` 的模块文档），
 连接参数放它自己的 `RedisQueueSettings`（`REDIS_*` 前缀，`infra/driver_config.py`），
 然后改 `QUEUE_DRIVER=redis`。业务代码、协议、测试都不用动。
 
@@ -981,13 +981,18 @@ CI 里的红灯。豁免表里失效的条目（路由改名/删除）同样会�
 这条命令只做「看 / 重投一条 / 删一条」，批量重投刻意没做——一次把几十条推回队列，
 等于同时给供应商发几十个请求，那应该是人逐条确认的决定。
 
-三条容易踩的：
+四条容易踩的：
 
 - **`attempts` 的语义是「已失败次数」**，不是「已执行次数」。handler 里 `job.attempts + 1`
   就是第几次尝试；新驱动自己另算一套，日志与告警会全部错位。
 - **领取必须原子且可接管**。`db` 驱动用「条件 UPDATE + 租约」，Redis 用
   `ZRANGEBYSCORE` + `ZREM`（或 `BRPOPLPUSH` + processing 列表）。只 `ZREM` 不留
   processing 列表，进程一崩那条 job 就**永远消失**——这比报错难查得多。
+- **停机 ≠ 失败**。handler 被上层取消（进程停机、`worker.stop()`）时走 `release()`，
+  不要用 `nack(requeue=True)`：后者会 `with_attempt()`，而 `max_attempts=1` 的 job
+  （生成轮询）一次就 `exhausted` —— 一次优雅停机就把在途的轮询链判成死信，
+  记录停在 running 且没有下一跳（2026-11-20 重启时实测到两条）。新驱动的
+  `release` 要保证三件事：回到 pending、`attempts` 不变、幂等键继续占用。
 - **租约要能续，回执要能设防**。`lease_sec`（驱动给出）+ `renew()`（只延长自己那份）+
   `Job.lease_token`（领取凭据）三个一起才成立：只续租不设防，一个「租约过期、自己还不
   知道」的 worker 仍然会把新主人的行 `DELETE` 掉；只设防不续租，所有跑得比租约久的

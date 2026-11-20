@@ -211,3 +211,40 @@ def test_stats_reports_pending_running_and_dead() -> None:
     assert stats["running"] == 0
     assert stats["dead"] == 1
     assert stats["pending"] == 1
+
+
+def test_release_does_not_burn_an_attempt() -> None:
+    """停机取消用 `release`：不算一次失败，`max_attempts=1` 也能再跑。
+
+    走 `nack` 会把 attempts 记到 1，`exhausted` 直接进死信 —— 一次优雅停机
+    就把在途的轮询链判死，任务停在 running（2026-11-20 重启时实测到两条）。
+    """
+
+    async def scenario() -> tuple[Job, Job | None]:
+        queue = MemoryJobQueue()
+        await queue.enqueue(_job(key="poll:t1", max_attempts=1))
+        claimed = await queue.dequeue(timeout=1.0)
+        assert claimed is not None
+        await queue.release(claimed)
+        again = await queue.dequeue(timeout=1.0)
+        return claimed, again
+
+    claimed, again = asyncio.run(scenario())
+    assert again is not None, "release 之后必须能再次领到，而不是进死信"
+    assert again.id == claimed.id
+    assert again.attempts == 0, "停机不是失败，不该消耗尝试次数"
+
+
+def test_release_keeps_the_idempotency_key() -> None:
+    """放回不是结束：同一个键仍然只允许一条在途。"""
+
+    async def scenario() -> str:
+        queue = MemoryJobQueue()
+        await queue.enqueue(_job(key="poll:t1", max_attempts=1))
+        claimed = await queue.dequeue(timeout=1.0)
+        assert claimed is not None
+        await queue.release(claimed)
+        # 放回之后同键再投，必须拿回同一条，而不是多开一条链
+        return await queue.enqueue(_job(key="poll:t1", max_attempts=1))
+
+    assert asyncio.run(scenario()) != ""

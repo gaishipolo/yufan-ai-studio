@@ -257,9 +257,13 @@ class Worker:
         except asyncio.CancelledError:
             if _being_cancelled():
                 # 停机时把任务放回队列，避免丢任务。
-                # 回执带凭据：若这行已被接手，它会被忽略而不是抢回来。
+                #
+                # 用 `release` 而不是 `nack(requeue=True)`：停机不是「这一跳失败了」。
+                # nack 会 `with_attempt()`，而 `max_attempts=1` 的 job（生成轮询、
+                # 模板作业）一次就 exhausted —— 每次优雅停机都会把在途的轮询链判成
+                # 死信，任务停在 running 且没有下一跳（2026-11-20 重启时实测到两条）。
                 outcome = "cancelled"
-                await self._queue.nack(job, requeue=True)
+                await self._queue.release(job)
                 raise
             # 不是我们在被取消，而是 `_renew_lease` 停掉了 handler：这行已经归别人了。
             # **不回执**——ack 会删掉新主人正在跑的行使任务彻底消失，

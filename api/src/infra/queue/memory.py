@@ -150,6 +150,21 @@ class MemoryJobQueue:
             if key and self._by_key.get(key) == job.id:
                 self._by_key.pop(key, None)
 
+    async def release(self, job: Job) -> None:
+        """被中断（停机 / 上层取消）：放回待执行，**不记一次失败**。
+
+        不能复用 `nack`：它会 `with_attempt()`，而 `max_attempts=1` 的 job
+        一次就 `exhausted` —— 停机这个「没有结论」的动作会被记成「执行失败」，
+        生成轮询链直接进死信（2026-11-20 重启时实测到）。
+        """
+        job.lease_token = None
+        async with self._cv:
+            self._running.discard(job.id)
+            # 这一跳的下一跳属于「执行成功之后」：中断了就作废（与 nack 同口径）
+            self._next.pop(job.id, None)
+            self._push(job, delay=0)
+            self._cv.notify()
+
     async def nack(self, job: Job, *, requeue: bool = True) -> None:
         """失败：先记一次失败，再判是否还有额度 —— 与 db 驱动同一个顺序。
 
