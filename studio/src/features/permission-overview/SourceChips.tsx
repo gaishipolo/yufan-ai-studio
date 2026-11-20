@@ -30,10 +30,12 @@ export function SourceChips({ origins }: { origins: Origin[] }) {
             key={`${origin.kind}:${origin.id || origin.name}`}
             title={own ? '个人层：只能影响这个账号' : `${kind}层：改动会影响该${kind}的所有人`}
             className={cn(
-              'max-w-[9.5rem] truncate rounded-full border px-1.5 py-[1px] text-micro',
+              // 白底 + 实边框：浅灰底加浅灰边在满屏白条里几乎看不见，
+              // 而来源是这一页的**主要信息**（「他为什么能删」靠它回答）
+              'max-w-[13rem] truncate rounded-full border bg-panel px-2 py-[1px] text-micro',
               own
-                ? 'border-primary-line bg-primary-soft text-primary'
-                : 'border-line-soft bg-panel-soft text-ink-soft',
+                ? 'border-primary-line bg-primary-soft font-medium text-primary'
+                : 'border-line text-ink-soft',
             )}
           >
             {text}

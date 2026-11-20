@@ -218,7 +218,8 @@ describe('PermissionOverview：一行一个动作，由来源决定', () => {
     const user = userEvent.setup();
     renderOverview({ denied: ['task:read'], deniedOff: ['task:read'] });
 
-    await user.click(screen.getByRole('button', { name: '仅例外' }));
+    // 筛选是分段控件（role=radio），不是按钮组
+    await user.click(screen.getByRole('radio', { name: '仅例外' }));
 
     expect(document.querySelector('[data-permission-row="task:read"]')).not.toBeNull();
     expect(document.querySelector('[data-permission-row="task:create"]')).toBeNull();

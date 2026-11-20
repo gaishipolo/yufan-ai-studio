@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft } from 'lucide-react';
 import { Button, ErrorState, PageHeader } from '@/shared/ui';
 import { toast } from '@/shared/lib/toast';
+import { cn } from '@/shared/lib/cn';
 import { useUserDetail } from '@/entities/user/api/user.queries';
 import {
   useEffectivePermissions,
@@ -101,7 +102,7 @@ export default function UserPermissionsPage() {
       <button
         type="button"
         onClick={() => navigate('/system/user-access')}
-        className="mb-2 inline-flex items-center gap-1 text-meta text-ink-soft hover:text-ink"
+        className="-ml-1 mb-2 inline-flex items-center gap-1 rounded-md px-1 py-0.5 text-meta text-ink-soft transition-colors hover:bg-panel-soft hover:text-ink"
       >
         <ArrowLeft size={12} /> 用户与权限
       </button>
@@ -137,15 +138,32 @@ export default function UserPermissionsPage() {
 
       {/* 超管没有「清单」可看：任何清单都是假的（他的权限是全集，不是若干条） */}
       {fullPrivilege ? null : (
-        <div className="mt-3 grid grid-cols-3 gap-2">
+        <div className="mt-3 flex flex-wrap gap-2">
           {[
-            { label: '生效', value: cards.counts.effective },
-            { label: '仅对他关闭', value: cards.counts.denied },
-            { label: '被页面关掉', value: cards.counts.gated },
+            { label: '生效', value: cards.counts.effective, tone: 'ink' as const },
+            { label: '仅对他关闭', value: cards.counts.denied, tone: 'ink' as const },
+            {
+              label: '被页面关掉',
+              value: cards.counts.gated,
+              // 有东西被关掉才用警示色：0 的时候染红，等于一直在报警
+              tone: cards.counts.gated > 0 ? ('danger' as const) : ('muted' as const),
+            },
           ].map((item) => (
-            <div key={item.label} className="rounded-lg bg-panel-soft px-3 py-2">
-              <div className="text-micro text-ink-soft">{item.label}</div>
-              <div className="text-body font-semibold tabular-nums text-ink">{item.value}</div>
+            <div
+              key={item.label}
+              className="min-w-[7.5rem] rounded-xl border border-line bg-panel px-3.5 py-2.5"
+            >
+              <div className="text-micro text-ink-mute">{item.label}</div>
+              <div
+                className={cn(
+                  'mt-0.5 text-title font-semibold leading-none tabular-nums',
+                  item.tone === 'danger' && 'text-danger',
+                  item.tone === 'muted' && 'text-ink-mute',
+                  item.tone === 'ink' && 'text-ink',
+                )}
+              >
+                {item.value}
+              </div>
             </div>
           ))}
         </div>

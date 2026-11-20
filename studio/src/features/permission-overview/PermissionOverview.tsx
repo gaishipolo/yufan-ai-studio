@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { cn } from '@/shared/lib/cn';
-import { EmptyState, SearchInput } from '@/shared/ui';
+import { Button, EmptyState, SearchInput, Segmented } from '@/shared/ui';
 import { SourceChips } from './SourceChips';
 import type { PermissionGroup, PermissionOverview, PermissionRow } from './use-overview';
 
@@ -70,17 +70,24 @@ function Row({
       data-permission-row={row.code}
       data-status={row.status}
       className={cn(
-        'grid grid-cols-[minmax(0,1fr)_10.5rem_6rem] items-start gap-2.5 border-b border-line-soft px-3 py-1.5 last:border-b-0',
+        'grid grid-cols-[minmax(11rem,26rem)_minmax(0,1fr)_7.5rem] items-center gap-3 border-b border-line-soft px-3 py-2 transition-colors last:border-b-0',
+        // 行本身要像一个「条目」：悬停给底色，否则一屏全是白条，眼睛没有落点
+        'hover:bg-panel-soft/70',
         !pageOpen && 'opacity-55',
       )}
     >
       <div className="min-w-0">
-        <div className={cn('truncate text-xs', closed ? 'text-ink-mute line-through' : 'text-ink')}>
+        <div
+          className={cn(
+            'truncate text-xs font-medium',
+            closed ? 'text-ink-mute line-through' : 'text-ink',
+          )}
+        >
           {row.name}
         </div>
         <div
           className={cn(
-            'truncate font-mono text-micro text-ink-mute',
+            'truncate font-mono text-micro tracking-[.01em] text-ink-mute',
             closed && 'line-through',
           )}
         >
@@ -88,9 +95,9 @@ function Row({
         </div>
       </div>
 
-      <div className="min-w-0 pt-[2px]">
+      <div className="min-w-0">
         {closed ? (
-          <span className="rounded-full border border-dashed border-line-strong px-1.5 py-[1px] text-micro text-ink-mute">
+          <span className="rounded-full border border-line bg-panel-soft px-2 py-[1px] text-micro text-ink-soft">
             已对他关闭
           </span>
         ) : (
@@ -106,7 +113,7 @@ function Row({
         ) : null}
       </div>
 
-      <div className="flex justify-end pt-[1px]">
+      <div className="flex justify-end">
         {/* 没有操作权时**不摆灰按钮**：灰按钮会让人以为「差点就能点」，
             而真正的原因（缺权限）在按钮上是看不出来的 */}
         {action === 'none' || readOnly ? (
@@ -117,18 +124,17 @@ function Row({
             —
           </span>
         ) : (
-          <button
-            type="button"
-            disabled={pending}
+          <Button
+            size="sm"
+            variant="secondary"
+            /* 紧凑一档 + **边框加深**：`border-line` 在满屏白条上几乎融进去，
+               看起来还是像一段文字；`line-strong` 才让它是个可点的对象 */
+            className="h-6 border-line-strong px-2 text-micro text-ink hover:bg-panel-soft"
+            loading={pending}
             onClick={trigger}
-            className={cn(
-              'rounded-md border border-transparent px-1.5 py-[2px] text-micro text-ink-soft',
-              'hover:border-line hover:bg-panel-soft hover:text-ink',
-              pending && 'cursor-not-allowed opacity-40 hover:bg-transparent',
-            )}
           >
-            {pending ? '处理中…' : ACTION_LABEL[action]}
-          </button>
+            {ACTION_LABEL[action]}
+          </Button>
         )}
       </div>
     </div>
@@ -154,13 +160,13 @@ function GroupBlock({
     <section data-page-group={group.code} className="overflow-hidden rounded-lg border border-line-soft">
       <header
         className={cn(
-          'flex flex-wrap items-center gap-x-2 gap-y-1 border-b px-3 py-1.5',
+          'flex flex-wrap items-center gap-x-2 gap-y-1 border-b px-3 py-2',
           group.open
             ? 'border-line bg-line-soft'
             : 'border-danger-line bg-danger-soft',
         )}
       >
-        <h3 className={cn('text-xs font-semibold', group.open ? 'text-ink' : 'text-danger')}>
+        <h3 className={cn('text-body font-semibold', group.open ? 'text-ink' : 'text-danger')}>
           {group.name}
         </h3>
         <span className="font-mono text-micro text-ink-mute">{group.route}</span>
@@ -238,24 +244,13 @@ export function PermissionOverview({
           aria-label="搜索权限"
           wrapperClassName="w-full md:w-64"
         />
-        <div className="flex gap-1" role="group" aria-label="筛选">
-          {FILTERS.map((item) => (
-            <button
-              key={item.value}
-              type="button"
-              aria-pressed={filter === item.value}
-              onClick={() => setFilter(item.value)}
-              className={cn(
-                'rounded-md px-2 py-1 text-micro',
-                filter === item.value
-                  ? 'bg-panel-soft font-medium text-ink'
-                  : 'text-ink-soft hover:bg-panel-soft',
-              )}
-            >
-              {item.label}
-            </button>
-          ))}
-        </div>
+        <Segmented
+          aria-label="筛选"
+          options={FILTERS}
+          value={filter}
+          onChange={setFilter}
+          className="w-auto shrink-0 whitespace-nowrap"
+        />
       </div>
 
       {empty ? (
