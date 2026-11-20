@@ -129,3 +129,43 @@ describe('RolePermissionsModal', () => {
     expect(screen.getAllByRole('button', { name: '取消本组' })).toHaveLength(1);
   });
 });
+
+/* 回归：`task:*` / `image:*` 不在权限目录里（目录只有具体码），但后端明确接受。
+   以前这里用「目录里有」当判据，于是打开内置「内容编辑」再点保存，就把这两条
+   通配静默删掉了 —— 它们覆盖十几个接口，界面上的表现只是「已选少了几项」。 */
+describe('RolePermissionsModal · 整类授权（通配）', () => {
+  beforeEach(() => {
+    h.save.mockReset();
+  });
+
+  it('通配留在选中集合里，保存时原样提交', async () => {
+    const user = userEvent.setup();
+    renderModal(
+      baseRole({ permissions: ['task:read', 'task:*'], orphanedPermissions: [] }),
+    );
+
+    // 通配不计入「目录里没有」的失效项，所以不该出现「保存后自动清除」那句
+    expect(screen.queryByText(/已下线/)).not.toBeInTheDocument();
+    // 它现在有一行可点（PermissionPicker 的「目录外」段）
+    expect(await screen.findByRole('checkbox', { name: 'task:* 接口权限' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '保存' }));
+    await waitFor(() => expect(h.save).toHaveBeenCalled());
+    const sent = h.save.mock.calls[0][0] as { permissions: string[] };
+    expect(sent.permissions).toContain('task:*');
+    expect(sent.permissions).toContain('task:read');
+  });
+
+  it('真正失效的码（后端也不认）仍然被排除，还是那句「保存后自动清除」', async () => {
+    const user = userEvent.setup();
+    renderModal(
+      baseRole({ permissions: ['task:read', 'asset:read'], orphanedPermissions: ['asset:read'] }),
+    );
+
+    expect(screen.getByText(/已下线/)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '保存' }));
+    await waitFor(() => expect(h.save).toHaveBeenCalled());
+    const sent = h.save.mock.calls[0][0] as { permissions: string[] };
+    expect(sent.permissions).toEqual(['task:read']);
+  });
+});

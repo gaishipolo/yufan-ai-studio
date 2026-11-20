@@ -3,6 +3,7 @@ import { AlertTriangle } from 'lucide-react';
 import { Button, Modal, Notice } from '@/shared/ui';
 import { toast } from '@/shared/lib/toast';
 import { usePermissionCatalog, useSetRolePermissions } from '@/entities/role/api/role.queries';
+import { isResolvablePermission } from '@/entities/role/model/permission-catalog';
 import type { Role } from '@/entities/role/model/types';
 import { PermissionPicker } from '@/features/permission-layers/PermissionPicker';
 
@@ -39,9 +40,13 @@ export function RolePermissionsModal({
 
   useEffect(() => {
     if (!open || !role) return;
-    // 等目录就绪再初始化，否则「有效码」集合是空的，会把所有权限都当成失效
+    // 等目录就绪再初始化：选择器要靠它渲染两层结构
     if (!catalogCodes.size) return;
-    setSelected(role.permissions.filter((code) => catalogCodes.has(code)));
+    /* 判据是「后端认不认」，不是「目录里渲染不渲染」——这两件事不一样：
+       `task:*` / `image:*` 不在目录里（目录只有具体码），但后端明确接受它们。
+       按目录过滤会把它悄悄从选中集合里删掉，于是**打开弹窗点保存就等于撤权**
+       （内置「内容编辑」就靠这两条通配覆盖十几个接口）。 */
+    setSelected(role.permissions.filter(isResolvablePermission));
     setFormError(null);
   }, [open, role, catalogCodes]);
 

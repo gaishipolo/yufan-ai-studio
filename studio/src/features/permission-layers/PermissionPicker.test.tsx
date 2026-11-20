@@ -262,3 +262,45 @@ describe('PermissionPicker 的两层结构', () => {
     expect(screen.getByText('没有匹配的接口权限')).toBeInTheDocument();
   });
 });
+
+/* 回归：`task:*` 这类通配不在权限目录里（目录只有具体码），于是它原来
+   一行都渲染不出来 —— 而汇总条把它算进「接口 N」，数字对不上；更要紧的是
+   它能一次性覆盖十几个接口，撤的时候却找不到它在哪。 */
+describe('目录外的已选码', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('通配会单独列出来，并说清它是什么', () => {
+    renderPicker(['page:task-center', 'task:*']);
+
+    expect(screen.getByText('目录外')).toBeInTheDocument();
+    const row = screen.getByRole('checkbox', { name: 'task:* 接口权限' }).closest('li');
+    expect(row).not.toBeNull();
+    expect(within(row as HTMLElement).getByText('task:*')).toBeInTheDocument();
+    expect(
+      within(row as HTMLElement).getByText('整类授权：覆盖该资源下现有的全部接口'),
+    ).toBeInTheDocument();
+  });
+
+  it('计数与可见行一致：不会出现「接口 1」却一行都看不到', () => {
+    renderPicker(['task:*']);
+
+    expect(screen.getByRole('checkbox', { name: 'task:* 接口权限' })).toBeInTheDocument();
+    // 汇总条仍然把它算作 1 个接口权限 —— 现在它同时有一行可点了
+    expect(screen.getByText('接口')).toBeInTheDocument();
+  });
+
+  it('取消勾选能把通配真的撤掉', async () => {
+    const user = userEvent.setup();
+    const { onChange } = renderPicker(['task:*']);
+
+    await user.click(screen.getByRole('checkbox', { name: 'task:* 接口权限' }));
+    expect(onChange).toHaveBeenCalledWith([]);
+  });
+
+  it('目录里的码不会跑进「目录外」', () => {
+    renderPicker(['task:read']);
+    expect(screen.queryByText('目录外')).not.toBeInTheDocument();
+  });
+});

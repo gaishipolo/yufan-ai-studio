@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Button, Modal, Notice } from '@/shared/ui';
 import { toast } from '@/shared/lib/toast';
+import { isResolvablePermission } from '@/entities/role/model/permission-catalog';
 import { usePermissionCatalog } from '@/entities/role/api/role.queries';
 import {
   useEffectivePermissions,
@@ -66,9 +67,12 @@ function LayerForm({
 
   // 目录就绪后过滤已下线的码：三层都是整组替换，留着失效码会让保存被后端拒绝，
   // 管理员只能先手动找出那条看不见的码。角色弹窗的 orphanedPermissions 同理。
+  //
+  // 判据用 `isResolvablePermission`（`*` / `资源:*` / 目录内的码），不是「目录里有」：
+  // `task:*` 不在目录里但后端接受，按目录过滤会让它在下一次保存时被悄悄撤掉。
   useEffect(() => {
     if (!knownCodes.size) return;
-    setSelected(currentCodes.filter((code) => code === '*' || knownCodes.has(code)));
+    setSelected(currentCodes.filter(isResolvablePermission));
     setFormError(null);
   }, [currentCodes, knownCodes]);
 

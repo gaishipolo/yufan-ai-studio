@@ -59,7 +59,7 @@ export function PermissionPicker({
 }: PermissionPickerProps) {
   const catalogQuery = usePermissionCatalog();
 
-  const { pages, apiGroups, nameOf, pagesByApi } = useMemo(() => {
+  const { pages, apiGroups, nameOf, pagesByApi, catalogCodes } = useMemo(() => {
     const groups = catalogQuery.data?.groups ?? [];
     const pageItems: typeof groups[number]['items'] = [];
     const rest: typeof groups = [];
@@ -85,6 +85,7 @@ export function PermissionPicker({
       apiGroups: rest,
       nameOf: names,
       pagesByApi: owners,
+      catalogCodes: new Set(names.keys()),
     };
   }, [catalogQuery.data]);
 
@@ -130,6 +131,14 @@ export function PermissionPicker({
   // 来自别的层、勾上但不可改的码。它们**不在**本层的保存集合里，
   // 但界面上是勾着的 —— 摘要必须把这两者分开，否则计数对不上眼睛看到的。
   const lockedCodes = Object.keys(inherited ?? {}).filter((code) => !selected.includes(code));
+
+  /* 已勾选、但目录里没有的码：`task:*` / `image:*` 这类通配，或已下线模块留下的
+     （v1 的 `asset:read`）。它们照样在 `selected` 里、照样被汇总条算进「接口 N」，
+     却原来一行都渲染不出来 —— 数字对不上，而看不见的那几条恰恰是最危险的：
+     通配能一次性覆盖十几个接口，撤的时候却找不到它在哪。 */
+  const offCatalog = [...new Set([...selected, ...lockedCodes])].filter(
+    (code) => !catalogCodes.has(code),
+  );
 
   if (catalogQuery.isLoading) {
     return (
@@ -456,6 +465,72 @@ export function PermissionPicker({
               </div>
             );
           })}
+          {offCatalog.length > 0 ? (
+            <div>
+              <div className="flex items-center gap-2 pb-1">
+                <h4 className="text-xs font-semibold text-ink-soft">目录外</h4>
+                <span className="text-meta tabular-nums text-ink-mute">
+                  {offCatalog.length}
+                </span>
+              </div>
+              <ul className="grid gap-1 md:grid-cols-2">
+                {offCatalog.map((code) => {
+                  const locked = isLocked(code);
+                  const checked = selected.includes(code) || locked;
+                  const blocked = Boolean(forbidden?.(code));
+                  return (
+                    <li
+                      key={code}
+                      className={cn(
+                        'flex items-start gap-2 rounded-md px-2 py-1.5',
+                        checked && !locked && !blocked && 'bg-primary-soft/40',
+                        locked && 'bg-panel-soft',
+                        blocked && 'opacity-45',
+                      )}
+                    >
+                      <label
+                        title={
+                          blocked
+                            ? forbiddenHint
+                            : locked
+                              ? `来自${inherited?.[code]?.join('、')}，不在这一层授予`
+                              : '不在权限目录里：可能是通配授权（如 task:*），也可能是已下线模块留下的码；取消勾选即可撤掉'
+                        }
+                        className={cn(
+                          'flex min-w-0 flex-1 items-start gap-2',
+                          blocked || locked ? 'cursor-not-allowed' : 'cursor-pointer',
+                        )}
+                      >
+                        <input
+                          type="checkbox"
+                          className="mt-[3px] h-3 w-3 shrink-0 accent-primary disabled:opacity-40"
+                          checked={checked}
+                          disabled={blocked || locked}
+                          onChange={() => toggle(code)}
+                          aria-label={`${code} 接口权限`}
+                        />
+                        <span className="min-w-0">
+                          <span className="flex flex-wrap items-center gap-1.5">
+                            <Chip>{code}</Chip>
+                            {locked ? (
+                              <span className="text-meta text-ink-mute">
+                                来自 {inherited?.[code]?.join('、')}
+                              </span>
+                            ) : null}
+                          </span>
+                          <span className="mt-0.5 block text-meta text-ink-mute">
+                            {code.endsWith(':*')
+                              ? '整类授权：覆盖该资源下现有的全部接口'
+                              : '目录里已没有这个码'}
+                          </span>
+                        </span>
+                      </label>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          ) : null}
           {keyword.trim() &&
           apiGroups.every(
             (group) =>
