@@ -590,3 +590,42 @@ def test_replacing_every_member_swaps_the_inherited_tag(client: TestClient) -> N
     row = client.get(f"{API}/library/assets/{pack['id']}", headers=headers).json()["data"]
     # 6036 必须走了，9999 必须在了
     assert {item["name"] for item in row["tags"]} == {"9999"}
+
+
+def test_pack_list_can_require_every_tag(client: TestClient) -> None:
+    """`mode=all`：成员标签的并集要覆盖**全部** tagIds。
+
+    封装容器（一次选包填多格）用它：容器里有「正面图 + 三视图」两格，
+    包里就必须两张都对得上 —— 只对得上一张的包候选里不该出现，
+    点下去只填一半这件事没法在界面上解释。
+    """
+    headers = _headers(client)
+    front = _tag(client, headers, "正面图")
+    views = _tag(client, headers, "三视图")
+    shared = _tag(client, headers, "6036")
+
+    both_a = upload_image(client, API, headers, name="both-a.png", color="orange")
+    both_b = upload_image(client, API, headers, name="both-b.png", color="white")
+    only_front = upload_image(client, API, headers, name="front.png", color="purple")
+
+    _tag_asset(client, headers, both_a["id"], [shared["id"], front["id"]])
+    _tag_asset(client, headers, both_b["id"], [shared["id"], views["id"]])
+    _tag_asset(client, headers, only_front["id"], [shared["id"], front["id"]])
+
+    assert _pack(client, headers, "一套（正+三）", [both_a["id"], both_b["id"]]).status_code == 201
+    assert _pack(client, headers, "只有正面", [only_front["id"]]).status_code == 201
+
+    wanted = [shared["id"], front["id"], views["id"]]
+
+    def names(mode: str) -> list[str]:
+        rows = client.get(
+            f"{API}/library/packs",
+            params={"tagIds": wanted, "mode": mode},
+            headers=headers,
+        ).json()["data"]
+        return sorted(item["name"] for item in rows)
+
+    # any：能填上其中一格就算候选
+    assert names("any") == ["一套（正+三）", "只有正面"]
+    # all：必须把这几格都填得上
+    assert names("all") == ["一套（正+三）"]

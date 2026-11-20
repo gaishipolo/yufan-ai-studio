@@ -280,7 +280,7 @@ export const libraryApi = {
 
   /** `parentId` 给一级的 id 就建成二级；留空建成一级。 */
   /** 封装列表：`tagIds` 传槽位的候选标签，只返回「成员标签与之有交集」的包 */
-  packs: (params: {tagIds?: string[]; keyword?: string}) =>
+  packs: (params: {tagIds?: string[]; keyword?: string; mode?: 'any' | 'all'}) =>
     api.get<PackSummaryOut[]>(`/library/packs`, params, {
       paramsSerializer: REPEATED_ARRAY,
     }),

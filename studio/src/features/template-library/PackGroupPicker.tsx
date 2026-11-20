@@ -1,6 +1,12 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Layers } from 'lucide-react';
-import { useLibraryPacks } from '@/entities/library/api/library.queries';
+import {
+  useLibraryPacks,
+  useLibraryTags,
+} from '@/entities/library/api/library.queries';
+import { scopeFilterIds } from '@/entities/library/model/tagTree';
+import { viewQuery } from '@/entities/library/model/types';
+import { TagFilter } from '@/entities/library/ui/TagFilter';
 import type { SpecSlotOut } from '@/shared/api/schema';
 import { CoverImage } from '@/shared/ui';
 import { cn } from '@/shared/lib/cn';
@@ -33,12 +39,44 @@ export function PackGroupPicker({
   const [hoveredPackId, setHoveredPackId] = useState<string | null>(null);
   const [pointer, setPointer] = useState<{x: number; y: number} | null>(null);
 
-  /* 候选包按成员的标签并集取：后端返回「成员标签与它交集非空」的包，
-     所以列出来的包一定能填上其中至少一格。 */
-  const tagIds = Array.from(
-    new Set(members.flatMap(member => member.tagIds ?? [])),
-  ).sort();
-  const packs = useLibraryPacks({tagIds}, tagIds.length > 0);
+  /* 容器的候选标签 = 子槽位候选标签的并集（自动继承）。
+     例如「左图=产品+正面图，右图=产品+三视图」→ 产品 + 正面图 + 三视图。 */
+  const scope = useMemo(
+    () => Array.from(new Set(members.flatMap(member => member.tagIds ?? []))),
+    [members],
+  );
+  const scopeKey = scope.join(',');
+  /* 跟槽位选择器同一套：列的是**这批候选范围里实际有值**的标签，
+     用户点一个就在范围里再筛（同维度替换）。一级维度本身不出现在行里。 */
+  const tags = useLibraryTags({
+    ...viewQuery('all'),
+    ...(scope.length ? {tagIds: scope} : {}),
+  });
+  const [picked, setPicked] = useState<string[]>([]);
+  /* 换模板 / 换容器 = 换候选范围：上次挑的标签可能已经在范围外。 */
+  useEffect(() => {
+    setPicked([]);
+  }, [scopeKey]);
+
+  const filterIds = useMemo(
+    () => scopeFilterIds(tags.data ?? [], scope, picked),
+    [tags.data, scope, picked],
+  );
+  const childCountOf = useMemo(() => {
+    const map = new Map((tags.data ?? []).map(tag => [tag.id, tag.childCount ?? 0]));
+    return (id: string) => map.get(id) ?? 0;
+  }, [tags.data]);
+  /* **只把「能打在素材上」的标签发去需要求**：一级标签是维度（产品 / 产品图类型），
+     素材身上挂的是它的叶子。把维度也放进 `mode=all` 里，等于要求每个成员都挂
+     「产品」这个一级标签 —— 一个包都匹配不上。 */
+  const required = filterIds.filter(id => childCountOf(id) === 0);
+
+  /* `mode=all`：容器里有几格，包就得几张对得上 —— 只对得上一张的包不列，
+     否则点下去只填一半，而界面上没有地方解释为什么少一格。 */
+  const packs = useLibraryPacks(
+    {tagIds: required.length ? required : undefined, mode: 'all'},
+    scope.length > 0,
+  );
   const rows = packs.data ?? [];
   const filled = members.filter(member => (values[member.key] ?? []).length > 0).length;
 
@@ -57,14 +95,32 @@ export function PackGroupPicker({
         >
           {filled}/{members.length}
         </span>
-        <span className="ml-auto text-micro text-ink-mute">
-          {tagIds.length ? '选一个包，这几格一起填好' : '这些槽位还没圈候选标签'}
+        <span className="ml-auto shrink-0 text-micro text-ink-mute">
+          {scope.length ? '选一个包，这几格一起填好' : '这些槽位还没圈候选标签'}
         </span>
       </div>
 
-      {tagIds.length > 0 && rows.length === 0 ? (
+      {/* 容器的筛选行 = 子槽位候选标签的并集，作用与普通槽位那一行相同：
+          自动圈定范围、手动再收窄。二级标签（6036 / 正面图 / 三视图）都在这里选。 */}
+      {scope.length > 0 && (
+        <div className="mt-1.5">
+          <TagFilter
+            tags={tags.data ?? []}
+            onlyWithAssets
+            hideTopLevel
+            excludeIds={scope}
+            single
+            value={picked}
+            onChange={setPicked}
+          />
+        </div>
+      )}
+
+      {scope.length > 0 && rows.length === 0 ? (
         <p className="py-3 text-center text-meta text-ink-mute">
-          这批标签下还没有封装包。去资产库把要一起用的几张打成一个封装。
+          {picked.length
+            ? '没有同时含这几张的封装包。换个产品再试，或去资产库把这个产品的那几张打成一个包。'
+            : '这批标签下还没有封装包。去资产库把要一起用的几张打成一个封装。'}
         </p>
       ) : (
         <div className="mt-2 grid grid-cols-4 gap-1.5">

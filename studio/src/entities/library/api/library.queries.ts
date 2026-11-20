@@ -248,12 +248,15 @@ export function useUploadSourceVideo() {
  * `tagIds` 传**槽位的候选标签**：后端只返回「成员标签与之有交集」的包 ——
  * 这就是「这个包能不能填这一格」的判据，所以前端不需要自己筛成员。
  */
-export function useLibraryPacks(params: {tagIds?: string[]; keyword?: string}, enabled = true) {
+export function useLibraryPacks(
+  params: {tagIds?: string[]; keyword?: string; mode?: 'any' | 'all'},
+  enabled = true,
+) {
   /* 依赖用**排序后拼串**：候选标签是一个集合，顺序不同不该触发重新请求，
     而数组作为 queryKey 的片段每次渲染都是新引用。 */
   const key = [...(params.tagIds ?? [])].sort().join(',');
   return useQuery({
-    queryKey: [...libraryKeys.all, 'packs', key, params.keyword ?? ''],
+    queryKey: [...libraryKeys.all, 'packs', key, params.keyword ?? '', params.mode ?? 'any'],
     queryFn: () => libraryApi.packs(params),
     enabled,
   });

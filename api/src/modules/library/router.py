@@ -14,7 +14,7 @@ M2 交付：三层可见集、共享与撤销审批、删除矩阵（含 §3.4.1
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Query, Request, status
 from fastapi.responses import Response
@@ -342,14 +342,18 @@ async def list_packs(
     service: LibraryServiceDep,
     tag_ids: Annotated[list[str] | None, Query(alias="tagIds")] = None,
     keyword: str = Query(default="", max_length=100),
+    mode: Literal["any", "all"] = Query(default="any"),
 ) -> ApiResponse[list[PackSummaryOut]]:
-    """`tagIds` 传**槽位的候选标签**：与包内成员标签有交集才返回。
+    """`tagIds` 传**槽位的候选标签**。
 
-    这条判据就是「这个包能不能填那一格」，所以不需要给包再加一个「类型」字段 ——
-    产品包 / 服装包 / 人物包各自的标签不同，天然就被过滤到对应的槽位里。
+    - `mode=any`（默认）：与包内成员标签有交集就返回 —— 「这个包能不能填这一格」；
+    - `mode=all`：成员标签的并集要覆盖全部 `tagIds` —— 「能不能把这一组格子都填上」。
+      封装容器用它：容器里有几格，包就得有几张对得上，否则点一次只填一半。
+
+    判据就是「这个包能不能填那一格 / 那一组」，所以不需要给包再加一个「类型」字段。
     """
     return ApiResponse.ok(
-        await service.list_packs(actor, tag_ids=tag_ids, keyword=keyword)
+        await service.list_packs(actor, tag_ids=tag_ids, keyword=keyword, mode=mode)
     )
 
 

@@ -997,11 +997,19 @@ class LibraryService:
         *,
         tag_ids: Sequence[str] | None = None,
         keyword: str = "",
+        mode: str = "any",
     ) -> list[PackSummaryOut]:
         """选择器用的包列表。
 
-        `tag_ids` 是**槽位的候选标签**：与包内成员标签有交集才返回 ——
-        这正是「这个包能不能填那一格」的判据，不需要另建「包属于什么类型」的字段。
+        `tag_ids` 是**槽位的候选标签**。
+        - `mode=any`（默认）：与包内成员标签有**交集**就返回 —— 「这个包能不能填
+          这一格」。单槽位选择器用这一档。
+        - `mode=all`：成员标签的并集必须**覆盖全部** `tag_ids` —— 「这个包能不能
+          把这一组格子都填上」。封装容器用这一档：容器里有几格，包就得几张对得上，
+          否则点下去只填一半。
+
+        容器传的是**具体的二级标签**（如 6036 + 正面图 + 三视图）：一级标签是维度，
+        素材身上不会挂它，放进 `all` 里会把所有包都排除掉。
         """
         groups = await access.all_groups(self.session, actor)
         query = select(LibraryAsset).where(
@@ -1033,8 +1041,10 @@ class LibraryService:
             # 卡片上的「N 张」仍按成员总数算（详情里会把已删的那张照列并标出来）。
             active = [member for member in group if member.state == "active"]
             union = self._union_tags(active, tags)
-            if wanted and not wanted & set(union):
-                continue
+            if wanted:
+                hit = wanted & set(union)
+                if not hit or (mode == "all" and hit != wanted):
+                    continue
             result.append(
                 PackSummaryOut(
                     id=row.id,

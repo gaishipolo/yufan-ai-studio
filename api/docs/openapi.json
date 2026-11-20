@@ -3069,7 +3069,7 @@
           "资产库"
         ],
         "summary": "封装列表（模板库选择器用）",
-        "description": "`tagIds` 传**槽位的候选标签**：与包内成员标签有交集才返回。\n\n这条判据就是「这个包能不能填那一格」，所以不需要给包再加一个「类型」字段 ——\n产品包 / 服装包 / 人物包各自的标签不同，天然就被过滤到对应的槽位里。",
+        "description": "`tagIds` 传**槽位的候选标签**。\n\n- `mode=any`（默认）：与包内成员标签有交集就返回 —— 「这个包能不能填这一格」；\n- `mode=all`：成员标签的并集要覆盖全部 `tagIds` —— 「能不能把这一组格子都填上」。\n  封装容器用它：容器里有几格，包就得有几张对得上，否则点一次只填一半。\n\n判据就是「这个包能不能填那一格 / 那一组」，所以不需要给包再加一个「类型」字段。",
         "operationId": "list_packs_api_v1_library_packs_get",
         "security": [
           {
@@ -3105,6 +3105,20 @@
               "maxLength": 100,
               "default": "",
               "title": "Keyword"
+            }
+          },
+          {
+            "name": "mode",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "any",
+                "all"
+              ],
+              "type": "string",
+              "default": "any",
+              "title": "Mode"
             }
           }
         ],

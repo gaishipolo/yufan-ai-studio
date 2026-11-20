@@ -20,11 +20,13 @@ import {SpecLibrary} from './SpecLibrary';
  * 3. 多张 → 也不填，并说出来 —— 静默取第一张，生成的图错了没人知道。
  */
 
-const {compileMock, specState, packsState, packState} = vi.hoisted(() => ({
+const {compileMock, specState, packsState, packState, tagsState, packCalls} = vi.hoisted(() => ({
   compileMock: vi.fn(),
   specState: {current: null as unknown},
   packsState: {current: [] as {id: string; name: string; memberCount?: number}[]},
   packState: {current: null as unknown},
+  tagsState: {current: [] as unknown[]},
+  packCalls: [] as {tagIds?: string[]; mode?: string}[],
 }));
 
 vi.mock('@/entities/template-spec/api/spec.queries', () => ({
@@ -51,17 +53,12 @@ vi.mock('@/entities/library/api/library.api', () => ({libraryApi: {}}));
 
 vi.mock('@/entities/library/api/library.queries', () => ({
   useLibraryDetail: (id: string) => ({data: {name: `素材-${id}.png`}}),
-  useLibraryTags: () => ({
-    data: [
-      {id: 'tag-front', name: '正面图', assetCount: 2, childCount: 0, createdAt: '2026-11-09T10:00:00Z'},
-      {id: 'tag-views', name: '三视图', assetCount: 2, childCount: 0, createdAt: '2026-11-09T10:00:00Z'},
-    ],
-    isPending: false,
-  }),
+  useLibraryTags: () => ({data: tagsState.current, isPending: false}),
   /* 包列表：后端会按槽位候选标签过滤，这里直接给「这个模板能用的那个包」 */
-  useLibraryPacks: (_params: {tagIds?: string[]}, enabled = true) => ({
-    data: enabled ? packsState.current : undefined,
-  }),
+  useLibraryPacks: (params: {tagIds?: string[]; mode?: string}, enabled = true) => {
+    packCalls.push(params);
+    return {data: enabled ? packsState.current : undefined};
+  },
   /* 详情：点包之后才拉（`pendingPack` 非空） */
   useLibraryPack: (id: string | null) => ({
     data: id ? packState.current : undefined,
@@ -145,6 +142,11 @@ const PACK = {
 };
 
 beforeEach(() => {
+  packCalls.length = 0;
+  tagsState.current = [
+    {id: 'tag-front', name: '正面图', assetCount: 2, childCount: 0, createdAt: '2026-11-09T10:00:00Z'},
+    {id: 'tag-views', name: '三视图', assetCount: 2, childCount: 0, createdAt: '2026-11-09T10:00:00Z'},
+  ];
   specState.current = SPEC;
   packsState.current = [{id: 'p1', name: '6036 黑', memberCount: 2}];
   packState.current = PACK;
@@ -238,6 +240,37 @@ describe('模板库 · 点封装包填多格', () => {
     // 一次点击仍然把容器里的两格填满
     expect(await screen.findByText(/素材-m-front/)).toBeInTheDocument();
     expect(await screen.findByText(/素材-m-views/)).toBeInTheDocument();
+  });
+
+  it('容器的筛选：继承子槽位候选标签，一级维度不发给后端', async () => {
+    /* 「产品」是一级维度，素材身上挂的是它的叶子（6036…）。把维度也塞进
+       `mode=all` 里，等于要求每个成员都挂「产品」—— 一个包都匹配不上。
+       所以行里能选它，但发给后端的是具体二级。 */
+    tagsState.current = [
+      {id: 'tag-product', name: '产品', assetCount: 20, childCount: 3, createdAt: '2026-11-09T10:00:00Z'},
+      {id: 'tag-type', name: '产品图类型', assetCount: 20, childCount: 2, createdAt: '2026-11-09T10:00:00Z'},
+      {id: 'tag-6036', name: '6036', parentId: 'tag-product', parentName: '产品', depth: 2, assetCount: 5, childCount: 0, createdAt: '2026-11-09T10:01:00Z'},
+      {id: 'tag-front', name: '正面图', parentId: 'tag-type', parentName: '产品图类型', depth: 2, assetCount: 2, childCount: 0, createdAt: '2026-11-09T10:00:00Z'},
+      {id: 'tag-views', name: '三视图', parentId: 'tag-type', parentName: '产品图类型', depth: 2, assetCount: 2, childCount: 0, createdAt: '2026-11-09T10:00:00Z'},
+    ];
+    specState.current = {
+      ...SPEC,
+      latest: {
+        ...SPEC.latest!,
+        slots: (SPEC.latest!.slots ?? []).map(slot => ({
+          ...slot,
+          group: 'g1',
+          tagIds: ['tag-product', ...(slot.tagIds ?? [])],
+        })),
+      },
+    };
+    renderLibrary();
+    await screen.findAllByTitle('6036 黑（封装 · 2 张）');
+
+    const call = packCalls.at(-1)!;
+    expect(call.mode).toBe('all');
+    expect(call.tagIds ?? []).not.toContain('tag-product');
+    expect(call.tagIds).toEqual(expect.arrayContaining(['tag-front', 'tag-views']));
   });
 
   it('包里缺某个视角：那一格不动，别的照填', async () => {
