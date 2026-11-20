@@ -11,6 +11,18 @@ const h = vi.hoisted(() => ({
   CATALOG: {
     groups: [
       {
+        group: '页面',
+        items: [
+          {
+            code: 'page:task-center',
+            name: '任务中心',
+            description: '',
+            requires: ['task:read', 'task:create'],
+            route: '/tasks',
+          },
+        ],
+      },
+      {
         group: '内容生产',
         items: [
           { code: 'task:read', name: '查看任务', description: '' },
@@ -114,19 +126,19 @@ describe('RolePermissionsModal', () => {
     expect(checkedCount()).toBe(0);
   });
 
-  it('整组全选只在未全选时出现', async () => {
+  it('页面卡片上的「全选」全给之后变成「取消」', async () => {
     const user = userEvent.setup();
     renderModal(baseRole());
 
-    /* 弹窗是 portal 到 body 的，render 返回的 container 里并没有它的 DOM；
-       权限勾选器现在是「页面段 + 接口段」两段，接口段里每个资源分组各有
-       一个「全选本组」——必须限定到具体那个分组，否则会点到两个同名按钮 */
-    const groupHeading = screen.getByRole('heading', { name: '内容生产' });
-    const group = groupHeading.closest('div');
-    if (!group) throw new Error('权限分组未渲染');
-    await user.click(within(group).getByRole('button', { name: '全选本组' }));
+    /* 弹窗是 portal 到 body 的，render 返回的 container 里没有它的 DOM。
+       权限勾选器现在是「一个页面一张卡片」，全选在每张卡片的页头 ——
+       限定到那张卡片，否则会点到别的卡片上的同名按钮 */
+    const card = screen
+      .getByRole('checkbox', { name: '任务中心 页面权限' })
+      .closest('section') as HTMLElement;
+    await user.click(within(card).getByRole('button', { name: '全选' }));
 
-    expect(screen.getAllByRole('button', { name: '取消本组' })).toHaveLength(1);
+    expect(within(card).getByRole('button', { name: '取消' })).toBeInTheDocument();
   });
 });
 
