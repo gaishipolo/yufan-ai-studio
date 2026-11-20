@@ -77,6 +77,9 @@ export default tseslint.config(
       // 里面的 `new URL(...)` / `process` 会被当成未定义全局，lint 直接红，跟本次改动无关。
       // 本机删除守卫会让这些文件清不掉，只能按模式忽略。
       '*.config.ts.timestamp-*.mjs',
+      // 本地探针与截图（puppeteer 验证脚本）：不进仓库，也不算项目代码。
+      // 里面的 `document` / `location` 是给真机浏览器用的，按浏览器全局判会红。
+      'var',
     ],
   },
 

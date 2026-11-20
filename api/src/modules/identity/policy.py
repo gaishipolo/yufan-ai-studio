@@ -91,7 +91,6 @@ def check_avatar_url(value: str | None) -> str | None:
     return trimmed
 
 
-
 __all__ = [
     "AVATAR_URL_PREFIXES",
     "PASSWORD_MAX_LENGTH",

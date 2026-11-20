@@ -10,7 +10,7 @@ import uuid
 
 from fastapi.testclient import TestClient
 
-from tests.test_pages import API, IDENTITY, _admin, _login, _suffix
+from tests.test_pages import IDENTITY, _admin, _suffix
 
 
 def _group(client: TestClient, admin: dict[str, str]) -> dict:
