@@ -79,6 +79,18 @@ describe('PermissionsSection：左树选人，右侧看权限', () => {
     expect(screen.getByText('设计组')).toBeInTheDocument();
   });
 
+  it('未分组也能折叠（它和真实分组共用一份开合状态）', async () => {
+    const user = userEvent.setup();
+    render(<PermissionsSection />);
+
+    expect(screen.getByText('戴夫')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /未分组/ }));
+
+    expect(screen.queryByText('戴夫')).toBeNull();
+    // 折叠的是成员，标题与人数还在
+    expect(screen.getByText('未分组')).toBeInTheDocument();
+  });
+
   it('搜索按账号或昵称过滤，且命中的组自动展开', async () => {
     const user = userEvent.setup();
     render(<PermissionsSection />);

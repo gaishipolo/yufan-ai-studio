@@ -13,6 +13,9 @@ import { UserPermissionsPanel } from './UserPermissionsPanel';
  * 能删任务」），而不是「他在哪个组」。树把归属也一起显示出来 —— 同一个人的来源里
  * 往往就有他所在的小组。
  */
+/** 「未分组」不是真实小组，折叠状态用一个哨兵键存在同一份集合里 */
+const UNGROUPED_KEY = '__ungrouped__';
+
 export function PermissionsSection() {
   const tree = usePermissionTree();
   const [selected, setSelected] = useState<PermissionTreeUserOut | null>(null);
@@ -20,6 +23,8 @@ export function PermissionsSection() {
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
 
   const searching = keyword.trim().length > 0;
+  // 未分组用同一份折叠集合，键是个不可能与小组 id 相撞的哨兵
+  const ungroupedOpen = searching || !collapsed.has(UNGROUPED_KEY);
 
   const { groups, ungrouped } = useMemo(() => {
     const text = keyword.trim().toLowerCase();
@@ -53,7 +58,15 @@ export function PermissionsSection() {
 
   return (
     <div className="grid gap-3 md:grid-cols-[248px_minmax(0,1fr)]">
-      <aside className="flex min-h-0 flex-col rounded-xl border border-line bg-panel">
+      <aside
+        data-permission-tree
+        className={cn(
+          'flex min-h-0 flex-col rounded-xl border border-line bg-panel',
+          // 贴住顶栏（54px 高的 sticky header）并占满可视高度：
+          // 右栏很长时，左栏不动才好一边看树一边看权限。67px 与侧栏同口径
+          'md:sticky md:top-[67px] md:h-[calc(100vh_-_83px)]',
+        )}
+      >
         <header className="flex items-baseline gap-2 border-b border-line px-3 py-2">
           <h2 className="text-body font-semibold text-ink">分组</h2>
           {/* 这个数字是**人数**不是组数：写「分组 20」会被读成二十个分组 */}
@@ -70,7 +83,7 @@ export function PermissionsSection() {
           />
         </div>
 
-        <div className="max-h-[calc(100vh-300px)] min-h-0 overflow-auto p-1.5">
+        <div data-tree-scroll className="min-h-0 flex-1 overflow-auto p-1.5">
           {tree.isError ? (
             <ErrorState
               error={tree.error}
@@ -129,12 +142,27 @@ export function PermissionsSection() {
 
               {ungrouped.length > 0 ? (
                 <div className="mt-1 border-t border-line-soft pt-1">
-                  <div className="flex items-center gap-1 px-1.5 py-1.5">
-                    <span className="text-xs font-medium text-ink-mute">未分组</span>
-                    <span className="ml-auto tabular-nums text-micro text-ink-mute">
+                  <button
+                    type="button"
+                    onClick={() => toggle(UNGROUPED_KEY)}
+                    aria-expanded={ungroupedOpen}
+                    className="flex w-full items-center gap-1 rounded-md px-1.5 py-1.5 text-left hover:bg-panel-soft"
+                  >
+                    <ChevronRight
+                      size={12}
+                      className={cn(
+                        'shrink-0 text-ink-mute transition-transform',
+                        ungroupedOpen && 'rotate-90',
+                      )}
+                    />
+                    <span className="min-w-0 truncate text-xs font-medium text-ink-mute">
+                      未分组
+                    </span>
+                    <span className="ml-auto shrink-0 tabular-nums text-micro text-ink-mute">
                       {ungrouped.length}
                     </span>
-                  </div>
+                  </button>
+                  {ungroupedOpen ? (
                   <ul className="space-y-0.5">
                     {ungrouped.map((user) => (
                       <li key={user.id}>
@@ -146,6 +174,7 @@ export function PermissionsSection() {
                       </li>
                     ))}
                   </ul>
+                  ) : null}
                 </div>
               ) : null}
 
