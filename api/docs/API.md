@@ -3469,6 +3469,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `model` | `string \| null` | 否 |  |
 | `slotValues` | `Record<string, string[]>` | 否 |  |
 | `useRandomPrompt` | `boolean` | 否 |  |
+| `slotTextOverrides` | `Record<string, string>` | 否 |  |
 | `paramOverrides` | `Record<string, unknown>` | 否 |  |
 
 **响应** `ApiResponse<SpecCompileOut>`（前端取 `res.data`）
@@ -4879,10 +4880,14 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 
 槽位按用户挑选顺序传素材 id。`version` 为空表示用当前发布版本。
 
-**没有 `promptOverride`**（2026-11-14 起）：模板库不改文字。需要可变内容的地方
-在模板里放 `text` 槽位 —— 填表时选一份文案，`compile` 把它排在 `{{Text N}}`
-的第 N 位，执行层按 `textLibraryIds` 注入正文。这个入口曾经存在（改写"可编辑段"），
-与"提示词只有一段"冲突，一并删掉。
+**没有 `promptOverride`**（2026-11-14 起）：模板库不改整段文字。需要可变内容
+的地方在模板里放 `text` 槽位 —— 填表时选一份文案，`compile` 把它排在
+`{{Text N}}` 的第 N 位，执行层按 `textLibraryIds` 注入正文。这个入口曾经存在
+（改写"可编辑段"），与"提示词只有一段"冲突，一并删掉。
+
+但**单个可选槽位的「未选时文案」可以改**（`slot_text_overrides`，2026-11-21）：
+那段话本来就是「这一格空着时说什么」，作者写的是通用版本，使用者知道得更具体。
+改的是插入点里的那一段，不是提示词的骨架 —— 与上面删掉的那个入口不是一回事。
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
@@ -4890,6 +4895,7 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `model` | `string \| null` | 否 |  |
 | `slotValues` | `Record<string, string[]>` | 否 |  |
 | `useRandomPrompt` | `boolean` | 否 |  |
+| `slotTextOverrides` | `Record<string, string>` | 否 |  |
 | `paramOverrides` | `Record<string, unknown>` | 否 |  |
 
 ### `SpecCompileOut`

@@ -55,6 +55,26 @@ export function slotRefModes(
 }
 
 /**
+ * 这个槽位在提示词里**有兜底文案的插入点**吗。
+ *
+ * 「未选时文案」只在两种引用下进入提示词（后端 `compile.py`）：
+ * `{{slot:x}}`（单张）与 `{{slot:x*}}`（整组）。`{{slot:x.2}}`（第 N 张）
+ * 套不上一段话 —— 它要的是某一编号。
+ *
+ * 判据给「改提示词」用：没有插入点时，使用者敲的字一个也不会进提示词，
+ * 那就**不该给他这个入口**（摆一个打了字也不生效的输入框，
+ * 与已删的 `usage` 字段是同一类错）。
+ */
+export function hasFallbackSlotRef(
+  prompt: string,
+  key: string,
+  slots: SpecSlotOut[] = [],
+): boolean {
+  const used = slotRefModes(prompt, slots)[key];
+  return Boolean(used && (used.has('') || used.has('*')));
+}
+
+/**
  * 提示词里「第 N 张」引用到的**最大 N**。
  *
  * `{{slot:x.3}}` 意味着这个槽位至少要填 **3** 张 —— 后端展开时取

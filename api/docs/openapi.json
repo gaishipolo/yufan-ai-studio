@@ -13905,6 +13905,13 @@
             "title": "Userandomprompt",
             "default": false
           },
+          "slotTextOverrides": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Slottextoverrides"
+          },
           "paramOverrides": {
             "additionalProperties": true,
             "type": "object",
@@ -13914,7 +13921,7 @@
         "additionalProperties": false,
         "type": "object",
         "title": "SpecCompileIn",
-        "description": "填表结果：`{slotKey: [assetId…]}`。\n\n槽位按用户挑选顺序传素材 id。`version` 为空表示用当前发布版本。\n\n**没有 `promptOverride`**（2026-11-14 起）：模板库不改文字。需要可变内容的地方\n在模板里放 `text` 槽位 —— 填表时选一份文案，`compile` 把它排在 `{{Text N}}`\n的第 N 位，执行层按 `textLibraryIds` 注入正文。这个入口曾经存在（改写\"可编辑段\"），\n与\"提示词只有一段\"冲突，一并删掉。"
+        "description": "填表结果：`{slotKey: [assetId…]}`。\n\n槽位按用户挑选顺序传素材 id。`version` 为空表示用当前发布版本。\n\n**没有 `promptOverride`**（2026-11-14 起）：模板库不改整段文字。需要可变内容\n的地方在模板里放 `text` 槽位 —— 填表时选一份文案，`compile` 把它排在\n`{{Text N}}` 的第 N 位，执行层按 `textLibraryIds` 注入正文。这个入口曾经存在\n（改写\"可编辑段\"），与\"提示词只有一段\"冲突，一并删掉。\n\n但**单个可选槽位的「未选时文案」可以改**（`slot_text_overrides`，2026-11-21）：\n那段话本来就是「这一格空着时说什么」，作者写的是通用版本，使用者知道得更具体。\n改的是插入点里的那一段，不是提示词的骨架 —— 与上面删掉的那个入口不是一回事。"
       },
       "SpecCompileOut": {
         "properties": {

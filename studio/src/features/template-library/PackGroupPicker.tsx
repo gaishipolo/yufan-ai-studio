@@ -8,10 +8,11 @@ import { scopeFilterIds } from '@/entities/library/model/tagTree';
 import { viewQuery } from '@/entities/library/model/types';
 import { TagFilter } from '@/entities/library/ui/TagFilter';
 import type { SpecSlotOut } from '@/shared/api/schema';
-import { CoverImage } from '@/shared/ui';
+import { CoverImage, Segmented } from '@/shared/ui';
 import { cn } from '@/shared/lib/cn';
 import { AssetChip } from '@/entities/library/ui/AssetChip';
 import { PackHoverPreview } from '@/entities/library/ui/PackHoverPreview';
+import { SlotTextField } from './SlotTextField';
 
 /**
  * 封装容器在**模板库**这边的形态。
@@ -26,12 +27,25 @@ import { PackHoverPreview } from '@/entities/library/ui/PackHoverPreview';
 export function PackGroupPicker({
   members,
   values,
+  canEditText,
+  slotModes,
+  textOf,
+  onMode,
+  onText,
   onPickPack,
   onClear,
 }: {
   /** 容器里的槽位（顺序即编号顺序）。 */
   members: SpecSlotOut[];
   values: Record<string, string[] | undefined>;
+  /** 可以「改提示词」的成员 key（可选 + 提示词有插入点 + 没被「第 N 张」钉住）。 */
+  canEditText: string[];
+  /** 每格当前的填写方式。缺省 = 选素材。 */
+  slotModes: Record<string, 'pick' | 'text'>;
+  /** 某格改写的文案（父层已填成作者的「未选时文案」）。 */
+  textOf: (key: string) => string;
+  onMode: (key: string, mode: 'pick' | 'text') => void;
+  onText: (key: string, value: string) => void;
   onPickPack: (packId: string) => void;
   /** 清掉某一格（chip 上的 ×）。 */
   onClear: (slotKey: string) => void;
@@ -78,7 +92,15 @@ export function PackGroupPicker({
     scope.length > 0,
   );
   const rows = packs.data ?? [];
-  const filled = members.filter(member => (values[member.key] ?? []).length > 0).length;
+  /* 文案格也算「填了」：容器那行 `x/y` 说的是「还差几格」，
+     差的是「没有任何说法」的格子，不是「没有素材」的格子。 */
+  const isTextMode = (key: string) =>
+    canEditText.includes(key) && slotModes[key] === 'text';
+  const filled = members.filter(
+    member =>
+      (values[member.key] ?? []).length > 0 ||
+      (isTextMode(member.key) && textOf(member.key).trim().length > 0),
+  ).length;
 
   return (
     <section className="rounded-xl border border-[rgba(211,224,229,.7)] bg-canvas/45 p-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,.9)]">
@@ -151,23 +173,55 @@ export function PackGroupPicker({
         </div>
       )}
 
-      {/* 每格一行：填了就显示那张（可撤），没填写「待填」。
+      {/* 每格一行：填了就显示那张（可撤），没填写「可留空 / 待填」。
           这里不摆网格 —— 容器里的槽位只由包决定，给它们各自的网格等于
-          把「一次选择」拆回「两次选择」。 */}
-      <ul className="mt-2 flex flex-col gap-1">
+          把「一次选择」拆回「两次选择」。
+
+          但**可选**的成员可以改成「改提示词」：包只填它那几格，剩下的格子
+          由使用者自己描述。切成文案的格子不再由包分发（见
+          `SpecLibrary.distributePack`）。 */}
+      <ul className="mt-2 flex flex-col gap-1.5">
         {members.map(member => {
           const picked = values[member.key] ?? [];
+          const editable = canEditText.includes(member.key);
+          const textMode = isTextMode(member.key);
           return (
-            <li key={member.key} className="flex items-center gap-2 text-micro">
-              <span className="w-16 shrink-0 truncate text-ink-soft">
-                {member.label || member.key}
-              </span>
-              {picked.length ? (
-                <AssetChip assetId={picked[0]} onRemove={() => onClear(member.key)} />
-              ) : (
-                <span className="text-ink-mute">
-                  {member.minCount === 0 ? '可留空' : '待填'}
+            <li key={member.key} className="flex flex-col gap-1 text-micro">
+              {/* `flex-wrap`：一格既有已选素材、又有填法切换时，两个控件在
+                  400px 的右栏里可能挤不下 —— 换行比挤出容器好。 */}
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="w-16 shrink-0 truncate text-ink-soft">
+                  {member.label || member.key}
                 </span>
+                {/* 文案格不再显示「可留空 / 待填」：下面那个输入框就是它的说法。 */}
+                {!textMode &&
+                  (picked.length ? (
+                    <AssetChip assetId={picked[0]} onRemove={() => onClear(member.key)} />
+                  ) : (
+                    <span className="text-ink-mute">
+                      {member.minCount === 0 ? '可留空' : '待填'}
+                    </span>
+                  ))}
+                {editable && (
+                  <Segmented
+                    aria-label={`${member.label || member.key} 的填法`}
+                    value={textMode ? 'text' : 'pick'}
+                    onChange={next => onMode(member.key, next)}
+                    options={[
+                      {value: 'pick', label: '选素材'},
+                      {value: 'text', label: '改提示词'},
+                    ]}
+                    className="ml-auto w-[136px] shrink-0"
+                  />
+                )}
+              </div>
+              {textMode && (
+                <SlotTextField
+                  rows={2}
+                  value={textOf(member.key)}
+                  onChange={value => onText(member.key, value)}
+                  placeholder="写这一格没素材时提示词怎么说"
+                />
               )}
             </li>
           );

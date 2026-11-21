@@ -54,8 +54,9 @@ import {
   visibleSlots,
   type ManualSlotValues,
   type RandomnessMode,
+  type SlotFillMode,
 } from './randomness';
-import { requiredSlotCount } from './slotIndexRefs';
+import { hasFallbackSlotRef, requiredSlotCount } from './slotIndexRefs';
 
 /**
  * 模板库（填表）：左边选模板，右边就地填素材 → 生成。
@@ -228,6 +229,12 @@ export function SpecLibrary() {
   /* 使用者对「运行时参数」的选择（计费模式等）。跟素材选择分开存：
      素材是这次填的，计费模式是这次选的 —— 换模板时两者都要重来。 */
   const [userChoices, setUserChoices] = useState<Record<string, ParamValue>>({});
+  /* 可选槽位的「填法」：挑素材，还是直接改写提示词里那一格。
+     两张表分开存：切回「选素材」时原来挑的素材要还在（只是不提交），
+     改过的文案也不清空 —— 想退回作者原话只能靠自己改回去，
+     这里偷偷清掉等于让「我刚才写的话」凭空消失。 */
+  const [slotModes, setSlotModes] = useState<Record<string, SlotFillMode>>({});
+  const [slotTexts, setSlotTexts] = useState<Record<string, string>>({});
   const [picker, setPicker] = useState<string | null>(null);
   /* 使用者挑的模型。作者声明了「允许选用的模型」时才有得挑；清单为空 = 只有
      固定模型（老模板），页面上连下拉都不出现。空串 = 还没挑（用固定模型）。 */
@@ -297,16 +304,22 @@ export function SpecLibrary() {
 
   /* 换模板就清空上一次的填写：不做"记忆上次填的素材"，
      那会让用户以为新模板也用了同一张图。计费模式这类选择同理 —— 上一张
-     模板的计费选择不该跟着带过来（那是上一笔生意的决定）。 */
+     模板的计费选择不该跟着带过来（那是上一笔生意的决定）。
+
+     填法与改写的文案一起清：槽位 key 是自动生成的（`image_1`…），
+     两个模板重名是常态 —— 留着的话，上一个模板里改成文案的格子会让
+     新模板的同一格一打开就是输入框。 */
   useEffect(() => {
     setValues({});
     setUserChoices({});
     setChosenModel('');
     setNote('');
     setError('');
+    setSlotModes({});
+    setSlotTexts({});
   }, [focused, version?.version]);
 
-  /* 换模型要清掉上一款的用户选择：两款模型的 `userSelectable` 参数未必相同，
+  /** 换模型要清掉上一款的用户选择：两款模型的 `userSelectable` 参数未必相同，
      残留的 `paramOverrides` 会被后端以「模型 X 没有这些参数」拒掉，而界面上那个控件
      已经消失了。 */
   useEffect(() => {
@@ -340,13 +353,6 @@ export function SpecLibrary() {
     [videoModels, imageModels],
   );
 
-  /* **真正提交给后端的素材**：使用者手动挑的，剔除这一档不该传的槽位。
-     随机档的可选槽位不传素材（提示词用作者的随机档那一段）。 */
-  const submitValues = useMemo(
-    () => mergeSlotValues(values, suppressed),
-    [values, suppressed],
-  );
-
   /* 每个槽位**实际**最少要几张。
      提示词里写了「第 2 张」的槽位实际至少要 2 张（后端取 `owned[index - 1]`，
      越界就 400）。只看 `minCount` 的话，界面显示「不缺料」，用户一点生成
@@ -361,13 +367,47 @@ export function SpecLibrary() {
     return map;
   }, [slots, activePrompt]);
 
+  /* 这一格能不能「改提示词」。三条缺一不可：
+     - 作者标了可选（必填没有「没选」这个状态）；
+     - 提示词里真有插入点（单张 / 整组引用，见 `hasFallbackSlotRef`）——
+       没有插入点，敲的字一个也进不了提示词；
+     - 提示词没按「第 N 张」把它钉住（钉住了就必须交素材，`requiredCount > 0`）。 */
+  const canEditText = (slot: SpecSlotOut): boolean =>
+    isOptionalSlot(slot) &&
+    (requiredCounts[slot.key] ?? 0) === 0 &&
+    hasFallbackSlotRef(activePrompt, slot.key, slots);
+
+  /** 这一档下**真的在改文案**的格子：状态里是 text，且这一格现在确实能改。 */
+  const textModeKeys = fillSlots
+    .filter(slot => slotModes[slot.key] === 'text' && canEditText(slot))
+    .map(slot => slot.key);
+
+  /* 作者的「未选时文案」，按 key 索引：改写框的初值就是它，
+     所以「自动取封装时写的那段」不需要 effect，也不会有先空白再填上的闪动。 */
+  const emptyTextOf = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const slot of slots) map[slot.key] = slot.emptyText ?? '';
+    return map;
+  }, [slots]);
+  const textOfKey = (key: string): string => slotTexts[key] ?? emptyTextOf[key] ?? '';
+
+  /* **真正提交给后端的素材**：使用者手动挑的，剔除这一档不该传的槽位。
+     随机档的可选槽位不传素材（提示词用作者的随机档那一段）。
+
+     改成文案的格子同样不传素材：这一格说的是文字，存的旧素材只是
+     「切回来时还在」的那一份。 */
+  const submitValues = mergeSlotValues(values, [...suppressed, ...textModeKeys]);
+
   /* 缺料判定看的是**真正会提交的**那份：均衡档下可选槽位已经被剔除了，
      不该再拿它们去算「还缺几项」。
 
-     **下限不是 `minCount` 而是 `requiredCounts`**：见上。 */
+     **下限不是 `minCount` 而是 `requiredCounts`**：见上。
+
+     改成文案的格子按**文案**判：这一格没素材是正常的，空的是那句话。 */
   const missing = slots.filter(slot => {
     if (slot.binding !== 'user') return false;
     if (suppressed.includes(slot.key)) return false;
+    if (textModeKeys.includes(slot.key)) return textOfKey(slot.key).trim().length === 0;
     return (submitValues[slot.key] ?? []).length < (requiredCounts[slot.key] ?? 0);
   });
 
@@ -447,6 +487,9 @@ export function SpecLibrary() {
 
     for (const slot of fillSlots) {
       if (slot.type !== 'image' && slot.type !== 'video') continue;
+      /* 改成文案的格子不再由包填：它这一格说的是文字，包往里塞一张图
+         等于把用户刚写的话覆盖掉（而输入框还留着，看起来两个说法并存）。 */
+      if (textModeKeys.includes(slot.key)) continue;
       /* 容器只填**自己**那几格：同一个包在两个容器里各出现一次，点哪个就填哪个，
          否则「点一次」会把手伸到另一个容器里去。独立槽位（`group` 为空）
          自然被排除 —— 它只从候选素材里挑。 */
@@ -561,6 +604,16 @@ export function SpecLibrary() {
   const confirmSlots = [
     ...fillSlots.map(slot => {
       const count = (submitValues[slot.key] ?? []).length;
+      /* 使用者自己改的那段话：这一格没素材，但它不是「没填」——
+         摆成「（未填）」会让人以为提示词里用的是作者的兜底文案。 */
+      if (textModeKeys.includes(slot.key)) {
+        const text = textOfKey(slot.key).trim();
+        return {
+          label: slot.label || slot.key,
+          count,
+          ...(text ? {override: text} : {}),
+        };
+      }
       /* 可选槽位**没填** → 提示词里会用「未选时文案」。摆出来，使用者
          才知道这次生成会用什么内容。
 
@@ -631,6 +684,14 @@ export function SpecLibrary() {
     setError('');
     setNote('');
     try {
+      /* 改成文案的格子：把那段话交给后端去替换「未选时文案」。
+         只送非空的 —— 空的那格已经算进「还缺」里，按钮点不到这儿；
+         真送上去后端也会 400 说「不能为空」。 */
+      const slotTextOverrides: Record<string, string> = {};
+      for (const key of textModeKeys) {
+        const text = textOfKey(key).trim();
+        if (text) slotTextOverrides[key] = text;
+      }
       const compiled = await compile.mutateAsync({
         key: spec.key,
         payload: {
@@ -642,6 +703,7 @@ export function SpecLibrary() {
           useRandomPrompt: effectiveRandomness === 'random',
           // 选中的模型：清单里挑的那款。不传则用模板的固定模型。
           model: modelId,
+          ...(Object.keys(slotTextOverrides).length ? {slotTextOverrides} : {}),
           // 使用者选的运行时参数（计费模式等）：随这次编译走，不落进模板版本。
           ...(Object.keys(userChoices).length ? {paramOverrides: userChoices} : {}),
         },
@@ -870,6 +932,17 @@ export function SpecLibrary() {
                             key={group}
                             members={members}
                             values={values}
+                            canEditText={members
+                              .filter(canEditText)
+                              .map(member => member.key)}
+                            slotModes={slotModes}
+                            textOf={textOfKey}
+                            onMode={(key, mode) =>
+                              setSlotModes(current => ({...current, [key]: mode}))
+                            }
+                            onText={(key, value) =>
+                              setSlotTexts(current => ({...current, [key]: value}))
+                            }
                             onPickPack={packId => setPendingPack({packId, group})}
                             onClear={key => setSlotValues(key, [])}
                           />
@@ -878,6 +951,7 @@ export function SpecLibrary() {
                       /* 图片/视频：一格一个选择器，里面是「素材 + 封装包」同一个网格，
                          上面一行标签用来在候选范围里再筛。其余（文本/音频）保留行式写法。 */
                       if (slot.type === 'image' || slot.type === 'video') {
+                        const editable = canEditText(slot);
                         return (
                           <SlotMediaPicker
                             key={slot.key}
@@ -885,6 +959,15 @@ export function SpecLibrary() {
                             selected={filled}
                             onChange={ids => setSlotValues(slot.key, ids)}
                             requiredCount={requiredCounts[slot.key]}
+                            mode={slotModes[slot.key] === 'text' ? 'text' : 'pick'}
+                            canEditText={editable}
+                            text={textOfKey(slot.key)}
+                            onModeChange={mode =>
+                              setSlotModes(current => ({...current, [slot.key]: mode}))
+                            }
+                            onTextChange={value =>
+                              setSlotTexts(current => ({...current, [slot.key]: value}))
+                            }
                           />
                         );
                       }
@@ -1013,7 +1096,12 @@ export function SpecLibrary() {
                 {busy
                   ? '提交中…'
                   : missing.length > 0
-                    ? `还缺 ${missing.length} 项素材`
+                    ? /* 缺的是素材就说素材；有格子是「改成文案但还空着」时
+                         去掉这个后缀 —— 写「还缺 1 项素材」会让人去素材里找，
+                         而那里什么都没有（空的是输入框）。 */
+                      `还缺 ${missing.length} 项${
+                        missing.some(slot => textModeKeys.includes(slot.key)) ? '' : '素材'
+                      }`
                     : kind === 'image'
                       ? '生成图片'
                       : '生成视频'}

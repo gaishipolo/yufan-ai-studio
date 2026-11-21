@@ -1045,6 +1045,235 @@ def test_compile_uses_the_filled_text_when_the_optional_slot_is_filled(
     assert data["referenceLibraryIds"] == [video, first]
 
 
+def test_compile_uses_the_overridden_text_instead_of_the_authors(
+    client: TestClient,
+) -> None:
+    """使用者改的「未选时文案」替换作者的，作者那句不再出现在提示词里。
+
+    验的是**替换**而不是追加：两句话都在提示词里，等于用户改的那句是白加的
+    旁白，而模型会同时收到两种场景描述。
+    """
+    headers = _headers(client)
+    video, first, _ = _media(client, headers)
+    draft = _optional_draft(video, first, emptyText="主角是穿红裙的年轻女性")
+    _save(client, headers, draft)
+    client.post(f"{API}/{draft['key']}/publish", headers=headers)
+
+    body = client.post(
+        f"{API}/{draft['key']}/compile",
+        json={
+            "slotValues": {},
+            "slotTextOverrides": {"hero": "主角是裹着灰色风衣的中年男人"},
+        },
+        headers=headers,
+    )
+    assert body.status_code == 200, body.text
+    prompt = body.json()["data"]["prompt"]
+    assert "主角是裹着灰色风衣的中年男人" in prompt
+    assert "主角是穿红裙的年轻女性" not in prompt
+    # 没填素材 → 不占编号、不进参考素材
+    assert body.json()["data"]["referenceLibraryIds"] == [video]
+
+
+def test_compile_override_works_for_a_group_reference(client: TestClient) -> None:
+    """整组引用（`{{slot:hero*}}`）没填素材时也用兜底文案 —— 改的同样生效。
+
+    整组引用的「没填」语义与单张不同（降级为空），但只要有兜底文案，
+    `compile` 就用它接管那一块。所以这里不能只认单张引用。
+    """
+    headers = _headers(client)
+    video, first, _ = _media(client, headers)
+    draft = _optional_draft(
+        video, first, prompt="原片 {{slot:source}}；产品参考 {{slot:hero*}}"
+    )
+    _save(client, headers, draft)
+    client.post(f"{API}/{draft['key']}/publish", headers=headers)
+
+    body = client.post(
+        f"{API}/{draft['key']}/compile",
+        json={"slotTextOverrides": {"hero": "不带产品，只保留人物"}},
+        headers=headers,
+    )
+    assert body.status_code == 200, body.text
+    assert "不带产品，只保留人物" in body.json()["data"]["prompt"]
+
+
+def test_compile_override_recognises_the_mixed_token_form(
+    client: TestClient,
+) -> None:
+    """作者写 `{{Mixed 2}}`（页面上的默认写法）也要认成插入点。
+
+    现存模板清一色是这种写法，它在 `compile_spec` 内部才换算成 `{{slot:key}}`。
+    改文案的判断如果只看 `{{slot:key}}`，**所有真实模板**都会被误判成
+    「没有插入点」而 400 —— 这个坑正是真机验证踩出来的。
+    """
+    headers = _headers(client)
+    video, first, _ = _media(client, headers)
+    draft = _optional_draft(
+        video,
+        first,
+        prompt="原片 {{Mixed 1}}，人物参考 {{Mixed 2}}",
+        emptyText="主角是穿红裙的年轻女性",
+    )
+    _save(client, headers, draft)
+    client.post(f"{API}/{draft['key']}/publish", headers=headers)
+
+    body = client.post(
+        f"{API}/{draft['key']}/compile",
+        json={"slotTextOverrides": {"hero": "主角换成戴墨镜的男人"}},
+        headers=headers,
+    )
+    assert body.status_code == 200, body.text
+    prompt = body.json()["data"]["prompt"]
+    assert "主角换成戴墨镜的男人" in prompt
+    assert "主角是穿红裙的年轻女性" not in prompt
+
+
+def test_compile_override_without_an_insertion_point_is_rejected(
+    client: TestClient,
+) -> None:
+    """提示词只写了第 N 张（`{{slot:hero.1}}`）→ 改文案不生效，所以 400。
+
+    兜底文案只服务单张 / 整组引用；第 N 张是「第几张图」的编号，套不上一段话。
+    静默收下的话，用户改的话没进提示词，而页面一切正常。
+    """
+    headers = _headers(client)
+    video, first, _ = _media(client, headers)
+    draft = _optional_draft(
+        video, first, prompt="原片 {{slot:source}}，只参考第 1 张 {{slot:hero.1}}"
+    )
+    _save(client, headers, draft)
+    client.post(f"{API}/{draft['key']}/publish", headers=headers)
+
+    body = client.post(
+        f"{API}/{draft['key']}/compile",
+        json={"slotTextOverrides": {"hero": "换成海边的场景"}},
+        headers=headers,
+    )
+    assert body.status_code == 400, body.text
+    assert "插入点" in body.json()["message"]
+
+
+def test_compile_override_checks_the_prompt_actually_being_compiled(
+    client: TestClient,
+) -> None:
+    """插入点只在随机档那一段时：均衡档编译 → 400；随机档编译 → 生效。
+
+    判据不能把两段提示词合并起来看 —— 合并会放行「均衡档改文案、可插入点
+    只写在随机档里」这种情况，改的话静默丢掉。
+    """
+    headers = _headers(client)
+    video, first, _ = _media(client, headers)
+    draft = _optional_draft(
+        video,
+        first,
+        prompt="原片 {{slot:source}}，只参考第 1 张 {{slot:hero.1}}",
+        emptyText="红裙女性",
+    )
+    draft["randomPrompt"] = "原片 {{slot:source}}；人物 {{slot:hero}}"
+    _save(client, headers, draft)
+    client.post(f"{API}/{draft['key']}/publish", headers=headers)
+
+    balanced = client.post(
+        f"{API}/{draft['key']}/compile",
+        json={"slotTextOverrides": {"hero": "换成海边的场景"}},
+        headers=headers,
+    )
+    assert balanced.status_code == 400, balanced.text
+
+    random = client.post(
+        f"{API}/{draft['key']}/compile",
+        json={"useRandomPrompt": True, "slotTextOverrides": {"hero": "换成海边的场景"}},
+        headers=headers,
+    )
+    assert random.status_code == 200, random.text
+    assert "换成海边的场景" in random.json()["data"]["prompt"]
+
+
+def test_compile_override_on_a_required_slot_is_rejected(client: TestClient) -> None:
+    """必填槽位没有「未选」这个状态，改兜底文案对它没有意义 → 400。"""
+    headers = _headers(client)
+    video, first, second = _media(client, headers)
+    draft = _draft(video, first, second)  # hero 是必填（minCount=1）
+    _save(client, headers, draft)
+    client.post(f"{API}/{draft['key']}/publish", headers=headers)
+
+    body = client.post(
+        f"{API}/{draft['key']}/compile",
+        json={"slotTextOverrides": {"hero": "随便写点什么"}},
+        headers=headers,
+    )
+    assert body.status_code == 400, body.text
+    assert "必填" in body.json()["message"]
+
+
+def test_compile_override_without_assets_for_the_same_slot_is_rejected(
+    client: TestClient,
+) -> None:
+    """同一格既挑了素材又改了文案 → 400（两者都在回答「这一格是什么」）。
+
+    而且改的文案在有素材时根本不会被用（那时用「选中时文案」），静默取素材
+    等于把用户写的字吞掉。
+    """
+    headers = _headers(client)
+    video, first, _ = _media(client, headers)
+    draft = _optional_draft(
+        video, first, filledText="人物参考 {{slot:hero}}", emptyText="红裙女性"
+    )
+    _save(client, headers, draft)
+    client.post(f"{API}/{draft['key']}/publish", headers=headers)
+
+    body = client.post(
+        f"{API}/{draft['key']}/compile",
+        json={
+            "slotValues": {"hero": [first]},
+            "slotTextOverrides": {"hero": "不要素材，只要一句描述"},
+        },
+        headers=headers,
+    )
+    assert body.status_code == 400, body.text
+    assert "二选一" in body.json()["message"]
+
+
+def test_compile_override_rejects_empty_and_placeholder_text(
+    client: TestClient,
+) -> None:
+    """空文案与含 `{{` 的文案都被拒，且报错点明是哪一格。
+
+    空的话编译期会报「请在封装里写未选时文案」—— 与实际情形（用户刚清空了
+    输入框）对不上；含占位符的话会在编译期炸成一句看不懂的残留引用错误。
+    """
+    headers = _headers(client)
+    video, first, _ = _media(client, headers)
+    draft = _optional_draft(video, first, emptyText="红裙女性")
+    _save(client, headers, draft)
+    client.post(f"{API}/{draft['key']}/publish", headers=headers)
+
+    empty = client.post(
+        f"{API}/{draft['key']}/compile",
+        json={"slotTextOverrides": {"hero": "   "}},
+        headers=headers,
+    )
+    assert empty.status_code == 400, empty.text
+    assert "不能为空" in empty.json()["message"]
+
+    placeholder = client.post(
+        f"{API}/{draft['key']}/compile",
+        json={"slotTextOverrides": {"hero": "参考 {{slot:source}}"}},
+        headers=headers,
+    )
+    assert placeholder.status_code == 400, placeholder.text
+    assert "槽位引用" in placeholder.json()["message"]
+
+    unknown = client.post(
+        f"{API}/{draft['key']}/compile",
+        json={"slotTextOverrides": {"nope": "改写"}},
+        headers=headers,
+    )
+    assert unknown.status_code == 400, unknown.text
+    assert "不存在" in unknown.json()["message"]
+
+
 def test_slot_texts_round_trip_through_the_contract(client: TestClient) -> None:
     """两个文案要能存进草稿、读回来（契约与持久化两侧都要通）。
 

@@ -7,12 +7,13 @@ import {
 import { scopeFilterIds } from '@/entities/library/model/tagTree';
 import { KIND_LABEL, viewQuery } from '@/entities/library/model/types';
 import type { SpecSlotOut } from '@/shared/api/schema';
-import { CoverImage } from '@/shared/ui';
+import { CoverImage, Segmented } from '@/shared/ui';
 import { cn } from '@/shared/lib/cn';
 import { AssetChip } from '@/entities/library/ui/AssetChip';
 import { AssetHoverPreview } from '@/entities/library/ui/AssetHoverPreview';
 import { TagFilter } from '@/entities/library/ui/TagFilter';
 import { pickWithin } from './slotPick';
+import { SlotTextField } from './SlotTextField';
 
 /* 首屏取多少张，以及「显示全部」最多到多少。
  *
@@ -29,12 +30,25 @@ export function SlotMediaPicker({
   selected,
   onChange,
   requiredCount,
+  mode = 'pick',
+  canEditText = false,
+  text = '',
+  onModeChange,
+  onTextChange,
 }: {
   slot: SpecSlotOut;
   selected: string[];
   onChange: (ids: string[]) => void;
   /** 这个槽位实际最少要几张（作者写的 `minCount`，或提示词「第 N 张」推出的下限）。 */
   requiredCount?: number;
+  /** 填写方式：`pick` 挑素材（默认），`text` 直接改写提示词里那一格。 */
+  mode?: 'pick' | 'text';
+  /** 能不能切到「改提示词」。不能就连分段控件都不画 —— 见 `hasFallbackSlotRef`。 */
+  canEditText?: boolean;
+  /** 改写的文案（父层已填成作者的「未选时文案」）。 */
+  text?: string;
+  onModeChange?: (mode: 'pick' | 'text') => void;
+  onTextChange?: (text: string) => void;
 }) {
   const kind = slot.type as 'image' | 'video';
   const label = KIND_LABEL[kind];
@@ -111,6 +125,9 @@ export function SlotMediaPicker({
   };
 
   const full = selected.length >= max;
+  /* 只有父层说「这一格能改文案」时 `text` 才算数：换模板/换版本后残留的
+     状态不该让一个没有插入点的槽位画出一个打了字也不生效的输入框。 */
+  const editingText = canEditText && mode === 'text';
 
   return (
     // 槽位是「卡片里的凹槽」：比面板暗一档、带内描边，里面的缩略图才有地方可放。
@@ -130,18 +147,51 @@ export function SlotMediaPicker({
             *
           </span>
         )}
-        <span className="ml-auto shrink-0 text-micro text-ink-mute">
-          {/* 单选也用同一套计数回读（`已选 0/1`），而不是另写一句「选 1 个」——
-              两套写法让同一件事长得不一样，而且「选 1 个」在多选时没有对应说法。 */}
-          {label} · 已选 {selected.length}/{max}
-          {/* 提示词里的「第 N 张」推出的下限可能**超过上限**（作者配置错了）。
-              那时候写「已选 0/1」是骗人的 —— 照实说，别让使用者以为挑一张就够。 */}
-          {need > max && ` · 至少 ${need} 张`}
-          {typeof list.data?.total === 'number' &&
-            filterIds.length > 0 &&
-            ` · 共 ${list.data.total}`}
-        </span>
+        {/* 改成提示词时不再数素材：这一刻没有「已选几张」这回事，
+            数字回读交给输入框下面那行。 */}
+        {!editingText && (
+          <span className="ml-auto shrink-0 text-micro text-ink-mute">
+            {/* 单选也用同一套计数回读（`已选 0/1`），而不是另写一句「选 1 个」——
+                两套写法让同一件事长得不一样，而且「选 1 个」在多选时没有对应说法。 */}
+            {label} · 已选 {selected.length}/{max}
+            {/* 提示词里的「第 N 张」推出的下限可能**超过上限**（作者配置错了）。
+                那时候写「已选 0/1」是骗人的 —— 照实说，别让使用者以为挑一张就够。 */}
+            {need > max && ` · 至少 ${need} 张`}
+            {typeof list.data?.total === 'number' &&
+              filterIds.length > 0 &&
+              ` · 共 ${list.data.total}`}
+          </span>
+        )}
       </div>
+
+      {/* 填法：挑素材 / 直接写提示词里这一格。只在**这一格真有插入点**时出现
+          （`hasFallbackSlotRef`）—— 没有插入点时敲的字不会进提示词。 */}
+      {canEditText && (
+        <Segmented
+          aria-label={`${slot.label || slot.key} 的填法`}
+          value={editingText ? 'text' : 'pick'}
+          onChange={next => onModeChange?.(next)}
+          options={[
+            {value: 'pick', label: '选素材'},
+            {value: 'text', label: '改提示词'},
+          ]}
+          hints={{
+            pick: '从资产库里挑素材（也可以不挑）',
+            text: '不挑素材，直接写这一格没素材时怎么说',
+          }}
+          className="mt-1.5"
+        />
+      )}
+
+      {editingText ? (
+        <SlotTextField
+          className="mt-2"
+          value={text}
+          onChange={value => onTextChange?.(value)}
+          placeholder="写这一格没素材时提示词怎么说"
+        />
+      ) : (
+        <>
 
       {/* 可选槽位**不摆**「不填会怎样」的说明：这栏由「随机性」三档控制，
           可选槽位要么不出现（随机/均衡档，走文案），要么出现由使用者挑（自定义）。
@@ -279,6 +329,8 @@ export function SlotMediaPicker({
         height={hovered?.height}
         pointer={pointer}
       />
+        </>
+      )}
     </div>
   );
 }
