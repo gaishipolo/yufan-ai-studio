@@ -16,8 +16,7 @@
 from __future__ import annotations
 
 from fastapi.testclient import TestClient
-
-from tests.test_pages import API, IDENTITY, _admin, _login, _suffix
+from test_pages import API, IDENTITY, _admin, _login, _suffix
 
 DELETE_TASKS = f"{API}/tasks"
 

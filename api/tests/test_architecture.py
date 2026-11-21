@@ -194,6 +194,48 @@ def test_modules_do_not_import_each_other() -> None:
     assert not offenders, "业务模块之间出现横向依赖：\n" + "\n".join(offenders)
 
 
+# --------------------------------------------------------------------------- #
+# 测试之间的 import
+# --------------------------------------------------------------------------- #
+TESTS_DIR = API_ROOT / "tests"
+
+
+def test_test_modules_import_siblings_by_bare_name() -> None:
+    """测试之间互相引用只能写裸模块名（`from test_pages import ...`）。
+
+    `tests/` 故意没有 `__init__.py`：pytest 的 prepend 模式把每个测试文件所在
+    目录插进 sys.path，裸名 import 因此在**任何**入口下都成立。而写成
+    `from tests.test_pages import ...` 只在 cwd 恰好位于 sys.path 上时成立 ——
+    本机习惯的 `python -m pytest` 会把 cwd 放进去（`sys.path[0] == ''`），
+    CI 里直接执行 `pytest` 这个入口脚本不会（`sys.path[0]` 是脚本所在目录）。
+
+    代价是这条错了整整一版都"绿"着：CI 从合入那天起红，报错是
+    `ModuleNotFoundError: No module named 'tests'`，两条用例收集失败 →
+    `Interrupted: 2 errors during collection`，后面一千多个用例一个都没跑，
+    而本地 `python -m pytest` 天天通过（2026-11-21 实测）。
+
+    判据是「路径无关」：只认 pytest 会替我们插进 sys.path 的那种写法。
+    """
+    offenders: list[str] = []
+    for path in _python_files(TESTS_DIR):
+        for imported in _imported_modules(path):
+            if imported == "tests" or imported.startswith("tests."):
+                offenders.append(f"{path.name} -> {imported}")
+
+    assert not offenders, (
+        "测试之间用了包名前缀 import：\n"
+        + "\n".join(offenders)
+        + "\n改成裸模块名（`from test_pages import ...`）：`tests/` 没有 __init__.py，"
+        "带 `tests.` 前缀只在 `python -m pytest` 下可导入，CI 用 `pytest` 会在收集阶段崩掉"
+    )
+
+
+def test_test_import_scan_is_not_vacuous() -> None:
+    """上面那条的扫描口径自检：扫不到文件时它会永远绿。"""
+    files = _python_files(TESTS_DIR)
+    assert len(files) >= 100, f"tests/ 下只扫到 {len(files)} 个 .py（预期 ≥100），扫描口径退化了"
+
+
 def test_template_module_does_not_resolve_model_providers_itself() -> None:
     """模板库不许自己解析模型层。
 
