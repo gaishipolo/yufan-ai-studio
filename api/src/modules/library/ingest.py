@@ -74,10 +74,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.context import CurrentUser, get_current_user
-from core.exceptions import BadRequest, Conflict
+from core.exceptions import BadRequest, Conflict, Forbidden
 from core.logging import get_logger
 from core.ports.library_ingest import IngestRequest, IngestResult
-from core.ports.library_lookup import LibraryAssetKind
+from core.ports.library_lookup import LibraryAssetKind, get_library_lookup
 from infra import get_storage
 from infra.archive import get_archive_storage
 from infra.driver_config import DriverSettings, driver_config
@@ -168,26 +168,31 @@ _SNAPSHOT_FIELDS: tuple[tuple[str, str], ...] = (
 )
 
 
-async def _inherited_tag_ids(
-    session: AsyncSession, generation: Mapping[str, object]
-) -> tuple[str, ...]:
-    """从生成快照里的参考素材继承标签（**并集**）。
-
-    快照是冻结的：读的是「提交这次生成时用了哪些素材」，不会因后来有人改了任务
-    或删了素材而漂移。两个键名都要认 —— 生图侧照抄契约的 `referenceLibraryIds`，
-    任务侧用列名，与 `_SNAPSHOT_FIELDS` 同源。
-
-    只继承**可打标**的词：维度标签（有子级的一级）显示成一个标签却筛不中，
-    继承它等于给用户一个假标签。判据走 `assignable_tag_ids`，与界面打标同一口径。
-    """
+def _snapshot_reference_ids(generation: Mapping[str, object]) -> list[str]:
+    """读快照里的参考素材 id。两个键名都要认 —— 生图侧照抄契约的
+    `referenceLibraryIds`，任务侧用列名，与 `_SNAPSHOT_FIELDS` 同源。"""
     refs = generation.get("reference_library_ids") or generation.get(
         "referenceLibraryIds"
     )
     if isinstance(refs, str):
         refs = [refs]
     if not isinstance(refs, (list, tuple)):
-        return ()
-    asset_ids = [item for item in refs if isinstance(item, str) and item]
+        return []
+    return [item for item in refs if isinstance(item, str) and item]
+
+
+async def _inherited_tag_ids(
+    session: AsyncSession, generation: Mapping[str, object]
+) -> tuple[str, ...]:
+    """从生成快照里的参考素材继承标签（**并集**）。
+
+    快照是冻结的：读的是「提交这次生成时用了哪些素材」，不会因后来有人改了任务
+    或删了素材而漂移。
+
+    只继承**可打标**的词：维度标签（有子级的一级）显示成一个标签却筛不中，
+    继承它等于给用户一个假标签。判据走 `assignable_tag_ids`，与界面打标同一口径。
+    """
+    asset_ids = _snapshot_reference_ids(generation)
     if not asset_ids:
         return ()
 
@@ -204,6 +209,35 @@ class GenerationIngest:
     def __init__(self, session: AsyncSession, storage: ObjectStorage) -> None:
         self.session = session
         self.storage = storage
+
+    async def _assert_references_readable(
+        self, generation: Mapping[str, object], owner_id: str
+    ) -> None:
+        """HTTP 入口：快照里的参考素材必须是调用方现在还能读的。
+
+        `library-ingest` 端口（trusted）由服务端生成链路填，受理期已经过
+        `core.library_refs` 的判定，这里不重复。HTTP 端点的 `generation`
+        完全由调用方自填；不校验就成了「猜一个 id 借别人的标签」——标签是
+        全局词表不敏感，但产物会带着它根本没用过的素材的标签。
+
+        判据走 `readable_ids`（含小组共享），按 owner 判会误拒别人共享给自己的
+        素材。不查 `state`：参考素材可能在生成后被删，那时仍按快照继承，
+        不能让入库失败反噬已经成功的生成。
+        """
+        asset_ids = _snapshot_reference_ids(generation)
+        if not asset_ids:
+            return
+        actor = get_current_user()
+        if actor is None or actor.id != owner_id:
+            raise Forbidden("无法确定参考素材归属，无法入库")
+        readable = await get_library_lookup().readable_ids(
+            self.session, actor, asset_ids
+        )
+        denied = [asset_id for asset_id in asset_ids if asset_id not in readable]
+        if denied:
+            raise Forbidden(
+                f"无权限使用这些参考素材（可能是他人的私有素材）：{denied}"
+            )
 
     async def run(self, request: IngestRequest, *, trusted: bool = False) -> IngestResult:
         """执行一次入库。
@@ -227,6 +261,8 @@ class GenerationIngest:
         source_key = request.source_key.strip()
         if not source_key:
             raise GenerationSourceInvalid("sourceKey 不能为空")
+        if not trusted:
+            await self._assert_references_readable(request.generation, owner_id)
 
         existing = await self._by_source_key(source_key, owner_id)
         if existing is not None:

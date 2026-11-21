@@ -739,3 +739,62 @@ def test_generated_asset_without_reference_has_no_inherited_tags(
     )
     assert created["created"] is True
     assert _detail_tags(client, api, h, created["assetId"]) == set()
+
+
+def test_from_generation_rejects_foreign_reference(client: TestClient, api: str) -> None:
+    """HTTP 入口的 generation 由调用方自填：猜别人的素材 id 不能借到它的标签。"""
+    admin = admin_headers(client)
+    owner, owner_h = make_user(client, admin, LIB_RW + ["library:generation:ingest"])
+    other, other_h = make_user(client, admin, LIB_RW)
+    assert other["id"] != owner["id"]
+    mark = suffix()
+    foreign = upload_image(client, api, other_h, name=f"foreign-{mark}.png", color="red")
+    source = upload_image(client, api, owner_h, name=f"source-{mark}.png", color="green")
+
+    resp = _ingest(
+        client,
+        api,
+        owner_h,
+        {
+            "sourceModule": "image",
+            "sourceTaskId": f"job-{mark}",
+            "sourceKey": f"image:foreign-ref-{mark}",
+            "kind": "image",
+            # HTTP 入口的 storageKey 必须指向调用方自己的素材行
+            "storageKey": _storage_key(client, api, owner_h, source["id"]),
+            "generation": {"referenceLibraryIds": [foreign["id"]]},
+        },
+    )
+    assert resp.status_code == 403, resp.text
+
+
+def test_from_generation_does_not_reject_own_reference(
+    client: TestClient, api: str
+) -> None:
+    """可读校验不能误拒自己的素材。
+
+    HTTP 入口的 storageKey 必须指向调用方已有的素材行，所以必然命中字节去重
+    （`created=false` 是既有语义）；继承本身由端口用例覆盖，这条只证明没有被
+    「猜 id 借标签」的校验连带挡住合法使用。
+    """
+    admin = admin_headers(client)
+    owner, h = make_user(client, admin, LIB_RW + ["library:generation:ingest"])
+    mark = suffix()
+    ref = upload_image(client, api, h, name=f"own-ref-{mark}.png", color="orange")
+    source = upload_image(client, api, h, name=f"own-source-{mark}.png", color="blue")
+
+    resp = _ingest(
+        client,
+        api,
+        h,
+        {
+            "sourceModule": "image",
+            "sourceTaskId": f"job-own-{mark}",
+            "sourceKey": f"image:own-ref-{mark}",
+            "kind": "image",
+            "storageKey": _storage_key(client, api, h, source["id"]),
+            "generation": {"referenceLibraryIds": [ref["id"]]},
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["data"]["created"] is False
