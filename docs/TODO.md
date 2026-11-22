@@ -41,6 +41,14 @@
 上游实测：内联 data URI 受理并出片（轮询回包 `usage.input_image_count=1`）；
 免费队列常态 503 `video_queue_full`，要等。
 
+2026-11-22（同日补）：**参考上限按类下发**。`maxReferences` 只是总数
+（5 图 + 3 音频 = 8），前端只守总数会让用户加到第 6 张图仍显示「还能再加」、
+提交才 400。`GET /models` 新增 `referenceLimits`（键是类型，值是份数上限与
+图片边长），前端按类算余量；控件按 `kinds` 拼 accept（之前写死图片，点「添加」
+选不到音频）、角标按类型各自编号（与 `<Picture N>` 对齐）。同时把内联素材的
+失败改抛 `BadRequest`（裸 `ValueError` 会被 runner 当可重试），并接住 Pillow 的
+`DecompressionBombError`（不接就是 500）。
+
 ## 一眼看完
 
 | 编号 | 事项 | 影响 | 落点 |
