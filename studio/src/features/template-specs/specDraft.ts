@@ -1,9 +1,11 @@
 import type {
+  SpecGroupIn,
   SpecSlotIn,
   TemplateSpecIn,
   TemplateSpecOut,
 } from '@/shared/api/schema';
 import { KIND_LABEL } from '@/entities/library/model/types';
+import { defaultGroupLabel, groupLabels } from '@/entities/template-spec/model/slotGroups';
 
 /**
  * 封装编辑器的草稿模型：**直接复用契约类型**。
@@ -191,8 +193,40 @@ export function blankSpec(): TemplateSpecIn {
     prompt: '',
     randomPrompt: '',
     slots: [blankSlot(0, 'image', [])],
+    // 空模板没有容器（第一个槽位是独立槽位）。加容器时才往里写一条。
+    groups: [],
     attributes: {},
   };
+}
+
+/**
+ * 把 `groups` 补成**规范形状**：按段序、每个容器恰好一条，没名字的给默认名。
+ *
+ * 三个作用：
+ * - 老草稿 / 老发布版本没有 `groups`（字段是后加的）→ 打开就有名字，不用作者
+ *   先改一次才看得见；
+ * - 作者把名字清空 → 落库的是默认名，与界面显示的同一个（所见即所得）；
+ * - 「声明了但已经没有任何成员」的残留条被丢掉 —— 它写不进快照，留着只会让
+ *   指纹与后端不一致。
+ */
+function normalizeGroups(slots: SpecSlotIn[], groups?: SpecGroupIn[]): SpecGroupIn[] {
+  return [...groupLabels(slots, groups)].map(([key, label]) => ({key, label}));
+}
+
+/**
+ * 新建容器的默认名：**第一个没被占用的编号**。
+ *
+ * 不能直接用「现有容器个数 + 1」：删掉中间的容器后（`封装槽位1`、`封装槽位3`），
+ * 个数是 2，新建就叫 `封装槽位3` —— 与已有的重名，模板库那两块标题一样，
+ * 使用者分不出哪个是哪个。
+ */
+export function nextGroupLabel(groups?: SpecGroupIn[] | null): string {
+  const used = new Set(
+    (groups ?? []).map(group => (group.label ?? '').trim()).filter(Boolean),
+  );
+  let index = 1;
+  while (used.has(defaultGroupLabel(index))) index += 1;
+  return defaultGroupLabel(index);
 }
 
 /** 已保存/已发布的规格 → 可编辑草稿。优先用草稿（可能比发布版更新）。 */
@@ -225,7 +259,14 @@ export function fromSpecOut(out: TemplateSpecOut): TemplateSpecIn {
  * 只在「打开 / 结构变了」的时候调，不参与每次输入 —— 见 `renumberRefs`。
  */
 function toAuthoredForm(spec: TemplateSpecIn): TemplateSpecIn {
-  return renumberRefs({...spec, slots: spec.slots ?? []}, spec.slots ?? []);
+  const slots = spec.slots ?? [];
+  return renumberRefs(
+    // 容器名也在这一步补齐：打开老模板时 `groups` 可能是空的，不补的话
+    // 页头那块无名框要等作者改一次才显示默认名；而且基线指纹必须与
+    // 「原样保存」提交出去的那份一致，否则一打开就被判成「有未保存改动」。
+    {...spec, slots, groups: normalizeGroups(slots, spec.groups)},
+    slots,
+  );
 }
 
 /**
@@ -367,9 +408,13 @@ export function rekeySlot(
 
 /** 提交前把槽位按当前顺序重排 `position`：拖拽之后位置就是唯一真相。 */
 export function normalize(spec: TemplateSpecIn): TemplateSpecIn {
+  const slots = (spec.slots ?? []).map((slot, index) => ({...slot, position: index}));
   return {
     ...spec,
-    slots: (spec.slots ?? []).map((slot, index) => ({...slot, position: index})),
+    slots,
+    // 提交前补齐容器名（老草稿没有这个键）。放在这里而不是每个调用点：
+    // 保存 / 预检 / 发布都走这个函数，漏一处就会发出「有容器没名字」的草稿。
+    groups: normalizeGroups(slots, spec.groups),
   };
 }
 
@@ -450,6 +495,13 @@ export function authoredFingerprint(spec: TemplateSpecIn): string {
     ),
     demoAssetId: spec.demoAssetId || null,
     slots: (spec.slots ?? []).map(slotFingerprint),
+    // 容器名是内容的一部分：改了名却不算「未保存」，作者会以为没生效；
+    // 发布时也会被后端判成「与上一版一样」而拿不到新版本。
+    // 先规范化（按段序、丢残留）再取 `[key, label]` —— 数组顺序本身不携带信息。
+    groups: normalizeGroups(spec.slots ?? [], spec.groups).map(group => [
+      group.key,
+      group.label ?? '',
+    ]),
   });
 }
 

@@ -127,6 +127,22 @@ class InputSlot:
 
 
 @dataclass(frozen=True, slots=True)
+class SpecGroup:
+    """封装容器的**名字**。
+
+    容器本身仍由槽位上的 `group` 表达（同一 key 相邻的一串槽位）；这里只补
+    「这一串叫什么」。作者给它起「三视图套图」，模板库的使用者看到的就不再是
+    一句写死的「封装槽位」。
+
+    为什么不把名字挂在槽位上：一个容器 N 个成员，挂上去就是同一句话存 N 份，
+    改一次要写 N 行，漂移只是时间问题。容器名是**容器的属性**，不是成员的。
+    """
+
+    key: str
+    label: str = ""
+
+
+@dataclass(frozen=True, slots=True)
 class TemplateSpec:
     """一份模板规格（发布版本的快照形状，也是草稿的形状）。"""
 
@@ -164,6 +180,12 @@ class TemplateSpec:
     #: 展示案例（图片或视频的资产 id）。**纯展示**：不进发布快照、不参与编译，
     #: 改案例不该要求发新版本。模板库卡片与详情用它给用户看"长什么样"。
     demo_asset_id: str | None = None
+    #: 封装容器的名字（`key` 对应槽位上的 `group`）。
+    #:
+    #: 空元组是**常态**，不是错误：老模板（加这个字段之前发布的）没有这一份，
+    #: 前端按段序回退成「封装槽位 1/2/…」。所以 `validate_spec` **不要求**
+    #: groups 与 `slots[].group` 一一对应 —— 强校验会把所有老模板判成非法。
+    groups: tuple[SpecGroup, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

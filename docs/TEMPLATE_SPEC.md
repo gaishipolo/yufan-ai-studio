@@ -158,6 +158,9 @@
   // 整段提示词，只有一段：模板库不改文字，要可变内容就放 text 槽位（见 §5）
   "prompt": "8 秒 · 9:16 竖屏写实短片，眼平正面中景…把 {{slot:source}} 里的内衣换成 {{slot:hero}} 的同款。{{slot:detail*}} 只补细节。",
   "demoAssetId": "7179dd76…",          // 展示案例（图或视频）；纯展示，不进发布快照
+  // 封装容器的名字：`key` 对应槽位上的 `group`，`label` 是作者起的（默认「封装槽位1」）。
+  // 可以不声明（老草稿都没有）：缺省时前端按段序回退成「封装槽位1/2/…」。
+  "groups": [{ "key": "g1", "label": "三视图套图" }],
   "slots": [
     { "key": "source", "type": "video", "binding": "fixed", "refMode": "mixed",
       "min": 1, "max": 1, "position": 0, "label": "原片", "assetId": "0a2062…" },
@@ -439,13 +442,17 @@ override 必得同一结果。
 | 列 | 说明 |
 |---|---|
 | `id` / `version_id` | `unique(version_id, slot_key)`、`unique(version_id, position)` |
-| `slot_key` / `type` / `source` / `binding` / `ref_mode` | |
+| `slot_key` / `type` / `binding` / `ref_mode` | |
 | `min_count` / `max_count` | 不用 `min`/`max`：SQL 里是聚合函数名，写迁移时容易踩 |
-| `label` | |
+| `label` | 槽位自己的展示名 |
+| `group_key` | 所属封装容器（空 = 独立槽位）。**列名带 `_key`**：`group` 在 SQL 里是保留字。它同时决定素材从哪来 —— 非空就是「这一组共用一次选包」 |
+| `group_label` | **容器名**，组内每一行都写同一个值（冗余）。发布快照只有槽位行、没有容器表，读时取组内首个非空值。迁移 `8d2a4f61c9e3` 加的列，默认空串；**不回填** —— 老版本为空即「没起过名」，前端按段序回退 |
 | `filled_text` / `empty_text` | 选中时 / 未选时文案（§6.1）。迁移 `b1f4c8d2e506` 加的列，默认空串；不做回填 —— 老行两列为空即旧语义 |
 | ~~`usage_text`~~ | **已删**（迁移 `d7f2a91c48b3`）。该列从未被写入过（113 条槽位全空串），所以这条迁移是**可逆**的：降级重建一个空列即装回原样 |
-| `asset_id` / `pack_id` | 按 `source` 二选一；`binding=user` 时都为空 |
+| `asset_id` | 固定槽位钉住的那一份素材；`binding=user` 时为空 |
 | `position` | 编号顺序 |
+
+> 这张表以前还列过 `source` / `pack_id`：两个字段分别于 2026-11-14 与 2026-11-20 删除（`source` 与 `type` 抢同一件事，`pick_mode` / `pack_id` 与 `group_key` 抢同一件事）。现在**判据只有一条**：`group_key` 非空 = 从封装包取，空 = 从候选素材里挑。
 
 **为什么 draft 用 JSON 而不是草稿行**：草稿只有一个人写、整份替换，查询需求为零；用行存反而要区分 `version=0` 与"发布中"两种半成品状态。发布时一次性把 draft 展开成 version + slots 行，之后不可变——与 `template_packs` 的"发布即冻结"是同一套口径。
 

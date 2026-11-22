@@ -25,6 +25,7 @@ import { SlotTextField } from './SlotTextField';
  * 正好是用户报的那个「点了只一次，但显示还是两个」。
  */
 export function PackGroupPicker({
+  label,
   members,
   values,
   canEditText,
@@ -35,6 +36,8 @@ export function PackGroupPicker({
   onPickPack,
   onClear,
 }: {
+  /** 容器名（作者起的 / 没起名时按段序的默认名）。 */
+  label: string;
   /** 容器里的槽位（顺序即编号顺序）。 */
   members: SpecSlotOut[];
   values: Record<string, string[] | undefined>;
@@ -107,7 +110,9 @@ export function PackGroupPicker({
       <div className="flex items-baseline gap-1.5">
         <span className="flex items-center gap-1 text-xs font-medium text-ink">
           <Layers size={12} className="text-primary" aria-hidden />
-          封装槽位
+          {/* 作者起的名字。没起名时调用方已按段序回退成「封装槽位1/2/…」，
+             这里不再叠一层判断 —— 两处各算一次就会出现「作者看到 A、使用者看到 B」。 */}
+          <span className="line-clamp-1">{label}</span>
         </span>
         <span
           className={cn(

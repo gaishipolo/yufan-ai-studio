@@ -1440,3 +1440,102 @@ def test_pack_group_members_must_be_adjacent(client: TestClient) -> None:
     response = client.post(f"{API}/validate", json=draft, headers=headers)
     assert response.status_code == 400, response.text
     assert "必须挨在一起" in response.json()["message"]
+
+
+# --------------------------------------------------------------- 封装容器名
+#
+# 容器不是一条记录（就是槽位上相同的 `group`），它的**名字**单独存在
+# `groups` 里：草稿整份进 JSON，发布时落到每一条成员行的 `group_label`。
+# 这里钉四件事：名字能存能读、老版本不炸、改名算新版本、重复 key 直接 422。
+
+_GROUP = "g1"
+_GROUP_LABEL = "三视图套图"
+
+
+def _grouped_draft(
+    video: str,
+    first: str,
+    second: str,
+    *,
+    label: str | None = _GROUP_LABEL,
+    key: str | None = None,
+) -> dict[str, Any]:
+    """把 `hero` 与 `note` 放进同一个容器（两者本来就相邻）。
+
+    容器内只能放图片/视频且必须是「用户填」，这两个槽位正好符合。
+    `key` 用于「同一份草稿再存一次」—— 不传就会生成一个新 spec。
+    """
+    draft = _draft(video, first, second, key=key)
+    for slot in draft["slots"]:
+        if slot["key"] in {"hero", "note"}:
+            slot["group"] = _GROUP
+    if label is not None:
+        draft["groups"] = [{"key": _GROUP, "label": label}]
+    return draft
+
+
+def test_group_label_survives_publish_and_reads_back(client: TestClient) -> None:
+    headers = _headers(client)
+    video, first, second = _media(client, headers)
+    draft = _grouped_draft(video, first, second)
+    saved = _save(client, headers, draft)
+    assert saved["draft"]["groups"] == [{"key": _GROUP, "label": _GROUP_LABEL}]
+
+    published = client.post(f"{API}/{draft['key']}/publish", headers=headers)
+    assert published.status_code == 200, published.text
+
+    detail = client.get(f"{API}/{draft['key']}", headers=headers).json()["data"]
+    # 快照里只有槽位行，名字是从成员行的 `group_label` 提炼出来的
+    assert detail["latest"]["groups"] == [{"key": _GROUP, "label": _GROUP_LABEL}]
+
+
+def test_group_without_a_label_reads_back_as_empty_not_missing(
+    client: TestClient,
+) -> None:
+    """老版本没有 `group_label`（列是后加的，不回填）。
+
+    读出来必须是**一条空名字**，不是整个 `groups` 消失 —— 前端靠「有这个 key、
+    名字为空」回退成「封装槽位1」；`groups` 整段消失会让它连容器都认不出来。
+    """
+    headers = _headers(client)
+    video, first, second = _media(client, headers)
+    draft = _grouped_draft(video, first, second, label=None)
+    _save(client, headers, draft)
+    client.post(f"{API}/{draft['key']}/publish", headers=headers)
+
+    detail = client.get(f"{API}/{draft['key']}", headers=headers).json()["data"]
+    assert detail["latest"]["groups"] == [{"key": _GROUP, "label": ""}]
+
+
+def test_renaming_a_group_is_a_new_version(client: TestClient) -> None:
+    """只改容器名也是内容变化：不算新版本的话，改名永远发不出去。"""
+    headers = _headers(client)
+    video, first, second = _media(client, headers)
+    draft = _grouped_draft(video, first, second)
+    _save(client, headers, draft)
+    client.post(f"{API}/{draft['key']}/publish", headers=headers)
+
+    renamed = _grouped_draft(
+        video, first, second, label="正面 + 三视图", key=draft["key"]
+    )
+    _save(client, headers, renamed)
+    second_publish = client.post(f"{API}/{draft['key']}/publish", headers=headers)
+    assert second_publish.json()["data"]["version"] == 2
+
+    detail = client.get(f"{API}/{draft['key']}", headers=headers).json()["data"]
+    assert detail["latest"]["groups"] == [{"key": _GROUP, "label": "正面 + 三视图"}]
+
+
+def test_duplicate_group_keys_are_rejected(client: TestClient) -> None:
+    """同一个容器 key 两条名字：哪个算数说不清，静默取第一条等于改名没生效。"""
+    headers = _headers(client)
+    video, first, second = _media(client, headers)
+    draft = _grouped_draft(video, first, second)
+    draft["groups"] = [
+        {"key": _GROUP, "label": "甲"},
+        {"key": _GROUP, "label": "乙"},
+    ]
+
+    response = client.post(API, json=draft, headers=headers)
+
+    assert response.status_code == 422, response.text

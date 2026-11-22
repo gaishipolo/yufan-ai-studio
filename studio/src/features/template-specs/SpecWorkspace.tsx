@@ -49,7 +49,7 @@ import { DemoMenu } from '@/features/template-specs/DemoMenu';
 import { ModelPicker } from '@/features/template-specs/ModelPicker';
 import { useSpecLimits } from '@/entities/template-spec/api/spec.queries';
 import { PromptBox } from '@/features/template-specs/PromptBox';
-import { groupRuns } from '@/entities/template-spec/model/slotGroups';
+import { groupLabels, groupRuns } from '@/entities/template-spec/model/slotGroups';
 import { SlotCard } from '@/features/template-specs/SlotCard';
 import {
   SLOT_TYPE_LABELS,
@@ -61,6 +61,7 @@ import {
   fromSpecOut,
   joinModelSelection,
   nextGroupKey,
+  nextGroupLabel,
   normalize,
   promptRefError,
   referenceChips,
@@ -198,6 +199,30 @@ export function SpecWorkspace() {
   // 契约里 `slots` 是可选的（后端有默认空列表），编辑器一律按非空处理。
   const slots = draft?.slots ?? [];
   const pickerSlot = picker?.target === 'slot' ? slots[picker.index] : undefined;
+
+  /* 容器名：声明了的用声明的，没声明的按段序回退「封装槽位1/2/…」。
+     与模板库共用同一个解析（`groupLabels`），否则作者看到的框名与使用者看到
+     的块名可能不是同一个 —— 这类不一致只在别人用的时候被发现。
+
+     依赖整个 `draft`（而不是 `slots` / `draft.groups`）：`slots` 是
+     `draft?.slots ?? []` 算出来的，每次渲染都是新数组，放进依赖会让这个 memo
+     形同虚设（lint 也会拦）。 */
+  const groupNames = useMemo(
+    () => groupLabels(draft?.slots ?? [], draft?.groups),
+    [draft],
+  );
+
+  /** 改容器名。没有这一条就补一条（老草稿 / 刚从 latest 打开时的常态）。 */
+  const renameGroup = (group: string, label: string) => {
+    if (!draft) return;
+    const groups = draft.groups ?? [];
+    setDraft({
+      ...draft,
+      groups: groups.some(item => item.key === group)
+        ? groups.map(item => (item.key === group ? {...item, label} : item))
+        : [...groups, {key: group, label}],
+    });
+  };
 
   /* 当前模型里「由使用者选」的参数（计费模式）。作者不设它们 —— 写死等于
      替每个使用者决定要不要花积分。提交前会把草稿里残留的这类参数剔掉。 */
@@ -504,7 +529,21 @@ export function SpecWorkspace() {
     const group = nextGroupKey(slots);
     const first = blankSlot(slots.length, 'image', slots, group);
     const second = blankSlot(slots.length + 1, 'image', [...slots, first], group);
-    setDraft(renumberRefs(draft, [...slots, first, second]));
+    /* 容器名**在新建这一刻就定下来**（而不是渲染时按位置算）：作者之后拖动的
+       是整个容器，位置会变；名字跟着位置变等于每拖一次都改一次名。
+       编号取「第一个没被占用的」，避免删过中间容器后与现存的撞名。 */
+    setDraft(
+      renumberRefs(
+        {
+          ...draft,
+          groups: [
+            ...(draft.groups ?? []),
+            {key: group, label: nextGroupLabel(draft.groups)},
+          ],
+        },
+        [...slots, first, second],
+      ),
+    );
   };
 
   /**
@@ -527,7 +566,11 @@ export function SpecWorkspace() {
       next = {...next, prompt: result.text};
       stripped += result.count;
     }
-    setDraft(next);
+    setDraft(
+      // 顺带规范化一次：容器被删光之后，`groups` 里那条名字就成了没有成员的
+      // 残留 —— 它写不进发布快照，留着只会让指纹与后端对不上。
+      normalize(next),
+    );
     const label = keys.length > 1 ? `封装里的 ${keys.length} 个槽位` : `槽位「${names[0]}」`;
     toast(
       stripped > 0
@@ -1076,7 +1119,23 @@ export function SpecWorkspace() {
                         <GripVertical size={12} />
                       </span>
                       <Layers size={13} className="text-primary" aria-hidden />
-                      <span className="text-meta font-medium text-ink">封装槽位</span>
+                      <input
+                        /* 容器名：和槽位的展示名同一套交互 —— 平时像一行标题，
+                           hover / 聚焦才显出边框（「看着像文本、点进去能改」）。
+                           **边框隐形**是必须的：这里一显眼，整块就看不出
+                           「这是个可以改名的标题」，会以为是个输入框表单。 */
+                        value={
+                          draft?.groups?.find(item => item.key === run.group)?.label ?? ''
+                        }
+                        placeholder={groupNames.get(run.group) ?? ''}
+                        aria-label="封装名称"
+                        onChange={event => renameGroup(run.group, event.target.value)}
+                        className={cn(
+                          'min-w-0 max-w-[11rem] rounded-md border border-transparent bg-transparent px-1.5 py-1 text-meta font-medium text-ink outline-none transition-colors',
+                          'hover:border-line-soft focus:border-primary-line focus:bg-panel focus:ring-2 focus:ring-primary/10',
+                          'placeholder:text-ink-mute',
+                        )}
+                      />
                       <span className="text-micro text-ink-mute">
                         {run.members.length} 个槽位 · 使用者选一次包，一起填好
                       </span>

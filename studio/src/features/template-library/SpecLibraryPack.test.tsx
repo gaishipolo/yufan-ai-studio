@@ -234,7 +234,8 @@ describe('模板库 · 点封装包填多格', () => {
 
     const cards = await screen.findAllByTitle('6036 黑（封装 · 2 张）');
     expect(cards).toHaveLength(1);
-    expect(screen.getByText('封装槽位')).toBeInTheDocument();
+    // 标题是容器名：老版本没有 `groups` → 按段序回退成「封装槽位1」
+    expect(screen.getByText(/封装槽位/)).toBeInTheDocument();
 
     await user.click(cards[0]);
     // 一次点击仍然把容器里的两格填满
@@ -418,7 +419,7 @@ describe('模板库 · 容器里的可选槽位改成提示词', () => {
     await renderCustom(user);
     /* 只看容器自己那一行：整页另有一个「填入素材 x/y」，两者数字恰好一样，
        不圈定范围会命中两个元素。 */
-    const container = screen.getByText('封装槽位').closest('section') as HTMLElement;
+    const container = screen.getByText(/封装槽位/).closest('section') as HTMLElement;
     /* 一开始 0/2（必填那格还空着，可选那格也没有任何说法）。 */
     expect(container).toHaveTextContent('0/2');
 
@@ -430,5 +431,30 @@ describe('模板库 · 容器里的可选槽位改成提示词', () => {
 
     /* 预填的就是作者那段话 → 这一格已经有说法了。 */
     await waitFor(() => expect(container).toHaveTextContent('1/2'));
+  });
+});
+
+/* 容器名是作者起的（封装页那个输入框），模板库要按它显示 ——
+   使用者看到「三视图套图」才知道这一块要挑什么，写死的「封装槽位」什么也没说。 */
+describe('模板库 · 容器的名字', () => {
+  it('显示作者起的名字', async () => {
+    specState.current = {
+      ...SPEC,
+      latest: {...SPEC.latest!, groups: [{key: 'g1', label: '三视图套图'}]},
+    };
+    renderLibrary();
+
+    expect(await screen.findByText('三视图套图')).toBeInTheDocument();
+    // 起了名就不再出现回退名（两个都显示等于没说清哪个是真的）
+    expect(screen.queryByText(/^封装槽位/)).not.toBeInTheDocument();
+  });
+
+  it('老版本没有名字：按段序回退成「封装槽位1」', async () => {
+    /* `groups` 是后加的字段，加之前发布的版本里没有它。回退而不是显示空 ——
+       空标题会让那一块变成一个只有「N/N」计数的无名框。 */
+    specState.current = {...SPEC, latest: {...SPEC.latest!, groups: []}};
+    renderLibrary();
+
+    expect(await screen.findByText('封装槽位1')).toBeInTheDocument();
   });
 });

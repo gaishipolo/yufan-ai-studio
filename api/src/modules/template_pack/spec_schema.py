@@ -43,6 +43,19 @@ class StrictIn(CamelModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class SpecGroupIn(StrictIn):
+    """封装容器的名字：`key` 对应槽位上的 `group`，`label` 是作者起的名字。
+
+    **不在这里校验「key 必须真的有成员」**：草稿阶段作者把成员挪走了、容器名
+    还留着，是编辑中的正常状态；发布时它只是写不进任何一行（没有成员就没有行），
+    不会变成坏数据。反过来强校验会挡住「先建容器、再加槽位」这个正常顺序。
+    """
+
+    #: 与槽位的 `group` 同一套取值，但**不能为空**（空串是「不属于任何容器」）。
+    key: str = Field(pattern=_KEY)
+    label: str = Field(default="", max_length=80)
+
+
 class SpecSlotIn(StrictIn):
     key: str = Field(pattern=_KEY)
     #: 槽位要什么：就是资产库的 kind（图片 / 视频 / 音频 / 文本）。
@@ -189,6 +202,9 @@ class TemplateSpecIn(StrictIn):
     #: 同样要求该槽位写了「未选时文案」（发布闸口会拦）。
     random_prompt: str = Field(default="", max_length=MAX_PROMPT)
     slots: list[SpecSlotIn] = Field(default_factory=list, max_length=MAX_SLOTS)
+    #: 封装容器的名字。**可以不声明**（老草稿也没有这个键）：缺省 = 每个容器都
+    #: 用回退名「封装槽位 N」，前端按段序算出来。
+    groups: list[SpecGroupIn] = Field(default_factory=list, max_length=MAX_SLOTS)
     attributes: dict[str, str] = Field(default_factory=dict)
     #: 展示案例（图片/视频资产 id）。纯展示：不进发布快照，改图不用发新版。
     demo_asset_id: str | None = Field(default=None, max_length=32)
@@ -201,6 +217,21 @@ class TemplateSpecIn(StrictIn):
         # 参数最终原样进执行请求；嵌套结构在执行器那侧只会变成 400 或静默忽略。
         if any(isinstance(item, (dict, list)) for item in value.values()):
             raise ValueError("参数只能是标量（字符串 / 数字 / 布尔）")
+        return value
+
+    @field_validator("groups")
+    @classmethod
+    def _group_keys_are_unique(cls, value: list[SpecGroupIn]) -> list[SpecGroupIn]:
+        """同一个容器 key 出现两次 → 哪个名字算数说不清，直接 422。
+
+        前端已经按 key 维护唯一容器（`specDraft` 的 `groups`），重复只可能是
+        调用方自己拼的请求；静默取第一个会让「改过的名字没生效」且无从解释。
+        """
+        seen: set[str] = set()
+        for group in value:
+            if group.key in seen:
+                raise ValueError(f"封装容器 key 重复：{group.key}")
+            seen.add(group.key)
         return value
 
 
@@ -220,6 +251,9 @@ class SpecVersionOut(CamelModel):
     #: 「随机」档用的整段提示词（发布时冻结）。空 = 该版本不支持随机档。
     random_prompt: str = ""
     slots: list[SpecSlotOut]
+    #: 封装容器的名字（发布时冻结）。**老版本为空**：那时还没这个字段，
+    #: 前端按段序回退成「封装槽位 N」。
+    groups: list[SpecGroupIn] = Field(default_factory=list)
     fingerprint: str = ""
     published_by: str = ""
     published_at: UtcDateTime | None = None

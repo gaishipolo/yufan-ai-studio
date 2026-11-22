@@ -168,6 +168,12 @@ class TemplateSpecSlot(Base, UUIDMixin):
     #: 所属封装容器（key；空 = 独立槽位）。**列名带 `_key`**：`group` 在 SQL 里是
     #: 保留字，裸用会在某些方言上要加引号。
     group_key: Mapped[str] = mapped_column(String(40), default="", nullable=False)
+    #: 容器名。**组内每一行都写同一个值**（冗余）：发布快照只有槽位行，没有
+    #: 「容器表」；只写组内第一行会依赖 `position` 顺序，拖一下顺序就取不到
+    #: 名字。读取时取首个非空值（`spec_service._group_outs`），所以被手改过一行
+    #: 的坏数据也有确定行为。老版本（列是后加的）为空串 → 前端回退成
+    #: 「封装槽位 N」。
+    group_label: Mapped[str] = mapped_column(String(80), default="", nullable=False)
     min_count: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     max_count: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     label: Mapped[str] = mapped_column(String(80), default="", nullable=False)

@@ -38,6 +38,7 @@ from core.template_spec import (
     FilledAsset,
     FilledSlot,
     InputSlot,
+    SpecGroup,
     TemplateSpec,
     compile_spec,
     normalize_refs,
@@ -56,6 +57,7 @@ from modules.template_pack.spec_schema import (
     CompiledSlotOut,
     SpecCompileIn,
     SpecCompileOut,
+    SpecGroupIn,
     SpecPublishOut,
     SpecSlotOut,
     SpecValidateOut,
@@ -100,6 +102,9 @@ def to_core(payload: TemplateSpecIn) -> TemplateSpec:
         ),
         attributes=dict(payload.attributes),
         demo_asset_id=payload.demo_asset_id,
+        groups=tuple(
+            SpecGroup(key=group.key, label=group.label) for group in payload.groups
+        ),
     )
 
 
@@ -148,6 +153,26 @@ def _slot_out(row: TemplateSpecSlot) -> SpecSlotOut:
     )
 
 
+def _group_outs(slots: Sequence[TemplateSpecSlot]) -> list[SpecGroupIn]:
+    """从发布快照的槽位行里提炼出「有哪些容器、各叫什么」。
+
+    **顺序 = 首次出现的顺序**（`slots` 已按 `position` 排好），这样模板库
+    画出来的容器顺序与槽位顺序一致。名字存组内每一行（冗余），取第一个非空的
+    那个：正常写入永远是同值，取首个只是让「被手改过一行」的坏数据有确定行为，
+    而不是随机挑一行。
+
+    老版本没有 `group_label`（列是后加的，不回填）→ 这里给出空 label，
+    前端按段序回退成「封装槽位 N」。
+    """
+    labels: dict[str, str] = {}
+    for row in slots:
+        key = row.group_key or ""
+        if not key or key in labels:
+            continue
+        labels[key] = row.group_label or ""
+    return [SpecGroupIn(key=key, label=label) for key, label in labels.items()]
+
+
 def _spec_out(
     head: SpecRow, latest: TemplateSpecVersion | None, slots: Sequence[TemplateSpecSlot]
 ) -> TemplateSpecOut:
@@ -180,6 +205,7 @@ def _spec_out(
                 # 漏映射时它的表现是**永远空**，于是模板明明配了，档位却置灰。
                 random_prompt=latest.random_prompt or "",
                 slots=[_slot_out(slot) for slot in slots],
+                groups=_group_outs(slots),
                 fingerprint=latest.fingerprint,
                 published_by=latest.published_by,
                 published_at=latest.published_at,
@@ -555,6 +581,9 @@ async def publish(session: AsyncSession, actor: CurrentUser, key: str) -> SpecPu
     )
     session.add(row)
     await session.flush()  # 主键在 flush 后才有，槽位要用它
+    # 容器名存组内每一行（冗余）：发布快照只有槽位行，没有「容器表」。
+    # 只写组内第一行会依赖 position 顺序 —— 拖一下顺序就取不到名字了。
+    group_labels = {group.key: group.label for group in spec.groups}
     for slot in spec.slots:
         session.add(
             TemplateSpecSlot(
@@ -564,6 +593,7 @@ async def publish(session: AsyncSession, actor: CurrentUser, key: str) -> SpecPu
                 binding=slot.binding,
                 ref_mode=slot.ref_mode,
                 group_key=slot.group,
+                group_label=group_labels.get(slot.group, ""),
                 min_count=slot.min_count,
                 max_count=slot.max_count,
                 label=slot.label,

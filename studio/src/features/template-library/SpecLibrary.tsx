@@ -26,6 +26,7 @@ import {
   slotTypeOf,
 } from '@/features/template-specs/specDraft';
 import { ParamFields } from '@/entities/model/ui/ParamFields';
+import { groupLabels } from '@/entities/template-spec/model/slotGroups';
 import {
   Button,
   Chip,
@@ -289,6 +290,15 @@ export function SpecLibrary() {
      **提示词要一起传进去**：均衡档下有些可选槽位不能被让给模型
      （提示词里按「第 N 张」引用了它，省掉就会 400）。见 `slotIndexRefs`。 */
   const fillSlots = visibleSlots(slots, effectiveRandomness, activePrompt);
+
+  /* 容器名：**按完整槽位算**，不按 `fillSlots`。
+     随机 / 均衡档会隐掉一部分可选槽位，若按 `fillSlots` 的段序编号，
+     同一个容器在编辑页叫「封装槽位2」、在模板库叫「封装槽位1」。
+     名字是作者起的（有声明就是固定的），回退名也应当稳定。 */
+  const groupNames = useMemo(
+    () => groupLabels(slots, version?.groups),
+    [slots, version?.groups],
+  );
   /* 这一档下**不该传素材**的槽位：随机/均衡档把可选槽位让给文案，
      所以它们既不出现在右栏，也不进 `slotValues`。 */
   const suppressed = useMemo(
@@ -939,6 +949,7 @@ export function SpecLibrary() {
                         return (
                           <PackGroupPicker
                             key={group}
+                            label={groupNames.get(group) ?? ''}
                             members={members}
                             values={values}
                             canEditText={members

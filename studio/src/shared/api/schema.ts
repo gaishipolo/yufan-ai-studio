@@ -1421,6 +1421,16 @@ export interface SpecCompileOut {
   slots?: CompiledSlotOut[];
 }
 
+/** 封装容器的名字：`key` 对应槽位上的 `group`，`label` 是作者起的名字。
+
+**不在这里校验「key 必须真的有成员」**：草稿阶段作者把成员挪走了、容器名
+还留着，是编辑中的正常状态；发布时它只是写不进任何一行（没有成员就没有行），
+不会变成坏数据。反过来强校验会挡住「先建容器、再加槽位」这个正常顺序。 */
+export interface SpecGroupIn {
+  key: string;
+  label?: string;
+}
+
 /** 编辑页要显示的**上限**。
 
 这些数是后端的常量（`core/template_spec/models.py`），前端以前各抄一份
@@ -1495,6 +1505,7 @@ export interface SpecVersionOut {
   prompt: string;
   randomPrompt?: string;
   slots: SpecSlotOut[];
+  groups?: SpecGroupIn[];
   fingerprint?: string;
   publishedBy?: string;
   publishedAt?: string | null;
@@ -1655,6 +1666,7 @@ export interface TemplateSpecIn {
   prompt: string;
   randomPrompt?: string;
   slots?: SpecSlotIn[];
+  groups?: SpecGroupIn[];
   attributes?: Record<string, string>;
   demoAssetId?: string | null;
   revision?: number | null;
