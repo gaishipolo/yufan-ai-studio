@@ -156,6 +156,9 @@ BUILTIN_ROLES: tuple[BuiltinRole, ...] = (
             "library:case:write",
             "storyboard:read",
             "shot:read",
+            # 用量看板：只给自己看（`usage:read:all` 不给 —— 编辑看别人的
+            # 用量是管理视角，应该由管理员显式授予，不该默认带上）。
+            "usage:read",
             # 页面权限（`core.pages`）：能进哪几页。
             # 为什么内置角色必须带它们：接口权限只有在「至少一个声明它的页面
             # 被授予」时才有效，所以漏了页面码 = 这个角色的人虽然持有
@@ -169,6 +172,7 @@ BUILTIN_ROLES: tuple[BuiltinRole, ...] = (
             "page:task-center",
             "page:templates",
             "page:template-specs",
+            "page:usage",
         ),
     ),
     BuiltinRole(
@@ -184,6 +188,9 @@ BUILTIN_ROLES: tuple[BuiltinRole, ...] = (
             "template_pack:read",
             "storyboard:read",
             "shot:read",
+            # 用量看板：看自己的用量。谁都能看自己的用量，所以这条码
+            # 跟着团队基础权限走（`TEAM_BASE_PERMISSIONS` 从 viewer 派生）。
+            "usage:read",
             # 与 editor 同一组页面：只读人员进得去，只是页面里的写按钮不可用
             "page:studio",
             "page:image",
@@ -193,6 +200,7 @@ BUILTIN_ROLES: tuple[BuiltinRole, ...] = (
             "page:task-center",
             "page:templates",
             "page:template-specs",
+            "page:usage",
         ),
     ),
     BuiltinRole(

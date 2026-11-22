@@ -53,6 +53,13 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
     ],
   },
   {
+    group: '数据统计',
+    items: [
+      { code: 'usage:read', name: '查看用量看板', description: '查看自己在指定区间内的生成用量（次数 / 时长 / 张数）' },
+      { code: 'usage:read:all', name: '查看全部用量', description: '用量看板的数据范围可以切到「全部成员」，并按使用人查看构成' },
+    ],
+  },
+  {
     group: '系统',
     items: [
       { code: 'export:read:audit', name: '导出操作留痕', description: '' },
@@ -107,6 +114,7 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
       { code: 'page:task-center', name: '任务中心', description: '关联接口：image:read, model_driver:read, task:create, task:delete, task:read, task:read:all, task:retry:any, task:update', requires: ['image:read', 'model_driver:read', 'task:create', 'task:delete', 'task:read', 'task:read:all', 'task:retry:any', 'task:update'], route: '/tasks' },
       { code: 'page:template-specs', name: '模板封装', description: '关联接口：library:case:read, library:case:write, library:read, template_pack:create, template_pack:publish, template_pack:read', requires: ['library:case:read', 'library:case:write', 'library:read', 'template_pack:create', 'template_pack:publish', 'template_pack:read'], route: '/templates/specs' },
       { code: 'page:templates', name: '模板库', description: '关联接口：template_pack:read', requires: ['template_pack:read'], route: '/templates/library' },
+      { code: 'page:usage', name: '用量看板', description: '按区间查看生成次数、已产出时长 / 张数、趋势与构成', requires: ['usage:read', 'usage:read:all'], route: '/usage' },
       { code: 'page:user-access', name: '用户与权限', description: '关联接口：identity:create, identity:delete, identity:group:create, identity:group:delete, identity:group:member:manage, identity:group:permission:manage, identity:group:read, identity:group:update, identity:read, identity:role:manage, identity:team:manage, identity:update, identity:user:permission:manage', requires: ['identity:create', 'identity:delete', 'identity:group:create', 'identity:group:delete', 'identity:group:member:manage', 'identity:group:permission:manage', 'identity:group:read', 'identity:group:update', 'identity:read', 'identity:role:manage', 'identity:team:manage', 'identity:update', 'identity:user:permission:manage'], route: '/system/user-access' },
     ],
   },
@@ -165,6 +173,7 @@ export const PERMISSION_CODES = [
   'page:task-center',
   'page:template-specs',
   'page:templates',
+  'page:usage',
   'page:user-access',
   'shot:read',
   'storyboard:read',
@@ -177,6 +186,8 @@ export const PERMISSION_CODES = [
   'template_pack:create',
   'template_pack:publish',
   'template_pack:read',
+  'usage:read',
+  'usage:read:all',
 ] as const;
 
 export type PermissionCode = (typeof PERMISSION_CODES)[number];

@@ -13,11 +13,13 @@ from core.ports.library_references import (
     LibraryReferenceSource,
     bind_library_reference_sources,
 )
+from core.ports.usage_metrics import register_usage_metrics
 from modules.task.export_source import TASK_EXPORT_SOURCE
 from modules.task.library_references import TaskLibraryReferences
 from modules.task.permissions import SPECS
 from modules.task.router import router
 from modules.task.seed import seed as seed_demo
+from modules.task.usage_provider import VideoUsageProvider
 
 # 必须 import：注册到生成框架的 pipeline 表（副作用导入）
 from modules.task import pipeline  # noqa: E402,F401  isort: skip
@@ -28,6 +30,11 @@ from modules.task import maintenance  # noqa: E402,F401  isort: skip  注册周�
 # 导出功能要读 video_tasks：注册成导出源，而不是让 modules/export import 本模块。
 # 见 core/ports/export_sources.py 的说明。
 register_export_source(TASK_EXPORT_SOURCE)
+
+# 用量看板要统计视频生成了多少，但业务模块之间不许互相 import：由本模块在
+# import 期把只读读取器交给 core 注入口，看板只认 `UsageMetricsProvider` 这份契约。
+# 注入口是多实现的 —— 视频、生图、将来的音频各注册一份，看板自动合并。
+register_usage_metrics("video", VideoUsageProvider())
 
 # 参考图存的是**资产库 v2 的 id**，所以归 v2 的删除保护管：彻底删除一张被任务
 # 引用的图，任务详情页的参考图会裂，而那一步不可逆。

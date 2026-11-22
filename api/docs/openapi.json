@@ -7121,6 +7121,218 @@
           }
         }
       }
+    },
+    "/api/v1/usage/overview": {
+      "get": {
+        "tags": [
+          "用量看板"
+        ],
+        "summary": "用量总览（汇总 / 趋势 / 构成）",
+        "operationId": "usage_overview_api_v1_usage_overview_get",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "start",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "区间起点（含，YYYY-MM-DD）。默认：结束日往前推 30 天",
+              "title": "Start"
+            },
+            "description": "区间起点（含，YYYY-MM-DD）。默认：结束日往前推 30 天"
+          },
+          {
+            "name": "end",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "区间终点（含，YYYY-MM-DD）。默认：今天",
+              "title": "End"
+            },
+            "description": "区间终点（含，YYYY-MM-DD）。默认：今天"
+          },
+          {
+            "name": "granularity",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/UsageGranularity",
+              "description": "时间桶粒度：day / week",
+              "default": "day"
+            },
+            "description": "时间桶粒度：day / week"
+          },
+          {
+            "name": "scope",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/UsageScope",
+              "description": "数据范围：mine（自己）/ all（全部成员，需要 usage:read:all）",
+              "default": "mine"
+            },
+            "description": "数据范围：mine（自己）/ all（全部成员，需要 usage:read:all）"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_UsageOverviewOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/usage/records": {
+      "get": {
+        "tags": [
+          "用量看板"
+        ],
+        "summary": "用量明细",
+        "operationId": "usage_records_api_v1_usage_records_get",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "start",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "区间起点（含，YYYY-MM-DD）。默认：结束日往前推 30 天",
+              "title": "Start"
+            },
+            "description": "区间起点（含，YYYY-MM-DD）。默认：结束日往前推 30 天"
+          },
+          {
+            "name": "end",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "区间终点（含，YYYY-MM-DD）。默认：今天",
+              "title": "End"
+            },
+            "description": "区间终点（含，YYYY-MM-DD）。默认：今天"
+          },
+          {
+            "name": "scope",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/UsageScope",
+              "description": "数据范围：mine（自己）/ all（全部成员，需要 usage:read:all）",
+              "default": "mine"
+            },
+            "description": "数据范围：mine（自己）/ all（全部成员，需要 usage:read:all）"
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "页码，从 1 开始",
+              "default": 1,
+              "title": "Page"
+            },
+            "description": "页码，从 1 开始"
+          },
+          {
+            "name": "pageSize",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "description": "每页条数",
+              "default": 24,
+              "title": "Pagesize"
+            },
+            "description": "每页条数"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_Page_UsageRecordOut__"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -7875,6 +8087,33 @@
         "type": "object",
         "title": "ApiResponse[Page[ImageJobOut]]"
       },
+      "ApiResponse_Page_UsageRecordOut__": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Page_UsageRecordOut_"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[Page[UsageRecordOut]]"
+      },
       "ApiResponse_Page_UserOut__": {
         "properties": {
           "code": {
@@ -8495,6 +8734,33 @@
         },
         "type": "object",
         "title": "ApiResponse[TokenOut]"
+      },
+      "ApiResponse_UsageOverviewOut_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UsageOverviewOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[UsageOverviewOut]"
       },
       "ApiResponse_UserOut_": {
         "properties": {
@@ -12675,6 +12941,34 @@
         "type": "object",
         "title": "Page[ImageJobOut]"
       },
+      "Page_UsageRecordOut_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/UsageRecordOut"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "default": 0
+          },
+          "page": {
+            "type": "integer",
+            "title": "Page",
+            "default": 1
+          },
+          "pageSize": {
+            "type": "integer",
+            "title": "Pagesize",
+            "default": 24
+          }
+        },
+        "type": "object",
+        "title": "Page[UsageRecordOut]"
+      },
       "Page_UserOut_": {
         "properties": {
           "items": {
@@ -15425,6 +15719,400 @@
         ],
         "title": "UploadKind",
         "description": "上传接口允许的文件类型。\n\n不复用 `LibraryAssetKind`：文本资产的体积上限与探测规则单独一档，\n`TEXT` 走同一条上传链，但上限另算（见 `infra/media_probe.MAX_TEXT_BYTES`）。"
+      },
+      "UsageBreakdownItemOut": {
+        "properties": {
+          "dimension": {
+            "$ref": "#/components/schemas/UsageDimension",
+            "description": "维度"
+          },
+          "key": {
+            "type": "string",
+            "title": "Key",
+            "description": "维度内的稳定键"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label",
+            "description": "展示名"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "description": "尝试次数"
+          },
+          "quantity": {
+            "type": "integer",
+            "title": "Quantity",
+            "description": "已产出数量"
+          },
+          "durationSec": {
+            "type": "integer",
+            "title": "Durationsec",
+            "description": "已产出视频总时长（秒）"
+          },
+          "share": {
+            "type": "number",
+            "title": "Share",
+            "description": "占全部尝试次数的比例，0-1"
+          }
+        },
+        "type": "object",
+        "required": [
+          "dimension",
+          "key",
+          "label",
+          "total",
+          "quantity",
+          "durationSec",
+          "share"
+        ],
+        "title": "UsageBreakdownItemOut",
+        "description": "构成表的一行。"
+      },
+      "UsageDimension": {
+        "type": "string",
+        "enum": [
+          "model",
+          "kind",
+          "owner",
+          "status"
+        ],
+        "title": "UsageDimension",
+        "description": "构成维度。"
+      },
+      "UsageGranularity": {
+        "type": "string",
+        "enum": [
+          "day",
+          "week"
+        ],
+        "title": "UsageGranularity",
+        "description": "时间桶粒度。"
+      },
+      "UsageOverviewOut": {
+        "properties": {
+          "summary": {
+            "$ref": "#/components/schemas/UsageSummaryOut",
+            "description": "区间汇总"
+          },
+          "trend": {
+            "items": {
+              "$ref": "#/components/schemas/UsageTrendPointOut"
+            },
+            "type": "array",
+            "title": "Trend",
+            "description": "时间趋势"
+          },
+          "breakdown": {
+            "items": {
+              "$ref": "#/components/schemas/UsageBreakdownItemOut"
+            },
+            "type": "array",
+            "title": "Breakdown",
+            "description": "构成行"
+          },
+          "sources": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Sources",
+            "description": "实际接上的数据来源标识"
+          }
+        },
+        "type": "object",
+        "required": [
+          "summary",
+          "trend",
+          "breakdown",
+          "sources"
+        ],
+        "title": "UsageOverviewOut",
+        "description": "看板总览：一次请求拿齐汇总 / 趋势 / 构成。"
+      },
+      "UsageRecordOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "记录 ID"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source",
+            "description": "来源标识"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title",
+            "description": "展示标题"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "description": "原始状态"
+          },
+          "modelId": {
+            "type": "string",
+            "title": "Modelid",
+            "description": "模型目录 id"
+          },
+          "modelName": {
+            "type": "string",
+            "title": "Modelname",
+            "description": "模型可读名"
+          },
+          "quantity": {
+            "type": "integer",
+            "title": "Quantity",
+            "description": "本次产出数量"
+          },
+          "durationSec": {
+            "type": "integer",
+            "title": "Durationsec",
+            "description": "视频时长（秒）"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Createdat",
+            "description": "创建时间（UTC）"
+          },
+          "ownerId": {
+            "type": "string",
+            "title": "Ownerid",
+            "description": "使用人 ID"
+          },
+          "ownerName": {
+            "type": "string",
+            "title": "Ownername",
+            "description": "使用人可读名"
+          },
+          "detailUrl": {
+            "type": "string",
+            "title": "Detailurl",
+            "description": "详情页深链接"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "source",
+          "title",
+          "status",
+          "modelId",
+          "modelName",
+          "quantity",
+          "durationSec",
+          "createdAt",
+          "ownerId",
+          "ownerName",
+          "detailUrl"
+        ],
+        "title": "UsageRecordOut",
+        "description": "一条用量明细。"
+      },
+      "UsageScope": {
+        "type": "string",
+        "enum": [
+          "mine",
+          "all"
+        ],
+        "title": "UsageScope",
+        "description": "数据范围。"
+      },
+      "UsageSourceOut": {
+        "properties": {
+          "source": {
+            "type": "string",
+            "title": "Source",
+            "description": "来源标识"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "description": "尝试次数"
+          },
+          "succeeded": {
+            "type": "integer",
+            "title": "Succeeded",
+            "description": "已产出次数"
+          },
+          "failed": {
+            "type": "integer",
+            "title": "Failed",
+            "description": "失败次数"
+          },
+          "pending": {
+            "type": "integer",
+            "title": "Pending",
+            "description": "排队 / 进行中"
+          },
+          "quantity": {
+            "type": "integer",
+            "title": "Quantity",
+            "description": "已产出数量"
+          },
+          "durationSec": {
+            "type": "integer",
+            "title": "Durationsec",
+            "description": "已产出视频总时长（秒）"
+          }
+        },
+        "type": "object",
+        "required": [
+          "source",
+          "total",
+          "succeeded",
+          "failed",
+          "pending",
+          "quantity",
+          "durationSec"
+        ],
+        "title": "UsageSourceOut",
+        "description": "一个来源（视频 / 生图 / 将来接上的音频…）的分项。"
+      },
+      "UsageSummaryOut": {
+        "properties": {
+          "start": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Start",
+            "description": "区间起点（含）"
+          },
+          "end": {
+            "type": "string",
+            "format": "date-time",
+            "title": "End",
+            "description": "区间终点（含）"
+          },
+          "granularity": {
+            "$ref": "#/components/schemas/UsageGranularity",
+            "description": "实际使用的时间桶粒度"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/UsageScope",
+            "description": "**实际生效**的数据范围（越权请求会被降级为 mine）"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "description": "尝试次数"
+          },
+          "succeeded": {
+            "type": "integer",
+            "title": "Succeeded",
+            "description": "已产出次数"
+          },
+          "failed": {
+            "type": "integer",
+            "title": "Failed",
+            "description": "失败次数"
+          },
+          "pending": {
+            "type": "integer",
+            "title": "Pending",
+            "description": "排队 / 进行中"
+          },
+          "successRate": {
+            "type": "number",
+            "title": "Successrate",
+            "description": "成功率，0-1"
+          },
+          "quantity": {
+            "type": "integer",
+            "title": "Quantity",
+            "description": "已产出数量合计"
+          },
+          "durationSec": {
+            "type": "integer",
+            "title": "Durationsec",
+            "description": "已产出视频总时长（秒）"
+          },
+          "avgDurationSec": {
+            "type": "number",
+            "title": "Avgdurationsec",
+            "description": "平均单条视频时长（秒）"
+          },
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/UsageSourceOut"
+            },
+            "type": "array",
+            "title": "Sources",
+            "description": "各来源分项"
+          }
+        },
+        "type": "object",
+        "required": [
+          "start",
+          "end",
+          "granularity",
+          "scope",
+          "total",
+          "succeeded",
+          "failed",
+          "pending",
+          "successRate",
+          "quantity",
+          "durationSec",
+          "avgDurationSec",
+          "sources"
+        ],
+        "title": "UsageSummaryOut",
+        "description": "区间汇总。"
+      },
+      "UsageTrendPointOut": {
+        "properties": {
+          "bucket": {
+            "type": "string",
+            "title": "Bucket",
+            "description": "时间桶键：day=YYYY-MM-DD，week=该周周一"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "description": "尝试次数"
+          },
+          "succeeded": {
+            "type": "integer",
+            "title": "Succeeded",
+            "description": "已产出次数"
+          },
+          "failed": {
+            "type": "integer",
+            "title": "Failed",
+            "description": "失败次数"
+          },
+          "pending": {
+            "type": "integer",
+            "title": "Pending",
+            "description": "排队 / 进行中"
+          },
+          "quantity": {
+            "type": "integer",
+            "title": "Quantity",
+            "description": "已产出数量"
+          },
+          "durationSec": {
+            "type": "integer",
+            "title": "Durationsec",
+            "description": "已产出视频总时长（秒）"
+          }
+        },
+        "type": "object",
+        "required": [
+          "bucket",
+          "total",
+          "succeeded",
+          "failed",
+          "pending",
+          "quantity",
+          "durationSec"
+        ],
+        "title": "UsageTrendPointOut",
+        "description": "趋势上的一个点（区间内没有数据的那天也会补一个 0）。"
       },
       "UserCreateIn": {
         "properties": {

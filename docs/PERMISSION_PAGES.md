@@ -138,9 +138,21 @@ PermissionSpec("catalog:read", "查看模型目录", group="内容生产",
 | `page:templates` | `/templates/library` | 1 | template_pack |
 | `page:template-specs` | `/templates/specs` | 6 | template_pack |
 | `page:user-access` | `/system/user-access` | 13 | identity |
+| `page:usage` | `/usage` | 2 | usage |
 
-未纳入的：登录页（`bare`，必须匿名可达）、用量看板（占位页，还没有后端接口；
-等它有接口时随模块一起声明）。
+未纳入的：登录页（`bare`，必须匿名可达）。
+
+用量看板在 2026-11-22 之前是**占位页**：前端有路由、侧栏有入口，但后端没有
+任何用量接口，所以那一页既没有页面码、也没有接口码 —— 路由守卫里它是唯一
+的豁免项（`app/router.test.ts` 的 `NO_PERMISSION_PATHS`）。现在后端补齐了
+`usage:read` / `usage:read:all` 两个接口码，页面码 `page:usage` 随之声明，
+豁免名单清空。
+
+它同时是「数据范围」和「页面入口」分离的第一个例子：`usage:read` 决定能不能
+**看自己的**用量，`usage:read:all` 决定能不能**看别人的**，而 `page:usage`
+只决定能不能**进这一页**。页面里用 `useCan('usage:read:all')` 控制「全部成员」
+这一档能不能选；没有它时后端把越权请求**降级**成 `mine`（不报错），界面也
+必须跟着降级 —— 显示着「全部成员」却只给一个人的数据，比直接不给看更糟。
 
 ## 6. 团队层为什么不能放页面码
 

@@ -100,6 +100,18 @@ export const TaskStatusFilter_VALUES = ["all", "queued", "running", "completed",
 export type UploadKind = "image" | "audio" | "video" | "text";
 export const UploadKind_VALUES = ["image", "audio", "video", "text"] as const;
 
+/** 取值：model, kind, owner, status */
+export type UsageDimension = "model" | "kind" | "owner" | "status";
+export const UsageDimension_VALUES = ["model", "kind", "owner", "status"] as const;
+
+/** 取值：day, week */
+export type UsageGranularity = "day" | "week";
+export const UsageGranularity_VALUES = ["day", "week"] as const;
+
+/** 取值：mine, all */
+export type UsageScope = "mine" | "all";
+export const UsageScope_VALUES = ["mine", "all"] as const;
+
 /* ------------------------------ 模型 ------------------------------ */
 
 /** 改名 / 换标签。**不含可见性**：共享必须走申请单，否则审批就没有意义了。 */
@@ -1772,6 +1784,130 @@ export interface UpdateTaskIn {
   favorited?: boolean | null;
 }
 
+/** 构成表的一行。 */
+export interface UsageBreakdownItemOut {
+  /** 维度 */
+  dimension: UsageDimension;
+  /** 维度内的稳定键 */
+  key: string;
+  /** 展示名 */
+  label: string;
+  /** 尝试次数 */
+  total: number;
+  /** 已产出数量 */
+  quantity: number;
+  /** 已产出视频总时长（秒） */
+  durationSec: number;
+  /** 占全部尝试次数的比例，0-1 */
+  share: number;
+}
+
+/** 看板总览：一次请求拿齐汇总 / 趋势 / 构成。 */
+export interface UsageOverviewOut {
+  /** 区间汇总 */
+  summary: UsageSummaryOut;
+  /** 时间趋势 */
+  trend: UsageTrendPointOut[];
+  /** 构成行 */
+  breakdown: UsageBreakdownItemOut[];
+  /** 实际接上的数据来源标识 */
+  sources: string[];
+}
+
+/** 一条用量明细。 */
+export interface UsageRecordOut {
+  /** 记录 ID */
+  id: string;
+  /** 来源标识 */
+  source: string;
+  /** 展示标题 */
+  title: string;
+  /** 原始状态 */
+  status: string;
+  /** 模型目录 id */
+  modelId: string;
+  /** 模型可读名 */
+  modelName: string;
+  /** 本次产出数量 */
+  quantity: number;
+  /** 视频时长（秒） */
+  durationSec: number;
+  /** 创建时间（UTC） */
+  createdAt: string;
+  /** 使用人 ID */
+  ownerId: string;
+  /** 使用人可读名 */
+  ownerName: string;
+  /** 详情页深链接 */
+  detailUrl: string;
+}
+
+/** 一个来源（视频 / 生图 / 将来接上的音频…）的分项。 */
+export interface UsageSourceOut {
+  /** 来源标识 */
+  source: string;
+  /** 尝试次数 */
+  total: number;
+  /** 已产出次数 */
+  succeeded: number;
+  /** 失败次数 */
+  failed: number;
+  /** 排队 / 进行中 */
+  pending: number;
+  /** 已产出数量 */
+  quantity: number;
+  /** 已产出视频总时长（秒） */
+  durationSec: number;
+}
+
+/** 区间汇总。 */
+export interface UsageSummaryOut {
+  /** 区间起点（含） */
+  start: string;
+  /** 区间终点（含） */
+  end: string;
+  /** 实际使用的时间桶粒度 */
+  granularity: UsageGranularity;
+  /** **实际生效**的数据范围（越权请求会被降级为 mine） */
+  scope: UsageScope;
+  /** 尝试次数 */
+  total: number;
+  /** 已产出次数 */
+  succeeded: number;
+  /** 失败次数 */
+  failed: number;
+  /** 排队 / 进行中 */
+  pending: number;
+  /** 成功率，0-1 */
+  successRate: number;
+  /** 已产出数量合计 */
+  quantity: number;
+  /** 已产出视频总时长（秒） */
+  durationSec: number;
+  /** 平均单条视频时长（秒） */
+  avgDurationSec: number;
+  /** 各来源分项 */
+  sources: UsageSourceOut[];
+}
+
+/** 趋势上的一个点（区间内没有数据的那天也会补一个 0）。 */
+export interface UsageTrendPointOut {
+  /** 时间桶键：day=YYYY-MM-DD，week=该周周一 */
+  bucket: string;
+  /** 尝试次数 */
+  total: number;
+  /** 已产出次数 */
+  succeeded: number;
+  /** 失败次数 */
+  failed: number;
+  /** 排队 / 进行中 */
+  pending: number;
+  /** 已产出数量 */
+  quantity: number;
+  /** 已产出视频总时长（秒） */
+  durationSec: number;
+}
+
 /** UserCreateIn */
 export interface UserCreateIn {
   /** 登录名，3-64 位字母数字或 `. _ -`，会被转成小写 */
@@ -2268,4 +2404,8 @@ export interface EndpointData {
   "POST /api/v1/template-specs/{key}/publish": SpecPublishOut;
   /** 从回收站恢复 */
   "POST /api/v1/template-specs/{key}/restore": TemplateSpecOut;
+  /** 用量总览（汇总 / 趋势 / 构成） */
+  "GET /api/v1/usage/overview": UsageOverviewOut;
+  /** 用量明细 */
+  "GET /api/v1/usage/records": Page<UsageRecordOut>;
 }

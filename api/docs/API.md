@@ -2,7 +2,7 @@
 
 > 此文件由 `app export-openapi` 自动生成，请勿手工编辑。
 >
-> 版本 `0.2.0`｜共 **134** 个接口 / **11** 个模块
+> 版本 `0.2.0`｜共 **136** 个接口 / **12** 个模块
 >
 > 重新生成：`cd api && .venv/Scripts/python -m cli export-openapi`
 
@@ -104,6 +104,13 @@ Authorization: Bearer <accessToken>
 | `template_pack:publish` | 发布或停用模板封装 |  |
 | `template_pack:read` | 查看模板封装 |  |
 
+**数据统计**
+
+| 权限码 | 名称 | 说明 |
+|---|---|---|
+| `usage:read` | 查看用量看板 | 查看自己在指定区间内的生成用量（次数 / 时长 / 张数） |
+| `usage:read:all` | 查看全部用量 | 用量看板的数据范围可以切到「全部成员」，并按使用人查看构成 |
+
 **系统**
 
 | 权限码 | 名称 | 说明 |
@@ -160,6 +167,7 @@ Authorization: Bearer <accessToken>
 | `page:task-center` | 任务中心 | 关联接口：image:read, model_driver:read, task:create, task:delete, task:read, task:read:all, task:retry:any, task:update |
 | `page:template-specs` | 模板封装 | 关联接口：library:case:read, library:case:write, library:read, template_pack:create, template_pack:publish, template_pack:read |
 | `page:templates` | 模板库 | 关联接口：template_pack:read |
+| `page:usage` | 用量看板 | 按区间查看生成次数、已产出时长 / 张数、趋势与构成 |
 | `page:user-access` | 用户与权限 | 关联接口：identity:create, identity:delete, identity:group:create, identity:group:delete, identity:group:member:manage, identity:group:permission:manage, identity:group:read, identity:group:update, identity:read, identity:role:manage, identity:team:manage, identity:update, identity:user:permission:manage |
 
 > 判定规则：`*` 恒真；`task:*` 这类通配可覆盖 `task:read`；否则按字符串精确匹配。
@@ -250,6 +258,7 @@ Authorization: Bearer <accessToken>
 | 资产库 | 47 | 见下方 `4.9` |
 | 模型驱动 | 9 | 见下方 `4.10` |
 | 模板封装 | 12 | 见下方 `4.11` |
+| 用量看板 | 2 | 见下方 `4.12` |
 
 ### 4.1 身份（42 个）
 
@@ -3561,6 +3570,54 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `demoAssetId` | `string \| null` | 否 |  |
 | `latest` | `SpecVersionOut \| null` | 否 |  |
 
+### 4.12 用量看板（2 个）
+
+| 方法 | 路径 | 说明 | 鉴权 |
+|---|---|---|---|
+| `GET` | `/api/v1/usage/overview` | 用量总览（汇总 / 趋势 / 构成） | 🔒 |
+| `GET` | `/api/v1/usage/records` | 用量明细 | 🔒 |
+
+#### `GET /api/v1/usage/overview`
+
+**用量总览（汇总 / 趋势 / 构成）**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `start` | query | `string | null` | 否 | 区间起点（含，YYYY-MM-DD）。默认：结束日往前推 30 天 |
+| `end` | query | `string | null` | 否 | 区间终点（含，YYYY-MM-DD）。默认：今天 |
+| `granularity` | query | `UsageGranularity` | 否 | 时间桶粒度：day / week |
+| `scope` | query | `UsageScope` | 否 | 数据范围：mine（自己）/ all（全部成员，需要 usage:read:all） |
+
+**响应** `ApiResponse<UsageOverviewOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `summary` | `UsageSummaryOut` | 是 | 区间汇总 |
+| `trend` | `UsageTrendPointOut[]` | 是 | 时间趋势 |
+| `breakdown` | `UsageBreakdownItemOut[]` | 是 | 构成行 |
+| `sources` | `string[]` | 是 | 实际接上的数据来源标识 |
+
+#### `GET /api/v1/usage/records`
+
+**用量明细**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `start` | query | `string | null` | 否 | 区间起点（含，YYYY-MM-DD）。默认：结束日往前推 30 天 |
+| `end` | query | `string | null` | 否 | 区间终点（含，YYYY-MM-DD）。默认：今天 |
+| `scope` | query | `UsageScope` | 否 | 数据范围：mine（自己）/ all（全部成员，需要 usage:read:all） |
+| `page` | query | `number` | 否 | 页码，从 1 开始 |
+| `pageSize` | query | `number` | 否 | 每页条数 |
+
+**响应** `ApiResponse<Page<UsageRecordOut>>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `items` | `UsageRecordOut[]` | 是 | 当前页数据 |
+| `total` | `number` | 是 | 总条数（用于分页器） |
+| `page` | `number` | 是 | 当前页码，从 1 开始 |
+| `pageSize` | `number` | 是 | 每页条数 |
+
 ---
 
 ## 5. 数据模型
@@ -5322,6 +5379,110 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 ### `UploadKind`（枚举）
 
 取值：`image`、`audio`、`video`、`text`
+
+### `UsageBreakdownItemOut`
+
+构成表的一行。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `dimension` | `UsageDimension` | 是 | 维度 |
+| `key` | `string` | 是 | 维度内的稳定键 |
+| `label` | `string` | 是 | 展示名 |
+| `total` | `number` | 是 | 尝试次数 |
+| `quantity` | `number` | 是 | 已产出数量 |
+| `durationSec` | `number` | 是 | 已产出视频总时长（秒） |
+| `share` | `number` | 是 | 占全部尝试次数的比例，0-1 |
+
+### `UsageDimension`（枚举）
+
+取值：`model`、`kind`、`owner`、`status`
+
+### `UsageGranularity`（枚举）
+
+取值：`day`、`week`
+
+### `UsageOverviewOut`
+
+看板总览：一次请求拿齐汇总 / 趋势 / 构成。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `summary` | `UsageSummaryOut` | 是 | 区间汇总 |
+| `trend` | `UsageTrendPointOut[]` | 是 | 时间趋势 |
+| `breakdown` | `UsageBreakdownItemOut[]` | 是 | 构成行 |
+| `sources` | `string[]` | 是 | 实际接上的数据来源标识 |
+
+### `UsageRecordOut`
+
+一条用量明细。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 | 记录 ID |
+| `source` | `string` | 是 | 来源标识 |
+| `title` | `string` | 是 | 展示标题 |
+| `status` | `string` | 是 | 原始状态 |
+| `modelId` | `string` | 是 | 模型目录 id |
+| `modelName` | `string` | 是 | 模型可读名 |
+| `quantity` | `number` | 是 | 本次产出数量 |
+| `durationSec` | `number` | 是 | 视频时长（秒） |
+| `createdAt` | `string` | 是 | 创建时间（UTC） |
+| `ownerId` | `string` | 是 | 使用人 ID |
+| `ownerName` | `string` | 是 | 使用人可读名 |
+| `detailUrl` | `string` | 是 | 详情页深链接 |
+
+### `UsageScope`（枚举）
+
+取值：`mine`、`all`
+
+### `UsageSourceOut`
+
+一个来源（视频 / 生图 / 将来接上的音频…）的分项。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `source` | `string` | 是 | 来源标识 |
+| `total` | `number` | 是 | 尝试次数 |
+| `succeeded` | `number` | 是 | 已产出次数 |
+| `failed` | `number` | 是 | 失败次数 |
+| `pending` | `number` | 是 | 排队 / 进行中 |
+| `quantity` | `number` | 是 | 已产出数量 |
+| `durationSec` | `number` | 是 | 已产出视频总时长（秒） |
+
+### `UsageSummaryOut`
+
+区间汇总。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `start` | `string` | 是 | 区间起点（含） |
+| `end` | `string` | 是 | 区间终点（含） |
+| `granularity` | `UsageGranularity` | 是 | 实际使用的时间桶粒度 |
+| `scope` | `UsageScope` | 是 | **实际生效**的数据范围（越权请求会被降级为 mine） |
+| `total` | `number` | 是 | 尝试次数 |
+| `succeeded` | `number` | 是 | 已产出次数 |
+| `failed` | `number` | 是 | 失败次数 |
+| `pending` | `number` | 是 | 排队 / 进行中 |
+| `successRate` | `number` | 是 | 成功率，0-1 |
+| `quantity` | `number` | 是 | 已产出数量合计 |
+| `durationSec` | `number` | 是 | 已产出视频总时长（秒） |
+| `avgDurationSec` | `number` | 是 | 平均单条视频时长（秒） |
+| `sources` | `UsageSourceOut[]` | 是 | 各来源分项 |
+
+### `UsageTrendPointOut`
+
+趋势上的一个点（区间内没有数据的那天也会补一个 0）。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `bucket` | `string` | 是 | 时间桶键：day=YYYY-MM-DD，week=该周周一 |
+| `total` | `number` | 是 | 尝试次数 |
+| `succeeded` | `number` | 是 | 已产出次数 |
+| `failed` | `number` | 是 | 失败次数 |
+| `pending` | `number` | 是 | 排队 / 进行中 |
+| `quantity` | `number` | 是 | 已产出数量 |
+| `durationSec` | `number` | 是 | 已产出视频总时长（秒） |
 
 ### `UserCreateIn`
 

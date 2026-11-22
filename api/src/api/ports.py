@@ -77,6 +77,7 @@ from core.ports.library_lookup import has_library_lookup
 from core.ports.library_references import library_references_ready
 from core.ports.model_generation import has_model_generation
 from core.ports.org_directory import has_org_directory
+from core.ports.usage_metrics import has_usage_metrics
 
 __all__ = ["PORT_CATALOG", "PortSpec", "port_status"]
 
@@ -201,6 +202,16 @@ PORT_CATALOG: tuple[PortSpec, ...] = (
         when_unregistered="fail-closed：抛 503。退化成「空模型列表」会把装配故障"
         "报成用户没配模型，是最难排查的一类问题",
         is_registered=has_model_generation,
+    ),
+    PortSpec(
+        name="usage-metrics",
+        module="core.ports.usage_metrics",
+        protocol="UsageMetricsProvider",
+        implementer="每个拥有生成记录的模块各注册一份（当前 modules/task 注册 `video`、"
+        "modules/image 注册 `image`）。多实现注入口：各来源各算各的，看板合并",
+        when_unregistered="返回中性值（空看板 + `sources` 为空）：不报错、也不假装"
+        "「用量为零」—— 看板会在页面上如实说明「暂无数据来源」",
+        is_registered=has_usage_metrics,
     ),
         )
 
