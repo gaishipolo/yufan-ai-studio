@@ -34,9 +34,12 @@ const shellPageRoutes = appRegistry.routes.filter((route) => route.layout === 's
  *
  * 写成显式数组而不是"空 permissions 就跳过"，是为了让每一次豁免都留下理由：
  * 后端还没有对应权限点时，写上权限码只会让页面永久打不开（fail-closed 且静默）。
- * 目前只有用量看板（占位页，后端无 `usage:read`）。
+ *
+ * 目前是**空的**：用量看板已接上后端，补上了页面码 `page:usage`（2026-11-22）。
+ * 下面那条反向断言会盯着这个名单 —— 页面补上权限后，豁免必须一起删掉，
+ * 否则豁免会永远留在那儿，把「这一页有门禁」这件事慢慢变成谎话。
  */
-const NO_PERMISSION_PATHS = new Set(['/usage']);
+const NO_PERMISSION_PATHS = new Set<string>();
 
 /** 顶层路由里除 `'/'` 之外的那批（即 bare 页面） */
 const topLevelOthers = router.routes.filter(

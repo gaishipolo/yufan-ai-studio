@@ -19,7 +19,7 @@
 | `/tasks` | task-center | shell | `page:task-center` | 资产与数据 / 任务中心 |
 | `/templates/library` | templates | shell | `page:templates` | 模板与镜头 / 模板库 |
 | `/templates/specs` | templates | shell | `page:template-specs` | 模板与镜头 / 模板封装 |
-| `/usage` | usage | shell | — | 资产与数据 / 用量看板 |
+| `/usage` | usage | shell | `page:usage` | 资产与数据 / 用量看板 |
 
 ## 导航分组
 
