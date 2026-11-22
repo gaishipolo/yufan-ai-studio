@@ -50,6 +50,7 @@
 | T34 | 生图链路没有参考图，Agnes 实际只能文生图 —— **2026-11-11 已修** | `referenceLibraryIds` + `reference_json` + Data URI 内联，前端按 `maxReferences` 出控件 | 后端 + 前端 |
 | T35 | PR#5 自报的六条遗留（409 未进契约、continuation 不查 rowcount、`_absorb` 下界、`resume` 全扫、`publish_output` 失败仍记 success、libtv 监督无超时） | 进度、启动耗时与「成功但没片子」这类静默问题 | 后端 |
 | T36 | 2026-11-11 主线复审剩下的九条 P2 —— **2026-11-12 已修** | 都是「不报错但口径不对」；修法与理由见下方段落 | 后端 + 前端 |
+| T37 | 生图没有「在途上限」，任务有（`TASK_MAX_IN_FLIGHT_PER_USER`） | 队列只有 2 个槽位且 FIFO；一条 60 次/分钟的限流挡不住「攒队列」，生图同样能顶满 | 后端（要一个跨模块计数口） |
 
 ---
 
@@ -410,3 +411,17 @@ Base64 直传），届时改 `drivers/bailian.py` 的 `prepare_inputs` 一处即
 |---|---|---|---|
 | T45 | `library_asset_generation.pack_id / pack_version` 两列与对应契约字段仍在 | 封装下线时只删了旧表，这两列与契约一起留着；需一条迁移 + 同步 schema / ORM / 前端生成类型 | 迁移可升可降；契约里不再有 `packId` |
 | T48 | 案例进回收站后**出现在谁的回收站里**没有用例 | 跨用户可读、案例池 403（列表与选择器两处）、不进普通列表、恢复后 `purpose` 清空都已验（2026-11-20 补齐）；只看得出「撤下后能从回收站恢复」，看不出它对**其他人**的回收站是否可见 | 一条用例：A 撤下案例后，B 的回收站里看不到它（否则每个人都能恢复别人撤下的共享内容） |
+
+## T37 · 生图没有在途上限
+
+任务有 `TASK_MAX_IN_FLIGHT_PER_USER`（见 `CAPACITY.md` §3），生图没有：`/images`
+只有 `image.generate` 的频率限制（60 次/分钟），拦不住「一分钟内攒 60 条」。
+队列只有 2 个槽位且是 FIFO，一个人攒生图同样会把别人的任务顶到后面。
+
+为什么没一起做：计数口在 task 模块（`TaskRepository.count_in_flight`），生图记录在
+image 模块 —— 两个模块不许互相 import，要做得先造一个共享计数口
+（`core/ports` 里加个"在途计数"协议，task 与 image 各注册一个实现），
+这不是一行能改完的事。
+
+验收口径：同一账号在途生图达到 N 条时，第 N+1 条 429，消息说明上限与在途数；
+上限由同一个配置项控制（或单独加 `IMAGE_MAX_IN_FLIGHT_PER_USER`）。
