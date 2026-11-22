@@ -46,6 +46,7 @@ PERMISSION_BY_ACTION = {
     BulkAction.RESTORE: "library:delete",
     BulkAction.APPROVE_DRAFT: "library:create",
     BulkAction.REJECT_DRAFT: "library:create",
+    BulkAction.REQUEST_SHARE: "library:share",
     BulkAction.REQUEST_REVOKE: "library:share",
 }
 
@@ -137,6 +138,19 @@ class BulkService:
             await LifecycleService(self.session, self.storage).reject_draft(
                 asset_id,
                 DraftDecisionIn(reason=str(data.get("reason") or ""), expected_version=version),
+                actor,
+            )
+            return
+        if action is BulkAction.REQUEST_SHARE:
+            await ShareService(self.session).request(
+                ShareRequestIn(
+                    asset_id=asset_id,
+                    action="share",
+                    target=str(data.get("target") or "group"),
+                    group_id=str(data.get("groupId") or ""),
+                    reason=str(data.get("reason") or ""),
+                    expected_version=version,
+                ),
                 actor,
             )
             return

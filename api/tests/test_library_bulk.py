@@ -228,3 +228,109 @@ def test_trash_gc_dry_run_deletes_nothing() -> None:
     assert report.dry_run is True
     assert report.purged == 0
     assert fetch_asset(asset_id) is not None
+
+
+def test_bulk_share_reports_partial_failure(client: TestClient, api: str) -> None:
+    """一批里已经共享过的那条失败，其余照样生效，并带出逐条明细。"""
+    admin = admin_headers(client)
+    owner, owner_h = make_user(client, admin, LIB_RW + ["library:share:direct"])
+
+    plain = upload_image(client, api, owner_h, color="lightcoral")
+    already = upload_image(client, api, owner_h, color="lightsalmon")
+    first = client.post(
+        f"{api}/library/share-requests",
+        json={"assetId": already["id"], "target": "team", "groupId": ""},
+        headers=owner_h,
+    )
+    assert first.status_code == 201, first.text
+
+    result = _bulk(
+        client,
+        api,
+        owner_h,
+        {
+            "ids": [plain["id"], already["id"]],
+            "action": "requestShare",
+            "payload": {"target": "team", "reason": "给全员看"},
+        },
+    )
+    assert result.status_code == 200, result.text
+    data = result.json()["data"]
+    assert (data["succeeded"], data["failed"]) == (1, 1)
+
+    by_id = {item["id"]: item for item in data["results"]}
+    assert by_id[plain["id"]]["ok"] is True
+    assert by_id[already["id"]]["ok"] is False
+    assert "已共享给团队" in by_id[already["id"]]["message"]
+    assert fetch_asset(plain["id"])["visibility"] == "team"
+    assert fetch_asset(already["id"])["visibility"] == "team"
+
+
+def test_bulk_share_by_non_owner_stays_pending(client: TestClient, api: str) -> None:
+    """批量里混着别人的素材：看得见就能申请，但不许直接生效。"""
+    admin = admin_headers(client)
+    owner, owner_h = make_user(client, admin, LIB_RW + ["library:share:direct"])
+    other, other_h = make_user(client, admin, LIB_RW)
+    group = make_group(client, admin, [owner["id"], other["id"]])
+
+    ids = []
+    for color in ("lightyellow", "lightpink"):
+        asset = upload_image(client, api, owner_h, color=color)
+        ids.append(asset["id"])
+        resp = client.post(
+            f"{api}/library/share-requests",
+            json={"assetId": asset["id"], "target": "group", "groupId": group["id"]},
+            headers=owner_h,
+        )
+        assert resp.status_code == 201, resp.text
+
+    result = _bulk(
+        client,
+        api,
+        other_h,
+        {"ids": ids, "action": "requestShare", "payload": {"target": "team"}},
+    )
+    assert result.status_code == 200, result.text
+    assert result.json()["data"]["succeeded"] == 2
+    # 审批没通过之前可见范围不能变
+    assert all(fetch_asset(asset_id)["visibility"] == "group" for asset_id in ids)
+
+    # `scope=mine` 才是「我提交的」；`pending` 是「待我审核」，按审批权限收窄
+    mine = client.get(f"{api}/library/share-requests", headers=other_h)
+    assert mine.status_code == 200, mine.text
+    mine_ids = {
+        item["assetId"]
+        for item in mine.json()["data"]
+        if item["action"] == "share" and item["status"] == "pending"
+    }
+    assert set(ids) <= mine_ids
+
+
+def test_bulk_share_honours_each_expected_version(client: TestClient, api: str) -> None:
+    """版本号逐条校验：旧页面发出的一批不能把新状态盖掉。"""
+    admin = admin_headers(client)
+    owner, owner_h = make_user(client, admin, LIB_RW + ["library:share:direct"])
+
+    stale = upload_image(client, api, owner_h, color="lightgreen")
+    fresh = upload_image(client, api, owner_h, color="lightblue")
+    result = _bulk(
+        client,
+        api,
+        owner_h,
+        {
+            "ids": [stale["id"], fresh["id"]],
+            "action": "requestShare",
+            "payload": {"target": "team"},
+            "expectedVersions": {
+                stale["id"]: 999,
+                fresh["id"]: fetch_asset(fresh["id"])["state_version"],
+            },
+        },
+    )
+    assert result.status_code == 200, result.text
+    data = result.json()["data"]
+    assert (data["succeeded"], data["failed"]) == (1, 1)
+    by_id = {item["id"]: item for item in data["results"]}
+    assert "已被修改" in by_id[stale["id"]]["message"]
+    assert fetch_asset(stale["id"])["visibility"] == "personal"
+    assert fetch_asset(fresh["id"])["visibility"] == "team"

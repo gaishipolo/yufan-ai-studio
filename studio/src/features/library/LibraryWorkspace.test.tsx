@@ -141,6 +141,39 @@ describe('LibraryWorkspace · 批量删除要确认', () => {
   });
 });
 
+describe('LibraryWorkspace · 批量共享接线', () => {
+  it('选中两条 → 选目标提交 → 批量请求带每条自己的版本号', async () => {
+    const user = userEvent.setup();
+    listMock.mockReturnValue(
+      listOf([
+        { ...ASSET, id: 'a1', stateVersion: 3 },
+        { ...ASSET, id: 'a2', stateVersion: 7, ownerId: 'u2' },
+      ]),
+    );
+    renderWorkspace();
+
+    await user.click(screen.getByRole('button', { name: '全选本页' }));
+    /* 卡片上也有「共享」，批量条的那个排在最后 */
+    await user.click(screen.getAllByRole('button', { name: '共享' }).at(-1)!);
+
+    expect(screen.getByText('共享到… · 已选 2 项')).toBeInTheDocument();
+    /* 一条不是我的：整批只能走审批，别谎称立即生效 */
+    expect(screen.getByText('需审批')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '提交共享' }));
+
+    expect(bulkMock).toHaveBeenCalledWith(
+      {
+        ids: ['a1', 'a2'],
+        action: 'requestShare',
+        payload: { target: 'team', groupId: '', reason: '' },
+        expectedVersions: { a1: 3, a2: 7 },
+      },
+      expect.anything(),
+    );
+  });
+});
+
 describe('LibraryWorkspace · 选中项随列表裁剪', () => {
   it('列表数据变了（换筛选 / 翻页 / 删掉一条）之后，看不见的选中项不再留在批量里', async () => {
     const user = userEvent.setup();

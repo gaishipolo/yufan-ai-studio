@@ -33,6 +33,7 @@ import {
   useSaveAssetFile,
   useShareRequests,
 } from '@/entities/library/api/library.queries';
+import { LibraryBatchShareModal } from './LibraryBatchShareModal';
 import { LibraryBulkBar, type BulkKind } from './LibraryBulkBar';
 import { LibraryConfirmModal } from './LibraryConfirmModal';
 import { LibraryDetail } from './LibraryDetail';
@@ -169,6 +170,8 @@ export function LibraryWorkspace() {
   const [share, setShare] = useState<{ asset: LibraryAssetOut; mode: 'share' | 'revoke' } | null>(
     null,
   );
+  /** 批量共享打开时把选中项快照下来：弹窗期间列表刷新/选中变化不该改这批的目标 */
+  const [batchShare, setBatchShare] = useState<LibraryAssetOut[] | null>(null);
   const [requestsOpen, setRequestsOpen] = useState(false);
   const [downloadsOpen, setDownloadsOpen] = useState(false);
   const [tagManagerOpen, setTagManagerOpen] = useState(false);
@@ -510,6 +513,14 @@ export function LibraryWorkspace() {
       );
       return;
     }
+    if (kindOfAction === 'share') {
+      /* 与单条共享共用同一套目标口径；这里只快照选中项，目标由弹窗选。
+         弹窗取消时选中项还在，用户还能对这批素材做别的操作。 */
+      const picked = items.filter((asset) => selected.has(asset.id));
+      if (!picked.length) return;
+      setBatchShare(picked);
+      return;
+    }
     if (kindOfAction === 'pack') {
       /* 不在这儿调接口：建封装要先让用户确认成员和起个名字。选中项不急着清，
          弹窗取消时用户还能继续对这批素材做别的操作。 */
@@ -597,9 +608,10 @@ export function LibraryWorkspace() {
     writeIds: string[],
     action: BulkAction,
     writePayload?: Record<string, unknown>,
+    expectedVersions?: Record<string, number>,
   ) {
     bulk.mutate(
-      { ids: writeIds, action, payload: writePayload },
+      { ids: writeIds, action, payload: writePayload, expectedVersions },
       {
         onSuccess: (result) => {
           const failed = result.failed ?? 0;
@@ -716,6 +728,7 @@ export function LibraryWorkspace() {
           view={view}
           count={selected.size}
           tags={tags.data ?? []}
+          canShare={canShare}
           busy={bulk.isPending || createDownload.isPending}
           onClear={() => setSelected(new Set())}
           onAction={runBulk}
@@ -783,6 +796,29 @@ export function LibraryWorkspace() {
         isOwner={!!share && share.asset.ownerId === viewer.id}
         onClose={() => setShare(null)}
       />
+
+      {batchShare && (
+        <LibraryBatchShareModal
+          count={batchShare.length}
+          groups={groups.data ?? []}
+          canDirect={canShareDirect}
+          allOwned={batchShare.every((asset) => asset.ownerId === viewer.id)}
+          busy={bulk.isPending}
+          onClose={() => setBatchShare(null)}
+          onSubmit={({ target, groupId, reason }) => {
+            const expectedVersions = Object.fromEntries(
+              batchShare.map((asset) => [asset.id, asset.stateVersion ?? 0]),
+            );
+            setBatchShare(null);
+            applyBulk(
+              batchShare.map((asset) => asset.id),
+              'requestShare',
+              { target, groupId: groupId ?? '', reason },
+              expectedVersions,
+            );
+          }}
+        />
+      )}
 
       <ShareRequestsModal open={requestsOpen} onClose={() => setRequestsOpen(false)} />
       <LibraryDownloadsModal open={downloadsOpen} onClose={() => setDownloadsOpen(false)} />

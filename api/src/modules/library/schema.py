@@ -566,6 +566,7 @@ class BulkAction(StrEnum):
     RESTORE = "restore"
     APPROVE_DRAFT = "approveDraft"
     REJECT_DRAFT = "rejectDraft"
+    REQUEST_SHARE = "requestShare"
     REQUEST_REVOKE = "requestRevoke"
 
 

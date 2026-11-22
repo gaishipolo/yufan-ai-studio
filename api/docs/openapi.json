@@ -8966,6 +8966,7 @@
           "restore",
           "approveDraft",
           "rejectDraft",
+          "requestShare",
           "requestRevoke"
         ],
         "title": "BulkAction",

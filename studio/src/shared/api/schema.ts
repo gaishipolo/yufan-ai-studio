@@ -36,9 +36,9 @@ export const AspectRatio_VALUES = ["9:16", "16:9", "1:1"] as const;
 export type AssetSort = "-createdAt" | "createdAt" | "name" | "-sizeBytes";
 export const AssetSort_VALUES = ["-createdAt", "createdAt", "name", "-sizeBytes"] as const;
 
-/** 取值：addTag, removeTag, rename, delete, restore, approveDraft, rejectDraft, requestRevoke */
-export type BulkAction = "addTag" | "removeTag" | "rename" | "delete" | "restore" | "approveDraft" | "rejectDraft" | "requestRevoke";
-export const BulkAction_VALUES = ["addTag", "removeTag", "rename", "delete", "restore", "approveDraft", "rejectDraft", "requestRevoke"] as const;
+/** 取值：addTag, removeTag, rename, delete, restore, approveDraft, rejectDraft, requestShare, requestRevoke */
+export type BulkAction = "addTag" | "removeTag" | "rename" | "delete" | "restore" | "approveDraft" | "rejectDraft" | "requestShare" | "requestRevoke";
+export const BulkAction_VALUES = ["addTag", "removeTag", "rename", "delete", "restore", "approveDraft", "rejectDraft", "requestShare", "requestRevoke"] as const;
 
 /** 取值：video, image, audio */
 export type Capability = "video" | "image" | "audio";

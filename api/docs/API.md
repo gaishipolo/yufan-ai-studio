@@ -3583,7 +3583,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 
 ### `BulkAction`（枚举）
 
-取值：`addTag`、`removeTag`、`rename`、`delete`、`restore`、`approveDraft`、`rejectDraft`、`requestRevoke`
+取值：`addTag`、`removeTag`、`rename`、`delete`、`restore`、`approveDraft`、`rejectDraft`、`requestShare`、`requestRevoke`
 
 ### `BulkIn`
 
