@@ -194,6 +194,13 @@ def image_size(data: bytes) -> tuple[int, int]:
     try:
         with Image.open(io.BytesIO(data)) as image:
             return image.width, image.height
+    except Image.DecompressionBombError as exc:
+        # 这一条**必须单独接**：它既不是 OSError 也不是 ValueError（MRO 只到
+        # Exception），漏掉就是 500。Pillow 在像素超过 2×`MAX_IMAGE_PIXELS`
+        # （约 1.79 亿）时于 `open()` 阶段抛出 —— 一张 14000×14000 的纯色 PNG
+        # 压缩后只有几十 KB，能轻松通过体积上限。而那个尺寸任何供应商都不收，
+        # 给一句「先缩小」比让用户看堆栈强。
+        raise BadRequest("图片像素过大，请先缩小后再传") from exc
     except (OSError, ValueError) as exc:
         raise BadRequest("图片无法解析") from exc
 
