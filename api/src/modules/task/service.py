@@ -62,7 +62,7 @@ logger = get_logger(__name__)
 
 DEFAULT_TITLE = "未命名任务"
 
-#: 视频 / 音频参考素材的时长门禁。单段 1–15 秒，同类型总时长不超过 15 秒。
+#: 视频 / 音频参考素材的**兜底**时长门禁。单段 1–15 秒，同类型总时长不超过 15 秒。
 #:
 #: 这条以前只是 `generic_inputs.py` 里的一句注释，代码只记时长不校验。后果是
 #: 用户能拿一个 3 秒片段当「原片」提交 —— 上游拿到的就是一个 3 秒参考片段，
@@ -72,12 +72,29 @@ DEFAULT_TITLE = "未命名任务"
 #: 在受理期就查，是因为资产库里已经存了探测出来的时长（`library_assets.duration`
 #: → `LibraryAssetRef.duration_ms`），不必下载字节就能判。物化期还有一道
 #: 兜底校验（`generic_inputs.py`），防止绕过受理期直接调驱动的路径。
+#:
+#: 供应商声明了自己的时长区间时（`ReferenceLimit.min_seconds` 等）以声明为准：
+#: Agnes 视频是 2–12 秒，比这份兜底更紧。写死成全局常量会把「另一个模型
+#: 收得下的素材」在受理期拒掉。
 _MIN_REFERENCE_SECONDS = 1.0
 _MAX_REFERENCE_SECONDS = 15.0
 
+#: 报错文案里的素材称呼。三处判据（张数 / 字节 / 时长）共用一份，避免
+#: 同一件事在不同错误里被叫成「音频」和「音轨」。
+_REFERENCE_KIND_LABELS = {"image": "图片", "video": "视频", "audio": "音频"}
+
+
+def _kind_label(kind: str) -> str:
+    return _REFERENCE_KIND_LABELS.get(kind, kind)
+
+
+def _mb(size: int) -> str:
+    """给人看的体积（判据全是整 MB，不必处理小数）。"""
+    return f"{size // (1024 * 1024)}MB"
+
 
 def _check_reference_limits(spec: ModelSpec, provider: Any, references: Sequence[Any]) -> None:
-    """按供应商声明的参考素材限制校验（张数 / 图片边长）。
+    """按供应商声明的参考素材限制校验（张数 / 图片边长 / 体积）。
 
     限制由**供应商**声明（`ReferenceLimitsCapable`），不是各链各写一份：
     图片边长范围各渠道不一样（Agnes 256-5760，百炼 240-8000），写成全局
@@ -86,6 +103,10 @@ def _check_reference_limits(spec: ModelSpec, provider: Any, references: Sequence
     边长按资产库里的宽高判；**宽高为 0**（历史行 / 未探测完）时放行 ——
     提交前还有一道按真实字节的检查（`core.reference_limits`），两道都过
     才不会被上游一句英文打回。
+
+    体积同理：`size_bytes` 为 0 的行跳过单份判、也不计入合计（拿 0 当真实
+    体积会把「一张图」算成 0 字节，合计永远不超限 —— 那是假通过）。物化期
+    读真实字节时还有一道。
     """
     if not isinstance(provider, ReferenceLimitsCapable):
         return
@@ -115,15 +136,48 @@ def _check_reference_limits(spec: ModelSpec, provider: Any, references: Sequence
             min_side=limit.min_side,
             max_side=limit.max_side,
         )
+    # 体积：**先判单份再判合计**。反过来的话，五张图里有一张 30MB 时用户
+    # 只会看到「合计超了 50MB」，猜不到该压哪一张。
+    totals: dict[str, int] = {}
+    for ref in references:
+        limit = limits.get(ref.kind.value)
+        if limit is None:
+            continue
+        size = ref.size_bytes
+        if not size:
+            continue
+        if limit.max_bytes and size > limit.max_bytes:
+            raise BadRequest(
+                f"{_kind_label(ref.kind.value)}参考素材「{ref.name or ref.id}」"
+                f"超过 {_mb(limit.max_bytes)}，请压缩后再提交"
+            )
+        totals[ref.kind.value] = totals.get(ref.kind.value, 0) + size
+    for kind, total in totals.items():
+        limit = limits.get(kind)
+        if limit is None or not limit.max_total_bytes:
+            continue
+        if total > limit.max_total_bytes:
+            raise BadRequest(
+                f"{_kind_label(kind)}参考素材合计不能超过 "
+                f"{_mb(limit.max_total_bytes)}（本次合计 {_mb(total)}），"
+                "请减少素材或压缩后再提交"
+            )
 
 
-def _check_reference_durations(spec: ModelSpec, references: Sequence[Any]) -> None:
-    """校验视频 / 音频参考素材的时长。
+def _check_reference_durations(
+    spec: ModelSpec, provider: Any, references: Sequence[Any]
+) -> None:
+    """校验视频 / 音频参考素材的时长（单段上限 + 同类合计上限）。
+
+    **时长区间优先取供应商声明**：Agnes 视频的音频是 2–12 秒且**合计**也不得
+    超过 12 秒（三段各 5 秒单看都合法、合计 15 秒照样被上游拒）。供应商没声明
+    就退回兜底的 1–15 秒 —— 那是 LibTV「原片」的口径，不能拿它去判 Agnes。
 
     **静默跳过没有时长信息的那几条**：资产库里的 `duration` 可能是 0（历史
     行、未探测完），这时拿不到可信的时长，判「超长」会误伤合法素材。物化期
     会重新探测真实字节，那时才判得准。
     """
+    limits = provider.reference_limits if isinstance(provider, ReferenceLimitsCapable) else {}
     totals = {"video": 0.0, "audio": 0.0}
     for ref in references:
         kind = ref.kind.value
@@ -133,23 +187,28 @@ def _check_reference_durations(spec: ModelSpec, references: Sequence[Any]) -> No
         if not millis:
             continue
         seconds = millis / 1000
-        label = ref.name or ref.id
-        if seconds < _MIN_REFERENCE_SECONDS:
+        limit = limits.get(kind)
+        low = limit.min_seconds if limit and limit.min_seconds else _MIN_REFERENCE_SECONDS
+        high = limit.max_seconds if limit and limit.max_seconds else _MAX_REFERENCE_SECONDS
+        cap = (
+            limit.max_total_seconds
+            if limit and limit.max_total_seconds
+            else _MAX_REFERENCE_SECONDS
+        )
+        subject = f"{_kind_label(kind)}参考素材「{ref.name or ref.id}」"
+        if seconds < low:
             raise BadRequest(
-                f"{'视频' if kind == 'video' else '音频'}参考素材「{label}」时长不足"
-                f" {_MIN_REFERENCE_SECONDS:g} 秒（实测 {seconds:g} 秒），请换一段更长的素材"
+                f"{subject}时长不足 {low:g} 秒（实测 {seconds:g} 秒），请换一段更长的素材"
             )
-        if seconds > _MAX_REFERENCE_SECONDS:
+        if seconds > high:
             raise BadRequest(
-                f"{'视频' if kind == 'video' else '音频'}参考素材「{label}」时长超过"
-                f" {_MAX_REFERENCE_SECONDS:g} 秒（实测 {seconds:g} 秒），请裁短后再提交"
+                f"{subject}时长超过 {high:g} 秒（实测 {seconds:g} 秒），请裁短后再提交"
             )
         totals[kind] += seconds
-        if totals[kind] > _MAX_REFERENCE_SECONDS + 1e-6:
+        if totals[kind] > cap + 1e-6:
             raise BadRequest(
-                f"{'视频' if kind == 'video' else '音频'}参考素材总时长不能超过"
-                f" {_MAX_REFERENCE_SECONDS:g} 秒（本次合计 {totals[kind]:g} 秒），"
-                "请减少素材数量"
+                f"{_kind_label(kind)}参考素材总时长不能超过 {cap:g} 秒"
+                f"（本次合计 {totals[kind]:g} 秒），请减少素材数量"
             )
 
 
@@ -308,14 +367,16 @@ class TaskService:
             # 在上面已经被 0 张上限挡掉了。
             kinds=_reference_kinds(spec),
         )
-        _check_reference_durations(spec, references)
-        # 张数与图片边长：限制由供应商声明，供应商没声明就跳过。
+        # 参考素材的张数 / 边长 / 体积 / 时长：限制一律由供应商声明。
+        # 先解析 provider 再判，是因为时长区间也来自声明（Agnes 音频 2-12 秒，
+        # LibTV 原片 1-15 秒）—— 判据取错会把能用的素材挡在门外。
         try:
             provider = self.router.provider_for(spec.id)
         except Exception:  # noqa: BLE001 - 装配异常不该把受理期变成 500
             logger.warning("解析供应商失败，跳过参考素材限制校验 model=%s", spec.id)
             provider = None
         _check_reference_limits(spec, provider, references)
+        _check_reference_durations(spec, provider, references)
 
         # 文本快照在受理期冻结，与生图同一口径：提交 / 重试只读这份，
         # 资产改稿不会让同一条任务的两跳用上不同的提示词。

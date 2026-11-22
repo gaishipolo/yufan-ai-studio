@@ -140,3 +140,139 @@ def test_reference_kinds_come_from_the_model_declaration() -> None:
         LibraryAssetKind.VIDEO,
         LibraryAssetKind.AUDIO,
     )
+
+
+# --------------------------------------------------- 官方「参考媒体限制」的那张表
+#
+# Agnes Video 2.5 Flash 的页面上只列「与 2.5 的差异」（图片 5 张 / 音频 3 段 /
+# 不收视频），体积与时长写在 2.5 的「参考媒体限制」里，Flash 全盘沿用：
+#
+# | 图片 | 单张 < 15MB · 整单 < 50MB · 宽高各 256-5760px |
+# | 音频 | 总时长 2-12 秒 · 单段 < 15MB · 整单 < 64MB |
+#
+# 这里逐条钉住。**阈值必须双向测**：只测「16MB 被拒」的话，上限写成 6MB 也会
+# 绿 —— 文案里那个数字才是判据。
+
+
+def _insert_audio(
+    owner_id: str,
+    *,
+    duration: float,
+    name: str = "参考音.mp3",
+    size_bytes: int = 1024,
+) -> str:
+    from library_support import insert_asset
+
+    return insert_asset(
+        name=name,
+        kind="audio",
+        mime_type="audio/mpeg",
+        duration=duration,
+        size_bytes=size_bytes,
+        storage_key=f"tests/{name}",
+        owner_id=owner_id,
+        state="active",
+    )
+
+
+def _insert_image(
+    owner_id: str,
+    *,
+    size_bytes: int,
+    name: str = "参考图.png",
+    side: int = 512,
+) -> str:
+    from library_support import insert_asset
+
+    return insert_asset(
+        name=name,
+        kind="image",
+        mime_type="image/png",
+        width=side,
+        height=side,
+        size_bytes=size_bytes,
+        storage_key=f"tests/{name}",
+        owner_id=owner_id,
+        state="active",
+    )
+
+
+def _owner_id(client: TestClient, headers: dict[str, str]) -> str:
+    return client.get(f"{API}/identity/me", headers=headers).json()["data"]["id"]
+
+
+def test_audio_shorter_than_two_seconds_is_rejected(client: TestClient) -> None:
+    """1.5 秒：兜底的 1 秒口径会放行，Agnes 的 2 秒下限必须拒。"""
+    headers = admin_headers(client)
+    asset = _insert_audio(_owner_id(client, headers), duration=1.5)
+
+    response = _create_task(client, headers, [asset])
+
+    assert response.status_code == 400, response.text
+    assert "时长不足 2 秒" in response.json()["message"]
+
+
+def test_audio_total_duration_over_twelve_seconds_is_rejected(
+    client: TestClient,
+) -> None:
+    """三段各 5 秒：单段都合法，合计 15 秒超过 12 —— 逐段查不出来。"""
+    headers = admin_headers(client)
+    owner = _owner_id(client, headers)
+    assets = [
+        _insert_audio(owner, duration=5.0, name=f"参考音{i}.mp3") for i in range(3)
+    ]
+
+    response = _create_task(client, headers, assets)
+
+    assert response.status_code == 400, response.text
+    assert "总时长不能超过 12 秒" in response.json()["message"]
+
+
+def test_audio_total_duration_within_twelve_seconds_is_accepted(
+    client: TestClient,
+) -> None:
+    """两段各 5 秒（合计 10 秒）该放行 —— 别把合计上限判成单段上限。"""
+    headers = admin_headers(client)
+    owner = _owner_id(client, headers)
+    assets = [
+        _insert_audio(owner, duration=5.0, name=f"参考音{i}.mp3") for i in range(2)
+    ]
+
+    response = _create_task(client, headers, assets)
+
+    assert response.status_code == 201, response.text
+
+
+def test_image_of_seven_megabytes_is_accepted(client: TestClient) -> None:
+    """7MB：按旧的 6MB 上限会被拒，提到 15MB 后必须放行。"""
+    headers = admin_headers(client)
+    asset = _insert_image(_owner_id(client, headers), size_bytes=7 * 1024 * 1024)
+
+    response = _create_task(client, headers, [asset])
+
+    assert response.status_code == 201, response.text
+
+
+def test_image_over_fifteen_megabytes_is_rejected(client: TestClient) -> None:
+    headers = admin_headers(client)
+    asset = _insert_image(_owner_id(client, headers), size_bytes=16 * 1024 * 1024)
+
+    response = _create_task(client, headers, [asset])
+
+    assert response.status_code == 400, response.text
+    assert "超过 15MB" in response.json()["message"]
+
+
+def test_image_total_over_fifty_megabytes_is_rejected(client: TestClient) -> None:
+    """五张各 12MB：每张都在 15MB 以内，加起来 60MB 超过整单 50MB。"""
+    headers = admin_headers(client)
+    owner = _owner_id(client, headers)
+    assets = [
+        _insert_image(owner, size_bytes=12 * 1024 * 1024, name=f"参考图{i}.png")
+        for i in range(5)
+    ]
+
+    response = _create_task(client, headers, assets)
+
+    assert response.status_code == 400, response.text
+    assert "合计不能超过 50MB" in response.json()["message"]

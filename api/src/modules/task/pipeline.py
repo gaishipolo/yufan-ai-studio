@@ -38,8 +38,13 @@ _EXECUTOR_OUTPUT = "outputs/generated.mp4"
 # 驱动对这类产物的约定形状；换执行器时改这一处。
 _RUN_OUTPUT_URL = re.compile(r"/replacement-runs/([a-f0-9]{32})/output$")
 
-# 单份参考素材的字节上限（与生图链同一数值）。base64 会把它撑大 4/3。
-_MAX_REFERENCE_BYTES = 6 * 1024 * 1024
+# 单份参考素材的字节上限（与生图链同一数值之外的**视频链**口径）：base64 会把它撑大 4/3。
+#
+# 取**所有供应商里最宽的一档**（Agnes 视频 15MB）。物化期只做「别把 worker 内存
+# 打爆」这一层兜底，按供应商区分的单份 / 合计体积已经在受理期按
+# `ReferenceLimit.max_bytes` / `max_total_bytes` 判过了；这里写窄了会反过来
+# 把受理期刚放行的素材在物化期杀掉，用户看到的是「提交成功又立刻失败」。
+_MAX_REFERENCE_BYTES = 15 * 1024 * 1024
 
 # 任务表的终态用 completed/failed（前端契约），与框架默认的 succeeded 不同，
 # 因此显式声明终态集合。

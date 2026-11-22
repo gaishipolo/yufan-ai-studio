@@ -401,7 +401,7 @@ payload 里拿掉（那要动契约），改成「物化前按 key 反查资产�
 
 | 层 | 改动 |
 |---|---|
-| 驱动 `drivers/agnes_video.py` | 收 `data:image/*` / `data:audio/*`；声明 `max_references=8`、`reference_kinds=("image","audio")`；图片与音频分两个数组（`images` / `audios`）；按真实字节判边长（256–5760，单边） |
+| 驱动 `drivers/agnes_video.py` | 收 `data:image/*` / `data:audio/*`；声明 `max_references=8`、`reference_kinds=("image","audio")`；图片与音频分两个数组（`images` / `audios`）；按真实字节判边长（256–5760，单边）；声明单份 15MB、图片整单 50MB / 音频整单 64MB、音频 2–12 秒 |
 | 链路 `modules/task/pipeline.py` | `VideoTaskStore.load` 带上存储 key；`build_request` 按驱动声明决定**内联**还是**落盘物化**（LibTV / 百炼那条老路一个字没动） |
 | 受理期 `modules/task/service.py` | 能收哪几类由**模型声明**（`referenceKinds`）筛，不再三类都收；张数与图片边长按供应商声明判（边长用资产库宽高，宽高为 0 时放行） |
 | 提示词 | `{{Mixed N}}` → `<Picture N>` / `<Audio N>`（编号按类型各自从 1 开始） |
@@ -708,9 +708,12 @@ curl -sS --noproxy '*' -H "Authorization: Bearer $TOKEN" \
   （Agnes 视频）。判据在 `modules/task/pipeline.py::build_request`，别在链路层
   写死某个供应商的名字。
 - **参考素材的硬限制由供应商声明**（`ReferenceLimitsCapable.reference_limits`）：
-  每类素材几份、图片单边多少像素。各渠道不一样（Agnes 256–5760，百炼 240–8000），
-  写成全局常量就会把「百炼能用的图」在受理期拒掉。受理期按资产库宽高判一次，
-  提交前按真实字节再判一次（资产库宽高可能是 0）。
+  每类素材几份、图片单边多少像素、单份与**同类合计**的体积、音视频的单段与
+  **合计**时长。各渠道不一样（Agnes 256–5760 / 15MB / 音频 2–12 秒，百炼 240–8000），
+  写成全局常量就会把「百炼能用的图」在受理期拒掉。受理期按资产库宽高、体积与
+  时长判一次，提交前按真实字节再判一次（那三样都可能是 0 / 未探测完）。
+  **合计那一档不能省**：供应商既限单张 15MB 又限整单 50MB，五张满额 75MB；
+  时长同理，「总时长 2–12 秒」是合计口径，三段各 5 秒单看都合法。
 - **批量输入的「几张 + 什么类型」都由模型声明**：`ModelSpec.max_references` /
   `.reference_kinds` → `GET /models` 出参 `maxReferences` / `referenceKinds` → 前端渲染。
   **前端别写死**（曾写死「只选图片、最多 4 张」，把 LibTV/百炼的「原片视频 + 音频」挡在门外）。
@@ -724,6 +727,8 @@ curl -sS --noproxy '*' -H "Authorization: Bearer $TOKEN" \
 - **注释里写了约束 ≠ 有约束**：参考素材 1–15 秒门禁曾只有一句注释，代码只记不校验 ——
   补门禁前先 grep 同类链路（百炼有）。补在受理期（用资产库 `duration_ms`，不下载字节）
   + 物化期（重探真实字节）两处；**单段与同类型总数都要查**（逐段查不出「两段各 9 秒」）。
+  2026-11-22 起 1–15 秒只是**供应商没声明时的兜底**，Agnes 视频按自己声明的 2–12 秒判
+  （含合计），所以「查过时长门禁了」不等于「按这个供应商的规矩查了」。
 
 ### 5.3 资产库 / 生图（v2）
 

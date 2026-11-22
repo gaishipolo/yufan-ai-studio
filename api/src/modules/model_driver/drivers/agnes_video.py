@@ -128,8 +128,20 @@ _MAX_REFERENCES = _MAX_REFERENCE_IMAGES + _MAX_REFERENCE_AUDIOS
 #: 同样被拒 —— 只判长边会把它放行。
 _MIN_IMAGE_SIDE = 256
 _MAX_IMAGE_SIDE = 5760
-#: 单份参考素材的字节上限。base64 会把它撑大 4/3，6MB 的图进请求体约 8MB。
-_MAX_REFERENCE_BYTES = 6 * 1024 * 1024
+#: 参考素材的音频时长范围（官方「参考媒体限制」表：总时长 2-12 秒）。
+#: 判两档：单段也要落在这个区间，且同类型**合计**不得超过 12 秒——
+#: 三段各 5 秒单看都合法，合计 15 秒上游照样拒。
+_MIN_AUDIO_SECONDS = 2.0
+_MAX_AUDIO_SECONDS = 12.0
+#: 单份参考素材的字节上限（官方：图片、音频单份均 < 15MB）。
+#: base64 会把它撑大 4/3，15MB 的图进请求体约 20MB。
+_MAX_REFERENCE_BYTES = 15 * 1024 * 1024
+#: 同类**合计**字节上限（官方：图片整单 < 50MB、音频整单 < 64MB）。
+#: 这一档不能省：五张 15MB 的图每张都合法，合计 75MB 却超过整单上限。
+#: 注意我们走内联 data URI，请求体会是这里的 4/3，上游的 body 限制仍是未知数——
+#: 所以按官方原始字节口径判，不按 base64 后口径放松。
+_MAX_TOTAL_IMAGE_BYTES = 50 * 1024 * 1024
+_MAX_TOTAL_AUDIO_BYTES = 64 * 1024 * 1024
 
 #: Agnes 视频的素材指代写法：图片 `<Picture N>`、音频 `<Audio N>`。
 #:
@@ -220,14 +232,24 @@ class AgnesVideoDriver:
     # 上游只收公网地址或 `data:` URI，我们的存储在内网、拿不出公网地址。
     inline_references = True
     # 参考素材的硬性限制（见 `ReferenceLimitsCapable`）：图片最多 5 张、
-    # 音频最多 3 段，图片单边 256-5760 像素。受理期与提交前各判一次。
+    # 音频最多 3 段，图片单边 256-5760 像素、单份 15MB，音频 2-12 秒。
+    # 受理期与提交前各判一次。
     reference_limits = {
         "image": ReferenceLimit(
             max_count=_MAX_REFERENCE_IMAGES,
             min_side=_MIN_IMAGE_SIDE,
             max_side=_MAX_IMAGE_SIDE,
+            max_bytes=_MAX_REFERENCE_BYTES,
+            max_total_bytes=_MAX_TOTAL_IMAGE_BYTES,
         ),
-        "audio": ReferenceLimit(max_count=_MAX_REFERENCE_AUDIOS),
+        "audio": ReferenceLimit(
+            max_count=_MAX_REFERENCE_AUDIOS,
+            max_bytes=_MAX_REFERENCE_BYTES,
+            max_total_bytes=_MAX_TOTAL_AUDIO_BYTES,
+            min_seconds=_MIN_AUDIO_SECONDS,
+            max_seconds=_MAX_AUDIO_SECONDS,
+            max_total_seconds=_MAX_AUDIO_SECONDS,
+        ),
     }
 
     def __init__(
