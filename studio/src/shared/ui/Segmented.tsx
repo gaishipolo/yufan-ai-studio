@@ -118,7 +118,11 @@ export function Segmented<T extends string = string>({
               className={cn(
                 // `relative` 是为了让文字压在滑块**上面**：绝对定位的兄弟默认
                 // 画在流内内容之上，不加这一句字会被那块滑块盖住。
-                'relative flex-1 rounded-[6px] px-2 py-1 text-xs transition-colors duration-150',
+                //
+                // `whitespace-nowrap` 不是装饰：按钮是 `flex-1`（basis 0），容器
+                // 按内容宽度收缩时，文字一旦能换行，min-content 就塌成一个字宽 ——
+                // 结果是「近 30 天」被拆成两行，滑块的实测位置也跟着错位。
+                'relative flex-1 whitespace-nowrap rounded-[6px] px-2 py-1 text-xs transition-colors duration-150',
                 active ? 'font-semibold text-primary-deep' : 'text-ink-mute hover:text-ink-soft',
                 disabled && 'cursor-not-allowed opacity-45 hover:text-ink-mute',
               )}
