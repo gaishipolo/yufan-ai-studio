@@ -47,17 +47,24 @@
 | 小组 | `state=active` + `visibility=group` + 组行命中我所在组 | — |
 | 团队 | `state=active` + `visibility=team` | 所有启用账号 |
 | 回收站 | `state=trash` + `owner_id=me` | 持 `library:delete:any` 可看全量 |
-| 选择器 `/selection` | 强制 `state=active`，三库并集 | 草稿与回收站**永不出现** |
+| 选择器 `/selection` | 强制 `state=active`，三库并集 **+ 我看得到的封装的成员** | 草稿与回收站**永不出现** |
 
 判定只有一份定义：`access.py` 的 `active_visible_clause`（SQL）、`tab_clause`（按入口）、
-`can_read`（Python 单条）与 `load_visible`（看不见就 404）。四处改一处必漂，所以读代码时以 `access.py` 为准。
+`can_read`（Python 单条）、`load_visible`（写路径，看不见就 404）与
+`load_readable`（只读路径，多认一层「包可见 ⇒ 成员可读」）。
+这些口径改一处必漂，所以读代码时以 `access.py` 为准。
 
 三个容易踩的口径：
 
 1. **共享出去之后，个人库不再重复出现**——「我自己的」这一支只算 `visibility=personal`。
 2. **封装成员在列表里不单列**（`hidden_by_pack_clause`），且必须带「封装对我可见」这一条件，
    否则我把共享到团队的素材装进自己的个人封装，团队成员会以为素材被删了。
-3. **选择器不隐藏封装成员**（`hide_packed_members=False`）——它要挑的就是成员本身。
+3. **选择器不隐藏封装成员**（`exclude_packed_members=False`）——它要挑的就是成员本身。
+4. **共享封装 = 额外给成员开一扇门，不改成员归属**：成员仍是原作者的 `personal`，
+   但包对谁可见，谁就能在模板库挑到、预览、下载、编译生成用它（2026-11-22）。
+   这一支只在只读链路生效（`load_readable`、`readable_rows(via_pack=True)`、
+   `selection(include_pack_members=true)`）；写路径仍走 `load_visible` / `can_read`，
+   所以「能用」不等于「能改名 / 能再共享 / 能撤销」。包进回收站或撤销共享后门即关闭。
 
 文件取件：`state=trash` 一律 404（「删除」必须真的拿不到文件）；草稿本人可预览可下载；
 其余可见即可下载，本地驱动走 `FileResponse`（支持 Range），远端驱动 307 到预签名地址。
@@ -262,12 +269,13 @@ state = active
 
 - 触发：`POST /library/assets/bulk`（限流 20，cost=2），`{ids[], action, payload, expectedVersions{}}`。
 - 动作与权限：`addTag/removeTag/rename → library:update`，`delete/restore → library:delete`，
-  `approveDraft/rejectDraft → library:create`，`requestRevoke → library:share`，`pack → library:create`。
+  `approveDraft/rejectDraft → library:create`，`requestShare/requestRevoke → library:share`。
+  `requestShare` 复用单条共享服务逐条提交：已共享过 / 版本过期 / 不在库内的条目只记明细，不拖累整批；
+  非所有者发起的条目一律 pending（看得见就能申请，但不能替别人直接扩大范围）。
 - 规则：
   - 权限按 action 判一次，不逐条判（同批差异只来自资产状态）；
   - 逐条复用单条服务方法，**每条成功立刻提交**；失败 `rollback()` 只清该条半截写入并记明细；
   - 返回 `{succeeded, failed, results[]}`，前端按条标红；
-  - `pack` 在 `run()` 里分流：整批建**一个**封装，返回一条结果；成员有一个不可用则整批失败；
   - `purge` 刻意不在批量动作里（不可逆，一次点错十条没救）；
   - 打标签前显式 `_require_writable()`（看得见 + 是我的 / `delete:any`），否则拿到 id 就能改别人的标签。
 - 代码：`bulk.BulkService`。
