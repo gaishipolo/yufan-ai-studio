@@ -173,6 +173,32 @@ New-NetFirewallRule -DisplayName "Yufan Studio 8080" -Direction Inbound -Protoco
 4. 打开一张素材、预览图能显示 —— S3 预签名通
 5. 跑一条最小的图任务直到出图 —— worker / 队列 / 供应商链路通
 6. 刷新任意前端路由（如 `/tasks`）不 404 —— SPA 回退生效
+7. 用到 LibTV 替换模型时，再跑一条替换任务直到出片 —— 浏览器、CDP、上游都通（见 §2.6）
+
+#### 2.6 LibTV 登录浏览器（用到替换模型才需要）
+
+后端自己不登录 LibTV，它通过 CDP 连一个**已经登录好的 Chrome**。这台机器上常驻两个，
+端口与 `api\.env` 里 `LIBTV_BROWSER_URLS=http://127.0.0.1:9411,http://127.0.0.1:9412`
+一一对应：9411 是免费队列账号，9412 是积分队列账号（`LIBTV_CREDITS_BROWSER_URL` 指向它）。
+
+**它与后端是两个独立进程**：后端已经在跑时，只补这一个即可（脚本只管浏览器，不碰 8080/5173）：
+
+```powershell
+cd D:\PythonFile\yufan-ai-studio
+powershell -ExecutionPolicy Bypass -File .\start-services.ps1 -BrowsersOnly
+```
+
+- **登录态存在 `--user-data-dir` 指向的目录里，没别的地方**。两个账号必须用**不同**目录
+  （同一个目录等于两个账号其实是同一个账号）。默认落在 `api\var\libtv-chrome-profile`
+  与 `api\var\libtv-chrome-profile-2`；沿用已经登录过的目录就显式传
+  `-Account1Profile` / `-Account2Profile`，别让它新建一个空的。
+- 目录是新的 → 两个窗口首次都要人工扫码登录一次（脚本会提示 `Profile ... is new`）。
+  登录完这个目录就别删、别换，之后重启直接复用。
+- **注销 Windows 会连带结束这两个 Chrome**，之后所有 LibTV 任务报「执行器浏览器未连接
+  （CDP …）」。RDP 断开（不是注销）不受影响。要无人值守就建成计划任务、触发器选
+  **「用户登录时」**——Chrome 需要交互式桌面会话，别用「不管用户是否登录都运行」。
+- 验证：`curl http://127.0.0.1:9411/json/version` 返回 JSON 就说明 CDP 活着；
+  账号本身的状态用 `app libtv-account --account http://127.0.0.1:9412`。
 
 ### 3. 前端产物由谁发
 
@@ -262,6 +288,7 @@ cd ..\api
 
 - **`alembic upgrade head` 是发版最容易漏的一步**——prod 不会替你跑。
 - 只改前端：`npm.cmd run build` 就够了，**后端不用重启**（产物按请求读盘）。
+- **LibTV 那两个 Chrome 不用重启**（§2.6）：它们与后端进程无关，关了就得重新扫码登录。
 - 接口有改动时还要 `app export-openapi`（四份一起提交）。
 - 发版后照 §2.5 走一遍验收，至少第 1、2、5 条。
 
@@ -292,6 +319,7 @@ cd ..\api
 | 打开 8080 是一段 JSON | `WEB_DIST_DIR` 没配，或 `dist` 没构建 | 配 `studio/dist` 并 `npm.cmd run build` |
 | 白屏、控制台 404 某个 `index-*.js` | 浏览器缓存了旧的 `index.html` | 强刷即可；首页已带 `no-cache`，之后不会再出现 |
 | 所有 LibTV 替换任务在 upload 阶段报 `RELEASE_INVALID`，而 `git diff` 是空的 | vendor 被检出成 CRLF | 删 `api\src\modules\model_driver\libtv\runtime\vendor` 再 `git checkout --` 该目录，跑 `pytest tests/test_libtv_vendor_manifest.py -q` |
+| LibTV 任务立刻失败，报「执行器浏览器未连接（CDP http://127.0.0.1:9411…）」 | 那两个 Chrome 没在跑（重启机器 / 注销过 / 窗口被关） | 按 §2.6 起；`curl 127.0.0.1:9411/json/version` 先确认 CDP 活着 |
 | 页面能开、所有接口报 CORS | 页面被挪到了另一个源（别的端口 / 域名 / 主机名） | 把**那个页面地址**加进 `CORS_ORIGINS`——是浏览器地址栏，不是服务器 IP |
 | `npm ci` 卡在下载 | 生产机不通外网 | 在有网机器上 `npm ci`，整包拷 `node_modules`（同 OS / 架构、Node 大版本一致） |
 
