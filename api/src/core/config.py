@@ -254,6 +254,16 @@ class Settings(BaseSettings):
     )
     worker_enabled: bool = True
     worker_concurrency: int = 2
+    # 单个账号最多同时有几条任务「在途」（queued + running）。`0` = 不限。
+    #
+    # 为什么需要它：后台只有 `worker_concurrency` 个槽位（默认 2），而
+    # `task.create` 的限流只拦**频率**（每分钟几次），不拦「一口气点几十条」。
+    # 队列是 FIFO 的，先到先跑 —— 一个人攒 30 条就足以把别人的任务顶到十几
+    # 分钟之后，而且这个过程对他自己也没有好处（他也在队尾）。
+    #
+    # 5 的依据：正常工作时的在途量是个位数（一条视频 5-8 分钟、2 个槽位），
+    # 超过 5 条说明是在攒队列，不是在干活。
+    task_max_in_flight_per_user: int = 5
 
     # ---------- 视频任务巡检 ----------
     # video 的链路比生图长（上传 → 提交 → 轮询 → 下载 → 落盘 → 入库），

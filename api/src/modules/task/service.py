@@ -17,8 +17,9 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.audit import record as audit
+from core.config import get_settings
 from core.context import CurrentUser
-from core.exceptions import BadRequest, Forbidden, InvalidState, UpstreamError
+from core.exceptions import BadRequest, Forbidden, InvalidState, RateLimited, UpstreamError
 from core.library_refs import resolve_reference_images
 from core.library_text import dumps_text_refs, freeze_text_refs
 from core.logging import get_logger
@@ -168,12 +169,35 @@ class TaskService:
         return task.author_id == actor.id or actor.has(PERM_READ_ALL)
 
     # ------------------------------------------------------------------ 命令
+    async def _assert_in_flight_room(self, actor: CurrentUser) -> None:
+        """一个人攒几十条任务会把队列顶满，而他并没有因此更快。
+
+        队列是 FIFO（先到先跑），后台只有 `WORKER_CONCURRENCY` 个槽位、一条
+        视频要几分钟；而 `task.create` 的限流只拦**频率**（每分钟几条），
+        一个人照样能在一分钟内点满 60 条，把别人推到十几分钟之后。
+
+        判据是 queued + running 的条数，与前端判断「还要不要轮询」同一个口径。
+        上限来自 `TASK_MAX_IN_FLIGHT_PER_USER`，`0` = 不限（老行为）。
+        """
+        limit = get_settings().task_max_in_flight_per_user
+        if limit <= 0:
+            return
+        in_flight = await self.repo.count_in_flight(actor.id)
+        if in_flight >= limit:
+            raise RateLimited(
+                f"你已有 {in_flight} 条任务在排队或生成中（上限 {limit} 条）："
+                "等其中几条跑完再提交，否则会挤占别人的排队时间"
+            )
+
     async def create_task(self, actor: CurrentUser, payload: CreateTaskIn) -> VideoTask:
         """创建任务：校验参数 → 落库（queued）→ 交给生成框架。
 
         请求线程不做任何模型调用，避免长耗时阻塞；前端拿到 queued 后靠轮询推进。
         模型与参数在这里就校验，非法请求**当场 400**，而不是异步失败后才暴露。
         """
+        # 先看队列容量：这一步不依赖 payload，放在最前面 —— 被挡住时不该先花
+        # 一轮解析模型/参考素材的代价。
+        await self._assert_in_flight_room(actor)
         spec = resolve_model(self.router, payload.model, capability=Capability.VIDEO)
         duration_sec = resolve_duration(spec, payload.duration_sec)
         aspect_ratio = resolve_aspect_ratio(spec, AspectRatio(payload.aspect_ratio).value)
@@ -273,6 +297,11 @@ class TaskService:
             raise Forbidden("无权重试他人的任务")
         if TaskStatus(task.status) is not TaskStatus.FAILED:
             raise InvalidState("仅失败的任务可以重试")
+
+        # 重试也会把一条记录推回 queued，同样是「往队列里加一条」。
+        # 放在这里而不是更早：先让「不是失败任务」「没权限」这些明确的错误赢，
+        # 否则用户看到的是一句与真实原因无关的「已在途太多」。
+        await self._assert_in_flight_room(actor)
 
         # 带任务号的失败 = **供应商那边可能已经受理并计费**。默认拒绝，
         # 必须显式确认；确认前把旧号搬进记录与历史（只有一个槽位，
