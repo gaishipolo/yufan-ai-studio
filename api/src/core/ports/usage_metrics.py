@@ -312,12 +312,15 @@ def aggregate_rows(
 
         model_key = row.model_id or row.model_name or "unknown"
         model_label = row.model_name or row.model_id or "未知模型"
-        for dimension, item_key, label in (
+        # 显式标注类型：不给的话元组会被推断成 tuple[str, str, str]，
+        # 维度就不再是 Literal，mypy 会判定维度名不合法。
+        dimensions: tuple[tuple[UsageDimension, str, str], ...] = (
             ("model", model_key, model_label),
             ("kind", row.kind or "unknown", row.kind or "未知"),
             ("owner", row.owner_id or "unknown", row.owner_name or row.owner_id or "未知"),
             ("status", bucket, _BUCKET_LABELS.get(bucket, bucket)),
-        ):
+        )
+        for dimension, item_key, label in dimensions:
             item = _slot(dimension, item_key, label)
             item.total += 1
             if bucket == "succeeded":

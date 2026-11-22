@@ -111,7 +111,7 @@ def _range(days: int = 30) -> dict[str, str]:
 @pytest.fixture
 def no_providers():
     """把用量来源清空（测「没接数据源」的中性值），用例结束后复原。"""
-    from core.ports.usage_metrics import reset_usage_metrics, register_usage_metrics
+    from core.ports.usage_metrics import register_usage_metrics, reset_usage_metrics
     from modules.image.usage_provider import ImageUsageProvider
     from modules.task.usage_provider import VideoUsageProvider
 
@@ -190,7 +190,8 @@ def test_failed_records_do_not_count_toward_output(client: TestClient, api: str)
         duration_sec=60,
     )
     summary = (
-        client.get(f"{api}/usage/overview", headers=headers, params=_range()).json()["data"]["summary"]
+        client.get(f"{api}/usage/overview", headers=headers, params=_range())
+        .json()["data"]["summary"]
     )
     assert summary["total"] == 1
     assert summary["quantity"] == 0
@@ -208,7 +209,11 @@ def test_scope_all_is_downgraded_without_permission(client: TestClient, api: str
     moment = datetime.now(UTC) - timedelta(days=1)
 
     _insert_video(
-        author_id=mine["id"], author_name="我", status="completed", created_at=moment, duration_sec=5
+        author_id=mine["id"],
+        author_name="我",
+        status="completed",
+        created_at=moment,
+        duration_sec=5,
     )
     _insert_video(
         author_id=other["id"],
@@ -234,7 +239,11 @@ def test_scope_all_with_permission_sees_everyone(client: TestClient, api: str) -
     moment = datetime.now(UTC) - timedelta(days=1)
 
     _insert_video(
-        author_id=mine["id"], author_name="我", status="completed", created_at=moment, duration_sec=5
+        author_id=mine["id"],
+        author_name="我",
+        status="completed",
+        created_at=moment,
+        duration_sec=5,
     )
     _insert_video(
         author_id=other["id"],
@@ -274,7 +283,11 @@ def test_trend_fills_empty_days(client: TestClient, api: str) -> None:
     user, headers = _make_user(client, ["usage:read"])
     moment = datetime.now(UTC) - timedelta(days=2)
     _insert_video(
-        author_id=user["id"], author_name="我", status="completed", created_at=moment, duration_sec=5
+        author_id=user["id"],
+        author_name="我",
+        status="completed",
+        created_at=moment,
+        duration_sec=5,
     )
 
     data = client.get(f"{api}/usage/overview", headers=headers, params=_range()).json()["data"]
@@ -288,7 +301,11 @@ def test_breakdown_covers_four_dimensions(client: TestClient, api: str) -> None:
     user, headers = _make_user(client, ["usage:read"])
     moment = datetime.now(UTC) - timedelta(days=1)
     _insert_video(
-        author_id=user["id"], author_name="我", status="completed", created_at=moment, duration_sec=5
+        author_id=user["id"],
+        author_name="我",
+        status="completed",
+        created_at=moment,
+        duration_sec=5,
     )
     _insert_image(owner_id=user["id"], status="failed", created_at=moment, count=2)
 
