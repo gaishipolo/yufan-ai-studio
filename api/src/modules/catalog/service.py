@@ -6,14 +6,42 @@
 
 from __future__ import annotations
 
-from infra.ai.base import Capability
+from core.logging import get_logger
+from infra.ai.base import Capability, ReferenceLimitsCapable
 from infra.ai.router import ModelRouter
-from modules.catalog.schema import ModelListOut, ModelOut
+from modules.catalog.schema import ModelListOut, ModelOut, ReferenceLimitOut
+
+logger = get_logger(__name__)
 
 
 class CatalogService:
     def __init__(self, router: ModelRouter) -> None:
         self.router = router
+
+    def _reference_limits(self, model_id: str) -> dict[str, ReferenceLimitOut]:
+        """供应商声明的**按类**上限（图片 5 张、音频 3 段…）。
+
+        只认 `ReferenceLimitsCapable` 这个协议，不用 `getattr` 探测：声明与不声明
+        是两种能力，靠属性名猜会「猜对了但意思是别的」。
+
+        解析失败返回空：目录是只读展示，一个供应商装配异常不该让整页 500；
+        前端在空对象时退回「只守总数」的老行为。
+        """
+        try:
+            provider = self.router.provider_for(model_id)
+        except Exception:  # noqa: BLE001 - 目录接口不该因为装配异常整体失败
+            logger.warning("解析供应商失败，参考上限按未声明处理 model=%s", model_id)
+            return {}
+        if not isinstance(provider, ReferenceLimitsCapable):
+            return {}
+        return {
+            kind: ReferenceLimitOut(
+                max_count=limit.max_count,
+                min_side=limit.min_side,
+                max_side=limit.max_side,
+            )
+            for kind, limit in provider.reference_limits.items()
+        }
 
     def list_models(self, capability: Capability | None = None) -> ModelListOut:
         """给人挑的模型清单：过滤 `internal=True` / `placeholder=True` 的模型。
@@ -34,6 +62,7 @@ class CatalogService:
                 max_references=spec.max_references,
                 replacement=spec.replacement,
                 reference_kinds=list(spec.reference_kinds),
+                reference_limits=self._reference_limits(spec.id),
                 is_default=spec.id == self.router.default_model_or_none(spec.capability),
             )
             for spec in self.router.public_models(capability)

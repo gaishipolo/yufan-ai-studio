@@ -4660,6 +4660,22 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `queueSize` | `number` | 是 |  |
 | `checks` | `RuntimeCheckOut[]` | 否 |  |
 
+### `ReferenceLimitOut`
+
+供应商对**一类**参考素材的硬性限制。
+
+与 `maxReferences` 的区别：那个是**总数**上限，这个是分类的。视频模型
+常见「5 张图 + 3 段音频 = 总数 8」—— 只把总数交给前端，用户加到第 6 张图
+时界面还说「还能再加」，提交才吃 400。前端按这里逐类算余量。
+
+`maxCount = 0` 表示这一类不限（供应商没声明）。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `maxCount` | `number` | 否 |  |
+| `minSide` | `number` | 否 |  |
+| `maxSide` | `number` | 否 |  |
+
 ### `RefreshIn`
 
 | 字段 | 类型 | 必填 | 说明 |
@@ -5399,6 +5415,7 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `maxReferences` | `number` | 否 | 这个模型最多接受几张参考图（图生图 / 多图合成），`0` 表示纯文生图。参考图不是 `paramSchema` 里的参数：它的值是「一批图片」，提交时走 `referenceLibraryIds` 这条独立入参 |
 | `replacement` | `boolean` | 否 | 这个模型能不能跑替换链（按「原片 + 素材包」替换）。由驱动声明，模板目录按它筛；调用方不得从槽位组合推断 |
 | `referenceKinds` | `string[]` | 否 | 这个模型能收哪几类参考素材（`image` / `video` / `audio`），空数组 = 纯文生图。前端据此渲染参考素材的类型筛选与数量上限，不在界面里写死 |
+| `referenceLimits` | `Record<string, ReferenceLimitOut>` | 否 | 按素材类型分开的上限（键是 `image` / `audio` …）。`maxReferences` 仍是总数上限，两者要一起守；空对象 = 供应商没声明 |
 | `isDefault` | `boolean` | 否 |  |
 
 ### `modules__model_driver__schema__ModelListOut`

@@ -84,3 +84,103 @@ describe('ReferenceImages · 投放区', () => {
     expect(onAddAsset).not.toHaveBeenCalled();
   });
 });
+
+describe('ReferenceImages · 多类参考素材', () => {
+  const audioLimit = { image: 5, audio: 3 };
+
+  it('模型声明收音频时，文件选择器也放开音频', () => {
+    /* 这条守的是「控件有没有跟着模型走」：accept 写死图片的话，
+       点「添加」时音频文件在选择器里是灰的 —— 音轨只能靠拖拽进去，
+       而用户根本不知道可以拖。后端收得下、界面选不到，就是功能不存在。 */
+    render(
+      <ReferenceImages
+        items={[]}
+        max={8}
+        kinds={['image', 'audio']}
+        limits={audioLimit}
+        onPick={vi.fn()}
+        onRemove={vi.fn()}
+      />,
+    );
+
+    const input = screen.getByLabelText('上传参考素材');
+    expect(input.getAttribute('accept')).toContain('audio/mpeg');
+    expect(input.getAttribute('accept')).toContain('audio/wav');
+    expect(input.getAttribute('accept')).toContain('image/png');
+  });
+
+  it('按类显示余量：图 2/5 · 音频 1/3', () => {
+    render(
+      <ReferenceImages
+        items={[
+          { id: 'i1', name: 'a.png', url: '/a', kind: 'image' },
+          { id: 'i2', name: 'b.png', url: '/b', kind: 'image' },
+          { id: 'a1', name: 'x.wav', url: '/x', kind: 'audio' },
+        ]}
+        max={8}
+        kinds={['image', 'audio']}
+        limits={audioLimit}
+        onPick={vi.fn()}
+        onRemove={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText(/图 2\/5/)).toBeInTheDocument();
+    expect(screen.getByText(/音频 1\/3/)).toBeInTheDocument();
+    // 角标按类型各自编号：图 1、图 2、音频 1 —— 与提示词里的指代一一对应
+    expect(screen.getByRole('button', { name: /移除图 2/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /移除音频 1/ })).toBeInTheDocument();
+  });
+
+  it('图片名额满了但音频还有：添加按钮不能消失', () => {
+    /* 只守总数的话这里会算成「8 个名额还剩 3 个」照旧显示按钮，
+       但再选一张图必然被后端拒。判据要按类：图满 ≠ 全都满。 */
+    const fiveImages = Array.from({ length: 5 }, (_, index) => ({
+      id: `i${index}`,
+      name: `${index}.png`,
+      url: `/u/${index}`,
+      kind: 'image',
+    }));
+    render(
+      <ReferenceImages
+        items={fiveImages}
+        max={8}
+        kinds={['image', 'audio']}
+        limits={audioLimit}
+        onPick={vi.fn()}
+        onRemove={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: /添加/ })).toBeInTheDocument();
+  });
+
+  it('每一类都满了才收起添加按钮', () => {
+    const full = [
+      ...Array.from({ length: 5 }, (_, index) => ({
+        id: `i${index}`,
+        name: `${index}.png`,
+        url: `/u/${index}`,
+        kind: 'image',
+      })),
+      ...Array.from({ length: 3 }, (_, index) => ({
+        id: `a${index}`,
+        name: `${index}.wav`,
+        url: `/v/${index}`,
+        kind: 'audio',
+      })),
+    ];
+    render(
+      <ReferenceImages
+        items={full}
+        max={8}
+        kinds={['image', 'audio']}
+        limits={audioLimit}
+        onPick={vi.fn()}
+        onRemove={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByRole('button', { name: /添加/ })).toBeNull();
+  });
+});

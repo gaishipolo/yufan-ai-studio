@@ -150,6 +150,27 @@ export function referenceLimitFor(model: ModelSpec | undefined): number {
   return referenceKindsFor(model).length;
 }
 
+/**
+ * **按类型分开**的上限：`{ image: 5, audio: 3 }`。
+ *
+ * 与 `referenceLimitFor` 的分工：那个是总数（上面两个加起来才是 8），这个是
+ * 分类的余量。只守总数的话，用户加到第 6 张图时界面还说「还能再加」——
+ * 提交才吃 400「最多 5 个 image」。
+ *
+ * 返回 `{}` = 供应商没声明（老后端 / 替换模型）：调用方退回「只守总数」。
+ * 不在这里按类型平均分摊，那种猜测会在真实上限是 5 和 3 时算出 4 和 4。
+ */
+export function referenceLimitsFor(model: ModelSpec | undefined): Record<string, number> {
+  const declared = model?.referenceLimits;
+  if (!declared) return {};
+  const limits: Record<string, number> = {};
+  for (const [kind, limit] of Object.entries(declared)) {
+    const count = limit?.maxCount ?? 0;
+    if (count > 0) limits[kind] = count;
+  }
+  return limits;
+}
+
 /* ---------------- 生图模型目录 ---------------- */
 
 /**

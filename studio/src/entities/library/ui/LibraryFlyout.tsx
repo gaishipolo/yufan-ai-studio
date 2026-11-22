@@ -74,6 +74,9 @@ function dragPayloadOf(asset: LibraryAssetOut): LibraryAssetDrag {
     id: asset.id,
     name: asset.name,
     url: asset.coverUrl ?? asset.previewUrl ?? asset.url ?? '',
+    /* 类型必须一起带上：接收方按它算「这一类还剩几个名额」，也据此把素材
+       归到图片 / 音频两个数组。只带 id 的话，音频拖过去会被当成图片。 */
+    kind: asset.kind,
   };
 }
 

@@ -42,6 +42,12 @@ const MOCK_MODELS = [
     isDefault: false,
     maxReferences: 8,
     referenceKinds: ['image', 'audio'],
+    // 与真实后端一致：总数 8 = 5 张图 + 3 段音频，图片另有边长范围。
+    // mock 里不写这条，离线开发就看不到「图 0/5 · 音频 0/3」的按类余量。
+    referenceLimits: {
+      image: { maxCount: 5, minSide: 256, maxSide: 5760 },
+      audio: { maxCount: 3, minSide: 0, maxSide: 0 },
+    },
   },
   // 生图模型与真实后端 /models?capability=image 保持一致：
   // 两个模型的 count 上限不同（1 / 4），正好用来验证表单没有写死张数

@@ -122,6 +122,8 @@ const AGNES_VIDEO = videoModel({
   description: '720P 文生视频，支持参考图与参考音频',
   maxReferences: 8,
   referenceKinds: ['image', 'audio'],
+  // 与真实后端一致：总数 8 = 图 5 + 音频 3
+  referenceLimits: { image: { maxCount: 5 }, audio: { maxCount: 3 } },
 });
 
 /** LibTV 那样声明了计费模式的模型（`drivers/libtv.py` 的真实形状）。 */
@@ -191,13 +193,27 @@ function dropOn(element: HTMLElement, asset: LibraryAssetDrag) {
 }
 
 const prompt = () => screen.getByPlaceholderText(/超市抢购场景/);
-const dropZone = () => screen.getByRole('group', { name: '参考图投放区' });
+// 单类模型叫「参考图投放区」，多类模型叫「参考素材投放区」——两种都认，
+// 免得到处再写一遍「这个用例用的是哪类模型」
+const dropZone = () => screen.getByRole('group', { name: /参考(图|素材)投放区/ });
 const openLibrary = () => fireEvent.click(screen.getByRole('button', { name: '素材库' }));
 
 /** 隐藏的 file input 直接塞文件：`userEvent.upload` 会因 `display:none` 拒绝交互 */
 const pick = (files: File[]) => {
-  fireEvent.change(screen.getByLabelText('上传参考图'), { target: { files } });
+  fireEvent.change(screen.getByLabelText(/上传参考(图|素材)/), { target: { files } });
 };
+
+/**
+ * 图片素材的按钮名：单类模型是「移除参考图 n」，多类模型是「移除图 n」。
+ *
+ * 用正则而不是写死一种：改文案时不该连带改十几处断言，那样每次都是
+ * 「测试跟着实现走」——它就不再是守卫了。
+ */
+const imageItem = (n: number) => new RegExp(`移除(参考)?图 ${n}`);
+const removeImage = (n: number) => screen.getByRole('button', { name: imageItem(n) });
+const findRemoveImage = (n: number) =>
+  screen.findByRole('button', { name: imageItem(n) });
+const queryRemoveImage = (n: number) => screen.queryByRole('button', { name: imageItem(n) });
 const png = (name: string) => new File([new Uint8Array([1, 2, 3])], name, { type: 'image/png' });
 
 beforeEach(() => {
@@ -223,7 +239,7 @@ describe('StudioPage · 参考图（与生图页同一条通道）', () => {
     render(<StudioPage />);
 
     pick([png('a.png'), png('b.png')]);
-    await screen.findByRole('button', { name: '移除参考图 2' });
+    await findRemoveImage(2);
 
     fireEvent.change(prompt(), { target: { value: '角色走进场景' } });
     fireEvent.click(screen.getByRole('button', { name: '生成视频任务' }));
@@ -266,8 +282,8 @@ describe('StudioPage · 参考图（与生图页同一条通道）', () => {
     dropOn(dropZone(), asset);
     dropOn(dropZone(), asset);
 
-    expect(screen.getByRole('button', { name: '移除参考图 1' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: '移除参考图 2' })).toBeNull();
+    expect(removeImage(1)).toBeInTheDocument();
+    expect(queryRemoveImage(2)).toBeNull();
   });
 
   it('上限由模型声明决定：声明 2 张就只给 2 格', async () => {
@@ -278,20 +294,20 @@ describe('StudioPage · 参考图（与生图页同一条通道）', () => {
 
     expect(screen.getByText(/最多 2 张，已选 0/)).toBeInTheDocument();
     pick([png('a.png'), png('b.png')]);
-    await screen.findByRole('button', { name: '移除参考图 2' });
+    await findRemoveImage(2);
 
     // 满员后不再给添加入口，拖动也接不住
     expect(screen.getByText(/最多 2 张，已选 2/)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '添加' })).toBeNull();
     dropOn(dropZone(), { id: 'lib-2', name: '场景参考图', url: '' });
-    expect(screen.queryByRole('button', { name: '移除参考图 3' })).toBeNull();
+    expect(queryRemoveImage(3)).toBeNull();
   });
 
   it('模型没声明参考素材时整块不画 —— 画了也只会让用户填完再吃一个 400', () => {
     // 后端受理期会拒：`模型 X 不支持参考素材，请换用支持参考素材的模型`。
     // 画一个上传框让用户选半天再报错，比不画更糟。
     render(<StudioPage />);
-    expect(screen.queryByLabelText('上传参考图')).toBeNull();
+    expect(screen.queryByLabelText('上传参考素材')).toBeNull();
   });
 
   it('换模型清空已选参考图（新模型未必支持）', async () => {
@@ -300,13 +316,13 @@ describe('StudioPage · 参考图（与生图页同一条通道）', () => {
     render(<StudioPage />);
 
     pick([png('a.png')]);
-    await screen.findByRole('button', { name: '移除参考图 1' });
+    await findRemoveImage(1);
 
     await userEvent.setup().selectOptions(screen.getAllByRole('combobox')[0], 'kling-2.1');
     // 有参考图时先问一声：静默清空等于替用户做决定
     expect(screen.getByRole('dialog', { name: '更换模型' })).toBeInTheDocument();
     await userEvent.setup().click(screen.getByRole('button', { name: '清空并更换' }));
-    expect(screen.queryByRole('button', { name: '移除参考图 1' })).toBeNull();
+    expect(queryRemoveImage(1)).toBeNull();
   });
 
   /* 换模型会丢参考图 —— 丢东西该问一声，而不是静默清空。
@@ -319,13 +335,13 @@ describe('StudioPage · 参考图（与生图页同一条通道）', () => {
       render(<StudioPage />);
 
       pick([png('a.png')]);
-      await screen.findByRole('button', { name: '移除参考图 1' });
+      await findRemoveImage(1);
 
       await userEvent.setup().selectOptions(screen.getAllByRole('combobox')[0], 'kling-2.1');
 
       expect(screen.getByRole('dialog', { name: '更换模型' })).toBeInTheDocument();
       // 确认之前图还在，模型也还没换
-      expect(screen.getByRole('button', { name: '移除参考图 1' })).toBeInTheDocument();
+      expect(removeImage(1)).toBeInTheDocument();
     });
 
     it('取消就什么都不发生：图还在，模型没换', async () => {
@@ -334,14 +350,14 @@ describe('StudioPage · 参考图（与生图页同一条通道）', () => {
       render(<StudioPage />);
 
       pick([png('a.png')]);
-      await screen.findByRole('button', { name: '移除参考图 1' });
+      await findRemoveImage(1);
 
       const user = userEvent.setup();
       await user.selectOptions(screen.getAllByRole('combobox')[0], 'kling-2.1');
       await user.click(screen.getByRole('button', { name: '取消' }));
 
       expect(screen.queryByRole('dialog', { name: '更换模型' })).not.toBeInTheDocument();
-      expect(screen.getByRole('button', { name: '移除参考图 1' })).toBeInTheDocument();
+      expect(removeImage(1)).toBeInTheDocument();
       // 模型还是原来那个
       expect((screen.getAllByRole('combobox')[0] as HTMLSelectElement).value).toBe(
         'seedance-2.5',
@@ -354,14 +370,14 @@ describe('StudioPage · 参考图（与生图页同一条通道）', () => {
       render(<StudioPage />);
 
       pick([png('a.png')]);
-      await screen.findByRole('button', { name: '移除参考图 1' });
+      await findRemoveImage(1);
 
       const user = userEvent.setup();
       await user.selectOptions(screen.getAllByRole('combobox')[0], 'kling-2.1');
       await user.click(screen.getByRole('button', { name: '清空并更换' }));
 
       expect(screen.queryByRole('dialog', { name: '更换模型' })).not.toBeInTheDocument();
-      expect(screen.queryByRole('button', { name: '移除参考图 1' })).toBeNull();
+      expect(queryRemoveImage(1)).toBeNull();
       expect((screen.getAllByRole('combobox')[0] as HTMLSelectElement).value).toBe('kling-2.1');
     });
 
@@ -385,22 +401,51 @@ describe('StudioPage · 参考图（与生图页同一条通道）', () => {
     render(<StudioPage />);
 
     pick([png('a.png')]);
-    await screen.findByRole('button', { name: '移除参考图 1' });
+    await findRemoveImage(1);
 
     fireEvent.change(prompt(), { target: { value: '角色走进场景' } });
     fireEvent.click(screen.getByRole('button', { name: '生成视频任务' }));
 
     await waitFor(() => {
-      expect(screen.queryByRole('button', { name: '移除参考图 1' })).toBeNull();
+      expect(queryRemoveImage(1)).toBeNull();
     });
     expect(navigateMock).toHaveBeenCalledWith('/tasks');
+  });
+
+  it('图片名额用完就当场拒第 6 张：不等提交才吃 400', async () => {
+    /* 两个上限要一起守：总数 8 里只有 5 个是图片名额。只守总数的话这里会
+       把第 6 张传上去（白花一次存储），到受理期才被后端拒。 */
+    modelsMock.mockReturnValue([AGNES_VIDEO]);
+    render(<StudioPage />);
+
+    for (let index = 0; index < 5; index += 1) {
+      uploadMock.mockResolvedValueOnce({
+        id: `a-${index}`,
+        name: `${index}.png`,
+        url: `/u/${index}`,
+      });
+      pick([png(`${index}.png`)]);
+      await findRemoveImage(index + 1);
+    }
+    uploadMock.mockClear();
+    toastMock.mockClear();
+
+    pick([png('6.png')]);
+
+    await waitFor(() =>
+      expect(toastMock).toHaveBeenCalledWith(expect.stringContaining('最多 5 张图'), 'error'),
+    );
+    // 连上传都不该发生：传上去再拒 = 白存一份字节
+    expect(uploadMock).not.toHaveBeenCalled();
   });
 
   it('模型声明了参考素材上限，参考区按声明渲染', () => {
     modelsMock.mockReturnValue([AGNES_VIDEO]);
     render(<StudioPage />);
 
-    expect(screen.getByText(/最多 8 张，已选 0/)).toBeInTheDocument();
+    // 上限要按类分开：只说「最多 8 张」的话，用户加到第 6 张图时界面还说「还能再加」
+    expect(screen.getByText(/图 0\/5/)).toBeInTheDocument();
+    expect(screen.getByText(/音频 0\/3/)).toBeInTheDocument();
   });
 
   it('模型收音频时，音轨按 audio 入库', async () => {
@@ -410,7 +455,8 @@ describe('StudioPage · 参考图（与生图页同一条通道）', () => {
 
     const wav = new File([new Uint8Array([1, 2, 3])], 'a.wav', { type: 'audio/wav' });
     pick([wav]);
-    await screen.findByRole('button', { name: '移除参考图 1' });
+    // 音轨的编号按类型自己数（`音频 1`），与提示词里的 `<Audio 1>` 对得上
+    await screen.findByRole('button', { name: /移除音频 1/ });
 
     // 按 image 入库会被后端按图片校验拒掉（探测出来的宽高也对不上）
     expect(uploadMock.mock.calls[0][0]).toMatchObject({ kind: 'audio' });
@@ -435,7 +481,7 @@ describe('StudioPage · 参考图（与生图页同一条通道）', () => {
     render(<StudioPage />);
 
     pick([png('a.png')]);
-    const thumb = await screen.findByRole('button', { name: '预览参考图 1：a.png' });
+    const thumb = await screen.findByRole('button', { name: /预览(参考)?图 1：a\.png/ });
     fireEvent.click(thumb);
 
     const dialog = await screen.findByRole('dialog');

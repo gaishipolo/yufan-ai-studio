@@ -61,6 +61,19 @@ export interface ModelSpec {
    * 替换模型（要「原片视频 + 参考图 + 音频」）的用户挡在门外。
    */
   referenceKinds?: string[];
+  /**
+   * **按素材类型分开**的上限，键是 `image` / `video` / `audio`。
+   *
+   * 与 `maxReferences` 的分工：那个是总数（「5 张图 + 3 段音频 = 8」），
+   * 这个是分类的（图 5、音频 3）。只守总数的话，用户加到第 6 张图时界面
+   * 还说「还能再加」，提交才吃 400。两个上限都要守。
+   *
+   * 空或缺省 = 供应商没声明这类限制，退回「只守总数」。
+   */
+  referenceLimits?: Record<
+    string,
+    { maxCount?: number; minSide?: number; maxSide?: number }
+  >;
   isDefault: boolean;
 }
 

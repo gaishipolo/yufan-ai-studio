@@ -1160,6 +1160,19 @@ export interface ReadyOut {
   checks?: RuntimeCheckOut[];
 }
 
+/** 供应商对**一类**参考素材的硬性限制。
+
+与 `maxReferences` 的区别：那个是**总数**上限，这个是分类的。视频模型
+常见「5 张图 + 3 段音频 = 总数 8」—— 只把总数交给前端，用户加到第 6 张图
+时界面还说「还能再加」，提交才吃 400。前端按这里逐类算余量。
+
+`maxCount = 0` 表示这一类不限（供应商没声明）。 */
+export interface ReferenceLimitOut {
+  maxCount?: number;
+  minSide?: number;
+  maxSide?: number;
+}
+
 /** RefreshIn */
 export interface RefreshIn {
   /** 登录时拿到的刷新令牌 */
@@ -1878,6 +1891,8 @@ export interface modules__catalog__schema__ModelOut {
   replacement?: boolean;
   /** 这个模型能收哪几类参考素材（`image` / `video` / `audio`），空数组 = 纯文生图。前端据此渲染参考素材的类型筛选与数量上限，不在界面里写死 */
   referenceKinds?: string[];
+  /** 按素材类型分开的上限（键是 `image` / `audio` …）。`maxReferences` 仍是总数上限，两者要一起守；空对象 = 供应商没声明 */
+  referenceLimits?: Record<string, ReferenceLimitOut>;
   isDefault?: boolean;
 }
 

@@ -13117,6 +13117,28 @@
         "title": "ReadyOut",
         "description": "就绪状态。`checks` 说明每一项依赖的结论，status ∈ ok / degraded / down。"
       },
+      "ReferenceLimitOut": {
+        "properties": {
+          "maxCount": {
+            "type": "integer",
+            "title": "Maxcount",
+            "default": 0
+          },
+          "minSide": {
+            "type": "integer",
+            "title": "Minside",
+            "default": 0
+          },
+          "maxSide": {
+            "type": "integer",
+            "title": "Maxside",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "title": "ReferenceLimitOut",
+        "description": "供应商对**一类**参考素材的硬性限制。\n\n与 `maxReferences` 的区别：那个是**总数**上限，这个是分类的。视频模型\n常见「5 张图 + 3 段音频 = 总数 8」—— 只把总数交给前端，用户加到第 6 张图\n时界面还说「还能再加」，提交才吃 400。前端按这里逐类算余量。\n\n`maxCount = 0` 表示这一类不限（供应商没声明）。"
+      },
       "RefreshIn": {
         "properties": {
           "refreshToken": {
@@ -15884,6 +15906,14 @@
             "type": "array",
             "title": "Referencekinds",
             "description": "这个模型能收哪几类参考素材（`image` / `video` / `audio`），空数组 = 纯文生图。前端据此渲染参考素材的类型筛选与数量上限，不在界面里写死"
+          },
+          "referenceLimits": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ReferenceLimitOut"
+            },
+            "type": "object",
+            "title": "Referencelimits",
+            "description": "按素材类型分开的上限（键是 `image` / `audio` …）。`maxReferences` 仍是总数上限，两者要一起守；空对象 = 供应商没声明"
           },
           "isDefault": {
             "type": "boolean",
