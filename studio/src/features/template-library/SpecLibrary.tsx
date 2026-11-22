@@ -44,6 +44,7 @@ import { modelChoiceOptions, resolveModelChoice } from './modelChoice';
 import { buildGenerateConfirm } from './generateConfirm';
 import {
   DEFAULT_RANDOMNESS,
+  RANDOMNESS_DESCRIPTION,
   RANDOMNESS_LABEL,
   displaySlotValues,
   hasRandomPrompt,
@@ -850,28 +851,41 @@ export function SpecLibrary() {
                   再看下面要填哪几格。
                   **无条件出现**（2026-11-18 用户拍板：「全是必填也显示」）——
                   三档是这一栏的前提，全是必填的模板也该让人看见这个选择。 */}
-              <div className="flex items-center gap-2">
-                {/* 没配随机档提示词的模板：这一档**显示但点不动** —— 直接不渲染
-                    等于这个能力不存在，用户不会想到去问；显示了才需要对一句原因。 */}
-                <Segmented
-                  aria-label="随机性"
-                  value={effectiveRandomness}
-                  onChange={changeRandomness}
-                  options={[
-                    {value: 'random', label: RANDOMNESS_LABEL.random},
-                    {value: 'balanced', label: RANDOMNESS_LABEL.balanced},
-                    {value: 'custom', label: RANDOMNESS_LABEL.custom},
-                  ]}
-                  hints={{
-                    random: randomAvailable
-                      ? '整段换成作者写的随机档提示词，场景描述不固定'
-                      : '该模板未配置随机档提示词',
-                    balanced: '可选的那张不传素材，用固定文案',
-                    custom: '每张素材都由你亲自挑',
-                  }}
-                  disabledValues={randomAvailable ? [] : ['random']}
-                  className="flex-1"
-                />
+              {/* 控件与下面那行说明是**一个整体**（外面这层 div 就是为它包的）：
+                  外层容器的 `gap-3.5` 是给「区块之间」用的，说明跟控件之间只该
+                  差 6px，否则那行字看起来像另一个区块的标题。 */}
+              <div>
+                <div className="flex items-center gap-2">
+                  {/* 没配随机档提示词的模板：这一档**显示但点不动** —— 直接不渲染
+                      等于这个能力不存在，用户不会想到去问；显示了才需要对一句原因。 */}
+                  <Segmented
+                    aria-label="随机性"
+                    value={effectiveRandomness}
+                    onChange={changeRandomness}
+                    options={[
+                      {value: 'random', label: RANDOMNESS_LABEL.random},
+                      {value: 'balanced', label: RANDOMNESS_LABEL.balanced},
+                      {value: 'custom', label: RANDOMNESS_LABEL.custom},
+                    ]}
+                    hints={{
+                      random: randomAvailable
+                        ? '整段换成作者写的随机档提示词，场景描述不固定'
+                        : '该模板未配置随机档提示词',
+                      balanced: '可选的那张不传素材，用固定文案',
+                      custom: '每张素材都由你亲自挑',
+                    }}
+                    disabledValues={randomAvailable ? [] : ['random']}
+                    className="flex-1"
+                  />
+                </div>
+                {/* 这一行是**唯一**允许挂在控件下面的说明，两件事值得写出来：
+                    ① 三档的差别在**生成结果**上（人物变不变、台词变不变），
+                       哪几格能填是布局在说，「结果长什么样」布局说不出来；
+                    ② 它随档位切换而变，读的人不用逐个试。
+                    `aria-live`：切档时读屏要念出新的一句话，否则只有视觉有效。 */}
+                <p className="mt-1.5 text-meta text-ink-soft" aria-live="polite">
+                  {RANDOMNESS_DESCRIPTION[effectiveRandomness]}
+                </p>
               </div>
               {!randomAvailable && (
                 <p className="mt-1 text-micro text-ink-mute">

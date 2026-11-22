@@ -272,6 +272,31 @@ describe('模板库 · 随机性三档', () => {
     await switchTo(user, '自定义');
     expect(screen.getByTitle('参考图一.png').querySelector('.lucide-check')).not.toBeNull();
   });
+
+  /**
+   * 这三句话是**用户给的原文**（2026-11-22），所以逐字钉住：它们讲的是
+   * 「生成出来长什么样」，跟界面能不能点、哪几格能填是两回事，改一个字都
+   * 可能让「随机会不会换台词」这件事被说反。
+   */
+  it('控件下面跟着档位换一句话，说明这一档会生成什么', async () => {
+    const user = userEvent.setup();
+    renderLibrary();
+    await waitFor(() => expect(screen.getByText('商品图')).toBeInTheDocument());
+
+    // 默认均衡
+    expect(screen.getByText('每次生成和演示案例相似的内容')).toBeInTheDocument();
+
+    await switchTo(user, '自定义');
+    expect(
+      screen.getByText('通过参考图和提示词精准控制人物、服装、场景等元素'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('每次生成和演示案例相似的内容')).not.toBeInTheDocument();
+
+    await switchTo(user, '随机');
+    expect(
+      screen.getByText('随机的人物、服装、场景等，脚本核心人物动作、台词固定不变'),
+    ).toBeInTheDocument();
+  });
 });
 
 describe('模板库 · 全是必填槽位时', () => {
