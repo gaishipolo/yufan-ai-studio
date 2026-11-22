@@ -120,13 +120,17 @@ export function useLibrarySelectionInfinite(params: {
   kind?: string;
   tagIds?: string[];
   pageSize?: number;
+  /** 「显示全部」之前不要发这些请求：每个槽位一挂载就翻页会把列表页打爆 */
+  enabled?: boolean;
 }) {
+  const { enabled = true, ...rest } = params;
   return useInfiniteQuery({
     // 与 useLibrarySelection 共用 `selection` 前缀，但键里多一个 marks，避免命中缓存里
     // 那份「单页结构」的数据（两者形状不同，共用会让某一方读到 undefined）
-    queryKey: libraryKeys.selection({ ...params, infinite: true }),
+    queryKey: libraryKeys.selection({ ...rest, infinite: true }),
     queryFn: ({ pageParam }) =>
-      libraryApi.selection({ ...params, page: pageParam }),
+      libraryApi.selection({ ...rest, page: pageParam }),
+    enabled,
     initialPageParam: 1,
     getNextPageParam: (last) => {
       const loaded = (last.page ?? 1) * (last.pageSize ?? 24);

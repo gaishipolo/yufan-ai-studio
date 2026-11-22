@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Check } from 'lucide-react';
 import {
   useLibrarySelection,
+  useLibrarySelectionInfinite,
   useLibraryTags,
 } from '@/entities/library/api/library.queries';
 import { scopeFilterIds } from '@/entities/library/model/tagTree';
@@ -15,15 +16,14 @@ import { TagFilter } from '@/entities/library/ui/TagFilter';
 import { pickWithin } from './slotPick';
 import { SlotTextField } from './SlotTextField';
 
-/* 首屏取多少张，以及「显示全部」最多到多少。
+/* 首屏取 24 张，「显示全部」按**服务端单页上限**翻页取全。
  *
- * 首屏不一次拉满：一个槽位的候选可能有几十张，拉满会让右栏一挂
- * 就是几十个缩略图请求。**但也不能只有首屏** —— 之前只取 24 张、
- * 没有下一页，47 张候选里第 25 张以后根本点不到（标题还写着「共 47」），
- * 用户只会以为那张图不在库里。上限 200 与服务端 `pageSize` 的 `le` 同一个数。
+ * 之前这里写 `PAGE_SIZE_MAX = 200`，注释还声称与服务端 `le` 相同 —— 实际服务端
+ * 一直是 100。127 张候选点「显示全部」会发 `pageSize=127` 直接 400，界面上
+ * 所有素材凭空消失（2026-11-22）。翻页取全既能显示超过 100 张，也不会再撞上限。
  */
 const PAGE_SIZE = 24;
-const PAGE_SIZE_MAX = 200;
+const ALL_PAGE_SIZE = 100;
 
 export function SlotMediaPicker({
   slot,
@@ -76,13 +76,13 @@ export function SlotMediaPicker({
   });
   /* 用户在这个槽位里又挑的标签（可空）：同维度是或、跨维度是且。 */
   const [picked, setPicked] = useState<string[]>([]);
-  /* 一次取多少张。换槽位 / 换候选集时回到首屏 —— 上一格的「显示全部」
-     不该让下一格一上来就拉满。 */
-  const [limit, setLimit] = useState(PAGE_SIZE);
+  /* 是否翻完全部。换槽位 / 换候选集时回到首屏 —— 上一格点过「显示全部」，
+     不该让下一格一上来就发一串翻页请求。 */
+  const [showAll, setShowAll] = useState(false);
   /* 换槽位 = 换候选集，之前挑的标签可能已经在范围外：清掉重来。 */
   useEffect(() => {
     setPicked([]);
-    setLimit(PAGE_SIZE);
+    setShowAll(false);
   }, [scopeKey, slot.key]);
 
   /*
@@ -97,14 +97,30 @@ export function SlotMediaPicker({
     [tags.data, picked, scope],
   );
 
-  const list = useLibrarySelection({
+  const selectionParams = {
     kind,
     tagIds: filterIds.length ? filterIds : undefined,
-    pageSize: limit,
+  };
+  const list = useLibrarySelection({ ...selectionParams, pageSize: PAGE_SIZE });
+  /* 「显示全部」走翻页：每页最多 100，和后端 PageDep 的 le 一致。
+     不在首屏挂 enabled，避免每个槽位挂载就多打一串请求。 */
+  const all = useLibrarySelectionInfinite({
+    ...selectionParams,
+    pageSize: ALL_PAGE_SIZE,
+    enabled: showAll,
   });
-  const items = list.data?.items ?? [];
+  const {hasNextPage, isFetchingNextPage, fetchNextPage} = all;
+  useEffect(() => {
+    if (showAll && hasNextPage && !isFetchingNextPage) {
+      void fetchNextPage();
+    }
+  }, [showAll, hasNextPage, isFetchingNextPage, fetchNextPage]);
+
+  const items = showAll
+    ? (all.data?.pages.flatMap((page) => page.items ?? []) ?? [])
+    : (list.data?.items ?? []);
   /* 这一档标签下还有多少张没列出来（标题里的「共 N」是总数）。 */
-  const hiddenCount = Math.max(0, (list.data?.total ?? 0) - items.length);
+  const hiddenCount = showAll ? 0 : Math.max(0, (list.data?.total ?? 0) - items.length);
 
 
   /* 已选但不在当前这档标签下的素材（换标签之后才会出现），见下面的渲染注释。 */
@@ -307,16 +323,14 @@ export function SlotMediaPicker({
       {hiddenCount > 0 && (
         <button
           type="button"
-          onClick={() => setLimit(Math.min(PAGE_SIZE_MAX, (list.data?.total ?? 0)))}
+          onClick={() => setShowAll(true)}
           className="mt-1.5 w-full rounded-md py-1 text-micro text-primary transition-colors hover:bg-primary-soft"
         >
           还有 {hiddenCount} 张 · 显示全部
         </button>
       )}
-      {hiddenCount > 0 && limit >= PAGE_SIZE_MAX && (
-        <p className="mt-1 text-center text-micro text-ink-mute">
-          一次最多列 {PAGE_SIZE_MAX} 张，按上面的标签收窄一下更快找到
-        </p>
+      {showAll && isFetchingNextPage && (
+        <p className="mt-1 text-center text-micro text-ink-mute">正在载入更多…</p>
       )}
 
       {/* 悬浮大图：点一下仍然是选中（浮层不接管点击）。
