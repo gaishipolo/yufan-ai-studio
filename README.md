@@ -74,6 +74,7 @@ APP_ENV=prod
 DEBUG=false
 JWT_SECRET=<openssl rand -hex 32 生成>     # 不用示例值
 CORS_ORIGINS=https://studio.example.com   # 实际域名，不带尾斜杠
+WEB_DIST_DIR=studio/dist                 # 后端同时发页面；留空 = 只发接口（交给 nginx）
 
 DB_URL=postgresql+asyncpg://user:pass@db-host:5432/yufan_studio
 TRUSTED_PROXIES=127.0.0.1                  # 反代后面必配，否则登录限流键退化成代理地址
@@ -102,7 +103,7 @@ cd api
 alembic upgrade head                              # prod 不会自动跑，必须手动
 app create-admin --username admin --password '<强口令>'
 app doctor --strict                               # 部署自检，含 schema 是否停在 head
-app serve --host 127.0.0.1 --port 8080            # 同机反代用 127.0.0.1
+app serve --host 127.0.0.1 --port 8080            # 同机反代用 127.0.0.1；要直接用 IP 访问就填 0.0.0.0
 ```
 
 `app serve` 没有 `--workers` 参数；要多副本就起多个进程，并先看下面的多实例约束。
@@ -117,7 +118,26 @@ npm run build        # 产物在 studio/dist，纯静态
 ```
 
 `studio/.env.production` 里 `VITE_API_BASE_URL=/api/v1` 是**相对路径**，不要改成后端的绝对地址。
-让反向代理和页面同域，浏览器便无需处理跨域，`VITE_USE_MOCK` 保持 `false`。
+页面只要和接口同域，浏览器便无需处理跨域，`VITE_USE_MOCK` 保持 `false`。
+
+产物有两种发法，**内网/单机部署推荐第一种**：
+
+**A. 后端一起发（一个端口，不用 nginx）**
+
+`.env` 里加一行，然后照常 `app serve`，直接开 `http://<host>:8080`：
+
+```
+WEB_DIST_DIR=studio/dist          # 相对路径按仓库根解析，仓库放哪个盘都不用改
+```
+
+页面、`/assets/*`、`/api/v1/*` 全在 8080 上，同源所以不会再出现跨域问题；
+前端路由（如 `/tasks/T001`）刷新会回退到 `index.html`，接口路径写错仍是 404 JSON。
+留空则退回「只发接口」的老行为。
+
+只改前端时重新 `npm run build` 即可，**后端不用重启**（产物按请求读盘：
+首页带 `no-cache` 每次回源，带 hash 的资源靠文件名区分版本）。
+
+**B. nginx 发静态、反代 `/api`**
 
 nginx 同机反代示例：
 
@@ -141,6 +161,10 @@ server {
 
 `proxy_set_header X-Forwarded-For` 与 `TRUSTED_PROXIES` 要配套：前者传真实客户端 IP，
 后者告诉应用该信任哪一段，两者缺一就会把全站请求算进同一个限流桶。
+
+两种发法都别在服务器上跑 `npm run dev`：那是开发服务器（带热更新、按需编译、
+单进程），拿它当生产服务器会慢，而且 `CORS_ORIGINS` 得为它额外开口子。
+
 
 ### 4. 从旧实例迁移数据（可选）
 

@@ -211,6 +211,13 @@ class Settings(BaseSettings):
     storage_local_root: str = (_VAR_DIR / "storage").as_posix()
     storage_public_base: str = "/static"
 
+    # 前端构建产物目录（`studio/dist`）。留空 = 后端只发接口，页面由 vite（开发）
+    # 或 nginx（生产）发。填了就让后端把页面一起发了：页面与接口同源，生产只开
+    # 一个端口，也就不再需要 CORS。
+    # 相对路径先按仓库根、再按启动目录解析（`app serve` 的 cwd 是 `api/`）。
+    # 目录里没有 index.html 时按「没配」处理，见 `app._web_dist`。
+    web_dist_dir: str = ""
+
     # memory = 进程内（重启即丢，开发用）；db = 落 queued_jobs 表（重启不丢，租约接管
     # 崩溃任务）。将来接 redis 只需新增 infra/queue/redis.py 并改这一行。
     queue_driver: str = "memory"
