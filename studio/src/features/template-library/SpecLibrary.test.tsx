@@ -547,3 +547,15 @@ describe('模板库：可选槽位改成提示词', () => {
     expect(screen.queryByRole('radiogroup', {name: '人物参考 的填法'})).toBeNull();
   });
 });
+
+describe('模板库：右栏', () => {
+  /**
+   * 2026-11-22 用户要求去掉「改模板」：这一栏只做「填」和「生成」，
+   * 跳去规格页是另一件事，改模板走左侧导航。
+   */
+  it('头部不出现「改模板」入口', async () => {
+    renderLibrary();
+    await waitFor(() => expect(screen.getByText('商品图')).toBeInTheDocument());
+    expect(screen.queryByRole('link', {name: '改模板'})).toBeNull();
+  });
+});

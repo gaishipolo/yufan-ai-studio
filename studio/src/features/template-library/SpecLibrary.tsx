@@ -821,24 +821,19 @@ export function SpecLibrary() {
         {spec && version ? (
           <>
             <header className="shrink-0 border-b border-line-soft bg-gradient-to-b from-panel-soft via-panel-soft/60 to-panel px-4 pb-3.5 pt-4">
-              <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <div className="truncate text-lead font-semibold leading-tight tracking-[.1px] text-ink">
-                    {spec.name}
-                  </div>
-                  <div className="mt-1.5 flex min-w-0 items-center gap-1.5 text-meta text-ink-mute">
-                    <span className="shrink-0 rounded-full bg-primary-soft px-1.5 py-[1px] text-micro font-medium text-primary-deep ring-1 ring-inset ring-primary-line/60">
-                      v{version.version}
-                    </span>
-                    <span className="truncate text-ink-soft">{model?.label ?? modelId}</span>
-                  </div>
+              {/* 这里**不放「改模板」入口**（2026-11-22 用户要求去掉）：这一栏是
+                  「填」的地方，跳到规格页是另一件事；改模板走左侧导航。
+                  别因为「顺手」再加回来。 */}
+              <div className="min-w-0">
+                <div className="truncate text-lead font-semibold leading-tight tracking-[.1px] text-ink">
+                  {spec.name}
                 </div>
-                <Link
-                  to="/templates/specs"
-                  className="shrink-0 rounded-md border border-line px-1.5 py-0.5 text-meta text-ink-soft transition-colors hover:border-primary-line hover:text-primary"
-                >
-                  改模板
-                </Link>
+                <div className="mt-1.5 flex min-w-0 items-center gap-1.5 text-meta text-ink-mute">
+                  <span className="shrink-0 rounded-full bg-primary-soft px-1.5 py-[1px] text-micro font-medium text-primary-deep ring-1 ring-inset ring-primary-line/60">
+                    v{version.version}
+                  </span>
+                  <span className="truncate text-ink-soft">{model?.label ?? modelId}</span>
+                </div>
               </div>
             </header>
 
