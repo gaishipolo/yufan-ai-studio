@@ -18,6 +18,8 @@
 2. **团队 ⊇ 小组**：`visibility=team` 时 `library_asset_groups` 里不该有行。
    共享到团队会先清空小组行（见 `sharing.apply_share`），否则「撤销某个组」
    会在团队共享上留下说不清的状态。
+3. **共享是额外开一扇门**：封装对谁可见，谁就能通过它读成员；成员自己的
+   `visibility` 不变，写路径也不认这层继承（`load_readable` / `via_pack` 只给只读链路）。
 """
 
 from __future__ import annotations
@@ -34,6 +36,7 @@ from modules.library.models import (
     LibraryAsset,
     LibraryAssetGroup,
     LibraryGroupLeader,
+    LibraryPackItem,
 )
 from modules.library.schema import LibraryTab
 
@@ -47,9 +50,11 @@ __all__ = [
     "is_group_leader",
     "leader_group_ids",
     "load_asset",
+    "load_readable",
     "load_visible",
     "owner_clause",
     "owner_names",
+    "pack_inherited_member_ids",
     "readable_rows",
     "tab_clause",
 ]
@@ -206,8 +211,82 @@ def can_read(
     return False
 
 
+async def pack_member_ids(
+    session: AsyncSession, asset_ids: Sequence[str]
+) -> Mapping[str, list[str]]:
+    """这批资产分别被哪些**还在库里的**封装收录。
+
+    只算 `state=active` 且没进回收站的包：包被撤掉之后，它给成员开的那扇门
+    必须同时关上，否则撤销共享只撤了包本身，成员还在被别人读。
+    """
+    wanted = [asset_id for asset_id in dict.fromkeys(asset_ids) if asset_id]
+    if not wanted:
+        return {}
+    rows = await session.execute(
+        select(LibraryPackItem.asset_id, LibraryPackItem.pack_id)
+        .join(LibraryAsset, LibraryAsset.id == LibraryPackItem.pack_id)
+        .where(
+            LibraryPackItem.asset_id.in_(wanted),
+            LibraryAsset.kind == "pack",
+            LibraryAsset.state == "active",
+            LibraryAsset.deleted_at.is_(None),
+        )
+    )
+    result: dict[str, list[str]] = {}
+    for asset_id, pack_id in rows.all():
+        result.setdefault(asset_id, []).append(pack_id)
+    return result
+
+
+async def pack_inherited_member_ids(
+    session: AsyncSession, actor: CurrentUser
+) -> set[str]:
+    """我因「看得到某个封装」而能读的成员 id。
+
+    共享是额外开一扇门，不改成员的 `visibility`（也不把成员塞进资产库列表）：
+    这一支只在**选择器 / 取件**这条读取链路上生效。写路径继续走 `can_read`，
+    所以「能用来填模板」不等于「能改名、能撤销共享」。
+    """
+    pack_ids = list(
+        await session.scalars(
+            select(LibraryAsset.id).where(
+                LibraryAsset.kind == "pack",
+                LibraryAsset.state == "active",
+                LibraryAsset.deleted_at.is_(None),
+            )
+        )
+    )
+    if not pack_ids:
+        return set()
+    visible_packs = await readable_rows(session, pack_ids, actor)
+    if not visible_packs:
+        return set()
+    member_ids = list(
+        await session.scalars(
+            select(LibraryPackItem.asset_id).where(
+                LibraryPackItem.pack_id.in_(list(visible_packs))
+            )
+        )
+    )
+    if not member_ids:
+        return set()
+    return set(
+        await session.scalars(
+            select(LibraryAsset.id).where(
+                LibraryAsset.id.in_(member_ids),
+                LibraryAsset.state == "active",
+                LibraryAsset.deleted_at.is_(None),
+            )
+        )
+    )
+
+
 async def readable_rows(
-    session: AsyncSession, asset_ids: Sequence[str], actor: CurrentUser
+    session: AsyncSession,
+    asset_ids: Sequence[str],
+    actor: CurrentUser,
+    *,
+    via_pack: bool = False,
 ) -> dict[str, LibraryAsset]:
     """这批 id 里，`actor` **现在**还能读的行。
 
@@ -218,6 +297,10 @@ async def readable_rows(
     判据必须与 `DownloadService._collect` 同口径，所以放在这里共用：
     `can_read` 一家说了算。各自写一份必然漂移，
     而漂移的方向恰好是「多给权限」，不会有人报错。
+
+    `via_pack=True` 额外认「我看得到的封装里的成员」（模板库填槽位用）：
+    共享包是额外开一扇门，不把成员改成 team/group。只对**只读**链路开这个口子，
+    写路径继续只认 `can_read` ——「能用」不等于「能改」。
     """
     wanted = [asset_id for asset_id in dict.fromkeys(asset_ids) if asset_id]
     if not wanted:
@@ -232,11 +315,27 @@ async def readable_rows(
         return {}
     my_groups = await all_groups(session, actor)
     group_map = await asset_group_ids(session, list(rows))
-    return {
-        asset_id: row
+    allowed = {
+        asset_id
         for asset_id, row in rows.items()
         if can_read(row, actor, my_groups, group_map.get(asset_id, []))
     }
+    if via_pack and len(allowed) < len(rows):
+        pack_map = await pack_member_ids(
+            session, [asset_id for asset_id in rows if asset_id not in allowed]
+        )
+        pack_ids = list(
+            dict.fromkeys(pack_id for ids in pack_map.values() for pack_id in ids)
+        )
+        if pack_ids:
+            # 递归只走基础口径：包自己的可见性不能再借它的包（封装不套封装）
+            visible_packs = await readable_rows(session, pack_ids, actor)
+            allowed.update(
+                asset_id
+                for asset_id, ids in pack_map.items()
+                if any(pack_id in visible_packs for pack_id in ids)
+            )
+    return {asset_id: rows[asset_id] for asset_id in allowed}
 
 
 async def asset_group_ids(
@@ -342,5 +441,28 @@ async def load_visible(
     my_groups = await all_groups(session, actor)
     rows = await asset_group_ids(session, [asset_id])
     if can_read(row, actor, my_groups, rows.get(asset_id, [])):
+        return row
+    raise NotFound("资产不存在")
+
+
+async def load_readable(
+    session: AsyncSession, asset_id: str, actor: CurrentUser
+) -> LibraryAsset:
+    """只读链路的「看不见就 404」：包含通过可见封装继承来的成员。
+
+    与 `load_visible` 分开，是因为写路径必须保持窄口径 —— 模板库选得到别人包里的
+    图，不等于这个人能改名、能再共享出去、能撤销。只读端点（详情 / 取件 / 预览）
+    才走这一支，并和 `readable_rows(via_pack=True)`、`selection` 共用同一判据。
+    """
+    row = await session.get(LibraryAsset, asset_id)
+    if row is None:
+        raise NotFound("资产不存在")
+    my_groups = await all_groups(session, actor)
+    rows = await asset_group_ids(session, [asset_id])
+    if can_read(row, actor, my_groups, rows.get(asset_id, [])):
+        return row
+    pack_map = await pack_member_ids(session, [asset_id])
+    pack_ids = pack_map.get(asset_id, [])
+    if pack_ids and await readable_rows(session, pack_ids, actor):
         return row
     raise NotFound("资产不存在")

@@ -47,9 +47,9 @@ class SqlLibraryLookup(LibraryLookup):
     async def readable_ids(
         self, session: AsyncSession, actor: CurrentUser, asset_ids: Sequence[str]
     ) -> set[str]:
-        # 判据在 `access.readable_rows`（含小组判定），这里只转发：
-        # 换个地方重写一份，第一处漂的永远是「小组共享」。
-        rows = await readable_rows(session, list(asset_ids), actor)
+        # 判据在 `access.readable_rows`（含小组判定与「可见封装的成员」），
+        # 这里只转发：换个地方重写一份，第一处漂的永远是「小组共享」。
+        rows = await readable_rows(session, list(asset_ids), actor, via_pack=True)
         return set(rows)
 
     async def get_many(
@@ -96,7 +96,7 @@ class SqlLibraryLookup(LibraryLookup):
         wanted = [asset_id for asset_id in dict.fromkeys(asset_ids) if asset_id]
         if not wanted:
             return {}
-        rows = await readable_rows(session, wanted, actor)
+        rows = await readable_rows(session, wanted, actor, via_pack=True)
         text_ids = [
             asset_id
             for asset_id, row in rows.items()
@@ -176,7 +176,7 @@ class SqlLibraryLookup(LibraryLookup):
             )
             if not page:
                 break
-            readable = await readable_rows(session, page, actor)
+            readable = await readable_rows(session, page, actor, via_pack=True)
             picked.extend(asset_id for asset_id in page if asset_id in readable)
             offset += len(page)
         return picked[:limit]

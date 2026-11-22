@@ -30,7 +30,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
@@ -282,6 +282,9 @@ class LibraryService:
         #: 模板库里**没进封装**的槽位都是按素材挑的，藏了会立刻表现为
         #: 「我上传的图不见了」。
         exclude_packed_members: bool = True,
+        # 选择器专用：把「我能看到的封装的成员」也算可读。不改成员 visibility，
+        # 也不影响资产库列表（那里 exclude_packed_members=True 仍把成员藏起来）。
+        include_pack_members: bool = False,
         purpose: str | None = None,
         exclude_purposes: Sequence[str] = (access.PURPOSE_CASE,),
     ) -> LibraryAssetPage:
@@ -297,10 +300,14 @@ class LibraryService:
 
         query = select(LibraryAsset).where(LibraryAsset.state == state)
         if state == "active":
-            query = query.where(
-                LibraryAsset.deleted_at.is_(None),
-                access.tab_clause(actor, groups, library),
-            )
+            visible = access.tab_clause(actor, groups, library)
+            if include_pack_members and library is LibraryTab.ALL:
+                # 只在「全部」这一档开口子：个人 / 小组 / 团队是**归属**筛选，
+                # 不能因为成员挂在可见的包上就把别人的私货算进「我的」。
+                inherited = await access.pack_inherited_member_ids(self.session, actor)
+                if inherited:
+                    visible = or_(visible, LibraryAsset.id.in_(inherited))
+            query = query.where(LibraryAsset.deleted_at.is_(None), visible)
         elif state == "draft":
             # 代审范围：持 draft:review 的人能看到所有人的草稿；否则只看自己的
             if not actor.has(access.PERM_DRAFT_REVIEW):
@@ -398,7 +405,7 @@ class LibraryService:
         再走一遍可见性判定就会 404，把一次成功的审核报成失败。
         """
         row = (
-            await access.load_visible(self.session, asset_id, actor)
+            await access.load_readable(self.session, asset_id, actor)
             if require_visible
             else await access.load_asset(self.session, asset_id)
         )
@@ -524,7 +531,7 @@ class LibraryService:
     async def file(
         self, asset_id: str, actor: CurrentUser, *, preview: bool = False
     ) -> Served:
-        row = await access.load_visible(self.session, asset_id, actor)
+        row = await access.load_readable(self.session, asset_id, actor)
         if row.state == "trash":
             # 「删除」必须真的拿不到文件，否则回收站只是前端的一个标签页。
             # 恢复后立刻可用，所以这不是永久拒绝。
@@ -571,7 +578,7 @@ class LibraryService:
         派生失败不抛 500：原图可能真的坏了，那属于「这张素材没有预览」，
         明确回 404，前端退回显示缩略图。
         """
-        row = await access.load_visible(self.session, asset_id, actor)
+        row = await access.load_readable(self.session, asset_id, actor)
         if row.state == "trash":
             raise NotFound("回收站内的资产不提供预览与下载")
         if row.kind == "text":
@@ -618,11 +625,12 @@ class LibraryService:
     async def preview(self, asset_id: str, actor: CurrentUser) -> Served:
         """受控公共预览：视频给派生流，图片 / 音频给原文件。
 
-        与旧 `/assets/{id}/preview` 同口径。能不能看只由 `load_visible` 一家
-        说了算（共享到小组 / 团队都算可见），这里不再写第二份
-        「有没有 shared」的判断——两处判定迟早漂移，漂移的方向一定是越权。
+        与旧 `/assets/{id}/preview` 同口径。能不能看只由 `load_readable` 一家
+        说了算（共享到小组 / 团队、以及通过可见封装继承的成员都算可见），
+        这里不再写第二份「有没有 shared」的判断——两处判定迟早漂移，
+        漂移的方向一定是越权。
         """
-        row = await access.load_visible(self.session, asset_id, actor)
+        row = await access.load_readable(self.session, asset_id, actor)
         if row.state == "trash":
             raise NotFound("回收站内的资产不提供预览与下载")
         if row.kind == "video":
@@ -639,7 +647,7 @@ class LibraryService:
         转码失败时**本人**回退原文件，**别人**一律 400：把别人共享的原片整份
         当「预览」送出去，等于绕过「只给派生预览」这层收窄。
         """
-        row = await access.load_visible(self.session, asset_id, actor)
+        row = await access.load_readable(self.session, asset_id, actor)
         if row.state == "trash":
             raise NotFound("回收站内的资产不提供预览与下载")
         if row.kind != "video":

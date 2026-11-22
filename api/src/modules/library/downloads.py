@@ -210,26 +210,26 @@ class DownloadService:
                 )
             ).all()
         }
-        my_groups = await access.all_groups(self.session, actor)
-        group_map = await access.asset_group_ids(self.session, wanted)
-
         # 封装要**展开成成员**再打包：它自己没有字节，直接按行处理会得到一条
         # 「没有可下载的原文件」，而用户勾的是「这一套图」。成员不再单列之后，
         # 这个入口也是那几张图唯一的批量下载途径。
         pack_ids = [row.id for row in rows.values() if row.kind == "pack"]
         members_by_pack = await self._pack_members(pack_ids)
         member_rows = [member for group in members_by_pack.values() for member in group]
-        member_groups = await access.asset_group_ids(
-            self.session, [member.id for member in member_rows]
+        # 与选择器 / 取件同口径：可见封装的成员即使仍是别人的 personal 也能打包。
+        # 一次算完，不在循环里逐行查权限。
+        readable = await access.readable_rows(
+            self.session,
+            [row.id for row in rows.values()] + [member.id for member in member_rows],
+            actor,
+            via_pack=True,
         )
 
         selected: list[LibraryAsset] = []
         skipped: list[DownloadSkip] = []
         for asset_id in wanted:
             row = rows.get(asset_id)
-            if row is None or not access.can_read(
-                row, actor, my_groups, group_map.get(asset_id, [])
-            ):
+            if row is None or row.id not in readable:
                 # 预览能看、单条能下，批量却跳过，用户只会觉得「打包坏了」
                 skipped.append(DownloadSkip(id=asset_id, reason="不存在或无权访问"))
                 continue
@@ -245,11 +245,7 @@ class DownloadService:
                     # 成员逐条判「能不能进包」，但原因要带上是哪个包 ——
                     # 只说「回收站内容不可下载」而卡片上明明是个封装，对不上。
                     reason = _skip_reason(member) or (
-                        ""
-                        if access.can_read(
-                            member, actor, my_groups, member_groups.get(member.id, [])
-                        )
-                        else "不存在或无权访问"
+                        "" if member.id in readable else "不存在或无权访问"
                     )
                     if reason:
                         skipped.append(
@@ -433,7 +429,7 @@ async def build_download(job_id: str) -> None:
             # 判据用 `access.readable_rows`（与建任务时的 `_collect` 同一套），
             # 这里自己写一份必然漂移，而漂移方向只会是多给。
             by_id = await access.readable_rows(
-                session, asset_ids, CurrentUser(id=row.owner_id, name="")
+                session, asset_ids, CurrentUser(id=row.owner_id, name=""), via_pack=True
             )
             with tempfile.TemporaryDirectory(prefix="library-download-") as folder:
                 root = Path(folder)
