@@ -322,6 +322,21 @@ cd ..\api
 | LibTV 任务立刻失败，报「执行器浏览器未连接（CDP http://127.0.0.1:9411…）」 | 那两个 Chrome 没在跑（重启机器 / 注销过 / 窗口被关） | 按 §2.6 起；`curl 127.0.0.1:9411/json/version` 先确认 CDP 活着 |
 | 页面能开、所有接口报 CORS | 页面被挪到了另一个源（别的端口 / 域名 / 主机名） | 把**那个页面地址**加进 `CORS_ORIGINS`——是浏览器地址栏，不是服务器 IP |
 | `npm ci` 卡在下载 | 生产机不通外网 | 在有网机器上 `npm ci`，整包拷 `node_modules`（同 OS / 架构、Node 大版本一致） |
+| 用户列表里一堆 `smoke_xxx`，界面上删不掉 | 接口只有「停用」，没有物理删除（历史任务的作者还指着它） | `app purge-users --pattern 'smoke_*'` 先预演，再 `--delete`（见下） |
+
+**清理冒烟测试留下的账号**：`purge-users` 默认只预演，不动库。
+
+```powershell
+cd D:\PythonFile\yufan-ai-studio\api
+.venv\Scripts\app.exe purge-users --pattern 'smoke_*'                 # 预演：列出账号与关联行
+.venv\Scripts\app.exe purge-users --pattern 'smoke_*' --deactivate    # 停用 + 吊销会话（可再启用）
+.venv\Scripts\app.exe purge-users --pattern 'smoke_*' --delete        # 物理删除（不可恢复）
+```
+
+`*` 是任意串、`?` 是单字符，其余字符按字面（`smoke_` 里的 `_` 不会被当成通配）。
+`--delete` 的三道闸门：名下有任务 / 素材等内容时默认拒绝（加 `--allow-orphans`
+才继续，那些行不会删，只会失去作者）；命中超级管理员要 `--include-admins`；
+模式写成 `*` 直接拒绝。执行后会写一条 `identity.user.purge` 审计。
 
 ### 8. 多实例部署
 

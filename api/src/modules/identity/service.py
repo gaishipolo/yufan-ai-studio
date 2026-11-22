@@ -1194,6 +1194,25 @@ class IdentityService:
         )
         logger.info("停用用户 %s，吊销 %d 个会话", user.username, revoked)
 
+    async def deactivate_many(self, users: Sequence[User], *, reason: str) -> int:
+        """批量停用（`app purge-users --deactivate` 用），返回吊销的会话数。
+
+        逐个走 `_cut_access` 而不是一条 `UPDATE ... SET is_active=false`：停用的
+        语义是「置 is_active **且**标记全部会话」（R10-02），这两件事必须在同一个
+        入口里完成。复制一份批量 SQL 就是给它造第二个写点 —— 而当初的故障正是
+        「两个写点都漏了后半句」造成的。几十个账号逐条走，多出来的往返远低于
+        把它写错的代价。
+
+        超管守卫放在循环**之后**、commit 之前（与单条路径同一位置）：一批里同时
+        含有多个超管时，逐条检查会误判「还有」。
+        """
+        revoked = 0
+        for user in users:
+            if user.is_active:
+                revoked += await self._cut_access(user, reason=reason)
+        await self._guard_has_superuser()
+        return revoked
+
     # ------------------------------------------------------------------ #
     # 角色管理
     # ------------------------------------------------------------------ #

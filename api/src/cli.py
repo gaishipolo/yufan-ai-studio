@@ -22,7 +22,7 @@ app meta [key]                     # 查看 app_meta 的运行期状态及其写
 下面这些命令**不在这个文件里**，由业务模块通过 `ModuleSpec.cli` 自己挂上来
 （`app --help` 里能看到当前实际有哪些；`library` / `drivers` 就是这么来的）：
 
-    create-admin / prune-logins / prune-sessions / sync-roles      ← modules/identity
+    create-admin / prune-logins / prune-sessions / sync-roles / purge-users  ← modules/identity
 
 判据是「这条命令认不认识业务表」：`migrate-storage` 扫 schema 里所有 `*_url` 列、
 `verify-blobs` 只读归档盘字节，都不认识业务模型，所以留在框架。
