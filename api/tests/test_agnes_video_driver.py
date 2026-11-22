@@ -384,7 +384,8 @@ def test_declared_model_matches_upstream_limits() -> None:
     assert spec.id == MODEL_ID
     assert spec.provider == "agnes_video"
     assert spec.capability is Capability.VIDEO
-    assert spec.max_references == 0, "视频任务没有解析参考图的通道，别画上传框"
+    assert spec.max_references == 8, "上游 images 最多 5 张、audios 最多 3 段"
+    assert spec.reference_kinds == ("image", "audio"), "上游的 videos 数组传了直接 400"
 
     duration = spec.param_schema["durationSec"]
     assert (duration["min"], duration["max"], duration["default"]) == (4, 12, 5)

@@ -214,6 +214,49 @@ class PromptTranslation(Protocol):
 
 
 @runtime_checkable
+class InlineReferencesCapable(Protocol):
+    """参考素材以**内联 data URI**交给供应商，而不是落盘物化。
+
+    为什么要有这个声明：同一条「视频任务」链上，两类供应商的参考素材走
+    完全不同的通道 ——
+
+    - 本地执行器型（LibTV / 百炼）：素材要先落进归档工作区，由物化器
+      （`modules/model_driver/generic_inputs.py`）写文件，上传时才有地址；
+    - 直连型（Agnes 视频）：上游只收公网地址或 `data:` URI，而我们的存储
+      在内网、拿不出公网地址，于是只能把字节**内联**进请求体。
+
+    链路层据此决定「要不要把存储里的字节读成 data URI」。不声明就按
+    「不内联」处理（落盘物化那条老路），不会凭空多读一遍素材。
+    """
+
+    inline_references: bool
+
+
+@dataclass(frozen=True, slots=True)
+class ReferenceLimit:
+    """某个供应商对**一类**参考素材的硬性限制。
+
+    `max_count`：这一类最多收几份（图片 5 份、音频 3 段…）。
+    `min_side` / `max_side`：图片的**单边**像素范围，`0` 表示不限。
+
+    为什么由供应商声明而不是各链各写一份：图片边长范围各渠道不一样
+    （Agnes 收 256-5760，百炼收 240-8000），写成全局常量就会把
+    「百炼能用的图」在受理期拒掉，而用户完全不知道自己错在哪。
+    """
+
+    max_count: int = 0
+    min_side: int = 0
+    max_side: int = 0
+
+
+@runtime_checkable
+class ReferenceLimitsCapable(Protocol):
+    """能声明参考素材硬性限制的供应商。键是素材类型（`image` / `audio`…）。"""
+
+    reference_limits: Mapping[str, ReferenceLimit]
+
+
+@runtime_checkable
 class ModelProvider(Protocol):
     """供应商适配器。实现三个方法即可接入一个新厂商。
 

@@ -51,7 +51,8 @@ drivers/<name>.py  ──自动扫描──▶ ModelRouter ──▶ generation.
 
 **可选能力也是协议**（`infra.ai.base`，运行时判定用 `isinstance`）：
 `PollCapable`（`supports_poll`）、`PollPacing`（`poll_interval_sec`）、
-`SubmitBudget`（`submit_timeout_sec`）。三个刻意分开 —— 声明了 `supports_poll`
+`SubmitBudget`（`submit_timeout_sec`）、`InlineReferencesCapable`（`inline_references`）、
+`ReferenceLimitsCapable`（`reference_limits`）。五个刻意分开 —— 声明了 `supports_poll`
 但没写节奏的驱动不会被当成「不支持轮询」，只是按全局间隔问。
 **不要**用 `getattr(provider, "...", None)` 探测：属性名写错时它只会安静地返回
 `None`，然后退化成默认行为（轮询变 2 秒、预算变默认），日志里一句话都没有。
@@ -91,6 +92,34 @@ async def prepare_inputs(self, run_id: str, model: str = "") -> dict: ...   # �
 在 2026-11-14 就删了，剩下的 `isinstance` 判断全仓为零 —— 协议留着的效果只是让人
 以为「不实现它就跑不起来」。范例见 `drivers/bailian.py`（`submit()` 里先
 `prepare_inputs` 再落请求体）。
+
+### 2.4.1 参考素材有两条通道，由驱动声明走哪条（2026-11-22）
+
+参考素材不是「模型参数」，走 `GenerationRequest.reference_urls` 这条独立通道。
+但**怎么把字节送到供应商面前**，各渠道差得很远，于是分成两条：
+
+| 通道 | 声明 | 链路层做什么 | 适用 |
+|---|---|---|---|
+| 落盘物化 | 不声明 | `params["referenceKeys"]` → 物化器写进归档工作区，上传时才有地址 | LibTV / 百炼（执行器型） |
+| 内联 | `inline_references = True` | 把存储里的字节读成 `data:<mime>;base64,...` 进请求体 | 直连型（Agnes 视频） |
+
+为什么直连型只能内联：上游只收**公网 URL** 或 `data:` URI，而我们的对象存储在
+内网、供应商根本拉不到（实测内联 data URI 上游照收照出片，轮询回包里还有
+`usage.input_image_count`）。引入了公网直传就要新增公网可达存储与合规口径，
+成本远高，所以先走内联。
+
+**声明出来的限制也要跟着走**（`ReferenceLimitsCapable`，属性 `reference_limits`）：
+每类素材的份数上限（`max_count`）与图片的单边像素范围（`min_side` / `max_side`）。
+各渠道不一样（Agnes 256–5760，百炼 240–8000），写成全局常量就会把
+「百炼能用的图」在受理期拒掉，而用户不知道错在哪。受理期按资产库里的宽高判一次
+（早失败、报错说人话），提交前按真实字节再判一次（资产库宽高可能是 0，
+或与实际文件对不上）。
+
+**提示词里的素材指代由驱动自己翻**：`{{Mixed N}}` 是本项目的模板语法，上游不认识。
+`core.prompt_refs.translate_prompt_with()` 给的是**编号规则**（按类型各自从 1 开始，
+与上游分数组收的形状一致），**标签**由驱动给 —— 生图与替换链用「图1」，
+Agnes 视频用 `<Picture 1>`（上游只认这个写法）。两边各写一份编号规则，迟早出现
+「档案里写 图1、实际发出去的是 图2」这种对不上的情况。
 
 ## 2.5 只给自己的业务链路用的模型：`internal=True`
 

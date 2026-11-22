@@ -22,6 +22,7 @@ import os
 import re
 import subprocess
 import uuid
+from collections.abc import Iterator
 from pathlib import Path
 
 import imageio_ffmpeg
@@ -37,6 +38,74 @@ from modules.library.models import LibraryAsset
 from modules.task.enums import TaskStatus
 from modules.task.models import VideoTask
 from modules.task.pipeline import KIND_VIDEO
+
+
+def _insert_reference_assets() -> None:
+    """把任务行引用的两条参考素材插进资产库。
+
+    为什么需要：任务行记的是**资产库 id**，受理期校验过的引用在 `load()` 里
+    要能重新找回（`referenceKeys` 与内联 data URI 都靠它）。查不到就**整条
+    拒绝** —— 「参考素材已不可用」比「悄悄少一张图」好。
+
+    用完即删：测试库是会话级共享的，留着会污染别的用例的资产计数。
+    """
+
+    async def run() -> None:
+        async with get_session_factory()() as session:
+            for asset_id in ("lib_a", "lib_b"):
+                if await session.get(LibraryAsset, asset_id) is not None:
+                    continue
+                session.add(
+                    LibraryAsset(
+                        id=asset_id,
+                        name=f"{asset_id}.png",
+                        kind="image",
+                        origin="upload",
+                        mime_type="image/png",
+                        size_bytes=1024,
+                        storage_key=f"media/{asset_id}.png",
+                        cover_key="",
+                        sha256=None,
+                        width=512,
+                        height=512,
+                        duration=0.0,
+                        has_audio=False,
+                        owner_id="u_001",
+                        visibility="personal",
+                        state="active",
+                        state_version=1,
+                        source_key=None,
+                        purpose="",
+                    )
+                )
+            await session.commit()
+
+    asyncio.run(run())
+
+
+def _delete_reference_assets() -> None:
+    """删掉上面造的两条素材，不给别的用例留垃圾。"""
+
+    async def run() -> None:
+        from sqlalchemy import delete
+
+        async with get_session_factory()() as session:
+            await session.execute(
+                delete(LibraryAsset).where(LibraryAsset.id.in_(("lib_a", "lib_b")))
+            )
+            await session.commit()
+
+    asyncio.run(run())
+
+
+@pytest.fixture(autouse=True)
+def _reference_assets() -> Iterator[None]:
+    """造出任务行引用的两条素材，用完删掉。"""
+    _insert_reference_assets()
+    try:
+        yield
+    finally:
+        _delete_reference_assets()
 
 
 def _create_task(**overrides: object) -> str:

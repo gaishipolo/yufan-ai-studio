@@ -43,6 +43,16 @@ MODELS = (
         label="示例异步视频",
         capability=Capability.VIDEO,
         provider="md_async",
+        # 视频模型的参数面：示例驱动也得声明它们，否则模板封装那条链会以
+        # 「模型不支持参数 aspectRatio、durationSec」把模板挡在门外。
+        param_schema={
+            "durationSec": {"type": "int", "min": 1, "max": 30, "default": 5},
+            "aspectRatio": {
+                "type": "enum",
+                "options": ["9:16", "16:9", "1:1"],
+                "default": "9:16",
+            },
+        },
     ),
 )
 

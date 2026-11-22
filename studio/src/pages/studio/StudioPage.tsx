@@ -114,6 +114,15 @@ export default function StudioPage() {
   );
   const maxReferences = currentModel?.maxReferences ?? 0;
 
+  /* 上传的素材类型跟着模型声明走：模型收音频时，音轨要按 `audio` 入库 ——
+     按 `image` 入库会被后端按图片校验拒掉（探测出来的宽高也对不上）。 */
+  const uploadKindFor = (file: File): 'image' | 'audio' | null => {
+    if (file.type.startsWith('audio/')) {
+      return referenceKinds.includes('audio') ? 'audio' : null;
+    }
+    return 'image';
+  };
+
   const addReferences = async (files: FileList | null) => {
     const picked = Array.from(files ?? []);
     if (!picked.length) return;
@@ -124,8 +133,13 @@ export default function StudioPage() {
     }
     // 多选超量时只取前面的：先传多余的那几张再丢掉，等于白花一次上传
     for (const file of picked.slice(0, room)) {
+      const kind = uploadKindFor(file);
+      if (!kind) {
+        toast('这个模型不收音频参考素材', 'error');
+        continue;
+      }
       try {
-        const asset = await upload.mutateAsync({ file, kind: 'image' });
+        const asset = await upload.mutateAsync({ file, kind });
         setReferences((prev) => [
           ...prev,
           { id: asset.id, name: asset.name, url: asset.previewUrl ?? asset.url ?? '' },

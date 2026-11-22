@@ -24,9 +24,10 @@ from core.library_refs import resolve_reference_images
 from core.library_text import dumps_text_refs, freeze_text_refs
 from core.logging import get_logger
 from core.ports.library_lookup import LibraryAssetKind
+from core.reference_limits import check_side_lengths
 from core.response import PageParams
 from generation.runner import get_runner
-from infra.ai.base import Capability, ModelSpec
+from infra.ai.base import Capability, ModelSpec, ReferenceLimitsCapable
 from infra.ai.router import ModelRouter
 from infra.artifacts import artifact_urls
 from infra.queue.base import JobQueue
@@ -75,6 +76,47 @@ _MIN_REFERENCE_SECONDS = 1.0
 _MAX_REFERENCE_SECONDS = 15.0
 
 
+def _check_reference_limits(spec: ModelSpec, provider: Any, references: Sequence[Any]) -> None:
+    """按供应商声明的参考素材限制校验（张数 / 图片边长）。
+
+    限制由**供应商**声明（`ReferenceLimitsCapable`），不是各链各写一份：
+    图片边长范围各渠道不一样（Agnes 256-5760，百炼 240-8000），写成全局
+    常量就会把「百炼能用的图」在受理期拒掉，而用户不知道错在哪。
+
+    边长按资产库里的宽高判；**宽高为 0**（历史行 / 未探测完）时放行 ——
+    提交前还有一道按真实字节的检查（`core.reference_limits`），两道都过
+    才不会被上游一句英文打回。
+    """
+    if not isinstance(provider, ReferenceLimitsCapable):
+        return
+    limits = provider.reference_limits
+    counts: dict[str, int] = {}
+    for ref in references:
+        counts[ref.kind.value] = counts.get(ref.kind.value, 0) + 1
+    for kind, count in counts.items():
+        limit = limits.get(kind)
+        if limit is None or not limit.max_count:
+            continue
+        if count > limit.max_count:
+            raise BadRequest(
+                f"模型 {spec.label} 最多接受 {limit.max_count} 个 {kind} 参考素材，"
+                f"本次传了 {count} 个"
+            )
+    for ref in references:
+        limit = limits.get(ref.kind.value)
+        if limit is None or not limit.min_side or not limit.max_side:
+            continue
+        if not ref.width or not ref.height:
+            continue
+        check_side_lengths(
+            label=ref.name or ref.id,
+            width=ref.width,
+            height=ref.height,
+            min_side=limit.min_side,
+            max_side=limit.max_side,
+        )
+
+
 def _check_reference_durations(spec: ModelSpec, references: Sequence[Any]) -> None:
     """校验视频 / 音频参考素材的时长。
 
@@ -109,6 +151,31 @@ def _check_reference_durations(spec: ModelSpec, references: Sequence[Any]) -> No
                 f" {_MAX_REFERENCE_SECONDS:g} 秒（本次合计 {totals[kind]:g} 秒），"
                 "请减少素材数量"
             )
+
+
+def _reference_kinds(spec: ModelSpec) -> tuple[LibraryAssetKind, ...]:
+    """这个模型能收哪几类参考素材 —— **由模型声明**。
+
+    声明为空时按三类都收处理：兼容只声明了张数、没声明类型的旧模型，
+    也避免一次「声明写错」把整条受理期堵死。
+    """
+    fallback = (
+        LibraryAssetKind.IMAGE,
+        LibraryAssetKind.VIDEO,
+        LibraryAssetKind.AUDIO,
+    )
+    if not spec.reference_kinds:
+        return fallback
+    kinds: list[LibraryAssetKind] = []
+    for raw in spec.reference_kinds:
+        try:
+            kind = LibraryAssetKind(str(raw))
+        except ValueError:
+            logger.warning("模型 %s 声明了未知的参考素材类型 %r，已忽略", spec.id, raw)
+            continue
+        if kind in fallback:
+            kinds.append(kind)
+    return tuple(kinds) or fallback
 
 
 class TaskService:
@@ -236,13 +303,19 @@ class TaskService:
             limit=spec.max_references,
             # 视频替换模型吃「原片视频 + 参考图 + 音频」混合输入；纯文生视频
             # 模型在上面已经被 0 张上限挡掉了。
-            kinds=(
-                LibraryAssetKind.IMAGE,
-                LibraryAssetKind.VIDEO,
-                LibraryAssetKind.AUDIO,
-            ),
+            # 能收哪几类**由模型声明**：视频替换模型吃「原片视频 + 参考图 + 音频」
+            # 混合输入，Agnes 视频只吃「参考图 + 参考音频」。纯文生视频模型
+            # 在上面已经被 0 张上限挡掉了。
+            kinds=_reference_kinds(spec),
         )
         _check_reference_durations(spec, references)
+        # 张数与图片边长：限制由供应商声明，供应商没声明就跳过。
+        try:
+            provider = self.router.provider_for(spec.id)
+        except Exception:  # noqa: BLE001 - 装配异常不该把受理期变成 500
+            logger.warning("解析供应商失败，跳过参考素材限制校验 model=%s", spec.id)
+            provider = None
+        _check_reference_limits(spec, provider, references)
 
         # 文本快照在受理期冻结，与生图同一口径：提交 / 重试只读这份，
         # 资产改稿不会让同一条任务的两跳用上不同的提示词。

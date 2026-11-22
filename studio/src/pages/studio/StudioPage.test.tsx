@@ -75,7 +75,8 @@ vi.mock('@/shared/lib/toast', async (importOriginal) => ({
 }));
 
 /**
- * 视频模型：paramSchema 只有时长与画幅两个键（与 agnes_video / echo 一致）。
+ * 纯文生视频模型：paramSchema 只有时长与画幅两个键，且**不声明参考素材**
+ * （`maxReferences=0`）—— 前端据此整块不画参考区。
  *
  * **没有 `stylePreset`** —— 这是这一轮改动的要害：以前工作台写死了
  * 「时长 / 画幅 / 风格预设」三件套，而风格预设所有模型都没声明，
@@ -83,10 +84,10 @@ vi.mock('@/shared/lib/toast', async (importOriginal) => ({
  */
 function videoModel(overrides: Partial<ModelSpec> = {}): ModelSpec {
   return {
-    id: 'agnes-video-2.5-flash',
-    label: 'Agnes Video 2.5 Flash',
+    id: 'seedance-2.5',
+    label: 'Seedance 2.5',
     capability: 'video',
-    provider: 'agnes_video',
+    provider: 'echo',
     description: '720P 文生视频，4-12 秒',
     isDefault: true,
     maxReferences: 0,
@@ -107,6 +108,20 @@ const KLING = videoModel({
     durationSec: { type: 'int', min: 5, max: 10, step: 1, default: 5 },
     aspectRatio: { type: 'enum', options: ['9:16'], default: '9:16' },
   },
+});
+
+/**
+ * Agnes 视频的真实声明（2026-11-22 起）：收参考图与参考音频，
+ * 上限是 5 张图 + 3 段音频（合计 8 份）。
+ */
+const AGNES_VIDEO = videoModel({
+  id: 'agnes-video-2.5-flash',
+  label: 'Agnes Video 2.5 Flash',
+  provider: 'agnes_video',
+  isDefault: false,
+  description: '720P 文生视频，支持参考图与参考音频',
+  maxReferences: 8,
+  referenceKinds: ['image', 'audio'],
 });
 
 /** LibTV 那样声明了计费模式的模型（`drivers/libtv.py` 的真实形状）。 */
@@ -329,7 +344,7 @@ describe('StudioPage · 参考图（与生图页同一条通道）', () => {
       expect(screen.getByRole('button', { name: '移除参考图 1' })).toBeInTheDocument();
       // 模型还是原来那个
       expect((screen.getAllByRole('combobox')[0] as HTMLSelectElement).value).toBe(
-        'agnes-video-2.5-flash',
+        'seedance-2.5',
       );
     });
 
@@ -379,6 +394,39 @@ describe('StudioPage · 参考图（与生图页同一条通道）', () => {
       expect(screen.queryByRole('button', { name: '移除参考图 1' })).toBeNull();
     });
     expect(navigateMock).toHaveBeenCalledWith('/tasks');
+  });
+
+  it('模型声明了参考素材上限，参考区按声明渲染', () => {
+    modelsMock.mockReturnValue([AGNES_VIDEO]);
+    render(<StudioPage />);
+
+    expect(screen.getByText(/最多 8 张，已选 0/)).toBeInTheDocument();
+  });
+
+  it('模型收音频时，音轨按 audio 入库', async () => {
+    uploadMock.mockResolvedValueOnce({ id: 'a-1', name: 'a.wav', url: '/u/1' });
+    modelsMock.mockReturnValue([AGNES_VIDEO]);
+    render(<StudioPage />);
+
+    const wav = new File([new Uint8Array([1, 2, 3])], 'a.wav', { type: 'audio/wav' });
+    pick([wav]);
+    await screen.findByRole('button', { name: '移除参考图 1' });
+
+    // 按 image 入库会被后端按图片校验拒掉（探测出来的宽高也对不上）
+    expect(uploadMock.mock.calls[0][0]).toMatchObject({ kind: 'audio' });
+  });
+
+  it('模型不收音频时，音轨不上传：白传一次等于白花一次存储', async () => {
+    modelsMock.mockReturnValue([videoModel({ maxReferences: 2 })]);
+    render(<StudioPage />);
+
+    const wav = new File([new Uint8Array([1, 2, 3])], 'a.wav', { type: 'audio/wav' });
+    pick([wav]);
+
+    await waitFor(() =>
+      expect(toastMock).toHaveBeenCalledWith('这个模型不收音频参考素材', 'error'),
+    );
+    expect(uploadMock).not.toHaveBeenCalled();
   });
 
   it('点缩略图能看大图：64px 上分不清角色细节', async () => {

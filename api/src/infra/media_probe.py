@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import math
 import re
 import subprocess
@@ -179,6 +180,22 @@ def inspect(path: Path, extension: str) -> MediaInfo:
         "duration": seconds,
         "hasAudio": "Audio:" in probe,
     }
+
+
+def image_size(data: bytes) -> tuple[int, int]:
+    """从**字节**里读图片宽高。
+
+    只读文件头（`Image.open` 是惰性的），不解码整张图：参考素材的边长
+    校验要在**提交前**做，那时手上只有 data URI 里的字节。
+
+    解析不了就抛 `BadRequest`：素材坏掉时必须说清楚是「这张图不行」，
+    而不是让供应商回一句「图片下载失败」。
+    """
+    try:
+        with Image.open(io.BytesIO(data)) as image:
+            return image.width, image.height
+    except (OSError, ValueError) as exc:
+        raise BadRequest("图片无法解析") from exc
 
 
 def _probe_stream(path: Path) -> str:

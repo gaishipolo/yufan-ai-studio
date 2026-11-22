@@ -10,7 +10,6 @@
 
 from __future__ import annotations
 
-import base64
 import ipaddress
 from collections.abc import Sequence
 from datetime import UTC, datetime
@@ -39,6 +38,7 @@ from generation.spec import (
 from infra import get_storage
 from infra.ai.base import Capability, GenerationRequest, PollCapable
 from infra.driver_config import DriverSettings, driver_config
+from infra.reference_inline import IMAGE_MIME_BY_SUFFIX, inline_data_uris
 from modules.image.models import ImageJob
 
 logger = get_logger(__name__)
@@ -66,13 +66,10 @@ _CHUNK = 64 * 1024
 # 的内存打爆——读的是整段字节，几十 MB 的图会连 base64 一起翻三倍。
 MAX_REFERENCE_BYTES = 6 * 1024 * 1024
 
-# 供应商只认这几种（与 `ImageService` 的白名单一致）
-REFERENCE_MIME_BY_SUFFIX = {
-    ".png": "image/png",
-    ".jpg": "image/jpeg",
-    ".jpeg": "image/jpeg",
-    ".webp": "image/webp",
-}
+# 供应商只认这几种（与 `ImageService` 的白名单一致）。**实现在 `infra/`**：
+# 视频链也要把参考素材内联成 data URI，两条链共用同一份白名单与体积上限，
+# 各写一份迟早漂移（多一个后缀、少一个上限，用户只在提交时才发现）。
+REFERENCE_MIME_BY_SUFFIX = IMAGE_MIME_BY_SUFFIX
 _BLOCKED_HOSTNAMES = frozenset(
     {"localhost", "metadata", "metadata.google.internal", "instance-data"}
 )
@@ -342,23 +339,11 @@ async def _reference_data_uris(record: GenerationRecord) -> tuple[str, ...]:
     读失败就抛：参考图是提交输入，静默退化成纯文生图会让用户拿到一张
     完全不相关的图，而记录里写着「用过参考图」。
     """
-    if not record.reference_urls:
-        return ()
-    storage = get_storage()
-    uris: list[str] = []
-    for key in record.reference_urls:
-        data = await storage.get(key)
-        if not data:
-            raise ValueError(f"参考图为空文件：{key}")
-        if len(data) > MAX_REFERENCE_BYTES:
-            raise ValueError(
-                f"参考图超过 {MAX_REFERENCE_BYTES // (1024 * 1024)}MB：{key}"
-            )
-        mime = REFERENCE_MIME_BY_SUFFIX.get(Path(key).suffix.lower(), "")
-        if not mime:
-            raise ValueError(f"参考图格式不支持（只认 png / jpeg / webp）：{key}")
-        uris.append(f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}")
-    return tuple(uris)
+    return await inline_data_uris(
+        record.reference_urls,
+        mime_by_suffix=REFERENCE_MIME_BY_SUFFIX,
+        max_bytes=MAX_REFERENCE_BYTES,
+    )
 
 
 def _with_suffix(name: str, stored: str) -> str:

@@ -41,13 +41,23 @@
 
 ## 参考素材
 
-`mode=reference` 的 `images` 必须是**公网可达**的 URL（Agnes 服务端自己去拉），
-所以只有调用方明确给出 `reference_urls` 时才走参考模式；本地文件、内网地址在
-提交前就拒绝——让上游回一句「图片下载失败」比在本地说清楚要贵得多。
+`mode=reference` 的 `images` 收两种形态：**公网可达的 URL**（Agnes 服务端自己去拉）
+与**内联 data URI**（`data:image/png;base64,...`）。后者是实测出来的：上游的文档
+只写了 URL，但 2026-11-22 实测内联 data URI 一样受理、一样出片（轮询回包里有
+`usage.input_image_count`），而我们本机的存储在内网、根本给不出公网地址。
+
+所以这条链走**内联**：链路层把资产库里的字节读成 data URI，驱动原样透传。
+本地文件、内网地址在提交前就拒绝——让上游回一句「图片下载失败」比在本地说清楚
+要贵得多。
+
+图片的边长另有硬限制：上游原话是
+`input image side length must be between 256 and 5760 pixels`，所以受理期按资产库
+里的宽高判一次、提交前按真实字节再判一次。
 """
 
 from __future__ import annotations
 
+import base64
 from collections.abc import Sequence
 from typing import Any
 from urllib.parse import urlsplit
@@ -62,14 +72,18 @@ from core.exceptions import (
     UpstreamError,
 )
 from core.logging import get_logger
+from core.prompt_refs import translate_or_original, translate_prompt_with
+from core.reference_limits import check_side_lengths
 from infra.ai.base import (
     Capability,
     GenerationProgress,
     GenerationRequest,
     GenerationState,
     ModelSpec,
+    ReferenceLimit,
 )
 from infra.driver_config import DriverSettings, driver_config
+from infra.media_probe import image_size
 from modules.model_driver.spec import DriverMeta
 
 logger = get_logger(__name__)
@@ -102,8 +116,27 @@ _MIN_SECONDS = 4
 _MAX_SECONDS = 12
 _DEFAULT_SECONDS = 5
 
-# Flash 的参考图上限（音频 3 段、视频不支持，本期没有对应输入通道）。
+# 参考素材的上游上限（官方文档 + 2026-11-22 实测）：
+#   images 最多 5 张、audios 最多 3 段，videos 不支持（传了直接 400）。
 _MAX_REFERENCE_IMAGES = 5
+_MAX_REFERENCE_AUDIOS = 3
+#: 一条任务最多带几份参考素材（图片 + 音频）：上游两个数组各自的上限之和。
+_MAX_REFERENCES = _MAX_REFERENCE_IMAGES + _MAX_REFERENCE_AUDIOS
+#: 图片**单边**的像素范围。上游的原话是
+#: `input image side length must be between 256 and 5760 pixels`（实测 64x64 被拒）。
+#: 口径是**两条边都要**落在这个区间里：实测一张 200x3000（短边 200、长边 3000）
+#: 同样被拒 —— 只判长边会把它放行。
+_MIN_IMAGE_SIDE = 256
+_MAX_IMAGE_SIDE = 5760
+#: 单份参考素材的字节上限。base64 会把它撑大 4/3，6MB 的图进请求体约 8MB。
+_MAX_REFERENCE_BYTES = 6 * 1024 * 1024
+
+#: Agnes 视频的素材指代写法：图片 `<Picture N>`、音频 `<Audio N>`。
+#:
+#: 上游的提示词里用尖括号标签指代素材（实测受理），不是「图1」这种中文说法。
+#: 编号按类型各自从 1 开始（见 `core.prompt_refs.translate_prompt_with`），
+#: 与 `images` / `audios` 两个数组的顺序一一对应。
+_REFERENCE_LABELS = {"image": "<Picture {n}>", "audio": "<Audio {n}>"}
 
 _PARAM_SCHEMA = {
     # 键名跟 `modules/task/params.py` 的校验口径对齐（durationSec / aspectRatio），
@@ -131,11 +164,14 @@ MODELS: tuple[ModelSpec, ...] = (
         capability=Capability.VIDEO,
         provider="agnes_video",
         param_schema=_PARAM_SCHEMA,
-        description="720P 文生视频，4-12 秒；当前限时免费（刊例 $0.025/秒）",
-        # 参考图要走公网 URL，而现役视频任务没有解析 reference_asset_ids 的通道
-        # （`task/pipeline.py` 不传 reference_urls），所以这里声明 0：
-        # 声明成 5 会让前端画出一个「传了也不会被用」的上传框。
-        max_references=0,
+        description="720P 文生视频，4-12 秒；支持参考图与参考音频（当前限时免费）",
+        # 参考素材走**内联 data URI**（见下面的 `inline_references`）：上游只收
+        # 公网地址或 data URI，而我们的存储在内网、拿不出公网地址。
+        # 声明成非 0，前端才会画出参考素材入口 —— 以前这里写 0，于是选这个
+        # 模型时整块控件不画、后端受理期直接 400「模型不支持参考素材」。
+        max_references=_MAX_REFERENCES,
+        # 只收图片与音频：上游的 `videos` 数组传了直接 400。
+        reference_kinds=("image", "audio"),
     ),
 )
 
@@ -180,6 +216,19 @@ class AgnesVideoDriver:
     #
     # 结果就是：默认必须落在这个开箱即用的文生视频模型上，由它接任默认。
     preferred_for = frozenset({Capability.VIDEO})
+    # 参考素材以**内联 data URI**交给上游（见 `InlineReferencesCapable`）：
+    # 上游只收公网地址或 `data:` URI，我们的存储在内网、拿不出公网地址。
+    inline_references = True
+    # 参考素材的硬性限制（见 `ReferenceLimitsCapable`）：图片最多 5 张、
+    # 音频最多 3 段，图片单边 256-5760 像素。受理期与提交前各判一次。
+    reference_limits = {
+        "image": ReferenceLimit(
+            max_count=_MAX_REFERENCE_IMAGES,
+            min_side=_MIN_IMAGE_SIDE,
+            max_side=_MAX_IMAGE_SIDE,
+        ),
+        "audio": ReferenceLimit(max_count=_MAX_REFERENCE_AUDIOS),
+    }
 
     def __init__(
         self,
@@ -202,9 +251,24 @@ class AgnesVideoDriver:
 
         seconds = _seconds(request.params.get("durationSec"))
         aspect = _aspect(request.params.get("aspectRatio"))
+        # 参考素材：内联 data URI 或公网直链，拆成「图片」与「音频」两组。
+        # 顺序保留 —— 提示词里的「第 2 张」指的就是这个顺序。
+        media = _reference_media(request.reference_urls)
+        images = [item for kind, item in media if kind == "image"]
+        audios = [item for kind, item in media if kind == "audio"]
+        # 提示词里的素材指代翻成上游认得的写法（`<Picture 1>` / `<Audio 1>`）。
+        prompt = request.prompt
+        if media:
+            prompt = translate_or_original(
+                request.prompt,
+                [{"type": kind} for kind, _ in media],
+                lambda text, entries: translate_prompt_with(
+                    text, entries, _REFERENCE_LABELS
+                ),
+            )
         payload: dict[str, Any] = {
             "model": _upstream_model(request.model),
-            "prompt": request.prompt,
+            "prompt": prompt,
             # 上游要字符串："5"，传整数会被拒
             "seconds": str(seconds),
             "mode": "text",
@@ -212,10 +276,12 @@ class AgnesVideoDriver:
             "size": "720P",
             "aspect_ratio": aspect,
         }
-        references = _reference_images(request.reference_urls)
-        if references:
+        if media:
             payload["mode"] = "reference"
-            payload["images"] = references
+            if images:
+                payload["images"] = images
+            if audios:
+                payload["audios"] = audios
 
         async with self._client() as client:
             # 不吞 httpx 的超时/连接异常：runner 的「超时 = 可能已受理」靠异常类型判断，
@@ -237,7 +303,7 @@ class AgnesVideoDriver:
             payload["model"],
             seconds,
             aspect,
-            len(references),
+            len(media),
             video_id,
         )
         return video_id
@@ -382,30 +448,93 @@ def _aspect(value: Any) -> str:
     return aspect
 
 
-def _reference_images(urls: Sequence[str]) -> list[str]:
-    """参考图：只收公网 http(s) 地址，保序去重，最多 5 张。
+def _reference_media(urls: Sequence[str]) -> list[tuple[str, str]]:
+    """把参考素材拆成「图片 / 音频」两类，保序去重。
 
-    不把本地存储的签名地址透传进来：Agnes 服务端拉不到我们的内网对象存储，
-    会在提交后回一句「图片下载失败」，而那时任务已经建了、队列也占了。
+    两种形态都收：
+
+    - `data:image/...;base64,...` / `data:audio/...;base64,...`：**内联**的字节。
+      这是我们唯一给得出的形态 —— 本机的存储在内网，供应商的取件链接又几分钟
+      就过期（实测上游受理内联 data URI，并真的解了图、出了片）。
+    - `http(s)://...`：公网直链，上游服务端会自己去拉。只能当图片（没有 MIME
+      可判，音频直链没验证过）。
+
+    按 MIME 分桶：上游的图片与音频分两个数组收（`images` / `audios`），
+    提示词里的指代也是**分类型各自编号**（`<Picture 1>` / `<Audio 1>`），
+    混在一个数组里就对不上号。
+
+    顺序必须保留：提示词里的「第 2 张」指的就是上传顺序里的第 2 张。
     """
     seen: set[str] = set()
-    images: list[str] = []
+    media: list[tuple[str, str]] = []
     for raw in urls:
         item = str(raw or "").strip()
         if not item or item in seen:
             continue
-        if urlsplit(item).scheme not in {"http", "https"}:
+        seen.add(item)
+        if item.startswith("data:"):
+            mime, data = _split_data_uri(item)
+            if mime.startswith("image/"):
+                _check_image_bytes(data)
+                media.append(("image", item))
+            elif mime.startswith("audio/"):
+                if len(data) > _MAX_REFERENCE_BYTES:
+                    raise BadRequest(
+                        f"参考音频超过 {_MAX_REFERENCE_BYTES // (1024 * 1024)}MB"
+                    )
+                media.append(("audio", item))
+            else:
+                raise BadRequest(f"Agnes 参考素材只收图片与音频，收到 {mime}")
+        elif urlsplit(item).scheme in {"http", "https"}:
+            media.append(("image", item))
+        else:
             raise BadRequest(
-                "Agnes 参考图必须是公网可访问的 http(s) 地址（服务端会主动下载），"
+                "Agnes 参考素材必须是公网可访问的 http(s) 地址或内联 data URI，"
                 f"收到 {item[:60]!r}"
             )
-        seen.add(item)
-        images.append(item)
-    if len(images) > _MAX_REFERENCE_IMAGES:
+    images = sum(1 for kind, _ in media if kind == "image")
+    audios = sum(1 for kind, _ in media if kind == "audio")
+    if images > _MAX_REFERENCE_IMAGES:
         raise BadRequest(
-            f"Agnes Video 2.5 Flash 最多 {_MAX_REFERENCE_IMAGES} 张参考图，收到 {len(images)} 张"
+            f"Agnes Video 2.5 Flash 最多 {_MAX_REFERENCE_IMAGES} 张参考图，收到 {images} 张"
         )
-    return images
+    if audios > _MAX_REFERENCE_AUDIOS:
+        raise BadRequest(
+            f"Agnes Video 2.5 Flash 最多 {_MAX_REFERENCE_AUDIOS} 段参考音频，收到 {audios} 段"
+        )
+    return media
+
+
+def _split_data_uri(item: str) -> tuple[str, bytes]:
+    """拆 `data:<mime>;base64,<payload>`，返回 (MIME, 字节)。"""
+    head, _, payload = item.partition(",")
+    if not payload or ";base64" not in head:
+        raise BadRequest("参考素材的 data URI 必须是 base64 编码")
+    mime = head[len("data:"):].split(";")[0].strip().lower()
+    try:
+        data = base64.b64decode(payload, validate=True)
+    except ValueError as exc:
+        raise BadRequest("参考素材的 data URI 不是合法的 base64") from exc
+    return mime, data
+
+
+def _check_image_bytes(data: bytes) -> None:
+    """按**真实字节**判图片的体积与边长。
+
+    受理期判过一次（资产库里的宽高），但那里可能是 0（历史行 / 未探测完），
+    或者与实际文件对不上 —— 上游的判据是它自己解出来的边长。少了这道，
+    用户拿到的是一句英文报错，而不是「换一张尺寸合适的图」。
+    """
+    if len(data) > _MAX_REFERENCE_BYTES:
+        raise BadRequest(f"参考图超过 {_MAX_REFERENCE_BYTES // (1024 * 1024)}MB")
+    width, height = image_size(data)
+    check_side_lengths(
+        label="",
+        width=width,
+        height=height,
+        min_side=_MIN_IMAGE_SIDE,
+        max_side=_MAX_IMAGE_SIDE,
+    )
 
 
 def _video_id(body: dict[str, Any]) -> str:

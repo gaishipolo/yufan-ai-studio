@@ -373,6 +373,49 @@ payload 里拿掉（那要动契约），改成「物化前按 key 反查资产�
 **教训**：下线一个功能时，要同时看**删掉了契约字段**与**存量数据里还带着那个键**的那批行。
 迁移只改了行表，没有动草稿 JSON 里的那一把——它们不在任何迁移的负荷里，只在读草稿时才会被看见。
 
+### 1.5 Agnes 视频支持参考图与参考音频（2026-11-22）
+
+**问题**：agnes 视频模型在生成工作台里**不能传参考图**。四层叠加，根因在链路层：
+
+1. 模型声明 `max_references=0` → 前端整块不画参考图控件，后端受理期直接
+   400「模型 X 不支持参考素材」；
+2. **真根因**：驱动其实早就实现了参考模式（`mode=reference` + `images`），
+   但视频链的 `build_request` **从不填 `reference_urls`** —— 生图链会调
+   `_reference_data_uris` 把存储字节读成 data URI，视频链没有这一步；
+3. 驱动的 `_reference_images` 只收公网 http(s)，明确拒 data URI；
+4. 统一门面对接只收 `data:` URI，与驱动正好相反。
+
+**修法**：走**内联 Base64 data URI**（不引入公网 OSS 直传）。实测依据：上游文档
+只写了 URL，但 2026-11-22 实测内联 data URI 一样受理、一样出片（任务
+`task_Kb5KZ7PKSb0ZVAjButxNReu9d9k1kz37` completed，轮询回包里有
+`usage.input_image_count: 1`）；而本机存储是 `STORAGE_DRIVER=s3` + 内网 MinIO，
+公网直链根本给不出去。
+
+**边长口径是实测出来的**，不是照错误文案猜的：2026-11-22 用上游实测了一张
+200x3000（短边 200、长边 3000）→ **400**
+`input image side length must be between 256 and 5760 pixels`，即**两条边都要**
+落在 [256, 5760] 里（只判长边会放行这种图）。上界 5760 仍只有错误文案佐证
+（6000x6000 那次撞上 503 队列满，没测到）。
+
+分层改动：
+
+| 层 | 改动 |
+|---|---|
+| 驱动 `drivers/agnes_video.py` | 收 `data:image/*` / `data:audio/*`；声明 `max_references=8`、`reference_kinds=("image","audio")`；图片与音频分两个数组（`images` / `audios`）；按真实字节判边长（256–5760，单边） |
+| 链路 `modules/task/pipeline.py` | `VideoTaskStore.load` 带上存储 key；`build_request` 按驱动声明决定**内联**还是**落盘物化**（LibTV / 百炼那条老路一个字没动） |
+| 受理期 `modules/task/service.py` | 能收哪几类由**模型声明**（`referenceKinds`）筛，不再三类都收；张数与图片边长按供应商声明判（边长用资产库宽高，宽高为 0 时放行） |
+| 提示词 | `{{Mixed N}}` → `<Picture N>` / `<Audio N>`（编号按类型各自从 1 开始） |
+| 前端 | 模型声明带出参考控件（既有逻辑）；本地上传的音轨按 `audio` 入库（模型不收音频时直接拒，不白传一次） |
+
+新增共用实现：`infra/reference_inline.py`（存储 key → data URI，生图链与视频链共用）、
+`core/reference_limits.py`（边长判据）、`core/prompt_refs.translate_prompt_with()`
+（编号规则一份、标签由驱动给）。协议加在 `infra/ai/base.py`：
+`InlineReferencesCapable` / `ReferenceLimitsCapable`。
+
+**教训**：`max_references=0` 不是「不支持」，而是「**没人告诉链路层怎么送过去**」。
+声明改成非 0 之前，先把字节到供应商面前的那条路修通，否则前端画出上传框、
+用户传完、请求照发、后端再拒——四层各自都合理，合起来是个死结。
+
 ## 3. 没做完的（直接从这里开工）
 
 完整清单在 [`TODO.md`](TODO.md)，这里只标需要拍板 / 刚变动的：
@@ -660,6 +703,14 @@ curl -sS --noproxy '*' -H "Authorization: Bearer $TOKEN" \
   （agnes 视频 10 秒，2 秒被 429）。
 - 通用链：`referenceLibraryIds` 在 `load()` 冻结成 `params["referenceKeys"]`，
   `materialize()` 补工作区。
+- **参考素材有两条通道，由驱动声明**（2026-11-22）：不声明 = 落盘物化（LibTV / 百炼，
+  老路一个字没动）；声明 `inline_references = True` = **内联 data URI**
+  （Agnes 视频）。判据在 `modules/task/pipeline.py::build_request`，别在链路层
+  写死某个供应商的名字。
+- **参考素材的硬限制由供应商声明**（`ReferenceLimitsCapable.reference_limits`）：
+  每类素材几份、图片单边多少像素。各渠道不一样（Agnes 256–5760，百炼 240–8000），
+  写成全局常量就会把「百炼能用的图」在受理期拒掉。受理期按资产库宽高判一次，
+  提交前按真实字节再判一次（资产库宽高可能是 0）。
 - **批量输入的「几张 + 什么类型」都由模型声明**：`ModelSpec.max_references` /
   `.reference_kinds` → `GET /models` 出参 `maxReferences` / `referenceKinds` → 前端渲染。
   **前端别写死**（曾写死「只选图片、最多 4 张」，把 LibTV/百炼的「原片视频 + 音频」挡在门外）。

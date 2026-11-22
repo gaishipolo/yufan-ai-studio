@@ -32,6 +32,15 @@
 > 剩余：业务侧 T2/T8/T9/T22/T23/T24，架构侧 T25/T26（只剩唤醒）/T29/T30（暂不收口），
 > T35（PR#5 自报的六条遗留）
 
+2026-11-22：**Agnes 视频支持参考图与参考音频**（走**内联 Base64 data URI**，
+不引入公网 OSS 直传）：模型声明 `max_references=8` / `referenceKinds=["image","audio"]`；
+链路层按驱动声明（`inline_references`）把资产库的字节内联成 data URI
+（共用实现 `infra/reference_inline.py`）；受理期按模型声明限类型 + 按供应商声明
+限张数与图片边长（Agnes 256–5760 单边）；提示词 `{{Mixed N}}` → `<Picture N>` /
+`<Audio N>`。用例 `tests/test_agnes_video_references.py` / `tests/test_video_references.py`。
+上游实测：内联 data URI 受理并出片（轮询回包 `usage.input_image_count=1`）；
+免费队列常态 503 `video_queue_full`，要等。
+
 ## 一眼看完
 
 | 编号 | 事项 | 影响 | 落点 |

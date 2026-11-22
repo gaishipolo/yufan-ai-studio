@@ -22,9 +22,10 @@ from core.ports.library_lookup import LibraryAssetKind, get_library_lookup
 from generation.pipeline import register_pipeline
 from generation.spec import STATUS_QUEUED, STATUS_RUNNING, GenerationRecord
 from infra import get_model_router, get_storage
-from infra.ai.base import Capability, GenerationRequest
+from infra.ai.base import Capability, GenerationRequest, InlineReferencesCapable
 from infra.archive import get_archive_storage
 from infra.archive.runs import run_dir
+from infra.reference_inline import MIME_BY_SUFFIX, inline_data_uris
 from modules.task.enums import TaskStatus
 from modules.task.models import VideoTask, parse_params_json
 
@@ -36,6 +37,9 @@ KIND_VIDEO = "video"
 _EXECUTOR_OUTPUT = "outputs/generated.mp4"
 # 驱动对这类产物的约定形状；换执行器时改这一处。
 _RUN_OUTPUT_URL = re.compile(r"/replacement-runs/([a-f0-9]{32})/output$")
+
+# 单份参考素材的字节上限（与生图链同一数值）。base64 会把它撑大 4/3。
+_MAX_REFERENCE_BYTES = 6 * 1024 * 1024
 
 # 任务表的终态用 completed/failed（前端契约），与框架默认的 succeeded 不同，
 # 因此显式声明终态集合。
@@ -125,6 +129,13 @@ class VideoTaskStore:
                 for asset_id in task.reference_library_ids
             ]
         return GenerationRecord(
+            # 参考素材的**存储 key**（不是地址）：链路层按供应商的声明决定
+            # 走「内联 data URI」还是「落盘物化」那两条路（见 build_request）。
+            reference_urls=tuple(
+                found[asset_id].storage_key
+                for asset_id in (task.reference_library_ids or [])
+                if asset_id in found
+            ),
             id=task.id,
             kind=KIND_VIDEO,
             # 路由供应商用目录 id；历史数据可能只有可读名（ModelRouter 两种都认）
@@ -255,11 +266,25 @@ class VideoGenerationPipeline:
         return VideoTaskStore(session)
 
     async def build_request(self, record: GenerationRecord) -> GenerationRequest:
+        # 参考素材有两条通道，由**供应商自己**声明走哪条：
+        #
+        # - 落盘物化（LibTV / 百炼）：`params["referenceKeys"]` 交给物化器写进
+        #   归档工作区，上传时才有地址（那条老路一个字都不动）；
+        # - 内联（Agnes 视频）：上游只收公网地址或 data URI，而我们的存储在内网、
+        #   给不出公网地址，于是把字节读成 data URI 直接进请求体。
+        #
+        # 不声明就走老路：多读一遍素材、把请求体撑大几 MB，纯属白费。
+        provider = get_model_router().provider_for(record.model)
+        inline = (
+            isinstance(provider, InlineReferencesCapable) and provider.inline_references
+        )
+        references = await _reference_data_uris(record) if inline else ()
         return GenerationRequest(
             capability=self.capability,
             model=record.model,
             prompt=record.prompt,
             params=record.params,
+            reference_urls=references,
             request_id=record.id,
         )
 
@@ -358,6 +383,23 @@ class VideoGenerationPipeline:
         task.cover_url = cover_key
         task.updated_at = datetime.now(tz=UTC)
         return True
+
+
+async def _reference_data_uris(record: GenerationRecord) -> tuple[str, ...]:
+    """把记录里的参考素材读成内联的 data URI。
+
+    为什么必须内联：Agnes 视频的上游只收公网地址或 `data:` URI，我们的存储
+    在内网（MinIO / OSS 内网端点），供应商根本拉不到 —— 实测内联 data URI
+    上游照收照出片，轮询回包里还有 `usage.input_image_count`。
+
+    读失败就抛：参考素材是提交输入，静默退化成纯文生视频会让用户拿到一段
+    与参考素材毫无关系的成片，而记录里写着「用过参考图」。
+    """
+    return await inline_data_uris(
+        record.reference_urls,
+        mime_by_suffix=MIME_BY_SUFFIX,
+        max_bytes=_MAX_REFERENCE_BYTES,
+    )
 
 
 def _with_suffix(name: str, stored: str) -> str:
