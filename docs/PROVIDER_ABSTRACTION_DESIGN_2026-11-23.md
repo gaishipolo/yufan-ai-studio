@@ -32,7 +32,10 @@
 | CLI 存量文件回执迁移命令 | ✅ 已完成 | `app migrate-receipts [--dry-run]`（模块 CLI 注册）；坏行/冲突非零退出，**执行需人工冻结提交通道** |
 | 工作区 GC（30 天） | ✅ 已完成 | `modules/model_driver/maintenance.py`，`leader_only=True`、6h 一轮；四道安全判据（终态 / 有 DB 回执 / 超 30 天 / 无锁） |
 | 运维权限点 + 独立页面 | ⏳ 未做 | 阶段 3 |
-| 全量回归 | ✅ 已通过 | 1871 passed, 14 skipped；ruff/mypy 全绿；assembly 守卫 11 passed |
+| 阶段 0（A1 验证 + kit 骨架） | ✅ 已完成 | 21 条黄金样本；kit/errors.py；生产代码零改动 |
+| 阶段 1 首批（grsai/grsai_video 迁移） | ✅ 已完成 | 错误分类 + `_suffix` 委托 kit；配置 getter 切 mtime 指纹；47 条驱动测试全绿 |
+| 通道决策层 | ✅ 已建、⏳ 未接线 | `infra/media_channel.py` + 9 条测试；接线需改 pipeline 按素材类型分组读字节，风险超出「行为等价迁移」，留待专门评审 |
+| 全量回归 | ✅ 已通过 | **1905 passed, 14 skipped**；ruff 全仓 / mypy 276 文件全绿 |
 
 > ⚠️ **当前仍不能上线**：代码已切 DB，但尚未执行**生产环境**的存量文件回执迁移。直接上线会让「旧任务的文件回执」读不到 → 恢复路径判为无回执 → 二次计费。上线 runbook：①冻结 bailian 提交（运维停入口/下线模型）→ ②`app migrate-receipts --dry-run` 核对 → ③正式迁移，校验 100% → ④解冻。**冻结机制需人工执行，代码不内置开关**（见 §3 冻结小节）。
 
@@ -104,7 +107,7 @@ G5 单独强调：这不是洁癖。2026-11-23 就因为**语义在 `generation/
 
 | # | 假设 | 何时验证 | 验证方法 | 失败后果 / 处置 |
 |---|---|---|---|---|
-| A1 | 各驱动的 `_http_error` / `_json` 等样板**语义等价**，可以合成一份 | 阶段 0 | 逐行比对 4 个驱动的函数，产出差异清单 + 黄金样本测试 | 差异不可调和 → kit 只抽「确定等价」的部分，其余保留驱动私有；G5 降级为「同语义同状态码」而非「同一函数」 |
+| A1 | 各驱动的 `_http_error` / `_json` 等样板**语义等价**，可以合成一份 | 阶段 0 | 逐行比对 4 个驱动的函数，产出差异清单 + 黄金样本测试 | **❌ 2026-11-23 验证失败**：4 组里仅两个 `_suffix` 逐字等价；HTTP 映射/剥前缀/素材分类都不可合并（差异是业务语义，如 `agnes_video` 把 `5xx+video_queue_full` 判 429、其他判 502；429 在 agnes 是 `RateLimited`、grsai 是 `BadRequest`）。**按预案处置**：G5 降级为「同语义同状态码」而非「同一函数」；kit 只抽确定等价件，其余保留驱动私有并以**声明式映射表**约束 |
 | A2 | 存量文件回执**全部可读、可解析、可映射到 DB** | 阶段 0.5 前 | 只读扫描全部 `records/bailian-submission.json`，统计损坏/缺失/模型不一致 | 有损坏 → 先人工修复清单再迁移；**不得跳过损坏项**（跳过 = 二次计费风险） |
 | A3 | 历史素材字节仍可从 S3 重新读取（D6 的重建前提） | 阶段 0.5 前 | 抽样 `referenceKeys` 对应对象，检查存在性与完整性 | 存在丢失对象 → D6 改为「仅新任务使用 S3 唯一副本」，存量档案保留磁盘副本并单独登记 |
 | A4 | `inline_references` 声明与真正走哪条通道**一致**（尤其 agnes 生图链路无条件内联） | 阶段 1 前 | 按驱动 × 素材类型穷举，记录实际通道 | 声明与实现不符 → 先修声明，再迁 kit；否则通道抽象会把错的行为固化 |
@@ -245,38 +248,46 @@ external_id = None, submit_attempts = 1
 
 | 模块 | 职责 | 收敛的样板 |
 |---|---|---|
-| `kit/http.py` | `VendorClient`：请求头组装、缺 key 直接 `BadRequest`、响应分类 | `_http_error` ×3 |
-| `kit/errors.py` | `http_error()`、`upstream_detail()`、`report_failure()` | `_error_detail` / `_suffix` ×4 |
-| `kit/models.py` | `strip_prefix()`、`parse_int()`、`parse_enum()`、`parse_duration()` | `_int` / `_seconds` / `_aspect` ×5 |
-| `kit/media.py` | `classify_media()`、`split_reference_media()`（**默认严格**） | 素材分类 ×4（通道实现在 `infra/`，见 §3.1.4） |
-| `kit/settings.py` | `vendor_settings(prefix, cls)` 工厂 + mtime 指纹缓存 | Settings 样板 ×5 + C2 |
-| `kit/submission_guard.py` | 提交前**数据库唯一约束抢占** + 回执落库 + 「可能已受理」时**禁止自动重提** | 提炼自 `bailian.py:20-27,479`，**介质由文件改为 DB**（D5+D6）；回执落库前不得提炼 |
+> ⚠️ **A1 验证后收缩（2026-11-23）**：原表按「函数名/职责」估计的收敛份数**不成立**。逐行比对证明 4 组里仅两个 `_suffix` 逐字等价；HTTP 映射、剥前缀、素材分类各驱动的差异是**业务语义**（详见 §1.1 A1）。下表是收缩后的实际范围 —— **只抽确定等价件**，其余靠「声明式映射表 + 框架统一执行」约束，不强行合成函数。
+
+| 模块 | 职责（收缩后） | 依据 |
+|---|---|---|
+| `kit/errors.py` | **框架持有唯一分类实现**：按驱动声明的 `status_map` / `error_map` 执行；统一 `suffix(error)`（两个 `_suffix` 逐字等价） | A1 验证 + 调研 LiteLLM |
+| `kit/settings.py` | `vendor_settings(prefix, cls)` 工厂 + mtime 指纹缓存 | Settings 样板 ×5 结构等价（未逐行比对，风格一致） |
+| `kit/submission_guard.py` | 提交前**DB 唯一约束抢占** + 「可能已受理」禁止自动重提 | **阶段 0.5 已实现**（`receipts.py`，作为件迁入） |
+| ~~`kit/http.py`~~ | ❌ 不抽 —— 4 份映射规则互异，抽了只能靠参数开关还原差异 | A1 验证 |
+| ~~`kit/models.py::strip_prefix`~~ | ❌ 不抽 —— agnes_video 是双别名归一、grsai 才剥前缀、bailian 是精确查表 | A1 验证 |
+| ~~`kit/media.py::classify`~~ | ❌ 不抽分类 —— 无分类/MIME+协议/MIME+后缀三种维度，失败行为从「不报错」到「严格报错」 | A1 验证；但「认不出就报错」的默认仍在 grsai 侧 |
 
 #### 3.1.1 错误分类：语义收进一处（G5）
 
 **决定权分层（调研后修正，对应 LiteLLM 的做法）**：驱动**不实现分类函数**，只**声明映射数据**；框架持有唯一分类实现并按表执行。若把 `map_error` 做成子类钩子，决定权就又下放——2026-11-23 那类「同语义不同状态码」必然复发。
 
 ```python
-# 驱动声明（数据，不是代码）：
-status_map: Mapping[str, GenerationState]        # 如 {"succeeded": SUCCEEDED, "failed": FAILED}
-error_map:  Mapping[ErrorKind, type[AppError]]   # 如 {MISSING_KEY: BadRequest, UPSTREAM_5XX: UpstreamError}
+# 驱动声明（数据，不是代码）—— 映射表按 HTTP 状态码，不按函数名：
+http_status_map: Mapping[int, type[AppError]]  # 如 {401: Unauthorized, 429: RateLimited}
+# 例外：agnes_video 的 5xx+video_queue_full → RateLimited 属业务码例外，
+# 用 error_code_overrides: Mapping[tuple[int, str], type[AppError]] 声明，不写死在框架
+error_code_overrides: Mapping[tuple[int, str], type[AppError]] = {}
 
-# 框架执行（唯一实现）：kit/errors.py 按上面两张表分类并抛异常
+# 框架执行（唯一实现）：kit/errors.py::classify_http_error() 按表分类并抛异常
+def classify_http_error(
+    response: httpx.Response,
+    *,
+    status_map: Mapping[int, type[AppError]],
+    code_overrides: Mapping[tuple[int, str], type[AppError]] | None = None,
+    vendor: str,
+) -> AppError: ...
 ```
 
-**唯一判定点**，驱动只提供「供应商名」和「上游错误细节」：
+> **A1 验证后的关键调整**：原设计写的是「驱动提供供应商名，框架按固定口径分类」—— 逐行比对证明**口径本身各驱动不同**（429 在 agnes 是 `RateLimited`、grsai 是 `BadRequest`；401/403 同理；agnes_video 有业务码例外）。现在改为「驱动声明映射表，框架执行」：状态码→异常的**决定权仍在驱动**（尊重业务语义），但**分类实现只有一份**（消除 4 份代码漂移）。G5 据此降级为「同语义同状态码」—— 不是「所有驱动用同一张表」。
+
+**唯一判定点**，驱动只提供映射表和错误细节：
 
 ```python
-# kit/errors.py
-def http_error(response: httpx.Response, *, vendor: str) -> AppError:
-    """上游 HTTP 错误 → 平台异常。
-
-    分类口径（G5 的唯一实现）：
-      · 连接失败 / 4xx（含 429）  → 4xx 侧：确定没送达 → 框架允许安全重试，
-        并把上游给的原因透给用户
-      · 5xx / 408                  → 5xx 侧：请求已发出、可能已计费 →
-        框架不自动重试，避免同一张图计费两次
-    """
+# kit/errors.py（唯一实现）
+def http_error(response: httpx.Response, *, status_map, code_overrides=None, vendor: str) -> AppError:
+    """上游 HTTP 错误 → 平台异常。分类口径由驱动的映射表给定，本函数只执行。"""
 ```
 
 配套约定：
@@ -444,7 +455,24 @@ EXTRA_SCHEMAS: tuple[type[BaseModel], ...] = ()
 
 每个阶段独立可发布、可回滚。
 
-### 阶段 0：固化行为（不动生产代码）
+### 阶段 0：固化行为（不动生产代码）—— ✅ 2026-11-23 完成
+
+**实际产出（与原文计划的差异已按 A1 验证结果调整）：**
+
+| 项 | 结果 |
+|---|---|
+| A1 逐行比对 | ✅ 完成：4 组里仅两个 `_suffix` 逐字等价，其余不可合并（详见 §1.1 A1） |
+| 黄金样本测试 | ✅ 21 条（`tests/test_driver_kit_errors.py`），逐条还原 4 个驱动各自的 HTTP 状态口径 |
+| `kit/errors.py` | ✅ 框架唯一分类实现 + `suffix()`；驱动用 `status_map` / `code_overrides` 声明口径 |
+| 生产代码 | ✅ 零改动（驱动仍在用自己的函数；kit 尚未被引用） |
+| 408 口径修正 | ✅ kit 默认归 5xx 侧（可能已受理），grsai 用 `status_map={408: BadRequest}` 显式覆盖 |
+
+> 原计划「建全部 kit 骨架」按 A1 结果收缩为只建 `errors.py`（唯一确定等价件）+ `settings.py`（阶段 1 随配置迁移建）。其余不抽（见 §3.1 收缩表）。
+>
+> **阶段 1 首批迁移结果（2026-11-23）**：`grsai` / `grsai_video` 的 HTTP 错误分类与 `_suffix` 已委托 kit（47 条测试全绿，行为等价）。
+> `agnes` / `agnes_video` **保留私有**：404 有定制文案（「当前密钥分组未开通…可用模型见 GET /api/v1/models」），401/403/429 也各有专门提示；`agnes_video` 还有业务码例外。kit 的 `status_map`/`code_overrides` 只表达异常类型，表达不了逐状态的定制文案 —— 强迁会破坏行为等价。这正是 A1 预案「其余保留驱动私有」的落地。
+
+### 原阶段 0 计划（留档）
 
 1. 把各驱动的样板实现**逐行比对**，查清差异（重点：`agnes_video._http_error` vs `grsai_http_error` 的映射规则差异）。
 2. 为**已存在的行为**写契约测试（§5.1–§5.3 的错误分类、素材分类、参数解析）—— 用现有驱动的真实行为做黄金样本。
