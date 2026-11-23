@@ -84,6 +84,14 @@ from infra.archive.base import lease
 from infra.archive.runs import check_id
 from infra.driver_config import DriverSettings, driver_config
 from modules.model_driver.generic_inputs import materialize
+from modules.model_driver.receipts import (
+    STATUS_REJECTED,
+    STATUS_SUBMITTED,
+    STATUS_UNKNOWN,
+    decide_before_submit,
+    recover_external_id,
+    settle_submission,
+)
 from modules.model_driver.spec import DriverMeta
 
 META = DriverMeta(
@@ -440,20 +448,19 @@ class BailianProvider:
     async def _submit(self, request: GenerationRequest) -> str:
         run_id = self._ensure_supported(request)
         folder = await asyncio.to_thread(run_path, run_id)
-        receipt_file = folder / "records/bailian-submission.json"
-        if await asyncio.to_thread(receipt_file.exists):
-            receipt = await asyncio.to_thread(_read, receipt_file)
-            if receipt.get("task_id"):
-                if receipt.get("model") != request.model:
-                    raise BadRequest("百炼已提交任务的模型不能变更")
-                return f"{run_id}:{receipt['task_id']}"
-            if receipt.get("status") == "rejected":
-                await asyncio.to_thread(
-                    receipt_file.rename,
-                    receipt_file.with_name(f"bailian-rejected-{uuid.uuid4().hex}.json"),
-                )
-            else:
-                raise UpstreamError("百炼提交回执未知，请核对上游；禁止自动重提")
+
+        # 回执在 DB（2026-11-23 落库）：工作区被删/换机器也能恢复，
+        # 不会再因为读不到文件回执而把同一个 run 重复提交给上游（二次计费）。
+        # 文件锁仍保留 —— 它管的是**进程内互斥**（含素材上传），和回执是两个职责。
+        #
+        # 顺序：只读恢复 → 本地校验 → **抢占** → 付费 POST → 结算。
+        # 抢占必须在校验之后 —— 否则校验失败会留下 submitting 回执，把后续
+        # 合法重试永久锁死（原来的文件回执也是这个顺序）。
+        existing = await recover_external_id(
+            provider="bailian", run_id=run_id, model=request.model
+        )
+        if existing is not None:
+            return existing
         headers = {
             **self._headers(),
             "X-DashScope-Async": "enable",
@@ -474,16 +481,14 @@ class BailianProvider:
             raise BadRequest("百炼输出时长须为2至30秒的整数")
         if time.time() - (await asyncio.to_thread(prepared.stat)).st_mtime > 47 * 3600:
             raise BadRequest("百炼临时素材已过期，请重新准备素材")
-        receipt = {"status": "submitting", "model": request.model, "run_id": run_id}
 
-        def claim() -> None:
-            try:
-                with receipt_file.open("x", encoding="utf-8") as stream:
-                    json.dump(receipt, stream)
-            except FileExistsError as exc:
-                raise UpstreamError("百炼已有提交记录；禁止自动重提") from exc
-
-        await asyncio.to_thread(claim)
+        # 校验全部通过，现在才抢占提交权（并发下只能有一个请求进到付费 POST）
+        await decide_before_submit(
+            provider="bailian",
+            run_id=run_id,
+            model=request.model,
+            channel_used="oss",  # 百炼音频走 OSS；图片将来改内联时按实际通道填
+        )
         try:
             async with self._client() as client:
                 result = await self._json(
@@ -496,19 +501,24 @@ class BailianProvider:
             task_id = result.get("output", {}).get("task_id")
             if not isinstance(task_id, str) or not re.fullmatch(r"[a-zA-Z0-9_-]+", task_id):
                 raise ValueError("missing task id")
-        except BadRequest:
-            await asyncio.to_thread(_write, receipt_file, {**receipt, "status": "rejected"})
+        except BadRequest as exc:
+            await settle_submission(
+                provider="bailian", run_id=run_id, status=STATUS_REJECTED, error=str(exc)
+            )
             raise
         except (UpstreamError, ValueError, TypeError) as exc:
-            await asyncio.to_thread(
-                _write, receipt_file, {**receipt, "status": "submission_unknown"}
+            # 可能已受理：记 submission_unknown 并禁止自动重提（DB 状态机守着）
+            await settle_submission(
+                provider="bailian", run_id=run_id, status=STATUS_UNKNOWN, error=str(exc)
             )
             raise UpstreamError("百炼提交回执未知，请核对上游；禁止自动重提") from exc
         external_id = f"{run_id}:{task_id}"
-        await asyncio.to_thread(
-            _write,
-            receipt_file,
-            {**receipt, "status": "submitted", "task_id": task_id, "external_id": external_id},
+        await settle_submission(
+            provider="bailian",
+            run_id=run_id,
+            status=STATUS_SUBMITTED,
+            task_id=task_id,
+            external_id=external_id,
         )
         return external_id
 

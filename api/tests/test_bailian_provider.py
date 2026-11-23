@@ -5,12 +5,14 @@ import httpx
 import pytest
 
 from core.exceptions import BadRequest, NotFound, UpstreamError
+from db.session import get_session_factory
 from infra.ai.base import Capability, GenerationRequest, GenerationState
 from modules.model_driver.drivers import bailian
+from modules.model_driver.models import SubmissionReceipt
 
 
 @pytest.fixture
-def workspace(tmp_path, monkeypatch):
+async def workspace(tmp_path, monkeypatch):
     (tmp_path / "inputs").mkdir()
     (tmp_path / "records").mkdir()
     (tmp_path / "inputs/prompt.txt").write_text(
@@ -34,6 +36,14 @@ def workspace(tmp_path, monkeypatch):
         encoding="utf-8",
     )
     monkeypatch.setattr(bailian, "run_path", lambda _: tmp_path)
+
+    # 回执在 DB（全局测试库），不像文件那样随 tmp_path 隔离 —— 每条测试
+    # 开跑前清表，否则上一条的回执会污染这一条。
+    from sqlalchemy import delete
+
+    async with get_session_factory()() as session:
+        await session.execute(delete(SubmissionReceipt))
+        await session.commit()
     return tmp_path
 
 
@@ -153,8 +163,19 @@ async def test_submit_persists_receipt_and_retry_reuses_task(workspace):
     assert await p.submit(req) == "run:task-123"
     assert await p.submit(req) == "run:task-123"
     assert len(calls) == 1
-    receipt = json.loads((workspace / "records/bailian-submission.json").read_text())
-    assert receipt["task_id"] == "task-123"
+    # 回执在 DB：工作区删掉也能恢复（2026-11-23 落库）
+    from sqlalchemy import select
+
+    async with get_session_factory()() as session:
+        result = await session.execute(
+            select(SubmissionReceipt).where(
+                SubmissionReceipt.provider == "bailian",
+                SubmissionReceipt.run_id == "run",
+            )
+        )
+        receipt = result.scalar_one()
+    assert receipt.task_id == "task-123"
+    assert receipt.status == "submitted"
 
 
 async def test_ambiguous_submission_never_automatically_resubmits(workspace):
@@ -231,7 +252,17 @@ async def test_submit_revalidates_prepared_payload_limits_before_paid_request(wo
     )
     with pytest.raises(BadRequest, match="20000"):
         await provider(lambda _: pytest.fail("must validate before paid POST")).submit(req)
-    assert not (workspace / "records/bailian-submission.json").exists()
+    # 校验失败不能抢占提交权 —— 否则后续合法重试会被 submitting 回执锁死
+    from sqlalchemy import func, select
+
+    async with get_session_factory()() as session:
+        count = await session.scalar(
+            select(func.count()).select_from(SubmissionReceipt).where(
+                SubmissionReceipt.provider == "bailian",
+                SubmissionReceipt.run_id == "run",
+            )
+        )
+    assert count == 0
 
 
 async def test_poll_bounded_download_removes_partial_file_and_keeps_task(workspace, monkeypatch):
