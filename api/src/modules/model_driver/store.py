@@ -19,6 +19,7 @@ from generation.spec import (
     STATUS_SUCCEEDED,
     GenerationRecord,
 )
+from infra.ai.base import PollCapable
 from modules.model_driver.models import (
     KIND_MODEL_DRIVER,
     TERMINAL_STATUSES,
@@ -129,7 +130,7 @@ class DriverJobStore:
             provider = router.provider_for(job.model)
         except Exception:  # noqa: BLE001 - 快照是增强，不能让一次成功提交失败
             return None
-        return "async" if getattr(provider, "supports_poll", False) else "sync"
+        return "async" if isinstance(provider, PollCapable) and provider.supports_poll else "sync"
 
     async def mark_progress(self, record_id: str, progress: int) -> bool:
         job = await _guard(self.session, record_id)

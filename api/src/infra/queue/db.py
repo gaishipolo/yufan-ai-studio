@@ -594,7 +594,13 @@ class DbJobQueue:
 
     # ------------------------------------------------------------------ 运维
     async def stats(self) -> dict[str, int]:
-        """各状态计数，供 `app doctor` 与排查用。不在协议里（别的驱动没有这个概念）。"""
+        """各状态计数，供 `app doctor` 与排查用。
+
+        不在 `JobQueue` 主协议里（那是「每个驱动都必须实现」的契约），
+        但用 `infra.queue.base.StatsCapable` 协议暴露——**`memory` 驱动也有**，
+        以前那句「别的驱动没有这个概念」是错的，正是它让调用方改用
+        `getattr` 探测、把「驱动有没有自报计数」变成了猜。
+        """
         async with self._session() as session:
             rows = await session.execute(
                 select(QueuedJob.status, func.count()).group_by(QueuedJob.status)

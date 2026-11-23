@@ -41,6 +41,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.config import settings
 from core.logging import get_logger
+from infra.queue.base import StatsCapable
 
 logger = get_logger(__name__)
 
@@ -116,7 +117,7 @@ async def _check_queue() -> tuple[int, RuntimeCheck]:
 
     try:
         queue = get_queue()
-        stats = getattr(queue, "stats", None)
+        stats = queue.stats if isinstance(queue, StatsCapable) else None
         if callable(stats):
             counts: dict[str, int] = await stats()
             size = sum(counts.values())
