@@ -50,6 +50,7 @@ from infra.ai.base import (
 )
 from infra.driver_config import DriverSettings, driver_config
 from infra.reference_inline import MIME_BY_SUFFIX
+from modules.model_driver.kit.credentials import require_api_key
 from modules.model_driver.kit.errors import classify_http_error
 from modules.model_driver.kit.errors import suffix as kit_suffix
 from modules.model_driver.kit.settings import vendor_settings
@@ -124,11 +125,12 @@ def grsai_headers(settings: GrsaiSettings) -> dict[str, str]:
     一律按「可能已送达」处理（宁可让任务失败等人核对，也不赌对方没收到）。
     本地配置缺失属于「确定没发出」，必须落在 4xx 这一侧。
     """
-    key = settings.api_key.strip()
-    if not key:
-        raise BadRequest(
-            "Grsai 未配置：请设置 GRSAI_API_KEY（控制台创建的密钥），当前无法提交"
-        )
+    key = require_api_key(
+        settings.api_key,
+        vendor="Grsai",
+        env_name="GRSAI_API_KEY",
+        note="控制台创建的密钥",
+    )
     return {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
 
 

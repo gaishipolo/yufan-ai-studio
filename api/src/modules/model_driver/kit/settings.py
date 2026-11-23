@@ -38,6 +38,11 @@ T = TypeVar("T")
 # 缓存项：(mtime_ns, size, env 快照指纹) → 实例
 _cache: dict[tuple[type, int, int, tuple[tuple[str, str], ...]], object] = {}
 
+#: 缓存条目上限。键里含 env 快照，所以**每次 env 变化都会新增一条键**。
+#: 正常部署 env 长期不变（只有 1 条），但密钥轮转 / 容器注入频繁变动时会累积。
+#: 超过上限就整体清空 —— 重建一次配置的成本远低于让缓存无限增长。
+_MAX_CACHE_ENTRIES = 32
+
 
 def _env_snapshot(env_prefix: str) -> tuple[tuple[str, str], ...]:
     """只取本供应商前缀的环境变量。
@@ -76,6 +81,8 @@ def vendor_settings(cls: type[T], *, env_prefix: str) -> Callable[[], T]:
         cached = _cache.get(key)
         if cached is not None:
             return cached  # type: ignore[return-value]
+        if len(_cache) >= _MAX_CACHE_ENTRIES:
+            _cache.clear()
         instance = cls()
         _cache[key] = instance
         return instance

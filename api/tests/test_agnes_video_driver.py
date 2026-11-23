@@ -160,10 +160,16 @@ async def test_unknown_aspect_ratio_is_rejected_before_request() -> None:
 
 
 async def test_missing_api_key_fails_before_request() -> None:
-    with pytest.raises(UpstreamError) as exc:
+    """缺密钥 = 确定没送达 → **4xx**（2026-11-23 事故修正）。
+
+    这里原来抛 `UpstreamError`(502)，会被框架改写成「可能已受理、
+    请到上游核对」—— 而请求根本没发出去。
+    """
+    with pytest.raises(BadRequest) as exc:
         await _driver(_no_network, api_key="  ").submit(_request())
 
     assert "AGNES_API_KEY" in str(exc.value)
+    assert exc.value.http_status == 400
 
 
 async def test_non_video_capability_is_refused() -> None:
@@ -313,7 +319,6 @@ async def test_queue_full_is_retryable_and_not_treated_as_delivered() -> None:
 
 async def test_other_5xx_stays_possibly_delivered() -> None:
     """网关自己 502（不是队列满）时仍按「可能已受理」保守处理，不许自动重提。"""
-    from core.exceptions import UpstreamError
     from generation.runner import _possibly_delivered
 
     def handler(request: httpx.Request) -> httpx.Response:

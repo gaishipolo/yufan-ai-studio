@@ -84,6 +84,7 @@ from infra.archive.base import lease
 from infra.archive.runs import check_id
 from infra.driver_config import DriverSettings, driver_config
 from modules.model_driver.generic_inputs import materialize
+from modules.model_driver.kit.credentials import require_api_key
 from modules.model_driver.receipts import (
     STATUS_REJECTED,
     STATUS_SUBMITTED,
@@ -330,9 +331,13 @@ class BailianProvider:
         )
 
     def _headers(self) -> dict[str, str]:
-        if not self.settings.api_key:
-            raise BadRequest("请先配置北京地域的BAILIAN_API_KEY")
-        return {"Authorization": f"Bearer {self.settings.api_key}"}
+        key = require_api_key(
+            self.settings.api_key,
+            vendor="百炼",
+            env_name="BAILIAN_API_KEY",
+            note="北京地域",
+        )
+        return {"Authorization": f"Bearer {key}"}
 
     def _url(self, path: str) -> str:
         return self.settings.base_url.rstrip("/") + path

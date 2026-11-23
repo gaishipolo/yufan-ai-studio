@@ -34,8 +34,10 @@
 | 运维权限点 + 独立页面 | ⏳ 未做 | 阶段 3 |
 | 阶段 0（A1 验证 + kit 骨架） | ✅ 已完成 | 21 条黄金样本；kit/errors.py；生产代码零改动 |
 | 阶段 1 首批（grsai/grsai_video 迁移） | ✅ 已完成 | 错误分类 + `_suffix` 委托 kit；配置 getter 切 mtime 指纹；47 条驱动测试全绿 |
+| **缺密钥判定收进 kit（事故修正）** | ✅ 已完成 | `kit/credentials.py::require_api_key`；agnes/agnes_video 从 502 修正为 400；四个驱动统一；8 条新测试 + 防漂移守卫 |
+| 阶段 1 第 2 组（agnes/agnes_video） | ✅ 部分完成 | 配置 getter 切 mtime 指纹；缺密钥判定统一；**HTTP 错误映射保留私有**（404 有定制文案、agnes_video 有业务码例外） |
 | 通道决策层 | ✅ 已建、⏳ 未接线 | `infra/media_channel.py` + 9 条测试；接线需改 pipeline 按素材类型分组读字节，风险超出「行为等价迁移」，留待专门评审 |
-| 全量回归 | ✅ 已通过 | **1905 passed, 14 skipped**；ruff 全仓 / mypy 276 文件全绿 |
+| 全量回归 | ✅ 已通过 | **1913 passed, 14 skipped**；ruff 全仓 / mypy 277 文件全绿 |
 
 > ⚠️ **当前仍不能上线**：代码已切 DB，但尚未执行**生产环境**的存量文件回执迁移。直接上线会让「旧任务的文件回执」读不到 → 恢复路径判为无回执 → 二次计费。上线 runbook：①冻结 bailian 提交（运维停入口/下线模型）→ ②`app migrate-receipts --dry-run` 核对 → ③正式迁移，校验 100% → ④解冻。**冻结机制需人工执行，代码不内置开关**（见 §3 冻结小节）。
 
@@ -229,6 +231,17 @@ external_id = None, submit_attempts = 1
 
 **这不是「有人写错了」，是「同一个语义有两处真相，其中一处必然漂移」。** 抽象的目标就是把这类判断收进一处。
 
+> ✅ **2026-11-23 已修正**：新增 `kit/credentials.py::require_api_key()` 作为**缺密钥的唯一判定**，四个驱动全部改用它。核实发现口径此前是分裂的：
+>
+> | 驱动 | 修正前 | 修正后 |
+> |---|---|---|
+> | `grsai` | `BadRequest`(400) | 不变（改走 kit） |
+> | `bailian` | `BadRequest`(400) | 不变（改走 kit） |
+> | `agnes` | **`UpstreamError`(502)** ❌ | `BadRequest`(400) ✅ |
+> | `agnes_video` | **`UpstreamError`(502)** ❌ | `BadRequest`(400) ✅ |
+>
+> 「缺 key = 请求根本没发出 = 确定没送达」→ 必须落 4xx。这一条是**行为修正**（不计入「行为等价迁移」验收），配套单独测试（`tests/test_driver_kit_credentials.py`，含防漂移守卫）。
+
 ### 2.5 与既有文档的关系
 
 | 既有文档 | 关系 |
@@ -253,6 +266,7 @@ external_id = None, submit_attempts = 1
 | 模块 | 职责（收缩后） | 依据 |
 |---|---|---|
 | `kit/errors.py` | **框架持有唯一分类实现**：按驱动声明的 `status_map` / `error_map` 执行；统一 `suffix(error)`（两个 `_suffix` 逐字等价） | A1 验证 + 调研 LiteLLM |
+| `kit/credentials.py` | **缺密钥的唯一判定**：空 → `BadRequest`(4xx，确定没送达)。文案由驱动给（`vendor`/`env_name`/`note`），异常类型由 kit 定 | **2026-11-23 事故修正**（§2.4）|
 | `kit/settings.py` | `vendor_settings(prefix, cls)` 工厂 + mtime 指纹缓存 | Settings 样板 ×5 结构等价（未逐行比对，风格一致） |
 | `kit/submission_guard.py` | 提交前**DB 唯一约束抢占** + 「可能已受理」禁止自动重提 | **阶段 0.5 已实现**（`receipts.py`，作为件迁入） |
 | ~~`kit/http.py`~~ | ❌ 不抽 —— 4 份映射规则互异，抽了只能靠参数开关还原差异 | A1 验证 |
@@ -497,6 +511,15 @@ EXTRA_SCHEMAS: tuple[type[BaseModel], ...] = ()
 
 ### 阶段 1：L1 迁移（逐个驱动，不合并）
 
+**进度（2026-11-23）**：
+
+| 组 | 状态 | 迁了什么 | 没迁什么（及原因） |
+|---|---|---|---|
+| `grsai` / `grsai_video` | ✅ 已完成 | 错误分类 → kit（`status_map` 声明口径）、`_suffix` → kit、配置 getter → kit | 剥模型前缀（grsai 特有）、素材分类（grsai 特有） |
+| `agnes` / `agnes_video` | ✅ 已完成（部分）| 配置 getter → kit、**缺密钥判定 → kit** | **HTTP 错误映射保留私有**：404 有定制文案（「当前密钥分组未开通…可用模型见 GET /api/v1/models」）、401/403/429 各有专门提示、`agnes_video` 还有业务码例外 —— `status_map` 只表达异常类型，表达不了逐状态的定制文案，强迁会破坏行为等价 |
+| `bailian` | ⏳ 未开始 | —— | 先做「图片改内联、音频保留 OSS」的行为修正（A4/A7 实测），再迁 |
+| `libtv` | ⏳ 未开始 | —— | 最后迁，顺带验证 L2 的 extras 机制 |
+
 迁移顺序（按收益/风险比）：
 
 1. `grsai` / `grsai_video`（本次刚改过，测试现成；错误分类刚被修正过，正好固化为契约）
@@ -599,6 +622,14 @@ EXTRA_SCHEMAS: tuple[type[BaseModel], ...] = ()
 - 坏配置**不被缓存**（改好立即可用）
 - 环境变量优先于 `.env`
 - 缺必填项 → 生产巡检报出（`DriverSettings.prod_required_fields`）
+
+### 5.4.1 缺密钥判定（`kit/credentials.py`）
+
+- 空串 / 纯空格 / `None` → **`BadRequest`(4xx)**，消息含环境变量名
+- 有值 → 返回去掉首尾空白的 key
+- **反向断言**：缺密钥**永远不是 5xx**（5xx 会落进框架「可能已受理」那一侧）
+- 四个驱动（`agnes` / `agnes_video` / `bailian` / `grsai`）缺密钥 → 全部 4xx
+- 架构守卫：驱动里**不得**再出现「自己判空 `api_key` + 自己 `raise`」的写法
 
 ### 5.5 刷新（`registry.refresh()`）
 

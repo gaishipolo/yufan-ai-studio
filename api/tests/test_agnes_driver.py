@@ -229,14 +229,22 @@ async def test_empty_data_fails_with_body_snippet(monkeypatch: pytest.MonkeyPatc
 async def test_missing_api_key_fails_before_request(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from core.exceptions import UpstreamError
+    """缺密钥 = 请求根本没发出 = **4xx**，不是 5xx。
+
+    2026-11-23 事故修正：这里原来抛 `UpstreamError`(502)，落进框架
+    `_possibly_delivered` 的「可能已受理」那一侧 → 用户看到
+    「提交结果未知，请到上游核对」，而上游压根没有这个任务。
+    缺 key 是本地配置问题，必须落在 4xx（确定没送达）这一侧。
+    """
+    from core.exceptions import BadRequest
 
     monkeypatch.setenv("AGNES_API_KEY", "  ")
 
-    with pytest.raises(UpstreamError) as exc:
+    with pytest.raises(BadRequest) as exc:
         await AgnesDriver().submit(_request())
 
     assert "AGNES_API_KEY" in str(exc.value)
+    assert exc.value.http_status == 400, "4xx 才允许框架安全重试并透出真实原因"
 
 
 async def test_count_above_one_is_rejected_before_request(

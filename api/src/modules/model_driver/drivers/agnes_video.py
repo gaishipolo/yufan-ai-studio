@@ -84,6 +84,8 @@ from infra.ai.base import (
 )
 from infra.driver_config import DriverSettings, driver_config
 from infra.media_probe import image_size
+from modules.model_driver.kit.credentials import require_api_key
+from modules.model_driver.kit.settings import vendor_settings
 from modules.model_driver.spec import DriverMeta
 
 logger = get_logger(__name__)
@@ -203,8 +205,9 @@ class AgnesVideoSettings(DriverSettings):
     timeout_sec: float = 30.0
 
 
-def get_agnes_video_settings() -> AgnesVideoSettings:
-    return AgnesVideoSettings()
+# 配置热生效（D3）：mtime 指纹缓存 —— 改 `.env` 下次请求即生效，
+# 且不再每次 submit 都整读一遍 `.env`（原实现每次新建实例）。
+get_agnes_video_settings = vendor_settings(AgnesVideoSettings, env_prefix="AGNES")
 
 
 class AgnesVideoDriver:
@@ -265,11 +268,9 @@ class AgnesVideoDriver:
     async def submit(self, request: GenerationRequest) -> str:
         if request.capability is not Capability.VIDEO:
             raise BadRequest("agnes_video 只负责视频生成；图片请走 agnes 驱动")
-        config = self.settings
-        if not config.api_key.strip():
-            raise UpstreamError(
-                "Agnes 未配置：请设置 AGNES_API_KEY（与生图共用），当前无法提交视频"
-            )
+        # 缺密钥 = 确定没送达 → 4xx（kit 唯一判定口径，见 kit/credentials.py）。
+        # 请求头在这里一次算好：既做缺密钥检查，也避免同一请求读两遍配置。
+        headers = self._headers()
 
         seconds = _seconds(request.params.get("durationSec"))
         aspect = _aspect(request.params.get("aspectRatio"))
@@ -311,7 +312,7 @@ class AgnesVideoDriver:
             response = await client.post(
                 f"{self._root()}/v1/videos",
                 json=payload,
-                headers=self._headers(),
+                headers=headers,
             )
         if response.status_code >= 400:
             raise _http_error(response)
@@ -415,9 +416,12 @@ class AgnesVideoDriver:
         )
 
     def _headers(self) -> dict[str, str]:
-        key = self.settings.api_key.strip()
-        if not key:
-            raise UpstreamError("Agnes 未配置：请设置 AGNES_API_KEY（与生图共用）")
+        key = require_api_key(
+            self.settings.api_key,
+            vendor="Agnes",
+            env_name="AGNES_API_KEY",
+            note="与生图共用",
+        )
         return {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
 
     def _root(self) -> str:

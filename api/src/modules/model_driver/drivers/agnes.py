@@ -75,6 +75,8 @@ from infra.ai.base import (
     ModelSpec,
 )
 from infra.driver_config import DriverSettings, driver_config
+from modules.model_driver.kit.credentials import require_api_key
+from modules.model_driver.kit.settings import vendor_settings
 from modules.model_driver.spec import DriverMeta
 
 logger = get_logger(__name__)
@@ -166,8 +168,9 @@ class AgnesSettings(DriverSettings):
     timeout_sec: float = 180.0
 
 
-def get_agnes_settings() -> AgnesSettings:
-    return AgnesSettings()
+# 配置热生效（D3）：mtime 指纹缓存 —— 改 `.env` 下次请求即生效，
+# 且不再每次 submit 都整读一遍 `.env`（原实现每次新建实例）。
+get_agnes_settings = vendor_settings(AgnesSettings, env_prefix="AGNES")
 
 
 class AgnesDriver:
@@ -198,10 +201,15 @@ class AgnesDriver:
 
     async def submit(self, request: GenerationRequest) -> GenerationProgress:
         config = get_agnes_settings()
-        if not config.api_key.strip():
-            raise UpstreamError(
-                "Agnes 未配置：请设置 AGNES_API_KEY（控制台创建的密钥），当前无法提交生图"
-            )
+        # 缺密钥 = 请求根本没发出 = 确定没送达 → 4xx（kit 唯一判定口径）。
+        # 原来这里抛 UpstreamError(502)，落进框架「可能已受理」那一侧，
+        # 把「没配 key」改写成「提交结果未知」（2026-11-23 事故）。
+        api_key = require_api_key(
+            config.api_key,
+            vendor="Agnes",
+            env_name="AGNES_API_KEY",
+            note="控制台创建的密钥",
+        )
 
         model = request.model or config.model
         _require_single_image(request.params.get("count", 1))
@@ -238,7 +246,7 @@ class AgnesDriver:
                 url,
                 json=payload,
                 headers={
-                    "Authorization": f"Bearer {config.api_key.strip()}",
+                    "Authorization": f"Bearer {api_key}",
                     "Content-Type": "application/json",
                 },
             )
