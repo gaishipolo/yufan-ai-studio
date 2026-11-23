@@ -1058,3 +1058,47 @@ describe('模板封装 · 拖动整个封装', () => {
     expect(document.querySelector('[data-drop-line="after"]')).toBeNull();
   });
 });
+
+describe('模板封装 · 删除前先问一句', () => {
+  /* 断言「还没发请求」要看调用次数，所以每个用例从干净的 mock 开始。 */
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  /* 删除是**方向不可逆**的动作（虽然能恢复），所以必须有一层确认。
+     确认框是页面内的 `ConfirmDialog`：原生 `window.confirm` 样式不受控，
+     还会把整页卡住 —— 用户看不清这次到底会发生什么。 */
+  it('点「删除」先弹确认框，还没确认就不发请求', async () => {
+    const user = userEvent.setup();
+    renderWorkspace([specOf({ status: 'draft' })]);
+
+    await user.click(cardOf('商品图模板').getByRole('button', { name: '删除' }));
+
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog).toHaveTextContent('移进回收站？');
+    expect(dialog).toHaveTextContent('商品图模板');
+    expect(mutations.remove).not.toHaveBeenCalled();
+  });
+
+  it('取消：什么都不发生', async () => {
+    const user = userEvent.setup();
+    renderWorkspace([specOf({ status: 'draft' })]);
+
+    await user.click(cardOf('商品图模板').getByRole('button', { name: '删除' }));
+    await user.click(await screen.findByRole('button', { name: '取消' }));
+
+    expect(mutations.remove).not.toHaveBeenCalled();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it('确认：才发删除请求，并给一条成功提示', async () => {
+    const user = userEvent.setup();
+    renderWorkspace([specOf({ status: 'draft' })]);
+
+    await user.click(cardOf('商品图模板').getByRole('button', { name: '删除' }));
+    await user.click(await screen.findByRole('button', { name: '移进回收站' }));
+
+    await waitFor(() => expect(mutations.remove).toHaveBeenCalledWith('spec-1'));
+    expect(await screen.findByText('已移进回收站：商品图模板')).toBeInTheDocument();
+  });
+});

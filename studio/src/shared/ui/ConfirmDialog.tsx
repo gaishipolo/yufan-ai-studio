@@ -22,6 +22,13 @@ export interface ConfirmDialogProps {
   /** 提醒条：需要特别注意的那一句（如「这次会消耗积分」）。 */
   notice?: ReactNode;
   noticeTone?: 'warn' | 'danger' | 'info';
+  /**
+   * 确认按钮的样式：`danger` 用于**破坏性动作**（删除、下架）。
+   *
+   * 默认是主按钮（蓝），但「移进回收站」这种动作点下去要有红色 —— 用户
+   * 扫一眼按钮就知道自己在按什么，不用读文字。
+   */
+  confirmTone?: 'primary' | 'danger';
   confirmLabel?: string;
   cancelLabel?: string;
   /** 提交中：确认按钮转圈并禁用，取消也禁用。 */
@@ -53,6 +60,7 @@ export function ConfirmDialog({
   details,
   notice,
   noticeTone = 'warn',
+  confirmTone = 'primary',
   confirmLabel = '确认',
   cancelLabel = '取消',
   busy,
@@ -106,7 +114,7 @@ export function ConfirmDialog({
           <Button size="sm" variant="ghost" className="ml-auto" onClick={onCancel} disabled={busy}>
             {cancelLabel}
           </Button>
-          <Button size="sm" variant="primary" loading={busy} onClick={onConfirm}>
+          <Button size="sm" variant={confirmTone} loading={busy} onClick={onConfirm}>
             {confirmLabel}
           </Button>
         </div>

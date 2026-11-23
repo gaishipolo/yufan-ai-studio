@@ -6,6 +6,7 @@ import {
   GripVertical,
   ImageOff,
   Layers,
+  Library,
   Plus,
   RotateCcw,
   Trash2,
@@ -29,10 +30,18 @@ import {
   useSpecs,
   useTrashedSpecs,
 } from '@/entities/template-spec/api/spec.queries';
-import type { SpecSlotIn, TemplateSpecIn, TemplateSpecOut } from '@/shared/api/schema';
+import { useCaseMutations, useTemplateCases } from '@/entities/template-case/api/case.queries';
+import { reuseSpecName } from '@/entities/template-case/model/caseMeta';
+import type {
+  SpecSlotIn,
+  TemplateCaseOut,
+  TemplateSpecIn,
+  TemplateSpecOut,
+} from '@/shared/api/schema';
 import {
   Button,
   Chip,
+  ConfirmDialog,
   EmptyState,
   FormField,
   Modal,
@@ -45,6 +54,9 @@ import { toast } from '@/shared/lib/toast';
 import { useCan } from '@/shared/access/use-access';
 import { AssetPicker, type PickKind, type PickedAsset } from '@/features/template-specs/AssetPicker';
 import { AddSlotMenu } from '@/features/template-specs/AddSlotMenu';
+import { CaseLibrary } from '@/features/template-specs/case-library/CaseLibrary';
+import { CasePickerDialog } from '@/features/template-specs/case-library/CasePickerDialog';
+import { PublishCaseDialog } from '@/features/template-specs/case-library/PublishCaseDialog';
 import { DemoMenu } from '@/features/template-specs/DemoMenu';
 import { ModelPicker } from '@/features/template-specs/ModelPicker';
 import { useSpecLimits } from '@/entities/template-spec/api/spec.queries';
@@ -58,8 +70,10 @@ import {
   blankSlot,
   blankSpec,
   dropUserSelectableParams,
+  fromCaseSnapshot,
   fromSpecOut,
   joinModelSelection,
+  newKey,
   nextGroupKey,
   nextGroupLabel,
   normalize,
@@ -136,6 +150,15 @@ export function SpecWorkspace() {
   /* 案例池是全员的共享内容：上传 / 把素材转成案例都要 `library:case:write`。
      没有它就不摆「设置案例」—— 后端一定 403，露出来只是让人点一次错。 */
   const canCaseWrite = useCan('library:case:write');
+
+  /* 模板案例（模板封装这套「案例」，不是资产库的案例池）是另一套权限：
+     `template_pack:case:read` 才能进案例库，`template_pack:case:write` 才能
+     发布 / 编辑 / 下架 / 删除。发布案例还要 `template_pack:publish` ——
+     案例快照的是模板内容，没发布权的人不该把它发到公共案例库。 */
+  const canTemplateCaseRead = useCan('template_pack:case:read');
+  const canTemplateCaseWrite = useCan('template_pack:case:write');
+  const canPublishTemplate = useCan('template_pack:publish');
+  const canPublishCase = canTemplateCaseWrite && canPublishTemplate;
 
   const [draft, setDraft] = useState<TemplateSpecIn | null>(null);
   /*
@@ -369,7 +392,24 @@ export function SpecWorkspace() {
     if (proceed) proceed();
     else if (blocker.state === 'blocked') blocker.proceed();
   };
-  const [view, setView] = useState<'list' | 'trash'>('list');
+  const [view, setView] = useState<'list' | 'cases' | 'trash'>('list');
+  /** 「从案例库复用」的案例选择器。 */
+  const [casePickerOpen, setCasePickerOpen] = useState(false);
+  /** 「发布为案例」的弹窗。 */
+  const [publishCaseOpen, setPublishCaseOpen] = useState(false);
+  /* 「移进回收站」的二次确认：删除是**不可逆的方向**（虽然能恢复），
+     所以要有一层页面内的确认，而不是浏览器的原生弹窗。 */
+  const [trashingSpec, setTrashingSpec] = useState<TemplateSpecOut | null>(null);
+  /* 案例的写操作（发布 / 编辑 / 下架 / 上架 / 删除 / 恢复）。 */
+  const caseMutations = useCaseMutations();
+  /* 案例库里已有的分类：发布案例时给几个现成的点选。 */
+  const caseMeta = useTemplateCases({scope: 'library', pageSize: 100});
+  /* 当前这份模板的发布版本：从模板列表缓存里找。找不到（刚建的）就是 0 ——
+     案例上记的版本由后端定，这里只是给作者一个「我发的是哪一版」的提示。 */
+  const draftVersion = useMemo(
+    () => (list.data?.items ?? []).find(item => item.key === draft?.key)?.currentVersion ?? 0,
+    [list.data, draft?.key],
+  );
   const [error, setError] = useState('');
   const [hint, setHint] = useState('');
   /* 两个提示词框各自一条提示：共用一个的话，在随机档那段里写错引用，
@@ -758,10 +798,63 @@ export function SpecWorkspace() {
   const randomPromptOver =
     promptLimit != null && (draft?.randomPrompt ?? '').length > promptLimit;
 
+  /* 移进回收站：先问一句，问的是「这次会发生什么」。
+     确认框是页面内的 `ConfirmDialog`（能摊开事实清单），不是浏览器的
+     `window.confirm` —— 原生那个样式不受控，还会把整个页面卡住。 */
   const moveToTrash = (item: TemplateSpecOut) => {
-    if (!window.confirm(`把「${item.name}」移进回收站？可以再恢复。`)) return;
+    setTrashingSpec(item);
+  };
+
+  const confirmTrash = () => {
+    const item = trashingSpec;
+    if (!item) return;
+    setTrashingSpec(null);
     clear();
     remove.mutateAsync(item.key).then(() => toast(`已移进回收站：${item.name}`, 'success'), fail);
+  };
+
+  /**
+   * 从案例复用：把案例的配置快照打开成一份**新草稿**。
+   *
+   * 案例与模板是「快照」关系，不是引用关系 —— 复用出来的模板与案例各自独立，
+   * 之后改案例不会影响它，反之亦然。所以 key 与名字都要换成新的：沿用源模板的
+   * key 会把别人的模板覆盖掉。
+   */
+  const reuseCase = (item: TemplateCaseOut) => {
+    const base = fromCaseSnapshot(item.config, {
+      key: newKey('spec'),
+      name: reuseSpecName(item),
+    });
+    /* 作者私有的固定素材，后端在快照里已经按可见性裁掉了（复用者读不到）。
+       这种槽位到这里没有素材，要复用者自己挑一张 —— 提前说一句，
+       免得打开一看是空的，以为模板坏了。 */
+    const blanks = (base.slots ?? []).filter(
+      slot => slot.binding === 'fixed' && !slot.assetId,
+    ).length;
+    clear();
+    setCasePickerOpen(false);
+    openDraft({...base, description: item.description || base.description});
+    toast(
+      blanks > 0
+        ? `已复用「${item.name}」，有 ${blanks} 个固定槽位需要自己选素材`
+        : `已复用「${item.name}」，可以接着改`,
+      'success',
+    );
+  };
+
+  /**
+   * 发布为案例：案例快照的是**服务端已保存的草稿**。
+   *
+   * 所以先存一遍当前内容 —— 免得发出去的案例里少掉用户还没保存的改动
+   * （用户以为发出去的是屏幕上的这一版）。
+   */
+  const publishCase = async (payload: {name: string; description: string; category: string}) => {
+    if (!draft) throw new Error('没有正在编辑的模板');
+    const saved = await submit('save');
+    if (!saved) throw new Error('模板还没存住（见上方提示），先解决保存的问题');
+    await caseMutations.create.mutateAsync({specKey: draft.key, ...payload});
+    setPublishCaseOpen(false);
+    toast(`已发布为案例「${payload.name}」`, 'success');
   };
 
   /* ---------- 列表 / 回收站 ---------- */
@@ -769,6 +862,13 @@ export function SpecWorkspace() {
     const trashed = view === 'trash';
     const rows = (trashed ? trash.data?.items : list.data?.items) ?? [];
     const loading = trashed ? trash.isLoading : list.isLoading;
+    /* 三档：模板 / 案例库 / 回收站。
+       案例库没有读权限时不摆这一档 —— 后端一定 403，摆出来点了只看到一个空页。 */
+    const viewTabs: {value: 'list' | 'cases' | 'trash'; label: string}[] = [
+      {value: 'list', label: '模板'},
+      ...(canTemplateCaseRead ? [{value: 'cases' as const, label: '案例库'}] : []),
+      {value: 'trash', label: '回收站'},
+    ];
     return (
       <section className="flex flex-col gap-4">
         {/* 列表态是普通页头；编辑态的标题在编辑器自己的吸顶栏里（跟面包屑、
@@ -779,48 +879,57 @@ export function SpecWorkspace() {
               以前是两颗胶囊共享一个圆角边框，选中只换字色 —— 在一排白卡上面几乎看不出
               当前在哪一档。 */}
           <div className="inline-flex items-center gap-0.5 rounded-xl bg-canvas/90 p-0.5 shadow-[inset_0_1px_2px_rgba(21,50,61,.06)] ring-1 ring-inset ring-[rgba(203,218,224,.8)]">
-            {(
-              [
-                ['list', '模板'],
-                ['trash', '回收站'],
-              ] as const
-            ).map(([value, label]) => (
+            {viewTabs.map(tab => (
               <button
-                key={value}
+                key={tab.value}
                 type="button"
                 onClick={() => {
-                  setView(value);
+                  setView(tab.value);
                   clear();
                 }}
                 className={cn(
                   'rounded-[10px] px-3 py-[5px] text-meta transition-all duration-150',
-                  view === value
+                  view === tab.value
                     ? 'bg-panel font-medium text-ink shadow-[0_1px_3px_rgba(21,50,61,.12)]'
                     : 'text-ink-mute hover:text-ink-soft',
                 )}
               >
-                {label}
-                {value === 'trash' && (trash.data?.total ?? 0) > 0 && (
+                {tab.label}
+                {tab.value === 'trash' && (trash.data?.total ?? 0) > 0 && (
                   <span className="ml-1 tabular-nums text-ink-mute">{trash.data?.total}</span>
                 )}
               </button>
             ))}
           </div>
-          {/* 列表页只有这一个动作，给它实心：整页就一个焦点，不用读字也知道从哪开始。 */}
+          {/* 列表页只有这一个动作，给它实心：整页就一个焦点，不用读字也知道从哪开始。
+              「从案例复用」是第二个入口，描边即可 —— 它是**另一种**开始方式，
+              不该跟「新建模板」抢同一个权重。 */}
           {!trashed && (
-            <Button variant="primary" onClick={() => openDraft(blankSpec())}>
-              <Plus size={14} /> 新建模板
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button variant="primary" onClick={() => openDraft(blankSpec())}>
+                <Plus size={14} /> 新建模板
+              </Button>
+              {canTemplateCaseRead && (
+                <Button variant="secondary" onClick={() => setCasePickerOpen(true)}>
+                  <FolderInput size={14} /> 从案例复用
+                </Button>
+              )}
+            </div>
           )}
         </div>
 
-        {error && <Notice tone="error">{error}</Notice>}
-        {loading ? (
-          <p className="py-10 text-center text-xs text-ink-mute">正在读取…</p>
-        ) : rows.length === 0 ? (
-          /* 「新建模板」按钮就在上方，不用来一段话再说一遍怎么新建 */
-          <EmptyState title={trashed ? '回收站是空的' : '还没有模板'} />
+        {view === 'cases' ? (
+          /* 案例库：另一档内容，口径（公共 / 我的 / 已删除）在面板内部再切一层。 */
+          <CaseLibrary onReuse={reuseCase} />
         ) : (
+          <>
+            {error && <Notice tone="error">{error}</Notice>}
+            {loading ? (
+              <p className="py-10 text-center text-xs text-ink-mute">正在读取…</p>
+            ) : rows.length === 0 ? (
+              /* 「新建模板」按钮就在上方，不用来一段话再说一遍怎么新建 */
+              <EmptyState title={trashed ? '回收站是空的' : '还没有模板'} />
+            ) : (
           /* 卡片而不是表格行：一张模板的"长相"是它的案例封面，列表里也该看得见。
              操作放在卡片脚上，扫一眼就知道哪张能发布、哪张已停用。
              一行 5 个（`lg` 档 3 列过渡）：封面是 9:16，列数再少每张卡就太高。 */
@@ -870,7 +979,34 @@ export function SpecWorkspace() {
               />
             ))}
           </div>
+            )}
+          </>
         )}
+
+        {/* 案例选择器：新建模板流程里的「从案例库复用」入口。 */}
+        <CasePickerDialog
+          open={casePickerOpen}
+          onClose={() => setCasePickerOpen(false)}
+          onPick={reuseCase}
+        />
+
+        {/* 移进回收站的二次确认：删除这种**方向不可逆**的动作要让用户
+            明确点一次，按钮上写着会发生什么（可恢复），不用去猜。 */}
+        <ConfirmDialog
+          open={trashingSpec !== null}
+          title="移进回收站？"
+          description={`「${trashingSpec?.name ?? ''}」会移进回收站，随时可以恢复。`}
+          details={[
+            {label: '模板', value: trashingSpec?.name ?? '—'},
+            {label: '影响', value: '不再出现在模板列表里'},
+          ]}
+          notice="回收站里的模板仍然保留全部配置，恢复后与原来一致。"
+          noticeTone="info"
+          confirmTone="danger"
+          confirmLabel="移进回收站"
+          onCancel={() => setTrashingSpec(null)}
+          onConfirm={confirmTrash}
+        />
       </section>
     );
   }
@@ -919,6 +1055,18 @@ export function SpecWorkspace() {
             </span>
           </div>
           <div className="flex items-center gap-2">
+            {/* 「发布为案例」排在最左边：它是**另一种对外动作**（发到公共案例库），
+                跟右边三个「改这份模板」的动作不是一回事，挨太近容易被误按。
+                没权限就不摆 —— 后端一定 403。 */}
+            {canPublishCase && (
+              <Button
+                variant="secondary"
+                disabled={busy}
+                onClick={() => setPublishCaseOpen(true)}
+              >
+                <Library size={14} /> 发布为案例
+              </Button>
+            )}
             {/* 三个动作的权重必须分开：一页只留一个实心按钮（保存并发布），
                 否则三颗长得一样的白按钮并排，用户每次都要读字才知道该点哪个。
 
@@ -1426,6 +1574,22 @@ export function SpecWorkspace() {
           </div>
         </div>
       </Modal>
+
+      {/* 「发布为案例」弹窗：发布的是**这份模板当前内容的一份快照**，
+          提交前会先把模板存一遍（见 `publishCase`）。 */}
+      <PublishCaseDialog
+        open={publishCaseOpen}
+        spec={{
+          key: draft.key,
+          name: draft.name,
+          version: draftVersion,
+          slotCount: slots.length,
+          model: draft.model,
+        }}
+        categories={caseMeta.data?.categories ?? []}
+        onClose={() => setPublishCaseOpen(false)}
+        onSubmit={publishCase}
+      />
     </section>
   );
 }

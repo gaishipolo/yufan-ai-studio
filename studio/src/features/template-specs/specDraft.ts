@@ -254,6 +254,47 @@ export function fromSpecOut(out: TemplateSpecOut): TemplateSpecIn {
 }
 
 /**
+ * 案例快照（模板草稿的副本）→ 可编辑草稿。
+ *
+ * 复用案例要换掉两样东西：
+ *
+ * - `key`：模板 key 全局唯一，复用一份案例不能抢走源模板的 key；
+ * - `name`：默认带「副本」后缀，免得复用者存下去才发现两个模板同名。
+ *
+ * 其余（槽位 / 提示词 / 模型 / 容器名）**原样带入** —— 复用的意义就是拿到一份
+ * 能直接改的起点，而不是一个空壳。
+ *
+ * `demoAssetId` 不带：那是源模板的展示素材（属于发布者的资产），复用者多半
+ * 没有它的使用权，带过去只会在保存时被拦下。展示素材由复用者自己挑。
+ */
+export function fromCaseSnapshot(
+  snapshot: Record<string, unknown> | undefined,
+  options: {key: string; name: string},
+): TemplateSpecIn {
+  const raw = (snapshot ?? {}) as Partial<TemplateSpecIn>;
+  const slots = (raw.slots ?? []).map((slot, index) => ({...slot, position: index}));
+  const spec: TemplateSpecIn = {
+    ...blankSpec(),
+    ...raw,
+    key: options.key,
+    name: options.name,
+    description: raw.description ?? '',
+    model: raw.model ?? '',
+    allowedModels: raw.allowedModels ?? [],
+    params: raw.params ?? {},
+    prompt: raw.prompt ?? '',
+    randomPrompt: raw.randomPrompt ?? '',
+    slots,
+    groups: raw.groups ?? [],
+    attributes: raw.attributes ?? {},
+    demoAssetId: null,
+    // 新模板没有并发令牌：留 null 才是「这是一份还没存过的草稿」。
+    revision: null,
+  };
+  return toAuthoredForm(spec);
+}
+
+/**
  * 把一份草稿里的引用统一成**作者写法**（视觉槽位 `{{Mixed N}}`）。
  *
  * 只在「打开 / 结构变了」的时候调，不参与每次输入 —— 见 `renumberRefs`。

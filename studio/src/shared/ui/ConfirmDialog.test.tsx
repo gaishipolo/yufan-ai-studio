@@ -70,6 +70,20 @@ describe('ConfirmDialog', () => {
     expect(screen.getByText(/消耗账号积分/)).toBeInTheDocument();
   });
 
+  it('破坏性动作：确认按钮是红色的', () => {
+    render(
+      <ConfirmDialog
+        open
+        title="移进回收站？"
+        confirmTone="danger"
+        confirmLabel="移进回收站"
+        onCancel={() => {}}
+        onConfirm={() => {}}
+      />,
+    );
+    expect(screen.getByRole('button', {name: '移进回收站'})).toHaveClass('bg-danger');
+  });
+
   it('提交中：确认按钮禁用、取消也禁用', () => {
     render(
       <ConfirmDialog
