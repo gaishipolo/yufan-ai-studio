@@ -11,7 +11,7 @@ import json
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, Integer, String, Text
+from sqlalchemy import DateTime, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from db.base import Base, TimestampMixin, UUIDMixin
@@ -85,3 +85,39 @@ def encode_request(params: dict[str, Any], reference_urls: tuple[str, ...]) -> s
         ensure_ascii=False,
         separators=(",", ":"),
     )
+
+
+class SubmissionReceipt(Base, UUIDMixin, TimestampMixin):
+    """一次提交的唯一回执（2026-11-23 落库，替代工作区文件）。
+
+    `(provider, run_id)` 唯一约束替代原来的 `O_EXCL` 文件抢占：有事务、有备份、
+    多实例一致。工作区误删后恢复仍能读到回执 —— 不会把同一个 request_id
+    重新提交给上游（二次计费）。
+
+    `channel_used` 记录当时走的素材通道（Base64 / OSS / 公网 URL），
+    重试必须复用原通道，否则同一素材两次重试走不同通道，行为不可预期。
+
+    状态沿用 bailian 既有语义：
+    - `submitting`          抢占成功、尚未拿到上游 task_id
+    - `submitted`           拿到 task_id，恢复时直接复用 external_id
+    - `rejected`            上游明确拒绝（4xx），允许人工重提
+    - `submission_unknown`  超时 / 5xx / 响应畸形，**禁止自动重提**（可能已受理）
+    """
+
+    __tablename__ = "submission_receipts"
+    __table_args__ = (
+        UniqueConstraint("provider", "run_id", name="uq_submission_receipts_provider_run"),
+    )
+
+    provider: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    run_id: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    model: Mapped[str] = mapped_column(String(128), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+
+    task_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    external_id: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    channel_used: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    error: Mapped[str | None] = mapped_column(String(512), nullable=True)
+
+    submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    settled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
