@@ -61,7 +61,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.audit import record as audit
 from core.context import CurrentUser
-from core.exceptions import BadRequest, Conflict, Forbidden, NotFound
+from core.exceptions import BadRequest, Forbidden, NotFound, StateChanged
 from core.ports.org_directory import group_names
 from modules.library import access
 from modules.library.errors import (
@@ -118,7 +118,7 @@ class ShareService:
             payload.expected_version is not None
             and asset.state_version != payload.expected_version
         ):
-            raise Conflict(
+            raise StateChanged(
                 "资产已被修改，请刷新后重试",
                 details={"stateVersion": asset.state_version},
             )
@@ -288,7 +288,7 @@ class ShareService:
                 payload.expected_version is not None
                 and asset.state_version != payload.expected_version
             ):
-                raise Conflict(
+                raise StateChanged(
                     "资产已被修改，请刷新后重试",
                     details={"stateVersion": asset.state_version},
                 )

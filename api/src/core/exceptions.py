@@ -219,6 +219,26 @@ class Conflict(AppError):
     http_status = 409
 
 
+class StateChanged(Conflict):
+    """乐观锁落败：409，且 `details.reason = 'state_changed'`。
+
+    409 有两类，用户要的处置完全相反：
+
+    - **业务冲突**（重名、已结束、不是你的）：重试没用，得换个做法；
+    - **状态被别人先改了**（你读到的那份已经旧了）：处置是**重读权威状态**，
+      由用户确认后重做。
+
+    前端只有一个判定入口（`studio/src/shared/api/types.ts::isStateChanged`），
+    它靠 `details.reason` 识别。所以凡是「读到的状态过期了」的 409 都从这里出，
+    别在别处新造一个语义不明的 409——那种 409 前端判不出来，只能给一句裸文案。
+    """
+
+    message = "数据已被修改，请刷新后重试"
+
+    def __init__(self, message: str | None = None, *, details: Any = None) -> None:
+        super().__init__(message, details={"reason": "state_changed", **(details or {})})
+
+
 class RateLimited(AppError):
     code = ErrorCode.RATE_LIMITED
     message = "请求过于频繁，请稍后再试"

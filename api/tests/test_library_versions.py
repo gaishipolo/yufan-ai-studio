@@ -376,3 +376,120 @@ def test_asset_state_version_is_not_zero(client: TestClient, api: str) -> None:
     row = fetch_asset(asset["id"])
     assert row is not None
     assert row["state_version"] >= 1, f"state_version 竟是 {row['state_version']}"
+
+
+# --------------------------------------------------------------------------- #
+# 409 的两种语义：版本过期 vs 业务冲突
+#
+# 409 在前端有两种完全不同的处置，所以后端必须把它们区分开：
+# - **版本过期**（你读到的那份被别人先改了）：重读权威状态，让用户确认后重做；
+# - **业务冲突**（重名、已结束、不是你的）：重试没用，得换个做法。
+#
+# 区分的标记是 `details.reason = 'state_changed'`（`core/exceptions.py::StateChanged`）。
+# 少了它，前端只能把两类 409 一视同仁地显示成一句「请刷新后重试」——
+# 而业务冲突刷新一百次也一样失败。
+# --------------------------------------------------------------------------- #
+def _conflict_details(response: Any) -> dict[str, Any]:
+    """取出 409 的 details（并断言确实是 409）。"""
+    assert response.status_code == 409, response.text
+    details = response.json().get("details") or {}
+    assert isinstance(details, dict), response.text
+    return details
+
+
+def test_a_stale_asset_patch_conflict_is_marked_as_state_changed(
+    client: TestClient, api: str
+) -> None:
+    admin = admin_headers(client)
+    owner, owner_h = make_user(client, admin, LIB_RW)
+    asset = upload_image(client, api, owner_h)
+
+    moved = client.patch(
+        f"{api}/library/assets/{asset['id']}",
+        json={"name": "先改一次.png", "expectedVersion": asset["stateVersion"]},
+        headers=owner_h,
+    )
+    assert moved.status_code == 200, moved.text
+
+    stale = client.patch(
+        f"{api}/library/assets/{asset['id']}",
+        json={"name": "再改一次.png", "expectedVersion": asset["stateVersion"]},
+        headers=owner_h,
+    )
+    details = _conflict_details(stale)
+    assert details.get("reason") == "state_changed", details
+    # 版本信息要留着：前端要告诉用户「现在是第几版」，而不只是「冲突了」
+    assert details.get("stateVersion") is not None, details
+
+
+def test_a_share_decision_conflict_is_marked_as_state_changed(
+    client: TestClient, api: str
+) -> None:
+    admin = admin_headers(client)
+    owner, owner_h = make_user(client, admin, LIB_RW)
+    group = make_group(client, admin, [owner["id"]])
+    asset = upload_image(client, api, owner_h)
+
+    created = client.post(
+        f"{api}/library/share-requests",
+        json={
+            "assetId": asset["id"],
+            "action": "share",
+            "target": "group",
+            "groupId": group["id"],
+        },
+        headers=owner_h,
+    )
+    assert created.status_code == 201, created.text
+    request_id = created.json()["data"]["id"]
+
+    # 审批人看到的那份状态过期了：先把资产改掉，版本往前走
+    renamed = client.patch(
+        f"{api}/library/assets/{asset['id']}",
+        json={"name": "审批前被改了.png", "expectedVersion": asset["stateVersion"]},
+        headers=owner_h,
+    )
+    assert renamed.status_code == 200, renamed.text
+
+    response = client.post(
+        f"{api}/library/share-requests/{request_id}/approve",
+        json={"note": "同意", "expectedVersion": asset["stateVersion"]},
+        headers=admin,
+    )
+    details = _conflict_details(response)
+    assert details.get("reason") == "state_changed", details
+
+
+def test_a_draft_decision_conflict_is_marked_as_state_changed(
+    client: TestClient, api: str
+) -> None:
+    admin = admin_headers(client)
+    owner, owner_h = make_user(client, admin, LIB_RW + ["library:draft:review"])
+    asset_id = make_session_asset(state="draft", owner_id=owner["id"])
+
+    response = client.post(
+        f"{api}/library/drafts/{asset_id}/approve",
+        json={"reason": "收下", "expectedVersion": 999},
+        headers=owner_h,
+    )
+    details = _conflict_details(response)
+    assert details.get("reason") == "state_changed", details
+
+
+def test_business_conflicts_are_not_marked_as_state_changed() -> None:
+    """只有「版本过期」才带 `state_changed`——业务冲突标了就是误导。
+
+    业务冲突（重名、已结束、不是你的）刷新多少次都一样失败。标成
+    `state_changed` 会让前端说「已为你刷新，请重试」，用户刷新后照样失败，
+    只是多绕一圈。
+    """
+    from core.exceptions import Conflict, StateChanged
+
+    plain = Conflict("同一分组下已有同名标签").to_payload()
+    assert "reason" not in (plain.get("details") or {}), plain
+
+    changed = StateChanged(
+        "资产已被修改，请刷新后重试", details={"stateVersion": 3}
+    ).to_payload()
+    assert changed["details"]["reason"] == "state_changed", changed
+    assert changed["details"]["stateVersion"] == 3, changed

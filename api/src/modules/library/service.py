@@ -39,7 +39,7 @@ from sqlalchemy.sql.elements import ColumnElement
 from core.audit import record as audit
 from core.config import settings
 from core.context import CurrentUser
-from core.exceptions import AppError, BadRequest, Conflict, NotFound
+from core.exceptions import AppError, BadRequest, Conflict, NotFound, StateChanged
 from core.ports.library_references import ask_library_references, library_references_ready
 from core.response import PageParams
 from core.serving import Served
@@ -1439,7 +1439,7 @@ class LibraryService:
         见 docs/FIX_ITEM_P2-2_2026-11-23.md。
         """
         if expected is not None and row.state_version != expected:
-            raise Conflict(
+            raise StateChanged(
                 "资产已被修改，请刷新后重试",
                 details={"expectedVersion": expected, "stateVersion": row.state_version},
             )

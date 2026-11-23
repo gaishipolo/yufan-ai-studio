@@ -30,7 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.audit import record as audit
 from core.config import settings
 from core.context import CurrentUser
-from core.exceptions import Conflict, NotFound
+from core.exceptions import Conflict, NotFound, StateChanged
 from core.logging import get_logger
 from core.ports.library_references import ask_library_references
 from infra.storage.base import ObjectStorage
@@ -529,7 +529,7 @@ class LifecycleService:
         if row.state != "draft":
             raise DraftNotReviewable()
         if expected_version is not None and row.state_version != expected_version:
-            raise Conflict(
+            raise StateChanged(
                 "草稿已被处理，请刷新后重试",
                 details={"stateVersion": row.state_version},
             )

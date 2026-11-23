@@ -27,7 +27,7 @@ from sqlalchemy import ColumnElement, and_, false, func, select, true
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.context import CurrentUser
-from core.exceptions import BadRequest, Conflict, NotFound
+from core.exceptions import BadRequest, Conflict, NotFound, StateChanged
 from core.param_schema import resolve_params
 from core.ports.library_lookup import get_library_lookup
 from core.ports.model_generation import ModelSummary, get_model_generation
@@ -510,8 +510,9 @@ async def save(
         if head.owner_id != actor.id:
             raise Conflict(f"配置 {payload.key} 属于其他用户")
         if payload.revision is not None and payload.revision != head.revision:
-            raise Conflict(
-                f"配置已被更新（当前第 {head.revision} 次修订），请刷新后重试"
+            raise StateChanged(
+                f"配置已被更新（当前第 {head.revision} 次修订），请刷新后重试",
+                details={"expectedRevision": payload.revision, "currentRevision": head.revision},
             )
         if head.fingerprint == fingerprint:
             # 幂等：内容没变就不加修订号，也不把已发布状态打回草稿。
