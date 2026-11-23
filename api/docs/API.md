@@ -2,7 +2,7 @@
 
 > 此文件由 `app export-openapi` 自动生成，请勿手工编辑。
 >
-> 版本 `0.2.0`｜共 **144** 个接口 / **12** 个模块
+> 版本 `0.2.0`｜共 **145** 个接口 / **12** 个模块
 >
 > 重新生成：`cd api && .venv/Scripts/python -m cli export-openapi`
 
@@ -251,7 +251,7 @@ Authorization: Bearer <accessToken>
 | 模块 | 接口数 | 说明 |
 |---|---|---|
 | 身份 | 42 | 见下方 `4.1` |
-| 任务 | 9 | 见下方 `4.2` |
+| 任务 | 10 | 见下方 `4.2` |
 | 模型 | 1 | 见下方 `4.3` |
 | 生图 | 4 | 见下方 `4.4` |
 | 分镜模板 | 1 | 见下方 `4.5` |
@@ -1123,7 +1123,7 @@ Authorization: Bearer <accessToken>
 | `createdAt` | `string` | 是 | 创建时间（UTC） |
 | `roles` | `RoleBriefOut[]` | 否 | 拥有的角色 |
 
-### 4.2 任务（9 个）
+### 4.2 任务（10 个）
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
@@ -1134,6 +1134,7 @@ Authorization: Bearer <accessToken>
 | `GET` | `/api/v1/tasks/stats` | 任务统计（侧边栏角标） | 🔒 |
 | `GET` | `/api/v1/tasks/{task_id}` | 任务详情 | 🔒 |
 | `PATCH` | `/api/v1/tasks/{task_id}` | 更新任务（标题 / 收藏） | 🔒 |
+| `POST` | `/api/v1/tasks/{task_id}/desubtitle` | 给成片派生去字幕版 | 🔒 |
 | `POST` | `/api/v1/tasks/{task_id}/favorite` | 收藏 / 取消收藏 | 🔒 |
 | `POST` | `/api/v1/tasks/{task_id}/retry` | 重试任务 | 🔒 |
 
@@ -1282,6 +1283,22 @@ Authorization: Bearer <accessToken>
 |---|---|---|---|
 | `title` | `string \| null` | 否 | 新标题 |
 | `favorited` | `boolean \| null` | 否 | 收藏状态 |
+
+**响应** `ApiResponse<core__response__ApiResponse_TaskOut___2>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `code` | `number` | 否 | 0 表示成功，其余为业务错误码 |
+| `message` | `string` | 否 |  |
+| `data` | `modules__task__schema__TaskOut \| null` | 否 |  |
+
+#### `POST /api/v1/tasks/{task_id}/desubtitle`
+
+**给成片派生去字幕版**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `task_id` | path | `string` | 是 | 任务 ID |
 
 **响应** `ApiResponse<core__response__ApiResponse_TaskOut___2>`（前端取 `res.data`）
 
@@ -5510,6 +5527,18 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 
 取值：`all`、`queued`、`running`、`completed`、`failed`
 
+### `TaskVariantOut`
+
+一条派生任务（目前只有「去字幕版」）。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 | 派生任务 ID |
+| `status` | `TaskStatus` | 是 | 状态：queued / running / completed / failed |
+| `progress` | `number` | 否 | 生成进度 0-100 |
+| `outputUrl` | `string \| null` | 否 | 去字幕成片地址；未完成时为 null |
+| `errorMessage` | `string \| null` | 否 | 失败原因，成功时为 null |
+
 ### `TemplateCaseCreateIn`
 
 | 字段 | 类型 | 必填 | 说明 |
@@ -5910,6 +5939,7 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `replacement` | `boolean` | 否 | 这个模型能不能跑替换链（按「原片 + 素材包」替换）。由驱动声明，模板目录按它筛；调用方不得从槽位组合推断 |
 | `referenceKinds` | `string[]` | 否 | 这个模型能收哪几类参考素材（`image` / `video` / `audio`），空数组 = 纯文生图。前端据此渲染参考素材的类型筛选与数量上限，不在界面里写死 |
 | `referenceLimits` | `Record<string, ReferenceLimitOut>` | 否 | 按素材类型分开的上限（键是 `image` / `audio` …）。`maxReferences` 仍是总数上限，两者要一起守；空对象 = 供应商没声明 |
+| `aliases` | `string[]` | 否 | 兼容历史模型 id 或旧展示名的别名列表，供前端解析存量模板/任务 |
 | `isDefault` | `boolean` | 否 |  |
 
 ### `modules__model_driver__schema__ModelListOut`
@@ -5979,4 +6009,5 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `createdAt` | `string` | 是 | 创建时间（UTC） |
 | `updatedAt` | `string` | 是 | 更新时间（UTC） |
 | `startedAt` | `string \| null` | 否 | 开始生成时间，未开始为 null |
+| `subtitleErase` | `TaskVariantOut \| null` | 否 | 去字幕版；没有派生过时为 null。前端据此显示进度与「原片/去字幕」切换 |
 | `externalId` | `string \| null` | 否 | 上游任务标识，形如 `<归档工作区>:<上游 task_id>`。**给排队查询用**：LibTV 的队列位次只能按上游 task_id 查，前端拿它拆出 task_id 去`POST /model-driver/libtv/progress`，不必由后端再存一份排队快照 |

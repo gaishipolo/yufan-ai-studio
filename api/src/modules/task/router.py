@@ -162,6 +162,19 @@ async def retry_task(
     return ApiResponse.ok(service.to_retry_out(task), message="已重新排队")
 
 
+@router.post("/{task_id}/desubtitle", summary="给成片派生去字幕版")
+async def create_desubtitle(
+    service: TaskServiceDep,
+    actor: TaskUpdateDep,
+    task_id: TaskId,
+    # 去字幕要向上游提交一条任务（当前 0 积分，但将来会计价），
+    # 与建任务 / 重试同一档限速，避免一次点不停就打出几十条上游任务。
+    _: None = Depends(rate_limit("task.desubtitle", limit=settings.rate_limit_default_per_min)),
+) -> ApiResponse[TaskOut]:
+    task = await service.create_desubtitle(task_id, actor)
+    return ApiResponse.ok(await service.present(task, actor), message="已提交去字幕")
+
+
 @router.post("/{task_id}/favorite", summary="收藏 / 取消收藏")
 async def toggle_favorite(
     service: TaskServiceDep, actor: TaskUpdateDep, task_id: TaskId

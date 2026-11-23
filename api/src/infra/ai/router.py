@@ -151,22 +151,25 @@ class ModelRouter:
             self._set_default_if_absent(spec)
 
     def _register_alias(self, spec: ModelSpec) -> None:
-        """登记 label → id 的别名，冲突时**不能静默**。
+        """登记 label / aliases → id 的别名，冲突时**不能静默**。
 
         两个供应商都叫「Seedance 2.5」时，先注册的会永远赢，后一个模型
         在日志里没有任何痕迹——排查「为什么请求打到了另一家」会非常痛苦。
         """
-        existing = self._alias.get(spec.label)
-        if existing is not None and existing != spec.id:
-            logger.warning(
-                "模型别名冲突 label=%r 已指向 %s，本次注册的 %s 不会被按名字解析；"
-                "请改用 id 区分",
-                spec.label,
-                existing,
-                spec.id,
-            )
-            return
-        self._alias[spec.label] = spec.id
+        for alias in (spec.label, *(getattr(spec, "aliases", ()) or ())):
+            if not alias or alias == spec.id:
+                continue
+            existing = self._alias.get(alias)
+            if existing is not None and existing != spec.id:
+                logger.warning(
+                    "模型别名冲突 alias=%r 已指向 %s，本次注册的 %s 不会被按别名解析；"
+                    "请改用 id 区分",
+                    alias,
+                    existing,
+                    spec.id,
+                )
+                continue
+            self._alias[alias] = spec.id
 
     # ------------------------------------------------------------------ 解析
     def resolve(self, model: str) -> ModelSpec | None:
@@ -266,8 +269,9 @@ class ModelRouter:
         specs = [spec for spec in self._models.values() if spec.provider == provider_name]
         for spec in specs:
             self._models.pop(spec.id, None)
-            if self._alias.get(spec.label) == spec.id:
-                self._alias.pop(spec.label, None)
+            for alias in (spec.label, *(getattr(spec, "aliases", ()) or ())):
+                if self._alias.get(alias) == spec.id:
+                    self._alias.pop(alias, None)
         self._providers.remove(provider_name)
 
         # 重算默认值：按剩余供应商的注册顺序取第一个（跳过占位模型）

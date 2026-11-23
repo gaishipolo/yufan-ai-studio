@@ -1,4 +1,6 @@
-import { Bookmark, Download, RotateCcw } from 'lucide-react';
+import { useState } from 'react';
+import { Bookmark, Download, RotateCcw, Wand2 } from 'lucide-react';
+import { isConfirmChargedRequired } from '@/shared/api/types';
 import { Button, Chip, CoverImage, Modal, Notice, Skeleton } from '@/shared/ui';
 import { toast } from '@/shared/lib/toast';
 import { downloadUrl } from '@/shared/lib/download';
@@ -6,12 +8,17 @@ import { formatDateTime, formatDuration, generatedFileName } from '@/shared/lib/
 import { useCan } from '@/shared/access/use-access';
 import { useLibtvQueue } from '@/entities/libtv/api/libtv.queries';
 import {
-  LIBTV_MODEL_ID,
+  isLibtvModelId,
   isQueued,
   liveTaskProgress,
   upstreamTaskId,
 } from '@/entities/libtv/model/types';
-import { useRetryTask, useTaskDetail, useToggleFavorite } from '@/entities/task/api/task.queries';
+import {
+  useDesubtitle,
+  useRetryTask,
+  useTaskDetail,
+  useToggleFavorite,
+} from '@/entities/task/api/task.queries';
 import { TASK_STATUS_LABEL, isTaskInFlight } from '@/entities/task/model/types';
 import { PromptField } from './PromptField';
 
@@ -29,13 +36,34 @@ const STATUS_TONE = {
   failed: 'danger',
 } as const;
 
+type PlaybackVersion = 'original' | 'erased';
+const versionKey = (id: string) => `task-playback-version:${id}`;
+function savedVersion(id: string | null): PlaybackVersion {
+  try {
+    return id && localStorage.getItem(versionKey(id)) === 'original' ? 'original' : 'erased';
+  } catch {
+    return 'erased';
+  }
+}
+
 export function TaskPreviewModal({ taskId, outputUrl, onClose }: TaskPreviewModalProps) {
   const { data: task, isLoading } = useTaskDetail(taskId);
   const retry = useRetryTask();
+  const eraseRetry = useRetryTask();
   const favorite = useToggleFavorite();
+  const desubtitle = useDesubtitle();
+  // 默认看去字幕版：这条链路存在的理由就是那版；原片留一个按钮随时能切回去。
+  const [selection, setSelection] = useState<{ id: string; version: PlaybackVersion } | null>(null);
+  const [confirmRetryId, setConfirmRetryId] = useState<string | null>(null);
+  const [confirmEraseId, setConfirmEraseId] = useState<string | null>(null);
+  const version = selection?.id === taskId ? selection.version : savedVersion(taskId);
+  const erase = task?.subtitleErase ?? null;
+  const erasedReady = erase?.status === 'completed' && Boolean(erase.outputUrl);
+  const playingUrl = version === 'erased' && erasedReady ? erase?.outputUrl : outputUrl;
+  const playingErased = version === 'erased' && erasedReady;
   const canReadQueue = useCan('task:read');
   const upstreamId =
-    task && isTaskInFlight(task) && task.modelId === LIBTV_MODEL_ID
+    task && isTaskInFlight(task) && isLibtvModelId(task.modelId)
       ? upstreamTaskId(task.externalId)
       : null;
   const { data: queueData } = useLibtvQueue(
@@ -60,10 +88,38 @@ export function TaskPreviewModal({ taskId, outputUrl, onClose }: TaskPreviewModa
         <div className="grid gap-5 p-[18px] md:grid-cols-[250px_minmax(0,1fr)]">
           {/* 成片能播就播：以前这里只放一张封面图，用户点开「预览」看到的是静止画面，
               正文里也没有任何播放入口 —— 等于看不见生成结果。 */}
-          {task.status === 'completed' && outputUrl ? (
+          {task.status === 'completed' && playingUrl ? (
             <div className="mx-auto w-full max-w-[240px] md:max-w-none">
+              {erasedReady ? (
+                <div className="mb-2 flex items-center gap-1.5" role="group" aria-label="播放版本">
+                  {(
+                    [
+                      ['erased', '去字幕版'],
+                      ['original', '原片'],
+                    ] as const
+                  ).map(([value, label]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      aria-pressed={version === value}
+                      onClick={() => {
+                        setSelection({ id: task.id, version: value });
+                        try { localStorage.setItem(versionKey(task.id), value); } catch { /* 当前弹窗仍可切换 */ }
+                      }}
+                      className={
+                        version === value
+                          ? 'rounded-pill bg-primary px-2 py-0.5 text-micro font-medium text-white'
+                          : 'rounded-pill border border-line-soft px-2 py-0.5 text-micro text-ink-mute hover:border-line-strong'
+                      }
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
               <video
-                src={outputUrl}
+                key={playingErased ? 'erased' : 'original'}
+                src={playingUrl}
                 poster={task.coverUrl || undefined}
                 controls
                 playsInline
@@ -131,38 +187,54 @@ export function TaskPreviewModal({ taskId, outputUrl, onClose }: TaskPreviewModa
                 {task.errorMessage}
               </Notice>
             )}
+            {erase?.status === 'failed' && erase.errorMessage && (
+              <Notice tone="error" className="mt-3">去字幕失败：{erase.errorMessage}</Notice>
+            )}
 
             <div className="mt-4 flex flex-wrap gap-2">
               <Button
                 size="sm"
                 variant="primary"
                 icon={<Download size={13} />}
-                disabled={!task.downloadable || !outputUrl}
+                disabled={!task.downloadable || !playingUrl}
                 onClick={() => {
-                  if (!outputUrl) {
+                  if (!playingUrl) {
                     toast('成片地址暂不可用，请稍后刷新', 'error');
                     return;
                   }
-                  void downloadUrl(
-                    outputUrl,
-                    generatedFileName(task.authorName ?? '', task.createdAt, '.mp4'),
-                  );
+                  const extMatch = /\.(mp4|mov|webm)(?:$|[?#])/i.exec(playingUrl);
+                  const ext = extMatch ? `.${extMatch[1].toLowerCase()}` : '.mp4';
+                  const base = generatedFileName(task.authorName ?? '', task.createdAt, ext);
+                  const name = playingErased ? base.replace(/(\.[^.]+)$/, '-去字幕$1') : base;
+                  void downloadUrl(playingUrl, name);
                 }}
               >
                 下载成片
               </Button>
+
               <Button
                 size="sm"
                 icon={<RotateCcw size={13} />}
                 loading={retry.isPending}
                 onClick={() =>
-                  retry.mutate(task.id, {
-                    onSuccess: () => toast('已提交重新生成', 'success'),
-                    onError: (e) => toast(e.message, 'error'),
-                  })
+                  retry.mutate(
+                    { id: task.id, confirmCharged: confirmRetryId === task.id },
+                    {
+                      onSuccess: () => {
+                        setConfirmRetryId(null);
+                        toast('已提交重新生成', 'success');
+                      },
+                      onError: (e) => {
+                        if (isConfirmChargedRequired(e)) {
+                          setConfirmRetryId(task.id);
+                        }
+                        toast(e.message, 'error');
+                      },
+                    },
+                  )
                 }
               >
-                重新生成
+                {confirmRetryId === task.id ? '已核对，仍要重新生成' : '重新生成'}
               </Button>
               <Button
                 size="sm"
@@ -176,6 +248,43 @@ export function TaskPreviewModal({ taskId, outputUrl, onClose }: TaskPreviewModa
                 }
               >
                 {task.favorited ? '取消收藏' : '收藏'}
+              </Button>
+              <Button
+                size="sm"
+                icon={<Wand2 size={13} />}
+                loading={
+                  desubtitle.isPending || eraseRetry.isPending ||
+                  erase?.status === 'queued' ||
+                  erase?.status === 'running'
+                }
+                disabled={task.status !== 'completed' || erase?.status === 'completed'}
+                onClick={() => {
+                  if (erase?.status === 'failed') {
+                    eraseRetry.mutate({ id: erase.id, confirmCharged: confirmEraseId === erase.id }, {
+                      onSuccess: () => {
+                        setConfirmEraseId(null);
+                        toast('已重新提交去字幕', 'success');
+                      },
+                      onError: (e) => {
+                        if (isConfirmChargedRequired(e)) setConfirmEraseId(erase.id);
+                        toast(e.message, 'error');
+                      },
+                    });
+                    return;
+                  }
+                  desubtitle.mutate(task.id, {
+                    onSuccess: () => toast('已提交去字幕', 'success'),
+                    onError: (e) => toast(e.message, 'error'),
+                  });
+                }}
+              >
+                {erase?.status === 'completed'
+                  ? '已去字幕'
+                  : erase && erase.status !== 'failed'
+                    ? `去字幕 ${erase.progress}%`
+                    : erase?.status === 'failed'
+                      ? confirmEraseId === erase.id ? '已核对，仍要重试去字幕' : '重试去字幕'
+                      : '智能去字幕'}
               </Button>
             </div>
 

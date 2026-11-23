@@ -87,6 +87,13 @@ class IngestRequest:
     """
     mime_type: str = ""
     size_bytes: int = 0
+    replaces_asset_id: str = ""
+    """把这条资产**原地替换**成新内容（同一个 asset id，引用不断）。
+
+    去字幕版走的就是这条路：资产库只保留去字幕后的那一版，而模板/镜头里已经
+    引用过原片资产的地方不该断。留空 = 正常新建。实现方必须校验归属与未删除，
+    替换是破坏性操作，不能接受跨用户覆盖。
+    """
     generation: Mapping[str, object] = field(default_factory=dict)
     #: 生成侧显式配置的标签。入库时还会**并上参考素材身上的可打标标签**
     #: （从上面这份冻结快照读参考素材 id），所以产物最终标签可能多于这里。

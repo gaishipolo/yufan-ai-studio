@@ -9,6 +9,7 @@ import { PackGroupPicker } from './PackGroupPicker';
 import { SlotMediaPicker } from './SlotMediaPicker';
 import { useGenerateImage } from '@/entities/image/api/image.api';
 import { useModels } from '@/entities/model/api/model.queries';
+import { findModelSpec } from '@/entities/model/model/types';
 import {
   isUserSelectable,
   paramControlsFor,
@@ -32,6 +33,7 @@ import {
   Chip,
   ConfirmDialog,
   EmptyState,
+  ErrorState,
   SearchInput,
   Segmented,
   Select,
@@ -358,9 +360,7 @@ export function SpecLibrary() {
   /** 模型 id → 目录里的友好名。卡片上显示的是这个，不是裸 id。 */
   const modelLabelOf = useCallback(
     (id: string): string | undefined =>
-      id
-        ? [...videoModels, ...imageModels].find(item => item.id === id)?.label
-        : undefined,
+      findModelSpec([...videoModels, ...imageModels], id)?.label,
     [videoModels, imageModels],
   );
 
@@ -756,6 +756,17 @@ export function SpecLibrary() {
           <Skeleton key={index} className="h-[360px] rounded-2xl" />
         ))}
       </div>
+    );
+  }
+
+  if (published.isError) {
+    return (
+      <ErrorState
+        title="模板加载失败"
+        error={published.error}
+        onRetry={() => void published.refetch()}
+        retrying={published.isFetching}
+      />
     );
   }
 

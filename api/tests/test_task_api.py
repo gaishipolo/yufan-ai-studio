@@ -574,6 +574,7 @@ def test_retry_with_supplier_task_id_requires_confirmation(client: TestClient, a
     denied = client.post(f"{api}/tasks/{task_id}/retry")
     assert denied.status_code == 409, denied.text
     assert "confirmCharged" in denied.text
+    assert denied.json()["details"]["confirmChargedRequired"] is True
 
     async def after_denied() -> VideoTask:
         factory = get_session_factory()

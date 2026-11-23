@@ -28,6 +28,9 @@ export const taskKeys = {
 const POLL_INTERVAL = 2_500;
 const FEED_POLL_INTERVAL = 5_000;
 
+const needsPolling = (task: VideoTask) => isTaskInFlight(task) ||
+  task.subtitleErase?.status === 'queued' || task.subtitleErase?.status === 'running';
+
 /** 后台标签页不轮询：React Query 只按窗口焦点暂停，隐藏标签页还要自己挡一层。 */
 function pageHidden() {
   return typeof document !== 'undefined' && document.visibilityState === 'hidden';
@@ -46,7 +49,9 @@ export function useTaskFeed(params: TaskFeedParams) {
     refetchInterval: query => {
       if (pageHidden()) return false;
       const data = query.state.data as TaskFeedResult | undefined;
-      return (data?.stats.running ?? 0) > 0 ? FEED_POLL_INTERVAL : false;
+      return (data?.stats.running ?? 0) > 0 || data?.items.some(item =>
+        item.video && needsPolling(item.video),
+      ) ? FEED_POLL_INTERVAL : false;
     },
   });
 }
@@ -60,7 +65,7 @@ export function useTaskList(params: TaskListParams) {
     placeholderData: keepPreviousData,
     refetchInterval: (query) => {
       const data = query.state.data as { items: VideoTask[] } | undefined;
-      return data?.items.some(isTaskInFlight) ? POLL_INTERVAL : false;
+      return data?.items.some(needsPolling) ? POLL_INTERVAL : false;
     },
   });
 }
@@ -73,7 +78,7 @@ export function useTaskDetail(id: string | null) {
     enabled: Boolean(id),
     refetchInterval: (query) => {
       const data = query.state.data as VideoTask | undefined;
-      return data && isTaskInFlight(data) ? POLL_INTERVAL : false;
+      return data && needsPolling(data) ? POLL_INTERVAL : false;
     },
   });
 }
@@ -92,7 +97,24 @@ export function useCreateTask() {
 export function useRetryTask() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => taskApi.retry(id),
+    mutationFn: (input: string | { id: string; confirmCharged?: boolean }) =>
+      typeof input === 'string' ? taskApi.retry(input) : taskApi.retry(input.id, input.confirmCharged),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: taskKeys.all });
+    },
+  });
+}
+
+/**
+ * 派生一条去字幕版。
+ *
+ * 后端幂等（同一父任务只有一条），所以这里不需要额外防抖：
+ * 重复点击最多拿到同一条任务，不会多下一条上游任务。
+ */
+export function useDesubtitle() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => taskApi.desubtitle(id),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: taskKeys.all });
     },

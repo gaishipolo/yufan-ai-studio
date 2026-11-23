@@ -16,7 +16,7 @@
     "libtv/prompts/character.template.zh.txt": "314ef005f976ec1ebbc201ce9cc02b7c830c383c88a0d7fc0063d460655debeb",
     "libtv/prompts/product.template.zh.txt": "076e73e403d19563937b668990d8007507b0f2f940ea841732c7742f3ae08281",
     "libtv/prompts/scene.template.zh.txt": "608d18fd351dfa026c3361094bc4e088bdfc8be2aadc2b6f0ad688f819399d9e",
-    "libtv/workbench/submit.mjs": "3c567cca6147e095568ce9124615f3883ab8d3f1693e3df8300cd57dda469533",
+    "libtv/workbench/submit.mjs": "9d132390fcfe2a062d474ca3b167232ca5897efd0f7220cca4bb93c33fd3d2ff",
     "tools/js-reverse-mcp/canvas-run.mjs": "1cfa76c14c41683e62438cf0011e6a721dca8d98e38ca4a3748c0b286dfd43b4",
     "tools/js-reverse-mcp/canvas-transport.mjs": "2f088ed46bb2fd33d930de979c6e365a460133f3544af40e17070c2b3c593203",
     "tools/js-reverse-mcp/release.json": "7ba4e6f2639e19270221d45b6f6a622e74ce22d8fd427c041234fd9c6e90f02b"

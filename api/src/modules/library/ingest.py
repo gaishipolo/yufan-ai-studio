@@ -279,13 +279,52 @@ class GenerationIngest:
             digest, size = await asyncio.to_thread(_digest_and_size, path)
 
             duplicate = await self._dedupe(owner_id, digest, request.kind.value)
-            if duplicate is not None:
-                # 同一份字节已经在这个人的库里了：返回原行，不覆盖来源
+            if duplicate is not None and (
+                not request.replaces_asset_id or duplicate.id != request.replaces_asset_id
+            ):
+                # 同一份字节已经在这个人的库里了（且不是正在原地替换的自身）：
+                # 若强行把 replaces_asset_id 改成同一摘要，会撞 `uq_library_assets_owner_sha_kind`。
                 return IngestResult(asset_id=duplicate.id, created=False)
 
             key = blob_key(digest, extension)
             await self.storage.put_file(key, path, mime)
             cover_key = await self._ensure_preview(path, digest, request.kind.value)
+
+            if request.replaces_asset_id:
+                # 原地替换（去字幕版）：同一个 asset id，字节/封面/时长换成新的。
+                # 为什么不是「新建一条再删旧的」：模板、镜头、分享链接里引用的是
+                # asset id，换 id 等于把那些引用全指向一条已删除的资产。
+                try:
+                    replaced = await self._replace(
+                        request.replaces_asset_id,
+                        owner_id=owner_id,
+                        values={
+                            "mime_type": mime,
+                            "size_bytes": size,
+                            "sha256": digest,
+                            "storage_key": key,
+                            "cover_key": cover_key,
+                            "width": int(info["width"]),
+                            "height": int(info["height"]),
+                            "duration": float(info["duration"]),
+                            "has_audio": bool(info["hasAudio"]),
+                            "name": _asset_name(request),
+                        },
+                    )
+                    if replaced is not None:
+                        await self.session.commit()
+                        return IngestResult(asset_id=replaced.id, created=False)
+                except IntegrityError:
+                    await self.session.rollback()
+                    raced = await self._by_source_key(
+                        source_key, owner_id
+                    ) or await self._dedupe(owner_id, digest, request.kind.value)
+                    if raced is None:
+                        raise
+                    return IngestResult(asset_id=raced.id, created=False)
+
+            if duplicate is not None:
+                return IngestResult(asset_id=duplicate.id, created=False)
 
             row = LibraryAsset(
                 name=_asset_name(request),
@@ -514,6 +553,23 @@ class GenerationIngest:
                 "该幂等键已被其他用户占用，请换一个 sourceKey",
                 details={"sourceKey": source_key},
             )
+        return row
+
+    async def _replace(
+        self, asset_id: str, *, owner_id: str, values: dict[str, Any]
+    ) -> LibraryAsset | None:
+        """把已有资产原地换成新内容；找不到 / 不是本人的 / 已删除时返回 None。
+
+        返回 None 时调用方退回「正常新建」——宁可多一条资产，也不要因为替换失败
+        把用户去字幕的结果吞掉。
+        """
+        row = await self.session.get(LibraryAsset, asset_id)
+        if row is None or row.deleted_at is not None or row.owner_id != owner_id:
+            logger.warning("要替换的资产不可用，退回新建 asset=%s owner=%s", asset_id, owner_id)
+            return None
+        for column, value in values.items():
+            setattr(row, column, value)
+        await self.session.flush()
         return row
 
     async def _dedupe(self, owner_id: str, digest: str, kind: str) -> LibraryAsset | None:

@@ -64,13 +64,26 @@ def test_reference_limits_are_per_kind(client: TestClient, api: str) -> None:
 def test_models_without_declared_limits_stay_empty(client: TestClient, api: str) -> None:
     """没声明按类上限的供应商给空对象（不是猜一个）。
 
-    替换模型（LibTV / 百炼）只声明了总数与类型，前端据此退回「只守总数」。
+    百炼替换只声明了总数与类型，前端据此退回「只守总数」；
+    LibTV 按模型分别声明了分类上限与历史别名。
     """
     data = client.get(f"{api}/models", params={"capability": "video"}).json()["data"]
-    libtv = next(item for item in data["items"] if item["id"] == "libtv-wan3-replacement")
+    bailian = next(item for item in data["items"] if item["id"] == "bailian-wan3-replacement")
 
     # 「声明了类型」与「声明了每类几份」是两件事：前者有，后者没有。
     # 断言成 `== {}` 时也顺手钉住这一点，否则「字段默认空」和「真的没声明」
     # 在出参上长得一模一样，谁也没法从接口看出是没接上还是本来就没有。
-    assert libtv["referenceKinds"]
-    assert libtv["referenceLimits"] == {}
+    assert bailian["referenceKinds"]
+    assert bailian["referenceLimits"] == {}
+
+    wan3 = next(item for item in data["items"] if item["id"] == "libtv-wan3.0")
+    assert wan3["label"] == "LibTV · Wan 3.0"
+    assert "libtv-wan3-replacement" in wan3["aliases"]
+    assert wan3["referenceLimits"]["image"]["maxCount"] == 10
+    assert wan3["referenceLimits"]["video"]["maxCount"] == 5
+    assert wan3["referenceLimits"]["audio"]["maxCount"] == 5
+
+    s20 = next(item for item in data["items"] if item["id"] == "libtv-seedance-2.0")
+    assert s20["referenceLimits"]["image"]["maxCount"] == 9
+    assert s20["referenceLimits"]["video"]["maxCount"] == 3
+    assert s20["referenceLimits"]["audio"]["maxCount"] == 3

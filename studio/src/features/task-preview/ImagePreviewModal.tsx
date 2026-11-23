@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Download, RotateCcw } from 'lucide-react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { isConfirmChargedRequired } from '@/shared/api/types';
 import { Button, Chip, CoverImage, Modal, Notice } from '@/shared/ui';
 import { toast } from '@/shared/lib/toast';
 import { downloadUrl } from '@/shared/lib/download';
@@ -52,9 +53,8 @@ export function ImagePreviewModal({ item, onClose }: ImagePreviewModalProps) {
     },
     onError: (error: unknown) => {
       const message = error instanceof Error ? error.message : '重试失败';
-      // 后端对「可能已扣费」的记录返回 409；把二次确认直接放在按钮上，
-      // 不让用户去猜 query 参数。
-      if (/扣费|核对|confirmCharged/.test(message)) setNeedConfirm(true);
+      // 后端对「可能已扣费」的记录返回 409 + confirmChargedRequired；把二次确认直接放在按钮上。
+      if (isConfirmChargedRequired(error)) setNeedConfirm(true);
       toast(message, 'error');
     },
   });

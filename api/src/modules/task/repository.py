@@ -32,6 +32,9 @@ class TaskRepository(BaseRepository[VideoTask]):
         是最难排查的一种不一致。
         """
         stmt = select(VideoTask)
+        # 派生任务（去字幕版）挂在父卡里切换，不进列表：否则同一段素材会出现两张卡，
+        # 用户在任务中心看到「两条任务」而其实只生成过一次。
+        stmt = stmt.where(VideoTask.derived_from_task_id.is_(None))
 
         scope = TaskScope(query.scope)
         can_read_all = actor.has(PERM_READ_ALL)

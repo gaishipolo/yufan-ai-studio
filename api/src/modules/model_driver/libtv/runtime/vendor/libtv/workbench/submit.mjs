@@ -6,6 +6,13 @@ import {CanvasApi} from '../../tools/js-reverse-mcp/canvas-transport.mjs';
 import {load,save,update,withRunLock,ROOT} from '../../tools/js-reverse-mcp/canvas-run.mjs';
 import {verifyMixedList} from '../prompt-compiler.mjs';
 
+const WORKBENCH_MODELS = {
+  'wanx3.0': {provider: 'Wan', resolutions: ['480P', '720P', '1080P'], min: 2, max: 30},
+  'star-video2.5': {provider: 'star-video2.5', resolutions: ['480p', '720p', '1080p', '4k'], min: 4, max: 30},
+  'star-video2.5-flash': {provider: 'star-video2.5', resolutions: ['480p', '720p'], min: 4, max: 30},
+  'star-video2': {provider: 'star-video2', resolutions: ['480p', '720p', '1080p', '4k'], min: 4, max: 15},
+};
+
 export function isAllowed(control,batchId,now=new Date()){
   if(!control.enabled||!Number.isInteger(control.start_hour)||!Number.isInteger(control.end_hour)||control.paused?.includes(batchId))return false;
   const hour=(now.getUTCHours()+8)%24;
@@ -19,7 +26,8 @@ export async function submit(api,run,batchId,guard){
   const compiled=JSON.parse(await readFile(path.join(run,'records/prompt-compilation.json'),'utf8'));
   verifyMixedList(compiled,request.params.mixedList);
   const p=request.params;
-  if(compiled.prompt!==p.prompt||p.resolution!=='720P'||p.model!=='wanx3.0'||p.modeType!=='mixed2video'||p.count!==1||p.infiniteSwitch!==0)throw Error('Unexpected workbench request');
+  const spec=WORKBENCH_MODELS[p.model];
+  if(compiled.prompt!==p.prompt||!spec||request.model!==p.model||request.provider!==spec.provider||!spec.resolutions.includes(p.resolution)||!Number.isInteger(p.duration)||p.duration<spec.min||p.duration>spec.max||p.modeType!=='mixed2video'||p.count!==1||p.infiniteSwitch!==0)throw Error('Unexpected workbench request');
   if(!await guard())return{state:'deferred_window'};
   const estimate=await api.request('/api/task/generation/power/calculator',request);
   await save(path.join(run,'records/estimate.json'),estimate);

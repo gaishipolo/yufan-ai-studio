@@ -362,6 +362,16 @@ def effective_model_ids(
     return tuple(ids)
 
 
+def _model_catalog() -> dict[str, ModelSummary]:
+    """按 id 与兼容别名索引模型目录，避免同一份解析逻辑写两遍。"""
+    catalog: dict[str, ModelSummary] = {}
+    for item in get_model_generation().models():
+        catalog[item.id] = item
+        for alias in item.aliases:
+            catalog.setdefault(alias, item)
+    return catalog
+
+
 async def _check_model(spec: TemplateSpec) -> None:
     """模型必须存在，参数键必须落在它的 `param_schema` 内。
 
@@ -371,7 +381,7 @@ async def _check_model(spec: TemplateSpec) -> None:
     清单里的**每一款**都要过同一道闸：使用者挑的是清单里的某一款，挑到哪一款
     都不该被拒 —— 否则「清单里第三款一选就报错」这种坑要等使用者自己踩到。
     """
-    catalog = {item.id: item for item in get_model_generation().models()}
+    catalog = _model_catalog()
     for model_id in effective_model_ids(spec.model, spec.allowed_models):
         model = catalog.get(model_id)
         if model is None:
@@ -735,9 +745,10 @@ async def list_out(
         count_stmt = count_stmt.where(SpecRow.status == status)
     if target != "all" and not trashed:
         replaceable = [
-            item.id
+            key
             for item in get_model_generation().models()
             if item.replacement
+            for key in (item.id, *item.aliases)
         ]
         condition: ColumnElement[bool]
         if target == "replacement":
@@ -954,7 +965,7 @@ def _checked_overrides(model_id: str, overrides: Mapping[str, Any]) -> dict[str,
     （模板参数），要么模型根本不认 —— 两种都不该由使用者在这里传。
     值按 schema 收敛（枚举必须落在 options 内），非法值当场 400。
     """
-    catalog = {item.id: item for item in get_model_generation().models()}
+    catalog = _model_catalog()
     model = catalog.get(model_id)
     if model is None:
         raise BadRequest(f"模型不存在或未启用：{model_id}")

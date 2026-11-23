@@ -19,8 +19,9 @@ import { TaskCard } from '@/entities/task/ui/TaskCard';
 import { ImageTaskCard } from '@/entities/task/ui/ImageTaskCard';
 import { LibTvAccountStrip } from '@/entities/libtv/ui/LibTvAccountStrip';
 import { useLibtvAccount, useLibtvQueue } from '@/entities/libtv/api/libtv.queries';
+import { useModels } from '@/entities/model/api/model.queries';
 import {
-  LIBTV_MODEL_ID,
+  isLibtvModelId,
   isQueued,
   liveTaskProgress,
   queueLabel,
@@ -171,17 +172,18 @@ export default function TaskCenterPage() {
      `externalId` 形如 `<归档工作区>:<上游 task_id>`，排队接口只认后面那半段。 */
   const canReadQueue = useCan('task:read');
   const canReadLibtvAccount = useCan('model_driver:read');
+  const videoModels = useModels('video');
   const upstreamIds = useMemo(
     () =>
       items.flatMap(item => {
         if (item.source !== 'video' || item.group !== 'running') return [];
         // 只有 LibTV 的任务号能在那个接口上查：百炼的 externalId 是自己家的 UUID，
         // 拿去问 LibTV 只会得到空结果，白打一次上游。
-        if (item.video?.modelId !== LIBTV_MODEL_ID) return [];
+        if (!isLibtvModelId(item.video?.modelId, videoModels)) return [];
         const id = upstreamTaskId(item.video?.externalId);
         return id ? [id] : [];
       }),
-    [items],
+    [items, videoModels],
   );
   // 没权限就别发请求：排队位次要 `task:read`，额度条要 `model_driver:read`。
   // 以前不论有没有都发，普通角色每分钟收一个 403，还被 throwOnError 吞掉。

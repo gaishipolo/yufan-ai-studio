@@ -7,7 +7,17 @@ from collections.abc import Mapping
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import JSON, Boolean, DateTime, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    DateTime,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from core.library_text import parse_text_refs, text_ref_bindings
@@ -17,7 +27,6 @@ from modules.task.enums import AspectRatio, TaskStatus
 
 class VideoTask(Base, UUIDMixin, TimestampMixin):
     __tablename__ = "video_tasks"
-
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     prompt: Mapped[str] = mapped_column(Text, nullable=False)
 
@@ -46,6 +55,24 @@ class VideoTask(Base, UUIDMixin, TimestampMixin):
     # 用不同的计费口径重下单）。默认值 `free` 是保守的那一侧：没声明就
     # 排免费队列，不会误扣积分。
     billing_mode: Mapped[str] = mapped_column(String(16), default="free", nullable=False)
+    # ------------------------------------------------------------------ #
+    # 派生任务（去字幕版）：同一段素材的另一种版本
+    #
+    # 复用 `video_tasks` 而不是另起一张表：去字幕版的生命周期与普通任务完全同构
+    # （排队 → 生成 → 下载 → 入库 → 可重试），另起表等于把 runner 再写一遍。
+    # 代价是列表/统计必须显式排除派生任务（`derived_from_task_id IS NULL`），
+    # 否则任务中心会多出一张「去字幕」卡，用户以为是两条任务。
+    # ------------------------------------------------------------------ #
+    derived_from_task_id: Mapped[str | None] = mapped_column(
+        String(32), nullable=True, index=True
+    )
+    #: `original` / `subtitle_erased`；与 `derived_from_task_id` 组成唯一键
+    variant: Mapped[str] = mapped_column(
+        String(24), default="original", server_default="original", nullable=False
+    )
+    #: 这条任务成功入库后的资产 id。派生任务用它把原片资产**原地替换**成去字幕版
+    library_asset_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
     # 模型声明的**其余**参数（JSON 文本）。
     #
     # 为什么要这一列：时长与画幅有顶层列，计费模式与风格预设也各有一列，
@@ -93,6 +120,16 @@ class VideoTask(Base, UUIDMixin, TimestampMixin):
         # 列表默认按「作者 + 创建时间倒序」翻页，走联合索引
         Index("ix_video_tasks_author_created", "author_id", "created_at"),
         Index("ix_video_tasks_status_created", "status", "created_at"),
+        # 同一父任务只允许一条同类型派生任务：这是「点两次不会下两单」的硬保证。
+        # 在这里显式声明，否则 `alembic check` 会把它当成「库里多出来的索引」要求删除。
+        Index(
+            "ux_video_tasks_derived_variant",
+            "derived_from_task_id",
+            "variant",
+            unique=True,
+            postgresql_where=text("derived_from_task_id IS NOT NULL"),
+            sqlite_where=text("derived_from_task_id IS NOT NULL"),
+        ),
     )
 
     @property

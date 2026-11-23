@@ -38,7 +38,7 @@ from library_support import insert_asset, png_bytes, upload_image
 from core.exceptions import BadRequest
 from infra.ai.base import Capability, ModelSpec
 
-LIBTV = "libtv-wan3-replacement"
+LIBTV = "libtv-wan3.0"
 
 
 def _spec(param_schema: dict[str, Any]) -> ModelSpec:

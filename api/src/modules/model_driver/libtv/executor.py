@@ -14,15 +14,17 @@ import re
 import subprocess
 import sys
 import uuid
+from contextlib import suppress
 from functools import lru_cache
 from pathlib import Path
 from urllib.parse import urlsplit
 from urllib.request import urlopen
 
+import httpx
 from pydantic import BaseModel
 
 from core.config import get_settings
-from core.exceptions import BadRequest
+from core.exceptions import BadRequest, UpstreamError
 from core.logging import get_logger
 from infra.archive import get_archive_storage, run_dir
 from infra.driver_config import DriverSettings, driver_config
@@ -33,7 +35,7 @@ from modules.model_driver.libtv.state import (
 )
 
 logger = get_logger(__name__)
-MODEL_ID = "libtv-wan3-replacement"
+MODEL_ID = "libtv-wan3.0"
 # 这些故障需要修复执行环境，再由「继续」恢复已有 task_id 的查询。
 EXECUTOR_BLOCKED = frozenset(
     {
@@ -146,6 +148,85 @@ def select_browser(billing_mode: str, *, has_task: bool) -> str:
     # （`EXECUTOR_BROWSER_UNAVAILABLE`，消息里带着这个地址和启动方式），
     # 这里返回空串只会让那句提示丢掉它最需要的信息。
     return primary
+
+
+async def submit_desubtitle(
+    *, account: str, source: str, width: int, height: int, duration: float
+) -> dict[str, object]:
+    """提交一条去字幕任务，返回 `{"taskId": ..., "power": ...}`。
+
+    走 `runtime/desubtitle.mjs` 而不是在 Python 里复刻：本地成片要先经
+    `MediaUploader` 上传（含视频审核），那套分片/校验逻辑 vendor 里已经有了，
+    再写一份 Python 版就是第二个会漂移的口径。
+    """
+    script = Path(__file__).parent / "runtime/desubtitle.mjs"
+    payload = json.dumps(
+        {
+            "account": account,
+            "source": source,
+            "width": width,
+            "height": height,
+            "duration": duration,
+        }
+    )
+    process: asyncio.subprocess.Process | None = None
+    try:
+        process = await asyncio.create_subprocess_exec(
+            get_settings().node_binary,
+            str(script),
+            payload,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=1500)
+    except (TimeoutError, asyncio.CancelledError) as exc:
+        if process is not None:
+            if process.returncode is None:
+                with suppress(ProcessLookupError):
+                    process.kill()
+            await process.communicate()
+        if isinstance(exc, asyncio.CancelledError):
+            raise
+        raise UpstreamError("去字幕执行器超时，已停止子进程") from exc
+    except OSError as exc:
+        raise UpstreamError(f"去字幕执行器不可用：{exc}") from exc
+
+    line = (stdout or b"").decode("utf-8", "replace").strip().splitlines()
+    parsed: dict[str, object] = {}
+    if line:
+        try:
+            parsed = json.loads(line[-1])
+        except ValueError:
+            parsed = {}
+    if process.returncode != 0 or parsed.get("error"):
+        detail = parsed.get("error") or (stderr or b"").decode("utf-8", "replace").strip()[-200:]
+        # create 请求发出后的超时/无 task_id 或子进程异常退出未输出回执：
+        # 归为 UpstreamError（502），让 GenerationRunner._possibly_delivered 保留 submit_attempts，
+        # 避免自动重提导致重复扣费。
+        if parsed.get("code") == "SUBMISSION_UNKNOWN" or not parsed:
+            raise UpstreamError(f"去字幕提交结果未知：{detail}")
+        raise BadRequest(f"去字幕未提交：{detail}")
+    return parsed
+
+
+def canvas_project_id(browser: str) -> str:
+    """浏览器里**当前打开的画布** uuid（去字幕建任务要它，否则上游回 30001）。
+
+    与桥接层 `currentCanvasProjectId()` 同一口径：读 CDP 的 `/json/list`，
+    从 `?projectId=` 里取。取不到就返回空串，由调用方报一条能照做的错。
+    """
+    try:
+        with httpx.Client(timeout=4.0) as client:
+            tabs = client.get(f"{browser}/json/list").json()
+    except (httpx.HTTPError, ValueError):
+        return ""
+    for tab in tabs if isinstance(tabs, list) else []:
+        match = re.search(
+            r"liblib\.tv/canvas\?[^#]*projectId=([0-9a-f]{32})", str(tab.get("url") or ""), re.I
+        )
+        if match:
+            return match.group(1)
+    return ""
 
 
 def browser_for(path: Path) -> str:

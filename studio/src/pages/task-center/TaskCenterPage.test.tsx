@@ -22,6 +22,8 @@ vi.mock('@/entities/task/api/task.queries', () => ({
   useCreateTask: () => ({mutateAsync: vi.fn(), isPending: false}),
   useRetryTask: () => ({mutateAsync: vi.fn(), isPending: false}),
   useToggleFavorite: () => ({mutateAsync: vi.fn(), isPending: false}),
+  // 任务卡与弹窗都会用到；返回同形状的空 mutation，避免「mock 缺导出」整页崩
+  useDesubtitle: () => ({mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false}),
   useDeleteTasks: () => ({
     mutateAsync: vi.fn(async (ids: string[]) => { mock.deleteCalls.push(ids); return mock.deleted; }),
     isPending: false,

@@ -68,6 +68,10 @@ class ModelOut(CamelModel):
             "`maxReferences` 仍是总数上限，两者要一起守；空对象 = 供应商没声明"
         ),
     )
+    aliases: list[str] = Field(
+        default_factory=list,
+        description="兼容历史模型 id 或旧展示名的别名列表，供前端解析存量模板/任务",
+    )
     is_default: bool = False
 
 

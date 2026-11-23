@@ -26,8 +26,28 @@ export interface LibTvQueueItem {
   describe: string;
 }
 
-/** 队列位次只对这一个模型有意义（上游是 LibTV 的画布队列） */
-export const LIBTV_MODEL_ID = 'libtv-wan3-replacement';
+/** 队列位次对全部 LibTV 画布模型有意义（包含更名前的历史 id `libtv-wan3-replacement`） */
+export const LIBTV_MODEL_ID = 'libtv-wan3.0';
+
+export const LIBTV_MODEL_IDS: ReadonlySet<string> = new Set([
+  'libtv-wan3.0',
+  'libtv-wan3-replacement',
+  'libtv-seedance-2.5',
+  'libtv-seedance-2.5-flash',
+  'libtv-seedance-2.0',
+]);
+
+import { findModelSpec, type ModelSpec } from '@/entities/model/model/types';
+
+export function isLibtvModelId(
+  modelId: string | null | undefined,
+  catalog: readonly ModelSpec[] = [],
+): boolean {
+  if (!modelId) return false;
+  const matched = findModelSpec(catalog, modelId);
+  if (matched) return matched.provider === 'libtv';
+  return LIBTV_MODEL_IDS.has(modelId);
+}
 
 export interface LibTvAsset {
   usablePower: number;
@@ -101,7 +121,7 @@ export function inFlightLibtvIds(
   tasks: Array<{ status?: string; modelId?: string | null; externalId?: string | null }>,
 ): string[] {
   return tasks.flatMap(task => {
-    if ((task.status !== 'running' && task.status !== 'queued') || task.modelId !== LIBTV_MODEL_ID) {
+    if ((task.status !== 'running' && task.status !== 'queued') || !isLibtvModelId(task.modelId)) {
       return [];
     }
     const id = upstreamTaskId(task.externalId);

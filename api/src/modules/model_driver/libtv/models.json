@@ -1,0 +1,62 @@
+[
+  {
+    "id": "libtv-wan3.0",
+    "label": "LibTV · Wan 3.0",
+    "description": "720P 默认视频生成与替换；支持 0 积分畅用队列与积分加速队列",
+    "upstreamModel": "wanx3.0",
+    "upstreamProvider": "Wan",
+    "family": "wan",
+    "resolutions": ["480P", "720P", "1080P"],
+    "defaultResolution": "720P",
+    "duration": {"min": 2, "max": 30},
+    "maxReferences": 10,
+    "mixed2video": {"imageMax": 10, "videoMax": 5, "audioMax": 5, "totalMax": 20},
+    "aliases": ["libtv-wan3-replacement", "LibTV · 720P 视频替换", "LibTV · Wan 3.0 视频替换"],
+    "bridgeAliases": ["wanx3.0", "wan3.0", "wan3"]
+  },
+  {
+    "id": "libtv-seedance-2.5",
+    "label": "LibTV · Seedance 2.5 VIP",
+    "description": "Seedance 2.5 VIP（默认 480p 节省积分，支持 480p–4k 与混合多参考）",
+    "upstreamModel": "star-video2.5",
+    "upstreamProvider": "star-video2.5",
+    "family": "seedance",
+    "resolutions": ["480p", "720p", "1080p", "4k"],
+    "defaultResolution": "480p",
+    "duration": {"min": 4, "max": 30},
+    "maxReferences": 50,
+    "mixed2video": {"imageMax": 30, "videoMax": 10, "audioMax": 10, "totalMax": 50},
+    "aliases": [],
+    "bridgeAliases": ["star-video2.5", "seedance2.5", "seedance-2.5", "2.5vip"]
+  },
+  {
+    "id": "libtv-seedance-2.5-flash",
+    "label": "LibTV · Seedance 2.5 Flash",
+    "description": "Seedance 2.5 Flash（默认 480p，支持 480p/720p 与 4–30 秒）",
+    "upstreamModel": "star-video2.5-flash",
+    "upstreamProvider": "star-video2.5",
+    "family": "seedance",
+    "resolutions": ["480p", "720p"],
+    "defaultResolution": "480p",
+    "duration": {"min": 4, "max": 30},
+    "maxReferences": 10,
+    "mixed2video": {"imageMax": 10, "videoMax": 5, "audioMax": 5, "totalMax": 20},
+    "aliases": [],
+    "bridgeAliases": ["star-video2.5-flash", "seedance2.5-flash", "seedance-2.5-flash", "2.5flash"]
+  },
+  {
+    "id": "libtv-seedance-2.0",
+    "label": "LibTV · Seedance 2.0 VIP",
+    "description": "Seedance 2.0 VIP（默认 480p 节省积分，支持 480p–4k 与 4–15 秒）",
+    "upstreamModel": "star-video2",
+    "upstreamProvider": "star-video2",
+    "family": "seedance",
+    "resolutions": ["480p", "720p", "1080p", "4k"],
+    "defaultResolution": "480p",
+    "duration": {"min": 4, "max": 15},
+    "maxReferences": 15,
+    "mixed2video": {"imageMax": 9, "videoMax": 3, "audioMax": 3, "totalMax": 15},
+    "aliases": [],
+    "bridgeAliases": ["star-video2", "seedance2.0-vip", "seedance-2.0-vip", "2.0vip"]
+  }
+]

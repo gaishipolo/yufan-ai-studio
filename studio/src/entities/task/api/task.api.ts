@@ -19,7 +19,11 @@ export const taskApi = {
 
   /* 后端回的是 TaskRetryOut（只有 id / status / updatedAt），不是整份任务。
      写成 VideoTask 会让「读 data.title」编译通过、运行时 undefined。 */
-  retry: (id: string) => api.post<TaskRetryResult>(`/tasks/${id}/retry`),
+  retry: (id: string, confirmCharged = false) =>
+    api.post<TaskRetryResult>(`/tasks/${id}/retry?confirmCharged=${confirmCharged}`),
+
+  /* 去字幕是一条派生任务：同一父任务只会有一条，重复调用后端直接返回它（幂等） */
+  desubtitle: (id: string) => api.post<VideoTask>(`/tasks/${id}/desubtitle`),
 
   toggleFavorite: (id: string) => api.post<VideoTask>(`/tasks/${id}/favorite`),
 

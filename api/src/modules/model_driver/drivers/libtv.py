@@ -13,36 +13,49 @@
 from __future__ import annotations
 
 import asyncio
+import tempfile
+from collections.abc import Mapping
 from pathlib import Path
 
 from core.exceptions import BadRequest, Conflict, RateLimited, UpstreamError
 from core.logging import get_logger
-from infra import get_queue
+from infra import get_queue, get_storage
 from infra.ai.base import (
     Capability,
     GenerationProgress,
     GenerationRequest,
     GenerationState,
     ModelSpec,
+    ReferenceLimit,
 )
 from infra.executor_output import executor_output_url
 from infra.queue.base import Job
 from modules.model_driver.generic_inputs import materialize
+from modules.model_driver.libtv import account as libtv_account
 from modules.model_driver.libtv import executor, process
+from modules.model_driver.libtv.models import (
+    DEFAULT_LIBTV_MODEL_ID,
+    LIBTV_PROFILES,
+    LibTVModelProfile,
+    resolve_libtv_profile,
+)
 from modules.model_driver.libtv.reconcile import reconcile as reconcile_state
 from modules.model_driver.libtv.state import LibTVState
 from modules.model_driver.spec import DriverMeta
 
 META = DriverMeta(
     label="LibTV",
-    description="Wan 3.0 视频替换（归档输入 + 免费/积分队列）",
-    version="1.0.0",
+    description="Wan 3.0 / Seedance 2.x 视频生成与替换（归档输入 + 免费/积分队列）",
+    version="1.1.0",
     author="",
 )
 
-MODEL_ID = "libtv-wan3-replacement"
+MODEL_ID = DEFAULT_LIBTV_MODEL_ID
 
 logger = get_logger(__name__)
+
+#: 去字幕模型（上游 `volcano-subtitle-eraser`）：源视频来自父任务，不新建档案
+DESUBTITLE_MODEL = "libtv-subtitle-eraser"
 
 # 这些故障需要修复执行环境，再由「继续」恢复已有 task_id 的查询。
 EXECUTOR_BLOCKED = frozenset(
@@ -58,56 +71,83 @@ EXECUTOR_BLOCKED = frozenset(
     }
 )
 
-_PARAM_SCHEMA = {
-    # 键名与 `modules/task/params.py` 对齐：前端按 paramSchema 渲染，不加代码。
-    "durationSec": {"type": "int", "min": 2, "max": 30, "step": 1, "default": 5},
-    "aspectRatio": {
-        "type": "enum",
-        "options": ["9:16", "16:9", "1:1"],
-        "default": "9:16",
-    },
-    # 计费模式。免费队列（free）走 `params.infiniteSwitch = 0`；积分加速
-    # （credits）走 `infiniteSwitch = 1` 并在请求体里关掉账号当前的 0 积分
-    # 权益标签（顶层与 params 各写一份 `disableBenefitTags`）。
-    #
-    # 默认 `free` 是保守的那一侧：免费队列慢一点，但不误扣积分。
-    #
-    # `userSelectable`：这个参数**由使用模板的人选**，不该由模板作者写死。
-    # 写死 = 模板作者替每个使用者决定了要不要花积分 —— 而积分是**用的人**的钱。
-    # 标记后：封装页不许设它（设了就报错），模板库填表时渲染成选择控件。
-    "billingMode": {
-        "type": "enum",
-        "options": ["free", "credits"],
-        "default": "free",
-        "label": "计费模式",
-        "userSelectable": True,
-        "description": (
-            "免费队列（较慢，不扣积分）/ 积分加速（更快，消耗账号积分）。"
-            "积分加速要求账号当前有生效的 0 积分权益标签，否则不会提交"
-        ),
-    },
-}
+def _param_schema(profile: LibTVModelProfile) -> dict[str, object]:
+    """按模型能力声明参数 schema（前端据此动态渲染，不写死字段）。"""
+    return {
+        # 键名与 `modules/task/params.py` 对齐：前端按 paramSchema 渲染，不加代码。
+        "durationSec": {
+            "type": "int",
+            "min": profile.min_duration,
+            "max": profile.max_duration,
+            "step": 1,
+            "default": 5,
+        },
+        "aspectRatio": {
+            "type": "enum",
+            # 与 `core.enums.AspectRatio` 对齐（`CreateTaskIn.aspectRatio` 强校验这三档）。
+            "options": ["9:16", "16:9", "1:1"],
+            "default": "9:16",
+        },
+        "resolution": {
+            "type": "enum",
+            "options": list(profile.resolutions),
+            "default": profile.default_resolution,
+            "label": "分辨率",
+        },
+        # 计费模式。免费队列（free）走 `params.infiniteSwitch = 0`；积分加速
+        # （credits）走 `infiniteSwitch = 1` 并在请求体里关掉账号当前的 0 积分
+        # 权益标签（顶层与 params 各写一份 `disableBenefitTags`）。
+        #
+        # 默认 `free` 是保守的那一侧：免费队列慢一点，但不误扣积分。
+        #
+        # `userSelectable`：这个参数**由使用模板的人选**，不该由模板作者写死。
+        # 写死 = 模板作者替每个使用者决定了要不要花积分 —— 而积分是**用的人**的钱。
+        # 标记后：封装页不许设它（设了就报错），模板库填表时渲染成选择控件。
+        "billingMode": {
+            "type": "enum",
+            "options": ["free", "credits"],
+            "default": "free",
+            "label": "计费模式",
+            "userSelectable": True,
+            "description": (
+                "免费队列（较慢，不扣积分）/ 积分加速（更快，消耗账号积分）。"
+                "积分加速要求账号当前有生效的 0 积分权益标签，否则不会提交"
+            ),
+        },
+    }
+
 
 MODELS: tuple[ModelSpec, ...] = (
+    *(
+        ModelSpec(
+            id=profile.id,
+            label=profile.label,
+            provider="libtv",
+            capability=Capability.VIDEO,
+            description=profile.description,
+            param_schema=_param_schema(profile),
+            max_references=profile.max_references,
+            # LibTV 的混合输入通道吃图片、视频与音频：图片是身份 / 商品 / 场景，
+            # 视频是原片或动作参考，音频是音轨 / 口型。三类共用同一条 `mixedList`。
+            reference_kinds=("image", "video", "audio"),
+            # 替换链的模型：有原片 + 素材包的档案工作区，能按模板做替换。
+            replacement=True,
+            aliases=profile.aliases,
+        )
+        for profile in LIBTV_PROFILES
+    ),
     ModelSpec(
-        id=MODEL_ID,
-        label="LibTV · 720P 视频替换",
+        id=DESUBTITLE_MODEL,
+        label="LibTV · 智能去字幕",
         provider="libtv",
         capability=Capability.VIDEO,
-        description="720P 视频替换；支持 0 积分畅用队列与积分加速队列",
-        param_schema=_PARAM_SCHEMA,
-        # 上限按**上游自己的编译器**给，不按记忆里的数字：`runtime/vendor/
-        # libtv/prompt-compiler.mjs` 里分类型判 `image ≤ 10 / video ≤ 5 /
-        # audio ≤ 5`，总数还卡在 1–15。此前写 5 是把它当成了「图片也最多 5 张」，
-        # 于是模板封装的第 6 张参考图在填表页提交时才被受理期挡掉——封装页
-        # 明明允许配到 `MAX_SLOT_REFS = 10`，两边口径对不上。取 10 是各类型
-        # 里最小那个能共用的值：混合输入也不越界（10 ≤ 15）。
-        max_references=10,
-        # LibTV 的混合输入通道吃图片、视频与音频：图片是身份 / 商品 / 场景，
-        # 视频是原片或动作参考，音频是音轨 / 口型。三类共用同一条 `mixedList`。
-        reference_kinds=("image", "video", "audio"),
-        # 替换链的模型：有原片 + 素材包的档案工作区，能按模板做替换。
-        replacement=True,
+        description="AI 一键去除视频里的字幕（仅中英文），输入是另一条任务的成片",
+        # 不给用户任何参数：源视频、宽高、时长都由父任务决定。
+        # 暴露出来只会让人以为可以随便传一个 URL 进来。
+        param_schema={},
+        # 不进货架：它只能由「任务卡 → 智能去字幕」调用（源视频必须是某条任务的成片），
+        # 出现在创建页下拉里必然缺参。
+        internal=True,
     ),
 )
 
@@ -213,7 +253,20 @@ class LibTVProvider:
     # 取消，而那时「提交意图」已经落库 → 被判成「可能已计费」。
     submit_timeout_sec = 1650.0
 
+    def reference_limits_for(self, model_id: str) -> Mapping[str, ReferenceLimit]:
+        """按模型返回参考素材分类上限，供受理期与模型目录复用。"""
+        profile = resolve_libtv_profile(model_id)
+        if profile is None:
+            return {}
+        return {
+            "image": ReferenceLimit(max_count=profile.image_max),
+            "video": ReferenceLimit(max_count=profile.video_max),
+            "audio": ReferenceLimit(max_count=profile.audio_max),
+        }
+
     async def submit(self, request: GenerationRequest) -> str:
+        if request.model == DESUBTITLE_MODEL:
+            return await self._submit_desubtitle(request)
         # 归档工作区 id 只能是字符串：模板库那条链把它放在 `archiveRunId`，
         # 通用链没有这个键（None → ""），于是用任务 id 当工作区 id。
         value = str(request.params.get("archiveRunId") or "")
@@ -279,7 +332,91 @@ class LibTVProvider:
             raise _stage_failure(result, value, account)
         raise BadRequest(f"提交前检查未完成：{result.message or result.code}；未提交生成")
 
+    async def _submit_desubtitle(self, request: GenerationRequest) -> str:
+        """去字幕：一条普通生成任务，只是换了模型，**不建运行档案**。
+
+        为什么不走 `upload/submit` 两个阶段：那条路会传素材、编译提示词、写
+        `request.json`，而去字幕的输入只有「一个已经存在的 mp4」。没有素材要传，
+        再造一套档案只会多一份要对账的状态。
+
+        源视频两种形态：
+        - `http(s)` 直链：直接给上游；
+        - 对象存储的 key（我们自己的成片）：先取字节落到临时文件，
+          由 `desubtitle.mjs` 用 `MediaUploader` 传到上游素材库（含视频审核），
+          因为 `create` 只接受上游取得到的 URL。
+        """
+        source = str(request.params.get("sourceUrl") or "")
+        if not source:
+            raise BadRequest("去字幕缺少源视频地址（父任务的成片）")
+
+        account = await asyncio.to_thread(executor.select_browser, "free", has_task=False)
+        local = source
+        temporary: Path | None = None
+        try:
+            if not source.startswith(("http://", "https://")):
+                # 成片在对象存储里是 key（`videos/xxx.mp4`），上游取不到，必须先流式物化到盘，
+                # 避免一次性 `get()` 把几百 MB 视频整份读进内存或同步写盘卡住事件循环。
+                temporary = Path(tempfile.gettempdir()) / f"desub-{request.request_id}.mp4"
+                handle = await asyncio.to_thread(temporary.open, "wb")
+                try:
+                    async for chunk in get_storage().iter_chunks(source.lstrip("/")):
+                        await asyncio.to_thread(handle.write, chunk)
+                finally:
+                    await asyncio.to_thread(handle.close)
+                local = str(temporary)
+
+            result = await executor.submit_desubtitle(
+                account=account,
+                source=local,
+                width=int(request.params.get("width") or 720),
+                height=int(request.params.get("height") or 1280),
+                duration=float(request.params.get("duration") or 4),
+            )
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
+
+        task_id = str(result.get("taskId") or "")
+        if not task_id:
+            raise UpstreamError("去字幕没有返回 task_id")
+        logger.info(
+            "去字幕已提交 task=%s account=%s power=%s", task_id, account, result.get("power")
+        )
+        return f"desub|{account}|{task_id}"
+
+    async def _poll_desubtitle(self, external_id: str) -> GenerationProgress:
+        _, account, task_id = external_id.split("|", 2)
+        items = await libtv_account.progress([task_id], account)
+        if not items:
+            # 刚提交时上游列表里可能还没有它：按「排队中」处理，下一跳再问。
+            return GenerationProgress(
+                external_id=external_id, state=GenerationState.RUNNING, queued=True
+            )
+        item = items[0]
+        if item.status == 2:
+            return GenerationProgress(
+                external_id=external_id,
+                state=GenerationState.SUCCEEDED,
+                progress=100,
+                output_url=item.result_url or None,
+                persist_required=True,
+            )
+        if item.status == 3:
+            return GenerationProgress(
+                external_id=external_id,
+                state=GenerationState.FAILED,
+                error=item.failed_reason or "上游去字幕失败",
+            )
+        return GenerationProgress(
+            external_id=external_id,
+            state=GenerationState.RUNNING,
+            queued=item.queued,
+            progress=min(99, item.percent),
+        )
+
     async def poll(self, external_id: str, *, model: str = "") -> GenerationProgress:
+        if external_id.startswith("desub|"):
+            return await self._poll_desubtitle(external_id)
         run_id, _, task_id = external_id.partition(":")
         if not task_id:
             raise BadRequest("LibTV 上游任务标识无效")

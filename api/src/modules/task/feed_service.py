@@ -144,8 +144,12 @@ async def list_feed(
         favorites = await service.repo.favorite_task_ids(
             actor.id, [row.id for row in rows]
         )
+        # 一页一次把派生任务查出来（去字幕版的进度要显示在卡片上），
+        # 别在卡片里逐个请求：48 张卡就是 48 次数据库往返。
+        variants = await service.subtitle_variants([row.id for row in rows])
         for index, row in enumerate(rows):
             video = service.to_out(row, favorited=row.id in favorites)
+            video.subtitle_erase = variants.get(row.id)
             # 封面是 `TaskOut` 的字段，需要现签；成片地址**不在** `TaskOut` 里
             # （详情接口刻意不返回它，成片只走外层 `TaskFeedItem.outputUrl`），
             # 所以这里不要去设 `video.output_url` —— 那是个不存在的字段，

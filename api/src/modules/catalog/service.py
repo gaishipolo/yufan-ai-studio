@@ -7,7 +7,11 @@
 from __future__ import annotations
 
 from core.logging import get_logger
-from infra.ai.base import Capability, ReferenceLimitsCapable
+from infra.ai.base import (
+    Capability,
+    ModelReferenceLimitsCapable,
+    ReferenceLimitsCapable,
+)
 from infra.ai.router import ModelRouter
 from modules.catalog.schema import ModelListOut, ModelOut, ReferenceLimitOut
 
@@ -32,7 +36,11 @@ class CatalogService:
         except Exception:  # noqa: BLE001 - 目录接口不该因为装配异常整体失败
             logger.warning("解析供应商失败，参考上限按未声明处理 model=%s", model_id)
             return {}
-        if not isinstance(provider, ReferenceLimitsCapable):
+        if isinstance(provider, ModelReferenceLimitsCapable):
+            raw = provider.reference_limits_for(model_id)
+        elif isinstance(provider, ReferenceLimitsCapable):
+            raw = provider.reference_limits
+        else:
             return {}
         return {
             kind: ReferenceLimitOut(
@@ -40,7 +48,7 @@ class CatalogService:
                 min_side=limit.min_side,
                 max_side=limit.max_side,
             )
-            for kind, limit in provider.reference_limits.items()
+            for kind, limit in raw.items()
         }
 
     def list_models(self, capability: Capability | None = None) -> ModelListOut:
@@ -63,6 +71,7 @@ class CatalogService:
                 replacement=spec.replacement,
                 reference_kinds=list(spec.reference_kinds),
                 reference_limits=self._reference_limits(spec.id),
+                aliases=list(spec.aliases),
                 is_default=spec.id == self.router.default_model_or_none(spec.capability),
             )
             for spec in self.router.public_models(capability)

@@ -123,6 +123,48 @@ GET https://api2.liblib.art/api/www/commerce/activity/benefit
 另有两个相关端点：`member/libtvFreePower`（POST `{}`，LibTV 赠送额度与到期）、
 `commerce/activity/rateLimitBenefit`（限流权益，通常为空）。
 
+## 5.5 智能去字幕（2026-11-20 逆向）
+
+画布里对视频节点点「智能去字幕」，前端发的**不是**新接口，而是一条普通的生成任务
+（与文生视频同一条 `create → progress` 链路），只是 `model` 换成了专用的擦除模型：
+
+```json
+POST /api/task/generation/power/calculator   （以及随后的 create，body 相同）
+{
+  "params": {
+    "model": "volcano-subtitle-eraser",
+    "mode": "Subtitle",
+    "videoList":   ["<源视频 mp4 URL>"],
+    "videoListV2": [{"url": "<同一个 URL>", "width": 720, "height": 1280, "duration": 4.04}]
+  },
+  "metadata": {"node_id": "v-xxxx", "project_id": "<当前画布 uuid>"},
+  "provider": "volcano",
+  "model": "volcano-subtitle-eraser",
+  "taskType": "video",
+  "requestId": "<16 位随机>"
+}
+```
+
+- `create` 前要现取 `POST /api/security/client-verification-token`，把 `requestToken`
+  放进 `riskControl`（与积分队列同一个防机器人门槛）；
+- **计费**：9412 实测 `power: 0`（免费），但接口照常回 `originalPrice/power`，别写死 0；
+- **产物**：`<源文件名>_<unix 秒>_lib_upscaled.mp4`，`taskResult.videos[0].previewPath`；
+- **耗时**：4 秒源片约 70-90 秒（排队为 0 时）；
+- `videoListV2` 的 `width/height/duration` 参与上游切片估算，缺了会报参数错误；
+- `metadata.project_id` 必须是**当前画布**的 uuid，否则 `30001 账号状态已切换`；
+  `node_id` 只是画布上的落点，可自造（形如 `v-xxxxxxxx`）。
+
+实现见 `api/scripts/libtv_desubtitle.mjs`（独立脚本，先于工作台集成落地）：
+
+```bash
+node api/scripts/libtv_desubtitle.mjs --video https://...mp4 --out out.mp4
+node api/scripts/libtv_desubtitle.mjs --video https://...mp4 --dry-run     # 只报价
+node api/scripts/libtv_desubtitle.mjs --poll <taskId>                      # 只等结果
+node api/scripts/libtv_desubtitle.mjs --video ./local.mp4 --width 720 --height 1280 --duration 4
+```
+
+本地文件会先走 `MediaUploader`（含视频审核）再提交；输出一行 JSON，供后端/工作台消费。
+
 ## 6. 平台怎么用
 
 | 能力 | 入口 | 权限 |

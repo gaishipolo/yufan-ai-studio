@@ -746,7 +746,13 @@ def test_models_expose_replacement_declaration(client: TestClient) -> None:
     body = client.get("/api/v1/models", headers=_headers(client))
     assert body.status_code == 200, body.text
     items = {item["id"]: item for item in body.json()["data"]["items"]}
-    for model in ("libtv-wan3-replacement", "bailian-wan3-replacement"):
+    for model in (
+        "libtv-wan3.0",
+        "libtv-seedance-2.5",
+        "libtv-seedance-2.5-flash",
+        "libtv-seedance-2.0",
+        "bailian-wan3-replacement",
+    ):
         assert items[model]["replacement"] is True, model
     assert items["agnes-video-2.5-flash"]["replacement"] is False
 

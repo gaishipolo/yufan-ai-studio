@@ -57,6 +57,20 @@ class CoverAttachable(Protocol):
 
 
 @runtime_checkable
+class AssetLinkable(Protocol):
+    """可选能力：把入库得到的资产 id 记回业务记录。
+
+    派生任务（去字幕版）需要它：下一次派生要知道「原片资产是哪一条」才能原地替换，
+    而资产 id 只有入库之后才存在。没有这个能力时业务表就少一条指针，
+    表现为「去字幕版入库了，但资产库里躺着两份」。
+    """
+
+    async def attach_asset(
+        self, session: AsyncSession, record_id: str, asset_id: str
+    ) -> bool: ...
+
+
+@runtime_checkable
 class DeadlineExtendable(Protocol):
     """可选能力：把墙钟预算的起点挪到「现在」。
 

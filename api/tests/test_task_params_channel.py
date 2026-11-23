@@ -30,7 +30,7 @@ from fastapi.testclient import TestClient
 from core.exceptions import BadRequest
 from infra.ai.base import Capability, ModelSpec
 
-LIBTV = "libtv-wan3-replacement"
+LIBTV = "libtv-wan3.0"
 
 #: 一个**声明了额外参数**的测试模型。真实驱动目前都只声明了时长与画幅，
 #: 而这条通道的价值就在于「模型多声明一个参数，前端不用改」。
