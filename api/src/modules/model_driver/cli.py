@@ -163,6 +163,86 @@ def cmd_libtv_account(args: argparse.Namespace) -> None:
         raise SystemExit(1) from exc
 
 
+def cmd_migrate_receipts(args: argparse.Namespace) -> None:
+    """把工作区文件回执全量迁进 DB（阶段 0.5 的解冻前置）。
+
+    ⚠️ 执行前**必须先冻结提交通道**：迁移期间如果还有新的 bailian 提交，
+    文件与 DB 会各写一份，恢复时以哪边为准就说不清了。命令本身不实现冻结
+    （那是运维动作），但会在报告里明确提示。
+
+    任何 `rejected` / `conflicts` 都以非零码退出 —— 跳过一条坏回执就等于
+    给二次计费留了个口子，宁可让运维手工修完再跑一遍。
+    """
+    import json
+
+    from sqlalchemy import select
+
+    from db.session import get_session_factory
+    from infra.archive.runs import existing_runs
+    from modules.model_driver.models import SubmissionReceipt
+    from modules.model_driver.receipts import migrate_legacy_receipts, stamp_from_legacy
+
+    async def run() -> dict[str, int]:
+        rows: list[dict[str, object]] = []
+        for folder in existing_runs():
+            source = folder / "records" / "bailian-submission.json"
+            if not source.is_file():
+                continue
+            try:
+                raw = json.loads(source.read_text(encoding="utf-8"))
+            except (OSError, ValueError) as exc:
+                # 损坏的源文件也计入 rejected，不能静默跳过
+                rows.append({"run_id": folder.name, "status": "invalid", "error": str(exc)})
+                continue
+            if not isinstance(raw, dict):
+                rows.append({"run_id": folder.name, "status": "invalid"})
+                continue
+            entry = dict(raw)
+            entry.setdefault("provider", "bailian")
+            entry.setdefault("run_id", folder.name)
+            entry["submitted_at"] = stamp_from_legacy(entry)
+            entry["settled_at"] = stamp_from_legacy(entry)
+            rows.append(entry)
+
+        if not rows:
+            return {"inserted": 0, "rejected": 0, "conflicts": 0, "scanned": 0}
+
+        async with get_session_factory()() as session:
+            # 幂等：已迁过的 run 不再插第二遍
+            existing = set(
+                (
+                    await session.execute(
+                        select(SubmissionReceipt.run_id).where(
+                            SubmissionReceipt.provider == "bailian"
+                        )
+                    )
+                ).scalars()
+            )
+            pending = [row for row in rows if str(row.get("run_id")) not in existing]
+            stats = await migrate_legacy_receipts(session, rows=pending)
+            if args.dry_run:
+                await session.rollback()
+            else:
+                await session.commit()
+        return {**stats, "scanned": len(rows)}
+
+    stats = asyncio.run(run())
+    print(
+        f"回执迁移：扫描 {stats['scanned']} 份，"
+        f"写入 {stats['inserted']}，拒绝 {stats['rejected']}，冲突 {stats['conflicts']}"
+    )
+    if args.dry_run:
+        print("（--dry-run 模式未落库）")
+        return
+    if stats["rejected"] or stats["conflicts"]:
+        print(
+            "存在无法自动迁移的回执：**不要解冻提交通道**，先逐条核对工作区文件。",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+    print("迁移完成且校验通过，可以解冻提交通道。")
+
+
 def register(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     parser = sub.add_parser("drivers", help="模型驱动自检与清单")
     actions = parser.add_subparsers(dest="drivers_action", required=True)
@@ -216,3 +296,10 @@ def register(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
         help="附上这些上游任务的进度与排队位次",
     )
     status.set_defaults(func=cmd_libtv_account)
+
+    migrate = sub.add_parser(
+        "migrate-receipts",
+        help="把工作区文件回执全量迁进 DB（执行前先冻结提交通道）",
+    )
+    migrate.add_argument("--dry-run", action="store_true", help="只统计与校验，不落库")
+    migrate.set_defaults(func=cmd_migrate_receipts)
