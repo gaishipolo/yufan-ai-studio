@@ -23,6 +23,7 @@ mtime 指纹是变更即生效，没有时间窗（对应 D3 拍板）。
 
 from __future__ import annotations
 
+import hashlib
 import os
 from collections.abc import Callable
 from pathlib import Path
@@ -109,4 +110,40 @@ def clear_cache() -> None:
     _cache.clear()
 
 
-__all__ = ["clear_cache", "vendor_settings"]
+#: 敏感字段名（子串匹配，忽略大小写）。这些字段的**值**不进指纹明文。
+_SENSITIVE_HINTS = ("key", "secret", "token", "password", "passwd", "credential", "cookie")
+
+
+def _field_digest(name: str, value: object) -> str:
+    """字段的指纹片段。
+
+    敏感字段用**值的哈希**而不是明文：指纹会进日志、进巡检报告，不能带密钥；
+    但密钥轮转也应该被指纹反映出来（否则运维看不出「配置换了一版」）。
+    """
+    text = str(value)
+    if any(hint in name.lower() for hint in _SENSITIVE_HINTS):
+        text = hashlib.sha256(text.encode("utf-8")).hexdigest()[:8]
+    return f"{name}={text}"
+
+
+def config_fingerprint(cls: type) -> str:
+    """当前生效配置的指纹（**不含密钥明文**）。
+
+    给 `app doctor` 用：运维需要知道「现在生效的是哪一版配置」，但指纹不能
+    出现密钥。取实例字段（名 + 值）排序后 sha256，取前 12 位。
+
+    配置本身是坏的（缺必填）时返回 ``"invalid"`` —— 巡检要能一眼看出「这版
+    配置没读出来」，而不是把坏配置算成一个看起来正常的指纹。
+    """
+    try:
+        instance = cls()
+    except Exception:  # noqa: BLE001 - 坏配置也要能给出指纹
+        return "invalid"
+    fields = type(instance).model_fields
+    parts = sorted(
+        _field_digest(name, getattr(instance, name, "")) for name in fields
+    )
+    return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()[:12]
+
+
+__all__ = ["clear_cache", "config_fingerprint", "vendor_settings"]

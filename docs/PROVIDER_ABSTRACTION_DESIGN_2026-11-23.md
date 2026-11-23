@@ -639,6 +639,34 @@ EXTRA_SCHEMAS: tuple[type[BaseModel], ...] = ()
 2. `registry.refresh()` + 管理端点
 3. 文档更新（§8）
 
+**进度（2026-11-23）**：✅ 已完成
+
+| 项 | 状态 | 实际 |
+|---|---|---|
+| mtime 指纹缓存 | ✅ | 阶段 1 已建（`kit/settings.py`），阶段 3 复核各驱动 getter 均已切过去，无 `lru_cache` 残留 |
+| `registry.refresh()` | ✅ | 扫 `drivers/` → 新文件 import/校验/注册 → 挂 `EXTRA_ROUTES`。**加文件热生效；改已加载的文件不热替换**，只进 `changedFiles` 提醒重启 |
+| 管理端点 | ✅ | `POST /api/v1/model-driver/refresh`，权限 `model_driver:refresh`（**独立权限点**，不挂 `read`/`read:all` —— 看模型目录的人不该能改进程里装了什么） |
+| 周期兜底 | ✅ | `model_driver.drivers.refresh`（5 分钟，`leader_only=False`）：刷新是**进程级**的，多实例部署时端点只影响被打到的那个实例，其余实例靠各自的周期刷新收敛 |
+| 配置指纹 | ✅ | `app doctor` 新增 `model_driver.config` 条目：各供应商当前生效配置的 sha256 指纹（**敏感字段只取哈希**，指纹会进日志，不能带密钥明文） |
+| 契约 | ✅ | `openapi.json` / `API.md` / `schema.ts` / `permissions.ts` 四份重生成（`app export-openapi`）。**接口面纯新增**（+106 行、0 删除） |
+
+**三个刻意选的边界**
+
+1. **改文件不热替换**：`importlib.reload` 会丢 in-flight 实例状态 —— 手里攥着供应商
+   任务号的任务会被续查到另一套实现上。「假装生效」比「明确说要重启」危险得多。
+2. **刷新不触发全量扫描**：装配（`_register_loaded`）与扫描（`_discover`）拆成两半。
+   混在一起时，全量扫描会把「新增文件」当启动期文件加载掉，热接上就无从谈起。
+   → 拆开后 `ensure_drivers_registered()` 仍能自愈（路由被重置后重新装配）。
+3. **巡检失败不抛**：运行期没有「启动失败」这个选项。坏配置必须立刻暴露
+   （进日志、进结果），但把整个刷新打回去会让「新增驱动已经接上了」也看不到 ——
+   两件事分开报。
+
+**新增的运维级权限点**：`model_driver:refresh`。它进了权限目录（前端
+`permissions.ts` 已重生成），但**没有页面声明** —— 前端没有运维页面，
+所以登记为「后台能力」（`tests/test_permission_coverage.py` 的
+`BACKGROUND_ONLY_PERMISSIONS`）。前端角色配置里能勾，但勾了也没有对应页面。
+
+
 ---
 
 ## 5. 契约测试清单
@@ -941,6 +969,18 @@ api/src/modules/model_driver/libtv/schema.py            ← 供应商专属出�
 api/tests/test_model_driver_self_description.py         ← 自描述机制（阶段 2）
 ```
 
+> **清单与实际的偏差（2026-11-23 复核）**：`kit/` 里**只建了 `credentials.py` / `errors.py`
+> / `settings.py`** 三个 —— `http.py` / `models.py` / `media.py` / `submission_guard.py`
+> **没建**：A1 假设（把各驱动的 HTTP 映射、剥前缀、素材分类合成一份）逐行比对后**验证失败**，
+> 那些差异是业务语义，合成一份反而会掩盖真实差别。对应的 `test_driver_kit_media.py` /
+> `test_driver_submission_guard.py` 也没建。二次计费防护也没走 kit 形态 ——
+> 回执表落在 `modules/model_driver/models.py`（`submission_receipts`，唯一约束
+> `provider + run_id`），核对在 `maintenance.py`，不在 `db/submission_receipts.py`。
+> `infra/media_channel.py` **已建**（`MediaChannel` / `MediaKind` / `validate_declaration`
+> / `choose_channel`），通道枚举与可行性校验成立；没建的是 `kit/media.py` ——
+> **素材分类**（而非通道选择）属于业务语义。
+> **清单是设计时的预估，实际以各阶段「进度」记录为准。**
+
 ### 修改（公共文件 —— 共 10 处，其中 3 处由 D6 引入）
 
 > 此清单需在每次评审时复查；**不能假定「改完不再增长」** —— D5/D6 与通道抽象都是在评审中新增的公共文件改动。
@@ -949,6 +989,11 @@ api/tests/test_model_driver_self_description.py         ← 自描述机制（�
 `schema.py` / `core/config.py`）；后 5 处中 `db/migrations.py` / `db/registry.py` 由阶段 0.5
 完成，`cli.py` / `infra/archive/runs.py` 属阶段 0.5 的话术更新，`generation/runner.py`
 **原则不改**。
+
+**阶段 3 又新增了 4 处公共文件改动**（原清单未列，正是 §9 提醒过的情况）：
+`permissions.py`（新增运维级权限点 `model_driver:refresh`）、
+`maintenance.py`（周期兜底任务）、`health.py`（`app doctor` 的配置指纹条目）、
+`kit/settings.py`（配置指纹函数）。
 
 ```
 api/src/modules/model_driver/registry.py     ← 收集 EXTRA_*、refresh()
@@ -972,8 +1017,8 @@ api/src/modules/model_driver/drivers/{bailian,grsai,grsai_video,agnes,agnes_vide
 
 ---
 
-> **实施状态（2026-11-23）**：阶段 0 / 0.5 / 1 / 2 已实施，各阶段的实际改动见对应小节的
-> 「进度」记录；阶段 3（L3 动态生效）未开始 —— 每阶段独立可发布，其中**阶段 0.5 可独立上线**，
+> **实施状态（2026-11-23）**：阶段 0 / 0.5 / 1 / 2 / 3 已实施，各阶段的实际改动见对应小节的
+> 「进度」记录 —— 每阶段独立可发布，其中**阶段 0.5 可独立上线**，
 > 它修的是现网的二次计费风险。
 >
 > **「预计变更文件清单」是设计时的预估**：实际改动以各阶段的进度记录为准 —— 评审中新增的

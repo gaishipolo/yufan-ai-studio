@@ -41,7 +41,7 @@ module = ModuleSpec(
     # 驱动自报的作业（如 `libtv.download`，见 `drivers/libtv.py` 的 EXTRA_JOBS）。
     # 声明是义务：声明了却没注册 handler 会启动失败，而不是静默少一个 handler。
     jobs=job_names(),
-    periodic=("model_driver.workspace.gc",),
+    periodic=("model_driver.workspace.gc", "model_driver.drivers.refresh"),
     recovery_kinds=(KIND_MODEL_DRIVER,),
     bootstrap=bootstrap,
     cli=register_cli,

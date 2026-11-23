@@ -37,6 +37,15 @@ WORKSPACE_RETENTION_SEC = 30 * 24 * 3600
 #: GC 每 6 小时跑一轮。不可逆操作用 leader_only，多实例只有一个实例动手。
 GC_EVERY_SEC = 6 * 3600
 
+#: 驱动刷新周期（秒）。
+#:
+#: 端点是**即时手段**，周期刷新是**收敛机制**：刷新是进程级的，多实例部署时
+#: 端点只影响被打到的那个实例，其余实例要靠各自的周期刷新跟上。所以这里
+#: `leader_only=False` —— 每个实例都跑。
+#:
+#: 间隔取 5 分钟：新增驱动文件通常伴随一次部署，不需要秒级。
+REFRESH_EVERY_SEC = 300
+
 
 @periodic("model_driver.workspace.gc", every=GC_EVERY_SEC, immediate=False, leader_only=True)
 async def gc_old_workspaces() -> None:
@@ -111,3 +120,33 @@ async def gc_old_workspaces() -> None:
             skipped_locked,
             skipped_active,
         )
+
+
+@periodic(
+    "model_driver.drivers.refresh",
+    every=REFRESH_EVERY_SEC,
+    immediate=False,
+    leader_only=False,
+)
+async def refresh_drivers_periodically() -> None:
+    """周期性地把**新增**的驱动文件热接上。
+
+    与端点是同一套逻辑（`registry.refresh()`），只是触发方式不同：
+    端点给「我现在就要」用，周期给「多实例最终一致」用。
+
+    失败只记日志、不抛：刷新失败不影响**已在跑的**驱动 —— 已经生效的东西
+    不会因为一次刷新失败而回退。
+    """
+    from starlette.concurrency import run_in_threadpool
+
+    from modules.model_driver.registry import refresh
+
+    try:
+        result = await run_in_threadpool(refresh)
+    except Exception as exc:  # noqa: BLE001 - 周期刷新不该拖垮调度器
+        logger.error("周期刷新模型驱动失败 %s", exc)
+        return
+    if result.added:
+        logger.info("周期刷新已热接上新增驱动 %s", list(result.added))
+    for problem in result.errors:
+        logger.error("周期刷新模型驱动发现问题 %s", problem)

@@ -34,7 +34,7 @@ drivers/<name>.py  ──自动扫描──▶ ModelRouter ──▶ generation.
 | 可选导出 | `EXTRA_ROUTES = (APIRouter, ...)` —— 供应商专属端点（见 §1.1） |
 | 可选导出 | `EXTRA_JOBS = (JobSpec(...), ...)` —— 供应商专属异步作业（见 §1.1） |
 | 可选导出 | `EXTRA_SCHEMAS = (BaseModel 子类, ...)` —— 供应商专属出参（见 §1.1） |
-| 生效方式 | 重启进程即自动载入；**不做热重载**，避免已提交任务的 `external_id` 指向换掉的驱动 |
+| 生效方式 | 重启进程即自动载入；**新增文件可热接上**（`POST /api/v1/model-driver/refresh`，见 §5.1），**改已加载的文件不热替换**，要重启才生效 |
 
 ### 1.1 供应商专属的接口面：自己声明（2026-11-23）
 
@@ -351,6 +351,34 @@ models 非空且归属一致、三个方法可调用。
 名会直接 400，而不是悄悄落到 echo。写驱动时请让 `models` 列全，调用方也必须
 用真实 model id（旧代码里那些随手编的名字会在这里现形）。
 
+### 5.1 新增驱动文件：热接上（2026-11-23）
+
+`registry.refresh()` 重新扫描 `drivers/`，把**新增**的文件热接上：import → 校验 →
+注册进路由 → 挂上它的 `EXTRA_ROUTES`（§1.1）。不用重启。
+
+```bash
+curl -X POST /api/v1/model-driver/refresh   # 权限：model_driver:refresh
+```
+
+还有一条周期兜底（`model_driver.drivers.refresh`，5 分钟一轮）跑同一套逻辑。
+
+**边界是刻意选的**：
+
+| 情况 | 结果 |
+|---|---|
+| **加文件** | 热生效（`added`） |
+| **改已加载的文件** | **不热替换**，只出现在 `changedFiles` 里提醒重启 |
+| **删文件** | 不动（已注册的驱动继续用） |
+| **多实例部署** | 进程级：只影响本实例，其余实例靠各自的周期刷新收敛 |
+
+**为什么改文件不热替换**：`importlib.reload` 会重新执行模块级代码、丢掉正在跑的
+实例状态 —— 手里还攥着供应商任务号的任务会被续查到另一套实现上。
+「假装生效」比「明确说要重启」危险得多，所以这里只报不改。
+
+**刷新会连带重跑必填项与提交预算预检**：配置被改坏要在这里就暴露，而不是等
+下次重启（那时坏配置已经生效过一整轮了）。巡检失败**不抛** —— 运行期没有
+「启动失败」这个选项，问题进日志也进结果，两件事分开报。
+
 ## 6. 下游怎么调用
 
 ```python
@@ -403,6 +431,7 @@ submit() ─▶ driver_jobs(queued) ─▶ generation.submit ─▶ provider.sub
 | GET | `/api/v1/model-driver/tasks/{id}` | `model_driver:read` | 查询任务 |
 | POST | `/api/v1/model-driver/tasks/{id}/cancel` | `model_driver:cancel` | 取消（会调驱动 `cancel`） |
 | POST | `/api/v1/model-driver/tasks/{id}/retry?confirmCharged=true` | `model_driver:create` | 人工重试失败任务 |
+| POST | `/api/v1/model-driver/refresh` | `model_driver:refresh` | 刷新驱动目录，热接上新增的驱动文件（见 §5.1） |
 
 这组接口是给运维/页面看状态用的；**模块间调用不走 HTTP**，走注入口。
 
@@ -426,7 +455,8 @@ cd api
 
 ## 10. 明确不做的事
 
-- **不做热重载**：驱动改动重启生效。运行中的任务持有供应商任务号，热替换会让续查打到另一套实现。
+- **不做热替换**：只热接上**新增**的驱动文件（§5.1）；**改已加载的文件要重启**。
+  运行中的任务持有供应商任务号，热替换会让续查打到另一套实现。
 - **不复制编排逻辑**：不自己写队列/轮询/状态机，全部交给 `generation.runner`。
 - **不改 `.env`**：所有供应商都由 `drivers/` 自动载入；名字撞车且模型清单不同会被报出来。
 - **不做生成结果入草稿箱**：本模块目前不实现 `pipeline.archive_request`，

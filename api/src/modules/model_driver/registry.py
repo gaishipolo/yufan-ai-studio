@@ -16,8 +16,11 @@
 from __future__ import annotations
 
 import importlib
+import importlib.util
 import pkgutil
 from dataclasses import dataclass, replace
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter
@@ -27,6 +30,7 @@ from core.logging import get_logger
 from core.ports.model_generation import DriverSummary
 from infra import get_model_router
 from infra.ai.base import ModelProvider, PollCapable
+from infra.ai.router import ModelRouter
 from modules.model_driver import spec as standard
 
 logger = get_logger(__name__)
@@ -52,6 +56,37 @@ _errors: list[str] = []
 #: 已经挂过的驱动路由（按对象身份）。`include_router` 是**复制**路由，
 #: 挂两次就是同一批端点出现两遍——所以按身份去重，而不是按名字。
 _mounted_routers: list[APIRouter] = []
+
+#: 已成功加载的驱动模块 → 该文件当时的指纹 `(mtime_ns, size)`。
+#:
+#: 刷新靠它区分两种情况：**文件是新增的**（可热接上）与**文件已经加载过**
+#: （改过内容也不热替换，只记进 `changed_files` 提醒重启）。
+#: 加载**失败**的文件不登记 —— 下次刷新会重试它。
+_imported_paths: dict[str, tuple[int, int]] = {}
+
+
+@dataclass(frozen=True, slots=True)
+class RefreshResult:
+    """一次驱动刷新装配的结果。
+
+    这是给运维看的，不是给机器解析的：每一项都对应一个具体动作
+    （哪些热生效了、哪些要重启、哪里坏了）。
+    """
+
+    #: 本次**热生效**的新驱动（对应新增的文件）。
+    added: tuple[str, ...] = ()
+    #: 已在运行、保持原实例的驱动（没被换掉）。
+    kept: tuple[str, ...] = ()
+    #: 文件被改过但**没有**热生效的驱动 —— 要重启才生效。
+    changed_files: tuple[str, ...] = ()
+    #: 声明了作业却没有 handler 的作业名（运行期只能报出来）。
+    missing_handlers: tuple[str, ...] = ()
+    #: 本次刷新发现的错误：加载失败、注册失败、巡检失败。
+    errors: tuple[str, ...] = ()
+    #: 谁触发的刷新（端点传入的用户 id；周期任务为空）。
+    operator: str = ""
+    #: 刷新时刻（ISO8601）。
+    refreshed_at: str = ""
 
 
 #: 自描述装配失败。定义在 `spec.py` —— 那是自描述契约该待的地方；这里只是
@@ -112,6 +147,62 @@ def _read_extra_schemas(module: Any) -> tuple[type[BaseModel], ...]:
     return raw
 
 
+def _module_stamp(module_path: str) -> tuple[int, int] | None:
+    """模块源文件的指纹 `(mtime_ns, size)`；拿不到就是 `None`。
+
+    用它回答一个问题：**这个文件的内容变过吗？** 变了也不热替换
+    （`importlib.reload` 会丢 in-flight 实例状态），只用来提醒运维重启。
+    """
+    try:
+        spec = importlib.util.find_spec(module_path)
+    except (ImportError, ValueError):
+        return None
+    if spec is None or not spec.origin:
+        return None
+    try:
+        stat = Path(spec.origin).stat()
+    except OSError:
+        return None
+    return (stat.st_mtime_ns, stat.st_size)
+
+
+def _load_module(file_name: str, module_path: str) -> _LoadedDriver:
+    """import 并校验单个驱动文件。
+
+    失败抛异常，由调用方决定「记一条」还是「炸掉」。接口面装配失败抛
+    `ExtrasError`（必须炸），其余是普通的加载失败（只影响这一个驱动）。
+    """
+    module = importlib.import_module(module_path)
+    factory = getattr(module, "Driver", None)
+    if factory is None:
+        raise TypeError("文件缺少 Driver 定义（Driver = <实现类>）")
+    provider = _instantiate(factory)
+    problems = standard.validate_driver(provider)
+    if problems:
+        raise TypeError("；".join(problems))
+
+    meta = getattr(module, "META", standard.DEFAULT_META)
+    if not isinstance(meta, standard.DriverMeta):
+        meta = standard.DEFAULT_META
+    summary = DriverSummary(
+        name=provider.name,
+        path=f"{module_path.replace('.', '/')}.py",
+        label=meta.label or provider.name,
+        version=meta.version,
+        capabilities=tuple(sorted(c.value for c in provider.capabilities)),
+        model_count=len(provider.models),
+        supports_poll=isinstance(provider, PollCapable) and bool(provider.supports_poll),
+        loaded=True,
+    )
+    return _LoadedDriver(
+        provider=provider,
+        summary=summary,
+        extra_routes=_read_extra_routes(module),
+        extra_jobs=_read_extra_jobs(module),
+        extra_schemas=_read_extra_schemas(module),
+    )
+
+
 def _mount_extra_routes(drivers: dict[str, _LoadedDriver]) -> None:
     """把驱动自报的端点挂到模块 router 上。
 
@@ -140,43 +231,31 @@ def _mount_extra_routes(drivers: dict[str, _LoadedDriver]) -> None:
             )
 
 
+def _failed_driver(file_name: str, error: str) -> _LoadedDriver:
+    """加载失败的驱动在清单里的占位（`loaded=False` + 错误原因）。"""
+    return _LoadedDriver(
+        provider=None,  # type: ignore[arg-type]
+        summary=DriverSummary(
+            name=file_name,
+            path=f"{_DRIVERS_PACKAGE.replace('.', '/')}/{file_name}.py",
+            label=file_name,
+            version="",
+            capabilities=(),
+            model_count=0,
+            supports_poll=False,
+            loaded=False,
+            error=error,
+        ),
+    )
+
+
 def _discover() -> None:
     """扫描并校验所有驱动文件。单个文件出错只记一条，不中断其他驱动。"""
     global _state
     loaded: dict[str, _LoadedDriver] = {}
     for file_name, module_path in _iter_driver_modules():
         try:
-            module = importlib.import_module(module_path)
-            factory = getattr(module, "Driver", None)
-            if factory is None:
-                raise TypeError("文件缺少 Driver 定义（Driver = <实现类>）")
-            provider = _instantiate(factory)
-            problems = standard.validate_driver(provider)
-            if problems:
-                raise TypeError("；".join(problems))
-
-            meta = getattr(module, "META", standard.DEFAULT_META)
-            if not isinstance(meta, standard.DriverMeta):
-                meta = standard.DEFAULT_META
-            summary = DriverSummary(
-                name=provider.name,
-                path=f"{module_path.replace('.', '/')}.py",
-                label=meta.label or provider.name,
-                version=meta.version,
-                capabilities=tuple(sorted(c.value for c in provider.capabilities)),
-                model_count=len(provider.models),
-                supports_poll=isinstance(provider, PollCapable) and bool(provider.supports_poll),
-                loaded=True,
-            )
-            if provider.name in loaded:
-                raise TypeError(f"驱动名 {provider.name!r} 与 {file_name}.py 之前的驱动重复")
-            loaded[provider.name] = _LoadedDriver(
-                provider=provider,
-                summary=summary,
-                extra_routes=_read_extra_routes(module),
-                extra_jobs=_read_extra_jobs(module),
-                extra_schemas=_read_extra_schemas(module),
-            )
+            item = _load_module(file_name, module_path)
         except ExtrasError:
             # 接口面装配失败不吞：端点静默消失比启动失败难查得多。
             raise
@@ -184,33 +263,30 @@ def _discover() -> None:
             message = f"{file_name}.py: {exc}"
             _errors.append(message)
             logger.error("模型驱动加载失败 %s", message)
-            loaded[f"__failed__{file_name}"] = _LoadedDriver(
-                provider=None,  # type: ignore[arg-type]
-                summary=DriverSummary(
-                    name=file_name,
-                    path=f"{_DRIVERS_PACKAGE.replace('.', '/')}/{file_name}.py",
-                    label=file_name,
-                    version="",
-                    capabilities=(),
-                    model_count=0,
-                    supports_poll=False,
-                    loaded=False,
-                    error=str(exc),
-                ),
-            )
+            loaded[f"__failed__{file_name}"] = _failed_driver(file_name, str(exc))
+            continue
+        if item.provider.name in loaded:
+            message = f"驱动名 {item.provider.name!r} 与 {file_name}.py 之前的驱动重复"
+            _errors.append(message)
+            logger.error("模型驱动加载失败 %s", message)
+            loaded[f"__failed__{file_name}"] = _failed_driver(file_name, message)
+            continue
+        loaded[item.provider.name] = item
+        # 只有**成功加载**的才登记：加载失败的文件下次刷新还会重试。
+        _imported_paths[module_path] = _module_stamp(module_path) or (0, 0)
     _state = loaded
     # 接口面装配放在最后：驱动都载入了再挂路由；挂了不上就是启动失败。
     _mount_extra_routes(loaded)
 
 
-def ensure_drivers_registered() -> None:
-    """把已发现的驱动补进 `ModelRouter`。可重复调用，路由被重置后能自愈。"""
-    if _state is None:
-        _discover()
+def _register_loaded(state: dict[str, _LoadedDriver], router: ModelRouter) -> None:
+    """把已加载的驱动补进 `ModelRouter`。可重复调用，路由被重置后能自愈。
 
-    router = get_model_router()
+    与扫描分开，是为了让 `refresh()` 能**只做装配**不触发重新扫描 ——
+    重新扫描会把「新增文件」当成启动期文件加载掉，热接上就无从谈起。
+    """
     existing = set(router.provider_names())
-    for name, item in (_state or {}).items():
+    for name, item in state.items():
         if item.provider is None:
             continue
         if name in _registered and name in existing:
@@ -227,8 +303,8 @@ def ensure_drivers_registered() -> None:
                     resolved = router.provider_for(item.provider.models[0].id)
                 except Exception:  # noqa: BLE001 - 解析不了就当真冲突
                     resolved = None
-                if resolved is not None and _state is not None:
-                    _state[name] = replace(item, provider=resolved)
+                if resolved is not None:
+                    state[name] = replace(item, provider=resolved)
                 _registered.add(name)
                 continue
             message = (
@@ -244,16 +320,23 @@ def ensure_drivers_registered() -> None:
             message = f"驱动 {name!r} 注册失败：{exc}"
             if message not in _errors:
                 _errors.append(message)
-            if _state is not None:
-                _state[name] = replace(
-                    item, summary=replace(item.summary, loaded=False, error=str(exc))
-                )
+            state[name] = replace(
+                item, summary=replace(item.summary, loaded=False, error=str(exc))
+            )
             logger.error("模型驱动注册失败 %s", message)
         else:
             _registered.add(name)
             logger.info(
                 "已自动载入模型驱动 %s（%d 个模型）", name, item.summary.model_count
             )
+
+
+def ensure_drivers_registered() -> None:
+    """把已发现的驱动补进 `ModelRouter`。可重复调用，路由被重置后能自愈。"""
+    if _state is None:
+        _discover()
+
+    _register_loaded(_state or {}, get_model_router())
 
 
 def driver_summaries() -> tuple[DriverSummary, ...]:
@@ -297,6 +380,138 @@ def extra_schemas() -> tuple[type[BaseModel], ...]:
     return tuple(seen.values())
 
 
+def _missing_handlers(item: _LoadedDriver) -> tuple[str, ...]:
+    """声明了作业却没有 handler 的作业名。
+
+    handler 是 **import 期**装饰器（`workers.register_handler`），所以驱动模块被
+    import 时就已经注册好了。启动期有「声明了就必须有 handler」的核对并在缺
+    handler 时让服务起不来；运行期新增的驱动没有「启动失败」这个选项了，
+    只能**报出来** —— 少一个消费者的话，作业会一直停在 queued。
+    """
+    from workers import handler_names  # 延迟导入：避免 import 期循环
+
+    registered = set(handler_names())
+    return tuple(job.name for job in item.extra_jobs if job.name not in registered)
+
+
+def _recheck_runtime_config() -> tuple[str, ...]:
+    """刷新时重跑必填项与提交预算预检。
+
+    不抛：运行期没有「启动失败」这个选项，报告出来比炸掉更可用。但问题会
+    同时进日志与刷新结果 —— 配置被改坏这件事必须**立刻**被发现，而不是
+    等下次重启（那时坏配置已经生效过一整轮了）。
+    """
+    from core.config import get_settings
+    from infra.driver_config import ensure_prod_driver_settings, precheck_submit_budgets
+
+    problems: list[str] = []
+    try:
+        ensure_prod_driver_settings(get_settings().app_env)
+    except Exception as exc:  # noqa: BLE001 - 报告问题，不让刷新整体失败
+        problems.append(f"必填项巡检失败：{exc}")
+    try:
+        precheck_submit_budgets()
+    except Exception as exc:  # noqa: BLE001
+        problems.append(f"提交预算预检失败：{exc}")
+    for problem in problems:
+        logger.error("驱动刷新时巡检未通过 %s", problem)
+    return tuple(problems)
+
+
+def refresh(*, operator: str = "") -> RefreshResult:
+    """重新扫描驱动目录，把**新增**的驱动文件热接上。
+
+    ## 边界（这几条是刻意选的，不是没做完）
+
+    - **加文件 = 热生效**：新文件会被 import、校验、注册，供应商专属端点也会
+      挂上（不用重启）。
+    - **改已加载的文件 = 需重启**：`importlib.reload` 会丢 in-flight 实例状态
+      （正在跑的请求、已提交的 `external_id` 指向的旧类），收益不抵风险。
+      改了内容只会出现在 `changed_files` 里 —— 提醒重启，不假装生效。
+    - **刷新是进程级的**：多实例部署下只影响本进程；其他实例靠各自的周期
+      刷新收敛（周期任务 `leader_only=False`，每实例都跑）。
+    - **已注册的驱动不会被换掉**：同名且模型清单一致时复用路由里那份实例。
+
+    ## 为什么巡检失败不抛
+
+    运行期没有「启动失败」这个选项。坏配置必须立刻暴露（进日志、进结果、
+    运维看得见），但把整个刷新打回去会让「新增驱动已经接上了」这件事也
+    看不到 —— 两件事要分开报。
+    """
+    global _state
+
+    if _state is None:
+        # 还没扫描过（少见：进程刚起还没 ensure）→ 先走一次全量扫描，
+        # 否则刷新后 `_state` 里只剩新加载的驱动，把原有的弄丢了。
+        _discover()
+
+    router = get_model_router()
+    before = set(router.provider_names())
+
+    state = dict(_state or {})
+    changed: list[str] = []
+    errors: list[str] = []
+    missing_handlers: list[str] = []
+
+    for file_name, module_path in _iter_driver_modules():
+        stamp = _module_stamp(module_path)
+        known = _imported_paths.get(module_path)
+        if known is not None:
+            # 已经加载过：**不热替换**（reload 会丢 in-flight 实例状态）。
+            if stamp is not None and stamp != known:
+                changed.append(file_name)
+            continue
+        try:
+            item = _load_module(file_name, module_path)
+        except ExtrasError:
+            # 接口面装配失败必须炸：端点凭空消失比启动失败难查得多。
+            raise
+        except Exception as exc:  # noqa: BLE001 - 单个驱动文件出错不该拖垮整个刷新
+            message = f"{file_name}.py: {exc}"
+            errors.append(message)
+            logger.error("刷新时驱动加载失败 %s", message)
+            continue
+        if item.provider.name in state:
+            message = f"驱动名 {item.provider.name!r} 重复（{file_name}.py）"
+            errors.append(message)
+            logger.error("刷新时驱动加载失败 %s", message)
+            continue
+        state[item.provider.name] = item
+        _imported_paths[module_path] = stamp or (0, 0)
+        missing_handlers.extend(_missing_handlers(item))
+
+    _state = state
+    # 路由侧：把新驱动接进路由。装配是幂等的，且同名且模型清单一致时会复用
+    # 路由里那份实例（不换掉正在跑的实例）。
+    _register_loaded(state, router)
+    after = set(router.provider_names())
+    added = tuple(sorted(after - before))
+    kept = tuple(sorted(after & before))
+    # 端点挂载：新驱动的 EXTRA_ROUTES 挂上（已挂过的按对象身份跳过）。
+    _mount_extra_routes(state)
+
+    errors.extend(_recheck_runtime_config())
+
+    refreshed_at = datetime.now(UTC).isoformat(timespec="seconds")
+    logger.info(
+        "驱动刷新完成：操作人=%s，新增=%s，保留=%s，变更待重启=%s，错误=%d",
+        operator or "（周期任务）",
+        list(added),
+        list(kept),
+        changed,
+        len(errors),
+    )
+    return RefreshResult(
+        added=added,
+        kept=kept,
+        changed_files=tuple(changed),
+        missing_handlers=tuple(missing_handlers),
+        errors=tuple(errors),
+        operator=operator,
+        refreshed_at=refreshed_at,
+    )
+
+
 def reset_drivers() -> None:
     """仅测试使用：清掉发现结果，下次调用会重新扫描目录。
 
@@ -306,6 +521,9 @@ def reset_drivers() -> None:
     _state = None
     _registered.clear()
     _errors.clear()
+    # 已加载记录也要清：否则刷新会以为这些文件「已经加载过」，新写的驱动
+    # 文件永远接不上（`reset_drivers()` 的语义就是「回到没扫过的状态」）。
+    _imported_paths.clear()
 
 
 # --------------------------------------------------------------------- 示例驱动

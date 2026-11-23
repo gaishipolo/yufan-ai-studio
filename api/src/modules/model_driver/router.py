@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
+from starlette.concurrency import run_in_threadpool
 
 from api.deps import rate_limit, require
 from core.config import settings
@@ -16,12 +17,19 @@ from core.context import CurrentUser
 from core.exceptions import NotFound
 from core.ports.model_generation import GenerationTicket, SubmitSpec
 from core.response import ApiResponse
-from modules.model_driver.registry import driver_summaries, load_errors
+from modules.model_driver.registry import (
+    driver_summaries,
+    load_errors,
+)
+from modules.model_driver.registry import (
+    refresh as refresh_registry,
+)
 from modules.model_driver.schema import (
     DriverListOut,
     DriverOut,
     ModelListOut,
     ModelOut,
+    RefreshOut,
     SubmitIn,
     TaskOut,
 )
@@ -38,6 +46,7 @@ FacadeDep = Annotated[ModelGenerationFacade, Depends(get_facade)]
 DriverReadDep = Annotated[CurrentUser, Depends(require("model_driver:read"))]
 DriverCreateDep = Annotated[CurrentUser, Depends(require("model_driver:create"))]
 DriverCancelDep = Annotated[CurrentUser, Depends(require("model_driver:cancel"))]
+DriverRefreshDep = Annotated[CurrentUser, Depends(require("model_driver:refresh"))]
 
 
 def _task_out(ticket: GenerationTicket) -> TaskOut:
@@ -156,3 +165,32 @@ async def retry_task(
 ) -> ApiResponse[TaskOut]:
     ticket = await facade.retry(task_id, actor, confirm_charged=confirm_charged)
     return ApiResponse.ok(_task_out(ticket))
+
+
+@router.post("/refresh", summary="刷新驱动目录，热接上新增的驱动文件")
+async def refresh_drivers(
+    actor: DriverRefreshDep,
+    _: None = Depends(
+        rate_limit("model_driver.refresh", limit=settings.rate_limit_default_per_min)
+    ),
+) -> ApiResponse[RefreshOut]:
+    """重新扫描驱动目录，把**新增**的驱动文件热接上。
+
+    - **进程级**：只影响本实例。多实例部署时其他实例靠各自的周期刷新收敛。
+    - **改已加载的文件不热替换**（reload 会丢正在跑的实例状态），要重启才生效 ——
+      返回结果里的 `changedFiles` 就是这条提醒。
+    - 刷新会**连带重跑**必填项与提交预算预检：配置被改坏要在这里就发现，
+      而不是等下次重启。
+    """
+    result = await run_in_threadpool(refresh_registry, operator=actor.id)
+    return ApiResponse.ok(
+        RefreshOut(
+            added=list(result.added),
+            kept=list(result.kept),
+            changed_files=list(result.changed_files),
+            missing_handlers=list(result.missing_handlers),
+            errors=list(result.errors),
+            operator=result.operator,
+            refreshed_at=result.refreshed_at,
+        )
+    )

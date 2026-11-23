@@ -14,6 +14,7 @@ __all__ = [
     "DriverOut",
     "ModelListOut",
     "ModelOut",
+    "RefreshOut",
     "SubmitIn",
     "TaskOut",
 ]
@@ -94,3 +95,19 @@ class TaskOut(CamelModel):
     source: str = ""
     submit_attempts: int = 0
     created_at: datetime | None = None
+
+
+class RefreshOut(CamelModel):
+    """一次驱动刷新的结果。
+
+    每一项都对应一个具体动作：哪些热生效了（`added`）、哪些要重启才生效
+    （`changedFiles`）、哪里坏了（`errors`）。
+    """
+
+    added: list[str] = Field(default_factory=list)
+    kept: list[str] = Field(default_factory=list)
+    changed_files: list[str] = Field(default_factory=list)
+    missing_handlers: list[str] = Field(default_factory=list)
+    errors: list[str] = Field(default_factory=list)
+    operator: str = ""
+    refreshed_at: str = ""

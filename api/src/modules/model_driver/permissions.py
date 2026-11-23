@@ -16,6 +16,10 @@ PERM_READ_ALL = "model_driver:read:all"
 PERM_RETRY_ANY = "model_driver:retry:any"
 # 替别人取消是**影响他人在跑任务**的动作：不认 read:all，单独一个开关
 PERM_CANCEL_ANY = "model_driver:cancel:any"
+# 刷新驱动目录 = 热接上新增的驱动文件。这是**运维级**动作：
+# 不能挂在 read 上（看模型目录的人不该能改进程里装了什么），
+# 也不该只凭 read:all —— 那是「看别人任务」的开关，与此无关。
+PERM_REFRESH = "model_driver:refresh"
 SPECS = (
     PermissionSpec(
         PERM_READ,
@@ -45,6 +49,15 @@ SPECS = (
         group="内容生产",
         description="会真的调供应商取消，影响别人正在跑的任务；不认 read:all",
     ),
+    PermissionSpec(
+        PERM_REFRESH,
+        "刷新模型驱动目录",
+        group="运维",
+        description=(
+            "重新扫描驱动目录，把新增的驱动文件热接上（进程级：只影响本实例，"
+            "多实例各自收敛）。改已加载的文件不热替换，要重启才生效"
+        ),
+    ),
 )
 
 __all__ = [
@@ -53,6 +66,7 @@ __all__ = [
     "PERM_CREATE",
     "PERM_READ",
     "PERM_READ_ALL",
+    "PERM_REFRESH",
     "PERM_RETRY_ANY",
     "SPECS",
 ]

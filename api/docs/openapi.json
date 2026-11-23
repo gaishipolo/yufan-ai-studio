@@ -5583,6 +5583,33 @@
         }
       }
     },
+    "/api/v1/model-driver/refresh": {
+      "post": {
+        "tags": [
+          "模型驱动"
+        ],
+        "summary": "刷新驱动目录，热接上新增的驱动文件",
+        "description": "重新扫描驱动目录，把**新增**的驱动文件热接上。\n\n- **进程级**：只影响本实例。多实例部署时其他实例靠各自的周期刷新收敛。\n- **改已加载的文件不热替换**（reload 会丢正在跑的实例状态），要重启才生效 ——\n  返回结果里的 `changedFiles` 就是这条提醒。\n- 刷新会**连带重跑**必填项与提交预算预检：配置被改坏要在这里就发现，\n  而不是等下次重启。",
+        "operationId": "refresh_drivers_api_v1_model_driver_refresh_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_RefreshOut_"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/api/v1/model-driver/libtv/account": {
       "get": {
         "tags": [
@@ -8758,6 +8785,33 @@
         },
         "type": "object",
         "title": "ApiResponse[ReadyOut]"
+      },
+      "ApiResponse_RefreshOut_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RefreshOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[RefreshOut]"
       },
       "ApiResponse_RevokedSessionsOut_": {
         "properties": {
@@ -14028,6 +14082,58 @@
           "refreshToken"
         ],
         "title": "RefreshIn"
+      },
+      "RefreshOut": {
+        "properties": {
+          "added": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Added"
+          },
+          "kept": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Kept"
+          },
+          "changedFiles": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Changedfiles"
+          },
+          "missingHandlers": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Missinghandlers"
+          },
+          "errors": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Errors"
+          },
+          "operator": {
+            "type": "string",
+            "title": "Operator",
+            "default": ""
+          },
+          "refreshedAt": {
+            "type": "string",
+            "title": "Refreshedat",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "title": "RefreshOut",
+        "description": "一次驱动刷新的结果。\n\n每一项都对应一个具体动作：哪些热生效了（`added`）、哪些要重启才生效\n（`changedFiles`）、哪里坏了（`errors`）。"
       },
       "ResetPasswordIn": {
         "properties": {

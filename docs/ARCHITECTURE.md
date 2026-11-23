@@ -199,6 +199,8 @@
 | `modules/model_driver/libtv/worker.py` | `libtv.download` 后台作业：成片下载是 240 秒量级的非计费工作，不占轮询那一跳的预算。 |
 | `modules/model_driver/libtv/state.py` | 适配器的持久化状态（`run.json` 的 schema）与启动方 ⇄ 监督进程的参数协议版本。 |
 | `modules/model_driver/libtv/runtime/` | Node 桥接层与固定版适配器快照：`vendor/manifest.json` 逐文件 sha256 校验，源仓库 `libtv-canvas 1.2.0`。 |
+| `modules/model_driver/kit/` | 供应商工具箱：**只放逐行验证过等价**的通用件 —— `credentials`（缺密钥的唯一判定口径）、`errors`（HTTP 异常分类的唯一实现）、`settings`（配置前缀工厂 + mtime 指纹缓存，改 `.env` 下次请求即生效）。**不放** HTTP 映射表 / 剥前缀 / 素材分类：A1 假设验证失败，那些差异是业务语义（见设计文档 §1.1 A1）。 |
+| `modules/model_driver/registry.py` | 驱动注册表：扫 `drivers/` → 逐文件校验 → 注册进 `ModelRouter`，并收集驱动自报的 `EXTRA_ROUTES` / `EXTRA_JOBS` / `EXTRA_SCHEMAS`（装配失败 = **启动失败**，端点不许凭空消失）。`refresh()` 把**新增**的文件热接上（`POST /api/v1/model-driver/refresh`）：**加文件生效，改已加载的文件不热替换**（`reload` 会丢 in-flight 实例状态），只提醒重启。 |
 | `infra/queue/base.py` | 任务队列抽象。 |
 | `infra/queue/memory.py` | 内存队列：开发 / 单测使用，进程重启即丢。 |
 | `infra/queue/db.py` | 数据库队列（`QUEUE_DRIVER=db`）：job 落 `queued_jobs`，条件 UPDATE 领取 + 租约续租 + 死信留档，重启不丢。 |

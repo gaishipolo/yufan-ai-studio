@@ -579,7 +579,7 @@ Driver = VolcengineProvider
 
 **② 不需要改配置**（历史步骤：`AI_PROVIDERS=echo,volcengine` 已作废）
 
-现在把文件放进 `drivers/` 就会自动载入；`core/config.py` 里没有启用清单。
+现在把文件放进 `drivers/` 就会自动载入（重启后；也可以用刷新端点热接上，见 ③）；`core/config.py` 里没有启用清单。
 
 如果这个供应商需要部署参数（base_url / api_key / 区域），**在它自己的文件里声明配置**，
 不要加进 `core/config.py`：
@@ -624,10 +624,10 @@ class VolcengineSettings(DriverSettings):
 三个常量必须是 tuple，装配不合法 → **启动失败**（端点凭空消失只会让前端看到
 一个没头没脑的 404）。
 
-**③ 完成**
+**③ 生效**
 
-- `app models` 会列出新模型
-- 前端模型选择器、时长与比例下拉会自动出现新模型（读 `GET /api/v1/models`，见第 6 节）
+- **重启后生效**：`app models` 会列出新模型，前端模型选择器、时长与比例下拉会自动出现新模型（读 `GET /api/v1/models`，见第 6 节）。
+- **不用重启也行**：新文件放进 `drivers/` 后调 `POST /api/v1/model-driver/refresh`（权限 `model_driver:refresh`）就能热接上；另有 5 分钟一轮的周期兜底跑同一套逻辑。**改已加载的驱动文件不热替换** —— 那种情况要重启（边界见 `docs/MODEL_DRIVER_STANDARD.md` §5.1）。
 - 业务代码、`infra/__init__.py`、`core/config.py` 全部不动（配置写在供应商自己的文件里）
 
 > `core/config.py` 里的 `ai_providers` 是普通 `str` 而不是 `Literal`，

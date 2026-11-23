@@ -2,7 +2,7 @@
 
 > 此文件由 `app export-openapi` 自动生成，请勿手工编辑。
 >
-> 版本 `0.2.0`｜共 **145** 个接口 / **12** 个模块
+> 版本 `0.2.0`｜共 **146** 个接口 / **12** 个模块
 >
 > 重新生成：`cd api && .venv/Scripts/python -m cli export-openapi`
 
@@ -157,6 +157,12 @@ Authorization: Bearer <accessToken>
 | `library:tag:manage` | 管理标签词表（改名 / 删除） |  |
 | `library:update` | 修改本人资产的名称与标签 |  |
 
+**运维**
+
+| 权限码 | 名称 | 说明 |
+|---|---|---|
+| `model_driver:refresh` | 刷新模型驱动目录 | 重新扫描驱动目录，把新增的驱动文件热接上（进程级：只影响本实例，多实例各自收敛）。改已加载的文件不热替换，要重启才生效 |
+
 **页面**
 
 | 权限码 | 名称 | 说明 |
@@ -259,7 +265,7 @@ Authorization: Bearer <accessToken>
 | 系统 | 2 | 见下方 `4.7` |
 | 导出 | 6 | 见下方 `4.8` |
 | 资产库 | 47 | 见下方 `4.9` |
-| 模型驱动 | 9 | 见下方 `4.10` |
+| 模型驱动 | 10 | 见下方 `4.10` |
 | 模板封装 | 20 | 见下方 `4.11` |
 | 用量看板 | 2 | 见下方 `4.12` |
 
@@ -3099,7 +3105,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `rejectReason` | `string \| null` | 否 |  |
 | `trashedFromState` | `string \| null` | 否 |  |
 
-### 4.10 模型驱动（9 个）
+### 4.10 模型驱动（10 个）
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
@@ -3108,6 +3114,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `GET` | `/api/v1/model-driver/libtv/consumption` | 积分消耗明细（含上游 task_id，对账用） | 🔒 |
 | `POST` | `/api/v1/model-driver/libtv/progress` | 批量查上游进度与排队位次（只读，不触发下载） | 🔒 |
 | `GET` | `/api/v1/model-driver/models` | 统一生成接口可用的模型目录 | 🔒 |
+| `POST` | `/api/v1/model-driver/refresh` | 刷新驱动目录，热接上新增的驱动文件 | 🔒 |
 | `POST` | `/api/v1/model-driver/tasks` | 提交一次统一生成任务 | 🔒 |
 | `GET` | `/api/v1/model-driver/tasks/{task_id}` | 查询统一生成任务 | 🔒 |
 | `POST` | `/api/v1/model-driver/tasks/{task_id}/cancel` | 取消生成任务 | 🔒 |
@@ -3196,6 +3203,30 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `code` | `number` | 否 | 0 表示成功，其余为业务错误码 |
 | `message` | `string` | 否 |  |
 | `data` | `modules__model_driver__schema__ModelListOut \| null` | 否 |  |
+
+#### `POST /api/v1/model-driver/refresh`
+
+**刷新驱动目录，热接上新增的驱动文件**
+
+重新扫描驱动目录，把**新增**的驱动文件热接上。
+
+- **进程级**：只影响本实例。多实例部署时其他实例靠各自的周期刷新收敛。
+- **改已加载的文件不热替换**（reload 会丢正在跑的实例状态），要重启才生效 ——
+  返回结果里的 `changedFiles` 就是这条提醒。
+- 刷新会**连带重跑**必填项与提交预算预检：配置被改坏要在这里就发现，
+  而不是等下次重启。
+
+**响应** `ApiResponse<RefreshOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `added` | `string[]` | 否 |  |
+| `kept` | `string[]` | 否 |  |
+| `changedFiles` | `string[]` | 否 |  |
+| `missingHandlers` | `string[]` | 否 |  |
+| `errors` | `string[]` | 否 |  |
+| `operator` | `string` | 否 |  |
+| `refreshedAt` | `string` | 否 |  |
 
 #### `POST /api/v1/model-driver/tasks`
 
@@ -5022,6 +5053,23 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `refreshToken` | `string` | 是 | 登录时拿到的刷新令牌 |
+
+### `RefreshOut`
+
+一次驱动刷新的结果。
+
+每一项都对应一个具体动作：哪些热生效了（`added`）、哪些要重启才生效
+（`changedFiles`）、哪里坏了（`errors`）。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `added` | `string[]` | 否 |  |
+| `kept` | `string[]` | 否 |  |
+| `changedFiles` | `string[]` | 否 |  |
+| `missingHandlers` | `string[]` | 否 |  |
+| `errors` | `string[]` | 否 |  |
+| `operator` | `string` | 否 |  |
+| `refreshedAt` | `string` | 否 |  |
 
 ### `ResetPasswordIn`
 

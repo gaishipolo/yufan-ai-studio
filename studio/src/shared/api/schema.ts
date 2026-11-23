@@ -1190,6 +1190,20 @@ export interface RefreshIn {
   refreshToken: string;
 }
 
+/** 一次驱动刷新的结果。
+
+每一项都对应一个具体动作：哪些热生效了（`added`）、哪些要重启才生效
+（`changedFiles`）、哪里坏了（`errors`）。 */
+export interface RefreshOut {
+  added?: string[];
+  kept?: string[];
+  changedFiles?: string[];
+  missingHandlers?: string[];
+  errors?: string[];
+  operator?: string;
+  refreshedAt?: string;
+}
+
 /** ResetPasswordIn */
 export interface ResetPasswordIn {
   /** 管理员设置的新密码；至少 10 位，不能是纯数字 */
@@ -2409,6 +2423,8 @@ export interface EndpointData {
   "POST /api/v1/model-driver/libtv/progress": LibTvProgressOut;
   /** 统一生成接口可用的模型目录 */
   "GET /api/v1/model-driver/models": core__response__ApiResponse_ModelListOut___2;
+  /** 刷新驱动目录，热接上新增的驱动文件 */
+  "POST /api/v1/model-driver/refresh": RefreshOut;
   /** 提交一次统一生成任务 */
   "POST /api/v1/model-driver/tasks": core__response__ApiResponse_TaskOut___1;
   /** 查询统一生成任务 */

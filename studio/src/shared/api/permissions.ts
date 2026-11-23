@@ -106,6 +106,12 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
     ],
   },
   {
+    group: '运维',
+    items: [
+      { code: 'model_driver:refresh', name: '刷新模型驱动目录', description: '重新扫描驱动目录，把新增的驱动文件热接上（进程级：只影响本实例，多实例各自收敛）。改已加载的文件不热替换，要重启才生效' },
+    ],
+  },
+  {
     group: '页面',
     items: [
       { code: 'page:image', name: '生图', description: '关联接口：catalog:read, image:create, image:delete, image:read, image:read:all, image:retry:any', requires: ['catalog:read', 'image:create', 'image:delete', 'image:read', 'image:read:all', 'image:retry:any'], route: '/image' },
@@ -166,6 +172,7 @@ export const PERMISSION_CODES = [
   'model_driver:create',
   'model_driver:read',
   'model_driver:read:all',
+  'model_driver:refresh',
   'model_driver:retry:any',
   'page:image',
   'page:library',
