@@ -62,11 +62,42 @@ def check_password_strength(value: str) -> str:
     return value
 
 
+#: 头像地址允许的写法：绝对 http(s)，或以 `/` 开头的站内相对路径。
+#: 与前端 `entities/user/model/validation.ts` 的 `AVATAR_URL_PATTERN` 同源。
+AVATAR_URL_PREFIXES: Final = ("http://", "https://", "/")
+
+
+def check_avatar_url(value: str | None) -> str | None:
+    """校验头像地址的 scheme，原样返回（`None` 表示「不设置 / 清空」）。
+
+    为什么服务层要再校验一遍：以前只有前端拦（`AVATAR_URL_PATTERN`），
+    直接打 `PATCH /identity/me` 就能写进 `javascript:` / `data:` / `file://`。
+    今天渲染走 `<img src>`，`javascript:` 不执行，所以**现在还不是 XSS**；
+    但导出、审批、邮件模板任何一处把它当链接用，立刻变成存储型 XSS —— 这类
+    「等下一处用法」的洞必须在写入口堵掉，而不是指望每个渲染点都记得转义。
+
+    前端那份保留：它是即时反馈，不是安全边界。判据与团队层那句
+    「校验放在服务层而不是只靠前端隐藏选项」一致（见 `service._validate_team_grants`）。
+    """
+    if value is None:
+        return None
+    trimmed = value.strip()
+    if not trimmed:
+        return trimmed
+    if len(trimmed) > 512:
+        raise ValueError("头像地址过长（上限 512 字符）")
+    if not trimmed.startswith(AVATAR_URL_PREFIXES):
+        raise ValueError("头像地址需以 http(s):// 或 / 开头")
+    return trimmed
+
+
 __all__ = [
+    "AVATAR_URL_PREFIXES",
     "PASSWORD_MAX_LENGTH",
     "PASSWORD_MIN_LENGTH",
     "PASSWORD_MIN_UNIQUE_CHARS",
     "WeakPassword",
+    "check_avatar_url",
     "check_password_strength",
     "describe",
 ]

@@ -1,136 +1,215 @@
-import { ChartColumn, Clock, Image as ImageIcon, Info, ListChecks, Wallet } from 'lucide-react';
-import { Chip, PageHeader } from '@/shared/ui';
-import { cn } from '@/shared/lib/cn';
+import { useCallback, useEffect, useMemo } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { useCan } from '@/shared/access/use-access';
+import { ErrorState, Notice, PageHeader, Segmented, Tabs, type TabItem } from '@/shared/ui';
+import { useUsageOverview, useUsageRecords } from '@/entities/usage/api/usage.queries';
+import type { UsageGranularity, UsageScope } from '@/entities/usage/model/types';
+import { OverviewSection } from './OverviewSection';
+import { RecordsSection } from './RecordsSection';
+import {
+  GRANULARITY_OPTIONS,
+  RANGE_OPTIONS,
+  SCOPE_OPTIONS,
+  rangeBounds,
+  type RangeKey,
+} from './range';
+
+/** 明细每页条数。后端上限 100，这里取 20 —— 一屏能扫完，又不至于一次拉太多。 */
+const PAGE_SIZE = 20;
+
+type TabKey = 'overview' | 'records';
 
 /**
- * 用量看板 · 骨架占位页
+ * 用量看板。
  *
- * 定位：只固定「看什么、怎么排」，不定义「数据从哪来」。
- * 后端接口就绪后，改动集中在 entities/usage（types / api / queries）+ 本文件的数据绑定，
- * 布局与路由不需要动。
+ * ## 页面为什么分成「概览 / 明细」两页签
+ *
+ * 两者的读者不是同一个人：管理者看**概览**（这段时间生成了多少、趋势如何、
+ * 谁用得最多），执行的人看**明细**（我昨天那条成片到底有没有算进去）。
+ * 混在一屏里，明细的表格会把上方的指标卡挤到折叠线以下 —— 首屏变成一张
+ * 要滚的表，趋势图反而没人看。
+ *
+ * ## 筛选条件全部挂在 URL 上
+ *
+ * 与任务中心同一条规矩：可分享、可回退、刷新不丢。看板尤其需要 —— 「你上
+ * 个月 30 天、按周、全部成员的那张图」是要被贴到群里的。
  */
-
-/** 汇总指标：只声明口径，不声明数据源 */
-const METRICS = [
-  { key: 'tasks', label: '生成任务', hint: '按状态汇总', icon: ListChecks },
-  { key: 'duration', label: '视频时长', hint: '有效产出秒数', icon: Clock },
-  { key: 'images', label: '图片张数', hint: '成功出图数', icon: ImageIcon },
-  { key: 'cost', label: '预估费用', hint: '按模型单价折算', icon: Wallet },
-];
-
-/** 用量构成：口径待后端确认 */
-const BREAKDOWN = ['文生视频', '图生视频', '生图', '音频'];
-
-/** 建议契约：仅用于和后端对齐，未经实现 */
-const ENDPOINTS = [
-  { method: 'GET', path: '/usage/summary', desc: '汇总卡片' },
-  { method: 'GET', path: '/usage/trend', desc: '按天趋势' },
-  { method: 'GET', path: '/usage/breakdown', desc: '用量构成' },
-];
-
 export default function UsagePage() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const canReadAll = useCan('usage:read:all');
+
+  /* ---------- 从 URL 读筛选条件 ---------- */
+  const rangeParam = searchParams.get('range');
+  const range: RangeKey = RANGE_OPTIONS.some((option) => option.value === rangeParam)
+    ? (rangeParam as RangeKey)
+    : '30d';
+  const granularityParam = searchParams.get('granularity');
+  const granularity: UsageGranularity = granularityParam === 'week' ? 'week' : 'day';
+  const scopeParam = searchParams.get('scope');
+  const requestedScope: UsageScope = scopeParam === 'all' ? 'all' : 'mine';
+  /* 没有 `usage:read:all` 时 URL 里可能残留 scope=all（手改链接、或者权限被
+     回收）。后端会把越权请求降级成 mine，界面也必须显示 mine —— 否则用户看着
+     「全部成员」，数据其实只有自己的，这个不一致比不给看更糟。 */
+  const scope: UsageScope = requestedScope === 'all' && canReadAll ? 'all' : 'mine';
+  const tab: TabKey = searchParams.get('tab') === 'records' ? 'records' : 'overview';
+  const page = Math.max(1, Math.floor(Number(searchParams.get('page') ?? '1') || 1));
+
+  const patchParams = useCallback(
+    (patch: Record<string, string | undefined>) => {
+      const next = new URLSearchParams(searchParams);
+      Object.entries(patch).forEach(([key, value]) => {
+        if (value === undefined || value === '') next.delete(key);
+        else next.set(key, value);
+      });
+      setSearchParams(next, { replace: true });
+    },
+    [searchParams, setSearchParams],
+  );
+
+  /* 权限被回收时把 URL 里的 scope=all 清掉：留着一个点不动的筛选项，
+     用户会以为筛选坏了。 */
+  useEffect(() => {
+    if (requestedScope === 'all' && !canReadAll) patchParams({ scope: undefined });
+  }, [requestedScope, canReadAll, patchParams]);
+
+  /* 改筛选条件就回到第 1 页：否则会出现「第 3 页但没有结果」。 */
+  const patchFilter = useCallback(
+    (patch: Record<string, string | undefined>) => {
+      patchParams({ ...patch, page: undefined });
+    },
+    [patchParams],
+  );
+
+  /* 区间按 UTC 算，和后端的桶边界一致（图里的今天 = 列表里的今天）。 */
+  const bounds = useMemo(() => rangeBounds(range), [range]);
+
+  const overviewParams = useMemo(
+    () => ({ start: bounds.start, end: bounds.end, granularity, scope }),
+    [bounds.start, bounds.end, granularity, scope],
+  );
+  const recordsParams = useMemo(
+    () => ({ start: bounds.start, end: bounds.end, scope, page, pageSize: PAGE_SIZE }),
+    [bounds.start, bounds.end, scope, page],
+  );
+
+  const overview = useUsageOverview(overviewParams, tab === 'overview');
+  const records = useUsageRecords(recordsParams, tab === 'records');
+
+  const tabItems: TabItem<TabKey>[] = [
+    { value: 'overview', label: '概览' },
+    { value: 'records', label: '明细' },
+  ];
+
+  const rangeLabel = RANGE_OPTIONS.find((option) => option.value === range)?.label ?? '近 30 天';
+  const scopeLabel = scope === 'all' ? '全部成员' : '我的';
+  const totalPages = records.data ? Math.max(1, Math.ceil(records.data.total / PAGE_SIZE)) : 0;
+
   return (
     <>
       <PageHeader
         title="用量看板"
-        actions={<Chip tone="warn">接口未接入</Chip>}
+        meta={
+          <span className="flex flex-wrap items-center gap-x-2">
+            <span>{rangeLabel}</span>
+            <span>·</span>
+            <span>{scopeLabel}</span>
+            <span>·</span>
+            <span className="font-mono tabular-nums">
+              {bounds.start} → {bounds.end} UTC
+            </span>
+          </span>
+        }
+        actions={
+          <Tabs
+            items={tabItems}
+            value={tab}
+            onChange={(value) => patchFilter({ tab: value === 'overview' ? undefined : value })}
+          />
+        }
       />
 
-      {/* 明确告知读者：这里是骨架，不是「加载失败」。
-          一句话说完就够 —— 标题旁已经有「接口未接入」的标记，
-          下面再写一段「在哪儿补 types / api / queries」是写给开发看的，
-          不是写给看这个页面的人看的。 */}
-      <div className="mt-4 flex items-center gap-2 rounded-card border border-line-soft bg-panel-soft px-3 py-2.5">
-        <Info size={14} className="shrink-0 text-ink-mute" />
-        <p className="text-meta text-ink-soft">
-          后端用量接口尚未实现，数值以 <span className="text-ink-mute">—</span> 占位。
-        </p>
+      {/* 筛选条：三组互斥选项，各管一件事。粒度只影响趋势图，所以只在概览页签下显示 —— */}
+      <div className="mt-3.5 flex flex-wrap items-center gap-x-5 gap-y-2.5">
+        <Segmented
+          className="max-sm:w-full"
+          options={RANGE_OPTIONS}
+          value={range}
+          onChange={(value) => patchFilter({ range: value === '30d' ? undefined : value })}
+          aria-label="时间区间"
+        />
+        {tab === 'overview' && (
+          <Segmented
+            className="max-sm:w-full"
+            options={GRANULARITY_OPTIONS}
+            value={granularity}
+            onChange={(value) => patchFilter({ granularity: value === 'day' ? undefined : value })}
+            aria-label="趋势粒度"
+          />
+        )}
+        <Segmented
+          /* 三组控件从左到右排开，不用 auto margin 把它推到右侧：
+             auto margin 在可换行的 flex 行里，「贴右」和「换行」是两件事 ——
+             窗口宽度一变，它就会跳到下一行去。 */
+          className="max-sm:w-full"
+          options={SCOPE_OPTIONS}
+          value={scope}
+          onChange={(value) => patchFilter({ scope: value === 'mine' ? undefined : value })}
+          disabledValues={canReadAll ? undefined : ['all']}
+          hints={{
+            all: canReadAll ? '包含所有成员的用量' : '需要「查看全部用量」权限',
+            mine: '只看自己的用量',
+          }}
+          aria-label="数据范围"
+        />
       </div>
 
-      {/* 时间筛选：静态占位，接口接入后才启用交互，避免「点了没反应」 */}
-      <div className="mt-3 flex flex-wrap items-center gap-1.5">
-        {['近 7 天', '近 30 天', '本月'].map((range, index) => (
-          <span
-            key={range}
-            className={cn(
-              'inline-flex h-[27px] items-center rounded-pill px-2.5 text-xs',
-              index === 0 ? 'bg-panel font-semibold text-ink-soft shadow-card' : 'text-ink-mute',
-            )}
-          >
-            {range}
-          </span>
-        ))}
-        
-      </div>
-
-      {/* 汇总指标 */}
-      <div className="mt-3 grid grid-cols-2 gap-2.5 md:grid-cols-4 md:gap-3.5">
-        {METRICS.map((metric) => (
-          <div key={metric.key} className="rounded-card border border-line-soft bg-panel p-3.5">
-            <div className="flex items-center gap-1.5 text-meta text-ink-mute">
-              <metric.icon size={13} />
-              {metric.label}
+      {tab === 'overview' ? (
+        <div className="mt-3.5">
+          {overview.isLoading ? (
+            /* 骨架按真实布局摆：先一大一小两张卡，再一块趋势区。形状对上了，
+               数据一填进来页面不会「跳」一下。 */
+            <div className="space-y-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                <div className="h-[148px] animate-pulse rounded-card bg-panel-soft sm:col-span-2" />
+                <div className="h-[148px] animate-pulse rounded-card bg-panel-soft" />
+              </div>
+              <div className="h-[236px] animate-pulse rounded-card bg-panel-soft" />
             </div>
-            <div className="mt-1.5 font-mono text-display font-bold leading-none tabular-nums text-ink-mute">—</div>
-            <div className="mt-1.5 text-meta text-ink-mute">{metric.hint}</div>
-          </div>
-        ))}
-      </div>
-
-      <div className="mt-3 grid gap-3 md:grid-cols-[minmax(0,1.7fr)_minmax(0,1fr)]">
-        {/* 趋势图占位 */}
-        <section className="rounded-card border border-line-soft bg-panel p-3.5">
-          <header className="flex items-center justify-between gap-2">
-            <h2 className="text-lead font-semibold text-ink">调用趋势</h2>
-            <span className="text-meta text-ink-mute">按天</span>
-          </header>
-          <div className="mt-3 flex h-[176px] flex-col items-center justify-center gap-2 rounded-[10px] border border-dashed border-line-strong bg-panel-soft px-4 text-center">
-            <ChartColumn size={26} strokeWidth={1.4} className="text-ink-mute" />
-            <p className="text-xs text-ink-mute">图表占位</p>
-            <p className="max-w-[260px] text-meta leading-[1.6] text-ink-mute">
-              图表占位
-            </p>
-          </div>
-        </section>
-
-        {/* 构成占位 */}
-        <section className="rounded-card border border-line-soft bg-panel p-3.5">
-          <header className="flex items-center justify-between gap-2">
-            <h2 className="text-lead font-semibold text-ink">用量构成</h2>
-            <span className="text-meta text-ink-mute">占比</span>
-          </header>
-          <ul className="mt-3 space-y-2.5">
-            {BREAKDOWN.map((label) => (
-              <li key={label}>
-                <div className="flex items-center justify-between text-meta text-ink-soft">
-                  <span>{label}</span>
-                  <span className="tabular-nums text-ink-mute">—</span>
-                </div>
-                <div className="mt-1 h-1.5 overflow-hidden rounded-pill bg-line-soft" />
-              </li>
-            ))}
-          </ul>
-        </section>
-      </div>
-
-      {/* 与后端对齐用的建议契约，不是已实现接口 */}
-      <section className="mt-3 rounded-card border border-line-soft bg-panel p-3.5">
-        <header className="flex items-center gap-2">
-          <h2 className="text-lead font-semibold text-ink">接入清单</h2>
-          <Chip>建议契约 · 待后端确认</Chip>
-        </header>
-        <ul className="mt-2.5 grid gap-1.5 text-meta md:grid-cols-2">
-          {ENDPOINTS.map((endpoint) => (
-            <li key={endpoint.path} className="flex items-center gap-2 text-ink-soft">
-              <span className="rounded bg-panel-soft px-1.5 py-px font-mono text-micro text-primary-deep">
-                {endpoint.method}
-              </span>
-              <span className="font-mono text-meta text-ink">{endpoint.path}</span>
-              <span className="text-ink-mute">{endpoint.desc}</span>
-            </li>
-          ))}
-        </ul>
-      </section>
+          ) : overview.isError ? (
+            <ErrorState
+              error={overview.error}
+              title="用量加载失败"
+              onRetry={() => void overview.refetch()}
+              retrying={overview.isFetching}
+            />
+          ) : overview.data ? (
+            <>
+              {/* 没有接上的数据来源要**说清楚**：这时候页面全是 0，
+                  用户会以为是「这个月没生成过」，而不是「看板没接数据源」。 */}
+              {overview.data.sources.length === 0 && (
+                <Notice tone="warning" className="mb-3">
+                  暂无可用的数据来源，看板显示为中性值。请确认用量来源是否已注册。
+                </Notice>
+              )}
+              <OverviewSection data={overview.data} granularity={granularity} />
+            </>
+          ) : null}
+        </div>
+      ) : (
+        <div className="mt-3.5">
+          <RecordsSection
+            records={records.data?.items ?? []}
+            total={records.data?.total ?? 0}
+            page={page}
+            totalPages={totalPages}
+            isLoading={records.isLoading}
+            isFetching={records.isFetching}
+            error={records.error}
+            onRetry={() => void records.refetch()}
+            onPageChange={(next) => patchParams({ page: next === 1 ? undefined : String(next) })}
+          />
+        </div>
+      )}
     </>
   );
 }

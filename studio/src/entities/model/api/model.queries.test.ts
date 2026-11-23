@@ -6,6 +6,7 @@ import {
   durationOptionsFor,
   referenceKindsFor,
   referenceLimitFor,
+  referenceLimitsFor,
 } from './model.queries';
 import type { ModelSpec } from '../model/types';
 
@@ -109,6 +110,26 @@ describe('referenceKindsFor / referenceLimitFor', () => {
     expect(referenceLimitFor(spec())).toBe(1);
     expect(referenceKindsFor(undefined)).toEqual(['image']);
     expect(referenceLimitFor(undefined)).toBe(1);
+  });
+
+  it('referenceLimitsFor 只取各类的份数，0 与缺省都不算上限', () => {
+    const model = spec({
+      maxReferences: 8,
+      referenceKinds: ['image', 'audio'],
+      referenceLimits: {
+        image: { maxCount: 5, minSide: 256, maxSide: 5760 },
+        audio: { maxCount: 3 },
+        // 供应商没声明的类不该出现（0 = 不限，交给总数兜）
+        video: { maxCount: 0 },
+      },
+    });
+    expect(referenceLimitsFor(model)).toEqual({ image: 5, audio: 3 });
+  });
+
+  it('没声明按类上限时给空对象：调用方退回「只守总数」，不平均分摊', () => {
+    // 平均分摊会在真实上限是 5 和 3 时算出 4 和 4，比不给更糟
+    expect(referenceLimitsFor(spec({ maxReferences: 8 }))).toEqual({});
+    expect(referenceLimitsFor(undefined)).toEqual({});
   });
 });
 

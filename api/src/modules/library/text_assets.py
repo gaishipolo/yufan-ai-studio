@@ -30,7 +30,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.context import CurrentUser
-from core.exceptions import Conflict, NotFound
+from core.exceptions import Conflict, NotFound, StateChanged
 from core.serving import Served
 from infra.media_probe import EXTENSIONS, MAX_TEXT_BYTES, encode_text, text_excerpt
 from infra.storage.base import ObjectStorage
@@ -291,7 +291,7 @@ class TextAssetService:
         await self.session.refresh(row)
         return self._out(row, version)
 
-    async def _version_conflict(self, asset_id: str, expected: int) -> Conflict:
+    async def _version_conflict(self, asset_id: str, expected: int | None) -> Conflict:
         """并发保存的 409：带上**当前**正文版本，前端据此提示刷新。
 
         单独一个方法：抢版本号失败与版本号撞唯一索引是同一件事，用户看到的
@@ -300,7 +300,7 @@ class TextAssetService:
         current = await self.session.scalar(
             select(LibraryAsset.text_version).where(LibraryAsset.id == asset_id)
         )
-        return Conflict(
+        return StateChanged(
             "正文已被修改，请刷新后重试",
             details={"expectedVersion": expected, "textVersion": current},
         )
@@ -378,9 +378,10 @@ class TextAssetService:
         return row
 
     @staticmethod
-    def _check_version(row: LibraryAsset, expected: int) -> None:
-        if expected and row.text_version != expected:
-            raise Conflict(
+    def _check_version(row: LibraryAsset, expected: int | None) -> None:
+        """乐观锁。带了就比对，不带（`None`）表示明确不校验（P2-2）。"""
+        if expected is not None and row.text_version != expected:
+            raise StateChanged(
                 "正文已被修改，请刷新后重试",
                 details={"expectedVersion": expected, "textVersion": row.text_version},
             )

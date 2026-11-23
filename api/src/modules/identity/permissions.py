@@ -21,6 +21,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Final
 
+from core.pages import PAGE_PREFIX
 from core.permissions import PermissionSpec
 
 # ---------- 权限码 ----------
@@ -42,8 +43,8 @@ PERM_GROUP_PERMISSION_MANAGE: Final = "identity:group:permission:manage"
 PERM_USER_PERMISSION_MANAGE: Final = "identity:user:permission:manage"
 
 SPECS: tuple[PermissionSpec, ...] = (
-    PermissionSpec(PERM_READ, "查看用户与角色", group="组织管理"),
-    PermissionSpec(PERM_CREATE, "创建用户", group="组织管理"),
+    PermissionSpec(PERM_READ, "查看用户与角色", group="组织管理", pages=("page:user-access",)),
+    PermissionSpec(PERM_CREATE, "创建用户", group="组织管理", pages=("page:user-access",)),
     PermissionSpec(
         PERM_UPDATE,
         "编辑用户（含停用、重置密码）",
@@ -52,41 +53,57 @@ SPECS: tuple[PermissionSpec, ...] = (
             "不含分配角色。改他人昵称/头像：目标不能是超管；"
             "重置密码、改他人邮箱、启停账号：目标权限不得高于自己（超管仍需超管）"
         ),
+            pages=("page:user-access",),
     ),
-    PermissionSpec(PERM_DELETE, "停用用户", group="组织管理"),
+    PermissionSpec(PERM_DELETE, "停用用户", group="组织管理", pages=("page:user-access",)),
     PermissionSpec(
         PERM_ROLE_MANAGE,
         "管理角色与权限点",
         group="组织管理",
         description="新建/删除角色、调整角色权限、给用户分配角色",
+        pages=("page:user-access",),
     ),
     PermissionSpec(
         PERM_TEAM_MANAGE,
         "设置团队基础权限",
         group="组织管理",
         description="团队 = 所有启用账号；禁止把 identity:* 或 * 放进这一层",
+        pages=("page:user-access",),
     ),
-    PermissionSpec(PERM_GROUP_READ, "查看小组与成员", group="组织管理"),
-    PermissionSpec(PERM_GROUP_CREATE, "新建小组", group="组织管理"),
-    PermissionSpec(PERM_GROUP_UPDATE, "编辑小组资料", group="组织管理"),
-    PermissionSpec(PERM_GROUP_DELETE, "删除小组", group="组织管理"),
+    PermissionSpec(
+        PERM_GROUP_READ,
+        "查看小组与成员",
+        group="组织管理",
+        pages=("page:user-access",),
+    ),
+    PermissionSpec(PERM_GROUP_CREATE, "新建小组", group="组织管理", pages=("page:user-access",)),
+    PermissionSpec(
+        PERM_GROUP_UPDATE,
+        "编辑小组资料",
+        group="组织管理",
+        pages=("page:user-access",),
+    ),
+    PermissionSpec(PERM_GROUP_DELETE, "删除小组", group="组织管理", pages=("page:user-access",)),
     PermissionSpec(
         PERM_GROUP_MEMBER_MANAGE,
         "分配小组成员",
         group="组织管理",
         description="整组替换成员；一人可属多组",
+        pages=("page:user-access",),
     ),
     PermissionSpec(
         PERM_GROUP_PERMISSION_MANAGE,
         "设置小组整体权限",
         group="组织管理",
         description="该组所有成员自动获得；个人权限只增不减",
+        pages=("page:user-access",),
     ),
     PermissionSpec(
         PERM_USER_PERMISSION_MANAGE,
         "设置个人权限",
         group="组织管理",
         description="单独授予，与团队/小组/角色取并集；不能授出自己没有的权限",
+        pages=("page:user-access",),
     ),
 )
 
@@ -134,11 +151,32 @@ BUILTIN_ROLES: tuple[BuiltinRole, ...] = (
             # 少了这一条，非超管进模板库会拿到 403——而超管自测发现不了。
             # 「封装」（create / publish）不在编辑角色里：那是素材专员的活。
             "template_pack:read",
+            # 模板案例（一份可复用的模板配置快照）：编辑能**看**案例库。
+            # 只给读不给写 —— 发布案例是把配置对外共享，那是素材专员的活；
+            # 而「复用案例」会新建模板草稿，受 `template_pack:create` 管，编辑同样没有。
+            "template_pack:case:read",
             # 「案例」是模板封装的展示素材：编辑要能挑一条放进案例池（写）。
             "library:case:read",
             "library:case:write",
             "storyboard:read",
             "shot:read",
+            # 用量看板：只给自己看（`usage:read:all` 不给 —— 编辑看别人的
+            # 用量是管理视角，应该由管理员显式授予，不该默认带上）。
+            "usage:read",
+            # 页面权限（`core.pages`）：能进哪几页。
+            # 为什么内置角色必须带它们：接口权限只有在「至少一个声明它的页面
+            # 被授予」时才有效，所以漏了页面码 = 这个角色的人虽然持有
+            # `task:read`，任务中心的接口照样 403 —— 症状是「权限都对，就是不
+            # 好使」，只能靠这里补齐。
+            "page:studio",
+            "page:image",
+            "page:library",
+            "page:shots",
+            "page:storyboards",
+            "page:task-center",
+            "page:templates",
+            "page:template-specs",
+            "page:usage",
         ),
     ),
     BuiltinRole(
@@ -154,6 +192,19 @@ BUILTIN_ROLES: tuple[BuiltinRole, ...] = (
             "template_pack:read",
             "storyboard:read",
             "shot:read",
+            # 用量看板：看自己的用量。谁都能看自己的用量，所以这条码
+            # 跟着团队基础权限走（`TEAM_BASE_PERMISSIONS` 从 viewer 派生）。
+            "usage:read",
+            # 与 editor 同一组页面：只读人员进得去，只是页面里的写按钮不可用
+            "page:studio",
+            "page:image",
+            "page:library",
+            "page:shots",
+            "page:storyboards",
+            "page:task-center",
+            "page:templates",
+            "page:template-specs",
+            "page:usage",
         ),
     ),
     BuiltinRole(
@@ -170,10 +221,20 @@ BUILTIN_ROLES: tuple[BuiltinRole, ...] = (
             "template_pack:read",
             "template_pack:create",
             "template_pack:publish",
+            # 模板案例：素材专员是「封装」的主动方，发布案例与管理案例
+            # （编辑 / 下架 / 删除）都归他。少了写码，封装页的「发布为案例」
+            # 会报 403 —— 与上面 `template_pack:create` 同理。
+            "template_pack:case:read",
+            "template_pack:case:write",
             # 素材专员是「封装」的主动方：展示案例要能写、能看案例池。
             # 不加这两个码的话，封装页的「设为案例」对他只会报 403。
             "library:case:read",
             "library:case:write",
+            # 页面：资产库 + 模板库 + 封装页。勾了接口码却不给页面，
+            # 那些接口会被门控关掉（见 editor 那段注释）。
+            "page:library",
+            "page:templates",
+            "page:template-specs",
         ),
     ),
 )
@@ -187,18 +248,46 @@ SCOPE_USER: Final = "user"
 TEAM_SCOPE_ID: Final = "__all__"
 SCOPES: Final = (SCOPE_TEAM, SCOPE_GROUP, SCOPE_USER)
 
+# ---------- 授予的两种效果（`permission_grants.effect`） ----------
+# `deny` 是**例外**：只对这个人关掉这一项。它只允许出现在 `SCOPE_USER` ——
+# 这是刻意的：只有最具体的一层能否决，加新层（部门 / 外协）时才不用重新
+# 回答「谁压谁」。规则一句话，不随层数增长。
+EFFECT_ALLOW: Final = "allow"
+EFFECT_DENY: Final = "deny"
+EFFECTS: Final = (EFFECT_ALLOW, EFFECT_DENY)
+
 # 团队基础权限的初始模板。**直接取 viewer 的默认权限**，不另抄一份：
 # 两边各写一遍，迟早会出现「只读成员能看的东西，团队基础权限却没给」。
 # 只在首次启动时播种（见 `IdentityService.ensure_team_permissions`），
 # 之后管理员在界面上改过的配置不会被重启覆盖。
+#
+# **页面码除外**：团队层 = 所有启用账号，而且这一层没有 deny ——
+# 把 `page:*` 放进去，等于「这一页对所有人在任何情况下都关不掉」，
+# 直接废掉页面权限这个功能。页面由角色 / 小组 / 个人授予（见 TEAM_FORBIDDEN_PREFIXES）。
 TEAM_BASE_PERMISSIONS: Final[tuple[str, ...]] = tuple(
-    next(role for role in BUILTIN_ROLES if role.code == "viewer").permissions
+    code
+    for code in next(role for role in BUILTIN_ROLES if role.code == "viewer").permissions
+    if not code.startswith(PAGE_PREFIX)
 )
 
 # 团队层是「所有人」：放进管理类权限等于给全站发管理权，放进 `*` 等于
 # 把所有人都变成超管。写接口要挡，常量单独列出来是为了让守卫与文档同源。
 TEAM_FORBIDDEN_CODES: Final = ("*", "identity:*")
-TEAM_FORBIDDEN_PREFIXES: Final = ("identity:",)
+# `page:` 与 `identity:` 同一类：团队层没有 deny，放进去就再也拿不掉。
+# 页面必须挂在「可以按人调整」的层上（角色 / 小组 / 个人），否则
+# 「关掉某个人的某一页」这个诉求永远实现不了。
+TEAM_FORBIDDEN_PREFIXES: Final = ("identity:", PAGE_PREFIX)
+
+# 团队层的**地板**：这是「登录之后还看得见东西」的最低要求。
+#
+# 为什么需要它：`_guard_layer_not_above` 在团队层上是结构性的空转 ——
+# 每个人的有效权限本来就把团队层并进去了（`resolve_identity`），所以
+# 「当前授权 ⊆ 操作者」恒真。于是一个只有 `identity:team:manage` 的委派管理员
+# 就能把基础权限整组清空，全站非超管立刻连 `task:read` 都没有；而且这个动作
+# 既没有二次确认，也不进审计（在补审计之前）。
+#
+# 结论：**动地板是超管动作**。上层的增删仍然可以委派。
+TEAM_FLOOR_CODES: Final = ("catalog:read", "task:read", "library:read")
 
 # 口令策略（长度 / 纯数字 / 重复字符）不在本文件：它不属于「权限点声明」，
 # 而且 CLI 与 API 要共用同一份规则，统一放在 `policy.py`。
@@ -219,6 +308,9 @@ __all__ = [
     "PERM_TEAM_MANAGE",
     "PERM_UPDATE",
     "PERM_USER_PERMISSION_MANAGE",
+    "EFFECTS",
+    "EFFECT_ALLOW",
+    "EFFECT_DENY",
     "SCOPES",
     "SCOPE_GROUP",
     "SCOPE_TEAM",
@@ -226,6 +318,7 @@ __all__ = [
     "SPECS",
     "SUPERUSER_ROLE",
     "TEAM_BASE_PERMISSIONS",
+    "TEAM_FLOOR_CODES",
     "TEAM_FORBIDDEN_CODES",
     "TEAM_FORBIDDEN_PREFIXES",
     "TEAM_SCOPE_ID",

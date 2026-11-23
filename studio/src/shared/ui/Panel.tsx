@@ -37,14 +37,43 @@ export interface PanelHeaderProps {
   meta?: ReactNode;
   actions?: ReactNode;
   className?: string;
+  /**
+   * 窄屏时把 `actions` 换到标题下面一行。
+   *
+   * 默认关闭 —— 标题行右侧的操作是「窄一点也放得下」的那种（一两个图标按钮）。
+   * 但像分段控件这种**本身就有宽度**的操作，硬塞在标题右边会把标题挤成
+   * 「用量构 / 成」两行；让它落到下一行，标题就还是标题。
+   */
+  stackActions?: boolean;
 }
 
-export function PanelHeader({ title, meta, actions, className }: PanelHeaderProps) {
-  return (
-    <header className={cn('mb-2.5 flex items-baseline gap-2', className)}>
+export function PanelHeader({
+  title,
+  meta,
+  actions,
+  className,
+  stackActions = false,
+}: PanelHeaderProps) {
+  const heading = (
+    <>
       <h2 className="text-lead font-semibold tracking-[.2px] text-ink">{title}</h2>
       {meta && <span className="font-mono text-meta tabular-nums text-ink-mute">{meta}</span>}
-      {actions && <div className="ml-auto flex shrink-0 items-center gap-1.5">{actions}</div>}
+    </>
+  );
+
+  if (!stackActions) {
+    return (
+      <header className={cn('mb-2.5 flex items-baseline gap-2', className)}>
+        {heading}
+        {actions && <div className="ml-auto flex shrink-0 items-center gap-1.5">{actions}</div>}
+      </header>
+    );
+  }
+
+  return (
+    <header className={cn('mb-2.5 flex flex-col gap-2 sm:flex-row sm:items-baseline', className)}>
+      <div className="flex items-baseline gap-2">{heading}</div>
+      {actions && <div className="flex items-center gap-1.5 sm:ml-auto">{actions}</div>}
     </header>
   );
 }

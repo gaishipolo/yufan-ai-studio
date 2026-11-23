@@ -56,6 +56,10 @@ def _auth(token_data: dict) -> dict[str, str]:
 
 def _provision(client: TestClient, admin: dict, code: str, perms: list[str]) -> dict:
     """建「角色 + 账号」并登录，返回登录结果（含 user / accessToken / refreshToken）。"""
+    # 页面门控：identity 的接口要在「用户与权限」页被授予后才有效（core.pages）
+    perms = list(perms)
+    if "*" not in perms and any(item.startswith("identity:") for item in perms):
+        perms.append("page:user-access")
     role = client.post(
         f"{API}/roles",
         json={"code": code, "name": code, "permissions": perms},

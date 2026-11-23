@@ -3,7 +3,7 @@ import { History, RotateCcw } from 'lucide-react';
 import { Button, Chip, Modal, Skeleton } from '@/shared/ui';
 import { formatDateTime } from '@/shared/lib/format';
 import { toast } from '@/shared/lib/toast';
-import { errorHttpStatus } from '@/shared/api/types';
+import { isStateChanged } from '@/shared/api/types';
 import {
   useReadText,
   useRestoreTextVersion,
@@ -19,9 +19,15 @@ export interface TextVersionHistoryProps {
   onRestored?: () => void;
 }
 
-function isConflict(error: Error): boolean {
-  const code = (error as { code?: number }).code;
-  return typeof code === 'number' && errorHttpStatus(code) === 409;
+/**
+ * 版本冲突用**共享判定**（`details.reason === 'state_changed'`），不自己判 409。
+ *
+ * 409 有两类：业务冲突（库里已有相同正文）与版本冲突（正文被别人改过）。
+ * 只看状态码分不出来——把业务冲突也说成「版本冲突」会让用户去重开版本历史，
+ * 而真正要做的却是换个名字再存一次。
+ */
+function isVersionConflict(error: unknown): boolean {
+  return isStateChanged(error);
 }
 
 /**
@@ -68,8 +74,8 @@ export function TextVersionHistory({
         },
         onError: (e) =>
           toast(
-            isConflict(e)
-              ? '正文已被其他编辑改过（版本冲突），请重新打开版本历史再试'
+            isVersionConflict(e)
+              ? '正文已被其他编辑改过，已刷新，请重新打开版本历史再试'
               : e.message,
             'error',
           ),

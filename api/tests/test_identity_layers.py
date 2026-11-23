@@ -123,7 +123,10 @@ def test_personal_grant_takes_effect_without_relogin(client: TestClient) -> None
 
     async def grant(service: IdentityService) -> None:
         uid = await _viewer_id(service)
-        await service.layers.set_grants(SCOPE_USER, uid, ["identity:read"])
+        # identity 的接口要在「用户与权限」页被授予后才有效（页面门控）
+        await service.layers.set_grants(
+            SCOPE_USER, uid, ["identity:read", "page:user-access"]
+        )
         await service.session.commit()
 
     asyncio.run(_with_service(grant))

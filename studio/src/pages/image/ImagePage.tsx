@@ -17,7 +17,11 @@ import type { ReferenceItem } from '@/shared/ui';
 import { cn } from '@/shared/lib/cn';
 import { toast } from '@/shared/lib/toast';
 import { formatDateTime } from '@/shared/lib/format';
-import { useImageModels } from '@/entities/model/api/model.queries';
+import {
+  referenceKindsFor,
+  referenceLimitsFor,
+  useImageModels,
+} from '@/entities/model/api/model.queries';
 import { useCan } from '@/shared/access/use-access';
 import {
   isEmptyParamValue,
@@ -68,6 +72,9 @@ export default function ImagePage() {
   const canSubmit = Boolean(model) && canGenerate;
   // 模型声明的上限决定这个入口出不出：0 或缺失 = 纯文生图
   const maxReferences = model?.maxReferences ?? 0;
+  // 生图链目前只有图片；仍按声明走，免得哪天某个模型多收一类时这里写死
+  const referenceKinds = referenceKindsFor(model);
+  const referenceLimits = referenceLimitsFor(model);
 
   const addReferences = async (files: FileList | null) => {
     const picked = Array.from(files ?? []);
@@ -226,6 +233,8 @@ export default function ImagePage() {
             <ReferenceImages
               items={references}
               max={maxReferences}
+              kinds={referenceKinds}
+              limits={referenceLimits}
               busy={upload.isPending}
               onPick={(files) => void addReferences(files)}
               onRemove={(id) =>

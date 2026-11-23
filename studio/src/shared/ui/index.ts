@@ -40,6 +40,7 @@ export type { CoverImageProps } from './CoverImage';
    放 entities/image 下会让视频页跨实体引用一份图片实体的 UI。 */
 export { ReferenceImages } from './ReferenceImages';
 export type { ReferenceImagesProps, ReferenceItem } from './ReferenceImages';
+export { REFERENCE_KIND_META } from './reference-kinds';
 
 export { EmptyState, Skeleton, CardSkeletonGrid } from './EmptyState';
 

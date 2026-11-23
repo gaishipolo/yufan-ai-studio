@@ -57,6 +57,7 @@ from modules.library.errors import DownloadEmpty, DownloadNotReady, DownloadTooL
 from modules.library.models import (
     LibraryAsset,
     LibraryDownloadJob,
+    LibraryDownloadJobAsset,
     LibraryPackItem,
 )
 from modules.library.schema import DownloadIn, DownloadJobOut, DownloadSkip
@@ -127,10 +128,22 @@ class DownloadService:
 
         job = LibraryDownloadJob(
             owner_id=actor.id,
-            asset_ids=[row.id for row in selected],
+            asset_count=len(selected),
             status=QUEUED,
         )
         self.session.add(job)
+        # 资产清单写进关联表（不是 JSON 列）：引用检查要靠它判断「这条资产
+        # 能不能彻底删除」，那必须是一次精确的 `IN` 查询，而不是在 JSON
+        # 文本里做子串粗筛（粗筛漏查 = 没人引用 = 不可逆删除放行）。
+        await self.session.flush()
+        for position, row in enumerate(selected):
+            self.session.add(
+                LibraryDownloadJobAsset(
+                    job_id=job.id,
+                    asset_id=row.id,
+                    position=position,
+                )
+            )
         await self.session.commit()
         try:
             await enqueue_download(job.id)
@@ -210,26 +223,26 @@ class DownloadService:
                 )
             ).all()
         }
-        my_groups = await access.all_groups(self.session, actor)
-        group_map = await access.asset_group_ids(self.session, wanted)
-
         # 封装要**展开成成员**再打包：它自己没有字节，直接按行处理会得到一条
         # 「没有可下载的原文件」，而用户勾的是「这一套图」。成员不再单列之后，
         # 这个入口也是那几张图唯一的批量下载途径。
         pack_ids = [row.id for row in rows.values() if row.kind == "pack"]
         members_by_pack = await self._pack_members(pack_ids)
         member_rows = [member for group in members_by_pack.values() for member in group]
-        member_groups = await access.asset_group_ids(
-            self.session, [member.id for member in member_rows]
+        # 与选择器 / 取件同口径：可见封装的成员即使仍是别人的 personal 也能打包。
+        # 一次算完，不在循环里逐行查权限。
+        readable = await access.readable_rows(
+            self.session,
+            [row.id for row in rows.values()] + [member.id for member in member_rows],
+            actor,
+            via_pack=True,
         )
 
         selected: list[LibraryAsset] = []
         skipped: list[DownloadSkip] = []
         for asset_id in wanted:
             row = rows.get(asset_id)
-            if row is None or not access.can_read(
-                row, actor, my_groups, group_map.get(asset_id, [])
-            ):
+            if row is None or row.id not in readable:
                 # 预览能看、单条能下，批量却跳过，用户只会觉得「打包坏了」
                 skipped.append(DownloadSkip(id=asset_id, reason="不存在或无权访问"))
                 continue
@@ -245,11 +258,7 @@ class DownloadService:
                     # 成员逐条判「能不能进包」，但原因要带上是哪个包 ——
                     # 只说「回收站内容不可下载」而卡片上明明是个封装，对不上。
                     reason = _skip_reason(member) or (
-                        ""
-                        if access.can_read(
-                            member, actor, my_groups, member_groups.get(member.id, [])
-                        )
-                        else "不存在或无权访问"
+                        "" if member.id in readable else "不存在或无权访问"
                     )
                     if reason:
                         skipped.append(
@@ -303,7 +312,7 @@ class DownloadService:
         return DownloadJobOut(
             id=row.id,
             status=row.status,
-            asset_count=len(row.asset_ids or []),
+            asset_count=row.asset_count,
             size_bytes=row.size_bytes,
             error=row.error,
             download_url=download_url,
@@ -422,7 +431,17 @@ async def build_download(job_id: str) -> None:
             logger.info("打包任务已被别人领走，跳过 id=%s", job_id)
             return
 
-        asset_ids = [str(asset_id) for asset_id in (row.asset_ids or [])]
+        # 清单在关联表里，`position` 就是包内顺序（包内文件按 001_名 命名）
+        asset_ids = [
+            str(asset_id)
+            for asset_id in (
+                await session.execute(
+                    select(LibraryDownloadJobAsset.asset_id)
+                    .where(LibraryDownloadJobAsset.job_id == row.id)
+                    .order_by(LibraryDownloadJobAsset.position)
+                )
+            ).scalars().all()
+        ]
         notes: list[str] = []
         key = ""
         size = 0
@@ -433,7 +452,7 @@ async def build_download(job_id: str) -> None:
             # 判据用 `access.readable_rows`（与建任务时的 `_collect` 同一套），
             # 这里自己写一份必然漂移，而漂移方向只会是多给。
             by_id = await access.readable_rows(
-                session, asset_ids, CurrentUser(id=row.owner_id, name="")
+                session, asset_ids, CurrentUser(id=row.owner_id, name=""), via_pack=True
             )
             with tempfile.TemporaryDirectory(prefix="library-download-") as folder:
                 root = Path(folder)
@@ -709,6 +728,18 @@ async def run_download_gc(
             report.purged += 1
             if dry_run:
                 continue
+            # 关联行一并删掉：关联表**刻意没加外键**（本模块的约定是关系由
+            # 应用层维护），所以级联删除得自己写。
+            #
+            # 不写会留下孤儿行（任务行没了，关联行还在）。注意后果的边界：
+            # 引用检查那边是 **INNER JOIN**（关联行必须对得上任务行），所以孤儿
+            # 行**不会**被误报成「这个资产还被下载任务引用」——它只是垃圾数据，
+            # 永远躺在索引里没人清理。所以这段代码是数据卫生，不是正确性。
+            await session.execute(
+                delete(LibraryDownloadJobAsset).where(
+                    LibraryDownloadJobAsset.job_id == row.id
+                )
+            )
             await session.execute(
                 delete(LibraryDownloadJob).where(LibraryDownloadJob.id == row.id)
             )

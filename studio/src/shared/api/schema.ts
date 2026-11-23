@@ -36,9 +36,9 @@ export const AspectRatio_VALUES = ["9:16", "16:9", "1:1"] as const;
 export type AssetSort = "-createdAt" | "createdAt" | "name" | "-sizeBytes";
 export const AssetSort_VALUES = ["-createdAt", "createdAt", "name", "-sizeBytes"] as const;
 
-/** 取值：addTag, removeTag, rename, delete, restore, approveDraft, rejectDraft, requestRevoke */
-export type BulkAction = "addTag" | "removeTag" | "rename" | "delete" | "restore" | "approveDraft" | "rejectDraft" | "requestRevoke";
-export const BulkAction_VALUES = ["addTag", "removeTag", "rename", "delete", "restore", "approveDraft", "rejectDraft", "requestRevoke"] as const;
+/** 取值：addTag, removeTag, rename, delete, restore, approveDraft, rejectDraft, requestShare, requestRevoke */
+export type BulkAction = "addTag" | "removeTag" | "rename" | "delete" | "restore" | "approveDraft" | "rejectDraft" | "requestShare" | "requestRevoke";
+export const BulkAction_VALUES = ["addTag", "removeTag", "rename", "delete", "restore", "approveDraft", "rejectDraft", "requestShare", "requestRevoke"] as const;
 
 /** 取值：video, image, audio */
 export type Capability = "video" | "image" | "audio";
@@ -100,14 +100,25 @@ export const TaskStatusFilter_VALUES = ["all", "queued", "running", "completed",
 export type UploadKind = "image" | "audio" | "video" | "text";
 export const UploadKind_VALUES = ["image", "audio", "video", "text"] as const;
 
+/** 取值：model, kind, owner, status */
+export type UsageDimension = "model" | "kind" | "owner" | "status";
+export const UsageDimension_VALUES = ["model", "kind", "owner", "status"] as const;
+
+/** 取值：day, week */
+export type UsageGranularity = "day" | "week";
+export const UsageGranularity_VALUES = ["day", "week"] as const;
+
+/** 取值：mine, all */
+export type UsageScope = "mine" | "all";
+export const UsageScope_VALUES = ["mine", "all"] as const;
+
 /* ------------------------------ 模型 ------------------------------ */
 
 /** 改名 / 换标签。**不含可见性**：共享必须走申请单，否则审批就没有意义了。 */
 export interface AssetPatchIn {
   name?: string | null;
   tagIds?: string[] | null;
-  /** >0 时做乐观锁校验；0 表示不校验（兼容单页操作） */
-  expectedVersion?: number;
+  expectedVersion?: number | null;
 }
 
 /** 批量写。**逐条判定、逐条提交**：一批里 3 条已共享就返回 7 成功 + 3 条明细。 */
@@ -243,7 +254,7 @@ export interface DownloadSkip {
 /** DraftDecisionIn */
 export interface DraftDecisionIn {
   reason?: string;
-  expectedVersion?: number;
+  expectedVersion?: number | null;
 }
 
 /** DriverListOut */
@@ -276,8 +287,20 @@ export interface EffectivePermissionsOut {
   personal?: string[];
   /** 现有角色授予的权限 */
   roles?: string[];
-  /** 四层并集；`*` 表示超级管理员。require() 唯一判据 */
+  /** 授予的页面权限（page:*）；决定侧栏与路由能进哪一页 */
+  pages?: string[];
+  /** 被页面门控关掉的接口权限：四层并集里有、但它所属的页面一页都没授予。`资源:*` 会先摊成具体码再判定，所以这里列的是被关掉的**具体码**。界面拿它解释「为什么我有 task:read 却仍然 403」 */
+  gatedOff?: string[];
+  /** 四层并集过完页面门控的结果；`*` 表示超级管理员。require() 唯一判据 */
   effective?: string[];
+  /** 按角色拆开的授予明细（`roles` 是合并后的） */
+  roleDetails?: RoleLayerOut[];
+  /** 每个权限码的来源层。界面据此在每一行上标「来自 角色·内容编辑」。键是**摊开通配之后**的码，所以 `task:*` 也逐条列出具体动作 */
+  sources?: PermissionSourceOut[];
+  /** 个人例外：对这个账号单独关闭的码。**包含当前不生效的那些** ——角色撤了但那条例外还在，它必须仍然可见、可撤销，否则就是一个谁也看不见的隐藏状态 */
+  denied?: string[];
+  /** 因为本人例外而不生效的码（授予了、但被关掉）。与 `gatedOff` 互斥：一个码不生效只有「你自己关的」和「页面没开」两种原因，界面按它分流 */
+  deniedOff?: string[];
 }
 
 /** 详情多一个 `downloadable`：让前端不必重复实现「能不能下」的判断。
@@ -427,6 +450,8 @@ export interface GroupLayerOut {
   name: string;
   /** 该组授予的权限码 */
   permissions?: string[];
+  /** 组内成员数（不含本人）。界面拿它写清「关掉这条会影响多少人」——改共享单元前必须知道影响面，而这个数字猜不出来 */
+  memberCount?: number;
 }
 
 /** 整体替换某组的负责人列表（只服务删除窄口）。空数组 = 清空。
@@ -1030,12 +1055,31 @@ export interface PermissionCatalogOut {
   total?: number;
 }
 
+/** 个人例外（`effect='deny'`）的整组替换入参。
+
+与 `PermissionsIn` 分开命名：同一张表、两个方向，混用一个类会让调用方
+以为「传空数组 = 清空他的权限」，而它清的是**例外**。 */
+export interface PermissionExceptionsIn {
+  /** 对这个账号单独关闭的权限码（整组替换）。只接受目录里的具体码：不接受通配（`task:*` 的「关掉」没有唯一解释），也不接受 `identity:*` */
+  exceptions?: string[];
+}
+
 /** PermissionGroupOut */
 export interface PermissionGroupOut {
   /** 分组名，如「任务」「身份」 */
   group: string;
   /** 该组下的权限点 */
   items?: PermissionOut[];
+}
+
+/** 一个权限码的一个来源层。`kind` 是开放枚举：加层不用改这个形状。 */
+export interface PermissionOriginOut {
+  /** 来源类型：team / group / user（个人层）/ role */
+  kind: string;
+  /** 来源实体 id（team 为空） */
+  id?: string;
+  /** 来源实体名称（team 固定为「团队」） */
+  name?: string;
 }
 
 /** PermissionOut */
@@ -1046,6 +1090,51 @@ export interface PermissionOut {
   name: string;
   /** 权限说明 */
   description?: string;
+  /** 页面权限关联的接口权限码（只有页面项有）。前端用它把「页面 → 接口」的层级画出来，而不是让人从描述文字里读 */
+  requires?: string[];
+  /** 页面路由（如 `/tasks`）；只有页面项有 */
+  route?: string;
+}
+
+/** 某个权限码由哪几层给到。空 `layers` = 目录外（只可能出现在例外里）。 */
+export interface PermissionSourceOut {
+  /** 权限码 */
+  code: string;
+  /** 给出这个码的全部来源 */
+  layers?: PermissionOriginOut[];
+}
+
+/** 一个分组，以及它的成员（成员顺序按账号排序，前端不再排）。 */
+export interface PermissionTreeGroupOut {
+  /** 小组 ID */
+  id: string;
+  /** 小组名称 */
+  name: string;
+  /** 组内成员 */
+  members?: PermissionTreeUserOut[];
+}
+
+/** 「分组 → 用户」的完整树。
+
+为什么单独一个接口，而不是让前端用「小组列表 + 用户列表」拼：
+用户列表是分页的，拼出来的树在人多时会**静默少人**，而看的人以为
+那就是全部。这里一次给全，没有分页参数。 */
+export interface PermissionTreeOut {
+  groups?: PermissionTreeGroupOut[];
+  /** 不属于任何分组的账号 */
+  ungrouped?: PermissionTreeUserOut[];
+}
+
+/** 树上的一个账号：只够画一行，不含权限。 */
+export interface PermissionTreeUserOut {
+  /** 用户 ID */
+  id: string;
+  /** 账号 */
+  username: string;
+  /** 昵称 */
+  displayName?: string;
+  /** 是否启用（停用的排后面并置灰） */
+  isActive?: boolean;
 }
 
 /** 团队 / 小组 / 个人三层共用的「整组替换」入参。
@@ -1080,6 +1169,19 @@ export interface ReadyOut {
   database: string;
   queueSize: number;
   checks?: RuntimeCheckOut[];
+}
+
+/** 供应商对**一类**参考素材的硬性限制。
+
+与 `maxReferences` 的区别：那个是**总数**上限，这个是分类的。视频模型
+常见「5 张图 + 3 段音频 = 总数 8」—— 只把总数交给前端，用户加到第 6 张图
+时界面还说「还能再加」，提交才吃 400。前端按这里逐类算余量。
+
+`maxCount = 0` 表示这一类不限（供应商没声明）。 */
+export interface ReferenceLimitOut {
+  maxCount?: number;
+  minSide?: number;
+  maxSide?: number;
 }
 
 /** RefreshIn */
@@ -1124,6 +1226,23 @@ export interface RoleCreateIn {
   permissions?: string[];
   /** 仅超级管理员可设置 */
   isSuperuser?: boolean;
+}
+
+/** 分层权限明细里的一段：这条权限来自哪个角色。
+
+`roles` 那份合并集合说不清「是哪个角色给的」，而「去哪撤」正需要这个 ——
+所以额外给一份按角色拆开的明细。 */
+export interface RoleLayerOut {
+  /** 角色 ID */
+  id: string;
+  /** 角色标识 */
+  code: string;
+  /** 角色名称 */
+  name: string;
+  /** 该角色授予的权限码 */
+  permissions?: string[];
+  /** 除本人外还挂着这个角色的人数（影响面） */
+  userCount?: number;
 }
 
 /** RoleOut */
@@ -1201,14 +1320,13 @@ export interface SessionOut {
 混在一起会让「只想改个错别字」的请求顺手把素材推出自己的库。 */
 export interface SetPurposeIn {
   purpose?: string;
-  /** >0 时做乐观锁校验；0 表示不校验（兼容单页操作） */
-  expectedVersion?: number;
+  expectedVersion?: number | null;
 }
 
 /** 审批 / 驳回 / 撤回申请单。`note` 会进申请单与审计。 */
 export interface ShareDecisionIn {
   note?: string;
-  expectedVersion?: number;
+  expectedVersion?: number | null;
 }
 
 /** 可见性变更的一条记录。`reason` 是撤销申请里填的理由，审核人当时看的就是它。 */
@@ -1239,7 +1357,7 @@ export interface ShareRequestIn {
   target?: ShareTarget;
   groupId?: string;
   reason?: string;
-  expectedVersion?: number;
+  expectedVersion?: number | null;
 }
 
 /** ShareRequestOut */
@@ -1247,6 +1365,8 @@ export interface ShareRequestOut {
   id: string;
   assetId: string;
   assetName?: string;
+  stateVersion?: number;
+  requestStateVersion?: number;
   applicantId: string;
   applicantName?: string | null;
   action: ShareAction;
@@ -1281,15 +1401,20 @@ export interface ShotPresetOut {
 
 槽位按用户挑选顺序传素材 id。`version` 为空表示用当前发布版本。
 
-**没有 `promptOverride`**（2026-11-14 起）：模板库不改文字。需要可变内容的地方
-在模板里放 `text` 槽位 —— 填表时选一份文案，`compile` 把它排在 `{{Text N}}`
-的第 N 位，执行层按 `textLibraryIds` 注入正文。这个入口曾经存在（改写"可编辑段"），
-与"提示词只有一段"冲突，一并删掉。 */
+**没有 `promptOverride`**（2026-11-14 起）：模板库不改整段文字。需要可变内容
+的地方在模板里放 `text` 槽位 —— 填表时选一份文案，`compile` 把它排在
+`{{Text N}}` 的第 N 位，执行层按 `textLibraryIds` 注入正文。这个入口曾经存在
+（改写"可编辑段"），与"提示词只有一段"冲突，一并删掉。
+
+但**单个可选槽位的「未选时文案」可以改**（`slot_text_overrides`，2026-11-21）：
+那段话本来就是「这一格空着时说什么」，作者写的是通用版本，使用者知道得更具体。
+改的是插入点里的那一段，不是提示词的骨架 —— 与上面删掉的那个入口不是一回事。 */
 export interface SpecCompileIn {
   version?: number | null;
   model?: string | null;
   slotValues?: Record<string, string[]>;
   useRandomPrompt?: boolean;
+  slotTextOverrides?: Record<string, string>;
   paramOverrides?: Record<string, unknown>;
 }
 
@@ -1306,6 +1431,16 @@ export interface SpecCompileOut {
   referenceLibraryIds?: string[];
   textLibraryIds?: string[];
   slots?: CompiledSlotOut[];
+}
+
+/** 封装容器的名字：`key` 对应槽位上的 `group`，`label` 是作者起的名字。
+
+**不在这里校验「key 必须真的有成员」**：草稿阶段作者把成员挪走了、容器名
+还留着，是编辑中的正常状态；发布时它只是写不进任何一行（没有成员就没有行），
+不会变成坏数据。反过来强校验会挡住「先建容器、再加槽位」这个正常顺序。 */
+export interface SpecGroupIn {
+  key: string;
+  label?: string;
 }
 
 /** 编辑页要显示的**上限**。
@@ -1382,6 +1517,7 @@ export interface SpecVersionOut {
   prompt: string;
   randomPrompt?: string;
   slots: SpecSlotOut[];
+  groups?: SpecGroupIn[];
   fingerprint?: string;
   publishedBy?: string;
   publishedAt?: string | null;
@@ -1531,18 +1667,47 @@ export interface TaskStats {
   failed?: number;
 }
 
-/** 一条派生任务（目前只有「去字幕版」）。 */
-export interface TaskVariantOut {
-  /** 派生任务 ID */
+/** TemplateCaseCreateIn */
+export interface TemplateCaseCreateIn {
+  specKey: string;
+  name: string;
+  description?: string;
+  category?: string;
+}
+
+/** TemplateCaseListOut */
+export interface TemplateCaseListOut {
+  items?: TemplateCaseOut[];
+  total?: number;
+  categories?: string[];
+}
+
+/** TemplateCaseOut */
+export interface TemplateCaseOut {
   id: string;
-  /** 状态：queued / running / completed / failed */
-  status: TaskStatus;
-  /** 生成进度 0-100 */
-  progress?: number;
-  /** 去字幕成片地址；未完成时为 null */
-  outputUrl?: string | null;
-  /** 失败原因，成功时为 null */
-  errorMessage?: string | null;
+  name: string;
+  description: string;
+  category: string;
+  status: "published" | "offline";
+  specId: string;
+  specKey: string;
+  specName: string;
+  specVersion: number;
+  sourceMissing?: boolean;
+  config?: Record<string, unknown>;
+  ownerId: string;
+  ownerName: string;
+  publishedAt?: string | null;
+  offlineAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** 编辑案例。只改案例自己的字段，不碰模板。 */
+export interface TemplateCaseUpdateIn {
+  name?: string | null;
+  description?: string | null;
+  category?: string | null;
 }
 
 /** 一份规格（草稿的整份内容）。`key` 是幂等边界，发布后不可改名。 */
@@ -1556,6 +1721,7 @@ export interface TemplateSpecIn {
   prompt: string;
   randomPrompt?: string;
   slots?: SpecSlotIn[];
+  groups?: SpecGroupIn[];
   attributes?: Record<string, string>;
   demoAssetId?: string | null;
   revision?: number | null;
@@ -1614,14 +1780,14 @@ export interface TextAssetOut {
 /** 把某一历史版本重新写成**新的一版**，不改历史行。 */
 export interface TextAssetRestoreIn {
   version: number;
-  expectedVersion?: number;
+  expectedVersion?: number | null;
 }
 
 /** 在线编辑。`expected_version` 是**内容版本**，不是 `stateVersion`：
 两个人同时打开编辑框时，后保存的人必须看到「正文已被改过」而不是静默覆盖。 */
 export interface TextAssetUpdateIn {
   content: string;
-  expectedVersion?: number;
+  expectedVersion?: number | null;
   note?: string;
 }
 
@@ -1659,6 +1825,130 @@ export interface UpdateTaskIn {
   title?: string | null;
   /** 收藏状态 */
   favorited?: boolean | null;
+}
+
+/** 构成表的一行。 */
+export interface UsageBreakdownItemOut {
+  /** 维度 */
+  dimension: UsageDimension;
+  /** 维度内的稳定键 */
+  key: string;
+  /** 展示名 */
+  label: string;
+  /** 尝试次数 */
+  total: number;
+  /** 已产出数量 */
+  quantity: number;
+  /** 已产出视频总时长（秒） */
+  durationSec: number;
+  /** 占全部尝试次数的比例，0-1 */
+  share: number;
+}
+
+/** 看板总览：一次请求拿齐汇总 / 趋势 / 构成。 */
+export interface UsageOverviewOut {
+  /** 区间汇总 */
+  summary: UsageSummaryOut;
+  /** 时间趋势 */
+  trend: UsageTrendPointOut[];
+  /** 构成行 */
+  breakdown: UsageBreakdownItemOut[];
+  /** 实际接上的数据来源标识 */
+  sources: string[];
+}
+
+/** 一条用量明细。 */
+export interface UsageRecordOut {
+  /** 记录 ID */
+  id: string;
+  /** 来源标识 */
+  source: string;
+  /** 展示标题 */
+  title: string;
+  /** 原始状态 */
+  status: string;
+  /** 模型目录 id */
+  modelId: string;
+  /** 模型可读名 */
+  modelName: string;
+  /** 本次产出数量 */
+  quantity: number;
+  /** 视频时长（秒） */
+  durationSec: number;
+  /** 创建时间（UTC） */
+  createdAt: string;
+  /** 使用人 ID */
+  ownerId: string;
+  /** 使用人可读名 */
+  ownerName: string;
+  /** 详情页深链接 */
+  detailUrl: string;
+}
+
+/** 一个来源（视频 / 生图 / 将来接上的音频…）的分项。 */
+export interface UsageSourceOut {
+  /** 来源标识 */
+  source: string;
+  /** 尝试次数 */
+  total: number;
+  /** 已产出次数 */
+  succeeded: number;
+  /** 失败次数 */
+  failed: number;
+  /** 排队 / 进行中 */
+  pending: number;
+  /** 已产出数量 */
+  quantity: number;
+  /** 已产出视频总时长（秒） */
+  durationSec: number;
+}
+
+/** 区间汇总。 */
+export interface UsageSummaryOut {
+  /** 区间起点（含） */
+  start: string;
+  /** 区间终点（含） */
+  end: string;
+  /** 实际使用的时间桶粒度 */
+  granularity: UsageGranularity;
+  /** **实际生效**的数据范围（越权请求会被降级为 mine） */
+  scope: UsageScope;
+  /** 尝试次数 */
+  total: number;
+  /** 已产出次数 */
+  succeeded: number;
+  /** 失败次数 */
+  failed: number;
+  /** 排队 / 进行中 */
+  pending: number;
+  /** 成功率，0-1 */
+  successRate: number;
+  /** 已产出数量合计 */
+  quantity: number;
+  /** 已产出视频总时长（秒） */
+  durationSec: number;
+  /** 平均单条视频时长（秒） */
+  avgDurationSec: number;
+  /** 各来源分项 */
+  sources: UsageSourceOut[];
+}
+
+/** 趋势上的一个点（区间内没有数据的那天也会补一个 0）。 */
+export interface UsageTrendPointOut {
+  /** 时间桶键：day=YYYY-MM-DD，week=该周周一 */
+  bucket: string;
+  /** 尝试次数 */
+  total: number;
+  /** 已产出次数 */
+  succeeded: number;
+  /** 失败次数 */
+  failed: number;
+  /** 排队 / 进行中 */
+  pending: number;
+  /** 已产出数量 */
+  quantity: number;
+  /** 已产出视频总时长（秒） */
+  durationSec: number;
 }
 
 /** UserCreateIn */
@@ -1792,6 +2082,8 @@ export interface modules__catalog__schema__ModelOut {
   replacement?: boolean;
   /** 这个模型能收哪几类参考素材（`image` / `video` / `audio`），空数组 = 纯文生图。前端据此渲染参考素材的类型筛选与数量上限，不在界面里写死 */
   referenceKinds?: string[];
+  /** 按素材类型分开的上限（键是 `image` / `audio` …）。`maxReferences` 仍是总数上限，两者要一起守；空对象 = 供应商没声明 */
+  referenceLimits?: Record<string, ReferenceLimitOut>;
   isDefault?: boolean;
 }
 
@@ -1879,8 +2171,6 @@ export interface modules__task__schema__TaskOut {
   updatedAt: string;
   /** 开始生成时间，未开始为 null */
   startedAt?: string | null;
-  /** 去字幕版；没有派生过时为 null。前端据此显示进度与「原片/去字幕」切换 */
-  subtitleErase?: TaskVariantOut | null;
   /** 上游任务标识，形如 `<归档工作区>:<上游 task_id>`。**给排队查询用**：LibTV 的队列位次只能按上游 task_id 查，前端拿它拆出 task_id 去`POST /model-driver/libtv/progress`，不必由后端再存一份排队快照 */
   externalId?: string | null;
 }
@@ -1943,6 +2233,8 @@ export interface EndpointData {
   "DELETE /api/v1/identity/me/sessions/{session_id}": null;
   /** 口令策略（匿名） */
   "GET /api/v1/identity/password-policy": PasswordPolicyOut;
+  /** 「分组 → 用户」的完整树（权限总览的左栏） */
+  "GET /api/v1/identity/permission-tree": PermissionTreeOut;
   /** 全部权限点（按分组，供角色编辑界面） */
   "GET /api/v1/identity/permissions": PermissionCatalogOut;
   /** 用刷新令牌换取新令牌 */
@@ -1975,6 +2267,10 @@ export interface EndpointData {
   "GET /api/v1/identity/users/{user_id}/effective-permissions": EffectivePermissionsOut;
   /** 某账号的登录记录 */
   "GET /api/v1/identity/users/{user_id}/logins": LoginEventListOut;
+  /** 用户的个人例外（只对他关掉的权限码） */
+  "GET /api/v1/identity/users/{user_id}/permission-exceptions": string[];
+  /** 设置个人例外（整组替换；不动他的授予） */
+  "PUT /api/v1/identity/users/{user_id}/permission-exceptions": string[];
   /** 用户单独授予的权限 */
   "GET /api/v1/identity/users/{user_id}/permissions": string[];
   /** 设置个人权限（整组替换） */
@@ -2123,12 +2419,26 @@ export interface EndpointData {
   "GET /api/v1/tasks/{task_id}": core__response__ApiResponse_TaskOut___2;
   /** 更新任务（标题 / 收藏） */
   "PATCH /api/v1/tasks/{task_id}": core__response__ApiResponse_TaskOut___2;
-  /** 给成片派生去字幕版 */
-  "POST /api/v1/tasks/{task_id}/desubtitle": core__response__ApiResponse_TaskOut___2;
   /** 收藏 / 取消收藏 */
   "POST /api/v1/tasks/{task_id}/favorite": core__response__ApiResponse_TaskOut___2;
   /** 重试任务 */
   "POST /api/v1/tasks/{task_id}/retry": TaskRetryOut;
+  /** 案例列表（library=公共案例库 / mine=我发布的 / trash=回收站） */
+  "GET /api/v1/template-cases": TemplateCaseListOut;
+  /** 把模板发布为案例（快照当前草稿） */
+  "POST /api/v1/template-cases": TemplateCaseOut;
+  /** 删除案例（软删，进回收站） */
+  "DELETE /api/v1/template-cases/{case_id}": TemplateCaseOut;
+  /** 案例详情（含可复用的配置快照） */
+  "GET /api/v1/template-cases/{case_id}": TemplateCaseOut;
+  /** 编辑案例（名称/描述/分类） */
+  "PATCH /api/v1/template-cases/{case_id}": TemplateCaseOut;
+  /** 下架案例（不可复用，可重新上架） */
+  "POST /api/v1/template-cases/{case_id}/offline": TemplateCaseOut;
+  /** 重新上架案例 */
+  "POST /api/v1/template-cases/{case_id}/online": TemplateCaseOut;
+  /** 从回收站恢复案例 */
+  "POST /api/v1/template-cases/{case_id}/restore": TemplateCaseOut;
   /** 本人可见的规格列表 */
   "GET /api/v1/template-specs": TemplateSpecListOut;
   /** 保存草稿（同内容幂等，revision 冲突 409） */
@@ -2153,4 +2463,8 @@ export interface EndpointData {
   "POST /api/v1/template-specs/{key}/publish": SpecPublishOut;
   /** 从回收站恢复 */
   "POST /api/v1/template-specs/{key}/restore": TemplateSpecOut;
+  /** 用量总览（汇总 / 趋势 / 构成） */
+  "GET /api/v1/usage/overview": UsageOverviewOut;
+  /** 用量明细 */
+  "GET /api/v1/usage/records": Page<UsageRecordOut>;
 }

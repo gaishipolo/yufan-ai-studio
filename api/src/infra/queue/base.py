@@ -170,3 +170,20 @@ class JobQueue(Protocol):
     async def size(self) -> int: ...
 
     async def close(self) -> None: ...
+
+
+@runtime_checkable
+class StatsCapable(Protocol):
+    """可选能力：自报各状态计数（pending / running / dead …）。
+
+    **不放在 `JobQueue` 主协议里**是刻意的：主协议是「每个驱动都必须实现」的
+    契约，而自报计数是**运维增强**——新驱动不实现时，调用方退回 `size()` 即可。
+
+    但它**不该**用 `getattr(queue, "stats", None)` 探测：属性名拼错时探测安静地
+    返回 `None`，症状是「监控指标和健康检查的队列计数**整段消失**」，而没人会
+    想到去查属性名（`infra/queue/db.py` 里那句「不在协议里」的注释就是这么过时过）。
+
+    现有两个驱动（`memory` / `db`）都实现了它。
+    """
+
+    async def stats(self) -> dict[str, int]: ...

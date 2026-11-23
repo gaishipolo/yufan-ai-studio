@@ -5,8 +5,10 @@
 """
 
 from api.module import ModuleSpec
+from core.pages import PageSpec
 from core.ports.generation_feed import register_generation_feed
 from core.ports.library_references import LibraryReferenceSource, bind_library_reference_sources
+from core.ports.usage_metrics import register_usage_metrics
 from modules.image import (
     maintenance,  # noqa: F401  副作用导入：注册周期任务 image.reconcile
     pipeline,  # noqa: F401  副作用导入：把流水线注册到 generation.pipeline
@@ -17,6 +19,7 @@ from modules.image.library_references import ImageJobReferences
 from modules.image.permissions import SPECS
 from modules.image.router import router
 from modules.image.seed import seed
+from modules.image.usage_provider import ImageUsageProvider
 
 # 参考图快照只冻结 `storageKey`，purge 之后这条作业的重试读不到字节，
 # 所以必须声明成 v2 引用来源（漏了 = 删得掉，但重试静默失败）。
@@ -35,12 +38,24 @@ bind_library_reference_sources("image", LIBRARY_REFERENCE_SOURCES)
 # 把只读 reader 交给 core 注入口，任务中心只认 `GenerationFeedPage` 这份契约。
 register_generation_feed(read_generation_feed)
 
+# 用量看板同理：它要统计生图用了多少张，但同样不能 import 本模块。
+# 注入口是多实现的 —— 视频、生图、将来的音频各注册一份，看板自动合并。
+register_usage_metrics("image", ImageUsageProvider())
+
 module = ModuleSpec(
     name="image",
     router=router,
     tags=["生图"],
     description="生图",
     permissions=SPECS,
+    # 生图页：提交、看历史、删记录、替别人重跑都发生在这里。
+    pages=(
+        PageSpec(
+            code="page:image",
+            name="生图",
+            route="/image",
+        ),
+    ),
     # 演示数据由模块自带：`app seed` 会遍历所有模块的 seed 钩子
     seed=seed,
     seed_order=70,

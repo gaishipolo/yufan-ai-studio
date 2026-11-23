@@ -18,9 +18,11 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import timedelta
 
 from core.config import get_settings
+from core.exceptions import BadRequest, Forbidden, UpstreamError
 from core.logging import get_logger
 from core.metrics import METRICS
 from db.base import utcnow
@@ -29,11 +31,38 @@ from db.session import get_session_factory
 from infra import get_storage
 from infra.queue.base import Job
 from modules.export.enums import ACTIVE_STATUSES, ExportStatus
+from modules.export.errors import ExportTooLarge
 from modules.export.models import Export
 from modules.export.sources import lookup_source, render_csv
 from workers import register_handler
 
 logger = get_logger(__name__)
+
+#: 异常类型 → 面向用户的中文原因。
+#:
+#: 对外字段（`ExportOut.error`）**不能写原始异常**：`str(exc)` 里可能带内部文件
+#: 路径、SQL 片段、数据库连接串、上游依赖地址，等于给前端开了一条信息泄露通道；
+#: 同一模块的其它两处错误都写的用户文案（`service.py` 的「任务入队失败，请重新
+#: 导出」「导出超时未完成，请重新导出」），只有 worker 这一处是原始异常——口径不一
+#: 致。完整 traceback 只进日志（`logger.exception`），对外只留一句看得懂的话。
+_ERROR_HINTS: tuple[tuple[type[Exception], str], ...] = (
+    (Forbidden, "没有导出该数据的权限，请联系管理员"),
+    (BadRequest, "导出参数不合法，请调整后重试"),
+    (UpstreamError, "上游服务异常，请稍后重试"),
+    (TimeoutError, "数据源查询超时，请缩小筛选范围后重试"),
+    (ExportTooLarge, "导出内容过大，请缩小筛选范围后重试"),
+)
+
+#: 兜底文案：不能出现异常类型名、路径或连接串
+_GENERIC_ERROR = "导出失败，请稍后重试；若持续失败请联系管理员"
+
+
+def _user_error(exc: Exception) -> str:
+    """把异常翻译成一句可以给用户看的话。"""
+    for exc_type, message in _ERROR_HINTS:
+        if isinstance(exc, exc_type):
+            return message
+    return _GENERIC_ERROR
 
 # 导入期声明一次。标签只用低基数字段：outcome 是枚举，data_source 是有限集合。
 BUILD_TOTAL = METRICS.counter(
@@ -81,7 +110,12 @@ async def build_export(job: Job) -> None:
                 params=dict(record.params or {}),
                 limit=settings.export_max_rows,
             )
-            payload = render_csv(source.columns, rows)
+            payload = await asyncio.to_thread(
+                render_csv,
+                source.columns,
+                rows,
+                max_bytes=settings.export_max_bytes,
+            )
 
             key = _object_key(record.id)
             await get_storage().put(key, payload, "text/csv")
@@ -99,9 +133,10 @@ async def build_export(job: Job) -> None:
             byte_size = record.byte_size
         except Exception as exc:  # noqa: BLE001
             # 这里吞掉异常是刻意的：见模块 docstring 第 2 条。
-            # 但仍然要把原因留给用户，并把 attempts 加一。
+            # 但仍然要把原因留给用户——只是给**用户文案**，不是原始异常；
+            # 完整 traceback 留给下面的 logger.exception。
             record.status = ExportStatus.FAILED.value
-            record.error = str(exc)[:512] or type(exc).__name__
+            record.error = _user_error(exc)
             record.attempts += 1
             record.finished_at = utcnow()
             await session.commit()

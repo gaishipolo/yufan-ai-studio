@@ -21,6 +21,7 @@ from collections.abc import Mapping, Sequence
 from sqlalchemy import String, cast, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.exceptions import Unavailable
 from modules.task.models import VideoTask
 
 __all__ = ["TaskLibraryReferences"]
@@ -41,7 +42,15 @@ class TaskLibraryReferences:
     async def references(
         self, session: AsyncSession, asset_ids: Sequence[str]
     ) -> Mapping[str, Sequence[str]]:
-        wanted = [asset_id for asset_id in dict.fromkeys(asset_ids) if asset_id][:_MAX_IDS]
+        wanted = [asset_id for asset_id in dict.fromkeys(asset_ids) if asset_id]
+        if len(wanted) > _MAX_IDS:
+            # 静默截断会让「这条资产能不能彻底删除」的判断建立在**漏查**之上，
+            # 而漏查 = 「查不到 = 没人引用」——不可逆删除一旦因此放行，只能靠
+            # 备份找回。宁可这次不删（503，fail-closed），也不要漏查。
+            raise Unavailable(
+                f"一次最多检查 {_MAX_IDS} 个资产引用，收到 {len(wanted)} 个："
+                "拒绝在可能漏查的前提下做删除判断，请分批处理"
+            )
         if not wanted:
             return {}
 

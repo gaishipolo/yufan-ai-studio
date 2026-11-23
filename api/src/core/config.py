@@ -211,6 +211,13 @@ class Settings(BaseSettings):
     storage_local_root: str = (_VAR_DIR / "storage").as_posix()
     storage_public_base: str = "/static"
 
+    # 前端构建产物目录（`studio/dist`）。留空 = 后端只发接口，页面由 vite（开发）
+    # 或 nginx（生产）发。填了就让后端把页面一起发了：页面与接口同源，生产只开
+    # 一个端口，也就不再需要 CORS。
+    # 相对路径先按仓库根、再按启动目录解析（`app serve` 的 cwd 是 `api/`）。
+    # 目录里没有 index.html 时按「没配」处理，见 `app._web_dist`。
+    web_dist_dir: str = ""
+
     # memory = 进程内（重启即丢，开发用）；db = 落 queued_jobs 表（重启不丢，租约接管
     # 崩溃任务）。将来接 redis 只需新增 infra/queue/redis.py 并改这一行。
     queue_driver: str = "memory"
@@ -247,6 +254,44 @@ class Settings(BaseSettings):
     )
     worker_enabled: bool = True
     worker_concurrency: int = 2
+    # 单个账号最多同时有几条任务「在途」（queued + running）。`0` = 不限。
+    #
+    # 为什么需要它：`task.create` 的限流只拦**频率**（每分钟几次），不拦「一口气
+    # 点几十条」。而一条任务从提交到出片要几分钟，这几分钟里它一直占着两个
+    # **共享**资源的位次：LibTV 账号的上游排队位次、以及每 2-5 秒一跳的 poll。
+    # 一个人挂 30 条，别人的任务就排在他后面（上游按提交顺序排），他自己也在
+    # 队尾 —— 谁都没变快。
+    #
+    # 注意要压的**不是** worker 槽位：等出片不占槽位，槽位只在上传/提交/下载
+    # 那几秒被占（见 `docs/CAPACITY.md` §1.1）。所以调大 `worker_concurrency`
+    # 也解决不了「一个人挂 30 条」这件事。
+    #
+    # 5 的依据：正常干活时在途量是个位数；超过 5 条说明是在攒队列。
+    task_max_in_flight_per_user: int = 5
+
+    # 生图的同一个问题（T37，2026-11-23 已做）。原来只有视频任务有在途上限，
+    # 生图只有频率限流（`image.generate` 每分钟 60 次）——频率限流拦不住
+    # 「一分钟点 60 次」，而 60 条生图会占满**该供应商**账号的上游排队位次
+    # （账号是全团队共享的），挤掉的是别人的任务。
+    #
+    # 口径与任务一致：queued + running 的条数，`0` = 不限（老行为）。
+    #
+    # 与 `task_max_in_flight_per_user` **分开计数**是**有意的**，不是待修的漏洞
+    # （2026-11-23 逐条核实）：两条链路默认**不共用**同一个上游资源——
+    #   - 视频默认走 LibTV：占**共享账号**的上游排队位次，且每 2-5 秒一跳 poll；
+    #   - 生图默认走 Agnes：**同步**提交（`image/pipeline.py`：submit 直接返回
+    #     终态、框架不轮询），既不占本机 worker 槽位（等出片不占槽，见
+    #     `docs/CAPACITY.md` §1.1），也不产生 poll 负载。
+    # 真正会撞的只有「**同一个供应商被两条链路同时用**」（百炼视频 + 百炼生图
+    # 吃同一份配额）。那时该封的是「一人在**同一供应商**上的在途总数」，
+    # 而不是「视频 + 生图之和」——后者会把「同时做视频和生图」的正常用户
+    # 误伤（默认组合 LibTV + Agnes 本来就不争抢）。
+    #
+    # 触发条件（真要做时）：① 实际开始用「百炼视频 + 百炼生图」同一账号；
+    # ② 出现单用户刷满上游位次的实际投诉 / 额度告警；③ 上游开始报并发超限。
+    # 届时按**供应商分组**做合计上限（`core/ports` 新增计数口 + 两个模块各
+    # 注册一个来源 + create/retry 共四处闸门），不要把两个上限合并成一个。
+    image_max_in_flight_per_user: int = 5
 
     # ---------- 视频任务巡检 ----------
     # video 的链路比生图长（上传 → 提交 → 轮询 → 下载 → 落盘 → 入库），
@@ -368,6 +413,10 @@ class Settings(BaseSettings):
     # 一个几百万行的任务表就能把 worker 的 RSS 打满；而 worker 是共享进程，
     # 会连带同一进程里其他模块的 job 一起 OOM。
     export_max_rows: int = 100_000
+    # 单次导出的**字节**上限。行数上限挡不住「行少但每行很长」：几百行长文本
+    # 也能堆出几百 MB。字节熔断是最后一道闸，宁可明确失败也不要吃穿内存
+    # （worker 是共享进程，会连带同进程里其他模块的 job 一起 OOM）。
+    export_max_bytes: int = 64 * 1024 * 1024
     # 产物保留时长（小时）。到期由周期任务 `export.reclaim` 删字节，**记录行保留**
     # （状态转 expired），这样「上周导过什么」查得到，只是文件没了。
     export_ttl_hours: int = 168

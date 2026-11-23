@@ -24,6 +24,7 @@ from api.module import Level
 from core.config import settings
 from infra.archive import get_archive_storage
 from infra.archive.integrity import verify_blobs
+from infra.queue.base import StatsCapable
 
 _CAS_PROBE = "catalog/locks/_doctor_cas.json"
 
@@ -357,7 +358,7 @@ async def _check_queue_channel(report: DoctorReport) -> None:
         return
 
     # 用鸭子类型而不是 isinstance：不想为了一个检查把 db 驱动 import 进来
-    stats_fn = getattr(queue, "stats", None)
+    stats_fn = queue.stats if isinstance(queue, StatsCapable) else None
     if stats_fn is not None:
         stats = await stats_fn()
         detail = (

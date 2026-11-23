@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Download, Layers, RotateCcw, Tag, Trash2, X } from 'lucide-react';
+import { Download, Layers, RotateCcw, Share2, Tag, Trash2, X } from 'lucide-react';
 import { Button, MultiSelect } from '@/shared/ui';
 import type { LibraryTagStatOut } from '@/shared/api/schema';
 import type { LibraryView } from '@/entities/library/model/types';
@@ -12,6 +12,8 @@ export type BulkKind =
   | 'approve'
   | 'reject'
   | 'tag'
+  /** 把选中的素材一起共享到同一个目标（团队 / 某个小组） */
+  | 'share'
   /** 把选中的素材打成一个封装。不是批量写（不逐条改资产），而是新建一条资产 */
   | 'pack';
 
@@ -19,6 +21,8 @@ export interface LibraryBulkBarProps {
   view: LibraryView;
   count: number;
   tags: LibraryTagStatOut[];
+  /** 没有 `library:share` 就不摆这个按钮：与卡片上的单条共享同一口径 */
+  canShare?: boolean;
   busy?: boolean;
   onClear: () => void;
   onAction: (kind: BulkKind, payload?: { tagIds?: string[] }) => void;
@@ -32,7 +36,15 @@ export interface LibraryBulkBarProps {
  *
  * **不提供就地新建标签** —— 词表是全局结构，统一在「标签管理」里维护。
  */
-export function LibraryBulkBar({ view, count, tags, busy, onClear, onAction }: LibraryBulkBarProps) {
+export function LibraryBulkBar({
+  view,
+  count,
+  tags,
+  canShare = true,
+  busy,
+  onClear,
+  onAction,
+}: LibraryBulkBarProps) {
   const [tagging, setTagging] = useState(false);
   const [tagIds, setTagIds] = useState<string[]>([]);
 
@@ -96,6 +108,17 @@ export function LibraryBulkBar({ view, count, tags, busy, onClear, onAction }: L
               >
                 打包下载
               </Button>
+              {canShare && (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  icon={<Share2 size={12} />}
+                  disabled={busy}
+                  onClick={() => onAction('share')}
+                >
+                  共享
+                </Button>
+              )}
               <Button
                 size="sm"
                 variant="secondary"

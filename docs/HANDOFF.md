@@ -373,6 +373,49 @@ payload 里拿掉（那要动契约），改成「物化前按 key 反查资产�
 **教训**：下线一个功能时，要同时看**删掉了契约字段**与**存量数据里还带着那个键**的那批行。
 迁移只改了行表，没有动草稿 JSON 里的那一把——它们不在任何迁移的负荷里，只在读草稿时才会被看见。
 
+### 1.5 Agnes 视频支持参考图与参考音频（2026-11-22）
+
+**问题**：agnes 视频模型在生成工作台里**不能传参考图**。四层叠加，根因在链路层：
+
+1. 模型声明 `max_references=0` → 前端整块不画参考图控件，后端受理期直接
+   400「模型 X 不支持参考素材」；
+2. **真根因**：驱动其实早就实现了参考模式（`mode=reference` + `images`），
+   但视频链的 `build_request` **从不填 `reference_urls`** —— 生图链会调
+   `_reference_data_uris` 把存储字节读成 data URI，视频链没有这一步；
+3. 驱动的 `_reference_images` 只收公网 http(s)，明确拒 data URI；
+4. 统一门面对接只收 `data:` URI，与驱动正好相反。
+
+**修法**：走**内联 Base64 data URI**（不引入公网 OSS 直传）。实测依据：上游文档
+只写了 URL，但 2026-11-22 实测内联 data URI 一样受理、一样出片（任务
+`task_Kb5KZ7PKSb0ZVAjButxNReu9d9k1kz37` completed，轮询回包里有
+`usage.input_image_count: 1`）；而本机存储是 `STORAGE_DRIVER=s3` + 内网 MinIO，
+公网直链根本给不出去。
+
+**边长口径是实测出来的**，不是照错误文案猜的：2026-11-22 用上游实测了一张
+200x3000（短边 200、长边 3000）→ **400**
+`input image side length must be between 256 and 5760 pixels`，即**两条边都要**
+落在 [256, 5760] 里（只判长边会放行这种图）。上界 5760 仍只有错误文案佐证
+（6000x6000 那次撞上 503 队列满，没测到）。
+
+分层改动：
+
+| 层 | 改动 |
+|---|---|
+| 驱动 `drivers/agnes_video.py` | 收 `data:image/*` / `data:audio/*`；声明 `max_references=8`、`reference_kinds=("image","audio")`；图片与音频分两个数组（`images` / `audios`）；按真实字节判边长（256–5760，单边）；声明单份 15MB、图片整单 50MB / 音频整单 64MB、音频 2–12 秒 |
+| 链路 `modules/task/pipeline.py` | `VideoTaskStore.load` 带上存储 key；`build_request` 按驱动声明决定**内联**还是**落盘物化**（LibTV / 百炼那条老路一个字没动） |
+| 受理期 `modules/task/service.py` | 能收哪几类由**模型声明**（`referenceKinds`）筛，不再三类都收；张数与图片边长按供应商声明判（边长用资产库宽高，宽高为 0 时放行） |
+| 提示词 | `{{Mixed N}}` → `<Picture N>` / `<Audio N>`（编号按类型各自从 1 开始） |
+| 前端 | 模型声明带出参考控件（既有逻辑）；本地上传的音轨按 `audio` 入库（模型不收音频时直接拒，不白传一次） |
+
+新增共用实现：`infra/reference_inline.py`（存储 key → data URI，生图链与视频链共用）、
+`core/reference_limits.py`（边长判据）、`core/prompt_refs.translate_prompt_with()`
+（编号规则一份、标签由驱动给）。协议加在 `infra/ai/base.py`：
+`InlineReferencesCapable` / `ReferenceLimitsCapable`。
+
+**教训**：`max_references=0` 不是「不支持」，而是「**没人告诉链路层怎么送过去**」。
+声明改成非 0 之前，先把字节到供应商面前的那条路修通，否则前端画出上传框、
+用户传完、请求照发、后端再拒——四层各自都合理，合起来是个死结。
+
 ## 3. 没做完的（直接从这里开工）
 
 完整清单在 [`TODO.md`](TODO.md)，这里只标需要拍板 / 刚变动的：
@@ -644,6 +687,19 @@ curl -sS --noproxy '*' -H "Authorization: Bearer $TOKEN" \
   展示名 input 必须 `min-w-0`（否则按内容宽度撑开父级）。
   固定槽位只描左边绿边、不铺绿底。`FormField` 要写 `htmlFor` 才关联得上控件。
 - 封装编辑器：一级标签下拉只给 image/video；发布与预检前跑 `slotsMissingTag()`。
+- **封装容器有名字**（2026-11-22）：`groups: [{key, label}]` 在 spec 顶层，
+  容器本身仍是「槽位上相同的 `group`」。名字**由作者在新建时定**（默认「封装槽位1」，
+  编号取第一个没被占用的 —— 用「个数+1」会在删过中间容器后与现存的撞名）。
+  - **草稿**存整份 JSON；**发布快照**只有槽位行，所以名字落 `template_spec_slots.group_label`
+    （组内每行冗余）。只写组内第一行会依赖 `position` 顺序，拖一下顺序就取不到名字。
+  - 读取 `_spec_out` 从成员行提炼 `groups`，取**组内首个非空**值；老版本为空 →
+    前端 `groupLabels()` 按**段序**回退成「封装槽位1/2/…」。编辑页与模板库共用这一个解析，
+    两处各算一次就会出现「作者看到 A、使用者看到 B」。
+  - **`groups` 必须进 `authoredFingerprint`**，否则只改名不算「有未保存改动」，
+    点返回直接丢掉、发布也拿不到新版本。写用例时要**打开一份已经带容器的草稿**再改名 ——
+    从空模板加容器的话，加槽位本身就把指纹改了，测不出这条。
+  - 模板库那边容器名按**完整槽位**算，不按 `fillSlots`：随机/均衡档会隐掉可选槽位，
+    按可见槽位的段序编号会让同一个容器在两个页面叫两个号。
 
 ### 5.2 模型驱动（唯一路径）
 
@@ -660,6 +716,17 @@ curl -sS --noproxy '*' -H "Authorization: Bearer $TOKEN" \
   （agnes 视频 10 秒，2 秒被 429）。
 - 通用链：`referenceLibraryIds` 在 `load()` 冻结成 `params["referenceKeys"]`，
   `materialize()` 补工作区。
+- **参考素材有两条通道，由驱动声明**（2026-11-22）：不声明 = 落盘物化（LibTV / 百炼，
+  老路一个字没动）；声明 `inline_references = True` = **内联 data URI**
+  （Agnes 视频）。判据在 `modules/task/pipeline.py::build_request`，别在链路层
+  写死某个供应商的名字。
+- **参考素材的硬限制由供应商声明**（`ReferenceLimitsCapable.reference_limits`）：
+  每类素材几份、图片单边多少像素、单份与**同类合计**的体积、音视频的单段与
+  **合计**时长。各渠道不一样（Agnes 256–5760 / 15MB / 音频 2–12 秒，百炼 240–8000），
+  写成全局常量就会把「百炼能用的图」在受理期拒掉。受理期按资产库宽高、体积与
+  时长判一次，提交前按真实字节再判一次（那三样都可能是 0 / 未探测完）。
+  **合计那一档不能省**：供应商既限单张 15MB 又限整单 50MB，五张满额 75MB；
+  时长同理，「总时长 2–12 秒」是合计口径，三段各 5 秒单看都合法。
 - **批量输入的「几张 + 什么类型」都由模型声明**：`ModelSpec.max_references` /
   `.reference_kinds` → `GET /models` 出参 `maxReferences` / `referenceKinds` → 前端渲染。
   **前端别写死**（曾写死「只选图片、最多 4 张」，把 LibTV/百炼的「原片视频 + 音频」挡在门外）。
@@ -673,6 +740,8 @@ curl -sS --noproxy '*' -H "Authorization: Bearer $TOKEN" \
 - **注释里写了约束 ≠ 有约束**：参考素材 1–15 秒门禁曾只有一句注释，代码只记不校验 ——
   补门禁前先 grep 同类链路（百炼有）。补在受理期（用资产库 `duration_ms`，不下载字节）
   + 物化期（重探真实字节）两处；**单段与同类型总数都要查**（逐段查不出「两段各 9 秒」）。
+  2026-11-22 起 1–15 秒只是**供应商没声明时的兜底**，Agnes 视频按自己声明的 2–12 秒判
+  （含合计），所以「查过时长门禁了」不等于「按这个供应商的规矩查了」。
 
 ### 5.3 资产库 / 生图（v2）
 
@@ -835,6 +904,11 @@ curl -sS --noproxy '*' -H "Authorization: Bearer $TOKEN" \
 | `ROUTES.md` / `MOCK_COVERAGE.md` | 生成物，`--check` 校验，别手改 |
 | `TEMPLATE_LIBRARY_V2.md` | **活文档**，模板库 v2 的五向 I/O 契约与待拍板项（2026-11-13 新写） |
 | `TEMPLATE_SPEC.md` | **设计定稿、待实施**（2026-11-14）：模板封装泛化为 "槽位 + 两段提示词 + 模型绑定"，封装定表 / 模板库填表 / task 执行三层；**终态统一到 task**（P3 删掉独立替换工作台，替换成为 task 的 capability，复核并入任务中心）。与 `TEMPLATE_LIBRARY_V2.md` 无关（那份是任务中心的旧计划） |
+| `PERMISSION_PAGES.md` | **活文档**（2026-11-19 新写）：页面权限与接口权限分层 —— 门控规则、通配为什么要先摊开、单独否决一页时它的接口怎么一并失效 |
+| `EXCEPTIONS.md` | **活文档**（2026-11-19 新写）：个人例外（`effect='deny'`）—— 为什么只允许在个人层、为什么拒绝通配、与「四层并集」的关系 |
+| `api/.env.production.example` | **生产配置模板**（2026-11-22 新写）：87 个生效键 + 每项填写理由 + 启动/发版顺序 + 上线后四项人工确认。生产守卫（JWT 弱值 / DEBUG / 匿名 / CORS / S3 / 两个域名白名单）全部覆盖；`JWT_SECRET` 用 `change-me-` 前缀占位，忘替换就起不来。修改配置项时同步更新，别让模板烂在原地 |
+| `REVIEW_2026-11-21_DESIGN.md` | **快照评审（非活文档）**（2026-11-21）：全量设计审查 —— 两条系统主线（同一概念多处真相 / 约定无机制）+ 高 13 / 中 23 / 低 10 分级发现 + P0–P3 处理顺序。行号基线 `f45ba14f`，代码改动后不要当现状读；和 `TODO.md` 对账过，不重复其中的待办 |
+| `CAPACITY.md` | **活文档**（2026-11-22 新写）：能扛多少人 / 同时几条生成 —— 三个硬上限（DB 池 30、worker 槽位 2、LibTV 账号级串行）、风险清单（含已处理的 `TASK_MAX_IN_FLIGHT_PER_USER`）、怎么量（`doctor` 的 `runtime.queue` + `worker_jobs_in_flight`）、怎么扩（加账号才有用，调 worker 并发对 LibTV 几乎无用）。改并发/账号/限流配置时同步 |
 | 历史评审 / 计划 / 需求 / 设计文档 | **2026-11-13 已清理**，只留 git 历史；不要从 git 里捞回来当现状读 |
 
 ## 8. 已知偶发（不是回归，别急着改代码）

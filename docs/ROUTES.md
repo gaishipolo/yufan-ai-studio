@@ -9,17 +9,17 @@
 
 | 路径 | 模块 | 外壳 | 权限 | 侧栏 |
 | --- | --- | --- | --- | --- |
-| `/image` | image | shell | `image:read` | 创作 / 生图 |
-| `/library` | library | shell | `library:read` | 资产与数据 / 资产库 |
+| `/image` | image | shell | `page:image` | 创作 / 生图 |
+| `/library` | library | shell | `page:library` | 资产与数据 / 资产库 |
 | `/login` | auth | bare | — | — |
-| `/shots` | shots | shell | `shot:read` | 模板与镜头 / 镜头库 |
-| `/storyboards` | storyboards | shell | `storyboard:read` | 模板与镜头 / 分镜模板库 |
-| `/studio` | studio | shell | `catalog:read` | 创作 / 生成工作台 |
-| `/system/user-access` | user-access | shell | `identity:read` | 系统管理 / 用户与权限 |
-| `/tasks` | task-center | shell | `task:read` | 资产与数据 / 任务中心 |
-| `/templates/library` | templates | shell | `template_pack:read` | 模板与镜头 / 模板库 |
-| `/templates/specs` | templates | shell | `template_pack:read` | 模板与镜头 / 模板封装 |
-| `/usage` | usage | shell | — | 资产与数据 / 用量看板 |
+| `/shots` | shots | shell | `page:shots` | 模板与镜头 / 镜头库 |
+| `/storyboards` | storyboards | shell | `page:storyboards` | 模板与镜头 / 分镜模板库 |
+| `/studio` | studio | shell | `page:studio` | 创作 / 生成工作台 |
+| `/system/user-access` | user-access | shell | `page:user-access` | 系统管理 / 用户与权限 |
+| `/tasks` | task-center | shell | `page:task-center` | 资产与数据 / 任务中心 |
+| `/templates/library` | templates | shell | `page:templates` | 模板与镜头 / 模板库 |
+| `/templates/specs` | templates | shell | `page:template-specs` | 模板与镜头 / 模板封装 |
+| `/usage` | usage | shell | `page:usage` | 资产与数据 / 用量看板 |
 
 ## 导航分组
 

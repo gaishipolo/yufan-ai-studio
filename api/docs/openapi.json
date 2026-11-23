@@ -1861,6 +1861,32 @@
         }
       }
     },
+    "/api/v1/identity/permission-tree": {
+      "get": {
+        "tags": [
+          "身份"
+        ],
+        "summary": "「分组 → 用户」的完整树（权限总览的左栏）",
+        "operationId": "permission_tree_api_v1_identity_permission_tree_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_PermissionTreeOut_"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/api/v1/identity/users/{user_id}/permissions": {
       "get": {
         "tags": [
@@ -1935,6 +1961,108 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/PermissionsIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_list_str__"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/identity/users/{user_id}/permission-exceptions": {
+      "get": {
+        "tags": [
+          "身份"
+        ],
+        "summary": "用户的个人例外（只对他关掉的权限码）",
+        "operationId": "user_permission_exceptions_api_v1_identity_users__user_id__permission_exceptions_get",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "User Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_list_str__"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "身份"
+        ],
+        "summary": "设置个人例外（整组替换；不动他的授予）",
+        "operationId": "set_permission_exceptions_api_v1_identity_users__user_id__permission_exceptions_put",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "User Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PermissionExceptionsIn"
               }
             }
           }
@@ -6280,55 +6408,6 @@
         }
       }
     },
-    "/api/v1/tasks/{task_id}/desubtitle": {
-      "post": {
-        "tags": [
-          "任务"
-        ],
-        "summary": "给成片派生去字幕版",
-        "operationId": "create_desubtitle_api_v1_tasks__task_id__desubtitle_post",
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "task_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "description": "任务 ID",
-              "title": "Task Id"
-            },
-            "description": "任务 ID"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/core__response__ApiResponse_TaskOut___2"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/v1/tasks/{task_id}/favorite": {
       "post": {
         "tags": [
@@ -7026,6 +7105,679 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApiResponse_SpecCompileOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/template-cases": {
+      "get": {
+        "tags": [
+          "模板封装",
+          "模板案例"
+        ],
+        "summary": "案例列表（library=公共案例库 / mine=我发布的 / trash=回收站）",
+        "operationId": "list_template_cases_api_v1_template_cases_get",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "scope",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "library",
+                "mine",
+                "trash"
+              ],
+              "type": "string",
+              "default": "library",
+              "title": "Scope"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 16,
+              "default": "",
+              "title": "Status"
+            }
+          },
+          {
+            "name": "category",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 64,
+              "default": "",
+              "title": "Category"
+            }
+          },
+          {
+            "name": "keyword",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 80,
+              "default": "",
+              "title": "Keyword"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1,
+              "title": "Page"
+            }
+          },
+          {
+            "name": "pageSize",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "default": 50,
+              "title": "Pagesize"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_TemplateCaseListOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "模板封装",
+          "模板案例"
+        ],
+        "summary": "把模板发布为案例（快照当前草稿）",
+        "operationId": "create_template_case_api_v1_template_cases_post",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TemplateCaseCreateIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_TemplateCaseOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/template-cases/{case_id}": {
+      "get": {
+        "tags": [
+          "模板封装",
+          "模板案例"
+        ],
+        "summary": "案例详情（含可复用的配置快照）",
+        "operationId": "get_template_case_api_v1_template_cases__case_id__get",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "case_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "title": "Case Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_TemplateCaseOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "模板封装",
+          "模板案例"
+        ],
+        "summary": "编辑案例（名称/描述/分类）",
+        "operationId": "update_template_case_api_v1_template_cases__case_id__patch",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "case_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "title": "Case Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TemplateCaseUpdateIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_TemplateCaseOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "模板封装",
+          "模板案例"
+        ],
+        "summary": "删除案例（软删，进回收站）",
+        "operationId": "delete_template_case_api_v1_template_cases__case_id__delete",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "case_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "title": "Case Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_TemplateCaseOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/template-cases/{case_id}/offline": {
+      "post": {
+        "tags": [
+          "模板封装",
+          "模板案例"
+        ],
+        "summary": "下架案例（不可复用，可重新上架）",
+        "operationId": "offline_template_case_api_v1_template_cases__case_id__offline_post",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "case_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "title": "Case Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_TemplateCaseOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/template-cases/{case_id}/online": {
+      "post": {
+        "tags": [
+          "模板封装",
+          "模板案例"
+        ],
+        "summary": "重新上架案例",
+        "operationId": "online_template_case_api_v1_template_cases__case_id__online_post",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "case_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "title": "Case Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_TemplateCaseOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/template-cases/{case_id}/restore": {
+      "post": {
+        "tags": [
+          "模板封装",
+          "模板案例"
+        ],
+        "summary": "从回收站恢复案例",
+        "operationId": "restore_template_case_api_v1_template_cases__case_id__restore_post",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "case_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "title": "Case Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_TemplateCaseOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/usage/overview": {
+      "get": {
+        "tags": [
+          "用量看板"
+        ],
+        "summary": "用量总览（汇总 / 趋势 / 构成）",
+        "operationId": "usage_overview_api_v1_usage_overview_get",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "start",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "区间起点（含，YYYY-MM-DD）。默认：结束日往前推 30 天",
+              "title": "Start"
+            },
+            "description": "区间起点（含，YYYY-MM-DD）。默认：结束日往前推 30 天"
+          },
+          {
+            "name": "end",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "区间终点（含，YYYY-MM-DD）。默认：今天",
+              "title": "End"
+            },
+            "description": "区间终点（含，YYYY-MM-DD）。默认：今天"
+          },
+          {
+            "name": "granularity",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/UsageGranularity",
+              "description": "时间桶粒度：day / week",
+              "default": "day"
+            },
+            "description": "时间桶粒度：day / week"
+          },
+          {
+            "name": "scope",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/UsageScope",
+              "description": "数据范围：mine（自己）/ all（全部成员，需要 usage:read:all）",
+              "default": "mine"
+            },
+            "description": "数据范围：mine（自己）/ all（全部成员，需要 usage:read:all）"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_UsageOverviewOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/usage/records": {
+      "get": {
+        "tags": [
+          "用量看板"
+        ],
+        "summary": "用量明细",
+        "operationId": "usage_records_api_v1_usage_records_get",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "start",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "区间起点（含，YYYY-MM-DD）。默认：结束日往前推 30 天",
+              "title": "Start"
+            },
+            "description": "区间起点（含，YYYY-MM-DD）。默认：结束日往前推 30 天"
+          },
+          {
+            "name": "end",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "区间终点（含，YYYY-MM-DD）。默认：今天",
+              "title": "End"
+            },
+            "description": "区间终点（含，YYYY-MM-DD）。默认：今天"
+          },
+          {
+            "name": "scope",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/UsageScope",
+              "description": "数据范围：mine（自己）/ all（全部成员，需要 usage:read:all）",
+              "default": "mine"
+            },
+            "description": "数据范围：mine（自己）/ all（全部成员，需要 usage:read:all）"
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "页码，从 1 开始",
+              "default": 1,
+              "title": "Page"
+            },
+            "description": "页码，从 1 开始"
+          },
+          {
+            "name": "pageSize",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "description": "每页条数",
+              "default": 24,
+              "title": "Pagesize"
+            },
+            "description": "每页条数"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_Page_UsageRecordOut__"
                 }
               }
             }
@@ -7796,6 +8548,33 @@
         "type": "object",
         "title": "ApiResponse[Page[ImageJobOut]]"
       },
+      "ApiResponse_Page_UsageRecordOut__": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Page_UsageRecordOut_"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[Page[UsageRecordOut]]"
+      },
       "ApiResponse_Page_UserOut__": {
         "properties": {
           "code": {
@@ -7876,6 +8655,33 @@
         },
         "type": "object",
         "title": "ApiResponse[PermissionCatalogOut]"
+      },
+      "ApiResponse_PermissionTreeOut_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PermissionTreeOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[PermissionTreeOut]"
       },
       "ApiResponse_ReadyOut_": {
         "properties": {
@@ -8255,6 +9061,60 @@
         "type": "object",
         "title": "ApiResponse[TaskStats]"
       },
+      "ApiResponse_TemplateCaseListOut_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TemplateCaseListOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[TemplateCaseListOut]"
+      },
+      "ApiResponse_TemplateCaseOut_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TemplateCaseOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[TemplateCaseOut]"
+      },
       "ApiResponse_TemplateSpecListOut_": {
         "properties": {
           "code": {
@@ -8389,6 +9249,33 @@
         },
         "type": "object",
         "title": "ApiResponse[TokenOut]"
+      },
+      "ApiResponse_UsageOverviewOut_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UsageOverviewOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[UsageOverviewOut]"
       },
       "ApiResponse_UserOut_": {
         "properties": {
@@ -8829,10 +9716,17 @@
             "title": "Tagids"
           },
           "expectedVersion": {
-            "type": "integer",
-            "title": "Expectedversion",
-            "description": ">0 时做乐观锁校验；0 表示不校验（兼容单页操作）",
-            "default": 0
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0,
+                "description": "客户端看到的版本：带了就做乐观锁校验，不带（null）表示明确不校验。版本从 1 起，0 不合法。"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expectedversion"
           }
         },
         "type": "object",
@@ -8860,6 +9754,7 @@
           "restore",
           "approveDraft",
           "rejectDraft",
+          "requestShare",
           "requestRevoke"
         ],
         "title": "BulkAction",
@@ -8886,7 +9781,8 @@
           },
           "expectedVersions": {
             "additionalProperties": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 1.0
             },
             "type": "object",
             "title": "Expectedversions"
@@ -9347,9 +10243,17 @@
             "default": ""
           },
           "expectedVersion": {
-            "type": "integer",
-            "title": "Expectedversion",
-            "default": 0
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0,
+                "description": "客户端看到的版本：带了就做乐观锁校验，不带（null）表示明确不校验。版本从 1 起，0 不合法。"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expectedversion"
           }
         },
         "type": "object",
@@ -9469,13 +10373,61 @@
             "title": "Roles",
             "description": "现有角色授予的权限"
           },
+          "pages": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Pages",
+            "description": "授予的页面权限（page:*）；决定侧栏与路由能进哪一页"
+          },
+          "gatedOff": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Gatedoff",
+            "description": "被页面门控关掉的接口权限：四层并集里有、但它所属的页面一页都没授予。`资源:*` 会先摊成具体码再判定，所以这里列的是被关掉的**具体码**。界面拿它解释「为什么我有 task:read 却仍然 403」"
+          },
           "effective": {
             "items": {
               "type": "string"
             },
             "type": "array",
             "title": "Effective",
-            "description": "四层并集；`*` 表示超级管理员。require() 唯一判据"
+            "description": "四层并集过完页面门控的结果；`*` 表示超级管理员。require() 唯一判据"
+          },
+          "roleDetails": {
+            "items": {
+              "$ref": "#/components/schemas/RoleLayerOut"
+            },
+            "type": "array",
+            "title": "Roledetails",
+            "description": "按角色拆开的授予明细（`roles` 是合并后的）"
+          },
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/PermissionSourceOut"
+            },
+            "type": "array",
+            "title": "Sources",
+            "description": "每个权限码的来源层。界面据此在每一行上标「来自 角色·内容编辑」。键是**摊开通配之后**的码，所以 `task:*` 也逐条列出具体动作"
+          },
+          "denied": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Denied",
+            "description": "个人例外：对这个账号单独关闭的码。**包含当前不生效的那些** ——角色撤了但那条例外还在，它必须仍然可见、可撤销，否则就是一个谁也看不见的隐藏状态"
+          },
+          "deniedOff": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Deniedoff",
+            "description": "因为本人例外而不生效的码（授予了、但被关掉）。与 `gatedOff` 互斥：一个码不生效只有「你自己关的」和「页面没开」两种原因，界面按它分流"
           }
         },
         "type": "object",
@@ -10124,6 +11076,12 @@
             "type": "array",
             "title": "Permissions",
             "description": "该组授予的权限码"
+          },
+          "memberCount": {
+            "type": "integer",
+            "title": "Membercount",
+            "description": "组内成员数（不含本人）。界面拿它写清「关掉这条会影响多少人」——改共享单元前必须知道影响面，而这个数字猜不出来",
+            "default": 0
           }
         },
         "type": "object",
@@ -12514,6 +13472,34 @@
         "type": "object",
         "title": "Page[ImageJobOut]"
       },
+      "Page_UsageRecordOut_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/UsageRecordOut"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "default": 0
+          },
+          "page": {
+            "type": "integer",
+            "title": "Page",
+            "default": 1
+          },
+          "pageSize": {
+            "type": "integer",
+            "title": "Pagesize",
+            "default": 24
+          }
+        },
+        "type": "object",
+        "title": "Page[UsageRecordOut]"
+      },
       "Page_UserOut_": {
         "properties": {
           "items": {
@@ -12625,6 +13611,21 @@
         "type": "object",
         "title": "PermissionCatalogOut"
       },
+      "PermissionExceptionsIn": {
+        "properties": {
+          "exceptions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Exceptions",
+            "description": "对这个账号单独关闭的权限码（整组替换）。只接受目录里的具体码：不接受通配（`task:*` 的「关掉」没有唯一解释），也不接受 `identity:*`"
+          }
+        },
+        "type": "object",
+        "title": "PermissionExceptionsIn",
+        "description": "个人例外（`effect='deny'`）的整组替换入参。\n\n与 `PermissionsIn` 分开命名：同一张表、两个方向，混用一个类会让调用方\n以为「传空数组 = 清空他的权限」，而它清的是**例外**。"
+      },
       "PermissionGroupOut": {
         "properties": {
           "group": {
@@ -12647,6 +13648,33 @@
         ],
         "title": "PermissionGroupOut"
       },
+      "PermissionOriginOut": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "title": "Kind",
+            "description": "来源类型：team / group / user（个人层）/ role"
+          },
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "来源实体 id（team 为空）",
+            "default": ""
+          },
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "来源实体名称（team 固定为「团队」）",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind"
+        ],
+        "title": "PermissionOriginOut",
+        "description": "一个权限码的一个来源层。`kind` 是开放枚举：加层不用改这个形状。"
+      },
       "PermissionOut": {
         "properties": {
           "code": {
@@ -12664,6 +13692,20 @@
             "title": "Description",
             "description": "权限说明",
             "default": ""
+          },
+          "requires": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Requires",
+            "description": "页面权限关联的接口权限码（只有页面项有）。前端用它把「页面 → 接口」的层级画出来，而不是让人从描述文字里读"
+          },
+          "route": {
+            "type": "string",
+            "title": "Route",
+            "description": "页面路由（如 `/tasks`）；只有页面项有",
+            "default": ""
           }
         },
         "type": "object",
@@ -12672,6 +13714,113 @@
           "name"
         ],
         "title": "PermissionOut"
+      },
+      "PermissionSourceOut": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "title": "Code",
+            "description": "权限码"
+          },
+          "layers": {
+            "items": {
+              "$ref": "#/components/schemas/PermissionOriginOut"
+            },
+            "type": "array",
+            "title": "Layers",
+            "description": "给出这个码的全部来源"
+          }
+        },
+        "type": "object",
+        "required": [
+          "code"
+        ],
+        "title": "PermissionSourceOut",
+        "description": "某个权限码由哪几层给到。空 `layers` = 目录外（只可能出现在例外里）。"
+      },
+      "PermissionTreeGroupOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "小组 ID"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "小组名称"
+          },
+          "members": {
+            "items": {
+              "$ref": "#/components/schemas/PermissionTreeUserOut"
+            },
+            "type": "array",
+            "title": "Members",
+            "description": "组内成员"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "title": "PermissionTreeGroupOut",
+        "description": "一个分组，以及它的成员（成员顺序按账号排序，前端不再排）。"
+      },
+      "PermissionTreeOut": {
+        "properties": {
+          "groups": {
+            "items": {
+              "$ref": "#/components/schemas/PermissionTreeGroupOut"
+            },
+            "type": "array",
+            "title": "Groups"
+          },
+          "ungrouped": {
+            "items": {
+              "$ref": "#/components/schemas/PermissionTreeUserOut"
+            },
+            "type": "array",
+            "title": "Ungrouped",
+            "description": "不属于任何分组的账号"
+          }
+        },
+        "type": "object",
+        "title": "PermissionTreeOut",
+        "description": "「分组 → 用户」的完整树。\n\n为什么单独一个接口，而不是让前端用「小组列表 + 用户列表」拼：\n用户列表是分页的，拼出来的树在人多时会**静默少人**，而看的人以为\n那就是全部。这里一次给全，没有分页参数。"
+      },
+      "PermissionTreeUserOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "用户 ID"
+          },
+          "username": {
+            "type": "string",
+            "title": "Username",
+            "description": "账号"
+          },
+          "displayName": {
+            "type": "string",
+            "title": "Displayname",
+            "description": "昵称",
+            "default": ""
+          },
+          "isActive": {
+            "type": "boolean",
+            "title": "Isactive",
+            "description": "是否启用（停用的排后面并置灰）",
+            "default": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "username"
+        ],
+        "title": "PermissionTreeUserOut",
+        "description": "树上的一个账号：只够画一行，不含权限。"
       },
       "PermissionsIn": {
         "properties": {
@@ -12792,6 +13941,28 @@
         ],
         "title": "ReadyOut",
         "description": "就绪状态。`checks` 说明每一项依赖的结论，status ∈ ok / degraded / down。"
+      },
+      "ReferenceLimitOut": {
+        "properties": {
+          "maxCount": {
+            "type": "integer",
+            "title": "Maxcount",
+            "default": 0
+          },
+          "minSide": {
+            "type": "integer",
+            "title": "Minside",
+            "default": 0
+          },
+          "maxSide": {
+            "type": "integer",
+            "title": "Maxside",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "title": "ReferenceLimitOut",
+        "description": "供应商对**一类**参考素材的硬性限制。\n\n与 `maxReferences` 的区别：那个是**总数**上限，这个是分类的。视频模型\n常见「5 张图 + 3 段音频 = 总数 8」—— 只把总数交给前端，用户加到第 6 张图\n时界面还说「还能再加」，提交才吃 400。前端按这里逐类算余量。\n\n`maxCount = 0` 表示这一类不限（供应商没声明）。"
       },
       "RefreshIn": {
         "properties": {
@@ -12916,6 +14087,47 @@
           "name"
         ],
         "title": "RoleCreateIn"
+      },
+      "RoleLayerOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "角色 ID"
+          },
+          "code": {
+            "type": "string",
+            "title": "Code",
+            "description": "角色标识"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "角色名称"
+          },
+          "permissions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Permissions",
+            "description": "该角色授予的权限码"
+          },
+          "userCount": {
+            "type": "integer",
+            "title": "Usercount",
+            "description": "除本人外还挂着这个角色的人数（影响面）",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "code",
+          "name"
+        ],
+        "title": "RoleLayerOut",
+        "description": "分层权限明细里的一段：这条权限来自哪个角色。\n\n`roles` 那份合并集合说不清「是哪个角色给的」，而「去哪撤」正需要这个 ——\n所以额外给一份按角色拆开的明细。"
       },
       "RoleOut": {
         "properties": {
@@ -13152,10 +14364,17 @@
             "default": ""
           },
           "expectedVersion": {
-            "type": "integer",
-            "title": "Expectedversion",
-            "description": ">0 时做乐观锁校验；0 表示不校验（兼容单页操作）",
-            "default": 0
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0,
+                "description": "客户端看到的版本：带了就做乐观锁校验，不带（null）表示明确不校验。版本从 1 起，0 不合法。"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expectedversion"
           }
         },
         "type": "object",
@@ -13179,9 +14398,17 @@
             "default": ""
           },
           "expectedVersion": {
-            "type": "integer",
-            "title": "Expectedversion",
-            "default": 0
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0,
+                "description": "客户端看到的版本：带了就做乐观锁校验，不带（null）表示明确不校验。版本从 1 起，0 不合法。"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expectedversion"
           }
         },
         "type": "object",
@@ -13317,9 +14544,17 @@
             "default": ""
           },
           "expectedVersion": {
-            "type": "integer",
-            "title": "Expectedversion",
-            "default": 0
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0,
+                "description": "客户端看到的版本：带了就做乐观锁校验，不带（null）表示明确不校验。版本从 1 起，0 不合法。"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expectedversion"
           }
         },
         "type": "object",
@@ -13343,6 +14578,16 @@
             "type": "string",
             "title": "Assetname",
             "default": ""
+          },
+          "stateVersion": {
+            "type": "integer",
+            "title": "Stateversion",
+            "default": 0
+          },
+          "requestStateVersion": {
+            "type": "integer",
+            "title": "Requeststateversion",
+            "default": 0
           },
           "applicantId": {
             "type": "string",
@@ -13541,6 +14786,13 @@
             "title": "Userandomprompt",
             "default": false
           },
+          "slotTextOverrides": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Slottextoverrides"
+          },
           "paramOverrides": {
             "additionalProperties": true,
             "type": "object",
@@ -13550,7 +14802,7 @@
         "additionalProperties": false,
         "type": "object",
         "title": "SpecCompileIn",
-        "description": "填表结果：`{slotKey: [assetId…]}`。\n\n槽位按用户挑选顺序传素材 id。`version` 为空表示用当前发布版本。\n\n**没有 `promptOverride`**（2026-11-14 起）：模板库不改文字。需要可变内容的地方\n在模板里放 `text` 槽位 —— 填表时选一份文案，`compile` 把它排在 `{{Text N}}`\n的第 N 位，执行层按 `textLibraryIds` 注入正文。这个入口曾经存在（改写\"可编辑段\"），\n与\"提示词只有一段\"冲突，一并删掉。"
+        "description": "填表结果：`{slotKey: [assetId…]}`。\n\n槽位按用户挑选顺序传素材 id。`version` 为空表示用当前发布版本。\n\n**没有 `promptOverride`**（2026-11-14 起）：模板库不改整段文字。需要可变内容\n的地方在模板里放 `text` 槽位 —— 填表时选一份文案，`compile` 把它排在\n`{{Text N}}` 的第 N 位，执行层按 `textLibraryIds` 注入正文。这个入口曾经存在\n（改写\"可编辑段\"），与\"提示词只有一段\"冲突，一并删掉。\n\n但**单个可选槽位的「未选时文案」可以改**（`slot_text_overrides`，2026-11-21）：\n那段话本来就是「这一格空着时说什么」，作者写的是通用版本，使用者知道得更具体。\n改的是插入点里的那一段，不是提示词的骨架 —— 与上面删掉的那个入口不是一回事。"
       },
       "SpecCompileOut": {
         "properties": {
@@ -13602,6 +14854,28 @@
         ],
         "title": "SpecCompileOut",
         "description": "编译结果（模板层）。\n\n**不是**任何端点的请求体：`/tasks` 的时长与画幅是顶层字段、不接受自由\n`params`。摊平由提交方按目标端点做（模板库页面对照生成的 `CreateTaskIn` 类型），\n这里刻意不假设端点，否则换端点就要改编译规则。"
+      },
+      "SpecGroupIn": {
+        "properties": {
+          "key": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{0,39}$",
+            "title": "Key"
+          },
+          "label": {
+            "type": "string",
+            "maxLength": 80,
+            "title": "Label",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "key"
+        ],
+        "title": "SpecGroupIn",
+        "description": "封装容器的名字：`key` 对应槽位上的 `group`，`label` 是作者起的名字。\n\n**不在这里校验「key 必须真的有成员」**：草稿阶段作者把成员挪走了、容器名\n还留着，是编辑中的正常状态；发布时它只是写不进任何一行（没有成员就没有行），\n不会变成坏数据。反过来强校验会挡住「先建容器、再加槽位」这个正常顺序。"
       },
       "SpecLimitsOut": {
         "properties": {
@@ -13911,6 +15185,13 @@
             },
             "type": "array",
             "title": "Slots"
+          },
+          "groups": {
+            "items": {
+              "$ref": "#/components/schemas/SpecGroupIn"
+            },
+            "type": "array",
+            "title": "Groups"
           },
           "fingerprint": {
             "type": "string",
@@ -14456,55 +15737,223 @@
         "title": "TaskStatusFilter",
         "description": "列表筛选值：`all` 与具体状态并列，避免路由层出现联合类型。"
       },
-      "TaskVariantOut": {
+      "TemplateCaseCreateIn": {
+        "properties": {
+          "specKey": {
+            "type": "string",
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Speckey"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 2000,
+            "title": "Description",
+            "default": ""
+          },
+          "category": {
+            "type": "string",
+            "maxLength": 64,
+            "title": "Category",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "specKey",
+          "name"
+        ],
+        "title": "TemplateCaseCreateIn"
+      },
+      "TemplateCaseListOut": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/TemplateCaseOut"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "default": 0
+          },
+          "categories": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Categories"
+          }
+        },
+        "type": "object",
+        "title": "TemplateCaseListOut"
+      },
+      "TemplateCaseOut": {
         "properties": {
           "id": {
             "type": "string",
-            "title": "Id",
-            "description": "派生任务 ID"
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description"
+          },
+          "category": {
+            "type": "string",
+            "title": "Category"
           },
           "status": {
-            "$ref": "#/components/schemas/TaskStatus",
-            "description": "状态：queued / running / completed / failed"
+            "type": "string",
+            "enum": [
+              "published",
+              "offline"
+            ],
+            "title": "Status"
           },
-          "progress": {
+          "specId": {
+            "type": "string",
+            "title": "Specid"
+          },
+          "specKey": {
+            "type": "string",
+            "title": "Speckey"
+          },
+          "specName": {
+            "type": "string",
+            "title": "Specname"
+          },
+          "specVersion": {
             "type": "integer",
-            "title": "Progress",
-            "description": "生成进度 0-100",
-            "default": 0
+            "title": "Specversion"
           },
-          "outputUrl": {
+          "sourceMissing": {
+            "type": "boolean",
+            "title": "Sourcemissing",
+            "default": false
+          },
+          "config": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Config"
+          },
+          "ownerId": {
+            "type": "string",
+            "title": "Ownerid"
+          },
+          "ownerName": {
+            "type": "string",
+            "title": "Ownername"
+          },
+          "publishedAt": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "format": "date-time"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Outputurl",
-            "description": "去字幕成片地址；未完成时为 null"
+            "title": "Publishedat"
           },
-          "errorMessage": {
+          "offlineAt": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "format": "date-time"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Errormessage",
-            "description": "失败原因，成功时为 null"
+            "title": "Offlineat"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Createdat"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updatedat"
           }
         },
         "type": "object",
         "required": [
           "id",
-          "status"
+          "name",
+          "description",
+          "category",
+          "status",
+          "specId",
+          "specKey",
+          "specName",
+          "specVersion",
+          "ownerId",
+          "ownerName",
+          "createdAt",
+          "updatedAt"
         ],
-        "title": "TaskVariantOut",
-        "description": "一条派生任务（目前只有「去字幕版」）。"
+        "title": "TemplateCaseOut"
+      },
+      "TemplateCaseUpdateIn": {
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 160,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 2000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "category": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "TemplateCaseUpdateIn",
+        "description": "编辑案例。只改案例自己的字段，不碰模板。"
       },
       "TemplateSpecIn": {
         "properties": {
@@ -14563,6 +16012,14 @@
             "type": "array",
             "maxItems": 20,
             "title": "Slots"
+          },
+          "groups": {
+            "items": {
+              "$ref": "#/components/schemas/SpecGroupIn"
+            },
+            "type": "array",
+            "maxItems": 20,
+            "title": "Groups"
           },
           "attributes": {
             "additionalProperties": {
@@ -14862,10 +16319,17 @@
             "title": "Version"
           },
           "expectedVersion": {
-            "type": "integer",
-            "minimum": 0.0,
-            "title": "Expectedversion",
-            "default": 0
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0,
+                "description": "客户端看到的版本：带了就做乐观锁校验，不带（null）表示明确不校验。版本从 1 起，0 不合法。"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expectedversion"
           }
         },
         "type": "object",
@@ -14884,10 +16348,17 @@
             "title": "Content"
           },
           "expectedVersion": {
-            "type": "integer",
-            "minimum": 0.0,
-            "title": "Expectedversion",
-            "default": 0
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0,
+                "description": "客户端看到的版本：带了就做乐观锁校验，不带（null）表示明确不校验。版本从 1 起，0 不合法。"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expectedversion"
           },
           "note": {
             "type": "string",
@@ -15044,6 +16515,400 @@
         ],
         "title": "UploadKind",
         "description": "上传接口允许的文件类型。\n\n不复用 `LibraryAssetKind`：文本资产的体积上限与探测规则单独一档，\n`TEXT` 走同一条上传链，但上限另算（见 `infra/media_probe.MAX_TEXT_BYTES`）。"
+      },
+      "UsageBreakdownItemOut": {
+        "properties": {
+          "dimension": {
+            "$ref": "#/components/schemas/UsageDimension",
+            "description": "维度"
+          },
+          "key": {
+            "type": "string",
+            "title": "Key",
+            "description": "维度内的稳定键"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label",
+            "description": "展示名"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "description": "尝试次数"
+          },
+          "quantity": {
+            "type": "integer",
+            "title": "Quantity",
+            "description": "已产出数量"
+          },
+          "durationSec": {
+            "type": "integer",
+            "title": "Durationsec",
+            "description": "已产出视频总时长（秒）"
+          },
+          "share": {
+            "type": "number",
+            "title": "Share",
+            "description": "占全部尝试次数的比例，0-1"
+          }
+        },
+        "type": "object",
+        "required": [
+          "dimension",
+          "key",
+          "label",
+          "total",
+          "quantity",
+          "durationSec",
+          "share"
+        ],
+        "title": "UsageBreakdownItemOut",
+        "description": "构成表的一行。"
+      },
+      "UsageDimension": {
+        "type": "string",
+        "enum": [
+          "model",
+          "kind",
+          "owner",
+          "status"
+        ],
+        "title": "UsageDimension",
+        "description": "构成维度。"
+      },
+      "UsageGranularity": {
+        "type": "string",
+        "enum": [
+          "day",
+          "week"
+        ],
+        "title": "UsageGranularity",
+        "description": "时间桶粒度。"
+      },
+      "UsageOverviewOut": {
+        "properties": {
+          "summary": {
+            "$ref": "#/components/schemas/UsageSummaryOut",
+            "description": "区间汇总"
+          },
+          "trend": {
+            "items": {
+              "$ref": "#/components/schemas/UsageTrendPointOut"
+            },
+            "type": "array",
+            "title": "Trend",
+            "description": "时间趋势"
+          },
+          "breakdown": {
+            "items": {
+              "$ref": "#/components/schemas/UsageBreakdownItemOut"
+            },
+            "type": "array",
+            "title": "Breakdown",
+            "description": "构成行"
+          },
+          "sources": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Sources",
+            "description": "实际接上的数据来源标识"
+          }
+        },
+        "type": "object",
+        "required": [
+          "summary",
+          "trend",
+          "breakdown",
+          "sources"
+        ],
+        "title": "UsageOverviewOut",
+        "description": "看板总览：一次请求拿齐汇总 / 趋势 / 构成。"
+      },
+      "UsageRecordOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "记录 ID"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source",
+            "description": "来源标识"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title",
+            "description": "展示标题"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "description": "原始状态"
+          },
+          "modelId": {
+            "type": "string",
+            "title": "Modelid",
+            "description": "模型目录 id"
+          },
+          "modelName": {
+            "type": "string",
+            "title": "Modelname",
+            "description": "模型可读名"
+          },
+          "quantity": {
+            "type": "integer",
+            "title": "Quantity",
+            "description": "本次产出数量"
+          },
+          "durationSec": {
+            "type": "integer",
+            "title": "Durationsec",
+            "description": "视频时长（秒）"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Createdat",
+            "description": "创建时间（UTC）"
+          },
+          "ownerId": {
+            "type": "string",
+            "title": "Ownerid",
+            "description": "使用人 ID"
+          },
+          "ownerName": {
+            "type": "string",
+            "title": "Ownername",
+            "description": "使用人可读名"
+          },
+          "detailUrl": {
+            "type": "string",
+            "title": "Detailurl",
+            "description": "详情页深链接"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "source",
+          "title",
+          "status",
+          "modelId",
+          "modelName",
+          "quantity",
+          "durationSec",
+          "createdAt",
+          "ownerId",
+          "ownerName",
+          "detailUrl"
+        ],
+        "title": "UsageRecordOut",
+        "description": "一条用量明细。"
+      },
+      "UsageScope": {
+        "type": "string",
+        "enum": [
+          "mine",
+          "all"
+        ],
+        "title": "UsageScope",
+        "description": "数据范围。"
+      },
+      "UsageSourceOut": {
+        "properties": {
+          "source": {
+            "type": "string",
+            "title": "Source",
+            "description": "来源标识"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "description": "尝试次数"
+          },
+          "succeeded": {
+            "type": "integer",
+            "title": "Succeeded",
+            "description": "已产出次数"
+          },
+          "failed": {
+            "type": "integer",
+            "title": "Failed",
+            "description": "失败次数"
+          },
+          "pending": {
+            "type": "integer",
+            "title": "Pending",
+            "description": "排队 / 进行中"
+          },
+          "quantity": {
+            "type": "integer",
+            "title": "Quantity",
+            "description": "已产出数量"
+          },
+          "durationSec": {
+            "type": "integer",
+            "title": "Durationsec",
+            "description": "已产出视频总时长（秒）"
+          }
+        },
+        "type": "object",
+        "required": [
+          "source",
+          "total",
+          "succeeded",
+          "failed",
+          "pending",
+          "quantity",
+          "durationSec"
+        ],
+        "title": "UsageSourceOut",
+        "description": "一个来源（视频 / 生图 / 将来接上的音频…）的分项。"
+      },
+      "UsageSummaryOut": {
+        "properties": {
+          "start": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Start",
+            "description": "区间起点（含）"
+          },
+          "end": {
+            "type": "string",
+            "format": "date-time",
+            "title": "End",
+            "description": "区间终点（含）"
+          },
+          "granularity": {
+            "$ref": "#/components/schemas/UsageGranularity",
+            "description": "实际使用的时间桶粒度"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/UsageScope",
+            "description": "**实际生效**的数据范围（越权请求会被降级为 mine）"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "description": "尝试次数"
+          },
+          "succeeded": {
+            "type": "integer",
+            "title": "Succeeded",
+            "description": "已产出次数"
+          },
+          "failed": {
+            "type": "integer",
+            "title": "Failed",
+            "description": "失败次数"
+          },
+          "pending": {
+            "type": "integer",
+            "title": "Pending",
+            "description": "排队 / 进行中"
+          },
+          "successRate": {
+            "type": "number",
+            "title": "Successrate",
+            "description": "成功率，0-1"
+          },
+          "quantity": {
+            "type": "integer",
+            "title": "Quantity",
+            "description": "已产出数量合计"
+          },
+          "durationSec": {
+            "type": "integer",
+            "title": "Durationsec",
+            "description": "已产出视频总时长（秒）"
+          },
+          "avgDurationSec": {
+            "type": "number",
+            "title": "Avgdurationsec",
+            "description": "平均单条视频时长（秒）"
+          },
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/UsageSourceOut"
+            },
+            "type": "array",
+            "title": "Sources",
+            "description": "各来源分项"
+          }
+        },
+        "type": "object",
+        "required": [
+          "start",
+          "end",
+          "granularity",
+          "scope",
+          "total",
+          "succeeded",
+          "failed",
+          "pending",
+          "successRate",
+          "quantity",
+          "durationSec",
+          "avgDurationSec",
+          "sources"
+        ],
+        "title": "UsageSummaryOut",
+        "description": "区间汇总。"
+      },
+      "UsageTrendPointOut": {
+        "properties": {
+          "bucket": {
+            "type": "string",
+            "title": "Bucket",
+            "description": "时间桶键：day=YYYY-MM-DD，week=该周周一"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "description": "尝试次数"
+          },
+          "succeeded": {
+            "type": "integer",
+            "title": "Succeeded",
+            "description": "已产出次数"
+          },
+          "failed": {
+            "type": "integer",
+            "title": "Failed",
+            "description": "失败次数"
+          },
+          "pending": {
+            "type": "integer",
+            "title": "Pending",
+            "description": "排队 / 进行中"
+          },
+          "quantity": {
+            "type": "integer",
+            "title": "Quantity",
+            "description": "已产出数量"
+          },
+          "durationSec": {
+            "type": "integer",
+            "title": "Durationsec",
+            "description": "已产出视频总时长（秒）"
+          }
+        },
+        "type": "object",
+        "required": [
+          "bucket",
+          "total",
+          "succeeded",
+          "failed",
+          "pending",
+          "quantity",
+          "durationSec"
+        ],
+        "title": "UsageTrendPointOut",
+        "description": "趋势上的一个点（区间内没有数据的那天也会补一个 0）。"
       },
       "UserCreateIn": {
         "properties": {
@@ -15563,6 +17428,14 @@
             "title": "Referencekinds",
             "description": "这个模型能收哪几类参考素材（`image` / `video` / `audio`），空数组 = 纯文生图。前端据此渲染参考素材的类型筛选与数量上限，不在界面里写死"
           },
+          "referenceLimits": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ReferenceLimitOut"
+            },
+            "type": "object",
+            "title": "Referencelimits",
+            "description": "按素材类型分开的上限（键是 `image` / `audio` …）。`maxReferences` 仍是总数上限，两者要一起守；空对象 = 供应商没声明"
+          },
           "isDefault": {
             "type": "boolean",
             "title": "Isdefault",
@@ -15911,17 +17784,6 @@
             ],
             "title": "Startedat",
             "description": "开始生成时间，未开始为 null"
-          },
-          "subtitleErase": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/TaskVariantOut"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "去字幕版；没有派生过时为 null。前端据此显示进度与「原片/去字幕」切换"
           },
           "externalId": {
             "anyOf": [

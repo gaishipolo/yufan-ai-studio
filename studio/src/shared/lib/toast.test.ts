@@ -26,9 +26,29 @@ describe('toast 通用通道', () => {
     toast('失败了', 'error');
 
     expect(items().map((item) => [item.message, item.tone])).toEqual([
-      ['已保存', 'default'],
+      ['已保存', 'info'],
       ['失败了', 'error'],
     ]);
+  });
+
+  it("旧名 'default' 归到 'info'：它一直是中性那一条", () => {
+    toast('随口说一句', 'default');
+
+    expect(items()[0].tone).toBe('info');
+  });
+
+  it('警告与错误停留更久：它们带着「为什么」，2.2 秒只够扫一眼', () => {
+    toast('注意', 'warning');
+    toast('失败了', 'error');
+
+    vi.advanceTimersByTime(2200);
+    expect(items().map((item) => item.tone)).toEqual(['warning', 'error']);
+
+    vi.advanceTimersByTime(2800); // 警告到 5s 走
+    expect(items().map((item) => item.tone)).toEqual(['error']);
+
+    vi.advanceTimersByTime(3000); // 错误到 8s 走
+    expect(items()).toHaveLength(0);
   });
 
   it('默认 2.2 秒后自己消失', () => {

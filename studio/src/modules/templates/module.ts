@@ -18,7 +18,7 @@ export default defineModule({
     {
       path: 'templates/library',
       load: () => import('@/pages/templates/LibraryPage'),
-      permissions: ['template_pack:read'],
+      permissions: ['page:templates'],
       nav: {
         label: '模板库',
         icon: Wand2,
@@ -30,7 +30,7 @@ export default defineModule({
     {
       path: 'templates/specs',
       load: () => import('@/pages/templates/SpecsPage'),
-      permissions: ['template_pack:read'],
+      permissions: ['page:template-specs'],
       nav: {
         label: '模板封装',
         icon: Layers3,

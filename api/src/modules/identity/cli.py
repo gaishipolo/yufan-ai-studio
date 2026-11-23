@@ -1,4 +1,6 @@
-"""身份模块的运维命令：`app create-admin` / `prune-logins` / `prune-sessions` / `sync-roles`。
+"""身份模块的运维命令。
+
+`app create-admin` / `prune-logins` / `prune-sessions` / `sync-roles` / `purge-users`。
 
 ## 为什么这些命令不在 `src/cli.py`
 
@@ -15,7 +17,13 @@ from __future__ import annotations
 import argparse
 import asyncio
 import getpass
+import json
 import sys
+from dataclasses import asdict
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # 只用于注解：命令执行时才 import，别把启动链拖长
+    from modules.identity.purge import PurgeReport
 
 
 def cmd_create_admin(args: argparse.Namespace) -> None:
@@ -141,6 +149,91 @@ def cmd_sync_roles(args: argparse.Namespace) -> None:
         print("快照与当前声明一致，无需收缩")
 
 
+def cmd_purge_users(args: argparse.Namespace) -> None:
+    """按用户名模式批量停用 / 删除账号。默认只预演。
+
+    三个动作互斥：`--dry-run`（默认）/ `--deactivate` / `--delete`。
+    默认只读是刻意的 —— 这条命令的输入是一个**模式**，写宽一个字符，
+    删掉的就不只是冒烟账号了。
+    """
+    from db.session import get_session_factory
+    from modules.identity.purge import Mode, purge_users
+
+    mode: Mode = "deactivate" if args.deactivate else "delete" if args.delete else "dry-run"
+
+    async def run() -> PurgeReport:
+        async with get_session_factory()() as session:
+            return await purge_users(
+                session,
+                pattern=args.pattern,
+                mode=mode,
+                allow_orphans=args.allow_orphans,
+                include_admins=args.include_admins,
+            )
+
+    report = asyncio.run(run())
+    _print_purge(report, as_json=args.json)
+    # 预演即便有 blocker 也是成功的（它的产出就是那句「按这个参数会失败」）
+    if mode != "dry-run" and report.blockers:
+        raise SystemExit(1)
+
+
+def _print_purge(report: PurgeReport, *, as_json: bool) -> None:
+    if as_json:
+        print(json.dumps(asdict(report), ensure_ascii=False, indent=2, default=str))
+        return
+
+    if not report.accounts:
+        print(f"没有用户名匹配 {report.pattern!r} 的账号")
+        return
+
+    active = sum(1 for account in report.accounts if account.is_active)
+    label = {"dry-run": "预演（不改库）", "deactivate": "停用", "delete": "物理删除"}
+    print(
+        f"匹配 {report.pattern!r} 的账号 {report.matched} 个"
+        f"（启用 {active} / 停用 {report.matched - active}）"
+    )
+    print(f"动作：{label[report.mode]}")
+    print()
+    for account in report.accounts:
+        state = "已启用" if account.is_active else "已停用"
+        marker = " [超管]" if account.is_superuser else ""
+        seen = f"{account.last_login_at:%Y-%m-%d %H:%M}" if account.last_login_at else "-"
+        print(f"  {account.username:32} {state}  最后登录 {seen}{marker}")
+
+    print()
+    # 措辞要跟「有没有真执行」对得上：预演与被拒时写「会 / 若执行」，
+    # 否则「会删 12 行」后面紧跟「不会执行」，读起来自相矛盾。
+    if report.mode == "deactivate":
+        if report.executed:
+            print(
+                f"已停用 {active} 个账号、吊销 {report.revoked_sessions} 个会话"
+                "（账号行保留，可再启用）"
+            )
+        else:
+            print(f"会停用 {active} 个仍启用的账号，并吊销它们当前有效的会话")
+    else:
+        prefix = "已删除" if report.executed else "若执行，会删"
+        detail = "、".join(f"{name} {count}" for name, count in report.cleared.items() if count)
+        print(f"{prefix} {report.matched} 行 users，并清掉关联行：{detail or '无'}")
+        left = "、".join(f"{name} {count}" for name, count in report.kept.items() if count)
+        print(f"会留下（不删，变成悬空引用）：{left or '无'}")
+
+    if report.blockers:
+        print()
+        print("不会执行，原因：")
+        for reason in report.blockers:
+            print(f"  - {reason}")
+        return
+
+    if report.mode == "dry-run":
+        print()
+        print("预演结束，没有改库。确认无误后加 --deactivate（可再启用）或 --delete（不可恢复）。")
+    else:
+        print()
+        print("已执行，并写了一条 identity.user.purge 审计。")
+
+
 def register(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     """把本模块的运维命令挂到 `app` 上（框架在组装解析器时调用一次）。"""
     p_admin = sub.add_parser("create-admin", help="创建/修复超级管理员（生产首启必跑）")
@@ -177,3 +270,27 @@ def register(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
         help="同时把权限目录快照收缩成「当前声明的全部」（自动路径只增不减）",
     )
     p_sync_roles.set_defaults(func=cmd_sync_roles)
+
+    p_purge = sub.add_parser(
+        "purge-users",
+        help="按用户名模式批量停用或删除账号（默认只预演：冒烟测试留下的 smoke_* 用这个清）",
+    )
+    p_purge.add_argument(
+        "--pattern",
+        required=True,
+        help="用户名模式：`*` 任意串、`?` 单字符，其余字符按字面（如 'smoke_*'）",
+    )
+    action = p_purge.add_mutually_exclusive_group()
+    action.add_argument("--dry-run", action="store_true", help="只打印会动什么、不动库（默认行为）")
+    action.add_argument(
+        "--deactivate", action="store_true", help="停用并吊销会话（账号行保留，可再启用）"
+    )
+    action.add_argument("--delete", action="store_true", help="物理删除账号及其关联行（不可恢复）")
+    p_purge.add_argument(
+        "--allow-orphans",
+        action="store_true",
+        help="--delete 时允许留下内容引用（任务 / 素材等会失去作者）",
+    )
+    p_purge.add_argument("--include-admins", action="store_true", help="允许处理超级管理员账号")
+    p_purge.add_argument("--json", action="store_true", help="以 JSON 输出（便于核对）")
+    p_purge.set_defaults(func=cmd_purge_users)

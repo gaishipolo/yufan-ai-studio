@@ -9,6 +9,10 @@ export interface PermissionItem {
   code: string;
   name: string;
   description: string;
+  /** 页面权限关联的接口权限码；只有页面项有 */
+  requires?: readonly string[];
+  /** 页面路由；只有页面项有 */
+  route?: string;
 }
 
 export interface PermissionGroup {
@@ -43,9 +47,18 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
       { code: 'task:read:all', name: '查看并管理他人任务', description: '列表 scope=all / 详情 / 删除的跨用户判定依据；不含重试' },
       { code: 'task:retry:any', name: '重试他人任务', description: '会消耗额度：重试他人任务前额外校验此权限' },
       { code: 'task:update', name: '编辑/重试自己的任务', description: '' },
+      { code: 'template_pack:case:read', name: '查看模板案例库并复用案例', description: '' },
+      { code: 'template_pack:case:write', name: '发布或管理模板案例（编辑 / 下架 / 删除）', description: '' },
       { code: 'template_pack:create', name: '创建或保存模板封装草稿', description: '' },
       { code: 'template_pack:publish', name: '发布或停用模板封装', description: '' },
       { code: 'template_pack:read', name: '查看模板封装', description: '' },
+    ],
+  },
+  {
+    group: '数据统计',
+    items: [
+      { code: 'usage:read', name: '查看用量看板', description: '查看自己在指定区间内的生成用量（次数 / 时长 / 张数）' },
+      { code: 'usage:read:all', name: '查看全部用量', description: '用量看板的数据范围可以切到「全部成员」，并按使用人查看构成' },
     ],
   },
   {
@@ -90,6 +103,21 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
       { code: 'library:share:direct', name: '共享无需审批（撤销仍需审批）', description: '' },
       { code: 'library:tag:manage', name: '管理标签词表（改名 / 删除）', description: '' },
       { code: 'library:update', name: '修改本人资产的名称与标签', description: '' },
+    ],
+  },
+  {
+    group: '页面',
+    items: [
+      { code: 'page:image', name: '生图', description: '关联接口：catalog:read, image:create, image:delete, image:read, image:read:all, image:retry:any', requires: ['catalog:read', 'image:create', 'image:delete', 'image:read', 'image:read:all', 'image:retry:any'], route: '/image' },
+      { code: 'page:library', name: '资产库', description: '关联接口：library:case:read, library:create, library:delete, library:delete:any, library:draft:review, library:generation:ingest, library:read, library:share, library:share:approve, library:share:approve:group, library:share:approve:team, library:share:direct, library:tag:manage, library:update', requires: ['library:case:read', 'library:create', 'library:delete', 'library:delete:any', 'library:draft:review', 'library:generation:ingest', 'library:read', 'library:share', 'library:share:approve', 'library:share:approve:group', 'library:share:approve:team', 'library:share:direct', 'library:tag:manage', 'library:update'], route: '/library' },
+      { code: 'page:shots', name: '镜头库', description: '关联接口：shot:read', requires: ['shot:read'], route: '/shots' },
+      { code: 'page:storyboards', name: '分镜模板库', description: '关联接口：storyboard:read', requires: ['storyboard:read'], route: '/storyboards' },
+      { code: 'page:studio', name: '生成工作台', description: '关联接口：catalog:read, image:create, task:create', requires: ['catalog:read', 'image:create', 'task:create'], route: '/studio' },
+      { code: 'page:task-center', name: '任务中心', description: '关联接口：image:read, model_driver:read, task:create, task:delete, task:read, task:read:all, task:retry:any, task:update', requires: ['image:read', 'model_driver:read', 'task:create', 'task:delete', 'task:read', 'task:read:all', 'task:retry:any', 'task:update'], route: '/tasks' },
+      { code: 'page:template-specs', name: '模板封装', description: '关联接口：library:case:read, library:case:write, library:read, template_pack:case:read, template_pack:case:write, template_pack:create, template_pack:publish, template_pack:read', requires: ['library:case:read', 'library:case:write', 'library:read', 'template_pack:case:read', 'template_pack:case:write', 'template_pack:create', 'template_pack:publish', 'template_pack:read'], route: '/templates/specs' },
+      { code: 'page:templates', name: '模板库', description: '关联接口：template_pack:read', requires: ['template_pack:read'], route: '/templates/library' },
+      { code: 'page:usage', name: '用量看板', description: '按区间查看生成次数、已产出时长 / 张数、趋势与构成', requires: ['usage:read', 'usage:read:all'], route: '/usage' },
+      { code: 'page:user-access', name: '用户与权限', description: '关联接口：identity:create, identity:delete, identity:group:create, identity:group:delete, identity:group:member:manage, identity:group:permission:manage, identity:group:read, identity:group:update, identity:read, identity:role:manage, identity:team:manage, identity:update, identity:user:permission:manage', requires: ['identity:create', 'identity:delete', 'identity:group:create', 'identity:group:delete', 'identity:group:member:manage', 'identity:group:permission:manage', 'identity:group:read', 'identity:group:update', 'identity:read', 'identity:role:manage', 'identity:team:manage', 'identity:update', 'identity:user:permission:manage'], route: '/system/user-access' },
     ],
   },
 ];
@@ -139,6 +167,16 @@ export const PERMISSION_CODES = [
   'model_driver:read',
   'model_driver:read:all',
   'model_driver:retry:any',
+  'page:image',
+  'page:library',
+  'page:shots',
+  'page:storyboards',
+  'page:studio',
+  'page:task-center',
+  'page:template-specs',
+  'page:templates',
+  'page:usage',
+  'page:user-access',
   'shot:read',
   'storyboard:read',
   'task:create',
@@ -147,9 +185,13 @@ export const PERMISSION_CODES = [
   'task:read:all',
   'task:retry:any',
   'task:update',
+  'template_pack:case:read',
+  'template_pack:case:write',
   'template_pack:create',
   'template_pack:publish',
   'template_pack:read',
+  'usage:read',
+  'usage:read:all',
 ] as const;
 
 export type PermissionCode = (typeof PERMISSION_CODES)[number];

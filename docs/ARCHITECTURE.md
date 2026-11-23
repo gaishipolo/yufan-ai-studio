@@ -190,6 +190,7 @@
 | `infra/ai/base.py` | AI 模型供应商抽象（`ModelProvider` Protocol）。 |
 | `infra/ai/echo.py` | Echo 供应商：本地开发占位，不调用任何外部 API。 |
 | `modules/model_driver/drivers/agnes.py` | Agnes 生图**驱动**（单文件，自动载入）：同步接口，`submit` 直接返回终态快照；支持图生图/多图合成（`reference_urls` → `extra_body.image`）。 |
+| `modules/model_driver/drivers/agnes_video.py` | Agnes 视频**驱动**（单文件，自动载入）：异步任务，`submit` 只拿任务号、`poll` 收进度；支持参考图与参考音频（**内联 data URI**，见 `InlineReferencesCapable`），提示词里的 `{{Mixed N}}` 翻成 `<Picture N>` / `<Audio N>`。 |
 | `modules/model_driver/drivers/bailian.py` | 百炼 Wan3 视频**驱动**（自动载入）：异步任务；参考素材由驱动自己的 `prepare_inputs()` 先直传百炼 OSS 再拼 `oss://` 直链（Wan 只认公网 URL）。付费提交只允许一次、回执落盘（`bailian-submission.json`），拒绝/未知分别收敛。 |
 | `infra/ai/router.py` | 模型路由：`model` 字符串 → 具体供应商。 |
 | `modules/model_driver/drivers/libtv.py` | LibTV 视频**驱动**（自动载入）：模型 `libtv-wan3-replacement`，只接收归档工作区引用；提交 / 轮询 / 取消交给 `generation.runner`，通用入口缺 `inputs/request.json` 时它先补跑 `upload`。 |

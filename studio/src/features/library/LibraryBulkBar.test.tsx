@@ -83,3 +83,24 @@ describe('LibraryBulkBar · 组建封装', () => {
     expect(screen.queryByRole('button', { name: '组建封装' })).not.toBeInTheDocument();
   });
 });
+
+describe('LibraryBulkBar · 批量共享', () => {
+  it('库内入口给「共享」，点了把动作交回上层选目标', async () => {
+    const user = userEvent.setup();
+    const { onAction } = renderBar();
+    await user.click(screen.getByRole('button', { name: '共享' }));
+    expect(onAction).toHaveBeenCalledWith('share');
+  });
+
+  it('没有 library:share 时连按钮都不摆，跟卡片上的单条共享同口径', () => {
+    renderBar({ canShare: false });
+    expect(screen.queryByRole('button', { name: '共享' })).not.toBeInTheDocument();
+  });
+
+  it('草稿箱 / 回收站不给「共享」：只有库内资产能发起共享', () => {
+    renderBar({ view: 'drafts' });
+    expect(screen.queryByRole('button', { name: '共享' })).not.toBeInTheDocument();
+    renderBar({ view: 'trash' });
+    expect(screen.queryByRole('button', { name: '共享' })).not.toBeInTheDocument();
+  });
+});

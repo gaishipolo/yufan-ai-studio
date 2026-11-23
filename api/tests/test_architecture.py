@@ -194,6 +194,48 @@ def test_modules_do_not_import_each_other() -> None:
     assert not offenders, "业务模块之间出现横向依赖：\n" + "\n".join(offenders)
 
 
+# --------------------------------------------------------------------------- #
+# 测试之间的 import
+# --------------------------------------------------------------------------- #
+TESTS_DIR = API_ROOT / "tests"
+
+
+def test_test_modules_import_siblings_by_bare_name() -> None:
+    """测试之间互相引用只能写裸模块名（`from test_pages import ...`）。
+
+    `tests/` 故意没有 `__init__.py`：pytest 的 prepend 模式把每个测试文件所在
+    目录插进 sys.path，裸名 import 因此在**任何**入口下都成立。而写成
+    `from tests.test_pages import ...` 只在 cwd 恰好位于 sys.path 上时成立 ——
+    本机习惯的 `python -m pytest` 会把 cwd 放进去（`sys.path[0] == ''`），
+    CI 里直接执行 `pytest` 这个入口脚本不会（`sys.path[0]` 是脚本所在目录）。
+
+    代价是这条错了整整一版都"绿"着：CI 从合入那天起红，报错是
+    `ModuleNotFoundError: No module named 'tests'`，两条用例收集失败 →
+    `Interrupted: 2 errors during collection`，后面一千多个用例一个都没跑，
+    而本地 `python -m pytest` 天天通过（2026-11-21 实测）。
+
+    判据是「路径无关」：只认 pytest 会替我们插进 sys.path 的那种写法。
+    """
+    offenders: list[str] = []
+    for path in _python_files(TESTS_DIR):
+        for imported in _imported_modules(path):
+            if imported == "tests" or imported.startswith("tests."):
+                offenders.append(f"{path.name} -> {imported}")
+
+    assert not offenders, (
+        "测试之间用了包名前缀 import：\n"
+        + "\n".join(offenders)
+        + "\n改成裸模块名（`from test_pages import ...`）：`tests/` 没有 __init__.py，"
+        "带 `tests.` 前缀只在 `python -m pytest` 下可导入，CI 用 `pytest` 会在收集阶段崩掉"
+    )
+
+
+def test_test_import_scan_is_not_vacuous() -> None:
+    """上面那条的扫描口径自检：扫不到文件时它会永远绿。"""
+    files = _python_files(TESTS_DIR)
+    assert len(files) >= 100, f"tests/ 下只扫到 {len(files)} 个 .py（预期 ≥100），扫描口径退化了"
+
+
 def test_template_module_does_not_resolve_model_providers_itself() -> None:
     """模板库不许自己解析模型层。
 
@@ -284,6 +326,9 @@ def test_permissions_are_declared_by_owners() -> None:
     declared: set[str] = set()
     for spec in discover_modules():
         declared |= set(spec.permission_codes())
+        # 页面权限同样进目录（管理员要在角色界面勾它），但它在 `pages` 里声明，
+        # 不在 `permissions` 里 —— 两边都收才不会把 9 个页面码判成「无人声明」。
+        declared |= set(spec.page_codes())
 
     assert declared == set(catalog.codes())
     for code in declared:
@@ -1004,3 +1049,191 @@ def test_require_scan_is_not_vacuous() -> None:
     )
     assert len(codes) >= 15, f"只扫到 {len(codes)} 个字面量权限码（预期 ≥15）：解析口径变了"
     assert "library:read" in codes, "连确定以字面量出现的 library:read 都没扫到，文件定位有问题"
+
+
+# --------------------------------------------------------------------------- #
+# 版本字段的取值表达
+#
+# P2-2 之后，版本只有两种合法表达：**一个真实版本（≥1）** 或 **None（明确不校验）**。
+# 0 不再是合法版本（入参层就 422），前端固定传 0 的老写法会直接被拒。
+#
+# 于是有两种新的错误写法要守住：
+# - 写死 0：语义上已经失效，运行时才发现（422），不如编译期就被指出来；
+# - `or` 兜底（`x or y`）：0 会被当成「没带」，而 0 已经非法——这行代码的真实
+#   含义（没带就回落）被一个永远不成立的分支掩盖，回落逻辑从此静默失效。
+#
+# 这类缺口靠 review 抓不干净——写的人只会觉得「先留个 0 表示不关心」，
+# 所以用机器守住。
+# --------------------------------------------------------------------------- #
+#: 会消费资产版本的入参模型 → 版本字段名
+_VERSIONED_INPUTS = {
+    "BulkIn": "expected_versions",
+    "AssetPatchIn": "expected_version",
+    "DraftDecisionIn": "expected_version",
+    "ShareRequestIn": "expected_version",
+    "ShareDecisionIn": "expected_version",
+    "SetPurposeIn": "expected_version",
+    "TextAssetUpdateIn": "expected_version",
+    "TextAssetRestoreIn": "expected_version",
+}
+
+
+def _version_problems(path: Path) -> list[str]:
+    """一个文件里「版本字段用错了表达」的问题清单。
+
+    **不带版本不算问题**：不传就是 `None`，即「明确不校验」，是合法用法
+    （单页操作没必要为了一个数字失败一次）。这条守卫只拦两种坏写法。
+    """
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    problems: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        name = _base_name(node.func)
+        field = _VERSIONED_INPUTS.get(name)
+        if field is None:
+            continue
+        value = next((kw.value for kw in node.keywords if kw.arg == field), None)
+        if value is None:
+            continue
+        if isinstance(value, ast.Constant) and value.value == 0:
+            problems.append(
+                f"{path.name}:{node.lineno} {name}() 的 {field} 写死 0"
+                "（0 不是合法版本，入参层就会 422）"
+            )
+        elif isinstance(value, ast.BoolOp) and isinstance(value.op, ast.Or):
+            problems.append(
+                f"{path.name}:{node.lineno} {name}() 的 {field} 用了 `or` 兜底："
+                "0 会被当成「没带」，改成显式的 None 判断"
+            )
+    return problems
+
+
+def test_version_arguments_never_use_zero_or_or_fallbacks() -> None:
+    """版本字段不得写死 0，也不得用 `or` 兜底。
+
+    漏传版本 → 静默按「不校验」处理 → A 打开列表后 B 改了名，A 的批量改名会把
+    B 的修改冲掉，且没有任何提示（REVIEW_2026-11-23 重要#5 / 一般#6）。
+    """
+    problems: list[str] = []
+    checked = 0
+    for path in _python_files(MODULES_DIR / "library"):
+        found = _version_problems(path)
+        checked += len(
+            [
+                node
+                for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+                if isinstance(node, ast.Call) and _base_name(node.func) in _VERSIONED_INPUTS
+            ]
+        )
+        problems.extend(found)
+
+    assert checked >= 3, (
+        f"只扫到 {checked} 处版本化入参构造（预期 ≥3）：扫描口径退化了，"
+        "这条守卫会永远绿"
+    )
+    assert not problems, "版本字段用错了表达：\n" + "\n".join(f"  - {p}" for p in problems)
+
+
+def test_version_guard_catches_zero_and_or_fallbacks(tmp_path: Path) -> None:
+    """守卫自身的自检：故意违规的样例必须被抓出来。"""
+    sample = tmp_path / "sample.py"
+    sample.write_text(
+        # 合法：不带版本 = None = 明确不校验
+        "AssetPatchIn(name='x')\n"
+        # 违规①：写死 0
+        "AssetPatchIn(name='x', expected_version=0)\n"
+        # 违规②：`or` 兜底
+        "AssetPatchIn(name='x', expected_version=version or 0)\n",
+        encoding="utf-8",
+    )
+    problems = _version_problems(sample)
+    assert len(problems) == 2, f"自检失败：应该抓到 2 处，实际 {problems}"
+
+
+# --------------------------------------------------------------------------- #
+# 对外错误字段不得写原始异常
+#
+# `str(exc)` 里可能有内部路径、SQL 片段、数据库连接串、上游地址。这些字段
+# 会随列表/详情接口返回前端，等于开了一条信息泄露通道
+# （REVIEW_2026-11-23 重要#3）。完整 traceback 只进日志。
+# --------------------------------------------------------------------------- #
+#: 常见的异常变量名
+_EXCEPTION_NAMES = {"exc", "e", "err", "error", "exception"}
+
+
+def _error_field_problems(path: Path) -> list[str]:
+    """一个文件里「把原始异常写进对外错误字段」的问题清单。"""
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    problems: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        if not any(
+            isinstance(target, ast.Attribute) and target.attr == "error" for target in node.targets
+        ):
+            continue
+        value = node.value
+        if isinstance(value, ast.Call) and _base_name(value.func) == "str":
+            for arg in value.args:
+                if isinstance(arg, ast.Name) and arg.id.lower() in _EXCEPTION_NAMES:
+                    problems.append(f"{path.name}:{node.lineno} str({arg.id}) 写进了对外错误字段")
+        elif isinstance(value, ast.JoinedStr):
+            names = {
+                inner.id
+                for part in value.values
+                if isinstance(part, ast.FormattedValue)
+                for inner in ast.walk(part.value)
+                if isinstance(inner, ast.Name)
+            }
+            if names & _EXCEPTION_NAMES:
+                problems.append(
+                    f"{path.name}:{node.lineno} f-string 里带了异常变量，写进了对外错误字段"
+                )
+    return problems
+
+
+def test_outward_error_fields_never_carry_the_raw_exception() -> None:
+    """对外错误字段只能写用户文案，不能写 `str(exc)`。
+
+    `record.error` / `job.error` 这类字段会随接口返回前端。
+    """
+    problems: list[str] = []
+    checked = 0
+    for path in _python_files(SRC):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        skip = _docstring_nodes(tree)
+        checked += sum(
+            1
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Assign)
+            and id(node) not in skip
+            and any(
+                isinstance(target, ast.Attribute)
+                and target.attr == "error"
+                for target in node.targets
+            )
+        )
+        problems.extend(_error_field_problems(path))
+
+    assert checked >= 3, (
+        f"只扫到 {checked} 处对外错误字段赋值（预期 ≥3）：扫描口径退化了，"
+        "这条守卫会永远绿"
+    )
+    assert not problems, "对外错误字段写进了原始异常：\n" + "\n".join(f"  - {p}" for p in problems)
+
+
+def test_error_field_guard_catches_a_raw_exception(tmp_path: Path) -> None:
+    """守卫自身的自检：故意违规的样例必须被抓出来。"""
+    sample = tmp_path / "sample.py"
+    sample.write_text(
+        "try:\n"
+        "    pass\n"
+        "except Exception as exc:\n"
+        "    record.error = str(exc)\n"
+        "    job.error = f'打包失败：{exc}'\n"
+        "    other.error = '正常文案'\n",
+        encoding="utf-8",
+    )
+    problems = _error_field_problems(sample)
+    assert len(problems) == 2, f"自检失败：应该抓到 2 处，实际 {problems}"

@@ -44,7 +44,9 @@ from modules.identity.schema import (
     PasswordChangeIn,
     PasswordPolicyOut,
     PermissionCatalogOut,
+    PermissionExceptionsIn,
     PermissionsIn,
+    PermissionTreeOut,
     ProfileUpdateIn,
     RefreshIn,
     ResetPasswordIn,
@@ -390,6 +392,16 @@ async def set_group_permissions(
     )
 
 
+@router.get(
+    "/permission-tree",
+    summary="「分组 → 用户」的完整树（权限总览的左栏）",
+)
+async def permission_tree(
+    service: IdentityServiceDep, actor: IdentityReadDep
+) -> ApiResponse[PermissionTreeOut]:
+    return ApiResponse.ok(await service.permission_tree())
+
+
 @router.get("/users/{user_id}/permissions", summary="用户单独授予的权限")
 async def user_permissions(
     user_id: str, service: IdentityServiceDep, actor: IdentityReadDep
@@ -406,6 +418,31 @@ async def set_user_permissions(
 ) -> ApiResponse[list[str]]:
     return ApiResponse.ok(
         await service.set_user_permissions(user_id, payload.permissions, actor)
+    )
+
+
+@router.get(
+    "/users/{user_id}/permission-exceptions",
+    summary="用户的个人例外（只对他关掉的权限码）",
+)
+async def user_permission_exceptions(
+    user_id: str, service: IdentityServiceDep, actor: IdentityReadDep
+) -> ApiResponse[list[str]]:
+    return ApiResponse.ok(await service.user_permission_exceptions(user_id))
+
+
+@router.put(
+    "/users/{user_id}/permission-exceptions",
+    summary="设置个人例外（整组替换；不动他的授予）",
+)
+async def set_permission_exceptions(
+    user_id: str,
+    payload: PermissionExceptionsIn,
+    service: IdentityServiceDep,
+    actor: IdentityUserPermissionManageDep,
+) -> ApiResponse[list[str]]:
+    return ApiResponse.ok(
+        await service.set_permission_exceptions(user_id, payload.exceptions, actor)
     )
 
 

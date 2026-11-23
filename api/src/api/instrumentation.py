@@ -23,6 +23,7 @@ from typing import Any
 from core.config import settings
 from core.logging import get_logger
 from core.metrics import HTTP_BUCKETS, METRICS
+from infra.queue.base import StatsCapable
 
 logger = get_logger(__name__)
 
@@ -139,7 +140,7 @@ async def _refresh_queue() -> None:
 
     try:
         queue = get_queue()
-        stats = getattr(queue, "stats", None)
+        stats = queue.stats if isinstance(queue, StatsCapable) else None
         if callable(stats):
             for state, count in (await stats()).items():
                 QUEUE_JOBS.set(count, state=str(state))

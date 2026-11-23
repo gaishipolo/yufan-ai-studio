@@ -100,7 +100,7 @@ export function LibraryShareModal({
         target: option.target,
         groupId: option.groupId,
         reason: reason.trim(),
-        expectedVersion: asset.stateVersion ?? 0,
+        expectedVersion: asset.stateVersion,
       },
       {
         onSuccess: (result) => {

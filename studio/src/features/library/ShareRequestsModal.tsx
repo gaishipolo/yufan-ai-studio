@@ -23,6 +23,23 @@ export interface ShareRequestsModalProps {
  * 返回」呈现，不按权限点藏按钮——否则持细分审批码的人会看到一张永远点不动的
  * 列表，或反过来「看不到却能通过接口点」。
  */
+/**
+ * 申请之后资产被改过没有。
+ *
+ * `requestStateVersion` 是申请单入库时的快照，`stateVersion` 是资产当前版本：
+ * 两者对不上就说明资产在申请之后被改过（改名、换标签、改可见性）。
+ * 这时**提示**审批人，不替他决定——申请单本来就是快照，审批权在审批人手里。
+ */
+function isStaleRequest(item: ShareRequestOut): boolean {
+  return (
+    item.status === 'pending' &&
+    item.requestStateVersion !== undefined &&
+    item.requestStateVersion > 0 &&
+    item.stateVersion !== undefined &&
+    item.requestStateVersion !== item.stateVersion
+  );
+}
+
 export function ShareRequestsModal({ open, onClose }: ShareRequestsModalProps) {
   const [scope, setScope] = useState<'pending' | 'mine'>('pending');
   const pending = useShareRequests('pending', open);
@@ -43,7 +60,15 @@ export function ShareRequestsModal({ open, onClose }: ShareRequestsModalProps) {
       return;
     }
     decide.mutate(
-      { id: item.id, approve: action === 'approve', body: { expectedVersion: 0 } },
+      {
+        id: item.id,
+        approve: action === 'approve',
+        // 通过时带上审批人**看到**的资产版本：后端比对不一致就 409，
+        // 避免「基于旧界面的审批」生效（原先固定传 0，等于把这道校验关掉了）。
+        // 驳回不传版本：驳回一条过时的申请单是正当操作，不能被 409 拦住。
+        // 版本字段「不传」= 明确不校验；0 不是合法版本，后端会直接拒。
+        body: action === 'approve' ? { expectedVersion: item.stateVersion } : {},
+      },
       {
         onSuccess: () => toast(action === 'approve' ? '已通过' : '已驳回'),
         onError,
@@ -90,6 +115,7 @@ export function ShareRequestsModal({ open, onClose }: ShareRequestsModalProps) {
                   >
                     {item.status === 'pending' ? '待审' : item.status === 'approved' ? '已通过' : '已驳回'}
                   </Chip>
+                  {isStaleRequest(item) && <Chip tone="warn">资产已变更</Chip>}
                 </div>
                 <p className="mt-1 text-body text-ink-mute">
                   {item.action === 'share' ? '共享到' : '撤销'}

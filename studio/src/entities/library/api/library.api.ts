@@ -129,7 +129,11 @@ export const libraryApi = {
    * 独立于 `patch`：改用途会改变这条素材的可见范围（案例对所有人可读），
    * 不该混在改名请求里顺手做掉。
    */
-  setPurpose: (id: string, purpose: string, expectedVersion = 0) =>
+  /**
+   * `expectedVersion` 传了才做乐观锁校验；**不传就是「明确不校验」**
+   * （后端只认真实版本或缺省，0 会被拒）。
+   */
+  setPurpose: (id: string, purpose: string, expectedVersion?: number) =>
     api.post<LibraryAssetOut>(`/library/assets/${id}/purpose`, {
       purpose,
       expectedVersion,

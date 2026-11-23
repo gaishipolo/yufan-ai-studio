@@ -95,6 +95,8 @@ class IngestRequest:
     替换是破坏性操作，不能接受跨用户覆盖。
     """
     generation: Mapping[str, object] = field(default_factory=dict)
+    #: 生成侧显式配置的标签。入库时还会**并上参考素材身上的可打标标签**
+    #: （从上面这份冻结快照读参考素材 id），所以产物最终标签可能多于这里。
     tag_ids: Sequence[str] = field(default_factory=tuple)
 
 

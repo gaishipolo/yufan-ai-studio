@@ -3,18 +3,25 @@ import {
   isValidElement,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type ReactElement,
   type ReactNode,
 } from 'react';
+import { createPortal } from 'react-dom';
 import { Check, ChevronDown } from 'lucide-react';
 import { cn } from '@/shared/lib/cn';
 import { useDropPlacement } from '@/shared/hooks/useDropPlacement';
 
 /** 浮层大致高度：列表 196 + 内边距 + 新建行。下方不够就朝上展开。 */
 const POPOVER_MIN_SPACE = 250;
+
+/** 浮层渲染到 body 时的层级：必须高于 Modal 的 Z_BASE(100) + 栈位偏移，
+    否则在弹窗里展开的浮层会被弹窗自己盖住。 */
+const POPOVER_Z_INDEX = 300;
 
 export interface MultiSelectOption {
   value: string;
@@ -84,13 +91,40 @@ export function MultiSelect({
   /* 浮层朝上还是朝下：量出来的，不是声明的。贴底的批量栏里朝下展开会落到视口外
      （只看得到一条边）。方向逻辑在 `useDropPlacement` 里，模板封装的 @ 候选面板
      用的是同一份 —— 两份实现漂移就是「同一个浮层两个页面表现不一样」。 */
-  const { side } = useDropPlacement(rootRef, listRef, open, POPOVER_MIN_SPACE);
+  const { side, space } = useDropPlacement(rootRef, listRef, open, POPOVER_MIN_SPACE);
   const dropUp = side === 'top';
+
+  /* 浮层用 Portal 渲染到 body（见下方 JSX），所以不能靠 `absolute` 挂在 root 上 ——
+     Modal 内容区是 `overflow-auto`，祖先的裁剪会把浮层切掉（资产库上传弹窗里
+     下拉框只露出半截）。这里自己记住锚点的视口坐标，用 `fixed` 定位绕开所有祖先。
+     useDropPlacement 只回答方向/剩余空间，不含坐标；它还要给模板 @ 候选面板用，
+     不为一个调用点改返回形状。 */
+  const [anchorRect, setAnchorRect] = useState<DOMRect | null>(null);
+  useLayoutEffect(() => {
+    if (!open) {
+      setAnchorRect(null);
+      return undefined;
+    }
+    const measure = () => {
+      const rect = rootRef.current?.getBoundingClientRect();
+      if (rect) setAnchorRect(rect);
+    };
+    measure();
+    window.addEventListener('scroll', measure, true);
+    window.addEventListener('resize', measure);
+    return () => {
+      window.removeEventListener('scroll', measure, true);
+      window.removeEventListener('resize', measure);
+    };
+  }, [open]);
 
   useEffect(() => {
     if (!open) return undefined;
     const onPointerDown = (event: PointerEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+      const target = event.target as Node;
+      /* Portal 出去的浮层不在 rootRef 里 —— 不把 listRef 也算进来，
+         点 checkbox 会被当成「点在外面」，浮层当场收起，一个都选不上。 */
+      if (!rootRef.current?.contains(target) && !listRef.current?.contains(target)) setOpen(false);
     };
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
@@ -172,15 +206,24 @@ export function MultiSelect({
         />
       </button>
 
-      {open && (
+      {open && anchorRect && createPortal(
         <div
           id={listId}
           ref={listRef}
           data-placement={dropUp ? 'top' : 'bottom'}
-          className={cn(
-            'absolute left-0 right-0 z-30 overflow-hidden rounded-lg border border-line bg-white shadow-pop',
-            dropUp ? 'bottom-[calc(100%+4px)]' : 'top-[calc(100%+4px)]',
-          )}
+          /* fixed 定位：脱离 Modal 的 overflow-auto 祖先，浮层不再被弹窗边框切掉。
+             maxHeight 用 hook 量出的那一侧剩余空间封顶，别让它溢出视口。 */
+          style={{
+            position: 'fixed',
+            left: anchorRect.left,
+            width: anchorRect.width,
+            zIndex: POPOVER_Z_INDEX,
+            maxHeight: Math.max(96, space),
+            ...(dropUp
+              ? { bottom: window.innerHeight - anchorRect.top + 4 }
+              : { top: anchorRect.bottom + 4 }),
+          } satisfies CSSProperties}
+          className="overflow-hidden rounded-lg border border-line bg-white shadow-pop"
         >
           {options.length === 0 ? (
             <div className="px-3 py-4 text-center">
@@ -230,7 +273,8 @@ export function MultiSelect({
               })}
             </ul>
           )}
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );

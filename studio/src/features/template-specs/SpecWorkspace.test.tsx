@@ -24,8 +24,10 @@ const { specs, trashedSpecs, mutations, canState } = vi.hoisted(() => ({
   specs: { current: [] as TemplateSpecOut[] },
   trashedSpecs: { current: [] as TemplateSpecOut[] },
   mutations: {
-    /* 带参数：有用例要断言「提交上去的提示词是什么」。 */
-    save: vi.fn((_payload: { prompt: string }) =>
+    /* 入参就是提交体（`TemplateSpecIn`）：有用例要断言「提交上去的提示词 /
+       槽位 / 容器名是什么」。只声明 `{prompt}` 的话，断言别的字段会直接类型报错，
+       而补一个 `as any` 又会把拼错的字段一起放过。 */
+    save: vi.fn((_payload: TemplateSpecIn) =>
       Promise.resolve({ key: 'spec-1', revision: 2 }),
     ),
     publish: vi.fn(() => Promise.resolve({ version: 3, spec: {} })),
@@ -407,6 +409,37 @@ describe('模板封装 · 未保存就离开', () => {
     expect(screen.getByRole('button', { name: '新建模板' })).toBeInTheDocument();
   });
 
+  it('只改了容器名也要算「有未保存改动」', async () => {
+    /* 容器名进了草稿指纹。漏进去的表现是：作者改完名字点返回，
+       页面一句不问就走 —— 名字丢了，而「刚刚改过」的画面还在眼前。
+
+       **必须打开一份已经有两个容器的草稿**：从空模板加容器的话，加槽位
+       本身就把指纹改掉了，改不改名都会 dirty，这条用例谁来写都是绿的。 */
+    const user = await enterEditor([
+      specOf({
+        status: 'draft',
+        draft: {
+          key: 'spec-1',
+          name: '商品图模板',
+          model: 'libtv-wan3-replacement',
+          prompt: '{{Mixed 1}} 与 {{Mixed 2}}',
+          slots: [
+            {key: 'image_1', type: 'image', group: 'g1', position: 0, label: '正面图'},
+            {key: 'image_2', type: 'image', group: 'g1', position: 1, label: '三视图'},
+          ],
+          groups: [{key: 'g1', label: '封装槽位1'}],
+        },
+      }),
+    ]);
+
+    const name = screen.getByLabelText('封装名称');
+    await user.clear(name);
+    await user.type(name, '三视图套图');
+    await user.click(screen.getByRole('button', { name: '返回模板列表' }));
+
+    expect(screen.getByRole('dialog', { name: '还有未保存的修改' })).toBeInTheDocument();
+  });
+
   it('改过名字再点返回：先问一声，不直接丢掉', async () => {
     const user = await enterEditor();
 
@@ -592,13 +625,60 @@ describe('模板封装 · 加封装容器', () => {
     await user.click(screen.getByRole('button', { name: /加槽位/ }));
     await user.click(screen.getByRole('menuitem', { name: /封装/ }));
 
-    const header = screen.getByText('封装槽位');
+    /* 容器标题现在是一个**可改名**的输入框（以前是写死的「封装槽位」），
+       所以按无障碍名找，不按文本找 —— 按文本找会随默认名一起变。 */
+    const header = screen.getByLabelText('封装名称');
     const box = header.closest('div.rounded-xl');
     expect(box).not.toBeNull();
+    // 新建时就把默认名**写进草稿**（不是等作者改一次才显示）：按段序「封装槽位1」
+    expect(header).toHaveValue('封装槽位1');
     // 默认两个子槽位（左图/右图这类一对是最常见的用法）
     expect(
       within(box as HTMLElement).getAllByRole('button', { name: '展开更多设置' }),
     ).toHaveLength(2);
+  });
+
+  /* 名字是**作者可见的数据**，要能存下来（模板库那边按它显示）。
+     只改界面文案、不把它放进提交体，作者改完保存后以为生效了，回到列表还是
+     原来的名字 —— 这类「改了但没存」只有靠断言提交体才抓得到。 */
+  it('容器名可改，改名随草稿一起提交', async () => {
+    const user = userEvent.setup();
+    renderWorkspace([specOf({ status: 'draft' })]);
+    await user.click(cardOf('商品图模板').getByRole('button', { name: '编辑' }));
+
+    await user.click(screen.getByRole('button', { name: /加槽位/ }));
+    await user.click(screen.getByRole('menuitem', { name: /封装/ }));
+
+    const name = screen.getByLabelText('封装名称');
+    await user.clear(name);
+    await user.type(name, '三视图套图');
+
+    mutations.save.mockClear();
+    await user.click(screen.getByRole('button', { name: '保存草稿' }));
+
+    const sent = mutations.save.mock.calls[0][0];
+    expect(sent.groups).toEqual([{ key: 'g1', label: '三视图套图' }]);
+    // 名字要挂在成员上（组内相邻），否则发布时它写不进任何一行
+    expect((sent.slots ?? []).filter(slot => slot.group === 'g1')).toHaveLength(2);
+  });
+
+  it('删掉整个容器时，名字一起清掉', async () => {
+    const user = userEvent.setup();
+    renderWorkspace([specOf({ status: 'draft' })]);
+    await user.click(cardOf('商品图模板').getByRole('button', { name: '编辑' }));
+
+    await user.click(screen.getByRole('button', { name: /加槽位/ }));
+    await user.click(screen.getByRole('menuitem', { name: /封装/ }));
+    await user.click(
+      screen.getByRole('button', { name: '删除整个封装槽位（连同里面的槽位）' }),
+    );
+
+    mutations.save.mockClear();
+    await user.click(screen.getByRole('button', { name: '保存草稿' }));
+
+    /* 容器没了，名字不能还留在 `groups` 里：发布时它写不进快照（没有成员行），
+       但草稿指纹会因此与后端不一致 —— 下次保存会平白多一次修订。 */
+    expect(mutations.save.mock.calls[0][0].groups).toEqual([]);
   });
 });
 
@@ -976,5 +1056,49 @@ describe('模板封装 · 拖动整个封装', () => {
     fireDrag(row, 'dragover', 5);
     expect(document.querySelector('[data-drop-line="before"]')).not.toBeNull();
     expect(document.querySelector('[data-drop-line="after"]')).toBeNull();
+  });
+});
+
+describe('模板封装 · 删除前先问一句', () => {
+  /* 断言「还没发请求」要看调用次数，所以每个用例从干净的 mock 开始。 */
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  /* 删除是**方向不可逆**的动作（虽然能恢复），所以必须有一层确认。
+     确认框是页面内的 `ConfirmDialog`：原生 `window.confirm` 样式不受控，
+     还会把整页卡住 —— 用户看不清这次到底会发生什么。 */
+  it('点「删除」先弹确认框，还没确认就不发请求', async () => {
+    const user = userEvent.setup();
+    renderWorkspace([specOf({ status: 'draft' })]);
+
+    await user.click(cardOf('商品图模板').getByRole('button', { name: '删除' }));
+
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog).toHaveTextContent('移进回收站？');
+    expect(dialog).toHaveTextContent('商品图模板');
+    expect(mutations.remove).not.toHaveBeenCalled();
+  });
+
+  it('取消：什么都不发生', async () => {
+    const user = userEvent.setup();
+    renderWorkspace([specOf({ status: 'draft' })]);
+
+    await user.click(cardOf('商品图模板').getByRole('button', { name: '删除' }));
+    await user.click(await screen.findByRole('button', { name: '取消' }));
+
+    expect(mutations.remove).not.toHaveBeenCalled();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it('确认：才发删除请求，并给一条成功提示', async () => {
+    const user = userEvent.setup();
+    renderWorkspace([specOf({ status: 'draft' })]);
+
+    await user.click(cardOf('商品图模板').getByRole('button', { name: '删除' }));
+    await user.click(await screen.findByRole('button', { name: '移进回收站' }));
+
+    await waitFor(() => expect(mutations.remove).toHaveBeenCalledWith('spec-1'));
+    expect(await screen.findByText('已移进回收站：商品图模板')).toBeInTheDocument();
   });
 });

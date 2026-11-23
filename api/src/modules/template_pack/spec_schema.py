@@ -43,6 +43,19 @@ class StrictIn(CamelModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class SpecGroupIn(StrictIn):
+    """封装容器的名字：`key` 对应槽位上的 `group`，`label` 是作者起的名字。
+
+    **不在这里校验「key 必须真的有成员」**：草稿阶段作者把成员挪走了、容器名
+    还留着，是编辑中的正常状态；发布时它只是写不进任何一行（没有成员就没有行），
+    不会变成坏数据。反过来强校验会挡住「先建容器、再加槽位」这个正常顺序。
+    """
+
+    #: 与槽位的 `group` 同一套取值，但**不能为空**（空串是「不属于任何容器」）。
+    key: str = Field(pattern=_KEY)
+    label: str = Field(default="", max_length=80)
+
+
 class SpecSlotIn(StrictIn):
     key: str = Field(pattern=_KEY)
     #: 槽位要什么：就是资产库的 kind（图片 / 视频 / 音频 / 文本）。
@@ -189,6 +202,9 @@ class TemplateSpecIn(StrictIn):
     #: 同样要求该槽位写了「未选时文案」（发布闸口会拦）。
     random_prompt: str = Field(default="", max_length=MAX_PROMPT)
     slots: list[SpecSlotIn] = Field(default_factory=list, max_length=MAX_SLOTS)
+    #: 封装容器的名字。**可以不声明**（老草稿也没有这个键）：缺省 = 每个容器都
+    #: 用回退名「封装槽位 N」，前端按段序算出来。
+    groups: list[SpecGroupIn] = Field(default_factory=list, max_length=MAX_SLOTS)
     attributes: dict[str, str] = Field(default_factory=dict)
     #: 展示案例（图片/视频资产 id）。纯展示：不进发布快照，改图不用发新版。
     demo_asset_id: str | None = Field(default=None, max_length=32)
@@ -201,6 +217,21 @@ class TemplateSpecIn(StrictIn):
         # 参数最终原样进执行请求；嵌套结构在执行器那侧只会变成 400 或静默忽略。
         if any(isinstance(item, (dict, list)) for item in value.values()):
             raise ValueError("参数只能是标量（字符串 / 数字 / 布尔）")
+        return value
+
+    @field_validator("groups")
+    @classmethod
+    def _group_keys_are_unique(cls, value: list[SpecGroupIn]) -> list[SpecGroupIn]:
+        """同一个容器 key 出现两次 → 哪个名字算数说不清，直接 422。
+
+        前端已经按 key 维护唯一容器（`specDraft` 的 `groups`），重复只可能是
+        调用方自己拼的请求；静默取第一个会让「改过的名字没生效」且无从解释。
+        """
+        seen: set[str] = set()
+        for group in value:
+            if group.key in seen:
+                raise ValueError(f"封装容器 key 重复：{group.key}")
+            seen.add(group.key)
         return value
 
 
@@ -220,6 +251,9 @@ class SpecVersionOut(CamelModel):
     #: 「随机」档用的整段提示词（发布时冻结）。空 = 该版本不支持随机档。
     random_prompt: str = ""
     slots: list[SpecSlotOut]
+    #: 封装容器的名字（发布时冻结）。**老版本为空**：那时还没这个字段，
+    #: 前端按段序回退成「封装槽位 N」。
+    groups: list[SpecGroupIn] = Field(default_factory=list)
     fingerprint: str = ""
     published_by: str = ""
     published_at: UtcDateTime | None = None
@@ -269,10 +303,14 @@ class SpecCompileIn(StrictIn):
 
     槽位按用户挑选顺序传素材 id。`version` 为空表示用当前发布版本。
 
-    **没有 `promptOverride`**（2026-11-14 起）：模板库不改文字。需要可变内容的地方
-    在模板里放 `text` 槽位 —— 填表时选一份文案，`compile` 把它排在 `{{Text N}}`
-    的第 N 位，执行层按 `textLibraryIds` 注入正文。这个入口曾经存在（改写"可编辑段"），
-    与"提示词只有一段"冲突，一并删掉。
+    **没有 `promptOverride`**（2026-11-14 起）：模板库不改整段文字。需要可变内容
+    的地方在模板里放 `text` 槽位 —— 填表时选一份文案，`compile` 把它排在
+    `{{Text N}}` 的第 N 位，执行层按 `textLibraryIds` 注入正文。这个入口曾经存在
+    （改写"可编辑段"），与"提示词只有一段"冲突，一并删掉。
+
+    但**单个可选槽位的「未选时文案」可以改**（`slot_text_overrides`，2026-11-21）：
+    那段话本来就是「这一格空着时说什么」，作者写的是通用版本，使用者知道得更具体。
+    改的是插入点里的那一段，不是提示词的骨架 —— 与上面删掉的那个入口不是一回事。
     """
 
     version: int | None = Field(default=None, ge=1)
@@ -290,6 +328,15 @@ class SpecCompileIn(StrictIn):
     #: 不静默回退主提示词 —— 回退的样子是「随机档和均衡档产出一模一样」。
     #: 不传 = 均衡 / 自定义档，走 `prompt`（老调用方零影响）。
     use_random_prompt: bool = False
+    #: 使用者改写「未选时文案」：`{slotKey: 改后的那段话}`。
+    #:
+    #: 「这一格我不挑素材，直接说我想要什么」—— 改的只是作者写的那段兜底话，
+    #: 不是整段提示词（那个入口 2026-11-14 删了，与「提示词只有一段」冲突）。
+    #: 编译前替换该槽位的 `empty_text`，编号展开仍由 `compile_spec` 一处算。
+    #:
+    #: 只对「可选、且提示词里有插入点」的槽位有效。不满足就 400 —— 静默收下的
+    #: 后果是「用户改的话没进提示词，页面看起来一切正常」。
+    slot_text_overrides: dict[str, str] = Field(default_factory=dict)
     #: 使用者在填表时对「运行时参数」的选择（如计费模式）。
     #:
     #: 这些参数在模型 schema 里标了 `userSelectable`：**不该由模板作者写死**

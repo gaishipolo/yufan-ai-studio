@@ -33,6 +33,7 @@ import {
   useSaveAssetFile,
   useShareRequests,
 } from '@/entities/library/api/library.queries';
+import { LibraryBatchShareModal } from './LibraryBatchShareModal';
 import { LibraryBulkBar, type BulkKind } from './LibraryBulkBar';
 import { LibraryConfirmModal } from './LibraryConfirmModal';
 import { LibraryDetail } from './LibraryDetail';
@@ -169,6 +170,8 @@ export function LibraryWorkspace() {
   const [share, setShare] = useState<{ asset: LibraryAssetOut; mode: 'share' | 'revoke' } | null>(
     null,
   );
+  /** 批量共享打开时把选中项快照下来：弹窗期间列表刷新/选中变化不该改这批的目标 */
+  const [batchShare, setBatchShare] = useState<LibraryAssetOut[] | null>(null);
   const [requestsOpen, setRequestsOpen] = useState(false);
   const [downloadsOpen, setDownloadsOpen] = useState(false);
   const [tagManagerOpen, setTagManagerOpen] = useState(false);
@@ -389,7 +392,7 @@ export function LibraryWorkspace() {
           {
             id: asset.id,
             action: 'reject',
-            body: { reason, expectedVersion: asset.stateVersion ?? 0 },
+            body: { reason, expectedVersion: asset.stateVersion },
           },
           {
             onSuccess: () => {
@@ -428,7 +431,7 @@ export function LibraryWorkspace() {
         return;
       case 'approve':
         decision.mutate(
-          { id: asset.id, action: 'approve', body: { expectedVersion: asset.stateVersion ?? 0 } },
+          { id: asset.id, action: 'approve', body: { expectedVersion: asset.stateVersion } },
           {
             onSuccess: () => toast('已入库'),
             onError: fail,
@@ -483,6 +486,27 @@ export function LibraryWorkspace() {
     }
   }
 
+  /**
+   * 选中项的资产版本：批量写必须带上它，后端据此做乐观锁。
+   *
+   * 不带的话后端只能按「不校验」处理——A 打开列表后 B 改了名，A 批量改名会把
+   * B 的修改冲掉且没有任何提示（REVIEW_2026-11-23 重要#5 / 一般#6）。
+   * 版本取自当前列表数据：列表旧了，后端会逐条报「已被修改」，刷新后重试即可。
+   *
+   * **版本缺失时不编造 0**：0 不是合法版本（后端会拒），编一个等于让这批写
+   * 在「不校验」的状态下改掉别人的成果。缺就让它缺——后端以「缺版本」400
+   * 拒掉整批，提示补上版本。
+   */
+  function versionsOf(ids: string[]): Record<string, number> {
+    const known = new Map(items.map((asset) => [asset.id, asset.stateVersion]));
+    const versions: Record<string, number> = {};
+    for (const id of ids) {
+      const version = known.get(id);
+      if (version !== undefined) versions[id] = version;
+    }
+    return versions;
+  }
+
   function runBulk(kindOfAction: BulkKind, payload?: { tagIds?: string[] }) {
     const ids = [...selected];
     if (!ids.length) return;
@@ -510,6 +534,14 @@ export function LibraryWorkspace() {
       );
       return;
     }
+    if (kindOfAction === 'share') {
+      /* 与单条共享共用同一套目标口径；这里只快照选中项，目标由弹窗选。
+         弹窗取消时选中项还在，用户还能对这批素材做别的操作。 */
+      const picked = items.filter((asset) => selected.has(asset.id));
+      if (!picked.length) return;
+      setBatchShare(picked);
+      return;
+    }
     if (kindOfAction === 'pack') {
       /* 不在这儿调接口：建封装要先让用户确认成员和起个名字。选中项不急着清，
          弹窗取消时用户还能继续对这批素材做别的操作。 */
@@ -526,7 +558,7 @@ export function LibraryWorkspace() {
         reasonLabel: '驳回原因',
         onConfirm: (reason) => {
           bulk.mutate(
-            { ids, action: 'rejectDraft', payload: { reason } },
+            { ids, action: 'rejectDraft', payload: { reason }, expectedVersions: versionsOf(ids) },
             {
               onSuccess: (result) => {
                 setConfirm(null);
@@ -576,6 +608,7 @@ export function LibraryWorkspace() {
             deletable.map((asset) => asset.id),
             'delete',
             { reason },
+            versionsOf(deletable.map((asset) => asset.id)),
           );
         },
       });
@@ -589,7 +622,7 @@ export function LibraryWorkspace() {
           ? 'approveDraft'
           : 'addTag';
 
-    applyBulk(ids, action, payload as Record<string, unknown> | undefined);
+    applyBulk(ids, action, payload as Record<string, unknown> | undefined, versionsOf(ids));
   }
 
   /** 批量写：逐条判定、逐条提交；成败混在一起时把失败明细带出来 */
@@ -597,9 +630,10 @@ export function LibraryWorkspace() {
     writeIds: string[],
     action: BulkAction,
     writePayload?: Record<string, unknown>,
+    expectedVersions?: Record<string, number>,
   ) {
     bulk.mutate(
-      { ids: writeIds, action, payload: writePayload },
+      { ids: writeIds, action, payload: writePayload, expectedVersions },
       {
         onSuccess: (result) => {
           const failed = result.failed ?? 0;
@@ -716,6 +750,7 @@ export function LibraryWorkspace() {
           view={view}
           count={selected.size}
           tags={tags.data ?? []}
+          canShare={canShare}
           busy={bulk.isPending || createDownload.isPending}
           onClear={() => setSelected(new Set())}
           onAction={runBulk}
@@ -783,6 +818,27 @@ export function LibraryWorkspace() {
         isOwner={!!share && share.asset.ownerId === viewer.id}
         onClose={() => setShare(null)}
       />
+
+      {batchShare && (
+        <LibraryBatchShareModal
+          count={batchShare.length}
+          groups={groups.data ?? []}
+          canDirect={canShareDirect}
+          allOwned={batchShare.every((asset) => asset.ownerId === viewer.id)}
+          busy={bulk.isPending}
+          onClose={() => setBatchShare(null)}
+          onSubmit={({ target, groupId, reason }) => {
+            const expectedVersions = versionsOf(batchShare.map((asset) => asset.id));
+            setBatchShare(null);
+            applyBulk(
+              batchShare.map((asset) => asset.id),
+              'requestShare',
+              { target, groupId: groupId ?? '', reason },
+              expectedVersions,
+            );
+          }}
+        />
+      )}
 
       <ShareRequestsModal open={requestsOpen} onClose={() => setRequestsOpen(false)} />
       <LibraryDownloadsModal open={downloadsOpen} onClose={() => setDownloadsOpen(false)} />

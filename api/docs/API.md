@@ -2,7 +2,7 @@
 
 > 此文件由 `app export-openapi` 自动生成，请勿手工编辑。
 >
-> 版本 `0.2.0`｜共 **132** 个接口 / **11** 个模块
+> 版本 `0.2.0`｜共 **144** 个接口 / **12** 个模块
 >
 > 重新生成：`cd api && .venv/Scripts/python -m cli export-openapi`
 
@@ -100,9 +100,18 @@ Authorization: Bearer <accessToken>
 | `task:read:all` | 查看并管理他人任务 | 列表 scope=all / 详情 / 删除的跨用户判定依据；不含重试 |
 | `task:retry:any` | 重试他人任务 | 会消耗额度：重试他人任务前额外校验此权限 |
 | `task:update` | 编辑/重试自己的任务 |  |
+| `template_pack:case:read` | 查看模板案例库并复用案例 |  |
+| `template_pack:case:write` | 发布或管理模板案例（编辑 / 下架 / 删除） |  |
 | `template_pack:create` | 创建或保存模板封装草稿 |  |
 | `template_pack:publish` | 发布或停用模板封装 |  |
 | `template_pack:read` | 查看模板封装 |  |
+
+**数据统计**
+
+| 权限码 | 名称 | 说明 |
+|---|---|---|
+| `usage:read` | 查看用量看板 | 查看自己在指定区间内的生成用量（次数 / 时长 / 张数） |
+| `usage:read:all` | 查看全部用量 | 用量看板的数据范围可以切到「全部成员」，并按使用人查看构成 |
 
 **系统**
 
@@ -148,6 +157,21 @@ Authorization: Bearer <accessToken>
 | `library:tag:manage` | 管理标签词表（改名 / 删除） |  |
 | `library:update` | 修改本人资产的名称与标签 |  |
 
+**页面**
+
+| 权限码 | 名称 | 说明 |
+|---|---|---|
+| `page:image` | 生图 | 关联接口：catalog:read, image:create, image:delete, image:read, image:read:all, image:retry:any |
+| `page:library` | 资产库 | 关联接口：library:case:read, library:create, library:delete, library:delete:any, library:draft:review, library:generation:ingest, library:read, library:share, library:share:approve, library:share:approve:group, library:share:approve:team, library:share:direct, library:tag:manage, library:update |
+| `page:shots` | 镜头库 | 关联接口：shot:read |
+| `page:storyboards` | 分镜模板库 | 关联接口：storyboard:read |
+| `page:studio` | 生成工作台 | 关联接口：catalog:read, image:create, task:create |
+| `page:task-center` | 任务中心 | 关联接口：image:read, model_driver:read, task:create, task:delete, task:read, task:read:all, task:retry:any, task:update |
+| `page:template-specs` | 模板封装 | 关联接口：library:case:read, library:case:write, library:read, template_pack:case:read, template_pack:case:write, template_pack:create, template_pack:publish, template_pack:read |
+| `page:templates` | 模板库 | 关联接口：template_pack:read |
+| `page:usage` | 用量看板 | 按区间查看生成次数、已产出时长 / 张数、趋势与构成 |
+| `page:user-access` | 用户与权限 | 关联接口：identity:create, identity:delete, identity:group:create, identity:group:delete, identity:group:member:manage, identity:group:permission:manage, identity:group:read, identity:group:update, identity:read, identity:role:manage, identity:team:manage, identity:update, identity:user:permission:manage |
+
 > 判定规则：`*` 恒真；`task:*` 这类通配可覆盖 `task:read`；否则按字符串精确匹配。
 
 ---
@@ -164,7 +188,9 @@ Authorization: Bearer <accessToken>
 | `40001` | 400 | 框架 | `ModelUnavailable` | 模型已下线 |
 | `40021` | 400 | identity | `OldPasswordMismatch` | 原密码不正确 |
 | `40022` | 400 | identity | `UnknownPermission` | 存在无法识别的权限点 |
-| `40023` | 400 | identity | `TeamGrantForbidden` | 团队基础权限不能包含管理类权限或通配符 |
+| `40023` | 400 | identity | `TeamGrantForbidden` | 团队基础权限不能包含管理类权限、页面权限或通配符 |
+| `40024` | 400 | identity | `ExceptionWildcardForbidden` | 例外只能是具体的权限码，不能写通配 |
+| `40025` | 400 | identity | `ExceptionLockedPermission` | 例外不能作用于组织管理类权限（identity:*），否则会把管理员锁在门外 |
 | `40081` | 400 | library | `RevokeReasonRequired` | 撤销共享必须填写理由 |
 | `40082` | 400 | library | `LibraryFileTypeNotAllowed` | 支持 MP4、PNG、JPG、WebP、MP3、WAV、TXT 和 MD |
 | `40085` | 400 | library | `GenerationSourceInvalid` | 生成结果必须提供可读取的 storageKey 或 sourceUrl |
@@ -178,6 +204,7 @@ Authorization: Bearer <accessToken>
 | `40321` | 403 | identity | `AccountDisabled` | 账号已停用，请联系管理员 |
 | `40322` | 403 | identity | `SuperuserRequired` | 该操作需要超级管理员权限 |
 | `40323` | 403 | identity | `PermissionEscalation` | 不能授予自己不具备的权限 |
+| `40324` | 403 | identity | `AccessSwitchForbidden` | 停用或启用账号需要「停用用户」权限 |
 | `40381` | 403 | library | `DraftReviewForbidden` | 没有审核他人草稿的权限 |
 | `40382` | 403 | library | `ShareNotOwned` | 撤销共享只能由资产所有者发起 |
 | `40383` | 403 | library | `IngestKeyNotOwned` | 该存储键不属于你，无法入库 |
@@ -195,6 +222,7 @@ Authorization: Bearer <accessToken>
 | `40925` | 409 | identity | `CannotTargetSelf` | 不能停用或删除自己的账号 |
 | `40926` | 409 | identity | `LastSuperuser` | 系统必须保留至少一个启用的超级管理员 |
 | `40927` | 409 | identity | `GroupNameTaken` | 小组名称已被占用 |
+| `40928` | 409 | identity | `SuperuserGrantForbidden` | 超级管理员的权限恒为全部，不能在角色或个人层配置 |
 | `40981` | 409 | library | `SharedAssetNotDeletable` | 该资产仍处于共享状态，请先撤销共享后再删除 |
 | `40982` | 409 | library | `TeamDeleteForbidden` | 团队库资产不能直接删除，请先撤销团队共享 |
 | `40983` | 409 | library | `ShareRevokePending` | 撤销共享正在审批中，通过后再删除 |
@@ -210,6 +238,7 @@ Authorization: Bearer <accessToken>
 | `41381` | 413 | library | `LibraryFileTooLarge` | 文件不能超过 300MB |
 | `41382` | 413 | library | `DownloadTooLarge` | 单次打包超出上限 |
 | `41383` | 413 | library | `LibraryTextTooLarge` | 文本资产不能超过 1MB |
+| `41391` | 413 | export | `ExportTooLarge` | 导出内容过大，请缩小筛选范围后重试 |
 | `42900` | 429 | 框架 | `RateLimited` | 请求过于频繁，请稍后再试 |
 | `50100` | 501 | 框架 | `NotImplementedFeature` | 该功能尚未实现 |
 | `50200` | 502 | 框架 | `UpstreamError` | 上游服务异常 |
@@ -221,8 +250,8 @@ Authorization: Bearer <accessToken>
 
 | 模块 | 接口数 | 说明 |
 |---|---|---|
-| 身份 | 39 | 见下方 `4.1` |
-| 任务 | 10 | 见下方 `4.2` |
+| 身份 | 42 | 见下方 `4.1` |
+| 任务 | 9 | 见下方 `4.2` |
 | 模型 | 1 | 见下方 `4.3` |
 | 生图 | 4 | 见下方 `4.4` |
 | 分镜模板 | 1 | 见下方 `4.5` |
@@ -231,9 +260,10 @@ Authorization: Bearer <accessToken>
 | 导出 | 6 | 见下方 `4.8` |
 | 资产库 | 47 | 见下方 `4.9` |
 | 模型驱动 | 9 | 见下方 `4.10` |
-| 模板封装 | 12 | 见下方 `4.11` |
+| 模板封装 | 20 | 见下方 `4.11` |
+| 用量看板 | 2 | 见下方 `4.12` |
 
-### 4.1 身份（39 个）
+### 4.1 身份（42 个）
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
@@ -255,6 +285,7 @@ Authorization: Bearer <accessToken>
 | `DELETE` | `/api/v1/identity/me/sessions` | 退出所有其他设备（保留当前） | 🔒 |
 | `DELETE` | `/api/v1/identity/me/sessions/{session_id}` | 踢掉我的一条会话 | 🔒 |
 | `GET` | `/api/v1/identity/password-policy` | 口令策略（匿名） | 公开 |
+| `GET` | `/api/v1/identity/permission-tree` | 「分组 → 用户」的完整树（权限总览的左栏） | 🔒 |
 | `GET` | `/api/v1/identity/permissions` | 全部权限点（按分组，供角色编辑界面） | 🔒 |
 | `POST` | `/api/v1/identity/refresh` | 用刷新令牌换取新令牌 | 公开 |
 | `GET` | `/api/v1/identity/roles` | 角色列表（含权限与人数） | 🔒 |
@@ -271,6 +302,8 @@ Authorization: Bearer <accessToken>
 | `DELETE` | `/api/v1/identity/users/{user_id}` | 停用用户（保留历史归属） | 🔒 |
 | `GET` | `/api/v1/identity/users/{user_id}/effective-permissions` | 用户有效权限与四层来源 | 🔒 |
 | `GET` | `/api/v1/identity/users/{user_id}/logins` | 某账号的登录记录 | 🔒 |
+| `GET` | `/api/v1/identity/users/{user_id}/permission-exceptions` | 用户的个人例外（只对他关掉的权限码） | 🔒 |
+| `PUT` | `/api/v1/identity/users/{user_id}/permission-exceptions` | 设置个人例外（整组替换；不动他的授予） | 🔒 |
 | `GET` | `/api/v1/identity/users/{user_id}/permissions` | 用户单独授予的权限 | 🔒 |
 | `PUT` | `/api/v1/identity/users/{user_id}/permissions` | 设置个人权限（整组替换） | 🔒 |
 | `POST` | `/api/v1/identity/users/{user_id}/reset-password` | 管理员重置密码 | 🔒 |
@@ -614,6 +647,17 @@ Authorization: Bearer <accessToken>
 | `forbidSameAsUsername` | `boolean` | 是 | 是否禁止与用户名相同；当前未启用，前端按 false 处理 |
 | `message` | `string` | 是 | 可直接展示的一句话，前端不要自己拼 |
 
+#### `GET /api/v1/identity/permission-tree`
+
+**「分组 → 用户」的完整树（权限总览的左栏）**
+
+**响应** `ApiResponse<PermissionTreeOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `groups` | `PermissionTreeGroupOut[]` | 否 |  |
+| `ungrouped` | `PermissionTreeUserOut[]` | 否 | 不属于任何分组的账号 |
+
 #### `GET /api/v1/identity/permissions`
 
 **全部权限点（按分组，供角色编辑界面）**
@@ -944,7 +988,13 @@ Authorization: Bearer <accessToken>
 | `groups` | `GroupLayerOut[]` | 否 | 各所属小组授予的权限 |
 | `personal` | `string[]` | 否 | 单独授予的权限 |
 | `roles` | `string[]` | 否 | 现有角色授予的权限 |
-| `effective` | `string[]` | 否 | 四层并集；`*` 表示超级管理员。require() 唯一判据 |
+| `pages` | `string[]` | 否 | 授予的页面权限（page:*）；决定侧栏与路由能进哪一页 |
+| `gatedOff` | `string[]` | 否 | 被页面门控关掉的接口权限：四层并集里有、但它所属的页面一页都没授予。`资源:*` 会先摊成具体码再判定，所以这里列的是被关掉的**具体码**。界面拿它解释「为什么我有 task:read 却仍然 403」 |
+| `effective` | `string[]` | 否 | 四层并集过完页面门控的结果；`*` 表示超级管理员。require() 唯一判据 |
+| `roleDetails` | `RoleLayerOut[]` | 否 | 按角色拆开的授予明细（`roles` 是合并后的） |
+| `sources` | `PermissionSourceOut[]` | 否 | 每个权限码的来源层。界面据此在每一行上标「来自 角色·内容编辑」。键是**摊开通配之后**的码，所以 `task:*` 也逐条列出具体动作 |
+| `denied` | `string[]` | 否 | 个人例外：对这个账号单独关闭的码。**包含当前不生效的那些** ——角色撤了但那条例外还在，它必须仍然可见、可撤销，否则就是一个谁也看不见的隐藏状态 |
+| `deniedOff` | `string[]` | 否 | 因为本人例外而不生效的码（授予了、但被关掉）。与 `gatedOff` 互斥：一个码不生效只有「你自己关的」和「页面没开」两种原因，界面按它分流 |
 
 #### `GET /api/v1/identity/users/{user_id}/logins`
 
@@ -960,6 +1010,32 @@ Authorization: Bearer <accessToken>
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `items` | `LoginEventOut[]` | 否 | 按时间倒序 |
+
+#### `GET /api/v1/identity/users/{user_id}/permission-exceptions`
+
+**用户的个人例外（只对他关掉的权限码）**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `user_id` | path | `string` | 是 |  |
+
+**响应** `ApiResponse<string[]>`（前端取 `res.data`）
+
+#### `PUT /api/v1/identity/users/{user_id}/permission-exceptions`
+
+**设置个人例外（整组替换；不动他的授予）**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `user_id` | path | `string` | 是 |  |
+
+**请求体** `PermissionExceptionsIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `exceptions` | `string[]` | 否 | 对这个账号单独关闭的权限码（整组替换）。只接受目录里的具体码：不接受通配（`task:*` 的「关掉」没有唯一解释），也不接受 `identity:*` |
+
+**响应** `ApiResponse<string[]>`（前端取 `res.data`）
 
 #### `GET /api/v1/identity/users/{user_id}/permissions`
 
@@ -1047,7 +1123,7 @@ Authorization: Bearer <accessToken>
 | `createdAt` | `string` | 是 | 创建时间（UTC） |
 | `roles` | `RoleBriefOut[]` | 否 | 拥有的角色 |
 
-### 4.2 任务（10 个）
+### 4.2 任务（9 个）
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
@@ -1058,7 +1134,6 @@ Authorization: Bearer <accessToken>
 | `GET` | `/api/v1/tasks/stats` | 任务统计（侧边栏角标） | 🔒 |
 | `GET` | `/api/v1/tasks/{task_id}` | 任务详情 | 🔒 |
 | `PATCH` | `/api/v1/tasks/{task_id}` | 更新任务（标题 / 收藏） | 🔒 |
-| `POST` | `/api/v1/tasks/{task_id}/desubtitle` | 给成片派生去字幕版 | 🔒 |
 | `POST` | `/api/v1/tasks/{task_id}/favorite` | 收藏 / 取消收藏 | 🔒 |
 | `POST` | `/api/v1/tasks/{task_id}/retry` | 重试任务 | 🔒 |
 
@@ -1207,22 +1282,6 @@ Authorization: Bearer <accessToken>
 |---|---|---|---|
 | `title` | `string \| null` | 否 | 新标题 |
 | `favorited` | `boolean \| null` | 否 | 收藏状态 |
-
-**响应** `ApiResponse<core__response__ApiResponse_TaskOut___2>`（前端取 `res.data`）
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `code` | `number` | 否 | 0 表示成功，其余为业务错误码 |
-| `message` | `string` | 否 |  |
-| `data` | `modules__task__schema__TaskOut \| null` | 否 |  |
-
-#### `POST /api/v1/tasks/{task_id}/desubtitle`
-
-**给成片派生去字幕版**
-
-| 参数 | 位置 | 类型 | 必填 | 说明 |
-|---|---|---|---|---|
-| `task_id` | path | `string` | 是 | 任务 ID |
 
 **响应** `ApiResponse<core__response__ApiResponse_TaskOut___2>`（前端取 `res.data`）
 
@@ -1808,7 +1867,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 |---|---|---|---|
 | `name` | `string \| null` | 否 |  |
 | `tagIds` | `string[] \| null` | 否 |  |
-| `expectedVersion` | `number` | 否 | >0 时做乐观锁校验；0 表示不校验（兼容单页操作） |
+| `expectedVersion` | `number \| null` | 否 |  |
 
 **响应** `ApiResponse<LibraryAssetDetailOut>`（前端取 `res.data`）
 
@@ -1989,7 +2048,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `purpose` | `string` | 否 |  |
-| `expectedVersion` | `number` | 否 | >0 时做乐观锁校验；0 表示不校验（兼容单页操作） |
+| `expectedVersion` | `number \| null` | 否 |  |
 
 **响应** `ApiResponse<LibraryAssetOut>`（前端取 `res.data`）
 
@@ -2077,7 +2136,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `content` | `string` | 是 |  |
-| `expectedVersion` | `number` | 否 |  |
+| `expectedVersion` | `number \| null` | 否 |  |
 | `note` | `string` | 否 |  |
 
 **响应** `ApiResponse<TextAssetOut>`（前端取 `res.data`）
@@ -2116,7 +2175,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `version` | `number` | 是 |  |
-| `expectedVersion` | `number` | 否 |  |
+| `expectedVersion` | `number \| null` | 否 |  |
 
 **响应** `ApiResponse<TextAssetOut>`（前端取 `res.data`）
 
@@ -2266,7 +2325,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `reason` | `string` | 否 |  |
-| `expectedVersion` | `number` | 否 |  |
+| `expectedVersion` | `number \| null` | 否 |  |
 
 **响应** `ApiResponse<LibraryAssetDetailOut>`（前端取 `res.data`）
 
@@ -2328,7 +2387,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `reason` | `string` | 否 |  |
-| `expectedVersion` | `number` | 否 |  |
+| `expectedVersion` | `number \| null` | 否 |  |
 
 **响应** `ApiResponse<LibraryAssetDetailOut>`（前端取 `res.data`）
 
@@ -2593,7 +2652,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `target` | `ShareTarget` | 否 |  |
 | `groupId` | `string` | 否 |  |
 | `reason` | `string` | 否 |  |
-| `expectedVersion` | `number` | 否 |  |
+| `expectedVersion` | `number \| null` | 否 |  |
 
 **响应** `ApiResponse<ShareRequestOut>`（前端取 `res.data`）
 
@@ -2602,6 +2661,8 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `id` | `string` | 是 |  |
 | `assetId` | `string` | 是 |  |
 | `assetName` | `string` | 否 |  |
+| `stateVersion` | `number` | 否 |  |
+| `requestStateVersion` | `number` | 否 |  |
 | `applicantId` | `string` | 是 |  |
 | `applicantName` | `string \| null` | 否 |  |
 | `action` | `ShareAction` | 是 |  |
@@ -2630,6 +2691,8 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `[].id` | `string` | 是 |  |
 | `[].assetId` | `string` | 是 |  |
 | `[].assetName` | `string` | 否 |  |
+| `[].stateVersion` | `number` | 否 |  |
+| `[].requestStateVersion` | `number` | 否 |  |
 | `[].applicantId` | `string` | 是 |  |
 | `[].applicantName` | `string \| null` | 否 |  |
 | `[].action` | `ShareAction` | 是 |  |
@@ -2659,7 +2722,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `note` | `string` | 否 |  |
-| `expectedVersion` | `number` | 否 |  |
+| `expectedVersion` | `number \| null` | 否 |  |
 
 **响应** `ApiResponse<ShareRequestOut>`（前端取 `res.data`）
 
@@ -2668,6 +2731,8 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `id` | `string` | 是 |  |
 | `assetId` | `string` | 是 |  |
 | `assetName` | `string` | 否 |  |
+| `stateVersion` | `number` | 否 |  |
+| `requestStateVersion` | `number` | 否 |  |
 | `applicantId` | `string` | 是 |  |
 | `applicantName` | `string \| null` | 否 |  |
 | `action` | `ShareAction` | 是 |  |
@@ -2696,6 +2761,8 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `id` | `string` | 是 |  |
 | `assetId` | `string` | 是 |  |
 | `assetName` | `string` | 否 |  |
+| `stateVersion` | `number` | 否 |  |
+| `requestStateVersion` | `number` | 否 |  |
 | `applicantId` | `string` | 是 |  |
 | `applicantName` | `string \| null` | 否 |  |
 | `action` | `ShareAction` | 是 |  |
@@ -2722,7 +2789,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `note` | `string` | 否 |  |
-| `expectedVersion` | `number` | 否 |  |
+| `expectedVersion` | `number \| null` | 否 |  |
 
 **响应** `ApiResponse<ShareRequestOut>`（前端取 `res.data`）
 
@@ -2731,6 +2798,8 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `id` | `string` | 是 |  |
 | `assetId` | `string` | 是 |  |
 | `assetName` | `string` | 否 |  |
+| `stateVersion` | `number` | 否 |  |
+| `requestStateVersion` | `number` | 否 |  |
 | `applicantId` | `string` | 是 |  |
 | `applicantName` | `string \| null` | 否 |  |
 | `action` | `ShareAction` | 是 |  |
@@ -3183,10 +3252,18 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `message` | `string` | 否 |  |
 | `data` | `modules__model_driver__schema__TaskOut \| null` | 否 |  |
 
-### 4.11 模板封装（12 个）
+### 4.11 模板封装（20 个）
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
+| `GET` | `/api/v1/template-cases` | 案例列表（library=公共案例库 / mine=我发布的 / trash=回收站） | 🔒 |
+| `POST` | `/api/v1/template-cases` | 把模板发布为案例（快照当前草稿） | 🔒 |
+| `GET` | `/api/v1/template-cases/{case_id}` | 案例详情（含可复用的配置快照） | 🔒 |
+| `PATCH` | `/api/v1/template-cases/{case_id}` | 编辑案例（名称/描述/分类） | 🔒 |
+| `DELETE` | `/api/v1/template-cases/{case_id}` | 删除案例（软删，进回收站） | 🔒 |
+| `POST` | `/api/v1/template-cases/{case_id}/offline` | 下架案例（不可复用，可重新上架） | 🔒 |
+| `POST` | `/api/v1/template-cases/{case_id}/online` | 重新上架案例 | 🔒 |
+| `POST` | `/api/v1/template-cases/{case_id}/restore` | 从回收站恢复案例 | 🔒 |
 | `POST` | `/api/v1/template-specs` | 保存草稿（同内容幂等，revision 冲突 409） | 🔒 |
 | `GET` | `/api/v1/template-specs` | 本人可见的规格列表 | 🔒 |
 | `GET` | `/api/v1/template-specs/limits` | 编辑页要显示的上限（存草稿 / 可发布） | 🔒 |
@@ -3199,6 +3276,250 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `POST` | `/api/v1/template-specs/{key}/disable` | 下架（历史版本保留） | 🔒 |
 | `POST` | `/api/v1/template-specs/{key}/publish` | 发布：把当前草稿冻结成新版本 | 🔒 |
 | `POST` | `/api/v1/template-specs/{key}/restore` | 从回收站恢复 | 🔒 |
+
+#### `GET /api/v1/template-cases`
+
+**案例列表（library=公共案例库 / mine=我发布的 / trash=回收站）**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `scope` | query | `"library" | "mine" | "trash"` | 否 |  |
+| `status` | query | `string` | 否 |  |
+| `category` | query | `string` | 否 |  |
+| `keyword` | query | `string` | 否 |  |
+| `page` | query | `number` | 否 |  |
+| `pageSize` | query | `number` | 否 |  |
+
+**响应** `ApiResponse<TemplateCaseListOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `items` | `TemplateCaseOut[]` | 否 |  |
+| `total` | `number` | 否 |  |
+| `categories` | `string[]` | 否 |  |
+
+#### `POST /api/v1/template-cases`
+
+**把模板发布为案例（快照当前草稿）**
+
+**请求体** `TemplateCaseCreateIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `specKey` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `description` | `string` | 否 |  |
+| `category` | `string` | 否 |  |
+
+**响应** `ApiResponse<TemplateCaseOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `description` | `string` | 是 |  |
+| `category` | `string` | 是 |  |
+| `status` | `"published" \| "offline"` | 是 |  |
+| `specId` | `string` | 是 |  |
+| `specKey` | `string` | 是 |  |
+| `specName` | `string` | 是 |  |
+| `specVersion` | `number` | 是 |  |
+| `sourceMissing` | `boolean` | 否 |  |
+| `config` | `Record<string, unknown>` | 否 |  |
+| `ownerId` | `string` | 是 |  |
+| `ownerName` | `string` | 是 |  |
+| `publishedAt` | `string \| null` | 否 |  |
+| `offlineAt` | `string \| null` | 否 |  |
+| `createdAt` | `string` | 是 |  |
+| `updatedAt` | `string` | 是 |  |
+
+#### `GET /api/v1/template-cases/{case_id}`
+
+**案例详情（含可复用的配置快照）**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `case_id` | path | `string` | 是 |  |
+
+**响应** `ApiResponse<TemplateCaseOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `description` | `string` | 是 |  |
+| `category` | `string` | 是 |  |
+| `status` | `"published" \| "offline"` | 是 |  |
+| `specId` | `string` | 是 |  |
+| `specKey` | `string` | 是 |  |
+| `specName` | `string` | 是 |  |
+| `specVersion` | `number` | 是 |  |
+| `sourceMissing` | `boolean` | 否 |  |
+| `config` | `Record<string, unknown>` | 否 |  |
+| `ownerId` | `string` | 是 |  |
+| `ownerName` | `string` | 是 |  |
+| `publishedAt` | `string \| null` | 否 |  |
+| `offlineAt` | `string \| null` | 否 |  |
+| `createdAt` | `string` | 是 |  |
+| `updatedAt` | `string` | 是 |  |
+
+#### `PATCH /api/v1/template-cases/{case_id}`
+
+**编辑案例（名称/描述/分类）**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `case_id` | path | `string` | 是 |  |
+
+**请求体** `TemplateCaseUpdateIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `name` | `string \| null` | 否 |  |
+| `description` | `string \| null` | 否 |  |
+| `category` | `string \| null` | 否 |  |
+
+**响应** `ApiResponse<TemplateCaseOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `description` | `string` | 是 |  |
+| `category` | `string` | 是 |  |
+| `status` | `"published" \| "offline"` | 是 |  |
+| `specId` | `string` | 是 |  |
+| `specKey` | `string` | 是 |  |
+| `specName` | `string` | 是 |  |
+| `specVersion` | `number` | 是 |  |
+| `sourceMissing` | `boolean` | 否 |  |
+| `config` | `Record<string, unknown>` | 否 |  |
+| `ownerId` | `string` | 是 |  |
+| `ownerName` | `string` | 是 |  |
+| `publishedAt` | `string \| null` | 否 |  |
+| `offlineAt` | `string \| null` | 否 |  |
+| `createdAt` | `string` | 是 |  |
+| `updatedAt` | `string` | 是 |  |
+
+#### `DELETE /api/v1/template-cases/{case_id}`
+
+**删除案例（软删，进回收站）**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `case_id` | path | `string` | 是 |  |
+
+**响应** `ApiResponse<TemplateCaseOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `description` | `string` | 是 |  |
+| `category` | `string` | 是 |  |
+| `status` | `"published" \| "offline"` | 是 |  |
+| `specId` | `string` | 是 |  |
+| `specKey` | `string` | 是 |  |
+| `specName` | `string` | 是 |  |
+| `specVersion` | `number` | 是 |  |
+| `sourceMissing` | `boolean` | 否 |  |
+| `config` | `Record<string, unknown>` | 否 |  |
+| `ownerId` | `string` | 是 |  |
+| `ownerName` | `string` | 是 |  |
+| `publishedAt` | `string \| null` | 否 |  |
+| `offlineAt` | `string \| null` | 否 |  |
+| `createdAt` | `string` | 是 |  |
+| `updatedAt` | `string` | 是 |  |
+
+#### `POST /api/v1/template-cases/{case_id}/offline`
+
+**下架案例（不可复用，可重新上架）**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `case_id` | path | `string` | 是 |  |
+
+**响应** `ApiResponse<TemplateCaseOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `description` | `string` | 是 |  |
+| `category` | `string` | 是 |  |
+| `status` | `"published" \| "offline"` | 是 |  |
+| `specId` | `string` | 是 |  |
+| `specKey` | `string` | 是 |  |
+| `specName` | `string` | 是 |  |
+| `specVersion` | `number` | 是 |  |
+| `sourceMissing` | `boolean` | 否 |  |
+| `config` | `Record<string, unknown>` | 否 |  |
+| `ownerId` | `string` | 是 |  |
+| `ownerName` | `string` | 是 |  |
+| `publishedAt` | `string \| null` | 否 |  |
+| `offlineAt` | `string \| null` | 否 |  |
+| `createdAt` | `string` | 是 |  |
+| `updatedAt` | `string` | 是 |  |
+
+#### `POST /api/v1/template-cases/{case_id}/online`
+
+**重新上架案例**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `case_id` | path | `string` | 是 |  |
+
+**响应** `ApiResponse<TemplateCaseOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `description` | `string` | 是 |  |
+| `category` | `string` | 是 |  |
+| `status` | `"published" \| "offline"` | 是 |  |
+| `specId` | `string` | 是 |  |
+| `specKey` | `string` | 是 |  |
+| `specName` | `string` | 是 |  |
+| `specVersion` | `number` | 是 |  |
+| `sourceMissing` | `boolean` | 否 |  |
+| `config` | `Record<string, unknown>` | 否 |  |
+| `ownerId` | `string` | 是 |  |
+| `ownerName` | `string` | 是 |  |
+| `publishedAt` | `string \| null` | 否 |  |
+| `offlineAt` | `string \| null` | 否 |  |
+| `createdAt` | `string` | 是 |  |
+| `updatedAt` | `string` | 是 |  |
+
+#### `POST /api/v1/template-cases/{case_id}/restore`
+
+**从回收站恢复案例**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `case_id` | path | `string` | 是 |  |
+
+**响应** `ApiResponse<TemplateCaseOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `description` | `string` | 是 |  |
+| `category` | `string` | 是 |  |
+| `status` | `"published" \| "offline"` | 是 |  |
+| `specId` | `string` | 是 |  |
+| `specKey` | `string` | 是 |  |
+| `specName` | `string` | 是 |  |
+| `specVersion` | `number` | 是 |  |
+| `sourceMissing` | `boolean` | 否 |  |
+| `config` | `Record<string, unknown>` | 否 |  |
+| `ownerId` | `string` | 是 |  |
+| `ownerName` | `string` | 是 |  |
+| `publishedAt` | `string \| null` | 否 |  |
+| `offlineAt` | `string \| null` | 否 |  |
+| `createdAt` | `string` | 是 |  |
+| `updatedAt` | `string` | 是 |  |
 
 #### `POST /api/v1/template-specs`
 
@@ -3217,6 +3538,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `prompt` | `string` | 是 |  |
 | `randomPrompt` | `string` | 否 |  |
 | `slots` | `SpecSlotIn[]` | 否 |  |
+| `groups` | `SpecGroupIn[]` | 否 |  |
 | `attributes` | `Record<string, string>` | 否 |  |
 | `demoAssetId` | `string \| null` | 否 |  |
 | `revision` | `number \| null` | 否 |  |
@@ -3330,6 +3652,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `prompt` | `string` | 是 |  |
 | `randomPrompt` | `string` | 否 |  |
 | `slots` | `SpecSlotIn[]` | 否 |  |
+| `groups` | `SpecGroupIn[]` | 否 |  |
 | `attributes` | `Record<string, string>` | 否 |  |
 | `demoAssetId` | `string \| null` | 否 |  |
 | `revision` | `number \| null` | 否 |  |
@@ -3422,6 +3745,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `model` | `string \| null` | 否 |  |
 | `slotValues` | `Record<string, string[]>` | 否 |  |
 | `useRandomPrompt` | `boolean` | 否 |  |
+| `slotTextOverrides` | `Record<string, string>` | 否 |  |
 | `paramOverrides` | `Record<string, unknown>` | 否 |  |
 
 **响应** `ApiResponse<SpecCompileOut>`（前端取 `res.data`）
@@ -3511,6 +3835,54 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `demoAssetId` | `string \| null` | 否 |  |
 | `latest` | `SpecVersionOut \| null` | 否 |  |
 
+### 4.12 用量看板（2 个）
+
+| 方法 | 路径 | 说明 | 鉴权 |
+|---|---|---|---|
+| `GET` | `/api/v1/usage/overview` | 用量总览（汇总 / 趋势 / 构成） | 🔒 |
+| `GET` | `/api/v1/usage/records` | 用量明细 | 🔒 |
+
+#### `GET /api/v1/usage/overview`
+
+**用量总览（汇总 / 趋势 / 构成）**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `start` | query | `string | null` | 否 | 区间起点（含，YYYY-MM-DD）。默认：结束日往前推 30 天 |
+| `end` | query | `string | null` | 否 | 区间终点（含，YYYY-MM-DD）。默认：今天 |
+| `granularity` | query | `UsageGranularity` | 否 | 时间桶粒度：day / week |
+| `scope` | query | `UsageScope` | 否 | 数据范围：mine（自己）/ all（全部成员，需要 usage:read:all） |
+
+**响应** `ApiResponse<UsageOverviewOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `summary` | `UsageSummaryOut` | 是 | 区间汇总 |
+| `trend` | `UsageTrendPointOut[]` | 是 | 时间趋势 |
+| `breakdown` | `UsageBreakdownItemOut[]` | 是 | 构成行 |
+| `sources` | `string[]` | 是 | 实际接上的数据来源标识 |
+
+#### `GET /api/v1/usage/records`
+
+**用量明细**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `start` | query | `string | null` | 否 | 区间起点（含，YYYY-MM-DD）。默认：结束日往前推 30 天 |
+| `end` | query | `string | null` | 否 | 区间终点（含，YYYY-MM-DD）。默认：今天 |
+| `scope` | query | `UsageScope` | 否 | 数据范围：mine（自己）/ all（全部成员，需要 usage:read:all） |
+| `page` | query | `number` | 否 | 页码，从 1 开始 |
+| `pageSize` | query | `number` | 否 | 每页条数 |
+
+**响应** `ApiResponse<Page<UsageRecordOut>>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `items` | `UsageRecordOut[]` | 是 | 当前页数据 |
+| `total` | `number` | 是 | 总条数（用于分页器） |
+| `page` | `number` | 是 | 当前页码，从 1 开始 |
+| `pageSize` | `number` | 是 | 每页条数 |
+
 ---
 
 ## 5. 数据模型
@@ -3527,7 +3899,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 |---|---|---|---|
 | `name` | `string \| null` | 否 |  |
 | `tagIds` | `string[] \| null` | 否 |  |
-| `expectedVersion` | `number` | 否 | >0 时做乐观锁校验；0 表示不校验（兼容单页操作） |
+| `expectedVersion` | `number \| null` | 否 |  |
 
 ### `AssetSort`（枚举）
 
@@ -3535,7 +3907,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 
 ### `BulkAction`（枚举）
 
-取值：`addTag`、`removeTag`、`rename`、`delete`、`restore`、`approveDraft`、`rejectDraft`、`requestRevoke`
+取值：`addTag`、`removeTag`、`rename`、`delete`、`restore`、`approveDraft`、`rejectDraft`、`requestShare`、`requestRevoke`
 
 ### `BulkIn`
 
@@ -3685,7 +4057,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `reason` | `string` | 否 |  |
-| `expectedVersion` | `number` | 否 |  |
+| `expectedVersion` | `number \| null` | 否 |  |
 
 ### `DriverListOut`
 
@@ -3719,7 +4091,13 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `groups` | `GroupLayerOut[]` | 否 | 各所属小组授予的权限 |
 | `personal` | `string[]` | 否 | 单独授予的权限 |
 | `roles` | `string[]` | 否 | 现有角色授予的权限 |
-| `effective` | `string[]` | 否 | 四层并集；`*` 表示超级管理员。require() 唯一判据 |
+| `pages` | `string[]` | 否 | 授予的页面权限（page:*）；决定侧栏与路由能进哪一页 |
+| `gatedOff` | `string[]` | 否 | 被页面门控关掉的接口权限：四层并集里有、但它所属的页面一页都没授予。`资源:*` 会先摊成具体码再判定，所以这里列的是被关掉的**具体码**。界面拿它解释「为什么我有 task:read 却仍然 403」 |
+| `effective` | `string[]` | 否 | 四层并集过完页面门控的结果；`*` 表示超级管理员。require() 唯一判据 |
+| `roleDetails` | `RoleLayerOut[]` | 否 | 按角色拆开的授予明细（`roles` 是合并后的） |
+| `sources` | `PermissionSourceOut[]` | 否 | 每个权限码的来源层。界面据此在每一行上标「来自 角色·内容编辑」。键是**摊开通配之后**的码，所以 `task:*` 也逐条列出具体动作 |
+| `denied` | `string[]` | 否 | 个人例外：对这个账号单独关闭的码。**包含当前不生效的那些** ——角色撤了但那条例外还在，它必须仍然可见、可撤销，否则就是一个谁也看不见的隐藏状态 |
+| `deniedOff` | `string[]` | 否 | 因为本人例外而不生效的码（授予了、但被关掉）。与 `gatedOff` 互斥：一个码不生效只有「你自己关的」和「页面没开」两种原因，界面按它分流 |
 
 ### `ExportDetailOut`
 
@@ -3877,6 +4255,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `id` | `string` | 是 | 小组 ID |
 | `name` | `string` | 是 | 小组名称 |
 | `permissions` | `string[]` | 否 | 该组授予的权限码 |
+| `memberCount` | `number` | 否 | 组内成员数（不含本人）。界面拿它写清「关掉这条会影响多少人」——改共享单元前必须知道影响面，而这个数字猜不出来 |
 
 ### `GroupLeadersIn`
 
@@ -4487,12 +4866,33 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `groups` | `PermissionGroupOut[]` | 否 | 按分组组织的全部权限点，角色编辑界面直接渲染 |
 | `total` | `number` | 否 | 权限点总数 |
 
+### `PermissionExceptionsIn`
+
+个人例外（`effect='deny'`）的整组替换入参。
+
+与 `PermissionsIn` 分开命名：同一张表、两个方向，混用一个类会让调用方
+以为「传空数组 = 清空他的权限」，而它清的是**例外**。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `exceptions` | `string[]` | 否 | 对这个账号单独关闭的权限码（整组替换）。只接受目录里的具体码：不接受通配（`task:*` 的「关掉」没有唯一解释），也不接受 `identity:*` |
+
 ### `PermissionGroupOut`
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `group` | `string` | 是 | 分组名，如「任务」「身份」 |
 | `items` | `PermissionOut[]` | 否 | 该组下的权限点 |
+
+### `PermissionOriginOut`
+
+一个权限码的一个来源层。`kind` 是开放枚举：加层不用改这个形状。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `kind` | `string` | 是 | 来源类型：team / group / user（个人层）/ role |
+| `id` | `string` | 否 | 来源实体 id（team 为空） |
+| `name` | `string` | 否 | 来源实体名称（team 固定为「团队」） |
 
 ### `PermissionOut`
 
@@ -4501,6 +4901,51 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `code` | `string` | 是 | 权限码，如 `task:create` |
 | `name` | `string` | 是 | 权限名称 |
 | `description` | `string` | 否 | 权限说明 |
+| `requires` | `string[]` | 否 | 页面权限关联的接口权限码（只有页面项有）。前端用它把「页面 → 接口」的层级画出来，而不是让人从描述文字里读 |
+| `route` | `string` | 否 | 页面路由（如 `/tasks`）；只有页面项有 |
+
+### `PermissionSourceOut`
+
+某个权限码由哪几层给到。空 `layers` = 目录外（只可能出现在例外里）。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `code` | `string` | 是 | 权限码 |
+| `layers` | `PermissionOriginOut[]` | 否 | 给出这个码的全部来源 |
+
+### `PermissionTreeGroupOut`
+
+一个分组，以及它的成员（成员顺序按账号排序，前端不再排）。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 | 小组 ID |
+| `name` | `string` | 是 | 小组名称 |
+| `members` | `PermissionTreeUserOut[]` | 否 | 组内成员 |
+
+### `PermissionTreeOut`
+
+「分组 → 用户」的完整树。
+
+为什么单独一个接口，而不是让前端用「小组列表 + 用户列表」拼：
+用户列表是分页的，拼出来的树在人多时会**静默少人**，而看的人以为
+那就是全部。这里一次给全，没有分页参数。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `groups` | `PermissionTreeGroupOut[]` | 否 |  |
+| `ungrouped` | `PermissionTreeUserOut[]` | 否 | 不属于任何分组的账号 |
+
+### `PermissionTreeUserOut`
+
+树上的一个账号：只够画一行，不含权限。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 | 用户 ID |
+| `username` | `string` | 是 | 账号 |
+| `displayName` | `string` | 否 | 昵称 |
+| `isActive` | `boolean` | 否 | 是否启用（停用的排后面并置灰） |
 
 ### `PermissionsIn`
 
@@ -4538,6 +4983,22 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `database` | `string` | 是 |  |
 | `queueSize` | `number` | 是 |  |
 | `checks` | `RuntimeCheckOut[]` | 否 |  |
+
+### `ReferenceLimitOut`
+
+供应商对**一类**参考素材的硬性限制。
+
+与 `maxReferences` 的区别：那个是**总数**上限，这个是分类的。视频模型
+常见「5 张图 + 3 段音频 = 总数 8」—— 只把总数交给前端，用户加到第 6 张图
+时界面还说「还能再加」，提交才吃 400。前端按这里逐类算余量。
+
+`maxCount = 0` 表示这一类不限（供应商没声明）。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `maxCount` | `number` | 否 |  |
+| `minSide` | `number` | 否 |  |
+| `maxSide` | `number` | 否 |  |
 
 ### `RefreshIn`
 
@@ -4579,6 +5040,21 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `description` | `string` | 否 | 角色说明 |
 | `permissions` | `string[]` | 否 | 权限码列表 |
 | `isSuperuser` | `boolean` | 否 | 仅超级管理员可设置 |
+
+### `RoleLayerOut`
+
+分层权限明细里的一段：这条权限来自哪个角色。
+
+`roles` 那份合并集合说不清「是哪个角色给的」，而「去哪撤」正需要这个 ——
+所以额外给一份按角色拆开的明细。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 | 角色 ID |
+| `code` | `string` | 是 | 角色标识 |
+| `name` | `string` | 是 | 角色名称 |
+| `permissions` | `string[]` | 否 | 该角色授予的权限码 |
+| `userCount` | `number` | 否 | 除本人外还挂着这个角色的人数（影响面） |
 
 ### `RoleOut`
 
@@ -4644,7 +5120,7 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `purpose` | `string` | 否 |  |
-| `expectedVersion` | `number` | 否 | >0 时做乐观锁校验；0 表示不校验（兼容单页操作） |
+| `expectedVersion` | `number \| null` | 否 |  |
 
 ### `ShareAction`（枚举）
 
@@ -4657,7 +5133,7 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `note` | `string` | 否 |  |
-| `expectedVersion` | `number` | 否 |  |
+| `expectedVersion` | `number \| null` | 否 |  |
 
 ### `ShareHistoryItem`
 
@@ -4694,7 +5170,7 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `target` | `ShareTarget` | 否 |  |
 | `groupId` | `string` | 否 |  |
 | `reason` | `string` | 否 |  |
-| `expectedVersion` | `number` | 否 |  |
+| `expectedVersion` | `number \| null` | 否 |  |
 
 ### `ShareRequestOut`
 
@@ -4703,6 +5179,8 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `id` | `string` | 是 |  |
 | `assetId` | `string` | 是 |  |
 | `assetName` | `string` | 否 |  |
+| `stateVersion` | `number` | 否 |  |
+| `requestStateVersion` | `number` | 否 |  |
 | `applicantId` | `string` | 是 |  |
 | `applicantName` | `string \| null` | 否 |  |
 | `action` | `ShareAction` | 是 |  |
@@ -4744,10 +5222,14 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 
 槽位按用户挑选顺序传素材 id。`version` 为空表示用当前发布版本。
 
-**没有 `promptOverride`**（2026-11-14 起）：模板库不改文字。需要可变内容的地方
-在模板里放 `text` 槽位 —— 填表时选一份文案，`compile` 把它排在 `{{Text N}}`
-的第 N 位，执行层按 `textLibraryIds` 注入正文。这个入口曾经存在（改写"可编辑段"），
-与"提示词只有一段"冲突，一并删掉。
+**没有 `promptOverride`**（2026-11-14 起）：模板库不改整段文字。需要可变内容
+的地方在模板里放 `text` 槽位 —— 填表时选一份文案，`compile` 把它排在
+`{{Text N}}` 的第 N 位，执行层按 `textLibraryIds` 注入正文。这个入口曾经存在
+（改写"可编辑段"），与"提示词只有一段"冲突，一并删掉。
+
+但**单个可选槽位的「未选时文案」可以改**（`slot_text_overrides`，2026-11-21）：
+那段话本来就是「这一格空着时说什么」，作者写的是通用版本，使用者知道得更具体。
+改的是插入点里的那一段，不是提示词的骨架 —— 与上面删掉的那个入口不是一回事。
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
@@ -4755,6 +5237,7 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `model` | `string \| null` | 否 |  |
 | `slotValues` | `Record<string, string[]>` | 否 |  |
 | `useRandomPrompt` | `boolean` | 否 |  |
+| `slotTextOverrides` | `Record<string, string>` | 否 |  |
 | `paramOverrides` | `Record<string, unknown>` | 否 |  |
 
 ### `SpecCompileOut`
@@ -4774,6 +5257,19 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `referenceLibraryIds` | `string[]` | 否 |  |
 | `textLibraryIds` | `string[]` | 否 |  |
 | `slots` | `CompiledSlotOut[]` | 否 |  |
+
+### `SpecGroupIn`
+
+封装容器的名字：`key` 对应槽位上的 `group`，`label` 是作者起的名字。
+
+**不在这里校验「key 必须真的有成员」**：草稿阶段作者把成员挪走了、容器名
+还留着，是编辑中的正常状态；发布时它只是写不进任何一行（没有成员就没有行），
+不会变成坏数据。反过来强校验会挡住「先建容器、再加槽位」这个正常顺序。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `key` | `string` | 是 |  |
+| `label` | `string` | 否 |  |
 
 ### `SpecLimitsOut`
 
@@ -4862,6 +5358,7 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `prompt` | `string` | 是 |  |
 | `randomPrompt` | `string` | 否 |  |
 | `slots` | `SpecSlotOut[]` | 是 |  |
+| `groups` | `SpecGroupIn[]` | 否 |  |
 | `fingerprint` | `string` | 否 |  |
 | `publishedBy` | `string` | 否 |  |
 | `publishedAt` | `string \| null` | 否 |  |
@@ -5013,17 +5510,54 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 
 取值：`all`、`queued`、`running`、`completed`、`failed`
 
-### `TaskVariantOut`
-
-一条派生任务（目前只有「去字幕版」）。
+### `TemplateCaseCreateIn`
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `id` | `string` | 是 | 派生任务 ID |
-| `status` | `TaskStatus` | 是 | 状态：queued / running / completed / failed |
-| `progress` | `number` | 否 | 生成进度 0-100 |
-| `outputUrl` | `string \| null` | 否 | 去字幕成片地址；未完成时为 null |
-| `errorMessage` | `string \| null` | 否 | 失败原因，成功时为 null |
+| `specKey` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `description` | `string` | 否 |  |
+| `category` | `string` | 否 |  |
+
+### `TemplateCaseListOut`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `items` | `TemplateCaseOut[]` | 否 |  |
+| `total` | `number` | 否 |  |
+| `categories` | `string[]` | 否 |  |
+
+### `TemplateCaseOut`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `description` | `string` | 是 |  |
+| `category` | `string` | 是 |  |
+| `status` | `"published" \| "offline"` | 是 |  |
+| `specId` | `string` | 是 |  |
+| `specKey` | `string` | 是 |  |
+| `specName` | `string` | 是 |  |
+| `specVersion` | `number` | 是 |  |
+| `sourceMissing` | `boolean` | 否 |  |
+| `config` | `Record<string, unknown>` | 否 |  |
+| `ownerId` | `string` | 是 |  |
+| `ownerName` | `string` | 是 |  |
+| `publishedAt` | `string \| null` | 否 |  |
+| `offlineAt` | `string \| null` | 否 |  |
+| `createdAt` | `string` | 是 |  |
+| `updatedAt` | `string` | 是 |  |
+
+### `TemplateCaseUpdateIn`
+
+编辑案例。只改案例自己的字段，不碰模板。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `name` | `string \| null` | 否 |  |
+| `description` | `string \| null` | 否 |  |
+| `category` | `string \| null` | 否 |  |
 
 ### `TemplateSpecIn`
 
@@ -5040,6 +5574,7 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `prompt` | `string` | 是 |  |
 | `randomPrompt` | `string` | 否 |  |
 | `slots` | `SpecSlotIn[]` | 否 |  |
+| `groups` | `SpecGroupIn[]` | 否 |  |
 | `attributes` | `Record<string, string>` | 否 |  |
 | `demoAssetId` | `string \| null` | 否 |  |
 | `revision` | `number \| null` | 否 |  |
@@ -5109,7 +5644,7 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `version` | `number` | 是 |  |
-| `expectedVersion` | `number` | 否 |  |
+| `expectedVersion` | `number \| null` | 否 |  |
 
 ### `TextAssetUpdateIn`
 
@@ -5119,7 +5654,7 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `content` | `string` | 是 |  |
-| `expectedVersion` | `number` | 否 |  |
+| `expectedVersion` | `number \| null` | 否 |  |
 | `note` | `string` | 否 |  |
 
 ### `TextAssetVersionOut`
@@ -5160,6 +5695,110 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 ### `UploadKind`（枚举）
 
 取值：`image`、`audio`、`video`、`text`
+
+### `UsageBreakdownItemOut`
+
+构成表的一行。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `dimension` | `UsageDimension` | 是 | 维度 |
+| `key` | `string` | 是 | 维度内的稳定键 |
+| `label` | `string` | 是 | 展示名 |
+| `total` | `number` | 是 | 尝试次数 |
+| `quantity` | `number` | 是 | 已产出数量 |
+| `durationSec` | `number` | 是 | 已产出视频总时长（秒） |
+| `share` | `number` | 是 | 占全部尝试次数的比例，0-1 |
+
+### `UsageDimension`（枚举）
+
+取值：`model`、`kind`、`owner`、`status`
+
+### `UsageGranularity`（枚举）
+
+取值：`day`、`week`
+
+### `UsageOverviewOut`
+
+看板总览：一次请求拿齐汇总 / 趋势 / 构成。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `summary` | `UsageSummaryOut` | 是 | 区间汇总 |
+| `trend` | `UsageTrendPointOut[]` | 是 | 时间趋势 |
+| `breakdown` | `UsageBreakdownItemOut[]` | 是 | 构成行 |
+| `sources` | `string[]` | 是 | 实际接上的数据来源标识 |
+
+### `UsageRecordOut`
+
+一条用量明细。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 | 记录 ID |
+| `source` | `string` | 是 | 来源标识 |
+| `title` | `string` | 是 | 展示标题 |
+| `status` | `string` | 是 | 原始状态 |
+| `modelId` | `string` | 是 | 模型目录 id |
+| `modelName` | `string` | 是 | 模型可读名 |
+| `quantity` | `number` | 是 | 本次产出数量 |
+| `durationSec` | `number` | 是 | 视频时长（秒） |
+| `createdAt` | `string` | 是 | 创建时间（UTC） |
+| `ownerId` | `string` | 是 | 使用人 ID |
+| `ownerName` | `string` | 是 | 使用人可读名 |
+| `detailUrl` | `string` | 是 | 详情页深链接 |
+
+### `UsageScope`（枚举）
+
+取值：`mine`、`all`
+
+### `UsageSourceOut`
+
+一个来源（视频 / 生图 / 将来接上的音频…）的分项。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `source` | `string` | 是 | 来源标识 |
+| `total` | `number` | 是 | 尝试次数 |
+| `succeeded` | `number` | 是 | 已产出次数 |
+| `failed` | `number` | 是 | 失败次数 |
+| `pending` | `number` | 是 | 排队 / 进行中 |
+| `quantity` | `number` | 是 | 已产出数量 |
+| `durationSec` | `number` | 是 | 已产出视频总时长（秒） |
+
+### `UsageSummaryOut`
+
+区间汇总。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `start` | `string` | 是 | 区间起点（含） |
+| `end` | `string` | 是 | 区间终点（含） |
+| `granularity` | `UsageGranularity` | 是 | 实际使用的时间桶粒度 |
+| `scope` | `UsageScope` | 是 | **实际生效**的数据范围（越权请求会被降级为 mine） |
+| `total` | `number` | 是 | 尝试次数 |
+| `succeeded` | `number` | 是 | 已产出次数 |
+| `failed` | `number` | 是 | 失败次数 |
+| `pending` | `number` | 是 | 排队 / 进行中 |
+| `successRate` | `number` | 是 | 成功率，0-1 |
+| `quantity` | `number` | 是 | 已产出数量合计 |
+| `durationSec` | `number` | 是 | 已产出视频总时长（秒） |
+| `avgDurationSec` | `number` | 是 | 平均单条视频时长（秒） |
+| `sources` | `UsageSourceOut[]` | 是 | 各来源分项 |
+
+### `UsageTrendPointOut`
+
+趋势上的一个点（区间内没有数据的那天也会补一个 0）。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `bucket` | `string` | 是 | 时间桶键：day=YYYY-MM-DD，week=该周周一 |
+| `total` | `number` | 是 | 尝试次数 |
+| `succeeded` | `number` | 是 | 已产出次数 |
+| `failed` | `number` | 是 | 失败次数 |
+| `pending` | `number` | 是 | 排队 / 进行中 |
+| `quantity` | `number` | 是 | 已产出数量 |
+| `durationSec` | `number` | 是 | 已产出视频总时长（秒） |
 
 ### `UserCreateIn`
 
@@ -5270,6 +5909,7 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `maxReferences` | `number` | 否 | 这个模型最多接受几张参考图（图生图 / 多图合成），`0` 表示纯文生图。参考图不是 `paramSchema` 里的参数：它的值是「一批图片」，提交时走 `referenceLibraryIds` 这条独立入参 |
 | `replacement` | `boolean` | 否 | 这个模型能不能跑替换链（按「原片 + 素材包」替换）。由驱动声明，模板目录按它筛；调用方不得从槽位组合推断 |
 | `referenceKinds` | `string[]` | 否 | 这个模型能收哪几类参考素材（`image` / `video` / `audio`），空数组 = 纯文生图。前端据此渲染参考素材的类型筛选与数量上限，不在界面里写死 |
+| `referenceLimits` | `Record<string, ReferenceLimitOut>` | 否 | 按素材类型分开的上限（键是 `image` / `audio` …）。`maxReferences` 仍是总数上限，两者要一起守；空对象 = 供应商没声明 |
 | `isDefault` | `boolean` | 否 |  |
 
 ### `modules__model_driver__schema__ModelListOut`
@@ -5339,5 +5979,4 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `createdAt` | `string` | 是 | 创建时间（UTC） |
 | `updatedAt` | `string` | 是 | 更新时间（UTC） |
 | `startedAt` | `string \| null` | 否 | 开始生成时间，未开始为 null |
-| `subtitleErase` | `TaskVariantOut \| null` | 否 | 去字幕版；没有派生过时为 null。前端据此显示进度与「原片/去字幕」切换 |
 | `externalId` | `string \| null` | 否 | 上游任务标识，形如 `<归档工作区>:<上游 task_id>`。**给排队查询用**：LibTV 的队列位次只能按上游 task_id 查，前端拿它拆出 task_id 去`POST /model-driver/libtv/progress`，不必由后端再存一份排队快照 |

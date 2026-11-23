@@ -7,16 +7,19 @@
 """
 
 from api.module import ModuleSpec
+from core.pages import PageSpec
 from core.ports.export_sources import register_export_source
 from core.ports.library_references import (
     LibraryReferenceSource,
     bind_library_reference_sources,
 )
+from core.ports.usage_metrics import register_usage_metrics
 from modules.task.export_source import TASK_EXPORT_SOURCE
 from modules.task.library_references import TaskLibraryReferences
 from modules.task.permissions import SPECS
 from modules.task.router import router
 from modules.task.seed import seed as seed_demo
+from modules.task.usage_provider import VideoUsageProvider
 
 # 必须 import：注册到生成框架的 pipeline 表（副作用导入）
 from modules.task import pipeline  # noqa: E402,F401  isort: skip
@@ -27,6 +30,11 @@ from modules.task import maintenance  # noqa: E402,F401  isort: skip  注册周�
 # 导出功能要读 video_tasks：注册成导出源，而不是让 modules/export import 本模块。
 # 见 core/ports/export_sources.py 的说明。
 register_export_source(TASK_EXPORT_SOURCE)
+
+# 用量看板要统计视频生成了多少，但业务模块之间不许互相 import：由本模块在
+# import 期把只读读取器交给 core 注入口，看板只认 `UsageMetricsProvider` 这份契约。
+# 注入口是多实现的 —— 视频、生图、将来的音频各注册一份，看板自动合并。
+register_usage_metrics("video", VideoUsageProvider())
 
 # 参考图存的是**资产库 v2 的 id**，所以归 v2 的删除保护管：彻底删除一张被任务
 # 引用的图，任务详情页的参考图会裂，而那一步不可逆。
@@ -55,6 +63,15 @@ module = ModuleSpec(
     tags=["任务"],
     description="视频生成任务：创建、查询、重试、收藏、删除",
     permissions=SPECS,
+    # 任务中心：视频任务的读 / 重试 / 删除都在这一页，另外它还要读生图历史
+    # （`image:read`）才能把两类记录排在同一条时间线上。
+    pages=(
+        PageSpec(
+            code="page:task-center",
+            name="任务中心",
+            route="/tasks",
+        ),
+    ),
     startup=_startup,
     # 已有自己的恢复器（worker.resume_unfinished_tasks），框架恢复器会跳过，
     # 但声明负责的 kind 让架构守卫能画出完整的「模块 × 插槽」矩阵。

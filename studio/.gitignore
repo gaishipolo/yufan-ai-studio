@@ -24,3 +24,6 @@ vite.config.ts.timestamp-*.mjs
 # 本地环境覆盖（仅提交示例）
 .env.local
 .env.*.local
+
+# 本地探针脚本与截图（puppeteer 真机验证的临时产物）
+var/

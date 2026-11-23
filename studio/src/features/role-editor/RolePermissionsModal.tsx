@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, Loader2 } from 'lucide-react';
-import { Button, Chip, Modal, Notice } from '@/shared/ui';
-import { cn } from '@/shared/lib/cn';
+import { AlertTriangle } from 'lucide-react';
+import { Button, Modal, Notice } from '@/shared/ui';
 import { toast } from '@/shared/lib/toast';
 import { usePermissionCatalog, useSetRolePermissions } from '@/entities/role/api/role.queries';
+import { isResolvablePermission } from '@/entities/role/model/permission-catalog';
 import type { Role } from '@/entities/role/model/types';
-import { PermissionSummaryBar } from '@/features/permission-layers/PermissionSummaryBar';
+import { PermissionPicker } from '@/features/permission-layers/PermissionPicker';
 
 /**
  * 勾选角色权限（`PUT /roles/{id}/permissions`，整组替换）。
@@ -40,26 +40,15 @@ export function RolePermissionsModal({
 
   useEffect(() => {
     if (!open || !role) return;
-    // 等目录就绪再初始化，否则「有效码」集合是空的，会把所有权限都当成失效
+    // 等目录就绪再初始化：选择器要靠它渲染两层结构
     if (!catalogCodes.size) return;
-    setSelected(role.permissions.filter((code) => catalogCodes.has(code)));
+    /* 判据是「后端认不认」，不是「目录里渲染不渲染」——这两件事不一样：
+       `task:*` / `image:*` 不在目录里（目录只有具体码），但后端明确接受它们。
+       按目录过滤会把它悄悄从选中集合里删掉，于是**打开弹窗点保存就等于撤权**
+       （内置「内容编辑」就靠这两条通配覆盖十几个接口）。 */
+    setSelected(role.permissions.filter(isResolvablePermission));
     setFormError(null);
   }, [open, role, catalogCodes]);
-
-  const toggle = (code: string) => {
-    setSelected((prev) => (prev.includes(code) ? prev.filter((item) => item !== code) : [...prev, code]));
-  };
-
-  const toggleGroup = (codes: string[], on: boolean) => {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      for (const code of codes) {
-        if (on) next.add(code);
-        else next.delete(code);
-      }
-      return [...next];
-    });
-  };
 
   const isSuperuser = role?.isSuperuser ?? false;
   const orphaned = role?.orphanedPermissions ?? [];
@@ -84,18 +73,12 @@ export function RolePermissionsModal({
       open={open}
       onClose={onClose}
       title={isSuperuser ? `角色权限 · ${role?.name ?? ''}` : `编辑角色权限 · ${role?.name ?? ''}`}
-      width={600}
+      width={1000}
     >
       <div className="space-y-3 px-[18px] py-4">
         {isSuperuser ? (
           <Notice tone="warning">该角色是超级管理员，权限恒为全部，不提供编辑。</Notice>
-        ) : (
-          <PermissionSummaryBar
-            count={selected.length}
-            unit="个权限点"
-            onClear={() => setSelected([])}
-          />
-        )}
+        ) : null}
 
         {orphaned.length > 0 && (
           <Notice
@@ -113,69 +96,11 @@ export function RolePermissionsModal({
           </Notice>
         )}
 
-        {isSuperuser ? null : catalogQuery.isLoading ? (
-          <div className="flex items-center justify-center gap-2 py-10 text-xs text-ink-mute">
-            <Loader2 size={14} className="animate-spin" /> 正在加载权限点…
-          </div>
-        ) : catalogQuery.isError ? (
-          <p className="py-8 text-center text-xs text-danger">
-            权限点加载失败：{catalogQuery.error.message}
-          </p>
-        ) : (
-          <div className="max-h-[46vh] space-y-3 overflow-auto pr-1">
-            {(catalogQuery.data?.groups ?? []).map((group) => {
-              const codes = group.items.map((item) => item.code);
-              const allChecked = codes.every((code) => selected.includes(code));
-              return (
-                <section key={group.group} className="rounded-lg border border-line-soft">
-                  <header className="flex items-center gap-2 border-b border-line-soft bg-panel-soft px-2.5 py-1.5">
-                    <h3 className="text-xs font-semibold text-ink-soft">{group.group}</h3>
-                    <span className="text-meta text-ink-mute tabular-nums">{codes.length}</span>
-                    <button
-                      type="button"
-                      className="ml-auto text-meta text-primary hover:underline"
-                      onClick={() => toggleGroup(codes, !allChecked)}
-                    >
-                      {allChecked ? '取消本组' : '全选本组'}
-                    </button>
-                  </header>
-                  <ul className="grid gap-1 p-1.5 md:grid-cols-2">
-                    {group.items.map((item) => {
-                      const checked = selected.includes(item.code);
-                      return (
-                        <li key={item.code}>
-                          <label
-                            className={cn(
-                              'flex cursor-pointer items-start gap-2 rounded-[7px] px-2 py-1.5 transition-colors',
-                              checked ? 'bg-primary-soft' : 'hover:bg-panel-soft',
-                            )}
-                          >
-                            <input
-                              type="checkbox"
-                              className="mt-[3px] h-3 w-3 shrink-0 accent-primary"
-                              checked={checked}
-                              onChange={() => toggle(item.code)}
-                            />
-                            <span className="min-w-0">
-                              <span className="flex items-center gap-1.5">
-                                <span className="text-xs text-ink">{item.name}</span>
-                                <Chip>{item.code}</Chip>
-                              </span>
-                              {item.description && (
-                                <span className="mt-0.5 block text-meta leading-[1.5] text-ink-mute">
-                                  {item.description}
-                                </span>
-                              )}
-                            </span>
-                          </label>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                </section>
-              );
-            })}
-          </div>
+        {isSuperuser ? null : (
+          /* 勾选清单由 PermissionPicker 提供：它把「页面 → 接口」的层级画在一屏里，
+             而这里原来自己抄了一份平铺清单 —— 两份列表迟早漂移（重复的 bug 修完一次
+             就够，两份都要修）。 */
+          <PermissionPicker selected={selected} onChange={setSelected} />
         )}
 
         {formError && (

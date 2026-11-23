@@ -51,7 +51,8 @@ drivers/<name>.py  ──自动扫描──▶ ModelRouter ──▶ generation.
 
 **可选能力也是协议**（`infra.ai.base`，运行时判定用 `isinstance`）：
 `PollCapable`（`supports_poll`）、`PollPacing`（`poll_interval_sec`）、
-`SubmitBudget`（`submit_timeout_sec`）。三个刻意分开 —— 声明了 `supports_poll`
+`SubmitBudget`（`submit_timeout_sec`）、`InlineReferencesCapable`（`inline_references`）、
+`ReferenceLimitsCapable`（`reference_limits`）。五个刻意分开 —— 声明了 `supports_poll`
 但没写节奏的驱动不会被当成「不支持轮询」，只是按全局间隔问。
 **不要**用 `getattr(provider, "...", None)` 探测：属性名写错时它只会安静地返回
 `None`，然后退化成默认行为（轮询变 2 秒、预算变默认），日志里一句话都没有。
@@ -91,6 +92,47 @@ async def prepare_inputs(self, run_id: str, model: str = "") -> dict: ...   # �
 在 2026-11-14 就删了，剩下的 `isinstance` 判断全仓为零 —— 协议留着的效果只是让人
 以为「不实现它就跑不起来」。范例见 `drivers/bailian.py`（`submit()` 里先
 `prepare_inputs` 再落请求体）。
+
+### 2.4.1 参考素材有两条通道，由驱动声明走哪条（2026-11-22）
+
+参考素材不是「模型参数」，走 `GenerationRequest.reference_urls` 这条独立通道。
+但**怎么把字节送到供应商面前**，各渠道差得很远，于是分成两条：
+
+| 通道 | 声明 | 链路层做什么 | 适用 |
+|---|---|---|---|
+| 落盘物化 | 不声明 | `params["referenceKeys"]` → 物化器写进归档工作区，上传时才有地址 | LibTV / 百炼（执行器型） |
+| 内联 | `inline_references = True` | 把存储里的字节读成 `data:<mime>;base64,...` 进请求体 | 直连型（Agnes 视频） |
+
+为什么直连型只能内联：上游只收**公网 URL** 或 `data:` URI，而我们的对象存储在
+内网、供应商根本拉不到（实测内联 data URI 上游照收照出片，轮询回包里还有
+`usage.input_image_count`）。引入了公网直传就要新增公网可达存储与合规口径，
+成本远高，所以先走内联。
+
+**声明出来的限制也要跟着走**（`ReferenceLimitsCapable`，属性 `reference_limits`）：
+每类素材的份数上限（`max_count`）、图片的单边像素范围（`min_side` / `max_side`）、
+单份与同类合计的体积（`max_bytes` / `max_total_bytes`）、音视频的单段与同类合计
+时长（`min_seconds` / `max_seconds` / `max_total_seconds`）。所有字段 `0` 表示不限。
+各渠道不一样（Agnes 256–5760、单张 15MB、音频 2–12 秒；百炼 240–8000），写成全局
+常量就会把「百炼能用的图」在受理期拒掉，而用户不知道错在哪。受理期按资产库里的
+宽高 / 体积 / 时长判一次（早失败、报错说人话），提交前按真实字节再判一次
+（那三样都可能是 0，或与实际文件对不上）。
+
+**合计口径必须单独声明**，不能靠逐份判推出来：供应商的表格同时写着「单张 15MB」
+和「整单 50MB」—— 五张满额就是 75MB，每张都合法而整体超限；时长同理，
+「总时长 2–12 秒」是合计，三段各 5 秒单看都合规。没有声明时就退回
+`modules/task/service.py` 的兜底 1–15 秒（LibTV「原片」的口径），**别把兜底
+当成 Agnes 的规矩**：它比 Agnes 宽，会把 1.5 秒的音频放过去，到上游才 400。
+
+这份声明还会**经目录接口下发给前端**（`GET /models` 的 `referenceLimits`，
+按类型分组）。必须下发，因为 `max_references` 只是**总数**：「5 张图 + 3 段音频
+= 总数 8」的模型只给总数，用户加到第 6 张图时界面还说「还能再加」，提交才吃 400。
+前端据此逐类算余量，没声明的供应商拿空对象、退回只守总数。
+
+**提示词里的素材指代由驱动自己翻**：`{{Mixed N}}` 是本项目的模板语法，上游不认识。
+`core.prompt_refs.translate_prompt_with()` 给的是**编号规则**（按类型各自从 1 开始，
+与上游分数组收的形状一致），**标签**由驱动给 —— 生图与替换链用「图1」，
+Agnes 视频用 `<Picture 1>`（上游只认这个写法）。两边各写一份编号规则，迟早出现
+「档案里写 图1、实际发出去的是 图2」这种对不上的情况。
 
 ## 2.5 只给自己的业务链路用的模型：`internal=True`
 

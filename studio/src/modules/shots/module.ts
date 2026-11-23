@@ -8,7 +8,7 @@ export default defineModule({
     {
       path: 'shots',
       load: () => import('@/pages/shots/ShotsPage'),
-      permissions: ['shot:read'],
+      permissions: ['page:shots'],
       nav: {
         label: '镜头库',
         icon: Video,

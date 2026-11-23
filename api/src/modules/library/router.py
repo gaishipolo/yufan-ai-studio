@@ -214,6 +214,9 @@ async def selection(
         # 那几张图选不到了（槽位默认还是按素材挑）。列表藏是为了别重复，
         # 选择器藏是让人找不到东西 —— 同一件事在两个场景里结论相反。
         exclude_packed_members=False,
+        # 共享出去的封装，成员仍是原作者的 personal：模板库要能挑到并用它，
+        # 所以「包可见 ⇒ 成员可读」。只在选择器开口子，资产库列表保持原样。
+        include_pack_members=True,
     )
     return ApiResponse.ok(
         LibrarySelectionPage(

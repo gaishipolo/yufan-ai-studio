@@ -11,6 +11,7 @@ import {
   blankSpec,
   dropUserSelectableParams,
   effectiveModelIds,
+  fromCaseSnapshot,
   fromSpecOut,
   hasSingleSlotRef,
   insertRef,
@@ -886,5 +887,53 @@ describe('引用写法', () => {
 
     // 原来指 group 的 {{Mixed 2}} 变成 {{Mixed 1}}；原来的 image_1 变成 key 写法
     expect(renumberRefs(before, next).prompt).toBe('{{slot:image_1}} 和 {{Mixed 1}}');
+  });
+});
+
+describe('案例复用', () => {
+  const SNAPSHOT = {
+    name: '源模板',
+    description: '源模板的描述',
+    model: 'model_x',
+    allowedModels: ['model_x', 'model_y'],
+    prompt: '一张图，暖色调',
+    randomPrompt: '随机 {{Mixed 1}}',
+    demoAssetId: 'asset_demo',
+    slots: [
+      {key: 'image_1', type: 'image', position: 0},
+      {key: 'image_2', type: 'image', position: 1},
+    ],
+  };
+
+  it('案例快照带成新草稿：key 与名字换新的，内容原样带入', () => {
+    const spec = fromCaseSnapshot(SNAPSHOT, {key: 'spec_new', name: '源模板 副本'});
+
+    expect(spec.key).toBe('spec_new');
+    expect(spec.name).toBe('源模板 副本');
+    expect(spec.model).toBe('model_x');
+    expect(spec.allowedModels).toEqual(['model_x', 'model_y']);
+    expect(spec.prompt).toBe('一张图，暖色调');
+    expect(spec.slots?.map(slot => slot.key)).toEqual(['image_1', 'image_2']);
+  });
+
+  it('不带源模板的展示素材：那是发布者的资产，复用者多半没有使用权', () => {
+    const spec = fromCaseSnapshot(SNAPSHOT, {key: 'spec_new', name: '源模板 副本'});
+
+    expect(spec.demoAssetId).toBeNull();
+  });
+
+  it('复用出来的是**还没存过**的草稿：没有并发令牌', () => {
+    const spec = fromCaseSnapshot(SNAPSHOT, {key: 'spec_new', name: '源模板 副本'});
+
+    expect(spec.revision).toBeNull();
+  });
+
+  it('快照是空的也不炸：给一份能直接编辑的空草稿', () => {
+    const spec = fromCaseSnapshot(undefined, {key: 'spec_new', name: '空模板'});
+
+    expect(spec.key).toBe('spec_new');
+    expect(spec.name).toBe('空模板');
+    expect(spec.slots).toEqual([]);
+    expect(spec.demoAssetId).toBeNull();
   });
 });

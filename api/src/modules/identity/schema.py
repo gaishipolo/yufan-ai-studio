@@ -13,7 +13,11 @@ from __future__ import annotations
 from pydantic import Field, field_validator, model_validator
 
 from core.schema import CamelModel, CamelORMModel, UtcDateTime
-from modules.identity.policy import PASSWORD_MIN_LENGTH, check_password_strength
+from modules.identity.policy import (
+    PASSWORD_MIN_LENGTH,
+    check_avatar_url,
+    check_password_strength,
+)
 
 # 用户名只允许字母数字与 . _ -：避免大小写、空格、emoji 带来的「看起来一样但登录不上」
 USERNAME_PATTERN = r"^[a-zA-Z0-9_.-]{3,64}$"
@@ -116,6 +120,11 @@ class UserCreateIn(CamelModel):
     def _strength(cls, v: str) -> str:
         return check_password_strength(v)
 
+    @field_validator("avatar_url")
+    @classmethod
+    def _avatar(cls, v: str | None) -> str | None:
+        return check_avatar_url(v)
+
 
 class UserUpdateIn(CamelModel):
     display_name: str | None = Field(default=None, max_length=64, description="昵称")
@@ -151,6 +160,11 @@ class UserUpdateIn(CamelModel):
             raise ValueError("isActive 不能为 null：停用请传 false，保持不动请不要传该字段")
         return v
 
+    @field_validator("avatar_url")
+    @classmethod
+    def _avatar(cls, v: str | None) -> str | None:
+        return check_avatar_url(v)
+
 
 class ProfileUpdateIn(CamelModel):
     """`PATCH /identity/me` 的自助可写字段。
@@ -172,6 +186,11 @@ class ProfileUpdateIn(CamelModel):
     position: str | None = Field(
         default=None, max_length=64, description="职务；传 null 清空"
     )
+
+    @field_validator("avatar_url")
+    @classmethod
+    def _avatar(cls, v: str | None) -> str | None:
+        return check_avatar_url(v)
 
 
 class UserRolesIn(CamelModel):
@@ -252,6 +271,17 @@ class PermissionOut(CamelModel):
     code: str = Field(description="权限码，如 `task:create`")
     name: str = Field(description="权限名称")
     description: str = Field(default="", description="权限说明")
+    requires: list[str] = Field(
+        default_factory=list,
+        description=(
+            "页面权限关联的接口权限码（只有页面项有）。"
+            "前端用它把「页面 → 接口」的层级画出来，而不是让人从描述文字里读"
+        ),
+    )
+    route: str = Field(
+        default="",
+        description="页面路由（如 `/tasks`）；只有页面项有",
+    )
 
 
 class PermissionGroupOut(CamelModel):
@@ -312,6 +342,39 @@ class GroupMembersIn(CamelModel):
     )
 
 
+class PermissionTreeUserOut(CamelModel):
+    """树上的一个账号：只够画一行，不含权限。"""
+
+    id: str = Field(description="用户 ID")
+    username: str = Field(description="账号")
+    display_name: str = Field(default="", description="昵称")
+    is_active: bool = Field(default=True, description="是否启用（停用的排后面并置灰）")
+
+
+class PermissionTreeGroupOut(CamelModel):
+    """一个分组，以及它的成员（成员顺序按账号排序，前端不再排）。"""
+
+    id: str = Field(description="小组 ID")
+    name: str = Field(description="小组名称")
+    members: list[PermissionTreeUserOut] = Field(
+        default_factory=list, description="组内成员"
+    )
+
+
+class PermissionTreeOut(CamelModel):
+    """「分组 → 用户」的完整树。
+
+    为什么单独一个接口，而不是让前端用「小组列表 + 用户列表」拼：
+    用户列表是分页的，拼出来的树在人多时会**静默少人**，而看的人以为
+    那就是全部。这里一次给全，没有分页参数。
+    """
+
+    groups: list[PermissionTreeGroupOut] = Field(default_factory=list)
+    ungrouped: list[PermissionTreeUserOut] = Field(
+        default_factory=list, description="不属于任何分组的账号"
+    )
+
+
 class GroupLayerOut(CamelModel):
     """分层权限明细里的一段：这条权限来自哪个小组。"""
 
@@ -319,6 +382,64 @@ class GroupLayerOut(CamelModel):
     name: str = Field(description="小组名称")
     permissions: list[str] = Field(
         default_factory=list, description="该组授予的权限码"
+    )
+    member_count: int = Field(
+        default=0,
+        description=(
+            "组内成员数（不含本人）。界面拿它写清「关掉这条会影响多少人」——"
+            "改共享单元前必须知道影响面，而这个数字猜不出来"
+        ),
+    )
+
+
+class RoleLayerOut(CamelModel):
+    """分层权限明细里的一段：这条权限来自哪个角色。
+
+    `roles` 那份合并集合说不清「是哪个角色给的」，而「去哪撤」正需要这个 ——
+    所以额外给一份按角色拆开的明细。
+    """
+
+    id: str = Field(description="角色 ID")
+    code: str = Field(description="角色标识")
+    name: str = Field(description="角色名称")
+    permissions: list[str] = Field(
+        default_factory=list, description="该角色授予的权限码"
+    )
+    user_count: int = Field(
+        default=0, description="除本人外还挂着这个角色的人数（影响面）"
+    )
+
+
+class PermissionOriginOut(CamelModel):
+    """一个权限码的一个来源层。`kind` 是开放枚举：加层不用改这个形状。"""
+
+    kind: str = Field(description="来源类型：team / group / user（个人层）/ role")
+    id: str = Field(default="", description="来源实体 id（team 为空）")
+    name: str = Field(default="", description="来源实体名称（team 固定为「团队」）")
+
+
+class PermissionSourceOut(CamelModel):
+    """某个权限码由哪几层给到。空 `layers` = 目录外（只可能出现在例外里）。"""
+
+    code: str = Field(description="权限码")
+    layers: list[PermissionOriginOut] = Field(
+        default_factory=list, description="给出这个码的全部来源"
+    )
+
+
+class PermissionExceptionsIn(CamelModel):
+    """个人例外（`effect='deny'`）的整组替换入参。
+
+    与 `PermissionsIn` 分开命名：同一张表、两个方向，混用一个类会让调用方
+    以为「传空数组 = 清空他的权限」，而它清的是**例外**。
+    """
+
+    exceptions: list[str] = Field(
+        default_factory=list,
+        description=(
+            "对这个账号单独关闭的权限码（整组替换）。只接受目录里的具体码："
+            "不接受通配（`task:*` 的「关掉」没有唯一解释），也不接受 `identity:*`"
+        ),
     )
 
 
@@ -333,9 +454,46 @@ class EffectivePermissionsOut(CamelModel):
     )
     personal: list[str] = Field(default_factory=list, description="单独授予的权限")
     roles: list[str] = Field(default_factory=list, description="现有角色授予的权限")
+    pages: list[str] = Field(
+        default_factory=list,
+        description="授予的页面权限（page:*）；决定侧栏与路由能进哪一页",
+    )
+    gated_off: list[str] = Field(
+        default_factory=list,
+        description=(
+            "被页面门控关掉的接口权限：四层并集里有、但它所属的页面一页都没授予。"
+            "`资源:*` 会先摊成具体码再判定，所以这里列的是被关掉的**具体码**。"
+            "界面拿它解释「为什么我有 task:read 却仍然 403」"
+        ),
+    )
     effective: list[str] = Field(
         default_factory=list,
-        description="四层并集；`*` 表示超级管理员。require() 唯一判据",
+        description="四层并集过完页面门控的结果；`*` 表示超级管理员。require() 唯一判据",
+    )
+    role_details: list[RoleLayerOut] = Field(
+        default_factory=list, description="按角色拆开的授予明细（`roles` 是合并后的）"
+    )
+    sources: list[PermissionSourceOut] = Field(
+        default_factory=list,
+        description=(
+            "每个权限码的来源层。界面据此在每一行上标「来自 角色·内容编辑」。"
+            "键是**摊开通配之后**的码，所以 `task:*` 也逐条列出具体动作"
+        ),
+    )
+    denied: list[str] = Field(
+        default_factory=list,
+        description=(
+            "个人例外：对这个账号单独关闭的码。**包含当前不生效的那些** ——"
+            "角色撤了但那条例外还在，它必须仍然可见、可撤销，否则就是一个"
+            "谁也看不见的隐藏状态"
+        ),
+    )
+    denied_off: list[str] = Field(
+        default_factory=list,
+        description=(
+            "因为本人例外而不生效的码（授予了、但被关掉）。与 `gatedOff` 互斥："
+            "一个码不生效只有「你自己关的」和「页面没开」两种原因，界面按它分流"
+        ),
     )
 
 

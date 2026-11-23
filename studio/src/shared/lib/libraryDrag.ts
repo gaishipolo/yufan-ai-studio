@@ -16,6 +16,14 @@ export interface LibraryAssetDrag {
   name: string;
   /** 缩略图地址（相对 API 前缀）；空串表示没有可用封面，由 UI 画占位 */
   url: string;
+  /**
+   * 素材类型（`image` / `video` / `audio`）。
+   *
+   * 接收方要按它算「这一类的名额还剩几个」，也要据此把素材归到对应的数组：
+   * 图片与音频在供应商那边是两个参数，混在一起就对不上号。缺省按图片理解
+   * （旧载荷没有这个字段）。
+   */
+  kind?: string;
 }
 
 /** 拖拽开始：写入载荷。`effectAllowed` 由调用方按场景设置（复制，不是移动） */
@@ -44,6 +52,9 @@ export function readLibraryDrag(dataTransfer: DataTransfer): LibraryAssetDrag | 
       id: parsed.id,
       name: typeof parsed.name === 'string' ? parsed.name : parsed.id,
       url: typeof parsed.url === 'string' ? parsed.url : '',
+      // 原样透传：载荷里没有就是没有，由调用方按图片兜底。
+      // 在这里补默认值会让「解析载荷」悄悄改写数据，测试里也对不上。
+      kind: typeof parsed.kind === 'string' && parsed.kind ? parsed.kind : undefined,
     };
   } catch {
     return null;

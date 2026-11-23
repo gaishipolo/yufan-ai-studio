@@ -17,7 +17,14 @@ PERM_RETRY_ANY = "model_driver:retry:any"
 # 替别人取消是**影响他人在跑任务**的动作：不认 read:all，单独一个开关
 PERM_CANCEL_ANY = "model_driver:cancel:any"
 SPECS = (
-    PermissionSpec(PERM_READ, "查看模型驱动、模型目录与生成任务", group="内容生产"),
+    PermissionSpec(
+        PERM_READ,
+        "查看模型驱动、模型目录与生成任务",
+        group="内容生产",
+        # 归「任务中心」：顶部那条 LibTV 额度条要读 `/model-driver/libtv/account`，
+        # 它由本码把关。不归那页的话，关掉任务中心、额度条的数据接口仍然可用。
+        pages=("page:task-center",),
+    ),
     PermissionSpec(PERM_CREATE, "提交统一生成任务并重试失败记录", group="内容生产"),
     PermissionSpec(PERM_CANCEL, "取消生成任务", group="内容生产"),
     PermissionSpec(

@@ -20,7 +20,7 @@
 
 from __future__ import annotations
 
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -96,6 +96,49 @@ class ClaimedExternalIdQueryable(Protocol):
     async def list_claimed_external_ids(self) -> set[str]: ...
 
 
+@runtime_checkable
+class StrictModelDeclared(Protocol):
+    """可选能力：声明「只有一个供应商时**禁止**兜底」。
+
+    以前是 `getattr(pipeline, "strict_model", False)`：属性名拼错、被改名，
+    探测只会安静地退回 `False`（= 允许兜底），而症状是任务被打到另一家
+    供应商上——产物风格、单价、合规口径全变，日志里还看不出异常。
+    """
+
+    strict_model: bool
+
+
+@runtime_checkable
+class FailOnModelGoneDeclared(Protocol):
+    """可选能力：声明「模型从目录消失时当场判失败」还是「保留等人工核对」。"""
+
+    fail_on_model_gone: bool
+
+
+@runtime_checkable
+class Persistable(Protocol):
+    """可选能力：把产物落到自己的存储上，返回**对象 key**（不是 URL）。
+
+    没有它，`output_url` 存的就是供应商签名地址——几小时后前端开始出现
+    裂图，而失败表现是「历史页图片加载不出来」，离真正原因很远。
+    """
+
+    async def persist_output(self, record_id: str, url: str) -> str: ...
+
+
+@runtime_checkable
+class ArchiveRequestable(Protocol):
+    """可选能力：把一条成功的记录翻译成「入草稿箱」的请求。
+
+    返回类型刻意写 `Any`：草稿箱请求是资产库模块的概念，框架层不认识它，
+    硬写进类型就是反过来让框架依赖业务模块。协议只保证「有这个方法」。
+    """
+
+    async def archive_request(
+        self, session: AsyncSession, record: GenerationRecord, stored: str
+    ) -> Any: ...
+
+
 async def list_claimed_external_ids(session: AsyncSession) -> set[str]:
     """聚合所有已注册流水线当前认领的外部任务标识。"""
     claimed: set[str] = set()
@@ -117,7 +160,7 @@ def strict_model(pipeline: GenerationPipeline) -> bool:
     这是**声明式**的开关，不是自定义解析：怎么找供应商仍然只有 `ModelRouter`
     一处实现（见 `generation.runner._provider_for`）。
     """
-    return bool(getattr(pipeline, "strict_model", False))
+    return bool(pipeline.strict_model) if isinstance(pipeline, StrictModelDeclared) else False
 
 
 def fail_on_model_gone(pipeline: GenerationPipeline) -> bool:
@@ -131,7 +174,10 @@ def fail_on_model_gone(pipeline: GenerationPipeline) -> bool:
     渠道停用只说明「我们联系不上供应商」，不代表任务失败。判失败会诱导用户
     去重试 → 重复计费。保留 `running` 等人工核对才是对的。
     """
-    return bool(getattr(pipeline, "fail_on_model_gone", True))
+    # 未声明 = 默认 True（框架通用行为）；声明了才读它的值
+    if isinstance(pipeline, FailOnModelGoneDeclared):
+        return bool(pipeline.fail_on_model_gone)
+    return True
 
 
 pipelines = NamedRegistry[GenerationPipeline]("generation.pipeline")

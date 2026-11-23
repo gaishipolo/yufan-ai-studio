@@ -15,8 +15,9 @@ import { SlotMediaPicker } from './SlotMediaPicker';
  * 断言落在「发给后端的 tagIds」上 —— 那才是筛选语义真正发生的地方。
  */
 
-const { selectionCalls, tagsData, itemsData } = vi.hoisted(() => ({
+const { selectionCalls, infiniteCalls, tagsData, itemsData } = vi.hoisted(() => ({
   selectionCalls: [] as { kind?: string; tagIds?: string[]; pageSize?: number }[],
+  infiniteCalls: [] as { pageSize?: number; enabled?: boolean }[],
   tagsData: { current: [] as LibraryTagStatOut[] },
   itemsData: { current: [] as { id: string; name: string; kind: string; coverUrl?: string }[] },
 }));
@@ -32,6 +33,32 @@ vi.mock('@/entities/library/api/library.queries', () => ({
       data: { items: itemsData.current.slice(0, size), total: itemsData.current.length },
       isSuccess: true,
       isLoading: false,
+    };
+  },
+  /* 「显示全部」按服务端单页上限翻页。mock 必须按 pageSize 真分页，
+     否则「127 张点完还在不在」这条守卫测的是空气。 */
+  useLibrarySelectionInfinite: (params: {
+    kind?: string;
+    tagIds?: string[];
+    pageSize?: number;
+    enabled?: boolean;
+  }) => {
+    infiniteCalls.push(params);
+    const size = params.pageSize ?? 100;
+    const total = itemsData.current.length;
+    const pages = params.enabled
+      ? Array.from({length: Math.ceil(total / size)}, (_, index) => ({
+          items: itemsData.current.slice(index * size, (index + 1) * size),
+          page: index + 1,
+          pageSize: size,
+          total,
+        }))
+      : [];
+    return {
+      data: {pages},
+      hasNextPage: false,
+      isFetchingNextPage: false,
+      fetchNextPage: vi.fn(),
     };
   },
   /* 悬浮大图：这里只关心「有没有被调用」，字节由组件自己的用例验。 */
@@ -67,6 +94,7 @@ function slotOf(extra: Partial<SpecSlotOut> = {}): SpecSlotOut {
 
 beforeEach(() => {
   selectionCalls.length = 0;
+  infiniteCalls.length = 0;
   tagsData.current = TAGS;
   itemsData.current = [];
 });
@@ -182,7 +210,10 @@ describe('SlotMediaPicker · 一屏放不下时', () => {
 
     await user.click(screen.getByRole('button', {name: /还有 6 张/}));
     expect(screen.getAllByTitle(/^图\d+\.png$/)).toHaveLength(30);
-    expect(selectionCalls.at(-1)?.pageSize).toBe(30);
+    /* 首屏查询仍是 24；「显示全部」走翻页查询，每页按服务端上限 100 */
+    expect(selectionCalls.at(-1)?.pageSize).toBe(24);
+    expect(infiniteCalls.at(-1)?.pageSize).toBe(100);
+    expect(infiniteCalls.at(-1)?.enabled).toBe(true);
     expect(screen.queryByRole('button', {name: /还有/})).not.toBeInTheDocument();
   });
 });
@@ -285,5 +316,28 @@ describe('SlotMediaPicker · 悬浮大图', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe('SlotMediaPicker · 显示全部', () => {
+  it('127 张候选翻页取全，不再拿 pageSize=127 去撞后端的 100 上限', async () => {
+    const user = userEvent.setup();
+    itemsData.current = Array.from({length: 127}, (_, index) => ({
+      id: `m${index}`,
+      name: `素材-${index}`,
+      kind: 'image',
+    }));
+    render(
+      <SlotMediaPicker slot={slotOf({tagIds: ['t11']})} selected={[]} onChange={vi.fn()} />,
+    );
+
+    expect(screen.getByRole('button', {name: '还有 103 张 · 显示全部'})).toBeInTheDocument();
+    await user.click(screen.getByRole('button', {name: '还有 103 张 · 显示全部'}));
+
+    /* 第 127 张原本根本不在 DOM 里；点完还在才叫「显示全部」 */
+    expect(screen.getByTitle('素材-126')).toBeInTheDocument();
+    expect(screen.queryByRole('button', {name: '还有 103 张 · 显示全部'})).not.toBeInTheDocument();
+    /* 首屏 24 张；翻页按 100 一页，任何一次请求都不能超过服务端上限 */
+    expect(selectionCalls.every(call => (call.pageSize ?? 0) <= 100)).toBe(true);
   });
 });

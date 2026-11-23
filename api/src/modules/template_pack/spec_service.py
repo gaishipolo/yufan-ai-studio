@@ -27,7 +27,7 @@ from sqlalchemy import ColumnElement, and_, false, func, select, true
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.context import CurrentUser
-from core.exceptions import BadRequest, Conflict, NotFound
+from core.exceptions import BadRequest, Conflict, NotFound, StateChanged
 from core.param_schema import resolve_params
 from core.ports.library_lookup import get_library_lookup
 from core.ports.model_generation import ModelSummary, get_model_generation
@@ -38,6 +38,7 @@ from core.template_spec import (
     FilledAsset,
     FilledSlot,
     InputSlot,
+    SpecGroup,
     TemplateSpec,
     compile_spec,
     normalize_refs,
@@ -56,6 +57,7 @@ from modules.template_pack.spec_schema import (
     CompiledSlotOut,
     SpecCompileIn,
     SpecCompileOut,
+    SpecGroupIn,
     SpecPublishOut,
     SpecSlotOut,
     SpecValidateOut,
@@ -100,6 +102,9 @@ def to_core(payload: TemplateSpecIn) -> TemplateSpec:
         ),
         attributes=dict(payload.attributes),
         demo_asset_id=payload.demo_asset_id,
+        groups=tuple(
+            SpecGroup(key=group.key, label=group.label) for group in payload.groups
+        ),
     )
 
 
@@ -148,6 +153,26 @@ def _slot_out(row: TemplateSpecSlot) -> SpecSlotOut:
     )
 
 
+def _group_outs(slots: Sequence[TemplateSpecSlot]) -> list[SpecGroupIn]:
+    """从发布快照的槽位行里提炼出「有哪些容器、各叫什么」。
+
+    **顺序 = 首次出现的顺序**（`slots` 已按 `position` 排好），这样模板库
+    画出来的容器顺序与槽位顺序一致。名字存组内每一行（冗余），取第一个非空的
+    那个：正常写入永远是同值，取首个只是让「被手改过一行」的坏数据有确定行为，
+    而不是随机挑一行。
+
+    老版本没有 `group_label`（列是后加的，不回填）→ 这里给出空 label，
+    前端按段序回退成「封装槽位 N」。
+    """
+    labels: dict[str, str] = {}
+    for row in slots:
+        key = row.group_key or ""
+        if not key or key in labels:
+            continue
+        labels[key] = row.group_label or ""
+    return [SpecGroupIn(key=key, label=label) for key, label in labels.items()]
+
+
 def _spec_out(
     head: SpecRow, latest: TemplateSpecVersion | None, slots: Sequence[TemplateSpecSlot]
 ) -> TemplateSpecOut:
@@ -180,6 +205,7 @@ def _spec_out(
                 # 漏映射时它的表现是**永远空**，于是模板明明配了，档位却置灰。
                 random_prompt=latest.random_prompt or "",
                 slots=[_slot_out(slot) for slot in slots],
+                groups=_group_outs(slots),
                 fingerprint=latest.fingerprint,
                 published_by=latest.published_by,
                 published_at=latest.published_at,
@@ -484,8 +510,9 @@ async def save(
         if head.owner_id != actor.id:
             raise Conflict(f"配置 {payload.key} 属于其他用户")
         if payload.revision is not None and payload.revision != head.revision:
-            raise Conflict(
-                f"配置已被更新（当前第 {head.revision} 次修订），请刷新后重试"
+            raise StateChanged(
+                f"配置已被更新（当前第 {head.revision} 次修订），请刷新后重试",
+                details={"expectedRevision": payload.revision, "currentRevision": head.revision},
             )
         if head.fingerprint == fingerprint:
             # 幂等：内容没变就不加修订号，也不把已发布状态打回草稿。
@@ -555,6 +582,9 @@ async def publish(session: AsyncSession, actor: CurrentUser, key: str) -> SpecPu
     )
     session.add(row)
     await session.flush()  # 主键在 flush 后才有，槽位要用它
+    # 容器名存组内每一行（冗余）：发布快照只有槽位行，没有「容器表」。
+    # 只写组内第一行会依赖 position 顺序 —— 拖一下顺序就取不到名字了。
+    group_labels = {group.key: group.label for group in spec.groups}
     for slot in spec.slots:
         session.add(
             TemplateSpecSlot(
@@ -564,6 +594,7 @@ async def publish(session: AsyncSession, actor: CurrentUser, key: str) -> SpecPu
                 binding=slot.binding,
                 ref_mode=slot.ref_mode,
                 group_key=slot.group,
+                group_label=group_labels.get(slot.group, ""),
                 min_count=slot.min_count,
                 max_count=slot.max_count,
                 label=slot.label,
@@ -751,6 +782,85 @@ async def list_out(
 # --------------------------------------------------------------------------- #
 # 编译
 # --------------------------------------------------------------------------- #
+#: 使用者改写「未选时文案」的长度上限。与作者那一栏同口径
+#: （`SpecSlotIn.empty_text` 的 `max_length`）：同一个槽位、同一段话，
+#: 只是写的人不同，不该有两套限制。
+MAX_SLOT_TEXT_OVERRIDE = 2000
+
+
+def _apply_slot_text_overrides(
+    spec: TemplateSpec,
+    overrides: Mapping[str, str],
+    slot_values: Mapping[str, Sequence[str]],
+) -> TemplateSpec:
+    """把使用者改写的「未选时文案」换进 spec。
+
+    放在 `compile_spec` **之前**改 spec（与随机档换 `prompt` 同一手法、同一位置
+    之后）：编译核心因此保持纯函数，同一 `(spec, fills)` 必得同一结果。
+    传进来的 `spec.prompt` 已是**这次真正要编的那一段**（随机档已换过），
+    所以「有没有插入点」查的就是它，不会出现「插入点在另一档里、改了也不生效」。
+
+    五道 400 都在这里，都点明是哪一格、为什么不生效。静默收下的后果是
+    「用户改的话没进提示词，页面看起来一切正常」—— 那比报错难查得多：
+
+    1. 槽位不存在（拼错 key / 页面停在旧版本）
+    2. 必填或固定槽位：没有「没选」这个状态，兜底文案本来就用不上
+    3. 同一格既挑了素材又改了文案：两者都在回答「这一格是什么」，
+       取谁都是替使用者做决定
+    4. 提示词里没有插入点：只有单张引用 `{{slot:x}}` 与整组引用
+       `{{slot:x*}}` 会用兜底文案，第 N 张 `{{slot:x.2}}` 不用
+    5. 文案为空或含 `{{`：空的到编译期必报错（且报的是「作者没写文案」，
+       与眼前的情况对不上）；占位符放进去会在编译期炸成一句看不懂的话
+    """
+    if not overrides:
+        return spec
+    by_key = {slot.key: slot for slot in spec.slots}
+    # 与发布闸同一个判据（`slot_ref_modes`）：只认**单张**与**整组**引用。
+    modes = slot_ref_modes(spec.prompt)
+    replaced: dict[str, InputSlot] = {}
+    for key, raw in overrides.items():
+        text = (raw or "").strip()
+        slot = by_key.get(key)
+        name = (slot.label.strip() or key) if slot else key
+        if slot is None:
+            raise BadRequest(f"改文案的槽位不存在：{key}")
+        if slot.binding == "fixed" or slot.min_count >= 1:
+            raise BadRequest(
+                f"「{name}」是必填槽位，没有「未选」这个状态，"
+                "不能改未选时文案；要改请把它改成可选槽位"
+            )
+        if any(item for item in slot_values.get(key, ())):
+            raise BadRequest(
+                f"「{name}」既挑了素材又改了文案："
+                "一格只有一种说法，请二选一"
+            )
+        if not ({"", "*"} & modes.get(key, set())):
+            raise BadRequest(
+                f"「{name}」在这份模板的提示词里没有插入点"
+                "（要写成 {{slot:" + key + "}} 或 {{slot:" + key + "*}}），"
+                "改的文案不会进提示词"
+            )
+        if not text:
+            raise BadRequest(f"「{name}」改写的提示词不能为空")
+        if len(text) > MAX_SLOT_TEXT_OVERRIDE:
+            raise BadRequest(
+                f"「{name}」改写的提示词 {len(text)} 字，"
+                f"超过上限 {MAX_SLOT_TEXT_OVERRIDE} 字"
+            )
+        if "{{" in text:
+            raise BadRequest(
+                f"「{name}」改写的提示词里不能再写槽位引用（{{{{…}}}}）："
+                "这一段是纯文字，编号由提示词骨架决定"
+            )
+        replaced[key] = replace(slot, empty_text=text)
+    if not replaced:
+        return spec
+    return replace(
+        spec,
+        slots=tuple(replaced.get(slot.key, slot) for slot in spec.slots),
+    )
+
+
 async def compile_for(
     session: AsyncSession, actor: CurrentUser, key: str, payload: SpecCompileIn
 ) -> SpecCompileOut:
@@ -792,6 +902,13 @@ async def compile_for(
         random_prompt=row.random_prompt or "",
         slots=tuple(_slot_core(item) for item in slots),
     )
+    # 作者写的是 `{{Mixed N}}`，而下面两处判断（随机档换段之后仍然成立、
+    # 改文案要查插入点）**都只认 `{{slot:key}}`**。换算做在入口一次
+    # （`rules.normalize_refs`，幂等），`compile_spec` 里还会再调一次。
+    #
+    # 不换的话，「这一格在提示词里没有插入点」会把**所有**真实模板误判掉 ——
+    # 现存模板清一色写 `{{Mixed 1}}`，它们其实都有插入点。
+    spec = normalize_refs(spec)
     # 「随机」档：整段替换成作者写的随机档提示词。放在 compile_spec **之前**
     # 改 spec（而不是改 compile），编译核心因此保持纯函数：同一 (spec, fills)
     # 必得同一结果。
@@ -803,6 +920,11 @@ async def compile_for(
         if not spec.random_prompt.strip():
             raise BadRequest("该模板未配置随机档提示词，不能用随机档生成")
         spec = replace(spec, prompt=spec.random_prompt)
+    # 使用者改写的「未选时文案」：同样在编译前换进 spec。顺序放在随机档之后，
+    # 这样查「有没有插入点」查的就是这次真正要编的那一段。
+    spec = _apply_slot_text_overrides(
+        spec, payload.slot_text_overrides, payload.slot_values
+    )
     fills = await _fills(session, actor, spec, payload.slot_values)
     compiled = compile_spec(spec, fills)
     # 使用者对「运行时参数」的选择（计费模式等）：只在编译结果里生效，

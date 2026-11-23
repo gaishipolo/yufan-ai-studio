@@ -44,6 +44,10 @@ export interface PermissionItem {
   code: string;
   name: string;
   description: string;
+  /** 页面权限关联的接口权限码（只有页面项有；后端 `GET /identity/permissions` 下发） */
+  requires?: string[];
+  /** 页面路由（只有页面项有） */
+  route?: string;
 }
 
 export interface PermissionGroup {

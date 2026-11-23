@@ -113,7 +113,7 @@ class ExportService:
             raise ExportGone()
 
         filename = f"{record.data_source}-{record.id}.csv"
-        await audit.record(
+        await self._audit(
             "export.download",
             actor_id=actor.id,
             target_type="export",
@@ -167,7 +167,7 @@ class ExportService:
             logger.exception("导出入队失败 id=%s", record.id)
             raise ExportBusy("导出服务暂时不可用，请稍后重试") from exc
 
-        await audit.record(
+        await self._audit(
             "export.create",
             actor_id=actor.id,
             target_type="export",
@@ -197,13 +197,29 @@ class ExportService:
 
         await self.repo.delete(record)
         await self.session.commit()
-        await audit.record(
+        await self._audit(
             "export.delete",
             actor_id=actor.id,
             target_type="export",
             target_id=export_id,
             detail={"data_source": source},
         )
+
+    async def _audit(self, action: str, **kwargs: Any) -> None:
+        """记一条审计：**失败绝不影响业务结果**。
+
+        `core.audit.record` 自己已经吞掉 sink 的异常（见 `core/audit.py` 的
+        硬规则 1），这里再包一层是第二道防线：审计是**旁路**，不能因为它抛了
+        就把一个**已经落库、已经排上队列**的导出变成 500 —— 用户以为失败而重试，
+        于是多出一条重复的导出记录（`_reject_duplicate` 只拦 ACTIVE 状态，
+        失败态不拦）。
+
+        完整 traceback 只进日志：审计写失败本身也要能查。
+        """
+        try:
+            await audit.record(action, **kwargs)
+        except Exception:  # noqa: BLE001 - 审计是旁路，不能拖垮业务
+            logger.exception("导出审计写入失败 action=%s", action)
 
     # ------------------------------------------------------------------ #
     # 运维（周期任务调用）

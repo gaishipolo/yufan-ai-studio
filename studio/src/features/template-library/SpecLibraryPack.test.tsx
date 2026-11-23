@@ -1,5 +1,5 @@
 import {QueryClient, QueryClientProvider} from '@tanstack/react-query';
-import {render, screen} from '@testing-library/react';
+import {render, screen, waitFor, within} from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import {MemoryRouter} from 'react-router-dom';
 import {beforeEach, describe, expect, it, vi} from 'vitest';
@@ -234,7 +234,8 @@ describe('模板库 · 点封装包填多格', () => {
 
     const cards = await screen.findAllByTitle('6036 黑（封装 · 2 张）');
     expect(cards).toHaveLength(1);
-    expect(screen.getByText('封装槽位')).toBeInTheDocument();
+    // 标题是容器名：老版本没有 `groups` → 按段序回退成「封装槽位1」
+    expect(screen.getByText(/封装槽位/)).toBeInTheDocument();
 
     await user.click(cards[0]);
     // 一次点击仍然把容器里的两格填满
@@ -337,5 +338,123 @@ describe('模板库 · 点封装包填多格', () => {
     expect(await screen.findByText(/素材-m-front/)).toBeInTheDocument();
     // 已删除的成员不参与分发（否则会填进一张取不到的图）
     expect(screen.queryByText(/素材-m-views/)).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * 容器里的可选成员也能改成文案。
+ *
+ * 包只填它那几格；改成文案的那格不再由包分发 —— 否则点一次包就把用户
+ * 刚写的话盖掉（而输入框还留着，两个说法并存）。
+ */
+describe('模板库 · 容器里的可选槽位改成提示词', () => {
+  /** front 必填、views 可选，两格都在同一个容器里。 */
+  const MIXED_SPEC: TemplateSpecOut = {
+    ...SPEC,
+    latest: {
+      ...SPEC.latest!,
+      prompt: '把 {{slot:front}} 换进原片；{{slot:views}}（没素材时按这句）',
+      slots: (SPEC.latest!.slots ?? []).map(slot =>
+        slot.key === 'views'
+          ? {...slot, minCount: 0, emptyText: '产品只出现正面'}
+          : slot,
+      ),
+    },
+  };
+
+  async function renderCustom(user: ReturnType<typeof userEvent.setup>) {
+    specState.current = MIXED_SPEC;
+    const client = new QueryClient({
+      defaultOptions: {queries: {retry: false}, mutations: {retry: false}},
+    });
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={['/templates/library']}>
+          <SpecLibrary />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    await user.click(await screen.findByRole('radio', {name: '自定义'}));
+    await screen.findByText('三视图');
+  }
+
+  it('只有可选成员出现「改提示词」，必填的没有', async () => {
+    const user = userEvent.setup();
+    await renderCustom(user);
+
+    expect(screen.getByRole('radiogroup', {name: '三视图 的填法'})).toBeInTheDocument();
+    expect(screen.queryByRole('radiogroup', {name: '正面图 的填法'})).toBeNull();
+  });
+
+  it('改成文案的格子不再由包填，输入框预填作者的未选时文案', async () => {
+    const user = userEvent.setup();
+    await renderCustom(user);
+
+    await user.click(
+      within(screen.getByRole('radiogroup', {name: '三视图 的填法'})).getByRole('radio', {
+        name: '改提示词',
+      }),
+    );
+    const box = await screen.findByPlaceholderText('写这一格没素材时提示词怎么说');
+    expect(box).toHaveValue('产品只出现正面');
+
+    await pickPack(user);
+
+    /* 正面图照常拿到包里的那张；三视图没有被塞图（它这一格说的是文字）。 */
+    expect(await screen.findByText(/素材-m-front/)).toBeInTheDocument();
+    expect(screen.queryByText(/素材-m-views/)).not.toBeInTheDocument();
+
+    /* 切回「选素材」也还是空的：包**没有**往这一格写过 ——
+       否则切回来就是一张用户没挑过的图，而他从头到尾只说了那句文案。 */
+    await user.click(
+      within(screen.getByRole('radiogroup', {name: '三视图 的填法'})).getByRole('radio', {
+        name: '选素材',
+      }),
+    );
+    expect(screen.queryByText(/素材-m-views/)).not.toBeInTheDocument();
+  });
+
+  it('容器的进度把文案格算作已填', async () => {
+    const user = userEvent.setup();
+    await renderCustom(user);
+    /* 只看容器自己那一行：整页另有一个「填入素材 x/y」，两者数字恰好一样，
+       不圈定范围会命中两个元素。 */
+    const container = screen.getByText(/封装槽位/).closest('section') as HTMLElement;
+    /* 一开始 0/2（必填那格还空着，可选那格也没有任何说法）。 */
+    expect(container).toHaveTextContent('0/2');
+
+    await user.click(
+      within(screen.getByRole('radiogroup', {name: '三视图 的填法'})).getByRole('radio', {
+        name: '改提示词',
+      }),
+    );
+
+    /* 预填的就是作者那段话 → 这一格已经有说法了。 */
+    await waitFor(() => expect(container).toHaveTextContent('1/2'));
+  });
+});
+
+/* 容器名是作者起的（封装页那个输入框），模板库要按它显示 ——
+   使用者看到「三视图套图」才知道这一块要挑什么，写死的「封装槽位」什么也没说。 */
+describe('模板库 · 容器的名字', () => {
+  it('显示作者起的名字', async () => {
+    specState.current = {
+      ...SPEC,
+      latest: {...SPEC.latest!, groups: [{key: 'g1', label: '三视图套图'}]},
+    };
+    renderLibrary();
+
+    expect(await screen.findByText('三视图套图')).toBeInTheDocument();
+    // 起了名就不再出现回退名（两个都显示等于没说清哪个是真的）
+    expect(screen.queryByText(/^封装槽位/)).not.toBeInTheDocument();
+  });
+
+  it('老版本没有名字：按段序回退成「封装槽位1」', async () => {
+    /* `groups` 是后加的字段，加之前发布的版本里没有它。回退而不是显示空 ——
+       空标题会让那一块变成一个只有「N/N」计数的无名框。 */
+    specState.current = {...SPEC, latest: {...SPEC.latest!, groups: []}};
+    renderLibrary();
+
+    expect(await screen.findByText('封装槽位1')).toBeInTheDocument();
   });
 });

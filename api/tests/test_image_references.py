@@ -160,7 +160,11 @@ async def test_reference_bytes_are_inlined_as_data_uri() -> None:
 
 
 async def test_unsupported_suffix_is_rejected_before_submit() -> None:
-    """后缀不在白名单就抛：静默退回纯文生图会让用户拿到一张毫不相关的图。"""
+    """后缀不在白名单就抛：静默退回纯文生图会让用户拿到一张毫不相关的图。
+
+    抛的是 `BadRequest`（4xx）而不是 `ValueError`：素材格式坏了重试一百次
+    也是同一个结果，runner 会按 `retryable` 直接判死，不再白跑两次。
+    """
     await get_storage().put("tests/ref-anim.gif", b"GIF89a", "image/gif")
 
     record = ImageJobStore._to_record(
@@ -170,7 +174,7 @@ async def test_unsupported_suffix_is_rejected_before_submit() -> None:
             )
         )
     )
-    with pytest.raises(ValueError, match="格式不支持"):
+    with pytest.raises(BadRequest, match="格式不支持"):
         await _reference_data_uris(record)
 
 
@@ -299,3 +303,38 @@ def test_non_active_asset_is_rejected(state: str) -> None:
 async def test_empty_list_is_a_noop() -> None:
     assert await _resolve([], _spec()) == []
     assert await _resolve(["  "], _spec()) == []
+
+
+def test_reference_failure_is_permanent_not_retried() -> None:
+    """素材坏了是**永久**错误：抛 BadRequest，runner 不会重试。
+
+    为什么专门钉这一条：`_retryable()` 只对 `AppError` 看 `retryable`，裸
+    `ValueError` 一律当「可能自愈」重试两次 —— 而格式不对重试两次也是同一句话，
+    只是让用户多等 6 秒、日志里多两条同样的错。
+    """
+    from types import SimpleNamespace
+
+    from generation.runner import GenerationRunner
+
+    job = SimpleNamespace(attempts=0, max_attempts=3)
+    assert GenerationRunner._retryable(BadRequest("参考素材格式不支持"), job) is False
+    # 反证：这正是改之前的样子（ValueError → 白跑两次）
+    assert GenerationRunner._retryable(ValueError("参考素材格式不支持"), job) is True
+
+
+def test_oversized_pixel_image_is_rejected_not_500(monkeypatch: pytest.MonkeyPatch) -> None:
+    """像素爆炸的图要给 400，不是 500。
+
+    Pillow 在像素超过 2×`MAX_IMAGE_PIXELS` 时**在 `open()` 阶段**抛
+    `DecompressionBombError`，而它既不是 OSError 也不是 ValueError ——
+    不单独接住，接口就是 500，用户看到「服务器错误」而不是「换一张小点的图」。
+    """
+    from PIL import Image
+
+    from infra.media_probe import image_size
+
+    # 把阈值压到 100 像素：一张 64×64 的图（4096 像素）就会触发，
+    # 不必真造一张 1.4 亿像素的图片（那样测试要吃掉几百 MB 内存）
+    monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 100)
+    with pytest.raises(BadRequest, match="像素过大"):
+        image_size(png_bytes(size=(64, 64)))

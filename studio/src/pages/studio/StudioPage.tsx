@@ -10,13 +10,18 @@ import {
   Panel,
   PanelHeader,
   ReferenceImages,
+  REFERENCE_KIND_META,
   Select,
   type ReferenceItem,
 } from '@/shared/ui';
 import { cn } from '@/shared/lib/cn';
 import { toast } from '@/shared/lib/toast';
 import { useCreateTask, useTaskList } from '@/entities/task/api/task.queries';
-import { useModels } from '@/entities/model/api/model.queries';
+import {
+  useModels,
+  referenceKindsFor,
+  referenceLimitsFor,
+} from '@/entities/model/api/model.queries';
 import { useShots } from '@/entities/shot/api/shot.api';
 import { LibraryFlyout } from '@/entities/library/ui/LibraryFlyout';
 import { useUploadAsset } from '@/entities/library/api/library.queries';
@@ -102,49 +107,105 @@ export default function StudioPage() {
   const paramControls = paramControlsFor(currentModel);
   const paramValues = resolveParamValues(paramControls, overrides);
 
-  /* 参考素材的数量上限与类型都由模型声明（`maxReferences` / `referenceKinds`），
-     不在界面里写死「只选图片、最多 4 张」——那会把视频替换模型的用户挡在门外。
+  /* 参考素材的数量上限与类型都由模型声明（`maxReferences` / `referenceKinds` /
+     `referenceLimits`），不在界面里写死「只选图片、最多 4 张」——那会把视频
+     替换模型的用户挡在门外。
 
      `maxReferences = 0` 就**整块不画**：模型没声明收参考素材，后端受理期会
      直接拒（`模型 X 不支持参考素材，请换用支持参考素材的模型`）。
      画一个上传框让用户填完再吃一个 400，比不画更糟。 */
-  const referenceKinds = useMemo(
-    () => currentModel?.referenceKinds?.length ? currentModel.referenceKinds : ['image'],
-    [currentModel],
-  );
+  const referenceKinds = useMemo(() => referenceKindsFor(currentModel), [currentModel]);
+  const referenceLimits = useMemo(() => referenceLimitsFor(currentModel), [currentModel]);
   const maxReferences = currentModel?.maxReferences ?? 0;
+
+  const countOfKind = (kind: string) =>
+    references.filter((one) => (one.kind ?? 'image') === kind).length;
+
+  /* 上传的素材类型跟着模型声明走：模型收音频时，音轨要按 `audio` 入库 ——
+     按 `image` 入库会被后端按图片校验拒掉（探测出来的宽高也对不上）。 */
+  const uploadKindFor = (file: File): 'image' | 'audio' | null => {
+    if (file.type.startsWith('audio/')) {
+      return referenceKinds.includes('audio') ? 'audio' : null;
+    }
+    return 'image';
+  };
+
+  const rejectMessage = (kind: string, limit: number): string => {
+    const meta = REFERENCE_KIND_META[kind];
+    return meta
+      ? `最多 ${limit} ${meta.unit}${meta.label}参考素材，先移除一个再添加`
+      : `最多 ${limit} 个 ${kind} 参考素材，先移除一个再添加`;
+  };
 
   const addReferences = async (files: FileList | null) => {
     const picked = Array.from(files ?? []);
     if (!picked.length) return;
-    const room = maxReferences - references.length;
-    if (room <= 0) {
-      toast(`这个模型最多接受 ${maxReferences} 张参考图`, 'error');
-      return;
+    /* 本批内部自己记账：`setReferences` 是异步的，一批里连着处理几张时
+       读 `references` 还是旧值，会一次塞进超额的量、到提交才被拒。 */
+    const used: Record<string, number> = {};
+    for (const item of references) {
+      const kind = item.kind ?? 'image';
+      used[kind] = (used[kind] ?? 0) + 1;
     }
-    // 多选超量时只取前面的：先传多余的那几张再丢掉，等于白花一次上传
-    for (const file of picked.slice(0, room)) {
+    let total = references.length;
+
+    for (const file of picked) {
+      const kind = uploadKindFor(file);
+      if (!kind) {
+        toast('这个模型不收音频参考素材', 'error');
+        continue;
+      }
+      if (total >= maxReferences) {
+        toast(`最多 ${maxReferences} 个参考素材，先移除一个再添加`, 'error');
+        break;
+      }
+      const limit = referenceLimits[kind];
+      if (limit !== undefined && (used[kind] ?? 0) >= limit) {
+        toast(rejectMessage(kind, limit), 'error');
+        continue;
+      }
       try {
-        const asset = await upload.mutateAsync({ file, kind: 'image' });
+        const asset = await upload.mutateAsync({ file, kind });
         setReferences((prev) => [
           ...prev,
-          { id: asset.id, name: asset.name, url: asset.previewUrl ?? asset.url ?? '' },
+          {
+            id: asset.id,
+            name: asset.name,
+            url: asset.previewUrl ?? asset.url ?? '',
+            kind,
+          },
         ]);
+        used[kind] = (used[kind] ?? 0) + 1;
+        total += 1;
       } catch (e) {
-        toast(e instanceof Error ? e.message : '参考图上传失败', 'error');
+        toast(e instanceof Error ? e.message : '参考素材上传失败', 'error');
       }
     }
   };
 
   /** 从素材库加入：不重复上传，只把 id / 名称 / 缩略图接进列表 */
   const addLibraryAsset = (asset: LibraryAssetDrag) => {
+    const kind = asset.kind ?? 'image';
     // 同一张重复加入没有意义：多图合成里同一张出现两次只会白占一个名额
     if (references.some((item) => item.id === asset.id)) return;
-    if (references.length >= maxReferences) {
-      toast(`最多 ${maxReferences} 张参考图，先移除一张再添加`, 'error');
+    if (!referenceKinds.includes(kind)) {
+      const meta = REFERENCE_KIND_META[kind];
+      toast(`这个模型不收${meta ? meta.label : kind}参考素材`, 'error');
       return;
     }
-    setReferences((prev) => [...prev, { id: asset.id, name: asset.name, url: asset.url }]);
+    const limit = referenceLimits[kind];
+    if (limit !== undefined && countOfKind(kind) >= limit) {
+      toast(rejectMessage(kind, limit), 'error');
+      return;
+    }
+    if (references.length >= maxReferences) {
+      toast(`最多 ${maxReferences} 个参考素材，先移除一个再添加`, 'error');
+      return;
+    }
+    setReferences((prev) => [
+      ...prev,
+      { id: asset.id, name: asset.name, url: asset.url, kind },
+    ]);
   };
 
   /**
@@ -245,6 +306,8 @@ export default function StudioPage() {
             <ReferenceImages
               items={references}
               max={maxReferences}
+              kinds={referenceKinds}
+              limits={referenceLimits}
               busy={upload.isPending}
               onPick={(files) => void addReferences(files)}
               onRemove={(id) => setReferences((prev) => prev.filter((item) => item.id !== id))}

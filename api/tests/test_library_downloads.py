@@ -232,7 +232,7 @@ def test_claiming_a_download_job_is_atomic() -> None:
 
     async def run() -> tuple[bool, bool]:
         async with get_session_factory()() as session:
-            job = LibraryDownloadJob(owner_id="system", asset_ids=[], status="queued")
+            job = LibraryDownloadJob(owner_id="system", asset_count=0, status="queued")
             session.add(job)
             await session.commit()
             first = await _claim_job(session, job.id)
@@ -259,7 +259,7 @@ def test_finishing_a_download_job_does_not_overwrite_a_finished_row() -> None:
         async with get_session_factory()() as session:
             job = LibraryDownloadJob(
                 owner_id="system",
-                asset_ids=[],
+                asset_count=0,
                 status="succeeded",
                 storage_key="library/downloads/x.zip",
             )

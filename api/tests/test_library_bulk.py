@@ -64,6 +64,81 @@ def test_bulk_delete_reports_partial_failure(client: TestClient, api: str) -> No
     assert fetch_asset(shared["id"])["state"] == "active"  # type: ignore[index]
 
 
+def test_bulk_rename_requires_a_version(client: TestClient, api: str) -> None:
+    """批量改名必须带版本：缺了就 400，不能静默按「不校验」处理。
+
+    0 在 `LibraryService._check_version` 里是「不校验」。批量入口若默认取 0，
+    A 打开列表后 B 改了名，A 批量改名会把 B 的修改冲掉且没有提示——批量接口
+    看着有并发保护，实际没有（见 REVIEW_2026-11-23 重要#5、一般#6）。
+    """
+    admin = admin_headers(client)
+    owner, owner_h = make_user(client, admin, LIB_RW)
+    asset = upload_image(client, api, owner_h, color="lightblue")
+
+    missing = _bulk(
+        client,
+        api,
+        owner_h,
+        {"ids": [asset["id"]], "action": "rename", "payload": {"name": "新名字"}},
+    )
+    assert missing.status_code == 400, missing.text
+    assert "expectedVersions" in missing.json()["message"]
+
+    version = fetch_asset(asset["id"])["state_version"]
+    ok = _bulk(
+        client,
+        api,
+        owner_h,
+        {
+            "ids": [asset["id"]],
+            "action": "rename",
+            "payload": {"name": "新名字"},
+            "expectedVersions": {asset["id"]: version},
+        },
+    )
+    assert ok.status_code == 200, ok.text
+    assert ok.json()["data"]["succeeded"] == 1
+    detail = client.get(f"{api}/library/assets/{asset['id']}", headers=owner_h)
+    # 改名默认保留原扩展名（keep_extension）
+    assert detail.json()["data"]["name"].startswith("新名字")
+
+
+def test_bulk_rename_reports_a_stale_version_per_item(client: TestClient, api: str) -> None:
+    """版本过期的条目逐条报错，其余照常提交（不整体回滚）。"""
+    admin = admin_headers(client)
+    owner, owner_h = make_user(client, admin, LIB_RW)
+    first = upload_image(client, api, owner_h, color="lightblue")
+    second = upload_image(client, api, owner_h, color="lightgreen")
+
+    # 只给第一条对版本，第二条给一个过时的版本
+    versions = {
+        first["id"]: fetch_asset(first["id"])["state_version"],
+        second["id"]: fetch_asset(second["id"])["state_version"] + 99,
+    }
+    result = _bulk(
+        client,
+        api,
+        owner_h,
+        {
+            "ids": [first["id"], second["id"]],
+            "action": "rename",
+            "payload": {"name": "批量改名"},
+            "expectedVersions": versions,
+        },
+    )
+    assert result.status_code == 200, result.text
+    data = result.json()["data"]
+    assert data["succeeded"] == 1
+    assert data["failed"] == 1
+    by_id = {item["id"]: item for item in data["results"]}
+    assert by_id[first["id"]]["ok"] is True
+    assert by_id[second["id"]]["ok"] is False
+    assert by_id[second["id"]]["errorCode"] == 40900
+    # 版本过期的那条不能被改名
+    detail = client.get(f"{api}/library/assets/{second['id']}", headers=owner_h)
+    assert detail.json()["data"]["name"] == second["name"]
+
+
 def test_bulk_revoke_rejects_a_stale_version(client: TestClient, api: str) -> None:
     """批量撤销共享的 expected_version 之前没人消费。
 
@@ -228,3 +303,121 @@ def test_trash_gc_dry_run_deletes_nothing() -> None:
     assert report.dry_run is True
     assert report.purged == 0
     assert fetch_asset(asset_id) is not None
+
+
+def test_bulk_share_reports_partial_failure(client: TestClient, api: str) -> None:
+    """一批里已经共享过的那条失败，其余照样生效，并带出逐条明细。"""
+    admin = admin_headers(client)
+    owner, owner_h = make_user(client, admin, LIB_RW + ["library:share:direct"])
+
+    plain = upload_image(client, api, owner_h, color="lightcoral")
+    already = upload_image(client, api, owner_h, color="lightsalmon")
+    first = client.post(
+        f"{api}/library/share-requests",
+        json={"assetId": already["id"], "target": "team", "groupId": ""},
+        headers=owner_h,
+    )
+    assert first.status_code == 201, first.text
+
+    result = _bulk(
+        client,
+        api,
+        owner_h,
+        {
+            "ids": [plain["id"], already["id"]],
+            "action": "requestShare",
+            "payload": {"target": "team", "reason": "给全员看"},
+            # 批量共享要带版本（共享申请会写申请单快照，版本不对就该拒）
+            "expectedVersions": {
+                plain["id"]: fetch_asset(plain["id"])["state_version"],
+                already["id"]: fetch_asset(already["id"])["state_version"],
+            },
+        },
+    )
+    assert result.status_code == 200, result.text
+    data = result.json()["data"]
+    assert (data["succeeded"], data["failed"]) == (1, 1)
+
+    by_id = {item["id"]: item for item in data["results"]}
+    assert by_id[plain["id"]]["ok"] is True
+    assert by_id[already["id"]]["ok"] is False
+    assert "已共享给团队" in by_id[already["id"]]["message"]
+    assert fetch_asset(plain["id"])["visibility"] == "team"
+    assert fetch_asset(already["id"])["visibility"] == "team"
+
+
+def test_bulk_share_by_non_owner_stays_pending(client: TestClient, api: str) -> None:
+    """批量里混着别人的素材：看得见就能申请，但不许直接生效。"""
+    admin = admin_headers(client)
+    owner, owner_h = make_user(client, admin, LIB_RW + ["library:share:direct"])
+    other, other_h = make_user(client, admin, LIB_RW)
+    group = make_group(client, admin, [owner["id"], other["id"]])
+
+    ids = []
+    for color in ("lightyellow", "lightpink"):
+        asset = upload_image(client, api, owner_h, color=color)
+        ids.append(asset["id"])
+        resp = client.post(
+            f"{api}/library/share-requests",
+            json={"assetId": asset["id"], "target": "group", "groupId": group["id"]},
+            headers=owner_h,
+        )
+        assert resp.status_code == 201, resp.text
+
+    result = _bulk(
+        client,
+        api,
+        other_h,
+        {
+            "ids": ids,
+            "action": "requestShare",
+            "payload": {"target": "team"},
+            "expectedVersions": {
+                asset_id: fetch_asset(asset_id)["state_version"] for asset_id in ids
+            },
+        },
+    )
+    assert result.status_code == 200, result.text
+    assert result.json()["data"]["succeeded"] == 2
+    # 审批没通过之前可见范围不能变
+    assert all(fetch_asset(asset_id)["visibility"] == "group" for asset_id in ids)
+
+    # `scope=mine` 才是「我提交的」；`pending` 是「待我审核」，按审批权限收窄
+    mine = client.get(f"{api}/library/share-requests", headers=other_h)
+    assert mine.status_code == 200, mine.text
+    mine_ids = {
+        item["assetId"]
+        for item in mine.json()["data"]
+        if item["action"] == "share" and item["status"] == "pending"
+    }
+    assert set(ids) <= mine_ids
+
+
+def test_bulk_share_honours_each_expected_version(client: TestClient, api: str) -> None:
+    """版本号逐条校验：旧页面发出的一批不能把新状态盖掉。"""
+    admin = admin_headers(client)
+    owner, owner_h = make_user(client, admin, LIB_RW + ["library:share:direct"])
+
+    stale = upload_image(client, api, owner_h, color="lightgreen")
+    fresh = upload_image(client, api, owner_h, color="lightblue")
+    result = _bulk(
+        client,
+        api,
+        owner_h,
+        {
+            "ids": [stale["id"], fresh["id"]],
+            "action": "requestShare",
+            "payload": {"target": "team"},
+            "expectedVersions": {
+                stale["id"]: 999,
+                fresh["id"]: fetch_asset(fresh["id"])["state_version"],
+            },
+        },
+    )
+    assert result.status_code == 200, result.text
+    data = result.json()["data"]
+    assert (data["succeeded"], data["failed"]) == (1, 1)
+    by_id = {item["id"]: item for item in data["results"]}
+    assert "已被修改" in by_id[stale["id"]]["message"]
+    assert fetch_asset(stale["id"])["visibility"] == "personal"
+    assert fetch_asset(fresh["id"])["visibility"] == "team"

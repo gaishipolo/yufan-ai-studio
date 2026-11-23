@@ -78,6 +78,8 @@ export function LibraryDetail(props: LibraryDetailProps) {
   const { assetId } = props;
   const query = useLibraryDetail(assetId);
   const asset = query.data;
+  /* 打标失败后要把本地标签对齐到服务端真值：重新拉一次，而不是回填旧快照 */
+  const refetchAsset = async () => (await query.refetch())?.data;
 
   if (!assetId) return null;
 
@@ -99,7 +101,7 @@ export function LibraryDetail(props: LibraryDetailProps) {
           <Skeleton className="h-4 w-2/3" />
         </div>
       ) : (
-        <DetailBody {...props} asset={asset} />
+        <DetailBody {...props} asset={asset} refetchAsset={refetchAsset} />
       )}
     </Modal>
   );
@@ -112,7 +114,12 @@ function DetailBody({
   canUpdate,
   onClose,
   onAction,
-}: LibraryDetailProps & { asset: LibraryAssetDetailOut }) {
+  refetchAsset,
+}: LibraryDetailProps & {
+  asset: LibraryAssetDetailOut;
+  /** 重新拉一次服务端资产：打标失败后要把本地态对齐到**服务端真值** */
+  refetchAsset: () => Promise<LibraryAssetDetailOut | undefined>;
+}) {
   const patch = usePatchAsset();
   const saveFile = useSaveAssetFile();
   const canCreate = useCan('library:create');
@@ -169,6 +176,9 @@ function DetailBody({
    * 重新拉取才更新：勾第二个标签时带的还是旧版本，服务端第一次已经把它 +1 了，
    * 于是必然 409「资产已被修改」——用户看到的是「打两个标签，第二个没生效」。
    * 改名仍带版本：那才是「两个人同时改同一行」该拦的场景。
+   *
+   * 「不带」= 字段不出现（序列化时被丢掉），后端按 `None` 处理＝明确不校验；
+   * 0 不是合法版本，不能再拿它当「不校验」的替身。
    */
   const save = (
     body: { name?: string; tagIds?: string[] },
@@ -179,7 +189,7 @@ function DetailBody({
         id: asset.id,
         body: {
           ...body,
-          expectedVersion: options?.versioned === false ? 0 : (asset.stateVersion ?? 0),
+          expectedVersion: options?.versioned === false ? undefined : asset.stateVersion,
         },
       },
       {
@@ -191,9 +201,19 @@ function DetailBody({
           toast(error.message, 'error');
           /* 打标被拒（标签被删 / 变成有子级的分组）时把本地态拉回服务端：
              否则界面显示「已打上」实际没打上，下一次保存还会把这枚坏标签
-             一起提交。 */
+             一起提交。
+
+             这里要**重新拉一次服务端**，而不是回填本地的 `asset` —— 那只是
+             上一次 invalidate 时的快照：坏标签若在这次保存之前就已经被删，
+             快照里照样有它，回填等于没修（REVIEW_2026-11-23 一般#10）。 */
           if (variables.body.tagIds) {
-            setTagIds(asset.tags?.map((tag) => tag.id) ?? []);
+            void refetchAsset().then((fresh) => {
+              // 拉不到就回落到**上一次确认过的服务端标签**（`asset.tags`）：
+              // 宁可停在旧值，也不要把用户刚勾上的坏标签留在界面上假装已生效
+              // （那正是这次要修的 bug），更不要清空成「没有标签」。
+              const confirmed = fresh?.tags ?? asset.tags;
+              setTagIds(confirmed?.map((tag) => tag.id) ?? []);
+            });
           }
         },
       },
@@ -205,7 +225,8 @@ function DetailBody({
       { id: asset.id, filename: asset.name },
       {
         onSuccess: () => toast('已开始下载'),
-        onError: (error) => toast(error.message, 'error'),      },
+        onError: (error) => toast(error.message, 'error'),
+      },
     );
   };
 

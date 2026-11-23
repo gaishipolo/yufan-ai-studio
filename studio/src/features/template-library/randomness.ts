@@ -44,10 +44,36 @@ export const RANDOMNESS_LABEL: Record<RandomnessMode, string> = {
   custom: '自定义',
 };
 
-/** 槽位是不是可选的（使用者可以不填）。判据只有 `minCount === 0`。 */
-export function isOptionalSlot(slot: SpecSlotOut): boolean {
+/**
+ * 三档各自「用这一档生成，出来会是什么样」的一句话，显示在控件下面。
+ *
+ * 与上面的 `RANDOMNESS_LABEL` 分开记：档名是这套功能自己的名字（不能改），
+ * 这句话是**写给用模板的人**的解释（2026-11-22 用户给的原文，照抄）。
+ *
+ * 也**不是** `Segmented` 的 `hints`（那句挂在 `title` 上，讲的是机制：
+ * 用哪段提示词、传不传素材）。这句讲的是结果 —— 界面和 title 都表达不了
+ * 「人物会变但台词不变」这种差别，只能写出来。
+ *
+ * 三句都在 28 字以内，400px 的右栏（内容区约 360px）一行放得下，
+ * 所以不用预留两行高度，切换时不会把下面的槽位顶下去。
+ */
+export const RANDOMNESS_DESCRIPTION: Record<RandomnessMode, string> = {
+  random: '随机的人物、服装、场景等，脚本核心人物动作、台词固定不变',
+  balanced: '每次生成和演示案例相似的内容',
+  custom: '通过参考图和提示词精准控制人物、服装、场景等元素',
+};
+
+/** 槽位是不是可选的（使用者可以不填）。判据只有 `minCount === 0`。 */export function isOptionalSlot(slot: SpecSlotOut): boolean {
   return (slot.minCount ?? 1) === 0;
 }
+
+/**
+ * 可选槽位的**填法**：从资产库挑素材，还是直接改写提示词里那一格。
+ *
+ * 与「随机性三档」是两个轴：档位决定「可选槽位由谁给」，填法决定
+ * 「给了的话是素材还是文字」。只有自定义档下的可选槽位才有得选填法。
+ */
+export type SlotFillMode = 'pick' | 'text';
 
 /**
  * 这一档下哪些槽位该出现在右栏。

@@ -381,3 +381,181 @@ describe('模板库：可选槽位不填也能生成', () => {
     expect(dialog).not.toHaveTextContent('主角是穿红裙的年轻女性');
   });
 });
+
+/**
+ * 可选槽位的第二种填法：不挑素材，直接改写提示词里那一格。
+ *
+ * 作者的「未选时文案」是**通用版本**，使用者往往知道得更具体（「这次不要产品，
+ * 只要人物站在海边」）。改的是插入点里那一段，不是整段提示词 ——
+ * 编号展开仍在后端 `compile`，前端只把这段字送上去。
+ */
+describe('模板库：可选槽位改成提示词', () => {
+  const EDITABLE_SPEC: TemplateSpecOut = {
+    ...SPEC,
+    latest: {
+      ...SPEC.latest!,
+      prompt: '把原片里的人换成 {{slot:person}}',
+      slots: [
+        {
+          key: 'person',
+          type: 'image',
+          binding: 'user',
+          minCount: 0,
+          maxCount: 1,
+          label: '人物参考',
+          tagIds: ['tag-person'],
+          emptyText: '主角是穿红裙的年轻女性',
+        },
+        SPEC.latest!.slots[1],
+      ],
+    },
+  };
+
+  function renderSpec(spec: TemplateSpecOut = EDITABLE_SPEC) {
+    specState.current = spec;
+    const client = new QueryClient({
+      defaultOptions: {queries: {retry: false}, mutations: {retry: false}},
+    });
+    return render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={['/templates/library']}>
+          <SpecLibrary />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+  }
+
+  /** 切到自定义档：可选槽位这时才出现在右栏。 */
+  async function toCustom(user: ReturnType<typeof userEvent.setup>) {
+    await user.click(await screen.findByRole('radio', {name: '自定义'}));
+    await screen.findByText('人物参考');
+  }
+
+  it('有插入点的可选槽位才有「选素材 / 改提示词」两格', async () => {
+    const user = userEvent.setup();
+    renderSpec();
+    await toCustom(user);
+
+    const segment = screen.getByRole('radiogroup', {name: '人物参考 的填法'});
+    expect(within(segment).getByRole('radio', {name: '选素材'})).toBeInTheDocument();
+    expect(within(segment).getByRole('radio', {name: '改提示词'})).toBeInTheDocument();
+  });
+
+  it('切到「改提示词」：输入框预填作者的未选时文案，素材网格让位', async () => {
+    const user = userEvent.setup();
+    renderSpec();
+    await toCustom(user);
+
+    /* 切之前网格在（那张人物图能点到）。 */
+    expect(await screen.findByTitle('人物图.png')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('radio', {name: '改提示词'}));
+
+    const box = await screen.findByPlaceholderText('写这一格没素材时提示词怎么说');
+    expect(box).toHaveValue('主角是穿红裙的年轻女性');
+    // 网格让位给输入框：这一刻没有「挑哪张」这回事
+    expect(screen.queryByTitle('人物图.png')).not.toBeInTheDocument();
+    // 「已选 0/1」也不再摆（那不是这一刻的计数）
+    expect(screen.queryByText(/已选 0\/1/)).not.toBeInTheDocument();
+  });
+
+  it('提交时把改写的字送进 slotTextOverrides，且这一格不传素材', async () => {
+    const user = userEvent.setup();
+    renderSpec();
+    await toCustom(user);
+    /* 先挑一张，再改成文案 —— 切回去时那张要还在（素材留在 state，只是不提交）。 */
+    await user.click(await screen.findByTitle('人物图.png'));
+    await user.click(screen.getByRole('radio', {name: '改提示词'}));
+
+    const box = await screen.findByPlaceholderText('写这一格没素材时提示词怎么说');
+    await user.clear(box);
+    await user.type(box, '不要人物，只留原片');
+
+    await user.click(screen.getByRole('button', {name: /生成视频/}));
+    const dialog = await screen.findByRole('dialog');
+    await user.click(within(dialog).getByRole('button', {name: '生成视频'}));
+
+    await waitFor(() => expect(compileMock).toHaveBeenCalledTimes(1));
+    const payload = compileMock.mock.calls[0][0].payload;
+    expect(payload.slotTextOverrides).toEqual({person: '不要人物，只留原片'});
+    // 素材一起传上去就变成「既挑图又改文案」，后端会 400
+    expect(payload.slotValues).toEqual({});
+  });
+
+  it('确认框把改写的字摆成「改写的提示词」，不写成「未填」', async () => {
+    const user = userEvent.setup();
+    renderSpec();
+    await toCustom(user);
+    await user.click(screen.getByRole('radio', {name: '改提示词'}));
+
+    const box = await screen.findByPlaceholderText('写这一格没素材时提示词怎么说');
+    await user.clear(box);
+    await user.type(box, '不要人物，只留原片');
+
+    await user.click(screen.getByRole('button', {name: /生成视频/}));
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog).toHaveTextContent('人物参考（改写的提示词）');
+    expect(dialog).toHaveTextContent('不要人物，只留原片');
+    /* 「（未填）」是另一种意思：那说的是「用作者的兜底文案」。
+       两个说法并存会让人以为这次用的是作者那句。 */
+    expect(dialog).not.toHaveTextContent('人物参考（未填）');
+    expect(dialog).not.toHaveTextContent('主角是穿红裙的年轻女性');
+  });
+
+  it('文案清空就不让生成（按钮说「还缺 1 项」，不说「素材」）', async () => {
+    const user = userEvent.setup();
+    renderSpec();
+    await toCustom(user);
+    await user.click(screen.getByRole('radio', {name: '改提示词'}));
+
+    const box = await screen.findByPlaceholderText('写这一格没素材时提示词怎么说');
+    await user.clear(box);
+
+    const button = screen.getByRole('button', {name: /还缺 1 项/});
+    expect(button).toBeDisabled();
+    // 空的是输入框，不是素材 —— 写成「还缺 1 项素材」会让人去网格里找
+    expect(button).not.toHaveTextContent('素材');
+  });
+
+  it('切回「选素材」：刚才挑的素材还在', async () => {
+    const user = userEvent.setup();
+    renderSpec();
+    await toCustom(user);
+    await user.click(await screen.findByTitle('人物图.png'));
+    expect(screen.getByText(/已选 1\/1/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole('radio', {name: '改提示词'}));
+    await screen.findByPlaceholderText('写这一格没素材时提示词怎么说');
+    await user.click(screen.getByRole('radio', {name: '选素材'}));
+
+    expect(screen.getByText(/已选 1\/1/)).toBeInTheDocument();
+  });
+
+  it('提示词里没有这一格的插入点：不给这个入口', async () => {
+    const user = userEvent.setup();
+    renderSpec({
+      ...EDITABLE_SPEC,
+      latest: {
+        ...EDITABLE_SPEC.latest!,
+        prompt: '把原片里的人换掉',
+      },
+    });
+    await toCustom(user);
+
+    /* 打了字也进不了提示词（后端 `compile` 只认单张 / 整组引用），
+       摆一个不生效的输入框比不给这个能力更糟。 */
+    expect(screen.queryByRole('radiogroup', {name: '人物参考 的填法'})).toBeNull();
+  });
+});
+
+describe('模板库：右栏', () => {
+  /**
+   * 2026-11-22 用户要求去掉「改模板」：这一栏只做「填」和「生成」，
+   * 跳去规格页是另一件事，改模板走左侧导航。
+   */
+  it('头部不出现「改模板」入口', async () => {
+    renderLibrary();
+    await waitFor(() => expect(screen.getByText('商品图')).toBeInTheDocument());
+    expect(screen.queryByRole('link', {name: '改模板'})).toBeNull();
+  });
+});

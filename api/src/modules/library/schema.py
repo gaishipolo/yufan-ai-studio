@@ -8,6 +8,7 @@ M0 只定「列表 + 分面」这一组，因为它是五个一级入口共用�
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import Annotated
 
 from pydantic import Field
 
@@ -66,6 +67,25 @@ __all__ = [
 ]
 
 
+#: 客户端看到的版本号。**带了就做乐观锁校验；`None` 表示明确不校验。**
+#:
+#: 资产的 `state_version` 与正文的 `text_version` 都从 1 起，**0 不是合法版本**。
+#: 旧写法用 `0` 当「不校验」的哨兵值，于是「漏传版本」与「显式不校验」成了
+#: 同一件事——漏传会被静默降级为不校验（`REVIEW_2026-11-23` 严重#1）。
+#: 现在 `0` 会被拒绝（422），不校验只能靠 `None` 表达。
+#: 见 `docs/FIX_ITEM_P2-2_2026-11-23.md`。
+ExpectedVersion = Annotated[
+    int,
+    Field(
+        ge=1,
+        description=(
+            "客户端看到的版本：带了就做乐观锁校验，不带（null）表示明确不校验。"
+            "版本从 1 起，0 不合法。"
+        ),
+    ),
+]
+
+
 class LibraryTab(StrEnum):
     """列表的可见范围（对应侧栏一级入口的个人/小组/团队/全部）。
 
@@ -78,7 +98,6 @@ class LibraryTab(StrEnum):
     PERSONAL = "personal"
     GROUP = "group"
     TEAM = "team"
-
 
 class LibraryAssetOrigin(StrEnum):
     """资产来源，取值必须和 `library_assets.origin` 的落库值一致。
@@ -310,7 +329,7 @@ class TextAssetUpdateIn(CamelModel):
     两个人同时打开编辑框时，后保存的人必须看到「正文已被改过」而不是静默覆盖。"""
 
     content: str = Field(min_length=1, max_length=1_048_576)
-    expected_version: int = Field(default=0, ge=0)
+    expected_version: ExpectedVersion | None = None
     note: str = Field(default="", max_length=200)
 
 
@@ -344,7 +363,7 @@ class TextAssetRestoreIn(CamelModel):
     """把某一历史版本重新写成**新的一版**，不改历史行。"""
 
     version: int = Field(ge=1)
-    expected_version: int = Field(default=0, ge=0)
+    expected_version: ExpectedVersion | None = None
 
 
 class LibraryGenerationOut(CamelModel):
@@ -461,9 +480,7 @@ class AssetPatchIn(CamelModel):
 
     name: str | None = Field(default=None, min_length=1, max_length=200)
     tag_ids: list[str] | None = None
-    expected_version: int = Field(
-        default=0, description=">0 时做乐观锁校验；0 表示不校验（兼容单页操作）"
-    )
+    expected_version: ExpectedVersion | None = None
 
 
 class SetPurposeIn(CamelModel):
@@ -475,9 +492,7 @@ class SetPurposeIn(CamelModel):
     """
 
     purpose: str = Field(default="", max_length=16)
-    expected_version: int = Field(
-        default=0, description=">0 时做乐观锁校验；0 表示不校验（兼容单页操作）"
-    )
+    expected_version: ExpectedVersion | None = None
 
 
 class TagIn(CamelModel):
@@ -520,20 +535,26 @@ class ShareRequestIn(CamelModel):
     target: ShareTarget = ShareTarget.GROUP
     group_id: str = ""
     reason: str = Field(default="", max_length=200)
-    expected_version: int = 0
+    expected_version: ExpectedVersion | None = None
 
 
 class ShareDecisionIn(CamelModel):
     """审批 / 驳回 / 撤回申请单。`note` 会进申请单与审计。"""
 
     note: str = Field(default="", max_length=200)
-    expected_version: int = 0
+    expected_version: ExpectedVersion | None = None
 
 
 class ShareRequestOut(CamelModel):
     id: str
     asset_id: str
     asset_name: str = ""
+    # 资产**当前**版本。审批人据此回传，后端比对不一致就 409，
+    # 避免「基于旧界面的审批」生效。
+    state_version: int = 0
+    # 申请单入库时的资产版本**快照**。用来提示「该申请基于旧版本」，
+    # 让审批人知道资产在申请之后被改过。与 `state_version` 语义不同，别混用。
+    request_state_version: int = 0
     applicant_id: str
     applicant_name: str | None = None
     action: ShareAction
@@ -550,7 +571,7 @@ class ShareRequestOut(CamelModel):
 
 class DraftDecisionIn(CamelModel):
     reason: str = Field(default="", max_length=200)
-    expected_version: int = 0
+    expected_version: ExpectedVersion | None = None
 
 
 class BulkAction(StrEnum):
@@ -566,6 +587,7 @@ class BulkAction(StrEnum):
     RESTORE = "restore"
     APPROVE_DRAFT = "approveDraft"
     REJECT_DRAFT = "rejectDraft"
+    REQUEST_SHARE = "requestShare"
     REQUEST_REVOKE = "requestRevoke"
 
 
@@ -575,7 +597,9 @@ class BulkIn(CamelModel):
     ids: list[str] = Field(min_length=1, max_length=100)
     action: BulkAction
     payload: dict = Field(default_factory=dict)
-    expected_versions: dict[str, int] = Field(default_factory=dict)
+    # 批量写逐条消费版本：每条要校验的资产都要在这里带上它当前的版本。
+    # 值必须是合法版本（≥1）——0 不再是「不校验」的哨兵值（P2-2）。
+    expected_versions: dict[str, Annotated[int, Field(ge=1)]] = Field(default_factory=dict)
 
 
 class BulkItemResult(CamelModel):

@@ -29,6 +29,7 @@ from core.template_spec.models import (
     RefMode,
     SlotBinding,
     SlotType,
+    SpecGroup,
     TemplateSpec,
 )
 from core.template_spec.rules import (
@@ -53,6 +54,7 @@ __all__ = [
     "RefMode",
     "SlotBinding",
     "SlotType",
+    "SpecGroup",
     "TemplateSpec",
     "compile_spec",
     "normalize_refs",

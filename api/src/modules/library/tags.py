@@ -49,7 +49,7 @@ AND 语义成立的前提 —— 一个素材在每个维度里只取一个值�
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 
 from sqlalchemy import and_, delete, exists, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -70,6 +70,7 @@ from modules.library.schema import (
 __all__ = [
     "TagService",
     "add_asset_tags",
+    "assignable_tag_ids",
     "expand_tag_ids",
     "group_tag_ids_by_dimension",
     "remove_asset_tags",
@@ -255,6 +256,40 @@ def tag_filter_clause(
     return and_(*clauses)
 
 
+async def assignable_tag_ids(
+    session: AsyncSession, tag_ids: Iterable[str]
+) -> list[str]:
+    """从这批 id 里挑出**可打标**的词：只排除「有子级的一级分组」。
+
+    与下面 `_ensure_tags_exist(reject_groups=True)` 是同一条判据，抽出来给
+    「生成产物继承参考素材标签」复用。继承来的词若含维度（产品 / 画面类型），
+    它会显示成一个标签却筛不出任何东西 —— 筛选按二级取值匹配，维度只用来分组。
+    孤立的一级（删维度后被提升上来的取值）仍可打，与原守卫保持一致。
+    """
+    wanted = [tag_id for tag_id in dict.fromkeys(tag_ids) if tag_id]
+    if not wanted:
+        return []
+    rows = (
+        await session.execute(
+            select(LibraryTag.id, LibraryTag.parent_id).where(
+                LibraryTag.id.in_(wanted)
+            )
+        )
+    ).all()
+    has_children = set(
+        (
+            await session.scalars(
+                select(LibraryTag.parent_id)
+                .where(LibraryTag.parent_id.in_(wanted))
+                .distinct()
+            )
+        ).all()
+    )
+    return [
+        tag_id for tag_id, parent_id in rows if parent_id or tag_id not in has_children
+    ]
+
+
 async def _ensure_tags_exist(
     session: AsyncSession, tag_ids: Sequence[str], *, reject_groups: bool = False
 ) -> None:
@@ -279,25 +314,8 @@ async def _ensure_tags_exist(
         #
         # 两级模型下这已经覆盖了「维度」：正常结构里一级都带子标签（= 维度），
         # 取值都在二级。
-        rows = (
-            await session.execute(
-                select(LibraryTag.id, LibraryTag.parent_id).where(
-                    LibraryTag.id.in_(wanted)
-                )
-            )
-        ).all()
-        has_children = set(
-            (
-                await session.scalars(
-                    select(LibraryTag.parent_id)
-                    .where(LibraryTag.parent_id.in_(wanted))
-                    .distinct()
-                )
-            ).all()
-        )
-        blocked = [
-            tag_id for tag_id, parent_id in rows if not parent_id and tag_id in has_children
-        ]
+        assignable = set(await assignable_tag_ids(session, wanted))
+        blocked = [tag_id for tag_id in wanted if tag_id not in assignable]
         if blocked:
             raise BadRequest("一级标签是分组（维度），请选择它下面的二级标签")
 

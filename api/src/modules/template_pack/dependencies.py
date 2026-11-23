@@ -27,3 +27,16 @@ TemplatePackCreateDep = Annotated[CurrentUser, Depends(require("template_pack:cr
 TemplatePackPublishDep = Annotated[
     CurrentUser, Depends(require("template_pack:publish"))
 ]
+
+# 案例（可复用模板快照）有自己的一对码：读案例库/复用案例 与 发布/编辑/下架/删除
+# 案例是两种不同性质的动作 —— 看别人的案例去复用，和把自己的模板发出去给别人用，
+# 不该是同一个权限。合用一个码就分不出「谁可以发布案例」。
+#
+# 新增码会让内置角色**静默失权**（identity 的内置角色里没有新码就等于没这个
+# 权限），所以两个新码在 `identity/permissions.py` 里同步给了对应角色。
+TemplateCaseReadDep = Annotated[
+    CurrentUser, Depends(require("template_pack:case:read"))
+]
+TemplateCaseWriteDep = Annotated[
+    CurrentUser, Depends(require("template_pack:case:write"))
+]

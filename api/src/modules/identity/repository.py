@@ -10,10 +10,13 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any, cast
 
 from sqlalchemy import and_, delete, func, or_, select
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.context import SUPER_PERMISSION
 from core.response import PageParams
 from db.base import utcnow
 from db.repository import BaseRepository
@@ -29,6 +32,8 @@ from modules.identity.models import (
     UserSession,
 )
 from modules.identity.permissions import (
+    EFFECT_ALLOW,
+    EFFECT_DENY,
     SCOPE_GROUP,
     SCOPE_TEAM,
     SCOPE_USER,
@@ -98,6 +103,20 @@ class UserRepository(BaseRepository[User]):
         stmt = stmt.order_by(User.created_at.desc(), User.id)
         return await self.paginate(stmt, params)
 
+    async def briefs(self) -> list[tuple[str, str, str, bool]]:
+        """全部账号的简要信息：`(id, username, display_name, is_active)`。
+
+        给「分组 → 用户」这棵树用：树必须一次画全，所以**不能走分页** ——
+        分页少一页时，树会静默少几个人，而看的人以为那就是全部。
+        只取四列，不实例化 ORM 行。
+        """
+        rows = await self.session.execute(
+            select(User.id, User.username, User.display_name, User.is_active).order_by(
+                User.username
+            )
+        )
+        return [(row[0], row[1], row[2], row[3]) for row in rows.all()]
+
     async def roles_for(self, user_ids: Sequence[str]) -> dict[str, list[Role]]:
         """一次查出多个用户的角色，返回 `{user_id: [Role, ...]}`。"""
         if not user_ids:
@@ -138,18 +157,78 @@ class UserRepository(BaseRepository[User]):
             self.session.add(UserRole(user_id=user_id, role_id=role_id))
         await self.session.flush()
 
-    async def count_active_superusers(self, *, exclude_user_id: str | None = None) -> int:
-        """启用的超级管理员人数（用于「不能锁死自己」的红线）。"""
-        stmt = (
-            select(func.count(func.distinct(User.id)))
-            .select_from(User)
+    async def active_superuser_ids(self) -> set[str]:
+        """启用账号里「超管等价」的用户 id。
+
+        判定必须与 `IdentityService.resolve_identity` **同源**：持有 `is_superuser`
+        角色，或者在任意层（角色权限 / 个人授权 / 小组授权）拿到 `*`。
+
+        为什么不能只数角色：`resolve_identity` 的注释写得很清楚——「任一层出现 `*`
+        都等价于超管：只认角色上的 `is_superuser` 会让『给某人单独授 `*`』这条合法
+        操作失效」。同一个系统里若两处口径不同，「最后一个超管」就会数出 0 ——
+        管理面所有写操作都开始报 `LastSuperuser`，而真正的原因是判定标准选错了。
+
+        三次查询而不是一次巨型 join：`permission_grants` 的 group 层要经过
+        `group_members` 才能落到用户，硬拼成一条 SQL 会得到三层嵌套 join 加 OR，
+        可读性换不来性能 —— 这个方法只在改权限时调用，不在请求主路径上。
+        """
+        active = User.is_active.is_(True)
+        ids: set[str] = set()
+
+        # ① is_superuser 角色，或角色权限里直接写了 `*`（两者等价）
+        role_rows = await self.session.scalars(
+            select(User.id)
+            .distinct()
             .join(UserRole, UserRole.user_id == User.id)
             .join(Role, Role.id == UserRole.role_id)
-            .where(Role.is_superuser.is_(True), User.is_active.is_(True))
+            .outerjoin(RolePermission, RolePermission.role_id == Role.id)
+            .where(
+                active,
+                or_(
+                    Role.is_superuser.is_(True),
+                    RolePermission.permission == SUPER_PERMISSION,
+                ),
+            )
         )
+        ids.update(role_rows)
+
+        # ② 个人授权 `*`
+        personal = await self.session.scalars(
+            select(PermissionGrant.scope_id)
+            .join(User, User.id == PermissionGrant.scope_id)
+            .where(
+                active,
+                PermissionGrant.scope == SCOPE_USER,
+                PermissionGrant.permission == SUPER_PERMISSION,
+            )
+        )
+        ids.update(personal)
+
+        # ③ 所属小组的授权 `*`（团队层不许放 `*`，写接口已经拦了，这里不必查）
+        grouped = await self.session.scalars(
+            select(GroupMember.user_id)
+            .join(User, User.id == GroupMember.user_id)
+            .join(
+                PermissionGrant,
+                and_(
+                    PermissionGrant.scope == SCOPE_GROUP,
+                    PermissionGrant.scope_id == GroupMember.group_id,
+                ),
+            )
+            .where(active, PermissionGrant.permission == SUPER_PERMISSION)
+        )
+        ids.update(grouped)
+        return set(ids)
+
+    async def count_active_superusers(self, *, exclude_user_id: str | None = None) -> int:
+        """启用的超级管理员人数（用于「不能锁死自己」的红线）。
+
+        「超管」的定义与鉴权侧同源，见 `active_superuser_ids`。
+        """
+        ids = await self.active_superuser_ids()
         if exclude_user_id:
-            stmt = stmt.where(User.id != exclude_user_id)
-        return int(await self.session.scalar(stmt) or 0)
+            ids.discard(exclude_user_id)
+        return len(ids)
 
 
 class RoleRepository(BaseRepository[Role]):
@@ -198,6 +277,27 @@ class RoleRepository(BaseRepository[Role]):
             result.setdefault(role_id, []).append(permission)
         return result
 
+    async def permission_codes(self) -> set[str]:
+        """全表出现过的权限码（启动时清理下线码用）。"""
+        return set(
+            await self.session.scalars(select(RolePermission.permission).distinct())
+        )
+
+    async def drop_permission_codes(self, codes: Sequence[str]) -> int:
+        """删掉这些码的全部分绑定，返回删掉的行数。"""
+        if not codes:
+            return 0
+        result = cast(
+            "CursorResult[Any]",
+            await self.session.execute(
+                delete(RolePermission).where(
+                    RolePermission.permission.in_(list(codes))
+                )
+            ),
+        )
+        await self.session.flush()
+        return int(result.rowcount or 0)
+
     async def set_permissions(self, role_id: str, codes: Sequence[str]) -> None:
         await self.session.execute(
             delete(RolePermission).where(RolePermission.role_id == role_id)
@@ -237,6 +337,9 @@ class LayerCodes:
     team: tuple[str, ...] = ()
     groups: dict[str, tuple[str, ...]] | None = None
     personal: tuple[str, ...] = ()
+    #: 个人层的**例外**（`effect='deny'`）。`all_codes()` 刻意不含它 ——
+    #: 那个方法是「他拥有什么」，否决是「他额外不要什么」，两个方向不能混。
+    denies: tuple[str, ...] = ()
     group_ids: tuple[str, ...] = ()
 
     def all_codes(self) -> set[str]:
@@ -362,30 +465,62 @@ class PermissionLayerRepository:
         return counts
 
     # ---------- 授权 ----------
-    async def grants(self, scope: str, scope_id: str) -> list[str]:
+    async def grants(
+        self, scope: str, scope_id: str, *, effect: str = EFFECT_ALLOW
+    ) -> list[str]:
+        """某一层授予（或否决）的权限码。
+
+        `effect` 默认只看 `allow`：调用方问「他现在被给了什么」时，
+        混进否决项会让它以为有这项权限。要拿否决请显式传 `EFFECT_DENY`。
+        """
         return list(
             await self.session.scalars(
                 select(PermissionGrant.permission)
                 .where(
                     PermissionGrant.scope == scope,
                     PermissionGrant.scope_id == scope_id,
+                    PermissionGrant.effect == effect,
                 )
                 .order_by(PermissionGrant.permission)
             )
         )
 
     async def set_grants(
-        self, scope: str, scope_id: str, codes: Sequence[str]
+        self,
+        scope: str,
+        scope_id: str,
+        codes: Sequence[str],
+        *,
+        effect: str = EFFECT_ALLOW,
     ) -> None:
+        """整组替换某一层的授予 / 否决。
+
+        **`delete` 必须带 `effect` 条件**：不带的话，改一次允许项就会把这个人
+        的例外一起删掉 —— 界面上只表现为「权限多了一项」，没人会怀疑是保存
+        动作弄丢的（这类静默丢失本仓已经踩过两次）。
+        """
+        # 结构性的不对称：例外只可能出现在个人层。写在这里而不是靠调用方自觉 ——
+        # 「只有最具体的一层能否决」是加新层时不重新决定优先级的**前提**，
+        # 让它变成一条运行时断言，比写在文档里可靠。
+        if effect == EFFECT_DENY and scope != SCOPE_USER:
+            raise ValueError(
+                f"例外（deny）只能出现在个人层，收到 scope={scope!r}"
+            )
         await self.session.execute(
             delete(PermissionGrant).where(
                 PermissionGrant.scope == scope,
                 PermissionGrant.scope_id == scope_id,
+                PermissionGrant.effect == effect,
             )
         )
         for code in dict.fromkeys(codes):
             self.session.add(
-                PermissionGrant(scope=scope, scope_id=scope_id, permission=code)
+                PermissionGrant(
+                    scope=scope,
+                    scope_id=scope_id,
+                    permission=code,
+                    effect=effect,
+                )
             )
         await self.session.flush()
 
@@ -396,6 +531,7 @@ class PermissionLayerRepository:
                 PermissionGrant.scope,
                 PermissionGrant.scope_id,
                 PermissionGrant.permission,
+                PermissionGrant.effect,
             ).where(
                 or_(
                     and_(
@@ -416,7 +552,13 @@ class PermissionLayerRepository:
         team: list[str] = []
         groups: dict[str, list[str]] = {gid: [] for gid in group_ids}
         personal: list[str] = []
-        for scope, scope_id, code in rows.all():
+        denies: list[str] = []
+        for scope, scope_id, code, effect in rows.all():
+            # 否决只可能出现在个人层（写入口保证），但仍然按 effect 分流，
+            # 不靠「scope 一定是 user」这个隐含前提。
+            if effect == EFFECT_DENY:
+                denies.append(code)
+                continue
             if scope == SCOPE_TEAM:
                 team.append(code)
             elif scope == SCOPE_USER:
@@ -427,6 +569,7 @@ class PermissionLayerRepository:
             team=tuple(sorted(team)),
             groups={gid: tuple(sorted(codes)) for gid, codes in groups.items()},
             personal=tuple(sorted(personal)),
+            denies=tuple(sorted(denies)),
             group_ids=group_ids,
         )
 
@@ -437,6 +580,44 @@ class PermissionLayerRepository:
                 select(PermissionGrant.permission).distinct()
             )
         )
+
+    async def all_grants(self) -> list[tuple[str, str, str]]:
+        """三层表里的全部**授予**行：`(scope, scope_id, permission)`。
+
+        给「一次性迁移」用：按 scope/scope_id 分组，才能判断某一层
+        「有接口码、但一个页面码都没有」。
+
+        **只看 `allow`**：否决行不代表这一层「拥有」这个码，把它算进来会让
+        迁移以为「这个账号有接口没页面」，于是给他补一个页面权限 ——
+        而那条权限本来是被他自己关掉的。
+        """
+        rows = await self.session.execute(
+            select(
+                PermissionGrant.scope,
+                PermissionGrant.scope_id,
+                PermissionGrant.permission,
+            ).where(PermissionGrant.effect == EFFECT_ALLOW)
+        )
+        return [(row[0], row[1], row[2]) for row in rows.all()]
+
+    async def drop_codes(self, codes: Sequence[str]) -> int:
+        """删掉这些码在**任意层**的授权行，返回行数。
+
+        三层一起删而不是逐层传参：调用方（启动引导）拿到的就是「目录里没有的码」，
+        它落在哪一层都该清掉 —— 逐层判断只会多三个调用点、多三种漏法。
+        """
+        if not codes:
+            return 0
+        result = cast(
+            "CursorResult[Any]",
+            await self.session.execute(
+                delete(PermissionGrant).where(
+                    PermissionGrant.permission.in_(list(codes))
+                )
+            ),
+        )
+        await self.session.flush()
+        return int(result.rowcount or 0)
 
     async def orphan_grants(self, valid_group_ids: set[str]) -> list[str]:
         """doctor 对账：指向已删除小组的 grant。"""

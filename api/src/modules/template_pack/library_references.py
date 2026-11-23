@@ -38,12 +38,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from modules.template_pack.models import (
+    TemplateCase,
     TemplateSpec,
     TemplateSpecSlot,
     TemplateSpecVersion,
 )
 
-__all__ = ["SpecDemoCases", "SpecFixedAssets"]
+__all__ = ["CaseSnapshots", "SpecDemoCases", "SpecFixedAssets"]
 
 
 class SpecFixedAssets:
@@ -122,4 +123,50 @@ class SpecDemoCases:
             demo_id = draft.get("demoAssetId") or draft.get("demo_asset_id")
             if isinstance(demo_id, str) and demo_id in wanted:
                 found.setdefault(demo_id, []).append(f"{name}（{key}）的展示案例")
+        return found
+
+
+class CaseSnapshots:
+    """`template_cases.config`：模板案例快照里咬住的 v2 资产。
+
+    ## 为什么案例快照也要算引用
+
+    案例存的是模板配置的一份**快照**（含固定槽位绑定的 `assetId` 与展示案例
+    `demoAssetId`），复用者拿它复制出新模板时，固定槽位就指着那张图。素材被彻底
+    删除之后，复用出来的新模板会安静地裂图 —— 案例本身看着毫无异常。
+
+    ## 口径：全表扫，**不**按状态过滤
+
+    下架（`status=offline`）与软删（`deleted_at` 非空）的案例都照样算引用：
+    它们随时能重新上架 / 恢复，引用会立刻回来。按状态过滤等于告诉用户
+    「下架了就能删素材」，等他恢复案例时那张图已经不可逆地没了。
+
+    与 `SpecFixedAssets` 同一个取舍：**查不清楚的一律当「有人在用」**。
+    """
+
+    async def references(
+        self, session: AsyncSession, asset_ids: Sequence[str]
+    ) -> Mapping[str, Sequence[str]]:
+        wanted = {asset_id for asset_id in asset_ids if asset_id}
+        if not wanted:
+            return {}
+        rows = await session.execute(select(TemplateCase.name, TemplateCase.config))
+        found: dict[str, list[str]] = {}
+        for name, config in rows:
+            if not isinstance(config, dict):
+                continue
+            used: set[str] = set()
+            demo_id = config.get("demoAssetId") or config.get("demo_asset_id")
+            if isinstance(demo_id, str):
+                used.add(demo_id)
+            for slot in config.get("slots") or []:
+                if not isinstance(slot, dict):
+                    continue
+                if (slot.get("binding") or "") != "fixed":
+                    continue
+                asset_id = slot.get("assetId") or slot.get("asset_id")
+                if isinstance(asset_id, str):
+                    used.add(asset_id)
+            for asset_id in used & wanted:
+                found.setdefault(asset_id, []).append(f"模板案例《{name}》")
         return found

@@ -53,3 +53,8 @@ Thumbs.db
 .workbuddy/
 # .tmp/：本地排查用的临时产物（接口快照、抽帧、pytest 输出）
 /.tmp/
+# var/：本地工作副本与排查产物（worktree、CI 日志、临时脚本、抽帧图片等）。
+# 必须锚定根目录——api/var/ 与 api/src/var/ 已在上面单独列出。
+/var/
+# videos/：本地生成的视频产物（mp4），体积大且与源码无关
+/videos/

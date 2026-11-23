@@ -46,10 +46,12 @@ from generation.events import (
     EVT_GENERATION_SUCCEEDED,
 )
 from generation.pipeline import (
+    ArchiveRequestable,
     AssetLinkable,
     CoverAttachable,
     DeadlineExtendable,
     GenerationPipeline,
+    Persistable,
     fail_on_model_gone,
     get_pipeline,
     strict_model,
@@ -827,9 +829,10 @@ class GenerationRunner:
         """
         if not url:
             return url
-        persist = getattr(get_pipeline(kind), "persist_output", None)
-        if persist is None:
+        pipeline = get_pipeline(kind)
+        if not isinstance(pipeline, Persistable):
             return url
+        persist = pipeline.persist_output
 
         durable = _is_public_url(url)
         # 相对地址没有兜底，所以多试两次把对象存储的瞬时抖动挡掉；
@@ -899,9 +902,9 @@ class GenerationRunner:
         if not stored:
             return
         pipeline = get_pipeline(kind)
-        build = getattr(pipeline, "archive_request", None)
-        if build is None:
+        if not isinstance(pipeline, ArchiveRequestable):
             return
+        build = pipeline.archive_request
         if not has_library_ingest():
             # 生成与资产库可以分别部署（资产库还没上线的环境）。库不在时打断
             # 生成是更坏的选择：用户连生成都用不了。留痕，等库上线后由重试补齐。

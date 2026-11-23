@@ -27,10 +27,12 @@ describe('资产库入口', () => {
     expect(navPaths).not.toContain('/assets');
   });
 
-  it('没有路由挂在 /assets 上，/library 只要 library:read', () => {
+  it('没有路由挂在 /assets 上，/library 的入口是页面权限', () => {
     expect(appRegistry.routes.map((route) => route.path)).not.toContain('/assets');
+    // 页面可见性与接口权限分两层：入口看 `page:library`，
+    // 上传/删除/分享按钮才看 `library:*`（见 docs/PERMISSION_PAGES.md）
     expect(appRegistry.routes.find((one) => one.path === '/library')?.permissions).toEqual([
-      'library:read',
+      'page:library',
     ]);
   });
 });

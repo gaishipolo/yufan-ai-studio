@@ -101,6 +101,20 @@ class TaskRepository(BaseRepository[VideoTask]):
             failed=counts.get(TaskStatus.FAILED.value, 0),
         )
 
+    async def count_in_flight(self, author_id: str) -> int:
+        """作者名下还没结束的任务数（queued + running）。
+
+        用来挡「一个人攒几十条任务把队列顶满」。判据与 `is_in_flight` 同一口径
+        （两个状态都算在途），但不 import 那个函数：这里是一次查询，用的是
+        状态值本身。
+        """
+        return await self.count(
+            select(VideoTask).where(
+                VideoTask.author_id == author_id,
+                VideoTask.status.in_([TaskStatus.QUEUED.value, TaskStatus.RUNNING.value]),
+            )
+        )
+
     async def get_many(self, ids: list[str]) -> list[VideoTask]:
         if not ids:
             return []

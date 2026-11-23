@@ -17,8 +17,9 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from api.discovery import active_modules
@@ -44,6 +45,11 @@ logger = get_logger(__name__)
 #: 停机时留给调度器跑完当前一轮的宽限期（秒）。任务本身可能更长，
 #: 到点仍未退出就强制取消——不可逆任务宁可留日志，也不能让进程永远关不掉。
 _SCHEDULER_GRACE_SEC = 30.0
+
+#: 仓库根（`api/src/app.py` → `api/src` → `api` → 仓库）。`WEB_DIST_DIR` 的相对
+#: 路径按它解析：后端进程的 cwd 取决于怎么起的（`app serve` 是 `api/`），
+#: 拿 cwd 当基准会让同一份 `.env` 在不同启动方式下指向不同目录。
+_REPO_ROOT = Path(__file__).resolve().parents[2]
 
 if TYPE_CHECKING:
     from api.module import ModuleSpec
@@ -295,6 +301,73 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.info("已关闭")
 
 
+def _web_dist() -> Path | None:
+    """解析 `WEB_DIST_DIR`；返回 None = 页面不由后端发（只发接口）。
+
+    相对路径先按仓库根、再按启动目录试：部署时写 `studio/dist` 还是
+    `../studio/dist` 取决于当时的 cwd，两种写法都接受，别让人猜。
+
+    目录里没有 `index.html` 时同样当作没配，**不报错**：
+    「先起后端、再构建前端」是很自然的顺序，那期间首页退回 JSON 问候语即可，
+    启动直接失败反而让人以为配置写错了。
+    """
+    raw = get_settings().web_dist_dir.strip()
+    if not raw:
+        return None
+    given = Path(raw)
+    candidates = [given] if given.is_absolute() else [_REPO_ROOT / given, Path.cwd() / given]
+    for candidate in candidates:
+        resolved = candidate.resolve()
+        if (resolved / "index.html").is_file():
+            return resolved
+    return None
+
+
+def _mount_web(app: FastAPI, dist: Path) -> None:
+    """把前端构建产物挂到根路径：页面与接口同源，生产只开一个端口。
+
+    只接管 GET，且必须注册在所有 `include_router` 之后 —— `/api/...` 与
+    `/static/...` 仍然先命中真路由，这里只兜「浏览器直接打开或刷新某个前端路由」。
+
+    未命中文件时回退 `index.html` 是 BrowserRouter 的硬要求：`/tasks/T001`
+    在磁盘上并不存在，不回退就是刷新即 404。反过来，`/api/...` 拼错必须
+    仍是 404 JSON —— 回退成页面的话前端只会报「JSON 解析失败」，排查方向全偏。
+    """
+    assets = dist / "assets"
+    if assets.is_dir():
+        # 带内容 hash 的文件名，命中即返回，不必走下面的回退判断
+        app.mount("/assets", StaticFiles(directory=assets), name="web-assets")
+
+    settings = get_settings()
+    index = dist / "index.html"
+    # `/api` 整段保留，不只是 `API_PREFIX`：`/api/.env`、`/api/xxx` 这类路径
+    # 不该被回退成一张页面（看起来像 200，实际什么都没有）。
+    reserved = (
+        "/api",
+        settings.api_prefix,
+        settings.storage_public_base,
+        "/metrics",
+        "/docs",
+        "/redoc",
+        "/openapi.json",
+    )
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def web_index(full_path: str) -> FileResponse:
+        path = f"/{full_path}"
+        if any(path == item or path.startswith(item + "/") for item in reserved):
+            raise HTTPException(status_code=404, detail="Not Found")
+        if full_path:
+            candidate = (dist / full_path).resolve()
+            # 目录穿越（`/../x`）解析后会落在外层，不认它，回退首页
+            if candidate.is_file() and dist in candidate.parents:
+                return FileResponse(candidate)
+        # 首页必须每次回源：重新 build 之后 index.html 指向的是新的 hash 文件名，
+        # 浏览器拿缓存里那份旧首页就会去要一个已经不存在的 js（表现为白屏）。
+        # 带 hash 的资源不受影响，它们靠文件名区分版本。
+        return FileResponse(index, headers={"Cache-Control": "no-cache"})
+
+
 def _mount_static(app: FastAPI, public_base: str) -> None:
     """本地存储驱动下，把对象目录挂到 HTTP 上供预览。"""
     settings = get_settings()
@@ -308,6 +381,7 @@ def _mount_static(app: FastAPI, public_base: str) -> None:
 def create_app() -> FastAPI:
     settings = get_settings()
     load_extension_points()
+    web_dist = _web_dist()
 
     app = FastAPI(
         title=settings.app_name,
@@ -322,10 +396,14 @@ def create_app() -> FastAPI:
     # 顺序：后添加的在外层。CORS 必须在最外层，异常响应才能带上跨域头。
     # 全局限流放在 RequestContext **内侧**：429 也要有 request id 和访问日志，
     # 否则「谁被限了」只能靠猜。默认关闭（额度 0 时整层透传，零开销）。
+    # `/assets` 是前端打包出来的静态文件，一个人打开一个页面就是十几个请求：
+    # 把它们算进按 IP 的限流桶，等于「页面越复杂越容易 429」，所以一并排除。
     app.add_middleware(
         GlobalRateLimitMiddleware,
         limit_per_min=settings.rate_limit_global_per_min,
-        exclude=DEFAULT_RATE_LIMIT_EXCLUDE + (settings.api_prefix + "/health",),
+        exclude=DEFAULT_RATE_LIMIT_EXCLUDE
+        + (settings.api_prefix + "/health",)
+        + (("/assets",) if web_dist is not None else ()),
     )
     app.add_middleware(RequestContextMiddleware)
     app.add_middleware(
@@ -344,9 +422,14 @@ def create_app() -> FastAPI:
     app.include_router(build_ops_router())
     _mount_static(app, settings.storage_public_base)
 
-    @app.get("/", include_in_schema=False)
-    async def root() -> dict[str, str]:
-        return {"service": settings.app_name, "docs": "/docs", "api": settings.api_prefix}
+    if web_dist is None:
+        # 没配 `WEB_DIST_DIR`：后端只是接口服务，首页给一句问候语便于探活
+        @app.get("/", include_in_schema=False)
+        async def root() -> dict[str, str]:
+            return {"service": settings.app_name, "docs": "/docs", "api": settings.api_prefix}
+    else:
+        # 配了：`/` 由前端页面接管（探活请用 `/api/v1/health`）
+        _mount_web(app, web_dist)
 
     # 放在 include_router 之后：模块导入时才会登记 scope，早于这里就是空集
     _check_rate_limit_overrides()

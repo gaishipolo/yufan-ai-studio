@@ -29,19 +29,31 @@ PERM_RETRY_ANY = "image:retry:any"
 PERM_DELETE = "image:delete"
 
 SPECS: tuple[PermissionSpec, ...] = (
-    PermissionSpec(PERM_READ, "查看生图历史", group="内容生产"),
-    PermissionSpec(PERM_CREATE, "提交生图任务", group="内容生产"),
+    PermissionSpec(
+        PERM_READ,
+        "查看生图历史",
+        group="内容生产",
+        pages=("page:image", "page:task-center"),
+    ),
+    PermissionSpec(
+        PERM_CREATE,
+        "提交生图任务",
+        group="内容生产",
+        pages=("page:image", "page:studio"),
+    ),
     PermissionSpec(
         PERM_READ_ALL,
         "查看他人生图历史",
         group="内容生产",
         description="列表的数据范围开关；与 task:read:all 同义，不含提交他人的生图任务",
+        pages=("page:image",),
     ),
     PermissionSpec(
         PERM_RETRY_ANY,
         "重试他人生图任务",
         group="内容生产",
         description="只开关「替别人点重试」，不蕴含 image:read:all",
+        pages=("page:image",),
     ),
     PermissionSpec(
         PERM_DELETE,
@@ -51,6 +63,7 @@ SPECS: tuple[PermissionSpec, ...] = (
             "删除生成历史，删除后不可再重试；"
             "不含删除他人记录（那需要 image:read:all 的数据范围）"
         ),
+            pages=("page:image",),
     ),
 )
 

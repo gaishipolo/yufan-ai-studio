@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import asyncio
+import tracemalloc
 from datetime import timedelta
 from types import SimpleNamespace
 from typing import Any
@@ -21,6 +22,7 @@ from db.base import utcnow
 from db.session import get_session_factory
 from infra.queue.base import Job
 from modules.export.enums import ExportStatus
+from modules.export.errors import ExportTooLarge
 from modules.export.models import Export
 from modules.export.sources import render_csv, resolve_source
 from modules.export.worker import build_export
@@ -96,6 +98,96 @@ def test_unknown_source_is_400(client: TestClient, admin: dict[str, str]) -> Non
     assert resp.status_code in (400, 422), resp.text
 
 
+def test_audit_failure_does_not_break_the_accepted_export(
+    client: TestClient, admin: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """审计失败不能让**已受理**的导出变成 500。
+
+    到这一步记录已落库、活已排上队列；接口一旦报失败，用户会重试，于是多出
+    一条重复的导出记录（`_reject_duplicate` 只拦 ACTIVE 状态，失败态不拦）。
+    审计是旁路：它挂了要能查日志，但不能改写业务结果。
+    """
+    async def boom(*args: Any, **kwargs: Any) -> None:
+        raise RuntimeError("审计库连不上")
+
+    monkeypatch.setattr("core.audit.record", boom)
+
+    resp = _create(client, admin)
+    assert resp.status_code == 202, resp.text
+    export_id = resp.json()["data"]["id"]
+
+    detail = client.get(f"{API}/exports/{export_id}", headers=admin)
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["data"]["status"] == "queued"
+
+
+def test_audit_failure_does_not_block_the_download(
+    client: TestClient, admin: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """下载同理：产物已经在磁盘上，审计写不进去不该让用户拿不到文件。"""
+    export_id = _create(client, admin).json()["data"]["id"]
+    _run(build_export(Job(name="export.build", payload={"id": export_id})))
+
+    async def boom(*args: Any, **kwargs: Any) -> None:
+        raise RuntimeError("审计库连不上")
+
+    monkeypatch.setattr("core.audit.record", boom)
+
+    downloaded = client.get(f"{API}/exports/{export_id}/download", headers=admin)
+    assert downloaded.status_code == 200, downloaded.text
+    assert downloaded.content.startswith(b"\xef\xbb\xbf")
+
+
+def test_render_csv_keeps_peak_memory_close_to_the_output_size() -> None:
+    """渲染时的峰值内存不该是产物的好几倍。
+
+    旧写法（`StringIO` → 拼 BOM → `encode`）在构造过程中同时留着 str 缓冲、
+    拼接后的 str、编码后的 bytes 三份副本，实测峰值约为产物的 **5.5 倍**；
+    现在直接写二进制流，实测约 **1.1 倍**。
+
+    worker 是共享进程（见 `core/config.py` 里 `export_max_rows` 的注释）：
+    多出来的那几份全量副本够把同进程里别的模块的 job 一起拖下水。
+    """
+    rows = [[f"任务-{i}", "完成中", "model-x"] for i in range(20_000)]
+    columns = ["id", "title", "status", "model"]
+
+    # 先造行再开追踪：否则峰值里混着输入行本身，量出来的是「输入 + 渲染」
+    tracemalloc.start()
+    try:
+        payload = render_csv(columns, rows)
+        _current, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+
+    assert peak <= 2 * len(payload), (
+        f"峰值内存 {peak} 相对产物 {len(payload)} 偏大：说明渲染过程留了全量副本"
+    )
+
+
+def test_render_csv_fails_when_the_output_exceeds_the_byte_limit() -> None:
+    """字节熔断：超限直接失败，不把内存吃穿。"""
+    with pytest.raises(ExportTooLarge):
+        render_csv(["id", "title"], [["x", "y"] * 100], max_bytes=16)
+
+
+def test_worker_fails_the_export_when_the_output_is_too_large(
+    client: TestClient, admin: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """超限时导出记录置失败，且给用户一句能照做的提示（不是内部异常）。"""
+    from core.config import get_settings
+
+    settings = get_settings().model_copy(update={"export_max_bytes": 64})
+    monkeypatch.setattr("modules.export.worker.get_settings", lambda: settings)
+
+    export_id = _create(client, admin).json()["data"]["id"]
+    _run(build_export(Job(name="export.build", payload={"id": export_id})))
+
+    row = _run(_fetch(export_id))
+    assert row is not None
+    assert row.status == ExportStatus.FAILED.value
+    assert "过大" in (row.error or "")
+
+
 def test_audit_source_needs_its_own_permission() -> None:
     """`audit_events` 含他人行为，只有 `export:read:audit` 能导。
 
@@ -151,6 +243,60 @@ def test_worker_is_idempotent(client: TestClient, admin: dict[str, str]) -> None
     row = _run(_fetch(export_id))
     assert row is not None
     assert row.status == ExportStatus.SUCCEEDED.value
+
+
+def test_failed_export_does_not_leak_the_raw_exception(
+    client: TestClient, admin: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """对外的 error 字段不能是原始异常。
+
+    `str(exc)` 里可能有内部路径、SQL 片段、数据库连接串、上游地址——
+    `ExportOut.error` 会随列表/详情接口返回前端，等于开了一条信息泄露通道
+    （见 REVIEW_2026-11-23 重要#3）。完整 traceback 只进日志。
+    """
+
+    async def boom(*args: Any, **kwargs: Any) -> list[Any]:
+        raise RuntimeError(
+            "connection failed: postgres://app:secret@10.0.0.7:5432/prod SELECT * FROM task"
+        )
+
+    source = SimpleNamespace(columns=("id",), fetch=boom)
+    monkeypatch.setattr("modules.export.worker.lookup_source", lambda name: source)
+
+    export_id = _create(client, admin).json()["data"]["id"]
+    _run(build_export(Job(name="export.build", payload={"id": export_id})))
+
+    row = _run(_fetch(export_id))
+    assert row is not None
+    assert row.status == ExportStatus.FAILED.value
+    error = row.error or ""
+    assert error, "失败必须给出原因"
+    leaks = ("postgres://", "secret", "10.0.0.7", "SELECT", "RuntimeError", "connection failed")
+    for leak in leaks:
+        assert leak not in error, f"对外错误信息泄露了内部细节：{error}"
+
+
+def test_failed_export_maps_known_errors_to_user_wording(
+    client: TestClient, admin: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """已知异常翻译成对应的用户文案，而不是一律兜底。"""
+    from core.exceptions import Forbidden
+
+    async def boom(*args: Any, **kwargs: Any) -> list[Any]:
+        raise Forbidden("用户 u_1 没有导出权限")
+
+    source = SimpleNamespace(columns=("id",), fetch=boom)
+    monkeypatch.setattr("modules.export.worker.lookup_source", lambda name: source)
+
+    export_id = _create(client, admin).json()["data"]["id"]
+    _run(build_export(Job(name="export.build", payload={"id": export_id})))
+
+    row = _run(_fetch(export_id))
+    assert row is not None
+    assert row.status == ExportStatus.FAILED.value
+    error = row.error or ""
+    assert "权限" in error
+    assert "u_1" not in error, "对外文案不应带出内部标识"
 
 
 def test_download_after_expiry_is_410(client: TestClient, admin: dict[str, str]) -> None:
@@ -302,6 +448,33 @@ def test_csv_keeps_bom_and_escapes_formula() -> None:
     lines = text.splitlines()
     assert lines[1] == "'=cmd|'/c calc'!A1"
     assert lines[2] == "普通标题"
+
+
+def test_csv_escapes_a_leading_dash_but_keeps_negative_numbers() -> None:
+    """`-` 也是公式触发字符，但不能把负数改成文本。
+
+    `-2+3+cmd|' /C calc'!A0` 会被 Excel 当公式执行；而 "-2" 是合法业务值，
+    一律加前缀就成了数据损坏（见 REVIEW_2026-11-23 重要#4）。
+    """
+    payload = render_csv(
+        ("v",),
+        [
+            ["-2+3+cmd|' /C calc'!A0"],
+            ["-cmd|'/c calc'!A0"],
+            ["-2"],
+            ["-1.5"],
+            ["- 3"],
+            ["-1e3"],
+        ],
+    )
+    lines = payload.decode("utf-8-sig").splitlines()
+    assert lines[1] == "'-2+3+cmd|' /C calc'!A0"
+    assert lines[2] == "'-cmd|'/c calc'!A0"
+    # 负数原样输出，不能被改成文本
+    assert lines[3] == "-2"
+    assert lines[4] == "-1.5"
+    assert lines[5] == "- 3"
+    assert lines[6] == "-1e3"
 
 
 def test_csv_renders_none_bool_datetime() -> None:

@@ -41,6 +41,13 @@ def _admin(client: TestClient) -> dict[str, str]:
 
 
 def _make_role(client: TestClient, admin: dict[str, str], code: str, perms: list[str]) -> dict:
+    # 页面门控（core.pages）：identity 的接口只有在「用户与权限」这一页被授予时
+    # 才有效。测试里造的是「只授接口、不授页面」的账号，直接加权限会被门控关掉，
+    # 于是所有断言都会变成「一上来就 403」——那不是这些用例要测的东西。
+    # 门控本身由 tests/test_pages.py 专门测。
+    perms = list(perms)
+    if "*" not in perms and any(code.startswith("identity:") for code in perms):
+        perms.append("page:user-access")
     resp = client.post(
         f"{API}/roles",
         json={"code": code, "name": code, "permissions": perms},
@@ -162,7 +169,9 @@ def test_deactivation_takes_effect_on_existing_token(client: TestClient, api: st
     这条用例就是 `api/authn.py` 的存在理由。
     """
     admin = _admin(client)
-    user, headers, _ = _make_user(client, admin, "victim", ["task:read"])
+    user, headers, _ = _make_user(
+        client, admin, "victim", ["task:read", "page:task-center"]
+    )
     assert client.get(f"{api}/tasks", headers=headers).status_code == 200
 
     client.delete(f"{API}/users/{user['id']}", headers=admin)
@@ -175,14 +184,16 @@ def test_deactivation_takes_effect_on_existing_token(client: TestClient, api: st
 def test_role_change_applies_without_relogin(client: TestClient) -> None:
     """改角色权限后，同一个令牌的下一个请求就要用新权限。"""
     admin = _admin(client)
-    _, headers, role = _make_user(client, admin, "promo", ["task:read"])
+    _, headers, role = _make_user(
+        client, admin, "promo", ["task:read", "page:task-center"]
+    )
 
     before = client.get(f"{API}/me", headers=headers).json()["data"]
     assert "task:create" not in before["permissions"]
 
     client.put(
         f"{API}/roles/{role['id']}/permissions",
-        json={"permissions": ["task:read", "task:create"]},
+        json={"permissions": ["task:read", "task:create", "page:task-center"]},
         headers=admin,
     )
 
@@ -1021,7 +1032,9 @@ def test_delegated_role_can_rename_a_normal_user_but_not_touch_email(
     # 目标带 `template_pack:create`：操作者没有这个权限码，严格判定会拒；轻判定才会放行。
     # 用 `template_pack:create` 而不是 `task:read`，是因为三层权限上线后 `task:read`
     # 属于团队基础权限、人人都有，拿它构造「目标比我高」已经不成立了。
-    target, _, _ = _make_user(client, admin, "delegated_target", ["template_pack:create"])
+    target, _, _ = _make_user(
+        client, admin, "delegated_target", ["template_pack:create", "page:template-specs"]
+    )
     _, hr, _ = _make_user(
         client, admin, "delegated_hr", ["identity:read", "identity:update"]
     )

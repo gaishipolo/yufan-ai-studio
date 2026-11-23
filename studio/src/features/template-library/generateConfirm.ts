@@ -23,6 +23,14 @@ export interface ConfirmSlotLine {
    * 「提交了才发现它用的是我以为没生效的那段话」。
    */
   fallback?: string;
+  /**
+   * 使用者**改写的**提示词（这一格不挑素材，直接给文字）。
+   *
+   * 它和 `fallback` 摆出来是同一件事：让使用者在按下确认前看到
+   * 「这次生成里这一段到底说什么」。区别只在口径 —— 文案格不能说成
+   * 「（未填）」，那不是没填，是他自己写的。
+   */
+  override?: string;
 }
 
 export interface ConfirmParamLine {
@@ -85,6 +93,13 @@ export function buildGenerateConfirm(input: GenerateConfirmInput): GenerateConfi
       label: `${slot.label}（未填）`,
       value: slot.fallback as string,
     });
+  }
+
+  /* 使用者改写的提示词：这一格没有素材，写的就是这次要用的那段话。
+     不写成「（未填）」—— 那句话不是缺省，是他自己填的。 */
+  for (const slot of input.slots) {
+    if (!slot.override) continue;
+    rows.push({label: `${slot.label}（改写的提示词）`, value: slot.override});
   }
 
   if (input.params.length > 0) {

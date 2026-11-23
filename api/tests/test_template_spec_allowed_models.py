@@ -35,7 +35,13 @@ OTHER_MODEL = "bailian-wan3-replacement"
 #: 生图模型：只声明 size / count，作者写的 durationSec 它不认。
 IMAGE_MODEL = "agnes-image-2.5-flash"
 #: 纯文生视频模型：`max_references = 0`，接不了需要编号的槽位。
-TEXT_ONLY_MODEL = "agnes-video-2.5-flash"
+#:
+#: 以前这里写的是 `agnes-video-2.5-flash` —— 它 2026-11-22 起也收参考素材了
+#: （5 张图 + 3 段音频），拿它当「接不了参考素材」的反例就不成立了。
+#: 现在用示例驱动里的纯文生视频模型：它没标 placeholder，会进公开目录。
+TEXT_ONLY_MODEL = "md-async-video"
+#: 清单外的另一款视频模型（用来验「挑了不在清单里的模型」）。
+OTHER_VIDEO_MODEL = "agnes-video-2.5-flash"
 
 #: 用户填的图片槽位必须带一级标签（发布前校验）。
 _TAG = "tag-allowed-models"
@@ -140,7 +146,7 @@ def test_compile_rejects_a_model_outside_the_allowed_list(client: TestClient) ->
 
     body = client.post(
         f"{API}/{draft['key']}/compile",
-        json={"slotValues": {}, "model": TEXT_ONLY_MODEL},
+        json={"slotValues": {}, "model": OTHER_VIDEO_MODEL},
         headers=headers,
     )
     assert body.status_code == 400, body.text
@@ -173,7 +179,9 @@ def test_allowed_model_must_support_the_authored_params(client: TestClient) -> N
     assert IMAGE_MODEL in response.json()["message"]
 
 
-def test_allowed_model_must_accept_reference_slots(client: TestClient) -> None:
+def test_allowed_model_must_accept_reference_slots(
+    client: TestClient, example_drivers: None
+) -> None:
     """清单里不能放接不了参考素材的模型：有编号槽位时它跑不起来。"""
     headers = _headers(client)
     draft = _draft_with_slot(allowedModels=[TEXT_ONLY_MODEL])
