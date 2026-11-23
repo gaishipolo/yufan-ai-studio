@@ -201,3 +201,130 @@ def _delete_tasks(task_ids: list[str]) -> None:
             await session.commit()
 
     asyncio.run(run())
+
+
+# ---------------------------------------------------------------------------
+# 精确性：子串粗筛必须被二次精确比对兜住
+# ---------------------------------------------------------------------------
+
+
+def _video_task_with_ids(asset_ids: list[str]) -> str:
+    async def run() -> str:
+        from db.session import get_session_factory
+        from modules.task.models import VideoTask
+
+        async with get_session_factory()() as session:
+            task = VideoTask(
+                title="粗筛兜底用例",
+                prompt="粗筛兜底用例",
+                model="libtv-wan3-replacement",
+                author_id="system",
+                reference_library_ids=asset_ids,
+            )
+            session.add(task)
+            await session.commit()
+            return task.id
+
+    return asyncio.run(run())
+
+
+def _image_job_with_refs(refs: list[dict[str, str]]) -> str:
+    import json
+
+    async def run() -> str:
+        from db.session import get_session_factory
+        from modules.image.models import ImageJob
+
+        async with get_session_factory()() as session:
+            job = ImageJob(
+                name="粗筛兜底用例",
+                prompt="粗筛兜底用例",
+                owner_id="system",
+                reference_json=json.dumps(refs),
+            )
+            session.add(job)
+            await session.commit()
+            return job.id
+
+    return asyncio.run(run())
+
+
+def _delete_image_jobs(job_ids: list[str]) -> None:
+    async def run() -> None:
+        from sqlalchemy import delete
+
+        from db.session import get_session_factory
+        from modules.image.models import ImageJob
+
+        async with get_session_factory()() as session:
+            await session.execute(delete(ImageJob).where(ImageJob.id.in_(job_ids)))
+            await session.commit()
+
+    asyncio.run(run())
+
+
+def _check_video(asset_ids: list[str]) -> dict[str, list[str]]:
+    from modules.task.library_references import TaskLibraryReferences
+
+    async def run() -> dict[str, list[str]]:
+        async with _session() as session:
+            found = await TaskLibraryReferences().references(session, asset_ids)
+            return {key: list(value) for key, value in found.items()}
+
+    return asyncio.run(run())
+
+
+def _check_image(asset_ids: list[str]) -> dict[str, list[str]]:
+    from modules.image.library_references import ImageJobReferences
+
+    async def run() -> dict[str, list[str]]:
+        async with _session() as session:
+            found = await ImageJobReferences().references(session, asset_ids)
+            return {key: list(value) for key, value in found.items()}
+
+    return asyncio.run(run())
+
+
+def test_视频侧的粗筛不能直接当结论(client: TestClient) -> None:
+    """子串粗筛必须被二次精确比对兜住。
+
+    JSON 列没法按元素查（sqlite / PG 语法不同），所以两个 JSON checker
+    只能先按子串粗筛，再在 Python 里精确比对。粗筛是「字符串里恰好出现了
+    这个 id」——**比目标 id 更长的另一个 id 也会被捞出来**。
+
+    如果哪天有人把二次精确比对删掉（看着像冗余：粗筛已经捞到了），粗筛
+    就直接变成了结论：一条**根本不含**该资产的任务会把它报成引用来源 →
+    那条资产被永久挡在「彻底删除」之外，而且看不出原因。
+
+    所以这里钉的是**行为**：查一个只是被别的 id 包含的字符串，不该有
+    引用来源；而真正在清单里的那个 id，必须仍然报得出来（否则这条用例
+    可能因为「什么都没查到」而假绿）。
+    """
+    task_id = _video_task_with_ids(["prefix-asset-1-suffix"])
+    try:
+        found = _check_video(["asset-1", "prefix-asset-1-suffix"])
+    finally:
+        _delete_tasks([task_id])
+
+    assert "asset-1" not in found, found
+    assert "prefix-asset-1-suffix" in found, found
+
+
+def test_生图侧的粗筛不能直接当结论(client: TestClient) -> None:
+    """同上，生图那支的 JSON 里还混着快照字段，粗筛捞出来的行更多。"""
+    job_id = _image_job_with_refs(
+        [
+            {
+                "assetId": "prefix-asset-1-suffix",
+                "storageKey": "library/x.png",
+                "mimeType": "image/png",
+            }
+        ]
+    )
+    try:
+        found = _check_image(["asset-1", "prefix-asset-1-suffix"])
+    finally:
+        _delete_image_jobs([job_id])
+
+    assert "asset-1" not in found, found
+    assert "prefix-asset-1-suffix" in found, found

@@ -729,8 +729,12 @@ async def run_download_gc(
             if dry_run:
                 continue
             # 关联行一并删掉：关联表**刻意没加外键**（本模块的约定是关系由
-            # 应用层维护），所以级联删除得自己写——留着孤儿行会让引用检查
-            # 报出「这个资产还被下载任务 xxx 引用」，而那个任务早就不存在了。
+            # 应用层维护），所以级联删除得自己写。
+            #
+            # 不写会留下孤儿行（任务行没了，关联行还在）。注意后果的边界：
+            # 引用检查那边是 **INNER JOIN**（关联行必须对得上任务行），所以孤儿
+            # 行**不会**被误报成「这个资产还被下载任务引用」——它只是垃圾数据，
+            # 永远躺在索引里没人清理。所以这段代码是数据卫生，不是正确性。
             await session.execute(
                 delete(LibraryDownloadJobAsset).where(
                     LibraryDownloadJobAsset.job_id == row.id

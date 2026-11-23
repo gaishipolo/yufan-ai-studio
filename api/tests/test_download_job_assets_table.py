@@ -240,9 +240,13 @@ def test_引用检查不再做子串粗筛() -> None:
 def test_清理过期任务后关联行不残留(client: TestClient) -> None:
     """关联表**刻意没加外键**，级联删除得自己写。
 
-    漏写的后果不是「多几行垃圾」：孤儿行会让引用检查报出「这个资产还被
-    下载任务 xxx 引用」，而那个任务早就不存在了——于是这条资产**永远删不掉**，
-    而且看不出原因。
+    漏写的后果**不是**「误判成还被引用」——引用检查那边是 INNER JOIN，
+    关联行必须对得上任务行，孤儿行本来就对不上任何任务，不会被报出来。
+    真正的后果是**垃圾数据**：孤儿行永远躺在索引里，没人清理。
+
+    所以这条用例钉的是数据卫生，不是正确性——写清这一点，免得后来人
+    为了「防误判」给这张表加外键（那会把「还引用着吗」这个问题挪到
+    写入时刻，变成约束冲突）。
     """
     from modules.library.downloads import run_download_gc
 
@@ -256,4 +260,4 @@ def test_清理过期任务后关联行不残留(client: TestClient) -> None:
 
     second = asyncio.run(run_download_gc())
     assert second.purged >= 1, second
-    assert _rows(job_id) == [], "任务行删了，关联行还留着——孤儿行会让资产永远删不掉"
+    assert _rows(job_id) == [], "任务行删了，关联行还留着——孤儿行是没人清理的垃圾"
